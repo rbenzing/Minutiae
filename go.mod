@@ -6,6 +6,7 @@ toolchain go1.26.8
 
 require (
 	github.com/spf13/cobra v1.10.2
+	go.bug.st/serial v1.8.0
 	golang.org/x/sys v0.48.0
 	modernc.org/sqlite v1.60.1
 )
