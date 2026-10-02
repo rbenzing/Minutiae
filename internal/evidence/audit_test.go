@@ -2,6 +2,10 @@ package evidence
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +15,7 @@ import (
 func newTestAudit(t *testing.T) (*AuditLog, string) {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "audit.jsonl")
-	a, err := OpenAuditLog(p, "tester", "test (none)")
+	a, err := CreateAuditLog(p, "tester", "test (none)")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +34,7 @@ func appendN(t *testing.T, a *AuditLog, actions ...string) {
 
 func TestAuditAppendChainsHashes(t *testing.T) {
 	a, p := newTestAudit(t)
-	appendN(t, a, "one", "two", "three")
+	appendN(t, a, "case.create", "two", "three")
 	es, err := ReadAuditEntries(p)
 	if err != nil {
 		t.Fatal(err)
@@ -46,7 +50,7 @@ func TestAuditAppendChainsHashes(t *testing.T) {
 
 func TestAuditReopenContinuesChain(t *testing.T) {
 	a, p := newTestAudit(t)
-	appendN(t, a, "one")
+	appendN(t, a, "case.create")
 	if err := a.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -69,6 +73,7 @@ func TestAuditReopenContinuesChain(t *testing.T) {
 
 func TestAuditDetailsRoundTrip(t *testing.T) {
 	a, p := newTestAudit(t)
+	appendN(t, a, "case.create")
 	type src struct {
 		Zeta  string `json:"zeta"`
 		Alpha int64  `json:"alpha"`
@@ -102,7 +107,7 @@ func rewrite(t *testing.T, p string, f func(lines [][]byte) [][]byte) {
 
 func TestAuditVerifyDetectsEdit(t *testing.T) {
 	a, p := newTestAudit(t)
-	appendN(t, a, "one", "two", "three")
+	appendN(t, a, "case.create", "two", "three")
 	rewrite(t, p, func(l [][]byte) [][]byte {
 		l[1] = bytes.Replace(l[1], []byte(`"action":"two"`), []byte(`"action":"TWO"`), 1)
 		return l
@@ -115,7 +120,7 @@ func TestAuditVerifyDetectsEdit(t *testing.T) {
 
 func TestAuditVerifyDetectsDeletedLine(t *testing.T) {
 	a, p := newTestAudit(t)
-	appendN(t, a, "one", "two", "three")
+	appendN(t, a, "case.create", "two", "three")
 	rewrite(t, p, func(l [][]byte) [][]byte { return [][]byte{l[0], l[2]} })
 	_, problems, _ := VerifyAuditLog(p)
 	if !containsSubstr(problems, "seq") || !containsSubstr(problems, "prev_hash") {
@@ -125,7 +130,7 @@ func TestAuditVerifyDetectsDeletedLine(t *testing.T) {
 
 func TestAuditVerifyDetectsReorder(t *testing.T) {
 	a, p := newTestAudit(t)
-	appendN(t, a, "one", "two", "three")
+	appendN(t, a, "case.create", "two", "three")
 	rewrite(t, p, func(l [][]byte) [][]byte { return [][]byte{l[1], l[0], l[2]} })
 	_, problems, _ := VerifyAuditLog(p)
 	if len(problems) == 0 {
@@ -140,4 +145,115 @@ func containsSubstr(list []string, sub string) bool {
 		}
 	}
 	return false
+}
+
+// Spec §6.2: hash = sha256(canonical JSON of the entry without "hash").
+func TestAuditHashIsOverEntryWithoutHashField(t *testing.T) {
+	a, p := newTestAudit(t)
+	appendN(t, a, "case.create")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := bytes.TrimRight(b, "\n")
+	i := bytes.LastIndex(line, []byte(`,"hash":"`))
+	if i < 0 {
+		t.Fatalf("no hash field in %s", line)
+	}
+	withoutHash := append(append([]byte{}, line[:i]...), '}')
+	sum := sha256.Sum256(withoutHash)
+	es, err := ReadAuditEntries(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := hex.EncodeToString(sum[:]); got != es[0].Hash {
+		t.Fatalf("hash %s is not sha256 of %s (= %s)", es[0].Hash, withoutHash, got)
+	}
+}
+
+func TestAuditInvalidUTF8IsNotFalseTamper(t *testing.T) {
+	a, p := newTestAudit(t)
+	appendN(t, a, "case.create")
+	if _, err := a.Append("acquire.start", "dev\xff", map[string]any{"name": "x\xfey"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, problems, err := VerifyAuditLog(p); err != nil || len(problems) != 0 {
+		t.Fatalf("problems=%v err=%v", problems, err)
+	}
+}
+
+func TestOpenAuditLogCorruptLineIsIntegrityError(t *testing.T) {
+	a, p := newTestAudit(t)
+	appendN(t, a, "case.create", "two", "three")
+	if err := a.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rewrite(t, p, func(l [][]byte) [][]byte {
+		l[1] = l[1][:len(l[1])/2]
+		return l
+	})
+	_, err := OpenAuditLog(p, "tester", "test (none)")
+	if !errors.Is(err, ErrIntegrity) || !strings.Contains(err.Error(), "audit log unreadable at line 2 (edited or torn write)") {
+		t.Fatalf("err = %v, want ErrIntegrity at line 2", err)
+	}
+}
+
+func TestOpenAuditLogTornLastLineIsIntegrityError(t *testing.T) {
+	a, p := newTestAudit(t)
+	appendN(t, a, "case.create", "two")
+	if err := a.Close(); err != nil {
+		t.Fatal(err)
+	}
+	truncateTail(t, p, 20)
+	_, err := OpenAuditLog(p, "tester", "test (none)")
+	if !errors.Is(err, ErrIntegrity) || !strings.Contains(err.Error(), "audit log unreadable at line 2") {
+		t.Fatalf("err = %v, want ErrIntegrity at line 2", err)
+	}
+}
+
+func TestAuditVerifyFlagsEmptyLog(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "audit.jsonl")
+	if err := os.WriteFile(p, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, problems, err := VerifyAuditLog(p); err != nil || !containsSubstr(problems, "audit log is empty") {
+		t.Fatalf("problems=%v err=%v", problems, err)
+	}
+}
+
+func TestAuditVerifyRequiresCaseCreateFirst(t *testing.T) {
+	a, p := newTestAudit(t)
+	appendN(t, a, "case.open", "two")
+	if _, problems, err := VerifyAuditLog(p); err != nil || !containsSubstr(problems, `line 1: action "case.open", want "case.create"`) {
+		t.Fatalf("problems=%v err=%v", problems, err)
+	}
+}
+
+func TestCreateAuditLogRefusesExisting(t *testing.T) {
+	_, p := newTestAudit(t)
+	if _, err := CreateAuditLog(p, "tester", "test (none)"); !errors.Is(err, fs.ErrExist) {
+		t.Fatalf("err = %v, want fs.ErrExist", err)
+	}
+}
+
+func TestOpenAuditLogMissingIsIntegrityError(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "audit.jsonl")
+	if _, err := OpenAuditLog(p, "tester", "test (none)"); !errors.Is(err, ErrIntegrity) {
+		t.Fatalf("err = %v, want ErrIntegrity", err)
+	}
+	if _, err := os.Stat(p); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("OpenAuditLog created the file: %v", err)
+	}
+}
+
+// truncateTail cuts the last n bytes off the file, simulating a torn write.
+func truncateTail(t *testing.T, p string, n int64) {
+	t.Helper()
+	fi, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(p, fi.Size()-n); err != nil {
+		t.Fatal(err)
+	}
 }

@@ -96,7 +96,11 @@ func Create(parentDir string, opts CreateOptions) (*Case, error) {
 	if err := writeExclusiveJSON(filepath.Join(dir, caseFile), meta); err != nil {
 		return nil, err
 	}
-	c, err := openParts(dir, meta)
+	audit, err := CreateAuditLog(filepath.Join(dir, auditFile), currentActor(), version.String())
+	if err != nil {
+		return nil, err
+	}
+	c, err := withStore(dir, meta, audit)
 	if err != nil {
 		return nil, err
 	}
@@ -133,11 +137,20 @@ func Open(dir string) (*Case, error) {
 	return c, nil
 }
 
+// openParts opens the audit log and artifacts.db of an existing case. Both are
+// created only by Create; a missing one is an integrity failure, never recreated.
 func openParts(dir string, meta Meta) (*Case, error) {
+	if _, err := os.Stat(filepath.Join(dir, dbFile)); errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("%w: %s is missing from case %s", ErrIntegrity, dbFile, dir)
+	}
 	audit, err := OpenAuditLog(filepath.Join(dir, auditFile), currentActor(), version.String())
 	if err != nil {
 		return nil, err
 	}
+	return withStore(dir, meta, audit)
+}
+
+func withStore(dir string, meta Meta, audit *AuditLog) (*Case, error) {
 	store, err := OpenStore(filepath.Join(dir, dbFile))
 	if err != nil {
 		_ = audit.Close()

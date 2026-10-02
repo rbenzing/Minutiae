@@ -2,6 +2,7 @@ package evidence
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -85,5 +86,26 @@ func TestOpenAppendsCaseOpen(t *testing.T) {
 func TestOpenNonCaseFails(t *testing.T) {
 	if _, err := Open(t.TempDir()); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestOpenMissingAuditOrDBIsIntegrityError(t *testing.T) {
+	for _, name := range []string{auditFile, dbFile} {
+		t.Run(name, func(t *testing.T) {
+			c := newTestCase(t)
+			dir := c.Dir
+			if err := c.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(filepath.Join(dir, name)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Open(dir); !errors.Is(err, ErrIntegrity) {
+				t.Fatalf("err = %v, want ErrIntegrity", err)
+			}
+			if _, err := os.Stat(filepath.Join(dir, name)); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("%s was recreated: %v", name, err)
+			}
+		})
 	}
 }

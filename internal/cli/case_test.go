@@ -128,3 +128,80 @@ func TestExitCodeDeviceAndIntegrity(t *testing.T) {
 		t.Error("ErrIntegrity should map to ExitIntegrity")
 	}
 }
+
+func TestCaseVerifyMissingAuditExits4(t *testing.T) {
+	c := newCLICase(t)
+	if err := os.Remove(filepath.Join(c, "audit.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := run(t, Deps{}, "case", "verify", "--case", c); code != ExitIntegrity {
+		t.Fatalf("verify: %d %s", code, out)
+	}
+	if _, err := os.Stat(filepath.Join(c, "audit.jsonl")); err == nil {
+		t.Fatal("audit.jsonl was recreated")
+	}
+}
+
+func TestCaseVerifyMissingDBExits4(t *testing.T) {
+	c := newCLICase(t)
+	if err := os.Remove(filepath.Join(c, "artifacts.db")); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := run(t, Deps{}, "case", "verify", "--case", c); code != ExitIntegrity {
+		t.Fatalf("verify: %d %s", code, out)
+	}
+}
+
+func TestCaseVerifyCorruptAuditLineExits4(t *testing.T) {
+	c := newCLICase(t)
+	run(t, Deps{}, "case", "info", "--case", c) // line 2: case.open
+	run(t, Deps{}, "case", "info", "--case", c) // line 3: case.open
+	overwriteLine(t, filepath.Join(c, "audit.jsonl"), 2)
+	code, out := run(t, Deps{}, "case", "verify", "--case", c)
+	if code != ExitIntegrity || !strings.Contains(out, "audit log unreadable at line 2 (edited or torn write)") {
+		t.Fatalf("verify: %d %s", code, out)
+	}
+}
+
+func TestCaseVerifyTornAuditLastLineExits4(t *testing.T) {
+	c := newCLICase(t)
+	p := filepath.Join(c, "audit.jsonl")
+	truncateTail(t, p, 20)
+	code, out := run(t, Deps{}, "case", "verify", "--case", c)
+	if code != ExitIntegrity || !strings.Contains(out, "audit log unreadable at line 1") {
+		t.Fatalf("verify: %d %s", code, out)
+	}
+}
+
+// truncateTail cuts the last n bytes off the file, simulating a torn write.
+func truncateTail(t *testing.T, p string, n int64) {
+	t.Helper()
+	fi, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(p, fi.Size()-n); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// overwriteLine replaces the first bytes of 1-based line n with junk, in place.
+func overwriteLine(t *testing.T, p string, n int) {
+	t.Helper()
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	off := 0
+	for range n - 1 {
+		off += bytes.IndexByte(b[off:], '\n') + 1
+	}
+	f, err := os.OpenFile(p, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	if _, err := f.WriteAt([]byte("#corrupt#"), int64(off)); err != nil {
+		t.Fatal(err)
+	}
+}
