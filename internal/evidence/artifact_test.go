@@ -6,8 +6,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"testing"
+	"time"
 )
 
 var testSrc = Source{Kind: "file", DeviceID: "dev1", RemotePath: "/sdcard/a.txt"}
@@ -149,5 +151,22 @@ func TestConcurrentArtifacts(t *testing.T) {
 	}
 	if _, problems, _ := VerifyAuditLog(filepath.Join(c.Dir, auditFile)); len(problems) != 0 {
 		t.Fatalf("audit problems: %v", problems)
+	}
+}
+
+func TestNewAcquisitionIDUnique(t *testing.T) {
+	format := regexp.MustCompile(`^\d{8}T\d{6}\.\d{9}Z-[0-9a-f]{8}$`)
+	seen := map[string]bool{}
+	for range 1000 {
+		id := NewAcquisitionID(time.Now())
+		if seen[id] {
+			t.Fatalf("duplicate acquisition id %q", id)
+		}
+		seen[id] = true
+	}
+	for id := range seen {
+		if !format.MatchString(id) || sanitizeComponent(id) != id {
+			t.Fatalf("id %q is not of the form <timestamp>-<8 hex> or not filesystem-safe", id)
+		}
 	}
 }

@@ -19,9 +19,13 @@ var ErrArtifactExists = errors.New("artifact already exists")
 
 var errArtifactClosed = errors.New("artifact already closed")
 
-// NewAcquisitionID returns a sortable, filesystem-safe id for one acquisition.
+// NewAcquisitionID returns a sortable, filesystem-safe id for one acquisition:
+// the UTC timestamp plus 4 random bytes, because clock granularity (notably on
+// Windows) makes timestamp-only ids collide.
 func NewAcquisitionID(t time.Time) string {
-	return t.UTC().Format("20060102T150405.000000000Z")
+	var b [4]byte
+	_, _ = rand.Read(b[:]) // crypto/rand.Read never returns an error (Go 1.24+)
+	return t.UTC().Format("20060102T150405.000000000Z") + "-" + hex.EncodeToString(b[:])
 }
 
 var windowsReserved = map[string]bool{

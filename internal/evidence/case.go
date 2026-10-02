@@ -76,8 +76,8 @@ var currentActor = func() string {
 // Create makes <parentDir>/<ID> as a new case. It refuses a non-empty directory.
 // It is the only function that creates audit.jsonl and artifacts.db.
 func Create(parentDir string, opts CreateOptions) (*Case, error) {
-	if !validCaseID.MatchString(opts.ID) || strings.Contains(opts.ID, "..") {
-		return nil, fmt.Errorf("invalid case id %q: use letters, digits, '.', '_' or '-' (max 64, must start with a letter or digit)", opts.ID)
+	if err := checkCaseID(opts.ID); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(opts.Examiner) == "" {
 		return nil, errors.New("examiner is required")
@@ -205,4 +205,15 @@ func (c *Case) Manifest() ([]ManifestRecord, error) {
 // Close closes the store and audit log, then releases the case lock.
 func (c *Case) Close() error {
 	return errors.Join(c.store.Close(), c.Audit.Close(), c.lock.release())
+}
+
+// checkCaseID accepts ids that are a safe directory name on Windows, macOS and
+// Linux: no "..", no trailing '.', and no Windows reserved device name (CON,
+// NUL, COM1, ...), with or without an extension.
+func checkCaseID(id string) error {
+	if !validCaseID.MatchString(id) || strings.Contains(id, "..") || strings.HasSuffix(id, ".") ||
+		windowsReserved[strings.ToUpper(strings.SplitN(id, ".", 2)[0])] {
+		return fmt.Errorf("invalid case id %q: use letters, digits, '.', '_' or '-' (max 64, must start with a letter or digit, must not end with '.' or be a reserved device name such as CON or NUL)", id)
+	}
+	return nil
 }

@@ -53,7 +53,10 @@ func TestCreateRefusesNonEmptyDir(t *testing.T) {
 }
 
 func TestCreateRejectsBadInput(t *testing.T) {
-	for _, id := range []string{"", "..", "../x", "a/b", `a\b`, "a b", ".hidden"} {
+	for _, id := range []string{
+		"", "..", "../x", "a/b", `a\b`, "a b", ".hidden",
+		"case.", "case-1.", "CON", "con", "Nul", "aux.txt", "PRN.case.1", "COM1", "com9.x", "LPT1", "lpt9",
+	} {
 		if _, err := Create(t.TempDir(), CreateOptions{ID: id, Examiner: "E"}); err == nil {
 			t.Errorf("id %q accepted", id)
 		}
