@@ -218,3 +218,26 @@ func TestCaseCommandRefusesCaseInUse(t *testing.T) {
 		t.Fatalf("verify while open: %d %s", code, out)
 	}
 }
+
+func TestCaseVerifyArtifactErasedEverywhereExits4(t *testing.T) {
+	c := newCLICase(t)
+	ec, err := evidence.Open(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := ec.Capture("d", "a", "x.bin", evidence.Source{Kind: "file", DeviceID: "d"}, func(w io.Writer) error {
+		_, err := w.Write([]byte("abc"))
+		return err
+	})
+	if cerr := ec.Close(); err != nil || cerr != nil {
+		t.Fatal(err, cerr)
+	}
+	for _, p := range []string{filepath.FromSlash(rec.Path), "manifest.jsonl", "artifacts.db"} {
+		if err := os.Remove(filepath.Join(c, p)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if code, out := run(t, Deps{}, "case", "verify", "--case", c); code != ExitIntegrity {
+		t.Fatalf("verify: %d %s", code, out)
+	}
+}
