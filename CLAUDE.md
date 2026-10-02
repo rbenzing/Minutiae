@@ -19,7 +19,8 @@ go tool golangci-lint version   # pinned in go.mod as a tool; nothing to install
 ## 3. Definition of done (empirical)
 Run `go run ./tools/check` and observe `CHECK PASSED` in the output.
 It runs: `go mod tidy -diff`, `go vet`, `golangci-lint` (incl. gofumpt/goimports),
-`go build ./cmd/minutiae`, `go test ./...` (with `-race` when cgo is available).
+`go build ./cmd/minutiae`, `CGO_ENABLED=0` cross-builds for linux/amd64 and
+darwin/arm64 (binaries discarded), `go test ./...` (with `-race` when cgo is available).
 Never claim work is complete, fixed or passing without that output from the
 current code. Auto-fix formatting with `go tool golangci-lint fmt`.
 
@@ -36,6 +37,12 @@ current code. Auto-fix formatting with `go tool golangci-lint fmt`.
 | `audit.jsonl` and `artifacts.db` are created only by `Create`; a missing, empty, corrupt or torn audit log, or a missing db, fails closed (exit 4) and is never recreated | `TestOpenMissingAuditOrDBIsIntegrityError`, `TestCaseVerifyMissingAuditExits4`, `TestCaseVerifyCorruptAuditLineExits4`, `TestAuditVerifyFlagsEmptyLog` |
 | An open case holds an exclusive OS lock on `case.lock` (never evidence); a second `Create`/`Open` fails until `Close` | `TestCaseLockExcludesSecondOpen`, `TestCaseCommandRefusesCaseInUse` |
 | `case verify` cross-checks every manifest record against its hash-chained `artifact.create` audit entry (both directions, duplicate ids flagged), so a consistent rewrite or erasure of file + manifest + db is still caught; unreadable parts are reported, never abort verify | `TestVerifyDetectsConsistentForgeryViaAudit`, `TestVerifyDetectsArtifactErasedFromManifestAndDB`, `TestVerifyDetectsManifestRecordWithoutAudit`, `TestCaseVerifyArtifactErasedEverywhereExits4` |
+| Serial writes: every chunk is audited (`device.modify`) before it reaches the port and its outcome after (`device.modify.done`/`.error` with `bytes_sent`; short write = error); an audit failure blocks the write; no write starts or is in flight after `Raw.Run` returns; a finished recorder refuses TX; writing needs a real (auditing) recorder | `TestRawTXAuditFailureBlocksWrite`, `TestRawNoPortWriteAfterRunReturns`, `TestCaseRecorderTXAfterFinishRefused`, `TestCaseRecorderAuditsWriteOutcome`, `TestRawWriteRefusedWithoutRecorder` |
+| Serial ports open with DTR and RTS de-asserted; `--dtr`/`--rts` need `--allow-device-write` and are audited (`device.modify` `serial.line_state`) before the open | `TestOpenModeNeverLeavesModemLinesToDriverDefault`, `TestSerialConsoleModemLinesOffByDefault`, `TestSerialConsoleModemLinesNeedAllowWrite`, `TestSerialConsoleModemLinesAuditedBeforeOpen` |
+
+Serial modem lines: on Linux/macOS the kernel may still pulse DTR/RTS during
+`open()` and drops them on close (HUPCL); userspace can only de-assert them
+right after open. Treat a serial open as able to reset DTR/RTS-wired targets.
 
 ## 5. Architecture rule (enforced by `TestArchitectureDependencyRule`)
 - `internal/evidence` and `internal/version` import no other Minutiae package except `evidence → version`.
