@@ -52,3 +52,18 @@ func TestEnumeratorListsPortsAsDevices(t *testing.T) {
 		t.Fatalf("info=%+v err=%v", info, err)
 	}
 }
+
+func TestOpenModeNeverLeavesModemLinesToDriverDefault(t *testing.T) {
+	m := openMode(DefaultConfig())
+	if m.InitialStatusBits == nil {
+		t.Fatal("InitialStatusBits is nil: the driver would assert DTR and RTS on open")
+	}
+	if m.InitialStatusBits.DTR || m.InitialStatusBits.RTS {
+		t.Fatalf("default config asserts modem lines: %+v", *m.InitialStatusBits)
+	}
+	c := DefaultConfig()
+	c.DTR, c.RTS = true, true
+	if m := openMode(c); m.InitialStatusBits == nil || !m.InitialStatusBits.DTR || !m.InitialStatusBits.RTS {
+		t.Fatalf("configured lines not passed: %+v", m.InitialStatusBits)
+	}
+}

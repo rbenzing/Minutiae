@@ -27,6 +27,10 @@ type Config struct {
 	Parity      string // none, odd, even, mark, space
 	StopBits    string // 1, 1.5, 2
 	ReadTimeout time.Duration
+	// DTR and RTS are the modem output lines held after open. Both default
+	// to false: on many boards and phones DTR/RTS are wired to reset or
+	// boot-mode pins, so asserting them is a device modification.
+	DTR, RTS bool
 }
 
 // DefaultConfig is 115200 8N1 with a 100 ms read timeout.
@@ -84,10 +88,7 @@ func (System) Open(name string, cfg Config) (Port, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	p, err := bug.Open(name, &bug.Mode{
-		BaudRate: cfg.Baud, DataBits: cfg.DataBits,
-		Parity: parities[cfg.Parity], StopBits: stopBits[cfg.StopBits],
-	})
+	p, err := bug.Open(name, openMode(cfg))
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", name, err)
 	}
@@ -96,4 +97,15 @@ func (System) Open(name string, cfg Config) (Port, error) {
 		return nil, fmt.Errorf("set read timeout on %s: %w", name, err)
 	}
 	return p, nil
+}
+
+// openMode builds the driver mode. InitialStatusBits is never nil: nil makes
+// go.bug.st/serial assert DTR and RTS on open. On Linux/macOS the kernel may
+// still pulse both lines during open(2); they are de-asserted right after.
+func openMode(cfg Config) *bug.Mode {
+	return &bug.Mode{
+		BaudRate: cfg.Baud, DataBits: cfg.DataBits,
+		Parity: parities[cfg.Parity], StopBits: stopBits[cfg.StopBits],
+		InitialStatusBits: &bug.ModemOutputBits{DTR: cfg.DTR, RTS: cfg.RTS},
+	}
 }
