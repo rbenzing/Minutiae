@@ -1,5 +1,6 @@
 // Command check runs every verification step that must pass before work is
-// called done: module tidiness, vet, lint (incl. formatting), build and tests.
+// called done: module tidiness, vet, lint (incl. formatting), build, no-cgo
+// cross-builds and tests.
 package main
 
 import (
@@ -11,24 +12,43 @@ import (
 	"strings"
 )
 
+type step struct {
+	env  []string // extra environment, KEY=VALUE
+	args []string
+}
+
 func main() {
-	steps := [][]string{
-		{"go", "mod", "tidy", "-diff"},
-		{"go", "vet", "./..."},
-		{"go", "tool", "golangci-lint", "run", "./..."},
-		{"go", "build", "-o", binPath(), "./cmd/minutiae"},
-		testCmd(),
+	steps := []step{
+		{args: []string{"go", "mod", "tidy", "-diff"}},
+		{args: []string{"go", "vet", "./..."}},
+		{args: []string{"go", "tool", "golangci-lint", "run", "./..."}},
+		{args: []string{"go", "build", "-o", binPath(), "./cmd/minutiae"}},
+		// Spec §2: a single static binary, no cgo, on every supported OS.
+		crossBuild("linux", "amd64"),
+		crossBuild("darwin", "arm64"),
+		{args: testCmd()},
 	}
 	for _, s := range steps {
-		fmt.Printf("==> %s\n", strings.Join(s, " "))
-		cmd := exec.Command(s[0], s[1:]...) //nolint:gosec // fixed, trusted command list
+		line := strings.Join(append(append([]string{}, s.env...), s.args...), " ")
+		fmt.Printf("==> %s\n", line)
+		cmd := exec.Command(s.args[0], s.args[1:]...) //nolint:gosec // fixed, trusted command list
+		cmd.Env = append(os.Environ(), s.env...)
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		if err := cmd.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "CHECK FAILED at %q: %v\n", strings.Join(s, " "), err)
+			fmt.Fprintf(os.Stderr, "CHECK FAILED at %q: %v\n", line, err)
 			os.Exit(1)
 		}
 	}
 	fmt.Println("CHECK PASSED")
+}
+
+// crossBuild compiles the CLI for goos/goarch without cgo and discards the
+// binary, so no stray build output is left in the repository.
+func crossBuild(goos, goarch string) step {
+	return step{
+		env:  []string{"CGO_ENABLED=0", "GOOS=" + goos, "GOARCH=" + goarch},
+		args: []string{"go", "build", "-o", os.DevNull, "./cmd/minutiae"},
+	}
 }
 
 func binPath() string {

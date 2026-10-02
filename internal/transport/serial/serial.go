@@ -8,7 +8,6 @@ import (
 	"time"
 
 	bug "go.bug.st/serial"
-	"go.bug.st/serial/enumerator"
 )
 
 // PortInfo describes one serial port.
@@ -79,19 +78,6 @@ type Provider interface {
 
 // System is the real Provider backed by the operating system.
 type System struct{}
-
-// List enumerates ports with USB details when available.
-func (System) List() ([]PortInfo, error) {
-	ds, err := enumerator.GetDetailedPortsList()
-	if err != nil {
-		return nil, fmt.Errorf("enumerate serial ports: %w", err)
-	}
-	out := make([]PortInfo, 0, len(ds))
-	for _, d := range ds {
-		out = append(out, PortInfo{Name: d.Name, IsUSB: d.IsUSB, VID: d.VID, PID: d.PID, SerialNumber: d.SerialNumber, Product: d.Product})
-	}
-	return out, nil
-}
 
 // Open opens name with cfg.
 func (System) Open(name string, cfg Config) (Port, error) {
