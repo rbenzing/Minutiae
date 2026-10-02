@@ -1,0 +1,12 @@
+# build output
+/bin/
+*.exe
+*.test
+*.out
+coverage.*
+
+# evidence must never be committed
+/cases/
+
+# local-only design specs and plans
+docs/superpowers/

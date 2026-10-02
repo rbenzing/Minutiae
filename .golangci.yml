@@ -1,0 +1,26 @@
+version: "2"
+linters:
+  enable:
+    - gosec
+    - revive
+    - misspell
+    - unconvert
+    - bodyclose
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+    gosec:
+      excludes:
+        - G304 # file paths are supplied by the examiner by design
+        - G115 # integer conversions are bounded by wire-protocol field sizes
+  exclusions:
+    presets:
+      - comments
+      - common-false-positives
+formatters:
+  enable:
+    - gofumpt
+    - goimports
