@@ -3,6 +3,7 @@ package serial
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/rbenzing/minutiae/internal/device"
 )
@@ -16,6 +17,10 @@ func TestConfigValidate(t *testing.T) {
 		func(c *Config) { c.DataBits = 9 },
 		func(c *Config) { c.Parity = "foo" },
 		func(c *Config) { c.StopBits = "3" },
+		func(c *Config) { c.Baud = -9600 },
+		func(c *Config) { c.DataBits = 4 },
+		func(c *Config) { c.ReadTimeout = 0 },
+		func(c *Config) { c.ReadTimeout = -time.Millisecond },
 	}
 	for i, mutate := range bad {
 		c := DefaultConfig()
