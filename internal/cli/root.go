@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/rbenzing/minutiae/internal/device"
+	"github.com/rbenzing/minutiae/internal/transport/serial"
 )
 
 // Deps are the external dependencies of the CLI, injectable for tests.
@@ -18,12 +19,18 @@ type Deps struct {
 	In       io.Reader
 	Out      io.Writer
 	Err      io.Writer
+	Serial   serial.Provider
 	Registry *device.Registry
 }
 
 // DefaultDeps wires the real process streams and device backends.
 func DefaultDeps() Deps {
-	return Deps{In: os.Stdin, Out: os.Stdout, Err: os.Stderr, Registry: device.NewRegistry()}
+	sp := serial.System{}
+	return Deps{
+		In: os.Stdin, Out: os.Stdout, Err: os.Stderr,
+		Serial:   sp,
+		Registry: device.NewRegistry(serial.Enumerator{P: sp}),
+	}
 }
 
 type rootOptions struct {
@@ -48,6 +55,7 @@ func newRootCmd(d Deps) *cobra.Command {
 	root.AddCommand(newVersionCmd(d, opts))
 	root.AddCommand(newCaseCmd(d, opts))
 	root.AddCommand(newDevicesCmd(d, opts))
+	root.AddCommand(newSerialCmd(d, opts))
 	return root
 }
 
