@@ -31,7 +31,7 @@ current code. Auto-fix formatting with `go tool golangci-lint fmt`.
 | Every artifact is hashed (SHA-256 + MD5) and in manifest + artifacts.db | `TestNewArtifactHashesAndRecords` |
 | Partial/failed acquisitions are kept and flagged `incomplete` | `TestAbortKeepsPartialFlagged`, `TestPullToCaseCancelledKeepsPartial` |
 | Audit log is append-only and hash-chained; tampering is detected | `TestAuditVerifyDetectsEdit`, `TestAuditVerifyDetectsDeletedLine`, `TestAuditVerifyDetectsReorder` |
-| Device writes need explicit permission and are audited before the write | `TestPushAuditedRequiresPermission`, `TestPushAuditedAuditsBeforeWrite` |
+| Device writes need explicit permission and are audited (size + sha256) before the write; the bytes sent are hashed and must match | `TestPushAuditedRequiresPermission`, `TestPushAuditedAuditsBeforeWrite`, `TestPushAuditedDetectsShortSend` |
 | `case verify` detects altered/missing/extra evidence and exits 4 | `TestVerifyDetectsModifiedArtifact`, `TestCaseVerifyExitCodeOnTamper` |
 | `audit.jsonl` and `artifacts.db` are created only by `Create`; a missing, empty, corrupt or torn audit log, or a missing db, fails closed (exit 4) and is never recreated | `TestOpenMissingAuditOrDBIsIntegrityError`, `TestCaseVerifyMissingAuditExits4`, `TestCaseVerifyCorruptAuditLineExits4`, `TestAuditVerifyFlagsEmptyLog` |
 | An open case holds an exclusive OS lock on `case.lock` (never evidence); a second `Create`/`Open` fails until `Close` | `TestCaseLockExcludesSecondOpen`, `TestCaseCommandRefusesCaseInUse` |

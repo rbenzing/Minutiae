@@ -3,7 +3,10 @@ package device_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -16,11 +19,13 @@ import (
 )
 
 type fakeDevice struct {
-	id     string
-	files  map[string]string
-	pushed map[string]string
-	onPush func()
-	block  chan struct{} // if non-nil, Pull writes "part" then waits for ctx
+	id        string
+	files     map[string]string
+	pushed    map[string]string
+	onPush    func()
+	pushErr   error         // if non-nil, Push consumes the input then fails
+	pushLimit int           // if > 0, Push reads only this many bytes and reports success
+	block     chan struct{} // if non-nil, Pull writes "part" then waits for ctx
 }
 
 func (f *fakeDevice) ID() string        { return f.id }
@@ -49,8 +54,14 @@ func (f *fakeDevice) Push(_ context.Context, r io.Reader, p string, _ fs.FileMod
 	if f.onPush != nil {
 		f.onPush()
 	}
+	if f.pushLimit > 0 {
+		r = io.LimitReader(r, int64(f.pushLimit))
+	}
 	b, err := io.ReadAll(r)
 	f.pushed[p] = string(b)
+	if f.pushErr != nil {
+		return f.pushErr
+	}
 	return err
 }
 
@@ -192,4 +203,75 @@ func TestPushAuditedAuditsBeforeWrite(t *testing.T) {
 	if !auditedFirst || d.pushed["/data/local/tmp/tool"] != "bin" {
 		t.Fatalf("auditedFirst=%v pushed=%v", auditedFirst, d.pushed)
 	}
+}
+
+func lastEntry(t *testing.T, c *evidence.Case) evidence.AuditEntry {
+	t.Helper()
+	es, err := evidence.ReadAuditEntries(filepath.Join(c.Dir, "audit.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return es[len(es)-1]
+}
+
+func writeTool(t *testing.T) string {
+	t.Helper()
+	local := filepath.Join(t.TempDir(), "tool")
+	if err := os.WriteFile(local, []byte("bin"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return local
+}
+
+func TestPushAuditedDoneRecordsSentHash(t *testing.T) {
+	c := newCase(t)
+	d := &fakeDevice{id: "A1", pushed: map[string]string{}}
+	if err := device.PushAudited(context.Background(), c, d, "A1", writeTool(t), "/data/local/tmp/tool", true); err != nil {
+		t.Fatal(err)
+	}
+	e := lastEntry(t, c)
+	if e.Action != "device.modify.done" || e.Details["sha256"] != sha256Hex("bin") || fmt.Sprint(e.Details["size"]) != "3" {
+		t.Fatalf("last entry = %+v", e)
+	}
+}
+
+func TestPushAuditedRecordsPushError(t *testing.T) {
+	c := newCase(t)
+	boom := errors.New("usb gone")
+	d := &fakeDevice{id: "A1", pushed: map[string]string{}, pushErr: boom}
+	if err := device.PushAudited(context.Background(), c, d, "A1", writeTool(t), "/x", true); !errors.Is(err, boom) {
+		t.Fatalf("err = %v", err)
+	}
+	if e := lastEntry(t, c); e.Action != "device.modify.error" {
+		t.Fatalf("last entry = %+v", e)
+	}
+}
+
+func TestPushAuditedDetectsShortSend(t *testing.T) {
+	c := newCase(t)
+	d := &fakeDevice{id: "A1", pushed: map[string]string{}, pushLimit: 1}
+	if err := device.PushAudited(context.Background(), c, d, "A1", writeTool(t), "/x", true); err == nil {
+		t.Fatal("short send accepted")
+	}
+	e := lastEntry(t, c)
+	if e.Action != "device.modify.error" || e.Details["sha256"] != sha256Hex("b") {
+		t.Fatalf("last entry = %+v", e)
+	}
+}
+
+func TestPushAuditedOpenFailureAuditsNothing(t *testing.T) {
+	c := newCase(t)
+	d := &fakeDevice{id: "A1", pushed: map[string]string{}}
+	missing := filepath.Join(t.TempDir(), "nope")
+	if err := device.PushAudited(context.Background(), c, d, "A1", missing, "/x", true); err == nil {
+		t.Fatal("missing local file accepted")
+	}
+	if e := lastEntry(t, c); e.Action != "case.create" {
+		t.Fatalf("audit written for a push that never started: %+v", e)
+	}
+}
+
+func sha256Hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
 }

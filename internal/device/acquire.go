@@ -3,6 +3,7 @@ package device
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"os"
@@ -51,31 +52,49 @@ func ImageToCase(ctx context.Context, c *evidence.Case, im Imager, deviceID, acq
 }
 
 // PushAudited writes a local file to the device. It refuses unless allow is
-// true, and records a device.modify audit entry before any byte is sent.
+// true, and records a device.modify audit entry (size, sha256) before any byte
+// is sent. The file is opened once: the audited hash and the bytes actually
+// sent come from the same handle, and the digest of what was sent is compared
+// with the audited one. device.modify.done records the sent size and sha256;
+// a push error or digest mismatch records device.modify.error instead.
 func PushAudited(ctx context.Context, c *evidence.Case, t FileTransferer, deviceID, localPath, remotePath string, allow bool) error {
 	if !allow {
 		return ErrDeviceWriteNotAllowed
-	}
-	d, err := evidence.HashFile(localPath)
-	if err != nil {
-		return err
-	}
-	details := map[string]any{
-		"operation": "push", "local_path": localPath, "remote_path": remotePath,
-		"size": d.Size, "sha256": d.SHA256,
-	}
-	if _, err := c.Audit.Append("device.modify", deviceID, details); err != nil {
-		return err
 	}
 	f, err := os.Open(localPath)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = f.Close() }()
-	if err := t.Push(ctx, f, remotePath, 0o644); err != nil {
-		_, aerr := c.Audit.Append("device.modify.error", deviceID, map[string]any{"remote_path": remotePath, "error": err.Error()})
-		return errors.Join(err, aerr)
+	pre := evidence.NewMultiHasher()
+	if _, err := io.Copy(pre, f); err != nil {
+		return err
 	}
-	_, err = c.Audit.Append("device.modify.done", deviceID, map[string]any{"remote_path": remotePath})
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	want := pre.Sum()
+	if _, err := c.Audit.Append("device.modify", deviceID, map[string]any{
+		"operation": "push", "local_path": localPath, "remote_path": remotePath,
+		"size": want.Size, "sha256": want.SHA256,
+	}); err != nil {
+		return err
+	}
+	sent := evidence.NewMultiHasher()
+	pushErr := t.Push(ctx, io.TeeReader(f, sent), remotePath, 0o644)
+	got := sent.Sum()
+	if pushErr == nil && (got.Size != want.Size || got.SHA256 != want.SHA256) {
+		pushErr = fmt.Errorf("pushed data does not match the audited file: sent %d bytes sha256 %s, audited %d bytes sha256 %s",
+			got.Size, got.SHA256, want.Size, want.SHA256)
+	}
+	if pushErr != nil {
+		_, aerr := c.Audit.Append("device.modify.error", deviceID, map[string]any{
+			"remote_path": remotePath, "error": pushErr.Error(), "size": got.Size, "sha256": got.SHA256,
+		})
+		return errors.Join(pushErr, aerr)
+	}
+	_, err = c.Audit.Append("device.modify.done", deviceID, map[string]any{
+		"remote_path": remotePath, "size": got.Size, "sha256": got.SHA256,
+	})
 	return err
 }
