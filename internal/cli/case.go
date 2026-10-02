@@ -1,0 +1,126 @@
+package cli
+
+import (
+	"fmt"
+
+	"github.com/spf13/cobra"
+
+	"github.com/rbenzing/minutiae/internal/evidence"
+)
+
+func openCase(path string) (*evidence.Case, error) {
+	if path == "" {
+		return nil, usageErrorf("--case is required")
+	}
+	return evidence.Open(path)
+}
+
+func newCaseCmd(d Deps, opts *rootOptions) *cobra.Command {
+	cmd := newGroupCmd("case", "Create, inspect and verify cases")
+	cmd.AddCommand(newCaseNewCmd(d, opts), newCaseInfoCmd(d, opts), newCaseVerifyCmd(d, opts))
+	return cmd
+}
+
+func newCaseNewCmd(d Deps, opts *rootOptions) *cobra.Command {
+	var dir string
+	var co evidence.CreateOptions
+	cmd := &cobra.Command{
+		Use:   "new",
+		Short: "Create a new case directory",
+		Args:  exactArgs(0),
+		RunE: func(_ *cobra.Command, _ []string) error {
+			c, err := evidence.Create(dir, co)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = c.Close() }()
+			if opts.json {
+				return writeJSON(d.Out, map[string]any{"dir": c.Dir, "meta": c.Meta})
+			}
+			fmt.Fprintf(d.Out, "created case %s at %s\n", c.Meta.ID, c.Dir)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&dir, "dir", "", "parent directory for the case")
+	cmd.Flags().StringVar(&co.ID, "id", "", "case identifier")
+	cmd.Flags().StringVar(&co.Examiner, "examiner", "", "examiner name")
+	cmd.Flags().StringVar(&co.Description, "description", "", "case description")
+	for _, f := range []string{"dir", "id", "examiner"} {
+		_ = cmd.MarkFlagRequired(f)
+	}
+	return cmd
+}
+
+func newCaseInfoCmd(d Deps, opts *rootOptions) *cobra.Command {
+	var path string
+	cmd := &cobra.Command{
+		Use:   "info",
+		Short: "Show case metadata and artifact count",
+		Args:  exactArgs(0),
+		RunE: func(_ *cobra.Command, _ []string) error {
+			c, err := openCase(path)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = c.Close() }()
+			recs, err := c.Manifest()
+			if err != nil {
+				return err
+			}
+			if opts.json {
+				return writeJSON(d.Out, map[string]any{
+					"id": c.Meta.ID, "examiner": c.Meta.Examiner, "description": c.Meta.Description,
+					"created": c.Meta.Created, "tool_version": c.Meta.ToolVersion, "artifacts": len(recs),
+				})
+			}
+			fmt.Fprintf(d.Out, "Case:        %s\nExaminer:    %s\nCreated:     %s\nTool:        %s\nArtifacts:   %d\n",
+				c.Meta.ID, c.Meta.Examiner, c.Meta.Created, c.Meta.ToolVersion, len(recs))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&path, "case", "", "case directory")
+	_ = cmd.MarkFlagRequired("case")
+	return cmd
+}
+
+func newCaseVerifyCmd(d Deps, opts *rootOptions) *cobra.Command {
+	var path string
+	cmd := &cobra.Command{
+		Use:   "verify",
+		Short: "Re-hash all artifacts and check the audit chain",
+		Args:  exactArgs(0),
+		RunE: func(_ *cobra.Command, _ []string) error {
+			c, err := openCase(path)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = c.Close() }()
+			rep, err := c.Verify()
+			if err != nil {
+				return err
+			}
+			if opts.json {
+				if err := writeJSON(d.Out, rep); err != nil {
+					return err
+				}
+			} else {
+				for _, p := range rep.Problems {
+					fmt.Fprintln(d.Out, "PROBLEM:", p)
+				}
+				status := "OK"
+				if !rep.OK() {
+					status = "FAILED"
+				}
+				fmt.Fprintf(d.Out, "%s: %d artifacts, %d audit entries, %d problems\n",
+					status, rep.ArtifactsChecked, rep.AuditEntries, len(rep.Problems))
+			}
+			if !rep.OK() {
+				return fmt.Errorf("%w: %d problem(s)", evidence.ErrIntegrity, len(rep.Problems))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&path, "case", "", "case directory")
+	_ = cmd.MarkFlagRequired("case")
+	return cmd
+}

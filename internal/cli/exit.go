@@ -6,6 +6,9 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/rbenzing/minutiae/internal/device"
+	"github.com/rbenzing/minutiae/internal/evidence"
 )
 
 // Process exit codes. Documented in the spec §8; scripts depend on them.
@@ -60,6 +63,11 @@ func isCobraUsageError(err error) bool {
 	return false
 }
 
+var deviceErrors = []error{
+	device.ErrNotFound, device.ErrUnauthorized, device.ErrNotRooted,
+	device.ErrUnsupported, device.ErrDeviceWriteNotAllowed,
+}
+
 // ExitCode maps an error returned by a command to a process exit code.
 func ExitCode(err error) int {
 	var ue usageError
@@ -68,7 +76,13 @@ func ExitCode(err error) int {
 		return ExitOK
 	case errors.As(err, &ue):
 		return ExitUsage
-	default:
-		return ExitError
+	case errors.Is(err, evidence.ErrIntegrity):
+		return ExitIntegrity
 	}
+	for _, de := range deviceErrors {
+		if errors.Is(err, de) {
+			return ExitDevice
+		}
+	}
+	return ExitError
 }

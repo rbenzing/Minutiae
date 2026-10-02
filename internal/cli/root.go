@@ -9,18 +9,21 @@ import (
 	"os/signal"
 
 	"github.com/spf13/cobra"
+
+	"github.com/rbenzing/minutiae/internal/device"
 )
 
 // Deps are the external dependencies of the CLI, injectable for tests.
 type Deps struct {
-	In  io.Reader
-	Out io.Writer
-	Err io.Writer
+	In       io.Reader
+	Out      io.Writer
+	Err      io.Writer
+	Registry *device.Registry
 }
 
-// DefaultDeps wires the real process streams.
+// DefaultDeps wires the real process streams and device backends.
 func DefaultDeps() Deps {
-	return Deps{In: os.Stdin, Out: os.Stdout, Err: os.Stderr}
+	return Deps{In: os.Stdin, Out: os.Stdout, Err: os.Stderr, Registry: device.NewRegistry()}
 }
 
 type rootOptions struct {
@@ -43,6 +46,8 @@ func newRootCmd(d Deps) *cobra.Command {
 	root.PersistentFlags().BoolVarP(&opts.verbose, "verbose", "v", false, "verbose output")
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return usageError{err} })
 	root.AddCommand(newVersionCmd(d, opts))
+	root.AddCommand(newCaseCmd(d, opts))
+	root.AddCommand(newDevicesCmd(d, opts))
 	return root
 }
 
@@ -61,4 +66,19 @@ func Run(args []string, d Deps) int {
 		fmt.Fprintln(d.Err, "error:", err)
 	}
 	return ExitCode(err)
+}
+
+// newGroupCmd builds a command that only holds subcommands. Unknown
+// subcommands are usage errors (exit 2) instead of silently printing help.
+func newGroupCmd(use, short string) *cobra.Command {
+	return &cobra.Command{
+		Use:   use,
+		Short: short,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return usageErrorf("unknown command %q for %q", args[0], cmd.CommandPath())
+			}
+			return cmd.Help()
+		},
+	}
 }
