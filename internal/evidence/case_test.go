@@ -109,3 +109,26 @@ func TestOpenMissingAuditOrDBIsIntegrityError(t *testing.T) {
 		})
 	}
 }
+
+func TestCaseLockExcludesSecondOpen(t *testing.T) {
+	c := newTestCase(t)
+	if _, err := os.Stat(filepath.Join(c.Dir, lockFile)); err != nil {
+		t.Fatalf("lock file: %v", err)
+	}
+	if _, err := Open(c.Dir); !errors.Is(err, ErrCaseInUse) {
+		t.Fatalf("second Open while first is open: err = %v, want ErrCaseInUse", err)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := Open(c.Dir)
+	if err != nil {
+		t.Fatalf("Open after Close: %v", err)
+	}
+	if _, err := Open(c.Dir); !errors.Is(err, ErrCaseInUse) {
+		t.Fatalf("Open while reopened case is open: err = %v, want ErrCaseInUse", err)
+	}
+	if err := c2.Close(); err != nil {
+		t.Fatal(err)
+	}
+}

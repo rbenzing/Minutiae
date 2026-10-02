@@ -205,3 +205,16 @@ func overwriteLine(t *testing.T, p string, n int) {
 		t.Fatal(err)
 	}
 }
+
+func TestCaseCommandRefusesCaseInUse(t *testing.T) {
+	c := newCLICase(t)
+	ec, err := evidence.Open(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ec.Close() }()
+	if code, out := run(t, Deps{}, "case", "verify", "--case", c); code != ExitError ||
+		!strings.Contains(out, "case is in use by another Minutiae process") {
+		t.Fatalf("verify while open: %d %s", code, out)
+	}
+}

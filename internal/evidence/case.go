@@ -23,6 +23,7 @@ const (
 	manifestFile = "manifest.jsonl"
 	dbFile       = "artifacts.db"
 	artifactsDir = "artifacts"
+	lockFile     = "case.lock"
 )
 
 var (
@@ -30,6 +31,8 @@ var (
 	ErrCaseExists = errors.New("case already exists")
 	// ErrIntegrity marks a failed integrity verification.
 	ErrIntegrity = errors.New("integrity check failed")
+	// ErrCaseInUse is returned while another Minutiae process (or Case) holds the case.
+	ErrCaseInUse = errors.New("case is in use by another Minutiae process")
 )
 
 // Meta is case.json.
@@ -56,6 +59,7 @@ type Case struct {
 	Meta       Meta
 	Audit      *AuditLog
 	store      *Store
+	lock       *caseLock
 	manifestMu sync.Mutex
 }
 
@@ -70,6 +74,7 @@ var currentActor = func() string {
 }
 
 // Create makes <parentDir>/<ID> as a new case. It refuses a non-empty directory.
+// It is the only function that creates audit.jsonl and artifacts.db.
 func Create(parentDir string, opts CreateOptions) (*Case, error) {
 	if !validCaseID.MatchString(opts.ID) || strings.Contains(opts.ID, "..") {
 		return nil, fmt.Errorf("invalid case id %q: use letters, digits, '.', '_' or '-' (max 64, must start with a letter or digit)", opts.ID)
@@ -88,19 +93,23 @@ func Create(parentDir string, opts CreateOptions) (*Case, error) {
 	if err := os.MkdirAll(filepath.Join(dir, artifactsDir), 0o750); err != nil {
 		return nil, err
 	}
+	lock, err := acquireCaseLock(dir)
+	if err != nil {
+		return nil, err
+	}
 	meta := Meta{
 		ID: opts.ID, Examiner: opts.Examiner, Description: opts.Description,
 		Created:     time.Now().UTC().Format(time.RFC3339),
 		ToolVersion: version.String(), HostOS: runtime.GOOS, HostArch: runtime.GOARCH,
 	}
 	if err := writeExclusiveJSON(filepath.Join(dir, caseFile), meta); err != nil {
-		return nil, err
+		return nil, errors.Join(err, lock.release())
 	}
 	audit, err := CreateAuditLog(filepath.Join(dir, auditFile), currentActor(), version.String())
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(err, lock.release())
 	}
-	c, err := withStore(dir, meta, audit)
+	c, err := withStore(dir, meta, audit, lock)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +122,8 @@ func Create(parentDir string, opts CreateOptions) (*Case, error) {
 	return c, nil
 }
 
-// Open opens an existing case and records the access in the audit log.
+// Open opens an existing case, holding its lock until Close, and records the
+// access in the audit log.
 func Open(dir string) (*Case, error) {
 	b, err := os.ReadFile(filepath.Join(dir, caseFile))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -126,10 +136,15 @@ func Open(dir string) (*Case, error) {
 	if err := json.Unmarshal(b, &meta); err != nil {
 		return nil, fmt.Errorf("%s: %w", caseFile, err)
 	}
-	c, err := openParts(dir, meta)
+	lock, err := acquireCaseLock(dir)
 	if err != nil {
 		return nil, err
 	}
+	c, err := openParts(dir, meta)
+	if err != nil {
+		return nil, errors.Join(err, lock.release())
+	}
+	c.lock = lock
 	if _, err := c.Audit.Append("case.open", "", nil); err != nil {
 		_ = c.Close()
 		return nil, err
@@ -147,16 +162,17 @@ func openParts(dir string, meta Meta) (*Case, error) {
 	if err != nil {
 		return nil, err
 	}
-	return withStore(dir, meta, audit)
+	return withStore(dir, meta, audit, nil)
 }
 
-func withStore(dir string, meta Meta, audit *AuditLog) (*Case, error) {
+// withStore opens artifacts.db and assembles the Case. On error it closes
+// audit and releases lock (if non-nil).
+func withStore(dir string, meta Meta, audit *AuditLog, lock *caseLock) (*Case, error) {
 	store, err := OpenStore(filepath.Join(dir, dbFile))
 	if err != nil {
-		_ = audit.Close()
-		return nil, err
+		return nil, errors.Join(err, audit.Close(), lock.release())
 	}
-	return &Case{Dir: dir, Meta: meta, Audit: audit, store: store}, nil
+	return &Case{Dir: dir, Meta: meta, Audit: audit, store: store, lock: lock}, nil
 }
 
 func writeExclusiveJSON(path string, v any) error {
@@ -186,7 +202,7 @@ func (c *Case) Manifest() ([]ManifestRecord, error) {
 	return readManifest(filepath.Join(c.Dir, manifestFile))
 }
 
-// Close closes the store and audit log.
+// Close closes the store and audit log, then releases the case lock.
 func (c *Case) Close() error {
-	return errors.Join(c.store.Close(), c.Audit.Close())
+	return errors.Join(c.store.Close(), c.Audit.Close(), c.lock.release())
 }

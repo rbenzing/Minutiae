@@ -34,6 +34,7 @@ current code. Auto-fix formatting with `go tool golangci-lint fmt`.
 | Device writes need explicit permission and are audited before the write | `TestPushAuditedRequiresPermission`, `TestPushAuditedAuditsBeforeWrite` |
 | `case verify` detects altered/missing/extra evidence and exits 4 | `TestVerifyDetectsModifiedArtifact`, `TestCaseVerifyExitCodeOnTamper` |
 | `audit.jsonl` and `artifacts.db` are created only by `Create`; a missing, empty, corrupt or torn audit log, or a missing db, fails closed (exit 4) and is never recreated | `TestOpenMissingAuditOrDBIsIntegrityError`, `TestCaseVerifyMissingAuditExits4`, `TestCaseVerifyCorruptAuditLineExits4`, `TestAuditVerifyFlagsEmptyLog` |
+| An open case holds an exclusive OS lock on `case.lock` (never evidence); a second `Create`/`Open` fails until `Close` | `TestCaseLockExcludesSecondOpen`, `TestCaseCommandRefusesCaseInUse` |
 
 ## 5. Architecture rule (enforced by `TestArchitectureDependencyRule`)
 - `internal/evidence` and `internal/version` import no other Minutiae package except `evidence → version`.
