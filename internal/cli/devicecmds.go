@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -121,7 +124,7 @@ func newLsCmd(d Deps, opts *rootOptions, kind device.Kind, flag string) *cobra.C
 			return writeJSON(d.Out, es)
 		}
 		for _, e := range es {
-			fmt.Fprintf(d.Out, "%s %12d %s %s\n", e.Mode, e.Size, e.ModTime.Format("2006-01-02 15:04:05"), e.Name)
+			fmt.Fprintf(d.Out, "%s %12d %s %s\n", e.Mode, e.Size, e.ModTime.Format("2006-01-02 15:04:05"), displayName(e.Name))
 		}
 		return nil
 	}
@@ -165,7 +168,28 @@ func newPullCmd(d Deps, opts *rootOptions, kind device.Kind, flag string) *cobra
 	return cmd
 }
 
+// displayName returns a remote file name safe to print on a terminal: a name
+// with control or non-printable characters, invalid UTF-8 or a leading quote
+// is printed Go-quoted, so a hostile name cannot inject escape sequences or
+// fake extra lines.
+func displayName(s string) string {
+	if !utf8.ValidString(s) || strings.HasPrefix(s, `"`) || strings.IndexFunc(s, func(r rune) bool { return !strconv.IsPrint(r) }) >= 0 {
+		return strconv.Quote(s)
+	}
+	return s
+}
+
+// printRecords prints the artifacts that were created; a zero-value record
+// (the artifact could not even be created) is skipped — its error is reported
+// separately.
 func printRecords(d Deps, opts *rootOptions, recs []evidence.ManifestRecord) {
+	created := make([]evidence.ManifestRecord, 0, len(recs))
+	for _, r := range recs {
+		if r.ID != "" {
+			created = append(created, r)
+		}
+	}
+	recs = created
 	if opts.json {
 		_ = writeJSON(d.Out, recs)
 		return

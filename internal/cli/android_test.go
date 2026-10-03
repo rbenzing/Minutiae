@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -145,5 +147,52 @@ func TestAndroidImageRecordsBlockPathAndExpectedSize(t *testing.T) {
 	}
 	if code, out := run(t, d, "case", "verify", "--case", c); code != 0 {
 		t.Fatalf("verify: %d %s", code, out)
+	}
+}
+
+func TestAndroidLsEscapesControlCharacters(t *testing.T) {
+	dev := cliPixel()
+	dev.Files["/sdcard/evil\x1b[2J\nname"] = adbtest.File{Data: []byte("x")}
+	d, _ := androidDeps(t, dev)
+	code, out := run(t, d, "android", "ls", "/sdcard")
+	if code != 0 || strings.ContainsAny(out, "\x1b") || !strings.Contains(out, `"evil\x1b[2J\nname"`) {
+		t.Fatalf("ls: %d %q", code, out)
+	}
+	if !strings.Contains(out, " a.txt\n") {
+		t.Fatalf("plain names should print unquoted: %q", out)
+	}
+}
+
+func TestAndroidPullSkipsRecordsThatWereNeverCreated(t *testing.T) {
+	d, _ := androidDeps(t, cliPixel())
+	c := newCLICase(t)
+	code, out := run(t, d, "android", "pull", "--case", c, "/sdcard/a.txt", "/sdcard/a.txt")
+	if code == 0 || strings.Count(out, "files/sdcard/a.txt") != 2 { // one record line + the error
+		t.Fatalf("pull: %d %q", code, out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "  ") {
+			t.Fatalf("zero-value record printed: %q in %q", line, out)
+		}
+	}
+}
+
+type errDev struct{ stubDev }
+
+func (e errDev) Info(context.Context) (device.Info, error) {
+	return device.Info{}, errors.New("device unauthorized.\nPlease check the confirmation dialog")
+}
+
+type errEnum struct{}
+
+func (errEnum) Kind() device.Kind { return device.KindAndroid }
+func (errEnum) List(context.Context) ([]device.Device, error) {
+	return []device.Device{errDev{stubDev{"E1"}}}, nil
+}
+
+func TestDevicesErrorColumnIsOneLine(t *testing.T) {
+	code, out := run(t, Deps{Registry: device.NewRegistry(errEnum{})}, "devices")
+	if code != 0 || !strings.Contains(out, "error: device unauthorized. Please check the confirmation dialog\n") {
+		t.Fatalf("devices: %d %q", code, out)
 	}
 }

@@ -2,11 +2,16 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/rbenzing/minutiae/internal/device"
 )
+
+// oneLine flattens multi-line error messages (the ADB server's "unauthorized"
+// text has several lines) so each device stays on one table row.
+var oneLine = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ")
 
 func newDevicesCmd(d Deps, opts *rootOptions) *cobra.Command {
 	var kind string
@@ -41,7 +46,7 @@ func newDevicesCmd(d Deps, opts *rootOptions) *cobra.Command {
 			for _, i := range infos {
 				detail := i.OSVersion
 				if msg := i.Extra["error"]; msg != "" {
-					detail = "error: " + msg
+					detail = "error: " + oneLine.Replace(msg)
 				}
 				fmt.Fprintf(d.Out, "%-8s %-28s %-20s %s\n", i.Kind, i.ID, i.Model, detail)
 			}
