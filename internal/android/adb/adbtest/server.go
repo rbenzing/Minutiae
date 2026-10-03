@@ -24,13 +24,14 @@ type File struct {
 // Device is a fake device.
 type Device struct {
 	Serial     string
-	State      string            // "device", "unauthorized", "offline"
-	Props      string            // devices-l tail, e.g. "product:p model:Pixel_7 device:panther"
-	Commands   map[string][]byte // exec/shell command -> stdout
-	Files      map[string]File   // absolute path -> file; parent dirs implied
-	Unreadable map[string]bool   // RECV fails with permission denied
-	ExtraDents map[string][]Dent // raw entries appended to LIST of a directory (hostile listings)
-	NoExec     bool              // exec: is rejected with FAIL "closed" (old adbd); shell: still works
+	State      string                      // "device", "unauthorized", "offline"
+	Props      string                      // devices-l tail, e.g. "product:p model:Pixel_7 device:panther"
+	Commands   map[string][]byte           // exec/shell command -> stdout
+	Files      map[string]File             // absolute path -> file; parent dirs implied
+	Unreadable map[string]bool             // RECV fails with permission denied
+	ExtraDents map[string][]Dent           // raw entries appended to LIST of a directory (hostile listings)
+	NoExec     bool                        // exec: is rejected with FAIL "closed" (old adbd); shell: still works
+	AfterChunk func(path string, sent int) // called after each RECV DATA chunk is written (tests use it to stall a transfer)
 }
 
 // Dent is a raw LIST entry, sent as-is (no validation of the name).
@@ -289,6 +290,9 @@ func (s *Server) serveSync(c net.Conn, d *Device) {
 				end := min(off+65536, len(f.Data))
 				writeSync(c, "DATA", uint32(end-off))
 				_, _ = c.Write(f.Data[off:end])
+				if d.AfterChunk != nil {
+					d.AfterChunk(p, end)
+				}
 			}
 			writeSync(c, "DONE", 0)
 		case "SEND":

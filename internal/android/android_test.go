@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -573,5 +574,58 @@ func TestImageNeverFallsBackToShell(t *testing.T) {
 	}
 	if n, err := d.Image(context.Background(), "boot", &bytes.Buffer{}, nil); err == nil || n != 0 {
 		t.Fatalf("dd must be exec:-only: n=%d err=%v", n, err)
+	}
+}
+
+func TestPullToCaseCancelledMidRecvKeepsPartial(t *testing.T) {
+	big := bytes.Repeat([]byte{0x5a}, 8*65536)
+	dev := basicDevice()
+	dev.Files["/sdcard/big.bin"] = adbtest.File{Data: big}
+	started, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	dev.AfterChunk = func(string, int) { // stall the device after its first chunk
+		once.Do(func() { close(started) })
+		<-release
+	}
+	c := newCase(t)
+	d := findDevice(t, fakeServer(t, dev), "PX1")
+	t.Cleanup(func() { close(release) })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	type result struct {
+		rec evidence.ManifestRecord
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		rec, err := device.PullToCase(ctx, c, d, "PX1", "acq", "/sdcard/big.bin")
+		done <- result{rec, err}
+	}()
+	<-started
+	// Cancel only once the first chunk has reached the artifact on disk, so
+	// the transfer is provably mid-RECV with bytes already written.
+	partial := filepath.Join(c.Dir, "artifacts", "PX1", "acq", "files", "sdcard", "big.bin")
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		if st, err := os.Stat(partial); err == nil && st.Size() > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("first chunk never reached the artifact")
+		}
+	}
+	cancel()
+	res := <-done
+	if !errors.Is(res.err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", res.err)
+	}
+	if !res.rec.Incomplete || res.rec.Size <= 0 || res.rec.Size >= int64(len(big)) {
+		t.Fatalf("partial artifact not kept and flagged: %+v", res.rec)
+	}
+	got, err := os.ReadFile(filepath.Join(c.Dir, filepath.FromSlash(res.rec.Path)))
+	if err != nil || !bytes.Equal(got, big[:res.rec.Size]) {
+		t.Fatalf("partial bytes on disk: %d bytes, %v", len(got), err)
+	}
+	if rep, err := c.Verify(); err != nil || !rep.OK() {
+		t.Fatalf("verify: %+v %v", rep, err)
 	}
 }
