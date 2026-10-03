@@ -40,6 +40,17 @@ current code. Auto-fix formatting with `go tool golangci-lint fmt`.
 | `case verify` cross-checks every manifest record against its hash-chained `artifact.create` audit entry (both directions, duplicate ids flagged), so a consistent rewrite or erasure of file + manifest + db is still caught; unreadable parts are reported, never abort verify | `TestVerifyDetectsConsistentForgeryViaAudit`, `TestVerifyDetectsArtifactErasedFromManifestAndDB`, `TestVerifyDetectsManifestRecordWithoutAudit`, `TestCaseVerifyArtifactErasedEverywhereExits4` |
 | Serial writes: every chunk is audited (`device.modify`) before it reaches the port and its outcome after (`device.modify.done`/`.error` with `bytes_sent`; short write = error); an audit failure blocks the write; no write starts or is in flight after `Raw.Run` returns; a finished recorder refuses TX; writing needs a real (auditing) recorder | `TestRawTXAuditFailureBlocksWrite`, `TestRawNoPortWriteAfterRunReturns`, `TestCaseRecorderTXAfterFinishRefused`, `TestCaseRecorderAuditsWriteOutcome`, `TestRawWriteRefusedWithoutRecorder` |
 | Serial ports open with DTR and RTS de-asserted; `--dtr`/`--rts` need `--allow-device-write` and are audited (`device.modify` `serial.line_state`) before the open | `TestOpenModeNeverLeavesModemLinesToDriverDefault`, `TestSerialConsoleModemLinesOffByDefault`, `TestSerialConsoleModemLinesNeedAllowWrite`, `TestSerialConsoleModemLinesAuditedBeforeOpen` |
+| Image analysis never modifies source evidence: the parent artifact is opened read-only via `Case.OpenArtifact`, and its hash is unchanged after info/ls/stat/extract/unalloc | `TestExamineNeverModifiesSource`, `TestOpenArtifactReadOnly` |
+| `OpenArtifact` refuses a parent whose size differs from its manifest record (integrity error, exit 4), a path that is not a regular file, and a manifest path that points outside the case | `TestOpenArtifactSizeMismatchIsIntegrityError`, `TestImageTamperedParentExits4`, `TestOpenArtifactRefusesNonRegularFile`, `TestOpenArtifactRefusesPathOutsideCase` |
+| Image imports are hashed through `Capture` and record the original path and the segment index/total; a source inside the case (including Windows extended-length spellings) is refused | `TestImportRecordsOriginalAndSegments`, `TestImportRefusesInsideCase`, `TestImportRefusesExtendedLengthPathInsideCase` |
+| A partially imported or inconsistent multi-segment image (missing last segment, disagreeing totals, no total) cannot be opened; re-import it | `TestOpenPartialOrInconsistentImportIsIntegrityError` |
+| Derived artifacts record full provenance (parent id + sha256, partition, filesystem type/path/id, image runs; every segment of a split parent) | `TestExtractRecordsProvenance`, `TestExtractFromSplitImageRecordsAllParentSegments` |
+| Extracted bytes equal the image bytes at the recorded runs | `TestExtractRunsReproduceContent` |
+| `case verify` flags a derived artifact whose parent (or any parent segment) is missing or whose recorded parent hash differs | `TestVerifyFlagsDerivedArtifactWithBadParent`, `TestVerifyFlagsDerivedArtifactWithBadParentSegment` |
+| Deleted entries are listed and flagged, never extracted as live files (the skip is an `analysis.warning`; recovery is sub-project 3) | `TestExtractSkipsDeletedWithWarning` |
+| Extraction from an incomplete parent is flagged `parent_incomplete` on the derived artifacts | `TestExtractFromIncompleteParentIsFlagged` |
+| A failure to write to the case aborts an analysis; it is never downgraded to a per-file warning | `TestExtractCaseWriteFailureIsNeverDowngradedToWarning` |
+| Hostile images never panic the process: panics in container, partition-table and filesystem parsers are recovered into errors, and the parsers are fuzzed | `TestDetectRecoversPanic`, `TestSessionRecoversFSPanic`, `TestOpenRecoversContainerAndTablePanics`, `FuzzRead`, `FuzzOpen` |
 
 Serial modem lines: on Linux/macOS the kernel may still pulse DTR/RTS during
 `open()` and drops them on close (HUPCL); userspace can only de-assert them
@@ -51,11 +62,17 @@ right after open. Treat a serial open as able to reset DTR/RTS-wired targets.
 - Backends (`transport/serial`, `protocol`, `android`, `ios`) import only `device`, `evidence`, `version` and their own sub-packages; never `cli`, never each other.
 - `internal/android/adb` imports no Minutiae package.
 - `cmd/minutiae` imports only `internal/cli`.
+- Parser packages `internal/image`, `internal/volume` and `internal/filesys` import no Minutiae package: they work on `io.ReaderAt` and can never write to a case, so they never import `evidence`.
+- Parser test helpers (`volume/volumetest`, `filesys/fstest`) import only their parent package; `internal/filesys/detect` imports only `filesys` (plus each filesystem package as it lands).
+- `internal/examine` is the only bridge between the parsers and the case: it imports `evidence`, `version`, `device`, `image`, `volume`, `filesys` and `filesys/detect`.
+- `internal/cli` may import anything.
 
 ## 6. Testing
 - TDD: write the failing test, see it fail, implement, see it pass.
 - Default tests never need hardware: use fakes (fake ADB server, in-memory serial, fake iOS).
 - Hardware tests use `//go:build hardware` and are run manually: `go test -tags hardware ./...`.
+- Parsers have synthetic in-memory builders (`volumetest`, `fstest`) and fuzz targets; fuzz seeds run under `go test`, `go test -fuzz` is run manually.
+- Real-image fixtures (`*.img.gz` plus an independent oracle `*.expect.json`) are committed under each package's `testdata/`. Regenerating them needs Docker (`docker build -t minutiae-fixtures tools/fixtures`, then `gen.sh all` in the container; see `tools/fixtures/README.md`); running the tests never does.
 
 ## 7. Git
 - Use `git` only. Never `gh` (not installed). For GitHub use the web UI or REST API via `curl`.
@@ -76,6 +93,12 @@ go build -ldflags "-X github.com/rbenzing/minutiae/internal/version.Version=v1.0
 - iOS encrypted backups (a backup password set on the device) are captured as-is; decryption belongs to roadmap sub-project 10.
 - iOS AFC (`ios ls`/`ios pull`) parsing robustness depends on go-ios: its panics are converted to errors and a pull whose byte count differs from the AFC-reported size is flagged `incomplete`, but malformed AFC responses are otherwise not validated by Minutiae.
 - iOS lockdown/service setup: plists the device returns during lockdown `GetValue` and `StartService` (used by `ios info`, `ios ls/pull` and `ios backup` setup) are decoded inside go-ios without Minutiae's bplist validator or panic recovery, so a hostile device could crash the process at that stage (before any artifact is written).
+- Image analysis (sub-project 2, in progress): filesystem readers arrive progressively (ext4, FAT/exFAT, F2FS, E01, APFS, HFS+). Until the ext4 plan lands the binary has no filesystem driver (`detect.Drivers` is empty; the only filesystem parser is the MTFS test filesystem in `filesys/fstest`, used by tests), so `image info` shows partitions but no filesystem, and `image ls`/`stat`/`extract` and `unalloc -p` report that none is recognized. Raw and split-raw images, MBR/EBR and GPT partition tables, and `image unalloc --volume` (gaps outside partitions) work now.
+- EWF/E01 images are detected but not yet opened (`image.ErrUnsupportedContainer`; plan 2E), and `image info --verify` only reports that verification is unavailable (raw images have no stored hashes).
+- One `image import` call imports exactly one image (its files are segments 1..N in the order given; nothing is sorted). A partially imported image cannot be opened: re-import it.
+- Deleted filesystem entries are listed (`image ls --deleted`) and flagged, but not recovered or extracted; recovery is sub-project 3.
+- Encrypted filesystem content is extracted as ciphertext (flagged `Derived.Encrypted`); decryption belongs to roadmap sub-project 10.
+- Regenerating the real-image fixtures needs Docker; running the tests never does.
 - Hardware: as of v1.0.0 the device backends (ADB, iOS, serial) have NOT been validated on real hardware, only against fakes. Before relying on them in casework, run the hardware acceptance steps with authorized/trusted devices attached and confirm `case verify` reports OK:
   ```bash
   go test -tags hardware ./... -v

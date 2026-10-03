@@ -45,6 +45,7 @@ Use Minutiae only on devices you are authorized to examine.
 - **Android over ADB** — native pure-Go ADB client: device info, file listing/pull, logical acquisition of `/sdcard` (plus `getprop` and package list), and partition imaging on rooted devices with exact size verification
 - **iOS over usbmuxd** — device info, AFC media listing/pull, and full logical backups via an in-house mobilebackup2 (DeviceLink) implementation hardened against hostile devices
 - **USB serial** — port enumeration with VID/PID, receive-only raw console capture (`rx.bin` + timestamped transcript), modem lines de-asserted on open
+- **Image analysis** — import disk images (raw/dd, split raw) into a case, read MBR/EBR and GPT partition tables, browse filesystems read-only, extract files and export unallocated space as new hashed artifacts that record their full provenance (parent image, partition, filesystem entry, byte runs). Filesystem readers arrive progressively (ext4, FAT/exFAT, F2FS, E01, APFS, HFS+); see [Known limitations](CLAUDE.md#9-known-limitations)
 - **Windows-safe evidence names** — device file names that are illegal on Windows (`:`, `?`, `CON`, case/8.3 collisions) are stored under safe local names while the original remote path is preserved
 - **Single static binary** — pure Go, no cgo; one cross-platform `go run ./tools/check` gate (tidy, vet, lint, build, cross-builds, tests)
 
@@ -119,6 +120,40 @@ minutiae serial console --port COM3 --baud 115200 --case ./cases/CASE01
 Device selection: `--serial` (Android) or `--udid` (iOS) is optional when
 exactly one device of that kind is connected.
 
+### Analyse images
+
+Images are imported into the case first, so every analysis works on a hashed,
+read-only copy and every result is tied back to it. `<ref>` is the image's
+artifact path in the case (printed by `import`; for a split image, any one of its
+segments) or its artifact id (`import --json`).
+
+```bash
+# Import one image: the files are its segments 1..N, in the order given (nothing is sorted)
+minutiae image import --case ./cases/CASE01 --device seized-sd disk.img
+minutiae image import --case ./cases/CASE01 disk.001 disk.002 disk.003
+
+# Container, partition table and filesystems
+minutiae image info    --case ./cases/CASE01 <ref>
+
+# Browse a filesystem (-p picks the partition; optional when only one holds a recognized filesystem)
+minutiae image ls      --case ./cases/CASE01 <ref> -p 1 -r /Users
+minutiae image ls      --case ./cases/CASE01 <ref> -p 1 --deleted /
+minutiae image stat    --case ./cases/CASE01 <ref> -p 1 /Users/jane/notes.txt
+
+# Copy files out of the image into the case (new hashed artifacts with provenance)
+minutiae image extract --case ./cases/CASE01 <ref> -p 1 -r /Users/jane
+
+# Export unallocated space: a filesystem's free space, or the gaps outside every partition
+minutiae image unalloc --case ./cases/CASE01 <ref> -p 1
+minutiae image unalloc --case ./cases/CASE01 <ref> --volume
+```
+
+One `import` call imports exactly one image; run it once per image. Deleted
+entries are listed and flagged but not recovered, and encrypted files are
+extracted as ciphertext. Filesystem readers arrive progressively (ext4,
+FAT/exFAT, F2FS, E01, APFS, HFS+); until they land, partitions are listed but
+their filesystems are not yet readable.
+
 ### Verify
 
 ```bash
@@ -174,7 +209,22 @@ device ──► backend (android | ios | serial) ──► evidence.Case.Captur
 | Android | `internal/android` | Info, pull/push, logical acquisition, root detection, imaging |
 | mobilebackup2 | `internal/ios/mb2` | DeviceLink host, binary-plist validator, staging handlers |
 | iOS | `internal/ios` | go-ios adapter (usbmuxd, lockdown, AFC), backup → staging → artifacts |
+| Image | `internal/image` | Disk-image containers (raw, split raw) as read-only `io.ReaderAt` |
+| Volume | `internal/volume` | MBR/EBR and GPT partition tables; unallocated gaps between partitions |
+| Filesystem | `internal/filesys` | Filesystem interface, entries and byte runs, block cache; `detect` probes drivers, `fstest` is the test filesystem |
+| Examine | `internal/examine` | The only bridge from parsers to the case: import, sessions, extract, unallocated export, provenance |
 | Arch test | `internal/archtest` | Enforces the package dependency rule |
+
+Image analysis follows the same rule: the parsers (`image`, `volume`,
+`filesys`) read an `io.ReaderAt` and import no Minutiae package, so they cannot
+write to a case; only `examine` turns their results into artifacts, through
+`evidence.Case`.
+
+```
+image import ──► artifact (hashed segments) ──► examine.Open ──► image ► volume ► filesystem
+                                                      │
+                                   extract / unalloc ─┴──► derived artifacts (parent id + sha256, runs)
+```
 
 ### Acquisition lifecycle
 
@@ -238,8 +288,10 @@ minutiae case verify     --case ./cases/HW1
 
 ## 🗺️ Roadmap
 
-v1.0.0 completes **Sub-project 1: Foundation + Acquisition**. Next up: image &
-filesystem parsing, deleted-data recovery (SQLite freelist/WAL, carving),
+v1.0.0 completes **Sub-project 1: Foundation + Acquisition**. **Sub-project 2:
+Image & filesystem layer** is in progress: the image, partition-table and
+analysis foundation is in place, with filesystem readers (ext4, FAT/exFAT,
+F2FS, E01, APFS, HFS+) arriving progressively. Next up: deleted-data recovery (SQLite freelist/WAL, carving),
 artifact parsers, analytics, reporting, protocol drivers (EDL/BROM/AT), a
 desktop GUI, automatic artifact classification, and AI-assisted search and
 analysis over the artifact collection (offline by default, every answer cites
