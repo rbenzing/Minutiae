@@ -41,7 +41,7 @@ type Device struct {
 	serial string
 	state  string
 	props  map[string]string
-	su     func(string) string //nolint:unused // set once root is detected (root detection, Task 5)
+	su     func(string) string
 }
 
 func (d *Device) ID() string        { return d.serial }

@@ -161,3 +161,79 @@ func TestAcquireLogicalContinuesAfterUnreadable(t *testing.T) {
 		t.Fatalf("verify: %+v %v", rep, err)
 	}
 }
+
+const procPartitions = "major minor  #blocks  name\n\n 179        0    7634944 mmcblk0\n 179        1          4 mmcblk0p1\n 179        2          8 mmcblk0p2\n"
+
+const byName = "total 0\nlrwxrwxrwx 1 root root 20 2009-01-01 00:00 boot -> /dev/block/mmcblk0p1\nlrwxrwxrwx 1 root root 20 2009-01-01 00:00 userdata -> /dev/block/mmcblk0p2\n"
+
+var bootImage = bytes.Repeat([]byte{0x41}, 4096)
+
+func rootedDevice() *adbtest.Device {
+	return &adbtest.Device{
+		Serial: "R1", State: "device",
+		Commands: map[string][]byte{
+			"su -c 'id'":                                           []byte("uid=0(root) gid=0(root)\n"),
+			"su -c 'cat /proc/partitions'":                         []byte(procPartitions),
+			"su -c 'ls -l /dev/block/by-name/'":                    []byte(byName),
+			"su -c 'dd if=/dev/block/mmcblk0p1 bs=4M 2>/dev/null'": bootImage,
+			"su -c 'dd if=/dev/block/mmcblk0p2 bs=4M 2>/dev/null'": []byte("short"),
+		},
+	}
+}
+
+func TestPartitions(t *testing.T) {
+	d := findDevice(t, fakeServer(t, rootedDevice()), "R1")
+	ps, err := d.Partitions(context.Background())
+	if err != nil || len(ps) != 2 || ps[0].Name != "boot" || ps[0].Path != "/dev/block/mmcblk0p1" || ps[0].Size != 4096 || ps[1].Size != 8192 {
+		t.Fatalf("partitions = %+v, %v", ps, err)
+	}
+}
+
+func TestImageToCase(t *testing.T) {
+	c := newCase(t)
+	d := findDevice(t, fakeServer(t, rootedDevice()), "R1")
+	rec, err := device.ImageToCase(context.Background(), c, d, "R1", "acq", "boot", nil)
+	if err != nil || rec.Size != 4096 || rec.Incomplete {
+		t.Fatalf("rec = %+v, %v", rec, err)
+	}
+	got, _ := os.ReadFile(filepath.Join(c.Dir, filepath.FromSlash(rec.Path)))
+	if !bytes.Equal(got, bootImage) {
+		t.Fatal("image bytes differ")
+	}
+}
+
+func TestImageShortReadIsIncomplete(t *testing.T) {
+	c := newCase(t)
+	d := findDevice(t, fakeServer(t, rootedDevice()), "R1")
+	rec, err := device.ImageToCase(context.Background(), c, d, "R1", "acq", "userdata", nil)
+	if err == nil || !strings.Contains(err.Error(), "short read") || !rec.Incomplete {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+}
+
+func TestImageRejectsBadPartitionName(t *testing.T) {
+	d := findDevice(t, fakeServer(t, rootedDevice()), "R1")
+	if _, err := d.Image(context.Background(), "boot; rm -rf /", &bytes.Buffer{}, nil); err == nil || !strings.Contains(err.Error(), "invalid partition") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestNotRooted(t *testing.T) {
+	d := findDevice(t, fakeServer(t, basicDevice()), "PX1")
+	if _, err := d.Partitions(context.Background()); !errors.Is(err, device.ErrNotRooted) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestAOSPSuVariant(t *testing.T) {
+	dev := &adbtest.Device{Serial: "A1", State: "device", Commands: map[string][]byte{
+		"su 0 sh -c 'id'":                        []byte("uid=0(root)\n"),
+		"su 0 sh -c 'cat /proc/partitions'":      []byte(procPartitions),
+		"su 0 sh -c 'ls -l /dev/block/by-name/'": []byte("ls: /dev/block/by-name/: No such file or directory\n"),
+	}}
+	d := findDevice(t, fakeServer(t, dev), "A1")
+	ps, err := d.Partitions(context.Background())
+	if err != nil || len(ps) != 3 || ps[0].Path != "/dev/block/mmcblk0" {
+		t.Fatalf("partitions = %+v, %v", ps, err)
+	}
+}
