@@ -2,3 +2,4 @@
 *.png binary
 *.bin binary
 *.img binary
+*.gz binary

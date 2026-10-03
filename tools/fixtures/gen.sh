@@ -1,0 +1,36 @@
+#!/bin/bash
+# Entry point: gen.sh <fixture>|all
+# Run from the repository root inside the minutiae-fixtures container (see
+# README.md). Output goes to the owning package's testdata/ directory.
+set -euo pipefail
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+root=$(cd "$here/../.." && pwd)
+
+declare -A fixtures=(
+  [volume-gpt]="internal/volume/testdata"
+  [volume-mbr]="internal/volume/testdata"
+)
+order=(volume-gpt volume-mbr)
+
+usage() {
+  echo "usage: gen.sh <fixture>|all" >&2
+  echo "fixtures: ${order[*]}" >&2
+  exit 2
+}
+
+[ $# -eq 1 ] || usage
+
+if [ "$1" = all ]; then
+  targets=("${order[@]}")
+else
+  [ -n "${fixtures[$1]:-}" ] || usage
+  targets=("$1")
+fi
+
+for name in "${targets[@]}"; do
+  out="$root/${fixtures[$name]}"
+  mkdir -p "$out"
+  echo "== $name -> ${fixtures[$name]}"
+  bash "$here/$name.sh" "$out"
+done

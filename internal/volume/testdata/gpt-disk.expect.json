@@ -1,0 +1,65 @@
+{
+  "scheme": "gpt",
+  "sector_size": 512,
+  "disk_guid": "6f1c5b2e-3a4d-4e8b-9c07-1d2e3f405162",
+  "partitions": [
+    {
+      "index": 1,
+      "start": 1048576,
+      "length": 2097152,
+      "type": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+      "name": "system",
+      "guid": "11111111-2222-4333-8444-555555555501"
+    },
+    {
+      "index": 2,
+      "start": 3145728,
+      "length": 2097152,
+      "type": "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7",
+      "name": "data",
+      "guid": "11111111-2222-4333-8444-555555555502"
+    },
+    {
+      "index": 3,
+      "start": 6291456,
+      "length": 1048576,
+      "type": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+      "name": "userdata",
+      "guid": "11111111-2222-4333-8444-555555555503"
+    }
+  ],
+  "generator": {
+    "packages": [
+      {
+        "package": "coreutils",
+        "version": "9.7-3"
+      },
+      {
+        "package": "fdisk",
+        "version": "2.41.5-0+deb13u1"
+      },
+      {
+        "package": "gdisk",
+        "version": "1.0.10-2"
+      },
+      {
+        "package": "gzip",
+        "version": "1.13-1+deb13u1"
+      },
+      {
+        "package": "jq",
+        "version": "1.7.1-6+deb13u4"
+      },
+      {
+        "package": "util-linux",
+        "version": "2.41.5-0+deb13u1"
+      }
+    ],
+    "commands": [
+      "truncate -s 8M disk.img",
+      "sgdisk -U 6f1c5b2e-3a4d-4e8b-9c07-1d2e3f405162 -n 1:2048:6143 -t 1:8300 -c 1:system -u 1:11111111-2222-4333-8444-555555555501 -n 2:6144:10239 -t 2:0700 -c 2:data -u 2:11111111-2222-4333-8444-555555555502 -n 3:12288:14335 -t 3:8300 -c 3:userdata -u 3:11111111-2222-4333-8444-555555555503 disk.img",
+      "sfdisk --json disk.img | jq <normalise to expect shape>",
+      "sgdisk -i <n> disk.img   # cross-checked against the sfdisk output"
+    ]
+  }
+}

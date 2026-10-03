@@ -21,6 +21,9 @@ func FuzzRead(f *testing.F) {
 		{StartLBA: 6, Sectors: 4, TypeGUID: guidEFI, GUID: guidB, Name: "b"},
 	}))
 	f.Add(make([]byte, 1024))
+	for _, path := range fixtureImages(f) {
+		f.Add(gunzipFixture(f, path))
+	}
 	f.Fuzz(func(t *testing.T, b []byte) {
 		size := int64(len(b))
 		tab, err := volume.Read(bytes.NewReader(b), size, 0)

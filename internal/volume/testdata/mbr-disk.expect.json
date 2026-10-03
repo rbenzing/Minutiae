@@ -1,0 +1,67 @@
+{
+  "scheme": "mbr",
+  "sector_size": 512,
+  "partitions": [
+    {
+      "index": 1,
+      "start": 1048576,
+      "length": 1048576,
+      "type": "0x0c",
+      "name": "",
+      "guid": ""
+    },
+    {
+      "index": 2,
+      "start": 2097152,
+      "length": 1048576,
+      "type": "0x83",
+      "name": "",
+      "guid": ""
+    },
+    {
+      "index": 5,
+      "start": 5242880,
+      "length": 1048576,
+      "type": "0x83",
+      "name": "",
+      "guid": ""
+    },
+    {
+      "index": 6,
+      "start": 7340032,
+      "length": 1048576,
+      "type": "0x07",
+      "name": "",
+      "guid": ""
+    }
+  ],
+  "generator": {
+    "packages": [
+      {
+        "package": "coreutils",
+        "version": "9.7-3"
+      },
+      {
+        "package": "fdisk",
+        "version": "2.41.5-0+deb13u1"
+      },
+      {
+        "package": "gzip",
+        "version": "1.13-1+deb13u1"
+      },
+      {
+        "package": "jq",
+        "version": "1.7.1-6+deb13u4"
+      },
+      {
+        "package": "util-linux",
+        "version": "2.41.5-0+deb13u1"
+      }
+    ],
+    "commands": [
+      "truncate -s 8M disk.img",
+      "sfdisk -q disk.img < layout.sfdisk   # layout.sfdisk lines joined by '|': label: dos|label-id: 0x5ec0de01|unit: sectors||start=2048,  size=2048, type=0c|start=4096,  size=2048, type=83|start=8192,  size=8192, type=0f|start=10240, size=2048, type=83|start=14336, size=2048, type=07",
+      "sfdisk --json disk.img | jq <drop extended containers, normalise to expect shape>"
+    ]
+  }
+}
