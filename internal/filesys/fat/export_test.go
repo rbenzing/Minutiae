@@ -31,3 +31,10 @@ func (f *FS) Warn(format string, a ...any) { f.warn(format, a...) }
 
 // TypeByCount exposes the cluster-count rule that decides the FAT type.
 var TypeByCount = typeByCount
+
+// SetDirBudget sets the bytes and entries of directories the instance may still read.
+func (f *FS) SetDirBudget(bytes, entries int64) {
+	f.dmu.Lock()
+	defer f.dmu.Unlock()
+	f.dirBudget, f.entryBudget, f.budgetWarned = bytes, entries, false
+}

@@ -11,10 +11,6 @@ import (
 	"github.com/rbenzing/minutiae/internal/filesys"
 )
 
-// maxFileRuns bounds the runs (physically separate stretches of clusters) of
-// one file.
-const maxFileRuns = 1 << 20
-
 // Open opens the file named by e.ID ("dirent:<directory cluster>:<index>"). The
 // directory entry is re-read from the volume: its first cluster, size and
 // state decide everything, and the Entry fields and Attrs the caller passes
@@ -54,6 +50,7 @@ func (f *FS) openData(first uint32, size int64) (*file, error) {
 		return fl, nil
 	}
 	cs := int64(f.clusterSize())
+	maxRuns := int(f.count)           // a file cannot have more runs than the volume has clusters
 	need := int((size + cs - 1) / cs) // size < 2^32: fits
 	clusters, _, chainErr := f.chainN(first, need)
 	var reason string
@@ -78,8 +75,8 @@ func (f *FS) openData(first uint32, size int64) (*file, error) {
 		if k := len(fl.runs); k > 0 && fl.runs[k-1].Offset+fl.runs[k-1].Length == off {
 			fl.runs[k-1].Length += n
 		} else {
-			if k >= maxFileRuns {
-				return nil, corrupt("file data", -1, "file at cluster %d has more than %d runs", first, maxFileRuns)
+			if k >= maxRuns {
+				return nil, corrupt("file data", -1, "file at cluster %d has more than %d runs", first, maxRuns)
 			}
 			fl.starts = append(fl.starts, fl.avail)
 			fl.runs = append(fl.runs, filesys.Run{Offset: off, Length: n})
@@ -107,8 +104,10 @@ type file struct {
 // Size is the file size from the directory entry.
 func (fl *file) Size() int64 { return fl.size }
 
-// Runs returns a copy of the volume-relative runs, covering [0, Size()) exactly
-// unless the chain is shorter than the size (then only the available part).
+// Runs returns a copy of the volume-relative runs in file order (not sorted),
+// covering [0, Size()) exactly unless the chain is shorter than the size (then
+// only the available part). Clusters that are consecutive in the file and
+// adjacent on disk are one run; the list is never reordered.
 func (fl *file) Runs() []filesys.Run { return slices.Clone(fl.runs) }
 
 // ReadAt reads file content. Bytes past the end of the cluster chain are an

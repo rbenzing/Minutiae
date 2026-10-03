@@ -3,6 +3,7 @@ package fat
 import (
 	"encoding/base64"
 	"encoding/binary"
+	"slices"
 	"strings"
 	"unicode/utf16"
 )
@@ -106,34 +107,36 @@ func (a *lfnAsm) take(name11 []byte) (units []uint16, ok, orphan bool) {
 // ordinals are lost, so they are taken by position: the nearest is ordinal 1.
 // The set's checksum covers the original short name, whose first byte deletion
 // overwrote with 0xE5; exactly one first byte reproduces the checksum, and the
-// set is accepted only if that byte is a legal short-name start that agrees with
-// the long name (its upper-cased first letter or digit). At least one entry is
-// required; entries are taken while their checksum equals that of the nearest.
-func deletedLFN(pending [][32]byte, name11 []byte) ([]uint16, bool) {
+// set is accepted only if that byte agrees with the long name (see agrees), so
+// the entries of a neighbouring file or reused slots are not mistaken for this
+// file's name. At least one entry is required; entries are taken while their
+// checksum equals that of the nearest. unterminated reports that the farthest
+// entry taken has no terminator, so the name may be cut short (a slot reused).
+func deletedLFN(pending [][32]byte, name11 []byte) (units []uint16, unterminated, ok bool) {
 	if len(pending) == 0 {
-		return nil, false
+		return nil, false, false
 	}
 	sum := pending[len(pending)-1][13]
-	first, ok := recoverFirstByte(name11, sum)
-	if !ok {
-		return nil, false
+	first, found := recoverFirstByte(name11, sum)
+	if !found {
+		return nil, false, false
 	}
-	var units []uint16
 	n := 0
+	var last [lfnUnitsPerEntry]uint16
 	for i := len(pending) - 1; i >= 0 && n < maxLFNEntries; i-- {
 		if pending[i][13] != sum {
 			break
 		}
-		var c [lfnUnitsPerEntry]uint16
-		lfnChunk(pending[i][:], c[:])
-		units = append(units, c[:]...)
+		lfnChunk(pending[i][:], last[:])
+		units = append(units, last[:]...)
 		n++
 	}
+	unterminated = !slices.ContainsFunc(last[:], func(u uint16) bool { return u == 0 || u == 0xFFFF })
 	units = trimUnits(units)
 	if len(units) == 0 || !agrees(first, units) {
-		return nil, false
+		return nil, false, false
 	}
-	return units, true
+	return units, unterminated, true
 }
 
 // recoverFirstByte finds the byte b such that the short name b+name11[1:] has
@@ -152,13 +155,11 @@ func recoverFirstByte(name11 []byte, sum byte) (byte, bool) {
 }
 
 // agrees reports whether first can be the first byte of the short name of a
-// file with the long name units: a legal short-name byte, and when the long
-// name starts (after spaces and dots) with an ASCII letter or digit, its upper
-// case.
+// file with the long name units. When the long name starts (after spaces and
+// dots) with an ASCII letter or digit, first must be its upper case. For any
+// other first character the short name is generated (a substitute character,
+// a tilde form), so first must be one of _ ~ $ % or a byte of 0x80 or more.
 func agrees(first byte, units []uint16) bool {
-	if first < 0x21 || first == 0x7F || strings.IndexByte(`"*+,/:;<=>?[\]|`, first) >= 0 {
-		return false
-	}
 	for _, u := range units {
 		if u == ' ' || u == '.' {
 			continue
@@ -171,7 +172,7 @@ func agrees(first byte, units []uint16) bool {
 		}
 		break
 	}
-	return true
+	return first >= 0x80 || strings.IndexByte("_~$%", first) >= 0
 }
 
 // trimUnits cuts a name at its 0x0000 terminator; without one, trailing 0xFFFF

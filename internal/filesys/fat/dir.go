@@ -115,6 +115,9 @@ func (f *FS) dirChain(first uint32) ([]uint32, bool, error) {
 func (f *FS) scanDir(first uint32, fn func(idx int, e []byte) (stop bool)) (read int, err error) {
 	idx := 0
 	visit := func(chunk []byte) (stop bool) {
+		if !f.chargeDir(first, int64(len(chunk))) {
+			return true
+		}
 		for i := 0; i+32 <= len(chunk); i += 32 {
 			if chunk[i] == 0x00 {
 				return true
@@ -149,6 +152,9 @@ func (f *FS) scanDir(first uint32, fn func(idx int, e []byte) (stop bool)) (read
 			}
 		}
 		return idx, nil
+	}
+	if !f.chargeDir(first, 0) {
+		return 0, nil // budget spent: nothing more is read (the warning is recorded)
 	}
 	clusters, truncated, chainErr := f.dirChain(first)
 	cs := f.clusterSize()
@@ -255,7 +261,7 @@ type dirItem struct {
 
 // makeItem builds the item for a short entry; ok is false for entries that are
 // not listed (".", "..", the volume label).
-func (f *FS) makeItem(e []byte, idx int, dir uint32, deleted bool, units []uint16, have, orphan bool) (dirItem, bool) {
+func (f *FS) makeItem(e []byte, idx int, dir uint32, deleted bool, units []uint16, have bool, lfnFlags ...string) (dirItem, bool) {
 	attr := e[11]
 	if attr&0x18 == attrVolume {
 		return dirItem{}, false // the volume label (Info.Label)
@@ -305,8 +311,8 @@ func (f *FS) makeItem(e []byte, idx int, dir uint32, deleted bool, units []uint1
 	} else {
 		en.Attrs = append(en.Attrs, filesys.KV{Key: "dirent", Value: strconv.FormatUint(uint64(dir), 10) + ":" + strconv.Itoa(idx)})
 	}
-	if orphan {
-		en.Attrs = append(en.Attrs, filesys.KV{Key: "lfn", Value: "orphan"})
+	for _, fl := range lfnFlags {
+		en.Attrs = append(en.Attrs, filesys.KV{Key: "lfn", Value: fl})
 	}
 	en.Times = filesys.Times{
 		Created:  dosTimestamp(binary.LittleEndian.Uint16(e[16:]), binary.LittleEndian.Uint16(e[14:]), e[13]),
@@ -333,7 +339,9 @@ func (f *FS) listDir(first uint32) ([]dirItem, error) {
 			pending = pending[:0]
 			lfn.add(e)
 		case isLFN(e):
-			lfn.reset()
+			if lfn.active { // a live set was interrupted by a deleted entry: it cannot name the next short entry
+				lfn.active, lfn.broken = false, true
+			}
 			if len(pending) == maxLFNEntries {
 				pending = slices.Delete(pending, 0, 1)
 			}
@@ -341,17 +349,27 @@ func (f *FS) listDir(first uint32) ([]dirItem, error) {
 		default:
 			deleted := e[0] == 0xE5
 			var (
-				units        []uint16
-				have, orphan bool
+				units []uint16
+				have  bool
+				flags []string
 			)
 			if deleted {
 				lfn.reset()
-				units, have = deletedLFN(pending, e[:11])
+				var unterminated bool
+				if units, unterminated, have = deletedLFN(pending, e[:11]); have {
+					flags = append(flags, "recovered")
+					if unterminated {
+						flags = append(flags, "unterminated")
+					}
+				}
 			} else {
-				units, have, orphan = lfn.take(e[:11])
+				var orphan bool
+				if units, have, orphan = lfn.take(e[:11]); orphan {
+					flags = append(flags, "orphan")
+				}
 			}
 			pending = pending[:0]
-			if it, ok := f.makeItem(e, idx, first, deleted, units, have, orphan); ok {
+			if it, ok := f.makeItem(e, idx, first, deleted, units, have, flags...); ok {
 				items = append(items, it)
 			}
 		}
@@ -518,6 +536,9 @@ func (f *FS) dirTarget(dir filesys.Entry) (uint32, error) {
 // directory of this volume, and returns it if it is a live short entry; a
 // deleted one is filesys.ErrDeleted.
 func (f *FS) liveEntryAt(p uint32, idx int) ([]byte, error) {
+	if (p != 0 || f.fatType == 32) && !f.validCluster(p) {
+		return nil, fmt.Errorf("%w: cluster %d cannot hold a directory", filesys.ErrNotFound, p)
+	}
 	if err := f.resolveDir(p, ""); err != nil {
 		return nil, err
 	}
@@ -622,4 +643,23 @@ func (f *FS) Lookup(p string) (filesys.Entry, error) {
 		cur, first = it.e, it.cluster
 	}
 	return cur, nil
+}
+
+// chargeDir takes bytes (and the entries they hold) from the directory read
+// budget; it reports false, with one warning, once the budget is spent. A zero
+// charge only asks whether anything is left.
+func (f *FS) chargeDir(first uint32, bytes int64) bool {
+	f.dmu.Lock()
+	ok := f.dirBudget >= bytes && f.dirBudget > 0 && f.entryBudget >= bytes/32 && f.entryBudget > 0
+	if ok {
+		f.dirBudget -= bytes
+		f.entryBudget -= bytes / 32
+	}
+	warn := !ok && !f.budgetWarned
+	f.budgetWarned = f.budgetWarned || !ok
+	f.dmu.Unlock()
+	if warn {
+		f.warn("directory read budget of %d bytes / %d entries per volume exhausted (at the directory starting at cluster %d); directories are no longer read", maxDirBudget, maxEntryBudget, first)
+	}
+	return ok
 }

@@ -24,6 +24,14 @@ const (
 
 	// maxDirEntries bounds the entries read from one directory (65536 x 32 bytes).
 	maxDirEntries = 65536
+
+	// maxDirBudget and maxEntryBudget bound all directory reading of one FS
+	// instance (listings, searches for a directory, the label scan): a volume
+	// whose directory entries point into overlapping chains would otherwise make
+	// every listing re-read the same long chain. Once spent, directories are no
+	// longer read (a warning says so).
+	maxDirBudget   = 1 << 30
+	maxEntryBudget = 1 << 24
 )
 
 // FS is an opened FAT12/16/32 volume. After Open it is safe for concurrent use:
@@ -39,9 +47,12 @@ type FS struct {
 	size      int64       // volume size in bytes (declared size clamped to the image)
 	label     string      // volume label: the root directory entry, else the BPB
 
-	dmu  sync.Mutex // guards dc and dirs
-	dc   *dirChainEntry
-	dirs map[uint32]dirLoc // directories met so far, by first cluster: where their entry is
+	dmu          sync.Mutex // guards dc, dirs and the directory read budget
+	dc           *dirChainEntry
+	dirs         map[uint32]dirLoc // directories met so far, by first cluster: where their entry is
+	dirBudget    int64             // bytes of directories this instance may still read
+	entryBudget  int64             // directory entries it may still read
+	budgetWarned bool
 
 	wmu      sync.Mutex
 	warnings []string
@@ -137,8 +148,11 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		fatOff:    fatOff,
 		r:         filesys.NewCachedReader(raw, b.bytsPerSec, cacheSectors),
 		data:      raw,
-		size:      volSize,
-		label:     b.label,
+
+		dirBudget:   maxDirBudget,
+		entryBudget: maxEntryBudget,
+		size:        volSize,
+		label:       b.label,
 	}
 	for _, w := range warns {
 		f.warn("%s", w)
@@ -151,8 +165,8 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 // 4085 clusters, FAT16 below 65525, else FAT32), except that the BPB layout
 // wins when the two disagree (with a warning). The label is the volume-label
 // entry of the root directory, else the BPB's ("NO NAME" counts as none). The
-// UUID is the volume serial number as "XXXX-XXXX" (empty when the boot sector has no extended boot signature). Warnings is a snapshot: it
-// holds the problems found at Open and those met since, without duplicates and
+// UUID is the volume serial number as "XXXX-XXXX" (empty when the boot
+// sector has no extended boot signature). Warnings is a snapshot: it holds the problems found at Open and those met since, without duplicates and
 // capped at 1000 entries.
 func (f *FS) Info() filesys.Info {
 	f.wmu.Lock()
