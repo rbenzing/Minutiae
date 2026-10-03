@@ -65,3 +65,6 @@ right after open. Treat a serial open as able to reset DTR/RTS-wired targets.
 ```bash
 go build -ldflags "-X github.com/rbenzing/minutiae/internal/version.Version=v0.1.0 -X github.com/rbenzing/minutiae/internal/version.Commit=$(git rev-parse --short HEAD)" -o bin/minutiae.exe ./cmd/minutiae
 ```
+
+## 9. Known limitations
+- Android sync v1: `LIST` of an unreadable directory returns `DONE` with no entries (indistinguishable from an empty directory, so no `acquire.warning` is possible), and `LIST`/`STAT` report sizes and mtimes as 32-bit values (sizes of files ≥ 4 GiB are truncated in listings and in `source.remote_size`; `RECV` still transfers every byte).
