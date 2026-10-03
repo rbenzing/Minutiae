@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"path"
 	"strings"
 	"time"
@@ -62,7 +63,7 @@ func (s *Session) Extract(ctx context.Context, o ExtractOptions) (Summary, error
 	x := &extractor{
 		s: s, ctx: ctx, o: o, fsys: fsys, part: part, fsType: fsType,
 		lp:   evidence.NewLocalPaths(fmt.Sprintf("p%d-%s", part.Index, fsType)),
-		done: map[string]bool{},
+		done: map[doneKey]bool{},
 	}
 	details := map[string]any{
 		"parent_id": s.Parent.ID, "partition": part.Index, "fs_type": fsType,
@@ -79,6 +80,10 @@ func (s *Session) Extract(ctx context.Context, o ExtractOptions) (Summary, error
 	})
 }
 
+// doneKey identifies an extracted entry: the same path can name different
+// entries (a deleted and a live one, or hard links), so the entry id counts.
+type doneKey struct{ path, id string }
+
 type extractor struct {
 	s      *Session
 	ctx    context.Context
@@ -88,9 +93,11 @@ type extractor struct {
 	fsType string
 	lp     *evidence.LocalPaths
 	a      *analysis
-	done   map[string]bool // fs paths already extracted in this run
-	copied int64           // bytes streamed so far, for Progress
+	done   map[doneKey]bool // entries already extracted in this run
+	copied int64            // bytes streamed so far, for Progress
 }
+
+const sparseTooBig = "sparse size exceeds partition length; not extracted"
 
 const deletedReason = "deleted; recovery is roadmap sub-project 3"
 
@@ -161,10 +168,11 @@ func fatal(ctx context.Context, err error) bool {
 }
 
 func (x *extractor) file(p string, e filesys.Entry) error {
-	if x.done[p] {
+	key := doneKey{p, e.ID}
+	if x.done[key] {
 		return x.a.warn(p, "already extracted in this analysis (overlapping paths)")
 	}
-	x.done[p] = true
+	x.done[key] = true
 	if e.Name == "" || e.Name == "." || e.Name == ".." || strings.Contains(e.Name, "/") {
 		return x.a.warn(p, fmt.Sprintf("unsafe entry name %q", e.Name))
 	}
@@ -176,6 +184,11 @@ func (x *extractor) file(p string, e filesys.Entry) error {
 		return err
 	}
 	size := f.Size()
+	if holeBytes(f.Runs(), size) > x.part.Length {
+		// A sparse file reads as zeros without any storage, so a hostile
+		// filesystem could make one cheap entry expand to an arbitrary size.
+		return x.a.warn(p, sparseTooBig)
+	}
 
 	d := x.s.baseDerivation(x.part, x.fsType)
 	d.FSPath, d.FSID = p, e.ID
@@ -302,6 +315,28 @@ func (s *Session) baseDerivation(part volume.Partition, fsType string) *evidence
 		d.ParentIncomplete = d.ParentIncomplete || seg.Incomplete
 	}
 	return d
+}
+
+// holeBytes returns how many bytes of a file of size bytes are not backed by
+// storage: the sum of its hole runs (Offset -1), saturating at MaxInt64, or,
+// for a file without runs (content inline in metadata, or entirely sparse),
+// its whole size. Inline content is far smaller than any partition, so only a
+// genuinely sparse file can exceed a partition's length.
+func holeBytes(runs []filesys.Run, size int64) int64 {
+	if len(runs) == 0 {
+		return max(size, 0)
+	}
+	var total int64
+	for _, r := range runs {
+		if r.Offset >= 0 || r.Length <= 0 {
+			continue
+		}
+		var ok bool
+		if total, ok = filesys.AddOK(total, r.Length); !ok {
+			return math.MaxInt64
+		}
+	}
+	return total
 }
 
 // imageRuns validates the filesystem-relative runs of a file of size bytes and

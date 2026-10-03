@@ -1,12 +1,14 @@
 package evidence
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 )
 
@@ -25,7 +27,7 @@ func (r *VerifyReport) problemf(format string, a ...any) {
 }
 
 // Verify re-hashes every artifact, checks the audit chain, and cross-checks
-// the manifest against the audit log's artifact.create entries, artifacts.db
+// the manifest (including each record's full source/provenance) against the audit log's artifact.create entries, artifacts.db
 // and the artifacts directory, and flags leftover (unpromoted) staging
 // directories. Every failure to read part of the case is a
 // reported problem, so Verify always completes; the result is audited
@@ -91,6 +93,7 @@ type auditedArtifact struct {
 // and its artifacts.db row consistently — or erases all three — is caught.
 func (c *Case) crossCheckAudit(rep *VerifyReport, recs []ManifestRecord, entries []AuditEntry) {
 	audited := map[string]auditedArtifact{}
+	auditedSource := map[string]any{}
 	var order []string
 	for _, e := range entries {
 		if e.Action != "artifact.create" {
@@ -106,6 +109,7 @@ func (c *Case) crossCheckAudit(rep *VerifyReport, recs []ManifestRecord, entries
 			continue
 		}
 		audited[id] = a
+		auditedSource[id] = e.Details["source"]
 		order = append(order, id)
 	}
 	inManifest := map[string]bool{}
@@ -121,6 +125,8 @@ func (c *Case) crossCheckAudit(rep *VerifyReport, recs []ManifestRecord, entries
 		case a != (auditedArtifact{Path: r.Path, Size: r.Size, SHA256: r.SHA256, MD5: r.MD5, Incomplete: r.Incomplete}):
 			rep.problemf("artifact %s: manifest record (path=%s size=%d sha256=%s incomplete=%t) does not match its artifact.create audit entry (path=%s size=%d sha256=%s incomplete=%t)",
 				r.ID, r.Path, r.Size, r.SHA256, r.Incomplete, a.Path, a.Size, a.SHA256, a.Incomplete)
+		case !sourceMatchesAudit(r.Source, auditedSource[r.ID]):
+			rep.problemf("artifact %s (%s): source differs from audit (the manifest provenance does not match its artifact.create audit entry)", r.ID, r.Path)
 		}
 	}
 	for _, id := range order {
@@ -128,6 +134,25 @@ func (c *Case) crossCheckAudit(rep *VerifyReport, recs []ManifestRecord, entries
 			rep.problemf("artifact %s: in audit log (artifact.create) but not in manifest (path=%s)", id, audited[id].Path)
 		}
 	}
+}
+
+// sourceMatchesAudit compares a manifest record's full provenance with the
+// source object of its artifact.create audit entry. Both sides are reduced to
+// generic JSON values first, so key order and number formatting do not matter
+// but every field (derivation, segments, original path, ...) does.
+func sourceMatchesAudit(src Source, audited any) bool {
+	b, err := json.Marshal(src)
+	if err != nil {
+		return false
+	}
+	// UseNumber, like the audit decoder, so integers compare as text, exactly.
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	var want any
+	if err := dec.Decode(&want); err != nil {
+		return false
+	}
+	return reflect.DeepEqual(want, audited)
 }
 
 func decodeAuditedArtifact(details map[string]any) (string, auditedArtifact, error) {

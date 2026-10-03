@@ -275,3 +275,55 @@ func TestVerifyFlagsLeftoverStaging(t *testing.T) {
 		t.Fatalf("report = %+v", r)
 	}
 }
+
+// derivedCase returns a case holding a parent image and a derived artifact
+// whose provenance carries a path and runs.
+func derivedCase(t *testing.T) (*Case, ManifestRecord) {
+	t.Helper()
+	c := newTestCase(t)
+	parent, err := c.Capture("dev1", "acq0", "img.bin", testSrc, func(w io.Writer) error {
+		_, err := io.WriteString(w, "image")
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &Derivation{
+		ParentID: parent.ID, ParentSHA256: parent.SHA256, FSType: "ext4", FSPath: "/etc/passwd",
+		Runs: []Run{{Offset: 4096, Length: 4}},
+	}
+	rec, err := c.Capture("dev1", "acq1", "f.bin", derivedSource(d), func(w io.Writer) error {
+		_, err := io.WriteString(w, "data")
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := mustVerify(t, c); !r.OK() {
+		t.Fatalf("clean derived case: %v", r.Problems)
+	}
+	return c, rec
+}
+
+func TestVerifyDetectsSourceDifferingFromAudit(t *testing.T) {
+	tamper := map[string]func(r *ManifestRecord){
+		"derived fs path": func(r *ManifestRecord) { r.Source.Derived.FSPath = "/etc/shadow" },
+		"derived runs":    func(r *ManifestRecord) { r.Source.Derived.Runs = []Run{{Offset: 8192, Length: 4}} },
+		"derivation gone": func(r *ManifestRecord) { r.Source.Derived = nil },
+		"original path":   func(r *ManifestRecord) { r.Source.OriginalPath = "/evil/disk.img" },
+	}
+	for name, f := range tamper {
+		t.Run(name, func(t *testing.T) {
+			c, rec := derivedCase(t)
+			rewriteManifest(t, c, func(r *ManifestRecord) {
+				if r.ID == rec.ID {
+					f(r)
+				}
+			})
+			r := mustVerify(t, c)
+			if r.OK() || !containsSubstr(r.Problems, "artifact "+rec.ID+" ("+rec.Path+"): source differs from audit") {
+				t.Fatalf("report = %+v", r)
+			}
+		})
+	}
+}

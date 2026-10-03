@@ -18,11 +18,18 @@ func writeJSON(w io.Writer, v any) error {
 // escapeText makes s safe to print on a terminal: every rune that is not
 // printable (control characters, escape sequences, bidi and other format
 // characters) and every invalid UTF-8 byte is replaced by a \xNN, \uNNNN or
-// \UNNNNNNNN escape. Newlines are kept so multi-line errors stay readable.
-// Use it for error and warning text that may carry filesystem-supplied names;
-// printable (image.go) quotes single names instead.
-func escapeText(s string) string {
-	clean := func(r rune) bool { return r == '\n' || unicode.IsPrint(r) }
+// \UNNNNNNNN escape. Newlines are escaped too, so the result is always one
+// line and filesystem- or container-supplied text can never forge a separate
+// warning/status line. Use it for single-line warnings and notes that may
+// carry such text; printable (image.go) quotes single names instead.
+func escapeText(s string) string { return escapeKeeping(s, false) }
+
+// escapeMultiline is escapeText but keeps newlines, so the multi-line error
+// printed by Run stays readable. Use it only for that top-level error.
+func escapeMultiline(s string) string { return escapeKeeping(s, true) }
+
+func escapeKeeping(s string, keepNewline bool) string {
+	clean := func(r rune) bool { return (keepNewline && r == '\n') || unicode.IsPrint(r) }
 	if utf8.ValidString(s) && !strings.ContainsFunc(s, func(r rune) bool { return !clean(r) }) {
 		return s
 	}

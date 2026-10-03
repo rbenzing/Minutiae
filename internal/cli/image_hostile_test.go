@@ -120,7 +120,7 @@ func TestImageErrorsAndWarningsNeverPrintRawControlCharacters(t *testing.T) {
 func TestEscapeText(t *testing.T) {
 	for in, want := range map[string]string{
 		"plain text é ✓":     "plain text é ✓",
-		"two\nlines":         "two\nlines",
+		"two\nlines":         `two\x0alines`,
 		"\x1b[31m":           `\x1b[31m`,
 		"a\u202eb":           `a\u202eb`,
 		"a\xffb":             `a\xffb`,
@@ -312,5 +312,38 @@ func TestImageLsOfDeletedEntryNotes(t *testing.T) {
 	code, out = e.image(t, "ls", e.ref, "id:"+id, "--deleted")
 	if code != 0 || !strings.Contains(out, "gone.txt") || !strings.Contains(out, "[deleted]") || strings.Contains(out, "note:") {
 		t.Fatalf("ls deleted with flag: %d %q", code, out)
+	}
+}
+
+func TestEscapeMultilineKeepsNewlines(t *testing.T) {
+	if got, want := escapeMultiline("two\nlines\x1b[31m"), "two\nlines"+`\x1b[31m`; got != want {
+		t.Errorf("escapeMultiline = %q, want %q", got, want)
+	}
+	if got := escapeText("x\nwarning: all clear"); strings.Contains(got, "\n") {
+		t.Errorf("escapeText kept a newline: %q", got)
+	}
+}
+
+// A newline in filesystem-supplied warning text must not start a forged line.
+func TestSingleLineNotesCannotForgeLines(t *testing.T) {
+	const evil = "x\nwarning: all clear"
+	var b strings.Builder
+	printImageInfo(&b, examine.ImageInfo{
+		Path: "p", Format: "raw", Warnings: []string{evil},
+		Partitions: []examine.PartitionInfo{
+			{
+				Partition: volume.Partition{Index: 1}, FSType: "mtfs",
+				FSInfo: &filesys.Info{Type: "mtfs", Warnings: []string{evil}},
+			},
+			{Partition: volume.Partition{Index: 2}, Error: evil},
+		},
+	})
+	for _, line := range strings.Split(b.String(), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "warning: all clear") {
+			t.Errorf("forged warning line %q in:\n%s", line, b.String())
+		}
+	}
+	if !strings.Contains(b.String(), `x\x0awarning: all clear`) {
+		t.Errorf("escaped text missing:\n%s", b.String())
 	}
 }

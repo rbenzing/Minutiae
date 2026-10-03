@@ -81,7 +81,7 @@ func Run(args []string, d Deps) int {
 		if isCobraUsageError(err) {
 			err = usageError{err}
 		}
-		fmt.Fprintln(d.Err, "error:", escapeText(err.Error()))
+		fmt.Fprintln(d.Err, "error:", escapeMultiline(err.Error()))
 	}
 	return ExitCode(err)
 }

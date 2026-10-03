@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
@@ -275,6 +276,22 @@ func TestExtractRecordsProvenance(t *testing.T) {
 	last := recs[len(recs)-1]
 	if last.ID != rec.ID || last.Source.Derived == nil || last.Source.Derived.FSID != e.ID {
 		t.Errorf("manifest record = %+v", last)
+	}
+	// Audit order: analysis.start precedes every artifact.create of the
+	// analysis, and analysis.end is the last entry.
+	var startSeq, createSeq int64
+	entries := auditEntries(t, c)
+	for _, e := range entries {
+		switch {
+		case e.Action == "analysis.start" && e.Details["analysis_id"] == sum.AnalysisID:
+			startSeq = e.Seq
+		case e.Action == "artifact.create" && e.Details["id"] == rec.ID:
+			createSeq = e.Seq
+		}
+	}
+	if endEntry := entries[len(entries)-1]; startSeq == 0 || createSeq <= startSeq ||
+		endEntry.Action != "analysis.end" || endEntry.Details["analysis_id"] != sum.AnalysisID || endEntry.Seq <= createSeq {
+		t.Errorf("audit order: start seq %d, artifact.create seq %d, last entry %s seq %d", startSeq, createSeq, endEntry.Action, endEntry.Seq)
 	}
 	verifyOK(t, c)
 }
@@ -872,5 +889,86 @@ func TestExtractCaseWriteFailureIsNeverDowngradedToWarning(t *testing.T) {
 	}
 	if len(auditByAction(t, c, "analysis.end")) != 0 {
 		t.Error("analysis.end written after a failure")
+	}
+}
+
+// sparseFile pretends to be a file of the given size and runs; it reads as zeros.
+type sparseFile struct {
+	filesys.File
+	size int64
+	runs []filesys.Run
+}
+
+func (f sparseFile) Size() int64         { return f.size }
+func (f sparseFile) Runs() []filesys.Run { return f.runs }
+func (f sparseFile) ReadAt(p []byte, _ int64) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
+func TestExtractSkipsSparseFileLargerThanPartition(t *testing.T) {
+	const huge = int64(1) << 50
+	for name, f := range map[string]sparseFile{
+		"hole run":                 {size: huge, runs: []filesys.Run{{Offset: -1, Length: huge}}},
+		"hole runs overflow":       {size: 0, runs: []filesys.Run{{Offset: -1, Length: math.MaxInt64}, {Offset: -1, Length: math.MaxInt64}}},
+		"no runs and a huge size":  {size: huge},
+		"hole next to data blocks": {size: huge + 5, runs: []filesys.Run{{Offset: 0, Length: 5}, {Offset: -1, Length: huge}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := newCase(t)
+			s, _ := sessionHook(t, c, hookFS{mapFile: func(e filesys.Entry, file filesys.File) filesys.File {
+				if e.Name != "bomb.bin" {
+					return file
+				}
+				f.File = file
+				return f
+			}}, 0,
+				fstest.Node{Path: "/bomb.bin", Data: []byte("hello")},
+				fstest.Node{Path: "/ok.txt", Data: []byte("fine")})
+			sum := extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: []string{"/bomb.bin", "/ok.txt"}})
+			if sum.Files != 1 || sum.Skipped != 1 || len(sum.Artifacts) != 1 || sum.Bytes != 4 {
+				t.Fatalf("summary = %+v", sum)
+			}
+			ws := auditByAction(t, c, "analysis.warning")
+			if len(ws) != 1 || ws[0].Details["path"] != "/bomb.bin" ||
+				ws[0].Details["reason"] != "sparse size exceeds partition length; not extracted" {
+				t.Errorf("warnings = %+v", ws)
+			}
+			verifyOK(t, c)
+		})
+	}
+}
+
+func TestExtractSmallSparseAndInlineFilesAreExtracted(t *testing.T) {
+	c := newCase(t)
+	s, _ := session(t, c, 0,
+		fstest.Node{Path: "/holey.bin", Data: pattern(3*blk, 7), Hole: true},
+		fstest.Node{Path: "/inline.txt", Data: []byte("tiny"), Inline: true})
+	sum := extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: []string{"/holey.bin", "/inline.txt"}})
+	if sum.Files != 2 || sum.Skipped != 0 {
+		t.Fatalf("summary = %+v", sum)
+	}
+}
+
+// Two different entries with the same path (the same name twice in one
+// directory) are both extracted; only the same entry twice is a duplicate.
+func TestExtractDedupesByPathAndEntryID(t *testing.T) {
+	c := newCase(t)
+	s, _ := sessionHook(t, c, hookFS{mapEntry: func(e filesys.Entry) filesys.Entry {
+		if e.Name == "b.txt" {
+			e.Name = "a.txt"
+		}
+		return e
+	}}, 0,
+		fstest.Node{Path: "/d/a.txt", Data: []byte("first")},
+		fstest.Node{Path: "/d/b.txt", Data: []byte("second")})
+	sum := extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: []string{"/d"}, Recursive: true})
+	if sum.Files != 2 || sum.Skipped != 0 || sum.Bytes != int64(len("first")+len("second")) {
+		t.Fatalf("summary = %+v", sum)
+	}
+	// The same directory requested twice still reports each file as a duplicate.
+	again := extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: []string{"/d", "/d"}, Recursive: true})
+	if again.Files != 2 || again.Skipped != 2 {
+		t.Fatalf("overlapping summary = %+v", again)
 	}
 }

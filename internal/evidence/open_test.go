@@ -3,10 +3,12 @@ package evidence
 import (
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -263,5 +265,46 @@ func TestVerifyFlagsDerivedArtifactWithBadParentSegment(t *testing.T) {
 	r := mustVerify(t, c)
 	if r.OK() || !containsSubstr(r.Problems, "parent segment 2") || !containsSubstr(r.Problems, "parent segment 3") {
 		t.Fatalf("report = %+v", r)
+	}
+}
+
+func TestOpenAndFindRefuseDuplicateManifestRecords(t *testing.T) {
+	c, rec := caseWithArtifact(t)
+	dup := rec
+	dup.ID = "other"
+	// A second record with the same id, and a different id sharing the path.
+	for _, r := range []ManifestRecord{rec, dup} {
+		if err := appendManifest(filepath.Join(c.Dir, manifestFile), r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if f, _, err := c.OpenArtifact(rec.ID); !errors.Is(err, ErrIntegrity) {
+		if f != nil {
+			_ = f.Close()
+		}
+		t.Fatalf("OpenArtifact duplicate id: err = %v, want ErrIntegrity", err)
+	}
+	if _, err := c.FindArtifact(rec.ID); !errors.Is(err, ErrIntegrity) {
+		t.Fatalf("FindArtifact duplicate id: err = %v, want ErrIntegrity", err)
+	}
+	// "other" is unique by id but its path is shared by three records.
+	if _, err := c.FindArtifact(rec.Path); !errors.Is(err, ErrIntegrity) {
+		t.Fatalf("FindArtifact duplicate path: err = %v, want ErrIntegrity", err)
+	}
+	if got, err := c.FindArtifact("other"); err != nil || got.ID != "other" {
+		t.Fatalf("FindArtifact unique id = %+v, %v", got, err)
+	}
+}
+
+func TestOpenErrorClassification(t *testing.T) {
+	r := ManifestRecord{ID: "x", Path: "artifacts/x"}
+	if err := openError(r, &fs.PathError{Op: "open", Path: "p", Err: fs.ErrNotExist}); !errors.Is(err, ErrIntegrity) {
+		t.Errorf("not-exist: err = %v, want ErrIntegrity", err)
+	}
+	for _, cause := range []error{fs.ErrPermission, syscall.EMFILE, io.ErrUnexpectedEOF} {
+		err := openError(r, &fs.PathError{Op: "open", Path: "p", Err: cause})
+		if errors.Is(err, ErrIntegrity) || !errors.Is(err, cause) {
+			t.Errorf("cause %v: err = %v, want a plain error wrapping the cause", cause, err)
+		}
 	}
 }

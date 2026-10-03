@@ -582,3 +582,31 @@ func jsonPart(out string) []byte {
 	}
 	return []byte(out)
 }
+
+// Rewriting a derived artifact's provenance in manifest.jsonl (leaving the
+// hash-chained audit entry untouched) is a verify failure, exit 4.
+func TestCaseVerifyTamperedDerivationExits4(t *testing.T) {
+	e := newImgEnv(t)
+	if code, out := e.image(t, "extract", e.ref, "/top.txt"); code != 0 {
+		t.Fatalf("extract: %d %s", code, out)
+	}
+	if code, out := run(t, e.d, "case", "verify", "--case", e.c); code != 0 {
+		t.Fatalf("clean verify: %d %s", code, out)
+	}
+	p := filepath.Join(e.c, "manifest.jsonl")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged := strings.Replace(string(b), `"fs_path":"/top.txt"`, `"fs_path":"/docs/a.txt"`, 1)
+	if forged == string(b) {
+		t.Fatalf("manifest has no fs_path to tamper with: %s", b)
+	}
+	if err := os.WriteFile(p, []byte(forged), 0o600); err != nil { //nolint:gosec // test writes inside its own temp case
+		t.Fatal(err)
+	}
+	code, out := run(t, e.d, "case", "verify", "--case", e.c)
+	if code != ExitIntegrity || !strings.Contains(out, "source differs from audit") {
+		t.Fatalf("verify after tamper: %d %s", code, out)
+	}
+}

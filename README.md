@@ -39,7 +39,7 @@ Use Minutiae only on devices you are authorized to examine.
 
 - **Tamper-evident audit log** — every action is an append-only, SHA-256 hash-chained JSON line; editing, deleting or reordering any entry is detected
 - **Hashed, never-overwritten artifacts** — every acquired file is streamed through SHA-256 + MD5, created with `O_EXCL`, and recorded in `manifest.jsonl`, `artifacts.db` and the audit log
-- **`case verify`** — re-hashes every artifact and cross-checks files ↔ manifest ↔ database ↔ audit chain; any discrepancy exits with code `4`
+- **`case verify`** — re-hashes every artifact and cross-checks files ↔ manifest ↔ database ↔ audit chain (including each artifact's recorded provenance); any discrepancy exits with code `4`
 - **Partial evidence is kept, never hidden** — a cancelled (Ctrl-C), interrupted or short transfer keeps its bytes and is flagged `incomplete`
 - **Read-only by default** — writing to a device (`android push`, serial transmit, DTR/RTS) requires `--allow-device-write` and is audited *before* any byte is sent
 - **Android over ADB** — native pure-Go ADB client: device info, file listing/pull, logical acquisition of `/sdcard` (plus `getprop` and package list), and partition imaging on rooted devices with exact size verification
