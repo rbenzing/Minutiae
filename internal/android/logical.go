@@ -100,6 +100,13 @@ func isFail(err error) bool {
 	return errors.As(err, &fe)
 }
 
+// validEntryName rejects LIST names that are not a single path element: an
+// empty name or "." would re-list the same directory forever, and "/", ".."
+// or NUL could leave the root being walked.
+func validEntryName(n string) bool {
+	return n != "" && n != "." && n != ".." && !strings.ContainsRune(n, '/') && !strings.ContainsRune(n, 0)
+}
+
 func (w *walker) walk(dir string) error {
 	if err := w.ctx.Err(); err != nil {
 		return err
@@ -115,6 +122,12 @@ func (w *walker) walk(dir string) error {
 		return w.reopen()
 	}
 	for _, e := range entries {
+		if !validEntryName(e.Name) {
+			if err := w.warn("skip", dir, fmt.Errorf("invalid entry name %q in listing", e.Name)); err != nil {
+				return err
+			}
+			continue
+		}
 		p := path.Join(dir, e.Name)
 		switch {
 		case e.IsDir():

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rbenzing/minutiae/internal/android/adb"
 	"github.com/rbenzing/minutiae/internal/android/adb/adbtest"
@@ -353,5 +354,62 @@ func TestResolvePartition(t *testing.T) {
 	}
 	if p, err := d.ResolvePartition(context.Background(), "unknown"); err != nil || p.Size != -1 {
 		t.Fatalf("unknown = %+v, %v", p, err)
+	}
+}
+
+func auditActions(t *testing.T, c *evidence.Case, action string) []evidence.AuditEntry {
+	t.Helper()
+	entries, err := evidence.ReadAuditEntries(filepath.Join(c.Dir, "audit.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []evidence.AuditEntry
+	for _, e := range entries {
+		if e.Action == action {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func TestAcquireLogicalSkipsInvalidDentNames(t *testing.T) {
+	const dir, file = 0o040755, 0o100644
+	dev := logicalDevice()
+	dev.Unreadable = nil
+	dev.ExtraDents = map[string][]adbtest.Dent{
+		"/sdcard":      {{Name: "", Mode: dir}, {Name: "a/b", Mode: file, Size: 1}, {Name: "nul\x00x", Mode: file, Size: 1}},
+		"/sdcard/DCIM": {{Name: "", Mode: dir}, {Name: "../escape", Mode: dir}},
+	}
+	c := newCase(t)
+	d := findDevice(t, fakeServer(t, dev), "PX1")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := d.AcquireLogical(ctx, c, device.LogicalOptions{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := c.Manifest()
+	byRemote := map[string]evidence.ManifestRecord{}
+	for _, r := range m {
+		byRemote[r.Source.RemotePath] = r
+	}
+	for _, p := range []string{"/sdcard/DCIM/a.jpg", "/sdcard/notes:1.txt", "/sdcard/secret.db", "/sdcard/zz.txt"} {
+		if r, ok := byRemote[p]; !ok || r.Incomplete {
+			t.Errorf("%s: record %+v ok=%v", p, r, ok)
+		}
+	}
+	if len(m) != 6 { // 2 info + 4 files
+		t.Errorf("manifest has %d records, want 6", len(m))
+	}
+	invalid := 0
+	for _, e := range auditActions(t, c, "acquire.warning") {
+		if msg, _ := e.Details["error"].(string); strings.Contains(msg, "invalid entry name") {
+			invalid++
+		}
+	}
+	if invalid != 5 {
+		t.Errorf("invalid-name warnings = %d, want 5", invalid)
+	}
+	if rep, err := c.Verify(); err != nil || !rep.OK() {
+		t.Fatalf("verify: %+v %v", rep, err)
 	}
 }

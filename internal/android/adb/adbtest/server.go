@@ -29,6 +29,13 @@ type Device struct {
 	Commands   map[string][]byte // exec/shell command -> stdout
 	Files      map[string]File   // absolute path -> file; parent dirs implied
 	Unreadable map[string]bool   // RECV fails with permission denied
+	ExtraDents map[string][]Dent // raw entries appended to LIST of a directory (hostile listings)
+}
+
+// Dent is a raw LIST entry, sent as-is (no validation of the name).
+type Dent struct {
+	Name              string
+	Mode, Size, MTime uint32
 }
 
 // Server is a fake ADB server on 127.0.0.1.
@@ -250,6 +257,10 @@ func (s *Server) serveSync(c net.Conn, d *Device) {
 			for _, e := range listDir(d, p) {
 				writeSync(c, "DENT", e.mode, e.size, e.mtime, uint32(len(e.name)))
 				_, _ = c.Write([]byte(e.name))
+			}
+			for _, e := range d.ExtraDents[p] {
+				writeSync(c, "DENT", e.Mode, e.Size, e.MTime, uint32(len(e.Name)))
+				_, _ = c.Write([]byte(e.Name))
 			}
 			writeSync(c, "DONE", 0, 0, 0, 0)
 		case "STAT":
