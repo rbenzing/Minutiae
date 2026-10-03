@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -638,5 +639,127 @@ func TestAcquireLogicalRecordsRemoteMetadata(t *testing.T) {
 	src := recs["/sdcard/a.txt"].Source
 	if src.RemoteMode != 0o100640 || src.RemoteSize != 5 || src.RemoteMTime != "2023-11-14T22:13:20Z" {
 		t.Fatalf("source = %+v", src)
+	}
+}
+
+// plantCollisions makes the local names of the second file collide on disk the
+// way an NTFS 8.3 alias or an APFS normalization alias would: localPaths knows
+// nothing about them, so only the exclusive create can notice. Planting
+// happens from the progress callback, i.e. after the first file is captured
+// and before the second one is created. The returned func removes the planted
+// files, which are deliberately not evidence.
+func plantCollisions(t *testing.T, c *evidence.Case, names []string) (progress device.ProgressFunc, cleanup func()) {
+	t.Helper()
+	var planted []string
+	var once sync.Once
+	progress = func(int64, int64) {
+		once.Do(func() {
+			dirs, err := filepath.Glob(filepath.Join(c.Dir, "artifacts", "*", "*", "files", "sdcard"))
+			if err != nil || len(dirs) != 1 {
+				t.Errorf("acquisition dir: %v %v", dirs, err)
+				return
+			}
+			for _, n := range names {
+				p := filepath.Join(dirs[0], n)
+				if err := os.WriteFile(p, []byte("planted"), 0o600); err != nil {
+					t.Errorf("plant %s: %v", n, err)
+					return
+				}
+				planted = append(planted, p)
+			}
+		})
+	}
+	cleanup = func() {
+		for _, p := range planted {
+			_ = os.Remove(p)
+		}
+	}
+	return progress, cleanup
+}
+
+func twoFileDevice() *adbtest.Device {
+	return &adbtest.Device{
+		Serial: "PX1", State: "device",
+		Commands: map[string][]byte{"getprop": []byte(getprop), "pm list packages -f": []byte("package:x\n")},
+		Files: map[string]adbtest.File{
+			"/sdcard/a.txt": {Data: []byte("first")},
+			"/sdcard/b.txt": {Data: []byte("second")},
+		},
+	}
+}
+
+func TestAcquireLogicalRetriesCollidingLocalName(t *testing.T) {
+	c := newCase(t)
+	d := findDevice(t, fakeServer(t, twoFileDevice()), "PX1")
+	progress, cleanup := plantCollisions(t, c, []string{"b.txt"})
+	err := d.AcquireLogical(context.Background(), c, device.LogicalOptions{}, progress)
+	cleanup()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _ := c.Manifest()
+	byRemote := map[string]evidence.ManifestRecord{}
+	for _, r := range m {
+		byRemote[r.Source.RemotePath] = r
+	}
+	b := byRemote["/sdcard/b.txt"]
+	if !strings.HasSuffix(b.Path, "files/sdcard/b~2.txt") || b.Incomplete || b.Size != int64(len("second")) {
+		t.Fatalf("b.txt record = %+v, want a complete artifact at b~2.txt", b)
+	}
+	if r := byRemote["/sdcard/a.txt"]; r.Incomplete || !strings.HasSuffix(r.Path, "files/sdcard/a.txt") {
+		t.Fatalf("a.txt record = %+v", r)
+	}
+	if rep, err := c.Verify(); err != nil || !rep.OK() {
+		t.Fatalf("verify: %+v %v", rep, err)
+	}
+}
+
+func TestAcquireLogicalSkipsFileWhenEveryLocalNameCollides(t *testing.T) {
+	c := newCase(t)
+	d := findDevice(t, fakeServer(t, twoFileDevice()), "PX1")
+	names := []string{"b.txt"}
+	for n := 2; n <= maxNameRetries+1; n++ {
+		names = append(names, withSuffix("b.txt", n, false))
+	}
+	progress, cleanup := plantCollisions(t, c, names)
+	err := d.AcquireLogical(context.Background(), c, device.LogicalOptions{}, progress)
+	cleanup()
+	if err != nil {
+		t.Fatalf("acquisition should continue after skipping the file: %v", err)
+	}
+	m, _ := c.Manifest()
+	for _, r := range m {
+		if r.Source.RemotePath == "/sdcard/b.txt" {
+			t.Fatalf("b.txt should have been skipped, got %+v", r)
+		}
+	}
+	skipped := 0
+	for _, e := range auditActions(t, c, "acquire.warning") {
+		if msg, _ := e.Details["error"].(string); e.Details["path"] == "/sdcard/b.txt" && strings.Contains(msg, "no free local name") {
+			skipped++
+		}
+	}
+	if skipped != 1 {
+		t.Fatalf("skip warnings for b.txt = %d, want 1", skipped)
+	}
+	if rep, err := c.Verify(); err != nil || !rep.OK() {
+		t.Fatalf("verify: %+v %v", rep, err)
+	}
+}
+
+// On NTFS with 8.3 names enabled, creating abcdefghij.txt makes abcdef~1.txt
+// an alias that already exists, so the next remote file needs the retry path.
+// Where the filesystem has no such aliasing the test still checks that both
+// files are acquired.
+func TestAcquireLogicalNTFSShortNameAlias(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("NTFS 8.3 short names are Windows-only")
+	}
+	recs := acquireFiles(t, map[string]adbtest.File{
+		"/sdcard/abcdefghij.txt": {Data: []byte("long")},
+		"/sdcard/abcdef~1.txt":   {Data: []byte("short")},
+	})
+	if len(recs) != 4 { // two info artifacts + two files
+		t.Fatalf("records = %v", recs)
 	}
 }

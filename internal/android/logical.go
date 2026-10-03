@@ -14,6 +14,10 @@ import (
 	"github.com/rbenzing/minutiae/internal/evidence"
 )
 
+// maxNameRetries bounds the alternative local names tried for one remote file
+// whose local name collides on disk.
+const maxNameRetries = 100
+
 var defaultRoots = []string{"/sdcard"}
 
 var infoCommands = []struct{ rel, cmd string }{
@@ -149,18 +153,33 @@ func (w *walker) pull(p, localDir string, e adb.SyncEntry) error {
 		return w.warn("skip", p, errors.New("already acquired in this acquisition (overlapping roots)"))
 	}
 	w.pulled[p] = true
-	rel, err := w.names.file(localDir, e.Name)
-	if err != nil {
-		return err
-	}
 	src := evidence.Source{
 		Kind: "file", DeviceID: w.d.serial, RemotePath: p,
 		RemoteMode: e.Mode, RemoteMTime: e.MTime.UTC().Format(time.RFC3339), RemoteSize: int64(e.Size),
 	}
-	rec, err := w.c.Capture(w.d.serial, w.acq, rel, src, func(out io.Writer) error {
-		_, err := w.s.Recv(p, out)
-		return err
-	})
+	var rec evidence.ManifestRecord
+	var err error
+	for attempt := 0; ; attempt++ {
+		var rel string
+		if rel, err = w.names.file(localDir, e.Name); err != nil {
+			return err
+		}
+		rec, err = w.c.Capture(w.d.serial, w.acq, rel, src, func(out io.Writer) error {
+			_, err := w.s.Recv(p, out)
+			return err
+		})
+		if !errors.Is(err, evidence.ErrArtifactExists) {
+			break
+		}
+		// The examiner's filesystem aliases the name in a way localPaths does
+		// not model (NTFS 8.3 short names, APFS NFC/NFD). The exclusive create
+		// failed before anything was requested from the device, so the sync
+		// session is untouched; the colliding name stays reserved and the
+		// next candidate is tried.
+		if attempt >= maxNameRetries {
+			return w.warn("skip", p, fmt.Errorf("no free local name after %d attempts: %w", attempt+1, err))
+		}
+	}
 	switch {
 	case err == nil:
 		w.files++
