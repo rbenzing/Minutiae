@@ -57,11 +57,24 @@ func (GoIOS) OpenBackup(_ context.Context, udid string) (io.ReadWriteCloser, err
 	return goios.ConnectToService(d, "com.apple.mobilebackup2")
 }
 
+// afcClient adapts go-ios AFC. go-ios parses device responses without
+// guarding every index, so a panic in any call is returned as an error.
 type afcClient struct{ c *afc.Client }
 
-func (a afcClient) List(p string) ([]string, error) { return a.c.List(p) }
+// recovered turns a panic into *err; use as: defer recovered("afc list", &err).
+func recovered(op string, err *error) {
+	if r := recover(); r != nil {
+		*err = fmt.Errorf("%s: go-ios panic: %v", op, r)
+	}
+}
 
-func (a afcClient) Stat(p string) (FileStat, error) {
+func (a afcClient) List(p string) (names []string, err error) {
+	defer recovered("afc list", &err)
+	return a.c.List(p)
+}
+
+func (a afcClient) Stat(p string) (st FileStat, err error) {
+	defer recovered("afc stat", &err)
 	fi, err := a.c.Stat(p)
 	if err != nil {
 		return FileStat{}, err
@@ -69,9 +82,32 @@ func (a afcClient) Stat(p string) (FileStat, error) {
 	return FileStat{Size: fi.Size, IsDir: fi.IsDir(), IsLink: fi.IsLink()}, nil
 }
 
-func (a afcClient) Open(p string) (io.ReadCloser, error) { return a.c.Open(p, afc.READ_ONLY) }
+func (a afcClient) Open(p string) (rc io.ReadCloser, err error) {
+	defer recovered("afc open", &err)
+	f, err := a.c.Open(p, afc.READ_ONLY)
+	if err != nil {
+		return nil, err
+	}
+	return safeFile{f}, nil
+}
 
-func (a afcClient) Close() error { return a.c.Close() }
+func (a afcClient) Close() (err error) {
+	defer recovered("afc close", &err)
+	return a.c.Close()
+}
+
+// safeFile is an open AFC file whose Read and Close never panic.
+type safeFile struct{ f io.ReadCloser }
+
+func (s safeFile) Read(p []byte) (n int, err error) {
+	defer recovered("afc read", &err)
+	return s.f.Read(p)
+}
+
+func (s safeFile) Close() (err error) {
+	defer recovered("afc close file", &err)
+	return s.f.Close()
+}
 
 const usbmuxdHint = "usbmuxd not reachable (Windows: install iTunes or the Apple Devices app for Apple Mobile Device Service; Linux: install and start usbmuxd)"
 

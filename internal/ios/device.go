@@ -81,16 +81,40 @@ func (d *Device) Info(ctx context.Context) (device.Info, error) {
 	return base, nil
 }
 
-// List lists an AFC (media domain) directory.
-func (d *Device) List(ctx context.Context, dir string) ([]device.FileEntry, error) {
+// openAFC opens the AFC service and arranges for it to be closed when ctx is
+// cancelled, which is the only way to interrupt a blocked AFC call. The
+// returned func closes the client and releases the context hook.
+func (d *Device) openAFC(ctx context.Context) (AFC, func(), error) {
 	a, err := d.b.OpenAFC(ctx, d.udid)
 	if err != nil {
-		return nil, mapErr(err)
+		return nil, nil, mapErr(err)
 	}
-	defer func() { _ = a.Close() }()
-	names, err := a.List(dir)
+	stop := context.AfterFunc(ctx, func() { _ = a.Close() })
+	return a, func() {
+		stop()
+		_ = a.Close()
+	}, nil
+}
+
+// ctxErr prefers the context's error once it is done: a cancelled call
+// fails with whatever error closing the connection produced.
+func ctxErr(ctx context.Context, err error) error {
+	if err != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
+}
+
+// List lists an AFC (media domain) directory.
+func (d *Device) List(ctx context.Context, dir string) ([]device.FileEntry, error) {
+	a, done, err := d.openAFC(ctx)
 	if err != nil {
 		return nil, err
+	}
+	defer done()
+	names, err := a.List(dir)
+	if err != nil {
+		return nil, ctxErr(ctx, err)
 	}
 	var out []device.FileEntry
 	for _, n := range names {
@@ -100,7 +124,7 @@ func (d *Device) List(ctx context.Context, dir string) ([]device.FileEntry, erro
 		p := path.Join(dir, n)
 		st, err := a.Stat(p)
 		if err != nil {
-			return nil, err
+			return nil, ctxErr(ctx, err)
 		}
 		mode := fs.FileMode(0o644)
 		switch {
@@ -126,19 +150,32 @@ func (c ctxReader) Read(p []byte) (int, error) {
 	return c.r.Read(p)
 }
 
-// Pull streams an AFC file into w.
+// Pull streams an AFC file into w. The bytes copied must match the size AFC
+// reported for the file; a short or long transfer is an error, so the
+// artifact is flagged incomplete.
 func (d *Device) Pull(ctx context.Context, remotePath string, w io.Writer) (int64, error) {
-	a, err := d.b.OpenAFC(ctx, d.udid)
-	if err != nil {
-		return 0, mapErr(err)
-	}
-	defer func() { _ = a.Close() }()
-	f, err := a.Open(remotePath)
+	a, done, err := d.openAFC(ctx)
 	if err != nil {
 		return 0, err
 	}
+	defer done()
+	st, err := a.Stat(remotePath)
+	if err != nil {
+		return 0, ctxErr(ctx, err)
+	}
+	f, err := a.Open(remotePath)
+	if err != nil {
+		return 0, ctxErr(ctx, err)
+	}
 	defer func() { _ = f.Close() }()
-	return io.Copy(w, ctxReader{ctx: ctx, r: f})
+	n, err := io.Copy(w, ctxReader{ctx: ctx, r: f})
+	if err != nil {
+		return n, ctxErr(ctx, err)
+	}
+	if n != st.Size {
+		return n, fmt.Errorf("afc pull %s: copied %d of %d bytes", remotePath, n, st.Size)
+	}
+	return n, nil
 }
 
 // Push is not supported for iOS in Spec 1.
