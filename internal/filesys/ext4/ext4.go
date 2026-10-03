@@ -42,6 +42,9 @@ type FS struct {
 	metaRanges [][2]uint64
 	// dirRecordCap bounds the entries one directory yields (maxDirRecords).
 	dirRecordCap int
+	// slackScanCap bounds the slack bytes one directory has searched for deleted
+	// entries (maxSlackScan).
+	slackScanCap int64
 }
 
 // readFull reads exactly len(p) bytes at off; a read that returns all the
@@ -130,6 +133,7 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		size:   sb.blocksCount * int64(sb.blockSize), // cannot overflow: <= size
 
 		dirRecordCap: maxDirRecords,
+		slackScanCap: maxSlackScan,
 	}
 	f.metaRanges = metadataRanges(sb, groups)
 	for _, w := range append(warns, gw...) {

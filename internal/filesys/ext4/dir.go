@@ -35,6 +35,10 @@ const (
 	// cap with a warning, for Lookup too: an entry beyond the cap is reported as
 	// not found.
 	maxDirRecords = 1 << 18
+	// maxSlackScan bounds the slack bytes one directory has searched for deleted
+	// entries. Slack is normally a few bytes per record, so a directory that
+	// exceeds it is hostile or badly damaged; the rest is not searched.
+	maxSlackScan = 16 << 20
 	// maxLinkTarget bounds the symlink target read for an Entry (PATH_MAX).
 	maxLinkTarget = 4096
 
@@ -56,6 +60,7 @@ type dirRec struct {
 	off     int   // offset in the block, or in the inline data
 	csumBad bool  // the block's checksum is bad or missing
 	beyond  bool  // the block lies beyond the directory's i_size
+	wasLive bool  // a live-looking record beyond i_size, reported as deleted
 
 	dirInode uint32 // the directory the record was read from
 }
@@ -70,6 +75,7 @@ type region struct {
 	slack   bool  // look for deleted records in the slack of each record
 	csumBad bool
 	beyond  bool
+	first   bool   // logical block 0: the "." and ".." records belong here
 	what    string // for warnings: "block 12" or "inline data"
 }
 
@@ -86,6 +92,9 @@ type dirScan struct {
 	seed         uint32 // checksum seed of the directory's blocks
 	count        int
 	stop         bool
+	slackBytes   int64    // slack bytes searched for deleted records so far
+	badIdx       []uint32 // see plausibleSlack
+	badFor       *region  // the region badIdx describes
 }
 
 // scanDir calls visit for every live record of directory in and, with
@@ -94,7 +103,8 @@ type dirScan struct {
 // read of that block only. If the block map is damaged part-way, the blocks
 // mapped before the damage are still read and the rest is a warning; holes in a
 // sparse directory are skipped; blocks mapped beyond i_size are read too, with a
-// warning and their records flagged. Only an inline directory whose data cannot
+// warning, and their records are reported as deleted (flagged beyond_isize),
+// never as live. Only an inline directory whose data cannot
 // be read is an error.
 func (f *FS) scanDir(in *inode, wantDeleted bool, visit func(*dirRec) bool) error {
 	w := &dirScan{f: f, in: in, wantDeleted: wantDeleted, visit: visit, index: in.flags&inodeFlagIndex != 0, enc: in.flags&inodeFlagEncrypt != 0}
@@ -139,12 +149,9 @@ func (f *FS) scanDir(in *inode, wantDeleted bool, visit func(*dirRec) bool) erro
 // number of blocks i_size covers (at most 64 MiB, a warning when i_size is
 // larger), and an error if the map is damaged, in which case the runs mapped
 // before the damage are returned. The map is read up to 64 MiB whatever i_size
-// says, so blocks mapped beyond i_size are seen; a directory with a zero size
-// has none.
+// says, so blocks mapped beyond i_size are seen; with a zero i_size every
+// mapped block is beyond it (a warning).
 func (f *FS) dirRuns(in *inode) ([]filesys.Run, int64, error) {
-	if in.size == 0 {
-		return nil, 0, nil
-	}
 	size := in.size
 	if size > maxDirBytes {
 		f.warn("directory inode %d: i_size %d exceeds the 64 MiB directory limit; only the first 64 MiB are read", in.num, in.size)
@@ -155,6 +162,9 @@ func (f *FS) dirRuns(in *inode) ([]filesys.Run, int64, error) {
 	c := *in
 	c.size = maxDirBytes
 	runs, err := f.runsPartial(&c)
+	if in.size == 0 && slices.ContainsFunc(runs, func(r filesys.Run) bool { return r.Offset >= 0 }) {
+		f.warn("directory inode %d has i_size 0 but maps blocks; they are scanned and their entries treated as lying beyond i_size", in.num)
+	}
 	return runs, isizeBlocks, err
 }
 
@@ -181,7 +191,7 @@ func (w *dirScan) inline() error {
 // block checks one directory block and reads its records. blk is the physical
 // block, lblk the logical one.
 func (w *dirScan) block(buf []byte, blk, lblk int64) {
-	g := &region{b: buf, limit: len(buf), blk: blk, slack: true, what: "block " + strconv.FormatInt(blk, 10), beyond: lblk >= w.isizeBlocks}
+	g := &region{b: buf, limit: len(buf), blk: blk, slack: true, what: "block " + strconv.FormatInt(blk, 10), beyond: lblk >= w.isizeBlocks, first: lblk == 0}
 	if g.beyond && !w.warnedBeyond {
 		w.warnedBeyond = true
 		w.f.warn("directory inode %d: blocks are mapped beyond i_size (from logical block %d, i_size %d); they are scanned and their entries flagged beyond_isize", w.in.num, lblk, w.in.size)
@@ -273,7 +283,9 @@ func (w *dirScan) nameLen(b []byte) (n int, ftype byte) {
 func (w *dirScan) records(g *region) {
 	b := g.b
 	n := len(b)
+	rec := -1 // index of the current record in the region
 	for off := 0; off < g.limit && !w.stop; {
+		rec++
 		if off+direntMin > n {
 			w.f.warn("directory inode %d, %s: %d trailing bytes at offset %d are too short for a record", w.in.num, g.what, n-off, off)
 			return
@@ -294,6 +306,10 @@ func (w *dirScan) records(g *region) {
 		switch {
 		case inode != 0 && !isDot(name):
 			w.emit(g, &dirRec{inode: inode, name: name, ftype: ftype, off: off})
+		case inode != 0 && (!g.first || rec >= 2):
+			// "." and ".." are the first two records of the first block and are
+			// never listed; anywhere else they are not a directory's own.
+			w.f.warn("directory inode %d, %s: a \".\" or \"..\" record at offset %d is not among the first two records of the directory; it is not listed", w.in.num, g.what, off)
 		case inode == 0 && off == 0 && g.slack && w.wantDeleted && nameLen > 0 && plausibleName(name, w.enc):
 			// The first record of a block, deleted: the kernel zeroed its
 			// inode, so only the name, type and place survive. It is reported
@@ -314,14 +330,27 @@ func (w *dirScan) records(g *region) {
 // candidate needs an inode in [1, inodes_count], a name that is non-empty,
 // fits in the slack and has no NUL or '/'; its rec_len is ignored (a deleted
 // record keeps its old one). After an accepted candidate the scan resumes past
-// its minimal length.
+// its minimal length. A directory's slack is searched up to the FS's slack cap;
+// the rest is a warning.
 func (w *dirScan) slackScan(g *region, from, to int) {
+	if from+direntHeader >= to {
+		return
+	}
+	remaining := w.f.slackScanCap - w.slackBytes
+	if remaining <= 0 || int64(to-from) > remaining {
+		w.f.warn("directory inode %d: more than %d bytes of slack space searched for deleted entries; the slack beyond that is not searched", w.in.num, w.f.slackScanCap)
+		if remaining <= 0 {
+			return
+		}
+		to = from + int(remaining) // remaining < to-from, which is an int
+	}
+	w.slackBytes += int64(to - from)
 	b := g.b
 	for q := from; q+direntHeader < to && !w.stop; {
 		inode := binary.LittleEndian.Uint32(b[q:])
 		nameLen, ftype := w.nameLen(b[q:])
 		end := q + direntHeader + nameLen
-		if inode >= 1 && inode <= w.f.sb.inodesCount && nameLen > 0 && end <= to && plausibleName(b[q+direntHeader:end], w.enc) {
+		if inode >= 1 && inode <= w.f.sb.inodesCount && nameLen > 0 && end <= to && w.plausibleSlack(g, q+direntHeader, end) {
 			w.emit(g, &dirRec{inode: inode, name: b[q+direntHeader : end], ftype: ftype, deleted: true, off: q})
 			q += (direntHeader + nameLen + 3) &^ 3
 			continue
@@ -330,8 +359,43 @@ func (w *dirScan) slackScan(g *region, from, to int) {
 	}
 }
 
-// emit hands one record to the visitor, within the per-directory record cap.
+// plausibleSlack is plausibleName for g.b[lo:hi] in constant time: the first
+// call on a region indexes it once (for each offset, the next NUL or '/'), so
+// a hostile slack cannot make every 4-byte step rescan up to 64 KiB.
+func (w *dirScan) plausibleSlack(g *region, lo, hi int) bool {
+	if isDot(g.b[lo:hi]) {
+		return false
+	}
+	if w.enc {
+		return true
+	}
+	if w.badFor != g {
+		w.badIdx = slices.Grow(w.badIdx[:0], len(g.b)+1)[:len(g.b)+1]
+		next := uint32(len(g.b))
+		w.badIdx[len(g.b)] = next
+		for i := len(g.b) - 1; i >= 0; i-- {
+			if c := g.b[i]; c == 0 || c == '/' {
+				next = uint32(i)
+			}
+			w.badIdx[i] = next
+		}
+		w.badFor = g
+	}
+	return int(w.badIdx[lo]) >= hi
+}
+
+// emit hands one record to the visitor, within the per-directory record cap. A
+// live-looking record in a block beyond i_size is handed over as a deleted one
+// (wasLive), and only to a scan that wants deleted entries.
 func (w *dirScan) emit(g *region, r *dirRec) {
+	if g.beyond && !r.deleted {
+		// A record in a block beyond i_size is not part of the directory: it is
+		// reported, as deleted, only to a scan that wants deleted entries.
+		if !w.wantDeleted {
+			return
+		}
+		r.deleted, r.wasLive = true, true
+	}
 	if w.count >= w.f.dirRecordCap {
 		w.f.warn("directory inode %d: more than %d entries; the rest are not read", w.in.num, w.f.dirRecordCap)
 		w.stop = true
@@ -421,6 +485,10 @@ func (f *FS) dirEntry(r *dirRec, dirEnc bool, links map[uint32]string) filesys.E
 			}
 			e.LinkTarget = t
 		}
+		if !r.deleted && in.links == 0 && !in.times.Deleted.T.IsZero() {
+			addAttr(&e, "inode_freed", "true")
+			f.warn("directory inode %d: the entry %q names inode %d, which has been freed (links_count 0, dtime set)", r.dirInode, name, r.inode)
+		}
 	}
 	if r.beyond {
 		addAttr(&e, "beyond_isize", "true")
@@ -428,7 +496,7 @@ func (f *FS) dirEntry(r *dirRec, dirEnc bool, links map[uint32]string) filesys.E
 	e.Encrypted = e.Encrypted || dirEnc
 	if r.deleted {
 		e.Deleted = true
-		if err == nil && in.links > 0 && in.orphanNext == 0 {
+		if err == nil && in.links > 0 && in.orphanNext == 0 && !r.wasLive {
 			addAttr(&e, "inode_reused", "true")
 		}
 		if r.blk >= 0 {
@@ -522,8 +590,10 @@ func (f *FS) dirInode(dir filesys.Entry) (*inode, error) {
 // read by a linear scan of all blocks. The entry names the inode as it is now,
 // so a deleted entry whose inode was reused shows the new inode. A deleted
 // entry that is a stale copy of a live one (same inode and name bytes, as an
-// htree leaf split leaves behind) stays listed with attr stale_copy=true. A
-// damaged block map does not fail the call: the entries that can be read are
+// htree leaf split leaves behind) stays listed with attr stale_copy=true. An entry found in a
+// block mapped beyond i_size is not live: it is reported Deleted with attr
+// beyond_isize=true (Lookup ignores it). A live entry whose inode has been freed
+// (links_count 0, dtime set) has attr inode_freed=true. A damaged block map does not fail the call: the entries that can be read are
 // returned and the damage is an Info warning.
 func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
 	in, err := f.dirInode(dir)

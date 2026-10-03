@@ -33,6 +33,7 @@
       "debugfs -w -R rm /notes/old-draft.txt /dev/shm/minutiae-ext4/ext4-1k-blockmap-ext2.img",
       "debugfs -w -R rm /big/entry-with-a-long-name-0150.txt /dev/shm/minutiae-ext4/ext4-1k-blockmap-ext2.img",
       "e2fsck -fn <img>   # must report a clean filesystem",
+      "dumpe2fs <img> | python3 tools/fixtures/ext4_freeblocks.py   # free block ranges",
       "dumpe2fs -h <img>   # label, uuid, block size, block count, features"
     ]
   },
@@ -2663,5 +2664,27 @@
     "/dir/deleted-me.txt",
     "/notes/old-draft.txt",
     "/big/entry-with-a-long-name-0150.txt"
+  ],
+  "free_blocks": [
+    [
+      413,
+      413
+    ],
+    [
+      3661,
+      3661
+    ],
+    [
+      3669,
+      3669
+    ],
+    [
+      3758,
+      8192
+    ],
+    [
+      8436,
+      12287
+    ]
   ]
 }

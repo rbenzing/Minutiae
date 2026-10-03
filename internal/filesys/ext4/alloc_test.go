@@ -334,8 +334,8 @@ func TestUnallocatedBlockUninit(t *testing.T) {
 				t.Fatalf("block %d of the distrusted group reported free", b)
 			}
 		}
-		if !hasWarning(f.Info(), "BLOCK_UNINIT") {
-			t.Errorf("no BLOCK_UNINIT warning: %q", f.Info().Warnings)
+		if !hasWarning(f.Info(), "wrong descriptor checksum") {
+			t.Errorf("no descriptor checksum warning: %q", f.Info().Warnings)
 		}
 	})
 }

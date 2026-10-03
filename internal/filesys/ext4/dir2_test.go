@@ -232,8 +232,12 @@ func TestBlocksBeyondISize(t *testing.T) {
 	if _, ok := attr(byName(t, es, "a"), "beyond_isize"); ok {
 		t.Error("a lies inside i_size but is flagged")
 	}
-	if v, _ := attr(byName(t, es, "b"), "beyond_isize"); v != "true" {
-		t.Errorf("b attrs %v, want beyond_isize=true", byName(t, es, "b").Attrs)
+	b := byName(t, es, "b")
+	if v, _ := attr(b, "beyond_isize"); v != "true" || !b.Deleted {
+		t.Errorf("b = %+v, want a deleted entry with beyond_isize=true", b)
+	}
+	if byName(t, es, "a").Deleted {
+		t.Error("a lies inside i_size but is reported deleted")
 	}
 	if !hasWarning(f.Info(), "beyond i_size") {
 		t.Errorf("no beyond i_size warning: %v", f.Info().Warnings)

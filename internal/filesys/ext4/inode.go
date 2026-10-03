@@ -157,6 +157,15 @@ func (f *FS) decodeInode(n uint32, raw []byte) (*inode, error) {
 		generation: le.Uint32(raw[iGeneration:]),
 		fileACL:    uint64(le.Uint32(raw[iFileACLLo:])),
 	}
+	// The flags are honoured as they are (they decide how i_block is read), but
+	// a flag the filesystem has no feature bit for is not what a kernel would
+	// have written.
+	if in.flags&inodeFlagExtents != 0 && !sb.hasIncompat(incompatExtents) {
+		f.warn("inode %d has the extents flag but the filesystem has no extent feature; the flag is honoured", n)
+	}
+	if in.flags&inodeFlagInlineData != 0 && !sb.hasIncompat(incompatInlineData) {
+		f.warn("inode %d has the inline data flag but the filesystem has no inline_data feature; the flag is honoured", n)
+	}
 	copy(in.block[:], raw[iBlock:iBlock+inodeBlockLen])
 	if sb.hasIncompat(incompat64Bit) {
 		in.fileACL |= uint64(le.Uint16(raw[iFileACLHigh:])) << 32

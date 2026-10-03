@@ -45,6 +45,9 @@ type oracle struct {
 	Mke2fsCreated []string     `json:"mke2fs_created"`
 	Files         []oracleFile `json:"files"`
 	Deleted       []string     `json:"deleted"`
+	// FreeBlocks are the free block ranges dumpe2fs reports, [first, last]
+	// inclusive, sorted and merged.
+	FreeBlocks [][2]int64 `json:"free_blocks"`
 }
 
 func fixturePaths(t testing.TB) []string {
@@ -87,6 +90,9 @@ func loadOracle(t testing.TB, imgGz string) oracle {
 	if len(o.Files) == 0 || len(o.Deleted) == 0 {
 		t.Fatal("oracle lists no files or no deleted entries")
 	}
+	if len(o.FreeBlocks) == 0 {
+		t.Fatal("oracle lists no free blocks")
+	}
 	return o
 }
 
@@ -123,7 +129,7 @@ func TestExt4MatchesOracle(t *testing.T) {
 			live, deleted := walkAll(t, fsys)
 			used := checkLive(t, fsys, want, live)
 			checkDeleted(t, want, deleted)
-			checkUnallocated(t, fsys, used)
+			checkUnallocated(t, fsys, used, want)
 		})
 	}
 }
@@ -292,7 +298,7 @@ func keys(m map[string]filesys.Entry) []string {
 
 // checkUnallocated checks the Unallocated contract and that no free run overlaps
 // the content of a live file or a group bitmap (catches an inverted bitmap).
-func checkUnallocated(t *testing.T, fsys *ext4.FS, used []filesys.Run) {
+func checkUnallocated(t *testing.T, fsys *ext4.FS, used []filesys.Run, want oracle) {
 	t.Helper()
 	runs, err := fsys.Unallocated()
 	if err != nil {
@@ -308,6 +314,15 @@ func checkUnallocated(t *testing.T, fsys *ext4.FS, used []filesys.Run) {
 	}
 	if total <= 0 {
 		t.Error("no unallocated space reported")
+	}
+
+	// Exactly the blocks dumpe2fs reports free, no more and no fewer.
+	var wantRuns []filesys.Run
+	for _, r := range want.FreeBlocks {
+		wantRuns = append(wantRuns, filesys.Run{Offset: r[0] * int64(want.BlockSize), Length: (r[1] - r[0] + 1) * int64(want.BlockSize)})
+	}
+	if !slices.Equal(runs, filesys.MergeRuns(wantRuns)) {
+		t.Errorf("Unallocated differs from the dumpe2fs free blocks:\n got  %v\n want %v", runs, filesys.MergeRuns(wantRuns))
 	}
 
 	bs := int64(fsys.Info().BlockSize)

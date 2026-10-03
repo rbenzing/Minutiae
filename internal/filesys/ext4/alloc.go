@@ -136,17 +136,28 @@ func (f *FS) Unallocated() ([]filesys.Run, error) {
 	meta := foreignMetadata(f.groups, uint64(first), uint64(total), uint64(sb.itableBlocks))
 
 	var (
-		runs                      []filesys.Run
-		groupsSeen                int
-		skipped, firstSkipped     int
-		untrusted, firstUntrusted int
-		noBitmap, firstNoBitmap   int
-		firstBitmapErr            error
-		badCsum                   int
-		badCsumGroups             []int
-		bm                        = make([]byte, sb.blockSize)
-		checkCsum                 = sb.metadataCsum() && sb.checksumType == csumTypeCRC32C
+		runs                              []filesys.Run
+		groupsSeen                        int
+		skipped, firstSkipped             int
+		untrusted, firstUntrusted         int
+		uninitSkipped, firstUninitSkipped int
+		noBitmap, firstNoBitmap           int
+		firstBitmapErr                    error
+		badCsum                           int
+		badCsumGroups                     []int
+		bm                                = make([]byte, sb.blockSize)
+		checkCsum                         = sb.metadataCsum() && sb.checksumType == csumTypeCRC32C
+		unreadable                        bool
 	)
+	// A descriptor that could not be read names no locations, so it may well be
+	// the one that points its bitmaps or inode table into a BLOCK_UNINIT group
+	// (flex_bg): that group's computed free space cannot then be trusted.
+	for g := range f.groups {
+		if f.groups[g].unreadable {
+			unreadable = true
+			break
+		}
+	}
 	for g := range f.groups {
 		start := first + int64(g)*bpg
 		if start >= total {
@@ -162,12 +173,21 @@ func (f *FS) Unallocated() ([]filesys.Run, error) {
 			}
 			skipped++
 			continue
-		case d.flags&bgBlockUninit != 0 && sb.blockUninitHonoured() && d.csumBad:
-			// The flag cannot be trusted when the descriptor checksum is wrong.
+		case d.csumBad:
+			// With descriptor checksums in force a wrong one means nothing in the
+			// descriptor can be trusted: not the flags (a cleared BLOCK_UNINIT would
+			// make the bitmap, possibly stale, authoritative) and not the bitmap
+			// location. csumBad is only ever set when checksums are in force.
 			if untrusted == 0 {
 				firstUntrusted = g
 			}
 			untrusted++
+			continue
+		case unreadable && uninit(g):
+			if uninitSkipped == 0 {
+				firstUninitSkipped = g
+			}
+			uninitSkipped++
 			continue
 		case uninit(g):
 			clear(bm)
@@ -213,7 +233,10 @@ func (f *FS) Unallocated() ([]filesys.Run, error) {
 		f.warn("unallocated space: %d of %d block groups have unusable descriptors and were skipped, their blocks are not reported as free (first: group %d)", skipped, groupsSeen, firstSkipped)
 	}
 	if untrusted > 0 {
-		f.warn("unallocated space: %d of %d block groups are flagged BLOCK_UNINIT but their descriptor checksum is wrong; skipped, their blocks are not reported as free (first: group %d)", untrusted, groupsSeen, firstUntrusted)
+		f.warn("unallocated space: %d of %d block groups have a wrong descriptor checksum, so their flags and bitmap locations cannot be trusted; skipped, their blocks are not reported as free (first: group %d)", untrusted, groupsSeen, firstUntrusted)
+	}
+	if uninitSkipped > 0 {
+		f.warn("unallocated space: the group descriptor table is truncated, so the free space of %d of %d BLOCK_UNINIT block groups cannot be derived (other groups' metadata may lie inside them); skipped, their blocks are not reported as free (first: group %d)", uninitSkipped, groupsSeen, firstUninitSkipped)
 	}
 	if noBitmap > 0 {
 		reason := "its location overflows"

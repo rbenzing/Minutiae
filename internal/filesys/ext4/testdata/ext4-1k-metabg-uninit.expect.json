@@ -1,6 +1,6 @@
 {
   "generator": {
-    "image_sha256": "5a053be5de3f4d4e938447995cbd564a7d8f2865cd7a2f94f4fb1267b7534a06",
+    "image_sha256": "055a92532bd76c6f3701583752bd367eda40a8290c4d8bc6fcca0c4d9172a646",
     "packages": [
       {
         "package": "coreutils",
@@ -26,38 +26,36 @@
     "commands": [
       "# source tree: make_small_tree in tools/fixtures/ext4.sh",
       "python3 tools/fixtures/ext4_oracle.py <src> --exclude /dir/deleted-me.txt --exclude /notes/old-draft.txt --exclude /many/e07.txt",
-      "mke2fs -q -F -U 0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d -E hash_seed=11112222-3333-4444-5555-666677778888,root_owner=0:0 -L fixtureinl -d /dev/shm/minutiae-ext4/ext4-inline.src -t ext4 -b 1024 -O inline_data /dev/shm/minutiae-ext4/ext4-inline.img 8M",
-      "debugfs -w -R rm /dir/deleted-me.txt /dev/shm/minutiae-ext4/ext4-inline.img",
-      "debugfs -w -R rm /notes/old-draft.txt /dev/shm/minutiae-ext4/ext4-inline.img",
-      "debugfs -w -R rm /many/e07.txt /dev/shm/minutiae-ext4/ext4-inline.img",
+      "mke2fs -q -F -U 0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d -E hash_seed=11112222-3333-4444-5555-666677778888,root_owner=0:0 -L fixturemb -d /dev/shm/minutiae-ext4/ext4-1k-metabg-uninit.src -t ext4 -b 1024 -g 256 -O meta_bg,^resize_inode,64bit,flex_bg,uninit_bg,^metadata_csum /dev/shm/minutiae-ext4/ext4-1k-metabg-uninit.img 6400k",
+      "debugfs -w -R rm /dir/deleted-me.txt /dev/shm/minutiae-ext4/ext4-1k-metabg-uninit.img",
+      "debugfs -w -R rm /notes/old-draft.txt /dev/shm/minutiae-ext4/ext4-1k-metabg-uninit.img",
+      "debugfs -w -R rm /many/e07.txt /dev/shm/minutiae-ext4/ext4-1k-metabg-uninit.img",
       "e2fsck -fn <img>   # must report a clean filesystem",
       "dumpe2fs <img> | python3 tools/fixtures/ext4_freeblocks.py   # free block ranges",
       "dumpe2fs -h <img>   # label, uuid, block size, block count, features"
     ]
   },
   "type": "ext4",
-  "label": "fixtureinl",
+  "label": "fixturemb",
   "uuid": "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
   "block_size": 1024,
-  "size": 8388608,
+  "size": 6553600,
   "features": [
     "has_journal",
     "ext_attr",
-    "resize_inode",
     "dir_index",
     "orphan_file",
     "filetype",
+    "meta_bg",
     "extent",
     "64bit",
     "flex_bg",
-    "metadata_csum_seed",
-    "inline_data",
     "sparse_super",
     "large_file",
     "huge_file",
+    "uninit_bg",
     "dir_nlink",
-    "extra_isize",
-    "metadata_csum"
+    "extra_isize"
   ],
   "mke2fs_created": [
     "/lost+found"
@@ -329,8 +327,48 @@
   ],
   "free_blocks": [
     [
-      1655,
-      8191
+      339,
+      339
+    ],
+    [
+      354,
+      354
+    ],
+    [
+      371,
+      371
+    ],
+    [
+      375,
+      768
+    ],
+    [
+      770,
+      1280
+    ],
+    [
+      1282,
+      1792
+    ],
+    [
+      1794,
+      2304
+    ],
+    [
+      2306,
+      2816
+    ],
+    [
+      3842,
+      4096
+    ],
+    [
+      4260,
+      4352
+    ],
+    [
+      4354,
+      6399
     ]
   ]
 }

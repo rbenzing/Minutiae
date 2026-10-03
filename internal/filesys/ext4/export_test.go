@@ -82,3 +82,7 @@ func (f *FS) SetDirRecordCap(n int) { f.dirRecordCap = n }
 
 // RecLenFromDisk exposes the rec_len decoder.
 var RecLenFromDisk = recLenFromDisk
+
+// SetSlackScanCap lowers the per-directory cap on slack bytes scanned for
+// deleted entries (before any read).
+func (f *FS) SetSlackScanCap(n int64) { f.slackScanCap = n }

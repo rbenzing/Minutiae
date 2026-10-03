@@ -9,10 +9,16 @@
 #                         indirect blocks, htree directory, deleted entries
 #   ext4-inline           ext4 with inline_data (small files and directories
 #                         stored in the inode), deleted entries
+#   ext4-1k-metabg-uninit ext4, 1 KiB blocks, 25 groups of 256 blocks (-g 256) with
+#                         meta_bg (two metagroups, 64-byte descriptors), flex_bg
+#                         and uninit_bg, mostly BLOCK_UNINIT groups, a partial
+#                         last group, deleted entries
 #
 # Oracle: ext4_oracle.py walks the SOURCE TREE (never the image); the
 # "deleted" list is the generator's own list of `debugfs rm` operations;
-# label, uuid, block size and size come from dumpe2fs. Never Minutiae.
+# label, uuid, block size and size come from dumpe2fs -h, and the free block
+# ranges ("free_blocks", inclusive [first, last]) from the full dumpe2fs report
+# via ext4_freeblocks.py. Never Minutiae.
 set -euo pipefail
 
 umask 022
@@ -190,6 +196,9 @@ build_fixture() {
   e2fsck -fn "$img" >"$work/$name.fsck2.log" 2>&1 || { cat "$work/$name.fsck2.log"; echo "final e2fsck not clean" >&2; exit 1; }
 
   # Facts the filesystem itself reports (independent of the reader).
+  CMDS+=("dumpe2fs <img> | python3 tools/fixtures/ext4_freeblocks.py   # free block ranges")
+  local free
+  free=$(dumpe2fs "$img" 2>/dev/null | python3 "$here/ext4_freeblocks.py")
   CMDS+=("dumpe2fs -h <img>   # label, uuid, block size, block count, features")
   local hdr bsize bcount uuid lab feats
   hdr=$(dumpe2fs -h "$img" 2>/dev/null)
@@ -209,10 +218,10 @@ build_fixture() {
   gen=$(generator_json "$img" e2fsprogs python3 coreutils jq gzip)
   del=$(printf '%s\n' $deleted | jq -R . | jq -s .)
   jq -n --argjson g "$gen" --slurpfile f "$work/$name.files.json" --argjson d "$del" \
-    --arg type "$fstype" --arg label "$label" --arg uuid "$uuid" --argjson bs "$bsize" --argjson bc "$bcount" --arg feats "$feats" '
+    --arg type "$fstype" --arg label "$label" --arg uuid "$uuid" --argjson bs "$bsize" --argjson bc "$bcount" --arg feats "$feats" --argjson free "$free" '
     {generator: $g, type: $type, label: $label, uuid: $uuid, block_size: $bs,
      size: ($bs * $bc), features: ($feats | split(" ")),
-     mke2fs_created: ["/lost+found"], files: $f[0].files, deleted: $d}' >"$out/$name.expect.json"
+     mke2fs_created: ["/lost+found"], files: $f[0].files, deleted: $d, free_blocks: $free}' >"$out/$name.expect.json"
   gzip -n -9 -c "$img" >"$out/$name.img.gz"
   echo "wrote $out/$name.img.gz and $name.expect.json ($(stat -c %s "$img") bytes raw)"
 }
@@ -226,3 +235,8 @@ build_fixture ext4-1k-blockmap-ext2 full fixture1k "$full_deleted" 12M \
   -t ext2 -b 1024 -I 128 -- -fyD
 build_fixture ext4-inline small fixtureinl "$small_deleted" 8M \
   -t ext4 -b 1024 -O inline_data -- none
+# 25 small groups (-g 256) with META_BG (two metagroups with 64-byte
+# descriptors), flex_bg and uninit_bg (gdt_csum), a partial last group; most
+# groups are BLOCK_UNINIT because the tree is small.
+build_fixture ext4-1k-metabg-uninit small fixturemb "$small_deleted" 6400k \
+  -t ext4 -b 1024 -g 256 -O meta_bg,^resize_inode,64bit,flex_bg,uninit_bg,^metadata_csum -- none
