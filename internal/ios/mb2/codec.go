@@ -60,8 +60,8 @@ func (c Codec) Recv() ([]any, error) {
 	if err := checkBinaryPlist(b); err != nil {
 		return nil, err
 	}
-	var v any
-	if _, err := plist.Unmarshal(b, &v); err != nil {
+	v, err := decodePlist(b)
+	if err != nil {
 		return nil, fmt.Errorf("mb2: decode: %w", err)
 	}
 	msg, ok := v.([]any)
@@ -69,6 +69,20 @@ func (c Codec) Recv() ([]any, error) {
 		return nil, fmt.Errorf("mb2: message is not a non-empty array (%T)", v)
 	}
 	return msg, nil
+}
+
+// unmarshal is the plist decoder; a variable so tests can inject a failing one.
+var unmarshal = plist.Unmarshal
+
+// decodePlist decodes b, converting a decoder panic on hostile input into an error.
+func decodePlist(b []byte) (v any, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			v, err = nil, fmt.Errorf("mobilebackup2: malformed plist (%v)", r)
+		}
+	}()
+	_, err = unmarshal(b, &v)
+	return v, err
 }
 
 // Name returns msg[0] as a string.

@@ -39,7 +39,9 @@ func checkBinaryPlist(b []byte) error {
 	switch {
 	case w.offSize < 1 || w.offSize > 8 || w.refSize < 1 || w.refSize > 8:
 		return errors.New("mb2: bad binary plist trailer sizes")
-	case numObjects == 0 || numObjects > dataEnd:
+	case numObjects == 0 || numObjects > dataEnd || numObjects > maxExpandedNodes:
+		// A legitimate plist references every object, so numObjects never
+		// exceeds the expanded node count; this also bounds the memo table.
 		return errors.New("mb2: bad binary plist object count")
 	case tableOff < uint64(len(bplistMagic)) || tableOff > dataEnd || numObjects*w.offSize > dataEnd-tableOff:
 		return errors.New("mb2: bad binary plist offset table")
@@ -122,11 +124,14 @@ func (w *bplistWalker) visit(i uint64, depth int) (bplistNode, error) {
 		if err != nil {
 			return bplistNode{}, err
 		}
+		if count > w.tableOff { // bound before doubling so a dict count cannot wrap
+			return bplistNode{}, errors.New("mb2: truncated binary plist container")
+		}
 		if typ == 0xD {
 			count *= 2
 		}
 		start := off + hdr
-		if count > w.tableOff || start+count*w.refSize > w.tableOff {
+		if start+count*w.refSize > w.tableOff {
 			return bplistNode{}, errors.New("mb2: truncated binary plist container")
 		}
 		for k := range count {
@@ -150,11 +155,11 @@ func (w *bplistWalker) visit(i uint64, depth int) (bplistNode, error) {
 		if err != nil {
 			return bplistNode{}, err
 		}
+		if count > maxMessage { // bound before doubling so a UTF-16 count cannot wrap
+			return bplistNode{}, errors.New("mb2: binary plist expands beyond the size limit")
+		}
 		if typ == 0x6 {
 			count *= 2
-		}
-		if count > maxMessage {
-			return bplistNode{}, errors.New("mb2: binary plist expands beyond the size limit")
 		}
 		res.payload = count
 	}

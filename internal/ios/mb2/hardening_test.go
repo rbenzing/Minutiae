@@ -257,3 +257,47 @@ func TestHandshakeSendsOwnVersionAndChecksReply(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// rawPlist assembles a binary plist from obj (placed at offset 8) and a
+// one-byte offset table; object 0 is the top object.
+func rawPlist(obj, offsets []byte) []byte {
+	b := append([]byte("bplist00"), obj...)
+	tableOff := len(b)
+	b = append(b, offsets...)
+	trailer := make([]byte, 32)
+	trailer[6], trailer[7] = 1, 3
+	binary.BigEndian.PutUint64(trailer[8:], uint64(len(offsets)))
+	binary.BigEndian.PutUint64(trailer[24:], uint64(tableOff))
+	return append(b, trailer...)
+}
+
+// bigCount returns a marker for type nibble typ followed by an 8-byte length.
+func bigCount(typ byte, n uint64) []byte {
+	return binary.BigEndian.AppendUint64([]byte{typ<<4 | 0x0f, 0x13}, n)
+}
+
+func TestRecvRejectsOverflowingCounts(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		obj  []byte
+	}{
+		{"dict-2^63", bigCount(0xD, 1<<63)},
+		{"dict-2^63+1", bigCount(0xD, 1<<63+1)},
+		{"utf16-2^63+1", bigCount(0x6, 1<<63+1)},
+		{"array-2^63", bigCount(0xA, 1<<63)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if msg, err := recv(rawPlist(tc.obj, []byte{8})); err == nil {
+				t.Fatalf("accepted: %v", msg)
+			}
+		})
+	}
+}
+
+func TestRecvRejectsHugeObjectTable(t *testing.T) {
+	offsets := bytes.Repeat([]byte{8}, 1<<20+1) // one more object than the expansion cap
+	offsets[0] = 10                             // top object: [1] (refSize is 3)
+	if msg, err := recv(rawPlist([]byte{0x10, 0x00, 0xA1, 0, 0, 1}, offsets)); err == nil {
+		t.Fatalf("accepted: %v", msg)
+	}
+}
