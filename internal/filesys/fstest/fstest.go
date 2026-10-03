@@ -364,15 +364,16 @@ func (f *mtfs) Open(e filesys.Entry) (filesys.File, error) {
 }
 
 func (f *mtfs) openFile(rec *record) (*file, error) {
-	fl := &file{r: f.r, size: rec.Size, runs: make([]filesys.Run, len(rec.Runs)), starts: make([]int64, len(rec.Runs))}
+	fl := &file{r: f.r, size: rec.Size}
 	var total int64
-	for i, ru := range rec.Runs {
-		fl.runs[i] = filesys.Run{Offset: ru.Offset, Length: ru.Length}
-		fl.starts[i] = total
-		var ok bool
-		if total, ok = filesys.AddOK(total, ru.Length); !ok {
-			return nil, corrupt(structEntry, headerLen, "entry %q: run lengths overflow", rec.ID)
+	for _, ru := range rec.Runs {
+		if total >= rec.Size {
+			break // the table's block slack beyond Size is not file content
 		}
+		length := min(ru.Length, rec.Size-total) // trim the last run so the runs cover exactly [0, Size)
+		fl.runs = append(fl.runs, filesys.Run{Offset: ru.Offset, Length: length})
+		fl.starts = append(fl.starts, total)
+		total += length // cannot overflow: total+length <= rec.Size
 	}
 	if total < rec.Size {
 		return nil, corrupt(structEntry, headerLen, "entry %q: size %d exceeds its runs (%d bytes)", rec.ID, rec.Size, total)

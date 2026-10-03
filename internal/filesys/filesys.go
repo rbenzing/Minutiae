@@ -33,7 +33,12 @@ type File interface {
 	io.ReaderAt
 	Size() int64
 	// Runs lists the filesystem-relative byte runs of the content in file
-	// order. Offset -1 marks a sparse hole (Length bytes of zeros).
+	// order. Offset -1 marks a sparse hole (Length bytes of zeros). The runs
+	// cover exactly [0, Size()): the sum of their lengths, holes included,
+	// equals Size(), and the last run is trimmed to the end of the content
+	// rather than to the end of its block. Content stored inline in metadata
+	// (for example a fast symlink target) has no on-disk run and returns
+	// none. CheckRuns verifies this contract.
 	Runs() []Run
 }
 

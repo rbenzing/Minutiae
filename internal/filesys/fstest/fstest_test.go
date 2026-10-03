@@ -119,7 +119,7 @@ func TestMTFSRoundTrip(t *testing.T) {
 	if got := readAll(t, f); !bytes.Equal(got, hello) {
 		t.Errorf("hello = %q", got)
 	}
-	if runs := f.Runs(); len(runs) != 1 || runs[0].Length != bs || !bytes.Equal(readRuns(img, runs)[:len(hello)], hello) {
+	if runs := f.Runs(); len(runs) != 1 || runs[0].Length != int64(len(hello)) || !bytes.Equal(readRuns(img, runs), hello) {
 		t.Errorf("hello runs = %+v", runs)
 	}
 
@@ -129,19 +129,22 @@ func TestMTFSRoundTrip(t *testing.T) {
 		t.Error("big.bin content differs")
 	}
 	runs := f.Runs()
-	wantBlocks := []int64{3, 3, 2, 2}
+	wantLens := []int64{3 * bs, 3 * bs, 2 * bs, 2*bs - 100} // the last run is trimmed to the content
 	if len(runs) != 4 {
 		t.Fatalf("big.bin runs = %+v", runs)
 	}
 	for i, r := range runs {
-		if r.Length != wantBlocks[i]*bs {
-			t.Errorf("run %d = %+v, want %d blocks", i, r, wantBlocks[i])
+		if r.Length != wantLens[i] {
+			t.Errorf("run %d = %+v, want length %d", i, r, wantLens[i])
 		}
 		if i > 0 && r.Offset != runs[i-1].Offset+runs[i-1].Length+bs {
 			t.Errorf("run %d = %+v: want exactly one free block after run %d", i, r, i-1)
 		}
 	}
-	if got := readRuns(img, runs)[:len(big)]; !bytes.Equal(got, big) {
+	if err := filesys.CheckRuns(runs, f.Size(), int64(len(img))); err != nil {
+		t.Error(err)
+	}
+	if got := readRuns(img, runs); !bytes.Equal(got, big) {
 		t.Error("bytes at the reported runs differ from the content")
 	}
 	// ReadAt across a run boundary and at the end.
@@ -443,9 +446,9 @@ func FuzzOpen(f *testing.F) {
 				if err != nil {
 					continue
 				}
-				for _, r := range file.Runs() {
-					if r.Offset != -1 && (r.Offset < 0 || r.Length <= 0 || r.Offset+r.Length > size) {
-						t.Fatalf("run out of filesystem: %+v (size %d)", r, size)
+				if k.Type == filesys.TypeFile {
+					if err := filesys.CheckRuns(file.Runs(), file.Size(), size); err != nil {
+						t.Fatalf("runs violate the contract: %v", err)
 					}
 				}
 				buf := make([]byte, min(file.Size(), 1<<16))
@@ -474,5 +477,50 @@ func (p *prng) Intn(n int) int { return int(p.next() % uint64(n)) }
 func (p *prng) Read(b []byte) {
 	for i := range b {
 		b[i] = byte(p.next() >> 32)
+	}
+}
+
+func TestMTFSRunsCoverExactlySize(t *testing.T) {
+	// 8 blocks minus 389 bytes: not block-aligned, fragmented, with a hole.
+	data := pattern(7*bs+123, 9)
+	img := fstest.Build(fstest.BuildSpec{Nodes: []fstest.Node{
+		{Path: "/odd", Data: data, Fragments: 3, Hole: true},
+		{Path: "/plain", Data: pattern(2*bs+1, 10)},
+		{Path: "/aligned", Data: pattern(2*bs, 11)},
+		{Path: "/empty"},
+	}})
+	fsys := open(t, img)
+	for p, size := range map[string]int64{"/odd": int64(len(data)), "/plain": 2*bs + 1, "/aligned": 2 * bs, "/empty": 0} {
+		_, f := lookupOpen(t, fsys, p)
+		var sum int64
+		for _, r := range f.Runs() {
+			sum += r.Length
+		}
+		if f.Size() != size || sum != size {
+			t.Errorf("%s: size %d, sum of run lengths %d, want %d", p, f.Size(), sum, size)
+		}
+		if err := filesys.CheckRuns(f.Runs(), f.Size(), int64(len(img))); err != nil {
+			t.Errorf("%s: %v", p, err)
+		}
+	}
+	_, f := lookupOpen(t, fsys, "/odd")
+	runs := f.Runs()
+	if last := runs[len(runs)-1]; len(runs) != 5 || last.Length != 2*bs-389 {
+		t.Errorf("odd runs = %+v", runs)
+	}
+	holes := 0
+	for _, r := range runs {
+		if r.Offset == -1 {
+			holes++
+		}
+	}
+	if holes != 1 {
+		t.Errorf("odd has %d hole runs, want 1: %+v", holes, runs)
+	}
+	// Content still reads correctly (hole block reads zeros).
+	want := append([]byte(nil), data...)
+	clear(want[bs : 2*bs])
+	if got := readAll(t, f); !bytes.Equal(got, want) {
+		t.Error("odd content differs")
 	}
 }

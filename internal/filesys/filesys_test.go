@@ -425,3 +425,39 @@ func (p *prng) Read(b []byte) {
 		b[i] = byte(p.next() >> 32)
 	}
 }
+
+func TestCheckRuns(t *testing.T) {
+	R := func(o, l int64) filesys.Run { return filesys.Run{Offset: o, Length: l} }
+	const fsSize = 10000
+	cases := []struct {
+		name string
+		runs []filesys.Run
+		size int64
+		ok   bool
+	}{
+		{"empty file", nil, 0, true},
+		{"one run", []filesys.Run{R(512, 100)}, 100, true},
+		{"run to fs end", []filesys.Run{R(9900, 100)}, 100, true},
+		{"holes count", []filesys.Run{R(0, 512), R(-1, 512), R(1024, 76)}, 1100, true},
+		{"all hole", []filesys.Run{R(-1, 4096)}, 4096, true},
+		{"zero-length run allowed", []filesys.Run{R(0, 0), R(10, 5)}, 5, true},
+		{"sum short", []filesys.Run{R(0, 512)}, 513, false},
+		{"sum long (untrimmed last run)", []filesys.Run{R(0, 512)}, 100, false},
+		{"no runs but size", nil, 1, false},
+		{"negative length", []filesys.Run{R(0, 10), R(20, -10)}, 0, false},
+		{"offset -2", []filesys.Run{R(-2, 10)}, 10, false},
+		{"run past fs end", []filesys.Run{R(9901, 100)}, 100, false},
+		{"offset overflow", []filesys.Run{R(math.MaxInt64-1, 10)}, 10, false},
+		{"length overflow", []filesys.Run{R(-1, math.MaxInt64), R(-1, 10)}, 10, false},
+		{"negative size", nil, -1, false},
+	}
+	for _, c := range cases {
+		err := filesys.CheckRuns(c.runs, c.size, fsSize)
+		if (err == nil) != c.ok {
+			t.Errorf("%s: CheckRuns = %v, want ok=%v", c.name, err, c.ok)
+		}
+		if err != nil && !errors.Is(err, filesys.ErrCorrupt) {
+			t.Errorf("%s: err %v is not ErrCorrupt", c.name, err)
+		}
+	}
+}
