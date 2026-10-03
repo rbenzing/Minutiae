@@ -12,13 +12,13 @@ const (
 	maxInodeExtents = 4 // entries that fit in i_block next to the header
 )
 
-// content returns the pieces of f's data and its i_size. Directories carry no
-// data here (their blocks are written with the directory entries).
+// content returns the pieces of f's data and its i_size. A directory's data is
+// its rendered blocks (or inline content), which placeFiles puts in f.Data.
 func (b *builder) content(f *File) ([]Piece, int64) {
 	var ps []Piece
 	switch {
 	case f.Dir:
-		return nil, 0
+		ps = []Piece{{Data: f.Data}}
 	case f.Symlink != "":
 		ps = []Piece{{Data: []byte(f.Symlink)}}
 	case len(f.Pieces) > 0:

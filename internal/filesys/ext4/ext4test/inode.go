@@ -53,23 +53,52 @@ var xattrPrefixes = []struct {
 // InodeNumber returns the inode number the builder gives files[i]: the
 // explicitly listed files are numbered consecutively from 11 in slice order
 // (inode 2 is the root directory; 1 and 3..10 are reserved and left zero).
+// Directories that a path needs but the list does not hold get the numbers
+// after the listed files.
 func InodeNumber(i int) uint32 { return uint32(firstUserInode + i) }
 
-// placeFiles writes the root directory inode and one inode per file. Directory
-// entries and file data are added by later tasks; the inode is complete except
-// for its block pointers.
+// placeFiles writes the inodes, the file data and the directories. Everything
+// that is not a directory is placed first, in slice order, so file data keeps
+// its layout whatever the directory tree looks like; the directory blocks come
+// after, then the root's.
 func (b *builder) placeFiles(files []File) {
-	root := File{Dir: true}
-	b.writeInode(rootInode, b.renderInode(rootInode, &root))
-	for i := range files {
+	all := withParents(files)
+	nums := map[string]uint32{"": rootInode}
+	kids := map[string][]dirChild{}
+	for i := range all {
 		num := InodeNumber(i)
 		g := int(num-1) / b.ipg
 		if g >= len(b.groups) {
-			panic(fmt.Sprintf("ext4test: %d files do not fit in %d groups of %d inodes", len(files), len(b.groups), b.ipg))
+			panic(fmt.Sprintf("ext4test: %d files do not fit in %d groups of %d inodes", len(all), len(b.groups), b.ipg))
 		}
 		b.usedInodes[g] = max(b.usedInodes[g], int(num-1)%b.ipg+1)
-		b.writeInode(num, b.renderInode(num, &files[i]))
+		if all[i].Dir {
+			nums[all[i].Path] = num
+		}
 	}
+	for i := range all {
+		parent, name := splitPath(all[i].Path)
+		kids[parent] = append(kids[parent], dirChild{
+			name: []byte(name), inode: InodeNumber(i), ftype: childType(&all[i]),
+			deleted: all[i].Deleted, newBlock: all[i].NewBlock,
+		})
+	}
+	for i := range all {
+		if !all[i].Dir {
+			b.writeInode(InodeNumber(i), b.renderInode(InodeNumber(i), &all[i]))
+		}
+	}
+	dir := func(num uint32, f File, parentPath string) {
+		f.Data = b.dirData(num, nums[parentPath], &f, kids[f.Path])
+		b.writeInode(num, b.renderInode(num, &f))
+	}
+	for i := range all {
+		if all[i].Dir {
+			parent, _ := splitPath(all[i].Path)
+			dir(InodeNumber(i), all[i], parent)
+		}
+	}
+	dir(rootInode, File{Dir: true}, "")
 }
 
 // writeInode stores raw as inode num in its group's inode table.
@@ -167,6 +196,13 @@ func (b *builder) renderInode(num uint32, f *File) []byte {
 	default:
 		b.putBlockMap(raw[0x28:0x28+60], f, pieces)
 	}
+	if f.HTree {
+		flags |= flagIndex
+	}
+	if b.o.Encrypt && (f.Path == "/enc" || strings.HasPrefix(f.Path, "/enc/")) {
+		flags |= flagEncrypt
+	}
+	flags |= f.Flags
 	le32(raw, 0x20, flags)
 
 	extra := 0

@@ -133,6 +133,7 @@ func (f *FS) readNode(st string, blk uint64) ([]byte, error) {
 // extentWalker walks an extent tree in file order.
 type extentWalker struct {
 	f       *FS
+	in      *inode // the file the tree belongs to (for block checksums)
 	rl      *runList
 	visited map[uint64]struct{} // node blocks read so far: each is read at most once
 	entries int                 // entries examined so far
@@ -149,8 +150,29 @@ func (f *FS) extentRuns(in *inode, rl *runList) error {
 	if depth > maxExtentDepth {
 		return corrupt(st, in.offset+iBlock, "inode %d: extent tree depth %d exceeds %d", in.num, depth, maxExtentDepth)
 	}
-	w := &extentWalker{f: f, rl: rl, visited: map[uint64]struct{}{}}
+	w := &extentWalker{f: f, in: in, rl: rl, visited: map[uint64]struct{}{}}
 	return w.node(in.block[:], depth, in.offset+iBlock)
+}
+
+// checkBlockChecksum verifies the tail checksum of the extent block blk (buf)
+// when metadata_csum is on, as the kernel's ext4_extent_block_csum does: crc32c
+// over the block up to the tail (12 + 12*eh_max), seeded with the filesystem
+// seed folded with the inode number and generation; the tail is the le32 right
+// after the last possible entry. A mismatch is a warning only. A block with a
+// bad header is left to node, which reports it.
+func (w *extentWalker) checkBlockChecksum(buf []byte, blk uint64) {
+	if !w.f.sb.metadataCsum() || len(buf) < extentHeaderLen || binary.LittleEndian.Uint16(buf) != extentMagic {
+		return
+	}
+	tail := extentHeaderLen + int(binary.LittleEndian.Uint16(buf[4:]))*extentEntryLen
+	if tail+4 > len(buf) {
+		w.f.warn("extent block %d of inode %d: no room for the checksum tail (eh_max %d)", blk, w.in.num, binary.LittleEndian.Uint16(buf[4:]))
+		return
+	}
+	stored := binary.LittleEndian.Uint32(buf[tail:])
+	if want := rawCRC32C(w.f.inodeSeed(w.in), buf[:tail]); stored != want {
+		w.f.warn("extent block %d of inode %d: checksum mismatch (stored %#08x, computed %#08x)", blk, w.in.num, stored, want)
+	}
 }
 
 // node walks one extent node (buf holds the whole container) whose header must
@@ -198,6 +220,7 @@ func (w *extentWalker) node(buf []byte, wantDepth int, where int64) error {
 			if err != nil {
 				return err
 			}
+			w.checkBlockChecksum(cbuf, child)
 			if err := w.node(cbuf, depth-1, int64(child)*bs); err != nil {
 				return err
 			}
@@ -373,6 +396,12 @@ func (f *FS) Open(e filesys.Entry) (filesys.File, error) {
 	if err != nil {
 		return nil, err
 	}
+	return f.openInode(in)
+}
+
+// openInode opens the content of a regular file or symlink inode.
+func (f *FS) openInode(in *inode) (filesys.File, error) {
+	n := in.num
 	switch in.mode & modeTypeMask {
 	case modeReg, modeSymlink:
 	case modeDir:

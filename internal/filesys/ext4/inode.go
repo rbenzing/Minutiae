@@ -291,6 +291,17 @@ func (f *FS) inodeChecksumOK(n uint32, raw []byte, extraIsize int) bool {
 	return true
 }
 
+// inodeSeed is the checksum seed of the blocks that belong to inode in (extent
+// blocks, directory blocks): the filesystem seed folded with the little-endian
+// inode number and i_generation (the kernel's i_csum_seed).
+func (f *FS) inodeSeed(in *inode) uint32 {
+	var w [4]byte
+	binary.LittleEndian.PutUint32(w[:], in.num)
+	c := rawCRC32C(f.sb.csumSeed, w[:])
+	binary.LittleEndian.PutUint32(w[:], in.generation)
+	return rawCRC32C(c, w[:])
+}
+
 // toEntry converts the inode to a directory entry named name. raw is the
 // on-disk name when it differs from name (else nil). Size, mode and times come
 // from the inode; the caller sets Deleted for an unlinked directory entry.

@@ -59,3 +59,19 @@ func ToEntry(name string, raw []byte, in *Inode) filesys.Entry { return toEntry(
 
 // ParseXattrs parses an xattr entry table (see parseXattrs).
 var ParseXattrs = parseXattrs
+
+// Warn records a warning, as the reader does when it meets a problem.
+func (f *FS) Warn(format string, a ...any) { f.warn(format, a...) }
+
+// DirRuns returns the byte runs of directory e's data (holes have Offset -1),
+// capped as ReadDir caps them.
+func (f *FS) DirRuns(e filesys.Entry) ([]filesys.Run, error) {
+	in, err := f.dirInode(e)
+	if err != nil {
+		return nil, err
+	}
+	return f.dirRuns(in)
+}
+
+// RecLenFromDisk exposes the rec_len decoder.
+var RecLenFromDisk = recLenFromDisk

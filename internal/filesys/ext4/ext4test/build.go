@@ -56,6 +56,16 @@ type File struct {
 	Size         int64
 	Scatter      bool
 	ExtentLeaves int
+
+	// Directories. HTree makes a Dir an htree directory (an index root in block
+	// 0, the entries in leaf blocks; the hash values are placeholders). NewBlock
+	// starts a new directory block before this entry in its parent (linear
+	// parents only). Flags are extra i_flags bits OR-ed into the inode (for
+	// example 0x40000000 casefold on a directory). A Dir with Inline stores its
+	// entries in the inode (Options.InlineData).
+	HTree    bool
+	NewBlock bool
+	Flags    uint32
 }
 
 // Piece is file content placed at logical block Block. With Uninit the extent
@@ -151,8 +161,9 @@ type builder struct {
 
 // Build returns an ext2/3/4 image for the options. It panics on invalid
 // options (it is a test helper). Each file gets an inode (see InodeNumber), its
-// data (extents, block pointers, inline data or a fast symlink target) and the
-// root directory inode exists; directory entries are added by a later task.
+// data (extents, block pointers, inline data or a fast symlink target) and an
+// entry in its parent directory; parents the list does not mention are created
+// implicitly, and the root directory is inode 2.
 func Build(o Options, files []File) []byte {
 	b := newBuilder(o)
 	b.layout()
