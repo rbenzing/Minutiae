@@ -71,6 +71,9 @@ func (s *Session) Extract(ctx context.Context, o ExtractOptions) (Summary, error
 	}
 	return runAnalysis(s.Case, s.Parent.Source.DeviceID, "extract", details, func(a *analysis) error {
 		x.a = a
+		if err := a.watchFS(fsys); err != nil {
+			return err
+		}
 		for _, t := range targets {
 			if err := x.target(t.p, t.e); err != nil {
 				return err
@@ -168,6 +171,13 @@ func fatal(ctx context.Context, err error) bool {
 }
 
 func (x *extractor) file(p string, e filesys.Entry) error {
+	if err := x.fileWork(p, e); err != nil {
+		return err
+	}
+	return x.a.syncFS() // what reading this file made the filesystem notice
+}
+
+func (x *extractor) fileWork(p string, e filesys.Entry) error {
 	key := doneKey{p, e.ID}
 	if x.done[key] {
 		return x.a.warn(p, "already extracted in this analysis (overlapping paths)")

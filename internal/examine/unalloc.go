@@ -50,6 +50,11 @@ func (s *Session) ExportUnallocated(ctx context.Context, o UnallocOptions) (Summ
 	details["partition"] = part.Index
 
 	return runAnalysis(s.Case, deviceID, "unalloc", details, func(a *analysis) error {
+		if fsys != nil {
+			if err := a.watchFS(fsys); err != nil {
+				return err
+			}
+		}
 		runs, err := s.unallocatedRuns(a, fsys, part, o.Volume)
 		if err != nil {
 			return err
