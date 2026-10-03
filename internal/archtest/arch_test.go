@@ -28,6 +28,8 @@ var allowed = map[string][]string{
 	"internal/filesys/detect":        {"internal/filesys", "internal/filesys/ext4"},
 	"internal/filesys/ext4":          {"internal/filesys"},
 	"internal/filesys/ext4/ext4test": {"internal/filesys", "internal/filesys/ext4"},
+	"internal/filesys/fat":           {"internal/filesys"},
+	"internal/filesys/fat/fattest":   {"internal/filesys", "internal/filesys/fat"},
 	"internal/evidence":              {"internal/version"},
 	"internal/examine":               {"internal/evidence", "internal/version", "internal/device", "internal/image", "internal/volume", "internal/filesys", "internal/filesys/detect"},
 	"internal/device":                {"internal/evidence", "internal/version"},
