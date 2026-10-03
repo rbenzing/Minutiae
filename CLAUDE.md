@@ -61,6 +61,7 @@ right after open. Treat a serial open as able to reset DTR/RTS-wired targets.
 - Use `git` only. Never `gh` (not installed). For GitHub use the web UI or REST API via `curl`.
 - Never commit `cases/`, real evidence, or device dumps. `docs/superpowers/` stays local.
 - Commit after each green task.
+- Never name competing forensic tools or their vendors anywhere: docs, code, comments, tests, commit messages, specs or plans (not even in a deny-list). Describe capabilities generically ("commercial forensic suites"). Review every diff for this before committing.
 
 ## 8. Release build
 ```bash
