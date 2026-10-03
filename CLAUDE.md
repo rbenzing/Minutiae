@@ -28,6 +28,7 @@ current code. Auto-fix formatting with `go tool golangci-lint fmt`.
 | Invariant | Test |
 |---|---|
 | Bytes from a device reach disk only via `evidence.Case.NewArtifact`/`Capture` (review rule; any stray file under `artifacts/` fails `case verify`) | `TestVerifyDetectsUnmanifestedFile` |
+| Only exception: the iOS backup working dir `<case>/staging/<acq>/` (the device moves/overwrites files mid-backup); it is audited (`acquire.staging`), promoted file-by-file via `Capture`, and deleted only after full promotion | `TestBackupPromotesStagedFiles`, `TestBackupDeviceErrorStillPromotes` |
 | Artifacts are never overwritten (`O_EXCL`) | `TestNewArtifactRefusesOverwrite` |
 | Every artifact is hashed (SHA-256 + MD5) and in manifest + artifacts.db | `TestNewArtifactHashesAndRecords` |
 | Partial/failed acquisitions are kept and flagged `incomplete` | `TestAbortKeepsPartialFlagged`, `TestPullToCaseCancelledKeepsPartial` |
@@ -68,3 +69,5 @@ go build -ldflags "-X github.com/rbenzing/minutiae/internal/version.Version=v0.1
 
 ## 9. Known limitations
 - Android sync v1: `LIST` of an unreadable directory returns `DONE` with no entries (indistinguishable from an empty directory, so no `acquire.warning` is possible), and `LIST`/`STAT` report sizes and mtimes as 32-bit values (sizes of files ≥ 4 GiB are truncated in listings and in `source.remote_size`; `RECV` still transfers every byte).
+- Android hostile device: a malicious or faulty device can stream an unbounded number of `LIST` entries, unbounded directory depth, and arbitrarily large files (`RECV` size is inherent to evidence, so it is not capped). The examiner can stop an acquisition with Ctrl-C: partial artifacts are kept and flagged incomplete.
+- iOS backup: the sync-lock / `notification_proxy` step is not performed, and `Info.plist` is not generated; the lockdown values are saved as `device/lockdown.json`.
