@@ -301,3 +301,27 @@ func TestRecvRejectsHugeObjectTable(t *testing.T) {
 		t.Fatalf("accepted: %v", msg)
 	}
 }
+
+func TestBackupFileInterruptedMidTransferIsIncomplete(t *testing.T) {
+	dir, res, err := runBackup(t, func(d *mb2test.Device) error {
+		if err := d.Handshake(); err != nil {
+			return err
+		}
+		if _, err := d.ExpectBackupRequest(); err != nil {
+			return err
+		}
+		if code, err := d.UploadFiles(mb2test.Upload{DeviceName: "/a", Name: "U1/whole", Data: []byte("whole")}); err != nil || code != 0 {
+			return fmt.Errorf("upload: %d %v", code, err)
+		}
+		return d.UploadPartial("/b", "U1/sub/../partial", []byte("part"))
+	})
+	if err == nil {
+		t.Fatal("interrupted transfer reported success")
+	}
+	if len(res.Incomplete) != 1 || res.Incomplete[0] != "U1/partial" {
+		t.Fatalf("incomplete = %q", res.Incomplete)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "U1", "partial")); string(b) != "part" {
+		t.Fatalf("partial bytes = %q", b)
+	}
+}

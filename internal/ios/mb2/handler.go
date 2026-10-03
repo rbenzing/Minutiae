@@ -186,6 +186,10 @@ func (h *handler) receiveFiles() error {
 		w := io.Discard
 		var f *os.File
 		dst, lerr := h.local(fname)
+		rel := ""
+		if lerr == nil {
+			rel, lerr = filepath.Rel(h.o.Dir, dst)
+		}
 		if lerr == nil {
 			lerr = os.MkdirAll(filepath.Dir(dst), 0o750)
 		}
@@ -200,6 +204,9 @@ func (h *handler) receiveFiles() error {
 		ended, err := h.receiveBlocks(r, w, fname)
 		if f != nil {
 			err = errors.Join(err, f.Close())
+			if err != nil { // the file holds only what arrived before the failure
+				h.res.Incomplete = append(h.res.Incomplete, filepath.ToSlash(rel))
+			}
 		}
 		if err != nil {
 			return err

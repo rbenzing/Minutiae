@@ -157,6 +157,22 @@ func (d *Device) UploadFiles(files ...Upload) (int64, error) {
 	return code, err
 }
 
+// UploadPartial starts an upload, sends the first file's name and one data
+// block, and stops without an end marker, as a device that fails mid-file
+// would. The caller then closes the connection.
+func (d *Device) UploadPartial(deviceName, name string, data []byte) error {
+	if err := d.Send("DLMessageUploadFiles", map[string]any{}, 0.0); err != nil {
+		return err
+	}
+	if err := mb2.WriteName(d.conn, deviceName); err != nil {
+		return err
+	}
+	if err := mb2.WriteName(d.conn, name); err != nil {
+		return err
+	}
+	return mb2.WriteBlock(d.conn, mb2.CodeFileData, data)
+}
+
 // DownloadFiles asks the host for files; missing ones are absent from the map.
 func (d *Device) DownloadFiles(paths ...string) (map[string][]byte, int64, error) {
 	list := make([]any, len(paths))

@@ -242,3 +242,51 @@ func TestBackupUnfinishedSnapshotIsError(t *testing.T) {
 		})
 	}
 }
+
+func TestBackupInterruptedFileIsFlaggedIncomplete(t *testing.T) {
+	b := fakeIPhone()
+	b.Script = func(d *mb2test.Device) error {
+		if err := d.Handshake(); err != nil {
+			return err
+		}
+		if _, err := d.ExpectBackupRequest(); err != nil {
+			return err
+		}
+		if _, err := d.UploadFiles(mb2test.Upload{DeviceName: "/a", Name: "U1/Info.plist", Data: []byte("info")}); err != nil {
+			return err
+		}
+		return d.UploadPartial("/b", "U1/Manifest.db", []byte("sql")) // then the device disconnects
+	}
+	c := newCase(t)
+	err := first(t, b).(device.LogicalAcquirer).AcquireLogical(context.Background(), c, device.LogicalOptions{}, nil)
+	if err == nil {
+		t.Fatal("interrupted backup reported success")
+	}
+	if serr := <-b.ScriptErr; serr != nil {
+		t.Fatalf("script: %v", serr)
+	}
+	m, _ := c.Manifest()
+	got := map[string]evidence.ManifestRecord{}
+	for _, r := range m {
+		got[r.Source.RemotePath] = r
+	}
+	if r, ok := got["U1/Manifest.db"]; !ok || !r.Incomplete || r.Size != 3 || !strings.Contains(r.Error, "transfer interrupted") {
+		t.Fatalf("interrupted file record = %+v (present %t)", r, ok)
+	}
+	if r := got["U1/Info.plist"]; r.Incomplete {
+		t.Fatalf("complete file flagged incomplete: %+v", r)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(c.Dir, "staging")); len(entries) != 0 {
+		t.Errorf("staging not cleaned: %v", entries)
+	}
+	audit, _ := os.ReadFile(filepath.Join(c.Dir, "audit.jsonl"))
+	if !strings.Contains(string(audit), `"action":"acquire.error"`) {
+		t.Fatalf("acquire.error not audited:\n%s", audit)
+	}
+	if !strings.Contains(string(audit), `"incomplete_files":1`) {
+		t.Fatalf("incomplete_files not audited:\n%s", audit)
+	}
+	if rep, err := c.Verify(); err != nil || !rep.OK() {
+		t.Fatalf("verify: %+v %v", rep, err)
+	}
+}

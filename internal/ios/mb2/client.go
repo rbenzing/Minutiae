@@ -32,6 +32,9 @@ type Result struct {
 	BytesReceived int64
 	LocalErrors   []string // files the host could not store
 	RemoteErrors  []string // per-file errors reported by the device
+	// Incomplete lists files (slash-separated, relative to Dir) whose transfer
+	// failed part-way; they hold only the bytes received before the failure.
+	Incomplete []string
 }
 
 // Client is a mobilebackup2 session on an already-started service connection.

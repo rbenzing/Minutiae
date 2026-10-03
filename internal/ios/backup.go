@@ -51,10 +51,11 @@ func (d *Device) AcquireLogical(ctx context.Context, c *evidence.Case, _ device.
 		if runErr != nil {
 			snapErr = nil // the transport failure is the primary error
 		}
-		promoted, promoteErr := promote(c, d.udid, acq, staging)
+		promoted, promoteErr := promote(c, d.udid, acq, staging, res.Incomplete)
 		_, statsErr := c.Audit.Append("acquire.stats", d.udid, map[string]any{
-			"acquisition_id": acq, "files": promoted, "bytes_received": res.BytesReceived,
-			"local_errors": res.LocalErrors, "remote_errors": res.RemoteErrors,
+			"acquisition_id": acq, "files": promoted.files, "incomplete_files": promoted.partial,
+			"bytes_received": res.BytesReceived,
+			"local_errors":   res.LocalErrors, "remote_errors": res.RemoteErrors,
 			"snapshot_state": state,
 		})
 		return errors.Join(runErr, snapErr, promoteErr, statsErr)
@@ -136,11 +137,27 @@ func readLimited(p string, limit int64) ([]byte, error) {
 	return b, err
 }
 
+// errTransferInterrupted marks a staged file whose transfer failed part-way.
+var errTransferInterrupted = errors.New("transfer interrupted")
+
+// promoteStats counts the artifacts promote created; partial ones (transfer
+// interrupted, flagged incomplete) are included in files.
+type promoteStats struct{ files, partial int }
+
 // promote captures every staged file as an artifact, then removes staging.
-// Staging is kept if any file could not be promoted, so nothing is lost.
-func promote(c *evidence.Case, udid, acq, staging string) (int, error) {
+// Files named in interrupted (slash-separated, relative to staging) were cut
+// off mid-transfer: their bytes are kept as artifacts flagged incomplete,
+// which is not a promotion failure. Staging is kept if any file could not be
+// promoted, so nothing is lost.
+func promote(c *evidence.Case, udid, acq, staging string, interrupted []string) (promoteStats, error) {
+	var cut []fs.FileInfo // matched by identity, so case-folding filesystems agree
+	for _, rel := range interrupted {
+		if fi, err := os.Stat(filepath.Join(staging, filepath.FromSlash(rel))); err == nil {
+			cut = append(cut, fi)
+		}
+	}
 	var errs []error
-	count := 0
+	var st promoteStats
 	walkErr := filepath.WalkDir(staging, func(p string, de fs.DirEntry, err error) error {
 		if err != nil || de.IsDir() {
 			return err
@@ -151,24 +168,62 @@ func promote(c *evidence.Case, udid, acq, staging string) (int, error) {
 		}
 		rel = filepath.ToSlash(rel)
 		src := evidence.Source{Kind: "backup", DeviceID: udid, RemotePath: rel}
-		_, cerr := c.Capture(udid, acq, "backup/"+rel, src, func(w io.Writer) error {
-			f, err := os.Open(p)
-			if err != nil {
-				return err
+		var perr error
+		if isInterrupted(p, cut) {
+			if perr = capturePartial(c, udid, acq, rel, p, src); perr == nil {
+				st.partial++
 			}
-			defer func() { _ = f.Close() }()
-			_, err = io.Copy(w, f)
-			return err
-		})
-		if cerr != nil {
-			errs = append(errs, cerr)
 		} else {
-			count++
+			_, perr = c.Capture(udid, acq, "backup/"+rel, src, func(w io.Writer) error { return copyFrom(w, p) })
+		}
+		if perr != nil {
+			errs = append(errs, perr)
+		} else {
+			st.files++
 		}
 		return nil
 	})
 	if err := errors.Join(append(errs, walkErr)...); err != nil {
-		return count, err
+		return st, err
 	}
-	return count, os.RemoveAll(staging)
+	return st, os.RemoveAll(staging)
+}
+
+func isInterrupted(p string, cut []fs.FileInfo) bool {
+	if len(cut) == 0 {
+		return false
+	}
+	fi, err := os.Stat(p)
+	if err != nil {
+		return false
+	}
+	for _, c := range cut {
+		if os.SameFile(fi, c) {
+			return true
+		}
+	}
+	return false
+}
+
+// capturePartial stores the bytes of an interrupted file as an artifact
+// aborted with errTransferInterrupted, so it is flagged incomplete. The
+// error is non-nil only if the staged bytes could not all be stored.
+func capturePartial(c *evidence.Case, udid, acq, rel, p string, src evidence.Source) error {
+	w, err := c.NewArtifact(udid, acq, "backup/"+rel, src)
+	if err != nil {
+		return err
+	}
+	copyErr := copyFrom(w, p)
+	_, abortErr := w.Abort(errors.Join(errTransferInterrupted, copyErr))
+	return errors.Join(copyErr, abortErr)
+}
+
+func copyFrom(w io.Writer, p string) error {
+	f, err := os.Open(p)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	_, err = io.Copy(w, f)
+	return err
 }
