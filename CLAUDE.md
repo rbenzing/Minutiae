@@ -31,7 +31,7 @@ current code. Auto-fix formatting with `go tool golangci-lint fmt`.
 | Only exception: the iOS backup working dir `<case>/staging/<acq>/` (the device moves/overwrites files mid-backup); it is audited (`acquire.staging`), promoted file-by-file via `Capture`, and deleted only after full promotion; a leftover staging directory is a `case verify` problem | `TestBackupPromotesStagedFiles`, `TestBackupDeviceErrorStillPromotes`, `TestVerifyFlagsLeftoverStaging` |
 | Artifacts are never overwritten (`O_EXCL`) | `TestNewArtifactRefusesOverwrite` |
 | Every artifact is hashed (SHA-256 + MD5) and in manifest + artifacts.db | `TestNewArtifactHashesAndRecords` |
-| Partial/failed acquisitions are kept and flagged `incomplete` | `TestAbortKeepsPartialFlagged`, `TestPullToCaseCancelledKeepsPartial` |
+| Partial/failed acquisitions are kept and flagged `incomplete` | `TestAbortKeepsPartialFlagged`, `TestPullToCaseCancelledKeepsPartial`, `TestBackupInterruptedFileIsFlaggedIncomplete`, `TestPullShortReadIsFlaggedIncomplete` |
 | Audit log is append-only and hash-chained; tampering is detected | `TestAuditVerifyDetectsEdit`, `TestAuditVerifyDetectsDeletedLine`, `TestAuditVerifyDetectsReorder` |
 | Device writes need explicit permission and are audited (size + sha256) before the write; the bytes sent are hashed and must match | `TestPushAuditedRequiresPermission`, `TestPushAuditedAuditsBeforeWrite`, `TestPushAuditedDetectsShortSend` |
 | `case verify` detects altered/missing/extra evidence and exits 4 | `TestVerifyDetectsModifiedArtifact`, `TestCaseVerifyExitCodeOnTamper` |
@@ -64,10 +64,22 @@ right after open. Treat a serial open as able to reset DTR/RTS-wired targets.
 
 ## 8. Release build
 ```bash
-go build -ldflags "-X github.com/rbenzing/minutiae/internal/version.Version=v0.1.0 -X github.com/rbenzing/minutiae/internal/version.Commit=$(git rev-parse --short HEAD)" -o bin/minutiae.exe ./cmd/minutiae
+go build -ldflags "-X github.com/rbenzing/minutiae/internal/version.Version=v1.0.0 -X github.com/rbenzing/minutiae/internal/version.Commit=$(git rev-parse --short HEAD)" -o bin/minutiae.exe ./cmd/minutiae
 ```
 
 ## 9. Known limitations
 - Android sync v1: `LIST` of an unreadable directory returns `DONE` with no entries (indistinguishable from an empty directory, so no `acquire.warning` is possible), and `LIST`/`STAT` report sizes and mtimes as 32-bit values (sizes of files ≥ 4 GiB are truncated in listings and in `source.remote_size`; `RECV` still transfers every byte).
 - Android hostile device: a malicious or faulty device can stream an unbounded number of `LIST` entries, unbounded directory depth, and arbitrarily large files (`RECV` size is inherent to evidence, so it is not capped). The examiner can stop an acquisition with Ctrl-C: partial artifacts are kept and flagged incomplete.
 - iOS backup: the sync-lock / `notification_proxy` step is not performed, and `Info.plist` is not generated; the lockdown values are saved as `device/lockdown.json`.
+- iOS backup transfer: a `0x0b` (remote error) block that follows file data is treated as the normal end of that file, mirroring libimobiledevice, so a device-side read failure in the middle of a file can look like a complete file. Files cut off by a transport failure or cancellation are kept and flagged `incomplete`.
+- iOS encrypted backups (a backup password set on the device) are captured as-is; decryption belongs to roadmap sub-project 10.
+- iOS AFC (`ios ls`/`ios pull`) parsing robustness depends on go-ios: its panics are converted to errors and a pull whose byte count differs from the AFC-reported size is flagged `incomplete`, but malformed AFC responses are otherwise not validated by Minutiae.
+- Hardware: as of v1.0.0 the device backends (ADB, iOS, serial) have NOT been validated on real hardware, only against fakes. Before relying on them in casework, run the hardware acceptance steps with authorized/trusted devices attached and confirm `case verify` reports OK:
+  ```bash
+  go test -tags hardware ./... -v
+  ./bin/minutiae.exe case new --dir ./cases --id HW1 --examiner "<name>"
+  ./bin/minutiae.exe android logical --serial <s> --case ./cases/HW1
+  ./bin/minutiae.exe ios backup --udid <u> --case ./cases/HW1
+  ./bin/minutiae.exe serial console --port <p> --baud <n> --case ./cases/HW1
+  ./bin/minutiae.exe case verify --case ./cases/HW1
+  ```
