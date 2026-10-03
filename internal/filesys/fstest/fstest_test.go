@@ -524,3 +524,78 @@ func TestMTFSRunsCoverExactlySize(t *testing.T) {
 		t.Error("odd content differs")
 	}
 }
+
+func TestMTFSInlineContent(t *testing.T) {
+	small := []byte("stored in the table, not in the data area")
+	plain := pattern(2*bs, 9)
+	spec := fstest.BuildSpec{FreeBlocks: 2, Nodes: []fstest.Node{
+		{Path: "/inline.txt", Data: small, Inline: true},
+		{Path: "/plain.bin", Data: plain},
+	}}
+	img := fstest.Build(spec)
+	fsys := open(t, img)
+
+	e, f := lookupOpen(t, fsys, "/inline.txt")
+	if e.Type != filesys.TypeFile || e.Size != int64(len(small)) || f.Size() != int64(len(small)) {
+		t.Fatalf("inline entry = %+v, size %d", e, f.Size())
+	}
+	if got := readAll(t, f); !bytes.Equal(got, small) {
+		t.Errorf("inline content = %q", got)
+	}
+	if runs := f.Runs(); runs != nil {
+		t.Errorf("inline file Runs() = %+v, want nil", runs)
+	}
+	part := make([]byte, 10)
+	if n, err := f.ReadAt(part, 5); n != 10 || err != nil || !bytes.Equal(part, small[5:15]) {
+		t.Errorf("ReadAt = %d, %v, %q", n, err, part)
+	}
+	tail := make([]byte, 20)
+	if n, err := f.ReadAt(tail, int64(len(small))-4); n != 4 || !errors.Is(err, io.EOF) || !bytes.Equal(tail[:4], small[len(small)-4:]) {
+		t.Errorf("tail ReadAt = %d, %v", n, err)
+	}
+
+	// Inline content takes no data-area blocks: the other file's blocks and
+	// the free blocks are the only data blocks, and the layout matches a
+	// spec without the inline file.
+	ref := fstest.Build(fstest.BuildSpec{FreeBlocks: 2, Nodes: []fstest.Node{{Path: "/plain.bin", Data: plain}}})
+	_, pf := lookupOpen(t, fsys, "/plain.bin")
+	if got := readAll(t, pf); !bytes.Equal(got, plain) {
+		t.Error("plain.bin content differs")
+	}
+	un, err := fsys.Unallocated()
+	if err != nil || len(un) != 1 || un[0].Length != 2*bs {
+		t.Errorf("Unallocated = %+v, %v; want only the 2 free blocks", un, err)
+	}
+	if len(img)-len(ref) > 1024 {
+		t.Errorf("inline image is %d bytes larger than the reference; content should only add table bytes", len(img)-len(ref))
+	}
+
+	// A non-inline file whose size exceeds its (absent) runs is still corrupt.
+	badTbl := `{"block_size":512,"entries":[{"id":"1","parent_id":"","name":"","type":"dir"},{"id":"2","parent_id":"1","name":"f","type":"file","size":5}]}`
+	bad := open(t, fstest.Encode([]byte(badTbl), nil))
+	fe, err := bad.Lookup("/f")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bad.Open(fe); !errors.Is(err, filesys.ErrCorrupt) {
+		t.Errorf("Open(size without runs or inline) err = %v, want ErrCorrupt", err)
+	}
+}
+
+func TestBuildPanicsOnBadInline(t *testing.T) {
+	for name, n := range map[string]fstest.Node{
+		"inline dir":       {Path: "/a", Dir: true, Inline: true},
+		"inline link":      {Path: "/a", Link: "x", Inline: true},
+		"inline fragments": {Path: "/a", Data: pattern(2*bs, 1), Inline: true, Fragments: 2},
+		"inline hole":      {Path: "/a", Data: pattern(2*bs, 1), Inline: true, Hole: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Error("Build did not panic")
+				}
+			}()
+			fstest.Build(fstest.BuildSpec{Nodes: []fstest.Node{n}})
+		})
+	}
+}

@@ -21,8 +21,16 @@ func FuzzRead(f *testing.F) {
 		{StartLBA: 6, Sectors: 4, TypeGUID: guidEFI, GUID: guidB, Name: "b"},
 	}))
 	f.Add(make([]byte, 1024))
+	// Seed with the first and last 64 KiB of each fixture, not the whole
+	// multi-MiB images: the partition tables sit at those ends and the fuzzer
+	// stays fast. TestVolumeFixturesMatchOracle keeps checking the full images.
+	const seedEdge = 64 << 10
 	for _, path := range fixtureImages(f) {
-		f.Add(gunzipFixture(f, path))
+		img := gunzipFixture(f, path)
+		f.Add(img[:min(len(img), seedEdge)])
+		if len(img) > seedEdge {
+			f.Add(img[len(img)-min(len(img), seedEdge):])
+		}
 	}
 	f.Fuzz(func(t *testing.T, b []byte) {
 		size := int64(len(b))

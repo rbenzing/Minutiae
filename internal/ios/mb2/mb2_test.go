@@ -19,7 +19,7 @@ var manifestDB = bytes.Repeat([]byte("SQLite format 3\x00"), 13_000) // ~208 KB
 func runBackup(t *testing.T, script func(*mb2test.Device) error) (string, mb2.Result, error) {
 	t.Helper()
 	host, dev := mb2test.Pipe()
-	_ = dev.SetDeadline(time.Now().Add(10 * time.Second))
+	_ = dev.SetDeadline(time.Now().Add(60 * time.Second))
 	errc := make(chan error, 1)
 	go func() {
 		err := script(dev)

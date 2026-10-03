@@ -51,6 +51,10 @@ type Node struct {
 	// into N block-aligned runs of near-equal size separated by one free
 	// block each; the content must have at least N blocks.
 	Fragments int
+	// Inline stores the content (Data) inline in the table, as the small-file
+	// optimisation of real filesystems does: no data blocks, no runs, and
+	// File.Runs returns nil. Only for regular files without Fragments or Hole.
+	Inline bool
 	// Hole makes the file's second block a sparse hole: a run with Offset -1
 	// that takes no storage and reads as zeros whatever Data holds there.
 	// The content must have at least two blocks.
@@ -169,6 +173,8 @@ func normalize(in []Node) map[string]Node {
 			panic(fmt.Sprintf("fstest: duplicate node %q", p))
 		}
 		switch {
+		case n.Inline && (n.Dir || n.Link != "" || n.Fragments != 0 || n.Hole):
+			panic(fmt.Sprintf("fstest: inline node %q must be a regular file without Fragments or Hole", p))
 		case n.Dir && (n.Data != nil || n.Link != "" || n.Fragments != 0 || n.Hole):
 			panic(fmt.Sprintf("fstest: directory %q cannot have Data, Link, Fragments or Hole", p))
 		case n.Link != "" && (n.Data != nil || n.Fragments != 0 || n.Hole):
@@ -218,6 +224,9 @@ func baseRecord(p string, n Node, ids map[string]string) record {
 		}
 	default:
 		rec.Type, rec.Size = "file", int64(len(n.Data))
+		if n.Inline {
+			rec.Inline = n.Data
+		}
 		if n.Mode == 0 {
 			perm = 0o644
 		}
@@ -230,7 +239,7 @@ func baseRecord(p string, n Node, ids map[string]string) record {
 // returns the first block after it.
 func layout(b *built, bs, next int64) int64 {
 	n := b.node
-	if n.Dir || n.Link != "" {
+	if n.Dir || n.Link != "" || n.Inline {
 		return next
 	}
 	nb := (int64(len(n.Data)) + bs - 1) / bs

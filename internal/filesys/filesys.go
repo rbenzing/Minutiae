@@ -84,9 +84,14 @@ func (t EntryType) String() string {
 
 // Entry is one directory entry.
 type Entry struct {
-	Name       string // display name; undecodable/encrypted names use "~enc~" + base64url(RawName)
-	RawName    []byte // on-disk name bytes when they differ from Name
-	ID         string // stable fs-specific id: "inode:12", "nid:5", "oid:0x402", "cnid:21", "dirent:<cluster>:<offset>"
+	Name    string // display name; undecodable/encrypted names use "~enc~" + base64url(RawName)
+	RawName []byte // on-disk name bytes when they differ from Name
+	// ID is a stable fs-specific id: "inode:12", "nid:5", "oid:0x402",
+	// "cnid:21", "dirent:<cluster>:<offset>". For a DIRECTORY it must identify
+	// the directory itself (its first cluster, inode, ...), not the directory
+	// entry that names it, so that Walk detects a cross-linked or
+	// self-referencing directory as a cycle on its first revisit.
+	ID         string
 	Type       EntryType
 	Size       int64
 	Mode       uint32 // POSIX mode bits where the fs has them

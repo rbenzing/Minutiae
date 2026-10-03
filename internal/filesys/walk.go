@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -14,6 +15,12 @@ var SkipDir = errors.New("skip directory") //nolint:revive,staticcheck // name m
 
 // MaxWalkDepth caps the directory nesting Walk will follow.
 const MaxWalkDepth = 4096
+
+// MaxWalkPath caps the length in bytes of the slash path Walk builds for an
+// entry. Names are bounded individually, so without it a deep chain of long
+// names makes every path (and the memory held by the recursion) grow without
+// limit.
+const MaxWalkPath = 32 << 10
 
 // Walk visits dir's subtree depth-first in pre-order, with the entries of
 // each directory sorted by Name (then ID). dirPath is the slash path of dir
@@ -28,12 +35,19 @@ const MaxWalkDepth = 4096
 // called a second time for that directory with the error. A non-nil error
 // from fn other than SkipDir stops the walk and is returned.
 //
-// Directory Entry.ID values must be unique within the filesystem. IDs are
+// Directory Entry.ID values must identify the directory itself (its first
+// cluster, inode, node id ...), not the directory entry that names it, and
+// must be unique within the filesystem: two entries that reach the same
+// directory (a hard link, a cross-linked or self-referencing directory) must
+// carry the same ID, or the loop is only caught by the depth cap. IDs are
 // tracked across the whole walk, so a directory reachable from two parents (a
 // hard-linked directory, a loop) is reported on its second appearance as a
-// cycle. A cycle, or nesting deeper than MaxWalkDepth, is reported to fn with
-// a *CorruptError (errors.Is ErrCorrupt) instead of being followed, so a
-// hostile filesystem cannot make Walk loop.
+// cycle. A cycle, nesting deeper than MaxWalkDepth, or a path longer than
+// MaxWalkPath is reported to fn with a *CorruptError (errors.Is ErrCorrupt)
+// instead of being followed, so a hostile filesystem cannot make Walk loop or
+// grow without bound. For such an entry Walk calls fn(path, entry, err) once
+// with the non-nil error and never fn(path, entry, nil); the path passed for a
+// MaxWalkPath violation is truncated to MaxWalkPath bytes.
 func Walk(fsys FileSystem, dir Entry, dirPath string, fn func(path string, e Entry, err error) error) error {
 	w := &walker{fsys: fsys, fn: fn, seen: map[string]bool{dir.ID: true}}
 	return w.walk(dir, dirPath, 0)
@@ -62,6 +76,19 @@ func (w *walker) walk(dir Entry, dirPath string, depth int) error {
 	})
 	base := strings.TrimSuffix(dirPath, "/") + "/"
 	for _, k := range kids {
+		if len(base)+len(k.Name) > MaxWalkPath {
+			// Report it without building the oversized path; the callback gets
+			// a bounded, truncated one.
+			p := truncatePath(base + k.Name[:min(len(k.Name), 256)])
+			bad := &CorruptError{
+				Structure: "directory tree", Offset: -1,
+				Reason: fmt.Sprintf("path longer than %d bytes, ending %s", MaxWalkPath, strconv.Quote(p[max(0, len(p)-128):])),
+			}
+			if err := w.fn(p, k, bad); err != nil && !errors.Is(err, SkipDir) {
+				return err
+			}
+			continue
+		}
 		p := base + k.Name
 		recurse := k.Type == TypeDir && !k.Deleted
 		if recurse {
@@ -101,4 +128,12 @@ func (w *walker) walk(dir Entry, dirPath string, depth int) error {
 		}
 	}
 	return nil
+}
+
+// truncatePath bounds a path that is only being reported, to MaxWalkPath bytes.
+func truncatePath(p string) string {
+	if len(p) > MaxWalkPath {
+		return p[:MaxWalkPath]
+	}
+	return p
 }

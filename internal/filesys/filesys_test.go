@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -486,5 +487,102 @@ func TestCachedReaderClampsHostileParameters(t *testing.T) {
 		if n, err := cached.ReadAt(buf, 100); n != 700 || err != nil || !bytes.Equal(buf, src[100:800]) {
 			t.Errorf("params %v: ReadAt = %d, %v", p, n, err)
 		}
+	}
+}
+
+// zeroSource is a ReaderAt of size zero bytes that never allocates.
+type zeroSource struct {
+	size  int64
+	calls atomic.Int64
+}
+
+func (z *zeroSource) ReadAt(p []byte, off int64) (int, error) {
+	z.calls.Add(1)
+	if off >= z.size {
+		return 0, io.EOF
+	}
+	n := int(min(int64(len(p)), z.size-off))
+	clear(p[:n])
+	if n < len(p) {
+		return n, io.EOF
+	}
+	return n, nil
+}
+
+func TestCachedReaderCapsTotalBytes(t *testing.T) {
+	const mib = 1 << 20
+	src := &zeroSource{size: 300 * mib}
+	// 4096 blocks of 1 MiB would be 4 GiB; the total is capped at 64 MiB.
+	cached := filesys.NewCachedReader(src, mib, filesys.MaxCacheCapacity)
+	buf := make([]byte, 1)
+	for i := range 100 {
+		if _, err := cached.ReadAt(buf, int64(i)*mib); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := src.calls.Load()
+	if _, err := cached.ReadAt(buf, 99*mib); err != nil || src.calls.Load() != before {
+		t.Errorf("most recent block should be cached (err %v, calls %d -> %d)", err, before, src.calls.Load())
+	}
+	if _, err := cached.ReadAt(buf, 0); err != nil || src.calls.Load() != before+1 {
+		t.Errorf("block 0 should have been evicted by the 64 MiB cap (err %v, calls %d -> %d)", err, before, src.calls.Load())
+	}
+}
+
+func TestCachedReaderEmptyBlocksReuseOneBuffer(t *testing.T) {
+	const mib = 1 << 20
+	src := &zeroSource{size: 0}
+	cached := filesys.NewCachedReader(src, mib, 64)
+	buf := make([]byte, 1)
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	for i := range 200 {
+		if n, err := cached.ReadAt(buf, int64(i)*mib); n != 0 || !errors.Is(err, io.EOF) {
+			t.Fatalf("ReadAt = %d, %v; want 0, EOF", n, err)
+		}
+	}
+	runtime.ReadMemStats(&after)
+	if grew := after.TotalAlloc - before.TotalAlloc; grew > 8*mib {
+		t.Errorf("200 empty 1 MiB blocks allocated %d MiB; want one reused buffer", grew/mib)
+	}
+}
+
+func TestWalkPathCap(t *testing.T) {
+	// 4096 nested directories with 255-byte names: the full path would reach
+	// about 1 MiB. Walk must stop at MaxWalkPath instead of building it.
+	name := strings.Repeat("n", 255)
+	var sb strings.Builder
+	sb.WriteString(`{"block_size":512,"entries":[{"id":"1","parent_id":"","name":"","type":"dir"}`)
+	for i := 2; i < filesys.MaxWalkDepth+2; i++ {
+		fmt.Fprintf(&sb, `,{"id":"%d","parent_id":"%d","name":%q,"type":"dir"}`, i, i-1, name)
+	}
+	sb.WriteString(`]}`)
+	img := fstest.Encode([]byte(sb.String()), nil)
+	fsys, err := fstest.Open(bytes.NewReader(img), int64(len(img)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	got := walkAll(t, fsys, nil)
+	runtime.ReadMemStats(&after)
+	if len(got) == 0 || len(got) >= filesys.MaxWalkDepth {
+		t.Fatalf("visited %d entries; want a walk stopped by the path cap well before depth %d", len(got), filesys.MaxWalkDepth)
+	}
+	last := got[len(got)-1]
+	var ce *filesys.CorruptError
+	if !errors.As(last.err, &ce) || !errors.Is(last.err, filesys.ErrCorrupt) || !strings.Contains(ce.Reason, "path") {
+		t.Fatalf("last visit err = %v, want a path-length CorruptError", last.err)
+	}
+	if len(last.path) > filesys.MaxWalkPath {
+		t.Errorf("reported path is %d bytes, over the %d cap", len(last.path), filesys.MaxWalkPath)
+	}
+	for _, v := range got[:len(got)-1] {
+		if v.err != nil || len(v.path) > filesys.MaxWalkPath {
+			t.Fatalf("%.40s...: err %v, len %d", v.path, v.err, len(v.path))
+		}
+	}
+	if grew := after.TotalAlloc - before.TotalAlloc; grew > 256<<20 {
+		t.Errorf("walk allocated %d MiB", grew>>20)
 	}
 }

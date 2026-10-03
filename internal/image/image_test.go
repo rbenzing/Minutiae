@@ -356,3 +356,52 @@ func TestOpenIsReadOnly(t *testing.T) {
 		t.Fatal("content hash changed after OpenFiles")
 	}
 }
+
+func openStubFiles(t *testing.T) []*os.File {
+	t.Helper()
+	p := writeFile(t, t.TempDir(), "x.E01", append(append([]byte{}, sigEWF...), pattern(64)...))
+	f, err := os.Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	return []*os.File{f}
+}
+
+func TestOpenFilesRejectsOpenerReturningNilImage(t *testing.T) {
+	RegisterEWF(func([]*os.File) (Image, error) { return nil, nil })
+	t.Cleanup(func() { RegisterEWF(nil) })
+	files := openStubFiles(t)
+	img, err := OpenFiles(files)
+	if err == nil || img != nil {
+		t.Fatalf("OpenFiles = %v, %v; want an error and no image", img, err)
+	}
+	if _, rerr := files[0].ReadAt(make([]byte, 1), 0); rerr == nil || !errors.Is(rerr, os.ErrClosed) {
+		t.Errorf("file not closed after a nil image: read err = %v", rerr)
+	}
+}
+
+func TestOpenFilesRecoversOpenerPanic(t *testing.T) {
+	RegisterEWF(func([]*os.File) (Image, error) { panic("boom") })
+	t.Cleanup(func() { RegisterEWF(nil) })
+	files := openStubFiles(t)
+	var img Image
+	var err error
+	func() {
+		defer func() {
+			if p := recover(); p != nil {
+				t.Fatalf("OpenFiles let the opener panic escape: %v", p)
+			}
+		}()
+		img, err = OpenFiles(files)
+	}()
+	if err == nil || img != nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("OpenFiles = %v, %v; want an error mentioning the panic", img, err)
+	}
+	if pe := new(PanicError); !errors.As(err, &pe) || pe.Value != "boom" {
+		t.Errorf("err = %v, want a *PanicError carrying the panic value", err)
+	}
+	if _, rerr := files[0].ReadAt(make([]byte, 1), 0); rerr == nil || !errors.Is(rerr, os.ErrClosed) {
+		t.Errorf("file not closed after an opener panic: read err = %v", rerr)
+	}
+}

@@ -154,3 +154,23 @@ func TestProbeWithSkipsDriversWithoutOpen(t *testing.T) {
 		t.Errorf("OpenWith err = %v", err)
 	}
 }
+
+// typedNilFS is a FileSystem wrapper whose nil pointer, returned alongside an
+// error, makes the interface value non-nil.
+type typedNilFS struct{ filesys.FileSystem }
+
+func TestOpenWithErrorDropsTypedNilFileSystem(t *testing.T) {
+	img := image()
+	want := errors.New("driver failed")
+	d := detect.Driver{
+		Name: "typednil", Probe: func(io.ReaderAt, int64) bool { return true },
+		Open: func(io.ReaderAt, int64) (filesys.FileSystem, error) { return (*typedNilFS)(nil), want },
+	}
+	fsys, err := detect.OpenWith([]detect.Driver{d}, bytes.NewReader(img), int64(len(img)))
+	if !errors.Is(err, want) {
+		t.Fatalf("err = %v, want %v", err, want)
+	}
+	if fsys != nil {
+		t.Errorf("OpenWith returned a non-nil FileSystem %T alongside an error", fsys)
+	}
+}

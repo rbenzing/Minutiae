@@ -116,7 +116,11 @@ func openImage(files []*os.File) (img image.Image, err error) {
 			img, err = nil, panicError("image container", "open", p)
 		}
 	}()
-	return image.OpenFiles(files) // takes ownership of files, closing them on error
+	img, err = image.OpenFiles(files) // takes ownership of files, closing them on error
+	if pe := new(image.PanicError); errors.As(err, &pe) {
+		return nil, panicError("image container", "open", pe.Value) // the opener panic, already recovered and closed by image
+	}
+	return img, err
 }
 
 // readTable is volume.Read with panics (including ones raised by the image's

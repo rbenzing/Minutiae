@@ -64,6 +64,7 @@ type record struct {
 	Deleted   bool   `json:"deleted,omitempty"`
 	Encrypted bool   `json:"encrypted,omitempty"`
 	Link      string `json:"link,omitempty"`
+	Inline    []byte `json:"inline,omitempty"` // content stored in the table (base64); no runs
 	Runs      []run  `json:"runs,omitempty"`
 }
 
@@ -364,6 +365,12 @@ func (f *mtfs) Open(e filesys.Entry) (filesys.File, error) {
 }
 
 func (f *mtfs) openFile(rec *record) (*file, error) {
+	if rec.Inline != nil {
+		if int64(len(rec.Inline)) != rec.Size || len(rec.Runs) != 0 {
+			return nil, corrupt(structEntry, headerLen, "entry %q: inline content of %d bytes with %d runs does not match size %d", rec.ID, len(rec.Inline), len(rec.Runs), rec.Size)
+		}
+		return &file{size: rec.Size, data: rec.Inline}, nil
+	}
 	fl := &file{r: f.r, size: rec.Size}
 	var total int64
 	for _, ru := range rec.Runs {

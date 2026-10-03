@@ -108,7 +108,7 @@ func OpenFiles(files []*os.File) (Image, error) {
 	switch {
 	case bytes.Equal(head, sigEWF):
 		if o := registeredEWF(); o != nil {
-			img, err := o(files)
+			img, err := callOpener(o, files)
 			if err != nil {
 				closeAll(files)
 				return nil, err
@@ -131,6 +131,27 @@ func OpenFiles(files []*os.File) (Image, error) {
 		return nil, err
 	}
 	return img, nil
+}
+
+// PanicError is returned by OpenFiles when a registered container opener
+// panicked. Value is the recovered panic value.
+type PanicError struct{ Value any }
+
+func (e *PanicError) Error() string { return fmt.Sprintf("image: container opener panic: %v", e.Value) }
+
+// callOpener runs a registered opener, turning a panic or a (nil, nil) result
+// into an error: openers are parser code over hostile container bytes.
+func callOpener(o Opener, files []*os.File) (img Image, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			img, err = nil, &PanicError{Value: p}
+		}
+	}()
+	img, err = o(files)
+	if err == nil && img == nil {
+		return nil, errors.New("image: container opener returned no image and no error")
+	}
+	return img, err
 }
 
 func closeAll(files []*os.File) {

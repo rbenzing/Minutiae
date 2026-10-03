@@ -91,8 +91,11 @@ func open(d Driver, r io.ReaderAt, size int64) (fsys filesys.FileSystem, err err
 		}
 	}()
 	fsys, err = d.Open(r, size)
-	if err == nil && fsys == nil {
+	if err != nil {
+		return nil, err // never hand back a (possibly typed-nil) filesystem with an error
+	}
+	if fsys == nil {
 		return nil, &filesys.CorruptError{Structure: d.Name, Offset: -1, Reason: "driver returned no filesystem and no error"}
 	}
-	return fsys, err
+	return fsys, nil
 }
