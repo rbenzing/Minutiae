@@ -66,44 +66,40 @@ func attrOf(e filesys.Entry, key string) (string, bool) {
 	return "", false
 }
 
-// Open opens a regular file. The extent comes from the entry's attributes
-// (first_cluster, size, valid_data_length, no_fat_chain, which ReadDir and
-// Lookup set from the Stream Extension entry), validated against the volume:
-// DataLength must fit the chain and ValidDataLength must not exceed it. The
-// bytes from ValidDataLength to DataLength read as zeros and are a hole run.
-// A deleted entry yields filesys.ErrDeleted; directories filesys.ErrUnsupported.
+// Open opens a regular file. Only the ID is taken from the entry: the entry set
+// it names ("dirent:<dir first cluster>:<entry index>") is located and
+// re-parsed from the disk, and whether the entry is deleted or a directory, its
+// first cluster, DataLength, ValidDataLength and NoFatChain flag come from that
+// set. The entry's other fields and its attributes are informational and are
+// ignored, so a stale or forged Entry cannot change what is read. DataLength
+// must fit the chain and ValidDataLength must not exceed it (*CorruptError);
+// the bytes from ValidDataLength to DataLength read as zeros and are a hole run.
+// A deleted entry yields filesys.ErrDeleted, a directory filesys.ErrUnsupported,
+// an ID that names no File entry filesys.ErrNotFound, and a set that is damaged
+// (SecondaryCount above 18, no Stream Extension) a *filesys.CorruptError.
 func (f *FS) Open(e filesys.Entry) (filesys.File, error) {
-	if e.Deleted {
-		return nil, filesys.ErrDeleted
-	}
-	kind, _, _, err := parseID(e.ID)
+	kind, p, i, err := parseID(e.ID)
 	if err != nil {
 		return nil, err
 	}
-	if kind == idDir || e.Type == filesys.TypeDir {
+	if kind == idDir {
 		return nil, fmt.Errorf("%w: %q is a directory", filesys.ErrUnsupported, e.ID)
 	}
-	fc, ok := attrOf(e, "first_cluster")
-	first, ok2 := parseCanonical(fc, 32)
-	if !ok || !ok2 {
-		return nil, fmt.Errorf("%w: entry %q has no valid first_cluster attribute (it was not produced by ReadDir)", filesys.ErrNotFound, e.ID)
+	r, err := f.locate(p, i)
+	if err != nil {
+		return nil, err
 	}
-	valid := e.Size
-	if v, ok := attrOf(e, "valid_data_length"); ok {
-		n, ok := parseCanonical(v, 64)
-		if !ok {
-			return nil, fmt.Errorf("%w: entry %q has an invalid valid_data_length attribute %q", filesys.ErrNotFound, e.ID, v)
-		}
-		if n > math.MaxInt64 {
-			return nil, corrupt("exFAT file", -1, "ValidDataLength %d is larger than any file", n)
-		}
-		valid = int64(n)
+	switch {
+	case r.deleted:
+		return nil, filesys.ErrDeleted
+	case r.attrs&attrDirectory != 0:
+		return nil, fmt.Errorf("%w: %q is a directory", filesys.ErrUnsupported, e.ID)
+	case r.damaged:
+		return nil, corrupt("exFAT file", -1, "the entry set of %q is damaged (SecondaryCount or Stream Extension)", e.ID)
+	case r.dataLen > math.MaxInt64 || r.valid > math.MaxInt64:
+		return nil, corrupt("exFAT file", -1, "DataLength %d / ValidDataLength %d is larger than any file", r.dataLen, r.valid)
 	}
-	noFat := false
-	if v, ok := attrOf(e, "no_fat_chain"); ok {
-		noFat = v == "true"
-	}
-	return f.openExtent(uint32(first), e.Size, valid, noFat)
+	return f.openExtent(r.first, int64(r.dataLen), int64(r.valid), r.noFatChain())
 }
 
 // openExtent builds the file of size bytes (valid of them initialised) whose

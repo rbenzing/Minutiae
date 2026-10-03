@@ -75,7 +75,8 @@ type File struct {
 // Options selects the geometry and the optional parts of the image.
 type Options struct {
 	BytesPerSectorShift    uint8 // 9..12 (default 9)
-	SectorsPerClusterShift uint8 // default 3
+	SectorsPerClusterShift uint8 // default 3 (0 means the default; see OneSectorClusters)
+	OneSectorClusters      bool  // clusters of a single sector (shift 0)
 	ClusterCount           int   // default 256
 	Label                  string
 	Serial                 uint32
@@ -85,6 +86,10 @@ type Options struct {
 	// up-case table out of the image.
 	Upcase   func(uint16) uint16
 	NoUpcase bool
+
+	// FragmentBitmap leaves a free cluster between the clusters of the
+	// allocation bitmap (chained through the FAT).
+	FragmentBitmap bool
 
 	// BadBootChecksum corrupts the checksum sector of the main boot region.
 	BadBootChecksum bool
@@ -108,7 +113,8 @@ type Layout struct {
 	ClusterCount            uint32
 	RootCluster             uint32
 	BitmapCluster           uint32
-	UpcaseCluster           uint32 // 0 with NoUpcase
+	BitmapClusters          []uint32 // every cluster of the bitmap, in order
+	UpcaseCluster           uint32   // 0 with NoUpcase
 	Entries                 []EntryLoc
 	free                    []uint32
 }
@@ -169,6 +175,7 @@ type builder struct {
 	o        Options
 	ss, cs   int
 	spc      int
+	spcShift uint8
 	cc       int
 	fatSecs  int
 	heapSecs int
@@ -210,6 +217,10 @@ func orDefault[T comparable](v, d T) T {
 func (b *builder) geometry() {
 	bps := orDefault(b.o.BytesPerSectorShift, 9)
 	spcShift := orDefault(b.o.SectorsPerClusterShift, 3)
+	if b.o.OneSectorClusters {
+		spcShift = 0
+	}
+	b.spcShift = spcShift
 	if bps < 9 || bps > 12 || int(bps)+int(spcShift) > 25 {
 		panic(fmt.Sprintf("exfattest: shifts %d+%d", bps, spcShift))
 	}
@@ -337,9 +348,21 @@ func (b *builder) clustersFor(bytes int) int { return (bytes + b.cs - 1) / b.cs 
 
 func (b *builder) allocate() {
 	b.fat[0], b.fat[1] = 0xFFFFFFF8, 0xFFFFFFFF
-	bm := b.alloc(b.clustersFor((b.cc + 7) / 8))
+	nbm := b.clustersFor((b.cc + 7) / 8)
+	var bm []uint32
+	if b.o.FragmentBitmap {
+		for i := 0; i < nbm; i++ {
+			bm = append(bm, b.alloc(1)...)
+			if i+1 < nbm {
+				b.next++ // a free cluster between the bitmap clusters
+			}
+		}
+	} else {
+		bm = b.alloc(nbm)
+	}
 	b.chainFAT(bm)
 	b.lay.BitmapCluster = bm[0]
+	b.lay.BitmapClusters = bm
 	if !b.o.NoUpcase {
 		uc := b.alloc(b.clustersFor(len(b.upcaseTable())))
 		b.chainFAT(uc)
@@ -433,11 +456,14 @@ func (b *builder) writeFAT() {
 }
 
 func (b *builder) writeBitmap() {
-	bm := b.img[b.clusterOff(b.lay.BitmapCluster):]
+	bm := make([]byte, len(b.lay.BitmapClusters)*b.cs)
 	for i, u := range b.used {
 		if u {
 			bm[i/8] |= 1 << (i % 8)
 		}
+	}
+	for i, c := range b.lay.BitmapClusters {
+		copy(b.img[b.clusterOff(c):], bm[i*b.cs:(i+1)*b.cs])
 	}
 }
 
@@ -686,7 +712,7 @@ func (b *builder) writeBoot() {
 	le32(boot, 100, b.o.Serial)
 	le16(boot, 104, 0x0100)
 	boot[108] = orDefault(b.o.BytesPerSectorShift, 9)
-	boot[109] = orDefault(b.o.SectorsPerClusterShift, 3)
+	boot[109] = b.spcShift
 	boot[110] = 1
 	boot[111] = 0x80
 	boot[510], boot[511] = 0x55, 0xAA

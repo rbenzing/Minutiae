@@ -7,7 +7,12 @@
 // checksum); a set that does not verify is still listed, with the attribute
 // checksum=bad. Entry sets whose InUse bits are cleared are listed as
 // deleted; their content is never opened (recovery is roadmap sub-project 3),
-// but the first cluster and size stay in the attributes. TexFAT (a second
+// / but the first cluster and size stay in the attributes. Entry attributes are
+// informational only: Open and ReadDir take nothing from a caller-supplied
+// Entry except its ID, and derive deleted/directory state and every extent
+// (first cluster, DataLength, ValidDataLength, NoFatChain) from the entry set
+// they re-read from the disk; a directory known by first cluster has the extent
+// of the first live entry set met on disk that claimed it. TexFAT (a second
 // FAT and bitmap) is not interpreted: the first FAT and the first bitmap are
 // read.
 package exfat
@@ -56,6 +61,16 @@ type FS struct {
 
 	// dirRecordCap bounds the entry sets one directory yields (maxDirRecords).
 	dirRecordCap int
+	// bitmapChunk is how much of the allocation bitmap is read at a time.
+	bitmapChunk int
+
+	// dirs are the directories met so far, by first cluster, with the extent the
+	// disk gave them (see dirState). dirBudget is what is left of the bytes of
+	// directories this instance may read (dirBudgetTotal at the start).
+	dmu            sync.Mutex
+	dirs           map[uint32]*dirState
+	dirBudget      int64
+	dirBudgetTotal int64
 
 	wmu      sync.Mutex
 	warnings []string
@@ -169,6 +184,11 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		revision:     bt.revision,
 		volFlags:     bt.volFlags,
 		dirRecordCap: maxDirRecords,
+		bitmapChunk:  maxBitmapChunk,
+
+		dirs:           map[uint32]*dirState{g.rootCluster: {spec: dirSpec{first: g.rootCluster, whole: true}}},
+		dirBudget:      maxDirBudget,
+		dirBudgetTotal: maxDirBudget,
 	}
 	for _, w := range g.warnings {
 		f.warn("%s", w)

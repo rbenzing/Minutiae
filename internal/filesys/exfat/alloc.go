@@ -173,8 +173,8 @@ func (f *FS) readExtents(exts []extent, dst []byte) error {
 	return nil
 }
 
-// bitmapChunk is how much of the allocation bitmap is read at a time.
-const bitmapChunk = 1 << 20
+// maxBitmapChunk is how much of the allocation bitmap is read at a time.
+const maxBitmapChunk = 1 << 20
 
 // Unallocated returns the byte runs of the clusters the allocation bitmap
 // marks free (a clear bit), sorted and merged. The bitmap is read from the
@@ -206,7 +206,7 @@ func (f *FS) Unallocated() ([]filesys.Run, error) {
 	var (
 		runs      []filesys.Run
 		runStart  = int64(-1) // cluster index of the open free run
-		buf       = make([]byte, min(have, bitmapChunk))
+		buf       = make([]byte, min(have, uint64(f.bitmapChunk)))
 		index     int64 // cluster index of the next bit
 		remaining = have
 	)

@@ -51,7 +51,8 @@ const (
 
 	dirReadChunk = 4096
 
-	rawPrefix = "~raw~" // display form of a name that is not usable UTF-8: prefix + base64url(UTF-16LE)
+	damagedPrefix = "~damaged~" // name of a damaged set that has no name: prefix + entry index
+	rawPrefix     = "~raw~"     // display form of a name that is not usable UTF-8: prefix + base64url(UTF-16LE)
 )
 
 // meta flags of the bitmap entry.
@@ -79,23 +80,16 @@ type setRec struct {
 	first    uint32
 	dataLen  uint64
 	checksum bool // the set is inconsistent: bad checksum, secondary count or name entries
+	damaged  bool // SecondaryCount above 18, or no Stream Extension: the extent cannot be trusted and Open fails
 	nameNote string
 }
 
 func (r *setRec) noFatChain() bool { return r.flags&0x02 != 0 }
 
-// dirSpec says where a directory's data is.
-type dirSpec struct {
-	first uint32
-	size  int64 // DataLength; unused when whole
-	noFat bool
-	whole bool // the root: follow the FAT chain to its end
-}
-
 // loadRootMeta reads the root directory's system entries: the allocation
 // bitmap, the up-case table and the volume label.
 func (f *FS) loadRootMeta() {
-	buf, err := f.readDirData(dirSpec{first: f.rootCluster, whole: true})
+	buf, err := f.readDirData(f.knownDir(f.rootCluster))
 	if err != nil {
 		f.warn("root directory (first cluster %d) cannot be read: %v", f.rootCluster, err)
 		return
@@ -209,75 +203,6 @@ func (f *FS) upper(u uint16) uint16 {
 	return f.upcase[u]
 }
 
-// readDirData returns the entries of a directory as one buffer, whole entries
-// only, cut at the end-of-directory marker. At most 256 MiB are read; damage
-// to the chain or a failed read is a warning and ends the read, and only a
-// directory of which nothing can be read is an error.
-func (f *FS) readDirData(sp dirSpec) ([]byte, error) {
-	maxClusters := max(uint64(maxDirBytes)/uint64(f.cs), 1)
-	var (
-		exts  []extent
-		cerr  error
-		limit uint64
-	)
-	if sp.whole {
-		exts, cerr = f.chain(sp.first, maxClusters, false, false)
-		limit = clusterTotal(exts) * uint64(f.cs)
-		if clusterTotal(exts) == maxClusters {
-			f.warn("directory (first cluster %d) is %d MiB or larger; only the first %d MiB are read", sp.first, maxDirBytes>>20, maxDirBytes>>20)
-		}
-	} else {
-		size := sp.size
-		if size > maxDirBytes {
-			f.warn("directory (first cluster %d): DataLength %d exceeds the %d MiB limit; only the first %d MiB are read", sp.first, sp.size, maxDirBytes>>20, maxDirBytes>>20)
-			size = maxDirBytes
-		}
-		if size <= 0 {
-			return nil, nil
-		}
-		exts, cerr = f.chain(sp.first, uint64(size+f.cs-1)/uint64(f.cs), true, sp.noFat) // size <= 256 MiB: cannot overflow
-		limit = uint64(size)
-	}
-	if cerr != nil {
-		if len(exts) == 0 {
-			return nil, cerr
-		}
-		f.warn("directory (first cluster %d): %v; only the part before the damage is read", sp.first, cerr)
-	}
-	limit = min(limit, clusterTotal(exts)*uint64(f.cs)) &^ (entrySize - 1)
-
-	buf := make([]byte, 0, min(limit, 1<<16))
-	var done uint64
-	for _, x := range exts {
-		base, total := f.clusterOff(x.first), x.n*uint64(f.cs) // the clusters of an extent are consecutive
-		for off := uint64(0); off < total && done < limit; {
-			n := min(total-off, limit-done, dirReadChunk)
-			start := len(buf)
-			buf = slices.Grow(buf, int(n))[:start+int(n)]
-			if err := readFull(f.r, buf[start:], base+int64(off)); err != nil {
-				f.warn("directory (first cluster %d): unreadable at byte %d: %v; the rest is not listed", sp.first, done, err)
-				return buf[:start], nil
-			}
-			for p := start; p < len(buf); p += entrySize {
-				if buf[p] == typeEnd {
-					return buf[:p], nil
-				}
-			}
-			done += n
-			off += n
-		}
-	}
-	return buf, nil
-}
-
-func clusterTotal(exts []extent) uint64 {
-	var n uint64
-	for _, x := range exts {
-		n += x.n
-	}
-	return n
-}
-
 // isSecondary reports whether type byte t is a secondary entry of a set that
 // is live (InUse set) or, with deleted, one whose InUse bit was cleared.
 func isSecondary(t byte, deleted bool) bool {
@@ -309,8 +234,9 @@ func setSum(set []byte, restoreInUse bool) uint16 {
 // ones too with wantDeleted) in on-disk order until visit returns false, or
 // the per-directory cap is reached. Damage inside the directory is a warning;
 // only a directory of which nothing can be read is an error.
-func (f *FS) scanDir(sp dirSpec, wantDeleted bool, visit func(*setRec) bool) error {
-	buf, err := f.readDirData(sp)
+func (f *FS) scanDir(st *dirState, wantDeleted bool, visit func(*setRec) bool) error {
+	sp := st.spec
+	buf, err := f.readDirData(st)
 	if err != nil {
 		return err
 	}
@@ -325,7 +251,7 @@ scan:
 		t := buf[i*entrySize]
 		switch {
 		case t == typeFile || (t == typeFileDeleted && wantDeleted):
-			rec, used := f.parseSet(buf, i, sp.first, t == typeFileDeleted)
+			rec, used := f.parseSet(buf, i, 0, sp.first, t == typeFileDeleted)
 			if rec == nil {
 				if t == typeFileDeleted {
 					skippedDeleted++
@@ -339,6 +265,9 @@ scan:
 			}
 			count++
 			i += used
+			if !rec.deleted && !rec.damaged && rec.attrs&attrDirectory != 0 && rec.first >= fatReservedClusters {
+				f.claim(rec)
+			}
 			if !visit(rec) {
 				break scan
 			}
@@ -369,31 +298,39 @@ scan:
 // listed and flagged. Deleted sets (InUse cleared on every entry) are read the
 // same way; their checksum is accepted either over the stored bytes or over
 // the bytes as they were while the set was live.
-func (f *FS) parseSet(buf []byte, i int, dirFirst uint32, deleted bool) (*setRec, int) {
+func (f *FS) parseSet(buf []byte, i, base int, dirFirst uint32, deleted bool) (*setRec, int) {
 	n := len(buf) / entrySize
 	ent := func(k int) []byte { return buf[k*entrySize : (k+1)*entrySize] }
 	le := binary.LittleEndian
 	p := ent(i)
 	sc := int(p[1])
+	idx := base + i // entry index in the directory
+	damaged := false
 	if sc > maxFileSecondary {
-		if !deleted {
-			f.warn("directory (first cluster %d), entry %d: a File entry with SecondaryCount %d (a File set has at most %d secondary entries) is skipped", dirFirst, i, sc, maxFileSecondary)
+		if deleted {
+			return nil, 1
 		}
-		return nil, 1
+		f.warn("directory (first cluster %d), entry %d: a File entry with SecondaryCount %d (a File set has at most %d secondary entries) is listed as damaged; only the secondary entries present are read", dirFirst, idx, sc, maxFileSecondary)
+		sc, damaged = maxFileSecondary, true
 	}
 	avail := 0 // secondary entries actually present, up to SecondaryCount
 	for avail < sc && i+1+avail < n && isSecondary(buf[(i+1+avail)*entrySize], deleted) {
 		avail++
 	}
 	if avail == 0 || ent(i + 1)[0]&0x7F != typeStream {
-		if !deleted {
-			f.warn("directory (first cluster %d), entry %d: a File entry without a Stream Extension entry is skipped", dirFirst, i)
+		if deleted {
+			return nil, 1
 		}
-		return nil, 1
+		f.warn("directory (first cluster %d), entry %d: a File entry without a Stream Extension entry is listed as damaged", dirFirst, idx)
+		return &setRec{
+			idx: idx, attrs: le.Uint16(p[4:]), checksum: true, damaged: true,
+			created: le.Uint32(p[8:]), modified: le.Uint32(p[12:]), accessed: le.Uint32(p[16:]),
+			createInc: p[20], modifyInc: p[21], createOff: p[22], modifyOff: p[23], accessOff: p[24],
+		}, 1
 	}
 	st := ent(i + 1)
 	r := &setRec{
-		idx: i, deleted: deleted,
+		idx: idx, deleted: deleted, damaged: damaged,
 		attrs:     le.Uint16(p[4:]),
 		created:   le.Uint32(p[8:]),
 		modified:  le.Uint32(p[12:]),
@@ -417,7 +354,7 @@ func (f *FS) parseSet(buf []byte, i int, dirFirst uint32, deleted bool) (*setRec
 			r.name = append(r.name, le.Uint16(ne[2+2*u:]))
 		}
 	}
-	consistent := avail == sc && len(r.name) == nameLen
+	consistent := avail == sc && len(r.name) == nameLen && !damaged
 	if nameLen == 0 {
 		r.nameNote = "empty"
 	} else if len(r.name) < nameLen {
@@ -436,7 +373,7 @@ func (f *FS) parseSet(buf []byte, i int, dirFirst uint32, deleted bool) (*setRec
 		stored := le.Uint16(p[2:])
 		consistent = stored == setSum(set, false) || (deleted && stored == setSum(set, true))
 	}
-	r.checksum = !consistent
+	r.checksum = !consistent || damaged
 	return r, 1 + avail
 }
 
@@ -518,6 +455,9 @@ func decodeTime(v uint32, inc10, off byte, hasInc bool) (ts filesys.Timestamp, o
 // cluster is dirFirst.
 func (f *FS) makeEntry(dirFirst uint32, r *setRec) filesys.Entry {
 	name, raw := displayName(r.name)
+	if r.damaged && len(r.name) == 0 {
+		name, raw = damagedPrefix+strconv.Itoa(r.idx), nil
+	}
 	e := filesys.Entry{Name: name, RawName: raw, Type: filesys.TypeFile, Deleted: r.deleted}
 	isDir := r.attrs&attrDirectory != 0
 	if isDir {
@@ -556,6 +496,9 @@ func (f *FS) makeEntry(dirFirst uint32, r *setRec) filesys.Entry {
 	if r.checksum {
 		addAttr(&e, "checksum", "bad")
 	}
+	if r.damaged {
+		addAttr(&e, "set", "damaged")
+	}
 	if r.nameNote != "" {
 		addAttr(&e, "name", r.nameNote)
 	}
@@ -590,51 +533,17 @@ func (f *FS) Root() filesys.Entry {
 	return filesys.Entry{ID: dirID(f.rootCluster), Type: filesys.TypeDir}
 }
 
-// dirSpec locates the data of directory entry dir. empty is true for a
-// directory that has no data. The extent comes from the entry (its size and
-// no_fat_chain attribute, set from the Stream Extension entry); the root has
-// no size and is followed through the FAT to its end.
-func (f *FS) dirSpec(dir filesys.Entry) (sp dirSpec, empty bool, err error) {
-	if dir.Deleted {
-		return sp, false, filesys.ErrDeleted
-	}
-	kind, first, _, err := parseID(dir.ID)
-	if err != nil {
-		return sp, false, err
-	}
-	if dir.Type != filesys.TypeDir {
-		return sp, false, fmt.Errorf("%w: %q is not a directory", filesys.ErrUnsupported, dir.ID)
-	}
-	if kind == idDirent { // a directory with no first cluster
-		if dir.Size == 0 {
-			return sp, true, nil
-		}
-		return sp, false, corrupt("exFAT directory", -1, "directory %q has DataLength %d but no first cluster", dir.ID, dir.Size)
-	}
-	if !f.validCluster(first) {
-		return sp, false, corrupt("exFAT directory", -1, "first cluster %d is not a cluster of the volume (2-%d)", first, uint64(f.clusterCount)+1)
-	}
-	switch {
-	case first == f.rootCluster && dir.Size == 0:
-		return dirSpec{first: first, whole: true}, false, nil
-	case dir.Size < 0:
-		return sp, false, corrupt("exFAT directory", -1, "directory %q has negative size %d", dir.ID, dir.Size)
-	case dir.Size == 0:
-		return sp, true, nil
-	}
-	v, _ := attrOf(dir, "no_fat_chain")
-	return dirSpec{first: first, size: dir.Size, noFat: v == "true"}, false, nil
-}
-
-// ReadDir lists the live and deleted entry sets of dir (Deleted is set for the
-// latter) in on-disk order. A set that does not verify (checksum, secondary
-// count, name entries) is listed with attr checksum=bad. Every entry has the
-// attributes dirent=<dir first cluster>:<entry index>, first_cluster and size,
 // and valid_data_length, no_fat_chain and attributes when they apply. Damage in
 // the directory (a broken chain, an unreadable cluster) does not fail the call:
 // the entries that can be read are returned and the damage is an Info warning.
+//
+// Only the ID of dir is used; the attributes and size of the Entry are
+// informational and never trusted (the directory is found, and its extent read,
+// from the disk). A live set with a SecondaryCount above 18 or no Stream
+// Extension is listed with attrs checksum=bad and set=damaged (a name when one
+// can be read, else "~damaged~<index>"); Open fails on it.
 func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
-	sp, empty, err := f.dirSpec(dir)
+	st, empty, err := f.dirOf(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -642,8 +551,8 @@ func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
 		return nil, nil
 	}
 	var out []filesys.Entry
-	if err := f.scanDir(sp, true, func(r *setRec) bool {
-		out = append(out, f.makeEntry(sp.first, r))
+	if err := f.scanDir(st, true, func(r *setRec) bool {
+		out = append(out, f.makeEntry(st.spec.first, r))
 		return true
 	}); err != nil {
 		return nil, err
@@ -689,7 +598,7 @@ func (f *FS) Lookup(p string) (filesys.Entry, error) {
 
 // child finds the live entry of dir named comp (see Lookup for the order).
 func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
-	sp, empty, err := f.dirSpec(dir)
+	st, empty, err := f.dirOf(dir)
 	if err != nil {
 		return filesys.Entry{}, err
 	}
@@ -710,7 +619,7 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 		}
 	}
 	var exactRec, altRec, foldRec *setRec
-	err = f.scanDir(sp, false, func(r *setRec) bool {
+	err = f.scanDir(st, false, func(r *setRec) bool {
 		switch {
 		case exact != nil && slices.Equal(r.name, exact):
 			exactRec = r
@@ -727,7 +636,7 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 	}
 	for _, r := range []*setRec{exactRec, altRec, foldRec} {
 		if r != nil {
-			return f.makeEntry(sp.first, r), nil
+			return f.makeEntry(st.spec.first, r), nil
 		}
 	}
 	return filesys.Entry{}, errNoChild

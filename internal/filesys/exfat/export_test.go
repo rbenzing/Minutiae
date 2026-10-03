@@ -26,3 +26,13 @@ var SetChecksum = setChecksum
 
 // BootChecksum exposes the boot region checksum.
 var BootChecksum = bootChecksum
+
+// SetBitmapChunk sets how many bitmap bytes Unallocated reads at a time.
+func (f *FS) SetBitmapChunk(n int) { f.bitmapChunk = max(n, 1) }
+
+// SetDirBudget sets the bytes of directories the instance may still read.
+func (f *FS) SetDirBudget(n int64) {
+	f.dmu.Lock()
+	defer f.dmu.Unlock()
+	f.dirBudget, f.dirBudgetTotal = n, n
+}

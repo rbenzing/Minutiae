@@ -939,8 +939,20 @@ func TestExfatUtcOffsetTimes(t *testing.T) {
 	exfattest.FixSetChecksum(inc, incLoc.Offset)
 	h := openImg(t, inc)
 	es3, _ := h.ReadDir(h.Root())
-	if m := byName(t, es3, "nozone").Times.Modified; !m.T.Equal(wall(1, 2, 4, 0)) && !m.T.Equal(wall(1, 2, 5, 0)) {
-		t.Errorf("bad increment shifted the time: %v", m.T)
+	// The odd second of the original (:05) lived in that increment byte, so with
+	// it ignored only the DoubleSeconds field is left: exactly :04, no extra time.
+	if m := byName(t, es3, "nozone").Times.Modified; !m.T.Equal(wall(1, 2, 4, 0)) {
+		t.Errorf("bad increment 255 gave %v, want exactly 01:02:04", m.T)
+	}
+	for inc, want := range map[byte]time.Time{199: wall(1, 2, 5, 990_000_000), 200: wall(1, 2, 4, 0), 100: wall(1, 2, 5, 0), 0: wall(1, 2, 4, 0)} {
+		b := bytes.Clone(img)
+		b[incLoc.Offset+21] = inc
+		exfattest.FixSetChecksum(b, incLoc.Offset)
+		x := openImg(t, b)
+		xs, _ := x.ReadDir(x.Root())
+		if m := byName(t, xs, "nozone").Times.Modified; !m.T.Equal(want) {
+			t.Errorf("increment %d gave %v, want %v", inc, m.T, want)
+		}
 	}
 }
 
@@ -1192,8 +1204,16 @@ func TestExfatHostile(t *testing.T) {
 		if !slices.Contains(got, "before") || !slices.Contains(got, "after") {
 			t.Errorf("neighbours lost: %q", got)
 		}
-		if slices.Contains(got, "victim") {
-			t.Errorf("the set with SecondaryCount 255 was listed: %q", got)
+		// The set is listed, flagged, with the name that can be read; it cannot be opened.
+		if !slices.Contains(got, "victim") {
+			t.Errorf("the set with SecondaryCount 255 was dropped: %q", got)
+		}
+		victim := byName(t, es, "victim")
+		if !hasAttr(victim, "checksum", "bad") || !hasAttr(victim, "set", "damaged") {
+			t.Errorf("victim attrs = %v", victim.Attrs)
+		}
+		if _, err := f.Open(victim); !errors.Is(err, filesys.ErrCorrupt) {
+			t.Errorf("Open(damaged set) = %v, want a corrupt error", err)
 		}
 		if !hasWarn(f, "SecondaryCount") {
 			t.Errorf("no SecondaryCount warning: %v", f.Info().Warnings)
@@ -1202,8 +1222,24 @@ func TestExfatHostile(t *testing.T) {
 		bad[lay.Find("/victim", false).Offset+1] = 19
 		g := openImg(t, bad)
 		es, _ = g.ReadDir(g.Root())
-		if slices.Contains(names(es), "victim") || !slices.Contains(names(es), "after") {
-			t.Errorf("SecondaryCount 19: %q", names(es))
+		if v := byName(t, es, "victim"); !hasAttr(v, "set", "damaged") || !slices.Contains(names(es), "after") {
+			t.Errorf("SecondaryCount 19: %q %v", names(es), v.Attrs)
+		}
+		// No Stream Extension at all: listed as ~damaged~<index>, not dropped.
+		ns := bytes.Clone(img)
+		vl := lay.Find("/victim", false)
+		ns[vl.Offset+32] = 0x01 // the Stream entry becomes an unused entry
+		nf := openImg(t, ns)
+		nes, _ := nf.ReadDir(nf.Root())
+		d := byName(t, nes, fmt.Sprintf("~damaged~%d", vl.Index))
+		if !hasAttr(d, "set", "damaged") || !hasAttr(d, "checksum", "bad") || d.Type != filesys.TypeFile {
+			t.Errorf("stream-less set = %+v", d)
+		}
+		if _, err := nf.Open(d); !errors.Is(err, filesys.ErrCorrupt) {
+			t.Errorf("Open(stream-less set) = %v", err)
+		}
+		if !slices.Contains(names(nes), "before") || !slices.Contains(names(nes), "after") {
+			t.Errorf("neighbours lost: %q", names(nes))
 		}
 		// A deleted set with SecondaryCount 255 is skipped too.
 		bad[lay.Find("/victim", false).Offset] = 0x05
@@ -1529,6 +1565,7 @@ func TestExfatOpenAndIDs(t *testing.T) {
 	files := []exfattest.File{
 		{Path: "/f.txt", Data: []byte("content")},
 		{Path: "/d", Dir: true},
+		{Path: "/d/x", Data: []byte("x")},
 		{Path: "/gone", Data: []byte("x"), Deleted: true},
 	}
 	img, lay := exfattest.BuildLayout(exfattest.Options{}, files)
@@ -1545,8 +1582,8 @@ func TestExfatOpenAndIDs(t *testing.T) {
 	if _, err := f.Open(gone); !errors.Is(err, filesys.ErrDeleted) {
 		t.Errorf("Open(deleted) = %v", err)
 	}
-	if _, err := f.Open(filesys.Entry{ID: "garbage", Deleted: true}); !errors.Is(err, filesys.ErrDeleted) {
-		t.Errorf("a deleted entry is ErrDeleted whatever its ID: %v", err)
+	if _, err := f.Open(filesys.Entry{ID: "garbage", Deleted: true}); !errors.Is(err, filesys.ErrNotFound) {
+		t.Errorf("the Deleted field of an Entry is not trusted, the ID decides: %v", err)
 	}
 	if _, err := f.ReadDir(file); !errors.Is(err, filesys.ErrUnsupported) {
 		t.Errorf("ReadDir(file) = %v, want ErrUnsupported", err)
@@ -1574,39 +1611,101 @@ func TestExfatOpenAndIDs(t *testing.T) {
 			t.Errorf("ReadDir(ID %q) = %v, want ErrNotFound", id, err)
 		}
 	}
-	// A well-formed ID of a cluster that cannot hold a directory is a corrupt
-	// volume, not "not found".
-	for _, id := range []string{"dir:0", "dir:1", "dir:4294967295", fmt.Sprintf("dir:%d", lay.ClusterCount+2)} {
+	// A well-formed ID of a directory the disk does not have is not found.
+	for _, id := range []string{"dir:0", "dir:1", "dir:4294967295", fmt.Sprintf("dir:%d", lay.ClusterCount+2), "dir:" + strconv.Itoa(int(lay.ClusterCount)+1)} {
 		e := dir
 		e.ID = id
-		if _, err := f.ReadDir(e); !errors.Is(err, filesys.ErrCorrupt) {
-			t.Errorf("ReadDir(ID %q) = %v, want a corrupt error", id, err)
+		if _, err := f.ReadDir(e); !errors.Is(err, filesys.ErrNotFound) {
+			t.Errorf("ReadDir(ID %q) = %v, want ErrNotFound", id, err)
 		}
 	}
-	// An entry that did not come from ReadDir carries no extent: refused.
-	bare := filesys.Entry{ID: file.ID, Type: filesys.TypeFile, Size: 7}
-	if _, err := f.Open(bare); err == nil {
-		t.Error("Open of an entry without its attributes succeeded")
+	// IDs of entry sets that are not there: another directory, a non-File
+	// entry (the bitmap entry is entry 0 of the root), beyond the directory.
+	for _, id := range []string{"dirent:" + rc + ":0", "dirent:" + rc + ":1", "dirent:" + rc + ":3", "dirent:" + rc + ":4", "dirent:" + rc + ":1000000", "dirent:99:3", "dirent:0:3", "dirent:" + rc + ":4294967295"} {
+		for _, e := range []filesys.Entry{file, dir} {
+			e.ID = id
+			if _, err := f.Open(e); !errors.Is(err, filesys.ErrNotFound) {
+				t.Errorf("Open(ID %q) = %v, want ErrNotFound", id, err)
+			}
+			if _, err := f.ReadDir(e); !errors.Is(err, filesys.ErrNotFound) {
+				t.Errorf("ReadDir(ID %q) = %v, want ErrNotFound", id, err)
+			}
+		}
 	}
-	// Forged attributes never panic.
-	for _, kv := range [][]filesys.KV{
-		{{Key: "first_cluster", Value: "-1"}},
-		{{Key: "first_cluster", Value: "x"}},
-		{{Key: "first_cluster", Value: "99999999999999999999"}},
-		{{Key: "first_cluster", Value: "4"}, {Key: "valid_data_length", Value: "zz"}},
-		{{Key: "first_cluster", Value: "4"}, {Key: "valid_data_length", Value: "99999999"}},
+	// An entry that did not come from ReadDir (no attributes, no size) opens:
+	// only the ID is used.
+	bare := filesys.Entry{ID: file.ID, Type: filesys.TypeFile}
+	if fl, err := f.Open(bare); err != nil || fl.Size() != 7 || string(readAll(t, f, bare)) != "content" {
+		t.Errorf("Open(bare entry) = %v, %v", fl, err)
+	}
+	if _, err := f.ReadDir(filesys.Entry{ID: dir.ID}); err != nil {
+		t.Errorf("ReadDir(bare dir) = %v", err)
+	}
+	// Whatever the other fields of an Entry say, the result is the disk's.
+	for name, forge := range map[string]func(e *filesys.Entry){
+		"first_cluster": func(e *filesys.Entry) { e.Attrs = []filesys.KV{{Key: "first_cluster", Value: "5"}} },
+		"junk attrs": func(e *filesys.Entry) {
+			e.Attrs = []filesys.KV{{Key: "first_cluster", Value: "x"}, {Key: "valid_data_length", Value: "zz"}, {Key: "no_fat_chain", Value: "true"}}
+		},
+		"size":     func(e *filesys.Entry) { e.Size = 1 << 40 },
+		"neg size": func(e *filesys.Entry) { e.Size = -5 },
+		"type":     func(e *filesys.Entry) { e.Type = filesys.TypeDir },
+		"valid":    func(e *filesys.Entry) { e.Attrs = append(e.Attrs, filesys.KV{Key: "valid_data_length", Value: "0"}) },
+		"deleted":  func(e *filesys.Entry) { e.Deleted = true },
 	} {
 		e := file
-		e.Attrs = kv
-		if _, err := f.Open(e); err == nil {
-			t.Errorf("Open with attrs %v succeeded", kv)
+		e.Attrs = slices.Clone(file.Attrs)
+		forge(&e)
+		fl, err := f.Open(e)
+		if name == "deleted" {
+			// Deleted is ignored too: the set is live, so the file opens.
+			if err != nil || string(readAll(t, f, e)) != "content" {
+				t.Errorf("forged Deleted: %v", err)
+			}
+			continue
+		}
+		if err != nil || fl.Size() != 7 || string(readAll(t, f, e)) != "content" {
+			t.Errorf("forged %s changed the result: %v", name, err)
 		}
 	}
-	// A negative size.
-	neg := file
-	neg.Size = -5
-	if _, err := f.Open(neg); err == nil {
-		t.Error("Open with a negative size succeeded")
+	// A deleted entry stays deleted when the caller says it is live, and a
+	// directory stays a directory when it is called a file.
+	g0 := gone
+	g0.Deleted, g0.Attrs = false, nil
+	if _, err := f.Open(g0); !errors.Is(err, filesys.ErrDeleted) {
+		t.Errorf("Open(deleted entry with Deleted=false) = %v, want ErrDeleted", err)
+	}
+	d0 := dir
+	d0.Type = filesys.TypeFile
+	if _, err := f.Open(d0); !errors.Is(err, filesys.ErrUnsupported) {
+		t.Errorf("Open(dir entry typed as a file) = %v, want ErrUnsupported", err)
+	}
+	// ReadDir: forged size, NoFatChain and type do not matter.
+	want, _ := f.ReadDir(dir)
+	for _, forge := range []func(e *filesys.Entry){
+		func(e *filesys.Entry) { e.Size = 1 << 50 },
+		func(e *filesys.Entry) { e.Size = 0 },
+		func(e *filesys.Entry) { e.Size = -1 },
+		func(e *filesys.Entry) { e.Attrs = []filesys.KV{{Key: "no_fat_chain", Value: "true"}} },
+		func(e *filesys.Entry) {
+			e.Attrs = []filesys.KV{{Key: "no_fat_chain", Value: "false"}, {Key: "dirent", Value: "99:99"}}
+		},
+		func(e *filesys.Entry) { e.Type = filesys.TypeFile },
+		func(e *filesys.Entry) { e.Deleted = true },
+	} {
+		e := dir
+		forge(&e)
+		got, err := f.ReadDir(e)
+		if err != nil || len(got) != len(want) {
+			t.Errorf("forged dir entry %+v: %d entries, %v (want %d)", e, len(got), err, len(want))
+		}
+	}
+	// Even the root: its size is not an input.
+	r := f.Root()
+	r.Size = 12345
+	r.Attrs = []filesys.KV{{Key: "no_fat_chain", Value: "true"}}
+	if got, err := f.ReadDir(r); err != nil || len(got) != len(es) {
+		t.Errorf("forged root entry: %d entries, %v", len(got), err)
 	}
 	// The directory hop is stable across runs and independent of the instance.
 	g := openImg(t, img)
@@ -1740,14 +1839,15 @@ func TestExfatBigGeometries(t *testing.T) {
 	for _, g := range []struct {
 		bps, spc uint8
 		cc       int
-	}{{9, 0, 100}, {10, 2, 300}, {12, 0, 64}, {12, 3, 40}, {9, 7, 128}} {
+		one      bool // clusters of a single sector
+	}{{9, 0, 1200, true}, {10, 2, 300, false}, {12, 0, 120, true}, {12, 3, 40, false}, {9, 7, 128, false}} {
 		files := []exfattest.File{
 			{Path: "/a.bin", Data: pattern(100000, 1)},
 			{Path: "/d", Dir: true},
 			{Path: "/d/b.bin", Data: pattern(33333, 2), FatChain: true},
 			{Path: "/x", Data: pattern(70000, 3), Fragmented: true},
 		}
-		img, lay := exfattest.BuildLayout(exfattest.Options{BytesPerSectorShift: g.bps, SectorsPerClusterShift: g.spc, ClusterCount: g.cc}, files)
+		img, lay := exfattest.BuildLayout(exfattest.Options{BytesPerSectorShift: g.bps, SectorsPerClusterShift: g.spc, OneSectorClusters: g.one, ClusterCount: g.cc}, files)
 		f, err := exfat.Open(bytes.NewReader(img), int64(len(img)))
 		if err != nil {
 			t.Fatalf("%+v: %v", g, err)
