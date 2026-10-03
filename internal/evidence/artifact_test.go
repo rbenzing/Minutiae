@@ -90,6 +90,26 @@ func TestSanitizeRelPath(t *testing.T) {
 	}
 }
 
+// Bidi overrides/isolates and other Unicode format characters would let a
+// local artifact name display as something else, so each becomes '_'.
+func TestSanitizeRelPathMapsFormatCharacters(t *testing.T) {
+	cases := map[string]string{
+		"evil\u202Efdp.exe":             "evil_fdp.exe", // right-to-left override
+		"a\u202Ab\u202Bc\u202Cd\u202De": "a_b_c_d_e",
+		"x\u2066y\u2067z\u2068w\u2069":  "x_y_z_w_",
+		"m\u200Em\u200Fm\u061Cm":        "m_m_m_m",
+		"zero\u200Bwidth\uFEFF":         "zero_width_",
+		"dir\u202E/fi\u200Ele":          "dir_/fi_le",
+		"caf\u00e9 \u65e5\u672c.txt":    "caf\u00e9 \u65e5\u672c.txt", // ordinary letters are kept
+	}
+	for in, want := range cases {
+		got, err := SanitizeRelPath(in)
+		if err != nil || got != want {
+			t.Errorf("SanitizeRelPath(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+}
+
 func TestAbortKeepsPartialFlagged(t *testing.T) {
 	c := newTestCase(t)
 	w, _ := c.NewArtifact("dev1", "acq1", "p.img", testSrc)

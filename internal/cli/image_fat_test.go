@@ -12,8 +12,8 @@ import (
 
 // A warning the FAT reader raises while extracting (here a cluster chain that
 // ends before the file size) is counted on the summary line ("filesystem
-// warnings: N"), apart from the two skips the short chain also causes, and
-// carried by --json as fs_warnings. The default driver registry recognizes the
+// warnings: N"), apart from the one skip (the partial read) the short chain also
+// causes, and carried by --json as fs_warnings. The default driver registry recognizes the
 // FAT volume.
 func TestImageExtractReportsFATFilesystemWarnings(t *testing.T) {
 	o := fattest.Options{Type: 16}
@@ -39,14 +39,20 @@ func TestImageExtractReportsFATFilesystemWarnings(t *testing.T) {
 	ref := recs[0].ID
 
 	code, out = run(t, Deps{}, "image", "extract", "--case", c, "-r", ref, "/")
+	if code != ExitOK {
+		t.Errorf("extract exit = %d, want %d (skips and filesystem warnings do not fail the run):\n%s", code, ExitOK, out)
+	}
 	if !strings.Contains(out, "filesystem warnings: 1 (see analysis.warning entries in audit.jsonl)") {
 		t.Errorf("extract output (exit %d) lacks the filesystem warning count:\n%s", code, out)
 	}
-	if !strings.Contains(out, "skipped 2") {
-		t.Errorf("the two examine-side skips are not counted apart from the filesystem warning:\n%s", out)
+	if !strings.Contains(out, "skipped 1") {
+		t.Errorf("the examine-side skip is not counted apart from the filesystem warning:\n%s", out)
 	}
 
 	code, out = run(t, Deps{}, "image", "extract", "--case", c, "-r", "--json", ref, "/")
+	if code != ExitOK {
+		t.Errorf("extract --json exit = %d, want %d:\n%s", code, ExitOK, out)
+	}
 	var sum map[string]any
 	if err := json.Unmarshal(jsonPart(out), &sum); err != nil || sum["fs_warnings"] != float64(1) {
 		t.Errorf("extract --json (exit %d, %v): %s", code, err, out)

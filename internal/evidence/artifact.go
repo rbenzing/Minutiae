@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // ErrArtifactExists is returned instead of overwriting an existing artifact.
@@ -35,11 +36,15 @@ var windowsReserved = map[string]bool{
 }
 
 // sanitizeComponent makes one path element safe on Windows, macOS and Linux.
-// The original name is preserved in the manifest Source, never lost.
+// Control characters and Unicode format characters (category Cf: the bidi
+// overrides and isolates U+202A-U+202E and U+2066-U+2069, the marks U+200E,
+// U+200F and U+061C, zero-width characters) become underscores, because they
+// can make a name display as something else in a file manager. The original
+// name is preserved in the manifest Source, never lost.
 func sanitizeComponent(s string) string {
 	var b strings.Builder
 	for _, r := range s {
-		if r < 0x20 || strings.ContainsRune(`<>:"/\|?*`, r) {
+		if r < 0x20 || unicode.Is(unicode.Cf, r) || strings.ContainsRune(`<>:"/\|?*`, r) {
 			b.WriteRune('_')
 		} else {
 			b.WriteRune(r)

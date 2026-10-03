@@ -131,3 +131,22 @@ func TestLocalPathsCapsLongComponents(t *testing.T) {
 		t.Errorf("a name of exactly %d bytes was changed: %q", maxComponentBytes, p)
 	}
 }
+
+// A name with a bidi override gets a safe local name while distinct originals
+// that sanitize alike still get distinct paths (the original stays in the
+// caller's RemotePath/FSPath).
+func TestLocalPathsMapsFormatCharacters(t *testing.T) {
+	l := NewLocalPaths("files")
+	a, err := l.File("files", "evil\u202Efdp.exe")
+	if err != nil || a != "files/evil_fdp.exe" {
+		t.Fatalf("File = %q, %v", a, err)
+	}
+	b, err := l.File("files", "evil_fdp.exe")
+	if err != nil || b == a || strings.ContainsRune(b, '\u202E') {
+		t.Fatalf("colliding name = %q, %v (first %q)", b, err, a)
+	}
+	d, err := l.Dir("/x\u2066y/z")
+	if err != nil || d != "files/x_y/z" {
+		t.Fatalf("Dir = %q, %v", d, err)
+	}
+}
