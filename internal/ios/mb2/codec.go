@@ -57,6 +57,9 @@ func (c Codec) Recv() ([]any, error) {
 	if _, err := io.ReadFull(c.rw, b); err != nil {
 		return nil, err
 	}
+	if err := checkBinaryPlist(b); err != nil {
+		return nil, err
+	}
 	var v any
 	if _, err := plist.Unmarshal(b, &v); err != nil {
 		return nil, fmt.Errorf("mb2: decode: %w", err)

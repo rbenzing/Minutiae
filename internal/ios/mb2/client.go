@@ -6,6 +6,9 @@ import (
 	"io"
 )
 
+// linkVersionMajor is the DeviceLink major version this host speaks.
+const linkVersionMajor = 300
+
 // DeviceError is a non-zero ErrorCode reported by the device.
 type DeviceError struct {
 	Code        int64
@@ -65,8 +68,7 @@ func (c *Client) Handshake() error {
 	if Name(msg) != "DLMessageVersionExchange" || len(msg) < 2 {
 		return fmt.Errorf("mobilebackup2 handshake: expected version exchange, got %v", msg)
 	}
-	major, _ := ToInt(msg[1])
-	if err := c.codec.Send([]any{"DLMessageVersionExchange", "DLVersionsOk", major}); err != nil {
+	if err := c.codec.Send([]any{"DLMessageVersionExchange", "DLVersionsOk", linkVersionMajor}); err != nil {
 		return err
 	}
 	if msg, err = c.codec.Recv(); err != nil {
@@ -83,8 +85,17 @@ func (c *Client) Handshake() error {
 	if msg, err = c.codec.Recv(); err != nil {
 		return err
 	}
-	_, err = checkProcessMessage(msg)
-	return err
+	if Name(msg) != "DLMessageProcessMessage" {
+		return fmt.Errorf("mobilebackup2 handshake: expected Hello reply, got %v", msg)
+	}
+	m, err := checkProcessMessage(msg)
+	if err != nil {
+		return err
+	}
+	if m["MessageName"] != "Response" {
+		return fmt.Errorf("mobilebackup2 handshake: unexpected Hello reply %v", m)
+	}
+	return nil
 }
 
 // Backup requests a full backup and serves the device's requests against

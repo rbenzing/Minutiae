@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"time"
 
 	"github.com/rbenzing/minutiae/internal/ios/mb2"
 )
@@ -25,8 +26,18 @@ func Pipe() (io.ReadWriteCloser, *Device) {
 // Close closes the device end.
 func (d *Device) Close() error { return d.conn.Close() }
 
+// SetDeadline bounds all later reads and writes on the device end, so a
+// misbehaving host turns a hung test into an error.
+func (d *Device) SetDeadline(t time.Time) error { return d.conn.SetDeadline(t) }
+
+// Write writes raw bytes to the host, for scripting malformed transfers.
+func (d *Device) Write(p []byte) (int, error) { return d.conn.Write(p) }
+
 // Send sends one DeviceLink message.
 func (d *Device) Send(msg ...any) error { return d.codec.Send(msg) }
+
+// Recv reads one DeviceLink message from the host.
+func (d *Device) Recv() ([]any, error) { return d.codec.Recv() }
 
 func (d *Device) expect(name string) ([]any, error) {
 	msg, err := d.codec.Recv()
@@ -77,7 +88,8 @@ func (d *Device) ExpectBackupRequest() (map[string]any, error) {
 	return m, nil
 }
 
-func (d *Device) status() (int64, any, error) {
+// Status reads one DLMessageStatusResponse and returns its code and payload.
+func (d *Device) Status() (int64, any, error) {
 	msg, err := d.expect("DLMessageStatusResponse")
 	if err != nil {
 		return 0, nil, err
@@ -94,7 +106,7 @@ func (d *Device) Request(msg ...any) (int64, any, error) {
 	if err := d.Send(msg...); err != nil {
 		return 0, nil, err
 	}
-	return d.status()
+	return d.Status()
 }
 
 // Upload is one file the device sends to the host.
@@ -102,7 +114,8 @@ type Upload struct {
 	DeviceName string
 	Name       string
 	Data       []byte
-	EndRemote  bool // end with a 0x0b remote marker instead of 0x00
+	EndRemote  bool   // end with a 0x0b remote marker instead of 0x00
+	RemoteMsg  []byte // message carried by the 0x0b marker; defaults to "end"
 }
 
 // UploadFiles sends files and returns the host's status code.
@@ -125,7 +138,11 @@ func (d *Device) UploadFiles(files ...Upload) (int64, error) {
 		}
 		var err error
 		if f.EndRemote {
-			err = mb2.WriteBlock(d.conn, mb2.CodeErrorRemote, []byte("end"))
+			msg := f.RemoteMsg
+			if msg == nil {
+				msg = []byte("end")
+			}
+			err = mb2.WriteBlock(d.conn, mb2.CodeErrorRemote, msg)
 		} else {
 			err = mb2.WriteBlock(d.conn, mb2.CodeSuccess, nil)
 		}
@@ -136,7 +153,7 @@ func (d *Device) UploadFiles(files ...Upload) (int64, error) {
 	if err := mb2.WriteU32(d.conn, 0); err != nil {
 		return 0, err
 	}
-	code, _, err := d.status()
+	code, _, err := d.Status()
 	return code, err
 }
 
@@ -165,6 +182,9 @@ func (d *Device) DownloadFiles(paths ...string) (map[string][]byte, int64, error
 			if err != nil {
 				return nil, 0, err
 			}
+			if n == 0 {
+				return nil, 0, fmt.Errorf("zero-length block for %s", name)
+			}
 			code, err := mb2.ReadByte(d.conn)
 			if err != nil {
 				return nil, 0, err
@@ -184,7 +204,7 @@ func (d *Device) DownloadFiles(paths ...string) (map[string][]byte, int64, error
 			}
 		}
 	}
-	code, _, err := d.status()
+	code, _, err := d.Status()
 	return got, code, err
 }
 

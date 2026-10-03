@@ -7,7 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
+	"syscall"
 )
 
 type handler struct {
@@ -45,8 +45,10 @@ func (h *handler) run() error {
 			err = h.remove(msg)
 		case "DLMessageCopyItem":
 			err = h.copyItem(msg)
+		case "DLMessagePurgeDiskSpace":
+			err = h.status(-1, "Operation not supported", nil)
 		case "DLMessageDisconnect":
-			return nil
+			return errors.New("mobilebackup2: device disconnected before completion")
 		case "DLMessageProcessMessage":
 			_, perr := checkProcessMessage(msg)
 			_ = h.c.codec.Send([]any{"DLMessageDisconnect", EmptyParameter})
@@ -63,8 +65,7 @@ func (h *handler) run() error {
 // local maps a device-relative path into o.Dir, refusing anything that escapes it.
 func (h *handler) local(p string) (string, error) {
 	clean := filepath.Clean(filepath.FromSlash(p))
-	if p == "" || filepath.IsAbs(clean) || filepath.VolumeName(clean) != "" ||
-		clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+	if p == "" || clean == "." || !filepath.IsLocal(clean) {
 		return "", fmt.Errorf("unsafe device path %q", p)
 	}
 	return filepath.Join(h.o.Dir, clean), nil
@@ -77,6 +78,16 @@ func deviceErrno(err error) int64 {
 		return -6
 	case errors.Is(err, fs.ErrExist):
 		return -7
+	case errors.Is(err, syscall.ENOTDIR):
+		return -8
+	case errors.Is(err, syscall.EISDIR):
+		return -9
+	case errors.Is(err, syscall.ELOOP):
+		return -10
+	case errors.Is(err, syscall.EIO):
+		return -11
+	case errors.Is(err, syscall.ENOSPC):
+		return -15
 	default:
 		return -1
 	}
@@ -104,6 +115,9 @@ func (h *handler) sendFiles(msg []any) error {
 	fileErrs := map[string]any{}
 	for _, pv := range paths {
 		p, _ := pv.(string)
+		if p == "" { // a zero-length name would terminate the list early
+			continue
+		}
 		if err := WriteName(h.c.rw, p); err != nil {
 			return err
 		}
@@ -183,30 +197,35 @@ func (h *handler) receiveFiles() error {
 		if lerr != nil {
 			h.res.LocalErrors = append(h.res.LocalErrors, fmt.Sprintf("%s: %v", fname, lerr))
 		}
-		err = h.receiveBlocks(r, w, fname)
+		ended, err := h.receiveBlocks(r, w, fname)
 		if f != nil {
 			err = errors.Join(err, f.Close())
 		}
 		if err != nil {
 			return err
 		}
+		if ended {
+			break
+		}
 	}
 	return h.status(0, "", nil)
 }
 
-func (h *handler) receiveBlocks(r io.Reader, w io.Writer, fname string) error {
+// receiveBlocks reads one file's blocks. ended reports a zero length where a
+// block was expected, which (as in libimobiledevice) ends the whole upload.
+func (h *handler) receiveBlocks(r io.Reader, w io.Writer, fname string) (ended bool, err error) {
 	last := byte(0xff)
 	for {
 		n, err := ReadU32(r)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if n == 0 {
-			return nil
+			return true, nil
 		}
 		code, err := ReadByte(r)
 		if err != nil {
-			return err
+			return false, err
 		}
 		payload := int64(n) - 1
 		switch code {
@@ -217,23 +236,27 @@ func (h *handler) receiveBlocks(r io.Reader, w io.Writer, fname string) error {
 				h.o.Progress(h.res.BytesReceived)
 			}
 			if err != nil {
-				return err
+				return false, err
 			}
 			last = code
 		case CodeSuccess:
 			_, err := io.CopyN(io.Discard, r, payload)
-			return err
+			return false, err
 		case CodeErrorRemote, CodeErrorLocal:
-			msg := make([]byte, payload)
+			// Keep at most maxName bytes of the device-supplied message and skip the rest.
+			msg := make([]byte, min(payload, maxName))
 			if _, err := io.ReadFull(r, msg); err != nil {
-				return err
+				return false, err
+			}
+			if _, err := io.CopyN(io.Discard, r, payload-int64(len(msg))); err != nil {
+				return false, err
 			}
 			if last != CodeFileData { // after data, 0x0b is just the end marker
 				h.res.RemoteErrors = append(h.res.RemoteErrors, fmt.Sprintf("%s: %s", fname, msg))
 			}
-			return nil
+			return false, nil
 		default:
-			return fmt.Errorf("unknown block code 0x%02x for %s", code, fname)
+			return false, fmt.Errorf("unknown block code 0x%02x for %s", code, fname)
 		}
 	}
 }
@@ -326,6 +349,12 @@ func (h *handler) copyItem(msg []any) error {
 	src, e1 := h.local(from)
 	dst, e2 := h.local(to)
 	err := errors.Join(e1, e2)
+	if err == nil {
+		// Copying a tree into itself would never terminate.
+		if rel, rerr := filepath.Rel(src, dst); rerr == nil && (rel == "." || filepath.IsLocal(rel)) {
+			err = fmt.Errorf("cannot copy %q into itself (%q)", from, to)
+		}
+	}
 	if err == nil {
 		err = copyPath(src, dst)
 	}
