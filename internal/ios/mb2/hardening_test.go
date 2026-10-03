@@ -295,8 +295,12 @@ func TestRecvRejectsOverflowingCounts(t *testing.T) {
 		{"array-2^63", bigCount(0xA, 1<<63)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if msg, err := recv(rawPlist(tc.obj, []byte{8})); err == nil {
+			msg, err := recv(rawPlist(tc.obj, []byte{8}))
+			if err == nil {
 				t.Fatalf("accepted: %v", msg)
+			}
+			if strings.Contains(err.Error(), "malformed plist") {
+				t.Fatalf("reached the decoder (rejected only by panic recovery): %v", err)
 			}
 		})
 	}

@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -365,5 +367,47 @@ func TestBackupStagingWalkErrorKeepsWalkingAndStaging(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(filepath.Join(c.Dir, "staging")); len(entries) != 1 {
 		t.Fatalf("staging should be kept after a walk error: %v", entries)
+	}
+}
+
+func TestBackupPromotionFailureKeepsStaging(t *testing.T) {
+	b := fakeIPhone()
+	c := newCase(t)
+	upload := uploadThenFinish(0, statusPlist(t, "finished"))
+	b.Script = func(d *mb2test.Device) error {
+		// While the backup runs, occupy the artifact path U1/Info.plist will
+		// be promoted to, so its Capture fails (artifacts are O_EXCL).
+		acqs, err := os.ReadDir(filepath.Join(c.Dir, "staging"))
+		if err != nil || len(acqs) != 1 {
+			return fmt.Errorf("staging: %v %v", acqs, err)
+		}
+		dst := filepath.Join(c.Dir, "artifacts", "U1", acqs[0].Name(), "backup", "U1", "Info.plist")
+		if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
+			return err
+		}
+		if err := os.WriteFile(dst, []byte("planted"), 0o600); err != nil {
+			return err
+		}
+		return upload(d)
+	}
+	err := first(t, b).(device.LogicalAcquirer).AcquireLogical(context.Background(), c, device.LogicalOptions{}, nil)
+	if !errors.Is(err, evidence.ErrArtifactExists) {
+		t.Fatalf("err = %v", err)
+	}
+	if serr := <-b.ScriptErr; serr != nil {
+		t.Fatalf("script: %v", serr)
+	}
+	acqs, _ := os.ReadDir(filepath.Join(c.Dir, "staging"))
+	if len(acqs) != 1 {
+		t.Fatalf("staging removed after a failed promotion: %v", acqs)
+	}
+	if got, err := os.ReadFile(filepath.Join(c.Dir, "staging", acqs[0].Name(), "U1", "Info.plist")); err != nil || string(got) != "info" {
+		t.Fatalf("unpromoted staged file lost: %q %v", got, err)
+	}
+	if m, _ := c.Manifest(); len(m) != 3 {
+		t.Fatalf("expected lockdown + the 2 promotable files, got %d", len(m))
+	}
+	if rep, _ := c.Verify(); !slices.Contains(rep.Problems, "leftover staging directory "+acqs[0].Name()+" (unpromoted acquisition data)") {
+		t.Fatalf("verify did not flag leftover staging: %+v", rep)
 	}
 }
