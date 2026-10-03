@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
-	"github.com/rbenzing/minutiae/internal/examine"
 	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/filesys/detect"
 	"github.com/rbenzing/minutiae/internal/filesys/fstest"
@@ -297,11 +296,11 @@ func TestImageJSONOutputs(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("info: %d %s", code, out)
 	}
-	var info examine.ImageInfo
+	var info jsonImageInfo
 	if err := json.Unmarshal([]byte(out), &info); err != nil || info.Format != "raw" || info.Scheme != "gpt" || len(info.Partitions) != 1 {
 		t.Fatalf("info json %q: %v (%+v)", out, err, info)
 	}
-	if info.ParentID != e.ref || info.Partitions[0].FSType != "mtfs" {
+	if info.ParentID != e.ref || info.Partitions[0].FSType != "mtfs" || info.Partitions[0].FS == nil || info.Partitions[0].FS.Label != "L" || info.SectorSize != 512 {
 		t.Errorf("info = %+v", info)
 	}
 
@@ -347,7 +346,7 @@ func TestImageJSONOutputs(t *testing.T) {
 	}
 
 	code, out = e.image(t, "extract", e.ref, "--json", "-r", "/docs")
-	var sum examine.Summary
+	var sum jsonSummary
 	if err := json.Unmarshal(jsonPart(out), &sum); code != 0 || err != nil || sum.Files != 2 || sum.AnalysisID == "" {
 		t.Fatalf("extract json: %d %q %v", code, out, err)
 	}

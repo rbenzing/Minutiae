@@ -69,12 +69,12 @@ func (w *walker) walk(dir Entry, dirPath string, depth int) error {
 			if w.seen[k.ID] {
 				bad = &CorruptError{
 					Structure: "directory tree", Offset: -1,
-					Reason: fmt.Sprintf("directory %q is reachable more than once (cycle) at %s", k.ID, p),
+					Reason: fmt.Sprintf("directory %q is reachable more than once (cycle) at %q", k.ID, p),
 				}
 			} else if depth+1 > MaxWalkDepth {
 				bad = &CorruptError{
 					Structure: "directory tree", Offset: -1,
-					Reason: fmt.Sprintf("nesting deeper than %d at %s", MaxWalkDepth, p),
+					Reason: fmt.Sprintf("nesting deeper than %d at %q", MaxWalkDepth, p),
 				}
 			}
 			if bad != nil {

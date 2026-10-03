@@ -3,6 +3,7 @@ package cli
 import (
 	"cmp"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"slices"
@@ -91,6 +92,9 @@ func newImageImportCmd(d Deps, opts *rootOptions) *cobra.Command {
 	casePath := caseFlag(cmd)
 	cmd.Flags().StringVar(&deviceID, "device", "import", "label of the source the image came from")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if strings.TrimSpace(deviceID) == "" {
+			return usageErrorf("--device must not be blank")
+		}
 		c, err := openCase(*casePath)
 		if err != nil {
 			return err
@@ -109,7 +113,7 @@ func newImageImportCmd(d Deps, opts *rootOptions) *cobra.Command {
 		for _, r := range recs {
 			status := ""
 			if r.Incomplete {
-				status = "  INCOMPLETE: " + printable(r.Error)
+				status = "  INCOMPLETE: " + escapeText(r.Error)
 			}
 			fmt.Fprintf(d.Out, "%s  %d  %s%s\n", printable(r.Path), r.Size, r.SHA256, status)
 		}
@@ -138,7 +142,7 @@ func newImageInfoCmd(d Deps, opts *rootOptions) *cobra.Command {
 		// in this build only containers without stored hashes can be opened.
 		var verifyNote string
 		if verify {
-			verifyNote = fmt.Sprintf("verification of %s containers is not available", info.Format)
+			verifyNote = fmt.Sprintf("verification of %s containers is not available", escapeText(info.Format))
 			if info.Format == "raw" || info.Format == "split-raw" {
 				verifyNote = "container has no stored hashes"
 			}
@@ -147,7 +151,7 @@ func newImageInfoCmd(d Deps, opts *rootOptions) *cobra.Command {
 			if verifyNote != "" {
 				fmt.Fprintln(d.Err, verifyNote)
 			}
-			return writeJSON(d.Out, info)
+			return writeJSON(d.Out, newJSONImageInfo(info))
 		}
 		printImageInfo(d.Out, info)
 		if verifyNote != "" {
@@ -204,10 +208,10 @@ func printImageInfo(w io.Writer, info examine.ImageInfo) {
 				fmt.Fprintf(w, "  Volumes:    %s\n", joinPrintable(fi.Volumes, ", "))
 			}
 			for _, warn := range fi.Warnings {
-				fmt.Fprintf(w, "  Warning:    %s\n", printable(warn))
+				fmt.Fprintf(w, "  Warning:    %s\n", escapeText(warn))
 			}
 		case pi.Error != "":
-			fmt.Fprintf(w, "Partition %d: %s\n", pi.Partition.Index, printable(pi.Error))
+			fmt.Fprintf(w, "Partition %d: %s\n", pi.Partition.Index, escapeText(pi.Error))
 		}
 	}
 
@@ -217,7 +221,7 @@ func printImageInfo(w io.Writer, info examine.ImageInfo) {
 	}
 	fmt.Fprintf(w, "Unallocated (outside partitions): %s (%d bytes) in %d range(s)\n", humanBytes(total), total, len(info.Unallocated))
 	for _, warn := range info.Warnings {
-		fmt.Fprintf(w, "Warning: %s\n", printable(warn))
+		fmt.Fprintf(w, "Warning: %s\n", escapeText(warn))
 	}
 }
 
@@ -251,22 +255,6 @@ func joinPrintable(ss []string, sep string) string {
 		out[i] = printable(s)
 	}
 	return strings.Join(out, sep)
-}
-
-// jsonEntry is a filesys.Entry whose Type is rendered as text ("file", "dir",
-// "symlink", "other") instead of a number.
-type jsonEntry struct {
-	filesys.Entry
-	Type string
-}
-
-type pathEntry struct {
-	Path  string    `json:"path"`
-	Entry jsonEntry `json:"entry"`
-}
-
-func newPathEntry(p string, e filesys.Entry) pathEntry {
-	return pathEntry{Path: p, Entry: jsonEntry{Entry: e, Type: e.Type.String()}}
 }
 
 func typeChar(t filesys.EntryType) byte {
@@ -354,20 +342,43 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 
-		var items []pathEntry
+		// --json streams the array, so a huge subtree is never held in memory. It is
+		// closed only on success: a failed listing leaves invalid JSON behind.
+		var (
+			wrote   int
+			jsonErr error
+		)
+		if opts.json {
+			_, jsonErr = io.WriteString(d.Out, "[")
+		}
 		emit := func(p string, e filesys.Entry) {
 			if e.Deleted && !deleted {
 				return
 			}
-			if opts.json {
-				items = append(items, newPathEntry(p, e))
-			} else if recursive {
+			switch {
+			case opts.json:
+				if jsonErr != nil {
+					return
+				}
+				b, merr := json.Marshal(newPathEntry(p, e))
+				if merr == nil {
+					sep := "\n  "
+					if wrote > 0 {
+						sep = ",\n  "
+					}
+					_, merr = d.Out.Write(append([]byte(sep), b...))
+				}
+				jsonErr = merr
+				wrote++
+			case recursive:
 				fmt.Fprintln(d.Out, lsLine(p, e))
-			} else {
+			default:
 				fmt.Fprintln(d.Out, lsLine(e.Name, e))
 			}
 		}
 		switch {
+		case dir.Deleted && !deleted:
+			fmt.Fprintln(d.Err, "note: entry is deleted; use --deleted")
 		case dir.Type != filesys.TypeDir:
 			emit(dirPath, dir)
 		case recursive:
@@ -376,11 +387,11 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 					return cerr
 				}
 				if werr != nil {
-					fmt.Fprintf(d.Err, "warning: %s: %v\n", printable(p), werr)
+					fmt.Fprintf(d.Err, "warning: %s: %s\n", escapeText(p), escapeText(werr.Error()))
 					return nil
 				}
 				emit(p, e)
-				return nil
+				return jsonErr
 			})
 		default:
 			var kids []filesys.Entry
@@ -394,11 +405,15 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 				}
 			}
 		}
+		if err == nil {
+			err = jsonErr
+		}
 		if opts.json && err == nil {
-			if items == nil {
-				items = []pathEntry{}
+			closer := "]\n"
+			if wrote > 0 {
+				closer = "\n]\n"
 			}
-			return writeJSON(d.Out, items)
+			_, err = io.WriteString(d.Out, closer)
 		}
 		return err
 	}
@@ -526,7 +541,7 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 			if note != "" {
 				fmt.Fprintln(d.Err, note)
 			}
-			if jerr := writeJSON(d.Out, sum); jerr != nil && err == nil {
+			if jerr := writeJSON(d.Out, newJSONSummary(sum)); jerr != nil && err == nil {
 				err = jerr
 			}
 			return err
@@ -575,7 +590,7 @@ func newImageUnallocCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		if opts.json {
-			if jerr := writeJSON(d.Out, sum); jerr != nil && err == nil {
+			if jerr := writeJSON(d.Out, newJSONSummary(sum)); jerr != nil && err == nil {
 				err = jerr
 			}
 			return err
