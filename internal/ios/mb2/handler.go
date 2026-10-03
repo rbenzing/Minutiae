@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"syscall"
 )
 
@@ -360,7 +362,7 @@ func (h *handler) copyItem(msg []any) error {
 	err := errors.Join(e1, e2)
 	if err == nil {
 		// Copying a tree into itself would never terminate.
-		if rel, rerr := filepath.Rel(src, dst); rerr == nil && (rel == "." || filepath.IsLocal(rel)) {
+		if insideOrSame(src, dst, foldCase) {
 			err = fmt.Errorf("cannot copy %q into itself (%q)", from, to)
 		}
 	}
@@ -420,4 +422,17 @@ func appendCapped(list []string, s string) []string {
 		return list
 	}
 	return append(list, s)
+}
+
+// foldCase is true where the default file system ignores case.
+var foldCase = runtime.GOOS == "windows" || runtime.GOOS == "darwin"
+
+// insideOrSame reports whether dst is src or lies below it, comparing
+// cleaned paths and ignoring case when fold is set.
+func insideOrSame(src, dst string, fold bool) bool {
+	src, dst = filepath.Clean(src), filepath.Clean(dst)
+	if fold {
+		src, dst = strings.ToLower(src), strings.ToLower(dst)
+	}
+	return dst == src || strings.HasPrefix(dst, strings.TrimSuffix(src, string(filepath.Separator))+string(filepath.Separator))
 }

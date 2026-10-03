@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -200,6 +201,10 @@ func TestBackupZeroBlockEndsUpload(t *testing.T) {
 }
 
 func TestBackupRefusesStagingRootAndSelfCopy(t *testing.T) {
+	selfCopies := []string{"U1/dir", "U1/dir/sub"}
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" { // case-insensitive by default
+		selfCopies = append(selfCopies, "u1/DIR/sub2")
+	}
 	dir, _, err := runBackup(t, func(d *mb2test.Device) error {
 		if err := d.Handshake(); err != nil {
 			return err
@@ -215,7 +220,7 @@ func TestBackupRefusesStagingRootAndSelfCopy(t *testing.T) {
 				return fmt.Errorf("remove %q: code %d %v", p, code, err)
 			}
 		}
-		for _, to := range []string{"U1/dir", "U1/dir/sub"} {
+		for _, to := range selfCopies {
 			if code, _, err := d.Request("DLMessageCopyItem", "U1/dir", to); err != nil || code == 0 {
 				return fmt.Errorf("copy to %q: code %d %v", to, code, err)
 			}
@@ -230,6 +235,9 @@ func TestBackupRefusesStagingRootAndSelfCopy(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "U1", "dir", "sub")); !os.IsNotExist(err) {
 		t.Fatalf("self-copy created U1/dir/sub: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "U1", "dir", "sub2")); !os.IsNotExist(err) {
+		t.Fatalf("self-copy created U1/dir/sub2: %v", err)
 	}
 }
 
