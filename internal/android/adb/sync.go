@@ -10,7 +10,14 @@ import (
 	"time"
 )
 
-const syncChunk = 64 * 1024
+const (
+	syncChunk = 64 * 1024
+	// maxFailMsg and maxDentName bound what a hostile device can make us
+	// allocate: lengths above them are protocol errors, checked before any
+	// buffer is allocated.
+	maxFailMsg  = 64 * 1024
+	maxDentName = 4096
+)
 
 // SyncEntry is a LIST/STAT result (sync v1: 32-bit size and mtime).
 type SyncEntry struct {
@@ -75,6 +82,9 @@ func (s *Sync) readFail() error {
 	if err != nil {
 		return err
 	}
+	if v[0] > maxFailMsg {
+		return fmt.Errorf("%w: FAIL message length %d exceeds %d", ErrProtocol, v[0], maxFailMsg)
+	}
 	msg := make([]byte, v[0])
 	if _, err := io.ReadFull(s.c, msg); err != nil {
 		return err
@@ -98,6 +108,9 @@ func (s *Sync) List(dir string) ([]SyncEntry, error) {
 			v, err := s.readU32s(4) // mode, size, mtime, namelen
 			if err != nil {
 				return nil, err
+			}
+			if v[3] > maxDentName {
+				return nil, fmt.Errorf("adb sync list %s: %w: DENT name length %d exceeds %d", dir, ErrProtocol, v[3], maxDentName)
 			}
 			name := make([]byte, v[3])
 			if _, err := io.ReadFull(s.c, name); err != nil {

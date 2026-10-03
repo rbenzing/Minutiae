@@ -17,6 +17,12 @@ import (
 // ErrServerUnavailable means nothing is listening on the ADB server port.
 var ErrServerUnavailable = errors.New("adb server not reachable (install Android platform-tools and run `adb start-server`)")
 
+// ErrProtocol means the server or device sent a malformed or oversized frame.
+var ErrProtocol = errors.New("adb protocol error")
+
+// ErrOutputTooLarge means a command produced more output than Output buffers.
+var ErrOutputTooLarge = errors.New("adb command output too large")
+
 // FailError is a FAIL response from the server or device.
 type FailError struct{ Msg string }
 
@@ -223,7 +229,11 @@ func (c *Client) Exec(ctx context.Context, serial, cmd string) (io.ReadCloser, e
 	return c.openService(ctx, serial, "exec:"+cmd)
 }
 
-// Output runs cmd and returns all of its output, falling back to shell: when
+// maxOutput bounds what Output buffers in memory; stream larger output with
+// Exec instead.
+const maxOutput = 16 << 20
+
+// Output runs cmd and returns all of its output (at most 16 MiB), falling back to shell: when
 // the device rejects exec:.
 func (c *Client) Output(ctx context.Context, serial, cmd string) ([]byte, error) {
 	rc, err := c.Exec(ctx, serial, cmd)
@@ -235,5 +245,9 @@ func (c *Client) Output(ctx context.Context, serial, cmd string) ([]byte, error)
 		return nil, err
 	}
 	defer func() { _ = rc.Close() }()
-	return io.ReadAll(rc)
+	out, err := io.ReadAll(io.LimitReader(rc, maxOutput+1))
+	if err == nil && len(out) > maxOutput {
+		return nil, fmt.Errorf("%w: %q produced more than %d bytes", ErrOutputTooLarge, cmd, maxOutput)
+	}
+	return out, err
 }
