@@ -537,3 +537,41 @@ func TestWithSuffixAndFoldCase(t *testing.T) {
 		t.Error("distinct names fold equal")
 	}
 }
+
+func TestAcquireLogicalOnNoExecDeviceUsesShell(t *testing.T) {
+	dev := logicalDevice()
+	dev.NoExec = true
+	c := newCase(t)
+	d := findDevice(t, fakeServer(t, dev), "PX1")
+	if info, err := d.Info(context.Background()); err != nil || info.Model != "Pixel 7" {
+		t.Fatalf("info = %+v, %v", info, err)
+	}
+	if err := d.AcquireLogical(context.Background(), c, device.LogicalOptions{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := c.Manifest()
+	byRemote := map[string]evidence.ManifestRecord{}
+	for _, r := range m {
+		byRemote[r.Source.RemotePath] = r
+	}
+	for _, p := range []string{"shell:getprop", "shell:pm list packages -f", "/sdcard/zz.txt"} {
+		if r, ok := byRemote[p]; !ok || r.Incomplete {
+			t.Errorf("%s: record %+v ok=%v", p, r, ok)
+		}
+	}
+	if got, _ := os.ReadFile(filepath.Join(c.Dir, filepath.FromSlash(byRemote["shell:getprop"].Path))); string(got) != getprop {
+		t.Errorf("getprop artifact = %q", got)
+	}
+}
+
+func TestImageNeverFallsBackToShell(t *testing.T) {
+	dev := rootedDevice()
+	dev.NoExec = true
+	d := findDevice(t, fakeServer(t, dev), "R1")
+	if _, err := d.Partitions(context.Background()); err != nil {
+		t.Fatalf("partitions over shell: fallback: %v", err)
+	}
+	if n, err := d.Image(context.Background(), "boot", &bytes.Buffer{}, nil); err == nil || n != 0 {
+		t.Fatalf("dd must be exec:-only: n=%d err=%v", n, err)
+	}
+}

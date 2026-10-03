@@ -32,17 +32,7 @@ func (d *Device) AcquireLogical(ctx context.Context, c *evidence.Case, opts devi
 	}
 	return device.RunAcquisition(c, d.serial, "logical", map[string]any{"roots": roots}, func(acq string) error {
 		for _, ic := range infoCommands {
-			src := evidence.Source{Kind: "info", DeviceID: d.serial, RemotePath: "exec:" + ic.cmd}
-			_, err := c.Capture(d.serial, acq, ic.rel, src, func(w io.Writer) error {
-				rc, err := d.c.Exec(ctx, d.serial, ic.cmd)
-				if err != nil {
-					return mapErr(err)
-				}
-				defer func() { _ = rc.Close() }()
-				_, err = io.Copy(w, rc)
-				return err
-			})
-			if err != nil {
+			if err := d.captureInfo(ctx, c, acq, ic.rel, ic.cmd); err != nil {
 				return err
 			}
 		}
@@ -183,4 +173,21 @@ func (w *walker) pull(p, localDir string, e adb.SyncEntry) error {
 	default:
 		return err
 	}
+}
+
+// captureInfo streams the output of a device command into an info artifact.
+// The command runs via exec: with the shell: fallback; Source.RemotePath
+// records the service actually used ("exec:getprop" or "shell:getprop").
+func (d *Device) captureInfo(ctx context.Context, c *evidence.Case, acq, rel, cmd string) error {
+	rc, svc, err := d.c.Stream(ctx, d.serial, cmd)
+	if err != nil {
+		return mapErr(err)
+	}
+	defer func() { _ = rc.Close() }()
+	src := evidence.Source{Kind: "info", DeviceID: d.serial, RemotePath: svc + cmd}
+	_, err = c.Capture(d.serial, acq, rel, src, func(w io.Writer) error {
+		_, err := io.Copy(w, rc)
+		return err
+	})
+	return err
 }

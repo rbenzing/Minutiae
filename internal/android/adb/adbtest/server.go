@@ -30,6 +30,7 @@ type Device struct {
 	Files      map[string]File   // absolute path -> file; parent dirs implied
 	Unreadable map[string]bool   // RECV fails with permission denied
 	ExtraDents map[string][]Dent // raw entries appended to LIST of a directory (hostile listings)
+	NoExec     bool              // exec: is rejected with FAIL "closed" (old adbd); shell: still works
 }
 
 // Dent is a raw LIST entry, sent as-is (no validation of the name).
@@ -150,6 +151,9 @@ func (s *Server) handle(c net.Conn) {
 				return
 			}
 			okay(c)
+		case dev != nil && dev.NoExec && strings.HasPrefix(req, "exec:"):
+			fail(c, "closed")
+			return
 		case dev != nil && (strings.HasPrefix(req, "exec:") || strings.HasPrefix(req, "shell:")):
 			cmd := req[strings.IndexByte(req, ':')+1:]
 			okay(c)

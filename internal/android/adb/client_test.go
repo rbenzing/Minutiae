@@ -80,3 +80,36 @@ func TestCancelledContext(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func noExecPixel() *adbtest.Device {
+	return &adbtest.Device{
+		Serial: "NE1", State: "device", NoExec: true,
+		Commands: map[string][]byte{"getprop ro.product.model": []byte("Pixel 7\n")},
+	}
+}
+
+func TestOutputFallsBackToShellWhenExecFails(t *testing.T) {
+	c := startServer(t, noExecPixel())
+	out, err := c.Output(context.Background(), "NE1", "getprop ro.product.model")
+	if err != nil || string(out) != "Pixel 7\n" {
+		t.Fatalf("out = %q, %v", out, err)
+	}
+	if _, err := c.Exec(context.Background(), "NE1", "getprop ro.product.model"); err == nil {
+		t.Fatal("Exec must not fall back to shell:")
+	}
+}
+
+func TestStreamReportsServiceUsed(t *testing.T) {
+	c := startServer(t, pixel, noExecPixel())
+	for serial, want := range map[string]string{"PX1": "exec:", "NE1": "shell:"} {
+		rc, svc, err := c.Stream(context.Background(), serial, "getprop ro.product.model")
+		if err != nil || svc != want {
+			t.Fatalf("%s: service = %q, %v", serial, svc, err)
+		}
+		_ = rc.Close()
+	}
+	var fe *adb.FailError
+	if _, _, err := c.Stream(context.Background(), "nope", "id"); !errors.As(err, &fe) || !strings.Contains(fe.Msg, "not found") {
+		t.Fatalf("unknown device err = %v", err)
+	}
+}

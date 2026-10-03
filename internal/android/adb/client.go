@@ -229,18 +229,46 @@ func (c *Client) Exec(ctx context.Context, serial, cmd string) (io.ReadCloser, e
 	return c.openService(ctx, serial, "exec:"+cmd)
 }
 
+// Stream runs cmd via exec: and returns its stdout together with the service
+// actually used ("exec:" or "shell:"). When the device FAILs exec: for any
+// reason other than an unauthorized or unknown device (older adbd versions
+// answer "closed" or "unknown service"), it retries once via shell:, whose
+// output may differ (e.g. CRLF line endings on old devices) — hence the
+// service is reported so callers can record it. Binary streams that must be
+// byte-exact (imaging) use Exec, which never falls back.
+func (c *Client) Stream(ctx context.Context, serial, cmd string) (io.ReadCloser, string, error) {
+	rc, err := c.Exec(ctx, serial, cmd)
+	if err == nil {
+		return rc, "exec:", nil
+	}
+	var fe *FailError
+	if !errors.As(err, &fe) || !shellFallbackAllowed(fe.Msg) {
+		return nil, "", err
+	}
+	rc, err = c.openService(ctx, serial, "shell:"+cmd)
+	if err != nil {
+		return nil, "", err
+	}
+	return rc, "shell:", nil
+}
+
+// shellFallbackAllowed is false for FAIL messages that say the device itself
+// is unusable (unauthorized, not found): shell: would fail the same way.
+func shellFallbackAllowed(msg string) bool {
+	m := strings.ToLower(msg)
+	unauthorized := strings.Contains(m, "unauthorized")
+	notFound := strings.Contains(m, "device") && strings.Contains(m, "not found")
+	return !unauthorized && !notFound
+}
+
 // maxOutput bounds what Output buffers in memory; stream larger output with
-// Exec instead.
+// Stream or Exec instead.
 const maxOutput = 16 << 20
 
-// Output runs cmd and returns all of its output (at most 16 MiB), falling back to shell: when
-// the device rejects exec:.
+// Output runs cmd (via Stream, so with the shell: fallback) and returns all of
+// its output, at most 16 MiB.
 func (c *Client) Output(ctx context.Context, serial, cmd string) ([]byte, error) {
-	rc, err := c.Exec(ctx, serial, cmd)
-	var fe *FailError
-	if errors.As(err, &fe) && strings.Contains(fe.Msg, "unknown service") {
-		rc, err = c.openService(ctx, serial, "shell:"+cmd)
-	}
+	rc, _, err := c.Stream(ctx, serial, cmd)
 	if err != nil {
 		return nil, err
 	}
