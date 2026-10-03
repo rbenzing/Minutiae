@@ -92,6 +92,18 @@ func (l *runList) finish() error {
 // uninitialized extents are runs with Offset -1; the last run is trimmed to the
 // size. A size of zero has no runs.
 func (f *FS) runs(in *inode) ([]filesys.Run, error) {
+	runs, err := f.runsPartial(in)
+	if err != nil {
+		return nil, err
+	}
+	return runs, nil
+}
+
+// runsPartial is runs, but when the map is damaged part-way (a bad extent node
+// or indirect block) it returns the runs mapped before the damage together with
+// the error. They cover a prefix of the file in file order and are not checked
+// against the size.
+func (f *FS) runsPartial(in *inode) ([]filesys.Run, error) {
 	if in.size == 0 {
 		return nil, nil
 	}
@@ -102,10 +114,10 @@ func (f *FS) runs(in *inode) ([]filesys.Run, error) {
 	} else {
 		err = f.blockMapRuns(in, rl)
 	}
-	if err == nil {
-		err = rl.finish()
+	if err != nil {
+		return rl.runs, err
 	}
-	if err == nil {
+	if err = rl.finish(); err == nil {
 		err = filesys.CheckRuns(rl.runs, in.size, f.size)
 	}
 	if err != nil {

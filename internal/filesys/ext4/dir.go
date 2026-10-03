@@ -29,9 +29,12 @@ const (
 
 	// maxDirBytes is how much of one directory is read.
 	maxDirBytes = 64 << 20
-	// maxDirRecords bounds the entries (live and deleted) one directory yields,
-	// so a hostile directory cannot make ReadDir build an unbounded list.
-	maxDirRecords = 1 << 20
+	// maxDirRecords bounds the entries one directory yields (live and deleted
+	// for ReadDir, live for Lookup), so a hostile directory cannot make ReadDir
+	// build an unbounded list. A directory with more entries is cut off at the
+	// cap with a warning, for Lookup too: an entry beyond the cap is reported as
+	// not found.
+	maxDirRecords = 1 << 18
 	// maxLinkTarget bounds the symlink target read for an Entry (PATH_MAX).
 	maxLinkTarget = 4096
 
@@ -52,6 +55,7 @@ type dirRec struct {
 	blk     int64 // physical block, or -1 for an inline directory
 	off     int   // offset in the block, or in the inline data
 	csumBad bool  // the block's checksum is bad or missing
+	beyond  bool  // the block lies beyond the directory's i_size
 
 	dirInode uint32 // the directory the record was read from
 }
@@ -65,43 +69,56 @@ type region struct {
 	base    int   // offset of b in the inline data
 	slack   bool  // look for deleted records in the slack of each record
 	csumBad bool
+	beyond  bool
 	what    string // for warnings: "block 12" or "inline data"
 }
 
 // dirScan walks the records of one directory.
 type dirScan struct {
-	f           *FS
-	in          *inode
-	wantDeleted bool
-	visit       func(*dirRec) bool
-	index       bool   // the directory has the INDEX flag
-	seed        uint32 // checksum seed of the directory's blocks
-	count       int
-	stop        bool
+	f            *FS
+	in           *inode
+	wantDeleted  bool
+	visit        func(*dirRec) bool
+	index        bool  // the directory has the INDEX flag
+	enc          bool  // the directory is encrypted: names are ciphertext
+	isizeBlocks  int64 // blocks that i_size covers; blocks past them are "beyond"
+	warnedBeyond bool
+	seed         uint32 // checksum seed of the directory's blocks
+	count        int
+	stop         bool
 }
 
 // scanDir calls visit for every live record of directory in and, with
 // wantDeleted, for the deleted records found in slack space, in on-disk order,
 // until visit returns false. Damage inside a block is a warning and ends the
-// read of that block only; a directory whose blocks cannot be mapped is an
-// error. Holes in a sparse directory are skipped.
+// read of that block only. If the block map is damaged part-way, the blocks
+// mapped before the damage are still read and the rest is a warning; holes in a
+// sparse directory are skipped; blocks mapped beyond i_size are read too, with a
+// warning and their records flagged. Only an inline directory whose data cannot
+// be read is an error.
 func (f *FS) scanDir(in *inode, wantDeleted bool, visit func(*dirRec) bool) error {
-	w := &dirScan{f: f, in: in, wantDeleted: wantDeleted, visit: visit, index: in.flags&inodeFlagIndex != 0}
+	w := &dirScan{f: f, in: in, wantDeleted: wantDeleted, visit: visit, index: in.flags&inodeFlagIndex != 0, enc: in.flags&inodeFlagEncrypt != 0}
 	if f.sb.metadataCsum() {
 		w.seed = f.inodeSeed(in)
 	}
 	if in.flags&inodeFlagInlineData != 0 {
 		return w.inline()
 	}
-	runs, err := f.dirRuns(in)
+	runs, isizeBlocks, err := f.dirRuns(in)
 	if err != nil {
-		return err
+		f.warn("directory inode %d: its block map is damaged (%v); only the entries in the blocks mapped before the damage are listed", in.num, err)
 	}
+	w.isizeBlocks = isizeBlocks
 	bs := int64(f.sb.blockSize)
 	var lblk int64
 	for _, r := range runs {
+		if w.stop {
+			break
+		}
 		if r.Offset < 0 {
-			f.warn("directory inode %d: no blocks at logical blocks %d-%d (sparse directory)", in.num, lblk, lblk+r.Length/bs-1)
+			if lblk < isizeBlocks {
+				f.warn("directory inode %d: no blocks at logical blocks %d-%d (sparse directory)", in.num, lblk, min(lblk+r.Length/bs, isizeBlocks)-1)
+			}
 			lblk += r.Length / bs
 			continue
 		}
@@ -118,20 +135,27 @@ func (f *FS) scanDir(in *inode, wantDeleted bool, visit func(*dirRec) bool) erro
 	return nil
 }
 
-// dirRuns returns the runs of directory in's data, read up to the lesser of
-// i_size and maxDirBytes (a warning when truncated) and rounded up to whole
-// blocks. A run with Offset -1 is a hole.
-func (f *FS) dirRuns(in *inode) ([]filesys.Run, error) {
+// dirRuns maps directory in's blocks: the runs (Offset -1 is a hole), the
+// number of blocks i_size covers (at most 64 MiB, a warning when i_size is
+// larger), and an error if the map is damaged, in which case the runs mapped
+// before the damage are returned. The map is read up to 64 MiB whatever i_size
+// says, so blocks mapped beyond i_size are seen; a directory with a zero size
+// has none.
+func (f *FS) dirRuns(in *inode) ([]filesys.Run, int64, error) {
+	if in.size == 0 {
+		return nil, 0, nil
+	}
 	size := in.size
 	if size > maxDirBytes {
 		f.warn("directory inode %d: i_size %d exceeds the 64 MiB directory limit; only the first 64 MiB are read", in.num, in.size)
 		size = maxDirBytes
 	}
 	bs := int64(f.sb.blockSize)
-	size = (size + bs - 1) / bs * bs // <= 64 MiB + a block: cannot overflow
+	isizeBlocks := (size + bs - 1) / bs // <= 64 MiB: cannot overflow
 	c := *in
-	c.size = size
-	return f.runs(&c)
+	c.size = maxDirBytes
+	runs, err := f.runsPartial(&c)
+	return runs, isizeBlocks, err
 }
 
 // inline scans an inline directory: the parent inode number (4 bytes), then the
@@ -157,7 +181,11 @@ func (w *dirScan) inline() error {
 // block checks one directory block and reads its records. blk is the physical
 // block, lblk the logical one.
 func (w *dirScan) block(buf []byte, blk, lblk int64) {
-	g := &region{b: buf, limit: len(buf), blk: blk, slack: true, what: "block " + strconv.FormatInt(blk, 10)}
+	g := &region{b: buf, limit: len(buf), blk: blk, slack: true, what: "block " + strconv.FormatInt(blk, 10), beyond: lblk >= w.isizeBlocks}
+	if g.beyond && !w.warnedBeyond {
+		w.warnedBeyond = true
+		w.f.warn("directory inode %d: blocks are mapped beyond i_size (from logical block %d, i_size %d); they are scanned and their entries flagged beyond_isize", w.in.num, lblk, w.in.size)
+	}
 	switch {
 	case w.index && w.isDX(buf, lblk):
 		// An htree index block (the root, or an interior node): not a list of
@@ -199,7 +227,9 @@ func (w *dirScan) isDX(b []byte, lblk int64) bool {
 			return false
 		}
 		limit, count := int(le.Uint16(b[off:])), int(le.Uint16(b[off+2:]))
-		return limit == (bs-off)/8-tail && count >= 1 && count <= limit
+		// With metadata_csum the index gives up one slot to the dx_tail, but an
+		// index made before the feature was enabled has the full capacity.
+		return (limit == (bs-off)/8-tail || limit == (bs-off)/8) && count >= 1 && count <= limit
 	}
 	if bs < 40 {
 		return false
@@ -264,16 +294,16 @@ func (w *dirScan) records(g *region) {
 		switch {
 		case inode != 0 && !isDot(name):
 			w.emit(g, &dirRec{inode: inode, name: name, ftype: ftype, off: off})
-		case inode == 0 && off == 0 && g.slack && w.wantDeleted && nameLen > 0 && plausibleName(name):
+		case inode == 0 && off == 0 && g.slack && w.wantDeleted && nameLen > 0 && plausibleName(name, w.enc):
 			// The first record of a block, deleted: the kernel zeroed its
 			// inode, so only the name, type and place survive. It is reported
 			// as a deleted entry of unknown inode (see unknownInodeEntry).
 			w.emit(g, &dirRec{name: name, ftype: ftype, deleted: true, off: off})
 		}
-		// The slack after a live record holds records deleted by merging them
-		// into it. A first record with a zeroed inode (the kernel zeroes the
-		// inode of a deleted first record) merged its successors the same way.
-		if g.slack && w.wantDeleted && !w.stop && (inode != 0 || off == 0) {
+		// The slack after a record holds records deleted by merging them into
+		// it. That includes a record with a zeroed inode (the kernel zeroes the
+		// inode of a deleted first record, which later deletions merge into).
+		if g.slack && w.wantDeleted && !w.stop {
 			w.slackScan(g, off+(direntHeader+nameLen+3)&^3, off+recLen)
 		}
 		off += recLen
@@ -291,7 +321,7 @@ func (w *dirScan) slackScan(g *region, from, to int) {
 		inode := binary.LittleEndian.Uint32(b[q:])
 		nameLen, ftype := w.nameLen(b[q:])
 		end := q + direntHeader + nameLen
-		if inode >= 1 && inode <= w.f.sb.inodesCount && nameLen > 0 && end <= to && plausibleName(b[q+direntHeader:end]) {
+		if inode >= 1 && inode <= w.f.sb.inodesCount && nameLen > 0 && end <= to && plausibleName(b[q+direntHeader:end], w.enc) {
 			w.emit(g, &dirRec{inode: inode, name: b[q+direntHeader : end], ftype: ftype, deleted: true, off: q})
 			q += (direntHeader + nameLen + 3) &^ 3
 			continue
@@ -308,7 +338,7 @@ func (w *dirScan) emit(g *region, r *dirRec) {
 		return
 	}
 	w.count++
-	r.blk, r.csumBad, r.dirInode = g.blk, g.csumBad, w.in.num
+	r.blk, r.csumBad, r.beyond, r.dirInode = g.blk, g.csumBad, g.beyond, w.in.num
 	if g.blk < 0 {
 		r.off += g.base
 	}
@@ -321,10 +351,11 @@ func isDot(name []byte) bool {
 	return len(name) == 1 && name[0] == '.' || len(name) == 2 && name[0] == '.' && name[1] == '.'
 }
 
-// plausibleName reports whether name can be the name of a deleted record: no
-// NUL or '/', and not "." or "..".
-func plausibleName(name []byte) bool {
-	return !bytes.ContainsAny(name, "\x00/") && !isDot(name)
+// plausibleName reports whether name can be the name of a deleted record: not
+// "." or "..", and no NUL or '/' - except in an encrypted directory, where
+// names are ciphertext and any byte can occur.
+func plausibleName(name []byte, encrypted bool) bool {
+	return !isDot(name) && (encrypted || !bytes.ContainsAny(name, "\x00/"))
 }
 
 // displayName returns the Entry.Name for an on-disk name and the RawName to
@@ -366,7 +397,9 @@ func addAttr(e *filesys.Entry, key, value string) {
 
 // dirEntry builds the Entry for a directory record, reading the inode it
 // names as it is now. dirEnc marks a record of an encrypted directory.
-func (f *FS) dirEntry(r *dirRec, dirEnc bool) filesys.Entry {
+// links caches symlink targets by inode for the duration of one ReadDir (may be
+// nil).
+func (f *FS) dirEntry(r *dirRec, dirEnc bool, links map[uint32]string) filesys.Entry {
 	name, raw := displayName(r.name, dirEnc)
 	if r.inode == 0 {
 		return unknownInodeEntry(r, name, raw, dirEnc)
@@ -379,8 +412,18 @@ func (f *FS) dirEntry(r *dirRec, dirEnc bool) filesys.Entry {
 	} else {
 		e = toEntry(name, raw, in)
 		if in.mode&modeTypeMask == modeSymlink && !r.deleted {
-			e.LinkTarget = f.linkTarget(in)
+			t, ok := links[r.inode]
+			if !ok {
+				t = f.linkTarget(in)
+				if links != nil {
+					links[r.inode] = t
+				}
+			}
+			e.LinkTarget = t
 		}
+	}
+	if r.beyond {
+		addAttr(&e, "beyond_isize", "true")
 	}
 	e.Encrypted = e.Encrypted || dirEnc
 	if r.deleted {
@@ -416,6 +459,9 @@ func unknownInodeEntry(r *dirRec, name string, raw []byte, dirEnc bool) filesys.
 		addAttr(&e, "dirent", fmt.Sprintf("inline:%d", r.off))
 	}
 	addAttr(&e, "inode", "unknown")
+	if r.beyond {
+		addAttr(&e, "beyond_isize", "true")
+	}
 	if r.csumBad {
 		addAttr(&e, "checksum", "bad")
 	}
@@ -474,29 +520,61 @@ func (f *FS) dirInode(dir filesys.Entry) (*inode, error) {
 // slack of its blocks (Deleted is set; see dirEntry for the attributes). "."
 // and ".." are omitted. Entries are in on-disk order; htree directories are
 // read by a linear scan of all blocks. The entry names the inode as it is now,
-// so a deleted entry whose inode was reused shows the new inode.
+// so a deleted entry whose inode was reused shows the new inode. A deleted
+// entry that is a stale copy of a live one (same inode and name bytes, as an
+// htree leaf split leaves behind) stays listed with attr stale_copy=true. A
+// damaged block map does not fail the call: the entries that can be read are
+// returned and the damage is an Info warning.
 func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
 	in, err := f.dirInode(dir)
 	if err != nil {
 		return nil, err
 	}
 	enc := in.flags&inodeFlagEncrypt != 0
+	type key struct {
+		inode uint32
+		name  string
+	}
 	var out []filesys.Entry
+	live := map[key]struct{}{}
+	var deleted []key   // keys of the deleted entries with a known inode...
+	var deletedAt []int // ...and where they are in out
+	links := map[uint32]string{}
 	if err := f.scanDir(in, true, func(r *dirRec) bool {
-		out = append(out, f.dirEntry(r, enc))
+		out = append(out, f.dirEntry(r, enc, links))
+		switch {
+		case !r.deleted:
+			live[key{r.inode, string(r.name)}] = struct{}{}
+		case r.inode != 0:
+			deleted = append(deleted, key{r.inode, string(r.name)})
+			deletedAt = append(deletedAt, len(out)-1)
+		}
 		return true
 	}); err != nil {
 		return nil, err
 	}
+	for i, k := range deleted {
+		if _, ok := live[k]; ok {
+			addAttr(&out[deletedAt[i]], "stale_copy", "true")
+		}
+	}
 	return out, nil
 }
 
-// Lookup resolves an absolute slash path. Each component is matched against the
-// live entries of its directory by exact bytes, or by the display forms of
-// ReadDir ("~enc~" names in encrypted directories, "~raw~" names elsewhere);
-// directories with the casefold flag also match with strings.EqualFold, which
-// approximates the filesystem's Unicode folding. Empty components are ignored,
-// "." and ".." are not special, and symlinks are not followed.
+// Lookup resolves an absolute slash path. Within each directory the live
+// entries are searched in this order of preference over the whole directory:
+//
+//  1. an exact byte match (never in an encrypted directory, whose names are
+//     ciphertext: there only the "~enc~" form matches);
+//  2. the display form of ReadDir: "~enc~"+base64url in encrypted directories,
+//     "~raw~"+base64url elsewhere, so a real name that happens to look like a
+//     display form wins over the name that form stands for;
+//  3. in a casefold directory, strings.EqualFold when both names are valid
+//     UTF-8 (an approximation of the filesystem's Unicode folding).
+//
+// Empty components are ignored, "." and ".." are not special, and symlinks are
+// not followed. A directory is read up to the per-directory entry cap
+// (maxDirRecords); an entry beyond it is reported as not found.
 func (f *FS) Lookup(p string) (filesys.Entry, error) {
 	cur := f.Root()
 	for _, comp := range strings.Split(p, "/") {
@@ -520,14 +598,14 @@ func (f *FS) Lookup(p string) (filesys.Entry, error) {
 
 var errNoChild = errors.New("no such entry")
 
-// child finds the live entry of dir named comp.
+// child finds the live entry of dir named comp (see Lookup for the order).
 func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 	in, err := f.dirInode(dir)
 	if err != nil {
 		return filesys.Entry{}, err
 	}
 	enc := in.flags&inodeFlagEncrypt != 0
-	casefold := in.flags&inodeFlagCasefold != 0 && !enc
+	casefold := in.flags&inodeFlagCasefold != 0 && !enc && utf8.ValidString(comp)
 	exact := []byte(comp)
 	var alt []byte // the bytes a display form stands for
 	prefix := rawPrefix
@@ -539,23 +617,31 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 			alt = b
 		}
 	}
-	var found *dirRec
-	var rec dirRec
+	var exactRec, altRec, foldRec *dirRec
+	keep := func(r *dirRec) *dirRec {
+		c := *r
+		c.name = slices.Clone(r.name)
+		return &c
+	}
 	err = f.scanDir(in, false, func(r *dirRec) bool {
-		if bytes.Equal(r.name, exact) || (alt != nil && bytes.Equal(r.name, alt)) ||
-			(casefold && strings.EqualFold(string(r.name), comp)) {
-			rec = *r
-			rec.name = slices.Clone(r.name)
-			found = &rec
+		switch {
+		case !enc && bytes.Equal(r.name, exact):
+			exactRec = keep(r)
 			return false
+		case altRec == nil && alt != nil && bytes.Equal(r.name, alt):
+			altRec = keep(r)
+		case foldRec == nil && casefold && utf8.Valid(r.name) && strings.EqualFold(string(r.name), comp):
+			foldRec = keep(r)
 		}
 		return true
 	})
 	if err != nil {
 		return filesys.Entry{}, err
 	}
-	if found == nil {
-		return filesys.Entry{}, errNoChild
+	for _, r := range []*dirRec{exactRec, altRec, foldRec} {
+		if r != nil {
+			return f.dirEntry(r, enc, nil), nil
+		}
 	}
-	return f.dirEntry(found, enc), nil
+	return filesys.Entry{}, errNoChild
 }

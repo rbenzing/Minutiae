@@ -740,12 +740,12 @@ func TestDirHostile(t *testing.T) {
 			}
 		}, nil, "", false, 5 * 12},
 		{"indirect cycle", false, func(h *dirImage) {
-			put32(h.img, h.dino+4, 400*1024) // reaches the double-indirect pointer
-			clear(h.img[h.dino+0x28 : h.dino+0x28+48])
-			const self = 1000 // an unused block: a double-indirect block pointing at itself
+			put32(h.img, h.dino+4, 400*1024)             // reaches the double-indirect pointer
+			clear(h.img[h.dino+0x28+4 : h.dino+0x28+48]) // block 0 keeps its pointer
+			const self = 1000                            // an unused block: a double-indirect block pointing at itself
 			put32(h.img, h.dino+0x28+4*13, self)
 			put32(h.img, self*1024, self)
-		}, nil, "", true, 0},
+		}, []string{"a", "b", "c", "d", "e"}, "block map is damaged", false, 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

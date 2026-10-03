@@ -64,17 +64,21 @@ var ParseXattrs = parseXattrs
 func (f *FS) Warn(format string, a ...any) { f.warn(format, a...) }
 
 // DirRuns returns the byte runs of directory e's data (holes have Offset -1),
-// capped as ReadDir caps them.
+// without the trailing hole that pads the map to the 64 MiB read limit.
 func (f *FS) DirRuns(e filesys.Entry) ([]filesys.Run, error) {
 	in, err := f.dirInode(e)
 	if err != nil {
 		return nil, err
 	}
-	return f.dirRuns(in)
+	runs, _, err := f.dirRuns(in)
+	if n := len(runs); n > 0 && runs[n-1].Offset < 0 {
+		runs = runs[:n-1]
+	}
+	return runs, err
 }
-
-// RecLenFromDisk exposes the rec_len decoder.
-var RecLenFromDisk = recLenFromDisk
 
 // SetDirRecordCap lowers the per-directory entry cap (before any read).
 func (f *FS) SetDirRecordCap(n int) { f.dirRecordCap = n }
+
+// RecLenFromDisk exposes the rec_len decoder.
+var RecLenFromDisk = recLenFromDisk
