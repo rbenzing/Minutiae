@@ -7,6 +7,7 @@ import (
 	"io"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/rbenzing/minutiae/internal/android/adb"
 	"github.com/rbenzing/minutiae/internal/device"
@@ -152,7 +153,10 @@ func (w *walker) pull(p, localDir string, e adb.SyncEntry) error {
 	if err != nil {
 		return err
 	}
-	src := evidence.Source{Kind: "file", DeviceID: w.d.serial, RemotePath: p}
+	src := evidence.Source{
+		Kind: "file", DeviceID: w.d.serial, RemotePath: p,
+		RemoteMode: e.Mode, RemoteMTime: e.MTime.UTC().Format(time.RFC3339), RemoteSize: int64(e.Size),
+	}
 	rec, err := w.c.Capture(w.d.serial, w.acq, rel, src, func(out io.Writer) error {
 		_, err := w.s.Recv(p, out)
 		return err

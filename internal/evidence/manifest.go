@@ -12,6 +12,11 @@ type Source struct {
 	DeviceID   string `json:"device_id"`
 	RemotePath string `json:"remote_path,omitempty"`
 	Partition  string `json:"partition,omitempty"`
+	// Remote metadata as the device reported it (e.g. a sync LIST entry);
+	// omitted when unknown. RemoteMTime is RFC 3339 UTC.
+	RemoteMode  uint32 `json:"remote_mode,omitempty"`
+	RemoteMTime string `json:"remote_mtime,omitempty"`
+	RemoteSize  int64  `json:"remote_size,omitempty"`
 }
 
 // ManifestRecord is one line of manifest.jsonl and one row of artifacts.

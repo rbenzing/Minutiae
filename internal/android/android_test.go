@@ -629,3 +629,14 @@ func TestPullToCaseCancelledMidRecvKeepsPartial(t *testing.T) {
 		t.Fatalf("verify: %+v %v", rep, err)
 	}
 }
+
+func TestAcquireLogicalRecordsRemoteMetadata(t *testing.T) {
+	mtime := time.Date(2023, 11, 14, 22, 13, 20, 0, time.UTC)
+	recs := acquireFiles(t, map[string]adbtest.File{
+		"/sdcard/a.txt": {Data: []byte("hello"), Mode: 0o100640, MTime: mtime},
+	})
+	src := recs["/sdcard/a.txt"].Source
+	if src.RemoteMode != 0o100640 || src.RemoteSize != 5 || src.RemoteMTime != "2023-11-14T22:13:20Z" {
+		t.Fatalf("source = %+v", src)
+	}
+}

@@ -1,12 +1,14 @@
 package evidence
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -168,5 +170,30 @@ func TestNewAcquisitionIDUnique(t *testing.T) {
 		if !format.MatchString(id) || sanitizeComponent(id) != id {
 			t.Fatalf("id %q is not of the form <timestamp>-<8 hex> or not filesystem-safe", id)
 		}
+	}
+}
+
+func TestSourceRemoteMetadataRecordedAndVerifies(t *testing.T) {
+	c := newTestCase(t)
+	src := Source{
+		Kind: "file", DeviceID: "dev1", RemotePath: "/sdcard/a.txt",
+		RemoteMode: 0o100640, RemoteMTime: "2023-11-14T22:13:20Z", RemoteSize: 3,
+	}
+	if _, err := c.Capture("dev1", "acq1", "files/sdcard/a.txt", src, func(w io.Writer) error {
+		_, err := io.WriteString(w, "abc")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m, err := c.Manifest()
+	if err != nil || len(m) != 1 || m[0].Source != src {
+		t.Fatalf("manifest = %+v, %v", m, err)
+	}
+	if rep, err := c.Verify(); err != nil || !rep.OK() {
+		t.Fatalf("verify: %+v %v", rep, err)
+	}
+	b, _ := json.Marshal(testSrc)
+	if strings.Contains(string(b), "remote_mode") || strings.Contains(string(b), "remote_mtime") || strings.Contains(string(b), "remote_size") {
+		t.Fatalf("zero remote metadata must be omitted: %s", b)
 	}
 }
