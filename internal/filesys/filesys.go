@@ -1,0 +1,130 @@
+// Package filesys defines the read-only filesystem interface shared by every
+// filesystem parser (ext4, FAT, exFAT, F2FS, APFS, HFS+), plus the common
+// error types, checked integer math, a block cache and a tree walker. It is a
+// pure parser layer: it operates on io.ReaderAt, never writes, and imports no
+// other Minutiae package.
+package filesys
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"time"
+)
+
+// FileSystem is a read-only view of one filesystem. All offsets are relative
+// to the start of the filesystem (not the image).
+type FileSystem interface {
+	Info() Info
+	Root() Entry
+	// ReadDir lists live and deleted entries of dir; "." and ".." are omitted.
+	ReadDir(dir Entry) ([]Entry, error)
+	// Lookup resolves an absolute slash path ("/a/b"). Only live entries are
+	// considered; a missing entry yields ErrNotFound.
+	Lookup(path string) (Entry, error)
+	// Open opens a regular file or symlink. A deleted entry yields ErrDeleted.
+	Open(e Entry) (File, error)
+	// Unallocated returns filesystem-relative byte runs, sorted and merged.
+	Unallocated() ([]Run, error)
+}
+
+// File is the content of one entry.
+type File interface {
+	io.ReaderAt
+	Size() int64
+	// Runs lists the filesystem-relative byte runs of the content in file
+	// order. Offset -1 marks a sparse hole (Length bytes of zeros).
+	Runs() []Run
+}
+
+// Run is a byte range. In File.Runs an Offset of -1 is a sparse hole.
+type Run struct{ Offset, Length int64 }
+
+// Info describes a filesystem.
+type Info struct {
+	Type        string // "ext4", "fat32", "exfat", "f2fs", "apfs", "hfsplus", "mtfs" ...
+	Label, UUID string
+	BlockSize   int
+	Size        int64    // filesystem size in bytes
+	Features    []string // human-readable feature flags
+	Encrypted   bool     // any encryption detected
+	Volumes     []string // apfs: volume names; others empty
+	Warnings    []string // checksum mismatches, truncation, unsupported features seen
+}
+
+// EntryType is the kind of a directory entry.
+type EntryType int
+
+// Entry kinds.
+const (
+	TypeOther EntryType = iota
+	TypeFile
+	TypeDir
+	TypeSymlink
+)
+
+// String returns "other", "file", "dir" or "symlink".
+func (t EntryType) String() string {
+	switch t {
+	case TypeFile:
+		return "file"
+	case TypeDir:
+		return "dir"
+	case TypeSymlink:
+		return "symlink"
+	default:
+		return "other"
+	}
+}
+
+// Entry is one directory entry.
+type Entry struct {
+	Name       string // display name; undecodable/encrypted names use "~enc~" + base64url(RawName)
+	RawName    []byte // on-disk name bytes when they differ from Name
+	ID         string // stable fs-specific id: "inode:12", "nid:5", "oid:0x402", "cnid:21", "dirent:<cluster>:<offset>"
+	Type       EntryType
+	Size       int64
+	Mode       uint32 // POSIX mode bits where the fs has them
+	UID, GID   uint32
+	Times      Times
+	Deleted    bool // the directory entry is deleted (still visible on disk)
+	Encrypted  bool // name and/or content encrypted
+	LinkTarget string
+	Attrs      []KV // fs-specific details (flags, xattr names, dir-entry location)
+}
+
+// KV is a key/value detail attached to an entry.
+type KV struct{ Key, Value string }
+
+// Times are the timestamps of an entry; a zero Timestamp.T means absent.
+type Times struct{ Modified, Accessed, Changed, Created, Deleted Timestamp }
+
+// Timestamp is a point in time with its zone certainty.
+type Timestamp struct {
+	T         time.Time // zero = absent
+	ZoneKnown bool      // false for FAT local times
+}
+
+// Sentinel errors, usable with errors.Is.
+var (
+	ErrNotFound    = errors.New("not found")
+	ErrDeleted     = errors.New("entry is deleted (recovery is roadmap sub-project 3)")
+	ErrUnsupported = errors.New("unsupported filesystem feature")
+	ErrEncrypted   = errors.New("encrypted (decryption is roadmap sub-project 10)")
+	ErrCorrupt     = errors.New("corrupt filesystem structure")
+)
+
+// CorruptError reports a malformed on-disk structure. Offset is the byte
+// offset of the structure, or -1 when it is not applicable or unknown.
+type CorruptError struct {
+	Structure string
+	Offset    int64
+	Reason    string
+}
+
+func (e *CorruptError) Error() string {
+	return fmt.Sprintf("corrupt %s at offset %d: %s", e.Structure, e.Offset, e.Reason)
+}
+
+// Is makes errors.Is(err, ErrCorrupt) true for every *CorruptError.
+func (e *CorruptError) Is(target error) bool { return target == ErrCorrupt }
