@@ -28,6 +28,7 @@ var allowed = map[string][]string{
 	"internal/android/adb/adbtest": {},
 	"internal/android":             {"internal/android/adb", "internal/device", "internal/evidence", "internal/version"},
 	"internal/ios/mb2":             {},
+	"internal/ios/mb2/mb2test":     {"internal/ios/mb2"},
 	"internal/ios":                 {"internal/ios/mb2", "internal/device", "internal/evidence", "internal/version"},
 	"internal/archtest":            {},
 	"tools/check":                  {},
