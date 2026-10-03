@@ -4,11 +4,18 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"howett.net/plist"
+
 	"github.com/rbenzing/minutiae/internal/device"
+	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/ios"
 	"github.com/rbenzing/minutiae/internal/ios/iostest"
+	"github.com/rbenzing/minutiae/internal/ios/mb2/mb2test"
 )
 
 func fakeIPhone() *iostest.Backend {
@@ -64,5 +71,137 @@ func TestListPullPushUnsupported(t *testing.T) {
 	}
 	if err := ft.Push(context.Background(), &buf, "/x", 0o644); !errors.Is(err, device.ErrUnsupported) {
 		t.Fatalf("push err = %v", err)
+	}
+}
+
+func newCase(t *testing.T) *evidence.Case {
+	t.Helper()
+	c, err := evidence.Create(t.TempDir(), evidence.CreateOptions{ID: "C", Examiner: "E"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	return c
+}
+
+func statusPlist(t *testing.T, state string) []byte {
+	t.Helper()
+	b, err := plist.Marshal(map[string]any{"SnapshotState": state}, plist.BinaryFormat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// uploadThenFinish uploads two files plus, when snapshot is non-nil,
+// U1/Status.plist, then finishes with the given ProcessMessage code.
+func uploadThenFinish(code int, snapshot []byte) func(*mb2test.Device) error {
+	return func(d *mb2test.Device) error {
+		if err := d.Handshake(); err != nil {
+			return err
+		}
+		if _, err := d.ExpectBackupRequest(); err != nil {
+			return err
+		}
+		files := []mb2test.Upload{
+			{DeviceName: "/a", Name: "U1/Info.plist", Data: []byte("info")},
+			{DeviceName: "/b", Name: "U1/Manifest.db", Data: []byte("sqlite")},
+		}
+		if snapshot != nil {
+			files = append(files, mb2test.Upload{DeviceName: "/c", Name: "U1/Status.plist", Data: snapshot})
+		}
+		if _, err := d.UploadFiles(files...); err != nil {
+			return err
+		}
+		return d.Finish(code)
+	}
+}
+
+func TestBackupPromotesStagedFiles(t *testing.T) {
+	b := fakeIPhone()
+	b.Script = uploadThenFinish(0, statusPlist(t, "finished"))
+	c := newCase(t)
+	la := first(t, b).(device.LogicalAcquirer)
+	if err := la.AcquireLogical(context.Background(), c, device.LogicalOptions{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-b.ScriptErr; err != nil {
+		t.Fatalf("script: %v", err)
+	}
+	m, _ := c.Manifest()
+	var paths []string
+	for _, r := range m {
+		paths = append(paths, r.Path)
+	}
+	joined := strings.Join(paths, "\n")
+	for _, want := range []string{"device/lockdown.json", "backup/U1/Info.plist", "backup/U1/Manifest.db", "backup/U1/Status.plist"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %s in\n%s", want, joined)
+		}
+	}
+	if entries, _ := os.ReadDir(filepath.Join(c.Dir, "staging")); len(entries) != 0 {
+		t.Errorf("staging not cleaned: %v", entries)
+	}
+	audit, _ := os.ReadFile(filepath.Join(c.Dir, "audit.jsonl"))
+	if !strings.Contains(string(audit), `"snapshot_state":"finished"`) {
+		t.Errorf("snapshot_state not audited:\n%s", audit)
+	}
+	if rep, err := c.Verify(); err != nil || !rep.OK() {
+		t.Fatalf("verify: %+v %v", rep, err)
+	}
+}
+
+func TestBackupDeviceErrorStillPromotes(t *testing.T) {
+	b := fakeIPhone()
+	b.Script = uploadThenFinish(105, statusPlist(t, "finished"))
+	c := newCase(t)
+	err := first(t, b).(device.LogicalAcquirer).AcquireLogical(context.Background(), c, device.LogicalOptions{}, nil)
+	if err == nil || !strings.Contains(err.Error(), "105") {
+		t.Fatalf("err = %v", err)
+	}
+	<-b.ScriptErr
+	m, _ := c.Manifest()
+	if len(m) != 4 {
+		t.Fatalf("expected lockdown + 3 promoted files, got %d", len(m))
+	}
+	audit, _ := os.ReadFile(filepath.Join(c.Dir, "audit.jsonl"))
+	if !strings.Contains(string(audit), `"action":"acquire.error"`) {
+		t.Fatal("acquire.error not audited")
+	}
+}
+
+func TestBackupUnfinishedSnapshotIsError(t *testing.T) {
+	for name, snapshot := range map[string][]byte{
+		"uploading": statusPlist(t, "uploading"),
+		"missing":   nil,
+		"garbage":   []byte("not a plist"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			b := fakeIPhone()
+			b.Script = uploadThenFinish(0, snapshot)
+			c := newCase(t)
+			err := first(t, b).(device.LogicalAcquirer).AcquireLogical(context.Background(), c, device.LogicalOptions{}, nil)
+			if err == nil || !strings.Contains(err.Error(), "backup snapshot not finished") {
+				t.Fatalf("err = %v", err)
+			}
+			if serr := <-b.ScriptErr; serr != nil {
+				t.Fatalf("script: %v", serr)
+			}
+			m, _ := c.Manifest()
+			want := 4
+			if snapshot == nil {
+				want = 3
+			}
+			if len(m) != want {
+				t.Fatalf("expected %d promoted artifacts, got %d", want, len(m))
+			}
+			if entries, _ := os.ReadDir(filepath.Join(c.Dir, "staging")); len(entries) != 0 {
+				t.Errorf("staging not cleaned: %v", entries)
+			}
+			audit, _ := os.ReadFile(filepath.Join(c.Dir, "audit.jsonl"))
+			if !strings.Contains(string(audit), `"action":"acquire.error"`) || !strings.Contains(string(audit), `"snapshot_state"`) {
+				t.Fatalf("acquire.error/snapshot_state not audited:\n%s", audit)
+			}
+		})
 	}
 }
