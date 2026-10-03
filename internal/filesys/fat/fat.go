@@ -35,8 +35,13 @@ type FS struct {
 	activeFAT int         // FAT copy that is read
 	fatOff    int64       // byte offset of the active FAT copy
 	r         io.ReaderAt // cached view of the volume for metadata, clamped to its size
+	data      io.ReaderAt // uncached view for file content and the FAT scan, clamped to the same size
 	size      int64       // volume size in bytes (declared size clamped to the image)
 	label     string      // volume label: the root directory entry, else the BPB
+
+	dmu  sync.Mutex // guards dc and dirs
+	dc   *dirChainEntry
+	dirs map[uint32]dirLoc // directories met so far, by first cluster: where their entry is
 
 	wmu      sync.Mutex
 	warnings []string
@@ -131,6 +136,7 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		activeFAT: b.activeFAT,
 		fatOff:    fatOff,
 		r:         filesys.NewCachedReader(raw, b.bytsPerSec, cacheSectors),
+		data:      raw,
 		size:      volSize,
 		label:     b.label,
 	}
@@ -171,51 +177,8 @@ func (f *FS) Info() filesys.Info {
 // entries, until fn returns true. If the FAT32 root chain breaks, the entries
 // before the break are still passed and the chain error is returned.
 func (f *FS) scanRoot(fn func(e []byte) (stop bool)) error {
-	seen := 0
-	visit := func(chunk []byte) (stop bool) {
-		for i := 0; i+32 <= len(chunk); i += 32 {
-			if seen >= maxDirEntries || chunk[i] == 0x00 {
-				return true
-			}
-			seen++
-			if fn(chunk[i : i+32]) {
-				return true
-			}
-		}
-		return false
-	}
-	bps := f.b.bytsPerSec
-	if f.fatType != 32 {
-		start := (int64(f.b.rsvd) + int64(f.b.numFATs)*int64(f.b.fatSz)) * int64(bps) // inside the volume: checked by parseBoot
-		total := int64(f.b.rootEnt) * 32
-		buf := make([]byte, bps)
-		for off := int64(0); off < total; off += int64(bps) {
-			chunk := buf[:min(int64(bps), total-off)]
-			if err := readFull(f.r, chunk, start+off); err != nil {
-				return corrupt("root directory", start+off, "read failed: %v", err)
-			}
-			if visit(chunk) {
-				return nil
-			}
-		}
-		return nil
-	}
-	cs := bps * f.b.secPerClus
-	clusters, _, chainErr := f.chainN(f.b.rootClus, (maxDirEntries*32+cs-1)/cs)
-	buf := make([]byte, cs)
-	for _, c := range clusters {
-		off, ok := f.clusterOffset(c)
-		if !ok {
-			return corrupt("root directory", -1, "cluster %d has no valid offset", c)
-		}
-		if err := readFull(f.r, buf, off); err != nil {
-			return corrupt("root directory", off, "read failed: %v", err)
-		}
-		if visit(buf) {
-			return nil
-		}
-	}
-	return chainErr
+	_, err := f.scanDir(f.rootFirst(), func(_ int, e []byte) bool { return fn(e) })
+	return err
 }
 
 // readRootLabel sets the label from the volume-label entry of the root
