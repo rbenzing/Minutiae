@@ -33,6 +33,10 @@ type groupDesc struct {
 	// could not be read (truncated table); later reads of
 	// that group's metadata must treat it as corrupt rather than follow it.
 	bad bool
+	// unreadable is set for a descriptor that could not be read at all (a
+	// truncated table): it names no locations. A bad descriptor that was read
+	// still does, and the locations that lie inside the filesystem are honoured.
+	unreadable bool
 }
 
 // hasSuper reports whether the group holds a superblock (and descriptor table)
@@ -174,7 +178,7 @@ func loadGroups(r io.ReaderAt, sb *superblock) ([]groupDesc, []string, error) {
 	if readable := int64(len(groups)); readable < sb.groups {
 		warns = append(warns, fmt.Sprintf("descriptor table truncated: %d of %d groups readable", readable, sb.groups))
 		for int64(len(groups)) < sb.groups {
-			groups = append(groups, groupDesc{bad: true})
+			groups = append(groups, groupDesc{bad: true, unreadable: true})
 		}
 	}
 	if badCsum > 0 {

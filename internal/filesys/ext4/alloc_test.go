@@ -558,6 +558,7 @@ func TestUnallocatedBitmapChecksum(t *testing.T) {
 
 			// Flip the bit of a free block without fixing the checksum.
 			img = build()
+			_, _, _, it0 := metaBlocks(0, true)
 			_, bb1, _, it1 := metaBlocks(1, true)
 			blk := it1 + tITable + 3
 			i := blk - tStart(1)
@@ -567,11 +568,19 @@ func TestUnallocatedBitmapChecksum(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !hasWarning(f.Info(), "bitmap checksum mismatch") {
-				t.Errorf("no checksum warning: %q", f.Info().Warnings)
+			if !hasWarning(f.Info(), "bitmap checksum mismatch") || !hasWarning(f.Info(), "group 1") {
+				t.Errorf("no checksum warning naming group 1: %q", f.Info().Warnings)
 			}
-			if freeSet(t, img, runs)[blk] {
-				t.Error("the bitmap is used as stored: the flipped block should be allocated")
+			// A bitmap that fails its checksum is not trusted: the whole group is
+			// skipped (never reported free), the other group is still read.
+			got := freeSet(t, img, runs)
+			for b := tStart(1); b < tStart(2); b++ {
+				if got[b] {
+					t.Fatalf("block %d of the group with a bad bitmap checksum reported free", b)
+				}
+			}
+			if !got[it0+tITable+3] {
+				t.Error("a free block of the intact group 0 should still be reported")
 			}
 		})
 	}

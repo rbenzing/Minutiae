@@ -1,6 +1,11 @@
 package ext4
 
 import (
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
+
 	"github.com/rbenzing/minutiae/internal/filesys"
 )
 
@@ -18,6 +23,14 @@ func (sb *superblock) blockUninitHonoured() bool {
 // the superblock backup, the group descriptor blocks and the reserved GDT
 // blocks (the kernel's ext4_num_base_meta_blocks).
 func (sb *superblock) baseMetaBlocks(group uint64) uint64 {
+	n := sb.baseMetaBlocksNoBoot(group)
+	if group == 0 && sb.blockSize == 1024 && sb.firstDataBlock == 0 {
+		n++ // 1 KiB blocks without first_data_block: group 0 starts at the boot block
+	}
+	return n
+}
+
+func (sb *superblock) baseMetaBlocksNoBoot(group uint64) uint64 {
 	var n uint64
 	if sb.hasSuper(group) {
 		n = 1
@@ -27,7 +40,14 @@ func (sb *superblock) baseMetaBlocks(group uint64) uint64 {
 		if n == 0 {
 			return 0
 		}
-		return n + (uint64(sb.groups)+perBlock-1)/perBlock + uint64(sb.reservedGDT)
+		// With META_BG the groups below first_meta_bg still hold the old
+		// descriptor table, but only first_meta_bg blocks of it (the kernel's
+		// ext4_bg_num_gdb_nometa).
+		gdt := (uint64(sb.groups) + perBlock - 1) / perBlock
+		if sb.hasIncompat(incompatMetaBG) {
+			gdt = uint64(sb.firstMetaBG)
+		}
+		return n + gdt + uint64(sb.reservedGDT)
 	}
 	// META_BG: the first, second and last group of each metagroup carry one
 	// descriptor block.
@@ -40,6 +60,55 @@ func (sb *superblock) baseMetaBlocks(group uint64) uint64 {
 
 // blockRange is a half-open range [lo, hi) of absolute block numbers.
 type blockRange struct{ lo, hi uint64 }
+
+// maxNamedGroups bounds how many group numbers one warning lists.
+const maxNamedGroups = 8
+
+// foreignMetadata returns the sorted, disjoint, coalesced block ranges that the
+// descriptors name as bitmaps or inode tables inside [first, total). Each
+// location counts on its own: a descriptor flagged bad because one location is
+// outside the filesystem still protects its other locations. Only descriptors
+// that could not be read at all are ignored.
+func foreignMetadata(groups []groupDesc, first, total, itable uint64) []blockRange {
+	var rs []blockRange
+	for i := range groups {
+		d := &groups[i]
+		if d.unreadable {
+			continue
+		}
+		for _, r := range [...]blockRange{
+			{d.blockBitmap, d.blockBitmap + 1},
+			{d.inodeBitmap, d.inodeBitmap + 1},
+			{d.inodeTable, d.inodeTable + itable},
+		} {
+			if r.lo < first || r.lo >= total {
+				continue
+			}
+			r.hi = min(r.hi, total)
+			if r.hi > r.lo {
+				rs = append(rs, r)
+			}
+		}
+	}
+	slices.SortFunc(rs, func(a, b blockRange) int {
+		switch {
+		case a.lo < b.lo:
+			return -1
+		case a.lo > b.lo:
+			return 1
+		}
+		return 0
+	})
+	out := rs[:0]
+	for _, r := range rs {
+		if n := len(out); n > 0 && r.lo <= out[n-1].hi {
+			out[n-1].hi = max(out[n-1].hi, r.hi)
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
 
 // Unallocated returns the byte runs of the blocks the block bitmaps mark free.
 // A BLOCK_UNINIT group (with group descriptor checksums) has no usable bitmap:
@@ -61,29 +130,10 @@ func (f *FS) Unallocated() ([]filesys.Run, error) {
 
 	// Metadata of any group that lies inside a BLOCK_UNINIT group is allocated,
 	// not only that group's own (flex_bg puts other groups' bitmaps and inode
-	// tables there; the kernel's own initialisation would miss them).
-	inUninit := map[int][]blockRange{}
-	for gi := range f.groups {
-		d := &f.groups[gi]
-		if d.bad {
-			continue
-		}
-		for _, r := range []blockRange{
-			{d.blockBitmap, d.blockBitmap + 1},
-			{d.inodeBitmap, d.inodeBitmap + 1},
-			{d.inodeTable, d.inodeTable + uint64(sb.itableBlocks)},
-		} {
-			if r.lo < uint64(first) || r.lo >= uint64(total) {
-				continue
-			}
-			r.hi = min(r.hi, uint64(total))
-			for g := (int64(r.lo) - first) / bpg; g <= (int64(r.hi)-1-first)/bpg && g < int64(len(f.groups)); g++ {
-				if uninit(int(g)) {
-					inUninit[int(g)] = append(inUninit[int(g)], r)
-				}
-			}
-		}
-	}
+	// tables there; the kernel's own initialisation would miss them). The
+	// ranges are sorted and coalesced once, so marking costs at most the size
+	// of a group however many descriptors point into it.
+	meta := foreignMetadata(f.groups, uint64(first), uint64(total), uint64(sb.itableBlocks))
 
 	var (
 		runs                      []filesys.Run
@@ -92,7 +142,8 @@ func (f *FS) Unallocated() ([]filesys.Run, error) {
 		untrusted, firstUntrusted int
 		noBitmap, firstNoBitmap   int
 		firstBitmapErr            error
-		badCsum, firstBadCsum     int
+		badCsum                   int
+		badCsumGroups             []int
 		bm                        = make([]byte, sb.blockSize)
 		checkCsum                 = sb.metadataCsum() && sb.checksumType == csumTypeCRC32C
 	)
@@ -121,8 +172,8 @@ func (f *FS) Unallocated() ([]filesys.Run, error) {
 		case uninit(g):
 			clear(bm)
 			setBlocks(bm, uint64(start), uint64(start)+sb.baseMetaBlocks(uint64(g)), start, n)
-			for _, r := range inUninit[g] {
-				setBlocks(bm, r.lo, r.hi, start, n)
+			for i := sort.Search(len(meta), func(i int) bool { return meta[i].hi > uint64(start) }); i < len(meta) && meta[i].lo < uint64(start)+uint64(n); i++ {
+				setBlocks(bm, meta[i].lo, meta[i].hi, start, n)
 			}
 		default:
 			off, ok := filesys.MulOK(int64(d.blockBitmap), bs)
@@ -145,10 +196,13 @@ func (f *FS) Unallocated() ([]filesys.Run, error) {
 					got &= 0xFFFF
 				}
 				if got != want {
-					if badCsum == 0 {
-						firstBadCsum = g
+					// The bitmap cannot be trusted: skip the group rather than
+					// report blocks as free on the strength of damaged data.
+					if len(badCsumGroups) < maxNamedGroups {
+						badCsumGroups = append(badCsumGroups, g)
 					}
 					badCsum++
+					continue
 				}
 			}
 		}
@@ -169,7 +223,15 @@ func (f *FS) Unallocated() ([]filesys.Run, error) {
 		f.warn("unallocated space: the block bitmap of %d of %d block groups is unreadable and the groups were skipped, their blocks are not reported as free (first: group %d: %s)", noBitmap, groupsSeen, firstNoBitmap, reason)
 	}
 	if badCsum > 0 {
-		f.warn("unallocated space: block bitmap checksum mismatch in %d of %d block groups (first: group %d); the bitmaps were used as stored", badCsum, groupsSeen, firstBadCsum)
+		names := make([]string, len(badCsumGroups))
+		for i, g := range badCsumGroups {
+			names[i] = strconv.Itoa(g)
+		}
+		more := ""
+		if badCsum > len(badCsumGroups) {
+			more = ", ..."
+		}
+		f.warn("unallocated space: block bitmap checksum mismatch in %d of %d block groups (group %s%s); the groups were skipped, their blocks are not reported as free", badCsum, groupsSeen, strings.Join(names, ", "), more)
 	}
 	return filesys.MergeRuns(runs), nil
 }
