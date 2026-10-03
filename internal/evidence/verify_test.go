@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -251,5 +252,26 @@ func assertLastAction(t *testing.T, c *Case, want string) {
 	}
 	if got := es[len(es)-1].Action; got != want {
 		t.Fatalf("last audit action = %s, want %s", got, want)
+	}
+}
+
+func TestVerifyFlagsLeftoverStaging(t *testing.T) {
+	c, _ := caseWithArtifact(t)
+	staging := filepath.Join(c.Dir, "staging")
+	if err := os.MkdirAll(staging, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if r := mustVerify(t, c); !r.OK() {
+		t.Fatalf("an empty staging directory is not a problem: %+v", r)
+	}
+	if err := os.MkdirAll(filepath.Join(staging, "ACQ1", "U1"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staging, "ACQ1", "U1", "Manifest.db"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := mustVerify(t, c)
+	if r.OK() || !slices.Contains(r.Problems, "leftover staging directory ACQ1 (unpromoted acquisition data)") {
+		t.Fatalf("report = %+v", r)
 	}
 }

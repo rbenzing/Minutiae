@@ -24,6 +24,7 @@ const (
 	dbFile       = "artifacts.db"
 	artifactsDir = "artifacts"
 	lockFile     = "case.lock"
+	stagingDir   = "staging"
 )
 
 var (

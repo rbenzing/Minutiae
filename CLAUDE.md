@@ -28,7 +28,7 @@ current code. Auto-fix formatting with `go tool golangci-lint fmt`.
 | Invariant | Test |
 |---|---|
 | Bytes from a device reach disk only via `evidence.Case.NewArtifact`/`Capture` (review rule; any stray file under `artifacts/` fails `case verify`) | `TestVerifyDetectsUnmanifestedFile` |
-| Only exception: the iOS backup working dir `<case>/staging/<acq>/` (the device moves/overwrites files mid-backup); it is audited (`acquire.staging`), promoted file-by-file via `Capture`, and deleted only after full promotion | `TestBackupPromotesStagedFiles`, `TestBackupDeviceErrorStillPromotes` |
+| Only exception: the iOS backup working dir `<case>/staging/<acq>/` (the device moves/overwrites files mid-backup); it is audited (`acquire.staging`), promoted file-by-file via `Capture`, and deleted only after full promotion; a leftover staging directory is a `case verify` problem | `TestBackupPromotesStagedFiles`, `TestBackupDeviceErrorStillPromotes`, `TestVerifyFlagsLeftoverStaging` |
 | Artifacts are never overwritten (`O_EXCL`) | `TestNewArtifactRefusesOverwrite` |
 | Every artifact is hashed (SHA-256 + MD5) and in manifest + artifacts.db | `TestNewArtifactHashesAndRecords` |
 | Partial/failed acquisitions are kept and flagged `incomplete` | `TestAbortKeepsPartialFlagged`, `TestPullToCaseCancelledKeepsPartial` |

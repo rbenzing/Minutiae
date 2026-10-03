@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 )
@@ -25,7 +26,8 @@ func (r *VerifyReport) problemf(format string, a ...any) {
 
 // Verify re-hashes every artifact, checks the audit chain, and cross-checks
 // the manifest against the audit log's artifact.create entries, artifacts.db
-// and the artifacts directory. Every failure to read part of the case is a
+// and the artifacts directory, and flags leftover (unpromoted) staging
+// directories. Every failure to read part of the case is a
 // reported problem, so Verify always completes; the result is audited
 // (verify.run). The returned error is only the failure to audit the result.
 func (c *Case) Verify() (VerifyReport, error) {
@@ -64,6 +66,7 @@ func (c *Case) Verify() (VerifyReport, error) {
 	c.crossCheckAudit(&rep, recs, audited)
 	c.crossCheckDB(&rep, recs)
 	c.checkUnmanifested(&rep, inManifest)
+	c.checkStaging(&rep)
 
 	_, err = c.Audit.Append("verify.run", "", map[string]any{
 		"ok": rep.OK(), "artifacts_checked": rep.ArtifactsChecked,
@@ -197,4 +200,20 @@ func (c *Case) checkUnmanifested(rep *VerifyReport, inManifest map[string]bool) 
 		}
 		return nil
 	})
+}
+
+// checkStaging reports every entry left in <case>/staging/: an iOS backup
+// working directory survives only when its files could not all be promoted
+// into artifacts, so it holds acquisition data the manifest does not cover.
+func (c *Case) checkStaging(rep *VerifyReport) {
+	entries, err := os.ReadDir(filepath.Join(c.Dir, stagingDir))
+	if errors.Is(err, fs.ErrNotExist) {
+		return
+	}
+	if err != nil {
+		rep.problemf("staging directory unreadable: %v", err)
+	}
+	for _, e := range entries {
+		rep.problemf("leftover staging directory %s (unpromoted acquisition data)", e.Name())
+	}
 }
