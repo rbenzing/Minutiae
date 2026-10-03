@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -86,6 +87,12 @@ func newAndroidPartitionsCmd(d Deps, opts *rootOptions) *cobra.Command {
 	return cmd
 }
 
+// partitionResolver is implemented by imagers that can report, before
+// imaging, the block device and exact size a partition name resolves to.
+type partitionResolver interface {
+	ResolvePartition(ctx context.Context, partition string) (device.Partition, error)
+}
+
 func newAndroidImageCmd(d Deps, opts *rootOptions) *cobra.Command {
 	var casePath, partition string
 	cmd := &cobra.Command{Use: "image", Short: "Image a partition into the case (requires root; read-only)", Args: exactArgs(0)}
@@ -108,8 +115,16 @@ func newAndroidImageCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		defer func() { _ = c.Close() }()
+		details := map[string]any{"partition": partition}
+		if r, ok := im.(partitionResolver); ok {
+			p, err := r.ResolvePartition(cmd.Context(), partition)
+			if err != nil {
+				return err
+			}
+			details["block_path"], details["expected_size"] = p.Path, p.Size // -1: unknown
+		}
 		var rec evidence.ManifestRecord
-		err = device.RunAcquisition(c, dv.ID(), "physical", map[string]any{"partition": partition}, func(acq string) error {
+		err = device.RunAcquisition(c, dv.ID(), "physical", details, func(acq string) error {
 			var err error
 			rec, err = device.ImageToCase(cmd.Context(), c, im, dv.ID(), acq, partition, newProgress(d.Err, partition))
 			return err

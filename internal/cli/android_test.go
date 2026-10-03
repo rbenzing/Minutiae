@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/android/adb"
 	"github.com/rbenzing/minutiae/internal/android/adb/adbtest"
 	"github.com/rbenzing/minutiae/internal/device"
+	"github.com/rbenzing/minutiae/internal/evidence"
 )
 
 func androidDeps(t *testing.T, devs ...*adbtest.Device) (Deps, *adbtest.Server) {
@@ -105,5 +107,43 @@ func TestHumanBytes(t *testing.T) {
 		if got := humanBytes(in); got != want {
 			t.Errorf("humanBytes(%d) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func cliRooted() *adbtest.Device {
+	su := func(cmd string) string { return "su -c '" + cmd + "' 2>/dev/null" }
+	return &adbtest.Device{
+		Serial: "R1", State: "device",
+		Commands: map[string][]byte{
+			su("id"):                                           []byte("uid=0(root)\n"),
+			su("cat /proc/partitions"):                         []byte("major minor  #blocks  name\n 179 1 4 mmcblk0p1\n"),
+			su("ls -l /dev/block/by-name/"):                    []byte("lrwxrwxrwx 1 root root 20 2009-01-01 00:00 boot -> /dev/block/mmcblk0p1\n"),
+			su("cat /sys/class/block/mmcblk0p1/size"):          []byte("9\n"),
+			su("dd if=/dev/block/mmcblk0p1 bs=4M 2>/dev/null"): []byte(strings.Repeat("B", 9*512)),
+		},
+	}
+}
+
+func TestAndroidImageRecordsBlockPathAndExpectedSize(t *testing.T) {
+	d, _ := androidDeps(t, cliRooted())
+	c := newCLICase(t)
+	if code, out := run(t, d, "android", "image", "--case", c, "--partition", "boot"); code != 0 {
+		t.Fatalf("image: %d %s", code, out)
+	}
+	entries, err := evidence.ReadAuditEntries(filepath.Join(c, "audit.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var start map[string]any
+	for _, e := range entries {
+		if e.Action == "acquire.start" && e.Details["type"] == "physical" {
+			start = e.Details
+		}
+	}
+	if start["partition"] != "boot" || start["block_path"] != "/dev/block/mmcblk0p1" || fmt.Sprint(start["expected_size"]) != "4608" {
+		t.Fatalf("acquire.start details = %v", start)
+	}
+	if code, out := run(t, d, "case", "verify", "--case", c); code != 0 {
+		t.Fatalf("verify: %d %s", code, out)
 	}
 }

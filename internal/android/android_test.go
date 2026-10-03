@@ -168,15 +168,23 @@ const byName = "total 0\nlrwxrwxrwx 1 root root 20 2009-01-01 00:00 boot -> /dev
 
 var bootImage = bytes.Repeat([]byte{0x41}, 4096)
 
+// su and aospSu are the exact commands the fake device sees for the two su
+// variants: su's own stderr is discarded outside the quoted command so it can
+// never reach an image stream.
+func su(cmd string) string     { return "su -c '" + cmd + "' 2>/dev/null" }
+func aospSu(cmd string) string { return "su 0 sh -c '" + cmd + "' 2>/dev/null" }
+
 func rootedDevice() *adbtest.Device {
 	return &adbtest.Device{
 		Serial: "R1", State: "device",
 		Commands: map[string][]byte{
-			"su -c 'id'":                                           []byte("uid=0(root) gid=0(root)\n"),
-			"su -c 'cat /proc/partitions'":                         []byte(procPartitions),
-			"su -c 'ls -l /dev/block/by-name/'":                    []byte(byName),
-			"su -c 'dd if=/dev/block/mmcblk0p1 bs=4M 2>/dev/null'": bootImage,
-			"su -c 'dd if=/dev/block/mmcblk0p2 bs=4M 2>/dev/null'": []byte("short"),
+			su("id"):                                           []byte("uid=0(root) gid=0(root)\n"),
+			su("cat /proc/partitions"):                         []byte(procPartitions),
+			su("ls -l /dev/block/by-name/"):                    []byte(byName),
+			su("cat /sys/class/block/mmcblk0p1/size"):          []byte("8\n"),
+			su("cat /sys/class/block/mmcblk0p2/size"):          []byte("16\n"),
+			su("dd if=/dev/block/mmcblk0p1 bs=4M 2>/dev/null"): bootImage,
+			su("dd if=/dev/block/mmcblk0p2 bs=4M 2>/dev/null"): []byte("short"),
 		},
 	}
 }
@@ -227,13 +235,123 @@ func TestNotRooted(t *testing.T) {
 
 func TestAOSPSuVariant(t *testing.T) {
 	dev := &adbtest.Device{Serial: "A1", State: "device", Commands: map[string][]byte{
-		"su 0 sh -c 'id'":                        []byte("uid=0(root)\n"),
-		"su 0 sh -c 'cat /proc/partitions'":      []byte(procPartitions),
-		"su 0 sh -c 'ls -l /dev/block/by-name/'": []byte("ls: /dev/block/by-name/: No such file or directory\n"),
+		aospSu("id"):                        []byte("uid=0(root)\n"),
+		aospSu("cat /proc/partitions"):      []byte(procPartitions),
+		aospSu("ls -l /dev/block/by-name/"): []byte("ls: /dev/block/by-name/: No such file or directory\n"),
 	}}
 	d := findDevice(t, fakeServer(t, dev), "A1")
 	ps, err := d.Partitions(context.Background())
 	if err != nil || len(ps) != 3 || ps[0].Path != "/dev/block/mmcblk0" {
 		t.Fatalf("partitions = %+v, %v", ps, err)
+	}
+}
+
+// hostileByName adds by-name links whose sizes need /sys, whose size cannot be
+// determined at all, and whose targets try to leave /dev/block.
+const hostileByName = byName +
+	"lrwxrwxrwx 1 root root 20 2009-01-01 00:00 odd -> /dev/block/mmcblk0p3\n" +
+	"lrwxrwxrwx 1 root root 20 2009-01-01 00:00 nosize -> /dev/block/mmcblk0p4\n" +
+	"lrwxrwxrwx 1 root root 20 2009-01-01 00:00 unknown -> /dev/block/mmcblk0p5\n" +
+	"lrwxrwxrwx 1 root root 20 2009-01-01 00:00 evil -> /dev/block/../../sdcard/evil\n" +
+	"lrwxrwxrwx 1 root root 20 2009-01-01 00:00 dots -> /dev/block/./mmcblk0p1\n" +
+	"lrwxrwxrwx 1 root root 20 2009-01-01 00:00 dbl -> /dev/block//mmcblk0p1\n"
+
+var oddImage = bytes.Repeat([]byte{0x42}, 9*512) // 9 sectors; /proc/partitions rounds down to 4 KiB
+
+func sizingDevice() *adbtest.Device {
+	return &adbtest.Device{
+		Serial: "R2", State: "device",
+		Commands: map[string][]byte{
+			su("id"):                                           []byte("uid=0(root) gid=0(root)\n"),
+			su("cat /proc/partitions"):                         []byte(procPartitions + " 179        3          4 mmcblk0p3\n"),
+			su("ls -l /dev/block/by-name/"):                    []byte(hostileByName),
+			su("cat /sys/class/block/mmcblk0p3/size"):          []byte("9\n"),
+			su("cat /sys/class/block/mmcblk0p4/size"):          []byte("2\n"),
+			su("dd if=/dev/block/mmcblk0p3 bs=4M 2>/dev/null"): oddImage,
+			su("dd if=/dev/block/mmcblk0p4 bs=4M 2>/dev/null"): bytes.Repeat([]byte{0x43}, 1024),
+			su("dd if=/dev/block/mmcblk0p5 bs=4M 2>/dev/null"): []byte("unknown-size partition bytes"),
+		},
+	}
+}
+
+func TestPartitionsRejectsEscapingTargetsAndFillsSizeFromSys(t *testing.T) {
+	d := findDevice(t, fakeServer(t, sizingDevice()), "R2")
+	ps, err := d.Partitions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]device.Partition{}
+	for _, p := range ps {
+		got[p.Name] = p
+	}
+	for _, bad := range []string{"evil", "dots", "dbl"} {
+		if p, ok := got[bad]; ok {
+			t.Errorf("non-canonical block target listed: %+v", p)
+		}
+	}
+	if got["nosize"].Size != 1024 {
+		t.Errorf("size of a partition missing from /proc/partitions should come from /sys: %+v", got["nosize"])
+	}
+	if len(ps) != 5 {
+		t.Errorf("partitions = %+v", ps)
+	}
+}
+
+func TestProcPartitionsFallbackRejectsDotDot(t *testing.T) {
+	dev := &adbtest.Device{Serial: "A2", State: "device", Commands: map[string][]byte{
+		aospSu("id"):                        []byte("uid=0(root)\n"),
+		aospSu("cat /proc/partitions"):      []byte(procPartitions + " 179        9          4 ..\n 179       10          4 .\n"),
+		aospSu("ls -l /dev/block/by-name/"): []byte("ls: /dev/block/by-name/: No such file or directory\n"),
+	}}
+	d := findDevice(t, fakeServer(t, dev), "A2")
+	ps, err := d.Partitions(context.Background())
+	if err != nil || len(ps) != 3 {
+		t.Fatalf("partitions = %+v, %v", ps, err)
+	}
+	if _, err := d.Image(context.Background(), "..", &bytes.Buffer{}, nil); err == nil {
+		t.Fatal(`imaging ".." should fail`)
+	}
+}
+
+func TestImageExactSizeFromSys(t *testing.T) {
+	c := newCase(t)
+	d := findDevice(t, fakeServer(t, sizingDevice()), "R2")
+	for name, want := range map[string]int{"odd": len(oddImage), "nosize": 1024} {
+		rec, err := device.ImageToCase(context.Background(), c, d, "R2", "acq", name, nil)
+		if err != nil || rec.Incomplete || rec.Size != int64(want) {
+			t.Errorf("%s: rec = %+v, err = %v", name, rec, err)
+		}
+	}
+}
+
+func TestImageUnknownSizeIsIncomplete(t *testing.T) {
+	c := newCase(t)
+	d := findDevice(t, fakeServer(t, sizingDevice()), "R2")
+	rec, err := device.ImageToCase(context.Background(), c, d, "R2", "acq", "unknown", nil)
+	if err == nil || !strings.Contains(err.Error(), "size unknown; completeness unverifiable") || !rec.Incomplete {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if rec.Size != int64(len("unknown-size partition bytes")) {
+		t.Fatalf("partial bytes not kept: %+v", rec)
+	}
+}
+
+func TestImageRejectsEscapingTarget(t *testing.T) {
+	d := findDevice(t, fakeServer(t, sizingDevice()), "R2")
+	for _, name := range []string{"evil", "dots", "dbl"} {
+		if _, err := d.Image(context.Background(), name, &bytes.Buffer{}, nil); err == nil || !strings.Contains(err.Error(), "no partition named") {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+}
+
+func TestResolvePartition(t *testing.T) {
+	d := findDevice(t, fakeServer(t, sizingDevice()), "R2")
+	p, err := d.ResolvePartition(context.Background(), "odd")
+	if err != nil || p.Path != "/dev/block/mmcblk0p3" || p.Size != int64(len(oddImage)) {
+		t.Fatalf("odd = %+v, %v", p, err)
+	}
+	if p, err := d.ResolvePartition(context.Background(), "unknown"); err != nil || p.Size != -1 {
+		t.Fatalf("unknown = %+v, %v", p, err)
 	}
 }
