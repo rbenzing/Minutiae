@@ -141,8 +141,8 @@ func openImportFiles(c *evidence.Case, paths []string) (files []importFile, tota
 	return files, total, nil
 }
 
-// stripExtendedPrefix turns a Windows extended-length path (`\?\C:\x`,
-// `\?\UNC\srv\share\x`) into its ordinary form so it can be compared with
+// stripExtendedPrefix turns a Windows extended-length path (`\\?\C:\x`,
+// `\\?\UNC\srv\share\x`) into its ordinary form so it can be compared with
 // other paths; it is a no-op elsewhere.
 func stripExtendedPrefix(p string) string {
 	if runtime.GOOS != "windows" {
@@ -153,10 +153,10 @@ func stripExtendedPrefix(p string) string {
 
 func trimExtendedPrefix(p string) string {
 	switch {
-	case strings.HasPrefix(p, `\?\UNC\`):
-		return `\` + p[len(`\?\UNC\`):]
-	case strings.HasPrefix(p, `\?\`):
-		return p[len(`\?\`):]
+	case strings.HasPrefix(p, `\\?\UNC\`):
+		return `\\` + p[len(`\\?\UNC\`):]
+	case strings.HasPrefix(p, `\\?\`):
+		return p[len(`\\?\`):]
 	}
 	return p
 }

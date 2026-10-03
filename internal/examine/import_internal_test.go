@@ -8,14 +8,15 @@ import (
 
 func TestTrimExtendedPrefix(t *testing.T) {
 	for in, want := range map[string]string{
-		`\?\C:\case\x`:         `C:\case\x`,
-		`\?\UNC\srv\share\x`:   `\srv\share\x`,
-		`C:\plain`:             `C:\plain`,
-		`\srv\share\x`:         `\srv\share\x`,
-		`/unix/path`:           `/unix/path`,
-		`\?\`:                  ``,
-		`\?\UNC\`:              `\`,
-		`\.\C:\device-style\x`: `\.\C:\device-style\x`,
+		`\\?\C:\case\x`:         `C:\case\x`,
+		`\\?\UNC\srv\share\x`:   `\\srv\share\x`,
+		`C:\plain`:              `C:\plain`,
+		`\\srv\share\x`:         `\\srv\share\x`,
+		`/unix/path`:            `/unix/path`,
+		`\\?\`:                  ``,
+		`\\?\UNC\`:              `\\`,
+		`\\.\C:\device-style\x`: `\\.\C:\device-style\x`,
+		`\?\C:\one-backslash`:   `\?\C:\one-backslash`,
 	} {
 		if got := trimExtendedPrefix(in); got != want {
 			t.Errorf("trimExtendedPrefix(%q) = %q, want %q", in, got, want)

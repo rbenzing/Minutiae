@@ -188,7 +188,7 @@ func TestImportRefusesExtendedLengthPathInsideCase(t *testing.T) {
 	if err := os.WriteFile(inside, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range []string{`\?\` + inside, strings.ToUpper(`\?\` + inside)} {
+	for _, p := range []string{`\\?\` + inside, strings.ToUpper(`\\?\` + inside)} {
 		if _, err := examine.Import(context.Background(), c, "img", []string{p}, nil); err == nil || !strings.Contains(err.Error(), "cannot import from inside the case") {
 			t.Errorf("Import(%q) = %v", p, err)
 		}
