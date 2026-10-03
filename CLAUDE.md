@@ -74,6 +74,7 @@ go build -ldflags "-X github.com/rbenzing/minutiae/internal/version.Version=v1.0
 - iOS backup transfer: a `0x0b` (remote error) block that follows file data is treated as the normal end of that file, mirroring libimobiledevice, so a device-side read failure in the middle of a file can look like a complete file. Files cut off by a transport failure or cancellation are kept and flagged `incomplete`.
 - iOS encrypted backups (a backup password set on the device) are captured as-is; decryption belongs to roadmap sub-project 10.
 - iOS AFC (`ios ls`/`ios pull`) parsing robustness depends on go-ios: its panics are converted to errors and a pull whose byte count differs from the AFC-reported size is flagged `incomplete`, but malformed AFC responses are otherwise not validated by Minutiae.
+- iOS lockdown/service setup: plists the device returns during lockdown `GetValue` and `StartService` (used by `ios info`, `ios ls/pull` and `ios backup` setup) are decoded inside go-ios without Minutiae's bplist validator or panic recovery, so a hostile device could crash the process at that stage (before any artifact is written).
 - Hardware: as of v1.0.0 the device backends (ADB, iOS, serial) have NOT been validated on real hardware, only against fakes. Before relying on them in casework, run the hardware acceptance steps with authorized/trusted devices attached and confirm `case verify` reports OK:
   ```bash
   go test -tags hardware ./... -v
