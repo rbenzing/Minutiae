@@ -84,6 +84,13 @@ func newPathEntry(p string, e filesys.Entry) pathEntry {
 	return pathEntry{Path: p, Entry: je}
 }
 
+// jsonStat is the object `image stat --json` prints: the entry plus the
+// filesystem warnings its lookup raised.
+type jsonStat struct {
+	pathEntry
+	Warnings []string `json:"warnings,omitempty"`
+}
+
 type jsonFSInfo struct {
 	Type      string   `json:"type"`
 	Label     string   `json:"label"`

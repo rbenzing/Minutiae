@@ -337,6 +337,7 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 		if err != nil {
 			return err
 		}
+		known := len(fsys.Info().Warnings) // those from opening are in `image info`
 		dir, dirPath, err := s.Lookup(fsys, dirRef)
 		if err != nil {
 			return err
@@ -415,6 +416,7 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 			}
 			_, err = io.WriteString(d.Out, closer)
 		}
+		printNewFSWarnings(d.Err, newFSWarnings(fsys, known))
 		return err
 	}
 	return cmd
@@ -442,14 +444,18 @@ func newImageStatCmd(d Deps, opts *rootOptions) *cobra.Command {
 		if err != nil {
 			return err
 		}
+		known := len(fsys.Info().Warnings)
 		e, p, err := s.Lookup(fsys, args[1])
 		if err != nil {
+			printNewFSWarnings(d.Err, newFSWarnings(fsys, known))
 			return err
 		}
+		warnings := newFSWarnings(fsys, known)
 		if opts.json {
-			return writeJSON(d.Out, newPathEntry(p, e))
+			return writeJSON(d.Out, jsonStat{pathEntry: newPathEntry(p, e), Warnings: warnings})
 		}
 		printEntry(d.Out, p, e)
+		printNewFSWarnings(d.Err, warnings)
 		return nil
 	}
 	return cmd
@@ -480,6 +486,32 @@ func printEntry(w io.Writer, p string, e filesys.Entry) {
 	field("Deleted at", formatTime(e.Times.Deleted))
 	for _, kv := range e.Attrs {
 		field("Attr", printable(kv.Key)+" = "+printable(kv.Value))
+	}
+}
+
+// maxNewFSWarnings is how many new filesystem warnings ls and stat print.
+const maxNewFSWarnings = 20
+
+// newFSWarnings returns the filesystem warnings that appeared after the first
+// known ones (the warnings only grow, in order).
+func newFSWarnings(fsys filesys.FileSystem, known int) []string {
+	w := fsys.Info().Warnings
+	if len(w) <= known {
+		return nil
+	}
+	return w[known:]
+}
+
+// printNewFSWarnings writes the warnings a read of the filesystem raised, one
+// escaped line each ("warning: <text>"; the text comes from the image), at most
+// maxNewFSWarnings of them and then the count of the rest.
+func printNewFSWarnings(w io.Writer, warnings []string) {
+	for i, text := range warnings {
+		if i == maxNewFSWarnings {
+			fmt.Fprintf(w, "… %d more\n", len(warnings)-i)
+			return
+		}
+		fmt.Fprintf(w, "warning: %s\n", escapeText(text))
 	}
 }
 

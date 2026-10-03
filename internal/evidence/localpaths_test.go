@@ -1,6 +1,13 @@
 package evidence
 
-import "testing"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"path"
+	"strings"
+	"testing"
+	"unicode/utf8"
+)
 
 func TestLocalPathsCollision(t *testing.T) {
 	l := NewLocalPaths("files")
@@ -72,5 +79,55 @@ func TestWithSuffixAndFoldCase(t *testing.T) {
 	}
 	if FoldCase("a.txt") == FoldCase("b.txt") {
 		t.Error("distinct names fold equal")
+	}
+}
+
+func TestLocalPathsCapsLongComponents(t *testing.T) {
+	const prefix = "~raw~"
+	long1 := prefix + strings.Repeat("A", 340) // 345 bytes
+	long2 := prefix + strings.Repeat("A", 339) + "B"
+	cjk := strings.Repeat("日", 85) // 255 bytes
+	l := NewLocalPaths("files")
+	dir, err := l.Dir("/d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, name := range []string{long1, long2, cjk, cjk + ".txt"} {
+		p, err := l.File(dir, name)
+		if err != nil {
+			t.Fatalf("File(%d bytes) = %v", len(name), err)
+		}
+		comp := path.Base(p)
+		if len(comp) > maxComponentBytes {
+			t.Errorf("component of %d bytes exceeds %d: %q", len(comp), maxComponentBytes, comp)
+		}
+		if !utf8.ValidString(comp) {
+			t.Errorf("truncation split a rune: %q", comp)
+		}
+		got[name] = p
+	}
+	if got[long1] == got[long2] {
+		t.Errorf("two long names sharing a 200-byte prefix got the same local name %q", got[long1])
+	}
+	if !strings.HasPrefix(path.Base(got[long1]), prefix+"AAAA") || !strings.Contains(path.Base(got[long1]), "~") {
+		t.Errorf("long name lost its prefix or hash suffix: %q", got[long1])
+	}
+	sum := sha256.Sum256([]byte(long1))
+	if want := "~" + hex.EncodeToString(sum[:4]); !strings.HasSuffix(got[long1], want) {
+		t.Errorf("%q does not end with the hash suffix %q", got[long1], want)
+	}
+	// Deterministic: the same name in a fresh assigner maps to the same component.
+	l2 := NewLocalPaths("files")
+	d2, _ := l2.Dir("/d")
+	if again, _ := l2.File(d2, long1); again != got[long1] {
+		t.Errorf("not deterministic: %q vs %q", again, got[long1])
+	}
+	// Long directory names are capped too; short names are untouched.
+	if d, err := l.Dir("/" + long1 + "/sub"); err != nil || len(path.Base(path.Dir(d))) > maxComponentBytes {
+		t.Errorf("long directory = %q, %v", d, err)
+	}
+	if p, _ := l.File(dir, strings.Repeat("s", maxComponentBytes)); path.Base(p) != strings.Repeat("s", maxComponentBytes) {
+		t.Errorf("a name of exactly %d bytes was changed: %q", maxComponentBytes, p)
 	}
 }

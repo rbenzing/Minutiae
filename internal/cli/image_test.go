@@ -1,16 +1,19 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/rbenzing/minutiae/internal/device"
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/filesys/detect"
@@ -735,5 +738,145 @@ func TestImageUnallocReportsFilesystemWarnings(t *testing.T) {
 	var sum map[string]any
 	if err := json.Unmarshal(jsonPart(out), &sum); code != 0 || err != nil || sum["fs_warnings"] != float64(1) || sum["skipped"] != float64(0) {
 		t.Errorf("unalloc --json (exit %d, %v): %s", code, err, out)
+	}
+}
+
+// warnOnRead is an MTFS filesystem whose Info().Warnings grow while it lists
+// directories and resolves paths.
+type warnOnRead struct {
+	filesys.FileSystem
+	warnings []string
+	add      []string // appended on every ReadDir and Lookup
+}
+
+func (f *warnOnRead) Info() filesys.Info {
+	i := f.FileSystem.Info()
+	i.Warnings = append([]string(nil), f.warnings...)
+	return i
+}
+
+// note records the warnings add, each text once (as the readers do).
+func (f *warnOnRead) note() {
+	for _, w := range f.add {
+		if !slices.Contains(f.warnings, w) {
+			f.warnings = append(f.warnings, w)
+		}
+	}
+}
+
+func (f *warnOnRead) ReadDir(d filesys.Entry) ([]filesys.Entry, error) {
+	f.note()
+	return f.FileSystem.ReadDir(d)
+}
+
+func (f *warnOnRead) Lookup(p string) (filesys.Entry, error) {
+	f.note()
+	return f.FileSystem.Lookup(p)
+}
+
+// warnReadEnv imports the default image through a warnOnRead filesystem that
+// starts with open and adds add on every read. The returned function runs the
+// CLI with separate stdout and stderr.
+func warnReadEnv(t *testing.T, open, add []string) (ref string, runSplit func(args ...string) (int, string, string)) {
+	t.Helper()
+	d := Deps{FSDrivers: []detect.Driver{{
+		Name: "mtfs", Probe: fstest.Probe,
+		Open: func(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
+			fsys, err := fstest.Open(r, size)
+			if err != nil {
+				return nil, err
+			}
+			return &warnOnRead{FileSystem: fsys, warnings: append([]string(nil), open...), add: add}, nil
+		},
+	}}}
+	c := newCLICase(t)
+	code, out := run(t, d, "image", "import", "--case", c, "--json", imgFile(t, imgDisk(defaultNodes()...)))
+	var recs []evidence.ManifestRecord
+	if err := json.Unmarshal(jsonPart(out), &recs); code != 0 || err != nil || len(recs) != 1 {
+		t.Fatalf("import: %d %s (%v)", code, out, err)
+	}
+	return recs[0].ID, func(args ...string) (int, string, string) {
+		var stdout, stderr bytes.Buffer
+		dd := d
+		dd.Out, dd.Err, dd.In, dd.Registry = &stdout, &stderr, strings.NewReader(""), device.NewRegistry()
+		full := append([]string{"image", args[0], "--case", c}, args[1:]...)
+		return Run(full, dd), stdout.String(), stderr.String()
+	}
+}
+
+func TestImageLsPrintsNewFilesystemWarningsToStderr(t *testing.T) {
+	ref, runSplit := warnReadEnv(t, []string{"open-time anomaly"}, []string{"dir entry \x1b[31mbad\nforged line"})
+	code, stdout, stderr := runSplit("ls", ref, "/docs")
+	if code != 0 {
+		t.Fatalf("ls: %d %s %s", code, stdout, stderr)
+	}
+	if strings.Contains(stdout, "warning") || strings.Contains(stdout, "bad") {
+		t.Errorf("warning leaked to stdout:\n%s", stdout)
+	}
+	if want := `warning: dir entry \x1b[31mbad\x0aforged line`; !strings.Contains(stderr, want+"\n") {
+		t.Errorf("stderr lacks the escaped single-line warning %q:\n%q", want, stderr)
+	}
+	if strings.Contains(stderr, "open-time anomaly") {
+		t.Errorf("a warning the filesystem already had at open is reported as new:\n%s", stderr)
+	}
+
+	code, stdout, stderr = runSplit("ls", ref, "/docs", "--json")
+	var listing []map[string]any
+	if err := json.Unmarshal([]byte(stdout), &listing); code != 0 || err != nil || len(listing) != 2 {
+		t.Fatalf("ls --json (exit %d, %v): %q", code, err, stdout)
+	}
+	if !strings.Contains(stderr, "warning: dir entry ") {
+		t.Errorf("ls --json does not write the warning to stderr:\n%s", stderr)
+	}
+}
+
+func TestImageLsWarningCap(t *testing.T) {
+	var add []string
+	for i := range 25 {
+		add = append(add, fmt.Sprintf("anomaly %02d", i))
+	}
+	ref, runSplit := warnReadEnv(t, nil, add)
+	code, _, stderr := runSplit("ls", ref)
+	if code != 0 {
+		t.Fatalf("ls: %d %s", code, stderr)
+	}
+	if got := strings.Count(stderr, "warning: anomaly"); got != 20 {
+		t.Errorf("%d warning lines, want 20:\n%s", got, stderr)
+	}
+	if !strings.Contains(stderr, "… 5 more\n") || strings.Contains(stderr, "anomaly 20") {
+		t.Errorf("cap summary wrong:\n%s", stderr)
+	}
+}
+
+func TestImageStatReportsNewFilesystemWarnings(t *testing.T) {
+	ref, runSplit := warnReadEnv(t, []string{"open-time anomaly"}, []string{"lookup anomaly"})
+	code, stdout, stderr := runSplit("stat", ref, "/top.txt")
+	if code != 0 || !strings.Contains(stdout, "Path:") || strings.Contains(stdout, "anomaly") {
+		t.Fatalf("stat: %d\n%s", code, stdout)
+	}
+	if !strings.Contains(stderr, "warning: lookup anomaly\n") || strings.Contains(stderr, "open-time") {
+		t.Errorf("stderr = %q", stderr)
+	}
+
+	code, stdout, stderr = runSplit("stat", ref, "/top.txt", "--json")
+	var obj struct {
+		Path     string   `json:"path"`
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &obj); code != 0 || err != nil || obj.Path != "/top.txt" {
+		t.Fatalf("stat --json (exit %d, %v): %q", code, err, stdout)
+	}
+	if len(obj.Warnings) != 1 || obj.Warnings[0] != "lookup anomaly" {
+		t.Errorf("warnings = %q, want the one new warning in the stat object", obj.Warnings)
+	}
+	if strings.Contains(stderr, "lookup anomaly") {
+		t.Errorf("--json stat also prints the warning to stderr:\n%s", stderr)
+	}
+
+	// No new warnings: no field, nothing on stderr.
+	ref, runSplit = warnReadEnv(t, []string{"open-time anomaly"}, nil)
+	code, stdout, stderr = runSplit("stat", ref, "/top.txt", "--json")
+	if code != 0 || strings.Contains(stdout, "warnings") || strings.Contains(stderr, "warning") {
+		t.Errorf("clean stat (exit %d): %q %q", code, stdout, stderr)
 	}
 }

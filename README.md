@@ -46,7 +46,7 @@ Use Minutiae only on devices you are authorized to examine.
 - **iOS over usbmuxd** — device info, AFC media listing/pull, and full logical backups via an in-house mobilebackup2 (DeviceLink) implementation hardened against hostile devices
 - **USB serial** — port enumeration with VID/PID, receive-only raw console capture (`rx.bin` + timestamped transcript), modem lines de-asserted on open
 - **Image analysis** — import disk images (raw/dd, split raw) into a case, read MBR/EBR and GPT partition tables, browse filesystems read-only, extract files and export unallocated space as new hashed artifacts that record their full provenance (parent image, partition, filesystem entry, byte runs). **ext2/ext3/ext4** filesystems (extents or block maps, htree and inline directories, inline data, metadata checksums, deleted-entry flagging, unallocated space) are readable today, verified against real `mke2fs`-built images with independent expected results and fuzzed against hostile input; more readers arrive progressively (FAT/exFAT, F2FS, E01, APFS, HFS+); see [Known limitations](CLAUDE.md#9-known-limitations)
-- **Windows-safe evidence names** — device file names that are illegal on Windows (`:`, `?`, `CON`, case/8.3 collisions) are stored under safe local names while the original remote path is preserved
+- **Windows-safe evidence names** — device file names that are illegal on Windows (`:`, `?`, `CON`, case/8.3 collisions, names over 200 bytes) are stored under safe local names while the original remote path is preserved
 - **Single static binary** — pure Go, no cgo; one cross-platform `go run ./tools/check` gate (tidy, vet, lint, build, cross-builds, tests)
 
 ---

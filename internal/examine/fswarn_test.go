@@ -224,3 +224,38 @@ func TestFilesystemWarningsReachAuditWhenAnalysisFails(t *testing.T) {
 		t.Error("no analysis.error entry")
 	}
 }
+
+// The filesystem warnings only grow, so syncFS looks at them again only when
+// their count changed. A reader that rewrote a warning in place (which real
+// readers never do) is therefore not re-read until another one is appended.
+func TestSyncFSOnlyDiffsWhenWarningCountChanged(t *testing.T) {
+	c := newCase(t)
+	var warnings *[]string
+	s := warnSession(t, c, []string{"open anomaly"}, func(w *[]string) warnFS {
+		warnings = w
+		return warnFS{warnings: w, onOpen: func(e filesys.Entry) []string {
+			switch e.Name {
+			case "a.txt":
+				(*warnings)[0] = "rewritten in place" // same count: not looked at
+			case "c.txt":
+				return []string{"appended anomaly"} // count grew: everything unseen is written
+			}
+			return nil
+		}}
+	},
+		fstest.Node{Path: "/a.txt", Data: []byte("a")},
+		fstest.Node{Path: "/b.txt", Data: []byte("b")},
+		fstest.Node{Path: "/c.txt", Data: []byte("c")})
+	sum := extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: []string{"/a.txt", "/b.txt", "/c.txt"}})
+	if want := []string{"rewritten in place", "appended anomaly"}; !slices.Equal(fsWarnings(t, c)["filesystem"], want) {
+		t.Errorf("filesystem warnings = %q, want %q", fsWarnings(t, c)["filesystem"], want)
+	}
+	if sum.FSWarnings != 2 {
+		t.Errorf("FSWarnings = %d, want 2", sum.FSWarnings)
+	}
+	for _, e := range auditByAction(t, c, "analysis.warning") {
+		if e.Details["warning"] == "rewritten in place" && e.Details["after"] != "/c.txt" {
+			t.Errorf("the in-place rewrite was noticed after %v, want only once the count changed (after /c.txt)", e.Details["after"])
+		}
+	}
+}

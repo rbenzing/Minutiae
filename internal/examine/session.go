@@ -38,7 +38,11 @@ type Session struct {
 	Image    image.Image
 	Table    *volume.Table
 
-	opts      Options
+	opts Options
+
+	// newArtifact creates artifacts when set (tests inject faults); nil means Case.NewArtifact.
+	newArtifact func(deviceID, acqID, rel string, src evidence.Source) (*evidence.ArtifactWriter, error)
+
 	mu        sync.Mutex
 	fsCache   map[int]*fsEntry
 	closeOnce sync.Once

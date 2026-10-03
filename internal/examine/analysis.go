@@ -41,6 +41,7 @@ type analysis struct {
 
 	fsys  filesys.FileSystem // watched by watchFS, nil when none
 	seen  map[string]bool    // filesystem warnings already in the audit log
+	known int                // len(Info().Warnings) at the last watchFS/syncFS
 	after string             // last path extracted, named by filesystem warnings written after it
 }
 
@@ -69,7 +70,9 @@ func (a *analysis) warn(path, reason string) error {
 // not counted in the summary. Later calls of syncFS write the new ones.
 func (a *analysis) watchFS(fsys filesys.FileSystem) error {
 	a.fsys, a.seen = fsys, map[string]bool{}
-	for _, w := range fsys.Info().Warnings {
+	warnings := fsys.Info().Warnings
+	a.known = len(warnings)
+	for _, w := range warnings {
 		if a.seen[w] {
 			continue
 		}
@@ -88,7 +91,13 @@ func (a *analysis) syncFS() error {
 	if a.fsys == nil {
 		return nil
 	}
-	for _, w := range a.fsys.Info().Warnings {
+	// Filesystem warnings only grow, so an unchanged count means nothing new:
+	// skip the per-warning work (it runs after every extracted file).
+	warnings := a.fsys.Info().Warnings
+	if len(warnings) == a.known {
+		return nil
+	}
+	for _, w := range warnings {
 		if a.seen[w] {
 			continue
 		}
@@ -98,6 +107,7 @@ func (a *analysis) syncFS() error {
 			return err
 		}
 	}
+	a.known = len(warnings)
 	return nil
 }
 

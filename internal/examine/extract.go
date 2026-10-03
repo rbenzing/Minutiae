@@ -242,6 +242,13 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 				return x.copyFile(w, f, size)
 			})
 		}
+		var nameErr *localNameError
+		if errors.As(err, &nameErr) {
+			// Belt and braces: LocalPaths caps every component, so this is an
+			// OS limit it does not model (a very deep path). The entry's name,
+			// not the case, is the problem, so skip it and go on.
+			return x.a.warn(p, "not extracted: "+nameErr.Error())
+		}
 		if !errors.Is(err, evidence.ErrArtifactExists) {
 			if err != nil {
 				return err // the case itself failed: never downgraded to a warning
@@ -275,9 +282,16 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 // evidence.ErrArtifactExists, which is returned as is so the caller can try
 // another name.
 func (s *Session) capture(a *analysis, rel string, src evidence.Source, fill func(io.Writer) error) (rec evidence.ManifestRecord, fillErr, err error) {
-	w, err := s.Case.NewArtifact(src.DeviceID, a.sum.AnalysisID, rel, src)
+	create := s.Case.NewArtifact
+	if s.newArtifact != nil {
+		create = s.newArtifact
+	}
+	w, err := create(src.DeviceID, a.sum.AnalysisID, rel, src)
 	if errors.Is(err, evidence.ErrArtifactExists) {
 		return rec, nil, err
+	}
+	if isLocalNameError(err) {
+		return rec, nil, &localNameError{err}
 	}
 	if err != nil {
 		return rec, nil, &caseWriteError{err}
