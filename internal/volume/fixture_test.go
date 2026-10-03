@@ -3,6 +3,8 @@ package volume_test
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"os"
@@ -19,6 +21,9 @@ type oracle struct {
 	Scheme     string `json:"scheme"`
 	SectorSize int    `json:"sector_size"`
 	DiskGUID   string `json:"disk_guid"`
+	Generator  struct {
+		ImageSHA256 string `json:"image_sha256"`
+	} `json:"generator"`
 	Partitions []struct {
 		Index  int    `json:"index"`
 		Start  int64  `json:"start"`
@@ -73,6 +78,13 @@ func TestVolumeFixturesMatchOracle(t *testing.T) {
 			}
 
 			img := gunzipFixture(t, path)
+			sum := sha256.Sum256(img)
+			if want.Generator.ImageSHA256 == "" {
+				t.Fatal("oracle has no generator.image_sha256")
+			}
+			if got := hex.EncodeToString(sum[:]); got != want.Generator.ImageSHA256 {
+				t.Fatalf("image sha256 %s does not match the oracle's %s: image and oracle are out of step", got, want.Generator.ImageSHA256)
+			}
 			tab, err := volume.Read(bytes.NewReader(img), int64(len(img)), 0)
 			if err != nil {
 				t.Fatal(err)

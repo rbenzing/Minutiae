@@ -476,6 +476,10 @@ func TestExtractSkipsDeletedWithWarning(t *testing.T) {
 	if len(ws) != 2 {
 		t.Fatalf("warnings = %+v", ws)
 	}
+	if len(sum.Warnings) != 2 || sum.Warnings[0].Path != "/lonely.txt" || sum.Warnings[1].Path != "/d/gone.txt" ||
+		!strings.Contains(sum.Warnings[0].Reason, "sub-project 3") || !strings.Contains(sum.Warnings[1].Reason, "sub-project 3") {
+		t.Errorf("Summary.Warnings = %+v, want both skips with path and reason in order", sum.Warnings)
+	}
 	paths := map[string]bool{}
 	for _, w := range ws {
 		r, _ := w.Details["reason"].(string)
@@ -970,5 +974,33 @@ func TestExtractDedupesByPathAndEntryID(t *testing.T) {
 	again := extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: []string{"/d", "/d"}, Recursive: true})
 	if again.Files != 2 || again.Skipped != 2 {
 		t.Fatalf("overlapping summary = %+v", again)
+	}
+}
+
+func TestExtractWarningsAreCappedButSkippedIsAuthoritative(t *testing.T) {
+	c := newCase(t)
+	s, _ := session(t, c, 1, fstest.Node{Path: "/gone.txt", Data: []byte("gone"), Deleted: true})
+	fsys, _, err := s.FS(-1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := fsys.ReadDir(fsys.Root())
+	if err != nil || len(root) != 1 {
+		t.Fatalf("setup: %v %+v", err, root)
+	}
+	const n = 130
+	paths := make([]string, n)
+	for i := range paths {
+		paths[i] = "id:" + root[0].ID
+	}
+	sum := extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: paths})
+	if sum.Skipped != n {
+		t.Fatalf("Skipped = %d, want %d (the count stays exact)", sum.Skipped, n)
+	}
+	if len(sum.Warnings) != 100 {
+		t.Errorf("len(Warnings) = %d, want it capped at 100", len(sum.Warnings))
+	}
+	if got := len(auditByAction(t, c, "analysis.warning")); got != n {
+		t.Errorf("audit has %d analysis.warning entries, want all %d", got, n)
 	}
 }

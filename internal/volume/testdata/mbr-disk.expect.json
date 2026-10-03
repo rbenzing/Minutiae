@@ -36,6 +36,7 @@
     }
   ],
   "generator": {
+    "image_sha256": "0d1a67d74afd5fe4dbd44ab6b9e52f959a904280281ae0d85baaa7978348dd22",
     "packages": [
       {
         "package": "coreutils",

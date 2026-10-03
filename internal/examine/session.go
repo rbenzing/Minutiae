@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,8 +47,10 @@ type Session struct {
 }
 
 type fsEntry struct {
-	fs  filesys.FileSystem
-	err error
+	fs    filesys.FileSystem
+	err   error
+	name  string   // driver that recognized the partition, "" when none did
+	notes []string // probe panics of drivers tried before the final one
 }
 
 // Open resolves ref (artifact id or case-relative path), collects all segments
@@ -263,7 +266,7 @@ func (s *Session) Partition(index int) (volume.Partition, error) {
 	}
 	var cand []volume.Partition
 	for _, p := range s.Table.Partitions {
-		if _, ok, _ := probe(s.drivers(), s.section(p), p.Length); ok {
+		if _, ok := detect.ProbeWith(s.drivers(), s.section(p), p.Length); ok {
 			cand = append(cand, p)
 		}
 	}
@@ -304,19 +307,54 @@ func (s *Session) FS(index int) (filesys.FileSystem, volume.Partition, error) {
 }
 
 func (s *Session) openFS(p volume.Partition) (filesys.FileSystem, error) {
+	e := s.openEntry(p)
+	return e.fs, e.err
+}
+
+// openEntry opens (and caches) the filesystem of p with detect.OpenWith.
+// detect stops at a driver whose Probe panics and reports it as a
+// *filesys.CorruptError; here the panic is noted and the remaining drivers are
+// still tried, so one faulty probe cannot hide a filesystem a later driver
+// recognizes. The notes are kept for Info.
+func (s *Session) openEntry(p volume.Partition) *fsEntry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if e, ok := s.fsCache[p.Index]; ok {
-		return e.fs, e.err
+		return e
 	}
-	fsys, err := detect.OpenWith(s.drivers(), s.section(p), p.Length)
-	if err == nil {
+	e := &fsEntry{}
+	drivers := s.drivers()
+	for {
+		e.fs, e.err = detect.OpenWith(drivers, s.section(p), p.Length)
+		var ce *filesys.CorruptError
+		if !errors.As(e.err, &ce) || !strings.HasPrefix(ce.Reason, probePanicPrefix) {
+			break
+		}
+		skip := slices.IndexFunc(drivers, func(d detect.Driver) bool { return d.Name == ce.Structure && d.Probe != nil && d.Open != nil })
+		if skip < 0 {
+			break
+		}
+		e.notes = append(e.notes, fmt.Sprintf("%s probe panicked: %s", ce.Structure, strings.TrimPrefix(ce.Reason, probePanicPrefix)))
+		drivers = drivers[skip+1:]
+	}
+	switch {
+	case e.err == nil:
 		name := fmt.Sprintf("partition %d filesystem", p.Index)
-		fsys, err = wrapFS(name, fsys)
+		e.fs, e.err = wrapFS(name, e.fs)
+	case errors.Is(e.err, filesys.ErrUnsupported):
+		if len(e.notes) > 0 {
+			e.err = fmt.Errorf("%w; %s", e.err, strings.Join(e.notes, "; "))
+		}
+	default:
+		// Recognized but failed to open: remember which driver matched.
+		e.name, _ = detect.ProbeWith(drivers, s.section(p), p.Length)
 	}
-	s.fsCache[p.Index] = &fsEntry{fs: fsys, err: err}
-	return fsys, err
+	s.fsCache[p.Index] = e
+	return e
 }
+
+// probePanicPrefix starts the Reason detect gives a panicking Probe.
+const probePanicPrefix = "probe panic: "
 
 // PartitionInfo describes one partition and the filesystem found on it.
 type PartitionInfo struct {
@@ -359,18 +397,18 @@ func (s *Session) Info() ImageInfo {
 	}
 	for _, p := range s.Table.Partitions {
 		pi := PartitionInfo{Partition: p}
-		name, recognized, notes := probe(s.drivers(), s.section(p), p.Length)
-		if !recognized {
-			pi.Error = strings.Join(append([]string{"no recognized filesystem"}, notes...), "; ")
-		} else {
-			pi.FSType = name
-			if fsys, err := s.openFS(p); err != nil {
-				pi.Error = err.Error()
-			} else {
-				fi := fsys.Info()
-				pi.FSInfo = &fi
-				pi.FSType = fi.Type
-			}
+		e := s.openEntry(p)
+		switch {
+		case e.err == nil:
+			fi := e.fs.Info()
+			pi.FSInfo = &fi
+			pi.FSType = fi.Type
+			pi.Error = strings.Join(e.notes, "; ") // earlier drivers' probe panics
+		case errors.Is(e.err, filesys.ErrUnsupported):
+			pi.Error = strings.Join(append([]string{"no recognized filesystem"}, e.notes...), "; ")
+		default:
+			pi.FSType = e.name
+			pi.Error = strings.Join(append([]string{e.err.Error()}, e.notes...), "; ")
 		}
 		info.Partitions = append(info.Partitions, pi)
 	}
@@ -436,32 +474,4 @@ func (s *Session) Lookup(fsys filesys.FileSystem, ref string) (filesys.Entry, st
 		return filesys.Entry{}, "", fmt.Errorf("id:%s: %w; %d directories could not be read (first: %s)", id, filesys.ErrNotFound, unreadable, firstBad)
 	}
 	return filesys.Entry{}, "", fmt.Errorf("id:%s: %w", id, filesys.ErrNotFound)
-}
-
-// probe returns the name of the first driver whose Probe matches. Unlike
-// detect.ProbeWith it reports a panicking Probe (treated as a non-match) so the
-// examiner can see why a partition was not recognized.
-func probe(drivers []detect.Driver, r io.ReaderAt, size int64) (name string, ok bool, notes []string) {
-	for _, d := range drivers {
-		if d.Probe == nil {
-			continue
-		}
-		matched, note := safeProbe(d, r, size)
-		if note != "" {
-			notes = append(notes, note)
-		}
-		if matched {
-			return d.Name, true, notes
-		}
-	}
-	return "", false, notes
-}
-
-func safeProbe(d detect.Driver, r io.ReaderAt, size int64) (matched bool, note string) {
-	defer func() {
-		if p := recover(); p != nil {
-			matched, note = false, fmt.Sprintf("%s probe panicked: %v", d.Name, p)
-		}
-	}()
-	return d.Probe(r, size), ""
 }

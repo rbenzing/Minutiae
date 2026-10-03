@@ -244,3 +244,35 @@ func TestInfoShowsProbePanicInPartitionError(t *testing.T) {
 		t.Errorf("partition = %+v, want the probe panic in Error", p)
 	}
 }
+
+func TestInfoKeepsProbePanicNoteWhenLaterDriverMatches(t *testing.T) {
+	c := newCase(t)
+	recs := importImage(t, c, disk(mtfsImage(map[string]string{"/a.txt": "hi"})), 1)
+	s, err := examine.Open(c, recs[0].ID, examine.Options{Drivers: []detect.Driver{
+		{Name: "angry", Probe: func(io.ReaderAt, int64) bool { panic("boom in probe") }, Open: fstest.Open},
+		{Name: "mtfs", Probe: fstest.Probe, Open: fstest.Open},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	info := s.Info()
+	if len(info.Partitions) != 1 {
+		t.Fatalf("partitions = %d", len(info.Partitions))
+	}
+	p := info.Partitions[0]
+	if p.FSType != "mtfs" || p.FSInfo == nil {
+		t.Fatalf("partition = %+v, want the later driver's filesystem despite the earlier probe panic", p)
+	}
+	if !strings.Contains(p.Error, "angry probe panicked") || !strings.Contains(p.Error, "boom in probe") {
+		t.Errorf("Error = %q, want the earlier driver's probe panic kept as a note", p.Error)
+	}
+	// The same filesystem must be reachable for ls/extract, not only shown.
+	fsys, _, err := s.FS(-1)
+	if err != nil {
+		t.Fatalf("FS(-1) = %v", err)
+	}
+	if _, err := fsys.Lookup("/a.txt"); err != nil {
+		t.Errorf("Lookup = %v", err)
+	}
+}

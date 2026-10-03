@@ -13,11 +13,19 @@ type Summary struct {
 	AnalysisID string
 	Files      int   // finished (complete) artifacts of the requested content
 	Bytes      int64 // bytes of those artifacts
-	Skipped    int   // analysis.warning entries written
+	Skipped    int   // analysis.warning entries written (authoritative; Warnings may be shorter)
+	// Warnings lists the first maxWarnings skips (path and reason), in order.
+	Warnings []Warning
 	// Artifacts lists every artifact the analysis wrote, runs sidecars and
 	// incomplete ones included, in creation order.
 	Artifacts []evidence.ManifestRecord
 }
+
+// Warning is one skipped path and why.
+type Warning struct{ Path, Reason string }
+
+// maxWarnings caps Summary.Warnings; the audit log has every warning.
+const maxWarnings = 100
 
 // analysis is one audited derived-artifact run. Its id doubles as the
 // acquisition directory of the artifacts it writes.
@@ -30,6 +38,9 @@ type analysis struct {
 // warn records an analysis.warning for path and counts it as skipped.
 func (a *analysis) warn(path, reason string) error {
 	a.sum.Skipped++
+	if len(a.sum.Warnings) < maxWarnings {
+		a.sum.Warnings = append(a.sum.Warnings, Warning{Path: path, Reason: reason})
+	}
 	_, err := a.c.Audit.Append("analysis.warning", a.deviceID, map[string]any{
 		"analysis_id": a.sum.AnalysisID, "path": path, "reason": reason,
 	})

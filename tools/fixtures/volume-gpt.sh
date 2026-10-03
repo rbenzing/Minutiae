@@ -66,7 +66,7 @@ for ((i = 1; i <= n; i++)); do
 done
 CMDS+=("sgdisk -i <n> disk.img   # cross-checked against the sfdisk output")
 
-gen=$(generator_json gdisk fdisk util-linux jq gzip coreutils)
+gen=$(generator_json "$img" gdisk fdisk util-linux jq gzip coreutils)
 jq --argjson g "$gen" '. + {generator: $g}' oracle.json >"$out/gpt-disk.expect.json"
 
 gzip -n -9 -c "$img" >"$out/gpt-disk.img.gz"

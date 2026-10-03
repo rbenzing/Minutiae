@@ -494,6 +494,23 @@ func printIncomplete(w io.Writer, sum examine.Summary) {
 	}
 }
 
+// maxSkipReasons is how many skip reasons the human summary prints.
+const maxSkipReasons = 5
+
+// printSkipReasons lists the first skipped paths with their reasons (escaped:
+// both come from the image) and points at the audit log for the rest.
+func printSkipReasons(w io.Writer, sum examine.Summary) {
+	for i, wn := range sum.Warnings {
+		if i == maxSkipReasons {
+			break
+		}
+		fmt.Fprintf(w, "  skipped %s: %s\n", escapeText(wn.Path), escapeText(wn.Reason))
+	}
+	if sum.Skipped > maxSkipReasons {
+		fmt.Fprintln(w, "  ... see analysis.warning entries in audit.jsonl")
+	}
+}
+
 func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 	var recursive, includeEncrypted bool
 	cmd := &cobra.Command{
@@ -547,6 +564,7 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		fmt.Fprintf(d.Out, "extracted %d files (%s), skipped %d\n", sum.Files, humanBytes(sum.Bytes), sum.Skipped)
+		printSkipReasons(d.Out, sum)
 		printIncomplete(d.Out, sum)
 		if note != "" {
 			fmt.Fprintln(d.Out, note)

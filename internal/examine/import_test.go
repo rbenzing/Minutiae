@@ -194,3 +194,28 @@ func TestImportRefusesExtendedLengthPathInsideCase(t *testing.T) {
 		}
 	}
 }
+
+func TestImportRefusesUnicodeCaseFoldCollision(t *testing.T) {
+	c := newCase(t)
+	a, b := t.TempDir(), t.TempDir()
+	write := func(dir, name string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(p), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	// strings.ToLower leaves the long s (U+017F) alone, but it case-folds to
+	// "s". The other pairs are folded by lower-casing too and guard against a
+	// regression to something weaker. A lower-casing check would
+	// let both through while a case-insensitive filesystem merges them.
+	for _, pair := range [][2]string{{"s.img", "ſ.img"}, {"k.img", "K.img"}, {"Ǆ.img", "ǆ.img"}} {
+		pa, pb := write(a, pair[0]), write(b, pair[1])
+		if _, err := examine.Import(context.Background(), c, "img", []string{pa, pb}, nil); err == nil {
+			t.Errorf("Import accepted %q and %q, which differ only by Unicode case", pair[0], pair[1])
+		}
+	}
+	if recs, _ := c.Manifest(); len(recs) != 0 {
+		t.Errorf("manifest has %d records; collisions must be refused before anything is written", len(recs))
+	}
+}

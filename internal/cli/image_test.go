@@ -610,3 +610,74 @@ func TestCaseVerifyTamperedDerivationExits4(t *testing.T) {
 		t.Fatalf("verify after tamper: %d %s", code, out)
 	}
 }
+
+// deletedIDs returns the ids of every deleted entry of the image.
+func (e *imgEnv) deletedIDs(t *testing.T) []string {
+	t.Helper()
+	_, out := e.image(t, "ls", e.ref, "--deleted", "--json")
+	var items []struct {
+		Entry struct {
+			ID, Name string
+			Deleted  bool
+		}
+	}
+	if err := json.Unmarshal([]byte(out), &items); err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, it := range items {
+		if it.Entry.Deleted {
+			ids = append(ids, it.Entry.ID)
+		}
+	}
+	return ids
+}
+
+func TestImageExtractShowsSkipReasons(t *testing.T) {
+	e := newImgEnv(t, fstest.Node{Path: "/ev\x1b[31mil\nname", Data: []byte("x"), Deleted: true})
+	id := e.deletedIDs(t)
+	if len(id) != 1 {
+		t.Fatalf("setup: deleted ids = %v", id)
+	}
+
+	args := func(n int) []string {
+		a := []string{e.ref}
+		for range n {
+			a = append(a, "id:"+id[0])
+		}
+		return a
+	}
+
+	// Up to 5 skips: each is listed with path and reason, escaped, no pointer.
+	code, out := e.image(t, "extract", args(2)...)
+	if code != 0 || !strings.Contains(out, "skipped 2") {
+		t.Fatalf("extract: %d\n%s", code, out)
+	}
+	if got := strings.Count(out, "  skipped "); got != 2 {
+		t.Errorf("%d skip-reason lines, want 2:\n%s", got, out)
+	}
+	if !strings.Contains(out, `ev\x1b[31mil`) || !strings.Contains(out, "sub-project 3") {
+		t.Errorf("skip line lacks the escaped path or the reason:\n%s", out)
+	}
+	if strings.ContainsAny(out, "\x1b\r") {
+		t.Errorf("raw control characters in output: %q", out)
+	}
+	if strings.Contains(out, "audit.jsonl") {
+		t.Errorf("audit pointer printed for 2 skips:\n%s", out)
+	}
+
+	// Exactly 5 still fits; a 6th is only counted and the audit log is named.
+	if _, out = e.image(t, "extract", args(5)...); strings.Contains(out, "audit.jsonl") || strings.Count(out, "  skipped ") != 5 {
+		t.Errorf("5 skips:\n%s", out)
+	}
+	code, out = e.image(t, "extract", args(7)...)
+	if code != 0 || !strings.Contains(out, "skipped 7") {
+		t.Fatalf("extract: %d\n%s", code, out)
+	}
+	if got := strings.Count(out, "  skipped "); got != 5 {
+		t.Errorf("%d skip-reason lines, want at most 5:\n%s", got, out)
+	}
+	if !strings.Contains(out, "see analysis.warning entries in audit.jsonl") {
+		t.Errorf("no audit pointer after 7 skips:\n%s", out)
+	}
+}

@@ -52,7 +52,7 @@ sfdisk --json "$img" | jq '
     }' >oracle.json
 CMDS+=("sfdisk --json disk.img | jq <drop extended containers, normalise to expect shape>")
 
-gen=$(generator_json fdisk util-linux jq gzip coreutils)
+gen=$(generator_json "$img" fdisk util-linux jq gzip coreutils)
 jq --argjson g "$gen" '. + {generator: $g}' oracle.json >"$out/mbr-disk.expect.json"
 
 gzip -n -9 -c "$img" >"$out/mbr-disk.img.gz"

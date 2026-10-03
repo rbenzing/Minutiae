@@ -39,7 +39,9 @@ Scripts must keep LF line endings (`.gitattributes` enforces this).
 Disk and partition GUIDs, the MBR disk id and all layouts are fixed in the
 scripts, and images are compressed with `gzip -n -9`, so regenerating with the
 same package versions yields identical files. Each `expect.json` records a
-`generator` object: the versions of the packages used (from `dpkg-query`) and
+`generator` object: `image_sha256` (the sha256 of the uncompressed image, which
+the tests check so an image and its oracle cannot drift apart), the versions of
+the packages used (from `dpkg-query`) and
 the exact commands.
 
 ## Adding a fixture

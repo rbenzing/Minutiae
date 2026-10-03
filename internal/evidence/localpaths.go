@@ -56,10 +56,10 @@ func (l *LocalPaths) assign(parent, name string, isDir bool) (string, error) {
 		return "", err
 	}
 	candidate := parent + "/" + comp
-	for n := 2; l.used[foldCase(candidate)]; n++ {
+	for n := 2; l.used[FoldCase(candidate)]; n++ {
 		candidate = parent + "/" + withSuffix(comp, n, isDir)
 	}
-	l.used[foldCase(candidate)] = true
+	l.used[FoldCase(candidate)] = true
 	return candidate, nil
 }
 
@@ -74,10 +74,11 @@ func withSuffix(name string, n int, isDir bool) string {
 	return strings.TrimSuffix(name, ext) + suffix + ext
 }
 
-// foldCase maps every rune to the smallest member of its Unicode simple
+// FoldCase maps every rune to the smallest member of its Unicode simple
 // case-folding orbit, so two strings fold equal exactly when
-// strings.EqualFold reports them equal.
-func foldCase(s string) string {
+// strings.EqualFold reports them equal. Use it as a map key to detect names
+// that collide on a case-insensitive filesystem (LocalPaths, image import).
+func FoldCase(s string) string {
 	return strings.Map(func(r rune) rune {
 		lowest := r
 		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {

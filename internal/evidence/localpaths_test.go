@@ -66,11 +66,11 @@ func TestWithSuffixAndFoldCase(t *testing.T) {
 		t.Errorf("directory suffix = %q", got)
 	}
 	for _, pair := range [][2]string{{"DCIM/File.TXT", "dcim/file.txt"}, {"Σ", "ς"}, {"K", "K"}} {
-		if foldCase(pair[0]) != foldCase(pair[1]) {
-			t.Errorf("foldCase(%q) != foldCase(%q)", pair[0], pair[1])
+		if FoldCase(pair[0]) != FoldCase(pair[1]) {
+			t.Errorf("FoldCase(%q) != FoldCase(%q)", pair[0], pair[1])
 		}
 	}
-	if foldCase("a.txt") == foldCase("b.txt") {
+	if FoldCase("a.txt") == FoldCase("b.txt") {
 		t.Error("distinct names fold equal")
 	}
 }

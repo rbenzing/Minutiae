@@ -29,6 +29,7 @@
     }
   ],
   "generator": {
+    "image_sha256": "2ccf453047ea55bc7f9ae016d5e2b2928eb753ef21a5559b977b7e5e9de2b514",
     "packages": [
       {
         "package": "coreutils",

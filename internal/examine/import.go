@@ -117,7 +117,7 @@ func openImportFiles(c *evidence.Case, paths []string) (files []importFile, tota
 			return files, 0, err
 		}
 		// Names collide on case-insensitive filesystems, so compare folded.
-		fold := strings.ToLower(rel)
+		fold := evidence.FoldCase(rel)
 		if other, dup := seen[fold]; dup {
 			return files, 0, fmt.Errorf("%s and %s would both be stored as %s; rename one so every segment has a distinct file name", other, abs, rel)
 		}
