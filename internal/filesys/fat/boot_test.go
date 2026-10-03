@@ -307,25 +307,42 @@ func TestChainOutOfRangeIsCorrupt(t *testing.T) {
 		c0 := firstCluster(typ)
 		img := build(o, fattest.File{Path: "A.BIN", Data: make([]byte, 3*512)})
 		last := g.Clusters + 1
-		bad := map[string]uint32{
-			"free":              0,
-			"reserved cluster":  1,
-			"past the last":     last + 1,
-			"reserved range":    map[int]uint32{12: 0xFF6, 16: 0xFFF6, 32: 0x0FFFFFF6}[typ],
-			"bad cluster mark":  map[int]uint32{12: 0xFF7, 16: 0xFFF7, 32: 0x0FFFFFF7}[typ],
-			"far past the last": map[int]uint32{12: 0xFF0, 16: 0xFFF0, 32: 0x0FFFFFF0}[typ],
+		// Cluster c0+1 holds the value v as its FAT entry. A free or bad entry
+		// means c0+1 is not part of any chain, so only c0 is returned; an entry
+		// pointing outside the volume belongs to a valid cluster, which is kept.
+		bad := map[string]struct {
+			v    uint32
+			want []uint32
+		}{
+			"free":              {0, []uint32{c0}},
+			"bad cluster mark":  {map[int]uint32{12: 0xFF7, 16: 0xFFF7, 32: 0x0FFFFFF7}[typ], []uint32{c0}},
+			"reserved cluster":  {1, []uint32{c0, c0 + 1}},
+			"past the last":     {last + 1, []uint32{c0, c0 + 1}},
+			"reserved range":    {map[int]uint32{12: 0xFF6, 16: 0xFFF6, 32: 0x0FFFFFF6}[typ], []uint32{c0, c0 + 1}},
+			"far past the last": {map[int]uint32{12: 0xFF0, 16: 0xFFF0, 32: 0x0FFFFFF0}[typ], []uint32{c0, c0 + 1}},
 		}
-		for name, v := range bad {
+		for name, c := range bad {
 			t.Run(fmt.Sprintf("fat%d/%s", typ, name), func(t *testing.T) {
 				im := slices.Clone(img)
-				setFAT(im, g, 0, c0+1, v)
+				setFAT(im, g, 0, c0+1, c.v)
 				f := openImg(t, im)
 				got, err := f.Chain(c0)
 				if !isCorrupt(err) {
 					t.Fatalf("err = %v, want CorruptError", err)
 				}
-				if !slices.Equal(got, []uint32{c0, c0 + 1}) && !slices.Equal(got, []uint32{c0}) {
-					t.Errorf("partial chain %v", got)
+				if !slices.Equal(got, c.want) {
+					t.Errorf("partial chain %v, want exactly %v", got, c.want)
+				}
+			})
+		}
+		// A first cluster that is itself free or bad yields no cluster at all.
+		for name, v := range map[string]uint32{"free": 0, "bad": map[int]uint32{12: 0xFF7, 16: 0xFFF7, 32: 0x0FFFFFF7}[typ]} {
+			t.Run(fmt.Sprintf("fat%d/first %s", typ, name), func(t *testing.T) {
+				im := slices.Clone(img)
+				setFAT(im, g, 0, c0, v)
+				got, err := openImg(t, im).Chain(c0)
+				if !isCorrupt(err) || len(got) != 0 {
+					t.Errorf("Chain(%d) = %v, %v; want no clusters and a CorruptError", c0, got, err)
 				}
 			})
 		}
@@ -381,6 +398,25 @@ func TestFAT12PackedEntries(t *testing.T) {
 	got, err := openImg(t, img).Chain(2)
 	if err != nil || !slices.Equal(got, []uint32{2, 3, 4, 5, 6}) {
 		t.Errorf("chain = %v, %v", got, err)
+	}
+	// Entries 340-343 straddle the 512-byte sector boundary (entry 341 spans
+	// bytes 511 and 512); they must round-trip and chain across it.
+	wantStraddle := map[uint32]uint32{340: 0xA5C, 341: 0x3E7, 342: 0xD19, 343: 0x82B}
+	for c, v := range wantStraddle {
+		setFAT(img, g, 0, c, v)
+	}
+	f = openImg(t, img)
+	for c, v := range wantStraddle {
+		if got, err := f.Entry(c); err != nil || got != v {
+			t.Errorf("straddling entry %d = %#x, %v; want %#x", c, got, err, v)
+		}
+	}
+	for c, next := range map[uint32]uint32{340: 341, 341: 342, 342: 343, 343: 0xFFF} {
+		setFAT(img, g, 0, c, next)
+	}
+	got, err = openImg(t, img).Chain(340)
+	if err != nil || !slices.Equal(got, []uint32{340, 341, 342, 343}) {
+		t.Errorf("chain across the sector boundary = %v, %v", got, err)
 	}
 	// The last entry in the table (its two bytes end exactly on the FAT's end).
 	last := g.Clusters + 1
@@ -770,5 +806,160 @@ func TestCorruptReasonQuotesOnDiskStrings(t *testing.T) {
 	err := openErr(img)
 	if !isCorrupt(err) || !strings.Contains(err.Error(), `"NTFS    "`) {
 		t.Errorf("err = %v, want the OEM id %q quoted", err, "NTFS    ")
+	}
+}
+
+func TestInfoUUIDEmptyWithoutExtendedBootSignature(t *testing.T) {
+	for _, typ := range []int{12, 16, 32} {
+		o := fattest.Options{Type: typ, VolID: 0xCAFEBABE}
+		img := build(o)
+		sig := 38
+		if typ == 32 {
+			sig = 66
+		}
+		if got := openImg(t, img).Info().UUID; got != "CAFE-BABE" {
+			t.Errorf("fat%d: UUID %q with the signature", typ, got)
+		}
+		img[sig] = 0 // no extended boot signature: the volume ID field is not defined
+		if got := openImg(t, img).Info().UUID; got != "" {
+			t.Errorf("fat%d: UUID %q without the extended boot signature, want none", typ, got)
+		}
+		img[sig] = 0x28 // volume ID present, no label
+		if got := openImg(t, img).Info().UUID; got != "CAFE-BABE" {
+			t.Errorf("fat%d: UUID %q with signature 0x28", typ, got)
+		}
+	}
+}
+
+func TestLabelMapsC1ControlsToQuestionMark(t *testing.T) {
+	img := build(fattest.Options{Type: 16})
+	copy(img[offLabelFAT:offLabelFAT+11], "A\x7fB\x80C\x9fD\xa0E\xffF")
+	if got := openImg(t, img).Info().Label; got != "A?B?C?D EÿF" {
+		t.Errorf("Label %q, want C1 and DEL bytes shown as '?' and Latin-1 letters kept", got)
+	}
+}
+
+func TestOpenWarnsAboutInconsistentBPB(t *testing.T) {
+	o := fattest.Options{Type: 16}
+	base := build(o)
+	hasWarn := func(img []byte, sub string) bool {
+		for _, w := range openImg(t, img).Info().Warnings {
+			if strings.Contains(w, sub) {
+				return true
+			}
+		}
+		return false
+	}
+	if w := openImg(t, base).Info().Warnings; len(w) != 0 {
+		t.Fatalf("clean image warns: %q", w)
+	}
+	// RootEntCnt x 32 not a multiple of BytsPerSec.
+	img := slices.Clone(base)
+	put16(img, offRootEnt, 500)
+	if !hasWarn(img, "RootEntCnt") {
+		t.Error("no warning for a root directory that is not a whole number of sectors")
+	}
+	// TotSec16 and TotSec32 both set and different.
+	img = slices.Clone(base)
+	put32(img, offTotSec32, binary.LittleEndian.Uint32(img[offTotSec32:])+1000)
+	if put := uint32(binary.LittleEndian.Uint16(img[offTotSec16:])); put == 0 {
+		t.Fatal("setup: TotSec16 is 0")
+	}
+	if !hasWarn(img, "TotSec32") {
+		t.Error("no warning for differing TotSec16 and TotSec32")
+	}
+	// Both set and equal: no warning.
+	img = slices.Clone(base)
+	put32(img, offTotSec32, uint32(binary.LittleEndian.Uint16(img[offTotSec16:])))
+	if hasWarn(img, "TotSec32") {
+		t.Error("warning for equal TotSec16 and TotSec32")
+	}
+}
+
+// A FAT32 root whose first cluster is free in the FAT is not a chain: its bytes
+// must not be read as a label, and the break is reported.
+func TestFreeRootClusterIsNotScannedForLabel(t *testing.T) {
+	o := fattest.Options{Type: 32, Label: "ROOTLAB"}
+	g := fattest.Layout(o)
+	img := build(o)
+	copy(img[offLabel32:offLabel32+11], "BPBLAB     ")
+	if got := openImg(t, img).Info().Label; got != "ROOTLAB" {
+		t.Fatalf("setup: Label %q", got)
+	}
+	setFAT(img, g, 0, 2, 0) // RootClus is free
+	f := openImg(t, img)
+	if got := f.Info().Label; got != "BPBLAB" {
+		t.Errorf("Label %q, want the BPB's: a free cluster's bytes are not a directory", got)
+	}
+	if w := f.Info().Warnings; len(w) != 1 || !strings.Contains(w[0], "root directory") {
+		t.Errorf("warnings = %q, want one about the root directory", w)
+	}
+}
+
+// TestOpenMutatedFATAndRootNeverPanics flips bytes in the FAT copies and the
+// root directory and exercises Open, Info and the chain walkers.
+func TestOpenMutatedFATAndRootNeverPanics(t *testing.T) {
+	files := []fattest.File{
+		{Path: "A.BIN", Data: make([]byte, 5*512)},
+		{Path: "B.BIN", Data: make([]byte, 3*512), Fragmented: true},
+		{Path: "LONGNAME.TXT", Data: []byte("x"), LongName: true},
+	}
+	var bases [][]byte
+	var geoms []fattest.Geometry
+	for _, typ := range []int{12, 16, 32} {
+		o := fattest.Options{Type: typ, TotalSectors: 2048, Label: "LBL"}
+		bases = append(bases, build(o, files...))
+		geoms = append(geoms, fattest.Layout(o))
+	}
+	rng := rand.New(rand.NewPCG(3, 4)) //nolint:gosec // deterministic test input, not security
+	interesting := []byte{0x00, 0x01, 0xE5, 0xF7, 0xF8, 0xFF, 0x0F, 0x80}
+	for i := range 3000 {
+		k := i % len(bases)
+		g := geoms[k]
+		img := slices.Clone(bases[k])
+		fatLo := int(g.FATStart(0)) * g.SectorSize
+		fatHi := fatLo + int(g.FATSectors)*g.SectorSize*g.NumFATs
+		rootLo := int(g.DataStart()-g.RootDirSectors) * g.SectorSize
+		rootHi := int(g.DataStart()) * g.SectorSize
+		if g.Type == 32 {
+			rootLo = int(g.DataStart()) * g.SectorSize
+			rootHi = rootLo + 32*8 // the entries in use
+		}
+		for range 1 + rng.IntN(6) {
+			var pos int
+			if rng.IntN(3) == 0 {
+				pos = rootLo + rng.IntN(rootHi-rootLo)
+			} else {
+				pos = fatLo + rng.IntN(min(fatHi-fatLo, 64)) // the entries of the clusters in use
+			}
+			if rng.IntN(2) == 0 {
+				img[pos] = interesting[rng.IntN(len(interesting))]
+			} else {
+				img[pos] = byte(rng.IntN(256))
+			}
+		}
+		f, err := fat.Open(bytes.NewReader(img), int64(len(img)))
+		if err != nil {
+			if !isCorrupt(err) {
+				t.Fatalf("iteration %d: %v", i, err)
+			}
+			continue
+		}
+		_ = f.Info()
+		limit := int(f.ClusterCount())
+		for c := uint32(0); c < 12; c++ {
+			_, _ = f.Entry(c)
+			got, _ := f.Chain(c)
+			if len(got) > limit {
+				t.Fatalf("iteration %d: chain of %d clusters exceeds the %d clusters", i, len(got), limit)
+			}
+			seen := map[uint32]bool{}
+			for _, x := range got {
+				if seen[x] || x < 2 || uint64(x) > uint64(limit)+1 {
+					t.Fatalf("iteration %d: chain %v repeats or leaves the volume", i, got)
+				}
+				seen[x] = true
+			}
+		}
 	}
 }

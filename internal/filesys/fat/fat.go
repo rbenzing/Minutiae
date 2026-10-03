@@ -145,17 +145,21 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 // 4085 clusters, FAT16 below 65525, else FAT32), except that the BPB layout
 // wins when the two disagree (with a warning). The label is the volume-label
 // entry of the root directory, else the BPB's ("NO NAME" counts as none). The
-// UUID is the volume serial number as "XXXX-XXXX". Warnings is a snapshot: it
+// UUID is the volume serial number as "XXXX-XXXX" (empty when the boot sector has no extended boot signature). Warnings is a snapshot: it
 // holds the problems found at Open and those met since, without duplicates and
 // capped at 1000 entries.
 func (f *FS) Info() filesys.Info {
 	f.wmu.Lock()
 	warnings := slices.Clone(f.warnings)
 	f.wmu.Unlock()
+	uuid := ""
+	if f.b.hasVolID {
+		uuid = fmt.Sprintf("%04X-%04X", f.b.volID>>16, f.b.volID&0xFFFF)
+	}
 	return filesys.Info{
 		Type:      fmt.Sprintf("fat%d", f.fatType),
 		Label:     f.label,
-		UUID:      fmt.Sprintf("%04X-%04X", f.b.volID>>16, f.b.volID&0xFFFF),
+		UUID:      uuid,
 		BlockSize: f.b.bytsPerSec * f.b.secPerClus,
 		Size:      f.size,
 		Warnings:  warnings,

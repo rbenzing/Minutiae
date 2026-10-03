@@ -113,7 +113,11 @@ func (f *FS) chain(first uint32) ([]uint32, error) {
 }
 
 // chainN follows a chain like chain but stops after limit clusters; truncated
-// reports that it stopped there with the chain still going.
+// reports that it stopped there with the chain still going. A cluster joins the
+// result only once its own FAT entry has been validated: a cluster whose entry
+// is free or marked bad is not part of any chain, so the clusters returned with
+// an error are exactly the ones that can be trusted. A cluster whose entry
+// points outside the volume is returned (its data is valid; the pointer is not).
 func (f *FS) chainN(first uint32, limit int) (clusters []uint32, truncated bool, err error) {
 	const st = "cluster chain"
 	if first == 0 {
@@ -130,18 +134,20 @@ func (f *FS) chainN(first uint32, limit int) (clusters []uint32, truncated bool,
 		if !seen.add(c) {
 			return clusters, false, corrupt(st, -1, "chain from cluster %d loops back to cluster %d", first, c)
 		}
-		clusters = append(clusters, c)
 		next, err := f.entry(c)
 		if err != nil {
 			return clusters, false, err
 		}
 		switch {
+		case next == 0:
+			return clusters, false, corrupt(st, -1, "chain from cluster %d reaches cluster %d, which is free", first, c)
+		case f.isBad(next):
+			return clusters, false, corrupt(st, -1, "chain from cluster %d reaches cluster %d, which is marked bad", first, c)
+		}
+		clusters = append(clusters, c)
+		switch {
 		case f.isEOC(next):
 			return clusters, false, nil
-		case next == 0:
-			return clusters, false, corrupt(st, -1, "chain from cluster %d runs into free cluster %d", first, c)
-		case f.isBad(next):
-			return clusters, false, corrupt(st, -1, "chain from cluster %d runs into a bad-cluster mark after cluster %d", first, c)
 		case !f.validCluster(next):
 			return clusters, false, corrupt(st, -1, "chain from cluster %d points from cluster %d to %d, outside the %d clusters", first, c, next, f.count)
 		}

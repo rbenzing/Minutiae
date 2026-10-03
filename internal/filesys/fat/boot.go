@@ -32,6 +32,7 @@ type bpb struct {
 	activeFAT  int    // FAT copy that is read (FAT32 mirroring flags)
 	volID      uint32
 	label      string // the BPB label, "" when absent or the "NO NAME" placeholder
+	hasVolID   bool   // the extended boot signature says volID is present
 
 	rootDirSectors uint64
 	dataStart      uint64 // first sector of cluster 2
@@ -77,14 +78,14 @@ func entryBits(typ int) uint64 {
 
 // oemString renders a space-padded OEM-codepage field. The codepage is not
 // stored on the volume, so bytes above 0x7F are shown as their Latin-1 code
-// points and control bytes as '?'.
+// points and control bytes (C0, DEL and C1) as '?'.
 func oemString(b []byte) string {
 	var sb strings.Builder
 	for _, c := range b {
 		switch {
 		case c == 0:
 			sb.WriteByte(' ')
-		case c < 0x20 || c == 0x7F:
+		case c < 0x20 || c >= 0x7F && c <= 0x9F:
 			sb.WriteByte('?')
 		default:
 			sb.WriteRune(rune(c))
@@ -143,9 +144,12 @@ func parseBoot(b []byte, size int64) (*bpb, []string, error) {
 		return nil, nil, corrupt(st, 21, "media descriptor %#x is not 0xF0 or 0xF8-0xFF", m)
 	}
 
+	var warns []string
 	claimedTot := uint64(le16(19))
-	if claimedTot == 0 {
-		claimedTot = uint64(le32(32))
+	if tot32 := uint64(le32(32)); claimedTot == 0 {
+		claimedTot = tot32
+	} else if tot32 != 0 && tot32 != claimedTot {
+		warns = append(warns, fmt.Sprintf("TotSec16 (%d) and TotSec32 (%d) are both set and differ: TotSec16 is used", claimedTot, tot32))
 	}
 	if claimedTot == 0 {
 		return nil, nil, corrupt(st, 19, "TotSec16 and TotSec32 are both 0")
@@ -178,7 +182,9 @@ func parseBoot(b []byte, size int64) (*bpb, []string, error) {
 		return nil, nil, corrupt(st, 19, "no data cluster: %d sectors, %d of them metadata, %d per cluster", claimedTot, meta, spc)
 	}
 
-	var warns []string
+	if !p.fat32 && (p.rootEnt*32)%p.bytsPerSec != 0 {
+		warns = append(warns, fmt.Sprintf("RootEntCnt %d x 32 bytes is not a multiple of BytsPerSec %d: the root directory is rounded up to whole sectors", p.rootEnt, p.bytsPerSec))
+	}
 	p.totSec = claimedTot
 	if have := uint64(size) / bps; p.totSec > have {
 		warns = append(warns, fmt.Sprintf("volume declares %d sectors but the image holds %d: reading is limited to the image", claimedTot, have))
@@ -245,6 +251,7 @@ func parseBoot(b []byte, size int64) (*bpb, []string, error) {
 	}
 	if sig := b[sigOff]; sig == 0x29 || sig == 0x28 {
 		p.volID = le32(idOff)
+		p.hasVolID = true
 		if sig == 0x29 {
 			if l := oemString(b[labOff : labOff+11]); l != "NO NAME" {
 				p.label = l
