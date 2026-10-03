@@ -2,6 +2,7 @@ package f2fs
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -69,9 +70,11 @@ func parseNATEntry(b []byte) natEntry {
 	}
 }
 
-// natState caches the NAT journal, which is read once.
+// natState caches the NAT journal, which is read once. A genuine I/O error is
+// not cached, so a later lookup retries.
 type natState struct {
-	once    sync.Once
+	mu      sync.Mutex
+	loaded  bool
 	journal []natJournalEntry
 	err     error
 }
@@ -137,7 +140,7 @@ func (f *FS) summaryJournal(typ int) ([]byte, error) {
 	}
 	b, err := readBlock(f.r, cp.addr+blk)
 	if err != nil {
-		return nil, corrupt(st, int64(cp.addr+blk)*blockSize, "read failed: %v", err)
+		return nil, readError(st, int64(cp.addr+blk)*blockSize, err)
 	}
 	return b[off : off+sumJournalSize], nil
 }
@@ -145,25 +148,32 @@ func (f *FS) summaryJournal(typ int) ([]byte, error) {
 // loadNATJournal decodes the NAT journal (the hot-data summary's journal).
 // A count beyond the in-block capacity is capped, with a warning.
 func (f *FS) loadNATJournal() ([]natJournalEntry, error) {
-	f.nat.once.Do(func() {
-		j, err := f.summaryJournal(curHotData)
-		if err != nil {
-			f.nat.err = err
-			return
+	s := &f.nat
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.loaded {
+		return s.journal, s.err
+	}
+	j, err := f.summaryJournal(curHotData)
+	if err != nil {
+		if errors.Is(err, filesys.ErrCorrupt) {
+			s.loaded, s.err = true, err
 		}
-		n := int(binary.LittleEndian.Uint16(j))
-		if n > natJournalEntries {
-			f.warn("NAT journal claims %d entries but holds at most %d; the excess is ignored", n, natJournalEntries)
-			n = natJournalEntries
-		}
-		ents := make([]natJournalEntry, 0, n)
-		for i := range n {
-			e := j[2+i*natJournalEntrySize:]
-			ents = append(ents, natJournalEntry{nid: binary.LittleEndian.Uint32(e), natEntry: parseNATEntry(e[4:])})
-		}
-		f.nat.journal = ents
-	})
-	return f.nat.journal, f.nat.err
+		return nil, err
+	}
+	s.loaded = true
+	n := int(binary.LittleEndian.Uint16(j))
+	if n > natJournalEntries {
+		f.warn("NAT journal claims %d entries but holds at most %d; the excess is ignored", n, natJournalEntries)
+		n = natJournalEntries
+	}
+	ents := make([]natJournalEntry, 0, n)
+	for i := range n {
+		e := j[2+i*natJournalEntrySize:]
+		ents = append(ents, natJournalEntry{nid: binary.LittleEndian.Uint32(e), natEntry: parseNATEntry(e[4:])})
+	}
+	s.journal = ents
+	return ents, nil
 }
 
 // natLookup returns the block address of node nid.
@@ -205,7 +215,7 @@ func (f *FS) natLookup(nid uint32) (uint32, error) {
 		}
 		blk, err := readBlock(f.r, blkAddr)
 		if err != nil {
-			return 0, corrupt(st, int64(blkAddr)*blockSize, "read of NAT block %d failed: %v", blkAddr, err)
+			return 0, readError(st, int64(blkAddr)*blockSize, err)
 		}
 		off := int(nid%natEntriesPerBlock) * natEntrySize
 		ent = parseNATEntry(blk[off : off+natEntrySize])

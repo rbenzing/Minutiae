@@ -3,7 +3,6 @@ package f2fs_test
 import (
 	"errors"
 	"math"
-	"strings"
 	"testing"
 	"time"
 
@@ -439,9 +438,8 @@ func TestInodeHostile(t *testing.T) {
 		o.Nodes = []f2fstest.Node{{NID: 5, Addr: last, Block: fileInode(o, 5, 1)}}
 		img := f2fstest.Build(o, nil)
 		f := mustOpen(t, img[:int(last)*4096+100]) // the last block is cut off
-		if _, _, err := f.Inode(5); err == nil || !strings.Contains(err.Error(), "5") {
-			t.Errorf("err = %v", err)
-		}
+		_, _, err := f.Inode(5)
+		_ = asCorrupt(t, err) // a short read is a property of the data, not an I/O error
 	})
 }
 

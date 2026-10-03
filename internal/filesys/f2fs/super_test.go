@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"io"
 	"math/rand/v2"
 	"slices"
 	"strings"
@@ -431,7 +430,7 @@ func TestUncleanCheckpointWarns(t *testing.T) {
 	o := smallOpts()
 	o.Unclean = true
 	f := mustOpen(t, f2fstest.Build(o, nil))
-	if !hasWarning(f.Info(), "unclean unmount") {
+	if !hasWarning(f.Info(), "not an unmount checkpoint") {
 		t.Errorf("warnings = %q", f.Info().Warnings)
 	}
 	if f.Checkpoint().Flags&1 != 0 {
@@ -668,24 +667,6 @@ func TestOpenTooSmall(t *testing.T) {
 	}
 	_, err = open(make([]byte, 8192))
 	_ = asCorrupt(t, err)
-}
-
-type failingReader struct{}
-
-func (failingReader) ReadAt([]byte, int64) (int, error) { return 0, errors.New("device unplugged") }
-
-func TestOpenReadError(t *testing.T) {
-	f, err := f2fs.Open(failingReader{}, 1<<30)
-	if err == nil || f != nil {
-		t.Fatalf("Open = %v, %v", f, err)
-	}
-	// A reader that fails only after the superblock: the checkpoint read error
-	// is reported, not ignored.
-	img := f2fstest.Build(smallOpts(), nil)
-	r := io.NewSectionReader(bytes.NewReader(img[:8192]), 0, int64(len(img)))
-	if _, err = f2fs.Open(r, int64(len(img))); err == nil {
-		t.Fatal("Open succeeded without the checkpoint area")
-	}
 }
 
 func TestOpenMutatedNeverPanics(t *testing.T) {

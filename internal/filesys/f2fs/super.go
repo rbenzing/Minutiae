@@ -34,6 +34,12 @@ const (
 
 	// maxBlockAddr: F2FS block addresses are 32-bit.
 	maxBlockAddr = 1 << 32
+
+	// sitEntrySize and sitEntriesPerBlock: struct f2fs_sit_entry is vblocks
+	// le16, valid_map[64], mtime le64 = 74 bytes (packed); SIT_ENTRY_PER_BLOCK
+	// = 4096 / 74 = 55.
+	sitEntrySize       = 74
+	sitEntriesPerBlock = blockSize / sitEntrySize
 )
 
 // Superblock field offsets, relative to the start of the superblock
@@ -151,6 +157,9 @@ type superblock struct {
 	// blocks is the number of blocks the image actually holds, at most
 	// blockCount.
 	blocks int64
+
+	// warns are inconsistencies in the geometry that do not stop the read.
+	warns []string
 }
 
 func (sb *superblock) has(f uint32) bool { return sb.feature&f != 0 }
@@ -189,7 +198,7 @@ func parseSuper(b []byte, base int64) (*superblock, error) {
 	}
 	u32 := func(off int) uint32 { return le.Uint32(b[off:]) }
 	if m := u32(sbMagic); m != superMagic {
-		return nil, corrupt(st, base+sbMagic, "bad magic %#08x, want %#08x", m, uint32(superMagic))
+		return nil, corrupt(st, base+sbMagic, "bad magic 0x%08x, want 0x%08x", m, uint32(superMagic))
 	}
 	if v := le.Uint16(b[sbMajorVer:]); v != 1 {
 		return nil, corrupt(st, base+sbMajorVer, "major_ver %d, want 1", v)
@@ -227,7 +236,7 @@ func parseSuper(b []byte, base int64) (*superblock, error) {
 			return nil, corrupt(st, base+sbChecksumOffset, "checksum_offset %d lies beyond the %d-byte superblock", off, superSize)
 		}
 		if stored, want := le.Uint32(b[off:]), rawCRC32(superMagic, b[:off]); stored != want {
-			return nil, corrupt(st, base+int64(off), "superblock checksum mismatch: stored %#08x, computed %#08x", stored, want)
+			return nil, corrupt(st, base+int64(off), "superblock checksum mismatch: stored 0x%08x, computed 0x%08x", stored, want)
 		}
 	}
 
@@ -284,6 +293,18 @@ func parseSuper(b []byte, base int64) (*superblock, error) {
 		if prev > sb.blockCount {
 			return nil, corrupt(st, base+int64(a.off), "%s area (blocks %d..%d) extends beyond block_count %d", a.name, a.start, prev, sb.blockCount)
 		}
+	}
+	// The SIT needs an entry per main-area segment and the NAT must be able to
+	// name the reserved inodes. Each copy of the SIT area holds sitPairs *
+	// blocks_per_seg blocks.
+	if have, need := uint64(sb.sitPairs())<<segShift, (uint64(sb.segMain)+sitEntriesPerBlock-1)/sitEntriesPerBlock; have < need {
+		return nil, corrupt(st, base+sbSegSIT, "SIT area holds %d blocks per copy but %d main-area segments need %d", have, sb.segMain, need)
+	}
+	if hi := max(sb.rootIno, sb.nodeIno, sb.metaIno); uint64(hi) >= sb.natCapacity() {
+		return nil, corrupt(st, base+sbSegNAT, "NAT area (%d segments, %d node ids) cannot hold reserved inode %d", sb.segNAT, sb.natCapacity(), hi)
+	}
+	if uint64(sb.segMain) != uint64(sb.sectionCount)*uint64(sb.segsPerSec) {
+		sb.warns = append(sb.warns, fmt.Sprintf("segment_count_main %d differs from section_count %d x segs_per_sec %d", sb.segMain, sb.sectionCount, sb.segsPerSec))
 	}
 	if sb.cpPayload > maxCPPayload {
 		return nil, corrupt(st, base+sbCPPayload, "cp_payload %d exceeds %d", sb.cpPayload, maxCPPayload)

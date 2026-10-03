@@ -25,7 +25,7 @@ func (f *FS) node(nid uint32) ([]byte, error) {
 	}
 	b, err := readBlock(f.r, addr)
 	if err != nil {
-		return nil, corrupt(st, int64(addr)*blockSize, "read of node id %d at block %d failed: %v", nid, addr, err)
+		return nil, readError(st, int64(addr)*blockSize, err)
 	}
 	if got := binary.LittleEndian.Uint32(b[footNID:]); got != nid {
 		return nil, corrupt(st, int64(addr)*blockSize, "node block %d has footer nid %d, want %d", addr, got, nid)

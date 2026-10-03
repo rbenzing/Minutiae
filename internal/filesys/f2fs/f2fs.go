@@ -43,19 +43,57 @@ func readFull(r io.ReaderAt, p []byte, off int64) error {
 	return err
 }
 
+// isIOError reports whether err is a genuine read failure rather than the
+// source ending early (a truncated image), which is a property of the data.
+func isIOError(err error) bool {
+	return err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+// readError converts a failed metadata read. A genuine I/O error is returned
+// wrapped as-is (it is not evidence of a corrupt filesystem, and callers can
+// tell it apart with errors.Is); a short read is a *filesys.CorruptError.
+func readError(structure string, off int64, err error) error {
+	if isIOError(err) {
+		return fmt.Errorf("%s: read at offset %d failed: %w", structure, off, err)
+	}
+	return corrupt(structure, off, "read failed: %v", err)
+}
+
+// ioError marks a failure to read part of a checkpoint pack so that pack
+// selection can tell it from an invalid pack.
+type ioError struct{ err error }
+
+func (e *ioError) Error() string { return e.err.Error() }
+func (e *ioError) Unwrap() error { return e.err }
+
+// readFailed describes a failed checkpoint read: a genuine I/O error becomes
+// an *ioError (surfaced by selectCheckpoint), a short read a plain reason.
+func readFailed(what string, err error) error {
+	if isIOError(err) {
+		return &ioError{fmt.Errorf("%s failed: %w", what, err)}
+	}
+	return fmt.Errorf("%s failed: %v", what, err)
+}
+
 // warn records a problem that does not stop the read in the shared,
 // deduplicated and capped filesys.Warnings collector. Safe for concurrent use.
 func (f *FS) warn(format string, a ...any) { f.warnings.Add(format, a...) }
 
 // Probe reports whether the first 8 KiB of the volume hold an F2FS
-// superblock: the magic at byte 1024 (primary) or at byte 4096+1024 (backup).
+// superblock: the magic at byte 1024 (primary) or at byte 4096+1024 (backup),
+// with major_ver 1 and 4 KiB blocks (the only geometry this reader supports),
+// so that detection can fall through to other drivers for anything else.
 func Probe(r io.ReaderAt, size int64) bool {
 	if size < minImage {
 		return false
 	}
-	var b [4]byte
+	var b [sbLogBlockSize + 4]byte
 	for _, off := range []int64{superOffset, backupBlock*blockSize + superOffset} {
-		if readFull(r, b[:], off) == nil && binary.LittleEndian.Uint32(b[:]) == superMagic {
+		if readFull(r, b[:], off) != nil {
+			continue
+		}
+		le := binary.LittleEndian
+		if le.Uint32(b[sbMagic:]) == superMagic && le.Uint16(b[sbMajorVer:]) == 1 && le.Uint32(b[sbLogBlockSize:]) == blockShift {
 			return true
 		}
 	}
@@ -70,6 +108,9 @@ func loadSuper(raw io.ReaderAt) (*superblock, []string, error) {
 	for i, base := range []int64{superOffset, backupBlock*blockSize + superOffset} {
 		buf := make([]byte, superSize)
 		if err := readFull(raw, buf, base); err != nil {
+			if isIOError(err) {
+				return nil, nil, readError("f2fs superblock", base, err)
+			}
 			errs[i] = corrupt("f2fs superblock", base, "read failed: %v", err)
 			continue
 		}
@@ -79,9 +120,9 @@ func loadSuper(raw io.ReaderAt) (*superblock, []string, error) {
 			continue
 		}
 		if i == 1 {
-			return sb, []string{fmt.Sprintf("primary superblock is unusable (%v); using the backup superblock at block %d", errs[0], backupBlock)}, nil
+			return sb, append([]string{fmt.Sprintf("primary superblock is unusable (%v); using the backup superblock at block %d", errs[0], backupBlock)}, sb.warns...), nil
 		}
-		return sb, nil, nil
+		return sb, sb.warns, nil
 	}
 	var ce *filesys.CorruptError
 	if errors.As(errs[0], &ce) {

@@ -1,0 +1,304 @@
+package f2fs_test
+
+import (
+	"bytes"
+	"errors"
+	"io"
+	"regexp"
+	"slices"
+	"testing"
+
+	"github.com/rbenzing/minutiae/internal/filesys"
+	"github.com/rbenzing/minutiae/internal/filesys/f2fs"
+	"github.com/rbenzing/minutiae/internal/filesys/f2fs/f2fstest"
+)
+
+// Checkpoint flags (ckpt_flags), header offset 132.
+const (
+	cpFlagsOff    = 132
+	cpUmount      = 0x1
+	cpOrphan      = 0x2
+	cpError       = 0x8
+	cpCRCRecovery = 0x40
+	cpDisabled    = 0x1000
+)
+
+func TestBlankPackIsSilentOnlyOnAFreshVolume(t *testing.T) {
+	// Fresh mkfs: pack 2 blank, version <= 2.
+	o := smallOpts()
+	o.NoPack2 = true
+	if w := mustOpen(t, f2fstest.Build(o, nil)).Info().Warnings; len(w) != 0 {
+		t.Errorf("fresh volume: warnings %q", w)
+	}
+
+	// A used volume whose pack 2 has been zeroed looks like a rollback.
+	o.Version = 7
+	f := mustOpen(t, f2fstest.Build(o, nil))
+	if !hasWarning(f.Info(), "checkpoint pack 2 is blank; using pack 1 (possible rollback)") {
+		t.Errorf("version 7, pack 2 blank: warnings %q", f.Info().Warnings)
+	}
+
+	// A blank pack 1 is never normal, whatever the version.
+	for _, ver := range []uint64{2, 7} {
+		o := smallOpts()
+		o.Version = ver
+		o.Pack2Newer = true
+		img := f2fstest.Build(o, nil)
+		g := f2fstest.Geometry(o)
+		clear(img[int(g.CP)*4096 : (int(g.CP)+1)*4096])
+		f := mustOpen(t, img)
+		if cp := f.Checkpoint(); cp.Pack != 2 {
+			t.Errorf("version %d: used pack %d", ver, cp.Pack)
+		}
+		if !hasWarning(f.Info(), "checkpoint pack 1 is blank; using pack 2 (possible rollback)") {
+			t.Errorf("version %d, pack 1 blank: warnings %q", ver, f.Info().Warnings)
+		}
+	}
+}
+
+func TestCheckpointStateFlagsWarn(t *testing.T) {
+	g := f2fstest.Geometry(smallOpts())
+	cases := []struct {
+		name  string
+		flags uint32
+		want  string
+	}{
+		{"not an unmount checkpoint", 0, "last checkpoint is not an unmount checkpoint (data written after it is not reflected)"},
+		{"error", cpUmount | cpError, "CP_ERROR_FLAG"},
+		{"disabled", cpUmount | cpDisabled, "CP_DISABLED_FLAG"},
+		{"crc recovery", cpUmount | cpCRCRecovery, "CP_CRC_RECOVERY_FLAG"},
+		{"orphans", cpUmount | cpOrphan, "CP_ORPHAN_PRESENT_FLAG"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			img := f2fstest.Build(smallOpts(), nil)
+			cp32(img, g, cpFlagsOff, tc.flags)
+			f := mustOpen(t, img)
+			if !hasWarning(f.Info(), tc.want) {
+				t.Errorf("flags %#x: warnings %q, want %q", tc.flags, f.Info().Warnings, tc.want)
+			}
+		})
+	}
+	t.Run("clean checkpoint is silent", func(t *testing.T) {
+		img := f2fstest.Build(smallOpts(), nil)
+		cp32(img, g, cpFlagsOff, cpUmount)
+		if w := mustOpen(t, img).Info().Warnings; len(w) != 0 {
+			t.Errorf("warnings %q", w)
+		}
+	})
+}
+
+func TestCheckpointBitmapDoesNotFit(t *testing.T) {
+	img := f2fstest.Build(smallOpts(), nil)
+	g := f2fstest.Geometry(smallOpts())
+	// A NAT of 130 segments needs 130/2*512/8 = 4160 bytes of version bitmap,
+	// more than a checkpoint block holds beside the SIT bitmap at byte 192.
+	const natSegs = 130
+	nat := g.NAT
+	ssa := nat + natSegs*512
+	mainAddr := ssa + 512
+	sb32(img, sbSegNAT, natSegs)
+	sb32(img, sbSSAAddr, ssa)
+	sb32(img, sbMainAddr, mainAddr)
+	sb32(img, sbSegmentCount, 2+2+natSegs+1+1)
+	sb64(img, sbBlockCount, uint64(mainAddr)+512)
+	cp32(img, g, cpNATBitmapBytes, natSegs/2*512/8) // matches the geometry, so only the fit is wrong
+
+	_, err := open(img)
+	ce := asCorrupt(t, err)
+	if want := "version bitmap (4160 bytes at 256) does not fit"; !bytes.Contains([]byte(ce.Reason), []byte(want)) {
+		t.Errorf("reason %q does not contain %q", ce.Reason, want)
+	}
+}
+
+type ioFault struct {
+	r       io.ReaderAt
+	failAt  int64 // reads touching [failAt, ∞) fail
+	armed   bool
+	errFail error
+}
+
+func (f *ioFault) ReadAt(p []byte, off int64) (int, error) {
+	if f.armed && off+int64(len(p)) > f.failAt {
+		return 0, f.errFail
+	}
+	return f.r.ReadAt(p, off)
+}
+
+func TestOpenReadError(t *testing.T) {
+	injected := errors.New("device unplugged")
+	wantIO := func(t *testing.T, err error) {
+		t.Helper()
+		if !errors.Is(err, injected) {
+			t.Fatalf("error %v does not wrap the injected I/O error", err)
+		}
+		if errors.Is(err, filesys.ErrCorrupt) {
+			t.Fatalf("an I/O error was reported as corruption: %v", err)
+		}
+	}
+	o := smallOpts()
+	g := f2fstest.Geometry(o)
+	img := f2fstest.Build(o, nil)
+
+	t.Run("superblock", func(t *testing.T) {
+		r := &ioFault{r: bytes.NewReader(img), failAt: 0, armed: true, errFail: injected}
+		f, err := f2fs.Open(r, int64(len(img)))
+		if f != nil {
+			t.Fatal("Open returned a filesystem")
+		}
+		wantIO(t, err)
+	})
+	t.Run("checkpoint", func(t *testing.T) {
+		r := &ioFault{r: bytes.NewReader(img), failAt: int64(g.CP) * 4096, armed: true, errFail: injected}
+		_, err := f2fs.Open(r, int64(len(img)))
+		wantIO(t, err)
+	})
+	t.Run("second checkpoint pack", func(t *testing.T) {
+		r := &ioFault{r: bytes.NewReader(img), failAt: (int64(g.CP) + 512) * 4096, armed: true, errFail: injected}
+		_, err := f2fs.Open(r, int64(len(img)))
+		wantIO(t, err)
+	})
+	t.Run("NAT journal and block after Open", func(t *testing.T) {
+		oo := o
+		oo.Nodes = []f2fstest.Node{{NID: 5, Block: fileInode(o, 5, 1)}}
+		img := f2fstest.Build(oo, nil)
+		r := &ioFault{r: bytes.NewReader(img), failAt: int64(g.CP) * 4096, errFail: injected}
+		f, err := f2fs.Open(r, int64(len(img)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.armed = true
+		_, err = f.NATLookup(5)
+		wantIO(t, err)
+		// The failure was transient: the journal is not poisoned.
+		r.armed = false
+		if _, err := f.NATLookup(5); err != nil {
+			t.Fatalf("lookup after the device came back: %v", err)
+		}
+		// And a failing node block read is an I/O error too (fresh FS: the
+		// metadata cache would otherwise serve it).
+		f, _ = f2fs.Open(r, int64(len(img)))
+		if _, err := f.NATLookup(5); err != nil {
+			t.Fatal(err)
+		}
+		r.failAt, r.armed = int64(g.Main)*4096, true
+		_, err = f.Node(5)
+		wantIO(t, err)
+	})
+	t.Run("a truncated image is still corruption", func(t *testing.T) {
+		_, err := open(img[:8192])
+		_ = asCorrupt(t, err)
+	})
+}
+
+func TestHygieneGeometry(t *testing.T) {
+	g := f2fstest.Geometry(smallOpts())
+	img := f2fstest.Build(smallOpts(), nil)
+
+	t.Run("SIT too small for the main area", func(t *testing.T) {
+		// 30000 main segments need ceil(30000/55) = 546 SIT blocks per copy; the
+		// builder's SIT has 512.
+		c := slices.Clone(img)
+		const main = 30000
+		sb32(c, sbSegMain, main)
+		sb32(c, sbSectionCount, main)
+		sb32(c, sbSegmentCount, 6+main)
+		sb64(c, sbBlockCount, uint64(g.Main)+main*512)
+		_, err := open(c)
+		if ce := asCorrupt(t, err); !regexp.MustCompile(`SIT area holds 512 blocks per copy but 30000 main-area segments need 546`).MatchString(ce.Reason) {
+			t.Errorf("reason %q", ce.Reason)
+		}
+		// 28160 segments (512 * 55) are exactly enough.
+		c = slices.Clone(img)
+		const fits = 512 * 55
+		sb32(c, sbSegMain, fits)
+		sb32(c, sbSectionCount, fits)
+		sb32(c, sbSegmentCount, 6+fits)
+		sb64(c, sbBlockCount, uint64(g.Main)+fits*512)
+		if _, err := open(c); err != nil {
+			t.Errorf("exactly enough SIT blocks rejected: %v", err)
+		}
+	})
+	t.Run("NAT too small for the reserved inodes", func(t *testing.T) {
+		c := slices.Clone(img)
+		sb32(c, sbRootIno, g.NATCapacity()) // one past the last nid
+		_, err := open(c)
+		if ce := asCorrupt(t, err); !regexp.MustCompile(`cannot hold reserved inode`).MatchString(ce.Reason) {
+			t.Errorf("reason %q", ce.Reason)
+		}
+		c = slices.Clone(img)
+		sb32(c, sbRootIno, g.NATCapacity()-1)
+		if _, err := open(c); err != nil {
+			t.Errorf("the last nid is a legal root_ino: %v", err)
+		}
+	})
+	t.Run("main segments differ from section_count x segs_per_sec", func(t *testing.T) {
+		c := slices.Clone(img)
+		sb32(c, sbSectionCount, 2)
+		f := mustOpen(t, c)
+		if !hasWarning(f.Info(), "segment_count_main 1 differs from section_count 2 x segs_per_sec 1") {
+			t.Errorf("warnings %q", f.Info().Warnings)
+		}
+		if w := mustOpen(t, img).Info().Warnings; len(w) != 0 {
+			t.Errorf("consistent geometry warns: %q", w)
+		}
+	})
+}
+
+func TestProbeRequiresSupportedGeometry(t *testing.T) {
+	img := f2fstest.Build(smallOpts(), nil)[:8192]
+	probe := func(b []byte) bool { return f2fs.Probe(bytes.NewReader(b), int64(len(b))) }
+	if !probe(img) {
+		t.Fatal("a valid image does not probe")
+	}
+	for _, f := range []struct {
+		name string
+		off  int
+		put  func(b []byte, base int)
+	}{
+		{"major_ver 2", sbMajorVer, func(b []byte, base int) { le.PutUint16(b[base+sbMajorVer:], 2) }},
+		{"major_ver 0", sbMajorVer, func(b []byte, base int) { le.PutUint16(b[base+sbMajorVer:], 0) }},
+		{"log_blocksize 13", sbLogBlockSize, func(b []byte, base int) { le.PutUint32(b[base+sbLogBlockSize:], 13) }},
+		{"log_blocksize 9", sbLogBlockSize, func(b []byte, base int) { le.PutUint32(b[base+sbLogBlockSize:], 9) }},
+	} {
+		t.Run(f.name, func(t *testing.T) {
+			// One bad copy still probes through the other; two bad ones do not.
+			one := slices.Clone(img)
+			f.put(one, primary)
+			if !probe(one) {
+				t.Error("Probe = false with only the primary copy unsupported")
+			}
+			two := slices.Clone(one)
+			f.put(two, backup)
+			if probe(two) {
+				t.Error("Probe = true although neither superblock copy is supported")
+			}
+		})
+	}
+}
+
+func TestChecksumMessagesUseEightHexDigits(t *testing.T) {
+	re := regexp.MustCompile(`stored 0x[0-9a-f]{8}, computed 0x[0-9a-f]{8}`)
+
+	o := smallOpts()
+	o.SBChksum = true
+	img := f2fstest.Build(o, nil)
+	img[primary+200] ^= 1
+	img[backup+200] ^= 1
+	_, err := open(img)
+	if ce := asCorrupt(t, err); !re.MatchString(ce.Reason) {
+		t.Errorf("superblock reason %q", ce.Reason)
+	}
+
+	g := f2fstest.Geometry(smallOpts())
+	img = f2fstest.Build(smallOpts(), nil)
+	cpBlock(img, g, 1)[cpValidBlocks]++
+	f := mustOpen(t, img) // pack 2 takes over
+	found := false
+	for _, w := range f.Info().Warnings {
+		found = found || re.MatchString(w)
+	}
+	if !found {
+		t.Errorf("checkpoint warnings %q", f.Info().Warnings)
+	}
+}

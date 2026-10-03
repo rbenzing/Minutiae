@@ -36,10 +36,13 @@ const (
 
 // Checkpoint flags (ckpt_flags).
 const (
-	cpUmountFlag      = 0x1
-	cpErrorFlag       = 0x8
-	cpFsckFlag        = 0x10
-	cpLargeNATBitmapF = 0x400
+	cpUmountFlag      = 0x1    // CP_UMOUNT_FLAG
+	cpOrphanFlag      = 0x2    // CP_ORPHAN_PRESENT_FLAG
+	cpErrorFlag       = 0x8    // CP_ERROR_FLAG
+	cpFsckFlag        = 0x10   // CP_FSCK_FLAG
+	cpCRCRecoveryFlag = 0x40   // CP_CRC_RECOVERY_FLAG
+	cpLargeNATBitmapF = 0x400  // CP_LARGE_NAT_BITMAP_FLAG
+	cpDisabledFlag    = 0x1000 // CP_DISABLED_FLAG
 )
 
 // checkpoint is one validated checkpoint pack.
@@ -62,7 +65,16 @@ type checkpoint struct {
 func (cp *checkpoint) warnings() []string {
 	var w []string
 	if cp.flags&cpUmountFlag == 0 {
-		w = append(w, "unclean unmount: the checkpoint was not written by an unmount (CP_UMOUNT_FLAG clear); changes made after it, such as fsynced node chains, are not applied")
+		w = append(w, "last checkpoint is not an unmount checkpoint (data written after it is not reflected)")
+	}
+	if cp.flags&cpOrphanFlag != 0 {
+		w = append(w, "the checkpoint lists orphan inodes (CP_ORPHAN_PRESENT_FLAG): files that were unlinked but still open")
+	}
+	if cp.flags&cpCRCRecoveryFlag != 0 {
+		w = append(w, "the checkpoint has CP_CRC_RECOVERY_FLAG set: fsynced data may exist in node chains written after it, which are not applied")
+	}
+	if cp.flags&cpDisabledFlag != 0 {
+		w = append(w, "the checkpoint was written with checkpointing disabled (CP_DISABLED_FLAG): the on-disk state may lag behind the live filesystem")
 	}
 	if cp.flags&cpErrorFlag != 0 {
 		w = append(w, "the checkpoint records filesystem errors (CP_ERROR_FLAG)")
@@ -133,7 +145,7 @@ func readPack(r io.ReaderAt, sb *superblock, pack int, addr uint32) (*checkpoint
 	le := binary.LittleEndian
 	blk, err := readBlock(r, addr)
 	if err != nil {
-		return nil, fmt.Errorf("read of the first block failed: %v", err)
+		return nil, readFailed("read of the first block", err)
 	}
 	if allZero(blk) {
 		return nil, errUnwritten
@@ -141,7 +153,7 @@ func readPack(r io.ReaderAt, sb *superblock, pack int, addr uint32) (*checkpoint
 	if stored, want, ok := cpCRC(blk); !ok {
 		return nil, fmt.Errorf("checksum_offset %d outside %d..%d", le.Uint32(blk[cpChecksumOffset:]), cpMinChksumOffset, cpMaxChksumOffset)
 	} else if stored != want {
-		return nil, fmt.Errorf("checksum mismatch in the first block: stored %#08x, computed %#08x", stored, want)
+		return nil, fmt.Errorf("checksum mismatch in the first block: stored 0x%08x, computed 0x%08x", stored, want)
 	}
 	u32 := func(off int) uint32 { return le.Uint32(blk[off:]) }
 	cp := &checkpoint{
@@ -169,12 +181,12 @@ func readPack(r io.ReaderAt, sb *superblock, pack int, addr uint32) (*checkpoint
 	// checkpoint area.
 	last, err := readBlock(r, addr+cp.packBlocks-1)
 	if err != nil {
-		return nil, fmt.Errorf("read of the last block failed: %v", err)
+		return nil, readFailed("read of the last block", err)
 	}
 	if stored, want, ok := cpCRC(last); !ok {
 		return nil, fmt.Errorf("last block: checksum_offset %d outside %d..%d", le.Uint32(last[cpChecksumOffset:]), cpMinChksumOffset, cpMaxChksumOffset)
 	} else if stored != want {
-		return nil, fmt.Errorf("checksum mismatch in the last block: stored %#08x, computed %#08x", stored, want)
+		return nil, fmt.Errorf("checksum mismatch in the last block: stored 0x%08x, computed 0x%08x", stored, want)
 	}
 	if v := le.Uint64(last[cpVersion:]); v != cp.ver {
 		return nil, fmt.Errorf("checkpoint_ver %d in the first block but %d in the last", cp.ver, v)
@@ -251,7 +263,7 @@ func (cp *checkpoint) loadBitmaps(r io.ReaderAt, sb *superblock, blk []byte) err
 			return out, nil
 		}
 		if err := readFull(r, out, int64(cp.addr)*blockSize+int64(off)); err != nil {
-			return nil, fmt.Errorf("read of the version bitmaps failed: %v", err)
+			return nil, readFailed("read of the version bitmaps", err)
 		}
 		return out, nil
 	}
@@ -263,10 +275,18 @@ func (cp *checkpoint) loadBitmaps(r io.ReaderAt, sb *superblock, blk []byte) err
 	return err
 }
 
+// freshMkfsMaxVersion is the highest checkpoint_ver at which a blank second
+// pack is the normal state of a freshly formatted volume.
+const freshMkfsMaxVersion = 2
+
 // selectCheckpoint reads both packs and returns the valid one with the higher
-// checkpoint_ver (pack 1 on a tie). An invalid pack is skipped with a warning,
-// unless it is blank, which mkfs leaves for the second pack. When neither pack
-// is valid the result is a *filesys.CorruptError.
+// checkpoint_ver (pack 1 on a tie). An invalid pack is skipped with a warning.
+// A blank (all-zero) pack 2 is silent only while the volume is as new as mkfs
+// leaves it (the chosen version is at most freshMkfsMaxVersion); any other
+// blank pack is reported, because zeroing the newer pack would roll the volume
+// back to older metadata. A genuine read failure is returned as an I/O error,
+// not as corruption. When neither pack is valid the result is a
+// *filesys.CorruptError.
 func selectCheckpoint(r io.ReaderAt, sb *superblock) (*checkpoint, []string, error) {
 	addrs := [2]uint32{sb.cpAddr, sb.cpAddr + blocksPerSeg} // area has >= 2 segments
 	var cps [2]*checkpoint
@@ -274,20 +294,33 @@ func selectCheckpoint(r io.ReaderAt, sb *superblock) (*checkpoint, []string, err
 	var warns []string
 	for i := range cps {
 		cps[i], errs[i] = readPack(r, sb, i+1, addrs[i])
+		var ioe *ioError
+		if errors.As(errs[i], &ioe) {
+			return nil, nil, fmt.Errorf("f2fs checkpoint pack %d at block %d: %w", i+1, addrs[i], ioe)
+		}
 		if errs[i] != nil && !errors.Is(errs[i], errUnwritten) {
 			warns = append(warns, fmt.Sprintf("checkpoint pack %d at block %d is invalid and was skipped: %v", i+1, addrs[i], errs[i]))
 		}
 	}
+	var chosen *checkpoint
 	switch {
 	case cps[0] != nil && cps[1] != nil:
+		chosen = cps[0]
 		if cps[1].ver > cps[0].ver {
-			return cps[1], warns, nil
+			chosen = cps[1]
 		}
-		return cps[0], warns, nil
 	case cps[0] != nil:
-		return cps[0], warns, nil
+		chosen = cps[0]
 	case cps[1] != nil:
-		return cps[1], warns, nil
+		chosen = cps[1]
+	}
+	if chosen != nil {
+		for i, e := range errs {
+			if errors.Is(e, errUnwritten) && (i != 1 || chosen.ver > freshMkfsMaxVersion) {
+				warns = append(warns, fmt.Sprintf("checkpoint pack %d is blank; using pack %d (possible rollback)", i+1, chosen.pack))
+			}
+		}
+		return chosen, warns, nil
 	}
 	var parts []string
 	for i, e := range errs {
