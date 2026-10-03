@@ -144,6 +144,9 @@ func readLimited(p string, limit int64) ([]byte, error) {
 	return b, err
 }
 
+// walkDir walks the staging tree; a variable so tests can inject walk errors.
+var walkDir = filepath.WalkDir
+
 // errTransferInterrupted marks a staged file whose transfer failed part-way.
 var errTransferInterrupted = errors.New("transfer interrupted")
 
@@ -154,8 +157,10 @@ type promoteStats struct{ files, partial int }
 // promote captures every staged file as an artifact, then removes staging.
 // Files named in interrupted (slash-separated, relative to staging) were cut
 // off mid-transfer: their bytes are kept as artifacts flagged incomplete,
-// which is not a promotion failure. Staging is kept if any file could not be
-// promoted, so nothing is lost.
+// which is not a promotion failure. A walk error is recorded and the walk
+// continues, so everything readable is promoted. Staging is kept if any file
+// could not be promoted or any part of it could not be walked, so nothing is
+// lost.
 func promote(c *evidence.Case, udid, acq, staging string, interrupted []string) (promoteStats, error) {
 	var cut []fs.FileInfo // matched by identity, so case-folding filesystems agree
 	for _, rel := range interrupted {
@@ -165,13 +170,18 @@ func promote(c *evidence.Case, udid, acq, staging string, interrupted []string) 
 	}
 	var errs []error
 	var st promoteStats
-	walkErr := filepath.WalkDir(staging, func(p string, de fs.DirEntry, err error) error {
-		if err != nil || de.IsDir() {
-			return err
+	walkErr := walkDir(staging, func(p string, de fs.DirEntry, err error) error {
+		if err != nil { // record it and keep walking: promote everything readable
+			errs = append(errs, fmt.Errorf("staging walk %s: %w", p, err))
+			return nil
+		}
+		if de.IsDir() {
+			return nil
 		}
 		rel, err := filepath.Rel(staging, p)
 		if err != nil {
-			return err
+			errs = append(errs, err)
+			return nil
 		}
 		rel = filepath.ToSlash(rel)
 		src := evidence.Source{Kind: "backup", DeviceID: udid, RemotePath: rel}

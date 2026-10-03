@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -339,5 +340,30 @@ func TestBackupStatsRecordErrorCounts(t *testing.T) {
 		if !strings.Contains(string(audit), want) {
 			t.Errorf("%s not audited:\n%s", want, audit)
 		}
+	}
+}
+
+func TestBackupStagingWalkErrorKeepsWalkingAndStaging(t *testing.T) {
+	errWalk := errors.New("injected walk error")
+	t.Cleanup(ios.SetWalkDir(func(root string, fn fs.WalkDirFunc) error {
+		// Report an unreadable directory first, as WalkDir does, then walk.
+		if err := fn(filepath.Join(root, "U1", "locked"), nil, errWalk); err != nil {
+			return err
+		}
+		return filepath.WalkDir(root, fn)
+	}))
+	b := fakeIPhone()
+	b.Script = uploadThenFinish(0, statusPlist(t, "finished"))
+	c := newCase(t)
+	err := first(t, b).(device.LogicalAcquirer).AcquireLogical(context.Background(), c, device.LogicalOptions{}, nil)
+	if !errors.Is(err, errWalk) {
+		t.Fatalf("err = %v", err)
+	}
+	<-b.ScriptErr
+	if m, _ := c.Manifest(); len(m) != 4 {
+		t.Fatalf("expected lockdown + 3 promoted files despite the walk error, got %d", len(m))
+	}
+	if entries, _ := os.ReadDir(filepath.Join(c.Dir, "staging")); len(entries) != 1 {
+		t.Fatalf("staging should be kept after a walk error: %v", entries)
 	}
 }
