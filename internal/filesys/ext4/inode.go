@@ -70,9 +70,13 @@ type inode struct {
 	csumOK  bool // true when the inode checksum matches or is not applicable
 	extra   []byte
 
-	generation uint32
-	extraIsize int  // effective i_extra_isize: 0 when absent or invalid
-	extraBad   bool // i_extra_isize is odd-sized or larger than the inode
+	generation      uint32
+	extraIsize      int    // effective i_extra_isize: 0 when absent or invalid
+	extraBad        bool   // i_extra_isize is odd-sized or larger than the inode
+	orphanNext      uint32 // i_dtime of a linked inode: the next inode on the orphan list
+	sizeHighIgnored uint32 // non-zero i_size_high that does not count towards the size
+	nsInvalid       bool   // a raw nanosecond field was >= 1e9 and was clamped
+	offset          int64  // byte offset of the inode in the image
 
 	xattrNames []string
 	xattrErr   error
@@ -96,7 +100,7 @@ func (f *FS) inode(n uint32) (*inode, error) {
 	}
 	gd := &f.groups[g]
 	if gd.bad {
-		return nil, corrupt(st, -1, "inode %d is in group %d, whose inode table lies outside the filesystem", n, g)
+		return nil, corrupt(st, -1, "inode %d is in group %d, whose descriptor is unreadable or whose inode table lies outside the filesystem", n, g)
 	}
 	// gd.bad is false, so the whole table (itableBlocks blocks) is inside the
 	// filesystem; idx < inodes_per_group keeps the inode inside the table.
@@ -121,6 +125,7 @@ func (f *FS) inode(n uint32) (*inode, error) {
 		}
 		return nil, err
 	}
+	in.offset = off
 	if xs, err := f.xattrs(in); err != nil {
 		in.xattrErr = err
 		in.xattrNames = xattrNames(xs)
@@ -163,6 +168,8 @@ func (f *FS) decodeInode(n uint32, raw []byte) (*inode, error) {
 	size := uint64(le.Uint32(raw[iSizeLo:]))
 	if in.mode&modeTypeMask == modeReg || sb.hasIncompat(incompatLargedir) {
 		size |= uint64(le.Uint32(raw[iSizeHigh:])) << 32
+	} else {
+		in.sizeHighIgnored = le.Uint32(raw[iSizeHigh:])
 	}
 	if size > math.MaxInt64 {
 		return nil, corrupt("ext4 inode", -1, "inode %d size %d exceeds the addressable range", n, size)
@@ -188,17 +195,23 @@ func (f *FS) decodeInode(n uint32, raw []byte) (*inode, error) {
 		return 0, false
 	}
 	ex, ok := extraOf(iAtimeExtra, iAtimeExtra+4)
-	in.times.Accessed = decodeTime(le.Uint32(raw[iAtime:]), ex, ok)
+	in.times.Accessed = in.decodeTime(le.Uint32(raw[iAtime:]), ex, ok)
 	ex, ok = extraOf(iCtimeExtra, iCtimeExtra+4)
-	in.times.Changed = decodeTime(le.Uint32(raw[iCtime:]), ex, ok)
+	in.times.Changed = in.decodeTime(le.Uint32(raw[iCtime:]), ex, ok)
 	ex, ok = extraOf(iMtimeExtra, iMtimeExtra+4)
-	in.times.Modified = decodeTime(le.Uint32(raw[iMtime:]), ex, ok)
+	in.times.Modified = in.decodeTime(le.Uint32(raw[iMtime:]), ex, ok)
 	if fits(iCrtime + 4) {
 		ex, ok = extraOf(iCrtimeExtra, iCrtimeExtra+4)
-		in.times.Created = decodeTime(le.Uint32(raw[iCrtime:]), ex, ok)
+		in.times.Created = in.decodeTime(le.Uint32(raw[iCrtime:]), ex, ok)
 	}
+	// i_dtime is the deletion time only while the inode is unlinked. On an inode
+	// that still has links it is the next-inode link of the orphan list.
 	if dt := le.Uint32(raw[iDtime:]); dt != 0 {
-		in.times.Deleted = filesys.Timestamp{T: time.Unix(int64(dt), 0).UTC(), ZoneKnown: true}
+		if in.links == 0 {
+			in.times.Deleted = filesys.Timestamp{T: time.Unix(int64(dt), 0).UTC(), ZoneKnown: true}
+		} else {
+			in.orphanNext = dt
+		}
 	}
 
 	in.csumOK = f.inodeChecksumOK(n, raw, in.extraIsize)
@@ -208,13 +221,19 @@ func (f *FS) decodeInode(n uint32, raw []byte) (*inode, error) {
 // decodeTime combines a 32-bit seconds field with its optional extra field,
 // following the kernel (ext4_decode_extra_time): the seconds are a signed
 // 32-bit value, the low two bits of extra extend them by bits<<32, and the
-// upper 30 bits are nanoseconds. Zero seconds is an unset time.
-func decodeTime(secs uint32, extra uint32, haveExtra bool) filesys.Timestamp {
+// upper 30 bits are nanoseconds (clamped, and flagged, when >= 1e9). Zero
+// seconds is an unset time.
+func (in *inode) decodeTime(secs uint32, extra uint32, haveExtra bool) filesys.Timestamp {
 	sec := int64(int32(secs))
 	var ns int64
 	if haveExtra {
 		sec += int64(extra&3) << 32
 		ns = int64(extra >> 2)
+		if ns > 999_999_999 {
+			// Not a valid nanosecond count: clamp rather than let time.Unix carry
+			// it into the seconds, and say so on the entry.
+			ns, in.nsInvalid = 999_999_999, true
+		}
 	}
 	if sec == 0 {
 		return filesys.Timestamp{}
@@ -306,6 +325,15 @@ func toEntry(name string, raw []byte, in *inode) filesys.Entry {
 	}
 	if in.xattrErr != nil {
 		e.Attrs = append(e.Attrs, filesys.KV{Key: "xattrs_error", Value: in.xattrErr.Error()})
+	}
+	if in.orphanNext != 0 {
+		e.Attrs = append(e.Attrs, filesys.KV{Key: "orphan_next", Value: strconv.FormatUint(uint64(in.orphanNext), 10)})
+	}
+	if in.nsInvalid {
+		e.Attrs = append(e.Attrs, filesys.KV{Key: "time_ns", Value: "invalid"})
+	}
+	if in.sizeHighIgnored != 0 {
+		e.Attrs = append(e.Attrs, filesys.KV{Key: "size_high_ignored", Value: strconv.FormatUint(uint64(in.sizeHighIgnored), 10)})
 	}
 	if in.extraBad {
 		e.Attrs = append(e.Attrs, filesys.KV{Key: "extra_isize", Value: "bad"})

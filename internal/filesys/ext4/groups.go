@@ -2,6 +2,7 @@ package ext4
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 
@@ -19,7 +20,8 @@ const (
 type groupDesc struct {
 	blockBitmap, inodeBitmap, inodeTable uint64
 	flags                                uint16
-	// bad is set when a location lies outside the filesystem; later reads of
+	// bad is set when a location lies outside the filesystem or the descriptor
+	// could not be read (truncated table); later reads of
 	// that group's metadata must treat it as corrupt rather than follow it.
 	bad bool
 }
@@ -53,7 +55,7 @@ func (sb *superblock) hasSuper(group uint64) bool {
 // the start of that metagroup's first group.
 func (sb *superblock) descBlock(i uint64) uint64 {
 	if !sb.hasIncompat(incompatMetaBG) || i < uint64(sb.firstMetaBG) {
-		return uint64(sb.firstDataBlock) + 1 + i
+		return uint64(sb.logicalSuperBlock()) + 1 + i
 	}
 	perBlock := uint64(sb.blockSize / sb.descSize)
 	group := i * perBlock // cannot overflow: i < groups/perBlock
@@ -101,18 +103,25 @@ func loadGroups(r io.ReaderAt, sb *superblock) ([]groupDesc, []string, error) {
 	var badCsum, badLoc int
 	firstBadCsum, firstBadLoc := int64(-1), int64(-1)
 
+	// A descriptor block outside the (clamped) filesystem or past the end of the
+	// image ends the readable part of the table: the remaining groups stay in
+	// the slice, flagged unreadable, so a truncated image or a head capture
+	// still opens.
 	for i := int64(0); i*perBlock < sb.groups; i++ {
 		loc := sb.descBlock(uint64(i))
-		if loc >= uint64(sb.blocksCount) {
-			return nil, nil, corrupt(st, -1, "descriptor block %d is at block %d, outside the %d-block filesystem", i, loc, sb.blocksCount)
-		}
 		off, ok := filesys.MulOK(int64(loc), int64(sb.blockSize))
 		if !ok {
 			return nil, nil, corrupt(st, -1, "descriptor block %d offset overflows", i)
 		}
 		n := min(perBlock, sb.groups-i*perBlock)
 		chunk := buf[:n*int64(sb.descSize)]
+		if loc >= uint64(sb.blocksCount) {
+			break
+		}
 		if err := readFull(r, chunk, off); err != nil {
+			if errors.Is(err, io.ErrUnexpectedEOF) {
+				break
+			}
 			return nil, nil, corrupt(st, off, "read failed: %v", err)
 		}
 		for k := range n {
@@ -147,6 +156,12 @@ func loadGroups(r io.ReaderAt, sb *superblock) ([]groupDesc, []string, error) {
 	}
 
 	var warns []string
+	if readable := int64(len(groups)); readable < sb.groups {
+		warns = append(warns, fmt.Sprintf("descriptor table truncated: %d of %d groups readable", readable, sb.groups))
+		for int64(len(groups)) < sb.groups {
+			groups = append(groups, groupDesc{bad: true})
+		}
+	}
 	if badCsum > 0 {
 		warns = append(warns, fmt.Sprintf("group descriptor checksum mismatch in %d of %d groups (first: group %d)", badCsum, sb.groups, firstBadCsum))
 	}

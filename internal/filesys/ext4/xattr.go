@@ -55,6 +55,9 @@ func (f *FS) xattrs(in *inode) ([]xattr, error) {
 		if binary.LittleEndian.Uint32(area) == xattrMagic {
 			// Value offsets are relative to the first entry, right after the magic.
 			got, err := parseXattrs(area[4:], 0)
+			if ce, ok := err.(*filesys.CorruptError); ok {
+				ce.Offset += in.offset + int64(goodOldInodeSz+in.extraIsize+4) // absolute image offset
+			}
 			out = append(out, got...)
 			firstErr = err
 		}

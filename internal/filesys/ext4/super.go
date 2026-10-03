@@ -29,7 +29,12 @@ const (
 
 // Feature bits (compat, incompat, ro_compat words).
 const (
+	compatDirPrealloc  = 0x1
+	compatImagic       = 0x2
 	compatHasJournal   = 0x4
+	compatExtAttr      = 0x8
+	compatResizeInode  = 0x10
+	compatDirIndex     = 0x20
 	compatSparseSuper2 = 0x200
 
 	incompatCompression = 0x1
@@ -49,17 +54,17 @@ const (
 	incompatEncrypt     = 0x10000
 	incompatCasefold    = 0x20000
 
-	roSparseSuper   = 0x1
-	roHugeFile      = 0x8
-	roGDTCsum       = 0x10
-	roDirNlink      = 0x20
-	roExtraIsize    = 0x40
-	roQuota         = 0x100
-	roBigalloc      = 0x200
-	roMetadataCsum  = 0x400
-	incompatKnown   = incompatFiletype | incompatRecover | incompatMetaBG | incompatExtents | incompat64Bit | incompatMMP | incompatFlexBG | incompatEAInode | incompatDirdata | incompatCsumSeed | incompatLargedir | incompatInlineData | incompatEncrypt | incompatCasefold
-	incompatExt4Own = incompatExtents | incompat64Bit | incompatMMP | incompatFlexBG | incompatEAInode | incompatDirdata | incompatCsumSeed | incompatLargedir | incompatInlineData | incompatEncrypt | incompatCasefold
-	roExt4Own       = roHugeFile | roGDTCsum | roDirNlink | roExtraIsize | roQuota | roBigalloc | roMetadataCsum
+	roSparseSuper  = 0x1
+	roLargeFile    = 0x2
+	roBtreeDir     = 0x4
+	roHugeFile     = 0x8
+	roGDTCsum      = 0x10
+	roDirNlink     = 0x20
+	roExtraIsize   = 0x40
+	roQuota        = 0x100
+	roBigalloc     = 0x200
+	roMetadataCsum = 0x400
+	incompatKnown  = incompatFiletype | incompatRecover | incompatMetaBG | incompatExtents | incompat64Bit | incompatMMP | incompatFlexBG | incompatEAInode | incompatDirdata | incompatCsumSeed | incompatLargedir | incompatInlineData | incompatEncrypt | incompatCasefold
 )
 
 type featureName struct {
@@ -144,6 +149,17 @@ type superblock struct {
 	csumSeed       uint32 // metadata_csum seed: s_checksum_seed with CSUM_SEED, else crc32c(~0, uuid)
 	groups         int64  // block groups described by the declared block count
 	itableBlocks   int64  // blocks in one group's inode table
+}
+
+// logicalSuperBlock is the block that holds the primary superblock: 1 for 1 KiB
+// blocks (the superblock is at byte 1024), else 0. The contiguous descriptor
+// table starts in the next block, as in the kernel, whatever first_data_block
+// says.
+func (sb *superblock) logicalSuperBlock() uint32 {
+	if sb.blockSize == 1024 {
+		return 1
+	}
+	return 0
 }
 
 func (sb *superblock) hasIncompat(f uint32) bool { return sb.incompat&f != 0 }
@@ -286,9 +302,9 @@ func parseSuper(b []byte, imgSize int64) (*superblock, []string, error) {
 	if !ok || table > maxGDTBytes {
 		return nil, nil, corrupt(st, superOffset+0x4, "%d block groups of %d-byte descriptors exceed the %d-byte table limit", groups, sb.descSize, maxGDTBytes)
 	}
-	if table > imgSize {
-		return nil, nil, corrupt(st, superOffset+0x4, "the %d-byte group descriptor table is larger than the %d-byte image", table, imgSize)
-	}
+	// A table larger than the image is not an error: a head capture or a
+	// truncated image still opens, and loadGroups marks the groups whose
+	// descriptors are missing as unreadable.
 	sb.groups = groups
 
 	// Clamp to what the image actually holds.
@@ -321,6 +337,12 @@ func parseSuper(b []byte, imgSize int64) (*superblock, []string, error) {
 			warns = append(warns, fmt.Sprintf("superblock checksum mismatch: stored %#08x, computed %#08x", stored, want))
 		}
 	}
+	if sb.revLevel > 1 {
+		warns = append(warns, fmt.Sprintf("unknown revision level %d", sb.revLevel))
+	}
+	if want := sb.logicalSuperBlock(); sb.firstDataBlock != want {
+		warns = append(warns, fmt.Sprintf("first_data_block is %d, expected %d for %d-byte blocks; the descriptor table is read from block %d", sb.firstDataBlock, want, sb.blockSize, want+1))
+	}
 	if sb.hasIncompat(incompatRecover) {
 		warns = append(warns, "the journal needs recovery and has not been replayed: the filesystem may be inconsistent")
 	}
@@ -340,16 +362,32 @@ func cString(b []byte) string {
 	return string(b)
 }
 
-// fsType names the filesystem generation from its feature set, following the
-// kernel's rule for which features an ext3 driver accepts.
+// Feature sets of the older generations. A filesystem is ext2 or ext3 only when
+// every set bit is in the generation's whitelist (so a feature this reader has
+// never heard of makes it ext4, not ext2).
+const (
+	ext2Compat   = compatDirPrealloc | compatImagic | compatExtAttr | compatResizeInode | compatDirIndex
+	ext2Incompat = incompatFiletype
+	ext2Ro       = roSparseSuper | roLargeFile | roBtreeDir
+
+	ext3Compat   = compatHasJournal | compatExtAttr | compatResizeInode | compatDirIndex | compatDirPrealloc
+	ext3Incompat = incompatFiletype | incompatRecover | incompatMetaBG
+	ext3Ro       = ext2Ro
+)
+
+// fsType names the filesystem generation from its feature set: ext2 without a
+// journal and with only ext2 features, ext3 with a journal and only ext3
+// features, ext4 otherwise.
 func (sb *superblock) fsType() string {
 	switch {
-	case sb.incompat&incompatExt4Own != 0 || sb.roCompat&roExt4Own != 0:
-		return "ext4"
-	case sb.hasCompat(compatHasJournal) || sb.hasIncompat(incompatRecover):
+	case !sb.hasCompat(compatHasJournal) &&
+		sb.compat&^ext2Compat == 0 && sb.incompat&^ext2Incompat == 0 && sb.roCompat&^ext2Ro == 0:
+		return "ext2"
+	case sb.hasCompat(compatHasJournal) &&
+		sb.compat&^ext3Compat == 0 && sb.incompat&^ext3Incompat == 0 && sb.roCompat&^ext3Ro == 0:
 		return "ext3"
 	default:
-		return "ext2"
+		return "ext4"
 	}
 }
 

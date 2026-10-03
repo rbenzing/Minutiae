@@ -590,3 +590,101 @@ func TestXattrHostileInImage(t *testing.T) {
 		t.Errorf("i_file_acl outside the filesystem: %v", err)
 	}
 }
+
+// Literal raw-byte time decoding, independent of the builder's encoder.
+func TestInodeRawTimeBytes(t *testing.T) {
+	img := ext4test.Build(ext4test.Options{}, []ext4test.File{{Path: "/a"}})
+	f := mustOpen(t, img)
+	off := inodeOff(t, f, 1024, 256, 128, 11)
+	put32(img, off+0x8, 0x80000000) // atime: -2^31 ...
+	put32(img, off+0x8C, 0x1)       // ... + epoch bit 1 => 2^31 = 2038-01-19T03:14:08Z
+	put32(img, off+0xC, 0xFFFFFFFF) // ctime: -1, no epoch bits
+	put32(img, off+0x84, 0)
+	put32(img, off+0x10, 100)              // mtime with invalid nanoseconds
+	put32(img, off+0x88, 1_000_000_000<<2) // 1e9 ns
+	put32(img, off+0x90, 200)              // crtime
+	put32(img, off+0x94, 0xFFFFFFFC|3)     // ns 1073741823 (max 30-bit), epoch 3
+	f = mustOpen(t, img)
+	in, err := f.Inode(11)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := in.Times()
+	if want := time.Date(2038, 1, 19, 3, 14, 8, 0, time.UTC); !ts.Accessed.T.Equal(want) {
+		t.Errorf("atime = %v, want %v", ts.Accessed.T, want)
+	}
+	if want := time.Date(1969, 12, 31, 23, 59, 59, 0, time.UTC); !ts.Changed.T.Equal(want) {
+		t.Errorf("ctime = %v, want %v", ts.Changed.T, want)
+	}
+	if want := time.Unix(100, 999999999); !ts.Modified.T.Equal(want) {
+		t.Errorf("mtime = %v, want clamped %v", ts.Modified.T, want)
+	}
+	if want := time.Unix(200+3<<32, 999999999); !ts.Created.T.Equal(want) {
+		t.Errorf("crtime = %v, want %v", ts.Created.T, want)
+	}
+	if v, _ := attr(ext4.ToEntry("a", nil, in), "time_ns"); v != "invalid" {
+		t.Errorf("time_ns attr = %q, want invalid", v)
+	}
+
+	// Valid nanoseconds carry no attr.
+	put32(img, off+0x88, 999_999_999<<2)
+	put32(img, off+0x94, 999_999_999<<2)
+	f = mustOpen(t, img)
+	in, _ = f.Inode(11)
+	if _, ok := attr(ext4.ToEntry("a", nil, in), "time_ns"); ok {
+		t.Error("time_ns attr on valid nanoseconds")
+	}
+}
+
+func TestInodeSizeHighIgnoredAttr(t *testing.T) {
+	img := ext4test.Build(ext4test.Options{}, []ext4test.File{{Path: "/d", Dir: true}, {Path: "/l", Symlink: "x"}, {Path: "/f"}})
+	f := mustOpen(t, img)
+	for _, n := range []int{11, 12, 13} {
+		put32(img, inodeOff(t, f, 1024, 256, 128, n)+0x6C, 7)
+	}
+	f = mustOpen(t, img)
+	for _, n := range []uint32{11, 12} {
+		e := entryOf(t, f, n)
+		if v, _ := attr(e, "size_high_ignored"); v != "7" {
+			t.Errorf("inode %d: size_high_ignored = %q, want 7", n, v)
+		}
+		if e.Size >= 1<<32 {
+			t.Errorf("inode %d: size %d includes the ignored high half", n, e.Size)
+		}
+	}
+	// A regular file uses the high half: no attr.
+	e := entryOf(t, f, 13)
+	if _, ok := attr(e, "size_high_ignored"); ok || e.Size != 7<<32 {
+		t.Errorf("regular file: size %d, attr present %v", e.Size, ok)
+	}
+}
+
+func TestXattrErrorOffsetIsAbsolute(t *testing.T) {
+	xs := []ext4test.Xattr{{Name: "user.a", Value: []byte("v")}}
+	img := ext4test.Build(ext4test.Options{}, []ext4test.File{{Path: "/a", Xattrs: xs}})
+	f := mustOpen(t, img)
+	off := inodeOff(t, f, 1024, 256, 128, 11)
+	entry := off + 128 + 32 + 4
+	put16(img, entry+2, 0xFFFF)
+	put32(img, entry+8, 4)
+	f = mustOpen(t, img)
+	in, _ := f.Inode(11)
+	_, err := f.Xattrs(in)
+	var ce *filesys.CorruptError
+	if !errors.As(err, &ce) || ce.Offset != int64(entry) {
+		t.Errorf("err = %v (offset %v), want a CorruptError at image offset %d", err, ce, entry)
+	}
+
+	img = ext4test.Build(ext4test.Options{}, []ext4test.File{{Path: "/a", Xattrs: xs, XattrBlock: true}})
+	f = mustOpen(t, img)
+	off = inodeOff(t, f, 1024, 256, 128, 11)
+	blk := int(le32(img, off+0x68))
+	put16(img, blk*1024+32+2, 0xFFFF)
+	put32(img, blk*1024+32+8, 4)
+	f = mustOpen(t, img)
+	in, _ = f.Inode(11)
+	_, err = f.Xattrs(in)
+	if !errors.As(err, &ce) || ce.Offset != int64(blk*1024+32) {
+		t.Errorf("block: err = %v, want a CorruptError at image offset %d", err, blk*1024+32)
+	}
+}

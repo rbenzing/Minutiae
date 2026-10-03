@@ -289,10 +289,6 @@ func TestOpenHostileGeometry(t *testing.T) {
 			"descriptor table larger than the cap", b64,
 			func(b []byte) { smallGroups(b); put32(b, offBlocksLo, 1<<24) },
 		},
-		{
-			"descriptor table larger than the image", b64,
-			func(b []byte) { smallGroups(b); put32(b, offBlocksLo, 1<<19) },
-		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -415,6 +411,13 @@ func TestGroupDescriptorChecksums(t *testing.T) {
 			if !hasWarning(info, "group descriptor checksum") {
 				t.Errorf("Warnings = %q, want a group descriptor checksum warning", info.Warnings)
 			}
+			if o.Bit64 {
+				img[gdt+size+0x4] ^= 0x01  // restore
+				img[gdt+size+0x20] ^= 0x01 // a byte of the _hi half (bg_block_bitmap_hi)
+				if info := mustOpen(t, img).Info(); !hasWarning(info, "group descriptor checksum") {
+					t.Errorf("hi-half tamper: Warnings = %q, want a group descriptor checksum warning", info.Warnings)
+				}
+			}
 		})
 	}
 }
@@ -463,5 +466,266 @@ func TestChecksumPrimitives(t *testing.T) {
 	a, b := []byte("1234"), []byte("56789")
 	if x, y := ext4.RawCRC32C(ext4.RawCRC32C(7, a), b), ext4.RawCRC32C(7, []byte("123456789")); x != y {
 		t.Errorf("chained crc %#x != one-shot %#x", x, y)
+	}
+}
+
+func TestOpenDescriptorTableLargerThanImageOpens(t *testing.T) {
+	img := build(ext4test.Options{BlockSize: 1024, Bit64: true})
+	smallGroups(img)
+	put32(img, offBlocksLo, 1<<19) // ~32768 groups, a 2 MiB table, in a 1 MiB image
+	f, err := open(img)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if !hasWarning(f.Info(), "descriptor table truncated") {
+		t.Errorf("Warnings = %q", f.Info().Warnings)
+	}
+	if f.GroupCount() != 1<<19/16 {
+		t.Errorf("GroupCount = %d, want %d (unreadable groups stay in the slice)", f.GroupCount(), 1<<19/16)
+	}
+}
+
+func TestOpenHeadCaptureOfLargeFilesystem(t *testing.T) {
+	// 40 groups x 64-byte descriptors = 3 descriptor blocks; keep only the
+	// first 3 blocks of the image, so one descriptor block (16 groups) is readable.
+	full := build(ext4test.Options{BlockSize: 1024, Bit64: true, Groups: 40})
+	whole := mustOpen(t, full)
+	f := mustOpen(t, full[:3*1024])
+	if !hasWarning(f.Info(), "descriptor table truncated: 16 of 40 groups readable") {
+		t.Errorf("Warnings = %q", f.Info().Warnings)
+	}
+	if f.GroupCount() != 40 {
+		t.Fatalf("GroupCount = %d, want 40", f.GroupCount())
+	}
+	for g := 0; g < 40; g++ {
+		bb, ib, it, _, bad := f.Group(g)
+		wb, wi, wt, _, _ := whole.Group(g)
+		if g < 16 {
+			if bb != wb || ib != wi || it != wt {
+				t.Errorf("group %d locations differ from the full image", g)
+			}
+			continue // bitmaps/table are beyond the 3 captured blocks, so bad is expected
+		}
+		if !bad {
+			t.Errorf("group %d beyond the readable table is not flagged bad", g)
+		}
+	}
+	if _, err := f.Inode(11); !errors.Is(err, filesys.ErrCorrupt) {
+		t.Errorf("Inode in a group beyond the capture = %v, want CorruptError", err)
+	}
+	if _, err := f.Inode(40 * 128); !errors.Is(err, filesys.ErrCorrupt) {
+		t.Errorf("Inode in an unreadable group = %v, want CorruptError", err)
+	}
+
+	// 64 KiB of a much larger (24 MiB) filesystem: group 0 stays fully usable.
+	big := ext4test.Build(ext4test.Options{BlockSize: 1024, Groups: 24, Extents: true},
+		[]ext4test.File{{Path: "/a", Mode: 0o600}})
+	head := big[:64*1024]
+	f = mustOpen(t, head)
+	if f.Info().Size != 64*1024 {
+		t.Errorf("Size = %d", f.Info().Size)
+	}
+	in, err := f.Inode(11)
+	if err != nil {
+		t.Fatalf("Inode(11) in the captured group: %v", err)
+	}
+	if e := ext4.ToEntry("a", nil, in); e.Mode != 0o100600 {
+		t.Errorf("mode %#o", e.Mode)
+	}
+}
+
+func TestMetaBGTruncatedTable(t *testing.T) {
+	o := ext4test.Options{BlockSize: 1024, Bit64: true, Groups: 17, BlocksPerGroup: 256}
+	img := build(o)
+	put32(img, offIncompat, le32(img, offIncompat)|0x10)
+	put32(img, offFirstMetaBg, 1)
+	f := mustOpen(t, img[:3*1024]) // descriptor block 0 (block 2) only; block 1 is at group 16
+	if !hasWarning(f.Info(), "descriptor table truncated: 16 of 17 groups readable") {
+		t.Errorf("Warnings = %q", f.Info().Warnings)
+	}
+	if _, _, _, _, bad := f.Group(16); !bad {
+		t.Error("group 16 is not flagged unreadable")
+	}
+}
+
+func TestContiguousTableIgnoresFirstDataBlock(t *testing.T) {
+	check := func(name string, o ext4test.Options, fdb uint32, blocks uint32) {
+		t.Run(name, func(t *testing.T) {
+			img := build(o)
+			ref := mustOpen(t, img)
+			bb, ib, it, _, _ := ref.Group(0)
+			put32(img, offFirstData, fdb)
+			put32(img, offBlocksLo, blocks)
+			f, err := open(img)
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			gb, gi, gt, _, _ := f.Group(0)
+			if gb != bb || gi != ib || gt != it {
+				t.Errorf("group 0 = %d,%d,%d, want %d,%d,%d (table is read from the block after the superblock block)", gb, gi, gt, bb, ib, it)
+			}
+			if !hasWarning(f.Info(), "first_data_block") {
+				t.Errorf("Warnings = %q, want a first_data_block warning", f.Info().Warnings)
+			}
+		})
+	}
+	check("1 KiB blocks, first_data_block 0", ext4test.Options{BlockSize: 1024}, 0, 1024)
+	check("4 KiB blocks, first_data_block 1", ext4test.Options{BlockSize: 4096}, 1, 1023)
+}
+
+func TestRevisionLevelWarning(t *testing.T) {
+	img := build(ext4test.Options{BlockSize: 1024})
+	put32(img, offRev, 7)
+	if !hasWarning(mustOpen(t, img).Info(), "unknown revision level 7") {
+		t.Error("no unknown-revision warning")
+	}
+	if w := mustOpen(t, build(ext4test.Options{BlockSize: 1024})).Info().Warnings; len(w) != 0 {
+		t.Errorf("rev 1 image warns: %q", w)
+	}
+}
+
+func TestFsTypeWhitelist(t *testing.T) {
+	const (
+		compat   = 1024 + 0x5C
+		incompat = 1024 + 0x60
+		ro       = 1024 + 0x64
+	)
+	cases := []struct {
+		name string
+		mut  func(b []byte)
+		want string
+	}{
+		{"plain", func([]byte) {}, "ext2"},
+		{"sparse_super2 (compat 0x200)", func(b []byte) { put32(b, compat, le32(b, compat)|0x200) }, "ext4"},
+		{"project (ro 0x2000)", func(b []byte) { put32(b, ro, le32(b, ro)|0x2000) }, "ext4"},
+		{"verity (ro 0x8000)", func(b []byte) { put32(b, ro, le32(b, ro)|0x8000) }, "ext4"},
+		{"unknown compat bit", func(b []byte) { put32(b, compat, le32(b, compat)|0x100000) }, "ext4"},
+		{"journal", func(b []byte) { put32(b, compat, le32(b, compat)|0x4) }, "ext3"},
+		{"journal + recover + meta_bg", func(b []byte) {
+			put32(b, compat, le32(b, compat)|0x4)
+			put32(b, incompat, le32(b, incompat)|0x4|0x10)
+		}, "ext3"},
+		{"journal + sparse_super2", func(b []byte) { put32(b, compat, le32(b, compat)|0x4|0x200) }, "ext4"},
+		{"journal + extents", func(b []byte) { put32(b, compat, le32(b, compat)|0x4); put32(b, incompat, le32(b, incompat)|0x40) }, "ext4"},
+		{"journal + project", func(b []byte) { put32(b, compat, le32(b, compat)|0x4); put32(b, ro, le32(b, ro)|0x2000) }, "ext4"},
+		{"recover without a journal", func(b []byte) { put32(b, incompat, le32(b, incompat)|0x4) }, "ext4"},
+	}
+	for _, c := range cases {
+		img := build(ext4test.Options{BlockSize: 1024})
+		c.mut(img)
+		if got := mustOpen(t, img).Info().Type; got != c.want {
+			t.Errorf("%s: Type = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestBuilderCapsImageSize(t *testing.T) {
+	defer func() {
+		r := recover()
+		if s, ok := r.(string); !ok || !strings.Contains(s, "test limit") {
+			t.Errorf("panic = %v, want the image size limit message", r)
+		}
+	}()
+	ext4test.Build(ext4test.Options{BlockSize: 4096, BlocksPerGroup: 32768, Groups: 4000}, nil)
+	t.Error("Build did not panic")
+}
+
+// metaBGImage returns a 17-group image (two 64-byte descriptor blocks at 1 KiB)
+// switched to META_BG with the given first_meta_bg and sparse_super setting,
+// with descriptor block 1 moved to where the kernel looks for it (at wantBlock).
+func metaBGImage(t *testing.T, firstMetaBG uint32, sparse bool, wantBlock int) (*ext4.FS, [][3]uint64) {
+	t.Helper()
+	img := build(ext4test.Options{BlockSize: 1024, Bit64: true, Groups: 17, BlocksPerGroup: 256})
+	plain := mustOpen(t, img)
+	want := make([][3]uint64, 17)
+	for g := range want {
+		want[g][0], want[g][1], want[g][2], _, _ = plain.Group(g)
+	}
+	const bs = 1024
+	copy(img[wantBlock*bs:], img[3*bs:4*bs]) // descriptor block 1 (block 3 in the contiguous layout)
+	if wantBlock != 3 {
+		clear(img[3*bs : 4*bs])
+	}
+	put32(img, offIncompat, le32(img, offIncompat)|0x10)
+	put32(img, offFirstMetaBg, firstMetaBG)
+	if !sparse {
+		put32(img, offRoCompat, le32(img, offRoCompat)&^0x1)
+	}
+	f := mustOpen(t, img)
+	return f, want
+}
+
+func TestMetaBGLocationRules(t *testing.T) {
+	const start16 = 1 + 16*256 // first block of group 16 (first_data_block 1)
+	cases := []struct {
+		name        string
+		firstMetaBG uint32
+		sparse      bool
+		block       int
+	}{
+		// first_meta_bg 0: block 0 stays at group 0 + 1 for the superblock
+		// (block 2, the same place); block 1 moves to group 16, which has no
+		// backup superblock under sparse_super.
+		{"first_meta_bg 0, sparse_super", 0, true, start16},
+		// without sparse_super every group has a backup, so +1.
+		{"first_meta_bg 0, sparse_super cleared", 0, false, start16 + 1},
+		{"first_meta_bg 1, sparse_super cleared", 1, false, start16 + 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f, want := metaBGImage(t, c.firstMetaBG, c.sparse, c.block)
+			for g := range want {
+				bb, ib, it, _, _ := f.Group(g)
+				if [3]uint64{bb, ib, it} != want[g] {
+					t.Errorf("group %d = %v, want %v", g, [3]uint64{bb, ib, it}, want[g])
+				}
+			}
+		})
+	}
+}
+
+func TestMetaBGOneKFirstDataBlockZeroBump(t *testing.T) {
+	// 1 KiB blocks with first_data_block 0: group 0's superblock is in block 1
+	// and its descriptor block is block 2, so META_BG adds one to the usual
+	// "group start + has_super".
+	img := build(ext4test.Options{BlockSize: 1024})
+	ref := mustOpen(t, img)
+	bb, ib, it, _, _ := ref.Group(0)
+	put32(img, offFirstData, 0)
+	put32(img, offBlocksLo, 1024)
+	put32(img, offIncompat, le32(img, offIncompat)|0x10)
+	put32(img, offFirstMetaBg, 0)
+	f, err := open(img)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	gb, gi, gt, _, bad := f.Group(0)
+	if gb != bb || gi != ib || gt != it || bad {
+		t.Errorf("group 0 = %d,%d,%d bad=%v, want %d,%d,%d", gb, gi, gt, bad, bb, ib, it)
+	}
+}
+
+func TestInodeOrphanNextIsNotDeletionTime(t *testing.T) {
+	img := ext4test.Build(ext4test.Options{}, []ext4test.File{{Path: "/linked"}, {Path: "/gone", Deleted: true}})
+	f := mustOpen(t, img)
+	off := inodeOff(t, f, 1024, 256, 128, 11)
+	put32(img, off+0x14, 12) // dtime of a linked inode = next inode on the orphan list
+	f = mustOpen(t, img)
+	e := entryOf(t, f, 11)
+	if !e.Times.Deleted.T.IsZero() {
+		t.Errorf("linked inode got Deleted time %v", e.Times.Deleted.T)
+	}
+	if v, _ := attr(e, "orphan_next"); v != "12" {
+		t.Errorf("orphan_next = %q, want 12", v)
+	}
+	g := entryOf(t, f, 12)
+	if g.Times.Deleted.T.IsZero() {
+		t.Error("unlinked inode lost its Deleted time")
+	}
+	if _, ok := attr(g, "orphan_next"); ok {
+		t.Error("unlinked inode has an orphan_next attr")
+	}
+	if _, ok := attr(entryOf(t, f, 2), "orphan_next"); ok {
+		t.Error("root has an orphan_next attr")
 	}
 }

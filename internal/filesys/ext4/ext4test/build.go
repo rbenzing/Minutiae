@@ -95,6 +95,10 @@ const (
 	descSize32     = 32
 	descSize64     = 64
 	maxGroups      = 1 << 14
+
+	// maxImageBytes caps the image Build will allocate, so a mistaken geometry
+	// in a test fails fast instead of exhausting memory.
+	maxImageBytes = 256 << 20
 )
 
 type group struct {
@@ -165,6 +169,9 @@ func newBuilder(o Options) *builder {
 		b.firstData = 1
 	}
 	b.totalBlocks = b.firstData + n*b.bpg
+	if size := int64(b.totalBlocks) * int64(b.bs); size > maxImageBytes {
+		panic(fmt.Sprintf("ext4test: image of %d bytes exceeds the %d-byte test limit", size, int64(maxImageBytes)))
+	}
 	b.gdtBlocks = (n*b.descSize + b.bs - 1) / b.bs
 	b.itableBlocks = (b.ipg*b.isz + b.bs - 1) / b.bs
 	b.seed = rawCRC32C(0xFFFFFFFF, o.UUID[:])
