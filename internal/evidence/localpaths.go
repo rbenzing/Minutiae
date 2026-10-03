@@ -1,15 +1,13 @@
-package android
+package evidence
 
 import (
 	"path"
 	"strconv"
 	"strings"
 	"unicode"
-
-	"github.com/rbenzing/minutiae/internal/evidence"
 )
 
-// localPaths assigns every remote file and directory of one logical
+// LocalPaths assigns every remote (or in-image) file and directory of one
 // acquisition a distinct local artifact path. Android paths are
 // case-sensitive and may contain characters that evidence sanitizes, but the
 // examiner's filesystem may be case-insensitive: "File.txt" and "file.txt",
@@ -17,23 +15,25 @@ import (
 // local path. A later name that collides, case-folded, with an earlier one
 // gets a "~N" suffix (before the extension for files); the original remote
 // path stays in the artifact's Source.RemotePath.
-type localPaths struct {
+type LocalPaths struct {
 	used map[string]bool   // case-folded local paths already assigned (files and directories)
 	dirs map[string]string // cleaned absolute remote directory -> local directory
 }
 
-func newLocalPaths() *localPaths {
-	return &localPaths{used: map[string]bool{}, dirs: map[string]string{"/": "files"}}
+// NewLocalPaths returns an assigner whose root remote directory "/" maps to
+// the local directory root.
+func NewLocalPaths(root string) *LocalPaths {
+	return &LocalPaths{used: map[string]bool{}, dirs: map[string]string{"/": root}}
 }
 
-// dir returns the local directory for remote directory remote, assigning it
+// Dir returns the local directory for remote directory remote, assigning it
 // (and any unassigned ancestor) on first use.
-func (l *localPaths) dir(remote string) (string, error) {
+func (l *LocalPaths) Dir(remote string) (string, error) {
 	remote = path.Clean("/" + remote)
 	if local, ok := l.dirs[remote]; ok {
 		return local, nil
 	}
-	parent, err := l.dir(path.Dir(remote))
+	parent, err := l.Dir(path.Dir(remote))
 	if err != nil {
 		return "", err
 	}
@@ -45,13 +45,13 @@ func (l *localPaths) dir(remote string) (string, error) {
 	return local, nil
 }
 
-// file assigns the local path for a file named name in local directory parent.
-func (l *localPaths) file(parent, name string) (string, error) {
+// File assigns the local path for a file named name in local directory parent.
+func (l *LocalPaths) File(parent, name string) (string, error) {
 	return l.assign(parent, name, false)
 }
 
-func (l *localPaths) assign(parent, name string, isDir bool) (string, error) {
-	comp, err := evidence.SanitizeRelPath(name)
+func (l *LocalPaths) assign(parent, name string, isDir bool) (string, error) {
+	comp, err := SanitizeRelPath(name)
 	if err != nil {
 		return "", err
 	}

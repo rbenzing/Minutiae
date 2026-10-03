@@ -47,7 +47,7 @@ func (d *Device) AcquireLogical(ctx context.Context, c *evidence.Case, opts devi
 		}
 		w := &walker{
 			ctx: ctx, d: d, c: c, acq: acq, s: s, progress: progress,
-			names: newLocalPaths(), pulled: map[string]bool{},
+			names: evidence.NewLocalPaths("files"), pulled: map[string]bool{},
 		}
 		defer func() { _ = w.s.Close() }()
 		for _, root := range roots {
@@ -69,7 +69,7 @@ type walker struct {
 	acq      string
 	s        *adb.Sync
 	progress device.ProgressFunc
-	names    *localPaths
+	names    *evidence.LocalPaths
 	pulled   map[string]bool // remote files already captured (overlapping roots)
 	files    int
 	skipped  int
@@ -111,7 +111,7 @@ func (w *walker) walk(dir string) error {
 	if err := w.ctx.Err(); err != nil {
 		return err
 	}
-	local, err := w.names.dir(dir)
+	local, err := w.names.Dir(dir)
 	if err != nil {
 		return err
 	}
@@ -161,7 +161,7 @@ func (w *walker) pull(p, localDir string, e adb.SyncEntry) error {
 	var err error
 	for attempt := 0; ; attempt++ {
 		var rel string
-		if rel, err = w.names.file(localDir, e.Name); err != nil {
+		if rel, err = w.names.File(localDir, e.Name); err != nil {
 			return err
 		}
 		rec, err = w.c.Capture(w.d.serial, w.acq, rel, src, func(out io.Writer) error {
@@ -171,7 +171,7 @@ func (w *walker) pull(p, localDir string, e adb.SyncEntry) error {
 		if !errors.Is(err, evidence.ErrArtifactExists) {
 			break
 		}
-		// The examiner's filesystem aliases the name in a way localPaths does
+		// The examiner's filesystem aliases the name in a way LocalPaths does
 		// not model (NTFS 8.3 short names, APFS NFC/NFD). The exclusive create
 		// failed before anything was requested from the device, so the sync
 		// session is untouched; the colliding name stays reserved and the

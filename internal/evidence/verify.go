@@ -63,6 +63,7 @@ func (c *Case) Verify() (VerifyReport, error) {
 		}
 	}
 
+	c.checkDerived(&rep, recs)
 	c.crossCheckAudit(&rep, recs, audited)
 	c.crossCheckDB(&rep, recs)
 	c.checkUnmanifested(&rep, inManifest)
@@ -215,5 +216,36 @@ func (c *Case) checkStaging(rep *VerifyReport) {
 	}
 	for _, e := range entries {
 		rep.problemf("leftover staging directory %s (unpromoted acquisition data)", e.Name())
+	}
+}
+
+// checkDerived requires, for every record with a Derivation, that its parent
+// artifact exists in the manifest with the recorded SHA-256 and that its runs
+// sidecar artifact (when named) exists.
+func (c *Case) checkDerived(rep *VerifyReport, recs []ManifestRecord) {
+	byID := make(map[string]ManifestRecord, len(recs))
+	for _, r := range recs {
+		if _, dup := byID[r.ID]; !dup {
+			byID[r.ID] = r
+		}
+	}
+	for _, r := range recs {
+		d := r.Source.Derived
+		if d == nil {
+			continue
+		}
+		parent, ok := byID[d.ParentID]
+		switch {
+		case !ok:
+			rep.problemf("artifact %s (%s): derived from parent %q, which is not in the manifest", r.ID, r.Path, d.ParentID)
+		case parent.SHA256 != d.ParentSHA256:
+			rep.problemf("artifact %s (%s): parent %s sha256 %s differs from the derivation's recorded parent sha256 %s",
+				r.ID, r.Path, d.ParentID, parent.SHA256, d.ParentSHA256)
+		}
+		if d.RunsArtifact != "" {
+			if _, ok := byID[d.RunsArtifact]; !ok {
+				rep.problemf("artifact %s (%s): runs artifact %q (of parent %s) is not in the manifest", r.ID, r.Path, d.RunsArtifact, d.ParentID)
+			}
+		}
 	}
 }

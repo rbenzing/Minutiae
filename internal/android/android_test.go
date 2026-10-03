@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -521,25 +522,6 @@ func TestAcquireLogicalOverlappingRootsCaptureOnce(t *testing.T) {
 	}
 }
 
-func TestWithSuffixAndFoldCase(t *testing.T) {
-	for in, want := range map[string]string{"a.txt": "a~2.txt", ".profile": ".profile~2", "noext": "noext~2", "x.tar.gz": "x.tar~2.gz"} {
-		if got := withSuffix(in, 2, false); got != want {
-			t.Errorf("withSuffix(%q) = %q, want %q", in, got, want)
-		}
-	}
-	if got := withSuffix("a.d", 3, true); got != "a.d~3" {
-		t.Errorf("directory suffix = %q", got)
-	}
-	for _, pair := range [][2]string{{"DCIM/File.TXT", "dcim/file.txt"}, {"Σ", "ς"}, {"K", "K"}} {
-		if foldCase(pair[0]) != foldCase(pair[1]) {
-			t.Errorf("foldCase(%q) != foldCase(%q)", pair[0], pair[1])
-		}
-	}
-	if foldCase("a.txt") == foldCase("b.txt") {
-		t.Error("distinct names fold equal")
-	}
-}
-
 func TestAcquireLogicalOnNoExecDeviceUsesShell(t *testing.T) {
 	dev := logicalDevice()
 	dev.NoExec = true
@@ -643,7 +625,7 @@ func TestAcquireLogicalRecordsRemoteMetadata(t *testing.T) {
 }
 
 // plantCollisions makes the local names of the second file collide on disk the
-// way an NTFS 8.3 alias or an APFS normalization alias would: localPaths knows
+// way an NTFS 8.3 alias or an APFS normalization alias would: LocalPaths knows
 // nothing about them, so only the exclusive create can notice. Planting
 // happens from the progress callback, i.e. after the first file is captured
 // and before the second one is created. The returned func removes the planted
@@ -719,7 +701,7 @@ func TestAcquireLogicalSkipsFileWhenEveryLocalNameCollides(t *testing.T) {
 	d := findDevice(t, fakeServer(t, twoFileDevice()), "PX1")
 	names := []string{"b.txt"}
 	for n := 2; n <= maxNameRetries+1; n++ {
-		names = append(names, withSuffix("b.txt", n, false))
+		names = append(names, fmt.Sprintf("b~%d.txt", n))
 	}
 	progress, cleanup := plantCollisions(t, c, names)
 	err := d.AcquireLogical(context.Background(), c, device.LogicalOptions{}, progress)

@@ -17,6 +17,11 @@ type Source struct {
 	RemoteMode  uint32 `json:"remote_mode,omitempty"`
 	RemoteMTime string `json:"remote_mtime,omitempty"`
 	RemoteSize  int64  `json:"remote_size,omitempty"`
+	// Import: examiner-side source path and 1-based segment number.
+	OriginalPath string `json:"original_path,omitempty"`
+	Segment      int    `json:"segment,omitempty"`
+	// Extract / unallocated: how the artifact was derived from another one.
+	Derived *Derivation `json:"derived,omitempty"`
 }
 
 // ManifestRecord is one line of manifest.jsonl and one row of artifacts.
@@ -67,4 +72,32 @@ func readManifest(path string) ([]ManifestRecord, error) {
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+// MaxInlineRuns is the most runs embedded in a Derivation; more go to a runs sidecar artifact.
+const MaxInlineRuns = 4096
+
+// Run is a byte range of a parent image. Offset -1 marks a sparse hole.
+type Run struct {
+	Offset int64 `json:"offset"`
+	Length int64 `json:"length"`
+}
+
+// Derivation records how an artifact was produced from another artifact.
+type Derivation struct {
+	ParentID         string            `json:"parent_id"`
+	ParentSHA256     string            `json:"parent_sha256"`
+	ParentIncomplete bool              `json:"parent_incomplete,omitempty"`
+	Partition        int               `json:"partition"`        // 0 = whole image
+	PartitionOffset  int64             `json:"partition_offset"` // bytes into the image
+	FSType           string            `json:"fs_type,omitempty"`
+	FSPath           string            `json:"fs_path,omitempty"`
+	FSID             string            `json:"fs_id,omitempty"`
+	Mode             uint32            `json:"mode,omitempty"`
+	UID              uint32            `json:"uid,omitempty"`
+	GID              uint32            `json:"gid,omitempty"`
+	Times            map[string]string `json:"times,omitempty"` // RFC 3339
+	Encrypted        bool              `json:"encrypted,omitempty"`
+	Runs             []Run             `json:"runs,omitempty"`          // image-relative byte runs (at most MaxInlineRuns)
+	RunsArtifact     string            `json:"runs_artifact,omitempty"` // id of a runs sidecar artifact
 }
