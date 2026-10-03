@@ -15,7 +15,7 @@ Status values: `Not started` · `Spec` · `Planned` · `In progress` · `Done`
 | # | Sub-project | Scope | Depends on | Status |
 |---|---|---|---|---|
 | 1 | Foundation + Acquisition | Case/evidence core (hash-chained audit log, manifest, `artifacts.db`, verify), device abstraction, USB serial transport + raw console, Android ADB (info, pull/push, logical, rooted partition imaging), iOS (info, AFC pull, logical backup), CLI | — | Done |
-| 2 | Image & filesystem layer | Open raw/dd and E01 images; GPT/MBR; read ext4, F2FS, APFS, HFS+, FAT, exFAT; expose unallocated space | 1 | Not started |
+| 2 | Image & filesystem layer | Open raw/dd and E01 images; GPT/MBR; read ext4, F2FS, APFS, HFS+, FAT, exFAT; expose unallocated space | 1 | In progress |
 | 3 | Deleted data recovery | SQLite freelist/WAL/journal record recovery; signature-based file carving; slack space; ext4 journal | 2 | Not started |
 | 4 | Artifact parsers (plugin system) | SMS/MMS, calls, contacts, calendar, browser history, WhatsApp, Telegram, Signal (where decryptable), Instagram and others, as plugins writing to `artifacts.db` | 1, 2 | Not started |
 | 5 | Unified artifact database | Indexed store of all parsed records with provenance (artifact, path, offset, deleted flag); full-text keyword search | 1 | Not started |
@@ -45,3 +45,4 @@ Specs and plans live in `docs/superpowers/` (gitignored, local only).
 | # | Spec | Plan |
 |---|---|---|
 | 1 | `docs/superpowers/specs/2026-10-02-foundation-acquisition-design.md` | `docs/superpowers/plans/2026-10-02-1a-foundation.md`, `…-1b-serial.md`, `…-1c-android.md`, `…-1d-ios.md` |
+| 2 | `docs/superpowers/specs/2026-10-03-image-filesystem-design.md` | `docs/superpowers/plans/2026-10-03-2a-foundation.md`, then `…-2b-ext4.md`, `…-2c-fat-exfat.md`, `…-2d-f2fs.md`, `…-2e-ewf.md`, `…-2f-apfs.md`, `…-2g-hfsplus.md` |
