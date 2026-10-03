@@ -116,15 +116,22 @@ func newAndroidImageCmd(d Deps, opts *rootOptions) *cobra.Command {
 		}
 		defer func() { _ = c.Close() }()
 		details := map[string]any{"partition": partition}
+		// A resolution failure (not rooted, no such partition, transport error)
+		// is returned from inside the acquisition so that it is audited as
+		// acquire.start + acquire.error: the root probe already ran on the device.
+		var resolveErr error
 		if r, ok := im.(partitionResolver); ok {
-			p, err := r.ResolvePartition(cmd.Context(), partition)
-			if err != nil {
-				return err
+			if p, err := r.ResolvePartition(cmd.Context(), partition); err != nil {
+				resolveErr = err
+			} else {
+				details["block_path"], details["expected_size"] = p.Path, p.Size // -1: unknown
 			}
-			details["block_path"], details["expected_size"] = p.Path, p.Size // -1: unknown
 		}
 		var rec evidence.ManifestRecord
 		err = device.RunAcquisition(c, dv.ID(), "physical", details, func(acq string) error {
+			if resolveErr != nil {
+				return resolveErr
+			}
 			var err error
 			rec, err = device.ImageToCase(cmd.Context(), c, im, dv.ID(), acq, partition, newProgress(d.Err, partition))
 			return err

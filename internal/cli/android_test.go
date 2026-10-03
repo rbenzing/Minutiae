@@ -196,3 +196,30 @@ func TestDevicesErrorColumnIsOneLine(t *testing.T) {
 		t.Fatalf("devices: %d %q", code, out)
 	}
 }
+
+func TestAndroidImageResolveFailureIsAudited(t *testing.T) {
+	d, _ := androidDeps(t, cliPixel()) // not rooted
+	c := newCLICase(t)
+	if code, out := run(t, d, "android", "image", "--case", c, "--partition", "boot"); code != ExitDevice {
+		t.Fatalf("image on a non-rooted device: code %d, want %d: %s", code, ExitDevice, out)
+	}
+	entries, err := evidence.ReadAuditEntries(filepath.Join(c, "audit.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var start, failed map[string]any
+	for _, e := range entries {
+		switch e.Action {
+		case "acquire.start":
+			start = e.Details
+		case "acquire.error":
+			failed = e.Details
+		}
+	}
+	if start == nil || start["type"] != "physical" || start["partition"] != "boot" {
+		t.Fatalf("acquire.start = %v", start)
+	}
+	if failed == nil || failed["acquisition_id"] != start["acquisition_id"] || !strings.Contains(fmt.Sprint(failed["error"]), "root") {
+		t.Fatalf("acquire.error = %v", failed)
+	}
+}
