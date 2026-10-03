@@ -1,0 +1,166 @@
+package examine_test
+
+import (
+	"context"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/rbenzing/minutiae/internal/examine"
+)
+
+func auditText(t *testing.T, caseDir string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(caseDir, "audit.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func TestImportRecordsOriginalAndSegments(t *testing.T) {
+	c := newCase(t)
+	data := []byte(strings.Repeat("0123456789abcdef", 100))
+	paths := writeSegments(t, data, 2)
+	var progressed, total int64
+	recs, err := examine.Import(context.Background(), c, "img", paths, func(done, tot int64) { progressed, total = done, tot })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 {
+		t.Fatalf("records = %d, want 2", len(recs))
+	}
+	if progressed != int64(len(data)) || total != int64(len(data)) {
+		t.Errorf("progress = %d/%d, want %d/%d", progressed, total, len(data), len(data))
+	}
+	dir := path.Dir(recs[0].Path)
+	for i, r := range recs {
+		src, err := os.ReadFile(paths[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		st, err := os.Stat(paths[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.Source.Kind != "import" || r.Source.Segment != i+1 || r.Source.DeviceID != "img" {
+			t.Errorf("record %d source = %+v", i, r.Source)
+		}
+		if r.Source.OriginalPath != paths[i] || !filepath.IsAbs(r.Source.OriginalPath) {
+			t.Errorf("OriginalPath = %q, want absolute %q", r.Source.OriginalPath, paths[i])
+		}
+		if r.Source.RemoteSize != int64(len(src)) || r.Source.RemoteMTime != st.ModTime().UTC().Format(time.RFC3339) {
+			t.Errorf("remote size/mtime = %d / %q", r.Source.RemoteSize, r.Source.RemoteMTime)
+		}
+		if r.SHA256 != sha256hex(src) || r.Size != int64(len(src)) || r.Incomplete {
+			t.Errorf("record %d hash/size/incomplete wrong: %+v", i, r)
+		}
+		if path.Dir(r.Path) != dir || path.Base(r.Path) != "disk.00"+string(rune('1'+i)) {
+			t.Errorf("record %d path = %q (dir %q)", i, r.Path, dir)
+		}
+		if path.Base(path.Dir(r.Path)) != "image" {
+			t.Errorf("record %d not under image/: %q", i, r.Path)
+		}
+	}
+	log := auditText(t, c.Dir)
+	for _, want := range []string{`"action":"acquire.start"`, `"type":"import"`, `"action":"acquire.end"`} {
+		if !strings.Contains(log, want) {
+			t.Errorf("audit lacks %s:\n%s", want, log)
+		}
+	}
+}
+
+func TestImportCancelledKeepsPartial(t *testing.T) {
+	c := newCase(t)
+	big := make([]byte, 4<<20)
+	p := writeSegments(t, big, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	recs, err := examine.Import(ctx, c, "img", p, func(done, _ int64) {
+		if done > 0 {
+			cancel()
+		}
+	})
+	if err == nil {
+		t.Fatal("Import returned nil after cancellation")
+	}
+	if len(recs) != 1 || !recs[0].Incomplete || recs[0].Size <= 0 || recs[0].Size >= int64(len(big)) {
+		t.Fatalf("records = %+v, want one partial incomplete artifact", recs)
+	}
+	if log := auditText(t, c.Dir); !strings.Contains(log, `"action":"acquire.error"`) {
+		t.Errorf("audit lacks acquire.error:\n%s", log)
+	}
+
+	// An already-cancelled context still audits and keeps an (empty) incomplete artifact.
+	recs, err = examine.Import(ctx, c, "img", writeSegments(t, big, 1), nil)
+	if err == nil || len(recs) != 1 || !recs[0].Incomplete {
+		t.Errorf("pre-cancelled: recs=%+v err=%v", recs, err)
+	}
+}
+
+func TestImportRefusesInsideCase(t *testing.T) {
+	c := newCase(t)
+	inside := filepath.Join(c.Dir, "notes.bin")
+	if err := os.WriteFile(inside, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := examine.Import(context.Background(), c, "img", []string{inside}, nil); err == nil || !strings.Contains(err.Error(), "cannot import from inside the case") {
+		t.Fatalf("Import(inside case) = %v", err)
+	}
+	// A relative path that resolves inside the case is also refused.
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(wd) })
+	if err := os.Chdir(c.Dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := examine.Import(context.Background(), c, "img", []string{"notes.bin"}, nil); err == nil || !strings.Contains(err.Error(), "cannot import from inside the case") {
+		t.Fatalf("Import(relative inside case) = %v", err)
+	}
+	if recs, _ := c.Manifest(); len(recs) != 0 {
+		t.Errorf("manifest has %d records after refused imports", len(recs))
+	}
+}
+
+func TestImportRefusesBadInput(t *testing.T) {
+	c := newCase(t)
+	dir := t.TempDir()
+	good := writeSegments(t, []byte("data"), 1)[0]
+	cases := map[string][]string{
+		"directory": {dir},
+		"missing":   {filepath.Join(dir, "nope")},
+		"none":      {},
+		"mixed":     {good, dir},
+	}
+	for name, paths := range cases {
+		if _, err := examine.Import(context.Background(), c, "img", paths, nil); err == nil {
+			t.Errorf("%s: Import succeeded", name)
+		}
+	}
+	if _, err := examine.Import(context.Background(), c, "", []string{good}, nil); err == nil {
+		t.Error("empty device id accepted")
+	}
+	if recs, _ := c.Manifest(); len(recs) != 0 {
+		t.Errorf("manifest has %d records after refused imports (validation must precede any write)", len(recs))
+	}
+}
+
+func TestImportSameBaseNameInDifferentDirs(t *testing.T) {
+	c := newCase(t)
+	a, b := t.TempDir(), t.TempDir()
+	pa, pb := filepath.Join(a, "disk.img"), filepath.Join(b, "disk.img")
+	for _, p := range []string{pa, pb} {
+		if err := os.WriteFile(p, []byte(p), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recs, err := examine.Import(context.Background(), c, "img", []string{pa, pb}, nil)
+	if err != nil || len(recs) != 2 || recs[0].Path == recs[1].Path {
+		t.Fatalf("Import = %+v, %v", recs, err)
+	}
+}
