@@ -822,3 +822,55 @@ func TestExtractFromSplitImageRecordsAllParentSegments(t *testing.T) {
 	}
 	verifyOK(t, c)
 }
+
+func TestExtractCaseWriteFailureIsNeverDowngradedToWarning(t *testing.T) {
+	c := newCase(t)
+	manifest := filepath.Join(c.Dir, "manifest.jsonl")
+	t.Cleanup(func() { _ = os.Chmod(manifest, 0o600) })
+	// While /a.txt is being read it hits a skippable (corrupt) error; at the
+	// same time the manifest becomes unwritable, so keeping the partial
+	// artifact fails. That must abort the run, not become a warning.
+	s, _ := sessionHook(t, c, hookFS{mapFile: func(e filesys.Entry, f filesys.File) filesys.File {
+		if e.Name == "a.txt" {
+			if err := os.Chmod(manifest, 0o400); err != nil {
+				t.Fatal(err)
+			}
+			return failingFile{File: f, after: blk}
+		}
+		return f
+	}}, 0,
+		fstest.Node{Path: "/a.txt", Data: pattern(4*blk, 1)},
+		fstest.Node{Path: "/b.txt", Data: []byte("later")})
+	if f, err := os.OpenFile(manifest, os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
+		_ = f.Close()
+	}
+	sum, err := s.Extract(context.Background(), examine.ExtractOptions{Partition: -1, Paths: []string{"/"}, Recursive: true})
+	if probe, perr := os.OpenFile(manifest, os.O_APPEND|os.O_WRONLY, 0o600); perr == nil {
+		_ = probe.Close()
+		t.Skip("manifest stays writable despite chmod 0400 (running as a privileged user)")
+	}
+	if err == nil {
+		t.Fatalf("Extract succeeded: %+v", sum)
+	}
+	var cw interface{ Unwrap() error }
+	if !errors.As(err, &cw) {
+		t.Errorf("err = %v", err)
+	}
+	if sum.Files != 0 || sum.Skipped != 0 {
+		t.Errorf("summary = %+v, want no file counted and no warning", sum)
+	}
+	for _, r := range sum.Artifacts {
+		if r.Source.RemotePath == "/b.txt" {
+			t.Errorf("run continued after the case failure: %+v", sum.Artifacts)
+		}
+	}
+	if ws := auditByAction(t, c, "analysis.warning"); len(ws) != 0 {
+		t.Errorf("warnings = %+v", ws)
+	}
+	if es := auditByAction(t, c, "analysis.error"); len(es) != 1 {
+		t.Errorf("analysis.error entries = %d", len(es))
+	}
+	if len(auditByAction(t, c, "analysis.end")) != 0 {
+		t.Error("analysis.end written after a failure")
+	}
+}

@@ -218,3 +218,32 @@ func TestExportUnallocatedDropsInvalidFSRuns(t *testing.T) {
 	}
 	verifyOK(t, c2)
 }
+
+func TestExportUnallocatedMergesOverlappingFSRuns(t *testing.T) {
+	c := newCase(t)
+	var orig []filesys.Run
+	s, img := sessionHook(t, c, hookFS{mapUnalloc: func(rs []filesys.Run) []filesys.Run {
+		orig = append([]filesys.Run(nil), rs...)
+		// A hostile filesystem repeats and overlaps its free space, in unsorted order.
+		return append([]filesys.Run{{Offset: rs[0].Offset + 10, Length: 100}}, append(rs, rs[0], filesys.Run{Offset: rs[0].Offset, Length: 0})...)
+	}}, 5, fstest.Node{Path: "/a", Data: pattern(2*blk, 1)})
+	sum, err := s.ExportUnallocated(context.Background(), examine.UnallocOptions{Partition: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := s.Table.Partitions[0].Start
+	var want []evidence.Run
+	var total int64
+	for _, r := range orig {
+		want = append(want, evidence.Run{Offset: r.Offset + start, Length: r.Length})
+		total += r.Length
+	}
+	bin := checkUnalloc(t, c, img, sum, want, "p1-mtfs")
+	if bin.Size != total {
+		t.Errorf("unallocated.bin = %d bytes, want the %d bytes of the distinct free space", bin.Size, total)
+	}
+	ws := auditByAction(t, c, "analysis.warning")
+	if len(ws) != 1 || !strings.Contains(ws[0].Details["reason"].(string), "ignored 1 empty") || strings.Contains(ws[0].Details["reason"].(string), "ignored 1 unallocated") {
+		t.Errorf("warnings = %+v", ws)
+	}
+}

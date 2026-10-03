@@ -182,7 +182,7 @@ func (x *extractor) file(p string, e filesys.Entry) error {
 	d.Mode, d.UID, d.GID = e.Mode, e.UID, e.GID
 	d.Times = timesMap(e.Times)
 	d.Encrypted = e.Encrypted
-	runs, runsErr := imageRuns(f.Runs(), size, x.part)
+	runs, runsErr := imageRuns(f.Runs(), size, x.part, x.s.Image.Size())
 	if runsErr != nil {
 		// Never record wrong provenance: no runs at all, content still extracted.
 		if err := x.a.warn(p, "no runs recorded (content is still extracted): "+runsErr.Error()); err != nil {
@@ -202,8 +202,8 @@ func (x *extractor) file(p string, e filesys.Entry) error {
 		return x.a.warn(p, "no usable local directory name: "+err.Error())
 	}
 	var (
-		rec  evidence.ManifestRecord
-		cerr error
+		rec     evidence.ManifestRecord
+		readErr error
 	)
 	for attempt := 0; ; attempt++ {
 		rel, err := x.lp.File(dir, e.Name)
@@ -211,18 +211,17 @@ func (x *extractor) file(p string, e filesys.Entry) error {
 			return x.a.warn(p, "no usable local name: "+err.Error())
 		}
 		if useSidecar {
-			srec, err := x.s.writeRunsSidecar(x.a, rel+".runs.jsonl", runs, p, d)
-			if err == nil {
-				d.RunsArtifact = srec.ID
-			}
-			cerr = err
+			err = x.s.writeRunsSidecar(x.a, rel+".runs.jsonl", runs, p, d)
 		}
-		if cerr == nil {
-			rec, cerr = x.s.Case.Capture(deviceID, x.a.sum.AnalysisID, rel, src, func(w io.Writer) error {
+		if err == nil {
+			rec, readErr, err = x.s.capture(x.a, rel, src, func(w io.Writer) error {
 				return x.copyFile(w, f, size)
 			})
 		}
-		if !errors.Is(cerr, evidence.ErrArtifactExists) {
+		if !errors.Is(err, evidence.ErrArtifactExists) {
+			if err != nil {
+				return err // the case itself failed: never downgraded to a warning
+			}
 			break
 		}
 		// The examiner's filesystem aliases the name in a way LocalPaths does
@@ -230,20 +229,45 @@ func (x *extractor) file(p string, e filesys.Entry) error {
 		// APFS NFC/NFD). The exclusive create failed before any byte was read,
 		// the colliding name stays reserved and the next candidate is tried.
 		if attempt+1 >= maxNameAttempts {
-			return x.a.warn(p, fmt.Sprintf("no free local name after %d attempts: %v", attempt+1, cerr))
+			return x.a.warn(p, fmt.Sprintf("no free local name after %d attempts: %v", attempt+1, err))
 		}
-		cerr = nil
 	}
-	x.a.add(rec)
 	switch {
-	case cerr == nil:
+	case readErr == nil:
 		x.a.sum.Files++
 		x.a.sum.Bytes += rec.Size
 		return nil
-	case rec.ID == "" || fatal(x.ctx, cerr) || !skippable(cerr):
-		return cerr
+	case fatal(x.ctx, readErr) || !skippable(readErr):
+		return readErr
 	}
-	return x.a.warn(p, fmt.Sprintf("read failed after %d of %d bytes (partial artifact kept, flagged incomplete): %v", rec.Size, size, cerr))
+	return x.a.warn(p, fmt.Sprintf("read failed after %d of %d bytes (partial artifact kept, flagged incomplete): %v", rec.Size, size, readErr))
+}
+
+// capture writes one artifact: fill streams its content. fillErr is the error
+// of fill alone (the artifact is then kept, flagged incomplete), so the caller
+// classifies it without any case failure mixed in. err is a failure of the
+// case itself (creating the artifact, closing or aborting it, recording it in
+// the manifest, database or audit log) and is a *caseWriteError, except
+// evidence.ErrArtifactExists, which is returned as is so the caller can try
+// another name.
+func (s *Session) capture(a *analysis, rel string, src evidence.Source, fill func(io.Writer) error) (rec evidence.ManifestRecord, fillErr, err error) {
+	w, err := s.Case.NewArtifact(src.DeviceID, a.sum.AnalysisID, rel, src)
+	if errors.Is(err, evidence.ErrArtifactExists) {
+		return rec, nil, err
+	}
+	if err != nil {
+		return rec, nil, &caseWriteError{err}
+	}
+	if fillErr = fill(w); fillErr == nil {
+		rec, err = w.Close()
+	} else {
+		rec, err = w.Abort(fillErr)
+	}
+	a.add(rec)
+	if err != nil {
+		return rec, fillErr, &caseWriteError{err}
+	}
+	return rec, fillErr, nil
 }
 
 // copyFile streams the content of f into w, checking ctx on every read.
@@ -281,9 +305,9 @@ func (s *Session) baseDerivation(part volume.Partition, fsType string) *evidence
 }
 
 // imageRuns validates the filesystem-relative runs of a file of size bytes and
-// converts them to image-relative ones (holes stay -1). No runs (inline
+// converts them to image-relative ones (holes stay -1). Every run must lie inside both the partition and the image. No runs (inline
 // content) yields none.
-func imageRuns(raw []filesys.Run, size int64, part volume.Partition) ([]evidence.Run, error) {
+func imageRuns(raw []filesys.Run, size int64, part volume.Partition, imageSize int64) ([]evidence.Run, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
@@ -301,6 +325,9 @@ func imageRuns(raw []filesys.Run, size int64, part volume.Partition) ([]evidence
 			if !ok {
 				return nil, fmt.Errorf("run offset %d + partition start %d overflows", r.Offset, part.Start)
 			}
+			if end, ok := filesys.AddOK(off, r.Length); !ok || end > imageSize {
+				return nil, fmt.Errorf("run %d+%d lies beyond the %d-byte image", off, r.Length, imageSize)
+			}
 			out = append(out, evidence.Run{Offset: off, Length: r.Length})
 		}
 	}
@@ -308,16 +335,22 @@ func imageRuns(raw []filesys.Run, size int64, part volume.Partition) ([]evidence
 }
 
 // writeRunsSidecar stores runs (one JSON evidence.Run per line) as a runs
-// artifact belonging to the derived file at fsPath.
-func (s *Session) writeRunsSidecar(a *analysis, rel string, runs []evidence.Run, fsPath string, d *evidence.Derivation) (evidence.ManifestRecord, error) {
+// artifact belonging to the derived file at fsPath and points d at it. The
+// content is generated in memory, so any failure writing it is a case failure.
+func (s *Session) writeRunsSidecar(a *analysis, rel string, runs []evidence.Run, fsPath string, d *evidence.Derivation) error {
 	sd := *d
 	sd.Runs, sd.RunsArtifact = nil, ""
 	src := evidence.Source{Kind: "runs", DeviceID: s.Parent.Source.DeviceID, RemotePath: fsPath, Derived: &sd}
-	rec, err := s.Case.Capture(src.DeviceID, a.sum.AnalysisID, rel, src, func(w io.Writer) error {
+	rec, fillErr, err := s.capture(a, rel, src, func(w io.Writer) error {
 		return writeJSONLines(w, len(runs), func(i int) any { return runs[i] })
 	})
-	a.add(rec)
-	return rec, err
+	if err == nil && fillErr != nil {
+		err = &caseWriteError{fillErr}
+	}
+	if err == nil {
+		d.RunsArtifact = rec.ID
+	}
+	return err
 }
 
 // writeJSONLines writes n JSON values, one per line.

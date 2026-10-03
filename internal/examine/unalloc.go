@@ -59,12 +59,12 @@ func (s *Session) ExportUnallocated(ctx context.Context, o UnallocOptions) (Summ
 		}
 		var total int64
 		for _, r := range runs {
-			total += r.Length // cannot overflow: each run ends inside the image
+			total += r.Length // the runs are disjoint and inside the image, so the sum is at most the image size
 		}
 
 		d := s.baseDerivation(part, fsType)
 		sd := *d
-		sidecar, err := s.Case.Capture(deviceID, a.sum.AnalysisID, dir+"/unallocated.runs.jsonl",
+		sidecar, fillErr, err := s.capture(a, dir+"/unallocated.runs.jsonl",
 			evidence.Source{Kind: "runs", DeviceID: deviceID, Derived: &sd}, func(w io.Writer) error {
 				var off int64
 				return writeJSONLines(w, len(runs), func(i int) any {
@@ -73,14 +73,16 @@ func (s *Session) ExportUnallocated(ctx context.Context, o UnallocOptions) (Summ
 					return l
 				})
 			})
-		a.add(sidecar)
 		if err != nil {
 			return err
+		}
+		if fillErr != nil { // generated in memory: only the case can fail here
+			return &caseWriteError{fillErr}
 		}
 
 		d.RunsArtifact = sidecar.ID
 		var done int64
-		bin, err := s.Case.Capture(deviceID, a.sum.AnalysisID, dir+"/unallocated.bin",
+		bin, fillErr, err := s.capture(a, dir+"/unallocated.bin",
 			evidence.Source{Kind: "unallocated", DeviceID: deviceID, Derived: d}, func(w io.Writer) error {
 				tw := &trackWriter{w: w}
 				for _, r := range runs {
@@ -101,9 +103,11 @@ func (s *Session) ExportUnallocated(ctx context.Context, o UnallocOptions) (Summ
 				}
 				return nil
 			})
-		a.add(bin)
 		if err != nil {
 			return err
+		}
+		if fillErr != nil {
+			return fillErr // the partial unallocated.bin is kept, flagged incomplete
 		}
 		a.sum.Files++
 		a.sum.Bytes += bin.Size
@@ -111,31 +115,38 @@ func (s *Session) ExportUnallocated(ctx context.Context, o UnallocOptions) (Summ
 	})
 }
 
-// unallocatedRuns returns the image-relative runs to export, dropping (with
-// one analysis.warning) any run the source reports that is empty, negative
-// or outside its container, so the recorded provenance is never wrong.
+// unallocatedRuns returns the image-relative runs to export: sorted, merged
+// (a hostile filesystem cannot inflate the export with overlapping or
+// duplicate runs) and each inside both its container (the partition, or the
+// image in volume mode) and the image. Runs that are not are dropped, and one
+// analysis.warning says how many, so the recorded provenance is never wrong.
 func (s *Session) unallocatedRuns(a *analysis, fsys filesys.FileSystem, part volume.Partition, volumeMode bool) ([]evidence.Run, error) {
 	var (
-		out      []evidence.Run
+		valid    []filesys.Run
+		empty    int
 		bad      int
 		firstBad string
 	)
 	imageSize := s.Image.Size()
-	check := func(r evidence.Run, limit, base int64) {
+	check := func(r filesys.Run, limit, base int64) {
+		if r.Length == 0 {
+			empty++
+			return
+		}
 		off, ok1 := filesys.AddOK(r.Offset, base)
 		end, ok2 := filesys.AddOK(off, r.Length)
-		if r.Offset < 0 || r.Length <= 0 || !ok1 || !ok2 || end-base > limit || end > imageSize {
+		if r.Offset < 0 || r.Length < 0 || !ok1 || !ok2 || end-base > limit || end > imageSize {
 			if bad == 0 {
 				firstBad = fmt.Sprintf("%d+%d", r.Offset, r.Length)
 			}
 			bad++
 			return
 		}
-		out = append(out, evidence.Run{Offset: off, Length: r.Length})
+		valid = append(valid, filesys.Run{Offset: off, Length: r.Length})
 	}
 	if volumeMode {
 		for _, r := range s.Table.Unallocated {
-			check(evidence.Run{Offset: r.Offset, Length: r.Length}, imageSize, 0)
+			check(filesys.Run{Offset: r.Offset, Length: r.Length}, imageSize, 0)
 		}
 	} else {
 		raw, err := fsys.Unallocated()
@@ -143,13 +154,23 @@ func (s *Session) unallocatedRuns(a *analysis, fsys filesys.FileSystem, part vol
 			return nil, fmt.Errorf("list unallocated space of partition %d: %w", part.Index, err)
 		}
 		for _, r := range raw {
-			check(evidence.Run{Offset: r.Offset, Length: r.Length}, part.Length, part.Start)
+			check(r, part.Length, part.Start)
 		}
 	}
-	if bad > 0 {
-		if err := a.warn("", fmt.Sprintf("ignored %d unallocated run(s) outside the %s (first: %s)", bad, containerName(volumeMode), firstBad)); err != nil {
+	if bad > 0 || empty > 0 {
+		reason := fmt.Sprintf("ignored %d unallocated run(s) outside the %s or with a negative length (first: %s) and %d empty run(s)",
+			bad, containerName(volumeMode), firstBad, empty)
+		if bad == 0 {
+			reason = fmt.Sprintf("ignored %d empty unallocated run(s)", empty)
+		}
+		if err := a.warn("", reason); err != nil {
 			return nil, err
 		}
+	}
+	merged := filesys.MergeRuns(valid)
+	out := make([]evidence.Run, len(merged))
+	for i, r := range merged {
+		out[i] = evidence.Run{Offset: r.Offset, Length: r.Length}
 	}
 	return out, nil
 }
