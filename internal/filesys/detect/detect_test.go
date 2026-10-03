@@ -111,14 +111,22 @@ func TestDetectRecoversPanic(t *testing.T) {
 		t.Errorf("CorruptError = %+v", ce)
 	}
 
-	// A panic in Probe is a non-match, not a crash.
+	// A panic in Probe is reported by OpenWith as a CorruptError (not swallowed
+	// as "no match", and not a crash); ProbeWith treats it as a non-match.
 	panicProbe := detect.Driver{
 		Name:  "evilprobe",
 		Probe: func(io.ReaderAt, int64) bool { panic("probe boom") },
 		Open:  fstest.Open,
 	}
-	if _, err := detect.OpenWith([]detect.Driver{panicProbe, mtfsDriver()}, bytes.NewReader(img), int64(len(img))); err != nil {
-		t.Errorf("a panicking Probe must fall through to the next driver: %v", err)
+	fsys, err = detect.OpenWith([]detect.Driver{panicProbe, mtfsDriver()}, bytes.NewReader(img), int64(len(img)))
+	if fsys != nil || !errors.As(err, &ce) || !errors.Is(err, filesys.ErrCorrupt) {
+		t.Fatalf("OpenWith(panicking Probe) = %v, %v; want *CorruptError", fsys, err)
+	}
+	if ce.Structure != "evilprobe" || ce.Reason != "probe panic: probe boom" {
+		t.Errorf("CorruptError = %+v", ce)
+	}
+	if name, ok := detect.ProbeWith([]detect.Driver{panicProbe, mtfsDriver()}, bytes.NewReader(img), int64(len(img))); !ok || name != "mtfs" {
+		t.Errorf("ProbeWith = %q, %v; want the panicking driver skipped", name, ok)
 	}
 
 	// (nil, nil) from a driver is reported, not returned as a nil filesystem.
@@ -128,5 +136,21 @@ func TestDetectRecoversPanic(t *testing.T) {
 	}
 	if fsys, err := detect.OpenWith([]detect.Driver{nilFS}, bytes.NewReader(img), int64(len(img))); fsys != nil || !errors.Is(err, filesys.ErrCorrupt) {
 		t.Errorf("OpenWith(nil,nil driver) = %v, %v", fsys, err)
+	}
+}
+
+func TestProbeWithSkipsDriversWithoutOpen(t *testing.T) {
+	img := image()
+	noOpen := detect.Driver{Name: "noopen", Probe: func(io.ReaderAt, int64) bool { return true }}
+	r := bytes.NewReader(img)
+	if name, ok := detect.ProbeWith([]detect.Driver{noOpen}, r, int64(len(img))); ok {
+		t.Errorf("ProbeWith matched a driver without Open: %q", name)
+	}
+	if name, ok := detect.ProbeWith([]detect.Driver{noOpen, mtfsDriver()}, r, int64(len(img))); !ok || name != "mtfs" {
+		t.Errorf("ProbeWith = %q, %v; want mtfs", name, ok)
+	}
+	// Consistent with OpenWith, which also skips it.
+	if _, err := detect.OpenWith([]detect.Driver{noOpen}, r, int64(len(img))); !errors.Is(err, filesys.ErrUnsupported) {
+		t.Errorf("OpenWith err = %v", err)
 	}
 }

@@ -28,11 +28,15 @@ var Drivers = []Driver{}
 // Probe returns the name of the first driver in Drivers that matches.
 func Probe(r io.ReaderAt, size int64) (string, bool) { return ProbeWith(Drivers, r, size) }
 
-// ProbeWith is Probe over an explicit driver list. A driver whose Probe
-// panics or is missing counts as a non-match.
+// ProbeWith is Probe over an explicit driver list. Like OpenWith it skips
+// drivers without Probe or Open. A driver whose Probe panics counts as a
+// non-match here; OpenWith is the call that surfaces the panic as an error.
 func ProbeWith(drivers []Driver, r io.ReaderAt, size int64) (string, bool) {
 	for _, d := range drivers {
-		if probe(d, r, size) {
+		if d.Open == nil {
+			continue
+		}
+		if ok, err := probe(d, r, size); err == nil && ok {
 			return d.Name, true
 		}
 	}
@@ -40,8 +44,9 @@ func ProbeWith(drivers []Driver, r io.ReaderAt, size int64) (string, bool) {
 }
 
 // Open probes and opens r with Drivers. When nothing matches the error wraps
-// filesys.ErrUnsupported ("no recognized filesystem"). A panic inside the
-// matching driver's Open is returned as a *filesys.CorruptError.
+// filesys.ErrUnsupported ("no recognized filesystem"). A panic inside a
+// driver's Probe or Open is returned as a *filesys.CorruptError (Reason
+// "probe panic: ..." or "parser panic: ...").
 func Open(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
 	return OpenWith(Drivers, r, size)
 }
@@ -51,24 +56,31 @@ func Open(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
 // Open fails.
 func OpenWith(drivers []Driver, r io.ReaderAt, size int64) (filesys.FileSystem, error) {
 	for _, d := range drivers {
-		if d.Open == nil || !probe(d, r, size) {
+		if d.Open == nil {
 			continue
 		}
-		return open(d, r, size)
+		ok, err := probe(d, r, size)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			return open(d, r, size)
+		}
 	}
 	return nil, fmt.Errorf("%w: no recognized filesystem", filesys.ErrUnsupported)
 }
 
-func probe(d Driver, r io.ReaderAt, size int64) (ok bool) {
+func probe(d Driver, r io.ReaderAt, size int64) (ok bool, err error) {
 	if d.Probe == nil {
-		return false
+		return false, nil
 	}
 	defer func() {
-		if recover() != nil {
+		if p := recover(); p != nil {
 			ok = false
+			err = &filesys.CorruptError{Structure: d.Name, Offset: -1, Reason: fmt.Sprintf("probe panic: %v", p)}
 		}
 	}()
-	return d.Probe(r, size)
+	return d.Probe(r, size), nil
 }
 
 func open(d Driver, r io.ReaderAt, size int64) (fsys filesys.FileSystem, err error) {

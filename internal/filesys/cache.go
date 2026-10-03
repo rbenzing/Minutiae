@@ -7,6 +7,12 @@ import (
 	"sync"
 )
 
+// Limits NewCachedReader clamps its parameters to.
+const (
+	MaxCacheBlockSize = 1 << 20
+	MaxCacheCapacity  = 4096
+)
+
 type cachedBlock struct {
 	idx  int64
 	data []byte // valid bytes of the block; shorter than the block size at the end of the source
@@ -26,15 +32,14 @@ type cachedReader struct {
 // bytes from r, evicting the least recently used when more than capacity
 // blocks are held. It is safe for concurrent use. Reads return exactly what r
 // returned: a block that r returned short is cached short, so no data past
-// the end of the source is ever invented. A blockSize or capacity below 1 is
-// treated as 512 or 1.
+// the end of the source is ever invented. Hostile parameters are clamped: blockSize
+// to [1, 1 MiB] (a value below 1 becomes 512) and capacity to [1, 4096].
 func NewCachedReader(r io.ReaderAt, blockSize int, capacity int) io.ReaderAt {
 	if blockSize < 1 {
 		blockSize = 512
 	}
-	if capacity < 1 {
-		capacity = 1
-	}
+	blockSize = min(blockSize, MaxCacheBlockSize)
+	capacity = min(max(capacity, 1), MaxCacheCapacity)
 	return &cachedReader{
 		src:       r,
 		blockSize: int64(blockSize),

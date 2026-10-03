@@ -332,6 +332,18 @@ func TestWalkOrderSkipDirAndCycle(t *testing.T) {
 		t.Errorf("after SkipDir(/a/a.txt): %s, want %s", paths(got), want)
 	}
 
+	// SkipDir for a deleted directory is a no-op for its (never visited)
+	// children and the walk continues with its siblings.
+	got = walkAll(t, fsys, func(p string, _ filesys.Entry, _ error) error {
+		if p == "/d" {
+			return filesys.SkipDir
+		}
+		return nil
+	})
+	if want := "/a /a/a.txt /a/b /a/b/c /b.txt /d /z"; paths(got) != want {
+		t.Errorf("after SkipDir(/d): %s, want %s", paths(got), want)
+	}
+
 	// A callback error stops the walk and is returned.
 	stop := errors.New("stop")
 	var seen []string
@@ -458,6 +470,21 @@ func TestCheckRuns(t *testing.T) {
 		}
 		if err != nil && !errors.Is(err, filesys.ErrCorrupt) {
 			t.Errorf("%s: err %v is not ErrCorrupt", c.name, err)
+		}
+	}
+}
+
+func TestCachedReaderClampsHostileParameters(t *testing.T) {
+	src := make([]byte, 5000)
+	newPRNG(8).Read(src)
+	for _, p := range [][2]int{{1 << 40, 1 << 40}, {-5, -5}, {0, 0}, {1, 1}} {
+		cached := filesys.NewCachedReader(bytes.NewReader(src), p[0], p[1])
+		buf := make([]byte, 700)
+		if n, err := cached.ReadAt(buf, 4500); n != 500 || !errors.Is(err, io.EOF) || !bytes.Equal(buf[:n], src[4500:]) {
+			t.Errorf("params %v: ReadAt = %d, %v", p, n, err)
+		}
+		if n, err := cached.ReadAt(buf, 100); n != 700 || err != nil || !bytes.Equal(buf, src[100:800]) {
+			t.Errorf("params %v: ReadAt = %d, %v", p, n, err)
 		}
 	}
 }
