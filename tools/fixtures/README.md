@@ -84,7 +84,8 @@ Fixture details worth knowing:
 
 - Long names, a lower-case 8.3 name (NTRes flags), a mixed-case long name, accents and CJK
   are in both. A non-ASCII byte in an 8.3-only name (an "OEM" name) is not in the
-  oracle: the codepage is not stored on the volume and the reader shows such bytes as Latin-1 or `?`.
+  oracle: the codepage is not stored on the volume, so the reader decodes bytes at or above 0x80
+  as code page 437 and keeps the raw bytes in `RawName`.
   A surrogate pair (an emoji) is only in the exFAT image: `mtools` cannot store one.
 - `/frag/c-large-fragmented.bin` is fragmented: a is written, b is written, a is
   deleted, c is written. On FAT32 `mtools` allocates from the FSInfo next-free hint, which
@@ -113,4 +114,6 @@ needs no image tools.
 1. Add `<name>.sh` taking the output directory as `$1`; source `lib.sh` and
    wrap commands whose invocation belongs in the oracle with `run`.
 2. Register it in `gen.sh`.
-3. Keep images small (a few KiB compressed, at most 16 MiB raw).
+3. Keep images small: a few hundred KiB compressed at most. The raw size is set by
+   the filesystem (the smallest FAT32 image is 34 MiB, see above; every other fixture
+   is at most 16 MiB raw).
