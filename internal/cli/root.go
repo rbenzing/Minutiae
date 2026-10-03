@@ -13,6 +13,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/android"
 	"github.com/rbenzing/minutiae/internal/android/adb"
 	"github.com/rbenzing/minutiae/internal/device"
+	"github.com/rbenzing/minutiae/internal/filesys/detect"
 	"github.com/rbenzing/minutiae/internal/ios"
 	"github.com/rbenzing/minutiae/internal/transport/serial"
 )
@@ -24,6 +25,9 @@ type Deps struct {
 	Err      io.Writer
 	Serial   serial.Provider
 	Registry *device.Registry
+	// FSDrivers overrides the filesystem drivers used by the image commands
+	// (tests inject fakes). nil = detect.Drivers.
+	FSDrivers []detect.Driver
 }
 
 // DefaultDeps wires the real process streams and device backends.
@@ -61,6 +65,7 @@ func newRootCmd(d Deps) *cobra.Command {
 	root.AddCommand(newSerialCmd(d, opts))
 	root.AddCommand(newAndroidCmd(d, opts))
 	root.AddCommand(newIOSCmd(d, opts))
+	root.AddCommand(newImageCmd(d, opts))
 	return root
 }
 

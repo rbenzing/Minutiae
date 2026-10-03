@@ -9,6 +9,8 @@ import (
 
 	"github.com/rbenzing/minutiae/internal/device"
 	"github.com/rbenzing/minutiae/internal/evidence"
+	"github.com/rbenzing/minutiae/internal/filesys"
+	"github.com/rbenzing/minutiae/internal/image"
 )
 
 // Process exit codes. Documented in the spec §8; scripts depend on them.
@@ -63,6 +65,14 @@ func isCobraUsageError(err error) bool {
 	return false
 }
 
+// imageErrors are problems with the content of an image (corrupt, unsupported
+// or encrypted structures, unknown artifacts): exit 1 with a message naming
+// the structure, not an integrity failure of the case itself.
+var imageErrors = []error{
+	filesys.ErrCorrupt, filesys.ErrUnsupported, filesys.ErrEncrypted, filesys.ErrDeleted,
+	image.ErrUnsupportedContainer, evidence.ErrUnknownArtifact,
+}
+
 var deviceErrors = []error{
 	device.ErrNotFound, device.ErrUnauthorized, device.ErrNotRooted,
 	device.ErrUnsupported, device.ErrDeviceWriteNotAllowed,
@@ -78,6 +88,11 @@ func ExitCode(err error) int {
 		return ExitUsage
 	case errors.Is(err, evidence.ErrIntegrity):
 		return ExitIntegrity
+	}
+	for _, ie := range imageErrors {
+		if errors.Is(err, ie) {
+			return ExitError
+		}
 	}
 	for _, de := range deviceErrors {
 		if errors.Is(err, de) {
