@@ -165,8 +165,11 @@ func TestReadDirFlagsDeletedEntries(t *testing.T) {
 			t.Fatalf("csum=%v: live %v dead %v", csum, live, dead)
 		}
 		g := byName(t, es, "gone.txt")
-		if g.ID != "inode:"+strconv.Itoa(int(ext4test.InodeNumber(1))) || g.Type != filesys.TypeFile || g.Size != 2000 {
+		if v, _ := attr(g, "inode"); v != strconv.Itoa(int(ext4test.InodeNumber(1))) || g.Type != filesys.TypeFile || g.Size != 2000 {
 			t.Errorf("gone.txt = %+v", g)
+		}
+		if !strings.HasPrefix(g.ID, "dirent:") {
+			t.Errorf("gone.txt ID %q, want the record's location (dirent:<block>:<offset>)", g.ID)
 		}
 		if g.Times.Deleted.T.IsZero() {
 			t.Error("gone.txt has no deletion time")

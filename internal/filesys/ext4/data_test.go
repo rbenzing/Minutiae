@@ -447,12 +447,18 @@ func TestOpenRefusals(t *testing.T) {
 	img := ext4test.Build(ext4test.Options{Extents: true}, files)
 	f := mustOpen(t, img)
 
-	// A deleted entry.
-	in, _ := f.Inode(ext4test.InodeNumber(2))
-	e := ext4.ToEntry("gone", nil, in)
-	e.Deleted = true
-	if _, err := f.Open(e); !errors.Is(err, filesys.ErrDeleted) {
+	// A deleted entry (its ID is the record's location), also with a forged
+	// Deleted=false: deleted-ness comes from the ID alone.
+	gone := byName(t, readDir(t, f, "/"), "gone")
+	if !gone.Deleted || !strings.HasPrefix(gone.ID, "dirent:") {
+		t.Fatalf("gone = %+v, want a deleted entry with a dirent: ID", gone)
+	}
+	if _, err := f.Open(gone); !errors.Is(err, filesys.ErrDeleted) {
 		t.Errorf("deleted entry: err = %v, want ErrDeleted", err)
+	}
+	gone.Deleted = false
+	if _, err := f.Open(gone); !errors.Is(err, filesys.ErrDeleted) {
+		t.Errorf("deleted entry with forged Deleted=false: err = %v, want ErrDeleted", err)
 	}
 	// Directories, by entry type and by the inode's own mode.
 	din, _ := f.Inode(ext4test.InodeNumber(1))

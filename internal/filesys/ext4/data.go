@@ -407,12 +407,14 @@ func parseInodeID(id string) (uint32, error) {
 }
 
 // Open opens a regular file or symlink. The content is the raw on-disk bytes:
-// an encrypted file yields ciphertext. A deleted entry yields
-// filesys.ErrDeleted; directories and special files filesys.ErrUnsupported.
+// an encrypted file yields ciphertext. Only e.ID is used: a "dirent:" ID (a
+// deleted entry) yields filesys.ErrDeleted, an "inode:<n>" ID re-reads inode n,
+// and the content is whatever that inode is now (directories and special files
+// yield filesys.ErrUnsupported). A forged Deleted, Type or Size on e is ignored.
 // Inline data and fast symlink targets are kept in metadata, so their Runs are
 // nil.
 func (f *FS) Open(e filesys.Entry) (filesys.File, error) {
-	if e.Deleted {
+	if isDirentID(e.ID) {
 		return nil, filesys.ErrDeleted
 	}
 	n, err := parseInodeID(e.ID)

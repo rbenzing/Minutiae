@@ -49,6 +49,24 @@ const (
 // inodeID is the Entry.ID of inode n.
 func inodeID(n uint32) string { return "inode:" + strconv.FormatUint(uint64(n), 10) }
 
+// direntPrefix starts the ID of a deleted directory entry. Such an entry is
+// identified by where its record lies, never by the inode it names (the inode
+// is reused, or unknown), so the ID alone says the entry is deleted.
+const direntPrefix = "dirent:"
+
+// direntID is the Entry.ID of the deleted record r: "dirent:<physical
+// block>:<offset>", or "dirent:inline:<dir inode>:<offset>" for an inline
+// directory.
+func direntID(r *dirRec) string {
+	if r.blk >= 0 {
+		return fmt.Sprintf("dirent:%d:%d", r.blk, r.off)
+	}
+	return fmt.Sprintf("dirent:inline:%d:%d", r.dirInode, r.off)
+}
+
+// isDirentID reports whether id names a deleted directory entry.
+func isDirentID(id string) bool { return strings.HasPrefix(id, direntPrefix) }
+
 // dirRec is one directory record found by a scan. name aliases the block
 // buffer; entries copy what they keep.
 type dirRec struct {
@@ -472,7 +490,11 @@ func (f *FS) dirEntry(r *dirRec, dirEnc bool, links map[uint32]string) filesys.E
 	var e filesys.Entry
 	if err != nil {
 		e = filesys.Entry{Name: name, RawName: raw, ID: inodeID(r.inode), Type: direntType(r.ftype)}
-		addAttr(&e, "inode", "unreadable")
+		if r.deleted {
+			addAttr(&e, "inode_unreadable", "true")
+		} else {
+			addAttr(&e, "inode", "unreadable")
+		}
 	} else {
 		e = toEntry(name, raw, in)
 		if in.mode&modeTypeMask == modeSymlink && !r.deleted {
@@ -495,7 +517,12 @@ func (f *FS) dirEntry(r *dirRec, dirEnc bool, links map[uint32]string) filesys.E
 	}
 	e.Encrypted = e.Encrypted || dirEnc
 	if r.deleted {
+		// The ID is the record's location, so Deleted is derivable from it
+		// (Open and ReadDir never trust the Entry's own Deleted field); the
+		// inode the record names, as of the scan, stays an attribute.
 		e.Deleted = true
+		e.ID = direntID(r)
+		addAttr(&e, "inode", strconv.FormatUint(uint64(r.inode), 10))
 		if err == nil && in.links > 0 && in.orphanNext == 0 && !r.wasLive {
 			addAttr(&e, "inode_reused", "true")
 		}
@@ -519,11 +546,10 @@ func (f *FS) dirEntry(r *dirRec, dirEnc bool, links map[uint32]string) filesys.E
 // inode-derived field is set.
 func unknownInodeEntry(r *dirRec, name string, raw []byte, dirEnc bool) filesys.Entry {
 	e := filesys.Entry{Name: name, RawName: raw, Type: direntType(r.ftype), Deleted: true, Encrypted: dirEnc}
+	e.ID = direntID(r)
 	if r.blk >= 0 {
-		e.ID = fmt.Sprintf("dirent:%d:%d", r.blk, r.off)
 		addAttr(&e, "dirent", fmt.Sprintf("%d:%d", r.blk, r.off))
 	} else {
-		e.ID = fmt.Sprintf("dirent:inline:%d:%d", r.dirInode, r.off)
 		addAttr(&e, "dirent", fmt.Sprintf("inline:%d", r.off))
 	}
 	addAttr(&e, "inode", "unknown")
@@ -565,9 +591,12 @@ func (f *FS) Root() filesys.Entry {
 	return toEntry("", nil, in)
 }
 
-// dirInode returns the inode of directory entry dir.
+// dirInode returns the inode of directory entry dir. Only dir.ID and the
+// on-disk inode are used: a "dirent:" ID is a deleted entry (ErrDeleted), an
+// "inode:<n>" ID is re-read, so a forged Deleted, Type or Size on the Entry
+// changes nothing.
 func (f *FS) dirInode(dir filesys.Entry) (*inode, error) {
-	if dir.Deleted {
+	if isDirentID(dir.ID) {
 		return nil, filesys.ErrDeleted
 	}
 	n, err := parseInodeID(dir.ID)
@@ -585,7 +614,11 @@ func (f *FS) dirInode(dir filesys.Entry) (*inode, error) {
 }
 
 // ReadDir lists the live entries of dir and the deleted ones found in the
-// slack of its blocks (Deleted is set; see dirEntry for the attributes). "."
+// slack of its blocks (Deleted is set; see dirEntry for the attributes). A
+// deleted entry's ID is the location of its record ("dirent:<block>:<offset>",
+// "dirent:inline:<dir inode>:<offset>"), with attr inode=<n> when the record
+// still names an inode; live entries are "inode:<n>". dir is identified by its
+// ID alone. "."
 // and ".." are omitted. Entries are in on-disk order; htree directories are
 // read by a linear scan of all blocks. The entry names the inode as it is now,
 // so a deleted entry whose inode was reused shows the new inode. A deleted
