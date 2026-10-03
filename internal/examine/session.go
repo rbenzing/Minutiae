@@ -13,7 +13,6 @@ import (
 	"io"
 	"os"
 	"path"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -311,11 +310,13 @@ func (s *Session) openFS(p volume.Partition) (filesys.FileSystem, error) {
 	return e.fs, e.err
 }
 
-// openEntry opens (and caches) the filesystem of p with detect.OpenWith.
-// detect stops at a driver whose Probe panics and reports it as a
-// *filesys.CorruptError; here the panic is noted and the remaining drivers are
-// still tried, so one faulty probe cannot hide a filesystem a later driver
-// recognizes. The notes are kept for Info.
+// openEntry opens (and caches) the filesystem of p with detect.OpenWith, one
+// driver at a time. detect stops at a driver whose Probe panics and reports it
+// as a *filesys.CorruptError; here the panic is noted and the remaining
+// drivers are still tried, so one faulty probe cannot hide a filesystem a
+// later driver recognizes. Drivers are told apart by position, never by name,
+// so duplicate names cannot re-run a driver or repeat a note. The first
+// driver that matches is final, as in detect. The notes are kept for Info.
 func (s *Session) openEntry(p volume.Partition) *fsEntry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -323,31 +324,31 @@ func (s *Session) openEntry(p volume.Partition) *fsEntry {
 		return e
 	}
 	e := &fsEntry{}
-	drivers := s.drivers()
-	for {
-		e.fs, e.err = detect.OpenWith(drivers, s.section(p), p.Length)
+	r := s.section(p)
+	for _, d := range s.drivers() {
+		one := []detect.Driver{d}
+		fsys, err := detect.OpenWith(one, r, p.Length)
 		var ce *filesys.CorruptError
-		if !errors.As(e.err, &ce) || !strings.HasPrefix(ce.Reason, probePanicPrefix) {
-			break
+		if errors.As(err, &ce) && strings.HasPrefix(ce.Reason, probePanicPrefix) {
+			e.notes = append(e.notes, fmt.Sprintf("%s probe panicked: %s", d.Name, strings.TrimPrefix(ce.Reason, probePanicPrefix)))
+			continue
 		}
-		skip := slices.IndexFunc(drivers, func(d detect.Driver) bool { return d.Name == ce.Structure && d.Probe != nil && d.Open != nil })
-		if skip < 0 {
-			break
+		if err != nil && errors.Is(err, filesys.ErrUnsupported) {
+			if _, matched := detect.ProbeWith(one, r, p.Length); !matched {
+				continue // no match; an Open that itself reports "unsupported" is a match
+			}
 		}
-		e.notes = append(e.notes, fmt.Sprintf("%s probe panicked: %s", ce.Structure, strings.TrimPrefix(ce.Reason, probePanicPrefix)))
-		drivers = drivers[skip+1:]
+		e.name, e.fs, e.err = d.Name, fsys, err
+		break
 	}
 	switch {
-	case e.err == nil:
-		name := fmt.Sprintf("partition %d filesystem", p.Index)
-		e.fs, e.err = wrapFS(name, e.fs)
-	case errors.Is(e.err, filesys.ErrUnsupported):
+	case e.name == "":
+		e.err = fmt.Errorf("%w: no recognized filesystem", filesys.ErrUnsupported)
 		if len(e.notes) > 0 {
 			e.err = fmt.Errorf("%w; %s", e.err, strings.Join(e.notes, "; "))
 		}
-	default:
-		// Recognized but failed to open: remember which driver matched.
-		e.name, _ = detect.ProbeWith(drivers, s.section(p), p.Length)
+	case e.err == nil:
+		e.fs, e.err = wrapFS(fmt.Sprintf("partition %d filesystem", p.Index), e.fs)
 	}
 	s.fsCache[p.Index] = e
 	return e
@@ -404,7 +405,7 @@ func (s *Session) Info() ImageInfo {
 			pi.FSInfo = &fi
 			pi.FSType = fi.Type
 			pi.Error = strings.Join(e.notes, "; ") // earlier drivers' probe panics
-		case errors.Is(e.err, filesys.ErrUnsupported):
+		case e.name == "":
 			pi.Error = strings.Join(append([]string{"no recognized filesystem"}, e.notes...), "; ")
 		default:
 			pi.FSType = e.name

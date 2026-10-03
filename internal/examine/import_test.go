@@ -205,10 +205,11 @@ func TestImportRefusesUnicodeCaseFoldCollision(t *testing.T) {
 		}
 		return p
 	}
-	// strings.ToLower leaves the long s (U+017F) alone, but it case-folds to
-	// "s". The other pairs are folded by lower-casing too and guard against a
-	// regression to something weaker. A lower-casing check would
-	// let both through while a case-insensitive filesystem merges them.
+	// The long s (U+017F) case-folds to "s" but strings.ToLower leaves it
+	// alone, so a lower-casing check would let that pair through while a
+	// case-insensitive filesystem merges them. The Kelvin sign and the
+	// digraph pairs also lower-case equal; they guard against a regression to
+	// something weaker than full case folding.
 	for _, pair := range [][2]string{{"s.img", "ſ.img"}, {"k.img", "K.img"}, {"Ǆ.img", "ǆ.img"}} {
 		pa, pb := write(a, pair[0]), write(b, pair[1])
 		if _, err := examine.Import(context.Background(), c, "img", []string{pa, pb}, nil); err == nil {

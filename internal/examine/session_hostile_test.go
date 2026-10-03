@@ -276,3 +276,56 @@ func TestInfoKeepsProbePanicNoteWhenLaterDriverMatches(t *testing.T) {
 		t.Errorf("Lookup = %v", err)
 	}
 }
+
+// panicInfoFS is a filesystem whose Info panics, so wrapping it fails.
+type panicInfoFS struct{ filesys.FileSystem }
+
+func (panicInfoFS) Info() filesys.Info { panic("boom in info") }
+
+func TestInfoKeepsFSTypeWhenWrappingPanics(t *testing.T) {
+	c := newCase(t)
+	recs := importImage(t, c, disk(mtfsImage(map[string]string{"/a.txt": "hi"})), 1)
+	s, err := examine.Open(c, recs[0].ID, examine.Options{Drivers: []detect.Driver{{
+		Name: "mtfs", Probe: fstest.Probe,
+		Open: func(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
+			f, err := fstest.Open(r, size)
+			if err != nil {
+				return nil, err
+			}
+			return panicInfoFS{f}, nil
+		},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	p := s.Info().Partitions[0]
+	if p.FSType != "mtfs" || p.FSInfo != nil || !strings.Contains(p.Error, "boom in info") {
+		t.Errorf("partition = %+v, want FSType mtfs with the panic in Error", p)
+	}
+}
+
+func TestInfoDriversWithDuplicateNamesAreToldApartByPosition(t *testing.T) {
+	c := newCase(t)
+	recs := importImage(t, c, disk(mtfsImage(map[string]string{"/a.txt": "hi"})), 1)
+	var panicProbes int
+	s, err := examine.Open(c, recs[0].ID, examine.Options{Drivers: []detect.Driver{
+		{Name: "x", Probe: func(io.ReaderAt, int64) bool { return false }, Open: fstest.Open},
+		{Name: "x", Probe: func(io.ReaderAt, int64) bool { panicProbes++; panic("boom in probe") }, Open: fstest.Open},
+		{Name: "mtfs", Probe: fstest.Probe, Open: fstest.Open},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	p := s.Info().Partitions[0]
+	if p.FSType != "mtfs" || p.FSInfo == nil {
+		t.Fatalf("partition = %+v, want the third driver's filesystem", p)
+	}
+	if n := strings.Count(p.Error, "x probe panicked"); n != 1 {
+		t.Errorf("Error = %q has the probe-panic note %d times, want once", p.Error, n)
+	}
+	if panicProbes != 1 {
+		t.Errorf("panicking Probe ran %d times, want 1", panicProbes)
+	}
+}
