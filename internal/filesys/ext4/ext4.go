@@ -6,24 +6,17 @@ package ext4
 
 import (
 	"errors"
-	"fmt"
 	"io"
-	"slices"
-	"sync"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
 )
 
 const (
 	cacheBlocks = 256 // blocks held by the metadata cache
-
-	// maxWarnings bounds Info().Warnings: a hostile image can make every
-	// directory block or extent node report a problem.
-	maxWarnings = 1000
 )
 
 // FS is an opened ext2/3/4 filesystem. After Open it is safe for concurrent
-// use: the only mutable state is the warning list, which is mutex-protected.
+// use: the only mutable state is the warning collector, which is mutex-protected.
 type FS struct {
 	sb     *superblock
 	groups []groupDesc
@@ -31,10 +24,7 @@ type FS struct {
 	data   io.ReaderAt // uncached view for file content, clamped to size
 	size   int64       // filesystem size in bytes (declared size clamped to the image)
 
-	wmu      sync.Mutex
-	warnings []string
-	warnSeen map[string]struct{}
-	warnFull bool // the cap was reached and the "suppressed" line is in warnings
+	warnings filesys.Warnings
 
 	// metaRanges are the block ranges [start, end) of group 0's metadata that
 	// file data must not overlap: boot block, superblock and descriptor table,
@@ -61,32 +51,9 @@ func readFull(r io.ReaderAt, p []byte, off int64) error {
 }
 
 // warn records a problem that does not stop the read (a checksum mismatch, a
-// damaged directory block ...). Identical messages are recorded once, and at
-// most maxWarnings distinct messages are kept: after that a single "further
-// warnings suppressed" line stands for the rest. It is safe for concurrent use.
-func (f *FS) warn(format string, a ...any) {
-	msg := format
-	if len(a) > 0 {
-		msg = fmt.Sprintf(format, a...)
-	}
-	f.wmu.Lock()
-	defer f.wmu.Unlock()
-	if _, dup := f.warnSeen[msg]; dup {
-		return
-	}
-	if len(f.warnings) >= maxWarnings {
-		if !f.warnFull {
-			f.warnFull = true
-			f.warnings = append(f.warnings, "further warnings suppressed")
-		}
-		return
-	}
-	if f.warnSeen == nil {
-		f.warnSeen = map[string]struct{}{}
-	}
-	f.warnSeen[msg] = struct{}{}
-	f.warnings = append(f.warnings, msg)
-}
+// damaged directory block ...) in the shared, deduplicated and capped
+// filesys.Warnings collector. It is safe for concurrent use.
+func (f *FS) warn(format string, a ...any) { f.warnings.Add(format, a...) }
 
 // Probe reports whether the first 2 KiB of the filesystem hold an ext
 // superblock: the 0xEF53 magic and a log_block_size of at most 6.
@@ -149,9 +116,6 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 // those met since by directory, extent and checksum reads, without duplicates
 // and capped at 1000 entries.
 func (f *FS) Info() filesys.Info {
-	f.wmu.Lock()
-	warnings := slices.Clone(f.warnings)
-	f.wmu.Unlock()
 	return filesys.Info{
 		Type:      f.sb.fsType(),
 		Label:     f.sb.label,
@@ -160,7 +124,7 @@ func (f *FS) Info() filesys.Info {
 		Size:      f.size,
 		Features:  f.sb.featureNames(),
 		Encrypted: f.sb.hasIncompat(incompatEncrypt),
-		Warnings:  warnings,
+		Warnings:  f.warnings.Snapshot(),
 	}
 }
 
