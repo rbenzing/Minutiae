@@ -1,0 +1,329 @@
+{
+  "generator": {
+    "image_sha256": "5a053be5de3f4d4e938447995cbd564a7d8f2865cd7a2f94f4fb1267b7534a06",
+    "packages": [
+      {
+        "package": "coreutils",
+        "version": "9.7-3"
+      },
+      {
+        "package": "e2fsprogs",
+        "version": "1.47.2-3+b12"
+      },
+      {
+        "package": "gzip",
+        "version": "1.13-1+deb13u1"
+      },
+      {
+        "package": "jq",
+        "version": "1.7.1-6+deb13u4"
+      },
+      {
+        "package": "python3",
+        "version": "3.13.5-1"
+      }
+    ],
+    "commands": [
+      "# source tree: make_small_tree in tools/fixtures/ext4.sh",
+      "python3 tools/fixtures/ext4_oracle.py <src> --exclude /dir/deleted-me.txt --exclude /notes/old-draft.txt --exclude /many/e07.txt",
+      "mke2fs -q -F -U 0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d -E hash_seed=11112222-3333-4444-5555-666677778888,root_owner=0:0 -L fixtureinl -d /dev/shm/minutiae-ext4/ext4-inline.src -t ext4 -b 1024 -O inline_data /dev/shm/minutiae-ext4/ext4-inline.img 8M",
+      "debugfs -w -R rm /dir/deleted-me.txt /dev/shm/minutiae-ext4/ext4-inline.img",
+      "debugfs -w -R rm /notes/old-draft.txt /dev/shm/minutiae-ext4/ext4-inline.img",
+      "debugfs -w -R rm /many/e07.txt /dev/shm/minutiae-ext4/ext4-inline.img",
+      "e2fsck -fn <img>   # must report a clean filesystem",
+      "dumpe2fs -h <img>   # label, uuid, block size, block count, features"
+    ]
+  },
+  "type": "ext4",
+  "label": "fixtureinl",
+  "uuid": "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+  "block_size": 1024,
+  "size": 8388608,
+  "features": [
+    "has_journal",
+    "ext_attr",
+    "resize_inode",
+    "dir_index",
+    "orphan_file",
+    "filetype",
+    "extent",
+    "64bit",
+    "flex_bg",
+    "metadata_csum_seed",
+    "inline_data",
+    "sparse_super",
+    "large_file",
+    "huge_file",
+    "dir_nlink",
+    "extra_isize",
+    "metadata_csum"
+  ],
+  "mke2fs_created": [
+    "/lost+found"
+  ],
+  "files": [
+    {
+      "path": "/dir",
+      "mode": 493,
+      "mtime": 1500000000,
+      "type": "dir",
+      "size": 0,
+      "sha256": ""
+    },
+    {
+      "path": "/dir/keep.txt",
+      "mode": 420,
+      "mtime": 1500008642,
+      "type": "file",
+      "size": 5,
+      "sha256": "78051faade059d70866df6a3fb83ef348721fd74a87e93ef95c493f87d0d236b"
+    },
+    {
+      "path": "/empty.dat",
+      "mode": 420,
+      "mtime": 1500012963,
+      "type": "file",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/five-k.bin",
+      "mode": 420,
+      "mtime": 1500017284,
+      "type": "file",
+      "size": 5000,
+      "sha256": "7445156134461d6567d4fd56036981cbd98ef44c919b7280533b7a3854ef479d"
+    },
+    {
+      "path": "/link-long",
+      "mode": 511,
+      "mtime": 1500021605,
+      "type": "symlink",
+      "size": 92,
+      "sha256": "0d18fc15deba29b3952ce3713f819e5b3ced34eed60aa47e74f1750cf0de0dd0",
+      "link_target": "notes/../notes/../notes/../notes/../notes/../notes/../notes/../notes/../notes/../notes/a.txt"
+    },
+    {
+      "path": "/link-short",
+      "mode": 511,
+      "mtime": 1500025926,
+      "type": "symlink",
+      "size": 10,
+      "sha256": "9e6e4772050998a5c0dc3c61acf3dab0a7e594566171fa5746d6b62f9598efb6",
+      "link_target": "readme.txt"
+    },
+    {
+      "path": "/many",
+      "mode": 493,
+      "mtime": 1500030247,
+      "type": "dir",
+      "size": 0,
+      "sha256": ""
+    },
+    {
+      "path": "/many/e01.txt",
+      "mode": 420,
+      "mtime": 1500034568,
+      "type": "file",
+      "size": 8,
+      "sha256": "efcc68fab15a9efcd02fa77e513b9806c1571813e8ce7866a5068cff2b84d407"
+    },
+    {
+      "path": "/many/e02.txt",
+      "mode": 420,
+      "mtime": 1500038889,
+      "type": "file",
+      "size": 8,
+      "sha256": "c1c62b0a829daeec13f2d3235f91ff55bf29092c60c6ae1e2469f0b2ac22369f"
+    },
+    {
+      "path": "/many/e03.txt",
+      "mode": 420,
+      "mtime": 1500043210,
+      "type": "file",
+      "size": 8,
+      "sha256": "97e33da4e1f10ccc7e37ea322fc55fb8d8623f47eec1e038d31a9dcab128c74a"
+    },
+    {
+      "path": "/many/e04.txt",
+      "mode": 420,
+      "mtime": 1500047531,
+      "type": "file",
+      "size": 8,
+      "sha256": "67d218737bddbf8cf0db94c282fb740b136dcbd08336112c428185dd3a2d58a6"
+    },
+    {
+      "path": "/many/e05.txt",
+      "mode": 420,
+      "mtime": 1500051852,
+      "type": "file",
+      "size": 8,
+      "sha256": "976f773bf98d4a40baf3369a03f196726bf13e9fea7af26500f8c6766f6014da"
+    },
+    {
+      "path": "/many/e06.txt",
+      "mode": 420,
+      "mtime": 1500056173,
+      "type": "file",
+      "size": 8,
+      "sha256": "dd5ee9f320713c0e744fa1cbc94bf85596981c6a1a5560d5ac89b87c9995c371"
+    },
+    {
+      "path": "/many/e08.txt",
+      "mode": 420,
+      "mtime": 1500064815,
+      "type": "file",
+      "size": 8,
+      "sha256": "e6cd07b83d29ad5e62b09fc785298c217b108a582715f3a3b90f4d0ea43eb218"
+    },
+    {
+      "path": "/many/e09.txt",
+      "mode": 420,
+      "mtime": 1500069136,
+      "type": "file",
+      "size": 8,
+      "sha256": "d1482b4366e118aa535ffe457b20606915a593b6766fa5b5eeae927ae5bd1fda"
+    },
+    {
+      "path": "/many/e10.txt",
+      "mode": 420,
+      "mtime": 1500073457,
+      "type": "file",
+      "size": 8,
+      "sha256": "171efd2d46a6ced8a6f69416bbbed38e5009d0d63fcf9baa5ee3a4b4aa8d589a"
+    },
+    {
+      "path": "/many/e11.txt",
+      "mode": 420,
+      "mtime": 1500077778,
+      "type": "file",
+      "size": 8,
+      "sha256": "7b99122d861122610a456acfdfedfc9b9c4c340f2ed971b0995fc18328ddb162"
+    },
+    {
+      "path": "/many/e12.txt",
+      "mode": 420,
+      "mtime": 1500082099,
+      "type": "file",
+      "size": 8,
+      "sha256": "99bfaf64dba1f4b86550a0d3118a1cc1739c61d798cda191ce20751d5cb0d258"
+    },
+    {
+      "path": "/many/e13.txt",
+      "mode": 420,
+      "mtime": 1500086420,
+      "type": "file",
+      "size": 8,
+      "sha256": "60da8699f656b6def619347f5501398affd632abc2b6a94044f736bb447aa9fe"
+    },
+    {
+      "path": "/many/e14.txt",
+      "mode": 420,
+      "mtime": 1500090741,
+      "type": "file",
+      "size": 8,
+      "sha256": "e1398947effa7e38689585cdc7fe3000f86b56010818834ece9c2ce757b8a89d"
+    },
+    {
+      "path": "/many/e15.txt",
+      "mode": 420,
+      "mtime": 1500095062,
+      "type": "file",
+      "size": 8,
+      "sha256": "e50070e50344a4b7b58e718922f9ee939cd02e3f5e2b78aa9623f3ede52e1d64"
+    },
+    {
+      "path": "/many/e16.txt",
+      "mode": 420,
+      "mtime": 1500099383,
+      "type": "file",
+      "size": 8,
+      "sha256": "2dad127109e13061b2dc489329241b719552b4e3b96557759799cdefffc3c36d"
+    },
+    {
+      "path": "/many/e17.txt",
+      "mode": 420,
+      "mtime": 1500103704,
+      "type": "file",
+      "size": 8,
+      "sha256": "3744d2b75178a82873afe8d97f5bba299ae825733d021db3147d0aa9ce6886a2"
+    },
+    {
+      "path": "/many/e18.txt",
+      "mode": 420,
+      "mtime": 1500108025,
+      "type": "file",
+      "size": 8,
+      "sha256": "d8251cd876cb14b48f13d1eb592b6854346c3ed1ccec403275850f19eb8c7521"
+    },
+    {
+      "path": "/many/e19.txt",
+      "mode": 420,
+      "mtime": 1500112346,
+      "type": "file",
+      "size": 8,
+      "sha256": "ed76d79d315cbde1e62ff8c340f0be0b45f7e8e5d3ee8b3230bfdb64bb947e6e"
+    },
+    {
+      "path": "/many/e20.txt",
+      "mode": 420,
+      "mtime": 1500116667,
+      "type": "file",
+      "size": 8,
+      "sha256": "ace95f66b30fa68a59c1f2f2c5d65659487a545b7dccd5079174d9cdf2cbd86e"
+    },
+    {
+      "path": "/mid-120.txt",
+      "mode": 420,
+      "mtime": 1500120988,
+      "type": "file",
+      "size": 120,
+      "sha256": "d3b236c7ca89dc4d95f20944caea9a7fd9bd85d76b9947e2e7670ffa103d516e"
+    },
+    {
+      "path": "/notes",
+      "mode": 493,
+      "mtime": 1500125309,
+      "type": "dir",
+      "size": 0,
+      "sha256": ""
+    },
+    {
+      "path": "/notes/a.txt",
+      "mode": 416,
+      "mtime": 1500129630,
+      "type": "file",
+      "size": 6,
+      "sha256": "b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060"
+    },
+    {
+      "path": "/readme.txt",
+      "mode": 420,
+      "mtime": 1500138272,
+      "type": "file",
+      "size": 3,
+      "sha256": "98ea6e4f216f2fb4b69fff9b3a44842c38686ca685f3f55dc48c5d3fb1107be4"
+    },
+    {
+      "path": "/utf8",
+      "mode": 493,
+      "mtime": 1500142593,
+      "type": "dir",
+      "size": 0,
+      "sha256": ""
+    },
+    {
+      "path": "/utf8/日本語.txt",
+      "mode": 420,
+      "mtime": 1500146914,
+      "type": "file",
+      "size": 4,
+      "sha256": "9f2c1a03124d90994aa38206721ba5ab10fd03e269fa24860a7f39d362dd9b5f"
+    }
+  ],
+  "deleted": [
+    "/dir/deleted-me.txt",
+    "/notes/old-draft.txt",
+    "/many/e07.txt"
+  ]
+}

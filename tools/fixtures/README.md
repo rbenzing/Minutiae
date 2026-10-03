@@ -17,7 +17,7 @@ docker build -t minutiae-fixtures tools/fixtures
 docker run --rm -v "$PWD:/work" -w /work minutiae-fixtures bash tools/fixtures/gen.sh all
 ```
 
-`gen.sh <fixture>` builds one fixture (`volume-gpt`, `volume-mbr`).
+`gen.sh <fixture>` builds one fixture (`volume-gpt`, `volume-mbr`, `ext4`).
 
 With Git Bash on Windows, stop MSYS rewriting the container paths:
 
@@ -33,6 +33,7 @@ Scripts must keep LF line endings (`.gitattributes` enforces this).
 |---|---|---|
 | `volume-gpt.sh` | `gpt-disk.img.gz`, `gpt-disk.expect.json` | `sfdisk --json`, cross-checked with `sgdisk -i` |
 | `volume-mbr.sh` | `mbr-disk.img.gz`, `mbr-disk.expect.json` | `sfdisk --json` |
+| `ext4.sh` + `ext4_oracle.py` | `ext4-4k-csum`, `ext4-1k-blockmap-ext2`, `ext4-inline` (`.img.gz` + `.expect.json`, in `internal/filesys/ext4/testdata/`) | the source tree handed to `mke2fs -d` (walked by `ext4_oracle.py`: type, size, sha256, mode, mtime, symlink targets), the generator's own list of `debugfs rm` operations (deleted names), and `dumpe2fs -h` (label, uuid, block size, features) |
 
 ## Determinism
 
@@ -43,6 +44,26 @@ same package versions yields identical files. Each `expect.json` records a
 the tests check so an image and its oracle cannot drift apart), the versions of
 the packages used (from `dpkg-query`) and
 the exact commands.
+
+### ext4 determinism
+
+The ext4 images are byte-identical across runs (checked by generating twice and
+comparing every output sha256). That needs:
+
+- `E2FSPROGS_FAKE_TIME=1700000000`, a fixed `-U` uuid, `-E hash_seed=...,root_owner=0:0`;
+- a source tree on tmpfs (`/dev/shm`, so directory enumeration is creation order; not
+  proven necessary) created in sorted order, every mtime set
+  with `touch -h -d` to a distinct value older than `SOURCE_DATE_EPOCH`
+  (the source ctime is "now"; mke2fs clamps it to `SOURCE_DATE_EPOCH`, which the
+  Dockerfile sets, so the image does not depend on the real clock);
+- `debugfs -w -R "ssv lastcheck 1700000000"` after `e2fsck -fyD`: `e2fsck`
+  stamps `s_lastcheck` with the real clock and ignores the fake time, which
+  was the only source of nondeterminism found.
+
+The oracle excludes the files later removed with `debugfs rm` (the generator's
+`deleted` list) and lists `/lost+found` (created by `mke2fs`, not in the source
+tree) under `mke2fs_created`. Directory mtimes are the source tree's: `e2fsck -D`
+and `debugfs rm` do not touch them.
 
 ## Adding a fixture
 

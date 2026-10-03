@@ -10,8 +10,9 @@ root=$(cd "$here/../.." && pwd)
 declare -A fixtures=(
   [volume-gpt]="internal/volume/testdata"
   [volume-mbr]="internal/volume/testdata"
+  [ext4]="internal/filesys/ext4/testdata"
 )
-order=(volume-gpt volume-mbr)
+order=(volume-gpt volume-mbr ext4)
 
 usage() {
   echo "usage: gen.sh <fixture>|all" >&2
