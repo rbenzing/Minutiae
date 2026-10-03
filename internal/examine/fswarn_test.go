@@ -99,22 +99,32 @@ func TestUnallocForwardsFilesystemWarnings(t *testing.T) {
 	if want := []string{"group 3 skipped, not reported as free"}; !slices.Equal(got["filesystem"], want) {
 		t.Errorf("filesystem warnings = %q, want %q (the open-time text is not repeated)", got["filesystem"], want)
 	}
-	if sum.Skipped != 1 || len(sum.Warnings) != 1 || sum.Warnings[0].Reason != "group 3 skipped, not reported as free" {
-		t.Errorf("summary skipped=%d warnings=%+v, want the one new filesystem warning", sum.Skipped, sum.Warnings)
+	if sum.FSWarnings != 1 || sum.Skipped != 0 || len(sum.Warnings) != 0 {
+		t.Errorf("summary fs=%d skipped=%d warnings=%+v, want one filesystem warning and no skips", sum.FSWarnings, sum.Skipped, sum.Warnings)
 	}
-	// The open-time state is recorded inside the analysis, after its start.
-	var started bool
+	// The entries sit inside the analysis: open-time state after analysis.start,
+	// new warnings before analysis.end; all keep the path/reason shape.
+	var started, ended bool
+	var seen int
 	for _, e := range auditEntries(t, c) {
 		switch {
 		case e.Action == "analysis.start":
 			started = true
-		case e.Action == "analysis.warning" && e.Details["source"] == "filesystem-open":
-			if !started || e.Details["analysis_id"] != sum.AnalysisID {
-				t.Errorf("open warning entry %+v outside its analysis", e.Details)
+		case e.Action == "analysis.end":
+			ended = true
+		case e.Action == "analysis.warning" && e.Details["source"] != nil:
+			seen++
+			if !started || ended || e.Details["analysis_id"] != sum.AnalysisID {
+				t.Errorf("filesystem warning entry %+v outside its analysis", e.Details)
+			}
+			if e.Details["path"] != "filesystem" || e.Details["reason"] != e.Details["warning"] {
+				t.Errorf("entry %+v lacks the path/reason shape", e.Details)
 			}
 		}
 	}
-	verifyOK(t, c)
+	if !ended || seen != 2 {
+		t.Errorf("ended=%v, %d filesystem entries, want analysis.end after 2", ended, seen)
+	}
 }
 
 func TestExtractForwardsFilesystemWarningsOnce(t *testing.T) {
@@ -141,14 +151,17 @@ func TestExtractForwardsFilesystemWarningsOnce(t *testing.T) {
 	if !slices.Equal(got["filesystem"], want) {
 		t.Errorf("filesystem warnings = %q, want %q", got["filesystem"], want)
 	}
-	if sum.Skipped != 3 || len(sum.Warnings) != 3 {
-		t.Errorf("summary skipped=%d warnings=%+v, want the 3 new ones", sum.Skipped, sum.Warnings)
+	if sum.FSWarnings != 3 || sum.Skipped != 0 || len(sum.Warnings) != 0 {
+		t.Errorf("summary fs=%d skipped=%d warnings=%+v, want the 3 new ones and no skips", sum.FSWarnings, sum.Skipped, sum.Warnings)
 	}
 	// The first file's warning is recorded before the second file is written.
 	var warnSeq, bSeq int64
 	for _, e := range auditEntries(t, c) {
 		if e.Action == "analysis.warning" && e.Details["warning"] == "file data pointer into filesystem metadata: a.txt" {
 			warnSeq = e.Seq
+			if e.Details["after"] != "/a.txt" {
+				t.Errorf("warning of a.txt has after = %v, want /a.txt", e.Details["after"])
+			}
 		}
 		if p, _ := e.Details["path"].(string); e.Action == "artifact.create" && strings.HasSuffix(p, "/b.txt") {
 			bSeq = e.Seq
@@ -162,15 +175,15 @@ func TestExtractForwardsFilesystemWarningsOnce(t *testing.T) {
 	// are open-time context now and none is new.
 	before := len(auditByAction(t, c, "analysis.warning"))
 	sum2 := extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: []string{"/a.txt"}})
-	if sum2.Skipped != 0 {
-		t.Errorf("second analysis skipped = %d, want 0 (the filesystem only repeats itself)", sum2.Skipped)
+	if sum2.FSWarnings != 0 || sum2.Skipped != 0 {
+		t.Errorf("second analysis fs=%d skipped=%d, want 0 (the filesystem only repeats itself)", sum2.FSWarnings, sum2.Skipped)
 	}
 	if n := len(auditByAction(t, c, "analysis.warning")) - before; n != 4 {
 		t.Errorf("second analysis wrote %d warning entries, want the 4 distinct open-time ones", n)
 	}
 }
 
-func TestFilesystemWarningsSummaryIsCappedAuditIsNot(t *testing.T) {
+func TestFilesystemWarningsAreCountedNotSkipped(t *testing.T) {
 	c := newCase(t)
 	const n = 130
 	many := make([]string, n)
@@ -182,8 +195,8 @@ func TestFilesystemWarningsSummaryIsCappedAuditIsNot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sum.Skipped != n || len(sum.Warnings) != 100 {
-		t.Errorf("skipped=%d len(Warnings)=%d, want %d and 100", sum.Skipped, len(sum.Warnings), n)
+	if sum.FSWarnings != n || sum.Skipped != 0 || len(sum.Warnings) != 0 {
+		t.Errorf("fs=%d skipped=%d warnings=%d, want %d filesystem warnings and no skips", sum.FSWarnings, sum.Skipped, len(sum.Warnings), n)
 	}
 	if got := len(fsWarnings(t, c)["filesystem"]); got != n {
 		t.Errorf("audit has %d filesystem warnings, want all %d", got, n)

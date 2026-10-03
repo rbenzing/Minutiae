@@ -511,6 +511,14 @@ func printSkipReasons(w io.Writer, sum examine.Summary) {
 	}
 }
 
+// printFSWarnings says how many warnings the filesystem raised during the
+// analysis (their text is in the audit log, not printed: it comes from the image).
+func printFSWarnings(w io.Writer, sum examine.Summary) {
+	if sum.FSWarnings > 0 {
+		fmt.Fprintf(w, "filesystem warnings: %d (see analysis.warning entries in audit.jsonl)\n", sum.FSWarnings)
+	}
+}
+
 func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 	var recursive, includeEncrypted bool
 	cmd := &cobra.Command{
@@ -565,6 +573,7 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 		}
 		fmt.Fprintf(d.Out, "extracted %d files (%s), skipped %d\n", sum.Files, humanBytes(sum.Bytes), sum.Skipped)
 		printSkipReasons(d.Out, sum)
+		printFSWarnings(d.Out, sum)
 		printIncomplete(d.Out, sum)
 		if note != "" {
 			fmt.Fprintln(d.Out, note)
@@ -614,6 +623,7 @@ func newImageUnallocCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		fmt.Fprintf(d.Out, "exported unallocated space: %d file(s) (%s), skipped %d\n", sum.Files, humanBytes(sum.Bytes), sum.Skipped)
+		printFSWarnings(d.Out, sum)
 		for _, a := range sum.Artifacts {
 			status := ""
 			if a.Incomplete {

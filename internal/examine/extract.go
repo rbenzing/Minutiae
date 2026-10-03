@@ -174,6 +174,7 @@ func (x *extractor) file(p string, e filesys.Entry) error {
 	if err := x.fileWork(p, e); err != nil {
 		return err
 	}
+	x.a.after = p
 	return x.a.syncFS() // what reading this file made the filesystem notice
 }
 

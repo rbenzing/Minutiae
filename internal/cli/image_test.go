@@ -681,3 +681,59 @@ func TestImageExtractShowsSkipReasons(t *testing.T) {
 		t.Errorf("no audit pointer after 7 skips:\n%s", out)
 	}
 }
+
+// warnOnUnalloc is an MTFS filesystem that notices an anomaly while listing
+// free space.
+type warnOnUnalloc struct {
+	filesys.FileSystem
+	warnings []string
+}
+
+func (f *warnOnUnalloc) Info() filesys.Info {
+	i := f.FileSystem.Info()
+	i.Warnings = append([]string(nil), f.warnings...)
+	return i
+}
+
+func (f *warnOnUnalloc) Unallocated() ([]filesys.Run, error) {
+	f.warnings = append(f.warnings, "group 3 skipped, not reported as free")
+	return f.FileSystem.Unallocated()
+}
+
+func TestImageUnallocReportsFilesystemWarnings(t *testing.T) {
+	d := Deps{FSDrivers: []detect.Driver{{
+		Name: "mtfs", Probe: fstest.Probe,
+		Open: func(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
+			fsys, err := fstest.Open(r, size)
+			if err != nil {
+				return nil, err
+			}
+			return &warnOnUnalloc{FileSystem: fsys}, nil
+		},
+	}}}
+	c := newCLICase(t)
+	code, out := run(t, d, "image", "import", "--case", c, "--json", imgFile(t, imgDisk(defaultNodes()...)))
+	if code != 0 {
+		t.Fatalf("import: %d %s", code, out)
+	}
+	var recs []evidence.ManifestRecord
+	if err := json.Unmarshal(jsonPart(out), &recs); err != nil || len(recs) != 1 {
+		t.Fatalf("import json %q: %v", out, err)
+	}
+	ref := recs[0].ID
+
+	code, out = run(t, d, "image", "unalloc", "--case", c, "--partition", "1", ref)
+	if code != 0 || !strings.Contains(out, "skipped 0") ||
+		!strings.Contains(out, "filesystem warnings: 1 (see analysis.warning entries in audit.jsonl)") {
+		t.Errorf("unalloc output (exit %d):\n%s", code, out)
+	}
+	if strings.Contains(out, "group 3") {
+		t.Errorf("filesystem warning text is printed (it comes from the image):\n%s", out)
+	}
+	// A fresh session starts the warnings over; --json carries the count.
+	code, out = run(t, d, "image", "unalloc", "--case", c, "--partition", "1", "--json", ref)
+	var sum map[string]any
+	if err := json.Unmarshal(jsonPart(out), &sum); code != 0 || err != nil || sum["fs_warnings"] != float64(1) || sum["skipped"] != float64(0) {
+		t.Errorf("unalloc --json (exit %d, %v): %s", code, err, out)
+	}
+}

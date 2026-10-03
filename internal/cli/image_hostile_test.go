@@ -234,7 +234,7 @@ func TestImageJSONKeysAreSnakeCase(t *testing.T) {
 	if mod["time"] != "2023-11-14T22:13:20Z" || mod["zone_known"] != true {
 		t.Errorf("modified = %v", mod)
 	}
-	has("summary", keys("extract", e.ref, "--json", "/f.txt"), "analysis_id", "files", "bytes", "skipped", "artifacts")
+	has("summary", keys("extract", e.ref, "--json", "/f.txt"), "analysis_id", "files", "bytes", "skipped", "fs_warnings", "artifacts")
 }
 
 func TestImageJSONHostileTimestampDoesNotBreakOutput(t *testing.T) {

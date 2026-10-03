@@ -14,15 +14,16 @@ type Summary struct {
 	AnalysisID string
 	Files      int   // finished (complete) artifacts of the requested content
 	Bytes      int64 // bytes of those artifacts
-	// Skipped counts the skips and the new filesystem warnings of the run, one
-	// analysis.warning entry each (authoritative; Warnings may be shorter).
-	Skipped int
-	// Warnings lists the first maxWarnings of them (path and reason), in order.
-	// A filesystem warning has the path "filesystem".
+	Skipped    int   // analysis.warning entries written (authoritative; Warnings may be shorter)
+	// Warnings lists the first maxWarnings skips (path and reason), in order.
 	Warnings []Warning
 	// Artifacts lists every artifact the analysis wrote, runs sidecars and
 	// incomplete ones included, in creation order.
 	Artifacts []evidence.ManifestRecord
+	// FSWarnings counts the filesystem warnings that appeared during the run
+	// (each also an analysis.warning with source "filesystem"). Warnings the
+	// filesystem already had at the start are audited but not counted.
+	FSWarnings int
 }
 
 // Warning is one skipped path and why.
@@ -38,8 +39,9 @@ type analysis struct {
 	deviceID string
 	sum      Summary
 
-	fsys filesys.FileSystem // watched by watchFS, nil when none
-	seen map[string]bool    // filesystem warnings already in the audit log
+	fsys  filesys.FileSystem // watched by watchFS, nil when none
+	seen  map[string]bool    // filesystem warnings already in the audit log
+	after string             // last path extracted, named by filesystem warnings written after it
 }
 
 // warn records an analysis.warning for path and counts it as skipped.
@@ -54,8 +56,11 @@ func (a *analysis) warn(path, reason string) error {
 	return err
 }
 
-// fsWarningPath is the Warning.Path of a filesystem warning.
-const fsWarningPath = "filesystem"
+// Filesystem warnings are de-duplicated by text (an anomaly that repeats is
+// written once per analysis) and each reader caps its own Info().Warnings, so
+// anomalies past that cap are invisible here. A warning is written after the
+// artifact whose processing triggered it, not before: it is seen only once
+// that work is done, and carries "after" (the last extracted path) when known.
 
 // watchFS starts forwarding the warnings of fsys to the audit log. The ones it
 // already has (from opening it, or from earlier work on it) are written once
@@ -78,7 +83,7 @@ func (a *analysis) watchFS(fsys filesys.FileSystem) error {
 
 // syncFS writes each filesystem warning that appeared since watchFS (or the
 // previous syncFS) as analysis.warning with source "filesystem" and counts it
-// as a skip. Every one reaches the audit log; Summary.Warnings is capped.
+// in Summary.FSWarnings. They are not skips: Skipped and Warnings are untouched.
 func (a *analysis) syncFS() error {
 	if a.fsys == nil {
 		return nil
@@ -88,10 +93,7 @@ func (a *analysis) syncFS() error {
 			continue
 		}
 		a.seen[w] = true
-		a.sum.Skipped++
-		if len(a.sum.Warnings) < maxWarnings {
-			a.sum.Warnings = append(a.sum.Warnings, Warning{Path: fsWarningPath, Reason: w})
-		}
+		a.sum.FSWarnings++
 		if err := a.fsWarning("filesystem", w); err != nil {
 			return err
 		}
@@ -100,9 +102,14 @@ func (a *analysis) syncFS() error {
 }
 
 func (a *analysis) fsWarning(source, text string) error {
-	_, err := a.c.Audit.Append("analysis.warning", a.deviceID, map[string]any{
+	details := map[string]any{
 		"analysis_id": a.sum.AnalysisID, "source": source, "warning": text,
-	})
+		"path": "filesystem", "reason": text, // the shape of every other analysis.warning
+	}
+	if a.after != "" && source == "filesystem" {
+		details["after"] = a.after
+	}
+	_, err := a.c.Audit.Append("analysis.warning", a.deviceID, details)
 	return err
 }
 
