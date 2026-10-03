@@ -57,6 +57,7 @@ type Options struct {
 	// Features written to the superblock. InlineXattr sets the
 	// flexible_inline_xattr feature.
 	ExtraAttr, InodeChksum, SBChksum, InlineXattr bool
+	InodeCrtime                                   bool
 	Encrypt                                       bool
 
 	// LargeNATBitmap sets CP_LARGE_NAT_BITMAP_FLAG: the checkpoint checksum
@@ -80,6 +81,44 @@ type Options struct {
 	Pack2Newer, NoPack2  bool
 	Unclean              bool
 	NATBitmap, SITBitmap []byte
+
+	// CompactSum stores the data summaries compacted (CP_COMPACT_SUM_FLAG):
+	// one block holding the NAT journal at byte 0 and the SIT journal at byte
+	// 507, instead of one full summary block per data type.
+	CompactSum bool
+
+	// NATJournal entries are written into the hot-data summary's journal of
+	// both checkpoint packs (at most 38, else Build panics: the builder is
+	// test-only and a longer journal cannot be encoded).
+	NATJournal []NATEntry
+
+	// Nodes are raw node blocks placed in the main area, each with a NAT entry
+	// in the NAT block copy that the NAT version bitmap selects (the other
+	// copy stays zero). Tests build node blocks with InodeBlock or by hand.
+	Nodes []Node
+}
+
+// NATEntry is a struct f2fs_nat_entry (with its nid when journalled).
+type NATEntry struct {
+	NID     uint32
+	Version uint8
+	Ino     uint32
+	Addr    uint32 // block_addr; 0 = free nid
+}
+
+// Node is a node block to place in the image.
+type Node struct {
+	NID uint32
+	// Addr is the absolute block address recorded in the NAT. 0 means
+	// Layout.Main + the index of the node in Options.Nodes.
+	Addr uint32
+	// Block is the 4096-byte node block. It is written at Addr only when Addr
+	// lies inside the main area and the image; a nil Block writes nothing (so
+	// a NAT entry can point anywhere, even outside the image).
+	Block []byte
+	// NoNAT writes the block but no NAT block entry (the entry then comes from
+	// the NAT journal, or is absent).
+	NoNAT bool
 }
 
 // Layout is the block geometry Build derives from Options (all in blocks).
@@ -90,18 +129,41 @@ type Layout struct {
 	CPPayload                                   uint32
 	PackBlocks                                  uint32 // cp_pack_total_block_count
 	StartSum                                    uint32 // cp_pack_start_sum
+	DataSums                                    uint32 // data summary blocks: 3, or 1 compacted
 }
+
+// NATBlock returns the absolute address of NAT block i (counting the logical
+// blocks of the area): the first copy, or the second one when second is set.
+// Each segment of 512 logical NAT blocks is stored twice back to back, so
+// block i lives at NAT + (i/512)*1024 + i%512 (+512 for the second copy).
+func (l Layout) NATBlock(i int, second bool) uint32 {
+	a := l.NAT + uint32(i/BlocksPerSeg)*2*BlocksPerSeg + uint32(i%BlocksPerSeg)
+	if second {
+		a += BlocksPerSeg
+	}
+	return a
+}
+
+// NATCapacity is the number of nids the NAT area describes (455 per block).
+func (l Layout) NATCapacity() uint32 { return l.NATSegs / 2 * BlocksPerSeg * NATPerBlock }
+
+// NATPerBlock is the number of 9-byte NAT entries in a 4 KiB block.
+const NATPerBlock = BlockSize / 9
 
 // Feature and checkpoint-flag bits, as in include/linux/f2fs_fs.h.
 const (
 	featEncrypt       = 0x1
 	featExtraAttr     = 0x8
 	featInodeChksum   = 0x20
+	featInodeCrtime   = 0x100
 	featFlexInlineXat = 0x40
 	featSBChksum      = 0x800
 
 	cpUmountFlag      = 0x1
+	cpCompactSumFlag  = 0x4
 	cpLargeNATBitmapF = 0x400
+
+	natJournalEntries = 38 // (507 - 2) / 13
 
 	superMagic = 0xF2F52010
 	sbOffset   = 1024
@@ -138,13 +200,17 @@ func Geometry(o Options) Layout {
 	l.BlockCount = l.Main + l.MainSegs*BlocksPerSeg
 	// header + payload + 3 data summaries + 3 node summaries + trailing copy
 	l.StartSum = 1 + l.CPPayload
-	l.PackBlocks = l.StartSum + 3 + 3 + 1
+	l.DataSums = 3
+	if o.CompactSum {
+		l.DataSums = 1
+	}
+	l.PackBlocks = l.StartSum + l.DataSums + 3 + 1
 	return l
 }
 
 // Build returns the image.
 func Build(o Options, files []File) []byte {
-	_ = files // laid out by later tasks
+	_ = files // laid out by later tasks (files, directories and data)
 	l := Geometry(o)
 	img := make([]byte, int(l.BlockCount)*BlockSize)
 
@@ -160,6 +226,7 @@ func Build(o Options, files []File) []byte {
 	if !o.NoPack2 {
 		writePack(img, o, l, l.CP+BlocksPerSeg, v2)
 	}
+	writeNodes(img, o, l)
 	return img
 }
 
@@ -172,6 +239,7 @@ func features(o Options) uint32 {
 		{o.Encrypt, featEncrypt},
 		{o.ExtraAttr, featExtraAttr},
 		{o.InodeChksum, featInodeChksum},
+		{o.InodeCrtime, featInodeCrtime},
 		{o.InlineXattr, featFlexInlineXat},
 		{o.SBChksum, featSBChksum},
 	} {
@@ -256,6 +324,9 @@ func writePack(img []byte, o Options, l Layout, base uint32, ver uint64) {
 	if o.LargeNATBitmap {
 		flags |= cpLargeNATBitmapF
 	}
+	if o.CompactSum {
+		flags |= cpCompactSumFlag
+	}
 	put32(132, flags)
 	put32(136, l.PackBlocks)
 	put32(140, l.StartSum)
@@ -289,9 +360,24 @@ func writePack(img []byte, o Options, l Layout, base uint32, ver uint64) {
 
 	// Data summaries: hot (NAT journal), warm, cold (SIT journal); footer
 	// entry_type SUM_TYPE_DATA = 0. Node summaries follow, SUM_TYPE_NODE = 1.
-	// The journals are empty (n_nats = n_sits = 0).
+	// Compacted, the data summaries are one block that starts with the NAT
+	// journal (507 bytes) then the SIT journal (507 bytes). The SIT journal is
+	// empty (n_sits = 0).
+	if len(o.NATJournal) > natJournalEntries {
+		panic("f2fstest: the NAT journal holds at most 38 entries")
+	}
+	jbase := int(base+l.StartSum)*BlockSize + 3584 // after the 512 summary entries
+	if o.CompactSum {
+		jbase = int(base+l.StartSum) * BlockSize
+	}
+	le.PutUint16(img[jbase:], uint16(len(o.NATJournal)))
+	for i, e := range o.NATJournal {
+		p := jbase + 2 + i*13
+		le.PutUint32(img[p:], e.NID)
+		putNATEntry(img[p+4:], e)
+	}
 	for i := range 3 {
-		img[(int(base+l.StartSum)+3+i)*BlockSize+BlockSize-5] = 1
+		img[(int(base+l.StartSum+l.DataSums)+i)*BlockSize+BlockSize-5] = 1
 	}
 	copy(img[int(base+l.PackBlocks-1)*BlockSize:], region[:BlockSize])
 }

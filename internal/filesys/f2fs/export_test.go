@@ -1,5 +1,7 @@
 package f2fs
 
+import "github.com/rbenzing/minutiae/internal/filesys"
+
 // Test-only accessors, so the external f2fs_test package can check internals
 // without widening the public API.
 
@@ -60,3 +62,57 @@ var TestBit = testBit
 
 // Warn records a warning, as the reader does when it meets a problem.
 func (f *FS) Warn(format string, a ...any) { f.warn(format, a...) }
+
+// NATLookup exposes natLookup.
+func (f *FS) NATLookup(nid uint32) (uint32, error) { return f.natLookup(nid) }
+
+// Node exposes node.
+func (f *FS) Node(nid uint32) ([]byte, error) { return f.node(nid) }
+
+// ParseNodeID exposes parseNodeID.
+func ParseNodeID(id string) (uint32, error) { return parseNodeID(id) }
+
+// InodeView is a read-only copy of a parsed inode.
+type InodeView struct {
+	Mode                        uint16
+	Inline                      uint8
+	UID, GID, Links             uint32
+	Size                        int64
+	Blocks                      uint64
+	Times                       filesys.Times
+	Generation, XattrNID, PIno  uint32
+	Flags                       uint32
+	Name                        string
+	NameBad                     bool
+	DirLevel                    uint8
+	Ext                         [3]uint32
+	NIDs                        [5]uint32
+	ExtraIsize, XattrWords      int
+	ProjID                      uint32
+	AddrStart, AddrSlots        int
+	ChecksumChecked, ChecksumOK bool
+	Compressed, Encrypted       bool
+	NSInvalid, TimeInvalid      bool
+	Raw                         []byte
+}
+
+// Inode parses inode ino and returns it with its directory entry (named
+// "name", with the given raw name).
+func (f *FS) Inode(ino uint32) (InodeView, filesys.Entry, error) {
+	in, err := f.inode(ino)
+	if err != nil {
+		return InodeView{}, filesys.Entry{}, err
+	}
+	v := InodeView{
+		Mode: in.mode, Inline: in.inline, UID: in.uid, GID: in.gid, Links: in.links,
+		Size: in.size, Blocks: in.blocks, Times: in.times,
+		Generation: in.generation, XattrNID: in.xattrNID, PIno: in.pino, Flags: in.flags,
+		Name: string(in.name), NameBad: in.nameBad, DirLevel: in.dirLevel, Ext: in.ext, NIDs: in.nids,
+		ExtraIsize: in.extraIsize, XattrWords: in.xattrWords, ProjID: in.projID,
+		AddrStart: in.addrStart, AddrSlots: in.addrSlots,
+		ChecksumChecked: in.csumChecked, ChecksumOK: in.csumOK,
+		Compressed: in.compressed, Encrypted: in.encrypted,
+		NSInvalid: in.nsInvalid, TimeInvalid: in.timeBad, Raw: in.raw,
+	}
+	return v, toEntry("name", []byte("raw"), in), nil
+}

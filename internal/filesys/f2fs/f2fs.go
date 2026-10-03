@@ -25,6 +25,8 @@ type FS struct {
 	r    io.ReaderAt // cached view of the filesystem for metadata, clamped to size
 	size int64       // filesystem size in bytes (declared size clamped to the image)
 
+	nat natState // NAT journal, read on first use
+
 	warnings filesys.Warnings
 }
 
