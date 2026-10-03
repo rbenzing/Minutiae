@@ -42,6 +42,29 @@ type File struct {
 	ExtraIsize int
 	Xattrs     []Xattr
 	XattrBlock bool
+
+	// File data. Data is stored contiguously from logical block 0. Pieces
+	// replaces Data with content placed at chosen logical blocks (ascending,
+	// non-overlapping; the blocks between pieces are holes). Size overrides
+	// i_size (0 = the end of the content), so a larger value gives a sparse
+	// tail. Scatter leaves one unused block after each piece so the pieces are
+	// not physically adjacent. ExtentLeaves > 0 moves the extents out of i_block
+	// into that many leaf blocks under an index root (a depth-1 tree; at most 4).
+	// A symlink target shorter than 60 bytes is stored in i_block (a fast
+	// symlink); a longer one is file data.
+	Pieces       []Piece
+	Size         int64
+	Scatter      bool
+	ExtentLeaves int
+}
+
+// Piece is file content placed at logical block Block. With Uninit the extent
+// is flagged uninitialized (preallocated): the blocks hold Data on disk, but a
+// reader must see zeros. Uninit needs Options.Extents.
+type Piece struct {
+	Block  int
+	Data   []byte
+	Uninit bool
 }
 
 // Options selects the features and geometry of the image.
@@ -127,9 +150,9 @@ type builder struct {
 }
 
 // Build returns an ext2/3/4 image for the options. It panics on invalid
-// options (it is a test helper). Each file gets an inode (see InodeNumber) and
-// the root directory inode exists; directory entries and file data are added
-// by later tasks, so the inodes carry no block pointers yet.
+// options (it is a test helper). Each file gets an inode (see InodeNumber), its
+// data (extents, block pointers, inline data or a fast symlink target) and the
+// root directory inode exists; directory entries are added by a later task.
 func Build(o Options, files []File) []byte {
 	b := newBuilder(o)
 	b.layout()

@@ -15,7 +15,8 @@ type Xattr struct {
 
 // Inode flags.
 const (
-	flagExtents = 0x80000
+	flagExtents    = 0x80000
+	flagInlineData = 0x10000000
 )
 
 const (
@@ -130,13 +131,8 @@ func (b *builder) renderInode(num uint32, f *File) []byte {
 	if f.Deleted {
 		links, dtime = 0, fixedTime
 	}
-	size := uint64(len(f.Data))
-	switch {
-	case f.Dir:
-		size = 0 // directory data is written with the directory entries
-	case f.Symlink != "":
-		size = uint64(len(f.Symlink))
-	}
+	pieces, isize := b.content(f)
+	size := uint64(isize)
 
 	le16(raw, 0x0, uint16(mode))
 	le16(raw, 0x2, uint16(f.UID))
@@ -150,10 +146,26 @@ func (b *builder) renderInode(num uint32, f *File) []byte {
 	le32(raw, 0x64, f.Generation)
 
 	var flags uint32
-	if b.o.Extents && f.Symlink == "" {
+	xattrs := f.Xattrs
+	switch {
+	case f.Inline:
+		if !b.o.InlineData {
+			panic("ext4test: Inline needs Options.InlineData")
+		}
+		flags |= flagInlineData
+		n := copy(raw[0x28:0x28+60], f.Data)
+		if rest := f.Data[n:]; len(rest) > 0 || b.isz > inodeHeader {
+			// The remainder lives in the system.data attribute (always present on
+			// real inline inodes, empty when everything fits in i_block).
+			xattrs = append([]Xattr{{Name: "system.data", Value: rest}}, xattrs...)
+		}
+	case f.Symlink != "" && len(f.Symlink) < 60:
+		copy(raw[0x28:0x28+60], f.Symlink) // fast symlink
+	case b.o.Extents:
 		flags |= flagExtents
-		le16(raw[0x28:], 0, extentMagic)
-		le16(raw[0x28:], 4, 4) // max entries in i_block; entries = 0, depth = 0
+		b.putExtents(raw[0x28:0x28+60], num, f, pieces)
+	default:
+		b.putBlockMap(raw[0x28:0x28+60], f, pieces)
 	}
 	le32(raw, 0x20, flags)
 
@@ -167,9 +179,9 @@ func (b *builder) renderInode(num uint32, f *File) []byte {
 	}
 	b.putTimes(raw, extra, f)
 
-	if len(f.Xattrs) > 0 {
+	if len(xattrs) > 0 {
 		if f.XattrBlock {
-			blk := b.xattrBlock(f.Xattrs)
+			blk := b.xattrBlock(xattrs)
 			le32(raw, 0x68, uint32(blk))
 			if b.o.Bit64 {
 				le16(raw, 0x76, uint16(uint64(blk)>>32))
@@ -178,7 +190,7 @@ func (b *builder) renderInode(num uint32, f *File) []byte {
 			if extra == 0 {
 				panic("ext4test: in-inode xattrs need an inode larger than 128 bytes")
 			}
-			b.putInodeXattrs(raw[inodeHeader+extra:], f.Xattrs)
+			b.putInodeXattrs(raw[inodeHeader+extra:], xattrs)
 		}
 	}
 

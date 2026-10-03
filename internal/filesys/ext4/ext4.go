@@ -20,7 +20,8 @@ const (
 type FS struct {
 	sb       *superblock
 	groups   []groupDesc
-	r        io.ReaderAt // cached view of the filesystem, clamped to size
+	r        io.ReaderAt // cached view of the filesystem for metadata, clamped to size
+	data     io.ReaderAt // uncached view for file content, clamped to size
 	size     int64       // filesystem size in bytes (declared size clamped to the image)
 	warnings []string
 }
@@ -79,6 +80,7 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		sb:       sb,
 		groups:   groups,
 		r:        cached,
+		data:     raw,
 		size:     sb.blocksCount * int64(sb.blockSize), // cannot overflow: <= size
 		warnings: append(warns, gw...),
 	}, nil
