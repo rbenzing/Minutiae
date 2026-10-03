@@ -11,7 +11,6 @@ import (
 )
 
 const (
-	fuzzSeedBytes  = 1 << 20 // seed with the first MiB of each fixture, not whole images
 	fuzzWalkBudget = 5000    // entries visited per input
 	fuzzFileMax    = 1 << 20 // files larger than this are opened but not read
 	fuzzReadBudget = 8 << 20 // bytes read per input
@@ -63,7 +62,7 @@ func FuzzExt4Open(f *testing.F) {
 	}
 	for _, path := range fixturePaths(f) {
 		img := gunzipFixture(f, path)
-		f.Add(img[:min(len(img), fuzzSeedBytes)])
+		f.Add(img)
 	}
 	f.Add(make([]byte, 2048))
 	f.Fuzz(func(t *testing.T, b []byte) {
@@ -87,7 +86,11 @@ func FuzzExt4Open(f *testing.F) {
 			if err != nil || file.Size() > fuzzFileMax || readTotal >= fuzzReadBudget {
 				return nil
 			}
-			_ = file.Runs()
+			if runs := file.Runs(); runs != nil {
+				if err := filesys.CheckRuns(runs, file.Size(), fsys.Info().Size); err != nil {
+					t.Fatalf("runs of %s violate the File.Runs contract: %v", e.Name, err)
+				}
+			}
 			buf := make([]byte, min(file.Size(), fuzzReadChunk))
 			for off := int64(0); off < file.Size(); off += int64(len(buf)) {
 				n, rerr := file.ReadAt(buf, off)

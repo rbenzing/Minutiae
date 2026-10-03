@@ -67,8 +67,12 @@ func loadExt4Fixture(t *testing.T, name string) ([]byte, ext4Oracle) {
 // image (no partition table), extracts everything and compares each artifact
 // with the oracle computed from the source tree.
 func TestExtractFromExt4Fixture(t *testing.T) {
+	if testing.Short() {
+		t.Skip("imports and extracts a 16 MiB image (about 300 artifacts)")
+	}
 	img, want := loadExt4Fixture(t, "ext4-4k-csum")
 	c := newCase(t)
+	imgSHA := sha256hex(img)
 	recs := importImage(t, c, img, 1)
 	s, err := examine.Open(c, recs[0].ID, examine.Options{}) // default driver registry
 	if err != nil {
@@ -91,6 +95,9 @@ func TestExtractFromExt4Fixture(t *testing.T) {
 		d := rec.Source.Derived
 		if rec.Source.Kind != "extract" || d == nil {
 			t.Fatalf("artifact %s has no extract provenance: %+v", rec.Path, rec.Source)
+		}
+		if d.ParentSHA256 != imgSHA {
+			t.Errorf("%s: Derived.ParentSHA256 = %s, want the imported image's %s", d.FSPath, d.ParentSHA256, imgSHA)
 		}
 		if d.FSType != "ext4" {
 			t.Errorf("%s: Derived.FSType = %q, want ext4", d.FSPath, d.FSType)

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -120,9 +121,9 @@ func TestExt4MatchesOracle(t *testing.T) {
 			checkInfo(t, fsys.Info(), want)
 
 			live, deleted := walkAll(t, fsys)
-			checkLive(t, fsys, want, live)
+			used := checkLive(t, fsys, want, live)
 			checkDeleted(t, want, deleted)
-			checkUnallocated(t, fsys)
+			checkUnallocated(t, fsys, used)
 		})
 	}
 }
@@ -169,7 +170,9 @@ func walkAll(t *testing.T, fsys *ext4.FS) (live, deleted map[string]filesys.Entr
 	return live, deleted
 }
 
-func checkLive(t *testing.T, fsys *ext4.FS, want oracle, live map[string]filesys.Entry) {
+// checkLive compares the live entries with the oracle and returns the on-disk
+// runs (holes excluded) of every live file and symlink.
+func checkLive(t *testing.T, fsys *ext4.FS, want oracle, live map[string]filesys.Entry) (used []filesys.Run) {
 	t.Helper()
 	wantSet := map[string]oracleFile{}
 	for _, f := range want.Files {
@@ -238,6 +241,11 @@ func checkLive(t *testing.T, fsys *ext4.FS, want oracle, live map[string]filesys
 		// on-disk run; everything else must account for exactly its size.
 		runs := f.Runs()
 		if len(runs) > 0 {
+			for _, r := range runs {
+				if r.Offset >= 0 {
+					used = append(used, r)
+				}
+			}
 			if err := filesys.CheckRuns(runs, f.Size(), fsys.Info().Size); err != nil {
 				t.Errorf("%s: runs: %v", w.Path, err)
 			}
@@ -249,6 +257,7 @@ func checkLive(t *testing.T, fsys *ext4.FS, want oracle, live map[string]filesys
 			t.Errorf("%s: sha256 %s, want %s", w.Path, got, w.SHA256)
 		}
 	}
+	return used
 }
 
 func checkDeleted(t *testing.T, want oracle, deleted map[string]filesys.Entry) {
@@ -281,7 +290,9 @@ func keys(m map[string]filesys.Entry) []string {
 	return out
 }
 
-func checkUnallocated(t *testing.T, fsys *ext4.FS) {
+// checkUnallocated checks the Unallocated contract and that no free run overlaps
+// the content of a live file or a group bitmap (catches an inverted bitmap).
+func checkUnallocated(t *testing.T, fsys *ext4.FS, used []filesys.Run) {
 	t.Helper()
 	runs, err := fsys.Unallocated()
 	if err != nil {
@@ -297,5 +308,22 @@ func checkUnallocated(t *testing.T, fsys *ext4.FS) {
 	}
 	if total <= 0 {
 		t.Error("no unallocated space reported")
+	}
+
+	bs := int64(fsys.Info().BlockSize)
+	overlaps := func(what string, off, length int64) {
+		i := sort.Search(len(runs), func(i int) bool { return runs[i].Offset+runs[i].Length > off })
+		if i < len(runs) && runs[i].Offset < off+length {
+			t.Errorf("free run %+v overlaps %s at [%d, %d)", runs[i], what, off, off+length)
+		}
+	}
+	for _, r := range used {
+		overlaps("the content of a live file", r.Offset, r.Length)
+	}
+	for g := range fsys.GroupCount() {
+		bb, ib, it, _, _ := fsys.Group(g)
+		overlaps(fmt.Sprintf("the block bitmap of group %d", g), int64(bb)*bs, bs)
+		overlaps(fmt.Sprintf("the inode bitmap of group %d", g), int64(ib)*bs, bs)
+		overlaps(fmt.Sprintf("the first inode table block of group %d", g), int64(it)*bs, bs)
 	}
 }

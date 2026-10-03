@@ -15,6 +15,12 @@
 # label, uuid, block size and size come from dumpe2fs. Never Minutiae.
 set -euo pipefail
 
+umask 022
+if [ "$(id -u)" != 0 ]; then
+  echo "ext4.sh must run as root (the container does): mke2fs -d records source ownership, and root_owner and the oracle assume uid 0" >&2
+  exit 1
+fi
+
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib.sh
 . "$here/lib.sh"
@@ -24,7 +30,8 @@ out=$(cd "${1:?outdir required}" && pwd)
 # Reproducible images: every timestamp mke2fs/debugfs/e2fsck writes itself
 # comes from the fake clock, source times are all older than SOURCE_DATE_EPOCH
 # (mke2fs clamps newer ones to it), the source tree lives on tmpfs so
-# directory enumeration order is creation order, uuid and hash seed are fixed.
+# directory enumeration order is creation order (a precaution, not proven
+# necessary), uuid and hash seed are fixed.
 export E2FSPROGS_FAKE_TIME=1700000000
 export LC_ALL=C.UTF-8
 fsuuid=0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d
