@@ -68,8 +68,15 @@ func (d *Device) backup(ctx context.Context, staging string, progress device.Pro
 		return mb2.Result{}, mapErr(err)
 	}
 	defer func() { _ = rw.Close() }()
+	// Closing the connection is the only way to interrupt a blocked read, so a
+	// device that never answers cannot outlive the context.
+	stop := context.AfterFunc(ctx, func() { _ = rw.Close() })
+	defer stop()
 	client := mb2.New(rw)
 	if err := client.Handshake(); err != nil {
+		if ctx.Err() != nil {
+			return mb2.Result{}, ctx.Err()
+		}
 		return mb2.Result{}, err
 	}
 	return client.Backup(ctx, mb2.BackupOptions{

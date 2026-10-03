@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"howett.net/plist"
 
@@ -289,4 +290,32 @@ func TestBackupInterruptedFileIsFlaggedIncomplete(t *testing.T) {
 	if rep, err := c.Verify(); err != nil || !rep.OK() {
 		t.Fatalf("verify: %+v %v", rep, err)
 	}
+}
+
+func TestBackupSilentDeviceHonoursCancel(t *testing.T) {
+	b := fakeIPhone()
+	b.Script = func(d *mb2test.Device) error {
+		_, _ = d.Recv() // never starts the handshake; returns once the host hangs up
+		return nil
+	}
+	c := newCase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		done <- first(t, b).(device.LogicalAcquirer).AcquireLogical(ctx, c, device.LogicalOptions{}, nil)
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("err = %v", err)
+		}
+		if el := time.Since(start); el > time.Second {
+			t.Fatalf("returned after %v", el)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("AcquireLogical still blocked 3s after a 200ms deadline")
+	}
+	<-b.ScriptErr
 }
