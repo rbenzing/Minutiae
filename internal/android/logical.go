@@ -50,7 +50,10 @@ func (d *Device) AcquireLogical(ctx context.Context, c *evidence.Case, opts devi
 		if err != nil {
 			return err
 		}
-		w := &walker{ctx: ctx, d: d, c: c, acq: acq, s: s, progress: progress}
+		w := &walker{
+			ctx: ctx, d: d, c: c, acq: acq, s: s, progress: progress,
+			names: newLocalPaths(), pulled: map[string]bool{},
+		}
 		defer func() { _ = w.s.Close() }()
 		for _, root := range roots {
 			if err := w.walk(root); err != nil {
@@ -71,6 +74,8 @@ type walker struct {
 	acq      string
 	s        *adb.Sync
 	progress device.ProgressFunc
+	names    *localPaths
+	pulled   map[string]bool // remote files already captured (overlapping roots)
 	files    int
 	skipped  int
 	bytes    int64
@@ -111,6 +116,10 @@ func (w *walker) walk(dir string) error {
 	if err := w.ctx.Err(); err != nil {
 		return err
 	}
+	local, err := w.names.dir(dir)
+	if err != nil {
+		return err
+	}
 	entries, err := w.s.List(dir)
 	if err != nil {
 		if !isFail(err) {
@@ -133,7 +142,7 @@ func (w *walker) walk(dir string) error {
 		case e.IsDir():
 			err = w.walk(p)
 		case e.IsRegular():
-			err = w.pull(p)
+			err = w.pull(p, local, e)
 		default:
 			err = w.warn("skip", p, fmt.Errorf("not a regular file (mode %o)", e.Mode))
 		}
@@ -144,9 +153,17 @@ func (w *walker) walk(dir string) error {
 	return nil
 }
 
-func (w *walker) pull(p string) error {
+func (w *walker) pull(p, localDir string, e adb.SyncEntry) error {
+	if w.pulled[p] {
+		return w.warn("skip", p, errors.New("already acquired in this acquisition (overlapping roots)"))
+	}
+	w.pulled[p] = true
+	rel, err := w.names.file(localDir, e.Name)
+	if err != nil {
+		return err
+	}
 	src := evidence.Source{Kind: "file", DeviceID: w.d.serial, RemotePath: p}
-	rec, err := w.c.Capture(w.d.serial, w.acq, "files/"+strings.TrimPrefix(p, "/"), src, func(out io.Writer) error {
+	rec, err := w.c.Capture(w.d.serial, w.acq, rel, src, func(out io.Writer) error {
 		_, err := w.s.Recv(p, out)
 		return err
 	})
@@ -163,8 +180,6 @@ func (w *walker) pull(p string) error {
 			return werr
 		}
 		return w.reopen()
-	case errors.Is(err, evidence.ErrArtifactExists): // two remote names sanitized to one local name
-		return w.warn("pull", p, err)
 	default:
 		return err
 	}

@@ -413,3 +413,127 @@ func TestAcquireLogicalSkipsInvalidDentNames(t *testing.T) {
 		t.Fatalf("verify: %+v %v", rep, err)
 	}
 }
+
+// acquireFiles runs a logical acquisition of a device holding files and
+// checks that it succeeded, that every file became one complete artifact,
+// that every manifest path is exactly (case included) a path on disk, and
+// that the case verifies.
+func acquireFiles(t *testing.T, files map[string]adbtest.File) map[string]evidence.ManifestRecord {
+	t.Helper()
+	c := newCase(t)
+	d := findDevice(t, fakeServer(t, &adbtest.Device{
+		Serial: "PX1", State: "device",
+		Commands: map[string][]byte{"getprop": []byte(getprop), "pm list packages -f": []byte("package:x\n")},
+		Files:    files,
+	}), "PX1")
+	if err := d.AcquireLogical(context.Background(), c, device.LogicalOptions{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := c.Manifest()
+	byRemote := map[string]evidence.ManifestRecord{}
+	inManifest := map[string]bool{}
+	for _, r := range m {
+		byRemote[r.Source.RemotePath] = r
+		inManifest[r.Path] = true
+	}
+	for p, f := range files {
+		r, ok := byRemote[p]
+		if !ok || r.Incomplete || r.Size != int64(len(f.Data)) {
+			t.Errorf("%s: record %+v ok=%v", p, r, ok)
+		}
+	}
+	onDisk := map[string]bool{}
+	_ = filepath.WalkDir(filepath.Join(c.Dir, "artifacts"), func(p string, e os.DirEntry, err error) error {
+		if err == nil && !e.IsDir() {
+			rel, _ := filepath.Rel(c.Dir, p)
+			onDisk[filepath.ToSlash(rel)] = true
+		}
+		return nil
+	})
+	for p := range inManifest {
+		if !onDisk[p] {
+			t.Errorf("manifest path %s is not a path on disk; on disk: %v", p, onDisk)
+		}
+	}
+	if len(onDisk) != len(inManifest) {
+		t.Errorf("on disk %v, manifest %v", onDisk, inManifest)
+	}
+	if rep, err := c.Verify(); err != nil || !rep.OK() {
+		t.Fatalf("verify: %+v %v", rep, err)
+	}
+	return byRemote
+}
+
+func TestAcquireLogicalCaseCollidingFiles(t *testing.T) {
+	recs := acquireFiles(t, map[string]adbtest.File{
+		"/sdcard/File.txt": {Data: []byte("UPPER")},
+		"/sdcard/file.txt": {Data: []byte("lower")},
+	})
+	if a, b := recs["/sdcard/File.txt"].Path, recs["/sdcard/file.txt"].Path; strings.EqualFold(a, b) {
+		t.Fatalf("case-colliding files share a local path: %s, %s", a, b)
+	}
+	if p := recs["/sdcard/file.txt"].Path; !strings.HasSuffix(p, "files/sdcard/file~2.txt") {
+		t.Errorf("second file path = %s, want the ~2 suffix before the extension", p)
+	}
+}
+
+func TestAcquireLogicalFileAndDirSanitizeAlike(t *testing.T) {
+	recs := acquireFiles(t, map[string]adbtest.File{
+		"/sdcard/a:b":    {Data: []byte("file")},
+		"/sdcard/a_b/x":  {Data: []byte("child")},
+		"/sdcard/zz.txt": {Data: []byte("later")},
+	})
+	if p := recs["/sdcard/a_b/x"].Path; !strings.HasSuffix(p, "files/sdcard/a_b~2/x") {
+		t.Errorf("child of the renamed directory = %s", p)
+	}
+}
+
+func TestAcquireLogicalCaseCollidingDirs(t *testing.T) {
+	recs := acquireFiles(t, map[string]adbtest.File{
+		"/sdcard/DCIM/a.jpg": {Data: []byte("A")},
+		"/sdcard/dcim/b.jpg": {Data: []byte("B")},
+	})
+	if p := recs["/sdcard/dcim/b.jpg"].Path; !strings.HasSuffix(p, "files/sdcard/dcim~2/b.jpg") {
+		t.Errorf("file in the case-colliding directory = %s", p)
+	}
+}
+
+func TestAcquireLogicalOverlappingRootsCaptureOnce(t *testing.T) {
+	c := newCase(t)
+	d := findDevice(t, fakeServer(t, logicalDevice()), "PX1")
+	if err := d.AcquireLogical(context.Background(), c, device.LogicalOptions{Roots: []string{"/sdcard", "/sdcard/DCIM"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := c.Manifest()
+	n := 0
+	for _, r := range m {
+		if r.Source.RemotePath == "/sdcard/DCIM/a.jpg" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("/sdcard/DCIM/a.jpg captured %d times", n)
+	}
+	if rep, err := c.Verify(); err != nil || !rep.OK() {
+		t.Fatalf("verify: %+v %v", rep, err)
+	}
+}
+
+func TestWithSuffixAndFoldCase(t *testing.T) {
+	for in, want := range map[string]string{"a.txt": "a~2.txt", ".profile": ".profile~2", "noext": "noext~2", "x.tar.gz": "x.tar~2.gz"} {
+		if got := withSuffix(in, 2, false); got != want {
+			t.Errorf("withSuffix(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := withSuffix("a.d", 3, true); got != "a.d~3" {
+		t.Errorf("directory suffix = %q", got)
+	}
+	for _, pair := range [][2]string{{"DCIM/File.TXT", "dcim/file.txt"}, {"Σ", "ς"}, {"K", "K"}} {
+		if foldCase(pair[0]) != foldCase(pair[1]) {
+			t.Errorf("foldCase(%q) != foldCase(%q)", pair[0], pair[1])
+		}
+	}
+	if foldCase("a.txt") == foldCase("b.txt") {
+		t.Error("distinct names fold equal")
+	}
+}
