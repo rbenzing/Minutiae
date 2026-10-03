@@ -30,7 +30,18 @@ type File struct {
 	// the previous record's rec_len, the inode gets a dtime and zero links, and
 	// the extent header is kept.
 	Deleted bool
-	Times   [4]int64 // atime, ctime, mtime, crtime (unix seconds)
+	Times   [4]int64 // atime, ctime, mtime, crtime (unix seconds); 0 with Nsec 0 = unset
+
+	// Inode details. Nsec holds the nanoseconds of Times, in the same order.
+	// ExtraIsize is i_extra_isize (default 32; a multiple of 4, at least 4;
+	// only for inodes larger than 128 bytes) and decides which extra time
+	// fields exist. Xattrs go in the inode, or in a block with XattrBlock.
+	UID, GID   uint32
+	Nsec       [4]uint32
+	Generation uint32
+	ExtraIsize int
+	Xattrs     []Xattr
+	XattrBlock bool
 }
 
 // Options selects the features and geometry of the image.
@@ -51,6 +62,11 @@ type Options struct {
 
 	Label string // at most 16 bytes
 	UUID  [16]byte
+
+	// CsumSeed, when non-zero with MetadataCsum, sets the metadata_csum_seed
+	// feature and stores this value as s_checksum_seed, so the checksum seed
+	// no longer depends on the UUID.
+	CsumSeed uint32
 }
 
 // Fixed superblock timestamp (2023-11-14), so images are reproducible.
@@ -65,6 +81,7 @@ const (
 	incompatExtents    = 0x40
 	incompat64Bit      = 0x80
 	incompatInlineData = 0x8000
+	incompatCsumSeed   = 0x2000
 	incompatEncrypt    = 0x10000
 
 	roSparseSuper  = 0x1
@@ -99,18 +116,20 @@ type builder struct {
 	totalBlocks  int
 	gdtBlocks    int
 	itableBlocks int
-	seed         uint32 // metadata_csum seed: crc32c(~0, uuid)
+	seed         uint32 // metadata_csum seed: crc32c(~0, uuid), or s_checksum_seed
 	used         []bool // per absolute block
 	usedInodes   []int  // per group, inodes in use
 	img          []byte
 }
 
 // Build returns an ext2/3/4 image for the options. It panics on invalid
-// options (it is a test helper). Files are not placed yet: the inode and
-// directory writers are added with the reader features that consume them.
-func Build(o Options, _ []File) []byte {
+// options (it is a test helper). Each file gets an inode (see InodeNumber) and
+// the root directory inode exists; directory entries and file data are added
+// by later tasks, so the inodes carry no block pointers yet.
+func Build(o Options, files []File) []byte {
 	b := newBuilder(o)
 	b.layout()
+	b.placeFiles(files)
 	b.finish()
 	return b.img
 }
@@ -149,6 +168,9 @@ func newBuilder(o Options) *builder {
 	b.gdtBlocks = (n*b.descSize + b.bs - 1) / b.bs
 	b.itableBlocks = (b.ipg*b.isz + b.bs - 1) / b.bs
 	b.seed = rawCRC32C(0xFFFFFFFF, o.UUID[:])
+	if o.MetadataCsum && o.CsumSeed != 0 {
+		b.seed = o.CsumSeed
+	}
 	b.groups = make([]group, n)
 	b.used = make([]bool, b.totalBlocks)
 	b.usedInodes = make([]int, n)
@@ -337,6 +359,10 @@ func (b *builder) superblock(g, freeBlocks, freeInodes int) []byte {
 	}
 	if o.Encrypt {
 		incompat |= incompatEncrypt
+	}
+	if o.MetadataCsum && o.CsumSeed != 0 {
+		incompat |= incompatCsumSeed
+		le32(sb, 0x270, o.CsumSeed)
 	}
 	ro := uint32(roSparseSuper | roLargeFile)
 	switch {

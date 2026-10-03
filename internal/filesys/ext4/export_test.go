@@ -1,5 +1,7 @@
 package ext4
 
+import "github.com/rbenzing/minutiae/internal/filesys"
+
 // Test-only accessors, so the external ext4_test package can check internals
 // without widening the public API.
 
@@ -17,3 +19,43 @@ var CRC16 = crc16
 
 // RawCRC32C exposes the kernel-style crc32c (no final inversion).
 var RawCRC32C = rawCRC32C
+
+// Inode is the decoded inode, exposed for tests.
+type Inode = inode
+
+// Xattr is one extended attribute.
+type Xattr = xattr
+
+// InodeFields is a read-only copy of the decoded inode fields.
+type InodeFields struct {
+	Num        uint32
+	Mode       uint16
+	UID, GID   uint32
+	Size       int64
+	Links      uint16
+	Flags      uint32
+	FileACL    uint64
+	CsumOK     bool
+	Generation uint32
+	ExtraLen   int
+}
+
+// Fields returns the decoded fields of the inode.
+func (in *inode) Fields() InodeFields {
+	return InodeFields{in.num, in.mode, in.uid, in.gid, in.size, in.links, in.flags, in.fileACL, in.csumOK, in.generation, len(in.extra)}
+}
+
+// Times returns the decoded timestamps.
+func (in *inode) Times() filesys.Times { return in.times }
+
+// Inode reads inode n.
+func (f *FS) Inode(n uint32) (*Inode, error) { return f.inode(n) }
+
+// Xattrs reads the extended attributes of in.
+func (f *FS) Xattrs(in *Inode) ([]Xattr, error) { return f.xattrs(in) }
+
+// ToEntry converts an inode to a directory entry.
+func ToEntry(name string, raw []byte, in *Inode) filesys.Entry { return toEntry(name, raw, in) }
+
+// ParseXattrs parses an xattr entry table (see parseXattrs).
+var ParseXattrs = parseXattrs
