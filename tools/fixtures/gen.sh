@@ -11,8 +11,10 @@ declare -A fixtures=(
   [volume-gpt]="internal/volume/testdata"
   [volume-mbr]="internal/volume/testdata"
   [ext4]="internal/filesys/ext4/testdata"
+  [fat]="internal/filesys/fat/testdata"
+  [exfat]="internal/filesys/exfat/testdata"
 )
-order=(volume-gpt volume-mbr ext4)
+order=(volume-gpt volume-mbr ext4 fat exfat)
 
 usage() {
   echo "usage: gen.sh <fixture>|all" >&2

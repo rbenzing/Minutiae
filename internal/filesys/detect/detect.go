@@ -8,7 +8,9 @@ import (
 	"io"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
+	"github.com/rbenzing/minutiae/internal/filesys/exfat"
 	"github.com/rbenzing/minutiae/internal/filesys/ext4"
+	"github.com/rbenzing/minutiae/internal/filesys/fat"
 )
 
 // Driver is one filesystem parser.
@@ -21,18 +23,39 @@ type Driver struct {
 	Open func(r io.ReaderAt, size int64) (filesys.FileSystem, error)
 }
 
-// Drivers is the probe order, an ordered literal (spec §6: apfs, f2fs, ext,
-// exfat, hfsplus, fat; FAT is last because its signature is the weakest). Each
-// filesystem package adds its driver here at its place in that order, not at
-// the end: only the drivers that exist are listed.
+// Drivers is the probe order, an ordered literal (spec §6: apfs, f2fs, ext4,
+// exfat, hfsplus, fat; FAT is last because its signature is the weakest). It
+// lists only the drivers that exist; a new filesystem package inserts its
+// driver at its place in that order, not at the end.
 var Drivers = []Driver{
 	{Name: "ext4", Probe: ext4.Probe, Open: openExt4},
+	{Name: "exfat", Probe: exfat.Probe, Open: openExFAT},
+	{Name: "fat", Probe: fat.Probe, Open: openFAT},
 }
 
 // openExt4 adapts ext4.Open. It returns an untyped nil FileSystem on error: a
 // nil *ext4.FS stored in the interface would not compare equal to nil.
 func openExt4(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
 	fs, err := ext4.Open(r, size)
+	if err != nil {
+		return nil, err
+	}
+	return fs, nil
+}
+
+// openExFAT adapts exfat.Open (untyped nil on error, see openExt4).
+func openExFAT(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
+	fs, err := exfat.Open(r, size)
+	if err != nil {
+		return nil, err
+	}
+	return fs, nil
+}
+
+// openFAT adapts fat.Open (untyped nil on error, see openExt4). The driver
+// reports FAT12, FAT16 and FAT32 through Info().Type.
+func openFAT(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
+	fs, err := fat.Open(r, size)
 	if err != nil {
 		return nil, err
 	}

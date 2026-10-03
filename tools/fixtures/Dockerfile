@@ -10,6 +10,15 @@ RUN apt-get update \
       gdisk fdisk util-linux jq gzip coreutils python3 \
  && rm -rf /var/lib/apt/lists/*
 
+# faketime freezes the clock for mtools (it stamps created/accessed times from
+# the clock); exfat-fuse is the only way to populate an exFAT image here (the
+# Docker Desktop kernel has no exfat driver; exfatprogs cannot copy files in).
+# A separate layer so the layer above, and the e2fsprogs it pins, stay as built.
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      faketime exfat-fuse \
+ && rm -rf /var/lib/apt/lists/*
+
 ENV SOURCE_DATE_EPOCH=1700000000 \
     TZ=UTC \
     LC_ALL=C

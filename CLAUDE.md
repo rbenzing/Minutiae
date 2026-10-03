@@ -68,7 +68,7 @@ right after open. Treat a serial open as able to reset DTR/RTS-wired targets.
 - `internal/android/adb` imports no Minutiae package.
 - `cmd/minutiae` imports only `internal/cli`.
 - Parser packages `internal/image`, `internal/volume` and `internal/filesys` import no Minutiae package: they work on `io.ReaderAt` and can never write to a case, so they never import `evidence`.
-- Parser test helpers (`volume/volumetest`, `filesys/fstest`) import only their parent package; `internal/filesys/detect` imports only `filesys` and the filesystem packages it probes (today `filesys/ext4`); `filesys/ext4` imports only `filesys`, and its test builder `ext4/ext4test` only `filesys` and `ext4`.
+- Parser test helpers (`volume/volumetest`, `filesys/fstest`) import only their parent package; `internal/filesys/detect` imports only `filesys` and the filesystem packages it probes (today `filesys/ext4`, `filesys/exfat` and `filesys/fat`); each of those imports only `filesys`, and its test builder (`ext4/ext4test`, `exfat/exfattest`, `fat/fattest`) only `filesys` and its parent package.
 - `internal/examine` is the only bridge between the parsers and the case: it imports `evidence`, `version`, `device`, `image`, `volume`, `filesys` and `filesys/detect`.
 - `internal/cli` may import anything.
 

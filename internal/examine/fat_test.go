@@ -3,37 +3,19 @@ package examine_test
 import (
 	"bytes"
 	"encoding/binary"
-	"io"
 	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/examine"
-	"github.com/rbenzing/minutiae/internal/filesys"
-	"github.com/rbenzing/minutiae/internal/filesys/detect"
-	"github.com/rbenzing/minutiae/internal/filesys/fat"
 	"github.com/rbenzing/minutiae/internal/filesys/fat/fattest"
 )
-
-// fatDrivers registers the FAT reader explicitly (it is not in detect.Drivers yet).
-func fatDrivers() examine.Options {
-	return examine.Options{Drivers: []detect.Driver{{
-		Name: "fat", Probe: fat.Probe,
-		Open: func(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
-			f, err := fat.Open(r, size)
-			if err != nil {
-				return nil, err
-			}
-			return f, nil
-		},
-	}}}
-}
 
 func fatSession(t *testing.T, img []byte) (*examine.Session, []byte) {
 	t.Helper()
 	c := newCase(t)
 	data := disk(img)
 	recs := importImage(t, c, data, 1)
-	s, err := examine.Open(c, recs[0].ID, fatDrivers())
+	s, err := examine.Open(c, recs[0].ID, examine.Options{}) // default driver registry
 	if err != nil {
 		t.Fatal(err)
 	}

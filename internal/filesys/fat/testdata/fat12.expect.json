@@ -1,0 +1,1954 @@
+{
+  "generator": {
+    "image_sha256": "beda68e3fe33f2b7a5111986ef13db37f30a427cf80ce348aac506164f270c63",
+    "packages": [
+      {
+        "package": "coreutils",
+        "version": "9.7-3"
+      },
+      {
+        "package": "dosfstools",
+        "version": "4.2-1.2"
+      },
+      {
+        "package": "faketime",
+        "version": "0.9.10+2024-06-05+gba9ed5b2-0.6"
+      },
+      {
+        "package": "gzip",
+        "version": "1.13-1+deb13u1"
+      },
+      {
+        "package": "jq",
+        "version": "1.7.1-6+deb13u4"
+      },
+      {
+        "package": "mtools",
+        "version": "4.0.48-1"
+      },
+      {
+        "package": "python3",
+        "version": "3.13.5-1"
+      }
+    ],
+    "commands": [
+      "# source tree: make_tree in tools/fixtures/fat_tree.sh",
+      "python3 tools/fixtures/fat_oracle.py <src> --exclude /dir/deleted-me.txt --exclude /notes/old-draft.txt --exclude /big/entry-with-a-long-name-0090.txt --exclude /frag/a-first-file.bin --exclude-tree /gone-directory",
+      "faketime -f '2023-11-14 22:13:20' mkfs.fat -F 12 -i 1234ABCD -n FIXTURE -s 1 -C /dev/shm/minutiae-fat/fat12.img 1440",
+      "# copy: top-level entries of the source tree except frag, in sorted order",
+      "faketime -f '2023-11-14 22:13:20' mcopy -s -m -i /dev/shm/minutiae-fat/fat12.img /dev/shm/minutiae-fat/fat12.src/A.TXT /dev/shm/minutiae-fat/fat12.src/Mixed-Case.Txt /dev/shm/minutiae-fat/fat12.src/UPPER.TXT /dev/shm/minutiae-fat/fat12.src/big /dev/shm/minutiae-fat/fat12.src/blob.bin /dev/shm/minutiae-fat/fat12.src/deep /dev/shm/minutiae-fat/fat12.src/dir /dev/shm/minutiae-fat/fat12.src/empty.dat /dev/shm/minutiae-fat/fat12.src/gone-directory /dev/shm/minutiae-fat/fat12.src/lower.txt /dev/shm/minutiae-fat/fat12.src/notes /dev/shm/minutiae-fat/fat12.src/readme.txt /dev/shm/minutiae-fat/fat12.src/utf8 ::/",
+      "faketime -f '2023-11-14 22:13:20' mcopy -s -m -i /dev/shm/minutiae-fat/fat12.img /dev/shm/minutiae-fat/fat12.stage/frag ::/",
+      "faketime -f '2023-11-14 22:13:20' mcopy -m -i /dev/shm/minutiae-fat/fat12.img /dev/shm/minutiae-fat/fat12.src/frag/a-first-file.bin /dev/shm/minutiae-fat/fat12.src/frag/b-second-file.bin ::/frag/",
+      "faketime -f '2023-11-14 22:13:20' mdel -i /dev/shm/minutiae-fat/fat12.img ::/frag/a-first-file.bin",
+      "faketime -f '2023-11-14 22:13:20' mcopy -m -i /dev/shm/minutiae-fat/fat12.img /dev/shm/minutiae-fat/fat12.src/frag/c-large-fragmented.bin ::/frag/",
+      "faketime -f '2023-11-14 22:13:20' mdel -i /dev/shm/minutiae-fat/fat12.img ::/dir/deleted-me.txt",
+      "faketime -f '2023-11-14 22:13:20' mdel -i /dev/shm/minutiae-fat/fat12.img ::/notes/old-draft.txt",
+      "faketime -f '2023-11-14 22:13:20' mdel -i /dev/shm/minutiae-fat/fat12.img ::/big/entry-with-a-long-name-0090.txt",
+      "faketime -f '2023-11-14 22:13:20' mdeltree -i /dev/shm/minutiae-fat/fat12.img ::/gone-directory",
+      "fsck.fat -n <img>   # must report a clean filesystem",
+      "fsck.fat -v -n <img>   # geometry, clusters in use",
+      "python3 tools/fixtures/fat_chains.py <img> <files.json> <fsck.fat -v output>   # mshowfat chains, free clusters"
+    ]
+  },
+  "type": "fat12",
+  "label": "FIXTURE",
+  "uuid": "1234-ABCD",
+  "block_size": 512,
+  "size": 1474560,
+  "sector_size": 512,
+  "data_start": 16896,
+  "cluster_count": 2847,
+  "files": [
+    {
+      "path": "/A.TXT",
+      "mtime": 1500000000,
+      "type": "file",
+      "size": 5,
+      "sha256": "36d25d3d80f8431614deece844a6def69fb24b92310156ce7847ba1d9595db57",
+      "clusters": [
+        [
+          2,
+          2
+        ]
+      ]
+    },
+    {
+      "path": "/Mixed-Case.Txt",
+      "mtime": 1500004322,
+      "type": "file",
+      "size": 21,
+      "sha256": "f9f451dbcaedd479dde783abb4521c595d1115927c84831d36b9e3c01535a8ae",
+      "clusters": [
+        [
+          3,
+          3
+        ]
+      ]
+    },
+    {
+      "path": "/UPPER.TXT",
+      "mtime": 1500008644,
+      "type": "file",
+      "size": 22,
+      "sha256": "1869dd96487746bf5a684237d827b39d36df7036f37bad01176b7c7738cd922f",
+      "clusters": [
+        [
+          4,
+          4
+        ]
+      ]
+    },
+    {
+      "path": "/big",
+      "mtime": 1500012966,
+      "type": "dir",
+      "size": 0,
+      "sha256": "",
+      "clusters": [
+        [
+          5,
+          5
+        ],
+        [
+          126,
+          155
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0001.txt",
+      "mtime": 1500017288,
+      "type": "file",
+      "size": 10,
+      "sha256": "cfb9e62c32d753a401054440e1409ac44236dfb405a1414b938cfde4e8ee2754",
+      "clusters": [
+        [
+          125,
+          125
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0002.txt",
+      "mtime": 1500021610,
+      "type": "file",
+      "size": 10,
+      "sha256": "956203421b80191ae4b9e931568360f2a4456dffe1df37bf858a2ece81b57c2c",
+      "clusters": [
+        [
+          124,
+          124
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0003.txt",
+      "mtime": 1500025932,
+      "type": "file",
+      "size": 10,
+      "sha256": "854ab71afe114cdaf724707a5c29a980e60e1859eb56bbd857dbefcd645d4144",
+      "clusters": [
+        [
+          123,
+          123
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0004.txt",
+      "mtime": 1500030254,
+      "type": "file",
+      "size": 10,
+      "sha256": "240ae6fd048e9d4a43e9eb858ccb8c6f1083065f02bba6644bb4b429fe1fc34e",
+      "clusters": [
+        [
+          122,
+          122
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0005.txt",
+      "mtime": 1500034576,
+      "type": "file",
+      "size": 10,
+      "sha256": "9396a3438d80e069d51607aa74d3b30b32676d70ea4d8de8c73bc24f6b3b40f9",
+      "clusters": [
+        [
+          121,
+          121
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0006.txt",
+      "mtime": 1500038898,
+      "type": "file",
+      "size": 10,
+      "sha256": "0e0fd1fb2a04844ddcef9a1219285cc3951a25377f5dad259b20860ca4cd1a23",
+      "clusters": [
+        [
+          120,
+          120
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0007.txt",
+      "mtime": 1500043220,
+      "type": "file",
+      "size": 10,
+      "sha256": "315b07aa96dd2149caf49d47dc63ef5356621b935304ce6c04665df98e6dae56",
+      "clusters": [
+        [
+          119,
+          119
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0008.txt",
+      "mtime": 1500047542,
+      "type": "file",
+      "size": 10,
+      "sha256": "01c3e2f1a77e4186ca3ec65c163a5df7df07ff3e52311213a469a50bb9ba250f",
+      "clusters": [
+        [
+          118,
+          118
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0009.txt",
+      "mtime": 1500051864,
+      "type": "file",
+      "size": 10,
+      "sha256": "d23f56a0cb22ed48b884e7aabdb67768748a5ecb300789a38e3d211713bfb580",
+      "clusters": [
+        [
+          117,
+          117
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0010.txt",
+      "mtime": 1500056186,
+      "type": "file",
+      "size": 10,
+      "sha256": "590699ca02fd746e84c2aa00b019692a7ec5dcf8c407d361e9834a8a1409e254",
+      "clusters": [
+        [
+          116,
+          116
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0011.txt",
+      "mtime": 1500060508,
+      "type": "file",
+      "size": 10,
+      "sha256": "92a5fa754ea1c1fb8601962a7d581e699681e1cf41943aca3066f7deb8c8404e",
+      "clusters": [
+        [
+          115,
+          115
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0012.txt",
+      "mtime": 1500064830,
+      "type": "file",
+      "size": 10,
+      "sha256": "19e189dc3320a1b1ee093ac41b2a3f8502fea1985faa1673e6ca287bade08991",
+      "clusters": [
+        [
+          114,
+          114
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0013.txt",
+      "mtime": 1500069152,
+      "type": "file",
+      "size": 10,
+      "sha256": "4a92567bf2f234def8ed83a0355efc3af711de68fe0e3ef10c39897ea516314c",
+      "clusters": [
+        [
+          113,
+          113
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0014.txt",
+      "mtime": 1500073474,
+      "type": "file",
+      "size": 10,
+      "sha256": "1f179398997b7eef9aac8581e19123d24c8545b50a48b88530d97c1265b45683",
+      "clusters": [
+        [
+          112,
+          112
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0015.txt",
+      "mtime": 1500077796,
+      "type": "file",
+      "size": 10,
+      "sha256": "f5c99c547de26609f7a48733c72cdf72798c5a5fc9cf2f2c07226f11ebdcb670",
+      "clusters": [
+        [
+          111,
+          111
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0016.txt",
+      "mtime": 1500082118,
+      "type": "file",
+      "size": 10,
+      "sha256": "8634bdebea7439f7e59c4d5df6c4c2129302d3e4e916e8170b63dc96448ee521",
+      "clusters": [
+        [
+          110,
+          110
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0017.txt",
+      "mtime": 1500086440,
+      "type": "file",
+      "size": 10,
+      "sha256": "1d4c51135917aef6eff81a84c636c831f3990fb5300cbaa9b5a124efee4d31d5",
+      "clusters": [
+        [
+          109,
+          109
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0018.txt",
+      "mtime": 1500090762,
+      "type": "file",
+      "size": 10,
+      "sha256": "11cbbae67f1bbd2566f9333dbbbfb34fe48bd123a5129df1b34724dd48478e87",
+      "clusters": [
+        [
+          108,
+          108
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0019.txt",
+      "mtime": 1500095084,
+      "type": "file",
+      "size": 10,
+      "sha256": "4b25b07dd46d05d7ce8ba76a14c4ae3f0f8c2252a04368fa9cf3fd25c48fd423",
+      "clusters": [
+        [
+          107,
+          107
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0020.txt",
+      "mtime": 1500099406,
+      "type": "file",
+      "size": 10,
+      "sha256": "85f0b3764b91ef609654ced1c2de892d863d2a114f4b972c0978d51b6d8dfca5",
+      "clusters": [
+        [
+          106,
+          106
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0021.txt",
+      "mtime": 1500103728,
+      "type": "file",
+      "size": 10,
+      "sha256": "b14cf860623e109ba7d8570b803c0c7746095fe582ae5225dde404bf1d52f572",
+      "clusters": [
+        [
+          105,
+          105
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0022.txt",
+      "mtime": 1500108050,
+      "type": "file",
+      "size": 10,
+      "sha256": "d3d49dcc18bc028aaefd6b74cf9af78826324dd4b10c54f3be546b11e032d281",
+      "clusters": [
+        [
+          104,
+          104
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0023.txt",
+      "mtime": 1500112372,
+      "type": "file",
+      "size": 10,
+      "sha256": "c53021b3811e3c75836ed298ceacba8078203107516385401aa490d83b47d170",
+      "clusters": [
+        [
+          103,
+          103
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0024.txt",
+      "mtime": 1500116694,
+      "type": "file",
+      "size": 10,
+      "sha256": "39d5b6dfcf229c359af5da33dfb242d3de2ecec5e6387534cf4f00a03f601ca1",
+      "clusters": [
+        [
+          102,
+          102
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0025.txt",
+      "mtime": 1500121016,
+      "type": "file",
+      "size": 10,
+      "sha256": "b9c20cf2bff0650f3e0a029acf9c006fcad7087d5535404a5ebf17e79f36eebf",
+      "clusters": [
+        [
+          101,
+          101
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0026.txt",
+      "mtime": 1500125338,
+      "type": "file",
+      "size": 10,
+      "sha256": "d82dcddbf906d6d06502ae1e33c3dfe51e89e16e36d4a193a77cb35093459cca",
+      "clusters": [
+        [
+          100,
+          100
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0027.txt",
+      "mtime": 1500129660,
+      "type": "file",
+      "size": 10,
+      "sha256": "77e4fccecbb33d600ede4c61bcc5ad41cf48d86c517d785f9e940df2d3307918",
+      "clusters": [
+        [
+          99,
+          99
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0028.txt",
+      "mtime": 1500133982,
+      "type": "file",
+      "size": 10,
+      "sha256": "db145831ec5ce2fcad6c320e79d80dce42a25313f982b26af1e2362f94b8566f",
+      "clusters": [
+        [
+          98,
+          98
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0029.txt",
+      "mtime": 1500138304,
+      "type": "file",
+      "size": 10,
+      "sha256": "0e114282e9e6472fc59784f810bd484528672fd329fbb3ddc39f08b77eacb031",
+      "clusters": [
+        [
+          97,
+          97
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0030.txt",
+      "mtime": 1500142626,
+      "type": "file",
+      "size": 10,
+      "sha256": "3a05eb8530def18dce173c0a0481e7ef97d274ba36c6743c9e78c51bfcd6d0f1",
+      "clusters": [
+        [
+          96,
+          96
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0031.txt",
+      "mtime": 1500146948,
+      "type": "file",
+      "size": 10,
+      "sha256": "af05efc3c34058b31196365ec264783abfa35358c1d897c6dc2e7810fa1fd6d6",
+      "clusters": [
+        [
+          95,
+          95
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0032.txt",
+      "mtime": 1500151270,
+      "type": "file",
+      "size": 10,
+      "sha256": "a3901025ae68b9cbf3283d8064581b375037e336a840dc1907327235de04ffc3",
+      "clusters": [
+        [
+          94,
+          94
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0033.txt",
+      "mtime": 1500155592,
+      "type": "file",
+      "size": 10,
+      "sha256": "89b99faa3fa38e1f4e279123f1cccf905488f1cf39f83f7801bcec51dd2bc113",
+      "clusters": [
+        [
+          93,
+          93
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0034.txt",
+      "mtime": 1500159914,
+      "type": "file",
+      "size": 10,
+      "sha256": "03f5842991d7fd997967cc7ff8d2c2ac5e716add31b333eacac7b1a3bfef55f2",
+      "clusters": [
+        [
+          92,
+          92
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0035.txt",
+      "mtime": 1500164236,
+      "type": "file",
+      "size": 10,
+      "sha256": "3bb28643bf38d891f34718041349516e5ea623717044fa76bebace799f40e12b",
+      "clusters": [
+        [
+          91,
+          91
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0036.txt",
+      "mtime": 1500168558,
+      "type": "file",
+      "size": 10,
+      "sha256": "92c9eaaba999c59d635f3b03862fa757b1f1b163a7646a7f9846d7284f624cf3",
+      "clusters": [
+        [
+          90,
+          90
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0037.txt",
+      "mtime": 1500172880,
+      "type": "file",
+      "size": 10,
+      "sha256": "7a782eab52ea986033c87507ed06d51249940efeacf9d7629fea6022ec40aca7",
+      "clusters": [
+        [
+          89,
+          89
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0038.txt",
+      "mtime": 1500177202,
+      "type": "file",
+      "size": 10,
+      "sha256": "316fb032282580d3d80f98bb6e06ed21834b03566e12e56a4810c712a54ed7f5",
+      "clusters": [
+        [
+          88,
+          88
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0039.txt",
+      "mtime": 1500181524,
+      "type": "file",
+      "size": 10,
+      "sha256": "d7daa3859470ee34dd9e22c62afaa00d065043c247f31ca8cddb9d3696866f1d",
+      "clusters": [
+        [
+          87,
+          87
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0040.txt",
+      "mtime": 1500185846,
+      "type": "file",
+      "size": 10,
+      "sha256": "9869e0349cb7d34147e38c841424ecd6d4cb9389d33a5a7e27c78e680919a2b4",
+      "clusters": [
+        [
+          86,
+          86
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0041.txt",
+      "mtime": 1500190168,
+      "type": "file",
+      "size": 10,
+      "sha256": "d93ac8d68b094dc0f962db0e31471e13746ff1adc83b1eb1834433d914f876d9",
+      "clusters": [
+        [
+          85,
+          85
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0042.txt",
+      "mtime": 1500194490,
+      "type": "file",
+      "size": 10,
+      "sha256": "2bc51ec9821b461d04456a5f46b0f785d2f064d6a2c8fb47f695f57af572f07a",
+      "clusters": [
+        [
+          84,
+          84
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0043.txt",
+      "mtime": 1500198812,
+      "type": "file",
+      "size": 10,
+      "sha256": "c5cd4b6be73925ca168a1e429e972f196f270ce2bcb666863575562c14c10eca",
+      "clusters": [
+        [
+          83,
+          83
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0044.txt",
+      "mtime": 1500203134,
+      "type": "file",
+      "size": 10,
+      "sha256": "1d7e69c8589c02352af9abfe448c8c955881eee1903d6b49c148ad4e6308db1c",
+      "clusters": [
+        [
+          82,
+          82
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0045.txt",
+      "mtime": 1500207456,
+      "type": "file",
+      "size": 10,
+      "sha256": "d9c08a5ced935d2a53110ae2b6f503785a34454c7bc49e34f46bd2a47821ebf5",
+      "clusters": [
+        [
+          81,
+          81
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0046.txt",
+      "mtime": 1500211778,
+      "type": "file",
+      "size": 10,
+      "sha256": "527e8967597ed8633e3078d95edd19db99375f689a55ddea14e4279dd04217de",
+      "clusters": [
+        [
+          80,
+          80
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0047.txt",
+      "mtime": 1500216100,
+      "type": "file",
+      "size": 10,
+      "sha256": "f6ce4a945bea2e8318bdec1326745b82fa36573f4ebcb0ec82b9854cc1a92dc2",
+      "clusters": [
+        [
+          79,
+          79
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0048.txt",
+      "mtime": 1500220422,
+      "type": "file",
+      "size": 10,
+      "sha256": "ec8713d487e0d36558450e23e3c82cae50a0aee112b36f49a0343b3634d38ff0",
+      "clusters": [
+        [
+          78,
+          78
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0049.txt",
+      "mtime": 1500224744,
+      "type": "file",
+      "size": 10,
+      "sha256": "afaa9237888044c17ae52597bd1de357485561e8d568ce382847b5e232496b39",
+      "clusters": [
+        [
+          77,
+          77
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0050.txt",
+      "mtime": 1500229066,
+      "type": "file",
+      "size": 10,
+      "sha256": "e1631826caade25774c69fe41ad02dd748423d52a0ffd103e3866fd74a139fb3",
+      "clusters": [
+        [
+          76,
+          76
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0051.txt",
+      "mtime": 1500233388,
+      "type": "file",
+      "size": 10,
+      "sha256": "c0badcf46801d62c1dcbc71a2cf906561da3f732b499e5de0e4d3511ad605680",
+      "clusters": [
+        [
+          75,
+          75
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0052.txt",
+      "mtime": 1500237710,
+      "type": "file",
+      "size": 10,
+      "sha256": "8e332802db6a1c1c2a16c6e80656117299cc12c8bb99c408afaae3ccfa60c2ee",
+      "clusters": [
+        [
+          74,
+          74
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0053.txt",
+      "mtime": 1500242032,
+      "type": "file",
+      "size": 10,
+      "sha256": "0e1bb81b4f78c63cd7599ab77604c5bc1afbc14c321b46b0ba434d89e72e430c",
+      "clusters": [
+        [
+          73,
+          73
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0054.txt",
+      "mtime": 1500246354,
+      "type": "file",
+      "size": 10,
+      "sha256": "be1df15c905520e71da8b684e45f57cac9f7068731dce00d871de5ece88f92f7",
+      "clusters": [
+        [
+          72,
+          72
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0055.txt",
+      "mtime": 1500250676,
+      "type": "file",
+      "size": 10,
+      "sha256": "194b3d54b298a9d1fa3214b29b969a088cc115f4cb350a354e7f627f2a5cb6cd",
+      "clusters": [
+        [
+          71,
+          71
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0056.txt",
+      "mtime": 1500254998,
+      "type": "file",
+      "size": 10,
+      "sha256": "d42d3fbf0bb6d63dd0cdebe1dd93139d4adc640b8a3f92dd5bb5281cccfac6d8",
+      "clusters": [
+        [
+          70,
+          70
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0057.txt",
+      "mtime": 1500259320,
+      "type": "file",
+      "size": 10,
+      "sha256": "6486e6673cdcdb64a7b569939b2ace34a6d4259a2377706a5570c8a02094a688",
+      "clusters": [
+        [
+          69,
+          69
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0058.txt",
+      "mtime": 1500263642,
+      "type": "file",
+      "size": 10,
+      "sha256": "3262864ec591ac55bd2647e5e7a7e47174bda51034ab4c46ddfe16e383cb3150",
+      "clusters": [
+        [
+          68,
+          68
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0059.txt",
+      "mtime": 1500267964,
+      "type": "file",
+      "size": 10,
+      "sha256": "b2020e9165cfe622a4b46cf725390bdfb0461498bc6ef0a8104e1761db1c0801",
+      "clusters": [
+        [
+          67,
+          67
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0060.txt",
+      "mtime": 1500272286,
+      "type": "file",
+      "size": 10,
+      "sha256": "3676c446a584fcfee4c0634bfe89203e73be9823420bb92a5b34a650cf090d22",
+      "clusters": [
+        [
+          66,
+          66
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0061.txt",
+      "mtime": 1500276608,
+      "type": "file",
+      "size": 10,
+      "sha256": "e9ee1edafb41848f7550ba1c3d2bc776e441db114cbb35b71a5244d18b2ee250",
+      "clusters": [
+        [
+          65,
+          65
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0062.txt",
+      "mtime": 1500280930,
+      "type": "file",
+      "size": 10,
+      "sha256": "3ce2f5057a6bd0813ac40d4b16ba48b50644969696ffaf43191f96cbed307e52",
+      "clusters": [
+        [
+          64,
+          64
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0063.txt",
+      "mtime": 1500285252,
+      "type": "file",
+      "size": 10,
+      "sha256": "47241c543959ae88f6f54be2c21668a8b4bde35d97177b35b14254f99e4ba1c7",
+      "clusters": [
+        [
+          63,
+          63
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0064.txt",
+      "mtime": 1500289574,
+      "type": "file",
+      "size": 10,
+      "sha256": "349dba7129a1047eb58288df027062ca7f723469055d3e92378665372e55b0a4",
+      "clusters": [
+        [
+          62,
+          62
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0065.txt",
+      "mtime": 1500293896,
+      "type": "file",
+      "size": 10,
+      "sha256": "f0aaf2098736ff1dd2b44966f477482c217342ebc3dd59bae6b1a678c0a3d837",
+      "clusters": [
+        [
+          61,
+          61
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0066.txt",
+      "mtime": 1500298218,
+      "type": "file",
+      "size": 10,
+      "sha256": "ce4a688fcbbdc001f5185331bc466571ac3ece78bdb663f7ff03a965d7d90cfb",
+      "clusters": [
+        [
+          60,
+          60
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0067.txt",
+      "mtime": 1500302540,
+      "type": "file",
+      "size": 10,
+      "sha256": "b032915f1fa0214bc2cdb28903f684ceea56b3fc9621c3a8d092ae590588858a",
+      "clusters": [
+        [
+          59,
+          59
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0068.txt",
+      "mtime": 1500306862,
+      "type": "file",
+      "size": 10,
+      "sha256": "fe3f9431910564f8ccc2612c931269bc938adb6fd25000787b512d31d7df3f6d",
+      "clusters": [
+        [
+          58,
+          58
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0069.txt",
+      "mtime": 1500311184,
+      "type": "file",
+      "size": 10,
+      "sha256": "e370cf63ca745b2377ba2ca163e4c304b2bf55d778b17bb50b0a415db26a548c",
+      "clusters": [
+        [
+          57,
+          57
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0070.txt",
+      "mtime": 1500315506,
+      "type": "file",
+      "size": 10,
+      "sha256": "6e60c341dca8e2a0918074e2c50a829dd1f9017e7ca2fea251d0f12247c39cc5",
+      "clusters": [
+        [
+          56,
+          56
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0071.txt",
+      "mtime": 1500319828,
+      "type": "file",
+      "size": 10,
+      "sha256": "27f9ff219a969d3b96fabb22ad59d88f19a8c1c83d1bdf462d287e22ee90a45e",
+      "clusters": [
+        [
+          55,
+          55
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0072.txt",
+      "mtime": 1500324150,
+      "type": "file",
+      "size": 10,
+      "sha256": "ebbe8f827699251a349d84e2440410b01d5a8f014cd6d9a38fd68df6d83d0b9d",
+      "clusters": [
+        [
+          54,
+          54
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0073.txt",
+      "mtime": 1500328472,
+      "type": "file",
+      "size": 10,
+      "sha256": "fd4d76fceed583c38d4f78e9ebe9e0891159eb4565042b79277a6b6c5ed1bce3",
+      "clusters": [
+        [
+          53,
+          53
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0074.txt",
+      "mtime": 1500332794,
+      "type": "file",
+      "size": 10,
+      "sha256": "386e6e0835fc55c02b8d3e82f8dda2d6fbe28271b91f073d875578707f28cf71",
+      "clusters": [
+        [
+          52,
+          52
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0075.txt",
+      "mtime": 1500337116,
+      "type": "file",
+      "size": 10,
+      "sha256": "ec102c4970193ced662cb1fa7afa980132fb9144d358f79b509c877c38cfdc8a",
+      "clusters": [
+        [
+          51,
+          51
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0076.txt",
+      "mtime": 1500341438,
+      "type": "file",
+      "size": 10,
+      "sha256": "f78a1a6643844ed0f8bda372b69db25d8457ffb1e091e525376e9142e0417ab6",
+      "clusters": [
+        [
+          50,
+          50
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0077.txt",
+      "mtime": 1500345760,
+      "type": "file",
+      "size": 10,
+      "sha256": "9fce4abd9ccd32e951c2e45ee6dc1f64cbb8b498b7d93abfe5cf2bc6d6fd6be9",
+      "clusters": [
+        [
+          49,
+          49
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0078.txt",
+      "mtime": 1500350082,
+      "type": "file",
+      "size": 10,
+      "sha256": "5a51edaa6434fb4913be1ec375f23e51e49a46b75fde0b0c5e225d0e5e495a0d",
+      "clusters": [
+        [
+          48,
+          48
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0079.txt",
+      "mtime": 1500354404,
+      "type": "file",
+      "size": 10,
+      "sha256": "5c28a3025449343533a4b8fac2b375bd74f805ef14fcc447e4688164ecb12606",
+      "clusters": [
+        [
+          47,
+          47
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0080.txt",
+      "mtime": 1500358726,
+      "type": "file",
+      "size": 10,
+      "sha256": "54a4f9d2aa813b4624b4d9bd06c0ca238fbe26a672d9c0dd94bfec2f2923c2e6",
+      "clusters": [
+        [
+          46,
+          46
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0081.txt",
+      "mtime": 1500363048,
+      "type": "file",
+      "size": 10,
+      "sha256": "0b042d9239df9ee226ceb71d65249659acd210b832fab1c572ba41119b5e0d33",
+      "clusters": [
+        [
+          45,
+          45
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0082.txt",
+      "mtime": 1500367370,
+      "type": "file",
+      "size": 10,
+      "sha256": "b5e5e96cd2aee60a91bf3976572329a90ab26a5b9f3ff3308e22b262d1fc9c80",
+      "clusters": [
+        [
+          44,
+          44
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0083.txt",
+      "mtime": 1500371692,
+      "type": "file",
+      "size": 10,
+      "sha256": "8da1222c2264a8745e0f25180ad22ca7231eda65d72ff7385d616180b8896350",
+      "clusters": [
+        [
+          43,
+          43
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0084.txt",
+      "mtime": 1500376014,
+      "type": "file",
+      "size": 10,
+      "sha256": "8d7afc9aa2f418f5fecdcfa313d2456e4e75b55de09c9c5dceedfa3f25d4995e",
+      "clusters": [
+        [
+          42,
+          42
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0085.txt",
+      "mtime": 1500380336,
+      "type": "file",
+      "size": 10,
+      "sha256": "10aea04b260fa424e33bf68099a07a16c436bcb91c1f2ca94f3df0cd2ec4e262",
+      "clusters": [
+        [
+          41,
+          41
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0086.txt",
+      "mtime": 1500384658,
+      "type": "file",
+      "size": 10,
+      "sha256": "645a534fa5aecf0fa77aa9c2225fe116d3616120a3ad64d6762dfc5f2f658144",
+      "clusters": [
+        [
+          40,
+          40
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0087.txt",
+      "mtime": 1500388980,
+      "type": "file",
+      "size": 10,
+      "sha256": "8ca80f7e8ef332c63c809ac859ba893766aa19a4004b5143d0463cc4ae01971a",
+      "clusters": [
+        [
+          39,
+          39
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0088.txt",
+      "mtime": 1500393302,
+      "type": "file",
+      "size": 10,
+      "sha256": "25a117f98c3535444f5e9c94ba13498f3a9371137bdf9500186df55184e54f9d",
+      "clusters": [
+        [
+          38,
+          38
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0089.txt",
+      "mtime": 1500397624,
+      "type": "file",
+      "size": 10,
+      "sha256": "c88b52f36cb9a718d00b9569d1e0f8d4b13aa7fd2963bed2b91e20b2252c94be",
+      "clusters": [
+        [
+          37,
+          37
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0091.txt",
+      "mtime": 1500406268,
+      "type": "file",
+      "size": 10,
+      "sha256": "07c4203d07ae4eecb5db6cca4300331728415ba53c704106e9dc0164c09535d2",
+      "clusters": [
+        [
+          35,
+          35
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0092.txt",
+      "mtime": 1500410590,
+      "type": "file",
+      "size": 10,
+      "sha256": "dd9755feb394d4fa65f8ebff519344965ea34d9a6e132be8922785064a2d7601",
+      "clusters": [
+        [
+          34,
+          34
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0093.txt",
+      "mtime": 1500414912,
+      "type": "file",
+      "size": 10,
+      "sha256": "5060d3ac9c6c3baf7a6d19b69dbbde04090b14e02b9d9c6df368e77acc7abad8",
+      "clusters": [
+        [
+          33,
+          33
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0094.txt",
+      "mtime": 1500419234,
+      "type": "file",
+      "size": 10,
+      "sha256": "7fbf5e93f72dc0b9c3e3c12417cfd814d4984682dad4f6285e6ec21f7a8e576e",
+      "clusters": [
+        [
+          32,
+          32
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0095.txt",
+      "mtime": 1500423556,
+      "type": "file",
+      "size": 10,
+      "sha256": "4d0e4f5f85ff704d993d87af5b23887317a5ed01ee3334bc7fba256be406d328",
+      "clusters": [
+        [
+          31,
+          31
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0096.txt",
+      "mtime": 1500427878,
+      "type": "file",
+      "size": 10,
+      "sha256": "6988f38ea53eba7a608b4352af55bb09ef27288451685063b684ceea5d94cf80",
+      "clusters": [
+        [
+          30,
+          30
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0097.txt",
+      "mtime": 1500432200,
+      "type": "file",
+      "size": 10,
+      "sha256": "c98bb0d47828d0a69cd8335a3c73c3223d377bdeed0de05d40ca050af846e4cc",
+      "clusters": [
+        [
+          29,
+          29
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0098.txt",
+      "mtime": 1500436522,
+      "type": "file",
+      "size": 10,
+      "sha256": "4ff96b6664a4a72af60da9d7c27b4758b5177e8df5c6fc4ae150be6930239248",
+      "clusters": [
+        [
+          28,
+          28
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0099.txt",
+      "mtime": 1500440844,
+      "type": "file",
+      "size": 10,
+      "sha256": "93d9021caca2809d95fb4d6bd11830522942e850e0574c3465872118a38c8306",
+      "clusters": [
+        [
+          27,
+          27
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0100.txt",
+      "mtime": 1500445166,
+      "type": "file",
+      "size": 10,
+      "sha256": "cdbab6bed5468666ca02cc98ec3b62dc81b6213667e0516cc63de8d8cc693c45",
+      "clusters": [
+        [
+          26,
+          26
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0101.txt",
+      "mtime": 1500449488,
+      "type": "file",
+      "size": 10,
+      "sha256": "da8324d03605f767f137801ea15a5d3122d8cc99bd21eff175a4020e67b75b76",
+      "clusters": [
+        [
+          25,
+          25
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0102.txt",
+      "mtime": 1500453810,
+      "type": "file",
+      "size": 10,
+      "sha256": "0390b5e1e3bb81ff0bbf713c0ee1eeae075328484811dd35d21dcbcc83b48cfa",
+      "clusters": [
+        [
+          24,
+          24
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0103.txt",
+      "mtime": 1500458132,
+      "type": "file",
+      "size": 10,
+      "sha256": "ddfb8ef6f17b6488e0721f1065ced1e7300ee0b7612519f5562f340ea9572e05",
+      "clusters": [
+        [
+          23,
+          23
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0104.txt",
+      "mtime": 1500462454,
+      "type": "file",
+      "size": 10,
+      "sha256": "571ef44cfc40fb92c73314c7e48199d734371d0f2fd1a1bb703ba50c62b8e36e",
+      "clusters": [
+        [
+          22,
+          22
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0105.txt",
+      "mtime": 1500466776,
+      "type": "file",
+      "size": 10,
+      "sha256": "ef3ffbf8b65caceb5e37ddb7bad7d501e093131ed9f02a461ad2f6a31b14fb2e",
+      "clusters": [
+        [
+          21,
+          21
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0106.txt",
+      "mtime": 1500471098,
+      "type": "file",
+      "size": 10,
+      "sha256": "5eb900bece8a49e4ffb8489e5a3ddd333c84b34ad26b38297eeb50b38380d374",
+      "clusters": [
+        [
+          20,
+          20
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0107.txt",
+      "mtime": 1500475420,
+      "type": "file",
+      "size": 10,
+      "sha256": "77b9e2edabc4db6ca0562456aa0337f424000d74daeddff7fb5a6f3474573c1f",
+      "clusters": [
+        [
+          19,
+          19
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0108.txt",
+      "mtime": 1500479742,
+      "type": "file",
+      "size": 10,
+      "sha256": "abf617de98ccbb3a5ded8cc63aa882c15aef7cb371ca19d258f35d9db681a19c",
+      "clusters": [
+        [
+          18,
+          18
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0109.txt",
+      "mtime": 1500484064,
+      "type": "file",
+      "size": 10,
+      "sha256": "c1649a629065f15a90534e16a13f313e309d1bf06657e87ac84663f378fd700d",
+      "clusters": [
+        [
+          17,
+          17
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0110.txt",
+      "mtime": 1500488386,
+      "type": "file",
+      "size": 10,
+      "sha256": "6a9426a4a154c27fb6e093b11cda7d300250ab568e6aaaf1b04c914f601ef85a",
+      "clusters": [
+        [
+          16,
+          16
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0111.txt",
+      "mtime": 1500492708,
+      "type": "file",
+      "size": 10,
+      "sha256": "dcd5a1d6583469b9e967263f3e4257853f738da172c1258d16253ec41d6fbb9c",
+      "clusters": [
+        [
+          15,
+          15
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0112.txt",
+      "mtime": 1500497030,
+      "type": "file",
+      "size": 10,
+      "sha256": "5dec27649d6bef15899fe320fcdde09ce8f0f76d878ec8301b85f28df7d2149f",
+      "clusters": [
+        [
+          14,
+          14
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0113.txt",
+      "mtime": 1500501352,
+      "type": "file",
+      "size": 10,
+      "sha256": "d413e1d1db8c682ffe67f63c939572e4641ebe13177b2f236fd7bc25a9135e3d",
+      "clusters": [
+        [
+          13,
+          13
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0114.txt",
+      "mtime": 1500505674,
+      "type": "file",
+      "size": 10,
+      "sha256": "b92cdcc280c2dccf60f3d5e125881cbacf1e29f0958e32d5fc67dd37bb80830d",
+      "clusters": [
+        [
+          12,
+          12
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0115.txt",
+      "mtime": 1500509996,
+      "type": "file",
+      "size": 10,
+      "sha256": "39a4b03efc19773913fdb5cdf81c47034a54da9f584fc94fd9537bd8023a60c5",
+      "clusters": [
+        [
+          11,
+          11
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0116.txt",
+      "mtime": 1500514318,
+      "type": "file",
+      "size": 10,
+      "sha256": "c04867d7bc56d9ddab8d8390419fcf976372f489bfda8b77e9fe0d16b68bb8db",
+      "clusters": [
+        [
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0117.txt",
+      "mtime": 1500518640,
+      "type": "file",
+      "size": 10,
+      "sha256": "b43769c02d5b7975888633eb4c9861cadda39a7dbcaa67d905badc4941069609",
+      "clusters": [
+        [
+          9,
+          9
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0118.txt",
+      "mtime": 1500522962,
+      "type": "file",
+      "size": 10,
+      "sha256": "710095b282e6000904814d00270b45e787f976517d77427387586bb9d758e46a",
+      "clusters": [
+        [
+          8,
+          8
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0119.txt",
+      "mtime": 1500527284,
+      "type": "file",
+      "size": 10,
+      "sha256": "28c624051a13fe21fca091e43e7b07e831b836e2f4d0d56652218b2e9a9d27d2",
+      "clusters": [
+        [
+          7,
+          7
+        ]
+      ]
+    },
+    {
+      "path": "/big/entry-with-a-long-name-0120.txt",
+      "mtime": 1500531606,
+      "type": "file",
+      "size": 10,
+      "sha256": "224ac68c23fbde0d83d5def7088b7d1c6274330461c3891dfeb9981dfe202e7f",
+      "clusters": [
+        [
+          6,
+          6
+        ]
+      ]
+    },
+    {
+      "path": "/blob.bin",
+      "mtime": 1500535928,
+      "type": "file",
+      "size": 200000,
+      "sha256": "a327a5404fe86323dc999ce1d7dc06535446b6c0657faabb4c830305f63b0627",
+      "clusters": [
+        [
+          156,
+          546
+        ]
+      ]
+    },
+    {
+      "path": "/deep",
+      "mtime": 1500540250,
+      "type": "dir",
+      "size": 0,
+      "sha256": "",
+      "clusters": [
+        [
+          547,
+          547
+        ]
+      ]
+    },
+    {
+      "path": "/deep/level-a",
+      "mtime": 1500544572,
+      "type": "dir",
+      "size": 0,
+      "sha256": "",
+      "clusters": [
+        [
+          548,
+          548
+        ]
+      ]
+    },
+    {
+      "path": "/deep/level-a/level-b",
+      "mtime": 1500548894,
+      "type": "dir",
+      "size": 0,
+      "sha256": "",
+      "clusters": [
+        [
+          549,
+          549
+        ]
+      ]
+    },
+    {
+      "path": "/deep/level-a/level-b/level-c",
+      "mtime": 1500553216,
+      "type": "dir",
+      "size": 0,
+      "sha256": "",
+      "clusters": [
+        [
+          550,
+          550
+        ]
+      ]
+    },
+    {
+      "path": "/deep/level-a/level-b/level-c/leaf.txt",
+      "mtime": 1500557538,
+      "type": "file",
+      "size": 5,
+      "sha256": "26d0bac9f0c7a35b2f3322a0f4ad4517265f56b2c0f4b2ed7cb5cbd30c5868e2",
+      "clusters": [
+        [
+          551,
+          551
+        ]
+      ]
+    },
+    {
+      "path": "/dir",
+      "mtime": 1500561860,
+      "type": "dir",
+      "size": 0,
+      "sha256": "",
+      "clusters": [
+        [
+          552,
+          552
+        ]
+      ]
+    },
+    {
+      "path": "/dir/keep.txt",
+      "mtime": 1500570504,
+      "type": "file",
+      "size": 5,
+      "sha256": "78051faade059d70866df6a3fb83ef348721fd74a87e93ef95c493f87d0d236b",
+      "clusters": [
+        [
+          554,
+          554
+        ]
+      ]
+    },
+    {
+      "path": "/empty.dat",
+      "mtime": 1500574826,
+      "type": "file",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "clusters": []
+    },
+    {
+      "path": "/frag",
+      "mtime": 1500579148,
+      "type": "dir",
+      "size": 0,
+      "sha256": "",
+      "clusters": [
+        [
+          568,
+          568
+        ]
+      ]
+    },
+    {
+      "path": "/frag/b-second-file.bin",
+      "mtime": 1500587792,
+      "type": "file",
+      "size": 30000,
+      "sha256": "dde16b0f63fde0179675c00734ed55258c3c1c717838c1bf62ac4822f86d84e6",
+      "clusters": [
+        [
+          648,
+          706
+        ]
+      ]
+    },
+    {
+      "path": "/frag/c-large-fragmented.bin",
+      "mtime": 1500592114,
+      "type": "file",
+      "size": 90000,
+      "sha256": "83dae916bb19e1ce638734b8be2334866748bbcfeff40bce9256e74eec8a1089",
+      "clusters": [
+        [
+          569,
+          647
+        ],
+        [
+          707,
+          803
+        ]
+      ]
+    },
+    {
+      "path": "/lower.txt",
+      "mtime": 1500613724,
+      "type": "file",
+      "size": 22,
+      "sha256": "6250ce4f7e162df94cdc30bfd29349950291ecb6909c458bf10e72148a82382c",
+      "clusters": [
+        [
+          559,
+          559
+        ]
+      ]
+    },
+    {
+      "path": "/notes",
+      "mtime": 1500618046,
+      "type": "dir",
+      "size": 0,
+      "sha256": "",
+      "clusters": [
+        [
+          560,
+          560
+        ]
+      ]
+    },
+    {
+      "path": "/notes/a.txt",
+      "mtime": 1500622368,
+      "type": "file",
+      "size": 6,
+      "sha256": "b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060",
+      "clusters": [
+        [
+          563,
+          563
+        ]
+      ]
+    },
+    {
+      "path": "/notes/b markdown notes.md",
+      "mtime": 1500626690,
+      "type": "file",
+      "size": 31,
+      "sha256": "2f1088d3fc75b56b48bb42bf08231e64eeeb871300b192ff6848416110c3dc7e",
+      "clusters": [
+        [
+          562,
+          562
+        ]
+      ]
+    },
+    {
+      "path": "/readme.txt",
+      "mtime": 1500635334,
+      "type": "file",
+      "size": 20,
+      "sha256": "766d50ee4278b032505ec835365a9780a30c73ba4587d87696954e519d28f9ad",
+      "clusters": [
+        [
+          564,
+          564
+        ]
+      ]
+    },
+    {
+      "path": "/utf8",
+      "mtime": 1500639656,
+      "type": "dir",
+      "size": 0,
+      "sha256": "",
+      "clusters": [
+        [
+          565,
+          565
+        ]
+      ]
+    },
+    {
+      "path": "/utf8/héllo-wörld.txt",
+      "mtime": 1500643978,
+      "type": "file",
+      "size": 8,
+      "sha256": "48b1abd43f44834d24dc243de1fb8ba8a370b5975fa70ff7ae72f70b3af889fb",
+      "clusters": [
+        [
+          567,
+          567
+        ]
+      ]
+    },
+    {
+      "path": "/utf8/日本語.txt",
+      "mtime": 1500648300,
+      "type": "file",
+      "size": 4,
+      "sha256": "9f2c1a03124d90994aa38206721ba5ab10fd03e269fa24860a7f39d362dd9b5f",
+      "clusters": [
+        [
+          566,
+          566
+        ]
+      ]
+    }
+  ],
+  "deleted": [
+    "/dir/deleted-me.txt",
+    "/notes/old-draft.txt",
+    "/big/entry-with-a-long-name-0090.txt",
+    "/gone-directory"
+  ],
+  "free_count": 2052,
+  "free_clusters": [
+    [
+      36,
+      36
+    ],
+    [
+      553,
+      553
+    ],
+    [
+      555,
+      558
+    ],
+    [
+      561,
+      561
+    ],
+    [
+      804,
+      2848
+    ]
+  ]
+}

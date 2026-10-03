@@ -25,7 +25,7 @@ var allowed = map[string][]string{
 	"internal/volume/volumetest":       {"internal/volume"},
 	"internal/filesys":                 {},
 	"internal/filesys/fstest":          {"internal/filesys"},
-	"internal/filesys/detect":          {"internal/filesys", "internal/filesys/ext4"},
+	"internal/filesys/detect":          {"internal/filesys", "internal/filesys/ext4", "internal/filesys/exfat", "internal/filesys/fat"},
 	"internal/filesys/ext4":            {"internal/filesys"},
 	"internal/filesys/ext4/ext4test":   {"internal/filesys", "internal/filesys/ext4"},
 	"internal/filesys/fat":             {"internal/filesys"},

@@ -533,9 +533,13 @@ func (f *FS) Root() filesys.Entry {
 	return filesys.Entry{ID: dirID(f.rootCluster), Type: filesys.TypeDir}
 }
 
-// and valid_data_length, no_fat_chain and attributes when they apply. Damage in
-// the directory (a broken chain, an unreadable cluster) does not fail the call:
-// the entries that can be read are returned and the damage is an Info warning.
+// ReadDir lists the live and the deleted entry sets of a directory (never
+// "." or ".."; exFAT has none) in on-disk order. Each Entry carries the attrs
+// dirent (<directory first cluster>:<index of the File entry>), first_cluster
+// and size, plus valid_data_length, no_fat_chain and attributes when they
+// apply. Damage in the directory (a broken chain, an unreadable cluster) does
+// not fail the call: the entries that can be read are returned and the damage
+// is an Info warning.
 //
 // Only the ID of dir is used; the attributes and size of the Entry are
 // informational and never trusted (the directory is found, and its extent read,
