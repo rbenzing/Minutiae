@@ -13,7 +13,6 @@ import (
 	"io"
 	"os"
 	"path"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -61,7 +60,7 @@ func Open(c *evidence.Case, ref string, opts Options) (*Session, error) {
 		return nil, err
 	}
 	segs := []evidence.ManifestRecord{ref0}
-	if ref0.Source.Segment > 0 {
+	if ref0.Source.Kind == "import" && ref0.Source.Segment > 0 {
 		recs, err := c.Manifest()
 		if err != nil {
 			return nil, fmt.Errorf("manifest unreadable: %w", err)
@@ -85,7 +84,7 @@ func Open(c *evidence.Case, ref string, opts Options) (*Session, error) {
 		}
 		files = append(files, f)
 	}
-	img, err := image.OpenFiles(files) // takes ownership of files, closing them on error
+	img, err := openImage(files)
 	if err != nil {
 		return nil, fmt.Errorf("open image %s: %w", segs[0].Path, err)
 	}
@@ -96,7 +95,7 @@ func Open(c *evidence.Case, ref string, opts Options) (*Session, error) {
 	if f := img.Format(); f == "raw" || f == "split-raw" {
 		sectorSize = 0
 	}
-	tbl, err := volume.Read(img, img.Size(), sectorSize)
+	tbl, err := readTable(img, sectorSize)
 	if err != nil {
 		_ = img.Close()
 		return nil, fmt.Errorf("read partition table of %s: %w", segs[0].Path, err)
@@ -107,31 +106,118 @@ func Open(c *evidence.Case, ref string, opts Options) (*Session, error) {
 	}, nil
 }
 
+// openImage is image.OpenFiles with parser panics (a container opener reads
+// hostile bytes) converted to a *filesys.CorruptError. The files are closed on
+// every failure.
+func openImage(files []*os.File) (img image.Image, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			closeFiles(files)
+			img, err = nil, panicError("image container", "open", p)
+		}
+	}()
+	return image.OpenFiles(files) // takes ownership of files, closing them on error
+}
+
+// readTable is volume.Read with panics (including ones raised by the image's
+// ReadAt) converted to a *filesys.CorruptError.
+func readTable(img image.Image, sectorSize int) (t *volume.Table, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			t, err = nil, panicError("partition table", "read", p)
+		}
+	}()
+	return volume.Read(img, img.Size(), sectorSize)
+}
+
+// maxSegments bounds the segment count accepted from a manifest record.
+const maxSegments = 1 << 16
+
+// acquisitionDir is artifacts/<device>/<acquisition> of a manifest path.
+func acquisitionDir(p string) string {
+	parts := strings.SplitN(p, "/", 4)
+	if len(parts) > 3 {
+		parts = parts[:3]
+	}
+	return strings.Join(parts, "/")
+}
+
 // collectSegments returns the records of the import that ref belongs to, in
-// segment order. Records belong to one import when they carry a segment number
-// and share the device id and the acquisition directory.
+// segment order. Records belong to one import when they are Kind "import" with
+// a segment number and share the device id and the acquisition directory. All
+// of them must agree on the total segment count N, and exactly the segments
+// 1..N must be present, otherwise the image is partial and the error is an
+// evidence.ErrIntegrity naming what is missing or inconsistent (the examiner
+// re-imports).
 func collectSegments(recs []evidence.ManifestRecord, ref evidence.ManifestRecord) ([]evidence.ManifestRecord, error) {
-	dir := path.Dir(ref.Path)
+	dir := acquisitionDir(ref.Path)
 	var group []evidence.ManifestRecord
 	for _, r := range recs {
-		if r.Source.Segment > 0 && r.Source.DeviceID == ref.Source.DeviceID && path.Dir(r.Path) == dir {
+		if r.Source.Kind == "import" && r.Source.Segment > 0 && r.Source.DeviceID == ref.Source.DeviceID && acquisitionDir(r.Path) == dir {
 			group = append(group, r)
 		}
 	}
-	sort.SliceStable(group, func(i, j int) bool { return group[i].Source.Segment < group[j].Source.Segment })
-	for i, r := range group {
-		if r.Source.Segment != i+1 {
-			return nil, fmt.Errorf("%w: image segments of %s are not contiguous 1..%d (found segment %d at position %d)",
-				evidence.ErrIntegrity, dir, len(group), r.Source.Segment, i+1)
+	fail := func(format string, a ...any) error {
+		return fmt.Errorf("%w: image import %s: %s; re-import the image", evidence.ErrIntegrity, dir, fmt.Sprintf(format, a...))
+	}
+	n := ref.Source.Segments
+	if n < 1 || n > maxSegments {
+		return nil, fail("segment %d of %s records an invalid total segment count %d", ref.Source.Segment, ref.Path, n)
+	}
+	var odd []string
+	have := make(map[int][]evidence.ManifestRecord)
+	for _, r := range group {
+		if r.Source.Segments != n {
+			odd = append(odd, fmt.Sprintf("%s (segment %d says %d segments)", r.Path, r.Source.Segment, r.Source.Segments))
+			continue
+		}
+		have[r.Source.Segment] = append(have[r.Source.Segment], r)
+	}
+	if len(odd) > 0 {
+		return nil, fail("inconsistent segment counts, expected %d: %s", n, strings.Join(odd, ", "))
+	}
+	out := make([]evidence.ManifestRecord, 0, n)
+	var missing []string
+	for i := 1; i <= n; i++ {
+		switch len(have[i]) {
+		case 0:
+			if len(missing) < 16 {
+				missing = append(missing, strconv.Itoa(i))
+			}
+		case 1:
+			out = append(out, have[i][0])
+		default:
+			return nil, fail("segment %d is recorded %d times", i, len(have[i]))
 		}
 	}
-	return group, nil
+	for seg := range have {
+		if seg > n {
+			return nil, fail("segment %d is outside 1..%d", seg, n)
+		}
+	}
+	if len(missing) > 0 {
+		return nil, fail("segment(s) %s of %d missing from the manifest", strings.Join(missing, ", "), n)
+	}
+	return out, nil
 }
 
 func closeFiles(files []*os.File) {
 	for _, f := range files {
 		_ = f.Close()
 	}
+}
+
+// ParentSegments lists every segment of a multi-segment parent in order
+// (including segment 1) for derivation provenance; nil for a single artifact.
+func (s *Session) ParentSegments() []evidence.SegmentRef {
+	if len(s.Segments) < 2 {
+		return nil
+	}
+	refs := make([]evidence.SegmentRef, len(s.Segments))
+	for i, seg := range s.Segments {
+		refs[i] = evidence.SegmentRef{ID: seg.ID, SHA256: seg.SHA256}
+	}
+	return refs
 }
 
 func (s *Session) drivers() []detect.Driver {
@@ -173,7 +259,7 @@ func (s *Session) Partition(index int) (volume.Partition, error) {
 	}
 	var cand []volume.Partition
 	for _, p := range s.Table.Partitions {
-		if _, ok := detect.ProbeWith(s.drivers(), s.section(p), p.Length); ok {
+		if _, ok, _ := probe(s.drivers(), s.section(p), p.Length); ok {
 			cand = append(cand, p)
 		}
 	}
@@ -269,9 +355,9 @@ func (s *Session) Info() ImageInfo {
 	}
 	for _, p := range s.Table.Partitions {
 		pi := PartitionInfo{Partition: p}
-		name, recognized := detect.ProbeWith(s.drivers(), s.section(p), p.Length)
+		name, recognized, notes := probe(s.drivers(), s.section(p), p.Length)
 		if !recognized {
-			pi.Error = "no recognized filesystem"
+			pi.Error = strings.Join(append([]string{"no recognized filesystem"}, notes...), "; ")
 		} else {
 			pi.FSType = name
 			if fsys, err := s.openFS(p); err != nil {
@@ -291,7 +377,10 @@ var errFound = errors.New("found")
 
 // Lookup resolves "/a/b" or "id:<fs id>" (searching the whole tree by ID, live
 // and deleted entries alike, via filesys.Walk) and returns the entry with its
-// slash path.
+// slash path. When several entries share an id a live one is preferred over a
+// deleted one. When the id is not found but some directories could not be read
+// (or a directory cycle was hit) the error says so, since the entry may be in
+// one of them.
 func (s *Session) Lookup(fsys filesys.FileSystem, ref string) (filesys.Entry, string, error) {
 	id, byID := strings.CutPrefix(ref, "id:")
 	if !byID {
@@ -310,21 +399,65 @@ func (s *Session) Lookup(fsys filesys.FileSystem, ref string) (filesys.Entry, st
 		return root, "/", nil
 	}
 	var (
-		found filesys.Entry
-		where string
+		found      filesys.Entry
+		where      string
+		haveMatch  bool
+		unreadable int
+		firstBad   string
 	)
 	err := filesys.Walk(fsys, root, "/", func(p string, e filesys.Entry, werr error) error {
-		if werr != nil || e.ID != id {
-			return nil // unreadable directories are skipped; they cannot be the answer
+		if werr != nil {
+			if unreadable++; unreadable == 1 {
+				firstBad = fmt.Sprintf("%s: %v", p, werr)
+			}
+			return nil
 		}
-		found, where = e, p
-		return errFound
+		if e.ID != id {
+			return nil
+		}
+		if !haveMatch || (found.Deleted && !e.Deleted) {
+			found, where, haveMatch = e, p, true
+		}
+		if !found.Deleted {
+			return errFound
+		}
+		return nil
 	})
 	switch {
-	case errors.Is(err, errFound):
-		return found, where, nil
-	case err != nil:
+	case err != nil && !errors.Is(err, errFound):
 		return filesys.Entry{}, "", err
+	case haveMatch:
+		return found, where, nil
+	case unreadable > 0:
+		return filesys.Entry{}, "", fmt.Errorf("id:%s: %w; %d directories could not be read (first: %s)", id, filesys.ErrNotFound, unreadable, firstBad)
 	}
 	return filesys.Entry{}, "", fmt.Errorf("id:%s: %w", id, filesys.ErrNotFound)
+}
+
+// probe returns the name of the first driver whose Probe matches. Unlike
+// detect.ProbeWith it reports a panicking Probe (treated as a non-match) so the
+// examiner can see why a partition was not recognized.
+func probe(drivers []detect.Driver, r io.ReaderAt, size int64) (name string, ok bool, notes []string) {
+	for _, d := range drivers {
+		if d.Probe == nil {
+			continue
+		}
+		matched, note := safeProbe(d, r, size)
+		if note != "" {
+			notes = append(notes, note)
+		}
+		if matched {
+			return d.Name, true, notes
+		}
+	}
+	return "", false, notes
+}
+
+func safeProbe(d detect.Driver, r io.ReaderAt, size int64) (matched bool, note string) {
+	defer func() {
+		if p := recover(); p != nil {
+			matched, note = false, fmt.Sprintf("%s probe panicked: %v", d.Name, p)
+		}
+	}()
+	return d.Probe(r, size), ""
 }

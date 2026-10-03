@@ -20,6 +20,9 @@ type Source struct {
 	// Import: examiner-side source path and 1-based segment number.
 	OriginalPath string `json:"original_path,omitempty"`
 	Segment      int    `json:"segment,omitempty"`
+	// Segments is the total number of segments of the import (set on every
+	// segment record), so a partially imported image is detectable.
+	Segments int `json:"segments,omitempty"`
 	// Extract / unallocated: how the artifact was derived from another one.
 	Derived *Derivation `json:"derived,omitempty"`
 }
@@ -83,21 +86,30 @@ type Run struct {
 	Length int64 `json:"length"`
 }
 
+// SegmentRef identifies one segment artifact of a multi-segment parent image.
+type SegmentRef struct {
+	ID     string `json:"id"`
+	SHA256 string `json:"sha256"`
+}
+
 // Derivation records how an artifact was produced from another artifact.
 type Derivation struct {
-	ParentID         string            `json:"parent_id"`
-	ParentSHA256     string            `json:"parent_sha256"`
-	ParentIncomplete bool              `json:"parent_incomplete,omitempty"`
-	Partition        int               `json:"partition"`        // 0 = whole image
-	PartitionOffset  int64             `json:"partition_offset"` // bytes into the image
-	FSType           string            `json:"fs_type,omitempty"`
-	FSPath           string            `json:"fs_path,omitempty"`
-	FSID             string            `json:"fs_id,omitempty"`
-	Mode             uint32            `json:"mode,omitempty"`
-	UID              uint32            `json:"uid,omitempty"`
-	GID              uint32            `json:"gid,omitempty"`
-	Times            map[string]string `json:"times,omitempty"` // RFC 3339
-	Encrypted        bool              `json:"encrypted,omitempty"`
-	Runs             []Run             `json:"runs,omitempty"`          // image-relative byte runs (at most MaxInlineRuns)
-	RunsArtifact     string            `json:"runs_artifact,omitempty"` // id of a runs sidecar artifact
+	ParentID         string `json:"parent_id"`
+	ParentSHA256     string `json:"parent_sha256"`
+	ParentIncomplete bool   `json:"parent_incomplete,omitempty"`
+	// ParentSegments lists every segment (in order, including segment 1) of a
+	// multi-segment parent; empty for a single-artifact parent.
+	ParentSegments  []SegmentRef      `json:"parent_segments,omitempty"`
+	Partition       int               `json:"partition"`        // 0 = whole image
+	PartitionOffset int64             `json:"partition_offset"` // bytes into the image
+	FSType          string            `json:"fs_type,omitempty"`
+	FSPath          string            `json:"fs_path,omitempty"`
+	FSID            string            `json:"fs_id,omitempty"`
+	Mode            uint32            `json:"mode,omitempty"`
+	UID             uint32            `json:"uid,omitempty"`
+	GID             uint32            `json:"gid,omitempty"`
+	Times           map[string]string `json:"times,omitempty"` // RFC 3339
+	Encrypted       bool              `json:"encrypted,omitempty"`
+	Runs            []Run             `json:"runs,omitempty"`          // image-relative byte runs (at most MaxInlineRuns)
+	RunsArtifact    string            `json:"runs_artifact,omitempty"` // id of a runs sidecar artifact
 }

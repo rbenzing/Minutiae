@@ -187,7 +187,7 @@ func TestOpenSegmentGapIsIntegrityError(t *testing.T) {
 	data := disk(mtfsImage(map[string]string{"/a": "x"}))
 	acq := evidence.NewAcquisitionID(time.Now())
 	for _, seg := range []int{1, 3} {
-		_, err := c.Capture("img", acq, "image/s"+string(rune('0'+seg)), evidence.Source{Kind: "import", DeviceID: "img", Segment: seg},
+		_, err := c.Capture("img", acq, "image/s"+string(rune('0'+seg)), evidence.Source{Kind: "import", DeviceID: "img", Segment: seg, Segments: 3},
 			func(w io.Writer) error { _, err := w.Write(data); return err })
 		if err != nil {
 			t.Fatal(err)
@@ -260,7 +260,7 @@ func TestInfoReportsPartitionsAndFS(t *testing.T) {
 func TestInfoFlagsIncompleteParent(t *testing.T) {
 	c := newCase(t)
 	data := disk(mtfsImage(map[string]string{"/a": "x"}))
-	rec, err := c.Capture("img", "acq", "image/x", evidence.Source{Kind: "import", DeviceID: "img", Segment: 1},
+	rec, err := c.Capture("img", "acq", "image/x", evidence.Source{Kind: "import", DeviceID: "img", Segment: 1, Segments: 1},
 		func(w io.Writer) error {
 			if _, err := w.Write(data); err != nil {
 				return err
@@ -404,6 +404,13 @@ func (f *panicFile) ReadAt(b []byte, off int64) (int, error) {
 	return f.File.ReadAt(b, off)
 }
 
+func (f *panicFile) Size() int64 {
+	if f.where == "Size" {
+		panic("boom in Size")
+	}
+	return f.File.Size()
+}
+
 func (f *panicFile) Runs() []filesys.Run {
 	if f.where == "Runs" {
 		panic("boom in Runs")
@@ -499,9 +506,23 @@ func TestSessionRecoversFSPanic(t *testing.T) {
 	})
 	t.Run("Info", func(t *testing.T) {
 		fsys := panicSession(t, "Info")
-		if info := fsys.Info(); info.Type != "mtfs" { // last good snapshot, no panic
-			t.Errorf("Info after panic = %+v", info)
+		info := fsys.Info() // last good snapshot plus a warning, no panic
+		warned := false
+		for _, w := range info.Warnings {
+			warned = warned || strings.Contains(w, "boom in Info")
 		}
+		if info.Type != "mtfs" || !warned {
+			t.Errorf("Info after panic = %+v, want the snapshot with a panic warning", info)
+		}
+	})
+	t.Run("Size", func(t *testing.T) {
+		fsys := panicSession(t, "Size")
+		e, err := fsys.Lookup("/a.txt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = fsys.Open(e)
+		requireCorrupt(t, "Open (Size panic)", err)
 	})
 }
 

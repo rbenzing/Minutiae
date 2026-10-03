@@ -231,3 +231,37 @@ func TestOpenArtifactRefusesPathOutsideCase(t *testing.T) {
 		}
 	}
 }
+
+func TestVerifyFlagsDerivedArtifactWithBadParentSegment(t *testing.T) {
+	c := newTestCase(t)
+	var segs []ManifestRecord
+	for i, data := range []string{"seg-one", "seg-two"} {
+		rec, err := c.Capture("dev1", "acq0", "image/s"+string(rune('1'+i)), Source{Kind: "import", DeviceID: "dev1", Segment: i + 1, Segments: 2},
+			func(w io.Writer) error { _, err := io.WriteString(w, data); return err })
+		if err != nil {
+			t.Fatal(err)
+		}
+		segs = append(segs, rec)
+	}
+	derive := func(refs []SegmentRef) {
+		t.Helper()
+		d := &Derivation{ParentID: segs[0].ID, ParentSHA256: segs[0].SHA256, ParentSegments: refs}
+		if _, err := c.Capture("dev1", "acq-"+string(rune('a'+len(refs))), "f.bin", derivedSource(d),
+			func(w io.Writer) error { _, err := io.WriteString(w, "data"); return err }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	good := []SegmentRef{{segs[0].ID, segs[0].SHA256}, {segs[1].ID, segs[1].SHA256}}
+	derive(good)
+	if r := mustVerify(t, c); !r.OK() {
+		t.Fatalf("good multi-segment derivation reported problems: %v", r.Problems)
+	}
+	if recs, _ := c.Manifest(); !reflect.DeepEqual(recs[2].Source.Derived.ParentSegments, good) || recs[0].Source.Segments != 2 {
+		t.Errorf("segments did not round-trip: %+v", recs)
+	}
+	derive([]SegmentRef{good[0], {segs[1].ID, "00ff"}, {"ghost-seg", "x"}}) // 3 refs: distinct acquisition id
+	r := mustVerify(t, c)
+	if r.OK() || !containsSubstr(r.Problems, "parent segment 2") || !containsSubstr(r.Problems, "parent segment 3") {
+		t.Fatalf("report = %+v", r)
+	}
+}

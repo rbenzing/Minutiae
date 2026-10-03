@@ -242,6 +242,16 @@ func (c *Case) checkDerived(rep *VerifyReport, recs []ManifestRecord) {
 			rep.problemf("artifact %s (%s): parent %s sha256 %s differs from the derivation's recorded parent sha256 %s",
 				r.ID, r.Path, d.ParentID, parent.SHA256, d.ParentSHA256)
 		}
+		for i, sg := range d.ParentSegments {
+			seg, ok := byID[sg.ID]
+			switch {
+			case !ok:
+				rep.problemf("artifact %s (%s): parent segment %d (%q) of %s is not in the manifest", r.ID, r.Path, i+1, sg.ID, d.ParentID)
+			case seg.SHA256 != sg.SHA256:
+				rep.problemf("artifact %s (%s): parent segment %d (%s) sha256 %s differs from the derivation's recorded sha256 %s",
+					r.ID, r.Path, i+1, sg.ID, seg.SHA256, sg.SHA256)
+			}
+		}
 		if d.RunsArtifact != "" {
 			if _, ok := byID[d.RunsArtifact]; !ok {
 				rep.problemf("artifact %s (%s): runs artifact %q (of parent %s) is not in the manifest", r.ID, r.Path, d.RunsArtifact, d.ParentID)

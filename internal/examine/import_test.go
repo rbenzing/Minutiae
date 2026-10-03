@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -150,17 +151,46 @@ func TestImportRefusesBadInput(t *testing.T) {
 	}
 }
 
-func TestImportSameBaseNameInDifferentDirs(t *testing.T) {
+func TestImportRefusesCollidingNames(t *testing.T) {
 	c := newCase(t)
 	a, b := t.TempDir(), t.TempDir()
-	pa, pb := filepath.Join(a, "disk.img"), filepath.Join(b, "disk.img")
-	for _, p := range []string{pa, pb} {
+	write := func(dir, name string) string {
+		p := filepath.Join(dir, name)
 		if err := os.WriteFile(p, []byte(p), 0o600); err != nil {
 			t.Fatal(err)
 		}
+		return p
 	}
-	recs, err := examine.Import(context.Background(), c, "img", []string{pa, pb}, nil)
-	if err != nil || len(recs) != 2 || recs[0].Path == recs[1].Path {
-		t.Fatalf("Import = %+v, %v", recs, err)
+	pa, pb := write(a, "disk.img"), write(b, "disk.img")
+	_, err := examine.Import(context.Background(), c, "img", []string{pa, pb}, nil)
+	if err == nil || !strings.Contains(err.Error(), pa) || !strings.Contains(err.Error(), pb) {
+		t.Fatalf("Import(same name) = %v, want an error naming both files", err)
+	}
+	// Names that differ only by case collide on case-insensitive filesystems.
+	upper := write(b, "DISK.IMG")
+	if _, err := examine.Import(context.Background(), c, "img", []string{pa, upper}, nil); err == nil {
+		t.Error("Import accepted names differing only by case")
+	}
+	if recs, _ := c.Manifest(); len(recs) != 0 {
+		t.Errorf("manifest has %d records; collisions must be refused before anything is written", len(recs))
+	}
+	if strings.Contains(auditText(t, c.Dir), "acquire.start") {
+		t.Error("acquire.start was audited for a refused import")
+	}
+}
+
+func TestImportRefusesExtendedLengthPathInsideCase(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("extended-length paths exist only on Windows")
+	}
+	c := newCase(t)
+	inside := filepath.Join(c.Dir, "notes.bin")
+	if err := os.WriteFile(inside, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{`\?\` + inside, strings.ToUpper(`\?\` + inside)} {
+		if _, err := examine.Import(context.Background(), c, "img", []string{p}, nil); err == nil || !strings.Contains(err.Error(), "cannot import from inside the case") {
+			t.Errorf("Import(%q) = %v", p, err)
+		}
 	}
 }
