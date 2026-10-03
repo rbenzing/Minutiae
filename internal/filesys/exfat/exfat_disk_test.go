@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
@@ -139,8 +140,9 @@ func TestExfatDirectoryReadBudget(t *testing.T) {
 	if len(part) == 0 || len(part) >= 200 || !hasWarn(f, "budget") {
 		t.Errorf("%d entries, warnings %v", len(part), f.Info().Warnings)
 	}
-	if got, err := f.ReadDir(f.Root()); err != nil || len(got) >= 200 {
-		t.Errorf("after exhaustion: %d entries, %v", len(got), err)
+	// Spent before any entry is read: an error, never an empty listing.
+	if got, err := f.ReadDir(f.Root()); err == nil || len(got) != 0 || !errors.Is(err, filesys.ErrCorrupt) || !strings.Contains(err.Error(), "directory read budget exhausted") {
+		t.Errorf("after exhaustion: %d entries, %v; want a CorruptError \"directory read budget exhausted\"", len(got), err)
 	}
 	// Opening a file reads only a small window of its directory: not counted.
 	if _, err := f.Open(full[150]); err != nil {

@@ -42,7 +42,7 @@ func fuzzBuilderSeeds() [][]byte {
 	// than its image).
 	seed := func(o fattest.Options, files []fattest.File) []byte {
 		img := fattest.Build(o, files)
-		return img[:min(int64(len(img)), fattest.Layout(o).ClusterOffset(600))]
+		return trimTail(img[:min(int64(len(img)), fattest.Layout(o).ClusterOffset(600))])
 	}
 	return [][]byte{
 		seed(fattest.Options{Type: 12, Label: "SEED12", VolID: 0x1234ABCD}, files),
@@ -84,11 +84,7 @@ func FuzzFATOpen(f *testing.F) {
 			if err != nil || file.Size() > fuzzFileMax || readTotal >= fuzzReadBudget {
 				return nil
 			}
-			if runs := file.Runs(); runs != nil {
-				if err := filesys.CheckRuns(runs, file.Size(), fsys.Info().Size); err != nil {
-					t.Fatalf("runs of %s violate the File.Runs contract: %v", e.Name, err)
-				}
-			}
+			checkFuzzRuns(t, e.Name, file, fsys.Info().Size)
 			buf := make([]byte, min(file.Size(), fuzzReadChunk))
 			for off := int64(0); off < file.Size(); off += int64(len(buf)) {
 				n, rerr := file.ReadAt(buf, off)
@@ -110,6 +106,28 @@ func FuzzFATOpen(f *testing.F) {
 			}
 		}
 	})
+}
+
+// checkFuzzRuns checks the File.Runs contract of a file the reader opened:
+// the runs cover exactly [0, Size()) or, when the allocation is truncated or
+// corrupt, a valid strict prefix of it, in which case a read at the end of
+// the prefix must fail with an error wrapping filesys.ErrCorrupt.
+func checkFuzzRuns(t *testing.T, name string, file filesys.File, fsSize int64) {
+	t.Helper()
+	runs, size := file.Runs(), file.Size()
+	covered, err := filesys.CheckRunsPrefix(runs, size, fsSize)
+	if err != nil {
+		t.Fatalf("runs of %s violate the File.Runs contract: %v", name, err)
+	}
+	if covered == size {
+		if err := filesys.CheckRuns(runs, size, fsSize); err != nil { // the exact-cover rule
+			t.Fatalf("runs of %s violate the File.Runs contract: %v", name, err)
+		}
+		return
+	}
+	if n, err := file.ReadAt(make([]byte, 1), covered); n != 0 || !errors.Is(err, filesys.ErrCorrupt) {
+		t.Fatalf("read of %s at the end of its %d-byte run prefix (size %d) = %d, %v; want 0 bytes and ErrCorrupt", name, covered, size, n, err)
+	}
 }
 
 // The builder seeds must be images the reader accepts, or the fuzz would
@@ -136,5 +154,17 @@ func trimmedFixture(t testing.TB, path string) []byte {
 		}
 	}
 	end := want.DataStart + (last-1)*int64(want.BlockSize) + 64<<10
-	return img[:min(int64(len(img)), end)]
+	return trimTail(img[:min(int64(len(img)), end)])
+}
+
+// trimTail cuts an image after its last non-zero byte plus a sector's worth of
+// slack: whatever follows is unused space. The reader clamps a volume that is
+// larger than its image, so the cut image is still a valid seed, and the fuzz
+// engine's throughput does not collapse on multi-megabyte inputs.
+func trimTail(img []byte) []byte {
+	end := len(img)
+	for end > 0 && img[end-1] == 0 {
+		end--
+	}
+	return img[:min(len(img), end+4096)]
 }

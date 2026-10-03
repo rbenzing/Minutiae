@@ -43,8 +43,11 @@ const (
 	// deleted for ReadDir, live for Lookup), so a hostile directory cannot make
 	// ReadDir build an unbounded list. A directory with more is cut off at the
 	// cap with a warning, for Lookup too: an entry beyond it is reported as not
-	// found.
-	maxDirRecords = 1 << 20
+	// found. An entry set takes at most 19 entries, so 1<<18 of them fit
+	// within maxDirBytes (152 MiB of 256): the per-directory byte limit binds
+	// only for a directory made of junk, and the per-volume budget
+	// (maxDirBudget, 1 GiB) after four such directories.
+	maxDirRecords = 1 << 18
 	// maxUpcaseBytes bounds the up-case table (65536 UTF-16 units).
 	maxUpcaseBytes = 128 << 10
 	maxLabelUnits  = 11
@@ -132,6 +135,7 @@ func (f *FS) loadRootMeta() {
 			}
 		}
 	}
+	f.upMeta = up
 	f.loadUpcase(up)
 }
 
@@ -394,12 +398,14 @@ func validUTF16(u []uint16) bool {
 }
 
 // displayName returns the Entry.Name for an on-disk name and the RawName to
-// keep. A valid UTF-16 name without NUL or '/' is shown as it is (RawName is
-// then nil); any other name is shown losslessly as "~raw~" + base64url of its
-// UTF-16LE bytes. Lookup accepts both forms.
+// keep. A valid UTF-16 name without NUL or '/' that is not "." or ".." is shown
+// as it is (RawName is then nil); any other name is shown losslessly as
+// "~raw~" + base64url of its UTF-16LE bytes. Lookup accepts both forms.
 func displayName(u []uint16) (string, []byte) {
 	if len(u) > 0 && validUTF16(u) && !slices.Contains(u, 0) && !slices.Contains(u, '/') {
-		return string(utf16.Decode(u)), nil
+		if name := string(utf16.Decode(u)); name != "." && name != ".." {
+			return name, nil
+		}
 	}
 	raw := make([]byte, 0, 2*len(u))
 	for _, c := range u {

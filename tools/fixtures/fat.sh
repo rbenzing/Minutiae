@@ -9,10 +9,11 @@
 #          65525 clusters), 512-byte clusters
 #
 # Every image holds long names (VFAT), mixed-case and lower-case 8.3 names, an
-# OEM-only short name, UTF-8 names (accents, CJK, a surrogate pair), a
-# directory of 120 entries (several clusters), an empty file, a fragmented
-# file (a written, b written, a deleted, c written), deleted files with long
-# names and a deleted directory with content.
+# OEM-only short name (ÉTÉ.TXT, the byte 0x90), UTF-8 names (accents, CJK; not
+# a surrogate pair, which mtools cannot store), a directory of 120 entries
+# (several clusters), an empty file, a fragmented file (a written, b written,
+# a deleted, c written), deleted files with long names and a deleted directory
+# with content.
 #
 # Oracle: fat_oracle.py walks the SOURCE TREE (never the image); the deleted
 # names are the generator's own list; geometry and the cluster chains of every
@@ -40,6 +41,7 @@ out=$(cd "${1:?outdir required}" && pwd)
 # for monotonic timers); NO_FAKE_STAT keeps the source files' own mtimes, which
 # mcopy -m copies. The volume id is fixed.
 export LC_ALL=C.UTF-8
+tree_oem=1 # fat_tree.sh adds the 8.3-only OEM-name file
 export MTOOLS_SKIP_CHECK=1 NO_FAKE_STAT=1 FAKETIME_DONT_FAKE_MONOTONIC=1
 clock="2023-11-14 22:13:20"
 
@@ -52,9 +54,10 @@ frun() {
 base=/dev/shm
 [ -w "$base" ] || base=${TMPDIR:-/tmp}
 work=$base/minutiae-fat # fixed name: the commands recorded in the oracle mention it
+cleanup() { rm -rf "$work"; }
+trap cleanup EXIT
 rm -rf "$work"
 mkdir "$work"
-
 
 # build_fixture <name> <fat type> <size in KiB> <mkfs.fat extra args...>
 build_fixture() {

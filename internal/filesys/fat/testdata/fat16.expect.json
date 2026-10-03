@@ -1,6 +1,6 @@
 {
   "generator": {
-    "image_sha256": "4190ac91ad7fba32e7dd139d885765e813852dcaf111a5b0054c2f948cc009d2",
+    "image_sha256": "d376a552cf9041f8a8f997e98f6dc6c9b62a690493f466db48075a6b4b722388",
     "packages": [
       {
         "package": "coreutils",
@@ -36,7 +36,7 @@
       "python3 tools/fixtures/fat_oracle.py <src> --exclude /dir/deleted-me.txt --exclude /notes/old-draft.txt --exclude /big/entry-with-a-long-name-0090.txt --exclude /frag/a-first-file.bin --exclude-tree /gone-directory",
       "faketime -f '2023-11-14 22:13:20' mkfs.fat -F 16 -i 1234ABCD -n FIXTURE -s 4 -C /dev/shm/minutiae-fat/fat16.img 16384",
       "# copy: top-level entries of the source tree except frag, in sorted order",
-      "faketime -f '2023-11-14 22:13:20' mcopy -s -m -i /dev/shm/minutiae-fat/fat16.img /dev/shm/minutiae-fat/fat16.src/A.TXT /dev/shm/minutiae-fat/fat16.src/Mixed-Case.Txt /dev/shm/minutiae-fat/fat16.src/UPPER.TXT /dev/shm/minutiae-fat/fat16.src/big /dev/shm/minutiae-fat/fat16.src/blob.bin /dev/shm/minutiae-fat/fat16.src/deep /dev/shm/minutiae-fat/fat16.src/dir /dev/shm/minutiae-fat/fat16.src/empty.dat /dev/shm/minutiae-fat/fat16.src/gone-directory /dev/shm/minutiae-fat/fat16.src/lower.txt /dev/shm/minutiae-fat/fat16.src/notes /dev/shm/minutiae-fat/fat16.src/readme.txt /dev/shm/minutiae-fat/fat16.src/utf8 ::/",
+      "faketime -f '2023-11-14 22:13:20' mcopy -s -m -i /dev/shm/minutiae-fat/fat16.img /dev/shm/minutiae-fat/fat16.src/A.TXT /dev/shm/minutiae-fat/fat16.src/Mixed-Case.Txt /dev/shm/minutiae-fat/fat16.src/UPPER.TXT /dev/shm/minutiae-fat/fat16.src/big /dev/shm/minutiae-fat/fat16.src/blob.bin /dev/shm/minutiae-fat/fat16.src/deep /dev/shm/minutiae-fat/fat16.src/dir /dev/shm/minutiae-fat/fat16.src/empty.dat /dev/shm/minutiae-fat/fat16.src/gone-directory /dev/shm/minutiae-fat/fat16.src/lower.txt /dev/shm/minutiae-fat/fat16.src/notes /dev/shm/minutiae-fat/fat16.src/readme.txt /dev/shm/minutiae-fat/fat16.src/utf8 /dev/shm/minutiae-fat/fat16.src/ÉTÉ.TXT ::/",
       "faketime -f '2023-11-14 22:13:20' mcopy -s -m -i /dev/shm/minutiae-fat/fat16.img /dev/shm/minutiae-fat/fat16.stage/frag ::/",
       "faketime -f '2023-11-14 22:13:20' mcopy -m -i /dev/shm/minutiae-fat/fat16.img /dev/shm/minutiae-fat/fat16.src/frag/a-first-file.bin /dev/shm/minutiae-fat/fat16.src/frag/b-second-file.bin ::/frag/",
       "faketime -f '2023-11-14 22:13:20' mdel -i /dev/shm/minutiae-fat/fat16.img ::/frag/a-first-file.bin",
@@ -1782,8 +1782,8 @@
       "sha256": "",
       "clusters": [
         [
-          252,
-          252
+          253,
+          253
         ]
       ]
     },
@@ -1795,8 +1795,8 @@
       "sha256": "dde16b0f63fde0179675c00734ed55258c3c1c717838c1bf62ac4822f86d84e6",
       "clusters": [
         [
-          273,
-          287
+          274,
+          288
         ]
       ]
     },
@@ -1808,12 +1808,12 @@
       "sha256": "83dae916bb19e1ce638734b8be2334866748bbcfeff40bce9256e74eec8a1089",
       "clusters": [
         [
-          253,
-          272
+          254,
+          273
         ],
         [
-          288,
-          311
+          289,
+          312
         ]
       ]
     },
@@ -1920,6 +1920,19 @@
           250
         ]
       ]
+    },
+    {
+      "path": "/ÉTÉ.TXT",
+      "mtime": 1600000000,
+      "type": "file",
+      "size": 4,
+      "sha256": "5c6fb18c5e139d9daf7e772a19bac7f6ad70402b7593665bb4a223ab4c5f1730",
+      "clusters": [
+        [
+          252,
+          252
+        ]
+      ]
     }
   ],
   "deleted": [
@@ -1928,7 +1941,7 @@
     "/big/entry-with-a-long-name-0090.txt",
     "/gone-directory"
   ],
-  "free_count": 7864,
+  "free_count": 7863,
   "free_clusters": [
     [
       36,
@@ -1947,7 +1960,7 @@
       245
     ],
     [
-      312,
+      313,
       8168
     ]
   ]

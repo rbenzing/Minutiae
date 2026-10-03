@@ -7,7 +7,7 @@
 // checksum); a set that does not verify is still listed, with the attribute
 // checksum=bad. Entry sets whose InUse bits are cleared are listed as
 // deleted; their content is never opened (recovery is roadmap sub-project 3),
-// / but the first cluster and size stay in the attributes. Entry attributes are
+// but the first cluster and size stay in the attributes. Entry attributes are
 // informational only: Open and ReadDir take nothing from a caller-supplied
 // Entry except its ID, and derive deleted/directory state and every extent
 // (first cluster, DataLength, ValidDataLength, NoFatChain) from the entry set
@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"sync"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
@@ -31,9 +30,6 @@ const (
 	cacheBlockSize = 4096
 	cacheBlocks    = 256 // blocks held by the metadata cache
 
-	// maxWarnings bounds Info().Warnings: a hostile image can make every
-	// directory entry report a problem.
-	maxWarnings = 1000
 )
 
 // FS is an opened exFAT volume. After Open it is safe for concurrent use: the
@@ -55,6 +51,7 @@ type FS struct {
 
 	label  string
 	bitmap meta // the Allocation Bitmap entry of the root directory
+	upMeta meta // the Up-case Table entry of the root directory
 	// upcase maps every UTF-16 unit to its up-case form; nil when the volume
 	// has no usable table (Lookup then folds with strings.EqualFold).
 	upcase *[65536]uint16
@@ -63,6 +60,8 @@ type FS struct {
 	dirRecordCap int
 	// bitmapChunk is how much of the allocation bitmap is read at a time.
 	bitmapChunk int
+	// unallocCap bounds the runs Unallocated reports (maxUnallocRuns).
+	unallocCap int
 
 	// dirs are the directories met so far, by first cluster, with the extent the
 	// disk gave them (see dirState). dirBudget is what is left of the bytes of
@@ -72,10 +71,7 @@ type FS struct {
 	dirBudget      int64
 	dirBudgetTotal int64
 
-	wmu      sync.Mutex
-	warnings []string
-	warnSeen map[string]struct{}
-	warnFull bool // the cap was reached and the "suppressed" line is in warnings
+	warns filesys.Warnings
 }
 
 // meta is a system file named by a root directory entry (bitmap, up-case).
@@ -103,33 +99,10 @@ func corrupt(structure string, off int64, format string, a ...any) error {
 	return &filesys.CorruptError{Structure: structure, Offset: off, Reason: fmt.Sprintf(format, a...)}
 }
 
-// warn records a problem that does not stop the read (a checksum mismatch, a
-// damaged directory ...). Identical messages are recorded once, and at most
-// maxWarnings distinct messages are kept: after that a single "further
-// warnings suppressed" line stands for the rest. It is safe for concurrent use.
-func (f *FS) warn(format string, a ...any) {
-	msg := format
-	if len(a) > 0 {
-		msg = fmt.Sprintf(format, a...)
-	}
-	f.wmu.Lock()
-	defer f.wmu.Unlock()
-	if _, dup := f.warnSeen[msg]; dup {
-		return
-	}
-	if len(f.warnings) >= maxWarnings {
-		if !f.warnFull {
-			f.warnFull = true
-			f.warnings = append(f.warnings, "further warnings suppressed")
-		}
-		return
-	}
-	if f.warnSeen == nil {
-		f.warnSeen = map[string]struct{}{}
-	}
-	f.warnSeen[msg] = struct{}{}
-	f.warnings = append(f.warnings, msg)
-}
+// warn records a problem that does not stop the read (see filesys.Warnings:
+// identical messages once, at most filesys.MaxWarnings distinct ones). On-disk
+// strings must be %q-quoted by the caller.
+func (f *FS) warn(format string, a ...any) { f.warns.Add(format, a...) }
 
 // Probe reports whether the first sector of the volume is an exFAT boot
 // sector: the file system name "EXFAT   " and legal sector and cluster
@@ -185,6 +158,7 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		volFlags:     bt.volFlags,
 		dirRecordCap: maxDirRecords,
 		bitmapChunk:  maxBitmapChunk,
+		unallocCap:   maxUnallocRuns,
 
 		dirs:           map[uint32]*dirState{g.rootCluster: {spec: dirSpec{first: g.rootCluster, whole: true}}},
 		dirBudget:      maxDirBudget,
@@ -219,11 +193,10 @@ func (f *FS) checkBoot(vol io.ReaderAt) {
 
 // Info describes the filesystem. Warnings is a snapshot: it holds the problems
 // found at Open and those met since by directory, chain and bitmap reads,
-// without duplicates and capped at 1000 entries.
+// without duplicates, at most 1000 distinct ones plus one "further warnings
+// suppressed" line.
 func (f *FS) Info() filesys.Info {
-	f.wmu.Lock()
-	warnings := slices.Clone(f.warnings)
-	f.wmu.Unlock()
+	warnings := f.warns.Snapshot()
 	major, minor := f.revision>>8, f.revision&0xFF
 	features := []string{fmt.Sprintf("revision %d.%02d", major, minor)}
 	if f.volFlags&0x2 != 0 {

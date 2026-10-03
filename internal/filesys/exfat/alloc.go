@@ -3,6 +3,7 @@ package exfat
 import (
 	"encoding/binary"
 	"fmt"
+	"sort"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
 )
@@ -173,8 +174,15 @@ func (f *FS) readExtents(exts []extent, dst []byte) error {
 	return nil
 }
 
-// maxBitmapChunk is how much of the allocation bitmap is read at a time.
-const maxBitmapChunk = 1 << 20
+const (
+	// maxBitmapChunk is how much of the allocation bitmap is read at a time.
+	maxBitmapChunk = 1 << 20
+	// maxUnallocRuns bounds the runs Unallocated reports (and the bad-cluster
+	// runs it subtracts); more are cut off with a warning.
+	maxUnallocRuns = 1 << 24
+	// fatScanChunk is how much of the FAT is read at a time to find bad clusters.
+	fatScanChunk = 1 << 20
+)
 
 // Unallocated returns the byte runs of the clusters the allocation bitmap
 // marks free (a clear bit), sorted and merged. The bitmap is read from the
@@ -182,6 +190,11 @@ const maxBitmapChunk = 1 << 20
 // shorter than the cluster count needs, the problem is reported through
 // Info().Warnings and the clusters it does not cover are never reported as
 // free. Bits past the cluster count are ignored.
+//
+// The bitmap is not trusted blindly: the clusters of the allocation bitmap, of
+// the up-case table and of the root directory, and the clusters the FAT marks
+// bad, are never reported as free even when the bitmap says so. At most
+// maxUnallocRuns runs are reported (a warning says when the rest is cut off).
 func (f *FS) Unallocated() ([]filesys.Run, error) {
 	if !f.bitmap.present {
 		f.warn("allocation bitmap: the root directory has no Allocation Bitmap entry; no free space is reported")
@@ -202,17 +215,47 @@ func (f *FS) Unallocated() ([]filesys.Run, error) {
 		f.warn("allocation bitmap: cannot be read (first cluster %d): %v; no free space is reported", f.bitmap.first, err)
 		return nil, nil
 	}
+	reserved, ok := f.reservedRuns(exts)
+	if !ok {
+		return nil, nil // the warning is recorded
+	}
 
 	var (
 		runs      []filesys.Run
+		capped    bool
 		runStart  = int64(-1) // cluster index of the open free run
 		buf       = make([]byte, min(have, uint64(f.bitmapChunk)))
 		index     int64 // cluster index of the next bit
 		remaining = have
 	)
+	// emit appends the part of the byte range [off, off+length) that no
+	// reserved run covers.
+	emit := func(off, length int64) {
+		end := off + length // inside the volume: cannot overflow
+		i := sort.Search(len(reserved), func(i int) bool { return reserved[i].Offset+reserved[i].Length > off })
+		for off < end && !capped {
+			next := end
+			if i < len(reserved) && reserved[i].Offset < end {
+				next = max(reserved[i].Offset, off)
+			}
+			if next > off {
+				if len(runs) >= f.unallocCap {
+					f.warn("unallocated space: more than %d free runs, the rest is not reported", f.unallocCap)
+					capped = true
+					return
+				}
+				runs = append(runs, filesys.Run{Offset: off, Length: next - off})
+			}
+			if i >= len(reserved) || reserved[i].Offset >= end {
+				return
+			}
+			off = max(off, reserved[i].Offset+reserved[i].Length)
+			i++
+		}
+	}
 	flush := func(end int64) {
 		if runStart >= 0 {
-			runs = append(runs, filesys.Run{Offset: f.heapOff + runStart*f.cs, Length: (end - runStart) * f.cs})
+			emit(f.heapOff+runStart*f.cs, (end-runStart)*f.cs)
 			runStart = -1
 		}
 	}
@@ -235,10 +278,81 @@ read:
 					index++
 				}
 			}
+			if capped {
+				break read
+			}
 			remaining -= n
 			off += n
 		}
 	}
 	flush(index)
 	return filesys.MergeRuns(runs), nil
+}
+
+// extentRuns converts cluster extents to byte runs.
+func (f *FS) extentRuns(exts []extent) []filesys.Run {
+	out := make([]filesys.Run, 0, len(exts))
+	for _, x := range exts {
+		out = append(out, filesys.Run{Offset: f.clusterOff(x.first), Length: int64(x.n) * f.cs}) // inside the heap: cannot overflow
+	}
+	return out
+}
+
+// reservedRuns returns, sorted and merged, the byte runs that are never free
+// space whatever the allocation bitmap says: the clusters of the bitmap itself
+// (bitmapExts), of the up-case table and of the root directory, and the
+// clusters the FAT marks bad. ok is false, with a warning, when there are too
+// many bad-cluster runs to hold (no free space is then reported at all).
+func (f *FS) reservedRuns(bitmapExts []extent) (runs []filesys.Run, ok bool) {
+	runs = f.extentRuns(bitmapExts)
+	if m := f.upMeta; m.present && m.length > 0 {
+		n := (min(m.length, maxUpcaseBytes) + uint64(f.cs) - 1) / uint64(f.cs)
+		if exts, err := f.metaExtents(m.first, n); err == nil { // an unusable table was warned about at Open
+			runs = append(runs, f.extentRuns(exts)...)
+		}
+	}
+	if st := f.knownDir(f.rootCluster); st != nil {
+		if err := f.loadDir(st); err == nil {
+			runs = append(runs, f.extentRuns(st.exts)...)
+		}
+	}
+	bad, ok := f.badClusterRuns()
+	if !ok {
+		return nil, false
+	}
+	return filesys.MergeRuns(append(runs, bad...)), true
+}
+
+// badClusterRuns returns the byte runs of the clusters whose FAT entry is the
+// bad-cluster mark. A FAT that cannot be read from some cluster on makes every
+// cluster from there on count as reserved (they cannot be vouched for), with a
+// warning. ok is false, with a warning, when there are more than the cap of
+// runs.
+func (f *FS) badClusterRuns() (runs []filesys.Run, ok bool) {
+	end := min(uint64(f.fatEntries), uint64(f.clusterCount)+fatReservedClusters) // FAT entries 0 .. end-1 exist
+	buf := make([]byte, fatScanChunk)
+	for c := uint64(fatReservedClusters); c < end; {
+		n := min(end-c, fatScanChunk/4)
+		if err := readFull(f.data, buf[:n*4], f.fatOff+4*int64(c)); err != nil {
+			f.warn("FAT: unreadable from cluster %d: %v; the clusters from there on are not reported as free", c, err)
+			return append(runs, filesys.Run{Offset: f.clusterOff(uint32(c)), Length: (int64(f.clusterCount) + fatReservedClusters - int64(c)) * f.cs}), true
+		}
+		for i := range n {
+			if binary.LittleEndian.Uint32(buf[4*i:]) != fatBadCluster {
+				continue
+			}
+			off := f.clusterOff(uint32(c + i))
+			if k := len(runs); k > 0 && runs[k-1].Offset+runs[k-1].Length == off {
+				runs[k-1].Length += f.cs
+				continue
+			}
+			if len(runs) >= f.unallocCap {
+				f.warn("FAT: more than %d runs of bad clusters; no free space is reported", f.unallocCap)
+				return nil, false
+			}
+			runs = append(runs, filesys.Run{Offset: off, Length: f.cs})
+		}
+		c += n
+	}
+	return runs, true
 }

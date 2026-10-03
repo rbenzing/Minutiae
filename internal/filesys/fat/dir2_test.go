@@ -64,7 +64,7 @@ func TestDirectoryReadBudget(t *testing.T) {
 		}
 		setRoot(img, g, mkShort("TOP     ", 0x10, 2, 0))
 		f := openImg(t, img)
-		f.SetDirBudget(1<<30, 300_000) // far fewer entries than the walk would otherwise read
+		f.SetDirBudget(300_000) // far fewer entries than the walk would otherwise read
 		start := time.Now()
 		visited := 0
 		err := filesys.Walk(f, f.Root(), "/", func(string, filesys.Entry, error) error { visited++; return nil })
@@ -87,17 +87,48 @@ func TestDirectoryReadBudget(t *testing.T) {
 		if full := readDir(t, f, "/"); len(full) != 200 || hasWarning(f, "budget") {
 			t.Fatalf("%d entries, warnings %q", len(full), f.Info().Warnings)
 		}
-		f.SetDirBudget(1000, 1<<20) // one 512-byte root sector
+		f.SetDirBudget(16) // one 512-byte root sector
+		// Exhausted part-way through the directory: the entries read so far are
+		// listed, with a warning.
 		part := readDir(t, f, "/")
 		if len(part) == 0 || len(part) >= 200 || !hasWarning(f, "budget") {
 			t.Errorf("%d entries, warnings %q", len(part), f.Info().Warnings)
 		}
-		if again := readDir(t, f, "/"); len(again) != 0 {
-			t.Errorf("after exhaustion %d entries are still listed", len(again))
+		// Exhausted before any entry of a directory is read: an error, never an
+		// empty listing.
+		if again, err := f.ReadDir(f.Root()); err == nil || len(again) != 0 || !errors.Is(err, filesys.ErrCorrupt) || !strings.Contains(err.Error(), "directory read budget exhausted") {
+			t.Errorf("after exhaustion ReadDir = %d entries, %v; want a CorruptError \"directory read budget exhausted\"", len(again), err)
 		}
-		f.SetDirBudget(1<<30, 20) // the entry budget alone
+		f.SetDirBudget(20) // 20 entries: fewer than the root has
 		if part := readDir(t, f, "/"); len(part) >= 200 {
 			t.Errorf("entry budget ignored: %d entries", len(part))
+		}
+	})
+	t.Run("walk reports a directory the budget no longer covers", func(t *testing.T) {
+		f := openImg(t, build(fattest.Options{Type: 16},
+			fattest.File{Path: "D", Dir: true}, fattest.File{Path: "D/IN.TXT", Data: []byte("x")}))
+		f.SetDirBudget(16) // the root's first (and only) sector; D cannot be read
+		var errs []string
+		var seen []string
+		err := filesys.Walk(f, f.Root(), "/", func(p string, _ filesys.Entry, err error) error {
+			if err != nil {
+				if !errors.Is(err, filesys.ErrCorrupt) {
+					t.Errorf("%s: %v, want a CorruptError", p, err)
+				}
+				errs = append(errs, p)
+			} else {
+				seen = append(seen, p)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(errs, []string{"/D"}) || slices.Contains(seen, "/D/IN.TXT") {
+			t.Errorf("Walk errors at %v, entries %v; want the error at /D and no /D/IN.TXT", errs, seen)
+		}
+		if !hasWarning(f, "budget") {
+			t.Errorf("no budget warning: %q", f.Info().Warnings)
 		}
 	})
 }
@@ -201,10 +232,10 @@ func TestLiveEntryFirstByte05(t *testing.T) {
 	if len(es) != 1 || es[0].Deleted {
 		t.Fatalf("entries %+v: 0x05 is not a deletion mark", es)
 	}
-	if es[0].Name != "åBC.TXT" || !bytes.Equal(es[0].RawName, raw) {
-		t.Errorf("name %q raw %q, want the 0xE5 character and the on-disk bytes", es[0].Name, es[0].RawName)
+	if es[0].Name != "σBC.TXT" || !bytes.Equal(es[0].RawName, raw) {
+		t.Errorf("name %q raw %q, want the 0xE5 character (code page 437: sigma) and the on-disk bytes", es[0].Name, es[0].RawName)
 	}
-	if attr(es[0], "short_name") != "åBC.TXT" {
+	if attr(es[0], "short_name") != "σBC.TXT" {
 		t.Errorf("short_name %q", attr(es[0], "short_name"))
 	}
 }

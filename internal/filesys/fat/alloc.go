@@ -12,6 +12,11 @@ const (
 // image holds are considered (the cluster count is clamped to the image and to
 // what the FAT describes). Deleted files' clusters are free space, as the OS
 // released their chains.
+//
+// Free space is read from the active FAT copy only. With two or more copies
+// the scan also compares the others, chunk by chunk, with the active one and
+// warns once if they differ (a stale or tampered copy; the active one is
+// trusted).
 func (f *FS) Unallocated() ([]filesys.Run, error) {
 	cs := int64(f.clusterSize())
 	total := uint64(f.count) + 2 // FAT entries 0 .. count+1
@@ -25,6 +30,11 @@ func (f *FS) Unallocated() ([]filesys.Run, error) {
 		perChunk = fatScanChunk / 4
 	}
 	buf := make([]byte, fatScanChunk)
+	var other []byte // the same bytes of another FAT copy, when there is one to compare
+	if f.b.numFATs > 1 {
+		other = make([]byte, fatScanChunk)
+	}
+	copiesDiffer := false
 	var runs []filesys.Run
 	for start := uint64(0); start < total; start += perChunk {
 		n := min(perChunk, total-start) // entries in this chunk; start is even (FAT12 pairs share 3 bytes)
@@ -39,6 +49,9 @@ func (f *FS) Unallocated() ([]filesys.Run, error) {
 		}
 		if err := readFull(f.data, buf[:nbytes], f.fatOff+int64(byteOff)); err != nil {
 			return nil, corrupt("FAT", f.fatOff+int64(byteOff), "read failed: %v", err)
+		}
+		if !copiesDiffer {
+			copiesDiffer = f.compareFATCopies(buf[:nbytes], other[:min(len(other), int(nbytes))], int64(byteOff))
 		}
 		for i := uint64(0); i < n; i++ {
 			c := start + i
@@ -79,4 +92,34 @@ func (f *FS) Unallocated() ([]filesys.Run, error) {
 		}
 	}
 	return runs, nil
+}
+
+// compareFATCopies compares the bytes active, read from the active FAT copy at
+// byte offset off of the FAT, with the same bytes of every other copy (scratch
+// is the buffer to read them into; nil when there is a single copy). It warns
+// about the first copy that differs, or cannot be read, and reports whether it
+// did.
+func (f *FS) compareFATCopies(active, scratch []byte, off int64) bool {
+	if len(scratch) < len(active) {
+		return false
+	}
+	bps := int64(f.b.bytsPerSec)
+	for n := range f.b.numFATs {
+		if n == f.activeFAT {
+			continue
+		}
+		base := (int64(f.b.rsvd) + int64(n)*int64(f.b.fatSz)) * bps // inside the volume: checked by parseBoot
+		got := scratch[:len(active)]
+		if err := readFull(f.data, got, base+off); err != nil {
+			f.warn("FAT copy %d cannot be compared with the active FAT copy %d: %v", n, f.activeFAT, err)
+			return true
+		}
+		for i := range active {
+			if got[i] != active[i] {
+				f.warn("FAT copy %d differs from the active FAT copy %d (first difference at byte %d of the FAT); free space is taken from copy %d", n, f.activeFAT, off+int64(i), f.activeFAT)
+				return true
+			}
+		}
+	}
+	return false
 }

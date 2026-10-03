@@ -831,11 +831,17 @@ func TestInfoUUIDEmptyWithoutExtendedBootSignature(t *testing.T) {
 	}
 }
 
-func TestLabelMapsC1ControlsToQuestionMark(t *testing.T) {
+// The volume label is an OEM string like an 8.3 name: bytes from 0x80 up are
+// code page 437, DEL and the C0 controls are shown as '?'.
+func TestLabelDecodesCodePage437AndMapsControls(t *testing.T) {
 	img := build(fattest.Options{Type: 16})
 	copy(img[offLabelFAT:offLabelFAT+11], "A\x7fB\x80C\x9fD\xa0E\xffF")
-	if got := openImg(t, img).Info().Label; got != "A?B?C?D EÿF" {
-		t.Errorf("Label %q, want C1 and DEL bytes shown as '?' and Latin-1 letters kept", got)
+	if got := openImg(t, img).Info().Label; got != "A?BÇCƒDáE\u00a0F" {
+		t.Errorf("Label %q, want DEL shown as '?' and the bytes from 0x80 up as code page 437", got)
+	}
+	copy(img[offLabelFAT:offLabelFAT+11], "A\x01B\x1fC\x00D      ")
+	if got := openImg(t, img).Info().Label; got != "A?B?C D" {
+		t.Errorf("Label %q, want C0 controls shown as '?'", got)
 	}
 }
 

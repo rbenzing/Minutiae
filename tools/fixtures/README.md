@@ -83,9 +83,12 @@ clock and the oracle reads it from `dump.exfat`.
 Fixture details worth knowing:
 
 - Long names, a lower-case 8.3 name (NTRes flags), a mixed-case long name, accents and CJK
-  are in both. A non-ASCII byte in an 8.3-only name (an "OEM" name) is not in the
-  oracle: the codepage is not stored on the volume, so the reader decodes bytes at or above 0x80
-  as code page 437 and keeps the raw bytes in `RawName`.
+  are in both. The FAT images also hold an 8.3-only name with non-ASCII characters
+  (`/ÉTÉ.TXT`, no long-name entries; `mcopy` stores É as the byte 0x90). The volume does not
+  record its code page, so the reader decodes bytes at or above 0x80 as code page 437 and
+  keeps the raw bytes in `RawName`; the oracle's expected name is the source tree's. The
+  file is added by `fat_tree.sh` (`tree_oem=1`, fat only) after the source mtimes are
+  assigned, so the exFAT image is unchanged and no other entry's time moves.
   A surrogate pair (an emoji) is only in the exFAT image: `mtools` cannot store one.
 - `/frag/c-large-fragmented.bin` is fragmented: a is written, b is written, a is
   deleted, c is written. On FAT32 `mtools` allocates from the FSInfo next-free hint, which

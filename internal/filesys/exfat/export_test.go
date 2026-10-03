@@ -36,3 +36,12 @@ func (f *FS) SetDirBudget(n int64) {
 	defer f.dmu.Unlock()
 	f.dirBudget, f.dirBudgetTotal = n, n
 }
+
+// MaxDirRecords is the default per-directory entry-set cap.
+const MaxDirRecords = maxDirRecords
+
+// DirRecordCap returns the per-directory entry-set cap in force.
+func (f *FS) DirRecordCap() int { return f.dirRecordCap }
+
+// SetUnallocatedRunCap lowers the number of runs Unallocated reports.
+func (f *FS) SetUnallocatedRunCap(n int) { f.unallocCap = n }

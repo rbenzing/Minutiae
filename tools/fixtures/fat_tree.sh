@@ -1,7 +1,8 @@
 # Shared by fat.sh and exfat.sh: the deterministic source tree both fixtures
 # are populated from. Source it; do not run it.
 #
-# make_tree <dir>   builds the tree. The paths in fat_deleted, fat_overwritten
+# make_tree <dir>   builds the tree (tree_emoji=1 adds a surrogate-pair name,
+#                   tree_oem=1 an 8.3-only OEM name). The paths in fat_deleted, fat_overwritten
 #                   and fat_deleted_dirs, which the scripts remove again, are
 #                   part of it; the oracle excludes them.
 # stamp_tree <dir>  gives every entry a distinct, increasing, even mtime before
@@ -74,4 +75,13 @@ make_tree() {
   pattern 30000 frag-b >"$d/frag/b-second-file.bin"
   pattern 90000 frag-c >"$d/frag/c-large-fragmented.bin"
   stamp_tree "$d"
+  # An 8.3-only name with non-ASCII characters (an "OEM" name, no long-name
+  # entries): mtools stores É as the single byte 0x90 (the same byte in code
+  # pages 437 and 850), which the reader decodes as code page 437. Only
+  # fat.sh asks for it. It is added after stamp_tree with its own mtime, so
+  # the times of every other entry (and the exFAT image) do not change.
+  if [ "${tree_oem:-}" = 1 ]; then
+    printf 'oem\n' >"$d/ÉTÉ.TXT"
+    touch -h -d "@1600000000" "$d/ÉTÉ.TXT"
+  fi
 }

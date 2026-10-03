@@ -77,18 +77,22 @@ func entryBits(typ int) uint64 {
 }
 
 // oemString renders a space-padded OEM-codepage field. The codepage is not
-// stored on the volume, so bytes above 0x7F are shown as their Latin-1 code
-// points and control bytes (C0, DEL and C1) as '?'.
+// stored on the volume, so bytes from 0x80 up are decoded as code page 437
+// (the original PC code page; the reader of a name in another page sees the
+// wrong letters, which is why Entry.RawName keeps the bytes), and control
+// bytes (C0 and DEL) are shown as '?'.
 func oemString(b []byte) string {
 	var sb strings.Builder
 	for _, c := range b {
 		switch {
 		case c == 0:
 			sb.WriteByte(' ')
-		case c < 0x20 || c >= 0x7F && c <= 0x9F:
+		case c < 0x20 || c == 0x7F:
 			sb.WriteByte('?')
+		case c >= 0x80:
+			sb.WriteRune(cp437High[c-0x80])
 		default:
-			sb.WriteRune(rune(c))
+			sb.WriteByte(c)
 		}
 	}
 	return strings.TrimRight(sb.String(), " ")

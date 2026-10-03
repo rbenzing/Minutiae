@@ -45,7 +45,18 @@ func direntID(dir uint32, idx int) string {
 	return direntIDPrefix + strconv.FormatUint(uint64(dir), 10) + ":" + strconv.Itoa(idx)
 }
 
-// parseDirentID parses "dirent:<cluster>:<index>".
+// parseCanonical parses a canonical decimal that fits in bits bits: digits
+// only, no sign, space or leading zero, so every number has exactly one
+// spelling and an Entry ID has exactly one form.
+func parseCanonical(s string, bits int) (uint64, bool) {
+	n, err := strconv.ParseUint(s, 10, bits)
+	if err != nil || strconv.FormatUint(n, 10) != s {
+		return 0, false
+	}
+	return n, true
+}
+
+// parseDirentID parses "dirent:<cluster>:<index>" (canonical decimals).
 func parseDirentID(id string) (dir uint32, idx int, ok bool) {
 	rest, ok := strings.CutPrefix(id, direntIDPrefix)
 	if !ok {
@@ -55,25 +66,25 @@ func parseDirentID(id string) (dir uint32, idx int, ok bool) {
 	if !ok {
 		return 0, 0, false
 	}
-	n, err := strconv.ParseUint(a, 10, 32)
-	if err != nil {
+	n, ok := parseCanonical(a, 32)
+	if !ok {
 		return 0, 0, false
 	}
-	i, err := strconv.ParseUint(b, 10, 31)
-	if err != nil || i >= maxDirEntries {
+	i, ok := parseCanonical(b, 31)
+	if !ok || i >= maxDirEntries {
 		return 0, 0, false
 	}
 	return uint32(n), int(i), true
 }
 
-// parseDirID parses "dir:<first cluster>".
+// parseDirID parses "dir:<first cluster>" (a canonical decimal).
 func parseDirID(id string) (uint32, bool) {
 	rest, ok := strings.CutPrefix(id, dirIDPrefix)
 	if !ok {
 		return 0, false
 	}
-	n, err := strconv.ParseUint(rest, 10, 32)
-	return uint32(n), err == nil
+	n, ok := parseCanonical(rest, 32)
+	return uint32(n), ok
 }
 
 // rootFirst is the first cluster of the root directory: 0 for the fixed FAT12/16
@@ -113,9 +124,25 @@ func (f *FS) dirChain(first uint32) ([]uint32, bool, error) {
 // before the problem have been passed, read says how many, and the error is
 // returned.
 func (f *FS) scanDir(first uint32, fn func(idx int, e []byte) (stop bool)) (read int, err error) {
+	return f.scan(first, true, fn)
+}
+
+// errBudget is the error of a directory that cannot be started because the
+// directory read budget is spent.
+func errBudget(first uint32) error {
+	return corrupt("directory", -1, "directory read budget exhausted before the directory at cluster %d was read", first)
+}
+
+// scan is scanDir with the choice of charging the directory read budget. A
+// charged scan whose budget is spent before its first entry returns an error
+// (never an empty listing); one cut short after entries were read returns them
+// with a nil error (the budget warning is recorded).
+func (f *FS) scan(first uint32, charged bool, fn func(idx int, e []byte) (stop bool)) (read int, err error) {
 	idx := 0
+	exhausted := false
 	visit := func(chunk []byte) (stop bool) {
-		if !f.chargeDir(first, int64(len(chunk))) {
+		if charged && !f.chargeDir(first, int64(len(chunk))) {
+			exhausted = true
 			return true
 		}
 		for i := 0; i+32 <= len(chunk); i += 32 {
@@ -148,13 +175,13 @@ func (f *FS) scanDir(first uint32, fn func(idx int, e []byte) (stop bool)) (read
 				return idx, corrupt("root directory", start+off, "read failed: %v", err)
 			}
 			if visit(chunk) {
-				return idx, nil
+				return idx, budgetErr(exhausted, idx, first)
 			}
 		}
 		return idx, nil
 	}
-	if !f.chargeDir(first, 0) {
-		return 0, nil // budget spent: nothing more is read (the warning is recorded)
+	if charged && !f.chargeDir(first, 0) {
+		return 0, errBudget(first) // the warning is recorded
 	}
 	clusters, truncated, chainErr := f.dirChain(first)
 	cs := f.clusterSize()
@@ -169,7 +196,7 @@ func (f *FS) scanDir(first uint32, fn func(idx int, e []byte) (stop bool)) (read
 				return idx, corrupt("directory", off+int64(pos), "read failed: %v", err)
 			}
 			if visit(buf) {
-				return idx, nil
+				return idx, budgetErr(exhausted, idx, first)
 			}
 		}
 	}
@@ -177,6 +204,48 @@ func (f *FS) scanDir(first uint32, fn func(idx int, e []byte) (stop bool)) (read
 		f.warn("directory at cluster %d is longer than %d entries: the rest is not listed", first, maxDirEntries)
 	}
 	return idx, chainErr
+}
+
+// budgetErr is the error of a scan stopped by the spent budget: only when no
+// entry was read yet.
+func budgetErr(exhausted bool, read int, first uint32) error {
+	if exhausted && read == 0 {
+		return errBudget(first)
+	}
+	return nil
+}
+
+// dirEnd returns the index of the first end-of-directory entry (0x00) of the
+// directory that starts at first: the entries from there on are not part of the
+// directory, whatever bytes they hold. It is maxDirEntries when the directory
+// has no end marker within the entries that can be read, and also when the
+// directory cannot be scanned (a broken chain: the callers then meet the same
+// problem themselves). The scan is not charged to the directory read budget (it
+// reads at most one directory, once: the result is remembered).
+func (f *FS) dirEnd(first uint32) int {
+	f.dmu.Lock()
+	n, ok := f.ends[first]
+	f.dmu.Unlock()
+	if ok {
+		return n
+	}
+	read, err := f.scan(first, false, func(int, []byte) bool { return false })
+	if err != nil {
+		return maxDirEntries
+	}
+	f.dmu.Lock()
+	if f.ends == nil {
+		f.ends = map[uint32]int{}
+	}
+	if len(f.ends) < maxKnownDirs {
+		f.ends[first] = read
+	}
+	f.dmu.Unlock()
+	return read
+}
+
+func endErr(idx int, first uint32, end int) error {
+	return fmt.Errorf("%w: entry %d is at or beyond the end of the directory at cluster %d (entry %d is its end marker)", filesys.ErrNotFound, idx, first, end)
 }
 
 // rawEntry reads entry idx of the directory that starts at first (0: the fixed
@@ -191,11 +260,17 @@ func (f *FS) rawEntry(first uint32, idx int) ([]byte, error) {
 		if idx >= f.b.rootEnt {
 			return nil, corrupt(st, -1, "entry %d lies beyond the %d root directory entries", idx, f.b.rootEnt)
 		}
+		if end := f.dirEnd(first); idx >= end {
+			return nil, endErr(idx, first, end)
+		}
 		start := (int64(f.b.rsvd) + int64(f.b.numFATs)*int64(f.b.fatSz)) * int64(f.b.bytsPerSec)
 		if err := readFull(f.r, buf, start+int64(idx)*32); err != nil {
 			return nil, corrupt(st, start+int64(idx)*32, "read failed: %v", err)
 		}
 		return buf, nil
+	}
+	if end := f.dirEnd(first); idx >= end {
+		return nil, endErr(idx, first, end)
 	}
 	clusters, _, err := f.dirChain(first)
 	cs := int64(f.clusterSize())
@@ -452,11 +527,11 @@ func (f *FS) resolveDir(first uint32, hint string) error {
 		return nil
 	}
 	if p, i, ok := strings.Cut(hint, ":"); ok {
-		pc, err1 := strconv.ParseUint(p, 10, 32)
-		idx, err2 := strconv.Atoi(i)
-		if err1 == nil && err2 == nil && f.knownDir(uint32(pc)) && f.isLiveDirAt(uint32(pc), idx, first) {
+		pc, ok1 := parseCanonical(p, 32)
+		ic, ok2 := parseCanonical(i, 31)
+		if ok1 && ok2 && f.knownDir(uint32(pc)) && f.isLiveDirAt(uint32(pc), int(ic), first) {
 			f.dmu.Lock()
-			f.noteDir(first, dirLoc{parent: uint32(pc), idx: idx})
+			f.noteDir(first, dirLoc{parent: uint32(pc), idx: int(ic)})
 			f.dmu.Unlock()
 			return nil
 		}
@@ -562,6 +637,10 @@ func (f *FS) liveEntryAt(p uint32, idx int) ([]byte, error) {
 // and re-read from the volume: Entry fields and Attrs the caller changed have no
 // effect (attrs only hint where to look). A directory chain that loops, breaks
 // or exceeds 65536 entries yields the entries read so far and an Info warning.
+// A directory that cannot be started because the per-volume directory read
+// budget is spent is a *filesys.CorruptError ("directory read budget
+// exhausted"), never an empty listing; one cut short by it is listed as far as
+// it was read, with the budget warning.
 func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
 	first, err := f.dirTarget(dir)
 	if err != nil {
@@ -645,21 +724,21 @@ func (f *FS) Lookup(p string) (filesys.Entry, error) {
 	return cur, nil
 }
 
-// chargeDir takes bytes (and the entries they hold) from the directory read
+// chargeDir takes bytes (as the entries they hold) from the directory read
 // budget; it reports false, with one warning, once the budget is spent. A zero
 // charge only asks whether anything is left.
 func (f *FS) chargeDir(first uint32, bytes int64) bool {
 	f.dmu.Lock()
-	ok := f.dirBudget >= bytes && f.dirBudget > 0 && f.entryBudget >= bytes/32 && f.entryBudget > 0
+	entries := bytes / 32
+	ok := f.entryBudget > 0 && f.entryBudget >= entries
 	if ok {
-		f.dirBudget -= bytes
-		f.entryBudget -= bytes / 32
+		f.entryBudget -= entries
 	}
 	warn := !ok && !f.budgetWarned
 	f.budgetWarned = f.budgetWarned || !ok
 	f.dmu.Unlock()
 	if warn {
-		f.warn("directory read budget of %d bytes / %d entries per volume exhausted (at the directory starting at cluster %d); directories are no longer read", maxDirBudget, maxEntryBudget, first)
+		f.warn("directory read budget of %d entries per volume exhausted (at the directory starting at cluster %d); directories are no longer read", maxEntryBudget, first)
 	}
 	return ok
 }

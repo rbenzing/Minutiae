@@ -233,9 +233,10 @@ func asciiLower(s string) string {
 // base and the extension lower case. The first byte 0x05 stands for 0xE5; for a
 // deleted entry the lost first byte is shown as '_'. shown is the readable
 // name (used for lookups); name and raw are the Entry.Name and Entry.RawName:
-// raw is the 11 on-disk bytes when they are not plain printable ASCII (the
-// codepage is unknown), and a name that cannot be shown as it is (empty, "." or
-// "..", or containing '/') is shown in the "~raw~" form.
+// raw is the 11 on-disk bytes when they are not plain printable ASCII, and a
+// name that cannot be shown as it is (empty, "." or "..", or containing '/') is
+// shown in the "~raw~" form. Bytes from 0x80 up are shown as code page 437 (the
+// volume does not record its code page; raw has the exact bytes).
 func shortName(name11 []byte, ntres byte, deleted bool) (shown, name string, raw []byte) {
 	var b [11]byte
 	copy(b[:], name11)

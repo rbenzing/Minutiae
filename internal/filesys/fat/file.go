@@ -21,10 +21,12 @@ import (
 // The runs come from the FAT chain, cut at the directory entry's size. A chain
 // that is shorter than the size (it ends, runs into a free or bad cluster,
 // loops, or leaves the volume) is not an error here: the file is opened with the
-// clusters that can be trusted, Runs lists only those (so filesys.CheckRuns
-// fails on it and examine records no runs), the unreadable tail reads as a
-// *filesys.CorruptError "chain shorter than file size" and never as zeros, and
-// an Info warning is added. A chain longer than the size is cut at the size.
+// clusters that can be trusted, Runs lists only those (a strict prefix of the
+// content, as the filesys.File contract allows: filesys.CheckRunsPrefix accepts
+// it, filesys.CheckRuns does not), every read at or beyond the end of that
+// prefix returns a *filesys.CorruptError "chain shorter than file size" and
+// never zeros, and an Info warning is added. A chain longer than the size is
+// cut at the size.
 func (f *FS) Open(e filesys.Entry) (filesys.File, error) {
 	if _, ok := parseDirID(e.ID); ok {
 		return nil, fmt.Errorf("%w: %s is a directory", filesys.ErrUnsupported, e.ID)
@@ -106,7 +108,7 @@ func (fl *file) Size() int64 { return fl.size }
 
 // Runs returns a copy of the volume-relative runs in file order (not sorted),
 // covering [0, Size()) exactly unless the chain is shorter than the size (then
-// only the available part). Clusters that are consecutive in the file and
+// only the available prefix; reads past it fail with filesys.ErrCorrupt). Clusters that are consecutive in the file and
 // adjacent on disk are one run; the list is never reordered.
 func (fl *file) Runs() []filesys.Run { return slices.Clone(fl.runs) }
 

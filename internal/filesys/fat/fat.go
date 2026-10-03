@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"sync"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
@@ -18,19 +17,16 @@ import (
 const (
 	cacheSectors = 256 // sectors held by the metadata cache
 
-	// maxWarnings bounds Info().Warnings: a hostile image can make every
-	// directory or chain report a problem.
-	maxWarnings = 1000
-
 	// maxDirEntries bounds the entries read from one directory (65536 x 32 bytes).
 	maxDirEntries = 65536
 
-	// maxDirBudget and maxEntryBudget bound all directory reading of one FS
-	// instance (listings, searches for a directory, the label scan): a volume
-	// whose directory entries point into overlapping chains would otherwise make
-	// every listing re-read the same long chain. Once spent, directories are no
-	// longer read (a warning says so).
-	maxDirBudget   = 1 << 30
+	// maxEntryBudget bounds all directory reading of one FS instance
+	// (listings, searches for a directory, the label scan) to this many 32-byte
+	// entries (128 MiB): a volume whose directory entries point into
+	// overlapping chains would otherwise make every listing re-read the same
+	// long chain. Once spent, a directory that has not been started is an error
+	// and one being read is cut short (a warning says so). Reads are charged
+	// per chunk, so a byte budget would only ever be 32 times this number.
 	maxEntryBudget = 1 << 22
 )
 
@@ -47,17 +43,14 @@ type FS struct {
 	size      int64       // volume size in bytes (declared size clamped to the image)
 	label     string      // volume label: the root directory entry, else the BPB
 
-	dmu          sync.Mutex // guards dc, dirs and the directory read budget
+	dmu          sync.Mutex // guards dc, dirs, ends and the directory read budget
 	dc           *dirChainEntry
 	dirs         map[uint32]dirLoc // directories met so far, by first cluster: where their entry is
-	dirBudget    int64             // bytes of directories this instance may still read
-	entryBudget  int64             // directory entries it may still read
+	ends         map[uint32]int    // directories whose end-of-directory marker was found: its entry index
+	entryBudget  int64             // directory entries this instance may still read
 	budgetWarned bool
 
-	wmu      sync.Mutex
-	warnings []string
-	warnSeen map[string]struct{}
-	warnFull bool // the cap was reached and the "suppressed" line is in warnings
+	warns filesys.Warnings
 }
 
 // readFull reads exactly len(p) bytes at off; a read that returns all the
@@ -73,33 +66,10 @@ func readFull(r io.ReaderAt, p []byte, off int64) error {
 	return err
 }
 
-// warn records a problem that does not stop the read. Identical messages are
-// recorded once, and at most maxWarnings distinct messages are kept: after that
-// a single "further warnings suppressed" line stands for the rest. It is safe
-// for concurrent use. On-disk strings must be %q-quoted by the caller.
-func (f *FS) warn(format string, a ...any) {
-	msg := format
-	if len(a) > 0 {
-		msg = fmt.Sprintf(format, a...)
-	}
-	f.wmu.Lock()
-	defer f.wmu.Unlock()
-	if _, dup := f.warnSeen[msg]; dup {
-		return
-	}
-	if len(f.warnings) >= maxWarnings {
-		if !f.warnFull {
-			f.warnFull = true
-			f.warnings = append(f.warnings, "further warnings suppressed")
-		}
-		return
-	}
-	if f.warnSeen == nil {
-		f.warnSeen = map[string]struct{}{}
-	}
-	f.warnSeen[msg] = struct{}{}
-	f.warnings = append(f.warnings, msg)
-}
+// warn records a problem that does not stop the read (see filesys.Warnings:
+// identical messages once, at most filesys.MaxWarnings distinct ones). On-disk
+// strings must be %q-quoted by the caller.
+func (f *FS) warn(format string, a ...any) { f.warns.Add(format, a...) }
 
 // Probe reports whether the first sector of the volume holds a FAT12/16/32 boot
 // sector: the 0x55AA signature, an x86 jump (0xEB ?? 0x90 or 0xE9), a valid BPB
@@ -149,7 +119,6 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		r:         filesys.NewCachedReader(raw, b.bytsPerSec, cacheSectors),
 		data:      raw,
 
-		dirBudget:   maxDirBudget,
 		entryBudget: maxEntryBudget,
 		size:        volSize,
 		label:       b.label,
@@ -166,12 +135,11 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 // wins when the two disagree (with a warning). The label is the volume-label
 // entry of the root directory, else the BPB's ("NO NAME" counts as none). The
 // UUID is the volume serial number as "XXXX-XXXX" (empty when the boot
-// sector has no extended boot signature). Warnings is a snapshot: it holds the problems found at Open and those met since, without duplicates and
-// capped at 1000 entries.
+// sector has no extended boot signature). Warnings is a snapshot: it holds the
+// problems found at Open and those met since, without duplicates, at most 1000
+// distinct ones plus one "further warnings suppressed" line.
 func (f *FS) Info() filesys.Info {
-	f.wmu.Lock()
-	warnings := slices.Clone(f.warnings)
-	f.wmu.Unlock()
+	warnings := f.warns.Snapshot()
 	uuid := ""
 	if f.b.hasVolID {
 		uuid = fmt.Sprintf("%04X-%04X", f.b.volID>>16, f.b.volID&0xFFFF)

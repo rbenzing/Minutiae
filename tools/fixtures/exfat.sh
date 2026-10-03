@@ -70,6 +70,18 @@ cleanup() {
   [ -z "$loopdev" ] || losetup -d "$loopdev" 2>/dev/null || true
   rm -rf "$work"
 }
+# fuse_running: succeeds while a mount.exfat-fuse process for $loopdev exists
+# (the container has no pgrep or fuser, so /proc is scanned).
+fuse_running() {
+  local c
+  for c in /proc/[0-9]*/cmdline; do
+    case $(tr '\0' ' ' <"$c" 2>/dev/null) in
+      *mount.exfat-fuse*"$loopdev"*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
 rm -rf "$work"
 mkdir "$work" "$mnt"
 trap cleanup EXIT
@@ -137,6 +149,17 @@ jq -r '[.files[] | select(.type == "dir")] | sort_by(.path) | reverse | .[] | "\
 CMDS+=("umount <mnt>; losetup -d /dev/loopN")
 umount "$mnt"
 wait "$daemon" || true
+# mount.exfat-fuse detaches itself, so the process started above can be gone
+# while the daemon still flushes the image: poll until none is left (it holds
+# the loop device) before the image is checked and compressed.
+for _ in $(seq 1 100); do
+  fuse_running || break
+  sleep 0.1
+done
+if fuse_running; then
+  echo "the exfat-fuse daemon is still running 10 s after umount" >&2
+  exit 1
+fi
 losetup -d "$loopdev"
 loopdev=
 

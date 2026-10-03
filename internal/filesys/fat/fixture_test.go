@@ -125,6 +125,13 @@ func TestFATMatchesOracle(t *testing.T) {
 			checkInfo(t, fsys.Info(), want)
 
 			live, deleted := walkAll(t, fsys)
+			// The 8.3-only OEM name (no long-name entries): shown as code page 437, the
+			// 11 on-disk bytes kept in RawName. Its expected name is the source tree's.
+			if e, ok := live["/ÉTÉ.TXT"]; !ok {
+				t.Error("the OEM 8.3-only file /ÉTÉ.TXT is missing from the listing")
+			} else if !bytes.Equal(e.RawName, []byte{0x90, 'T', 0x90, ' ', ' ', ' ', ' ', ' ', 'T', 'X', 'T'}) {
+				t.Errorf("/ÉTÉ.TXT: RawName % x, want the on-disk bytes 90 54 90 20 20 20 20 20 54 58 54", e.RawName)
+			}
 			used := checkLive(t, fsys, want, live)
 			checkDeleted(t, want, deleted)
 			checkUnallocated(t, fsys, used, want)
@@ -171,7 +178,9 @@ func walkAll(t *testing.T, fsys *fat.FS) (live, deleted map[string]filesys.Entry
 }
 
 // chainRuns converts inclusive cluster ranges into the byte runs of a file of
-// size bytes: the chain's clusters in order, cut at the file size.
+// size bytes: the chain's clusters in file order, cut at the file size. Runs
+// that are adjacent on disk and consecutive in the file are one run; the list is
+// never sorted, so a reader that returns the clusters in the wrong order fails.
 func chainRuns(w oracleFile, want oracle) []filesys.Run {
 	var runs []filesys.Run
 	left := w.Size
@@ -183,10 +192,15 @@ func chainRuns(w oracleFile, want oracle) []filesys.Run {
 		if length <= 0 {
 			break
 		}
-		runs = append(runs, filesys.Run{Offset: want.DataStart + (c[0]-2)*int64(want.BlockSize), Length: length})
+		off := want.DataStart + (c[0]-2)*int64(want.BlockSize)
+		if n := len(runs); n > 0 && runs[n-1].Offset+runs[n-1].Length == off {
+			runs[n-1].Length += length
+		} else {
+			runs = append(runs, filesys.Run{Offset: off, Length: length})
+		}
 		left -= length
 	}
-	return filesys.MergeRuns(runs)
+	return runs
 }
 
 // checkLive compares the live entries with the oracle and returns the on-disk
@@ -257,10 +271,15 @@ func checkLive(t *testing.T, fsys *fat.FS, want oracle, live map[string]filesys.
 				t.Errorf("%s: runs: %v", w.Path, err)
 			}
 			// The runs are exactly the clusters mshowfat reports for the chain.
-			if wantRuns := chainRuns(w, want); !slices.Equal(filesys.MergeRuns(slices.Clone(runs)), wantRuns) {
+			// Compared as returned, in file order, holes included: no sorting, no merging.
+			if wantRuns := chainRuns(w, want); !slices.Equal(runs, wantRuns) {
 				t.Errorf("%s: runs\n got  %v\n want %v (the mshowfat chain %v)", w.Path, runs, wantRuns, w.Clusters)
 			}
-			used = append(used, runs...)
+			for _, r := range runs {
+				if r.Offset >= 0 { // a hole has no place on disk
+					used = append(used, r)
+				}
+			}
 		}
 		sum := sha256.Sum256(readFile(t, f))
 		if got := hex.EncodeToString(sum[:]); got != w.SHA256 {

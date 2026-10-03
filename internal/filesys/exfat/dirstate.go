@@ -42,6 +42,13 @@ type dirState struct {
 	exts   []extent // clusters of the directory, in order
 	cum    []uint64 // cum[i] is the number of clusters before exts[i]
 	limit  uint64   // bytes of directory data (a multiple of 32)
+
+	// What setIn has learned about the end of the directory (guarded by
+	// FS.dmu): the entries [0, clean) hold no end marker; once a marker is
+	// found, end is its entry index.
+	clean    uint64
+	end      uint64
+	endKnown bool
 }
 
 // claim records the directory that the live entry set r describes, keyed by its
@@ -158,8 +165,9 @@ func (f *FS) readDirRange(st *dirState, off uint64, dst []byte) error {
 // readDirData returns the entries of a directory as one buffer, whole entries
 // only, cut at the end-of-directory marker. At most 256 MiB of one directory
 // and 1 GiB per FS are read; damage to the chain, a failed read or the
-// exhausted budget is a warning and ends the read, and only a directory of
-// which nothing can be mapped is an error.
+// exhausted budget is a warning and ends the read (the part read so far is
+// returned), and only a directory of which nothing can be mapped, or whose
+// budget is spent before its first chunk, is an error.
 func (f *FS) readDirData(st *dirState) ([]byte, error) {
 	if err := f.loadDir(st); err != nil {
 		return nil, err
@@ -175,6 +183,9 @@ func (f *FS) readDirData(st *dirState) ([]byte, error) {
 		f.dmu.Unlock()
 		if over {
 			f.warn("directory read budget of %d bytes per volume exhausted (directory at first cluster %d); directories are no longer read in full", f.dirBudgetTotal, st.spec.first)
+			if len(buf) == 0 { // nothing of this directory was read: an error, never an empty listing
+				return nil, corrupt("exFAT directory", -1, "directory read budget exhausted before the directory at first cluster %d was read", st.spec.first)
+			}
 			return buf, nil
 		}
 		start := len(buf)
@@ -245,6 +256,11 @@ func (f *FS) setIn(st *dirState, idx int) (*setRec, error) {
 	if idx < 0 || off >= st.limit {
 		return nil, notFound
 	}
+	if before, err := f.beforeEnd(st, uint64(idx)); err != nil {
+		return nil, err
+	} else if !before {
+		return nil, fmt.Errorf("%w: entry %d is at or beyond the end of directory %d", filesys.ErrNotFound, idx, st.spec.first)
+	}
 	win := make([]byte, min(st.limit-off, (maxFileSecondary+1)*entrySize))
 	if err := f.readDirRange(st, off, win); err != nil {
 		return nil, err
@@ -261,6 +277,41 @@ func (f *FS) setIn(st *dirState, idx int) (*setRec, error) {
 		f.claim(r)
 	}
 	return r, nil
+}
+
+// beforeEnd reports whether entry idx (which lies inside the directory's data)
+// comes before the first end-of-directory entry (type 0x00): the entries from
+// the marker on are not part of the directory, whatever bytes they hold. It
+// reads, uncharged and at most once, the entries from the last position it
+// has vouched for up to idx, so repeated calls over one directory read it once
+// in all.
+func (f *FS) beforeEnd(st *dirState, idx uint64) (bool, error) {
+	f.dmu.Lock()
+	known, end, pos := st.endKnown, st.end, st.clean
+	f.dmu.Unlock()
+	if known {
+		return idx < end, nil
+	}
+	buf := make([]byte, dirReadChunk)
+	for pos <= idx {
+		n := min(idx+1-pos, dirReadChunk/entrySize) // entries; pos*32+n*32 <= limit, as limit is a multiple of 32 and idx*32 < limit
+		if err := f.readDirRange(st, pos*entrySize, buf[:n*entrySize]); err != nil {
+			return false, err
+		}
+		for j := range n {
+			if buf[j*entrySize] == typeEnd {
+				f.dmu.Lock()
+				st.endKnown, st.end = true, pos+j
+				f.dmu.Unlock()
+				return false, nil
+			}
+		}
+		pos += n
+	}
+	f.dmu.Lock()
+	st.clean = max(st.clean, pos)
+	f.dmu.Unlock()
+	return true, nil
 }
 
 // locate returns the entry set that the ID "dirent:P:I" names, read from the
