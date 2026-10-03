@@ -39,6 +39,13 @@ type File interface {
 	// rather than to the end of its block. Content stored inline in metadata
 	// (for example a fast symlink target) has no on-disk run and returns
 	// none. CheckRuns verifies this contract.
+	//
+	// Exception: when the file's allocation is truncated or corrupt (a FAT
+	// chain that ends or breaks early, say) Runs may cover only a strict
+	// PREFIX of [0, Size()). Every read at or beyond the end of that prefix
+	// must then return an error wrapping ErrCorrupt, so a consumer can tell
+	// the covered bytes from the missing ones. CheckRunsPrefix validates such
+	// a list.
 	Runs() []Run
 }
 

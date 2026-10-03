@@ -24,9 +24,10 @@ func fatSession(t *testing.T, img []byte) (*examine.Session, []byte) {
 }
 
 // A FAT file whose cluster chain is shorter than its size is extracted as a
-// partial artifact flagged incomplete: no runs are recorded (they cannot cover
-// the size), the read stops with a corrupt-chain error, and the filesystem's
-// own warning is counted separately from the two skips.
+// partial artifact flagged incomplete: the runs of the chain's prefix are
+// recorded (they are the exact provenance of the captured bytes), the read
+// stops with a corrupt-chain error, and the filesystem's own warning is
+// counted separately from the skip.
 func TestExtractFATShortChainIsIncomplete(t *testing.T) {
 	o := fattest.Options{Type: 16}
 	g := fattest.Layout(o)
@@ -39,7 +40,7 @@ func TestExtractFATShortChainIsIncomplete(t *testing.T) {
 	for n := range g.NumFATs {
 		binary.LittleEndian.PutUint16(img[int(g.FATStart(n))*g.SectorSize+3*2:], 0xFFFF)
 	}
-	s, _ := fatSession(t, img)
+	s, data := fatSession(t, img)
 	c := s.Case
 	sum := extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: []string{"/"}, Recursive: true})
 
@@ -59,15 +60,30 @@ func TestExtractFATShortChainIsIncomplete(t *testing.T) {
 	if !short.Incomplete || short.Size != 2*blk || !bytes.Equal(readArtifact(t, c, short), content[:2*blk]) {
 		t.Errorf("short-chain artifact: incomplete=%v size=%d, want an incomplete 2-cluster prefix", short.Incomplete, short.Size)
 	}
-	if d := short.Source.Derived; d == nil || len(d.Runs) != 0 || d.RunsArtifact != "" {
-		t.Errorf("runs were recorded for a file whose chain cannot cover its size: %+v", d)
+	d := short.Source.Derived
+	if d == nil || len(d.Runs) == 0 || d.RunsArtifact != "" {
+		t.Fatalf("the prefix runs of the truncated chain were not recorded: %+v", d)
+	}
+	// Provenance: the recorded runs, read back from the image, are exactly the
+	// bytes the artifact captured (the prefix), and nothing more.
+	var fromRuns []byte
+	var covered int64
+	for _, r := range d.Runs {
+		if r.Offset < 0 || r.Offset+r.Length > int64(len(data)) {
+			t.Fatalf("run %+v is not inside the %d-byte image", r, len(data))
+		}
+		fromRuns = append(fromRuns, data[r.Offset:r.Offset+r.Length]...)
+		covered += r.Length
+	}
+	if covered != short.Size || !bytes.Equal(fromRuns, readArtifact(t, c, short)) {
+		t.Errorf("recorded runs cover %d bytes and do not reproduce the %d captured bytes", covered, short.Size)
 	}
 	if fine.Incomplete || string(readArtifact(t, c, fine)) != "fine" || len(fine.Source.Derived.Runs) == 0 {
 		t.Errorf("the intact neighbour was affected: %+v", fine)
 	}
-	// Two skips are the examine-side warnings (no runs recorded; partial read) ...
-	if sum.Skipped != 2 {
-		t.Errorf("Skipped = %d, want 2 (no runs recorded + read failed)", sum.Skipped)
+	// One skip is the examine-side warning (partial read); runs were recorded ...
+	if sum.Skipped != 1 {
+		t.Errorf("Skipped = %d, want 1 (read failed)", sum.Skipped)
 	}
 	// ... and the reader's own live warning about the chain is a filesystem warning.
 	if sum.FSWarnings != 1 {
@@ -80,7 +96,7 @@ func TestExtractFATShortChainIsIncomplete(t *testing.T) {
 		}
 	}
 	joined := strings.Join(reasons, "\n")
-	if !strings.Contains(joined, "no runs recorded") || !strings.Contains(joined, "partial artifact kept, flagged incomplete") || !strings.Contains(joined, "chain shorter than file size") {
+	if strings.Contains(joined, "no runs recorded") || !strings.Contains(joined, "partial artifact kept, flagged incomplete") || !strings.Contains(joined, "chain shorter than file size") {
 		t.Errorf("warnings do not explain the partial extraction: %q", reasons)
 	}
 	verifyOK(t, c)

@@ -586,3 +586,47 @@ func TestWalkPathCap(t *testing.T) {
 		t.Errorf("walk allocated %d MiB", grew>>20)
 	}
 }
+
+func TestCheckRunsPrefix(t *testing.T) {
+	R := func(o, l int64) filesys.Run { return filesys.Run{Offset: o, Length: l} }
+	const fsSize = 10000
+	cases := []struct {
+		name    string
+		runs    []filesys.Run
+		size    int64
+		covered int64
+		ok      bool
+	}{
+		{"exact cover", []filesys.Run{R(512, 100)}, 100, 100, true},
+		{"strict prefix", []filesys.Run{R(512, 100)}, 300, 100, true},
+		{"prefix with hole", []filesys.Run{R(0, 512), R(-1, 512)}, 5000, 1024, true},
+		{"no runs", nil, 50, 0, true},
+		{"empty file", nil, 0, 0, true},
+		{"cover exceeds size", []filesys.Run{R(0, 512)}, 100, 0, false},
+		{"second run exceeds size", []filesys.Run{R(0, 60), R(600, 60)}, 100, 0, false},
+		{"negative length", []filesys.Run{R(0, 10), R(20, -10)}, 100, 0, false},
+		{"offset -2", []filesys.Run{R(-2, 10)}, 100, 0, false},
+		{"run past fs end", []filesys.Run{R(9901, 100)}, 300, 0, false},
+		{"offset overflow", []filesys.Run{R(math.MaxInt64-1, 10)}, 100, 0, false},
+		{"length overflow", []filesys.Run{R(-1, math.MaxInt64), R(-1, 10)}, math.MaxInt64, 0, false},
+		{"negative size", nil, -1, 0, false},
+	}
+	for _, c := range cases {
+		covered, err := filesys.CheckRunsPrefix(c.runs, c.size, fsSize)
+		if (err == nil) != c.ok {
+			t.Errorf("%s: CheckRunsPrefix err = %v, want ok=%v", c.name, err, c.ok)
+			continue
+		}
+		if err != nil && !errors.Is(err, filesys.ErrCorrupt) {
+			t.Errorf("%s: err %v is not ErrCorrupt", c.name, err)
+		}
+		if covered != c.covered {
+			t.Errorf("%s: covered = %d, want %d", c.name, covered, c.covered)
+		}
+		// CheckRuns must accept exactly the lists CheckRunsPrefix accepts with full cover.
+		wantFull := c.ok && c.covered == c.size
+		if err := filesys.CheckRuns(c.runs, c.size, fsSize); (err == nil) != wantFull {
+			t.Errorf("%s: CheckRuns err = %v, want ok=%v", c.name, err, wantFull)
+		}
+	}
+}

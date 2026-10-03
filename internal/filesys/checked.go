@@ -72,32 +72,52 @@ func MergeRuns(rs []Run) []Run {
 // reported as a *CorruptError. Content stored inline in metadata has no runs
 // and must not be passed here.
 func CheckRuns(runs []Run, size int64, fsSize int64) error {
-	bad := func(format string, a ...any) error {
-		return &CorruptError{Structure: "file runs", Offset: -1, Reason: fmt.Sprintf(format, a...)}
+	covered, err := CheckRunsPrefix(runs, size, fsSize)
+	if err != nil {
+		return err
 	}
+	if covered != size {
+		return runsErr("runs cover %d bytes, want exactly the size %d", covered, size)
+	}
+	return nil
+}
+
+// CheckRunsPrefix verifies a File.Runs list that may cover only a strict
+// prefix of [0, size): the file's allocation is truncated or corrupt, and
+// every read at or beyond the prefix end fails with an error wrapping
+// ErrCorrupt. It applies the same per-run validation as CheckRuns (no
+// negative length, a hole is exactly -1, non-hole runs lie inside
+// [0, fsSize), no overflow) but accepts a total of at most size, and returns
+// that total: the number of leading bytes of the file the runs account for.
+// A total above size is an error. A violation is reported as a *CorruptError.
+func CheckRunsPrefix(runs []Run, size int64, fsSize int64) (covered int64, err error) {
 	if size < 0 || fsSize < 0 {
-		return bad("negative size %d or filesystem size %d", size, fsSize)
+		return 0, runsErr("negative size %d or filesystem size %d", size, fsSize)
 	}
 	var total int64
 	for i, r := range runs {
 		if r.Length < 0 {
-			return bad("run %d has negative length %d", i, r.Length)
+			return 0, runsErr("run %d has negative length %d", i, r.Length)
 		}
 		if r.Offset < 0 && r.Offset != -1 {
-			return bad("run %d has offset %d (a hole is exactly -1)", i, r.Offset)
+			return 0, runsErr("run %d has offset %d (a hole is exactly -1)", i, r.Offset)
 		}
 		if r.Offset >= 0 {
 			if end, ok := AddOK(r.Offset, r.Length); !ok || end > fsSize {
-				return bad("run %d (%d+%d) lies outside the %d-byte filesystem", i, r.Offset, r.Length, fsSize)
+				return 0, runsErr("run %d (%d+%d) lies outside the %d-byte filesystem", i, r.Offset, r.Length, fsSize)
 			}
 		}
 		var ok bool
 		if total, ok = AddOK(total, r.Length); !ok {
-			return bad("run lengths overflow at run %d", i)
+			return 0, runsErr("run lengths overflow at run %d", i)
+		}
+		if total > size {
+			return 0, runsErr("runs cover more than the size %d (%d bytes by run %d)", size, total, i)
 		}
 	}
-	if total != size {
-		return bad("runs cover %d bytes, want exactly the size %d", total, size)
-	}
-	return nil
+	return total, nil
+}
+
+func runsErr(format string, a ...any) error {
+	return &CorruptError{Structure: "file runs", Offset: -1, Reason: fmt.Sprintf(format, a...)}
 }

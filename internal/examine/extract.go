@@ -206,6 +206,10 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 	d.Mode, d.UID, d.GID = e.Mode, e.UID, e.GID
 	d.Times = timesMap(e.Times)
 	d.Encrypted = e.Encrypted
+	// The runs normally cover the whole file. A file whose allocation is
+	// truncated or corrupt may report only a prefix (filesys.File.Runs): they
+	// are then the exact provenance of the bytes that can be captured, and
+	// the read past the prefix fails, so the artifact ends incomplete.
 	runs, runsErr := imageRuns(f.Runs(), size, x.part, x.s.Image.Size())
 	if runsErr != nil {
 		// Never record wrong provenance: no runs at all, content still extracted.
@@ -365,13 +369,16 @@ func holeBytes(runs []filesys.Run, size int64) int64 {
 }
 
 // imageRuns validates the filesystem-relative runs of a file of size bytes and
-// converts them to image-relative ones (holes stay -1). Every run must lie inside both the partition and the image. No runs (inline
-// content) yields none.
+// converts them to image-relative ones (holes stay -1). Every run must lie
+// inside both the partition and the image. The runs must cover [0, size) or,
+// for a file with a truncated or corrupt allocation, a leading prefix of it
+// (filesys.CheckRunsPrefix); a list that is invalid either way is an error.
+// No runs (inline content) yields none.
 func imageRuns(raw []filesys.Run, size int64, part volume.Partition, imageSize int64) ([]evidence.Run, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
-	if err := filesys.CheckRuns(raw, size, part.Length); err != nil {
+	if _, err := filesys.CheckRunsPrefix(raw, size, part.Length); err != nil {
 		return nil, err
 	}
 	out := make([]evidence.Run, 0, len(raw))

@@ -25,3 +25,28 @@ func TestImageRunsAreBoundedByTheImage(t *testing.T) {
 		t.Errorf("hole: %v, %v", got, err)
 	}
 }
+
+func TestImageRunsAcceptsOnlyAValidPrefix(t *testing.T) {
+	part := volume.Partition{Index: 1, Start: 1000, Length: 5000}
+	// A strict prefix of the file (truncated allocation) is converted.
+	got, err := imageRuns([]filesys.Run{{Offset: 0, Length: 512}}, 4096, part, 10000)
+	if err != nil || len(got) != 1 || got[0].Offset != 1000 || got[0].Length != 512 {
+		t.Fatalf("prefix runs: %v, %v", got, err)
+	}
+	// More bytes than the file has, a run outside the partition, or a prefix
+	// beyond the image is still an error (no runs recorded).
+	for name, c := range map[string]struct {
+		raw  []filesys.Run
+		size int64
+	}{
+		"longer than size":  {[]filesys.Run{{Offset: 0, Length: 512}}, 100},
+		"outside partition": {[]filesys.Run{{Offset: 4900, Length: 200}}, 4096},
+	} {
+		if got, err := imageRuns(c.raw, c.size, part, 10000); err == nil {
+			t.Errorf("%s accepted: %v", name, got)
+		}
+	}
+	if _, err := imageRuns([]filesys.Run{{Offset: 0, Length: 512}}, 4096, part, 1200); err == nil {
+		t.Error("prefix beyond the image end accepted")
+	}
+}

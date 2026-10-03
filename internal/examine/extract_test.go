@@ -690,7 +690,7 @@ func TestExtractFromIncompleteParentIsFlagged(t *testing.T) {
 func TestExtractWarnsOnBadRunsButStillExtracts(t *testing.T) {
 	c := newCase(t)
 	s, _ := sessionHook(t, c, hookFS{mapFile: func(_ filesys.Entry, f filesys.File) filesys.File {
-		return runsFile{File: f, runs: []filesys.Run{{Offset: 0, Length: 3}}} // covers 3 of 5 bytes
+		return runsFile{File: f, runs: []filesys.Run{{Offset: 0, Length: 7}}} // covers 7 of 5 bytes (a prefix would be valid; more than the file is not)
 	}}, 0, fstest.Node{Path: "/a.txt", Data: []byte("hello")})
 	sum := extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: []string{"/a.txt"}})
 	if sum.Files != 1 || sum.Skipped != 1 {
