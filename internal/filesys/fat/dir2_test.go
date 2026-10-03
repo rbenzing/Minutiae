@@ -108,8 +108,8 @@ func TestDeletedLongNameRecoveryMarkers(t *testing.T) {
 	t.Run("recovered", func(t *testing.T) {
 		img := build(o, fattest.File{Path: "Secret Plan.doc", Data: []byte("x"), LongName: true, Deleted: true})
 		es := readDir(t, openImg(t, img), "/")
-		if es[0].Name != "Secret Plan.doc" || !slices.Equal(attrValues(es[0], "lfn"), []string{"recovered"}) {
-			t.Errorf("name %q lfn %q, want recovered and no unterminated flag", es[0].Name, attrValues(es[0], "lfn"))
+		if es[0].Name != "Secret Plan.doc" || !slices.Equal(attrValues(es[0], "lfn"), []string{"recovered"}) || hasAttr(es[0], "lfn_tail") {
+			t.Errorf("name %q lfn %q, want recovered and no lfn_tail", es[0].Name, attrValues(es[0], "lfn"))
 		}
 	})
 	t.Run("slot reuse truncates the name", func(t *testing.T) {
@@ -121,8 +121,8 @@ func TestDeletedLongNameRecoveryMarkers(t *testing.T) {
 		}
 		img[lfns[0]+13]++ // the farthest slot (highest ordinal) now belongs to something else
 		es := readDir(t, openImg(t, img), "/")
-		if es[0].Name != "Secret Plan D" || !slices.Equal(attrValues(es[0], "lfn"), []string{"recovered", "unterminated"}) {
-			t.Errorf("name %q lfn %q, want the first 13 characters flagged recovered and unterminated", es[0].Name, attrValues(es[0], "lfn"))
+		if es[0].Name != "Secret Plan D" || !slices.Equal(attrValues(es[0], "lfn"), []string{"recovered"}) || attr(es[0], "lfn_tail") != "unterminated" {
+			t.Errorf("name %q lfn %q lfn_tail %q, want the first 13 characters flagged lfn=recovered and lfn_tail=unterminated", es[0].Name, attrValues(es[0], "lfn"), attr(es[0], "lfn_tail"))
 		}
 	})
 	t.Run("a neighbouring long name is not attributed", func(t *testing.T) {
@@ -257,5 +257,28 @@ func TestVeryFragmentedFileIsNeverRefused(t *testing.T) {
 	}
 	if err := filesys.CheckRuns(fl.Runs(), fl.Size(), f.Info().Size); err != nil {
 		t.Error(err)
+	}
+}
+
+// No entry carries the same attribute key twice, whatever the long-name state.
+func TestEntryAttrKeysAreDistinct(t *testing.T) {
+	o := fattest.Options{Type: 16}
+	g := fattest.Layout(o)
+	img := build(o,
+		fattest.File{Path: "Secret Plan Document.doc", Data: []byte("x"), LongName: true, Deleted: true},
+		fattest.File{Path: "Live Long Name.txt", Data: []byte("y"), LongName: true},
+		fattest.File{Path: "D", Dir: true},
+		fattest.File{Path: "Gone.txt", Data: []byte("z"), LongName: true, Deleted: true})
+	root := rootRegion(g)
+	lfns := entryOffsets(img, root, root+32*512, func(e []byte) bool { return e[0] == 0xE5 && e[11] == 0x0F })
+	img[lfns[0]+13]++ // truncate the first deleted name: lfn=recovered + lfn_tail=unterminated
+	for _, e := range readDir(t, openImg(t, img), "/") {
+		seen := map[string]bool{}
+		for _, kv := range e.Attrs {
+			if seen[kv.Key] {
+				t.Errorf("entry %q has the attr key %q twice: %+v", e.Name, kv.Key, e.Attrs)
+			}
+			seen[kv.Key] = true
+		}
 	}
 }

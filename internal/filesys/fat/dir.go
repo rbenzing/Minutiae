@@ -259,9 +259,11 @@ type dirItem struct {
 	idx     int    // index of the short entry in its directory
 }
 
-// makeItem builds the item for a short entry; ok is false for entries that are
+// makeItem builds the item for a short entry; extra are attrs added after the
+// standard ones (each key at most once: lfn=orphan or lfn=recovered, and
+// lfn_tail=unterminated). ok is false for entries that are
 // not listed (".", "..", the volume label).
-func (f *FS) makeItem(e []byte, idx int, dir uint32, deleted bool, units []uint16, have bool, lfnFlags ...string) (dirItem, bool) {
+func (f *FS) makeItem(e []byte, idx int, dir uint32, deleted bool, units []uint16, have bool, extra ...filesys.KV) (dirItem, bool) {
 	attr := e[11]
 	if attr&0x18 == attrVolume {
 		return dirItem{}, false // the volume label (Info.Label)
@@ -311,9 +313,7 @@ func (f *FS) makeItem(e []byte, idx int, dir uint32, deleted bool, units []uint1
 	} else {
 		en.Attrs = append(en.Attrs, filesys.KV{Key: "dirent", Value: strconv.FormatUint(uint64(dir), 10) + ":" + strconv.Itoa(idx)})
 	}
-	for _, fl := range lfnFlags {
-		en.Attrs = append(en.Attrs, filesys.KV{Key: "lfn", Value: fl})
-	}
+	en.Attrs = append(en.Attrs, extra...)
 	en.Times = filesys.Times{
 		Created:  dosTimestamp(binary.LittleEndian.Uint16(e[16:]), binary.LittleEndian.Uint16(e[14:]), e[13]),
 		Modified: dosTimestamp(binary.LittleEndian.Uint16(e[24:]), binary.LittleEndian.Uint16(e[22:]), 0),
@@ -351,21 +351,21 @@ func (f *FS) listDir(first uint32) ([]dirItem, error) {
 			var (
 				units []uint16
 				have  bool
-				flags []string
+				flags []filesys.KV
 			)
 			if deleted {
 				lfn.reset()
 				var unterminated bool
 				if units, unterminated, have = deletedLFN(pending, e[:11]); have {
-					flags = append(flags, "recovered")
+					flags = append(flags, filesys.KV{Key: "lfn", Value: "recovered"})
 					if unterminated {
-						flags = append(flags, "unterminated")
+						flags = append(flags, filesys.KV{Key: "lfn_tail", Value: "unterminated"})
 					}
 				}
 			} else {
 				var orphan bool
 				if units, have, orphan = lfn.take(e[:11]); orphan {
-					flags = append(flags, "orphan")
+					flags = append(flags, filesys.KV{Key: "lfn", Value: "orphan"})
 				}
 			}
 			pending = pending[:0]

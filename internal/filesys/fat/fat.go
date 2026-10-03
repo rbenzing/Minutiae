@@ -31,7 +31,7 @@ const (
 	// every listing re-read the same long chain. Once spent, directories are no
 	// longer read (a warning says so).
 	maxDirBudget   = 1 << 30
-	maxEntryBudget = 1 << 24
+	maxEntryBudget = 1 << 22
 )
 
 // FS is an opened FAT12/16/32 volume. After Open it is safe for concurrent use:
