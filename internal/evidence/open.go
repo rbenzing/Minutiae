@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // ErrUnknownArtifact is returned when an artifact id or path is not in the manifest.
@@ -23,7 +24,11 @@ func (c *Case) OpenArtifact(id string) (*os.File, ManifestRecord, error) {
 		if r.ID != id {
 			continue
 		}
-		f, err := os.Open(filepath.Join(c.Dir, filepath.FromSlash(r.Path)))
+		local := filepath.FromSlash(r.Path)
+		if !strings.HasPrefix(r.Path, artifactsDir+"/") || !filepath.IsLocal(local) {
+			return nil, ManifestRecord{}, fmt.Errorf("%w: artifact %s: manifest path %q is outside the case artifacts directory", ErrIntegrity, r.ID, r.Path)
+		}
+		f, err := os.Open(filepath.Join(c.Dir, local))
 		if err != nil {
 			return nil, ManifestRecord{}, fmt.Errorf("%w: artifact %s (%s): %v", ErrIntegrity, r.ID, r.Path, err)
 		}
@@ -31,6 +36,10 @@ func (c *Case) OpenArtifact(id string) (*os.File, ManifestRecord, error) {
 		if err != nil {
 			_ = f.Close()
 			return nil, ManifestRecord{}, fmt.Errorf("%w: artifact %s (%s): %v", ErrIntegrity, r.ID, r.Path, err)
+		}
+		if !st.Mode().IsRegular() {
+			_ = f.Close()
+			return nil, ManifestRecord{}, fmt.Errorf("%w: artifact %s (%s): not a regular file", ErrIntegrity, r.ID, r.Path)
 		}
 		if st.Size() != r.Size {
 			_ = f.Close()

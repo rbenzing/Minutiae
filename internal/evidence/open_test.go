@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -166,22 +167,67 @@ func TestVerifyFlagsDerivedArtifactWithBadParent(t *testing.T) {
 	t.Run("missing parent", func(t *testing.T) {
 		c, p := setup(t)
 		capture(t, c, &Derivation{ParentID: "ghost", ParentSHA256: p.SHA256})
-		if r := mustVerify(t, c); r.OK() || !containsSubstr(r.Problems, "parent") {
+		if r := mustVerify(t, c); r.OK() || !containsSubstr(r.Problems, "which is not in the manifest") {
 			t.Fatalf("report = %+v", r)
 		}
 	})
 	t.Run("parent hash differs", func(t *testing.T) {
 		c, p := setup(t)
 		capture(t, c, &Derivation{ParentID: p.ID, ParentSHA256: "00ff"})
-		if r := mustVerify(t, c); r.OK() || !containsSubstr(r.Problems, "parent") {
+		if r := mustVerify(t, c); r.OK() || !containsSubstr(r.Problems, "differs from the derivation's recorded parent sha256") {
 			t.Fatalf("report = %+v", r)
 		}
 	})
 	t.Run("missing runs artifact", func(t *testing.T) {
 		c, p := setup(t)
 		capture(t, c, &Derivation{ParentID: p.ID, ParentSHA256: p.SHA256, RunsArtifact: "ghost-runs"})
-		if r := mustVerify(t, c); r.OK() || !containsSubstr(r.Problems, "parent") {
+		if r := mustVerify(t, c); r.OK() || !containsSubstr(r.Problems, "runs artifact \"ghost-runs\"") {
 			t.Fatalf("report = %+v", r)
 		}
 	})
+}
+
+func TestOpenArtifactRefusesNonRegularFile(t *testing.T) {
+	c, rec := caseWithArtifact(t)
+	p := filepath.Join(c.Dir, filepath.FromSlash(rec.Path))
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(p, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f, _, err := c.OpenArtifact(rec.ID)
+	if f != nil {
+		_ = f.Close()
+		t.Fatal("directory opened as artifact")
+	}
+	// The regular-file check runs before the size check, so this holds
+	// whatever size the directory reports.
+	if !errors.Is(err, ErrIntegrity) || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("err = %v, want ErrIntegrity (not a regular file)", err)
+	}
+}
+
+func TestOpenArtifactRefusesPathOutsideCase(t *testing.T) {
+	c := newTestCase(t)
+	outside := filepath.Join(filepath.Dir(c.Dir), "outside.bin")
+	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	paths := []string{"../outside.bin", outside, filepath.ToSlash(outside), "case.json", "artifacts/../../outside.bin"}
+	for i, p := range paths {
+		id := "forged" + string(rune('a'+i))
+		if err := appendManifest(filepath.Join(c.Dir, manifestFile), ManifestRecord{ID: id, Path: p, Size: 6}); err != nil {
+			t.Fatal(err)
+		}
+		f, _, err := c.OpenArtifact(id)
+		if f != nil {
+			_ = f.Close()
+			t.Errorf("path %q was opened", p)
+			continue
+		}
+		if !errors.Is(err, ErrIntegrity) {
+			t.Errorf("path %q: err = %v, want ErrIntegrity", p, err)
+		}
+	}
 }
