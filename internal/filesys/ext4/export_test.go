@@ -75,3 +75,6 @@ func (f *FS) DirRuns(e filesys.Entry) ([]filesys.Run, error) {
 
 // RecLenFromDisk exposes the rec_len decoder.
 var RecLenFromDisk = recLenFromDisk
+
+// SetDirRecordCap lowers the per-directory entry cap (before any read).
+func (f *FS) SetDirRecordCap(n int) { f.dirRecordCap = n }

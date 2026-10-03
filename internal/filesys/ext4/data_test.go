@@ -833,3 +833,172 @@ func TestBlockMapHostile(t *testing.T) {
 		})
 	}
 }
+
+func TestDataPointerIntoMetadataWarns(t *testing.T) {
+	const bs = 1024
+	build := func(extents bool) ([]byte, *ext4.FS, int) {
+		img := ext4test.Build(ext4test.Options{Extents: extents, BlockSize: bs}, []ext4test.File{{Path: "/f", Data: pat(bs, 1)}})
+		f := mustOpen(t, img)
+		return img, f, inodeOff(t, f, bs, 256, 128, int(ext4test.InodeNumber(0)))
+	}
+	const msg = "file data pointer into filesystem metadata (inode 11)"
+
+	// A clean file warns about nothing.
+	for _, ext := range []bool{true, false} {
+		img, f, _ := build(ext)
+		checkFile(t, img, f, ext4test.InodeNumber(0), pat(bs, 1))
+		if w := f.Info().Warnings; len(w) != 0 {
+			t.Errorf("extents=%v: warnings on a clean image: %v", ext, w)
+		}
+	}
+
+	_, f0, _ := build(true)
+	_, bitmap, itable, _, _ := f0.Group(0)
+	for name, target := range map[string]uint32{
+		"block 0 (boot block)":    0,
+		"superblock":              1,
+		"descriptor table":        2,
+		"inode bitmap":            uint32(bitmap),
+		"inode table, first":      uint32(itable),
+		"inode table, last block": uint32(itable) + 31, // 128 inodes x 256 bytes = 32 blocks
+	} {
+		for _, ext := range []bool{true, false} {
+			img, _, ino := build(ext)
+			if ext {
+				put32(img, ino+0x28+12+8, target) // ee_start_lo
+				put16(img, ino+0x28+12+6, 0)      // ee_start_hi
+			} else {
+				put32(img, ino+0x28, target) // i_block[0]
+			}
+			f := mustOpen(t, img)
+			if target == 0 && !ext {
+				// A zero block pointer is a hole, not a pointer into block 0.
+				if hasWarning(f.Info(), "metadata") {
+					t.Errorf("%s: a hole was reported as a metadata pointer", name)
+				}
+				continue
+			}
+			fl, err := tryOpenNum(f, ext4test.InodeNumber(0))
+			if err != nil {
+				t.Fatalf("%s extents=%v: reading must go on: %v", name, ext, err)
+			}
+			if fl.Size() != bs {
+				t.Errorf("%s extents=%v: size %d", name, ext, fl.Size())
+			}
+			if !hasWarning(f.Info(), msg) {
+				t.Errorf("%s extents=%v: no %q in %v", name, ext, msg, f.Info().Warnings)
+			}
+		}
+	}
+}
+
+// buildLen is a 1-block extent file on a 5-group image big enough to hold a
+// 32768-block extent.
+func buildLen(t *testing.T) (img []byte, f *ext4.FS, ino int, phys int64) {
+	t.Helper()
+	const bs = 1024
+	img = ext4test.Build(ext4test.Options{Extents: true, BlockSize: bs, Groups: 5, BlocksPerGroup: 8192}, []ext4test.File{{Path: "/f", Data: pat(bs, 1)}})
+	f = mustOpen(t, img)
+	ino = inodeOff(t, f, bs, 256, 128, int(ext4test.InodeNumber(0)))
+	return img, f, ino, openNum(t, f, ext4test.InodeNumber(0)).Runs()[0].Offset
+}
+
+func TestExtentLengthBoundary(t *testing.T) {
+	const bs = 1024
+	ee := func(ino int) int { return ino + 0x28 + 12 }
+
+	// ee_len 32768 is an initialized extent of 32768 blocks.
+	img, _, ino, phys := buildLen(t)
+	put16(img, ee(ino)+4, 32768)
+	put32(img, ino+4, 32768*bs)
+	f := mustOpen(t, img)
+	fl := openNum(t, f, ext4test.InodeNumber(0))
+	if runs := fl.Runs(); len(runs) != 1 || runs[0] != (filesys.Run{Offset: phys, Length: 32768 * bs}) {
+		t.Errorf("ee_len 32768: runs = %v, want one initialized run of 32768 blocks at %d", runs, phys)
+	}
+	got := make([]byte, bs)
+	if _, err := fl.ReadAt(got, 0); err != nil || !bytes.Equal(got, pat(bs, 1)) {
+		t.Errorf("ee_len 32768: first block differs (%v)", err)
+	}
+
+	// ee_len 32769 is an uninitialized extent of one block: it reads as zeros.
+	img, _, ino, _ = buildLen(t)
+	put16(img, ee(ino)+4, 32769)
+	f = mustOpen(t, img)
+	fl = openNum(t, f, ext4test.InodeNumber(0))
+	if runs := fl.Runs(); len(runs) != 1 || runs[0] != (filesys.Run{Offset: -1, Length: bs}) {
+		t.Errorf("ee_len 32769: runs = %v, want one hole of 1 block", runs)
+	}
+	if _, err := fl.ReadAt(got, 0); err != nil || !bytes.Equal(got, make([]byte, bs)) {
+		t.Errorf("ee_len 32769: content is not zeros (%v)", err)
+	}
+}
+
+// sparseReader is a huge image of which only the first bytes are non-zero.
+type sparseReader struct {
+	head []byte
+	size int64
+}
+
+func (s sparseReader) ReadAt(p []byte, off int64) (int, error) {
+	if off < 0 || off >= s.size {
+		return 0, io.EOF
+	}
+	n := int(min(int64(len(p)), s.size-off))
+	clear(p[:n])
+	if off < int64(len(s.head)) {
+		copy(p[:n], s.head[off:])
+	}
+	if n < len(p) {
+		return n, io.EOF
+	}
+	return n, nil
+}
+
+func TestExtentStartHighBits(t *testing.T) {
+	const bs = 4096
+	img := ext4test.Build(ext4test.Options{Extents: true, BlockSize: bs, Bit64: true, BlocksPerGroup: 16384}, []ext4test.File{{Path: "/f", Data: pat(bs, 1)}})
+	f0 := mustOpen(t, img)
+	ino := inodeOff(t, f0, bs, 256, 128, int(ext4test.InodeNumber(0)))
+
+	// Declare a 16 TiB filesystem (2^32 + 100000 blocks); everything past the
+	// head of the image reads as zeros. The file's extent starts at physical
+	// block 2^32 + 10, so ee_start_hi is 1.
+	const total = 1<<32 + 100000
+	put32(img, 1024+0x4, uint32(total&0xFFFFFFFF))
+	put32(img, 1024+0x150, uint32(total>>32))
+	put16(img, ino+0x28+12+6, 1)
+	put32(img, ino+0x28+12+8, 10)
+	size := int64(total) * bs
+	f, err := ext4.Open(sparseReader{head: img[:1<<20], size: size}, size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fl, err := tryOpenNum(f, ext4test.InodeNumber(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filesys.Run{Offset: (1<<32 + 10) * bs, Length: bs}
+	if runs := fl.Runs(); len(runs) != 1 || runs[0] != want {
+		t.Fatalf("runs = %v, want %v", runs, want)
+	}
+	got := make([]byte, bs)
+	if n, err := fl.ReadAt(got, 0); n != bs || (err != nil && !errors.Is(err, io.EOF)) || !bytes.Equal(got, make([]byte, bs)) {
+		t.Errorf("ReadAt = %d, %v; want %d zero bytes", n, err, bs)
+	}
+	if hasWarning(f.Info(), "metadata") {
+		t.Errorf("a high pointer was reported as metadata: %v", f.Info().Warnings)
+	}
+
+	// The same extent beyond the declared size is refused.
+	put32(img, 1024+0x150, 0)
+	put32(img, 1024+0x4, 100000)
+	small := int64(100000) * bs
+	f, err = ext4.Open(sparseReader{head: img[:1<<20], size: small}, small)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tryOpenNum(f, ext4test.InodeNumber(0)); !errors.Is(err, filesys.ErrCorrupt) {
+		t.Errorf("extent beyond the filesystem: %v, want a CorruptError", err)
+	}
+}

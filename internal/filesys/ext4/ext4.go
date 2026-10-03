@@ -35,6 +35,13 @@ type FS struct {
 	warnings []string
 	warnSeen map[string]struct{}
 	warnFull bool // the cap was reached and the "suppressed" line is in warnings
+
+	// metaRanges are the block ranges [start, end) of group 0's metadata that
+	// file data must not overlap: boot block, superblock and descriptor table,
+	// then the group's bitmaps and inode table.
+	metaRanges [][2]uint64
+	// dirRecordCap bounds the entries one directory yields (maxDirRecords).
+	dirRecordCap int
 }
 
 // readFull reads exactly len(p) bytes at off; a read that returns all the
@@ -121,7 +128,10 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		r:      cached,
 		data:   raw,
 		size:   sb.blocksCount * int64(sb.blockSize), // cannot overflow: <= size
+
+		dirRecordCap: maxDirRecords,
 	}
+	f.metaRanges = metadataRanges(sb, groups)
 	for _, w := range append(warns, gw...) {
 		f.warn("%s", w)
 	}
@@ -153,4 +163,20 @@ func (f *FS) Info() filesys.Info {
 // Unallocated is not implemented yet (plan 2B, Task 5).
 func (f *FS) Unallocated() ([]filesys.Run, error) {
 	return nil, fmt.Errorf("ext4: listing unallocated space: %w", filesys.ErrUnsupported)
+}
+
+// metadataRanges lists the block ranges that hold group 0's metadata: from
+// block 0 through the superblock and group descriptor table, and the group's
+// two bitmaps and inode table (when its descriptor is usable).
+func metadataRanges(sb *superblock, groups []groupDesc) [][2]uint64 {
+	gdtBlocks := (uint64(sb.groups)*uint64(sb.descSize) + uint64(sb.blockSize) - 1) / uint64(sb.blockSize) // <= 32 MiB table: cannot overflow
+	rs := [][2]uint64{{0, max(uint64(sb.firstDataBlock), uint64(sb.logicalSuperBlock())+1+gdtBlocks)}}
+	if len(groups) > 0 && !groups[0].bad {
+		g := groups[0]
+		rs = append(rs,
+			[2]uint64{g.blockBitmap, g.blockBitmap + 1},
+			[2]uint64{g.inodeBitmap, g.inodeBitmap + 1},
+			[2]uint64{g.inodeTable, g.inodeTable + uint64(sb.itableBlocks)})
+	}
+	return rs
 }

@@ -154,6 +154,18 @@ func (f *FS) extentRuns(in *inode, rl *runList) error {
 	return w.node(in.block[:], depth, in.offset+iBlock)
 }
 
+// checkDataPointer warns when n data blocks starting at phys overlap the
+// filesystem's own metadata (see metaRanges). Reading goes on: a damaged or
+// hostile inode may point anywhere, and the examiner decides what that means.
+func (f *FS) checkDataPointer(in *inode, phys, n uint64) {
+	for _, r := range f.metaRanges {
+		if phys < r[1] && phys+n > r[0] {
+			f.warn("file data pointer into filesystem metadata (inode %d)", in.num)
+			return
+		}
+	}
+}
+
 // checkBlockChecksum verifies the tail checksum of the extent block blk (buf)
 // when metadata_csum is on, as the kernel's ext4_extent_block_csum does: crc32c
 // over the block up to the tail (12 + 12*eh_max), seeded with the filesystem
@@ -244,6 +256,7 @@ func (w *extentWalker) node(buf []byte, wantDepth int, where int64) error {
 		case phys+n > uint64(w.f.sb.blocksCount):
 			return corrupt(st, where, "extent %d maps blocks %d+%d beyond the %d-block filesystem", i, phys, n, w.f.sb.blocksCount)
 		}
+		w.f.checkDataPointer(w.in, phys, n)
 		if lblk > w.next {
 			if err := w.rl.addBlocks(-1, int64(lblk-w.next), bs); err != nil {
 				return err
@@ -265,6 +278,7 @@ func (w *extentWalker) node(buf []byte, wantDepth int, where int64) error {
 // style file in file order.
 type blockMapWalker struct {
 	f       *FS
+	in      *inode
 	rl      *runList
 	nb      int64 // logical blocks needed to cover the size
 	next    int64 // next logical block
@@ -279,7 +293,7 @@ func (f *FS) blockMapRuns(in *inode, rl *runList) error {
 	if in.size%bs != 0 {
 		nb++
 	}
-	w := &blockMapWalker{f: f, rl: rl, nb: nb, ppb: bs / 4, visited: map[uint32]struct{}{}}
+	w := &blockMapWalker{f: f, in: in, rl: rl, nb: nb, ppb: bs / 4, visited: map[uint32]struct{}{}}
 	ptr := func(i int) uint32 { return binary.LittleEndian.Uint32(in.block[i*4:]) }
 	for i := range 12 {
 		if err := w.walk(ptr(i), 0, in.offset+iBlock); err != nil {
@@ -316,6 +330,7 @@ func (w *blockMapWalker) walk(ptr uint32, level int, where int64) error {
 		return corrupt(st, where, "block pointer %d is beyond the %d-block filesystem", ptr, w.f.sb.blocksCount)
 	}
 	if level == 0 {
+		w.f.checkDataPointer(w.in, uint64(ptr), 1)
 		w.next++
 		return w.rl.addBlocks(int64(ptr), 1, bs)
 	}

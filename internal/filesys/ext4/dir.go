@@ -52,6 +52,8 @@ type dirRec struct {
 	blk     int64 // physical block, or -1 for an inline directory
 	off     int   // offset in the block, or in the inline data
 	csumBad bool  // the block's checksum is bad or missing
+
+	dirInode uint32 // the directory the record was read from
 }
 
 // region is one run of directory records: a directory block, or one part of an
@@ -258,8 +260,15 @@ func (w *dirScan) records(g *region) {
 			off += recLen
 			continue
 		}
-		if name := b[off+direntHeader : off+direntHeader+nameLen]; inode != 0 && !isDot(name) {
+		name := b[off+direntHeader : off+direntHeader+nameLen]
+		switch {
+		case inode != 0 && !isDot(name):
 			w.emit(g, &dirRec{inode: inode, name: name, ftype: ftype, off: off})
+		case inode == 0 && off == 0 && g.slack && w.wantDeleted && nameLen > 0 && plausibleName(name):
+			// The first record of a block, deleted: the kernel zeroed its
+			// inode, so only the name, type and place survive. It is reported
+			// as a deleted entry of unknown inode (see unknownInodeEntry).
+			w.emit(g, &dirRec{name: name, ftype: ftype, deleted: true, off: off})
 		}
 		// The slack after a live record holds records deleted by merging them
 		// into it. A first record with a zeroed inode (the kernel zeroes the
@@ -293,13 +302,13 @@ func (w *dirScan) slackScan(g *region, from, to int) {
 
 // emit hands one record to the visitor, within the per-directory record cap.
 func (w *dirScan) emit(g *region, r *dirRec) {
-	if w.count >= maxDirRecords {
-		w.f.warn("directory inode %d: more than %d entries; the rest are not read", w.in.num, maxDirRecords)
+	if w.count >= w.f.dirRecordCap {
+		w.f.warn("directory inode %d: more than %d entries; the rest are not read", w.in.num, w.f.dirRecordCap)
 		w.stop = true
 		return
 	}
 	w.count++
-	r.blk, r.csumBad = g.blk, g.csumBad
+	r.blk, r.csumBad, r.dirInode = g.blk, g.csumBad, w.in.num
 	if g.blk < 0 {
 		r.off += g.base
 	}
@@ -359,6 +368,9 @@ func addAttr(e *filesys.Entry, key, value string) {
 // names as it is now. dirEnc marks a record of an encrypted directory.
 func (f *FS) dirEntry(r *dirRec, dirEnc bool) filesys.Entry {
 	name, raw := displayName(r.name, dirEnc)
+	if r.inode == 0 {
+		return unknownInodeEntry(r, name, raw, dirEnc)
+	}
 	in, err := f.inode(r.inode)
 	var e filesys.Entry
 	if err != nil {
@@ -382,6 +394,28 @@ func (f *FS) dirEntry(r *dirRec, dirEnc bool) filesys.Entry {
 			addAttr(&e, "dirent", fmt.Sprintf("inline:%d", r.off))
 		}
 	}
+	if r.csumBad {
+		addAttr(&e, "checksum", "bad")
+	}
+	return e
+}
+
+// unknownInodeEntry is the Entry of a deleted first record of a block, whose
+// inode number the kernel zeroed. Nothing is known beyond the name, the
+// dirent's file_type (an unknown type without the filetype feature) and where
+// the record lies, so the ID is that location ("dirent:<block>:<offset>", or
+// "dirent:inline:<dir inode>:<offset>"), attr inode=unknown marks it, and no
+// inode-derived field is set.
+func unknownInodeEntry(r *dirRec, name string, raw []byte, dirEnc bool) filesys.Entry {
+	e := filesys.Entry{Name: name, RawName: raw, Type: direntType(r.ftype), Deleted: true, Encrypted: dirEnc}
+	if r.blk >= 0 {
+		e.ID = fmt.Sprintf("dirent:%d:%d", r.blk, r.off)
+		addAttr(&e, "dirent", fmt.Sprintf("%d:%d", r.blk, r.off))
+	} else {
+		e.ID = fmt.Sprintf("dirent:inline:%d:%d", r.dirInode, r.off)
+		addAttr(&e, "dirent", fmt.Sprintf("inline:%d", r.off))
+	}
+	addAttr(&e, "inode", "unknown")
 	if r.csumBad {
 		addAttr(&e, "checksum", "bad")
 	}

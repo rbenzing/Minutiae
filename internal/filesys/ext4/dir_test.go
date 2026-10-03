@@ -239,8 +239,9 @@ func TestDeletedEntryInodeReuseAndCandidateRules(t *testing.T) {
 func TestReadDirDeletedFirstEntryInBlock(t *testing.T) {
 	// Block 1 of the root starts with a deleted record. The kernel zeroes the
 	// inode of a first record (its number is lost) and merges later deletions
-	// into its rec_len, so gone2 is only found by scanning the slack of that
-	// zero-inode first record.
+	// into its rec_len, so gone2 is found by scanning the slack of that
+	// zero-inode first record, and gone1 itself is reported with an unknown
+	// inode.
 	files := []ext4test.File{
 		{Path: "/live0", Data: pat(10, 1)},
 		{Path: "/gone1", Data: pat(10, 2), Deleted: true, NewBlock: true},
@@ -251,7 +252,7 @@ func TestReadDirDeletedFirstEntryInBlock(t *testing.T) {
 		img := ext4test.Build(ext4test.Options{Extents: true, MetadataCsum: csum}, files)
 		f := mustOpen(t, img)
 		es := readDir(t, f, "/")
-		if got, want := names(es), []string{"gone2", "live0", "live3"}; !slices.Equal(got, want) {
+		if got, want := names(es), []string{"gone1", "gone2", "live0", "live3"}; !slices.Equal(got, want) {
 			t.Fatalf("csum=%v: entries %v, want %v", csum, got, want)
 		}
 		if !byName(t, es, "gone2").Deleted || byName(t, es, "live0").Deleted || byName(t, es, "live3").Deleted {
@@ -261,9 +262,105 @@ func TestReadDirDeletedFirstEntryInBlock(t *testing.T) {
 		if !strings.HasSuffix(v, ":16") { // after gone1's 16-byte record
 			t.Errorf("csum=%v: gone2 dirent = %q, want an offset of 16", csum, v)
 		}
+		g1 := byName(t, es, "gone1")
+		blk, _, _ := strings.Cut(v, ":")
+		if !g1.Deleted || g1.ID != "dirent:"+blk+":0" || g1.Type != filesys.TypeFile ||
+			g1.Size != 0 || g1.Mode != 0 || !g1.Times.Modified.T.IsZero() || g1.UID != 0 {
+			t.Errorf("csum=%v: gone1 = %+v, want a deleted file with ID dirent:%s:0 and no inode fields", csum, g1, blk)
+		}
+		if u, _ := attr(g1, "inode"); u != "unknown" {
+			t.Errorf("csum=%v: gone1 attrs %v, want inode=unknown", csum, g1.Attrs)
+		}
+		if d, _ := attr(g1, "dirent"); d != blk+":0" {
+			t.Errorf("csum=%v: gone1 dirent = %q", csum, d)
+		}
+		if _, err := f.Open(g1); !errors.Is(err, filesys.ErrDeleted) {
+			t.Errorf("csum=%v: Open(gone1) = %v, want ErrDeleted", csum, err)
+		}
 		if w := f.Info().Warnings; len(w) != 0 {
 			t.Errorf("csum=%v: warnings %v", csum, w)
 		}
+	}
+}
+
+func TestDeletedFirstEntryRules(t *testing.T) {
+	files := []ext4test.File{
+		{Path: "/live0", Data: pat(10, 1)},
+		{Path: "/gone1", Data: pat(10, 2), Deleted: true, NewBlock: true},
+		{Path: "/live2", Data: pat(10, 3)},
+	}
+	img := ext4test.Build(ext4test.Options{Extents: true}, files)
+	f := mustOpen(t, img)
+	runs, err := f.DirRuns(f.Root())
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("root runs %v, %v", runs, err)
+	}
+	b1 := int(runs[0].Offset) + 1024 // block 1 starts with the zeroed record
+
+	// Without the filetype feature the type is unknown: clear the feature bit
+	// and the file_type byte of every record.
+	noft := bytes.Clone(img)
+	put32(noft, 1024+0x60, le32(noft, 1024+0x60)&^0x2)
+	for _, off := range []int{int(runs[0].Offset) + 7, int(runs[0].Offset) + 19, int(runs[0].Offset) + 31, b1 + 7, b1 + 16 + 7, b1 + 32 + 7} {
+		noft[off] = 0
+	}
+	es := readDir(t, mustOpen(t, noft), "/")
+	if g := byName(t, es, "gone1"); !g.Deleted || g.Type != filesys.TypeOther {
+		t.Errorf("without filetype: gone1 = %+v, want a deleted entry of type other", g)
+	}
+
+	// The name must pass the same checks as any deleted record.
+	for name, mut := range map[string]func(b []byte){
+		"name has slash": func(b []byte) { b[b1+8] = '/' },
+		"name has NUL":   func(b []byte) { b[b1+9] = 0 },
+		"name_len zero":  func(b []byte) { b[b1+6] = 0 },
+		"name is dot":    func(b []byte) { b[b1+6], b[b1+8] = 1, '.' },
+	} {
+		c := bytes.Clone(img)
+		mut(c)
+		for _, e := range readDir(t, mustOpen(t, c), "/") {
+			if e.Deleted {
+				t.Errorf("%s: accepted %+v", name, e)
+			}
+		}
+	}
+
+	// A hole-free but empty block (inode 0, name_len 0, spanning the block) is
+	// not an entry.
+	c := bytes.Clone(img)
+	clear(c[b1 : b1+1024])
+	put16(c, b1+4, 1024)
+	for _, e := range readDir(t, mustOpen(t, c), "/") {
+		if e.Deleted {
+			t.Errorf("an empty block yielded %+v", e)
+		}
+	}
+}
+
+func TestDirRecordCap(t *testing.T) {
+	files := []ext4test.File{{Path: "/d", Dir: true}}
+	for _, n := range []string{"a", "b", "c", "d", "e"} {
+		files = append(files, ext4test.File{Path: "/d/" + n, Data: []byte(n)})
+	}
+	img := ext4test.Build(ext4test.Options{Extents: true}, files)
+
+	f := mustOpen(t, img)
+	f.SetDirRecordCap(3)
+	d, _ := f.Lookup("/d")
+	es, err := f.ReadDir(d)
+	if err != nil || len(es) != 3 {
+		t.Fatalf("ReadDir = %d entries, %v; want 3 and no error", len(es), err)
+	}
+	if !hasWarning(f.Info(), "more than 3 entries") {
+		t.Errorf("no cap warning in %v", f.Info().Warnings)
+	}
+
+	// Exactly at the cap is not over it.
+	f = mustOpen(t, img)
+	f.SetDirRecordCap(5)
+	d, _ = f.Lookup("/d")
+	if es, _ = f.ReadDir(d); len(es) != 5 || len(f.Info().Warnings) != 0 {
+		t.Errorf("at the cap: %d entries, warnings %v", len(es), f.Info().Warnings)
 	}
 }
 
