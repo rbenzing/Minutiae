@@ -3,6 +3,7 @@ package ios_test
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"os"
 	"path/filepath"
@@ -96,6 +97,16 @@ func statusPlist(t *testing.T, state string) []byte {
 // uploadThenFinish uploads two files plus, when snapshot is non-nil,
 // U1/Status.plist, then finishes with the given ProcessMessage code.
 func uploadThenFinish(code int, snapshot []byte) func(*mb2test.Device) error {
+	var extra []mb2test.Upload
+	if snapshot != nil {
+		extra = append(extra, mb2test.Upload{DeviceName: "/c", Name: "U1/Status.plist", Data: snapshot})
+	}
+	return uploadExtraThenFinish(code, extra...)
+}
+
+// uploadExtraThenFinish uploads two files plus extra, then finishes with the
+// given ProcessMessage code.
+func uploadExtraThenFinish(code int, extra ...mb2test.Upload) func(*mb2test.Device) error {
 	return func(d *mb2test.Device) error {
 		if err := d.Handshake(); err != nil {
 			return err
@@ -107,9 +118,7 @@ func uploadThenFinish(code int, snapshot []byte) func(*mb2test.Device) error {
 			{DeviceName: "/a", Name: "U1/Info.plist", Data: []byte("info")},
 			{DeviceName: "/b", Name: "U1/Manifest.db", Data: []byte("sqlite")},
 		}
-		if snapshot != nil {
-			files = append(files, mb2test.Upload{DeviceName: "/c", Name: "U1/Status.plist", Data: snapshot})
-		}
+		files = append(files, extra...)
 		if _, err := d.UploadFiles(files...); err != nil {
 			return err
 		}
@@ -170,15 +179,44 @@ func TestBackupDeviceErrorStillPromotes(t *testing.T) {
 	}
 }
 
+// dictBombPlist is a binary plist whose only object is a dict claiming 2^63
+// entries; an unvalidated decoder panics or allocates without bound on it.
+func dictBombPlist() []byte {
+	b := binary.BigEndian.AppendUint64([]byte("bplist00\xdf\x13"), 1<<63)
+	tableOff := len(b)
+	b = append(b, 8)
+	trailer := make([]byte, 32)
+	trailer[6], trailer[7] = 1, 3
+	binary.BigEndian.PutUint64(trailer[8:], 1)
+	binary.BigEndian.PutUint64(trailer[24:], uint64(tableOff))
+	return append(b, trailer...)
+}
+
+func xmlStatus(state string) []byte {
+	return []byte(`<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>` +
+		`<key>SnapshotState</key><string>` + state + `</string></dict></plist>`)
+}
+
 func TestBackupUnfinishedSnapshotIsError(t *testing.T) {
-	for name, snapshot := range map[string][]byte{
-		"uploading": statusPlist(t, "uploading"),
-		"missing":   nil,
-		"garbage":   []byte("not a plist"),
+	status := func(data []byte) []mb2test.Upload {
+		return []mb2test.Upload{{DeviceName: "/c", Name: "U1/Status.plist", Data: data}}
+	}
+	for _, tc := range []struct {
+		name      string
+		extra     []mb2test.Upload
+		wantState string
+	}{
+		{"uploading", status(statusPlist(t, "uploading")), "uploading"},
+		{"xml-uploading", status(xmlStatus("uploading")), "uploading"},
+		{"missing", nil, "missing"},
+		{"garbage", status([]byte("not a plist")), "unreadable"},
+		{"dict-bomb", status(dictBombPlist()), "unreadable"},
+		{"oversized", status(append(xmlStatus("finished"), bytes.Repeat([]byte(" "), 1<<20)...)), "unreadable"},
+		{"directory", []mb2test.Upload{{DeviceName: "/c", Name: "U1/Status.plist/x", Data: []byte("x")}}, "unreadable"},
 	} {
-		t.Run(name, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			b := fakeIPhone()
-			b.Script = uploadThenFinish(0, snapshot)
+			b.Script = uploadExtraThenFinish(0, tc.extra...)
 			c := newCase(t)
 			err := first(t, b).(device.LogicalAcquirer).AcquireLogical(context.Background(), c, device.LogicalOptions{}, nil)
 			if err == nil || !strings.Contains(err.Error(), "backup snapshot not finished") {
@@ -188,19 +226,18 @@ func TestBackupUnfinishedSnapshotIsError(t *testing.T) {
 				t.Fatalf("script: %v", serr)
 			}
 			m, _ := c.Manifest()
-			want := 4
-			if snapshot == nil {
-				want = 3
-			}
-			if len(m) != want {
+			if want := 3 + len(tc.extra); len(m) != want {
 				t.Fatalf("expected %d promoted artifacts, got %d", want, len(m))
 			}
 			if entries, _ := os.ReadDir(filepath.Join(c.Dir, "staging")); len(entries) != 0 {
 				t.Errorf("staging not cleaned: %v", entries)
 			}
 			audit, _ := os.ReadFile(filepath.Join(c.Dir, "audit.jsonl"))
-			if !strings.Contains(string(audit), `"action":"acquire.error"`) || !strings.Contains(string(audit), `"snapshot_state"`) {
-				t.Fatalf("acquire.error/snapshot_state not audited:\n%s", audit)
+			if !strings.Contains(string(audit), `"action":"acquire.error"`) {
+				t.Fatalf("acquire.error not audited:\n%s", audit)
+			}
+			if want := `"snapshot_state":"` + tc.wantState + `"`; !strings.Contains(string(audit), want) {
+				t.Fatalf("want %s audited:\n%s", want, audit)
 			}
 		})
 	}

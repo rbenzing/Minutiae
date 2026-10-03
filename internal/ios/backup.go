@@ -10,8 +10,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"howett.net/plist"
-
 	"github.com/rbenzing/minutiae/internal/device"
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/ios/mb2"
@@ -87,23 +85,55 @@ func (d *Device) backup(ctx context.Context, staging string, progress device.Pro
 
 // snapshotState reads <staging>/<udid>/Status.plist (XML or binary) and
 // returns its SnapshotState. The error is non-nil unless the state is
-// "finished"; the returned state is "missing" or "unreadable" when the file
-// cannot be used.
+// "finished". The returned state is "missing" only when the file does not
+// exist, and "unreadable" when it exists but cannot be used (not a regular
+// file, larger than mb2.MaxPlistFile, unreadable, or not a valid plist). The
+// device wrote the file, so it is decoded only through mb2.UnmarshalPlist.
 func snapshotState(staging, udid string) (string, error) {
-	data, err := os.ReadFile(filepath.Join(staging, udid, "Status.plist"))
-	if err != nil {
+	p := filepath.Join(staging, udid, "Status.plist")
+	fi, err := os.Stat(p)
+	if errors.Is(err, fs.ErrNotExist) {
 		return "missing", fmt.Errorf("backup snapshot not finished: Status.plist missing: %w", err)
+	}
+	unreadable := func(err error) (string, error) {
+		return "unreadable", fmt.Errorf("backup snapshot not finished: Status.plist unreadable: %w", err)
+	}
+	switch {
+	case err != nil:
+		return unreadable(err)
+	case !fi.Mode().IsRegular():
+		return unreadable(fmt.Errorf("not a regular file (%s)", fi.Mode()))
+	case fi.Size() > mb2.MaxPlistFile:
+		return unreadable(fmt.Errorf("%d bytes exceeds the %d-byte limit", fi.Size(), mb2.MaxPlistFile))
+	}
+	data, err := readLimited(p, mb2.MaxPlistFile)
+	if err != nil {
+		return unreadable(err)
 	}
 	var st struct {
 		SnapshotState string `plist:"SnapshotState"`
 	}
-	if _, err := plist.Unmarshal(data, &st); err != nil {
-		return "unreadable", fmt.Errorf("backup snapshot not finished: Status.plist unreadable: %w", err)
+	if err := mb2.UnmarshalPlist(data, &st); err != nil {
+		return unreadable(err)
 	}
 	if st.SnapshotState != "finished" {
 		return st.SnapshotState, fmt.Errorf("backup snapshot not finished: %q", st.SnapshotState)
 	}
 	return st.SnapshotState, nil
+}
+
+// readLimited reads at most limit bytes of p, failing if the file is longer.
+func readLimited(p string, limit int64) ([]byte, error) {
+	f, err := os.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	b, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err == nil && int64(len(b)) > limit {
+		err = fmt.Errorf("more than %d bytes", limit)
+	}
+	return b, err
 }
 
 // promote captures every staged file as an artifact, then removes staging.

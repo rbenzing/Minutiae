@@ -3,7 +3,9 @@
 package mb2
 
 import (
+	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 
@@ -75,14 +77,48 @@ func (c Codec) Recv() ([]any, error) {
 var unmarshal = plist.Unmarshal
 
 // decodePlist decodes b, converting a decoder panic on hostile input into an error.
-func decodePlist(b []byte) (v any, err error) {
+func decodePlist(b []byte) (any, error) {
+	var v any
+	if _, err := safeUnmarshal(b, &v); err != nil {
+		return nil, err
+	}
+	return v, nil
+}
+
+// safeUnmarshal runs the decoder, converting a panic into an error.
+func safeUnmarshal(b []byte, v any) (format int, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			v, err = nil, fmt.Errorf("mobilebackup2: malformed plist (%v)", r)
+			format, err = plist.InvalidFormat, fmt.Errorf("mobilebackup2: malformed plist (%v)", r)
 		}
 	}()
-	_, err = unmarshal(b, &v)
-	return v, err
+	return unmarshal(b, v)
+}
+
+// MaxPlistFile bounds a device-written plist file decoded by UnmarshalPlist.
+const MaxPlistFile = 1 << 20
+
+// UnmarshalPlist decodes a device-written plist file (such as Status.plist)
+// into v. Input of more than MaxPlistFile bytes is refused. Anything the
+// decoder would parse as binary (a "bplist" prefix) must first pass the same
+// structural validation as a DeviceLink message; otherwise only an XML plist
+// is accepted. A decoder panic is returned as an error.
+func UnmarshalPlist(b []byte, v any) error {
+	if len(b) > MaxPlistFile {
+		return fmt.Errorf("mb2: plist of %d bytes exceeds limit", len(b))
+	}
+	if bytes.HasPrefix(b, []byte("bplist")) {
+		if err := checkBinaryPlist(b); err != nil {
+			return err
+		}
+	} else if !looksLikeXML(b) {
+		return errors.New("mb2: not a binary or XML plist")
+	}
+	format, err := safeUnmarshal(b, v)
+	if err == nil && format != plist.BinaryFormat && format != plist.XMLFormat {
+		err = errors.New("mb2: not a binary or XML plist")
+	}
+	return err
 }
 
 // Name returns msg[0] as a string.
@@ -167,4 +203,11 @@ func WriteBlock(w io.Writer, code byte, payload []byte) error {
 	b = append(b, code)
 	_, err := w.Write(append(b, payload...))
 	return err
+}
+
+// looksLikeXML reports whether b starts (after an optional UTF-8 BOM and
+// whitespace) with '<', so the decoder's text-format fallback is never used.
+func looksLikeXML(b []byte) bool {
+	b = bytes.TrimLeft(bytes.TrimPrefix(b, []byte("\xef\xbb\xbf")), " \t\r\n")
+	return len(b) > 0 && b[0] == '<'
 }
