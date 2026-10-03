@@ -45,7 +45,7 @@ Use Minutiae only on devices you are authorized to examine.
 - **Android over ADB** — native pure-Go ADB client: device info, file listing/pull, logical acquisition of `/sdcard` (plus `getprop` and package list), and partition imaging on rooted devices with exact size verification
 - **iOS over usbmuxd** — device info, AFC media listing/pull, and full logical backups via an in-house mobilebackup2 (DeviceLink) implementation hardened against hostile devices
 - **USB serial** — port enumeration with VID/PID, receive-only raw console capture (`rx.bin` + timestamped transcript), modem lines de-asserted on open
-- **Image analysis** — import disk images (raw/dd, split raw) into a case, read MBR/EBR and GPT partition tables, browse filesystems read-only, extract files and export unallocated space as new hashed artifacts that record their full provenance (parent image, partition, filesystem entry, byte runs). **ext2/ext3/ext4** filesystems (extents or block maps, htree and inline directories, inline data, metadata checksums, deleted-entry flagging, unallocated space) are readable today, verified against real `mke2fs`-built images with independent expected results and fuzzed against hostile input; more readers arrive progressively (FAT/exFAT, F2FS, E01, APFS, HFS+); see [Known limitations](CLAUDE.md#9-known-limitations)
+- **Image analysis** — import disk images (raw/dd, split raw) into a case, read MBR/EBR and GPT partition tables, browse filesystems read-only, extract files and export unallocated space as new hashed artifacts that record their full provenance (parent image, partition, filesystem entry, byte runs). **ext2/ext3/ext4** (extents or block maps, htree and inline directories, inline data, metadata checksums), **FAT12/16/32** (long names, 2-second local times) and **exFAT** (entry sets, validated checksums, `ValidDataLength`) filesystems are readable today, with deleted-entry flagging (names only) and exact unallocated-space export; each reader is verified against real images built by the standard filesystem tools with independent expected results (tree, hashes, times, cluster chains, free space) and fuzzed against hostile input; more readers arrive progressively (F2FS, E01, APFS, HFS+); see [Known limitations](CLAUDE.md#9-known-limitations)
 - **Windows-safe evidence names** — device file names that are illegal on Windows (`:`, `?`, `CON`, case/8.3 collisions, names over 200 bytes) are stored under safe local names while the original remote path is preserved
 - **Single static binary** — pure Go, no cgo; one cross-platform `go run ./tools/check` gate (tidy, vet, lint, build, cross-builds, tests)
 
@@ -151,10 +151,11 @@ minutiae image unalloc --case ./cases/CASE01 <ref> --volume
 One `import` call imports exactly one image; run it once per image. Deleted
 entries are listed and flagged but not recovered, and encrypted files are
 extracted as ciphertext. ext2, ext3 and ext4 are read as found (the journal is
-not replayed) and anomalies the reader notices are written to the audit log as
-`analysis.warning` entries. Other filesystem readers arrive progressively
-(FAT/exFAT, F2FS, E01, APFS, HFS+); until they land, partitions are listed but
-those filesystems are not yet readable.
+not replayed), FAT12/16/32 and exFAT likewise (a FAT file whose cluster chain
+ends early is extracted as an `incomplete` partial artifact), and anomalies a
+reader notices are written to the audit log as `analysis.warning` entries. Other
+filesystem readers arrive progressively (F2FS, E01, APFS, HFS+); until they land,
+partitions are listed but those filesystems are not yet readable.
 
 ### Verify
 
@@ -213,7 +214,7 @@ device ──► backend (android | ios | serial) ──► evidence.Case.Captur
 | iOS | `internal/ios` | go-ios adapter (usbmuxd, lockdown, AFC), backup → staging → artifacts |
 | Image | `internal/image` | Disk-image containers (raw, split raw) as read-only `io.ReaderAt` |
 | Volume | `internal/volume` | MBR/EBR and GPT partition tables; unallocated gaps between partitions |
-| Filesystem | `internal/filesys` | Filesystem interface, entries and byte runs, block cache; `detect` probes drivers, `ext4` reads ext2/3/4, `fstest` is the test filesystem |
+| Filesystem | `internal/filesys` | Filesystem interface, entries and byte runs, block cache; `detect` probes drivers, `ext4` reads ext2/3/4, `fat` reads FAT12/16/32, `exfat` reads exFAT, `fstest` is the test filesystem |
 | Examine | `internal/examine` | The only bridge from parsers to the case: import, sessions, extract, unallocated export, provenance |
 | Arch test | `internal/archtest` | Enforces the package dependency rule |
 
@@ -292,8 +293,8 @@ minutiae case verify     --case ./cases/HW1
 
 v1.0.0 completes **Sub-project 1: Foundation + Acquisition**. **Sub-project 2:
 Image & filesystem layer** is in progress: the image, partition-table and
-analysis foundation is in place, ext2/3/4 can be read, and the remaining
-readers (FAT/exFAT, F2FS, E01, APFS, HFS+) are arriving progressively. Next up: deleted-data recovery (SQLite freelist/WAL, carving),
+analysis foundation is in place, ext2/3/4, FAT12/16/32 and exFAT can be read, and the
+remaining readers (F2FS, E01, APFS, HFS+) are arriving progressively. Next up: deleted-data recovery (SQLite freelist/WAL, carving),
 artifact parsers, analytics, reporting, protocol drivers (EDL/BROM/AT), a
 desktop GUI, automatic artifact classification, and AI-assisted search and
 analysis over the artifact collection (offline by default, every answer cites
