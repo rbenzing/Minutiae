@@ -24,6 +24,16 @@ Status values: `Not started` · `Spec` · `Planned` · `In progress` · `Done`
 | 8 | Protocol drivers | AT commands, Qualcomm EDL/diag, MediaTek BROM, UART console | 1 | Not started |
 | 9 | Desktop GUI | Case browser, viewers, timeline/map UI, built on `internal/` core | 1, 6 | Not started |
 | 10 | Encrypted data / keychain | Backup password handling, app database decryption where keys are available | 4 | Not started |
+| 11 | Artifact classification & categorization | Classifier model automatically assigns categories (e.g. image content classes, document types, conversation topics) to artifacts and records, with confidence scores; filter and navigate the case by category. CLI first, GUI view via 9 | 4, 5 | Not started |
+| 12 | AI artifact search & analysis | Natural-language chat over the artifact collection: searches `artifacts.db`, retrieves specific details and returns numbers, keywords and other structured answers, each citing the artifacts and records it came from. CLI first, GUI panel via 9 | 5 | Not started |
+
+AI-derived results (11, 12) are investigative leads, never evidence:
+- they are stored apart from acquired artifacts and never change them;
+- each result records the model identity, version and file hash, plus a confidence score where the model gives one;
+- every answer cites the artifact and record IDs it is based on;
+- models run offline by default. Case data leaves the host only if the examiner explicitly configures a remote model, and that choice is audited.
+
+The model and its runtime are chosen in each sub-project's spec, within the no-cgo, single-binary constraint.
 
 Deferred (needs a separate legal/authority discussion before any spec):
 cloud account extraction.

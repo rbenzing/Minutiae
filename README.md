@@ -240,8 +240,10 @@ minutiae case verify     --case ./cases/HW1
 
 v1.0.0 completes **Sub-project 1: Foundation + Acquisition**. Next up: image &
 filesystem parsing, deleted-data recovery (SQLite freelist/WAL, carving),
-artifact parsers, analytics, reporting, protocol drivers (EDL/BROM/AT) and a
-desktop GUI. See [docs/ROADMAP.md](docs/ROADMAP.md).
+artifact parsers, analytics, reporting, protocol drivers (EDL/BROM/AT), a
+desktop GUI, automatic artifact classification, and AI-assisted search and
+analysis over the artifact collection (offline by default, every answer cites
+its source records). See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ---
 
