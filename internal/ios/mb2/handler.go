@@ -199,7 +199,8 @@ func (h *handler) receiveFiles() error {
 			}
 		}
 		if lerr != nil {
-			h.res.LocalErrors = append(h.res.LocalErrors, fmt.Sprintf("%s: %v", fname, lerr))
+			h.res.LocalErrorCount++
+			h.res.LocalErrors = appendCapped(h.res.LocalErrors, fmt.Sprintf("%s: %v", fname, lerr))
 		}
 		ended, err := h.receiveBlocks(r, w, fname)
 		if f != nil {
@@ -259,7 +260,8 @@ func (h *handler) receiveBlocks(r io.Reader, w io.Writer, fname string) (ended b
 				return false, err
 			}
 			if last != CodeFileData { // after data, 0x0b is just the end marker
-				h.res.RemoteErrors = append(h.res.RemoteErrors, fmt.Sprintf("%s: %s", fname, msg))
+				h.res.RemoteErrorCount++
+				h.res.RemoteErrors = appendCapped(h.res.RemoteErrors, fmt.Sprintf("%s: %s", fname, msg))
 			}
 			return false, nil
 		default:
@@ -410,4 +412,12 @@ func copyFile(src, dst string) error {
 	}
 	_, err = io.Copy(out, in)
 	return errors.Join(err, out.Close())
+}
+
+// appendCapped appends s unless list already holds MaxRecordedErrors entries.
+func appendCapped(list []string, s string) []string {
+	if len(list) >= MaxRecordedErrors {
+		return list
+	}
+	return append(list, s)
 }

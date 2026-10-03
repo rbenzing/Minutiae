@@ -319,3 +319,25 @@ func TestBackupSilentDeviceHonoursCancel(t *testing.T) {
 	}
 	<-b.ScriptErr
 }
+
+func TestBackupStatsRecordErrorCounts(t *testing.T) {
+	b := fakeIPhone()
+	b.Script = uploadExtraThenFinish(0,
+		mb2test.Upload{DeviceName: "/c", Name: "U1/Status.plist", Data: statusPlist(t, "finished")},
+		mb2test.Upload{DeviceName: "/d", Name: "U1/gone", EndRemote: true},
+		mb2test.Upload{DeviceName: "/e", Name: "../evil"},
+	)
+	c := newCase(t)
+	if err := first(t, b).(device.LogicalAcquirer).AcquireLogical(context.Background(), c, device.LogicalOptions{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-b.ScriptErr; err != nil {
+		t.Fatalf("script: %v", err)
+	}
+	audit, _ := os.ReadFile(filepath.Join(c.Dir, "audit.jsonl"))
+	for _, want := range []string{`"local_error_count":1`, `"remote_error_count":1`} {
+		if !strings.Contains(string(audit), want) {
+			t.Errorf("%s not audited:\n%s", want, audit)
+		}
+	}
+}

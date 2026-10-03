@@ -54,9 +54,9 @@ func (d *Device) AcquireLogical(ctx context.Context, c *evidence.Case, _ device.
 		promoted, promoteErr := promote(c, d.udid, acq, staging, res.Incomplete)
 		_, statsErr := c.Audit.Append("acquire.stats", d.udid, map[string]any{
 			"acquisition_id": acq, "files": promoted.files, "incomplete_files": promoted.partial,
-			"bytes_received": res.BytesReceived,
-			"local_errors":   res.LocalErrors, "remote_errors": res.RemoteErrors,
-			"snapshot_state": state,
+			"bytes_received": res.BytesReceived, "snapshot_state": state,
+			"local_errors": res.LocalErrors, "local_error_count": res.LocalErrorCount,
+			"remote_errors": res.RemoteErrors, "remote_error_count": res.RemoteErrorCount,
 		})
 		return errors.Join(runErr, snapErr, promoteErr, statsErr)
 	})

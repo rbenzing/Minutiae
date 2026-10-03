@@ -27,11 +27,17 @@ type BackupOptions struct {
 	Progress  func(bytesReceived int64)
 }
 
+// MaxRecordedErrors bounds Result.LocalErrors and Result.RemoteErrors; the
+// counts keep the true totals.
+const MaxRecordedErrors = 1000
+
 // Result summarizes a backup.
 type Result struct {
-	BytesReceived int64
-	LocalErrors   []string // files the host could not store
-	RemoteErrors  []string // per-file errors reported by the device
+	BytesReceived    int64
+	LocalErrors      []string // files the host could not store (first MaxRecordedErrors)
+	LocalErrorCount  int
+	RemoteErrors     []string // per-file errors reported by the device (first MaxRecordedErrors)
+	RemoteErrorCount int
 	// Incomplete lists files (slash-separated, relative to Dir) whose transfer
 	// failed part-way; they hold only the bytes received before the failure.
 	Incomplete []string

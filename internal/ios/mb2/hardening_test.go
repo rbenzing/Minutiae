@@ -325,3 +325,35 @@ func TestBackupFileInterruptedMidTransferIsIncomplete(t *testing.T) {
 		t.Fatalf("partial bytes = %q", b)
 	}
 }
+
+func TestBackupCapsRecordedErrors(t *testing.T) {
+	const n = 1005
+	_, res, err := runBackup(t, func(d *mb2test.Device) error {
+		if err := d.Handshake(); err != nil {
+			return err
+		}
+		if _, err := d.ExpectBackupRequest(); err != nil {
+			return err
+		}
+		var files []mb2test.Upload
+		for i := range n {
+			files = append(files,
+				mb2test.Upload{DeviceName: "/l", Name: fmt.Sprintf("../evil%d", i)},
+				mb2test.Upload{DeviceName: "/r", Name: fmt.Sprintf("U1/gone%d", i), EndRemote: true},
+			)
+		}
+		if code, err := d.UploadFiles(files...); err != nil || code != 0 {
+			return fmt.Errorf("upload: %d %v", code, err)
+		}
+		return d.Finish(0)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.LocalErrors) != 1000 || res.LocalErrorCount != n {
+		t.Fatalf("local errors: %d kept, count %d", len(res.LocalErrors), res.LocalErrorCount)
+	}
+	if len(res.RemoteErrors) != 1000 || res.RemoteErrorCount != n {
+		t.Fatalf("remote errors: %d kept, count %d", len(res.RemoteErrors), res.RemoteErrorCount)
+	}
+}
