@@ -160,11 +160,6 @@ func (f *FS) Info() filesys.Info {
 	}
 }
 
-// Unallocated is not implemented yet (plan 2B, Task 5).
-func (f *FS) Unallocated() ([]filesys.Run, error) {
-	return nil, fmt.Errorf("ext4: listing unallocated space: %w", filesys.ErrUnsupported)
-}
-
 // metadataRanges lists the block ranges that hold group 0's metadata: from
 // block 0 through the superblock and group descriptor table, and the group's
 // two bitmaps and inode table (when its descriptor is usable).

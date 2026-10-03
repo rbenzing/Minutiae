@@ -2,13 +2,16 @@ package detect_test
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/filesys/detect"
+	"github.com/rbenzing/minutiae/internal/filesys/ext4/ext4test"
 	"github.com/rbenzing/minutiae/internal/filesys/fstest"
 )
 
@@ -37,10 +40,6 @@ func TestOpenWithNoMatch(t *testing.T) {
 				t.Errorf("OpenWith = %v, %v; want ErrUnsupported (no recognized filesystem)", fsys, err)
 			}
 		})
-	}
-	// The package-level registry starts empty.
-	if len(detect.Drivers) != 0 {
-		t.Errorf("Drivers = %d entries, want none until the filesystem packages land", len(detect.Drivers))
 	}
 	if _, err := detect.Open(bytes.NewReader(img), int64(len(img))); !errors.Is(err, filesys.ErrUnsupported) {
 		t.Errorf("Open err = %v, want ErrUnsupported", err)
@@ -172,5 +171,97 @@ func TestOpenWithErrorDropsTypedNilFileSystem(t *testing.T) {
 	}
 	if fsys != nil {
 		t.Errorf("OpenWith returned a non-nil FileSystem %T alongside an error", fsys)
+	}
+}
+
+// registryOrder is the spec §6 probe order; Drivers lists the implemented ones
+// in this relative order.
+var registryOrder = []string{"apfs", "f2fs", "ext4", "exfat", "hfsplus", "fat"}
+
+func TestDriversFollowSpecOrder(t *testing.T) {
+	last := -1
+	for _, d := range detect.Drivers {
+		pos := slices.Index(registryOrder, d.Name)
+		if pos < 0 || pos <= last {
+			t.Errorf("driver %q is unknown or out of the spec order %v", d.Name, registryOrder)
+		}
+		last = pos
+		if d.Probe == nil || d.Open == nil {
+			t.Errorf("driver %q has no Probe or Open", d.Name)
+		}
+	}
+	if !slices.ContainsFunc(detect.Drivers, func(d detect.Driver) bool { return d.Name == "ext4" }) {
+		t.Error("ext4 is not registered")
+	}
+}
+
+func TestDetectOpensExt4(t *testing.T) {
+	for _, o := range []ext4test.Options{
+		{Extents: true, MetadataCsum: true, Label: "evidence"},
+		{Journal: true},
+		{},
+	} {
+		img := ext4test.Build(o, []ext4test.File{{Path: "/hello.txt", Data: []byte("hello")}})
+		r := bytes.NewReader(img)
+		if name, ok := detect.Probe(r, int64(len(img))); !ok || name != "ext4" {
+			t.Fatalf("Probe = %q, %v; want ext4", name, ok)
+		}
+		fsys, err := detect.Open(r, int64(len(img)))
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		info := fsys.Info()
+		want := "ext4"
+		switch {
+		case !o.Extents && o.Journal:
+			want = "ext3"
+		case !o.Extents:
+			want = "ext2"
+		}
+		if info.Type != want || info.Label != o.Label {
+			t.Errorf("Info = %+v, want type %s label %q", info, want, o.Label)
+		}
+		e, err := fsys.Lookup("/hello.txt")
+		if err != nil {
+			t.Fatalf("Lookup: %v", err)
+		}
+		f, err := fsys.Open(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := make([]byte, f.Size())
+		if _, err := f.ReadAt(got, 0); err != nil && !errors.Is(err, io.EOF) || string(got) != "hello" {
+			t.Errorf("content = %q, %v", got, err)
+		}
+		if runs, err := fsys.Unallocated(); err != nil || len(runs) == 0 {
+			t.Errorf("Unallocated = %v, %v", runs, err)
+		}
+	}
+}
+
+func TestDetectExt4OpenFailureIsUntypedNil(t *testing.T) {
+	// A superblock that probes as ext (magic, block size) but has an impossible
+	// geometry fails to open: the registered driver must return a nil interface.
+	img := make([]byte, 8192)
+	binary.LittleEndian.PutUint16(img[1024+0x38:], 0xEF53)
+	var ext *detect.Driver
+	for i := range detect.Drivers {
+		if detect.Drivers[i].Name == "ext4" {
+			ext = &detect.Drivers[i]
+		}
+	}
+	if ext == nil || !ext.Probe(bytes.NewReader(img), int64(len(img))) {
+		t.Fatalf("setup: ext4 driver %v does not probe the image", ext)
+	}
+	fsys, err := ext.Open(bytes.NewReader(img), int64(len(img)))
+	if err == nil || fsys != nil {
+		t.Fatalf("Open = %v, %v; want a nil FileSystem and an error", fsys, err)
+	}
+	var ce *filesys.CorruptError
+	if !errors.As(err, &ce) {
+		t.Errorf("err = %v, want a CorruptError", err)
+	}
+	if f, err := detect.Open(bytes.NewReader(img), int64(len(img))); f != nil || err == nil {
+		t.Errorf("detect.Open = %v, %v", f, err)
 	}
 }

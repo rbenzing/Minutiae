@@ -8,6 +8,7 @@ import (
 	"io"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
+	"github.com/rbenzing/minutiae/internal/filesys/ext4"
 )
 
 // Driver is one filesystem parser.
@@ -20,10 +21,23 @@ type Driver struct {
 	Open func(r io.ReaderAt, size int64) (filesys.FileSystem, error)
 }
 
-// Drivers is the probe order (spec §6: apfs, f2fs, ext, exfat, hfsplus, fat;
-// FAT is last because its signature is the weakest). It starts empty; each
-// filesystem package appends its driver when it lands.
-var Drivers = []Driver{}
+// Drivers is the probe order, an ordered literal (spec §6: apfs, f2fs, ext,
+// exfat, hfsplus, fat; FAT is last because its signature is the weakest). Each
+// filesystem package adds its driver here at its place in that order, not at
+// the end: only the drivers that exist are listed.
+var Drivers = []Driver{
+	{Name: "ext4", Probe: ext4.Probe, Open: openExt4},
+}
+
+// openExt4 adapts ext4.Open. It returns an untyped nil FileSystem on error: a
+// nil *ext4.FS stored in the interface would not compare equal to nil.
+func openExt4(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
+	fs, err := ext4.Open(r, size)
+	if err != nil {
+		return nil, err
+	}
+	return fs, nil
+}
 
 // Probe returns the name of the first driver in Drivers that matches.
 func Probe(r io.ReaderAt, size int64) (string, bool) { return ProbeWith(Drivers, r, size) }

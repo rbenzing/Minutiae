@@ -14,12 +14,21 @@ const (
 	gdChecksum      = 0x1E // bg_checksum
 	gdSize64        = 64   // descriptors of this size or larger carry the _hi halves
 	gdAfterChecksum = 0x20
+	// gdBitmapCsumHiEnd is the descriptor size that holds bg_block_bitmap_csum_hi.
+	gdBitmapCsumHiEnd = 0x3A
 )
 
 // groupDesc is one decoded block group descriptor.
 type groupDesc struct {
 	blockBitmap, inodeBitmap, inodeTable uint64
 	flags                                uint16
+	// bitmapCsum is bg_block_bitmap_csum (lo, with hi in the upper half when
+	// bitmapCsumHi is set: descriptors of 0x3A bytes or more).
+	bitmapCsum   uint32
+	bitmapCsumHi bool
+	// csumBad is set when the descriptor checksum does not verify: its flags
+	// cannot be trusted.
+	csumBad bool
 	// bad is set when a location lies outside the filesystem or the descriptor
 	// could not be read (truncated table); later reads of
 	// that group's metadata must treat it as corrupt rather than follow it.
@@ -132,17 +141,23 @@ func loadGroups(r io.ReaderAt, sb *superblock) ([]groupDesc, []string, error) {
 				inodeBitmap: uint64(le.Uint32(gd[0x4:])),
 				inodeTable:  uint64(le.Uint32(gd[0x8:])),
 				flags:       le.Uint16(gd[0x12:]),
+				bitmapCsum:  uint32(le.Uint16(gd[0x18:])),
 			}
 			if sb.descSize >= gdSize64 {
 				d.blockBitmap |= uint64(le.Uint32(gd[0x20:])) << 32
 				d.inodeBitmap |= uint64(le.Uint32(gd[0x24:])) << 32
 				d.inodeTable |= uint64(le.Uint32(gd[0x28:])) << 32
+				if sb.descSize >= gdBitmapCsumHiEnd {
+					d.bitmapCsum |= uint32(le.Uint16(gd[0x38:])) << 16
+					d.bitmapCsumHi = true
+				}
 			}
 			if want, ok := sb.descChecksum(gd, uint32(g)); ok && want != le.Uint16(gd[gdChecksum:]) {
 				if badCsum == 0 {
 					firstBadCsum = g
 				}
 				badCsum++
+				d.csumBad = true
 			}
 			if !sb.groupLocated(&d) {
 				d.bad = true

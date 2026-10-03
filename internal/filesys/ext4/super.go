@@ -145,6 +145,7 @@ type superblock struct {
 	descSize       int
 	firstMetaBG    uint32
 	backupBGs      [2]uint32
+	reservedGDT    uint16 // s_reserved_gdt_blocks: descriptor blocks reserved for online resize
 	checksumType   uint8
 	csumSeed       uint32 // metadata_csum seed: s_checksum_seed with CSUM_SEED, else crc32c(~0, uuid)
 	groups         int64  // block groups described by the declared block count
@@ -322,6 +323,7 @@ func parseSuper(b []byte, imgSize int64) (*superblock, []string, error) {
 
 	copy(sb.uuid[:], b[0x68:0x78])
 	sb.label = cString(b[0x78:0x88])
+	sb.reservedGDT = le.Uint16(b[0xCE:])
 	sb.firstMetaBG = le.Uint32(b[0x104:])
 	sb.backupBGs = [2]uint32{le.Uint32(b[0x24C:]), le.Uint32(b[0x250:])}
 	sb.checksumType = b[0x175]
