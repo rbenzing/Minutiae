@@ -21,6 +21,8 @@ var allowed = map[string][]string{
 	"cmd/minutiae":                 {"internal/cli"},
 	"internal/version":             {},
 	"internal/image":               {},
+	"internal/volume":              {},
+	"internal/volume/volumetest":   {"internal/volume"},
 	"internal/evidence":            {"internal/version"},
 	"internal/device":              {"internal/evidence", "internal/version"},
 	"internal/transport/serial":    {"internal/device", "internal/evidence", "internal/version"},
