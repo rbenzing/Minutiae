@@ -39,7 +39,11 @@ func newDevicesCmd(d Deps, opts *rootOptions) *cobra.Command {
 				fmt.Fprintln(d.Out, "no devices found")
 			}
 			for _, i := range infos {
-				fmt.Fprintf(d.Out, "%-8s %-28s %-20s %s\n", i.Kind, i.ID, i.Model, i.OSVersion)
+				detail := i.OSVersion
+				if msg := i.Extra["error"]; msg != "" {
+					detail = "error: " + msg
+				}
+				fmt.Fprintf(d.Out, "%-8s %-28s %-20s %s\n", i.Kind, i.ID, i.Model, detail)
 			}
 			return nil
 		},
