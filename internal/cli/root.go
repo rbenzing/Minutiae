@@ -13,6 +13,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/android"
 	"github.com/rbenzing/minutiae/internal/android/adb"
 	"github.com/rbenzing/minutiae/internal/device"
+	"github.com/rbenzing/minutiae/internal/ios"
 	"github.com/rbenzing/minutiae/internal/transport/serial"
 )
 
@@ -31,7 +32,7 @@ func DefaultDeps() Deps {
 	return Deps{
 		In: os.Stdin, Out: os.Stdout, Err: os.Stderr,
 		Serial:   sp,
-		Registry: device.NewRegistry(serial.Enumerator{P: sp}, android.Enumerator{C: adb.New("")}),
+		Registry: device.NewRegistry(serial.Enumerator{P: sp}, android.Enumerator{C: adb.New("")}, ios.Enumerator{B: ios.GoIOS{}}),
 	}
 }
 
@@ -59,6 +60,7 @@ func newRootCmd(d Deps) *cobra.Command {
 	root.AddCommand(newDevicesCmd(d, opts))
 	root.AddCommand(newSerialCmd(d, opts))
 	root.AddCommand(newAndroidCmd(d, opts))
+	root.AddCommand(newIOSCmd(d, opts))
 	return root
 }
 
