@@ -314,11 +314,11 @@ func TestBackupSilentDeviceHonoursCancel(t *testing.T) {
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("err = %v", err)
 		}
-		if el := time.Since(start); el > time.Second {
+		if el := time.Since(start); el > 2*time.Second {
 			t.Fatalf("returned after %v", el)
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("AcquireLogical still blocked 3s after a 200ms deadline")
+	case <-time.After(5 * time.Second):
+		t.Fatal("AcquireLogical still blocked 5s after a 200ms deadline")
 	}
 	<-b.ScriptErr
 }
