@@ -181,7 +181,7 @@ func walkEBRChain(s source, ss int, ext mbrEntry, visited map[uint64]bool, logic
 				t.Partitions = append(t.Partitions, mbrPartition(index, first, start, length))
 			}
 		}
-		if link.typ == 0 {
+		if !isExtendedType(link.typ) || link.count == 0 {
 			return nil
 		}
 		lba = extStart + uint64(link.start)

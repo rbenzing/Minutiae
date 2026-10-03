@@ -121,6 +121,9 @@ func Read(r io.ReaderAt, size int64, sectorSize int) (*Table, error) {
 		return nil, err
 	}
 	if t != nil {
+		if sectorSize == 0 {
+			t.Warnings = append(t.Warnings, "MBR sector size assumed to be 512 bytes")
+		}
 		return t, nil
 	}
 	return &Table{
@@ -132,16 +135,20 @@ func Read(r io.ReaderAt, size int64, sectorSize int) (*Table, error) {
 }
 
 // clampExtent converts an LBA extent to byte offsets inside the image. It
-// reports ok=false (with a warning) when the extent starts outside the image
-// or is empty, and clamps (with a warning) when it runs past the end.
+// reports ok=false only for an empty extent. An extent starting at or past the
+// end of the image is kept with Start=min(offset,size), Length 0 and a warning;
+// one running past the end is clamped with a warning.
 func clampExtent(index int, startLBA, count uint64, ss int, size int64, warns *[]string) (start, length int64, ok bool) {
 	if count == 0 {
 		return 0, 0, false
 	}
 	start, fits := sectorOffset(startLBA, ss)
 	if !fits || start >= size {
-		*warns = append(*warns, fmt.Sprintf("partition %d starts past end of image (truncated image); skipped", index))
-		return 0, 0, false
+		*warns = append(*warns, fmt.Sprintf("partition %d starts past end of image (truncated image)", index))
+		if !fits {
+			start = size
+		}
+		return min(start, size), 0, true
 	}
 	remaining := size - start
 	if count > uint64(remaining)/uint64(ss) {

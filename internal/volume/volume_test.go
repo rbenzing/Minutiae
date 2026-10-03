@@ -71,7 +71,7 @@ func TestReadMBRPrimaryAndLogical(t *testing.T) {
 			t.Errorf("partition %d: got %+v want %+v", i, tab.Partitions[i], w)
 		}
 	}
-	if len(tab.Warnings) != 0 {
+	if len(tab.Warnings) != 1 || tab.Warnings[0] != "MBR sector size assumed to be 512 bytes" {
 		t.Errorf("warnings: %v", tab.Warnings)
 	}
 }
@@ -354,7 +354,7 @@ func TestReadTruncatedPartitionClamped(t *testing.T) {
 	img := volumetest.GPT(512, 16384, diskGUID, parts)
 	img = img[:200*512+100] // ends inside partition 2 (sectors 128..255), mid-sector
 	tab := read(t, img, 0)
-	if tab.Scheme != "gpt" || len(tab.Partitions) != 2 {
+	if tab.Scheme != "gpt" || len(tab.Partitions) != 3 {
 		t.Fatalf("scheme %q partitions %+v", tab.Scheme, tab.Partitions)
 	}
 	p := tab.Partitions[1]
@@ -364,7 +364,10 @@ func TestReadTruncatedPartitionClamped(t *testing.T) {
 	if !hasWarning(tab, "partition 2 extends past end of image (truncated image)") {
 		t.Errorf("warnings: %v", tab.Warnings)
 	}
-	if !hasWarning(tab, "partition 3 starts past end of image") {
+	if q := tab.Partitions[2]; q.Index != 3 || q.Start != int64(len(img)) || q.Length != 0 || q.Name != "late" {
+		t.Errorf("partition wholly past the end must stay listed with length 0: %+v", q)
+	}
+	if !hasWarning(tab, "partition 3 starts past end of image (truncated image)") {
 		t.Errorf("warnings: %v", tab.Warnings)
 	}
 	for _, u := range tab.Unallocated {
@@ -455,5 +458,101 @@ func (failingReader) ReadAt([]byte, int64) (int, error) { return 0, errors.New("
 func TestReadPropagatesIOError(t *testing.T) {
 	if _, err := volume.Read(failingReader{}, 1<<20, 0); err == nil {
 		t.Error("I/O error swallowed")
+	}
+}
+
+func TestReadMBRPartitionWhollyPastEndListed(t *testing.T) {
+	img := volumetest.MBR(16384, []volumetest.Part{
+		{StartLBA: 2048, Sectors: 100, MBRType: 0x83},
+		{StartLBA: 9600, Sectors: 100, MBRType: 0x83},
+		{StartLBA: 9500, Sectors: 100, MBRType: 0x83, Logical: true},
+	})
+	img = img[:9500*512] // the EBR (sector 9499) is inside, its logical partition is not
+	tab := read(t, img, 512)
+	if len(tab.Partitions) != 3 {
+		t.Fatalf("got %+v", tab.Partitions)
+	}
+	for i, idx := range []int{1, 2, 5} {
+		p := tab.Partitions[i]
+		wantLen := int64(0)
+		if idx == 1 {
+			wantLen = 100 * 512
+		}
+		if p.Index != idx || p.Length != wantLen || p.Start+p.Length > int64(len(img)) || p.Start < 0 {
+			t.Errorf("partition %d: %+v", idx, p)
+		}
+		if idx != 1 && !hasWarning(tab, "partition "+string(rune('0'+idx))+" starts past end of image (truncated image)") {
+			t.Errorf("no warning for %d: %v", idx, tab.Warnings)
+		}
+	}
+}
+
+func TestReadMBREBRLinkMustBeExtendedType(t *testing.T) {
+	img := volumetest.MBR(16384, []volumetest.Part{
+		{StartLBA: 8192, Sectors: 1000, MBRType: 0x83, Logical: true},
+		{StartLBA: 10000, Sectors: 500, MBRType: 0x83, Logical: true},
+	})
+	// Turn the first EBR's link entry into a non-extended entry (garbage).
+	img[8191*512+462+4] = 0x83
+	tab := read(t, img, 512)
+	if len(tab.Partitions) != 1 || tab.Partitions[0].Index != 5 {
+		t.Errorf("followed a non-extended link: %+v", tab.Partitions)
+	}
+	// Extended type with a zero sector count is not followed either.
+	img = volumetest.MBR(16384, []volumetest.Part{
+		{StartLBA: 8192, Sectors: 1000, MBRType: 0x83, Logical: true},
+		{StartLBA: 10000, Sectors: 500, MBRType: 0x83, Logical: true},
+	})
+	binary.LittleEndian.PutUint32(img[8191*512+462+12:], 0)
+	if tab := read(t, img, 512); len(tab.Partitions) != 1 {
+		t.Errorf("followed a zero-count link: %+v", tab.Partitions)
+	}
+}
+
+func TestReadMBRSectorSizeAssumedWarning(t *testing.T) {
+	img := volumetest.MBR(4096, []volumetest.Part{{StartLBA: 64, Sectors: 64, MBRType: 0x83}})
+	if tab := read(t, img, 0); !hasWarning(tab, "MBR sector size assumed to be 512 bytes") {
+		t.Errorf("probing: warnings %v", tab.Warnings)
+	}
+	if tab := read(t, img, 512); len(tab.Warnings) != 0 {
+		t.Errorf("explicit sector size: warnings %v", tab.Warnings)
+	}
+}
+
+func TestReadGPTPrimaryBackupDiffer(t *testing.T) {
+	img := volumetest.GPT(512, 16384, diskGUID, gptParts())
+	if tab := read(t, img, 0); hasWarning(tab, "differ") {
+		t.Fatalf("unexpected differ warning: %v", tab.Warnings)
+	}
+	last := (len(img)/512 - 1) * 512
+	img[last+56] ^= 0xff // backup disk GUID
+	fixHeaderCRC(img, last)
+	tab := read(t, img, 0)
+	if !hasWarning(tab, "primary and backup GPT differ") || tab.DiskGUID != diskGUID || len(tab.Partitions) != 2 {
+		t.Errorf("got %+v", tab)
+	}
+	// Backup entry array altered (CRCs fixed): also a difference.
+	img = volumetest.GPT(512, 16384, diskGUID, gptParts())
+	arr := (len(img)/512 - 1 - 32) * 512
+	img[arr+56] ^= 0x01
+	binary.LittleEndian.PutUint32(img[last+88:], crc32.ChecksumIEEE(img[arr:arr+128*128]))
+	fixHeaderCRC(img, last)
+	if tab := read(t, img, 0); !hasWarning(tab, "primary and backup GPT differ") {
+		t.Errorf("array difference: %v", tab.Warnings)
+	}
+}
+
+func TestReadMBRWithBootloaderJumpIsMBR(t *testing.T) {
+	img := volumetest.MBR(4096, []volumetest.Part{
+		{StartLBA: 64, Sectors: 64, MBRType: 0x83},
+		{StartLBA: 200, Sectors: 64, MBRType: 0x0c},
+	})
+	img[0], img[1], img[2] = 0xEB, 0x63, 0x90 // bootloader jump, zero BPB
+	if volume.LooksLikeBootSector(img[:512]) {
+		t.Fatal("test setup: sector should not look like a boot sector")
+	}
+	tab := read(t, img, 0)
+	if tab.Scheme != "mbr" || len(tab.Partitions) != 2 {
+		t.Errorf("got %+v", tab)
 	}
 }

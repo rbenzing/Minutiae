@@ -30,6 +30,7 @@ type gptHeader struct {
 	arrOff   int64
 	arrLen   int64
 	arr      []byte
+	arrCRC   uint32
 }
 
 func (h *gptHeader) valid() bool { return h.seen && h.reason == "" }
@@ -95,7 +96,8 @@ func parseGPTHeader(s source, ss int, lba uint64) (*gptHeader, error) {
 	if err != nil {
 		return nil, err
 	}
-	if crc32.ChecksumIEEE(h.arr) != binary.LittleEndian.Uint32(sector[88:]) {
+	h.arrCRC = binary.LittleEndian.Uint32(sector[88:])
+	if crc32.ChecksumIEEE(h.arr) != h.arrCRC {
 		h.reason = "partition entry array CRC mismatch"
 	}
 	return h, nil
@@ -158,6 +160,10 @@ func readGPT(s source, ss int) (*Table, []string, error) {
 		warnings = append(warnings, "primary GPT header invalid; using backup")
 	}
 	warnings = append(warnings, warns...)
+	if primary.valid() && backup != nil && (primary.diskGUID != backup.diskGUID || primary.arrCRC != backup.arrCRC ||
+		primary.count != backup.count || primary.esz != backup.esz) {
+		warnings = append(warnings, "primary and backup GPT differ")
+	}
 	if primary.valid() && backup == nil && firstBackup != nil && !firstBackup.seen {
 		warnings = append(warnings, prefix+"backup header not found")
 	}
