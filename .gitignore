@@ -10,3 +10,4 @@ coverage.*
 
 # local-only design specs and plans
 docs/superpowers/
+.superpowers/
