@@ -14,6 +14,7 @@ import (
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/filesys"
+	"github.com/rbenzing/minutiae/internal/image"
 	"github.com/rbenzing/minutiae/internal/volume"
 )
 
@@ -146,6 +147,7 @@ func (x *extractor) target(p string, e filesys.Entry) error {
 func skippable(err error) bool {
 	for _, target := range []error{
 		filesys.ErrCorrupt, filesys.ErrUnsupported, filesys.ErrEncrypted, filesys.ErrDeleted, filesys.ErrNotFound,
+		image.ErrChunkCorrupt, // a damaged container chunk: the bytes before it are kept
 		io.ErrUnexpectedEOF, io.EOF,
 	} {
 		if errors.Is(err, target) {
@@ -260,7 +262,24 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 		}
 		if err == nil {
 			rec, readErr, err = x.s.capture(x.a, rel, src, func(w io.Writer) error {
-				return x.copyFile(w, f, size)
+				n, err := x.copyFile(w, f, size)
+				if errors.Is(err, image.ErrChunkCorrupt) {
+					// The bytes before the unreadable chunk are kept (the artifact is
+					// flagged incomplete), so the provenance, recorded when the manifest
+					// entry is written below, must name only the runs of those bytes.
+					full := d.RunsArtifact // the complete run list written before the read, if any
+					if perr := x.keepPrefixRuns(rel, p, d, runs, n); perr != nil {
+						return perr // a failure of the case itself
+					}
+					if n > 0 && d.Runs == nil && d.RunsArtifact == "" {
+						err = fmt.Errorf("%w (the runs of the kept bytes are not recorded: no free runs sidecar name)", err)
+					}
+					if full != "" {
+						// Say in the hash-chained record which artifact is the orphan.
+						err = fmt.Errorf("%w (complete run list of the file: runs artifact %s)", err, full)
+					}
+				}
+				return err
 			})
 		}
 		var nameErr *localNameError
@@ -330,23 +349,26 @@ func (s *Session) capture(a *analysis, rel string, src evidence.Source, fill fun
 }
 
 // copyFile streams the content of f into w, checking ctx on every read.
-func (x *extractor) copyFile(w io.Writer, f filesys.File, size int64) error {
+func (x *extractor) copyFile(w io.Writer, f filesys.File, size int64) (int64, error) {
 	tw := &trackWriter{w: w}
-	n, err := io.Copy(tw, &ctxReader{ctx: x.ctx, r: io.NewSectionReader(f, 0, size), onRead: func(n int) {
+	n, err := io.CopyBuffer(tw, &ctxReader{ctx: x.ctx, r: io.NewSectionReader(f, 0, size), onRead: func(n int) {
 		x.copied += int64(n)
 		if x.o.Progress != nil {
 			x.o.Progress(x.copied, -1)
 		}
-	}})
+	}}, make([]byte, copyBufSize))
+	if err != nil && tw.err == nil && errors.Is(err, image.ErrChunkCorrupt) {
+		n += salvage(tw, f, n, min(size-n, copyBufSize))
+	}
 	switch {
 	case tw.err != nil:
-		return &caseWriteError{tw.err}
+		return n, &caseWriteError{tw.err}
 	case err != nil:
-		return err
+		return n, err
 	case n != size:
-		return fmt.Errorf("content ended after %d of %d bytes: %w", n, size, io.ErrUnexpectedEOF)
+		return n, fmt.Errorf("content ended after %d of %d bytes: %w", n, size, io.ErrUnexpectedEOF)
 	}
-	return nil
+	return n, nil
 }
 
 // baseDerivation returns the parent fields shared by every derived artifact
@@ -468,4 +490,98 @@ func timesMap(t filesys.Times) map[string]string {
 		return nil
 	}
 	return m
+}
+
+// prefixRuns returns the runs that cover the first n bytes of a file whose
+// runs (in file order) are given; a run that straddles n is cut.
+func prefixRuns(runs []evidence.Run, n int64) []evidence.Run {
+	var out []evidence.Run
+	for _, r := range runs {
+		if n <= 0 {
+			break
+		}
+		if r.Length > n {
+			r.Length = n
+		}
+		out = append(out, r)
+		n -= r.Length
+	}
+	return out
+}
+
+// keepPrefixRuns narrows the provenance of a file whose read stopped after n
+// bytes (an unreadable container chunk) to the runs of those n bytes. Inline
+// runs are cut in place. When the prefix still needs a runs sidecar, a second
+// one holding only the prefix is written (under the first free of the names
+// rel.incomplete.runs.jsonl, rel.incomplete~2.runs.jsonl ...; a name already
+// taken is no case failure) and replaces the reference to the first, which was
+// written before the read and stays in the case as the filesystem's full list
+// of runs for the file. d is changed only once the new provenance is known, so
+// it never claims the full list for the partial artifact. Only a failure of the
+// case is returned. When no free name is found the prefix runs cannot be
+// recorded: the artifact then carries no runs (and says so in its error), which
+// is incomplete provenance but never wrong provenance.
+func (x *extractor) keepPrefixRuns(rel, fsPath string, d *evidence.Derivation, runs []evidence.Run, n int64) error {
+	if len(runs) == 0 {
+		return nil
+	}
+	pre := prefixRuns(runs, n)
+	if len(pre) <= evidence.MaxInlineRuns {
+		d.Runs, d.RunsArtifact = pre, ""
+		return nil
+	}
+	for attempt := 0; attempt < maxNameAttempts; attempt++ {
+		name := rel + ".incomplete.runs.jsonl"
+		if attempt > 0 {
+			name = fmt.Sprintf("%s.incomplete~%d.runs.jsonl", rel, attempt+1)
+		}
+		sd := *d // writeRunsSidecar fills in the sidecar id; keep d until it is known
+		err := x.s.writeRunsSidecar(x.a, name, pre, fsPath, &sd)
+		var nameErr *localNameError
+		switch {
+		case err == nil:
+			d.Runs, d.RunsArtifact = nil, sd.RunsArtifact
+			return nil
+		case errors.Is(err, evidence.ErrArtifactExists), errors.As(err, &nameErr):
+			continue // this name is taken or unusable: try the next
+		}
+		return err
+	}
+	d.Runs, d.RunsArtifact = nil, ""
+	return nil
+}
+
+// copyBufSize is the size of the buffer one extraction read fills.
+const copyBufSize = 32 << 10
+
+// salvage writes to w the bytes of f in [off, off+window) that can still be
+// read after a read of that range failed with an unreadable container chunk.
+// A filesystem reader drops the part of a failing read that was good, so the
+// longest readable prefix of the window is found by bisection (every probe
+// reads from off; a longer read succeeds only if a shorter one does) and then
+// written. It returns the bytes written; a write failure is left to the
+// caller, who sees it in w. A probe that fails, whatever the error, counts as
+// not readable; only the bytes of a final read that succeeded are written.
+func salvage(w io.Writer, f filesys.File, off, window int64) int64 {
+	if window <= 1 {
+		return 0
+	}
+	buf := make([]byte, window)
+	readable := func(k int64) bool {
+		n, err := f.ReadAt(buf[:k], off)
+		return int64(n) == k && (err == nil || errors.Is(err, io.EOF))
+	}
+	lo, hi := int64(0), window // buf[:lo] reads fine, buf[:hi] is known not to
+	for hi-lo > 1 {
+		if mid := lo + (hi-lo)/2; readable(mid) {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	if lo == 0 || !readable(lo) { // the final read fills buf[:lo] for the write
+		return 0
+	}
+	n, _ := w.Write(buf[:lo])
+	return int64(n)
 }

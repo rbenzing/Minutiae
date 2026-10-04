@@ -17,7 +17,7 @@ docker build -t minutiae-fixtures tools/fixtures
 docker run --rm --privileged -v "$PWD:/work" -w /work minutiae-fixtures bash tools/fixtures/gen.sh all
 ```
 
-`gen.sh <fixture>` builds one fixture (`volume-gpt`, `volume-mbr`, `ext4`, `fat`, `exfat`, `f2fs`, `apfs`; `apfs-populated` needs its own image, see "APFS populated fixture").
+`gen.sh <fixture>` builds one fixture (`volume-gpt`, `volume-mbr`, `ext4`, `fat`, `exfat`, `f2fs`, `ewf`, `apfs`; `hfsplus` and `apfs-populated` each need their own image, see "HFS+ fixtures" and "APFS populated fixture").
 `--privileged` is needed by `exfat` (see below) and is used by `f2fs` only to try a kernel mount (see "F2FS determinism"); every other fixture runs without it.
 
 With Git Bash on Windows, stop MSYS rewriting the container paths:
@@ -39,6 +39,8 @@ Scripts must keep LF line endings (`.gitattributes` enforces this).
 | `exfat.sh` + `exfat_chains.py` (also `fat_tree.sh`, `fat_oracle.py`) | `exfat` (`.img.gz` + `.expect.json`, in `internal/filesys/exfat/testdata/`) | the source tree, the generator's deleted names, and `dump.exfat` (boot report: geometry, serial, label; `-c -d <path>`: the cluster chain of every live path; the free clusters are the ones no chain, bitmap, up-case table or root holds, cross-checked against dump.exfat's "Free Clusters") |
 | `apfs.sh` + `apfs_oracle.py` | `apfs-ci`, `apfs-cs`, `apfs-multichunk` (`.img.gz` + `.expect.json`, in `internal/filesys/apfs/testdata/`) | the `mkapfs` arguments (label, UUIDs, case flags) and an independent Python decoder of the finished image (see "APFS determinism and limits"); `apfsck` must accept the image |
 | `apfs-populated.sh` + `apfs_tree.py` + `apfs_populate.sh` + `apfs_guest.c` + `apfs_populated_oracle.py` (image `minutiae-fixtures-apfs`, `Dockerfile.apfs`) | `apfs-populated` (`.img.gz` + `.expect.json`, in `internal/filesys/apfs/testdata/`) | a container populated by the real `linux-apfs-rw` kernel driver under QEMU from a source tree, a snapshot included; an independent Python decode of the image compared with that source tree, plus `apfsck` (see "APFS populated fixture") |
+| `hfsplus.sh` + `hfsplus_oracle.py` + `hfsplus_normalize.py` (image `minutiae-fixtures-hfs`) | `hfsplus-empty`, `hfsx-empty`, `hfsplus-journal`, `hfsplus-1k`, `hfsplus-wrapped`, `hfsplus-populated` (`.img.gz` + `.expect.json`, in `internal/filesys/hfsplus/testdata/`; also `hfsplus_populate.sh` + `hfsplus_tree.py`) | an independent Python parse of the volume header, B-trees (extents-overflow records included), allocation bitmap and journal files, cross-checked against `fsck.hfsplus` and `blkid`; for the populated image also the source tree the Linux driver was fed (see "HFS+ fixtures") |
+| `ewf.sh` + `ewf_inspect.py` + `ewf_normalize.py` | `ewf-disk.img.gz` (the raw source disk), `ewf-<variant>.E0N.gz` (one `.gz` per segment file of `single-none`, `single-best`, `multi-none`, `seed-small`) and `ewf-fixtures.expect.json`, in `internal/image/ewf/testdata/` | the raw disk (its sha256/md5/sha1/size, built from the committed ext4 and fat12 fixtures), an independent Python decoder (`ewf_inspect.py`: every section and Adler-32, every chunk, the rebuilt media equals the raw disk byte for byte), `ewfverify`, `ewfinfo` (whitelisted geometry and hash fields) and `ewfexport -f raw` (sha256 equals the raw disk) |
 | `f2fs.sh` + `f2fs_tree.sh` + `f2fs_oracle.py` + `f2fs_normalize.py` | `f2fs-extra-attr`, `f2fs-default` (`.img.gz` + `.expect.json`, in `internal/filesys/f2fs/testdata/`) | the source tree handed to `sload.f2fs` (`f2fs_oracle.py tree`: type, size, sha256, mode, mtime, symlink targets), and the reports of `fsck.f2fs -l/-f/-t/-M`, `dump.f2fs -s/-n` and `blkid` on the finished image (`f2fs_oracle.py layout`: superblock and checkpoint fields, features, uuid, label, the NAT block address of every inode, the data-block extents of every file, the free main-area blocks from the SIT bitmaps). The oracle cross-checks the tools against each other (fsck vs dump on every shared field, SIT popcount vs `valid_block_count`, fsck's tree vs the source tree, the file map vs file sizes) and the generator fails on any mismatch, on an unclean `fsck.f2fs`, or when no file is fragmented |
 
 ## Determinism
@@ -102,6 +104,54 @@ Fixture details worth knowing:
 - FAT32 needs 65525 clusters, so the smallest image (512-byte clusters) is 34 MiB raw
   (about 400 KiB gzipped); the fuzz tests cut their seeds after the last used cluster.
 - Single-character names are avoided: `dump.exfat -d` fails to resolve `/deep/a`.
+
+### EWF determinism
+
+`ewf.sh` acquires a GPT disk (8 MiB; partition 1 = the smallest committed ext4 fixture, partition 2 =
+`fat12.img.gz`; partitions are 4 KiB aligned because the smallest ext4 image is 6.25 MiB, so 1 MiB
+alignment would not fit 8 MiB) with the real `ewfacquire` (the tool's default format, `-d sha1`), under a
+frozen `faketime` clock (the acquisition and system dates are in the header sections). The four E01 sets
+were byte-identical across two generation runs (compared by hand on every output sha256; `ewf.sh` does not check it) and
+`ewfacquire 20140816` needs no further normalisation: it writes an all-zero set identifier (the volume
+payload field at offset 64), so `ewf_normalize.py` rewrites nothing (the generator log prints "0 section(s)
+rewritten"). The normaliser stays in the pipeline as a safeguard: it pins a non-zero set identifier to a
+fixed GUID and recomputes the payload Adler-32, nothing else, so a tool version that randomises it does
+not break reproducibility. If a later `ewf-tools` makes the outputs differ run to run in another field,
+extend the normaliser for that one field.
+
+Order of work: acquire, normalise, `ewf_inspect.py` (fails unless the decoded media equals the raw disk and
+the stored hashes match), `ewfverify`, `ewfinfo`, `ewfexport`, and only then `gzip -n -9`. The generator
+fails on any disagreement and when the committed outputs would exceed 2 MiB. `expect.json` holds the raw
+disk hashes, the partitions (with the source fixture of each), and per variant the segment files (size and
+sha256 of the E01 bytes), geometry, chunk counts by kind, the stored hashes, every table and section, the
+header fields and the location of the first compressed and first uncompressed chunk. Only whitelisted
+fields of the tools' output are parsed; none is stored verbatim.
+
+Regenerate with `docker run --rm -v "$PWD:/work" -w /work minutiae-fixtures bash tools/fixtures/gen.sh ewf`
+(about 30 s, not privileged; it reads the committed ext4 and fat12 fixtures from the tree, so regenerate
+those first if they ever change, and commit the new `ewf` outputs with them).
+
+Committed in `internal/image/ewf/testdata/` (bytes, as stored; 1,389,704 bytes of `.gz` files plus the 31,915-byte
+oracle, 1,421,619 in all):
+
+| File | Bytes | Content |
+|---|---|---|
+| `ewf-disk.img.gz` | 346,007 | the raw 8 MiB GPT disk every variant wraps (the oracle for the media) |
+| `ewf-single-none.E01.gz` | 349,468 | one segment, `-c none`: 256 chunks, all uncompressed |
+| `ewf-single-best.E01.gz` | 336,508 | one segment, `-c best`: 128 chunks (126 compressed, 2 uncompressed) |
+| `ewf-multi-none.E01.gz` .. `.E05.gz` | 11,913 / 3,156 / 2,992 / 330,118 / 650 | five segments, `-c none`, 63+63+63+63+4 chunks |
+| `ewf-seed-small.E01.gz` | 8,892 | the first MiB only (32 compressed chunks): the fuzz seed |
+| `ewf-fixtures.expect.json` | 31,915 | the oracle (see above) |
+
+The tests gunzip each file in memory; no `.E01` is stored uncompressed. The `error2` section, table base 0 and
+other layouts the real writer does not produce are covered by the `ewftest` builder only.
+
+If `sgdisk` hangs in the container, an earlier container left a dead FUSE mount (a stuck `exfat` run) that
+blocks the VM's global sync; remove that container, or abort its connection (`mount -t fusectl none /mnt`
+in a privileged container, then `echo 1 > /mnt/<id>/abort` for the connection with a pending request).
+
+The `error2` section is not produced by any variant (ewfacquire only writes it after a read error); its
+layout was checked once against an image acquired from a device-mapper `error` target, outside the generator.
 
 ### exFAT needs a privileged container
 
@@ -403,6 +453,228 @@ coverage is left to the `f2fstest` builder tests. The mount path has never run o
 with f2fs; if it does, the kernel stamps ctimes and checkpoint data from the real clock, so
 such images are not byte-reproducible (the note says so) and the oracle (read from the final
 image) still holds.
+
+## HFS+ fixtures
+
+`gen.sh hfsplus` runs in a SEPARATE image, `minutiae-fixtures-hfs`
+(`Dockerfile.hfs`), because `hfsprogs` (`mkfs.hfsplus`, `fsck.hfsplus`) is not
+installable in the main image and that image's pinned layers must not change
+(every existing fixture stays byte-identical; checked by running `gen.sh all`
+and seeing no change under `git status`). `hfsplus` is deliberately not part of
+`all`; without `mkfs.hfsplus` `gen.sh` stops with a message naming the image.
+
+```bash
+docker build -f tools/fixtures/Dockerfile.hfs -t minutiae-fixtures-hfs tools/fixtures
+docker run --rm -v "$PWD:/work" -w /work minutiae-fixtures-hfs bash tools/fixtures/gen.sh hfsplus
+```
+
+No `--privileged` is needed.
+
+### Feasibility probe (2026-10-03, Docker Desktop, kernel 6.6.87.2-microsoft-standard-WSL2)
+
+| Probe | Result |
+|---|---|
+| `debian:bookworm-slim` main / trixie / bullseye main | `hfsprogs`: no candidate |
+| bullseye `non-free` on `archive.debian.org` | `540.1.linux3-4` (not needed) |
+| **bookworm `non-free`** (chosen) | **`540.1.linux3-5+b1`**: installs directly, no source build |
+| base image | `debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251` (pinned in `Dockerfile.hfs`) |
+| `mkfs.hfsplus` flags | `-v` label, `-s` case-sensitive (HFSX), `-J [size]` journaled, `-b` block size, `-w` HFS wrapper, `-N` dry run, `-i` first CNID, `-n`/`-c` node and clump sizes |
+| `fsck.hfsplus -n -f` | works on a plain file image (read-only check) |
+| `grep hfsplus /proc/filesystems` | absent |
+| `modprobe hfsplus` | `Module hfsplus not found` (the kernel ships no module) |
+| `--privileged` `mount -t hfsplus -o loop` | `unknown filesystem type 'hfsplus'` |
+
+Consequence for the mkfs-only route: nothing in hfsprogs copies files into an
+image, so those five fixtures are EMPTY volumes. The populated fixture
+(`hfsplus-populated`) uses the route below instead.
+
+### Populated image: the Linux hfsplus driver under QEMU (tier 2, reached)
+
+Docker Desktop's kernel has no `hfsplus` module, but the Debian kernel that can
+be installed in the image has (`CONFIG_HFSPLUS_FS=m`, `linux-image-6.1.0-53-amd64`
+from bookworm). `hfsplus_populate.sh` boots it under QEMU software emulation
+(`qemu-system-x86_64 -accel tcg`: no `/dev/kvm`, no `--privileged`, about 20 s)
+with a busybox initramfs, the modules `virtio_blk`, `hfsplus`, `nls_utf8` and
+the tarballs written by `hfsplus_tree.py`; the guest mounts the 16 MiB image
+(`mkfs.hfsplus -c d=1,r=1`: one block of clump, because the driver preallocates
+one clump per file and never gives it back, which fills a small volume),
+extracts phase 1 (the tree and 400 one-block fillers), deletes the odd fillers,
+extracts phase 2 (a 150-block file that fills the holes: 18 extents, so the
+extents-overflow tree has records), unmounts and powers off. Run it with
+`--shm-size=1g` (the work directory is under `/dev/shm`; it falls back to
+`/tmp` if that is smaller than 256 MiB):
+
+```bash
+docker run --rm --shm-size=1g -v "$PWD:/work" -w /work minutiae-fixtures-hfs bash tools/fixtures/gen.sh hfsplus
+```
+
+What it holds (the oracle's `checks` fail the generator if any of it is missing):
+a catalog of depth 3 (1674 leaf records), a 600-entry directory, a 3 MiB file,
+a file with 18 extents plus extents-overflow records, symlinks (absolute,
+relative, dangling), a three-link hard-link group with its hidden private
+folder, mode/owner/mtime variety, UTF-8 names (stored decomposed), a
+255-unit ASCII name and an 85-character CJK one.
+
+Findings about a real kernel-written volume (all recorded in the oracle, all
+reader-visible):
+
+- **The private folder is named with four real NUL units** (`\0\0\0\0HFS+ Private Data`),
+  as macOS does (the driver's source spells them U+2400 and maps them to NUL), and it
+  sorts LAST among the root's children, after names up to U+65E5 (`oracle.private_folder`,
+  `root_children_in_leaf_order`). `fsck.hfsplus` walks the tree with Apple's own
+  comparison and accepts that order, so NUL folds above every other unit, as the reader
+  assumes (`foldUnit(0) = 0xFFFF`); `TestRealPrivateFolderSortsLastAndIsFoundByDescent`
+  checks every catalog key pair of this image against the reader's comparison and that
+  the descent finds the folder with no scan. This settles the earlier "unverified" ruling
+  for the HFS+ (case-folding) catalog.
+- The hidden inode is named `iNode<random number below 2^30>` (the driver draws it
+  with `get_random_bytes`); its link-record special fields hold the number, its own
+  special field the link count.
+- The driver writes the backup volume header when it MOUNTS (attributes: inconsistent
+  set, unmounted clear) and does not refresh it at unmount; the primary header is
+  correct. The oracle accepts a backup header that differs from the primary in the
+  attributes word and the modify date only.
+- Names are decomposed (NFD): `café` is stored `cafe` + U+0301. Names outside the BMP
+  cannot be created (the utf8 NLS turns each byte of a 4-byte sequence into `?`).
+- Hard-link records carry the original's dates and permissions only through the iNode:
+  the reader (like macOS) takes everything but name and CNID from the iNode.
+- A directory's valence, `fileCount` (counts the iNode files too) and `folderCount`
+  (does not count the private folder) are recorded in the oracle.
+
+Not covered by the populated image: deleted entries (HFS+ keeps none), decmpfs
+compression (macOS-only), extended attributes (the driver can only write them
+through `setfattr`; the attributes file is empty here), non-BMP names, journaling
+(the driver mounts a journaled volume read-only), HFSX.
+
+Reproducibility: the guest clock is virtual (`-rtc clock=vm -icount`) and the
+guest rewinds it to the fixture time every 0.2 virtual seconds
+(`hfsplus_populate.sh`), so every date the driver stamps is `2023-11-14 22:13:20`
+whatever the host load. The cause of the earlier instability, found by comparing
+a differing run with the committed image (`cmp -l`): exactly ONE byte differed,
+the low byte of the primary volume header's modify date (offset 1047, `0x80` vs
+`0x81`). Under `-icount` the guest needs about one virtual second from setting
+its clock to unmounting, so the unmount stamp sat on the boundary of the next
+second and host timing decided which side it fell on (3 of 9 regenerations
+differed, more often on a loaded host); the oracle accepted every variant. The
+rewinding loop removes the boundary, so the kernel-written field needs no
+post-write normalization. The one random number, the hidden inode's name, is
+rewritten to `100000001` by `hfsplus_normalize.py linkid` (the guest runs again
+when the random number has a different number of digits). After the fix the
+populated image was regenerated 15 times (12 of them with a second generator
+running at the same time on the same host, 2 of them in a freshly rebuilt pinned image)
+and was byte-identical to the committed one every time, as were all
+12 committed files in the 5 runs compared in full (the five empty fixtures were
+identical in every run compared). The package set is pinned in
+`Dockerfile.hfs`: apt reads `snapshot.debian.org` as of 2026-10-03 and every
+recorded package (`generator.packages`) is installed at its exact version, so a
+rebuilt image either has the same toolchain or the build fails; a rebuild of the
+pinned Dockerfile gave the same versions and byte-identical fixtures. The
+snapshot service must stay reachable for a rebuild (an existing image keeps
+working without it). Still, a different host CPU or QEMU could in principle
+change timing, so the committed `expect.json` carries the sha256 of the
+committed image and the tests check it first: always regenerate
+`hfsplus-populated.img.gz` and `hfsplus-populated.expect.json` TOGETHER (a
+different image with the old oracle fails the sha256 check at once).
+
+### Images (8 MiB raw each except the populated one, `internal/filesys/hfsplus/testdata/`)
+
+| Image | `mkfs.hfsplus` | What it holds |
+|---|---|---|
+| `hfsplus-empty` | `-v FIXTURE` | HFS+ (H+, version 4), 4 KiB blocks, root folder and system files only |
+| `hfsx-empty` | `-s -v FIXTURE` | HFSX (HX, version 5), case-sensitive (binary key compare 0xBC) |
+| `hfsplus-journal` | `-J -v FIXTURE` | journaled: real `.journal_info_block` (CNID 17) and `.journal` (CNID 16, 512 KiB) catalog files in the root |
+| `hfsplus-1k` | `-b 1024 -v FIXTURE` | 1 KiB allocation blocks (smaller than the 4 KiB B-tree node size) |
+| `hfsplus-wrapped` | `-w -v FIXTURE` | classic HFS wrapper (master directory block `BD`) embedding the HFS+ volume at byte 45056 (`volume_offset` in the oracle) |
+| `hfsplus-populated` (16 MiB) | `-c d=1,r=1 -v FIXTURE`, then filled by the Linux hfsplus driver (see "Populated image") | a real populated tree: 3-level catalog, 600-entry folder, 3 MiB file, 18-extent file with extents-overflow records, symlinks, hard links with the private folder, UTF-8 names |
+
+What the five mkfs images validate against Apple's own formatter: the volume header (both
+copies), the five special-file forks, B-tree headers and node maps, the
+catalog key/record/thread layouts, the allocation bitmap, the journal files and
+the wrapper embedding. What they do NOT: a populated tree. The populated image
+covers a multi-level catalog, hard links, fragmented files, overflow extents,
+decomposed Unicode and symlinks against a kernel-written volume. Still
+builder-only (verified against the Go builder and Apple's fsck on builder images,
+tier 3, `hfsplus.sh check-builder <dir>`, never against a macOS-written volume):
+extended attributes, decmpfs compression, resource forks, deletion, HFSX with
+content, journals with transactions, non-BMP names. macOS- and iOS-written
+volumes are covered only by the manual `realimages` test.
+
+### Oracle (`hfsplus_oracle.py`)
+
+A second, hand-written parse (never Minutiae) plus external tools; the
+generator FAILS on any disagreement (each passed check is listed in `checks`
+of the `expect.json`). Cross-checks: header fields and both header copies;
+allocation-bitmap popcount = `totalBlocks - freeBlocks`; the set of allocated
+blocks equals EXACTLY the header blocks plus every extent of the special files
+and of every catalog file fork; catalog walked top-down and along the leaf
+chain (same leaves), keys strictly increasing, threads match records,
+valence, `fileCount`/`folderCount`, node map vs `freeNodes`; journal info and
+files agree and the journal region is zero; `fsck.hfsplus -n -f` exit status;
+`blkid -p -o export` TYPE, LABEL and UUID (the UUID is also recomputed from
+the volume id: MD5 of Apple's namespace plus the id, version-3 bits); the image
+sha256 is unchanged after the read-only tools. `expect.json` carries
+`free_blocks` (inclusive block ranges counted from the volume start, so for the
+wrapped image add `volume_offset` for byte offsets), `free_count`, every
+catalog entry (path, CNID, type, size, sha256, extents, mode, dates) and
+`populated`. With `--source-tree` (the populated image) the oracle also resolves
+the extents-overflow records (a fork's extents are its 8 inline ones plus the
+records, which must continue block for block and none may be orphaned), finds
+the private folder and the hard-link records, and compares the whole visible
+tree with the source tree: names (NFD), types, modes, sizes, content sha256,
+file mtimes, symlink targets and the hard-link groups. Checks of that image are
+aggregated (digits normalized) in `checks`; the order of the catalog keys is
+checked only for adjacent ASCII names and parent ids, the rest by `fsck.hfsplus`. Stated limitation: the Python parse is a second
+implementation by the same author as the reader; its independence rests on
+`fsck.hfsplus` and `blkid` agreeing, not on a different author.
+
+Facts the oracle recorded about `mkfs.hfsplus` output (they shape the reader's tests):
+
+- Volume dates are the frozen clock (1700000000); `.journal` is created one second later.
+- The root folder and the journal files have no BSD info: `fileMode` is 0 for the root and `0o100000` (type bits only) for files, so `mode&0o7777` is 0; `attributeModDate`, `accessDate`, `backupDate` are 0 (absent).
+- `-J` leaves the journal uninitialised: journal info flags are `in-FS|need-init` (0x5) and the whole journal is zero; there is no journal header to parse (the first mount writes it).
+- **HFSX quirk:** `mkfs.hfsplus -s` leaves the root folder record without `kHFSHasFolderCountMask` (0x10), and Apple's `fsck_hfs` reports `HasFolderCount flag needs to be set (id = 2)` and exits 8; nothing else is reported. The generator keeps the formatter's real output, requires exactly that report (`--fsck-issue`) and records it in `external_tools.fsck.known_issues`. A builder HFSX image must set the flag to pass `check-builder`.
+- `blkid` reports `TYPE=hfsplus` for HFSX and for the wrapped volume.
+
+### Determinism
+
+The five mkfs images are byte-identical across runs (generated twice, every output sha256 compared; the populated image: see above).
+`mkfs.hfsplus` takes its dates from the clock, frozen with `faketime -f
+'2023-11-14 22:13:20'` (`FAKETIME_DONT_FAKE_MONOTONIC=1`, `NO_FAKE_STAT=1`), but
+draws the 64-bit volume id (finderInfo words 6-7) from a random source; two
+runs differed only in those 8 bytes, in both header copies.
+`hfsplus_normalize.py` rewrites the id (`MINUTIAE`, `4d494e5554494145`) in both
+copies (in the embedded volume for the wrapped image). Also `gzip -n -9`, a
+fixed work directory, `umask 022`, a root check and a cleanup trap.
+
+### Builder images (`hfsplus.sh check-builder <dir>`)
+
+Runs `fsck.hfsplus -n -f` on every `*.img` directly in `<dir>` and exits non-zero
+when any fails. `MINUTIAE_WRITE_BUILDER_IMAGES=<dir> go test -run TestBuilderImagesPassFsck ./internal/filesys/hfsplus`
+writes the builder's images (`builderImages()`: plain, multi-level catalog, HFSX
+case-sensitive and case-folding, hard links, overflow extents, a catalog file
+with overflow extents, attributes, resource fork, compressed files, wrapper,
+wrapped HFSX, journaled, 1 KiB blocks); the ones fsck cannot accept go to
+`<dir>/exempt/` with the reasons in `REASONS.txt`.
+
+Result (2026-10-04): 12 of the 15 images pass `fsck.hfsplus -n -f`. Before that, the
+run found two BUILDER defects, now fixed (and pinned by
+`TestBuilderMatchesFsckExpectations`): a file with extended attributes must carry
+`kHFSHasAttributesMask` (0x04) in its catalog flags (fsck counts the files that have
+attributes: "Incorrect number of extended attributes"), and a hard-link record's
+createDate must be the private folder's ("Bad hard link creation date"). The three
+exempt images are accepted by the reader on purpose:
+
+- `hardlinks-owned` (hard links whose files have a non-zero uid/gid): fsck says
+  "filelink prime buckets do not match" / "Incorrect number of file hard links"; with
+  uid = gid = 0 it passes (the builder's `hardlinks` image and the Linux-written
+  fixture). The builder writes no link chain (prev/next link ids, `kHFSHasLinkChainMask`),
+  which the Linux driver does not write either; the cause of the owner dependence is
+  unconfirmed.
+- `journaled-clean`: the builder lays out the journal info block and journal but
+  adds no `.journal_info_block` and `.journal` catalog files, so fsck reports
+  orphaned blocks (the real journal fixture has the files).
+- `wrapped-hfsx`: Apple never embeds HFSX in a wrapper (the embedded signature must
+  be `H+`); the reader accepts both on purpose.
 
 ## Adding a fixture
 

@@ -131,6 +131,49 @@ type jsonImageInfo struct {
 	Partitions  []jsonPartition `json:"partitions"`
 	Unallocated []jsonRun       `json:"unallocated"`
 	Warnings    []string        `json:"warnings"`
+	// PartitionError is why the partition table could not be read (with --verify).
+	PartitionError string `json:"partition_error,omitempty"`
+	// Verify is present only with --verify on a container that stores hashes.
+	Verify *jsonVerify `json:"verify,omitempty"`
+}
+
+type jsonHashCheck struct {
+	Stored   string `json:"stored"`
+	Computed string `json:"computed"`
+	Status   string `json:"status"`
+	// Reason is why the hash is unverified when its stored section is damaged.
+	Reason string `json:"reason,omitempty"`
+}
+
+// jsonVerify is the outcome of `image info --verify`: the same values the
+// image.verify audit entry records.
+type jsonVerify struct {
+	Result        string        `json:"result"`
+	Size          int64         `json:"size"`
+	BytesHashed   int64         `json:"bytes_hashed"`
+	MD5           jsonHashCheck `json:"md5"`
+	SHA1          jsonHashCheck `json:"sha1"`
+	FirstBadChunk *int64        `json:"first_bad_chunk,omitempty"`
+	// Error is the error that ended the run (cancelled, failed audit append),
+	// else the error of the first unreadable chunk.
+	Error string `json:"error,omitempty"`
+}
+
+func newJSONVerify(cv examine.ContainerVerification, verr error) *jsonVerify {
+	v := &jsonVerify{
+		Result: cv.Result, Size: cv.Size, BytesHashed: cv.BytesHashed,
+		MD5:  jsonHashCheck{Stored: cv.MD5.Stored, Computed: cv.MD5.Computed, Status: string(cv.MD5.Status), Reason: cv.MD5.Damaged},
+		SHA1: jsonHashCheck{Stored: cv.SHA1.Stored, Computed: cv.SHA1.Computed, Status: string(cv.SHA1.Status), Reason: cv.SHA1.Damaged},
+	}
+	if cv.BadChunk >= 0 {
+		bad := cv.BadChunk
+		v.FirstBadChunk = &bad
+		v.Error = cv.BadChunkError
+	}
+	if verr != nil {
+		v.Error = verr.Error()
+	}
+	return v
 }
 
 func nonNil(s []string) []string {
@@ -145,6 +188,7 @@ func newJSONImageInfo(in examine.ImageInfo) jsonImageInfo {
 		ParentID: in.ParentID, Path: in.Path, SHA256: in.SHA256, Incomplete: in.Incomplete,
 		Format: in.Format, Size: in.Size, SectorSize: in.SectorSize, Scheme: in.Scheme, DiskGUID: in.DiskGUID,
 		Metadata: []jsonKV{}, Partitions: []jsonPartition{}, Unallocated: []jsonRun{}, Warnings: nonNil(in.Warnings),
+		PartitionError: in.PartitionError,
 	}
 	for _, kv := range in.Metadata {
 		out.Metadata = append(out.Metadata, jsonKV{Key: kv.Key, Value: kv.Value})

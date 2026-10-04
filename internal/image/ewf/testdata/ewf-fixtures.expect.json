@@ -1,0 +1,1216 @@
+{
+  "raw": {
+    "size": 8388608,
+    "sha256": "6450c874680197108b644616c3a78c4e6e261029d0ea59afe295e7f26a335fb6",
+    "md5": "511a0bdb3588a3fd040f1adaa715b25b",
+    "sha1": "5ff3a95088776db3c1d4e44cb89c1f5773f8b57a"
+  },
+  "partitions": {
+    "scheme": "gpt",
+    "sector_size": 512,
+    "disk_guid": "6f1c5b2e-3a4d-4e8b-9c07-1d2e3f405162",
+    "partitions": [
+      {
+        "index": 1,
+        "start": 20480,
+        "length": 6553600,
+        "type": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+        "name": "ext4",
+        "guid": "11111111-2222-4333-8444-555555555511",
+        "source_fixture": "internal/filesys/ext4/testdata/ext4-1k-metabg-uninit.img.gz",
+        "source_size": 6553600,
+        "source_sha256": "055a92532bd76c6f3701583752bd367eda40a8290c4d8bc6fcca0c4d9172a646"
+      },
+      {
+        "index": 2,
+        "start": 6574080,
+        "length": 1474560,
+        "type": "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7",
+        "name": "fat12",
+        "guid": "11111111-2222-4333-8444-555555555512",
+        "source_fixture": "internal/filesys/fat/testdata/fat12.img.gz",
+        "source_size": 1474560,
+        "source_sha256": "b435d9728c5b7f23577694cd26626554582870a04039b693db59ac26a6a07e76"
+      }
+    ]
+  },
+  "variants": [
+    {
+      "name": "single-none",
+      "files": [
+        {
+          "name": "ewf-single-none.E01",
+          "size": 8395455,
+          "sha256": "4f695ba1eb55f2ca6663d3f300ff6b8acfa08469c0c2a4ba3c08948fb2cd761e"
+        }
+      ],
+      "segments": 1,
+      "media_size": 8388608,
+      "media_sha256": "6450c874680197108b644616c3a78c4e6e261029d0ea59afe295e7f26a335fb6",
+      "bytes_per_sector": 512,
+      "sectors_per_chunk": 64,
+      "sectors": 16384,
+      "chunks": 256,
+      "compressed_chunks": 0,
+      "uncompressed_chunks": 256,
+      "chunk_kinds": "uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
+      "first_compressed_chunk": null,
+      "first_uncompressed_chunk": {
+        "chunk": 0,
+        "segment": 1,
+        "offset": 2095,
+        "length": 32772
+      },
+      "compression_level": 0,
+      "stored_md5": "511a0bdb3588a3fd040f1adaa715b25b",
+      "stored_sha1": "5ff3a95088776db3c1d4e44cb89c1f5773f8b57a",
+      "stored_hash_md5": "511a0bdb3588a3fd040f1adaa715b25b",
+      "volume": {
+        "media_type": 1,
+        "chunks": 256,
+        "spc": 64,
+        "bps": 512,
+        "sectors": 16384,
+        "chs": [
+          0,
+          0,
+          0
+        ],
+        "media_flags": 3,
+        "palm_start_sector": 0,
+        "legacy_log_start_sector": 0,
+        "compression_level": 0,
+        "error_granularity": 64,
+        "set_identifier": "00000000000000000000000000000000",
+        "signature": "0000000000",
+        "nonzero_unknown_regions": [],
+        "section_type": "volume"
+      },
+      "header2": {
+        "a": "Minutiae EWF test disk",
+        "c": "MINUTIAE-EWF-1",
+        "n": "EV-0001",
+        "e": "Test Examiner",
+        "t": "Fixture generated for tests",
+        "md": "",
+        "sn": "",
+        "av": "20140816",
+        "ov": "Linux",
+        "m": "1700000000",
+        "u": "1700000000",
+        "p": "0",
+        "dc": ""
+      },
+      "header": {
+        "c": "MINUTIAE-EWF-1",
+        "n": "EV-0001",
+        "a": "Minutiae EWF test disk",
+        "e": "Test Examiner",
+        "t": "Fixture generated for tests",
+        "av": "20140816",
+        "ov": "Linux",
+        "m": "2023 11 14 22 13 20",
+        "u": "2023 11 14 22 13 20",
+        "p": "0"
+      },
+      "tables": [
+        {
+          "segment": 1,
+          "offset": 8391727,
+          "entries": 256,
+          "base_offset": 2019,
+          "footer": true,
+          "compressed": 0,
+          "uncompressed": 256,
+          "first_chunk": 0
+        }
+      ],
+      "sections": [
+        {
+          "segment": 1,
+          "type": "header2",
+          "offset": 13,
+          "next": 341,
+          "size": 328
+        },
+        {
+          "segment": 1,
+          "type": "header2",
+          "offset": 341,
+          "next": 669,
+          "size": 328
+        },
+        {
+          "segment": 1,
+          "type": "header",
+          "offset": 669,
+          "next": 891,
+          "size": 222
+        },
+        {
+          "segment": 1,
+          "type": "volume",
+          "offset": 891,
+          "next": 2019,
+          "size": 1128
+        },
+        {
+          "segment": 1,
+          "type": "sectors",
+          "offset": 2019,
+          "next": 8391727,
+          "size": 8389708
+        },
+        {
+          "segment": 1,
+          "type": "table",
+          "offset": 8391727,
+          "next": 8392855,
+          "size": 1128
+        },
+        {
+          "segment": 1,
+          "type": "table2",
+          "offset": 8392855,
+          "next": 8393983,
+          "size": 1128
+        },
+        {
+          "segment": 1,
+          "type": "data",
+          "offset": 8393983,
+          "next": 8395111,
+          "size": 1128
+        },
+        {
+          "segment": 1,
+          "type": "digest",
+          "offset": 8395111,
+          "next": 8395267,
+          "size": 156
+        },
+        {
+          "segment": 1,
+          "type": "hash",
+          "offset": 8395267,
+          "next": 8395379,
+          "size": 112
+        },
+        {
+          "segment": 1,
+          "type": "done",
+          "offset": 8395379,
+          "next": 8395379,
+          "size": 0
+        }
+      ],
+      "segment_files": [
+        {
+          "file": "ewf-single-none.E01",
+          "number": 1,
+          "size": 8395455
+        }
+      ],
+      "observations": {
+        "terminal_sizes": [
+          0
+        ],
+        "size_equals_next_minus_offset": true,
+        "section_order_by_segment": [
+          [
+            "header2",
+            "header2",
+            "header",
+            "volume",
+            "sectors",
+            "table",
+            "table2",
+            "data",
+            "digest",
+            "hash",
+            "done"
+          ]
+        ],
+        "table2_equals_table": true,
+        "base_offset_relation": [
+          "sectors_descriptor_offset"
+        ],
+        "table_footer": [
+          true
+        ],
+        "data_equals_volume": true,
+        "hash_md5_equals_digest_md5": true,
+        "table2_count": 1,
+        "data_section_count": 1,
+        "header_section_counts": {
+          "header2": 2,
+          "header": 1
+        },
+        "compressed_trailing_bytes": 0,
+        "last_compressed_chunk_of_table_ends_at_sectors_end": null
+      }
+    },
+    {
+      "name": "single-best",
+      "files": [
+        {
+          "name": "ewf-single-best.E01",
+          "size": 350841,
+          "sha256": "2dffea544e1b6b8d3cde223a6a4ed9ce84950ff11ec05591b62989c8fc6c9335"
+        }
+      ],
+      "segments": 1,
+      "media_size": 8388608,
+      "media_sha256": "6450c874680197108b644616c3a78c4e6e261029d0ea59afe295e7f26a335fb6",
+      "bytes_per_sector": 512,
+      "sectors_per_chunk": 128,
+      "sectors": 16384,
+      "chunks": 128,
+      "compressed_chunks": 126,
+      "uncompressed_chunks": 2,
+      "chunk_kinds": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccuucccccccccccccccccccccccc",
+      "first_compressed_chunk": {
+        "chunk": 0,
+        "segment": 1,
+        "offset": 2095,
+        "length": 1141
+      },
+      "first_uncompressed_chunk": {
+        "chunk": 102,
+        "segment": 1,
+        "offset": 39610,
+        "length": 65540
+      },
+      "compression_level": 2,
+      "stored_md5": "511a0bdb3588a3fd040f1adaa715b25b",
+      "stored_sha1": "5ff3a95088776db3c1d4e44cb89c1f5773f8b57a",
+      "stored_hash_md5": "511a0bdb3588a3fd040f1adaa715b25b",
+      "volume": {
+        "media_type": 1,
+        "chunks": 128,
+        "spc": 128,
+        "bps": 512,
+        "sectors": 16384,
+        "chs": [
+          0,
+          0,
+          0
+        ],
+        "media_flags": 3,
+        "palm_start_sector": 0,
+        "legacy_log_start_sector": 0,
+        "compression_level": 2,
+        "error_granularity": 64,
+        "set_identifier": "00000000000000000000000000000000",
+        "signature": "0000000000",
+        "nonzero_unknown_regions": [],
+        "section_type": "volume"
+      },
+      "header2": {
+        "a": "Minutiae EWF test disk",
+        "c": "MINUTIAE-EWF-1",
+        "n": "EV-0001",
+        "e": "Test Examiner",
+        "t": "Fixture generated for tests",
+        "md": "",
+        "sn": "",
+        "av": "20140816",
+        "ov": "Linux",
+        "m": "1700000000",
+        "u": "1700000000",
+        "p": "0",
+        "dc": ""
+      },
+      "header": {
+        "c": "MINUTIAE-EWF-1",
+        "n": "EV-0001",
+        "a": "Minutiae EWF test disk",
+        "e": "Test Examiner",
+        "t": "Fixture generated for tests",
+        "av": "20140816",
+        "ov": "Linux",
+        "m": "2023 11 14 22 13 20",
+        "u": "2023 11 14 22 13 20",
+        "p": "0"
+      },
+      "tables": [
+        {
+          "segment": 1,
+          "offset": 348137,
+          "entries": 128,
+          "base_offset": 2019,
+          "footer": true,
+          "compressed": 126,
+          "uncompressed": 2,
+          "first_chunk": 0
+        }
+      ],
+      "sections": [
+        {
+          "segment": 1,
+          "type": "header2",
+          "offset": 13,
+          "next": 341,
+          "size": 328
+        },
+        {
+          "segment": 1,
+          "type": "header2",
+          "offset": 341,
+          "next": 669,
+          "size": 328
+        },
+        {
+          "segment": 1,
+          "type": "header",
+          "offset": 669,
+          "next": 891,
+          "size": 222
+        },
+        {
+          "segment": 1,
+          "type": "volume",
+          "offset": 891,
+          "next": 2019,
+          "size": 1128
+        },
+        {
+          "segment": 1,
+          "type": "sectors",
+          "offset": 2019,
+          "next": 348137,
+          "size": 346118
+        },
+        {
+          "segment": 1,
+          "type": "table",
+          "offset": 348137,
+          "next": 348753,
+          "size": 616
+        },
+        {
+          "segment": 1,
+          "type": "table2",
+          "offset": 348753,
+          "next": 349369,
+          "size": 616
+        },
+        {
+          "segment": 1,
+          "type": "data",
+          "offset": 349369,
+          "next": 350497,
+          "size": 1128
+        },
+        {
+          "segment": 1,
+          "type": "digest",
+          "offset": 350497,
+          "next": 350653,
+          "size": 156
+        },
+        {
+          "segment": 1,
+          "type": "hash",
+          "offset": 350653,
+          "next": 350765,
+          "size": 112
+        },
+        {
+          "segment": 1,
+          "type": "done",
+          "offset": 350765,
+          "next": 350765,
+          "size": 0
+        }
+      ],
+      "segment_files": [
+        {
+          "file": "ewf-single-best.E01",
+          "number": 1,
+          "size": 350841
+        }
+      ],
+      "observations": {
+        "terminal_sizes": [
+          0
+        ],
+        "size_equals_next_minus_offset": true,
+        "section_order_by_segment": [
+          [
+            "header2",
+            "header2",
+            "header",
+            "volume",
+            "sectors",
+            "table",
+            "table2",
+            "data",
+            "digest",
+            "hash",
+            "done"
+          ]
+        ],
+        "table2_equals_table": true,
+        "base_offset_relation": [
+          "sectors_descriptor_offset"
+        ],
+        "table_footer": [
+          true
+        ],
+        "data_equals_volume": true,
+        "hash_md5_equals_digest_md5": true,
+        "table2_count": 1,
+        "data_section_count": 1,
+        "header_section_counts": {
+          "header2": 2,
+          "header": 1
+        },
+        "compressed_trailing_bytes": 0,
+        "last_compressed_chunk_of_table_ends_at_sectors_end": true
+      }
+    },
+    {
+      "name": "multi-none",
+      "files": [
+        {
+          "name": "ewf-multi-none.E01",
+          "size": 2067519,
+          "sha256": "d2a1ec4c02a369608fe6c566d472f51939e5c3e8bdf53a2bb1f6c01425002a8c"
+        },
+        {
+          "name": "ewf-multi-none.E02",
+          "size": 2066641,
+          "sha256": "db6465f8b9d5363281620ee6b97f103abf31e5486ef6941ee090d766c9798fda"
+        },
+        {
+          "name": "ewf-multi-none.E03",
+          "size": 2066641,
+          "sha256": "8b972af47e0c8e534668c9f7cdb3cab7096dc25e2e5dc8e0092471d4c81bfefd"
+        },
+        {
+          "name": "ewf-multi-none.E04",
+          "size": 2066641,
+          "sha256": "50f75b5bf6c8db078c2e0ab26fa1ef032f4aba1e392849adf5433dc7a8a080f1"
+        },
+        {
+          "name": "ewf-multi-none.E05",
+          "size": 132889,
+          "sha256": "d0d34ec7ff7c7538acfae345413f244fa9e45d153045da3e9f0991ac01899875"
+        }
+      ],
+      "segments": 5,
+      "media_size": 8388608,
+      "media_sha256": "6450c874680197108b644616c3a78c4e6e261029d0ea59afe295e7f26a335fb6",
+      "bytes_per_sector": 512,
+      "sectors_per_chunk": 64,
+      "sectors": 16384,
+      "chunks": 256,
+      "compressed_chunks": 0,
+      "uncompressed_chunks": 256,
+      "chunk_kinds": "uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
+      "first_compressed_chunk": null,
+      "first_uncompressed_chunk": {
+        "chunk": 0,
+        "segment": 1,
+        "offset": 2095,
+        "length": 32772
+      },
+      "compression_level": 0,
+      "stored_md5": "511a0bdb3588a3fd040f1adaa715b25b",
+      "stored_sha1": "5ff3a95088776db3c1d4e44cb89c1f5773f8b57a",
+      "stored_hash_md5": "511a0bdb3588a3fd040f1adaa715b25b",
+      "volume": {
+        "media_type": 1,
+        "chunks": 256,
+        "spc": 64,
+        "bps": 512,
+        "sectors": 16384,
+        "chs": [
+          0,
+          0,
+          0
+        ],
+        "media_flags": 3,
+        "palm_start_sector": 0,
+        "legacy_log_start_sector": 0,
+        "compression_level": 0,
+        "error_granularity": 64,
+        "set_identifier": "00000000000000000000000000000000",
+        "signature": "0000000000",
+        "nonzero_unknown_regions": [],
+        "section_type": "volume"
+      },
+      "header2": {
+        "a": "Minutiae EWF test disk",
+        "c": "MINUTIAE-EWF-1",
+        "n": "EV-0001",
+        "e": "Test Examiner",
+        "t": "Fixture generated for tests",
+        "md": "",
+        "sn": "",
+        "av": "20140816",
+        "ov": "Linux",
+        "m": "1700000000",
+        "u": "1700000000",
+        "p": "0",
+        "dc": ""
+      },
+      "header": {
+        "c": "MINUTIAE-EWF-1",
+        "n": "EV-0001",
+        "a": "Minutiae EWF test disk",
+        "e": "Test Examiner",
+        "t": "Fixture generated for tests",
+        "av": "20140816",
+        "ov": "Linux",
+        "m": "2023 11 14 22 13 20",
+        "u": "2023 11 14 22 13 20",
+        "p": "0"
+      },
+      "tables": [
+        {
+          "segment": 1,
+          "offset": 2066731,
+          "entries": 63,
+          "base_offset": 2019,
+          "footer": true,
+          "compressed": 0,
+          "uncompressed": 63,
+          "first_chunk": 0
+        },
+        {
+          "segment": 2,
+          "offset": 2065853,
+          "entries": 63,
+          "base_offset": 1141,
+          "footer": true,
+          "compressed": 0,
+          "uncompressed": 63,
+          "first_chunk": 63
+        },
+        {
+          "segment": 3,
+          "offset": 2065853,
+          "entries": 63,
+          "base_offset": 1141,
+          "footer": true,
+          "compressed": 0,
+          "uncompressed": 63,
+          "first_chunk": 126
+        },
+        {
+          "segment": 4,
+          "offset": 2065853,
+          "entries": 63,
+          "base_offset": 1141,
+          "footer": true,
+          "compressed": 0,
+          "uncompressed": 63,
+          "first_chunk": 189
+        },
+        {
+          "segment": 5,
+          "offset": 132305,
+          "entries": 4,
+          "base_offset": 1141,
+          "footer": true,
+          "compressed": 0,
+          "uncompressed": 4,
+          "first_chunk": 252
+        }
+      ],
+      "sections": [
+        {
+          "segment": 1,
+          "type": "header2",
+          "offset": 13,
+          "next": 341,
+          "size": 328
+        },
+        {
+          "segment": 1,
+          "type": "header2",
+          "offset": 341,
+          "next": 669,
+          "size": 328
+        },
+        {
+          "segment": 1,
+          "type": "header",
+          "offset": 669,
+          "next": 891,
+          "size": 222
+        },
+        {
+          "segment": 1,
+          "type": "volume",
+          "offset": 891,
+          "next": 2019,
+          "size": 1128
+        },
+        {
+          "segment": 1,
+          "type": "sectors",
+          "offset": 2019,
+          "next": 2066731,
+          "size": 2064712
+        },
+        {
+          "segment": 1,
+          "type": "table",
+          "offset": 2066731,
+          "next": 2067087,
+          "size": 356
+        },
+        {
+          "segment": 1,
+          "type": "table2",
+          "offset": 2067087,
+          "next": 2067443,
+          "size": 356
+        },
+        {
+          "segment": 1,
+          "type": "next",
+          "offset": 2067443,
+          "next": 2067443,
+          "size": 0
+        },
+        {
+          "segment": 2,
+          "type": "data",
+          "offset": 13,
+          "next": 1141,
+          "size": 1128
+        },
+        {
+          "segment": 2,
+          "type": "sectors",
+          "offset": 1141,
+          "next": 2065853,
+          "size": 2064712
+        },
+        {
+          "segment": 2,
+          "type": "table",
+          "offset": 2065853,
+          "next": 2066209,
+          "size": 356
+        },
+        {
+          "segment": 2,
+          "type": "table2",
+          "offset": 2066209,
+          "next": 2066565,
+          "size": 356
+        },
+        {
+          "segment": 2,
+          "type": "next",
+          "offset": 2066565,
+          "next": 2066565,
+          "size": 0
+        },
+        {
+          "segment": 3,
+          "type": "data",
+          "offset": 13,
+          "next": 1141,
+          "size": 1128
+        },
+        {
+          "segment": 3,
+          "type": "sectors",
+          "offset": 1141,
+          "next": 2065853,
+          "size": 2064712
+        },
+        {
+          "segment": 3,
+          "type": "table",
+          "offset": 2065853,
+          "next": 2066209,
+          "size": 356
+        },
+        {
+          "segment": 3,
+          "type": "table2",
+          "offset": 2066209,
+          "next": 2066565,
+          "size": 356
+        },
+        {
+          "segment": 3,
+          "type": "next",
+          "offset": 2066565,
+          "next": 2066565,
+          "size": 0
+        },
+        {
+          "segment": 4,
+          "type": "data",
+          "offset": 13,
+          "next": 1141,
+          "size": 1128
+        },
+        {
+          "segment": 4,
+          "type": "sectors",
+          "offset": 1141,
+          "next": 2065853,
+          "size": 2064712
+        },
+        {
+          "segment": 4,
+          "type": "table",
+          "offset": 2065853,
+          "next": 2066209,
+          "size": 356
+        },
+        {
+          "segment": 4,
+          "type": "table2",
+          "offset": 2066209,
+          "next": 2066565,
+          "size": 356
+        },
+        {
+          "segment": 4,
+          "type": "next",
+          "offset": 2066565,
+          "next": 2066565,
+          "size": 0
+        },
+        {
+          "segment": 5,
+          "type": "data",
+          "offset": 13,
+          "next": 1141,
+          "size": 1128
+        },
+        {
+          "segment": 5,
+          "type": "sectors",
+          "offset": 1141,
+          "next": 132305,
+          "size": 131164
+        },
+        {
+          "segment": 5,
+          "type": "table",
+          "offset": 132305,
+          "next": 132425,
+          "size": 120
+        },
+        {
+          "segment": 5,
+          "type": "table2",
+          "offset": 132425,
+          "next": 132545,
+          "size": 120
+        },
+        {
+          "segment": 5,
+          "type": "digest",
+          "offset": 132545,
+          "next": 132701,
+          "size": 156
+        },
+        {
+          "segment": 5,
+          "type": "hash",
+          "offset": 132701,
+          "next": 132813,
+          "size": 112
+        },
+        {
+          "segment": 5,
+          "type": "done",
+          "offset": 132813,
+          "next": 132813,
+          "size": 0
+        }
+      ],
+      "segment_files": [
+        {
+          "file": "ewf-multi-none.E01",
+          "number": 1,
+          "size": 2067519
+        },
+        {
+          "file": "ewf-multi-none.E02",
+          "number": 2,
+          "size": 2066641
+        },
+        {
+          "file": "ewf-multi-none.E03",
+          "number": 3,
+          "size": 2066641
+        },
+        {
+          "file": "ewf-multi-none.E04",
+          "number": 4,
+          "size": 2066641
+        },
+        {
+          "file": "ewf-multi-none.E05",
+          "number": 5,
+          "size": 132889
+        }
+      ],
+      "observations": {
+        "terminal_sizes": [
+          0
+        ],
+        "size_equals_next_minus_offset": true,
+        "section_order_by_segment": [
+          [
+            "header2",
+            "header2",
+            "header",
+            "volume",
+            "sectors",
+            "table",
+            "table2",
+            "next"
+          ],
+          [
+            "data",
+            "sectors",
+            "table",
+            "table2",
+            "next"
+          ],
+          [
+            "data",
+            "sectors",
+            "table",
+            "table2",
+            "next"
+          ],
+          [
+            "data",
+            "sectors",
+            "table",
+            "table2",
+            "next"
+          ],
+          [
+            "data",
+            "sectors",
+            "table",
+            "table2",
+            "digest",
+            "hash",
+            "done"
+          ]
+        ],
+        "table2_equals_table": true,
+        "base_offset_relation": [
+          "sectors_descriptor_offset"
+        ],
+        "table_footer": [
+          true
+        ],
+        "data_equals_volume": true,
+        "hash_md5_equals_digest_md5": true,
+        "table2_count": 5,
+        "data_section_count": 4,
+        "header_section_counts": {
+          "header2": 2,
+          "header": 1
+        },
+        "compressed_trailing_bytes": 0,
+        "last_compressed_chunk_of_table_ends_at_sectors_end": null
+      }
+    },
+    {
+      "name": "seed-small",
+      "files": [
+        {
+          "name": "ewf-seed-small.E01",
+          "size": 13441,
+          "sha256": "90cd5b5b9f2984bebf02d8393dc5865127caa8b7a35458b79f382aa8de72bc10"
+        }
+      ],
+      "segments": 1,
+      "media_size": 1048576,
+      "media_sha256": "6bfa7dcd912877c64448bbd62c6cc61bdd1b3ccb15bc4c4fb40830852b638085",
+      "bytes_per_sector": 512,
+      "sectors_per_chunk": 64,
+      "sectors": 2048,
+      "chunks": 32,
+      "compressed_chunks": 32,
+      "uncompressed_chunks": 0,
+      "chunk_kinds": "cccccccccccccccccccccccccccccccc",
+      "first_compressed_chunk": {
+        "chunk": 0,
+        "segment": 1,
+        "offset": 2095,
+        "length": 668
+      },
+      "first_uncompressed_chunk": null,
+      "compression_level": 2,
+      "stored_md5": "06257612c967b31981d89f0ff72e0dce",
+      "stored_sha1": "ddcea7c0d72bb033db76005107cf83add3e981ea",
+      "stored_hash_md5": "06257612c967b31981d89f0ff72e0dce",
+      "volume": {
+        "media_type": 1,
+        "chunks": 32,
+        "spc": 64,
+        "bps": 512,
+        "sectors": 2048,
+        "chs": [
+          0,
+          0,
+          0
+        ],
+        "media_flags": 3,
+        "palm_start_sector": 0,
+        "legacy_log_start_sector": 0,
+        "compression_level": 2,
+        "error_granularity": 64,
+        "set_identifier": "00000000000000000000000000000000",
+        "signature": "0000000000",
+        "nonzero_unknown_regions": [],
+        "section_type": "volume"
+      },
+      "header2": {
+        "a": "Minutiae EWF test disk",
+        "c": "MINUTIAE-EWF-1",
+        "n": "EV-0001",
+        "e": "Test Examiner",
+        "t": "Fixture generated for tests",
+        "md": "",
+        "sn": "",
+        "av": "20140816",
+        "ov": "Linux",
+        "m": "1700000000",
+        "u": "1700000000",
+        "p": "0",
+        "dc": ""
+      },
+      "header": {
+        "c": "MINUTIAE-EWF-1",
+        "n": "EV-0001",
+        "a": "Minutiae EWF test disk",
+        "e": "Test Examiner",
+        "t": "Fixture generated for tests",
+        "av": "20140816",
+        "ov": "Linux",
+        "m": "2023 11 14 22 13 20",
+        "u": "2023 11 14 22 13 20",
+        "p": "0"
+      },
+      "tables": [
+        {
+          "segment": 1,
+          "offset": 11505,
+          "entries": 32,
+          "base_offset": 2019,
+          "footer": true,
+          "compressed": 32,
+          "uncompressed": 0,
+          "first_chunk": 0
+        }
+      ],
+      "sections": [
+        {
+          "segment": 1,
+          "type": "header2",
+          "offset": 13,
+          "next": 341,
+          "size": 328
+        },
+        {
+          "segment": 1,
+          "type": "header2",
+          "offset": 341,
+          "next": 669,
+          "size": 328
+        },
+        {
+          "segment": 1,
+          "type": "header",
+          "offset": 669,
+          "next": 891,
+          "size": 222
+        },
+        {
+          "segment": 1,
+          "type": "volume",
+          "offset": 891,
+          "next": 2019,
+          "size": 1128
+        },
+        {
+          "segment": 1,
+          "type": "sectors",
+          "offset": 2019,
+          "next": 11505,
+          "size": 9486
+        },
+        {
+          "segment": 1,
+          "type": "table",
+          "offset": 11505,
+          "next": 11737,
+          "size": 232
+        },
+        {
+          "segment": 1,
+          "type": "table2",
+          "offset": 11737,
+          "next": 11969,
+          "size": 232
+        },
+        {
+          "segment": 1,
+          "type": "data",
+          "offset": 11969,
+          "next": 13097,
+          "size": 1128
+        },
+        {
+          "segment": 1,
+          "type": "digest",
+          "offset": 13097,
+          "next": 13253,
+          "size": 156
+        },
+        {
+          "segment": 1,
+          "type": "hash",
+          "offset": 13253,
+          "next": 13365,
+          "size": 112
+        },
+        {
+          "segment": 1,
+          "type": "done",
+          "offset": 13365,
+          "next": 13365,
+          "size": 0
+        }
+      ],
+      "segment_files": [
+        {
+          "file": "ewf-seed-small.E01",
+          "number": 1,
+          "size": 13441
+        }
+      ],
+      "observations": {
+        "terminal_sizes": [
+          0
+        ],
+        "size_equals_next_minus_offset": true,
+        "section_order_by_segment": [
+          [
+            "header2",
+            "header2",
+            "header",
+            "volume",
+            "sectors",
+            "table",
+            "table2",
+            "data",
+            "digest",
+            "hash",
+            "done"
+          ]
+        ],
+        "table2_equals_table": true,
+        "base_offset_relation": [
+          "sectors_descriptor_offset"
+        ],
+        "table_footer": [
+          true
+        ],
+        "data_equals_volume": true,
+        "hash_md5_equals_digest_md5": true,
+        "table2_count": 1,
+        "data_section_count": 1,
+        "header_section_counts": {
+          "header2": 2,
+          "header": 1
+        },
+        "compressed_trailing_bytes": 0,
+        "last_compressed_chunk_of_table_ends_at_sectors_end": true
+      }
+    }
+  ],
+  "generator": {
+    "image_sha256": "6450c874680197108b644616c3a78c4e6e261029d0ea59afe295e7f26a335fb6",
+    "packages": [
+      {
+        "package": "coreutils",
+        "version": "9.7-3"
+      },
+      {
+        "package": "ewf-tools",
+        "version": "20140816-1+b1"
+      },
+      {
+        "package": "faketime",
+        "version": "0.9.10+2024-06-05+gba9ed5b2-0.6"
+      },
+      {
+        "package": "fdisk",
+        "version": "2.41.5-0+deb13u1"
+      },
+      {
+        "package": "gdisk",
+        "version": "1.0.10-2"
+      },
+      {
+        "package": "gzip",
+        "version": "1.13-1+deb13u1"
+      },
+      {
+        "package": "jq",
+        "version": "1.7.1-6+deb13u4"
+      },
+      {
+        "package": "python3",
+        "version": "3.13.5-1"
+      },
+      {
+        "package": "util-linux",
+        "version": "2.41.5-0+deb13u1"
+      }
+    ],
+    "commands": [
+      "truncate -s 8388608 disk.img",
+      "sgdisk -a 1 -U 6f1c5b2e-3a4d-4e8b-9c07-1d2e3f405162 -n 1:40:12839 -t 1:8300 -c 1:ext4 -u 1:11111111-2222-4333-8444-555555555511 -n 2:12840:15719 -t 2:0700 -c 2:fat12 -u 2:11111111-2222-4333-8444-555555555512 disk.img",
+      "dd if=part1.img of=disk.img bs=512 seek=40 conv=notrunc status=none",
+      "dd if=part2.img of=disk.img bs=512 seek=12840 conv=notrunc status=none",
+      "sfdisk --json disk.img | jq <normalise to expect shape, plus source_fixture/source_size/source_sha256>",
+      "faketime -f '2023-11-14 22:13:20' ewfacquire -u -q -c none -b 64 -C MINUTIAE-EWF-1 -D Minutiae EWF test disk -e Test Examiner -E EV-0001 -N Fixture generated for tests -d sha1 -t ewf-single-none disk.img",
+      "faketime -f '2023-11-14 22:13:20' ewfacquire -u -q -c best -b 128 -C MINUTIAE-EWF-1 -D Minutiae EWF test disk -e Test Examiner -E EV-0001 -N Fixture generated for tests -d sha1 -t ewf-single-best disk.img",
+      "faketime -f '2023-11-14 22:13:20' ewfacquire -u -q -c none -b 64 -C MINUTIAE-EWF-1 -D Minutiae EWF test disk -e Test Examiner -E EV-0001 -N Fixture generated for tests -d sha1 -S 2097152 -t ewf-multi-none disk.img",
+      "faketime -f '2023-11-14 22:13:20' ewfacquire -u -q -c best -b 64 -C MINUTIAE-EWF-1 -D Minutiae EWF test disk -e Test Examiner -E EV-0001 -N Fixture generated for tests -d sha1 -B 1048576 -t ewf-seed-small disk.img",
+      "python3 /work/tools/fixtures/ewf_normalize.py ewf-single-none.E01",
+      "python3 tools/fixtures/ewf_inspect.py ewf-single-none.E01.. --raw disk.img ",
+      "ewfverify -q ewf-single-none.E01..",
+      "ewfinfo ewf-single-none.E01..",
+      "ewfexport -u -q -f raw -t export-single-none ewf-single-none.E01..",
+      "python3 /work/tools/fixtures/ewf_normalize.py ewf-single-best.E01",
+      "python3 tools/fixtures/ewf_inspect.py ewf-single-best.E01.. --raw disk.img ",
+      "ewfverify -q ewf-single-best.E01..",
+      "ewfinfo ewf-single-best.E01..",
+      "ewfexport -u -q -f raw -t export-single-best ewf-single-best.E01..",
+      "python3 /work/tools/fixtures/ewf_normalize.py ewf-multi-none.E01 ewf-multi-none.E02 ewf-multi-none.E03 ewf-multi-none.E04 ewf-multi-none.E05",
+      "python3 tools/fixtures/ewf_inspect.py ewf-multi-none.E01.. --raw disk.img ",
+      "ewfverify -q ewf-multi-none.E01..",
+      "ewfinfo ewf-multi-none.E01..",
+      "ewfexport -u -q -f raw -t export-multi-none ewf-multi-none.E01..",
+      "python3 /work/tools/fixtures/ewf_normalize.py ewf-seed-small.E01",
+      "python3 tools/fixtures/ewf_inspect.py ewf-seed-small.E01.. --raw disk.img --raw-bytes 1048576",
+      "ewfverify -q ewf-seed-small.E01..",
+      "ewfinfo ewf-seed-small.E01..",
+      "ewfexport -u -q -f raw -t export-seed-small ewf-seed-small.E01.."
+    ]
+  }
+}

@@ -1,0 +1,281 @@
+{
+  "generator": {
+    "image_sha256": "76efe6ae02c91bf30c2f132f4cb8ef2f4ec01bfe508ea950225ebb7efdc50e3c",
+    "packages": [
+      {
+        "package": "coreutils",
+        "version": "9.1-1"
+      },
+      {
+        "package": "faketime",
+        "version": "0.9.10-2.1"
+      },
+      {
+        "package": "gzip",
+        "version": "1.12-1"
+      },
+      {
+        "package": "hfsprogs",
+        "version": "540.1.linux3-5+b1"
+      },
+      {
+        "package": "jq",
+        "version": "1.6-2.1+deb12u2"
+      },
+      {
+        "package": "python3",
+        "version": "3.11.2-1+b1"
+      },
+      {
+        "package": "util-linux",
+        "version": "2.38.1-5+deb12u3"
+      }
+    ],
+    "commands": [
+      "truncate -s 8M <img>",
+      "faketime -f '2023-11-14 22:13:20' mkfs.hfsplus  -v FIXTURE <img>",
+      "python3 tools/fixtures/hfsplus_normalize.py <img> 4d494e5554494145",
+      "python3 tools/fixtures/hfsplus_oracle.py <img> --type hfsplus --label FIXTURE --block-size 4096 --journaled 0 --volume-id 4d494e5554494145 --create-unix 1700000000    # also runs fsck.hfsplus -n -f and blkid -p -o export"
+    ],
+    "note": "Empty volume made by mkfs.hfsplus (hfsprogs): real root folder, system files and, with -J, the real journal files. No populated multi-level tree, hard links, attributes, fragmented files, overflow extents, decomposed Unicode or deletions: nothing in hfsprogs copies files in and the Docker Desktop kernel has no hfsplus driver (populated: false). The volume id (finderInfo words 6-7) is normalized by hfsplus_normalize.py; mkfs draws it at random."
+  },
+  "type": "hfsplus",
+  "label": "FIXTURE",
+  "uuid": "40a4a02f-f135-34c6-8888-2a0ad4f46806",
+  "volume_id": "4d494e5554494145",
+  "block_size": 4096,
+  "size": 8388608,
+  "image_size": 8388608,
+  "volume_offset": 0,
+  "wrapper": null,
+  "total_blocks": 2048,
+  "case_sensitive": false,
+  "journaled": false,
+  "attributes": 2147483904,
+  "version": 4,
+  "create_date": 1700000000,
+  "file_count": 0,
+  "folder_count": 0,
+  "next_catalog_id": 16,
+  "journal_info_block": 0,
+  "system_files": {
+    "allocation": {
+      "logical_size": 4096,
+      "total_blocks": 1,
+      "extents": [
+        [
+          1,
+          1
+        ]
+      ]
+    },
+    "extents": {
+      "logical_size": 65536,
+      "total_blocks": 16,
+      "extents": [
+        [
+          2,
+          16
+        ]
+      ]
+    },
+    "catalog": {
+      "logical_size": 65536,
+      "total_blocks": 16,
+      "extents": [
+        [
+          194,
+          16
+        ]
+      ]
+    },
+    "attributes": {
+      "logical_size": 65536,
+      "total_blocks": 16,
+      "extents": [
+        [
+          18,
+          16
+        ]
+      ]
+    },
+    "startup": {
+      "logical_size": 0,
+      "total_blocks": 0,
+      "extents": []
+    }
+  },
+  "catalog": {
+    "node_size": 4096,
+    "depth": 1,
+    "root_node": 1,
+    "leaf_records": 2,
+    "total_nodes": 16,
+    "free_nodes": 14,
+    "max_key_length": 516,
+    "key_compare_type": 207,
+    "records_walked": 2
+  },
+  "extents_tree": {
+    "node_size": 4096,
+    "depth": 0,
+    "root_node": 0,
+    "leaf_records": 0,
+    "total_nodes": 16,
+    "free_nodes": 15,
+    "max_key_length": 10,
+    "key_compare_type": 0,
+    "records_walked": 0
+  },
+  "attributes_tree": {
+    "node_size": 8192,
+    "depth": 0,
+    "root_node": 0,
+    "leaf_records": 0,
+    "total_nodes": 8,
+    "free_nodes": 7,
+    "max_key_length": 266,
+    "key_compare_type": 0,
+    "records_walked": 0
+  },
+  "free_count": 1997,
+  "free_blocks": [
+    [
+      34,
+      193
+    ],
+    [
+      210,
+      2046
+    ]
+  ],
+  "populated": false,
+  "files": [
+    {
+      "path": "/",
+      "type": "dir",
+      "cnid": 2,
+      "parent_cnid": 1,
+      "name": "",
+      "mode": 0,
+      "file_mode": 0,
+      "uid": 0,
+      "gid": 0,
+      "created": 1700000000,
+      "modified": 1700000000,
+      "changed": null,
+      "accessed": null,
+      "backup": null,
+      "size": 0,
+      "sha256": "",
+      "valence": 0,
+      "volume_name": "FIXTURE"
+    }
+  ],
+  "journal": null,
+  "external_tools": {
+    "fsck": {
+      "exit": 0,
+      "known_issues": []
+    },
+    "blkid": {
+      "TYPE": "hfsplus",
+      "LABEL": "FIXTURE",
+      "UUID": "40a4a02f-f135-34c6-8888-2a0ad4f46806"
+    }
+  },
+  "checks": [
+    "signature H+",
+    "header version",
+    "block size as requested",
+    "totalBlocks covers the volume",
+    "boot blocks are zero",
+    "alternate volume header equals the primary",
+    "volume id (finderInfo[6..7]) as written",
+    "createDate is the frozen clock",
+    "journaled attribute bit (0x2000)",
+    "volume unmounted cleanly (0x100)",
+    "volume not inconsistent (0x800)",
+    "journalInfoBlock set iff journaled",
+    "fork allocation: inline extents cover all blocks",
+    "fork allocation logicalSize fits its blocks",
+    "fork extents: inline extents cover all blocks",
+    "fork extents logicalSize fits its blocks",
+    "fork catalog: inline extents cover all blocks",
+    "fork catalog logicalSize fits its blocks",
+    "fork attributes: inline extents cover all blocks",
+    "fork attributes logicalSize fits its blocks",
+    "fork startup: inline extents cover all blocks",
+    "fork startup logicalSize fits its blocks",
+    "allocation file covers every block",
+    "bitmap popcount = totalBlocks - freeBlocks",
+    "catalog: node size is a power of two",
+    "catalog: node 0 is a header node",
+    "catalog: nodeSize",
+    "catalog: file holds totalNodes nodes",
+    "catalog: record offsets ascending in node 0",
+    "catalog: record offsets ascending in node 0",
+    "catalog: record offsets ascending in node 0",
+    "catalog: node map popcount = totalNodes - freeNodes",
+    "catalog B-tree type",
+    "catalog key compare type",
+    "catalog uses big keys and variable index keys (0x2|0x4)",
+    "catalog: leaf chain sane",
+    "catalog: chain node 1 is a leaf",
+    "catalog: leaf bLink",
+    "catalog: last leaf",
+    "catalog: walk depth",
+    "catalog: node 1 height",
+    "catalog: top-down walk and leaf chain visit the same leaves",
+    "catalog: record offsets ascending in node 1",
+    "catalog: record offsets ascending in node 1",
+    "catalog: leafRecords = records walked",
+    "key length = parentID + name field",
+    "folder record is 88 bytes",
+    "key length = parentID + name field",
+    "thread key has an empty name",
+    "catalog keys strictly increasing",
+    "root folder (CNID 2) with parent 1",
+    "CNIDs unique",
+    "every file and folder has exactly one thread record, and nothing else has",
+    "thread type matches record type for CNID 2",
+    "thread points back at the record for CNID 2",
+    "valence of folder 2 = number of children",
+    "fileCount = file records",
+    "folderCount = folder records, root not counted",
+    "nextCatalogID above every CNID",
+    "extents overflow: node size is a power of two",
+    "extents overflow: node 0 is a header node",
+    "extents overflow: nodeSize",
+    "extents overflow: file holds totalNodes nodes",
+    "extents overflow: record offsets ascending in node 0",
+    "extents overflow: record offsets ascending in node 0",
+    "extents overflow: record offsets ascending in node 0",
+    "extents overflow: node map popcount = totalNodes - freeNodes",
+    "extents overflow: top-down walk and leaf chain visit the same leaves",
+    "extents overflow: leafRecords = records walked",
+    "extents overflow file has no records (no fork needs overflow extents)",
+    "attributes: node size is a power of two",
+    "attributes: node 0 is a header node",
+    "attributes: nodeSize",
+    "attributes: file holds totalNodes nodes",
+    "attributes: record offsets ascending in node 0",
+    "attributes: record offsets ascending in node 0",
+    "attributes: record offsets ascending in node 0",
+    "attributes: node map popcount = totalNodes - freeNodes",
+    "attributes: top-down walk and leaf chain visit the same leaves",
+    "attributes: leafRecords = records walked",
+    "allocated blocks = headers + special files + catalog file forks, exactly",
+    "no block belongs to two forks",
+    "free ranges sum to freeBlocks",
+    "root folder (volume) name = label",
+    "fsck.hfsplus -n -f: volume appears to be OK (exit 0)",
+    "fsck.hfsplus reports journaled iff journaled",
+    "fsck.hfsplus detects a case-sensitive volume iff HFSX",
+    "blkid -p succeeds",
+    "blkid TYPE=hfsplus",
+    "blkid LABEL = label",
+    "blkid UUID = MD5(Apple namespace + volume id), version 3",
+    "image unchanged by the read-only tools"
+  ]
+}

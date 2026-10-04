@@ -17,6 +17,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/filesys/ext4/ext4test"
 	"github.com/rbenzing/minutiae/internal/filesys/f2fs/f2fstest"
 	"github.com/rbenzing/minutiae/internal/filesys/fat/fattest"
+	"github.com/rbenzing/minutiae/internal/filesys/hfsplus/hfsplustest"
 )
 
 // gunzipFixture returns the decompressed image of a committed fixture in
@@ -47,7 +48,7 @@ func TestDriversClaimExactlyTheirOwnImages(t *testing.T) {
 	for _, d := range detect.Drivers {
 		names = append(names, d.Name)
 	}
-	if want := []string{"apfs", "f2fs", "ext4", "exfat", "fat", "f2fs-backup"}; !slices.Equal(names, want) {
+	if want := []string{"apfs", "f2fs", "ext4", "exfat", "hfsplus", "fat", "f2fs-backup"}; !slices.Equal(names, want) {
 		t.Fatalf("driver order = %v, want %v", names, want)
 	}
 
@@ -61,12 +62,19 @@ func TestDriversClaimExactlyTheirOwnImages(t *testing.T) {
 	images := map[string]image{
 		"builder f2fs": {img: f2fstest.Build(f2fstest.Options{Segments: 2, Label: "data"}, []f2fstest.File{{Path: "/a.txt", Data: []byte("a"), Inline: true}}), want: "f2fs", typ: "f2fs"},
 		"builder f2fs with a blank second checkpoint": {img: f2fstest.Build(f2fstest.Options{Segments: 1, NoPack2: true}, nil), want: "f2fs", typ: "f2fs"},
-		"builder ext4":  {img: ext4test.Build(ext4test.Options{Extents: true}, nil), want: "ext4", typ: "ext4"},
-		"builder exfat": {img: exfattest.Build(exfattest.Options{}, nil), want: "exfat", typ: "exfat"},
-		"builder fat12": {img: fattest.Build(fattest.Options{Type: 12}, nil), want: "fat", typ: "fat12"},
-		"builder fat16": {img: fattest.Build(fattest.Options{Type: 16}, nil), want: "fat", typ: "fat16"},
-		"builder fat32": {img: fattest.Build(fattest.Options{Type: 32}, nil), want: "fat", typ: "fat32"},
-		"builder apfs":  {img: apfstest.Build(apfstest.Options{Blocks: 2048, Volumes: []apfstest.Volume{apfsVolume}}), want: "apfs", typ: "apfs"},
+
+		"builder ext4":              {img: ext4test.Build(ext4test.Options{Extents: true}, nil), want: "ext4", typ: "ext4"},
+		"builder exfat":             {img: exfattest.Build(exfattest.Options{}, nil), want: "exfat", typ: "exfat"},
+		"builder fat12":             {img: fattest.Build(fattest.Options{Type: 12}, nil), want: "fat", typ: "fat12"},
+		"builder fat16":             {img: fattest.Build(fattest.Options{Type: 16}, nil), want: "fat", typ: "fat16"},
+		"builder fat32":             {img: fattest.Build(fattest.Options{Type: 32}, nil), want: "fat", typ: "fat32"},
+		"builder apfs":              {img: apfstest.Build(apfstest.Options{Blocks: 2048, Volumes: []apfstest.Volume{apfsVolume}}), want: "apfs", typ: "apfs"},
+		"builder hfsplus":           {img: hfsplustest.Build(hfsplustest.Options{Label: "H"}, nil), want: "hfsplus", typ: "hfsplus"},
+		"builder hfsplus journaled": {img: hfsplustest.Build(hfsplustest.Options{Label: "H", Journaled: true}, nil), want: "hfsplus", typ: "hfsplus"},
+		"builder hfsx":              {img: hfsplustest.Build(hfsplustest.Options{Label: "H", HFSX: true, CaseSensitive: true}, nil), want: "hfsplus", typ: "hfsx"},
+		"builder hfsplus wrapped":   {img: hfsplustest.Build(hfsplustest.Options{Label: "H", Wrapper: true}, nil), want: "hfsplus", typ: "hfsplus"},
+		"builder hfsx wrapped":      {img: hfsplustest.Build(hfsplustest.Options{Label: "H", HFSX: true, Wrapper: true}, nil), want: "hfsplus", typ: "hfsx"},
+
 		"builder apfs, two checkpoints, CAB layer": {img: apfstest.Build(apfstest.Options{Blocks: 2048, Checkpoints: 2, ChunksPerCIB: 1, CibsPerCAB: 1}), want: "apfs", typ: "apfs"},
 		"builder apfs, 64 KiB blocks":              {img: apfstest.Build(apfstest.Options{BlockSize: 65536, Blocks: 256}), want: "apfs", typ: "apfs"},
 	}
@@ -83,6 +91,11 @@ func TestDriversClaimExactlyTheirOwnImages(t *testing.T) {
 		"real fat32":           {"../fat/testdata/fat32.img.gz", "fat", "fat32"},
 		"real exfat":           {"../exfat/testdata/exfat.img.gz", "exfat", "exfat"},
 		"real f2fs":            {"../f2fs/testdata/f2fs-default.img.gz", "f2fs", "f2fs"},
+		"real hfsplus":         {"../hfsplus/testdata/hfsplus-empty.img.gz", "hfsplus", "hfsplus"},
+		"real hfsplus 1k":      {"../hfsplus/testdata/hfsplus-1k.img.gz", "hfsplus", "hfsplus"},
+		"real hfsplus journal": {"../hfsplus/testdata/hfsplus-journal.img.gz", "hfsplus", "hfsplus"},
+		"real hfsplus wrapped": {"../hfsplus/testdata/hfsplus-wrapped.img.gz", "hfsplus", "hfsplus"},
+		"real hfsx":            {"../hfsplus/testdata/hfsx-empty.img.gz", "hfsplus", "hfsx"},
 		"real f2fs extra attr": {"../f2fs/testdata/f2fs-extra-attr.img.gz", "f2fs", "f2fs"},
 	} {
 		images[name] = image{img: gunzipFixture(t, f.path), want: f.want, typ: f.typ}
@@ -118,6 +131,9 @@ func TestDriversClaimExactlyTheirOwnImages(t *testing.T) {
 			}
 			if got := fsys.Info().Type; got != tc.typ {
 				t.Errorf("Info().Type = %q, want %q", got, tc.typ)
+			}
+			if w := fsys.Info().Warnings; slices.ContainsFunc(w, func(s string) bool { return strings.Contains(s, "ambiguous signatures") }) {
+				t.Errorf("a clean image carries an ambiguity note: %q", w)
 			}
 		})
 	}
@@ -366,4 +382,63 @@ func zeroOffsets(img []byte, n int) []int {
 		}
 	}
 	return out
+}
+
+// An HFS+, HFSX and wrapped HFS+ image is detected as the hfsplus driver and
+// opens with Info().Type hfsplus or hfsx; the images of every other driver are
+// still detected as themselves (TestDriversClaimExactlyTheirOwnImages claims
+// each image by exactly one driver), and none of them opens as HFS+.
+func TestDetectOpensHFSPlus(t *testing.T) {
+	for name, tc := range map[string]struct {
+		img  []byte
+		typ  string
+		wrap bool
+	}{
+		"hfsplus": {hfsplustest.Build(hfsplustest.Options{Label: "H"}, nil), "hfsplus", false},
+		"hfsx":    {hfsplustest.Build(hfsplustest.Options{Label: "H", HFSX: true, CaseSensitive: true}, nil), "hfsx", false},
+		"wrapped": {hfsplustest.Build(hfsplustest.Options{Label: "H", Wrapper: true}, nil), "hfsplus", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := bytes.NewReader(tc.img)
+			size := int64(len(tc.img))
+			if got, ok := detect.Probe(r, size); !ok || got != "hfsplus" {
+				t.Fatalf("Probe = %q, %v; want hfsplus", got, ok)
+			}
+			fsys, err := detect.Open(r, size)
+			if err != nil {
+				t.Fatal(err)
+			}
+			info := fsys.Info()
+			if info.Type != tc.typ || info.Label != "H" {
+				t.Errorf("Info = %+v, want type %s label H", info, tc.typ)
+			}
+			if tc.wrap && !slices.Contains(info.Features, "hfs-wrapper") {
+				t.Errorf("Features = %v, want hfs-wrapper", info.Features)
+			}
+			if _, err := fsys.Unallocated(); err != nil {
+				t.Errorf("Unallocated: %v", err)
+			}
+		})
+	}
+	for name, tc := range map[string]struct {
+		img    []byte
+		driver string
+	}{
+		"ext4":  {ext4test.Build(ext4test.Options{Extents: true}, nil), "ext4"},
+		"f2fs":  {f2fstest.Build(f2fstest.Options{Segments: 2}, nil), "f2fs"},
+		"exfat": {exfattest.Build(exfattest.Options{}, nil), "exfat"},
+		"fat32": {fattest.Build(fattest.Options{Type: 32}, nil), "fat"},
+	} {
+		img := tc.img
+		if got, ok := detect.Probe(bytes.NewReader(img), int64(len(img))); !ok || got != tc.driver {
+			t.Errorf("%s image: Probe = %q, %v; want %s", name, got, ok, tc.driver)
+		}
+		fsys, err := detect.Open(bytes.NewReader(img), int64(len(img)))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if typ := fsys.Info().Type; typ == "hfsplus" || typ == "hfsx" {
+			t.Errorf("%s image opened as %s", name, typ)
+		}
+	}
 }
