@@ -12,6 +12,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/filesys/detect"
 	"github.com/rbenzing/minutiae/internal/filesys/ext4/ext4test"
+	"github.com/rbenzing/minutiae/internal/filesys/f2fs/f2fstest"
 	"github.com/rbenzing/minutiae/internal/filesys/fstest"
 )
 
@@ -263,5 +264,97 @@ func TestDetectExt4OpenFailureIsUntypedNil(t *testing.T) {
 	}
 	if f, err := detect.Open(bytes.NewReader(img), int64(len(img))); f != nil || err == nil {
 		t.Errorf("detect.Open = %v, %v", f, err)
+	}
+}
+
+// An F2FS image (builder-made and real) is detected as f2fs, an ext4 image
+// still as ext4, and the opened filesystem works end to end.
+func TestDetectOpensF2FS(t *testing.T) {
+	img := f2fstest.Build(f2fstest.Options{Segments: 2, Label: "userdata"},
+		[]f2fstest.File{{Path: "/hello.txt", Data: []byte("hello"), Inline: true}, {Path: "/big.bin", Data: bytes.Repeat([]byte{7}, 9000)}})
+	r := bytes.NewReader(img)
+	if name, ok := detect.Probe(r, int64(len(img))); !ok || name != "f2fs" {
+		t.Fatalf("Probe = %q, %v; want f2fs", name, ok)
+	}
+	fsys, err := detect.Open(r, int64(len(img)))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if info := fsys.Info(); info.Type != "f2fs" || info.Label != "userdata" {
+		t.Errorf("Info = %+v, want type f2fs label userdata", info)
+	}
+	e, err := fsys.Lookup("/hello.txt")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	f, err := fsys.Open(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]byte, f.Size())
+	if _, err := f.ReadAt(got, 0); err != nil && !errors.Is(err, io.EOF) || string(got) != "hello" {
+		t.Errorf("content = %q, %v", got, err)
+	}
+	runs, err := fsys.Unallocated()
+	if err != nil || len(runs) == 0 {
+		t.Fatalf("Unallocated = %v, %v", runs, err)
+	}
+	// The big file's blocks are not free.
+	big, err := fsys.Lookup("/big.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bf, err := fsys.Open(big)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, br := range bf.Runs() {
+		for _, fr := range runs {
+			if br.Offset < fr.Offset+fr.Length && fr.Offset < br.Offset+br.Length {
+				t.Errorf("free run %+v overlaps the file's run %+v", fr, br)
+			}
+		}
+	}
+
+	// An ext4 image is still ext4.
+	ext := ext4test.Build(ext4test.Options{Extents: true}, nil)
+	if name, ok := detect.Probe(bytes.NewReader(ext), int64(len(ext))); !ok || name != "ext4" {
+		t.Errorf("ext4 image: Probe = %q, %v; want ext4", name, ok)
+	}
+	fsys, err = detect.Open(bytes.NewReader(ext), int64(len(ext)))
+	if err != nil || fsys.Info().Type != "ext4" {
+		t.Errorf("ext4 image: Open = %v, %v", fsys, err)
+	}
+	if !slices.ContainsFunc(detect.Drivers, func(d detect.Driver) bool { return d.Name == "f2fs" }) {
+		t.Error("f2fs is not registered")
+	}
+}
+
+// An image that probes as F2FS but cannot be opened yields an untyped nil
+// FileSystem with the error from the registered driver.
+func TestDetectF2FSOpenFailureIsUntypedNil(t *testing.T) {
+	img := make([]byte, 8192)
+	binary.LittleEndian.PutUint32(img[1024:], 0xF2F52010) // magic
+	binary.LittleEndian.PutUint16(img[1024+4:], 1)        // major_ver
+	binary.LittleEndian.PutUint32(img[1024+16:], 12)      // log_blocksize
+	var d *detect.Driver
+	for i := range detect.Drivers {
+		if detect.Drivers[i].Name == "f2fs" {
+			d = &detect.Drivers[i]
+		}
+	}
+	if d == nil || !d.Probe(bytes.NewReader(img), int64(len(img))) {
+		t.Fatalf("setup: f2fs driver %v does not probe the image", d)
+	}
+	fsys, err := d.Open(bytes.NewReader(img), int64(len(img)))
+	if err == nil || fsys != nil {
+		t.Fatalf("Open = %v, %v; want a nil FileSystem and an error", fsys, err)
+	}
+	var ce *filesys.CorruptError
+	if !errors.As(err, &ce) {
+		t.Errorf("error %v is not a *filesys.CorruptError", err)
+	}
+	if _, err := detect.Open(bytes.NewReader(img), int64(len(img))); err == nil {
+		t.Error("detect.Open succeeded on a corrupt f2fs image")
 	}
 }

@@ -112,6 +112,17 @@ type Options struct {
 
 	// Data are file data blocks placed at absolute block addresses.
 	Data []DataBlock
+
+	// SIT: unless NoSIT, the SIT marks every main-area block placed by Nodes
+	// and Data as valid (the entries live in the SIT block copy that SITBitmap
+	// selects). SIT entries replace the computed entry of their segment;
+	// SITJournal entries (at most 6) go into the cold-data summary's journal
+	// of both checkpoint packs. SITDecoy fills the copy SITBitmap does not
+	// select with entries that describe every segment as fully valid.
+	SIT        []SITEntry
+	SITJournal []SITEntry
+	NoSIT      bool
+	SITDecoy   bool
 }
 
 // NATEntry is a struct f2fs_nat_entry (with its nid when journalled).
@@ -251,6 +262,7 @@ func build(o Options) []byte {
 	}
 	writeNodes(img, o, l)
 	writeData(img, o)
+	writeSIT(img, o, l)
 	return img
 }
 
@@ -385,8 +397,8 @@ func writePack(img []byte, o Options, l Layout, base uint32, ver uint64) {
 	// Data summaries: hot (NAT journal), warm, cold (SIT journal); footer
 	// entry_type SUM_TYPE_DATA = 0. Node summaries follow, SUM_TYPE_NODE = 1.
 	// Compacted, the data summaries are one block that starts with the NAT
-	// journal (507 bytes) then the SIT journal (507 bytes). The SIT journal is
-	// empty (n_sits = 0).
+	// journal (507 bytes) then the SIT journal (507 bytes); the SIT journal is
+	// written by writeSITJournal (empty unless Options.SITJournal is set).
 	if len(o.NATJournal) > natJournalEntries {
 		panic("f2fstest: the NAT journal holds at most 38 entries")
 	}
@@ -400,6 +412,7 @@ func writePack(img []byte, o Options, l Layout, base uint32, ver uint64) {
 		le.PutUint32(img[p:], e.NID)
 		putNATEntry(img[p+4:], e)
 	}
+	writeSITJournal(img, o, l, base)
 	for i := range 3 {
 		img[(int(base+l.StartSum+l.DataSums)+i)*BlockSize+BlockSize-5] = 1
 	}

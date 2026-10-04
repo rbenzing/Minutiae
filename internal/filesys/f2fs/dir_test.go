@@ -25,11 +25,6 @@ func treeFS(t *testing.T, o f2fstest.Options, files []f2fstest.File) (*f2fs.FS, 
 	return mustOpen(t, img), img, tree
 }
 
-// walkable adds the Unallocated method (a later task) so Walk accepts the FS.
-type walkable struct{ *f2fs.FS }
-
-func (walkable) Unallocated() ([]filesys.Run, error) { return nil, nil }
-
 func nidID(n uint32) string { return fmt.Sprintf("nid:%d", n) }
 
 func entryNames(es []filesys.Entry) []string {
@@ -765,7 +760,7 @@ func TestDirHostile(t *testing.T) {
 		setDentryBlock(t, img, tree, "/d", 0, blk)
 		f := mustOpen(t, img)
 		n, cycles := 0, 0
-		err := filesys.Walk(walkable{f}, f.Root(), "/", func(_ string, _ filesys.Entry, err error) error {
+		err := filesys.Walk(f, f.Root(), "/", func(_ string, _ filesys.Entry, err error) error {
 			if n++; n > 100 {
 				t.Fatal("walk does not terminate")
 			}
@@ -801,7 +796,7 @@ func TestWalkWholeTree(t *testing.T) {
 		deleted bool
 	}
 	got := map[string]rec{}
-	err := filesys.Walk(walkable{f}, f.Root(), "/", func(p string, e filesys.Entry, err error) error {
+	err := filesys.Walk(f, f.Root(), "/", func(p string, e filesys.Entry, err error) error {
 		if err != nil {
 			t.Errorf("%s: %v", p, err)
 			return nil
@@ -985,7 +980,7 @@ func TestFixtureTreeMatchesOracle(t *testing.T) {
 				wantSet[o.Path] = rec{o.Type, o.Size, o.Mode, o.Mtime}
 			}
 			got := map[string]rec{}
-			err := filesys.Walk(walkable{f}, f.Root(), "/", func(p string, e filesys.Entry, err error) error {
+			err := filesys.Walk(f, f.Root(), "/", func(p string, e filesys.Entry, err error) error {
 				if err != nil {
 					t.Errorf("%s: %v", p, err)
 					return nil

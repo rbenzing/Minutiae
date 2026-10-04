@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/filesys/f2fs"
 )
 
@@ -71,7 +72,11 @@ type oracle struct {
 		Mode  uint32 `json:"mode"`
 		Mtime int64  `json:"mtime"`
 	} `json:"files"`
-	Checkpoint struct {
+	FileBlocks     map[string][][2]int64 `json:"file_blocks"`
+	FreeBlocks     [][2]int64            `json:"free_blocks"`
+	FreeBlockCount int64                 `json:"free_block_count"`
+	MainBlocks     int64                 `json:"main_blocks"`
+	Checkpoint     struct {
 		Version      uint64 `json:"checkpoint_ver"`
 		UserBlocks   uint64 `json:"user_block_count"`
 		ValidBlocks  uint64 `json:"valid_block_count"`
@@ -127,8 +132,9 @@ func loadOracle(t testing.TB, imgGz string) oracle {
 
 // TestF2FSMatchesOracle opens each real mkfs.f2fs/sload.f2fs fixture and
 // compares what the reader decoded with the oracle: Info, the superblock
-// geometry and the chosen checkpoint. (Directory, file and Unallocated
-// comparisons are added by the later tasks that implement those readers.)
+// geometry, the chosen checkpoint, the inode addresses and Unallocated (exactly
+// the free blocks of the SIT bitmaps). Directory and file comparisons live in
+// dir_test.go and data_test.go.
 func TestF2FSMatchesOracle(t *testing.T) {
 	for _, path := range fixturePaths(t) {
 		name := strings.TrimSuffix(filepath.Base(path), ".img.gz")
@@ -151,6 +157,7 @@ func TestF2FSMatchesOracle(t *testing.T) {
 			checkGeometry(t, fsys, want)
 			checkCheckpoint(t, fsys, want)
 			checkInodes(t, fsys, want)
+			checkUnallocated(t, fsys, want)
 		})
 	}
 }
@@ -275,6 +282,77 @@ func checkInodes(t *testing.T, fsys *f2fs.FS, want oracle) {
 		}
 		if got := v.Times.Modified.T.Unix(); got != f.Mtime {
 			t.Errorf("%s: mtime %d, want %d", in.Path, got, f.Mtime)
+		}
+	}
+}
+
+// checkUnallocated compares Unallocated exactly with the free main-area blocks
+// the oracle derived from the SIT valid bitmaps by the external tools
+// (ranges and count), and checks that no free run overlaps a block of a live
+// file: the data blocks the oracle lists, the node blocks of every inode and
+// the data runs the reader reports for every regular file.
+func checkUnallocated(t *testing.T, fsys *f2fs.FS, want oracle) {
+	t.Helper()
+	runs, err := fsys.Unallocated()
+	if err != nil {
+		t.Fatalf("Unallocated: %v", err)
+	}
+	var wantRuns []filesys.Run
+	var wantBlocks int64
+	for _, r := range want.FreeBlocks {
+		wantRuns = append(wantRuns, filesys.Run{Offset: r[0] * 4096, Length: (r[1] - r[0] + 1) * 4096})
+		wantBlocks += r[1] - r[0] + 1
+	}
+	if wantBlocks != want.FreeBlockCount || len(wantRuns) == 0 {
+		t.Fatalf("oracle free ranges hold %d blocks, its count says %d", wantBlocks, want.FreeBlockCount)
+	}
+	var gotBlocks int64
+	for _, r := range runs {
+		gotBlocks += r.Length / 4096
+	}
+	if gotBlocks != want.FreeBlockCount {
+		t.Errorf("Unallocated holds %d blocks, oracle (SIT bitmaps via dump.f2fs) %d", gotBlocks, want.FreeBlockCount)
+	}
+	if !slices.Equal(runs, wantRuns) {
+		t.Errorf("Unallocated differs from the oracle's free blocks:\n got  %v\n want %v", runs, wantRuns)
+	}
+	if w := fsys.Info().Warnings; len(w) != 0 {
+		t.Errorf("warnings after Unallocated on a clean image: %v", w)
+	}
+
+	var live []filesys.Run
+	for _, ranges := range want.FileBlocks {
+		for _, r := range ranges {
+			live = append(live, filesys.Run{Offset: r[0] * 4096, Length: (r[1] - r[0] + 1) * 4096})
+		}
+	}
+	live = append(live, filesys.Run{Offset: int64(want.Root.NATBlkaddr) * 4096, Length: 4096})
+	for _, in := range want.Inodes {
+		live = append(live, filesys.Run{Offset: int64(in.NATBlkaddr) * 4096, Length: 4096})
+	}
+	err = filesys.Walk(fsys, fsys.Root(), "/", func(p string, e filesys.Entry, err error) error {
+		if err != nil || e.Type != filesys.TypeFile {
+			return nil
+		}
+		fl, err := fsys.Open(e)
+		if err != nil {
+			t.Errorf("%s: %v", p, err)
+			return nil
+		}
+		for _, r := range fl.Runs() {
+			if r.Offset >= 0 {
+				live = append(live, r)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range live {
+		i := sort.Search(len(runs), func(i int) bool { return runs[i].Offset+runs[i].Length > r.Offset })
+		if i < len(runs) && runs[i].Offset < r.Offset+r.Length {
+			t.Errorf("free run %+v overlaps a live block run %+v", runs[i], r)
 		}
 	}
 }

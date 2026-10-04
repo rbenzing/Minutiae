@@ -10,6 +10,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/filesys/exfat"
 	"github.com/rbenzing/minutiae/internal/filesys/ext4"
+	"github.com/rbenzing/minutiae/internal/filesys/f2fs"
 	"github.com/rbenzing/minutiae/internal/filesys/fat"
 )
 
@@ -28,6 +29,7 @@ type Driver struct {
 // lists only the drivers that exist; a new filesystem package inserts its
 // driver at its place in that order, not at the end.
 var Drivers = []Driver{
+	{Name: "f2fs", Probe: f2fs.Probe, Open: openF2FS},
 	{Name: "ext4", Probe: ext4.Probe, Open: openExt4},
 	{Name: "exfat", Probe: exfat.Probe, Open: openExFAT},
 	{Name: "fat", Probe: fat.Probe, Open: openFAT},
@@ -37,6 +39,15 @@ var Drivers = []Driver{
 // nil *ext4.FS stored in the interface would not compare equal to nil.
 func openExt4(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
 	fs, err := ext4.Open(r, size)
+	if err != nil {
+		return nil, err
+	}
+	return fs, nil
+}
+
+// openF2FS adapts f2fs.Open (untyped nil on error, see openExt4).
+func openF2FS(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
+	fs, err := f2fs.Open(r, size)
 	if err != nil {
 		return nil, err
 	}

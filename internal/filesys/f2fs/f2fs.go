@@ -28,6 +28,10 @@ type FS struct {
 	size int64       // filesystem size in bytes (declared size clamped to the image)
 
 	nat natState // NAT journal, read on first use
+	sit sitState // SIT journal, read on first use
+
+	// unallocCap bounds the runs Unallocated reports (0 = maxUnallocRuns).
+	unallocCap int
 
 	// dmu guards dirBudget, the bytes of dentry blocks this instance may still
 	// read (dirBudgetTotal at the start), shared by every listing and lookup.

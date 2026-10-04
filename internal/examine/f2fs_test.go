@@ -3,23 +3,12 @@ package examine_test
 import (
 	"bytes"
 	"encoding/binary"
-	"io"
 	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/examine"
-	"github.com/rbenzing/minutiae/internal/filesys"
-	"github.com/rbenzing/minutiae/internal/filesys/detect"
-	"github.com/rbenzing/minutiae/internal/filesys/f2fs"
 	"github.com/rbenzing/minutiae/internal/filesys/f2fs/f2fstest"
 )
-
-// f2fsNoFree is the real F2FS reader plus a stub Unallocated (that part of the
-// driver is a separate piece of work); everything else, including the directory
-// reader, is the real one.
-type f2fsNoFree struct{ *f2fs.FS }
-
-func (f2fsNoFree) Unallocated() ([]filesys.Run, error) { return nil, nil }
 
 // A file whose block map breaks part-way (a data address outside the main
 // area) is extracted as a partial artifact flagged incomplete: the runs of the
@@ -40,16 +29,7 @@ func TestExtractF2FSBrokenChainIsIncomplete(t *testing.T) {
 	c := newCase(t)
 	disc := disk(img)
 	recs := importImage(t, c, disc, 1)
-	s, err := examine.Open(c, recs[0].ID, examine.Options{Drivers: []detect.Driver{{
-		Name: "f2fs", Probe: f2fs.Probe,
-		Open: func(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
-			fsys, err := f2fs.Open(r, size)
-			if err != nil {
-				return nil, err
-			}
-			return f2fsNoFree{fsys}, nil
-		},
-	}}})
+	s, err := examine.Open(c, recs[0].ID, examine.Options{}) // the default registry: the real f2fs driver
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,4 +88,27 @@ func TestExtractF2FSBrokenChainIsIncomplete(t *testing.T) {
 		t.Errorf("warnings do not explain the partial extraction: %q", reasons)
 	}
 	verifyOK(t, c)
+}
+
+// TestInfoDetectsF2FSPartition runs the default driver registry over a GPT
+// image whose partition holds an F2FS filesystem.
+func TestInfoDetectsF2FSPartition(t *testing.T) {
+	c := newCase(t)
+	fsImg := f2fstest.Build(f2fstest.Options{Segments: 1, Label: "userdata"},
+		[]f2fstest.File{{Path: "/hello.txt", Data: []byte("hello"), Inline: true}})
+	recs := importImage(t, c, disk(fsImg), 1)
+	s, err := examine.Open(c, recs[0].ID, examine.Options{}) // nil Drivers = detect.Drivers
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	info := s.Info()
+	if len(info.Partitions) != 1 {
+		t.Fatalf("partitions = %d, want 1", len(info.Partitions))
+	}
+	p := info.Partitions[0]
+	if p.FSType != "f2fs" || p.FSInfo == nil || p.FSInfo.Type != "f2fs" || p.FSInfo.Label != "userdata" || p.Error != "" {
+		t.Errorf("partition = %+v (FSInfo %+v), want an f2fs filesystem labelled userdata", p, p.FSInfo)
+	}
 }

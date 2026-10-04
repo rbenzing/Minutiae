@@ -12,6 +12,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/filesys/detect"
 	"github.com/rbenzing/minutiae/internal/filesys/exfat/exfattest"
 	"github.com/rbenzing/minutiae/internal/filesys/ext4/ext4test"
+	"github.com/rbenzing/minutiae/internal/filesys/f2fs/f2fstest"
 	"github.com/rbenzing/minutiae/internal/filesys/fat/fattest"
 )
 
@@ -43,7 +44,7 @@ func TestDriversClaimExactlyTheirOwnImages(t *testing.T) {
 	for _, d := range detect.Drivers {
 		names = append(names, d.Name)
 	}
-	if want := []string{"ext4", "exfat", "fat"}; !slices.Equal(names, want) {
+	if want := []string{"f2fs", "ext4", "exfat", "fat"}; !slices.Equal(names, want) {
 		t.Fatalf("driver order = %v, want %v", names, want)
 	}
 
@@ -53,6 +54,8 @@ func TestDriversClaimExactlyTheirOwnImages(t *testing.T) {
 		typ  string // Info().Type
 	}
 	images := map[string]image{
+		"builder f2fs": {f2fstest.Build(f2fstest.Options{Segments: 2, Label: "data"}, []f2fstest.File{{Path: "/a.txt", Data: []byte("a"), Inline: true}}), "f2fs", "f2fs"},
+		"builder f2fs with a blank second checkpoint": {f2fstest.Build(f2fstest.Options{Segments: 1, NoPack2: true}, nil), "f2fs", "f2fs"},
 		"builder ext4":  {ext4test.Build(ext4test.Options{Extents: true}, nil), "ext4", "ext4"},
 		"builder exfat": {exfattest.Build(exfattest.Options{}, nil), "exfat", "exfat"},
 		"builder fat12": {fattest.Build(fattest.Options{Type: 12}, nil), "fat", "fat12"},
@@ -60,11 +63,13 @@ func TestDriversClaimExactlyTheirOwnImages(t *testing.T) {
 		"builder fat32": {fattest.Build(fattest.Options{Type: 32}, nil), "fat", "fat32"},
 	}
 	for name, f := range map[string]struct{ path, want, typ string }{
-		"real ext4 4k": {"../ext4/testdata/ext4-4k-csum.img.gz", "ext4", "ext4"},
-		"real fat12":   {"../fat/testdata/fat12.img.gz", "fat", "fat12"},
-		"real fat16":   {"../fat/testdata/fat16.img.gz", "fat", "fat16"},
-		"real fat32":   {"../fat/testdata/fat32.img.gz", "fat", "fat32"},
-		"real exfat":   {"../exfat/testdata/exfat.img.gz", "exfat", "exfat"},
+		"real ext4 4k":         {"../ext4/testdata/ext4-4k-csum.img.gz", "ext4", "ext4"},
+		"real fat12":           {"../fat/testdata/fat12.img.gz", "fat", "fat12"},
+		"real fat16":           {"../fat/testdata/fat16.img.gz", "fat", "fat16"},
+		"real fat32":           {"../fat/testdata/fat32.img.gz", "fat", "fat32"},
+		"real exfat":           {"../exfat/testdata/exfat.img.gz", "exfat", "exfat"},
+		"real f2fs":            {"../f2fs/testdata/f2fs-default.img.gz", "f2fs", "f2fs"},
+		"real f2fs extra attr": {"../f2fs/testdata/f2fs-extra-attr.img.gz", "f2fs", "f2fs"},
 	} {
 		images[name] = image{gunzipFixture(t, f.path), f.want, f.typ}
 	}

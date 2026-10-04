@@ -123,3 +123,6 @@ func (f *FS) SetDirBudget(n int64) {
 	defer f.dmu.Unlock()
 	f.dirBudget, f.dirBudgetTotal = n, n
 }
+
+// SetUnallocatedRunCap lowers the number of runs Unallocated reports.
+func (f *FS) SetUnallocatedRunCap(n int) { f.unallocCap = n }
