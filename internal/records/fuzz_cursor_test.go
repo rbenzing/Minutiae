@@ -13,9 +13,10 @@ import (
 func FuzzCursor(f *testing.F) {
 	for _, s := range []string{
 		"", "v1.", "v1.e30", "garbage", "v2.abc",
-		records.Cursor{ID: 7, TS: 5}.Encode(), records.Cursor{D: 1, N: 1, ID: 1}.Encode(),
-		records.Cursor{D: 1, TS: -9, ID: 1 << 40}.Encode(),
-		"v1." + b64(`{"d":0,"n":0,"ts":1e30,"id":1}`), "v1." + b64(`{"d":0,"n":0,"ts":1,"id":-1}`),
+		records.Cursor{ID: 7, TS: 5, F: testFP}.Encode(), records.Cursor{D: 1, N: 1, ID: 1, F: testFP}.Encode(),
+		records.Cursor{D: 1, TS: -9, ID: 1 << 40, F: testFP}.Encode(),
+		"v1." + b64(`{"d":0,"n":0,"ts":1e30,"id":1,"f":"`+testFP+`"}`), "v1." + b64(`{"d":0,"n":0,"ts":1,"id":-1,"f":"`+testFP+`"}`),
+		"v1." + b64(`{"d":0,"n":0,"ts":1,"id":1,"f":"XYZ"}`),
 	} {
 		f.Add(s)
 	}

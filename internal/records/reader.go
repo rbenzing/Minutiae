@@ -8,8 +8,8 @@ import (
 )
 
 var (
-	// ErrBadCursor: the cursor is not one this reader produced for this
-	// direction (tampered, forged, truncated, another version).
+	// ErrBadCursor: the cursor is not one this reader produced for this case,
+	// filter, order and direction (tampered, forged, truncated, another version).
 	ErrBadCursor = errors.New("invalid cursor")
 	// ErrInvalidPage: Page.Limit is negative or above MaxLimit.
 	ErrInvalidPage = errors.New("invalid page")
@@ -56,7 +56,7 @@ type ParserRef struct{ Name, Version string }
 type Page struct {
 	Limit  int    // 0 = DefaultLimit; negative or above MaxLimit is ErrInvalidPage
 	Cursor string // NextCursor of the previous page ("" = the first page)
-	Desc   bool   // the exact reverse order; a cursor is only valid for its own direction
+	Desc   bool   // the exact reverse order; a cursor is only valid for its own filter, direction and case
 }
 
 // ParserInfo is the identity of the parser that produced a record.

@@ -97,8 +97,10 @@ func (p Page) limit() (int, error) {
 	return p.Limit, nil
 }
 
-// position returns the decoded cursor of the page, nil for the first page.
-func (p Page) position() (*cursor, error) {
+// position returns the decoded cursor of the page, nil for the first page. fp is
+// the fingerprint of the listing being asked for: a cursor of another one is
+// ErrBadCursor.
+func (p Page) position(fp string) (*cursor, error) {
 	if p.Cursor == "" {
 		return nil, nil
 	}
@@ -108,6 +110,9 @@ func (p Page) position() (*cursor, error) {
 	}
 	if (c.D == 1) != p.Desc {
 		return nil, fmt.Errorf("%w: the cursor belongs to the other direction", ErrBadCursor)
+	}
+	if c.F != fp {
+		return nil, fmt.Errorf("%w: the cursor belongs to another filter, order or case", ErrBadCursor)
 	}
 	return &c, nil
 }
@@ -135,6 +140,12 @@ type segment struct {
 	order string
 	args  []any
 }
+
+// listOrder names the order of a listing in its fingerprint.
+const listOrder = "untimed-last,ts,id"
+
+// caseIdentity names the case a cursor belongs to.
+func (r *Reader) caseIdentity() string { return r.c.Meta.ID + "\x00" + r.c.Meta.Created }
 
 const (
 	timed   = "(r.ts IS NULL) = 0"
@@ -197,17 +208,19 @@ func buildList(f Filter, desc bool, cur *cursor, have bool) ([]query, error) {
 // (untimed last, ts, id), or the exact reverse with Page.Desc. Pages are keyset
 // pages: across the pages of an unchanged database every row appears exactly
 // once, whatever the page size, even with tied or missing timestamps. A cursor
-// holds a position only, not the filter.
+// holds a position and the fingerprint of the case, filter, order and direction
+// that produced it: used with any other it is ErrBadCursor.
 func (r *Reader) List(ctx context.Context, f Filter, p Page) (Result, error) {
 	limit, err := p.limit()
 	if err != nil {
 		return Result{}, err
 	}
-	cur, err := p.position()
-	if err != nil {
+	if _, err := f.compile(false); err != nil { // validate before touching the database
 		return Result{}, err
 	}
-	if _, err := f.compile(false); err != nil { // validate before touching the database
+	fp := f.fingerprint(r.caseIdentity(), p.Desc)
+	cur, err := p.position(fp)
+	if err != nil {
 		return Result{}, err
 	}
 	var res Result
@@ -237,7 +250,7 @@ func (r *Reader) List(ctx context.Context, f Filter, p Page) (Result, error) {
 	}
 	if len(res.Rows) > limit {
 		res.Rows = res.Rows[:limit]
-		next, err := cursorAfter(res.Rows[limit-1], p.Desc)
+		next, err := cursorAfter(res.Rows[limit-1], p.Desc, fp)
 		if err != nil {
 			return Result{}, err
 		}
@@ -263,9 +276,9 @@ func collect(ctx context.Context, h evidence.ReadHandle, q query, dst *[]Row) er
 	return rows.Err()
 }
 
-// cursorAfter is the position after row.
-func cursorAfter(row Row, desc bool) (cursor, error) {
-	c := cursor{ID: row.ID}
+// cursorAfter is the position after row in the listing fp.
+func cursorAfter(row Row, desc bool, fp string) (cursor, error) {
+	c := cursor{ID: row.ID, F: fp}
 	if desc {
 		c.D = 1
 	}

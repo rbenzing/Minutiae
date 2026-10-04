@@ -1,7 +1,11 @@
 package records
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -204,4 +208,62 @@ func (w where) whereSQL() string {
 		return ""
 	}
 	return " WHERE " + strings.Join(w.conds, " AND ")
+}
+
+// fingerprint identifies a listing: the case (so a cursor of another case is
+// refused), the canonical form of f, the order and the direction. Two filters
+// that select the same records through different spellings (the order or
+// repetition of an IN list, IncludeUntimed without a time bound, IngestID
+// implying IncludeSuperseded) have the same fingerprint, so a cursor continues
+// either; a filter that differs in anything else does not. It must be called
+// only with a filter that compiles.
+func (f Filter) fingerprint(caseID string, desc bool) string {
+	sortedSet := func(ss []string) []string {
+		out := slices.Clone(ss)
+		slices.Sort(out)
+		return slices.Compact(out)
+	}
+	micros := func(t *time.Time) *int64 {
+		if t == nil {
+			return nil
+		}
+		us, _ := unixMicros(*t) // compile has checked that it fits
+		return &us
+	}
+	var parsers [][2]string
+	for _, p := range f.Parsers {
+		parsers = append(parsers, [2]string{p.Name, p.Version})
+	}
+	slices.SortFunc(parsers, func(a, b [2]string) int { return slices.Compare(a[:], b[:]) })
+	parsers = slices.Compact(parsers)
+
+	canon := struct {
+		Case, Order    string
+		Desc           bool
+		Types          []string
+		Artifacts      []string
+		From, To       *int64
+		IncludeUntimed bool
+		PathPrefix     string
+		Deleted        Tri
+		Recovered      Tri
+		Parsers        [][2]string
+		MinConfidence  *int
+		IngestID       string
+		AllRuns        bool
+	}{
+		Case: caseID, Order: listOrder, Desc: desc,
+		Types: sortedSet(f.Types), Artifacts: sortedSet(f.ArtifactIDs),
+		From: micros(f.From), To: micros(f.To),
+		IncludeUntimed: f.IncludeUntimed && (f.From != nil || f.To != nil),
+		PathPrefix:     f.PathPrefix, Deleted: f.Deleted, Recovered: f.Recovered,
+		Parsers: parsers, MinConfidence: f.MinConfidence,
+		IngestID: f.IngestID, AllRuns: f.IncludeSuperseded || f.IngestID != "",
+	}
+	b, err := json.Marshal(canon)
+	if err != nil { // cannot happen: strings, integers and booleans
+		panic(fmt.Sprintf("records: fingerprint filter: %v", err))
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:fingerprintLen/2])
 }
