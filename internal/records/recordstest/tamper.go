@@ -791,3 +791,17 @@ func InjectMetaKey(t testing.TB, caseDir, key, value string) {
 		return err
 	})
 }
+
+// SetManifestPath changes the path of an artifact's manifest record (the file and
+// artifacts.db are left as they are), so `case verify` reports it with the text
+// given.
+func SetManifestPath(t testing.TB, caseDir, artifactID, path string) {
+	t.Helper()
+	recs := readManifestLines(t, caseDir)
+	i := slices.IndexFunc(recs, func(r evidence.ManifestRecord) bool { return r.ID == artifactID })
+	if i < 0 {
+		t.Fatalf("recordstest: artifact %q is not in the manifest", artifactID)
+	}
+	recs[i].Path = path
+	writeManifestLines(t, caseDir, recs)
+}

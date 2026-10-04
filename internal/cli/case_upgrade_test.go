@@ -159,3 +159,19 @@ func containsAll(have []string, want ...string) bool {
 	}
 	return true
 }
+
+// TestCaseVerifyEscapesProblemText: a problem that carries text from the case (here
+// a manifest path with an escape sequence and a bidi override) is printed
+// escaped, never raw; the exit code is still 4.
+func TestCaseVerifyEscapesProblemText(t *testing.T) {
+	rc := recDataset(t, false)
+	recordstest.SetManifestPath(t, rc.dir, rc.art.ID, "artifacts/x\x1b[31mRED"+string(rune(0x202e))+"evil.db")
+	code, out := run(t, Deps{}, "case", "verify", "--case", rc.dir)
+	if code != ExitIntegrity || !strings.Contains(out, "PROBLEM: ") {
+		t.Fatalf("verify: %d %s", code, out)
+	}
+	noRawNonPrintable(t, "case verify output", out)
+	if !strings.Contains(out, `\x1b`) || !strings.Contains(out, string(rune(0x5c))+"u202e") {
+		t.Errorf("the escapes are not visible in the output:\n%s", out)
+	}
+}

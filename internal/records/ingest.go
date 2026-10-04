@@ -159,6 +159,9 @@ func (w *Writer) Start(ctx context.Context, so StartOptions) error {
 	}.Details()); err != nil {
 		return fmt.Errorf("audit ingest start: %w", err)
 	}
+	if err := w.callHook("after-start-audit"); err != nil {
+		return err
+	}
 	err = w.c.StoreTx(ctx, func(tx *sql.Tx) error { return ensureParser(ctx, tx, w.p.Name, w.p.Version, w.parserHash) })
 	if err != nil {
 		return err

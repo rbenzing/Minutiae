@@ -562,7 +562,7 @@ func TestRecordsCLIEscapesRecordText(t *testing.T) {
 	c := recordstest.NewCase(t)
 	art := recordstest.AddArtifact(t, c, "a.db", make([]byte, recordstest.ArtifactSize))
 	recEvilClean := strings.ReplaceAll(recEvil, "\x00", "")
-	recordstest.Ingest(t, c, recParser, []string{art.ID}, []records.Record{{
+	res := recordstest.Ingest(t, c, recParser, []string{art.ID}, []records.Record{{
 		Type: "message", ArtifactID: art.ID, Summary: recEvilClean, SourcePath: "/p/" + recEvilClean, Locator: "sqlite:t=" + recEvilClean,
 		Recovery: "carve", Deleted: true,
 		Body:    "line one " + recEvilClean + "\nline two\u202e " + recEvilClean + "\n\x1b[2Jline three\r\n",
@@ -575,6 +575,17 @@ func TestRecordsCLIEscapesRecordText(t *testing.T) {
 	}
 	recordstest.SetParserColumn(t, dir, 1, "name", "parser"+recEvilClean)
 	recordstest.SetParserColumn(t, dir, 1, "version", "v"+recEvilClean)
+	// the strings of the record type, the recovery method, the ingest id and the batch and
+	// run rows are database text too: hostile values in each of them
+	recordstest.SetRecordColumn(t, dir, 1, "type", "ty"+recEvilClean)
+	recordstest.SetRecordColumn(t, dir, 1, "recovery_method", "rm"+recEvilClean)
+	evilIngest := "ing" + recEvilClean
+	recordstest.SetBatchColumn(t, dir, res.IngestID, 1, "digest", "dg"+recEvilClean)
+	recordstest.SetBatchColumn(t, dir, res.IngestID, 1, "created", "cr"+recEvilClean)
+	recordstest.SetBatchColumn(t, dir, res.IngestID, 1, "ingest_id", evilIngest)
+	recordstest.SetRunColumn(t, dir, res.IngestID, "analysis_id", "an"+recEvilClean)
+	recordstest.SetRunColumn(t, dir, res.IngestID, "rollup", "ru"+recEvilClean)
+	recordstest.SetRunColumn(t, dir, res.IngestID, "ended", "en"+recEvilClean)
 
 	for _, args := range [][]string{
 		{"records", "list", "--case", dir},
@@ -584,6 +595,8 @@ func TestRecordsCLIEscapesRecordText(t *testing.T) {
 		{"records", "stats", "--case", dir, "--by", "parser"},
 		{"records", "stats", "--case", dir, "--by", "run"},
 		{"records", "stats", "--case", dir, "--by", "type"},
+		{"records", "stats", "--case", dir, "--by", "artifact"},
+		{"records", "stats", "--case", dir, "--by", "deleted"},
 	} {
 		code, out := run(t, Deps{}, args...)
 		if code != 0 {

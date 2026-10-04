@@ -337,10 +337,16 @@ func TestStoredTextIsOriginal(t *testing.T) {
 		Type: "note", ArtifactID: a.ID, Summary: nfd, SourcePath: "/p/with trailing space ", Body: body,
 		Locator: "sqlite:t=" + string(rune(0x202e)) + ";r=1  ", Payload: map[string]any{"nfd": nfd, "k" + string(rune(0x301)): "v "},
 	}
-	recordstest.Ingest(t, c, testParser, []string{a.ID}, []records.Record{r})
+	// the same letter precomposed (NFC) is a different byte string and must stay one
+	nfc := "Caf" + string(rune(0xe9))
+	r2 := records.Record{Type: "note", ArtifactID: a.ID, Summary: nfc, Payload: map[string]any{"nfc": nfc}}
+	recordstest.Ingest(t, c, testParser, []string{a.ID}, []records.Record{r, r2})
 	rows := loadRows(t, c)
-	if len(rows) != 1 {
+	if len(rows) != 2 {
 		t.Fatalf("%d rows", len(rows))
+	}
+	if rows[1].Summary != nfc || !strings.Contains(rows[1].Payload, nfc) {
+		t.Errorf("the NFC text came back changed: %q %q", rows[1].Summary, rows[1].Payload)
 	}
 	got := rows[0]
 	if got.Summary != nfd || *got.SourcePath != r.SourcePath || *got.Body != body || *got.Locator != r.Locator {
@@ -773,5 +779,35 @@ func TestAddConcurrent(t *testing.T) {
 	}
 	if n := scalar[int](t, c, `SELECT count(*) FROM records r JOIN record_batches b ON b.batch_id = r.batch_id WHERE r.id BETWEEN b.first_id AND b.first_id + b.count - 1`); n != goroutines*each {
 		t.Errorf("%d records inside their batch's range", n)
+	}
+}
+
+// TestStartAuditedBeforeParserRow: records.ingest.start is audited (and fsynced)
+// before the parser row exists, and before anything else of the ingest.
+func TestStartAuditedBeforeParserRow(t *testing.T) {
+	c, a := setup(t)
+	w := newWriter(t, c, testParser, records.WriterOptions{})
+	called := false
+	w.SetHook(func(point string) error {
+		if point != "after-start-audit" {
+			return nil
+		}
+		called = true
+		if n := len(auditOf(t, c, evidence.ActionIngestStart)); n != 1 {
+			t.Errorf("%d records.ingest.start entries at the hook, want 1", n)
+		}
+		if n := count(t, c, "parsers"); n != 0 {
+			t.Errorf("the parsers table holds %d rows before the start entry's parser row is written", n)
+		}
+		return nil
+	})
+	if err := w.Start(ctx, records.StartOptions{Artifacts: []string{a.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("the after-start-audit hook never ran")
+	}
+	if n := count(t, c, "parsers"); n != 1 {
+		t.Errorf("%d parser rows after Start, want 1", n)
 	}
 }

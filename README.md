@@ -192,12 +192,23 @@ Records of a superseded run are hidden unless you pass `--all-runs`. Text output
 escapes every control, escape-sequence and bidirectional character a record
 carries; `--json` keeps the strings as stored.
 
+These commands read the database as it is and do not verify it: run
+`case verify` first if the listing matters (a forged row, or a forged
+supersession pair that hides a run, is only found by `case verify`). They do
+refuse a database whose tables, indexes, views or triggers are not the ones this
+build defines (exit 4). Hiding a superseded run uses the stored supersession
+table, which `case verify` proves equal to its recomputation from the runs.
+
 ### Verify
 
 ```bash
 minutiae case info   --case ./cases/CASE01
 minutiae case verify --case ./cases/CASE01
 ```
+
+`case verify` prints each problem as a `PROBLEM:` line and each notice (an
+upgrade announced but not concluded, a recovered ingest) as a `NOTICE:` line,
+with case text escaped, and exits 4 when it found a problem.
 
 Every command accepts `--json` for machine-readable output.
 
@@ -207,9 +218,9 @@ Every command accepts `--json` for machine-readable output.
 |---|---|
 | `0` | Success |
 | `1` | General error |
-| `2` | Usage error (bad flag, missing argument, unknown command) |
+| `2` | Usage error (bad flag, missing argument, unknown command, a bad filter, cursor or page, or a case that needs `case upgrade`) |
 | `3` | Device error (not found, unauthorized, not rooted, unsupported, write not allowed) |
-| `4` | Integrity failure (`case verify` found a problem, or the audit log/database is missing or corrupt) |
+| `4` | Integrity failure (`case verify` found a problem, the audit log/database is missing or corrupt, or the records database schema is not the one this build defines) |
 
 ### Case layout
 
@@ -218,7 +229,7 @@ cases/CASE01/
   case.json        id, examiner, created, tool version, host
   audit.jsonl      append-only, SHA-256 hash-chained action log
   manifest.jsonl   one record per artifact (path, size, sha256, md5, source, incomplete)
-  artifacts.db     SQLite index (schema v1) for later analysis
+  artifacts.db     SQLite index (schema v2: artifacts + unified records tables)
   case.lock        held while a command has the case open
   artifacts/<device>/<acquisition>/...
 ```

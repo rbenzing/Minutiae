@@ -88,9 +88,9 @@ type Writer struct {
 	p   Parser
 	opt WriterOptions
 
-	// hook is a test seam, called at "after-batch-audit", "before-insert",
-	// "after-insert", "after-end-audit" and "before-abort-audit", always outside any
-	// transaction.
+	// hook is a test seam, called at "after-start-audit", "after-batch-audit",
+	// "before-insert", "after-insert", "after-end-audit" and "before-abort-audit",
+	// always outside any transaction.
 	hook func(point string) error
 
 	ingest atomic.Pointer[string] // the ingest id; readable from a hook while mu is held
