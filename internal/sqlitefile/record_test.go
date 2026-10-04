@@ -147,21 +147,6 @@ func textIs(s string) func(sqlitefile.Value) bool {
 	}
 }
 
-func TestRecordReservedSerialIsInvalid(t *testing.T) {
-	for _, s := range []uint64{10, 11} {
-		b := mkRecord([]uint64{1, s}, []byte{1})
-		if _, err := sqlitefile.DecodeRecord(b, sqlitefile.EncUTF8, sqlitefile.Limits{}); !errors.Is(err, sqlitefile.ErrCorrupt) {
-			t.Errorf("DecodeRecord with serial %d: %v, want ErrCorrupt", s, err)
-		}
-		if _, _, _, err := sqlitefile.ParseRecordHeader(b, 100); !errors.Is(err, sqlitefile.ErrCorrupt) {
-			t.Errorf("ParseRecordHeader with serial %d: %v, want ErrCorrupt", s, err)
-		}
-		if sqlitefile.SerialSize(s) != -1 {
-			t.Errorf("SerialSize(%d) = %d, want -1", s, sqlitefile.SerialSize(s))
-		}
-	}
-}
-
 func TestFloatNaNReadsAsNull(t *testing.T) {
 	for name, bits := range map[string]uint64{
 		"quiet NaN":      0x7ff8000000000000,
@@ -196,7 +181,6 @@ func TestRecordHeaderHostile(t *testing.T) {
 		{"header length varint runs past the payload", []byte{0x81}, sqlitefile.Limits{}},
 		{"serial varint overruns the header (completed by a body byte)", []byte{0x02, 0x81, 0x01}, sqlitefile.Limits{}},
 		{"more columns than MaxColumns", mkRecord([]uint64{1, 1, 1, 1}, []byte{1, 2, 3, 4}), sqlitefile.Limits{MaxColumns: 3}},
-		{"serial 10", mkRecord([]uint64{10}), sqlitefile.Limits{}},
 		{"body length overflows", mkRecord([]uint64{math.MaxUint64, math.MaxUint64}), sqlitefile.Limits{}},
 	}
 	for _, c := range bad {
@@ -452,5 +436,33 @@ func TestTextEncodingsDecode(t *testing.T) {
 	}
 	if s, ok := (sqlitefile.Value{Kind: sqlitefile.KindText, Omitted: true, Len: 3}).Text(); ok || s != "" {
 		t.Errorf("an omitted text has no text: (%q, %v)", s, ok)
+	}
+}
+
+// TestRecordReservedSerialReadsAsNull: serial types 10 and 11 are zero-width
+// NULLs, as the engine reads them (TestEngineReservedSerialTypesReadAsNull);
+// the record is not rejected and the columns after them keep their offsets.
+func TestRecordReservedSerialReadsAsNull(t *testing.T) {
+	for _, s := range []uint64{10, 11} {
+		b := mkRecord([]uint64{1, s, 1}, []byte{7, 9})
+		rec, err := sqlitefile.DecodeRecord(b, sqlitefile.EncUTF8, sqlitefile.Limits{})
+		if err != nil {
+			t.Fatalf("DecodeRecord with serial %d: %v", s, err)
+		}
+		if rec.Truncated || rec.Reserved != 1 {
+			t.Errorf("serial %d: Truncated %v Reserved %d", s, rec.Truncated, rec.Reserved)
+		}
+		if v := rec.Values[1]; v.Kind != sqlitefile.KindNull || v.Omitted || v.Len != 0 || v.Serial != s {
+			t.Errorf("serial %d: %+v", s, v)
+		}
+		if rec.Values[0].Int != 7 || rec.Values[2].Int != 9 {
+			t.Errorf("serial %d: neighbours %+v %+v", s, rec.Values[0], rec.Values[2])
+		}
+		if _, _, body, err := sqlitefile.ParseRecordHeader(b, 100); err != nil || body != 2 {
+			t.Errorf("ParseRecordHeader with serial %d: body %d, %v", s, body, err)
+		}
+		if sqlitefile.SerialSize(s) != 0 {
+			t.Errorf("SerialSize(%d) = %d, want 0", s, sqlitefile.SerialSize(s))
+		}
 	}
 }

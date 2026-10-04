@@ -84,6 +84,9 @@ func ParsePageHeader(page []byte, pgno uint32) (PageHeader, error) {
 type CellPointer struct {
 	Index  int // position in the cell pointer array
 	Offset int // offset of the cell in the page
+	// BelowContentStart: the pointer lies below the stored content-start field
+	// (but inside the page, after the header and the pointer array).
+	BelowContentStart bool
 }
 
 // BadCellPointer is an entry that was rejected. Raw is the value as stored; it
@@ -100,7 +103,8 @@ type BadCellPointer struct {
 type CellPointerSet struct {
 	Good []CellPointer // in array order
 	Bad  []BadCellPointer
-	// Lo and Hi are the bounds a pointer had to lie in: [Lo, Hi).
+	// Lo and Hi are the bounds a pointer had to lie in: [Lo, Hi) (Lo is the end
+	// of the pointer array).
 	Lo, Hi int
 	// Cells is the cell count of the page (len(Good) + len(Bad)).
 	Cells int
@@ -117,28 +121,43 @@ func (s CellPointerSet) Err() error {
 	return &CorruptError{File: FileDB, Reason: fmt.Sprintf("%d of %d cell pointers outside [%d, %d); first: cell %d points at %d", len(s.Bad), s.Cells, s.Lo, s.Hi, f.Index, f.Raw)}
 }
 
-// CellPointers returns the cell pointer array of page, validated: every
-// pointer must lie in [max(ContentStart, end of the pointer array), usable)
-// and inside the bytes present. A pointer into the reserved-bytes region
-// [usable, pagesize), the header, the pointer array or below the content
-// start is bad. Good and Bad together name every cell once. The error is
-// non-nil only when the pointer array itself reaches past usable (or the
-// bytes present): then no pointer can be trusted and the set is empty.
+// CellPointers returns the cell pointer array of page, validated the way the
+// engine uses it: a pointer is good when it lies after the header and the
+// pointer array and inside min(usable, bytes present). A pointer below the
+// stored content-start field is still good (the engine reads such a cell,
+// pinned by TestEngineReadsCellsBelowTheStoredContentStart): it is flagged
+// BelowContentStart so the caller can warn once for the page. A pointer into
+// the header or the pointer array, into the reserved-bytes region [usable,
+// pagesize) or past the bytes present is bad. Good and Bad together name every
+// cell once. The error is non-nil only when the pointer array itself reaches
+// past usable (or the bytes present): then no pointer can be trusted and the
+// set is empty.
 func CellPointers(page []byte, h PageHeader, usable int) (CellPointerSet, error) {
 	end := h.pointerArrayEnd()
 	if end > usable || end > len(page) {
 		return CellPointerSet{}, &CorruptError{File: FileDB, Reason: fmt.Sprintf("%d cell pointers reach offset %d, past the usable size %d", h.CellCount, end, usable)}
 	}
-	lo := max(h.ContentStart, end)
 	hi := min(usable, len(page))
-	s := CellPointerSet{Lo: lo, Hi: hi, Cells: h.CellCount}
+	s := CellPointerSet{Lo: end, Hi: hi, Cells: h.CellCount}
 	for i := range h.CellCount {
 		p := int(binary.BigEndian.Uint16(page[h.Base+h.HeaderSize+2*i:]))
-		if p < lo || p >= hi {
+		if p < end || p >= hi {
 			s.Bad = append(s.Bad, BadCellPointer{Index: i, Raw: p})
 			continue
 		}
-		s.Good = append(s.Good, CellPointer{Index: i, Offset: p})
+		s.Good = append(s.Good, CellPointer{Index: i, Offset: p, BelowContentStart: p < h.ContentStart})
 	}
 	return s, nil
+}
+
+// BelowContent counts the good pointers that lie below the stored content
+// start.
+func (s CellPointerSet) BelowContent() int {
+	n := 0
+	for _, g := range s.Good {
+		if g.BelowContentStart {
+			n++
+		}
+	}
+	return n
 }

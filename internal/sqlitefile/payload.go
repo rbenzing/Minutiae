@@ -150,6 +150,10 @@ func (p *payload) page(idx int64) ([]byte, error) {
 			p.die(cur, "overflow page %d is not in the file", cur)
 			return nil, nil
 		case !p.vis.mark(cur):
+			if mv, ok := p.vis.(*mapVisitor); ok && mv.full {
+				p.die(cur, "overflow page %d not followed: the visited-set capacity of %d pages is reached", cur, mv.max)
+				return nil, nil
+			}
 			p.die(cur, "overflow page %d was already met (a cycle or a page shared with another structure)", cur)
 			return nil, nil
 		}

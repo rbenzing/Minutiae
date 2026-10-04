@@ -147,6 +147,9 @@ func (w *walker) enter(pgno uint32, depth int) (n node, ok bool, err error) {
 	if len(set.Bad) > 0 { // one warning for the page; its good cells are read
 		v.warn(WarnCellPointer, pgno, "%s; the other cells are read", corruptReason(set.Err()))
 	}
+	if k := set.BelowContent(); k > 0 { // the engine reads these cells; one warning for the page
+		v.warn(WarnCellPointer, pgno, "%d cell pointers lie below the stored content start %d; the cells are read, as the engine reads them", k, h.ContentStart)
+	}
 	return node{pgno: pgno, data: data, loc: loc, h: h, ptrs: set.Good, depth: depth}, true, nil
 }
 

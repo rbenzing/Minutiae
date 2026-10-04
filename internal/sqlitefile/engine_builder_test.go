@@ -132,7 +132,7 @@ func TestEngineTrailingPartialPage(t *testing.T) {
 // builder encoding (1 UTF-8, 2 UTF-16le, 3 UTF-16be) whose text the engine
 // reads back intact when the field is patched to the key; 0 means the engine
 // reads none of them (it refuses or fails).
-var engineEncodingForField = map[uint32]int{4: 1, 5: 1, 6: 2, 7: 3, 0x102: 2}
+var engineEncodingForField = map[uint32]int{4: 1, 5: 1, 6: 2, 7: 3, 0x102: 2, 0x100: 1, 0x80000003: 3}
 
 // TestEngineTextEncodingHeaderField: a database whose header encoding field is
 // 4..7 (or has bits above the low two) still holds text in one real encoding.

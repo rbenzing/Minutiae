@@ -131,7 +131,9 @@ func TestCellPointersValidated(t *testing.T) {
 		{"into the header area", 0, 256, []uint16{300, 4, 400}, 512, goodAt(map[int]int{0: 300, 2: 400}), badAt(map[int]int{1: 4})},
 		{"into the pointer array", 0, 256, []uint16{12, 300, 400}, 512, goodAt(map[int]int{1: 300, 2: 400}), badAt(map[int]int{0: 12})},
 		{"content start itself", 0, 256, []uint16{256, 300, 400}, 512, goodPtrs(256, 300, 400), nil},
-		{"below the content start", 0, 256, []uint16{255, 300, 400}, 512, goodAt(map[int]int{1: 300, 2: 400}), badAt(map[int]int{0: 255})},
+		{"below the content start is read as the engine reads it", 0, 256, []uint16{255, 300, 400}, 512, []sqlitefile.CellPointer{{Index: 0, Offset: 255, BelowContentStart: true}, {Index: 1, Offset: 300}, {Index: 2, Offset: 400}}, nil},
+		{"just past the pointer array but below the content start", 0, 256, []uint16{14, 300}, 512, []sqlitefile.CellPointer{{Index: 0, Offset: 14, BelowContentStart: true}, {Index: 1, Offset: 300}}, nil},
+		{"page 1 below the content start, after its pointer array", 100, 256, []uint16{200, 300}, 512, []sqlitefile.CellPointer{{Index: 0, Offset: 200, BelowContentStart: true}, {Index: 1, Offset: 300}}, nil},
 		{"last usable byte", 0, 256, []uint16{479, 300, 400}, 512, goodPtrs(479, 300, 400), nil},
 		{"first reserved byte", 0, 256, []uint16{480, 300, 400}, 512, goodAt(map[int]int{1: 300, 2: 400}), badAt(map[int]int{0: 480})},
 		{"inside the reserved region", 0, 256, []uint16{300, 500, 400}, 512, goodAt(map[int]int{0: 300, 2: 400}), badAt(map[int]int{1: 500})},
@@ -211,7 +213,7 @@ func TestCellPointersNeverYieldASentinel(t *testing.T) {
 		}
 		seen := map[int]bool{}
 		for _, g := range got.Good {
-			if g.Offset < 0 || g.Offset >= usable || g.Offset < h.ContentStart || g.Offset < 8+2*n {
+			if g.Offset < 0 || g.Offset >= usable || g.Offset < 8+2*n || g.BelowContentStart != (g.Offset < h.ContentStart) {
 				t.Fatalf("good pointer %+v outside the valid range (content %d, cells %d)", g, h.ContentStart, n)
 			}
 			seen[g.Index] = true

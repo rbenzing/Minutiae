@@ -72,10 +72,17 @@ func (e *env) readRecord(l *ledger, w *warnings, at cellCtx, p *payload, enc Enc
 	enc = normEnc(enc)
 	rec = Record{Serials: serials, HeaderLen: headerLen, BodyLen: bodyLen, Values: make([]Value, len(serials))}
 	acct := rowAcct{lim: lim}
+	firstReserved := 0
 	pos := int64(headerLen)
 	for i, s := range serials {
 		sz := SerialSize(s)
 		v := blank(s, enc)
+		if s == 10 || s == 11 {
+			if rec.Reserved == 0 {
+				firstReserved = i
+			}
+			rec.Reserved++
+		}
 		if pos > p.total || sz > p.total-pos { // declared past the end of the payload
 			rec.Truncated = true
 			rec.Values[i] = v
@@ -96,33 +103,37 @@ func (e *env) readRecord(l *ledger, w *warnings, at cellCtx, p *payload, enc Enc
 				rec.Values[i] = v
 				continue
 			}
-			if err := l.alloc(take); err != nil {
+			e.at("record.value")
+			var ok bool
+			if buf, ok, err = readValue(l, p, at0, take); err != nil {
 				return Record{}, held, err
 			}
-			buf = make([]byte, take)
+			if !ok { // the bytes are not all there: omit, never pad
+				rec.Truncated = true
+				rec.Values[i] = v
+				pos = math.MaxInt64 // every later value is unreadable too
+				continue
+			}
+			held += int64(len(buf))
 		} else {
 			buf = scalarBuf[:sz]
-		}
-		e.at("record.value")
-		got, err := p.readAt(buf, at0)
-		if err != nil {
-			if s >= 12 {
-				l.free(int64(len(buf)))
+			e.at("record.value")
+			got, rerr := p.readAt(buf, at0)
+			if rerr != nil {
+				return Record{}, held, rerr
 			}
-			return Record{}, held, err
-		}
-		if got < len(buf) { // the bytes are not all there: omit, never pad
-			if s >= 12 {
-				l.free(int64(len(buf)))
+			// A scalar is at most 8 bytes inside the declared payload; an
+			// unreadable one (damaged chain) is omitted like any other value.
+			if got < len(buf) {
+				rec.Truncated = true
+				rec.Values[i] = v
+				pos = math.MaxInt64
+				continue
 			}
-			rec.Truncated = true
-			rec.Values[i] = v
-			continue
 		}
 		v.Omitted = false
 		if !scalar(&v, s, buf) {
 			v.Bytes = buf[:len(buf):len(buf)]
-			held += int64(len(buf))
 		}
 		rec.Values[i] = v
 	}
@@ -133,6 +144,14 @@ func (e *env) readRecord(l *ledger, w *warnings, at cellCtx, p *payload, enc Enc
 				Msg: fmt.Sprintf("%d values over the caps were omitted; first is column %d of %d bytes", acct.capped, acct.firstCol, acct.firstLen),
 			})
 		}
+		if rec.Reserved > 0 {
+			// The engine reads serial types 10 and 11 as a NULL that takes no
+			// bytes (TestEngineReservedSerialTypesReadAsNull); the row is kept.
+			w.add(Warning{
+				Code: WarnRecordInvalid, File: at.File, Page: at.Page, Offset: at.Offset,
+				Msg: fmt.Sprintf("reserved serial type in %d column(s), first column %d (type %d): read as NULL, as the engine reads it", rec.Reserved, firstReserved, rec.Serials[firstReserved]),
+			})
+		}
 		if why, pg, dead := p.damaged(); dead && rec.Truncated {
 			w.add(Warning{
 				Code: WarnCellOverflowChain, File: at.File, Page: at.Page, Offset: at.Offset,
@@ -141,4 +160,65 @@ func (e *env) readRecord(l *ledger, w *warnings, at cellCtx, p *payload, enc Enc
 		}
 	}
 	return rec, held, nil
+}
+
+// valueProbe is how many bytes of a text or blob are read into the stack before
+// anything is allocated for it; valueStep is the size of the first heap buffer.
+const (
+	valueProbe = 64
+	valueStep  = 4096
+)
+
+// readValue reads take bytes of the payload at off into a new buffer. take is
+// what the record declares, which no byte of the file vouches for, so memory
+// is never sized from it directly: a probe on the stack proves the first bytes
+// exist, the first buffer is at most valueStep bytes, and from there the
+// buffer at most doubles, each step after the bytes of the previous one were
+// read. What is allocated is therefore bounded by a small multiple of the
+// bytes that really exist. The buffer's size is charged to l; ok is false (and
+// nothing stays charged) when the bytes are not all there.
+func readValue(l *ledger, p *payload, off, take int64) (buf []byte, ok bool, err error) {
+	var probe [valueProbe]byte
+	n := min(take, valueProbe)
+	got, err := p.readAt(probe[:n], off)
+	if err != nil || int64(got) < n {
+		return nil, false, err
+	}
+	size := min(take, valueStep)
+	if err := l.alloc(size); err != nil {
+		return nil, false, err
+	}
+	buf = make([]byte, size)
+	copy(buf, probe[:n])
+	fill := func(from int64) (bool, error) {
+		got, err := p.readAt(buf[from:], off+from)
+		if err != nil {
+			l.free(int64(len(buf)))
+			return false, err
+		}
+		if int64(got) < int64(len(buf))-from {
+			l.free(int64(len(buf)))
+			return false, nil
+		}
+		return true, nil
+	}
+	if ok, err := fill(n); !ok {
+		return nil, false, err
+	}
+	for int64(len(buf)) < take {
+		have := int64(len(buf))
+		next := min(take, 2*have)
+		if err := l.alloc(next); err != nil {
+			l.free(have)
+			return nil, false, err
+		}
+		grown := make([]byte, next)
+		copy(grown, buf)
+		l.free(have)
+		buf = grown
+		if ok, err := fill(have); !ok {
+			return nil, false, err
+		}
+	}
+	return buf, true, nil
 }

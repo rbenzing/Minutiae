@@ -12,17 +12,22 @@ type Record struct {
 	Values    []Value
 	HeaderLen int
 	BodyLen   int64 // the sum of the declared value sizes
+	// Reserved counts the columns whose serial type is reserved (10, 11), which
+	// read as zero-width NULL, as the engine reads them.
+	Reserved int
 	// Truncated: a value lies (wholly or partly) past the end of the payload
-	// that was available, so it is Omitted. A strict user (the live view)
-	// treats a truncated record as invalid.
+	// that was available, so it is Omitted, and so is every later value. The live
+	// view keeps such a row only when a damaged overflow chain caused it
+	// (with a warning) and skips a record that declares bytes its intact payload lacks.
 	Truncated bool
 }
 
-// SerialSize is the byte length of a value of the given serial type, or -1
-// for the reserved types 10 and 11.
+// SerialSize is the byte length of a value of the given serial type. The
+// reserved types 10 and 11 take no bytes: the engine reads them as a NULL
+// (TestEngineReservedSerialTypesReadAsNull).
 func SerialSize(serial uint64) int64 {
 	switch serial {
-	case 0, 8, 9:
+	case 0, 8, 9, 10, 11:
 		return 0
 	case 1:
 		return 1
@@ -36,8 +41,6 @@ func SerialSize(serial uint64) int64 {
 		return 6
 	case 6, 7:
 		return 8
-	case 10, 11:
-		return -1
 	}
 	return int64((serial - 12) / 2)
 }
@@ -52,8 +55,10 @@ func recordInvalid(format string, a ...any) error {
 // of columns. bodyLen is the sum of the declared value sizes; it is not
 // compared with len(b) (a strict user checks len(b)-headerLen >= bodyLen).
 // A header length below its own varint or past b, a serial varint that runs
-// past the header, more than maxCols columns, a reserved serial type (10, 11)
-// and a body length that overflows are errors wrapping ErrCorrupt. A header
+// past the header, more than maxCols columns
+// and a body length that overflows are errors wrapping ErrCorrupt. The reserved
+// serial types 10 and 11 are accepted (zero-width NULLs, as the engine reads
+// them; the caller counts and warns). A header
 // that holds no columns (length 1) is accepted, as the engine does.
 func ParseRecordHeader(b []byte, maxCols int) (serials []uint64, headerLen int, bodyLen int64, err error) {
 	hl, n := GetVarint(b)
@@ -74,9 +79,6 @@ func ParseRecordHeader(b []byte, maxCols int) (serials []uint64, headerLen int, 
 		}
 		hdr = hdr[k:]
 		sz := SerialSize(s)
-		if sz < 0 {
-			return nil, 0, 0, recordInvalid("serial type %d is reserved", s)
-		}
 		if len(serials) >= maxCols {
 			return nil, 0, 0, recordInvalid("more than %d columns", maxCols)
 		}
@@ -103,7 +105,7 @@ func readSigned(b []byte) int64 {
 // SerialSize(serial) bytes.
 func scalar(v *Value, serial uint64, raw []byte) bool {
 	switch {
-	case serial == 0:
+	case serial == 0, serial == 10, serial == 11:
 		v.Kind = KindNull
 	case serial == 8:
 		v.Kind, v.Int = KindInt, 0
@@ -128,7 +130,7 @@ func scalar(v *Value, serial uint64, raw []byte) bool {
 func blank(serial uint64, enc Encoding) Value {
 	v := Value{Serial: serial, Omitted: true}
 	switch {
-	case serial == 0:
+	case serial == 0, serial == 10, serial == 11:
 		v.Kind = KindNull
 	case serial >= 1 && serial <= 6, serial == 8, serial == 9:
 		v.Kind = KindInt
@@ -208,6 +210,9 @@ func decodeRecord(b []byte, enc Encoding, lim Limits, recovered bool) (Record, e
 	pos := int64(hl)
 	for i, s := range serials {
 		sz := SerialSize(s)
+		if s == 10 || s == 11 {
+			rec.Reserved++
+		}
 		v := blank(s, enc)
 		if pos > int64(len(b)) || sz > int64(len(b))-pos { // not wholly inside b
 			rec.Truncated = true
