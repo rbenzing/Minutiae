@@ -1,8 +1,8 @@
 // Package image opens disk and partition image containers (raw, split raw,
 // and EWF through a registered opener) as read-only io.ReaderAt values.
 //
-// The package is pure: it imports no other Minutiae package and never opens a
-// file for writing.
+// The package is pure: it imports no other Minutiae package except image/ewf
+// (the EWF reader, itself pure) and never opens a file for writing.
 package image
 
 import (
