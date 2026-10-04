@@ -224,7 +224,7 @@ func buildTree(s treeSpec) *builtTree {
 type foldMode int
 
 const (
-	// foldNulLast: the ordering the reader assumes (unverified against a real
+	// foldNulLast: the ordering the reader assumes (confirmed on a real
 	// image): the other ignorable units (U+200C-200F, U+202A-202E, U+206A-206F,
 	// U+FEFF) are skipped, and U+0000 maps to 0xFFFF, so it sorts after every
 	// other unit and is not ignorable.

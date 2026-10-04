@@ -307,7 +307,7 @@ func TestFoldAndCompare(t *testing.T) {
 		"a" + zwnj + "b" + zwj:      "ab",        // zero-width joiners are ignorable
 		"x" + lre + "y" + iss + "z": "xyz",
 		bom + "name":                "name",
-		"a\x00b":                    "a￿b", // U+0000 folds to 0xFFFF: not ignorable (unverified against a real image)
+		"a\x00b":                    "a￿b", // U+0000 folds to 0xFFFF: not ignorable (confirmed on a real image)
 		"😀A":                        "😀a",  // surrogates pass through
 	} {
 		if got := fold(in); got != want {

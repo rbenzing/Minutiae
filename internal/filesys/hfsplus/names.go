@@ -17,8 +17,10 @@ const maxNameUnits = 255
 // sorts after every other unit (this is why the hard-link private folder, whose
 // name starts with four NULs, is the last child of the root). This is the
 // coordinator's ruling from two independent recollections plus the
-// FastUnicodeCompare table; it is UNVERIFIED (no real image holds such a name).
-// An earlier version skipped U+0000 like the others. The reader does not rely
+// FastUnicodeCompare table, CONFIRMED on the kernel-written populated fixture:
+// its private folder (four NULs) is the last child of the root and fsck.hfsplus
+// accepts that order (TestRealPrivateFolderSortsLastAndIsFoundByDescent). An
+// earlier version skipped U+0000 like the others. The reader does not rely
 // on the order for the private folder: when the descent misses it scans the
 // root (see privateFolder). The effect elsewhere is limited to name lookups on
 // case-folding volumes: Lookup tries an exact (binary) spelling before the
@@ -45,7 +47,7 @@ func ignorable(u uint16) bool {
 // the table frozen in HFS+, which Lookup's exact-before-folded order mitigates).
 func foldUnit(u uint16) uint16 {
 	if u == 0 {
-		return 0xFFFF // unverified, see ignorable
+		return 0xFFFF // confirmed on a real image, see ignorable
 	}
 	if u < 0x80 {
 		if u >= 'A' && u <= 'Z' {

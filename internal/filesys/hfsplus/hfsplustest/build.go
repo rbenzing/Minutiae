@@ -183,7 +183,7 @@ type Options struct {
 	// own descent cannot search for such names: only its linear fallback scan finds
 	// them). NulIgnorable skips U+0000 like the other ignorable units (an earlier
 	// guess). By default U+0000 sorts after every other unit (it folds to 0xFFFF:
-	// the reader's assumption, unverified against a real image).
+	// the reader's assumption, confirmed on a real image).
 	RawFoldOrder bool
 	NulIgnorable bool
 }

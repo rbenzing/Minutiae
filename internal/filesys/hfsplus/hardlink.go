@@ -52,7 +52,7 @@ func isDirLink(r *catalogRecord) bool {
 // when the volume has none. The result is cached (a miss too); an I/O error is
 // returned and not cached. The names are first looked up by the catalog descent,
 // which relies on how the volume orders a NUL-prefixed name (U+0000 sorts last,
-// unverified against a real image). When the descent misses on a case-folding
+// confirmed on the kernel-written populated fixture). When the descent misses on a case-folding
 // volume the root folder is scanned for the exact private-folder names (charged
 // to the directory read budget), which does not depend on the sort order, so a
 // real hard link is never reported dangling because that guess is wrong. A case-sensitive

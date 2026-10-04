@@ -324,7 +324,9 @@ Earlier, one run was rejected by the oracle itself because the primary header's
 modify date was a second after the backup header's (the oracle now accepts up
 to 120 s). Treat byte-identity of the populated image as likely, not
 guaranteed; the committed `expect.json` carries the sha256 of the committed
-image and the tests check it first.
+image and the tests check it first, so always regenerate `hfsplus-populated.img.gz` and
+`hfsplus-populated.expect.json` TOGETHER (a different image with the old oracle fails the
+sha256 check at once).
 
 ### Images (8 MiB raw each except the populated one, `internal/filesys/hfsplus/testdata/`)
 
