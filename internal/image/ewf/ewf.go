@@ -63,6 +63,10 @@ type Reader struct {
 	warn warnings
 	err2 *error2Info // acquisition error ranges, nil when none
 
+	refs    []chunkRef // one resolved table entry per covered chunk
+	sectors [][]span   // per segment: payload ranges of its sectors sections
+	cache   *chunkCache
+
 	mu     sync.Mutex
 	closed bool
 }
@@ -93,6 +97,9 @@ func (r *Reader) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.closed = true
+	if r.cache != nil {
+		r.cache.close()
+	}
 	return nil
 }
 
@@ -206,7 +213,7 @@ func Open(segs []Segment) (*Reader, error) {
 	if len(segs) > maxSegments {
 		return nil, corrupt(0, "", "%d segment files; the format allows at most %d", len(segs), maxSegments)
 	}
-	o := &opener{r: &Reader{segs: slices.Clone(segs), secs: make([][]section, len(segs))}}
+	o := &opener{r: &Reader{segs: slices.Clone(segs), secs: make([][]section, len(segs)), sectors: make([][]span, len(segs))}}
 	for i := range segs {
 		if err := o.segment(i); err != nil {
 			return nil, err
@@ -219,3 +226,9 @@ func Open(segs []Segment) (*Reader, error) {
 }
 
 func hexOf(b []byte) string { return hex.EncodeToString(b) }
+
+func (r *Reader) isClosed() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.closed
+}

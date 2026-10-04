@@ -51,3 +51,22 @@ func (r *Reader) Sections() [][]SectionInfo {
 	}
 	return out
 }
+
+// CacheLen returns the number of chunks in the cache.
+func (r *Reader) CacheLen() int { return r.cache.len() }
+
+// CacheHits returns how many chunk reads the cache served.
+func (r *Reader) CacheHits() uint64 { return r.cache.hitCount() }
+
+// SetCacheCapacity changes the cache capacity (evicting down to it).
+func (r *Reader) SetCacheCapacity(n int) { r.cache.setCapacity(n) }
+
+// CacheCapacity returns the cache capacity.
+func (r *Reader) CacheCapacity() int {
+	r.cache.mu.Lock()
+	defer r.cache.mu.Unlock()
+	return r.cache.cap
+}
+
+// CacheCapacityFor returns the capacity chosen for a chunk size.
+func CacheCapacityFor(chunkSize int64) int { return cacheCapacity(chunkSize) }

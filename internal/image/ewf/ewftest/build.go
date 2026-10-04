@@ -85,6 +85,10 @@ type Options struct {
 	TerminalSize76 bool
 	// Header2NoBOM omits the UTF-16 byte order mark from header2.
 	Header2NoBOM bool
+	// Override replaces the stored bytes of chunk i (as stored: a zlib stream,
+	// or raw bytes followed by their Adler-32) and its compressed flag. The
+	// hashes still describe the original media.
+	Override map[int]RawChunk
 	// HeaderText and Header2Text replace the generated header text (before
 	// compression and, for header2, UTF-16 encoding) when non-empty.
 	HeaderText, Header2Text string
@@ -100,6 +104,12 @@ var signature = []byte{'E', 'V', 'F', 0x09, 0x0d, 0x0a, 0xff, 0x00}
 
 func put32(b []byte, v uint32) { binary.LittleEndian.PutUint32(b, v) }
 func put64(b []byte, v uint64) { binary.LittleEndian.PutUint64(b, v) }
+
+// RawChunk is a chunk as stored on disk, for Options.Override.
+type RawChunk struct {
+	Data       []byte
+	Compressed bool
+}
 
 type chunk struct {
 	data       []byte // bytes as stored (compressed stream, or raw + adler)
@@ -301,6 +311,9 @@ func Build(o Options, media []byte) [][]byte {
 	for i := range chunks {
 		hi := min((i+1)*chunkSize, len(media))
 		chunks[i] = encodeChunk(media[i*chunkSize:hi], o.Compress)
+		if ov, ok := o.Override[i]; ok {
+			chunks[i] = chunk{data: ov.Data, compressed: ov.Compressed}
+		}
 	}
 	perSeg := o.ChunksPerSegment
 	if perSeg <= 0 {

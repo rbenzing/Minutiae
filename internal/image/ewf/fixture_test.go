@@ -3,10 +3,13 @@ package ewf_test
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/md5"  //nolint:gosec // comparing stored hashes
+	"crypto/sha1" //nolint:gosec // comparing stored hashes
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,6 +21,8 @@ type fixtureExpect struct {
 	Raw struct {
 		Size   int64  `json:"size"`
 		SHA256 string `json:"sha256"`
+		MD5    string `json:"md5"`
+		SHA1   string `json:"sha1"`
 	} `json:"raw"`
 	Variants []fixtureVariant `json:"variants"`
 }
@@ -35,6 +40,7 @@ type fixtureVariant struct {
 	SectorsPerChunk int    `json:"sectors_per_chunk"`
 	Sectors         int64  `json:"sectors"`
 	Chunks          int64  `json:"chunks"`
+	MediaSHA256     string `json:"media_sha256"`
 	StoredMD5       string `json:"stored_md5"`
 	StoredSHA1      string `json:"stored_sha1"`
 	Volume          struct {
@@ -152,6 +158,64 @@ func TestOpenRealFixtureSections(t *testing.T) {
 				if m[key] != v.Header2[field] {
 					t.Fatalf("%s = %q, oracle header2 %s = %q", key, m[key], field, v.Header2[field])
 				}
+			}
+		})
+	}
+}
+
+// TestEWFReadAtMatchesRawFixture reads the whole media of every real
+// acquisition-tool fixture and compares it, byte for byte, with the raw image
+// the fixtures were made from (and with the oracle's hashes).
+func TestEWFReadAtMatchesRawFixture(t *testing.T) {
+	exp := loadFixtureExpect(t)
+	raw := gunzipFile(t, "ewf-disk.img.gz")
+	if int64(len(raw)) != exp.Raw.Size {
+		t.Fatalf("raw image is %d bytes, oracle %d", len(raw), exp.Raw.Size)
+	}
+	if sum := sha256.Sum256(raw); hex.EncodeToString(sum[:]) != exp.Raw.SHA256 {
+		t.Fatal("raw image differs from the oracle")
+	}
+	for _, v := range exp.Variants {
+		t.Run(v.Name, func(t *testing.T) {
+			var segs []ewf.Segment
+			for _, f := range v.Files {
+				data := gunzipFile(t, f.Name+".gz")
+				segs = append(segs, ewf.Segment{Name: f.Name, R: bytes.NewReader(data), Size: int64(len(data))})
+			}
+			r, err := ewf.Open(segs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if r.Size() != v.MediaSize || v.MediaSize > int64(len(raw)) {
+				t.Fatalf("size %d, oracle %d, raw %d", r.Size(), v.MediaSize, len(raw))
+			}
+			want := raw[:v.MediaSize] // seed-small holds a prefix of the raw image
+			got := readAll(t, r)
+			if !bytes.Equal(got, want) {
+				t.Fatal("ReadAt over the whole media differs from the raw image")
+			}
+			if sum := sha256.Sum256(got); hex.EncodeToString(sum[:]) != v.MediaSHA256 {
+				t.Fatal("media sha256 differs from the oracle")
+			}
+			md5s, sha1s := md5.Sum(got), sha1.Sum(got) //nolint:gosec // comparing stored hashes
+			if hex.EncodeToString(md5s[:]) != v.StoredMD5 || hex.EncodeToString(sha1s[:]) != v.StoredSHA1 {
+				t.Fatalf("md5/sha1 of the decoded media differ from the stored ones")
+			}
+			if v.MediaSize == exp.Raw.Size && (hex.EncodeToString(md5s[:]) != exp.Raw.MD5 || hex.EncodeToString(sha1s[:]) != exp.Raw.SHA1) {
+				t.Fatal("md5/sha1 differ from the oracle's raw image hashes")
+			}
+			// Small unaligned reads across chunk (and segment) boundaries.
+			rng := rand.New(rand.NewPCG(7, 1)) //nolint:gosec // deterministic test input, not security
+			for range 300 {
+				off := rng.Int64N(r.Size())
+				p := make([]byte, 1+rng.IntN(3*r.ChunkSize()))
+				n, err := r.ReadAt(p, off)
+				if !bytes.Equal(p[:n], want[off:min(int64(len(want)), off+int64(n))]) || (n < len(p)) != (err == io.EOF) {
+					t.Fatalf("read of %d bytes at %d: n=%d err=%v", len(p), off, n, err)
+				}
+			}
+			if w := r.Warnings(); len(w) != 0 {
+				t.Fatalf("warnings after reading a clean fixture: %q", w)
 			}
 		})
 	}

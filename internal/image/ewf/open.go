@@ -80,7 +80,12 @@ func (o *opener) segment(i int) error {
 			return err
 		}
 	}
-	return nil
+	for _, sec := range secs {
+		if sec.kind == kSectors {
+			o.r.sectors[i] = append(o.r.sectors[i], span{start: sec.payloadOff(), end: sec.off + sec.size})
+		}
+	}
+	return o.tables(i, secs)
 }
 
 // handle processes one section of segment n.
@@ -148,6 +153,14 @@ func (o *opener) finish() error {
 		r.warn.add("acquisition error: %d sector range(s) (%d sectors) were unreadable at acquisition and are zero-filled in the image", e.count, e.sectors)
 	}
 	r.err2 = o.err2
+	if covered := int64(len(r.refs)); covered < int64(r.geo.chunks) {
+		// A missing or truncated segment or table: the image opens, and the
+		// chunks without an entry fail on read (never zero-filled). If a
+		// table in the middle is missing, later entries are indexed from the
+		// wrong chunk, which only the stored hashes (Verify) can reveal.
+		r.warn.add("chunk table covers %d of %d chunks (missing or truncated segment or table); reads of the other chunks fail", covered, r.geo.chunks)
+	}
+	r.cache = newChunkCache(cacheCapacity(r.geo.chunkSize))
 	r.meta = o.metadata()
 	return nil
 }

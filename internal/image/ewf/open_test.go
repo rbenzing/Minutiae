@@ -488,7 +488,7 @@ func TestNextInLastSegmentIsIncomplete(t *testing.T) {
 	files := ewftest.Build(ewftest.Options{ChunksPerSegment: 1}, pattern(3*64*512))
 	r := mustOpen(t, files[:2]) // the last segment is missing
 	w := r.Warnings()
-	if len(w) != 1 || w[0] != "E01 set incomplete (no done section)" {
+	if len(w) != 2 || w[0] != "E01 set incomplete (no done section)" || !strings.Contains(w[1], "covers 2 of 3 chunks") {
 		t.Fatalf("warnings %q", w)
 	}
 }
@@ -734,7 +734,7 @@ func TestVolumeHostile(t *testing.T) {
 
 func TestUnknownSectionsAreCounted(t *testing.T) {
 	files := ewftest.Build(ewftest.Options{}, pattern(2*64*512))
-	s := section(t, files[0], "table2")
+	s := section(t, files[0], "data")
 	s.Type = "session"
 	ewftest.FixDescriptor(files[0], s)
 	r := mustOpen(t, files)
@@ -1013,7 +1013,7 @@ func TestOpenLayoutVariations(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := mustOpen(t, ewftest.Build(o, m))
-			if w := r.Warnings(); len(w) != 0 {
+			if w := r.Warnings(); (o.NoTable2 && len(w) != 1) || (!o.NoTable2 && len(w) != 0) {
 				t.Fatalf("warnings %q", w)
 			}
 			g := meta(r)
