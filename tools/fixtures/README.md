@@ -108,7 +108,7 @@ Fixture details worth knowing:
 `fat12.img.gz`; partitions are 4 KiB aligned because the smallest ext4 image is 6.25 MiB, so 1 MiB
 alignment would not fit 8 MiB) with the real `ewfacquire` (the tool's default format, `-d sha1`), under a
 frozen `faketime` clock (the acquisition and system dates are in the header sections). The four E01 sets
-are byte-identical across runs (checked by generating twice and comparing every output sha256) and
+were byte-identical across two generation runs (compared by hand on every output sha256; `ewf.sh` does not check it) and
 `ewfacquire 20140816` needs no further normalisation: it writes an all-zero set identifier (the volume
 payload field at offset 64), so `ewf_normalize.py` rewrites nothing (the generator log prints "0 section(s)
 rewritten"). The normaliser stays in the pipeline as a safeguard: it pins a non-zero set identifier to a
