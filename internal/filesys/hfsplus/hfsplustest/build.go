@@ -19,8 +19,9 @@
 // every folder and file has a thread; the catalog keyCompareType is 0xCF for
 // H+ and case-insensitive HFSX, 0xBC for case-sensitive HFSX. Layout choices
 // from memory of Apple TN1150: the allocation file's logical size is a whole
-// number of blocks and its padding bits (past totalBlocks) are set; the
-// alternate header's block is allocated.
+// number of blocks; the alternate header's block is allocated. Padding bits (past
+// totalBlocks) are CLEAR: real mkfs.hfsplus images leave them clear and fsck
+// reports orphaned blocks when they are set.
 package hfsplustest
 
 import (
@@ -29,7 +30,6 @@ import (
 	"path"
 	"sort"
 	"strings"
-	"unicode/utf16"
 )
 
 // WrapperBase is the byte offset of the embedded volume in an image built with
@@ -44,6 +44,18 @@ const hfsEpoch = 2082844800
 // writes (HFS+ seconds): 2023-11-14 22:13:20 UTC.
 const fixedDate = hfsEpoch + 1700000000
 
+// HFSEpoch is the offset of the HFS+ epoch (1904-01-01) from the Unix epoch, in
+// seconds: an HFS+ date is a Unix time plus HFSEpoch.
+const HFSEpoch = hfsEpoch
+
+// FixedDate is the HFS+ date (seconds since 1904) of every object that does
+// not set Times.
+const FixedDate = fixedDate
+
+// Times are raw catalog dates, in HFS+ seconds since 1904-01-01 UTC (0 =
+// absent).
+type Times struct{ Create, ContentMod, AttrMod, Access, Backup uint32 }
+
 // File describes one file or directory to place in the image. Parents must
 // precede their children; CNIDs are assigned from 16 in order. Files have no
 // content yet (Data must be empty): later tasks give this type more fields.
@@ -51,6 +63,33 @@ type File struct {
 	Path string // "/a/b.txt"
 	Data []byte
 	Dir  bool
+
+	Mode     uint16 // BSD fileMode with type bits; 0 = the default (0o40755 folder, 0o100644 file)
+	ZeroMode bool   // write fileMode 0 (a volume written by classic Mac OS has no BSD info)
+	UID, GID uint32
+	Times    *Times // nil = FixedDate for the four dates, no backup date
+	// FileType and FileCreator are the Finder 4CCs of a file (4 bytes, or empty).
+	FileType, FileCreator string
+	// DataLogical is the logical size recorded in the data fork of a file. The
+	// fork has no extents until a later task gives files content.
+	DataLogical uint64
+	// RsrcLogical and RsrcBlocks are recorded in the resource fork of a file
+	// (no extents).
+	RsrcLogical uint64
+	RsrcBlocks  uint32
+	// NameUnits, when not nil, is the name stored on disk, as UTF-16 code units
+	// (any units: '/', NUL, a lone surrogate, 255 of them). The last component
+	// of Path then only has to be unique: it names the object inside the builder.
+	NameUnits []uint16
+	NoThread  bool // write no thread record for this object (a legacy volume)
+}
+
+// RawRecord is a catalog leaf record placed under the key (Parent, Name) with
+// Data as its data bytes, verbatim: a way to plant junk or forged records.
+type RawRecord struct {
+	Parent uint32
+	Name   []uint16
+	Data   []byte
 }
 
 // Extent is a run of allocation blocks.
@@ -95,6 +134,8 @@ type Options struct {
 	StaleSlack bool
 	// OverflowRecords are added to the extents-overflow tree as given.
 	OverflowRecords []OverflowRecord
+	// RawRecords are added to the catalog as given (see RawRecord).
+	RawRecords []RawRecord
 }
 
 // Layout reports where Build put things, so tests can patch or read them.
@@ -333,10 +374,10 @@ func BuildLayout(o Options, files []File) ([]byte, *Layout) {
 	vol := make([]byte, total*bs)
 	be := binary.BigEndian
 
-	// Allocation file: an exact bitmap, MSB first; padding bits are set.
+	// Allocation file: an exact bitmap, MSB first; padding bits stay clear (as mkfs.hfsplus leaves them).
 	bitmap := vol[allocBlock*bs : (allocBlock+allocBlocks)*bs]
 	for n := 0; n < len(bitmap)*8; n++ {
-		if n >= total || inUse[n] {
+		if n < total && inUse[n] {
 			bitmap[n/8] |= 0x80 >> (n % 8)
 		}
 	}
@@ -458,15 +499,17 @@ const (
 )
 
 // catalogRecords builds the catalog's leaf records: the root folder, every file
-// and folder with its thread. CNIDs run from 16 in file order.
+// and folder with its thread, and the raw records. CNIDs run from 16 in file
+// order.
 func catalogRecords(o Options, files []File) ([]rec, counters, map[string]uint32) {
 	cnids := map[string]uint32{"/": 2}
 	dirs := map[string]bool{"/": true}
 	valence := map[uint32]uint32{}
+	subfolders := map[uint32]uint32{}
 	type item struct {
 		cnid, parent uint32
-		name         string
-		dir          bool
+		name         []uint16
+		f            File
 	}
 	var items []item
 	var c counters
@@ -489,78 +532,133 @@ func catalogRecords(o Options, files []File) ([]rec, counters, map[string]uint32
 		if f.Dir {
 			dirs[p] = true
 			c.folders++
+			subfolders[parent]++
 		} else {
 			c.files++
 		}
 		valence[parent]++
-		items = append(items, item{cnid, parent, path.Base(p), f.Dir})
+		name := f.NameUnits
+		if name == nil {
+			name = unitsOf(path.Base(p))
+		}
+		items = append(items, item{cnid, parent, name, f})
 	}
 	c.nextCNID = next
 
 	var recs []rec
-	add := func(parent uint32, name string, data []byte) {
-		u := unitsOf(name)
-		recs = append(recs, rec{key: catalogKey(parent, name), data: data, parent: parent, name: u})
+	add := func(parent uint32, name []uint16, data []byte) {
+		recs = append(recs, rec{key: keyOfUnits(parent, name), data: data, parent: parent, name: name})
 	}
-	add(1, o.Label, folderRecord(2, valence[2], 0o40755))
-	add(2, "", threadRecord(catThreadDir, 1, o.Label))
-	for _, it := range items {
-		if it.dir {
-			add(it.parent, it.name, folderRecord(it.cnid, valence[it.cnid], 0o40755))
-			add(it.cnid, "", threadRecord(catThreadDir, it.parent, it.name))
+	// An HFSX volume's folder records carry kHFSHasFolderCountMask and the
+	// number of subfolders (checked by fsck on HFSX volumes).
+	folder := func(id uint32, f *File) []byte {
+		return folderRecord(id, valence[id], subfolders[id], o.HFSX, f)
+	}
+	rootName := unitsOf(o.Label)
+	add(1, rootName, folder(2, nil))
+	add(2, nil, threadRecordUnits(catThreadDir, 1, rootName))
+	for i := range items {
+		it := &items[i]
+		if it.f.Dir {
+			add(it.parent, it.name, folder(it.cnid, &it.f))
+			if !it.f.NoThread {
+				add(it.cnid, nil, threadRecordUnits(catThreadDir, it.parent, it.name))
+			}
 		} else {
-			add(it.parent, it.name, fileRecord(it.cnid, 0o100644))
-			add(it.cnid, "", threadRecord(catThreadFil, it.parent, it.name))
+			add(it.parent, it.name, fileRecord(it.cnid, &it.f))
+			if !it.f.NoThread {
+				add(it.cnid, nil, threadRecordUnits(catThreadFil, it.parent, it.name))
+			}
 		}
+	}
+	for _, r := range o.RawRecords {
+		add(r.Parent, r.Name, r.Data)
 	}
 	return recs, c, cnids
 }
 
-// folderRecord is an 88-byte HFSPlusCatalogFolder.
-func folderRecord(id, valence uint32, mode uint16) []byte {
+// setCommon writes the fields folder and file records share: the dates and the
+// BSD info (owner, group, fileMode).
+func setCommon(b []byte, f *File, defMode uint16) {
+	be := binary.BigEndian
+	t := Times{fixedDate, fixedDate, fixedDate, fixedDate, 0}
+	mode := defMode
+	if f != nil {
+		if f.Times != nil {
+			t = *f.Times
+		}
+		if f.Mode != 0 {
+			mode = f.Mode
+		}
+		if f.ZeroMode {
+			mode = 0
+		}
+		be.PutUint32(b[32:], f.UID)
+		be.PutUint32(b[36:], f.GID)
+	}
+	be.PutUint32(b[12:], t.Create)
+	be.PutUint32(b[16:], t.ContentMod)
+	be.PutUint32(b[20:], t.AttrMod)
+	be.PutUint32(b[24:], t.Access)
+	be.PutUint32(b[28:], t.Backup)
+	be.PutUint16(b[42:], mode) // BSD fileMode
+}
+
+// folderRecord is an 88-byte HFSPlusCatalogFolder. f is nil for the root.
+func folderRecord(id, valence, subfolders uint32, hfsx bool, f *File) []byte {
 	be := binary.BigEndian
 	b := make([]byte, 88)
 	be.PutUint16(b[0:], catRecFolder)
-	be.PutUint16(b[2:], 2) // flags: thread exists
+	flags := uint16(0) // as mkfs.hfsplus writes it (fsck rejects kHFSThreadExistsMask on a folder)
+	if hfsx {
+		flags |= 0x10 // kHFSHasFolderCountMask: the folderCount field below is valid
+		be.PutUint32(b[84:], subfolders)
+	}
+	be.PutUint16(b[2:], flags)
 	be.PutUint32(b[4:], valence)
 	be.PutUint32(b[8:], id)
-	for _, off := range []int{12, 16, 20, 24} { // create, contentMod, attributeMod, access
-		be.PutUint32(b[off:], fixedDate)
-	}
-	be.PutUint16(b[42:], mode) // BSD fileMode
+	setCommon(b, f, 0o40755)
 	return b
 }
 
-// fileRecord is a 248-byte HFSPlusCatalogFile with empty forks.
-func fileRecord(id uint32, mode uint16) []byte {
+// fileRecord is a 248-byte HFSPlusCatalogFile with empty forks (only their
+// recorded sizes, when set).
+func fileRecord(id uint32, f *File) []byte {
 	be := binary.BigEndian
 	b := make([]byte, 248)
 	be.PutUint16(b[0:], catRecFile)
-	be.PutUint16(b[2:], 2) // flags: thread exists
-	be.PutUint32(b[8:], id)
-	for _, off := range []int{12, 16, 20, 24} {
-		be.PutUint32(b[off:], fixedDate)
+	flags := uint16(2)
+	if f.NoThread {
+		flags = 0
 	}
-	be.PutUint16(b[42:], mode)
+	be.PutUint16(b[2:], flags)
+	be.PutUint32(b[8:], id)
+	setCommon(b, f, 0o100644)
+	copy(b[48:52], f.FileType)
+	copy(b[52:56], f.FileCreator)
+	be.PutUint64(b[88:], f.DataLogical)
+	be.PutUint64(b[168:], f.RsrcLogical)
+	be.PutUint32(b[168+12:], f.RsrcBlocks)
 	return b
 }
 
-// threadRecord is a folder or file thread: type, reserved, parent, name.
-func threadRecord(typ uint16, parent uint32, name string) []byte {
+// threadRecordUnits is a folder or file thread: type, reserved, parent, name.
+func threadRecordUnits(typ uint16, parent uint32, name []uint16) []byte {
 	be := binary.BigEndian
-	units, nb := utf16be(name)
-	b := make([]byte, 10+len(nb))
+	b := make([]byte, 10+2*len(name))
 	be.PutUint16(b[0:], typ)
 	be.PutUint32(b[4:], parent)
-	be.PutUint16(b[8:], uint16(units))
-	copy(b[10:], nb)
+	be.PutUint16(b[8:], uint16(len(name)))
+	for i, u := range name {
+		be.PutUint16(b[10+2*i:], u)
+	}
 	return b
 }
 
 // staleRecord is a complete, valid catalog leaf record (a file named
 // "stale.txt" in the root folder, CNID 4242) as left behind in node slack.
 func staleRecord() []byte {
-	return rec{key: catalogKey(2, "stale.txt"), data: fileRecord(4242, 0o100644)}.bytes()
+	return rec{key: keyOfUnits(2, unitsOf("stale.txt")), data: fileRecord(4242, &File{})}.bytes()
 }
 
 // putFork writes an HFSPlusForkData with up to eight inline extents.
@@ -665,26 +763,17 @@ func headerNode(nodeSize int, h bthdr, usedNodes int) []byte {
 	return n
 }
 
-// utf16be encodes a name as a count of UTF-16 code units and the units.
-func utf16be(name string) (units int, b []byte) {
-	u := utf16.Encode([]rune(name))
-	if len(u) > 255 {
+// keyOfUnits is a catalog key: keyLength, parentID, then the HFSUniStr255 name.
+func keyOfUnits(parent uint32, name []uint16) []byte {
+	if len(name) > 255 {
 		panic("hfsplustest: name longer than 255 UTF-16 units")
 	}
-	b = make([]byte, 2*len(u))
-	for i, c := range u {
-		binary.BigEndian.PutUint16(b[2*i:], c)
-	}
-	return len(u), b
-}
-
-// catalogKey is keyLength, parentID, then the HFSUniStr255 name.
-func catalogKey(parent uint32, name string) []byte {
-	units, nb := utf16be(name)
-	k := make([]byte, 2+6+len(nb))
-	binary.BigEndian.PutUint16(k[0:], uint16(6+len(nb)))
+	k := make([]byte, 2+6+2*len(name))
+	binary.BigEndian.PutUint16(k[0:], uint16(6+2*len(name)))
 	binary.BigEndian.PutUint32(k[2:], parent)
-	binary.BigEndian.PutUint16(k[6:], uint16(units))
-	copy(k[8:], nb)
+	binary.BigEndian.PutUint16(k[6:], uint16(len(name)))
+	for i, u := range name {
+		binary.BigEndian.PutUint16(k[8+2*i:], u)
+	}
 	return k
 }

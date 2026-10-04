@@ -385,6 +385,18 @@ func firstAtOrAfter(nd *btNode, cmp keyCmp, minCmp int) (int, error) {
 // node reached must be a leaf and none may be visited twice: a loop is a
 // CorruptError, as is a chain longer than totalNodes.
 func (t *btree) scan(nd *btNode, pos int, fn func(rec []byte) (bool, error)) error {
+	return t.scanHook(nd, pos, nil, fn)
+}
+
+// scanHook is scan with a hook that runs for the first leaf and before each
+// further leaf is read; an error from it ends the scan and is returned (it is
+// how a caller charges the leaves it reads to a budget).
+func (t *btree) scanHook(nd *btNode, pos int, onNode func(num uint32) error, fn func(rec []byte) (bool, error)) error {
+	if onNode != nil {
+		if err := onNode(nd.num); err != nil {
+			return err
+		}
+	}
 	visited := map[uint32]struct{}{}
 	for {
 		visited[nd.num] = struct{}{}
@@ -407,6 +419,11 @@ func (t *btree) scan(nd *btNode, pos int, fn func(rec []byte) (bool, error)) err
 		}
 		if _, seen := visited[next]; seen || uint32(len(visited)) >= t.totalNodes {
 			return corrupt(t.kind.String(), -1, "the leaf chain loops at node %d", next)
+		}
+		if onNode != nil {
+			if err := onNode(next); err != nil {
+				return err
+			}
 		}
 		var err error
 		if nd, err = t.node(next); err != nil {

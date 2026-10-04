@@ -211,9 +211,13 @@ fixed work directory, `umask 022`, a root check and a cleanup trap.
 ### Builder images (`hfsplus.sh check-builder <dir>`)
 
 Runs `fsck.hfsplus -n -f` on every `*.img` in `<dir>` and exits non-zero when
-any fails. The Go test that writes the builder's images
-(`MINUTIAE_WRITE_BUILDER_IMAGES=<dir>`) lands with the reader tests; results are
-recorded here when it does (not yet run).
+any fails. `MINUTIAE_WRITE_BUILDER_IMAGES=<dir> go test -run TestWriteBuilderImages ./internal/filesys/hfsplus`
+writes the builder's images (empty, populated trees, 600-entry folders; H+, HFSX
+case-sensitive and case-folding, HFS wrapper); all of them pass `fsck.hfsplus -n -f`
+(run 2026-10-03). Two builder facts came from that run: folder records carry
+flags 0 (0x10 on HFSX) and the bitmap's padding bits stay clear, as in the real
+images. A journaled builder volume is not in the set: its journal blocks are
+allocated but no catalog file owns them, so fsck reports orphaned blocks.
 
 ## Adding a fixture
 

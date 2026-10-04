@@ -36,6 +36,16 @@ type FS struct {
 
 	warnings filesys.Warnings
 
+	// dirBudget is how many bytes of catalog nodes listings and fallback scans may
+	// still read, shared by every call (see chargeDir); dirCap overrides the
+	// per-listing entry cap (0 = maxDirEntries).
+	dirMu     sync.Mutex
+	dirBudget int64
+	dirCap    int
+
+	rootMu    sync.Mutex
+	rootEntry *filesys.Entry // the root folder as its record describes it, once readable
+
 	treeMu sync.Mutex
 	trees  [numTreeKinds]*btree // lazily opened B-trees, see tree
 	label  string               // the volume name, from the root folder thread
@@ -216,6 +226,8 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		r:       filesys.NewCachedReader(vol, cacheBlockSize, cacheBlocks),
 		size:    end,
 		wrapped: loc.wrapped,
+
+		dirBudget: maxDirBudget,
 	}
 	for _, w := range warns {
 		f.warn("%s", w)

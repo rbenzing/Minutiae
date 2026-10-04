@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
@@ -162,13 +163,23 @@ func (f *FS) binaryNames() bool { return f.caseSensitive }
 
 // catalogCmp builds the descent comparison for a target catalog key.
 func (f *FS) catalogCmp(target catalogKey) keyCmp {
-	binary := f.binaryNames()
+	bin := f.binaryNames()
 	return func(key []byte) (int, error) {
 		k, err := parseCatalogKey(key)
 		if err != nil {
+			// A key whose name is damaged still has a readable parent id, and a
+			// damaged name sorts after the empty name: that is enough to find a
+			// folder's thread record and the start of its children whatever damage
+			// lies inside the range. Any other comparison needs the name.
+			if len(key) >= 4 && len(target.name) == 0 {
+				if p := binary.BigEndian.Uint32(key); p < target.parent {
+					return -1, nil
+				}
+				return 1, nil
+			}
 			return 0, err
 		}
-		return compareKeys(k, target, binary), nil
+		return compareKeys(k, target, bin), nil
 	}
 }
 
@@ -234,24 +245,43 @@ func (f *FS) catalogThread(cnid uint32) (catalogRecord, error) {
 	return rec, nil
 }
 
-// findRecord finds the record keyed (parent, name). The descent follows the
-// tree's own order, which is exact for binary (HFSX case-sensitive) trees; for
+// maxEqualRun bounds how many records that compare equal to a searched name
+// findRecord looks at: a real catalog has one, a forged one may hold more.
+const maxEqualRun = 64
+
+// findRecord finds the folder or file record keyed (parent, name); thread
+// records are never returned. The descent follows the tree's own order, which
+// is exact for binary (HFSX case-sensitive) trees; the records that compare
+// equal to the name (several only in a forged or approximately folded tree)
+// are examined and an exact spelling is preferred to a case-folded one. For
 // case-folding trees the fold here only approximates Apple's table, so a miss
 // falls back to a linear scan of that parent's children with the approximate
-// fold (an exotic name may stay unreachable by name). Thread records are
-// never returned for a child lookup by the fallback. filesys.ErrNotFound when
-// there is none; the key returned holds the name as stored.
+// fold (an exotic name may stay unreachable by name); the scan reads catalog
+// nodes and is charged to the directory read budget, and a scan that the budget
+// cut short is a CorruptError, not a miss. filesys.ErrNotFound when there is
+// none; the key returned holds the name as stored.
 func (f *FS) findRecord(parent uint32, name []uint16) (catalogKey, catalogRecord, error) {
 	target := catalogKey{parent: parent, name: name}
 	binaryMode := f.binaryNames()
 	var gotKey catalogKey
 	var got catalogRecord
-	found := false
+	found, exact, run := false, false, 0 // exact: a record spelled as name was seen
 	err := f.catalogScan(target, func(k catalogKey, r catalogRecord) (bool, error) {
-		if compareKeys(k, target, binaryMode) == 0 {
+		if compareKeys(k, target, binaryMode) != 0 {
+			return false, nil
+		}
+		if r.isThread() {
+			return true, nil
+		}
+		run++
+		if !found {
 			gotKey, got, found = k, r, true
 		}
-		return false, nil
+		if slices.Equal(k.name, name) {
+			gotKey, got, exact = k, r, true
+			return false, nil
+		}
+		return run < maxEqualRun, nil
 	})
 	if err != nil {
 		return gotKey, got, err
@@ -260,24 +290,64 @@ func (f *FS) findRecord(parent uint32, name []uint16) (catalogKey, catalogRecord
 		return gotKey, got, nil
 	}
 	if !binaryMode && len(name) > 0 {
-		err = f.catalogScan(catalogKey{parent: parent}, func(k catalogKey, r catalogRecord) (bool, error) {
-			if k.parent != parent {
-				return false, nil
-			}
-			if !r.isThread() && compareNames(k.name, name, false) == 0 {
+		cutShort, err := f.foldScan(parent, name, func(k catalogKey, r catalogRecord) bool {
+			if !found {
 				gotKey, got, found = k, r, true
-				return false, nil
 			}
-			return true, nil
+			if slices.Equal(k.name, name) {
+				gotKey, got, exact = k, r, true
+			}
+			return !exact
 		})
 		if err != nil {
 			return gotKey, got, err
 		}
-		if found {
-			return gotKey, got, nil
+		if cutShort && !found {
+			return gotKey, got, corrupt("catalog", -1, "the directory read budget ran out while searching folder %d for a name", parent)
 		}
 	}
+	if found {
+		return gotKey, got, nil
+	}
 	return gotKey, got, fmt.Errorf("%w: no catalog record for parent %d", filesys.ErrNotFound, parent)
+}
+
+// foldScan visits the folder and file records of parent whose name equals name
+// under the approximate case fold, in key order, until visit returns false. The
+// leaves read are charged to the directory read budget; cutShort reports that
+// the budget ended the scan before the range did. Damaged records are skipped
+// with a warning.
+func (f *FS) foldScan(parent uint32, name []uint16, visit func(k catalogKey, r catalogRecord) bool) (cutShort bool, err error) {
+	t, err := f.tree(treeCatalog)
+	if err != nil {
+		return false, err
+	}
+	leaf, pos, err := t.search(f.catalogCmp(catalogKey{parent: parent}))
+	if err != nil || leaf == nil {
+		return false, err
+	}
+	want := fold(name)
+	err = t.scanHook(leaf, pos, f.chargeLeaf(t), func(rec []byte) (bool, error) {
+		k, r, ok, err := f.decodeLeaf(rec)
+		if err != nil {
+			f.warn("a damaged catalog record was skipped while searching folder %d: %v", parent, err)
+			return true, nil
+		}
+		if !ok {
+			return true, nil
+		}
+		if k.parent != parent {
+			return false, nil
+		}
+		if !r.isThread() && compareUnits(fold(k.name), want) == 0 {
+			return visit(k, r), nil
+		}
+		return true, nil
+	})
+	if errors.Is(err, errDirBudget) {
+		return true, nil
+	}
+	return false, err
 }
 
 // loadLabel sets the volume name from the root folder's thread record (keyed

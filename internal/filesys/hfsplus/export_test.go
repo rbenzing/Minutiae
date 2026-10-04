@@ -180,3 +180,21 @@ func (f *FS) CatalogScan(fn func(parent uint32, name string, r CatRec) bool) err
 		return fn(k.parent, s, catRec(r)), nil
 	})
 }
+
+// SetDirBudget sets the bytes of catalog nodes the instance may still read for
+// directory listings and fallback scans.
+func (f *FS) SetDirBudget(n int64) {
+	f.dirMu.Lock()
+	f.dirBudget = n
+	f.dirMu.Unlock()
+}
+
+// DirBudget returns the bytes of the directory read budget still available.
+func (f *FS) DirBudget() int64 {
+	f.dirMu.Lock()
+	defer f.dirMu.Unlock()
+	return f.dirBudget
+}
+
+// SetDirEntryCap lowers the number of entries one listing yields.
+func (f *FS) SetDirEntryCap(n int) { f.dirCap = n }

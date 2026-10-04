@@ -626,7 +626,8 @@ func TestInfoWarningsAreLive(t *testing.T) {
 
 func TestBuilderVolumeIsSelfConsistent(t *testing.T) {
 	// freeBlocks, the bitmap and the layout of the builder agree: count the
-	// clear bits among the first totalBlocks and compare with freeBlocks.
+	// clear bits among the first totalBlocks and compare with freeBlocks; the
+	// padding bits past totalBlocks stay clear, as mkfs.hfsplus leaves them.
 	for _, o := range []hfsplustest.Options{{}, {Journaled: true}, {BlockSize: 512, Blocks: 1024, NodeSize: 512, ExtentsNodeSize: 512}, {BlockSize: 1024, Blocks: 300}, {BlockSize: 8192, Blocks: 100, NodeSize: 8192, ExtentsNodeSize: 4096}} {
 		img, lay := build(t, o)
 		vh := img[lay.PrimaryVH:]
@@ -643,8 +644,8 @@ func TestBuilderVolumeIsSelfConsistent(t *testing.T) {
 			t.Errorf("%+v: %d clear bits, freeBlocks %d", o, clearBits, free)
 		}
 		for n := total; n < lay.AllocBlocks*lay.BlockSize*8; n++ {
-			if bm[n/8]&(0x80>>(n%8)) == 0 {
-				t.Errorf("%+v: padding bit %d is clear", o, n)
+			if bm[n/8]&(0x80>>(n%8)) != 0 {
+				t.Errorf("%+v: padding bit %d is set", o, n)
 				break
 			}
 		}
