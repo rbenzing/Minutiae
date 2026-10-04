@@ -64,6 +64,7 @@ type Reader struct {
 	err2 *error2Info // acquisition error ranges, nil when none
 
 	refs    []chunkRef // one resolved table entry per covered chunk
+	gap     *tableGap  // non-nil: chunks from gap.from onward have no proven index
 	sectors [][]span   // per segment: payload ranges of its sectors sections
 	cache   *chunkCache
 

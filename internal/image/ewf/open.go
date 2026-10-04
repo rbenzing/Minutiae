@@ -217,9 +217,9 @@ func (o *opener) finish() error {
 	r.err2 = o.err2
 	if covered := int64(len(r.refs)); covered < int64(r.geo.chunks) {
 		// A missing or truncated segment or table: the image opens, and the
-		// chunks without an entry fail on read (never zero-filled). If a
-		// table in the middle is missing, later entries are indexed from the
-		// wrong chunk, which only the stored hashes (Verify) can reveal.
+		// chunks without an entry fail on read (never zero-filled). A missing
+		// table in the middle of the set also makes every later chunk
+		// unreadable (Reader.gap), as their indexes cannot be proven.
 		r.warn.add("chunk table covers %d of %d chunks (missing or truncated segment or table); reads of the other chunks fail", covered, r.geo.chunks)
 	}
 	r.cache = newChunkCache(cacheCapacity(r.geo.chunkSize))

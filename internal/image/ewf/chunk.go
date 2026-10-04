@@ -43,7 +43,7 @@ func (r *Reader) chunk(idx int64) ([]byte, error) {
 
 func chunkErr(idx int64, ref chunkRef, cause error) error {
 	e := &ChunkError{Chunk: idx, Segment: ref.seg() + 1, Offset: -1, Err: cause}
-	if !ref.outside() {
+	if !ref.unlocated() {
 		e.Offset = ref.off()
 	}
 	return e
@@ -56,9 +56,15 @@ func (r *Reader) decode(idx int64) ([]byte, error) {
 		return nil, &ChunkError{Chunk: idx, Offset: -1, Err: errors.New("chunk index outside the media")}
 	}
 	if idx >= int64(len(r.refs)) {
+		if r.gap != nil {
+			return nil, &ChunkError{Chunk: idx, Offset: -1, Err: errors.New(r.gap.why)}
+		}
 		return nil, &ChunkError{Chunk: idx, Offset: -1, Err: fmt.Errorf("no table entry (the chunk table covers %d of %d chunks)", len(r.refs), r.geo.chunks)}
 	}
 	ref := r.refs[idx]
+	if ref.disputed() {
+		return nil, chunkErr(idx, ref, errors.New("table and table2 disagree about this chunk and it passes its integrity check at neither location"))
+	}
 	if ref.outside() {
 		return nil, chunkErr(idx, ref, errors.New("table entry points outside the segment"))
 	}
@@ -103,7 +109,7 @@ func (r *Reader) chunkEnd(idx int64, ref chunkRef, segSize int64) int64 {
 	}
 	if idx+1 < int64(len(r.refs)) {
 		nx := r.refs[idx+1]
-		if nx.seg() == ref.seg() && !nx.outside() && nx.off() > off {
+		if nx.seg() == ref.seg() && !nx.unlocated() && nx.off() > off {
 			end = min(end, nx.off())
 		}
 	}
