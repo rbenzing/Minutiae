@@ -69,7 +69,14 @@ func parseHeader(buf []byte, size int64, w *warnings) (Info, error) {
 	case enc >= 1 && enc <= 3:
 		i.Encoding, i.EncodingValid = Encoding(enc), true
 	case enc != 0:
-		add(WarnHdrEncodingInvalid, 56, fmt.Sprintf("text encoding field is %d, not 1..3; read as UTF-8", enc))
+		// The engine reads the field masked with 3 (0 meaning UTF-8), measured by
+		// TestEngineTextEncodingHeaderField: 4 and 5 are UTF-8, 6 is UTF-16le, 7
+		// is UTF-16be, and bits above the low two do not count. The text really is
+		// in that encoding, so Info.Encoding follows it; the field stays invalid.
+		if low := Encoding(enc & 3); low != 0 {
+			i.Encoding = low
+		}
+		add(WarnHdrEncodingInvalid, 56, fmt.Sprintf("text encoding field is %d, not 1..3; read as %s like the engine", enc, i.Encoding))
 		if engineRefusesBadEncoding {
 			refuse(fmt.Sprintf("text encoding field is %d", enc))
 		}
@@ -90,15 +97,17 @@ func parseHeader(buf []byte, size int64, w *warnings) (Info, error) {
 
 	// Page count: the header's, when the file change counter vouches for it,
 	// else the file's.
-	whole := size / int64(i.PageSize)
-	if whole > math.MaxUint32 {
-		whole = math.MaxUint32
-		add(WarnPageCountClamped, 0, "the file holds more whole pages than a page number can name; counted as 4294967295")
+	// A trailing partial page counts as a page, as the engine counts it (the
+	// page count of a file is its size rounded up). Its missing bytes are not
+	// zeros: the page source serves only the bytes that are there.
+	pages := (size + int64(i.PageSize) - 1) / int64(i.PageSize)
+	if pages > math.MaxUint32 {
+		pages = math.MaxUint32
+		add(WarnPageCountClamped, 0, "the file holds more pages than a page number can name; counted as 4294967295")
+	} else if rest := size % int64(i.PageSize); rest != 0 {
+		add(WarnTruncatedFile, 0, fmt.Sprintf("trailing partial page of %d bytes counted as a page; the bytes it lacks are unreadable", rest))
 	}
-	i.FilePages = uint32(whole)
-	if rest := size % int64(i.PageSize); rest != 0 && whole < math.MaxUint32 {
-		add(WarnTruncatedFile, 0, fmt.Sprintf("trailing partial page of %d bytes ignored", rest))
-	}
+	i.FilePages = uint32(pages)
 	i.HeaderPagesValid = i.HeaderPages != 0 && i.ChangeCounter == i.VersionValidFor
 	switch {
 	case i.HeaderPagesValid:

@@ -263,6 +263,9 @@ func TestEngineWALWithRollbackHeader(t *testing.T) {
 		want bool
 	}{
 		{"no page 1 frame", false, engineAppliesWALWithRollbackHeader},
+		// Variant B cannot exercise the patched rollback header on page 1: the
+		// engine reads page 1 from the WAL own frame, so the patch is not seen.
+		// Variant A is the real probe of the rollback-header rule.
 		{"page 1 in the WAL", true, engineAppliesWALWithRollbackHeaderPage1WAL},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

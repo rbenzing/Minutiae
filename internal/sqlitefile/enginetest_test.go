@@ -5,7 +5,9 @@ package sqlitefile_test
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -48,7 +50,7 @@ func copyFiles(t testing.TB, dst string, src ...string) string {
 		var err error
 		for attempt := range 50 {
 			data, err = os.ReadFile(s)
-			if err == nil {
+			if err == nil || errors.Is(err, fs.ErrNotExist) { // only a sharing violation is worth another try
 				break
 			}
 			mode = copyRetry

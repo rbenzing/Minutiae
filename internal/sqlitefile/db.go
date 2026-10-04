@@ -6,7 +6,9 @@ import (
 )
 
 // engineRefusesBadEncoding records what the engine does with a header
-// encoding outside 0..3 (measured by TestEngineRefusesToleratedHeaders).
+// encoding field outside 0..3: it opens the file and reads text in the encoding
+// the field masked with 3 names (measured by TestEngineTextEncodingHeaderField
+// for the fields 4..7 and 0x102, and by TestEngineRefusesToleratedHeaders).
 const engineRefusesBadEncoding = false
 
 // DB is an opened database file, read only. The file's pages are reached
@@ -63,19 +65,21 @@ func (d *DB) Info() Info {
 func (d *DB) Warnings() []Warning { return d.warns.snapshot() }
 
 // readRawPage reads page pgno of the database file exactly as found. A page
-// number of 0, above Limits.MaxPages, or a page that does not lie wholly
-// below the declared size is ErrPageUnavailable; a read that fails or comes
-// up short below the size is an I/O error, never ErrCorrupt.
+// number of 0, above Limits.MaxPages, or a page with no byte below the declared
+// size is ErrPageUnavailable. The trailing page of a file whose size is not a
+// whole number of pages is returned short: only the bytes that are in the file,
+// never padded with zeros. A read that fails or comes up short below the size
+// is an I/O error, never ErrCorrupt.
 func (d *DB) readRawPage(pgno uint32) ([]byte, error) {
 	d.env.at("rawpage")
 	if pgno == 0 || int64(pgno) > d.env.opts.Limits.MaxPages {
 		return nil, fmt.Errorf("%w: page %d is not addressable", ErrPageUnavailable, pgno)
 	}
 	off := PageOffset(d.info.PageSize, pgno)
-	if off+int64(d.info.PageSize) > d.size {
+	if off >= d.size {
 		return nil, fmt.Errorf("%w: page %d lies beyond the %d bytes of the file", ErrPageUnavailable, pgno, d.size)
 	}
-	p := make([]byte, d.info.PageSize)
+	p := make([]byte, min(int64(d.info.PageSize), d.size-off))
 	if err := readFull(d.r, p, off); err != nil {
 		return nil, err
 	}

@@ -44,7 +44,7 @@ type Info struct {
 	EncodingValid      bool     // the stored value is 1, 2 or 3
 	HeaderPages        uint32   // field at offset 28 as stored
 	HeaderPagesValid   bool     // non-zero and file change counter == version-valid-for
-	FilePages          uint32   // whole pages in the file
+	FilePages          uint32   // pages in the file: its size rounded up (a trailing partial page counts, as for the engine)
 	PageCount          uint32   // pages the engine would use (declared or file-derived; an upper bound, not an allocation size)
 	ChangeCounter      uint32
 	VersionValidFor    uint32

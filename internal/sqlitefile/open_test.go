@@ -191,13 +191,36 @@ func TestOpenHeaderPagesRules(t *testing.T) {
 			t.Errorf("EngineRefuses = %q, want one reason naming the page count", i.EngineRefuses)
 		}
 	})
-	t.Run("trailing partial page is ignored with a warning", func(t *testing.T) {
+	t.Run("a trailing partial page counts as a page, as the engine counts it", func(t *testing.T) {
 		db := openBytes(t, append(sqlitetest.New(sqlitetest.Options{}).Bytes(), make([]byte, 100)...))
-		if i := db.Info(); i.FilePages != 1 || i.PageCount != 1 || i.FileSize != 4196 {
-			t.Errorf("Info = %+v", i)
+		if i := db.Info(); i.FilePages != 2 || i.PageCount != 1 || i.FileSize != 4196 || len(i.EngineRefuses) != 0 {
+			t.Errorf("Info = %+v, want FilePages 2 and the valid header count 1", i)
+		}
+		b := sqlitetest.New(sqlitetest.Options{})
+		b.SetHeaderPages(0, true) // no header count: the engine counts from the file
+		db = openBytes(t, append(b.Bytes(), make([]byte, 100)...))
+		if i := db.Info(); i.FilePages != 2 || i.PageCount != 2 {
+			t.Errorf("Info = %+v, want FilePages 2 and PageCount 2", i)
 		}
 		if !hasWarning(db, sqlitefile.WarnTruncatedFile) {
 			t.Errorf("warnings %v lack %s", warningCodes(db), sqlitefile.WarnTruncatedFile)
+		}
+	})
+	t.Run("a valid header count that only the partial page covers is not refused by the engine", func(t *testing.T) {
+		b := sqlitetest.New(sqlitetest.Options{})
+		b.SetHeaderPages(2, true)
+		db := openBytes(t, append(b.Bytes(), make([]byte, 2048)...))
+		i := db.Info()
+		if i.PageCount != 2 || i.FilePages != 2 || !i.HeaderPagesValid {
+			t.Errorf("Info = %+v, want PageCount 2, FilePages 2", i)
+		}
+		if len(i.EngineRefuses) != 0 {
+			t.Errorf("EngineRefuses = %q: the engine opens a 1.5-page file whose header says 2 pages", i.EngineRefuses)
+		}
+		b.SetHeaderPages(3, true)
+		db = openBytes(t, append(b.Bytes(), make([]byte, 2048)...))
+		if len(db.Info().EngineRefuses) != 1 {
+			t.Errorf("a header count of 3 pages on a 1.5-page file is refused: %q", db.Info().EngineRefuses)
 		}
 	})
 }
@@ -277,8 +300,8 @@ var toleratedHeaders = []toleratedHeader{
 		}
 	}},
 	{"encoding 7", func(b *sqlitetest.Builder) { b.Patch(56, 0, 0, 0, 7) }, sqlitefile.WarnHdrEncodingInvalid, false, func(t *testing.T, i sqlitefile.Info) {
-		if i.Encoding != sqlitefile.EncUTF8 || i.EncodingValid {
-			t.Errorf("encoding 7: %v valid=%v, want UTF-8 not valid", i.Encoding, i.EncodingValid)
+		if i.Encoding != sqlitefile.EncUTF16BE || i.EncodingValid {
+			t.Errorf("encoding 7: %v valid=%v, want UTF-16be (the engine reads the field masked with 3) and not valid", i.Encoding, i.EncodingValid)
 		}
 	}},
 	{"read version 3", func(b *sqlitetest.Builder) { b.Patch(19, 3) }, sqlitefile.WarnHdrVersionBytes, true, func(t *testing.T, i sqlitefile.Info) {

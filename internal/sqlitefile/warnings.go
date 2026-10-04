@@ -91,7 +91,9 @@ var knownWarningCodes = map[string]bool{
 }
 
 // Warning is one anomaly found while reading. Msg is short; any text read
-// from the disk in it is quoted.
+// from the disk in it is quoted. File is 0 (printed as unknown) for a warning
+// that belongs to no file: a limit that was clamped, a page count that
+// overflowed, the suppression note.
 type Warning struct {
 	Code   string
 	File   FileKind
@@ -156,6 +158,8 @@ func (w *warnings) add(x Warning) {
 	if !knownWarningCodes[x.Code] && w.unknown != nil {
 		w.unknown(x.Code)
 	}
+	// Two long messages that differ only past the clip collapse into one: the
+	// key is the clipped text.
 	x.Msg = clipMsg(x.Msg)
 	k := warningKey{x.Code, x.File, x.Page, x.Offset, x.Msg}
 	w.mu.Lock()

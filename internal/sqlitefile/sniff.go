@@ -130,18 +130,26 @@ func headerPageSize(v uint16) int {
 	return 0
 }
 
-// containerMagics are the starts of common container and text formats, which
-// rule out the encryption hint.
-var containerMagics = [...]string{"\x1f\x8b", "PK\x03\x04", "PK\x05\x06", "PK\x07\x08", "\x89PNG", "\xff\xd8\xff", "bplist", "<?xml", "{", "["}
+// containerMagics are the starts of common compressed, archive, media and
+// markup formats, which rule out the encryption hint. Only multi-byte magics
+// are listed: a one-byte prefix would drop the hint from about 1 in 128 random
+// files, and text formats (JSON, source) have far too little entropy to reach
+// the hint anyway.
+var containerMagics = [...]string{
+	"\x1f\x8b", "PK\x03\x04", "PK\x05\x06", "PK\x07\x08", "\x89PNG", "\xff\xd8\xff", "bplist", "<?xml",
+	"\x28\xb5\x2f\xfd", "\xfd7zXZ\x00", "BZh", "7z\xbc\xaf\x27\x1c", "Rar!\x1a\x07", "%PDF", "OggS", "\x1a\x45\xdf\xa3",
+	"GIF8", "RIFF", "ID3",
+}
 
-// knownContainer reports whether b starts with a known container magic.
+// knownContainer reports whether b starts with a known container magic (an
+// MP4-family file carries its magic at offset 4).
 func knownContainer(b []byte) bool {
 	for _, m := range containerMagics {
 		if bytes.HasPrefix(b, []byte(m)) {
 			return true
 		}
 	}
-	return false
+	return len(b) >= 8 && string(b[4:8]) == "ftyp"
 }
 
 // Entropy returns the Shannon entropy of b in bits per byte (0 for empty).
