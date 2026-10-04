@@ -3,6 +3,8 @@ package evidence
 import (
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -42,13 +44,19 @@ func TestNormalizeTable(t *testing.T) {
 		{"bidi override U+202E removed", "ab\u202ecd", "abcd"},
 		{"bidi isolate U+2066 and pop U+2069 removed", "a\u2066b\u2069c", "abc"},
 		{"left-to-right mark removed", "a\u200eb", "ab"},
-		{"zero width space U+200B removed", "a\u200bb", "ab"},
-		{"zero width non-joiner and joiner removed", "a\u200cb\u200dc", "abc"},
-		{"word joiner U+2060 removed", "a\u2060b", "ab"},
+		{"zero width space U+200B separates words (R32)", "a\u200bb", "a b"},
+		{"zero width space run is one space", "a\u200b\u200b\u200bb", "a b"},
+		{"zero width space beside a space is one space", "a \u200bb\u200b c", "a b c"},
+		{"zero width space beside a dropped Cf is one space", "a\u2060\u200b\u00adb", "a b"},
+		{"zero width non-joiner U+200C dropped (R32)", "a\u200cb", "ab"},
+		{"zero width joiner U+200D dropped (R32)", "a\u200db", "ab"},
+		{"word joiner U+2060 dropped (R32)", "a\u2060b", "ab"},
+		{"leading zero width space is a leading space", "\u200ba", " a"},
 		{"soft hyphen removed", "co\u00adoperate", "cooperate"},
 		{"BOM removed", "\ufeffabc", "abc"},
 		{"tag character removed", "a\U000e0001b", "ab"},
-		{"only Cf gives nothing", "\u200b\u202e\ufeff", ""},
+		{"only Cf gives nothing", "\u202e\ufeff\u200c\u200d\u2060", ""},
+		{"only a zero width space is one space", "\u200b\u202e\ufeff", " "},
 
 		// step 2: Cc, Zs, Zl, Zp become one space each, then runs collapse (R14)
 		{"newline", "a\nb", "a b"},
@@ -190,7 +198,8 @@ func TestNormalizeEquivalentSpellingsMeet(t *testing.T) {
 		{"\ufb01", "fi", "FI"},
 		{"\u212a", "K", "k", "\uff2b"},
 		{"\u2460", "1", "\uff11"},
-		{"a\u200bb", "ab", "a\u00adb", "a\u2060b"},
+		{"a\u200cb", "ab", "a\u00adb", "a\u2060b", "a\u200db"},
+		{"a\u200bb", "a b", "a\u200b\u200bb", "a \u200bb"},
 		{"a\u00a0b", "a b", "a\tb", "a\nb", "a\r\nb", "a  b", "a\u2028b", "a\u3000b"},
 		{"\u03c3", "\u03c2", "\u03a3"},
 	}
@@ -204,7 +213,7 @@ func TestNormalizeEquivalentSpellingsMeet(t *testing.T) {
 	}
 	// The groups above are deliberate classes; two spellings that are not equivalent stay apart
 	// (accents are the tokenizers' job: see TestNormalizeAndTokenizersAgree).
-	for _, pair := range [][2]string{{"\u00e9", "e"}, {"ss", "s"}, {"a b", "ab"}, {"\u0131", "\u00ef"}} {
+	for _, pair := range [][2]string{{"\u00e9", "e"}, {"ss", "s"}, {"a b", "ab"}, {"a\u200bb", "ab"}, {"\u0131", "\u00ef"}} {
 		if NormalizeText(pair[0]) == NormalizeText(pair[1]) {
 			t.Errorf("NormalizeText folds %q and %q together; accent folding must stay with the tokenizers", pair[0], pair[1])
 		}
@@ -312,7 +321,7 @@ func TestNormalizeLongCombiningRunIsFast(t *testing.T) {
 
 func TestFTSNormVersionShape(t *testing.T) {
 	v := FTSNormVersion()
-	re := regexp.MustCompile(`^fts1/unicode-[0-9]+\.[0-9]+\.[0-9]+/sqlite-[0-9]+\.[0-9]+\.[0-9]+$`)
+	re := regexp.MustCompile(`^fts2/unicode-[0-9]+\.[0-9]+\.[0-9]+/xtext-v[0-9]+\.[0-9]+\.[0-9]+/sqlite-[0-9]+\.[0-9]+\.[0-9]+$`)
 	if !re.MatchString(v) {
 		t.Fatalf("FTSNormVersion() = %q does not match %s", v, re)
 	}
@@ -322,8 +331,11 @@ func TestFTSNormVersionShape(t *testing.T) {
 	if want := fmt.Sprintf("fts%d/", FTSPipelineVersion); !strings.HasPrefix(v, want) {
 		t.Errorf("FTSNormVersion() = %q does not start with %q", v, want)
 	}
-	if FTSPipelineVersion != 1 {
-		t.Errorf("FTSPipelineVersion = %d, want 1 (bump it by hand only with a change of NormalizeText)", FTSPipelineVersion)
+	if !strings.Contains(v, "/xtext-"+xTextVersion+"/") {
+		t.Errorf("FTSNormVersion() = %q does not contain the x/text version %q", v, xTextVersion)
+	}
+	if FTSPipelineVersion != 2 {
+		t.Errorf("FTSPipelineVersion = %d, want 2 (bump it by hand only with a change of NormalizeText)", FTSPipelineVersion)
 	}
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -346,6 +358,33 @@ func TestFTSNormVersionShape(t *testing.T) {
 		})
 	}
 	wg.Wait()
+}
+
+// TestXTextVersionMatchesGoMod (R31): the index content depends on the x/text tables, so
+// FTSNormVersion names the module version. The constant must equal the version go.mod requires,
+// otherwise an x/text upgrade would change index content (case folding, NFKC tables) without the
+// stored versions noticing.
+func TestXTextVersionMatchesGoMod(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found []string
+	for line := range strings.SplitSeq(string(data), "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 3 && f[0] == "require" {
+			f = f[1:]
+		}
+		if len(f) >= 2 && f[0] == "golang.org/x/text" {
+			found = append(found, f[1])
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("go.mod requires golang.org/x/text %d times (%v), want exactly once", len(found), found)
+	}
+	if found[0] != xTextVersion {
+		t.Errorf("go.mod requires golang.org/x/text %s but xTextVersion = %q: update xTextVersion, bump FTSPipelineVersion if the index content changes, and re-pin the tests", found[0], xTextVersion)
+	}
 }
 
 // ---- agreement between NormalizeText and the SQLite tokenizers ----------------------------------
@@ -395,7 +434,8 @@ func TestNormalizeAndTokenizersAgree(t *testing.T) {
 		{"o\ufb04ce", "offlce"},
 		{"\u212aelvin", "kelvin", "KELVIN"},
 		{"\u03a3\u0391\u03a3", "\u03c3\u03b1\u03c2", "\u03c3\u03b1\u03c3"},
-		{"co\u00adoperate", "cooperate", "co\u200boperate"},
+		{"co\u00adoperate", "cooperate", "co\u2060operate"},
+		{"co\u200boperate", "co operate"},
 	}
 	for _, class := range classes {
 		x := newTokenizerIndex(t, class...)
@@ -452,10 +492,12 @@ func TestNormalizeKnownSilentMisses(t *testing.T) {
 		{"CJK sub-run by prefix", probeMatch(t, x.db, "records_fts", probeQuote(NormalizeText("\u65e5\u672c"))+" *"), []int64{2}, "a prefix finds the start of a run", "word"},
 		{"CJK sub-run by substring", x.sub("\u672c\u8a9e\u306e"), []int64{2}, "the trigram index finds any 3-character piece", "sub"},
 		{"CJK piece shorter than a trigram", x.sub("\u672c\u8a9e"), nil, "a 2-character substring is below the trigram minimum", "sub"},
-		{"ZWSP fuses words: the joined word", x.word("foobar"), []int64{3}, "U+200B is removed (Cf), so the two words become one token", "word"},
-		{"ZWSP fuses words: the first word alone", x.word("foo"), nil, "so a search for one of the words misses", "word"},
-		{"ZWSP fuses words: the second word alone", x.word("bar"), nil, "likewise", "word"},
-		{"ZWSP fuses words: substring still finds", x.sub("oob"), []int64{3}, "--substring is the way to find them", "sub"},
+		{"ZWSP separates words: the first word", x.word("foo"), []int64{3}, "U+200B maps to a space (R32), so the two words stay two tokens", "word"},
+		{"ZWSP separates words: the second word", x.word("bar"), []int64{3}, "likewise", "word"},
+		{"ZWSP separates words: the phrase", x.word("foo bar"), []int64{3}, "and the phrase with a space finds them", "word"},
+		{"ZWSP separates words: the fused spelling misses", x.word("foobar"), nil, "the word 'foobar' is not in a text that separates them", "word"},
+		{"ZWSP separates words: substring across it misses", x.sub("oob"), nil, "the normalized text holds a space between the words", "sub"},
+		{"ZWSP separates words: substring with the space", x.sub("oo b"), []int64{3}, "the space is part of the trigram text", "sub"},
 		{"Hangul word with particle by word", x.word("\ud55c\uad6d\uc5b4"), nil, "the particle is part of the token", "word"},
 		{"Hangul prefix", probeMatch(t, x.db, "records_fts", probeQuote(NormalizeText("\ud55c\uad6d\uc5b4"))+" *"), []int64{4}, "a prefix finds it", "word"},
 		{"currency sign by word", x.word("\u20ac"), nil, "symbols are not tokens", "word"},

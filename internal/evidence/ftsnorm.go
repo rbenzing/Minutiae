@@ -15,19 +15,29 @@ import (
 // FTSPipelineVersion is bumped by hand whenever NormalizeText changes behaviour: it is part of
 // FTSNormVersion, so a changed pipeline makes every existing index "not current" until it is
 // rebuilt with `records reindex`.
-const FTSPipelineVersion = 1
+const FTSPipelineVersion = 2
+
+// xTextVersion is the golang.org/x/text module version this build is made with. The index content
+// depends on its tables (NFKC, case folding), not only on the Unicode version they implement, so it
+// is part of FTSNormVersion. TestXTextVersionMatchesGoMod fails when it differs from go.mod, so an
+// x/text upgrade can never change index content without this constant (and the tests that pin the
+// normalization) being revisited.
+const xTextVersion = "v0.42.0"
 
 const (
+	runeZeroWidthSpace = 0x200b // ZERO WIDTH SPACE: a word separator in Thai and Khmer
+
 	runeDotlessI     = 0x0131 // LATIN SMALL LETTER DOTLESS I
 	runeCombiningDot = 0x0307 // COMBINING DOT ABOVE
 )
 
 // NormalizeText returns the text the full-text indexes hold and queries are compiled from
-// (pipeline version 1):
+// (pipeline version 2):
 //
 //  1. invalid UTF-8 becomes U+FFFD (one per undecodable byte); NUL becomes U+0020;
-//  2. every Cf rune (bidi controls, zero-width characters, soft hyphen, BOM) is dropped; every Cc,
-//     Zs, Zl and Zp rune becomes U+0020;
+//  2. U+200B ZERO WIDTH SPACE becomes U+0020 (it separates words in Thai and Khmer); every other
+//     Cf rune (bidi controls, U+200C, U+200D and U+2060, which join within words, soft hyphen,
+//     BOM) is dropped; every Cc, Zs, Zl and Zp rune becomes U+0020;
 //  3. NFKC; 4. full Unicode case folding; 5. NFKC again;
 //  6. the deliberate mappings the folding does not give: U+0131 becomes "i", a run of U+0307
 //     after an "i" is dropped (the Turkish ones, for recall), and Cherokee letters are mapped to
@@ -41,8 +51,8 @@ const (
 // output is valid UTF-8 without NUL, Cc or Cf runes and without two consecutive spaces.
 //
 // What it does not do: accents are not removed (the SQLite tokenizers remove them, on the
-// index and on the query alike), and a Cf rune that separates words in some scripts (U+200B)
-// fuses them: a document "foo<U+200B>bar" holds the one token "foobar".
+// index and on the query alike), and the Cf runes that join within words (U+200C, U+200D, U+2060,
+// soft hyphen) are dropped, so "foo<U+2060>bar" holds the one token "foobar".
 func NormalizeText(s string) string {
 	s = cleanRunes(s, false)
 	s = norm.NFKC.String(s)
@@ -64,6 +74,8 @@ func cleanRunes(s string, collapse bool) string {
 		r, size := utf8.DecodeRuneInString(s[i:])
 		i += size
 		switch {
+		case r == runeZeroWidthSpace:
+			r = ' '
 		case unicode.Is(unicode.Cf, r):
 			continue
 		case unicode.In(r, unicode.Cc, unicode.Zs, unicode.Zl, unicode.Zp):
@@ -127,7 +139,7 @@ var (
 )
 
 // FTSNormVersion names everything the index content depends on:
-// "fts<FTSPipelineVersion>/unicode-<norm.Version>/sqlite-<sqlite_version()>". The SQLite part is
+// "fts<FTSPipelineVersion>/unicode-<norm.Version>/xtext-<module version>/sqlite-<sqlite_version()>". The SQLite part is
 // read once from a scratch in-memory database. If that read fails the version carries
 // "sqlite-unknown" (and is read again on the next call), which matches no stored index version,
 // so a search or an index write is refused with "not current" rather than trusting an unnamed
@@ -140,9 +152,9 @@ func FTSNormVersion() string {
 	}
 	sv, err := sqliteVersion()
 	if err != nil {
-		return fmt.Sprintf("fts%d/unicode-%s/sqlite-unknown", FTSPipelineVersion, norm.Version)
+		return fmt.Sprintf("fts%d/unicode-%s/xtext-%s/sqlite-unknown", FTSPipelineVersion, norm.Version, xTextVersion)
 	}
-	normVersion = fmt.Sprintf("fts%d/unicode-%s/sqlite-%s", FTSPipelineVersion, norm.Version, sv)
+	normVersion = fmt.Sprintf("fts%d/unicode-%s/xtext-%s/sqlite-%s", FTSPipelineVersion, norm.Version, xTextVersion, sv)
 	return normVersion
 }
 
