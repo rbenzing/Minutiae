@@ -8,7 +8,7 @@ import "context"
 // because the case is intact and only unsearchable; an unreadable or invalid state is a problem,
 // because the case cannot say what its index is. A records reindex that the audit log announced and
 // never concluded is a NOTICE too, whatever the state says: the index may be partial.
-func (c *Case) verifyIndexState(ctx context.Context, rep *VerifyReport, entries []AuditEntry, auditReadable bool) {
+func (c *Case) verifyIndexState(ctx context.Context, rep *VerifyReport, entries []AuditEntry, auditReadable bool) (current bool) {
 	remedy := "run: minutiae records reindex --case " + c.Dir
 	if auditReadable {
 		for _, d := range danglingReindexes(entries, rep) {
@@ -29,10 +29,11 @@ func (c *Case) verifyIndexState(ctx context.Context, rep *VerifyReport, entries 
 	})
 	if err != nil {
 		unreadable(rep, "full-text index state", err)
-		return
+		return false
 	}
 	switch st.Kind {
 	case IndexCurrent:
+		return true
 	case IndexUnbuilt:
 		rep.noticef("%s: the full-text index is not built: %d records are not searchable and the index content is not verified; %s", FTSWordTable, records, remedy)
 	case IndexBuilding:
@@ -42,10 +43,11 @@ func (c *Case) verifyIndexState(ctx context.Context, rep *VerifyReport, entries 
 	default:
 		if st.Value == "" {
 			rep.problemf("%s: records_meta %s is missing (or is not text): the state of the full-text index is unknown; %s", FTSWordTable, MetaFTSNormVersion, remedy)
-			return
+			return false
 		}
 		rep.problemf("%s: records_meta %s holds %q, which is not a version of the full-text index; %s", FTSWordTable, MetaFTSNormVersion, st.Value, remedy)
 	}
+	return false
 }
 
 // danglingReindex is a records.reindex entry no later entry concluded.

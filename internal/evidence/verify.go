@@ -18,10 +18,14 @@ type VerifyReport struct {
 	ArtifactsChecked int `json:"artifacts_checked"`
 	// RecordsChecked, RecordBatchesChecked and RecordRunsChecked count what the
 	// record checks of a schema v2 case covered (0 for a v1 case).
-	RecordsChecked       int      `json:"records_checked"`
-	RecordBatchesChecked int      `json:"record_batches_checked"`
-	RecordRunsChecked    int      `json:"record_runs_checked"`
-	Problems             []string `json:"problems"`
+	RecordsChecked       int `json:"records_checked"`
+	RecordBatchesChecked int `json:"record_batches_checked"`
+	RecordRunsChecked    int `json:"record_runs_checked"`
+	// FTSDocsChecked is the number of documents of the word index the full-text check (P11)
+	// compared with a rebuild (0 for a case older than schema v3, and when the index is not
+	// current: its content is then not verified, see Notices).
+	FTSDocsChecked int      `json:"fts_docs_checked"`
+	Problems       []string `json:"problems"`
 	// Notices are findings that are not integrity problems (for example an
 	// announced upgrade that was never concluded); never silent.
 	Notices []string `json:"notices"`
@@ -83,6 +87,7 @@ func (c *Case) verify(observe verifyChunkObserver) (VerifyReport, error) {
 	c.checkDerived(&rep, recs)
 	c.crossCheckAudit(&rep, recs, audited)
 	c.crossCheckDB(&rep, recs)
+	c.checkTmp(&rep)
 	c.verifyRecords(&rep, recs, audited, auditReadable, observe)
 	if auditReadable {
 		c.checkSchema(&rep, audited)
@@ -94,7 +99,7 @@ func (c *Case) verify(observe verifyChunkObserver) (VerifyReport, error) {
 		"ok": rep.OK(), "artifacts_checked": rep.ArtifactsChecked,
 		"audit_entries": rep.AuditEntries, "problems": len(rep.Problems),
 		"records_checked": rep.RecordsChecked, "record_batches_checked": rep.RecordBatchesChecked,
-		"record_runs_checked": rep.RecordRunsChecked,
+		"record_runs_checked": rep.RecordRunsChecked, "fts_docs_checked": rep.FTSDocsChecked,
 	})
 	return rep, err
 }

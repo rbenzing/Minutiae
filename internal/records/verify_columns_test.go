@@ -116,6 +116,13 @@ func TestVerifyDetectsAnyColumnAlteration(t *testing.T) {
 	digestOnly := func(name string, change func(dir string)) alter {
 		return alter{name: name, change: change, want: []string{"digest mismatch"}, batch1: true}
 	}
+	// a changed summary or body, or a changed id, also leaves the full-text index (built from the
+	// original rows) differing from a rebuild: P11 reports that too
+	digestAndIndex := func(name string, change func(dir string)) alter {
+		a := digestOnly(name, change)
+		a.allowed = []string{"records_fts"}
+		return a
+	}
 	batchCol := func(name, col string, v any, want ...string) alter {
 		return alter{name: "record_batches." + name, want: want, change: func(dir string) {
 			recordstest.SetBatchColumn(t, dir, base.ing1, 1, col, v)
@@ -148,8 +155,8 @@ func TestVerifyDetectsAnyColumnAlteration(t *testing.T) {
 		}),
 		digestOnly("records.recovery_method", setCol(1, "recovery_method", "other")),
 		digestOnly("records.confidence", setCol(1, "confidence", 81)),
-		digestOnly("records.summary", setCol(1, "summary", "changed")),
-		digestOnly("records.body", setCol(1, "body", "changed body")),
+		digestAndIndex("records.summary", setCol(1, "summary", "changed")),
+		digestAndIndex("records.body", setCol(1, "body", "changed body")),
 		digestOnly("records.payload", setCol(1, "payload", `{"a":2}`)),
 		digestOnly("records.artifact_id", func(dir string) { recordstest.RepointRecord(t, dir, 1, base.art2.ID) }),
 		digestOnly("records.parser_id", func(dir string) { recordstest.SetRecordParser(t, dir, 1, base.parser2) }),
@@ -159,11 +166,13 @@ func TestVerifyDetectsAnyColumnAlteration(t *testing.T) {
 		},
 		{
 			name: "records.id to 0", change: func(dir string) { recordstest.SetRecordID(t, dir, 1, 0) },
-			want: []string{"id is not positive", "outside every batch range", "records stored", "digest mismatch", "has no record"},
+			want:    []string{"id is not positive", "outside every batch range", "records stored", "digest mismatch", "has no record"},
+			allowed: []string{"records_fts"},
 		},
 		{
 			name: "records.id to an unused id", change: func(dir string) { recordstest.SetRecordID(t, dir, 1, 7) },
-			want: []string{"outside every batch range", "records stored", "digest mismatch", "has no record", "next_id"},
+			want:    []string{"outside every batch range", "records stored", "digest mismatch", "has no record", "next_id"},
+			allowed: []string{"records_fts"},
 		},
 		// record_times, column by column
 		digestOnly("record_times.kind", timeCol(1, "created", "kind", "other")),
@@ -196,7 +205,7 @@ func TestVerifyDetectsAnyColumnAlteration(t *testing.T) {
 			expectProblems(t, rep, tc.want, tc.allowed...)
 			if tc.batch1 {
 				for _, p := range rep.Problems {
-					if !strings.Contains(p, "ingest "+`"`+base.ing1+`"`) {
+					if !strings.Contains(p, "ingest "+`"`+base.ing1+`"`) && !strings.Contains(p, "records_fts") {
 						t.Errorf("the problem does not name the ingest of the record: %s", p)
 					}
 				}

@@ -287,8 +287,9 @@ func (c *Case) verifyRecords(rep *VerifyReport, recs []ManifestRecord, entries [
 	// the tables no scan below reads row by row for another purpose
 	c.verifyClassOnly(ctx, ps, metaClasses, []string{"key"}, func(v []string) string { return fmt.Sprintf("key %q", v[0]) })
 	c.verifyMetaKeys(ctx, ps, dbv)
+	indexCurrent := false
 	if dbv >= 3 {
-		c.verifyIndexState(ctx, rep, entries, auditReadable)
+		indexCurrent = c.verifyIndexState(ctx, rep, entries, auditReadable)
 	}
 	c.verifyClassOnly(ctx, ps, supersededClasses, []string{"ingest_id", "artifact_id"},
 		func(v []string) string { return fmt.Sprintf("ingest %q artifact %q", v[0], v[1]) })
@@ -370,6 +371,11 @@ func (c *Case) verifyRecords(rep *VerifyReport, recs []ManifestRecord, entries [
 	}
 	if streamed {
 		c.checkNextID(ctx, rep, maxID)
+	}
+	if indexCurrent {
+		// P11: the index is compared with a rebuild from the records (after the record checks, which
+		// authenticate the rows the rebuild reads)
+		c.verifyFTS(ctx, ps, observe)
 	}
 }
 
