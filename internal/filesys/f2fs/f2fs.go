@@ -98,25 +98,35 @@ func readFailed(what string, err error) error {
 // deduplicated and capped filesys.Warnings collector. Safe for concurrent use.
 func (f *FS) warn(format string, a ...any) { f.warnings.Add(format, a...) }
 
-// Probe reports whether the first 8 KiB of the volume hold an F2FS
-// superblock: the magic at byte 1024 (primary) or at byte 4096+1024 (backup),
-// with major_ver 1 and 4 KiB blocks (the only geometry this reader supports),
-// so that detection can fall through to other drivers for anything else.
-func Probe(r io.ReaderAt, size int64) bool {
-	if size < minImage {
+// superblockLooksValid reports whether the 8 KiB head holds an F2FS superblock
+// at off: the magic, major_ver 1 and 4 KiB blocks (the only geometry this
+// reader supports).
+func superblockLooksValid(r io.ReaderAt, off int64) bool {
+	var b [sbLogBlockSize + 4]byte
+	if readFull(r, b[:], off) != nil {
 		return false
 	}
-	var b [sbLogBlockSize + 4]byte
-	for _, off := range []int64{superOffset, backupBlock*blockSize + superOffset} {
-		if readFull(r, b[:], off) != nil {
-			continue
-		}
-		le := binary.LittleEndian
-		if le.Uint32(b[sbMagic:]) == superMagic && le.Uint16(b[sbMajorVer:]) == 1 && le.Uint32(b[sbLogBlockSize:]) == blockShift {
-			return true
-		}
-	}
-	return false
+	le := binary.LittleEndian
+	return le.Uint32(b[sbMagic:]) == superMagic && le.Uint16(b[sbMajorVer:]) == 1 && le.Uint32(b[sbLogBlockSize:]) == blockShift
+}
+
+// Probe reports whether the first 8 KiB of the volume hold a valid PRIMARY F2FS
+// superblock at byte 1024: the magic, major_ver 1 and 4 KiB blocks (the only
+// geometry this reader supports), so that detection can fall through to other
+// drivers for anything else. The backup copy is deliberately not consulted: a
+// stale or forged backup signature inside another filesystem must not claim
+// the volume ahead of that filesystem's own driver (see ProbeBackup).
+func Probe(r io.ReaderAt, size int64) bool {
+	return size >= minImage && superblockLooksValid(r, superOffset)
+}
+
+// ProbeBackup is the last-resort probe: it reports whether the BACKUP
+// superblock at byte 4096+1024 is valid while the primary is not (a destroyed
+// primary). Detection registers it after every other driver, so a volume
+// another driver recognizes is never claimed through a backup signature alone.
+// Open already falls back to the backup on its own.
+func ProbeBackup(r io.ReaderAt, size int64) bool {
+	return size >= minImage && !superblockLooksValid(r, superOffset) && superblockLooksValid(r, backupBlock*blockSize+superOffset)
 }
 
 // loadSuper reads the primary superblock and, when it is unusable, the backup.

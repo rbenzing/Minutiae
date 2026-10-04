@@ -264,6 +264,8 @@ func TestHygieneGeometry(t *testing.T) {
 	})
 }
 
+// A superblock needs major_ver 1 and 4 KiB blocks to be valid: in the primary
+// for Probe, in the backup (with an invalid primary) for ProbeBackup.
 func TestProbeRequiresSupportedGeometry(t *testing.T) {
 	img := f2fstest.Build(smallOpts(), nil)[:8192]
 	probe := func(b []byte) bool { return f2fs.Probe(bytes.NewReader(b), int64(len(b))) }
@@ -281,16 +283,23 @@ func TestProbeRequiresSupportedGeometry(t *testing.T) {
 		{"log_blocksize 9", sbLogBlockSize, func(b []byte, base int) { le.PutUint32(b[base+sbLogBlockSize:], 9) }},
 	} {
 		t.Run(f.name, func(t *testing.T) {
-			// One bad copy still probes through the other; two bad ones do not.
+			// Probe looks at the primary only; ProbeBackup is the last resort for a
+			// destroyed primary with a supported backup. Two bad copies match neither.
+			probeBackup := func(b []byte) bool { return f2fs.ProbeBackup(bytes.NewReader(b), int64(len(b))) }
 			one := slices.Clone(img)
 			f.put(one, primary)
-			if !probe(one) {
-				t.Error("Probe = false with only the primary copy unsupported")
+			if probe(one) || !probeBackup(one) {
+				t.Error("with only the primary copy unsupported, Probe must be false and ProbeBackup true")
+			}
+			onlyBackup := slices.Clone(img)
+			f.put(onlyBackup, backup)
+			if !probe(onlyBackup) || probeBackup(onlyBackup) {
+				t.Error("with only the backup copy unsupported, Probe must be true and ProbeBackup false")
 			}
 			two := slices.Clone(one)
 			f.put(two, backup)
-			if probe(two) {
-				t.Error("Probe = true although neither superblock copy is supported")
+			if probe(two) || probeBackup(two) {
+				t.Error("a probe matched although neither superblock copy is supported")
 			}
 		})
 	}

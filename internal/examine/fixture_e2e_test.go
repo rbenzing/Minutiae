@@ -78,8 +78,11 @@ func loadFixture(t *testing.T, pkg, name string) ([]byte, fixtureOracle) {
 // artifact with the oracle; it then exports the unallocated space and checks it
 // against the oracle's free clusters, and verifies the case. zoneKnown says
 // whether the filesystem stores a UTC offset (exFAT) or not (FAT: the local time
-// is shown as stored, without a zone suffix).
-func extractFixture(t *testing.T, pkg, name, fsType string, zoneKnown bool) {
+// is shown as stored, without a zone suffix). strictSkips demands that the
+// skipped entries are exactly the oracle's deleted entries; the relaxed mode
+// (extra skips only logged) is for a fixture whose oracle tool does not report
+// every leftover deleted slot.
+func extractFixture(t *testing.T, pkg, name, fsType string, zoneKnown, strictSkips bool) {
 	t.Helper()
 	img, want := loadFixture(t, pkg, name)
 	c := newCase(t)
@@ -159,10 +162,9 @@ func extractFixture(t *testing.T, pkg, name, fsType string, zoneKnown bool) {
 		t.Errorf("artifacts = %d, Summary.Files = %d, want %d (every file of the oracle)", artifacts, sum.Files, wantFiles)
 	}
 
-	// Every deleted entry of the oracle is skipped with a warning. The image may
-	// hold more deleted entries than the oracle lists (the tools do not report
-	// every leftover slot), so extra skips are logged, not asserted; every
-	// skip still carries one warning.
+	// Every deleted entry of the oracle is skipped with one warning. With
+	// strictSkips nothing else is skipped (exact set equality); otherwise the
+	// image may hold more deleted entries than the oracle lists, which are logged.
 	skipped := map[string]bool{}
 	for _, w := range sum.Warnings {
 		skipped[w.Path] = true
@@ -179,10 +181,14 @@ func extractFixture(t *testing.T, pkg, name, fsType string, zoneKnown bool) {
 			extra = append(extra, p)
 		}
 		sort.Strings(extra)
-		t.Logf("skipped beyond the oracle's deleted entries: %v", extra)
+		if strictSkips {
+			t.Errorf("skipped beyond the oracle's deleted entries: %v", extra)
+		} else {
+			t.Logf("skipped beyond the oracle's deleted entries: %v", extra)
+		}
 	}
-	if sum.Skipped != len(sum.Warnings) || sum.Skipped < len(want.Deleted) {
-		t.Errorf("Skipped = %d with %d warnings, want at least the %d deleted entries, one warning each", sum.Skipped, len(sum.Warnings), len(want.Deleted))
+	if sum.Skipped != len(sum.Warnings) || sum.Skipped < len(want.Deleted) || (strictSkips && sum.Skipped != len(want.Deleted)) {
+		t.Errorf("Skipped = %d with %d warnings, want one warning each for the %d deleted entries (strict: %v)", sum.Skipped, len(sum.Warnings), len(want.Deleted), strictSkips)
 	}
 	if sum.FSWarnings != 0 {
 		t.Errorf("FSWarnings = %d on a clean image", sum.FSWarnings)
@@ -221,7 +227,7 @@ func TestExtractFromFAT32Fixture(t *testing.T) {
 	if testing.Short() {
 		t.Skip("imports and extracts a 34 MiB image (about 140 artifacts)")
 	}
-	extractFixture(t, "fat", "fat32", "fat32", false)
+	extractFixture(t, "fat", "fat32", "fat32", false, true)
 }
 
 // TestExtractFromExfatFixture does the same for the exFAT image populated
@@ -230,7 +236,7 @@ func TestExtractFromExfatFixture(t *testing.T) {
 	if testing.Short() {
 		t.Skip("imports and extracts a 16 MiB image (about 140 artifacts)")
 	}
-	extractFixture(t, "exfat", "exfat", "exfat", true)
+	extractFixture(t, "exfat", "exfat", "exfat", true, true)
 }
 
 // A zero-length FAT file has no clusters: it is extracted as an empty artifact

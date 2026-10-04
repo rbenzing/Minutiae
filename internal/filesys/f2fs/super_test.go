@@ -135,19 +135,40 @@ func TestProbe(t *testing.T) {
 		t.Error("Probe = false on the 8192-byte head")
 	}
 
-	// A damaged primary magic still probes through the backup, and vice versa.
-	for _, off := range []int{primary, backup} {
-		c := slices.Clone(img[:8192])
-		le.PutUint32(c[off:], 0)
-		if !f2fs.Probe(bytes.NewReader(c), int64(len(c))) {
-			t.Errorf("Probe = false with the magic at %d zeroed", off)
-		}
+	// Probe matches the primary superblock only (a stale or forged backup must
+	// not claim a volume that another driver recognizes); ProbeBackup is the
+	// last-resort probe for a destroyed primary with a valid backup.
+	ok := bytes.NewReader(img[:8192])
+	if f2fs.ProbeBackup(ok, 8192) {
+		t.Error("ProbeBackup = true although the primary is valid")
 	}
 	c := slices.Clone(img[:8192])
 	le.PutUint32(c[primary:], 0)
-	le.PutUint32(c[backup:], 0)
 	if f2fs.Probe(bytes.NewReader(c), int64(len(c))) {
-		t.Error("Probe = true with both magics zeroed")
+		t.Error("Probe = true with the primary magic zeroed (it must not match through the backup)")
+	}
+	if !f2fs.ProbeBackup(bytes.NewReader(c), int64(len(c))) {
+		t.Error("ProbeBackup = false with a valid backup and a zeroed primary magic")
+	}
+	// A primary with an unsupported geometry is not valid either: the backup counts.
+	g := slices.Clone(img[:8192])
+	le.PutUint32(g[primary+sbLogBlockSize:], 13)
+	if f2fs.Probe(bytes.NewReader(g), 8192) || !f2fs.ProbeBackup(bytes.NewReader(g), 8192) {
+		t.Error("a primary with log_blocksize 13 must not Probe, and the backup must ProbeBackup")
+	}
+	c = slices.Clone(img[:8192])
+	le.PutUint32(c[backup:], 0)
+	if !f2fs.Probe(bytes.NewReader(c), int64(len(c))) || f2fs.ProbeBackup(bytes.NewReader(c), int64(len(c))) {
+		t.Error("with only the backup magic zeroed, Probe must match and ProbeBackup must not")
+	}
+	c = slices.Clone(img[:8192])
+	le.PutUint32(c[primary:], 0)
+	le.PutUint32(c[backup:], 0)
+	if f2fs.Probe(bytes.NewReader(c), int64(len(c))) || f2fs.ProbeBackup(bytes.NewReader(c), int64(len(c))) {
+		t.Error("a probe matched with both magics zeroed")
+	}
+	if f2fs.ProbeBackup(bytes.NewReader(img[:8191]), 8191) {
+		t.Error("ProbeBackup = true below 8192 bytes")
 	}
 	// ext4's magic is not ours.
 	ext := make([]byte, 8192)

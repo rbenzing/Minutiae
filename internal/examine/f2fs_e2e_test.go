@@ -20,7 +20,7 @@ func TestExtractFromF2FSFixture(t *testing.T) {
 	}
 	for _, name := range []string{"f2fs-extra-attr", "f2fs-default"} {
 		t.Run(name, func(t *testing.T) {
-			extractFixture(t, "f2fs", name, "f2fs", true)
+			extractFixture(t, "f2fs", name, "f2fs", true, true)
 		})
 	}
 }

@@ -31,12 +31,12 @@ BLOCKS_PER_SEG = 512
 # Names of the files the generator saves the tool output in.
 CAPTURES = {
     "fsck_l": "fsck-l.txt",  # fsck.f2fs -l: superblock and checkpoint
-    "dump_i": "dump-i.txt",  # dump.f2fs -i 3: superblock and checkpoint (+ root inode)
+    "dump_i": "dump-i.txt",  # dump.f2fs -d 1 -s0~-1: superblock, checkpoint (stdout; the SIT goes to dump_sit)
     "fsck_f": "fsck-f.txt",  # fsck.f2fs -f --dry-run: consistency verdicts
     "tree": "tree.txt",  # fsck.f2fs -t --dry-run: directory tree with inode numbers
-    "map": "map.txt",  # fsck.f2fs -d 1 -M: data blocks of every file
-    "sit": "dump_sit",  # dump.f2fs -s0~-1: per-segment valid-block bitmaps
-    "nat": "dump_nat",  # dump.f2fs -n0~-1: NID -> block address
+    "map": "map.txt",  # fsck.f2fs -d 1 -M --dry-run: data blocks of every file
+    "sit": "dump_sit",  # file written by dump.f2fs -d 1 -s0~-1: per-segment valid-block bitmaps
+    "nat": "dump_nat",  # file written by dump.f2fs -n0~-1: NID -> block address
     "blkid": "blkid.txt",  # blkid -p -o export: label, uuid, type
 }
 
