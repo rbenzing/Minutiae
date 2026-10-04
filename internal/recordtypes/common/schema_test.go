@@ -160,8 +160,10 @@ func TestSchemaValidate(t *testing.T) {
 		for _, ok := range []string{"2024-02-29", "1999-12-31", "0001-01-01", "--02-29", "--12-31", "--01-01", "2000-02-29", "1900-01-31"} {
 			wantOK(t, f, ok)
 		}
-		for _, bad := range []string{"2023-02-29", "1900-02-29", "2024-13-01", "2024-00-10", "2024-04-31", "2024-01-00", "--13-01", "--04-31", "--02-30",
-			"2024-1-01", "24-01-01", "2024/01/01", "2024-01-011", "-02-29", "---02-29", "", "20240101", "2024-01-0a", "--0x-01", "\u0662\u0660\u0662\u0664-\u0660\u0661-\u0660\u0661"} {
+		for _, bad := range []string{
+			"2023-02-29", "1900-02-29", "2024-13-01", "2024-00-10", "2024-04-31", "2024-01-00", "--13-01", "--04-31", "--02-30",
+			"2024-1-01", "24-01-01", "2024/01/01", "2024-01-011", "-02-29", "---02-29", "", "20240101", "2024-01-0a", "--0x-01", "\u0662\u0660\u0662\u0664-\u0660\u0661-\u0660\u0661",
+		} {
 			wantErr(t, f, bad, "not a date")
 		}
 	})
@@ -383,8 +385,10 @@ func TestCommonFields(t *testing.T) {
 		ok("relation "+rel, obj{"recovery": obj{"relation": rel}})
 	}
 	bad("relation", obj{"recovery": obj{"relation": "found"}}, "payload.recovery.relation: not one of absent-from-live,superseded-version,uncommitted,from-recovered-artifact")
-	ok("recovery with free keys", obj{"recovery": obj{"relation": "uncommitted", "via": "wal", "table_basis": "x",
-		"wal": obj{"frame": 3, "salt1": json.Number("12"), "committed": false}, "notes": []any{"a", "b"}}})
+	ok("recovery with free keys", obj{"recovery": obj{
+		"relation": "uncommitted", "via": "wal", "table_basis": "x",
+		"wal": obj{"frame": 3, "salt1": json.Number("12"), "committed": false}, "notes": []any{"a", "b"},
+	}})
 	bad("recovery key too deep", obj{"recovery": obj{"wal": obj{"a": obj{"b": obj{}}}}}, "payload.recovery: another key holds an unsupported value or nests too deep")
 	bad("recovery key bad value", obj{"recovery": obj{"via": math.NaN()}}, "another key holds")
 	bad("recovery not an object", obj{"recovery": []any{}}, "payload.recovery: must be an object")
@@ -442,12 +446,20 @@ func TestSchemaErrorsNeverContainValues(t *testing.T) {
 		{"participants": []any{s1}},
 		{"ids": []any{"ok", s2}},
 		{"ids": []any{json.Number("77" + "41")}},
-		{"num": s3}, {"num": json.Number(s4)}, {"flag": s1},
-		{"thread": s2}, {"thread": obj{"role": s3}},
-		{"raw": s1}, {"raw": obj{s2: obj{s3: obj{s4: obj{s1: 1}}}}}, {"raw": obj{"k": struct{ s string }{s2}}},
-		{"recovery": obj{"relation": s1}}, {"recovery": obj{s2: obj{s3: obj{s4: 1}}}},
-		{"snapshot": obj{"name": 1, "xid": s3}}, {"snapshot": obj{"name": "n", "xid": json.Number("-" + "5" + "5")}},
-		{"deleted": obj{"source": s4 + "x", "extra": s1}}, {"deleted": s2},
+		{"num": s3},
+		{"num": json.Number(s4)},
+		{"flag": s1},
+		{"thread": s2},
+		{"thread": obj{"role": s3}},
+		{"raw": s1},
+		{"raw": obj{s2: obj{s3: obj{s4: obj{s1: 1}}}}},
+		{"raw": obj{"k": struct{ s string }{s2}}},
+		{"recovery": obj{"relation": s1}},
+		{"recovery": obj{s2: obj{s3: obj{s4: 1}}}},
+		{"snapshot": obj{"name": 1, "xid": s3}},
+		{"snapshot": obj{"name": "n", "xid": json.Number("-" + "5" + "5")}},
+		{"deleted": obj{"source": s4 + "x", "extra": s1}},
+		{"deleted": s2},
 		{s1: s2, "unknown": s3},
 	}
 	sentinels := []string{s1, s2, s3, s4, "7741", "9902", "3318", "5560"}
