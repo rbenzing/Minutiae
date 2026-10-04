@@ -17,7 +17,7 @@ docker build -t minutiae-fixtures tools/fixtures
 docker run --rm --privileged -v "$PWD:/work" -w /work minutiae-fixtures bash tools/fixtures/gen.sh all
 ```
 
-`gen.sh <fixture>` builds one fixture (`volume-gpt`, `volume-mbr`, `ext4`, `fat`, `exfat`, `f2fs`; `hfsplus` needs its own image, see "HFS+ fixtures").
+`gen.sh <fixture>` builds one fixture (`volume-gpt`, `volume-mbr`, `ext4`, `fat`, `exfat`, `f2fs`, `ewf`; `hfsplus` needs its own image, see "HFS+ fixtures").
 `--privileged` is needed by `exfat` (see below) and is used by `f2fs` only to try a kernel mount (see "F2FS determinism"); every other fixture runs without it.
 
 With Git Bash on Windows, stop MSYS rewriting the container paths:
@@ -38,6 +38,7 @@ Scripts must keep LF line endings (`.gitattributes` enforces this).
 | `fat.sh` + `fat_tree.sh` + `fat_oracle.py` + `fat_chains.py` | `fat12`, `fat16`, `fat32` (`.img.gz` + `.expect.json`, in `internal/filesys/fat/testdata/`) | the source tree (`fat_oracle.py`: type, size, sha256, mtime), the generator's own list of deleted names, `fsck.fat -v` (geometry, data-area offset, cluster count, clusters in use) and `mshowfat` (the cluster chain of every live file and directory; the free clusters are the ones no live chain holds, `fat_chains.py` fails unless that count equals what `fsck.fat -v` reports in use; the tests compare the reader's unallocated space and every file's runs with them exactly) |
 | `exfat.sh` + `exfat_chains.py` (also `fat_tree.sh`, `fat_oracle.py`) | `exfat` (`.img.gz` + `.expect.json`, in `internal/filesys/exfat/testdata/`) | the source tree, the generator's deleted names, and `dump.exfat` (boot report: geometry, serial, label; `-c -d <path>`: the cluster chain of every live path; the free clusters are the ones no chain, bitmap, up-case table or root holds, cross-checked against dump.exfat's "Free Clusters") |
 | `hfsplus.sh` + `hfsplus_oracle.py` + `hfsplus_normalize.py` (image `minutiae-fixtures-hfs`) | `hfsplus-empty`, `hfsx-empty`, `hfsplus-journal`, `hfsplus-1k`, `hfsplus-wrapped`, `hfsplus-populated` (`.img.gz` + `.expect.json`, in `internal/filesys/hfsplus/testdata/`; also `hfsplus_populate.sh` + `hfsplus_tree.py`) | an independent Python parse of the volume header, B-trees (extents-overflow records included), allocation bitmap and journal files, cross-checked against `fsck.hfsplus` and `blkid`; for the populated image also the source tree the Linux driver was fed (see "HFS+ fixtures") |
+| `ewf.sh` + `ewf_inspect.py` + `ewf_normalize.py` | `ewf-disk.img.gz` (the raw source disk), `ewf-<variant>.E0N.gz` (one `.gz` per segment file of `single-none`, `single-best`, `multi-none`, `seed-small`) and `ewf-fixtures.expect.json`, in `internal/image/ewf/testdata/` | the raw disk (its sha256/md5/sha1/size, built from the committed ext4 and fat12 fixtures), an independent Python decoder (`ewf_inspect.py`: every section and Adler-32, every chunk, the rebuilt media equals the raw disk byte for byte), `ewfverify`, `ewfinfo` (whitelisted geometry and hash fields) and `ewfexport -f raw` (sha256 equals the raw disk) |
 | `f2fs.sh` + `f2fs_tree.sh` + `f2fs_oracle.py` + `f2fs_normalize.py` | `f2fs-extra-attr`, `f2fs-default` (`.img.gz` + `.expect.json`, in `internal/filesys/f2fs/testdata/`) | the source tree handed to `sload.f2fs` (`f2fs_oracle.py tree`: type, size, sha256, mode, mtime, symlink targets), and the reports of `fsck.f2fs -l/-f/-t/-M`, `dump.f2fs -s/-n` and `blkid` on the finished image (`f2fs_oracle.py layout`: superblock and checkpoint fields, features, uuid, label, the NAT block address of every inode, the data-block extents of every file, the free main-area blocks from the SIT bitmaps). The oracle cross-checks the tools against each other (fsck vs dump on every shared field, SIT popcount vs `valid_block_count`, fsck's tree vs the source tree, the file map vs file sizes) and the generator fails on any mismatch, on an unclean `fsck.f2fs`, or when no file is fragmented |
 
 ## Determinism
@@ -101,6 +102,54 @@ Fixture details worth knowing:
 - FAT32 needs 65525 clusters, so the smallest image (512-byte clusters) is 34 MiB raw
   (about 400 KiB gzipped); the fuzz tests cut their seeds after the last used cluster.
 - Single-character names are avoided: `dump.exfat -d` fails to resolve `/deep/a`.
+
+### EWF determinism
+
+`ewf.sh` acquires a GPT disk (8 MiB; partition 1 = the smallest committed ext4 fixture, partition 2 =
+`fat12.img.gz`; partitions are 4 KiB aligned because the smallest ext4 image is 6.25 MiB, so 1 MiB
+alignment would not fit 8 MiB) with the real `ewfacquire` (the tool's default format, `-d sha1`), under a
+frozen `faketime` clock (the acquisition and system dates are in the header sections). The four E01 sets
+were byte-identical across two generation runs (compared by hand on every output sha256; `ewf.sh` does not check it) and
+`ewfacquire 20140816` needs no further normalisation: it writes an all-zero set identifier (the volume
+payload field at offset 64), so `ewf_normalize.py` rewrites nothing (the generator log prints "0 section(s)
+rewritten"). The normaliser stays in the pipeline as a safeguard: it pins a non-zero set identifier to a
+fixed GUID and recomputes the payload Adler-32, nothing else, so a tool version that randomises it does
+not break reproducibility. If a later `ewf-tools` makes the outputs differ run to run in another field,
+extend the normaliser for that one field.
+
+Order of work: acquire, normalise, `ewf_inspect.py` (fails unless the decoded media equals the raw disk and
+the stored hashes match), `ewfverify`, `ewfinfo`, `ewfexport`, and only then `gzip -n -9`. The generator
+fails on any disagreement and when the committed outputs would exceed 2 MiB. `expect.json` holds the raw
+disk hashes, the partitions (with the source fixture of each), and per variant the segment files (size and
+sha256 of the E01 bytes), geometry, chunk counts by kind, the stored hashes, every table and section, the
+header fields and the location of the first compressed and first uncompressed chunk. Only whitelisted
+fields of the tools' output are parsed; none is stored verbatim.
+
+Regenerate with `docker run --rm -v "$PWD:/work" -w /work minutiae-fixtures bash tools/fixtures/gen.sh ewf`
+(about 30 s, not privileged; it reads the committed ext4 and fat12 fixtures from the tree, so regenerate
+those first if they ever change, and commit the new `ewf` outputs with them).
+
+Committed in `internal/image/ewf/testdata/` (bytes, as stored; 1,389,704 bytes of `.gz` files plus the 31,915-byte
+oracle, 1,421,619 in all):
+
+| File | Bytes | Content |
+|---|---|---|
+| `ewf-disk.img.gz` | 346,007 | the raw 8 MiB GPT disk every variant wraps (the oracle for the media) |
+| `ewf-single-none.E01.gz` | 349,468 | one segment, `-c none`: 256 chunks, all uncompressed |
+| `ewf-single-best.E01.gz` | 336,508 | one segment, `-c best`: 128 chunks (126 compressed, 2 uncompressed) |
+| `ewf-multi-none.E01.gz` .. `.E05.gz` | 11,913 / 3,156 / 2,992 / 330,118 / 650 | five segments, `-c none`, 63+63+63+63+4 chunks |
+| `ewf-seed-small.E01.gz` | 8,892 | the first MiB only (32 compressed chunks): the fuzz seed |
+| `ewf-fixtures.expect.json` | 31,915 | the oracle (see above) |
+
+The tests gunzip each file in memory; no `.E01` is stored uncompressed. The `error2` section, table base 0 and
+other layouts the real writer does not produce are covered by the `ewftest` builder only.
+
+If `sgdisk` hangs in the container, an earlier container left a dead FUSE mount (a stuck `exfat` run) that
+blocks the VM's global sync; remove that container, or abort its connection (`mount -t fusectl none /mnt`
+in a privileged container, then `echo 1 > /mnt/<id>/abort` for the connection with a pending request).
+
+The `error2` section is not produced by any variant (ewfacquire only writes it after a read error); its
+layout was checked once against an image acquired from a device-mapper `error` target, outside the generator.
 
 ### exFAT needs a privileged container
 

@@ -563,6 +563,8 @@ func TestImageErrorExitCodes(t *testing.T) {
 		{fmt.Errorf("w: %w", filesys.ErrUnsupported), ExitError},
 		{fmt.Errorf("w: %w", filesys.ErrEncrypted), ExitError},
 		{fmt.Errorf("w: %w", image.ErrUnsupportedContainer), ExitError},
+		{fmt.Errorf("w: %w", image.ErrCorruptContainer), ExitError},
+		{fmt.Errorf("w: %w", image.ErrChunkCorrupt), ExitError},
 		{fmt.Errorf("w: %w", evidence.ErrUnknownArtifact), ExitError},
 		{fmt.Errorf("w: %w", evidence.ErrIntegrity), ExitIntegrity},
 	} {

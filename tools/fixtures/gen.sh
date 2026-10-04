@@ -14,9 +14,10 @@ declare -A fixtures=(
   [fat]="internal/filesys/fat/testdata"
   [exfat]="internal/filesys/exfat/testdata"
   [f2fs]="internal/filesys/f2fs/testdata"
+  [ewf]="internal/image/ewf/testdata"
   [hfsplus]="internal/filesys/hfsplus/testdata"
 )
-order=(volume-gpt volume-mbr ext4 fat exfat f2fs)
+order=(volume-gpt volume-mbr ext4 fat exfat f2fs ewf)
 # Not in "all": needs the other image (Dockerfile.hfs, minutiae-fixtures-hfs).
 separate=(hfsplus)
 

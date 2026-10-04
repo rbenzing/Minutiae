@@ -20,7 +20,9 @@ const module = "github.com/rbenzing/minutiae/"
 var allowed = map[string][]string{
 	"cmd/minutiae":                         {"internal/cli"},
 	"internal/version":                     {},
-	"internal/image":                       {},
+	"internal/image":                       {"internal/image/ewf"},
+	"internal/image/ewf":                   {},
+	"internal/image/ewf/ewftest":           {},
 	"internal/volume":                      {},
 	"internal/volume/volumetest":           {"internal/volume"},
 	"internal/filesys":                     {},
