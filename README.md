@@ -46,6 +46,7 @@ Use Minutiae only on devices you are authorized to examine.
 - **iOS over usbmuxd** — device info, AFC media listing/pull, and full logical backups via an in-house mobilebackup2 (DeviceLink) implementation hardened against hostile devices
 - **USB serial** — port enumeration with VID/PID, receive-only raw console capture (`rx.bin` + timestamped transcript), modem lines de-asserted on open
 - **Image analysis** — import disk images (raw/dd, split raw) into a case, read MBR/EBR and GPT partition tables, browse filesystems read-only, extract files and export unallocated space as new hashed artifacts that record their full provenance (parent image, partition, filesystem entry, byte runs). **ext2/ext3/ext4** (extents or block maps, htree and inline directories, inline data, metadata checksums), **FAT12/16/32** (long names, 2-second local times) and **exFAT** (entry sets, validated checksums, `ValidDataLength`) and **F2FS** (checkpoint packs, NAT/SIT journals, inline data and dentries, encrypted names) filesystems are readable today, with deleted-entry flagging (names only) and exact unallocated-space export; each reader is verified against real images built by the standard filesystem tools with independent expected results (tree, hashes, times, cluster chains or data extents, free space) and fuzzed against hostile input; more readers arrive progressively (E01, APFS, HFS+); see [Known limitations](CLAUDE.md#9-known-limitations)
+- **Unified records database** — parsed records (messages, calls, contacts, web visits, files, events ...) live in `artifacts.db` with full provenance (artifact, source path, locator, byte range, parser identity and version, deleted/recovered flags, microsecond timestamps with their time-zone basis). Every batch of records is announced in the hash-chained audit log with a digest *before* any row is written, the record tables are immutable (triggers) and `case verify` recomputes every digest, run, supersession and range, so an altered, deleted, injected or repointed record exits `4`. A newer complete run of a parser supersedes an older one without deleting it. Existing cases are moved to the new schema only by the explicit, audited `case upgrade`. Read it with `records list|show|stats` (filters, stable keyset pagination, terminal-safe output). Parsers that fill it arrive with sub-project 4; full-text search with 5B; see [Known limitations](CLAUDE.md#9-known-limitations)
 - **Windows-safe evidence names** — device file names that are illegal on Windows (`:`, `?`, `CON`, case/8.3 collisions, names over 200 bytes) are stored under safe local names while the original remote path is preserved
 - **Single static binary** — pure Go, no cgo; one cross-platform `go run ./tools/check` gate (tidy, vet, lint, build, cross-builds, tests)
 
@@ -159,6 +160,31 @@ reader notices are written to the audit log as `analysis.warning` entries. Other
 filesystem readers arrive progressively (E01, APFS, HFS+); until they land,
 partitions are listed but those filesystems are not yet readable.
 
+### Records
+
+Parsed records are stored in the case database. A case created before the records
+database existed is upgraded explicitly (audited, never automatic):
+
+```bash
+minutiae case upgrade --case ./cases/CASE01
+
+# Newest first, 50 per page; text lines show id, time, type, markers and summary
+minutiae records list  --case ./cases/CASE01 --type message --from 2026-10-01T00:00:00Z --sort -ts --limit 50
+minutiae records list  --case ./cases/CASE01 --deleted only --recovered any --parser sms-parser@1.2
+minutiae records list  --case ./cases/CASE01 --limit 50 --cursor <next cursor of the previous page>
+
+# One record with its artifact, source, parser, batch and run (--payload adds the structured payload)
+minutiae records show  --case ./cases/CASE01 1234 --payload
+
+# Counts, overall and by type | parser | artifact | deleted | run
+minutiae records stats --case ./cases/CASE01 --by parser
+```
+
+A cursor only continues the listing (filters, `--sort`, case) that produced it.
+Records of a superseded run are hidden unless you pass `--all-runs`. Text output
+escapes every control, escape-sequence and bidirectional character a record
+carries; `--json` keeps the strings as stored.
+
 ### Verify
 
 ```bash
@@ -218,7 +244,8 @@ device ──► backend (android | ios | serial) ──► evidence.Case.Captur
 | Volume | `internal/volume` | MBR/EBR and GPT partition tables; unallocated gaps between partitions |
 | Filesystem | `internal/filesys` | Filesystem interface, entries and byte runs, block cache; `detect` probes drivers, `f2fs` reads F2FS, `ext4` reads ext2/3/4, `fat` reads FAT12/16/32, `exfat` reads exFAT, `fstest` is the test filesystem |
 | Examine | `internal/examine` | The only bridge from parsers to the case: import, sessions, extract, unallocated export, provenance |
-| Arch test | `internal/archtest` | Enforces the package dependency rule |
+| Records | `internal/records` | Unified record database: record model and type registry, the audited batch writer and ingest lifecycle (the only code that writes the record tables), supersession, and the read-only reader behind `records list\|show\|stats`; `recordstest` holds its fixtures and tamper helpers |
+| Arch test | `internal/archtest` | Enforces the package dependency rule and the single-writer rule for the record tables |
 
 Image analysis follows the same rule: the parsers (`image`, `volume`,
 `filesys`) read an `io.ReaderAt` and import no Minutiae package, so they cannot
@@ -300,7 +327,11 @@ remaining readers (E01, APFS, HFS+) are arriving progressively. Next up: deleted
 artifact parsers, analytics, reporting, protocol drivers (EDL/BROM/AT), a
 desktop GUI, automatic artifact classification, and AI-assisted search and
 analysis over the artifact collection (offline by default, every answer cites
-its source records). See [docs/ROADMAP.md](docs/ROADMAP.md).
+its source records). **Sub-project 5: Unified artifact database** is in
+progress: its core (the audited, verifiable record store, `case upgrade` and
+`records list|show|stats`) is in place; full-text search, the provenance chain
+with image-offset translation, and scale work follow. See
+[docs/ROADMAP.md](docs/ROADMAP.md).
 
 ---
 
