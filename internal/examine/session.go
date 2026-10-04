@@ -36,9 +36,10 @@ type Session struct {
 	Parent   evidence.ManifestRecord   // segment 1
 	Segments []evidence.ManifestRecord // in segment order (len 1 for a single artifact)
 	Image    image.Image
-	Table    *volume.Table
+	Table    *volume.Table // nil until ReadPartitions succeeds (Open does it)
 
-	opts Options
+	opts     Options
+	tableErr error // the last ReadPartitions failure
 
 	// newArtifact creates artifacts when set (tests inject faults); nil means Case.NewArtifact.
 	newArtifact func(deviceID, acqID, rel string, src evidence.Source) (*evidence.ArtifactWriter, error)
@@ -59,8 +60,25 @@ type fsEntry struct {
 // Open resolves ref (artifact id or case-relative path), collects all segments
 // of its import (same device id and acquisition directory, Source.Segment
 // 1..N, contiguous; a gap or a missing file is evidence.ErrIntegrity), opens
-// them read-only, opens the image and reads its partition table.
+// them read-only, opens the image and reads its partition table
+// (OpenContainer followed by ReadPartitions).
 func Open(c *evidence.Case, ref string, opts Options) (*Session, error) {
+	s, err := OpenContainer(c, ref, opts)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.ReadPartitions(); err != nil {
+		_ = s.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+// OpenContainer is Open without the partition table: it opens the image only
+// (Session.Table is nil until ReadPartitions succeeds). Container-level
+// operations such as VerifyContainer need nothing more, so a damaged partition
+// table cannot keep a damaged image from being verified.
+func OpenContainer(c *evidence.Case, ref string, opts Options) (*Session, error) {
 	ref0, err := c.FindArtifact(ref)
 	if err != nil {
 		return nil, err
@@ -94,20 +112,27 @@ func Open(c *evidence.Case, ref string, opts Options) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open image %s: %w", segs[0].Path, err)
 	}
+	return &Session{
+		Case: c, Parent: segs[0], Segments: segs, Image: img,
+		opts: opts, fsCache: map[int]*fsEntry{},
+	}, nil
+}
+
+// ReadPartitions reads the image's partition table into s.Table. On failure
+// Table stays nil, the error is kept for Info (ImageInfo.PartitionError) and
+// the session stays usable for container-level operations.
+func (s *Session) ReadPartitions() error {
 	// Raw containers report the default 512 without knowing it, and an E01 that
 	// declares 512 only echoes what raw-input acquisition writes (also for 4096-byte
 	// sector disks): let the partition reader probe 512 and 4096 for both. A
 	// declared 1024, 2048 or 4096 is trusted.
-	sectorSize := probeSectorSize(img)
-	tbl, err := readTable(img, sectorSize)
+	tbl, err := readTable(s.Image, probeSectorSize(s.Image))
 	if err != nil {
-		_ = img.Close()
-		return nil, fmt.Errorf("read partition table of %s: %w", segs[0].Path, err)
+		s.tableErr = fmt.Errorf("read partition table of %s: %w", s.Parent.Path, err)
+		return s.tableErr
 	}
-	return &Session{
-		Case: c, Parent: segs[0], Segments: segs, Image: img, Table: tbl,
-		opts: opts, fsCache: map[int]*fsEntry{},
-	}, nil
+	s.Table, s.tableErr = tbl, nil
+	return nil
 }
 
 // probeSectorSize returns the sector size volume.Read should be told: 0 (probe
@@ -261,7 +286,7 @@ func (s *Session) section(p volume.Partition) *io.SectionReader {
 
 // partitionByIndex returns the partition with the given volume index.
 func (s *Session) partitionByIndex(index int) (volume.Partition, bool) {
-	for _, p := range s.Table.Partitions {
+	for _, p := range s.partitions() {
 		if p.Index == index {
 			return p, true
 		}
@@ -273,14 +298,17 @@ func (s *Session) partitionByIndex(index int) (volume.Partition, bool) {
 // holding a recognized filesystem" (an error listing candidates when there are
 // none or several).
 func (s *Session) Partition(index int) (volume.Partition, error) {
+	if err := s.needTable(); err != nil {
+		return volume.Partition{}, err
+	}
 	if index != -1 {
 		if p, ok := s.partitionByIndex(index); ok {
 			return p, nil
 		}
-		return volume.Partition{}, fmt.Errorf("no partition %d (have %s)", index, indexList(s.Table.Partitions))
+		return volume.Partition{}, fmt.Errorf("no partition %d (have %s)", index, indexList(s.partitions()))
 	}
 	var cand []volume.Partition
-	for _, p := range s.Table.Partitions {
+	for _, p := range s.partitions() {
 		if _, ok := detect.ProbeWith(s.drivers(), s.section(p), p.Length); ok {
 			cand = append(cand, p)
 		}
@@ -289,7 +317,7 @@ func (s *Session) Partition(index int) (volume.Partition, error) {
 	case 1:
 		return cand[0], nil
 	case 0:
-		return volume.Partition{}, fmt.Errorf("no partition holds a recognized filesystem (partitions: %s)", indexList(s.Table.Partitions))
+		return volume.Partition{}, fmt.Errorf("no partition holds a recognized filesystem (partitions: %s)", indexList(s.partitions()))
 	default:
 		return volume.Partition{}, fmt.Errorf("%d partitions hold a recognized filesystem (%s); choose one with --partition", len(cand), indexList(cand))
 	}
@@ -419,6 +447,9 @@ type ImageInfo struct {
 	Partitions             []PartitionInfo
 	Unallocated            []volume.Run
 	Warnings               []string
+	// PartitionError is why the partition table could not be read (Table is
+	// nil then and Scheme, Partitions and Unallocated are empty).
+	PartitionError string
 }
 
 // Info describes the image, its partition table and, per partition, the
@@ -426,10 +457,15 @@ type ImageInfo struct {
 func (s *Session) Info() ImageInfo {
 	info := ImageInfo{
 		ParentID: s.Parent.ID, Path: s.Parent.Path, SHA256: s.Parent.SHA256,
-		Format: s.Image.Format(), Size: s.Image.Size(), SectorSize: s.Table.SectorSize,
-		Metadata: s.Image.Metadata(), Scheme: s.Table.Scheme, DiskGUID: s.Table.DiskGUID,
-		Unallocated: append([]volume.Run(nil), s.Table.Unallocated...),
-		Warnings:    append([]string(nil), s.Table.Warnings...),
+		Format: s.Image.Format(), Size: s.Image.Size(), SectorSize: s.Image.SectorSize(),
+		Metadata: s.Image.Metadata(),
+	}
+	if t := s.Table; t != nil {
+		info.SectorSize, info.Scheme, info.DiskGUID = t.SectorSize, t.Scheme, t.DiskGUID
+		info.Unallocated = append([]volume.Run(nil), t.Unallocated...)
+		info.Warnings = append([]string(nil), t.Warnings...)
+	} else if s.tableErr != nil {
+		info.PartitionError = s.tableErr.Error()
 	}
 	if w, ok := s.Image.(image.Warner); ok {
 		info.Warnings = append(info.Warnings, w.Warnings()...)
@@ -440,7 +476,7 @@ func (s *Session) Info() ImageInfo {
 			info.Warnings = append(info.Warnings, fmt.Sprintf("artifact %s is incomplete (acquisition was interrupted)", seg.ID))
 		}
 	}
-	for _, p := range s.Table.Partitions {
+	for _, p := range s.partitions() {
 		pi := PartitionInfo{Partition: p}
 		e := s.openEntry(p)
 		switch {
@@ -519,4 +555,25 @@ func (s *Session) Lookup(fsys filesys.FileSystem, ref string) (filesys.Entry, st
 		return filesys.Entry{}, "", fmt.Errorf("id:%s: %w; %d directories could not be read (first: %s)", id, filesys.ErrNotFound, unreadable, firstBad)
 	}
 	return filesys.Entry{}, "", fmt.Errorf("id:%s: %w", id, filesys.ErrNotFound)
+}
+
+// partitions lists the partitions of the table; none before ReadPartitions has
+// succeeded.
+func (s *Session) partitions() []volume.Partition {
+	if s.Table == nil {
+		return nil
+	}
+	return s.Table.Partitions
+}
+
+// needTable fails when the partition table has not been read: why not, if
+// ReadPartitions failed.
+func (s *Session) needTable() error {
+	switch {
+	case s.Table != nil:
+		return nil
+	case s.tableErr != nil:
+		return s.tableErr
+	}
+	return errors.New("the partition table has not been read")
 }

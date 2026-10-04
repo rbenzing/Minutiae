@@ -131,6 +131,8 @@ type jsonImageInfo struct {
 	Partitions  []jsonPartition `json:"partitions"`
 	Unallocated []jsonRun       `json:"unallocated"`
 	Warnings    []string        `json:"warnings"`
+	// PartitionError is why the partition table could not be read (with --verify).
+	PartitionError string `json:"partition_error,omitempty"`
 	// Verify is present only with --verify on a container that stores hashes.
 	Verify *jsonVerify `json:"verify,omitempty"`
 }
@@ -184,6 +186,7 @@ func newJSONImageInfo(in examine.ImageInfo) jsonImageInfo {
 		ParentID: in.ParentID, Path: in.Path, SHA256: in.SHA256, Incomplete: in.Incomplete,
 		Format: in.Format, Size: in.Size, SectorSize: in.SectorSize, Scheme: in.Scheme, DiskGUID: in.DiskGUID,
 		Metadata: []jsonKV{}, Partitions: []jsonPartition{}, Unallocated: []jsonRun{}, Warnings: nonNil(in.Warnings),
+		PartitionError: in.PartitionError,
 	}
 	for _, kv := range in.Metadata {
 		out.Metadata = append(out.Metadata, jsonKV{Key: kv.Key, Value: kv.Value})
