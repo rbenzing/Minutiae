@@ -326,12 +326,15 @@ func (s *Session) capture(a *analysis, rel string, src evidence.Source, fill fun
 // copyFile streams the content of f into w, checking ctx on every read.
 func (x *extractor) copyFile(w io.Writer, f filesys.File, size int64) (int64, error) {
 	tw := &trackWriter{w: w}
-	n, err := io.Copy(tw, &ctxReader{ctx: x.ctx, r: io.NewSectionReader(f, 0, size), onRead: func(n int) {
+	n, err := io.CopyBuffer(tw, &ctxReader{ctx: x.ctx, r: io.NewSectionReader(f, 0, size), onRead: func(n int) {
 		x.copied += int64(n)
 		if x.o.Progress != nil {
 			x.o.Progress(x.copied, -1)
 		}
-	}})
+	}}, make([]byte, copyBufSize))
+	if err != nil && tw.err == nil && errors.Is(err, image.ErrChunkCorrupt) {
+		n += salvage(tw, f, n, min(size-n, copyBufSize))
+	}
 	switch {
 	case tw.err != nil:
 		return n, &caseWriteError{tw.err}
@@ -498,4 +501,39 @@ func (x *extractor) keepPrefixRuns(rel, fsPath string, d *evidence.Derivation, r
 	}
 	d.Runs, d.RunsArtifact = pre, ""
 	return nil
+}
+
+// copyBufSize is the size of the buffer one extraction read fills.
+const copyBufSize = 32 << 10
+
+// salvage writes to w the bytes of f in [off, off+window) that can still be
+// read after a read of that range failed with an unreadable container chunk.
+// A filesystem reader drops the part of a failing read that was good, so the
+// longest readable prefix of the window is found by bisection (every probe
+// reads from off; a longer read succeeds only if a shorter one does) and then
+// written. It returns the bytes written; a write failure is left to the
+// caller, who sees it in w. Any other read error ends the search: only bytes
+// that were read without error are ever written.
+func salvage(w io.Writer, f filesys.File, off, window int64) int64 {
+	if window <= 1 {
+		return 0
+	}
+	buf := make([]byte, window)
+	readable := func(k int64) bool {
+		n, err := f.ReadAt(buf[:k], off)
+		return int64(n) == k && (err == nil || errors.Is(err, io.EOF))
+	}
+	lo, hi := int64(0), window // buf[:lo] reads fine, buf[:hi] is known not to
+	for hi-lo > 1 {
+		if mid := lo + (hi-lo)/2; readable(mid) {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	if lo == 0 || !readable(lo) { // the final read fills buf[:lo] for the write
+		return 0
+	}
+	n, _ := w.Write(buf[:lo])
+	return int64(n)
 }

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/image/ewf"
@@ -26,7 +27,19 @@ type fixtureExpect struct {
 		MD5    string `json:"md5"`
 		SHA1   string `json:"sha1"`
 	} `json:"raw"`
+	Generator struct {
+		ImageSHA256 string `json:"image_sha256"`
+	} `json:"generator"`
 	Variants []fixtureVariant `json:"variants"`
+}
+
+// fixtureChunk is where the independent decoder found a chunk: file offset in
+// the segment and stored length.
+type fixtureChunk struct {
+	Chunk   int64 `json:"chunk"`
+	Segment int   `json:"segment"`
+	Offset  int64 `json:"offset"`
+	Length  int64 `json:"length"`
 }
 
 type fixtureVariant struct {
@@ -36,16 +49,21 @@ type fixtureVariant struct {
 		Size   int64  `json:"size"`
 		SHA256 string `json:"sha256"`
 	} `json:"files"`
-	Segments        int    `json:"segments"`
-	MediaSize       int64  `json:"media_size"`
-	BytesPerSector  int    `json:"bytes_per_sector"`
-	SectorsPerChunk int    `json:"sectors_per_chunk"`
-	Sectors         int64  `json:"sectors"`
-	Chunks          int64  `json:"chunks"`
-	MediaSHA256     string `json:"media_sha256"`
-	StoredMD5       string `json:"stored_md5"`
-	StoredSHA1      string `json:"stored_sha1"`
-	Volume          struct {
+	Segments          int           `json:"segments"`
+	MediaSize         int64         `json:"media_size"`
+	BytesPerSector    int           `json:"bytes_per_sector"`
+	SectorsPerChunk   int           `json:"sectors_per_chunk"`
+	Sectors           int64         `json:"sectors"`
+	Chunks            int64         `json:"chunks"`
+	MediaSHA256       string        `json:"media_sha256"`
+	Compressed        int64         `json:"compressed_chunks"`
+	Uncompressed      int64         `json:"uncompressed_chunks"`
+	ChunkKinds        string        `json:"chunk_kinds"`
+	FirstCompressed   *fixtureChunk `json:"first_compressed_chunk"`
+	FirstUncompressed *fixtureChunk `json:"first_uncompressed_chunk"`
+	StoredMD5         string        `json:"stored_md5"`
+	StoredSHA1        string        `json:"stored_sha1"`
+	Volume            struct {
 		CompressionLevel int `json:"compression_level"`
 	} `json:"volume"`
 	Header2  map[string]string `json:"header2"`
@@ -58,7 +76,7 @@ type fixtureVariant struct {
 	} `json:"sections"`
 }
 
-func gunzipFile(t *testing.T, name string) []byte {
+func gunzipFile(t testing.TB, name string) []byte {
 	t.Helper()
 	f, err := os.Open(filepath.Join("testdata", name))
 	if err != nil {
@@ -279,5 +297,94 @@ func TestEWFTruncatedRealFixture(t *testing.T) {
 				t.Fatalf("first uncovered chunk: %d, %v", n, err)
 			}
 		})
+	}
+}
+
+func openFixtureFiles(t *testing.T, v fixtureVariant, mutate func(i int, data []byte)) *ewf.Reader {
+	t.Helper()
+	var segs []ewf.Segment
+	for i, f := range v.Files {
+		data := gunzipFile(t, f.Name+".gz")
+		if mutate != nil {
+			mutate(i, data)
+		}
+		segs = append(segs, ewf.Segment{Name: f.Name, R: bytes.NewReader(data), Size: int64(len(data))})
+	}
+	r, err := ewf.Open(segs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// TestEWFFixtureRawDiskIsTheOracles pins the raw disk every variant wraps: its
+// sha256 equals the generator's image_sha256, so a stale oracle fails here
+// before anything else is compared.
+func TestEWFFixtureRawDiskIsTheOracles(t *testing.T) {
+	exp := loadFixtureExpect(t)
+	raw := gunzipFile(t, "ewf-disk.img.gz")
+	sum := sha256.Sum256(raw)
+	if got := hex.EncodeToString(sum[:]); got != exp.Generator.ImageSHA256 || got != exp.Raw.SHA256 {
+		t.Fatalf("raw disk sha256 %s, oracle generator %s raw %s", got, exp.Generator.ImageSHA256, exp.Raw.SHA256)
+	}
+}
+
+// TestEWFFixtureChunkKinds compares which chunks the table marks compressed
+// with the independent decoder's chunk list.
+func TestEWFFixtureChunkKinds(t *testing.T) {
+	exp := loadFixtureExpect(t)
+	for _, v := range exp.Variants {
+		t.Run(v.Name, func(t *testing.T) {
+			r := openFixtureFiles(t, v, nil)
+			kinds := r.ChunkKinds()
+			if kinds != v.ChunkKinds {
+				t.Fatalf("chunk kinds\n got  %s\n want %s", kinds, v.ChunkKinds)
+			}
+			c := int64(strings.Count(kinds, "c"))
+			if c != v.Compressed || int64(len(kinds))-c != v.Uncompressed {
+				t.Fatalf("%d compressed, %d uncompressed; oracle %d, %d", c, int64(len(kinds))-c, v.Compressed, v.Uncompressed)
+			}
+		})
+	}
+}
+
+// TestEWFFixtureFlippedByteIsChunkCorrupt flips one byte inside the first
+// compressed chunk and the first uncompressed one (as many of them as the
+// variant has), at the offsets the independent decoder reports, in a copy of the
+// segment: exactly that chunk becomes an ErrChunkCorrupt read with the oracle's
+// index, the chunk before it still reads, and a read of the same bytes from the
+// untouched fixture is fine.
+func TestEWFFixtureFlippedByteIsChunkCorrupt(t *testing.T) {
+	exp := loadFixtureExpect(t)
+	raw := gunzipFile(t, "ewf-disk.img.gz")
+	for _, v := range exp.Variants {
+		for kind, loc := range map[string]*fixtureChunk{"compressed": v.FirstCompressed, "uncompressed": v.FirstUncompressed} {
+			if loc == nil {
+				continue
+			}
+			t.Run(v.Name+"/"+kind, func(t *testing.T) {
+				r := openFixtureFiles(t, v, func(i int, data []byte) {
+					if i == loc.Segment-1 {
+						data[loc.Offset+loc.Length/2] ^= 0x5A
+					}
+				})
+				cs := int64(r.ChunkSize())
+				p := make([]byte, cs)
+				n, err := r.ReadAt(p, loc.Chunk*cs)
+				var ce *ewf.ChunkError
+				if n != 0 || !errors.Is(err, ewf.ErrChunkCorrupt) || !errors.As(err, &ce) || ce.Chunk != loc.Chunk {
+					t.Fatalf("read of chunk %d: n=%d err=%v", loc.Chunk, n, err)
+				}
+				if loc.Chunk > 0 {
+					before := make([]byte, cs)
+					if n, err := r.ReadAt(before, (loc.Chunk-1)*cs); n != len(before) || err != nil || !bytes.Equal(before, raw[(loc.Chunk-1)*cs:loc.Chunk*cs]) {
+						t.Fatalf("the chunk before: n=%d err=%v", n, err)
+					}
+				}
+				if res := verify(t, r); res.Result() != "unverified" || res.BadChunk != loc.Chunk {
+					t.Fatalf("Verify: %+v", res)
+				}
+			})
+		}
 	}
 }

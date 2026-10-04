@@ -70,3 +70,16 @@ func (r *Reader) CacheCapacity() int {
 
 // CacheCapacityFor returns the capacity chosen for a chunk size.
 func CacheCapacityFor(chunkSize int64) int { return cacheCapacity(chunkSize) }
+
+// ChunkKinds returns one letter per chunk: 'c' for a chunk the table marks
+// compressed, 'u' for an uncompressed one.
+func (r *Reader) ChunkKinds() string {
+	b := make([]byte, len(r.refs))
+	for i, ref := range r.refs {
+		b[i] = 'u'
+		if ref.compressed() {
+			b[i] = 'c'
+		}
+	}
+	return string(b)
+}
