@@ -1,0 +1,130 @@
+package sqlitefile
+
+import (
+	"fmt"
+)
+
+// BTreeKind says what a b-tree holds.
+type BTreeKind uint8
+
+// The two kinds of b-tree.
+const (
+	TableTree BTreeKind = iota
+	IndexTree
+)
+
+// WALInfo describes the write-ahead log attached to a database. Task 7 gives
+// it its fields.
+type WALInfo struct{}
+
+// JournalInfo describes the rollback journal attached to a database. Task 9
+// gives it its fields.
+type JournalInfo struct{}
+
+// DBStatus is the state of a database and its companions, for the checklist
+// that asks what the examiner is looking at.
+type DBStatus struct {
+	Info    Info
+	WAL     *WALInfo
+	Journal *JournalInfo
+}
+
+// Status composes the header information with the state of the write-ahead
+// log and the rollback journal; both are nil while no companion is attached.
+func (d *DB) Status() DBStatus {
+	return DBStatus{Info: d.Info()}
+}
+
+// View is an immutable snapshot of what a database presents as live: the page
+// source stack (today the database file as found; the write-ahead log and
+// journal overlays are layered on by later tasks), the warnings found so far
+// and a page cache. It is safe for concurrent use. The cache holds up to
+// Limits.PageCacheBytes charged to the budget until Release.
+type View struct {
+	d     *DB
+	e     *env
+	info  Info
+	src   pageSource
+	cache *pageCache
+	st    *counters
+	warns *warnings
+	addr  uint32
+}
+
+// Live returns the live view of the database as it is now: Attach* calls made
+// after it do not reach it. For a plain database (no companion files) the live
+// state is the file as stored. The view's warnings start as the database's
+// and grow as scans run.
+func (d *DB) Live() *View {
+	st := &counters{}
+	w := newWarnings(d.env.opts.Limits.MaxWarnings)
+	for _, x := range d.warns.snapshot() {
+		w.add(x)
+	}
+	v := &View{d: d, e: d.env, info: d.Info(), st: st, warns: w}
+	v.src = dbSource{d}
+	v.cache = newPageCache(d.env, v.src, d.info.PageSize, st)
+	v.addr = v.addressable()
+	return v
+}
+
+// addressable computes the highest page number any source can supply: the
+// pages the header (or the file) declares, clamped to the pages that really
+// exist and to Limits.MaxPages. Everything sized by a page count (bitsets,
+// caches) uses this, never the declared count.
+func (v *View) addressable() uint32 {
+	phys := int64(v.info.FilePages)
+	n := min(int64(v.info.PageCount), phys, v.e.opts.Limits.MaxPages)
+	if n < int64(v.info.PageCount) {
+		v.warns.add(Warning{
+			Code: WarnPageCountClamped,
+			Msg:  fmt.Sprintf("the header counts %d pages; %d can be read (the file holds %d, the limit is %d)", v.info.PageCount, n, v.info.FilePages, v.e.opts.Limits.MaxPages),
+		})
+	}
+	return uint32(max(n, 0))
+}
+
+// Info returns the header information of the view.
+func (v *View) Info() Info {
+	i := v.info
+	i.EngineRefuses = append([]string(nil), v.info.EngineRefuses...)
+	return i
+}
+
+// Addressable is the highest page number any source of the view can supply,
+// clamped to the pages that exist: the header's page count is an upper bound
+// and never sizes an allocation.
+func (v *View) Addressable() uint32 { return v.addr }
+
+// Warnings returns the anomalies found so far, in the order first seen. The
+// list grows as scans run.
+func (v *View) Warnings() []Warning { return v.warns.snapshot() }
+
+// Stats returns the work counters of the view.
+func (v *View) Stats() Stats { return v.st.snapshot() }
+
+// Release drops the page cache and gives its budget charge back. It is
+// optional (the view stays usable and refills its cache) and exists so a
+// caller can account for the budget exactly once it is done with a view.
+func (v *View) Release() { v.cache.clear() }
+
+// ReadPage returns a copy of page pgno as the view presents it: for a page
+// number outside 1..Addressable it is ErrPageUnavailable. The page is as long
+// as the bytes present (a trailing partial page of a truncated file is
+// shorter than a page).
+func (v *View) ReadPage(pgno uint32) (pg Page, err error) {
+	defer guard(&err)
+	if pgno == 0 || pgno > v.addr {
+		return Page{}, fmt.Errorf("%w: page %d is outside 1..%d", ErrPageUnavailable, pgno, v.addr)
+	}
+	data, loc, err := v.cache.read(pgno)
+	if err != nil {
+		return Page{}, err
+	}
+	return Page{Number: pgno, Data: append([]byte(nil), data...), Loc: loc}, nil
+}
+
+// warn records a warning about page pgno of the database file.
+func (v *View) warn(code string, pgno uint32, format string, a ...any) {
+	v.warns.add(Warning{Code: code, File: FileDB, Page: pgno, Msg: fmt.Sprintf(format, a...)})
+}

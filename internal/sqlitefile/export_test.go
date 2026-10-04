@@ -276,3 +276,20 @@ func (t *TestEnv) Call(fn func(l *TestLedger) error) (err error) {
 	defer l.guard(&err)
 	return fn(&TestLedger{l})
 }
+
+// ---- Task 4: view, scan, lookup, locations ----
+
+// LocFor builds the Loc of cell c at pointer index idx of the page whose image
+// lies at at, from the overflow pages (page, location) it followed.
+func LocFor(at PageLoc, pgno uint32, idx int, c Cell, steps []ChainStep, maxOverflow int) Loc {
+	var s []chainStep
+	for _, x := range steps {
+		s = append(s, chainStep(x))
+	}
+	return newLoc(at, pgno, idx, c, s, maxOverflow)
+}
+
+// PtrmapPageno exposes ptrmapPageno.
+func PtrmapPageno(pageSize, reserved int, pgno uint32) uint32 {
+	return ptrmapPageno(pageSize, reserved, pgno)
+}
