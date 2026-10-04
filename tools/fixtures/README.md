@@ -313,20 +313,35 @@ compression (macOS-only), extended attributes (the driver can only write them
 through `setfattr`; the attributes file is empty here), non-BMP names, journaling
 (the driver mounts a journaled volume read-only), HFSX.
 
-Reproducibility: the guest clock is virtual and frozen to the fixture clock
-(`-rtc clock=vm -icount`), so every date is fixed. The one random number, the
-hidden inode's name, is rewritten to `100000001` by
-`hfsplus_normalize.py linkid` (the guest runs again when the random number has a
-different number of digits). Regenerated 9 times with near-final scripts: the five empty fixtures were
-byte-identical every time and `hfsplus-populated.img.gz` was byte-identical in 8
-of the 9 runs (the odd one differed, cause not analysed: the oracle accepted it).
-Earlier, one run was rejected by the oracle itself because the primary header's
-modify date was a second after the backup header's (the oracle now accepts up
-to 120 s). Treat byte-identity of the populated image as likely, not
-guaranteed; the committed `expect.json` carries the sha256 of the committed
-image and the tests check it first, so always regenerate `hfsplus-populated.img.gz` and
-`hfsplus-populated.expect.json` TOGETHER (a different image with the old oracle fails the
-sha256 check at once).
+Reproducibility: the guest clock is virtual (`-rtc clock=vm -icount`) and the
+guest rewinds it to the fixture time every 0.2 virtual seconds
+(`hfsplus_populate.sh`), so every date the driver stamps is `2023-11-14 22:13:20`
+whatever the host load. The cause of the earlier instability, found by comparing
+a differing run with the committed image (`cmp -l`): exactly ONE byte differed,
+the low byte of the primary volume header's modify date (offset 1047, `0x80` vs
+`0x81`). Under `-icount` the guest needs about one virtual second from setting
+its clock to unmounting, so the unmount stamp sat on the boundary of the next
+second and host timing decided which side it fell on (3 of 9 regenerations
+differed, more often on a loaded host); the oracle accepted every variant. The
+rewinding loop removes the boundary, so the kernel-written field needs no
+post-write normalization. The one random number, the hidden inode's name, is
+rewritten to `100000001` by `hfsplus_normalize.py linkid` (the guest runs again
+when the random number has a different number of digits). After the fix the
+populated image was regenerated 15 times (12 of them with a second generator
+running at the same time on the same host, 2 of them in a freshly rebuilt pinned image)
+and was byte-identical to the committed one every time, as were all
+12 committed files in the 5 runs compared in full (the five empty fixtures were
+identical in every run compared). The package set is pinned in
+`Dockerfile.hfs`: apt reads `snapshot.debian.org` as of 2026-10-03 and every
+recorded package (`generator.packages`) is installed at its exact version, so a
+rebuilt image either has the same toolchain or the build fails; a rebuild of the
+pinned Dockerfile gave the same versions and byte-identical fixtures. The
+snapshot service must stay reachable for a rebuild (an existing image keeps
+working without it). Still, a different host CPU or QEMU could in principle
+change timing, so the committed `expect.json` carries the sha256 of the
+committed image and the tests check it first: always regenerate
+`hfsplus-populated.img.gz` and `hfsplus-populated.expect.json` TOGETHER (a
+different image with the old oracle fails the sha256 check at once).
 
 ### Images (8 MiB raw each except the populated one, `internal/filesys/hfsplus/testdata/`)
 
