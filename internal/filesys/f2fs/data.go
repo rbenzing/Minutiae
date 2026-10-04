@@ -131,6 +131,13 @@ func (c *chain) node(nid uint32, level int) error {
 		}
 		return err
 	}
+	if owner := binary.LittleEndian.Uint32(b[footIno:]); owner == nid {
+		// An inode's footer ino is its own nid: this is an inode, not a node of
+		// the tree.
+		return corrupt("f2fs file data", -1, "inode %d: node id %d is an inode, not a direct or indirect node", c.in.nid, nid)
+	} else if owner != c.in.nid {
+		c.f.warn("inode %d: node id %d records inode %d as its owner", c.in.nid, nid, owner)
+	}
 	for i := 0; i < addrsPerBlock && !c.done(); i++ {
 		w := binary.LittleEndian.Uint32(b[4*i:])
 		if level == 1 {
@@ -283,11 +290,18 @@ func (f *FS) openInode(in *inode) (filesys.File, error) {
 // the first data slot and cannot extend beyond the data slots.
 func (f *FS) openInline(in *inode) (filesys.File, error) {
 	maxInline := int64(max(in.addrSlots-inlineReserve, 0)) * 4
-	if in.size > maxInline {
-		return nil, corrupt("f2fs inline data", -1, "inode %d: inline size %d exceeds the %d bytes the inode can hold", in.nid, in.size, maxInline)
-	}
 	start := in.addrStart + inlineReserve*4
-	return &file{size: in.size, avail: in.size, mem: slices.Clone(in.raw[start : start+int(in.size)])}, nil
+	if in.noDataExist() {
+		f.warn("inode %d: inline data without the DATA_EXIST flag (the kernel reads such a file as empty); the stored bytes are returned", in.nid)
+	}
+	if in.size > maxInline {
+		// The size is a lie: the inode cannot hold that much. The bytes it can
+		// hold are the trusted prefix; reads beyond them fail.
+		err := corrupt("f2fs inline data", -1, "inode %d: inline size %d exceeds the %d bytes the inode can hold", in.nid, in.size, maxInline)
+		f.warn("file inode %d: %v; the first %d bytes are readable and the rest reads as an error", in.nid, err, maxInline)
+		return &file{size: in.size, avail: maxInline, inline: true, mem: slices.Clone(in.raw[start : start+int(maxInline)]), tail: err}, nil
+	}
+	return &file{size: in.size, avail: in.size, inline: true, mem: slices.Clone(in.raw[start : start+int(in.size)])}, nil
 }
 
 // file is the content of one inode. It is immutable, so concurrent ReadAt
@@ -295,6 +309,7 @@ func (f *FS) openInline(in *inode) (filesys.File, error) {
 type file struct {
 	size   int64
 	avail  int64         // bytes the runs cover (== size unless the block map is damaged)
+	inline bool          // the content is in mem
 	mem    []byte        // inline content (runs is nil), else nil
 	runs   []filesys.Run // file order, trimmed to avail
 	starts []int64       // starts[i] is the file offset where runs[i] begins
@@ -330,15 +345,15 @@ func (fl *file) ReadAt(p []byte, off int64) (int, error) {
 	var n int64
 	for n < want {
 		pos := off + n
-		if fl.mem != nil {
-			n += int64(copy(p[n:want], fl.mem[pos:]))
-			continue
-		}
 		if pos >= fl.avail {
 			if fl.tail != nil {
 				return int(n), fl.tail
 			}
 			return int(n), io.ErrUnexpectedEOF // unreachable: avail == size without a tail error
+		}
+		if fl.inline {
+			n += int64(copy(p[n:min(want, fl.avail-off)], fl.mem[pos:]))
+			continue
 		}
 		i := sort.Search(len(fl.starts), func(i int) bool { return fl.starts[i] > pos }) - 1
 		if i < 0 {

@@ -88,7 +88,10 @@ const (
 	// size in words (kernel xattr.h): the minimum is sizeof(struct
 	// f2fs_xattr_header)/4 = 24/4; the maximum leaves room for the full
 	// 36-byte extra header, the reserved inline-data word and the 40-byte
-	// minimum inline dentry: 923 - 9 - 1 - 10.
+	// minimum inline dentry: 923 - 9 - 1 - 10 = 903. That assumes the 36-byte
+	// extra header of kernel 5.6 and later (the compression fields included);
+	// before them the header was 24 bytes and the bound is 923 - 6 - 1 - 10 = 906,
+	// so a recorded size between 904 and 906 is only valid on an older volume.
 	minInlineXattrSize = 6
 	maxInlineXattrSize = addrsPerIno - 36/4 - 1 - 40/4
 
@@ -166,6 +169,14 @@ type inode struct {
 }
 
 func (in *inode) typ() uint16 { return in.mode & modeTypeMask }
+
+// noDataExist reports an inode with inline data and a size but without
+// F2FS_DATA_EXIST: the kernel then treats the content as absent (reads give
+// zeros), yet the inode area may still hold bytes. An empty inline file
+// legitimately lacks the flag.
+func (in *inode) noDataExist() bool {
+	return in.inline&inlineData != 0 && in.inline&inlineDataExt == 0 && in.size > 0
+}
 
 // inode reads and parses inode ino.
 func (f *FS) inode(ino uint32) (*inode, error) {
@@ -281,6 +292,11 @@ func (f *FS) parseExtra(in *inode) error {
 			in.projID = le.Uint32(x[4:])
 		}
 	}
+	if in.inline&inlineExtra == 0 && f.sb.has(featFlexInlineXat) && f.sb.has(featExtraAttr) {
+		// The kernel (sanity_check_inode) treats this as a corrupted inode: a
+		// flexible-xattr volume records every inode's reservation in the header.
+		f.warn("inode %d has no extra attribute header on a volume with flexible inline xattrs; its inline xattr reservation is not recorded", in.nid)
+	}
 	if !recorded && (in.inlineXattrB || in.inline&inlineDentry != 0) {
 		in.xattrWords = defaultInlineXattrAddrs
 	}
@@ -391,6 +407,9 @@ func toEntry(name string, raw []byte, in *inode) filesys.Entry {
 	}
 	if in.compressed {
 		e.Attrs = append(e.Attrs, filesys.KV{Key: "compressed", Value: "true"})
+	}
+	if in.noDataExist() {
+		e.Attrs = append(e.Attrs, filesys.KV{Key: "data_exist", Value: "false"})
 	}
 	if in.nsInvalid {
 		e.Attrs = append(e.Attrs, filesys.KV{Key: "time_ns", Value: "invalid"})

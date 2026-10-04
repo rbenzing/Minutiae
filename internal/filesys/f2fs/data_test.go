@@ -352,10 +352,30 @@ func TestInlineDataFile(t *testing.T) {
 					t.Errorf("n=%d: read at size = %d, %v", n, m, err)
 				}
 			}
-			// One byte more than fits the inode: the size is a lie.
-			f := inlineFS(t, tc.o, f2fstest.Inode{Mode: regMode, Size: uint64(tc.max + 1), Extra: tc.extra, InlineData: dpat(tc.max, 1)})
-			if _, err := openNID(f, dataNID); !errors.Is(err, filesys.ErrCorrupt) {
-				t.Errorf("oversized inline file: %v, want ErrCorrupt", err)
+			// One byte more than fits the inode: the size is a lie. The bytes the
+			// inode can hold are a trusted prefix; reads beyond them are errors.
+			want := dpat(tc.max, 1)
+			f := inlineFS(t, tc.o, f2fstest.Inode{Mode: regMode, Size: uint64(tc.max + 1), Extra: tc.extra, InlineData: want})
+			fl, err := openNID(f, dataNID)
+			if err != nil {
+				t.Fatalf("oversized inline file: %v, want it opened with a trusted prefix", err)
+			}
+			if fl.Size() != int64(tc.max+1) || fl.Runs() != nil {
+				t.Errorf("size %d runs %v", fl.Size(), fl.Runs())
+			}
+			buf := make([]byte, tc.max)
+			if n, err := fl.ReadAt(buf, 0); n != tc.max || err != nil || !bytes.Equal(buf, want) {
+				t.Errorf("prefix read = %d, %v", n, err)
+			}
+			big := make([]byte, 8)
+			if n, err := fl.ReadAt(big, int64(tc.max-3)); n != 3 || !errors.Is(err, filesys.ErrCorrupt) {
+				t.Errorf("straddling read = %d, %v, want 3 and ErrCorrupt", n, err)
+			}
+			if n, err := fl.ReadAt(big, int64(tc.max)); n != 0 || !errors.Is(err, filesys.ErrCorrupt) {
+				t.Errorf("read at the end of the prefix = %d, %v, want 0 and ErrCorrupt", n, err)
+			}
+			if !hasWarning(f.Info(), "exceeds") {
+				t.Errorf("no warning: %v", f.Info().Warnings)
 			}
 		})
 	}
@@ -601,7 +621,10 @@ func TestBrokenChainsKeepTrustedPrefix(t *testing.T) {
 			nodes: func() []f2fstest.Node {
 				return []f2fstest.Node{inode(1<<62, seq(0, 3), [5]uint32{})}
 			},
-			prefix:  0, // set below: everything is mapped up to the limit
+			// Everything the tree can address is mapped (the i_addr slots, two
+			// direct, two indirect and one double-indirect node; unset ones are
+			// holes) and the rest of the size is not.
+			prefix:  (923 + 2*1018 + 2*1018*1018 + 1018*1018*1018) * bs,
 			size:    1 << 62,
 			warning: "addressable",
 		},
@@ -918,4 +941,135 @@ func (r *failingReader) ReadAt(p []byte, off int64) (int, error) {
 		return 0, r.err
 	}
 	return bytes.NewReader(r.b).ReadAt(p, off)
+}
+
+// INLINE_DATA without DATA_EXIST: the kernel reads such a file as empty. The
+// stored bytes are still returned, with a warning and the attr data_exist=false;
+// an empty inline file legitimately lacks the flag and is silent.
+func TestInlineDataWithoutDataExist(t *testing.T) {
+	hasAttr := func(e filesys.Entry) bool { _, ok := attrOf(e, "data_exist"); return ok }
+	content := []byte("stale inline bytes")
+	in := f2fstest.Inode{Mode: regMode, Size: uint64(len(content)), InlineData: content, RawOverrides: map[int][]byte{3: {f2fstest.InlineData}}}
+	f := inlineFS(t, smallOpts(), in)
+	_, e, err := f.Inode(dataNID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := attrOf(e, "data_exist"); v != "false" {
+		t.Errorf("attrs %+v lack data_exist=false", e.Attrs)
+	}
+	fl := mustOpenFile(t, f, dataNID)
+	if got := readWhole(t, fl); !bytes.Equal(got, content) {
+		t.Errorf("content = %q", got)
+	}
+	if !hasWarning(f.Info(), "DATA_EXIST") {
+		t.Errorf("no warning: %v", f.Info().Warnings)
+	}
+	// A normal inline file carries no such attr and no warning.
+	f = inlineFS(t, smallOpts(), f2fstest.Inode{Mode: regMode, Size: 3, InlineData: []byte("abc")})
+	mustOpenFile(t, f, dataNID)
+	if _, e, _ := f.Inode(dataNID); hasAttr(e) || len(f.Info().Warnings) != 0 {
+		t.Errorf("normal inline file: attrs %+v warnings %v", e.Attrs, f.Info().Warnings)
+	}
+	// An empty inline file lacks the flag by design.
+	f = inlineFS(t, smallOpts(), f2fstest.Inode{Mode: regMode, Inline: f2fstest.InlineData})
+	mustOpenFile(t, f, dataNID)
+	if _, e, _ := f.Inode(dataNID); hasAttr(e) || len(f.Info().Warnings) != 0 {
+		t.Errorf("empty inline file: attrs %+v warnings %v", e.Attrs, f.Info().Warnings)
+	}
+}
+
+// A direct or indirect node records its owning inode in its footer. A different
+// owner is a warning; a node that is itself an inode (footer ino == own nid)
+// cannot be part of a node tree and is corrupt for that subtree.
+func TestNodeFooterOwnership(t *testing.T) {
+	o := f2fstest.Options{Segments: 2}
+	main := f2fstest.Geometry(o).Main
+	const dirNode = 20
+	seq := func(from, n int) []uint32 {
+		s := make([]uint32, n)
+		for i := range s {
+			s[i] = main + 100 + uint32((from+i)%500)
+		}
+		return s
+	}
+	build := func(owner uint32) *f2fs.FS {
+		o2 := o
+		o2.Nodes = []f2fstest.Node{
+			{NID: dataNID, Addr: main, Block: f2fstest.InodeBlock(o, f2fstest.Inode{NID: dataNID, Mode: regMode, Size: uint64(923+5) * bs, Addrs: seq(0, 923), NIDs: [5]uint32{dirNode}})},
+			{NID: dirNode, Addr: main + 1, Block: f2fstest.DirectNodeBlock(dirNode, owner, seq(923, 5))},
+		}
+		return mustOpen(t, f2fstest.Build(o2, nil))
+	}
+
+	f := build(dataNID)
+	fl := mustOpenFile(t, f, dataNID)
+	if got := sumRuns(fl.Runs()); got != int64(923+5)*bs || len(f.Info().Warnings) != 0 {
+		t.Errorf("proper owner: covered %d, warnings %v", got, f.Info().Warnings)
+	}
+
+	f = build(77)
+	fl = mustOpenFile(t, f, dataNID)
+	if got := sumRuns(fl.Runs()); got != int64(923+5)*bs {
+		t.Errorf("foreign owner: covered %d, want the whole file (a warning only)", got)
+	}
+	if !hasWarning(f.Info(), "records inode 77") {
+		t.Errorf("no ownership warning: %v", f.Info().Warnings)
+	}
+
+	f = build(dirNode)
+	fl = mustOpenFile(t, f, dataNID)
+	covered := sumRuns(fl.Runs())
+	if covered != 923*bs {
+		t.Errorf("node that is an inode: covered %d, want the trusted prefix %d", covered, 923*bs)
+	}
+	if _, err := fl.ReadAt(make([]byte, 1), covered); !errors.Is(err, filesys.ErrCorrupt) {
+		t.Errorf("read past the prefix: %v, want ErrCorrupt", err)
+	}
+	if !hasWarning(f.Info(), "is an inode") {
+		t.Errorf("no warning: %v", f.Info().Warnings)
+	}
+}
+
+// Forged Entry fields (Size, Type, Deleted, Attrs, names) never change what
+// Open or ReadDir read from the volume: the ID decides, the disk answers.
+func TestForgedEntryFieldsAreIgnored(t *testing.T) {
+	files := []f2fstest.File{
+		{Path: "/file", Data: []byte("real content")},
+		{Path: "/dir", Dir: true},
+		{Path: "/dir/inner", Data: []byte("i")},
+		{Path: "/packed", Data: []byte("squeezed"), Compressed: true},
+		{Path: "/gone", Data: []byte("gone"), Deleted: true},
+	}
+	f, _, tree := treeFS(t, treeOpts(), files)
+	fileID, dirID := nidID(tree.NID["/file"]), nidID(tree.NID["/dir"])
+	forged := []filesys.Entry{
+		{ID: fileID},
+		{ID: fileID, Size: 1 << 40, Type: filesys.TypeDir, Deleted: true, Attrs: []filesys.KV{{Key: "compressed", Value: "true"}, {Key: "inline", Value: "data"}}},
+		{ID: fileID, Size: 0, Type: filesys.TypeSymlink, Encrypted: true, Name: "other", RawName: []byte("other"), LinkTarget: "/etc/passwd"},
+	}
+	for _, e := range forged {
+		fl, err := f.Open(e)
+		if err != nil || fl.Size() != 12 || string(readWhole(t, fl)) != "real content" {
+			t.Errorf("Open(%+v) = %v, %v", e, fl, err)
+		}
+	}
+	// A directory forged as a file, and a compressed file forged as plain.
+	if _, err := f.Open(filesys.Entry{ID: dirID, Type: filesys.TypeFile, Size: 4}); !errors.Is(err, filesys.ErrUnsupported) {
+		t.Errorf("directory forged as a file: %v, want ErrUnsupported", err)
+	}
+	if _, err := f.Open(filesys.Entry{ID: nidID(tree.NID["/packed"]), Type: filesys.TypeFile}); !errors.Is(err, filesys.ErrUnsupported) {
+		t.Errorf("compressed file forged as plain: %v, want ErrUnsupported", err)
+	}
+	// A deleted slot stays deleted whatever the entry claims.
+	gone := entryByName(t, readDirPath(t, f, "/"), "gone")
+	if _, err := f.Open(filesys.Entry{ID: gone.ID, Deleted: false, Type: filesys.TypeFile, Size: 4}); !errors.Is(err, filesys.ErrDeleted) {
+		t.Errorf("deleted slot forged as live: %v, want ErrDeleted", err)
+	}
+	for _, e := range []filesys.Entry{{ID: dirID}, {ID: dirID, Type: filesys.TypeFile, Size: 1 << 40, Deleted: true, Attrs: []filesys.KV{{Key: "inline", Value: "dentry"}}}} {
+		es, err := f.ReadDir(e)
+		if err != nil || len(es) != 1 || es[0].Name != "inner" {
+			t.Errorf("ReadDir(%+v) = %q, %v", e, entryNames(es), err)
+		}
+	}
 }

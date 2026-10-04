@@ -547,3 +547,30 @@ func TestInodeFooterFlagAndNATOwner(t *testing.T) {
 		t.Errorf("consistent NAT owner: err %v warnings %q", err, g.Info().Warnings)
 	}
 }
+
+// On a volume with flexible inline xattrs every inode records its reservation
+// in an extra header; one without is reported (the kernel calls it corrupted).
+func TestFlexibleVolumeInodeWithoutExtraHeader(t *testing.T) {
+	o := f2fstest.Options{Segments: 1, ExtraAttr: true, InlineXattr: true}
+	o.Nodes = []f2fstest.Node{
+		{NID: 5, Block: f2fstest.InodeBlock(o, f2fstest.Inode{NID: 5, Mode: 0o100644, Extra: true})},
+		{NID: 6, Block: f2fstest.InodeBlock(o, f2fstest.Inode{NID: 6, Mode: 0o100644})},
+	}
+	f := mustOpen(t, f2fstest.Build(o, nil))
+	if _, _, err := f.Inode(5); err != nil || len(f.Info().Warnings) != 0 {
+		t.Fatalf("inode with a header: %v, warnings %v", err, f.Info().Warnings)
+	}
+	if _, _, err := f.Inode(6); err != nil {
+		t.Fatal(err)
+	}
+	if !hasWarning(f.Info(), "inode 6 has no extra attribute header") {
+		t.Errorf("no warning: %v", f.Info().Warnings)
+	}
+	// Without the extra_attr feature it is simply an old volume.
+	o2 := f2fstest.Options{Segments: 1, InlineXattr: true}
+	o2.Nodes = []f2fstest.Node{{NID: 6, Block: f2fstest.InodeBlock(o2, f2fstest.Inode{NID: 6, Mode: 0o100644})}}
+	g := mustOpen(t, f2fstest.Build(o2, nil))
+	if _, _, err := g.Inode(6); err != nil || len(g.Info().Warnings) != 0 {
+		t.Errorf("no extra_attr feature: %v, warnings %v", err, g.Info().Warnings)
+	}
+}
