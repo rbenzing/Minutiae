@@ -29,8 +29,9 @@ var (
 	// ErrWriterStarted: Start was already called.
 	ErrWriterStarted = errors.New("records writer is already started")
 	// ErrIngestActive: this Case already has a live ingest (a Writer that was
-	// started and neither ended nor aborted); a second Start is refused.
-	ErrIngestActive = errors.New("an ingest is already active in this case")
+	// started and neither ended nor aborted, or a running records reindex); a second Start is
+	// refused. It is evidence.ErrIngestActive, which the reindex returns too.
+	ErrIngestActive = evidence.ErrIngestActive
 	// ErrInvalidOptions: a writer or start option is out of range.
 	ErrInvalidOptions = errors.New("invalid writer options")
 )

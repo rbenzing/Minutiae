@@ -288,7 +288,7 @@ func (c *Case) verifyRecords(rep *VerifyReport, recs []ManifestRecord, entries [
 	c.verifyClassOnly(ctx, ps, metaClasses, []string{"key"}, func(v []string) string { return fmt.Sprintf("key %q", v[0]) })
 	c.verifyMetaKeys(ctx, ps, dbv)
 	if dbv >= 3 {
-		c.verifyIndexState(ctx, rep)
+		c.verifyIndexState(ctx, rep, entries, auditReadable)
 	}
 	c.verifyClassOnly(ctx, ps, supersededClasses, []string{"ingest_id", "artifact_id"},
 		func(v []string) string { return fmt.Sprintf("ingest %q artifact %q", v[0], v[1]) })
@@ -296,7 +296,7 @@ func (c *Case) verifyRecords(rep *VerifyReport, recs []ManifestRecord, entries [
 	acc := make([]*batchAcc, len(sorted))
 	seenArtifact := map[string]bool{}
 	var maxID int64
-	streamed := c.streamRecords(ctx, ps, observe, func(row RecordRow, m recordRowMeta) {
+	streamed := c.streamRecords(ctx, ps, verifyChunkRows, observe, func(row RecordRow, m recordRowMeta) {
 		rep.RecordsChecked++
 		maxID = max(maxID, row.ID)
 		if !seenArtifact[row.ArtifactID] {
@@ -613,10 +613,13 @@ var (
 		` FROM record_times WHERE record_id >= ? AND record_id <= ? ORDER BY record_id, kind`
 )
 
-// streamRecords reads every record row in keyset chunks, each in its own ReadTx
-// together with the record_times of that id range, and calls fn for each row in
-// id order. It reports whether every chunk could be read.
-func (c *Case) streamRecords(ctx context.Context, ps *problemSet, observe verifyChunkObserver, fn func(RecordRow, recordRowMeta)) bool {
+// streamRecords reads every record row in keyset chunks of at most chunkRows rows
+// (and verifyChunkBytes), each in its own ReadTx together with the record_times of
+// that id range, and calls fn for each row in id order. fn runs after the chunk's
+// ReadTx has closed, so it may open transactions of its own (reindex writes each
+// chunk of rows it is handed before the next chunk is read). It reports whether
+// every chunk could be read.
+func (c *Case) streamRecords(ctx context.Context, ps *problemSet, chunkRows int, observe verifyChunkObserver, fn func(RecordRow, recordRowMeta)) bool {
 	rep := ps.rep
 	after := int64(math.MinInt64) // below every possible id: a tampered database may hold ids <= 0
 	var nRows, nTimes int64
@@ -627,7 +630,7 @@ func (c *Case) streamRecords(ctx context.Context, ps *problemSet, observe verify
 		more := false
 		err := c.ReadTx(ctx, func(h ReadHandle) error {
 			rows, metas, times, more = nil, nil, nil, false
-			rs, err := h.QueryContext(ctx, recordsSelect, after, verifyChunkRows)
+			rs, err := h.QueryContext(ctx, recordsSelect, after, chunkRows)
 			if err != nil {
 				return err
 			}
@@ -656,7 +659,7 @@ func (c *Case) streamRecords(ctx context.Context, ps *problemSet, observe verify
 				if r.Body != nil {
 					size += len(*r.Body)
 				}
-				if len(rows) >= verifyChunkRows || size >= verifyChunkBytes {
+				if len(rows) >= chunkRows || size >= verifyChunkBytes {
 					more = true
 					break
 				}

@@ -103,3 +103,18 @@ func wreckStructure(db *sql.DB, table string) error {
 	}
 	return nil
 }
+
+// EmptyFTSIndex removes every document from both full-text tables with FTS5's own delete-all
+// command, through its own connection: the records are untouched, the schema is as defined and
+// every search hits nothing, which is what an index emptied by an attacker or a lost write looks
+// like.
+func EmptyFTSIndex(t testing.TB, caseDir string) {
+	t.Helper()
+	db := openTamperDB(t, caseDir)
+	defer func() { _ = db.Close() }()
+	for _, table := range evidence.FTSTables() {
+		if _, err := db.Exec(`INSERT INTO ` + table + `(` + table + `) VALUES ('delete-all')`); err != nil { //nolint:gosec // the table is one of two constants
+			t.Fatalf("recordstest: empty %s: %v", table, err)
+		}
+	}
+}

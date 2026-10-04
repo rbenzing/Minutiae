@@ -71,6 +71,9 @@ type Case struct {
 	// upgradeHook, when set by a test, runs between the case.upgrade audit entry
 	// and the migration.
 	upgradeHook func()
+
+	// reindexHook, when set by a test, is called at the named points of ReindexText.
+	reindexHook func(point string) error
 }
 
 var validCaseID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
