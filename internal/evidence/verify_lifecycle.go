@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"sort"
 )
 
@@ -277,14 +278,14 @@ func (c *Case) checkTotals(ps *problemSet, id, what string, seq int64, got Inges
 const runsSelect = `SELECT r.end_seq, r.ingest_id, r.parser_id, p.name, p.version, p.hash, r.analysis_id, r.outcome,
 	r.batches, r.records, r.first_id, r.last_id, r.rollup, r.ended
 	FROM record_runs r LEFT JOIN parsers p ON p.id = r.parser_id
-	WHERE r.end_seq > ? ORDER BY r.end_seq LIMIT ?`
+	WHERE r.end_seq >= ? ORDER BY r.end_seq LIMIT ?`
 
 // checkRuns compares every record_runs row with the run the audit log demands and
 // reports the demanded runs that have no row. It returns the ingests that have a
 // row and whether the table could be read.
 func (c *Case) checkRuns(ctx context.Context, rep *VerifyReport, ps *problemSet, expected map[string]expectedRun) (map[string]bool, bool) {
 	have := map[string]bool{}
-	after := int64(-1) << 62
+	after := int64(math.MinInt64)
 	for {
 		var chunk []storedRun
 		err := c.ReadTx(ctx, func(h ReadHandle) error {
@@ -318,7 +319,10 @@ func (c *Case) checkRuns(ctx context.Context, rep *VerifyReport, ps *problemSet,
 		if len(chunk) < verifyChunkRows {
 			break
 		}
-		after = chunk[len(chunk)-1].endSeq
+		if after = chunk[len(chunk)-1].endSeq; after == math.MaxInt64 {
+			break
+		}
+		after++
 	}
 	ids := make([]string, 0, len(expected))
 	for id := range expected {

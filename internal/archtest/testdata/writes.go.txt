@@ -66,5 +66,35 @@ var (
 	harmFmt  = fmt.Sprintf("failed to update %s: %v", "records", 1)
 )
 
+// evasions of the first scanner (review of Task 6): quoting, aliases, INDEXED BY, comments.
+var (
+	evDQuote   = "UPDATE \"records\" SET summary = 'x'" // want
+	evBacktick = "UPDATE `records` SET summary = 'x'" // want
+	evBracket  = "UPDATE [records] SET summary = 'x'" // want
+	evAlias    = "UPDATE records AS r SET summary = 'x'" // want
+	evAlias2   = "UPDATE records r SET summary = 'x'" // want
+	evIndexed  = "UPDATE records INDEXED BY records_ts SET summary = 'x'" // want
+	evComment  = "DELETE FROM /**/ records" // want
+	evLineCmt  = "DELETE -- go on\n FROM records" // want
+	evMainQ    = "UPDATE main.\"record_batches\" SET count = 1" // want
+	evDelQ     = "DELETE FROM [record_times]" // want
+	evInsBr    = "INSERT INTO `parsers` (name) VALUES ('x')" // want
+	evSpaces   = "UPDATE\t\n records\n\tSET x = 1" // want
+	evOrQuoted = "UPDATE OR FAIL \"records\" SET x = 1" // want
+	evSprintfQ = fmt.Sprintf("UPDATE \"%s\" SET x = 1", "records") // want
+	evSprintfB = fmt.Sprintf("UPDATE [%[1]s] SET x = 1", "records") // want
+)
+
+// harmless next to the evasions: none of these may be flagged.
+var (
+	harmSetCol   = "UPDATE other_table SET records = 1"
+	harmComment  = "SELECT 1 -- UPDATE records SET x = 1"
+	harmBlockCmt = "SELECT 1 /* DELETE FROM records */"
+	harmAlias    = "UPDATE devices AS d SET records = 1"
+	harmEnglish4 = "failed to update \"records\": the table is locked"
+	harmEnglish5 = "could not update the records, set aside"
+)
+
+
 // a comment that mentions UPDATE records SET x = 1 or DELETE FROM records is no write.
 /* INSERT INTO records (id) VALUES (1) */

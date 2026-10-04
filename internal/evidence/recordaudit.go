@@ -40,6 +40,7 @@ type BatchCommit struct {
 	FirstID            int64             `json:"first_id"`
 	Count              int               `json:"count"`
 	Digest             string            `json:"digest"`
+	Created            string            `json:"created"`   // the time the batch row is stored with (RFC 3339), committed before the row exists
 	Artifacts          map[string]string `json:"artifacts"` // artifact id -> sha256
 	ArtifactIncomplete []string          `json:"artifact_incomplete"`
 	Types              map[string]int64  `json:"types"` // record type -> rows

@@ -143,3 +143,50 @@ func TestVerifyRecordsUnreadableIsAProblemNotAnAbort(t *testing.T) {
 	}
 	assertLastAction(t, c, "verify.run")
 }
+
+// TestVerifyStreamsRowsInChunks: the record rows are read in keyset chunks of at
+// most 5000 rows, never by one query.
+func TestVerifyStreamsRowsInChunks(t *testing.T) {
+	c, rec := caseWithArtifact(t)
+	const n = 12000
+	if _, err := c.store.db.Exec(`INSERT INTO parsers (name, version, hash) VALUES ('raw', '1', NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := c.store.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(`INSERT INTO record_batches (ingest_id, batch_no, first_id, count, digest, created) VALUES ('ing-raw', 1, 1, ?, ?, 'x')`, n, strings.Repeat("e", 64)); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= n; i++ {
+		if _, err := tx.Exec(`INSERT INTO records (id, batch_id, type, payload_v, artifact_id, parser_id, summary, payload)
+			VALUES (?, 1, 'event', 1, ?, 1, 'raw', '{}')`, i, rec.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	// A chunk is one query of the record rows (with the record_times of its id
+	// range, in the same read transaction); the observer sees one event per chunk.
+	var chunks []int
+	rep, err := c.verify(func(table string, rows int) {
+		if table == "records" {
+			chunks = append(chunks, rows)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.RecordsChecked != n {
+		t.Fatalf("RecordsChecked = %d, want %d", rep.RecordsChecked, n)
+	}
+	if want := []int{5000, 5000, 2000}; len(chunks) != len(want) || chunks[0] != want[0] || chunks[1] != want[1] || chunks[2] != want[2] {
+		t.Fatalf("chunk sizes = %v, want %v", chunks, want)
+	}
+	// the rows are unaudited forgeries here; what matters is that none was missed
+	if containsSubstr(rep.Problems, "verify read") {
+		t.Errorf("the scans disagree with count(*): %q", rep.Problems)
+	}
+}

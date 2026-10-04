@@ -35,7 +35,7 @@ func auditSamples() []auditSample {
 		AnalysisID: "an-1", Artifacts: []string{"a-1", "a-2"}, BatchRows: 5000, Reingest: true,
 	}
 	batch := BatchCommit{
-		IngestID: "ing-1", BatchNo: 2, FirstID: 5001, Count: 5000, Digest: strings.Repeat("cd", 32),
+		IngestID: "ing-1", BatchNo: 2, FirstID: 5001, Count: 5000, Digest: strings.Repeat("cd", 32), Created: "2026-10-04T10:00:00.123456789Z",
 		Artifacts:          map[string]string{"a-1": strings.Repeat("11", 32), "a-2": strings.Repeat("22", 32)},
 		ArtifactIncomplete: []string{"a-2"}, Types: map[string]int64{"message": 5000},
 	}
@@ -57,7 +57,7 @@ func auditSamples() []auditSample {
 		{
 			"BatchCommit", batch, batch.Details(),
 			func(d map[string]any) (any, error) { return DecodeDetails[BatchCommit](d) },
-			[]string{"artifact_incomplete", "artifacts", "batch_no", "count", "digest", "first_id", "ingest_id", "types"},
+			[]string{"artifact_incomplete", "artifacts", "batch_no", "count", "created", "digest", "first_id", "ingest_id", "types"},
 		},
 		{
 			"BatchFailure", fail, fail.Details(),

@@ -27,15 +27,16 @@ const unknown = "\x01"
 const placeholder = `(?:%(?:\[\d+\])?[-+# 0-9.]*[svq]|\x01)`
 
 // tableRef is a record table name, or a placeholder in table position, with an
-// optional main. prefix and quoting.
-const tableRef = "(?:main\\s*\\.\\s*)?[\"`\\[]?(?:" + recordTables + `\b|` + placeholder + `)`
+// optional main. prefix. Identifier quoting is removed by normalizeSQL first.
+const tableRef = `(?:main\s*\.\s*)?(?:\b` + recordTables + `\b|\x01)`
 
-// SQL-shaped patterns only, so plain English ("failed to update records") is
-// not flagged: an UPDATE needs its SET, a DELETE its FROM, an INSERT its INTO.
+// SQL-shaped patterns over the normalized text (see normalizeSQL), so plain
+// English ("failed to update records") is not flagged: each write verb needs its
+// structural keyword in SQL order (INSERT .. INTO table, UPDATE table .. SET,
+// DELETE FROM table, ALTER TABLE table, DROP TABLE|TRIGGER|INDEX).
 var recordWriteRE = regexp.MustCompile(`(?is)\b(?:` +
-	`insert\s+(?:or\s+\w+\s+)?into\s+` + tableRef + `|` +
-	`replace\s+into\s+` + tableRef + `|` +
-	`update\s+(?:or\s+\w+\s+)?` + tableRef + `\s+set\b|` +
+	`(?:insert|replace)\s+(?:or\s+\w+\s+)?into\s+` + tableRef + `|` +
+	`update\s+(?:or\s+\w+\s+)?` + tableRef + `(?:\s+(?:as\s+)?\w+)?(?:\s+indexed\s+by\s+\w+|\s+not\s+indexed)?\s+set\b|` +
 	`delete\s+from\s+` + tableRef + `|` +
 	`alter\s+table\s+` + tableRef + `|` +
 	`drop\s+(?:table|trigger|index)\b)`)
@@ -43,6 +44,34 @@ var recordWriteRE = regexp.MustCompile(`(?is)\b(?:` +
 // recordWriteTailRE matches a string that ends in a write verb: the first half
 // of SQL a builder finishes with a table name held in a variable.
 var recordWriteTailRE = regexp.MustCompile(`(?is)\b(?:insert\s+(?:or\s+\w+\s+)?into|replace\s+into|delete\s+from|alter\s+table)\s*$`)
+
+var (
+	placeholderRE   = regexp.MustCompile(placeholder)
+	blockCommentRE  = regexp.MustCompile(`(?s)/\*.*?\*/`)
+	lineCommentRE   = regexp.MustCompile(`--[^\n]*`)
+	quotedIdentREs  = []*regexp.Regexp{regexp.MustCompile(`"([^"]*)"`), regexp.MustCompile("`([^`]*)`"), regexp.MustCompile(`\[([^\]]*)\]`)}
+	whitespaceRunRE = regexp.MustCompile(`\s+`)
+)
+
+// normalizeSQL prepares a constant SQL string for matching: printf verbs and
+// unknown operands become one placeholder, /* */ and -- comments are removed,
+// "x", `x` and [x] identifiers are unquoted and whitespace runs collapse to one
+// space, so quoting, comments and line breaks cannot hide a statement.
+func normalizeSQL(s string) string {
+	s = placeholderRE.ReplaceAllString(s, unknown)
+	s = blockCommentRE.ReplaceAllString(s, " ")
+	s = lineCommentRE.ReplaceAllString(s, " ")
+	for _, re := range quotedIdentREs {
+		s = re.ReplaceAllString(s, "$1")
+	}
+	return strings.TrimSpace(whitespaceRunRE.ReplaceAllString(s, " "))
+}
+
+// writesRecordTable reports whether a folded string holds SQL that writes a record table.
+func writesRecordTable(text string) bool {
+	n := normalizeSQL(text)
+	return recordWriteRE.MatchString(n) || recordWriteTailRE.MatchString(n)
+}
 
 type writeViolation struct {
 	File string
@@ -171,7 +200,7 @@ func recordTableWrites(t testing.TB, srcs map[string]string) []writeViolation {
 		covered := map[ast.Node]bool{}
 		check := func(n ast.Expr) {
 			text := evalString(n, consts)
-			if recordWriteRE.MatchString(text) || recordWriteTailRE.MatchString(text) {
+			if writesRecordTable(text) {
 				p := fset.Position(n.Pos())
 				out = append(out, writeViolation{File: p.Filename, Line: p.Line, Text: strings.TrimSpace(strings.ReplaceAll(text, unknown, "<?>"))})
 			}

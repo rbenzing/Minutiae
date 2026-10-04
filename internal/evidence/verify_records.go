@@ -29,7 +29,8 @@ const (
 	verifyMaxPerKind = 50
 )
 
-// verifyChunkObserver is told about every chunk query (see Case.VerifyObserved).
+// verifyChunkObserver is told about every chunk query of the record rows (table
+// "records") with the number of rows it returned; only tests pass one (Case.verify).
 type verifyChunkObserver func(table string, rows int)
 
 // problemSet lists at most verifyMaxPerKind problems per kind and then counts
@@ -214,16 +215,6 @@ type recordRowMeta struct {
 	hasParse bool
 }
 
-// observer and verification entry points.
-
-// VerifyObserved is Verify that also calls observe after every chunk query of
-// the record rows (table "records") with the number of rows the chunk returned.
-// It exists so a test can show that the rows are streamed in chunks, never read
-// by one query.
-func (c *Case) VerifyObserved(observe func(table string, rows int)) (VerifyReport, error) {
-	return c.verify(observe)
-}
-
 func unreadable(rep *VerifyReport, what string, err error) {
 	rep.problemf("records unreadable: %s: %q", what, err.Error())
 }
@@ -269,6 +260,14 @@ func (c *Case) verifyRecords(rep *VerifyReport, recs []ManifestRecord, entries [
 	}
 
 	batches, ok := c.readStoredBatches(ctx, rep)
+	if ok {
+		for _, b := range batches {
+			if b.id <= 0 {
+				ps.add("nonpositive-id", "record batch %d of ingest %q: batch id %d is not positive", b.no, b.ingest, b.id)
+			}
+		}
+		c.checkTableCount(ctx, rep, "record_batches", int64(len(batches)))
+	}
 	byBatchID := make(map[int64]storedBatch, len(batches))
 	byKey := make(map[batchKey]storedBatch, len(batches))
 	for _, b := range batches {
@@ -401,9 +400,9 @@ func (c *Case) checkBatches(rep *VerifyReport, ps *problemSet, audit *recordAudi
 				}
 			}
 		default:
-			if sb.first != ab.FirstID || sb.count != int64(ab.Count) || sb.digest != ab.Digest {
-				ps.add("batch-row", "record_batches row of batch %d of ingest %q differs from the audit log: stored first_id %d count %d digest %q, audited first_id %d count %d digest %q",
-					ab.BatchNo, ab.IngestID, sb.first, sb.count, sb.digest, ab.FirstID, ab.Count, ab.Digest)
+			if sb.first != ab.FirstID || sb.count != int64(ab.Count) || sb.digest != ab.Digest || sb.created != ab.Created {
+				ps.add("batch-row", "record_batches row of batch %d of ingest %q differs from the audit log: stored first_id %d count %d digest %q created %q, audited first_id %d count %d digest %q created %q",
+					ab.BatchNo, ab.IngestID, sb.first, sb.count, sb.digest, sb.created, ab.FirstID, ab.Count, ab.Digest, ab.Created)
 			}
 		}
 		if stored != int64(ab.Count) {
@@ -505,12 +504,12 @@ func (c *Case) verifyQuickCheck(ctx context.Context, rep *VerifyReport) {
 // readStoredBatches reads every record_batches row (keyset chunks).
 func (c *Case) readStoredBatches(ctx context.Context, rep *VerifyReport) ([]storedBatch, bool) {
 	var out []storedBatch
-	after := int64(0)
+	after := int64(math.MinInt64) // keyset scans start below every possible id (ids may be 0 or negative in a tampered db)
 	for {
 		var chunk []storedBatch
 		err := c.ReadTx(ctx, func(h ReadHandle) error {
 			rows, err := h.QueryContext(ctx, `SELECT batch_id, ingest_id, batch_no, first_id, count, digest, created
-				FROM record_batches WHERE batch_id > ? ORDER BY batch_id LIMIT ?`, after, verifyChunkRows)
+				FROM record_batches WHERE batch_id >= ? ORDER BY batch_id LIMIT ?`, after, verifyChunkRows)
 			if err != nil {
 				return err
 			}
@@ -532,7 +531,10 @@ func (c *Case) readStoredBatches(ctx context.Context, rep *VerifyReport) ([]stor
 		if len(chunk) < verifyChunkRows {
 			return out, true
 		}
-		after = chunk[len(chunk)-1].id
+		if after = chunk[len(chunk)-1].id; after == math.MaxInt64 {
+			return out, true
+		}
+		after++
 	}
 }
 
@@ -564,6 +566,11 @@ func (c *Case) verifyParsers(ctx context.Context, rep *VerifyReport, ps *problem
 		unreadable(rep, "parsers", err)
 		return false
 	}
+	for _, p := range rows {
+		if p.id <= 0 {
+			ps.add("nonpositive-id", "parser %q %q: id %d is not positive", p.name, p.version, p.id)
+		}
+	}
 	if audit == nil {
 		return true
 	}
@@ -581,15 +588,16 @@ const recordsSelect = `SELECT r.id, r.batch_id, r.parser_id, r.type, r.payload_v
 	r.src_offset, r.src_length, r.ts, r.ts_end, r.ts_basis, r.tz_offset_min, r.deleted, r.recovered, r.recovery_method,
 	r.confidence, p.name, p.version, p.hash, r.summary, r.body, r.payload
 	FROM records r LEFT JOIN parsers p ON p.id = r.parser_id
-	WHERE r.id > ? ORDER BY r.id LIMIT ?`
+	WHERE r.id >= ? ORDER BY r.id LIMIT ?`
 
 // streamRecords reads every record row in keyset chunks, each in its own ReadTx
 // together with the record_times of that id range, and calls fn for each row in
 // id order. It reports whether every chunk could be read.
 func (c *Case) streamRecords(ctx context.Context, rep *VerifyReport, observe verifyChunkObserver, fn func(RecordRow, recordRowMeta)) bool {
-	after := int64(0)
+	after := int64(math.MinInt64) // below every possible id: a tampered database may hold ids <= 0
 	ps := &problemSet{rep: rep, counts: map[string]int{}}
 	defer ps.flush()
+	var nRows, nTimes int64
 	for {
 		var rows []RecordRow
 		var metas []recordRowMeta
@@ -639,9 +647,9 @@ func (c *Case) streamRecords(ctx context.Context, rep *VerifyReport, observe ver
 			}
 			// the record_times of this id range: after the previous chunk's last id
 			// up to this chunk's last id (all the rest for the final chunk).
-			q, args := `SELECT record_id, kind, ts, ts_basis, tz_offset_min FROM record_times WHERE record_id > ? ORDER BY record_id, kind`, []any{after}
+			q, args := `SELECT record_id, kind, ts, ts_basis, tz_offset_min FROM record_times WHERE record_id >= ? ORDER BY record_id, kind`, []any{after}
 			if more {
-				q, args = `SELECT record_id, kind, ts, ts_basis, tz_offset_min FROM record_times WHERE record_id > ? AND record_id <= ? ORDER BY record_id, kind`,
+				q, args = `SELECT record_id, kind, ts, ts_basis, tz_offset_min FROM record_times WHERE record_id >= ? AND record_id <= ? ORDER BY record_id, kind`,
 					[]any{after, rows[len(rows)-1].ID}
 			}
 			ts, err := h.QueryContext(ctx, q, args...)
@@ -669,7 +677,12 @@ func (c *Case) streamRecords(ctx context.Context, rep *VerifyReport, observe ver
 		for i, r := range rows {
 			index[r.ID] = i
 		}
+		nRows += int64(len(rows))
+		nTimes += int64(len(times))
 		for _, t := range times {
+			if t.recordID <= 0 {
+				ps.add("nonpositive-id", "record_times row (kind %q) of record %d: record_id is not positive", t.Kind, t.recordID)
+			}
 			i, ok := index[t.recordID]
 			if !ok {
 				ps.add("orphan-time", "record_times row (kind %q) of record %d has no record", t.Kind, t.recordID)
@@ -678,12 +691,36 @@ func (c *Case) streamRecords(ctx context.Context, rep *VerifyReport, observe ver
 			rows[i].Times = append(rows[i].Times, t.RecordTime)
 		}
 		for i, r := range rows {
+			if r.ID <= 0 {
+				ps.add("nonpositive-id", "record %d: id is not positive", r.ID)
+			}
 			fn(r, metas[i])
 		}
-		if !more {
+		last := int64(0)
+		if more {
+			last = rows[len(rows)-1].ID
+		}
+		if !more || last == math.MaxInt64 {
+			c.checkTableCount(ctx, rep, "records", nRows)
+			c.checkTableCount(ctx, rep, "record_times", nTimes)
 			return true
 		}
-		after = rows[len(rows)-1].ID
+		after = last + 1
+	}
+}
+
+// checkTableCount compares the number of rows a scan read with count(*) of the
+// table (defence in depth: a row a keyset scan can never reach is still reported).
+func (c *Case) checkTableCount(ctx context.Context, rep *VerifyReport, table string, read int64) {
+	var n int64
+	err := c.ReadTx(ctx, func(h ReadHandle) error {
+		return h.QueryRowContext(ctx, "SELECT count(*) FROM "+table).Scan(&n)
+	})
+	switch {
+	case err != nil:
+		unreadable(rep, table+" count", err)
+	case n != read:
+		rep.problemf("%s holds %d rows but verify read %d of them", table, n, read)
 	}
 }
 

@@ -310,9 +310,10 @@ func (w *Writer) flush(ctx context.Context) error {
 		incomplete = []string{}
 	}
 	digest := bd.Sum()
+	created := time.Now().UTC().Format(time.RFC3339Nano)
 
 	if _, err := w.c.Audit.Append(evidence.ActionBatch, "", evidence.BatchCommit{
-		IngestID: w.IngestID(), BatchNo: batchNo, FirstID: first, Count: n, Digest: digest,
+		IngestID: w.IngestID(), BatchNo: batchNo, FirstID: first, Count: n, Digest: digest, Created: created,
 		Artifacts: hashes, ArtifactIncomplete: incomplete, Types: types,
 	}.Details()); err != nil {
 		return w.fail(batchNo, fmt.Errorf("audit batch: %w", err))
@@ -323,7 +324,7 @@ func (w *Writer) flush(ctx context.Context) error {
 	if err := w.callHook("before-insert"); err != nil {
 		return w.fail(batchNo, err)
 	}
-	if err := w.insertBatch(ctx, batchNo, first, digest); err != nil {
+	if err := w.insertBatch(ctx, batchNo, first, digest, created); err != nil {
 		return w.fail(batchNo, err)
 	}
 
@@ -357,11 +358,11 @@ func boolInt(b bool) int {
 
 // insertBatch writes the batch row, its records, their times and the new
 // next_id in one transaction.
-func (w *Writer) insertBatch(ctx context.Context, batchNo int, first int64, digest string) error {
+func (w *Writer) insertBatch(ctx context.Context, batchNo int, first int64, digest, created string) error {
 	n := len(w.buf)
 	return w.c.StoreTx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `INSERT INTO record_batches (ingest_id, batch_no, first_id, count, digest, created) VALUES (?, ?, ?, ?, ?, ?)`,
-			w.IngestID(), batchNo, first, n, digest, time.Now().UTC().Format(time.RFC3339Nano))
+			w.IngestID(), batchNo, first, n, digest, created)
 		if err != nil {
 			return err
 		}

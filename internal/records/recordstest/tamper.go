@@ -583,3 +583,53 @@ func ReplaceInAuditLine(t testing.TB, caseDir string, seq int, old, replacement 
 		t.Fatal(err)
 	}
 }
+
+// batchColumns, parserColumns, timeColumns and recordColumns+id are the columns
+// the Set*Column helpers may change.
+var (
+	batchColumns  = []string{"batch_id", "ingest_id", "batch_no", "first_id", "count", "digest", "created"}
+	parserColumns = []string{"id", "name", "version", "hash"}
+	timeColumns   = []string{"record_id", "kind", "ts", "ts_basis", "tz_offset_min"}
+)
+
+func setOne(t testing.TB, caseDir, table string, allowed []string, column string, value any, where string, args ...any) {
+	t.Helper()
+	if !slices.Contains(allowed, column) {
+		t.Fatalf("recordstest: %q is not a %s column the tamper helpers may change", column, table)
+	}
+	tamper(t, caseDir, func(db *sql.DB) error {
+		q := `UPDATE ` + table + ` SET ` + column + ` = ? WHERE ` + where //nolint:gosec // table and column names are whitelisted by the callers
+		res, err := db.Exec(q, append([]any{value}, args...)...)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n != 1 {
+			return fmt.Errorf("%s %s: %d rows changed", table, column, n)
+		}
+		return nil
+	})
+}
+
+// SetBatchColumn sets one column of a record_batches row (value nil sets NULL).
+func SetBatchColumn(t testing.TB, caseDir, ingestID string, batchNo int, column string, value any) {
+	t.Helper()
+	setOne(t, caseDir, "record_batches", batchColumns, column, value, `ingest_id = ? AND batch_no = ?`, ingestID, batchNo)
+}
+
+// SetParserColumn sets one column of a parsers row (value nil sets NULL).
+func SetParserColumn(t testing.TB, caseDir string, parserID int64, column string, value any) {
+	t.Helper()
+	setOne(t, caseDir, "parsers", parserColumns, column, value, `id = ?`, parserID)
+}
+
+// SetRecordTimeColumn sets one column of a record_times row (value nil sets NULL).
+func SetRecordTimeColumn(t testing.TB, caseDir string, recordID int64, kind, column string, value any) {
+	t.Helper()
+	setOne(t, caseDir, "record_times", timeColumns, column, value, `record_id = ? AND kind = ?`, recordID, kind)
+}
+
+// SetRecordID changes the id of a record row (its record_times rows keep the old id).
+func SetRecordID(t testing.TB, caseDir string, id, newID int64) {
+	t.Helper()
+	setOne(t, caseDir, "records", []string{"id"}, "id", newID, `id = ?`, id)
+}

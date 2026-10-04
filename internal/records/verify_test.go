@@ -123,13 +123,17 @@ func fullRecord(artifactID string, i int, basis records.Basis, off int, recovere
 	if basis == records.BasisLocalOffset {
 		tm.OffsetMin, end.OffsetMin = off, off
 	}
+	created := records.Time{T: t0.Add(-time.Hour), Basis: basis}
+	if basis == records.BasisLocalOffset {
+		created.OffsetMin = off
+	}
 	conf := 80
 	rec := records.Record{
 		Type: "message", ArtifactID: artifactID, Summary: "full record", Body: "the body",
 		SourcePath: "/data/x.db", Locator: "sqlite:t=m;r=" + string(rune('0'+i)),
 		Range: &records.Range{Offset: 100, Length: 50}, Time: &tm, TimeEnd: &end,
 		Times: []records.NamedTime{
-			{Kind: "created", Time: records.Time{T: t0.Add(-time.Hour), Basis: records.BasisLocalUnknown}},
+			{Kind: "created", Time: created},
 			{Kind: "modified", Time: records.Time{T: t0.Add(time.Hour), Basis: records.BasisLocalUnknown}},
 		},
 		Deleted: true, Confidence: &conf,
@@ -139,93 +143,6 @@ func fullRecord(artifactID string, i int, basis records.Basis, off int, recovere
 		rec.Recovery = "carve"
 	}
 	return rec
-}
-
-func TestVerifyDetectsAnyColumnAlteration(t *testing.T) {
-	// record 1: local-offset time, deleted and recovered; record 2: local-unknown
-	// time, deleted and not recovered. An alteration is a single change.
-	type alter struct {
-		name   string
-		id     int64
-		change func(t *testing.T, g ingestedTwo)
-	}
-	setCol := func(id int64, col string, v any) func(*testing.T, ingestedTwo) {
-		return func(t *testing.T, g ingestedTwo) { recordstest.SetRecordColumn(t, g.c.Dir, id, col, v) }
-	}
-	cases := []alter{
-		{"type", 1, setCol(1, "type", "call")},
-		{"payload_v", 1, setCol(1, "payload_v", 2)},
-		{"source_path", 1, setCol(1, "source_path", "/other.db")},
-		{"source_path to NULL", 1, setCol(1, "source_path", nil)},
-		{"locator", 1, setCol(1, "locator", "sqlite:t=other")},
-		{"src_offset", 1, setCol(1, "src_offset", 101)},
-		{"src_length", 1, setCol(1, "src_length", 51)},
-		{"ts", 1, setCol(1, "ts", 1_650_000_001)},
-		{"ts_end", 1, setCol(1, "ts_end", 1_650_000_099)},
-		{"ts_basis", 2, setCol(2, "ts_basis", "utc")},
-		{"tz_offset_min", 1, setCol(1, "tz_offset_min", 90)},
-		{"deleted", 2, setCol(2, "deleted", 0)},
-		{"recovered", 2, func(t *testing.T, g ingestedTwo) {
-			recordstest.SetRecordColumns(t, g.c.Dir, 2, map[string]any{"recovered": 1, "recovery_method": "carve"})
-		}},
-		{"recovery_method", 1, setCol(1, "recovery_method", "other")},
-		{"confidence", 1, setCol(1, "confidence", 81)},
-		{"summary", 1, setCol(1, "summary", "changed")},
-		{"body", 1, setCol(1, "body", "changed body")},
-		{"payload", 1, setCol(1, "payload", `{"a":2}`)},
-		{"artifact_id", 1, func(t *testing.T, g ingestedTwo) { recordstest.RepointRecord(t, g.c.Dir, 1, g.art2.ID) }},
-		{"parser_id", 1, func(t *testing.T, g ingestedTwo) { recordstest.SetRecordParser(t, g.c.Dir, 1, g.parser2) }},
-		{"time altered", 1, func(t *testing.T, g ingestedTwo) { recordstest.SetRecordTime(t, g.c.Dir, 1, "created", 5) }},
-		{"time deleted", 1, func(t *testing.T, g ingestedTwo) { recordstest.DeleteRecordTime(t, g.c.Dir, 1, "modified") }},
-		{"time injected", 1, func(t *testing.T, g ingestedTwo) { recordstest.InjectRecordTime(t, g.c.Dir, 1, "accessed", 77) }},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			g := ingestFull(t)
-			if rep := mustVerify(t, g.c); !rep.OK() {
-				t.Fatalf("not clean before the change: %q", rep.Problems)
-			}
-			tc.change(t, g)
-			rep := mustVerify(t, g.c)
-			expectProblems(t, rep, []string{"digest mismatch"})
-			for _, p := range rep.Problems {
-				if !strings.Contains(p, "ingest "+`"`+g.ing1+`"`) {
-					t.Errorf("the problem does not name the batch of record %d: %s", tc.id, p)
-				}
-			}
-		})
-	}
-}
-
-// ingestedTwo: two artifacts, two parsers; ingest 1 holds the two full records,
-// ingest 2 one more record of the second parser.
-type ingestedTwo struct {
-	c       *evidence.Case
-	art     evidence.ManifestRecord
-	art2    evidence.ManifestRecord
-	ing1    string
-	parser2 int64
-}
-
-func ingestFull(t *testing.T) ingestedTwo {
-	t.Helper()
-	c, a := setup(t)
-	a2 := recordstest.AddArtifact(t, c, "b.db", append([]byte("second"), mib...))
-	res1 := recordstest.Ingest(t, c, testParser, []string{a.ID}, []records.Record{
-		fullRecord(a.ID, 1, records.BasisLocalOffset, 60, true),
-		fullRecord(a.ID, 2, records.BasisLocalUnknown, 0, false),
-	})
-	// record 2 is deleted but not recovered
-	_ = res1
-	other := records.Parser{Name: "other-parser", Version: "2.0", Hash: "def456"}
-	recordstest.Ingest(t, c, other, []string{a2.ID}, recordstest.Records(a2.ID, 1, 3))
-	var p2 int64
-	if err := c.ReadTx(ctx, func(h evidence.ReadHandle) error {
-		return h.QueryRow(`SELECT id FROM parsers WHERE name = 'other-parser'`).Scan(&p2)
-	}); err != nil {
-		t.Fatal(err)
-	}
-	return ingestedTwo{c: c, art: a, art2: a2, ing1: res1.IngestID, parser2: p2}
 }
 
 func TestVerifyDetectsDeletedRecord(t *testing.T) {
@@ -388,8 +305,8 @@ func TestVerifyCompletesWhenRecordTablesCorrupt(t *testing.T) {
 			t.Fatal(err)
 		}
 		rep := mustVerify(t, g.c) // completes, no panic
-		if rep.OK() || len(rep.Problems) == 0 {
-			t.Fatalf("report = %+v", rep)
+		if rep.OK() || !strings.Contains(strings.Join(rep.Problems, " | "), "records unreadable") {
+			t.Fatalf("problems = %q", rep.Problems)
 		}
 		es := auditOf(t, g.c, "")
 		if es[len(es)-1].Action != "verify.run" {
@@ -404,37 +321,6 @@ func TestVerifyCompletesWhenRecordTablesCorrupt(t *testing.T) {
 			t.Fatalf("report = %q", rep.Problems)
 		}
 	})
-}
-
-func TestVerifyStreamsRowsInChunks(t *testing.T) {
-	c, a := setup(t)
-	const n = 12000
-	recordstest.Ingest(t, c, testParser, []string{a.ID}, recordstest.Records(a.ID, n, 11))
-	// A chunk is one query of the record rows (with the record_times of its id
-	// range, in the same read transaction): VerifyObserved reports one event per
-	// chunk with the number of rows it returned.
-	var chunks []int
-	rep, err := c.VerifyObserved(func(table string, rows int) {
-		if table == "records" {
-			chunks = append(chunks, rows)
-		}
-	})
-	if err != nil || !rep.OK() || rep.RecordsChecked != n {
-		t.Fatalf("report = %+v, %v", rep, err)
-	}
-	if want := (n + 4999) / 5000; len(chunks) != want {
-		t.Fatalf("%d chunk queries %v, want %d", len(chunks), chunks, want)
-	}
-	total := 0
-	for _, r := range chunks {
-		if r > 5000 {
-			t.Errorf("a chunk returned %d rows, the cap is 5000", r)
-		}
-		total += r
-	}
-	if total != n {
-		t.Errorf("chunks hold %d rows in total, want %d", total, n)
-	}
 }
 
 // TestAcceptedRecordsRoundTripAndVerify: whatever the writer accepts is stored
