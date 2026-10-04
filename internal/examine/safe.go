@@ -136,3 +136,18 @@ func (s *safeFS) SnapshotPath(p, snapshot string) (out string, err error) {
 	}
 	return sn.SnapshotPath(p, snapshot)
 }
+
+// EntrySnapshot implements filesys.SnapshotViewer for every wrapped
+// filesystem: false when it keeps no snapshots (a panic is not a snapshot).
+func (s *safeFS) EntrySnapshot(e filesys.Entry) (name string, xid uint64, ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			name, xid, ok = "", 0, false
+		}
+	}()
+	sv, has := s.fs.(filesys.SnapshotViewer)
+	if !has {
+		return "", 0, false
+	}
+	return sv.EntrySnapshot(e)
+}

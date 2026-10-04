@@ -1039,3 +1039,44 @@ func TestOrderViolationInLaterLeafEndsPrefix(t *testing.T) {
 		t.Errorf("warnings %q", f.Info().Warnings)
 	}
 }
+
+// Records of OTHER objects that sort wrongly before the file's range must not
+// turn an intact file into an empty incomplete one: the scan only warns, and the
+// file's own extents are read and checked as usual.
+func TestUnrelatedOrderViolationBeforeRangeIsOnlyAWarning(t *testing.T) {
+	data := pattern(4*bs, 33)
+	v := dataVolume(
+		apfstest.File{Path: "/p", Ino: 20},
+		apfstest.File{Path: "/q", Ino: 21},
+		apfstest.File{Path: "/b", Ino: 40, Data: data, Extents: []apfstest.Extent{
+			{Logical: 0, Length: 2 * bs, Rel: true}, {Logical: 2 * bs, Length: 2 * bs, Rel: true, Phys: 2},
+		}})
+	v.Reorder = func(recs []apfstest.FSRecord) []apfstest.FSRecord {
+		a, b := -1, -1
+		for i, r := range recs {
+			if r.Type == apfstest.TypeInode && r.ID == 20 {
+				a = i
+			}
+			if r.Type == apfstest.TypeInode && r.ID == 21 {
+				b = i
+			}
+		}
+		if a < 0 || b != a+1 {
+			t.Fatalf("inode records of 20 and 21 at %d, %d", a, b)
+		}
+		out := slices.Clone(recs)
+		out[a], out[b] = out[b], out[a]
+		return out
+	}
+	f, _ := openOpts(t, volOpts(v))
+	fl := openPath(t, f, "/Data/b")
+	if err := filesys.CheckRuns(fl.Runs(), fl.Size(), f.Info().Size); err != nil {
+		t.Fatalf("an unrelated swap damaged the file: %v (runs %v)", err, fl.Runs())
+	}
+	if got := readAllAt(t, fl); !bytes.Equal(got, data) {
+		t.Error("content differs")
+	}
+	if !hasWarn(f, "out of key order") {
+		t.Errorf("no warning for the unordered records: %q", f.Info().Warnings)
+	}
+}

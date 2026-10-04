@@ -91,8 +91,9 @@ type volume struct {
 	tree      *tree            // the live fs tree, once opened
 	snapTrees map[uint64]*tree // the fs tree of each snapshot view, once opened
 
-	snapMu sync.Mutex // guards snaps
-	snaps  *snapList  // the usable snapshots, once read
+	snapMu  sync.Mutex // guards snaps
+	snaps   *snapList  // the usable snapshots, once read
+	snapErr error      // why they could not be read, when that is a property of the image (cached)
 }
 
 // folds reports whether name lookups compare case-insensitively (the volume is

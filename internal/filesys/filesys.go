@@ -191,3 +191,12 @@ func IsSnapshotsDir(e Entry) bool {
 	}
 	return false
 }
+
+// SnapshotViewer is implemented by filesystems that keep snapshots: it reports
+// whether e (an entry found inside a snapshot view) was read from a snapshot,
+// and which one (display name and transaction id). Extraction records it in the
+// derivation, so the provenance of snapshot bytes is explicit and not only
+// implied by the path.
+type SnapshotViewer interface {
+	EntrySnapshot(e Entry) (name string, xid uint64, ok bool)
+}

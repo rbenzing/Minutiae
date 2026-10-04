@@ -28,6 +28,10 @@ type Snapshot struct {
 	BadSblock      bool // the volume-superblock copy fails its checksum
 	NoNameRecord   bool // no SNAP_NAME record
 
+	// MutateSblock rewrites the volume-superblock copy before it is sealed (a
+	// copy that verifies but says the wrong thing).
+	MutateSblock func(b []byte)
+
 	// MutateMeta rewrites the key and value of the SNAP_METADATA record before it
 	// is written (hostile records).
 	MutateMeta func(key, val []byte) ([]byte, []byte)
@@ -179,6 +183,9 @@ func (v Volume) writeSnapSuper(b []byte, vg VolumeGeo, st *snapTree, rootOid uin
 	sv.Snapshots = nil
 	sv.writeSuper(b, vg, rootOid, st.cnt, st.nextID)
 	putObjHeader(b, st.sblock, st.xid, flagPhysical|typeVolume, 0)
+	if st.s.MutateSblock != nil {
+		st.s.MutateSblock(b)
+	}
 	sealBlock(b)
 	if st.s.BadSblock {
 		b[100] ^= 0xff // after sealing: the checksum no longer matches

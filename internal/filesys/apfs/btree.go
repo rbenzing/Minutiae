@@ -370,6 +370,8 @@ type scanner struct {
 	// the next leaf, order-checking only.
 	sameObject func(key []byte) bool
 	carry      bool
+
+	preWarned bool // the warning for unordered records before the range was written
 }
 
 // scan visits, in key order, the leaf records for which prefix returns 0.
@@ -403,7 +405,8 @@ func (t *tree) scan(prefix func(key []byte) int, visit func(key, val []byte) (st
 // range the rest of that leaf is read too, so a record of the range that
 // follows a larger key is found: a record that is not strictly greater than the
 // previous one, or a range record after a larger key, ends the scan with
-// outOfOrder true. When a leaf ends on a record for which sameObject (when set)
+// outOfOrder true; two records before the range that are out of order are only
+// warned about (they are not the wanted object's). When a leaf ends on a record for which sameObject (when set)
 // is true, that is a record after the range that still belongs to the wanted
 // object (a later record type of the same object id), the check goes on into
 // the following leaves, whatever their index keys claim, until a record of
@@ -531,9 +534,19 @@ func (s *scanner) leaf(n *btNode) error {
 	for _, r := range n.recs {
 		if s.order != nil {
 			if s.havePrev && !s.order(s.prev, r.key) {
-				s.t.f.warn("B-tree node at block %d is out of key order: scan stopped", n.addr)
-				s.ooo, s.stop = true, true
-				return nil
+				if !s.inRange && !s.beyond && s.cmp(r.key) < 0 {
+					// Two records before the wanted range: they are not this
+					// object's, so the tree being unordered there is a warning, not
+					// a reason to give up on the object's own records.
+					if !s.preWarned {
+						s.preWarned = true
+						s.t.f.warn("B-tree node at block %d has records out of key order before the requested range", n.addr)
+					}
+				} else {
+					s.t.f.warn("B-tree node at block %d is out of key order: scan stopped", n.addr)
+					s.ooo, s.stop = true, true
+					return nil
+				}
 			}
 			s.prev, s.havePrev = r.key, true
 			if s.beyond {

@@ -75,8 +75,17 @@ func (f *FS) snapshotList(v *volume) (*snapList, error) {
 	if v.snaps != nil {
 		return v.snaps, nil
 	}
+	if v.snapErr != nil {
+		return nil, v.snapErr
+	}
 	l, err := f.readSnapshots(v)
 	if err != nil {
+		// A damaged list stays damaged: remember it, so forged view ids and repeated
+		// listings do not rescan it. An I/O failure and the exhaustion of the node
+		// budget are not properties of the image and are retried.
+		if isNotFoundOrCorrupt(err) && !errors.Is(err, errNodeBudget) {
+			v.snapErr = err
+		}
 		return nil, err
 	}
 	v.snaps = l
@@ -339,7 +348,25 @@ func (f *FS) snapshotRoot(v *volume, s *snapshot) (uint64, uint32, error) {
 	if oid == 0 {
 		return fallback("its volume superblock copy has no root tree")
 	}
-	return oid, le.Uint32(buf[vsRootTreeType:]), nil
+	// The copy verifies, so what it says is checked against what it must be: a
+	// valid superblock of another object, volume or time (or a tree that is not an
+	// ordinary virtual one) must not steer this view. The snapshot is refused.
+	refuse := func(format string, a ...any) (uint64, uint32, error) {
+		return 0, 0, corrupt("snapshot volume superblock", int64(s.sblock)*int64(f.bs), "volume %d snapshot %q (xid %d): its volume superblock copy at block %d %s",
+			v.slot, s.name, s.xid, s.sblock, fmt.Sprintf(format, a...))
+	}
+	rootType := le.Uint32(buf[vsRootTreeType:])
+	switch {
+	case h.oid != s.sblock:
+		return refuse("carries oid %d, not its block address", h.oid)
+	case h.xid > s.xid:
+		return refuse("is from transaction %d, after the snapshot (xid %d)", h.xid, s.xid)
+	case le.Uint32(buf[vsFsIndex:]) != v.fsIndex:
+		return refuse("belongs to volume index %d, not %d", le.Uint32(buf[vsFsIndex:]), v.fsIndex)
+	case rootType&storageMask != 0:
+		return refuse("has a root tree of storage type %#x, want a virtual tree", rootType&storageMask)
+	}
+	return oid, rootType, nil
 }
 
 // snapsEntry is the synthetic .snapshots directory of v.
@@ -507,3 +534,25 @@ func (f *FS) SnapshotPath(p, snapshot string) (string, error) {
 	}
 	return out, nil
 }
+
+// EntrySnapshot implements filesys.SnapshotViewer: an entry whose ID names a
+// snapshot view (n:<volume>:<xid>:<inode>, xid not 0) of a usable snapshot is
+// reported with the snapshot's display name and xid. Nothing but the ID is
+// trusted; a view that is not a usable snapshot is not one.
+func (f *FS) EntrySnapshot(e filesys.Entry) (string, uint64, bool) {
+	kind, vol, view, _, ok := parseEntryID(e.ID)
+	if !ok || kind != idNode || view == 0 || vol >= len(f.slots) || f.slots[vol] == nil {
+		return "", 0, false
+	}
+	l, err := f.snapshotList(f.slots[vol])
+	if err != nil {
+		return "", 0, false
+	}
+	s := l.byXid[view]
+	if s == nil {
+		return "", 0, false
+	}
+	return s.display, s.xid, true
+}
+
+var _ filesys.SnapshotViewer = (*FS)(nil)

@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -199,5 +200,54 @@ func TestImageLsRecursiveNotesSkippedSnapshots(t *testing.T) {
 	}
 	if n, _ := examineNotes(t, e.c); n != 0 {
 		t.Errorf("a volume without snapshots wrote %d notes", n)
+	}
+}
+
+// manifestRecords reads the case manifest.
+func manifestRecords(t *testing.T, caseDir string) []evidence.ManifestRecord {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(caseDir, "manifest.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []evidence.ManifestRecord
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		var r evidence.ManifestRecord
+		if err := json.Unmarshal([]byte(line), &r); err != nil {
+			t.Fatalf("manifest line %q: %v", line, err)
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// Bytes extracted from a snapshot view record the snapshot (name and xid) in
+// the derivation; a live extraction leaves it empty; case verify is clean.
+func TestImageExtractRecordsSnapshotProvenance(t *testing.T) {
+	e := apfsEnv(t, snapshotVolume("Data"))
+	if code, out := e.image(t, "extract", e.ref, "/Data/.snapshots/S/docs/a.txt"); code != 0 {
+		t.Fatalf("extract snapshot file: %d\n%s", code, out)
+	}
+	if code, out := e.image(t, "extract", e.ref, "/Data/docs/a.txt"); code != 0 {
+		t.Fatalf("extract live file: %d\n%s", code, out)
+	}
+	byPath := map[string]*evidence.Derivation{}
+	for _, r := range manifestRecords(t, e.c) {
+		if d := r.Source.Derived; d != nil {
+			byPath[d.FSPath] = d
+		}
+	}
+	snap, live := byPath["/Data/.snapshots/S/docs/a.txt"], byPath["/Data/docs/a.txt"]
+	if snap == nil || live == nil {
+		t.Fatalf("derivations by path: %v", byPath)
+	}
+	if snap.Snapshot == nil || snap.Snapshot.Name != "S" || snap.Snapshot.Xid != 2 {
+		t.Errorf("snapshot extract: Snapshot = %+v, want {S 2}", snap.Snapshot)
+	}
+	if live.Snapshot != nil {
+		t.Errorf("live extract: Snapshot = %+v, want none", live.Snapshot)
+	}
+	if code, out := run(t, e.d, "case", "verify", "--case", e.c); code != 0 {
+		t.Errorf("case verify: %d\n%s", code, out)
 	}
 }

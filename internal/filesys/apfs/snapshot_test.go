@@ -596,3 +596,72 @@ func TestSnapshotViewsAreConcurrentSafe(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// A volume-superblock copy that verifies but names another object (header oid),
+// a later transaction, another volume or a physical root tree refuses THAT
+// snapshot's view with a corrupt error; the other snapshots stay usable.
+func TestSnapshotSblockCopyMismatchRefusesOnlyThatSnapshot(t *testing.T) {
+	put32 := func(b []byte, off int, v uint32) {
+		b[off], b[off+1], b[off+2], b[off+3] = byte(v), byte(v>>8), byte(v>>16), byte(v>>24)
+	}
+	put64 := func(b []byte, off int, v uint64) {
+		put32(b, off, uint32(v))
+		put32(b, off+4, uint32(v>>32))
+	}
+	for name, mut := range map[string]func(b []byte){
+		"header oid of another object":  func(b []byte) { put64(b, 8, 12345) },
+		"header xid after the snapshot": func(b []byte) { put64(b, 16, 999) },
+		"another volume's fs_index":     func(b []byte) { put32(b, 36, 7) },
+		"physical root tree type":       func(b []byte) { put32(b, 116, 0x40000002) },
+		"ephemeral root tree type":      func(b []byte) { put32(b, 116, 0x80000002) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, _ := openOpts(t, snapOpts(snapVolume(nil,
+				apfstest.Snapshot{Name: "bad", Files: []apfstest.File{{Path: "/b", Data: []byte("b")}}, MutateSblock: mut},
+				apfstest.Snapshot{Name: "good", Files: []apfstest.File{{Path: "/g", Data: []byte("g")}}},
+			)))
+			if got := snapNames(t, f); !slices.Equal(got, []string{"bad", "good"}) {
+				t.Fatalf("snapshots = %v, want both listed", got)
+			}
+			if _, err := f.ReadDir(mustLookupSnapshotRoot(t, f, "bad")); !errors.Is(err, filesys.ErrCorrupt) {
+				t.Errorf("the mismatching snapshot's view: %v, want a corrupt error", err)
+			}
+			if got := entryNames(mustReadDir(t, f, mustLookupSnapshotRoot(t, f, "good"))); !slices.Equal(got, []string{"g"}) {
+				t.Errorf("the good snapshot lists %v", got)
+			}
+		})
+	}
+}
+
+func mustLookupSnapshotRoot(t *testing.T, f *apfs.FS, name string) filesys.Entry {
+	t.Helper()
+	for _, e := range mustReadDir(t, f, mustLookup(t, f, "/Data/.snapshots")) {
+		if e.Name == name {
+			return e
+		}
+	}
+	t.Fatalf("no snapshot %q", name)
+	return filesys.Entry{}
+}
+
+// A snapshot list that cannot be read is remembered: forged view IDs and
+// repeated listings do not rescan the damaged metadata tree.
+func TestSnapshotListFailureIsCached(t *testing.T) {
+	im := newImage(t, snapOpts(snapVolume(nil, apfstest.Snapshot{Name: "S"})))
+	meta := im.g.Volumes[0].SnapMeta
+	im.b[int(meta)*im.bs+32], im.b[int(meta)*im.bs+33] = 0, 0 // btn_flags: no longer a root node
+	im.seal(meta)
+	f := im.mustOpen()
+	if _, err := f.ReadDir(filesys.Entry{ID: "n:0:2:2"}); !errors.Is(err, filesys.ErrCorrupt) {
+		t.Fatalf("ReadDir(view 2) = %v, want a corrupt error", err)
+	}
+	before := f.NodeReads()
+	for _, id := range []string{"n:0:2:2", "n:0:3:2", "n:0:77:2"} {
+		if _, err := f.ReadDir(filesys.Entry{ID: id}); err == nil {
+			t.Errorf("ReadDir(%s) succeeded on a volume whose snapshot list is unreadable", id)
+		}
+	}
+	if got := before - f.NodeReads(); got != 0 {
+		t.Errorf("repeated requests read %d more nodes, want 0 (the failure is cached)", got)
+	}
+}

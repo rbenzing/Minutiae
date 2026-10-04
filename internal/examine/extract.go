@@ -217,6 +217,11 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 	d.FSPath, d.FSID = p, e.ID
 	d.Mode, d.UID, d.GID = e.Mode, e.UID, e.GID
 	d.Times = timesMap(e.Times)
+	if sv, ok := x.fsys.(filesys.SnapshotViewer); ok {
+		if name, xid, in := sv.EntrySnapshot(e); in {
+			d.Snapshot = &evidence.SnapshotRef{Name: name, Xid: xid} // bytes of a snapshot view, not the live tree
+		}
+	}
 	d.Encrypted = e.Encrypted || filesys.FileEncrypted(f) // the listing sees the dstream key, the opened file also the extents
 	// The runs normally cover the whole file. A file whose allocation is
 	// truncated or corrupt may report only a prefix (filesys.File.Runs): they

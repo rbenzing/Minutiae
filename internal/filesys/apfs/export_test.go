@@ -349,3 +349,6 @@ func (f *FS) SetMaxFileRuns(n int) { f.maxFileRuns = n }
 // NameHash is the stored directory-record name hash for name; ok is false when
 // the name is not verifiable (not pure ASCII).
 func NameHash(name []byte, foldCase bool) (hash uint32, ok bool) { return nameHash(name, foldCase) }
+
+// NodeReads is the number of node reads all scans of this FS may still make.
+func (f *FS) NodeReads() int64 { return f.nodeReads.Load() }
