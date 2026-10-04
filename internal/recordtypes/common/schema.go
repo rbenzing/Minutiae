@@ -13,8 +13,9 @@ import (
 // Kind is the type a schema field must have.
 type Kind int
 
-// The kinds of a Field. Integers accept int, int64, uint64 (up to MaxInt64) and an
-// integral json.Number; numbers also accept a finite float64.
+// The kinds of a Field. Integers accept int, int64, uint64 (up to MaxInt64) and a
+// json.Number holding a canonical integer (no fraction, no exponent); numbers also
+// accept a finite float64.
 const (
 	KString      Kind = iota + 1 // string (NonEmpty, MaxLen)
 	KToken                       // string matching [a-z][a-z0-9_]{0,31}
@@ -42,7 +43,6 @@ const (
 	// maxCheckedValues bounds the work of one Validate: with arrays of 10,000
 	// entries nested 4 deep a payload could otherwise cost 10^12 steps.
 	maxCheckedValues = 1 << 20
-	maxExactFloatInt = 1 << 53
 )
 
 // Field describes one field of a payload object.
@@ -379,8 +379,10 @@ func typeName(v any) string {
 }
 
 // asInt reads an integer: int, int64, uint64 up to MaxInt64, or a json.Number that
-// is integral (an exact integer, or a decimal or exponent form of one no larger
-// than 2^53).
+// is a canonical JSON integer (an optional minus and digits, no fraction and no
+// exponent) within int64. A decimal or exponent form such as 1e3 or 2.0 is refused
+// even when it is integral, so a typed reader that parses integers as integers
+// (Decode) can never drop a value the validator accepted.
 func asInt(v any) (int64, bool) {
 	switch x := v.(type) {
 	case int:
@@ -394,17 +396,11 @@ func asInt(v any) (int64, bool) {
 		return int64(x), true
 	case numberLike:
 		s := x.String()
-		if !jsonNumber(s) {
+		if !jsonNumber(s) || strings.ContainsAny(s, ".eE") {
 			return 0, false
 		}
-		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
-			return n, true
-		}
-		f, err := strconv.ParseFloat(s, 64)
-		if err != nil || f != math.Trunc(f) || math.Abs(f) > maxExactFloatInt {
-			return 0, false
-		}
-		return int64(f), true
+		n, err := strconv.ParseInt(s, 10, 64)
+		return n, err == nil
 	}
 	return 0, false
 }

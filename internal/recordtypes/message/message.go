@@ -124,6 +124,7 @@ type Message struct {
 	BodyRawLen                                             *int64
 	Deleted                                                map[string]any // {"source": ...}
 	Raw                                                    map[string]any
+	Recovery, Snapshot                                     map[string]any // provenance: a recovered or snapshot-derived message is never presented as live
 }
 
 func put(m map[string]any, key, v string) {
@@ -218,6 +219,12 @@ func (m Message) Payload() map[string]any {
 	if m.Deleted != nil {
 		p["deleted"] = copyMap(m.Deleted)
 	}
+	if m.Recovery != nil {
+		p["recovery"] = copyMap(m.Recovery)
+	}
+	if m.Snapshot != nil {
+		p["snapshot"] = copyMap(m.Snapshot)
+	}
 	if m.Raw != nil {
 		p["raw"] = copyMap(m.Raw)
 	}
@@ -285,7 +292,7 @@ var schema = common.Schema{
 				{Name: "mime", Kind: common.KString},
 				{Name: "size", Kind: common.KInt, Min: new(int64)},
 				{Name: "source_ref", Kind: common.KString},
-				{Name: "artifact_id", Kind: common.KString},
+				{Name: "artifact_id", Kind: common.KString, NonEmpty: true},
 				{Name: "artifact_sha256", Kind: common.KHex64},
 			},
 			Cross: func(m map[string]any) error {
@@ -341,19 +348,22 @@ func Validate(payload map[string]any) error { return schema.Validate(payload) }
 func init() { records.SetValidator(Type, Validate) }
 
 // Summary builds the record summary "<channel> <in|out> <counterparty>: <first
-// 80 characters of text>", one line, through common.Summarize. The parts are
-// bounded separately so the whole stays far below the summary cap.
+// 80 characters of text>", one line, through common.Summarize (the text counts
+// characters, not bytes; format and bidi characters are shown as <U+XXXX>, see
+// common.Summarize). The other parts are bounded in bytes (32, 16, 64) so the
+// whole stays under the 512-byte summary cap even for 4-byte characters.
 func Summary(channel, direction, counterparty, text string) string {
 	head := strings.Join([]string{
 		common.Summarize(channel, 32),
 		common.Summarize(direction, 16),
 		common.Summarize(counterparty, 64),
 	}, " ")
-	return strings.TrimRight(head+": "+common.Summarize(text, 80), " ")
+	return strings.TrimRight(head+": "+common.SummarizeChars(text, 80), " ")
 }
 
 // Decode reads a stored message payload of the given payload version. Only
-// version 1 exists; any other value is ErrUnsupportedPayloadVersion. Numbers are
+// version 1 exists; any other value is ErrUnsupportedPayloadVersion. Integers are
+// canonical JSON integers (the validator refuses 1e3 and 2.0). Numbers are
 // read exactly (json.Number) and become int64 where integral, so the result
 // equals what Payload produced. Unknown fields are ignored. A payload that does
 // not satisfy the v1 contract is an error naming the path, never a value.
@@ -424,6 +434,12 @@ func fromMap(m map[string]any) Message {
 	out.BodyRawLen = intPtr(m, "body_raw_len")
 	if d, ok := m["deleted"].(map[string]any); ok {
 		out.Deleted = normMap(d, 0)
+	}
+	if r, ok := m["recovery"].(map[string]any); ok {
+		out.Recovery = normMap(r, 0)
+	}
+	if sn, ok := m["snapshot"].(map[string]any); ok {
+		out.Snapshot = normMap(sn, 0)
 	}
 	if r, ok := m["raw"].(map[string]any); ok {
 		out.Raw = normMap(r, 0)

@@ -128,6 +128,11 @@ func FuzzCleanText(f *testing.F) {
 		if utf8.Valid(raw) && !bytes.Contains(raw, []byte{0}) && len(raw) <= limit && (c.Text != string(raw) || len(c.Flags) != 0) {
 			t.Fatalf("clean text changed: %q -> %+v", raw, c)
 		}
-		_ = common.Summarize(string(raw), limit)
+		if s := common.Summarize(string(raw), limit); len(s) > max(limit, 0) || !utf8.ValidString(s) || strings.ContainsAny(s, "\n\r\t\x00") {
+			t.Fatalf("Summarize(limit %d) = %q breaks its contract", limit, s)
+		}
+		if s := common.SummarizeChars(string(raw), limit); utf8.RuneCountInString(s) > max(limit, 0) || !utf8.ValidString(s) || strings.ContainsAny(s, "\n\r\t\x00") {
+			t.Fatalf("SummarizeChars(limit %d) = %q breaks its contract", limit, s)
+		}
 	})
 }

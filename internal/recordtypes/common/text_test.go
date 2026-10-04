@@ -306,10 +306,11 @@ func TestHugeLimitsAreClamped(t *testing.T) {
 	})
 }
 
-// TestSummarizeDropsInvisibleFormatting: bidi controls and zero-width characters
-// (category Cf) are dropped from the one-line summary, so a summary cannot
-// reorder or hide what it shows. The stored body keeps them untouched.
-func TestSummarizeDropsInvisibleFormatting(t *testing.T) {
+// TestSummarizeShowsInvisibleFormatting: bidi controls and zero-width characters
+// (category Cf) are shown as <U+XXXX> in the one-line summary, so a summary can
+// neither reorder nor hide what it shows, and "Bank" and "Ba<ZWSP>nk" differ. The
+// stored body keeps them untouched.
+func TestSummarizeShowsInvisibleFormatting(t *testing.T) {
 	// code points are built from numbers so this file holds no invisible characters
 	cp := func(parts ...any) string {
 		var b strings.Builder
@@ -334,23 +335,88 @@ func TestSummarizeDropsInvisibleFormatting(t *testing.T) {
 		softHyphen      = rune(0x00AD)
 	)
 	cases := []struct{ name, in, want string }{
-		{"right-to-left override", cp("pay ", rlo, "txt.exe", pdf, " now"), "pay txt.exe now"},
-		{"embeddings and isolates", cp("a", lre, rle, lro, lri, rli, fsi, "b", pdi, "c"), "abc"},
-		{"marks", cp("a", lrm, rlm, "b", alm, "c"), "abc"},
-		{"zero width", cp("pa", zwsp, "ss", zwnj, "wo", zwj, "rd", wordJoiner, bom, "!"), "password!"},
-		{"soft hyphen", cp("co", softHyphen, "op"), "coop"},
-		{"only invisible", cp(zwsp, rlo, wordJoiner), ""},
-		{"space kept around them", cp("a ", rlo, " b"), "a b"},
+		{"right-to-left override", cp("pay ", rlo, "txt.exe", pdf, " now"), "pay <U+202E>txt.exe<U+202C> now"},
+		{"embeddings and isolates", cp("a", lre, rle, lro, lri, rli, fsi, "b", pdi, "c"), "a<U+202A><U+202B><U+202D><U+2066><U+2067><U+2068>b<U+2069>c"},
+		{"marks", cp("a", lrm, rlm, "b", alm, "c"), "a<U+200E><U+200F>b<U+061C>c"},
+		{"zero width", cp("pa", zwsp, "ss", zwnj, "wo", zwj, "rd", wordJoiner, bom, "!"), "pa<U+200B>ss<U+200C>wo<U+200D>rd<U+2060><U+FEFF>!"},
+		{"soft hyphen", cp("co", softHyphen, "op"), "co<U+00AD>op"},
+		{"only invisible", cp(zwsp, rlo, wordJoiner), "<U+200B><U+202E><U+2060>"},
+		{"space kept around them", cp("a ", rlo, " b"), "a <U+202E> b"},
+		{"tag character (five hex digits)", cp("a", rune(0xE0001), "b"), "a<U+E0001>b"},
 		{"ordinary text is untouched", "héllo wörld 日本語 😀", "héllo wörld 日本語 😀"},
 	}
 	for _, tc := range cases {
 		if got := common.Summarize(tc.in, 100); got != tc.want {
 			t.Errorf("%s: Summarize(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
 		}
+		if got := common.SummarizeChars(tc.in, 100); got != tc.want {
+			t.Errorf("%s: SummarizeChars(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
+		}
+	}
+	// a look-alike with an invisible character is not the same summary as the plain word
+	if common.Summarize("Bank", 50) == common.Summarize(cp("Ba", zwsp, "nk"), 50) {
+		t.Error("\"Bank\" and a Bank with a zero-width space give the same summary")
+	}
+	// the escape is never cut in half, whichever way the limit is counted
+	if got := common.Summarize(cp(zwsp, zwsp, zwsp, zwsp, zwsp, zwsp, zwsp, zwsp, zwsp, zwsp), 20); got != "<U+200B><U+200B>..." {
+		t.Errorf("Summarize cut inside an escape: %q", got)
+	}
+	if got := common.SummarizeChars(cp(zwsp, zwsp, zwsp, zwsp), 20); got != "<U+200B><U+200B>..." {
+		t.Errorf("SummarizeChars cut inside an escape: %q", got)
 	}
 	// the stored text is not changed
 	in := cp("pay ", rlo, "txt.exe", pdf)
 	if c := common.CleanText([]byte(in), 100); c.Text != in || len(c.Flags) != 0 {
 		t.Errorf("CleanText changed formatting characters: %+v", c)
+	}
+}
+
+// TestSummarizeChars: the limit counts characters (runes of the result), not bytes,
+// so CJK and emoji text keeps the same number of characters as ASCII; the result is
+// still one valid line and an escape counts as the characters it shows.
+func TestSummarizeChars(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		max  int
+		want string
+	}{
+		{"empty", "", 5, ""},
+		{"fits in characters though not in bytes", "日本語日本", 5, "日本語日本"},
+		{"cut by characters", "日本語日本語日本語", 5, "日本..."},
+		{"two-byte letters", "héllo wörld", 8, "héllo..."},
+		{"emoji", "😀😀😀😀😀😀", 5, "😀😀..."},
+		{"exactly max", "abcdef", 6, "abcdef"},
+		{"one over", "abcdefg", 6, "abc..."},
+		{"collapses and trims", "  a\n\tb \x00 c  ", 20, "a b c"},
+		{"max of 3", "abcdef", 3, "..."},
+		{"max under 3", "abcdef", 2, ".."},
+		{"max 0", "abc", 0, ""},
+		{"negative", "abc", -1, ""},
+		{"invalid UTF-8", "a\xffb", 10, "a" + string(rune(0xFFFD)) + "b"},
+		{"trailing space before the dots is dropped", "abcd efghijk", 8, "abcd..."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := common.SummarizeChars(tc.in, tc.max)
+			if got != tc.want {
+				t.Errorf("SummarizeChars(%q, %d) = %q, want %q", tc.in, tc.max, got, tc.want)
+			}
+			if n := utf8.RuneCountInString(got); n > max(tc.max, 0) || !utf8.ValidString(got) || strings.ContainsAny(got, "\n\r\t\x00") {
+				t.Errorf("result %q (%d characters) breaks the one-line, valid, bounded contract", got, n)
+			}
+		})
+	}
+	// 80 characters of CJK is 80 characters, not 26
+	long := common.SummarizeChars(strings.Repeat("日本語", 100), 80)
+	if utf8.RuneCountInString(long) != 80 || !strings.HasSuffix(long, "...") {
+		t.Errorf("long CJK summary = %q (%d characters)", long, utf8.RuneCountInString(long))
+	}
+	// huge limits are clamped and huge texts cost bounded work
+	if got := common.SummarizeChars("hello   world", math.MaxInt); got != "hello world" {
+		t.Errorf("SummarizeChars with MaxInt = %q", got)
+	}
+	if got := common.SummarizeChars(strings.Repeat("word \n", 1<<20), 64); utf8.RuneCountInString(got) != 64 || !strings.HasSuffix(got, "...") {
+		t.Errorf("a huge text gave %d characters", utf8.RuneCountInString(got))
 	}
 }

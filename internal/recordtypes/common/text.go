@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -144,48 +145,78 @@ func (c Cleaned) PayloadFields() map[string]any {
 	return m
 }
 
-// Summarize builds the one-line summary of s: every run of whitespace and control
-// characters (NUL included) becomes one space, the ends are trimmed, invalid UTF-8
-// becomes U+FFFD, format characters (category Cf: bidi overrides, embeddings and
-// isolates, directional marks, zero-width characters, the soft hyphen) are dropped
-// so the summary cannot reorder or hide what it shows (the stored text keeps them),
-// and a result longer than limit bytes is cut on a rune boundary and
-// ends in "..." (the whole result stays within limit bytes; a max under 3 gets only
-// as many dots as fit, a max of 0 or less gets ""). Text that already fits is
-// returned as collapsed.
-func Summarize(s string, limit int) string {
+// Summarize builds the one-line summary of s, at most limit BYTES long: every run
+// of whitespace and control characters (NUL included) becomes one space, the ends
+// are trimmed, invalid UTF-8 becomes U+FFFD, and every format character (category
+// Cf: bidi overrides, embeddings and isolates, directional marks, zero-width
+// characters, the soft hyphen, the byte order mark) is shown as its code point,
+// "<U+200B>", so a summary can neither reorder nor hide what it shows and "Bank"
+// and "Ba<ZWSP>nk" differ (the stored text keeps the characters themselves). A
+// result longer than limit is cut on a character boundary (an escape is never cut
+// in half) and ends in "..."; the whole result stays within limit bytes (a limit
+// under 3 gets only as many dots as fit, one of 0 or less gets ""). Text that
+// already fits is returned as collapsed.
+func Summarize(s string, limit int) string { return summarize(s, limit, false) }
+
+// SummarizeChars is Summarize with the limit counted in characters (runes of the
+// result: an escape counts as the characters it shows) instead of bytes, so text in
+// any script keeps the same number of characters. The result is at most 4 bytes per
+// character plus the dots.
+func SummarizeChars(s string, limit int) string { return summarize(s, limit, true) }
+
+func summarize(s string, limit int, chars bool) string {
 	if limit = clampLimit(limit); limit <= 0 {
 		return ""
 	}
 	var b strings.Builder
+	cost := 0   // length of b in the unit of the limit
+	cutLen := 0 // length of the longest prefix of b whose cost leaves room for the dots
+	add := func(unit string) bool {
+		b.WriteString(unit)
+		if chars {
+			cost += utf8.RuneCountInString(unit)
+		} else {
+			cost += len(unit)
+		}
+		if cost <= limit-3 {
+			cutLen = b.Len()
+		}
+		return cost > limit
+	}
 	pendingSpace := false
+	over := false
 	for _, r := range s { // an invalid byte ranges as U+FFFD
 		if unicode.IsSpace(r) || unicode.IsControl(r) {
 			pendingSpace = b.Len() > 0
 			continue
 		}
-		if unicode.Is(unicode.Cf, r) {
-			continue // dropped: a bidi override or zero-width character would make the summary lie about what it shows
-		}
 		if pendingSpace {
-			b.WriteByte(' ')
 			pendingSpace = false
+			if add(" ") {
+				over = true
+				break
+			}
 		}
-		b.WriteRune(r)
-		if b.Len() > limit+utf8.UTFMax {
+		unit := string(r)
+		if unicode.Is(unicode.Cf, r) {
+			unit = escapeRune(r) // shown, never silently dropped: a bidi override or zero-width character must not hide
+		}
+		if add(unit) {
+			over = true
 			break // longer than limit for certain; the rest cannot matter
 		}
 	}
-	out := b.String()
-	if len(out) <= limit {
-		return out
+	if !over {
+		return b.String()
 	}
 	if limit < 3 {
 		return "..."[:limit]
 	}
-	cut := limit - 3
-	for cut > 0 && !utf8.RuneStart(out[cut]) {
-		cut--
-	}
-	return strings.TrimRight(out[:cut], " ") + "..."
+	return strings.TrimRight(b.String()[:cutLen], " ") + "..."
+}
+
+// escapeRune renders a format character as <U+XXXX> (at least four upper-case hex digits).
+func escapeRune(r rune) string {
+	h := strings.ToUpper(strconv.FormatInt(int64(r), 16))
+	return "<U+" + strings.Repeat("0", max(0, 4-len(h))) + h + ">"
 }

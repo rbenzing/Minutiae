@@ -97,6 +97,8 @@ func TestSchemaValidate(t *testing.T) {
 		wantOK(t, f, 42)
 		wantOK(t, f, int64(-7))
 		wantOK(t, f, json.Number("12345678901234"))
+		wantErr(t, f, json.Number("1e3"), "a string or an integer")
+		wantErr(t, f, json.Number("2.0"), "a string or an integer")
 		wantErr(t, f, "", "must not be empty")
 		wantErr(t, f, strings.Repeat("x", 1025), "longer than 1024 bytes")
 		wantOK(t, f, strings.Repeat("x", 1024))
@@ -114,8 +116,13 @@ func TestSchemaValidate(t *testing.T) {
 		wantOK(t, f, json.Number("42"))
 		wantOK(t, f, json.Number("-42"))
 		wantOK(t, f, json.Number("9223372036854775807"))
-		wantOK(t, f, json.Number("1.0"))
-		wantOK(t, f, json.Number("1e3"))
+		// only canonical JSON integers: a decimal or exponent form is refused even when it is integral
+		for _, bad := range []string{"1.0", "2.0", "1e3", "1E3", "1e0", "10e-1", "1.0e0", "-1.0", "01", "+1", "-", "--1", "0x10", " 1", "1 ", "1_0", "00", "-01", "1.", ".5"} {
+			wantErr(t, f, json.Number(bad), "must be an integer")
+		}
+		wantOK(t, f, json.Number("-0"))
+		wantOK(t, f, json.Number("0"))
+		wantOK(t, f, json.Number("-9223372036854775808"))
 		wantErr(t, f, json.Number("9223372036854775808"), "must be an integer")
 		wantErr(t, f, json.Number("1.5"), "must be an integer")
 		wantErr(t, f, json.Number("1e400"), "must be an integer")

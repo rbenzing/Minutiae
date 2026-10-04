@@ -27,6 +27,8 @@ const v1Fixture = `{
   "participants": [{"address": "+15551234567", "future_in_participant": 1, "kind": "phone", "name": "Alex", "role": "from"}, {"address": "+15557654321", "role": "to"}],
   "raw": {"date": 1700000000123, "ratio": 0.5, "tags": ["a", "b"], "nested": {"ok": true}},
   "read": true,
+  "recovery": {"relation": "uncommitted", "via": "wal", "wal": {"frame": 3, "committed": false}},
+  "snapshot": {"name": "snap-1", "xid": 12},
   "status": "received",
   "subscription": 1,
   "thread": {"group": false, "id": 77, "members": ["+15551234567"], "title": "Alex"}
@@ -83,8 +85,10 @@ func TestRecordTypesDecodeOlderVersions(t *testing.T) {
 				Name: "p.jpg", Mime: "image/jpeg", Size: ptr(int64(4096)), ArtifactID: "art-9",
 				ArtifactSHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 			}},
-			Deleted: map[string]any{"source": "wal"},
-			Raw:     map[string]any{"date": int64(1700000000123), "ratio": 0.5, "tags": []any{"a", "b"}, "nested": map[string]any{"ok": true}},
+			Deleted:  map[string]any{"source": "wal"},
+			Recovery: map[string]any{"relation": "uncommitted", "via": "wal", "wal": map[string]any{"frame": int64(3), "committed": false}},
+			Snapshot: map[string]any{"name": "snap-1", "xid": int64(12)},
+			Raw:      map[string]any{"date": int64(1700000000123), "ratio": 0.5, "tags": []any{"a", "b"}, "nested": map[string]any{"ok": true}},
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("Decode(v1 fixture)\n got  %+v\n want %+v", got, want)
@@ -139,6 +143,10 @@ func TestRecordTypesDecodeOlderVersions(t *testing.T) {
 			"enum":               `{"channel":"sms","direction":"` + marker + `","kind":"text","participants":[],"participants_unknown":true}`,
 			"big exponent":       `{"channel":"sms","direction":"in","kind":"text","participants":[],"participants_unknown":true,"subscription":1e999}`,
 			"fractional integer": `{"channel":"sms","direction":"in","kind":"text","participants":[],"participants_unknown":true,"subscription":1.5}`,
+			"exponent integer":   `{"channel":"sms","direction":"in","kind":"text","participants":[],"participants_unknown":true,"subscription":1e3}`,
+			"decimal integer":    `{"channel":"sms","direction":"in","kind":"text","participants":[],"participants_unknown":true,"subscription":2.0}`,
+			"exponent total":     `{"channel":"sms","direction":"in","kind":"text","participants":[],"participants_unknown":true,"body_truncated":true,"body_total_bytes":1e3}`,
+			"exponent thread id": `{"channel":"sms","direction":"in","kind":"text","participants":[],"participants_unknown":true,"thread":{"id":1e3}}`,
 		} {
 			_, err := message.Decode(1, []byte(b))
 			if err == nil {
@@ -160,4 +168,57 @@ func TestRecordTypesDecodeOlderVersions(t *testing.T) {
 			t.Error("a payload nested 2000 deep was accepted")
 		}
 	})
+}
+
+// TestDecodeKeepsRecoveryAndSnapshot: a typed reader can never present a recovered
+// or snapshot-derived message as a live one, so Decode carries both objects and
+// Payload writes them back.
+func TestDecodeKeepsRecoveryAndSnapshot(t *testing.T) {
+	const in = `{"channel":"sms","direction":"in","kind":"text","participants":[],"participants_unknown":true,` +
+		`"recovery":{"relation":"uncommitted","via":"wal","wal":{"frame":3,"salt1":7,"committed":false},"notes":["a","b"]},` +
+		`"snapshot":{"name":"snap-1","xid":12}}`
+	got, err := message.Decode(1, []byte(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRec := map[string]any{
+		"relation": "uncommitted", "via": "wal", "notes": []any{"a", "b"},
+		"wal": map[string]any{"frame": int64(3), "salt1": int64(7), "committed": false},
+	}
+	if !reflect.DeepEqual(got.Recovery, wantRec) {
+		t.Errorf("Recovery = %#v, want %#v", got.Recovery, wantRec)
+	}
+	if want := map[string]any{"name": "snap-1", "xid": int64(12)}; !reflect.DeepEqual(got.Snapshot, want) {
+		t.Errorf("Snapshot = %#v, want %#v", got.Snapshot, want)
+	}
+	p := got.Payload()
+	if !reflect.DeepEqual(p["recovery"], wantRec) || !reflect.DeepEqual(p["snapshot"], map[string]any{"name": "snap-1", "xid": int64(12)}) {
+		t.Errorf("Payload dropped the provenance: recovery %#v snapshot %#v", p["recovery"], p["snapshot"])
+	}
+	if err := message.Validate(p); err != nil {
+		t.Errorf("the re-built payload does not validate: %v", err)
+	}
+	// a live message has neither
+	live, err := message.Decode(1, []byte(`{"channel":"sms","direction":"in","kind":"text","participants":[],"participants_unknown":true}`))
+	if err != nil || live.Recovery != nil || live.Snapshot != nil {
+		t.Errorf("a live message decoded with provenance: %+v, %v", live, err)
+	}
+	if _, has := live.Payload()["recovery"]; has {
+		t.Error("a live message built a recovery key")
+	}
+	// the deleted marker and recovery are independent
+	both, err := message.Decode(1, []byte(`{"channel":"sms","direction":"in","kind":"text","participants":[],"participants_unknown":true,"deleted":{"source":"x"},"recovery":{}}`))
+	if err != nil || both.Deleted == nil || both.Recovery == nil || len(both.Recovery) != 0 {
+		t.Errorf("deleted+empty recovery: %+v, %v", both, err)
+	}
+	// the Message does not alias the payload it builds
+	rec, snap := objOf(t, p, "recovery"), objOf(t, p, "snapshot")
+	rec["via"] = "changed"
+	if wal, ok := rec["wal"].(map[string]any); ok {
+		wal["frame"] = "changed"
+	}
+	snap["name"] = "changed"
+	if got.Recovery["via"] != "wal" || !reflect.DeepEqual(got.Recovery["wal"], map[string]any{"frame": int64(3), "salt1": int64(7), "committed": false}) || got.Snapshot["name"] != "snap-1" {
+		t.Error("the payload aliases the message's recovery or snapshot")
+	}
 }

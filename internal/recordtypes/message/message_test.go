@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/rbenzing/minutiae/internal/records"
 	"github.com/rbenzing/minutiae/internal/records/recordstest"
@@ -51,6 +52,8 @@ func full() message.Message {
 		BodyRawLen:     ptr(int64(123456)),
 		Deleted:        map[string]any{"source": "sqlite-freelist"},
 		Raw:            map[string]any{"flags": int64(5), "nested": map[string]any{"a": []any{"x", int64(2)}}},
+		Recovery:       map[string]any{"relation": "uncommitted", "via": "wal", "wal": map[string]any{"frame": int64(3), "committed": false}},
+		Snapshot:       map[string]any{"name": "com.apple.snap", "xid": int64(12)},
 	}
 }
 
@@ -196,6 +199,8 @@ func TestPayloadValidatorsRejectViolations(t *testing.T) {
 
 	// attachments
 	add("attachment sha without id", mutate(func(p map[string]any) { delete(attOf(p, 0), "artifact_id") }), "artifact_sha256 requires artifact_id")
+	add("attachment sha with empty artifact_id", mutate(func(p map[string]any) { attOf(p, 0)["artifact_id"] = "" }), "payload.attachments[0].artifact_id: must not be empty")
+	add("attachment empty artifact_id without sha", mutate(func(p map[string]any) { delete(attOf(p, 0), "artifact_sha256"); attOf(p, 0)["artifact_id"] = "" }), "payload.attachments[0].artifact_id: must not be empty")
 	add("attachment sha uppercase", mutate(func(p map[string]any) { attOf(p, 0)["artifact_sha256"] = strings.Repeat("AB", 32) }), "payload.attachments[0].artifact_sha256")
 	add("attachment sha short", mutate(func(p map[string]any) { attOf(p, 0)["artifact_sha256"] = "abc" }), "payload.attachments[0].artifact_sha256")
 	add("attachment sha not hex", mutate(func(p map[string]any) { attOf(p, 0)["artifact_sha256"] = strings.Repeat("zz", 32) }), "payload.attachments[0].artifact_sha256")
@@ -205,6 +210,16 @@ func TestPayloadValidatorsRejectViolations(t *testing.T) {
 		add("attachment "+f+" type", mutate(func(p map[string]any) { attOf(p, 0)[f] = int64(1) }), "payload.attachments[0]."+f)
 	}
 	add("attachment not an object", mutate(func(p map[string]any) { p["attachments"] = []any{int64(1)} }), "payload.attachments[0]")
+
+	// integers are canonical JSON integers: a decimal or exponent form is refused (Decode could not read it back)
+	for _, in := range []string{"1e3", "2.0", "1E3", "10e-1", "0.0"} {
+		add("subscription as "+in, mutate(func(p map[string]any) { p["subscription"] = json.Number(in) }), "payload.subscription")
+		add("body_total_bytes as "+in, mutate(func(p map[string]any) { p["body_total_bytes"] = json.Number(in) }), "payload.body_total_bytes")
+		add("body_raw_len as "+in, mutate(func(p map[string]any) { p["body_raw_len"] = json.Number(in) }), "payload.body_raw_len")
+		add("attachment size as "+in, mutate(func(p map[string]any) { attOf(p, 0)["size"] = json.Number(in) }), "payload.attachments[0].size")
+		add("thread id as "+in, mutate(func(p map[string]any) { threadOf(p)["id"] = json.Number(in) }), "payload.thread.id")
+		add("snapshot xid as "+in, mutate(func(p map[string]any) { p["snapshot"] = map[string]any{"name": "s", "xid": json.Number(in)} }), "payload.snapshot.xid")
+	}
 
 	// body fields
 	add("body_truncated without total", mutate(func(p map[string]any) { delete(p, "body_total_bytes") }), "body_truncated requires body_total_bytes")
@@ -380,6 +395,15 @@ func TestMessagePayloadIsCanonicalTypes(t *testing.T) {
 	p["deleted"].(map[string]any)["source"] = "changed"
 	p["raw"].(map[string]any)["flags"] = "changed"
 	p["raw"].(map[string]any)["nested"].(map[string]any)["a"].([]any)[0] = "changed"
+	rec, snap := objOf(t, p, "recovery"), objOf(t, p, "snapshot")
+	rec["via"] = "changed"
+	if wal, ok := rec["wal"].(map[string]any); ok {
+		wal["frame"] = "changed"
+	}
+	snap["name"] = "changed"
+	if m.Recovery["via"] != "wal" || !reflect.DeepEqual(m.Recovery["wal"], map[string]any{"frame": int64(3), "committed": false}) || m.Snapshot["name"] != "com.apple.snap" {
+		t.Error("the payload aliases the message's recovery or snapshot maps")
+	}
 	if m.Deleted["source"] != "sqlite-freelist" || m.Raw["flags"] != int64(5) || m.Raw["nested"].(map[string]any)["a"].([]any)[0] != "x" {
 		t.Error("the payload aliases the message's deleted/raw maps")
 	}
@@ -424,15 +448,31 @@ func TestSummary(t *testing.T) {
 			t.Errorf("Summary(%q,%q,%q,%q) = %q, want %q", tc.channel, tc.dir, tc.who, tc.text, got, tc.want)
 		}
 	}
+	// the text is cut at 80 CHARACTERS, not 80 bytes
 	long := message.Summary("sms", "in", "x", strings.Repeat("word ", 100))
-	if want := "sms in x: "; !strings.HasPrefix(long, want) || len(long)-len(want) > 80 || !strings.HasSuffix(long, "...") {
+	if want := "sms in x: "; !strings.HasPrefix(long, want) || len(long)-len(want) != 80 || !strings.HasSuffix(long, "...") {
 		t.Errorf("long text summary = %q", long)
 	}
-	// hostile parts stay one line and bounded
-	rlo := string(rune(0x202E))
-	h := message.Summary(strings.Repeat("c", 1000), "in\n", strings.Repeat("é", 1000)+"\x00", rlo+"evil")
-	if strings.ContainsAny(h, "\n\x00"+rlo) || len(h) > 32+16+64+4+80 {
+	cjk := message.Summary("sms", "in", "x", strings.Repeat(string(rune(0x65E5))+string(rune(0x672C)), 100))
+	if body := strings.TrimPrefix(cjk, "sms in x: "); utf8.RuneCountInString(body) != 80 || !strings.HasSuffix(body, "...") {
+		t.Errorf("CJK text summary has %d characters, want 80: %q", utf8.RuneCountInString(body), body)
+	}
+	short := strings.Repeat(string(rune(0x65E5)), 80) // 80 characters, 240 bytes: fits
+	if got := message.Summary("sms", "in", "x", short); got != "sms in x: "+short {
+		t.Errorf("an 80-character text was cut: %q", got)
+	}
+	// hostile parts stay one line, show invisible and bidi characters, and stay within the records summary cap (512 bytes)
+	rlo, zwsp := string(rune(0x202E)), string(rune(0x200B))
+	emoji := strings.Repeat(string(rune(0x1F600)), 1000)
+	h := message.Summary(strings.Repeat("c", 1000), "in\n", strings.Repeat("é", 1000)+"\x00", rlo+"evil"+emoji)
+	if strings.ContainsAny(h, "\n\x00"+rlo) || len(h) > 512 {
 		t.Errorf("hostile summary = %q (%d bytes)", h, len(h))
+	}
+	if got := message.Summary("sms", "in", rlo+"Ba"+zwsp+"nk", "pay "+rlo+"txt.exe"); got != "sms in <U+202E>Ba<U+200B>nk: pay <U+202E>txt.exe" {
+		t.Errorf("format characters are not visible in the summary: %q", got)
+	}
+	if message.Summary("sms", "in", "Bank", "x") == message.Summary("sms", "in", "Ba"+zwsp+"nk", "x") {
+		t.Error("two different counterparties give the same summary")
 	}
 }
 
@@ -451,6 +491,9 @@ func FuzzMessageValidate(f *testing.F) {
 	f.Add([]byte(`[]`))
 	f.Add([]byte(`{"channel":"sms","direction":"in","kind":"text","participants":[{"role":"from","address":"x"}],"raw":{"a":{"b":{"c":{}}}}}`))
 	f.Add([]byte(`{"channel":"sms","direction":"in","kind":"text","participants":[],"participants_unknown":true,"subscription":1e400}`))
+	f.Add([]byte(`{"channel":"sms","direction":"in","kind":"text","participants":[],"participants_unknown":true,"body_truncated":true,"body_total_bytes":1e3}`))
+	f.Add([]byte(`{"channel":"sms","direction":"in","kind":"text","participants":[],"participants_unknown":true,"subscription":2.0,"thread":{"id":1E3}}`))
+	f.Add([]byte(`{"channel":"sms","direction":"in","kind":"text","participants":[],"participants_unknown":true,"recovery":{"relation":"uncommitted"},"snapshot":{"name":"s","xid":1}}`))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		dec := json.NewDecoder(strings.NewReader(string(data)))
 		dec.UseNumber()
@@ -480,4 +523,14 @@ func FuzzMessageValidate(f *testing.F) {
 			t.Fatalf("the decoded message does not produce a valid payload: %v", err)
 		}
 	})
+}
+
+// objOf returns the object under key in a payload, failing the test when there is none.
+func objOf(t *testing.T, p map[string]any, key string) map[string]any {
+	t.Helper()
+	o, ok := p[key].(map[string]any)
+	if !ok {
+		t.Fatalf("the payload has no %s object: %v", key, p)
+	}
+	return o
 }
