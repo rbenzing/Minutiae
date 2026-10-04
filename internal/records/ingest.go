@@ -36,9 +36,11 @@ func newIngestID() (string, error) {
 	return "ing-" + hex.EncodeToString(b[:]), nil
 }
 
-// Start begins the ingest, in this order: it checks the schema and the options,
-// reads the manifest, RECOVERS every ingest the audit log announced and the
-// database never concluded (see below), refuses a parser name+version that a
+// Start begins the ingest, in this order: it checks the schema, that the full-text
+// index is current (ErrIndexNotCurrent otherwise; nothing is audited or recovered
+// for a refused index) and the options, reads the manifest, RECOVERS every ingest
+// the audit log announced and the database never concluded (see below), refuses a
+// parser name+version that a
 // complete run already covers (ErrAlreadyIngested, unless AllowReingest),
 // checks the parser identity (ErrParserIdentityConflict), audits
 // records.ingest.start and records the parser.
@@ -69,6 +71,11 @@ func (w *Writer) Start(ctx context.Context, so StartOptions) error {
 	// nothing is audited, recovered or written against a database whose schema
 	// objects (tables, indexes, triggers, views) are not the ones this build defines
 	if err := w.c.RequireSchemaObjects(ctx); err != nil {
+		return err
+	}
+	// the full-text index must be current before anything is audited or recovered: the writer maintains
+	// it in every batch transaction and cannot do that for an index another build or a rebuild owns
+	if err := w.c.RequireIndexCurrent(ctx); err != nil {
 		return err
 	}
 	if len(so.AnalysisID) > maxAnalysisID {

@@ -2,6 +2,7 @@ package evidence
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"regexp"
@@ -70,6 +71,16 @@ func classifyIndexValue(value, current string) IndexKind {
 // not text is IndexInvalid (not an error: the state is the finding). The caller guarantees the
 // schema is v3 or newer (Case.IndexState checks it).
 func ReadIndexState(ctx context.Context, h ReadHandle) (IndexState, error) {
+	return readIndexState(ctx, h)
+}
+
+// ctxQuerier is what a read handle and a write transaction share.
+type ctxQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+// readIndexState is ReadIndexState over any querier (the write path reads the state inside its own transaction).
+func readIndexState(ctx context.Context, h ctxQuerier) (IndexState, error) {
 	current := FTSNormVersion()
 	rows, err := h.QueryContext(ctx, `SELECT typeof(value), CAST(value AS TEXT) FROM records_meta WHERE key = ? LIMIT 2`, MetaFTSNormVersion)
 	if err != nil {
@@ -126,7 +137,7 @@ func (c *Case) RequireIndexCurrent(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return st.require(c.Dir)
+	return st.Require(c.Dir)
 }
 
 // RequireIndexCurrentIn is RequireIndexCurrent inside an open read transaction (the check then
@@ -137,11 +148,11 @@ func RequireIndexCurrentIn(ctx context.Context, h ReadHandle) error {
 	if err != nil {
 		return err
 	}
-	return st.require("<dir>")
+	return st.Require("<dir>")
 }
 
-// require returns nil for a current index and the refusal otherwise.
-func (s IndexState) require(dir string) error {
+// Require returns nil for a current index and the refusal (wrapping ErrIndexNotCurrent, naming `records reindex --case <dir>`) otherwise.
+func (s IndexState) Require(dir string) error {
 	if s.Kind == IndexCurrent {
 		return nil
 	}
@@ -161,4 +172,57 @@ func (s IndexState) describe() string {
 		return "it is current"
 	}
 	return fmt.Sprintf("records_meta %s holds %q (or the key is missing), which is not a version of the index", MetaFTSNormVersion, s.Value)
+}
+
+// FTSDoc is one record's normalized index text.
+type FTSDoc struct {
+	ID            int64
+	Summary, Body string
+}
+
+// NewFTSDoc normalizes the text of record id with NormalizeText, the one function every index text
+// goes through. ok is false when nothing is left to index (the summary is empty and the body is nil
+// or empty, after normalization): such a record has no row in either index.
+func NewFTSDoc(id int64, summary string, body *string) (doc FTSDoc, ok bool) {
+	doc = FTSDoc{ID: id, Summary: NormalizeText(summary)}
+	if body != nil {
+		doc.Body = NormalizeText(*body)
+	}
+	return doc, doc.Summary != "" || doc.Body != ""
+}
+
+// InsertFTSDocs writes the documents into both full-text tables inside tx, the transaction that
+// writes their records. The index must be current: the meta value is read inside tx and must equal
+// FTSNormVersion(), otherwise nothing is written and the error wraps ErrIndexNotCurrent.
+func InsertFTSDocs(ctx context.Context, tx *sql.Tx, docs []FTSDoc) error {
+	st, err := readIndexState(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if err := st.Require("<dir>"); err != nil {
+		return err
+	}
+	return insertFTSDocs(ctx, tx, docs)
+}
+
+// insertFTSDocs is InsertFTSDocs without the state check: reindex (state 'building') and the
+// verify rebuild use it, so there is one insert statement and one place that decides what is
+// indexed. The table names are the two constants, never input.
+func insertFTSDocs(ctx context.Context, tx *sql.Tx, docs []FTSDoc) error {
+	for _, table := range FTSTables() {
+		stmt, err := tx.PrepareContext(ctx, `INSERT INTO `+table+` (rowid, summary, body) VALUES (?, ?, ?)`) //nolint:gosec // the table is one of the two FTS table constants
+		if err != nil {
+			return fmt.Errorf("prepare %s insert: %w", table, err)
+		}
+		for _, d := range docs {
+			if _, err := stmt.ExecContext(ctx, d.ID, d.Summary, d.Body); err != nil {
+				_ = stmt.Close()
+				return fmt.Errorf("index record %d in %s: %w", d.ID, table, err)
+			}
+		}
+		if err := stmt.Close(); err != nil {
+			return fmt.Errorf("close %s insert: %w", table, err)
+		}
+	}
+	return nil
 }

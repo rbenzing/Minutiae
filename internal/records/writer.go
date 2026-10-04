@@ -286,10 +286,10 @@ func (w *Writer) flush(ctx context.Context) error {
 		return nil
 	}
 	n := len(w.buf)
-	// before anything is audited: the database must still hold the counter this
-	// writer wrote (an attacker may have changed it since Start), and the range
-	// must not overflow. The batch entry is irrevocable, so a refusal comes first.
-	if err := w.checkStoredNext(ctx); err != nil {
+	// before anything is audited: the index must still be current, the database must still
+	// hold the counter this writer wrote (an attacker may have changed it since Start), and
+	// the range must not overflow. The batch entry is irrevocable, so a refusal comes first.
+	if err := w.checkBeforeBatch(ctx); err != nil {
 		w.poison = err
 		w.buf, w.bufBytes = nil, 0
 		return err
@@ -326,6 +326,15 @@ func (w *Writer) flush(ctx context.Context) error {
 	digest := bd.Sum()
 	created := time.Now().UTC().Format(time.RFC3339Nano)
 
+	// the index text is normalized here, outside the transaction and before the batch is audited
+	docs := make([]evidence.FTSDoc, 0, n)
+	for i := range w.buf {
+		row := &w.buf[i].row
+		if d, ok := evidence.NewFTSDoc(row.ID, row.Summary, row.Body); ok {
+			docs = append(docs, d)
+		}
+	}
+
 	if _, err := w.c.Audit.Append(evidence.ActionBatch, "", evidence.BatchCommit{
 		IngestID: w.IngestID(), BatchNo: batchNo, FirstID: first, Count: n, Digest: digest, Created: created,
 		Artifacts: hashes, ArtifactIncomplete: incomplete, Types: types,
@@ -338,7 +347,7 @@ func (w *Writer) flush(ctx context.Context) error {
 	if err := w.callHook("before-insert"); err != nil {
 		return w.fail(batchNo, err)
 	}
-	if err := w.insertBatch(ctx, batchNo, first, digest, created); err != nil {
+	if err := w.insertBatch(ctx, batchNo, first, digest, created, docs); err != nil {
 		return w.fail(batchNo, err)
 	}
 
@@ -371,9 +380,10 @@ func boolInt(b bool) int {
 	return 0
 }
 
-// insertBatch writes the batch row, its records, their times and the new
-// next_id in one transaction.
-func (w *Writer) insertBatch(ctx context.Context, batchNo int, first int64, digest, created string) error {
+// insertBatch writes the batch row, its records, their times, their full-text
+// index rows (docs, already normalized) and the new next_id in one transaction: a
+// failure anywhere leaves none of them.
+func (w *Writer) insertBatch(ctx context.Context, batchNo int, first int64, digest, created string, docs []evidence.FTSDoc) error {
 	n := len(w.buf)
 	return w.c.StoreTx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `INSERT INTO record_batches (ingest_id, batch_no, first_id, count, digest, created) VALUES (?, ?, ?, ?, ?, ?)`,
@@ -411,6 +421,10 @@ func (w *Writer) insertBatch(ctx context.Context, batchNo int, first int64, dige
 					return fmt.Errorf("record %d time %q: %w", r.ID, t.Kind, err)
 				}
 			}
+		}
+		// refuses (ErrIndexNotCurrent) when the index state changed since the pre-audit check
+		if err := evidence.InsertFTSDocs(ctx, tx, docs); err != nil {
+			return err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE records_meta SET value = ? WHERE key = 'next_id'`, strconv.FormatInt(first+int64(n), 10))
 		return err
@@ -605,12 +619,21 @@ func (w *Writer) releaseIfClosed() {
 	}
 }
 
-// checkStoredNext requires the database to hold exactly the counter this writer
-// last wrote: records_meta.next_id == max(id)+1 == w.dbNext.
-func (w *Writer) checkStoredNext(ctx context.Context) error {
+// checkBeforeBatch is what the writer verifies before it audits a batch (the entry
+// cannot be withdrawn), in one ReadRecordsTx, so the schema objects are compared
+// first: the full-text index is current (ErrIndexNotCurrent otherwise) and the
+// database holds exactly the counter this writer last wrote:
+// records_meta.next_id == max(id)+1 == w.dbNext.
+func (w *Writer) checkBeforeBatch(ctx context.Context) error {
 	var got int64
 	err := w.c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {
-		var err error
+		st, err := evidence.ReadIndexState(ctx, h)
+		if err != nil {
+			return err
+		}
+		if err := st.Require(w.c.Dir); err != nil {
+			return err
+		}
 		got, err = storedNextID(ctx, h)
 		return err
 	})
