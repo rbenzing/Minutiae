@@ -128,6 +128,21 @@ Regenerate with `docker run --rm -v "$PWD:/work" -w /work minutiae-fixtures bash
 (about 30 s, not privileged; it reads the committed ext4 and fat12 fixtures from the tree, so regenerate
 those first if they ever change, and commit the new `ewf` outputs with them).
 
+Committed in `internal/image/ewf/testdata/` (bytes, as stored; 1,389,704 bytes of `.gz` files plus the 31,915-byte
+oracle, 1,421,619 in all):
+
+| File | Bytes | Content |
+|---|---|---|
+| `ewf-disk.img.gz` | 346,007 | the raw 8 MiB GPT disk every variant wraps (the oracle for the media) |
+| `ewf-single-none.E01.gz` | 349,468 | one segment, `-c none`: 256 chunks, all uncompressed |
+| `ewf-single-best.E01.gz` | 336,508 | one segment, `-c best`: 128 chunks (126 compressed, 2 uncompressed) |
+| `ewf-multi-none.E01.gz` .. `.E05.gz` | 11,913 / 3,156 / 2,992 / 330,118 / 650 | five segments, `-c none`, 63+63+63+63+4 chunks |
+| `ewf-seed-small.E01.gz` | 8,892 | the first MiB only (32 compressed chunks): the fuzz seed |
+| `ewf-fixtures.expect.json` | 31,915 | the oracle (see above) |
+
+The tests gunzip each file in memory; no `.E01` is stored uncompressed. The `error2` section, table base 0 and
+other layouts the real writer does not produce are covered by the `ewftest` builder only.
+
 If `sgdisk` hangs in the container, an earlier container left a dead FUSE mount (a stuck `exfat` run) that
 blocks the VM's global sync; remove that container, or abort its connection (`mount -t fusectl none /mnt`
 in a privileged container, then `echo 1 > /mnt/<id>/abort` for the connection with a pending request).
