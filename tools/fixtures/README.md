@@ -160,12 +160,108 @@ allocated; and every non-zero block of the image is a verified object or a known
 raw block. Its `measured` section records what the reference leaves open (ring
 shape, drec key form, bitmap polarity, tree storage types, ...).
 
-Limits: these are EMPTY volumes. Nothing on Linux can populate an APFS volume, so
+Limits: these are EMPTY volumes. Nothing in the Docker toolchain can populate an APFS volume (see "Populating a real APFS image on Linux: what was tried"), so
 there are no files, no extra directory records (only `root` and `private-dir`),
 no xattrs, hard links, symlinks, file extents, snapshots (`apfs-snap` needs the
 kernel module) or encrypted volumes, and a single checkpoint (no ring
 wrap-around or fallback). Those paths are covered by the synthetic builder only
 and, for real data, by the manual `realimages` test.
+
+### Supplying a real APFS image (manual `realimages` test)
+
+The committed APFS fixtures are empty, so files, extents, clones, symlinks,
+extended attributes, hard links, snapshots and directory-record name hashes on
+non-root names are validated against the synthetic builder only. An examiner can
+validate them against a real, populated image with the build-tagged test
+`internal/filesys/apfs/realimages_test.go`:
+
+```bash
+MINUTIAE_TEST_IMAGES=/path go test -tags realimages ./internal/filesys/apfs -run TestRealImages -v
+```
+
+It reads every `<name>.img` or `<name>.img.gz` in `$MINUTIAE_TEST_IMAGES/apfs/`
+that has a `<name>.expect.json` beside it, opens the image with `apfs.Open` and
+asserts: no checksum warning (other warnings are listed); the volumes, with role,
+encryption and case-sensitivity; for every unencrypted volume the exact live tree
+(path, type, size, SHA-256, `mode&07777`, mtime in seconds, symlink target,
+hard-link groups) and the exact tree of each snapshot the JSON names under
+`/<volume>/.snapshots/<name>/`; `ErrEncrypted` for an encrypted volume; the number
+of unallocated blocks when given; and that no free run overlaps any file's runs.
+The expected-output JSON is documented in the header of the test file:
+
+```json
+{"image_sha256": "<hex>", "unallocated_blocks": 12345,
+ "volumes": [{"name": "Test", "role": "none", "encrypted": false, "case_insensitive": true,
+   "tree": [{"path": "/a.txt", "type": "file", "size": 5, "sha256": "<hex>", "mode": 420,
+             "mtime": 1700000000, "hardlink_group": "g1"},
+            {"path": "/sym", "type": "symlink", "link": "a.txt", "mode": 511, "mtime": 1700000000}],
+   "snapshots": [{"name": "snap1", "tree": []}]}]}
+```
+
+How to produce an image (from memory, NOT verified on a Mac here: check each
+command on your machine):
+
+1. Create a container image without a partition map:
+   `hdiutil create -size 64m -layout NONE -fs APFS -volname Test test.dmg`, mount it.
+2. Populate it: files, a hard link (`ln`), a symlink (`ln -s`), a sparse file
+   (`dd if=/dev/zero of=sparse bs=1 count=0 seek=1048576` or `dd ... seek=`), a clone
+   (`cp -c`), extended attributes (`xattr -w`).
+3. Create a snapshot on the mounted test volume (`tmutil localsnapshot` only works
+   on a boot volume; for a test volume use `fs_snapshot_create(2)`, or the
+   `snapUtil` tool), then modify the live tree.
+4. With the volume still mounted print the live tree:
+   `tools/fixtures/apfs_expect.sh /Volumes/Test` (the `tree` array), and for each
+   snapshot mount it (`mount_apfs -s <snapshot> <device> <dir>`) and run the same
+   script on that mount point.
+5. Unmount, detach, convert to a raw image (`hdiutil convert test.dmg -format UDTO -o test`
+   writes `test.cdr`; rename it to `test.img`) and check that the first block holds
+   "NXSB" at byte offset 32.
+6. Put `test.img` (or `.img.gz`) and the JSON in `$MINUTIAE_TEST_IMAGES/apfs/`.
+
+A data volume of an iOS or other device image works the same when it is
+unencrypted; an encrypted volume is only asserted to be `ErrEncrypted`.
+`go vet -tags realimages ./...` compiles the test (the normal check does not set the tag).
+
+#### Populating a real APFS image on Linux: what was tried (Task 8)
+
+Goal: a populated real fixture (files, extents, symlinks, xattrs, hard links, sparse
+files, snapshots, name hashes on non-root names) with an oracle from the source tree
+and `apfsck`. It was NOT achieved; the committed fixtures stay empty and the
+populated coverage is the builder plus the manual `realimages` test above.
+
+- `apfsprogs` (`mkapfs`, `apfsck`) only creates and checks empty containers; there
+  is no tool in it that writes files. No userspace APFS writer exists in Debian.
+- The Linux `apfs` kernel module with write support (`linux-apfs-rw`, git
+  `923526a`) would populate a loop-mounted `mkapfs` image. The Docker Desktop
+  kernel (`6.6.87.2-microsoft-standard-WSL2`) has `CONFIG_MODULES=y`,
+  `CONFIG_MODVERSIONS=y`, `CONFIG_MODULE_FORCE_LOAD=y`, no module tree and no
+  `apfs` module, so the module had to be built out of tree against the matching
+  Microsoft kernel source (tag `linux-msft-wsl-6.6.87.2`, `/proc/config.gz`,
+  `make modules_prepare`). That works: `apfs.ko` builds (it needs `genver.sh` run
+  by hand, and `KBUILD_MODPOST_WARN=1` or a full `make vmlinux` plus
+  `cp vmlinux.symvers Module.symvers` for the exported-symbol CRCs).
+- Loading it did not work: with no `Module.symvers`, `insmod -f` fails with
+  `Invalid relocation target, existing value is nonzero for type 1`; with
+  `Module.symvers` from a full `vmlinux` build (about 35 minutes on 12 cores) the
+  load fails with `disagrees about version of symbol module_layout`, because the
+  rebuilt kernel differs from the running one in `struct module` (the running
+  kernel has `CONFIG_DEBUG_INFO_BTF_MODULES`, which needs `pahole` and a vmlinux
+  BTF section to reproduce). The remaining way is to edit the module's
+  `__versions` table so the version check passes, which deliberately defeats the
+  kernel's ABI check and loads out-of-tree code into the shared Docker Desktop VM
+  kernel; that was judged unsafe on a shared machine and not done.
+- Even with a loadable module the image would not be reproducible: the module stamps
+  create/change/access times from the kernel's real-time clock, which `faketime`
+  cannot freeze, so a normalizer that rewrites every inode time and re-checksums
+  the blocks would also be needed; and `linux-apfs-rw` cannot create snapshots or
+  clones, so those would stay builder-only anyway.
+- The first load attempt (`insmod -f`) tainted the Docker Desktop VM kernel (the
+  taint disappears when Docker Desktop is restarted); no module was ever loaded
+  (`/proc/filesystems` has no `apfs`) and the build volume was removed.
+
+A machine that can run a stock Debian or Ubuntu kernel with `apfs.ko` (a VM or a
+physical Linux box, not Docker Desktop) is the way forward: `mkapfs`, `mount -t apfs`,
+populate, `umount`, `apfsck`, then a normalizer for the inode times.
 
 ### F2FS determinism
 
