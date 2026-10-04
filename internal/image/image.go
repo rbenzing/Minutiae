@@ -1,8 +1,8 @@
 // Package image opens disk and partition image containers (raw, split raw,
-// and EWF through a registered opener) as read-only io.ReaderAt values.
+// and EWF) as read-only io.ReaderAt values.
 //
-// The package is pure: it imports no other Minutiae package and never opens a
-// file for writing.
+// The package is pure: it imports no other Minutiae package except image/ewf
+// (the EWF reader, itself pure) and never opens a file for writing.
 package image
 
 import (
@@ -49,14 +49,17 @@ var (
 
 var (
 	registryMu sync.Mutex
-	ewfOpener  Opener
+	ewfOpener  Opener = openEWF
 )
 
-// RegisterEWF installs the EWF v1 opener (plan 2E). Until then EWF images
-// return ErrUnsupportedContainer. Passing nil removes the opener.
+// RegisterEWF replaces the EWF v1 opener (the built-in reader by default); tests
+// use it to inject fakes. Passing nil restores the built-in opener.
 func RegisterEWF(o Opener) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
+	if o == nil {
+		o = openEWF
+	}
 	ewfOpener = o
 }
 
@@ -107,16 +110,12 @@ func OpenFiles(files []*os.File) (Image, error) {
 
 	switch {
 	case bytes.Equal(head, sigEWF):
-		if o := registeredEWF(); o != nil {
-			img, err := callOpener(o, files)
-			if err != nil {
-				closeAll(files)
-				return nil, err
-			}
-			return img, nil
+		img, err := callOpener(registeredEWF(), files)
+		if err != nil {
+			closeAll(files)
+			return nil, err
 		}
-		closeAll(files)
-		return nil, fmt.Errorf("%w: EWF (E01) support arrives in a later release", ErrUnsupportedContainer)
+		return img, nil
 	case bytes.Equal(head, sigEWF2):
 		closeAll(files)
 		return nil, fmt.Errorf("%w: EWF2 (Ex01)", ErrUnsupportedContainer)

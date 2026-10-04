@@ -31,6 +31,9 @@ type unallocLine struct {
 // space; in volume mode it is the part of the image covered by no partition
 // and no table structure. Both are bracketed by analysis.* audit entries.
 func (s *Session) ExportUnallocated(ctx context.Context, o UnallocOptions) (Summary, error) {
+	if err := s.needTable(); err != nil {
+		return Summary{}, err
+	}
 	var (
 		fsys     filesys.FileSystem
 		part     volume.Partition // zero value for volume mode: whole image

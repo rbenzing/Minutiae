@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/filesys/exfat"
 	"github.com/rbenzing/minutiae/internal/filesys/ext4"
 	"github.com/rbenzing/minutiae/internal/filesys/f2fs"
 	"github.com/rbenzing/minutiae/internal/filesys/fat"
+	"github.com/rbenzing/minutiae/internal/filesys/hfsplus"
 )
 
 // Driver is one filesystem parser.
@@ -24,6 +26,10 @@ type Driver struct {
 	Probe func(r io.ReaderAt, size int64) bool
 	// Open parses the filesystem.
 	Open func(r io.ReaderAt, size int64) (filesys.FileSystem, error)
+	// LastResort marks a driver whose probe is a fallback for damaged volumes
+	// (it matches an image another driver may legitimately open, by design),
+	// so its match is never reported as an ambiguous signature.
+	LastResort bool
 }
 
 // Drivers is the probe order, an ordered literal (spec §6: apfs, f2fs, ext4,
@@ -35,12 +41,13 @@ var Drivers = []Driver{
 	{Name: "f2fs", Probe: f2fs.Probe, Open: openF2FS},
 	{Name: "ext4", Probe: ext4.Probe, Open: openExt4},
 	{Name: "exfat", Probe: exfat.Probe, Open: openExFAT},
+	{Name: "hfsplus", Probe: hfsplus.Probe, Open: openHFSPlus},
 	{Name: "fat", Probe: fat.Probe, Open: openFAT},
 	// Last resort: an F2FS volume whose primary superblock is destroyed. It
 	// comes after every other driver so that a stale or forged F2FS backup
 	// signature inside another filesystem can never claim it. Info().Type of
 	// the opened filesystem stays "f2fs"; the name only identifies this probe.
-	{Name: "f2fs-backup", Probe: f2fs.ProbeBackup, Open: openF2FS},
+	{Name: "f2fs-backup", Probe: f2fs.ProbeBackup, Open: openF2FS, LastResort: true},
 }
 
 // openExt4 adapts ext4.Open. It returns an untyped nil FileSystem on error: a
@@ -65,6 +72,16 @@ func openF2FS(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
 // openExFAT adapts exfat.Open (untyped nil on error, see openExt4).
 func openExFAT(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
 	fs, err := exfat.Open(r, size)
+	if err != nil {
+		return nil, err
+	}
+	return fs, nil
+}
+
+// openHFSPlus adapts hfsplus.Open (untyped nil on error, see openExt4). The
+// driver reports HFS+ and HFSX through Info().Type ("hfsplus", "hfsx").
+func openHFSPlus(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
+	fs, err := hfsplus.Open(r, size)
 	if err != nil {
 		return nil, err
 	}
@@ -113,13 +130,16 @@ func Open(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
 // this filesystem) the remaining drivers whose Probe matches are tried in
 // order; the first that opens is returned, its Info().Warnings leading with
 // one "driver X matched but failed to open: <err>; opened as Y" entry per
-// failed driver. When none opens, the first driver's error is returned. Any
+// failed driver. When more than one
+// driver's Probe matches, the drivers after the one that opened are named in a
+// last "also matched by: ... (ambiguous signatures)" entry (a stale signature of
+// another filesystem, or a forged one); a clean image has no such entry. When none opens, the first driver's error is returned. Any
 // other error (an I/O failure, a probe panic) is final.
 func OpenWith(drivers []Driver, r io.ReaderAt, size int64) (filesys.FileSystem, error) {
 	var firstErr error
 	var warnings []string
 	var failed []string
-	for _, d := range drivers {
+	for i, d := range drivers {
 		if d.Open == nil {
 			continue
 		}
@@ -132,11 +152,14 @@ func OpenWith(drivers []Driver, r io.ReaderAt, size int64) (filesys.FileSystem, 
 		}
 		fsys, err := open(d, r, size)
 		if err == nil {
-			if len(failed) == 0 {
-				return fsys, nil
-			}
 			for _, f := range failed {
 				warnings = append(warnings, fmt.Sprintf("%s; opened as %s", f, d.Name))
+			}
+			if note := AmbiguityNote(AlsoMatching(drivers[i+1:], r, size)); note != "" {
+				warnings = append(warnings, note)
+			}
+			if len(warnings) == 0 {
+				return fsys, nil
 			}
 			return &warned{FileSystem: fsys, warnings: warnings}, nil
 		}
@@ -152,6 +175,34 @@ func OpenWith(drivers []Driver, r io.ReaderAt, size int64) (filesys.FileSystem, 
 		return nil, firstErr
 	}
 	return nil, fmt.Errorf("%w: no recognized filesystem", filesys.ErrUnsupported)
+}
+
+// AlsoMatching returns the names of the drivers in rest whose Probe matches r.
+// OpenWith calls it with the drivers after the one that opened the filesystem: a
+// second matching signature is not an error (the first driver wins, and any
+// earlier one that failed to open has its own note) but the examiner is told.
+// A driver whose Probe panics, that has no Open, or that is a LastResort one does
+// not count.
+func AlsoMatching(rest []Driver, r io.ReaderAt, size int64) []string {
+	var names []string
+	for _, d := range rest {
+		if d.Open == nil || d.LastResort {
+			continue
+		}
+		if ok, err := probe(d, r, size); err == nil && ok {
+			names = append(names, d.Name)
+		}
+	}
+	return names
+}
+
+// AmbiguityNote is the note for a filesystem that other drivers also matched
+// ("also matched by: fat (ambiguous signatures)"), or "" when none did.
+func AmbiguityNote(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	return "also matched by: " + strings.Join(names, ", ") + " (ambiguous signatures)"
 }
 
 // warned is a filesystem opened after an earlier matching driver failed: its

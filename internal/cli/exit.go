@@ -71,7 +71,7 @@ func isCobraUsageError(err error) bool {
 // the structure, not an integrity failure of the case itself.
 var imageErrors = []error{
 	filesys.ErrCorrupt, filesys.ErrUnsupported, filesys.ErrEncrypted, filesys.ErrDeleted,
-	image.ErrUnsupportedContainer, evidence.ErrUnknownArtifact,
+	image.ErrUnsupportedContainer, image.ErrCorruptContainer, image.ErrChunkCorrupt, evidence.ErrUnknownArtifact,
 }
 
 var deviceErrors = []error{
