@@ -484,7 +484,7 @@ func validToken(s string) bool {
 	}
 	for i := 1; i < len(s); i++ {
 		c := s[i]
-		if !(c >= 'a' && c <= 'z') && !isASCIIDigit(c) && c != '_' {
+		if (c < 'a' || c > 'z') && !isASCIIDigit(c) && c != '_' {
 			return false
 		}
 	}
@@ -497,7 +497,7 @@ func validHex64(s string) bool {
 	}
 	for i := 0; i < len(s); i++ {
 		c := s[i]
-		if !isASCIIDigit(c) && !(c >= 'a' && c <= 'f') {
+		if !isASCIIDigit(c) && (c < 'a' || c > 'f') {
 			return false
 		}
 	}
@@ -554,7 +554,7 @@ func daysIn(year, month int) int {
 // string, xid: integer >= 0}); and deleted (an object with a non-empty string
 // source). It is a function so that no exported package state exists, and every
 // call returns values nobody else holds.
-func CommonFields() []Field {
+func CommonFields() []Field { //nolint:revive // the name is part of the plan's interface (used by every record type); Fields would hide what it returns
 	zero := int64(0)
 	return []Field{
 		{Name: "raw", Kind: KRaw},

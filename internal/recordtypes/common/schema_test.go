@@ -287,7 +287,7 @@ func TestSchemaValidate(t *testing.T) {
 	})
 	t.Run("cross error is wrapped", func(t *testing.T) {
 		sentinel := errors.New("participants is empty without participants_unknown")
-		s := common.Schema{Cross: func(m map[string]any) error { return sentinel }}
+		s := common.Schema{Cross: func(map[string]any) error { return sentinel }}
 		err := s.Validate(obj{})
 		if !errors.Is(err, sentinel) || !strings.HasPrefix(err.Error(), "payload: ") {
 			t.Errorf("Cross error = %v", err)
