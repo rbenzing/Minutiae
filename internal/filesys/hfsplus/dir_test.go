@@ -721,8 +721,15 @@ func TestDirHostile(t *testing.T) {
 		be.PutUint32(img[pos.data+8:], lay.CNIDs["/a"])
 		f := open(t, img)
 		es := readDir(t, f, filesys.Entry{ID: idOf(lay.CNIDs["/a"])})
-		if len(es) != 1 || es[0].ID != idOf(lay.CNIDs["/a"]) || es[0].Type != filesys.TypeDir {
+		// The record claims the id of its own parent: it is a conflict entry, so a
+		// recursive walk can never be sent back to the ancestor.
+		if len(es) != 1 || es[0].ID == idOf(lay.CNIDs["/a"]) || es[0].Type != filesys.TypeDir || attrOf(es[0], "cnid_conflict") != "true" {
 			t.Fatalf("entries = %+v", es)
+		}
+		if _, err := f.ReadDir(es[0]); err == nil {
+			t.Error("ReadDir of the conflicting folder succeeded")
+		} else {
+			wantCorrupt(t, err)
 		}
 	})
 	t.Run("thread parent chain loops", func(t *testing.T) {

@@ -28,7 +28,7 @@ const (
 
 // privateDataName is the name of the hard-link metadata folder in the root,
 // after its four prefix units (from memory of TN1150; exercised by builder
-// volumes only: the real fixtures hold no hard links).
+// volumes and the populated real fixture).
 var privateDataName = unitsOf("HFS+ Private Data")
 
 func unitsOf(s string) []uint16 {
@@ -78,6 +78,57 @@ func parseCNID(id string) (uint32, error) {
 }
 
 func cnidString(n uint32) string { return "cnid:" + strconv.FormatUint(uint64(n), 10) }
+
+// conflictPrefix starts the ID of an entry whose catalog node id is claimed by
+// another record as well (see conflictID).
+const conflictPrefix = "conflict:"
+
+// conflictID is the ID of a catalog record that shares its catalog node id with
+// the record the id's thread names: "conflict:<id>:<parent>:<base64url of the
+// raw name units>". It names the record by its key, so it can never be
+// mistaken for the other record, and it cannot be opened or listed: no read
+// could tell which of the two the caller meant by the plain id.
+func conflictID(id uint32, k catalogKey) string {
+	raw := make([]byte, 2*len(k.name))
+	for i, u := range k.name {
+		raw[2*i], raw[2*i+1] = byte(u>>8), byte(u)
+	}
+	return conflictPrefix + strconv.FormatUint(uint64(id), 10) + ":" + strconv.FormatUint(uint64(k.parent), 10) + ":" + base64.RawURLEncoding.EncodeToString(raw)
+}
+
+// canonicalUint32 parses a canonical decimal (no sign, space or leading zero).
+func canonicalUint32(s string) (uint32, bool) {
+	if s == "" || len(s) > 10 || (s[0] == '0' && len(s) > 1) {
+		return 0, false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return 0, false
+		}
+	}
+	n, err := strconv.ParseUint(s, 10, 32)
+	return uint32(n), err == nil
+}
+
+// refuseConflictID returns nil for an ID that is not a conflict ID. A
+// well-formed conflict ID is a CorruptError (no read is made); a malformed one
+// wraps filesys.ErrNotFound.
+func refuseConflictID(id string) error {
+	rest, ok := strings.CutPrefix(id, conflictPrefix)
+	if !ok {
+		return nil
+	}
+	parts := strings.SplitN(rest, ":", 3)
+	if len(parts) == 3 {
+		n, ok1 := canonicalUint32(parts[0])
+		p, ok2 := canonicalUint32(parts[1])
+		b, derr := base64.RawURLEncoding.Strict().DecodeString(parts[2])
+		if ok1 && ok2 && derr == nil && len(b)%2 == 0 && len(b)/2 <= maxNameUnits && base64.RawURLEncoding.EncodeToString(b) == parts[2] && (n == rootFolderID || n >= firstUserCNID) {
+			return corrupt("catalog", -1, "the record (%d, %q) shares catalog node id %d with another record, so it cannot be opened or listed by id", p, decodeLossy(readUnits(b, len(b)/2)), n)
+		}
+	}
+	return fmt.Errorf("%w: %s is not an entry id of this volume", filesys.ErrNotFound, strconv.Quote(id[:min(len(id), 48)]))
+}
 
 // displayName returns the Entry.Name for an on-disk name and the RawName to
 // keep. A name is shown as it is (decoded UTF-16, no normalization) unless it
@@ -134,8 +185,18 @@ func (f *FS) toEntry(k catalogKey, r catalogRecord) (filesys.Entry, error) {
 	}
 	n := &o.node
 	name, raw := displayName(k.name)
+	th, thErr := f.catalogThread(r.id)
+	if thErr != nil && !errors.Is(thErr, filesys.ErrNotFound) && !errors.Is(thErr, filesys.ErrCorrupt) {
+		return filesys.Entry{}, thErr
+	}
+	id := cnidString(r.id)
+	conflict := thErr == nil && !f.threadNames(th, k, r)
+	if conflict {
+		id = conflictID(r.id, k)
+		f.warn("catalog record %s under folder %d claims catalog node id %d, which the thread record assigns to the record (%d, %q): the id is shared, so this entry cannot be opened or listed by id", strconv.Quote(name), k.parent, r.id, th.parent, decodeLossy(th.name))
+	}
 	e := filesys.Entry{
-		Name: name, RawName: raw, ID: cnidString(r.id),
+		Name: name, RawName: raw, ID: id,
 		Type: entryType(n),
 		Mode: uint32(n.bsd.mode), UID: n.bsd.owner, GID: n.bsd.group,
 		Times: filesys.Times{
@@ -166,6 +227,9 @@ func (f *FS) toEntry(k catalogKey, r catalogRecord) (filesys.Entry, error) {
 		} else {
 			e.Size = int64(size)
 		}
+	}
+	if conflict {
+		addAttr(&e, "cnid_conflict", "true")
 	}
 	addAttr(&e, "flags", fmt.Sprintf("0x%04x", n.flags))
 	if r.typ == recFile {
@@ -200,6 +264,9 @@ func (f *FS) toEntry(k catalogKey, r catalogRecord) (filesys.Entry, error) {
 		addAttr(&e, "hardlink", "invalid")
 		addAttr(&e, "hardlink_inode", strconv.FormatUint(uint64(o.link.inodeNum), 10))
 	}
+	if o.decmpfsIgnored {
+		addAttr(&e, "decmpfs_ignored", "true")
+	}
 	if o.compressed {
 		addAttr(&e, "compressed", o.cmp.label())
 		if o.cmp.ok {
@@ -219,23 +286,32 @@ func (f *FS) toEntry(k catalogKey, r catalogRecord) (filesys.Entry, error) {
 	if o.attrs.cprotect {
 		addAttr(&e, "cprotect", "present")
 	}
-	if r.typ == recFile {
-		if _, err := f.catalogThread(r.id); err != nil {
-			switch {
-			case errors.Is(err, filesys.ErrNotFound):
-				addAttr(&e, "thread", "missing")
-			case errors.Is(err, filesys.ErrCorrupt):
-				f.warn("the thread record of file %s (id %d) is unusable: %v", strconv.Quote(name), r.id, err)
-				addAttr(&e, "thread", "invalid")
-			default:
-				return filesys.Entry{}, err
-			}
+	if r.typ == recFile && thErr != nil {
+		if errors.Is(thErr, filesys.ErrNotFound) {
+			addAttr(&e, "thread", "missing")
+		} else {
+			f.warn("the thread record of file %s (id %d) is unusable: %v", strconv.Quote(name), r.id, thErr)
+			addAttr(&e, "thread", "invalid")
 		}
 	}
 	if e.Type == filesys.TypeSymlink && o.link.kind != linkDangling && o.link.kind != linkInvalid {
 		e.LinkTarget = f.linkTarget(o, e.Size)
 	}
 	return e, nil
+}
+
+// threadNames reports whether the thread record th of r.id points back at the
+// key k the record r was found under (same parent, same name in the catalog's
+// own order, same kind). The root and the reserved ids are never in conflict:
+// they cannot be opened by id anyway.
+func (f *FS) threadNames(th catalogRecord, k catalogKey, r catalogRecord) bool {
+	if r.id != rootFolderID && r.id < firstUserCNID {
+		return true
+	}
+	if (r.typ == recFolder) != (th.typ == recFolderThread) {
+		return false
+	}
+	return th.parent == k.parent && (slices.Equal(th.name, k.name) || compareNames(th.name, k.name, f.binaryNames()) == 0)
 }
 
 // Root returns the root folder (cnid:2), described by its catalog record when

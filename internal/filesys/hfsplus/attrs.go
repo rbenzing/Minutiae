@@ -111,6 +111,7 @@ func (f *FS) attributesOf(cnid uint32) (attrInfo, error) {
 		}
 		if examined++; examined > maxAttrRecords {
 			f.warn("attributes of id %d: more than %d records; the rest are not read", cnid, maxAttrRecords)
+			out.unread = true
 			return false, nil
 		}
 		if len(key) < attrKeyMin {

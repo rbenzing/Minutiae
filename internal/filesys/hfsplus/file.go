@@ -24,9 +24,10 @@ type object struct {
 	link  linkInfo
 	attrs attrInfo // the attributes of node
 	cmp   decmpfsHeader
-	// compressed: the file is decmpfs-compressed (the UF_COMPRESSED flag or a
-	// com.apple.decmpfs attribute).
-	compressed bool
+	// compressed: the file is decmpfs-compressed (the UF_COMPRESSED flag, as for
+	// the OS). decmpfsIgnored: a decmpfs attribute without the flag.
+	compressed     bool
+	decmpfsIgnored bool
 }
 
 func (o *object) name() string {
@@ -58,7 +59,14 @@ func (f *FS) newObject(k catalogKey, r catalogRecord) (*object, error) {
 	o.attrs = a
 	if r.typ == recFile {
 		o.cmp = parseDecmpfs(a.value)
-		o.compressed = o.node.bsd.ownerFlags&ufCompressed != 0 || a.decmpfs
+		// As the OS does, only UF_COMPRESSED makes a file compressed: a decmpfs
+		// attribute without it (planted, or copied by a tool that does not know
+		// it) never replaces the data fork.
+		o.compressed = o.node.bsd.ownerFlags&ufCompressed != 0
+		o.decmpfsIgnored = a.decmpfs && !o.compressed
+		if o.decmpfsIgnored {
+			f.warn("file %s (id %d) has a com.apple.decmpfs attribute but not the UF_COMPRESSED flag: its data fork is read as the content and the attribute is ignored", o.name(), o.node.id)
+		}
 		if o.compressed && !o.cmp.ok {
 			f.warn("file %s (id %d) is decmpfs-compressed but its decmpfs header is missing or unreadable; its content cannot be decoded", o.name(), o.node.id)
 		}
@@ -103,8 +111,13 @@ func (f *FS) fileObject(id uint32) (*object, error) {
 // dangling or invalid hard link is a CorruptError. A file whose fork is
 // damaged or shorter than its size opens with the bytes that can be trusted
 // (a warning; File.Runs is that prefix and reads at its end fail with an error
-// wrapping filesys.ErrCorrupt).
+// wrapping filesys.ErrCorrupt). The ID of an entry whose catalog node id is
+// shared by two records ("conflict:...", attribute cnid_conflict) is a
+// CorruptError, never the other record's bytes.
 func (f *FS) Open(e filesys.Entry) (filesys.File, error) {
+	if err := refuseConflictID(e.ID); err != nil {
+		return nil, err
+	}
 	id, err := parseCNID(e.ID)
 	if err != nil {
 		return nil, err

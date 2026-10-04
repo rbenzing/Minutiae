@@ -89,8 +89,8 @@ func TestDuplicateCNIDInListingIsWarned(t *testing.T) {
 	_, _, f := buildTree(t, hfsplustest.Options{RawRecords: []hfsplustest.RawRecord{{Parent: 2, Name: units("dup"), Data: rec}}},
 		[]hfsplustest.File{{Path: "/a"}})
 	es := readDir(t, f, f.Root())
-	if len(es) != 2 || es[0].ID != es[1].ID {
-		t.Fatalf("entries = %v", nameList(es))
+	if len(es) != 2 || es[0].ID == es[1].ID || attrOf(es[1], "cnid_conflict") != "true" {
+		t.Fatalf("entries = %+v", es)
 	}
 	if !hasWarning(f.Info(), "more than once") {
 		t.Errorf("warnings = %q", f.Info().Warnings)

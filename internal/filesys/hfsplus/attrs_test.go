@@ -113,8 +113,6 @@ func TestCompressedFileUnsupportedNotEmpty(t *testing.T) {
 		// UF_COMPRESSED with an empty data fork: the content lives elsewhere.
 		{Path: "/lzvn", OwnerFlags: ufCompressed, Attrs: []hfsplustest.Attr{{Name: nameDecmpfs, Value: decmpfsValue(7, 1234, []byte("xxxx"))}}},
 		{Path: "/lzfse", OwnerFlags: ufCompressed, Attrs: []hfsplustest.Attr{{Name: nameDecmpfs, Value: decmpfsValue(11, 99, nil)}}},
-		// The attribute without the flag is compressed too.
-		{Path: "/noflag", Attrs: []hfsplustest.Attr{{Name: nameDecmpfs, Value: decmpfsValue(8, 777, nil)}}},
 		// The flag without any attribute.
 		{Path: "/flagonly", OwnerFlags: ufCompressed},
 		// An unreadable header: still compressed.
@@ -127,7 +125,7 @@ func TestCompressedFileUnsupportedNotEmpty(t *testing.T) {
 	for _, tc := range []struct {
 		name, typ string
 		size      int64
-	}{{"lzvn", "7", 1234}, {"lzfse", "11", 99}, {"noflag", "8", 777}} {
+	}{{"lzvn", "7", 1234}, {"lzfse", "11", 99}} {
 		e := child(t, root, tc.name)
 		if e.Size != tc.size || attrOf(e, "compressed") != tc.typ || attrOf(e, "decmpfs_type") != tc.typ || attrOf(e, "uncompressed_size") != strconv.FormatInt(tc.size, 10) {
 			t.Errorf("%s: size %d attrs %+v", tc.name, e.Size, e.Attrs)

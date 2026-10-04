@@ -106,6 +106,9 @@ func decodeLossy(u []uint16) string {
 // directory whose budget is spent before its first entry is a CorruptError.
 // The order is the catalog's.
 func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
+	if err := refuseConflictID(dir.ID); err != nil {
+		return nil, err
+	}
 	id, err := parseCNID(dir.ID)
 	if err != nil {
 		return nil, err
@@ -215,6 +218,9 @@ func (f *FS) Lookup(p string) (filesys.Entry, error) {
 		}
 		if cur.Type != filesys.TypeDir {
 			return filesys.Entry{}, fmt.Errorf("%w: %s", filesys.ErrNotFound, strconv.Quote(p[:min(len(p), 256)]))
+		}
+		if err := refuseConflictID(cur.ID); err != nil {
+			return filesys.Entry{}, err
 		}
 		parent, err := parseCNID(cur.ID)
 		if err != nil {

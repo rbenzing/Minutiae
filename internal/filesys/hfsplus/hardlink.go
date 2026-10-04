@@ -7,10 +7,10 @@ import (
 	"github.com/rbenzing/minutiae/internal/filesys"
 )
 
-// Hard links (TN1150 "Hard Links", from memory; the real fixtures hold none, so
-// this is covered by builder images only): a file record whose Finder fileType
-// is 'hlnk' and creator 'hfs+' is a link whose BSD "special" field is the inode
-// number N; the data is the file iNode<N> in the private metadata folder, a
+// Hard links (TN1150 "Hard Links", from memory; the populated real fixture holds
+// a three-link group and the builder images cover the damaged cases): a file
+// record whose Finder fileType is 'hlnk' and creator 'hfs+' is a link whose BSD
+// "special" field is the inode number N; the data is the file iNode<N> in the private metadata folder, a
 // child of the root named by four identical U+0000/U+2400/U+200B units and
 // "HFS+ Private Data". The iNode's own special field is the link count. A
 // directory hard link has fileType 'fldr' and creator 'MACS'.
