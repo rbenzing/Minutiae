@@ -365,6 +365,9 @@ func (s *Session) openFS(p volume.Partition) (filesys.FileSystem, error) {
 // detect.OpenWith): the later matching drivers are tried, the failure is kept
 // as a note ("driver X matched but failed to open: ...; opened as Y") and, when
 // no driver opens, the first failure is the result. Any other error is final.
+// When the driver that opened is not the only one whose Probe matches, the later
+// matching drivers are named in a note ("also matched by: fat (ambiguous
+// signatures)"), as detect.OpenWith does.
 // The notes are kept for Info.
 func (s *Session) openEntry(p volume.Partition) *fsEntry {
 	s.mu.Lock()
@@ -377,7 +380,9 @@ func (s *Session) openEntry(p volume.Partition) *fsEntry {
 	var firstFailed string // name of the first driver whose Open failed as corrupt
 	var firstErr error
 	var failed []string
-	for _, d := range s.drivers() {
+	drivers := s.drivers()
+	var also []string // later drivers that match the filesystem that opened
+	for i, d := range drivers {
 		one := []detect.Driver{d}
 		fsys, err := detect.OpenWith(one, r, p.Length)
 		var ce *filesys.CorruptError
@@ -398,6 +403,9 @@ func (s *Session) openEntry(p volume.Partition) *fsEntry {
 			continue
 		}
 		e.name, e.fs, e.err = d.Name, fsys, err
+		if err == nil {
+			also = detect.AlsoMatching(drivers[i+1:], r, p.Length)
+		}
 		break
 	}
 	if e.name == "" && firstErr != nil {
@@ -409,6 +417,9 @@ func (s *Session) openEntry(p volume.Partition) *fsEntry {
 			f += "; opened as " + e.name
 		}
 		e.notes = append(e.notes, f)
+	}
+	if note := detect.AmbiguityNote(also); note != "" && e.err == nil {
+		e.notes = append(e.notes, note)
 	}
 	switch {
 	case e.name == "":

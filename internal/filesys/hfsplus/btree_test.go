@@ -449,6 +449,13 @@ func TestBTreeHeaderHostile(t *testing.T) {
 			c.patch(img, lay)
 			cr := &countingReader{r: bytes.NewReader(img)}
 			f, err := hfsplus.Open(cr, int64(len(img)))
+			if strings.HasPrefix(c.name, "node 0 ") {
+				// A first node that is not a header node (kind, height, 3 records, no
+				// backward link) is caught by Open itself: the header points at something
+				// that is not a catalog, so detection can fall through to another driver.
+				wantCorrupt(t, err)
+				return
+			}
 			if err != nil {
 				t.Fatalf("Open: %v", err)
 			}
@@ -515,12 +522,40 @@ func TestStaleNodeSlackIsNotListed(t *testing.T) {
 }
 
 func TestTreeOpenFailureIsRepeatable(t *testing.T) {
+	// A header that passes Open (the first node is a header node) but whose
+	// tree header is bad: the failure is reported again, not cached as success.
 	img, lay := buildFiles(t, hfsplustest.Options{}, nil)
-	img[catOff(lay, 0, 8)] = 0xFF
+	putCat16(img, lay, 0, 14+18, 1000) // node size not a power of two
 	f := open(t, img)
 	for range 2 {
 		if _, err := f.Tree(hfsplus.TreeCatalog); !errors.Is(err, filesys.ErrCorrupt) {
 			t.Fatalf("Tree = %v", err)
 		}
+	}
+}
+
+// Open fails with a corrupt-structure error when the first node of the catalog
+// file is not a B-tree header node, so detect.OpenWith falls through to the next
+// matching driver; a catalog the image does not hold at all (a truncated image)
+// still opens, with a warning, so the allocation bitmap stays reachable.
+func TestOpenChecksTheCatalogHeaderNode(t *testing.T) {
+	img, lay := buildFiles(t, hfsplustest.Options{}, nil)
+	bad := bytes.Clone(img)
+	bad[catOff(lay, 0, 8)] = 0xFF
+	if _, err := hfsplus.Open(bytes.NewReader(bad), int64(len(bad))); err == nil || !errors.Is(err, filesys.ErrCorrupt) {
+		t.Fatalf("Open = %v, want a corrupt-structure error", err)
+	}
+	zero := bytes.Clone(img)
+	clear(zero[catOff(lay, 0, 0):catOff(lay, 0, 14)])
+	if _, err := hfsplus.Open(bytes.NewReader(zero), int64(len(zero))); !errors.Is(err, filesys.ErrCorrupt) {
+		t.Fatalf("Open with a zeroed descriptor = %v", err)
+	}
+	cut := img[:catOff(lay, 0, 0)+4]
+	f, err := hfsplus.Open(bytes.NewReader(cut), int64(len(cut)))
+	if err != nil {
+		t.Fatalf("Open of an image cut inside the catalog: %v", err)
+	}
+	if !hasWarning(f.Info(), "catalog B-tree header") {
+		t.Errorf("warnings = %q", f.Info().Warnings)
 	}
 }

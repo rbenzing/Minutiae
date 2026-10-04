@@ -26,7 +26,7 @@ var errFuzzBudget = errors.New("walk budget reached")
 // journal) and every real fixture cut after its last used byte.
 func FuzzHFSPlusOpen(f *testing.F) {
 	for _, b := range builderImages() {
-		f.Add(b.img)
+		f.Add(trimTail(b.img))
 	}
 	for _, name := range fixtureNames {
 		img, _ := loadFixture(f, name)
@@ -51,10 +51,13 @@ func FuzzHFSPlusOpen(f *testing.F) {
 				return nil
 			}
 			file, err := fsys.Open(e)
-			if err != nil || file.Size() > fuzzFileMax || readTotal >= fuzzReadBudget {
+			if err != nil {
 				return nil
 			}
-			checkFuzzRuns(t, e.Name, file, fsys.Info().Size)
+			checkFuzzRuns(t, e.Name, file, fsys.Info().Size) // metadata only: checked for files too big to read
+			if file.Size() > fuzzFileMax || readTotal >= fuzzReadBudget {
+				return nil
+			}
 			buf := make([]byte, min(file.Size(), fuzzReadChunk))
 			for off := int64(0); off < file.Size(); off += int64(len(buf)) {
 				n, rerr := file.ReadAt(buf, off)
@@ -104,12 +107,24 @@ func checkFuzzRuns(t testing.TB, name string, file filesys.File, fsSize int64) {
 	}
 }
 
-// trimTail cuts an image after its last non-zero byte plus a sector's worth of
-// slack: whatever follows is unused space. The reader clamps a volume that is
-// larger than its image (with a warning), so the cut image is still a valid
-// seed and the fuzz engine's throughput does not collapse on large inputs.
+// trimTail cuts an image after its last used block: the last non-zero byte
+// before the alternate volume header, plus a block of slack. The alternate
+// header (the last 1024 bytes of the volume, followed, in a wrapper, by the
+// wrapper's trailing blocks and alternate master directory block) is non-zero
+// and would keep every seed at full size, so it is found by its signature in
+// the last 64 KiB and cut away with whatever follows. The reader opens a
+// volume that is larger than its image from the primary header, clamped, with
+// a warning, so the cut image is still a valid seed (TestFuzzFixtureSeedsOpen),
+// and the fuzz engine's baseline pass does not spend its time on tens of
+// megabytes of zeros.
 func trimTail(img []byte) []byte {
 	end := len(img)
+	for p := max(len(img)-64<<10, 4096) &^ 511; p+4 <= len(img); p += 512 {
+		if (string(img[p:p+2]) == "H+" && img[p+2] == 0 && img[p+3] == 4) || (string(img[p:p+2]) == "HX" && img[p+2] == 0 && img[p+3] == 5) {
+			end = p
+			break
+		}
+	}
 	for end > 0 && img[end-1] == 0 {
 		end--
 	}
@@ -122,6 +137,10 @@ func TestFuzzFixtureSeedsOpen(t *testing.T) {
 	for _, name := range fixtureNames {
 		img, _ := loadFixture(t, name)
 		seed := trimTail(img)
+		if len(seed) >= len(img) {
+			t.Errorf("%s: the trimmed seed holds %d of %d bytes: trimTail trims nothing", name, len(seed), len(img))
+		}
+		t.Logf("%s: seed %d of %d bytes", name, len(seed), len(img))
 		fsys, err := hfsplus.Open(bytes.NewReader(seed), int64(len(seed)))
 		if err != nil {
 			t.Errorf("%s: %v", name, err)

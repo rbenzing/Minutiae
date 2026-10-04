@@ -112,6 +112,9 @@ func TestDriversClaimExactlyTheirOwnImages(t *testing.T) {
 			if got := fsys.Info().Type; got != tc.typ {
 				t.Errorf("Info().Type = %q, want %q", got, tc.typ)
 			}
+			if w := fsys.Info().Warnings; slices.ContainsFunc(w, func(s string) bool { return strings.Contains(s, "ambiguous signatures") }) {
+				t.Errorf("a clean image carries an ambiguity note: %q", w)
+			}
 		})
 	}
 }
@@ -287,105 +290,4 @@ func TestDetectOpensHFSPlus(t *testing.T) {
 			t.Errorf("%s image opened as %s", name, typ)
 		}
 	}
-}
-
-// A stale (or forged) HFS+ volume header planted where HFS+ keeps it (byte 1024
-// of the volume) inside a FAT or exFAT volume must not change which driver
-// claims the image or what it opens as. A FAT32 volume's reserved sector 2 and
-// an exFAT volume's extended boot sector 1 sit there; on FAT12/16 it is the
-// first FAT. A FAT-family boot sector at byte 0 is a stronger signature than
-// the header: HFS+ boot blocks never look like that. (ext4 and F2FS keep their
-// own superblock at byte 1024, so a header cannot coexist with one.)
-func TestStaleHFSPlusHeaderDoesNotHideFATFamily(t *testing.T) {
-	hfs := hfsplustest.Build(hfsplustest.Options{Label: "STALE"}, nil)
-	header := hfs[1024 : 1024+512]
-	for name, path := range map[string]string{
-		"fat12": "../fat/testdata/fat12.img.gz",
-		"fat16": "../fat/testdata/fat16.img.gz",
-		"fat32": "../fat/testdata/fat32.img.gz",
-		"exfat": "../exfat/testdata/exfat.img.gz",
-	} {
-		t.Run(name, func(t *testing.T) {
-			pristine := gunzipFixture(t, path)
-			wantName, ok := detect.Probe(bytes.NewReader(pristine), int64(len(pristine)))
-			if !ok || wantName == "hfsplus" {
-				t.Fatalf("pristine Probe = %q, %v", wantName, ok)
-			}
-			base, err := detect.Open(bytes.NewReader(pristine), int64(len(pristine)))
-			if err != nil {
-				t.Fatal(err)
-			}
-			wantType := base.Info().Type
-
-			img := bytes.Clone(pristine)
-			copy(img[1024:], header)
-			size := int64(len(img))
-			r := bytes.NewReader(img)
-			// Without the volume's own boot sector the planted header is a valid HFS+ volume.
-			bare := bytes.Clone(img)
-			clear(bare[:512])
-			if !hfsplusProbe(bytes.NewReader(bare), size) {
-				t.Fatal("the planted header is not seen by the hfsplus driver: the test plants nothing")
-			}
-			var claimed []string
-			for _, d := range detect.Drivers {
-				if d.Probe(r, size) && d.Name != "hfsplus" {
-					claimed = append(claimed, d.Name)
-				}
-			}
-			if !slices.Contains(claimed, wantName) {
-				t.Fatalf("the pristine driver %q no longer claims the image (%v)", wantName, claimed)
-			}
-			if got, ok := detect.Probe(r, size); !ok || got != wantName {
-				t.Errorf("Probe = %q, %v; want %q", got, ok, wantName)
-			}
-			fsys, err := detect.Open(r, size)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := fsys.Info().Type; got != wantType {
-				t.Errorf("Info().Type = %q, want %q", got, wantType)
-			}
-		})
-	}
-}
-
-// The reverse: a stale FAT-family boot sector left in the boot blocks of an
-// HFS+ volume (bytes 0-1023 are not part of the HFS+ structures) does not hide
-// the volume either.
-func TestStaleFATBootSectorDoesNotHideHFSPlus(t *testing.T) {
-	boot := gunzipFixture(t, "../fat/testdata/fat32.img.gz")[:512]
-	for name, o := range map[string]hfsplustest.Options{
-		"hfsplus": {Label: "H"},
-		"hfsx":    {Label: "H", HFSX: true, CaseSensitive: true},
-	} {
-		typ := name
-		t.Run(name, func(t *testing.T) {
-			img := hfsplustest.Build(o, nil)
-			copy(img, boot)
-			size := int64(len(img))
-			r := bytes.NewReader(img)
-			// The FAT driver also sees its stale boot sector, but the volume's own size
-			// (it is smaller than the FAT volume the stale sector declares) wins.
-			if got, ok := detect.Probe(r, size); !ok || got != "hfsplus" {
-				t.Fatalf("Probe = %q, %v; want hfsplus", got, ok)
-			}
-			fsys, err := detect.Open(r, size)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := fsys.Info().Type; got != typ {
-				t.Errorf("Info().Type = %q, want %q", got, typ)
-			}
-		})
-	}
-}
-
-func hfsplusProbe(r io.ReaderAt, size int64) bool {
-	for _, d := range detect.Drivers {
-		if d.Name == "hfsplus" {
-			return d.Probe(r, size)
-		}
-	}
-	return false
 }

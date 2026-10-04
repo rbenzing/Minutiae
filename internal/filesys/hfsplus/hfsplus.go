@@ -140,10 +140,15 @@ func be16(b []byte) uint16 { return uint16(b[0])<<8 | uint16(b[1]) }
 // Probe reports whether the image holds an HFS+ or HFSX volume: a volume
 // header at byte 1024, or an HFS wrapper whose embedded header, at the
 // embedded volume's byte 1024, passes the sanity checks of parseVolumeHeader
-// (matching signature and version, a block size that is a multiple of 512 up
-// to 1 GiB, at least one block, catalog ids from 16, and non-empty catalog and
-// allocation forks whose first extent lies inside the volume). It reads
-// nothing from an image shorter than 1536 bytes. Only the primary header is
+// (matching signature and version, a block size that is a power of two from 512
+// up to 1 GiB, at least one block, catalog ids from 16, and non-empty catalog
+// and allocation forks whose first extent lies inside the volume). It reads
+// nothing from an image shorter than 1536 bytes and depends on nothing else in
+// the image: it does not look at other filesystems' signatures (a stale FAT
+// boot sector in the boot blocks, or a stale HFS+ header in a FAT volume, is
+// settled by the probe order and by Open, which fails with a corrupt-structure
+// error when the catalog the header points at is not a B-tree; detect then
+// falls through to the next matching driver). Only the primary header is
 // consulted: a volume whose primary header is destroyed is not claimed (Open
 // can still read it from the alternate header).
 func Probe(r io.ReaderAt, size int64) bool {
@@ -155,39 +160,7 @@ func Probe(r io.ReaderAt, size int64) bool {
 		return false
 	}
 	vh, err := parseVolumeHeader(loc.pri[:])
-	if err != nil {
-		return false
-	}
-	if !loc.wrapped {
-		var boot [sectorSize]byte
-		if readFull(r, boot[:], 0) == nil && fatVolumeBytes(boot[:]) > vh.volumeBytes() && fatVolumeBytes(boot[:]) <= size {
-			return false // a stale header inside a larger FAT volume: the FAT boot sector wins
-		}
-	}
-	return true
-}
-
-// fatVolumeBytes is the volume size a FAT12/16/32 boot sector (the first 512
-// bytes of the image) declares, or 0 when the sector does not look like one: a
-// 0x55AA signature, a power-of-two sector size of 512 to 4096 and cluster size,
-// one or two FATs and a non-zero total sector count. HFS+ boot blocks never look
-// like this. (BPB offsets from the FAT specification as remembered: bytes per
-// sector @11, sectors per cluster @13, FATs @16, 16-bit total @19, 32-bit
-// total @32.)
-func fatVolumeBytes(b []byte) int64 {
-	if len(b) < sectorSize || b[510] != 0x55 || b[511] != 0xAA {
-		return 0
-	}
-	bps := int64(binary.LittleEndian.Uint16(b[11:]))
-	spc := int64(b[13])
-	if bps < 512 || bps > 4096 || bps&(bps-1) != 0 || spc == 0 || spc&(spc-1) != 0 || b[16] < 1 || b[16] > 2 {
-		return 0
-	}
-	total := int64(binary.LittleEndian.Uint16(b[19:]))
-	if total == 0 {
-		total = int64(binary.LittleEndian.Uint32(b[32:]))
-	}
-	return total * bps // <= 2^32 * 2^12: cannot overflow
+	return err == nil && vh.blockSize&(vh.blockSize-1) == 0
 }
 
 // Open parses the volume header (falling back to the alternate header when the
@@ -288,6 +261,9 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 	}
 	if vh.attributes&attrBootInconsistent != 0 {
 		f.warn("the volume is marked boot-volume inconsistent")
+	}
+	if err := f.checkCatalogHeader(); err != nil {
+		return nil, err
 	}
 	f.loadCaseMode()
 	f.loadJournal()
@@ -408,4 +384,29 @@ func (f *FS) Info() filesys.Info {
 		Features:  feats,
 		Warnings:  f.warnings.Snapshot(),
 	}
+}
+
+// checkCatalogHeader makes Open fail, with a *filesys.CorruptError, when the
+// catalog file the volume header points at is not a B-tree: its first node is
+// present but is not a header node (kind 1, height 0, 3 records, no backward link): a header that merely looks like HFS+, such as a stale
+// one in the reserved sector of a FAT volume, points into data that is not a
+// catalog. detect then falls through to the next matching driver. A catalog
+// whose first node the image does not hold (a truncated image) is not judged
+// here: the volume opens, loadCaseMode warns, and what the image still holds
+// (the allocation bitmap, for Unallocated) stays reachable. An I/O error is
+// returned as it is.
+func (f *FS) checkCatalogHeader() error {
+	e := f.vh.catalog.extents[0] // non-empty and inside the volume: checked by parseVolumeHeader
+	var b [btHeaderPrefixSize]byte
+	if err := readFull(f.r, b[:], int64(e.start)*int64(f.vh.blockSize)); err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil
+		}
+		return fmt.Errorf("hfsplus: read the catalog B-tree header: %w", err)
+	}
+	be := binary.BigEndian
+	if int8(b[offNodeKind]) != nodeKindHeader || b[9] != 0 || be.Uint16(b[10:]) != 3 || be.Uint32(b[4:]) != 0 {
+		return corrupt("catalog B-tree", int64(e.start)*int64(f.vh.blockSize), "the first node of the catalog file is not a B-tree header node (kind %d, height %d, %d records, backward link %d)", int8(b[offNodeKind]), b[9], be.Uint16(b[10:]), be.Uint32(b[4:]))
+	}
+	return nil
 }
