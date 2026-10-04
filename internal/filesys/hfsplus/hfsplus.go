@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
 )
@@ -33,6 +34,10 @@ type FS struct {
 	journal                  journalState
 
 	warnings filesys.Warnings
+
+	treeMu sync.Mutex
+	trees  [numTreeKinds]*btree // lazily opened B-trees, see tree
+	label  string               // the volume name, from the root folder thread
 }
 
 // readFull reads exactly len(p) bytes at off; a read that returns all the
@@ -61,10 +66,11 @@ func (f *FS) warn(format string, a ...any) { f.warnings.Add(format, a...) }
 // headers are. pri is the raw primary header; altPos is the absolute offset of
 // the alternate header, or -1 when it cannot be placed.
 type location struct {
-	base    int64
-	wrapped bool
-	pri     [vhSize]byte
-	altPos  int64
+	base      int64
+	truncated bool // the HFS wrapper's embedded extent ends beyond the image
+	wrapped   bool
+	pri       [vhSize]byte
+	altPos    int64
 }
 
 // locate finds the volume: directly (a header at byte 1024) or through an HFS
@@ -85,11 +91,15 @@ func locate(r io.ReaderAt, size int64) (*location, error) {
 		if err != nil {
 			return nil, err
 		}
-		loc.base, loc.wrapped = w.base, true
-		if err := readFull(r, loc.pri[:], w.base+vhOffset); err != nil { // w.base+1536 <= w.base+w.length <= size
+		loc.base, loc.wrapped, loc.truncated = w.base, true, w.truncated
+		if err := readFull(r, loc.pri[:], w.base+vhOffset); err != nil { // w.base+1536 <= size: checked by parseWrapper
 			return nil, fmt.Errorf("hfsplus: read embedded volume header: %w", err)
 		}
-		loc.altPos = w.base + w.length - altFromEnd
+		// The alternate header is 1024 bytes before the end of the embedded
+		// extent, when that lies after the primary header and inside the image.
+		if alt := w.base + w.length - altFromEnd; alt >= w.base+vhOffset+vhSize && alt+vhSize <= size {
+			loc.altPos = alt
+		}
 		return loc, nil
 	}
 	// The alternate header is 1024 bytes before the end of the volume; with
@@ -156,6 +166,9 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		warns = append(warns, fmt.Sprintf("primary volume header is unusable (%v); using the alternate volume header", perr))
 	}
 
+	if loc.truncated {
+		warns = append(warns, "the HFS wrapper's embedded extent ends beyond the image: truncated image")
+	}
 	declared := vh.volumeBytes()
 	volLen := declared
 	if avail := size - loc.base; avail < declared {
@@ -182,6 +195,7 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 	}
 	f.loadCaseMode()
 	f.loadJournal()
+	f.loadLabel()
 	if vh.attributes&attrJournaled == 0 && vh.attributes&attrUnmounted == 0 {
 		f.warn("the volume was not cleanly unmounted (the unmounted attribute is clear and there is no journal)")
 	}
@@ -214,25 +228,36 @@ const (
 	btHeaderPrefixSize = nodeDescSize + offBTKeyCompare + 1
 )
 
-// loadCaseMode reads the catalog B-tree header's keyCompareType: 0xBC (binary)
-// is a case-sensitive volume; 0xCF or 0 is case folding. The signature alone
+// loadCaseMode decides case sensitivity. An H+ volume is ALWAYS case-insensitive
+// (the HFS+ driver folds case whatever the catalog header says); only an HFSX
+// volume takes its mode from the catalog B-tree header's keyCompareType: 0xBC
+// (binary) is case-sensitive, 0xCF or 0 is case folding. The signature alone
 // does not decide it (an HFSX volume can fold case). The full B-tree layer
 // reads the same byte again; here it only has to name the volume's mode.
 func (f *FS) loadCaseMode() {
+	hfsx := f.vh.hfsx()
+	if !hfsx {
+		f.caseKnown = true // case-insensitive, whatever the header says
+	}
 	e := f.vh.catalog.extents[0] // non-empty and inside the volume: checked by parseVolumeHeader/checkGeometry
 	var b [btHeaderPrefixSize]byte
 	if err := readFull(f.r, b[:], int64(e.start)*int64(f.vh.blockSize)); err != nil {
-		f.warn("the catalog B-tree header cannot be read, so case sensitivity is unknown: %v", err)
+		f.warn("the catalog B-tree header cannot be read, so the key comparison mode is unknown: %v", err)
 		return
 	}
 	if int8(b[offNodeKind]) != nodeKindHeader {
-		f.warn("the catalog B-tree has no header node (node kind %d), so case sensitivity is unknown", int8(b[offNodeKind]))
+		f.warn("the catalog B-tree has no header node (node kind %d), so the key comparison mode is unknown", int8(b[offNodeKind]))
 		return
 	}
-	switch kc := b[nodeDescSize+offBTKeyCompare]; kc {
-	case keyCompareBinary:
+	kc := b[nodeDescSize+offBTKeyCompare]
+	switch {
+	case !hfsx:
+		if kc != keyCompareFolding && kc != 0 {
+			f.warn("the catalog B-tree of this HFS+ volume has keyCompareType %#02x; HFS+ is always case-insensitive and is read as such", kc)
+		}
+	case kc == keyCompareBinary:
 		f.caseSensitive, f.caseKnown = true, true
-	case keyCompareFolding, 0:
+	case kc == keyCompareFolding || kc == 0:
 		f.caseKnown = true
 	default:
 		f.warn("the catalog B-tree has unknown keyCompareType %#02x, so case sensitivity is unknown", kc)
@@ -272,6 +297,7 @@ func (f *FS) Info() filesys.Info {
 	}
 	return filesys.Info{
 		Type:      typ,
+		Label:     f.label,
 		UUID:      f.vh.uuid(),
 		BlockSize: int(f.vh.blockSize),
 		Size:      f.size,

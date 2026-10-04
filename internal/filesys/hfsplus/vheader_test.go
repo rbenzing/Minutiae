@@ -249,11 +249,27 @@ func TestOpenVolumeHeaderFields(t *testing.T) {
 			t.Errorf("Info = %+v", info)
 		}
 	})
-	t.Run("unknown keyCompareType", func(t *testing.T) {
-		img, lay := build(t, hfsplustest.Options{})
+	t.Run("unknown keyCompareType on hfsx", func(t *testing.T) {
+		img, lay := build(t, hfsplustest.Options{HFSX: true})
 		img[int64(lay.CatalogBlock)*int64(lay.BlockSize)+14+37] = 0x42
 		info := open(t, img).Info()
 		if len(info.Features) != 0 || !hasWarning(info, "keyCompareType") {
+			t.Errorf("Info = %+v", info)
+		}
+	})
+	t.Run("hfs+ with a binary keyCompareType is still case-insensitive", func(t *testing.T) {
+		img, lay := build(t, hfsplustest.Options{})
+		img[int64(lay.CatalogBlock)*int64(lay.BlockSize)+14+37] = 0xBC
+		info := open(t, img).Info()
+		if !slices.Equal(info.Features, []string{"case-insensitive"}) || !hasWarning(info, "keyCompareType") {
+			t.Errorf("Info = %+v", info)
+		}
+	})
+	t.Run("hfs+ with an unknown keyCompareType", func(t *testing.T) {
+		img, lay := build(t, hfsplustest.Options{})
+		img[int64(lay.CatalogBlock)*int64(lay.BlockSize)+14+37] = 0x42
+		info := open(t, img).Info()
+		if !slices.Equal(info.Features, []string{"case-insensitive"}) {
 			t.Errorf("Info = %+v", info)
 		}
 	})
@@ -410,9 +426,6 @@ func TestOpenHostileGeometry(t *testing.T) {
 		{"extents file inline extents exceed its blocks", hfsplustest.Options{}, both(ext(vExtents, 1, 20, 3))},
 		{"catalog inline extents exceed its blocks", hfsplustest.Options{}, both(ext(vCatalog, 1, 100, 100))},
 		{"attributes blocks without extents", hfsplustest.Options{}, both(func(v []byte) { be.PutUint32(v[vAttrs+fBlocks:], 5) })},
-		{"wrapper embed beyond the image", hfsplustest.Options{Wrapper: true}, func(img []byte, _ *hfsplustest.Layout) {
-			be.PutUint16(img[1024+128:], 0xFFFF)
-		}},
 		{"wrapper embed start beyond the image", hfsplustest.Options{Wrapper: true}, func(img []byte, _ *hfsplustest.Layout) {
 			be.PutUint16(img[1024+126:], 0xFFFF)
 		}},
@@ -465,11 +478,25 @@ func TestOpenHostileGeometry(t *testing.T) {
 			t.Errorf("Warnings = %q", f.Info().Warnings)
 		}
 	})
-	t.Run("truncated wrapped volume", func(t *testing.T) {
-		img, _ := build(t, hfsplustest.Options{Wrapper: true})
+	t.Run("truncated wrapped volume opens clamped with a warning", func(t *testing.T) {
+		img, lay := build(t, hfsplustest.Options{Wrapper: true})
 		img = img[:len(img)-8192]
-		_, err := hfsplus.Open(bytes.NewReader(img), int64(len(img)))
-		wantCorrupt(t, err) // the wrapper's embed extent no longer fits
+		f := open(t, img) // the embed extent no longer fits: truncated images are evidence
+		info := f.Info()
+		if !hasWarning(info, "truncated") || info.Size != int64(len(img)) {
+			t.Errorf("Size = %d (image %d), Warnings = %q", info.Size, len(img), info.Warnings)
+		}
+		if f.Base() != lay.Base {
+			t.Errorf("Base = %d, want %d", f.Base(), lay.Base)
+		}
+	})
+	t.Run("wrapper embed extent beyond the image opens clamped", func(t *testing.T) {
+		img, _ := build(t, hfsplustest.Options{Wrapper: true})
+		be.PutUint16(img[1024+128:], 0xFFFF) // an embed extent far longer than the image
+		f := open(t, img)
+		if info := f.Info(); !hasWarning(info, "truncated") {
+			t.Errorf("Warnings = %q", info.Warnings)
+		}
 	})
 }
 

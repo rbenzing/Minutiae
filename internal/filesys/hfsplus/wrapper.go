@@ -24,15 +24,18 @@ const (
 
 // wrapper is the place of an HFS+ volume embedded in a classic HFS volume.
 type wrapper struct {
-	base   int64 // byte offset of the embedded volume from the start of the image
-	length int64 // byte length of the embedded extent
+	base      int64 // byte offset of the embedded volume from the start of the image
+	length    int64 // byte length of the embedded extent (may reach past the image: see truncated)
+	truncated bool  // the embedded extent ends beyond the image
 }
 
 // parseWrapper decodes the MDB in b (the sector at volume byte 1024) of an
 // image of size bytes. A classic HFS volume with no embedded HFS+ volume is
 // filesys.ErrUnsupported. An embed that is arithmetically impossible, a
-// non-512-multiple HFS block size, or an embedded extent that does not fit
-// the image or cannot hold a volume header is a *filesys.CorruptError.
+// non-512-multiple HFS block size, or an embedded extent that cannot hold a
+// volume header (or whose start leaves no room for one in the image) is a
+// *filesys.CorruptError. An extent that merely ends beyond the image is
+// accepted and flagged truncated: the volume opens clamped, with a warning.
 func parseWrapper(b []byte, size int64) (*wrapper, error) {
 	if len(b) < mdbMinLen {
 		return nil, corrupt("HFS wrapper", vhOffset, "%d bytes is too small for a master directory block", len(b))
@@ -56,11 +59,20 @@ func parseWrapper(b []byte, size int64) (*wrapper, error) {
 		return nil, corrupt("HFS wrapper", vhOffset+offMDBEmbedStart, "embedded volume start overflows")
 	}
 	end, ok := filesys.AddOK(base, length)
-	if !ok || end > size {
-		return nil, corrupt("HFS wrapper", vhOffset+offMDBEmbedStart, "embedded volume at %d, %d bytes long, does not fit the %d-byte image", base, length, size)
+	if !ok {
+		return nil, corrupt("HFS wrapper", vhOffset+offMDBEmbedStart, "embedded volume at %d, %d bytes long overflows", base, length)
 	}
 	if length < minVolumeSize {
 		return nil, corrupt("HFS wrapper", vhOffset+offMDBEmbedCount, "embedded extent of %d bytes cannot hold a volume header", length)
 	}
-	return &wrapper{base: base, length: length}, nil
+	w := &wrapper{base: base, length: length}
+	if end > size {
+		// A truncated image is evidence: the volume opens clamped to what the
+		// image holds, with a warning. It must still hold the embedded header.
+		if base > size || size-base < minVolumeSize {
+			return nil, corrupt("HFS wrapper", vhOffset+offMDBEmbedStart, "embedded volume at %d leaves no room for a volume header in the %d-byte image", base, size)
+		}
+		w.truncated = true
+	}
+	return w, nil
 }

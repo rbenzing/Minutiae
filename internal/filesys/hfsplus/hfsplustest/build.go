@@ -7,23 +7,28 @@
 //
 // Everything is big-endian. Build lays out the volume in allocation blocks:
 // the boot area and the volume header (byte 1024), the allocation file (an
-// exact bitmap), the extents-overflow file (an empty B-tree), the catalog file
-// (a B-tree holding the root folder record and its thread), optionally the
-// journal info block and the journal, free space, and the block that holds the
-// alternate volume header (the last 1024 bytes of the volume). Options and
+// exact bitmap), the extents-overflow file (a B-tree, empty unless a fragmented
+// catalog or forged overflow records need it), the catalog file (a B-tree of
+// the root folder, the given files and folders, and their threads), optionally
+// the journal info block and the journal, free space, and the block that holds
+// the alternate volume header (the last 1024 bytes of the volume). Options and
 // File only ever gain fields, so existing callers keep working.
 //
-// Layout choices that come from memory of Apple TN1150 and are to be checked
-// against real mkfs.hfsplus images: the root folder is not counted in the
-// header's folderCount; the allocation file's logical size is a whole number
-// of blocks, its padding bits (past totalBlocks) are set; the alternate
-// header's block is allocated; a plain HFS+ catalog has keyCompareType 0 (case
-// folding) while a case-insensitive HFSX catalog has 0xCF.
+// Layout choices that were checked against real mkfs.hfsplus images (see
+// tools/fixtures): the root folder is not counted in the header's folderCount;
+// every folder and file has a thread; the catalog keyCompareType is 0xCF for
+// H+ and case-insensitive HFSX, 0xBC for case-sensitive HFSX. Layout choices
+// from memory of Apple TN1150: the allocation file's logical size is a whole
+// number of blocks and its padding bits (past totalBlocks) are set; the
+// alternate header's block is allocated.
 package hfsplustest
 
 import (
 	"encoding/binary"
 	"fmt"
+	"path"
+	"sort"
+	"strings"
 	"unicode/utf16"
 )
 
@@ -39,12 +44,26 @@ const hfsEpoch = 2082844800
 // writes (HFS+ seconds): 2023-11-14 22:13:20 UTC.
 const fixedDate = hfsEpoch + 1700000000
 
-// File describes one file or directory to place in the image. Task 1 builds
-// only the root folder; later tasks give this type its fields' meaning.
+// File describes one file or directory to place in the image. Parents must
+// precede their children; CNIDs are assigned from 16 in order. Files have no
+// content yet (Data must be empty): later tasks give this type more fields.
 type File struct {
 	Path string // "/a/b.txt"
 	Data []byte
 	Dir  bool
+}
+
+// Extent is a run of allocation blocks.
+type Extent struct{ Start, Count uint32 }
+
+// OverflowRecord is a record written verbatim into the extents-overflow tree,
+// so tests can forge overflow structures (zero-block records, repeats,
+// overshoots). The extents are zero-padded to eight.
+type OverflowRecord struct {
+	FileID     uint32
+	Resource   bool
+	StartBlock uint32
+	Extents    []Extent
 }
 
 // Options selects the features and geometry of the image.
@@ -66,6 +85,16 @@ type Options struct {
 	NotUnmounted        bool // clear the unmounted attribute bit
 	PrimaryBad          bool // corrupt the primary volume header (the alternate must win)
 	ImageExtra          int  // extra bytes after the volume end
+
+	// CatalogFragment, when non-zero, splits the catalog file into extents of
+	// this many blocks with one free block between them; extents past the
+	// eighth are described by records of the extents-overflow tree.
+	CatalogFragment uint32
+	// StaleSlack leaves a fully valid-looking catalog record in the free space
+	// of every leaf node, past its record count (bytes of a removed record).
+	StaleSlack bool
+	// OverflowRecords are added to the extents-overflow tree as given.
+	OverflowRecords []OverflowRecord
 }
 
 // Layout reports where Build put things, so tests can patch or read them.
@@ -81,12 +110,46 @@ type Layout struct {
 
 	AllocBlock, AllocBlocks     uint32 // allocation file
 	ExtentsBlock, ExtentsBlocks uint32 // extents-overflow file
-	CatalogBlock, CatalogBlocks uint32 // catalog file
+	CatalogBlock, CatalogBlocks uint32 // catalog file (CatalogBlock is its first extent's start)
 	NodeSize, ExtentsNodeSize   uint32
+
+	CatalogExtents []Extent // every extent of the catalog file, in order
+	// Node counts and tree shape. Levels[0] holds the leaf node numbers, the
+	// last level the root.
+	CatalogNodes, ExtentsNodes uint32
+	CatalogDepth               int
+	CatalogRoot                uint32
+	CatalogLevels              [][]uint32
+	ExtentsDepth               int
+	ExtentsRoot                uint32
+	ExtentsLevels              [][]uint32
+	CNIDs                      map[string]uint32 // path -> catalog node id
 
 	JournalInfoBlock uint32 // 0 when not journaled
 	JournalOffset    int64  // volume offset of the journal (the journal header)
 	JournalBytes     int64
+}
+
+// CatalogOffset maps a byte offset in the catalog file to an image offset,
+// following the catalog's extents.
+func (l *Layout) CatalogOffset(forkOff int64) int64 {
+	return forkOffset(l.CatalogExtents, int64(l.BlockSize), l.Base, forkOff)
+}
+
+// ExtentsOffset maps a byte offset in the extents-overflow file to an image offset.
+func (l *Layout) ExtentsOffset(forkOff int64) int64 {
+	return forkOffset([]Extent{{l.ExtentsBlock, l.ExtentsBlocks}}, int64(l.BlockSize), l.Base, forkOff)
+}
+
+func forkOffset(exts []Extent, bs, base, off int64) int64 {
+	for _, e := range exts {
+		n := int64(e.Count) * bs
+		if off < n {
+			return base + int64(e.Start)*bs + off
+		}
+		off -= n
+	}
+	panic("hfsplustest: fork offset beyond the fork")
 }
 
 const (
@@ -97,26 +160,73 @@ const (
 	journalBlks = 8   // blocks reserved for the journal buffer
 )
 
-type forkSpec struct {
-	logical    uint64
-	clump      uint32
-	totalBlks  uint32
-	start, cnt uint32
-}
-
-// Build returns an image holding one HFS+/HFSX volume with only the root
-// folder. files must be empty until a later task teaches the builder to place
-// content; it panics rather than silently dropping a file.
+// Build returns an image holding one HFS+/HFSX volume with the given files.
 func Build(o Options, files []File) []byte {
 	img, _ := BuildLayout(o, files)
 	return img
 }
 
+// extentsRecords converts the catalog's extents past the eighth, and the
+// forged records, to extents-overflow records, sorted by key.
+func extentsRecords(catExts []Extent, forged []OverflowRecord) []rec {
+	type item struct {
+		fileID uint32
+		fork   byte
+		start  uint32
+		exts   []Extent
+	}
+	var items []item
+	var covered uint32
+	for _, e := range catExts[:min(8, len(catExts))] {
+		covered += e.Count
+	}
+	if len(catExts) > 8 {
+		for rest := catExts[8:]; len(rest) > 0; {
+			n := min(8, len(rest))
+			items = append(items, item{4, 0, covered, rest[:n]})
+			for _, e := range rest[:n] {
+				covered += e.Count
+			}
+			rest = rest[n:]
+		}
+	}
+	for _, f := range forged {
+		fk := byte(0)
+		if f.Resource {
+			fk = 0xFF
+		}
+		items = append(items, item{f.FileID, fk, f.StartBlock, f.Extents})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		a, b := items[i], items[j]
+		if a.fileID != b.fileID {
+			return a.fileID < b.fileID
+		}
+		if a.fork != b.fork {
+			return a.fork < b.fork
+		}
+		return a.start < b.start
+	})
+	be := binary.BigEndian
+	out := make([]rec, len(items))
+	for i, it := range items {
+		key := make([]byte, 12)
+		be.PutUint16(key[0:], 10)
+		key[2] = it.fork
+		be.PutUint32(key[4:], it.fileID)
+		be.PutUint32(key[8:], it.start)
+		data := make([]byte, 64)
+		for k, e := range it.exts {
+			be.PutUint32(data[8*k:], e.Start)
+			be.PutUint32(data[8*k+4:], e.Count)
+		}
+		out[i] = rec{key: key, data: data}
+	}
+	return out
+}
+
 // BuildLayout is Build plus the Layout of the result.
 func BuildLayout(o Options, files []File) ([]byte, *Layout) {
-	if len(files) > 0 {
-		panic("hfsplustest: files are not supported yet")
-	}
 	if o.BlockSize == 0 {
 		o.BlockSize = 4096
 	}
@@ -135,21 +245,75 @@ func BuildLayout(o Options, files []File) ([]byte, *Layout) {
 	bs, total := int(o.BlockSize), int(o.Blocks)
 	ceil := func(n, d int) int { return (n + d - 1) / d }
 
+	compare := byte(0xCF)
+	if o.HFSX && o.CaseSensitive {
+		compare = 0xBC
+	}
+
+	// Trees. The catalog first: its size fixes the number of its extents,
+	// which fixes the extents-overflow records.
+	recs, counts, cnids := catalogRecords(o, files)
+	sortCatalog(recs, compare == 0xBC)
+	var stale []byte
+	if o.StaleSlack {
+		stale = staleRecord()
+	}
+	cat := buildTree(treeSpec{
+		nodeSize: int(o.NodeSize), blockSize: bs, recs: recs,
+		maxKey: 516, keyCompare: compare, attrs: 2 | 4, // kBTBigKeysMask | kBTVariableIndexKeysMask
+		stale: stale,
+	})
+	catBytes := len(cat.data)
+	catBlocks := catBytes / bs
+	nFrags := 1
+	if o.CatalogFragment > 0 {
+		nFrags = ceil(catBlocks, int(o.CatalogFragment))
+	}
+	extSpec := func(catExts []Extent) *builtTree {
+		return buildTree(treeSpec{
+			nodeSize: int(o.ExtentsNodeSize), blockSize: bs, recs: extentsRecords(catExts, o.OverflowRecords),
+			maxKey: 10, attrs: 2, // kBTBigKeysMask
+		})
+	}
+	extBytes := len(extSpec(make([]Extent, nFrags)).data)
+	extBlocks := extBytes / bs
+
 	// Block layout.
+	inUse := make([]bool, total)
+	mark := func(start, n int) {
+		for i := start; i < start+n; i++ {
+			inUse[i] = true
+		}
+	}
 	cur := ceil(vhOffset+vhSize, bs) // boot area and volume header
+	mark(0, cur)
 	allocBlocks := ceil(ceil(total, 8), bs)
 	allocBlock := cur
+	mark(cur, allocBlocks)
 	cur += allocBlocks
-	extBytes := ceil(int(o.ExtentsNodeSize), bs) * bs
-	extBlocks, extBlock := extBytes/bs, cur
+	extBlock := cur
+	mark(cur, extBlocks)
 	cur += extBlocks
-	catBytes := ceil(2*int(o.NodeSize), bs) * bs
-	catBlocks, catBlock := catBytes/bs, cur
-	cur += catBlocks
+	var catExts []Extent
+	if o.CatalogFragment == 0 {
+		catExts = []Extent{{uint32(cur), uint32(catBlocks)}}
+		mark(cur, catBlocks)
+		cur += catBlocks
+	} else {
+		for left := catBlocks; left > 0; {
+			n := min(left, int(o.CatalogFragment))
+			catExts = append(catExts, Extent{uint32(cur), uint32(n)})
+			mark(cur, n)
+			cur += n + 1 // one free block between fragments
+			left -= n
+		}
+	}
+	catBlock := int(catExts[0].Start)
 	var jibBlock, jrnlBlock int
 	if o.Journaled {
 		jibBlock = cur
 		jrnlBlock = cur + 1
+		mark(cur, 1+journalBlks)
 		cur += 1 + journalBlks
 	}
 	altBlocks := ceil(1024, bs)
@@ -157,7 +321,14 @@ func BuildLayout(o Options, files []File) ([]byte, *Layout) {
 	if cur > altStart {
 		panic(fmt.Sprintf("hfsplustest: %d blocks of %d bytes are too few for the metadata", total, bs))
 	}
-	used := cur + altBlocks
+	mark(altStart, altBlocks)
+	used := 0
+	for _, u := range inUse {
+		if u {
+			used++
+		}
+	}
+	ext := extSpec(catExts)
 
 	vol := make([]byte, total*bs)
 	be := binary.BigEndian
@@ -165,35 +336,20 @@ func BuildLayout(o Options, files []File) ([]byte, *Layout) {
 	// Allocation file: an exact bitmap, MSB first; padding bits are set.
 	bitmap := vol[allocBlock*bs : (allocBlock+allocBlocks)*bs]
 	for n := 0; n < len(bitmap)*8; n++ {
-		inUse := n >= total || n < cur || n >= altStart
-		if inUse {
+		if n >= total || inUse[n] {
 			bitmap[n/8] |= 0x80 >> (n % 8)
 		}
 	}
-
-	// Extents-overflow file: a header node and nothing else.
-	extNodes := extBytes / int(o.ExtentsNodeSize)
-	copy(vol[extBlock*bs:], headerNode(int(o.ExtentsNodeSize), bthdr{
-		maxKeyLength: 10, totalNodes: uint32(extNodes), freeNodes: uint32(extNodes - 1),
-		clumpSize: uint32(extBytes), attrs: 2, // kBTBigKeysMask
-	}, 1))
-
-	// Catalog file: header node, one leaf holding the root folder and its thread.
-	catNodes := catBytes / int(o.NodeSize)
-	compare := byte(0)
-	if o.HFSX {
-		compare = 0xCF
-		if o.CaseSensitive {
-			compare = 0xBC
+	copy(vol[extBlock*bs:], ext.data)
+	// The catalog, written across its extents.
+	{
+		data := cat.data
+		for _, e := range catExts {
+			n := int(e.Count) * bs
+			copy(vol[int(e.Start)*bs:], data[:n])
+			data = data[n:]
 		}
 	}
-	cat := vol[catBlock*bs:]
-	copy(cat, headerNode(int(o.NodeSize), bthdr{
-		depth: 1, root: 1, leafRecords: 2, firstLeaf: 1, lastLeaf: 1,
-		maxKeyLength: 516, totalNodes: uint32(catNodes), freeNodes: uint32(catNodes - 2),
-		clumpSize: uint32(catBytes), keyCompare: compare, attrs: 2 | 4, // kBTBigKeysMask | kBTVariableIndexKeysMask
-	}, 2))
-	copy(cat[int(o.NodeSize):], rootLeaf(int(o.NodeSize), o.Label))
 
 	// Journal.
 	lay := &Layout{
@@ -202,6 +358,11 @@ func BuildLayout(o Options, files []File) ([]byte, *Layout) {
 		ExtentsBlock: uint32(extBlock), ExtentsBlocks: uint32(extBlocks),
 		CatalogBlock: uint32(catBlock), CatalogBlocks: uint32(catBlocks),
 		NodeSize: uint32(o.NodeSize), ExtentsNodeSize: uint32(o.ExtentsNodeSize),
+		CatalogExtents: catExts,
+		CatalogNodes:   uint32(cat.totalNodes), ExtentsNodes: uint32(ext.totalNodes),
+		CatalogDepth: cat.depth, CatalogRoot: cat.root, CatalogLevels: cat.levels,
+		ExtentsDepth: ext.depth, ExtentsRoot: ext.root, ExtentsLevels: ext.levels,
+		CNIDs: cnids,
 	}
 	if o.Journaled {
 		jBytes := journalBlks * bs
@@ -254,21 +415,21 @@ func BuildLayout(o Options, files []File) ([]byte, *Layout) {
 	for _, off := range []int{16, 20, 28} { // create, modify, checked
 		be.PutUint32(vh[off:], fixedDate)
 	}
-	be.PutUint32(vh[32:], 0)                     // fileCount
-	be.PutUint32(vh[36:], 0)                     // folderCount (the root folder is not counted)
+	be.PutUint32(vh[32:], counts.files)          // fileCount
+	be.PutUint32(vh[36:], counts.folders)        // folderCount (the root folder is not counted)
 	be.PutUint32(vh[40:], o.BlockSize)           // blockSize
 	be.PutUint32(vh[44:], o.Blocks)              // totalBlocks
 	be.PutUint32(vh[48:], uint32(total-used))    // freeBlocks
 	be.PutUint32(vh[52:], uint32(cur))           // nextAllocation
 	be.PutUint32(vh[56:], 65536)                 // rsrcClumpSize
 	be.PutUint32(vh[60:], 65536)                 // dataClumpSize
-	be.PutUint32(vh[64:], 16)                    // nextCatalogID
+	be.PutUint32(vh[64:], counts.nextCNID)       // nextCatalogID
 	be.PutUint32(vh[68:], 1)                     // writeCount
 	be.PutUint64(vh[72:], 1)                     // encodingsBitmap: MacRoman
 	be.PutUint64(vh[80+24:], 0x0123456789ABCDEF) // finderInfo words 6 and 7: the volume id
-	putFork(vh[112:], forkSpec{uint64(allocBlocks * bs), uint32(allocBlocks * bs), uint32(allocBlocks), uint32(allocBlock), uint32(allocBlocks)})
-	putFork(vh[192:], forkSpec{uint64(extBytes), uint32(extBytes), uint32(extBlocks), uint32(extBlock), uint32(extBlocks)})
-	putFork(vh[272:], forkSpec{uint64(catBytes), uint32(catBytes), uint32(catBlocks), uint32(catBlock), uint32(catBlocks)})
+	putFork(vh[112:], uint64(allocBlocks*bs), uint32(allocBlocks*bs), uint32(allocBlocks), []Extent{{uint32(allocBlock), uint32(allocBlocks)}})
+	putFork(vh[192:], uint64(extBytes), uint32(extBytes), uint32(extBlocks), []Extent{{uint32(extBlock), uint32(extBlocks)}})
+	putFork(vh[272:], uint64(catBytes), uint32(catBytes), uint32(catBlocks), catExts)
 	// attributes and startup files: empty forks.
 	copy(vol[vhOffset:], vh)
 	copy(vol[total*bs-1024:], vh)
@@ -284,6 +445,137 @@ func BuildLayout(o Options, files []File) ([]byte, *Layout) {
 		return img, lay
 	}
 	return wrap(o, vol, lay)
+}
+
+// counters are the header counts the catalog implies.
+type counters struct{ files, folders, nextCNID uint32 }
+
+const (
+	catRecFolder = 1
+	catRecFile   = 2
+	catThreadDir = 3
+	catThreadFil = 4
+)
+
+// catalogRecords builds the catalog's leaf records: the root folder, every file
+// and folder with its thread. CNIDs run from 16 in file order.
+func catalogRecords(o Options, files []File) ([]rec, counters, map[string]uint32) {
+	cnids := map[string]uint32{"/": 2}
+	dirs := map[string]bool{"/": true}
+	valence := map[uint32]uint32{}
+	type item struct {
+		cnid, parent uint32
+		name         string
+		dir          bool
+	}
+	var items []item
+	var c counters
+	next := uint32(16)
+	for _, f := range files {
+		if len(f.Data) > 0 {
+			panic("hfsplustest: file content is not supported yet")
+		}
+		p := path.Clean(f.Path)
+		if !strings.HasPrefix(p, "/") || p == "/" {
+			panic("hfsplustest: bad path " + f.Path)
+		}
+		parent, ok := cnids[path.Dir(p)]
+		if !ok || !dirs[path.Dir(p)] {
+			panic("hfsplustest: parent of " + f.Path + " is missing or not a directory")
+		}
+		cnid := next
+		next++
+		cnids[p] = cnid
+		if f.Dir {
+			dirs[p] = true
+			c.folders++
+		} else {
+			c.files++
+		}
+		valence[parent]++
+		items = append(items, item{cnid, parent, path.Base(p), f.Dir})
+	}
+	c.nextCNID = next
+
+	var recs []rec
+	add := func(parent uint32, name string, data []byte) {
+		u := unitsOf(name)
+		recs = append(recs, rec{key: catalogKey(parent, name), data: data, parent: parent, name: u})
+	}
+	add(1, o.Label, folderRecord(2, valence[2], 0o40755))
+	add(2, "", threadRecord(catThreadDir, 1, o.Label))
+	for _, it := range items {
+		if it.dir {
+			add(it.parent, it.name, folderRecord(it.cnid, valence[it.cnid], 0o40755))
+			add(it.cnid, "", threadRecord(catThreadDir, it.parent, it.name))
+		} else {
+			add(it.parent, it.name, fileRecord(it.cnid, 0o100644))
+			add(it.cnid, "", threadRecord(catThreadFil, it.parent, it.name))
+		}
+	}
+	return recs, c, cnids
+}
+
+// folderRecord is an 88-byte HFSPlusCatalogFolder.
+func folderRecord(id, valence uint32, mode uint16) []byte {
+	be := binary.BigEndian
+	b := make([]byte, 88)
+	be.PutUint16(b[0:], catRecFolder)
+	be.PutUint16(b[2:], 2) // flags: thread exists
+	be.PutUint32(b[4:], valence)
+	be.PutUint32(b[8:], id)
+	for _, off := range []int{12, 16, 20, 24} { // create, contentMod, attributeMod, access
+		be.PutUint32(b[off:], fixedDate)
+	}
+	be.PutUint16(b[42:], mode) // BSD fileMode
+	return b
+}
+
+// fileRecord is a 248-byte HFSPlusCatalogFile with empty forks.
+func fileRecord(id uint32, mode uint16) []byte {
+	be := binary.BigEndian
+	b := make([]byte, 248)
+	be.PutUint16(b[0:], catRecFile)
+	be.PutUint16(b[2:], 2) // flags: thread exists
+	be.PutUint32(b[8:], id)
+	for _, off := range []int{12, 16, 20, 24} {
+		be.PutUint32(b[off:], fixedDate)
+	}
+	be.PutUint16(b[42:], mode)
+	return b
+}
+
+// threadRecord is a folder or file thread: type, reserved, parent, name.
+func threadRecord(typ uint16, parent uint32, name string) []byte {
+	be := binary.BigEndian
+	units, nb := utf16be(name)
+	b := make([]byte, 10+len(nb))
+	be.PutUint16(b[0:], typ)
+	be.PutUint32(b[4:], parent)
+	be.PutUint16(b[8:], uint16(units))
+	copy(b[10:], nb)
+	return b
+}
+
+// staleRecord is a complete, valid catalog leaf record (a file named
+// "stale.txt" in the root folder, CNID 4242) as left behind in node slack.
+func staleRecord() []byte {
+	return rec{key: catalogKey(2, "stale.txt"), data: fileRecord(4242, 0o100644)}.bytes()
+}
+
+// putFork writes an HFSPlusForkData with up to eight inline extents.
+func putFork(b []byte, logical uint64, clump, totalBlks uint32, exts []Extent) {
+	be := binary.BigEndian
+	be.PutUint64(b[0:], logical)
+	be.PutUint32(b[8:], clump)
+	be.PutUint32(b[12:], totalBlks)
+	for i, e := range exts {
+		if i == 8 {
+			break
+		}
+		be.PutUint32(b[16+8*i:], e.Start)
+		be.PutUint32(b[20+8*i:], e.Count)
+	}
 }
 
 // wrap embeds vol at WrapperBase in a classic HFS volume whose master
@@ -322,16 +614,6 @@ func sigOf(o Options) uint16 {
 		return 0x4858
 	}
 	return 0x482B
-}
-
-// putFork writes an HFSPlusForkData with one extent.
-func putFork(b []byte, f forkSpec) {
-	be := binary.BigEndian
-	be.PutUint64(b[0:], f.logical)
-	be.PutUint32(b[8:], f.clump)
-	be.PutUint32(b[12:], f.totalBlks)
-	be.PutUint32(b[16:], f.start)
-	be.PutUint32(b[20:], f.cnt)
 }
 
 // bthdr is a B-tree header record.
@@ -405,45 +687,4 @@ func catalogKey(parent uint32, name string) []byte {
 	binary.BigEndian.PutUint16(k[6:], uint16(units))
 	copy(k[8:], nb)
 	return k
-}
-
-// rootLeaf builds the catalog's only leaf node: the root folder record keyed
-// (1, label) and its thread keyed (2, "").
-func rootLeaf(nodeSize int, label string) []byte {
-	be := binary.BigEndian
-	folder := make([]byte, 88)
-	be.PutUint16(folder[0:], 1)                 // recordType: folder
-	be.PutUint16(folder[2:], 2)                 // flags: thread exists
-	be.PutUint32(folder[4:], 0)                 // valence
-	be.PutUint32(folder[8:], 2)                 // folderID
-	for _, off := range []int{12, 16, 20, 24} { // create, contentMod, attributeMod, access
-		be.PutUint32(folder[off:], fixedDate)
-	}
-	be.PutUint16(folder[42:], 0o40755) // BSD fileMode: directory rwxr-xr-x
-	units, nb := utf16be(label)
-	thread := make([]byte, 10+len(nb))
-	be.PutUint16(thread[0:], 3) // recordType: folder thread
-	be.PutUint32(thread[4:], 1) // parentID
-	be.PutUint16(thread[8:], uint16(units))
-	copy(thread[10:], nb)
-
-	recs := [][]byte{
-		append(catalogKey(1, label), folder...),
-		append(catalogKey(2, ""), thread...),
-	}
-	n := make([]byte, nodeSize)
-	n[8] = 0xFF // kind: leaf (-1)
-	n[9] = 1    // height
-	be.PutUint16(n[10:], uint16(len(recs)))
-	off := 14
-	for i, r := range recs {
-		if len(r)%2 != 0 {
-			panic("hfsplustest: odd record length")
-		}
-		be.PutUint16(n[nodeSize-2*(i+1):], uint16(off))
-		copy(n[off:], r)
-		off += len(r)
-	}
-	be.PutUint16(n[nodeSize-2*(len(recs)+1):], uint16(off))
-	return n
 }
