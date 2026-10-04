@@ -75,11 +75,8 @@ func writeSpaceman(b []byte, o Options, xid uint64) {
 	le.PutUint64(b[56:], (uint64(o.Blocks)+bpc-1)/bpc) // sm_dev[0].sm_chunk_count
 }
 
-// writeOmap writes the omap_phys_t of the container object map (no tree yet:
-// the B-tree task adds it).
-func writeOmap(b []byte, addr, xid uint64) {
-	putObjHeader(b, addr, xid, flagPhysical|typeOmap, 0)
-	le.PutUint32(b[32:], 1)              // om_flags: MANUALLY_MANAGED
-	le.PutUint32(b[40:], flagPhysical|2) // om_tree_type: physical B-tree
-	le.PutUint32(b[44:], flagPhysical|2) // om_snapshot_tree_type
+// writeOmap writes the omap_phys_t of the container object map; its tree is
+// packed by Build.
+func writeOmap(b []byte, addr, xid, treeOid, snapTreeOid uint64, snapCount int) {
+	OmapPhys(b, addr, xid, 1 /* MANUALLY_MANAGED */, uint32(snapCount), treeOid, snapTreeOid)
 }

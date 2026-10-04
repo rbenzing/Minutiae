@@ -1,6 +1,9 @@
 package apfs
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // Test-only accessors, so the external apfs_test package can check internals
 // without widening the public API.
@@ -81,3 +84,122 @@ var ChecksumOK = checksumOK
 
 // MaxDescBlocks is the cap on the checkpoint descriptor and data areas.
 const MaxDescBlocks = maxAreaBlocks
+
+// OmapEntry is one record of an object map tree.
+type OmapEntry struct {
+	Oid, Xid uint64
+	Flags    uint32
+	Size     uint32
+	Paddr    uint64
+}
+
+// OmapSnapshot is one record of an object map's snapshot tree.
+type OmapSnapshot struct {
+	Xid   uint64
+	Flags uint32
+	Oid   uint64
+}
+
+// omapAt opens the object map at block paddr; 0 means the container's own.
+func (f *FS) omapAt(paddr uint64) (*omapView, error) {
+	if paddr == 0 {
+		return f.cmap, nil
+	}
+	return f.openOmap(paddr)
+}
+
+// OmapEntries returns every record of the object map at paddr (0: the
+// container's), in tree order.
+func (f *FS) OmapEntries(paddr uint64) ([]OmapEntry, error) {
+	o, err := f.omapAt(paddr)
+	if err != nil {
+		return nil, err
+	}
+	var out []OmapEntry
+	err = o.tree.scan(nil, func(k, v []byte) (bool, error) {
+		if len(k) != 16 || len(v) != 16 {
+			return false, fmt.Errorf("omap record %d/%d bytes", len(k), len(v))
+		}
+		out = append(out, OmapEntry{
+			Oid: le.Uint64(k), Xid: le.Uint64(k[8:]),
+			Flags: le.Uint32(v), Size: le.Uint32(v[4:]), Paddr: le.Uint64(v[8:]),
+		})
+		return false, nil
+	})
+	return out, err
+}
+
+// OmapLookup is the object map lookup at block paddr (0: the container's).
+func (f *FS) OmapLookup(paddr, oid, xid uint64) (uint64, uint32, uint32, error) {
+	o, err := f.omapAt(paddr)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	return o.lookup(oid, xid)
+}
+
+// OmapSnapshots lists the snapshot tree of the object map at paddr (0: the
+// container's).
+func (f *FS) OmapSnapshots(paddr uint64) ([]OmapSnapshot, error) {
+	o, err := f.omapAt(paddr)
+	if err != nil {
+		return nil, err
+	}
+	snaps, err := o.snapshots()
+	var out []OmapSnapshot
+	for _, s := range snaps {
+		out = append(out, OmapSnapshot{Xid: s.xid, Flags: s.flags, Oid: s.oid})
+	}
+	return out, err
+}
+
+// OpenOmapErr opens the object map at paddr and returns only the error.
+func (f *FS) OpenOmapErr(paddr uint64) error {
+	_, err := f.openOmap(paddr)
+	return err
+}
+
+// TreeRec is one scanned record (copied).
+type TreeRec struct{ Key, Val []byte }
+
+// ScanTree opens the tree rooted at rootOid with tree type typ (storage bits
+// decide physical or virtual) and scans it. A virtual tree is resolved through
+// the container object map when useOmap is set, else through none. prefix nil
+// visits everything; limit > 0 stops after that many records.
+func (f *FS) ScanTree(rootOid uint64, typ uint32, useOmap bool, prefix func(key []byte) int, limit int) ([]TreeRec, error) {
+	var o *omapView
+	if useOmap {
+		o = f.cmap
+	}
+	t, err := f.openTree(rootOid, typ, o)
+	if err != nil {
+		return nil, err
+	}
+	var out []TreeRec
+	err = t.scan(prefix, func(k, v []byte) (bool, error) {
+		out = append(out, TreeRec{Key: append([]byte(nil), k...), Val: append([]byte(nil), v...)})
+		return limit > 0 && len(out) >= limit, nil
+	})
+	return out, err
+}
+
+// ScanVolumeTree is ScanTree through the object map at block omapPaddr.
+func (f *FS) ScanVolumeTree(omapPaddr, rootOid uint64, typ uint32) ([]TreeRec, error) {
+	o, err := f.openOmap(omapPaddr)
+	if err != nil {
+		return nil, err
+	}
+	t, err := f.openTree(rootOid, typ, o)
+	if err != nil {
+		return nil, err
+	}
+	var out []TreeRec
+	err = t.scan(nil, func(k, v []byte) (bool, error) {
+		out = append(out, TreeRec{Key: append([]byte(nil), k...), Val: append([]byte(nil), v...)})
+		return false, nil
+	})
+	return out, err
+}
+
+// SetNodeBudget sets the per-scan node budget.
+func (f *FS) SetNodeBudget(n int) { f.nodeBudget = n }

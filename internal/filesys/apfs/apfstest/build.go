@@ -22,6 +22,13 @@ type Options struct {
 	CryptoSW    bool
 	Volumes     []Volume // Task 3/4; empty in this task
 
+	// Omap holds the records of the container object map tree; OmapMaxKeys
+	// limits the records per node (0: as many as fit) to force a multi-level
+	// tree; OmapSnaps are the records of its snapshot tree (none: no tree).
+	Omap        []OmapEntry
+	OmapMaxKeys int
+	OmapSnaps   []OmapSnap
+
 	// MapBlocks is the number of checkpoint-map blocks written before each
 	// superblock (default 1). RingStart is the ring index where the OLDEST
 	// checkpoint starts; later ones follow it, wrapping at the end of the ring.
@@ -75,6 +82,11 @@ type Geo struct {
 	DataBase, DataCount uint64
 	SpacemanOid         uint64
 	Omap                uint64 // container object map (omap_phys_t)
+	// OmapNodes are the blocks of the object map tree, root first; OmapSnapNodes
+	// those of its snapshot tree (empty when there are no snapshots). Free is
+	// the first block after them: tests may place their own objects from there.
+	OmapNodes, OmapSnapNodes []uint64
+	Free                     uint64
 	// Checkpoints lists the checkpoints newest first.
 	Checkpoints []Checkpoint
 }
@@ -104,6 +116,17 @@ func Geometry(o Options) Geo {
 	g.Omap = g.DataBase + g.DataCount
 	if g.Omap >= uint64(o.Blocks) {
 		panic("apfstest: container too small for its areas")
+	}
+	tree, snap := o.omapBlocks(g.Omap + 1)
+	for _, b := range tree {
+		g.OmapNodes = append(g.OmapNodes, b.Addr)
+	}
+	for _, b := range snap {
+		g.OmapSnapNodes = append(g.OmapSnapNodes, b.Addr)
+	}
+	g.Free = g.Omap + 1 + uint64(len(tree)+len(snap))
+	if g.Free >= uint64(o.Blocks) {
+		panic("apfstest: container too small for its object map")
 	}
 	g.Checkpoints = make([]Checkpoint, o.Checkpoints)
 	for t := range o.Checkpoints { // t = 0 is the oldest
@@ -152,8 +175,36 @@ func Build(o Options) []byte {
 	}
 	oldest := g.Checkpoints[len(g.Checkpoints)-1]
 	om := blk(g.Omap)
-	writeOmap(om, g.Omap, oldest.Xid)
+	tree, snap := o.omapBlocks(g.Omap + 1)
+	var snapRoot uint64
+	if len(snap) > 0 {
+		snapRoot = snap[0].Addr
+	}
+	writeOmap(om, g.Omap, oldest.Xid, tree[0].Addr, snapRoot, len(o.OmapSnaps))
 	sealBlock(om)
+	Place(img, bs, tree)
+	Place(img, bs, snap)
 	copy(blk(0), blk(oldest.Super))
 	return img
+}
+
+// omapBlocks packs the container object map tree and its snapshot tree, the
+// first node at block first.
+func (o Options) omapBlocks(first uint64) (tree, snap []Block) {
+	next := first
+	alloc := func() (uint64, uint64) {
+		a := next
+		next++
+		return a, a
+	}
+	xid := o.Xid - uint64(o.Checkpoints-1) // the oldest checkpoint's xid, like the omap block
+	tree = PackTree(OmapTreeSpec(o.BlockSize, xid, o.OmapMaxKeys), OmapRecs(o.Omap, o.BlockSize), alloc)
+	if len(o.OmapSnaps) > 0 {
+		spec := TreeSpec{
+			BlockSize: o.BlockSize, Fixed: true, KeySize: 8, ValSize: 16,
+			BTFlags: 0x10, Storage: StoragePhysical, Xid: xid, MaxKeys: o.OmapMaxKeys,
+		}
+		snap = PackTree(spec, snapRecs(o.OmapSnaps), alloc)
+	}
+	return tree, snap
 }

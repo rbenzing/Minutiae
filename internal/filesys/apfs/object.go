@@ -108,12 +108,11 @@ func isShort(err error) bool {
 	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
-// readObject reads the object of size bytes at block paddr, verifies its
-// Fletcher-64 and, unless want is anyType, its type. size must be a positive
-// multiple of the block size inside the container. A checksum mismatch is a
-// *checksumError; a wrong type or bad bounds a *filesys.CorruptError; read
+// readObjectRaw reads the object of size bytes at block paddr without
+// verifying its checksum or type. size must be a positive multiple of the
+// block size inside the container (else a *filesys.CorruptError); read
 // failures are returned wrapped as they are (a short read matches isShort).
-func (f *FS) readObject(paddr uint64, size int, want uint32) ([]byte, objHeader, error) {
+func (f *FS) readObjectRaw(paddr uint64, size int) ([]byte, objHeader, error) {
 	if size <= 0 || size > maxObjectBytes || size%f.bs != 0 {
 		return nil, objHeader{}, corrupt("object", -1, "object at block %d has unusable size %d (block size %d)", paddr, size, f.bs)
 	}
@@ -126,12 +125,23 @@ func (f *FS) readObject(paddr uint64, size int, want uint32) ([]byte, objHeader,
 	if err := readFull(f.r, buf, off); err != nil {
 		return nil, objHeader{}, fmt.Errorf("apfs: read object at block %d: %w", paddr, err)
 	}
+	return buf, parseHeader(buf), nil
+}
+
+// readObject reads the object of size bytes at block paddr, verifies its
+// Fletcher-64 and, unless want is anyType, its type. A checksum mismatch is a
+// *checksumError; a wrong type or bad bounds a *filesys.CorruptError; read
+// failures are returned wrapped as they are (a short read matches isShort).
+func (f *FS) readObject(paddr uint64, size int, want uint32) ([]byte, objHeader, error) {
+	buf, h, err := f.readObjectRaw(paddr, size)
+	if err != nil {
+		return nil, objHeader{}, err
+	}
 	if !checksumOK(buf) {
 		return nil, objHeader{}, &checksumError{paddr: paddr}
 	}
-	h := parseHeader(buf)
 	if want != anyType && h.kind() != want {
-		return nil, objHeader{}, corrupt("object", off, "object at block %d has type %#x, want %#x", paddr, h.kind(), want)
+		return nil, objHeader{}, corrupt("object", int64(paddr)*int64(f.bs), "object at block %d has type %#x, want %#x", paddr, h.kind(), want)
 	}
 	return buf, h, nil
 }

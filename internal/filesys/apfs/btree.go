@@ -1,0 +1,446 @@
+package apfs
+
+import (
+	"errors"
+	"fmt"
+
+	"github.com/rbenzing/minutiae/internal/filesys"
+)
+
+// B-tree layout (Apple File System Reference; the Format reference of the
+// project plan). A node is one block: the 32-byte object header, a 24-byte
+// btree_node_phys_t header (btn_data starts at 56), the table of contents, the
+// key area, free space and the value area, which ends at the end of the block
+// (or before the 40-byte btree_info_t of a root node).
+const (
+	typeBTree     = 0x2 // BTREE: a root node
+	typeBTreeNode = 0x3 // BTREE_NODE: any other node
+
+	// Storage bits of an object type or tree type.
+	storageMask      = 0xc0000000
+	storagePhysical  = 0x40000000
+	storageEphemeral = 0x80000000
+
+	btnRoot    = 0x1
+	btnLeaf    = 0x2
+	btnFixedKV = 0x4
+	btnNoHdr   = 0x10 // BTNODE_NOHEADER
+
+	btnDataOff    = 56 // btn_data
+	btreeInfoSize = 40 // btree_info_t, last bytes of a root node
+
+	// btOffInvalid is v.off of a ghost entry (BTOFF_INVALID).
+	btOffInvalid = 0xFFFF
+
+	btHashed = 0x80 // bt_flags HASHED: index values carry a hash after the oid
+
+	hashedChildHashLen = 32
+
+	// maxBTreeDepth bounds the levels of a tree (and so the recursion).
+	maxBTreeDepth = 16
+	// maxNodeBudget bounds the nodes one scan reads; the effective budget is
+	// also capped by the container's block count.
+	maxNodeBudget = 1 << 20
+
+	// minKeyLen: every key of every APFS tree starts with an 8-byte id.
+	minKeyLen = 8
+)
+
+// btreeInfo is btree_info_t, the last 40 bytes of a root node.
+type btreeInfo struct {
+	flags      uint32
+	nodeSize   uint32
+	keySize    uint32 // 0 for variable-size keys
+	valSize    uint32 // 0 for variable-size values
+	longestKey uint32
+	longestVal uint32
+	keyCount   uint64
+	nodeCount  uint64
+}
+
+// rootKind says how a tree's node oids are resolved.
+type rootKind int
+
+const (
+	kindPhysical rootKind = iota // oids are block addresses
+	kindVirtual                  // oids go through an object map
+)
+
+// tree is an opened B-tree.
+type tree struct {
+	f        *FS
+	root     uint64 // root oid as given
+	rootAddr uint64 // block of the root node
+	info     btreeInfo
+	kind     rootKind
+	omap     *omapView // resolves virtual oids; nil for a physical tree
+}
+
+// btRec is one live record of a node; key and val alias the node's own buffer.
+type btRec struct {
+	key, val []byte
+}
+
+// btNode is a validated node.
+type btNode struct {
+	addr  uint64
+	level uint16
+	recs  []btRec // live records (ghosts removed), in node order
+}
+
+// openTree opens the tree rooted at rootOid; typ is the tree-type field that
+// names it (om_tree_type, apfs_root_tree_type, ...): its storage bits say
+// whether rootOid is a block address (physical) or a virtual oid resolved
+// through o. It reads and validates the root node. A tree of ephemeral objects
+// is unsupported.
+func (f *FS) openTree(rootOid uint64, typ uint32, o *omapView) (*tree, error) {
+	if typ&typeMask != typeBTree {
+		return nil, corrupt("B-tree", -1, "tree type %#x is not a B-tree", typ)
+	}
+	t := &tree{f: f, root: rootOid, omap: o}
+	switch typ & storageMask {
+	case storagePhysical:
+		t.kind = kindPhysical
+	case 0:
+		if o == nil {
+			return nil, corrupt("B-tree", -1, "virtual tree %d has no object map to resolve it", rootOid)
+		}
+		t.kind = kindVirtual
+	case storageEphemeral:
+		return nil, unsupported("B-tree of ephemeral objects")
+	default:
+		return nil, corrupt("B-tree", -1, "tree type %#x has conflicting storage bits", typ)
+	}
+	addr, err := t.addrOf(rootOid)
+	if err != nil {
+		return nil, err
+	}
+	t.rootAddr = addr
+	buf, err := f.readNodeBlock(addr, true)
+	if err != nil {
+		return nil, err
+	}
+	if buf[32]&btnRoot == 0 { // btn_flags low byte
+		return nil, corrupt("B-tree", int64(addr)*int64(f.bs), "block %d: the root of a tree is not flagged ROOT", addr)
+	}
+	info := btreeInfo{
+		flags:      le.Uint32(buf[len(buf)-btreeInfoSize:]),
+		nodeSize:   le.Uint32(buf[len(buf)-btreeInfoSize+4:]),
+		keySize:    le.Uint32(buf[len(buf)-btreeInfoSize+8:]),
+		valSize:    le.Uint32(buf[len(buf)-btreeInfoSize+12:]),
+		longestKey: le.Uint32(buf[len(buf)-btreeInfoSize+16:]),
+		longestVal: le.Uint32(buf[len(buf)-btreeInfoSize+20:]),
+		keyCount:   le.Uint64(buf[len(buf)-btreeInfoSize+24:]),
+		nodeCount:  le.Uint64(buf[len(buf)-btreeInfoSize+32:]),
+	}
+	if int64(info.nodeSize) != int64(f.bs) {
+		// Larger nodes exist in theory [unverified]; only block-sized ones are read.
+		return nil, unsupported("B-tree node size %d differs from the block size %d", info.nodeSize, f.bs)
+	}
+	if int64(info.keySize) > int64(f.bs) || int64(info.valSize) > int64(f.bs) {
+		return nil, corrupt("B-tree", int64(addr)*int64(f.bs), "block %d: fixed key/value sizes %d/%d exceed a node", addr, info.keySize, info.valSize)
+	}
+	t.info = info
+	if _, err := t.parseNode(buf, addr, true); err != nil { // validate the root now
+		return nil, err
+	}
+	return t, nil
+}
+
+// addrOf maps a node oid to its block address: itself for a physical tree, the
+// object map's answer for a virtual one.
+func (t *tree) addrOf(oid uint64) (uint64, error) {
+	if t.kind == kindPhysical {
+		return oid, nil
+	}
+	paddr, size, flags, err := t.omap.resolve(oid)
+	if err != nil {
+		if errors.Is(err, filesys.ErrNotFound) {
+			return 0, corrupt("B-tree", -1, "virtual node oid %d is not in the object map", oid)
+		}
+		return 0, err
+	}
+	if flags&omapValEncrypted != 0 {
+		return 0, fmt.Errorf("apfs: %w: B-tree node oid %d is encrypted", filesys.ErrEncrypted, oid)
+	}
+	if flags&omapValNoHeader != 0 {
+		return 0, unsupported("B-tree node oid %d is stored without an object header", oid)
+	}
+	if int64(size) != int64(t.f.bs) {
+		return 0, corrupt("B-tree", -1, "virtual node oid %d maps %d bytes, want one %d-byte node", oid, size, t.f.bs)
+	}
+	return paddr, nil
+}
+
+// readNodeBlock reads one node block, checks its object header type (BTREE for
+// a root, BTREE_NODE otherwise) and reports a checksum mismatch as a warning:
+// the node is still parsed, with every bound checked.
+func (f *FS) readNodeBlock(addr uint64, root bool) ([]byte, error) {
+	buf, h, err := f.readObjectRaw(addr, f.bs)
+	if err != nil {
+		return nil, err
+	}
+	if !checksumOK(buf) {
+		f.warn("B-tree node at block %d has a bad checksum; it is read with every bound checked", addr)
+	}
+	want := uint32(typeBTreeNode)
+	if root {
+		want = typeBTree
+	}
+	if h.kind() != want {
+		return nil, corrupt("B-tree node", int64(addr)*int64(f.bs), "block %d has object type %#x, want %#x", addr, h.kind(), want)
+	}
+	return buf, nil
+}
+
+// parseNode validates a node and decodes its records. Every table-of-contents
+// entry is checked against the node before any key or value is sliced out.
+func (t *tree) parseNode(buf []byte, addr uint64, root bool) (*btNode, error) {
+	bs := len(buf)
+	off := int64(addr) * int64(t.f.bs)
+	bad := func(format string, a ...any) error {
+		return corrupt("B-tree node", off, "block %d: %s", addr, fmt.Sprintf(format, a...))
+	}
+	flags := le.Uint16(buf[32:])
+	level := le.Uint16(buf[34:])
+	nkeys := uint64(le.Uint32(buf[36:]))
+	tsOff := int(le.Uint16(buf[40:]))
+	tsLen := int(le.Uint16(buf[42:]))
+
+	if flags&btnNoHdr != 0 {
+		return nil, unsupported("B-tree node at block %d has no object header", addr)
+	}
+	if (flags&btnRoot != 0) != root {
+		return nil, bad("ROOT flag %v on a %s node", flags&btnRoot != 0, map[bool]string{true: "root", false: "non-root"}[root])
+	}
+	if (flags&btnLeaf != 0) != (level == 0) {
+		return nil, bad("leaf flag %v with level %d", flags&btnLeaf != 0, level)
+	}
+	if level >= maxBTreeDepth {
+		return nil, bad("level %d exceeds the depth cap of %d", level, maxBTreeDepth)
+	}
+	fixed := flags&btnFixedKV != 0
+	entry := 8
+	if fixed {
+		entry = 4
+	}
+	valEnd := bs
+	if root {
+		valEnd -= btreeInfoSize
+	}
+	tocStart := btnDataOff + tsOff
+	keyStart := tocStart + tsLen // the key area starts after the table
+	if keyStart > valEnd {
+		return nil, bad("table of contents [%d, +%d) does not fit the node", tocStart, tsLen)
+	}
+	if tsLen%4 != 0 {
+		return nil, bad("table space length %d is not a multiple of 4", tsLen)
+	}
+	if nkeys*uint64(entry) > uint64(tsLen) {
+		return nil, bad("%d entries of %d bytes do not fit a table space of %d", nkeys, entry, tsLen)
+	}
+	leaf := level == 0
+	areaLen := valEnd - keyStart // keys grow up from keyStart, values down from valEnd
+
+	n := &btNode{addr: addr, level: level, recs: make([]btRec, 0, nkeys)}
+	for i := range int(nkeys) {
+		e := buf[tocStart+i*entry:]
+		var kOff, kLen, vOff, vLen int
+		if fixed {
+			kOff, vOff = int(le.Uint16(e)), int(le.Uint16(e[2:]))
+			switch {
+			case t.info.keySize > 0:
+				kLen = int(t.info.keySize)
+			case !leaf:
+				kLen = minKeyLen // an index key is only read for its 8-byte id
+			default:
+				return nil, bad("fixed-size leaf entry in a tree without a fixed key size")
+			}
+			switch {
+			case !leaf && t.info.flags&btHashed != 0:
+				vLen = 8 + hashedChildHashLen
+			case !leaf:
+				vLen = 8
+			case t.info.valSize > 0:
+				vLen = int(t.info.valSize)
+			default:
+				return nil, bad("fixed-size leaf entry in a tree without a fixed value size")
+			}
+		} else {
+			kOff, kLen = int(le.Uint16(e)), int(le.Uint16(e[2:]))
+			vOff, vLen = int(le.Uint16(e[4:])), int(le.Uint16(e[6:]))
+		}
+		if vOff == btOffInvalid { // a ghost: no value
+			if !leaf {
+				t.f.warn("B-tree index node at block %d has a ghost entry: skipped", addr)
+			}
+			continue
+		}
+		if kLen < minKeyLen {
+			return nil, bad("entry %d: key of %d bytes is shorter than an object id", i, kLen)
+		}
+		if kOff > areaLen || kLen > areaLen-kOff {
+			return nil, bad("entry %d: key [%d, +%d) is outside the key area of %d bytes", i, kOff, kLen, areaLen)
+		}
+		if vOff > areaLen {
+			return nil, bad("entry %d: value offset %d is beyond the value area of %d bytes", i, vOff, areaLen)
+		}
+		if vLen > vOff {
+			return nil, bad("entry %d: value of %d bytes at offset %d runs past the end of the node", i, vLen, vOff)
+		}
+		if !leaf && vLen < 8 {
+			return nil, bad("entry %d: index value of %d bytes cannot hold a child oid", i, vLen)
+		}
+		kStart := keyStart + kOff
+		vStart := valEnd - vOff
+		if kStart+kLen > vStart {
+			return nil, bad("entry %d: key [%d, +%d) overlaps its value at %d", i, kStart, kLen, vStart)
+		}
+		n.recs = append(n.recs, btRec{key: buf[kStart : kStart+kLen : kStart+kLen], val: buf[vStart : vStart+vLen : vStart+vLen]})
+	}
+	return n, nil
+}
+
+// scanner is the state of one scan.
+type scanner struct {
+	t       *tree
+	prefix  func(key []byte) int
+	visit   func(key, val []byte) (stop bool, err error)
+	visited map[uint64]struct{}
+	budget  int
+	inRange bool // a record of the range was seen
+	stop    bool
+}
+
+// scan visits, in key order, the leaf records for which prefix returns 0.
+// prefix classifies a key against the wanted range: negative when the key sorts
+// before it, zero inside it, positive after it; it must be monotonic in key
+// order and must tolerate keys of any length of at least 8 bytes. A nil prefix
+// visits every record. The seek is the one of the Format reference: in an index
+// node descend into the last child whose key sorts before the range (else the
+// first), then continue forward and stop at the first key after the range.
+// Records that sort before the range after one inside it end the scan with a
+// warning (the tree is out of order).
+//
+// key and val alias the node buffer and must not be modified. visit returns
+// stop to end the scan early. Structural problems are *filesys.CorruptError:
+// depth over 16, a node reached twice (a cycle or a shared child), more nodes
+// than the budget, a child level that is not the parent's minus one.
+func (t *tree) scan(prefix func(key []byte) int, visit func(key, val []byte) (stop bool, err error)) error {
+	s := &scanner{
+		t: t, prefix: prefix, visit: visit,
+		visited: map[uint64]struct{}{t.rootAddr: {}},
+		budget:  t.f.nodeBudget - 1, // the root
+	}
+	buf, err := t.f.readNodeBlock(t.rootAddr, true)
+	if err != nil {
+		return err
+	}
+	root, err := t.parseNode(buf, t.rootAddr, true)
+	if err != nil {
+		return err
+	}
+	return s.walk(root, 1, true)
+}
+
+func (s *scanner) cmp(key []byte) int {
+	if s.prefix == nil {
+		return 0
+	}
+	return s.prefix(key)
+}
+
+func (s *scanner) walk(n *btNode, depth int, seeking bool) error {
+	if depth > maxBTreeDepth {
+		return corrupt("B-tree", int64(n.addr)*int64(s.t.f.bs), "tree deeper than %d levels", maxBTreeDepth)
+	}
+	if n.level == 0 {
+		return s.leaf(n)
+	}
+	if len(n.recs) == 0 {
+		return corrupt("B-tree node", int64(n.addr)*int64(s.t.f.bs), "block %d: index node without children", n.addr)
+	}
+	start := 0
+	if seeking {
+		for i, r := range n.recs {
+			if s.cmp(r.key) >= 0 {
+				break
+			}
+			start = i
+		}
+	}
+	for i := start; i < len(n.recs); i++ {
+		if (!seeking || i != start) && s.cmp(n.recs[i].key) > 0 {
+			s.stop = true // this child and all after it are beyond the range
+			return nil
+		}
+		child, err := s.load(n, n.recs[i].val)
+		if err != nil {
+			return err
+		}
+		if err := s.walk(child, depth+1, seeking && i == start); err != nil {
+			return err
+		}
+		if s.stop {
+			return nil
+		}
+	}
+	return nil
+}
+
+// load reads the child an index value points to.
+func (s *scanner) load(parent *btNode, val []byte) (*btNode, error) {
+	t := s.t
+	oid := le.Uint64(val)
+	addr, err := t.addrOf(oid)
+	if err != nil {
+		return nil, err
+	}
+	if _, dup := s.visited[addr]; dup {
+		return nil, corrupt("B-tree", int64(addr)*int64(t.f.bs), "node at block %d is reached twice (a cycle or a shared child)", addr)
+	}
+	if s.budget <= 0 {
+		return nil, corrupt("B-tree", -1, "tree has more than %d nodes", t.f.nodeBudget)
+	}
+	s.budget--
+	s.visited[addr] = struct{}{}
+	buf, err := t.f.readNodeBlock(addr, false)
+	if err != nil {
+		return nil, err
+	}
+	child, err := t.parseNode(buf, addr, false)
+	if err != nil {
+		return nil, err
+	}
+	if child.level != parent.level-1 {
+		return nil, corrupt("B-tree node", int64(addr)*int64(t.f.bs), "block %d: level %d under a level %d node", addr, child.level, parent.level)
+	}
+	return child, nil
+}
+
+func (s *scanner) leaf(n *btNode) error {
+	for _, r := range n.recs {
+		switch c := s.cmp(r.key); {
+		case c > 0:
+			s.stop = true
+			return nil
+		case c < 0:
+			if s.inRange {
+				s.t.f.warn("B-tree node at block %d is out of key order: scan stopped", n.addr)
+				s.stop = true
+				return nil
+			}
+		default:
+			s.inRange = true
+			stop, err := s.visit(r.key, r.val)
+			if err != nil {
+				return err
+			}
+			if stop {
+				s.stop = true
+				return nil
+			}
+		}
+	}
+	return nil
+}

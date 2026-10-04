@@ -675,7 +675,7 @@ func TestFusionAndVersion1AreUnsupported(t *testing.T) {
 
 func TestTruncatedImageIsAWarning(t *testing.T) {
 	im := newImage(t, apfstest.Options{})
-	keep := int(im.g.Omap+1) * im.bs
+	keep := int(im.g.Free) * im.bs // through the object map tree
 	im.b = im.b[:keep]
 	f := im.mustOpen()
 	in := f.Info()

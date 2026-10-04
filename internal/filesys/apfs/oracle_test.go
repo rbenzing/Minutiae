@@ -6,12 +6,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/filesys/apfs"
 )
 
@@ -46,6 +48,18 @@ type orcRingEntry struct {
 	Mappings []orcMapping `json:"mappings"`
 }
 
+// orcOmap is an object map as the independent decoder read it.
+type orcOmap struct {
+	Block   uint64 `json:"block"`
+	Entries []struct {
+		Oid   uint64 `json:"oid"`
+		Xid   uint64 `json:"xid"`
+		Flags uint32 `json:"flags"`
+		Size  uint32 `json:"size"`
+		Paddr uint64 `json:"paddr"`
+	} `json:"entries"`
+}
+
 type orcExpect struct {
 	Container struct {
 		BlockSize    uint32   `json:"block_size"`
@@ -72,6 +86,30 @@ type orcExpect struct {
 		Data      orcArea        `json:"data"`
 		Ring      []orcRingEntry `json:"ring"`
 	} `json:"checkpoint"`
+	ContainerOmap orcOmap `json:"container_omap"`
+	VolumeOmap    orcOmap `json:"volume_omap"`
+	Volume        struct {
+		Oid          uint64 `json:"oid"`
+		Block        uint64 `json:"block"`
+		OmapOid      uint64 `json:"omap_oid"`
+		RootTreeOid  uint64 `json:"root_tree_oid"`
+		RootTreeType uint32 `json:"root_tree_type"`
+	} `json:"volume"`
+	FsTree struct {
+		RootOid   uint64 `json:"root_oid"`
+		RootBlock uint64 `json:"root_block"`
+		Info      struct {
+			Flags     uint32 `json:"bt_flags"`
+			KeyCount  uint64 `json:"bt_key_count"`
+			NodeCount uint64 `json:"bt_node_count"`
+		} `json:"btree_info"`
+		Records []struct {
+			ID          uint64 `json:"id"`
+			Type        uint64 `json:"type"`
+			KeyLength   int    `json:"key_length"`
+			ValueLength int    `json:"value_length"`
+		} `json:"records"`
+	} `json:"fs_tree"`
 	Verified  []uint64 `json:"verified_object_blocks"`
 	Generator struct {
 		ImageSHA256 string `json:"image_sha256"`
@@ -128,6 +166,83 @@ func TestAPFSMatchesOracle(t *testing.T) {
 			})
 		}
 	})
+	t.Run("omap", func(t *testing.T) {
+		for _, name := range orcFixtures {
+			t.Run(name, func(t *testing.T) {
+				orcSkipShort(t, name)
+				img, exp := orcLoad(t, name)
+				orcCheckOmaps(t, img, exp)
+			})
+		}
+	})
+}
+
+// orcCheckOmaps compares the container and volume object maps and the volume's
+// file-system tree with the oracle: the records of the real B-trees, the
+// lookup of the volume superblock's oid, and a walk of the virtual fs tree
+// root through the volume omap.
+func orcCheckOmaps(t *testing.T, img []byte, exp *orcExpect) {
+	t.Helper()
+	f, err := apfs.Open(bytes.NewReader(img), int64(len(img)))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	for _, tc := range []struct {
+		name  string
+		paddr uint64 // 0: the container's
+		want  orcOmap
+	}{
+		{"container omap", 0, exp.ContainerOmap},
+		{"volume omap", exp.Volume.OmapOid, exp.VolumeOmap},
+	} {
+		got, err := f.OmapEntries(tc.paddr)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if len(tc.want.Entries) == 0 || len(got) != len(tc.want.Entries) {
+			t.Fatalf("%s: %d entries, oracle %d", tc.name, len(got), len(tc.want.Entries))
+		}
+		for i, w := range tc.want.Entries {
+			g := got[i]
+			if g.Oid != w.Oid || g.Xid != w.Xid || g.Flags != w.Flags || g.Size != w.Size || g.Paddr != w.Paddr {
+				t.Errorf("%s entry %d = %+v, oracle %+v", tc.name, i, g, w)
+			}
+			// Every entry resolves through the lookup too (and not below its xid).
+			p, size, flags, err := f.OmapLookup(tc.paddr, w.Oid, w.Xid)
+			if err != nil || p != w.Paddr || size != w.Size || flags != w.Flags {
+				t.Errorf("%s lookup(%d, %d) = %d/%d/%d, %v; oracle %+v", tc.name, w.Oid, w.Xid, p, size, flags, err, w)
+			}
+			if _, _, _, err := f.OmapLookup(tc.paddr, w.Oid, w.Xid-1); !errors.Is(err, filesys.ErrNotFound) {
+				t.Errorf("%s lookup(%d, %d) below the entry's xid: %v, want ErrNotFound", tc.name, w.Oid, w.Xid-1, err)
+			}
+		}
+		if snaps, err := f.OmapSnapshots(tc.paddr); err != nil || len(snaps) != 0 {
+			t.Errorf("%s snapshots = %v, %v; an empty container has none", tc.name, snaps, err)
+		}
+	}
+	// The volume superblock is virtual: the container omap finds it.
+	paddr, size, _, err := f.OmapLookup(0, exp.Volume.Oid, f.NX().Xid)
+	if err != nil || paddr != exp.Volume.Block || int(size) != f.Info().BlockSize {
+		t.Errorf("volume superblock oid %d -> %d/%d, %v; oracle block %d", exp.Volume.Oid, paddr, size, err, exp.Volume.Block)
+	}
+
+	// The fs tree: virtual root, one leaf, through the volume omap.
+	recs, err := f.ScanVolumeTree(exp.Volume.OmapOid, exp.Volume.RootTreeOid, exp.Volume.RootTreeType)
+	if err != nil {
+		t.Fatalf("fs tree: %v", err)
+	}
+	if want := exp.FsTree.Records; len(recs) != len(want) || uint64(len(recs)) != exp.FsTree.Info.KeyCount {
+		t.Fatalf("fs tree has %d records, oracle %d (bt_key_count %d)", len(recs), len(want), exp.FsTree.Info.KeyCount)
+	}
+	for i, w := range exp.FsTree.Records {
+		k := le.Uint64(recs[i].Key)
+		if id, typ := k&0x0fffffffffffffff, k>>60; id != w.ID || typ != w.Type || len(recs[i].Key) != w.KeyLength || len(recs[i].Val) != w.ValueLength {
+			t.Errorf("fs record %d = id %d type %d key %d val %d; oracle %+v", i, id, typ, len(recs[i].Key), len(recs[i].Val), w)
+		}
+	}
+	if w := f.Info().Warnings; len(w) != 0 {
+		t.Errorf("warnings on a real container: %q", w)
+	}
 }
 
 func orcCheckContainer(t *testing.T, img []byte, exp *orcExpect) {

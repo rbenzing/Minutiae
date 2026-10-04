@@ -46,6 +46,9 @@ type FS struct {
 	nx nxSuper    // the selected checkpoint's superblock
 	cp checkpoint // the selected checkpoint
 
+	nodeBudget int       // nodes one B-tree scan may read
+	cmap       *omapView // the container object map (virtual oid to block)
+
 	warns filesys.Warnings
 }
 
@@ -142,6 +145,15 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 	vol := io.NewSectionReader(r, 0, f.size)
 	f.r = filesys.NewCachedReader(vol, f.bs, cacheBlocks)
 	f.data = vol
+	f.nodeBudget = int(min(uint64(maxNodeBudget), f.blocks))
+	if nx.omapOid == 0 {
+		return nil, corrupt("container superblock", 160, "the container has no object map")
+	}
+	om, err := f.openOmap(nx.omapOid)
+	if err != nil {
+		return nil, err
+	}
+	f.cmap = om
 	return f, nil
 }
 
