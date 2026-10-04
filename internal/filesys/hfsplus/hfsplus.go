@@ -6,6 +6,7 @@
 package hfsplus
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -89,7 +90,8 @@ func (f *FS) warn(format string, a ...any) { f.warnings.Add(format, a...) }
 // the alternate header, or -1 when it cannot be placed.
 type location struct {
 	base      int64
-	truncated bool // the HFS wrapper's embedded extent ends beyond the image
+	truncated bool  // the HFS wrapper's embedded extent ends beyond the image
+	wrapLen   int64 // byte length of the wrapper's embedded extent (wrapped only)
 	wrapped   bool
 	pri       [vhSize]byte
 	altPos    int64
@@ -113,7 +115,7 @@ func locate(r io.ReaderAt, size int64) (*location, error) {
 		if err != nil {
 			return nil, err
 		}
-		loc.base, loc.wrapped, loc.truncated = w.base, true, w.truncated
+		loc.base, loc.wrapped, loc.truncated, loc.wrapLen = w.base, true, w.truncated, w.length
 		if err := readFull(r, loc.pri[:], w.base+vhOffset); err != nil { // w.base+1536 <= size: checked by parseWrapper
 			return nil, fmt.Errorf("hfsplus: read embedded volume header: %w", err)
 		}
@@ -152,8 +154,40 @@ func Probe(r io.ReaderAt, size int64) bool {
 	if err != nil {
 		return false
 	}
-	_, err = parseVolumeHeader(loc.pri[:])
-	return err == nil
+	vh, err := parseVolumeHeader(loc.pri[:])
+	if err != nil {
+		return false
+	}
+	if !loc.wrapped {
+		var boot [sectorSize]byte
+		if readFull(r, boot[:], 0) == nil && fatVolumeBytes(boot[:]) > vh.volumeBytes() && fatVolumeBytes(boot[:]) <= size {
+			return false // a stale header inside a larger FAT volume: the FAT boot sector wins
+		}
+	}
+	return true
+}
+
+// fatVolumeBytes is the volume size a FAT12/16/32 boot sector (the first 512
+// bytes of the image) declares, or 0 when the sector does not look like one: a
+// 0x55AA signature, a power-of-two sector size of 512 to 4096 and cluster size,
+// one or two FATs and a non-zero total sector count. HFS+ boot blocks never look
+// like this. (BPB offsets from the FAT specification as remembered: bytes per
+// sector @11, sectors per cluster @13, FATs @16, 16-bit total @19, 32-bit
+// total @32.)
+func fatVolumeBytes(b []byte) int64 {
+	if len(b) < sectorSize || b[510] != 0x55 || b[511] != 0xAA {
+		return 0
+	}
+	bps := int64(binary.LittleEndian.Uint16(b[11:]))
+	spc := int64(b[13])
+	if bps < 512 || bps > 4096 || bps&(bps-1) != 0 || spc == 0 || spc&(spc-1) != 0 || b[16] < 1 || b[16] > 2 {
+		return 0
+	}
+	total := int64(binary.LittleEndian.Uint16(b[19:]))
+	if total == 0 {
+		total = int64(binary.LittleEndian.Uint32(b[32:]))
+	}
+	return total * bps // <= 2^32 * 2^12: cannot overflow
 }
 
 // Open parses the volume header (falling back to the alternate header when the
@@ -222,9 +256,15 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 	}
 	declared := vh.volumeBytes()
 	volLen := declared
-	if avail := size - loc.base; avail < declared {
+	if loc.wrapped && declared > loc.wrapLen {
+		// The wrapper's own structures (its alternate master directory block,
+		// trailing HFS blocks) follow the embedded extent: they are not the volume.
+		volLen = loc.wrapLen
+		warns = append(warns, fmt.Sprintf("the volume declares %d bytes but the HFS wrapper's embedded extent holds %d: the volume is bounded to the embedded extent", declared, loc.wrapLen))
+	}
+	if avail := size - loc.base; avail < volLen {
+		warns = append(warns, fmt.Sprintf("the volume declares %d bytes but the image holds %d from the volume start: truncated image", volLen, avail))
 		volLen = avail
-		warns = append(warns, fmt.Sprintf("the volume declares %d bytes but the image holds %d from the volume start: truncated image", declared, avail))
 	}
 	end, ok := filesys.AddOK(loc.base, volLen)
 	if !ok { // unreachable: both terms are bounded by int64 sizes that fit the image

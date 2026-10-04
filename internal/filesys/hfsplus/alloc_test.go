@@ -1,6 +1,7 @@
 package hfsplus_test
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
+	"github.com/rbenzing/minutiae/internal/filesys/hfsplus"
 	"github.com/rbenzing/minutiae/internal/filesys/hfsplus/hfsplustest"
 )
 
@@ -549,4 +551,89 @@ func TestUnallocatedMatchesOracle(t *testing.T) {
 			}
 		})
 	}
+}
+
+// On a truncated image no free run reaches past the bytes the reader holds,
+// whatever the cut (a block boundary, inside a block, inside the allocation
+// bitmap, the wrapper), and the clip is reported by Unallocated itself.
+func TestUnallocatedRunsStayInsideTruncatedImage(t *testing.T) {
+	for _, wrapped := range []bool{false, true} {
+		full, lay := hfsplustest.BuildLayout(hfsplustest.Options{Label: "T", Wrapper: wrapped}, nil)
+		bs := int64(lay.BlockSize)
+		for _, cut := range []int64{lay.Base + 40*bs, lay.Base + 200*bs, lay.Base + 200*bs + 100, lay.Base + 255*bs, lay.Base + 255*bs + 1000, int64(len(full)) - 1024, int64(len(full)) - 1} {
+			img := full[:cut]
+			f, err := hfsplus.Open(bytes.NewReader(img), int64(len(img)))
+			if err != nil {
+				continue // too little left to open: not what this test is about
+			}
+			got, err := f.Unallocated()
+			if err != nil {
+				t.Fatalf("wrapped=%v cut=%d: %v", wrapped, cut, err)
+			}
+			for _, r := range got {
+				if r.Offset < 0 || r.Length <= 0 || r.Offset+r.Length > int64(len(img)) {
+					t.Errorf("wrapped=%v cut=%d: run %+v lies outside the %d-byte image", wrapped, cut, r, len(img))
+				}
+			}
+			// A free block past what the image holds is clipped, with one warning; none, no warning.
+			held := (int64(len(img)) - lay.Base) / bs
+			clipped := false
+			for b, u := range layoutBlocks(lay, true) {
+				clipped = clipped || (!u && int64(b) >= held)
+			}
+			n := 0
+			for _, w := range f.Info().Warnings {
+				if strings.Contains(w, "free space beyond the end of the truncated image") {
+					n++
+				}
+			}
+			if want := map[bool]int{false: 0, true: 1}[clipped]; n != want {
+				t.Errorf("wrapped=%v cut=%d: %d clip warnings, want %d (%v)", wrapped, cut, n, want, f.Info().Warnings)
+			}
+		}
+	}
+}
+
+// A wrapped volume whose header declares more blocks than the HFS wrapper's
+// embedded extent holds is clamped to the extent: the wrapper's own area after
+// it (here trailing HFS blocks of zero bytes, whose bitmap bits would read as
+// free) is never reported as free space, never counts as the volume, and one
+// warning says so.
+func TestWrappedVolumeIsBoundedByTheWrapperExtent(t *testing.T) {
+	img, lay := hfsplustest.BuildLayout(hfsplustest.Options{Label: "W", Wrapper: true}, nil)
+	bs := int64(lay.BlockSize)
+	extra := int64(40)
+	// Trailing space after the embedded extent and the HFS alternate MDB, big
+	// enough to hold the extra blocks the header will claim.
+	img = append(img, make([]byte, extra*bs)...)
+	patchHeaders(img, lay, func(vh []byte) {
+		be.PutUint32(vh[44:], lay.Blocks+uint32(extra)) // totalBlocks
+		be.PutUint64(vh[vhAllocFork:], uint64(int64(lay.Blocks)+extra+7)/8)
+	})
+	f := open(t, img)
+	if want := lay.Base + lay.VolumeBytes; f.Info().Size != want {
+		t.Errorf("Info.Size = %d, want the embedded extent's end %d", f.Info().Size, want)
+	}
+	got, err := f.Unallocated()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range got {
+		if r.Offset+r.Length > lay.Base+lay.VolumeBytes {
+			t.Errorf("run %+v reaches past the embedded extent (end %d)", r, lay.Base+lay.VolumeBytes)
+		}
+	}
+	if n := countWarnings(f.Info(), "wrapper's embedded extent"); n != 1 {
+		t.Errorf("%d wrapper-extent warnings, want 1 (%v)", n, f.Info().Warnings)
+	}
+}
+
+func countWarnings(info filesys.Info, sub string) int {
+	n := 0
+	for _, w := range info.Warnings {
+		if strings.Contains(w, sub) {
+			n++
+		}
+	}
+	return n
 }

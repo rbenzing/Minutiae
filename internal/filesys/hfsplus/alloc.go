@@ -85,6 +85,7 @@ func (f *FS) Unallocated() ([]filesys.Run, error) {
 		pi        int // first protected range that may still matter (emit is called in ascending order)
 		runStart  = int64(-1)
 		clearBits int64 // clear bits among the first bitsDone blocks
+		clipped   bool  // the bitmap marks free blocks the truncated image does not hold
 	)
 	runCap := maxUnallocRuns
 	if f.unallocCap > 0 {
@@ -92,6 +93,9 @@ func (f *FS) Unallocated() ([]filesys.Run, error) {
 	}
 	// emit appends the blocks [s, e) that the image holds and no protected range covers.
 	emit := func(s, e int64) {
+		if e > avail && s < e {
+			clipped = true
+		}
 		e = min(e, avail)
 		for s < e {
 			for pi < len(prot) && prot[pi].Offset+prot[pi].Length <= s {
@@ -161,6 +165,9 @@ func (f *FS) Unallocated() ([]filesys.Run, error) {
 	}
 	if !capped {
 		closeRun(bitsDone)
+	}
+	if clipped {
+		f.warn("unallocated space: the allocation bitmap marks free space beyond the end of the truncated image (the image holds %d of %d blocks); that part is not reported", avail, total)
 	}
 	if !capped && bitsDone == total && clearBits != int64(vh.freeBlocks) {
 		f.warn("the volume header says %d free blocks but the allocation file has %d clear bits", vh.freeBlocks, clearBits)
