@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
@@ -632,4 +633,82 @@ func SetRecordTimeColumn(t testing.TB, caseDir string, recordID int64, kind, col
 func SetRecordID(t testing.TB, caseDir string, id, newID int64) {
 	t.Helper()
 	setOne(t, caseDir, "records", []string{"id"}, "id", newID, `id = ?`, id)
+}
+
+// withoutStrict runs fn with the table's STRICT keyword removed from its stored
+// definition, then puts the original definition back. An attacker who wants a
+// BLOB in an INTEGER column has to do exactly this (STRICT refuses the value);
+// restoring the text leaves the class tampering as the only change, so verify's
+// storage-class checks are tested on their own. The schema is edited through
+// writable_schema, which only takes effect on a new connection: each step opens
+// its own.
+func withoutStrict(t testing.TB, caseDir, table string, fn func(db *sql.DB) error) {
+	t.Helper()
+	setSQL := func(def string) {
+		db := openTamperDB(t, caseDir)
+		defer func() { _ = db.Close() }()
+		if _, err := db.Exec(`PRAGMA writable_schema = ON`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`UPDATE sqlite_master SET sql = ? WHERE type = 'table' AND name = ?`, def, table); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var orig string
+	func() {
+		db := openTamperDB(t, caseDir)
+		defer func() { _ = db.Close() }()
+		if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&orig); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	loose := strings.NewReplacer(" STRICT, WITHOUT ROWID", " WITHOUT ROWID", " STRICT", "").Replace(orig)
+	setSQL(loose)
+	tamper(t, caseDir, func(db *sql.DB) error {
+		if _, err := db.Exec(`PRAGMA ignore_check_constraints = ON`); err != nil {
+			return err
+		}
+		return fn(db)
+	})
+	setSQL(orig)
+}
+
+// SetStorageClass changes the storage class of one column of the rows matching
+// where (all rows when where is empty) to BLOB, keeping the bytes of the value
+// (CAST(col AS BLOB)); NULLs stay NULL. SQLite keeps a BLOB in a TEXT or INTEGER
+// column as a BLOB, and Go's Scan reads it back as the same string or number, so
+// only a storage-class check sees it. The table's STRICT keyword and CHECK
+// constraints are bypassed while the change is made and restored afterwards. It
+// fails the test unless at least one row changed, and returns how many did.
+func SetStorageClass(t testing.TB, caseDir, table, column, where string, args ...any) int64 {
+	t.Helper()
+	if where == "" {
+		where = "1"
+	}
+	var n int64
+	withoutStrict(t, caseDir, table, func(db *sql.DB) error {
+		q := `UPDATE ` + table + ` SET ` + column + ` = CAST(` + column + ` AS BLOB) WHERE typeof(` + column + `) <> 'null' AND (` + where + `)` //nolint:gosec // test helper; names come from the test
+		res, err := db.Exec(q, args...)
+		if err != nil {
+			return err
+		}
+		n, _ = res.RowsAffected()
+		return nil
+	})
+	if n == 0 {
+		t.Fatalf("recordstest: no %s.%s value matched %q", table, column, where)
+	}
+	return n
+}
+
+// InjectBlobRunArtifacts adds n record_run_artifacts rows whose ingest_id is a
+// BLOB (distinct, sorted after every TEXT value): a hostile table that makes a
+// keyset scan binding the last key as TEXT return the same rows forever.
+func InjectBlobRunArtifacts(t testing.TB, caseDir string, n int) {
+	t.Helper()
+	withoutStrict(t, caseDir, "record_run_artifacts", func(db *sql.DB) error {
+		_, err := db.Exec(`WITH RECURSIVE s(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM s WHERE i < ?)
+			INSERT INTO record_run_artifacts (ingest_id, artifact_id) SELECT CAST('ing-blob-' || printf('%08d', i) AS BLOB), 'x' FROM s`, n)
+		return err
+	})
 }

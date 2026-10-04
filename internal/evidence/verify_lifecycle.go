@@ -55,6 +55,7 @@ type storedRun struct {
 	firstID       int64
 	lastID        int64
 	rollup, ended string
+	sig           string // typeof() of every column, comma separated
 }
 
 // sameConclusion compares the totals two conclusion entries carry (not the
@@ -275,8 +276,8 @@ func (c *Case) checkTotals(ps *problemSet, id, what string, seq int64, got Inges
 	}
 }
 
-const runsSelect = `SELECT r.end_seq, r.ingest_id, r.parser_id, p.name, p.version, p.hash, r.analysis_id, r.outcome,
-	r.batches, r.records, r.first_id, r.last_id, r.rollup, r.ended
+var runsSelect = `SELECT r.end_seq, r.ingest_id, r.parser_id, p.name, p.version, p.hash, r.analysis_id, r.outcome,
+	r.batches, r.records, r.first_id, r.last_id, r.rollup, r.ended, ` + runsClasses.signature("r.") + `
 	FROM record_runs r LEFT JOIN parsers p ON p.id = r.parser_id
 	WHERE r.end_seq >= ? ORDER BY r.end_seq LIMIT ?`
 
@@ -299,7 +300,7 @@ func (c *Case) checkRuns(ctx context.Context, rep *VerifyReport, ps *problemSet,
 				var r storedRun
 				var name, ver sql.NullString
 				if err := rows.Scan(&r.endSeq, &r.ingest, &r.parserID, &name, &ver, &r.pHash, &r.analysis, &r.outcome,
-					&r.batches, &r.records, &r.firstID, &r.lastID, &r.rollup, &r.ended); err != nil {
+					&r.batches, &r.records, &r.firstID, &r.lastID, &r.rollup, &r.ended, &r.sig); err != nil {
 					return err
 				}
 				r.hasParser, r.pName, r.pVer = name.Valid, name.String, ver.String
@@ -313,13 +314,19 @@ func (c *Case) checkRuns(ctx context.Context, rep *VerifyReport, ps *problemSet,
 		}
 		for _, r := range chunk {
 			rep.RecordRunsChecked++
+			runsClasses.check(ps, r.sig, func() string { return fmt.Sprintf("ingest %q", r.ingest) })
 			have[r.ingest] = true
 			compareRun(ps, r, expected)
 		}
 		if len(chunk) < verifyChunkRows {
 			break
 		}
-		if after = chunk[len(chunk)-1].endSeq; after == math.MaxInt64 {
+		last := chunk[len(chunk)-1].endSeq
+		if last < after {
+			ps.add("scan", "scan of record_runs cannot make progress: the chunk after end_seq %d ended at %d", after, last)
+			return have, false
+		}
+		if after = last; after == math.MaxInt64 {
 			break
 		}
 		after++
@@ -385,9 +392,9 @@ func compareRun(ps *problemSet, r storedRun, expected map[string]expectedRun) {
 	}
 }
 
-const (
-	coverageFirst = `SELECT ingest_id, artifact_id FROM record_run_artifacts ORDER BY ingest_id, artifact_id LIMIT ?`
-	coverageNext  = `SELECT ingest_id, artifact_id FROM record_run_artifacts WHERE (ingest_id, artifact_id) > (?, ?) ORDER BY ingest_id, artifact_id LIMIT ?`
+var (
+	coverageFirst = `SELECT ingest_id, artifact_id, ` + coverageClasses.signature("") + ` FROM record_run_artifacts ORDER BY ingest_id, artifact_id LIMIT ?`
+	coverageNext  = `SELECT ingest_id, artifact_id, ` + coverageClasses.signature("") + ` FROM record_run_artifacts WHERE (ingest_id, artifact_id) > (?, ?) ORDER BY ingest_id, artifact_id LIMIT ?`
 )
 
 // checkCoverage requires record_run_artifacts to hold, for each run row, exactly
@@ -398,8 +405,9 @@ func (c *Case) checkCoverage(ctx context.Context, rep *VerifyReport, ps *problem
 	first := true
 	for {
 		var chunk [][2]string
+		var sigs []string
 		err := c.ReadTx(ctx, func(h ReadHandle) error {
-			chunk = nil
+			chunk, sigs = nil, nil
 			var rows *sql.Rows
 			var err error
 			if first {
@@ -413,10 +421,12 @@ func (c *Case) checkCoverage(ctx context.Context, rep *VerifyReport, ps *problem
 			defer func() { _ = rows.Close() }()
 			for rows.Next() {
 				var p [2]string
-				if err := rows.Scan(&p[0], &p[1]); err != nil {
+				var sig string
+				if err := rows.Scan(&p[0], &p[1], &sig); err != nil {
 					return err
 				}
 				chunk = append(chunk, p)
+				sigs = append(sigs, sig)
 			}
 			return rows.Err()
 		})
@@ -424,8 +434,9 @@ func (c *Case) checkCoverage(ctx context.Context, rep *VerifyReport, ps *problem
 			unreadable(rep, "record_run_artifacts", err)
 			return
 		}
-		for _, p := range chunk {
+		for i, p := range chunk {
 			ing, art := p[0], p[1]
+			coverageClasses.check(ps, sigs[i], func() string { return fmt.Sprintf("ingest %q artifact %q", ing, art) })
 			exp, demanded := expected[ing]
 			switch {
 			case !runs[ing]:
@@ -445,6 +456,12 @@ func (c *Case) checkCoverage(ctx context.Context, rep *VerifyReport, ps *problem
 			break
 		}
 		last := chunk[len(chunk)-1]
+		// the scan must advance: the last key is above the previous one (a BLOB-class
+		// row sorts after every TEXT parameter, so the same chunk would come back forever)
+		if !first && last[0] <= afterIngest && (last[0] < afterIngest || last[1] <= afterArtifact) {
+			ps.add("scan", "scan of record_run_artifacts cannot make progress: the chunk after (%q, %q) ended at (%q, %q)", afterIngest, afterArtifact, last[0], last[1])
+			return
+		}
 		afterIngest, afterArtifact, first = last[0], last[1], false
 	}
 	ids := make([]string, 0, len(expected))

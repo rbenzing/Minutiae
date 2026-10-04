@@ -612,3 +612,37 @@ func TestV1StatementsAreFrozen(t *testing.T) {
 		t.Fatalf("v1Statements changed: sha256 %s, want %s", got, want)
 	}
 }
+
+// TestRecordTablesAreStrict: every table of schema v2 is STRICT, so SQLite itself
+// refuses a value of the wrong storage class (a BLOB in an INTEGER or TEXT column,
+// text in an INTEGER column) instead of keeping it as the attacker stored it. The
+// storage-class checks of verify do not depend on this; STRICT stops the writer
+// and later UPDATEs.
+func TestRecordTablesAreStrict(t *testing.T) {
+	s := openTestStore(t, filepath.Join(t.TempDir(), "a.db"))
+	for _, table := range []string{
+		"parsers", "record_batches", "records", "record_times", "record_runs", "record_run_artifacts",
+		"record_superseded", "records_meta",
+	} {
+		var strict int
+		// pragma_table_list reports "strict" per table (SQLite 3.37+)
+		if err := s.db.QueryRow(`SELECT strict FROM pragma_table_list WHERE name = ? AND schema = 'main'`, table).Scan(&strict); err != nil {
+			t.Fatalf("%s: %v", table, err)
+		}
+		if strict != 1 {
+			t.Errorf("table %s is not STRICT", table)
+		}
+	}
+	seedRecordTables(t, s)
+	for _, bad := range []struct{ name, stmt string }{
+		{"BLOB in an INTEGER column", `INSERT INTO record_batches (ingest_id, batch_no, first_id, count, digest, created) VALUES ('i', 9, X'31', 1, 'd', 'c')`},
+		{"BLOB in a TEXT column", `INSERT INTO record_batches (ingest_id, batch_no, first_id, count, digest, created) VALUES (X'69', 9, 1, 1, 'd', 'c')`},
+		{"text in an INTEGER column", `INSERT INTO record_batches (ingest_id, batch_no, first_id, count, digest, created) VALUES ('i', 'nine', 1, 1, 'd', 'c')`},
+		{"BLOB key in record_run_artifacts", `INSERT INTO record_run_artifacts (ingest_id, artifact_id) VALUES (X'69', 'a')`},
+		{"BLOB value in records_meta", `UPDATE records_meta SET value = CAST(value AS BLOB)`},
+	} {
+		if _, err := s.db.Exec(bad.stmt); err == nil {
+			t.Errorf("%s was accepted", bad.name)
+		}
+	}
+}

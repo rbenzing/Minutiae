@@ -213,6 +213,7 @@ type recordRowMeta struct {
 	batchID  int64
 	parserID int64
 	hasParse bool
+	sig      string // typeof() of every column of the row, comma separated
 }
 
 func unreadable(rep *VerifyReport, what string, err error) {
@@ -259,7 +260,7 @@ func (c *Case) verifyRecords(rep *VerifyReport, recs []ManifestRecord, entries [
 		unreadable(rep, "artifacts", dbErr)
 	}
 
-	batches, ok := c.readStoredBatches(ctx, rep)
+	batches, ok := c.readStoredBatches(ctx, rep, ps)
 	if ok {
 		for _, b := range batches {
 			if b.id <= 0 {
@@ -279,11 +280,15 @@ func (c *Case) verifyRecords(rep *VerifyReport, recs []ManifestRecord, entries [
 	}
 
 	parserOK := c.verifyParsers(ctx, rep, ps, audit)
+	// the tables no scan below reads row by row for another purpose
+	c.verifyClassOnly(ctx, ps, metaClasses, []string{"key"}, func(v []string) string { return fmt.Sprintf("key %q", v[0]) })
+	c.verifyClassOnly(ctx, ps, supersededClasses, []string{"ingest_id", "artifact_id"},
+		func(v []string) string { return fmt.Sprintf("ingest %q artifact %q", v[0], v[1]) })
 
 	acc := make([]*batchAcc, len(sorted))
 	seenArtifact := map[string]bool{}
 	var maxID int64
-	streamed := c.streamRecords(ctx, rep, observe, func(row RecordRow, m recordRowMeta) {
+	streamed := c.streamRecords(ctx, ps, observe, func(row RecordRow, m recordRowMeta) {
 		rep.RecordsChecked++
 		maxID = max(maxID, row.ID)
 		if !seenArtifact[row.ArtifactID] {
@@ -469,7 +474,8 @@ func (c *Case) verifyTriggers(ctx context.Context, rep *VerifyReport) {
 
 func normalizeSpace(s string) string { return strings.Join(strings.Fields(s), " ") }
 
-// verifyQuickCheck (P10) runs SQLite's quick_check; anything but "ok" is a problem.
+// verifyQuickCheck (P10) runs SQLite's quick_check; anything but "ok" is a problem
+// (on a STRICT table it also reports a value of the wrong storage class).
 func (c *Case) verifyQuickCheck(ctx context.Context, rep *VerifyReport) {
 	var msgs []string
 	err := c.ReadTx(ctx, func(h ReadHandle) error {
@@ -502,24 +508,27 @@ func (c *Case) verifyQuickCheck(ctx context.Context, rep *VerifyReport) {
 }
 
 // readStoredBatches reads every record_batches row (keyset chunks).
-func (c *Case) readStoredBatches(ctx context.Context, rep *VerifyReport) ([]storedBatch, bool) {
+func (c *Case) readStoredBatches(ctx context.Context, rep *VerifyReport, ps *problemSet) ([]storedBatch, bool) {
 	var out []storedBatch
 	after := int64(math.MinInt64) // keyset scans start below every possible id (ids may be 0 or negative in a tampered db)
 	for {
 		var chunk []storedBatch
+		var sigs []string
 		err := c.ReadTx(ctx, func(h ReadHandle) error {
-			rows, err := h.QueryContext(ctx, `SELECT batch_id, ingest_id, batch_no, first_id, count, digest, created
-				FROM record_batches WHERE batch_id >= ? ORDER BY batch_id LIMIT ?`, after, verifyChunkRows)
+			chunk, sigs = nil, nil
+			rows, err := h.QueryContext(ctx, batchesSelect, after, verifyChunkRows)
 			if err != nil {
 				return err
 			}
 			defer func() { _ = rows.Close() }()
 			for rows.Next() {
 				var b storedBatch
-				if err := rows.Scan(&b.id, &b.ingest, &b.no, &b.first, &b.count, &b.digest, &b.created); err != nil {
+				var sig string
+				if err := rows.Scan(&b.id, &b.ingest, &b.no, &b.first, &b.count, &b.digest, &b.created, &sig); err != nil {
 					return err
 				}
 				chunk = append(chunk, b)
+				sigs = append(sigs, sig)
 			}
 			return rows.Err()
 		})
@@ -527,16 +536,27 @@ func (c *Case) readStoredBatches(ctx context.Context, rep *VerifyReport) ([]stor
 			unreadable(rep, "record_batches", err)
 			return out, false
 		}
+		for i, b := range chunk {
+			batchesClasses.check(ps, sigs[i], func() string { return fmt.Sprintf("ingest %q batch %d", b.ingest, b.no) })
+		}
 		out = append(out, chunk...)
 		if len(chunk) < verifyChunkRows {
 			return out, true
 		}
-		if after = chunk[len(chunk)-1].id; after == math.MaxInt64 {
+		last := chunk[len(chunk)-1].id
+		if last < after {
+			ps.add("scan", "scan of record_batches cannot make progress: the chunk after batch id %d ended at %d", after, last)
+			return out, false
+		}
+		if after = last; after == math.MaxInt64 {
 			return out, true
 		}
 		after++
 	}
 }
+
+var batchesSelect = `SELECT batch_id, ingest_id, batch_no, first_id, count, digest, created, ` + batchesClasses.signature("") + `
+	FROM record_batches WHERE batch_id >= ? ORDER BY batch_id LIMIT ?`
 
 // verifyParsers (P2) requires every parsers row to be named by a
 // records.ingest.start entry. It returns whether the parsers table was readable.
@@ -545,17 +565,18 @@ func (c *Case) verifyParsers(ctx context.Context, rep *VerifyReport, ps *problem
 		id            int64
 		name, version string
 		hash          sql.NullString
+		sig           string
 	}
 	var rows []parserRow
 	err := c.ReadTx(ctx, func(h ReadHandle) error {
-		rs, err := h.QueryContext(ctx, `SELECT id, name, version, hash FROM parsers ORDER BY id`)
+		rs, err := h.QueryContext(ctx, `SELECT id, name, version, hash, `+parsersClasses.signature("")+` FROM parsers ORDER BY id`)
 		if err != nil {
 			return err
 		}
 		defer func() { _ = rs.Close() }()
 		for rs.Next() {
 			var p parserRow
-			if err := rs.Scan(&p.id, &p.name, &p.version, &p.hash); err != nil {
+			if err := rs.Scan(&p.id, &p.name, &p.version, &p.hash, &p.sig); err != nil {
 				return err
 			}
 			rows = append(rows, p)
@@ -567,6 +588,7 @@ func (c *Case) verifyParsers(ctx context.Context, rep *VerifyReport, ps *problem
 		return false
 	}
 	for _, p := range rows {
+		parsersClasses.check(ps, p.sig, func() string { return fmt.Sprintf("id %d", p.id) })
 		if p.id <= 0 {
 			ps.add("nonpositive-id", "parser %q %q: id %d is not positive", p.name, p.version, p.id)
 		}
@@ -584,19 +606,28 @@ func (c *Case) verifyParsers(ctx context.Context, rep *VerifyReport, ps *problem
 
 // recordsSelect reads one chunk of rows; the parser is a LEFT JOIN so a row whose
 // parser row is gone is seen (and reported), not silently dropped.
-const recordsSelect = `SELECT r.id, r.batch_id, r.parser_id, r.type, r.payload_v, r.artifact_id, r.source_path, r.locator,
+//
+// The last column is the typeof() signature of the row's own columns, checked
+// against the schema's storage classes (verify_class.go).
+var recordsSelect = `SELECT r.id, r.batch_id, r.parser_id, r.type, r.payload_v, r.artifact_id, r.source_path, r.locator,
 	r.src_offset, r.src_length, r.ts, r.ts_end, r.ts_basis, r.tz_offset_min, r.deleted, r.recovered, r.recovery_method,
-	r.confidence, p.name, p.version, p.hash, r.summary, r.body, r.payload
+	r.confidence, p.name, p.version, p.hash, r.summary, r.body, r.payload, ` + recordsClasses.signature("r.") + `
 	FROM records r LEFT JOIN parsers p ON p.id = r.parser_id
 	WHERE r.id >= ? ORDER BY r.id LIMIT ?`
+
+var (
+	timesSelectAll = `SELECT record_id, kind, ts, ts_basis, tz_offset_min, ` + timesClasses.signature("") +
+		` FROM record_times WHERE record_id >= ? ORDER BY record_id, kind`
+	timesSelectRange = `SELECT record_id, kind, ts, ts_basis, tz_offset_min, ` + timesClasses.signature("") +
+		` FROM record_times WHERE record_id >= ? AND record_id <= ? ORDER BY record_id, kind`
+)
 
 // streamRecords reads every record row in keyset chunks, each in its own ReadTx
 // together with the record_times of that id range, and calls fn for each row in
 // id order. It reports whether every chunk could be read.
-func (c *Case) streamRecords(ctx context.Context, rep *VerifyReport, observe verifyChunkObserver, fn func(RecordRow, recordRowMeta)) bool {
+func (c *Case) streamRecords(ctx context.Context, ps *problemSet, observe verifyChunkObserver, fn func(RecordRow, recordRowMeta)) bool {
+	rep := ps.rep
 	after := int64(math.MinInt64) // below every possible id: a tampered database may hold ids <= 0
-	ps := &problemSet{rep: rep, counts: map[string]int{}}
-	defer ps.flush()
 	var nRows, nTimes int64
 	for {
 		var rows []RecordRow
@@ -618,7 +649,7 @@ func (c *Case) streamRecords(ctx context.Context, rep *VerifyReport, observe ver
 				var deleted, recovered int64
 				if err := rs.Scan(&r.ID, &m.batchID, &m.parserID, &r.Type, &r.PayloadV, &r.ArtifactID, &r.SourcePath, &r.Locator,
 					&r.SrcOffset, &r.SrcLength, &r.TS, &r.TSEnd, &r.TSBasis, &r.TZOffsetMin, &deleted, &recovered, &r.RecoveryMethod,
-					&r.Confidence, &pname, &pver, &phash, &r.Summary, &r.Body, &r.Payload); err != nil {
+					&r.Confidence, &pname, &pver, &phash, &r.Summary, &r.Body, &r.Payload, &m.sig); err != nil {
 					return err
 				}
 				r.Deleted, r.Recovered = deleted != 0, recovered != 0
@@ -647,9 +678,9 @@ func (c *Case) streamRecords(ctx context.Context, rep *VerifyReport, observe ver
 			}
 			// the record_times of this id range: after the previous chunk's last id
 			// up to this chunk's last id (all the rest for the final chunk).
-			q, args := `SELECT record_id, kind, ts, ts_basis, tz_offset_min FROM record_times WHERE record_id >= ? ORDER BY record_id, kind`, []any{after}
+			q, args := timesSelectAll, []any{after}
 			if more {
-				q, args = `SELECT record_id, kind, ts, ts_basis, tz_offset_min FROM record_times WHERE record_id >= ? AND record_id <= ? ORDER BY record_id, kind`,
+				q, args = timesSelectRange,
 					[]any{after, rows[len(rows)-1].ID}
 			}
 			ts, err := h.QueryContext(ctx, q, args...)
@@ -659,7 +690,7 @@ func (c *Case) streamRecords(ctx context.Context, rep *VerifyReport, observe ver
 			defer func() { _ = ts.Close() }()
 			for ts.Next() {
 				var t timeRow
-				if err := ts.Scan(&t.recordID, &t.Kind, &t.TS, &t.Basis, &t.TZOffsetMin); err != nil {
+				if err := ts.Scan(&t.recordID, &t.Kind, &t.TS, &t.Basis, &t.TZOffsetMin, &t.sig); err != nil {
 					return err
 				}
 				times = append(times, t)
@@ -680,6 +711,7 @@ func (c *Case) streamRecords(ctx context.Context, rep *VerifyReport, observe ver
 		nRows += int64(len(rows))
 		nTimes += int64(len(times))
 		for _, t := range times {
+			timesClasses.check(ps, t.sig, func() string { return fmt.Sprintf("record %d kind %q", t.recordID, t.Kind) })
 			if t.recordID <= 0 {
 				ps.add("nonpositive-id", "record_times row (kind %q) of record %d: record_id is not positive", t.Kind, t.recordID)
 			}
@@ -691,6 +723,7 @@ func (c *Case) streamRecords(ctx context.Context, rep *VerifyReport, observe ver
 			rows[i].Times = append(rows[i].Times, t.RecordTime)
 		}
 		for i, r := range rows {
+			recordsClasses.check(ps, metas[i].sig, func() string { return fmt.Sprintf("id %d", r.ID) })
 			if r.ID <= 0 {
 				ps.add("nonpositive-id", "record %d: id is not positive", r.ID)
 			}
@@ -704,6 +737,11 @@ func (c *Case) streamRecords(ctx context.Context, rep *VerifyReport, observe ver
 			c.checkTableCount(ctx, rep, "records", nRows)
 			c.checkTableCount(ctx, rep, "record_times", nTimes)
 			return true
+		}
+		// every keyset scan must advance: the next chunk starts above this one's last key
+		if last < after {
+			ps.add("scan", "scan of records cannot make progress: the chunk after id %d ended at id %d", after, last)
+			return false
 		}
 		after = last + 1
 	}
@@ -726,6 +764,7 @@ func (c *Case) checkTableCount(ctx context.Context, rep *VerifyReport, table str
 
 type timeRow struct {
 	recordID int64
+	sig      string
 	RecordTime
 }
 

@@ -60,7 +60,9 @@ func v2Precheck(tx *sql.Tx) error {
 }
 
 // v2Statements upgrades schema v1 to v2: it replaces the unused v1 records
-// table with the unified record tables, indexes and immutability triggers.
+// table with the unified record tables, indexes and immutability triggers. Every
+// new table is STRICT (SQLite refuses a value of the wrong storage class); verify
+// checks the classes itself and does not rely on it (verify_class.go).
 var v2Statements = buildV2Statements()
 
 func buildV2Statements() []string {
@@ -73,7 +75,7 @@ func buildV2Statements() []string {
 			name TEXT NOT NULL,
 			version TEXT NOT NULL,
 			hash TEXT,
-			UNIQUE (name, version))`,
+			UNIQUE (name, version)) STRICT`,
 		`CREATE TABLE record_batches (
 			batch_id INTEGER PRIMARY KEY,
 			ingest_id TEXT NOT NULL,
@@ -82,7 +84,7 @@ func buildV2Statements() []string {
 			count INTEGER NOT NULL,
 			digest TEXT NOT NULL,
 			created TEXT NOT NULL,
-			UNIQUE (ingest_id, batch_no))`,
+			UNIQUE (ingest_id, batch_no)) STRICT`,
 		`CREATE TABLE records (
 			id INTEGER PRIMARY KEY,
 			batch_id INTEGER NOT NULL REFERENCES record_batches(batch_id),
@@ -114,7 +116,7 @@ func buildV2Statements() []string {
 			CHECK (ts_basis IS NULL OR ts_basis IN ('utc','local-offset','local-unknown')),
 			CHECK ((ts IS NULL) = (ts_basis IS NULL)),
 			CHECK (ts_end IS NULL OR ts IS NOT NULL),
-			CHECK ((tz_offset_min IS NOT NULL) = (ts_basis IS 'local-offset')))`,
+			CHECK ((tz_offset_min IS NOT NULL) = (ts_basis IS 'local-offset'))) STRICT`,
 		`CREATE TABLE record_times (
 			record_id INTEGER NOT NULL REFERENCES records(id),
 			kind TEXT NOT NULL,
@@ -122,7 +124,7 @@ func buildV2Statements() []string {
 			ts_basis TEXT NOT NULL CHECK (ts_basis IN ('utc','local-offset','local-unknown')),
 			tz_offset_min INTEGER,
 			PRIMARY KEY (record_id, kind),
-			CHECK ((tz_offset_min IS NOT NULL) = (ts_basis = 'local-offset'))) WITHOUT ROWID`,
+			CHECK ((tz_offset_min IS NOT NULL) = (ts_basis = 'local-offset'))) STRICT, WITHOUT ROWID`,
 		`CREATE TABLE record_runs (
 			end_seq INTEGER PRIMARY KEY,
 			ingest_id TEXT NOT NULL UNIQUE,
@@ -134,16 +136,16 @@ func buildV2Statements() []string {
 			first_id INTEGER NOT NULL,
 			last_id INTEGER NOT NULL,
 			rollup TEXT NOT NULL,
-			ended TEXT NOT NULL)`,
+			ended TEXT NOT NULL) STRICT`,
 		`CREATE TABLE record_run_artifacts (
 			ingest_id TEXT NOT NULL REFERENCES record_runs(ingest_id),
 			artifact_id TEXT NOT NULL REFERENCES artifacts(id),
-			PRIMARY KEY (ingest_id, artifact_id)) WITHOUT ROWID`,
+			PRIMARY KEY (ingest_id, artifact_id)) STRICT, WITHOUT ROWID`,
 		`CREATE TABLE record_superseded (
 			ingest_id TEXT NOT NULL,
 			artifact_id TEXT NOT NULL,
-			PRIMARY KEY (ingest_id, artifact_id)) WITHOUT ROWID`,
-		`CREATE TABLE records_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+			PRIMARY KEY (ingest_id, artifact_id)) STRICT, WITHOUT ROWID`,
+		`CREATE TABLE records_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT`,
 		`INSERT INTO records_meta (key, value) VALUES ('next_id', '1')`,
 		`CREATE INDEX records_type_ts ON records (type, (ts IS NULL), ts, id)`,
 		`CREATE INDEX records_ts ON records ((ts IS NULL), ts, id)`,
