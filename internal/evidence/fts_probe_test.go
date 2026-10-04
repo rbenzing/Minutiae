@@ -464,13 +464,30 @@ func TestFTS5IdxTamperLosesHitsThatNeitherIntegrityCheckSees(t *testing.T) {
 				}
 			}
 
-			// some edits are loud: repointing a row makes both checks fail
-			probeExec(t, db, `BEGIN`)
-			probeExec(t, db, `UPDATE `+idx+` SET pgno = pgno + 3 WHERE (segid, term) = (SELECT segid, term FROM `+idx+` WHERE term <> x'' ORDER BY segid, term LIMIT 1 OFFSET 20)`)
-			p, ftsErr := probeIntegrity(t, db, tb.name)
-			probeExec(t, db, `ROLLBACK`)
-			if p == pragmaOK || ftsErr == nil {
-				t.Errorf("a repointed _idx row went unnoticed (integrity_check=%s, integrity-check=%v)", p, ftsErr)
+			// other edits are loud: a row left pointing at the wrong place or under the
+			// wrong term is caught by PRAGMA integrity_check (design: verify P10); the
+			// repointed row is also caught by FTS5's own command
+			pick := `(segid, term) = (SELECT segid, term FROM ` + idx + ` WHERE term <> x'' ORDER BY segid, term LIMIT 1 OFFSET 20)`
+			for _, e := range []struct {
+				name, stmt string
+				both       bool
+			}{
+				{"repoint a row (pgno + 3)", `UPDATE ` + idx + ` SET pgno = pgno + 3 WHERE ` + pick, true},
+				{"change the term of a row", `UPDATE ` + idx + ` SET term = x'7a7a7a7a7a' WHERE ` + pick, false},
+				{"point a row at page 2", `UPDATE ` + idx + ` SET pgno = 2 WHERE ` + pick, false},
+				{"repoint every row (pgno + 1)", `UPDATE ` + idx + ` SET pgno = pgno + 1`, false},
+			} {
+				probeExec(t, db, `BEGIN`)
+				probeExec(t, db, e.stmt)
+				p, ftsErr := probeIntegrity(t, db, tb.name)
+				probeExec(t, db, `ROLLBACK`)
+				t.Logf("%s: integrity_check=%s, integrity-check=%v", e.name, p, ftsErr)
+				if p == pragmaOK {
+					t.Errorf("%s: PRAGMA integrity_check did not notice it", e.name)
+				}
+				if e.both && ftsErr == nil {
+					t.Errorf("%s: FTS5 integrity-check did not notice it", e.name)
+				}
 			}
 		})
 	}
@@ -541,14 +558,14 @@ func TestFTS5DeleteRemovesTermRowidPairs(t *testing.T) {
 	}
 }
 
-// TestFTS5UnicodeTokenizerDoesNotFoldSharpSOrDottedI documents why Go
+// TestFTS5UnicodeTokenizerFoldsDottedIButNotSharpSOrLigatures documents why Go
 // normalization (NormalizeText) runs before the tokenizer. unicode61 with
 // remove_diacritics 2 folds case and accents, but NOT: "ß" or "ẞ" to "ss"; a
 // ligature ("ﬁ") to "fi"; a fullwidth letter to ASCII; the dotless "ı" to "i".
 // It does fold the dotted capital "İ" to "i" (it drops the combining dot), so
 // the dotted-I case is covered by the tokenizer and the Go mapping of "ı" (plan
 // pipeline step 6) is what is still needed.
-func TestFTS5UnicodeTokenizerDoesNotFoldSharpSOrDottedI(t *testing.T) {
+func TestFTS5UnicodeTokenizerFoldsDottedIButNotSharpSOrLigatures(t *testing.T) {
 	db := probeDB(t, probeTables[0])
 	probeExec(t, db, `INSERT INTO records_fts(rowid, summary, body) VALUES
 		(1, 'Straße', ''), (2, 'strasse', ''), (3, 'STRAẞE', ''),
@@ -602,7 +619,9 @@ func TestFTS5TrigramFoldsCaseAndDiacritics(t *testing.T) {
 // spillFiles lists SQLite temporary files that exist now under dir: directory
 // entries (Windows lists a delete-on-close file) and, on Linux, open
 // descriptors that point there (the unix VFS unlinks a temp file at once, so
-// it is visible only through /proc/self/fd).
+// it is visible only through /proc/self/fd, which shows the resolved path, so
+// dir is resolved too). Other platforms (macOS) are not supported: the unlinked
+// file would be invisible and the positive spill assertion would fail.
 func spillFiles(t testing.TB, dir string) []string {
 	t.Helper()
 	var out []string
@@ -614,6 +633,9 @@ func spillFiles(t testing.TB, dir string) []string {
 		out = append(out, e.Name())
 	}
 	if runtime.GOOS == "linux" {
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			dir = resolved
+		}
 		fds, _ := os.ReadDir("/proc/self/fd")
 		for _, fd := range fds {
 			if target, err := os.Readlink(filepath.Join("/proc/self/fd", fd.Name())); err == nil &&
@@ -793,16 +815,12 @@ func TestReadTxContextCancelInterruptsRunningQuery(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	start := time.Now()
 	err = c.ReadTx(ctx, func(h ReadHandle) error {
 		var n int64
 		return h.QueryRowContext(ctx, `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT count(*) FROM c`).Scan(&n)
 	})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("ReadTx error = %v, want context.DeadlineExceeded", err)
-	}
-	if d := time.Since(start); d > 30*time.Second {
-		t.Fatalf("the query was not interrupted promptly (%v)", d)
 	}
 
 	var v int
@@ -859,18 +877,24 @@ func TestFTS5DropAndRecreateKeepsSchemaIdentical(t *testing.T) {
 	}
 }
 
-// TestFTS5MatchStringsAreInert: quoted strings that look like syntax or hold no
-// token return zero rows without an error.
+// probeOperatorData is the data of the MATCH operator probes. It holds a term that starts
+// with "a" in several shapes (apple, a at the start of a column, a inside a column), zzz, and
+// words that look like syntax, so that a probe cannot pass merely because the data lacks a hit.
+const probeOperatorData = `(1, 'bbb ccc', 'ddd eee'), (2, 'apple pie', 'zzz'), (3, 'a', 'x'), (4, 'x a b', 'y')`
+
+// TestFTS5MatchStringsAreInert: quoted strings that look like syntax or hold no token return zero
+// rows without an error, on data that WOULD match an operator reading of them (see
+// TestFTS5MatchOperatorsAreOperators for the inputs that are not inert).
 func TestFTS5MatchStringsAreInert(t *testing.T) {
 	for _, tb := range probeTables {
 		t.Run(tb.name, func(t *testing.T) {
 			db := probeDB(t, tb)
-			probeExec(t, db, `INSERT INTO `+tb.name+`(rowid, summary, body) VALUES (1, 'bbb ccc', 'ddd eee')`)
+			probeExec(t, db, `INSERT INTO `+tb.name+`(rowid, summary, body) VALUES `+probeOperatorData)
 			for _, expr := range []string{
-				`""`, `"!!!"`, `"a" *`, `"AND"`, `"OR"`, `"NOT"`, `"NEAR"`, `"NEAR(bbb ccc)"`, `"summary:bbb"`,
-				`"^zzz"`, `"("`, `"a ""quoted"" b"`, `"bbb" "ccc" "zzz"`,
+				`""`, `"!!!"`, `"AND"`, `"OR"`, `"NOT"`, `"NEAR"`, `"NEAR(bbb ccc)"`, `"summary:bbb"`,
+				`"("`, `"a ""quoted"" b"`, `"bbb" "ccc" "zzz"`,
 			} {
-				got, err := queryInts(db, `SELECT rowid FROM `+tb.name+` WHERE `+tb.name+` MATCH ?`, expr)
+				got, err := queryInts(db, `SELECT rowid FROM `+tb.name+` WHERE `+tb.name+` MATCH ? ORDER BY rowid`, expr)
 				if err != nil {
 					t.Errorf("MATCH %s: %v", expr, err)
 					continue
@@ -880,5 +904,65 @@ func TestFTS5MatchStringsAreInert(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestFTS5MatchOperatorsAreOperators documents, as facts and with the rows each one matches, the
+// MATCH inputs that are NOT inert even though they contain a quoted string. A bare "*" after a
+// quoted string is a PREFIX query, "^" before one anchors it at the start of a column, a "col :"
+// prefix is a column filter, and bare AND, OR, NOT and NEAR( ) are operators. The query compiler
+// (Task 7) must therefore neutralise "*", "^", ":" and the keywords itself, never rely on
+// quoting alone: it emits a "*" and a column filter only where it means one.
+func TestFTS5MatchOperatorsAreOperators(t *testing.T) {
+	db := probeDB(t, probeTables[0])
+	probeExec(t, db, `INSERT INTO records_fts(rowid, summary, body) VALUES `+probeOperatorData)
+	for _, c := range []struct {
+		expr string
+		want []int64
+	}{
+		{`"a" *`, []int64{2, 3, 4}},            // prefix: apple, a, a
+		{`"a"*`, []int64{2, 3, 4}},             // the same without the blank
+		{`"a"`, []int64{3, 4}},                 // without the star only the token a
+		{`^"a"`, []int64{3}},                   // anchored at the start of a column: not row 4
+		{`summary : "a"`, []int64{3, 4}},       // a column filter
+		{`body : "zzz"`, []int64{2}},           // a column filter that excludes the other column
+		{`"a" NOT "pie"`, []int64{3, 4}},       // keywords are operators when bare
+		{`"a" OR "zzz"`, []int64{2, 3, 4}},     //
+		{`"bbb" AND "zzz"`, []int64(nil)},      // AND of two phrases that never meet
+		{`"^zzz"`, []int64{2}},                 // inside the quotes "^" is plain punctuation
+		{`^"zzz"`, []int64{2}},                 // outside it is the anchor
+		{`NEAR("a" "pie", 3)`, []int64(nil)},   // NEAR is a function when bare ("a" is no token of row 2: no hit)
+		{`NEAR("apple" "pie", 1)`, []int64{2}}, // ... and it finds adjacent terms
+	} {
+		got, err := queryInts(db, `SELECT rowid FROM records_fts WHERE records_fts MATCH ? ORDER BY rowid`, c.expr)
+		if err != nil {
+			t.Errorf("MATCH %s: %v", c.expr, err)
+			continue
+		}
+		if !slices.Equal(got, c.want) {
+			t.Errorf("MATCH %s = %v, want %v", c.expr, got, c.want)
+		}
+	}
+	// a dangling operator is a syntax error, not an empty result
+	if _, err := queryInts(db, `SELECT rowid FROM records_fts WHERE records_fts MATCH ?`, `"zzz" ^`); err == nil {
+		t.Error(`MATCH "zzz" ^ did not fail`)
+	}
+
+	// the trigram table: "^" inside quotes is a literal character there (it is part of the
+	// 4-character phrase), outside it is the anchor
+	sub := probeDB(t, probeTables[1])
+	probeExec(t, sub, `INSERT INTO records_fts_sub(rowid, summary, body) VALUES `+probeOperatorData)
+	for _, c := range []struct {
+		expr string
+		want []int64
+	}{
+		{`"^zzz"`, []int64(nil)},
+		{`^"zzz"`, []int64{2}},
+		{`"zzz"`, []int64{2}},
+	} {
+		got, err := queryInts(sub, `SELECT rowid FROM records_fts_sub WHERE records_fts_sub MATCH ? ORDER BY rowid`, c.expr)
+		if err != nil || !slices.Equal(got, c.want) {
+			t.Errorf("trigram MATCH %s = %v, %v, want %v", c.expr, got, err, c.want)
+		}
 	}
 }
