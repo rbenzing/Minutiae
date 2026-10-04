@@ -1,5 +1,7 @@
 package sqlitefile
 
+import "io"
+
 // Test-only access to internals. Panic injection reaches library code only
 // through the instance-scoped env.hook set here (there is no package-level
 // variable).
@@ -59,4 +61,12 @@ func (p *Probe) Run(site string) (err error) {
 func GuardedCall(fn func() error) (err error) {
 	defer guard(&err)
 	return fn()
+}
+
+// RawPage reads page pgno of the database file as found.
+func (d *DB) RawPage(pgno uint32) ([]byte, error) { return d.readRawPage(pgno) }
+
+// OpenWithHook is Open with a panic-injection hook (called at every site).
+func OpenWithHook(db io.ReaderAt, size int64, opts Options, hook func(site string)) (*DB, error) {
+	return openWith(db, size, opts, hook)
 }
