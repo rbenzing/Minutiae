@@ -3,6 +3,7 @@ package apfs
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -166,8 +167,12 @@ func (f *FS) openVolumes() {
 	used := map[string]bool{}
 	for _, v := range f.vols {
 		if !v.readable {
-			v.display = "~unreadable~" + strconv.Itoa(v.slot)
-			used[v.display] = true
+			disp := "~unreadable~" + strconv.Itoa(v.slot)
+			for used[disp] {
+				disp += "~" + strconv.Itoa(v.slot)
+			}
+			used[disp] = true
+			v.display = disp
 			continue
 		}
 		disp, raw := displayName(v.name)
@@ -347,7 +352,7 @@ func (f *FS) volumeEntry(v *volume) filesys.Entry {
 			e.Mode, e.UID, e.GID = uint32(in.mode), in.uid, in.gid
 			e.Times = inodeTimes(in)
 			return e
-		} else if isNotFoundOrCorrupt(err) {
+		} else if isNotFoundOrCorrupt(err) || errors.Is(err, filesys.ErrUnsupported) {
 			f.warn("volume %d: the root inode cannot be read: %v", v.slot, err)
 		}
 	}

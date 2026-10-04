@@ -38,9 +38,14 @@ func cryptoAnomaly(id uint64) bool { return id != 0 && id != cryptoSWID }
 // CRYPTO_SW_ID) is returned as stored on disk, never decrypted (decryption is
 // roadmap sub-project 10), with a warning.
 func (f *FS) Open(e filesys.Entry) (filesys.File, error) {
-	kind, _, _, _, ok := parseEntryID(e.ID)
+	kind, slot, _, _, ok := parseEntryID(e.ID)
 	if !ok {
 		return nil, notFound("entry ID %q", e.ID)
+	}
+	if kind == idSnaps {
+		if err := f.snapsTarget(slot, e.ID); err != nil {
+			return nil, err
+		}
 	}
 	if kind != idNode {
 		return nil, fmt.Errorf("apfs: %w: %q is a directory", filesys.ErrUnsupported, e.ID)

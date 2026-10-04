@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"math"
 	"time"
 	"unicode/utf8"
@@ -284,31 +285,33 @@ func displayXattr(name []byte) string {
 
 // drec is a decoded directory record.
 type drec struct {
-	name   []byte // without the NUL, aliases the node
-	fileID uint64
-	flags  uint16
+	name    []byte // without the NUL, aliases the node
+	fileID  uint64
+	flags   uint16
+	badHash bool // hashed key whose stored hash does not match the (ASCII) name
 }
 
 // parseDrecKey returns the name of a directory-record key. Either key form is
 // accepted when it is self-consistent: the hashed form (u32 name_len_and_hash
 // after the header: low 10 bits the length including the NUL, the rest the
-// hash) or the plain form (u16 name_len). The hash is never verified. why is
+// hash) or the plain form (u16 name_len). The hash is returned for the caller
+// to verify (nameHash). why is
 // set when the key fits neither form.
-func parseDrecKey(key []byte) (name []byte, why string) {
+func parseDrecKey(key []byte) (name []byte, hash uint32, hashed bool, why string) {
 	end := len(key) - 1
 	if len(key) >= 8+4+1 {
 		nl := int(le.Uint32(key[8:]) & 0x3ff)
 		if nl >= 1 && 12+nl == len(key) && key[end] == 0 {
-			return key[12:end], ""
+			return key[12:end], le.Uint32(key[8:]) >> 10, true, ""
 		}
 	}
 	if len(key) >= 8+2+1 {
 		nl := int(le.Uint16(key[8:]))
 		if nl >= 1 && 10+nl == len(key) && key[end] == 0 {
-			return key[10:end], ""
+			return key[10:end], 0, false, ""
 		}
 	}
-	return nil, "the name length does not fit the key or the name is not NUL-terminated"
+	return nil, 0, false, "the name length does not fit the key or the name is not NUL-terminated"
 }
 
 // scanDir visits the directory records of directory dir of volume v as of
@@ -332,7 +335,7 @@ func (f *FS) scanDir(v *volume, view uint64, dir uint64, fn func(d *drec) (stop 
 			f.warn("volume %d directory %d: the directory read budget is exhausted; the listing is partial", v.slot, dir)
 			return true, nil
 		}
-		name, why := parseDrecKey(key)
+		name, hash, hashed, why := parseDrecKey(key)
 		switch {
 		case why != "":
 			f.warn("volume %d directory %d: directory record skipped: %s", v.slot, dir, why)
@@ -351,6 +354,12 @@ func (f *FS) scanDir(v *volume, view uint64, dir uint64, fn func(d *drec) (stop 
 			return false, nil
 		}
 		d := &drec{name: name, fileID: le.Uint64(val), flags: le.Uint16(val[16:])}
+		if hashed {
+			if want, ok := nameHash(name, v.caseInsen); ok && want != hash {
+				d.badHash = true
+				f.warn("volume %d directory %d: directory record %q stores the name hash %d, the name hashes to %d: the entry is listed as found", v.slot, dir, name, hash, want)
+			}
+		}
 		if d.fileID == 0 || d.fileID > maxIno {
 			f.warn("volume %d directory %d: directory record %q names object %d, which is out of range: skipped", v.slot, dir, name, d.fileID)
 			return false, nil
@@ -389,4 +398,29 @@ func (f *FS) siblingTarget(v *volume, view, sib uint64) (uint64, bool, error) {
 // opposed to I/O failures.
 func isNotFoundOrCorrupt(err error) bool {
 	return errors.Is(err, filesys.ErrNotFound) || errors.Is(err, filesys.ErrCorrupt)
+}
+
+// castagnoli is the CRC-32C table.
+var castagnoli = crc32.MakeTable(crc32.Castagnoli)
+
+// nameHash is the 22-bit hash a hashed directory-record key stores for name
+// (Format reference: the name in NFD, as UTF-32 little-endian code points
+// without the NUL, CRC-32C with initial value 0xFFFFFFFF and no final
+// complement, low 22 bits; a case-insensitive volume hashes the case-folded
+// name). Only pure-ASCII names are supported: NFD is the identity there and
+// the fold is lower-casing. ok is false for any other name (it is not
+// verified: that needs Unicode normalization and folding tables).
+func nameHash(name []byte, foldCase bool) (hash uint32, ok bool) {
+	u := make([]byte, 0, 4*len(name))
+	for _, c := range name {
+		if c >= 0x80 {
+			return 0, false
+		}
+		if foldCase && c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		u = append(u, c, 0, 0, 0)
+	}
+	// hash/crc32 complements the result; the stored value does not.
+	return ^crc32.Checksum(u, castagnoli) & 0x3fffff, true
 }

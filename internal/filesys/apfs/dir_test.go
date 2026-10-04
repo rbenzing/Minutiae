@@ -210,7 +210,8 @@ func TestDrecKeyForms(t *testing.T) {
 		}
 	}
 
-	// The hash is never verified: a wrong one changes nothing.
+	// A wrong hash is reported (attribute and one warning each) but the entry is
+	// still listed and found.
 	files[0].BadHash, files[1].BadHash = true, true
 	f, _ := openOpts(t, volOpts(dataVolume(files...)))
 	if got := entryNames(mustReadDir(t, f, mustLookup(t, f, "/Data"))); !slices.Equal(got, []string{"Two", "one", "three"}) {
@@ -219,8 +220,8 @@ func TestDrecKeyForms(t *testing.T) {
 	if e := mustLookup(t, f, "/Data/one"); e.Size != 1 {
 		t.Errorf("lookup with a wrong hash = %+v", e)
 	}
-	if w := f.Info().Warnings; len(w) != 0 {
-		t.Errorf("wrong hashes warn: %q", w)
+	if w := f.Info().Warnings; len(w) != 2 || !hasWarn(f, "\"one\"", "hash") || !hasWarn(f, "\"Two\"", "hash") {
+		t.Errorf("wrong hashes: warnings %q, want one per bad record", w)
 	}
 
 	// A key that fits neither form is skipped with a warning; the rest is listed.
@@ -583,14 +584,16 @@ func TestForgedIDsRejectedQuickly(t *testing.T) {
 		"", "x", "n:", "n:0:0", "n:0:0:2:1", "n:2:0:2", "n:99:0:2", "n:100:0:2", "n:0:7:2", "n:0:0:0",
 		"n:0:0:1152921504606846976", "n:0:0:99999999999999999999", "n:00:0:2", "n:0:00:2", "n:0:0:02", "n:+0:0:2",
 		"n:-1:0:2", "n: 0:0:2", "n:0x0:0:2", "N:0:0:2", "snaps:0", "snaps:1", "snaps:7", "snaps:100", "snaps:00",
-		"apfs:root ", "APFS:ROOT", "inode:2",
+		"apfs:root ", "APFS:ROOT", "inode:2", "snaps:2",
 	}
 	for _, id := range ids {
 		e := filesys.Entry{ID: id, Type: filesys.TypeDir}
 		if _, err := f.ReadDir(e); !errors.Is(err, filesys.ErrNotFound) {
 			t.Errorf("ReadDir(%q) = %v, want ErrNotFound", id, err)
 		}
-		if _, err := f.Open(e); !errors.Is(err, filesys.ErrNotFound) && !errors.Is(err, filesys.ErrUnsupported) {
+		_, err := f.Open(e)
+		existingSnaps := (id == "snaps:0" || id == "snaps:1") && errors.Is(err, filesys.ErrUnsupported)
+		if !errors.Is(err, filesys.ErrNotFound) && !existingSnaps {
 			t.Errorf("Open(%q) = %v, want ErrNotFound", id, err)
 		}
 	}
@@ -741,11 +744,15 @@ func TestDirHostile(t *testing.T) {
 		v.Reorder = func(r []apfstest.FSRecord) []apfstest.FSRecord { slices.Reverse(r); return r }
 		f, _ := openOpts(t, volOpts(v))
 		// The tree is garbage to the seek; it must neither panic nor loop.
+		before := f.Scans()
 		_, _ = f.Lookup("/Data/f010")
 		if vol, err := f.Lookup("/Data"); err == nil {
 			_, _ = f.ReadDir(vol)
 		}
 		_, _ = f.ReadDir(filesys.Entry{ID: "n:0:0:2"})
+		if got := f.Scans() - before; got > 1000 {
+			t.Errorf("a garbage tree cost %d scans", got)
+		}
 	})
 
 	t.Run("100k records under a tiny budget", func(t *testing.T) {

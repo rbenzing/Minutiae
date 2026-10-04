@@ -184,7 +184,7 @@ func (t *tree) addrOf(oid uint64) (uint64, error) {
 func (f *FS) chargeNode() error {
 	if f.nodeReads.Add(-1) < 0 {
 		f.warn("the B-tree node read budget of %d reads for this filesystem is exhausted; further tree reads fail", f.nodeReadLimit)
-		return corrupt("B-tree", -1, "the node read budget of %d reads for this filesystem is exhausted", f.nodeReadLimit)
+		return &budgetError{corrupt("B-tree", -1, "the node read budget of %d reads for this filesystem is exhausted", f.nodeReadLimit).(*filesys.CorruptError)}
 	}
 	return nil
 }
@@ -526,3 +526,15 @@ func (s *scanner) leaf(n *btNode) error {
 	}
 	return nil
 }
+
+// errNodeBudget marks the exhaustion of the filesystem-wide node read budget:
+// a *filesys.CorruptError that callers can tell from damage to one structure.
+var errNodeBudget = errors.New("node read budget exhausted")
+
+type budgetError struct{ *filesys.CorruptError }
+
+func (e *budgetError) Is(target error) bool {
+	return target == errNodeBudget || target == filesys.ErrCorrupt
+}
+
+func (e *budgetError) Unwrap() error { return e.CorruptError }

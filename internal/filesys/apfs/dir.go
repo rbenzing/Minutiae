@@ -75,8 +75,8 @@ func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
 		return out, nil
 	case idSnaps:
 		// The .snapshots directory is added with the snapshot layer.
-		if f.slots[slot] == nil {
-			return nil, notFound("entry ID %q names no volume", dir.ID)
+		if err := f.snapsTarget(slot, dir.ID); err != nil {
+			return nil, err
 		}
 		return nil, notFound("entry ID %q: no snapshots", dir.ID)
 	}
@@ -105,10 +105,30 @@ func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
 	if err == nil {
 		err = ferr
 	}
+	if errors.Is(err, errNodeBudget) && len(out) > 0 {
+		// The shared budget rule: spent before the first entry the listing is an
+		// error, spent mid-directory it is cut short with a warning.
+		f.warn("volume %d directory %d: the node read budget is exhausted; the listing is partial (%d entries)", v.slot, ino, len(out))
+		return out, nil
+	}
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+// snapsTarget validates the volume of a snaps:<n> ID without touching the
+// disk: a volume that does not exist is ErrNotFound, an encrypted one
+// ErrEncrypted.
+func (f *FS) snapsTarget(slot int, id string) error {
+	v := f.slots[slot]
+	switch {
+	case v == nil:
+		return notFound("entry ID %q names no volume", id)
+	case v.encrypted:
+		return v.encryptedErr()
+	}
+	return nil
 }
 
 // dirEntry builds the entry for a directory record, reading the inode it names
@@ -120,23 +140,25 @@ func (f *FS) dirEntry(v *volume, view uint64, d *drec) (filesys.Entry, error) {
 	if errors.Is(err, filesys.ErrNotFound) {
 		t, ok, serr := f.siblingTarget(v, view, d.fileID)
 		switch {
-		case serr != nil && !isNotFoundOrCorrupt(serr):
+		case serr != nil && (!isNotFoundOrCorrupt(serr) || errors.Is(serr, errNodeBudget)):
 			return filesys.Entry{}, serr
 		case ok && t != d.fileID:
 			in, err = f.inode(v, view, t)
 		}
 	}
 	if err != nil {
-		if !isNotFoundOrCorrupt(err) {
+		if !isNotFoundOrCorrupt(err) || errors.Is(err, errNodeBudget) {
 			return filesys.Entry{}, err
 		}
 		f.warn("volume %d: the entry %q names object %d, whose inode cannot be read: %v", v.slot, name, d.fileID, err)
 		return filesys.Entry{
 			Name: name, RawName: raw, ID: nodeID(v.slot, view, d.fileID), Type: direntType(d.flags),
-			Attrs: []filesys.KV{{Key: "inode", Value: "unreadable"}},
+			Attrs: hashAttr(d, []filesys.KV{{Key: "inode", Value: "unreadable"}}),
 		}, nil
 	}
-	return f.inodeEntry(v, view, in, name, raw, d.flags), nil
+	e := f.inodeEntry(v, view, in, name, raw, d.flags)
+	e.Attrs = hashAttr(d, e.Attrs)
+	return e, nil
 }
 
 // inodeEntry describes an inode. flags is the directory record's type, used
@@ -310,4 +332,12 @@ func (f *FS) child(v *volume, view, dirIno uint64, comp string) (filesys.Entry, 
 		}
 	}
 	return filesys.Entry{}, errNoChild
+}
+
+// hashAttr adds name_hash=bad for a record whose stored name hash is wrong.
+func hashAttr(d *drec, attrs []filesys.KV) []filesys.KV {
+	if d.badHash {
+		attrs = append(attrs, filesys.KV{Key: "name_hash", Value: "bad"})
+	}
+	return attrs
 }
