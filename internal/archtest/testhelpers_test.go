@@ -13,7 +13,7 @@ import (
 // testOnlyPackages may be imported only from _test.go files: they hold raw-SQL
 // tamper helpers and fixtures that must never be linked into the binary (a
 // non-test import from internal/cli, which may import anything, would ship them).
-var testOnlyPackages = []string{"internal/records/recordstest"}
+var testOnlyPackages = []string{"internal/records/recordstest", "internal/sqlitefile/sqlitetest"}
 
 // nonTestImporters returns the non-_test.go files under root that import the
 // package module+pkg.
@@ -64,25 +64,37 @@ func TestTestOnlyPackagesAreImportedFromTestsOnly(t *testing.T) {
 	}
 }
 
-// TestTestOnlyRuleFlagsNonTestImport: the rule is not vacuous: a non-test file
-// importing the package is found, a _test.go file importing it is not.
+// TestTestOnlyRuleFlagsNonTestImport: the rule is not vacuous: for every
+// test-only package, a non-test file importing it (from any package, such as
+// internal/cli) is found, a _test.go file importing it is not.
 func TestTestOnlyRuleFlagsNonTestImport(t *testing.T) {
-	dir := t.TempDir()
-	imp := `package x
+	for _, must := range []string{"internal/records/recordstest", "internal/sqlitefile/sqlitetest"} {
+		listed := false
+		for _, pkg := range testOnlyPackages {
+			listed = listed || pkg == must
+		}
+		if !listed {
+			t.Errorf("%s must be listed in testOnlyPackages", must)
+		}
+	}
+	for _, pkg := range testOnlyPackages {
+		dir := t.TempDir()
+		imp := `package x
 
-import _ "` + module + testOnlyPackages[0] + `"
+import _ "` + module + pkg + `"
 `
-	if err := os.WriteFile(filepath.Join(dir, "prod.go"), []byte(imp), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "x_test.go"), []byte(imp), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	got, err := nonTestImporters(dir, testOnlyPackages[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 || got[0] != "prod.go" {
-		t.Fatalf("importers = %q, want only prod.go", got)
+		if err := os.WriteFile(filepath.Join(dir, "prod.go"), []byte(imp), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "x_test.go"), []byte(imp), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := nonTestImporters(dir, pkg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 || got[0] != "prod.go" {
+			t.Fatalf("%s: importers = %q, want only prod.go", pkg, got)
+		}
 	}
 }
