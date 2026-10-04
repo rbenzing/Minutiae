@@ -286,6 +286,8 @@ func TestStaleAPFSSuperblockDoesNotHideOtherFilesystems(t *testing.T) {
 		"exfat":      "../exfat/testdata/exfat.img.gz",
 		"f2fs":       "../f2fs/testdata/f2fs-default.img.gz",
 		"f2fs extra": "../f2fs/testdata/f2fs-extra-attr.img.gz",
+		"hfsplus":    "../hfsplus/testdata/hfsplus-empty.img.gz",
+		"hfsx":       "../hfsplus/testdata/hfsx-empty.img.gz",
 	} {
 		t.Run(name, func(t *testing.T) {
 			pristine := gunzipFixture(t, path)
@@ -302,8 +304,8 @@ func TestStaleAPFSSuperblockDoesNotHideOtherFilesystems(t *testing.T) {
 			// Planted past block 0 in unused (all-zero) space, aligned and not, the way
 			// a leftover of an earlier format sits: nothing changes.
 			offsets := zeroOffsets(pristine, 3)
-			if len(offsets) == 0 {
-				t.Fatal("the fixture has no unused space to plant in")
+			if len(offsets) < 3 {
+				t.Fatalf("the fixture has %d unused areas to plant in, want 3 (aligned and unaligned)", len(offsets))
 			}
 			for _, off := range offsets {
 				img := plantNXSB(pristine, off, 4096)
@@ -335,6 +337,8 @@ func TestStaleAPFSSuperblockDoesNotHideOtherFilesystems(t *testing.T) {
 	for name, path := range map[string]string{
 		"ext4 4k": "../ext4/testdata/ext4-4k-csum.img.gz",
 		"f2fs":    "../f2fs/testdata/f2fs-default.img.gz",
+		"hfsplus": "../hfsplus/testdata/hfsplus-empty.img.gz",
+		"hfsx":    "../hfsplus/testdata/hfsx-empty.img.gz",
 	} {
 		t.Run("block 0 over the boot area of "+name, func(t *testing.T) {
 			pristine := gunzipFixture(t, path)
