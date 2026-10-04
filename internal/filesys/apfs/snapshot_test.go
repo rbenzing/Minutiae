@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"slices"
 	"strings"
 	"sync"
@@ -683,28 +684,89 @@ func TestSnapshotListFailureIsCached(t *testing.T) {
 	}
 }
 
-// A snapshot is named by its display name or, failing that, by its xid in
-// canonical decimal; an exact name always wins over an xid.
+// A snapshot reference must be unambiguous. "xid:<n>" and "name:<name>" are
+// explicit; a bare value is accepted only when exactly one snapshot matches it
+// by any of its display name, stored name, ~raw~ alias or xid, and a reference
+// that matches several is refused with an error that lists the candidates.
 func TestSnapshotPathByXid(t *testing.T) {
 	f, _ := openOpts(t, snapOpts(snapVolume(nil,
 		apfstest.Snapshot{Name: "daily", Xid: 5},
-		apfstest.Snapshot{Name: "7", Xid: 9}, // a name that looks like an xid
+		apfstest.Snapshot{Name: "7", Xid: 9}, // a name that looks like another snapshot's xid
 		apfstest.Snapshot{Name: "other", Xid: 7},
 	)))
 	for _, c := range []struct{ snap, want string }{
 		{"5", "/Data/.snapshots/daily/x"},
-		{"7", "/Data/.snapshots/7/x"}, // the name "7", not xid 7
-		{"9", "/Data/.snapshots/7/x"}, // the xid of the snapshot named "7"
+		{"9", "/Data/.snapshots/7/x"},
 		{"daily", "/Data/.snapshots/daily/x"},
+		{"xid:5", "/Data/.snapshots/daily/x"},
+		{"xid:7", "/Data/.snapshots/other/x"},
+		{"xid:9", "/Data/.snapshots/7/x"},
+		{"name:7", "/Data/.snapshots/7/x"},
+		{"name:daily", "/Data/.snapshots/daily/x"},
+		{"name:" + rawName([]byte("other")), "/Data/.snapshots/other/x"},
 	} {
 		got, err := f.SnapshotPath("/Data/x", c.snap)
 		if err != nil || got != c.want {
 			t.Errorf("SnapshotPath(%q) = %q, %v; want %q", c.snap, got, err, c.want)
 		}
 	}
-	for _, bad := range []string{"05", "+5", " 5", "0x5", "5 ", "6", "18446744073709551616", "-5"} {
+
+	// "7" is the name of the snapshot of xid 9 and the xid of "other": refused,
+	// with both candidates (xid and quoted name) and the way out.
+	_, err := f.SnapshotPath("/Data/x", "7")
+	if !errors.Is(err, filesys.ErrAmbiguous) {
+		t.Fatalf("SnapshotPath(7) = %v, want ErrAmbiguous", err)
+	}
+	for _, want := range []string{`xid 7 "other"`, `xid 9 "7"`, "xid:", "name:"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ambiguity error %q lacks %q", err, want)
+		}
+	}
+
+	for _, bad := range []string{
+		"", "05", "+5", " 5", "0x5", "5 ", "6", "18446744073709551616", "-5",
+		"xid:05", "xid:+5", "xid:6", "xid:", "xid:daily", "xid: 5", "name:", "name:5", "name:nope", "XID:5", "name:xid:5",
+	} {
 		if got, err := f.SnapshotPath("/Data/x", bad); !errors.Is(err, filesys.ErrNotFound) {
 			t.Errorf("SnapshotPath(%q) = %q, %v; want ErrNotFound", bad, got, err)
 		}
+	}
+}
+
+// Several snapshots with one stored name (an odd or hostile image): the name is
+// ambiguous however it is spelled, and only the xid names one of them.
+func TestSnapshotPathSharedNameIsAmbiguous(t *testing.T) {
+	f, _ := openOpts(t, snapOpts(snapVolume(nil,
+		apfstest.Snapshot{Name: "S", Xid: 5},
+		apfstest.Snapshot{Name: "S", Xid: 6},
+		apfstest.Snapshot{Name: "T", Xid: 8},
+		apfstest.Snapshot{RawName: []byte{0xff, 'x'}, Xid: 9},
+		apfstest.Snapshot{RawName: []byte{0xff, 'x'}, Xid: 10},
+	)))
+	for _, ref := range []string{"S", "name:S", rawName([]byte("S")), "name:" + rawName([]byte("S")), rawName([]byte{0xff, 'x'}), "name:" + rawName([]byte{0xff, 'x'})} {
+		_, err := f.SnapshotPath("/Data/x", ref)
+		if !errors.Is(err, filesys.ErrAmbiguous) {
+			t.Errorf("SnapshotPath(%q) = %v, want ErrAmbiguous", ref, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), "xid:") {
+			t.Errorf("error %q does not tell to use xid:", err)
+		}
+	}
+	if _, err := f.SnapshotPath("/Data/x", "S"); err == nil || !strings.Contains(err.Error(), `xid 5 "S"`) || !strings.Contains(err.Error(), `xid 6 "S`) {
+		t.Errorf("the error must list both candidates: %v", err)
+	}
+	// By xid each is reachable, under its own (unique) display name.
+	p5, err5 := f.SnapshotPath("/Data/x", "xid:5")
+	p6, err6 := f.SnapshotPath("/Data/x", "xid:6")
+	if err5 != nil || err6 != nil || p5 == p6 || p5 != "/Data/.snapshots/S/x" {
+		t.Errorf("xid:5 = %q, %v; xid:6 = %q, %v", p5, err5, p6, err6)
+	}
+	// The unique display name of the second one resolves to it alone.
+	if got, err := f.SnapshotPath("/Data/x", path.Base(path.Dir(p6))); err != nil || got != p6 {
+		t.Errorf("display name of xid 6: %q, %v; want %q", got, err, p6)
+	}
+	if got, err := f.SnapshotPath("/Data/x", "T"); err != nil || got != "/Data/.snapshots/T/x" {
+		t.Errorf("T = %q, %v", got, err)
 	}
 }

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -299,5 +300,62 @@ func TestImageExtractSnapshotFlagErrors(t *testing.T) {
 	e2 := newImgEnv(t) // a filesystem without snapshots
 	if code, out = e2.image(t, "extract", e2.ref, "/x", "--snapshot", "S"); code != ExitUsage || !strings.Contains(out, "no snapshots") {
 		t.Errorf("--snapshot on a filesystem without snapshots: %d, want %d with 'no snapshots'\n%s", code, ExitUsage, out)
+	}
+}
+
+// ambiguousSnapshotsVolume has a snapshot NAMED "3" (xid 2) and a snapshot of
+// xid 3 (named "x"): the reference "3" matches both.
+func ambiguousSnapshotsVolume() apfstest.Volume {
+	return apfstest.Volume{
+		Name: "Data", UUID: [16]byte{1},
+		Files: []apfstest.File{{Path: "/f.txt", Data: []byte("live")}},
+		Snapshots: []apfstest.Snapshot{
+			{Name: "3", Files: []apfstest.File{{Path: "/f.txt", Data: []byte("named 3")}}},
+			{Name: "x", Files: []apfstest.File{{Path: "/f.txt", Data: []byte("xid 3")}}},
+		},
+	}
+}
+
+// An ambiguous --snapshot reference is a usage error for ls and for extract,
+// listing every candidate; nothing is extracted. xid:/name: name one snapshot,
+// and the derivation records its name and xid.
+func TestSnapshotFlagRefusesAmbiguousReference(t *testing.T) {
+	e := apfsEnv(t, ambiguousSnapshotsVolume())
+	for _, args := range [][]string{
+		{"ls", e.ref, "/Data", "--snapshot", "3"},
+		{"extract", e.ref, "/Data/f.txt", "--snapshot", "3"},
+	} {
+		code, out := e.image(t, args[0], args[1:]...)
+		if code != ExitUsage || !strings.Contains(out, `xid 2 "3"`) || !strings.Contains(out, `xid 3 "x"`) || !strings.Contains(out, "xid:") {
+			t.Errorf("%v: %d, want %d listing both candidates and the xid:/name: forms:\n%s", args, code, ExitUsage, out)
+		}
+	}
+	for _, r := range manifestRecords(t, e.c) {
+		if r.Source.Kind == "extract" {
+			t.Errorf("a refused extract left an artifact: %+v", r.Source)
+		}
+	}
+
+	if code, out := e.image(t, "ls", e.ref, "/Data", "--snapshot", "xid:3", "-r"); code != 0 || !strings.Contains(out, "/Data/.snapshots/x/f.txt") {
+		t.Errorf("ls --snapshot xid:3: %d\n%s", code, out)
+	}
+	if code, out := e.image(t, "extract", e.ref, "/Data/f.txt", "--snapshot", "xid:3"); code != 0 {
+		t.Fatalf("extract --snapshot xid:3: %d\n%s", code, out)
+	}
+	if code, out := e.image(t, "extract", e.ref, "/Data/f.txt", "--snapshot", "name:3"); code != 0 {
+		t.Fatalf("extract --snapshot name:3: %d\n%s", code, out)
+	}
+	got := map[string]string{}
+	for _, r := range manifestRecords(t, e.c) {
+		if d := r.Source.Derived; d != nil && d.Snapshot != nil {
+			b, err := os.ReadFile(filepath.Join(e.c, r.Path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got[fmt.Sprintf("%s@%d", d.Snapshot.Name, d.Snapshot.Xid)] = string(b)
+		}
+	}
+	if len(got) != 2 || got["x@3"] != "xid 3" || got["3@2"] != "named 3" {
+		t.Errorf("extracted snapshot artifacts (name@xid -> bytes) = %v, want x@3 and 3@2 with their own bytes", got)
 	}
 }

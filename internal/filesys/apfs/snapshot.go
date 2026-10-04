@@ -487,30 +487,84 @@ func (f *FS) matchSnapshot(v *volume, comp string) (*snapshot, error) {
 	return nil, nil
 }
 
-// matchSnapshotRef resolves the argument of a snapshot option: a snapshot's
-// display name (or ~raw~ alias) first, and only when none matches, its xid in
-// canonical decimal. A name that looks like an xid therefore stays reachable
-// by name, and the xid of that snapshot by its number.
+// nameMatches reports whether ref names s: its display name, its stored name
+// (valid UTF-8 spelled as is) or its ~raw~ alias. Display names are unique in a
+// volume, stored names are not (an odd or hostile image may repeat one).
+func (s *snapshot) nameMatches(ref string) bool {
+	if ref == "" {
+		return false
+	}
+	if s.display == ref || string(s.name) == ref {
+		return true
+	}
+	raw, ok := rawAlias(ref)
+	return ok && bytes.Equal(s.name, raw)
+}
+
+// matchSnapshotRef resolves the argument of a snapshot option, which must name
+// exactly one snapshot:
+//
+//	xid:<n>      the snapshot of that xid (canonical decimal)
+//	name:<name>  the snapshot(s) with that display name, stored name or ~raw~ alias
+//	<value>      every snapshot that matches the value by name, alias or xid
+//
+// A bare value is accepted only when exactly one snapshot matches; a name
+// shared by several snapshots is ambiguous unless given as xid:. A reference
+// that matches several is refused with filesys.ErrAmbiguous and the candidates;
+// one that matches none yields (nil, nil).
 func (f *FS) matchSnapshotRef(v *volume, ref string) (*snapshot, error) {
-	s, err := f.matchSnapshot(v, ref)
-	if s != nil || err != nil {
-		return s, err
+	l, err := f.snapshotList(v)
+	if err != nil {
+		return nil, err
 	}
-	if xid, ok := canonDecimal(ref); ok {
-		l, err := f.snapshotList(v)
-		if err != nil {
-			return nil, err
+	var cands []*snapshot
+	switch {
+	case strings.HasPrefix(ref, "xid:"):
+		if xid, ok := canonDecimal(ref[len("xid:"):]); ok && l.byXid[xid] != nil {
+			return l.byXid[xid], nil
 		}
-		return l.byXid[xid], nil
+		return nil, nil
+	case strings.HasPrefix(ref, "name:"):
+		for _, s := range l.list {
+			if s.nameMatches(ref[len("name:"):]) {
+				cands = append(cands, s)
+			}
+		}
+	default:
+		xid, isXid := canonDecimal(ref)
+		for _, s := range l.list {
+			if s.nameMatches(ref) || (isXid && s.xid == xid) {
+				cands = append(cands, s)
+			}
+		}
 	}
-	return nil, nil
+	switch len(cands) {
+	case 0:
+		return nil, nil
+	case 1:
+		return cands[0], nil
+	}
+	list := make([]string, 0, maxSnapNames)
+	for _, c := range cands {
+		if len(list) == maxSnapNames {
+			break
+		}
+		list = append(list, fmt.Sprintf("xid %d %s", c.xid, strconv.Quote(c.display)))
+	}
+	more := ""
+	if n := len(cands) - len(list); n > 0 {
+		more = fmt.Sprintf(" and %d more", n)
+	}
+	return nil, fmt.Errorf("apfs: %w: snapshot reference %s of volume %s matches %d snapshots (%s%s); name one by xid:<n> or name:<name>",
+		filesys.ErrAmbiguous, strconv.Quote(ref), strconv.Quote(v.display), len(cands), strings.Join(list, ", "), more)
 }
 
 // SnapshotPath maps a path inside a volume ("/Data/docs/a.txt"; "/" alone only
 // when the container has exactly one volume) to the path of the same file in
 // the named snapshot ("/Data/.snapshots/<snapshot>/docs/a.txt"). The snapshot
-// is named by its display name, its "~raw~" alias or its xid (in that order of
-// preference). It implements filesys.Snapshotter. The path itself is not looked up.
+// is named as described at matchSnapshotRef (xid:<n>, name:<name> or an
+// unambiguous bare value). It implements filesys.Snapshotter. The path itself is
+// not looked up.
 func (f *FS) SnapshotPath(p, snapshot string) (string, error) {
 	var comps []string
 	for _, c := range strings.Split(p, "/") {

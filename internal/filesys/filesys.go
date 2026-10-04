@@ -144,6 +144,9 @@ var (
 	ErrUnsupported = errors.New("unsupported filesystem feature")
 	ErrEncrypted   = errors.New("encrypted (decryption is roadmap sub-project 10)")
 	ErrCorrupt     = errors.New("corrupt filesystem structure")
+	// ErrAmbiguous is returned when a reference (a snapshot name or xid) matches
+	// more than one object; the error lists the candidates.
+	ErrAmbiguous = errors.New("ambiguous reference")
 )
 
 // CorruptError reports a malformed on-disk structure. Offset is the byte

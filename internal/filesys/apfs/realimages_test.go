@@ -51,6 +51,7 @@ package apfs_test
 
 import (
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
@@ -106,7 +107,7 @@ func TestRealImages(t *testing.T) {
 	dir := filepath.Join(root, "apfs")
 	var imgs []string
 	for _, pat := range []string{"*.img", "*.img.gz"} {
-		m, err := filepath.Glob(filepath.Join(dir, pat))
+		m, err := filepath.Glob(filepath.Join(dir, pat)) //nolint:gosec // a directory the examiner supplies
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -116,7 +117,7 @@ func TestRealImages(t *testing.T) {
 	for _, p := range imgs {
 		name := strings.TrimSuffix(strings.TrimSuffix(filepath.Base(p), ".gz"), ".img")
 		exp := filepath.Join(dir, name+".expect.json")
-		if _, err := os.Stat(exp); err != nil {
+		if _, err := os.Stat(exp); err != nil { //nolint:gosec // a path the examiner supplies
 			t.Logf("%s: no %s.expect.json, skipped", p, name)
 			continue
 		}
@@ -130,7 +131,7 @@ func TestRealImages(t *testing.T) {
 
 func readRealImage(t *testing.T, p string) []byte {
 	t.Helper()
-	f, err := os.Open(p)
+	f, err := os.Open(p) //nolint:gosec // an image path the examiner supplies
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +154,7 @@ func readRealImage(t *testing.T, p string) []byte {
 var realVolLine = regexp.MustCompile(`^vol\[\d+\] "(.*)": role=([^,]*), (.*)$`)
 
 func checkRealImage(t *testing.T, imgPath, expPath string) {
-	raw, err := os.ReadFile(expPath)
+	raw, err := os.ReadFile(expPath) //nolint:gosec // a path the examiner supplies
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,17 +231,22 @@ func checkRealImage(t *testing.T, imgPath, expPath string) {
 	if want.UnallocatedBlocks != nil && free/int64(info.BlockSize) != *want.UnallocatedBlocks {
 		t.Errorf("Unallocated = %d blocks, the JSON says %d", free/int64(info.BlockSize), *want.UnallocatedBlocks)
 	}
-	slices.SortFunc(fileRuns, func(a, b filesys.Run) int { return int(a.Offset - b.Offset) })
-	for _, fr := range fileRuns {
-		if fr.Offset < 0 {
-			continue
+	// Sweep: Unallocated returns sorted, merged runs; sort the file runs once.
+	data := slices.DeleteFunc(slices.Clone(fileRuns), func(r filesys.Run) bool { return r.Offset < 0 })
+	slices.SortFunc(data, func(a, b filesys.Run) int { return cmp.Compare(a.Offset, b.Offset) })
+	overlaps, j := 0, 0
+	for _, fr := range data {
+		for j < len(runs) && runs[j].Offset+runs[j].Length <= fr.Offset {
+			j++
 		}
-		for _, r := range runs {
-			if fr.Offset < r.Offset+r.Length && r.Offset < fr.Offset+fr.Length {
-				t.Errorf("free run %+v overlaps a file's run %+v", r, fr)
-				break
+		for k := j; k < len(runs) && runs[k].Offset < fr.Offset+fr.Length; k++ {
+			if overlaps++; overlaps <= 20 {
+				t.Errorf("free run %+v overlaps a file's run %+v", runs[k], fr)
 			}
 		}
+	}
+	if overlaps > 20 {
+		t.Errorf("%d overlaps in all", overlaps)
 	}
 
 	var other []string

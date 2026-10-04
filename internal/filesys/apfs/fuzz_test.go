@@ -222,7 +222,8 @@ func checkFuzzRuns(t *testing.T, name string, file filesys.File, fsSize int64) {
 	}
 }
 
-// The builder seeds must be images the reader accepts and lists, or the fuzz
+// The seeds (builder images and trimmed real fixtures) must be images the reader
+// accepts and lists, or the fuzz
 // would start from nothing.
 func TestFuzzBuilderSeedsOpen(t *testing.T) {
 	for i, s := range fuzzBuilderSeeds() {
@@ -243,6 +244,20 @@ func TestFuzzBuilderSeedsOpen(t *testing.T) {
 		}
 		if i == 0 && n < 30 {
 			t.Errorf("seed 0 (the rich one) lists only %d entries", n)
+		}
+	}
+	// The trimmed real fixtures are seeds too: they must still open (a fixture change
+	// that stopped them would leave dead seeds) and list their volume.
+	for _, name := range orcFixtures {
+		orcSkipShort(t, name)
+		s := trimmedFixture(t, name)
+		fsys, err := apfs.Open(bytes.NewReader(s), int64(len(s)))
+		if err != nil {
+			t.Errorf("trimmed fixture %s: %v", name, err)
+			continue
+		}
+		if es, err := fsys.ReadDir(fsys.Root()); err != nil || len(es) == 0 {
+			t.Errorf("trimmed fixture %s: root lists %d entries, err %v", name, len(es), err)
 		}
 	}
 }

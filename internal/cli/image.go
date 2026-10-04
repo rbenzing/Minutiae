@@ -312,6 +312,8 @@ func snapshotRef(s *examine.Session, fsys filesys.FileSystem, snapshot, ref stri
 	switch {
 	case errors.Is(err, filesys.ErrUnsupported):
 		return "", usageErrorf("--snapshot: %s", escapeText(err.Error()))
+	case errors.Is(err, filesys.ErrAmbiguous):
+		return "", usageErrorf("--snapshot: %s", escapeText(err.Error()))
 	case errors.Is(err, filesys.ErrNeedsVolume):
 		return "", usageErrorf("--snapshot needs a volume path (for example /Data): %s", escapeText(err.Error()))
 	case err != nil:
@@ -340,7 +342,7 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 	partition := partitionFlag(cmd, "partition index (default: the only partition with a recognized filesystem)")
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "list the whole subtree with full paths")
 	cmd.Flags().BoolVar(&deleted, "deleted", false, "also show deleted directory entries")
-	cmd.Flags().StringVar(&snapshot, "snapshot", "", "list the path as it was in this snapshot, by name or xid (APFS; the path must name a volume, output paths are /<volume>/.snapshots/<name>/...)")
+	cmd.Flags().StringVar(&snapshot, "snapshot", "", "list the path as it was in this snapshot, as xid:<n>, name:<name> or a bare name or xid that matches one snapshot (APFS; the path must name a volume, output paths are /<volume>/.snapshots/<name>/...)")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		pidx, err := partition()
 		if err != nil {
@@ -605,7 +607,7 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 	partition := partitionFlag(cmd, "partition index (default: the only partition with a recognized filesystem)")
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "extract the live subtree of directories")
 	cmd.Flags().BoolVar(&includeEncrypted, "include-encrypted", false, "accepted for clarity: encrypted files are always extracted as ciphertext")
-	cmd.Flags().StringVar(&snapshot, "snapshot", "", "extract the paths as they were in this snapshot, by name or xid (APFS; every path must name a volume, artifacts record the snapshot)")
+	cmd.Flags().StringVar(&snapshot, "snapshot", "", "extract the paths as they were in this snapshot, as xid:<n>, name:<name> or a bare name or xid that matches one snapshot (APFS; every path must name a volume, artifacts record the snapshot)")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		pidx, err := partition()
 		if err != nil {
