@@ -209,16 +209,18 @@ func (o *opener) tableGroup(i, n, group int, s Segment, sec section, tab, tab2 *
 	return nil
 }
 
+// refsPresize bounds the up-front allocation for the chunk references (8 bytes
+// each, 512 KiB): enough that ordinary images grow the slice rarely, small
+// enough that a hostile volume claiming millions of chunks over little table
+// data costs nothing. Beyond it, append grows the slice with the entries
+// actually present.
+const refsPresize = 1 << 16
+
 // addRefs appends resolved entries, pre-sizing the slice on first use from the
-// volume's chunk count, capped by what the segments' bytes could describe (a
-// chunk needs a table entry and some data).
+// volume's chunk count, capped at refsPresize.
 func (o *opener) addRefs(refs []chunkRef) {
 	if o.r.refs == nil {
-		var total int64
-		for _, s := range o.r.segs {
-			total += s.Size
-		}
-		o.r.refs = make([]chunkRef, 0, max(int64(len(refs)), min(int64(o.r.geo.chunks), total/8)))
+		o.r.refs = make([]chunkRef, 0, max(int64(len(refs)), min(int64(o.r.geo.chunks), refsPresize)))
 	}
 	o.r.refs = append(o.r.refs, refs...)
 }

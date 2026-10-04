@@ -44,15 +44,15 @@ type VerifyResult struct {
 }
 
 // Result summarises the verification as "mismatch" (either stored hash
-// differs from the media), "unverified" (the media could not be read to the
-// end, so a stored hash was not compared), "absent" (the container stores no
-// hash) or "match". A mismatch outranks everything: it was seen on fully
-// hashed media.
+// differs from the media), "unverified" (the media was not hashed to the
+// end: a bad chunk or a cancelled run, whatever hashes are stored), "absent"
+// (the container stores no hash) or "match". A mismatch outranks everything: it
+// was seen on fully hashed media.
 func (v VerifyResult) Result() string {
 	switch {
 	case v.MD5.Status == HashMismatch || v.SHA1.Status == HashMismatch:
 		return string(HashMismatch)
-	case v.BadChunk >= 0 || v.MD5.Status == HashUnverified || v.SHA1.Status == HashUnverified:
+	case v.BadChunk >= 0 || v.BytesHashed != v.Size || v.MD5.Status == HashUnverified || v.SHA1.Status == HashUnverified:
 		return string(HashUnverified)
 	case v.MD5.Status == HashAbsent && v.SHA1.Status == HashAbsent:
 		return string(HashAbsent)

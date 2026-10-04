@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"io/fs"
 	"runtime"
 	"slices"
 	"testing"
@@ -319,5 +320,42 @@ func TestVerifyRealFixtures(t *testing.T) {
 				t.Fatalf("warnings after verifying a clean fixture: %q", w)
 			}
 		})
+	}
+}
+
+// TestVerifyPartialIsUnverifiedWithoutStoredHashes: a cancelled run that hashed
+// only part of the media is "unverified" even when the container stores no hash
+// (both statuses are then absent), never "absent".
+func TestVerifyPartialIsUnverifiedWithoutStoredHashes(t *testing.T) {
+	const cs = 64 * 512
+	media := mixedMedia(10 * cs)
+	r := mustOpen(t, ewftest.Build(ewftest.Options{NoHash: true, NoDigest: true}, media))
+	ctx, cancel := context.WithCancel(context.Background())
+	res, err := r.Verify(ctx, func(done, _ int64) {
+		if done >= 2*cs {
+			cancel()
+		}
+	})
+	if !errors.Is(err, context.Canceled) || res.BytesHashed != 2*cs || res.BadChunk != -1 {
+		t.Fatalf("%+v, %v", res, err)
+	}
+	if res.MD5.Status != ewf.HashAbsent || res.SHA1.Status != ewf.HashAbsent {
+		t.Fatalf("statuses %+v", res)
+	}
+	if got := res.Result(); got != "unverified" {
+		t.Fatalf("Result() = %q, want unverified", got)
+	}
+	if full, err := r.Verify(context.Background(), nil); err != nil || full.Result() != "absent" {
+		t.Fatalf("complete run: %+v, %v", full, err)
+	}
+}
+
+func TestVerifyAfterCloseFails(t *testing.T) {
+	r := mustOpen(t, ewftest.Build(ewftest.Options{}, pattern(2*64*512)))
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Verify(context.Background(), nil); !errors.Is(err, fs.ErrClosed) {
+		t.Fatalf("err = %v, want fs.ErrClosed", err)
 	}
 }
