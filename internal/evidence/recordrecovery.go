@@ -20,11 +20,32 @@ const SupersededPairsSQL = `SELECT DISTINCT o.ingest_id AS ingest_id, oa.artifac
 	JOIN parsers op ON op.id = o.parser_id
 	JOIN record_run_artifacts oa ON oa.ingest_id = o.ingest_id
 	WHERE EXISTS (
-		SELECT 1 FROM record_runs n
+		SELECT 1 FROM ` + supersedingRunFrom + `
+		WHERE ` + supersedingRunWhere + `)`
+
+// supersedingRunFrom and supersedingRunWhere are the two halves of the
+// definition: a run n (parser np, coverage na) supersedes the run o (parser op,
+// coverage oa) for the artifact oa covers. SupersededPairsSQL and
+// SupersededBySQL are both built from them, so there is one definition.
+const (
+	supersedingRunFrom = `record_runs n
 		JOIN parsers np ON np.id = n.parser_id
-		JOIN record_run_artifacts na ON na.ingest_id = n.ingest_id
-		WHERE n.outcome = 'complete' AND np.name = op.name
-			AND na.artifact_id = oa.artifact_id AND n.end_seq > o.end_seq)`
+		JOIN record_run_artifacts na ON na.ingest_id = n.ingest_id`
+	supersedingRunWhere = `n.outcome = 'complete' AND np.name = op.name
+			AND na.artifact_id = oa.artifact_id AND n.end_seq > o.end_seq`
+)
+
+// SupersededBySQL selects, for the run (ingest_id = ?1) and artifact
+// (artifact_id = ?2), the ingest id of the lowest-ending run that supersedes it
+// (at most one row; none when the run is current for that artifact). It is built
+// from the same definition as SupersededPairsSQL.
+const SupersededBySQL = `SELECT n.ingest_id
+	FROM record_runs o
+	JOIN parsers op ON op.id = o.parser_id
+	JOIN record_run_artifacts oa ON oa.ingest_id = o.ingest_id
+	JOIN ` + supersedingRunFrom + `
+	WHERE o.ingest_id = ?1 AND oa.artifact_id = ?2 AND ` + supersedingRunWhere + `
+	ORDER BY n.end_seq LIMIT 1`
 
 // Kinds of UnresolvedIngest.
 const (
