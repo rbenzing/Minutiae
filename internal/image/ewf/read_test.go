@@ -3,6 +3,7 @@ package ewf_test
 import (
 	"bytes"
 	"compress/zlib"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -455,6 +456,30 @@ func TestEWFChunkOffsetOutsideSegmentIsChunkError(t *testing.T) {
 	})
 }
 
+// wantGroupUncovered asserts the outcome of a chunk table group (1-based) whose
+// table and table2 both failed their own checks: Open succeeded, one warning
+// names the group and the first uncovered chunk, the chunks before it read
+// byte-identically, every chunk from it on fails with a ChunkError (no bytes),
+// and Verify cannot verify the stored hashes.
+func wantGroupUncovered(t *testing.T, r *ewf.Reader, media []byte, group int, from int) {
+	t.Helper()
+	const cs = 64 * 512
+	var named []string
+	for _, w := range r.Warnings() {
+		if strings.Contains(w, fmt.Sprintf("chunk table group %d:", group)) {
+			named = append(named, w)
+		}
+	}
+	if len(named) != 1 || !strings.Contains(named[0], fmt.Sprintf("chunks from index %d onward unreadable", from)) {
+		t.Fatalf("want exactly one warning naming group %d and index %d, got %q", group, from, r.Warnings())
+	}
+	wantUnreadableFrom(t, r, media, cs, from)
+	res, err := r.Verify(context.Background(), nil)
+	if err != nil || res.BadChunk != int64(from) || res.Result() != "unverified" || res.MD5.Status != ewf.HashUnverified {
+		t.Fatalf("Verify = %+v, %v; want unverified at chunk %d", res, err, from)
+	}
+}
+
 func TestEWFTable2FallbackWhenTableCorrupt(t *testing.T) {
 	const cs = 64 * 512
 	media := mixedMedia(10 * cs)
@@ -510,13 +535,15 @@ func TestEWFTable2FallbackWhenTableCorrupt(t *testing.T) {
 			files := build()
 			patchTable(t, files[0], "table", 1, corrupt)
 			patchTable(t, files[0], "table2", 1, corrupt)
-			wantCorrupt(t, openErr(t, files))
+			// A damaged table must not make the image unopenable: the group
+			// (chunks 4..7) and everything after it is uncovered.
+			wantGroupUncovered(t, mustOpen(t, files), media, 2, 4)
 		})
 	}
 	t.Run("lone corrupt table", func(t *testing.T) {
 		files := ewftest.Build(ewftest.Options{ChunksPerTable: 4, NoTable2: true}, media)
 		patchTable(t, files[0], "table", 1, corruptions["header checksum"])
-		wantCorrupt(t, openErr(t, files))
+		wantGroupUncovered(t, mustOpen(t, files), media, 2, 4)
 	})
 	t.Run("lone good table2", func(t *testing.T) {
 		files := ewftest.Build(ewftest.Options{ChunksPerTable: 4}, media)
@@ -676,20 +703,28 @@ func TestEWFTableCountMismatch(t *testing.T) {
 			t.Fatal("volume sections are not interchangeable")
 		}
 		copy(a[0][va.Offset:va.Offset+va.Size], b[0][vb.Offset:vb.Offset+vb.Size])
-		wantCorrupt(t, openErr(t, a))
+		// The surplus table (group 2) is a count failure: it is uncovered with a
+		// warning instead of failing Open; the 5 chunks the volume has read.
+		r := mustOpen(t, a)
+		if !hasWarning(r, "chunk table group 2:") || !hasWarning(r, "chunks from index 5 onward unreadable") {
+			t.Fatalf("warnings %q", r.Warnings())
+		}
+		wantUnreadableFrom(t, r, media[:5*cs], cs, 5)
 	})
 }
 
 func TestEWFHostileTable(t *testing.T) {
 	const cs = 64 * 512
 	t.Run("entry_count 0xFFFFFFFF", func(t *testing.T) {
-		files := ewftest.Build(ewftest.Options{ChunksPerTable: 5}, pattern(10*cs))
+		media := pattern(10 * cs)
+		files := ewftest.Build(ewftest.Options{ChunksPerTable: 5}, media)
 		patchBoth(t, files[0], 0, func(p []byte) { binary.LittleEndian.PutUint32(p, 0xFFFFFFFF) })
 		start := time.Now()
-		wantCorrupt(t, openErr(t, files))
+		r := mustOpen(t, files)
 		if time.Since(start) > 10*time.Second {
 			t.Fatal("too slow")
 		}
+		wantGroupUncovered(t, r, media, 1, 0)
 	})
 	t.Run("entries not increasing", func(t *testing.T) {
 		// Reversed entries break rule (b) (the first entry is not the payload

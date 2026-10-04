@@ -38,8 +38,8 @@ func (o *opener) gapAt(n, group int, why string) {
 // neither does, the group is uncovered and, because the numbering after it is
 // then unknowable, so is every later chunk (tableGap). A sectors section with
 // no table group after it, or a table group that does not follow a sectors
-// section, is the same failure. Both copies failing their own checksums stays a
-// corrupt image (a CorruptError), as before.
+// section, is the same failure, and so are both copies failing their own
+// checksum or count checks: only an I/O error fails Open.
 func (o *opener) tables(i int, secs []section) error {
 	n := i + 1
 	s := o.r.segs[i]
@@ -135,18 +135,23 @@ func (o *opener) tableGroup(i, n, group int, s Segment, sec section, tab, tab2 *
 			b.rule = b.rules(sec)
 		}
 	}
-	// A present copy that fails its own checksums is unreadable; with no
-	// readable copy at all the image is corrupt.
+	// A present copy that fails its own checksums or counts is unreadable; with no
+	// readable copy at all the group is uncovered.
 	aOK, bOK := tab != nil && a.trusted(), tab2 != nil && b.trusted()
 	if !aOK && !bOK {
+		// Uncovered, as for a missing table: a damaged table must not make the
+		// whole image unopenable.
+		var why string
 		switch {
 		case tab != nil && tab2 != nil:
-			return corrupt(n, "table", "table at offset %d unreadable (%s) and table2 at offset %d unreadable (%s)", a.off, a.reason, b.off, b.reason)
+			why = fmt.Sprintf("table at offset %d unreadable (%s) and table2 at offset %d unreadable (%s)", a.off, a.reason, b.off, b.reason)
 		case tab != nil:
-			return corrupt(n, "table", "table at offset %d unreadable (%s) and has no table2", a.off, a.reason)
+			why = fmt.Sprintf("table at offset %d unreadable (%s) and has no table2", a.off, a.reason)
 		default:
-			return corrupt(n, "table2", "table2 at offset %d unreadable (%s) and has no table", b.off, b.reason)
+			why = fmt.Sprintf("table2 at offset %d unreadable (%s) and has no table", b.off, b.reason)
 		}
+		o.gapAt(n, group, why)
+		return nil
 	}
 	va, vb := tab != nil && a.valid(), tab2 != nil && b.valid()
 	var use *tbl
