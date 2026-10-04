@@ -55,3 +55,6 @@ const MaxWarnings = maxWarnings
 
 // SetMaxWarnings lowers the Warn cap of this writer.
 func (w *Writer) SetMaxWarnings(n int) { w.warnCap = n }
+
+// Canonical exposes the cursor-fingerprint form of a compiled query.
+func (q *TextQuery) Canonical() string { return q.canonical() }
