@@ -1,6 +1,7 @@
 package ewf
 
 import (
+	"cmp"
 	"encoding/binary"
 	"fmt"
 	"hash/adler32"
@@ -30,11 +31,13 @@ func (o *opener) hash(n int, s Segment, sec section) error {
 		return err
 	}
 	if !ok {
-		o.r.warn.add("segment %d: hash section is smaller than %d bytes; ignored", n, hashPayloadLen)
+		o.r.warn.add("segment %d: hash section is smaller than %d bytes; stored hash section damaged, the MD5 cannot be verified", n, hashPayloadLen)
+		o.hashDamaged = fmt.Sprintf("stored hash section damaged: segment %d hash section is smaller than %d bytes", n, hashPayloadLen)
 		return nil
 	}
 	if got, want := binary.LittleEndian.Uint32(p[32:]), adler32.Checksum(p[:32]); got != want {
-		o.r.warn.add("segment %d: hash section checksum mismatch; stored hash ignored", n)
+		o.r.warn.add("segment %d: hash section checksum mismatch; stored hash section damaged, the MD5 cannot be verified", n)
+		o.hashDamaged = fmt.Sprintf("stored hash section damaged: segment %d hash section checksum mismatch", n)
 		return nil
 	}
 	var v [16]byte
@@ -57,11 +60,13 @@ func (o *opener) digest(n int, s Segment, sec section) error {
 		return err
 	}
 	if !ok {
-		o.r.warn.add("segment %d: digest section is smaller than %d bytes; ignored", n, digestPayloadLen)
+		o.r.warn.add("segment %d: digest section is smaller than %d bytes; stored hash section damaged, the MD5 and SHA-1 cannot be verified", n, digestPayloadLen)
+		o.digestDamaged = fmt.Sprintf("stored hash section damaged: segment %d digest section is smaller than %d bytes", n, digestPayloadLen)
 		return nil
 	}
 	if got, want := binary.LittleEndian.Uint32(p[76:]), adler32.Checksum(p[:76]); got != want {
-		o.r.warn.add("segment %d: digest section checksum mismatch; stored hashes ignored", n)
+		o.r.warn.add("segment %d: digest section checksum mismatch; stored hash section damaged, the MD5 and SHA-1 cannot be verified", n)
+		o.digestDamaged = fmt.Sprintf("stored hash section damaged: segment %d digest section checksum mismatch", n)
 		return nil
 	}
 	var m [16]byte
@@ -99,6 +104,15 @@ func (o *opener) resolveHashes() {
 	}
 	if o.digestSHA1 != nil {
 		r.sha1 = hexOf(o.digestSHA1[:])
+	}
+	// A hash section that was present but unusable must never read as "the
+	// container stores no hash": Verify reports the affected hash unverified.
+	// A hash that another valid section still stores is not affected.
+	if r.md5 == "" {
+		r.md5Damaged = cmp.Or(o.digestDamaged, o.hashDamaged)
+	}
+	if r.sha1 == "" {
+		r.sha1Damaged = o.digestDamaged
 	}
 }
 

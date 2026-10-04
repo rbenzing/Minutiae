@@ -57,7 +57,7 @@ func openWithin(t *testing.T, files [][]byte) (*ewf.Reader, error) {
 	case v := <-ch:
 		return v.r, v.err
 	case <-time.After(30 * time.Second):
-		t.Fatal("Open did not return within 5s")
+		t.Fatal("Open did not return within 30s")
 		return nil, nil
 	}
 }
@@ -1121,7 +1121,7 @@ func TestEWFOverlappingDescriptorsAreBounded(t *testing.T) {
 	elapsed := time.Since(start)
 	runtime.ReadMemStats(&after)
 	if err != nil {
-		wantCorrupt(t, err) // failing is acceptable, hanging or allocating is not
+		t.Fatalf("Open: %v", err) // the descriptors are bounded and ignored, not a reason to refuse the image
 	}
 	if elapsed > 10*time.Second {
 		t.Fatalf("Open took %v", elapsed)
@@ -1129,7 +1129,7 @@ func TestEWFOverlappingDescriptorsAreBounded(t *testing.T) {
 	if used := after.TotalAlloc - before.TotalAlloc; used > 256<<20 {
 		t.Fatalf("Open allocated %d bytes", used)
 	}
-	if r != nil && !hasWarning(r, "more than 4 error2 sections") {
+	if !hasWarning(r, "more than 4 error2 sections") {
 		t.Fatalf("warnings %q", r.Warnings())
 	}
 }

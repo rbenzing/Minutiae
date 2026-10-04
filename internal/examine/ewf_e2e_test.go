@@ -432,7 +432,7 @@ func TestImportE01RecordsOriginalAndSegments(t *testing.T) {
 		}
 		_ = s.Close()
 	}
-	// A set with a segment missing from the case is partial and refused.
+	// A set with a segment missing from the case still opens, with a warning that it is incomplete.
 	c2 := newCase(t)
 	recs2, _ := importFiles(t, c2, e01Names(2), segs[:2])
 	// The container opens (the segments present are readable) but says the set is incomplete.

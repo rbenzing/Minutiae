@@ -397,3 +397,54 @@ func TestExtractIOErrorIsNotDowngradedToIncompleteFile(t *testing.T) {
 		}
 	}
 }
+
+// When every candidate name of the prefix runs sidecar is taken (16 attempts),
+// the prefix runs cannot be recorded: the partial artifact then carries NO runs
+// (never the full list, which would claim bytes it does not hold), its error
+// says so and names the full-run artifact, and the analysis still goes on.
+func TestExtractPrefixSidecarNamesExhaustedRecordsNoRuns(t *testing.T) {
+	const frags = evidence.MaxInlineRuns + 2000
+	size := frags * blk
+	big := pattern(size, 3)
+	nodes := []fstest.Node{
+		{Path: "/a-first.txt", Data: []byte("first")},
+		{Path: "/big.bin", Data: big, Fragments: frags},
+		{Path: "/z-last.txt", Data: []byte("last file")},
+	}
+	base := bytes.Index(disk(fstest.Build(fstest.BuildSpec{Label: "L", FreeBlocks: 2, Nodes: nodes})), big[:64])
+	if base < 0 {
+		t.Fatal("cannot find the file data in the disk")
+	}
+	c := newCase(t)
+	s, _ := e01ChunkSessionOpts(t, c, nodes, int64(base+(frags-200)*2*blk), squatPrefixSidecarNames(t, c, "big.bin", 16))
+	sum := extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: []string{"/"}, Recursive: true})
+
+	byPath := map[string]evidence.ManifestRecord{}
+	for _, r := range sum.Artifacts {
+		byPath[r.Source.RemotePath] = r
+	}
+	rec := byPath["/big.bin"]
+	if !rec.Incomplete || rec.Size == 0 {
+		t.Fatalf("big.bin: incomplete=%v size=%d error=%q", rec.Incomplete, rec.Size, rec.Error)
+	}
+	d := rec.Source.Derived
+	if len(d.Runs) != 0 || d.RunsArtifact != "" {
+		t.Fatalf("the artifact must carry no runs: %d inline, sidecar %q", len(d.Runs), d.RunsArtifact)
+	}
+	full := fullRunsArtifact(t, c, "")
+	if !strings.Contains(rec.Error, "not recorded") || !strings.Contains(rec.Error, full) {
+		t.Errorf("error %q must say the prefix runs are not recorded and name %s", rec.Error, full)
+	}
+	var warned bool
+	for _, e := range auditByAction(t, c, "analysis.warning") {
+		if r, _ := e.Details["reason"].(string); strings.Contains(r, "partial artifact kept") && strings.Contains(r, full) {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Error("no analysis.warning names the full runs artifact")
+	}
+	if string(readArtifact(t, c, byPath["/z-last.txt"])) != "last file" || len(auditByAction(t, c, "analysis.end")) != 1 {
+		t.Error("the analysis must go on and end normally")
+	}
+}

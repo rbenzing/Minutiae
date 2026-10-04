@@ -34,7 +34,11 @@ const ewfChunkBytes = 8 * 512
 
 // newEWFEnv pads the MTFS disk to a whole number of chunks, a multiple of three,
 // builds a 3-segment E01 from it with o, and imports it with `image import`.
-func newEWFEnv(t *testing.T, o ewftest.Options) *ewfEnv {
+func newEWFEnv(t *testing.T, o ewftest.Options) *ewfEnv { return newEWFEnvMutated(t, o, nil) }
+
+// newEWFEnvMutated is newEWFEnv with mutate called on the built segment files
+// (damage a section, say) before they are written and imported.
+func newEWFEnvMutated(t *testing.T, o ewftest.Options, mutate func(segs [][]byte)) *ewfEnv {
 	t.Helper()
 	media := imgDisk(defaultNodes()...)
 	n := (len(media) + ewfChunkBytes - 1) / ewfChunkBytes
@@ -47,6 +51,9 @@ func newEWFEnv(t *testing.T, o ewftest.Options) *ewfEnv {
 
 	dir := t.TempDir()
 	segs := ewftest.Build(o, media)
+	if mutate != nil {
+		mutate(segs)
+	}
 	if len(segs) != 3 {
 		t.Fatalf("built %d segments, want 3", len(segs))
 	}
@@ -407,6 +414,10 @@ func TestImageVerifyOutputEscapesContainerText(t *testing.T) {
 	if !strings.Contains(out, "Verify:       result  match") {
 		t.Fatalf("no verification in the output:\n%s", out)
 	}
+	// The hostile metadata is shown in its escaped form: not dropped, not raw.
+	if want := strconv.Quote(evil); !strings.Contains(out, want) {
+		t.Errorf("the escaped examiner text %s is missing from the output:\n%s", want, out)
+	}
 	for name, s := range map[string]string{"stdout": out, "stderr": errs} {
 		for _, r := range s {
 			if r == '\x1b' || r == '\x07' || r == '\u202e' || r == '\u2066' {
@@ -446,4 +457,60 @@ func numOf(v any) int {
 		return -1
 	}
 	return int(i)
+}
+
+// A stored-hash section that is present but fails its checksum is never
+// reported as absent: `image info --verify` exits 1 (unverified), prints the
+// reason, and the image.verify audit entry records "unverified" with the reason
+// instead of claiming the container stores no hash.
+func TestImageVerifyDamagedHashSectionIsUnverifiedExits1(t *testing.T) {
+	e := newEWFEnvMutated(t, ewftest.Options{NoDigest: true}, func(segs [][]byte) {
+		for _, s := range segs {
+			for _, sec := range ewftest.Sections(s) {
+				if sec.Type == "hash" {
+					s[sec.Offset+76] ^= 0xFF
+				}
+			}
+		}
+	})
+
+	code, out, errs := e.info(t, "--verify")
+	if code != ExitError {
+		t.Fatalf("exit %d, want %d\nstdout:\n%s\nstderr:\n%s", code, ExitError, out, errs)
+	}
+	for _, want := range []string{"result  unverified", "damaged"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "result  absent") || strings.Contains(out, "MD5     stored absent") {
+		t.Errorf("a damaged hash section must not read as absent:\n%s", out)
+	}
+	es := e.verifyEntries(t)
+	if len(es) != 1 {
+		t.Fatalf("%d image.verify entries", len(es))
+	}
+	d := es[0].Details
+	if d["result"] != "unverified" {
+		t.Fatalf("details %v", d)
+	}
+	h := hashDetail(t, d, "md5")
+	reason, _ := h["reason"].(string)
+	if h["status"] != "unverified" || h["stored"] != "" || h["computed"] != e.md5 || !strings.Contains(reason, "stored hash section damaged") {
+		t.Fatalf("md5 = %v", h)
+	}
+	if sh := hashDetail(t, d, "sha1"); sh["status"] != "absent" {
+		t.Fatalf("sha1 = %v (it was never stored)", sh)
+	}
+	e.caseVerifyOK(t)
+
+	// The same image with the hash section genuinely absent: exit 0, absent.
+	a := newEWFEnv(t, ewftest.Options{NoHash: true, NoDigest: true})
+	code, out, errs = a.info(t, "--verify")
+	if code != 0 || !strings.Contains(out, "result  absent") {
+		t.Fatalf("really absent: exit %d\nstdout:\n%s\nstderr:\n%s", code, out, errs)
+	}
+	if h := hashDetail(t, a.verifyEntries(t)[0].Details, "md5"); h["status"] != "absent" || h["reason"] != nil {
+		t.Fatalf("absent md5 = %v", h)
+	}
 }

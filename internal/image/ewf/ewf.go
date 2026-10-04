@@ -60,8 +60,12 @@ type Reader struct {
 	meta []KV
 	md5  string // stored MD5 (lower-case hex), "" when absent
 	sha1 string // stored SHA-1, "" when absent
-	warn warnings
-	err2 *error2Info // acquisition error ranges, nil when none
+	// md5Damaged / sha1Damaged: the hash is not available (md5/sha1 are "")
+	// because the section that held it is present but failed its checksum or
+	// could not be parsed. That is not the same as absent.
+	md5Damaged, sha1Damaged string
+	warn                    warnings
+	err2                    *error2Info // acquisition error ranges, nil when none
 
 	refs    []chunkRef // one resolved table entry per covered chunk
 	gap     *tableGap  // non-nil: chunks from gap.from onward have no proven index

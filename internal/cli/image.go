@@ -272,6 +272,8 @@ func printVerification(w io.Writer, cv examine.ContainerVerification) {
 		switch {
 		case h.Stored != "":
 			stored = printable(h.Stored)
+		case h.Damaged != "":
+			stored = "damaged"
 		case h.Status == image.HashUnverified:
 			// The run never got to read the container's stored hash (a parser
 			// panic): that is not the same as the container storing none.
@@ -282,6 +284,9 @@ func printVerification(w io.Writer, cv examine.ContainerVerification) {
 			computed = fmt.Sprintf("computed %-*s", width, printable(h.Computed))
 		}
 		field("Verify", "%-7s stored %-*s  %s  %s", name, width, stored, computed, printable(string(h.Status)))
+		if h.Damaged != "" {
+			field("Verify", "%-7s %s", name, escapeText(h.Damaged))
+		}
 	}
 	hash("MD5", 32, cv.MD5)
 	hash("SHA-1", 40, cv.SHA1)

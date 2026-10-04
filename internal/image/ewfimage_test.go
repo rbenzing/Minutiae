@@ -191,3 +191,19 @@ func TestEWFImageCloseClosesFilesAndIsIdempotent(t *testing.T) {
 	}
 	_ = img.Close() // a second Close must not panic
 }
+
+// An E01 layout this reader does not handle is an unsupported container (not a
+// corrupt one), so callers can tell "not handled" from "damaged".
+func TestOpenEWFUnsupportedLayoutIsUnsupportedContainer(t *testing.T) {
+	files := ewftest.Build(ewftest.Options{}, pattern(64*512))
+	for _, sec := range ewftest.Sections(files[0]) {
+		if sec.Type == "volume" {
+			sec.Size = 1100 // a volume layout other than the 1128-byte one
+			ewftest.FixDescriptor(files[0], sec)
+		}
+	}
+	_, err := Open(writeE01(t, t.TempDir(), files))
+	if !errors.Is(err, ErrUnsupportedContainer) || !errors.Is(err, ewf.ErrUnsupported) || errors.Is(err, ewf.ErrCorrupt) {
+		t.Fatalf("%v", err)
+	}
+}

@@ -28,9 +28,14 @@ const (
 // HashCheck is one stored hash against the computed one (lower-case hex).
 // Computed is empty unless the whole media was hashed (it is reported even
 // when nothing is stored to compare it with).
+//
+// Damaged is non-empty when the hash is not available because the section that
+// held it is present but failed its checksum or could not be parsed: the status
+// is then unverified, never absent (the container did store a hash).
 type HashCheck struct {
 	Stored, Computed string
 	Status           HashStatus
+	Damaged          string
 }
 
 // VerifyResult is the outcome of Verify.
@@ -47,7 +52,7 @@ type VerifyResult struct {
 // Result summarises the verification as "mismatch" (either stored hash
 // differs from the media), "unverified" (the media was not hashed to the
 // end: a bad chunk or a cancelled run, whatever hashes are stored), "absent"
-// (the container stores no hash) or "match". A mismatch outranks everything: it
+// (the container stores no hash and no hash section is damaged) or "match". A mismatch outranks everything: it
 // was seen on fully hashed media.
 func (v VerifyResult) Result() string {
 	switch {
@@ -75,8 +80,8 @@ func (v VerifyResult) Result() string {
 // context returns the partial result (hashes "unverified") and ctx.Err().
 func (r *Reader) Verify(ctx context.Context, progress func(done, total int64)) (VerifyResult, error) {
 	res := VerifyResult{Size: r.geo.size, BadChunk: -1}
-	res.MD5 = HashCheck{Stored: r.md5, Status: statusFor(r.md5)}
-	res.SHA1 = HashCheck{Stored: r.sha1, Status: statusFor(r.sha1)}
+	res.MD5 = HashCheck{Stored: r.md5, Status: statusFor(r.md5, r.md5Damaged), Damaged: r.md5Damaged}
+	res.SHA1 = HashCheck{Stored: r.sha1, Status: statusFor(r.sha1, r.sha1Damaged), Damaged: r.sha1Damaged}
 	if r.isClosed() {
 		return res, fmt.Errorf("ewf: verify after Close: %w", fs.ErrClosed)
 	}
@@ -111,20 +116,21 @@ func (r *Reader) Verify(ctx context.Context, progress func(done, total int64)) (
 }
 
 // statusFor is the status before any comparison: unverified when a hash is
-// stored, absent otherwise.
-func statusFor(stored string) HashStatus {
-	if stored == "" {
+// stored or its section is damaged, absent otherwise.
+func statusFor(stored, damaged string) HashStatus {
+	if stored == "" && damaged == "" {
 		return HashAbsent
 	}
 	return HashUnverified
 }
 
 // compare records the computed hash of fully hashed media. With no stored hash
-// the computed value is still reported (the status stays absent).
+// the computed value is still reported (the status stays absent, or unverified
+// when the section that held the hash is damaged).
 func (c *HashCheck) compare(computed string) {
 	c.Computed = computed
 	switch {
-	case c.Status == HashAbsent:
+	case c.Stored == "":
 	case computed == c.Stored:
 		c.Status = HashMatch
 	default:

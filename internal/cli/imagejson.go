@@ -141,6 +141,8 @@ type jsonHashCheck struct {
 	Stored   string `json:"stored"`
 	Computed string `json:"computed"`
 	Status   string `json:"status"`
+	// Reason is why the hash is unverified when its stored section is damaged.
+	Reason string `json:"reason,omitempty"`
 }
 
 // jsonVerify is the outcome of `image info --verify`: the same values the
@@ -160,8 +162,8 @@ type jsonVerify struct {
 func newJSONVerify(cv examine.ContainerVerification, verr error) *jsonVerify {
 	v := &jsonVerify{
 		Result: cv.Result, Size: cv.Size, BytesHashed: cv.BytesHashed,
-		MD5:  jsonHashCheck{Stored: cv.MD5.Stored, Computed: cv.MD5.Computed, Status: string(cv.MD5.Status)},
-		SHA1: jsonHashCheck{Stored: cv.SHA1.Stored, Computed: cv.SHA1.Computed, Status: string(cv.SHA1.Status)},
+		MD5:  jsonHashCheck{Stored: cv.MD5.Stored, Computed: cv.MD5.Computed, Status: string(cv.MD5.Status), Reason: cv.MD5.Damaged},
+		SHA1: jsonHashCheck{Stored: cv.SHA1.Stored, Computed: cv.SHA1.Computed, Status: string(cv.SHA1.Status), Reason: cv.SHA1.Damaged},
 	}
 	if cv.BadChunk >= 0 {
 		bad := cv.BadChunk

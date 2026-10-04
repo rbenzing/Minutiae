@@ -359,3 +359,68 @@ func TestVerifyAfterCloseFails(t *testing.T) {
 		t.Fatalf("err = %v, want fs.ErrClosed", err)
 	}
 }
+
+// A hash section that is present but fails its checksum is not "absent": the
+// container stored a hash that cannot be trusted, so the affected hash is
+// unverified (with the reason) and the whole result is unverified, while the
+// computed value is still reported. A hash that really is absent stays absent.
+func TestVerifyDamagedHashSectionIsUnverifiedNotAbsent(t *testing.T) {
+	const cs = 64 * 512
+	media := mixedMedia(6 * cs)
+	m, s := hexHashes(media)
+
+	t.Run("damaged hash section", func(t *testing.T) {
+		files := ewftest.Build(ewftest.Options{NoDigest: true}, media)
+		h := section(t, files[0], "hash")
+		files[0][h.Offset+76] ^= 0xFF // the stored MD5 no longer matches its Adler-32
+		r := mustOpen(t, files)
+		if !hasWarning(r, "stored hash section damaged") {
+			t.Fatalf("warnings %q", r.Warnings())
+		}
+		res := verify(t, r)
+		if res.MD5.Status != ewf.HashUnverified || res.MD5.Stored != "" || res.MD5.Computed != m || res.MD5.Damaged == "" {
+			t.Fatalf("md5 %+v", res.MD5)
+		}
+		if res.SHA1.Status != ewf.HashAbsent || res.SHA1.Damaged != "" || res.SHA1.Computed != s {
+			t.Fatalf("sha1 (no digest section was ever written) %+v", res.SHA1)
+		}
+		if res.Result() != "unverified" {
+			t.Fatalf("result %q, want unverified", res.Result())
+		}
+	})
+	t.Run("damaged digest section", func(t *testing.T) {
+		files := ewftest.Build(ewftest.Options{NoHash: true}, media)
+		d := section(t, files[0], "digest")
+		files[0][d.Offset+76+20] ^= 0xFF
+		r := mustOpen(t, files)
+		if !hasWarning(r, "stored hash section damaged") {
+			t.Fatalf("warnings %q", r.Warnings())
+		}
+		res := verify(t, r)
+		for name, h := range map[string]ewf.HashCheck{"md5": res.MD5, "sha1": res.SHA1} {
+			if h.Status != ewf.HashUnverified || h.Stored != "" || h.Damaged == "" || h.Computed == "" {
+				t.Fatalf("%s %+v", name, h)
+			}
+		}
+		if res.Result() != "unverified" {
+			t.Fatalf("result %q", res.Result())
+		}
+	})
+	t.Run("a valid digest keeps its hashes when the hash section is damaged", func(t *testing.T) {
+		files := ewftest.Build(ewftest.Options{}, media)
+		h := section(t, files[0], "hash")
+		files[0][h.Offset+76] ^= 0xFF
+		res := verify(t, mustOpen(t, files))
+		if res.Result() != "match" || res.MD5.Status != ewf.HashMatch || res.MD5.Damaged != "" || res.SHA1.Status != ewf.HashMatch {
+			t.Fatalf("%+v", res)
+		}
+	})
+	t.Run("truly absent stays absent", func(t *testing.T) {
+		files := ewftest.Build(ewftest.Options{NoHash: true, NoDigest: true}, media)
+		r := mustOpen(t, files)
+		res := verify(t, r)
+		if res.Result() != "absent" || res.MD5.Status != ewf.HashAbsent || res.SHA1.Status != ewf.HashAbsent || res.MD5.Damaged != "" {
+			t.Fatalf("%+v", res)
+		}
+	})
+}

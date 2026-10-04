@@ -14,14 +14,15 @@ type opener struct {
 	volSeg     int // segment the accepted volume came from
 	dataGeo    *geometry
 
-	hdr          [2]*headerInfo // header, header2
-	hdrRaw       [2][]byte      // decompressed text, to spot a differing repeat
-	hashMD5      *[16]byte
-	digestMD5    *[16]byte
-	digestSHA1   *[20]byte
-	err2         *error2Info
-	unknown      []string
-	unknownCount int
+	hdr                        [2]*headerInfo // header, header2
+	hdrRaw                     [2][]byte      // decompressed text, to spot a differing repeat
+	hashMD5                    *[16]byte
+	digestMD5                  *[16]byte
+	digestSHA1                 *[20]byte
+	hashDamaged, digestDamaged string // why a present hash/digest section is unusable, "" when it is not
+	err2                       *error2Info
+	unknown                    []string
+	unknownCount               int
 
 	// Per-segment limits on what overlapping or repeated sections can make
 	// the opener read (see handle).

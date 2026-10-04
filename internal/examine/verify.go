@@ -66,7 +66,11 @@ func runVerify(ctx context.Context, v image.Verifier, size int64, progress func(
 }
 
 func hashDetails(h image.HashCheck) map[string]any {
-	return map[string]any{"stored": h.Stored, "computed": h.Computed, "status": string(h.Status)}
+	d := map[string]any{"stored": h.Stored, "computed": h.Computed, "status": string(h.Status)}
+	if h.Damaged != "" {
+		d["reason"] = h.Damaged // the stored hash section is present but unusable
+	}
+	return d
 }
 
 // auditVerify appends the image.verify entry. The values are the strings the

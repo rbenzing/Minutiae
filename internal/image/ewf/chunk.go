@@ -76,7 +76,7 @@ func (r *Reader) decode(idx int64) ([]byte, error) {
 	}
 	ref := r.refs[idx]
 	if ref.disputed() {
-		return nil, chunkErr(idx, ref, errors.New("table and table2 disagree about this chunk and it passes its integrity check at neither location"))
+		return nil, chunkErr(idx, ref, errors.New("table and table2 disagree about this chunk's location; neither is believed"))
 	}
 	if ref.outside() {
 		return nil, chunkErr(idx, ref, errors.New("table entry points outside the segment"))

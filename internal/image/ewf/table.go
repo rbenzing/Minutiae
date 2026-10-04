@@ -22,7 +22,7 @@ const (
 // overflows) keeps its flag and segment but carries the offset maxLocation, so
 // the read of that chunk fails with a ChunkError while its neighbours still
 // read. The offset disputedLocation marks an entry on which table and table2
-// disagree and whose chunk passes its integrity check at neither location.
+// disagree about its location; neither is believed.
 // Memory is 8 bytes per chunk, bounded by the table bytes present.
 type chunkRef uint64
 
