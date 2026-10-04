@@ -12,6 +12,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/filesys/detect"
 	"github.com/rbenzing/minutiae/internal/filesys/ext4/ext4test"
+	"github.com/rbenzing/minutiae/internal/filesys/f2fs/f2fstest"
 	"github.com/rbenzing/minutiae/internal/filesys/fstest"
 )
 
@@ -176,7 +177,7 @@ func TestOpenWithErrorDropsTypedNilFileSystem(t *testing.T) {
 
 // registryOrder is the spec §6 probe order; Drivers lists the implemented ones
 // in this relative order.
-var registryOrder = []string{"apfs", "f2fs", "ext4", "exfat", "hfsplus", "fat"}
+var registryOrder = []string{"apfs", "f2fs", "ext4", "exfat", "hfsplus", "fat", "f2fs-backup"}
 
 func TestDriversFollowSpecOrder(t *testing.T) {
 	last := -1
@@ -263,5 +264,159 @@ func TestDetectExt4OpenFailureIsUntypedNil(t *testing.T) {
 	}
 	if f, err := detect.Open(bytes.NewReader(img), int64(len(img))); f != nil || err == nil {
 		t.Errorf("detect.Open = %v, %v", f, err)
+	}
+}
+
+// An F2FS image (builder-made and real) is detected as f2fs, an ext4 image
+// still as ext4, and the opened filesystem works end to end.
+func TestDetectOpensF2FS(t *testing.T) {
+	img := f2fstest.Build(f2fstest.Options{Segments: 2, Label: "userdata"},
+		[]f2fstest.File{{Path: "/hello.txt", Data: []byte("hello"), Inline: true}, {Path: "/big.bin", Data: bytes.Repeat([]byte{7}, 9000)}})
+	r := bytes.NewReader(img)
+	if name, ok := detect.Probe(r, int64(len(img))); !ok || name != "f2fs" {
+		t.Fatalf("Probe = %q, %v; want f2fs", name, ok)
+	}
+	fsys, err := detect.Open(r, int64(len(img)))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if info := fsys.Info(); info.Type != "f2fs" || info.Label != "userdata" {
+		t.Errorf("Info = %+v, want type f2fs label userdata", info)
+	}
+	e, err := fsys.Lookup("/hello.txt")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	f, err := fsys.Open(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]byte, f.Size())
+	if _, err := f.ReadAt(got, 0); err != nil && !errors.Is(err, io.EOF) || string(got) != "hello" {
+		t.Errorf("content = %q, %v", got, err)
+	}
+	runs, err := fsys.Unallocated()
+	if err != nil || len(runs) == 0 {
+		t.Fatalf("Unallocated = %v, %v", runs, err)
+	}
+	// The big file's blocks are not free.
+	big, err := fsys.Lookup("/big.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bf, err := fsys.Open(big)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, br := range bf.Runs() {
+		for _, fr := range runs {
+			if br.Offset < fr.Offset+fr.Length && fr.Offset < br.Offset+br.Length {
+				t.Errorf("free run %+v overlaps the file's run %+v", fr, br)
+			}
+		}
+	}
+
+	// An ext4 image is still ext4.
+	ext := ext4test.Build(ext4test.Options{Extents: true}, nil)
+	if name, ok := detect.Probe(bytes.NewReader(ext), int64(len(ext))); !ok || name != "ext4" {
+		t.Errorf("ext4 image: Probe = %q, %v; want ext4", name, ok)
+	}
+	fsys, err = detect.Open(bytes.NewReader(ext), int64(len(ext)))
+	if err != nil || fsys.Info().Type != "ext4" {
+		t.Errorf("ext4 image: Open = %v, %v", fsys, err)
+	}
+	if !slices.ContainsFunc(detect.Drivers, func(d detect.Driver) bool { return d.Name == "f2fs" }) {
+		t.Error("f2fs is not registered")
+	}
+}
+
+// An image that probes as F2FS but cannot be opened yields an untyped nil
+// FileSystem with the error from the registered driver.
+func TestDetectF2FSOpenFailureIsUntypedNil(t *testing.T) {
+	img := make([]byte, 8192)
+	binary.LittleEndian.PutUint32(img[1024:], 0xF2F52010) // magic
+	binary.LittleEndian.PutUint16(img[1024+4:], 1)        // major_ver
+	binary.LittleEndian.PutUint32(img[1024+16:], 12)      // log_blocksize
+	var d *detect.Driver
+	for i := range detect.Drivers {
+		if detect.Drivers[i].Name == "f2fs" {
+			d = &detect.Drivers[i]
+		}
+	}
+	if d == nil || !d.Probe(bytes.NewReader(img), int64(len(img))) {
+		t.Fatalf("setup: f2fs driver %v does not probe the image", d)
+	}
+	fsys, err := d.Open(bytes.NewReader(img), int64(len(img)))
+	if err == nil || fsys != nil {
+		t.Fatalf("Open = %v, %v; want a nil FileSystem and an error", fsys, err)
+	}
+	var ce *filesys.CorruptError
+	if !errors.As(err, &ce) {
+		t.Errorf("error %v is not a *filesys.CorruptError", err)
+	}
+	if _, err := detect.Open(bytes.NewReader(img), int64(len(img))); err == nil {
+		t.Error("detect.Open succeeded on a corrupt f2fs image")
+	}
+}
+
+// A matching driver whose Open fails with a corrupt-structure error does not
+// end detection: the remaining drivers whose Probe matches are tried, and the
+// filesystem that opens is returned with a warning naming the failed driver.
+func TestOpenWithFallsThroughOnCorruptOpen(t *testing.T) {
+	img := image()
+	r := bytes.NewReader(img)
+	size := int64(len(img))
+	corrupt := func(name string) detect.Driver {
+		return detect.Driver{
+			Name:  name,
+			Probe: func(io.ReaderAt, int64) bool { return true },
+			Open: func(io.ReaderAt, int64) (filesys.FileSystem, error) {
+				return nil, &filesys.CorruptError{Structure: name, Offset: 7, Reason: "bad " + name}
+			},
+		}
+	}
+	unmatched := detect.Driver{Name: "unmatched", Probe: func(io.ReaderAt, int64) bool { return false }, Open: func(io.ReaderAt, int64) (filesys.FileSystem, error) {
+		t.Error("a driver whose Probe does not match was opened")
+		return nil, nil
+	}}
+
+	fsys, err := detect.OpenWith([]detect.Driver{corrupt("first"), unmatched, mtfsDriver()}, r, size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := fsys.Info()
+	if info.Type != "mtfs" {
+		t.Errorf("Info().Type = %q, want mtfs", info.Type)
+	}
+	if len(info.Warnings) != 1 || !strings.Contains(info.Warnings[0], "first matched but failed to open") ||
+		!strings.Contains(info.Warnings[0], "bad first") || !strings.Contains(info.Warnings[0], "opened as mtfs") {
+		t.Errorf("Warnings = %q, want one naming the failed driver, its error and mtfs", info.Warnings)
+	}
+	if _, err := fsys.Lookup("/a"); err != nil {
+		t.Errorf("Lookup through the wrapper: %v", err)
+	}
+
+	// A panicking Open counts as corrupt too.
+	panics := detect.Driver{Name: "panics", Probe: func(io.ReaderAt, int64) bool { return true }, Open: func(io.ReaderAt, int64) (filesys.FileSystem, error) { panic("kaboom") }}
+	fsys, err = detect.OpenWith([]detect.Driver{panics, mtfsDriver()}, r, size)
+	if err != nil || fsys.Info().Type != "mtfs" {
+		t.Errorf("OpenWith(panicking Open, mtfs) = %v, %v", fsys, err)
+	}
+
+	// Every matching driver corrupt: the FIRST driver's error is returned.
+	fsys, err = detect.OpenWith([]detect.Driver{corrupt("first"), corrupt("second")}, r, size)
+	var ce *filesys.CorruptError
+	if fsys != nil || !errors.As(err, &ce) || ce.Structure != "first" {
+		t.Errorf("OpenWith(all corrupt) = %v, %v; want the first driver's CorruptError", fsys, err)
+	}
+
+	// A non-corrupt failure (an I/O error) stays final, before or after.
+	boom := errors.New("boom")
+	ioFail := detect.Driver{Name: "iofail", Probe: func(io.ReaderAt, int64) bool { return true }, Open: func(io.ReaderAt, int64) (filesys.FileSystem, error) { return nil, boom }}
+	if _, err := detect.OpenWith([]detect.Driver{ioFail, mtfsDriver()}, r, size); !errors.Is(err, boom) {
+		t.Errorf("OpenWith(io error first) = %v, want boom", err)
+	}
+	if _, err := detect.OpenWith([]detect.Driver{corrupt("first"), ioFail, mtfsDriver()}, r, size); !errors.Is(err, boom) {
+		t.Errorf("OpenWith(corrupt, io error) = %v, want boom", err)
 	}
 }

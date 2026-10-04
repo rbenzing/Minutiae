@@ -17,8 +17,8 @@ docker build -t minutiae-fixtures tools/fixtures
 docker run --rm --privileged -v "$PWD:/work" -w /work minutiae-fixtures bash tools/fixtures/gen.sh all
 ```
 
-`gen.sh <fixture>` builds one fixture (`volume-gpt`, `volume-mbr`, `ext4`, `fat`, `exfat`, `apfs`).
-`--privileged` is needed only by `exfat` (see below); every other fixture runs without it.
+`gen.sh <fixture>` builds one fixture (`volume-gpt`, `volume-mbr`, `ext4`, `fat`, `exfat`, `f2fs`, `apfs`).
+`--privileged` is needed by `exfat` (see below) and is used by `f2fs` only to try a kernel mount (see "F2FS determinism"); every other fixture runs without it.
 
 With Git Bash on Windows, stop MSYS rewriting the container paths:
 
@@ -38,6 +38,7 @@ Scripts must keep LF line endings (`.gitattributes` enforces this).
 | `fat.sh` + `fat_tree.sh` + `fat_oracle.py` + `fat_chains.py` | `fat12`, `fat16`, `fat32` (`.img.gz` + `.expect.json`, in `internal/filesys/fat/testdata/`) | the source tree (`fat_oracle.py`: type, size, sha256, mtime), the generator's own list of deleted names, `fsck.fat -v` (geometry, data-area offset, cluster count, clusters in use) and `mshowfat` (the cluster chain of every live file and directory; the free clusters are the ones no live chain holds, `fat_chains.py` fails unless that count equals what `fsck.fat -v` reports in use; the tests compare the reader's unallocated space and every file's runs with them exactly) |
 | `exfat.sh` + `exfat_chains.py` (also `fat_tree.sh`, `fat_oracle.py`) | `exfat` (`.img.gz` + `.expect.json`, in `internal/filesys/exfat/testdata/`) | the source tree, the generator's deleted names, and `dump.exfat` (boot report: geometry, serial, label; `-c -d <path>`: the cluster chain of every live path; the free clusters are the ones no chain, bitmap, up-case table or root holds, cross-checked against dump.exfat's "Free Clusters") |
 | `apfs.sh` + `apfs_oracle.py` | `apfs-ci`, `apfs-cs`, `apfs-multichunk` (`.img.gz` + `.expect.json`, in `internal/filesys/apfs/testdata/`) | the `mkapfs` arguments (label, UUIDs, case flags) and an independent Python decoder of the finished image (see "APFS determinism and limits"); `apfsck` must accept the image |
+| `f2fs.sh` + `f2fs_tree.sh` + `f2fs_oracle.py` + `f2fs_normalize.py` | `f2fs-extra-attr`, `f2fs-default` (`.img.gz` + `.expect.json`, in `internal/filesys/f2fs/testdata/`) | the source tree handed to `sload.f2fs` (`f2fs_oracle.py tree`: type, size, sha256, mode, mtime, symlink targets), and the reports of `fsck.f2fs -l/-f/-t/-M`, `dump.f2fs -s/-n` and `blkid` on the finished image (`f2fs_oracle.py layout`: superblock and checkpoint fields, features, uuid, label, the NAT block address of every inode, the data-block extents of every file, the free main-area blocks from the SIT bitmaps). The oracle cross-checks the tools against each other (fsck vs dump on every shared field, SIT popcount vs `valid_block_count`, fsck's tree vs the source tree, the file map vs file sizes) and the generator fails on any mismatch, on an unclean `fsck.f2fs`, or when no file is fragmented |
 
 ## Determinism
 
@@ -165,6 +166,64 @@ no xattrs, hard links, symlinks, file extents, snapshots (`apfs-snap` needs the
 kernel module) or encrypted volumes, and a single checkpoint (no ring
 wrap-around or fallback). Those paths are covered by the synthetic builder only
 and, for real data, by the manual `realimages` test.
+
+### F2FS determinism
+
+Both F2FS images are byte-identical across runs (checked by generating twice and
+comparing every output sha256). That needs:
+
+- `faketime -f '2023-11-14 22:13:20'` around `mkfs.f2fs` and `sload.f2fs`, with
+  `FAKETIME_DONT_FAKE_MONOTONIC=1` and `NO_FAKE_STAT=1` (the source files' own mtimes are
+  what `sload.f2fs` copies; it stamps atime and ctime with the same value and leaves the
+  creation time zero);
+- `mkfs.f2fs -r`: the checkpoint version is seeded from `rand()` and `-r` fixes the seed
+  (the version is the constant 1804289383); a fixed `-U` uuid and `-l` label;
+- `f2fs_normalize.py`: `mkfs.f2fs` and `sload.f2fs` write the running kernel's `uname`
+  string into the superblock's `version` and `init_version` fields, so the Docker Desktop
+  kernel would end up in the fixture. The script replaces both fields in both superblock
+  copies with a fixed text and recomputes each copy's checksum (it checks the stored
+  checksums first; `fsck.f2fs` then verifies the new ones). This is the only host
+  dependence found; the oracle's `generator.commands` lists it;
+- the images live in `/tmp` and the source tree in `/dev/shm` (Docker caps `/dev/shm` at
+  64 MiB); in every run the inode numbers followed the sorted names.
+
+What `sload.f2fs` does with the tree: small files and symlinks (the largest inline one here is the 584-byte symlink; the 5000-byte file is not inline) become
+inline data, the 600-entry directory gets several dentry blocks, and **holes are written
+out as zero blocks**, so no F2FS fixture file has a hole (the "sparse" file is fully
+allocated, 1026 blocks, and is the one whose addresses spill into a direct node). It also
+fails with "Can't find free block" for a single file of 7 MiB (7000000 bytes work, 7340032 do not), whatever the
+image size, so no fixture file needs an indirect node. Holes, indirect and double-indirect
+nodes, and node-chain damage are left to the `f2fstest` builder tests. The fragmented
+file is `/sparse-islands.bin` (the warm-data log skips the segment the cold-data log holds);
+the generator fails unless one file has more than one extent. The two images differ only in
+features: `f2fs-extra-attr` is `-O extra_attr,inode_checksum,sb_checksum,inode_crtime`,
+`f2fs-default` uses the `mkfs.f2fs` defaults (no feature bits, no checksums).
+
+The oracle's facts come from the tools, not from Minutiae: `fsck.f2fs -l` and `dump.f2fs
+-d 1` (superblock and checkpoint fields, which must agree), `fsck.f2fs -t` (path to inode
+number, which must list exactly the source tree), `dump.f2fs -n0~-1` (NAT: inode number to
+block address), `fsck.f2fs -d 1 -M` (the data-block extents of every file with data blocks,
+in file order; inline files and directories do not appear), `dump.f2fs -s0~-1` (the SIT
+bitmap of every main-area segment; the free blocks are the clear bits, as inclusive
+absolute block ranges in `free_blocks`, with their count; the popcount must equal the
+checkpoint's `valid_block_count`, which fsck must also report as matching), `fsck.f2fs -f
+--dry-run` (every check must be `[Ok..]`) and `blkid -p` (type, label, uuid). The image
+hash is checked unchanged after the read-only tools ran. The tools print the feature bits
+in unprefixed hex (`928` is `0x928`).
+
+### F2FS deleted entries need a mountable kernel
+
+F2FS keeps no deletion time and `sload.f2fs` cannot delete, so deleted entries exist only if
+files are removed through a kernel mount. `f2fs.sh` tries `mount -t f2fs -o loop` and, when
+it works, removes `/dir/removable-1.txt`, `-2` and `-3` and puts `/dir`'s mtime back to the
+source tree's. The Docker Desktop kernel (6.6.87.2-microsoft-standard-WSL2) has no f2fs
+module (`/proc/filesystems` lacks it, there is no `/lib/modules`, and the mount fails even
+with `--privileged`), so the committed fixtures have `"deleted": []` and a `generator.note`
+saying so; the three removable files are then ordinary live files in the oracle. Deleted-entry
+coverage is left to the `f2fstest` builder tests. The mount path has never run on a kernel
+with f2fs; if it does, the kernel stamps ctimes and checkpoint data from the real clock, so
+such images are not byte-reproducible (the note says so) and the oracle (read from the final
+image) still holds.
 
 ## Adding a fixture
 

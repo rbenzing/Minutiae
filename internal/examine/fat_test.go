@@ -10,7 +10,9 @@ import (
 	"github.com/rbenzing/minutiae/internal/filesys/fat/fattest"
 )
 
-func fatSession(t *testing.T, img []byte) (*examine.Session, []byte) {
+// imageSession imports img as a whole-disk partitioned image and opens it with
+// the default driver registry.
+func imageSession(t *testing.T, img []byte) (*examine.Session, []byte) {
 	t.Helper()
 	c := newCase(t)
 	data := disk(img)
@@ -40,7 +42,7 @@ func TestExtractFATShortChainIsIncomplete(t *testing.T) {
 	for n := range g.NumFATs {
 		binary.LittleEndian.PutUint16(img[int(g.FATStart(n))*g.SectorSize+3*2:], 0xFFFF)
 	}
-	s, data := fatSession(t, img)
+	s, data := imageSession(t, img)
 	c := s.Case
 	sum := extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: []string{"/"}, Recursive: true})
 
@@ -111,7 +113,7 @@ func TestExtractFATLongCJKNameNeverAborts(t *testing.T) {
 		{Path: name, Data: []byte("long name content"), LongName: true},
 		{Path: "NEXT.TXT", Data: []byte("next")},
 	})
-	s, _ := fatSession(t, img)
+	s, _ := imageSession(t, img)
 	c := s.Case
 	sum := extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: []string{"/"}, Recursive: true})
 	if sum.Files != 2 || sum.Skipped != 0 || len(sum.Artifacts) != 2 {

@@ -18,11 +18,14 @@ import (
 	"github.com/rbenzing/minutiae/internal/filesys/fat/fattest"
 )
 
-// fatOracle is the part of internal/filesys/{fat,exfat}/testdata/*.expect.json
+// fixtureOracle is the part of internal/filesys/{fat,exfat,f2fs}/testdata/*.expect.json
 // used here. The oracle comes from the source tree the image was populated
-// from, and from fsck.fat/mshowfat (FAT) or dump.exfat (exFAT), never from
-// Minutiae (see tools/fixtures/fat.sh and exfat.sh).
-type fatOracle struct {
+// from, and from fsck.fat/mshowfat (FAT), dump.exfat (exFAT) or fsck.f2fs/
+// dump.f2fs (F2FS), never from Minutiae (see tools/fixtures/*.sh). The free
+// space is given in clusters (FAT, exFAT: FreeClusters, numbered from 2 at
+// DataStart) or in absolute blocks (F2FS: FreeBlocks, from the start of the
+// image).
+type fixtureOracle struct {
 	Generator struct {
 		ImageSHA256 string `json:"image_sha256"`
 	} `json:"generator"`
@@ -38,9 +41,10 @@ type fatOracle struct {
 	} `json:"files"`
 	Deleted      []string   `json:"deleted"`
 	FreeClusters [][2]int64 `json:"free_clusters"`
+	FreeBlocks   [][2]int64 `json:"free_blocks"`
 }
 
-func loadFATFixture(t *testing.T, pkg, name string) ([]byte, fatOracle) {
+func loadFixture(t *testing.T, pkg, name string) ([]byte, fixtureOracle) {
 	t.Helper()
 	dir := filepath.Join("..", "filesys", pkg, "testdata")
 	gz, err := os.ReadFile(filepath.Join(dir, name+".img.gz"))
@@ -59,7 +63,7 @@ func loadFATFixture(t *testing.T, pkg, name string) ([]byte, fatOracle) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var o fatOracle
+	var o fixtureOracle
 	if err := json.Unmarshal(raw, &o); err != nil {
 		t.Fatal(err)
 	}
@@ -74,10 +78,13 @@ func loadFATFixture(t *testing.T, pkg, name string) ([]byte, fatOracle) {
 // artifact with the oracle; it then exports the unallocated space and checks it
 // against the oracle's free clusters, and verifies the case. zoneKnown says
 // whether the filesystem stores a UTC offset (exFAT) or not (FAT: the local time
-// is shown as stored, without a zone suffix).
-func extractFixture(t *testing.T, pkg, name, fsType string, zoneKnown bool) {
+// is shown as stored, without a zone suffix). strictSkips demands that the
+// skipped entries are exactly the oracle's deleted entries; the relaxed mode
+// (extra skips only logged) is for a fixture whose oracle tool does not report
+// every leftover deleted slot.
+func extractFixture(t *testing.T, pkg, name, fsType string, zoneKnown, strictSkips bool) {
 	t.Helper()
-	img, want := loadFATFixture(t, pkg, name)
+	img, want := loadFixture(t, pkg, name)
 	c := newCase(t)
 	imgSHA := sha256hex(img)
 	recs := importImage(t, c, img, 1)
@@ -155,28 +162,51 @@ func extractFixture(t *testing.T, pkg, name, fsType string, zoneKnown bool) {
 		t.Errorf("artifacts = %d, Summary.Files = %d, want %d (every file of the oracle)", artifacts, sum.Files, wantFiles)
 	}
 
-	// The deleted entries are skipped with a warning each, and nothing else is.
-	var skipped []string
+	// Every deleted entry of the oracle is skipped with one warning. With
+	// strictSkips nothing else is skipped (exact set equality); otherwise the
+	// image may hold more deleted entries than the oracle lists, which are logged.
+	skipped := map[string]bool{}
 	for _, w := range sum.Warnings {
-		skipped = append(skipped, w.Path)
+		skipped[w.Path] = true
 	}
-	wantSkipped := append([]string(nil), want.Deleted...)
-	sort.Strings(skipped)
-	sort.Strings(wantSkipped)
-	if strings.Join(skipped, "\n") != strings.Join(wantSkipped, "\n") || sum.Skipped != len(want.Deleted) {
-		t.Errorf("skipped = %v (count %d), want exactly the deleted entries %v", skipped, sum.Skipped, wantSkipped)
+	for _, d := range want.Deleted {
+		if !skipped[d] {
+			t.Errorf("deleted entry %s of the oracle was not skipped", d)
+		}
+		delete(skipped, d)
+	}
+	if len(skipped) != 0 {
+		extra := make([]string, 0, len(skipped))
+		for p := range skipped {
+			extra = append(extra, p)
+		}
+		sort.Strings(extra)
+		if strictSkips {
+			t.Errorf("skipped beyond the oracle's deleted entries: %v", extra)
+		} else {
+			t.Logf("skipped beyond the oracle's deleted entries: %v", extra)
+		}
+	}
+	if sum.Skipped != len(sum.Warnings) || sum.Skipped < len(want.Deleted) || (strictSkips && sum.Skipped != len(want.Deleted)) {
+		t.Errorf("Skipped = %d with %d warnings, want one warning each for the %d deleted entries (strict: %v)", sum.Skipped, len(sum.Warnings), len(want.Deleted), strictSkips)
 	}
 	if sum.FSWarnings != 0 {
 		t.Errorf("FSWarnings = %d on a clean image", sum.FSWarnings)
 	}
 
-	// image unalloc -p: the export is exactly the free clusters of the oracle.
+	// image unalloc -p: the export is exactly the free clusters (or blocks) of the oracle.
 	var wantRuns []evidence.Run
 	for _, r := range want.FreeClusters {
 		wantRuns = append(wantRuns, evidence.Run{
 			Offset: want.DataStart + (r[0]-2)*want.BlockSize,
 			Length: (r[1] - r[0] + 1) * want.BlockSize,
 		})
+	}
+	for _, r := range want.FreeBlocks { // F2FS: absolute block numbers
+		wantRuns = append(wantRuns, evidence.Run{Offset: r[0] * want.BlockSize, Length: (r[1] - r[0] + 1) * want.BlockSize})
+	}
+	if len(wantRuns) == 0 {
+		t.Fatal("the oracle lists no free space")
 	}
 	usum, err := s.ExportUnallocated(context.Background(), examine.UnallocOptions{Partition: -1})
 	if err != nil {
@@ -197,7 +227,7 @@ func TestExtractFromFAT32Fixture(t *testing.T) {
 	if testing.Short() {
 		t.Skip("imports and extracts a 34 MiB image (about 140 artifacts)")
 	}
-	extractFixture(t, "fat", "fat32", "fat32", false)
+	extractFixture(t, "fat", "fat32", "fat32", false, true)
 }
 
 // TestExtractFromExfatFixture does the same for the exFAT image populated
@@ -206,7 +236,7 @@ func TestExtractFromExfatFixture(t *testing.T) {
 	if testing.Short() {
 		t.Skip("imports and extracts a 16 MiB image (about 140 artifacts)")
 	}
-	extractFixture(t, "exfat", "exfat", "exfat", true)
+	extractFixture(t, "exfat", "exfat", "exfat", true, true)
 }
 
 // A zero-length FAT file has no clusters: it is extracted as an empty artifact
@@ -216,7 +246,7 @@ func TestExtractFATZeroLengthFile(t *testing.T) {
 		{Path: "EMPTY.TXT"},
 		{Path: "FULL.TXT", Data: []byte("full")},
 	})
-	s, _ := fatSession(t, img)
+	s, _ := imageSession(t, img)
 	c := s.Case
 	sum := extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: []string{"/"}, Recursive: true})
 	if sum.Files != 2 || sum.Skipped != 0 || sum.FSWarnings != 0 || len(sum.Warnings) != 0 || len(sum.Artifacts) != 2 {
