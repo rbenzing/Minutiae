@@ -781,3 +781,13 @@ func DesyncIndex(t testing.TB, caseDir, index, otherDef string) {
 	_ = db.Close()
 	setSchemaSQL(t, caseDir, "index", index, orig)
 }
+
+// InjectMetaKey adds a records_meta row under another key (the one table that
+// holds only the next_id counter).
+func InjectMetaKey(t testing.TB, caseDir, key, value string) {
+	t.Helper()
+	tamper(t, caseDir, func(db *sql.DB) error {
+		_, err := db.Exec(`INSERT INTO records_meta (key, value) VALUES (?, ?)`, key, value)
+		return err
+	})
+}

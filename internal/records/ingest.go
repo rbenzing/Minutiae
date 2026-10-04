@@ -136,7 +136,18 @@ func (w *Writer) Start(ctx context.Context, so StartOptions) error {
 	if err != nil {
 		return err
 	}
+	// every stored record lies inside a range the audit log announced (the log is
+	// the authority on ids): the counter derived from the data must not be above
+	// the first id the audit log has not announced
+	if next > 1 && next > audited {
+		return fmt.Errorf("%w: records up to id %d are stored but the audit log announced ids only below %d (run: minutiae case verify --case %s)",
+			evidence.ErrIntegrity, next-1, audited, w.c.Dir)
+	}
+	stored := next
 	next = max(next, audited, 1)
+	if next > maxRecordID {
+		return fmt.Errorf("%w: the next record id would be %d, above the cap of %d", evidence.ErrIntegrity, next, int64(maxRecordID))
+	}
 
 	hash := ""
 	if w.parserHash != nil {
@@ -152,7 +163,7 @@ func (w *Writer) Start(ctx context.Context, so StartOptions) error {
 	if err != nil {
 		return err
 	}
-	w.analysisID, w.declared, w.known, w.next = so.AnalysisID, declared, known, next
+	w.analysisID, w.declared, w.known, w.next, w.dbNext = so.AnalysisID, declared, known, next, stored
 	w.ingest.Store(&ingestID)
 	w.state = stateStarted
 	return nil
@@ -161,8 +172,9 @@ func (w *Writer) Start(ctx context.Context, so StartOptions) error {
 // preflight runs the read-only checks before the start entry: the artifacts
 // exist in artifacts.db, no complete run of this parser name+version covers one
 // of them (unless allowed), the parser identity matches what is recorded. It
-// returns whether an existing run was overridden and the next id the database
-// itself implies (records_meta.next_id and max(records.id)+1).
+// returns whether an existing run was overridden and the next id the stored data
+// implies: max(records.id)+1 (1 when there are no records), which records_meta.next_id
+// must equal (storedNextID).
 func (w *Writer) preflight(ctx context.Context, artifacts []string, allowReingest bool) (reingest bool, next int64, err error) {
 	var covered []string
 	err = w.c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {
@@ -191,23 +203,8 @@ func (w *Writer) preflight(ctx context.Context, artifacts []string, allowReinges
 		case !sameHash(stored, w.parserHash):
 			return fmt.Errorf("%w: %s %s", ErrParserIdentityConflict, clip(w.p.Name), clip(w.p.Version))
 		}
-		var meta string
-		if err := h.QueryRowContext(ctx, `SELECT value FROM records_meta WHERE key = 'next_id'`).Scan(&meta); err != nil {
-			return err
-		}
-		metaNext, perr := strconv.ParseInt(meta, 10, 64)
-		if perr != nil || metaNext < 1 {
-			return fmt.Errorf("%w: records_meta next_id is %q", evidence.ErrIntegrity, clip(meta))
-		}
-		var maxID int64
-		if err := h.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM records`).Scan(&maxID); err != nil {
-			return err
-		}
-		if maxID == math.MaxInt64 {
-			return fmt.Errorf("%w: a record id is %d", evidence.ErrIntegrity, maxID)
-		}
-		next = max(metaNext, maxID+1)
-		return nil
+		next, err = storedNextID(ctx, h)
+		return err
 	})
 	if err != nil {
 		return false, 0, err
@@ -387,4 +384,37 @@ func digestsOf(bs []presentBatch) []string {
 		out[i] = b.digest
 	}
 	return out
+}
+
+// maxRecordID bounds every record id. Ids are int64 and a batch adds at most
+// maxBatchRows to them; the cap keeps first+count far from overflowing whatever a
+// tampered counter or audit range says.
+const maxRecordID = 1 << 62
+
+// storedNextID derives the next record id from the data: max(records.id)+1, or 1
+// when there are no records. records_meta.next_id is an unaudited, mutable value
+// an attacker can raise (the writer would then announce a batch range that was
+// never used, or overflow, in the append-only audit log), so it is never
+// trusted: it must equal the derived value, otherwise the case is inconsistent
+// (ErrIntegrity) and the caller audits and writes nothing. Ids are only ever used
+// above everything the audit log announced; Start takes the maximum of the two.
+func storedNextID(ctx context.Context, h evidence.ReadHandle) (int64, error) {
+	var meta string
+	if err := h.QueryRowContext(ctx, `SELECT value FROM records_meta WHERE key = 'next_id'`).Scan(&meta); err != nil {
+		return 0, err
+	}
+	var maxID int64
+	if err := h.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM records`).Scan(&maxID); err != nil {
+		return 0, err
+	}
+	if maxID < 0 || maxID >= maxRecordID {
+		return 0, fmt.Errorf("%w: the highest record id is %d", evidence.ErrIntegrity, maxID)
+	}
+	derived := maxID + 1
+	metaNext, perr := strconv.ParseInt(meta, 10, 64)
+	if perr != nil || metaNext != derived {
+		return 0, fmt.Errorf("%w: records_meta next_id is %q but the highest record id is %d: next_id must equal max(id)+1 (1 when there are no records); run: minutiae case verify",
+			evidence.ErrIntegrity, clip(meta), maxID)
+	}
+	return derived, nil
 }

@@ -440,10 +440,9 @@ func TestNextIDHighWaterTakesMaximum(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	recordstest.SetNextID(t, c, 1) // a stale counter
 	recordstest.Ingest(t, c, records.Parser{Name: "third", Version: "1"}, []string{a.ID}, recordstest.Records(a.ID, 2, 9))
 	if lo := scalar[int](t, c, `SELECT min(id) FROM records WHERE id > 5`); lo != 8 {
-		t.Errorf("first id after a stale next_id = %d, want 8 (above max(id)=5 and the audited range 6..7)", lo)
+		t.Errorf("first id after a failed batch = %d, want 8 (above max(id)=5 and the audited range 6..7)", lo)
 	}
 	if got := scalar[string](t, c, `SELECT value FROM records_meta WHERE key = 'next_id'`); got != "10" {
 		t.Errorf("next_id = %s, want 10", got)

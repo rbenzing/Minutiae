@@ -184,5 +184,5 @@ var sideEffects = map[string][]string{
 	"record_superseded.ingest_id":      supersessionJoin,
 	"record_superseded.artifact_id":    supersessionJoin,
 	"parsers.name":                     supersessionJoin,
-	"records_meta.key":                 {"records_meta next_id"},
+	"records_meta.key":                 {"records_meta next_id", "records_meta holds the key"},
 }

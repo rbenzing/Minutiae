@@ -286,6 +286,7 @@ func (c *Case) verifyRecords(rep *VerifyReport, recs []ManifestRecord, entries [
 	parserOK := c.verifyParsers(ctx, rep, ps, audit)
 	// the tables no scan below reads row by row for another purpose
 	c.verifyClassOnly(ctx, ps, metaClasses, []string{"key"}, func(v []string) string { return fmt.Sprintf("key %q", v[0]) })
+	c.verifyMetaKeys(ctx, ps)
 	c.verifyClassOnly(ctx, ps, supersededClasses, []string{"ingest_id", "artifact_id"},
 		func(v []string) string { return fmt.Sprintf("ingest %q artifact %q", v[0], v[1]) })
 
@@ -755,7 +756,7 @@ type timeRow struct {
 	RecordTime
 }
 
-// checkNextID requires records_meta.next_id to be above every stored record id.
+// checkNextID requires records_meta.next_id to be exactly max(record id)+1.
 func (c *Case) checkNextID(ctx context.Context, rep *VerifyReport, maxID int64) {
 	var v string
 	err := c.ReadTx(ctx, func(h ReadHandle) error {
@@ -771,6 +772,11 @@ func (c *Case) checkNextID(ctx context.Context, rep *VerifyReport, maxID int64) 
 		rep.problemf("records_meta next_id holds %q, which is not a valid id", v)
 	case n <= maxID:
 		rep.problemf("records_meta next_id is %d but record %d exists: next_id must be above the highest record id", n, maxID)
+	case n != maxID+1:
+		// the writer sets next_id only to first+count of the batch it wrote in the same
+		// transaction, so it is exactly max(id)+1; a raised counter would make the next
+		// ingest announce ids that were never used
+		rep.problemf("records_meta next_id is %d but the highest record id is %d: next_id must equal max(id)+1 (1 when there are no records)", n, max(maxID, 0))
 	}
 }
 
@@ -782,4 +788,32 @@ func (r VerifyReport) RecordsSummary() string {
 		return ""
 	}
 	return fmt.Sprintf(", %d records", r.RecordsChecked)
+}
+
+// verifyMetaKeys requires records_meta to hold only the next_id counter.
+func (c *Case) verifyMetaKeys(ctx context.Context, ps *problemSet) {
+	var keys []string
+	err := c.ReadTx(ctx, func(h ReadHandle) error {
+		keys = nil
+		rows, err := h.QueryContext(ctx, `SELECT COALESCE(CAST(key AS TEXT), '') FROM records_meta WHERE key IS NOT 'next_id' ORDER BY 1 LIMIT `+strconv.Itoa(verifyMaxPerKind+1))
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var k string
+			if err := rows.Scan(&k); err != nil {
+				return err
+			}
+			keys = append(keys, k)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		unreadable(ps.rep, "records_meta keys", err)
+		return
+	}
+	for _, k := range keys {
+		ps.add("meta-key", "records_meta holds the key %q, which is not part of the schema", k)
+	}
 }

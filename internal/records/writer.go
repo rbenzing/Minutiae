@@ -103,6 +103,7 @@ type Writer struct {
 	known      map[string]bool // every artifact id in the manifest at Start
 	parserHash *string
 	next       int64 // first id of the next batch
+	dbNext     int64 // records_meta.next_id and max(id)+1 as the database must hold them now (checked before every batch)
 	batchNo    int   // number of the last batch audited (committed or failed)
 	buf        []prepared
 	bufBytes   int
@@ -285,6 +286,19 @@ func (w *Writer) flush(ctx context.Context) error {
 		return nil
 	}
 	n := len(w.buf)
+	// before anything is audited: the database must still hold the counter this
+	// writer wrote (an attacker may have changed it since Start), and the range
+	// must not overflow. The batch entry is irrevocable, so a refusal comes first.
+	if err := w.checkStoredNext(ctx); err != nil {
+		w.poison = err
+		w.buf, w.bufBytes = nil, 0
+		return err
+	}
+	if w.next > maxRecordID-int64(n) {
+		w.poison = fmt.Errorf("%w: the next record id would be %d, above the cap of %d", evidence.ErrIntegrity, w.next, int64(maxRecordID))
+		w.buf, w.bufBytes = nil, 0
+		return w.poison
+	}
 	first := w.next
 	w.next += int64(n) // consumed even if the batch fails
 	w.batchNo++
@@ -328,6 +342,7 @@ func (w *Writer) flush(ctx context.Context) error {
 		return w.fail(batchNo, err)
 	}
 
+	w.dbNext = first + int64(n)
 	w.digests = append(w.digests, digest)
 	if w.nrecords == 0 {
 		w.firstID = first
@@ -588,4 +603,23 @@ func (w *Writer) releaseIfClosed() {
 	if w.state == stateClosed {
 		w.c.EndIngest(w.IngestID())
 	}
+}
+
+// checkStoredNext requires the database to hold exactly the counter this writer
+// last wrote: records_meta.next_id == max(id)+1 == w.dbNext.
+func (w *Writer) checkStoredNext(ctx context.Context) error {
+	var got int64
+	err := w.c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {
+		var err error
+		got, err = storedNextID(ctx, h)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	if got != w.dbNext {
+		return fmt.Errorf("%w: the highest record id is now %d, but this ingest last wrote up to %d (run: minutiae case verify --case %s)",
+			evidence.ErrIntegrity, got-1, w.dbNext-1, w.c.Dir)
+	}
+	return nil
 }
