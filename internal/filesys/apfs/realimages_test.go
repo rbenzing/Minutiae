@@ -3,7 +3,9 @@
 package apfs_test
 
 // Manual check of the reader against real APFS images that an examiner supplies
-// (the committed fixtures are empty mkapfs volumes; see tools/fixtures/README.md).
+// (the committed fixtures are three empty mkapfs volumes and one volume populated
+// by a Linux driver; none was written by Apple software; see
+// tools/fixtures/README.md).
 // Run it as
 //
 //	MINUTIAE_TEST_IMAGES=/path go test -tags realimages ./internal/filesys/apfs -run TestRealImages -v

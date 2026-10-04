@@ -45,7 +45,7 @@ Use Minutiae only on devices you are authorized to examine.
 - **Android over ADB** — native pure-Go ADB client: device info, file listing/pull, logical acquisition of `/sdcard` (plus `getprop` and package list), and partition imaging on rooted devices with exact size verification
 - **iOS over usbmuxd** — device info, AFC media listing/pull, and full logical backups via an in-house mobilebackup2 (DeviceLink) implementation hardened against hostile devices
 - **USB serial** — port enumeration with VID/PID, receive-only raw console capture (`rx.bin` + timestamped transcript), modem lines de-asserted on open
-- **Image analysis** — import disk images (raw/dd, split raw, **E01/EWF** with multiple segments) into a case, read MBR/EBR and GPT partition tables, browse filesystems read-only, extract files and export unallocated space as new hashed artifacts that record their full provenance (parent image, partition, filesystem entry, byte runs). **ext2/ext3/ext4** (extents or block maps, htree and inline directories, inline data, metadata checksums), **FAT12/16/32** (long names, 2-second local times) and **exFAT** (entry sets, validated checksums, `ValidDataLength`), **F2FS** (checkpoint packs, NAT/SIT journals, inline data and dentries, encrypted names) and **HFS+/HFSX** (classic-HFS wrapper, B-tree catalog with extents overflow, hard links, zlib-compressed files, per-file data-protection flag) filesystems are readable today, with deleted-entry flagging where the format keeps deleted names (names only; HFS+ keeps none) and exact unallocated-space export; each reader is verified against real images built by the standard filesystem tools with independent expected results (tree, hashes, times, cluster chains or data extents, free space; the populated HFS+ image is written by the Linux driver under QEMU) and fuzzed against hostile input; E01 images are verified against the hashes the acquirer stored (`image info --verify`, audited) and an unreadable chunk is an error, never zeros; APFS arrives next; see [Known limitations](CLAUDE.md#9-known-limitations)
+- **Image analysis** — import disk images (raw/dd, split raw, **E01/EWF** with multiple segments) into a case, read MBR/EBR and GPT partition tables, browse filesystems read-only, extract files and export unallocated space as new hashed artifacts that record their full provenance (parent image, partition, filesystem entry, byte runs). **ext2/ext3/ext4** (extents or block maps, htree and inline directories, inline data, metadata checksums), **FAT12/16/32** (long names, 2-second local times) and **exFAT** (entry sets, validated checksums, `ValidDataLength`), **F2FS** (checkpoint packs, NAT/SIT journals, inline data and dentries, encrypted names), **HFS+/HFSX** (classic-HFS wrapper, B-tree catalog with extents overflow, hard links, zlib-compressed files, per-file data-protection flag) and **APFS** (checkpoint ring, object maps, B-trees, extents with holes and clones, hard links, extended-attribute names, name hashes with normalization-insensitive lookup, read-only snapshots as views, space-manager free space; encrypted volumes are detected and refused, compressed files are listed but not extracted) filesystems are readable, with deleted-entry flagging where the format keeps deleted names (names only; HFS+ and APFS keep none) and exact unallocated-space export; each reader is verified against real images built by the standard filesystem tools with independent expected results (tree, hashes, times, cluster chains or data extents, free space; the populated HFS+ and APFS images are written by Linux kernel drivers under QEMU, with nothing loaded into the host kernel) and fuzzed against hostile input; E01 images are verified against the hashes the acquirer stored (`image info --verify`, audited) and an unreadable chunk is an error, never zeros; see [Known limitations](CLAUDE.md#9-known-limitations)
 - **Windows-safe evidence names** — device file names that are illegal on Windows (`:`, `?`, `CON`, case/8.3 collisions, names over 200 bytes) are stored under safe local names while the original remote path is preserved
 - **Single static binary** — pure Go, no cgo; one cross-platform `go run ./tools/check` gate (tidy, vet, lint, build, cross-builds, tests)
 
@@ -144,8 +144,12 @@ minutiae image ls      --case ./cases/CASE01 <ref> -p 1 -r /Users
 minutiae image ls      --case ./cases/CASE01 <ref> -p 1 --deleted /
 minutiae image stat    --case ./cases/CASE01 <ref> -p 1 /Users/jane/notes.txt
 
+# APFS only: read a volume as it was in a snapshot (xid:<n>, name:<name>, or a bare value that matches exactly one)
+minutiae image ls      --case ./cases/CASE01 <ref> -p 1 --snapshot xid:261 /Data/docs
+
 # Copy files out of the image into the case (new hashed artifacts with provenance)
 minutiae image extract --case ./cases/CASE01 <ref> -p 1 -r /Users/jane
+minutiae image extract --case ./cases/CASE01 <ref> -p 1 -r --snapshot name:snap1 /Data/docs   # APFS snapshot
 
 # Export unallocated space: a filesystem's free space, or the gaps outside every partition
 minutiae image unalloc --case ./cases/CASE01 <ref> -p 1
@@ -162,9 +166,14 @@ files are not supported), HFS+ and HFSX are read as found (the journal is not re
 reader notices are written to the audit log as `analysis.warning` entries. E01 sets
 are read like raw images (an incomplete set opens with a warning, and a corrupt
 chunk fails the read instead of returning zeros; a file that reaches one is
-extracted as an `incomplete` partial artifact up to that chunk). The APFS
-reader is still to come; until it lands, such partitions are listed but
-not yet readable.
+extracted as an `incomplete` partial artifact up to that chunk). APFS is read
+as of its newest valid checkpoint (older checkpoints and deleted data are not
+interpreted), each volume shows its snapshots under a synthetic `.snapshots`
+directory that recursive `ls` and `extract` do not enter and say so in the audit
+log (read a snapshot with `--snapshot <xid:N|name:NAME>` on `image ls` and
+`image extract`, which record the snapshot in each artifact's provenance), an
+encrypted APFS volume is reported but not read, and decmpfs-compressed APFS
+files are listed but not extracted.
 
 ### Verify
 
@@ -223,7 +232,7 @@ device ──► backend (android | ios | serial) ──► evidence.Case.Captur
 | iOS | `internal/ios` | go-ios adapter (usbmuxd, lockdown, AFC), backup → staging → artifacts |
 | Image | `internal/image` | Disk-image containers (raw, split raw, E01) as read-only `io.ReaderAt`; `ewf` reads EWF v1 (E01) segment sets with chunk-table trust rules and stored-hash verification, `ewftest` is its builder |
 | Volume | `internal/volume` | MBR/EBR and GPT partition tables; unallocated gaps between partitions |
-| Filesystem | `internal/filesys` | Filesystem interface, entries and byte runs, block cache; `detect` probes drivers, `f2fs` reads F2FS, `ext4` reads ext2/3/4, `fat` reads FAT12/16/32, `exfat` reads exFAT, `hfsplus` reads HFS+/HFSX, `fstest` is the test filesystem |
+| Filesystem | `internal/filesys` | Filesystem interface, entries and byte runs, block cache; `detect` probes drivers, `f2fs` reads F2FS, `ext4` reads ext2/3/4, `fat` reads FAT12/16/32, `exfat` reads exFAT, `hfsplus` reads HFS+/HFSX, `apfs` reads APFS (volumes, snapshots as views), `fstest` is the test filesystem |
 | Examine | `internal/examine` | The only bridge from parsers to the case: import, sessions, extract, unallocated export, provenance |
 | Arch test | `internal/archtest` | Enforces the package dependency rule |
 
@@ -301,9 +310,9 @@ minutiae case verify     --case ./cases/HW1
 ## 🗺️ Roadmap
 
 v1.0.0 completes **Sub-project 1: Foundation + Acquisition**. **Sub-project 2:
-Image & filesystem layer** is in progress: the image, partition-table and
-analysis foundation is in place, F2FS, ext2/3/4, FAT12/16/32, exFAT and HFS+/HFSX can be read, E01 images can be
-read and verified, and the remaining reader (APFS) is still to come. Next up: deleted-data recovery (SQLite freelist/WAL, carving),
+Image & filesystem layer** is complete: the image, partition-table and
+analysis foundation is in place, APFS, F2FS, ext2/3/4, FAT12/16/32, exFAT and HFS+/HFSX can be read and E01 images can be
+read and verified, which completes sub-project 2. Next up: deleted-data recovery (SQLite freelist/WAL, carving),
 artifact parsers, analytics, reporting, protocol drivers (EDL/BROM/AT), a
 desktop GUI, automatic artifact classification, and AI-assisted search and
 analysis over the artifact collection (offline by default, every answer cites
