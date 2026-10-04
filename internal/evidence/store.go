@@ -24,25 +24,25 @@ type migration struct {
 // v1Statements is schema v1. It is moved here verbatim and must stay byte-identical.
 var v1Statements = []string{
 	`CREATE TABLE artifacts (
-				id TEXT PRIMARY KEY,
-				path TEXT NOT NULL,
-				size INTEGER,
-				sha256 TEXT,
-				md5 TEXT,
-				device_id TEXT,
-				source TEXT,
-				incomplete INTEGER NOT NULL,
-				created TEXT NOT NULL)`,
+			id TEXT PRIMARY KEY,
+			path TEXT NOT NULL,
+			size INTEGER,
+			sha256 TEXT,
+			md5 TEXT,
+			device_id TEXT,
+			source TEXT,
+			incomplete INTEGER NOT NULL,
+			created TEXT NOT NULL)`,
 	`CREATE TABLE records (
-				id INTEGER PRIMARY KEY,
-				type TEXT NOT NULL,
-				artifact_id TEXT REFERENCES artifacts(id),
-				source_path TEXT,
-				offset INTEGER,
-				length INTEGER,
-				deleted INTEGER NOT NULL DEFAULT 0,
-				timestamp TEXT,
-				data TEXT NOT NULL)`,
+			id INTEGER PRIMARY KEY,
+			type TEXT NOT NULL,
+			artifact_id TEXT REFERENCES artifacts(id),
+			source_path TEXT,
+			offset INTEGER,
+			length INTEGER,
+			deleted INTEGER NOT NULL DEFAULT 0,
+			timestamp TEXT,
+			data TEXT NOT NULL)`,
 	`CREATE INDEX records_type ON records(type)`,
 	`CREATE INDEX records_ts ON records(timestamp)`,
 }
@@ -83,10 +83,17 @@ func OpenExistingStore(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	var tables int
+	if err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'schema_version'`).Scan(&tables); err != nil {
+		_ = s.db.Close()
+		return nil, fmt.Errorf("artifacts.db schema: %w", err)
+	}
+	if tables == 0 {
+		_ = s.db.Close()
+		return nil, fmt.Errorf("%w: artifacts.db has no schema_version table", ErrIntegrity)
+	}
 	v, err := s.SchemaVersion()
 	switch {
-	case err != nil && strings.Contains(err.Error(), "no such table"):
-		err = fmt.Errorf("%w: artifacts.db has no schema_version table", ErrIntegrity)
 	case err != nil:
 		err = fmt.Errorf("artifacts.db schema_version: %w", err)
 	case v == 0:
@@ -119,6 +126,12 @@ func openDB(path string) (*Store, error) {
 
 func configure(db *sql.DB) error {
 	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		return fmt.Errorf("artifacts.db pragma: %w", err)
+	}
+	// Without recursive_triggers SQLite does not fire DELETE triggers for the
+	// rows an INSERT OR REPLACE removes, which would let a REPLACE rewrite a row
+	// of an immutable table.
+	if _, err := db.Exec(`PRAGMA recursive_triggers = ON`); err != nil {
 		return fmt.Errorf("artifacts.db pragma: %w", err)
 	}
 	var mode string
@@ -165,6 +178,9 @@ func ensureVersionTable(db *sql.DB) error {
 // pre-check, the statements and the schema_version row commit together or not
 // at all). Tests use it to build a database at an older version.
 func applyMigrations(db *sql.DB, from, to int) error {
+	if from < 0 || from > to || to > len(migrations) {
+		return fmt.Errorf("artifacts.db cannot apply migrations %d..%d: this build knows %d", from, to, len(migrations))
+	}
 	if err := ensureVersionTable(db); err != nil {
 		return err
 	}

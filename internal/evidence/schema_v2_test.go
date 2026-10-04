@@ -108,6 +108,10 @@ func TestMigrateV1ToV2KeepsArtifacts(t *testing.T) {
 			t.Errorf("records column %q missing (have %v)", want, cols)
 		}
 	}
+	var triggers int
+	if err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'immut\_%' ESCAPE '\'`).Scan(&triggers); err != nil || triggers != 16 {
+		t.Errorf("immutability triggers after v1 -> v2 = %d, %v, want 16", triggers, err)
+	}
 	for _, gone := range []string{"offset", "length", "timestamp", "data"} {
 		if cols[gone] {
 			t.Errorf("v1 records column %q survived the migration", gone)
@@ -505,5 +509,106 @@ func TestFTS5Available(t *testing.T) {
 	}
 	if err := db.QueryRow(`SELECT rowid FROM grams WHERE grams MATCH 'ORLD'`).Scan(&rowid); err != nil || rowid != 2 {
 		t.Fatalf("trigram MATCH = %d, %v", rowid, err)
+	}
+}
+
+// TestReplaceCannotBypassImmutability: SQLite does not fire DELETE triggers for
+// the rows an INSERT OR REPLACE removes unless recursive_triggers is on, so a
+// REPLACE (or an upsert) must be refused by the triggers like any other change.
+func TestReplaceCannotBypassImmutability(t *testing.T) {
+	s := openTestStore(t, filepath.Join(t.TempDir(), "a.db"))
+	seedRecordTables(t, s)
+
+	// column list, a conflicting row (same key as the seeded one, other values),
+	// and a column to rewrite in an upsert.
+	type forge struct{ cols, vals, set, check string }
+	forged := map[string]forge{
+		"artifacts": {
+			"id, path, size, sha256, md5, device_id, source, incomplete, created",
+			"'a1', 'forged', 1, 'x', 'x', 'd', '{}', 0, 't'", "path", "path",
+		},
+		"parsers":        {"id, name, version, hash", "1, 'p', '1', 'forged'", "hash", "name"},
+		"record_batches": {"batch_id, ingest_id, batch_no, first_id, count, digest, created", "1, 'ing', 1, 1, 1, 'forged', 't'", "digest", "digest"},
+		"records": {
+			"id, batch_id, type, payload_v, artifact_id, parser_id, payload, summary",
+			"1, 1, 'event', 1, 'a1', 1, '{}', 'forged'", "summary", "type",
+		},
+		"record_times": {"record_id, kind, ts, ts_basis", "1, 'read', 99, 'utc'", "ts", "ts"},
+		"record_runs": {
+			"end_seq, ingest_id, parser_id, outcome, batches, records, first_id, last_id, rollup, ended",
+			"7, 'ing', 1, 'complete', 1, 1, 1, 1, 'forged', 't'", "rollup", "rollup",
+		},
+		"record_run_artifacts": {"ingest_id, artifact_id", "'ing', 'a1'", "artifact_id", "artifact_id"},
+		"record_superseded":    {"ingest_id, artifact_id", "'old', 'a1'", "artifact_id", "artifact_id"},
+	}
+	if len(forged) != len(immutableTables) {
+		t.Fatalf("test knows %d tables, immutableTables has %d", len(forged), len(immutableTables))
+	}
+	for _, table := range immutableTables {
+		f, ok := forged[table]
+		if !ok {
+			t.Fatalf("no forged row for %s", table)
+		}
+		var before string
+		if err := s.db.QueryRow(`SELECT CAST(` + f.check + ` AS TEXT) FROM ` + table).Scan(&before); err != nil {
+			t.Fatal(err)
+		}
+		for name, q := range map[string]string{
+			"INSERT OR REPLACE": `INSERT OR REPLACE INTO ` + table + ` (` + f.cols + `) VALUES (` + f.vals + `)`,
+			"REPLACE INTO":      `REPLACE INTO ` + table + ` (` + f.cols + `) VALUES (` + f.vals + `)`,
+			"upsert":            `INSERT INTO ` + table + ` (` + f.cols + `) VALUES (` + f.vals + `) ON CONFLICT DO UPDATE SET ` + f.set + ` = excluded.` + f.set,
+		} {
+			_, err := s.db.Exec(q)
+			if err == nil || !strings.Contains(err.Error(), "immutable") {
+				t.Errorf("%s on %s: err = %v, want immutable", name, table, err)
+			}
+		}
+		var after string
+		var n int
+		if err := s.db.QueryRow(`SELECT CAST(`+f.check+` AS TEXT), count(*) FROM `+table).Scan(&after, &n); err != nil || n != 1 || after != before {
+			t.Errorf("%s: after refused REPLACEs %s = %q (was %q), %d rows, %v", table, f.check, after, before, n, err)
+		}
+	}
+}
+
+func TestRecursiveTriggersOn(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "a.db")
+	s := openTestStore(t, p)
+	check := func(label string, s *Store) {
+		t.Helper()
+		var on int
+		if err := s.db.QueryRow(`PRAGMA recursive_triggers`).Scan(&on); err != nil || on != 1 {
+			t.Errorf("%s: recursive_triggers = %d, %v, want 1", label, on, err)
+		}
+	}
+	check("OpenStore", s)
+	_ = s.Close()
+	s2, err := OpenExistingStore(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s2.Close() }()
+	check("OpenExistingStore", s2)
+}
+
+func TestApplyMigrationsRejectsBadRange(t *testing.T) {
+	db := rawDB(t, filepath.Join(t.TempDir(), "a.db"))
+	for _, r := range [][2]int{{0, len(migrations) + 1}, {-1, 1}, {2, 1}} {
+		if err := applyMigrations(db, r[0], r[1]); err == nil {
+			t.Errorf("applyMigrations(%d, %d) = nil, want an error", r[0], r[1])
+		}
+	}
+	if tableExists(t, db, "artifacts") {
+		t.Fatal("a rejected range changed the database")
+	}
+}
+
+// TestV1StatementsAreFrozen pins the v1 DDL text byte for byte (v1 history is
+// never edited: sqlite_master.sql of every v1 case holds exactly this text).
+func TestV1StatementsAreFrozen(t *testing.T) {
+	sum := sha256.Sum256([]byte(strings.Join(v1Statements, "\x00")))
+	const want = "09b00b0140a0812a30baaea6b2f19dcc1703c63fee2d1127082e6608626959c4"
+	if got := fmt.Sprintf("%x", sum); got != want {
+		t.Fatalf("v1Statements changed: sha256 %s, want %s", got, want)
 	}
 }
