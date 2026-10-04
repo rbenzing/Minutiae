@@ -155,8 +155,8 @@ func newCaseVerifyCmd(d Deps, opts *rootOptions) *cobra.Command {
 				if !rep.OK() {
 					status = "FAILED"
 				}
-				fmt.Fprintf(d.Out, "%s: %d artifacts, %d audit entries, %d problems\n",
-					status, rep.ArtifactsChecked, rep.AuditEntries, len(rep.Problems))
+				fmt.Fprintf(d.Out, "%s: %d artifacts%s, %d audit entries, %d problems\n",
+					status, rep.ArtifactsChecked, rep.RecordsSummary(), rep.AuditEntries, len(rep.Problems))
 			}
 			if !rep.OK() {
 				return fmt.Errorf("%w: %d problem(s)", evidence.ErrIntegrity, len(rep.Problems))

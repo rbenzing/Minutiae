@@ -14,9 +14,14 @@ import (
 
 // VerifyReport is the outcome of Case.Verify.
 type VerifyReport struct {
-	AuditEntries     int      `json:"audit_entries"`
-	ArtifactsChecked int      `json:"artifacts_checked"`
-	Problems         []string `json:"problems"`
+	AuditEntries     int `json:"audit_entries"`
+	ArtifactsChecked int `json:"artifacts_checked"`
+	// RecordsChecked, RecordBatchesChecked and RecordRunsChecked count what the
+	// record checks of a schema v2 case covered (0 for a v1 case).
+	RecordsChecked       int      `json:"records_checked"`
+	RecordBatchesChecked int      `json:"record_batches_checked"`
+	RecordRunsChecked    int      `json:"record_runs_checked"`
+	Problems             []string `json:"problems"`
 	// Notices are findings that are not integrity problems (for example an
 	// announced upgrade that was never concluded); never silent.
 	Notices []string `json:"notices"`
@@ -39,7 +44,9 @@ func (r *VerifyReport) noticef(format string, a ...any) {
 // directories. Every failure to read part of the case is a
 // reported problem, so Verify always completes; the result is audited
 // (verify.run). The returned error is only the failure to audit the result.
-func (c *Case) Verify() (VerifyReport, error) {
+func (c *Case) Verify() (VerifyReport, error) { return c.verify(nil) }
+
+func (c *Case) verify(observe verifyChunkObserver) (VerifyReport, error) {
 	rep := VerifyReport{Problems: []string{}, Notices: []string{}}
 	n, audited, auditProblems, err := verifyAudit(filepath.Join(c.Dir, auditFile))
 	if err != nil {
@@ -76,6 +83,7 @@ func (c *Case) Verify() (VerifyReport, error) {
 	c.checkDerived(&rep, recs)
 	c.crossCheckAudit(&rep, recs, audited)
 	c.crossCheckDB(&rep, recs)
+	c.verifyRecords(&rep, recs, audited, auditReadable, observe)
 	if auditReadable {
 		c.checkSchema(&rep, audited)
 	}
@@ -85,6 +93,8 @@ func (c *Case) Verify() (VerifyReport, error) {
 	_, err = c.Audit.Append("verify.run", "", map[string]any{
 		"ok": rep.OK(), "artifacts_checked": rep.ArtifactsChecked,
 		"audit_entries": rep.AuditEntries, "problems": len(rep.Problems),
+		"records_checked": rep.RecordsChecked, "record_batches_checked": rep.RecordBatchesChecked,
+		"record_runs_checked": rep.RecordRunsChecked,
 	})
 	return rep, err
 }

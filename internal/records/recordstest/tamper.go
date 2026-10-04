@@ -1,13 +1,28 @@
 package recordstest
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 )
+
+// Tamper helpers: named functions that change a case the way an attacker with
+// file access would, so verify's detection can be tested. They take the case
+// directory and work through their own connection to artifacts.db, opened with
+// foreign_keys=OFF. Every helper drops the immutability triggers, tampers and
+// then RE-CREATES the triggers from their expected definitions (a careful
+// attacker restores them), so the tampering under test is the only problem left;
+// DropImmutabilityTriggers is the one helper that leaves them dropped.
 
 // SetNextID overwrites records_meta.next_id (the one mutable record table), as
 // a stale or tampered counter would be: the writer must not trust it alone.
@@ -18,6 +33,423 @@ func SetNextID(t testing.TB, c *evidence.Case, v int64) {
 		return err
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// openTamperDB opens a second connection to the case's artifacts.db.
+func openTamperDB(t testing.TB, caseDir string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(caseDir, "artifacts.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	return db
+}
+
+func dropTriggers(db *sql.DB) error {
+	for _, tr := range evidence.ImmutabilityTriggers() {
+		if _, err := db.Exec(`DROP TRIGGER IF EXISTS "` + tr.Name + `"`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func createTriggers(db *sql.DB) error {
+	for _, tr := range evidence.ImmutabilityTriggers() {
+		if _, err := db.Exec(tr.SQL); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// tamper runs fn with the triggers dropped and restores them afterwards.
+func tamper(t testing.TB, caseDir string, fn func(db *sql.DB) error) {
+	t.Helper()
+	db := openTamperDB(t, caseDir)
+	defer func() { _ = db.Close() }()
+	if err := dropTriggers(db); err != nil {
+		t.Fatalf("drop triggers: %v", err)
+	}
+	ferr := fn(db)
+	if err := createTriggers(db); err != nil {
+		t.Fatalf("restore triggers: %v", err)
+	}
+	if ferr != nil {
+		t.Fatal(ferr)
+	}
+}
+
+func execAll(db *sql.DB, stmts ...[]any) error {
+	for _, s := range stmts {
+		if _, err := db.Exec(s[0].(string), s[1:]...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// DropImmutabilityTriggers drops all 16 immutability triggers and leaves them
+// dropped.
+func DropImmutabilityTriggers(t testing.TB, caseDir string) {
+	t.Helper()
+	db := openTamperDB(t, caseDir)
+	defer func() { _ = db.Close() }()
+	if err := dropTriggers(db); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// DropTrigger drops one immutability trigger and leaves it dropped.
+func DropTrigger(t testing.TB, caseDir, name string) {
+	t.Helper()
+	db := openTamperDB(t, caseDir)
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec(`DROP TRIGGER "` + name + `"`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ReplaceTrigger leaves the named trigger in place under the same name with a
+// weaker body (one that no longer blocks anything).
+func ReplaceTrigger(t testing.TB, caseDir, name, table, event string) {
+	t.Helper()
+	db := openTamperDB(t, caseDir)
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec(`DROP TRIGGER "` + name + `"`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER "` + name + `" BEFORE ` + event + ` ON ` + table + ` BEGIN SELECT 1; END`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// recordColumns are the columns SetRecordColumn may change.
+var recordColumns = []string{
+	"type", "payload_v", "artifact_id", "source_path", "locator", "src_offset", "src_length", "ts", "ts_end",
+	"ts_basis", "tz_offset_min", "deleted", "recovered", "recovery_method", "confidence", "summary", "body",
+	"payload", "parser_id", "batch_id",
+}
+
+// SetRecordColumn sets one column of a record row (value nil sets NULL). The
+// column must be one of the stored columns; the table's CHECK constraints still apply.
+func SetRecordColumn(t testing.TB, caseDir string, id int64, column string, value any) {
+	t.Helper()
+	SetRecordColumns(t, caseDir, id, map[string]any{column: value})
+}
+
+// SetRecordColumns sets several columns of a record row at once (a nil value
+// sets NULL), for changes the CHECK constraints only allow together.
+func SetRecordColumns(t testing.TB, caseDir string, id int64, values map[string]any) {
+	t.Helper()
+	cols := make([]string, 0, len(values))
+	for c := range values {
+		if !slices.Contains(recordColumns, c) {
+			t.Fatalf("recordstest: %q is not a records column the tamper helpers may change", c)
+		}
+		cols = append(cols, c)
+	}
+	slices.Sort(cols)
+	var set string
+	args := make([]any, 0, len(cols)+1)
+	for i, c := range cols {
+		if i > 0 {
+			set += ", "
+		}
+		set += c + " = ?"
+		args = append(args, values[c])
+	}
+	args = append(args, id)
+	tamper(t, caseDir, func(db *sql.DB) error {
+		res, err := db.Exec(`UPDATE records SET `+set+` WHERE id = ?`, args...) //nolint:gosec // column names are whitelisted above
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n != 1 {
+			return fmt.Errorf("record %d: %d rows changed", id, n)
+		}
+		return nil
+	})
+}
+
+// SetRecordSummary changes the summary of a record in place.
+func SetRecordSummary(t testing.TB, caseDir string, id int64, summary string) {
+	t.Helper()
+	SetRecordColumn(t, caseDir, id, "summary", summary)
+}
+
+// RepointRecord makes a record point at another artifact.
+func RepointRecord(t testing.TB, caseDir string, id int64, artifactID string) {
+	t.Helper()
+	SetRecordColumn(t, caseDir, id, "artifact_id", artifactID)
+}
+
+// SetRecordParser makes a record point at another parsers row.
+func SetRecordParser(t testing.TB, caseDir string, id, parserID int64) {
+	t.Helper()
+	SetRecordColumn(t, caseDir, id, "parser_id", parserID)
+}
+
+// SetRecordTime changes the ts of an existing record_times row.
+func SetRecordTime(t testing.TB, caseDir string, id int64, kind string, ts int64) {
+	t.Helper()
+	tamper(t, caseDir, func(db *sql.DB) error {
+		res, err := db.Exec(`UPDATE record_times SET ts = ? WHERE record_id = ? AND kind = ?`, ts, id, kind)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n != 1 {
+			return fmt.Errorf("record %d time %q: %d rows changed", id, kind, n)
+		}
+		return nil
+	})
+}
+
+// InjectRecordTime adds a record_times row.
+func InjectRecordTime(t testing.TB, caseDir string, id int64, kind string, ts int64) {
+	t.Helper()
+	tamper(t, caseDir, func(db *sql.DB) error {
+		_, err := db.Exec(`INSERT INTO record_times (record_id, kind, ts, ts_basis, tz_offset_min) VALUES (?, ?, ?, 'utc', NULL)`, id, kind, ts)
+		return err
+	})
+}
+
+// DeleteRecordTime removes one record_times row.
+func DeleteRecordTime(t testing.TB, caseDir string, id int64, kind string) {
+	t.Helper()
+	tamper(t, caseDir, func(db *sql.DB) error {
+		res, err := db.Exec(`DELETE FROM record_times WHERE record_id = ? AND kind = ?`, id, kind)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n != 1 {
+			return fmt.Errorf("record %d time %q: %d rows deleted", id, kind, n)
+		}
+		return nil
+	})
+}
+
+// DeleteRecord removes a record row and its record_times rows.
+func DeleteRecord(t testing.TB, caseDir string, id int64) {
+	t.Helper()
+	tamper(t, caseDir, func(db *sql.DB) error {
+		return execAll(db,
+			[]any{`DELETE FROM record_times WHERE record_id = ?`, id},
+			[]any{`DELETE FROM records WHERE id = ?`, id})
+	})
+}
+
+// DeleteRecordKeepTimes removes a record row but leaves its record_times rows
+// behind (orphans).
+func DeleteRecordKeepTimes(t testing.TB, caseDir string, id int64) {
+	t.Helper()
+	tamper(t, caseDir, func(db *sql.DB) error {
+		_, err := db.Exec(`DELETE FROM records WHERE id = ?`, id)
+		return err
+	})
+}
+
+// DeleteBatch removes a record_batches row and every record (and time) of it.
+func DeleteBatch(t testing.TB, caseDir, ingestID string, batchNo int) {
+	t.Helper()
+	tamper(t, caseDir, func(db *sql.DB) error {
+		var batchID int64
+		if err := db.QueryRow(`SELECT batch_id FROM record_batches WHERE ingest_id = ? AND batch_no = ?`, ingestID, batchNo).Scan(&batchID); err != nil {
+			return err
+		}
+		return execAll(db,
+			[]any{`DELETE FROM record_times WHERE record_id IN (SELECT id FROM records WHERE batch_id = ?)`, batchID},
+			[]any{`DELETE FROM records WHERE batch_id = ?`, batchID},
+			[]any{`DELETE FROM record_batches WHERE batch_id = ?`, batchID})
+	})
+}
+
+// DeleteBatchRowOnly removes a record_batches row and leaves its records.
+func DeleteBatchRowOnly(t testing.TB, caseDir, ingestID string, batchNo int) {
+	t.Helper()
+	tamper(t, caseDir, func(db *sql.DB) error {
+		_, err := db.Exec(`DELETE FROM record_batches WHERE ingest_id = ? AND batch_no = ?`, ingestID, batchNo)
+		return err
+	})
+}
+
+// InjectRecord inserts a minimal record row (type event, empty payload, the
+// first parsers row) with the given id, batch id and artifact.
+func InjectRecord(t testing.TB, caseDir string, id, batchID int64, artifactID, summary string) {
+	t.Helper()
+	tamper(t, caseDir, func(db *sql.DB) error {
+		_, err := db.Exec(`INSERT INTO records (id, batch_id, type, payload_v, artifact_id, parser_id, summary, payload)
+			VALUES (?, ?, 'event', 1, ?, (SELECT min(id) FROM parsers), ?, '{}')`, id, batchID, artifactID, summary)
+		return err
+	})
+}
+
+// InjectBatchRow inserts a record_batches row and returns its batch id.
+func InjectBatchRow(t testing.TB, caseDir, ingestID string, batchNo int, firstID int64, count int, digest string) int64 {
+	t.Helper()
+	var batchID int64
+	tamper(t, caseDir, func(db *sql.DB) error {
+		res, err := db.Exec(`INSERT INTO record_batches (ingest_id, batch_no, first_id, count, digest, created) VALUES (?, ?, ?, ?, ?, '2026-01-01T00:00:00Z')`,
+			ingestID, batchNo, firstID, count, digest)
+		if err != nil {
+			return err
+		}
+		batchID, err = res.LastInsertId()
+		return err
+	})
+	return batchID
+}
+
+// CopyBatchRow inserts a copy of a real record_batches row under a new batch_no
+// (its first_id, count and digest are those of the original) and returns the new
+// batch id.
+func CopyBatchRow(t testing.TB, caseDir, ingestID string, batchNo, newBatchNo int) int64 {
+	t.Helper()
+	var batchID int64
+	tamper(t, caseDir, func(db *sql.DB) error {
+		res, err := db.Exec(`INSERT INTO record_batches (ingest_id, batch_no, first_id, count, digest, created)
+			SELECT ingest_id, ?, first_id, count, digest, created FROM record_batches WHERE ingest_id = ? AND batch_no = ?`, newBatchNo, ingestID, batchNo)
+		if err != nil {
+			return err
+		}
+		batchID, err = res.LastInsertId()
+		return err
+	})
+	return batchID
+}
+
+// SetBatchDigest changes the digest stored in a record_batches row.
+func SetBatchDigest(t testing.TB, caseDir, ingestID string, batchNo int, digest string) {
+	t.Helper()
+	tamper(t, caseDir, func(db *sql.DB) error {
+		res, err := db.Exec(`UPDATE record_batches SET digest = ? WHERE ingest_id = ? AND batch_no = ?`, digest, ingestID, batchNo)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n != 1 {
+			return fmt.Errorf("batch %d of %s: %d rows changed", batchNo, ingestID, n)
+		}
+		return nil
+	})
+}
+
+// BatchID returns the batch id of a record_batches row.
+func BatchID(t testing.TB, c *evidence.Case, ingestID string, batchNo int) int64 {
+	t.Helper()
+	var id int64
+	err := c.ReadTx(context.Background(), func(h evidence.ReadHandle) error {
+		return h.QueryRow(`SELECT batch_id FROM record_batches WHERE ingest_id = ? AND batch_no = ?`, ingestID, batchNo).Scan(&id)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+const manifestName = "manifest.jsonl"
+
+func readManifestLines(t testing.TB, caseDir string) []evidence.ManifestRecord {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(caseDir, manifestName)) //nolint:gosec // test helper on a case directory the test created
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []evidence.ManifestRecord
+	sc := bufio.NewScanner(bytes.NewReader(b))
+	sc.Buffer(make([]byte, 0, 1<<20), 64<<20)
+	for sc.Scan() {
+		if len(bytes.TrimSpace(sc.Bytes())) == 0 {
+			continue
+		}
+		var r evidence.ManifestRecord
+		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, r)
+	}
+	if err := sc.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func writeManifestLines(t testing.TB, caseDir string, recs []evidence.ManifestRecord) {
+	t.Helper()
+	var buf bytes.Buffer
+	for _, r := range recs {
+		b, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		buf.Write(b)
+		buf.WriteByte('\n')
+	}
+	if err := os.WriteFile(filepath.Join(caseDir, manifestName), buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// RemoveArtifactEverywhere erases an artifact from the manifest and from
+// artifacts.db (the file under artifacts/ is left where it is).
+func RemoveArtifactEverywhere(t testing.TB, caseDir, artifactID string) {
+	t.Helper()
+	recs := readManifestLines(t, caseDir)
+	kept := recs[:0]
+	for _, r := range recs {
+		if r.ID != artifactID {
+			kept = append(kept, r)
+		}
+	}
+	if len(kept) == len(recs) {
+		t.Fatalf("recordstest: artifact %q is not in the manifest", artifactID)
+	}
+	writeManifestLines(t, caseDir, kept)
+	tamper(t, caseDir, func(db *sql.DB) error {
+		_, err := db.Exec(`DELETE FROM artifacts WHERE id = ?`, artifactID)
+		return err
+	})
+}
+
+// RewriteArtifactConsistently replaces the bytes of an artifact and brings the
+// manifest record and the artifacts.db row (size, SHA-256, MD5) in line with
+// them, as a forger who fixes every copy of the hash would.
+func RewriteArtifactConsistently(t testing.TB, caseDir, artifactID string, newBytes []byte) {
+	t.Helper()
+	recs := readManifestLines(t, caseDir)
+	i := slices.IndexFunc(recs, func(r evidence.ManifestRecord) bool { return r.ID == artifactID })
+	if i < 0 {
+		t.Fatalf("recordstest: artifact %q is not in the manifest", artifactID)
+	}
+	full := filepath.Join(caseDir, filepath.FromSlash(recs[i].Path))
+	if err := os.WriteFile(full, newBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d, err := evidence.HashFile(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recs[i].Size, recs[i].SHA256, recs[i].MD5 = d.Size, d.SHA256, d.MD5
+	writeManifestLines(t, caseDir, recs)
+	tamper(t, caseDir, func(db *sql.DB) error {
+		_, err := db.Exec(`UPDATE artifacts SET size = ?, sha256 = ?, md5 = ? WHERE id = ?`, d.Size, d.SHA256, d.MD5, artifactID)
+		return err
+	})
+}
+
+// DropTable drops a table of artifacts.db (its triggers go with it and are not
+// restored: the table is gone).
+func DropTable(t testing.TB, caseDir, table string) {
+	t.Helper()
+	db := openTamperDB(t, caseDir)
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec(`DROP TABLE "` + table + `"`); err != nil {
 		t.Fatal(err)
 	}
 }

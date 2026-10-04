@@ -158,3 +158,24 @@ func buildV2Statements() []string {
 	}
 	return stmts
 }
+
+// TriggerDef is one immutability trigger as the schema defines it.
+type TriggerDef struct {
+	Name  string
+	Table string
+	SQL   string // the CREATE TRIGGER statement
+}
+
+// ImmutabilityTriggers returns the 16 immutability triggers (BEFORE UPDATE and
+// BEFORE DELETE on each immutable table) exactly as the schema creates them.
+// Verify compares the database's triggers with these; test helpers that tamper
+// with the database re-create them from here after tampering.
+func ImmutabilityTriggers() []TriggerDef {
+	out := make([]TriggerDef, 0, 2*len(immutableTables))
+	for _, t := range immutableTables {
+		for _, op := range []string{"upd", "del"} {
+			out = append(out, TriggerDef{Name: immutabilityTriggerName(t, op), Table: t, SQL: immutabilityTriggerSQL(t, op)})
+		}
+	}
+	return out
+}
