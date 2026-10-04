@@ -785,6 +785,9 @@ func fileRecord(id uint32, f *File, fk *fileFork) []byte {
 	if f.NoThread {
 		flags = 0
 	}
+	if len(f.Attrs) > 0 {
+		flags |= 0x04 // kHFSHasAttributesMask: fsck counts the files that have attributes
+	}
 	be.PutUint16(b[2:], flags)
 	be.PutUint32(b[8:], id)
 	setCommon(b, f, 0o100644)

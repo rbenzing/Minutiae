@@ -63,6 +63,13 @@ func expandLinks(files []File, prefix uint16) ([]File, uint32, map[string]uint32
 		link.Data, link.Rsrc, link.Attrs = nil, nil, nil
 		link.DataLogical, link.RsrcLogical, link.RsrcBlocks, link.Fragment, link.OwnerFlags = 0, 0, 0, 0, 0
 		link.FileType, link.FileCreator, link.Special = "hlnk", "hfs+", n
+		// fsck: a link record's createDate is the private folder's (the metadata
+		// folder's creation date, which has no Times here: FixedDate).
+		if link.Times != nil {
+			t := *link.Times
+			t.Create = fixedDate
+			link.Times = &t
+		}
 		out[i] = link
 	}
 	out = append(out, File{Path: "/.hfs-private", Dir: true, NameUnits: privateFolderName(prefix), Mode: 0o40555})

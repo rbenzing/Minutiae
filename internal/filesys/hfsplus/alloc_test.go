@@ -508,7 +508,7 @@ type freeOracle struct {
 // The free space of every real fixture equals the oracle's (the free ranges the
 // independent fsck-checked bitmap decoder found), exactly, with no warning.
 func TestUnallocatedMatchesOracle(t *testing.T) {
-	for _, name := range []string{"hfsplus-empty", "hfsx-empty", "hfsplus-journal", "hfsplus-1k", "hfsplus-wrapped"} {
+	for _, name := range []string{"hfsplus-empty", "hfsx-empty", "hfsplus-journal", "hfsplus-1k", "hfsplus-wrapped", "hfsplus-populated"} {
 		t.Run(name, func(t *testing.T) {
 			img, _ := loadFixture(t, name)
 			raw, err := os.ReadFile(filepath.Join("testdata", name+".expect.json"))

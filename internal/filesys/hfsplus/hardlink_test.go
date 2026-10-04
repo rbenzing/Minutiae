@@ -264,3 +264,46 @@ func TestDirectoryHardLinkIsNotFollowed(t *testing.T) {
 		t.Errorf("listing = %v", got)
 	}
 }
+
+// The builder writes the private folder where a real volume has it: a real
+// image written by the Linux driver (hfsplus-populated, fsck.hfsplus-checked)
+// holds the folder, named with four NULs, as the LAST child of the root, after
+// every other name. The builder's default order agrees, and the whole builder
+// catalog is in key order under the reader's comparison, as the real one is
+// (TestRealPrivateFolderSortsLastAndIsFoundByDescent).
+func TestBuilderPrivateFolderSortsLastLikeARealVolume(t *testing.T) {
+	files := append(linkTree(),
+		hfsplustest.File{Path: "/日本語.txt", Data: []byte("j")},
+		hfsplustest.File{Path: "/zzz.txt", Data: []byte("z")},
+		hfsplustest.File{Path: "/~tilde.txt", Data: []byte("t")})
+	_, lay, f := buildTree(t, hfsplustest.Options{}, files)
+	var rootKids []string
+	var prevParent uint32
+	var prevName []uint16
+	first := true
+	err := f.CatalogScan(func(parent uint32, name string, _ hfsplus.CatRec) bool {
+		if parent == 2 && name != "" {
+			rootKids = append(rootKids, name)
+		}
+		var units []uint16
+		for _, c := range name {
+			units = append(units, uint16(c)) // every name here is in the BMP
+		}
+		if !first && hfsplus.CompareKeys(prevParent, prevName, parent, units, false) > 0 {
+			t.Errorf("builder catalog out of order at (%d, %q)", parent, name)
+		}
+		prevParent, prevName, first = parent, units, false
+		return true
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lay.PrivateFolder == 0 || len(rootKids) < 5 {
+		t.Fatalf("layout private folder %d, root children %q", lay.PrivateFolder, rootKids)
+	}
+	if last := rootKids[len(rootKids)-1]; !isPrivateName(last) {
+		t.Errorf("the root's last child is %q, want the private folder (as on a real volume)", last)
+	}
+}
+
+func isPrivateName(s string) bool { return len(s) > 4 && s[:4] == "\x00\x00\x00\x00" }

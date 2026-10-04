@@ -19,6 +19,16 @@ RUN sed -i 's/^Components: main$/Components: main non-free/' /etc/apt/sources.li
       hfsprogs util-linux kmod faketime jq python3 gzip coreutils file \
  && rm -rf /var/lib/apt/lists/*
 
+# The populated fixture is written by a real hfsplus kernel driver: Docker
+# Desktop's kernel has none, so the Debian kernel below (CONFIG_HFSPLUS_FS=m)
+# is booted under QEMU software emulation with a busybox initramfs
+# (hfsplus_populate.sh). The kernel package is pinned by name: its hfsplus
+# driver is what the fixture records (generator.packages).
+RUN DEBIAN_FRONTEND=noninteractive apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      qemu-system-x86 linux-image-6.1.0-53-amd64 busybox-static cpio \
+ && rm -rf /var/lib/apt/lists/*
+
 ENV SOURCE_DATE_EPOCH=1700000000 \
     TZ=UTC \
     LC_ALL=C

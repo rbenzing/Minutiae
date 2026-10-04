@@ -42,13 +42,18 @@ Prints the expectation JSON (without the generator section) on stdout.
 import argparse
 import hashlib
 import json
+import os
+import re
+import stat
 import struct
 import subprocess
 import sys
+import unicodedata
 
 HFS_EPOCH_DELTA = 2082844800  # seconds from 1904-01-01 to 1970-01-01
 APPLE_NS = bytes.fromhex("B3E20F39F29211D697A400306543ECAC")
 checks = []
+agg = None  # populated images: checks are aggregated (digits normalized), see main()
 
 
 def die(msg):
@@ -59,7 +64,11 @@ def die(msg):
 def check(cond, name):
     if not cond:
         die("check failed: " + name)
-    checks.append(name)
+    if agg is not None:
+        key = re.sub(r"[0-9]+", "N", name)
+        agg[key] = agg.get(key, 0) + 1
+    else:
+        checks.append(name)
 
 
 def u16(b, o):
@@ -85,6 +94,7 @@ class Fork:
         self.clump = u32(b, o + 8)
         self.blocks = u32(b, o + 12)
         self.extents = []
+        self.used_overflow = False
         for i in range(8):
             start, count = u32(b, o + 16 + 8 * i), u32(b, o + 20 + 8 * i)
             if count:
@@ -97,6 +107,23 @@ class Fork:
     def json(self):
         return {"logical_size": self.logical, "total_blocks": self.blocks,
                 "extents": [[s, c] for s, c in self.extents]}
+
+
+def resolve_fork(fork, file_id, fork_type, overflow, what):
+    """Append the overflow extents (from the extents-overflow tree) to the
+    fork's 8 inline extents: records are keyed by the first block they map and
+    must continue exactly where the previous extent ends."""
+    have = sum(c for _, c in fork.extents)
+    if len(fork.extents) < 8 and fork.blocks == have:
+        check((file_id, fork_type) not in overflow, what + ": no overflow records for a fork that fits inline")
+        return
+    recs = sorted(overflow.get((file_id, fork_type), []))
+    for start, exts in recs:
+        check(start == have, what + ": overflow record starts at the block the previous extents end")
+        fork.extents.extend(exts)
+        have += sum(c for _, c in exts)
+    check(have == fork.blocks, what + ": inline plus overflow extents cover every block of the fork")
+    fork.used_overflow = bool(recs)
 
 
 class Image:
@@ -301,6 +328,170 @@ def apple_key_lt(a, b, binary):
     return na.lower().encode("utf-16-be") < nb.lower().encode("utf-16-be")
 
 
+HLINK = (b"hlnk", b"hfs+")
+S_IFMT = 0o170000
+
+
+def nfd(s):
+    return unicodedata.normalize("NFD", s)
+
+
+def source_tree_entries(root):
+    """What the volume must hold, from the source tree alone: path (NFD, as the
+    Linux driver stores names) -> expectations."""
+    out = {}
+    for d, dirs, fs in os.walk(root):
+        for name in dirs + fs:
+            p = os.path.join(d, name)
+            rel = "/" + nfd(os.path.relpath(p, root).replace(os.sep, "/"))
+            st = os.lstat(p)
+            e = {"mode": st.st_mode & 0o7777, "mtime": int(st.st_mtime), "src_ino": st.st_ino, "nlink": st.st_nlink}
+            if stat.S_ISLNK(st.st_mode):
+                e["type"], e["target"] = "symlink", os.readlink(p)
+                e["size"] = len(e["target"].encode("utf-8"))
+                e["sha256"] = hashlib.sha256(e["target"].encode("utf-8")).hexdigest()
+            elif stat.S_ISDIR(st.st_mode):
+                e["type"] = "dir"
+            else:
+                e["type"], e["size"] = "file", st.st_size
+                e["sha256"] = sha256_file(p)
+            out[rel] = e
+    return out
+
+
+def populated_view(src_root, img, bs, h, folders, files, entries, path_of, cat, recs):
+    """Populated image: identify the hidden hard-link folder and the link
+    records, rewrite the entries of the visible tree (links resolved to their
+    inode record), and compare the whole visible tree with the source tree."""
+    # --- the private folder: a root folder named 4 NULs (or the Linux driver's
+    # U+2400 symbols) + "HFS+ Private Data"
+    suffix = "HFS+ Private Data"
+    priv = [c for c, f in folders.items() if f["parent"] == 2 and f["name"].endswith(suffix)
+            and set(f["name"][: -len(suffix)]) <= {"\x00", "␀"} and len(f["name"]) == len(suffix) + 4]
+    links = [f for f in files.values() if (f["ftype"], f["fcreator"]) == HLINK]
+    check(len(priv) <= 1, "at most one private data folder")
+    if links:
+        check(len(priv) == 1, "hard-link records exist, so the private data folder exists")
+    priv_id = priv[0] if priv else None
+    inodes = {}
+    if priv_id is not None:
+        for c, f in files.items():
+            if f["parent"] == priv_id:
+                m = re.fullmatch(r"iNode(\d+)", f["name"])
+                check(m is not None, "every file in the private folder is named iNode<number>")
+                inodes[int(m.group(1))] = c
+        for c, f in folders.items():
+            if f["parent"] == priv_id:
+                die("unexpected folder inside the private folder")
+        check(folders[priv_id]["valence"] == len(inodes), "private folder valence = number of iNode files")
+    refs = {}
+    for f in links:
+        n = f["special"]
+        check(n in inodes, "hard-link record points at an existing iNode file")
+        refs.setdefault(n, []).append(f["cnid"])
+    check(set(inodes) == set(refs), "every iNode file is referenced by at least one link record")
+    for n, c in inodes.items():
+        ino = files[c]
+        # the iNode record's own special field holds its link count on macOS;
+        # recorded, compared with the number of link records
+        ino["link_count_field"] = ino["special"]
+
+    # --- the visible tree
+    def hidden(c):
+        r = folders.get(c) or files[c]
+        return c == priv_id or (priv_id is not None and r["parent"] == priv_id)
+
+    # Everything the catalog holds stays in the list (the reader shows the
+    # private folder too, flagged); the hidden ones are marked and left out of
+    # the source-tree comparison.
+    out = entries
+    for e in out:
+        if e["cnid"] != 2 and hidden(e["cnid"]):
+            e["private"] = True
+    by_cnid = {e["cnid"]: e for e in entries}
+    for e in out:
+        if e["type"] != "file" or e.get("private"):
+            continue
+        f = files[e["cnid"]]
+        fmode = f["mode"]
+        if (f["ftype"], f["fcreator"]) == HLINK:
+            ino = files[inodes[f["special"]]]
+            ie = by_cnid[ino["cnid"]]
+            for k in ("mode", "file_mode", "uid", "gid", "size", "sha256", "extents", "total_blocks", "rsrc_size", "rsrc_extents", "created", "modified", "changed", "accessed", "backup"):
+                e[k] = ie[k]
+            e["hardlink"] = True
+            e["hardlink_inode"] = f["special"]
+            e["inode_cnid"] = ino["cnid"]
+            e["link_count"] = len(refs[f["special"]])
+            fmode = ino["mode"]
+        e["type"] = {0o120000: "symlink", 0o100000: "file"}.get(fmode & S_IFMT, "other")
+        check(e["type"] != "other", "file record mode is a regular file or a symlink")
+
+    # --- compare with the source tree
+    want = source_tree_entries(src_root)
+    got = {e["path"]: e for e in out if e["path"] != "/" and not e.get("private")}
+    check(set(want) == set(got), "visible tree has exactly the source tree's paths (names NFD-normalized): missing %s, extra %s" % (sorted(set(want) - set(got))[:5], sorted(set(got) - set(want))[:5]))
+    groups_src, groups_img = {}, {}
+    for p, w in want.items():
+        g = got[p]
+        check(g["type"] == w["type"], "type of %s" % p)
+        check(g["mode"] == w["mode"], "mode of %s (0o%o)" % (p, w["mode"]))
+        if w["type"] != "dir":
+            check(g["size"] == w["size"], "size of %s" % p)
+            check(g["sha256"] == w["sha256"], "content sha256 of %s" % p)
+        if w["type"] == "file":
+            check(g["modified"] == w["mtime"], "contentModDate of %s = the source mtime" % p)
+            if w["nlink"] > 1:
+                groups_src.setdefault(w["src_ino"], set()).add(p)
+        if g.get("hardlink"):
+            groups_img.setdefault(g["inode_cnid"], set()).add(p)
+        elif w["type"] != "dir":
+            check(w["nlink"] == 1, "%s has no hard links in the source, and none in the image" % p)
+    check(sorted(map(sorted, groups_src.values())) == sorted(map(sorted, groups_img.values())), "hard-link groups equal the source tree's")
+    for ino_cnid, paths in groups_img.items():
+        n = files[ino_cnid]["link_count_field"]
+        check(n == len(paths), "iNode link count field = number of links (%d)" % len(paths))
+    for p, w in want.items():
+        if w["type"] == "symlink":
+            got[p]["target"] = w["target"]
+
+    # --- facts the fixture must hold to be worth having
+    check(cat.depth >= 2, "catalog tree has an index level (depth >= 2)")
+    nover = [p for p, e in got.items() if e["type"] != "dir" and len(e["extents"]) > 8]
+    check(len(nover) >= 1, "a file needs more than 8 extents (extents-overflow records)")
+    check(max(len(f["name"].encode("utf-16-be")) // 2 for f in files.values()) == 255, "a 255-unit name")
+    check(len(groups_img) >= 1 and max(len(v) for v in groups_img.values()) >= 3, "a hard-link group of three")
+
+    # --- where the private folder sorts among the root's children (leaf order)
+    root_order = []
+    for rec in recs:
+        if u32(rec, 2) == 2:
+            nm, _ = utf16(rec, 6)
+            if nm:
+                root_order.append(nm)
+    private = None
+    if priv_id is not None:
+        pname = folders[priv_id]["name"]
+        idx = root_order.index(pname)
+        private = {
+            "cnid": priv_id, "name": pname, "name_utf16_units": [ord(ch) for ch in pname],
+            "root_leaf_index": idx, "root_children": len(root_order),
+            "previous_sibling": root_order[idx - 1] if idx else None,
+            "next_sibling": root_order[idx + 1] if idx + 1 < len(root_order) else None,
+            "valence": folders[priv_id]["valence"],
+            "inodes": [{"name": "iNode%d" % n, "cnid": c, "link_count_field": files[c]["link_count_field"],
+                        "size": files[c]["data"].logical, "links": len(refs[n])} for n, c in sorted(inodes.items())],
+        }
+    extra = {
+        "private_folder": private,
+        "root_children_in_leaf_order": root_order,
+        "fragmented_files": sorted(nover),
+        "source_tree_compared": True,
+    }
+    out.sort(key=lambda e: e["path"].encode("utf-8"))
+    return out, extra
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("image")
@@ -312,6 +503,7 @@ def main():
     ap.add_argument("--create-unix", type=int, required=True)
     ap.add_argument("--wrapper", action="store_true", help="the HFS+ volume is embedded in an HFS wrapper")
     ap.add_argument("--fsck-issue", action="append", default=[])
+    ap.add_argument("--source-tree", help="populated image: the directory the volume must hold (hfsplus_tree.py final/); hard-link groups, modes, sizes, hashes, symlink targets and file mtimes are compared; names are compared after NFD normalization, which the Linux driver applies")
     a = ap.parse_args()
     vid = bytes.fromhex(a.volume_id)
 
@@ -346,7 +538,17 @@ def main():
     check(h["total_blocks"] * bs <= size and size - h["total_blocks"] * bs < bs, "totalBlocks covers the volume")
     check(img.read(0, 1024) == bytes(1024), "boot blocks are zero")
     # the alternate header is a copy; only the journaling/mount counters could differ
-    check(ab == hb, "alternate volume header equals the primary")
+    if a.source_tree is None:
+        check(ab == hb, "alternate volume header equals the primary")
+    else:
+        # The Linux driver writes the backup header when it mounts (attributes:
+        # inconsistent set, unmounted clear) and does not refresh it on unmount:
+        # the attributes word and the modify date (bytes 20..23, which the
+        # primary header gets at unmount; the guest clock may have moved a
+        # second) may differ, nothing else.
+        check(ab[:4] + ab[8:20] + ab[24:] == hb[:4] + hb[8:20] + hb[24:], "alternate volume header equals the primary except for the attributes word and the modify date")
+        check(0 <= u32(hb, 20) - u32(ab, 20) <= 120, "primary modify date is at most 120 s after the backup header's")
+        check(u32(ab, 20) >= u32(hb, 16) and u32(hb, 20) - u32(hb, 16) <= 600, "modify date within 600 s of the create date (the guest clock is frozen near it)")
     check(struct.pack(">II", h["finder_info"][6], h["finder_info"][7]) == vid, "volume id (finderInfo[6..7]) as written")
     check(unix(h["create"]) == a.create_unix, "createDate is the frozen clock")
     journaled = bool(h["vol_attributes"] & 0x2000)
@@ -354,9 +556,30 @@ def main():
     check(h["vol_attributes"] & 0x100, "volume unmounted cleanly (0x100)")
     check(not h["vol_attributes"] & 0x800, "volume not inconsistent (0x800)")
     check((h["journal_info_block"] != 0) == journaled, "journalInfoBlock set iff journaled")
-    for k in ("allocation", "extents", "catalog", "attributes", "startup"):
-        h[k].check_inline("fork " + k)
-        check(h[k].logical <= h[k].blocks * bs, "fork %s logicalSize fits its blocks" % k)
+    populated = a.source_tree is not None
+    if populated:
+        global agg
+        agg = {}
+    overflow = {}  # (fileID, forkType) -> [(startBlock, [extents])] from the extents-overflow tree
+    if not populated:
+        for k in ("allocation", "extents", "catalog", "attributes", "startup"):
+            h[k].check_inline("fork " + k)
+            check(h[k].logical <= h[k].blocks * bs, "fork %s logicalSize fits its blocks" % k)
+    else:
+        # extents-overflow records first: the catalog file itself may need them
+        h["extents"].check_inline("fork extents (the extents-overflow file has no overflow of its own)")
+        ext0 = BTree(img.fork_data(h["extents"], bs), "extents overflow")
+        if not ext0.empty:
+            for rec in ext0.all_leaf_records():
+                check(u16(rec, 0) == 10, "extents-overflow key is 10 bytes")
+                ftype, fid, start = rec[2], u32(rec, 4), u32(rec, 8)
+                exts = [(u32(rec, 12 + 8 * i), u32(rec, 16 + 8 * i)) for i in range(8)]
+                exts = [(s, c) for s, c in exts if c]
+                overflow.setdefault((fid, ftype), []).append((start, exts))
+        for k, fid in (("allocation", 6), ("catalog", 4), ("attributes", 8), ("startup", 7)):
+            resolve_fork(h[k], fid, 0, overflow, "fork " + k)
+        for k in ("allocation", "extents", "catalog", "attributes", "startup"):
+            check(h[k].logical <= h[k].blocks * bs, "fork %s logicalSize fits its blocks" % k)
     check(h["allocation"].logical >= (h["total_blocks"] + 7) // 8, "allocation file covers every block")
 
     # ---- allocation bitmap
@@ -407,9 +630,11 @@ def main():
                 "access": u32(body, 24), "backup": u32(body, 28),
                 "uid": u32(body, 32), "gid": u32(body, 36), "mode": u16(body, 42),
                 "data": Fork(body, 88), "rsrc": Fork(body, 168),
+                "special": u32(body, 44), "ftype": body[48:52], "fcreator": body[52:56],
             }
-            files[cnid]["data"].check_inline("file data fork")
-            files[cnid]["rsrc"].check_inline("file resource fork")
+            if not populated:
+                files[cnid]["data"].check_inline("file data fork")
+                files[cnid]["rsrc"].check_inline("file resource fork")
         elif t in (3, 4):
             check(klen == 6, "thread key has an empty name")
             tp = u32(body, 4)
@@ -418,10 +643,20 @@ def main():
         else:
             die("unknown catalog record type %d" % t)
     binary = a.type == "hfsx"
-    for x, y in zip(keys, keys[1:]):
-        if not apple_key_lt(x, y, binary):
-            die("catalog keys not strictly increasing near %r %r" % (x, y))
-    checks.append("catalog keys strictly increasing")
+    if not populated:
+        for x, y in zip(keys, keys[1:]):
+            if not apple_key_lt(x, y, binary):
+                die("catalog keys not strictly increasing near %r %r" % (x, y))
+        checks.append("catalog keys strictly increasing")
+    else:
+        # Apple's full name folding is not reimplemented here: parent ids must be
+        # non-decreasing and adjacent all-ASCII names strictly increasing; the
+        # complete ordering (non-ASCII names, the private folder) is vouched for
+        # by fsck.hfsplus below, which walks the tree with Apple's own comparison.
+        for x, y in zip(keys, keys[1:]):
+            check(x[0] <= y[0], "catalog parent ids never decrease")
+            if x[0] == y[0] and x[1].isascii() and y[1].isascii():
+                check(apple_key_lt(x, y, binary), "adjacent ASCII keys strictly increase: %r %r" % (x[1], y[1]))
 
     check(2 in folders and folders[2]["parent"] == 1, "root folder (CNID 2) with parent 1")
     allc = set(folders) | set(files)
@@ -447,7 +682,16 @@ def main():
     # ---- other trees
     ext = BTree(img.fork_data(h["extents"], bs), "extents overflow")
     ext_records = len(ext.all_leaf_records()) if not ext.empty else 0
-    check(ext_records == 0, "extents overflow file has no records (no fork needs overflow extents)")
+    if not populated:
+        check(ext_records == 0, "extents overflow file has no records (no fork needs overflow extents)")
+    else:
+        check(ext_records == sum(len(v) for v in overflow.values()), "extents-overflow leaf records = records read")
+        for c, f in files.items():
+            resolve_fork(f["data"], c, 0x00, overflow, "data fork of CNID %d" % c)
+            resolve_fork(f["rsrc"], c, 0xFF, overflow, "resource fork of CNID %d" % c)
+        resolved = {(c, t) for c, f in files.items() for t, fk in ((0x00, f["data"]), (0xFF, f["rsrc"])) if getattr(fk, "used_overflow", False)}
+        resolved |= {(fid, 0) for fid, fk in ((6, h["allocation"]), (4, h["catalog"]), (8, h["attributes"]), (7, h["startup"])) if getattr(fk, "used_overflow", False)}
+        check(resolved == set(overflow), "every extents-overflow record belongs to a fork that needs it (none orphaned)")
     attr = BTree(img.fork_data(h["attributes"], bs), "attributes")
     attr_records = len(attr.all_leaf_records()) if not attr.empty else 0
 
@@ -518,6 +762,10 @@ def main():
         entries.append(e)
     check(folders[2]["name"] == a.label, "root folder (volume) name = label")
     entries.sort(key=lambda e: e["path"].encode("utf-8"))
+
+    extra = {}
+    if populated:
+        entries, extra = populated_view(a.source_tree, img, bs, h, folders, files, entries, path_of, cat, recs)
 
     # ---- journal
     journal = None
@@ -597,11 +845,12 @@ def main():
         "attributes_tree": {"leaf_records": attr_records} if attr.empty else trees(attr, attr_records),
         "free_count": free_count,
         "free_blocks": free,
-        "populated": False,
+        "populated": populated,
         "files": entries,
+        **extra,
         "journal": journal,
         "external_tools": {"fsck": {"exit": rc_fsck, "known_issues": issues}, "blkid": {"TYPE": kv["TYPE"], "LABEL": kv["LABEL"], "UUID": kv["UUID"]}},
-        "checks": checks,
+        "checks": checks if agg is None else ["%s [x%d]" % kv for kv in agg.items()],
     }
     json.dump(result, sys.stdout, ensure_ascii=False, indent=1)
     sys.stdout.write("\n")
