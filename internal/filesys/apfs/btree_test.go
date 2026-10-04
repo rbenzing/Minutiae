@@ -552,3 +552,121 @@ func TestBTreeChecksumMismatchWarns(t *testing.T) {
 		t.Errorf("no root checksum warning: %q", f.Info().Warnings)
 	}
 }
+
+// A node whose header does not belong to it is a warning: another oid, an xid
+// newer than the view, storage bits that disagree with the tree.
+func TestBTreeNodeIdentityWarnings(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(n []byte)
+		warn   string
+	}{
+		{"oid", func(n []byte) { le.PutUint64(n[8:], 12345) }, "carries oid 12345"},
+		{"xid", func(n []byte) { le.PutUint64(n[16:], 99) }, "xid 99"},
+		{"storage bits", func(n []byte) { le.PutUint32(n[24:], le.Uint32(n[24:])&^0x40000000) }, "storage bits"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ti, blocks, _ := deepTree(t)
+			clean := ti.mustOpen()
+			scanAll(t, clean, blocks[0].Addr, physTreeType)
+			if w := clean.Info().Warnings; len(w) != 0 {
+				t.Fatalf("an undamaged tree warns: %q", w)
+			}
+			for _, victim := range []int{0, 2} { // the root and a leaf
+				var recs []apfstest.Rec
+				ti, blocks, recs = deepTree(t)
+				tc.mutate(ti.blk(blocks[victim].Addr))
+				ti.seal(blocks[victim])
+				f := ti.mustOpen()
+				sameRecs(t, scanAll(t, f, blocks[0].Addr, physTreeType), recs)
+				if !hasWarn(f, tc.warn, fmt.Sprint(blocks[victim].Addr)) {
+					t.Errorf("node %d: no warning %q naming block %d: %q", victim, tc.warn, blocks[victim].Addr, f.Info().Warnings)
+				}
+			}
+		})
+	}
+}
+
+// The node reads of all scans of one filesystem share a budget: nested scans
+// cannot multiply the work without limit. Exhausting it warns once and every
+// further tree read fails.
+func TestBTreeCumulativeNodeBudget(t *testing.T) {
+	ti, blocks, recs := deepTree(t)
+	f := ti.mustOpen()
+	f.SetNodeReads(2 * int64(len(blocks)+1)) // a scan reads the root twice (open, scan) and every other node once
+	for i := range 2 {
+		got, err := f.ScanTree(blocks[0].Addr, physTreeType, false, nil, 0)
+		if err != nil {
+			t.Fatalf("scan %d within the budget: %v", i, err)
+		}
+		sameRecs(t, got, recs)
+	}
+	for range 3 {
+		if _, err := f.ScanTree(blocks[0].Addr, physTreeType, false, nil, 0); !isCorrupt(err) || !strings.Contains(err.Error(), "budget") {
+			t.Fatalf("scan beyond the budget: %v, want a budget CorruptError", err)
+		}
+	}
+	n := 0
+	for _, w := range f.Info().Warnings {
+		if strings.Contains(w, "node read budget") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d budget warnings, want one: %q", n, f.Info().Warnings)
+	}
+}
+
+// bt_node_count tightens the node budget of a scan and, with bt_key_count, is
+// cross-checked after a scan of the whole tree.
+func TestBTreeInfoCountsAreCrossChecked(t *testing.T) {
+	setCounts := func(ti *treeImage, root apfstest.Block, keys, nodes uint64) {
+		n := ti.blk(root.Addr)
+		le.PutUint64(n[4096-btInfoSize+24:], keys)
+		le.PutUint64(n[4096-btInfoSize+32:], nodes)
+		ti.seal(root)
+	}
+	ti, blocks, recs := deepTree(t)
+	f := ti.mustOpen()
+	sameRecs(t, scanAll(t, f, blocks[0].Addr, physTreeType), recs)
+	if w := f.Info().Warnings; len(w) != 0 {
+		t.Fatalf("accurate counts warn: %q", w)
+	}
+
+	ti, blocks, recs = deepTree(t)
+	setCounts(ti, blocks[0], uint64(len(recs))+5, uint64(len(blocks)))
+	f = ti.mustOpen()
+	sameRecs(t, scanAll(t, f, blocks[0].Addr, physTreeType), recs)
+	if !hasWarn(f, "bt_key_count") || hasWarn(f, "bt_node_count") {
+		t.Errorf("wrong key count: %q", f.Info().Warnings)
+	}
+
+	// Understated: the tree claims fewer nodes than it has; the scan stops at that
+	// many with a CorruptError rather than reading on.
+	ti, blocks, _ = deepTree(t)
+	setCounts(ti, blocks[0], uint64(len(blocks)), 2)
+	f = ti.mustOpen()
+	if _, err := f.ScanTree(blocks[0].Addr, physTreeType, false, nil, 0); !isCorrupt(err) || !strings.Contains(err.Error(), "more than 2 nodes") {
+		t.Errorf("understated bt_node_count: %v", err)
+	}
+
+	// Overstated: the whole-tree scan reads fewer nodes than claimed; a warning.
+	ti, blocks, recs = deepTree(t)
+	setCounts(ti, blocks[0], uint64(len(recs)), uint64(len(blocks))+3)
+	f = ti.mustOpen()
+	sameRecs(t, scanAll(t, f, blocks[0].Addr, physTreeType), recs)
+	if !hasWarn(f, "bt_node_count") {
+		t.Errorf("overstated bt_node_count: %q", f.Info().Warnings)
+	}
+
+	// A partial scan (a seek) is not compared with the totals.
+	ti, blocks, _ = deepTree(t)
+	setCounts(ti, blocks[0], 1, 1000)
+	f = ti.mustOpen()
+	if _, err := f.ScanTree(blocks[0].Addr, physTreeType, false, idPrefix(1), 0); err != nil {
+		t.Fatal(err)
+	}
+	if hasWarn(f, "bt_key_count") || hasWarn(f, "bt_node_count") {
+		t.Errorf("a partial scan was compared with the totals: %q", f.Info().Warnings)
+	}
+}

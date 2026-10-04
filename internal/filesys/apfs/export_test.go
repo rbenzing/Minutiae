@@ -336,3 +336,6 @@ func (f *FS) DirRecords(slot int, view, dir uint64) ([]DrecInfo, error) {
 	})
 	return out, err
 }
+
+// SetNodeReads sets the node reads all scans of this FS may still make.
+func (f *FS) SetNodeReads(n int64) { f.nodeReadLimit = n; f.nodeReads.Store(n) }

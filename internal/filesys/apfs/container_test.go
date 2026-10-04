@@ -455,21 +455,6 @@ func TestCheckpointFallsBackToOlderValid(t *testing.T) {
 			le.PutUint32(im.blk(sb)[offDescLen:], 17)
 			im.seal(sb)
 		}, "descriptor"},
-		{"superblock cursor disagrees with its ring position", func(im *image) {
-			sb := im.g.Checkpoints[0].Super
-			le.PutUint32(im.blk(sb)[offDescIndex:], uint32(im.g.Checkpoints[0].DescIndex+1))
-			im.seal(sb)
-		}, "cursor"},
-		{"mapped object outside the data cursor range", func(im *image) {
-			sb := im.g.Checkpoints[0].Super
-			le.PutUint32(im.blk(sb)[offDataLen:], 0)
-			im.seal(sb)
-		}, "data range"},
-		{"data index moved off the mapped object", func(im *image) {
-			sb := im.g.Checkpoints[0].Super
-			le.PutUint32(im.blk(sb)[offDataIndex:], 5)
-			im.seal(sb)
-		}, "data range"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			im := newImage(t, apfstest.Options{})
@@ -818,5 +803,45 @@ func TestBlockZeroSuppliesOnlyGeometry(t *testing.T) {
 	}
 	if f.NX().Xid != 10 || f.NX().MaxFS != 1 {
 		t.Errorf("selected xid %d max fs %d, want the ring's newest checkpoint", f.NX().Xid, f.NX().MaxFS)
+	}
+}
+
+// The cursor claims of a checkpoint superblock (where its descriptor blocks and
+// data blocks sit) are verified only against single-checkpoint containers: a
+// disagreement is a warning, and a checkpoint whose checksums, xids and objects
+// verify is still the one used.
+func TestCheckpointCursorClaimsAreWarnings(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(im *image)
+		warn   string
+	}{
+		{"descriptor cursor disagrees with its ring position", func(im *image) {
+			sb := im.g.Checkpoints[0].Super
+			le.PutUint32(im.blk(sb)[offDescIndex:], uint32(im.g.Checkpoints[0].DescIndex+1))
+			im.seal(sb)
+		}, "descriptor cursor"},
+		{"mapped object outside the data cursor range", func(im *image) {
+			sb := im.g.Checkpoints[0].Super
+			le.PutUint32(im.blk(sb)[offDataLen:], 0)
+			im.seal(sb)
+		}, "data range"},
+		{"data index moved off the mapped object", func(im *image) {
+			sb := im.g.Checkpoints[0].Super
+			le.PutUint32(im.blk(sb)[offDataIndex:], 5)
+			im.seal(sb)
+		}, "data range"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			im := newImage(t, apfstest.Options{})
+			tc.mutate(im)
+			f := im.mustOpen()
+			if got := f.NX().Xid; got != 10 {
+				t.Fatalf("selected xid %d, want the newest (10) despite the cursor", got)
+			}
+			if !hasWarn(f, "xid 10", tc.warn, "accepted") {
+				t.Errorf("no warning about %q: %q", tc.warn, f.Info().Warnings)
+			}
+		})
 	}
 }

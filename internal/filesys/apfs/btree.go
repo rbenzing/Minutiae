@@ -42,6 +42,10 @@ const (
 	// also capped by the container's block count.
 	maxNodeBudget = 1 << 20
 
+	// minNodeReads is the least number of node reads all scans of one FS may
+	// make together; the budget is 4 reads per container block above it.
+	minNodeReads = 1 << 20
+
 	// minKeyLen: every key of every APFS tree starts with an 8-byte id.
 	minKeyLen = 8
 )
@@ -83,9 +87,10 @@ type btRec struct {
 
 // btNode is a validated node.
 type btNode struct {
-	addr  uint64
-	level uint16
-	recs  []btRec // live records (ghosts removed), in node order
+	addr   uint64
+	level  uint16
+	recs   []btRec // live records (ghosts removed), in node order
+	ghosts int     // ghost entries that were removed
 }
 
 // openTree opens the tree rooted at rootOid; typ is the tree-type field that
@@ -116,7 +121,7 @@ func (f *FS) openTree(rootOid uint64, typ uint32, o *omapView) (*tree, error) {
 		return nil, err
 	}
 	t.rootAddr = addr
-	buf, err := f.readNodeBlock(addr, true)
+	buf, err := t.readNode(rootOid, addr, true)
 	if err != nil {
 		return nil, err
 	}
@@ -172,10 +177,29 @@ func (t *tree) addrOf(oid uint64) (uint64, error) {
 	return paddr, nil
 }
 
-// readNodeBlock reads one node block, checks its object header type (BTREE for
-// a root, BTREE_NODE otherwise) and reports a checksum mismatch as a warning:
-// the node is still parsed, with every bound checked.
-func (f *FS) readNodeBlock(addr uint64, root bool) ([]byte, error) {
+// chargeNode takes one node read from the filesystem-wide budget. Scans are
+// nested (a virtual tree resolves every node through an object map, itself a
+// tree), so the per-scan budget alone does not bound the total work; this one
+// does. Exhausting it is one warning, then every further tree read fails.
+func (f *FS) chargeNode() error {
+	if f.nodeReads.Add(-1) < 0 {
+		f.warn("the B-tree node read budget of %d reads for this filesystem is exhausted; further tree reads fail", f.nodeReadLimit)
+		return corrupt("B-tree", -1, "the node read budget of %d reads for this filesystem is exhausted", f.nodeReadLimit)
+	}
+	return nil
+}
+
+// readNode reads one node block of the tree: oid is the node's oid (its block
+// address for a physical tree), root says whether it is the root. The object
+// header type must be BTREE for a root and BTREE_NODE otherwise. A checksum
+// mismatch is a warning (the node is still parsed, with every bound checked),
+// and so are a header that does not belong to this node: another oid, an xid
+// newer than the tree's view, storage bits that disagree with the tree.
+func (t *tree) readNode(oid, addr uint64, root bool) ([]byte, error) {
+	f := t.f
+	if err := f.chargeNode(); err != nil {
+		return nil, err
+	}
 	buf, h, err := f.readObjectRaw(addr, f.bs)
 	if err != nil {
 		return nil, err
@@ -189,6 +213,23 @@ func (f *FS) readNodeBlock(addr uint64, root bool) ([]byte, error) {
 	}
 	if h.kind() != want {
 		return nil, corrupt("B-tree node", int64(addr)*int64(f.bs), "block %d has object type %#x, want %#x", addr, h.kind(), want)
+	}
+	if h.oid != oid {
+		f.warn("B-tree node at block %d carries oid %d, want %d", addr, h.oid, oid)
+	}
+	view := f.nx.xid
+	if t.omap != nil {
+		view = t.omap.xid
+	}
+	if h.xid > view {
+		f.warn("B-tree node at block %d has xid %d, newer than the view it is read in (xid %d)", addr, h.xid, view)
+	}
+	wantStorage := uint32(storagePhysical)
+	if t.kind == kindVirtual {
+		wantStorage = 0
+	}
+	if h.typ&storageMask != wantStorage {
+		f.warn("B-tree node at block %d has storage bits %#x, want %#x for its tree", addr, h.typ&storageMask, wantStorage)
 	}
 	return buf, nil
 }
@@ -274,6 +315,7 @@ func (t *tree) parseNode(buf []byte, addr uint64, root bool) (*btNode, error) {
 			if !leaf {
 				t.f.warn("B-tree index node at block %d has a ghost entry: skipped", addr)
 			}
+			n.ghosts++
 			continue
 		}
 		if kLen < minKeyLen {
@@ -307,8 +349,11 @@ type scanner struct {
 	prefix  func(key []byte) int
 	visit   func(key, val []byte) (stop bool, err error)
 	visited map[uint64]struct{}
-	budget  int
-	inRange bool // a record of the range was seen
+	budget  int    // child nodes this scan may still read
+	limit   int    // nodes this scan may read, the root included
+	nodes   int    // nodes read
+	keys    uint64 // leaf entries seen, ghosts included
+	inRange bool   // a record of the range was seen
 	stop    bool
 }
 
@@ -325,14 +370,21 @@ type scanner struct {
 // key and val alias the node buffer and must not be modified. visit returns
 // stop to end the scan early. Structural problems are *filesys.CorruptError:
 // depth over 16, a node reached twice (a cycle or a shared child), more nodes
-// than the budget, a child level that is not the parent's minus one.
+// than the budget (the container's, tightened to the tree's own bt_node_count),
+// a child level that is not the parent's minus one. A scan of the whole tree
+// (nil prefix) that runs to the end also checks bt_node_count and bt_key_count
+// and warns when they disagree with what was read.
 func (t *tree) scan(prefix func(key []byte) int, visit func(key, val []byte) (stop bool, err error)) error {
+	limit := t.f.nodeBudget
+	if n := t.info.nodeCount; n > 0 && n < uint64(limit) {
+		limit = int(n) // the tree says how many nodes it has
+	}
 	s := &scanner{
 		t: t, prefix: prefix, visit: visit,
 		visited: map[uint64]struct{}{t.rootAddr: {}},
-		budget:  t.f.nodeBudget - 1, // the root
+		limit:   limit, budget: limit - 1, nodes: 1, // the root
 	}
-	buf, err := t.f.readNodeBlock(t.rootAddr, true)
+	buf, err := t.readNode(t.root, t.rootAddr, true)
 	if err != nil {
 		return err
 	}
@@ -340,7 +392,25 @@ func (t *tree) scan(prefix func(key []byte) int, visit func(key, val []byte) (st
 	if err != nil {
 		return err
 	}
-	return s.walk(root, 1, true)
+	if err := s.walk(root, 1, true); err != nil {
+		return err
+	}
+	if prefix == nil && !s.stop {
+		s.crossCheck()
+	}
+	return nil
+}
+
+// crossCheck compares what a scan of the whole tree read with the tree's own
+// bt_node_count and bt_key_count.
+func (s *scanner) crossCheck() {
+	t := s.t
+	if uint64(s.nodes) != t.info.nodeCount {
+		t.f.warn("B-tree at block %d reports %d nodes (bt_node_count) but %d were read", t.rootAddr, t.info.nodeCount, s.nodes)
+	}
+	if s.keys != t.info.keyCount {
+		t.f.warn("B-tree at block %d reports %d keys (bt_key_count) but %d were read", t.rootAddr, t.info.keyCount, s.keys)
+	}
 }
 
 func (s *scanner) cmp(key []byte) int {
@@ -400,11 +470,12 @@ func (s *scanner) load(parent *btNode, val []byte) (*btNode, error) {
 		return nil, corrupt("B-tree", int64(addr)*int64(t.f.bs), "node at block %d is reached twice (a cycle or a shared child)", addr)
 	}
 	if s.budget <= 0 {
-		return nil, corrupt("B-tree", -1, "tree has more than %d nodes", t.f.nodeBudget)
+		return nil, corrupt("B-tree", -1, "tree has more than %d nodes (the container allows %d, the tree reports %d)", s.limit, t.f.nodeBudget, t.info.nodeCount)
 	}
 	s.budget--
+	s.nodes++
 	s.visited[addr] = struct{}{}
-	buf, err := t.f.readNodeBlock(addr, false)
+	buf, err := t.readNode(oid, addr, false)
 	if err != nil {
 		return nil, err
 	}
@@ -419,6 +490,7 @@ func (s *scanner) load(parent *btNode, val []byte) (*btNode, error) {
 }
 
 func (s *scanner) leaf(n *btNode) error {
+	s.keys += uint64(len(n.recs) + n.ghosts)
 	for _, r := range n.recs {
 		switch c := s.cmp(r.key); {
 		case c > 0:

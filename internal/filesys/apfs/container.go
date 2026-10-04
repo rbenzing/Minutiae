@@ -111,9 +111,11 @@ func unsupported(format string, a ...any) error {
 // validateGeometry checks the geometry a superblock claims before anything is
 // allocated or looped over on its account: block size, block count and the two
 // checkpoint areas (contiguous, bounded, inside the container, disjoint, not
-// block 0). It is all block 0 is trusted for: the checkpoint cursors, the file
-// system count and the volume oids of the block-0 copy have no meaning (it may
-// be stale) and are checked only on checkpoint candidates (validate).
+// block 0). It is all block 0 is trusted for: the checkpoint cursors and the
+// file-system count of the block-0 copy have no meaning (it may be stale) and
+// are checked only on checkpoint candidates (validate); the volume oids are
+// not validated here at all, they are checked against nx_next_oid when the
+// volumes are opened.
 func (n *nxSuper) validateGeometry() error {
 	if n.descBlocks&areaNonContiguous != 0 || n.dataBlocks&areaNonContiguous != 0 {
 		return unsupported("non-contiguous checkpoint area (a B-tree of fragments)")

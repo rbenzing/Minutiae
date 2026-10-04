@@ -15,7 +15,11 @@ func writeSuperblock(b []byte, o Options, g Geo, cp Checkpoint) {
 	le.PutUint64(b[56:], 0)                // nx_readonly_compatible_features
 	le.PutUint64(b[64:], incompatVersion2) // nx_incompatible_features
 	copy(b[72:88], o.UUID[:])
-	le.PutUint64(b[88:], firstUnusedOid)
+	nextOid := uint64(firstUnusedOid)
+	if len(o.Volumes) > 0 {
+		nextOid = max(nextOid, VolumeOid(len(o.Volumes)-1)+1)
+	}
+	le.PutUint64(b[88:], nextOid)
 	le.PutUint64(b[96:], cp.Xid+1) // nx_next_xid
 	le.PutUint32(b[104:], uint32(g.DescCount))
 	le.PutUint32(b[108:], uint32(g.DataCount))

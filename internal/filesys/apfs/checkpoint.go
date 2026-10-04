@@ -144,11 +144,13 @@ func (f *FS) tryCandidate(nx0 *nxSuper, c candidate, bud *selBudget) (nxSuper, c
 			nx.descBase, nx.descBlocks, nx.blockSize, nx0.descBase, nx0.descBlocks, nx0.blockSize)
 	}
 
-	// The superblock's own cursor claim must agree with where it sits: the
+	// The superblock's own cursor claim should agree with where it sits: the
 	// checkpoint occupies descLen ring blocks starting at descIndex and its
-	// superblock is the last of them.
+	// superblock is the last of them. That reading is verified only against
+	// single-checkpoint containers, so a disagreement is a warning, not a reason
+	// to reject a checkpoint whose checksums, xids and objects all verify.
 	if pos := (int64(nx.descIndex) + int64(nx.descLen) - 1) % int64(nx.descBlocks); pos != int64(c.idx) {
-		return fail("its descriptor cursor (index %d, length %d) puts the superblock at ring index %d, not %d", nx.descIndex, nx.descLen, pos, c.idx)
+		f.warn("checkpoint xid %d: its descriptor cursor (index %d, length %d) puts the superblock at ring index %d, not %d; accepted (the cursor reading is unverified)", nx.xid, nx.descIndex, nx.descLen, pos, c.idx)
 	}
 
 	// The descLen-1 blocks immediately before the superblock in the ring are
@@ -195,8 +197,12 @@ func (f *FS) tryCandidate(nx0 *nxSuper, c candidate, bud *selBudget) (nxSuper, c
 				typ: le.Uint32(e[0:]), subtype: le.Uint32(e[4:]), size: le.Uint32(e[8:]),
 				fsOid: le.Uint64(e[16:]), oid: le.Uint64(e[24:]), paddr: le.Uint64(e[32:]),
 			}
-			if reason := nx.checkMapping(m, f.bs); reason != "" {
-				return fail("%s", reason)
+			reject, note := nx.checkMapping(m, f.bs)
+			if reject != "" {
+				return fail("%s", reject)
+			}
+			if note != "" {
+				f.warn("checkpoint xid %d: %s; accepted (the data-range reading is unverified)", nx.xid, note)
 			}
 			if _, dup := eph[m.oid]; dup {
 				return fail("ephemeral object oid %d is mapped twice", m.oid)
@@ -231,25 +237,26 @@ func (f *FS) tryCandidate(nx0 *nxSuper, c candidate, bud *selBudget) (nxSuper, c
 	return nx, checkpoint{index: c.idx, ephemeral: eph}, "", nil
 }
 
-// checkMapping validates one checkpoint_mapping_t against the data area.
-func (n *nxSuper) checkMapping(m mapping, bs int) string {
+// checkMapping validates one checkpoint_mapping_t against the data area: reject
+// is a reason to reject the checkpoint, note a finding that is only reported.
+func (n *nxSuper) checkMapping(m mapping, bs int) (reject, note string) {
 	if m.size == 0 || m.size > maxObjectBytes || int(m.size)%bs != 0 {
-		return fmt.Sprintf("mapping of oid %d has unusable size %d", m.oid, m.size)
+		return fmt.Sprintf("mapping of oid %d has unusable size %d", m.oid, m.size), ""
 	}
 	nblk := uint64(m.size) / uint64(bs)
 	end, ok := addU64(m.paddr, nblk)
 	if !ok || m.paddr < n.dataBase || end > n.dataBase+uint64(n.dataBlocks) {
-		return fmt.Sprintf("mapping of oid %d (block %d, %d blocks) lies outside the data area [%d, +%d)", m.oid, m.paddr, nblk, n.dataBase, n.dataBlocks)
+		return fmt.Sprintf("mapping of oid %d (block %d, %d blocks) lies outside the data area [%d, +%d)", m.oid, m.paddr, nblk, n.dataBase, n.dataBlocks), ""
 	}
-	// The object must lie inside the live part of the data ring, [dataIndex,
+	// The object should lie inside the live part of the data ring, [dataIndex,
 	// dataIndex+dataLen) modulo the area. Treating the data area as a ring
-	// follows the descriptor area; wrap-around is [unverified] against a real
-	// container (mkapfs writes index 0 and never wraps).
+	// follows the descriptor area; it is unverified against a multi-checkpoint
+	// container (mkapfs writes index 0 and never wraps), so only a note.
 	start := (m.paddr - n.dataBase + uint64(n.dataBlocks) - uint64(n.dataIndex)) % uint64(n.dataBlocks)
 	if start+nblk > uint64(n.dataLen) {
-		return fmt.Sprintf("mapping of oid %d (block %d, %d blocks) lies outside the checkpoint's data range (index %d, length %d)", m.oid, m.paddr, nblk, n.dataIndex, n.dataLen)
+		return "", fmt.Sprintf("mapping of oid %d (block %d, %d blocks) lies outside the checkpoint's data range (index %d, length %d)", m.oid, m.paddr, nblk, n.dataIndex, n.dataLen)
 	}
-	return ""
+	return "", ""
 }
 
 func sortedKeys(m map[uint64]mapping) []uint64 {

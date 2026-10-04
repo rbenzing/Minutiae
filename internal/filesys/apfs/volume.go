@@ -155,6 +155,9 @@ func (f *FS) openVolumes() {
 			f.warn("file system slot %d holds oid %d beyond nx_max_file_systems (%d): ignored", i, oid, n)
 			continue
 		}
+		if oid >= f.nx.nextOid {
+			f.warn("volume slot %d holds oid %d, which is not below nx_next_oid (%d)", i, oid, f.nx.nextOid)
+		}
 		v := f.readVolume(i, oid)
 		f.vols = append(f.vols, v)
 		f.slots[i] = v

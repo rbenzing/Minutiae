@@ -512,3 +512,20 @@ func TestVolumeSuperblockBadChecksumWarns(t *testing.T) {
 		t.Errorf("Info.Volumes = %q", in.Volumes)
 	}
 }
+
+// A volume oid is a virtual oid already handed out: it is below nx_next_oid.
+func TestVolumeOidBelowNextOid(t *testing.T) {
+	im := newImage(t, volOpts(dataVolume(richFiles()...)))
+	if f := im.mustOpen(); hasWarn(f, "nx_next_oid") {
+		t.Fatalf("a consistent container warns: %q", f.Info().Warnings)
+	}
+	im.patchSupers(func(b []byte) { le.PutUint64(b[88:], 1000) }) // nx_next_oid below the volume's oid
+	f := im.mustOpen()
+	if !hasWarn(f, "volume slot 0", "not below nx_next_oid (1000)") {
+		t.Errorf("warnings: %q", f.Info().Warnings)
+	}
+	// The volume is still read.
+	if got := f.Info().Volumes; !slices.Equal(got, []string{"Data"}) {
+		t.Errorf("Info.Volumes = %q", got)
+	}
+}
