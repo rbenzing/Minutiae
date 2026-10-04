@@ -654,3 +654,127 @@ func TestBuilderVolumeIsSelfConsistent(t *testing.T) {
 		open(t, img)
 	}
 }
+
+// ioFailReader fails reads that touch [at, at+n) with err and passes the rest.
+type ioFailReader struct {
+	r   io.ReaderAt
+	at  int64
+	err error
+}
+
+func (f ioFailReader) ReadAt(p []byte, off int64) (int, error) {
+	if off <= f.at && f.at < off+int64(len(p)) {
+		return 0, f.err
+	}
+	return f.r.ReadAt(p, off)
+}
+
+func TestAlternateHeaderIOErrorIsNotCorrupt(t *testing.T) {
+	img, lay := build(t, hfsplustest.Options{PrimaryBad: true})
+	boom := errors.New("device went away")
+	_, err := hfsplus.Open(ioFailReader{bytes.NewReader(img), lay.AltVH, boom}, int64(len(img)))
+	if !errors.Is(err, boom) || errors.Is(err, filesys.ErrCorrupt) {
+		t.Fatalf("Open = %v, want the read error and not a corrupt volume", err)
+	}
+	// A short read of the alternate (the image ends inside it) is not an I/O
+	// error: the primary's problem is reported as corrupt.
+	cut := img[:lay.AltVH+100]
+	_, err = hfsplus.Open(bytes.NewReader(cut), int64(len(cut)))
+	wantCorrupt(t, err)
+}
+
+func TestAlternateHeaderAtDeclaredVolumeEnd(t *testing.T) {
+	breakPrimary := func(img []byte, lay *hfsplustest.Layout) {
+		// Impossible geometry in the primary only: the catalog claims more blocks than the volume has.
+		be.PutUint32(img[lay.PrimaryVH+vCatalog+fBlocks:], 1000)
+	}
+	t.Run("image longer than the volume", func(t *testing.T) {
+		img, lay := build(t, hfsplustest.Options{ImageExtra: 3000})
+		breakPrimary(img, lay)
+		f := open(t, img)
+		info := f.Info()
+		if !hasWarning(info, "alternate volume header") || info.Size != lay.VolumeBytes {
+			t.Errorf("Size = %d, Warnings = %q", info.Size, info.Warnings)
+		}
+	})
+	t.Run("wrapper extent longer than the volume", func(t *testing.T) {
+		img, lay := build(t, hfsplustest.Options{Wrapper: true, ImageExtra: 8192})
+		breakPrimary(img, lay)
+		be.PutUint16(img[1024+128:], be.Uint16(img[1024+128:])+8) // 8 more HFS blocks: the extent ends 4096 bytes after the volume
+		f := open(t, img)
+		info := f.Info()
+		if !hasWarning(info, "alternate volume header") || info.Size != lay.Base+lay.VolumeBytes {
+			t.Errorf("Size = %d, Warnings = %q", info.Size, info.Warnings)
+		}
+	})
+	t.Run("device-end candidate still works", func(t *testing.T) {
+		img, lay := build(t, hfsplustest.Options{})
+		breakPrimary(img, lay)
+		if !hasWarning(open(t, img).Info(), "alternate volume header") {
+			t.Error("no warning for the alternate header")
+		}
+	})
+	t.Run("both unusable", func(t *testing.T) {
+		img, lay := build(t, hfsplustest.Options{ImageExtra: 3000})
+		breakPrimary(img, lay)
+		be.PutUint32(img[lay.AltVH+vCatalog+fBlocks:], 1000)
+		_, err := hfsplus.Open(bytes.NewReader(img), int64(len(img)))
+		wantCorrupt(t, err)
+	})
+}
+
+func TestWrappedAlternateHeaderIsBounded(t *testing.T) {
+	// The wrapper's extent end lies beyond the truncated image: the alternate
+	// header cannot be placed, so a destroyed primary is corrupt, not an I/O error.
+	img, _ := build(t, hfsplustest.Options{Wrapper: true, PrimaryBad: true})
+	img = img[:len(img)-8192]
+	_, err := hfsplus.Open(bytes.NewReader(img), int64(len(img)))
+	wantCorrupt(t, err)
+	// A wrapper extent so short that its alternate would overlap the primary.
+	img, _ = build(t, hfsplustest.Options{Wrapper: true, PrimaryBad: true})
+	be.PutUint16(img[1024+128:], 4) // 2048 bytes: end-1024 = 1024 lies before the end of the primary header
+	_, err = hfsplus.Open(bytes.NewReader(img), int64(len(img)))
+	wantCorrupt(t, err)
+	if !strings.Contains(err.Error(), "cannot be placed") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestVolumeAttributeBits(t *testing.T) {
+	img, lay := build(t, hfsplustest.Options{})
+	patchHeaders(img, lay, func(v []byte) {
+		be.PutUint32(v[vAttributes:], be.Uint32(v[vAttributes:])|1<<7|1<<11|1<<30|1<<31)
+	})
+	info := open(t, img).Info()
+	if !hasFeature(info, "hardware-locked") || !hasFeature(info, "content-protection") || !hasWarning(info, "boot-volume inconsistent") {
+		t.Errorf("Info = %+v", info)
+	}
+	if info.Encrypted {
+		t.Error("Info.Encrypted must stay false: data protection is per entry")
+	}
+	// The bit 31 mkfs sets is not interpreted: a clean volume has no warnings.
+	clean, cl := build(t, hfsplustest.Options{})
+	patchHeaders(clean, cl, func(v []byte) { be.PutUint32(v[vAttributes:], be.Uint32(v[vAttributes:])|1<<31) })
+	if w := open(t, clean).Info().Warnings; len(w) != 0 {
+		t.Errorf("Warnings = %q", w)
+	}
+}
+
+func TestOpenTinyVolumeIsCorrupt(t *testing.T) {
+	img, lay := build(t, hfsplustest.Options{})
+	patchHeaders(img, lay, func(v []byte) {
+		be.PutUint32(v[vBlockSize:], 512)
+		be.PutUint32(v[vTotal:], 4) // 2048 bytes: no room for both volume headers
+		for _, fork := range []int{vAlloc, vExtents, vCatalog} {
+			be.PutUint64(v[fork+fLogical:], 512)
+			be.PutUint32(v[fork+fBlocks:], 1)
+			be.PutUint32(v[fork+fExtent0:], 0)
+			be.PutUint32(v[fork+fExtent0+4:], 1)
+		}
+	})
+	_, err := hfsplus.Open(bytes.NewReader(img), int64(len(img)))
+	wantCorrupt(t, err)
+	if !strings.Contains(err.Error(), "too small") {
+		t.Errorf("err = %v", err)
+	}
+}

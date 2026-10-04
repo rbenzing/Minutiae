@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
@@ -149,11 +150,40 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 	var warns []string
 	vh, perr := validHeader(loc.pri[:])
 	if perr != nil {
-		var alt [vhSize]byte
+		// Where can the alternate header be? When the primary header parsed
+		// but failed its checks, its own geometry says: 1024 bytes before the
+		// end of the volume it declares (right for a wrapper whose embedded
+		// extent is longer than the volume and for an image with trailing
+		// bytes). The device end (or the wrapper extent's end) is the other
+		// candidate; the first one that validates wins.
+		var cands []int64
+		if vh != nil {
+			if end, ok := filesys.AddOK(loc.base, vh.volumeBytes()); ok {
+				if alt := end - altFromEnd; alt >= loc.base+vhOffset+vhSize && alt+vhSize <= size {
+					cands = append(cands, alt)
+				}
+			}
+		}
+		if loc.altPos >= 0 && !slices.Contains(cands, loc.altPos) {
+			cands = append(cands, loc.altPos)
+		}
 		aerr := errors.New("the alternate header cannot be placed")
-		if loc.altPos >= 0 {
-			if aerr = readFull(r, alt[:], loc.altPos); aerr == nil {
-				vh, aerr = validHeader(alt[:])
+		for i, pos := range cands {
+			var alt [vhSize]byte
+			err := readFull(r, alt[:], pos)
+			if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+				return nil, fmt.Errorf("hfsplus: read alternate volume header: %w", err) // an I/O error is not a corrupt volume
+			}
+			var v *volumeHeader
+			if err == nil {
+				v, err = validHeader(alt[:])
+			}
+			if err == nil {
+				vh, aerr = v, nil
+				break
+			}
+			if i == 0 {
+				aerr = err
 			}
 		}
 		if aerr != nil {
@@ -193,6 +223,9 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 	if vh.attributes&attrInconsistent != 0 {
 		f.warn("the volume is marked inconsistent")
 	}
+	if vh.attributes&attrBootInconsistent != 0 {
+		f.warn("the volume is marked boot-volume inconsistent")
+	}
 	f.loadCaseMode()
 	f.loadJournal()
 	f.loadLabel()
@@ -202,14 +235,16 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 	return f, nil
 }
 
-// validHeader parses a header and checks its geometry.
+// validHeader parses a header and checks its geometry. When the header parses
+// but its geometry is impossible the header is returned together with the
+// error, so the caller can still use its declared size.
 func validHeader(b []byte) (*volumeHeader, error) {
 	vh, err := parseVolumeHeader(b)
 	if err != nil {
 		return nil, err
 	}
 	if err := vh.checkGeometry(); err != nil {
-		return nil, err
+		return vh, err
 	}
 	return vh, nil
 }
@@ -294,6 +329,12 @@ func (f *FS) Info() filesys.Info {
 	}
 	if f.vh.attributes&attrSoftwareLock != 0 {
 		feats = append(feats, "software-locked")
+	}
+	if f.vh.attributes&attrHardwareLock != 0 {
+		feats = append(feats, "hardware-locked")
+	}
+	if f.vh.attributes&attrContentProtect != 0 {
+		feats = append(feats, "content-protection")
 	}
 	return filesys.Info{
 		Type:      typ,

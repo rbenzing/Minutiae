@@ -48,14 +48,25 @@ const (
 	offVHStartupFile = 432
 )
 
-// Volume attribute bits (from memory, TN1150 "Volume Attributes"; the bits the
-// reader uses are checked against real images).
+// Volume attribute bits, from memory of xnu hfs_format.h: kHFSVolumeHardwareLockBit
+// 7, kHFSVolumeUnmountedBit 8, kHFSBootVolumeInconsistentBit 11,
+// kHFSCatalogNodeIDsReusedBit 12, kHFSVolumeJournaledBit 13,
+// kHFSVolumeInconsistentBit 14, kHFSVolumeSoftwareLockBit 15,
+// kHFSContentProtectionBit 30. Confirmed on real mkfs.hfsplus images: the
+// unmounted bit (8) is set on a clean volume and the journaled bit (13) with
+// -J. Bits 8, 11, 12, 13 and 15 also match the Linux driver's hfsplus_raw.h as
+// remembered (it calls bit 11 "inconsistent"); bit 14, the hardware lock and
+// content protection bits are from xnu memory only. Real images also carry
+// kHFSUnusedNodeFixBit (31), which is not interpreted.
 const (
-	attrUnmounted    = 1 << 8  // kHFSVolumeUnmountedBit: set on a clean unmount
-	attrCNIDsReused  = 1 << 12 // kHFSCatalogNodeIDsReusedBit
-	attrJournaled    = 1 << 13 // kHFSVolumeJournaledBit
-	attrInconsistent = 1 << 14 // kHFSVolumeInconsistentBit
-	attrSoftwareLock = 1 << 15 // kHFSVolumeSoftwareLockBit
+	attrHardwareLock     = 1 << 7
+	attrUnmounted        = 1 << 8  // kHFSVolumeUnmountedBit: set on a clean unmount
+	attrBootInconsistent = 1 << 11 // kHFSBootVolumeInconsistentBit
+	attrCNIDsReused      = 1 << 12 // kHFSCatalogNodeIDsReusedBit
+	attrJournaled        = 1 << 13 // kHFSVolumeJournaledBit
+	attrInconsistent     = 1 << 14 // kHFSVolumeInconsistentBit
+	attrSoftwareLock     = 1 << 15 // kHFSVolumeSoftwareLockBit
+	attrContentProtect   = 1 << 30 // kHFSContentProtectionBit (iOS data protection)
 )
 
 // extent is one HFSPlusExtentDescriptor: count allocation blocks from start.
@@ -205,6 +216,13 @@ func parseVolumeHeader(b []byte) (*volumeHeader, error) {
 // which cannot itself overflow, has exactly its blocks inline. Nothing is
 // allocated or looped over beyond the 8 inline extents of each fork.
 func (vh *volumeHeader) checkGeometry() error {
+	// The volume must hold the boot area, both volume headers (the alternate is
+	// in the last 1024 bytes) and so cannot be smaller than that.
+	if vh.volumeBytes() < vhOffset+vhSize+altFromEnd {
+		return corrupt("HFS+ volume header", vhOffset, "the volume of %d bytes is too small for its volume headers", vh.volumeBytes())
+	}
+	// Not checked here (Task 5 does, with the allocation file in hand): the
+	// allocation file covers totalBlocks bits and the catalog has >= 2 nodes.
 	forks := []struct {
 		name string
 		fd   *forkData
