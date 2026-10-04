@@ -3,6 +3,7 @@ package hfsplus
 import (
 	"encoding/binary"
 	"fmt"
+	"io"
 	"sort"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
@@ -70,20 +71,20 @@ func (f *FS) forkExtents(fileID uint32, resource bool, fd forkData) (exts []exte
 			break
 		}
 		if !f.extentInVolume(e) {
-			return nil, false, corrupt("fork extents", -1, "extent %d of file %d (%d+%d) is outside the %d-block volume", i, fileID, e.start, e.count, f.vh.totalBlocks)
+			return exts, false, corrupt("fork extents", -1, "extent %d of file %d (%d+%d) is outside the %d-block volume", i, fileID, e.start, e.count, f.vh.totalBlocks)
 		}
 		covered += uint64(e.count) // at most 8 x 2^32: cannot overflow
+		if covered > uint64(fd.totalBlocks) {
+			return exts, false, corrupt("fork extents", -1, "the inline extents of file %d hold %d blocks, more than its %d", fileID, covered, fd.totalBlocks)
+		}
 		exts = append(exts, e)
 	}
 	total := uint64(fd.totalBlocks)
-	if covered > total {
-		return nil, false, corrupt("fork extents", -1, "the inline extents of file %d hold %d blocks, more than its %d", fileID, covered, total)
-	}
 	if covered == total {
 		return exts, true, nil
 	}
 	if fileID == cnidExtents {
-		return nil, false, corrupt("fork extents", -1, "the extents-overflow file claims %d blocks but its inline extents hold %d", total, covered)
+		return exts, false, corrupt("fork extents", -1, "the extents-overflow file claims %d blocks but its inline extents hold %d", total, covered)
 	}
 
 	forkType := byte(forkTypeData)
@@ -92,22 +93,22 @@ func (f *FS) forkExtents(fileID uint32, resource bool, fd forkData) (exts []exte
 	}
 	seen := map[uint32]struct{}{}
 	for covered < total {
-		if len(exts) >= maxExtentsPerFork {
-			f.warn("file %d has more than %d extents: only the first %d blocks of its %d are mapped", fileID, maxExtentsPerFork, covered, total)
+		if len(exts) >= f.extentCapOrDefault() {
+			f.warn("file %d has more than %d extents: only the first %d blocks of its %d are mapped", fileID, f.extentCapOrDefault(), covered, total)
 			return exts, false, nil
 		}
 		start := uint32(covered) // covered < total <= 2^32
 		if _, dup := seen[start]; dup {
-			return nil, false, corrupt("extents-overflow tree", -1, "file %d fork %#02x: start block %d looked up twice", fileID, forkType, start)
+			return exts, false, corrupt("extents-overflow tree", -1, "file %d fork %#02x: start block %d looked up twice", fileID, forkType, start)
 		}
 		seen[start] = struct{}{}
 		tree, err := f.tree(treeExtents)
 		if err != nil {
-			return nil, false, err
+			return exts, false, err
 		}
 		data, found, err := tree.overflowRecord(fileID, forkType, start)
 		if err != nil {
-			return nil, false, err
+			return exts, false, err
 		}
 		if !found {
 			f.warn("file %d fork %#02x: no extents-overflow record at block %d, so only %d of its %d blocks are mapped", fileID, forkType, start, covered, total)
@@ -117,26 +118,36 @@ func (f *FS) forkExtents(fileID uint32, resource bool, fd forkData) (exts []exte
 			f.warn("file %d fork %#02x: the extents-overflow record at block %d is %d bytes, too short for %d extents; only %d of %d blocks are mapped", fileID, forkType, start, len(data), maxInlineExts, covered, total)
 			return exts, false, nil
 		}
-		before := covered
+		// The extents of a bad record are not trusted: on an error the list
+		// returned ends before the record.
+		before, kept := covered, len(exts)
 		for i := 0; i < maxInlineExts; i++ {
 			e := extent{start: binary.BigEndian.Uint32(data[i*extentRecSize:]), count: binary.BigEndian.Uint32(data[i*extentRecSize+4:])}
 			if e.count == 0 {
 				break
 			}
 			if !f.extentInVolume(e) {
-				return nil, false, corrupt("extents-overflow tree", -1, "file %d fork %#02x: extent %d of the record at block %d (%d+%d) is outside the %d-block volume", fileID, forkType, i, start, e.start, e.count, f.vh.totalBlocks)
+				return exts[:kept], false, corrupt("extents-overflow tree", -1, "file %d fork %#02x: extent %d of the record at block %d (%d+%d) is outside the %d-block volume", fileID, forkType, i, start, e.start, e.count, f.vh.totalBlocks)
 			}
 			covered += uint64(e.count)
 			if covered > total {
-				return nil, false, corrupt("extents-overflow tree", -1, "file %d fork %#02x: the record at block %d runs past the fork's %d blocks", fileID, forkType, start, total)
+				return exts[:kept], false, corrupt("extents-overflow tree", -1, "file %d fork %#02x: the record at block %d runs past the fork's %d blocks", fileID, forkType, start, total)
 			}
 			exts = append(exts, e)
 		}
 		if covered == before {
-			return nil, false, corrupt("extents-overflow tree", -1, "file %d fork %#02x: the record at block %d holds no blocks", fileID, forkType, start)
+			return exts[:kept], false, corrupt("extents-overflow tree", -1, "file %d fork %#02x: the record at block %d holds no blocks", fileID, forkType, start)
 		}
 	}
 	return exts, true, nil
+}
+
+// extentCapOrDefault is the number of extents kept per fork.
+func (f *FS) extentCapOrDefault() int {
+	if f.extentCap > 0 {
+		return f.extentCap
+	}
+	return maxExtentsPerFork
 }
 
 // overflowRecord finds the extents-overflow record keyed exactly (fileID,
@@ -144,8 +155,8 @@ func (f *FS) forkExtents(fileID uint32, resource bool, fd forkData) (exts []exte
 // false when there is none. Two records with the same key are a CorruptError.
 func (t *btree) overflowRecord(fileID uint32, forkType byte, startBlock uint32) (data []byte, found bool, err error) {
 	cmp := func(key []byte) (int, error) {
-		if len(key) < extentsKeyLen {
-			return 0, corrupt("extents-overflow tree", -1, "key of %d bytes is shorter than %d", len(key), extentsKeyLen)
+		if len(key) != extentsKeyLen {
+			return 0, corrupt("extents-overflow tree", -1, "key of %d bytes, not the %d of an extents-overflow key", len(key), extentsKeyLen)
 		}
 		return compareExtentsKey(key, fileID, forkType, startBlock), nil
 	}
@@ -160,8 +171,8 @@ func (t *btree) overflowRecord(fileID uint32, forkType byte, startBlock uint32) 
 	if err != nil {
 		return nil, false, err
 	}
-	if len(key) < extentsKeyLen {
-		return nil, false, corrupt("extents-overflow tree", -1, "key of %d bytes is shorter than %d", len(key), extentsKeyLen)
+	if len(key) != extentsKeyLen {
+		return nil, false, corrupt("extents-overflow tree", -1, "key of %d bytes, not the %d of an extents-overflow key", len(key), extentsKeyLen)
 	}
 	switch c := compareExtentsKey(key, fileID, forkType, startBlock); {
 	case c < 0: // seek returns the first record not less than the key: a smaller one means broken order or links
@@ -170,7 +181,7 @@ func (t *btree) overflowRecord(fileID uint32, forkType byte, startBlock uint32) 
 		return nil, false, nil
 	}
 	if len(recs) > 1 {
-		if k2, _, err := splitRecord(recs[1]); err == nil && len(k2) >= extentsKeyLen && compareExtentsKey(k2, fileID, forkType, startBlock) == 0 {
+		if k2, _, err := splitRecord(recs[1]); err == nil && len(k2) == extentsKeyLen && compareExtentsKey(k2, fileID, forkType, startBlock) == 0 {
 			return nil, false, corrupt("extents-overflow tree", -1, "two records for file %d fork %#02x at block %d", fileID, forkType, startBlock)
 		}
 	}
@@ -206,12 +217,34 @@ func compareExtentsKey(key []byte, fileID uint32, forkType byte, startBlock uint
 	return 0
 }
 
+// volumeOffset maps a fork-relative offset to a volume-relative one (for error
+// reports); -1 when the offset lies beyond the mapped extents.
+func (m *forkMap) volumeOffset(off int64) int64 {
+	if off < 0 {
+		return -1
+	}
+	blk := uint64(off / m.blockSize)
+	if blk >= m.blocks {
+		return -1
+	}
+	i := sort.Search(len(m.first), func(i int) bool { return m.first[i] > blk }) - 1
+	return int64(m.exts[i].start)*m.blockSize + off - int64(m.first[i])*m.blockSize
+}
+
 // ReadAt reads fork bytes at a fork-relative offset, splitting a read that
-// spans several extents. Bytes past the mapped extents are an error wrapping
-// filesys.ErrCorrupt (never zeros); I/O errors are returned as they are.
+// spans several extents. A read stops at the fork's logical size (io.EOF).
+// Bytes inside the logical size but past the mapped extents are an error
+// wrapping filesys.ErrCorrupt (never zeros); I/O errors are returned as they are.
 func (m *forkMap) ReadAt(p []byte, off int64) (int, error) {
 	if off < 0 {
 		return 0, fmt.Errorf("hfsplus: negative fork offset %d", off)
+	}
+	var eof error
+	if m.logical <= uint64(off) {
+		return 0, io.EOF
+	}
+	if left := m.logical - uint64(off); left < uint64(len(p)) {
+		p, eof = p[:left], io.EOF
 	}
 	n := 0
 	for n < len(p) {
@@ -235,7 +268,7 @@ func (m *forkMap) ReadAt(p []byte, off int64) (int, error) {
 		}
 		n += chunk
 	}
-	return n, nil
+	return n, eof
 }
 
 // Runs returns the byte runs of the first size bytes of the fork (or of all

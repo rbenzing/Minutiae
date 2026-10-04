@@ -198,3 +198,12 @@ func (f *FS) DirBudget() int64 {
 
 // SetDirEntryCap lowers the number of entries one listing yields.
 func (f *FS) SetDirEntryCap(n int) { f.dirCap = n }
+
+// WithLogical returns fd with its logical size replaced.
+func WithLogical(fd ForkData, n uint64) ForkData {
+	fd.logicalSize = n
+	return fd
+}
+
+// SetExtentCap lowers the number of extents kept per fork (0 = the default).
+func (f *FS) SetExtentCap(n int) { f.extentCap = n }

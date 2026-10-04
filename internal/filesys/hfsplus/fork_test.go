@@ -3,6 +3,7 @@ package hfsplus_test
 import (
 	"bytes"
 	"errors"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -305,14 +306,27 @@ func TestForkReadAtAcrossExtents(t *testing.T) {
 			}
 		}
 	}
-	// Past the mapped blocks: an error wrapping ErrCorrupt, never zeros.
+	// At the fork's logical size a read ends with io.EOF.
 	buf := make([]byte, 100)
 	n, err := fm.ReadAt(buf, int64(len(want)-10))
-	if n != 10 || !errors.Is(err, filesys.ErrCorrupt) || !bytes.Equal(buf[:10], want[len(want)-10:]) {
-		t.Errorf("read across the end = %d, %v", n, err)
+	if n != 10 || err != io.EOF || !bytes.Equal(buf[:10], want[len(want)-10:]) {
+		t.Errorf("read across the logical end = %d, %v", n, err)
 	}
-	if n, err := fm.ReadAt(buf, int64(len(want))); n != 0 || !errors.Is(err, filesys.ErrCorrupt) {
-		t.Errorf("read at the end = %d, %v", n, err)
+	if n, err := fm.ReadAt(buf, int64(len(want))); n != 0 || err != io.EOF {
+		t.Errorf("read at the logical end = %d, %v", n, err)
+	}
+	// Inside the logical size but past the mapped blocks: an error wrapping
+	// ErrCorrupt, never zeros.
+	fm2, err := f.MapFork(4, false, hfsplus.WithLogical(fd, uint64(len(want))+5000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err = fm2.ReadAt(buf, int64(len(want)-10))
+	if n != 10 || !errors.Is(err, filesys.ErrCorrupt) || !bytes.Equal(buf[:10], want[len(want)-10:]) {
+		t.Errorf("read across the end of the mapped blocks = %d, %v", n, err)
+	}
+	if n, err := fm2.ReadAt(buf, int64(len(want))); n != 0 || !errors.Is(err, filesys.ErrCorrupt) {
+		t.Errorf("read at the end of the mapped blocks = %d, %v", n, err)
 	}
 	if n, err := fm.ReadAt(buf, 1<<62); n != 0 || err == nil {
 		t.Errorf("read far past the end = %d, %v", n, err)

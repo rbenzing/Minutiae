@@ -37,6 +37,12 @@ type treeSpec struct {
 	maxKey     uint16
 	keyCompare byte
 	attrs      uint32
+	// fixedIndex selects the index record layout of a tree without
+	// kBTVariableIndexKeysMask: every index key is maxKey bytes (the key padded
+	// with zeros) and the child pointer follows it. 1 writes maxKey in the
+	// record's keyLength field (as Apple's writers do), 2 leaves the real key
+	// length there. 0 is the variable layout.
+	fixedIndex int
 	// stale, when it fits, is written into the free space of every leaf after
 	// its last record (not counted by numRecords): leftover bytes of a removed
 	// record.
@@ -154,7 +160,11 @@ func buildTree(s treeSpec) *builtTree {
 		for i, k := range kids {
 			d := make([]byte, 4)
 			be.PutUint32(d, k.num)
-			irecs[i] = rec{key: k.key, data: d}.bytes()
+			key := k.key
+			if s.fixedIndex != 0 {
+				key = fixedKey(key, int(s.maxKey), s.fixedIndex == 1)
+			}
+			irecs[i] = rec{key: key, data: d}.bytes()
 		}
 		var next []child
 		var nums []uint32
@@ -247,3 +257,14 @@ func sortCatalog(recs []rec, binary bool) {
 
 // unitsOf encodes a name as UTF-16 code units.
 func unitsOf(name string) []uint16 { return utf16.Encode([]rune(name)) }
+
+// fixedKey pads a key (with its keyLength prefix) to a maxKey-byte key. field
+// says whether the keyLength field is rewritten to maxKey or kept.
+func fixedKey(key []byte, maxKey int, field bool) []byte {
+	out := make([]byte, 2+maxKey)
+	copy(out, key)
+	if field {
+		binary.BigEndian.PutUint16(out, uint16(maxKey))
+	}
+	return out
+}

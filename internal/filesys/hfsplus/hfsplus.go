@@ -42,6 +42,7 @@ type FS struct {
 	dirMu     sync.Mutex
 	dirBudget int64
 	dirCap    int
+	extentCap int // overrides maxExtentsPerFork when positive (tests)
 
 	rootMu    sync.Mutex
 	rootEntry *filesys.Entry // the root folder as its record describes it, once readable

@@ -11,8 +11,13 @@ const maxNameUnits = 255
 // ignorable reports whether a UTF-16 code unit is skipped by the HFS+ case
 // folding comparison. TN1150 ("Unicode Subtleties") lists U+0000 and the
 // zero-width and bidirectional controls U+200C-200F, U+202A-202E, U+206A-206F
-// and U+FEFF. From memory of the TN; not validated against a real image (the
-// fixtures hold no such names).
+// and U+FEFF. From memory of the TN; NOT validated against a real image (the
+// fixtures hold no such names). In particular, treating U+0000 as ignorable is
+// unverified: if Apple's table keeps NUL significant, a name with an embedded NUL
+// folds equal to its NUL-less spelling here but not on a real volume. The effect
+// is limited to name lookups on case-folding volumes: Lookup tries an exact
+// (binary) spelling before the folded one, so a name that exists as typed is
+// always found, and the fold only decides which near-miss may also match.
 func ignorable(u uint16) bool {
 	switch {
 	case u == 0x0000, u == 0xFEFF:
@@ -31,7 +36,8 @@ func ignorable(u uint16) bool {
 // lower case is outside the BMP are left unchanged. Apple's real fold is a
 // 64 K-entry table that is not embedded here, so this is an APPROXIMATION
 // (unicode.ToLower per unit): it agrees for ASCII, Latin-1, Greek and Cyrillic
-// and may differ for exotic letters.
+// and may differ for exotic letters (Go's case data follows a newer Unicode version than
+// the table frozen in HFS+, which Lookup's exact-before-folded order mitigates).
 func foldUnit(u uint16) uint16 {
 	if u < 0x80 {
 		if u >= 'A' && u <= 'Z' {

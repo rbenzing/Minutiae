@@ -136,6 +136,11 @@ type Options struct {
 	OverflowRecords []OverflowRecord
 	// RawRecords are added to the catalog as given (see RawRecord).
 	RawRecords []RawRecord
+	// IndexKeys selects the catalog's index record layout: 0 variable-length keys
+	// (kBTVariableIndexKeysMask set, as on real volumes), 1 fixed maxKeyLength
+	// keys with the key length field set to maxKeyLength, 2 fixed keys whose
+	// key length field holds the real key length.
+	IndexKeys int
 }
 
 // Layout reports where Build put things, so tests can patch or read them.
@@ -299,10 +304,14 @@ func BuildLayout(o Options, files []File) ([]byte, *Layout) {
 	if o.StaleSlack {
 		stale = staleRecord()
 	}
+	catAttrs := uint32(2 | 4) // kBTBigKeysMask | kBTVariableIndexKeysMask
+	if o.IndexKeys != 0 {
+		catAttrs = 2
+	}
 	cat := buildTree(treeSpec{
 		nodeSize: int(o.NodeSize), blockSize: bs, recs: recs,
-		maxKey: 516, keyCompare: compare, attrs: 2 | 4, // kBTBigKeysMask | kBTVariableIndexKeysMask
-		stale: stale,
+		maxKey: 516, keyCompare: compare, attrs: catAttrs,
+		fixedIndex: o.IndexKeys, stale: stale,
 	})
 	catBytes := len(cat.data)
 	catBlocks := catBytes / bs

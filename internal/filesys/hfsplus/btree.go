@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
 )
@@ -20,7 +21,12 @@ const (
 	nodeKindIndex = 0
 	nodeKindMap   = 2
 
-	btBadClose = 1 // kBTBadCloseMask: the tree was not closed cleanly
+	btBadClose          = 1 // kBTBadCloseMask: the tree was not closed cleanly
+	btBigKeys           = 2 // kBTBigKeysMask: key lengths are 2 bytes
+	btVariableIndexKeys = 4 // kBTVariableIndexKeysMask: index keys are as long as the key they copy, not maxKeyLength
+
+	btreeTypeControl = 0 // kHFSBTreeType: the control files; user B-trees (128) are tolerated
+	btreeTypeUser    = 128
 
 	// maxKeyLength limits per tree kind (TN1150): catalog keys are at most 516
 	// bytes, extents-overflow keys are exactly 10, attribute keys at most 266.
@@ -66,6 +72,8 @@ type btree struct {
 	totalNodes  uint32
 	maxKey      uint16
 	keyCompare  byte
+	freeNodes   uint32
+	btreeType   byte
 	attrs       uint32
 }
 
@@ -152,6 +160,22 @@ func splitRecord(rec []byte) (key, data []byte, err error) {
 	return rec[2 : 2+kl], rec[dataOff:], nil
 }
 
+// recordParts separates record i of nd into key bytes and data. The index records
+// of a tree without kBTVariableIndexKeysMask hold a key of exactly maxKeyLength
+// bytes whatever their keyLength field says, and the child pointer follows it
+// (padded to an even offset); every other record is laid out by its own keyLength.
+func (t *btree) recordParts(nd *btNode, i int) (key, data []byte, err error) {
+	rec := nd.record(i)
+	if nd.kind == nodeKindIndex && t.attrs&btVariableIndexKeys == 0 {
+		end := 2 + int(t.maxKey)
+		if len(rec) < end {
+			return nil, nil, corrupt(t.kind.String(), -1, "index record %d of node %d has %d bytes, fewer than its fixed %d-byte key", i, nd.num, len(rec), t.maxKey)
+		}
+		return rec[2:end], rec[min((end+1)&^1, len(rec)):], nil
+	}
+	return splitRecord(rec)
+}
+
 // openBTree reads and validates the header node of a B-tree held in fk. Every
 // header field that later drives a loop, an allocation or an offset is checked
 // here; any inconsistency is a *filesys.CorruptError.
@@ -179,6 +203,8 @@ func (f *FS) openBTree(kind treeKind, fk *forkMap) (*btree, error) {
 		maxKey:      be.Uint16(h[20:]),
 		totalNodes:  be.Uint32(h[22:]),
 		keyCompare:  h[37],
+		freeNodes:   be.Uint32(h[26:]),
+		btreeType:   h[36],
 		attrs:       be.Uint32(h[38:]),
 	}
 	ns := t.nodeSize
@@ -188,8 +214,21 @@ func (f *FS) openBTree(kind treeKind, fk *forkMap) (*btree, error) {
 	if t.totalNodes == 0 {
 		return nil, corrupt(name, -1, "the tree has no nodes")
 	}
-	if bytes, ok := filesys.MulOK(int64(t.totalNodes), int64(ns)); !ok || uint64(bytes) > fk.logical {
+	if t.attrs&btBigKeys == 0 {
+		return nil, fmt.Errorf("%w: the %s lacks kBTBigKeysMask (2-byte key lengths are required)", filesys.ErrUnsupported, name)
+	}
+	if t.freeNodes > t.totalNodes {
+		return nil, corrupt(name, -1, "%d free nodes exceed the %d nodes of the tree", t.freeNodes, t.totalNodes)
+	}
+	if t.btreeType != btreeTypeControl && t.btreeType != btreeTypeUser {
+		return nil, corrupt(name, -1, "B-tree type %d is neither %d (control file) nor %d (user)", t.btreeType, btreeTypeControl, btreeTypeUser)
+	}
+	bytes, ok := filesys.MulOK(int64(t.totalNodes), int64(ns))
+	if !ok || uint64(bytes) > fk.logical {
 		return nil, corrupt(name, -1, "%d nodes of %d bytes do not fit the %d-byte fork", t.totalNodes, ns, fk.logical)
+	}
+	if mapped, ok := filesys.MulOK(int64(fk.blocks), fk.blockSize); !ok || bytes > mapped {
+		return nil, corrupt(name, -1, "%d nodes of %d bytes do not fit the %d blocks the fork maps", t.totalNodes, ns, fk.blocks)
 	}
 	if t.depth > maxTreeDepth {
 		return nil, corrupt(name, -1, "tree depth %d exceeds %d", t.depth, maxTreeDepth)
@@ -258,8 +297,12 @@ func (t *btree) readNode(n uint32) (*btNode, error) {
 	if !ok {
 		return nil, corrupt(t.kind.String(), -1, "node %d offset overflows", n)
 	}
+	volOff := t.fork.volumeOffset(off) // volume-relative, for error reports
 	buf := make([]byte, t.nodeSize)
 	if err := readForkFull(t.fork, buf, off); err != nil {
+		if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) { // the image ends inside the tree
+			return nil, corrupt(t.kind.String(), volOff, "node %d is cut off: the image ends inside the tree (%v)", n, err)
+		}
 		return nil, err
 	}
 	nd, err := parseNode(n, buf)
@@ -267,12 +310,12 @@ func (t *btree) readNode(n uint32) (*btNode, error) {
 		var ce *filesys.CorruptError
 		if errors.As(err, &ce) {
 			ce.Structure = t.kind.String() + " node"
-			ce.Offset = off
+			ce.Offset = volOff
 		}
 		return nil, err
 	}
 	if nd.kind == nodeKindHeader && n != 0 {
-		return nil, corrupt(t.kind.String(), off, "node %d is a header node", n)
+		return nil, corrupt(t.kind.String(), volOff, "node %d is a header node", n)
 	}
 	return nd, nil
 }
@@ -323,20 +366,20 @@ func (t *btree) search(cmp keyCmp) (*btNode, int, error) {
 			return nil, 0, corrupt(t.kind.String(), -1, "node %d of kind %d at height %d", cur, nd.kind, level)
 		}
 		if level == 1 {
-			pos, err := firstAtOrAfter(nd, cmp, 0)
+			pos, err := t.firstAtOrAfter(nd, cmp, 0)
 			return nd, pos, err
 		}
 		if nd.numRecords() == 0 {
 			return nil, 0, corrupt(t.kind.String(), -1, "index node %d is empty", cur)
 		}
-		pos, err := firstAtOrAfter(nd, cmp, 1) // first record whose key is greater than the target
+		pos, err := t.firstAtOrAfter(nd, cmp, 1) // first record whose key is greater than the target
 		if err != nil {
 			return nil, 0, err
 		}
 		if pos > 0 {
 			pos-- // the last record whose key is not greater than the target
 		}
-		_, data, err := splitRecord(nd.record(pos))
+		_, data, err := t.recordParts(nd, pos)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -358,11 +401,11 @@ func (t *btree) search(cmp keyCmp) (*btNode, int, error) {
 // firstAtOrAfter binary-searches node nd for the first record whose key
 // compares at least minCmp against the target (minCmp 0: not less than the
 // target; 1: greater than it).
-func firstAtOrAfter(nd *btNode, cmp keyCmp, minCmp int) (int, error) {
+func (t *btree) firstAtOrAfter(nd *btNode, cmp keyCmp, minCmp int) (int, error) {
 	lo, hi := 0, nd.numRecords()
 	for lo < hi {
 		mid := int(uint(lo+hi) >> 1)
-		key, _, err := splitRecord(nd.record(mid))
+		key, _, err := t.recordParts(nd, mid)
 		if err != nil {
 			return 0, err
 		}
@@ -412,6 +455,10 @@ func (t *btree) scanHook(nd *btNode, pos int, onNode func(num uint32) error, fn 
 		pos = 0
 		next := nd.fLink
 		if next == 0 {
+			if nd.num != t.lastLeaf { // the chain is cut short: records after this leaf are not seen
+				t.f.warn("%s: the leaf chain ends early at node %d (the last leaf is %d); later records are not listed", t.kind, nd.num, t.lastLeaf)
+				return corrupt(t.kind.String(), -1, "the leaf chain ends at node %d, not at the last leaf %d", nd.num, t.lastLeaf)
+			}
 			return nil
 		}
 		if next >= t.totalNodes {
