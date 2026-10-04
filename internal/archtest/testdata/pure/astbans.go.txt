@@ -68,17 +68,27 @@ func clock(t tm.Time, ctx context.Context, wg group, p *int) {
 	wg.Go(clockHelper)                   // want
 	runtime.SetFinalizer(p, nil)         // want
 	runtime.AddCleanup(p, clockHelper, 1) // want
+	_ = time.Unix(1, 0)                         // want
+	_ = tm.UnixMilli(1)                         // want
+	_ = time.UnixMicro(1)                       // want
+	_ = time.Unix(1, 0).UTC()                   // want
+	_ = time.Date(2020, time.January, 1, 0, 0, 0, 0, time.Local) // want
+	_, _ = context.WithTimeout(ctx, 1)          // want
+	_, _ = context.WithDeadline(ctx, t)         // want
+	_, _ = context.WithTimeoutCause(ctx, 1, nil) // want
+	_, _ = context.WithDeadlineCause(ctx, t, nil) // want
 
 	// harmless uses of package time
 	_ = time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
 	_ = time.Duration(5) * time.Second
-	_ = time.Unix(1, 0).UTC()
 	_ = t.UTC().Format(time.RFC3339)
 	_ = t.Add(time.Hour).Before(t)
 	_, _ = time.Parse(time.RFC3339, "2020-01-01T00:00:00Z")
 	var d time.Duration
 	_ = d.Seconds()
 	_ = context.Background()
+	_, _ = context.WithCancel(ctx)
+	_ = context.WithValue(ctx, 1, 2)
 }
 
 // shadow: a local variable named like an imported package is not the package

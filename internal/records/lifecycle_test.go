@@ -64,22 +64,25 @@ func TestWarnIsCappedPerIngest(t *testing.T) {
 			t.Fatalf("warning %d: %v", i, err)
 		}
 	}
-	if n := len(warnEntries(t, c)); n != 5 {
-		t.Fatalf("%d analysis.warning entries before End, want the 5 under the cap", n)
+	if n := len(warnEntries(t, c)); n != 6 {
+		t.Fatalf("%d analysis.warning entries before End, want the 5 under the cap and the suppression began note", n)
 	}
 	res, err := w.End(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ws := warnEntries(t, c)
-	if len(ws) != 6 {
-		t.Fatalf("%d analysis.warning entries, want 5 plus one suppression note", len(ws))
+	if len(ws) != 7 {
+		t.Fatalf("%d analysis.warning entries, want 5 plus the began note and the conclusion note", len(ws))
 	}
-	if r, _ := ws[5]["reason"].(string); !strings.Contains(r, "further warnings suppressed") {
-		t.Errorf("last entry = %v, want the suppression note", ws[5])
+	if b, _ := ws[5][evidence.WarnKeySuppressionBegan].(bool); !b {
+		t.Errorf("entry 5 = %v, want the suppression began note", ws[5])
 	}
-	if ws[5]["reason"] != "further warnings suppressed (the cap is 5 per ingest): 7 warnings and 0 rejections not written" {
-		t.Errorf("note text = %q", ws[5]["reason"])
+	if r, _ := ws[6]["reason"].(string); !strings.Contains(r, "further warnings suppressed") {
+		t.Errorf("last entry = %v, want the suppression note", ws[6])
+	}
+	if ws[6]["reason"] != "further warnings suppressed (the cap is 5 per ingest): 7 warnings and 0 rejections not written" {
+		t.Errorf("note text = %q", ws[6]["reason"])
 	}
 	for _, e := range ws[:5] {
 		if e["reason"] != "r" {

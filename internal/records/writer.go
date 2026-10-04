@@ -90,7 +90,7 @@ type Writer struct {
 	p   Parser
 	opt WriterOptions
 
-	// hook is a test seam, called at "after-start-audit", "after-batch-audit", "after-suppression-note",
+	// hook is a test seam, called at "after-start-audit", "after-batch-audit", "after-suppression-began", "after-suppression-note",
 	// "before-insert", "after-insert", "after-end-audit" and "before-abort-audit",
 	// always outside any transaction.
 	hook func(point string) error
@@ -119,6 +119,7 @@ type Writer struct {
 	warnSupp   int  // entries the cap kept out of the log (warnings and rejections)
 	rejSupp    int  // of those, the rejections
 	rejected   int  // records refused: Add failures wrapping ErrInvalidRecord and Reject calls
+	began      bool // the "suppression began" note was written (the cap was hit)
 	noted      bool // the end-of-ingest suppression note was written: nothing more can be counted
 }
 
@@ -301,6 +302,9 @@ func (w *Writer) warnLocked(path, reason string, rejection bool) error {
 		limit = maxWarnings
 	}
 	if w.warnings >= limit {
+		if err := w.writeBegan(limit); err != nil {
+			return err
+		}
 		w.warnSupp++
 		if rejection {
 			w.rejSupp++
@@ -320,6 +324,25 @@ func (w *Writer) warnLocked(path, reason string, rejection bool) error {
 	}
 	w.warnings++
 	return nil
+}
+
+// writeBegan appends the "suppression began" note the first time the shared cap keeps an entry out
+// of the log, before that entry is counted. It carries no numbers; it exists so that an ingest that
+// dies before writeNote still shows in the audit log that suppression began, and recovery then
+// records the suppressed counts as unknown instead of 0. A failed append returns the error and
+// counts nothing (the next call tries again). w.mu is held.
+func (w *Writer) writeBegan(limit int) error {
+	if w.began {
+		return nil
+	}
+	if _, err := w.c.Audit.Append(evidence.ActionAnalysisWarning, "", map[string]any{
+		"analysis_id": w.analysisID, "path": "", evidence.WarnKeyIngest: w.IngestID(), evidence.WarnKeySuppressionBegan: true,
+		"reason": fmt.Sprintf("warning cap reached (%d per ingest): further warnings and rejections are counted, not written; the totals follow when the ingest concludes", limit),
+	}); err != nil {
+		return fmt.Errorf("audit suppression began note: %w", err)
+	}
+	w.began = true
+	return w.callHook("after-suppression-began")
 }
 
 // writeNote appends the one suppression note of the ingest, when the cap kept any

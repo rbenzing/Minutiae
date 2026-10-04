@@ -155,8 +155,8 @@ func TestRefusedAddAtTheCapIsCountedAndNoted(t *testing.T) {
 			t.Fatalf("Add = %v", err)
 		}
 	}
-	if n := len(warnEntries(t, c)); n != 1 {
-		t.Errorf("%d entries before End, want 1 (the cap)", n)
+	if n := len(warnEntries(t, c)); n != 2 {
+		t.Errorf("%d entries before End, want 2 (the cap, then the suppression began note)", n)
 	}
 	wantCounts(t, w, 1, 2, 3)
 	res, err := w.End(ctx)
@@ -247,8 +247,8 @@ func TestRejectSharesWarnCapAndCountsWhenSuppressed(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantCounts(t, w, 3, 8, 10)
-	if n := len(warnEntries(t, c)); n != 3 {
-		t.Errorf("%d analysis.warning entries before End, want the 3 under the cap (the note is written at the end)", n)
+	if n := len(warnEntries(t, c)); n != 4 {
+		t.Errorf("%d analysis.warning entries before End, want the 3 under the cap and the suppression began note (the conclusion note is written at the end)", n)
 	}
 	res, err := w.End(ctx)
 	if err != nil {
@@ -762,7 +762,7 @@ func TestVerifyMalformedSuppressionNotes(t *testing.T) {
 				t.Fatal(err)
 			}
 			rep := mustVerify(t, c)
-			expectProblems(t, rep, []string{tc.want, quoted(w.IngestID())}, "warnings is 0, the audit log holds", "warnings_suppressed is 0, the audit log proves")
+			expectProblems(t, rep, []string{tc.want, quoted(w.IngestID())}, "warnings is 0, the audit log holds", "warnings_suppressed is 0, the audit log proves", "the audit log holds a suppression note but no suppression began note")
 		})
 	}
 }
@@ -786,7 +786,7 @@ func TestVerifyForgedUnfinishedRecoverCounts(t *testing.T) {
 // rejections the log proves, never zeros. The suppressed numbers come from the
 // end-of-ingest note, so an ingest that died before writing it loses them.
 func TestRecoveryDerivesCountsFromAuditLog(t *testing.T) {
-	check := func(t *testing.T, c *evidence.Case, a evidence.ManifestRecord, id string, warnings, suppressed, rejected int) {
+	check := func(t *testing.T, c *evidence.Case, a evidence.ManifestRecord, id string, warnings, suppressed, rejected int, unknown bool) {
 		t.Helper()
 		w2 := startWriter(t, c, records.Parser{Name: "next", Version: "1"}, records.WriterOptions{}, a.ID)
 		rcs := auditOf(t, c, evidence.ActionIngestRecover)
@@ -794,8 +794,8 @@ func TestRecoveryDerivesCountsFromAuditLog(t *testing.T) {
 			t.Fatalf("%d recover entries", len(rcs))
 		}
 		rc := details[evidence.IngestRecover](t, rcs[0])
-		if rc.IngestID != id || rc.Outcome != "interrupted" || rc.Warnings != warnings || rc.WarningsSuppressed != suppressed || rc.Rejected != rejected {
-			t.Errorf("recover entry warnings %d suppressed %d rejected %d (%s), want %d, %d, %d", rc.Warnings, rc.WarningsSuppressed, rc.Rejected, rc.Outcome, warnings, suppressed, rejected)
+		if rc.IngestID != id || rc.Outcome != "interrupted" || rc.Warnings != warnings || rc.WarningsSuppressed != suppressed || rc.Rejected != rejected || rc.SuppressionUnknown != unknown {
+			t.Errorf("recover entry warnings %d suppressed %d rejected %d unknown %v (%s), want %d, %d, %d, %v", rc.Warnings, rc.WarningsSuppressed, rc.Rejected, rc.SuppressionUnknown, rc.Outcome, warnings, suppressed, rejected, unknown)
 		}
 		if _, err := w2.End(ctx); err != nil {
 			t.Fatal(err)
@@ -806,17 +806,17 @@ func TestRecoveryDerivesCountsFromAuditLog(t *testing.T) {
 	}
 	t.Run("process died", func(t *testing.T) {
 		c, a, w, _ := auditedWarnings(t, 3, 2, 1, 0, false)
-		check(t, c, a, w.IngestID(), 6, 0, 3)
+		check(t, c, a, w.IngestID(), 6, 0, 3, false)
 	})
 	t.Run("process died after the note", func(t *testing.T) {
 		// 4 warns, 3 rejects, 2 refused Adds under a cap of 2: the entries are the first
 		// two warns; the note carries 2 suppressed warnings and 5 suppressed rejections
 		c, a, w, _ := auditedWarnings(t, 4, 3, 2, 2, true)
-		check(t, c, a, w.IngestID(), 2, 7, 5)
+		check(t, c, a, w.IngestID(), 2, 7, 5, false)
 	})
 	t.Run("process died at the cap before the note", func(t *testing.T) {
 		c, a, w, _ := auditedWarnings(t, 4, 3, 2, 2, false)
-		check(t, c, a, w.IngestID(), 2, 0, 0) // nothing past the cap is provable without the note
+		check(t, c, a, w.IngestID(), 2, 0, 0, true) // nothing past the cap is provable without the note: flagged unknown
 	})
 	t.Run("abort failed", func(t *testing.T) {
 		c, a := setup(t)
@@ -838,7 +838,7 @@ func TestRecoveryDerivesCountsFromAuditLog(t *testing.T) {
 		if _, err := w.Abort(ctx, errors.New("cause")); err == nil {
 			t.Fatal("Abort succeeded")
 		}
-		check(t, c, a, w.IngestID(), 3, 0, 1)
+		check(t, c, a, w.IngestID(), 3, 0, 1, false)
 	})
 }
 
@@ -862,7 +862,7 @@ func TestWriterWarningEntriesAreMarked(t *testing.T) {
 		t.Fatal(err)
 	}
 	ws := warnEntries(t, c)
-	if len(ws) != 4 { // warn, reject, warn, then the note written by End
+	if len(ws) != 5 { // warn, reject, warn, the began note, then the note written by End
 		t.Fatalf("%d warning entries", len(ws))
 	}
 	for i, e := range ws {
@@ -870,9 +870,10 @@ func TestWriterWarningEntriesAreMarked(t *testing.T) {
 			t.Errorf("entry %d does not name its ingest: %v", i, e)
 		}
 		_, rejected := e[evidence.WarnKeyRejected]
+		_, began := e[evidence.WarnKeySuppressionBegan]
 		_, note := e[evidence.WarnKeySuppression]
-		if rejected != (i == 1) || note != (i == 3) {
-			t.Errorf("entry %d markers rejected=%v suppression=%v: %v", i, rejected, note, e)
+		if rejected != (i == 1) || began != (i == 3) || note != (i == 4) {
+			t.Errorf("entry %d markers rejected=%v began=%v suppression=%v: %v", i, rejected, began, note, e)
 		}
 	}
 	if rep := mustVerify(t, c); !rep.OK() {

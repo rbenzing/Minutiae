@@ -39,7 +39,7 @@ func (cleanParser) read(ctx context.Context, r io.ReaderAt) ([]records.Record, e
 		return nil, ErrShort
 	}
 	secs := int64(binary.LittleEndian.Uint32(hdr[8:]))
-	ts := time.Unix(secs, 0).UTC().Add(epochs[1])
+	ts := time.Date(1970, time.January, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(secs) * time.Second).Add(epochs[1])
 	var out []records.Record
 	for i := range epochs {
 		if err := ctx.Err(); err != nil {

@@ -63,7 +63,8 @@ type storedRun struct {
 func sameConclusion(a, b IngestConclusion) bool {
 	return a.Outcome == b.Outcome && a.Batches == b.Batches && a.Records == b.Records &&
 		a.FirstID == b.FirstID && a.LastID == b.LastID && a.Rollup == b.Rollup && a.Error == b.Error &&
-		a.Warnings == b.Warnings && a.WarningsSuppressed == b.WarningsSuppressed && a.Rejected == b.Rejected
+		a.Warnings == b.Warnings && a.WarningsSuppressed == b.WarningsSuppressed && a.Rejected == b.Rejected &&
+		a.SuppressionUnknown == b.SuppressionUnknown
 }
 
 // verifyLifecycle runs P6, P7 and P14. byKey and batchesRead describe the stored
@@ -221,7 +222,7 @@ func (c *Case) checkIngest(rep *VerifyReport, ps *problemSet, audit *recordAudit
 		ps.add("lifecycle", "ingest %q: %s (audit seq %d) names ingest %q", id, what, seq, exp.concl.IngestID)
 	}
 	c.checkTotals(ps, id, what, seq, exp.concl, committedBatches(audit, id, batches, byKey, batchesRead))
-	checkCounts(ps, id, what, seq, exp.concl, audit.warns[id])
+	checkCounts(ps, id, what, seq, exp.concl, audit.warns[id], en == nil && rc != nil && !rc.RunMissing)
 	return exp, true
 }
 
@@ -544,18 +545,31 @@ func (c *Case) checkSupersession(ctx context.Context, rep *VerifyReport, ps *pro
 // conclusion (an end, error or recover entry) to equal what the audit log proves:
 // the records writer names its ingest in every analysis.warning entry it appends,
 // marks the entries written for a rejection (Reject, or an Add refused for an
-// invalid record) and, when the ingest concludes, writes one suppression note
-// carrying the numbers of warnings and rejections the shared cap kept out of the
-// log. So warnings equals the entries, warnings_suppressed the suppressed
-// warnings plus suppressed rejections of the note, and rejected the rejection
-// entries plus the suppressed rejections: equality, not a lower bound.
-func checkCounts(ps *problemSet, id, what string, seq int64, got IngestConclusion, tally *IngestWarningTally) {
+// invalid record), writes a "suppression began" note the moment the shared cap is
+// first hit and, when the ingest concludes, one conclusion note carrying the
+// numbers of warnings and rejections the cap kept out of the log. So warnings
+// equals the entries, warnings_suppressed the suppressed warnings plus suppressed
+// rejections of the conclusion note, and rejected the rejection entries plus the
+// suppressed rejections: equality, not a lower bound.
+//
+// One case has no conclusion note: an ingest that began suppressing and died
+// before it concluded. Its recovery (recoveredUnfinished) states
+// suppression_unknown instead of a number nobody can prove, with the placeholders
+// warnings_suppressed 0 and rejected equal to the rejection entries. Unknown is
+// accepted nowhere else.
+func checkCounts(ps *problemSet, id, what string, seq int64, got IngestConclusion, tally *IngestWarningTally, recoveredUnfinished bool) {
 	var t IngestWarningTally
 	if tally != nil {
 		t = *tally
 	}
 	if t.Notes > 1 {
 		ps.add("lifecycle", "ingest %q: the audit log holds %d suppression notes for it, at most one is possible", id, t.Notes)
+	}
+	if t.Began > 1 {
+		ps.add("lifecycle", "ingest %q: the audit log holds %d suppression began notes for it, at most one is possible", id, t.Began)
+	}
+	if t.Notes > 0 && t.Began == 0 {
+		ps.add("lifecycle", "ingest %q: the audit log holds a suppression note but no suppression began note", id)
 	}
 	if t.NoteBadCounts > 0 {
 		ps.add("lifecycle", "ingest %q: the audit log holds a suppression note with missing, negative or non-integer counts", id)
@@ -565,6 +579,27 @@ func checkCounts(ps *problemSet, id, what string, seq int64, got IngestConclusio
 	}
 	if got.Warnings != t.Warnings {
 		ps.add("lifecycle", "ingest %q: %s (audit seq %d): warnings is %d, the audit log holds %d analysis.warning entries for it", id, what, seq, got.Warnings, t.Warnings)
+	}
+	mustBeUnknown := recoveredUnfinished && t.Began > 0 && t.Notes == 0
+	switch {
+	case got.SuppressionUnknown && !recoveredUnfinished:
+		ps.add("lifecycle", "ingest %q: %s (audit seq %d): suppression_unknown is set, but only the recovery of an ingest that never concluded may state it", id, what, seq)
+	case got.SuppressionUnknown && t.Began == 0:
+		ps.add("lifecycle", "ingest %q: %s (audit seq %d): suppression_unknown is set, but the audit log holds no suppression began note for it", id, what, seq)
+	case got.SuppressionUnknown && t.Notes > 0:
+		ps.add("lifecycle", "ingest %q: %s (audit seq %d): suppression_unknown is set, but the audit log holds the suppression note that proves the numbers", id, what, seq)
+	case !got.SuppressionUnknown && mustBeUnknown:
+		ps.add("lifecycle", "ingest %q: %s (audit seq %d): the audit log holds a suppression began note but no conclusion note, so suppression_unknown must be set", id, what, seq)
+		return
+	}
+	if got.SuppressionUnknown && mustBeUnknown {
+		if got.WarningsSuppressed != 0 {
+			ps.add("lifecycle", "ingest %q: %s (audit seq %d): warnings_suppressed is %d, a recovered ingest of unknown suppression states 0", id, what, seq, got.WarningsSuppressed)
+		}
+		if got.Rejected != t.Rejects {
+			ps.add("lifecycle", "ingest %q: %s (audit seq %d): rejected is %d, a recovered ingest of unknown suppression states the %d rejection entries", id, what, seq, got.Rejected, t.Rejects)
+		}
+		return
 	}
 	if got.WarningsSuppressed != t.Suppressed() {
 		ps.add("lifecycle", "ingest %q: %s (audit seq %d): warnings_suppressed is %d, the audit log proves %d (%d suppressed warnings plus %d suppressed rejections)",

@@ -71,9 +71,13 @@ type IngestConclusion struct {
 	// analysis.warning entries written for the ingest, the warnings dropped after the per-ingest cap, and the
 	// records refused (a failed Add with ErrInvalidRecord, or Writer.Reject). Entries written before these
 	// fields existed lack the keys and decode to zero.
-	Warnings           int    `json:"warnings"`
-	WarningsSuppressed int    `json:"warnings_suppressed"`
-	Rejected           int    `json:"rejected"`
+	Warnings           int `json:"warnings"`
+	WarningsSuppressed int `json:"warnings_suppressed"`
+	Rejected           int `json:"rejected"`
+	// SuppressionUnknown is set only by recovery of an ingest that never concluded after it began suppressing:
+	// how many entries the cap kept out of the log is then unknown (WarningsSuppressed is 0 and Rejected holds the
+	// rejection entries only: lower bounds, not the true numbers).
+	SuppressionUnknown bool   `json:"suppression_unknown,omitempty"`
 	Error              string `json:"error,omitempty"`
 }
 
@@ -151,6 +155,10 @@ const (
 	WarnKeyIngest      = "ingest_id"
 	WarnKeyRejected    = "rejected"
 	WarnKeySuppression = "suppression"
+	// WarnKeySuppressionBegan marks the note the writer appends the moment the shared cap is first hit, before
+	// anything is suppressed: it carries no numbers, it only proves that suppression began, so a crash before the
+	// conclusion note is still visible to recovery and verify.
+	WarnKeySuppressionBegan = "suppression_began"
 	// WarnKeySuppressedWarnings and WarnKeySuppressedRejects are the numbers the
 	// suppression note carries: the Warn calls and the rejections (Reject calls and
 	// refused Adds) the cap kept out of the log.
@@ -159,14 +167,15 @@ const (
 )
 
 // IngestWarningTally is what the audit log proves about the warnings of one
-// ingest: Warnings analysis.warning entries (the suppression note not counted),
-// Rejects of them written for a rejection, and Notes suppression notes (an
-// ingest has at most one). NoteWarnings and NoteRejects sum what the notes say
+// ingest: Warnings analysis.warning entries (the suppression notes not counted),
+// Rejects of them written for a rejection, Notes conclusion notes and Began
+// suppression began notes (an ingest has at most one of each). NoteWarnings and NoteRejects sum what the notes say
 // the cap kept out of the log; a note whose counts are missing, negative or not
 // whole numbers adds nothing and is counted in NoteBadCounts, one whose counts
 // are both zero in NoteEmpty.
 type IngestWarningTally struct {
 	Warnings      int
+	Began         int // suppression began notes (an ingest has at most one)
 	Rejects       int
 	Notes         int
 	NoteWarnings  int
@@ -212,6 +221,10 @@ func noteCount(v any) (int, bool) {
 
 // add counts one analysis.warning entry of the records writer.
 func (t *IngestWarningTally) add(d map[string]any) {
+	if b, _ := d[WarnKeySuppressionBegan].(bool); b {
+		t.Began++
+		return
+	}
 	if b, _ := d[WarnKeySuppression].(bool); b {
 		t.Notes++
 		w, wok := noteCount(d[WarnKeySuppressedWarnings])

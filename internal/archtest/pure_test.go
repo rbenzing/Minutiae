@@ -366,6 +366,15 @@ var timeBans = map[string]string{
 	"LoadLocation": "reads the host's zone database", "LoadLocationFromTZData": "loads a zone",
 }
 
+// unixBans are the time constructors that yield a Time in the host zone; internal/decode/ts, the one
+// package that converts device timestamps, is exempt (it states the zone itself).
+var unixBans = map[string]bool{"Unix": true, "UnixMilli": true, "UnixMicro": true}
+
+// contextBans are the context constructors that read the clock and fire a timer on their own goroutine.
+var contextBans = map[string]bool{"WithTimeout": true, "WithDeadline": true, "WithTimeoutCause": true, "WithDeadlineCause": true}
+
+const dirDecodeTS = "internal/decode/ts"
+
 // fmtBanPrefixes: every printing, scanning and appending function of fmt.
 var fmtBanPrefixes = []string{"Print", "Fprint", "Scan", "Fscan", "Sscan", "Append"}
 
@@ -401,7 +410,7 @@ func topLevelNames(srcs []pureSrc) map[string]bool {
 
 // checkAstBans reports the constructs P2 forbids. Calls are resolved through the
 // local name of each import, so an alias does not hide them.
-func checkAstBans(srcs []pureSrc, class pureClass) []pureViolation {
+func checkAstBans(srcs []pureSrc, class pureClass, dirRel string) []pureViolation {
 	var out []pureViolation
 	declared := topLevelNames(srcs)
 	for _, s := range srcs {
@@ -435,7 +444,7 @@ func checkAstBans(srcs []pureSrc, class pureClass) []pureViolation {
 			case *ast.CallExpr:
 				out = append(out, callBans(s, x, names, declared)...)
 			case *ast.SelectorExpr:
-				out = append(out, selectorBans(s, x, names)...)
+				out = append(out, selectorBans(s, x, names, dirRel)...)
 			}
 			return true
 		})
@@ -465,7 +474,7 @@ func callBans(s pureSrc, call *ast.CallExpr, names map[string]string, declared m
 }
 
 // selectorBans checks `pkg.Name` selectors against the banned lists.
-func selectorBans(s pureSrc, sel *ast.SelectorExpr, names map[string]string) []pureViolation {
+func selectorBans(s pureSrc, sel *ast.SelectorExpr, names map[string]string, dirRel string) []pureViolation {
 	p, name, ok := pkgSelector(sel, names)
 	if !ok {
 		return nil
@@ -483,8 +492,13 @@ func selectorBans(s pureSrc, sel *ast.SelectorExpr, names map[string]string) []p
 		if why, banned := timeBans[name]; banned {
 			return []pureViolation{violationAt(s, sel.Pos(), "P2", "time.%s %s: results must not depend on the clock, a timer or the host zone", name, why)}
 		}
+		if unixBans[name] && dirRel != dirDecodeTS && !strings.HasPrefix(dirRel, dirDecodeTS+"/") {
+			return []pureViolation{violationAt(s, sel.Pos(), "P2", "time.%s yields a Time in the host zone: build times in UTC with time.Date (only %s converts device timestamps)", name, dirDecodeTS)}
+		}
 	case p == "context" && name == "AfterFunc":
 		return []pureViolation{violationAt(s, sel.Pos(), "P2", "context.AfterFunc runs code on its own goroutine")}
+	case p == "context" && contextBans[name]:
+		return []pureViolation{violationAt(s, sel.Pos(), "P2", "context.%s reads the clock and fires a timer: output must not depend on wall-clock timing, the host owns every deadline", name)}
 	case p == "runtime" && (name == "SetFinalizer" || name == "AddCleanup"):
 		return []pureViolation{violationAt(s, sel.Pos(), "P2", "runtime.%s runs code at a time the parser does not control", name)}
 	}
@@ -512,7 +526,7 @@ var recordsData = map[string]bool{
 func checkRecordsSelectors(srcs []pureSrc, class pureClass) []pureViolation {
 	var out []pureViolation
 	for _, s := range srcs {
-		var recName string
+		recNames := map[string]bool{} // every local name of records in this file
 		for _, spec := range s.f.Imports {
 			switch importPath(spec) {
 			case evidencePkg:
@@ -523,16 +537,16 @@ func checkRecordsSelectors(srcs []pureSrc, class pureClass) []pureViolation {
 					out = append(out, violationAt(s, spec.Pos(), "P3", "dot import of internal/records hides which selectors are used"))
 				case "_":
 				default:
-					recName = n
+					recNames[n] = true
 				}
 			}
 		}
-		if recName == "" {
+		if len(recNames) == 0 {
 			continue
 		}
 		check := func(sel *ast.SelectorExpr, inInit bool) {
 			id, ok := sel.X.(*ast.Ident)
-			if !ok || id.Name != recName || id.Obj != nil {
+			if !ok || !recNames[id.Name] || id.Obj != nil {
 				return
 			}
 			name := sel.Sel.Name
@@ -627,6 +641,7 @@ const (
 	vkRegexp                      // regexp.MustCompile result
 	vkTable                       // unexported read-only lookup table
 	vkSchema                      // unexported common.Schema, receiver of Validate only
+	vkEmbed                       // unexported string or embed.FS var filled by a go:embed directive: read-only
 )
 
 const commonPkg = module + dirRTCommon
@@ -932,7 +947,7 @@ climb:
 			sel = p.Sel.Name
 			node = p
 		case *ast.SliceExpr:
-			if p.X == node {
+			if p.X == node && kind == vkTable {
 				return "sliced (the slice would alias the table)"
 			}
 			break climb
@@ -1002,19 +1017,23 @@ climb:
 // checkMutableState applies P5 to one package: every package-level var is one of
 // the five allowed forms, and every use of a tracked var is read-only (a lookup
 // table) or a plain reference (sentinels, regexps).
-func checkMutableState(srcs []pureSrc) []pureViolation {
+func checkMutableState(srcs []pureSrc, class pureClass) []pureViolation {
 	var out []pureViolation
 	tracked := map[string]trackedVar{}
 	for _, s := range srcs {
 		names := importNames(s.f)
-		for _, d := range s.f.Decls {
+		for di, d := range s.f.Decls {
 			gd, ok := d.(*ast.GenDecl)
 			if !ok || gd.Tok != token.VAR {
 				continue
 			}
-			for _, sp := range gd.Specs {
+			for si, sp := range gd.Specs {
 				vs := sp.(*ast.ValueSpec)
 				for i := range vs.Names {
+					if embedVar(s.f, di, si, vs, names, class) {
+						tracked[vs.Names[i].Name] = trackedVar{kind: vkEmbed, spec: vs}
+						continue
+					}
 					kind, why := classifyVar(vs, i, names)
 					if why != "" {
 						out = append(out, violationAt(s, vs.Names[i].Pos(), "P5", "var %s: %s", vs.Names[i].Name, why))
@@ -1169,8 +1188,8 @@ func TestParserPackagesImportOnlyAllowlisted(t *testing.T) {
 }
 
 func TestParserPackagesAstBans(t *testing.T) {
-	scanPure(t, func(_ *testing.T, _ string, class pureClass, srcs []pureSrc) []pureViolation {
-		return checkAstBans(srcs, class)
+	scanPure(t, func(_ *testing.T, rel string, class pureClass, srcs []pureSrc) []pureViolation {
+		return checkAstBans(srcs, class, rel)
 	})
 }
 
@@ -1195,8 +1214,8 @@ func TestParserDirsHaveNoNonGoSource(t *testing.T) {
 }
 
 func TestParserPackagesHaveNoMutableState(t *testing.T) {
-	scanPure(t, func(_ *testing.T, _ string, _ pureClass, srcs []pureSrc) []pureViolation {
-		return checkMutableState(srcs)
+	scanPure(t, func(_ *testing.T, _ string, class pureClass, srcs []pureSrc) []pureViolation {
+		return checkMutableState(srcs, class)
 	})
 }
 
@@ -1447,31 +1466,58 @@ func TestPurityAllowlistSelfTest(t *testing.T) {
 func TestPurityAstBansSelfTest(t *testing.T) {
 	data := readPureFixture(t, "astbans.go.txt")
 	srcs := parsePureSources(t, map[string]string{"astbans.go": data})
-	expectLines(t, data, markedLines(data, "// want"), checkAstBans(srcs, pcParser), 40)
+	expectLines(t, data, markedLines(data, "// want"), checkAstBans(srcs, pcParser, fixtureParserDir), 40)
 
 	// a package that declares its own print is not calling the builtin
 	own := "package x\n\nfunc print(s string) {}\n\nfunc f() { print(\"x\") }\n"
-	if got := checkAstBans(parsePureSources(t, map[string]string{"x.go": own}), pcParser); len(got) != 0 {
+	if got := checkAstBans(parsePureSources(t, map[string]string{"x.go": own}), pcParser, fixtureParserDir); len(got) != 0 {
 		t.Errorf("a package's own print function was flagged: %v", got)
 	}
 	// dot imports of the packages the rules resolve would hide the calls
 	for _, p := range []string{"fmt", "log", "time", "context", "runtime"} {
 		src := "package x\n\nimport . " + strconv.Quote(p) + "\n"
-		if got := checkAstBans(parsePureSources(t, map[string]string{"x.go": src}), pcParser); len(got) != 1 {
+		if got := checkAstBans(parsePureSources(t, map[string]string{"x.go": src}), pcParser, fixtureParserDir); len(got) != 1 {
 			t.Errorf("dot import of %s: %v, want one violation", p, got)
 		}
 	}
 	// //go:embed is allowed only in the data packages
 	embed := "package x\n\nimport _ \"embed\"\n\n//go:embed data.bin\nvar data []byte\n"
 	for class, want := range map[pureClass]int{pcParse: 1, pcSqlitefile: 1, pcRTCommon: 0, pcRTType: 0, pcDecode: 0, pcParser: 0} {
-		got := checkAstBans(parsePureSources(t, map[string]string{"x.go": embed}), class)
+		got := checkAstBans(parsePureSources(t, map[string]string{"x.go": embed}), class, fixtureParserDir)
 		if len(got) != want {
 			t.Errorf("//go:embed in %s: %d violations, want %d (%v)", class, len(got), want, got)
 		}
 	}
+	// time.Unix, UnixMilli and UnixMicro yield host-zone times: banned everywhere except internal/decode/ts
+	for _, fn := range []string{"Unix(1, 0)", "UnixMilli(1)", "UnixMicro(1)"} {
+		src := "package x\n\nimport \"time\"\n\nvar _ = time." + fn + ".UTC()\n"
+		for _, tc := range []struct {
+			class pureClass
+			dir   string
+			want  int
+		}{
+			{pcParser, fixtureParserDir, 1},
+			{pcParse, dirParse, 1},
+			{pcRTType, "internal/recordtypes/message", 1},
+			{pcDecode, "internal/decode/plist", 1},
+			{pcDecode, "internal/decode/ts", 0},
+			{pcDecode, "internal/decode/tsx", 1},
+		} {
+			if got := checkAstBans(parsePureSources(t, map[string]string{"x.go": src}), tc.class, tc.dir); len(got) != tc.want {
+				t.Errorf("time.%s in %s: %d violations, want %d (%v)", fn, tc.dir, len(got), tc.want, got)
+			}
+		}
+	}
+	// the exemption of decode/ts covers the Unix constructors only
+	for _, banned := range []string{"time.Now()", "time.Local", "context.WithTimeout"} {
+		src := "package x\n\nimport (\n\t\"context\"\n\t\"time\"\n)\n\nvar _ = " + banned + "\nvar _ = context.Background\nvar _ = time.UTC\n"
+		if got := checkAstBans(parsePureSources(t, map[string]string{"x.go": src}), pcDecode, "internal/decode/ts"); len(got) != 1 {
+			t.Errorf("%s in decode/ts: %v, want one violation", banned, got)
+		}
+	}
 	// the violation of one ban is reported once per construct, with its line
 	one := "package x\n\nimport \"time\"\n\nvar _ = time.Now()\n"
-	got := checkAstBans(parsePureSources(t, map[string]string{"x.go": one}), pcParser)
+	got := checkAstBans(parsePureSources(t, map[string]string{"x.go": one}), pcParser, fixtureParserDir)
 	if len(got) != 1 || got[0].Line != 5 || !strings.Contains(got[0].Msg, "time.Now") {
 		t.Errorf("time.Now violation = %v", got)
 	}
@@ -1503,6 +1549,29 @@ func TestPurityRecordsSelectorsSelfTest(t *testing.T) {
 	other := "package x\n\nimport records \"example.org/records\"\n\nvar _ = records.NewWriter\n"
 	if got := checkRecordsSelectors(parsePureSources(t, map[string]string{"x.go": other}), pcParser); len(got) != 0 {
 		t.Errorf("another package named records was flagged: %v", got)
+	}
+	// importing records twice under two names: every local name is checked, in either order
+	imp := func(names ...string) string {
+		s := "package x\n\nimport (\n"
+		for _, n := range names {
+			s += "\t" + n + " \"" + recordsPkg + "\"\n"
+		}
+		return s + ")\n"
+	}
+	for name, tc := range map[string]struct {
+		src  string
+		want int
+	}{
+		"two aliases":              {imp("r1", "r2") + "\nvar _ = r1.NewWriter\nvar _ = r2.RegisterType\n", 2},
+		"two aliases, other order": {imp("r2", "r1") + "\nvar _ = r1.NewWriter\nvar _ = r2.RegisterType\n", 2},
+		"plain then alias":         {imp("", "r1") + "\nvar _ = r1.NewWriter\nvar _ = records.RegisterType\n", 2},
+		"alias then plain":         {imp("r1", "") + "\nvar _ = r1.NewWriter\nvar _ = records.RegisterType\n", 2},
+		"three names":              {imp("a", "b", "c") + "\nvar _ = a.NewWriter\nvar _ = b.NewWriter\nvar _ = c.NewWriter\n", 3},
+		"data types under both":    {imp("r1", "r2") + "\nvar _ r1.Record\nvar _ r2.Range\n", 0},
+	} {
+		if got := checkRecordsSelectors(parsePureSources(t, map[string]string{"x.go": tc.src}), pcParser); len(got) != tc.want {
+			t.Errorf("%s: %d violations, want %d: %v", name, len(got), tc.want, got)
+		}
 	}
 	// the local name decides: an alias does not hide the call
 	alias := "package x\n\nimport r \"" + recordsPkg + "\"\n\nvar _ = r.NewWriter\n"
@@ -1552,14 +1621,86 @@ func TestPurityNonGoSourceSelfTest(t *testing.T) {
 func TestPurityStateSelfTest(t *testing.T) {
 	data := readPureFixture(t, "state.go.txt")
 	srcs := parsePureSources(t, map[string]string{"state.go": data})
-	expectLines(t, data, markedLines(data, "// want"), checkMutableState(srcs), 30)
+	expectLines(t, data, markedLines(data, "// want"), checkMutableState(srcs, pcParser), 30)
 
 	// uses in another file of the package count, and a local variable of the same name is not the table
 	a := "package x\n\nvar table = [...]int{1, 2}\n\nfunc read() int { return table[0] }\n"
 	b := "package x\n\nfunc f() {\n\ttable[0] = 9\n}\n\nfunc g() {\n\ttable := []int{1}\n\ttable[0] = 9\n}\n"
-	got := checkMutableState(parsePureSources(t, map[string]string{"a.go": a, "b.go": b}))
+	got := checkMutableState(parsePureSources(t, map[string]string{"a.go": a, "b.go": b}), pcParser)
 	if len(got) != 1 || got[0].File != "b.go" || got[0].Line != 4 {
 		t.Errorf("violations = %v, want only b.go:4", got)
+	}
+}
+
+// TestPurityEmbedVarSelfTest: a //go:embed variable is the one package-level var that
+// carries data without a constant initialiser. P5 exempts exactly an unexported
+// string or embed.FS var with the directive, alone in its spec, in a data class;
+// writing to it is still flagged, and nothing else with a directive is exempt.
+func TestPurityEmbedVarSelfTest(t *testing.T) {
+	const head = "package x\n\nimport \"embed\"\n\nvar _ embed.FS\n\n"
+	dataClasses := []pureClass{pcRTCommon, pcRTType, pcDecode, pcParser}
+	otherClasses := []pureClass{pcParse, pcSqlitefile}
+	cases := []struct {
+		name string
+		decl string
+		ok   bool // exempt in a data class
+	}{
+		{"string", "//go:embed a.txt\nvar text string\n", true},
+		{"embed.FS", "//go:embed assets/*\nvar assets embed.FS\n", true},
+		{"directive in a group", "var (\n\t//go:embed a.txt\n\ttext string\n)\n", true},
+		{"directive with a blank line after", "//go:embed a.txt\n\nvar text string\n", true},
+		{"no directive", "var text string\n", false},
+		{"byte slice", "//go:embed a.bin\nvar data []byte\n", false},
+		{"exported", "//go:embed a.txt\nvar Text string\n", false},
+		{"two names", "//go:embed a.txt\nvar a, b string\n", false},
+		{"with an initialiser", "//go:embed a.txt\nvar text string = \"x\"\n", false},
+		{"another type", "//go:embed a.txt\nvar n int\n", false},
+		{"other directive", "//go:generate echo\nvar text string\n", false},
+		{"directive on a different var", "//go:embed a.txt\nvar text string\n\nvar other string\n", false},
+	}
+	for _, tc := range cases {
+		for _, class := range dataClasses {
+			got := checkMutableState(parsePureSources(t, map[string]string{"x.go": head + tc.decl}), class)
+			want := 0
+			switch tc.name {
+			case "directive on a different var":
+				want = 1 // only the plain `other` is state
+			case "two names":
+				want = 2
+			default:
+				if !tc.ok {
+					want = 1
+				}
+			}
+			if len(got) != want {
+				t.Errorf("%s in %s: %d violations, want %d: %v", tc.name, class, len(got), want, got)
+			}
+		}
+	}
+	// outside the data classes the directive exempts nothing (P2 flags the directive itself)
+	for _, class := range otherClasses {
+		got := checkMutableState(parsePureSources(t, map[string]string{"x.go": head + "//go:embed a.txt\nvar text string\n"}), class)
+		if len(got) != 1 {
+			t.Errorf("embed var in %s: %d violations, want 1: %v", class, len(got), got)
+		}
+	}
+	// the exempt var stays read-only: assigning, incrementing or taking its address is flagged, reading is not
+	use := head + "//go:embed a.txt\nvar text string\n\nfunc f() string {\n\tx := text + \"!\"\n\treturn x + text[:1]\n}\n"
+	if got := checkMutableState(parsePureSources(t, map[string]string{"x.go": use}), pcParser); len(got) != 0 {
+		t.Errorf("reading an embed var was flagged: %v", got)
+	}
+	for _, write := range []string{"text = \"y\"", "text += \"y\"", "_ = &text"} {
+		src := head + "//go:embed a.txt\nvar text string\n\nfunc f() {\n\t" + write + "\n}\n"
+		if got := checkMutableState(parsePureSources(t, map[string]string{"x.go": src}), pcParser); len(got) != 1 {
+			t.Errorf("%q: %d violations, want 1: %v", write, len(got), got)
+		}
+	}
+	// the P1 table and P2 allow the embed import and the directive in the same classes
+	src := head + "//go:embed a.txt\nvar text string\n"
+	for _, class := range dataClasses {
+		if got := checkAstBans(parsePureSources(t, map[string]string{"x.go": src}), class, fixtureParserDir); len(got) != 0 {
+			t.Errorf("P2 flagged the embed directive in %s: %v", class, got)
+		}
 	}
 }
 
@@ -1600,9 +1741,9 @@ func TestPurityCleanSnippet(t *testing.T) {
 	srcs := parsePureSources(t, map[string]string{"clean.go": data})
 	var all []pureViolation
 	all = append(all, checkImports(srcs, pcParser, fixtureParserDir)...)
-	all = append(all, checkAstBans(srcs, pcParser)...)
+	all = append(all, checkAstBans(srcs, pcParser, fixtureParserDir)...)
 	all = append(all, checkRecordsSelectors(srcs, pcParser)...)
-	all = append(all, checkMutableState(srcs)...)
+	all = append(all, checkMutableState(srcs, pcParser)...)
 	all = append(all, checkNoSQL(t, srcs)...)
 	for _, v := range all {
 		t.Errorf("clean snippet flagged: %s", v)
@@ -1677,8 +1818,57 @@ func TestPurityScannerSelfTest(t *testing.T) {
 	t.Run("P3 records selectors", TestPurityRecordsSelectorsSelfTest)
 	t.Run("P4 non-Go source", TestPurityNonGoSourceSelfTest)
 	t.Run("P5 package state", TestPurityStateSelfTest)
+	t.Run("P5 embed vars", TestPurityEmbedVarSelfTest)
 	t.Run("P6 no SQL", TestNoSQLScannerSelfTest)
 	t.Run("clean snippet", TestPurityCleanSnippet)
 	t.Run("class of a directory", TestPurityClassOf)
 	t.Run("discovery", TestPureDirsDiscovery)
+}
+
+// embedVar reports whether the si-th spec of the di-th declaration of f is the one
+// package-level var form a //go:embed directive allows: a single unexported name of
+// type string or embed.FS, with no initialiser, preceded by the directive (only blank
+// lines and // comments may stand between them), in a class that may embed. The
+// directive is looked for by position, so blank lines between it and the var, which
+// the go tool allows, do not hide it. A []byte var is refused: it is mutable and
+// aliasable. Writes to the var are still flagged (kind vkEmbed is read-only).
+func embedVar(f *ast.File, di, si int, vs *ast.ValueSpec, names map[string]string, class pureClass) bool {
+	if !embedAllowed.has(class) || len(vs.Names) != 1 || len(vs.Values) != 0 || ast.IsExported(vs.Names[0].Name) || vs.Names[0].Name == "_" {
+		return false
+	}
+	switch t := vs.Type.(type) {
+	case *ast.Ident:
+		if t.Name != "string" || t.Obj != nil {
+			return false
+		}
+	case *ast.SelectorExpr:
+		if p, name, ok := pkgSelector(t, names); !ok || p != "embed" || name != "FS" {
+			return false
+		}
+	default:
+		return false
+	}
+	gd := f.Decls[di].(*ast.GenDecl)
+	var lo, hi token.Pos
+	switch {
+	case gd.Lparen.IsValid() && si == 0:
+		lo, hi = gd.Lparen, vs.Pos()
+	case gd.Lparen.IsValid():
+		lo, hi = gd.Specs[si-1].End(), vs.Pos()
+	case di == 0:
+		lo, hi = f.Name.End(), gd.Pos()
+	default:
+		lo, hi = f.Decls[di-1].End(), gd.Pos()
+	}
+	for _, cg := range f.Comments {
+		if cg.Pos() < lo || cg.End() > hi {
+			continue
+		}
+		for _, c := range cg.List {
+			if strings.HasPrefix(c.Text, "//go:embed ") {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -333,8 +333,9 @@ func (w *Writer) recoverIngest(ctx context.Context, byID string, u evidence.Unre
 		concl = evidence.IngestConclusion{
 			IngestID: u.Start.IngestID, Outcome: "interrupted", Batches: len(batches), Types: types,
 			Rollup: evidence.IngestRollup(digestsOf(batches)),
-			// what the audit log proves, never zeros (the suppressed numbers come from the end-of-ingest note, which a dead ingest may not have written)
+			// what the audit log proves, never zeros (the suppressed numbers come from the conclusion note; an ingest that began suppressing and died before it is recovered with SuppressionUnknown set, never a silent 0)
 			Warnings: u.Warnings, WarningsSuppressed: u.WarningsSuppressed, Rejected: u.Rejected,
+			SuppressionUnknown: u.SuppressionUnknown,
 		}
 		for i, b := range batches {
 			concl.Records += b.count

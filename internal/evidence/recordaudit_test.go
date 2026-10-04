@@ -243,3 +243,24 @@ func TestIngestWarningTallyReadsSuppressionNotes(t *testing.T) {
 		t.Errorf("native numbers: tally = %+v", native)
 	}
 }
+
+// TestIngestWarningTallyReadsBeganNote: the "suppression began" note is a marker
+// only: it is counted apart (Began), never as a warning, a rejection or a
+// conclusion note, and it adds no suppressed numbers.
+func TestIngestWarningTallyReadsBeganNote(t *testing.T) {
+	var tally IngestWarningTally
+	tally.add(map[string]any{WarnKeyIngest: "x"})
+	tally.add(map[string]any{WarnKeyIngest: "x", WarnKeySuppressionBegan: true})
+	if tally.Warnings != 1 || tally.Began != 1 || tally.Notes != 0 || tally.Rejects != 0 || tally.Suppressed() != 0 || tally.NoteBadCounts != 0 {
+		t.Fatalf("tally = %+v, want one warning and one began note", tally)
+	}
+	tally.add(map[string]any{WarnKeyIngest: "x", WarnKeySuppressionBegan: true})
+	if tally.Began != 2 {
+		t.Errorf("Began = %d after two began notes, want 2", tally.Began)
+	}
+	var other IngestWarningTally
+	other.add(map[string]any{WarnKeyIngest: "x", WarnKeySuppressionBegan: "yes"}) // not a bool: an ordinary entry
+	if other.Warnings != 1 || other.Began != 0 {
+		t.Errorf("a non-bool marker was believed: %+v", other)
+	}
+}
