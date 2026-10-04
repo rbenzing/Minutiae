@@ -355,10 +355,15 @@ func (f *FS) snapshotRoot(v *volume, s *snapshot) (uint64, uint32, error) {
 		return 0, 0, corrupt("snapshot volume superblock", int64(s.sblock)*int64(f.bs), "volume %d snapshot %q (xid %d): its volume superblock copy at block %d %s",
 			v.slot, s.name, s.xid, s.sblock, fmt.Sprintf(format, a...))
 	}
+	// UNVERIFIED against a real image: that a snapshot's superblock copy carries
+	// its own block address as header oid is from memory of the format. If that is
+	// wrong, refusing would make every real snapshot unusable, so a mismatch is
+	// only a warning; the other checks stay refusals.
+	if h.oid != s.sblock {
+		f.warn("volume %d snapshot %q (xid %d): its volume superblock copy at block %d carries oid %d, not its block address (unverified expectation; the copy is used)", v.slot, s.name, s.xid, s.sblock, h.oid)
+	}
 	rootType := le.Uint32(buf[vsRootTreeType:])
 	switch {
-	case h.oid != s.sblock:
-		return refuse("carries oid %d, not its block address", h.oid)
 	case h.xid > s.xid:
 		return refuse("is from transaction %d, after the snapshot (xid %d)", h.xid, s.xid)
 	case le.Uint32(buf[vsFsIndex:]) != v.fsIndex:
@@ -482,11 +487,30 @@ func (f *FS) matchSnapshot(v *volume, comp string) (*snapshot, error) {
 	return nil, nil
 }
 
+// matchSnapshotRef resolves the argument of a snapshot option: a snapshot's
+// display name (or ~raw~ alias) first, and only when none matches, its xid in
+// canonical decimal. A name that looks like an xid therefore stays reachable
+// by name, and the xid of that snapshot by its number.
+func (f *FS) matchSnapshotRef(v *volume, ref string) (*snapshot, error) {
+	s, err := f.matchSnapshot(v, ref)
+	if s != nil || err != nil {
+		return s, err
+	}
+	if xid, ok := canonDecimal(ref); ok {
+		l, err := f.snapshotList(v)
+		if err != nil {
+			return nil, err
+		}
+		return l.byXid[xid], nil
+	}
+	return nil, nil
+}
+
 // SnapshotPath maps a path inside a volume ("/Data/docs/a.txt"; "/" alone only
 // when the container has exactly one volume) to the path of the same file in
 // the named snapshot ("/Data/.snapshots/<snapshot>/docs/a.txt"). The snapshot
-// is named by its display name or its "~raw~" alias. It implements
-// filesys.Snapshotter. The path itself is not looked up.
+// is named by its display name, its "~raw~" alias or its xid (in that order of
+// preference). It implements filesys.Snapshotter. The path itself is not looked up.
 func (f *FS) SnapshotPath(p, snapshot string) (string, error) {
 	var comps []string
 	for _, c := range strings.Split(p, "/") {
@@ -506,7 +530,7 @@ func (f *FS) SnapshotPath(p, snapshot string) (string, error) {
 		}
 		comps = comps[1:]
 	}
-	s, err := f.matchSnapshot(v, snapshot)
+	s, err := f.matchSnapshotRef(v, snapshot)
 	if err != nil {
 		return "", err
 	}

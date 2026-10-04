@@ -301,6 +301,25 @@ func lsLine(shown string, e filesys.Entry) string {
 	return b.String()
 }
 
+// snapshotRef maps one --snapshot path argument to the real path of the same
+// location inside the named snapshot (output paths are
+// /<volume>/.snapshots/<name>/...). A bad argument is a usage error.
+func snapshotRef(s *examine.Session, fsys filesys.FileSystem, snapshot, ref string) (string, error) {
+	if strings.HasPrefix(ref, "id:") {
+		return "", usageErrorf("--snapshot needs a volume path, not %s", escapeText(ref))
+	}
+	mapped, err := s.SnapshotPath(fsys, snapshot, ref)
+	switch {
+	case errors.Is(err, filesys.ErrUnsupported):
+		return "", usageErrorf("--snapshot: %s", escapeText(err.Error()))
+	case errors.Is(err, filesys.ErrNeedsVolume):
+		return "", usageErrorf("--snapshot needs a volume path (for example /Data): %s", escapeText(err.Error()))
+	case err != nil:
+		return "", err
+	}
+	return mapped, nil
+}
+
 func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 	var recursive, deleted bool
 	var snapshot string
@@ -321,7 +340,7 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 	partition := partitionFlag(cmd, "partition index (default: the only partition with a recognized filesystem)")
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "list the whole subtree with full paths")
 	cmd.Flags().BoolVar(&deleted, "deleted", false, "also show deleted directory entries")
-	cmd.Flags().StringVar(&snapshot, "snapshot", "", "list the path as it was in this snapshot (APFS; the path must name a volume, output paths are /<volume>/.snapshots/<name>/...)")
+	cmd.Flags().StringVar(&snapshot, "snapshot", "", "list the path as it was in this snapshot, by name or xid (APFS; the path must name a volume, output paths are /<volume>/.snapshots/<name>/...)")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		pidx, err := partition()
 		if err != nil {
@@ -342,16 +361,8 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 		}
 		known := len(fsys.Info().Warnings) // those from opening are in `image info`
 		if cmd.Flags().Changed("snapshot") {
-			if strings.HasPrefix(dirRef, "id:") {
-				return usageErrorf("--snapshot needs a volume path, not %s", escapeText(dirRef))
-			}
-			mapped, err := s.SnapshotPath(fsys, snapshot, dirRef)
-			switch {
-			case errors.Is(err, filesys.ErrUnsupported):
-				return usageErrorf("--snapshot: %s", escapeText(err.Error()))
-			case errors.Is(err, filesys.ErrNeedsVolume):
-				return usageErrorf("--snapshot needs a volume path (for example /Data): %s", escapeText(err.Error()))
-			case err != nil:
+			mapped, err := snapshotRef(s, fsys, snapshot, dirRef)
+			if err != nil {
 				return err
 			}
 			dirRef = mapped
@@ -579,6 +590,7 @@ func printFSWarnings(w io.Writer, sum examine.Summary) {
 
 func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 	var recursive, includeEncrypted bool
+	var snapshot string
 	cmd := &cobra.Command{
 		Use:   "extract <ref> <path>...",
 		Short: "Copy files out of an image's filesystem into the case",
@@ -593,6 +605,7 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 	partition := partitionFlag(cmd, "partition index (default: the only partition with a recognized filesystem)")
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "extract the live subtree of directories")
 	cmd.Flags().BoolVar(&includeEncrypted, "include-encrypted", false, "accepted for clarity: encrypted files are always extracted as ciphertext")
+	cmd.Flags().StringVar(&snapshot, "snapshot", "", "extract the paths as they were in this snapshot, by name or xid (APFS; every path must name a volume, artifacts record the snapshot)")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		pidx, err := partition()
 		if err != nil {
@@ -603,8 +616,21 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		defer closeAll()
+		paths := args[1:]
+		if cmd.Flags().Changed("snapshot") {
+			fsys, _, err := s.FS(pidx)
+			if err != nil {
+				return err
+			}
+			paths = make([]string, len(args)-1)
+			for i, a := range args[1:] {
+				if paths[i], err = snapshotRef(s, fsys, snapshot, a); err != nil {
+					return err
+				}
+			}
+		}
 		sum, err := s.Extract(cmd.Context(), examine.ExtractOptions{
-			Partition: pidx, Paths: args[1:], Recursive: recursive, Progress: newProgress(d.Err, "extract"),
+			Partition: pidx, Paths: paths, Recursive: recursive, Progress: newProgress(d.Err, "extract"),
 		})
 		fmt.Fprintln(d.Err)
 		if sum.AnalysisID == "" {

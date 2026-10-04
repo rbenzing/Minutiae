@@ -27,6 +27,8 @@ const (
 	spmDevChunks   = 8
 	spmDevCibs     = 16
 	spmDevCabs     = 20
+	spmDevBlocks   = 0
+	spmDevFree     = 24
 	spmDevAddrOff  = 32
 	spmIPBlocks    = 152
 	spmIPBase      = 176
@@ -375,6 +377,14 @@ func subtractRuns(a, b []filesys.Run) []filesys.Run {
 // the first block, the checkpoint areas, the internal pool and its bitmaps, the
 // space manager's blocks, every bitmap block or the blocked-out range. The
 // blocks of every file (live or only in a snapshot) are never free either.
+// smFree adds delta to the space manager's sm_free_count (a test that changes the
+// chunk records keeps the totals consistent).
+func smFree(im *image, delta int64) {
+	sm := im.g.Checkpoints[0].Spaceman
+	putU64(im.blk(sm), spmDev0+spmDevFree, uint64(int64(le.Uint64(im.blk(sm)[spmDev0+spmDevFree:]))+delta))
+	im.seal(sm)
+}
+
 func TestUnallocatedMetadataAndFileBlocksNeverFree(t *testing.T) {
 	o := apfstest.Options{Blocks: 4096, Xid: 40, ChunksPerCIB: 1, CibsPerCAB: 1, Volumes: []apfstest.Volume{allocVolume()}}
 	im := newImage(t, o)
@@ -400,6 +410,7 @@ func TestUnallocatedMetadataAndFileBlocksNeverFree(t *testing.T) {
 	cib := im.blk(sp.CIBs[0])
 	putU32(cib, cibRecs+ciFree, le.Uint32(cib[cibRecs+ciFree:])+uint32(cleared))
 	im.seal(sp.CIBs[0])
+	smFree(im, int64(cleared))
 
 	f := im.mustOpen()
 	got := unalloc(t, f)
@@ -589,6 +600,7 @@ func TestUnallocatedBoundsAndCap(t *testing.T) {
 	cib := im.blk(sp.CIBs[0])
 	putU32(cib, cibRecs+ciFree, le.Uint32(cib[cibRecs+ciFree:])-uint32(set))
 	im.seal(sp.CIBs[0])
+	smFree(im, -int64(set))
 
 	f := im.mustOpen()
 	all := unalloc(t, f)
@@ -719,4 +731,78 @@ func TestUnallocatedMutatedNeverPanics(t *testing.T) {
 			}
 		}
 	}
+}
+
+// The space manager's own totals are cross-checked, but only as warnings: the
+// bitmaps stay authoritative, so the free runs never change.
+func TestUnallocatedSpacemanCrossChecks(t *testing.T) {
+	small := func() *image {
+		return newImage(t, apfstest.Options{Blocks: 4096, Xid: 40, Volumes: []apfstest.Volume{allocVolume()}})
+	}
+	t.Run("sm_free_count differing from the chunk records", func(t *testing.T) {
+		for _, delta := range []int64{1, -1, 1 << 20} {
+			im := small()
+			sm := im.g.Checkpoints[0].Spaceman
+			putU64(im.blk(sm), spmDev0+spmDevFree, uint64(int64(im.g.Spaceman.FreeCount)+delta))
+			im.seal(sm)
+			f := im.mustOpen()
+			sameRuns(t, "Unallocated", unalloc(t, f), wantFree(im))
+			if !hasWarn(f, "free blocks", "chunk") {
+				t.Errorf("delta %d: warnings %q, want one comparing the space manager's free count with the chunk records", delta, f.Info().Warnings)
+			}
+		}
+	})
+	t.Run("sm_free_count differing, several chunks", func(t *testing.T) {
+		im := bigImage(t)
+		sm := im.g.Checkpoints[0].Spaceman
+		undo := im.patchSealed(sm, func(b []byte) { putU64(b, spmDev0+spmDevFree, le.Uint64(b[spmDev0+spmDevFree:])+3) })
+		defer undo()
+		f := im.mustOpen()
+		sameRuns(t, "Unallocated", unalloc(t, f), wantFree(im))
+		if !hasWarn(f, "free blocks", "chunk") {
+			t.Errorf("warnings %q", f.Info().Warnings)
+		}
+	})
+	t.Run("a chunk that was skipped does not also raise the total", func(t *testing.T) {
+		im := small()
+		cib := im.g.Spaceman.CIBs[0]
+		putU64(im.blk(cib), cibRecs+ciAddr, 4096) // the only chunk is rejected: "records address"
+		im.seal(cib)
+		f := im.mustOpen()
+		if got := unalloc(t, f); len(got) != 0 {
+			t.Errorf("runs %v, want none", head(got))
+		}
+		if hasWarn(f, "free blocks", "add up") {
+			t.Errorf("an incomplete sum was compared: %q", f.Info().Warnings)
+		}
+	})
+	t.Run("device smaller than the container", func(t *testing.T) {
+		im := small()
+		const n = 4000 // the builder allocates nothing past here
+		want := clipRuns(wantFree(im), 0, int64(n)*int64(bs))
+		var freeBelow uint64
+		for _, r := range im.g.FreeRuns() {
+			if r[0] < n {
+				freeBelow += min(r[1], n) - r[0]
+			}
+		}
+		if freeBelow == 0 || total(want) != int64(freeBelow)*int64(bs) || len(want) == 0 {
+			t.Fatalf("test image: %d free blocks below %d, runs %v", freeBelow, n, head(want))
+		}
+		sm, cib := im.g.Checkpoints[0].Spaceman, im.g.Spaceman.CIBs[0]
+		putU64(im.blk(sm), spmDev0+spmDevBlocks, n)
+		putU64(im.blk(sm), spmDev0+spmDevFree, freeBelow)
+		im.seal(sm)
+		putU32(im.blk(cib), cibRecs+ciBlocks, n)
+		putU32(im.blk(cib), cibRecs+ciFree, uint32(freeBelow))
+		im.seal(cib)
+		f := im.mustOpen()
+		sameRuns(t, "Unallocated", unalloc(t, f), want)
+		if !hasWarn(f, "4000 blocks", "4096") {
+			t.Errorf("warnings %q, want one naming the device (4000) and the container (4096) block counts", f.Info().Warnings)
+		}
+		if hasWarn(f, "free blocks", "add up") {
+			t.Errorf("consistent counts were reported as a mismatch: %q", f.Info().Warnings)
+		}
+	})
 }

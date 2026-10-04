@@ -68,6 +68,10 @@ func (f *FS) Unallocated() ([]filesys.Run, error) {
 	addExcl(f.nx.blockedStart, f.nx.blockedCount)
 	addExcl(sm.obj[0], sm.obj[1])
 
+	// A device smaller than the container is noted; the bitmaps stay authoritative.
+	if sm.blocks < f.blocks {
+		f.warn("free space: the space manager's device has %d blocks but the container has %d; the blocks past the device are not reported", sm.blocks, f.blocks)
+	}
 	infos, err := f.readChunkInfos(sm, limit, addExcl)
 	if err != nil {
 		return nil, err
@@ -100,24 +104,44 @@ func (f *FS) Unallocated() ([]filesys.Run, error) {
 		}
 		free = append(free, s)
 	}
+	var (
+		sum     uint64 // of the ci_free_count of the chunks whose bitmaps were used
+		skipped bool   // a chunk was left out (its own warning says why)
+	)
 	for _, ci := range infos {
 		if capped {
+			skipped = true
 			break
 		}
 		switch {
 		case ci.bitmap == 0:
 			if ci.free != ci.blocks {
 				f.warn("free space: chunk %d (CIB at block %d) has no bitmap block but records %d of %d blocks allocated; the chunk is skipped", ci.index, ci.cib, ci.blocks-ci.free, ci.blocks)
+				skipped = true
 				continue
 			}
 			emit(span{ci.start, min(ci.end, limit)})
+			sum += ci.free
 		case users[ci.bitmap] > 1:
 			f.warn("free space: chunk %d (CIB at block %d) shares its bitmap block %d with another chunk; the chunk is skipped", ci.index, ci.cib, ci.bitmap)
+			skipped = true
 		default:
-			if err := f.chunkFree(ci, limit, emit); err != nil {
+			used, err := f.chunkFree(ci, limit, emit)
+			if err != nil {
 				return nil, err
 			}
+			if used {
+				sum += ci.free
+			} else {
+				skipped = true
+			}
 		}
+	}
+	// The space manager's own totals are cross-checked with a warning only (the
+	// bitmaps stay authoritative, so the runs never change), and only when every
+	// chunk was read and used: a skipped chunk has its own warning.
+	if !skipped && uint64(len(infos)) == sm.chunks && sum != sm.free {
+		f.warn("free space: the space manager records %d free blocks but its chunk records add up to %d; the bitmaps are used", sm.free, sum)
 	}
 
 	runs := subtract(free, excl, f.bs)
@@ -257,28 +281,29 @@ func (f *FS) checkChunk(sm *spaceman, idx uint64, e []byte) (ci chunkInfo, why s
 }
 
 // chunkFree reads the bitmap of ci and emits its free blocks below limit. A
-// bitmap whose clear bits do not match the record is skipped with a warning.
-func (f *FS) chunkFree(ci chunkInfo, limit uint64, emit func(span)) error {
+// bitmap whose clear bits do not match the record is skipped with a warning
+// (used is false).
+func (f *FS) chunkFree(ci chunkInfo, limit uint64, emit func(span)) (used bool, err error) {
 	bm, err := f.readFresh(ci.bitmap, f.bs)
 	switch {
 	case err == nil:
 	case isShort(err):
 		f.warn("free space: the bitmap block %d of chunk %d is unreadable (truncated image); the chunk is skipped", ci.bitmap, ci.index)
-		return nil
+		return false, nil
 	case isNotFoundOrCorrupt(err):
 		f.warn("free space: the bitmap block %d of chunk %d cannot be used (%v); the chunk is skipped", ci.bitmap, ci.index, err)
-		return nil
+		return false, nil
 	default:
-		return fmt.Errorf("apfs: unallocated: bitmap of chunk %d: %w", ci.index, err)
+		return false, fmt.Errorf("apfs: unallocated: bitmap of chunk %d: %w", ci.index, err)
 	}
 	if zeros := countZeroBits(bm, ci.blocks); zeros != ci.free {
 		f.warn("free space: chunk %d has %d clear bits in its bitmap but records %d free blocks; the chunk is skipped", ci.index, zeros, ci.free)
-		return nil
+		return false, nil
 	}
 	scanZeroRuns(bm, ci.blocks, func(from, to uint64) {
 		emit(span{ci.start + from, min(ci.start+to, limit)})
 	})
-	return nil
+	return true, nil
 }
 
 // countZeroBits counts the clear bits among the first n bits of bm (bit i is

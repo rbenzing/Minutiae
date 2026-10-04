@@ -597,8 +597,7 @@ func TestSnapshotViewsAreConcurrentSafe(t *testing.T) {
 	wg.Wait()
 }
 
-// A volume-superblock copy that verifies but names another object (header oid),
-// a later transaction, another volume or a physical root tree refuses THAT
+// A volume-superblock copy that verifies but comes from a later transaction, another volume or a physical root tree refuses THAT
 // snapshot's view with a corrupt error; the other snapshots stay usable.
 func TestSnapshotSblockCopyMismatchRefusesOnlyThatSnapshot(t *testing.T) {
 	put32 := func(b []byte, off int, v uint32) {
@@ -609,7 +608,6 @@ func TestSnapshotSblockCopyMismatchRefusesOnlyThatSnapshot(t *testing.T) {
 		put32(b, off+4, uint32(v>>32))
 	}
 	for name, mut := range map[string]func(b []byte){
-		"header oid of another object":  func(b []byte) { put64(b, 8, 12345) },
 		"header xid after the snapshot": func(b []byte) { put64(b, 16, 999) },
 		"another volume's fs_index":     func(b []byte) { put32(b, 36, 7) },
 		"physical root tree type":       func(b []byte) { put32(b, 116, 0x40000002) },
@@ -630,6 +628,25 @@ func TestSnapshotSblockCopyMismatchRefusesOnlyThatSnapshot(t *testing.T) {
 				t.Errorf("the good snapshot lists %v", got)
 			}
 		})
+	}
+}
+
+// The header oid of a snapshot's superblock copy is checked against its block
+// address from memory of the format only, so a mismatch warns and the snapshot
+// stays usable (refusing could hide every real snapshot).
+func TestSnapshotSblockHeaderOidMismatchOnlyWarns(t *testing.T) {
+	f, _ := openOpts(t, snapOpts(snapVolume(nil,
+		apfstest.Snapshot{Name: "odd", Files: []apfstest.File{{Path: "/o", Data: []byte("o")}}, MutateSblock: func(b []byte) {
+			for i := range 8 {
+				b[8+i] = byte(uint64(12345) >> (8 * i))
+			}
+		}},
+	)))
+	if got := entryNames(mustReadDir(t, f, mustLookupSnapshotRoot(t, f, "odd"))); !slices.Equal(got, []string{"o"}) {
+		t.Errorf("the snapshot lists %v, want [o]", got)
+	}
+	if !hasWarn(f, "carries oid 12345", "odd") {
+		t.Errorf("warnings %q, want one about the header oid", f.Info().Warnings)
 	}
 }
 
@@ -663,5 +680,31 @@ func TestSnapshotListFailureIsCached(t *testing.T) {
 	}
 	if got := before - f.NodeReads(); got != 0 {
 		t.Errorf("repeated requests read %d more nodes, want 0 (the failure is cached)", got)
+	}
+}
+
+// A snapshot is named by its display name or, failing that, by its xid in
+// canonical decimal; an exact name always wins over an xid.
+func TestSnapshotPathByXid(t *testing.T) {
+	f, _ := openOpts(t, snapOpts(snapVolume(nil,
+		apfstest.Snapshot{Name: "daily", Xid: 5},
+		apfstest.Snapshot{Name: "7", Xid: 9}, // a name that looks like an xid
+		apfstest.Snapshot{Name: "other", Xid: 7},
+	)))
+	for _, c := range []struct{ snap, want string }{
+		{"5", "/Data/.snapshots/daily/x"},
+		{"7", "/Data/.snapshots/7/x"}, // the name "7", not xid 7
+		{"9", "/Data/.snapshots/7/x"}, // the xid of the snapshot named "7"
+		{"daily", "/Data/.snapshots/daily/x"},
+	} {
+		got, err := f.SnapshotPath("/Data/x", c.snap)
+		if err != nil || got != c.want {
+			t.Errorf("SnapshotPath(%q) = %q, %v; want %q", c.snap, got, err, c.want)
+		}
+	}
+	for _, bad := range []string{"05", "+5", " 5", "0x5", "5 ", "6", "18446744073709551616", "-5"} {
+		if got, err := f.SnapshotPath("/Data/x", bad); !errors.Is(err, filesys.ErrNotFound) {
+			t.Errorf("SnapshotPath(%q) = %q, %v; want ErrNotFound", bad, got, err)
+		}
 	}
 }

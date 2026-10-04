@@ -234,3 +234,70 @@ func TestImageExtractRecordsSnapshotProvenance(t *testing.T) {
 		t.Errorf("case verify: %d\n%s", code, out)
 	}
 }
+
+// extract --snapshot maps every path into the named snapshot (by name or xid),
+// like ls --snapshot; the artifacts hold the snapshot's bytes and record the
+// snapshot in their derivation, while a live extract records none.
+func TestImageExtractSnapshotFlag(t *testing.T) {
+	e := apfsEnv(t, snapshotVolume("Data"))
+	if code, out := e.image(t, "extract", e.ref, "/Data/docs", "-r", "--snapshot", "S"); code != 0 {
+		t.Fatalf("extract -r --snapshot S: %d\n%s", code, out)
+	}
+	// By xid (S is xid 2), a single file.
+	if code, out := e.image(t, "extract", e.ref, "/Data/docs/old.txt", "--snapshot", "2"); code != 0 {
+		t.Fatalf("extract --snapshot 2: %d\n%s", code, out)
+	}
+	if code, out := e.image(t, "extract", e.ref, "/Data/docs/a.txt"); code != 0 {
+		t.Fatalf("live extract: %d\n%s", code, out)
+	}
+	byPath := map[string]evidence.ManifestRecord{}
+	for _, r := range manifestRecords(t, e.c) {
+		if d := r.Source.Derived; d != nil {
+			byPath[d.FSPath] = r
+		}
+	}
+	for _, p := range []string{"/Data/.snapshots/S/docs/a.txt", "/Data/.snapshots/S/docs/old.txt"} {
+		r, ok := byPath[p]
+		if !ok {
+			t.Fatalf("no artifact for %s; have %v", p, byPath)
+		}
+		if s := r.Source.Derived.Snapshot; s == nil || s.Name != "S" || s.Xid != 2 {
+			t.Errorf("%s: Snapshot = %+v, want {S 2}", p, s)
+		}
+	}
+	snapA, err := os.ReadFile(filepath.Join(e.c, byPath["/Data/.snapshots/S/docs/a.txt"].Path))
+	if err != nil || string(snapA) != "old a" {
+		t.Errorf("snapshot a.txt bytes = %q, %v; want the snapshot's \"old a\"", snapA, err)
+	}
+	live, ok := byPath["/Data/docs/a.txt"]
+	if !ok || live.Source.Derived.Snapshot != nil {
+		t.Errorf("live extract: %+v (present %v), want no Snapshot", live.Source.Derived, ok)
+	}
+	if code, out := run(t, e.d, "case", "verify", "--case", e.c); code != 0 {
+		t.Errorf("case verify: %d\n%s", code, out)
+	}
+}
+
+func TestImageExtractSnapshotFlagErrors(t *testing.T) {
+	e := apfsEnv(t, snapshotVolume("Data"))
+	if code, out := e.image(t, "extract", e.ref, "id:n:0:0:2", "--snapshot", "S"); code != ExitUsage {
+		t.Errorf("--snapshot with an id: path: %d, want %d\n%s", code, ExitUsage, out)
+	}
+	code, out := e.image(t, "extract", e.ref, "/Data/docs", "-r", "--snapshot", "nope")
+	if code != ExitError || !strings.Contains(out, `"S"`) {
+		t.Errorf("--snapshot nope: %d, want %d naming the snapshots:\n%s", code, ExitError, out)
+	}
+	if code, out = e.image(t, "extract", e.ref, "/Nowhere/x", "--snapshot", "S"); code == 0 {
+		t.Errorf("--snapshot with an unknown volume succeeded:\n%s", out)
+	}
+	// Nothing was extracted by any of the refused calls.
+	for _, r := range manifestRecords(t, e.c) {
+		if r.Source.Kind == "extract" {
+			t.Errorf("a refused extract left an artifact: %+v", r.Source)
+		}
+	}
+	e2 := newImgEnv(t) // a filesystem without snapshots
+	if code, out = e2.image(t, "extract", e2.ref, "/x", "--snapshot", "S"); code != ExitUsage || !strings.Contains(out, "no snapshots") {
+		t.Errorf("--snapshot on a filesystem without snapshots: %d, want %d with 'no snapshots'\n%s", code, ExitUsage, out)
+	}
+}

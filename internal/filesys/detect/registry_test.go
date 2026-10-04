@@ -53,9 +53,9 @@ func TestDriversClaimExactlyTheirOwnImages(t *testing.T) {
 
 	type image struct {
 		img  []byte
-		load func() []byte // when set, builds the image on demand (the real APFS fixtures are 64 MiB and more)
-		want string        // detect driver name
-		typ  string        // Info().Type
+		load func(t *testing.T) []byte // when set, builds the image on demand with the subtest's t (the real APFS fixtures are 64 MiB and more)
+		want string                    // detect driver name
+		typ  string                    // Info().Type
 	}
 	apfsVolume := apfstest.Volume{Name: "V", Files: []apfstest.File{{Path: "/a", Data: []byte("a")}}}
 	images := map[string]image{
@@ -74,7 +74,7 @@ func TestDriversClaimExactlyTheirOwnImages(t *testing.T) {
 		"real apfs ci": "apfs-ci", "real apfs cs": "apfs-cs", "real apfs multichunk": "apfs-multichunk",
 	} {
 		path := "../apfs/testdata/" + file + ".img.gz"
-		images[name] = image{load: func() []byte { return gunzipFixture(t, path) }, want: "apfs", typ: "apfs"}
+		images[name] = image{load: func(t *testing.T) []byte { return gunzipFixture(t, path) }, want: "apfs", typ: "apfs"}
 	}
 	for name, f := range map[string]struct{ path, want, typ string }{
 		"real ext4 4k":         {"../ext4/testdata/ext4-4k-csum.img.gz", "ext4", "ext4"},
@@ -94,7 +94,7 @@ func TestDriversClaimExactlyTheirOwnImages(t *testing.T) {
 				if testing.Short() && strings.HasSuffix(name, "multichunk") {
 					t.Skip("large fixture skipped under -short")
 				}
-				tc.img = tc.load()
+				tc.img = tc.load(t)
 			}
 			r := bytes.NewReader(tc.img)
 			size := int64(len(tc.img))

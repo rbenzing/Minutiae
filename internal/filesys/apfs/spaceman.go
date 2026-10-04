@@ -38,6 +38,7 @@ const (
 	sdChunkCount = 8
 	sdCibCount   = 16
 	sdCabCount   = 20
+	sdFreeCount  = 24
 	sdAddrOffset = 32
 
 	// chunk_info_block_t / cib_addr_block_t: header, then the records.
@@ -55,6 +56,7 @@ const (
 // spaceman is the validated geometry of the main device.
 type spaceman struct {
 	blocks     uint64 // sm_dev[0].sm_block_count
+	free       uint64 // sm_dev[0].sm_free_count (cross-checked, never used to decide what is free)
 	chunks     uint64
 	cibs, cabs uint64
 	cpc, cpcab uint64 // chunks per CIB, CIBs per CAB
@@ -150,7 +152,7 @@ func (f *FS) loadSpaceman() (sm *spaceman, problem string, err error) {
 	}
 	d0 := buf[smDev0:]
 	sm = &spaceman{
-		blocks: le.Uint64(d0[sdBlockCount:]), chunks: le.Uint64(d0[sdChunkCount:]),
+		blocks: le.Uint64(d0[sdBlockCount:]), chunks: le.Uint64(d0[sdChunkCount:]), free: le.Uint64(d0[sdFreeCount:]),
 		cibs: uint64(le.Uint32(d0[sdCibCount:])), cabs: uint64(le.Uint32(d0[sdCabCount:])),
 		cpc: cpc, cpcab: cpcab,
 		ipBlocks: le.Uint64(buf[smIPBlockCount:]), ipBase: le.Uint64(buf[smIPBase:]),
