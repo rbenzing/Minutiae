@@ -1,0 +1,24 @@
+# Toolchain used to generate the HFS+ real-image fixtures (see README.md,
+# "HFS+ fixtures"). Separate from the main Dockerfile so that image's pinned
+# layers (and every existing fixture) stay byte-identical.
+#
+# hfsprogs (mkfs.hfsplus, fsck.hfsplus) is not in debian stable's main
+# component and has no candidate in the current stable or bullseye "main"; it
+# is in the "non-free" component of Debian 12 (bookworm) and of 11 (bullseye,
+# archive.debian.org). Probe outcome (2026-10-03): bookworm non-free has
+# hfsprogs 540.1.linux3-5+b1, so no archive or source build is needed.
+#
+# Base: debian:bookworm-slim, pinned by digest (index digest of the tag as
+# probed on 2026-10-03).
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
+
+RUN sed -i 's/^Components: main$/Components: main non-free/' /etc/apt/sources.list.d/debian.sources \
+ && grep -q 'Components: main non-free' /etc/apt/sources.list.d/debian.sources \
+ && apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      hfsprogs util-linux kmod faketime jq python3 gzip coreutils file \
+ && rm -rf /var/lib/apt/lists/*
+
+ENV SOURCE_DATE_EPOCH=1700000000 \
+    TZ=UTC \
+    LC_ALL=C
