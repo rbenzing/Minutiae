@@ -216,3 +216,55 @@ func TestCaseUpgradePrintsReindexHint(t *testing.T) {
 		}
 	})
 }
+
+// TestUpgradeSummaryText: the text of `case upgrade` for every outcome. A resumed step and the new
+// step are both said, each with its own versions, so an examiner reading the output can match it
+// with the audit log's {1,2} (concluded) and {2,3} (new) pairs.
+func TestUpgradeSummaryText(t *testing.T) {
+	tests := []struct {
+		name string
+		res  evidence.UpgradeResult
+		want []string
+		not  []string
+	}{
+		{
+			"resumed and new",
+			evidence.UpgradeResult{From: 2, To: 3, Upgraded: true, Resumed: true, ResumedFrom: 1, ResumedTo: 2},
+			[]string{"concluded an interrupted upgrade v1 -> v2", "upgraded case schema v2 -> v3"},
+			nil,
+		},
+		{
+			"resumed only",
+			evidence.UpgradeResult{From: 3, To: 3, Resumed: true, ResumedFrom: 1, ResumedTo: 3},
+			[]string{"concluded an interrupted upgrade v1 -> v3"},
+			[]string{"upgraded case schema"},
+		},
+		{
+			"new only",
+			evidence.UpgradeResult{From: 1, To: 3, Upgraded: true},
+			[]string{"upgraded case schema v1 -> v3"},
+			[]string{"interrupted"},
+		},
+		{
+			"current",
+			evidence.UpgradeResult{From: 3, To: 3},
+			[]string{"case schema v3 is already current"},
+			[]string{"interrupted", "upgraded"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := upgradeSummary(tc.res)
+			for _, w := range tc.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("summary %q lacks %q", got, w)
+				}
+			}
+			for _, n := range tc.not {
+				if strings.Contains(got, n) {
+					t.Errorf("summary %q holds %q", got, n)
+				}
+			}
+		})
+	}
+}

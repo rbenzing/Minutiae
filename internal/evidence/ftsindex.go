@@ -112,11 +112,13 @@ func readIndexState(ctx context.Context, h ctxQuerier) (IndexState, error) {
 	return IndexState{Kind: classifyIndexValue(values[0], current), Value: values[0], Current: current}, nil
 }
 
-// IndexState returns the state of the case's full-text index. A case older than schema v3 has no
-// index: ErrNeedsUpgrade.
+// IndexState returns the state of the case's full-text index, read through the schema guard
+// (ReadRecordsTx): a case whose schema objects are not the ones this build defines (an FTS table
+// whose definition was rewritten) is ErrIntegrity, never an answer. A case older than schema v3 has
+// no index: ErrNeedsUpgrade.
 func (c *Case) IndexState(ctx context.Context) (IndexState, error) {
 	var st IndexState
-	err := c.ReadTx(ctx, func(h ReadHandle) error {
+	err := c.ReadRecordsTx(ctx, func(h ReadHandle) error {
 		v, err := schemaVersionIn(ctx, h)
 		if err != nil {
 			return fmt.Errorf("artifacts.db schema_version: %w", err)

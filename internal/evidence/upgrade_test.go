@@ -313,7 +313,7 @@ func TestUpgradeResumesUnauditedCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Upgraded || !res.Resumed || res.From != 3 || res.To != 3 {
+	if res.Upgraded || !res.Resumed || res.From != 3 || res.To != 3 || res.ResumedFrom != 1 || res.ResumedTo != 3 {
 		t.Fatalf("result = %+v", res)
 	}
 	es := auditEntries(t, c)
@@ -517,4 +517,70 @@ func TestUpgradeAuditReadErrorClassification(t *testing.T) {
 			t.Fatalf("err = %v, want ErrIntegrity", err)
 		}
 	})
+}
+
+// TestUpgradeFailureMidChainAppliesNothingAndIsAudited: a v1 case in which records_fts_sub is
+// taken. The v1 -> v3 chain gets through every v2 statement and the creation of records_fts, then
+// fails on records_fts_sub, in the middle of the v3 step. Nothing of the chain survives (the file
+// is byte-identical, still v1), the audit log holds exactly case.upgrade{1,3} and
+// case.upgrade.error{1,3} naming the statement that failed, no upgrade is left dangling, and once
+// the obstacle is removed the same Upgrade goes through.
+func TestUpgradeFailureMidChainAppliesNothingAndIsAudited(t *testing.T) {
+	c := openV1Case(t)
+	if _, err := c.store.db.Exec(`CREATE TABLE records_fts_sub (planted TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(c.Dir, dbFile)
+	before := fileSHA(t, dbPath)
+	n := len(auditEntries(t, c))
+
+	res, err := c.Upgrade()
+	if err == nil {
+		t.Fatal("Upgrade succeeded although records_fts_sub is taken")
+	}
+	if res.Upgraded || res.From != 1 || res.To != 1 {
+		t.Fatalf("result = %+v, want nothing upgraded from v1", res)
+	}
+	if v := mustVersion(t, c); v != 1 {
+		t.Fatalf("version after the failed chain = %d, want 1", v)
+	}
+	if after := fileSHA(t, dbPath); after != before {
+		t.Fatal("a failed upgrade changed artifacts.db")
+	}
+	for _, name := range []string{"parsers", "record_batches", "records_meta", "records_fts", "records_fts_v", "records_fts_sub_v"} {
+		var cnt int
+		if err := c.store.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name = ?`, name).Scan(&cnt); err != nil || cnt != 0 {
+			t.Errorf("%s exists after the failed chain (n=%d, %v)", name, cnt, err)
+		}
+	}
+
+	es := auditEntries(t, c)[n:]
+	if len(es) != 2 || es[0].Action != ActionCaseUpgrade || es[1].Action != ActionCaseUpgradeError {
+		t.Fatalf("audit after the failed upgrade = %+v", es)
+	}
+	for _, e := range es {
+		if got := detailInts(t, e, "from", "to"); got[0] != 1 || got[1] != 3 {
+			t.Errorf("%s from/to = %v, want 1, 3", e.Action, got)
+		}
+	}
+	if msg, _ := es[1].Details["error"].(string); !strings.Contains(msg, "records_fts_sub") {
+		t.Errorf("the error entry %q does not name the table that was in the way", msg)
+	}
+	if sa := auditedSchema(auditEntries(t, c)); sa.Version != 1 || sa.Dangling != nil || len(sa.Problems) != 0 {
+		t.Fatalf("audited schema after the failed upgrade = %+v, want v1 with nothing dangling", sa)
+	}
+
+	if _, err := c.store.db.Exec(`DROP TABLE records_fts_sub`); err != nil {
+		t.Fatal(err)
+	}
+	if r := mustVerify(t, c); !r.OK() || len(r.Notices) != 0 {
+		t.Fatalf("verify after the failed upgrade and the removal of the obstacle = %+v", r)
+	}
+	res, err = c.Upgrade()
+	if err != nil || res != (UpgradeResult{From: 1, To: 3, Upgraded: true}) {
+		t.Fatalf("retry = %+v, %v", res, err)
+	}
+	if r := mustVerify(t, c); !r.OK() || len(r.Notices) != 0 {
+		t.Fatalf("verify after the retry = %+v", r)
+	}
 }

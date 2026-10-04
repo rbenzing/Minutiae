@@ -383,7 +383,7 @@ func TestUpgradeResumesThenContinues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res != (UpgradeResult{From: 2, To: 3, Upgraded: true, Resumed: true}) {
+	if res != (UpgradeResult{From: 2, To: 3, Upgraded: true, Resumed: true, ResumedFrom: 1, ResumedTo: 2}) {
 		t.Fatalf("result = %+v", res)
 	}
 	var steps []string
@@ -399,5 +399,50 @@ func TestUpgradeResumesThenContinues(t *testing.T) {
 	}
 	if r := mustVerify(t, c); !r.OK() || len(r.Notices) != 0 {
 		t.Fatalf("verify = %+v", r)
+	}
+}
+
+// TestIndexStateRefusesTamperedSchema: the index state is read through the schema guard like every
+// other record read, so a case whose FTS table definition was rewritten (writable_schema: the rows
+// and shadow tables stay, the tokenizer now means something else) is refused with ErrIntegrity, not
+// answered, and verify names the table. No trigger is involved: the immutability triggers are
+// untouched and the schema text of records_fts is the only difference.
+func TestIndexStateRefusesTamperedSchema(t *testing.T) {
+	c := newTestCase(t)
+	db := rawDB(t, filepath.Join(c.Dir, dbFile))
+	var def string
+	if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`, FTSWordTable).Scan(&def); err != nil {
+		t.Fatal(err)
+	}
+	altered := strings.Replace(def, "remove_diacritics 2", "remove_diacritics 0", 1)
+	if altered == def {
+		t.Fatalf("the definition %q has no remove_diacritics 2 to alter", def)
+	}
+	if _, err := db.Exec(`PRAGMA writable_schema = ON`); err != nil {
+		t.Fatal(err)
+	}
+	res, err := db.Exec(`UPDATE sqlite_master SET sql = ? WHERE type = 'table' AND name = ?`, altered, FTSWordTable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		t.Fatalf("%d schema rows changed", n)
+	}
+
+	ctx := context.Background()
+	if st, err := c.IndexState(ctx); !errors.Is(err, ErrIntegrity) {
+		t.Errorf("IndexState = %+v, %v; want ErrIntegrity", st, err)
+	} else if !strings.Contains(err.Error(), `table "records_fts" was altered`) {
+		t.Errorf("the refusal does not name the altered table: %v", err)
+	}
+	if err := c.RequireIndexCurrent(ctx); !errors.Is(err, ErrIntegrity) || errors.Is(err, ErrIndexNotCurrent) {
+		t.Errorf("RequireIndexCurrent = %v; want ErrIntegrity (and not a reindex hint)", err)
+	}
+	if err := c.RequireSchemaObjects(ctx); !errors.Is(err, ErrIntegrity) {
+		t.Errorf("RequireSchemaObjects = %v; want ErrIntegrity", err)
+	}
+	rep := mustVerify(t, c)
+	if rep.OK() || !containsSubstr(rep.Problems, `table "records_fts" was altered`) {
+		t.Fatalf("verify = %+v; want the problem `table \"records_fts\" was altered`", rep)
 	}
 }
