@@ -79,6 +79,7 @@ func (f *FS) loadJournal() {
 		f.warn("the journal (offset %d, size %d) does not fit the %d-byte volume; the journal state is unknown", off, size, declared)
 		return
 	}
+	f.jrnlOff, f.jrnlSize = int64(off), int64(size) // both <= declared <= 2^62: the journal is inside the volume
 	if flags&jibNeedInit != 0 {
 		f.journal = journalClean // the journal was created but never used: no header, no transactions
 		return

@@ -14,6 +14,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/filesys/ext4"
 	"github.com/rbenzing/minutiae/internal/filesys/f2fs"
 	"github.com/rbenzing/minutiae/internal/filesys/fat"
+	"github.com/rbenzing/minutiae/internal/filesys/hfsplus"
 )
 
 // Driver is one filesystem parser.
@@ -35,6 +36,7 @@ var Drivers = []Driver{
 	{Name: "f2fs", Probe: f2fs.Probe, Open: openF2FS},
 	{Name: "ext4", Probe: ext4.Probe, Open: openExt4},
 	{Name: "exfat", Probe: exfat.Probe, Open: openExFAT},
+	{Name: "hfsplus", Probe: hfsplus.Probe, Open: openHFSPlus},
 	{Name: "fat", Probe: fat.Probe, Open: openFAT},
 	// Last resort: an F2FS volume whose primary superblock is destroyed. It
 	// comes after every other driver so that a stale or forged F2FS backup
@@ -65,6 +67,16 @@ func openF2FS(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
 // openExFAT adapts exfat.Open (untyped nil on error, see openExt4).
 func openExFAT(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
 	fs, err := exfat.Open(r, size)
+	if err != nil {
+		return nil, err
+	}
+	return fs, nil
+}
+
+// openHFSPlus adapts hfsplus.Open (untyped nil on error, see openExt4). The
+// driver reports HFS+ and HFSX through Info().Type ("hfsplus", "hfsx").
+func openHFSPlus(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
+	fs, err := hfsplus.Open(r, size)
 	if err != nil {
 		return nil, err
 	}

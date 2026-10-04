@@ -266,8 +266,3 @@ func (f *FS) Root() filesys.Entry {
 	f.rootMu.Unlock()
 	return e
 }
-
-// Unallocated is not implemented yet.
-func (f *FS) Unallocated() ([]filesys.Run, error) {
-	return nil, fmt.Errorf("%w: unallocated space is not implemented", filesys.ErrUnsupported)
-}

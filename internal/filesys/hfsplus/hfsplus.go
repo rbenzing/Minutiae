@@ -33,17 +33,21 @@ type FS struct {
 	// header's keyCompareType decided it (0xBC binary = case-sensitive).
 	caseSensitive, caseKnown bool
 	journal                  journalState
+	// jrnlOff and jrnlSize are the journal area (bytes from the volume start) once
+	// the journal info block has been read and checked; jrnlSize is 0 otherwise.
+	jrnlOff, jrnlSize int64
 
 	warnings filesys.Warnings
 
 	// dirBudget is how many bytes of catalog nodes listings and fallback scans may
 	// still read, shared by every call (see chargeDir); dirCap overrides the
 	// per-listing entry cap (0 = maxDirEntries).
-	dirMu     sync.Mutex
-	dirBudget int64
-	dirCap    int
-	recCap    int // overrides maxDirRecords when positive (tests)
-	extentCap int // overrides maxExtentsPerFork when positive (tests)
+	dirMu      sync.Mutex
+	dirBudget  int64
+	dirCap     int
+	recCap     int // overrides maxDirRecords when positive (tests)
+	extentCap  int // overrides maxExtentsPerFork when positive (tests)
+	unallocCap int // overrides maxUnallocRuns when positive (tests)
 
 	rootMu    sync.Mutex
 	rootEntry *filesys.Entry // the root folder as its record describes it, once readable

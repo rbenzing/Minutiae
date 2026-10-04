@@ -16,6 +16,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/filesys/ext4/ext4test"
 	"github.com/rbenzing/minutiae/internal/filesys/f2fs/f2fstest"
 	"github.com/rbenzing/minutiae/internal/filesys/fat/fattest"
+	"github.com/rbenzing/minutiae/internal/filesys/hfsplus/hfsplustest"
 )
 
 // gunzipFixture returns the decompressed image of a committed fixture in
@@ -46,7 +47,7 @@ func TestDriversClaimExactlyTheirOwnImages(t *testing.T) {
 	for _, d := range detect.Drivers {
 		names = append(names, d.Name)
 	}
-	if want := []string{"f2fs", "ext4", "exfat", "fat", "f2fs-backup"}; !slices.Equal(names, want) {
+	if want := []string{"f2fs", "ext4", "exfat", "hfsplus", "fat", "f2fs-backup"}; !slices.Equal(names, want) {
 		t.Fatalf("driver order = %v, want %v", names, want)
 	}
 
@@ -58,11 +59,16 @@ func TestDriversClaimExactlyTheirOwnImages(t *testing.T) {
 	images := map[string]image{
 		"builder f2fs": {f2fstest.Build(f2fstest.Options{Segments: 2, Label: "data"}, []f2fstest.File{{Path: "/a.txt", Data: []byte("a"), Inline: true}}), "f2fs", "f2fs"},
 		"builder f2fs with a blank second checkpoint": {f2fstest.Build(f2fstest.Options{Segments: 1, NoPack2: true}, nil), "f2fs", "f2fs"},
-		"builder ext4":  {ext4test.Build(ext4test.Options{Extents: true}, nil), "ext4", "ext4"},
-		"builder exfat": {exfattest.Build(exfattest.Options{}, nil), "exfat", "exfat"},
-		"builder fat12": {fattest.Build(fattest.Options{Type: 12}, nil), "fat", "fat12"},
-		"builder fat16": {fattest.Build(fattest.Options{Type: 16}, nil), "fat", "fat16"},
-		"builder fat32": {fattest.Build(fattest.Options{Type: 32}, nil), "fat", "fat32"},
+		"builder ext4":              {ext4test.Build(ext4test.Options{Extents: true}, nil), "ext4", "ext4"},
+		"builder exfat":             {exfattest.Build(exfattest.Options{}, nil), "exfat", "exfat"},
+		"builder hfsplus":           {hfsplustest.Build(hfsplustest.Options{Label: "H"}, nil), "hfsplus", "hfsplus"},
+		"builder hfsplus journaled": {hfsplustest.Build(hfsplustest.Options{Label: "H", Journaled: true}, nil), "hfsplus", "hfsplus"},
+		"builder hfsx":              {hfsplustest.Build(hfsplustest.Options{Label: "H", HFSX: true, CaseSensitive: true}, nil), "hfsplus", "hfsx"},
+		"builder hfsplus wrapped":   {hfsplustest.Build(hfsplustest.Options{Label: "H", Wrapper: true}, nil), "hfsplus", "hfsplus"},
+		"builder hfsx wrapped":      {hfsplustest.Build(hfsplustest.Options{Label: "H", HFSX: true, Wrapper: true}, nil), "hfsplus", "hfsx"},
+		"builder fat12":             {fattest.Build(fattest.Options{Type: 12}, nil), "fat", "fat12"},
+		"builder fat16":             {fattest.Build(fattest.Options{Type: 16}, nil), "fat", "fat16"},
+		"builder fat32":             {fattest.Build(fattest.Options{Type: 32}, nil), "fat", "fat32"},
 	}
 	for name, f := range map[string]struct{ path, want, typ string }{
 		"real ext4 4k":         {"../ext4/testdata/ext4-4k-csum.img.gz", "ext4", "ext4"},
@@ -71,6 +77,11 @@ func TestDriversClaimExactlyTheirOwnImages(t *testing.T) {
 		"real fat32":           {"../fat/testdata/fat32.img.gz", "fat", "fat32"},
 		"real exfat":           {"../exfat/testdata/exfat.img.gz", "exfat", "exfat"},
 		"real f2fs":            {"../f2fs/testdata/f2fs-default.img.gz", "f2fs", "f2fs"},
+		"real hfsplus":         {"../hfsplus/testdata/hfsplus-empty.img.gz", "hfsplus", "hfsplus"},
+		"real hfsplus 1k":      {"../hfsplus/testdata/hfsplus-1k.img.gz", "hfsplus", "hfsplus"},
+		"real hfsplus journal": {"../hfsplus/testdata/hfsplus-journal.img.gz", "hfsplus", "hfsplus"},
+		"real hfsplus wrapped": {"../hfsplus/testdata/hfsplus-wrapped.img.gz", "hfsplus", "hfsplus"},
+		"real hfsx":            {"../hfsplus/testdata/hfsx-empty.img.gz", "hfsplus", "hfsx"},
 		"real f2fs extra attr": {"../f2fs/testdata/f2fs-extra-attr.img.gz", "f2fs", "f2fs"},
 	} {
 		images[name] = image{gunzipFixture(t, f.path), f.want, f.typ}
@@ -216,5 +227,64 @@ func TestF2FSDestroyedPrimaryOpensThroughBackupDriver(t *testing.T) {
 	}
 	if !slices.ContainsFunc(info.Warnings, func(w string) bool { return strings.Contains(w, "backup superblock") }) {
 		t.Errorf("Warnings = %q, want one saying the backup superblock is in use", info.Warnings)
+	}
+}
+
+// An HFS+, HFSX and wrapped HFS+ image is detected as the hfsplus driver and
+// opens with Info().Type hfsplus or hfsx; the images of every other driver are
+// still detected as themselves (TestDriversClaimExactlyTheirOwnImages claims
+// each image by exactly one driver), and none of them opens as HFS+.
+func TestDetectOpensHFSPlus(t *testing.T) {
+	for name, tc := range map[string]struct {
+		img  []byte
+		typ  string
+		wrap bool
+	}{
+		"hfsplus": {hfsplustest.Build(hfsplustest.Options{Label: "H"}, nil), "hfsplus", false},
+		"hfsx":    {hfsplustest.Build(hfsplustest.Options{Label: "H", HFSX: true, CaseSensitive: true}, nil), "hfsx", false},
+		"wrapped": {hfsplustest.Build(hfsplustest.Options{Label: "H", Wrapper: true}, nil), "hfsplus", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := bytes.NewReader(tc.img)
+			size := int64(len(tc.img))
+			if got, ok := detect.Probe(r, size); !ok || got != "hfsplus" {
+				t.Fatalf("Probe = %q, %v; want hfsplus", got, ok)
+			}
+			fsys, err := detect.Open(r, size)
+			if err != nil {
+				t.Fatal(err)
+			}
+			info := fsys.Info()
+			if info.Type != tc.typ || info.Label != "H" {
+				t.Errorf("Info = %+v, want type %s label H", info, tc.typ)
+			}
+			if tc.wrap && !slices.Contains(info.Features, "hfs-wrapper") {
+				t.Errorf("Features = %v, want hfs-wrapper", info.Features)
+			}
+			if _, err := fsys.Unallocated(); err != nil {
+				t.Errorf("Unallocated: %v", err)
+			}
+		})
+	}
+	for name, tc := range map[string]struct {
+		img    []byte
+		driver string
+	}{
+		"ext4":  {ext4test.Build(ext4test.Options{Extents: true}, nil), "ext4"},
+		"f2fs":  {f2fstest.Build(f2fstest.Options{Segments: 2}, nil), "f2fs"},
+		"exfat": {exfattest.Build(exfattest.Options{}, nil), "exfat"},
+		"fat32": {fattest.Build(fattest.Options{Type: 32}, nil), "fat"},
+	} {
+		img := tc.img
+		if got, ok := detect.Probe(bytes.NewReader(img), int64(len(img))); !ok || got != tc.driver {
+			t.Errorf("%s image: Probe = %q, %v; want %s", name, got, ok, tc.driver)
+		}
+		fsys, err := detect.Open(bytes.NewReader(img), int64(len(img)))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if typ := fsys.Info().Type; typ == "hfsplus" || typ == "hfsx" {
+			t.Errorf("%s image opened as %s", name, typ)
+		}
 	}
 }
