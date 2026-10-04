@@ -86,6 +86,8 @@ func ExitCode(err error) int {
 		return ExitOK
 	case errors.As(err, &ue):
 		return ExitUsage
+	case errors.Is(err, evidence.ErrNeedsUpgrade):
+		return ExitUsage
 	case errors.Is(err, evidence.ErrIntegrity):
 		return ExitIntegrity
 	}

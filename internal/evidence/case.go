@@ -62,6 +62,10 @@ type Case struct {
 	store      *Store
 	lock       *caseLock
 	manifestMu sync.Mutex
+
+	// upgradeHook, when set by a test, runs between the case.upgrade audit entry
+	// and the migration.
+	upgradeHook func()
 }
 
 var validCaseID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -110,12 +114,16 @@ func Create(parentDir string, opts CreateOptions) (*Case, error) {
 	if err != nil {
 		return nil, errors.Join(err, lock.release())
 	}
-	c, err := withStore(dir, meta, audit, lock)
+	// A new case gets the current schema; opening an existing case never
+	// migrates it (see Upgrade).
+	store, err := OpenStore(filepath.Join(dir, dbFile))
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(err, audit.Close(), lock.release())
 	}
+	c := &Case{Dir: dir, Meta: meta, Audit: audit, store: store, lock: lock}
 	if _, err := c.Audit.Append("case.create", "", map[string]any{
 		"id": meta.ID, "examiner": meta.Examiner, "description": meta.Description,
+		"schema_version": CurrentSchema,
 	}); err != nil {
 		_ = c.Close()
 		return nil, err
@@ -163,17 +171,12 @@ func openParts(dir string, meta Meta) (*Case, error) {
 	if err != nil {
 		return nil, err
 	}
-	return withStore(dir, meta, audit, nil)
-}
-
-// withStore opens artifacts.db and assembles the Case. On error it closes
-// audit and releases lock (if non-nil).
-func withStore(dir string, meta Meta, audit *AuditLog, lock *caseLock) (*Case, error) {
-	store, err := OpenStore(filepath.Join(dir, dbFile))
+	// OpenExistingStore never migrates: a v1 case stays v1 until Upgrade.
+	store, err := OpenExistingStore(filepath.Join(dir, dbFile))
 	if err != nil {
-		return nil, errors.Join(err, audit.Close(), lock.release())
+		return nil, errors.Join(err, audit.Close())
 	}
-	return &Case{Dir: dir, Meta: meta, Audit: audit, store: store, lock: lock}, nil
+	return &Case{Dir: dir, Meta: meta, Audit: audit, store: store}, nil
 }
 
 func writeExclusiveJSON(path string, v any) error {

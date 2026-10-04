@@ -17,6 +17,9 @@ type VerifyReport struct {
 	AuditEntries     int      `json:"audit_entries"`
 	ArtifactsChecked int      `json:"artifacts_checked"`
 	Problems         []string `json:"problems"`
+	// Notices are findings that are not integrity problems (for example an
+	// announced upgrade that was never concluded); never silent.
+	Notices []string `json:"notices"`
 }
 
 // OK reports whether no integrity problems were found.
@@ -26,6 +29,10 @@ func (r *VerifyReport) problemf(format string, a ...any) {
 	r.Problems = append(r.Problems, fmt.Sprintf(format, a...))
 }
 
+func (r *VerifyReport) noticef(format string, a ...any) {
+	r.Notices = append(r.Notices, fmt.Sprintf(format, a...))
+}
+
 // Verify re-hashes every artifact, checks the audit chain, and cross-checks
 // the manifest (including each record's full source/provenance) against the audit log's artifact.create entries, artifacts.db
 // and the artifacts directory, and flags leftover (unpromoted) staging
@@ -33,11 +40,12 @@ func (r *VerifyReport) problemf(format string, a ...any) {
 // reported problem, so Verify always completes; the result is audited
 // (verify.run). The returned error is only the failure to audit the result.
 func (c *Case) Verify() (VerifyReport, error) {
-	rep := VerifyReport{Problems: []string{}}
+	rep := VerifyReport{Problems: []string{}, Notices: []string{}}
 	n, audited, auditProblems, err := verifyAudit(filepath.Join(c.Dir, auditFile))
 	if err != nil {
 		rep.problemf("audit log unreadable: %v", err)
 	}
+	auditReadable := err == nil
 	rep.AuditEntries = n
 	rep.Problems = append(rep.Problems, auditProblems...)
 
@@ -68,6 +76,9 @@ func (c *Case) Verify() (VerifyReport, error) {
 	c.checkDerived(&rep, recs)
 	c.crossCheckAudit(&rep, recs, audited)
 	c.crossCheckDB(&rep, recs)
+	if auditReadable {
+		c.checkSchema(&rep, audited)
+	}
 	c.checkUnmanifested(&rep, inManifest)
 	c.checkStaging(&rep)
 
@@ -76,6 +87,35 @@ func (c *Case) Verify() (VerifyReport, error) {
 		"audit_entries": rep.AuditEntries, "problems": len(rep.Problems),
 	})
 	return rep, err
+}
+
+// checkSchema (P13) requires the database's schema version to be the version
+// the audit log says it has: case.create's schema_version (1 when absent), then
+// every case.upgrade.done. A database migrated outside the audited upgrade is a
+// problem. An announced upgrade without a conclusion is a notice: the audit
+// entry was committed before the migration, so a database at either the old or
+// the announced version is explained (case upgrade concludes it).
+func (c *Case) checkSchema(rep *VerifyReport, entries []AuditEntry) {
+	sa := auditedSchema(entries)
+	for _, p := range sa.Problems {
+		rep.problemf("%s", p)
+	}
+	dbv, err := c.store.SchemaVersion()
+	if err != nil {
+		rep.problemf("artifacts.db schema version unreadable: %v", err)
+		return
+	}
+	d := sa.Dangling
+	switch {
+	case dbv == sa.Version:
+		if d != nil {
+			rep.noticef("audit seq %d: case.upgrade (schema v%d -> v%d) was announced but never concluded; the database is still at v%d (run: minutiae case upgrade)", d.Seq, d.From, d.To, dbv)
+		}
+	case d != nil && dbv == d.To && sa.Version == d.From:
+		rep.noticef("audit seq %d: case.upgrade (schema v%d -> v%d) was announced and the database is at v%d, but case.upgrade.done was never audited (run: minutiae case upgrade)", d.Seq, d.From, d.To, dbv)
+	default:
+		rep.problemf("artifacts.db schema version %d does not match the audited schema version %d (the database was changed outside an audited upgrade, or the audit log was altered)", dbv, sa.Version)
+	}
 }
 
 // auditedArtifact is the part of an artifact.create audit entry that must

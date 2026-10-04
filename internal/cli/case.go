@@ -16,8 +16,40 @@ func openCase(path string) (*evidence.Case, error) {
 }
 
 func newCaseCmd(d Deps, opts *rootOptions) *cobra.Command {
-	cmd := newGroupCmd("case", "Create, inspect and verify cases")
-	cmd.AddCommand(newCaseNewCmd(d, opts), newCaseInfoCmd(d, opts), newCaseVerifyCmd(d, opts))
+	cmd := newGroupCmd("case", "Create, inspect, upgrade and verify cases")
+	cmd.AddCommand(newCaseNewCmd(d, opts), newCaseInfoCmd(d, opts), newCaseVerifyCmd(d, opts), newCaseUpgradeCmd(d, opts))
+	return cmd
+}
+
+func newCaseUpgradeCmd(d Deps, opts *rootOptions) *cobra.Command {
+	var path string
+	cmd := &cobra.Command{
+		Use:   "upgrade",
+		Short: "Upgrade the case database to the current schema (audited; never implicit)",
+		Args:  exactArgs(0),
+		RunE: func(_ *cobra.Command, _ []string) error {
+			c, err := openCase(path)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = c.Close() }()
+			res, err := c.Upgrade()
+			if err != nil {
+				return err
+			}
+			if opts.json {
+				return writeJSON(d.Out, map[string]any{"from": res.From, "to": res.To, "upgraded": res.Upgraded})
+			}
+			if res.Upgraded {
+				fmt.Fprintf(d.Out, "upgraded case schema v%d -> v%d\n", res.From, res.To)
+			} else {
+				fmt.Fprintf(d.Out, "case schema v%d is already current\n", res.To)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&path, "case", "", "case directory")
+	_ = cmd.MarkFlagRequired("case")
 	return cmd
 }
 
@@ -67,14 +99,23 @@ func newCaseInfoCmd(d Deps, opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			schema, err := c.SchemaVersion()
+			if err != nil {
+				return err
+			}
 			if opts.json {
 				return writeJSON(d.Out, map[string]any{
 					"id": c.Meta.ID, "examiner": c.Meta.Examiner, "description": c.Meta.Description,
 					"created": c.Meta.Created, "tool_version": c.Meta.ToolVersion, "artifacts": len(recs),
+					"schema_version": schema,
 				})
 			}
-			fmt.Fprintf(d.Out, "Case:        %s\nExaminer:    %s\nCreated:     %s\nTool:        %s\nArtifacts:   %d\n",
-				c.Meta.ID, c.Meta.Examiner, c.Meta.Created, c.Meta.ToolVersion, len(recs))
+			fmt.Fprintf(d.Out, "Case:        %s\nExaminer:    %s\nCreated:     %s\nTool:        %s\nArtifacts:   %d\nSchema:      v%d",
+				c.Meta.ID, c.Meta.Examiner, c.Meta.Created, c.Meta.ToolVersion, len(recs), schema)
+			if schema < evidence.CurrentSchema {
+				fmt.Fprintf(d.Out, " (older than v%d; run: minutiae case upgrade --case %s)", evidence.CurrentSchema, c.Dir)
+			}
+			fmt.Fprintln(d.Out)
 			return nil
 		},
 	}
@@ -104,6 +145,9 @@ func newCaseVerifyCmd(d Deps, opts *rootOptions) *cobra.Command {
 					return err
 				}
 			} else {
+				for _, n := range rep.Notices {
+					fmt.Fprintln(d.Out, "NOTICE:", n)
+				}
 				for _, p := range rep.Problems {
 					fmt.Fprintln(d.Out, "PROBLEM:", p)
 				}

@@ -47,6 +47,7 @@ var allowed = map[string][]string{
 	"internal/ios":                     {"internal/ios/mb2", "internal/device", "internal/evidence", "internal/version"},
 	"internal/ios/iostest":             {"internal/ios", "internal/ios/mb2/mb2test"},
 	"internal/archtest":                {},
+	"internal/records/recordstest":     {"internal/records", "internal/evidence"},
 	"tools/check":                      {},
 }
 
