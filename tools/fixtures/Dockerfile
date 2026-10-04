@@ -22,3 +22,10 @@ RUN apt-get update \
 ENV SOURCE_DATE_EPOCH=1700000000 \
     TZ=UTC \
     LC_ALL=C
+
+# apfsprogs (mkapfs, apfsck) for the APFS fixtures. A separate, final layer so
+# every layer above, and every fixture generated from it, stays as built.
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      apfsprogs \
+ && rm -rf /var/lib/apt/lists/*
