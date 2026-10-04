@@ -56,6 +56,7 @@ var allowed = map[string][]string{
 	"internal/records":                     {"internal/evidence", "internal/version"},
 	"internal/records/recordstest":         {"internal/records", "internal/evidence"},
 	"internal/parse":                       {"internal/records"},
+	"internal/recordtypes/common":          {},
 	"tools/check":                          {},
 }
 
