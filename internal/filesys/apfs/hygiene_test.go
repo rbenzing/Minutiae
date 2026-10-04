@@ -51,6 +51,7 @@ func TestInfoWarningsAccumulateAcrossReads(t *testing.T) {
 func TestVolumeDamageNeverPanics(t *testing.T) {
 	v := dataVolume(richFiles()...)
 	v.TreeMaxKeys = 3
+	v.Snapshots = []apfstest.Snapshot{{Name: "S", Files: richFiles()}, {Name: "T", Files: []apfstest.File{{Path: "/t", Data: pattern(2*bs, 4)}}}}
 	v.Files = append(v.Files, apfstest.File{Path: "/x/y", Xattrs: []apfstest.Xattr{{Name: "k", Value: []byte("v")}}},
 		apfstest.File{Path: "/x/data", Data: pattern(3*bs, 3), Fragments: 3, Holes: [][2]int64{{bs, bs}}, SparseTail: bs})
 	im := newImage(t, volOpts(v, apfstest.Volume{Name: "Enc", Encrypted: true}))
@@ -75,6 +76,8 @@ func TestVolumeDamageNeverPanics(t *testing.T) {
 		})
 		_, _ = f.Lookup("/Data/docs/a.txt")
 		_, _ = f.Lookup("/Data/x/y")
+		_, _ = f.Lookup("/Data/.snapshots/S/docs/a.txt")
+		_, _ = f.SnapshotPath("/Data/docs/a.txt", "T")
 		_ = f.Info()
 	}
 	for blk := vg.Super; blk < vg.End; blk++ {
@@ -104,7 +107,7 @@ func TestReadDirIsConcurrentSafe(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range 50 {
-				if es, err := f.ReadDir(filesys.Entry{ID: "n:0:0:2"}); err != nil || len(es) != 3 {
+				if es, err := f.ReadDir(filesys.Entry{ID: "n:0:0:2"}); err != nil || len(es) != 4 { // three entries and .snapshots
 					t.Errorf("goroutine %d: ReadDir = %d entries, %v", g, len(es), err)
 					return
 				}

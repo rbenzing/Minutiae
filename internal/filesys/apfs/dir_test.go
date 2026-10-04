@@ -588,11 +588,12 @@ func TestForgedIDsRejectedQuickly(t *testing.T) {
 	}
 	for _, id := range ids {
 		e := filesys.Entry{ID: id, Type: filesys.TypeDir}
-		if _, err := f.ReadDir(e); !errors.Is(err, filesys.ErrNotFound) {
-			t.Errorf("ReadDir(%q) = %v, want ErrNotFound", id, err)
+		existingSnaps := id == "snaps:0" || id == "snaps:1" // volumes that exist: their .snapshots directory
+		if _, err := f.ReadDir(e); existingSnaps != (err == nil) || (!existingSnaps && !errors.Is(err, filesys.ErrNotFound)) {
+			t.Errorf("ReadDir(%q) = %v, want ErrNotFound (or success for an existing volume's snaps ID)", id, err)
 		}
 		_, err := f.Open(e)
-		existingSnaps := (id == "snaps:0" || id == "snaps:1") && errors.Is(err, filesys.ErrUnsupported)
+		existingSnaps = existingSnaps && errors.Is(err, filesys.ErrUnsupported)
 		if !errors.Is(err, filesys.ErrNotFound) && !existingSnaps {
 			t.Errorf("Open(%q) = %v, want ErrNotFound", id, err)
 		}
@@ -869,8 +870,9 @@ func TestWalkWholeTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Two volumes + the builder's entries: every file path and its ancestors.
-	want := 2 + expectedEntries(a.Files) + expectedEntries(b.Files)
+	// Two volumes, their synthetic .snapshots directories and the builder's
+	// entries: every file path and its ancestors.
+	want := 2 + 2 + expectedEntries(a.Files) + expectedEntries(b.Files)
 	if count != want {
 		t.Errorf("Walk visited %d entries, the builder wrote %d", count, want)
 	}

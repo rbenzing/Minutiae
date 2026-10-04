@@ -160,3 +160,34 @@ func (e *CorruptError) Error() string {
 
 // Is makes errors.Is(err, ErrCorrupt) true for every *CorruptError.
 func (e *CorruptError) Is(target error) bool { return target == ErrCorrupt }
+
+// ErrNeedsVolume is returned by Snapshotter.SnapshotPath for a path that names
+// no volume while the filesystem has more than one.
+var ErrNeedsVolume = errors.New("the path must name a volume")
+
+// Snapshotter is implemented by a filesystem that keeps snapshots (APFS).
+// SnapshotPath maps a path inside a volume ("/Data/docs/a.txt"; "/" alone only
+// when there is exactly one volume) to the real path of the same file in the
+// named snapshot ("/Data/.snapshots/<snapshot>/docs/a.txt"). The snapshot is
+// named by its display name or its "~raw~" alias. An unknown snapshot or volume
+// is ErrNotFound (the message lists at most 20 snapshot names, quoted), an
+// encrypted volume ErrEncrypted, a path without a volume ErrNeedsVolume. The
+// path itself is not looked up.
+type Snapshotter interface {
+	SnapshotPath(p, snapshot string) (string, error)
+}
+
+// IsSnapshotsDir reports whether e is the synthetic directory that holds a
+// volume's snapshots (attribute synthetic=snapshots). Recursive operations skip
+// it unless the examiner addresses it.
+func IsSnapshotsDir(e Entry) bool {
+	if e.Type != TypeDir {
+		return false
+	}
+	for _, kv := range e.Attrs {
+		if kv.Key == "synthetic" && kv.Value == "snapshots" {
+			return true
+		}
+	}
+	return false
+}

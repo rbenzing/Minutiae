@@ -99,7 +99,7 @@ func TestNodeBudgetExhaustedInListing(t *testing.T) {
 				t.Fatalf("budget %d: ReadDir = %d entries, %v; want a CorruptError and no entries", n, len(es), err)
 			}
 			failed++
-		case len(es) < 40:
+		case len(es) < 41: // 40 entries and the synthetic .snapshots directory
 			if len(es) == 0 || !hasWarn(f, "listing", "partial") {
 				t.Fatalf("budget %d: %d entries, warnings %q; want a partial listing with a warning", n, len(es), f.Info().Warnings)
 			}

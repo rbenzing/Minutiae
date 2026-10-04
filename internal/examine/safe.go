@@ -120,3 +120,19 @@ func (f *safeFile) Runs() []filesys.Run { return append([]filesys.Run(nil), f.ru
 // Encrypted forwards what the file reported when it was opened
 // (filesys.EncryptedFile).
 func (f *safeFile) Encrypted() bool { return f.enc }
+
+// SnapshotPath implements filesys.Snapshotter for every wrapped filesystem: it
+// forwards to the filesystem when that keeps snapshots (a panic becomes a
+// *filesys.CorruptError) and is an ErrUnsupported error otherwise.
+func (s *safeFS) SnapshotPath(p, snapshot string) (out string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			out, err = "", panicError(s.name, "SnapshotPath", r)
+		}
+	}()
+	sn, ok := s.fs.(filesys.Snapshotter)
+	if !ok {
+		return "", errNoSnapshots()
+	}
+	return sn.SnapshotPath(p, snapshot)
+}

@@ -25,8 +25,10 @@ const (
 	vsRoCompat      = 48
 	vsIncompat      = 56
 	vsRootTreeType  = 116
+	vsSnapMetaType  = 124
 	vsOmapOid       = 128
 	vsRootTreeOid   = 136
+	vsSnapMetaOid   = 152
 	vsRevertToXid   = 160
 	vsNumSnapshots  = 216
 	vsUUID          = 240
@@ -81,8 +83,16 @@ type volume struct {
 	caseInsen bool
 	normInsen bool
 
-	mu   sync.Mutex // guards tree
-	tree *tree      // the live fs tree, once opened
+	snapMetaOid  uint64 // the snapshot-metadata tree
+	snapMetaType uint32
+
+	mu        sync.Mutex       // guards omap, tree and snapTrees
+	omap      *omapView        // the volume object map, once opened
+	tree      *tree            // the live fs tree, once opened
+	snapTrees map[uint64]*tree // the fs tree of each snapshot view, once opened
+
+	snapMu sync.Mutex // guards snaps
+	snaps  *snapList  // the usable snapshots, once read
 }
 
 // folds reports whether name lookups compare case-insensitively (the volume is
@@ -226,6 +236,8 @@ func (f *FS) readVolume(slot int, oid uint64) *volume {
 	v.rootType = le.Uint32(buf[vsRootTreeType:])
 	v.omapOid = le.Uint64(buf[vsOmapOid:])
 	v.rootOid = le.Uint64(buf[vsRootTreeOid:])
+	v.snapMetaType = le.Uint32(buf[vsSnapMetaType:])
+	v.snapMetaOid = le.Uint64(buf[vsSnapMetaOid:])
 	v.snapshots = le.Uint64(buf[vsNumSnapshots:])
 	copy(v.uuid[:], buf[vsUUID:vsUUID+16])
 	v.lastMod = le.Uint64(buf[vsLastModTime:])
@@ -264,8 +276,9 @@ func (f *FS) readVolume(slot int, oid uint64) *volume {
 	return v
 }
 
-// fsTree opens (once) the live file-system tree of v through the volume's
-// object map. An encrypted volume is never opened: the error is ErrEncrypted.
+// fsTree opens (once) the file-system tree of v for a view: the live tree
+// (view 0) through the volume's object map, or the tree of the snapshot whose
+// xid is view. An encrypted volume is never opened: the error is ErrEncrypted.
 func (f *FS) fsTree(v *volume, view uint64) (*tree, error) {
 	if v.encrypted {
 		return nil, v.encryptedErr()
@@ -273,20 +286,20 @@ func (f *FS) fsTree(v *volume, view uint64) (*tree, error) {
 	if !v.readable {
 		return nil, corrupt("volume", int64(v.paddr)*int64(f.bs), "volume %d is unreadable", v.slot)
 	}
-	if !f.viewKnown(v, view) {
-		return nil, fmt.Errorf("apfs: volume %d view %d: %w", v.slot, view, filesys.ErrNotFound)
+	if view != 0 {
+		return f.snapTree(v, view)
 	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.tree != nil {
 		return v.tree, nil
 	}
-	if v.omapOid == 0 || v.rootOid == 0 {
-		return nil, corrupt("volume", int64(v.paddr)*int64(f.bs), "volume %d has no object map or file-system tree", v.slot)
+	if v.rootOid == 0 {
+		return nil, corrupt("volume", int64(v.paddr)*int64(f.bs), "volume %d has no file-system tree", v.slot)
 	}
-	o, err := f.openOmap(v.omapOid)
+	o, err := f.volOmapLocked(v)
 	if err != nil {
-		return nil, fmt.Errorf("apfs: volume %d object map: %w", v.slot, err)
+		return nil, err
 	}
 	t, err := f.openTree(v.rootOid, v.rootType, o)
 	if err != nil {
@@ -295,10 +308,6 @@ func (f *FS) fsTree(v *volume, view uint64) (*tree, error) {
 	v.tree = t
 	return t, nil
 }
-
-// viewKnown reports whether view names a view of v: 0 is the live tree; the
-// snapshot views are added with the snapshot layer.
-func (f *FS) viewKnown(_ *volume, view uint64) bool { return view == 0 }
 
 // featureLine is the Info.Features line of the volume.
 func (v *volume) featureLine() string {

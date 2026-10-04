@@ -378,8 +378,13 @@ func orcCheckVolume(t *testing.T, img []byte, exp *orcExpect) {
 	if lk, err := f.Lookup("/" + ov.Name); err != nil || lk.ID != e.ID || lk.Name != e.Name {
 		t.Errorf("Lookup(volume) = %+v, %v", lk, err)
 	}
-	if kids, err := f.ReadDir(e); err != nil || len(kids) != 0 {
-		t.Errorf("the root directory lists %v, %v; mkapfs writes no entries below it", kids, err)
+	// mkapfs writes no entries below the root; the reader adds the synthetic
+	// .snapshots directory (this volume has no snapshots).
+	kids, err := f.ReadDir(e)
+	if err != nil || len(kids) != 1 || !filesys.IsSnapshotsDir(kids[0]) || kids[0].Name != ".snapshots" {
+		t.Errorf("the root directory lists %v, %v; want only the synthetic .snapshots", kids, err)
+	} else if v, _ := attr(kids[0], "snapshots"); v != fmt.Sprint(ov.NumSnapshots) {
+		t.Errorf(".snapshots reports %q snapshots, the volume has %d", v, ov.NumSnapshots)
 	}
 	if _, err := f.Lookup("/" + ov.Name + "/root"); !errors.Is(err, filesys.ErrNotFound) {
 		t.Errorf("Lookup below the root = %v, want ErrNotFound", err)
@@ -393,8 +398,8 @@ func orcCheckVolume(t *testing.T, img []byte, exp *orcExpect) {
 		t.Errorf("inode 1 has no record: ReadDir = %v", err)
 	}
 	var walked int
-	if err := filesys.Walk(f, f.Root(), "/", func(string, filesys.Entry, error) error { walked++; return nil }); err != nil || walked != 1 {
-		t.Errorf("Walk visited %d entries, %v", walked, err)
+	if err := filesys.Walk(f, f.Root(), "/", func(string, filesys.Entry, error) error { walked++; return nil }); err != nil || walked != 2 {
+		t.Errorf("Walk visited %d entries (the volume and its .snapshots), %v", walked, err)
 	}
 	if w := f.Info().Warnings; len(w) != 0 {
 		t.Errorf("warnings on a real container: %q", w)

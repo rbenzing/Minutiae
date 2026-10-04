@@ -2,6 +2,7 @@ package apfs
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"slices"
@@ -52,7 +53,9 @@ func (f *FS) nodeTarget(id string) (v *volume, view, ino uint64, err error) {
 	if !v.readable {
 		return nil, 0, 0, corrupt("volume", int64(v.paddr)*int64(f.bs), "volume %d is unreadable", v.slot)
 	}
-	if !f.viewKnown(v, view) {
+	if ok, err := f.viewKnown(v, view); err != nil {
+		return nil, 0, 0, err
+	} else if !ok {
 		return nil, 0, 0, notFound("entry ID %q names no snapshot view", id)
 	}
 	return v, view, ino, nil
@@ -74,11 +77,10 @@ func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
 		}
 		return out, nil
 	case idSnaps:
-		// The .snapshots directory is added with the snapshot layer.
 		if err := f.snapsTarget(slot, dir.ID); err != nil {
 			return nil, err
 		}
-		return nil, notFound("entry ID %q: no snapshots", dir.ID)
+		return f.listSnapshots(f.slots[slot])
 	}
 	v, view, ino, err := f.nodeTarget(dir.ID)
 	if err != nil {
@@ -93,11 +95,17 @@ func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
 	}
 	var out []filesys.Entry
 	var ferr error
+	shadow := shadowsSnapshots(view, ino)
 	err = f.scanDir(v, view, ino, func(d *drec) bool {
 		e, err := f.dirEntry(v, view, d)
 		if err != nil {
 			ferr = err
 			return true
+		}
+		if shadow && string(d.name) == snapshotsDirName {
+			// A real directory of that name: the synthetic one wins, this one is
+			// shown (and found) in its ~raw~ form.
+			e.Name, e.RawName = rawPrefix+base64.RawURLEncoding.EncodeToString(d.name), slices.Clone(d.name)
 		}
 		out = append(out, e)
 		return false
@@ -109,13 +117,30 @@ func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
 		// The shared budget rule: spent before the first entry the listing is an
 		// error, spent mid-directory it is cut short with a warning.
 		f.warn("volume %d directory %d: the node read budget is exhausted; the listing is partial (%d entries)", v.slot, ino, len(out))
-		return out, nil
+		err = nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	if shadow {
+		// The synthetic .snapshots directory of the volume, shown even when empty.
+		se, serr := f.snapsEntry(v)
+		switch {
+		case serr == nil:
+			out = append(out, se)
+		case errors.Is(serr, errNodeBudget) && len(out) > 0:
+			// The same rule as for the entries: a partial listing and a warning.
+			f.warn("volume %d directory %d: the node read budget is exhausted; the listing is partial (the .snapshots directory is missing)", v.slot, ino)
+		default:
+			return nil, serr
+		}
+	}
 	return out, nil
 }
+
+// shadowsSnapshots reports whether a directory is the live root of a volume,
+// where the synthetic .snapshots directory lives.
+func shadowsSnapshots(view, ino uint64) bool { return view == 0 && ino == rootIno }
 
 // snapsTarget validates the volume of a snaps:<n> ID without touching the
 // disk: a volume that does not exist is ErrNotFound, an encrypted one
@@ -259,9 +284,19 @@ func (f *FS) Lookup(p string) (filesys.Entry, error) {
 	if v.encrypted {
 		return filesys.Entry{}, v.encryptedErr()
 	}
-	dirIno := uint64(rootIno)
+	var (
+		dirIno = uint64(rootIno)
+		view   uint64
+		kind   = idNode
+	)
 	for i, c := range comps[1:] {
-		next, err := f.child(v, 0, dirIno, c)
+		var next filesys.Entry
+		var err error
+		if kind == idSnaps {
+			next, err = f.snapshotChild(v, c)
+		} else {
+			next, err = f.child(v, view, dirIno, c)
+		}
 		if err != nil {
 			if errors.Is(err, errNoChild) {
 				err = notFound("%q", p)
@@ -275,7 +310,7 @@ func (f *FS) Lookup(p string) (filesys.Entry, error) {
 		if cur.Type != filesys.TypeDir {
 			return filesys.Entry{}, notFound("%q: %q is not a directory", p, cur.Name)
 		}
-		_, _, _, dirIno, _ = parseEntryID(cur.ID)
+		kind, _, view, dirIno, _ = parseEntryID(cur.ID)
 	}
 	return cur, nil
 }
@@ -301,6 +336,10 @@ func (f *FS) matchVolume(comp string) *volume {
 
 // child finds the entry of directory dirIno named comp.
 func (f *FS) child(v *volume, view, dirIno uint64, comp string) (filesys.Entry, error) {
+	shadow := shadowsSnapshots(view, dirIno)
+	if shadow && comp == snapshotsDirName {
+		return f.snapsEntry(v) // the synthetic directory wins over a real one of that name
+	}
 	alt, hasAlt := rawAlias(comp)
 	fold := v.folds() && utf8.ValidString(comp) && comp != "." && comp != ".."
 	var exact, alias, folded *drec
@@ -312,6 +351,14 @@ func (f *FS) child(v *volume, view, dirIno uint64, comp string) (filesys.Entry, 
 	err := f.scanDir(v, view, dirIno, func(d *drec) bool {
 		plain := plainName(d.name)
 		isAlt := hasAlt && bytes.Equal(d.name, alt)
+		if shadow && string(d.name) == snapshotsDirName {
+			// Reached only through its ~raw~ alias, never by name or by folding.
+			if isAlt {
+				exact = keep(d)
+				return true
+			}
+			return false
+		}
 		switch {
 		case plain && string(d.name) == comp, !plain && isAlt:
 			exact = keep(d)
@@ -327,9 +374,14 @@ func (f *FS) child(v *volume, view, dirIno uint64, comp string) (filesys.Entry, 
 		return filesys.Entry{}, err
 	}
 	for _, d := range []*drec{exact, alias, folded} {
-		if d != nil {
-			return f.dirEntry(v, view, d)
+		if d == nil {
+			continue
 		}
+		e, err := f.dirEntry(v, view, d)
+		if err == nil && shadow && string(d.name) == snapshotsDirName {
+			e.Name, e.RawName = rawPrefix+base64.RawURLEncoding.EncodeToString(d.name), slices.Clone(d.name)
+		}
+		return e, err
 	}
 	return filesys.Entry{}, errNoChild
 }

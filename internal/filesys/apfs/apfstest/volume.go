@@ -59,6 +59,9 @@ type Volume struct {
 	// sorted record list (to build out-of-order trees).
 	Extra   []FSRecord
 	Reorder func([]FSRecord) []FSRecord
+
+	// Snapshots are the volume's snapshots, oldest first; Files is the live tree.
+	Snapshots []Snapshot
 }
 
 // Times are the four inode times in nanoseconds since 1970; zero means the
@@ -141,6 +144,12 @@ type VolumeGeo struct {
 	// DataStart is the first block of the data blocks the builder wrote for each
 	// path that has file data (physical placement order, see File.Fragments).
 	DataStart map[string]uint64
+	// LiveXid is the xid of the live fs tree (above every snapshot xid when the
+	// volume has snapshots); MetaNodes, OmapSnapNodes and Snapshots locate the
+	// snapshot objects.
+	LiveXid       uint64
+	OmapSnapNodes []uint64
+	Snapshots     []SnapGeo
 }
 
 // Extent is one file-extent record written verbatim. Phys is the physical
@@ -162,8 +171,19 @@ func (o Options) buildVolume(slot int, v Volume, first uint64, da *dataAlloc) (V
 	recs, inodes, cnt, nextID, dataStart := v.compile(da)
 	vg := VolumeGeo{Slot: slot, Oid: VolumeOid(slot), First: first, Inodes: inodes, NextObjectID: nextID, DataStart: dataStart}
 
+	// Without snapshots the volume's objects are at xid 1, below every checkpoint;
+	// with them the live tree is the newest state: above every snapshot xid.
+	liveXid := uint64(volXid)
+	if len(v.Snapshots) > 0 {
+		liveXid = uint64(len(v.Snapshots)) + 2
+		if liveXid > o.Xid {
+			panic("apfstest: the snapshots do not fit below the checkpoint xid")
+		}
+	}
+	vg.LiveXid = liveXid
+
 	spec := TreeSpec{
-		BlockSize: bs, BTFlags: 0x40, Storage: StorageVirtual, Xid: volXid,
+		BlockSize: bs, BTFlags: 0x40, Storage: StorageVirtual, Xid: liveXid,
 		MaxKeys: v.TreeMaxKeys, Hashed: v.Sealed,
 	}
 	oidNext := uint64(fsOidBase + slot*fsOidStride)
@@ -172,22 +192,44 @@ func (o Options) buildVolume(slot int, v Volume, first uint64, da *dataAlloc) (V
 		oidNext++
 		return 0, oid
 	})
+	snaps := v.packSnapshots(spec, da, fsBlocks[0].Oid, &oidNext)
 	if oidNext > uint64(fsOidBase+(slot+1)*fsOidStride) {
 		panic("apfstest: volume fs tree has too many nodes")
 	}
-	// The volume object map: one record per fs-tree node.
-	omapRecs := func(addrs []uint64) []OmapEntry {
-		es := make([]OmapEntry, len(fsBlocks))
-		for i, b := range fsBlocks {
-			es[i] = OmapEntry{Oid: b.Oid, Xid: volXid}
-			if addrs != nil {
-				es[i].Paddr = addrs[i]
+	if v.NumSnapshots == 0 {
+		v.NumSnapshots = uint64(len(snaps))
+	}
+
+	// The volume object map: one record per fs-tree node, at the xid of the tree
+	// it belongs to (the shared root oid has one record per tree).
+	omapEntries := func() []OmapEntry {
+		var es []OmapEntry
+		for _, b := range fsBlocks {
+			es = append(es, OmapEntry{Oid: b.Oid, Xid: liveXid, Paddr: b.Addr})
+		}
+		for _, st := range snaps {
+			for _, b := range st.blocks {
+				es = append(es, OmapEntry{Oid: b.Oid, Xid: st.xid, Paddr: b.Addr})
 			}
 		}
 		return es
 	}
+	size := func(spec TreeSpec, recs []Rec) int {
+		return len(PackTree(spec, recs, func() (uint64, uint64) { return 0, 0 }))
+	}
 	omapSpec := OmapTreeSpec(bs, volXid, 0)
-	nOmap := len(PackTree(omapSpec, OmapRecs(omapRecs(nil), bs), func() (uint64, uint64) { return 0, 0 }))
+	nOmap := size(omapSpec, OmapRecs(omapEntries(), bs))
+	metaSpec := TreeSpec{BlockSize: bs, BTFlags: 0x50, Storage: StoragePhysical, Xid: volXid}
+	nMeta := size(metaSpec, metaRecs(snaps))
+	osnaps := omapSnaps(snaps)
+	osnapSpec := TreeSpec{
+		BlockSize: bs, Fixed: true, KeySize: 8, ValSize: 16,
+		BTFlags: 0x10, Storage: StoragePhysical, Xid: volXid,
+	}
+	nOsnap := 0
+	if len(osnaps) > 0 {
+		nOsnap = size(osnapSpec, snapRecs(osnaps))
+	}
 
 	next := first
 	take := func() uint64 { a := next; next++; return a }
@@ -197,6 +239,10 @@ func (o Options) buildVolume(slot int, v Volume, first uint64, da *dataAlloc) (V
 	next += uint64(nOmap)
 	vg.ExtentRef = take()
 	vg.SnapMeta = take()
+	metaExtra := make([]uint64, nMeta-1)
+	for i := range metaExtra {
+		metaExtra[i] = take()
+	}
 	addrs := make([]uint64, len(fsBlocks))
 	for i := range fsBlocks {
 		addrs[i] = take()
@@ -204,13 +250,28 @@ func (o Options) buildVolume(slot int, v Volume, first uint64, da *dataAlloc) (V
 		vg.FsNodes = append(vg.FsNodes, addrs[i])
 		vg.FsOids = append(vg.FsOids, fsBlocks[i].Oid)
 	}
+	for _, st := range snaps {
+		sg := SnapGeo{Xid: st.xid}
+		for i := range st.blocks {
+			st.blocks[i].Addr = take()
+			sg.FsNodes = append(sg.FsNodes, st.blocks[i].Addr)
+			sg.FsOids = append(sg.FsOids, st.blocks[i].Oid)
+		}
+		if !st.s.NoSblock {
+			st.sblock = take()
+			sg.Sblock = st.sblock
+		}
+		vg.Snapshots = append(vg.Snapshots, sg)
+	}
+	osnapBase := next
+	next += uint64(nOsnap)
 	vg.End = next
 	if next > uint64(o.Blocks) {
 		panic("apfstest: container too small for its volumes")
 	}
 
 	omapNext := omapBase
-	omapTree := PackTree(omapSpec, OmapRecs(omapRecs(addrs), bs), func() (uint64, uint64) {
+	omapTree := PackTree(omapSpec, OmapRecs(omapEntries(), bs), func() (uint64, uint64) {
 		a := omapNext
 		omapNext++
 		return a, a
@@ -218,8 +279,34 @@ func (o Options) buildVolume(slot int, v Volume, first uint64, da *dataAlloc) (V
 	for _, b := range omapTree {
 		vg.OmapNodes = append(vg.OmapNodes, b.Addr)
 	}
+	var osnapTree []Block
+	if nOsnap > 0 {
+		osnapNext := osnapBase
+		osnapTree = PackTree(osnapSpec, snapRecs(osnaps), func() (uint64, uint64) {
+			a := osnapNext
+			osnapNext++
+			return a, a
+		})
+		for _, b := range osnapTree {
+			vg.OmapSnapNodes = append(vg.OmapSnapNodes, b.Addr)
+		}
+	}
+	// The snapshot-metadata tree: its root is at vg.SnapMeta, allocated last.
+	metaCall := 0
+	metaTree := PackTree(metaSpec, metaRecs(snaps), func() (uint64, uint64) {
+		a := vg.SnapMeta
+		if metaCall < len(metaExtra) {
+			a = metaExtra[metaCall]
+		}
+		metaCall++
+		return a, a
+	})
+	var snapRoot uint64
+	if len(osnapTree) > 0 {
+		snapRoot = osnapTree[0].Addr
+	}
 	omapPhys := make([]byte, bs)
-	OmapPhys(omapPhys, vg.Omap, volXid, 0, 0, omapTree[0].Addr, 0)
+	OmapPhys(omapPhys, vg.Omap, volXid, 0, uint32(len(osnaps)), omapTree[0].Addr, snapRoot)
 	sealBlock(omapPhys)
 
 	emptySpec := TreeSpec{BlockSize: bs, BTFlags: 0x50, Storage: StoragePhysical, Xid: volXid}
@@ -234,10 +321,20 @@ func (o Options) buildVolume(slot int, v Volume, first uint64, da *dataAlloc) (V
 	blocks := []Block{
 		{Addr: vg.Super, Oid: vg.Oid, Data: sb},
 		{Addr: vg.Omap, Oid: vg.Omap, Data: omapPhys},
-		emptyAt(vg.ExtentRef), emptyAt(vg.SnapMeta),
+		emptyAt(vg.ExtentRef),
 	}
+	blocks = append(blocks, metaTree...)
 	blocks = append(blocks, omapTree...)
+	blocks = append(blocks, osnapTree...)
 	blocks = append(blocks, fsBlocks...)
+	for _, st := range snaps {
+		blocks = append(blocks, st.blocks...)
+		if st.sblock != 0 {
+			b := make([]byte, bs)
+			v.writeSnapSuper(b, vg, st, fsBlocks[0].Oid)
+			blocks = append(blocks, Block{Addr: st.sblock, Oid: st.sblock, Data: b})
+		}
+	}
 	sort.Slice(blocks, func(i, j int) bool { return blocks[i].Addr < blocks[j].Addr })
 	if uint64(len(blocks)) != vg.End-vg.First {
 		panic("apfstest: volume blocks are not contiguous")
@@ -276,7 +373,11 @@ func (v Volume) writeSuper(b []byte, vg VolumeGeo, rootOid uint64, c counts, nex
 	le.PutUint64(b[192:], c.dirs)
 	le.PutUint64(b[200:], c.symlinks)
 	le.PutUint64(b[208:], c.other)
-	le.PutUint64(b[216:], v.NumSnapshots)
+	numSnaps := v.NumSnapshots
+	if numSnaps == 0 {
+		numSnaps = uint64(len(v.Snapshots))
+	}
+	le.PutUint64(b[216:], numSnaps)
 	copy(b[240:256], v.UUID[:])
 	le.PutUint64(b[256:], v.LastModTime)
 	var flags uint64

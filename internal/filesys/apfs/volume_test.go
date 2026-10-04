@@ -67,7 +67,15 @@ func mustLookup(t *testing.T, f *apfs.FS, p string) filesys.Entry {
 	return e
 }
 
+// mustReadDir lists dir without the synthetic .snapshots directory every volume
+// root carries (the snapshot tests use readDirAll to see it).
 func mustReadDir(t *testing.T, f *apfs.FS, dir filesys.Entry) []filesys.Entry {
+	t.Helper()
+	return slices.DeleteFunc(readDirAll(t, f, dir), filesys.IsSnapshotsDir)
+}
+
+// readDirAll lists dir as ReadDir returns it.
+func readDirAll(t *testing.T, f *apfs.FS, dir filesys.Entry) []filesys.Entry {
 	t.Helper()
 	es, err := f.ReadDir(dir)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -302,6 +303,7 @@ func lsLine(shown string, e filesys.Entry) string {
 
 func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 	var recursive, deleted bool
+	var snapshot string
 	cmd := &cobra.Command{
 		Use:   "ls <ref> [<path>]",
 		Short: "List a directory of an image's filesystem",
@@ -319,6 +321,7 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 	partition := partitionFlag(cmd, "partition index (default: the only partition with a recognized filesystem)")
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "list the whole subtree with full paths")
 	cmd.Flags().BoolVar(&deleted, "deleted", false, "also show deleted directory entries")
+	cmd.Flags().StringVar(&snapshot, "snapshot", "", "list the path as it was in this snapshot (APFS; the path must name a volume, output paths are /<volume>/.snapshots/<name>/...)")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		pidx, err := partition()
 		if err != nil {
@@ -338,6 +341,21 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		known := len(fsys.Info().Warnings) // those from opening are in `image info`
+		if cmd.Flags().Changed("snapshot") {
+			if strings.HasPrefix(dirRef, "id:") {
+				return usageErrorf("--snapshot needs a volume path, not %s", escapeText(dirRef))
+			}
+			mapped, err := s.SnapshotPath(fsys, snapshot, dirRef)
+			switch {
+			case errors.Is(err, filesys.ErrUnsupported):
+				return usageErrorf("--snapshot: %s", escapeText(err.Error()))
+			case errors.Is(err, filesys.ErrNeedsVolume):
+				return usageErrorf("--snapshot needs a volume path (for example /Data): %s", escapeText(err.Error()))
+			case err != nil:
+				return err
+			}
+			dirRef = mapped
+		}
 		dir, dirPath, err := s.Lookup(fsys, dirRef)
 		if err != nil {
 			return err
@@ -392,6 +410,11 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 					return nil
 				}
 				emit(p, e)
+				if jsonErr == nil && filesys.IsSnapshotsDir(e) {
+					// Listed, but not descended into: name a snapshot (--snapshot, or a
+					// path below .snapshots) to see inside.
+					return filesys.SkipDir
+				}
 				return jsonErr
 			})
 		default:
