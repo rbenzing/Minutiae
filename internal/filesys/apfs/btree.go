@@ -354,8 +354,16 @@ type scanner struct {
 	nodes   int    // nodes read
 	keys    uint64 // leaf entries seen, ghosts included
 	inRange bool   // a record of the range was seen
-	ooo     bool   // a record sorted before the range after one inside it: the tree is out of order
+	ooo     bool   // the records are not in strictly increasing key order
 	stop    bool
+
+	// order, when set, makes the scan verify that every record it meets (also
+	// the ones after the range, up to the end of the leaf that holds the first
+	// of them) sorts strictly after the previous one.
+	order    func(prev, cur []byte) bool
+	prev     []byte
+	havePrev bool
+	beyond   bool // a record after the range was seen; the rest of the leaf is only order-checked
 }
 
 // scan visits, in key order, the leaf records for which prefix returns 0.
@@ -376,20 +384,28 @@ type scanner struct {
 // (nil prefix) that runs to the end also checks bt_node_count and bt_key_count
 // and warns when they disagree with what was read.
 func (t *tree) scan(prefix func(key []byte) int, visit func(key, val []byte) (stop bool, err error)) error {
-	_, err := t.scanOrdered(prefix, visit)
+	_, err := t.scanOrdered(prefix, nil, visit)
 	return err
 }
 
 // scanOrdered is scan that also reports whether the scan ended early because
 // the tree is out of key order (records of the range may then have been missed:
 // a caller that must not mistake that for the end of the range checks it).
-func (t *tree) scanOrdered(prefix func(key []byte) int, visit func(key, val []byte) (stop bool, err error)) (outOfOrder bool, err error) {
+// Without order, only a record sorting before the range after one inside it is
+// noticed. With order (a strict "prev sorts before cur" test), every record read
+// is checked against its predecessor, and after the first record beyond the
+// range the rest of that leaf is read too, so a record of the range that
+// follows a larger key is found: a record that is not strictly greater than the
+// previous one, or a range record after a larger key, ends the scan with
+// outOfOrder true. Records in later leaves are not read (the index keys say
+// they sort after the range).
+func (t *tree) scanOrdered(prefix func(key []byte) int, order func(prev, cur []byte) bool, visit func(key, val []byte) (stop bool, err error)) (outOfOrder bool, err error) {
 	limit := t.f.nodeBudget
 	if n := t.info.nodeCount; n > 0 && n < uint64(limit) {
 		limit = int(n) // the tree says how many nodes it has
 	}
 	s := &scanner{
-		t: t, prefix: prefix, visit: visit,
+		t: t, prefix: prefix, visit: visit, order: order,
 		visited: map[uint64]struct{}{t.rootAddr: {}},
 		limit:   limit, budget: limit - 1, nodes: 1, // the root
 	}
@@ -501,8 +517,23 @@ func (s *scanner) load(parent *btNode, val []byte) (*btNode, error) {
 func (s *scanner) leaf(n *btNode) error {
 	s.keys += uint64(len(n.recs) + n.ghosts)
 	for _, r := range n.recs {
+		if s.order != nil {
+			if s.havePrev && !s.order(s.prev, r.key) {
+				s.t.f.warn("B-tree node at block %d is out of key order: scan stopped", n.addr)
+				s.ooo, s.stop = true, true
+				return nil
+			}
+			s.prev, s.havePrev = r.key, true
+			if s.beyond {
+				continue // only the order is checked from here to the end of the leaf
+			}
+		}
 		switch c := s.cmp(r.key); {
 		case c > 0:
+			if s.order != nil {
+				s.beyond = true // keep reading this leaf: a record of the range after this one means the tree is out of order
+				continue
+			}
 			s.stop = true
 			return nil
 		case c < 0:
@@ -523,6 +554,9 @@ func (s *scanner) leaf(n *btNode) error {
 				return nil
 			}
 		}
+	}
+	if s.beyond {
+		s.stop = true
 	}
 	return nil
 }

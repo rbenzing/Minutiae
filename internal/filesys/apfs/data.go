@@ -1,6 +1,7 @@
 package apfs
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -75,7 +76,7 @@ func (f *FS) Open(e filesys.Entry) (filesys.File, error) {
 		size = in.size
 	}
 	if size == 0 {
-		return &file{r: f.data}, nil
+		return &file{r: f.data, enc: cryptoAnomaly(in.cryptoID)}, nil
 	}
 	m, err := f.fileMap(v, view, in, size)
 	if err != nil {
@@ -88,7 +89,7 @@ func (f *FS) Open(e filesys.Entry) (filesys.File, error) {
 		}
 		f.warn("volume %d inode %d: per-file encryption (crypto id %#x): the content is returned as stored on disk (ciphertext), not decrypted", v.slot, ino, id)
 	}
-	fl := &file{r: f.data, size: size, avail: m.covered, runs: m.runs, tail: m.tail}
+	fl := &file{r: f.data, size: size, avail: m.covered, runs: m.runs, tail: m.tail, enc: cryptoAnomaly(in.cryptoID) || m.cryptoSeen}
 	fl.starts = make([]int64, len(m.runs))
 	var at int64
 	for i, r := range m.runs {
@@ -173,10 +174,11 @@ func (f *FS) fileMap(v *volume, view uint64, in *inode, size int64) (*fileMap, e
 	m := &fileMap{}
 	rb := &runBuilder{max: f.maxFileRuns}
 	var (
-		pos     int64  // bytes of the file the runs cover
-		prevEnd uint64 // end of the previous extent as the records state it
-		reason  string // why the prefix ends, when it does
-		records int
+		pos         int64  // bytes of the file the runs cover
+		prevEnd     uint64 // end of the previous extent as the records state it
+		reason      string // why the prefix ends, when it does
+		records     int
+		flagsWarned bool
 	)
 	capReason := fmt.Sprintf("more than %d runs", f.maxFileRuns)
 
@@ -205,7 +207,7 @@ func (f *FS) fileMap(v *volume, view uint64, in *inode, size int64) (*fileMap, e
 			return 0
 		}
 		bsz := uint64(f.bs)
-		ooo, err := t.scanOrdered(prefix, func(key, val []byte) (bool, error) {
+		ooo, err := t.scanOrdered(prefix, fsKeyInOrder, func(key, val []byte) (bool, error) {
 			if records++; records > maxExtentRecords {
 				reason = fmt.Sprintf("more than %d extent records", maxExtentRecords)
 				return true, nil
@@ -216,7 +218,12 @@ func (f *FS) fileMap(v *volume, view uint64, in *inode, size int64) (*fileMap, e
 			}
 			logical := le.Uint64(key[8:])
 			if logical >= uint64(size) {
-				return true, nil // this extent and every later one lies beyond the end of the file
+				// Past the end of the file (preallocation, say): ignored for the
+				// content and not validated, but the scan goes on. Stopping here
+				// would hide a real extent that follows a damaged record; the
+				// scanner reports any record that is not strictly greater than
+				// the previous one, so such an extent ends the trusted prefix.
+				return false, nil
 			}
 			lenFlags := le.Uint64(val)
 			length, flags := lenFlags&extentLenMask, uint8(lenFlags>>56)
@@ -244,7 +251,8 @@ func (f *FS) fileMap(v *volume, view uint64, in *inode, size int64) (*fileMap, e
 			if reason != "" {
 				return true, nil
 			}
-			if flags != 0 {
+			if flags != 0 && !flagsWarned {
+				flagsWarned = true // one warning per file
 				f.warn("volume %d inode %d: extent at logical address %d has flags %#x, none are defined", v.slot, in.ino, logical, flags)
 			}
 			if !m.cryptoSeen && cryptoAnomaly(crypto) {
@@ -270,7 +278,7 @@ func (f *FS) fileMap(v *volume, view uint64, in *inode, size int64) (*fileMap, e
 			return false, nil
 		})
 		switch {
-		case err != nil && !errors.Is(err, filesys.ErrCorrupt) && !errors.Is(err, filesys.ErrNotFound) && !isShort(err):
+		case err != nil && (errors.Is(err, errNodeBudget) || (!errors.Is(err, filesys.ErrCorrupt) && !errors.Is(err, filesys.ErrNotFound) && !isShort(err))):
 			return nil, fmt.Errorf("apfs: volume %d inode %d: extents: %w", v.slot, in.ino, err)
 		case err != nil && reason == "":
 			reason = fmt.Sprintf("the extent tree cannot be read: %v", err)
@@ -304,6 +312,7 @@ type file struct {
 	runs   []filesys.Run // file order, trimmed to avail
 	starts []int64       // starts[i] is the file offset where runs[i] begins
 	tail   error         // what reading [avail, size) returns; nil when avail == size
+	enc    bool          // the dstream or an extent carries a key of its own (the content is ciphertext)
 }
 
 // Size is the content length.
@@ -366,3 +375,27 @@ func (fl *file) ReadAt(p []byte, off int64) (int, error) {
 	}
 	return int(n), nil
 }
+
+// fsKeyInOrder reports whether cur sorts strictly after prev in an fs-tree:
+// by object id, then record type, then (for two extents of one file) logical
+// address. Two other records with the same id and type are in order unless
+// their keys are identical (their type-specific order is not checked here).
+func fsKeyInOrder(prev, cur []byte) bool {
+	pk, ck := le.Uint64(prev), le.Uint64(cur)
+	if pid, cid := pk&jobjIDMask, ck&jobjIDMask; pid != cid {
+		return pid < cid
+	}
+	if pt, ct := uint8(pk>>60), uint8(ck>>60); pt != ct {
+		return pt < ct
+	}
+	if uint8(ck>>60) == fsTypeFileExtent && len(prev) == extentKeySize && len(cur) == extentKeySize {
+		return le.Uint64(prev[8:]) < le.Uint64(cur[8:])
+	}
+	return !bytes.Equal(prev, cur)
+}
+
+// Encrypted reports a file with a key of its own (a crypto id other than 0 and
+// CRYPTO_SW_ID on its dstream or any extent): the bytes are returned as stored
+// (filesys.EncryptedFile). A listing only sees the dstream id; this also sees
+// the extents.
+func (fl *file) Encrypted() bool { return fl.enc }

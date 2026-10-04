@@ -1004,3 +1004,34 @@ func TestExtractWarningsAreCappedButSkippedIsAuthoritative(t *testing.T) {
 		t.Errorf("audit has %d analysis.warning entries, want all %d", got, n)
 	}
 }
+
+// encFile is a file that reports itself encrypted (as the APFS reader does for
+// a file whose extents, not its listing, carry a key).
+type encFile struct{ filesys.File }
+
+func (encFile) Encrypted() bool { return true }
+
+// A file that reports itself encrypted when opened makes the artifact carry
+// Derived.Encrypted even though its listing entry was not flagged.
+func TestExtractFlagsFileThatReportsItselfEncrypted(t *testing.T) {
+	c := newCase(t)
+	hook := hookFS{mapFile: func(e filesys.Entry, f filesys.File) filesys.File {
+		if e.Name == "key.bin" {
+			return encFile{f}
+		}
+		return f
+	}}
+	s, _ := sessionHook(t, c, hook, 0,
+		fstest.Node{Path: "/key.bin", Data: []byte("ciphertext")},
+		fstest.Node{Path: "/plain.bin", Data: []byte("plain")})
+	sum := extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: []string{"/"}, Recursive: true})
+	got := map[string]bool{}
+	for _, a := range sum.Artifacts {
+		if d := a.Source.Derived; d != nil {
+			got[path.Base(a.Source.RemotePath)] = d.Encrypted
+		}
+	}
+	if len(got) != 2 || !got["key.bin"] || got["plain.bin"] {
+		t.Errorf("Derived.Encrypted by file = %v, want key.bin true and plain.bin false", got)
+	}
+}

@@ -49,6 +49,21 @@ type File interface {
 	Runs() []Run
 }
 
+// EncryptedFile is implemented by a File that knows its content is stored
+// encrypted (for example a file with its own key, which only its extents
+// reveal) and is returned as stored. Entry.Encrypted is what a listing can say
+// cheaply; this reports what opening the file found.
+type EncryptedFile interface {
+	File
+	Encrypted() bool
+}
+
+// FileEncrypted reports whether f reports itself encrypted (see EncryptedFile).
+func FileEncrypted(f File) bool {
+	e, ok := f.(EncryptedFile)
+	return ok && e.Encrypted()
+}
+
 // Run is a byte range. In File.Runs an Offset of -1 is a sparse hole.
 type Run struct{ Offset, Length int64 }
 

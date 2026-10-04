@@ -204,7 +204,7 @@ func (f *FS) inodeEntry(v *volume, view uint64, in *inode, name string, raw []by
 		e.Size = in.size
 	}
 	if in.compressed() {
-		add("compressed", "true")
+		add("compressed", in.decmpfs)
 	}
 	// A file with a key of its own (a dstream crypto id other than 0 and
 	// CRYPTO_SW_ID); Open reports it too when only an extent carries the id.

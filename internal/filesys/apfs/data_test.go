@@ -2,6 +2,7 @@ package apfs_test
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -291,9 +292,9 @@ func TestSymlinkOpenReturnsTarget(t *testing.T) {
 }
 
 func TestCompressedFileUnsupported(t *testing.T) {
-	f, _ := openOpts(t, volOpts(dataVolume(apfstest.File{Path: "/c", Data: pattern(50, 1), CompressedFlag: true, UncompressedSize: 9999})))
+	f, _ := openOpts(t, volOpts(dataVolume(apfstest.File{Path: "/c", Data: pattern(50, 1), CompressedFlag: true, UncompressedSize: 9999, Xattrs: []apfstest.Xattr{{Name: "com.apple.decmpfs", Value: decmpfs(3)}}})))
 	e := mustLookup(t, f, "/Data/c")
-	if v, ok := attr(e, "compressed"); !ok || v != "true" || e.Size != 9999 {
+	if v, ok := attr(e, "compressed"); !ok || v != "zlib-attr" || e.Size != 9999 {
 		t.Errorf("entry %+v: the listing must still show the compressed file", e)
 	}
 	_, err := f.Open(e)
@@ -410,7 +411,7 @@ func TestBrokenExtentsKeepTrustedPrefix(t *testing.T) {
 		warn   string
 	}{
 		{"overlap", []apfstest.Extent{{Logical: bs, Length: 2 * bs, Rel: true, Phys: 2}}, 2 * bs, "overlap"},
-		{"backwards", []apfstest.Extent{good2, {Logical: 0, Length: bs, Rel: true, Phys: 4}}, 4 * bs, "overlap"},
+		{"backwards", []apfstest.Extent{good2, {Logical: 0, Length: bs, Rel: true, Phys: 4}}, 4 * bs, "out of key order"},
 		{"unaligned", []apfstest.Extent{{Logical: 2*bs + 1, Length: bs, Rel: true, Phys: 2}}, 2 * bs, "aligned"},
 		{"zero length", []apfstest.Extent{{Logical: 2 * bs, Length: 0, Rel: true, Phys: 2}}, 2 * bs, "length"},
 		{"length not a block multiple", []apfstest.Extent{{Logical: 2 * bs, Length: bs + 1, Rel: true, Phys: 2}}, 2 * bs, "length"},
@@ -761,5 +762,238 @@ func TestExtentScanCountIsBounded(t *testing.T) {
 	}
 	if got := f.Scans() - before; got != 2 {
 		t.Errorf("Open made %d tree scans, want 2", got)
+	}
+}
+
+// moveBeforeExtent returns a Reorder that moves the record chosen by from to just
+// before the extent record number before (0-based) of object 40.
+func moveBeforeExtent(t *testing.T, from func(recs []apfstest.FSRecord) int, before int) func([]apfstest.FSRecord) []apfstest.FSRecord {
+	return func(recs []apfstest.FSRecord) []apfstest.FSRecord {
+		src := from(recs)
+		moved := recs[src]
+		out := slices.Delete(slices.Clone(recs), src, src+1)
+		n := 0
+		for i, r := range out {
+			if r.ID == 40 && r.Type == apfstest.TypeFileExtent {
+				if n == before {
+					return slices.Insert(out, i, moved)
+				}
+				n++
+			}
+		}
+		t.Fatal("extent record not found")
+		return recs
+	}
+}
+
+func lastRecord(recs []apfstest.FSRecord) int { return len(recs) - 1 }
+
+// A record of a LARGER object id between two extents of one file: the tree is
+// out of order, so the second extent is not reachable by the seek. The file
+// keeps the first extent as its trusted prefix; the missing tail is never a
+// hole of zeros.
+func TestLargerIDRecordBetweenExtentsEndsPrefix(t *testing.T) {
+	data := pattern(4*bs, 12)
+	v := dataVolume(apfstest.File{Path: "/b", Ino: 40, Data: data, Extents: []apfstest.Extent{
+		{Logical: 0, Length: 2 * bs, Rel: true}, {Logical: 2 * bs, Length: 2 * bs, Rel: true, Phys: 2},
+	}})
+	v.Files = append(v.Files, apfstest.File{Path: "/later", Ino: 50, Data: pattern(10, 1)})
+	v.Reorder = moveBeforeExtent(t, lastRecord, 1)
+	f, _ := openOpts(t, volOpts(v))
+	fl := openPath(t, f, "/Data/b")
+	wantPrefix(t, f, fl, data, 2*bs)
+	if !hasWarn(f, "out of key order") {
+		t.Errorf("warnings %q", f.Info().Warnings)
+	}
+}
+
+// The larger-id record sits before the first extent: no extent is reached at
+// all. That must be an empty trusted prefix, not an all-hole file.
+func TestLargerIDRecordBeforeFirstExtentIsEmptyPrefix(t *testing.T) {
+	data := pattern(4*bs, 12)
+	v := dataVolume(apfstest.File{Path: "/b", Ino: 40, Data: data, Extents: []apfstest.Extent{
+		{Logical: 0, Length: 2 * bs, Rel: true}, {Logical: 2 * bs, Length: 2 * bs, Rel: true, Phys: 2},
+	}})
+	v.Files = append(v.Files, apfstest.File{Path: "/later", Ino: 50, Data: pattern(10, 1)})
+	v.Reorder = moveBeforeExtent(t, lastRecord, 0)
+	f, _ := openOpts(t, volOpts(v))
+	fl := openPath(t, f, "/Data/b")
+	wantPrefix(t, f, fl, data, 0)
+	if !hasWarn(f, "out of key order") {
+		t.Errorf("warnings %q", f.Info().Warnings)
+	}
+}
+
+// A well-ordered tree with ordinary holes and gaps is unaffected.
+func TestWellOrderedSparseFileStaysHoles(t *testing.T) {
+	data := pattern(4*bs, 14)
+	v := dataVolume(apfstest.File{Path: "/s", Ino: 40, Data: data, Gaps: [][2]int64{{bs, bs}}, Holes: [][2]int64{{2 * bs, bs}}})
+	v.Files = append(v.Files, apfstest.File{Path: "/later", Ino: 50, Data: pattern(10, 1)})
+	f, _ := openOpts(t, volOpts(v))
+	fl := openPath(t, f, "/Data/s")
+	if err := filesys.CheckRuns(fl.Runs(), fl.Size(), f.Info().Size); err != nil {
+		t.Fatalf("CheckRuns: %v", err)
+	}
+	noWarnings(t, f)
+}
+
+// A duplicated record (not strictly greater than the previous key) is out of
+// order too: here a second copy of extent 0 follows the first.
+func TestDuplicateKeyEndsPrefix(t *testing.T) {
+	data := pattern(4*bs, 12)
+	v := dataVolume(apfstest.File{Path: "/b", Ino: 40, Data: data, Extents: []apfstest.Extent{
+		{Logical: 0, Length: 2 * bs, Rel: true}, {Logical: 2 * bs, Length: 2 * bs, Rel: true, Phys: 2},
+	}})
+	v.Reorder = func(recs []apfstest.FSRecord) []apfstest.FSRecord {
+		for i, r := range recs {
+			if r.ID == 40 && r.Type == apfstest.TypeFileExtent {
+				return slices.Insert(slices.Clone(recs), i, r) // two equal keys in a row
+			}
+		}
+		t.Fatal("no extent record")
+		return recs
+	}
+	f, _ := openOpts(t, volOpts(v))
+	fl := openPath(t, f, "/Data/b")
+	covered, err := filesys.CheckRunsPrefix(fl.Runs(), fl.Size(), f.Info().Size)
+	if err != nil || covered >= fl.Size() {
+		t.Fatalf("CheckRunsPrefix = %d, %v; want a strict prefix", covered, err)
+	}
+	if _, err := fl.ReadAt(make([]byte, 10), fl.Size()-10); !errors.Is(err, filesys.ErrCorrupt) {
+		t.Errorf("read of the unreached tail: %v, want ErrCorrupt", err)
+	}
+}
+
+// A file whose extents (not its dstream) carry a key is reported encrypted by
+// the opened file, so examine flags the artifact. The listing cannot know
+// without an extent scan per file, so its entry stays unflagged.
+func TestOpenedFileReportsPerFileEncryption(t *testing.T) {
+	data := pattern(2*bs, 9)
+	f, _ := openOpts(t, volOpts(dataVolume(
+		apfstest.File{Path: "/plain", Data: data},
+		apfstest.File{Path: "/sw", Data: data, CryptoID: 4, ExtentCrypto: 4},
+		apfstest.File{Path: "/keyed", Data: data, CryptoID: 5, ExtentCrypto: 5},
+		apfstest.File{Path: "/extentonly", Data: data, ExtentCrypto: 7},
+		apfstest.File{Path: "/dstreamonly", Data: data, CryptoID: 8},
+	)))
+	es := mustReadDir(t, f, mustLookup(t, f, "/Data"))
+	if byName(t, es, "extentonly").Encrypted {
+		t.Errorf("the listing flagged extentonly: it cannot know without an extent scan")
+	}
+	for n, want := range map[string]bool{"plain": false, "sw": false, "keyed": true, "extentonly": true, "dstreamonly": true} {
+		if got := filesys.FileEncrypted(openPath(t, f, "/Data/"+n)); got != want {
+			t.Errorf("%s: FileEncrypted = %v, want %v", n, got, want)
+		}
+	}
+}
+
+// Review scenario: a damaged/reordered record whose logical address lies past
+// the end of the file sits before a real extent. The scan must not stop at it:
+// the later extent is out of order, so the file keeps the prefix before it
+// and the rest reads as an error, never as zeros.
+func TestBeyondSizeRecordBeforeRealExtentIsNotAHoleTail(t *testing.T) {
+	data := pattern(4*bs, 15)
+	f, _ := openOpts(t, volOpts(dataVolume(apfstest.File{Path: "/b", Data: data, Extents: []apfstest.Extent{
+		{Logical: 0, Length: 2 * bs, Rel: true},
+		{Logical: 1 << 40, Length: bs, Phys: 1 << 50}, // beyond the size
+		{Logical: 2 * bs, Length: 2 * bs, Rel: true, Phys: 2},
+	}})))
+	fl := openPath(t, f, "/Data/b")
+	wantPrefix(t, f, fl, data, 2*bs)
+	if !hasWarn(f, "out of key order") {
+		t.Errorf("warnings %q", f.Info().Warnings)
+	}
+}
+
+// Several legitimate extents past the end (preallocation) in order are
+// ignored for the content, without a warning.
+func TestOrderedBeyondSizeExtentsAreIgnored(t *testing.T) {
+	data := pattern(100, 16)
+	f, _ := openOpts(t, volOpts(dataVolume(apfstest.File{Path: "/p", Data: data, Extents: []apfstest.Extent{
+		{Logical: 0, Length: bs, Rel: true},
+		{Logical: 4 * bs, Length: bs, Phys: 1 << 50},
+		{Logical: 8 * bs, Length: bs, Phys: 1 << 50},
+	}})))
+	fl := openPath(t, f, "/Data/p")
+	if !bytes.Equal(readAllAt(t, fl), data) {
+		t.Error("content differs")
+	}
+	noWarnings(t, f)
+}
+
+// Exhausting the node-read budget while the extents are read is the budget
+// error, not a corrupt file that opens with a prefix.
+func TestNodeBudgetDuringExtentScanFailsOpen(t *testing.T) {
+	data := pattern(8*bs, 17)
+	im := newImage(t, volOpts(dataVolume(apfstest.File{Path: "/m", Data: data, Fragments: 4})))
+	var failed, full int
+	for n := int64(0); n < 60; n++ {
+		f := im.mustOpen()
+		e := mustLookup(t, f, "/Data/m")
+		f.SetNodeReads(n)
+		fl, err := f.Open(e)
+		if err != nil {
+			if !errors.Is(err, filesys.ErrCorrupt) {
+				t.Fatalf("budget %d: Open = %v", n, err)
+			}
+			failed++
+			continue
+		}
+		if covered, cerr := filesys.CheckRunsPrefix(fl.Runs(), fl.Size(), f.Info().Size); cerr != nil || covered != fl.Size() {
+			t.Fatalf("budget %d: Open succeeded with a damaged file (covered %d, %v, warnings %q)", n, covered, cerr, f.Info().Warnings)
+		}
+		full++
+	}
+	if failed == 0 || full == 0 {
+		t.Errorf("%d failed, %d full opens; the sweep must reach both", failed, full)
+	}
+}
+
+// decmpfs builds the value of a com.apple.decmpfs xattr: "fpmc", the
+// compression type and the uncompressed size, then (here) no payload.
+func decmpfs(typ uint32) []byte {
+	v := make([]byte, 16)
+	copy(v, "fpmc")
+	binary.LittleEndian.PutUint32(v[4:], typ)
+	binary.LittleEndian.PutUint64(v[8:], 1234)
+	return v
+}
+
+// The compressed attribute names the decmpfs type (a name for the known
+// types, the decimal number otherwise); "unknown" when the header cannot be
+// read. Such a file stays unsupported.
+func TestCompressedAttrNamesTheDecmpfsType(t *testing.T) {
+	badMagic := decmpfs(7)
+	copy(badMagic, "xxxx")
+	cases := []struct {
+		name string
+		xa   []apfstest.Xattr
+		want string
+	}{
+		{"zlib attr", []apfstest.Xattr{{Name: "com.apple.decmpfs", Value: decmpfs(3)}}, "zlib-attr"},
+		{"zlib rsrc", []apfstest.Xattr{{Name: "com.apple.decmpfs", Value: decmpfs(4)}}, "zlib-rsrc"},
+		{"lzvn attr", []apfstest.Xattr{{Name: "com.apple.decmpfs", Value: decmpfs(7)}}, "lzvn-attr"},
+		{"lzvn rsrc", []apfstest.Xattr{{Name: "com.apple.decmpfs", Value: decmpfs(8)}}, "lzvn-rsrc"},
+		{"uncompressed attr", []apfstest.Xattr{{Name: "com.apple.decmpfs", Value: decmpfs(9)}}, "uncompressed-attr"},
+		{"uncompressed rsrc", []apfstest.Xattr{{Name: "com.apple.decmpfs", Value: decmpfs(10)}}, "uncompressed-rsrc"},
+		{"lzfse attr", []apfstest.Xattr{{Name: "com.apple.decmpfs", Value: decmpfs(11)}}, "lzfse-attr"},
+		{"lzfse rsrc", []apfstest.Xattr{{Name: "com.apple.decmpfs", Value: decmpfs(12)}}, "lzfse-rsrc"},
+		{"unknown number", []apfstest.Xattr{{Name: "com.apple.decmpfs", Value: decmpfs(99)}}, "99"},
+		{"no xattr", nil, "unknown"},
+		{"bad magic", []apfstest.Xattr{{Name: "com.apple.decmpfs", Value: badMagic}}, "unknown"},
+		{"short header", []apfstest.Xattr{{Name: "com.apple.decmpfs", Value: decmpfs(7)[:6]}}, "unknown"},
+		{"stream form", []apfstest.Xattr{{Name: "com.apple.decmpfs", Value: decmpfs(7), Stream: true}}, "unknown"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f, _ := openOpts(t, volOpts(dataVolume(apfstest.File{Path: "/c", Data: pattern(50, 1), CompressedFlag: true, Xattrs: c.xa})))
+			e := mustLookup(t, f, "/Data/c")
+			if v, ok := attr(e, "compressed"); !ok || v != c.want {
+				t.Errorf("compressed = %q, %v; want %q", v, ok, c.want)
+			}
+			if _, err := f.Open(e); !errors.Is(err, filesys.ErrUnsupported) {
+				t.Errorf("Open = %v, want ErrUnsupported", err)
+			}
+		})
 	}
 }

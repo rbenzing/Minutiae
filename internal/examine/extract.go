@@ -205,7 +205,7 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 	d.FSPath, d.FSID = p, e.ID
 	d.Mode, d.UID, d.GID = e.Mode, e.UID, e.GID
 	d.Times = timesMap(e.Times)
-	d.Encrypted = e.Encrypted
+	d.Encrypted = e.Encrypted || filesys.FileEncrypted(f) // the listing sees the dstream key, the opened file also the extents
 	// The runs normally cover the whole file. A file whose allocation is
 	// truncated or corrupt may report only a prefix (filesys.File.Runs): they
 	// are then the exact provenance of the bytes that can be captured, and

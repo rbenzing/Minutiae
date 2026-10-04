@@ -88,7 +88,7 @@ func TestReadDirLiveEntries(t *testing.T) {
 
 func TestInodeAttributes(t *testing.T) {
 	files := []apfstest.File{
-		{Path: "/c", Data: []byte("zz"), CompressedFlag: true, UncompressedSize: 7777, BsdFlags: 0x2, ProtClass: 4, PrivateID: 99, InternalFlg: 0x8, CryptoID: 5},
+		{Path: "/c", Data: []byte("zz"), CompressedFlag: true, Xattrs: []apfstest.Xattr{{Name: "com.apple.decmpfs", Value: decmpfs(7)}}, UncompressedSize: 7777, BsdFlags: 0x2, ProtClass: 4, PrivateID: 99, InternalFlg: 0x8, CryptoID: 5},
 		{Path: "/big", Size: 1 << 40},
 	}
 	f, im := openOpts(t, volOpts(dataVolume(files...)))
@@ -98,7 +98,7 @@ func TestInodeAttributes(t *testing.T) {
 		t.Errorf("compressed size = %d, want the uncompressed size", c.Size)
 	}
 	for k, want := range map[string]string{
-		"compressed": "true", "private_id": "99", "protection_class": "4",
+		"compressed": "lzvn-attr", "private_id": "99", "protection_class": "4",
 		"bsd_flags": "0x22", "internal_flags": "0x40008",
 	} {
 		if v, ok := attr(c, k); !ok || v != want {

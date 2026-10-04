@@ -83,7 +83,7 @@ func (s *safeFS) Open(e filesys.Entry) (f filesys.File, err error) {
 	}
 	// Size and Runs are snapshotted here so a panic in them surfaces as an
 	// Open error; ReadAt is protected on every call.
-	return &safeFile{f: inner, name: s.name, size: inner.Size(), runs: inner.Runs()}, nil
+	return &safeFile{f: inner, name: s.name, size: inner.Size(), runs: inner.Runs(), enc: filesys.FileEncrypted(inner)}, nil
 }
 
 func (s *safeFS) Unallocated() (rs []filesys.Run, err error) {
@@ -101,6 +101,7 @@ type safeFile struct {
 	name string
 	size int64
 	runs []filesys.Run
+	enc  bool // the file reported itself encrypted when it was opened
 }
 
 func (f *safeFile) ReadAt(p []byte, off int64) (n int, err error) {
@@ -115,3 +116,7 @@ func (f *safeFile) ReadAt(p []byte, off int64) (n int, err error) {
 func (f *safeFile) Size() int64 { return f.size }
 
 func (f *safeFile) Runs() []filesys.Run { return append([]filesys.Run(nil), f.runs...) }
+
+// Encrypted forwards what the file reported when it was opened
+// (filesys.EncryptedFile).
+func (f *safeFile) Encrypted() bool { return f.enc }

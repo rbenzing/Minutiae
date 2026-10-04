@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"math"
+	"strconv"
 	"time"
 	"unicode/utf8"
 
@@ -43,6 +44,7 @@ const (
 	xattrStream  = 0x1
 	xattrInline  = 0x2
 	symlinkXattr = "com.apple.fs.symlink"
+	decmpfsXattr = "com.apple.decmpfs"
 
 	// maxXattrNames bounds the xattr names listed in an entry's attributes.
 	maxXattrNames = 32
@@ -76,6 +78,7 @@ type inode struct {
 	symlink    []byte   // the embedded symlink target, trailing NUL removed
 	symlinkSet bool     // the object has a symlink xattr
 	symlinkOK  bool     // ... and its target is embedded (readable)
+	decmpfs    string   // the compression type the decmpfs xattr names ("unknown" when absent or unreadable)
 }
 
 func (in *inode) isDir() bool { return in.mode&modeTypeMask == modeDir }
@@ -163,6 +166,7 @@ func (f *FS) inode(v *volume, view uint64, ino uint64) (*inode, error) {
 		symlink []byte
 		symSet  bool
 		symOK   bool
+		decmpfs string
 	)
 	err = f.scanObject(t, ino, fsTypeInode, fsTypeXattr, func(typ uint8, key, val []byte) (bool, error) {
 		switch typ {
@@ -190,6 +194,9 @@ func (f *FS) inode(v *volume, view uint64, ino uint64) (*inode, error) {
 			if len(xnames) < maxXattrNames {
 				xnames = append(xnames, displayXattr(name))
 			}
+			if string(name) == decmpfsXattr {
+				decmpfs = decmpfsType(val)
+			}
 			if string(name) == symlinkXattr {
 				symSet = true
 				if len(val) >= 4 && le.Uint16(val)&xattrInline != 0 {
@@ -211,6 +218,10 @@ func (f *FS) inode(v *volume, view uint64, ino uint64) (*inode, error) {
 	}
 	in.xattrNames, in.xattrCount = xnames, xcount
 	in.symlink, in.symlinkSet, in.symlinkOK = symlink, symSet, symOK
+	in.decmpfs = decmpfs
+	if in.decmpfs == "" {
+		in.decmpfs = "unknown" // no decmpfs xattr
+	}
 	return in, nil
 }
 
@@ -423,4 +434,34 @@ func nameHash(name []byte, foldCase bool) (hash uint32, ok bool) {
 	}
 	// hash/crc32 complements the result; the stored value does not.
 	return ^crc32.Checksum(u, castagnoli) & 0x3fffff, true
+}
+
+// decmpfsNames are the decmpfs compression types this reader names. The numbers
+// are from memory of Apple's decmpfs header (not in the APFS reference, and not
+// checked against a real image); any other type is shown as its decimal number.
+var decmpfsNames = map[uint32]string{
+	3: "zlib-attr", 4: "zlib-rsrc",
+	7: "lzvn-attr", 8: "lzvn-rsrc",
+	9: "uncompressed-attr", 10: "uncompressed-rsrc",
+	11: "lzfse-attr", 12: "lzfse-rsrc",
+}
+
+// decmpfsType reads the compression type from the value of the
+// com.apple.decmpfs xattr (j_xattr_val_t: u16 flags, u16 xdata_len, data; the
+// data starts with the magic "fpmc", the u32 type and the u64 uncompressed
+// size). A stream-form value, a short one or one with another magic is
+// "unknown".
+func decmpfsType(val []byte) string {
+	if len(val) < 4 || le.Uint16(val)&xattrInline == 0 {
+		return "unknown"
+	}
+	n := int(le.Uint16(val[2:]))
+	if n < 8 || n > len(val)-4 || string(val[4:8]) != "fpmc" {
+		return "unknown"
+	}
+	typ := le.Uint32(val[8:])
+	if name, ok := decmpfsNames[typ]; ok {
+		return name
+	}
+	return strconv.FormatUint(uint64(typ), 10)
 }
