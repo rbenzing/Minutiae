@@ -1236,7 +1236,7 @@ func TestParserPackagesHaveNoSQL(t *testing.T) {
 // change of the roots that drops one fails TestPurityRulesCoverKnownPackages.
 // Every plan that creates a pure package appends it here in the same commit
 // (internal/recordtypes/common is listed; the six type packages and the others follow with their plans).
-var purityRequired = []string{"internal/parse", "internal/recordtypes/common"}
+var purityRequired = []string{"internal/parse", "internal/recordtypes/common", "internal/recordtypes/message"}
 
 // purePackageRE is a second, independent description of the pure roots: any
 // directory under internal/ that matches it and holds a non-test Go file must
