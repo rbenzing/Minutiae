@@ -43,7 +43,11 @@ func writeNodes(img []byte, o Options, l Layout) {
 		}
 		i := int(n.NID / NATPerBlock)
 		blk := l.NATBlock(i, bitSet(o.NATBitmap, i))
-		putNATEntry(img[int(blk)*BlockSize+int(n.NID%NATPerBlock)*9:], NATEntry{Ino: n.NID, Addr: addr})
+		ino := n.Ino
+		if ino == 0 {
+			ino = n.NID
+		}
+		putNATEntry(img[int(blk)*BlockSize+int(n.NID%NATPerBlock)*9:], NATEntry{Ino: ino, Addr: addr})
 	}
 }
 
@@ -91,6 +95,8 @@ type Inode struct {
 	BadChecksum, SkipChecksum bool
 	// FooterIno / FooterNID override the footer (0 = NID).
 	FooterIno, FooterNID uint32
+	// FooterFlag is the node footer's flag word (offset in the node tree << 7).
+	FooterFlag uint32
 	// RawOverrides are applied last (byte offset -> bytes), before the checksum.
 	RawOverrides map[int][]byte
 }
@@ -175,6 +181,7 @@ func InodeBlock(o Options, in Inode) []byte {
 	}
 	le.PutUint32(b[4072:], fn)
 	le.PutUint32(b[4076:], fi)
+	le.PutUint32(b[4080:], in.FooterFlag)
 	for off, v := range in.RawOverrides {
 		copy(b[off:], v)
 	}

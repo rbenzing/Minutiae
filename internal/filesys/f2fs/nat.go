@@ -176,28 +176,34 @@ func (f *FS) loadNATJournal() ([]natJournalEntry, error) {
 	return ents, nil
 }
 
-// natLookup returns the block address of node nid.
+// natLookup returns the block address of node nid (see natGet).
+func (f *FS) natLookup(nid uint32) (uint32, error) {
+	ent, err := f.natGet(nid)
+	return ent.addr, err
+}
+
+// natGet returns the NAT entry of node nid.
 //
 // nid 0 and the node/meta inodes (which have no node block) are refused, as is
 // any nid beyond the NAT area. The NAT journal overrides the on-disk block (it
 // holds entries newer than the last NAT flush); the first matching journal
 // entry wins. A NULL_ADDR entry is a free nid and yields an error wrapping
 // filesys.ErrNotFound.
-func (f *FS) natLookup(nid uint32) (uint32, error) {
+func (f *FS) natGet(nid uint32) (natEntry, error) {
 	const st = "f2fs NAT"
 	sb := f.sb
 	switch {
 	case nid == 0:
-		return 0, corrupt(st, -1, "node id 0 is not valid")
+		return natEntry{}, corrupt(st, -1, "node id 0 is not valid")
 	case nid == sb.nodeIno || nid == sb.metaIno:
-		return 0, corrupt(st, -1, "node id %d is a reserved inode without a node block", nid)
+		return natEntry{}, corrupt(st, -1, "node id %d is a reserved inode without a node block", nid)
 	case uint64(nid) >= sb.natCapacity():
-		return 0, corrupt(st, -1, "node id %d is beyond the NAT capacity of %d", nid, sb.natCapacity())
+		return natEntry{}, corrupt(st, -1, "node id %d is beyond the NAT capacity of %d", nid, sb.natCapacity())
 	}
 
 	journal, err := f.loadNATJournal()
 	if err != nil {
-		return 0, err
+		return natEntry{}, err
 	}
 	var ent natEntry
 	found := false
@@ -211,17 +217,17 @@ func (f *FS) natLookup(nid uint32) (uint32, error) {
 		idx := uint64(nid / natEntriesPerBlock)
 		blkAddr, ok := versionedBlock(sb.natAddr, sb.natPairs(), f.cp.natBitmap, idx)
 		if !ok {
-			return 0, corrupt(st, -1, "NAT block %d for node id %d is outside the NAT area", idx, nid)
+			return natEntry{}, corrupt(st, -1, "NAT block %d for node id %d is outside the NAT area", idx, nid)
 		}
 		blk, err := readBlock(f.r, blkAddr)
 		if err != nil {
-			return 0, readError(st, int64(blkAddr)*blockSize, err)
+			return natEntry{}, readError(st, int64(blkAddr)*blockSize, err)
 		}
 		off := int(nid%natEntriesPerBlock) * natEntrySize
 		ent = parseNATEntry(blk[off : off+natEntrySize])
 	}
 	if ent.addr == 0 {
-		return 0, fmt.Errorf("%w: node id %d is free (NAT block address 0)", filesys.ErrNotFound, nid)
+		return natEntry{}, fmt.Errorf("%w: node id %d is free (NAT block address 0)", filesys.ErrNotFound, nid)
 	}
-	return ent.addr, nil
+	return ent, nil
 }

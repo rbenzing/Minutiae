@@ -158,6 +158,9 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		return nil, err
 	}
 	f := &FS{sb: sb, cp: cp, r: cached, data: raw, size: sb.blocks * blockSize}
+	if capacity := sb.natCapacity(); uint64(cp.nextFreeNid) > capacity || uint64(cp.validNodes) > capacity {
+		f.warn("checkpoint next_free_nid %d or valid_node_count %d exceeds the NAT capacity of %d node ids", cp.nextFreeNid, cp.validNodes, capacity)
+	}
 	for _, w := range append(append(warns, cw...), cp.warnings()...) {
 		f.warn("%s", w)
 	}
@@ -168,13 +171,17 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 // found at Open and those met since by later reads, without duplicates and
 // capped at filesys.MaxWarnings entries.
 func (f *FS) Info() filesys.Info {
+	features := f.sb.featureList()
+	if f.cp.pack2Blank {
+		features = append(features, "checkpoint pack 2 blank")
+	}
 	return filesys.Info{
 		Type:      "f2fs",
 		Label:     f.sb.label,
 		UUID:      formatUUID(f.sb.uuid),
 		BlockSize: blockSize,
 		Size:      f.size,
-		Features:  f.sb.featureList(),
+		Features:  features,
 		Encrypted: f.sb.has(featEncrypt),
 		Warnings:  f.warnings.Snapshot(),
 	}

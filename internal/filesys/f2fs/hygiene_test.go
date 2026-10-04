@@ -16,6 +16,8 @@ import (
 // Checkpoint flags (ckpt_flags), header offset 132.
 const (
 	cpFlagsOff    = 132
+	cpValidNodes  = 144
+	cpNextFreeNid = 152
 	cpUmount      = 0x1
 	cpOrphan      = 0x2
 	cpError       = 0x8
@@ -23,22 +25,28 @@ const (
 	cpDisabled    = 0x1000
 )
 
-func TestBlankPackIsSilentOnlyOnAFreshVolume(t *testing.T) {
-	// Fresh mkfs: pack 2 blank, version <= 2.
-	o := smallOpts()
-	o.NoPack2 = true
-	if w := mustOpen(t, f2fstest.Build(o, nil)).Info().Warnings; len(w) != 0 {
-		t.Errorf("fresh volume: warnings %q", w)
+func TestBlankPackHandling(t *testing.T) {
+	const feature = "checkpoint pack 2 blank"
+	// A blank pack 2 is what mkfs leaves: silent at any checkpoint version,
+	// recorded as an Info feature.
+	for _, ver := range []uint64{0, 2, 7, 900} {
+		o := smallOpts()
+		o.NoPack2 = true
+		o.Version = ver
+		f := mustOpen(t, f2fstest.Build(o, nil))
+		if w := f.Info().Warnings; len(w) != 0 {
+			t.Errorf("version %d, pack 2 blank: warnings %q", ver, w)
+		}
+		if !slices.Contains(f.Info().Features, feature) {
+			t.Errorf("version %d: features %q lack %q", ver, f.Info().Features, feature)
+		}
+	}
+	// With both packs written there is no such feature.
+	if f := mustOpen(t, f2fstest.Build(smallOpts(), nil)); slices.Contains(f.Info().Features, feature) {
+		t.Errorf("features %q", f.Info().Features)
 	}
 
-	// A used volume whose pack 2 has been zeroed looks like a rollback.
-	o.Version = 7
-	f := mustOpen(t, f2fstest.Build(o, nil))
-	if !hasWarning(f.Info(), "checkpoint pack 2 is blank; using pack 1 (possible rollback)") {
-		t.Errorf("version 7, pack 2 blank: warnings %q", f.Info().Warnings)
-	}
-
-	// A blank pack 1 is never normal, whatever the version.
+	// A blank pack 1 while pack 2 is valid is never normal, whatever the version.
 	for _, ver := range []uint64{2, 7} {
 		o := smallOpts()
 		o.Version = ver
@@ -53,6 +61,9 @@ func TestBlankPackIsSilentOnlyOnAFreshVolume(t *testing.T) {
 		if !hasWarning(f.Info(), "checkpoint pack 1 is blank; using pack 2 (possible rollback)") {
 			t.Errorf("version %d, pack 1 blank: warnings %q", ver, f.Info().Warnings)
 		}
+		if slices.Contains(f.Info().Features, feature) {
+			t.Errorf("version %d: pack 2 is not blank but features are %q", ver, f.Info().Features)
+		}
 	}
 }
 
@@ -66,7 +77,6 @@ func TestCheckpointStateFlagsWarn(t *testing.T) {
 		{"not an unmount checkpoint", 0, "last checkpoint is not an unmount checkpoint (data written after it is not reflected)"},
 		{"error", cpUmount | cpError, "CP_ERROR_FLAG"},
 		{"disabled", cpUmount | cpDisabled, "CP_DISABLED_FLAG"},
-		{"crc recovery", cpUmount | cpCRCRecovery, "CP_CRC_RECOVERY_FLAG"},
 		{"orphans", cpUmount | cpOrphan, "CP_ORPHAN_PRESENT_FLAG"},
 	}
 	for _, tc := range cases {
@@ -79,6 +89,15 @@ func TestCheckpointStateFlagsWarn(t *testing.T) {
 			}
 		})
 	}
+	// The kernel sets CP_CRC_RECOVERY_FLAG on every checkpoint it writes with
+	// fsync data in flight; it says nothing about this checkpoint's own state.
+	t.Run("crc recovery flag is silent", func(t *testing.T) {
+		img := f2fstest.Build(smallOpts(), nil)
+		cp32(img, g, cpFlagsOff, cpUmount|cpCRCRecovery)
+		if w := mustOpen(t, img).Info().Warnings; len(w) != 0 {
+			t.Errorf("warnings %q", w)
+		}
+	})
 	t.Run("clean checkpoint is silent", func(t *testing.T) {
 		img := f2fstest.Build(smallOpts(), nil)
 		cp32(img, g, cpFlagsOff, cpUmount)
@@ -300,5 +319,32 @@ func TestChecksumMessagesUseEightHexDigits(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("checkpoint warnings %q", f.Info().Warnings)
+	}
+}
+
+func TestCheckpointCountsBeyondNATCapacityWarn(t *testing.T) {
+	o := smallOpts()
+	g := f2fstest.Geometry(o)
+	capacity := g.NATCapacity()
+	for _, tc := range []struct {
+		name string
+		off  int
+		val  uint32
+		warn bool
+	}{
+		{"next_free_nid at capacity", cpNextFreeNid, capacity, false},
+		{"next_free_nid beyond capacity", cpNextFreeNid, capacity + 1, true},
+		{"valid_node_count beyond capacity", cpValidNodes, capacity + 1, true},
+		{"valid_node_count at capacity", cpValidNodes, capacity, false},
+		{"next_free_nid 0xFFFFFFFF", cpNextFreeNid, 0xFFFFFFFF, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			img := f2fstest.Build(o, nil)
+			cp32(img, g, tc.off, tc.val)
+			f := mustOpen(t, img)
+			if got := hasWarning(f.Info(), "exceeds the NAT capacity"); got != tc.warn {
+				t.Errorf("warned=%v, want %v: %q", got, tc.warn, f.Info().Warnings)
+			}
+		})
 	}
 }

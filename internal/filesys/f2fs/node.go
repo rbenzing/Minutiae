@@ -9,6 +9,12 @@ const (
 	nodeFooterOff = blockSize - 24
 	footNID       = nodeFooterOff
 	footIno       = nodeFooterOff + 4
+	footFlag      = nodeFooterOff + 8
+
+	// offsetBitShift is OFFSET_BIT_SHIFT: the footer flag keeps the node's
+	// offset in the file's node tree above bit 7 (ofs_of_node); it is 0 for an
+	// inode.
+	offsetBitShift = 7
 )
 
 // node reads the node block of nid: its NAT address must lie in the main

@@ -253,3 +253,53 @@ func TestNodeAddressMustBeInMainArea(t *testing.T) {
 		})
 	}
 }
+
+// With the same nid journalled twice, the first entry wins (the kernel scans
+// the journal from the start).
+func TestNATJournalDuplicateNidFirstWins(t *testing.T) {
+	for _, compact := range []bool{false, true} {
+		o := smallOpts()
+		o.CompactSum = compact
+		l := f2fstest.Geometry(o)
+		o.NATJournal = []f2fstest.NATEntry{
+			{NID: 40, Ino: 40, Addr: l.Main + 1},
+			{NID: 41, Ino: 41, Addr: l.Main + 7},
+			{NID: 40, Ino: 40, Addr: l.Main + 2},
+			{NID: 40, Ino: 40, Addr: 0},
+		}
+		f := mustOpen(t, f2fstest.Build(o, nil))
+		if got, err := f.NATLookup(40); err != nil || got != l.Main+1 {
+			t.Errorf("compact=%v: NATLookup(40) = %d, %v; want the first entry %d", compact, got, err, l.Main+1)
+		}
+		if got, err := f.NATLookup(41); err != nil || got != l.Main+7 {
+			t.Errorf("compact=%v: NATLookup(41) = %d, %v", compact, got, err)
+		}
+	}
+}
+
+// In a compacted summary block the NAT journal (first 507 bytes) is followed
+// by the SIT journal; a full NAT journal must not read into it, and SIT
+// journal bytes must not be taken for NAT entries.
+func TestNATJournalCompactSummaryManyEntries(t *testing.T) {
+	o := smallOpts()
+	o.CompactSum = true
+	l := f2fstest.Geometry(o)
+	for i := range 38 {
+		o.NATJournal = append(o.NATJournal, f2fstest.NATEntry{NID: uint32(200 + i), Ino: uint32(200 + i), Addr: l.Main + uint32(i)})
+	}
+	img := f2fstest.Build(o, nil)
+	// Fill the SIT journal half of the block with a recognisable pattern.
+	sum := int(l.CP+l.StartSum) * 4096
+	for i := 507; i < 507+507; i++ {
+		img[sum+i] = 0xA5
+	}
+	f := mustOpen(t, img)
+	for i := range 38 {
+		if got, err := f.NATLookup(uint32(200 + i)); err != nil || got != l.Main+uint32(i) {
+			t.Fatalf("journal entry %d: %d, %v", i, got, err)
+		}
+	}
+	if w := f.Info().Warnings; len(w) != 0 {
+		t.Errorf("warnings %q", w)
+	}
+}

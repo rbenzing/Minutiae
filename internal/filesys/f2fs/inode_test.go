@@ -3,6 +3,7 @@ package f2fs_test
 import (
 	"errors"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -505,5 +506,44 @@ func TestParseNodeID(t *testing.T) {
 		if !errors.Is(err, filesys.ErrNotFound) {
 			t.Errorf("ParseNodeID(%q): err = %v, want ErrNotFound", id, err)
 		}
+	}
+}
+
+func TestInodeFooterFlagAndNATOwner(t *testing.T) {
+	// A node whose footer flag records a position in a node tree (offset > 0)
+	// is a direct/indirect/xattr node, never an inode.
+	for _, ofs := range []uint32{1, 2, 5, 0xFFFFFF} {
+		f, _ := buildOne(t, smallOpts(), f2fstest.Inode{Mode: 0o100644, FooterFlag: ofs << 7})
+		_, _, err := f.Inode(5)
+		ce := asCorrupt(t, err)
+		if !strings.Contains(ce.Reason, "not an inode node") {
+			t.Errorf("offset %d: reason %q", ofs, ce.Reason)
+		}
+		if _, err := f.Open(filesys.Entry{ID: "nid:5"}); !errors.Is(err, filesys.ErrCorrupt) {
+			t.Errorf("offset %d: Open = %v", ofs, err)
+		}
+	}
+	// Low flag bits (cold, fsync, dentry marks) are fine.
+	f, _ := buildOne(t, smallOpts(), f2fstest.Inode{Mode: 0o100644, FooterFlag: 0x7F})
+	if _, _, err := f.Inode(5); err != nil {
+		t.Errorf("low flag bits: %v", err)
+	}
+
+	// A NAT entry that names a different owner warns once; the inode still reads.
+	o := smallOpts()
+	o.Nodes = []f2fstest.Node{{NID: 5, Ino: 9, Block: f2fstest.InodeBlock(o, f2fstest.Inode{NID: 5, Mode: 0o100644})}}
+	f = mustOpen(t, f2fstest.Build(o, nil))
+	if len(f.Info().Warnings) != 0 {
+		t.Fatalf("warnings at Open: %q", f.Info().Warnings)
+	}
+	if _, _, err := f.Inode(5); err != nil {
+		t.Fatal(err)
+	}
+	if !hasWarning(f.Info(), "NAT entry records owner ino 9") {
+		t.Errorf("warnings %q", f.Info().Warnings)
+	}
+	g, _ := buildOne(t, smallOpts(), f2fstest.Inode{Mode: 0o100644})
+	if _, _, err := g.Inode(5); err != nil || len(g.Info().Warnings) != 0 {
+		t.Errorf("consistent NAT owner: err %v warnings %q", err, g.Info().Warnings)
 	}
 }

@@ -179,6 +179,14 @@ func (f *FS) inode(ino uint32) (*inode, error) {
 		// An inode's footer ino equals its nid (the kernel's RAW_IS_INODE).
 		return nil, corrupt(st, -1, "node %d is not an inode (footer ino is %d)", ino, fi)
 	}
+	// A node that belongs to a file's node tree (direct, indirect, xattr) has a
+	// non-zero offset in its footer flag (ofs_of_node); an inode has none.
+	if ofs := le.Uint32(raw[footFlag:]) >> offsetBitShift; ofs != 0 {
+		return nil, corrupt(st, -1, "node %d is not an inode node (its footer records offset %d in a node tree)", ino, ofs)
+	}
+	if ent, err := f.natGet(ino); err == nil && ent.ino != ino {
+		f.warn("inode %d: its NAT entry records owner ino %d", ino, ent.ino)
+	}
 	in := &inode{
 		nid:        ino,
 		raw:        raw,

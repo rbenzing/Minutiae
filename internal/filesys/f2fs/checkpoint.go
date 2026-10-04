@@ -40,7 +40,6 @@ const (
 	cpOrphanFlag      = 0x2    // CP_ORPHAN_PRESENT_FLAG
 	cpErrorFlag       = 0x8    // CP_ERROR_FLAG
 	cpFsckFlag        = 0x10   // CP_FSCK_FLAG
-	cpCRCRecoveryFlag = 0x40   // CP_CRC_RECOVERY_FLAG
 	cpLargeNATBitmapF = 0x400  // CP_LARGE_NAT_BITMAP_FLAG
 	cpDisabledFlag    = 0x1000 // CP_DISABLED_FLAG
 )
@@ -59,6 +58,7 @@ type checkpoint struct {
 	startSum                             uint32 // pack-relative block of the first data summary
 	sitBitmap, natBitmap                 []byte // version bitmaps (which copy of each SIT/NAT block is current)
 	sitBitmapBytes, natBitmapBytes       uint32
+	pack2Blank                           bool // pack 2 was never written (normal after mkfs)
 }
 
 // warnings lists what the checkpoint's flags say about the volume's state.
@@ -69,9 +69,6 @@ func (cp *checkpoint) warnings() []string {
 	}
 	if cp.flags&cpOrphanFlag != 0 {
 		w = append(w, "the checkpoint lists orphan inodes (CP_ORPHAN_PRESENT_FLAG): files that were unlinked but still open")
-	}
-	if cp.flags&cpCRCRecoveryFlag != 0 {
-		w = append(w, "the checkpoint has CP_CRC_RECOVERY_FLAG set: fsynced data may exist in node chains written after it, which are not applied")
 	}
 	if cp.flags&cpDisabledFlag != 0 {
 		w = append(w, "the checkpoint was written with checkpointing disabled (CP_DISABLED_FLAG): the on-disk state may lag behind the live filesystem")
@@ -275,18 +272,14 @@ func (cp *checkpoint) loadBitmaps(r io.ReaderAt, sb *superblock, blk []byte) err
 	return err
 }
 
-// freshMkfsMaxVersion is the highest checkpoint_ver at which a blank second
-// pack is the normal state of a freshly formatted volume.
-const freshMkfsMaxVersion = 2
-
 // selectCheckpoint reads both packs and returns the valid one with the higher
 // checkpoint_ver (pack 1 on a tie). An invalid pack is skipped with a warning.
-// A blank (all-zero) pack 2 is silent only while the volume is as new as mkfs
-// leaves it (the chosen version is at most freshMkfsMaxVersion); any other
-// blank pack is reported, because zeroing the newer pack would roll the volume
-// back to older metadata. A genuine read failure is returned as an I/O error,
-// not as corruption. When neither pack is valid the result is a
-// *filesys.CorruptError.
+// A blank (all-zero) pack 2 is normal (mkfs writes only the first pack): it is
+// silent and recorded as the checkpoint's pack2Blank, which Info lists as a
+// feature. A blank pack 1 while pack 2 is valid is reported as a possible
+// rollback, because pack 1 is always written first. A genuine read failure is
+// returned as an I/O error, not as corruption. When neither pack is valid the
+// result is a *filesys.CorruptError.
 func selectCheckpoint(r io.ReaderAt, sb *superblock) (*checkpoint, []string, error) {
 	addrs := [2]uint32{sb.cpAddr, sb.cpAddr + blocksPerSeg} // area has >= 2 segments
 	var cps [2]*checkpoint
@@ -315,11 +308,10 @@ func selectCheckpoint(r io.ReaderAt, sb *superblock) (*checkpoint, []string, err
 		chosen = cps[1]
 	}
 	if chosen != nil {
-		for i, e := range errs {
-			if errors.Is(e, errUnwritten) && (i != 1 || chosen.ver > freshMkfsMaxVersion) {
-				warns = append(warns, fmt.Sprintf("checkpoint pack %d is blank; using pack %d (possible rollback)", i+1, chosen.pack))
-			}
+		if errors.Is(errs[0], errUnwritten) {
+			warns = append(warns, fmt.Sprintf("checkpoint pack 1 is blank; using pack %d (possible rollback)", chosen.pack))
 		}
+		chosen.pack2Blank = errors.Is(errs[1], errUnwritten)
 		return chosen, warns, nil
 	}
 	var parts []string

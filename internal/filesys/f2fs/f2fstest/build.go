@@ -119,6 +119,8 @@ type Node struct {
 	// lies inside the main area and the image; a nil Block writes nothing (so
 	// a NAT entry can point anywhere, even outside the image).
 	Block []byte
+	// Ino is the owner ino recorded in the NAT entry (0 = NID).
+	Ino uint32
 	// NoNAT writes the block but no NAT block entry (the entry then comes from
 	// the NAT journal, or is absent).
 	NoNAT bool
