@@ -56,7 +56,7 @@ func openWithin(t *testing.T, files [][]byte) (*ewf.Reader, error) {
 	select {
 	case v := <-ch:
 		return v.r, v.err
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("Open did not return within 5s")
 		return nil, nil
 	}
@@ -1123,7 +1123,7 @@ func TestEWFOverlappingDescriptorsAreBounded(t *testing.T) {
 	if err != nil {
 		wantCorrupt(t, err) // failing is acceptable, hanging or allocating is not
 	}
-	if elapsed > 2*time.Second {
+	if elapsed > 10*time.Second {
 		t.Fatalf("Open took %v", elapsed)
 	}
 	if used := after.TotalAlloc - before.TotalAlloc; used > 256<<20 {

@@ -91,7 +91,7 @@ func (o *opener) segment(i int) error {
 	}
 	for _, sec := range secs {
 		if sec.kind == kSectors {
-			o.r.sectors[i] = append(o.r.sectors[i], span{start: sec.payloadOff(), end: sec.off + sec.size})
+			o.r.sectors[i] = append(o.r.sectors[i], span{start: sec.payloadOff(), end: sec.off + sec.psize})
 		}
 	}
 	return o.tables(i, secs)

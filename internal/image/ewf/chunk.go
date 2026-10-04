@@ -73,6 +73,12 @@ func (r *Reader) decode(idx int64) ([]byte, error) {
 	mediaLen := r.chunkLen(idx)
 
 	if !ref.compressed() {
+		// The chunk and its checksum must lie inside the sectors section that
+		// holds them, not run on into the next section or segment.
+		sp, ok := spanOf(r.sectors[ref.seg()], off)
+		if !ok || mediaLen+4 > sp.end-off {
+			return nil, chunkErr(idx, ref, errors.New("the chunk does not fit inside its sectors section"))
+		}
 		buf := make([]byte, mediaLen+4)
 		if err := readFull(seg.R, buf, off); err != nil {
 			return nil, chunkErr(idx, ref, err)
@@ -91,9 +97,12 @@ func (r *Reader) decode(idx int64) ([]byte, error) {
 	if err := readFull(seg.R, src, off); err != nil {
 		return nil, chunkErr(idx, ref, err)
 	}
-	out, err := inflateExact(src, mediaLen)
+	out, trailing, err := inflateExact(src, mediaLen)
 	if err != nil {
 		return nil, chunkErr(idx, ref, err)
+	}
+	if trailing > 0 {
+		r.warn.add("chunk %d (segment %d, offset %d): %d byte(s) follow the end of its zlib stream", idx, ref.seg()+1, off, trailing)
 	}
 	return out, nil
 }
@@ -118,42 +127,51 @@ func (r *Reader) chunkEnd(idx int64, ref chunkRef, segSize int64) int64 {
 
 // inflateExact inflates the zlib stream in src to exactly want bytes. The
 // output is capped at want+1 bytes however large the stream claims to be, and
-// reading to EOF verifies the stream's own Adler-32 trailer.
-func inflateExact(src []byte, want int64) ([]byte, error) {
+// reading to EOF verifies the stream's own Adler-32 trailer. trailing is the
+// number of bytes of src after the end of the stream.
+func inflateExact(src []byte, want int64) (out []byte, trailing int, err error) {
 	br := bytes.NewReader(src)
 	var zr io.ReadCloser
 	if v, ok := zlibPool.Get().(io.ReadCloser); ok {
 		if err := v.(zlib.Resetter).Reset(br, nil); err != nil {
-			return nil, fmt.Errorf("zlib header: %w", err)
+			releaseZlib(v)
+			return nil, 0, fmt.Errorf("zlib header: %w", err)
 		}
 		zr = v
 	} else {
 		var err error
 		if zr, err = zlib.NewReader(br); err != nil {
-			return nil, fmt.Errorf("zlib header: %w", err)
+			return nil, 0, fmt.Errorf("zlib header: %w", err)
 		}
 	}
-	defer zlibPool.Put(zr)
+	defer releaseZlib(zr)
 	lr := io.LimitReader(zr, want+1)
-	out := make([]byte, want)
+	out = make([]byte, want)
 	if _, err := io.ReadFull(lr, out); err != nil {
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-			return nil, fmt.Errorf("zlib stream ends before the chunk's %d bytes: %w", want, err)
+			return nil, 0, fmt.Errorf("zlib stream ends before the chunk's %d bytes: %w", want, err)
 		}
-		return nil, fmt.Errorf("zlib stream: %w", err)
+		return nil, 0, fmt.Errorf("zlib stream: %w", err)
 	}
 	var probe [1]byte
 	for range 8 {
 		m, err := lr.Read(probe[:])
 		if m > 0 {
-			return nil, fmt.Errorf("zlib stream inflates to more than the chunk's %d bytes", want)
+			return nil, 0, fmt.Errorf("zlib stream inflates to more than the chunk's %d bytes", want)
 		}
 		if err == io.EOF {
-			return out[:want:want], nil
+			return out[:want:want], br.Len(), nil
 		}
 		if err != nil {
-			return nil, fmt.Errorf("zlib stream: %w", err)
+			return nil, 0, fmt.Errorf("zlib stream: %w", err)
 		}
 	}
-	return nil, errors.New("zlib stream does not end")
+	return nil, 0, errors.New("zlib stream does not end")
+}
+
+// releaseZlib returns an inflater to the pool after pointing it at an empty
+// reader, so a pooled inflater does not keep the last chunk's bytes alive.
+func releaseZlib(zr io.ReadCloser) {
+	_ = zr.(zlib.Resetter).Reset(bytes.NewReader(nil), nil) // fails on the empty stream; the reader is dropped either way
+	zlibPool.Put(zr)
 }

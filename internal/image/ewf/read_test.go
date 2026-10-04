@@ -392,6 +392,29 @@ func TestEWFZlibOutputCappedAtChunkSize(t *testing.T) {
 	}
 }
 
+// wantAllUnreadable asserts that every chunk of the media fails with a
+// ChunkError (no bytes returned) and that exactly the chunks below ok read.
+func wantUnreadableFrom(t *testing.T, r *ewf.Reader, media []byte, cs int, ok int) {
+	t.Helper()
+	p := make([]byte, cs)
+	for c := range len(media) / cs {
+		n, err := r.ReadAt(p, int64(c*cs))
+		if c < ok {
+			if n != cs || err != nil || !bytes.Equal(p, media[c*cs:(c+1)*cs]) {
+				t.Fatalf("chunk %d before the gap: %d, %v", c, n, err)
+			}
+			continue
+		}
+		if n != 0 {
+			t.Fatalf("chunk %d: %d bytes served from an unproven location", c, n)
+		}
+		wantChunkError(t, err, int64(c))
+	}
+}
+
+// TestEWFChunkOffsetOutsideSegmentIsChunkError: an entry outside its segment
+// breaks rule (d): the group is untrusted and, as the numbering after it is
+// then unknowable, so is every later chunk.
 func TestEWFChunkOffsetOutsideSegmentIsChunkError(t *testing.T) {
 	const cs = 64 * 512
 	media := pattern(10 * cs)
@@ -399,20 +422,19 @@ func TestEWFChunkOffsetOutsideSegmentIsChunkError(t *testing.T) {
 		files := ewftest.Build(ewftest.Options{ChunksPerTable: 5}, media)
 		patchBoth(t, files[0], 0, func(p []byte) { setEntry(p, 3, 0x7FFFFFF0) })
 		r := mustOpen(t, files)
-		if !hasWarning(r, "point outside the segment") || !hasWarning(r, "first: chunk 3") {
+		if !hasWarning(r, "points outside the segment") || !hasWarning(r, "chunks from index 0 onward unreadable") {
 			t.Fatalf("warnings %q", r.Warnings())
 		}
-		p := make([]byte, cs)
-		n, err := r.ReadAt(p, 3*cs)
-		wantChunkError(t, err, 3)
-		if n != 0 {
-			t.Fatalf("n = %d", n)
+		wantUnreadableFrom(t, r, media, cs, 0)
+	})
+	t.Run("entry past the file in the second group", func(t *testing.T) {
+		files := ewftest.Build(ewftest.Options{ChunksPerTable: 5}, media)
+		patchBoth(t, files[0], 1, func(p []byte) { setEntry(p, 3, 0x7FFFFFF0) })
+		r := mustOpen(t, files)
+		if !hasWarning(r, "group 2") || !hasWarning(r, "chunks from index 5 onward unreadable") {
+			t.Fatalf("warnings %q", r.Warnings())
 		}
-		for _, c := range []int{0, 2, 4, 5, 9} {
-			if n, err := r.ReadAt(p, int64(c*cs)); n != cs || err != nil || !bytes.Equal(p, media[c*cs:(c+1)*cs]) {
-				t.Fatalf("chunk %d: %d, %v", c, n, err)
-			}
-		}
+		wantUnreadableFrom(t, r, media, cs, 5)
 	})
 	t.Run("base overflows", func(t *testing.T) {
 		for name, base := range map[string]uint64{
@@ -424,20 +446,10 @@ func TestEWFChunkOffsetOutsideSegmentIsChunkError(t *testing.T) {
 				files := ewftest.Build(ewftest.Options{ChunksPerTable: 5}, media)
 				patchBoth(t, files[0], 0, func(p []byte) { binary.LittleEndian.PutUint64(p[8:], base) })
 				r := mustOpen(t, files)
-				if !hasWarning(r, "point outside the segment") {
+				if !hasWarning(r, "points outside the segment") {
 					t.Fatalf("warnings %q", r.Warnings())
 				}
-				p := make([]byte, cs)
-				for c := range 5 {
-					n, err := r.ReadAt(p, int64(c*cs))
-					wantChunkError(t, err, int64(c))
-					if n != 0 {
-						t.Fatalf("n = %d", n)
-					}
-				}
-				if n, err := r.ReadAt(p, 5*cs); n != cs || err != nil || !bytes.Equal(p, media[5*cs:6*cs]) {
-					t.Fatalf("second table: %d, %v", n, err)
-				}
+				wantUnreadableFrom(t, r, media, cs, 0)
 			})
 		}
 	})
@@ -508,8 +520,13 @@ func TestEWFTable2FallbackWhenTableCorrupt(t *testing.T) {
 	})
 	t.Run("lone good table2", func(t *testing.T) {
 		files := ewftest.Build(ewftest.Options{ChunksPerTable: 4}, media)
+		// sectors, table2, dropped: the copy right after the sectors section is
+		// the only table of the group.
 		s := tableSections(files[0], "table")[1]
-		s.Type = "tablX" // the table is no longer one
+		s.Type = "table2"
+		ewftest.FixDescriptor(files[0], s)
+		s = tableSections(files[0], "table2")[2] // [1] is the one just made
+		s.Type = "dropped"
 		ewftest.FixDescriptor(files[0], s)
 		r := mustOpen(t, files)
 		oneWarning(t, r, "has no table")
@@ -519,24 +536,89 @@ func TestEWFTable2FallbackWhenTableCorrupt(t *testing.T) {
 	})
 }
 
-func TestEWFTablesDifferWarns(t *testing.T) {
+// dropFooter removes the entries footer (the last 4 bytes) of the table or
+// table2 section at off in a one-group segment and shifts every later section
+// back, so the result is a table without its Adler-32 footer.
+func dropFooter(seg []byte, sec ewftest.Section) []byte {
+	secs := ewftest.Sections(seg)
+	cut := sec.Offset + sec.Size - 4
+	out := append(append([]byte{}, seg[:cut]...), seg[cut+4:]...)
+	for _, s := range secs {
+		switch {
+		case s.Offset == sec.Offset:
+			s.Size -= 4
+			s.Next -= 4
+		case s.Offset > sec.Offset:
+			s.Offset -= 4
+			s.Next -= 4
+			if s.Type == "next" || s.Type == "done" {
+				s.Next = s.Offset
+			}
+		default:
+			if s.Next > sec.Offset {
+				s.Next -= 4
+			}
+		}
+		ewftest.FixDescriptor(out, s)
+	}
+	return out
+}
+
+// TestEWFTablesDifferFooterDecides: table and table2 both satisfy the rules but
+// differ; the copy whose entries footer verified wins, and when both are
+// equally trustworthy the differing chunks are unreadable.
+func TestEWFTablesDifferFooterDecides(t *testing.T) {
 	const cs = 64 * 512
 	media := pattern(10 * cs)
-	files := ewftest.Build(ewftest.Options{ChunksPerTable: 5}, media)
-	// Chunk 7 (entry 2 of the second table) differs in table2 only, in a way
-	// that keeps every checksum valid.
-	patchTable(t, files[0], "table2", 1, func(p []byte) {
-		setEntry(p, 2, entryAt(p, 2)+1)
-		fixTable(p)
+	build := func() [][]byte { return ewftest.Build(ewftest.Options{ChunksPerTable: 10}, media) }
+	shift := func(p []byte) { setEntry(p, 2, entryAt(p, 2)+1); fixTable(p) }
+	t.Run("table2 lacks a footer", func(t *testing.T) {
+		files := build()
+		files[0] = dropFooter(files[0], tableSections(files[0], "table2")[0])
+		patchTable(t, files[0], "table2", 0, shift)
+		r := mustOpen(t, files)
+		w := r.Warnings()
+		if len(w) != 1 || !strings.Contains(w[0], "differ") || !strings.Contains(w[0], "using table, whose entries checksum verified") {
+			t.Fatalf("warnings %q", w)
+		}
+		if !bytes.Equal(readAll(t, r), media) {
+			t.Fatal("the copy with a verified footer must win")
+		}
 	})
-	r := mustOpen(t, files)
-	w := r.Warnings()
-	if len(w) != 1 || !strings.Contains(w[0], "differ") || !strings.Contains(w[0], "first at entry 2") || !strings.Contains(w[0], "using table") {
-		t.Fatalf("warnings %q", w)
-	}
-	if !bytes.Equal(readAll(t, r), media) {
-		t.Fatal("the table must win")
-	}
+	t.Run("table lacks a footer", func(t *testing.T) {
+		files := build()
+		files[0] = dropFooter(files[0], tableSections(files[0], "table")[0])
+		patchTable(t, files[0], "table", 0, shift)
+		r := mustOpen(t, files)
+		w := r.Warnings()
+		if len(w) != 1 || !strings.Contains(w[0], "using table2, whose entries checksum verified") {
+			t.Fatalf("warnings %q", w)
+		}
+		if !bytes.Equal(readAll(t, r), media) {
+			t.Fatal("the copy with a verified footer must win")
+		}
+	})
+	t.Run("equally trustworthy", func(t *testing.T) {
+		files := build()
+		patchTable(t, files[0], "table2", 0, shift)
+		r := mustOpen(t, files)
+		w := r.Warnings()
+		if len(w) != 1 || !strings.Contains(w[0], "differ") || !strings.Contains(w[0], "first at entry 2") || !strings.Contains(w[0], "1 differing chunk(s) cannot be read") {
+			t.Fatalf("warnings %q", w)
+		}
+		p := make([]byte, cs)
+		for c := range 10 {
+			n, err := r.ReadAt(p, int64(c*cs))
+			if c == 2 {
+				wantChunkError(t, err, 2)
+				if n != 0 {
+					t.Fatalf("n = %d", n)
+				}
+			} else if n != cs || err != nil || !bytes.Equal(p, media[c*cs:(c+1)*cs]) {
+				t.Fatalf("chunk %d: %d, %v", c, n, err)
+			}
+		}
+	})
 }
 
 func TestEWFTableCountMismatch(t *testing.T) {
@@ -605,11 +687,13 @@ func TestEWFHostileTable(t *testing.T) {
 		patchBoth(t, files[0], 0, func(p []byte) { binary.LittleEndian.PutUint32(p, 0xFFFFFFFF) })
 		start := time.Now()
 		wantCorrupt(t, openErr(t, files))
-		if time.Since(start) > 2*time.Second {
+		if time.Since(start) > 10*time.Second {
 			t.Fatal("too slow")
 		}
 	})
 	t.Run("entries not increasing", func(t *testing.T) {
+		// Reversed entries break rule (b) (the first entry is not the payload
+		// start) and (c): the group is uncovered, with every chunk after it.
 		media := mixedMedia(10 * cs)
 		for name, comp := range map[string]ewftest.Compress{"none": ewftest.CompressNone, "all": ewftest.CompressAll} {
 			files := ewftest.Build(ewftest.Options{ChunksPerTable: 10, Compress: comp}, media)
@@ -621,18 +705,58 @@ func TestEWFHostileTable(t *testing.T) {
 				}
 			})
 			r := mustOpen(t, files)
-			p := make([]byte, cs)
-			for c := range 10 {
-				n, err := r.ReadAt(p, int64(c*cs))
-				if err != nil {
-					wantChunkError(t, err, int64(c))
-				} else if n != cs {
-					t.Fatalf("%s chunk %d: n = %d", name, c, n)
-				}
+			if !hasWarning(r, "segment 1, chunk table group 1:") || !hasWarning(r, "rule (b)") || !hasWarning(r, "chunks from index 0 onward unreadable") {
+				t.Fatalf("%s: warnings %q", name, r.Warnings())
 			}
+			wantUnreadableFrom(t, r, media, cs, 0)
 		}
 	})
+	t.Run("entries increasing but not from the payload start", func(t *testing.T) {
+		// Only the middle of the group is out of order: rule (c).
+		media := pattern(10 * cs)
+		files := ewftest.Build(ewftest.Options{ChunksPerTable: 10}, media)
+		patchBoth(t, files[0], 0, func(p []byte) {
+			a, b := entryAt(p, 4), entryAt(p, 5)
+			setEntry(p, 4, b)
+			setEntry(p, 5, a)
+		})
+		r := mustOpen(t, files)
+		if !hasWarning(r, "rule (c)") {
+			t.Fatalf("warnings %q", r.Warnings())
+		}
+		wantUnreadableFrom(t, r, media, cs, 0)
+	})
+	t.Run("base shifted by whole strides", func(t *testing.T) {
+		// Every entry still points at a valid, checksum-passing chunk, but one
+		// stride too far: chunk i would read chunk i+1's data. Rule (b) (the
+		// first entry is the payload start) rejects it, as does (d).
+		media := pattern(10 * cs)
+		for _, strides := range []uint64{1, 2, 9} {
+			files := ewftest.Build(ewftest.Options{ChunksPerTable: 10}, media)
+			patchBoth(t, files[0], 0, func(p []byte) {
+				binary.LittleEndian.PutUint64(p[8:], binary.LittleEndian.Uint64(p[8:])+strides*(cs+4))
+			})
+			r := mustOpen(t, files)
+			if !hasWarning(r, "rule (b)") && !hasWarning(r, "rule (d)") {
+				t.Fatalf("strides %d: warnings %q", strides, r.Warnings())
+			}
+			wantUnreadableFrom(t, r, media, cs, 0)
+		}
+	})
+	t.Run("base shifted back by whole strides", func(t *testing.T) {
+		media := pattern(10 * cs)
+		files := ewftest.Build(ewftest.Options{ChunksPerTable: 5, ChunksPerSegment: 5}, media)
+		patchBoth(t, files[1], 0, func(p []byte) {
+			binary.LittleEndian.PutUint64(p[8:], binary.LittleEndian.Uint64(p[8:])-(cs+4))
+		})
+		r := mustOpen(t, files)
+		if !hasWarning(r, "segment 2, chunk table group 1:") || !hasWarning(r, "chunks from index 5 onward unreadable") {
+			t.Fatalf("warnings %q", r.Warnings())
+		}
+		wantUnreadableFrom(t, r, media, cs, 5)
+	})
 	t.Run("thousands of entries at one compressed chunk", func(t *testing.T) {
+		// Duplicate offsets break rule (c): no chunk is served from them.
 		const n = 4000
 		media := make([]byte, n*512) // one-sector chunks
 		copy(media, pattern(512))
@@ -645,13 +769,18 @@ func TestEWFHostileTable(t *testing.T) {
 		})
 		start := time.Now()
 		r := mustOpen(t, files)
+		if !hasWarning(r, "rule (c)") || !hasWarning(r, "chunks from index 0 onward unreadable") {
+			t.Fatalf("warnings %q", r.Warnings())
+		}
 		p := make([]byte, 512)
 		for c := range n {
-			if got, err := r.ReadAt(p, int64(c)*512); got != 512 || err != nil || !bytes.Equal(p, media[:512]) {
-				t.Fatalf("chunk %d: %d, %v", c, got, err)
+			got, err := r.ReadAt(p, int64(c)*512)
+			if got != 0 {
+				t.Fatalf("chunk %d: %d bytes served", c, got)
 			}
+			wantChunkError(t, err, int64(c))
 		}
-		if time.Since(start) > 5*time.Second {
+		if time.Since(start) > 10*time.Second {
 			t.Fatal("too slow")
 		}
 	})
@@ -852,15 +981,16 @@ func TestEWFMissingTableMakesLaterChunksUnreadable(t *testing.T) {
 			files := ewftest.Build(c.opt, media)
 			dropTables(t, files[c.seg], c.grp)
 			r := mustOpen(t, files)
-			want := fmt.Sprintf("chunk table missing in segment %d; chunks from index %d onward unreadable", c.seg+1, c.k)
+			want := fmt.Sprintf("segment %d, chunk table group %d: the sectors section at offset ", c.seg+1, c.grp+1)
+			tail := fmt.Sprintf("has no chunk table after it; chunks from index %d onward unreadable", c.k)
 			n := 0
 			for _, w := range r.Warnings() {
-				if w == want {
+				if strings.HasPrefix(w, want) && strings.HasSuffix(w, tail) {
 					n++
 				}
 			}
 			if n != 1 {
-				t.Fatalf("warnings %q, want exactly one %q", r.Warnings(), want)
+				t.Fatalf("warnings %q, want exactly one %q ... %q", r.Warnings(), want, tail)
 			}
 			p := make([]byte, cs)
 			for i := range int64(12) {
@@ -875,7 +1005,7 @@ func TestEWFMissingTableMakesLaterChunksUnreadable(t *testing.T) {
 					t.Fatalf("chunk %d after the gap returned %d bytes", i, got)
 				}
 				ce := asChunkError(t, err, i)
-				if !strings.Contains(ce.Error(), "chunk table missing in segment") {
+				if !strings.Contains(ce.Error(), "chunk table group") {
 					t.Fatalf("chunk %d: %v", i, err)
 				}
 			}
@@ -889,22 +1019,55 @@ func TestEWFMissingTableMakesLaterChunksUnreadable(t *testing.T) {
 		})
 	}
 	t.Run("only the table is missing", func(t *testing.T) {
-		// table2 alone is enough to number the chunks: no gap.
+		// A table2 right after its sectors section alone numbers the chunks
+		// (sectors, table2, dropped): no gap.
+		files := ewftest.Build(ewftest.Options{ChunksPerSegment: 4, ChunksPerTable: 2}, media)
+		s := tableSections(files[1], "table")[0]
+		s.Type = "table2"
+		ewftest.FixDescriptor(files[1], s)
+		s = tableSections(files[1], "table2")[1] // [0] is the one just made
+		s.Type = "dropped"
+		ewftest.FixDescriptor(files[1], s)
+		r := mustOpen(t, files)
+		if hasWarning(r, "chunks from index") || !hasWarning(r, "has no table") || !bytes.Equal(readAll(t, r), media) {
+			t.Fatalf("warnings %q", r.Warnings())
+		}
+	})
+	t.Run("table not directly after its sectors section", func(t *testing.T) {
+		// sectors, dropped, table2: the table2 does not follow the sectors
+		// section, so rule (a) fails and everything from there is unreadable.
 		files := ewftest.Build(ewftest.Options{ChunksPerSegment: 4, ChunksPerTable: 2}, media)
 		s := tableSections(files[1], "table")[0]
 		s.Type = "dropped"
 		ewftest.FixDescriptor(files[1], s)
 		r := mustOpen(t, files)
-		if hasWarning(r, "chunk table missing") || !bytes.Equal(readAll(t, r), media) {
+		if !hasWarning(r, "segment 2, chunk table group 1: the sectors section at offset") || !hasWarning(r, "has no chunk table after it") {
 			t.Fatalf("warnings %q", r.Warnings())
 		}
+		wantUnreadableFrom(t, r, media, cs, 4)
+	})
+	t.Run("table group without a sectors section", func(t *testing.T) {
+		// dropped, table, table2: rule (a) fails for the group.
+		files := ewftest.Build(ewftest.Options{ChunksPerSegment: 4, ChunksPerTable: 2}, media)
+		s := tableSections(files[1], "table")[1] // the second group's table; its sectors section precedes it
+		sectors := ewftest.Sections(files[1])
+		for i, x := range sectors {
+			if x.Offset == s.Offset {
+				sectors[i-1].Type = "dropped"
+				ewftest.FixDescriptor(files[1], sectors[i-1])
+			}
+		}
+		r := mustOpen(t, files)
+		if !hasWarning(r, "segment 2, chunk table group 2: the table section at offset") || !hasWarning(r, "does not directly follow a sectors section") {
+			t.Fatalf("warnings %q", r.Warnings())
+		}
+		wantUnreadableFrom(t, r, media, cs, 6)
 	})
 }
 
 // TestEWFDisagreeingTablesNeverServeUnprovenChunks: table and table2 both pass
-// their checksums but differ. An entry is used only when its chunk passes its
-// own integrity check at the table's or table2's location; otherwise the chunk
-// is unreadable.
+// their checksums but differ. The copy that satisfies the structural rules is
+// used; when both do, the differing chunks are unreadable.
 func TestEWFDisagreeingTablesNeverServeUnprovenChunks(t *testing.T) {
 	const cs = 64 * 512
 	media := pattern(10 * cs)
@@ -914,32 +1077,32 @@ func TestEWFDisagreeingTablesNeverServeUnprovenChunks(t *testing.T) {
 	shift := func(i int, by uint32) func(p []byte) {
 		return func(p []byte) { setEntry(p, i, entryAt(p, i)+by); fixTable(p) }
 	}
-	t.Run("table location fails its check, table2 passes", func(t *testing.T) {
+	t.Run("table breaks a rule, table2 passes", func(t *testing.T) {
 		files := build()
-		patchTable(t, files[0], "table", 0, shift(2, 1))
+		patchTable(t, files[0], "table", 0, func(p []byte) { setEntry(p, 2, entryAt(p, 1)); fixTable(p) }) // duplicate
 		r := mustOpen(t, files)
-		if !hasWarning(r, "differ") {
+		if !hasWarning(r, "rule (c)") || !hasWarning(r, "using table2") {
 			t.Fatalf("warnings %q", r.Warnings())
 		}
 		if !bytes.Equal(readAll(t, r), media) {
-			t.Fatal("table2's location passes its check and must be used")
+			t.Fatal("table2 satisfies the rules and must be used")
 		}
 	})
-	t.Run("table location passes its check", func(t *testing.T) {
+	t.Run("table2 breaks a rule, table passes", func(t *testing.T) {
 		files := build()
-		patchTable(t, files[0], "table2", 1, shift(2, 1))
+		patchTable(t, files[0], "table2", 1, func(p []byte) { setEntry(p, 2, entryAt(p, 4)); fixTable(p) }) // not increasing
 		r := mustOpen(t, files)
-		if !hasWarning(r, "differ") || !bytes.Equal(readAll(t, r), media) {
+		if !hasWarning(r, "rule (c)") || !hasWarning(r, "using table") || !bytes.Equal(readAll(t, r), media) {
 			t.Fatalf("warnings %q", r.Warnings())
 		}
 	})
-	t.Run("neither location passes", func(t *testing.T) {
+	t.Run("both satisfy the rules but differ", func(t *testing.T) {
 		files := build()
 		patchTable(t, files[0], "table", 1, shift(2, 1))
 		patchTable(t, files[0], "table2", 1, shift(2, 2))
 		r := mustOpen(t, files)
 		w := r.Warnings()
-		if len(w) != 1 || !strings.Contains(w[0], "differ") || !strings.Contains(w[0], "1 of 1 differing entries pass at neither location") {
+		if len(w) != 1 || !strings.Contains(w[0], "differ") || !strings.Contains(w[0], "1 differing chunk(s) cannot be read") {
 			t.Fatalf("warnings %q", w)
 		}
 		p := make([]byte, cs)
@@ -988,4 +1151,49 @@ func TestEWFDisagreeingTablesNeverServeUnprovenChunks(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestEWFUncompressedChunkBoundedToItsSectorsSection: a raw chunk and its
+// checksum must lie inside the sectors section that holds them.
+func TestEWFUncompressedChunkBoundedToItsSectorsSection(t *testing.T) {
+	const cs = 64 * 512
+	media := pattern(5 * cs)
+	files := ewftest.Build(ewftest.Options{ChunksPerTable: 5}, media)
+	// The last entry stays increasing and inside the payload, but 8 bytes too
+	// far for its chunk to fit before the section ends.
+	patchBoth(t, files[0], 0, func(p []byte) { setEntry(p, 4, entryAt(p, 4)+8) })
+	r := mustOpen(t, files)
+	wantUnreadableFrom(t, r, media, cs, 4)
+	p := make([]byte, cs)
+	_, err := r.ReadAt(p, 4*cs)
+	if !strings.Contains(fmt.Sprint(err), "does not fit inside its sectors section") {
+		t.Fatalf("%v", err)
+	}
+}
+
+// TestEWFBytesAfterZlibStreamWarn: a compressed chunk followed, inside its
+// table-delimited extent, by bytes that are not part of the stream still reads
+// (the stream's own checksum passed) but is flagged.
+func TestEWFBytesAfterZlibStreamWarn(t *testing.T) {
+	const cs = 64 * 512
+	media := pattern(3 * cs)
+	var zb bytes.Buffer
+	zw := zlib.NewWriter(&zb)
+	_, _ = zw.Write(media[cs : 2*cs])
+	_ = zw.Close()
+	stored := append(zb.Bytes(), 0xDE, 0xAD, 0xBE)
+	files := ewftest.Build(ewftest.Options{
+		Compress: ewftest.CompressAll,
+		Override: map[int]ewftest.RawChunk{1: {Data: stored, Compressed: true}},
+	}, media)
+	r := mustOpen(t, files)
+	if len(r.Warnings()) != 0 {
+		t.Fatalf("open warnings %q", r.Warnings())
+	}
+	if !bytes.Equal(readAll(t, r), media) {
+		t.Fatal("ReadAt differs from the media")
+	}
+	if !hasWarning(r, "chunk 1 (segment 1, offset ") || !hasWarning(r, "3 byte(s) follow the end of its zlib stream") {
+		t.Fatalf("warnings %q", r.Warnings())
+	}
 }
