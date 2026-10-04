@@ -43,6 +43,11 @@ func newIngestID() (string, error) {
 // checks the parser identity (ErrParserIdentityConflict), audits
 // records.ingest.start and records the parser.
 //
+// While this Case has a live ingest (another Writer that was started and not
+// yet ended or aborted) Start refuses with ErrIngestActive before it audits or
+// recovers anything: a live ingest is never recovered. The ingest is live from a
+// successful Start until End or Abort concludes it.
+//
 // Recovery comes first and is never undone: its records.ingest.recover entries
 // and run rows stay even when Start then fails (the caller sees the error, the
 // dead ingests are resolved anyway). The refusals and the identity check happen
@@ -99,6 +104,14 @@ func (w *Writer) Start(ctx context.Context, so StartOptions) error {
 	if err != nil {
 		return err
 	}
+	if active, ok := w.c.BeginIngest(ingestID); !ok {
+		return fmt.Errorf("%w: %s", ErrIngestActive, active)
+	}
+	defer func() {
+		if w.state != stateStarted {
+			w.c.EndIngest(ingestID)
+		}
+	}()
 	w.ingest.Store(&ingestID)
 
 	unresolved, err := w.c.UnresolvedIngests()

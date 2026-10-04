@@ -63,6 +63,11 @@ type Case struct {
 	lock       *caseLock
 	manifestMu sync.Mutex
 
+	// liveIngest is the id of the records ingest running in this process, if any
+	// (see BeginIngest).
+	ingestMu   sync.Mutex
+	liveIngest string
+
 	// upgradeHook, when set by a test, runs between the case.upgrade audit entry
 	// and the migration.
 	upgradeHook func()

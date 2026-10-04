@@ -175,6 +175,7 @@ func crashAt(w *records.Writer, point string, nth int) {
 		if p == point {
 			calls++
 			if calls == nth {
+				w.Die() // the "process" is gone: it holds no live-ingest slot
 				panic(crash{p})
 			}
 		}

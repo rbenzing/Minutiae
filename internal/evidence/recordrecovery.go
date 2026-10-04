@@ -216,3 +216,35 @@ func (c *Case) ReadAudit() ([]AuditEntry, error) {
 	}
 	return entries, nil
 }
+
+// BeginIngest registers id as the live ingest of this Case. It refuses (ok is
+// false, active names the ingest) while another ingest registered earlier is
+// still live: one Case has at most one live ingest in this process, so recovery
+// can never mistake a running ingest for a dead one. The caller must call
+// EndIngest when the ingest concludes or its Start fails.
+func (c *Case) BeginIngest(id string) (active string, ok bool) {
+	c.ingestMu.Lock()
+	defer c.ingestMu.Unlock()
+	if c.liveIngest != "" {
+		return c.liveIngest, false
+	}
+	c.liveIngest = id
+	return "", true
+}
+
+// EndIngest releases the registration BeginIngest made for id (a no-op for any
+// other id).
+func (c *Case) EndIngest(id string) {
+	c.ingestMu.Lock()
+	defer c.ingestMu.Unlock()
+	if c.liveIngest == id {
+		c.liveIngest = ""
+	}
+}
+
+// LiveIngest returns the id of the ingest live in this Case ("" when none).
+func (c *Case) LiveIngest() string {
+	c.ingestMu.Lock()
+	defer c.ingestMu.Unlock()
+	return c.liveIngest
+}

@@ -44,3 +44,8 @@ func (p prepared) ApproxBytes() int { return p.approxBytes }
 // always outside any transaction. An error returned at the first two fails the
 // batch; a panic simulates a process that died there.
 func (w *Writer) SetHook(f func(point string) error) { w.hook = f }
+
+// Die simulates the death of the process that ran the writer: the Case's
+// live-ingest slot is released (a real dead process holds nothing), while the
+// audit log and the database stay as they are.
+func (w *Writer) Die() { w.c.EndIngest(w.IngestID()) }

@@ -28,6 +28,9 @@ var (
 	ErrWriterNotStarted = errors.New("records writer is not started")
 	// ErrWriterStarted: Start was already called.
 	ErrWriterStarted = errors.New("records writer is already started")
+	// ErrIngestActive: this Case already has a live ingest (a Writer that was
+	// started and neither ended nor aborted); a second Start is refused.
+	ErrIngestActive = errors.New("an ingest is already active in this case")
 	// ErrInvalidOptions: a writer or start option is out of range.
 	ErrInvalidOptions = errors.New("invalid writer options")
 )
@@ -389,6 +392,7 @@ func (w *Writer) result(c evidence.IngestConclusion) IngestResult {
 func (w *Writer) End(ctx context.Context) (IngestResult, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	defer w.releaseIfClosed()
 	if err := w.usable(); err != nil {
 		return IngestResult{}, err
 	}
@@ -417,6 +421,7 @@ func (w *Writer) End(ctx context.Context) (IngestResult, error) {
 func (w *Writer) Abort(ctx context.Context, cause error) (IngestResult, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	defer w.releaseIfClosed()
 	switch w.state {
 	case stateNew:
 		return IngestResult{}, ErrWriterNotStarted
@@ -535,4 +540,12 @@ func clipTo(s string, n int) string {
 		cut--
 	}
 	return strings.ToValidUTF8(s[:cut], "?") + "..."
+}
+
+// releaseIfClosed frees the Case's live-ingest slot once the ingest has
+// concluded (End or Abort got as far as closing the writer). w.mu is held.
+func (w *Writer) releaseIfClosed() {
+	if w.state == stateClosed {
+		w.c.EndIngest(w.IngestID())
+	}
 }

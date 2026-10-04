@@ -180,6 +180,7 @@ func TestRecoverFinishesHalfDoneRecovery(t *testing.T) {
 	if _, err := c.Audit.Append(evidence.ActionIngestRecover, "", rec.Details()); err != nil {
 		t.Fatal(err)
 	}
+	w.Die() // the writer's process is gone
 	startWriter(t, c, records.Parser{Name: "next", Version: "1"}, records.WriterOptions{}, a.ID)
 	if n := len(auditOf(t, c, evidence.ActionIngestRecover)); n != 1 {
 		t.Errorf("%d recover entries, want the hand-written one only", n)
@@ -187,4 +188,50 @@ func TestRecoverFinishesHalfDoneRecovery(t *testing.T) {
 	if o := scalar[string](t, c, `SELECT outcome FROM record_runs WHERE ingest_id = ?`, w.IngestID()); o != "interrupted" {
 		t.Errorf("run outcome = %q", o)
 	}
+}
+
+// TestLiveIngestBlocksSecondStart: while an ingest is live in this process a
+// second Start is refused and writes nothing (it must never recover, that is
+// interrupt, the live ingest); once the ingest ends a new Start works.
+func TestLiveIngestBlocksSecondStart(t *testing.T) {
+	c, a := setup(t)
+	w := startWriter(t, c, records.Parser{Name: "a", Version: "1"}, records.WriterOptions{}, a.ID)
+	add(t, w, recordstest.Records(a.ID, 2, 1))
+	before := len(auditOf(t, c, ""))
+
+	w2 := newWriter(t, c, records.Parser{Name: "b", Version: "1"}, records.WriterOptions{})
+	err := w2.Start(ctx, records.StartOptions{Artifacts: []string{a.ID}})
+	if !errors.Is(err, records.ErrIngestActive) {
+		t.Fatalf("second Start = %v, want ErrIngestActive", err)
+	}
+	if after := len(auditOf(t, c, "")); after != before {
+		t.Errorf("the refused Start wrote %d audit entries", after-before)
+	}
+	if n := len(auditOf(t, c, evidence.ActionIngestRecover)); n != 0 {
+		t.Errorf("%d recover entries for a live ingest", n)
+	}
+	if n := count(t, c, "record_runs"); n != 0 {
+		t.Errorf("%d run rows written by the refused Start", n)
+	}
+	// the refused writer is not usable and does not hold the slot
+	if err := w2.Add(ctx, recordstest.Records(a.ID, 1, 1)[0]); !errors.Is(err, records.ErrWriterNotStarted) {
+		t.Errorf("Add on the refused writer = %v", err)
+	}
+
+	res, err := w.End(ctx)
+	if err != nil || res.Outcome != "complete" || res.Records != 2 {
+		t.Fatalf("End of the live ingest = %+v, %v", res, err)
+	}
+	if n := len(auditOf(t, c, evidence.ActionIngestRecover)); n != 0 {
+		t.Errorf("%d recover entries after a normal end", n)
+	}
+	// after A ended, a new Start works
+	if err := w2.Start(ctx, records.StartOptions{Artifacts: []string{a.ID}}); err != nil {
+		t.Fatalf("Start after the ingest ended: %v", err)
+	}
+	if _, err := w2.Abort(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	// an aborted ingest frees the slot too
+	startWriter(t, c, records.Parser{Name: "c", Version: "1"}, records.WriterOptions{}, a.ID)
 }
