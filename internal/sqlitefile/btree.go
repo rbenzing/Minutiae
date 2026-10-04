@@ -79,39 +79,66 @@ func ParsePageHeader(page []byte, pgno uint32) (PageHeader, error) {
 	return h, nil
 }
 
+// CellPointer is a validated entry of the cell pointer array: Offset always
+// lies in the valid range, so it can be used to index the page.
+type CellPointer struct {
+	Index  int // position in the cell pointer array
+	Offset int // offset of the cell in the page
+}
+
+// BadCellPointer is an entry that was rejected. Raw is the value as stored; it
+// is not an offset anyone may use.
+type BadCellPointer struct {
+	Index int
+	Raw   int
+}
+
+// CellPointerSet is the cell pointer array of a page split into the pointers
+// that can be followed and those that cannot. A caller that wants the cells it
+// can read walks Good, and warns once for the page when Bad is not empty
+// (Err gives the text). There is no sentinel value to index with.
+type CellPointerSet struct {
+	Good []CellPointer // in array order
+	Bad  []BadCellPointer
+	// Lo and Hi are the bounds a pointer had to lie in: [Lo, Hi).
+	Lo, Hi int
+	// Cells is the cell count of the page (len(Good) + len(Bad)).
+	Cells int
+}
+
+// Err describes the rejected pointers (an error wrapping ErrCorrupt naming the
+// first one and how many), or is nil when every pointer is good. Good stays
+// usable whatever Err says.
+func (s CellPointerSet) Err() error {
+	if len(s.Bad) == 0 {
+		return nil
+	}
+	f := s.Bad[0]
+	return &CorruptError{File: FileDB, Reason: fmt.Sprintf("%d of %d cell pointers outside [%d, %d); first: cell %d points at %d", len(s.Bad), s.Cells, s.Lo, s.Hi, f.Index, f.Raw)}
+}
+
 // CellPointers returns the cell pointer array of page, validated: every
 // pointer must lie in [max(ContentStart, end of the pointer array), usable)
 // and inside the bytes present. A pointer into the reserved-bytes region
 // [usable, pagesize), the header, the pointer array or below the content
-// start is invalid. The result always has CellCount entries; an invalid
-// pointer is returned as -1 and the error (wrapping ErrCorrupt, naming the
-// first one and how many) is non-nil, so a caller may keep the cells that
-// are good or skip the page. A pointer array that itself reaches past usable
-// leaves no valid pointer: the result is nil with the error.
-func CellPointers(page []byte, h PageHeader, usable int) ([]int, error) {
+// start is bad. Good and Bad together name every cell once. The error is
+// non-nil only when the pointer array itself reaches past usable (or the
+// bytes present): then no pointer can be trusted and the set is empty.
+func CellPointers(page []byte, h PageHeader, usable int) (CellPointerSet, error) {
 	end := h.pointerArrayEnd()
 	if end > usable || end > len(page) {
-		return nil, &CorruptError{File: FileDB, Reason: fmt.Sprintf("%d cell pointers reach offset %d, past the usable size %d", h.CellCount, end, usable)}
+		return CellPointerSet{}, &CorruptError{File: FileDB, Reason: fmt.Sprintf("%d cell pointers reach offset %d, past the usable size %d", h.CellCount, end, usable)}
 	}
 	lo := max(h.ContentStart, end)
 	hi := min(usable, len(page))
-	out := make([]int, h.CellCount)
-	bad, first := 0, -1
-	for i := range out {
+	s := CellPointerSet{Lo: lo, Hi: hi, Cells: h.CellCount}
+	for i := range h.CellCount {
 		p := int(binary.BigEndian.Uint16(page[h.Base+h.HeaderSize+2*i:]))
 		if p < lo || p >= hi {
-			out[i] = -1
-			if bad == 0 {
-				first = i
-			}
-			bad++
+			s.Bad = append(s.Bad, BadCellPointer{Index: i, Raw: p})
 			continue
 		}
-		out[i] = p
+		s.Good = append(s.Good, CellPointer{Index: i, Offset: p})
 	}
-	if bad > 0 {
-		p := int(binary.BigEndian.Uint16(page[h.Base+h.HeaderSize+2*first:]))
-		return out, &CorruptError{File: FileDB, Reason: fmt.Sprintf("%d of %d cell pointers outside [%d, %d); first: cell %d points at %d", bad, h.CellCount, lo, hi, first, p)}
-	}
-	return out, nil
+	return s, nil
 }

@@ -788,8 +788,8 @@ func TestOverflowChainFromBuilder(t *testing.T) {
 					t.Fatal(err)
 				}
 				ptrs, err := sqlitefile.CellPointers(page, h, db.Info().UsableSize)
-				if err != nil || !slices.Contains(ptrs, off) {
-					t.Fatalf("row %d: pointers %v do not include %d (%v)", rowid, ptrs, off, err)
+				if err != nil || !slices.ContainsFunc(ptrs.Good, func(p sqlitefile.CellPointer) bool { return p.Offset == off }) {
+					t.Fatalf("row %d: pointers %v do not include %d (%v)", rowid, ptrs.Good, off, err)
 				}
 				cell, err := sqlitefile.ParseCell(page, db.Info().UsableSize, h, off)
 				if err != nil {

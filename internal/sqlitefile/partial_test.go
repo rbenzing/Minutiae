@@ -131,14 +131,12 @@ func TestPartialLastPageCellsAreReadWhereTheyLie(t *testing.T) {
 		t.Fatal(err)
 	}
 	ptrs, err := sqlitefile.CellPointers(page, h, db.Info().UsableSize)
-	if err == nil {
-		t.Fatalf("cells at the end of the page cannot all be inside 490 bytes: %v", ptrs)
+	if err != nil || len(ptrs.Bad) == 0 {
+		t.Fatalf("cells at the end of the page cannot all be inside 490 bytes: %+v (%v)", ptrs, err)
 	}
 	readable := 0
-	for _, off := range ptrs {
-		if off < 0 {
-			continue
-		}
+	for _, ptr := range ptrs.Good {
+		off := ptr.Offset
 		cell, err := sqlitefile.ParseCell(page, db.Info().UsableSize, h, off)
 		if err != nil {
 			continue // a cell that starts inside but ends past the bytes present
