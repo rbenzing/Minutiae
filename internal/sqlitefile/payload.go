@@ -35,6 +35,9 @@ type payload struct {
 	local  []byte
 	total  int64 // declared payload length
 	head   uint32
+	// maxSteps is the longest chain followed (the one overflow cap of the
+	// package, overflowPageCap); 0 means no cap (only the visited set bounds it).
+	maxSteps int64
 
 	next  uint32 // page the chain continues at (valid while !dead)
 	steps []chainStep
@@ -49,9 +52,9 @@ type payload struct {
 // newPayload prepares the payload of cell c, whose overflow chain (if any)
 // is read from src and recorded in vis. Memory held for the chain's steps is
 // charged to l; release gives it back.
-func newPayload(src pageSource, l *ledger, vis visitor, usable int, c Cell) *payload {
+func newPayload(src pageSource, l *ledger, vis visitor, usable int, maxSteps int64, c Cell) *payload {
 	return &payload{
-		src: src, l: l, vis: vis, usable: usable,
+		src: src, l: l, vis: vis, usable: usable, maxSteps: maxSteps,
 		local: c.Local, total: c.PayloadLen, head: c.OverflowHead, next: c.OverflowHead,
 		winIdx: -1,
 	}
@@ -143,6 +146,9 @@ func (p *payload) page(idx int64) ([]byte, error) {
 		}
 		cur := p.next
 		switch {
+		case p.maxSteps > 0 && int64(len(p.steps)) >= p.maxSteps:
+			p.die(cur, "the chain is longer than the %d overflow pages any payload can need", p.maxSteps)
+			return nil, nil
 		case cur == 0:
 			p.die(0, "the chain ends after %d overflow pages but the payload needs more", len(p.steps))
 			return nil, nil

@@ -56,12 +56,12 @@ func TestEngineReservedSerialTypesReadAsNull(t *testing.T) {
 			}
 			n := 0
 			for _, w := range v.Warnings() {
-				if w.Code == sqlitefile.WarnRecordInvalid && strings.Contains(w.Msg, "reserved serial type") {
+				if w.Code == sqlitefile.WarnRecordReservedSerial && strings.Contains(w.Msg, "reserved serial type") {
 					n++
 				}
 			}
 			if n != 1 {
-				t.Errorf("%d reserved-serial-type warnings, want one for the record: %v", n, v.Warnings())
+				t.Errorf("%d record-reserved-serial warnings, want one for the record: %v", n, v.Warnings())
 			}
 		})
 	}

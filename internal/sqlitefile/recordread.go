@@ -148,7 +148,7 @@ func (e *env) readRecord(l *ledger, w *warnings, at cellCtx, p *payload, enc Enc
 			// The engine reads serial types 10 and 11 as a NULL that takes no
 			// bytes (TestEngineReservedSerialTypesReadAsNull); the row is kept.
 			w.add(Warning{
-				Code: WarnRecordInvalid, File: at.File, Page: at.Page, Offset: at.Offset,
+				Code: WarnRecordReservedSerial, File: at.File, Page: at.Page, Offset: at.Offset,
 				Msg: fmt.Sprintf("reserved serial type in %d column(s), first column %d (type %d): read as NULL, as the engine reads it", rec.Reserved, firstReserved, rec.Serials[firstReserved]),
 			})
 		}

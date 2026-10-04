@@ -96,14 +96,16 @@ func (w *walker) lookupLeaf(n node, rowid int64) (Row, bool, error) {
 }
 
 // found decodes the row of cell c. Its overflow pages are marked in a visited
-// set of their own, sized for the chain the cell declares.
+// set of their own, sized for the chain the cell declares, never above the
+// shared overflow cap and never above the pages the file can supply (a chain
+// visits distinct pages, so a hostile declared length cannot inflate the charge).
 func (w *walker) found(n node, ptr CellPointer, c Cell) (Row, bool, error) {
 	local, spills := LocalPayload(w.v.info.UsableSize, n.h.Type, c.PayloadLen)
 	pages := int64(1)
 	if spills {
 		pages += (c.PayloadLen-local)/int64(w.v.info.UsableSize-4) + 1
 	}
-	ovf, err := newMapVisitor(w.l, int(min(pages, maxMapVisited)))
+	ovf, err := newMapVisitor(w.l, int(min(pages, w.v.e.overflowCap(w.v.info.UsableSize), int64(w.v.addr))))
 	if err != nil {
 		return Row{}, false, err
 	}

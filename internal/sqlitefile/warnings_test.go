@@ -19,7 +19,7 @@ import (
 var goldenWarningCodes = []string{
 	"truncated-file", "hdr-fractions", "hdr-encoding-invalid", "hdr-version-bytes", "hdr-counter-mismatch",
 	"page-count-clamped", "page-unavailable", "page-type-invalid", "page-range", "cell-pointer", "cell-overflow-chain",
-	"cell-too-large", "record-invalid", "btree-cycle", "btree-depth", "btree-order", "btree-shape", "freelist-cycle",
+	"cell-too-large", "record-invalid", "record-reserved-serial", "btree-cycle", "btree-depth", "btree-order", "btree-shape", "freelist-cycle",
 	"freelist-count", "freelist-leaf-count", "freeblock-chain", "ptrmap-mismatch", "schema-row-invalid",
 	"schema-duplicate", "schema-sql-unparsed", "wal-header-invalid", "wal-page-size-mismatch", "wal-torn-tail",
 	"wal-mode-mismatch", "journal-header-invalid", "journal-sector-invalid", "journal-page-size-mismatch",
@@ -79,8 +79,8 @@ func TestWarningCodesPinned(t *testing.T) {
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("exported Warn* constants differ from the Format reference\n got: %q\nwant: %q", got, want)
 	}
-	if len(want) != 42 {
-		t.Errorf("the golden slice has %d codes; the Format reference lists 42", len(want))
+	if len(want) != 43 {
+		t.Errorf("the golden slice has %d codes; the Format reference lists 43", len(want))
 	}
 
 	// The collector accepts exactly this set, so a code any later test

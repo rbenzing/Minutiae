@@ -57,8 +57,10 @@ type visitor interface {
 // up front for the whole capacity.
 const mapVisitorEntryCost = 64
 
-// maxMapVisited bounds a mapVisitor.
-const maxMapVisited = 1 << 16
+// maxMapVisited bounds a mapVisitor. It is above the overflow-chain cap of
+// every legal configuration (a payload of the hard-ceiling 1 GiB on 480-byte
+// usable pages needs 2255761 pages), so no legal chain is cut by it.
+const maxMapVisited = 1 << 22
 
 // mapVisitor is a small bounded visited set. Past its capacity mark returns
 // false and full reports true: the walk must end as if it had met a cycle.
@@ -94,3 +96,20 @@ func (m *mapVisitor) mark(pgno uint32) bool {
 
 // release gives the capacity back.
 func (m *mapVisitor) release(l *ledger) { l.free(m.cost); m.cost = 0 }
+
+// overflowPageCap is the longest overflow chain that is ever followed, the one
+// cap of the scan and of the point lookup. A chain is read only as far as the
+// payload needs, and a payload is refused above lim.MaxPayloadBytes (the value
+// caps and the row cap are below it), so the most pages any legal cell needs
+// is ceil(MaxPayloadBytes / (usable-4)): a legal 64 MiB blob on 512-byte pages
+// (132105 pages) is never cut. The result never exceeds maxMapVisited.
+func overflowPageCap(lim Limits, usable int) int64 {
+	chunk := int64(usable - 4)
+	if chunk <= 0 {
+		return 1
+	}
+	return min((lim.MaxPayloadBytes+chunk-1)/chunk, maxMapVisited)
+}
+
+// overflowCap is the cap for this instance's limits.
+func (e *env) overflowCap(usable int) int64 { return overflowPageCap(e.opts.Limits, usable) }

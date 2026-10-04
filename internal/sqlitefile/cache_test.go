@@ -203,7 +203,7 @@ func TestPageSetMarksOnce(t *testing.T) {
 }
 
 func TestMapVisitorIsBounded(t *testing.T) {
-	budget := newRecBudget(1 << 24)
+	budget := newRecBudget(1 << 30)
 	env := sqlitefile.NewTestEnv(sqlitefile.Options{Budget: budget})
 	l := env.Ledger()
 	v, err := env.NewMapVisited(l, 3)
@@ -223,7 +223,7 @@ func TestMapVisitorIsBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if budget.used > 1<<22 {
+	if budget.used > sqlitefile.MaxMapVisited*64 {
 		t.Errorf("a visitor for 2^40 pages charged %d bytes", budget.used)
 	}
 	v.Release(l)

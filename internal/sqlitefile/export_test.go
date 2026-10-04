@@ -188,7 +188,7 @@ type TestPayload struct{ p *payload }
 
 // NewTestPayload prepares the payload of cell c over src.
 func (t *TestEnv) NewTestPayload(src *FakeSource, l *TestLedger, vis Visited, usable int, c Cell) *TestPayload {
-	return &TestPayload{newPayload(src, l.l, vis.(visitedAdapter).v, usable, c)}
+	return &TestPayload{newPayload(src, l.l, vis.(visitedAdapter).v, usable, t.e.overflowCap(usable), c)}
 }
 
 // ReadAt reads up to len(dst) payload bytes at off.
@@ -265,7 +265,7 @@ func (d *DB) PayloadOf(l *TestLedger, c Cell) (*TestPayload, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &TestPayload{newPayload(cache, l.l, vis, d.info.UsableSize, c)}, nil
+	return &TestPayload{newPayload(cache, l.l, vis, d.info.UsableSize, d.env.overflowCap(d.info.UsableSize), c)}, nil
 }
 
 // Call runs fn as an exported method would: with a ledger on the
@@ -292,4 +292,14 @@ func LocFor(at PageLoc, pgno uint32, idx int, c Cell, steps []ChainStep, maxOver
 // PtrmapPageno exposes ptrmapPageno.
 func PtrmapPageno(pageSize, reserved int, pgno uint32) uint32 {
 	return ptrmapPageno(pageSize, reserved, pgno)
+}
+
+// ---- Task 5 step 0: the shared overflow-chain cap ----
+
+// MaxMapVisited is the hard bound of a mapVisitor.
+const MaxMapVisited = maxMapVisited
+
+// OverflowPageCap exposes overflowPageCap.
+func OverflowPageCap(lim Limits, usable int) int64 {
+	return overflowPageCap(lim.withDefaults(), usable)
 }

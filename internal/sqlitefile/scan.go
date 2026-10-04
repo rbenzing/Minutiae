@@ -178,7 +178,7 @@ func (w *walker) cell(n node, ptr CellPointer) (Cell, bool, error) {
 // when it is done with the row.
 func (w *walker) rowFor(n node, ptr CellPointer, c Cell, ovf visitor) (row Row, held int64, ok bool, err error) {
 	v := w.v
-	p := newPayload(v.cache, w.l, ovf, v.info.UsableSize, c)
+	p := newPayload(v.cache, w.l, ovf, v.info.UsableSize, v.e.overflowCap(v.info.UsableSize), c)
 	p.ctx = w.ctx
 	defer p.release()
 	at := cellCtx{File: n.loc.File, Page: n.pgno, Offset: n.loc.Offset + int64(c.Offset)}

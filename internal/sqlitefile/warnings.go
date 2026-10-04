@@ -43,6 +43,7 @@ const (
 	WarnCellOverflowChain       = "cell-overflow-chain"
 	WarnCellTooLarge            = "cell-too-large"
 	WarnRecordInvalid           = "record-invalid"
+	WarnRecordReservedSerial    = "record-reserved-serial"
 	WarnBTreeCycle              = "btree-cycle"
 	WarnBTreeDepth              = "btree-depth"
 	WarnBTreeOrder              = "btree-order"
@@ -80,7 +81,7 @@ var knownWarningCodes = map[string]bool{
 	WarnTruncatedFile: true, WarnHdrFractions: true, WarnHdrEncodingInvalid: true, WarnHdrVersionBytes: true,
 	WarnHdrCounterMismatch: true, WarnPageCountClamped: true, WarnPageUnavailable: true, WarnPageTypeInvalid: true,
 	WarnPageRange: true, WarnCellPointer: true, WarnCellOverflowChain: true, WarnCellTooLarge: true,
-	WarnRecordInvalid: true, WarnBTreeCycle: true, WarnBTreeDepth: true, WarnBTreeOrder: true, WarnBTreeShape: true,
+	WarnRecordInvalid: true, WarnRecordReservedSerial: true, WarnBTreeCycle: true, WarnBTreeDepth: true, WarnBTreeOrder: true, WarnBTreeShape: true,
 	WarnFreelistCycle: true, WarnFreelistCount: true, WarnFreelistLeafCount: true, WarnFreeblockChain: true,
 	WarnPtrmapMismatch: true, WarnSchemaRowInvalid: true, WarnSchemaDuplicate: true, WarnSchemaSQLUnparsed: true,
 	WarnWALHeaderInvalid: true, WarnWALPageSizeMismatch: true, WarnWALTornTail: true, WarnWALModeMismatch: true,
