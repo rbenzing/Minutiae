@@ -78,17 +78,39 @@ func clock(t tm.Time, ctx context.Context, wg group, p *int) {
 	_, _ = context.WithTimeoutCause(ctx, 1, nil) // want
 	_, _ = context.WithDeadlineCause(ctx, t, nil) // want
 
+	// time parsing resolves zone abbreviations against the host: only internal/decode/ts may parse
+	_, _ = time.Parse(time.RFC3339, "2020-01-01T00:00:00Z") // want
+	_, _ = tm.ParseInLocation("2006-01-02 MST", "2020-01-01 CET", tm.UTC) // want
+
+	// method values and function values are flagged the same as calls
+	_ = t.Local                          // want
+	local := tm.Time.Local               // want
+	spawn := wg.Go                       // want
+	spawn2 := (*sync.WaitGroup).Go       // want
+	show := fmt.Println                  // want
+	show2 := tm.Now                      // want
+	pr := print                          // want
+	prln := println                      // want
+	register(fmt.Printf, print)          // want
+	mk := time.Local                     // want
+	later := time.Parse                  // want
+	_ = []func(...any){print, println}   // want
+
 	// harmless uses of package time
 	_ = time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
 	_ = time.Duration(5) * time.Second
 	_ = t.UTC().Format(time.RFC3339)
 	_ = t.Add(time.Hour).Before(t)
-	_, _ = time.Parse(time.RFC3339, "2020-01-01T00:00:00Z")
 	var d time.Duration
 	_ = d.Seconds()
 	_ = context.Background()
 	_, _ = context.WithCancel(ctx)
 	_ = context.WithValue(ctx, 1, 2)
+	// a field or key named like a print builtin is not the builtin
+	_ = opts{print: 1, println: 2}
+	_ = o.print
+	_ = o.println
+	_ = t.UTC
 }
 
 // shadow: a local variable named like an imported package is not the package

@@ -370,6 +370,10 @@ var timeBans = map[string]string{
 // package that converts device timestamps, is exempt (it states the zone itself).
 var unixBans = map[string]bool{"Unix": true, "UnixMilli": true, "UnixMicro": true}
 
+// parseBans are the time parsers: a layout with a zone abbreviation resolves it against the host's
+// zone database, so the result depends on the machine. Only internal/decode/ts may call them.
+var parseBans = map[string]bool{"Parse": true, "ParseInLocation": true}
+
 // contextBans are the context constructors that read the clock and fire a timer on their own goroutine.
 var contextBans = map[string]bool{"WithTimeout": true, "WithDeadline": true, "WithTimeoutCause": true, "WithDeadlineCause": true}
 
@@ -409,7 +413,8 @@ func topLevelNames(srcs []pureSrc) map[string]bool {
 }
 
 // checkAstBans reports the constructs P2 forbids. Calls are resolved through the
-// local name of each import, so an alias does not hide them.
+// local name of each import, so an alias does not hide them. A banned identifier is
+// flagged wherever it is referenced, so a function or method value counts like a call.
 func checkAstBans(srcs []pureSrc, class pureClass, dirRel string) []pureViolation {
 	var out []pureViolation
 	declared := topLevelNames(srcs)
@@ -437,14 +442,23 @@ func checkAstBans(srcs []pureSrc, class pureClass, dirRel string) []pureViolatio
 				}
 			}
 		}
+		skip := map[*ast.Ident]bool{} // selector names and struct-literal keys are not references to a builtin
 		ast.Inspect(s.f, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.GoStmt:
 				out = append(out, violationAt(s, x.Pos(), "P2", "go statement: a parser runs on the host's goroutine and starts none"))
-			case *ast.CallExpr:
-				out = append(out, callBans(s, x, names, declared)...)
 			case *ast.SelectorExpr:
+				skip[x.Sel] = true
 				out = append(out, selectorBans(s, x, names, dirRel)...)
+			case *ast.KeyValueExpr:
+				if id, ok := x.Key.(*ast.Ident); ok {
+					skip[id] = true
+				}
+			case *ast.Ident:
+				// every reference counts, not only a call: `p := print` is the same write to standard error
+				if !skip[x] && (x.Name == "print" || x.Name == "println") && x.Obj == nil && !declared[x.Name] {
+					out = append(out, violationAt(s, x.Pos(), "P2", "builtin %s writes to standard error", x.Name))
+				}
 			}
 			return true
 		})
@@ -452,31 +466,20 @@ func checkAstBans(srcs []pureSrc, class pureClass, dirRel string) []pureViolatio
 	return dedupe(out)
 }
 
-// callBans checks the call-shaped bans: the print builtins and methods named Local or Go.
-func callBans(s pureSrc, call *ast.CallExpr, names map[string]string, declared map[string]bool) []pureViolation {
-	var out []pureViolation
-	switch fn := call.Fun.(type) {
-	case *ast.Ident:
-		if (fn.Name == "print" || fn.Name == "println") && fn.Obj == nil && !declared[fn.Name] {
-			out = append(out, violationAt(s, fn.Pos(), "P2", "builtin %s writes to standard error", fn.Name))
-		}
-	case *ast.SelectorExpr:
-		if _, _, isPkg := pkgSelector(fn, names); !isPkg {
-			switch fn.Sel.Name {
-			case "Local":
-				out = append(out, violationAt(s, fn.Sel.Pos(), "P2", "call of a method named Local: results must not depend on the host time zone"))
-			case "Go":
-				out = append(out, violationAt(s, fn.Sel.Pos(), "P2", "call of a method named Go (the sync.WaitGroup.Go shape starts a goroutine)"))
-			}
-		}
-	}
-	return out
-}
-
-// selectorBans checks `pkg.Name` selectors against the banned lists.
+// selectorBans checks selectors, called or not, against the banned lists: `pkg.Name`
+// against the package bans, and any other `x.Name` (a method call, a method value
+// such as `g := t.Local` or `run(wg.Go)`, a method expression such as
+// `time.Time.Local`) against the banned method names. A field with one of those
+// names is flagged too: types are not resolved, so the safe reading is the ban.
 func selectorBans(s pureSrc, sel *ast.SelectorExpr, names map[string]string, dirRel string) []pureViolation {
 	p, name, ok := pkgSelector(sel, names)
 	if !ok {
+		switch name = sel.Sel.Name; name {
+		case "Local":
+			return []pureViolation{violationAt(s, sel.Sel.Pos(), "P2", "use of a method named Local: results must not depend on the host time zone")}
+		case "Go":
+			return []pureViolation{violationAt(s, sel.Sel.Pos(), "P2", "use of a method named Go (the sync.WaitGroup.Go shape starts a goroutine)")}
+		}
 		return nil
 	}
 	switch {
@@ -492,7 +495,10 @@ func selectorBans(s pureSrc, sel *ast.SelectorExpr, names map[string]string, dir
 		if why, banned := timeBans[name]; banned {
 			return []pureViolation{violationAt(s, sel.Pos(), "P2", "time.%s %s: results must not depend on the clock, a timer or the host zone", name, why)}
 		}
-		if unixBans[name] && dirRel != dirDecodeTS && !strings.HasPrefix(dirRel, dirDecodeTS+"/") {
+		if hostZone := unixBans[name] || parseBans[name]; hostZone && dirRel != dirDecodeTS && !strings.HasPrefix(dirRel, dirDecodeTS+"/") {
+			if parseBans[name] {
+				return []pureViolation{violationAt(s, sel.Pos(), "P2", "time.%s resolves zone abbreviations (MST, CET) against the host's zone database: parse timestamps by hand and build times with time.Date in UTC (only %s parses)", name, dirDecodeTS)}
+			}
 			return []pureViolation{violationAt(s, sel.Pos(), "P2", "time.%s yields a Time in the host zone: build times in UTC with time.Date (only %s converts device timestamps)", name, dirDecodeTS)}
 		}
 	case p == "context" && name == "AfterFunc":
@@ -605,6 +611,7 @@ func sortedKeys(m map[string]bool) string {
 var nonGoExts = map[string]bool{
 	".s": true, ".c": true, ".h": true, ".cc": true, ".cpp": true, ".cxx": true, ".hh": true, ".hpp": true, ".hxx": true,
 	".m": true, ".mm": true, ".f": true, ".for": true, ".f90": true, ".syso": true, ".swig": true, ".swigcxx": true,
+	".sx": true, ".rc": true, // assembly that goes through the C preprocessor; Windows resources (compiled to a .syso)
 }
 
 // checkNonGoSource reports the non-Go source files directly in dir.
@@ -1508,7 +1515,59 @@ func TestPurityAstBansSelfTest(t *testing.T) {
 			}
 		}
 	}
-	// the exemption of decode/ts covers the Unix constructors only
+	// time.Parse and time.ParseInLocation resolve zone abbreviations against the host: only internal/decode/ts may parse
+	for _, fn := range []string{"Parse(time.RFC3339, \"x\")", "ParseInLocation(time.RFC3339, \"x\", time.UTC)", "Parse"} {
+		src := "package x\n\nimport \"time\"\n\nvar _ = time." + fn + "\n"
+		for _, tc := range []struct {
+			class pureClass
+			dir   string
+			want  int
+		}{
+			{pcParser, fixtureParserDir, 1},
+			{pcParse, dirParse, 1},
+			{pcRTType, "internal/recordtypes/message", 1},
+			{pcRTCommon, dirRTCommon, 1},
+			{pcDecode, "internal/decode/plist", 1},
+			{pcDecode, "internal/decode/ts", 0},
+			{pcDecode, "internal/decode/tsx", 1},
+		} {
+			if got := checkAstBans(parsePureSources(t, map[string]string{"x.go": src}), tc.class, tc.dir); len(got) != tc.want {
+				t.Errorf("time.%s in %s: %d violations, want %d (%v)", fn, tc.dir, len(got), tc.want, got)
+			}
+		}
+	}
+	// method values and function values of banned names are flagged like calls, including through aliases and method expressions
+	for name, tc := range map[string]struct {
+		src  string
+		want int
+	}{
+		"time.Local value":        {"import \"time\"\n\nvar f = time.Local\n", 1},
+		"aliased time.Local":      {"import tm \"time\"\n\nvar f = tm.Local\n", 1},
+		"method value Local":      {"import \"time\"\n\nfunc f(t time.Time) { g := t.Local; _ = g }\n", 1},
+		"method expression Local": {"import \"time\"\n\nvar f = time.Time.Local\n", 1},
+		"method call Local":       {"import \"time\"\n\nfunc f(t time.Time) { _ = t.Local() }\n", 1},
+		"method value Go":         {"type g interface{ Go(func()) }\n\nfunc f(w g) { h := w.Go; _ = h }\n", 1},
+		"method expression Go":    {"import \"sync\"\n\nvar f = (*sync.WaitGroup).Go\n", 1},
+		"Go passed as argument":   {"func f(w interface{ Go(func()) }) { run(w.Go) }\n", 1},
+		"fmt.Println value":       {"import \"fmt\"\n\nvar h = fmt.Println\n", 1},
+		"aliased fmt value":       {"import f \"fmt\"\n\nvar h = f.Fprintf\n", 1},
+		"time.Now value":          {"import \"time\"\n\nvar h = time.Now\n", 1},
+		"builtin print value":     {"var p = print\n", 1},
+		"builtin println value":   {"func f() { q := println; _ = q }\n", 1},
+		"builtin as argument":     {"func f() { run(print) }\n", 1},
+		"time.Parse value":        {"import \"time\"\n\nvar p = time.Parse\n", 1},
+		"print as struct key":     {"type o struct{ print int }\n\nvar _ = o{print: 1}\n", 0},
+		"print as field":          {"type o struct{ print int }\n\nfunc f(x o) int { return x.print }\n", 0},
+		"own print value":         {"func print(string) {}\n\nvar p = print\n", 0},
+		"UTC value is fine":       {"import \"time\"\n\nvar h = time.UTC\n", 0},
+		"WaitGroup type is fine":  {"import \"sync\"\n\nvar w sync.WaitGroup\n", 0},
+	} {
+		src := "package x\n\n" + tc.src
+		if got := checkAstBans(parsePureSources(t, map[string]string{"x.go": src}), pcParser, fixtureParserDir); len(got) != tc.want {
+			t.Errorf("%s: %d violations, want %d (%v)", name, len(got), tc.want, got)
+		}
+	}
+	// the exemption of decode/ts covers the Unix constructors and parsing only
 	for _, banned := range []string{"time.Now()", "time.Local", "context.WithTimeout"} {
 		src := "package x\n\nimport (\n\t\"context\"\n\t\"time\"\n)\n\nvar _ = " + banned + "\nvar _ = context.Background\nvar _ = time.UTC\n"
 		if got := checkAstBans(parsePureSources(t, map[string]string{"x.go": src}), pcDecode, "internal/decode/ts"); len(got) != 1 {
@@ -1582,7 +1641,10 @@ func TestPurityRecordsSelectorsSelfTest(t *testing.T) {
 
 func TestPurityNonGoSourceSelfTest(t *testing.T) {
 	dir := t.TempDir()
-	bad := []string{"x.s", "y.S", "z.c", "w.h", "a.cc", "b.cpp", "c.m", "d.f", "e.syso", "f.swig", "g.cxx", "h.mm"}
+	bad := []string{
+		"x.s", "y.S", "z.c", "w.h", "a.cc", "b.cpp", "c.m", "d.f", "e.syso", "f.swig", "g.cxx", "h.mm",
+		"i.sx", "j.SX", "k.rc", "l.RC", "m.F", "n.for", "o.f90", "p.swigcxx", "q.hh", "r.hpp", "s.hxx",
+	}
 	good := []string{"ok.go", "ok_test.go", "README.md", "data.json", "notes.txt", "gen.sh"}
 	for _, n := range append(append([]string{}, bad...), good...) {
 		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o600); err != nil {
