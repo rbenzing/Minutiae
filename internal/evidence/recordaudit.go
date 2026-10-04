@@ -25,7 +25,7 @@ type IngestStart struct {
 	IngestID      string   `json:"ingest_id"`
 	Parser        string   `json:"parser"`
 	ParserVersion string   `json:"parser_version"`
-	ParserHash    string   `json:"parser_hash"` // "" when the parser has no hash
+	ParserHash    string   `json:"parser_hash"` // "" means no hash (NULL in parsers); a stored hash is never ""
 	AnalysisID    string   `json:"analysis_id"`
 	Artifacts     []string `json:"artifacts"` // sorted, de-duplicated, required
 	BatchRows     int      `json:"batch_rows"`

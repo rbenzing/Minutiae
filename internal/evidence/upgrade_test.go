@@ -474,3 +474,35 @@ func TestUpgradeAuditFailureBlocksMigration(t *testing.T) {
 		t.Fatalf("version = %d, want 1", v)
 	}
 }
+
+// TestUpgradeAuditReadErrorClassification: only a corrupt audit log (it does not
+// parse) is an integrity failure; an ordinary I/O error reading it is a plain
+// error (exit 1, not 4).
+func TestUpgradeAuditReadErrorClassification(t *testing.T) {
+	t.Run("unreadable audit log is a plain error", func(t *testing.T) {
+		c := openV1Case(t)
+		dir := t.TempDir()
+		if err := os.Mkdir(filepath.Join(dir, auditFile), 0o700); err != nil { // reading a directory fails
+			t.Fatal(err)
+		}
+		c.Dir = dir
+		_, err := c.checkSchemaMatchesAudit(1)
+		if err == nil {
+			t.Fatal("no error for an unreadable audit log")
+		}
+		if errors.Is(err, ErrIntegrity) {
+			t.Fatalf("err = %v, an I/O error must not be an integrity error", err)
+		}
+	})
+	t.Run("unparseable audit log is an integrity error", func(t *testing.T) {
+		c := openV1Case(t)
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, auditFile), []byte("{not json\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		c.Dir = dir
+		if _, err := c.checkSchemaMatchesAudit(1); !errors.Is(err, ErrIntegrity) {
+			t.Fatalf("err = %v, want ErrIntegrity", err)
+		}
+	})
+}

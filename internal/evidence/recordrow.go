@@ -1,11 +1,12 @@
 package evidence
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"hash"
-	"sort"
+	"slices"
 	"strconv"
 )
 
@@ -88,7 +89,7 @@ func (e *rowEncoder) boolean(b bool) {
 
 // encodeRow returns the canonical encoding of r bound to artifactSHA256, in the
 // field order of the format reference (the batch id is not part of it). The
-// times are encoded sorted by kind (byte order), whatever order r holds them in.
+// times are encoded in the canonical order of compareTimes, whatever order r holds them in.
 func encodeRow(r RecordRow, artifactSHA256 string) []byte {
 	var e rowEncoder
 	e.int(r.ID)
@@ -116,7 +117,7 @@ func encodeRow(r RecordRow, artifactSHA256 string) []byte {
 	e.str(r.Payload)
 
 	times := append([]RecordTime(nil), r.Times...)
-	sort.SliceStable(times, func(i, j int) bool { return times[i].Kind < times[j].Kind })
+	slices.SortFunc(times, compareTimes)
 	e.int(int64(len(times)))
 	for _, t := range times {
 		e.str(t.Kind)
@@ -165,4 +166,31 @@ func IngestRollup(batchDigests []string) string {
 		_, _ = h.Write([]byte(d))
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// compareTimes is the canonical order of a record's secondary times inside the
+// digest: kind (byte order), then ts (numeric), then basis (byte order), then
+// tz_offset_min (NULL first, then numeric). It is total over the fields the
+// digest encodes, so the digest never depends on the order a caller holds the
+// times in, whether or not kinds repeat (the database allows one row per kind;
+// the digest does not rely on that).
+func compareTimes(a, b RecordTime) int {
+	if c := cmp.Compare(a.Kind, b.Kind); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(a.TS, b.TS); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(a.Basis, b.Basis); c != 0 {
+		return c
+	}
+	switch {
+	case a.TZOffsetMin == nil && b.TZOffsetMin == nil:
+		return 0
+	case a.TZOffsetMin == nil:
+		return -1
+	case b.TZOffsetMin == nil:
+		return 1
+	}
+	return cmp.Compare(*a.TZOffsetMin, *b.TZOffsetMin)
 }

@@ -327,3 +327,73 @@ func TestIngestRollup(t *testing.T) {
 		t.Error("an empty trailing digest is ignored")
 	}
 }
+
+// TestRowDigestGoldenVectorMarkersAndUTF8: field contents that look like the
+// framing (0x00 NULL marker, 0x01 present marker, length-like bytes) and
+// multi-byte UTF-8 (lengths are byte counts, not characters) cannot move a field
+// boundary. Written out by hand from the format reference.
+func TestRowDigestGoldenVectorMarkersAndUTF8(t *testing.T) {
+	r := RecordRow{
+		ID: 7, Type: "t", PayloadV: 1, ArtifactID: "a",
+		SourcePath:    ptr("€/x"),        // e2 82 ac 2f 78: 5 bytes, 4 characters
+		Locator:       ptr("a:\x01\x00"), // 4 bytes, ends in the NULL marker byte
+		ParserName:    "p",
+		ParserVersion: "1",
+		Summary:       "\x00\x01\x02é", // 5 bytes
+		Body:          ptr("😀"),        // f0 9f 98 80: 4 bytes, 1 character
+		Payload:       `{"k":"é€😀"}`,   // 17 bytes
+	}
+	want := "\x01\x017" + // 1 id
+		"\x01\x01t" + // 2 type
+		"\x01\x011" + // 3 payload_v
+		"\x01\x01a" + // 4 artifact_id
+		"\x01\x40" + testArtifactSHA + // 5 artifact_sha256
+		"\x01\x05\xe2\x82\xac/x" + // 6 source_path
+		"\x01\x04a:\x01\x00" + // 7 locator
+		"\x00\x00\x00\x00\x00\x00" + // 8-13 src_offset src_length ts ts_end ts_basis tz_offset_min
+		"\x01\x010" + // 14 deleted
+		"\x01\x010" + // 15 recovered
+		"\x00" + // 16 recovery_method
+		"\x00" + // 17 confidence
+		"\x01\x01p" + // 18 parser name
+		"\x01\x011" + // 19 parser version
+		"\x00" + // 20 parser hash
+		"\x01\x05\x00\x01\x02\xc3\xa9" + // 21 summary
+		"\x01\x04\xf0\x9f\x98\x80" + // 22 body
+		"\x01\x11{\"k\":\"\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80\"}" + // 23 payload
+		"\x01\x010" // 24 count of times
+	checkGolden(t, r, want, "ac4092cfb144cd52b6c7745123afc5fe47933535451c8a568e7c9ce7c9d68d8a")
+}
+
+// TestRowDigestGoldenVectorSameKindTimes: times are put in a canonical order
+// that does not depend on the order the caller holds them in, also when several
+// share a kind: by kind (bytes), then ts (numerically, not as text), then basis
+// (bytes), then tz_offset_min (NULL first, then numerically). Written by hand:
+// j; k/9/local-offset/-60; k/9/local-offset/60; k/9/utc; k/10/utc.
+func TestRowDigestGoldenVectorSameKindTimes(t *testing.T) {
+	times := []RecordTime{
+		{Kind: "k", TS: 10, Basis: "utc"},
+		{Kind: "k", TS: 9, Basis: "utc"},
+		{Kind: "k", TS: 9, Basis: "local-offset", TZOffsetMin: ptr(int64(60))},
+		{Kind: "k", TS: 9, Basis: "local-offset", TZOffsetMin: ptr(int64(-60))},
+		{Kind: "j", TS: 100, Basis: "utc"},
+	}
+	want := "\x01\x011" + "\x01\x01t" + "\x01\x011" + "\x01\x01a" + "\x01\x40" + testArtifactSHA +
+		"\x00\x00\x00\x00\x00\x00\x00\x00" +
+		"\x01\x010" + "\x01\x010" + "\x00" + "\x00" +
+		"\x01\x01p" + "\x01\x011" + "\x00" + "\x01\x00" + "\x00" + "\x01\x02{}" +
+		"\x01\x015" + // 24 count of times
+		"\x01\x01j" + "\x01\x03100" + "\x01\x03utc" + "\x00" +
+		"\x01\x01k" + "\x01\x019" + "\x01\x0clocal-offset" + "\x01\x03-60" +
+		"\x01\x01k" + "\x01\x019" + "\x01\x0clocal-offset" + "\x01\x0260" +
+		"\x01\x01k" + "\x01\x019" + "\x01\x03utc" + "\x00" +
+		"\x01\x01k" + "\x01\x0210" + "\x01\x03utc" + "\x00"
+	perms := [][]int{{0, 1, 2, 3, 4}, {4, 3, 2, 1, 0}, {2, 0, 4, 1, 3}, {1, 4, 3, 0, 2}}
+	for _, p := range perms {
+		r := RecordRow{ID: 1, Type: "t", PayloadV: 1, ArtifactID: "a", ParserName: "p", ParserVersion: "1", Payload: "{}"}
+		for _, j := range p {
+			r.Times = append(r.Times, times[j])
+		}
+		checkGolden(t, r, want, "177f5ad1926d979211ede4eda44322bd852aeeb8a026c1eb65f5799640fbd448")
+	}
+}

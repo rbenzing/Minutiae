@@ -199,7 +199,13 @@ func decodeEntries(lines [][]byte) ([]AuditEntry, int, error) {
 	return entries, 0, nil
 }
 
-// ReadAuditEntries parses every entry; a missing file yields no entries.
+// errAuditCorrupt marks an audit log that cannot be parsed (as opposed to one
+// that cannot be read: I/O errors stay plain errors).
+var errAuditCorrupt = errors.New("audit log is corrupt")
+
+// ReadAuditEntries parses every entry; a missing file yields no entries. An
+// entry that does not parse wraps an unexported corruption marker; read errors
+// are returned as they are.
 func ReadAuditEntries(path string) ([]AuditEntry, error) {
 	lines, err := readLines(path)
 	if err != nil {
@@ -207,7 +213,7 @@ func ReadAuditEntries(path string) ([]AuditEntry, error) {
 	}
 	entries, bad, err := decodeEntries(lines)
 	if err != nil {
-		return nil, fmt.Errorf("audit line %d: %w", bad, err)
+		return nil, fmt.Errorf("%w: audit line %d: %w", errAuditCorrupt, bad, err)
 	}
 	return entries, nil
 }

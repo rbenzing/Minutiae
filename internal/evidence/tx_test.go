@@ -108,7 +108,7 @@ func queryOnly(t *testing.T, c *Case) int {
 	return v
 }
 
-func queryOnlyIn(t *testing.T, tx *sql.Tx) int {
+func queryOnlyIn(t *testing.T, tx ReadHandle) int {
 	t.Helper()
 	var v int
 	if err := tx.QueryRow(`PRAGMA query_only`).Scan(&v); err != nil {
@@ -139,7 +139,7 @@ func TestReaderCannotWrite(t *testing.T) {
 	}
 
 	t.Run("writes are refused", func(t *testing.T) {
-		err := c.ReadTx(ctx, func(tx *sql.Tx) error {
+		err := c.ReadTx(ctx, func(tx ReadHandle) error {
 			if got := queryOnlyIn(t, tx); got != 1 {
 				t.Errorf("query_only inside ReadTx = %d", got)
 			}
@@ -148,7 +148,7 @@ func TestReaderCannotWrite(t *testing.T) {
 				`UPDATE records_meta SET value = '9' WHERE key = 'next_id'`,
 				`DELETE FROM records_meta WHERE key = 'next_id'`,
 			} {
-				if _, err := tx.Exec(stmt); err == nil {
+				if err := queryExec(tx, stmt); err == nil {
 					t.Errorf("%s succeeded inside ReadTx", stmt)
 				}
 			}
@@ -166,7 +166,7 @@ func TestReaderCannotWrite(t *testing.T) {
 
 	t.Run("fn error is returned", func(t *testing.T) {
 		boom := errors.New("boom")
-		if err := c.ReadTx(ctx, func(*sql.Tx) error { return boom }); !errors.Is(err, boom) {
+		if err := c.ReadTx(ctx, func(ReadHandle) error { return boom }); !errors.Is(err, boom) {
 			t.Errorf("err = %v", err)
 		}
 		after(t)
@@ -179,7 +179,7 @@ func TestReaderCannotWrite(t *testing.T) {
 					t.Errorf("recover() = %v", r)
 				}
 			}()
-			_ = c.ReadTx(ctx, func(*sql.Tx) error { panic("kaboom") })
+			_ = c.ReadTx(ctx, func(ReadHandle) error { panic("kaboom") })
 		}()
 		after(t)
 	})
@@ -187,7 +187,7 @@ func TestReaderCannotWrite(t *testing.T) {
 	t.Run("cancelled context", func(t *testing.T) {
 		cctx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		_ = c.ReadTx(cctx, func(*sql.Tx) error {
+		_ = c.ReadTx(cctx, func(ReadHandle) error {
 			cancel()
 			return cctx.Err()
 		})
@@ -202,13 +202,26 @@ func TestTxRefusedAfterClose(t *testing.T) {
 	}
 	called := false
 	fn := func(*sql.Tx) error { called = true; return nil }
+	rfn := func(ReadHandle) error { called = true; return nil }
 	if err := c.StoreTx(context.Background(), fn); err == nil {
 		t.Error("StoreTx succeeded after Close")
 	}
-	if err := c.ReadTx(context.Background(), fn); err == nil {
+	if err := c.ReadTx(context.Background(), rfn); err == nil {
 		t.Error("ReadTx succeeded after Close")
 	}
 	if called {
 		t.Error("fn ran after Close")
 	}
+}
+
+// queryExec runs a statement through the only door ReadHandle has (a query).
+func queryExec(h ReadHandle, stmt string) error {
+	rows, err := h.Query(stmt)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+	}
+	return rows.Err()
 }

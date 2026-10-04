@@ -3,7 +3,9 @@ package evidence
 import (
 	"context"
 	"database/sql/driver"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -194,5 +196,22 @@ func TestFreshConnectionGetsEveryPragma(t *testing.T) {
 				_ = fresh.Close()
 			}
 		})
+	}
+}
+
+// TestOpenDBPermissionErrorFromDriverIsNotIntegrity drives the real driver into
+// SQLITE_CANTOPEN (the database path is a directory): that is an I/O problem,
+// never evidence damage.
+func TestOpenDBCannotOpenFromDriverIsNotIntegrity(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "artifacts.db")
+	if err := os.Mkdir(p, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err := OpenExistingStore(p)
+	if err == nil {
+		t.Fatal("OpenExistingStore succeeded on a directory")
+	}
+	if errors.Is(err, ErrIntegrity) {
+		t.Fatalf("err = %v, want a plain error (not ErrIntegrity)", err)
 	}
 }

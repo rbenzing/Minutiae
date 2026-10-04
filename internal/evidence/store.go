@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"strings"
+	"sync/atomic"
 
 	"modernc.org/sqlite" // pure-Go SQLite driver; also registered as "sqlite" for test helpers
 )
@@ -56,7 +57,10 @@ var migrations = []migration{
 }
 
 // Store is the case's artifacts.db.
-type Store struct{ db *sql.DB }
+type Store struct {
+	db     *sql.DB
+	txBusy atomic.Bool // a StoreTx or ReadTx is open (see enterTx)
+}
 
 // OpenStore opens or creates the database and migrates it to CurrentSchema. It
 // is for a newly created case (and tests): opening an existing case never

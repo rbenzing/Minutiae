@@ -203,7 +203,10 @@ func (c *Case) Upgrade() (UpgradeResult, error) {
 func (c *Case) checkSchemaMatchesAudit(dbVersion int) (*upgradeStep, error) {
 	entries, err := ReadAuditEntries(filepath.Join(c.Dir, auditFile))
 	if err != nil {
-		return nil, fmt.Errorf("%w: read audit log: %w", ErrIntegrity, err)
+		if errors.Is(err, errAuditCorrupt) {
+			return nil, fmt.Errorf("%w: %w", ErrIntegrity, err)
+		}
+		return nil, fmt.Errorf("read audit log: %w", err)
 	}
 	sa := auditedSchema(entries)
 	if len(sa.Problems) > 0 {
