@@ -116,3 +116,10 @@ func (f *FS) Inode(ino uint32) (InodeView, filesys.Entry, error) {
 	}
 	return v, toEntry("name", []byte("raw"), in), nil
 }
+
+// SetDirBudget sets the bytes of directory blocks the instance may still read.
+func (f *FS) SetDirBudget(n int64) {
+	f.dmu.Lock()
+	defer f.dmu.Unlock()
+	f.dirBudget, f.dirBudgetTotal = n, n
+}

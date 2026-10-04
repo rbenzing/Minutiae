@@ -30,10 +30,10 @@ const (
 	RootIno = 3
 )
 
-// File describes one file, directory or symlink to place in the image.
-// Files are not laid out yet: Build accepts and ignores them until the inode,
-// data and directory tasks of the plan add that (the fields are fixed now so
-// callers written against this shape keep working).
+// File describes one file, directory or symlink for Build / BuildTree to lay
+// out (see tree.go). Mode holds the permission bits; when it carries no file
+// type bits they are derived from Dir / Symlink (a Mode with type bits, such as
+// 0o020644, makes a special file).
 type File struct {
 	Path       string // "/a/b.txt"
 	Data       []byte
@@ -46,6 +46,19 @@ type File struct {
 	Mode       uint32
 	Times      [4]int64 // atime, ctime, mtime, crtime (unix seconds)
 	UID, GID   uint32
+
+	// RawName replaces the last component of Path as the name stored in the
+	// directory (for ciphertext names, which may hold any byte).
+	RawName []byte
+	// Casefold sets the casefold flag on a directory.
+	Casefold bool
+	// NoInode (with Deleted) writes only the dentry: the inode number it names
+	// is not backed by a node.
+	NoInode bool
+	// InlineXattrSize is i_inline_xattr_size (words) of an Inline directory on a
+	// volume with the flexible inline xattr feature and extra attributes: the
+	// words reserved at the end of its address area.
+	InlineXattrSize uint16
 }
 
 // Options configure the image. The zero value is a valid, minimal volume.
@@ -213,9 +226,14 @@ func Geometry(o Options) Layout {
 	return l
 }
 
-// Build returns the image.
+// Build returns the image holding files (see BuildTree).
 func Build(o Options, files []File) []byte {
-	_ = files // laid out by later tasks (files, directories and data)
+	img, _ := BuildTree(o, files)
+	return img
+}
+
+// build lays out o as it stands.
+func build(o Options) []byte {
 	l := Geometry(o)
 	img := make([]byte, int(l.BlockCount)*BlockSize)
 

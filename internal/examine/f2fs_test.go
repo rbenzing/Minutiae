@@ -14,33 +14,12 @@ import (
 	"github.com/rbenzing/minutiae/internal/filesys/f2fs/f2fstest"
 )
 
-// f2fsFlat presents an F2FS image as a flat root directory of fixed entries.
-// The directory reader of the F2FS driver is a separate piece of work; the
-// file data reader under test here is the real one (Open, Runs, ReadAt).
-type f2fsFlat struct {
-	*f2fs.FS
-	entries []filesys.Entry
-}
+// f2fsNoFree is the real F2FS reader plus a stub Unallocated (that part of the
+// driver is a separate piece of work); everything else, including the directory
+// reader, is the real one.
+type f2fsNoFree struct{ *f2fs.FS }
 
-func (a f2fsFlat) Root() filesys.Entry {
-	return filesys.Entry{Name: "/", ID: "nid:3", Type: filesys.TypeDir}
-}
-
-func (a f2fsFlat) ReadDir(filesys.Entry) ([]filesys.Entry, error) { return a.entries, nil }
-
-func (a f2fsFlat) Lookup(path string) (filesys.Entry, error) {
-	if path == "/" {
-		return a.Root(), nil
-	}
-	for _, e := range a.entries {
-		if "/"+e.Name == path {
-			return e, nil
-		}
-	}
-	return filesys.Entry{}, filesys.ErrNotFound
-}
-
-func (a f2fsFlat) Unallocated() ([]filesys.Run, error) { return nil, nil }
+func (f2fsNoFree) Unallocated() ([]filesys.Run, error) { return nil, nil }
 
 // A file whose block map breaks part-way (a data address outside the main
 // area) is extracted as a partial artifact flagged incomplete: the runs of the
@@ -51,14 +30,12 @@ func TestExtractF2FSBrokenChainIsIncomplete(t *testing.T) {
 	const bs = f2fstest.BlockSize
 	o := f2fstest.Options{Segments: 1}
 	content := pattern(6*bs, 3)
-	a := f2fstest.NewAlloc(o, 10)
-	nodes, data := a.File(o, f2fstest.Inode{NID: 5, Mode: 0o100644, Size: uint64(len(content))}, f2fstest.FileData{Blocks: map[int64][]byte{
-		0: content[0:bs], 1: content[bs : 2*bs], 2: content[2*bs : 3*bs], 3: content[3*bs : 4*bs], 4: content[4*bs : 5*bs], 5: content[5*bs:],
-	}})
-	binary.LittleEndian.PutUint32(nodes[0].Block[360+3*4:], 1) // i_addr[3]: block 1, below the main area
-	nodes = append(nodes, f2fstest.Node{NID: 6, Addr: a.Addr(), Block: f2fstest.InodeBlock(o, f2fstest.Inode{NID: 6, Mode: 0o100644, Size: 4, InlineData: []byte("fine")})})
-	o.Nodes, o.Data = nodes, data
-	img := f2fstest.Build(o, nil)
+	img, tree := f2fstest.BuildTree(o, []f2fstest.File{
+		{Path: "/BROKEN.BIN", Data: content},
+		{Path: "/FINE.TXT", Data: []byte("fine"), Inline: true},
+	})
+	// i_addr[3] of BROKEN.BIN: block 1, below the main area.
+	binary.LittleEndian.PutUint32(img[int(tree.Addr[tree.NID["/BROKEN.BIN"]])*bs+360+3*4:], 1)
 
 	c := newCase(t)
 	disc := disk(img)
@@ -70,10 +47,7 @@ func TestExtractF2FSBrokenChainIsIncomplete(t *testing.T) {
 			if err != nil {
 				return nil, err
 			}
-			return f2fsFlat{FS: fsys, entries: []filesys.Entry{
-				{Name: "BROKEN.BIN", ID: "nid:5", Type: filesys.TypeFile, Size: int64(len(content))},
-				{Name: "FINE.TXT", ID: "nid:6", Type: filesys.TypeFile, Size: 4},
-			}}, nil
+			return f2fsNoFree{fsys}, nil
 		},
 	}}})
 	if err != nil {

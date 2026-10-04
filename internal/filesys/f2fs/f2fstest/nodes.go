@@ -84,6 +84,14 @@ type Inode struct {
 	// the caller's.
 	InlineData []byte
 
+	// Dentries are packed from slot 0 into the inline dentry area (this sets InlineDentry; the
+	// inode then has no Addrs). The caller includes "." and ".."
+	// when wanted. The area is laid out as the kernel does for the volume: with
+	// an extra header and the flexible inline xattr feature the reserved words
+	// are InlineXattrSize, otherwise the default 50. Build panics when they do
+	// not fit.
+	Dentries []Dentry
+
 	Extra           bool   // write the extra attribute header (sets ExtraAttr)
 	ExtraIsize      uint16 // default 36 (the full header)
 	InlineXattrSize uint16 // i_inline_xattr_size, in words
@@ -168,6 +176,16 @@ func InodeBlock(o Options, in Inode) []byte {
 		}
 		b[3] |= InlineData | DataExist
 		copy(b[p:], in.InlineData)
+	}
+	if in.Dentries != nil {
+		b[3] |= InlineDentry
+		xw := 50 // DEFAULT_INLINE_XATTR_ADDRS
+		if o.InlineXattr && in.Extra {
+			xw = int(in.InlineXattrSize)
+		}
+		if _, ok := inlineArea(b, extra, xw).Pack(0, in.Dentries); !ok {
+			panic("f2fstest: inline dentries do not fit the inode")
+		}
 	}
 	for i, v := range in.NIDs {
 		le.PutUint32(b[4052+4*i:], v)

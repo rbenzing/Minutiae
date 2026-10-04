@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
 )
@@ -27,6 +28,12 @@ type FS struct {
 	size int64       // filesystem size in bytes (declared size clamped to the image)
 
 	nat natState // NAT journal, read on first use
+
+	// dmu guards dirBudget, the bytes of dentry blocks this instance may still
+	// read (dirBudgetTotal at the start), shared by every listing and lookup.
+	dmu            sync.Mutex
+	dirBudget      int64
+	dirBudgetTotal int64
 
 	warnings filesys.Warnings
 }
@@ -157,7 +164,7 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 	if err != nil {
 		return nil, err
 	}
-	f := &FS{sb: sb, cp: cp, r: cached, data: raw, size: sb.blocks * blockSize}
+	f := &FS{sb: sb, cp: cp, r: cached, data: raw, size: sb.blocks * blockSize, dirBudget: maxDirBudget, dirBudgetTotal: maxDirBudget}
 	if capacity := sb.natCapacity(); uint64(cp.nextFreeNid) > capacity || uint64(cp.validNodes) > capacity {
 		f.warn("checkpoint next_free_nid %d or valid_node_count %d exceeds the NAT capacity of %d node ids", cp.nextFreeNid, cp.validNodes, capacity)
 	}
