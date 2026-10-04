@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -277,4 +278,79 @@ func TestSummarize(t *testing.T) {
 			t.Errorf("got %d bytes %q", len(got), got)
 		}
 	})
+}
+
+// TestHugeLimitsAreClamped: limit+UTFMax must not overflow, so neither CleanText
+// nor Summarize panics or silently cuts at a limit near the int maximum.
+func TestHugeLimitsAreClamped(t *testing.T) {
+	for _, limit := range []int{math.MaxInt, math.MaxInt - 1, math.MaxInt - utf8.UTFMax, math.MaxInt - 3, math.MaxInt32, 1 << 40} {
+		t.Run(fmt.Sprint(limit), func(t *testing.T) {
+			raw := []byte("hello \xff world é\x00 end")
+			c := common.CleanText(raw, limit)
+			if want := "hello � world é� end"; c.Text != want || c.Truncated || !slices.Equal(c.Flags, []string{"invalid_utf8", "nul"}) {
+				t.Errorf("CleanText limit %d = %+v", limit, c)
+			}
+			if got := common.Summarize("hello   world\nand more", limit); got != "hello world and more" {
+				t.Errorf("Summarize limit %d = %q", limit, got)
+			}
+		})
+	}
+	t.Run("a long text under a huge limit is not cut", func(t *testing.T) {
+		raw := bytes.Repeat([]byte("abcdefgh"), 1<<14)
+		if c := common.CleanText(raw, math.MaxInt); c.Truncated || len(c.Text) != len(raw) {
+			t.Errorf("text cut: truncated %v, %d bytes of %d", c.Truncated, len(c.Text), len(raw))
+		}
+		if got := common.Summarize(strings.Repeat("word ", 1<<14), math.MaxInt); len(got) != 5*(1<<14)-1 {
+			t.Errorf("Summarize cut a text that fits: %d bytes", len(got))
+		}
+	})
+}
+
+// TestSummarizeDropsInvisibleFormatting: bidi controls and zero-width characters
+// (category Cf) are dropped from the one-line summary, so a summary cannot
+// reorder or hide what it shows. The stored body keeps them untouched.
+func TestSummarizeDropsInvisibleFormatting(t *testing.T) {
+	// code points are built from numbers so this file holds no invisible characters
+	cp := func(parts ...any) string {
+		var b strings.Builder
+		for _, p := range parts {
+			switch v := p.(type) {
+			case string:
+				b.WriteString(v)
+			case rune:
+				b.WriteRune(v)
+			}
+		}
+		return b.String()
+	}
+	const (
+		rlo, pdf        = rune(0x202E), rune(0x202C)
+		lre, rle, lro   = rune(0x202A), rune(0x202B), rune(0x202D)
+		lri, rli, fsi   = rune(0x2066), rune(0x2067), rune(0x2068)
+		pdi             = rune(0x2069)
+		lrm, rlm, alm   = rune(0x200E), rune(0x200F), rune(0x061C)
+		zwsp, zwnj, zwj = rune(0x200B), rune(0x200C), rune(0x200D)
+		wordJoiner, bom = rune(0x2060), rune(0xFEFF)
+		softHyphen      = rune(0x00AD)
+	)
+	cases := []struct{ name, in, want string }{
+		{"right-to-left override", cp("pay ", rlo, "txt.exe", pdf, " now"), "pay txt.exe now"},
+		{"embeddings and isolates", cp("a", lre, rle, lro, lri, rli, fsi, "b", pdi, "c"), "abc"},
+		{"marks", cp("a", lrm, rlm, "b", alm, "c"), "abc"},
+		{"zero width", cp("pa", zwsp, "ss", zwnj, "wo", zwj, "rd", wordJoiner, bom, "!"), "password!"},
+		{"soft hyphen", cp("co", softHyphen, "op"), "coop"},
+		{"only invisible", cp(zwsp, rlo, wordJoiner), ""},
+		{"space kept around them", cp("a ", rlo, " b"), "a b"},
+		{"ordinary text is untouched", "héllo wörld 日本語 😀", "héllo wörld 日本語 😀"},
+	}
+	for _, tc := range cases {
+		if got := common.Summarize(tc.in, 100); got != tc.want {
+			t.Errorf("%s: Summarize(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
+		}
+	}
+	// the stored text is not changed
+	in := cp("pay ", rlo, "txt.exe", pdf)
+	if c := common.CleanText([]byte(in), 100); c.Text != in || len(c.Flags) != 0 {
+		t.Errorf("CleanText changed formatting characters: %+v", c)
+	}
 }

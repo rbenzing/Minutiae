@@ -21,6 +21,13 @@ const (
 	FlagTruncated   = "truncated"
 )
 
+// MaxLimit is the largest limit CleanText and Summarize honour; a larger one is
+// clamped to it (1 GiB, above any text a record holds), so no arithmetic on a limit
+// can overflow.
+const MaxLimit = 1 << 30
+
+func clampLimit(limit int) int { return max(0, min(limit, MaxLimit)) }
+
 // MaxRawInline is the largest original (bytes) kept inline as base64; a larger
 // one is recorded by SHA-256 and length instead.
 const MaxRawInline = 64 << 10
@@ -41,13 +48,12 @@ type Cleaned struct {
 // the original is kept (base64, or its SHA-256 and length when it exceeds 64
 // KiB) whenever a flag other than truncated applies; a result longer than limit
 // bytes is cut on a rune boundary with the flag truncated, Truncated and
-// TotalBytes. Nothing changes without a flag. A max of 0 or less is treated as 0:
+// TotalBytes. Nothing changes without a flag. A limit above MaxLimit is treated as
+// MaxLimit (so arithmetic on a limit cannot overflow), one of 0 or less as 0:
 // the text is empty and, for a non-empty input, Truncated. A U+FFFD that was
 // already valid in the input is kept and raises no flag.
 func CleanText(raw []byte, limit int) Cleaned {
-	if limit < 0 {
-		limit = 0
-	}
+	limit = clampLimit(limit)
 	c := Cleaned{RawLen: len(raw)}
 	var invalid, nul bool
 	var b strings.Builder
@@ -140,12 +146,15 @@ func (c Cleaned) PayloadFields() map[string]any {
 
 // Summarize builds the one-line summary of s: every run of whitespace and control
 // characters (NUL included) becomes one space, the ends are trimmed, invalid UTF-8
-// becomes U+FFFD, and a result longer than limit bytes is cut on a rune boundary and
+// becomes U+FFFD, format characters (category Cf: bidi overrides, embeddings and
+// isolates, directional marks, zero-width characters, the soft hyphen) are dropped
+// so the summary cannot reorder or hide what it shows (the stored text keeps them),
+// and a result longer than limit bytes is cut on a rune boundary and
 // ends in "..." (the whole result stays within limit bytes; a max under 3 gets only
 // as many dots as fit, a max of 0 or less gets ""). Text that already fits is
 // returned as collapsed.
 func Summarize(s string, limit int) string {
-	if limit <= 0 {
+	if limit = clampLimit(limit); limit <= 0 {
 		return ""
 	}
 	var b strings.Builder
@@ -154,6 +163,9 @@ func Summarize(s string, limit int) string {
 		if unicode.IsSpace(r) || unicode.IsControl(r) {
 			pendingSpace = b.Len() > 0
 			continue
+		}
+		if unicode.Is(unicode.Cf, r) {
+			continue // dropped: a bidi override or zero-width character would make the summary lie about what it shows
 		}
 		if pendingSpace {
 			b.WriteByte(' ')

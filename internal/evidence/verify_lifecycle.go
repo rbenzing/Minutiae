@@ -557,6 +557,10 @@ func (c *Case) checkSupersession(ctx context.Context, rep *VerifyReport, ps *pro
 // suppression_unknown instead of a number nobody can prove, with the placeholders
 // warnings_suppressed 0 and rejected equal to the rejection entries. Unknown is
 // accepted nowhere else.
+//
+// The converse holds too: an ingest that began suppressing and concluded (an end,
+// error or run-missing recover entry) must carry its conclusion note, or the
+// numbers it states would be unprovable.
 func checkCounts(ps *problemSet, id, what string, seq int64, got IngestConclusion, tally *IngestWarningTally, recoveredUnfinished bool) {
 	var t IngestWarningTally
 	if tally != nil {
@@ -565,8 +569,9 @@ func checkCounts(ps *problemSet, id, what string, seq int64, got IngestConclusio
 	if t.Notes > 1 {
 		ps.add("lifecycle", "ingest %q: the audit log holds %d suppression notes for it, at most one is possible", id, t.Notes)
 	}
-	if t.Began > 1 {
-		ps.add("lifecycle", "ingest %q: the audit log holds %d suppression began notes for it, at most one is possible", id, t.Began)
+	// more than one began note is not a problem: an audit append that fails after the entry reached the log is retried, and the marker carries no numbers
+	if t.Began > 0 && t.Notes == 0 && !recoveredUnfinished {
+		ps.add("lifecycle", "ingest %q: %s (audit seq %d): the audit log holds a suppression began note but no conclusion note for it, yet the ingest concluded: the suppressed counts it states cannot be proven", id, what, seq)
 	}
 	if t.Notes > 0 && t.Began == 0 {
 		ps.add("lifecycle", "ingest %q: the audit log holds a suppression note but no suppression began note", id)

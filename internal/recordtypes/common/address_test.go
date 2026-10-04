@@ -77,3 +77,45 @@ func TestAddressKind(t *testing.T) {
 		}
 	}
 }
+
+// TestAddressKindIPAndDateAreNotPhones: the phone shape is digits and separators,
+// which an IPv4 address or a separated date also fits; those are never labelled
+// phone (a filtered list would mislead), while real phone numbers with the same
+// separators stay phones. The kind is a shape hint, never an identity.
+func TestAddressKindIPAndDateAreNotPhones(t *testing.T) {
+	cases := []struct {
+		addr string
+		want string
+	}{
+		// IPv4 shapes
+		{"192.168.1.100", "unknown"},
+		{"10.0.0.1", "unknown"}, // 6 digits would be unknown anyway; stays unknown
+		{"255.255.255.255", "unknown"},
+		{"172.16.254.1", "unknown"},
+		{"001.002.003.004", "unknown"},
+		{"192.168.1.100 ", "unknown"},
+		// separated dates: year first, year last, dashes, dots and spaces
+		{"2024-01-15", "unknown"},
+		{"2024.01.15", "unknown"},
+		{"15.01.2024", "unknown"},
+		{"15-01-2024", "unknown"},
+		{"2024-1-15", "unknown"},
+		{"2024-01-5", "unknown"},
+		{"1-15-2024", "unknown"},
+		// phones with the same separators stay phones
+		{"555.123.4567", "phone"},
+		{"555-123-4567", "phone"},
+		{"(555) 123-4567", "phone"},
+		{"555 123 4567", "phone"},
+		{"+1 555.123.4567", "phone"},
+		{"+44.20.7946.0958", "phone"},
+		{"020 7946 0958", "phone"},
+		{"1-800-555-0199", "phone"},
+		{"+2024-01-15", "phone"}, // a plus makes it a number
+	}
+	for _, tc := range cases {
+		if got := common.AddressKind(tc.addr); got != tc.want {
+			t.Errorf("AddressKind(%q) = %q, want %q", tc.addr, got, tc.want)
+		}
+	}
+}

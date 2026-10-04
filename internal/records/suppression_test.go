@@ -234,7 +234,13 @@ func TestVerifyUnknownSuppressionOnlyForRecoveredIngests(t *testing.T) {
 		noBegan      = "suppression_unknown is set, but the audit log holds no suppression began note for it"
 		hasNote      = "suppression_unknown is set, but the audit log holds the suppression note that proves the numbers"
 		mustBeSet    = "the audit log holds a suppression began note but no conclusion note, so suppression_unknown must be set"
+		noConclusion = "holds a suppression began note but no conclusion note for it, yet the ingest concluded"
 	)
+	// an end entry appended by hand for an ingest that began suppressing and died: it states exact numbers
+	// (zero suppressed) that nobody can prove, so it must not pass
+	zeroSuppressed := func(rejected int) func(c *evidence.IngestConclusion) {
+		return func(c *evidence.IngestConclusion) { c.WarningsSuppressed, c.Rejected = 0, rejected }
+	}
 	cases := []tc{
 		{"honest unknown recover", 4, 0, 0, 2, false, false, honest(0), ""},
 		{"honest unknown recover with a rejection entry", 1, 3, 0, 2, false, false, honest(1), ""},
@@ -243,6 +249,10 @@ func TestVerifyUnknownSuppressionOnlyForRecoveredIngests(t *testing.T) {
 		{"unknown recover without a began note", 3, 1, 0, 0, false, false, flag, noBegan},
 		{"unknown recover although the conclusion note proves the numbers", 4, 0, 0, 2, true, false, flag, hasNote},
 		{"began but stated as known", 4, 0, 0, 2, false, false, func(*evidence.IngestConclusion) {}, mustBeSet},
+		{"end entry for an ingest that began suppressing, zero suppressed", 4, 0, 0, 2, false, true, zeroSuppressed(0), noConclusion},
+		{"end entry for an ingest that began suppressing, with a rejection entry", 1, 3, 0, 2, false, true, zeroSuppressed(1), noConclusion},
+		{"end entry for an ingest that began suppressing, stating unknown", 4, 0, 0, 2, false, true, flag, onlyRecovery},
+		{"end entry whose conclusion note exists", 4, 0, 0, 2, true, true, func(*evidence.IngestConclusion) {}, ""},
 		{
 			"unknown with a suppressed count invented", 4, 0, 0, 2, false, false, func(c *evidence.IngestConclusion) { honest(0)(c); c.WarningsSuppressed = 9 },
 			"warnings_suppressed is 9, a recovered ingest of unknown suppression states 0",
@@ -296,8 +306,12 @@ func TestVerifyUnknownSuppressionOnlyForRecoveredIngests(t *testing.T) {
 	}
 }
 
-// TestVerifyFlagsASecondBeganNote: an ingest begins suppressing once.
-func TestVerifyFlagsASecondBeganNote(t *testing.T) {
+// TestVerifyToleratesRepeatedBeganNotes: if an audit append reports an error after
+// the entry actually reached the log (an I/O fault of the log itself), the writer
+// retries on the next call and the log holds a second began note. That is not a
+// tamper sign: the marker carries no numbers, and the conclusion note still has to
+// prove the counts. Verify accepts any number of began notes.
+func TestVerifyToleratesRepeatedBeganNotes(t *testing.T) {
 	c, a := setup(t)
 	w := startWriter(t, c, testParser, records.WriterOptions{}, a.ID)
 	w.SetMaxWarnings(1)
@@ -306,17 +320,19 @@ func TestVerifyFlagsASecondBeganNote(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	forged := map[string]any{
-		"analysis_id": "", "path": "", "reason": "forged", evidence.WarnKeyIngest: w.IngestID(), evidence.WarnKeySuppressionBegan: true,
+	// the write of the began note that "failed" but reached the log
+	repeat := map[string]any{
+		"analysis_id": "", "path": "", "reason": "retry after an I/O fault", evidence.WarnKeyIngest: w.IngestID(), evidence.WarnKeySuppressionBegan: true,
 	}
-	if _, err := c.Audit.Append(evidence.ActionAnalysisWarning, "", forged); err != nil {
+	if _, err := c.Audit.Append(evidence.ActionAnalysisWarning, "", repeat); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := w.End(ctx); err != nil {
 		t.Fatal(err)
 	}
-	rep := mustVerify(t, c)
-	expectProblems(t, rep, []string{"the audit log holds 2 suppression began notes for it, at most one is possible", quoted(w.IngestID())}, "the audit log holds a suppression note but no suppression began note")
+	if rep := mustVerify(t, c); !rep.OK() {
+		t.Errorf("a repeated began note is a false positive: %q", rep.Problems)
+	}
 }
 
 // TestVerifyConclusionNoteNeedsBeganNote: the conclusion note is always preceded

@@ -19,7 +19,10 @@ const (
 //
 //   - email: exactly one '@', a non-empty local part, a domain with a dot inside
 //     it (not first or last), no spaces or control characters;
-//   - phone: an optional '+', then only ASCII digits and " -().", with 7 to 15 digits;
+//   - phone: an optional '+', then only ASCII digits and " -().", with 7 to 15 digits, but
+//     never an IPv4 address or a separated date (2024-01-15, 15.01.2024), which fit the
+//     same shape; compact digit strings (an epoch time, 20240115) stay phones, so the
+//     kind is a shape hint and never an identity;
 //   - shortcode: 3 to 6 ASCII digits and nothing else;
 //   - alnum: 1 to 11 characters from [A-Za-z0-9 ] with at least one letter;
 //   - unknown: everything else (Unicode digits are not digits here).
@@ -55,6 +58,9 @@ func isEmail(a string) bool {
 }
 
 func isPhone(a string) bool {
+	if looksLikeIPOrDate(strings.TrimSpace(a)) {
+		return false
+	}
 	s := strings.TrimPrefix(a, "+")
 	digits := 0
 	for i := 0; i < len(s); i++ {
@@ -98,4 +104,42 @@ func isAlnum(a string) bool {
 		}
 	}
 	return letter
+}
+
+// looksLikeIPOrDate reports an IPv4 address (four groups of 1 to 3 digits joined by
+// dots) or a separated date (three digit groups joined by '-' or by '.', sized
+// year-month-day or day-month-year or month-day-year: 4+1..2+1..2, 1..2+1..2+4)
+// so the phone shape, which fits both, does not label them. Only plain digit
+// groups with one separator kind count: a number with a plus, spaces or
+// parentheses is a phone.
+func looksLikeIPOrDate(a string) bool {
+	sep := byte(0)
+	for i := 0; i < len(a); i++ {
+		switch c := a[i]; {
+		case isASCIIDigit(c):
+		case (c == '.' || c == '-') && (sep == 0 || sep == c):
+			sep = c
+		default:
+			return false
+		}
+	}
+	if sep == 0 {
+		return false
+	}
+	groups := strings.Split(a, string(sep))
+	for _, g := range groups {
+		if g == "" {
+			return false
+		}
+	}
+	n := func(i int) int { return len(groups[i]) }
+	switch len(groups) {
+	case 4:
+		return sep == '.' && n(0) <= 3 && n(1) <= 3 && n(2) <= 3 && n(3) <= 3
+	case 3:
+		yearFirst := n(0) == 4 && n(1) <= 2 && n(2) <= 2
+		yearLast := n(0) <= 2 && n(1) <= 2 && n(2) == 4
+		return yearFirst || yearLast
+	}
+	return false
 }
