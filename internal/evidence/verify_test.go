@@ -119,8 +119,37 @@ func rewriteManifest(t *testing.T, c *Case, f func(r *ManifestRecord)) {
 	})
 }
 
+// dropImmutabilityTriggers drops every immut_* trigger, as an attacker with file
+// access would before tampering with a table.
+func dropImmutabilityTriggers(t *testing.T, c *Case) {
+	t.Helper()
+	rows, err := c.store.db.Query(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'immut\_%' ESCAPE '\'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			_ = rows.Close()
+			t.Fatal(err)
+		}
+		names = append(names, n)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	_ = rows.Close() // the single connection must be free before the DROPs
+	for _, n := range names {
+		if _, err := c.store.db.Exec(`DROP TRIGGER "` + n + `"`); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func execDB(t *testing.T, c *Case, query string, args ...any) {
 	t.Helper()
+	dropImmutabilityTriggers(t, c)
 	if _, err := c.store.db.Exec(query, args...); err != nil {
 		t.Fatal(err)
 	}

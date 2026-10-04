@@ -15,17 +15,33 @@ func openTestStore(t *testing.T, p string) *Store {
 	return s
 }
 
-func TestStoreMigratesToV1(t *testing.T) {
+func TestStoreMigratesToV2(t *testing.T) {
 	s := openTestStore(t, filepath.Join(t.TempDir(), "a.db"))
 	v, err := s.SchemaVersion()
-	if err != nil || v != 1 {
+	if err != nil || v != 2 {
 		t.Fatalf("version = %d, %v", v, err)
 	}
-	for _, table := range []string{"artifacts", "records"} {
+	for _, table := range []string{
+		"artifacts", "parsers", "record_batches", "records", "record_times", "record_runs",
+		"record_run_artifacts", "record_superseded", "records_meta", "schema_version",
+	} {
 		var n int
 		if err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&n); err != nil || n != 1 {
 			t.Fatalf("table %s missing (n=%d err=%v)", table, n, err)
 		}
+	}
+	for _, index := range []string{
+		"records_type_ts", "records_ts", "records_artifact", "records_deleted", "records_parser",
+		"record_times_kind", "record_run_artifacts_artifact",
+	} {
+		var n int
+		if err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='index' AND name=?`, index).Scan(&n); err != nil || n != 1 {
+			t.Fatalf("index %s missing (n=%d err=%v)", index, n, err)
+		}
+	}
+	var next string
+	if err := s.db.QueryRow(`SELECT value FROM records_meta WHERE key = 'next_id'`).Scan(&next); err != nil || next != "1" {
+		t.Fatalf("records_meta next_id = %q, %v", next, err)
 	}
 }
 
@@ -35,11 +51,14 @@ func TestStoreMigrationIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var rows int
+	if err := s1.db.QueryRow(`SELECT count(*) FROM schema_version`).Scan(&rows); err != nil || rows != 2 {
+		t.Fatalf("schema_version rows = %d, %v", rows, err)
+	}
 	_ = s1.Close()
 	s2 := openTestStore(t, p)
-	var rows int
-	if err := s2.db.QueryRow(`SELECT count(*) FROM schema_version`).Scan(&rows); err != nil || rows != 1 {
-		t.Fatalf("schema_version rows = %d, %v", rows, err)
+	if err := s2.db.QueryRow(`SELECT count(*) FROM schema_version`).Scan(&rows); err != nil || rows != 2 {
+		t.Fatalf("schema_version rows after reopen = %d, %v", rows, err)
 	}
 }
 
