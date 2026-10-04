@@ -49,6 +49,15 @@ func (f *FS) chargeLeaf(t *btree) func(uint32) error {
 	}
 }
 
+// dirRecordCap is the number of catalog records (listed, thread or damaged) one
+// listing examines.
+func (f *FS) dirRecordCap() int {
+	if f.recCap > 0 {
+		return f.recCap
+	}
+	return maxDirRecords
+}
+
 func (f *FS) dirEntryCap() int {
 	if f.dirCap > 0 {
 		return f.dirCap
@@ -124,6 +133,8 @@ func (f *FS) listFolder(id, valence uint32) ([]filesys.Entry, error) {
 	var out []filesys.Entry
 	var ioErr error
 	bad, examined := 0, 0
+	recCap := f.dirRecordCap()
+	seen := map[uint32]struct{}{}
 	var firstBad error
 	cut := ""
 	err = t.scanHook(leaf, pos, f.chargeLeaf(t), func(rec []byte) (bool, error) {
@@ -139,7 +150,7 @@ func (f *FS) listFolder(id, valence uint32) ([]filesys.Entry, error) {
 		case k.parent != id:
 			return false, nil
 		case r.isThread():
-			return true, nil
+			// not an entry, but it counts toward the record cap below
 		case len(out) >= limit:
 			cut = fmt.Sprintf("folder %d has more than %d entries: the rest are not listed", id, limit)
 			return false, nil
@@ -149,10 +160,14 @@ func (f *FS) listFolder(id, valence uint32) ([]filesys.Entry, error) {
 				ioErr = err
 				return false, nil
 			}
+			if _, dup := seen[r.id]; dup {
+				f.warn("folder %d lists catalog node id %d more than once (a forged or damaged catalog)", id, r.id)
+			}
+			seen[r.id] = struct{}{}
 			out = append(out, e)
 		}
-		if examined++; examined >= maxDirRecords {
-			cut = fmt.Sprintf("folder %d has more than %d catalog records: the rest are not listed", id, maxDirRecords)
+		if examined++; examined >= recCap {
+			cut = fmt.Sprintf("folder %d has more than %d catalog records: the rest are not listed", id, recCap)
 			return false, nil
 		}
 		return true, nil
@@ -217,43 +232,84 @@ func (f *FS) Lookup(p string) (filesys.Entry, error) {
 	return cur, nil
 }
 
-// child finds the entry of folder parent named comp (see Lookup).
+// child finds the entry of folder parent named comp (see Lookup). The order is
+// exact > display alias > case fold: the catalog descent finds an exact
+// spelling (or a name the tree itself orders as equal); an exact spelling wins
+// at once; then a "~raw~" alias, which needs only one more descent; then a name
+// the descent found by folding; and only last the linear fold scan, which reads
+// the whole folder, is charged to the directory read budget and can fail on a
+// damaged leaf chain.
 func (f *FS) child(parent uint32, comp string) (filesys.Entry, error) {
+	var plain []uint16 // comp as a catalog name, when ReadDir would show such a name as it is
 	if utf8.ValidString(comp) {
 		if u := utf16.Encode([]rune(comp)); len(u) <= maxNameUnits {
-			if _, raw := displayName(u); raw == nil { // only a name ReadDir shows as it is
-				k, r, err := f.findRecord(parent, u)
-				switch {
-				case err == nil:
-					return f.toEntry(k, r)
-				case !errors.Is(err, filesys.ErrNotFound):
-					return filesys.Entry{}, err
-				}
+			if _, raw := displayName(u); raw == nil {
+				plain = u
 			}
 		}
 	}
-	notFound := fmt.Errorf("%w: no entry named %s", filesys.ErrNotFound, strconv.Quote(comp[:min(len(comp), 64)]))
-	rest, ok := strings.CutPrefix(comp, rawPrefix)
-	if !ok {
-		return filesys.Entry{}, notFound
+	var nearKey catalogKey
+	var near catalogRecord
+	haveNear := false
+	if plain != nil {
+		k, r, err := f.findRecordTree(parent, plain)
+		switch {
+		case err == nil && slices.Equal(k.name, plain):
+			return f.toEntry(k, r)
+		case err == nil:
+			nearKey, near, haveNear = k, r, true
+		case !errors.Is(err, filesys.ErrNotFound):
+			return filesys.Entry{}, err
+		}
+	}
+	e, ok, err := f.aliasChild(parent, comp)
+	if err != nil || ok {
+		return e, err
+	}
+	if haveNear {
+		return f.toEntry(nearKey, near)
+	}
+	if plain != nil {
+		k, r, err := f.findRecordFold(parent, plain)
+		switch {
+		case err == nil:
+			return f.toEntry(k, r)
+		case !errors.Is(err, filesys.ErrNotFound):
+			return filesys.Entry{}, err
+		}
+	}
+	return filesys.Entry{}, fmt.Errorf("%w: no entry named %s", filesys.ErrNotFound, strconv.Quote(comp[:min(len(comp), 64)]))
+}
+
+// aliasChild resolves a "~raw~"+base64url display form to the entry whose
+// stored name bytes are exactly the decoded ones; ok is false when comp is not
+// an alias of a name of this folder.
+func (f *FS) aliasChild(parent uint32, comp string) (e filesys.Entry, ok bool, err error) {
+	rest, isAlias := strings.CutPrefix(comp, rawPrefix)
+	if !isAlias {
+		return e, false, nil
 	}
 	// Each name has one spelling: the text must be exactly what encoding the
 	// decoded bytes gives (the decoder skips embedded CR/LF, and a variant with
 	// padding or another alphabet is not the display form).
-	b, err := base64.RawURLEncoding.Strict().DecodeString(rest)
-	if err != nil || base64.RawURLEncoding.EncodeToString(b) != rest || len(b)%2 != 0 || len(b)/2 > maxNameUnits {
-		return filesys.Entry{}, notFound
+	b, derr := base64.RawURLEncoding.Strict().DecodeString(rest)
+	if derr != nil || base64.RawURLEncoding.EncodeToString(b) != rest || len(b)%2 != 0 || len(b)/2 > maxNameUnits {
+		return e, false, nil
 	}
 	u := readUnits(b, len(b)/2)
-	k, r, err := f.findRecord(parent, u)
+	k, r, err := f.findRecordTree(parent, u)
+	if errors.Is(err, filesys.ErrNotFound) {
+		return e, false, nil
+	}
 	if err != nil {
-		return filesys.Entry{}, err
+		return e, false, err
 	}
 	// The alias stands for the exact stored bytes of a name shown in the raw form.
 	if display, _ := displayName(k.name); !slices.Equal(k.name, u) || display != comp {
-		return filesys.Entry{}, notFound
+		return e, false, nil
 	}
-	return f.toEntry(k, r)
+	e, err = f.toEntry(k, r)
+	return e, err == nil, err
 }
 
 var _ filesys.FileSystem = (*FS)(nil)

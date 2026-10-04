@@ -291,17 +291,28 @@ func (f *FS) findRecordTree(parent uint32, name []uint16) (catalogKey, catalogRe
 
 // findRecord finds the folder or file record keyed (parent, name); thread
 // records are never returned. It is findRecordTree, then, for case-folding
-// trees, a linear scan of that parent's children with the approximate fold
-// (the fold here only approximates Apple's table, so an exotic name may stay
-// unreachable by name): the scan reads catalog nodes and is charged to the
-// directory read budget, and a scan that the budget cut short is a
-// CorruptError, not a miss. An exact spelling is preferred to a folded one.
-// filesys.ErrNotFound when there is none; the key returned holds the name as
-// stored.
+// trees, findRecordFold. filesys.ErrNotFound when there is none; the key
+// returned holds the name as stored.
 func (f *FS) findRecord(parent uint32, name []uint16) (catalogKey, catalogRecord, error) {
-	gotKey, got, err := f.findRecordTree(parent, name)
-	if !errors.Is(err, filesys.ErrNotFound) || f.binaryNames() || len(name) == 0 {
-		return gotKey, got, err
+	k, r, err := f.findRecordTree(parent, name)
+	if !errors.Is(err, filesys.ErrNotFound) {
+		return k, r, err
+	}
+	return f.findRecordFold(parent, name)
+}
+
+// findRecordFold is the second phase of findRecord: for case-folding trees a
+// linear scan of that parent's children with the approximate fold (the fold
+// here only approximates Apple's table, so an exotic name may stay unreachable
+// by name). The scan reads catalog nodes and is charged to the directory read
+// budget, and a scan that the budget cut short is a CorruptError, not a miss.
+// An exact spelling is preferred to a folded one. On a case-sensitive tree, or
+// for an empty name, it finds nothing (filesys.ErrNotFound).
+func (f *FS) findRecordFold(parent uint32, name []uint16) (catalogKey, catalogRecord, error) {
+	var gotKey catalogKey
+	var got catalogRecord
+	if f.binaryNames() || len(name) == 0 {
+		return gotKey, got, fmt.Errorf("%w: no catalog record for parent %d", filesys.ErrNotFound, parent)
 	}
 	found, exact := false, false
 	cutShort, err := f.foldScan(parent, name, func(k catalogKey, r catalogRecord) bool {

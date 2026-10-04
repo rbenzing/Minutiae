@@ -42,6 +42,7 @@ type FS struct {
 	dirMu     sync.Mutex
 	dirBudget int64
 	dirCap    int
+	recCap    int // overrides maxDirRecords when positive (tests)
 	extentCap int // overrides maxExtentsPerFork when positive (tests)
 
 	rootMu    sync.Mutex

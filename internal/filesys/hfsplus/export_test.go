@@ -206,4 +206,5 @@ func WithLogical(fd ForkData, n uint64) ForkData {
 }
 
 // SetExtentCap lowers the number of extents kept per fork (0 = the default).
-func (f *FS) SetExtentCap(n int) { f.extentCap = n }
+func (f *FS) SetExtentCap(n int)    { f.extentCap = n }
+func (f *FS) SetDirRecordCap(n int) { f.recCap = n }

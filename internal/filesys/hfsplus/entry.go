@@ -27,8 +27,8 @@ const (
 )
 
 // privateDataName is the name of the hard-link metadata folder in the root,
-// after its four prefix units (from memory of TN1150; see Task 4, which
-// verifies it).
+// after its four prefix units (from memory of TN1150; exercised by builder
+// volumes only: the real fixtures hold no hard links).
 var privateDataName = unitsOf("HFS+ Private Data")
 
 func unitsOf(s string) []uint16 {

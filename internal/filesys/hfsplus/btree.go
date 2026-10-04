@@ -186,6 +186,9 @@ func (f *FS) openBTree(kind treeKind, fk *forkMap) (*btree, error) {
 	}
 	var hb [nodeDescSize + btHeaderRecSize]byte
 	if err := readForkFull(fk, hb[:], 0); err != nil {
+		if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) { // the image ends inside the tree
+			return nil, corrupt(name, fk.volumeOffset(0), "the header node is cut off: the image ends inside the tree (%v)", err)
+		}
 		return nil, err
 	}
 	be := binary.BigEndian
