@@ -128,7 +128,7 @@ func TestOpenMinimalImage(t *testing.T) {
 	m := pattern(3 * 64 * 512)
 	files := ewftest.Build(ewftest.Options{
 		Case: "C-1", Evidence: "E-1", Description: "a disk", Examiner: "Ex", Notes: "some notes",
-		Acquired: "2020 1 2 3 4 5",
+		Acquired: "1700000000",
 	}, m)
 	r := mustOpen(t, files)
 	if r.Size() != int64(len(m)) || r.SectorSize() != 512 || r.ChunkSize() != 32768 || r.Chunks() != 3 {
@@ -147,8 +147,8 @@ func TestOpenMinimalImage(t *testing.T) {
 		{Key: "description", Value: "a disk"},
 		{Key: "examiner", Value: "Ex"},
 		{Key: "notes", Value: "some notes"},
-		{Key: "acquired", Value: "2020 1 2 3 4 5"},
-		{Key: "system_date", Value: "2020 1 2 3 4 5"},
+		{Key: "acquired", Value: "1700000000"},
+		{Key: "system_date", Value: "1700000000"},
 		{Key: "compression", Value: "none"},
 		{Key: "media", Value: "fixed"},
 		{Key: "sectors_per_chunk", Value: "64"},
@@ -157,10 +157,9 @@ func TestOpenMinimalImage(t *testing.T) {
 		{Key: "chunks", Value: "3"},
 		{Key: "md5", Value: hex.EncodeToString(sum5[:])},
 		{Key: "sha1", Value: hex.EncodeToString(sum1[:])},
-		{Key: "header.av", Value: "ewftest"},
-		{Key: "header.ov", Value: "Test"},
+		{Key: "header.av", Value: "20140816"},
+		{Key: "header.ov", Value: "Linux"},
 		{Key: "header.p", Value: "0"},
-		{Key: "header.r", Value: "n"},
 	}
 	if got := r.Metadata(); !slices.Equal(got, want) {
 		t.Fatalf("Metadata:\n got %q\nwant %q", got, want)
@@ -275,7 +274,7 @@ func TestOpenHeaderMetadata(t *testing.T) {
 		}
 	})
 	t.Run("repeated header that decodes differently warns", func(t *testing.T) {
-		files := ewftest.Build(ewftest.Options{NoHeader2: true, WithData: true, Case: "FIRST"}, m)
+		files := ewftest.Build(ewftest.Options{NoHeader2: true, Case: "FIRST"}, m)
 		d := section(t, files[0], "data") // payload is not a zlib stream
 		d.Type = "header"
 		ewftest.FixDescriptor(files[0], d)
@@ -654,7 +653,7 @@ func TestVolumeHostile(t *testing.T) {
 		}
 	})
 	t.Run("a second differing volume warns", func(t *testing.T) {
-		files := ewftest.Build(ewftest.Options{WithData: true}, m)
+		files := ewftest.Build(ewftest.Options{}, m)
 		d := section(t, files[0], "data")
 		p := int(d.Offset) + 76
 		binary.LittleEndian.PutUint32(files[0][p+8:], 32) // spc 32 => 6 chunks
@@ -668,7 +667,7 @@ func TestVolumeHostile(t *testing.T) {
 		}
 	})
 	t.Run("an identical second volume is silent", func(t *testing.T) {
-		files := ewftest.Build(ewftest.Options{WithData: true}, m)
+		files := ewftest.Build(ewftest.Options{}, m)
 		d := section(t, files[0], "data")
 		d.Type = "volume"
 		ewftest.FixDescriptor(files[0], d)
@@ -677,7 +676,7 @@ func TestVolumeHostile(t *testing.T) {
 		}
 	})
 	t.Run("a second corrupt volume warns", func(t *testing.T) {
-		files := ewftest.Build(ewftest.Options{WithData: true}, m)
+		files := ewftest.Build(ewftest.Options{}, m)
 		d := section(t, files[0], "data")
 		files[0][d.Offset+76+9] ^= 1
 		d.Type = "volume"
@@ -687,7 +686,7 @@ func TestVolumeHostile(t *testing.T) {
 		}
 	})
 	t.Run("a differing data section warns", func(t *testing.T) {
-		files := ewftest.Build(ewftest.Options{WithData: true}, m)
+		files := ewftest.Build(ewftest.Options{}, m)
 		d := section(t, files[0], "data")
 		p := int(d.Offset) + 76
 		binary.LittleEndian.PutUint32(files[0][p+8:], 32)
@@ -698,7 +697,7 @@ func TestVolumeHostile(t *testing.T) {
 		}
 	})
 	t.Run("a damaged data section warns", func(t *testing.T) {
-		files := ewftest.Build(ewftest.Options{WithData: true}, m)
+		files := ewftest.Build(ewftest.Options{}, m)
 		d := section(t, files[0], "data")
 		files[0][d.Offset+76+9] ^= 1
 		if r := mustOpen(t, files); !hasWarning(r, "data section ignored") {
@@ -868,39 +867,65 @@ func types(secs []ewftest.Section) []string {
 
 func TestBuilderRoundTripsSections(t *testing.T) {
 	m := pattern(5 * 64 * 512)
-	t.Run("single segment", func(t *testing.T) {
-		files := ewftest.Build(ewftest.Options{ChunksPerTable: 3, ErrorRanges: [][2]uint32{{1, 1}}, WithData: true}, m)
-		want := []string{"header", "header2", "volume", "data", "sectors", "table", "table2", "sectors", "table", "table2", "error2", "hash", "digest", "done"}
+	t.Run("single segment follows real output", func(t *testing.T) {
+		files := ewftest.Build(ewftest.Options{ChunksPerTable: 3, ErrorRanges: [][2]uint32{{1, 1}}}, m)
+		want := []string{"header2", "header2", "header", "volume", "sectors", "table", "table2", "sectors", "table", "table2", "data", "error2", "digest", "hash", "done"}
 		if got := types(ewftest.Sections(files[0])); !slices.Equal(got, want) {
 			t.Fatalf("got %v want %v", got, want)
 		}
 		for _, s := range ewftest.Sections(files[0]) {
-			if s.Type != "done" && s.Next != s.Offset+s.Size {
+			switch {
+			case s.Type == "done" && (s.Size != 0 || s.Next != s.Offset):
+				t.Fatalf("done: %+v", s)
+			case s.Type != "done" && s.Next != s.Offset+s.Size:
 				t.Fatalf("%s: next %d != off %d + size %d", s.Type, s.Next, s.Offset, s.Size)
 			}
 		}
 	})
-	t.Run("options drop sections", func(t *testing.T) {
-		files := ewftest.Build(ewftest.Options{NoHeader: true, NoHeader2: true, NoTable2: true, NoHash: true, NoDigest: true}, m)
+	t.Run("options vary the layout", func(t *testing.T) {
+		files := ewftest.Build(ewftest.Options{NoHeader: true, NoHeader2: true, NoTable2: true, NoHash: true, NoDigest: true, NoData: true}, m)
 		want := []string{"volume", "sectors", "table", "done"}
 		if got := types(ewftest.Sections(files[0])); !slices.Equal(got, want) {
 			t.Fatalf("got %v want %v", got, want)
 		}
+		files = ewftest.Build(ewftest.Options{HashBeforeDigest: true, TerminalSize76: true}, m)
+		got := ewftest.Sections(files[0])
+		n := len(got)
+		if got[n-3].Type != "hash" || got[n-2].Type != "digest" || got[n-1].Size != 76 {
+			t.Fatalf("%+v", got[n-3:])
+		}
 	})
-	t.Run("multi segment", func(t *testing.T) {
+	t.Run("multi segment follows real output", func(t *testing.T) {
 		files := ewftest.Build(ewftest.Options{ChunksPerSegment: 2}, m)
 		if len(files) != 3 {
 			t.Fatalf("%d segments", len(files))
 		}
-		if got := types(ewftest.Sections(files[0])); got[len(got)-1] != "next" || got[0] != "header" {
+		want := []string{"header2", "header2", "header", "volume", "sectors", "table", "table2", "next"}
+		if got := types(ewftest.Sections(files[0])); !slices.Equal(got, want) {
 			t.Fatalf("%v", got)
 		}
-		if got := types(ewftest.Sections(files[1])); !slices.Equal(got, []string{"sectors", "table", "table2", "next"}) {
+		if got := types(ewftest.Sections(files[1])); !slices.Equal(got, []string{"data", "sectors", "table", "table2", "next"}) {
 			t.Fatalf("%v", got)
 		}
-		want := []string{"sectors", "table", "table2", "hash", "digest", "done"}
+		want = []string{"data", "sectors", "table", "table2", "digest", "hash", "done"}
 		if got := types(ewftest.Sections(files[2])); !slices.Equal(got, want) {
 			t.Fatalf("%v", got)
+		}
+	})
+	t.Run("table base conventions", func(t *testing.T) {
+		for _, base := range []ewftest.BaseMode{ewftest.BaseSectorsDescriptor, ewftest.BaseZero} {
+			f := ewftest.Build(ewftest.Options{Base: base}, m)[0]
+			s := section(t, f, "sectors")
+			tb := section(t, f, "table")
+			p := tb.Offset + 76
+			baseOff := int64(binary.LittleEndian.Uint64(f[p+8:]))
+			first := int64(binary.LittleEndian.Uint32(f[p+24:]) & 0x7fffffff)
+			if base == ewftest.BaseSectorsDescriptor && (baseOff != s.Offset || first != 76) {
+				t.Fatalf("descriptor base: base %d first %d, sectors at %d", baseOff, first, s.Offset)
+			}
+			if base == ewftest.BaseZero && (baseOff != 0 || first != s.Offset+76) {
+				t.Fatalf("zero base: base %d first %d", baseOff, first)
+			}
 		}
 	})
 	t.Run("no done writes next", func(t *testing.T) {
@@ -910,7 +935,7 @@ func TestBuilderRoundTripsSections(t *testing.T) {
 		}
 	})
 	t.Run("chunk locations", func(t *testing.T) {
-		for _, base := range []ewftest.BaseMode{ewftest.BaseZero, ewftest.BaseSectorsData} {
+		for _, base := range []ewftest.BaseMode{ewftest.BaseZero, ewftest.BaseSectorsDescriptor} {
 			files := ewftest.Build(ewftest.Options{Base: base, ChunksPerSegment: 2, ChunksPerTable: 1}, m)
 			locs := ewftest.ChunkLocs(files)
 			if len(locs) != 5 {
@@ -942,7 +967,7 @@ func TestBuilderRoundTripsSections(t *testing.T) {
 // mutated numbers) and requires Open to return promptly without panicking.
 func TestOpenSurvivesMutations(t *testing.T) {
 	base := ewftest.Build(ewftest.Options{
-		ChunksPerSegment: 2, ChunksPerTable: 1, WithData: true, Compress: ewftest.CompressMixed,
+		ChunksPerSegment: 2, ChunksPerTable: 1, Compress: ewftest.CompressMixed,
 		ErrorRanges: [][2]uint32{{1, 2}, {5, 6}}, Case: "x",
 	}, pattern(5*64*512))
 	x := uint32(99)
@@ -970,5 +995,31 @@ func TestOpenSurvivesMutations(t *testing.T) {
 			_ = r.Metadata()
 			_ = r.Warnings()
 		}
+	}
+}
+
+// TestOpenLayoutVariations covers layouts other writers may use: all must
+// open cleanly with identical geometry and stored hashes.
+func TestOpenLayoutVariations(t *testing.T) {
+	m := pattern(5 * 64 * 512)
+	for name, o := range map[string]ewftest.Options{
+		"terminal size 76":     {TerminalSize76: true},
+		"hash before digest":   {HashBeforeDigest: true},
+		"no data sections":     {NoData: true, ChunksPerSegment: 2},
+		"base 0":               {Base: ewftest.BaseZero},
+		"no table2, no foot":   {NoTable2: true, NoTableFooter: true},
+		"multi, compressed":    {ChunksPerSegment: 2, Compress: ewftest.CompressAll},
+		"512 sectors, 1 chunk": {SectorsPerChunk: 320},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := mustOpen(t, ewftest.Build(o, m))
+			if w := r.Warnings(); len(w) != 0 {
+				t.Fatalf("warnings %q", w)
+			}
+			g := meta(r)
+			if r.Size() != int64(len(m)) || g["md5"] == "" || g["sha1"] == "" {
+				t.Fatalf("size %d %v", r.Size(), g)
+			}
+		})
 	}
 }

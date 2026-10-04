@@ -7,10 +7,13 @@
 //
 //	segment header (13)  EVF\x09\x0d\x0a\xff\x00, 0x01, segment number u16, 0 u16
 //	section descriptor (76)  type[16] next u64 size u64 padding[40] adler32
-//	segment 1:  header, header2, volume, [data]
+//	segment 1:  header2, header2, header, volume
 //	every segment: groups of sectors, table, table2
-//	last segment:  error2, hash, digest, then done (or next when incomplete)
-//	other segments end with next
+//	segments 2..N start with data (a copy of volume); a single segment has
+//	data after its last table2; the last segment ends error2, digest, hash,
+//	done (next instead of done when incomplete); other segments end with next.
+//	Terminal sections have size 0; table base_offset is the sectors descriptor
+//	offset (BaseZero and other variations are options).
 package ewftest
 
 import (
@@ -21,6 +24,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"hash/adler32"
+	"strconv"
+	"time"
 	"unicode/utf16"
 )
 
@@ -41,11 +46,13 @@ const (
 type BaseMode int
 
 const (
-	// BaseZero writes base_offset 0 and absolute segment-file offsets.
-	BaseZero BaseMode = iota
-	// BaseSectorsData writes the offset of the sectors section descriptor (as
-	// real acquisition output does) as base_offset and offsets relative to it.
-	BaseSectorsData
+	// BaseSectorsDescriptor (the default) writes the file offset of the
+	// sectors section DESCRIPTOR as base_offset and entry offsets relative to
+	// it (the first is 76), as real acquisition output does.
+	BaseSectorsDescriptor BaseMode = iota
+	// BaseZero writes base_offset 0 and absolute segment-file offsets (older
+	// writers; builder-only coverage).
+	BaseZero
 )
 
 // Options controls Build. The zero value is a valid single-segment image with
@@ -67,8 +74,15 @@ type Options struct {
 	NoDone                          bool // writes `next` last (incomplete image)
 	SetID                           [16]byte
 
-	// WithData also writes a `data` section (a copy of volume) after volume.
-	WithData bool
+	// NoData omits the `data` sections (copies of volume). By default a
+	// single segment has one after its last table2 and segments 2..N start
+	// with one, like real output.
+	NoData bool
+	// HashBeforeDigest writes `hash` before `digest` (real output writes
+	// digest first).
+	HashBeforeDigest bool
+	// TerminalSize76 gives next/done a size of 76 instead of 0.
+	TerminalSize76 bool
 	// Header2NoBOM omits the UTF-16 byte order mark from header2.
 	Header2NoBOM bool
 	// HeaderText and Header2Text replace the generated header text (before
@@ -128,10 +142,15 @@ func (w *writer) section(typ string, payload []byte) {
 	w.buf = append(w.buf, payload...)
 }
 
-// terminal appends a next/done section whose next points at itself.
-func (w *writer) terminal(typ string) {
+// terminal appends a next/done section whose next points at itself. Real
+// output gives it size 0; size76 writes the descriptor size instead.
+func (w *writer) terminal(typ string, size76 bool) {
 	off := int64(len(w.buf))
-	w.descriptor(typ, off, descLen)
+	size := int64(0)
+	if size76 {
+		size = descLen
+	}
+	w.descriptor(typ, off, size)
 }
 
 func segmentHeader(n int) []byte {
@@ -154,23 +173,34 @@ func headerText(o Options) string {
 	if o.HeaderText != "" {
 		return o.HeaderText
 	}
-	r := "n"
-	switch o.Compress {
-	case CompressAll:
-		r = "b"
-	case CompressMixed:
-		r = "f"
-	}
-	return "1\nmain\nc\tn\ta\te\tt\tav\tov\tm\tu\tp\tr\n" +
+	// One category, CRLF line ends, dates as "YYYY M D h m s" (unpadded).
+	d := dateParts(o.Acquired)
+	return "1\r\nmain\r\nc\tn\ta\te\tt\tav\tov\tm\tu\tp\r\n" +
 		o.Case + "\t" + o.Evidence + "\t" + o.Description + "\t" + o.Examiner + "\t" + o.Notes +
-		"\tewftest\tTest\t" + o.Acquired + "\t" + o.Acquired + "\t0\t" + r + "\n\n"
+		"\t20140816\tLinux\t" + d + "\t" + d + "\t0\r\n\r\n"
+}
+
+// dateParts renders Unix seconds as the header text's "YYYY M D h m s"; a
+// value that is not a number is kept as is.
+func dateParts(unix string) string {
+	n, err := strconv.ParseInt(unix, 10, 64)
+	if err != nil {
+		return unix
+	}
+	t := time.Unix(n, 0).UTC()
+	return fmt.Sprintf("%d %d %d %d %d %d", t.Year(), int(t.Month()), t.Day(), t.Hour(), t.Minute(), t.Second())
 }
 
 func header2Text(o Options) string {
 	if o.Header2Text != "" {
 		return o.Header2Text
 	}
-	return headerText(o)
+	// Three categories (main, srce, sub), LF line ends, Unix-second dates.
+	return "3\nmain\na\tc\tn\te\tt\tmd\tsn\tav\tov\tm\tu\tp\tdc\n" +
+		o.Description + "\t" + o.Case + "\t" + o.Evidence + "\t" + o.Examiner + "\t" + o.Notes +
+		"\t\t\t20140816\tLinux\t" + o.Acquired + "\t" + o.Acquired + "\t0\t\n\n" +
+		"srce\n0\t1\np\tn\tid\tev\ttb\tlo\tpo\tah\tgu\taq\n-1\t-1\t\t\t\t-1\t-1\t-1\t\t\n\n" +
+		"sub\n0\t1\np\tn\tid\tnu\tco\tgu\n0\t0\t\t\t\t\n\n"
 }
 
 func utf16le(s string, bom bool) []byte {
@@ -191,14 +221,14 @@ func volumePayload(o Options, nChunks int, sectors uint64) []byte {
 	put32(v[8:], uint32(o.SectorsPerChunk))
 	put32(v[12:], uint32(o.BytesPerSector))
 	put64(v[16:], sectors)
-	v[36] = 1 // media flags: physical
+	v[36] = 3 // media flags, as real output
 	switch o.Compress {
 	case CompressAll:
 		v[52] = 2
 	case CompressMixed:
-		v[52] = 1
+		v[52] = 2
 	}
-	put32(v[56:], uint32(o.SectorsPerChunk))
+	put32(v[56:], 64) // error granularity: 64 even for other chunk sizes
 	copy(v[64:], o.SetID[:])
 	put32(v[1048:], adler32.Checksum(v[:1048]))
 	return v
@@ -278,44 +308,54 @@ func Build(o Options, media []byte) [][]byte {
 	}
 	nSeg := max(1, (nChunks+perSeg-1)/perSeg)
 	hashP, digestP := hashPayloads(o, media)
+	vol := volumePayload(o, nChunks, uint64(len(media)/o.BytesPerSector))
 
 	segs := make([][]byte, nSeg)
 	for s := range nSeg {
 		w := &writer{buf: segmentHeader(s + 1)}
+		last := s == nSeg-1
 		if s == 0 {
+			if !o.NoHeader2 {
+				h2 := zlibBytes(utf16le(header2Text(o), !o.Header2NoBOM))
+				w.section("header2", h2)
+				w.section("header2", h2) // real output writes it twice
+			}
 			if !o.NoHeader {
 				w.section("header", zlibBytes([]byte(headerText(o))))
 			}
-			if !o.NoHeader2 {
-				w.section("header2", zlibBytes(utf16le(header2Text(o), !o.Header2NoBOM)))
-			}
-			vol := volumePayload(o, nChunks, uint64(len(media)/o.BytesPerSector))
 			w.section("volume", vol)
-			if o.WithData {
-				w.section("data", vol)
-			}
+		} else if !o.NoData {
+			w.section("data", vol) // segments 2..N start with a copy of volume
 		}
 		lo, hi := s*perSeg, min(nChunks, (s+1)*perSeg)
 		for g := lo; g < hi; g += o.ChunksPerTable {
 			writeGroup(w, o, chunks[g:min(hi, g+o.ChunksPerTable)])
 		}
-		last := s == nSeg-1
 		if last {
+			if s == 0 && !o.NoData {
+				w.section("data", vol) // a single segment: data after the last table2
+			}
 			if len(o.ErrorRanges) > 0 {
 				w.section("error2", error2Payload(o.ErrorRanges))
 			}
-			if !o.NoHash {
-				w.section("hash", hashP)
+			first, second := "digest", "hash"
+			if o.HashBeforeDigest {
+				first, second = second, first
 			}
-			if !o.NoDigest {
-				w.section("digest", digestP)
+			for _, name := range []string{first, second} {
+				switch {
+				case name == "hash" && !o.NoHash:
+					w.section("hash", hashP)
+				case name == "digest" && !o.NoDigest:
+					w.section("digest", digestP)
+				}
 			}
 		}
+		term := "next"
 		if last && !o.NoDone {
-			w.terminal("done")
-		} else {
-			w.terminal("next")
+			term = "done"
 		}
+		w.terminal(term, o.TerminalSize76)
 		segs[s] = w.buf
 	}
 	return segs
@@ -327,12 +367,12 @@ func writeGroup(w *writer, o Options, group []chunk) {
 	var payload []byte
 	entries := make([]uint32, len(group))
 	var base uint64
-	if o.Base == BaseSectorsData {
+	if o.Base == BaseSectorsDescriptor {
 		base = uint64(sectorsOff)
 	}
 	for i, c := range group {
 		pos := dataStart + int64(len(payload))
-		if o.Base == BaseSectorsData {
+		if o.Base == BaseSectorsDescriptor {
 			pos -= sectorsOff
 		}
 		if pos >= 1<<31 {
