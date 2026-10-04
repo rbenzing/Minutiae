@@ -179,9 +179,23 @@ type Options struct {
 	// hard-link private folder's name: 0 (the default, as Apple writes it), 0x2400 or 0x200B.
 	PrivatePrefix uint16
 	// RawFoldOrder orders a case-folding catalog by the plain lower-cased units,
-	// without skipping the ignorable ones (a tree the reader's own descent
-	// cannot search for such names: only its linear fallback scan finds them).
+	// without skipping any ignorable one (U+0000 sorts first; a tree the reader's
+	// own descent cannot search for such names: only its linear fallback scan finds
+	// them). NulIgnorable skips U+0000 like the other ignorable units (an earlier
+	// guess). By default U+0000 sorts after every other unit (it folds to 0xFFFF:
+	// the reader's assumption, unverified against a real image).
 	RawFoldOrder bool
+	NulIgnorable bool
+}
+
+func (o Options) foldMode() foldMode {
+	switch {
+	case o.RawFoldOrder:
+		return foldRaw
+	case o.NulIgnorable:
+		return foldNulIgnored
+	}
+	return foldNulLast
 }
 
 // Layout reports where Build put things, so tests can patch or read them.
@@ -368,7 +382,7 @@ func BuildLayout(o Options, files []File) ([]byte, *Layout) {
 	// trees do not depend on where the forks lie); pass 2, below, places them.
 	forks, _ := allocForks(files, bs, 0)
 	recs, counts, cnids := catalogRecords(o, files, forks)
-	sortCatalog(recs, compare == 0xBC, o.RawFoldOrder)
+	sortCatalog(recs, compare == 0xBC, o.foldMode())
 	var stale []byte
 	if o.StaleSlack {
 		stale = staleRecord()
@@ -476,7 +490,7 @@ func BuildLayout(o Options, files []File) ([]byte, *Layout) {
 	// The catalog again with the real fork placement (its size cannot change).
 	{
 		recs2, _, _ := catalogRecords(o, files, forks)
-		sortCatalog(recs2, compare == 0xBC, o.RawFoldOrder)
+		sortCatalog(recs2, compare == 0xBC, o.foldMode())
 		cat = buildTree(treeSpec{
 			nodeSize: int(o.NodeSize), blockSize: bs, recs: recs2,
 			maxKey: 516, keyCompare: compare, attrs: catAttrs,

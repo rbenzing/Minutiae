@@ -9,18 +9,23 @@ import (
 const maxNameUnits = 255
 
 // ignorable reports whether a UTF-16 code unit is skipped by the HFS+ case
-// folding comparison. TN1150 ("Unicode Subtleties") lists U+0000 and the
-// zero-width and bidirectional controls U+200C-200F, U+202A-202E, U+206A-206F
-// and U+FEFF. From memory of the TN; NOT validated against a real image (the
-// fixtures hold no such names). In particular, treating U+0000 as ignorable is
-// unverified: if Apple's table keeps NUL significant, a name with an embedded NUL
-// folds equal to its NUL-less spelling here but not on a real volume. The effect
-// is limited to name lookups on case-folding volumes: Lookup tries an exact
-// (binary) spelling before the folded one, so a name that exists as typed is
-// always found, and the fold only decides which near-miss may also match.
+// folding comparison: the zero-width and bidirectional controls U+200C-200F,
+// U+202A-202E, U+206A-206F and U+FEFF (TN1150 "Unicode Subtleties", from memory;
+// NOT validated against a real image, the fixtures hold no such names).
+//
+// U+0000 is NOT ignorable: Apple's case-folding table maps it to 0xFFFF, so it
+// sorts after every other unit (this is why the hard-link private folder, whose
+// name starts with four NULs, is the last child of the root). This is the
+// coordinator's ruling from two independent recollections plus the
+// FastUnicodeCompare table; it is UNVERIFIED (no real image holds such a name).
+// An earlier version skipped U+0000 like the others. The reader does not rely
+// on the order for the private folder: when the descent misses it scans the
+// root (see privateFolder). The effect elsewhere is limited to name lookups on
+// case-folding volumes: Lookup tries an exact (binary) spelling before the
+// folded one, so a name that exists as typed is always found.
 func ignorable(u uint16) bool {
 	switch {
-	case u == 0x0000, u == 0xFEFF:
+	case u == 0xFEFF:
 		return true
 	case u >= 0x200C && u <= 0x200F:
 		return true
@@ -32,13 +37,16 @@ func ignorable(u uint16) bool {
 	return false
 }
 
-// foldUnit lower-cases one BMP code unit. Surrogates and everything whose
+// foldUnit lower-cases one BMP code unit (U+0000 becomes 0xFFFF, as Apple's table has it). Surrogates and everything whose
 // lower case is outside the BMP are left unchanged. Apple's real fold is a
 // 64 K-entry table that is not embedded here, so this is an APPROXIMATION
 // (unicode.ToLower per unit): it agrees for ASCII, Latin-1, Greek and Cyrillic
 // and may differ for exotic letters (Go's case data follows a newer Unicode version than
 // the table frozen in HFS+, which Lookup's exact-before-folded order mitigates).
 func foldUnit(u uint16) uint16 {
+	if u == 0 {
+		return 0xFFFF // unverified, see ignorable
+	}
 	if u < 0x80 {
 		if u >= 'A' && u <= 'Z' {
 			return u + 'a' - 'A'

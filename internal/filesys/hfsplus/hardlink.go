@@ -50,8 +50,14 @@ func isDirLink(r *catalogRecord) bool {
 
 // privateFolder returns the CNID of the hard-link private metadata folder, 0
 // when the volume has none. The result is cached (a miss too); an I/O error is
-// returned and not cached. The names are found by the catalog descent alone, so
-// a volume without links costs no directory scan.
+// returned and not cached. The names are first looked up by the catalog descent,
+// which relies on how the volume orders a NUL-prefixed name (U+0000 sorts last,
+// unverified against a real image). When the descent misses on a case-folding
+// volume the root folder is scanned for the exact private-folder names (charged
+// to the directory read budget), which does not depend on the sort order, so a
+// real hard link is never reported dangling because that guess is wrong. A case-sensitive
+// (binary) catalog has a certain order: its descent miss is a miss. The result
+// is cached, and only a volume with link records ever gets here.
 func (f *FS) privateFolder() (uint32, error) {
 	f.privMu.Lock()
 	done, id := f.privDone, f.privID
@@ -77,6 +83,13 @@ func (f *FS) privateFolder() (uint32, error) {
 		if id != 0 {
 			break
 		}
+	}
+	if id == 0 && !f.binaryNames() {
+		scanned, err := f.scanPrivateFolder()
+		if err != nil {
+			return 0, err
+		}
+		id = scanned
 	}
 	f.privMu.Lock()
 	f.privDone, f.privID = true, id
@@ -125,4 +138,58 @@ func (f *FS) resolveLink(r *catalogRecord) (linkInfo, error) {
 		li.kind, li.inode = linkFile, ir
 	}
 	return li, nil
+}
+
+// scanPrivateFolder scans the children of the root folder, in leaf-chain order,
+// for the private metadata folder, whatever order the tree is in. A scan the
+// directory budget cut short, or a damaged tree, is a warning and no folder; an
+// I/O error is returned.
+func (f *FS) scanPrivateFolder() (uint32, error) {
+	t, err := f.tree(treeCatalog)
+	if err != nil {
+		if errors.Is(err, filesys.ErrCorrupt) {
+			f.warn("the hard-link private folder cannot be looked up: %v", err)
+			return 0, nil
+		}
+		return 0, err
+	}
+	leaf, pos, err := t.search(f.catalogCmp(catalogKey{parent: rootFolderID}))
+	if err == nil && leaf != nil {
+		var id uint32
+		err = t.scanHook(leaf, pos, f.chargeLeaf(t), func(rec []byte) (bool, error) {
+			k, r, ok, err := f.decodeLeaf(rec)
+			if err != nil {
+				f.warn("a damaged catalog record was skipped while searching the root folder: %v", err)
+				return true, nil
+			}
+			if !ok {
+				return true, nil
+			}
+			if k.parent != rootFolderID {
+				return false, nil
+			}
+			if r.typ == recFolder && isPrivateMetadataName(k.name) {
+				id = r.id
+				return false, nil
+			}
+			return true, nil
+		})
+		if err == nil {
+			return id, nil
+		}
+		if id != 0 && errors.Is(err, filesys.ErrCorrupt) {
+			return id, nil // found before the chain broke
+		}
+	}
+	switch {
+	case err == nil:
+		return 0, nil
+	case errors.Is(err, errDirBudget):
+		f.warn("the directory read budget ran out while searching the root folder for the hard-link private folder")
+		return 0, nil
+	case errors.Is(err, filesys.ErrCorrupt):
+		f.warn("the hard-link private folder cannot be looked up: %v", err)
+		return 0, nil
+	}
+	return 0, err
 }

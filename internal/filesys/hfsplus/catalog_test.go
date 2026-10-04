@@ -307,8 +307,8 @@ func TestFoldAndCompare(t *testing.T) {
 		"a" + zwnj + "b" + zwj:      "ab",        // zero-width joiners are ignorable
 		"x" + lre + "y" + iss + "z": "xyz",
 		bom + "name":                "name",
-		"a\x00b":                    "ab",
-		"😀A":                        "😀a", // surrogates pass through
+		"a\x00b":                    "a￿b", // U+0000 folds to 0xFFFF: not ignorable (unverified against a real image)
+		"😀A":                        "😀a",  // surrogates pass through
 	} {
 		if got := fold(in); got != want {
 			t.Errorf("fold(%q) = %q, want %q", in, got, want)
@@ -353,6 +353,9 @@ func TestFoldAndCompare(t *testing.T) {
 		{"a" + zwj + "b", "AB", false, 0}, // ignorable units do not count
 		{"a" + zwj + "b", "ab", true, 1},  // ... but binary compares them
 		{"z", "a" + zwj, false, 1},
+		{"\x00", "z", false, 1},    // U+0000 sorts after every other unit ...
+		{"a\x00b", "ab", false, 1}, // ... and is not skipped
+		{"a\x00b", "ab", true, -1}, // binary: 0 < b
 		// HFSX binary order is by UTF-16 unit value, not by code point: the
 		// surrogate pair of U+1F600 (D83D DE00) sorts before U+FF21 (FF21).
 		{"😀", "Ａ", true, -1},

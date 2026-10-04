@@ -204,7 +204,7 @@ func (f *FS) protectedBlocks() (prot []filesys.Run, bitmap *forkMap, ok bool) {
 		{"attributes file", cnidAttributes, vh.attributesFile},
 		{"startup file", cnidStartup, vh.startup},
 	} {
-		m, err := f.forkPrefix(sf.id, false, sf.fd)
+		m, err := f.forkMapOf(sf.id, false, sf.fd, false) // declared blocks are protected whether or not the image holds them
 		if err != nil || !m.complete {
 			f.warn("unallocated space: the extents of the %s cannot be fully resolved (%v); no free space is reported", sf.name, errOrIncomplete(err))
 			return nil, nil, false

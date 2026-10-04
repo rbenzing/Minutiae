@@ -82,7 +82,7 @@ func SplitRecord(rec []byte) (key, data []byte, err error) { return splitRecord(
 
 // ForkExtents resolves a fork's extents ({start, count} pairs).
 func (f *FS) ForkExtents(fileID uint32, resource bool, fd ForkData) ([][2]uint32, bool, error) {
-	exts, complete, err := f.forkExtents(fileID, resource, fd)
+	exts, complete, err := f.forkExtents(fileID, resource, fd, true)
 	out := make([][2]uint32, len(exts))
 	for i, e := range exts {
 		out[i] = [2]uint32{e.start, e.count}

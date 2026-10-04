@@ -126,6 +126,49 @@ func TestHardLinkPrivateFolderPrefixVariants(t *testing.T) {
 	}
 }
 
+// The private folder is found whichever way a case-folding catalog orders its
+// NUL-prefixed name: after every other name (the assumed Apple order), among the
+// H names (NUL ignorable, an earlier guess) or first (plain code unit order).
+// The catalog descent only knows the first guess; the others are found by the
+// linear scan of the root, and a real link is never reported dangling because
+// the ordering guess was wrong.
+func TestHardLinkPrivateFolderFoundInAnyOrdering(t *testing.T) {
+	orderings := map[string]hfsplustest.Options{
+		"nul last":    {},
+		"nul ignored": {NulIgnorable: true},
+		"nul first":   {RawFoldOrder: true},
+	}
+	for name, base := range orderings {
+		for _, prefix := range []uint16{0, 0x2400, 0x200B} {
+			t.Run(name+"/"+strconv.FormatUint(uint64(prefix), 16), func(t *testing.T) {
+				o := base
+				o.PrivatePrefix, o.NodeSize, o.Blocks = prefix, 1024, 512
+				files := linkTree()
+				for i := range 300 { // many root children: several leaves, so a wrongly placed name is not found by luck
+					files = append(files, hfsplustest.File{Path: "/r" + strconv.Itoa(1000+i)})
+				}
+				_, lay, f := buildTree(t, o, files)
+				if lay.CatalogDepth < 3 {
+					t.Fatalf("test setup: catalog depth %d", lay.CatalogDepth)
+				}
+				e, fl := openPath(t, f, "/a/first.txt")
+				if attrOf(e, "hardlink") != "file" || !bytes.Equal(readAll(t, fl), pattern(9000, 20)) {
+					t.Errorf("attrs %+v: the link did not resolve", e.Attrs)
+				}
+				if _, fl := openPath(t, f, "/b/second.txt"); !bytes.Equal(readAll(t, fl), pattern(9000, 20)) {
+					t.Error("second link has other content")
+				}
+			})
+		}
+	}
+	// A volume without the folder still reports its links dangling (no error).
+	_, _, f := buildTree(t, hfsplustest.Options{RawFoldOrder: true}, []hfsplustest.File{{Path: "/dangling", LinkInode: 9999}})
+	e, err := f.Lookup("/dangling")
+	if err != nil || attrOf(e, "hardlink") != "dangling" {
+		t.Errorf("dangling link: %+v, %v", e, err)
+	}
+}
+
 func TestHardLinkDanglingIsFlagged(t *testing.T) {
 	for name, tc := range map[string]struct {
 		files []hfsplustest.File

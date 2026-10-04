@@ -447,3 +447,60 @@ func TestOpenFileWithoutThreadIsNotFound(t *testing.T) {
 		t.Errorf("Open = %v", err)
 	}
 }
+
+// An extent that lies past the end of a truncated image ends the trusted
+// prefix: Runs is that prefix (a valid CheckRunsPrefix list inside Info.Size),
+// a read at or after its end wraps filesys.ErrCorrupt (never io.ErrUnexpectedEOF
+// and never zeros), and the cut is reported as a warning.
+func TestTruncatedImageEndsTrustedPrefix(t *testing.T) {
+	const bs = 4096
+	data := pattern(12*bs, 7)
+	img0, lay := hfsplustest.BuildLayout(hfsplustest.Options{Label: "T"}, []hfsplustest.File{{Path: "/frag", Data: data, Fragment: 2}})
+	exts := lay.Files["/frag"].Data
+	if len(exts) != 6 {
+		t.Fatalf("test setup: %d extents", len(exts))
+	}
+	for name, tc := range map[string]struct {
+		cut        int64  // image length
+		wantBlocks uint32 // blocks of the file that stay mapped
+	}{
+		"between extents":        {int64(exts[2].Start)*bs + 100, 4},            // extents 0 and 1 are whole, 2 starts at the cut
+		"inside an extent":       {(int64(exts[1].Start)+1)*bs + 10, 3},         // extent 1 keeps its first block
+		"inside the first":       {(int64(exts[0].Start)+1)*bs + 10, 1},         // extent 0 keeps one block
+		"before the file":        {int64(exts[0].Start) * bs, 0},                // the whole file is cut away
+		"on the last block edge": {int64(exts[5].Start+exts[5].Count) * bs, 12}, // nothing of the file is lost
+	} {
+		t.Run(name, func(t *testing.T) {
+			img := img0[:tc.cut]
+			f := open(t, img)
+			_, fl := openPath(t, f, "/frag")
+			size := fl.Size()
+			covered, err := filesys.CheckRunsPrefix(fl.Runs(), size, f.Info().Size)
+			if err != nil {
+				t.Fatalf("Runs %v: %v", fl.Runs(), err)
+			}
+			if want := int64(tc.wantBlocks) * bs; covered != want {
+				t.Fatalf("runs cover %d bytes, want %d (runs %v)", covered, want, fl.Runs())
+			}
+			if got := readRuns(img, fl.Runs()); !bytes.Equal(got, data[:covered]) {
+				t.Error("the bytes at the runs differ from the file content")
+			}
+			buf := make([]byte, size-covered)
+			if len(buf) > 0 {
+				n, err := fl.ReadAt(buf, covered)
+				if !errors.Is(err, filesys.ErrCorrupt) || errors.Is(err, io.ErrUnexpectedEOF) || n != 0 {
+					t.Errorf("read at the prefix end = %d, %v; want 0 and an error wrapping ErrCorrupt", n, err)
+				}
+				if !hasWarning(f.Info(), "truncated") {
+					t.Errorf("warnings = %q, want one about the truncated image", f.Info().Warnings)
+				}
+			}
+			if covered > 0 {
+				got := make([]byte, covered)
+				if n, err := fl.ReadAt(got, 0); n != len(got) || err != nil || !bytes.Equal(got, data[:covered]) {
+					t.Errorf("read of the prefix = %d, %v", n, err)
+				}
+			}
+		})
+	}
+}

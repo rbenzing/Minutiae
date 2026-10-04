@@ -37,7 +37,7 @@ type forkMap struct {
 // error from the extents-overflow tree; no map is returned with it (use
 // forkPrefix for file content, which keeps the trusted prefix).
 func (f *FS) fork(fileID uint32, resource bool, fd forkData) (*forkMap, error) {
-	m, err := f.forkPrefix(fileID, resource, fd)
+	m, err := f.forkMapOf(fileID, resource, fd, false)
 	if err != nil {
 		return nil, err
 	}
@@ -48,8 +48,22 @@ func (f *FS) fork(fileID uint32, resource bool, fd forkData) (*forkMap, error) {
 // holding exactly the extents validated before the failure (the trusted
 // prefix, see forkExtents), so a file can be opened with the bytes that can be
 // trusted. The error says why the fork is not complete.
+//
+// The extents of file content are also bounded by the image: an extent that
+// reaches past the end of a truncated image (the volume declares more blocks
+// than the image holds) ends the trusted prefix (the part inside the image is
+// kept, with a CorruptError saying so), so File.Runs stay inside Info.Size and
+// reads past the prefix fail with filesys.ErrCorrupt, not an end-of-file error.
 func (f *FS) forkPrefix(fileID uint32, resource bool, fd forkData) (*forkMap, error) {
-	exts, complete, err := f.forkExtents(fileID, resource, fd)
+	return f.forkMapOf(fileID, resource, fd, true)
+}
+
+// forkMapOf is the shared body of fork and forkPrefix; bounded applies the
+// image bound described at forkPrefix. The B-tree layer and Unallocated do not
+// bound: a B-tree reads what the image holds, and Unallocated protects declared
+// blocks whether or not the image has them.
+func (f *FS) forkMapOf(fileID uint32, resource bool, fd forkData, bounded bool) (*forkMap, error) {
+	exts, complete, err := f.forkExtents(fileID, resource, fd, bounded)
 	m := &forkMap{f: f, exts: exts, blockSize: int64(f.vh.blockSize), logical: fd.logicalSize, complete: complete}
 	m.first = make([]uint64, len(exts))
 	for i, e := range exts {
@@ -57,6 +71,26 @@ func (f *FS) forkPrefix(fileID uint32, resource bool, fd forkData) (*forkMap, er
 		m.blocks += uint64(e.count) // <= 2^20 extents x 2^32 blocks: cannot overflow
 	}
 	return m, err
+}
+
+// heldBlocks is how many whole allocation blocks the image holds from the
+// volume start (the volume's declared blocks when the image is complete).
+func (f *FS) heldBlocks() int64 {
+	return min(int64(f.vh.totalBlocks), (f.size-f.base)/int64(f.vh.blockSize))
+}
+
+// clipToImage keeps the part of e inside the image. cut is true when e reaches
+// past the end of the image; keep is then the part inside (count 0 when none).
+func (f *FS) clipToImage(e extent) (keep extent, cut bool) {
+	held := f.heldBlocks()
+	if int64(e.start)+int64(e.count) <= held { // both < 2^32: cannot overflow
+		return e, false
+	}
+	keep = extent{start: e.start}
+	if int64(e.start) < held {
+		keep.count = uint32(held - int64(e.start))
+	}
+	return keep, true
 }
 
 // extentInVolume checks that [start, start+count) lies inside the volume.
@@ -74,7 +108,7 @@ func (f *FS) extentInVolume(e extent) bool {
 // record that makes no progress, repeats or overshoots are a CorruptError. The
 // extents-overflow file (CNID 3) never consults the tree: it must hold all its
 // blocks inline.
-func (f *FS) forkExtents(fileID uint32, resource bool, fd forkData) (exts []extent, complete bool, err error) {
+func (f *FS) forkExtents(fileID uint32, resource bool, fd forkData, bounded bool) (exts []extent, complete bool, err error) {
 	var covered uint64
 	for i, e := range fd.extents {
 		if e.count == 0 {
@@ -86,6 +120,14 @@ func (f *FS) forkExtents(fileID uint32, resource bool, fd forkData) (exts []exte
 		covered += uint64(e.count) // at most 8 x 2^32: cannot overflow
 		if covered > uint64(fd.totalBlocks) {
 			return exts, false, corrupt("fork extents", -1, "the inline extents of file %d hold %d blocks, more than its %d", fileID, covered, fd.totalBlocks)
+		}
+		if bounded {
+			if keep, cut := f.clipToImage(e); cut {
+				if keep.count > 0 {
+					exts = append(exts, keep)
+				}
+				return exts, false, f.truncatedExtent(fileID, i, e)
+			}
 		}
 		exts = append(exts, e)
 	}
@@ -143,6 +185,14 @@ func (f *FS) forkExtents(fileID uint32, resource bool, fd forkData) (exts []exte
 			if covered > total {
 				return exts[:kept], false, corrupt("extents-overflow tree", -1, "file %d fork %#02x: the record at block %d runs past the fork's %d blocks", fileID, forkType, start, total)
 			}
+			if bounded {
+				if keep, cut := f.clipToImage(e); cut {
+					if keep.count > 0 {
+						exts = append(exts, keep)
+					}
+					return exts, false, f.truncatedExtent(fileID, len(exts), e)
+				}
+			}
 			exts = append(exts, e)
 		}
 		if covered == before {
@@ -150,6 +200,14 @@ func (f *FS) forkExtents(fileID uint32, resource bool, fd forkData) (exts []exte
 		}
 	}
 	return exts, true, nil
+}
+
+// truncatedExtent is the error for an extent that reaches past the end of a
+// truncated image; it also records the warning.
+func (f *FS) truncatedExtent(fileID uint32, index int, e extent) error {
+	err := corrupt("fork extents", -1, "extent %d of file %d (%d+%d) reaches past the end of the truncated image (%d of %d blocks held)", index, fileID, e.start, e.count, f.heldBlocks(), f.vh.totalBlocks)
+	f.warn("file %d: %v; only the part inside the image can be trusted", fileID, err)
+	return err
 }
 
 // extentCapOrDefault is the number of extents kept per fork.

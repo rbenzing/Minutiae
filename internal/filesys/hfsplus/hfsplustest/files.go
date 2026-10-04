@@ -184,6 +184,6 @@ func attrRecords(files []File) []rec {
 			recs = append(recs, rec{key: attrKey(id, 0, name), data: data, parent: id, name: name})
 		}
 	}
-	sortCatalog(recs, true, false)
+	sortCatalog(recs, true, foldNulLast)
 	return recs
 }
