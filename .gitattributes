@@ -3,3 +3,4 @@
 *.bin binary
 *.img binary
 *.gz binary
+internal/records/recordstest/testdata/** -text
