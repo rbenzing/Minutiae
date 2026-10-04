@@ -1,18 +1,23 @@
 package evidence
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"runtime"
+	"strconv"
+	"sync/atomic"
 )
 
-// ErrNestedTx is returned by StoreTx and ReadTx when a transaction is already
-// open on the case's single connection (a nested call would wait for itself
-// forever). Transactions of one case are not meant to run concurrently either:
-// a second caller gets this error instead of waiting.
-var ErrNestedTx = errors.New("artifacts.db transaction already open (StoreTx/ReadTx must not nest)")
+// ErrNestedTx is returned by StoreTx and ReadTx when they are called from inside
+// the fn of another StoreTx or ReadTx on the same goroutine: the outer
+// transaction holds the case's single connection, so a nested call would wait
+// for itself forever. Callers on other goroutines are not nesting: they queue
+// and run in turn.
+var ErrNestedTx = errors.New("artifacts.db transaction already open on this goroutine (StoreTx/ReadTx must not nest)")
 
 // ErrReadTxModified is returned by ReadTx when fn changed the database anyway
 // (for example by switching query_only off through a query). The transaction is
@@ -20,15 +25,60 @@ var ErrNestedTx = errors.New("artifacts.db transaction already open (StoreTx/Rea
 // cannot be prevented, only detected.
 var ErrReadTxModified = errors.New("artifacts.db was modified inside a read transaction")
 
-// enterTx claims the case's single transaction slot.
-func (s *Store) enterTx() error {
-	if !s.txBusy.CompareAndSwap(false, true) {
-		return ErrNestedTx
-	}
-	return nil
+// txGate serialises the case's transactions (one connection) and recognises a
+// nested call. fn does not receive a context, so a context marker could not be
+// seen by a nested call that uses its own ctx; the marker is the goroutine that
+// holds the slot instead (one call chain runs on one goroutine). A fn that
+// hands a transaction to another goroutine and waits for it is not detected:
+// that call queues behind the transaction that waits for it.
+type txGate struct {
+	slot   chan struct{} // capacity 1: holds a token while a transaction is open
+	holder atomic.Int64  // goroutine id of the transaction in progress; 0 when none
 }
 
-func (s *Store) leaveTx() { s.txBusy.Store(false) }
+func newTxGate() *txGate { return &txGate{slot: make(chan struct{}, 1)} }
+
+// goroutineID returns the id of the calling goroutine, read from the header of
+// its stack trace ("goroutine N [running]:"); 0 if it cannot be parsed.
+func goroutineID() int64 {
+	var buf [64]byte
+	b := buf[:runtime.Stack(buf[:], false)]
+	b = bytes.TrimPrefix(b, []byte("goroutine "))
+	end := bytes.IndexByte(b, ' ')
+	if end < 0 {
+		return 0
+	}
+	id, err := strconv.ParseInt(string(b[:end]), 10, 64)
+	if err != nil || id <= 0 {
+		return 0
+	}
+	return id
+}
+
+// enterTx waits for the case's single transaction slot. A call made while the
+// calling goroutine already holds the slot returns ErrNestedTx at once; any
+// other caller queues until the slot is free or ctx ends.
+func (s *Store) enterTx(ctx context.Context) error {
+	gid := goroutineID()
+	if gid == 0 {
+		return errors.New("artifacts.db: cannot identify the calling goroutine")
+	}
+	if s.gate.holder.Load() == gid {
+		return ErrNestedTx
+	}
+	select {
+	case s.gate.slot <- struct{}{}:
+		s.gate.holder.Store(gid)
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("artifacts.db: waiting for the transaction slot: %w", context.Cause(ctx))
+	}
+}
+
+func (s *Store) leaveTx() {
+	s.gate.holder.Store(0)
+	<-s.gate.slot
+}
 
 // discardConn makes database/sql close conn instead of pooling it, so the next
 // connection is opened fresh (and configured by dbConnector).
@@ -44,11 +94,11 @@ func discardConn(conn *sql.Conn) {
 // connection that fails to roll back, to commit or to be configured is
 // discarded, never returned to the pool in an unknown state.
 //
-// There is one connection: calling StoreTx or ReadTx from inside fn returns
-// ErrNestedTx, and never hold a *sql.Rows across them. It fails after the case
-// is closed.
+// There is one connection: calling StoreTx or ReadTx from inside fn (on the same
+// goroutine) returns ErrNestedTx; other goroutines queue until ctx ends. Never
+// hold a *sql.Rows across them. It fails after the case is closed.
 func (c *Case) StoreTx(ctx context.Context, fn func(*sql.Tx) error) error {
-	if err := c.store.enterTx(); err != nil {
+	if err := c.store.enterTx(ctx); err != nil {
 		return err
 	}
 	defer c.store.leaveTx()
@@ -136,9 +186,10 @@ func (h ReadHandle) QueryRowContext(ctx context.Context, query string, args ...a
 // itself cannot be prevented, only detected this way.
 //
 // The same single-connection rules as StoreTx apply: no nesting (ErrNestedTx),
-// no *sql.Rows held across calls; it fails after the case is closed.
+// concurrent callers queue, no *sql.Rows held across calls; it fails after the
+// case is closed.
 func (c *Case) ReadTx(ctx context.Context, fn func(ReadHandle) error) (err error) {
-	if err := c.store.enterTx(); err != nil {
+	if err := c.store.enterTx(ctx); err != nil {
 		return err
 	}
 	defer c.store.leaveTx()

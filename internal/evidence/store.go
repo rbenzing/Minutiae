@@ -10,7 +10,6 @@ import (
 	"io/fs"
 	"os"
 	"strings"
-	"sync/atomic"
 
 	"modernc.org/sqlite" // pure-Go SQLite driver; also registered as "sqlite" for test helpers
 )
@@ -58,8 +57,8 @@ var migrations = []migration{
 
 // Store is the case's artifacts.db.
 type Store struct {
-	db     *sql.DB
-	txBusy atomic.Bool // a StoreTx or ReadTx is open (see enterTx)
+	db   *sql.DB
+	gate *txGate // serialises StoreTx/ReadTx and detects nesting
 }
 
 // OpenStore opens or creates the database and migrates it to CurrentSchema. It
@@ -160,7 +159,7 @@ func openDB(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	return &Store{db: db}, nil
+	return &Store{db: db, gate: newTxGate()}, nil
 }
 
 // dbConnector opens connections to artifacts.db through the SQLite driver and

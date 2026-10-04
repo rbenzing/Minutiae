@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -155,5 +156,115 @@ func TestStoreTxReassertsPragmasInsideTheTransaction(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestConcurrentTxQueueAndSucceed: callers on different goroutines are not
+// nesting; they queue on the single connection and every one succeeds.
+func TestConcurrentTxQueueAndSucceed(t *testing.T) {
+	c := newTestCase(t)
+	ctx := context.Background()
+	const n = 16
+	errs := make(chan error, 2*n)
+	for i := 0; i < n; i++ {
+		go func() {
+			errs <- c.StoreTx(ctx, func(tx *sql.Tx) error {
+				var v int
+				if err := tx.QueryRow(`SELECT CAST(value AS INTEGER) FROM records_meta WHERE key = 'next_id'`).Scan(&v); err != nil {
+					return err
+				}
+				time.Sleep(time.Millisecond) // keep the slot long enough for the others to queue
+				return setNextID(tx, strconv.Itoa(v+1))
+			})
+		}()
+		go func() {
+			errs <- c.ReadTx(ctx, func(h ReadHandle) error {
+				var v string
+				return h.QueryRow(`SELECT value FROM records_meta WHERE key = 'next_id'`).Scan(&v)
+			})
+		}()
+	}
+	for i := 0; i < 2*n; i++ {
+		select {
+		case err := <-errs:
+			if err != nil {
+				t.Errorf("concurrent transaction %d: %v", i, err)
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatal("concurrent transactions did not finish")
+		}
+	}
+	if got, want := nextID(t, c), strconv.Itoa(1+n); got != want {
+		t.Errorf("next_id = %s, want %s (every StoreTx ran exactly once)", got, want)
+	}
+}
+
+// TestNestedTxFailsWhileOthersAreQueued: a nested call is refused at once even
+// when other goroutines are waiting for the slot, and the queued callers
+// still succeed afterwards.
+func TestNestedTxFailsWhileOthersAreQueued(t *testing.T) {
+	c := newTestCase(t)
+	ctx := context.Background()
+	queued := make(chan error, 3)
+	nested := make(chan error, 1)
+	release := make(chan struct{})
+	started := make(chan struct{})
+	go func() {
+		nested <- c.StoreTx(ctx, func(*sql.Tx) error {
+			close(started)
+			<-release
+			return c.ReadTx(ctx, func(ReadHandle) error { return nil })
+		})
+	}()
+	<-started
+	for i := 0; i < 3; i++ {
+		go func() { queued <- c.StoreTx(ctx, func(*sql.Tx) error { return nil }) }()
+	}
+	time.Sleep(50 * time.Millisecond) // let them queue
+	close(release)
+	select {
+	case err := <-nested:
+		if !errors.Is(err, ErrNestedTx) {
+			t.Errorf("nested err = %v, want ErrNestedTx", err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("nested transaction deadlocked behind queued callers")
+	}
+	for i := 0; i < 3; i++ {
+		select {
+		case err := <-queued:
+			if err != nil {
+				t.Errorf("queued caller: %v", err)
+			}
+		case <-time.After(20 * time.Second):
+			t.Fatal("queued caller never ran")
+		}
+	}
+}
+
+// TestQueuedTxHonoursContext: a caller waiting for the slot gives up when its
+// context ends, without disturbing the holder.
+func TestQueuedTxHonoursContext(t *testing.T) {
+	c := newTestCase(t)
+	held := make(chan struct{})
+	release := make(chan struct{})
+	holder := make(chan error, 1)
+	go func() {
+		holder <- c.StoreTx(context.Background(), func(*sql.Tx) error {
+			close(held)
+			<-release
+			return nil
+		})
+	}()
+	<-held
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err := c.StoreTx(ctx, func(*sql.Tx) error { return nil })
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("waiting caller err = %v, want context.DeadlineExceeded", err)
+	}
+	close(release)
+	if err := <-holder; err != nil {
+		t.Errorf("holder: %v", err)
 	}
 }
