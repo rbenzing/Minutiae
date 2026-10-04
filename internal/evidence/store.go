@@ -72,21 +72,22 @@ func OpenStore(path string) (*Store, error) {
 }
 
 // OpenExistingStore opens an existing database without ever changing its schema.
-// A missing database, a missing schema_version table or one without a row is an
-// integrity failure; a schema newer than this build is a plain error. An older
-// schema opens as it is (Case.Upgrade is the only way forward).
+// A missing database, one that is not a SQLite database or is corrupt, a missing
+// schema_version table or one without a row is an integrity failure (it is never
+// recreated); a schema newer than this build and ordinary I/O errors are plain
+// errors. An older schema opens as it is (Case.Upgrade is the only way forward).
 func OpenExistingStore(path string) (*Store, error) {
 	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("%w: artifacts.db is missing", ErrIntegrity)
 	}
 	s, err := openDB(path)
 	if err != nil {
-		return nil, err
+		return nil, classifyDBError(err)
 	}
 	var tables int
 	if err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'schema_version'`).Scan(&tables); err != nil {
 		_ = s.db.Close()
-		return nil, fmt.Errorf("artifacts.db schema: %w", err)
+		return nil, classifyDBError(fmt.Errorf("artifacts.db schema: %w", err))
 	}
 	if tables == 0 {
 		_ = s.db.Close()
@@ -95,7 +96,7 @@ func OpenExistingStore(path string) (*Store, error) {
 	v, err := s.SchemaVersion()
 	switch {
 	case err != nil:
-		err = fmt.Errorf("artifacts.db schema_version: %w", err)
+		err = classifyDBError(fmt.Errorf("artifacts.db schema_version: %w", err))
 	case v == 0:
 		err = fmt.Errorf("%w: artifacts.db schema_version holds no version", ErrIntegrity)
 	case v > CurrentSchema:
@@ -106,6 +107,35 @@ func OpenExistingStore(path string) (*Store, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// SQLite primary result codes that mean the file itself is damaged.
+const (
+	sqliteCorrupt = 11 // SQLITE_CORRUPT: database disk image is malformed
+	sqliteNotADB  = 26 // SQLITE_NOTADB: file is not a database
+)
+
+// classifyDBError wraps ErrIntegrity around an error that says artifacts.db is
+// not a SQLite database or is corrupt (a structural failure of the evidence
+// file, so it fails closed like a missing database). Any other error (permission,
+// descriptor exhaustion, ...) is returned unchanged: it is not evidence damage.
+func classifyDBError(err error) error {
+	if err == nil || errors.Is(err, ErrIntegrity) {
+		return err
+	}
+	var coded interface{ Code() int }
+	if errors.As(err, &coded) {
+		switch coded.Code() & 0xff {
+		case sqliteCorrupt, sqliteNotADB:
+			return fmt.Errorf("%w: artifacts.db is corrupt or not a SQLite database: %w", ErrIntegrity, err)
+		}
+		return err
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "file is not a database") || strings.Contains(msg, "database disk image is malformed") {
+		return fmt.Errorf("%w: artifacts.db is corrupt or not a SQLite database: %w", ErrIntegrity, err)
+	}
+	return err
 }
 
 // openDB opens the database file and sets the pragmas every connection needs:

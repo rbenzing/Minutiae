@@ -276,7 +276,7 @@ func TestUpgradeNoopWhenCurrent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res != (UpgradeResult{From: 2, To: 2, Upgraded: false}) {
+	if res != (UpgradeResult{From: 2, To: 2}) || res.Resumed {
 		t.Fatalf("result = %+v", res)
 	}
 	if after := len(auditEntries(t, c)); after != before {
@@ -301,7 +301,7 @@ func TestUpgradeResumesUnauditedCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Upgraded || res.From != 2 || res.To != 2 {
+	if res.Upgraded || !res.Resumed || res.From != 2 || res.To != 2 {
 		t.Fatalf("result = %+v", res)
 	}
 	es := auditEntries(t, c)

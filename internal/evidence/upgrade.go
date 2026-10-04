@@ -138,6 +138,11 @@ func (c *Case) RequireSchema(minVersion int) error {
 type UpgradeResult struct {
 	From, To int
 	Upgraded bool
+	// Resumed is true when an announced upgrade whose migration had already
+	// committed (the process died before its conclusion was audited) was
+	// concluded now with a case.upgrade.done{resumed:true} entry. The case was
+	// already at the current schema, so Upgraded is false.
+	Resumed bool
 }
 
 // Upgrade migrates the case database to CurrentSchema. It is the only way a
@@ -150,7 +155,7 @@ type UpgradeResult struct {
 // A case already at the current schema is left alone and nothing is audited,
 // except that a dangling case.upgrade (announced, migration committed, process
 // died before the conclusion) whose `to` is the current version gets a
-// case.upgrade.done{resumed:true}.
+// case.upgrade.done{resumed:true} (UpgradeResult.Resumed).
 func (c *Case) Upgrade() (UpgradeResult, error) {
 	from, err := c.store.SchemaVersion()
 	if err != nil {
@@ -161,7 +166,8 @@ func (c *Case) Upgrade() (UpgradeResult, error) {
 		return UpgradeResult{}, fmt.Errorf("artifacts.db schema version %d is newer than this build supports (%d)", from, to)
 	}
 	if from == to {
-		return UpgradeResult{From: from, To: to}, c.resumeUpgrade(from)
+		resumed, err := c.resumeUpgrade(from)
+		return UpgradeResult{From: from, To: to, Resumed: resumed}, err
 	}
 	if _, err := c.Audit.Append(actionUpgrade, "", upgradeDetails(from, to)); err != nil {
 		return UpgradeResult{From: from, To: from}, err
@@ -180,16 +186,19 @@ func (c *Case) Upgrade() (UpgradeResult, error) {
 	return UpgradeResult{From: from, To: to, Upgraded: true}, nil
 }
 
-// resumeUpgrade audits the completion of a dangling upgrade to version current.
-func (c *Case) resumeUpgrade(current int) error {
+// resumeUpgrade audits the completion of a dangling upgrade to version current
+// and reports whether it did.
+func (c *Case) resumeUpgrade(current int) (bool, error) {
 	entries, err := ReadAuditEntries(filepath.Join(c.Dir, auditFile))
 	if err != nil {
-		return fmt.Errorf("read audit log: %w", err)
+		return false, fmt.Errorf("read audit log: %w", err)
 	}
 	d := auditedSchema(entries).Dangling
 	if d == nil || d.To != current {
-		return nil
+		return false, nil
 	}
-	_, err = c.Audit.Append(actionUpgradeDone, "", upgradeDoneDetails(d.From, d.To, true))
-	return err
+	if _, err := c.Audit.Append(actionUpgradeDone, "", upgradeDoneDetails(d.From, d.To, true)); err != nil {
+		return false, err
+	}
+	return true, nil
 }

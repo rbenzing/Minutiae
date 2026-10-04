@@ -241,3 +241,25 @@ func TestCaseVerifyArtifactErasedEverywhereExits4(t *testing.T) {
 		t.Fatalf("verify: %d %s", code, out)
 	}
 }
+
+func TestCaseVerifyCorruptDBExits4(t *testing.T) {
+	for name, content := range map[string][]byte{
+		"garbage": bytes.Repeat([]byte("not a sqlite database "), 500),
+		"header":  []byte("SQLite format 3\x00 torn"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := newCLICase(t)
+			p := filepath.Join(c, "artifacts.db")
+			if err := os.WriteFile(p, content, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			code, out := run(t, Deps{}, "case", "verify", "--case", c)
+			if code != ExitIntegrity {
+				t.Fatalf("verify: %d %s", code, out)
+			}
+			if after, _ := os.ReadFile(p); !bytes.Equal(after, content) {
+				t.Fatal("artifacts.db was modified or recreated")
+			}
+		})
+	}
+}
