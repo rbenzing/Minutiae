@@ -352,3 +352,6 @@ func NameHash(name []byte, foldCase bool) (hash uint32, ok bool) { return nameHa
 
 // NodeReads is the number of node reads all scans of this FS may still make.
 func (f *FS) NodeReads() int64 { return f.nodeReads.Load() }
+
+// SetUnallocCap sets the cap on the runs Unallocated reports.
+func (f *FS) SetUnallocCap(n int) { f.unallocCap = n }

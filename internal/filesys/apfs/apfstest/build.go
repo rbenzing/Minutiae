@@ -5,6 +5,8 @@
 // under apfs/testdata are the independent check.
 package apfstest
 
+import "slices"
+
 // Options configures Build. The zero value builds a 4096-block container with
 // 4 KiB blocks and three checkpoints.
 type Options struct {
@@ -30,6 +32,13 @@ type Options struct {
 	// checkpoint starts; later ones follow it, wrapping at the end of the ring.
 	MapBlocks int
 	RingStart int
+
+	// ChunksPerCIB is the chunk-info records per chunk-info block (0: as many as
+	// fit the block) and CibsPerCAB the CIB addresses per CIB-address block (0: no
+	// CAB layer: the spaceman lists the CIBs itself). Small values build several
+	// CIBs and CABs from a container of two chunks.
+	ChunksPerCIB int
+	CibsPerCAB   int
 }
 
 func (o Options) norm() Options {
@@ -87,6 +96,11 @@ type Geo struct {
 	Volumes []VolumeGeo
 	// Checkpoints lists the checkpoints newest first.
 	Checkpoints []Checkpoint
+
+	// Alloc marks, per block, what the builder wrote (the bitmaps say the same);
+	// Spaceman is where the space manager's objects are.
+	Alloc    []bool
+	Spaceman SpacemanGeo
 }
 
 // layout is everything Build writes besides the checkpoint ring.
@@ -96,6 +110,7 @@ type layout struct {
 	snap []Block // its snapshot tree
 	vols [][]Block
 	data []Block // file content
+	pool []Block // the internal pool: CABs, CIBs, chunk bitmaps
 }
 
 // layout computes where everything goes. Volumes follow the container object
@@ -166,10 +181,25 @@ func (o Options) layout() layout {
 	for _, b := range snap {
 		g.OmapSnapNodes = append(g.OmapSnapNodes, b.Addr)
 	}
-	g.Free = next
-	if g.Free >= uint64(o.Blocks) {
+	if next >= uint64(o.Blocks) {
 		panic("apfstest: container too small for its object map and volumes")
 	}
+	// What the builder wrote is allocated; the internal pool (the space manager's
+	// own blocks) follows it and is allocated too.
+	alloc := make([]bool, o.Blocks)
+	alloc[0] = true
+	for i := range g.DescCount + g.DataCount + 1 {
+		alloc[g.DescBase+i] = true // the descriptor and data areas and the container omap follow block 0
+	}
+	for _, bl := range slices.Concat(tree, snap, l.data, slices.Concat(l.vols...)) {
+		alloc[bl.Addr] = true
+	}
+	var pool []Block
+	g.Spaceman, pool = o.buildSpaceman(next, alloc)
+	l.pool = pool
+	g.Alloc = alloc
+	poolEnd, _, _, _ := o.poolLen()
+	g.Free = next + poolEnd
 	g.Checkpoints = make([]Checkpoint, o.Checkpoints)
 	for t := range o.Checkpoints { // t = 0 is the oldest
 		cp := Checkpoint{Xid: o.Xid - uint64(o.Checkpoints-1-t)}
@@ -218,7 +248,7 @@ func Build(o Options) []byte {
 			sealBlock(b)
 		}
 		sp := blk(cp.Spaceman)
-		writeSpaceman(sp, o, cp.Xid)
+		writeSpaceman(sp, o, g.Spaceman, cp.Xid)
 		sealBlock(sp)
 	}
 	oldest := g.Checkpoints[len(g.Checkpoints)-1]
@@ -232,6 +262,7 @@ func Build(o Options) []byte {
 	Place(img, bs, l.tree)
 	Place(img, bs, l.snap)
 	Place(img, bs, l.data)
+	Place(img, bs, l.pool)
 	for _, blocks := range l.vols {
 		Place(img, bs, blocks)
 	}

@@ -10,6 +10,7 @@ import (
 	"slices"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
+	"github.com/rbenzing/minutiae/internal/filesys/apfs"
 	"github.com/rbenzing/minutiae/internal/filesys/exfat"
 	"github.com/rbenzing/minutiae/internal/filesys/ext4"
 	"github.com/rbenzing/minutiae/internal/filesys/f2fs"
@@ -32,6 +33,7 @@ type Driver struct {
 // driver at its place in that order, not at the end (f2fs-backup, the
 // last-resort probe of a destroyed F2FS primary superblock, stays last).
 var Drivers = []Driver{
+	{Name: "apfs", Probe: apfs.Probe, Open: openAPFS},
 	{Name: "f2fs", Probe: f2fs.Probe, Open: openF2FS},
 	{Name: "ext4", Probe: ext4.Probe, Open: openExt4},
 	{Name: "exfat", Probe: exfat.Probe, Open: openExFAT},
@@ -41,6 +43,15 @@ var Drivers = []Driver{
 	// signature inside another filesystem can never claim it. Info().Type of
 	// the opened filesystem stays "f2fs"; the name only identifies this probe.
 	{Name: "f2fs-backup", Probe: f2fs.ProbeBackup, Open: openF2FS},
+}
+
+// openAPFS adapts apfs.Open (untyped nil on error, see openExt4).
+func openAPFS(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
+	fs, err := apfs.Open(r, size)
+	if err != nil {
+		return nil, err
+	}
+	return fs, nil
 }
 
 // openExt4 adapts ext4.Open. It returns an untyped nil FileSystem on error: a

@@ -10,9 +10,12 @@ import (
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
+	"github.com/rbenzing/minutiae/internal/filesys/apfs/apfstest"
 	"github.com/rbenzing/minutiae/internal/filesys/detect"
+	"github.com/rbenzing/minutiae/internal/filesys/exfat/exfattest"
 	"github.com/rbenzing/minutiae/internal/filesys/ext4/ext4test"
 	"github.com/rbenzing/minutiae/internal/filesys/f2fs/f2fstest"
+	"github.com/rbenzing/minutiae/internal/filesys/fat/fattest"
 	"github.com/rbenzing/minutiae/internal/filesys/fstest"
 )
 
@@ -418,5 +421,91 @@ func TestOpenWithFallsThroughOnCorruptOpen(t *testing.T) {
 	}
 	if _, err := detect.OpenWith([]detect.Driver{corrupt("first"), ioFail, mtfsDriver()}, r, size); !errors.Is(err, boom) {
 		t.Errorf("OpenWith(corrupt, io error) = %v, want boom", err)
+	}
+}
+
+func TestDetectOpensAPFS(t *testing.T) {
+	img := apfstest.Build(apfstest.Options{Blocks: 2048, Volumes: []apfstest.Volume{{Name: "Data", Files: []apfstest.File{{Path: "/hello.txt", Data: []byte("hello")}}}}})
+	r := bytes.NewReader(img)
+	if name, ok := detect.Probe(r, int64(len(img))); !ok || name != "apfs" {
+		t.Fatalf("Probe = %q, %v; want apfs", name, ok)
+	}
+	fsys, err := detect.Open(r, int64(len(img)))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if info := fsys.Info(); info.Type != "apfs" || !slices.Equal(info.Volumes, []string{"Data"}) {
+		t.Errorf("Info = %+v, want type apfs with the volume Data", info)
+	}
+	e, err := fsys.Lookup("/Data/hello.txt")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	f, err := fsys.Open(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]byte, f.Size())
+	if _, err := f.ReadAt(got, 0); err != nil && !errors.Is(err, io.EOF) || string(got) != "hello" {
+		t.Errorf("content = %q, %v", got, err)
+	}
+	runs, err := fsys.Unallocated()
+	if err != nil || len(runs) == 0 {
+		t.Fatalf("Unallocated = %v, %v", runs, err)
+	}
+	for _, br := range f.Runs() {
+		for _, fr := range runs {
+			if br.Offset < fr.Offset+fr.Length && fr.Offset < br.Offset+br.Length {
+				t.Errorf("free run %+v overlaps the file's run %+v", fr, br)
+			}
+		}
+	}
+
+	// The other filesystems are still detected as themselves.
+	for name, c := range map[string]struct {
+		img []byte
+		typ string
+	}{
+		"f2fs":  {f2fstest.Build(f2fstest.Options{Segments: 2}, nil), "f2fs"},
+		"ext4":  {ext4test.Build(ext4test.Options{Extents: true}, nil), "ext4"},
+		"exfat": {exfattest.Build(exfattest.Options{}, nil), "exfat"},
+		"fat":   {fattest.Build(fattest.Options{Type: 16}, nil), "fat16"},
+	} {
+		fsys, err := detect.Open(bytes.NewReader(c.img), int64(len(c.img)))
+		if err != nil || fsys.Info().Type != c.typ {
+			t.Errorf("%s image: Open = %v, %v; want type %s", name, fsys, err, c.typ)
+		}
+	}
+	if !slices.ContainsFunc(detect.Drivers, func(d detect.Driver) bool { return d.Name == "apfs" }) {
+		t.Error("apfs is not registered")
+	}
+}
+
+// An image that probes as APFS but cannot be opened yields an untyped nil
+// FileSystem with the error from the registered driver.
+func TestDetectAPFSOpenFailureIsUntypedNil(t *testing.T) {
+	img := make([]byte, 8192)
+	copy(img[32:], "NXSB")                        // magic
+	binary.LittleEndian.PutUint32(img[24:], 1)    // NX_SUPERBLOCK object type
+	binary.LittleEndian.PutUint32(img[36:], 4096) // block size
+	var d *detect.Driver
+	for i := range detect.Drivers {
+		if detect.Drivers[i].Name == "apfs" {
+			d = &detect.Drivers[i]
+		}
+	}
+	if d == nil || !d.Probe(bytes.NewReader(img), int64(len(img))) {
+		t.Fatalf("setup: apfs driver %v does not probe the image", d)
+	}
+	fsys, err := d.Open(bytes.NewReader(img), int64(len(img)))
+	if err == nil || fsys != nil {
+		t.Fatalf("Open = %v, %v; want a nil FileSystem and an error", fsys, err)
+	}
+	var ce *filesys.CorruptError
+	if !errors.As(err, &ce) {
+		t.Errorf("error %v is not a *filesys.CorruptError", err)
+	}
+	if _, err := detect.Open(bytes.NewReader(img), int64(len(img))); err == nil {
+		t.Error("detect.Open succeeded on a corrupt apfs image")
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rbenzing/minutiae/internal/filesys/apfs/apfstest"
 	"github.com/rbenzing/minutiae/internal/filesys/detect"
 	"github.com/rbenzing/minutiae/internal/filesys/exfat/exfattest"
 	"github.com/rbenzing/minutiae/internal/filesys/ext4/ext4test"
@@ -46,23 +47,34 @@ func TestDriversClaimExactlyTheirOwnImages(t *testing.T) {
 	for _, d := range detect.Drivers {
 		names = append(names, d.Name)
 	}
-	if want := []string{"f2fs", "ext4", "exfat", "fat", "f2fs-backup"}; !slices.Equal(names, want) {
+	if want := []string{"apfs", "f2fs", "ext4", "exfat", "fat", "f2fs-backup"}; !slices.Equal(names, want) {
 		t.Fatalf("driver order = %v, want %v", names, want)
 	}
 
 	type image struct {
 		img  []byte
-		want string // detect driver name
-		typ  string // Info().Type
+		load func() []byte // when set, builds the image on demand (the real APFS fixtures are 64 MiB and more)
+		want string        // detect driver name
+		typ  string        // Info().Type
 	}
+	apfsVolume := apfstest.Volume{Name: "V", Files: []apfstest.File{{Path: "/a", Data: []byte("a")}}}
 	images := map[string]image{
-		"builder f2fs": {f2fstest.Build(f2fstest.Options{Segments: 2, Label: "data"}, []f2fstest.File{{Path: "/a.txt", Data: []byte("a"), Inline: true}}), "f2fs", "f2fs"},
-		"builder f2fs with a blank second checkpoint": {f2fstest.Build(f2fstest.Options{Segments: 1, NoPack2: true}, nil), "f2fs", "f2fs"},
-		"builder ext4":  {ext4test.Build(ext4test.Options{Extents: true}, nil), "ext4", "ext4"},
-		"builder exfat": {exfattest.Build(exfattest.Options{}, nil), "exfat", "exfat"},
-		"builder fat12": {fattest.Build(fattest.Options{Type: 12}, nil), "fat", "fat12"},
-		"builder fat16": {fattest.Build(fattest.Options{Type: 16}, nil), "fat", "fat16"},
-		"builder fat32": {fattest.Build(fattest.Options{Type: 32}, nil), "fat", "fat32"},
+		"builder f2fs": {img: f2fstest.Build(f2fstest.Options{Segments: 2, Label: "data"}, []f2fstest.File{{Path: "/a.txt", Data: []byte("a"), Inline: true}}), want: "f2fs", typ: "f2fs"},
+		"builder f2fs with a blank second checkpoint": {img: f2fstest.Build(f2fstest.Options{Segments: 1, NoPack2: true}, nil), want: "f2fs", typ: "f2fs"},
+		"builder ext4":  {img: ext4test.Build(ext4test.Options{Extents: true}, nil), want: "ext4", typ: "ext4"},
+		"builder exfat": {img: exfattest.Build(exfattest.Options{}, nil), want: "exfat", typ: "exfat"},
+		"builder fat12": {img: fattest.Build(fattest.Options{Type: 12}, nil), want: "fat", typ: "fat12"},
+		"builder fat16": {img: fattest.Build(fattest.Options{Type: 16}, nil), want: "fat", typ: "fat16"},
+		"builder fat32": {img: fattest.Build(fattest.Options{Type: 32}, nil), want: "fat", typ: "fat32"},
+		"builder apfs":  {img: apfstest.Build(apfstest.Options{Blocks: 2048, Volumes: []apfstest.Volume{apfsVolume}}), want: "apfs", typ: "apfs"},
+		"builder apfs, two checkpoints, CAB layer": {img: apfstest.Build(apfstest.Options{Blocks: 2048, Checkpoints: 2, ChunksPerCIB: 1, CibsPerCAB: 1}), want: "apfs", typ: "apfs"},
+		"builder apfs, 64 KiB blocks":              {img: apfstest.Build(apfstest.Options{BlockSize: 65536, Blocks: 256}), want: "apfs", typ: "apfs"},
+	}
+	for name, file := range map[string]string{
+		"real apfs ci": "apfs-ci", "real apfs cs": "apfs-cs", "real apfs multichunk": "apfs-multichunk",
+	} {
+		path := "../apfs/testdata/" + file + ".img.gz"
+		images[name] = image{load: func() []byte { return gunzipFixture(t, path) }, want: "apfs", typ: "apfs"}
 	}
 	for name, f := range map[string]struct{ path, want, typ string }{
 		"real ext4 4k":         {"../ext4/testdata/ext4-4k-csum.img.gz", "ext4", "ext4"},
@@ -73,11 +85,17 @@ func TestDriversClaimExactlyTheirOwnImages(t *testing.T) {
 		"real f2fs":            {"../f2fs/testdata/f2fs-default.img.gz", "f2fs", "f2fs"},
 		"real f2fs extra attr": {"../f2fs/testdata/f2fs-extra-attr.img.gz", "f2fs", "f2fs"},
 	} {
-		images[name] = image{gunzipFixture(t, f.path), f.want, f.typ}
+		images[name] = image{img: gunzipFixture(t, f.path), want: f.want, typ: f.typ}
 	}
 
 	for name, tc := range images {
 		t.Run(name, func(t *testing.T) {
+			if tc.load != nil {
+				if testing.Short() && strings.HasSuffix(name, "multichunk") {
+					t.Skip("large fixture skipped under -short")
+				}
+				tc.img = tc.load()
+			}
 			r := bytes.NewReader(tc.img)
 			size := int64(len(tc.img))
 
@@ -217,4 +235,135 @@ func TestF2FSDestroyedPrimaryOpensThroughBackupDriver(t *testing.T) {
 	if !slices.ContainsFunc(info.Warnings, func(w string) bool { return strings.Contains(w, "backup superblock") }) {
 		t.Errorf("Warnings = %q, want one saying the backup superblock is in use", info.Warnings)
 	}
+}
+
+// plantNXSB copies the first n bytes of a (stale) APFS container superblock
+// block into img at off and returns the modified copy.
+func plantNXSB(img []byte, off, n int) []byte {
+	apfsImg := apfstest.Build(apfstest.Options{Blocks: 2048, Volumes: []apfstest.Volume{{Name: "V"}}})
+	out := bytes.Clone(img)
+	copy(out[off:], apfsImg[:n]) // block 0 of an APFS container: the superblock
+	return out
+}
+
+// An APFS container superblock (NXSB) planted inside another filesystem's image
+// must not hide it. The APFS probe looks at block 0 only, so a stale or forged
+// copy anywhere else (a leftover from an earlier format, a forged backup) changes
+// nothing: each image still probes and opens as its own type, without a warning.
+// The one place the probe does look, the first block, is shared with the other
+// filesystems' boot areas: where a filesystem leaves those free (ext4 and F2FS
+// keep their superblock at byte 1024) a signature planted there is claimed by
+// the apfs driver first, whose Open fails on it with a corrupt-structure error,
+// so detection falls through to the real driver and records the failure as a
+// warning (it still opens as its own type).
+func TestStaleAPFSSuperblockDoesNotHideOtherFilesystems(t *testing.T) {
+	apfsIdx := slices.IndexFunc(detect.Drivers, func(d detect.Driver) bool { return d.Name == "apfs" })
+	if apfsIdx < 0 {
+		t.Fatal("no apfs driver is registered")
+	}
+	for name, path := range map[string]string{
+		"ext4 4k":    "../ext4/testdata/ext4-4k-csum.img.gz",
+		"ext2 1k":    "../ext4/testdata/ext4-1k-blockmap-ext2.img.gz",
+		"fat12":      "../fat/testdata/fat12.img.gz",
+		"fat16":      "../fat/testdata/fat16.img.gz",
+		"fat32":      "../fat/testdata/fat32.img.gz",
+		"exfat":      "../exfat/testdata/exfat.img.gz",
+		"f2fs":       "../f2fs/testdata/f2fs-default.img.gz",
+		"f2fs extra": "../f2fs/testdata/f2fs-extra-attr.img.gz",
+	} {
+		t.Run(name, func(t *testing.T) {
+			pristine := gunzipFixture(t, path)
+			wantName, ok := detect.Probe(bytes.NewReader(pristine), int64(len(pristine)))
+			if !ok || wantName == "apfs" {
+				t.Fatalf("pristine Probe = %q, %v", wantName, ok)
+			}
+			base, err := detect.Open(bytes.NewReader(pristine), int64(len(pristine)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantType := base.Info().Type
+
+			// Planted past block 0 in unused (all-zero) space, aligned and not, the way
+			// a leftover of an earlier format sits: nothing changes.
+			offsets := zeroOffsets(pristine, 3)
+			if len(offsets) == 0 {
+				t.Fatal("the fixture has no unused space to plant in")
+			}
+			for _, off := range offsets {
+				img := plantNXSB(pristine, off, 4096)
+				r, size := bytes.NewReader(img), int64(len(img))
+				if detect.Drivers[apfsIdx].Probe(r, size) {
+					t.Fatalf("offset %d: the apfs probe claims a signature that is not at block 0", off)
+				}
+				if got, ok := detect.Probe(r, size); !ok || got != wantName {
+					t.Errorf("offset %d: Probe = %q, %v; want %q", off, got, ok, wantName)
+				}
+				fsys, err := detect.Open(r, size)
+				if err != nil {
+					t.Fatalf("offset %d: %v", off, err)
+				}
+				if got := fsys.Info().Type; got != wantType {
+					t.Errorf("offset %d: Info().Type = %q, want %q", off, got, wantType)
+				}
+				for _, w := range fsys.Info().Warnings {
+					if strings.Contains(w, "driver apfs") {
+						t.Errorf("offset %d: warning %q", off, w)
+					}
+				}
+			}
+		})
+	}
+
+	// Block 0 itself, over a free boot area (only the first KiB of the APFS
+	// block: the filesystem's own superblock stays intact).
+	for name, path := range map[string]string{
+		"ext4 4k": "../ext4/testdata/ext4-4k-csum.img.gz",
+		"f2fs":    "../f2fs/testdata/f2fs-default.img.gz",
+	} {
+		t.Run("block 0 over the boot area of "+name, func(t *testing.T) {
+			pristine := gunzipFixture(t, path)
+			base, err := detect.Open(bytes.NewReader(pristine), int64(len(pristine)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			img := plantNXSB(pristine, 0, 1024)
+			r, size := bytes.NewReader(img), int64(len(img))
+			if !detect.Drivers[apfsIdx].Probe(r, size) {
+				t.Fatal("the planted signature is not seen by the apfs probe: the test plants nothing")
+			}
+			fsys, err := detect.Open(r, size)
+			if err != nil {
+				t.Fatalf("Open: %v (a stale signature must not make the real filesystem unreadable)", err)
+			}
+			info := fsys.Info()
+			if info.Type != base.Info().Type {
+				t.Errorf("Info().Type = %q, want %q", info.Type, base.Info().Type)
+			}
+			if !slices.ContainsFunc(info.Warnings, func(w string) bool {
+				return strings.Contains(w, "driver apfs matched but failed to open") && strings.Contains(w, "opened as")
+			}) {
+				t.Errorf("Warnings = %q, want the apfs failure noted", info.Warnings)
+			}
+		})
+	}
+}
+
+// zeroOffsets returns up to n offsets past the first 16 KiB where img has
+// 4096 + 512 bytes of zeros: the first aligned to 4096, the others spread out
+// and 512 bytes off alignment.
+func zeroOffsets(img []byte, n int) []int {
+	zero := func(off int) bool {
+		return off+4096+512 <= len(img) && !slices.ContainsFunc(img[off:off+4096+512], func(b byte) bool { return b != 0 })
+	}
+	var out []int
+	for off := 16384; off < len(img) && len(out) < n; off += 4096 {
+		if zero(off) {
+			out = append(out, off)
+			if len(out) == 1 {
+				off += 64 << 10
+			}
+			off += 512 // later hits are not 4096-aligned
+		}
+	}
+	return out
 }

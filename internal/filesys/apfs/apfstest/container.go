@@ -71,20 +71,6 @@ func writeMap(b []byte, g Geo, cp Checkpoint, addr uint64, first, last bool) {
 	le.PutUint32(b[36:], count)
 }
 
-// writeSpaceman writes the part of spaceman_phys_t that describes the device
-// geometry (no chunk-info blocks yet: the space manager task extends this).
-func writeSpaceman(b []byte, o Options, xid uint64) {
-	bs := o.BlockSize
-	putObjHeader(b, oidSpaceman, xid, flagEphemeral|typeSpaceman, 0)
-	bpc := uint64(bs) * 8
-	le.PutUint32(b[32:], uint32(bs))
-	le.PutUint32(b[36:], uint32(bpc))
-	le.PutUint32(b[40:], uint32((bs-40)/32))
-	le.PutUint32(b[44:], uint32((bs-40)/8))
-	le.PutUint64(b[48:], uint64(o.Blocks))             // sm_dev[0].sm_block_count
-	le.PutUint64(b[56:], (uint64(o.Blocks)+bpc-1)/bpc) // sm_dev[0].sm_chunk_count
-}
-
 // writeOmap writes the omap_phys_t of the container object map; its tree is
 // packed by Build.
 func writeOmap(b []byte, addr, xid, treeOid, snapTreeOid uint64, snapCount int) {

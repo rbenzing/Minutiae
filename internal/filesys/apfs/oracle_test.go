@@ -148,8 +148,17 @@ type orcExpect struct {
 			} `json:"inode"`
 		} `json:"records"`
 	} `json:"fs_tree"`
-	Verified  []uint64 `json:"verified_object_blocks"`
-	Generator struct {
+	Chunks []struct {
+		Chunk      int    `json:"chunk"`
+		Addr       uint64 `json:"ci_addr"`
+		BlockCount uint64 `json:"ci_block_count"`
+		FreeCount  uint64 `json:"ci_free_count"`
+		BitmapAddr uint64 `json:"ci_bitmap_addr"`
+	} `json:"chunks"`
+	FreeRanges [][2]uint64 `json:"free_ranges"` // inclusive block ranges
+	FreeBlocks uint64      `json:"free_blocks"`
+	Verified   []uint64    `json:"verified_object_blocks"`
+	Generator  struct {
 		ImageSHA256 string `json:"image_sha256"`
 	} `json:"generator"`
 }
@@ -219,6 +228,15 @@ func TestAPFSMatchesOracle(t *testing.T) {
 				orcSkipShort(t, name)
 				img, exp := orcLoad(t, name)
 				orcCheckVolume(t, img, exp)
+			})
+		}
+	})
+	t.Run("unallocated", func(t *testing.T) {
+		for _, name := range orcFixtures {
+			t.Run(name, func(t *testing.T) {
+				orcSkipShort(t, name)
+				img, exp := orcLoad(t, name)
+				orcCheckUnallocated(t, img, exp)
 			})
 		}
 	})

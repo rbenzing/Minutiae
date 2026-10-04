@@ -2,36 +2,19 @@ package cli
 
 import (
 	"encoding/json"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
-	"github.com/rbenzing/minutiae/internal/filesys"
-	"github.com/rbenzing/minutiae/internal/filesys/apfs"
 	"github.com/rbenzing/minutiae/internal/filesys/apfs/apfstest"
-	"github.com/rbenzing/minutiae/internal/filesys/detect"
 )
-
-// apfsDrivers opens raw APFS containers (the registry gets the driver with the
-// unallocated-space task; the CLI tests inject it).
-var apfsDrivers = []detect.Driver{{
-	Name: "apfs", Probe: apfs.Probe,
-	Open: func(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
-		f, err := apfs.Open(r, size)
-		if err != nil {
-			return nil, err
-		}
-		return f, nil
-	},
-}}
 
 // apfsEnv imports an APFS container (the whole image, no partition table).
 func apfsEnv(t *testing.T, vols ...apfstest.Volume) *imgEnv {
 	t.Helper()
-	e := &imgEnv{d: Deps{FSDrivers: apfsDrivers}, c: newCLICase(t)}
+	e := &imgEnv{d: Deps{}, c: newCLICase(t)}
 	img := apfstest.Build(apfstest.Options{Blocks: 2048, Xid: 20, Volumes: vols})
 	code, out := run(t, e.d, "image", "import", "--case", e.c, "--json", imgFile(t, img))
 	if code != 0 {

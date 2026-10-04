@@ -62,6 +62,7 @@ type FS struct {
 	dirBudget     atomic.Int64 // directory-record bytes this FS may still scan
 	maxDirEntries int          // entries read from one directory
 	maxFileRuns   int          // runs one file may map
+	unallocCap    int          // runs Unallocated reports (0: maxUnallocRuns)
 	scans         atomic.Int64 // file-system tree scans started (a work counter)
 
 	warns filesys.Warnings
