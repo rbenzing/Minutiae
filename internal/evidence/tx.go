@@ -157,10 +157,6 @@ func (c *Case) StoreTx(ctx context.Context, fn func(*sql.Tx) error) error {
 // checkReadSQL); anything else returns ErrReadSQLRefused and runs nothing.
 type ReadHandle struct{ tx *sql.Tx }
 
-// refusedRow is what QueryRow methods return for a refused statement: a query
-// that cannot succeed, so Scan reports an error and the caller's SQL is never run.
-const refusedRow = `SELECT * FROM "non-read SQL refused by ReadHandle"`
-
 // Query runs a query and returns its rows (close them before fn returns).
 func (h ReadHandle) Query(query string, args ...any) (*sql.Rows, error) {
 	if err := checkReadSQL(query); err != nil {
@@ -177,21 +173,45 @@ func (h ReadHandle) QueryContext(ctx context.Context, query string, args ...any)
 	return h.tx.QueryContext(ctx, query, args...)
 }
 
-// QueryRow runs a query that returns at most one row. A refused statement makes
-// Scan fail.
-func (h ReadHandle) QueryRow(query string, args ...any) *sql.Row {
-	if checkReadSQL(query) != nil {
-		return h.tx.QueryRow(refusedRow)
+// Row is the result of QueryRow: Scan and Err report ErrReadSQLRefused itself
+// for a refused statement (sql.Row cannot carry a custom error, so ReadHandle
+// wraps it).
+type Row struct {
+	row *sql.Row
+	err error
+}
+
+// Scan copies the row's columns into dest, as sql.Row.Scan does.
+func (r *Row) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
 	}
-	return h.tx.QueryRow(query, args...)
+	return r.row.Scan(dest...)
+}
+
+// Err returns the error of the query, if any, without scanning.
+func (r *Row) Err() error {
+	if r.err != nil {
+		return r.err
+	}
+	return r.row.Err()
+}
+
+// QueryRow runs a query that returns at most one row. A refused statement runs
+// nothing: Scan and Err return ErrReadSQLRefused.
+func (h ReadHandle) QueryRow(query string, args ...any) *Row {
+	if err := checkReadSQL(query); err != nil {
+		return &Row{err: err}
+	}
+	return &Row{row: h.tx.QueryRow(query, args...)}
 }
 
 // QueryRowContext is QueryRow with a context.
-func (h ReadHandle) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
-	if checkReadSQL(query) != nil {
-		return h.tx.QueryRowContext(ctx, refusedRow)
+func (h ReadHandle) QueryRowContext(ctx context.Context, query string, args ...any) *Row {
+	if err := checkReadSQL(query); err != nil {
+		return &Row{err: err}
 	}
-	return h.tx.QueryRowContext(ctx, query, args...)
+	return &Row{row: h.tx.QueryRowContext(ctx, query, args...)}
 }
 
 // ReadTx runs fn inside one BEGIN on the case's connection, with

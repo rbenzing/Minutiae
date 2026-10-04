@@ -304,7 +304,7 @@ func clip(s string) string {
 func runValidator(ty Type, payload map[string]any) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("%w: type %q: validator panicked: panic: %s", ErrInvalidPayload, ty.Name, clip(fmt.Sprint(r)))
+			err = fmt.Errorf("%w: type %q: validator panicked: panic: %s", ErrInvalidPayload, ty.Name, clip(panicText(r)))
 		}
 	}()
 	if err := ty.Validate(deepCopyPayload(payload)); err != nil {
@@ -358,4 +358,23 @@ func validateParser(p Parser) error {
 		return fmt.Errorf("%w: parser hash %q must be empty (none) or match [A-Za-z0-9][A-Za-z0-9._:-]{0,127}", ErrInvalidField, clip(p.Hash))
 	}
 	return nil
+}
+
+// panicText describes a recovered panic value without running any method of an
+// arbitrary type: a string as it is, an error through Error() (guarded: a
+// panicking Error method must not panic inside the recover), anything else by
+// its type name.
+func panicText(r any) (text string) {
+	defer func() {
+		if p := recover(); p != nil {
+			text = fmt.Sprintf("%T (its Error method panicked)", r)
+		}
+	}()
+	switch v := r.(type) {
+	case string:
+		return v
+	case error:
+		return v.Error()
+	}
+	return fmt.Sprintf("%T", r)
 }

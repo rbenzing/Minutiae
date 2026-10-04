@@ -43,6 +43,9 @@ const (
 	maxBatchBytes     = 1 << 30
 	maxAnalysisID     = 128
 	maxErrorText      = 2048
+	maxWarnPath       = 4096
+	maxWarnReason     = 1024
+	maxWarnings       = 10000
 )
 
 // WriterOptions tune batching. A batch is flushed when it holds BatchRows records
@@ -63,6 +66,8 @@ type IngestResult struct {
 	Rollup   string
 	Types    map[string]int64
 	Warnings int // analysis.warning entries appended through Warn
+	// WarningsSuppressed counts the warnings dropped after the per-ingest cap.
+	WarningsSuppressed int
 }
 
 const (
@@ -84,7 +89,8 @@ type Writer struct {
 	opt WriterOptions
 
 	// hook is a test seam, called at "after-batch-audit", "before-insert",
-	// "after-insert" and "after-end-audit", always outside any transaction.
+	// "after-insert", "after-end-audit" and "before-abort-audit", always outside any
+	// transaction.
 	hook func(point string) error
 
 	ingest atomic.Pointer[string] // the ingest id; readable from a hook while mu is held
@@ -106,6 +112,8 @@ type Writer struct {
 	lastID     int64
 	types      map[string]int64
 	warnings   int
+	warnCap    int // 0 means maxWarnings
+	warnSupp   int
 }
 
 // NewWriter checks the case is at schema v2 (evidence.ErrNeedsUpgrade
@@ -209,7 +217,12 @@ func (w *Writer) Flush(ctx context.Context) error {
 	return w.flush(ctx)
 }
 
-// Warn appends an analysis.warning entry (the shape examine uses) for path.
+// Warn appends an analysis.warning entry (the shape examine uses) for path. Both
+// texts are bounded (path 4096 bytes, reason 1024, cut on a rune boundary and
+// marked with "..."), NUL and invalid UTF-8 become "?". A parser is an untrusted
+// caller and the audit log can never shrink, so at most 10,000 warnings are
+// written per ingest: the next one writes a single "further warnings suppressed"
+// entry and every later one is only counted (IngestResult.WarningsSuppressed).
 func (w *Writer) Warn(_ context.Context, path, reason string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -219,14 +232,35 @@ func (w *Writer) Warn(_ context.Context, path, reason string) error {
 	case stateClosed:
 		return ErrWriterClosed
 	}
+	limit := w.warnCap
+	if limit <= 0 {
+		limit = maxWarnings
+	}
+	if w.warnings >= limit {
+		if w.warnSupp == 0 {
+			if _, err := w.c.Audit.Append(evidence.ActionAnalysisWarning, "", map[string]any{
+				"analysis_id": w.analysisID, "path": "",
+				"reason": fmt.Sprintf("further warnings suppressed (the cap is %d per ingest)", limit),
+			}); err != nil {
+				return err
+			}
+		}
+		w.warnSupp++
+		return nil
+	}
 	_, err := w.c.Audit.Append(evidence.ActionAnalysisWarning, "", map[string]any{
-		"analysis_id": w.analysisID, "path": path, "reason": reason,
+		"analysis_id": w.analysisID, "path": cleanText(path, maxWarnPath), "reason": cleanText(reason, maxWarnReason),
 	})
 	if err != nil {
 		return err
 	}
 	w.warnings++
 	return nil
+}
+
+// cleanText replaces NUL and invalid UTF-8 with "?" and bounds s to n bytes.
+func cleanText(s string, n int) string {
+	return clipTo(strings.ToValidUTF8(strings.ReplaceAll(s, "\x00", "?"), "?"), n)
 }
 
 // fail records the failure of an announced batch: the batch.error entry is
@@ -382,7 +416,7 @@ func (w *Writer) conclusion(outcome string) evidence.IngestConclusion {
 func (w *Writer) result(c evidence.IngestConclusion) IngestResult {
 	return IngestResult{
 		IngestID: c.IngestID, Outcome: c.Outcome, Batches: c.Batches, Records: c.Records, FirstID: c.FirstID,
-		LastID: c.LastID, Rollup: c.Rollup, Types: c.Types, Warnings: w.warnings,
+		LastID: c.LastID, Rollup: c.Rollup, Types: c.Types, Warnings: w.warnings, WarningsSuppressed: w.warnSupp,
 	}
 }
 
@@ -408,7 +442,8 @@ func (w *Writer) End(ctx context.Context) (IngestResult, error) {
 	if err := w.callHook("after-end-audit"); err != nil {
 		return IngestResult{}, err
 	}
-	if err := w.storeRun(ctx, concl, e); err != nil {
+	// the outcome is audited: record the run even if the caller's ctx is cancelled now
+	if err := w.storeRun(context.WithoutCancel(ctx), concl, e); err != nil {
 		return IngestResult{}, err
 	}
 	return w.result(concl), nil
@@ -434,12 +469,16 @@ func (w *Writer) Abort(ctx context.Context, cause error) (IngestResult, error) {
 	if cause != nil {
 		concl.Error = clipTo(cause.Error(), maxErrorText)
 	}
-	w.buf, w.bufBytes = nil, 0
-	w.state = stateClosed
+	if err := w.callHook("before-abort-audit"); err != nil {
+		return IngestResult{}, err
+	}
 	e, err := w.c.Audit.Append(evidence.ActionIngestError, "", concl.Details())
 	if err != nil {
+		// the ingest is not concluded: the writer stays open so Abort can be retried
 		return IngestResult{}, fmt.Errorf("audit ingest error: %w", err)
 	}
+	w.buf, w.bufBytes = nil, 0
+	w.state = stateClosed
 	if err := w.storeRun(ctx, concl, e); err != nil {
 		return IngestResult{}, err
 	}

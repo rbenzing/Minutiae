@@ -1,12 +1,14 @@
 package archtest
 
 import (
-	"go/scanner"
+	"go/ast"
+	"go/parser"
 	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,35 +19,184 @@ import (
 // internal/evidence writes today).
 const recordTables = `(?:records_meta|records|record_batches|parsers|record_times|record_runs|record_run_artifacts|record_superseded|artifacts)`
 
-// recordWriteRE matches SQL that inserts into, updates, deletes from, drops or
-// alters one of recordTables (an optional main. prefix and quoting allowed).
-var recordWriteRE = regexp.MustCompile(`(?is)\b(?:insert\s+(?:or\s+\w+\s+)?into|replace\s+into|update(?:\s+or\s+\w+)?|delete\s+from|drop\s+table(?:\s+if\s+exists)?|alter\s+table)\s+(?:main\s*\.\s*)?["` + "`" + `\[]?` + recordTables + `\b`)
+// unknown stands for an operand of a string expression that is not a constant
+// (a variable, a call): it may hold a table name, so it counts as one.
+const unknown = "\x01"
 
-// recordTableWrites returns the string literals of Go source src that hold SQL
-// writing to a record table. Only string literals are inspected, so a comment
-// that mentions such SQL is not a violation.
-func recordTableWrites(src string) []string {
-	var found []string
-	fset := token.NewFileSet()
-	file := fset.AddFile("", fset.Base(), len(src))
-	var s scanner.Scanner
-	s.Init(file, []byte(src), func(token.Position, string) {}, 0)
-	for {
-		_, tok, lit := s.Scan()
-		if tok == token.EOF {
-			return found
+// placeholder is a printf verb or an unknown operand.
+const placeholder = `(?:%(?:\[\d+\])?[-+# 0-9.]*[svq]|\x01)`
+
+// tableRef is a record table name, or a placeholder in table position, with an
+// optional main. prefix and quoting.
+const tableRef = "(?:main\\s*\\.\\s*)?[\"`\\[]?(?:" + recordTables + `\b|` + placeholder + `)`
+
+// SQL-shaped patterns only, so plain English ("failed to update records") is
+// not flagged: an UPDATE needs its SET, a DELETE its FROM, an INSERT its INTO.
+var recordWriteRE = regexp.MustCompile(`(?is)\b(?:` +
+	`insert\s+(?:or\s+\w+\s+)?into\s+` + tableRef + `|` +
+	`replace\s+into\s+` + tableRef + `|` +
+	`update\s+(?:or\s+\w+\s+)?` + tableRef + `\s+set\b|` +
+	`delete\s+from\s+` + tableRef + `|` +
+	`alter\s+table\s+` + tableRef + `|` +
+	`drop\s+(?:table|trigger|index)\b)`)
+
+// recordWriteTailRE matches a string that ends in a write verb: the first half
+// of SQL a builder finishes with a table name held in a variable.
+var recordWriteTailRE = regexp.MustCompile(`(?is)\b(?:insert\s+(?:or\s+\w+\s+)?into|replace\s+into|delete\s+from|alter\s+table)\s*$`)
+
+type writeViolation struct {
+	File string
+	Line int
+	Text string
+}
+
+// evalString folds a string expression: literals, named string constants (from
+// consts), parentheses and `+`. Any other operand becomes `unknown`.
+func evalString(e ast.Expr, consts map[string]string) string {
+	switch x := e.(type) {
+	case *ast.BasicLit:
+		if x.Kind == token.STRING {
+			if s, err := strconv.Unquote(x.Value); err == nil {
+				return s
+			}
+			return x.Value
 		}
-		if tok != token.STRING {
-			continue
+	case *ast.ParenExpr:
+		return evalString(x.X, consts)
+	case *ast.Ident:
+		if v, ok := consts[x.Name]; ok {
+			return v
 		}
-		text, err := strconv.Unquote(lit)
-		if err != nil {
-			text = lit
-		}
-		if recordWriteRE.MatchString(text) {
-			found = append(found, strings.TrimSpace(text))
+	case *ast.BinaryExpr:
+		if x.Op == token.ADD {
+			return evalString(x.X, consts) + evalString(x.Y, consts)
 		}
 	}
+	return unknown
+}
+
+// collectConsts gathers the string constants declared (at any level) in the
+// parsed files of one package; constants built from other constants are folded
+// by repeating until nothing new resolves.
+func collectConsts(files []*ast.File) map[string]string {
+	type decl struct {
+		name string
+		expr ast.Expr
+	}
+	var decls []decl
+	for _, f := range files {
+		ast.Inspect(f, func(n ast.Node) bool {
+			gd, ok := n.(*ast.GenDecl)
+			if !ok || gd.Tok != token.CONST {
+				return true
+			}
+			for _, sp := range gd.Specs {
+				vs, ok := sp.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, id := range vs.Names {
+					if i < len(vs.Values) {
+						decls = append(decls, decl{id.Name, vs.Values[i]})
+					}
+				}
+			}
+			return true
+		})
+	}
+	consts := map[string]string{}
+	for range 8 {
+		changed := false
+		for _, d := range decls {
+			v := evalString(d.expr, consts)
+			if strings.Contains(v, unknown) {
+				continue
+			}
+			if old, ok := consts[d.name]; !ok || old != v {
+				consts[d.name] = v
+				changed = true
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	return consts
+}
+
+// markOperands records the operands of an already evaluated `+` expression so
+// they are not evaluated again on their own.
+func markOperands(e ast.Expr, covered map[ast.Node]bool) {
+	switch y := e.(type) {
+	case *ast.BinaryExpr:
+		if y.Op == token.ADD {
+			covered[y] = true
+			markOperands(y.X, covered)
+			markOperands(y.Y, covered)
+		}
+	case *ast.ParenExpr:
+		covered[y] = true
+		markOperands(y.X, covered)
+	case *ast.BasicLit:
+		covered[y] = true
+	}
+}
+
+// recordTableWrites scans the files of one package (sources by file name) and
+// returns every string expression holding SQL that writes a record table.
+// Constant string expressions (concatenations of literals and named constants)
+// are folded first; a printf verb or a non-constant operand in table position
+// counts as a table name; a string ending in a write verb is a builder piece.
+// Comments are never inspected.
+func recordTableWrites(t testing.TB, srcs map[string]string) []writeViolation {
+	t.Helper()
+	fset := token.NewFileSet()
+	var files []*ast.File
+	names := make([]string, 0, len(srcs))
+	for name := range srcs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		f, err := parser.ParseFile(fset, name, srcs[name], parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		files = append(files, f)
+	}
+	consts := collectConsts(files)
+
+	var out []writeViolation
+	for _, f := range files {
+		covered := map[ast.Node]bool{}
+		check := func(n ast.Expr) {
+			text := evalString(n, consts)
+			if recordWriteRE.MatchString(text) || recordWriteTailRE.MatchString(text) {
+				p := fset.Position(n.Pos())
+				out = append(out, writeViolation{File: p.Filename, Line: p.Line, Text: strings.TrimSpace(strings.ReplaceAll(text, unknown, "<?>"))})
+			}
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			if n == nil || covered[n] {
+				return true
+			}
+			switch x := n.(type) {
+			case *ast.BinaryExpr:
+				if x.Op != token.ADD {
+					return true
+				}
+				check(x)
+				markOperands(x.X, covered)
+				markOperands(x.Y, covered)
+			case *ast.BasicLit:
+				if x.Kind == token.STRING {
+					check(x)
+				}
+			}
+			return true
+		})
+	}
+	return out
 }
 
 // TestOnlyRecordsPackageWritesRecordTables is the single-writer rule: no Go
@@ -61,6 +212,7 @@ func TestOnlyRecordsPackageWritesRecordTables(t *testing.T) {
 		filepath.Join(root, "internal", "evidence") + string(filepath.Separator),
 		filepath.Join(root, "internal", "records") + string(filepath.Separator),
 	}
+	byDir := map[string]map[string]string{}
 	scanned := 0
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -85,10 +237,11 @@ func TestOnlyRecordsPackageWritesRecordTables(t *testing.T) {
 			return err
 		}
 		scanned++
-		rel, _ := filepath.Rel(root, p)
-		for _, v := range recordTableWrites(string(src)) {
-			t.Errorf("%s writes a record table with SQL (only internal/evidence and internal/records may): %q", filepath.ToSlash(rel), v)
+		dir := filepath.Dir(p)
+		if byDir[dir] == nil {
+			byDir[dir] = map[string]string{}
 		}
+		byDir[dir][p] = string(src)
 		return nil
 	})
 	if err != nil {
@@ -97,66 +250,69 @@ func TestOnlyRecordsPackageWritesRecordTables(t *testing.T) {
 	if scanned < 20 {
 		t.Fatalf("scanned only %d Go files: the walk is not reaching the tree", scanned)
 	}
+	for _, srcs := range byDir {
+		for _, v := range recordTableWrites(t, srcs) {
+			rel, _ := filepath.Rel(root, v.File)
+			t.Errorf("%s:%d writes a record table with SQL (only internal/evidence and internal/records may): %q", filepath.ToSlash(rel), v.Line, v.Text)
+		}
+	}
 }
 
-// TestRecordTableWriteScannerSelfTest keeps the rule from going vacuous: the
-// scanner must flag a table of violating snippets and pass a table of harmless
-// ones. The snippets are built by concatenation so this file does not contain
-// the SQL it looks for.
+// TestRecordTableWriteScannerSelfTest keeps the rule from going vacuous. The
+// violating and harmless snippets live in testdata/writes.go.txt (not compiled,
+// not scanned by the rule), so this package holds no violation itself: every
+// line marked "// want" must be flagged and no other line may be. The data
+// holds every evasion of the review (concatenation, named constants, a
+// variable in table position, Sprintf verbs, a Builder piece) and plain English
+// that must not be flagged.
 func TestRecordTableWriteScannerSelfTest(t *testing.T) {
-	violating := []string{
-		"INSERT INTO " + "records (id) VALUES (1)",
-		"insert or replace into " + "parsers (name) VALUES ('x')",
-		"INSERT OR IGNORE INTO " + "record_times (record_id) VALUES (1)",
-		"INSERT INTO " + "record_batches (batch_id) VALUES (1)",
-		"UPDATE " + "records_meta SET value = '9'",
-		"update  " + "record_batches set count = 1",
-		"UPDATE OR ROLLBACK " + "records SET type = 'x'",
-		"DELETE FROM " + "record_runs",
-		"delete\nfrom " + "record_run_artifacts",
-		"DROP TABLE " + "record_superseded",
-		"drop table if exists " + "records",
-		"ALTER TABLE " + "records ADD COLUMN x",
-		"REPLACE INTO " + "records (id) VALUES (1)",
-		"INSERT INTO \"" + "records\" (id) VALUES (1)",
-		"INSERT INTO main." + "records (id) VALUES (1)",
-		"UPDATE " + "artifacts SET path = 'x'",
-		"INSERT INTO " + "artifacts (id) VALUES ('x')",
+	data, err := os.ReadFile(filepath.Join("testdata", "writes.go.txt"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, sql := range violating {
-		for name, lit := range map[string]string{"interpreted": strconv.Quote(sql), "raw": "`" + sql + "`"} {
-			src := "package x\n\nvar q = " + lit + "\n"
-			if got := recordTableWrites(src); len(got) != 1 {
-				t.Errorf("%s literal %q: scanner found %d violations, want 1", name, sql, len(got))
+	lines := strings.Split(string(data), "\n")
+	want := map[int]bool{}
+	for i, line := range lines {
+		if strings.Contains(line, "// want") {
+			want[i+1] = true
+		}
+	}
+	if len(want) < 25 {
+		t.Fatalf("only %d lines are marked as violations: the test data was damaged", len(want))
+	}
+	got := map[int]bool{}
+	for _, v := range recordTableWrites(t, map[string]string{"writes.go": string(data)}) {
+		got[v.Line] = true
+		if !want[v.Line] {
+			t.Errorf("line %d was flagged but is harmless: %q", v.Line, v.Text)
+		}
+	}
+	for l := range want {
+		if !got[l] {
+			t.Errorf("line %d was not flagged: %s", l, strings.TrimSpace(lines[l-1]))
+		}
+	}
+	// every table of the rule is covered, with each write verb
+	for _, table := range strings.Split(strings.Trim(recordTables, "(?:)"), "|") {
+		for _, tmpl := range []string{"DELETE FROM @", "INSERT INTO @ (x) VALUES (1)", "UPDATE @ SET x = 1"} {
+			sql := strings.ReplaceAll(tmpl, "@", table)
+			src := "package x\n\nvar q = " + strconv.Quote(sql) + "\n"
+			if len(recordTableWrites(t, map[string]string{"x.go": src})) != 1 {
+				t.Errorf("%q is not flagged", sql)
 			}
 		}
 	}
-	harmless := []string{
-		"SELECT * FROM " + "records",
-		"SELECT count(*) FROM " + "record_runs",
-		"UPDATE " + "other_table SET x = 1",
-		"INSERT INTO " + "my_records VALUES (1)",
-		"INSERT INTO " + "parsers_backup VALUES (1)",
-		"DELETE FROM " + "records_archive",
-		"UPDATE " + "records_meta_x SET a = 1",
-		"SELECT 'insert into' || name FROM " + "records",
-		"PRAGMA table_info(" + "records)",
+}
+
+// TestRecordTableWriteScannerSeesConstantsAcrossFiles: a constant declared in
+// another file of the package still folds into the statement.
+func TestRecordTableWriteScannerSeesConstantsAcrossFiles(t *testing.T) {
+	srcs := map[string]string{
+		"a.go": "package x\n\nconst table = \"record_runs\"\n",
+		"b.go": "package x\n\nvar q = \"DELETE FROM \" + table\n",
 	}
-	for _, sql := range harmless {
-		src := "package x\n\nvar q = " + strconv.Quote(sql) + "\n"
-		if got := recordTableWrites(src); len(got) != 0 {
-			t.Errorf("harmless %q was flagged: %v", sql, got)
-		}
-	}
-	// a comment is not a write
-	if got := recordTableWrites("package x\n\n// UPDATE " + "records SET x = 1 would be a violation\n/* DELETE FROM " + "records */\nvar q = 1\n"); len(got) != 0 {
-		t.Errorf("comments were flagged: %v", got)
-	}
-	// every table name of the rule is covered
-	for _, table := range strings.Split(strings.Trim(recordTables, "(?:)"), "|") {
-		src := "package x\n\nvar q = " + strconv.Quote("DELETE FROM "+table) + "\n"
-		if len(recordTableWrites(src)) != 1 {
-			t.Errorf("table %s is not covered by the rule", table)
-		}
+	got := recordTableWrites(t, srcs)
+	if len(got) != 1 || got[0].File != "b.go" {
+		t.Errorf("violations = %+v, want one in b.go", got)
 	}
 }

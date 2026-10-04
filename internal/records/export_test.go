@@ -49,3 +49,9 @@ func (w *Writer) SetHook(f func(point string) error) { w.hook = f }
 // live-ingest slot is released (a real dead process holds nothing), while the
 // audit log and the database stay as they are.
 func (w *Writer) Die() { w.c.EndIngest(w.IngestID()) }
+
+// MaxWarnings is the default per-ingest cap on Warn entries.
+const MaxWarnings = maxWarnings
+
+// SetMaxWarnings lowers the Warn cap of this writer.
+func (w *Writer) SetMaxWarnings(n int) { w.warnCap = n }

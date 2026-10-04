@@ -112,14 +112,13 @@ func (w *Writer) Start(ctx context.Context, so StartOptions) error {
 			w.c.EndIngest(ingestID)
 		}
 	}()
-	w.ingest.Store(&ingestID)
 
 	unresolved, err := w.c.UnresolvedIngests()
 	if err != nil {
 		return err
 	}
 	for _, u := range unresolved {
-		if err := w.recoverIngest(ctx, u); err != nil {
+		if err := w.recoverIngest(ctx, ingestID, u); err != nil {
 			return fmt.Errorf("recover ingest %s: %w", u.Start.IngestID, err)
 		}
 	}
@@ -149,6 +148,7 @@ func (w *Writer) Start(ctx context.Context, so StartOptions) error {
 		return err
 	}
 	w.analysisID, w.declared, w.known, w.next = so.AnalysisID, declared, known, next
+	w.ingest.Store(&ingestID)
 	w.state = stateStarted
 	return nil
 }
@@ -277,7 +277,7 @@ type presentBatch struct {
 // recoverIngest resolves one ingest that has no run row. The records.ingest.recover
 // entry is audited first (unless an earlier recovery already audited it) and the
 // run row written after it. Nothing existing is edited or deleted.
-func (w *Writer) recoverIngest(ctx context.Context, u evidence.UnresolvedIngest) error {
+func (w *Writer) recoverIngest(ctx context.Context, byID string, u evidence.UnresolvedIngest) error {
 	var batches []presentBatch
 	types := map[string]int64{}
 	err := w.c.ReadTx(ctx, func(h evidence.ReadHandle) error {
@@ -344,7 +344,7 @@ func (w *Writer) recoverIngest(ctx context.Context, u evidence.UnresolvedIngest)
 			batchNos = []int{}
 		}
 		rec := evidence.IngestRecover{
-			IngestConclusion: concl, ByIngestID: w.IngestID(), BatchNos: batchNos,
+			IngestConclusion: concl, ByIngestID: byID, BatchNos: batchNos,
 			RunMissing: u.Kind == evidence.IngestRunMissing,
 		}
 		if rec.RunMissing {

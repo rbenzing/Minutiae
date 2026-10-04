@@ -1,0 +1,70 @@
+package fixture
+
+import (
+	"fmt"
+	"strings"
+)
+
+// This file is data for TestRecordTableWriteScannerSelfTest (a .txt file: it is
+// neither compiled nor scanned by the rule itself). Every line that must be
+// flagged ends with the marker "want"; no other line may be flagged.
+
+const tbl = "records"
+const verb = "DELETE FROM " // want (a builder piece ending in a write verb)
+const part1 = "UPDATE "
+const part2 = part1 + "record_batches SET count = 1" // want
+
+var (
+	plain       = "INSERT INTO records (id) VALUES (1)" // want
+	lower       = "insert or replace into parsers (name) VALUES ('x')" // want
+	ignore      = "INSERT OR IGNORE INTO record_times (record_id) VALUES (1)" // want
+	meta        = "UPDATE records_meta SET value = '9'" // want
+	orRollback  = "UPDATE OR ROLLBACK records SET type = 'x'" // want
+	delRuns     = "DELETE FROM record_runs" // want
+	multi       = "delete\nfrom record_run_artifacts" // want
+	drop        = "DROP TABLE record_superseded" // want
+	dropTrigger = "drop trigger immut_records_upd" // want
+	alter       = "ALTER TABLE records ADD COLUMN x" // want
+	replace     = "REPLACE INTO records (id) VALUES (1)" // want
+	quoted      = "INSERT INTO \"records\" (id) VALUES (1)" // want
+	schema      = "INSERT INTO main.records (id) VALUES (1)" // want
+	art         = "UPDATE artifacts SET path = 'x'" // want
+	raw         = `DELETE FROM record_times` // want
+
+	// evasion: concatenation of literals
+	concat = "INSERT INTO " + "records (id) VALUES (1)" // want
+	// evasion: named constants (a constant that already holds the whole statement is flagged where it is declared)
+	viaConst  = "UPDATE " + tbl + " SET type = 'x'" // want
+	viaConst2 = verb + tbl // want
+	paren     = ("DELETE FROM " + ("record" + "_runs")) // want
+	// evasion: a table name held in a variable
+	viaVar = func(table string) string { return "DELETE FROM " + table } // want
+	// evasion: Sprintf, Fprintf-style and Builder construction
+	sprintf  = fmt.Sprintf("DELETE FROM %s", "record_runs") // want
+	sprintfQ = fmt.Sprintf("UPDATE %q SET x = 1", "records") // want
+	sprintfV = fmt.Sprintf("INSERT INTO %v (id) VALUES (1)", tbl) // want
+	nested   = strings.ToUpper("x" + fmt.Sprintf("DELETE FROM %s", "t")) // want
+	builder  = func(b *strings.Builder, table string) { b.WriteString("DELETE FROM "); b.WriteString(table) } // want
+)
+
+// harmless: none of these may be flagged.
+var (
+	english1 = "failed to update records"
+	english2 = "could not delete the records of this case"
+	english3 = "cannot insert the new records into the list"
+	sel1     = "SELECT * FROM records"
+	sel2     = "SELECT count(*) FROM record_runs"
+	sel3     = fmt.Sprintf("SELECT * FROM %s", "records")
+	sel4     = "SELECT 'insert into' || name FROM records"
+	other1   = "UPDATE other_table SET x = 1"
+	other2   = "INSERT INTO my_records VALUES (1)"
+	other3   = "INSERT INTO parsers_backup VALUES (1)"
+	other4   = "DELETE FROM records_archive"
+	other5   = "UPDATE records_meta_x SET a = 1"
+	pragma   = "PRAGMA table_info(records)"
+	harmCat  = "SELECT * FROM " + tbl + " WHERE id = 1"
+	harmFmt  = fmt.Sprintf("failed to update %s: %v", "records", 1)
+)
+
+// a comment that mentions UPDATE records SET x = 1 or DELETE FROM records is no write.
+/* INSERT INTO records (id) VALUES (1) */
