@@ -1,0 +1,90 @@
+package fixture
+
+// Data for TestPurityAstBansSelfTest. Checked as a package of class parsers/<name>
+// (where //go:embed is allowed). A line that must be flagged ends with the marker
+// "want"; no other line may be flagged.
+
+import (
+	"C" // want
+	"context"
+	"fmt"
+	"log"
+	logger "log/slog"
+	"runtime"
+	"time"
+	tm "time"
+)
+
+//go:linkname local runtime.nanotime // want
+
+func printing(w writer, n int) {
+	fmt.Println("x")                     // want
+	fmt.Printf("%d\n", n)                // want
+	fmt.Print("x")                       // want
+	fmt.Fprintf(w, "x")                  // want
+	fmt.Fprintln(w, "x")                 // want
+	fmt.Fprint(w, "x")                   // want
+	fmt.Scan(&n)                         // want
+	fmt.Scanf("%d", &n)                  // want
+	fmt.Scanln(&n)                       // want
+	fmt.Sscan("1", &n)                   // want
+	fmt.Sscanf("1", "%d", &n)            // want
+	fmt.Fscan(r, &n)                     // want
+	_ = fmt.Append(nil, "x")             // want
+	_ = fmt.Appendf(nil, "%d", n)        // want
+	log.Printf("x")                      // want
+	log.Fatal("x")                       // want
+	logger.Info("x")                     // want
+	print("x")                           // want
+	println("x")                         // want
+	_ = fmt.Sprintf("%d", n)
+	_ = fmt.Sprint(n)
+	_ = fmt.Sprintln(n)
+	_ = fmt.Errorf("bad %d: %w", n, err)
+	var _ fmt.Stringer
+}
+
+func clock(t tm.Time, ctx context.Context, wg group, p *int) {
+	_ = time.Now()                       // want
+	_ = tm.Now()                         // want
+	_ = time.Since(t)                    // want
+	_ = time.Until(t)                    // want
+	time.Sleep(1)                        // want
+	<-time.After(1)                      // want
+	_ = time.Tick(1)                     // want
+	_ = time.NewTimer(1)                 // want
+	_ = time.NewTicker(1)                // want
+	time.AfterFunc(1, clockHelper)       // want
+	_ = tm.AfterFunc(1, clockHelper)     // want
+	_ = time.Local                       // want
+	_ = tm.Local                         // want
+	_, _ = time.LoadLocation("x")        // want
+	_, _ = time.LoadLocationFromTZData("x", nil) // want
+	_ = t.Local()                        // want
+	_ = tm.Unix(1, 0).Local()            // want
+	go clockHelper()                     // want
+	go func() {}()                       // want
+	context.AfterFunc(ctx, clockHelper)  // want
+	wg.Go(clockHelper)                   // want
+	runtime.SetFinalizer(p, nil)         // want
+	runtime.AddCleanup(p, clockHelper, 1) // want
+
+	// harmless uses of package time
+	_ = time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
+	_ = time.Duration(5) * time.Second
+	_ = time.Unix(1, 0).UTC()
+	_ = t.UTC().Format(time.RFC3339)
+	_ = t.Add(time.Hour).Before(t)
+	_, _ = time.Parse(time.RFC3339, "2020-01-01T00:00:00Z")
+	var d time.Duration
+	_ = d.Seconds()
+	_ = context.Background()
+}
+
+// shadow: a local variable named like an imported package is not the package
+func shadow() {
+	time := clockValue{}
+	_ = time.Now()
+	fmt := printer{}
+	fmt.Println("x")
+}

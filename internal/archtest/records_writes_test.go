@@ -179,6 +179,15 @@ func markOperands(e ast.Expr, covered map[ast.Node]bool) {
 // Comments are never inspected.
 func recordTableWrites(t testing.TB, srcs map[string]string) []writeViolation {
 	t.Helper()
+	return stringViolations(t, srcs, writesRecordTable)
+}
+
+// stringViolations is the folding scanner behind recordTableWrites, shared with the
+// purity rule that bans SQL in the parser packages (pure_test.go): it returns every
+// string expression (literals, named constants and concatenations folded; an operand
+// that is not constant is `unknown`) for which matches reports true.
+func stringViolations(t testing.TB, srcs map[string]string, matches func(text string) bool) []writeViolation {
+	t.Helper()
 	fset := token.NewFileSet()
 	var files []*ast.File
 	names := make([]string, 0, len(srcs))
@@ -200,7 +209,7 @@ func recordTableWrites(t testing.TB, srcs map[string]string) []writeViolation {
 		covered := map[ast.Node]bool{}
 		check := func(n ast.Expr) {
 			text := evalString(n, consts)
-			if writesRecordTable(text) {
+			if matches(text) {
 				p := fset.Position(n.Pos())
 				out = append(out, writeViolation{File: p.Filename, Line: p.Line, Text: strings.TrimSpace(strings.ReplaceAll(text, unknown, "<?>"))})
 			}

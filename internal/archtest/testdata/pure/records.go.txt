@@ -1,0 +1,50 @@
+package fixture
+
+// Data for TestPurityRecordsSelectorsSelfTest. A line ending in "want" is flagged
+// in every class; a line ending in "want:non-rttype" is flagged in every class
+// except recordtypes/<type> (the only one that may call SetValidator, in init).
+
+import (
+	rec "github.com/rbenzing/minutiae/internal/records"
+)
+
+var _ rec.Record
+var _ rec.Range
+var _ rec.Time
+var _ rec.NamedTime
+var _ rec.Basis = rec.BasisUTC
+var _ = rec.BasisLocalOffset
+var _ = rec.BasisLocalUnknown
+
+func use(r rec.Record) rec.Record {
+	_ = rec.NewWriter        // want
+	_ = rec.NewReader        // want
+	_ = rec.RegisterType     // want
+	_ = rec.Prepare          // want
+	_ = rec.Parser{}         // want
+	_ = rec.Types()          // want
+	_ = rec.LookupType("x")  // want
+	_ = rec.AlreadyIngested  // want
+	_ = rec.ErrInvalidRecord // want
+	_ = rec.WriterOptions{}  // want
+	_ = rec.ReadHandle       // want
+	rec.SetValidator("message", nil) // want
+	return r
+}
+
+func init() {
+	rec.SetValidator("message", nil) // want:non-rttype
+	f := func() {
+		rec.SetValidator("later", nil) // want
+	}
+	_ = f
+	defer func() { rec.SetValidator("deferred", nil) }() // want
+}
+
+type holder struct{}
+
+func (holder) init() {
+	rec.SetValidator("method", nil) // want
+}
+
+var _ = rec.SetValidator // want
