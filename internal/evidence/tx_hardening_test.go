@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -220,7 +221,14 @@ func TestNestedTxFailsWhileOthersAreQueued(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		go func() { queued <- c.StoreTx(ctx, func(*sql.Tx) error { return nil }) }()
 	}
-	time.Sleep(50 * time.Millisecond) // let them queue
+	// wait until all three are really queued (no sleeping and hoping)
+	deadline := time.Now().Add(20 * time.Second)
+	for c.store.gate.waiting.Load() != 3 {
+		if time.Now().After(deadline) {
+			t.Fatalf("only %d of 3 callers queued", c.store.gate.waiting.Load())
+		}
+		runtime.Gosched()
+	}
 	close(release)
 	select {
 	case err := <-nested:

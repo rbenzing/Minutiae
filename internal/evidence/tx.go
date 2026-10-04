@@ -32,8 +32,9 @@ var ErrReadTxModified = errors.New("artifacts.db was modified inside a read tran
 // hands a transaction to another goroutine and waits for it is not detected:
 // that call queues behind the transaction that waits for it.
 type txGate struct {
-	slot   chan struct{} // capacity 1: holds a token while a transaction is open
-	holder atomic.Int64  // goroutine id of the transaction in progress; 0 when none
+	slot    chan struct{} // capacity 1: holds a token while a transaction is open
+	holder  atomic.Int64  // goroutine id of the transaction in progress; 0 when none
+	waiting atomic.Int64  // callers blocked in enterTx (tests wait for it instead of sleeping)
 }
 
 func newTxGate() *txGate { return &txGate{slot: make(chan struct{}, 1)} }
@@ -66,6 +67,8 @@ func (s *Store) enterTx(ctx context.Context) error {
 	if s.gate.holder.Load() == gid {
 		return ErrNestedTx
 	}
+	s.gate.waiting.Add(1)
+	defer s.gate.waiting.Add(-1)
 	select {
 	case s.gate.slot <- struct{}{}:
 		s.gate.holder.Store(gid)

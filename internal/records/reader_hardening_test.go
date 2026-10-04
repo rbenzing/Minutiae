@@ -27,8 +27,8 @@ func TestGetResolvesArtifactByIDOnly(t *testing.T) {
 	}
 	recordstest.RepointRecord(t, c.Dir, res.FirstID, a2.Path)
 	full, err := r.Get(ctx, res.FirstID)
-	if !errors.Is(err, evidence.ErrUnknownArtifact) {
-		t.Fatalf("Get after pointing at another artifact's path = %+v, %v; want ErrUnknownArtifact", full.Artifact, err)
+	if !errors.Is(err, evidence.ErrUnknownArtifact) || !errors.Is(err, evidence.ErrIntegrity) {
+		t.Fatalf("Get after pointing at another artifact's path = %+v, %v; want ErrUnknownArtifact and ErrIntegrity", full.Artifact, err)
 	}
 	if !reflect.DeepEqual(full, records.Full{}) {
 		t.Fatalf("an error returned a partial record: %+v", full)
@@ -44,8 +44,8 @@ func TestGetMissingArtifactIsError(t *testing.T) {
 	r := newReader(t, c)
 	recordstest.RemoveArtifactEverywhere(t, c.Dir, a1.ID)
 	full, err := r.Get(ctx, res.FirstID)
-	if !errors.Is(err, evidence.ErrUnknownArtifact) {
-		t.Fatalf("Get = %v, want ErrUnknownArtifact", err)
+	if !errors.Is(err, evidence.ErrUnknownArtifact) || !errors.Is(err, evidence.ErrIntegrity) {
+		t.Fatalf("Get = %v, want ErrUnknownArtifact and ErrIntegrity (exit 4)", err)
 	}
 	if !reflect.DeepEqual(full, records.Full{}) {
 		t.Fatalf("an error returned a partial record: %+v", full)

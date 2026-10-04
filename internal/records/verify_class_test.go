@@ -186,3 +186,31 @@ var sideEffects = map[string][]string{
 	"parsers.name":                     supersessionJoin,
 	"records_meta.key":                 {"records_meta next_id", "records_meta holds the key"},
 }
+
+// TestVerifyListsAtMostFiftyProblemsPerKind: 60 rows with the same problem give 50
+// listed problems and one line counting the rest; the cap is per kind (other
+// kinds are still listed) and never hides that the case failed.
+func TestVerifyListsAtMostFiftyProblemsPerKind(t *testing.T) {
+	c, a := setup(t)
+	recordstest.Ingest(t, c, testParser, []string{a.ID}, recordstest.Records(a.ID, 60, 5))
+	if n := recordstest.SetStorageClass(t, c.Dir, "records", "summary", ""); n != 60 {
+		t.Fatalf("%d rows changed, want 60", n)
+	}
+	recordstest.SetBatchColumn(t, c.Dir, scalar[string](t, c, `SELECT ingest_id FROM record_batches`), 1, "digest", strings.Repeat("0", 64))
+	rep := mustVerify(t, c)
+	classes, further, other := 0, 0, 0
+	for _, p := range rep.Problems {
+		switch {
+		case strings.HasPrefix(p, "storage class: table records"):
+			classes++
+		case p == "10 further storage-class problems are not listed":
+			further++
+		case strings.Contains(p, "differs from the audit log"):
+			other++
+		}
+	}
+	if classes != 50 || further != 1 || other != 1 {
+		t.Errorf("%d storage-class problems listed, %d \"further\" lines, %d record_batches problems; want 50, 1 and 1 (the cap is per kind): %.3000q",
+			classes, further, other, rep.Problems)
+	}
+}

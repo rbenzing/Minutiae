@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func newTestCase(t *testing.T) *Case {
+func newTestCase(t testing.TB) *Case {
 	t.Helper()
 	c, err := Create(t.TempDir(), CreateOptions{ID: "CASE01", Examiner: "Examiner A"})
 	if err != nil {

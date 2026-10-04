@@ -729,3 +729,15 @@ func TestRecordsCommandsRefuseTamperedSchema(t *testing.T) {
 		}
 	}
 }
+
+// TestRecordsShowArtifactMissingFromManifestExits4: a record whose artifact the
+// manifest no longer holds is a verify-class failure (P1), exit 4, not a plain
+// error.
+func TestRecordsShowArtifactMissingFromManifestExits4(t *testing.T) {
+	rc := recDataset(t, false)
+	recordstest.RemoveArtifactEverywhere(t, rc.dir, rc.art.ID)
+	code, out := run(t, Deps{}, "records", "show", "--case", rc.dir, "1")
+	if code != ExitIntegrity || !strings.Contains(out, "unknown artifact") {
+		t.Fatalf("show with the artifact gone: exit %d: %s", code, out)
+	}
+}
