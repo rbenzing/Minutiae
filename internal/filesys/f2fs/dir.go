@@ -552,8 +552,10 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 		prefix = encPrefix
 	}
 	if rest, ok := strings.CutPrefix(comp, prefix); ok {
-		// Strict: each name has one spelling (no stray trailing bits).
-		if b, err := base64.RawURLEncoding.Strict().DecodeString(rest); err == nil {
+		// Each name has one spelling: the text must be exactly what encoding the
+		// decoded bytes gives. (The decoder skips embedded CR/LF and, even strict,
+		// would accept them; the round trip rejects those and any other variant.)
+		if b, err := base64.RawURLEncoding.Strict().DecodeString(rest); err == nil && base64.RawURLEncoding.EncodeToString(b) == rest {
 			alt = b
 		}
 	}

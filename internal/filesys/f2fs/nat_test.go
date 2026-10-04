@@ -168,16 +168,17 @@ func TestNATJournalFullAndOverfull(t *testing.T) {
 		}
 	}
 
-	// A count beyond the in-block capacity is capped (with a warning) and
-	// never reads past the journal.
+	// A count beyond the in-block capacity makes the whole journal untrusted:
+	// it is ignored (lookups fall back to the NAT blocks, which hold none of
+	// these nids) with a loud warning, and nothing is read past the journal.
 	jb := (int(l.CP+l.StartSum)*4096 + 3584)
 	le.PutUint16(img[jb:], 60000)
 	f = mustOpen(t, img)
-	if got, err := f.NATLookup(137); err != nil || got != l.Main+37 {
-		t.Fatalf("capped journal: %d, %v", got, err)
+	if got, err := f.NATLookup(137); err == nil {
+		t.Fatalf("over-count journal still used: nid 137 -> %d", got)
 	}
-	if !hasWarning(f.Info(), "NAT journal claims 60000") {
-		t.Errorf("no cap warning: %q", f.Info().Warnings)
+	if !hasWarning(f.Info(), "NAT journal entry count 60000 exceeds capacity 38; journal ignored") || !hasWarning(f.Info(), "may be stale") {
+		t.Errorf("no warning about the ignored journal: %q", f.Info().Warnings)
 	}
 }
 

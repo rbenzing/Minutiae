@@ -132,3 +132,26 @@ func TestDirEntryCapPrefersLiveEntries(t *testing.T) {
 		t.Errorf("%d entries, warnings %v; want 10 and the cap warning", len(es), f.Info().Warnings)
 	}
 }
+
+// An alias must be spelled exactly as ReadDir shows it: CR/LF embedded in the
+// text (which a base64 decoder silently skips) and other variants are not
+// aliases.
+func TestLookupAliasRejectsNonCanonicalSpelling(t *testing.T) {
+	f, _, _ := treeFS(t, treeOpts(), []f2fstest.File{
+		{Path: "/bin", RawName: []byte{0xff, 0xfe, 0xfd}, Data: []byte("b")},
+		{Path: "/enc", Dir: true, Encrypted: true},
+		{Path: "/enc/c", RawName: []byte{0xfe, 0x01, 0x02}, Data: []byte("c"), Encrypted: true},
+	})
+	canon := base64.RawURLEncoding.EncodeToString([]byte{0xff, 0xfe, 0xfd})
+	encCanon := base64.RawURLEncoding.EncodeToString([]byte{0xfe, 0x01, 0x02})
+	if _, err := f.Lookup("/~raw~" + canon); err != nil {
+		t.Fatalf("canonical alias: %v", err)
+	}
+	if _, err := f.Lookup("/enc/~enc~" + encCanon); err != nil {
+		t.Fatalf("canonical enc alias: %v", err)
+	}
+	for _, bad := range []string{canon[:2] + "\n" + canon[2:], canon[:2] + "\r\n" + canon[2:], canon + "\n", canon + "="} {
+		wantNoEntry(t, f, "/~raw~"+bad)
+		wantNoEntry(t, f, "/enc/~enc~"+encCanon[:3]+"\n"+encCanon[3:])
+	}
+}

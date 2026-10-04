@@ -69,8 +69,11 @@ func (f *FS) loadSITJournal() (map[uint32][]byte, error) {
 	s.loaded = true
 	n := int(binary.LittleEndian.Uint16(j))
 	if n > sitJournalEntries {
-		f.warn("SIT journal claims %d entries but holds at most %d; the excess is ignored", n, sitJournalEntries)
-		n = sitJournalEntries
+		// The journal cannot be interpreted and may override any segment:
+		// treat it as unreadable, so no free space is reported.
+		s.loaded = true
+		s.err = corrupt("f2fs SIT journal", -1, "SIT journal entry count %d exceeds capacity %d; free space not reported", n, sitJournalEntries)
+		return nil, s.err
 	}
 	m := make(map[uint32][]byte, n)
 	for i := range n {

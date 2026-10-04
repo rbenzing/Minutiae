@@ -164,8 +164,12 @@ func (f *FS) loadNATJournal() ([]natJournalEntry, error) {
 	s.loaded = true
 	n := int(binary.LittleEndian.Uint16(j))
 	if n > natJournalEntries {
-		f.warn("NAT journal claims %d entries but holds at most %d; the excess is ignored", n, natJournalEntries)
-		n = natJournalEntries
+		// A count the block cannot hold: the journal is not trustworthy, so it
+		// is ignored as a whole and lookups use the NAT blocks, which may be
+		// older than the journal.
+		f.warn("NAT journal entry count %d exceeds capacity %d; journal ignored — file locations may be stale", n, natJournalEntries)
+		s.journal = nil
+		return nil, nil
 	}
 	ents := make([]natJournalEntry, 0, n)
 	for i := range n {

@@ -302,12 +302,12 @@ func TestSITJournalHostile(t *testing.T) {
 			img[j], img[j+1] = 0xff, 0xff // n_sits = 65535
 		}
 		f := mustOpen(t, img)
-		runs := unalloc(t, f)
-		valid := map[uint32]bool{}
-		segBlocks(l, valid, 1, []int{9})
-		// The six decodable entries are all-zero entries for segment 0.
-		checkFree(t, runs, freeOf(l, valid))
-		if !hasWarning(f.Info(), "at most 6") {
+		// The journal cannot be interpreted and may override any segment: it
+		// is treated as unreadable and nothing is reported free.
+		if runs := unalloc(t, f); len(runs) != 0 {
+			t.Errorf("free space reported from an over-count journal: %v", clip(runs))
+		}
+		if !hasWarning(f.Info(), "SIT journal entry count 65535 exceeds capacity 6; free space not reported") {
 			t.Errorf("no warning about the journal count: %v", f.Info().Warnings)
 		}
 	})
@@ -475,5 +475,65 @@ func TestUnallocatedWarningsAccumulate(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(f.Info().Warnings, "\n"), "segment 0") {
 		t.Errorf("warnings do not name the segment: %v", f.Info().Warnings)
+	}
+}
+
+// Property: damage that does not touch the live SIT entries (padding after the
+// last entry of a SIT block, the other copy of every SIT block, the mtime of
+// each entry, entries of segments that do not exist, journal bytes past the
+// entry count, the NAT area and file data) never makes Unallocated report a
+// block of a file the builder laid out.
+func TestUnallocatedNeverFreesUsedBlocks(t *testing.T) {
+	o := f2fstest.Options{Segments: 3}
+	a := f2fstest.NewAlloc(o, firstNode)
+	a.Stride = 3
+	nodes, data := a.File(o, f2fstest.Inode{NID: dataNID, Mode: regMode, Size: 200 * bs},
+		f2fstest.FileData{Blocks: blocksOf(dpat(200*bs, 2), 0)})
+	o.Nodes, o.Data = nodes, data
+	base := f2fstest.Build(o, nil)
+	l := f2fstest.Geometry(o)
+	used := map[uint32]bool{}
+	for _, n := range nodes {
+		used[n.Addr] = true
+	}
+	for _, d := range data {
+		used[d.Addr] = true
+	}
+	rng := rand.New(rand.NewSource(11)) //nolint:gosec // deterministic test input, not security
+	for range 300 {
+		img := bytes.Clone(base)
+		for range 1 + rng.Intn(16) {
+			var off int
+			switch rng.Intn(6) {
+			case 0: // padding after the 55th entry
+				off = int(l.SIT)*bs + 55*74 + rng.Intn(bs-55*74)
+			case 1: // the other copy of SIT block 0
+				off = (int(l.SIT)+f2fstest.BlocksPerSeg)*bs + rng.Intn(bs)
+			case 2: // mtime of one of the three live entries
+				off = int(l.SIT)*bs + rng.Intn(3)*74 + 66 + rng.Intn(8)
+			case 3: // entries of segments beyond the main area
+				off = int(l.SIT)*bs + (3+rng.Intn(52))*74 + rng.Intn(74)
+			case 4: // journal bytes after the (empty) entry list
+				off = (int(l.CP)+int(l.StartSum)+2)*bs + 3584 + 2 + rng.Intn(500)
+			default: // NAT area
+				off = int(l.NAT)*bs + rng.Intn(1024*bs)
+			}
+			img[off] ^= byte(1 + rng.Intn(255))
+		}
+		f, err := open(img)
+		if err != nil {
+			continue
+		}
+		runs, err := f.Unallocated()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range runs {
+			for b := r.Offset / bs; b < (r.Offset+r.Length)/bs; b++ {
+				if used[uint32(b)] {
+					t.Fatalf("block %d belongs to the file but is reported free", b)
+				}
+			}
+		}
 	}
 }
