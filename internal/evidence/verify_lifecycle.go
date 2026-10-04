@@ -58,11 +58,12 @@ type storedRun struct {
 	sig           string // typeof() of every column, comma separated
 }
 
-// sameConclusion compares the totals two conclusion entries carry (not the
-// per-type counts).
+// sameConclusion compares the totals two conclusion entries carry, including the
+// warning and rejection counts (not the per-type counts).
 func sameConclusion(a, b IngestConclusion) bool {
 	return a.Outcome == b.Outcome && a.Batches == b.Batches && a.Records == b.Records &&
-		a.FirstID == b.FirstID && a.LastID == b.LastID && a.Rollup == b.Rollup && a.Error == b.Error
+		a.FirstID == b.FirstID && a.LastID == b.LastID && a.Rollup == b.Rollup && a.Error == b.Error &&
+		a.Warnings == b.Warnings && a.WarningsSuppressed == b.WarningsSuppressed && a.Rejected == b.Rejected
 }
 
 // verifyLifecycle runs P6, P7 and P14. byKey and batchesRead describe the stored

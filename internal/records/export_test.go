@@ -55,3 +55,11 @@ const MaxWarnings = maxWarnings
 
 // SetMaxWarnings lowers the Warn cap of this writer.
 func (w *Writer) SetMaxWarnings(n int) { w.warnCap = n }
+
+// Counts returns the writer's counters of written warnings, suppressed warnings
+// and rejected records.
+func (w *Writer) Counts() (warnings, suppressed, rejected int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.warnings, w.warnSupp, w.rejected
+}

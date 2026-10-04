@@ -66,7 +66,14 @@ type IngestConclusion struct {
 	LastID   int64            `json:"last_id"`
 	Rollup   string           `json:"rollup"`
 	Types    map[string]int64 `json:"types"`
-	Error    string           `json:"error,omitempty"`
+	// Warnings, WarningsSuppressed and Rejected are audit-only counts (the run row holds no copy): the
+	// analysis.warning entries written for the ingest, the warnings dropped after the per-ingest cap, and the
+	// records refused (a failed Add with ErrInvalidRecord, or Writer.Reject). Entries written before these
+	// fields existed lack the keys and decode to zero.
+	Warnings           int    `json:"warnings"`
+	WarningsSuppressed int    `json:"warnings_suppressed"`
+	Rejected           int    `json:"rejected"`
+	Error              string `json:"error,omitempty"`
 }
 
 // IngestRecover is the details of records.ingest.recover: the conclusion of an

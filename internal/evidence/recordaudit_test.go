@@ -11,7 +11,8 @@ func sampleConclusion() IngestConclusion {
 	return IngestConclusion{
 		IngestID: "ing-1", Outcome: "complete", Batches: 3, Records: 12000,
 		FirstID: 1, LastID: 12000, Rollup: strings.Repeat("ab", 32),
-		Types: map[string]int64{"message": 9000, "call": 3000},
+		Types:    map[string]int64{"message": 9000, "call": 3000},
+		Warnings: 12, WarningsSuppressed: 5, Rejected: 7,
 	}
 }
 
@@ -45,6 +46,7 @@ func auditSamples() []auditSample {
 		IngestConclusion: IngestConclusion{
 			IngestID: "ing-0", Outcome: "interrupted", Batches: 1, Records: 5000, FirstID: 1, LastID: 5000,
 			Rollup: strings.Repeat("ef", 32), Types: map[string]int64{"message": 5000},
+			Warnings: 2, WarningsSuppressed: 1, Rejected: 3,
 		},
 		ByIngestID: "ing-1", Reason: "unfinished ingest found by a later start", BatchNos: []int{2, 3}, RunMissing: true,
 	}
@@ -67,17 +69,17 @@ func auditSamples() []auditSample {
 		{
 			"IngestConclusion end", end, end.Details(),
 			func(d map[string]any) (any, error) { return DecodeDetails[IngestConclusion](d) },
-			[]string{"batches", "first_id", "ingest_id", "last_id", "outcome", "records", "rollup", "types"},
+			[]string{"batches", "first_id", "ingest_id", "last_id", "outcome", "records", "rejected", "rollup", "types", "warnings", "warnings_suppressed"},
 		},
 		{
 			"IngestConclusion error", endErr, endErr.Details(),
 			func(d map[string]any) (any, error) { return DecodeDetails[IngestConclusion](d) },
-			[]string{"batches", "error", "first_id", "ingest_id", "last_id", "outcome", "records", "rollup", "types"},
+			[]string{"batches", "error", "first_id", "ingest_id", "last_id", "outcome", "records", "rejected", "rollup", "types", "warnings", "warnings_suppressed"},
 		},
 		{
 			"IngestRecover", recov, recov.Details(),
 			func(d map[string]any) (any, error) { return DecodeDetails[IngestRecover](d) },
-			[]string{"batch_nos", "batches", "by_ingest_id", "first_id", "ingest_id", "last_id", "outcome", "reason", "records", "rollup", "run_missing", "types"},
+			[]string{"batch_nos", "batches", "by_ingest_id", "first_id", "ingest_id", "last_id", "outcome", "reason", "records", "rejected", "rollup", "run_missing", "types", "warnings", "warnings_suppressed"},
 		},
 	}
 }
@@ -114,6 +116,40 @@ func TestRecordAuditDetailsRoundTrip(t *testing.T) {
 				t.Fatalf("audit round trip: %+v, %v; want %+v", got, err, s.value)
 			}
 		})
+	}
+}
+
+// TestDecodeDetailsAbsentCountsAreZero: conclusion entries written before the
+// warnings, warnings_suppressed and rejected keys existed still decode.
+func TestDecodeDetailsAbsentCountsAreZero(t *testing.T) {
+	d := sampleConclusion().Details()
+	for _, k := range []string{"warnings", "warnings_suppressed", "rejected"} {
+		if _, ok := d[k]; !ok {
+			t.Fatalf("Details has no %q", k)
+		}
+		delete(d, k)
+	}
+	got, err := DecodeDetails[IngestConclusion](d)
+	if err != nil || got.Warnings != 0 || got.WarningsSuppressed != 0 || got.Rejected != 0 || got.Records != 12000 {
+		t.Fatalf("decoded %+v, %v", got, err)
+	}
+}
+
+func TestSameConclusionComparesCounts(t *testing.T) {
+	a := sampleConclusion()
+	if !sameConclusion(a, sampleConclusion()) {
+		t.Fatal("equal conclusions differ")
+	}
+	for name, mod := range map[string]func(c *IngestConclusion){
+		"warnings":            func(c *IngestConclusion) { c.Warnings++ },
+		"warnings_suppressed": func(c *IngestConclusion) { c.WarningsSuppressed++ },
+		"rejected":            func(c *IngestConclusion) { c.Rejected++ },
+	} {
+		b := sampleConclusion()
+		mod(&b)
+		if sameConclusion(a, b) {
+			t.Errorf("%s is not compared", name)
+		}
 	}
 }
 

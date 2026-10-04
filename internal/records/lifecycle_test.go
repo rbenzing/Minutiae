@@ -111,37 +111,8 @@ func TestEndWithCancelledContextStillConcludes(t *testing.T) {
 	}
 }
 
-// TestAbortStaysOpenWhenItsAuditFails: Abort closes the writer only after
-// records.ingest.error is on disk, so a failed append can be retried.
-func TestAbortStaysOpenWhenItsAuditFails(t *testing.T) {
-	c, a := setup(t)
-	w := startWriter(t, c, testParser, records.WriterOptions{}, a.ID)
-	add(t, w, recordstest.Records(a.ID, 2, 1))
-	boom := errors.New("disk full")
-	w.SetHook(func(p string) error {
-		if p == "before-abort-audit" {
-			return boom
-		}
-		return nil
-	})
-	if _, err := w.Abort(ctx, errors.New("cause")); !errors.Is(err, boom) {
-		t.Fatalf("Abort = %v, want the audit failure", err)
-	}
-	if n := len(auditOf(t, c, evidence.ActionIngestError)); n != 0 {
-		t.Fatalf("%d records.ingest.error entries after the failed Abort", n)
-	}
-	if err := w.Add(ctx, recordstest.Records(a.ID, 1, 2)[0]); errors.Is(err, records.ErrWriterClosed) {
-		t.Errorf("the writer was closed by a failed Abort: %v", err)
-	}
-	w.SetHook(nil)
-	res, err := w.Abort(ctx, errors.New("cause"))
-	if err != nil || res.Outcome != "incomplete" {
-		t.Fatalf("retried Abort = %+v, %v", res, err)
-	}
-	if o := scalar[string](t, c, `SELECT outcome FROM record_runs WHERE ingest_id = ?`, w.IngestID()); o != "incomplete" {
-		t.Errorf("run outcome %q", o)
-	}
-}
+// A failed Abort is no longer retryable: it closes the writer and frees the
+// live-ingest slot (TestFailedAbortReleasesLiveIngestSlot in counts_test.go).
 
 // TestIngestIDIsSetOnlyByASuccessfulStart: a Start that fails leaves IngestID
 // empty (an id that was never audited).
