@@ -14,8 +14,12 @@ type Budget interface {
 	Free(n int64)
 }
 
-// Limits are the structural and memory caps. Every field is a ceiling; a zero
-// (or negative) field means its default from DefaultLimits.
+// Limits are the structural and memory caps. Every field is a limit; a zero
+// (or negative) field means its default from DefaultLimits, and a value above
+// the field's hard ceiling (see resolve) is clamped to it and reported. The
+// ceiling of MaxBTreeDepth keeps recursion within the goroutine stack: a
+// stack overflow is fatal in Go and no guard can recover it. Tree walks are
+// iterative where they can be.
 type Limits struct {
 	MaxBTreeDepth                       int
 	MaxColumns                          int
@@ -107,6 +111,86 @@ func (l Limits) withDefaults() Limits {
 	i(&l.MaxLocOverflow, d.MaxLocOverflow)
 	i(&l.MaxWarnings, d.MaxWarnings)
 	return l
+}
+
+// ceilingLimits returns the hard ceiling of every limit: no caller value
+// raises a limit above it. They are far above the defaults, so they bound a
+// hostile or mistaken caller, not honest use. MaxBTreeDepth is the stack
+// safety one.
+func ceilingLimits() Limits {
+	return Limits{
+		MaxBTreeDepth:           64,
+		MaxColumns:              32767,
+		MaxTextBytes:            1 << 30,
+		MaxBlobBytes:            1 << 30,
+		MaxRecoveredValueBytes:  1 << 30,
+		MaxRowBytes:             1 << 32,
+		MaxPayloadBytes:         1 << 30,
+		MaxSchemaObjects:        10000000,
+		MaxSchemaSQLBytes:       64 << 20,
+		MaxSchemaTotalBytes:     1 << 30,
+		MaxPages:                1<<32 - 2,
+		PageCacheBytes:          1 << 32,
+		DefaultBudgetBytes:      1 << 36,
+		MaxWALFrames:            1 << 32,
+		MaxJournalRecords:       1 << 32,
+		MaxJournalSegments:      1 << 20,
+		MaxHistoryPages:         1 << 32,
+		MaxHistoryRows:          1 << 32,
+		MaxHistoryOverflowPages: 1 << 32,
+		MaxDiffRows:             1 << 28,
+		MaxDiffRowsTotal:        1 << 29,
+		MaxFitSteps:             1 << 30,
+		MaxOrphans:              1 << 24,
+		MaxLocOverflow:          1 << 16,
+		MaxWarnings:             100000,
+	}
+}
+
+// resolve returns l with defaults applied (withDefaults) and every field
+// above its hard ceiling clamped to it, with one note per clamped field.
+func (l Limits) resolve() (Limits, []string) {
+	l = l.withDefaults()
+	c := ceilingLimits()
+	var notes []string
+	i := func(v *int, ceil int, name string) {
+		if *v > ceil {
+			notes = append(notes, fmt.Sprintf("limit %s clamped from %d to its ceiling %d", name, *v, ceil))
+			*v = ceil
+		}
+	}
+	n := func(v *int64, ceil int64, name string) {
+		if *v > ceil {
+			notes = append(notes, fmt.Sprintf("limit %s clamped from %d to its ceiling %d", name, *v, ceil))
+			*v = ceil
+		}
+	}
+	i(&l.MaxBTreeDepth, c.MaxBTreeDepth, "MaxBTreeDepth")
+	i(&l.MaxColumns, c.MaxColumns, "MaxColumns")
+	n(&l.MaxTextBytes, c.MaxTextBytes, "MaxTextBytes")
+	n(&l.MaxBlobBytes, c.MaxBlobBytes, "MaxBlobBytes")
+	n(&l.MaxRecoveredValueBytes, c.MaxRecoveredValueBytes, "MaxRecoveredValueBytes")
+	n(&l.MaxRowBytes, c.MaxRowBytes, "MaxRowBytes")
+	n(&l.MaxPayloadBytes, c.MaxPayloadBytes, "MaxPayloadBytes")
+	i(&l.MaxSchemaObjects, c.MaxSchemaObjects, "MaxSchemaObjects")
+	i(&l.MaxSchemaSQLBytes, c.MaxSchemaSQLBytes, "MaxSchemaSQLBytes")
+	n(&l.MaxSchemaTotalBytes, c.MaxSchemaTotalBytes, "MaxSchemaTotalBytes")
+	n(&l.MaxPages, c.MaxPages, "MaxPages")
+	n(&l.PageCacheBytes, c.PageCacheBytes, "PageCacheBytes")
+	n(&l.DefaultBudgetBytes, c.DefaultBudgetBytes, "DefaultBudgetBytes")
+	n(&l.MaxWALFrames, c.MaxWALFrames, "MaxWALFrames")
+	n(&l.MaxJournalRecords, c.MaxJournalRecords, "MaxJournalRecords")
+	i(&l.MaxJournalSegments, c.MaxJournalSegments, "MaxJournalSegments")
+	n(&l.MaxHistoryPages, c.MaxHistoryPages, "MaxHistoryPages")
+	n(&l.MaxHistoryRows, c.MaxHistoryRows, "MaxHistoryRows")
+	n(&l.MaxHistoryOverflowPages, c.MaxHistoryOverflowPages, "MaxHistoryOverflowPages")
+	n(&l.MaxDiffRows, c.MaxDiffRows, "MaxDiffRows")
+	n(&l.MaxDiffRowsTotal, c.MaxDiffRowsTotal, "MaxDiffRowsTotal")
+	n(&l.MaxFitSteps, c.MaxFitSteps, "MaxFitSteps")
+	i(&l.MaxOrphans, c.MaxOrphans, "MaxOrphans")
+	i(&l.MaxLocOverflow, c.MaxLocOverflow, "MaxLocOverflow")
+	i(&l.MaxWarnings, c.MaxWarnings, "MaxWarnings")
+	return l, notes
 }
 
 // Options configure Open, ScanWAL and ScanJournal. The zero Options is valid.

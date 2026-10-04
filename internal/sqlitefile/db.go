@@ -42,6 +42,7 @@ func openWith(r io.ReaderAt, size int64, opts Options, hook func(site string)) (
 		return nil, res.notSQLite()
 	}
 	w := newWarnings(e.opts.Limits.MaxWarnings)
+	e.reportClamps(w)
 	e.at("open.header")
 	info, err := parseHeader(res.buf[:headerSize], size, w)
 	if err != nil {

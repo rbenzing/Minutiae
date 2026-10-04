@@ -70,3 +70,28 @@ func (d *DB) RawPage(pgno uint32) ([]byte, error) { return d.readRawPage(pgno) }
 func OpenWithHook(db io.ReaderAt, size int64, opts Options, hook func(site string)) (*DB, error) {
 	return openWith(db, size, opts, hook)
 }
+
+// ResolveLimitsReport exposes Limits.resolve: the limits in effect and one
+// note per field clamped to its hard ceiling.
+func ResolveLimitsReport(l Limits) (Limits, []string) { return l.resolve() }
+
+// EffectiveLimits returns the limits the instance runs with.
+func (d *DB) EffectiveLimits() Limits { return d.env.opts.Limits }
+
+// TestLedger wraps a call-scoped budget ledger.
+type TestLedger struct{ l *ledger }
+
+// Alloc charges n bytes to the call.
+func (t *TestLedger) Alloc(n int64) error { return t.l.alloc(n) }
+
+// Free returns n bytes the call charged.
+func (t *TestLedger) Free(n int64) { t.l.free(n) }
+
+// LedgerCall runs fn as an exported method would: with a ledger on budget b
+// and the guard deferred.
+func LedgerCall(b Budget, fn func(*TestLedger) error) (err error) {
+	e := newEnv(Options{Budget: b}, nil)
+	l := e.newLedger()
+	defer l.guard(&err)
+	return fn(&TestLedger{l})
+}

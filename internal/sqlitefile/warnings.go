@@ -1,6 +1,9 @@
 package sqlitefile
 
-import "sync"
+import (
+	"sync"
+	"unicode/utf8"
+)
 
 // FileKind names which file of a database a location or warning refers to.
 type FileKind uint8
@@ -98,10 +101,31 @@ type Warning struct {
 }
 
 type warningKey struct {
-	code string
-	file FileKind
-	page uint32
-	msg  string
+	code   string
+	file   FileKind
+	page   uint32
+	offset int64
+	msg    string
+}
+
+// maxWarningMsg is the longest message a warning keeps; longer ones are cut
+// at a rune boundary and end in clippedMark, so a producer that quotes a
+// long on-disk name cannot make 1000 warnings large.
+const (
+	maxWarningMsg = 256
+	clippedMark   = " [clipped]"
+)
+
+// clipMsg returns m cut to at most maxWarningMsg bytes, marked when cut.
+func clipMsg(m string) string {
+	if len(m) <= maxWarningMsg {
+		return m
+	}
+	cut := maxWarningMsg - len(clippedMark)
+	for cut > 0 && !utf8.RuneStart(m[cut]) {
+		cut--
+	}
+	return m[:cut] + clippedMark
 }
 
 // warnings is the mutex-safe collector: identical warnings (same code, file,
@@ -132,7 +156,8 @@ func (w *warnings) add(x Warning) {
 	if !knownWarningCodes[x.Code] && w.unknown != nil {
 		w.unknown(x.Code)
 	}
-	k := warningKey{x.Code, x.File, x.Page, x.Msg}
+	x.Msg = clipMsg(x.Msg)
+	k := warningKey{x.Code, x.File, x.Page, x.Offset, x.Msg}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if _, dup := w.seen[k]; dup {
