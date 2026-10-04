@@ -460,8 +460,10 @@ func TestOpenIDsAndTypes(t *testing.T) {
 	if _, err := f.Open(filesys.Entry{ID: "nid:8"}); !errors.Is(err, filesys.ErrNotFound) {
 		t.Errorf("free nid: %v, want ErrNotFound", err)
 	}
-	if _, err := f.Open(filesys.Entry{ID: "nid:1000000000"}); !errors.Is(err, filesys.ErrCorrupt) {
-		t.Errorf("nid beyond the NAT: %v, want ErrCorrupt", err)
+	// A canonical ID whose nid cannot be an inode of the volume is a forged or
+	// stale ID: not found, not corruption.
+	if _, err := f.Open(filesys.Entry{ID: "nid:1000000000"}); !errors.Is(err, filesys.ErrNotFound) || errors.Is(err, filesys.ErrCorrupt) {
+		t.Errorf("nid beyond the NAT: %v, want ErrNotFound and not ErrCorrupt", err)
 	}
 	// Forged Entry fields are ignored: the inode on disk decides.
 	fl, err := f.Open(filesys.Entry{ID: "nid:5", Size: 1 << 40, Type: filesys.TypeDir, Deleted: true, Attrs: []filesys.KV{{Key: "compressed", Value: "true"}}})

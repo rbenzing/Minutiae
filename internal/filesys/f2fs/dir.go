@@ -69,9 +69,10 @@ const (
 	// inode, which is already read, and cost nothing).
 	maxDirBudget = 1 << 30
 	// maxDirEntries bounds the entries one scan yields, so a hostile directory
-	// cannot make ReadDir build an unbounded list (ext4 parity). Live entries
-	// have precedence: deleted entries may use at most half of it, so the live
-	// ones are always listed first.
+	// cannot make ReadDir build an unbounded list (ext4 parity). Deleted entries
+	// may use at most half of it, so at least half of it (maxDirEntries/2) is
+	// always left for live entries; live entries are not listed first, they are
+	// admitted in on-disk order alongside the deleted ones.
 	maxDirEntries = 1 << 18
 
 	encPrefix = "~enc~" // display form of an encrypted name: prefix + base64url(raw)
@@ -223,11 +224,14 @@ func (w *dirScan) scanArea(a area, blk int64, first bool) {
 	}
 }
 
-// emit passes r to the visitor, enforcing the per-scan entry cap. Deleted
-// records are admitted only up to half the cap (and while the cap is not
-// reached): beyond that they are skipped with a warning and the scan goes on,
-// so live entries later in the directory are still listed; a live entry beyond
-// the cap ends the scan.
+// emit passes r to the visitor, enforcing the per-scan entry cap (limit).
+// Deleted records are admitted only up to limit/2 (and while the total is below
+// limit); beyond that they are skipped with a warning and the scan goes on. The
+// guarantee is: whatever the directory holds, at least limit/2 live entries are
+// listed (every live entry is admitted while the total, deleted ones included,
+// is below limit, and the deleted ones are at most limit/2 of it). It is not
+// that live entries come before deleted ones: records are visited in on-disk
+// order. A live entry beyond the cap ends the scan, with a warning.
 func (w *dirScan) emit(r *dentry) bool {
 	limit := w.f.dirEntryCap()
 	if r.deleted {
@@ -270,13 +274,31 @@ func (f *FS) chargeDir(n int64) bool {
 // The per-FS directory read budget (1 GiB) is charged per block: when it runs
 // out before the first block was read the scan fails with a
 // *filesys.CorruptError (never an empty listing), later a warning ends it.
+//
+// A dentry block belongs to one directory: the first directory that reads a
+// block claims it (a per-FS map from block address to directory nid), and a
+// block that a later scan of another directory maps, or that the same scan maps
+// twice, is skipped with a warning. Without this a hostile image that points
+// many i_addr slots (or nested directories) at one dentry block would multiply
+// its entries by the number of references. A claim is made only after the block
+// is charged to the read budget, so the map holds at most
+// maxDirBudget/blockSize addresses.
 func (f *FS) scanDir(dir *inode, wantDeleted bool, visit func(*dentry) bool) error {
+	_, err := f.scanDirBudget(dir, wantDeleted, visit)
+	return err
+}
+
+// scanDirBudget is scanDir that also reports whether the scan stopped short
+// because the directory read budget ran out after the first block, so a caller
+// that needs the whole directory (Lookup) can tell "not found" from "not looked
+// at everything".
+func (f *FS) scanDirBudget(dir *inode, wantDeleted bool, visit func(*dentry) bool) (budgetCut bool, err error) {
 	w := &dirScan{f: f, dir: dir, enc: dir.encrypted, wantDeleted: wantDeleted, visit: visit}
 	if dir.inline&inlineDentry != 0 {
-		return w.inline()
+		return false, w.inline()
 	}
 	if dir.size == 0 {
-		return nil
+		return false, nil
 	}
 	nb := (dir.size-1)/blockSize + 1
 	if nb > maxDirBlocks {
@@ -288,11 +310,12 @@ func (f *FS) scanDir(dir *inode, wantDeleted bool, visit func(*dentry) bool) err
 	runs, err := f.runs(&capped)
 	if err != nil {
 		if !errors.Is(err, filesys.ErrCorrupt) {
-			return err
+			return false, err
 		}
 		f.warn("directory inode %d: its block map is damaged (%v); only the entries in the blocks mapped before the damage are listed", dir.nid, err)
 	}
 	buf := make([]byte, blockSize)
+	seen := map[int64]struct{}{} // blocks this scan has read (at most maxDirBlocks)
 	var blk int64
 	read := false
 	for _, r := range runs {
@@ -302,20 +325,27 @@ func (f *FS) scanDir(dir *inode, wantDeleted bool, visit func(*dentry) bool) err
 			if r.Offset < 0 {
 				continue // a hole
 			}
+			addr := r.Offset + off
+			if owner, shared := f.dentryBlockOwner(addr, dir.nid, seen); shared {
+				f.warn("dentry block %d shared by directories %d and %d; skipped", addr/blockSize, owner, dir.nid)
+				continue
+			}
 			if !f.chargeDir(blockSize) {
 				f.warn("directory read budget of %d bytes per filesystem exhausted (directory inode %d); directories are no longer read in full", int64(maxDirBudget), dir.nid)
 				if !read {
-					return corrupt("f2fs directory", -1, "directory read budget exhausted before directory inode %d was read", dir.nid)
+					return true, corrupt("f2fs directory", -1, "directory read budget exhausted before directory inode %d was read", dir.nid)
 				}
-				return nil
+				return true, nil
 			}
 			read = true
-			if err := readFull(f.data, buf, r.Offset+off); err != nil {
+			f.claimDentryBlock(addr, dir.nid)
+			seen[addr] = struct{}{}
+			if err := readFull(f.data, buf, addr); err != nil {
 				if isIOError(err) {
-					return readError("f2fs directory", r.Offset+off, err)
+					return false, readError("f2fs directory", addr, err)
 				}
 				f.warn("directory inode %d: block %d is unreadable (%v); the rest is not listed", dir.nid, idx, err)
-				return nil
+				return false, nil
 			}
 			w.scanArea(area{b: buf, bitmap: 0, ents: dentriesOff, names: filenamesOff, max: nrDentryInBlock}, idx, idx == 0)
 		}
@@ -323,7 +353,35 @@ func (f *FS) scanDir(dir *inode, wantDeleted bool, visit func(*dentry) bool) err
 			break
 		}
 	}
-	return nil
+	return false, nil
+}
+
+// dentryBlockOwner reports whether the dentry block at byte address addr must
+// not be read for directory nid: this scan already read it (seen; the owner is
+// then nid itself) or another directory claimed it.
+func (f *FS) dentryBlockOwner(addr int64, nid uint32, seen map[int64]struct{}) (owner uint32, shared bool) {
+	if _, dup := seen[addr]; dup {
+		return nid, true
+	}
+	f.dmu.Lock()
+	defer f.dmu.Unlock()
+	if o, ok := f.dirClaims[addr]; ok && o != nid {
+		return o, true
+	}
+	return 0, false
+}
+
+// claimDentryBlock records directory nid as the owner of the dentry block at
+// byte address addr; the first claim stays.
+func (f *FS) claimDentryBlock(addr int64, nid uint32) {
+	f.dmu.Lock()
+	defer f.dmu.Unlock()
+	if f.dirClaims == nil {
+		f.dirClaims = make(map[int64]uint32)
+	}
+	if _, ok := f.dirClaims[addr]; !ok {
+		f.dirClaims[addr] = nid
+	}
 }
 
 // inline scans the dentries stored in the inode.
@@ -450,16 +508,12 @@ func (f *FS) dirInode(dir filesys.Entry) (*inode, error) {
 	if parseDentryID(dir.ID) {
 		return nil, filesys.ErrDeleted
 	}
-	n, err := parseNodeID(dir.ID)
-	if err != nil {
-		return nil, err
-	}
-	in, err := f.inode(n)
+	in, err := f.inodeByID(dir.ID)
 	if err != nil {
 		return nil, err
 	}
 	if in.typ() != modeDir {
-		return nil, fmt.Errorf("%w: inode %d is not a directory", filesys.ErrUnsupported, n)
+		return nil, fmt.Errorf("%w: inode %d is not a directory", filesys.ErrUnsupported, in.nid)
 	}
 	return in, nil
 }
@@ -565,7 +619,7 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 		c.name = slices.Clone(d.name)
 		return &c
 	}
-	err = f.scanDir(in, false, func(d *dentry) bool {
+	budgetCut, err := f.scanDirBudget(in, false, func(d *dentry) bool {
 		switch {
 		case exactOK && bytes.Equal(d.name, exact):
 			exactRec = keep(d)
@@ -586,6 +640,11 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 		if d != nil {
 			return f.dirEntry(d, in)
 		}
+	}
+	if budgetCut {
+		// The directory was not read to the end: "no such entry" would be a claim
+		// about the whole directory that was not checked.
+		return filesys.Entry{}, corrupt("f2fs directory", -1, "directory read budget exhausted while looking up %q in directory inode %d", comp, in.nid)
 	}
 	return filesys.Entry{}, errNoChild
 }

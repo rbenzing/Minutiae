@@ -2,6 +2,7 @@ package f2fs
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -76,8 +77,14 @@ const (
 	// minExtraIsize is the smallest legal i_extra_isize: the header's own
 	// first two fields.
 	minExtraIsize = 4
-	// maxExtraIsize bounds i_extra_isize by the whole i_addr area.
+	// maxExtraIsize bounds i_extra_isize by the whole i_addr area (the hard
+	// limit of this reader).
 	maxExtraIsize = addrsPerIno * 4
+	// kernelExtraIsize is F2FS_TOTAL_EXTRA_ATTR_SIZE of current kernels
+	// (offsetof(struct f2fs_inode, i_extra_end) - offsetof(i_extra_isize) = 36,
+	// the header above): sanity_check_inode rejects a larger i_extra_isize. A
+	// larger value is accepted here with a warning.
+	kernelExtraIsize = 36
 
 	// defaultInlineXattrAddrs is DEFAULT_INLINE_XATTR_ADDRS: the words reserved
 	// at the end of i_addr for inline xattrs when the size is not recorded
@@ -170,6 +177,35 @@ type inode struct {
 
 func (in *inode) typ() uint16 { return in.mode & modeTypeMask }
 
+// notInodeError marks the corruption "this node block is not an inode" (a data
+// or xattr node, or an inode owned by another number). It still is a
+// *filesys.CorruptError for a dentry that names such a node; only a caller that
+// got the node number from an Entry ID treats it as "no such inode".
+type notInodeError struct{ error }
+
+func (e *notInodeError) Unwrap() error { return e.error }
+
+// inodeByID resolves an Entry.ID to its inode. An ID that is not canonical, or
+// whose node number cannot be an inode of this volume (beyond the NAT, or the
+// node/meta inode, which have no node block), or that names a free nid or a
+// node that is not an inode (a forged or stale ID), wraps filesys.ErrNotFound.
+// Any other failure (an unreadable or damaged node block) is returned as it is.
+func (f *FS) inodeByID(id string) (*inode, error) {
+	n, err := parseNodeID(id)
+	if err != nil {
+		return nil, err
+	}
+	if n == f.sb.nodeIno || n == f.sb.metaIno || uint64(n) >= f.sb.natCapacity() {
+		return nil, fmt.Errorf("%w: node id %d is not an inode of this volume", filesys.ErrNotFound, n)
+	}
+	in, err := f.inode(n)
+	var ni *notInodeError
+	if errors.As(err, &ni) {
+		return nil, fmt.Errorf("%w: node id %d is not an inode (%v)", filesys.ErrNotFound, n, ni.error)
+	}
+	return in, err
+}
+
 // noDataExist reports an inode with inline data and a size but without
 // F2FS_DATA_EXIST: the kernel then treats the content as absent (reads give
 // zeros), yet the inode area may still hold bytes. An empty inline file
@@ -188,12 +224,12 @@ func (f *FS) inode(ino uint32) (*inode, error) {
 	le := binary.LittleEndian
 	if fi := le.Uint32(raw[footIno:]); fi != ino {
 		// An inode's footer ino equals its nid (the kernel's RAW_IS_INODE).
-		return nil, corrupt(st, -1, "node %d is not an inode (footer ino is %d)", ino, fi)
+		return nil, &notInodeError{corrupt(st, -1, "node %d is not an inode (footer ino is %d)", ino, fi)}
 	}
 	// A node that belongs to a file's node tree (direct, indirect, xattr) has a
 	// non-zero offset in its footer flag (ofs_of_node); an inode has none.
 	if ofs := le.Uint32(raw[footFlag:]) >> offsetBitShift; ofs != 0 {
-		return nil, corrupt(st, -1, "node %d is not an inode node (its footer records offset %d in a node tree)", ino, ofs)
+		return nil, &notInodeError{corrupt(st, -1, "node %d is not an inode node (its footer records offset %d in a node tree)", ino, ofs)}
 	}
 	if ent, err := f.natGet(ino); err == nil && ent.ino != ino {
 		f.warn("inode %d: its NAT entry records owner ino %d", ino, ent.ino)
@@ -281,6 +317,14 @@ func (f *FS) parseExtra(in *inode) error {
 			return corrupt(st, -1, "inode %d has i_extra_isize %d (want a multiple of 4 in %d..%d)", in.nid, e, minExtraIsize, maxExtraIsize)
 		}
 		in.extraIsize = e
+		if e > kernelExtraIsize {
+			// The kernel (sanity_check_inode) rejects an inode whose i_extra_isize
+			// exceeds F2FS_TOTAL_EXTRA_ATTR_SIZE and treats it as corrupted. This
+			// reader keeps the larger bound (the whole i_addr area) so that an
+			// inode written by a future layout, or damaged, stays readable, but
+			// the data addresses it reports start past what current kernels allow.
+			f.warn("inode %d has i_extra_isize %d, more than the %d bytes current kernels accept; its data address slots may be misplaced", in.nid, e, kernelExtraIsize)
+		}
 		if f.sb.has(featFlexInlineXat) {
 			recorded = true
 			in.xattrWords = int(le.Uint16(x[xaInlineXattr:]))

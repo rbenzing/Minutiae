@@ -218,8 +218,14 @@ func TestSITInconsistentEntries(t *testing.T) {
 		skip  bool   // the whole segment is unreported
 		warn  string // expected warning
 	}{
-		{"vblocks 0 but bits set", f2fstest.SITEntry{Segno: 0, Valid: []int{3, 4}, VBlocks: ptr16(0)}, []int{3, 4}, false, "valid-block count"},
-		{"vblocks too high", f2fstest.SITEntry{Segno: 0, Valid: []int{3}, VBlocks: ptr16(9)}, []int{3}, false, "valid-block count"},
+		// A count below the popcount is harmless: the map wins, with a warning.
+		{"vblocks 0 but bits set", f2fstest.SITEntry{Segno: 0, Valid: []int{3, 4}, VBlocks: ptr16(0)}, []int{3, 4}, false, "is below its valid map"},
+		{"vblocks one below the popcount", f2fstest.SITEntry{Segno: 0, Valid: []int{3, 4}, VBlocks: ptr16(1)}, []int{3, 4}, false, "is below its valid map"},
+		// A count above the map's popcount: some clear bits may be live blocks that
+		// the map lost, so the whole segment is skipped.
+		{"vblocks too high", f2fstest.SITEntry{Segno: 0, Valid: []int{3}, VBlocks: ptr16(9)}, nil, true, "exceeds its valid map"},
+		{"vblocks one above the popcount", f2fstest.SITEntry{Segno: 0, Valid: []int{3, 4}, VBlocks: ptr16(3)}, nil, true, "exceeds its valid map"},
+		{"vblocks 512 with a sparse map", f2fstest.SITEntry{Segno: 0, Valid: []int{0}, VBlocks: ptr16(512)}, nil, true, "exceeds its valid map"},
 		{"vblocks above 512", f2fstest.SITEntry{Segno: 0, Valid: []int{3}, VBlocks: ptr16(600)}, nil, true, "600"},
 		{"segment type bits are not part of the count", f2fstest.SITEntry{Segno: 0, Type: 5, Valid: []int{3}}, []int{3}, false, ""},
 	} {

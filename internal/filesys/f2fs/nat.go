@@ -48,6 +48,15 @@ const (
 	// (kernel read_compacted_summaries); otherwise each data type has its own
 	// full summary block with the journal at byte 3584.
 	cpCompactSumFlag = 0x4
+
+	// cpFastbootFlag (CP_FASTBOOT_FLAG): like CP_UMOUNT_FLAG, the pack holds
+	// the node summaries.
+	cpFastbootFlag = 0x20
+
+	// NR_CURSEG_DATA_TYPE and NR_CURSEG_PERSIST_TYPE: the number of data logs
+	// and of all persistent logs (3 data + 3 node).
+	nrCursegDataType    = 3
+	nrCursegPersistType = 6
 )
 
 // natEntry is one decoded NAT entry.
@@ -123,24 +132,44 @@ func versionedBlock(start, pairs uint32, bitmap []byte, i uint64) (uint32, bool)
 func (f *FS) summaryJournal(typ int) ([]byte, error) {
 	const st = "f2fs checkpoint summary"
 	cp := f.cp
-	var blk, off uint32
+	var blk int64
+	var off uint32
 	if cp.flags&cpCompactSumFlag != 0 {
-		blk = cp.startSum
+		blk = int64(cp.startSum)
 		if typ == curColdData {
 			off = sumJournalSize
 		}
 	} else {
-		blk = cp.startSum + uint32(typ)
+		// Non-compact data summaries are located from the END of the pack, as the
+		// kernel does (read_normal_summaries -> sum_blk_addr, segment.h):
+		//
+		//	sum_blk_addr(base, type) = pack start + cp_pack_total_block_count - (base + 1) + type
+		//
+		// with base = NR_CURSEG_PERSIST_TYPE (6) when the pack also holds the node
+		// summaries (CP_UMOUNT_FLAG or CP_FASTBOOT_FLAG, __exist_node_summaries),
+		// else NR_CURSEG_DATA_TYPE (3). The pack ends with [3 data summaries, 3
+		// node summaries,] and the trailing copy of the header, so the data
+		// summaries are at total-7+type (with node summaries) or total-4+type
+		// (without). This agrees with cp_pack_start_sum + type for a well-formed
+		// pack, but the kernel never uses cp_pack_start_sum here, so neither do
+		// we. (Derived from kernel source from memory; the real fixtures and the
+		// builder lay the pack out exactly so.)
+		base := int64(nrCursegDataType)
+		if cp.flags&(cpUmountFlag|cpFastbootFlag) != 0 {
+			base = nrCursegPersistType
+		}
+		blk = int64(cp.packBlocks) - (base + 1) + int64(typ)
 		off = sumEntriesSize
 	}
 	// The summaries lie between the header/payload blocks and the trailing
-	// copy of the header (cp_pack_start_sum itself was checked at Open).
-	if blk >= cp.packBlocks-1 {
+	// copy of the header.
+	if blk < 1+int64(f.sb.cpPayload) || blk >= int64(cp.packBlocks)-1 {
 		return nil, corrupt(st, int64(cp.addr)*blockSize, "data summary block %d is outside the %d-block checkpoint pack", blk, cp.packBlocks)
 	}
-	b, err := readBlock(f.r, cp.addr+blk)
+	addr := cp.addr + uint32(blk) // blk < packBlocks <= 512: the pack lies in the checkpoint area
+	b, err := readBlock(f.r, addr)
 	if err != nil {
-		return nil, readError(st, int64(cp.addr+blk)*blockSize, err)
+		return nil, readError(st, int64(addr)*blockSize, err)
 	}
 	return b[off : off+sumJournalSize], nil
 }

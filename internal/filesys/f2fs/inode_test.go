@@ -519,8 +519,9 @@ func TestInodeFooterFlagAndNATOwner(t *testing.T) {
 		if !strings.Contains(ce.Reason, "not an inode node") {
 			t.Errorf("offset %d: reason %q", ofs, ce.Reason)
 		}
-		if _, err := f.Open(filesys.Entry{ID: "nid:5"}); !errors.Is(err, filesys.ErrCorrupt) {
-			t.Errorf("offset %d: Open = %v", ofs, err)
+		// An ID that names such a node is a stale or forged ID: not found.
+		if _, err := f.Open(filesys.Entry{ID: "nid:5"}); !errors.Is(err, filesys.ErrNotFound) || errors.Is(err, filesys.ErrCorrupt) {
+			t.Errorf("offset %d: Open = %v, want ErrNotFound and not ErrCorrupt", ofs, err)
 		}
 	}
 	// Low flag bits (cold, fsync, dentry marks) are fine.
@@ -572,5 +573,29 @@ func TestFlexibleVolumeInodeWithoutExtraHeader(t *testing.T) {
 	g := mustOpen(t, f2fstest.Build(o2, nil))
 	if _, _, err := g.Inode(6); err != nil || len(g.Info().Warnings) != 0 {
 		t.Errorf("no extra_attr feature: %v, warnings %v", err, g.Info().Warnings)
+	}
+}
+
+// Current kernels reject i_extra_isize above 36 (F2FS_TOTAL_EXTRA_ATTR_SIZE);
+// the reader keeps its larger hard maximum but warns, so the inode stays
+// readable and the examiner is told its data slots may be misplaced.
+func TestExtraIsizeAboveKernelBoundWarns(t *testing.T) {
+	o := smallOpts()
+	o.ExtraAttr = true
+	for _, tc := range []struct {
+		isize uint16
+		warn  bool
+	}{{24, false}, {36, false}, {40, true}, {923 * 4, true}} {
+		f, _ := buildOne(t, o, f2fstest.Inode{Mode: 0o100644, Extra: true, ExtraIsize: tc.isize})
+		v, _, err := f.Inode(5)
+		if err != nil {
+			t.Fatalf("i_extra_isize %d: %v", tc.isize, err)
+		}
+		if v.ExtraIsize != int(tc.isize) {
+			t.Errorf("i_extra_isize %d parsed as %d", tc.isize, v.ExtraIsize)
+		}
+		if got := hasWarning(f.Info(), "more than the 36 bytes current kernels accept"); got != tc.warn {
+			t.Errorf("i_extra_isize %d: warning = %v, want %v (%q)", tc.isize, got, tc.warn, f.Info().Warnings)
+		}
 	}
 }

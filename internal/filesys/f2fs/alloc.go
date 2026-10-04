@@ -109,11 +109,13 @@ func (f *FS) sitBlockOf(idx uint64) ([]byte, error) {
 // segment's SIT valid map is clear, sorted and merged.
 //
 // A segment's entry is the SIT journal's (it is newer than the last SIT
-// flush), else the one in the SIT block the version bitmap selects. The valid
-// map is authoritative: a block is reported free only when its bit is clear,
-// even if the entry's valid-block count disagrees (that is reported as a
-// warning); an entry whose count exceeds the 512 blocks of a segment cannot be
-// interpreted and its segment is skipped. A SIT block that cannot be read
+// flush), else the one in the SIT block the version bitmap selects. A block is
+// reported free only when its bit in the valid map is clear. When the entry's
+// valid-block count is below the number of set bits the map wins (a warning:
+// no live block is lost). When the count exceeds the number of set bits, or the
+// 512 blocks of a segment, some clear bits may stand for live blocks that the
+// map failed to record, so the whole segment is skipped with a warning. A SIT
+// block that cannot be read
 // skips its segments, with a warning, and an unreadable journal reports
 // nothing, because any segment might be overridden by it. Only blocks inside
 // the main area and inside the image are reported.
@@ -191,8 +193,15 @@ func (f *FS) Unallocated() ([]filesys.Run, error) {
 		for _, c := range vmap {
 			set += bits.OnesCount8(c)
 		}
+		if vblocks > set {
+			// The count says more blocks are in use than the map shows: some of
+			// the clear bits may stand for live blocks, and which ones is not
+			// known, so no block of the segment is reported free.
+			f.warn("SIT entry of segment %d: valid-block count %d exceeds its valid map (%d bits set); the segment is not reported as free", seg, vblocks, set)
+			continue
+		}
 		if set != vblocks {
-			f.warn("SIT entry of segment %d: valid-block count %d disagrees with its valid map (%d bits set); the valid map is used", seg, vblocks, set)
+			f.warn("SIT entry of segment %d: valid-block count %d is below its valid map (%d bits set); the valid map is used", seg, vblocks, set)
 		}
 		if set == 0 {
 			emit(base, min(base+blocksPerSeg, limit))

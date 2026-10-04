@@ -41,6 +41,10 @@ type FS struct {
 	dmu            sync.Mutex
 	dirBudget      int64
 	dirBudgetTotal int64
+	// dirClaims maps the byte address of each dentry block read so far to the
+	// directory (nid) that read it first (also guarded by dmu); a block another
+	// directory maps is skipped. Bounded by dirBudgetTotal/blockSize entries.
+	dirClaims map[int64]uint32
 
 	warnings filesys.Warnings
 }

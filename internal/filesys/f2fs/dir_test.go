@@ -695,14 +695,19 @@ func TestDirHostile(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ReadDir: %v", err)
 		}
+		// A dentry block is read once per scan: the other 922 references are
+		// skipped with a warning, so the entries are not multiplied.
 		n := 0
 		for _, e := range es {
 			if e.Name == "x" {
 				n++
 			}
 		}
-		if n != 923 {
-			t.Errorf("x listed %d times, want once per mapped block", n)
+		if n != 1 {
+			t.Errorf("x listed %d times, want once", n)
+		}
+		if !hasWarning(f.Info(), fmt.Sprintf("dentry block %d shared by directories %d and %d; skipped", first, tree.NID["/d"], tree.NID["/d"])) {
+			t.Errorf("no sharing warning: %v", f.Info().Warnings)
 		}
 	})
 

@@ -237,11 +237,7 @@ func (f *FS) Open(e filesys.Entry) (filesys.File, error) {
 	if parseDentryID(e.ID) {
 		return nil, filesys.ErrDeleted
 	}
-	nid, err := parseNodeID(e.ID)
-	if err != nil {
-		return nil, err
-	}
-	in, err := f.inode(nid)
+	in, err := f.inodeByID(e.ID)
 	if err != nil {
 		return nil, err
 	}
