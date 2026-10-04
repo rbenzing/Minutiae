@@ -184,6 +184,9 @@ func (f *FS) inodeEntry(v *volume, view uint64, in *inode, name string, raw []by
 	if in.compressed() {
 		add("compressed", "true")
 	}
+	// A file with a key of its own (a dstream crypto id other than 0 and
+	// CRYPTO_SW_ID); Open reports it too when only an extent carries the id.
+	e.Encrypted = e.Type == filesys.TypeFile && cryptoAnomaly(in.cryptoID)
 	if e.Type == filesys.TypeSymlink && in.symlinkSet {
 		if in.symlinkOK {
 			e.LinkTarget = string(in.symlink)

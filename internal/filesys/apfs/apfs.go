@@ -61,6 +61,7 @@ type FS struct {
 
 	dirBudget     atomic.Int64 // directory-record bytes this FS may still scan
 	maxDirEntries int          // entries read from one directory
+	maxFileRuns   int          // runs one file may map
 	scans         atomic.Int64 // file-system tree scans started (a work counter)
 
 	warns filesys.Warnings
@@ -132,6 +133,7 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		blocks: nx0.blockCount,
 
 		maxDirEntries: maxDirEntries,
+		maxFileRuns:   maxFileRuns,
 	}
 	f.dirBudget.Store(maxDirBudget)
 	f.checkBlockZero()

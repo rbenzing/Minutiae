@@ -95,6 +95,7 @@ type layout struct {
 	tree []Block // container object map tree
 	snap []Block // its snapshot tree
 	vols [][]Block
+	data []Block // file content
 }
 
 // layout computes where everything goes. Volumes follow the container object
@@ -138,13 +139,26 @@ func (o Options) layout() layout {
 	tree, snap := o.omapBlocks(g.Omap+1, entries)
 	next := g.Omap + 1 + uint64(len(tree)+len(snap))
 	var l layout
+	// File data goes after the last volume; where the volumes end does not depend
+	// on it, so lay them out once to find the end and again with the data placed.
+	volumesEnd := next // advances over the volumes in the first pass
 	for i, v := range o.Volumes {
-		vg, blocks := o.buildVolume(i, v, next)
+		_, blocks := o.buildVolume(i, v, volumesEnd, &dataAlloc{bs: o.BlockSize})
+		volumesEnd += uint64(len(blocks))
+	}
+	da := &dataAlloc{bs: o.BlockSize, next: volumesEnd}
+	for i, v := range o.Volumes {
+		vg, blocks := o.buildVolume(i, v, next, da)
 		next += uint64(len(blocks))
 		g.Volumes = append(g.Volumes, vg)
 		l.vols = append(l.vols, blocks)
 		entries[len(o.Omap)+i].Paddr = vg.Super
 	}
+	if next != volumesEnd {
+		panic("apfstest: volume sizes changed between layout passes")
+	}
+	l.data = da.blocks
+	next = da.next
 	tree, snap = o.omapBlocks(g.Omap+1, entries)
 	for _, b := range tree {
 		g.OmapNodes = append(g.OmapNodes, b.Addr)
@@ -217,6 +231,7 @@ func Build(o Options) []byte {
 	sealBlock(om)
 	Place(img, bs, l.tree)
 	Place(img, bs, l.snap)
+	Place(img, bs, l.data)
 	for _, blocks := range l.vols {
 		Place(img, bs, blocks)
 	}

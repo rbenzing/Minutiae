@@ -95,6 +95,18 @@ type File struct {
 	LinkTo      string // Path of the file this name is a hard link to
 	LinkSibling bool   // the directory record names a sibling id, mapped to the inode
 
+	// File data layout. Data is the content; the bytes under a hole or gap are
+	// not stored (no block is written for them). Ranges are block-aligned
+	// {offset, length} in bytes.
+	Fragments    int        // Data in this many extents, placed in reverse physical order
+	SplitContig  int        // Data in this many extents that are physically adjacent
+	Holes        [][2]int64 // explicit hole extents (phys_block_num 0)
+	Gaps         [][2]int64 // ranges with no extent record at all
+	SparseTail   int64      // dstream size = len(Data) + SparseTail (a trailing hole)
+	Clone        string     // Path of the file whose private id, size and extents this one shares
+	ExtentCrypto uint64     // crypto_id written in every extent the builder lays out
+	Extents      []Extent   // explicit extent list, written verbatim (replaces the layout)
+
 	CompressedFlag   bool   // UF_COMPRESSED in bsd_flags
 	UncompressedSize uint64 // with INODE_HAS_UNCOMPRESSED_SIZE when non-zero
 	CryptoID         uint64 // default_crypto_id of the dstream
@@ -126,14 +138,29 @@ type VolumeGeo struct {
 	First, End   uint64   // the volume's blocks are [First, End)
 	Inodes       map[string]uint64
 	NextObjectID uint64
+	// DataStart is the first block of the data blocks the builder wrote for each
+	// path that has file data (physical placement order, see File.Fragments).
+	DataStart map[string]uint64
+}
+
+// Extent is one file-extent record written verbatim. Phys is the physical
+// block; with Rel it is relative to the first data block of the file (the
+// blocks allocated for File.Data).
+type Extent struct {
+	Logical uint64 // bytes
+	Length  uint64 // bytes (the low 56 bits of len_and_flags)
+	Flags   uint8  // the high 8 bits of len_and_flags
+	Phys    uint64
+	Rel     bool
+	Crypto  uint64
 }
 
 // buildVolume lays out volume v of the given slot from block first and
 // returns its geometry and its blocks.
-func (o Options) buildVolume(slot int, v Volume, first uint64) (VolumeGeo, []Block) {
+func (o Options) buildVolume(slot int, v Volume, first uint64, da *dataAlloc) (VolumeGeo, []Block) {
 	bs := o.BlockSize
-	recs, inodes, cnt, nextID := v.compile()
-	vg := VolumeGeo{Slot: slot, Oid: VolumeOid(slot), First: first, Inodes: inodes, NextObjectID: nextID}
+	recs, inodes, cnt, nextID, dataStart := v.compile(da)
+	vg := VolumeGeo{Slot: slot, Oid: VolumeOid(slot), First: first, Inodes: inodes, NextObjectID: nextID, DataStart: dataStart}
 
 	spec := TreeSpec{
 		BlockSize: bs, BTFlags: 0x40, Storage: StorageVirtual, Xid: volXid,

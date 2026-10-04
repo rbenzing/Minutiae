@@ -339,3 +339,9 @@ func (f *FS) DirRecords(slot int, view, dir uint64) ([]DrecInfo, error) {
 
 // SetNodeReads sets the node reads all scans of this FS may still make.
 func (f *FS) SetNodeReads(n int64) { f.nodeReadLimit = n; f.nodeReads.Store(n) }
+
+// MaxFileRuns is the default cap on the runs of one file.
+const MaxFileRuns = maxFileRuns
+
+// SetMaxFileRuns sets the cap on the runs of one file.
+func (f *FS) SetMaxFileRuns(n int) { f.maxFileRuns = n }

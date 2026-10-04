@@ -262,7 +262,7 @@ func timesOrDefault(t Times) [4]uint64 {
 // compile turns the volume's files into sorted fs-tree records. It returns the
 // records, the inode number of every path ("/" is the root directory), the
 // object counts and the next free object id.
-func (v Volume) compile() ([]FSRecord, map[string]uint64, counts, uint64) {
+func (v Volume) compile(da *dataAlloc) ([]FSRecord, map[string]uint64, counts, uint64, map[string]uint64) {
 	var (
 		recs   []FSRecord
 		inodes = map[uint64]*bInode{}
@@ -271,6 +271,8 @@ func (v Volume) compile() ([]FSRecord, map[string]uint64, counts, uint64) {
 		next   = uint64(firstUserIno)
 		kids   = map[uint64]int32{}
 		order  []*bInode
+
+		dataStart = map[string]uint64{}
 	)
 	add := func(in *bInode) *bInode {
 		inodes[in.ino] = in
@@ -369,12 +371,21 @@ func (v Volume) compile() ([]FSRecord, map[string]uint64, counts, uint64) {
 		}
 		in.times = timesOrDefault(f.Times)
 		applyAttrs(in, f)
-		if f.Data != nil || f.Size > 0 {
+		if f.Data != nil || f.Size > 0 || f.SparseTail > 0 {
 			in.hasDstream = true
-			in.size = int64(len(f.Data))
-			if f.Data == nil {
+			in.size = int64(len(f.Data)) + f.SparseTail
+			if f.Data == nil && f.Size > 0 {
 				in.size = f.Size
 			}
+		}
+		if f.Clone != "" {
+			cclean, _, _ := splitPath(f.Clone)
+			src, ok := inodes[byPath[cclean]]
+			if !ok {
+				panic("apfstest: clone source " + f.Clone + " does not exist")
+			}
+			in.private = privateOf(src)
+			in.size, in.hasDstream = src.size, src.hasDstream
 		}
 		if f.CompressedFlag {
 			in.bsd |= bsdCompressed
@@ -399,6 +410,13 @@ func (v Volume) compile() ([]FSRecord, map[string]uint64, counts, uint64) {
 				ID: in.ino, Type: TypeXattr, Key: XattrKey(symlinkXattr),
 				Val: XattrVal(append([]byte(f.Symlink), 0), f.SymlinkStream),
 			})
+		}
+		if !f.Dir && f.Symlink == "" && f.Clone == "" && (len(f.Data) > 0 || f.Extents != nil) {
+			exts, start := da.layout(f)
+			dataStart[clean] = start
+			for _, e := range exts {
+				recs = append(recs, FSRecord{ID: privateOf(in), Type: TypeFileExtent, Key: le8(e.Logical), Val: ExtentVal(e)})
+			}
 		}
 		for _, x := range f.Xattrs {
 			recs = append(recs, FSRecord{ID: in.ino, Type: TypeXattr, Key: XattrKey(x.Name), Val: XattrVal(x.Value, x.Stream)})
@@ -437,7 +455,7 @@ func (v Volume) compile() ([]FSRecord, map[string]uint64, counts, uint64) {
 	if v.Reorder != nil {
 		recs = v.Reorder(recs)
 	}
-	return recs, byPath, cnt, next
+	return recs, byPath, cnt, next, dataStart
 }
 
 func le8(n uint64) []byte {

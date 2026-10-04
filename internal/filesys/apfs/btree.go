@@ -354,6 +354,7 @@ type scanner struct {
 	nodes   int    // nodes read
 	keys    uint64 // leaf entries seen, ghosts included
 	inRange bool   // a record of the range was seen
+	ooo     bool   // a record sorted before the range after one inside it: the tree is out of order
 	stop    bool
 }
 
@@ -375,6 +376,14 @@ type scanner struct {
 // (nil prefix) that runs to the end also checks bt_node_count and bt_key_count
 // and warns when they disagree with what was read.
 func (t *tree) scan(prefix func(key []byte) int, visit func(key, val []byte) (stop bool, err error)) error {
+	_, err := t.scanOrdered(prefix, visit)
+	return err
+}
+
+// scanOrdered is scan that also reports whether the scan ended early because
+// the tree is out of key order (records of the range may then have been missed:
+// a caller that must not mistake that for the end of the range checks it).
+func (t *tree) scanOrdered(prefix func(key []byte) int, visit func(key, val []byte) (stop bool, err error)) (outOfOrder bool, err error) {
 	limit := t.f.nodeBudget
 	if n := t.info.nodeCount; n > 0 && n < uint64(limit) {
 		limit = int(n) // the tree says how many nodes it has
@@ -386,19 +395,19 @@ func (t *tree) scan(prefix func(key []byte) int, visit func(key, val []byte) (st
 	}
 	buf, err := t.readNode(t.root, t.rootAddr, true)
 	if err != nil {
-		return err
+		return false, err
 	}
 	root, err := t.parseNode(buf, t.rootAddr, true)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := s.walk(root, 1, true); err != nil {
-		return err
+		return false, err
 	}
 	if prefix == nil && !s.stop {
 		s.crossCheck()
 	}
-	return nil
+	return s.ooo, nil
 }
 
 // crossCheck compares what a scan of the whole tree read with the tree's own
@@ -499,6 +508,7 @@ func (s *scanner) leaf(n *btNode) error {
 		case c < 0:
 			if s.inRange {
 				s.t.f.warn("B-tree node at block %d is out of key order: scan stopped", n.addr)
+				s.ooo = true
 				s.stop = true
 				return nil
 			}

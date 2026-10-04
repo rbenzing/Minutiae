@@ -51,14 +51,23 @@ func TestInfoWarningsAccumulateAcrossReads(t *testing.T) {
 func TestVolumeDamageNeverPanics(t *testing.T) {
 	v := dataVolume(richFiles()...)
 	v.TreeMaxKeys = 3
-	v.Files = append(v.Files, apfstest.File{Path: "/x/y", Xattrs: []apfstest.Xattr{{Name: "k", Value: []byte("v")}}})
+	v.Files = append(v.Files, apfstest.File{Path: "/x/y", Xattrs: []apfstest.Xattr{{Name: "k", Value: []byte("v")}}},
+		apfstest.File{Path: "/x/data", Data: pattern(3*bs, 3), Fragments: 3, Holes: [][2]int64{{bs, bs}}, SparseTail: bs})
 	im := newImage(t, volOpts(v, apfstest.Volume{Name: "Enc", Encrypted: true}))
 	vg := im.g.Volumes[0]
 	rng := rand.New(rand.NewPCG(7, 9)) //nolint:gosec // deterministic test input, not security
 	orig := slices.Clone(im.b)
 	walk := func(f *apfs.FS) {
 		n := 0
-		_ = filesys.Walk(f, f.Root(), "/", func(_ string, _ filesys.Entry, _ error) error {
+		_ = filesys.Walk(f, f.Root(), "/", func(_ string, e filesys.Entry, _ error) error {
+			if e.Type == filesys.TypeFile || e.Type == filesys.TypeSymlink {
+				if fl, err := f.Open(e); err == nil {
+					if _, err := filesys.CheckRunsPrefix(fl.Runs(), fl.Size(), f.Info().Size); err != nil {
+						t.Errorf("Open(%q): runs violate the contract: %v", e.ID, err)
+					}
+					_, _ = fl.ReadAt(make([]byte, 8192), 0)
+				}
+			}
 			if n++; n > 500 {
 				return filesys.SkipDir
 			}
