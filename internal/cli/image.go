@@ -188,9 +188,8 @@ func newImageInfoCmd(d Deps, opts *rootOptions) *cobra.Command {
 			default:
 				cv = &res
 			}
-			if perr = s.ReadPartitions(); perr == nil {
-				warnIncomplete(d, s)
-			}
+			warnIncomplete(d, s) // known from the manifest, whatever the partition table
+			perr = s.ReadPartitions()
 		}
 		info := s.Info()
 		if !opts.json {

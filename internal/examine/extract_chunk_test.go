@@ -5,14 +5,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/examine"
+	"github.com/rbenzing/minutiae/internal/filesys"
+	"github.com/rbenzing/minutiae/internal/filesys/detect"
 	"github.com/rbenzing/minutiae/internal/filesys/fstest"
+	"github.com/rbenzing/minutiae/internal/image"
 	"github.com/rbenzing/minutiae/internal/image/ewf/ewftest"
 )
 
@@ -23,6 +28,12 @@ const e01Chunk = 8 * 512 // 8 sectors per chunk
 // corruptAt (a disk offset; negative = no corruption), imports the set and
 // opens it.
 func e01ChunkSession(t *testing.T, c *evidence.Case, nodes []fstest.Node, corruptAt int64) (*examine.Session, []byte) {
+	t.Helper()
+	return e01ChunkSessionOpts(t, c, nodes, corruptAt, mtfsOpts())
+}
+
+// e01ChunkSessionOpts is e01ChunkSession with the session options given.
+func e01ChunkSessionOpts(t *testing.T, c *evidence.Case, nodes []fstest.Node, corruptAt int64, opts examine.Options) (*examine.Session, []byte) {
 	t.Helper()
 	data := disk(fstest.Build(fstest.BuildSpec{Label: "L", FreeBlocks: 2, Nodes: nodes}))
 	o := ewftest.Options{SectorsPerChunk: 8, ChunksPerSegment: (len(data)/e01Chunk + 2) / 3, Compress: ewftest.CompressNone}
@@ -43,7 +54,12 @@ func e01ChunkSession(t *testing.T, c *evidence.Case, nodes []fstest.Node, corrup
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
-	return openSession(t, c, recs[0].ID), data
+	s, err := examine.Open(c, recs[0].ID, opts)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return s, data
 }
 
 // A chunk that cannot be decoded in the middle of one file makes that file an
@@ -51,9 +67,16 @@ func e01ChunkSession(t *testing.T, c *evidence.Case, nodes []fstest.Node, corrup
 // provenance runs of that prefix only; the run goes on with the next files.
 func TestExtractUnreadableChunkMakesFileIncompleteAndContinues(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		frags int // > MaxInlineRuns forces a runs sidecar
-	}{{"inline runs", 0}, {"sidecar runs", evidence.MaxInlineRuns + 2000}} {
+		name     string
+		frags    int  // > MaxInlineRuns forces a full runs sidecar
+		badBlock int  // block of the file whose chunk is corrupted; 0 = near the end
+		collide  bool // the prefix sidecar names are taken by other files
+	}{
+		{"inline runs", 0, 0, false},
+		{"sidecar runs", evidence.MaxInlineRuns + 2000, 0, false},
+		{"full sidecar and an inline prefix", evidence.MaxInlineRuns + 2000, 40, false},
+		{"prefix sidecar name collision", evidence.MaxInlineRuns + 2000, 0, true},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			size := 6*e01Chunk + 100
 			if tc.frags > 0 {
@@ -74,10 +97,18 @@ func TestExtractUnreadableChunkMakesFileIncompleteAndContinues(t *testing.T) {
 			corruptAt := int64(base + size/2)
 			if tc.frags > 0 {
 				stride = 2 * blk
-				corruptAt = int64(base + (tc.frags-200)*stride)
+				bb := tc.badBlock
+				if bb == 0 {
+					bb = tc.frags - 200
+				}
+				corruptAt = int64(base + bb*stride)
 			}
 			c := newCase(t)
-			s, data := e01ChunkSession(t, c, nodes, corruptAt)
+			opts := mtfsOpts()
+			if tc.collide {
+				opts = squatPrefixSidecarNames(t, c, "big.bin", 2)
+			}
+			s, data := e01ChunkSessionOpts(t, c, nodes, corruptAt, opts)
 			chunkStart := corruptAt / e01Chunk * e01Chunk
 			end := base + size
 			if tc.frags > 0 {
@@ -115,12 +146,32 @@ func TestExtractUnreadableChunkMakesFileIncompleteAndContinues(t *testing.T) {
 			}
 			d := rec.Source.Derived
 			runs := d.Runs
-			if tc.frags > 0 {
+			prefixBlocks := len(want) / blk
+			switch {
+			case tc.frags > 0 && prefixBlocks > evidence.MaxInlineRuns:
 				// A prefix this long still needs a sidecar; it must hold the prefix runs only.
 				if len(runs) != 0 || d.RunsArtifact == "" {
 					t.Fatalf("runs %d, sidecar %q", len(runs), d.RunsArtifact)
 				}
 				runs = readSidecarRuns(t, c, d.RunsArtifact)
+				if tc.collide && !strings.HasSuffix(sidecarPath(t, c, d.RunsArtifact), "/big.bin.incomplete~3.runs.jsonl") {
+					t.Errorf("prefix sidecar is %q, want the third candidate name", sidecarPath(t, c, d.RunsArtifact))
+				}
+			case tc.frags > 0:
+				if len(runs) == 0 || d.RunsArtifact != "" {
+					t.Fatalf("a short prefix must be inline: runs %d, sidecar %q", len(runs), d.RunsArtifact)
+				}
+			}
+			if tc.frags > 0 {
+				// The full run list written before the read stays in the case; the
+				// partial artifact says which artifact it is.
+				full := fullRunsArtifact(t, c, d.RunsArtifact)
+				if !strings.Contains(rec.Error, full) {
+					t.Errorf("rec.Error %q does not name the full runs artifact %s", rec.Error, full)
+				}
+				if full == d.RunsArtifact {
+					t.Error("the partial artifact references the full-run sidecar")
+				}
 			}
 			var covered int64
 			for _, r := range runs {
@@ -140,7 +191,20 @@ func TestExtractUnreadableChunkMakesFileIncompleteAndContinues(t *testing.T) {
 			if len(auditByAction(t, c, "analysis.end")) != 1 || len(auditByAction(t, c, "analysis.error")) != 0 {
 				t.Error("the analysis must end normally")
 			}
-			verifyOK(t, c)
+			if !tc.collide {
+				verifyOK(t, c)
+				return
+			}
+			// The squatting files the test planted are the only problem of the case.
+			rep, err := c.Verify()
+			if err != nil || len(rep.Problems) != 2 {
+				t.Fatalf("case verify: %v, %v", rep.Problems, err)
+			}
+			for _, p := range rep.Problems {
+				if !strings.Contains(p, "unmanifested file") || !strings.Contains(p, "big.bin.incomplete") {
+					t.Errorf("unexpected problem %q", p)
+				}
+			}
 		})
 	}
 }
@@ -185,4 +249,151 @@ func readSidecarRuns(t *testing.T, c *evidence.Case, id string) []evidence.Run {
 	}
 	t.Fatalf("runs artifact %s is not in the manifest", id)
 	return nil
+}
+
+// sidecarPath returns the manifest path of artifact id.
+func sidecarPath(t *testing.T, c *evidence.Case, id string) string {
+	t.Helper()
+	recs, err := c.Manifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range recs {
+		if r.ID == id {
+			return r.Path
+		}
+	}
+	t.Fatalf("artifact %s is not in the manifest", id)
+	return ""
+}
+
+// fullRunsArtifact returns the id of the runs artifact of /big.bin that is not
+// referenced by the partial artifact (the complete run list written before the
+// read failed). prefixID may be empty (an inline prefix).
+func fullRunsArtifact(t *testing.T, c *evidence.Case, prefixID string) string {
+	t.Helper()
+	recs, err := c.Manifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found []string
+	for _, r := range recs {
+		if r.Source.Kind == "runs" && r.Source.RemotePath == "/big.bin" && r.ID != prefixID && strings.HasSuffix(r.Path, "/big.bin.runs.jsonl") {
+			found = append(found, r.ID)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("%d full runs artifacts for /big.bin, want 1", len(found))
+	}
+	return found[0]
+}
+
+// squatPrefixSidecarNames returns session options whose filesystem, when file
+// name is opened, occupies the first n candidate names of its prefix runs
+// sidecar (name.incomplete.runs.jsonl, name.incomplete~2.runs.jsonl ...) with
+// other files, as an odd image or a later entry of the walk could.
+func squatPrefixSidecarNames(t *testing.T, c *evidence.Case, name string, n int) examine.Options {
+	t.Helper()
+	hook := hookFS{mapFile: func(e filesys.Entry, f filesys.File) filesys.File {
+		if e.Name != name {
+			return f
+		}
+		starts := auditByAction(t, c, "analysis.start")
+		acq := starts[len(starts)-1].Details["analysis_id"].(string)
+		dir := filepath.Join(c.Dir, "artifacts", "img", acq, "p1-mtfs")
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		cands := []string{name + ".incomplete.runs.jsonl"}
+		for i := 2; i <= n; i++ {
+			cands = append(cands, name+".incomplete~"+strconv.Itoa(i)+".runs.jsonl")
+		}
+		for _, cand := range cands[:n] {
+			if err := os.WriteFile(filepath.Join(dir, cand), []byte("squatter"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return f
+	}}
+	return examine.Options{Drivers: []detect.Driver{{
+		Name: "mtfs", Probe: fstest.Probe,
+		Open: func(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
+			fsys, err := fstest.Open(r, size)
+			if err != nil {
+				return nil, err
+			}
+			return hookedFS{FileSystem: fsys, h: hook}, nil
+		},
+	}}}
+}
+
+// ioFailImage is an EWF-format image over data whose reads of [failFrom, failTo)
+// fail with a plain I/O error (not a chunk error).
+type ioFailImage struct {
+	data             []byte
+	failFrom, failTo int64
+	err              error
+}
+
+func (m *ioFailImage) ReadAt(p []byte, off int64) (int, error) {
+	if off >= int64(len(m.data)) {
+		return 0, io.EOF
+	}
+	end := min(off+int64(len(p)), int64(len(m.data)))
+	if off < m.failTo && end > m.failFrom { // the read overlaps the failing range
+		n := 0
+		if off < m.failFrom {
+			n = copy(p, m.data[off:m.failFrom])
+		}
+		return n, m.err
+	}
+	n := copy(p, m.data[off:end])
+	if n < len(p) {
+		return n, io.EOF
+	}
+	return n, nil
+}
+func (m *ioFailImage) Size() int64        { return int64(len(m.data)) }
+func (m *ioFailImage) SectorSize() int    { return 512 }
+func (*ioFailImage) Format() string       { return "ewf" }
+func (*ioFailImage) Metadata() []image.KV { return nil }
+func (*ioFailImage) Close() error         { return nil }
+
+// A real I/O error (not the container's chunk-corrupt error) in the middle of a
+// file keeps its old behaviour: it is not downgraded to an incomplete artifact
+// and a warning, it ends the analysis. A chunk error with the same shape is
+// skipped (TestExtractUnreadableChunkMakesFileIncompleteAndContinues).
+func TestExtractIOErrorIsNotDowngradedToIncompleteFile(t *testing.T) {
+	big := pattern(8*e01Chunk, 5)
+	nodes := []fstest.Node{
+		{Path: "/a-first.txt", Data: []byte("first")},
+		{Path: "/big.bin", Data: big},
+		{Path: "/z-last.txt", Data: []byte("last file")},
+	}
+	data := disk(fstest.Build(fstest.BuildSpec{Label: "L", FreeBlocks: 2, Nodes: nodes}))
+	base := bytes.Index(data, big[:64])
+	boom := errors.New("input/output error")
+	stub := &ioFailImage{data: data, failFrom: int64(base + len(big)/2), failTo: int64(base + len(big)/2 + e01Chunk), err: boom}
+	image.RegisterEWF(func(files []*os.File) (image.Image, error) {
+		for _, f := range files {
+			_ = f.Close()
+		}
+		return stub, nil
+	})
+	t.Cleanup(func() { image.RegisterEWF(nil) })
+
+	c := newCase(t)
+	s := openSession(t, c, ewfArtifact(t, c).ID)
+	sum, err := s.Extract(context.Background(), examine.ExtractOptions{Partition: -1, Paths: []string{"/"}, Recursive: true})
+	if !errors.Is(err, boom) {
+		t.Fatalf("Extract err = %v, want the I/O error to end the analysis", err)
+	}
+	if len(auditByAction(t, c, "analysis.error")) != 1 || len(auditByAction(t, c, "analysis.end")) != 0 {
+		t.Error("the analysis must end with analysis.error")
+	}
+	for _, r := range sum.Artifacts {
+		if r.Source.RemotePath == "/z-last.txt" {
+			t.Errorf("the run went on after an I/O error: %+v", r)
+		}
+	}
 }

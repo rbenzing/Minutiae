@@ -43,8 +43,9 @@ func (e *CorruptError) Error() string {
 func (e *CorruptError) Unwrap() error { return ErrCorrupt }
 
 // ChunkError is the error of a read that could not decode one chunk. It
-// matches ErrChunkCorrupt, and the underlying cause (an I/O error, for
-// instance) with errors.Is.
+// matches ErrChunkCorrupt, and the underlying cause (a checksum or
+// zlib failure, a segment that ends early) with errors.Is. An I/O error of the
+// segment source is not a ChunkError.
 type ChunkError struct {
 	Chunk   int64
 	Segment int

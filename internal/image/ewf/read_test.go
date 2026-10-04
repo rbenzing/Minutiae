@@ -863,9 +863,21 @@ func TestEWFSegmentReadErrorIsWrapped(t *testing.T) {
 	if n != 2*cs {
 		t.Fatalf("n = %d", n)
 	}
-	wantChunkError(t, err, 2)
-	if !errors.Is(err, boom) {
-		t.Fatalf("the I/O error is not reachable with errors.Is: %v", err)
+	// A real I/O error of the segment source is an I/O error, never a corrupt
+	// chunk: callers must not treat it as damage to the evidence.
+	if !errors.Is(err, boom) || errors.Is(err, ewf.ErrChunkCorrupt) {
+		t.Fatalf("an I/O error must wrap the cause and not match ErrChunkCorrupt: %v", err)
+	}
+	var ce *ewf.ChunkError
+	if errors.As(err, &ce) {
+		t.Fatalf("an I/O error is not a ChunkError: %v", err)
+	}
+	if !strings.Contains(err.Error(), "chunk 2") {
+		t.Fatalf("the error does not name the chunk: %v", err)
+	}
+	// Verify reports it as a failed run (an error), not as an unreadable chunk.
+	if res, verr := r.Verify(context.Background(), nil); !errors.Is(verr, boom) || res.BadChunk != -1 || res.Result() != "unverified" {
+		t.Fatalf("Verify = %+v, %v", res, verr)
 	}
 	// A segment that shrinks after Open: the short read is an unexpected EOF.
 	segs = segsOf(files)

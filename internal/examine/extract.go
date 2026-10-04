@@ -250,8 +250,16 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 					// The bytes before the unreadable chunk are kept (the artifact is
 					// flagged incomplete), so the provenance, recorded when the manifest
 					// entry is written below, must name only the runs of those bytes.
+					full := d.RunsArtifact // the complete run list written before the read, if any
 					if perr := x.keepPrefixRuns(rel, p, d, runs, n); perr != nil {
-						return &caseWriteError{perr}
+						return perr // a failure of the case itself
+					}
+					if n > 0 && d.Runs == nil && d.RunsArtifact == "" {
+						err = fmt.Errorf("%w (the runs of the kept bytes are not recorded: no free runs sidecar name)", err)
+					}
+					if full != "" {
+						// Say in the hash-chained record which artifact is the orphan.
+						err = fmt.Errorf("%w (complete run list of the file: runs artifact %s)", err, full)
 					}
 				}
 				return err
@@ -487,19 +495,42 @@ func prefixRuns(runs []evidence.Run, n int64) []evidence.Run {
 // keepPrefixRuns narrows the provenance of a file whose read stopped after n
 // bytes (an unreadable container chunk) to the runs of those n bytes. Inline
 // runs are cut in place. When the prefix still needs a runs sidecar, a second
-// one holding only the prefix is written and replaces the reference to the
-// first, which was written before the read and stays in the case as the
-// filesystem's full list of runs for the file.
+// one holding only the prefix is written (under the first free of the names
+// rel.incomplete.runs.jsonl, rel.incomplete~2.runs.jsonl ...; a name already
+// taken is no case failure) and replaces the reference to the first, which was
+// written before the read and stays in the case as the filesystem's full list
+// of runs for the file. d is changed only once the new provenance is known, so
+// it never claims the full list for the partial artifact. Only a failure of the
+// case is returned. When no free name is found the prefix runs cannot be
+// recorded: the artifact then carries no runs (and says so in its error), which
+// is incomplete provenance but never wrong provenance.
 func (x *extractor) keepPrefixRuns(rel, fsPath string, d *evidence.Derivation, runs []evidence.Run, n int64) error {
 	if len(runs) == 0 {
 		return nil
 	}
 	pre := prefixRuns(runs, n)
-	if len(pre) > evidence.MaxInlineRuns {
-		d.Runs = nil
-		return x.s.writeRunsSidecar(x.a, rel+".incomplete.runs.jsonl", pre, fsPath, d)
+	if len(pre) <= evidence.MaxInlineRuns {
+		d.Runs, d.RunsArtifact = pre, ""
+		return nil
 	}
-	d.Runs, d.RunsArtifact = pre, ""
+	for attempt := 0; attempt < maxNameAttempts; attempt++ {
+		name := rel + ".incomplete.runs.jsonl"
+		if attempt > 0 {
+			name = fmt.Sprintf("%s.incomplete~%d.runs.jsonl", rel, attempt+1)
+		}
+		sd := *d // writeRunsSidecar fills in the sidecar id; keep d until it is known
+		err := x.s.writeRunsSidecar(x.a, name, pre, fsPath, &sd)
+		var nameErr *localNameError
+		switch {
+		case err == nil:
+			d.Runs, d.RunsArtifact = nil, sd.RunsArtifact
+			return nil
+		case errors.Is(err, evidence.ErrArtifactExists), errors.As(err, &nameErr):
+			continue // this name is taken or unusable: try the next
+		}
+		return err
+	}
+	d.Runs, d.RunsArtifact = nil, ""
 	return nil
 }
 
@@ -512,8 +543,8 @@ const copyBufSize = 32 << 10
 // longest readable prefix of the window is found by bisection (every probe
 // reads from off; a longer read succeeds only if a shorter one does) and then
 // written. It returns the bytes written; a write failure is left to the
-// caller, who sees it in w. Any other read error ends the search: only bytes
-// that were read without error are ever written.
+// caller, who sees it in w. A probe that fails, whatever the error, counts as
+// not readable; only the bytes of a final read that succeeded are written.
 func salvage(w io.Writer, f filesys.File, off, window int64) int64 {
 	if window <= 1 {
 		return 0

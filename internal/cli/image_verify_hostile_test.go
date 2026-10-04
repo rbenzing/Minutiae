@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/examine"
@@ -238,5 +239,43 @@ func TestVerifyOutcomeMismatchSurvivesAuditFailure(t *testing.T) {
 	cv.Result, cv.MD5.Status = "match", image.HashMatch
 	if err := verifyOutcome(cv, errors.New("disk full")); ExitCode(err) != ExitError {
 		t.Fatalf("exit %d, want %d", ExitCode(err), ExitError)
+	}
+}
+
+// The incomplete-parent warning does not depend on the partition table being
+// readable: `image info --verify` shows it on stderr in that case too.
+func TestImageVerifyWarnsIncompleteParentWhenPartitionsUnreadable(t *testing.T) {
+	stub := &stubEWF{readErr: chunkErr("chunk 0 unreadable"), res: image.VerifyResult{
+		Size: 1 << 20, BytesHashed: 4096, BadChunk: 0, BadChunkError: "chunk 0 unreadable",
+		MD5: image.HashCheck{Status: image.HashUnverified}, SHA1: image.HashCheck{Status: image.HashUnverified},
+	}}
+	image.RegisterEWF(func(files []*os.File) (image.Image, error) {
+		for _, f := range files {
+			_ = f.Close()
+		}
+		return stub, nil
+	})
+	t.Cleanup(func() { image.RegisterEWF(nil) })
+	dir := t.TempDir()
+	c, err := evidence.Create(dir, evidence.CreateOptions{ID: "C1", Examiner: "E"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, cerr := c.Capture("dev", evidence.NewAcquisitionID(time.Now()), "part.E01",
+		evidence.Source{Kind: "partition", DeviceID: "dev"}, func(w io.Writer) error {
+			if _, err := w.Write(append([]byte("EVF\x09\x0d\x0a\xff\x00"), make([]byte, 1024)...)); err != nil {
+				return err
+			}
+			return errors.New("device vanished")
+		})
+	if cerr == nil || !rec.Incomplete {
+		t.Fatalf("setup: %+v, %v", rec, cerr)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runSplit(context.Background(), t, Deps{FSDrivers: mtfsDrivers}, "image", "info", "--case", filepath.Join(dir, "C1"), rec.ID, "--verify")
+	if code != ExitError || !strings.Contains(errs, "warning: parent image is flagged incomplete") || !strings.Contains(out, "Verify:       result  unverified") {
+		t.Fatalf("exit %d\nstdout:\n%s\nstderr:\n%s", code, out, errs)
 	}
 }

@@ -49,8 +49,21 @@ func chunkErr(idx int64, ref chunkRef, cause error) error {
 	return e
 }
 
-// decode reads and verifies chunk idx from its segment. Every failure is a
-// *ChunkError wrapping ErrChunkCorrupt.
+// readErr classifies a failed read of a chunk's stored bytes: a segment that
+// ends early (io.ErrUnexpectedEOF) is damage to the evidence, so a *ChunkError;
+// any other error is an I/O failure of the segment source and is returned
+// wrapped but never as ErrChunkCorrupt: it says nothing about the chunk, and
+// callers must not treat it as corruption.
+func readErr(idx int64, ref chunkRef, err error) error {
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return chunkErr(idx, ref, err)
+	}
+	return fmt.Errorf("ewf: chunk %d (segment %d): reading its bytes: %w", idx, ref.seg()+1, err)
+}
+
+// decode reads and verifies chunk idx from its segment. Every failure to
+// decode is a *ChunkError wrapping ErrChunkCorrupt; an I/O error of the
+// segment source is not (see readErr).
 func (r *Reader) decode(idx int64) ([]byte, error) {
 	if idx < 0 || idx >= int64(r.geo.chunks) {
 		return nil, &ChunkError{Chunk: idx, Offset: -1, Err: errors.New("chunk index outside the media")}
@@ -81,7 +94,7 @@ func (r *Reader) decode(idx int64) ([]byte, error) {
 		}
 		buf := make([]byte, mediaLen+4)
 		if err := readFull(seg.R, buf, off); err != nil {
-			return nil, chunkErr(idx, ref, err)
+			return nil, readErr(idx, ref, err)
 		}
 		if got, want := binary.LittleEndian.Uint32(buf[mediaLen:]), adler32.Checksum(buf[:mediaLen]); got != want {
 			return nil, chunkErr(idx, ref, fmt.Errorf("checksum mismatch (stored %#08x, computed %#08x)", got, want))
@@ -95,7 +108,7 @@ func (r *Reader) decode(idx int64) ([]byte, error) {
 	}
 	src := make([]byte, n)
 	if err := readFull(seg.R, src, off); err != nil {
-		return nil, chunkErr(idx, ref, err)
+		return nil, readErr(idx, ref, err)
 	}
 	out, trailing, err := inflateExact(src, mediaLen)
 	if err != nil {

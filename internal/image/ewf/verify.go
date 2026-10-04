@@ -5,6 +5,7 @@ import (
 	"crypto/md5"  //nolint:gosec // MD5 is a value the format stores, compared for verification; not a security control
 	"crypto/sha1" //nolint:gosec // SHA-1 is a value the format stores, compared for verification; not a security control
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 )
@@ -68,7 +69,9 @@ func (v VerifyResult) Result() string {
 //
 // The first chunk that cannot be read stops the verification: the result
 // names it, each stored hash is reported "unverified" with no computed value
-// (nothing is ever compared on partial data) and the error is nil. A cancelled
+// (nothing is ever compared on partial data) and the error is nil. An I/O error of
+// the segment source is not a bad chunk: it is returned as the error with the
+// partial result. A cancelled
 // context returns the partial result (hashes "unverified") and ctx.Err().
 func (r *Reader) Verify(ctx context.Context, progress func(done, total int64)) (VerifyResult, error) {
 	res := VerifyResult{Size: r.geo.size, BadChunk: -1}
@@ -84,6 +87,9 @@ func (r *Reader) Verify(ctx context.Context, progress func(done, total int64)) (
 		}
 		data, err := r.decode(idx)
 		if err != nil {
+			if !errors.Is(err, ErrChunkCorrupt) {
+				return res, err // an I/O failure of the segments: the run failed, no chunk is to blame
+			}
 			res.BadChunk, res.BadChunkError = idx, err.Error()
 			return res, nil
 		}
