@@ -241,7 +241,7 @@ func (w *Writer) Flush(ctx context.Context) error {
 func (w *Writer) Warn(_ context.Context, path, reason string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.warnLocked(path, reason)
+	return w.warnLocked(path, reason, false)
 }
 
 // Reject records that the caller refused a record before Add. It goes through
@@ -251,19 +251,25 @@ func (w *Writer) Warn(_ context.Context, path, reason string) error {
 // append fails the error is returned and nothing is counted. A rejection is
 // counted even when its individual warning is suppressed by the cap. A record
 // that Add refused is already counted by Add: the caller only warns about it
-// (Warn), it does not Reject it again.
+// (Warn), it does not Reject it again. Like Warn it also works on a poisoned
+// writer. Its audit entry is marked rejected=true, so verify can count the
+// rejections the log proves (rejected may exceed them: refused Adds and
+// rejections past the cap leave no entry).
 func (w *Writer) Reject(_ context.Context, path, reason string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if err := w.warnLocked(path, reason); err != nil {
+	if err := w.warnLocked(path, reason, true); err != nil {
 		return err
 	}
 	w.rejected++
 	return nil
 }
 
-// warnLocked is the body of Warn and Reject. w.mu is held.
-func (w *Writer) warnLocked(path, reason string) error {
+// warnLocked is the body of Warn and Reject. Every entry names its ingest (a
+// parser cannot set these keys): verify and recovery count the entries per
+// ingest, the one suppression note is marked suppression=true and a Reject entry
+// rejected=true. w.mu is held.
+func (w *Writer) warnLocked(path, reason string, rejection bool) error {
 	switch w.state {
 	case stateNew:
 		return ErrWriterNotStarted
@@ -277,7 +283,7 @@ func (w *Writer) warnLocked(path, reason string) error {
 	if w.warnings >= limit {
 		if w.warnSupp == 0 {
 			if _, err := w.c.Audit.Append(evidence.ActionAnalysisWarning, "", map[string]any{
-				"analysis_id": w.analysisID, "path": "",
+				"analysis_id": w.analysisID, "path": "", evidence.WarnKeyIngest: w.IngestID(), evidence.WarnKeySuppression: true,
 				"reason": fmt.Sprintf("further warnings suppressed (the cap is %d per ingest)", limit),
 			}); err != nil {
 				return err
@@ -286,9 +292,14 @@ func (w *Writer) warnLocked(path, reason string) error {
 		w.warnSupp++
 		return nil
 	}
-	_, err := w.c.Audit.Append(evidence.ActionAnalysisWarning, "", map[string]any{
+	d := map[string]any{
 		"analysis_id": w.analysisID, "path": cleanText(path, maxWarnPath), "reason": cleanText(reason, maxWarnReason),
-	})
+		evidence.WarnKeyIngest: w.IngestID(),
+	}
+	if rejection {
+		d[evidence.WarnKeyRejected] = true
+	}
+	_, err := w.c.Audit.Append(evidence.ActionAnalysisWarning, "", d)
 	if err != nil {
 		return err
 	}

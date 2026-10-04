@@ -333,6 +333,8 @@ func (w *Writer) recoverIngest(ctx context.Context, byID string, u evidence.Unre
 		concl = evidence.IngestConclusion{
 			IngestID: u.Start.IngestID, Outcome: "interrupted", Batches: len(batches), Types: types,
 			Rollup: evidence.IngestRollup(digestsOf(batches)),
+			// what the audit log proves, never zeros (the suppressed count is the least it can be; Add refusals leave no entry)
+			Warnings: u.Warnings, WarningsSuppressed: u.WarningsSuppressed, Rejected: u.Rejected,
 		}
 		for i, b := range batches {
 			concl.Records += b.count
@@ -355,7 +357,7 @@ func (w *Writer) recoverIngest(ctx context.Context, byID string, u evidence.Unre
 		if rec.RunMissing {
 			rec.Reason = "the ingest concluded in the audit log but its run row was never written"
 		} else {
-			rec.Reason = "the ingest never concluded (the process stopped before records.ingest.end)"
+			rec.Reason = "the ingest never concluded (the process stopped before records.ingest.end, or its abort could not be audited)"
 		}
 		e, err := w.c.Audit.Append(evidence.ActionIngestRecover, "", rec.Details())
 		if err != nil {

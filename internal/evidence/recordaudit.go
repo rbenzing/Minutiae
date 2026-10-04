@@ -15,7 +15,7 @@ const (
 	ActionIngestEnd       = "records.ingest.end"     // IngestConclusion, outcome complete
 	ActionIngestError     = "records.ingest.error"   // IngestConclusion, outcome incomplete, with error
 	ActionIngestRecover   = "records.ingest.recover" // IngestRecover
-	ActionAnalysisWarning = "analysis.warning"       // analysis_id, path, reason (the shape examine uses)
+	ActionAnalysisWarning = "analysis.warning"       // analysis_id, path, reason (the shape examine uses); the records writer adds ingest_id and, for Reject and the suppression note, rejected / suppression
 )
 
 // IngestStart is the details of records.ingest.start: an ingest announces the
@@ -137,4 +137,44 @@ func DecodeDetails[T any](d map[string]any) (T, error) {
 		return out, fmt.Errorf("audit details: %w", err)
 	}
 	return out, nil
+}
+
+// Detail keys the records writer adds to its own analysis.warning entries, so
+// that verify and recovery can count them without trusting any text a parser
+// supplied: every writer entry names its ingest, an entry written by
+// Writer.Reject carries rejected=true, and the one "further warnings
+// suppressed" note of an ingest carries suppression=true.
+const (
+	WarnKeyIngest      = "ingest_id"
+	WarnKeyRejected    = "rejected"
+	WarnKeySuppression = "suppression"
+)
+
+// IngestWarningTally is what the audit log proves about the warnings of one
+// ingest: Warnings analysis.warning entries (the suppression note not counted),
+// Rejects of them written by Writer.Reject, and Notes suppression notes (an
+// ingest has at most one).
+type IngestWarningTally struct {
+	Warnings int
+	Rejects  int
+	Notes    int
+}
+
+// add counts one analysis.warning entry of the records writer.
+func (t *IngestWarningTally) add(d map[string]any) {
+	if b, _ := d[WarnKeySuppression].(bool); b {
+		t.Notes++
+		return
+	}
+	t.Warnings++
+	if b, _ := d[WarnKeyRejected].(bool); b {
+		t.Rejects++
+	}
+}
+
+// writerWarningIngest returns the ingest an analysis.warning entry written by the
+// records writer names ("" for any other analysis.warning entry).
+func writerWarningIngest(d map[string]any) string {
+	s, _ := d[WarnKeyIngest].(string)
+	return s
 }

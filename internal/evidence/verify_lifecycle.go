@@ -221,6 +221,7 @@ func (c *Case) checkIngest(rep *VerifyReport, ps *problemSet, audit *recordAudit
 		ps.add("lifecycle", "ingest %q: %s (audit seq %d) names ingest %q", id, what, seq, exp.concl.IngestID)
 	}
 	c.checkTotals(ps, id, what, seq, exp.concl, committedBatches(audit, id, batches, byKey, batchesRead))
+	checkCounts(ps, id, what, seq, exp.concl, audit.warns[id])
 	return exp, true
 }
 
@@ -536,5 +537,30 @@ func (c *Case) checkSupersession(ctx context.Context, rep *VerifyReport, ps *pro
 			}
 			ps.add(d.kind, d.format, p[0], p[1])
 		}
+	}
+}
+
+// checkCounts requires the warning and rejection counts of a conclusion (an end,
+// error or recover entry) to be the ones the audit log proves: the records
+// writer names its ingest in every analysis.warning entry it appends, marks the
+// ones written by Writer.Reject and the single suppression note. Records refused
+// by Add leave no entry, so rejected may exceed the Reject entries but never fall
+// below them; a suppression note means at least one warning was dropped.
+func checkCounts(ps *problemSet, id, what string, seq int64, got IngestConclusion, tally *IngestWarningTally) {
+	var t IngestWarningTally
+	if tally != nil {
+		t = *tally
+	}
+	if t.Notes > 1 {
+		ps.add("lifecycle", "ingest %q: the audit log holds %d suppression notes for it, at most one is possible", id, t.Notes)
+	}
+	if got.Warnings != t.Warnings {
+		ps.add("lifecycle", "ingest %q: %s (audit seq %d): warnings is %d, the audit log holds %d analysis.warning entries for it", id, what, seq, got.Warnings, t.Warnings)
+	}
+	if (got.WarningsSuppressed > 0) != (t.Notes > 0) {
+		ps.add("lifecycle", "ingest %q: %s (audit seq %d): warnings_suppressed is %d, but the audit log holds %d suppression notes for it", id, what, seq, got.WarningsSuppressed, t.Notes)
+	}
+	if got.Rejected < t.Rejects {
+		ps.add("lifecycle", "ingest %q: %s (audit seq %d): rejected is %d, but the audit log holds at least %d rejections for it", id, what, seq, got.Rejected, t.Rejects)
 	}
 }

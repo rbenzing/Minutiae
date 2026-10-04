@@ -79,6 +79,14 @@ type UnresolvedIngest struct {
 	// records.batch.error entry and are not named by a recover: audited, never
 	// written.
 	AbsentBatches []int
+
+	// Warnings, WarningsSuppressed and Rejected are what the audit log proves about the ingest's
+	// analysis.warning entries (the suppression note is not a warning; WarningsSuppressed is 1 when the
+	// note exists, the least it can mean; Rejected counts the Writer.Reject entries, a lower bound: records
+	// refused by Add leave no entry). Recovery states them instead of zeros.
+	Warnings           int
+	WarningsSuppressed int
+	Rejected           int
 }
 
 // UnresolvedIngests lists, in start order, the ingests the audit log announced
@@ -107,6 +115,7 @@ func (c *Case) UnresolvedIngests() ([]UnresolvedIngest, error) {
 		recover    *IngestRecover
 		recSeq     int64
 		recTime    string
+		tally      IngestWarningTally
 	}
 	var order []*ingest
 	byID := map[string]*ingest{}
@@ -121,6 +130,10 @@ func (c *Case) UnresolvedIngests() ([]UnresolvedIngest, error) {
 				in := &ingest{start: s, startSeq: e.Seq, errored: map[int]bool{}}
 				byID[s.IngestID] = in
 				order = append(order, in)
+			}
+		case ActionAnalysisWarning:
+			if in := byID[writerWarningIngest(e.Details)]; in != nil {
+				in.tally.add(e.Details)
 			}
 		case ActionBatch:
 			b, err := DecodeDetails[BatchCommit](e.Details)
@@ -205,7 +218,13 @@ func (c *Case) UnresolvedIngests() ([]UnresolvedIngest, error) {
 		if runs[in.start.IngestID] {
 			continue
 		}
-		u := UnresolvedIngest{Start: in.start, StartSeq: in.startSeq, Kind: IngestUnfinished}
+		u := UnresolvedIngest{
+			Start: in.start, StartSeq: in.startSeq, Kind: IngestUnfinished,
+			Warnings: in.tally.Warnings, Rejected: in.tally.Rejects,
+		}
+		if in.tally.Notes > 0 {
+			u.WarningsSuppressed = 1
+		}
 		if in.conclusion != nil {
 			u.Kind, u.Conclusion, u.ConclusionSeq, u.ConclusionTime = IngestRunMissing, in.conclusion, in.concSeq, in.concTime
 		}

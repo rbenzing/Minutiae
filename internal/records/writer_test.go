@@ -734,7 +734,8 @@ func TestWarnAppendsAnalysisWarning(t *testing.T) {
 	if len(ws) != 1 {
 		t.Fatalf("%d analysis.warning entries", len(ws))
 	}
-	want := map[string]any{"analysis_id": "an-1", "path": "/data/x.db", "reason": "table t is damaged"}
+	// the examine shape plus the writer's own ingest_id (no source field, no rejected/suppression marker on a Warn)
+	want := map[string]any{"analysis_id": "an-1", "path": "/data/x.db", "reason": "table t is damaged", "ingest_id": w.IngestID()}
 	if !reflect.DeepEqual(ws[0].Details, want) {
 		t.Errorf("details = %v, want exactly %v", ws[0].Details, want)
 	}
