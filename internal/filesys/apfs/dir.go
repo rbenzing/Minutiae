@@ -258,9 +258,19 @@ func (f *FS) inodeEntry(v *volume, view uint64, in *inode, name string, raw []by
 //
 //  1. the display name exactly;
 //  2. the "~raw~"+base64url alias of the stored name (canonical encodings only);
-//  3. on a case- or normalization-insensitive volume, strings.EqualFold on
-//     valid UTF-8 (an approximation: no normalization or Unicode folding
-//     tables; never for "." and "..").
+//  3. on a normalization-insensitive volume (incompat 0x8, or 0x1 which
+//     implies it), a name that is equal after Unicode normalization (NFD) and,
+//     when the volume is also case-insensitive, full case folding, so an NFC
+//     query finds an NFD name and the reverse (valid UTF-8 only; never for "."
+//     and "..", and the folding tables are this reader's own: see names.go).
+//     On a normalization-insensitive volume the B-tree is searched by the name
+//     hash (the keys sort by it), reading the records of one hash instead of
+//     the directory; a name that is not found that way (its record stores a
+//     wrong hash, or the hash cannot be computed) is searched for by a scan.
+//
+// Where the hash search finds only a folded match, it is returned without
+// looking for an exact name stored under a wrong hash (a driver that looks names
+// up by hash does not find such a record either).
 //
 // An encrypted volume can be looked up but nothing below it (ErrEncrypted).
 func (f *FS) Lookup(p string) (filesys.Entry, error) {
@@ -342,13 +352,23 @@ func (f *FS) child(v *volume, view, dirIno uint64, comp string) (filesys.Entry, 
 	}
 	alt, hasAlt := rawAlias(comp)
 	fold := v.folds() && utf8.ValidString(comp) && comp != "." && comp != ".."
-	var exact, alias, folded *drec
+	var (
+		exact, alias, folded *drec
+		qkey                 string // comp as the volume compares names
+		qhash                = int64(-1)
+	)
+	if fold {
+		qkey = matchKey([]byte(comp), v.caseInsen)
+		if h, ok := nameHash([]byte(comp), v.caseInsen); ok && !hasAlt {
+			qhash = int64(h)
+		}
+	}
 	keep := func(d *drec) *drec {
 		c := *d
 		c.name = slices.Clone(d.name)
 		return &c
 	}
-	err := f.scanDir(v, view, dirIno, func(d *drec) bool {
+	match := func(d *drec) bool {
 		plain := plainName(d.name)
 		isAlt := hasAlt && bytes.Equal(d.name, alt)
 		if shadow && string(d.name) == snapshotsDirName {
@@ -365,13 +385,22 @@ func (f *FS) child(v *volume, view, dirIno uint64, comp string) (filesys.Entry, 
 			return true
 		case alias == nil && plain && isAlt:
 			alias = keep(d)
-		case folded == nil && fold && plain && strings.EqualFold(string(d.name), comp):
+		case folded == nil && fold && plain && (qhash < 0 || !d.hashOK || int64(d.hash) == qhash) && matchKey(d.name, v.caseInsen) == qkey:
+			// A record whose stored hash was verified and differs from the
+			// query's cannot hold an equal name: the comparison is skipped.
 			folded = keep(d)
 		}
 		return false
-	})
-	if err != nil {
-		return filesys.Entry{}, err
+	}
+	if qhash >= 0 && v.normInsen {
+		if err := f.scanDirHash(v, view, dirIno, qhash, match); err != nil {
+			return filesys.Entry{}, err
+		}
+	}
+	if exact == nil && alias == nil && folded == nil {
+		if err := f.scanDir(v, view, dirIno, match); err != nil {
+			return filesys.Entry{}, err
+		}
 	}
 	for _, d := range []*drec{exact, alias, folded} {
 		if d == nil {

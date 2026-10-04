@@ -12,7 +12,7 @@ import (
 )
 
 // The stored name hash of a directory record is checked for hashed keys and
-// pure-ASCII names (normalization is the identity there); a mismatch keeps the
+// every name (see TestNameHashNonASCIIMatchesRealImage); a mismatch keeps the
 // entry, adds name_hash=bad and one warning.
 func TestDrecNameHashIsVerified(t *testing.T) {
 	// The two hashes a real container stores (see the oracle fixtures).
@@ -27,14 +27,14 @@ func TestDrecNameHashIsVerified(t *testing.T) {
 	if h1, _ := apfs.NameHash([]byte("Root"), false); h1 == 2989177 {
 		t.Error("a case-sensitive hash must not fold")
 	}
-	if _, ok := apfs.NameHash([]byte("café"), true); ok {
-		t.Error("a non-ASCII name must not be verified (it needs normalization)")
+	if got, ok := apfs.NameHash([]byte("caf00e9"), true); !ok || got == 0 {
+		t.Errorf("a non-ASCII name must be verified too, got %d, %v", got, ok)
 	}
 
 	files := []apfstest.File{
 		{Path: "/good", Data: []byte("1")},
 		{Path: "/Bad", Data: []byte("22"), BadHash: true},
-		{Path: "/café", Data: []byte("333"), BadHash: true}, // not verified
+		{Path: "/café", Data: []byte("333"), BadHash: true},
 	}
 	for _, ci := range []bool{true, false} {
 		v := dataVolume(files...)
@@ -44,14 +44,14 @@ func TestDrecNameHashIsVerified(t *testing.T) {
 		if got := entryNames(es); !slices.Equal(got, []string{"Bad", "café", "good"}) {
 			t.Fatalf("ci=%v lists %q", ci, got)
 		}
-		for name, wantBad := range map[string]bool{"good": false, "Bad": true, "café": false} {
+		for name, wantBad := range map[string]bool{"good": false, "Bad": true, "café": true} {
 			v, ok := attr(byName(t, es, name), "name_hash")
 			if ok != wantBad || (ok && v != "bad") {
 				t.Errorf("ci=%v %s: name_hash = %q, %v; want bad=%v", ci, name, v, ok, wantBad)
 			}
 		}
-		if w := f.Info().Warnings; len(w) != 1 || !hasWarn(f, `"Bad"`, "hash") {
-			t.Errorf("ci=%v warnings: %q, want one for \"Bad\"", ci, w)
+		if w := f.Info().Warnings; len(w) != 2 || !hasWarn(f, `"Bad"`, "hash") || !hasWarn(f, `"café"`, "hash") {
+			t.Errorf("ci=%v warnings: %q, want one each for \"Bad\" and \"café\"", ci, w)
 		}
 		// Lookup scans by name, so a bad hash never hides the entry.
 		e := mustLookup(t, f, "/Data/Bad")

@@ -667,12 +667,30 @@ func TestDirEntryCap(t *testing.T) {
 	if !hasWarn(f, "more than 10 entries") {
 		t.Errorf("warnings: %q", f.Info().Warnings)
 	}
-	// An entry beyond the cap is not found.
-	if _, err := f.Lookup("/Data/f024"); !errors.Is(err, filesys.ErrNotFound) {
-		t.Errorf("Lookup beyond the cap = %v", err)
+	// On a hashed volume the name is searched by its hash and reads only the
+	// records of that hash, so the cap on a listing does not bound it.
+	for _, name := range []string{"f024", "f003"} {
+		if _, err := f.Lookup("/Data/" + name); err != nil {
+			t.Errorf("hashed Lookup(%s): %v", name, err)
+		}
 	}
-	if _, err := f.Lookup("/Data/f003"); err != nil {
-		t.Errorf("Lookup inside the cap: %v", err)
+	// Plain keys are scanned in key order: an entry beyond the cap is not found.
+	v := dataVolume(bigDir(25)...)
+	v.HashedKeys = false
+	f, _ = openOpts(t, volOpts(v))
+	f.SetMaxDirEntries(10)
+	var found, missed int
+	for i := range 25 {
+		if _, err := f.Lookup(fmt.Sprintf("/Data/f%03d", i)); err == nil {
+			found++
+		} else if errors.Is(err, filesys.ErrNotFound) {
+			missed++
+		} else {
+			t.Errorf("Lookup(f%03d) = %v", i, err)
+		}
+	}
+	if found != 10 || missed != 15 {
+		t.Errorf("plain keys with a cap of 10: %d found, %d not found; want 10 and 15", found, missed)
 	}
 }
 

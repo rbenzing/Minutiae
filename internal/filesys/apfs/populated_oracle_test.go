@@ -483,33 +483,25 @@ func testPopulated(t *testing.T) {
 		root := "/" + exp.Volume.Name
 		for _, tc := range []struct {
 			query, stored string
-			approx        bool // a normalization difference: see below
 		}{
-			{"/case/upper.txt", "/case/UPPER.TXT", false},
-			{"/CASE/LOWER.TXT", "/case/lower.txt", false},
-			{"/case/CAMELCASE.TXT", "/case/CamelCase.Txt", false},
-			{"/mixedcase.txt", "/MixedCase.TXT", false},
-			{"/unicode/café.txt", "/unicode/café.txt", true}, // NFD query, NFC stored
-			{"/nfd/café.txt", "/nfd/café.txt", true},         // NFC query, NFD stored
-			{"/unicode/CAFÉ.TXT", "/unicode/café.txt", false},
-			{"/unicode/ÜBER-ÅNGSTRÖM.TXT", "/unicode/über-Ångström.txt", false},
-			{"/unicode/ДОКУМЕНТ.TXT", "/unicode/документ.txt", false},
-			{"/unicode/ΕΛΛΗΝΙΚΆ.TXT", "/unicode/Ελληνικά.txt", false},
-			{"/unicode/한국어.txt", "/unicode/한국어.txt", false},
-			{"/nfd/한국어.txt", "/nfd/" + "한국어" + ".txt", true}, // composed query, conjoining-jamo stored
+			{"/case/upper.txt", "/case/UPPER.TXT"},
+			{"/CASE/LOWER.TXT", "/case/lower.txt"},
+			{"/case/CAMELCASE.TXT", "/case/CamelCase.Txt"},
+			{"/mixedcase.txt", "/MixedCase.TXT"},
+			{"/unicode/café.txt", "/unicode/café.txt"}, // NFD query, NFC stored
+			{"/nfd/café.txt", "/nfd/café.txt"},         // NFC query, NFD stored
+			{"/unicode/CAFÉ.TXT", "/unicode/café.txt"},
+			{"/unicode/ÜBER-ÅNGSTRÖM.TXT", "/unicode/über-Ångström.txt"},
+			{"/unicode/ДОКУМЕНТ.TXT", "/unicode/документ.txt"},
+			{"/unicode/ΕΛΛΗΝΙΚΆ.TXT", "/unicode/Ελληνικά.txt"},
+			{"/unicode/한국어.txt", "/unicode/한국어.txt"},
+			{"/nfd/한국어.txt", "/nfd/" + "한국어" + ".txt"}, // composed query, conjoining-jamo stored
 		} {
 			want, ok := stored[tc.stored]
 			if !ok {
 				t.Fatalf("the oracle has no path %q: the test table is wrong", tc.stored)
 			}
 			e, err := f.Lookup(root + tc.query)
-			if errors.Is(err, filesys.ErrNotFound) && tc.approx {
-				// dir.go: lookup folds case with strings.EqualFold, it does not
-				// normalize Unicode, so a differently normalized spelling of a
-				// non-ASCII name is not found (listing is unaffected).
-				t.Logf("known approximation: Lookup(%q) does not find %q", tc.query, tc.stored)
-				continue
-			}
 			if err != nil {
 				t.Errorf("Lookup(%q): %v", tc.query, err)
 				continue
@@ -520,26 +512,6 @@ func testPopulated(t *testing.T) {
 		}
 		if _, err := f.Lookup(root + "/case/missing.txt"); !errors.Is(err, filesys.ErrNotFound) {
 			t.Errorf("Lookup of a missing name = %v, want ErrNotFound", err)
-		}
-		// The stored hash of every directory record of the real volume: the
-		// reader's recipe (ASCII names) reproduces it, so a name search by
-		// hash is sound on real data.
-		checked := 0
-		for _, n := range exp.Live.Tree {
-			if n.NameHash == nil {
-				continue
-			}
-			h, ok := apfs.NameHash([]byte(path.Base(n.Path)), true)
-			if !ok {
-				continue // not ASCII: the reader does not verify those
-			}
-			checked++
-			if h != *n.NameHash {
-				t.Errorf("%s: stored name hash %d, reader computes %d", n.Path, *n.NameHash, h)
-			}
-		}
-		if checked < 600 {
-			t.Errorf("only %d ASCII names had their stored hash checked", checked)
 		}
 	})
 

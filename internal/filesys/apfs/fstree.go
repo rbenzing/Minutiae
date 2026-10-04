@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"hash/crc32"
 	"math"
 	"strconv"
 	"time"
@@ -123,6 +122,14 @@ func timestamp(ns uint64) (filesys.Timestamp, bool) {
 // scanObject visits, in key order, the records of object id whose type is in
 // [lo, hi]. Records over the format's size limits are skipped with a warning.
 func (f *FS) scanObject(t *tree, id uint64, lo, hi uint8, visit func(typ uint8, key, val []byte) (stop bool, err error)) error {
+	return f.scanObjectWithin(t, id, lo, hi, nil, visit)
+}
+
+// scanObjectWithin is scanObject narrowed further by within, when set: it
+// orders a record of the object and type range against the wanted sub-range of
+// keys (negative before it, positive after it, zero inside), and only records
+// inside are visited. The records must be sorted by it within the object.
+func (f *FS) scanObjectWithin(t *tree, id uint64, lo, hi uint8, within func(key []byte) int, visit func(typ uint8, key, val []byte) (stop bool, err error)) error {
 	f.scans.Add(1)
 	prefix := func(key []byte) int {
 		k := le.Uint64(key)
@@ -136,6 +143,9 @@ func (f *FS) scanObject(t *tree, id uint64, lo, hi uint8, visit func(typ uint8, 
 			return -1
 		case kt > hi:
 			return 1
+		}
+		if within != nil {
+			return within(key)
 		}
 		return 0
 	}
@@ -299,15 +309,16 @@ type drec struct {
 	name    []byte // without the NUL, aliases the node
 	fileID  uint64
 	flags   uint16
-	badHash bool // hashed key whose stored hash does not match the (ASCII) name
+	badHash bool // hashed key whose stored hash does not match the name
+	hash    uint32
+	hashOK  bool // a hashed key whose stored hash is the verified hash of the name
 }
 
 // parseDrecKey returns the name of a directory-record key. Either key form is
 // accepted when it is self-consistent: the hashed form (u32 name_len_and_hash
 // after the header: low 10 bits the length including the NUL, the rest the
 // hash) or the plain form (u16 name_len). The hash is returned for the caller
-// to verify (nameHash). why is
-// set when the key fits neither form.
+// to verify (nameHash). why is set when the key fits neither form.
 func parseDrecKey(key []byte) (name []byte, hash uint32, hashed bool, why string) {
 	end := len(key) - 1
 	if len(key) >= 8+4+1 {
@@ -332,12 +343,37 @@ func parseDrecKey(key []byte) (name []byte, hash uint32, hashed bool, why string
 // the scan ends with a warning; a directory of more than maxDirEntries valid
 // records is cut with a warning.
 func (f *FS) scanDir(v *volume, view uint64, dir uint64, fn func(d *drec) (stop bool)) error {
+	return f.scanDirHash(v, view, dir, -1, fn)
+}
+
+// scanDirHash is scanDir limited, when hash is not negative, to the records
+// whose stored name hash is hash. On a hashed volume those are adjacent in key
+// order (the hash is the high part of the key's name_len_and_hash, which sorts
+// before the name), so the B-tree is searched for just that run. It relies on
+// the tree being in key order, as every key search does; a caller that must also
+// find a record whose stored hash is wrong (or not hashed) scans without one.
+func (f *FS) scanDirHash(v *volume, view uint64, dir uint64, hash int64, fn func(d *drec) (stop bool)) error {
 	t, err := f.fsTree(v, view)
 	if err != nil {
 		return err
 	}
+	var within func(key []byte) int
+	if hash >= 0 {
+		within = func(key []byte) int {
+			if len(key) < 12 {
+				return 0 // not a hashed key: visited, then skipped as unusable
+			}
+			switch h := int64(le.Uint32(key[8:]) >> 10); {
+			case h < hash:
+				return -1
+			case h > hash:
+				return 1
+			}
+			return 0
+		}
+	}
 	var seen, valid int
-	return f.scanObject(t, dir, fsTypeDrec, fsTypeDrec, func(_ uint8, key, val []byte) (bool, error) {
+	return f.scanObjectWithin(t, dir, fsTypeDrec, fsTypeDrec, within, func(_ uint8, key, val []byte) (bool, error) {
 		seen++
 		if f.dirBudget.Add(-int64(len(key)+len(val))) < 0 {
 			if seen == 1 {
@@ -366,9 +402,12 @@ func (f *FS) scanDir(v *volume, view uint64, dir uint64, fn func(d *drec) (stop 
 		}
 		d := &drec{name: name, fileID: le.Uint64(val), flags: le.Uint16(val[16:])}
 		if hashed {
+			d.hash = hash
 			if want, ok := nameHash(name, v.caseInsen); ok && want != hash {
 				d.badHash = true
 				f.warn("volume %d directory %d: directory record %q stores the name hash %d, the name hashes to %d: the entry is listed as found", v.slot, dir, name, hash, want)
+			} else if ok {
+				d.hashOK = true
 			}
 		}
 		if d.fileID == 0 || d.fileID > maxIno {
@@ -409,31 +448,6 @@ func (f *FS) siblingTarget(v *volume, view, sib uint64) (uint64, bool, error) {
 // opposed to I/O failures.
 func isNotFoundOrCorrupt(err error) bool {
 	return errors.Is(err, filesys.ErrNotFound) || errors.Is(err, filesys.ErrCorrupt)
-}
-
-// castagnoli is the CRC-32C table.
-var castagnoli = crc32.MakeTable(crc32.Castagnoli)
-
-// nameHash is the 22-bit hash a hashed directory-record key stores for name
-// (Format reference: the name in NFD, as UTF-32 little-endian code points
-// without the NUL, CRC-32C with initial value 0xFFFFFFFF and no final
-// complement, low 22 bits; a case-insensitive volume hashes the case-folded
-// name). Only pure-ASCII names are supported: NFD is the identity there and
-// the fold is lower-casing. ok is false for any other name (it is not
-// verified: that needs Unicode normalization and folding tables).
-func nameHash(name []byte, foldCase bool) (hash uint32, ok bool) {
-	u := make([]byte, 0, 4*len(name))
-	for _, c := range name {
-		if c >= 0x80 {
-			return 0, false
-		}
-		if foldCase && c >= 'A' && c <= 'Z' {
-			c += 'a' - 'A'
-		}
-		u = append(u, c, 0, 0, 0)
-	}
-	// hash/crc32 complements the result; the stored value does not.
-	return ^crc32.Checksum(u, castagnoli) & 0x3fffff, true
 }
 
 // decmpfsNames are the decmpfs compression types this reader names. The numbers

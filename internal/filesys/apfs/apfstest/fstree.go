@@ -3,6 +3,9 @@ package apfstest
 import (
 	"sort"
 	"unicode/utf8"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 )
 
 // File-system record types and constants: the builder's own copy.
@@ -83,24 +86,47 @@ func crc32c(init uint32, b []byte) uint32 {
 }
 
 // NameHash is the 22-bit directory-record name hash: UTF-32 little-endian code
-// points of the name (no terminating NUL), CRC-32C with initial value
-// 0xFFFFFFFF and no final complement, low 22 bits. Names are not decomposed
-// (the builder's tests use ASCII); fold lower-cases ASCII for case-insensitive
-// volumes.
+// points of the name in NFD (no terminating NUL), CRC-32C with initial value
+// 0xFFFFFFFF and no final complement, low 22 bits. fold applies Unicode full
+// case folding first (then NFD again), as a case-insensitive volume does. A
+// name that is not valid UTF-8 is hashed as its bytes (Latin-1 code points).
+// This is the recipe the real kernel-written fixture's stored hashes follow;
+// it is written out here independently of the reader.
 func NameHash(name []byte, fold bool) uint32 {
 	var u []byte
-	for len(name) > 0 {
-		r, n := utf8.DecodeRune(name)
-		if n == 1 && r == utf8.RuneError {
-			r = rune(name[0])
+	if utf8.Valid(name) {
+		s := norm.NFD.String(string(name))
+		if fold {
+			s = norm.NFD.String(cases.Fold().String(s))
 		}
-		name = name[n:]
-		if fold && r >= 'A' && r <= 'Z' {
-			r += 'a' - 'A'
+		for _, r := range s {
+			u = append(u, byte(r), byte(r>>8), byte(r>>16), byte(r>>24))
 		}
-		u = append(u, byte(r), byte(r>>8), byte(r>>16), byte(r>>24))
+	} else {
+		for _, c := range name {
+			u = append(u, c, 0, 0, 0)
+		}
 	}
 	return crc32c(0xFFFFFFFF, u) & 0x3fffff
+}
+
+// drecKeyLess orders two directory-record keys (the bytes after the 8-byte
+// header) as a tree of hashed keys is sorted: by name_len_and_hash as a number
+// (the hash is its high part), then by name. Plain keys sort by name.
+func drecKeyLess(a, b []byte, hashed bool) bool {
+	if hashed {
+		if len(a) < 4 || len(b) < 4 {
+			return len(a) < len(b)
+		}
+		if x, y := le.Uint32(a), le.Uint32(b); x != y {
+			return x < y
+		}
+		return string(a[4:]) < string(b[4:])
+	}
+	if len(a) < 2 || len(b) < 2 {
+		return len(a) < len(b)
+	}
+	return string(a[2:]) < string(b[2:])
 }
 
 // DrecKey returns the bytes after the 8-byte header of a directory-record key
@@ -450,7 +476,13 @@ func (v Volume) compile(da *dataAlloc) ([]FSRecord, map[string]uint64, counts, u
 		if recs[i].ID&idMask != recs[j].ID&idMask {
 			return recs[i].ID&idMask < recs[j].ID&idMask
 		}
-		return recs[i].Type < recs[j].Type
+		if recs[i].Type != recs[j].Type {
+			return recs[i].Type < recs[j].Type
+		}
+		if recs[i].Type == TypeDrec {
+			return drecKeyLess(recs[i].Key, recs[j].Key, v.HashedKeys)
+		}
+		return false
 	})
 	if v.Reorder != nil {
 		recs = v.Reorder(recs)
