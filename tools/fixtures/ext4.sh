@@ -50,18 +50,6 @@ rm -rf "$work"
 mkdir "$work"
 trap 'rm -rf "$work"' EXIT
 
-# pattern <bytes> <seed>: deterministic pseudo-random bytes (sha256 counter mode).
-pattern() {
-  python3 -c '
-import hashlib, sys
-n, seed = int(sys.argv[1]), sys.argv[2]
-out, i = bytearray(), 0
-while len(out) < n:
-    out += hashlib.sha256(f"{seed}:{i}".encode()).digest()
-    i += 1
-sys.stdout.buffer.write(bytes(out[:n]))' "$1" "$2"
-}
-
 # island <file> <offset> <text>: write text (repeated to 6000 bytes) at offset.
 island() {
   python3 -c '
