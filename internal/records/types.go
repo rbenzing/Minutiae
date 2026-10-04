@@ -3,6 +3,8 @@ package records
 import (
 	"fmt"
 	"regexp"
+	"slices"
+	"strings"
 	"sync"
 )
 
@@ -61,4 +63,43 @@ func LookupType(name string) (Type, bool) {
 	defer registryMu.RUnlock()
 	t, ok := registry[name]
 	return t, ok
+}
+
+// TypeInfo describes a registered type without exposing its validator.
+type TypeInfo struct {
+	Name           string
+	PayloadVersion int
+	HasValidator   bool
+}
+
+// SetValidator installs the payload validator of an already registered type. It is for package init functions
+// (sub-project 4 owns the contracts) and panics on misuse: the type is not registered, v is nil, or the type
+// already has a validator (a second call, or a type registered with Validate set). It never changes PayloadVersion.
+func SetValidator(name string, v func(payload map[string]any) error) {
+	if v == nil {
+		panic(fmt.Sprintf("records.SetValidator(%q): nil validator", name))
+	}
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	t, ok := registry[name]
+	if !ok {
+		panic(fmt.Sprintf("records.SetValidator(%q): type is not registered", name))
+	}
+	if t.Validate != nil {
+		panic(fmt.Sprintf("records.SetValidator(%q): type already has a validator", name))
+	}
+	t.Validate = v
+	registry[name] = t
+}
+
+// Types lists every registered type, sorted by Name, without exposing the validators.
+func Types() []TypeInfo {
+	registryMu.RLock()
+	out := make([]TypeInfo, 0, len(registry))
+	for _, t := range registry {
+		out = append(out, TypeInfo{Name: t.Name, PayloadVersion: t.PayloadVersion, HasValidator: t.Validate != nil})
+	}
+	registryMu.RUnlock()
+	slices.SortFunc(out, func(a, b TypeInfo) int { return strings.Compare(a.Name, b.Name) })
+	return out
 }
