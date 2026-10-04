@@ -71,7 +71,13 @@ type oracle struct {
 		Size  int64  `json:"size"`
 		Mode  uint32 `json:"mode"`
 		Mtime int64  `json:"mtime"`
+		// SHA256 is the digest of the file content (of the link target for a
+		// symlink); empty for a directory.
+		SHA256     string `json:"sha256"`
+		LinkTarget string `json:"link_target"`
 	} `json:"files"`
+	// FileBlocks lists, per file with data blocks, the inclusive block ranges in
+	// logical order (files stored inline have no entry).
 	FileBlocks     map[string][][2]int64 `json:"file_blocks"`
 	FreeBlocks     [][2]int64            `json:"free_blocks"`
 	FreeBlockCount int64                 `json:"free_block_count"`
@@ -132,9 +138,9 @@ func loadOracle(t testing.TB, imgGz string) oracle {
 
 // TestF2FSMatchesOracle opens each real mkfs.f2fs/sload.f2fs fixture and
 // compares what the reader decoded with the oracle: Info, the superblock
-// geometry, the chosen checkpoint, the inode addresses and Unallocated (exactly
-// the free blocks of the SIT bitmaps). Directory and file comparisons live in
-// dir_test.go and data_test.go.
+// geometry, the chosen checkpoint, the inode addresses, Unallocated (exactly
+// the free blocks of the SIT bitmaps), and the tree: the exact live set, the
+// content hash of every file, the symlink targets and the per-file runs.
 func TestF2FSMatchesOracle(t *testing.T) {
 	for _, path := range fixturePaths(t) {
 		name := strings.TrimSuffix(filepath.Base(path), ".img.gz")
@@ -158,6 +164,7 @@ func TestF2FSMatchesOracle(t *testing.T) {
 			checkCheckpoint(t, fsys, want)
 			checkInodes(t, fsys, want)
 			checkUnallocated(t, fsys, want)
+			checkFiles(t, fsys, want)
 		})
 	}
 }
@@ -354,5 +361,162 @@ func checkUnallocated(t *testing.T, fsys *f2fs.FS, want oracle) {
 		if i < len(runs) && runs[i].Offset < r.Offset+r.Length {
 			t.Errorf("free run %+v overlaps a live block run %+v", runs[i], r)
 		}
+	}
+}
+
+// coalesce merges adjacent runs of a file by hand, in file order: two holes, or
+// two data runs that are contiguous on disk. It never sorts and keeps holes
+// (filesys.MergeRuns is for Unallocated only).
+func coalesce(runs []filesys.Run) []filesys.Run {
+	var out []filesys.Run
+	for _, r := range runs {
+		if n := len(out); n > 0 {
+			p := &out[n-1]
+			if (p.Offset < 0 && r.Offset < 0) || (p.Offset >= 0 && r.Offset >= 0 && p.Offset+p.Length == r.Offset) {
+				p.Length += r.Length
+				continue
+			}
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// extentRuns converts the oracle's inclusive block ranges of a file into runs in
+// logical order, the last one clipped to the file size.
+func extentRuns(ranges [][2]int64, size int64) []filesys.Run {
+	var out []filesys.Run
+	left := size
+	for _, r := range ranges {
+		n := min((r[1]-r[0]+1)*4096, left)
+		if n <= 0 {
+			break
+		}
+		out = append(out, filesys.Run{Offset: r[0] * 4096, Length: n})
+		left -= n
+	}
+	return out
+}
+
+// checkFiles walks the filesystem and compares it with the oracle: the live set
+// is exactly the oracle's files (type, size, permission bits, mtime), every
+// regular file and symlink reads back to the oracle's sha256 (a symlink to its
+// target), and the runs of every file equal the data-block extents that the
+// oracle derived from the source tree and dump.f2fs, in logical order. At least
+// one file must be fragmented, and nothing may warn.
+func checkFiles(t *testing.T, fsys *f2fs.FS, want oracle) {
+	t.Helper()
+	byPath := map[string]int{}
+	for i, f := range want.Files {
+		byPath[f.Path] = i
+	}
+	seen := map[string]bool{}
+	fragmented := 0
+	err := filesys.Walk(fsys, fsys.Root(), "/", func(p string, e filesys.Entry, err error) error {
+		if err != nil {
+			t.Errorf("%s: %v", p, err)
+			return nil
+		}
+		i, ok := byPath[p]
+		if !ok {
+			t.Errorf("%s: listed by the reader, absent from the oracle", p)
+			return nil
+		}
+		seen[p] = true
+		f := want.Files[i]
+		wantType := map[string]filesys.EntryType{"file": filesys.TypeFile, "dir": filesys.TypeDir, "symlink": filesys.TypeSymlink}[f.Type]
+		if e.Type != wantType || e.Deleted {
+			t.Errorf("%s: type %v deleted %v, want %s live", p, e.Type, e.Deleted, f.Type)
+		}
+		if e.Mode&0o7777 != f.Mode {
+			t.Errorf("%s: entry permission bits %#o, want %#o", p, e.Mode&0o7777, f.Mode)
+		}
+		if got := e.Times.Modified.T.Unix(); got != f.Mtime {
+			t.Errorf("%s: entry mtime %d, want %d", p, got, f.Mtime)
+		}
+		if f.Type == "dir" {
+			return nil
+		}
+		if e.Size != f.Size {
+			t.Errorf("%s: entry size %d, want %d", p, e.Size, f.Size)
+		}
+		fl, err := fsys.Open(e)
+		if err != nil {
+			t.Errorf("%s: Open: %v", p, err)
+			return nil
+		}
+		if fl.Size() != f.Size {
+			t.Errorf("%s: file size %d, want %d", p, fl.Size(), f.Size)
+		}
+		h, buf := sha256.New(), make([]byte, 64<<10)
+		var content []byte
+		for off := int64(0); off < fl.Size(); {
+			n, rerr := fl.ReadAt(buf[:min(int64(len(buf)), fl.Size()-off)], off)
+			h.Write(buf[:n])
+			if f.Type == "symlink" {
+				content = append(content, buf[:n]...)
+			}
+			off += int64(n)
+			if rerr != nil && (rerr != io.EOF || off != fl.Size()) {
+				t.Errorf("%s: read at %d: %v", p, off, rerr)
+				break
+			}
+		}
+		if got := hex.EncodeToString(h.Sum(nil)); got != f.SHA256 {
+			t.Errorf("%s: content sha256 %s, want %s", p, got, f.SHA256)
+		}
+		if f.Type == "symlink" && string(content) != f.LinkTarget {
+			t.Errorf("%s: symlink target %q, want %q", p, content, f.LinkTarget)
+		}
+
+		ranges, hasBlocks := want.FileBlocks[p]
+		runs := coalesce(fl.Runs())
+		if !hasBlocks {
+			if len(fl.Runs()) != 0 {
+				t.Errorf("%s: stored inline per the oracle, runs %v", p, fl.Runs())
+			}
+			return nil
+		}
+		exp := extentRuns(ranges, f.Size)
+		var dataLen int64
+		for _, r := range exp {
+			dataLen += r.Length
+		}
+		if dataLen == f.Size { // no hole: the runs are the extents, in logical order
+			if !slices.Equal(runs, exp) {
+				t.Errorf("%s: runs differ from the oracle's data extents:\n got  %v\n want %v", p, runs, exp)
+			}
+		} else { // holes: compare the data runs, and the hole bytes by difference
+			var data []filesys.Run
+			var holes int64
+			for _, r := range runs {
+				if r.Offset >= 0 {
+					data = append(data, r)
+				} else {
+					holes += r.Length
+				}
+			}
+			if !slices.Equal(data, exp) || holes != f.Size-dataLen {
+				t.Errorf("%s: data runs %v with %d hole bytes, want %v with %d", p, data, holes, exp, f.Size-dataLen)
+			}
+		}
+		if len(exp) > 1 {
+			fragmented++
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for p := range byPath {
+		if !seen[p] {
+			t.Errorf("%s: in the oracle, not listed by the reader", p)
+		}
+	}
+	if fragmented == 0 {
+		t.Error("no fragmented file in the oracle: the multi-extent path is untested")
+	}
+	if w := fsys.Info().Warnings; len(w) != 0 {
+		t.Errorf("warnings after reading every file of a clean image: %v", w)
 	}
 }
