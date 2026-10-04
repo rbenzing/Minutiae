@@ -140,7 +140,9 @@ type StatRow struct {
 
 // Overview summarises the records a filter selects.
 type Overview struct {
-	Records   int64
+	Records int64
+	// Deleted counts every deleted record, recovered ones included; Stats by
+	// "deleted" puts recovered records in their own "recovered" group.
 	Deleted   int64
 	Recovered int64
 	Untimed   int64
