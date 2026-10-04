@@ -19,9 +19,9 @@ func TestReadTxEscapesCannotPersist(t *testing.T) {
 	ctx := context.Background()
 	before := nextID(t, c)
 	err := c.ReadTx(ctx, func(h ReadHandle) error {
-		_ = queryExec(h, `PRAGMA query_only = OFF`)
-		_ = queryExec(h, `UPDATE records_meta SET value = '777' WHERE key = 'next_id'`)
-		_ = queryExec(h, `ATTACH DATABASE ':memory:' AS evil`)
+		_ = rawExec(h, `PRAGMA query_only = OFF`)
+		_ = rawExec(h, `UPDATE records_meta SET value = '777' WHERE key = 'next_id'`)
+		_ = rawExec(h, `ATTACH DATABASE ':memory:' AS evil`)
 		return nil
 	})
 	if !errors.Is(err, ErrReadTxModified) {

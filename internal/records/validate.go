@@ -62,13 +62,13 @@ type prepared struct {
 func prepare(r Record, art artifactInfo) (prepared, error) {
 	ty, ok := LookupType(r.Type)
 	if !ok {
-		return prepared{}, fmt.Errorf("%w: %q", ErrUnknownType, r.Type)
+		return prepared{}, fmt.Errorf("%w: %q", ErrUnknownType, clip(r.Type))
 	}
 	if r.ArtifactID == "" {
 		return prepared{}, fmt.Errorf("%w: the record names no artifact", ErrUnknownArtifact)
 	}
 	if r.ArtifactID != art.ID {
-		return prepared{}, fmt.Errorf("%w: %q is not the artifact %q", ErrUnknownArtifact, r.ArtifactID, art.ID)
+		return prepared{}, fmt.Errorf("%w: %q is not the artifact %q", ErrUnknownArtifact, clip(r.ArtifactID), clip(art.ID))
 	}
 
 	for _, f := range []struct {
@@ -150,11 +150,8 @@ func prepare(r Record, art artifactInfo) (prepared, error) {
 	}
 
 	if ty.Validate != nil {
-		if err := ty.Validate(r.Payload); err != nil {
-			if errors.Is(err, ErrInvalidPayload) {
-				return prepared{}, err
-			}
-			return prepared{}, fmt.Errorf("%w: type %q: %w", ErrInvalidPayload, r.Type, err)
+		if err := runValidator(ty, r.Payload); err != nil {
+			return prepared{}, err
 		}
 	}
 
@@ -283,13 +280,68 @@ func checkText(name, s string) error {
 	return nil
 }
 
-// clip shortens hostile text for an error message.
+// maxClip is how many bytes of caller-supplied text an error message may carry.
+const maxClip = 128
+
+// clip shortens hostile text for an error message: at most maxClip bytes, cut on
+// a rune boundary, invalid UTF-8 replaced. Callers print it with %q, which also
+// escapes control characters.
 func clip(s string) string {
-	const n = 64
-	if len(s) <= n {
-		return s
+	if len(s) <= maxClip {
+		return strings.ToValidUTF8(s, "?")
 	}
-	return strings.ToValidUTF8(s[:n], "?") + "..."
+	cut := maxClip
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return strings.ToValidUTF8(s[:cut], "?") + "..."
+}
+
+// runValidator calls a type's validator on a deep copy of the payload (so it can
+// neither change the caller's map nor what is stored) and turns a panic into a
+// typed validation error: a registered validator is code the writer does not
+// control, and a parser's record must never take the process down.
+func runValidator(ty Type, payload map[string]any) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%w: type %q: validator panicked: panic: %s", ErrInvalidPayload, ty.Name, clip(fmt.Sprint(r)))
+		}
+	}()
+	if err := ty.Validate(deepCopyPayload(payload)); err != nil {
+		if errors.Is(err, ErrInvalidPayload) {
+			return err
+		}
+		return fmt.Errorf("%w: type %q: %w", ErrInvalidPayload, ty.Name, err)
+	}
+	return nil
+}
+
+// deepCopyPayload copies maps and slices recursively. It runs only on a payload
+// that canonicalPayload already accepted (so depth and size are bounded and it
+// holds only the encodable value types, whose scalars are immutable).
+func deepCopyPayload(m map[string]any) map[string]any {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = deepCopyValue(v)
+	}
+	return out
+}
+
+func deepCopyValue(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		return deepCopyPayload(x)
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = deepCopyValue(e)
+		}
+		return out
+	}
+	return v
 }
 
 // validateParser checks a parser identity. The hash is optional: "" means none

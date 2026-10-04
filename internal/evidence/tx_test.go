@@ -111,7 +111,7 @@ func queryOnly(t *testing.T, c *Case) int {
 func queryOnlyIn(t *testing.T, tx ReadHandle) int {
 	t.Helper()
 	var v int
-	if err := tx.QueryRow(`PRAGMA query_only`).Scan(&v); err != nil {
+	if err := tx.QueryRow(`SELECT query_only FROM pragma_query_only`).Scan(&v); err != nil {
 		t.Fatal(err)
 	}
 	return v
@@ -148,7 +148,7 @@ func TestReaderCannotWrite(t *testing.T) {
 				`UPDATE records_meta SET value = '9' WHERE key = 'next_id'`,
 				`DELETE FROM records_meta WHERE key = 'next_id'`,
 			} {
-				if err := queryExec(tx, stmt); err == nil {
+				if err := rawExec(tx, stmt); err == nil {
 					t.Errorf("%s succeeded inside ReadTx", stmt)
 				}
 			}
@@ -212,16 +212,4 @@ func TestTxRefusedAfterClose(t *testing.T) {
 	if called {
 		t.Error("fn ran after Close")
 	}
-}
-
-// queryExec runs a statement through the only door ReadHandle has (a query).
-func queryExec(h ReadHandle, stmt string) error {
-	rows, err := h.Query(stmt)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-	}
-	return rows.Err()
 }

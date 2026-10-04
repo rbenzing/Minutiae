@@ -152,26 +152,45 @@ func (c *Case) StoreTx(ctx context.Context, fn func(*sql.Tx) error) error {
 
 // ReadHandle is what fn sees inside ReadTx: query methods only. It has no Exec,
 // no Commit or Rollback and no access to the underlying transaction or
-// connection.
+// connection. Every query is checked before it runs: it must be one SELECT or
+// WITH statement without PRAGMA, ATTACH, COMMIT, BEGIN and similar (see
+// checkReadSQL); anything else returns ErrReadSQLRefused and runs nothing.
 type ReadHandle struct{ tx *sql.Tx }
+
+// refusedRow is what QueryRow methods return for a refused statement: a query
+// that cannot succeed, so Scan reports an error and the caller's SQL is never run.
+const refusedRow = `SELECT * FROM "non-read SQL refused by ReadHandle"`
 
 // Query runs a query and returns its rows (close them before fn returns).
 func (h ReadHandle) Query(query string, args ...any) (*sql.Rows, error) {
+	if err := checkReadSQL(query); err != nil {
+		return nil, err
+	}
 	return h.tx.Query(query, args...)
 }
 
 // QueryContext is Query with a context.
 func (h ReadHandle) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if err := checkReadSQL(query); err != nil {
+		return nil, err
+	}
 	return h.tx.QueryContext(ctx, query, args...)
 }
 
-// QueryRow runs a query that returns at most one row.
+// QueryRow runs a query that returns at most one row. A refused statement makes
+// Scan fail.
 func (h ReadHandle) QueryRow(query string, args ...any) *sql.Row {
+	if checkReadSQL(query) != nil {
+		return h.tx.QueryRow(refusedRow)
+	}
 	return h.tx.QueryRow(query, args...)
 }
 
 // QueryRowContext is QueryRow with a context.
 func (h ReadHandle) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	if checkReadSQL(query) != nil {
+		return h.tx.QueryRowContext(ctx, refusedRow)
+	}
 	return h.tx.QueryRowContext(ctx, query, args...)
 }
 

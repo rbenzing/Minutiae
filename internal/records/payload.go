@@ -75,7 +75,7 @@ func (e *payloadEncoder) value(v any, depth int) error {
 		return e.str(x)
 	case json.Number:
 		if !validNumber(string(x)) {
-			return fmt.Errorf("%w: %q is not a JSON number", ErrInvalidPayload, string(x))
+			return fmt.Errorf("%w: %q is not a JSON number", ErrInvalidPayload, clip(string(x)))
 		}
 		if !e.room(len(x)) {
 			return e.tooLarge()
