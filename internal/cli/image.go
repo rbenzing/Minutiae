@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -16,8 +17,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/examine"
 	"github.com/rbenzing/minutiae/internal/filesys"
+	"github.com/rbenzing/minutiae/internal/image"
 )
 
 func newImageCmd(d Deps, opts *rootOptions) *cobra.Command {
@@ -131,35 +134,110 @@ func newImageInfoCmd(d Deps, opts *rootOptions) *cobra.Command {
 	}
 	casePath := caseFlag(cmd)
 	cmd.Flags().BoolVar(&verify, "verify", false, "verify the container's stored hashes (raw images have none)")
-	cmd.RunE = func(_ *cobra.Command, args []string) error {
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		s, closeAll, err := openImageSession(d, *casePath, args[0])
 		if err != nil {
 			return err
 		}
 		defer closeAll()
 		info := s.Info()
-		// Verification of stored container hashes belongs to the EWF reader (plan 2E);
-		// in this build only containers without stored hashes can be opened.
-		var verifyNote string
+		if !opts.json {
+			printImageInfo(d.Out, info)
+		}
+		var cv *examine.ContainerVerification
+		var verr error
 		if verify {
-			verifyNote = fmt.Sprintf("verification of %s containers is not available", escapeText(info.Format))
-			if info.Format == "raw" || info.Format == "split-raw" {
-				verifyNote = "container has no stored hashes"
+			var res examine.ContainerVerification
+			res, verr = s.VerifyContainer(cmd.Context(), newProgress(d.Err, "verify"))
+			if errors.Is(verr, examine.ErrNoStoredHashes) {
+				// Raw images store no hashes: nothing to verify, nothing audited.
+				const note = "container has no stored hashes (raw images carry none)"
+				if opts.json {
+					fmt.Fprintln(d.Err, note)
+				} else {
+					fmt.Fprintln(d.Out, note)
+				}
+				verr = nil
+			} else {
+				fmt.Fprintln(d.Err) // end the progress line
+				cv = &res
 			}
 		}
 		if opts.json {
-			if verifyNote != "" {
-				fmt.Fprintln(d.Err, verifyNote)
+			out := newJSONImageInfo(info)
+			if cv != nil {
+				out.Verify = newJSONVerify(*cv, verr)
 			}
-			return writeJSON(d.Out, newJSONImageInfo(info))
+			if err := writeJSON(d.Out, out); err != nil {
+				return err
+			}
+		} else if cv != nil {
+			printVerification(d.Out, *cv)
 		}
-		printImageInfo(d.Out, info)
-		if verifyNote != "" {
-			fmt.Fprintln(d.Out, verifyNote)
-		}
-		return nil
+		return verifyOutcome(cv, verr)
 	}
 	return cmd
+}
+
+// verifyOutcome turns a verification into the command's error: nil for a match
+// or a container storing no hashes; ErrIntegrity (exit 4) for a mismatch; any
+// other outcome (unreadable chunk, cancelled, parse failure, failed audit
+// append) is a plain error, exit 1. The result has already been printed.
+func verifyOutcome(cv *examine.ContainerVerification, verr error) error {
+	if cv == nil {
+		return nil
+	}
+	if verr != nil {
+		return fmt.Errorf("container verification: %w", verr)
+	}
+	switch image.HashStatus(cv.Result) {
+	case image.HashMatch, image.HashAbsent:
+		return nil
+	case image.HashMismatch:
+		var bad []string
+		if cv.MD5.Status == image.HashMismatch {
+			bad = append(bad, "MD5")
+		}
+		if cv.SHA1.Status == image.HashMismatch {
+			bad = append(bad, "SHA-1")
+		}
+		return fmt.Errorf("%w: the container's stored %s differs from the hash of the image data", evidence.ErrIntegrity, strings.Join(bad, " and "))
+	}
+	return fmt.Errorf("container could not be verified: %s", escapeText(unverifiedReason(*cv)))
+}
+
+func unverifiedReason(cv examine.ContainerVerification) string {
+	if cv.BadChunk >= 0 {
+		return fmt.Sprintf("first unreadable chunk %d: %s", cv.BadChunk, cv.BadChunkError)
+	}
+	return fmt.Sprintf("%d of %d bytes hashed", cv.BytesHashed, cv.Size)
+}
+
+// printVerification prints the stored-versus-computed comparison. Every value
+// comes from the container, so all of it goes through printable/escapeText.
+func printVerification(w io.Writer, cv examine.ContainerVerification) {
+	field := func(name, format string, a ...any) { fmt.Fprintf(w, "%-13s %s\n", name+":", fmt.Sprintf(format, a...)) }
+	hash := func(name string, width int, h image.HashCheck) {
+		stored := string(image.HashAbsent)
+		if h.Stored != "" {
+			stored = printable(h.Stored)
+		}
+		computed := strings.Repeat(" ", len("computed ")+width)
+		if h.Computed != "" {
+			computed = fmt.Sprintf("computed %-*s", width, printable(h.Computed))
+		}
+		field("Verify", "%-7s stored %-*s  %s  %s", name, width, stored, computed, printable(string(h.Status)))
+	}
+	hash("MD5", 32, cv.MD5)
+	hash("SHA-1", 40, cv.SHA1)
+	if cv.BadChunk >= 0 {
+		field("Verify", "first unreadable chunk %d: %s", cv.BadChunk, escapeText(cv.BadChunkError))
+	}
+	hashed := fmt.Sprintf("%d bytes hashed", cv.BytesHashed)
+	if cv.BytesHashed != cv.Size {
+		hashed = fmt.Sprintf("%d of %d bytes hashed", cv.BytesHashed, cv.Size)
+	}
+	field("Verify", "result  %s (%s)", printable(cv.Result), hashed)
 }
 
 func printImageInfo(w io.Writer, info examine.ImageInfo) {

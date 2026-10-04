@@ -131,6 +131,45 @@ type jsonImageInfo struct {
 	Partitions  []jsonPartition `json:"partitions"`
 	Unallocated []jsonRun       `json:"unallocated"`
 	Warnings    []string        `json:"warnings"`
+	// Verify is present only with --verify on a container that stores hashes.
+	Verify *jsonVerify `json:"verify,omitempty"`
+}
+
+type jsonHashCheck struct {
+	Stored   string `json:"stored"`
+	Computed string `json:"computed"`
+	Status   string `json:"status"`
+}
+
+// jsonVerify is the outcome of `image info --verify`: the same values the
+// image.verify audit entry records.
+type jsonVerify struct {
+	Result        string        `json:"result"`
+	Size          int64         `json:"size"`
+	BytesHashed   int64         `json:"bytes_hashed"`
+	MD5           jsonHashCheck `json:"md5"`
+	SHA1          jsonHashCheck `json:"sha1"`
+	FirstBadChunk *int64        `json:"first_bad_chunk,omitempty"`
+	// Error is the error that ended the run (cancelled, failed audit append),
+	// else the error of the first unreadable chunk.
+	Error string `json:"error,omitempty"`
+}
+
+func newJSONVerify(cv examine.ContainerVerification, verr error) *jsonVerify {
+	v := &jsonVerify{
+		Result: cv.Result, Size: cv.Size, BytesHashed: cv.BytesHashed,
+		MD5:  jsonHashCheck{Stored: cv.MD5.Stored, Computed: cv.MD5.Computed, Status: string(cv.MD5.Status)},
+		SHA1: jsonHashCheck{Stored: cv.SHA1.Stored, Computed: cv.SHA1.Computed, Status: string(cv.SHA1.Status)},
+	}
+	if cv.BadChunk >= 0 {
+		bad := cv.BadChunk
+		v.FirstBadChunk = &bad
+		v.Error = cv.BadChunkError
+	}
+	if verr != nil {
+		v.Error = verr.Error()
+	}
+	return v
 }
 
 func nonNil(s []string) []string {
