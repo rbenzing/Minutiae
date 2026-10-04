@@ -66,6 +66,7 @@ func newRootCmd(d Deps) *cobra.Command {
 	root.AddCommand(newAndroidCmd(d, opts))
 	root.AddCommand(newIOSCmd(d, opts))
 	root.AddCommand(newImageCmd(d, opts))
+	root.AddCommand(newRecordsCmd(d, opts))
 	return root
 }
 

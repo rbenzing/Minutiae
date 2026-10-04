@@ -38,11 +38,14 @@ func newCaseUpgradeCmd(d Deps, opts *rootOptions) *cobra.Command {
 				return err
 			}
 			if opts.json {
-				return writeJSON(d.Out, map[string]any{"from": res.From, "to": res.To, "upgraded": res.Upgraded})
+				return writeJSON(d.Out, map[string]any{"from": res.From, "to": res.To, "upgraded": res.Upgraded, "resumed": res.Resumed})
 			}
-			if res.Upgraded {
+			switch {
+			case res.Resumed:
+				fmt.Fprintf(d.Out, "case schema v%d: concluded an interrupted upgrade (audited)\n", res.To)
+			case res.Upgraded:
 				fmt.Fprintf(d.Out, "upgraded case schema v%d -> v%d\n", res.From, res.To)
-			} else {
+			default:
 				fmt.Fprintf(d.Out, "case schema v%d is already current\n", res.To)
 			}
 			return nil
@@ -146,10 +149,10 @@ func newCaseVerifyCmd(d Deps, opts *rootOptions) *cobra.Command {
 				}
 			} else {
 				for _, n := range rep.Notices {
-					fmt.Fprintln(d.Out, "NOTICE:", n)
+					fmt.Fprintln(d.Out, "NOTICE:", escapeText(n))
 				}
 				for _, p := range rep.Problems {
-					fmt.Fprintln(d.Out, "PROBLEM:", p)
+					fmt.Fprintln(d.Out, "PROBLEM:", escapeText(p))
 				}
 				status := "OK"
 				if !rep.OK() {

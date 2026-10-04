@@ -11,6 +11,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/image"
+	"github.com/rbenzing/minutiae/internal/records"
 )
 
 // Process exit codes. Documented in the spec §8; scripts depend on them.
@@ -86,7 +87,8 @@ func ExitCode(err error) int {
 		return ExitOK
 	case errors.As(err, &ue):
 		return ExitUsage
-	case errors.Is(err, evidence.ErrNeedsUpgrade):
+	case errors.Is(err, evidence.ErrNeedsUpgrade), errors.Is(err, records.ErrBadCursor),
+		errors.Is(err, records.ErrInvalidFilter), errors.Is(err, records.ErrInvalidPage):
 		return ExitUsage
 	case errors.Is(err, evidence.ErrIntegrity):
 		return ExitIntegrity
