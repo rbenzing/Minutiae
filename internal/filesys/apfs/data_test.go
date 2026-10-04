@@ -997,3 +997,45 @@ func TestCompressedAttrNamesTheDecmpfsType(t *testing.T) {
 		})
 	}
 }
+
+// A record of the SAME object id but a later type ends the first leaf, and the
+// file's remaining extent sits at the start of the second leaf: the extent
+// follows a larger key, so the tree is out of order. The ordering check must go
+// on across the leaf boundary while the object id is still the file's, not stop
+// at the end of the leaf (the missing tail would otherwise read as a hole).
+func TestOrderViolationInLaterLeafEndsPrefix(t *testing.T) {
+	data := pattern(6*bs, 31)
+	extents := []apfstest.Extent{
+		{Logical: 0, Length: 2 * bs, Rel: true},
+		{Logical: 2 * bs, Length: 2 * bs, Rel: true, Phys: 2},
+		{Logical: 4 * bs, Length: 2 * bs, Rel: true, Phys: 4},
+	}
+	var lastOfLeaf int // records before the hostile one (it ends the first leaf)
+	hostile := func(recs []apfstest.FSRecord) []apfstest.FSRecord {
+		n := 0
+		for i, r := range recs {
+			if r.ID == 40 && r.Type == apfstest.TypeFileExtent {
+				if n++; n == 3 { // before the third extent
+					lastOfLeaf = i
+					extra := apfstest.FSRecord{ID: 40, Type: apfstest.TypeDrec, Key: apfstest.DrecKey([]byte("x"), false, 0), Val: apfstest.DrecVal(40, 8)}
+					return slices.Insert(slices.Clone(recs), i, extra)
+				}
+			}
+		}
+		t.Fatal("no third extent record")
+		return recs
+	}
+	mk := func(maxKeys int) apfstest.Options {
+		v := dataVolume(apfstest.File{Path: "/b", Ino: 40, Data: data, Extents: extents})
+		v.Reorder = hostile
+		v.TreeMaxKeys = maxKeys
+		return volOpts(v)
+	}
+	apfstest.Build(mk(0)) // finds the position of the hostile record
+	f, _ := openOpts(t, mk(lastOfLeaf+1))
+	fl := openPath(t, f, "/Data/b")
+	wantPrefix(t, f, fl, data, 4*bs)
+	if !hasWarn(f, "out of key order") {
+		t.Errorf("warnings %q", f.Info().Warnings)
+	}
+}

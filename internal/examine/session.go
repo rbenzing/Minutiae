@@ -521,3 +521,16 @@ func (s *Session) SnapshotPath(fsys filesys.FileSystem, snapshot, p string) (str
 func errNoSnapshots() error {
 	return fmt.Errorf("%w: filesystem has no snapshots", filesys.ErrUnsupported)
 }
+
+// NoteSnapshotsSkipped writes one analysis.warning (source "examine") to the
+// audit log when a recursive operation that walks the tree itself (image ls -r)
+// did not descend into e, the synthetic .snapshots directory at p, of a volume
+// that has snapshots. A volume without snapshots writes nothing.
+func (s *Session) NoteSnapshotsSkipped(p string, e filesys.Entry) error {
+	d := snapshotsSkippedDetails(p, e)
+	if d == nil {
+		return nil
+	}
+	_, err := s.Case.Audit.Append("analysis.warning", s.Parent.Source.DeviceID, d)
+	return err
+}

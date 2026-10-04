@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -145,5 +146,58 @@ func TestImageLsSnapshotNeedsVolume(t *testing.T) {
 	}
 	if code, _ = e.image(t, "ls", e.ref, "id:n:0:0:2", "--snapshot", "S"); code != ExitUsage {
 		t.Errorf("--snapshot with an id: path: %d, want %d", code, ExitUsage)
+	}
+}
+
+// examineNotes counts the analysis.warning entries with source "examine" in the
+// case's audit log.
+func examineNotes(t *testing.T, caseDir string) (n int, first map[string]any) {
+	t.Helper()
+	entries, err := evidence.ReadAuditEntries(filepath.Join(caseDir, "audit.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Action == "analysis.warning" && e.Details["source"] == "examine" {
+			if n == 0 {
+				first = e.Details
+			}
+			n++
+		}
+	}
+	return n, first
+}
+
+// A recursive listing that skips .snapshots on a volume that HAS snapshots
+// writes exactly one audit entry saying so; a volume without snapshots, a
+// non-recursive listing and a listing of the snapshots write none.
+func TestImageLsRecursiveNotesSkippedSnapshots(t *testing.T) {
+	e := apfsEnv(t, snapshotVolume("Data"))
+	if code, out := e.image(t, "ls", e.ref, "/Data"); code != 0 {
+		t.Fatalf("ls: %d\n%s", code, out)
+	}
+	if n, _ := examineNotes(t, e.c); n != 0 {
+		t.Errorf("a non-recursive ls wrote %d notes", n)
+	}
+	if code, out := e.image(t, "ls", e.ref, "/Data", "-r"); code != 0 {
+		t.Fatalf("ls -r: %d\n%s", code, out)
+	}
+	n, d := examineNotes(t, e.c)
+	if n != 1 || d["path"] != "/Data/.snapshots" || !strings.Contains(d["reason"].(string), "--snapshot") {
+		t.Fatalf("after ls -r: %d notes, first %v; want exactly one for /Data/.snapshots", n, d)
+	}
+	if code, out := e.image(t, "ls", e.ref, "/Data", "--snapshot", "S", "-r"); code != 0 {
+		t.Fatalf("ls --snapshot -r: %d\n%s", code, out)
+	}
+	if n, _ := examineNotes(t, e.c); n != 1 {
+		t.Errorf("listing a snapshot wrote another note (%d in total)", n)
+	}
+
+	e = apfsEnv(t, apfstest.Volume{Name: "Plain", UUID: [16]byte{3}, Files: []apfstest.File{{Path: "/a.txt", Data: []byte("a")}}})
+	if code, out := e.image(t, "ls", e.ref, "/Plain", "-r"); code != 0 {
+		t.Fatalf("ls -r (no snapshots): %d\n%s", code, out)
+	}
+	if n, _ := examineNotes(t, e.c); n != 0 {
+		t.Errorf("a volume without snapshots wrote %d notes", n)
 	}
 }

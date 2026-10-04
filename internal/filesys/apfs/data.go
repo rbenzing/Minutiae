@@ -207,7 +207,7 @@ func (f *FS) fileMap(v *volume, view uint64, in *inode, size int64) (*fileMap, e
 			return 0
 		}
 		bsz := uint64(f.bs)
-		ooo, err := t.scanOrdered(prefix, fsKeyInOrder, func(key, val []byte) (bool, error) {
+		ooo, err := t.scanOrdered(prefix, fsKeyInOrder, func(key []byte) bool { return le.Uint64(key)&jobjIDMask == id }, func(key, val []byte) (bool, error) {
 			if records++; records > maxExtentRecords {
 				reason = fmt.Sprintf("more than %d extent records", maxExtentRecords)
 				return true, nil

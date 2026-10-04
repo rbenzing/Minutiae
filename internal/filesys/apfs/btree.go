@@ -364,6 +364,12 @@ type scanner struct {
 	prev     []byte
 	havePrev bool
 	beyond   bool // a record after the range was seen; the rest of the leaf is only order-checked
+
+	// sameObject reports whether a record belongs to the wanted object. A leaf
+	// that ends after the range on such a record lets the scan go on (carry) into
+	// the next leaf, order-checking only.
+	sameObject func(key []byte) bool
+	carry      bool
 }
 
 // scan visits, in key order, the leaf records for which prefix returns 0.
@@ -384,7 +390,7 @@ type scanner struct {
 // (nil prefix) that runs to the end also checks bt_node_count and bt_key_count
 // and warns when they disagree with what was read.
 func (t *tree) scan(prefix func(key []byte) int, visit func(key, val []byte) (stop bool, err error)) error {
-	_, err := t.scanOrdered(prefix, nil, visit)
+	_, err := t.scanOrdered(prefix, nil, nil, visit)
 	return err
 }
 
@@ -397,15 +403,20 @@ func (t *tree) scan(prefix func(key []byte) int, visit func(key, val []byte) (st
 // range the rest of that leaf is read too, so a record of the range that
 // follows a larger key is found: a record that is not strictly greater than the
 // previous one, or a range record after a larger key, ends the scan with
-// outOfOrder true. Records in later leaves are not read (the index keys say
-// they sort after the range).
-func (t *tree) scanOrdered(prefix func(key []byte) int, order func(prev, cur []byte) bool, visit func(key, val []byte) (stop bool, err error)) (outOfOrder bool, err error) {
+// outOfOrder true. When a leaf ends on a record for which sameObject (when set)
+// is true, that is a record after the range that still belongs to the wanted
+// object (a later record type of the same object id), the check goes on into
+// the following leaves, whatever their index keys claim, until a record of
+// another object id is read or the node budget is spent. Records of later
+// leaves after a record of another (larger) object id are not read: the index
+// keys say they sort after the range, and reading on would cost the whole tree.
+func (t *tree) scanOrdered(prefix func(key []byte) int, order func(prev, cur []byte) bool, sameObject func(key []byte) bool, visit func(key, val []byte) (stop bool, err error)) (outOfOrder bool, err error) {
 	limit := t.f.nodeBudget
 	if n := t.info.nodeCount; n > 0 && n < uint64(limit) {
 		limit = int(n) // the tree says how many nodes it has
 	}
 	s := &scanner{
-		t: t, prefix: prefix, visit: visit, order: order,
+		t: t, prefix: prefix, visit: visit, order: order, sameObject: sameObject,
 		visited: map[uint64]struct{}{t.rootAddr: {}},
 		limit:   limit, budget: limit - 1, nodes: 1, // the root
 	}
@@ -465,7 +476,7 @@ func (s *scanner) walk(n *btNode, depth int, seeking bool) error {
 		}
 	}
 	for i := start; i < len(n.recs); i++ {
-		if (!seeking || i != start) && s.cmp(n.recs[i].key) > 0 {
+		if (!seeking || i != start) && !s.carry && s.cmp(n.recs[i].key) > 0 {
 			s.stop = true // this child and all after it are beyond the range
 			return nil
 		}
@@ -515,6 +526,7 @@ func (s *scanner) load(parent *btNode, val []byte) (*btNode, error) {
 }
 
 func (s *scanner) leaf(n *btNode) error {
+	s.carry = false
 	s.keys += uint64(len(n.recs) + n.ghosts)
 	for _, r := range n.recs {
 		if s.order != nil {
@@ -556,7 +568,14 @@ func (s *scanner) leaf(n *btNode) error {
 		}
 	}
 	if s.beyond {
-		s.stop = true
+		// Go on into the next leaf only while the last record read is still of the
+		// wanted object (s.prev is the last record of this leaf, or of an earlier
+		// one when this leaf held no record).
+		if s.sameObject != nil && s.havePrev && s.sameObject(s.prev) {
+			s.carry = true
+		} else {
+			s.stop = true
+		}
 	}
 	return nil
 }

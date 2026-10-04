@@ -413,6 +413,9 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 				if jsonErr == nil && filesys.IsSnapshotsDir(e) {
 					// Listed, but not descended into: name a snapshot (--snapshot, or a
 					// path below .snapshots) to see inside.
+					if nerr := s.NoteSnapshotsSkipped(p, e); nerr != nil {
+						return nerr
+					}
 					return filesys.SkipDir
 				}
 				return jsonErr

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/examine"
 	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/filesys/detect"
@@ -120,5 +121,93 @@ func TestExtractRecursiveSkipsSnapshotsUnlessAddressed(t *testing.T) {
 	sum = extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: []string{"/.snapshots/S/old.txt"}})
 	if got := paths(sum); len(got) != 1 || got[0] != "/.snapshots/S/old.txt" {
 		t.Errorf("extract of a snapshot file = %v", got)
+	}
+}
+
+// snapshotsHook marks the synthetic .snapshots directory the way the APFS
+// reader does: attribute synthetic=snapshots and snapshots=<usable count>.
+func snapshotsHook(count string) hookFS {
+	return hookFS{mapEntry: func(e filesys.Entry) filesys.Entry {
+		if e.Name == ".snapshots" && e.Type == filesys.TypeDir {
+			e.Attrs = append(e.Attrs, filesys.KV{Key: "synthetic", Value: "snapshots"}, filesys.KV{Key: "snapshots", Value: count})
+		}
+		return e
+	}}
+}
+
+// examineWarnings returns the analysis.warning entries written with source
+// "examine".
+func examineWarnings(t *testing.T, c *evidence.Case) []evidence.AuditEntry {
+	t.Helper()
+	var out []evidence.AuditEntry
+	for _, e := range auditByAction(t, c, "analysis.warning") {
+		if e.Details["source"] == "examine" {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// A recursive extraction that skips the .snapshots directory of a volume that
+// HAS snapshots says so, exactly once, in the audit log: the snapshots exist and
+// are not included. A volume without snapshots writes nothing, and addressing
+// the snapshots explicitly is not a skip.
+func TestExtractRecursiveNotesSkippedSnapshots(t *testing.T) {
+	nodes := []fstest.Node{
+		{Path: "/live.txt", Data: []byte("live")},
+		{Path: "/.snapshots/S/old.txt", Data: []byte("old")},
+	}
+	c := newCase(t)
+	s, _ := sessionHook(t, c, snapshotsHook("2"), 0, nodes...)
+	sum := extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: []string{"/"}, Recursive: true})
+	ws := examineWarnings(t, c)
+	if len(ws) != 1 {
+		t.Fatalf("%d examine warnings, want exactly 1: %+v", len(ws), ws)
+	}
+	d := ws[0].Details
+	reason, _ := d["reason"].(string)
+	if d["path"] != "/.snapshots" || d["analysis_id"] != sum.AnalysisID || !strings.Contains(reason, "--snapshot") || !strings.Contains(reason, "not included") {
+		t.Errorf("warning details = %+v", d)
+	}
+	if sum.Skipped != 0 || len(sum.Artifacts) != 1 {
+		t.Errorf("the note must not count as a skipped file: skipped %d, %d artifacts", sum.Skipped, len(sum.Artifacts))
+	}
+
+	for _, count := range []string{"0", ""} { // no usable snapshots, or no count at all
+		c := newCase(t)
+		s, _ := sessionHook(t, c, snapshotsHook(count), 0, nodes...)
+		extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: []string{"/"}, Recursive: true})
+		if ws := examineWarnings(t, c); len(ws) != 0 {
+			t.Errorf("snapshots=%q: %d examine warnings, want none: %+v", count, len(ws), ws)
+		}
+	}
+
+	c = newCase(t)
+	s, _ = sessionHook(t, c, snapshotsHook("2"), 0, nodes...)
+	extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: []string{"/.snapshots"}, Recursive: true})
+	if ws := examineWarnings(t, c); len(ws) != 0 {
+		t.Errorf("an explicit .snapshots path wrote %d examine warnings, want none: %+v", len(ws), ws)
+	}
+}
+
+// NoteSnapshotsSkipped is what a caller that walks the tree itself (image ls -r)
+// uses: one entry for a directory with snapshots, nothing otherwise.
+func TestSessionNoteSnapshotsSkipped(t *testing.T) {
+	c := newCase(t)
+	s, _ := sessionHook(t, c, snapshotsHook("3"), 0, fstest.Node{Path: "/a", Data: []byte("a")})
+	dir := filesys.Entry{Name: ".snapshots", Type: filesys.TypeDir, Attrs: []filesys.KV{{Key: "synthetic", Value: "snapshots"}, {Key: "snapshots", Value: "3"}}}
+	if err := s.NoteSnapshotsSkipped("/V/.snapshots", dir); err != nil {
+		t.Fatal(err)
+	}
+	ws := examineWarnings(t, c)
+	if len(ws) != 1 || ws[0].Details["path"] != "/V/.snapshots" {
+		t.Fatalf("examine warnings = %+v, want one for /V/.snapshots", ws)
+	}
+	dir.Attrs[1].Value = "0"
+	if err := s.NoteSnapshotsSkipped("/V/.snapshots", dir); err != nil {
+		t.Fatal(err)
+	}
+	if ws := examineWarnings(t, c); len(ws) != 1 {
+		t.Errorf("a volume without snapshots wrote an entry: %+v", ws)
 	}
 }

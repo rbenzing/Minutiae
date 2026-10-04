@@ -35,7 +35,8 @@ type ExtractOptions struct {
 // cannot be read are skipped with an analysis.warning. A recursive run does not
 // descend into a volume's synthetic .snapshots directory (APFS snapshots; see
 // filesys.IsSnapshotsDir): the directory itself, or a path inside it, is
-// extracted when addressed. A failure to write
+// extracted when addressed. When the volume has snapshots, one
+// analysis.warning with source "examine" notes that they were not included. A failure to write
 // the case, or a cancelled ctx, aborts the run (a partially written artifact
 // is kept and flagged incomplete).
 func (s *Session) Extract(ctx context.Context, o ExtractOptions) (Summary, error) {
@@ -123,6 +124,9 @@ func (x *extractor) target(p string, e filesys.Entry) error {
 			if filesys.IsSnapshotsDir(we) {
 				// A recursive run does not descend into the snapshots of a volume
 				// (they would multiply the output); address them explicitly.
+				if err := x.a.noteSnapshotsSkipped(wp, we); err != nil {
+					return err
+				}
 				return filesys.SkipDir
 			}
 			if we.Type == filesys.TypeDir && !we.Deleted {
