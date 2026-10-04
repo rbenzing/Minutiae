@@ -121,17 +121,6 @@ func TestOpenSplitRawCrossesSegments(t *testing.T) {
 	}
 }
 
-func TestOpenDetectsEWFUnsupported(t *testing.T) {
-	p := writeFile(t, t.TempDir(), "a.E01", append([]byte("EVF\x09\x0d\x0a\xff\x00"), make([]byte, 100)...))
-	img, err := Open([]string{p})
-	if !errors.Is(err, ErrUnsupportedContainer) || img != nil {
-		t.Fatalf("img=%v err=%v", img, err)
-	}
-	if !strings.Contains(err.Error(), "EWF (E01) support arrives in a later release") {
-		t.Fatalf("message: %v", err)
-	}
-}
-
 func TestOpenDetectsEx01Unsupported(t *testing.T) {
 	p := writeFile(t, t.TempDir(), "a.Ex01", append([]byte("EVF2\x0d\x0a\x81\x00"), make([]byte, 100)...))
 	_, err := Open([]string{p})

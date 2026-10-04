@@ -94,13 +94,11 @@ func Open(c *evidence.Case, ref string, opts Options) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open image %s: %w", segs[0].Path, err)
 	}
-	// Raw containers report the default 512 without knowing it, so let the
-	// partition reader probe 512 and 4096; a container that declares its sector
-	// size (EWF) is trusted.
-	sectorSize := img.SectorSize()
-	if f := img.Format(); f == "raw" || f == "split-raw" {
-		sectorSize = 0
-	}
+	// Raw containers report the default 512 without knowing it, and an E01 that
+	// declares 512 only echoes what raw-input acquisition writes (also for 4096-byte
+	// sector disks): let the partition reader probe 512 and 4096 for both. A
+	// declared 1024, 2048 or 4096 is trusted.
+	sectorSize := probeSectorSize(img)
 	tbl, err := readTable(img, sectorSize)
 	if err != nil {
 		_ = img.Close()
@@ -110,6 +108,20 @@ func Open(c *evidence.Case, ref string, opts Options) (*Session, error) {
 		Case: c, Parent: segs[0], Segments: segs, Image: img, Table: tbl,
 		opts: opts, fsCache: map[int]*fsEntry{},
 	}, nil
+}
+
+// probeSectorSize returns the sector size volume.Read should be told: 0 (probe
+// 512, then 4096) when the container does not know it, else the declared size.
+func probeSectorSize(img image.Image) int {
+	switch img.Format() {
+	case "raw", "split-raw":
+		return 0
+	case "ewf":
+		if img.SectorSize() == 512 {
+			return 0
+		}
+	}
+	return img.SectorSize()
 }
 
 // openImage is image.OpenFiles with parser panics (a container opener reads
@@ -393,6 +405,9 @@ func (s *Session) Info() ImageInfo {
 		Metadata: s.Image.Metadata(), Scheme: s.Table.Scheme, DiskGUID: s.Table.DiskGUID,
 		Unallocated: append([]volume.Run(nil), s.Table.Unallocated...),
 		Warnings:    append([]string(nil), s.Table.Warnings...),
+	}
+	if w, ok := s.Image.(image.Warner); ok {
+		info.Warnings = append(info.Warnings, w.Warnings()...)
 	}
 	for _, seg := range s.Segments {
 		if seg.Incomplete {
