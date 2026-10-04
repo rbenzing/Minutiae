@@ -75,12 +75,20 @@ func (b auditedBatch) lastID() int64 { return b.FirstID + int64(b.Count) - 1 }
 
 // recordAudit is what the audit log says about records.
 type recordAudit struct {
-	starts    map[string]IngestStart
 	batches   []auditedBatch // every valid records.batch entry, in log order
 	byKey     map[batchKey]int
 	batchErr  map[batchKey]bool // announced batches explained by records.batch.error
 	recovered map[batchKey]bool // announced batches a records.ingest.recover says never reached the database
 	parsers   map[[3]string]bool
+
+	// the ingest lifecycle entries (P6): every start (first one wins, a repeat is
+	// flagged), the conclusions and the recovers per ingest, in log order
+	starts     map[string]IngestStart
+	startSeq   map[string]int64
+	startOrder []string
+	dupStart   map[string]bool
+	ends       map[string][]auditedConclusion
+	recovers   map[string][]auditedRecover
 }
 
 // readRecordAudit decodes the records.* entries; entries that cannot be decoded
@@ -89,6 +97,8 @@ func readRecordAudit(entries []AuditEntry, ps *problemSet) *recordAudit {
 	a := &recordAudit{
 		starts: map[string]IngestStart{}, byKey: map[batchKey]int{}, batchErr: map[batchKey]bool{},
 		recovered: map[batchKey]bool{}, parsers: map[[3]string]bool{},
+		startSeq: map[string]int64{}, dupStart: map[string]bool{},
+		ends: map[string][]auditedConclusion{}, recovers: map[string][]auditedRecover{},
 	}
 	for _, e := range entries {
 		switch e.Action {
@@ -100,8 +110,19 @@ func readRecordAudit(entries []AuditEntry, ps *problemSet) *recordAudit {
 			}
 			if _, dup := a.starts[s.IngestID]; !dup {
 				a.starts[s.IngestID] = s
+				a.startSeq[s.IngestID] = e.Seq
+				a.startOrder = append(a.startOrder, s.IngestID)
+			} else {
+				a.dupStart[s.IngestID] = true
 			}
 			a.parsers[[3]string{s.Parser, s.ParserVersion, s.ParserHash}] = true
+		case ActionIngestEnd, ActionIngestError:
+			cn, err := DecodeDetails[IngestConclusion](e.Details)
+			if err != nil {
+				ps.add("audit", "audit seq %d: %s details unreadable: %q", e.Seq, e.Action, err.Error())
+				continue
+			}
+			a.ends[cn.IngestID] = append(a.ends[cn.IngestID], auditedConclusion{Seq: e.Seq, Action: e.Action, Time: e.Time, IngestConclusion: cn})
 		case ActionBatch:
 			b, err := DecodeDetails[BatchCommit](e.Details)
 			if err != nil {
@@ -132,6 +153,7 @@ func readRecordAudit(entries []AuditEntry, ps *problemSet) *recordAudit {
 				ps.add("audit", "audit seq %d: %s details unreadable: %q", e.Seq, e.Action, err.Error())
 				continue
 			}
+			a.recovers[r.IngestID] = append(a.recovers[r.IngestID], auditedRecover{Seq: e.Seq, Time: e.Time, IngestRecover: r})
 			for _, n := range r.BatchNos {
 				a.recovered[batchKey{r.IngestID, n}] = true
 			}
@@ -284,6 +306,12 @@ func (c *Case) verifyRecords(rep *VerifyReport, recs []ManifestRecord, entries [
 		if !m.hasParse && parserOK {
 			ps.add("parser", "record %d: parser id %d does not exist in parsers", row.ID, m.parserID)
 		}
+		if mr, ok := manifest[row.ArtifactID]; ok && row.SrcOffset != nil && row.SrcLength != nil {
+			// P9, with checked math: off+n is never computed
+			if off, n := *row.SrcOffset, *row.SrcLength; off < 0 || n < 0 || off > mr.Size || n > mr.Size-off {
+				ps.add("src-range", "record %d: range beyond artifact: bytes %d+%d of artifact %q, which holds %d bytes", row.ID, off, n, row.ArtifactID, mr.Size)
+			}
+		}
 		if !auditReadable {
 			return
 		}
@@ -310,6 +338,9 @@ func (c *Case) verifyRecords(rep *VerifyReport, recs []ManifestRecord, entries [
 
 	if auditReadable && streamed {
 		c.checkBatches(rep, ps, audit, sorted, acc, byKey, ok)
+	}
+	if auditReadable {
+		c.verifyLifecycle(ctx, rep, ps, audit, manifest, byKey, ok)
 	}
 	if ok {
 		announced := map[batchKey]bool{}

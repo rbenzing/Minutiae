@@ -307,7 +307,7 @@ func TestVerifyDetectsArtifactChangedAfterIngest(t *testing.T) {
 	g := ingest30(t)
 	forged := append([]byte("forged"), mib[:len(mib)-6]...)
 	recordstest.RewriteArtifactConsistently(t, g.c.Dir, g.art.ID, forged)
-	expectProblems(t, mustVerify(t, g.c), []string{"digest mismatch", "does not match its artifact.create audit entry"})
+	expectProblems(t, mustVerify(t, g.c), []string{"digest mismatch", "does not match its artifact.create audit entry"}, "differs from the manifest")
 }
 
 func TestVerifySwappedParserID(t *testing.T) {
@@ -352,7 +352,7 @@ func TestVerifyDetectsOverlappingBatchRanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	expectProblems(t, mustVerify(t, g.c), []string{"overlaps"},
-		"digest mismatch", "records stored", "batch row missing", "outside every batch range")
+		"digest mismatch", "records stored", "batch row missing", "outside every batch range", "does not match its audited batches")
 }
 
 func TestVerifyFlagsMissingImmutabilityTrigger(t *testing.T) {

@@ -295,8 +295,9 @@ func (c *Case) checkStaging(rep *VerifyReport) {
 }
 
 // checkDerived requires, for every record with a Derivation, that its parent
-// artifact exists in the manifest with the recorded SHA-256 and that its runs
-// sidecar artifact (when named) exists.
+// artifact exists in the manifest with the recorded SHA-256, that its runs
+// sidecar artifact (when named) exists, and that its chain of derivations ends
+// (no cycle, at most maxDerivedDepth hops).
 func (c *Case) checkDerived(rep *VerifyReport, recs []ManifestRecord) {
 	byID := make(map[string]ManifestRecord, len(recs))
 	for _, r := range recs {
@@ -304,6 +305,7 @@ func (c *Case) checkDerived(rep *VerifyReport, recs []ManifestRecord) {
 			byID[r.ID] = r
 		}
 	}
+	chainProblems := 0
 	for _, r := range recs {
 		d := r.Source.Derived
 		if d == nil {
@@ -332,5 +334,45 @@ func (c *Case) checkDerived(rep *VerifyReport, recs []ManifestRecord) {
 				rep.problemf("artifact %s (%s): runs artifact %q (of parent %s) is not in the manifest", r.ID, r.Path, d.RunsArtifact, d.ParentID)
 			}
 		}
+		if p := derivedChainProblem(byID, r.ID); p != "" {
+			chainProblems++
+			if chainProblems <= verifyMaxPerKind {
+				rep.problemf("%s", p)
+			}
+		}
+	}
+	if chainProblems > verifyMaxPerKind {
+		rep.problemf("%d further derived chain problems are not listed", chainProblems-verifyMaxPerKind)
+	}
+}
+
+// maxDerivedDepth is the longest chain of derivations (artifact, its parent, the
+// parent's parent, ...) verify accepts: real chains are one or two hops, so a
+// longer one is a damaged or hostile manifest.
+const maxDerivedDepth = 16
+
+// derivedChainProblem is the multi-hop part of checkDerived: it follows
+// Source.Derived.ParentID from id and reports a cycle or a chain longer than
+// maxDerivedDepth hops ("" when the chain is fine). A hop whose parent is missing
+// from the manifest, or whose recorded parent hash is wrong, ends the walk
+// without a report: checkDerived reports that hop itself, so one broken parent
+// is reported once.
+func derivedChainProblem(byID map[string]ManifestRecord, id string) string {
+	seen := map[string]bool{id: true}
+	cur := id
+	for hops := 1; ; hops++ {
+		r, ok := byID[cur]
+		if !ok || r.Source.Derived == nil {
+			return ""
+		}
+		parent := r.Source.Derived.ParentID
+		if seen[parent] {
+			return fmt.Sprintf("artifact %q (%q): derived chain has a cycle (%q derives from %q, which is already part of the chain)", id, byID[id].Path, cur, parent)
+		}
+		if hops > maxDerivedDepth {
+			return fmt.Sprintf("artifact %q (%q): derived chain is longer than %d hops", id, byID[id].Path, maxDerivedDepth)
+		}
+		seen[parent] = true
+		cur = parent
 	}
 }

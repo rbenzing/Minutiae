@@ -453,3 +453,133 @@ func DropTable(t testing.TB, caseDir, table string) {
 		t.Fatal(err)
 	}
 }
+
+// runColumns are the record_runs columns SetRunColumn may change.
+var runColumns = []string{
+	"end_seq", "parser_id", "analysis_id", "outcome", "batches", "records", "first_id", "last_id", "rollup", "ended",
+}
+
+// SetRunColumn sets one column of a record_runs row (value nil sets NULL).
+func SetRunColumn(t testing.TB, caseDir, ingestID, column string, value any) {
+	t.Helper()
+	if !slices.Contains(runColumns, column) {
+		t.Fatalf("recordstest: %q is not a record_runs column the tamper helpers may change", column)
+	}
+	tamper(t, caseDir, func(db *sql.DB) error {
+		res, err := db.Exec(`UPDATE record_runs SET `+column+` = ? WHERE ingest_id = ?`, value, ingestID) //nolint:gosec // column name is whitelisted above
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n != 1 {
+			return fmt.Errorf("run of %s: %d rows changed", ingestID, n)
+		}
+		return nil
+	})
+}
+
+// DeleteRun erases a run: its record_runs row and its record_run_artifacts rows
+// (the records and the supersession rows are left as they are).
+func DeleteRun(t testing.TB, caseDir, ingestID string) {
+	t.Helper()
+	tamper(t, caseDir, func(db *sql.DB) error {
+		return execAll(db,
+			[]any{`DELETE FROM record_run_artifacts WHERE ingest_id = ?`, ingestID},
+			[]any{`DELETE FROM record_runs WHERE ingest_id = ?`, ingestID})
+	})
+}
+
+// InsertRun inserts a record_runs row by hand (no audit entry): the parser is
+// looked up by name and version.
+func InsertRun(t testing.TB, caseDir string, endSeq int64, ingestID, parserName, parserVersion, outcome string, batches, records int, firstID, lastID int64, rollup string) {
+	t.Helper()
+	tamper(t, caseDir, func(db *sql.DB) error {
+		_, err := db.Exec(`INSERT INTO record_runs (end_seq, ingest_id, parser_id, analysis_id, outcome, batches, records, first_id, last_id, rollup, ended)
+			VALUES (?, ?, (SELECT id FROM parsers WHERE name = ? AND version = ?), NULL, ?, ?, ?, ?, ?, ?, '2026-01-01T00:00:00Z')`,
+			endSeq, ingestID, parserName, parserVersion, outcome, batches, records, firstID, lastID, rollup)
+		return err
+	})
+}
+
+// InjectRunArtifact adds a record_run_artifacts row.
+func InjectRunArtifact(t testing.TB, caseDir, ingestID, artifactID string) {
+	t.Helper()
+	tamper(t, caseDir, func(db *sql.DB) error {
+		_, err := db.Exec(`INSERT INTO record_run_artifacts (ingest_id, artifact_id) VALUES (?, ?)`, ingestID, artifactID)
+		return err
+	})
+}
+
+// DeleteRunArtifact removes one record_run_artifacts row.
+func DeleteRunArtifact(t testing.TB, caseDir, ingestID, artifactID string) {
+	t.Helper()
+	tamper(t, caseDir, func(db *sql.DB) error {
+		res, err := db.Exec(`DELETE FROM record_run_artifacts WHERE ingest_id = ? AND artifact_id = ?`, ingestID, artifactID)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n != 1 {
+			return fmt.Errorf("run coverage (%s, %s): %d rows deleted", ingestID, artifactID, n)
+		}
+		return nil
+	})
+}
+
+// DeleteSuperseded removes a record_superseded pair, which resurrects the records
+// of that ingest for that artifact.
+func DeleteSuperseded(t testing.TB, caseDir, ingestID, artifactID string) {
+	t.Helper()
+	tamper(t, caseDir, func(db *sql.DB) error {
+		res, err := db.Exec(`DELETE FROM record_superseded WHERE ingest_id = ? AND artifact_id = ?`, ingestID, artifactID)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n != 1 {
+			return fmt.Errorf("superseded (%s, %s): %d rows deleted", ingestID, artifactID, n)
+		}
+		return nil
+	})
+}
+
+// InjectSuperseded adds a record_superseded pair, which hides the records of that
+// ingest for that artifact.
+func InjectSuperseded(t testing.TB, caseDir, ingestID, artifactID string) {
+	t.Helper()
+	tamper(t, caseDir, func(db *sql.DB) error {
+		_, err := db.Exec(`INSERT INTO record_superseded (ingest_id, artifact_id) VALUES (?, ?)`, ingestID, artifactID)
+		return err
+	})
+}
+
+// InjectParser adds a parsers row no audit entry names.
+func InjectParser(t testing.TB, caseDir, name, version, hash string) {
+	t.Helper()
+	tamper(t, caseDir, func(db *sql.DB) error {
+		_, err := db.Exec(`INSERT INTO parsers (name, version, hash) VALUES (?, ?, ?)`, name, version, hash)
+		return err
+	})
+}
+
+// ReplaceInAuditLine replaces old by new inside the audit line with sequence
+// number seq (line seq of audit.jsonl), keeping the rest of the line as it is: a
+// hand edit of an audit entry, which breaks the hash chain. It fails the test
+// when the line does not hold old.
+func ReplaceInAuditLine(t testing.TB, caseDir string, seq int, old, replacement string) {
+	t.Helper()
+	p := filepath.Join(caseDir, "audit.jsonl")
+	b, err := os.ReadFile(p) //nolint:gosec // test helper on a case directory the test created
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.Split(b, []byte("\n"))
+	if seq < 1 || seq > len(lines) {
+		t.Fatalf("recordstest: audit line %d does not exist", seq)
+	}
+	line := lines[seq-1]
+	if !bytes.Contains(line, []byte(old)) {
+		t.Fatalf("recordstest: audit line %d does not contain %q: %s", seq, old, line)
+	}
+	lines[seq-1] = bytes.Replace(line, []byte(old), []byte(replacement), 1)
+	if err := os.WriteFile(p, bytes.Join(lines, []byte("\n")), 0o600); err != nil { //nolint:gosec // test helper on a case directory the test created
+		t.Fatal(err)
+	}
+}
