@@ -15,7 +15,7 @@ import (
 // FTSPipelineVersion is bumped by hand whenever NormalizeText changes behaviour: it is part of
 // FTSNormVersion, so a changed pipeline makes every existing index "not current" until it is
 // rebuilt with `records reindex`.
-const FTSPipelineVersion = 2
+const FTSPipelineVersion = 3
 
 // xTextVersion is the golang.org/x/text module version this build is made with. The index content
 // depends on its tables (NFKC, case folding), not only on the Unicode version they implement, so it
@@ -32,12 +32,13 @@ const (
 )
 
 // NormalizeText returns the text the full-text indexes hold and queries are compiled from
-// (pipeline version 2):
+// (pipeline version 3):
 //
 //  1. invalid UTF-8 becomes U+FFFD (one per undecodable byte); NUL becomes U+0020;
 //  2. U+200B ZERO WIDTH SPACE becomes U+0020 (it separates words in Thai and Khmer); every other
 //     Cf rune (bidi controls, U+200C, U+200D and U+2060, which join within words, soft hyphen,
-//     BOM) is dropped; every Cc, Zs, Zl and Zp rune becomes U+0020;
+//     BOM) and every variation selector (U+FE00-U+FE0F, U+E0100-U+E01EF; so an emoji with and
+//     without U+FE0F meet) is dropped; every Cc, Zs, Zl and Zp rune becomes U+0020;
 //  3. NFKC; 4. full Unicode case folding; 5. NFKC again;
 //  6. the deliberate mappings the folding does not give: U+0131 becomes "i", a run of U+0307
 //     after an "i" is dropped (the Turkish ones, for recall), and Cherokee letters are mapped to
@@ -45,10 +46,13 @@ const (
 //     without this the two spellings of one letter would not meet);
 //  7. NFKC again (step 6 can leave a composable pair), then step 2 once more as a guard (so the
 //     output contract does not depend on what a Unicode table maps to), and finally every run of
-//     U+0020 collapses to one. Leading and trailing spaces are kept (one each at most).
+//     U+0020 collapses to one and the leading and trailing U+0020 are trimmed (the same for stored
+//     text and for a query, so a query pasted with a trailing newline finds the same as the bare
+//     word, also in the trigram index, where a space is a character).
 //
 // It is pure and deterministic, safe for concurrent use, never panics on any input, and its
-// output is valid UTF-8 without NUL, Cc or Cf runes and without two consecutive spaces.
+// output is valid UTF-8 without NUL, Cc or Cf runes, variation selectors, two consecutive spaces or
+// a leading or trailing space.
 //
 // What it does not do: accents are not removed (the SQLite tokenizers remove them, on the
 // index and on the query alike), and the Cf runes that join within words (U+200C, U+200D, U+2060,
@@ -60,7 +64,7 @@ func NormalizeText(s string) string {
 	s = norm.NFKC.String(s)
 	s = foldExceptions(s)
 	s = norm.NFKC.String(s)
-	return cleanRunes(s, true)
+	return strings.Trim(cleanRunes(s, true), " ")
 }
 
 // cleanRunes applies pipeline step 2: it drops Cf runes and maps Cc, Zs, Zl and Zp runes to U+0020.
@@ -76,7 +80,7 @@ func cleanRunes(s string, collapse bool) string {
 		switch {
 		case r == runeZeroWidthSpace:
 			r = ' '
-		case unicode.Is(unicode.Cf, r):
+		case unicode.Is(unicode.Cf, r), isVariationSelector(r):
 			continue
 		case unicode.In(r, unicode.Cc, unicode.Zs, unicode.Zl, unicode.Zp):
 			r = ' '
@@ -139,7 +143,7 @@ var (
 )
 
 // FTSNormVersion names everything the index content depends on:
-// "fts<FTSPipelineVersion>/unicode-<norm.Version>/xtext-<module version>/sqlite-<sqlite_version()>". The SQLite part is
+// "fts<FTSPipelineVersion>/unicode-<norm.Version>/gounicode-<unicode.Version>/xtext-<module version>/sqlite-<sqlite_version()>". The SQLite part is
 // read once from a scratch in-memory database. If that read fails the version carries
 // "sqlite-unknown" (and is read again on the next call), which matches no stored index version,
 // so a search or an index write is refused with "not current" rather than trusting an unnamed
@@ -152,9 +156,9 @@ func FTSNormVersion() string {
 	}
 	sv, err := sqliteVersion()
 	if err != nil {
-		return fmt.Sprintf("fts%d/unicode-%s/xtext-%s/sqlite-unknown", FTSPipelineVersion, norm.Version, xTextVersion)
+		return fmt.Sprintf("fts%d/unicode-%s/gounicode-%s/xtext-%s/sqlite-unknown", FTSPipelineVersion, norm.Version, unicode.Version, xTextVersion)
 	}
-	normVersion = fmt.Sprintf("fts%d/unicode-%s/xtext-%s/sqlite-%s", FTSPipelineVersion, norm.Version, xTextVersion, sv)
+	normVersion = fmt.Sprintf("fts%d/unicode-%s/gounicode-%s/xtext-%s/sqlite-%s", FTSPipelineVersion, norm.Version, unicode.Version, xTextVersion, sv)
 	return normVersion
 }
 
@@ -169,4 +173,12 @@ func sqliteVersion() (string, error) {
 		return "", err
 	}
 	return v, nil
+}
+
+// isVariationSelector reports U+FE00-U+FE0F and U+E0100-U+E01EF. They select a glyph variant of
+// the character before them (text or emoji presentation, an ideographic variant) and carry no
+// searchable content; platforms differ in whether they append U+FE0F, so keeping them would hide
+// the same message from a substring search.
+func isVariationSelector(r rune) bool {
+	return (r >= 0xfe00 && r <= 0xfe0f) || (r >= 0xe0100 && r <= 0xe01ef)
 }

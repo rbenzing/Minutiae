@@ -38,7 +38,7 @@ func TestNormalizeTable(t *testing.T) {
 		{"a real U+FFFD stays", "a\ufffdb", "a\ufffdb"},
 		{"NUL becomes a space", "a\x00b", "a b"},
 		{"NUL run is one space", "a\x00\x00\x00b", "a b"},
-		{"only NUL", "\x00", " "},
+		{"only NUL is empty (trimmed)", "\x00", ""},
 
 		// step 2: Cf dropped
 		{"bidi override U+202E removed", "ab\u202ecd", "abcd"},
@@ -51,12 +51,13 @@ func TestNormalizeTable(t *testing.T) {
 		{"zero width non-joiner U+200C dropped (R32)", "a\u200cb", "ab"},
 		{"zero width joiner U+200D dropped (R32)", "a\u200db", "ab"},
 		{"word joiner U+2060 dropped (R32)", "a\u2060b", "ab"},
-		{"leading zero width space is a leading space", "\u200ba", " a"},
+		{"leading zero width space is trimmed", "\u200ba", "a"},
+		{"trailing zero width space is trimmed", "a\u200b", "a"},
 		{"soft hyphen removed", "co\u00adoperate", "cooperate"},
 		{"BOM removed", "\ufeffabc", "abc"},
 		{"tag character removed", "a\U000e0001b", "ab"},
 		{"only Cf gives nothing", "\u202e\ufeff\u200c\u200d\u2060", ""},
-		{"only a zero width space is one space", "\u200b\u202e\ufeff", " "},
+		{"only a zero width space is empty (trimmed)", "\u200b\u202e\ufeff", ""},
 
 		// step 2: Cc, Zs, Zl, Zp become one space each, then runs collapse (R14)
 		{"newline", "a\nb", "a b"},
@@ -77,9 +78,11 @@ func TestNormalizeTable(t *testing.T) {
 		{"mixed whitespace run is one space", "a \t\r\n\u00a0\u2028 b", "a b"},
 		{"run of ordinary spaces is one space", "a      b", "a b"},
 		{"Cf between spaces joins the run", "a \u200b b", "a b"},
-		{"leading run collapses to one space", " \n\t a", " a"},
-		{"trailing run collapses to one space", "a \r\n", "a "},
-		{"only whitespace is one space", " \t\n ", " "},
+		{"leading run is trimmed", " \n\t a", "a"},
+		{"trailing run is trimmed", "a \r\n", "a"},
+		{"a query with a trailing newline equals the bare word", "foo\n", "foo"},
+		{"a space-wrapped phrase is trimmed on both sides", "  foo bar \t", "foo bar"},
+		{"only whitespace is empty (trimmed)", " \t\n ", ""},
 
 		// steps 3-5: NFKC, case folding
 		{"NFC e-acute", "caf\u00e9", "caf\u00e9"},
@@ -126,8 +129,14 @@ func TestNormalizeTable(t *testing.T) {
 		{"thumbs up with skin tone", "\U0001f44d\U0001f3fd", "\U0001f44d\U0001f3fd"},
 		{"ZWJ family loses the joiner, keeps every base", "\U0001f468\u200d\U0001f469\u200d\U0001f467", "\U0001f468\U0001f469\U0001f467"},
 		{"flag", "\U0001f1fa\U0001f1f8", "\U0001f1fa\U0001f1f8"},
-		{"keycap keeps its base", "1\ufe0f\u20e3", "1\ufe0f\u20e3"},
-		{"emoji variation selector stays", "\u2764\ufe0f", "\u2764\ufe0f"},
+		{"keycap loses the variation selector", "1\ufe0f\u20e3", "1\u20e3"},
+		{"emoji variation selector VS16 dropped", "\u2764\ufe0f", "\u2764"},
+		{"text variation selector VS15 dropped", "\u2764\ufe0e", "\u2764"},
+		{"VS1 U+FE00 dropped", "a\ufe00b", "ab"},
+		{"a lone VS16 is empty", "\ufe0f", ""},
+		{"ideographic variation selector U+E0100 dropped", "\u8fbb\U000e0100", "\u8fbb"},
+		{"last ideographic variation selector U+E01EF dropped", "\u8fbb\U000e01ef", "\u8fbb"},
+		{"VS between a base and a combining mark does not block composition", "e\ufe0f\u0301", "\u00e9"},
 
 		// steps 6-7: the Turkish mappings
 		{"dotted capital I", "\u0130stanbul", "istanbul"},
@@ -139,7 +148,8 @@ func TestNormalizeTable(t *testing.T) {
 		{"dotted capital I followed by a combining dot", "\u0130\u0307", "i"},
 		{"several combining dots after i", "i\u0307\u0307\u0307", "i"},
 		{"combining dot after another letter stays", "a\u0307", "\u0227"},
-		{"combining dot after a space stays", " \u0307", " \u0307"},
+		{"combining dot after a space stays (the leading space is trimmed)", " \u0307", "\u0307"},
+		{"combining dot after an inner space stays", "a \u0307", "a \u0307"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -199,6 +209,9 @@ func TestNormalizeEquivalentSpellingsMeet(t *testing.T) {
 		{"\u212a", "K", "k", "\uff2b"},
 		{"\u2460", "1", "\uff11"},
 		{"a\u200cb", "ab", "a\u00adb", "a\u2060b", "a\u200db"},
+		{"\u2764", "\u2764\ufe0f", "\u2764\ufe0e"},
+		{"i \u2764\ufe0f you", "i \u2764 you", "I \u2764\ufe0e YOU"},
+		{"foo", "foo\n", " foo ", "\tfoo\r\n", "\u200bfoo\u200b"},
 		{"a\u200bb", "a b", "a\u200b\u200bb", "a \u200bb"},
 		{"a\u00a0b", "a b", "a\tb", "a\nb", "a\r\nb", "a  b", "a\u2028b", "a\u3000b"},
 		{"\u03c3", "\u03c2", "\u03a3"},
@@ -269,7 +282,7 @@ func TestNormalizeCaseOrbitsMeet(t *testing.T) {
 }
 
 // checkNormalizedShape asserts the output contract: valid UTF-8, no NUL, no Cc/Cf rune, and no
-// run of two spaces.
+// run of two spaces, no leading or trailing space and no variation selector.
 func checkNormalizedShape(t testing.TB, in, out string) {
 	t.Helper()
 	if !utf8.ValidString(out) {
@@ -277,6 +290,14 @@ func checkNormalizedShape(t testing.TB, in, out string) {
 	}
 	if strings.Contains(out, "  ") {
 		t.Fatalf("NormalizeText(%q) = %q holds a run of spaces", in, out)
+	}
+	if strings.HasPrefix(out, " ") || strings.HasSuffix(out, " ") {
+		t.Fatalf("NormalizeText(%q) = %q has a leading or trailing space", in, out)
+	}
+	for _, r := range out {
+		if (r >= 0xfe00 && r <= 0xfe0f) || (r >= 0xe0100 && r <= 0xe01ef) {
+			t.Fatalf("NormalizeText(%q) = %q holds the variation selector U+%04X", in, out, r)
+		}
 	}
 	for _, r := range out {
 		if r == 0 || unicode.In(r, unicode.Cc, unicode.Cf) {
@@ -321,7 +342,7 @@ func TestNormalizeLongCombiningRunIsFast(t *testing.T) {
 
 func TestFTSNormVersionShape(t *testing.T) {
 	v := FTSNormVersion()
-	re := regexp.MustCompile(`^fts2/unicode-[0-9]+\.[0-9]+\.[0-9]+/xtext-v[0-9]+\.[0-9]+\.[0-9]+/sqlite-[0-9]+\.[0-9]+\.[0-9]+$`)
+	re := regexp.MustCompile(`^fts3/unicode-[0-9]+\.[0-9]+\.[0-9]+/gounicode-[0-9]+\.[0-9]+\.[0-9]+/xtext-v[0-9]+\.[0-9]+\.[0-9]+/sqlite-[0-9]+\.[0-9]+\.[0-9]+$`)
 	if !re.MatchString(v) {
 		t.Fatalf("FTSNormVersion() = %q does not match %s", v, re)
 	}
@@ -334,8 +355,11 @@ func TestFTSNormVersionShape(t *testing.T) {
 	if !strings.Contains(v, "/xtext-"+xTextVersion+"/") {
 		t.Errorf("FTSNormVersion() = %q does not contain the x/text version %q", v, xTextVersion)
 	}
-	if FTSPipelineVersion != 2 {
-		t.Errorf("FTSPipelineVersion = %d, want 2 (bump it by hand only with a change of NormalizeText)", FTSPipelineVersion)
+	if !strings.Contains(v, "/gounicode-"+unicode.Version+"/") {
+		t.Errorf("FTSNormVersion() = %q does not contain the Go unicode version %q", v, unicode.Version)
+	}
+	if FTSPipelineVersion != 3 {
+		t.Errorf("FTSPipelineVersion = %d, want 3 (bump it by hand only with a change of NormalizeText)", FTSPipelineVersion)
 	}
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -394,7 +418,7 @@ func TestXTextVersionMatchesGoMod(t *testing.T) {
 // layer: what the tokenizers do with the normalized text. The tests below pin those facts so a
 // search that silently misses is a known, documented behaviour, never a surprise.
 
-// tokenizerHits indexes each doc's NormalizeText (rowid = position + 1) in the word and the
+// tokenizerIndex indexes each doc's NormalizeText (rowid = position + 1) in the word and the
 // trigram tables and returns, for a query, the matching positions: the query is normalized and
 // quoted, exactly as the query compiler will emit it.
 type tokenizerIndex struct {
@@ -475,6 +499,9 @@ func TestNormalizeKnownSilentMisses(t *testing.T) {
 		"\ud55c\uad6d\uc5b4\ub97c",                         // 4: a Hangul word with a particle
 		"price: 5\u20ac!",                                  // 5: symbols
 		"a.b",                                              // 6: punctuation inside a word
+		"i \u2764\ufe0f you",                               // 7: an emoji with a variation selector
+		"foo",                                              // 8: the word at the end of a field
+		"foo, bar",                                         // 9: the word before punctuation
 	)
 	type probe struct {
 		name  string
@@ -492,12 +519,16 @@ func TestNormalizeKnownSilentMisses(t *testing.T) {
 		{"CJK sub-run by prefix", probeMatch(t, x.db, "records_fts", probeQuote(NormalizeText("\u65e5\u672c"))+" *"), []int64{2}, "a prefix finds the start of a run", "word"},
 		{"CJK sub-run by substring", x.sub("\u672c\u8a9e\u306e"), []int64{2}, "the trigram index finds any 3-character piece", "sub"},
 		{"CJK piece shorter than a trigram", x.sub("\u672c\u8a9e"), nil, "a 2-character substring is below the trigram minimum", "sub"},
-		{"ZWSP separates words: the first word", x.word("foo"), []int64{3}, "U+200B maps to a space (R32), so the two words stay two tokens", "word"},
-		{"ZWSP separates words: the second word", x.word("bar"), []int64{3}, "likewise", "word"},
-		{"ZWSP separates words: the phrase", x.word("foo bar"), []int64{3}, "and the phrase with a space finds them", "word"},
+		{"ZWSP separates words: the first word", x.word("foo"), []int64{3, 8, 9}, "U+200B maps to a space (R32), so the two words stay two tokens", "word"},
+		{"ZWSP separates words: the second word", x.word("bar"), []int64{3, 9}, "likewise", "word"},
+		{"ZWSP separates words: the phrase", x.word("foo bar"), []int64{3, 9}, "and the phrase with a space finds them", "word"},
 		{"ZWSP separates words: the fused spelling misses", x.word("foobar"), nil, "the word 'foobar' is not in a text that separates them", "word"},
 		{"ZWSP separates words: substring across it misses", x.sub("oob"), nil, "the normalized text holds a space between the words", "sub"},
 		{"ZWSP separates words: substring with the space", x.sub("oo b"), []int64{3}, "the space is part of the trigram text", "sub"},
+		{"emoji spelled without the variation selector finds the text with it", x.sub("i \u2764 you"), []int64{7}, "variation selectors are dropped on both sides (R32 review)", "sub"},
+		{"emoji spelled with the variation selector finds the same", x.sub("i \u2764\ufe0f you"), []int64{7}, "likewise", "sub"},
+		{"a trailing newline in a substring query does not narrow it", x.sub("foo\n"), []int64{3, 8, 9}, "the query is trimmed, so it finds the word at the end of a field and before punctuation", "sub"},
+		{"a trailing space in a substring query does not narrow it", x.sub("foo "), []int64{3, 8, 9}, "likewise", "sub"},
 		{"Hangul word with particle by word", x.word("\ud55c\uad6d\uc5b4"), nil, "the particle is part of the token", "word"},
 		{"Hangul prefix", probeMatch(t, x.db, "records_fts", probeQuote(NormalizeText("\ud55c\uad6d\uc5b4"))+" *"), []int64{4}, "a prefix finds it", "word"},
 		{"currency sign by word", x.word("\u20ac"), nil, "symbols are not tokens", "word"},
@@ -513,7 +544,7 @@ func TestNormalizeKnownSilentMisses(t *testing.T) {
 	}
 }
 
-// TestNormalizeNeverProducesAQueryThatSplitsAWord: a query term (one word) normalizes to text that
+// TestNormalizeWordInContextMatchesBareWord: a query term (one word) normalizes to text that
 // the tokenizer turns into the same tokens as the same word inside a document, for a set of words in
 // many scripts: the document holds "xx <word> yy", the query is the bare word.
 func TestNormalizeWordInContextMatchesBareWord(t *testing.T) {
