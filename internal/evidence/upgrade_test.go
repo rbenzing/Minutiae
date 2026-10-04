@@ -288,7 +288,7 @@ func TestUpgradeResumesUnauditedCompletion(t *testing.T) {
 	c := openV1Case(t)
 	// The upgrade was announced and the migration committed, but the process
 	// died before case.upgrade.done reached the log.
-	if _, err := c.Audit.Append(actionUpgrade, "", upgradeDetails(1, 2)); err != nil {
+	if _, err := c.Audit.Append(ActionCaseUpgrade, "", upgradeDetails(1, 2)); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.store.migrateTo(2); err != nil {
@@ -376,7 +376,7 @@ func TestVerifyV1CaseIsCleanAndSkipsRecordChecks(t *testing.T) {
 
 func TestVerifyNoticeOnDanglingUpgrade(t *testing.T) {
 	c := openV1Case(t)
-	if _, err := c.Audit.Append(actionUpgrade, "", upgradeDetails(1, 2)); err != nil {
+	if _, err := c.Audit.Append(ActionCaseUpgrade, "", upgradeDetails(1, 2)); err != nil {
 		t.Fatal(err)
 	}
 	r := mustVerify(t, c) // the db is still at v1
@@ -387,10 +387,10 @@ func TestVerifyNoticeOnDanglingUpgrade(t *testing.T) {
 
 func TestVerifyUpgradeErrorClosesTheUpgrade(t *testing.T) {
 	c := openV1Case(t)
-	if _, err := c.Audit.Append(actionUpgrade, "", upgradeDetails(1, 2)); err != nil {
+	if _, err := c.Audit.Append(ActionCaseUpgrade, "", upgradeDetails(1, 2)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Audit.Append(actionUpgradeError, "", upgradeErrorDetails(1, 2, errors.New("boom"))); err != nil {
+	if _, err := c.Audit.Append(ActionCaseUpgradeError, "", upgradeErrorDetails(1, 2, errors.New("boom"))); err != nil {
 		t.Fatal(err)
 	}
 	if r := mustVerify(t, c); !r.OK() || len(r.Notices) != 0 {
@@ -400,7 +400,7 @@ func TestVerifyUpgradeErrorClosesTheUpgrade(t *testing.T) {
 
 func TestVerifyDoneWithoutMigrationIsAProblem(t *testing.T) {
 	c := openV1Case(t)
-	if _, err := c.Audit.Append(actionUpgradeDone, "", upgradeDoneDetails(1, 2, false)); err != nil {
+	if _, err := c.Audit.Append(ActionCaseUpgradeDone, "", upgradeDoneDetails(1, 2, false)); err != nil {
 		t.Fatal(err)
 	}
 	r := mustVerify(t, c) // audit says v2, db is v1
@@ -414,7 +414,7 @@ func TestVerifyDoneWithoutMigrationIsAProblem(t *testing.T) {
 // error, announce nothing and leave the database untouched.
 func TestUpgradeRefusesDBBehindAudit(t *testing.T) {
 	c := openV1Case(t)
-	if _, err := c.Audit.Append(actionUpgradeDone, "", upgradeDoneDetails(1, 2, false)); err != nil {
+	if _, err := c.Audit.Append(ActionCaseUpgradeDone, "", upgradeDoneDetails(1, 2, false)); err != nil {
 		t.Fatal(err)
 	}
 	dbPath := filepath.Join(c.Dir, dbFile)

@@ -13,12 +13,12 @@ import (
 // case implicitly.
 var ErrNeedsUpgrade = errors.New("case database needs upgrade")
 
-// Audit actions of an upgrade. Each upgrade is announced (and fsynced) before
+// Audit actions of an upgrade (the codecs are below). Each upgrade is announced (and fsynced) before
 // the migration touches the database, and concluded afterwards.
 const (
-	actionUpgrade      = "case.upgrade"       // details: from, to
-	actionUpgradeDone  = "case.upgrade.done"  // details: from, to, resumed
-	actionUpgradeError = "case.upgrade.error" // details: from, to, error
+	ActionCaseUpgrade      = "case.upgrade"       // details: from, to
+	ActionCaseUpgradeDone  = "case.upgrade.done"  // details: from, to, resumed
+	ActionCaseUpgradeError = "case.upgrade.error" // details: from, to, error
 )
 
 func upgradeDetails(from, to int) map[string]any {
@@ -91,7 +91,7 @@ func auditedSchema(entries []AuditEntry) schemaAudit {
 				continue
 			}
 			sa.Version = v
-		case actionUpgrade:
+		case ActionCaseUpgrade:
 			from, okF := auditInt(e.Details, "from")
 			to, okT := auditInt(e.Details, "to")
 			if !okF || !okT {
@@ -99,9 +99,9 @@ func auditedSchema(entries []AuditEntry) schemaAudit {
 				continue
 			}
 			sa.Dangling = &upgradeStep{From: from, To: to, Seq: e.Seq}
-		case actionUpgradeError:
+		case ActionCaseUpgradeError:
 			sa.Dangling = nil
-		case actionUpgradeDone:
+		case ActionCaseUpgradeDone:
 			from, okF := auditInt(e.Details, "from")
 			to, okT := auditInt(e.Details, "to")
 			switch {
@@ -177,17 +177,17 @@ func (c *Case) Upgrade() (UpgradeResult, error) {
 		resumed, err := c.resumeUpgrade(dangling, from)
 		return UpgradeResult{From: from, To: to, Resumed: resumed}, err
 	}
-	if _, err := c.Audit.Append(actionUpgrade, "", upgradeDetails(from, to)); err != nil {
+	if _, err := c.Audit.Append(ActionCaseUpgrade, "", upgradeDetails(from, to)); err != nil {
 		return UpgradeResult{From: from, To: from}, err
 	}
 	if c.upgradeHook != nil {
 		c.upgradeHook()
 	}
 	if err := c.store.migrateTo(to); err != nil {
-		_, aerr := c.Audit.Append(actionUpgradeError, "", upgradeErrorDetails(from, to, err))
+		_, aerr := c.Audit.Append(ActionCaseUpgradeError, "", upgradeErrorDetails(from, to, err))
 		return UpgradeResult{From: from, To: from}, errors.Join(err, aerr)
 	}
-	if _, err := c.Audit.Append(actionUpgradeDone, "", upgradeDoneDetails(from, to, false)); err != nil {
+	if _, err := c.Audit.Append(ActionCaseUpgradeDone, "", upgradeDoneDetails(from, to, false)); err != nil {
 		// The migration is committed; the next Upgrade completes the record.
 		return UpgradeResult{From: from, To: to, Upgraded: true}, err
 	}
@@ -222,7 +222,7 @@ func (c *Case) resumeUpgrade(d *upgradeStep, current int) (bool, error) {
 	if d == nil || d.To != current {
 		return false, nil
 	}
-	if _, err := c.Audit.Append(actionUpgradeDone, "", upgradeDoneDetails(d.From, d.To, true)); err != nil {
+	if _, err := c.Audit.Append(ActionCaseUpgradeDone, "", upgradeDoneDetails(d.From, d.To, true)); err != nil {
 		return false, err
 	}
 	return true, nil
