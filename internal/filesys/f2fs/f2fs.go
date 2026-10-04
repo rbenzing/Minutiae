@@ -22,6 +22,7 @@ const cacheBlocks = 256 // blocks held by the metadata cache
 type FS struct {
 	sb   *superblock
 	cp   *checkpoint
+	data io.ReaderAt // uncached view of the whole image, for file content
 	r    io.ReaderAt // cached view of the filesystem for metadata, clamped to size
 	size int64       // filesystem size in bytes (declared size clamped to the image)
 
@@ -156,7 +157,7 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 	if err != nil {
 		return nil, err
 	}
-	f := &FS{sb: sb, cp: cp, r: cached, size: sb.blocks * blockSize}
+	f := &FS{sb: sb, cp: cp, r: cached, data: raw, size: sb.blocks * blockSize}
 	for _, w := range append(append(warns, cw...), cp.warnings()...) {
 		f.warn("%s", w)
 	}

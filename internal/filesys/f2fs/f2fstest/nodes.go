@@ -75,6 +75,11 @@ type Inode struct {
 	NIDs                            [5]uint32
 	Addrs                           []uint32 // data address slots, from i_addr[ExtraIsize/4]
 
+	// InlineData is stored inline: it starts one word after the first data slot
+	// (i_addr[extra/4 + 1]) and sets the InlineData and DataExist flags. Size is
+	// the caller's.
+	InlineData []byte
+
 	Extra           bool   // write the extra attribute header (sets ExtraAttr)
 	ExtraIsize      uint16 // default 36 (the full header)
 	InlineXattrSize uint16 // i_inline_xattr_size, in words
@@ -149,6 +154,14 @@ func InodeBlock(o Options, in Inode) []byte {
 			panic("f2fstest: too many inode address slots")
 		}
 		le.PutUint32(b[p:], v)
+	}
+	if in.InlineData != nil {
+		p := iAddr + extra + 4
+		if p+len(in.InlineData) > 4052 {
+			panic("f2fstest: inline data does not fit the inode")
+		}
+		b[3] |= InlineData | DataExist
+		copy(b[p:], in.InlineData)
 	}
 	for i, v := range in.NIDs {
 		le.PutUint32(b[4052+4*i:], v)

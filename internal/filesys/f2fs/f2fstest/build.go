@@ -96,6 +96,9 @@ type Options struct {
 	// in the NAT block copy that the NAT version bitmap selects (the other
 	// copy stays zero). Tests build node blocks with InodeBlock or by hand.
 	Nodes []Node
+
+	// Data are file data blocks placed at absolute block addresses.
+	Data []DataBlock
 }
 
 // NATEntry is a struct f2fs_nat_entry (with its nid when journalled).
@@ -227,6 +230,7 @@ func Build(o Options, files []File) []byte {
 		writePack(img, o, l, l.CP+BlocksPerSeg, v2)
 	}
 	writeNodes(img, o, l)
+	writeData(img, o)
 	return img
 }
 

@@ -140,9 +140,29 @@ func TestInodeLayoutVariants(t *testing.T) {
 			extra: 36, xattr: 20, start: 396, slots: 923 - 9 - 20, inlineAttr: "dentry,xattr",
 		},
 		{
-			name: "flexible without the inline xattr flag reserves nothing", o: flex(),
+			name: "flexible: the recorded size applies even without the inline xattr flag", o: flex(),
 			in:    f2fstest.Inode{Mode: 0o100644, Extra: true, InlineXattrSize: 20},
+			extra: 36, xattr: 20, start: 396, slots: 923 - 9 - 20,
+		},
+		{
+			name: "flexible with a recorded size of zero reserves nothing", o: flex(),
+			in:    f2fstest.Inode{Mode: 0o100644, Extra: true},
 			extra: 36, xattr: 0, start: 396, slots: 923 - 9,
+		},
+		{
+			name: "flexible volume, inode without an extra header: default 50 words", o: flex(),
+			in:    f2fstest.Inode{Mode: 0o100644, Inline: f2fstest.InlineXattr},
+			extra: 0, xattr: 50, start: 360, slots: 873, inlineAttr: "xattr",
+		},
+		{
+			name: "an inline dentry reserves the default 50 words without the xattr flag", o: plain(),
+			in:    f2fstest.Inode{Mode: 0o040755, Extra: true, Inline: f2fstest.InlineDentry},
+			extra: 36, xattr: 50, start: 396, slots: 923 - 9 - 50, inlineAttr: "dentry",
+		},
+		{
+			name: "no extra header, no flags: nothing reserved even for a directory", o: smallOpts(),
+			in:    f2fstest.Inode{Mode: 0o040755},
+			extra: 0, xattr: 0, start: 360, slots: 923,
 		},
 		{
 			name: "short 24-byte header reaches crtime", o: crtime(),
@@ -386,7 +406,10 @@ func TestInodeHostile(t *testing.T) {
 		{"extra_isize zero", extra(), f2fstest.Inode{Extra: true, ExtraIsize: 0, RawOverrides: map[int][]byte{360: {0, 0}}}},
 		{"extra header on a volume without the feature", smallOpts(), f2fstest.Inode{Extra: true}},
 		{"flexible inline xattr size 0xFFFF", flexExtra(), f2fstest.Inode{Extra: true, Inline: f2fstest.InlineXattr, InlineXattrSize: 0xFFFF}},
-		{"flexible inline xattr larger than the area by one", flexExtra(), f2fstest.Inode{Extra: true, Inline: f2fstest.InlineXattr, InlineXattrSize: 923 - 9 + 1}},
+		{"flexible inline xattr larger than the area by one", flexExtra(), f2fstest.Inode{Extra: true, Inline: f2fstest.InlineXattr, InlineXattrSize: 903 + 1}},
+		{"flexible inline xattr size below the xattr header", flexExtra(), f2fstest.Inode{Extra: true, Inline: f2fstest.InlineXattr, InlineXattrSize: 5}},
+		{"flexible inline xattr size zero with the flag", flexExtra(), f2fstest.Inode{Extra: true, Inline: f2fstest.InlineXattr, InlineXattrSize: 0}},
+		{"flexible recorded size that cannot fit, flag clear", flexExtra(), f2fstest.Inode{Extra: true, InlineXattrSize: 0xFFFF}},
 		{"default inline xattr does not fit beside a full extra header", extra(), f2fstest.Inode{Extra: true, ExtraIsize: 923 * 4, Inline: f2fstest.InlineXattr}},
 		{"size beyond int64", smallOpts(), f2fstest.Inode{Size: 1 << 63}},
 		{"not an inode (footer ino differs)", smallOpts(), f2fstest.Inode{FooterIno: 9}},
@@ -402,9 +425,9 @@ func TestInodeHostile(t *testing.T) {
 
 	t.Run("the largest legal reservation is accepted", func(t *testing.T) {
 		o := flexExtra()
-		f, _ := buildOne(t, o, f2fstest.Inode{Extra: true, Inline: f2fstest.InlineXattr, InlineXattrSize: 923 - 9})
+		f, _ := buildOne(t, o, f2fstest.Inode{Extra: true, Inline: f2fstest.InlineXattr, InlineXattrSize: 903})
 		v, _, err := f.Inode(5)
-		if err != nil || v.AddrSlots != 0 {
+		if err != nil || v.AddrSlots != 923-9-903 {
 			t.Errorf("slots=%d err=%v", v.AddrSlots, err)
 		}
 	})

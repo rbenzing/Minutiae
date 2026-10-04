@@ -84,6 +84,14 @@ const (
 	// per inode (no FLEXIBLE_INLINE_XATTR).
 	defaultInlineXattrAddrs = 50
 
+	// minInlineXattrSize and maxInlineXattrSize bound a recorded inline xattr
+	// size in words (kernel xattr.h): the minimum is sizeof(struct
+	// f2fs_xattr_header)/4 = 24/4; the maximum leaves room for the full
+	// 36-byte extra header, the reserved inline-data word and the 40-byte
+	// minimum inline dentry: 923 - 9 - 1 - 10.
+	minInlineXattrSize = 6
+	maxInlineXattrSize = addrsPerIno - 36/4 - 1 - 40/4
+
 	// iInodeChecksum is offsetof(struct f2fs_inode, i_inode_checksum): the
 	// checksum word is i_addr + xaChecksum.
 	iInodeChecksum = iAddr + xaChecksum
@@ -233,14 +241,18 @@ func (f *FS) inode(ino uint32) (*inode, error) {
 // The kernel (sanity_check_inode / do_read_inode) requires EXTRA_ATTR only
 // with the extra_attr feature, i_extra_isize a multiple of 4 inside the
 // header limits, and the reservations to fit in i_addr[]. Reservation rule
-// (get_inline_xattr_addrs): with FLEXIBLE_INLINE_XATTR the inode records the
-// size itself (i_inline_xattr_size, in words); otherwise it is the fixed
-// DEFAULT_INLINE_XATTR_ADDRS (50). Either applies only if the inode has
-// F2FS_INLINE_XATTR. Slots = 923 - i_extra_isize/4 - reserved words.
+// (do_read_inode, get_inline_xattr_addrs): with FLEXIBLE_INLINE_XATTR and an
+// extra header, the inode records the size itself (i_inline_xattr_size, in
+// words) and it applies whether or not INLINE_XATTR is set; the recorded size
+// must lie in [minInlineXattrSize, maxInlineXattrSize] when INLINE_XATTR is
+// set. Otherwise it is the fixed DEFAULT_INLINE_XATTR_ADDRS (50) for an inode
+// with INLINE_XATTR or INLINE_DENTRY, else nothing.
+// Slots = 923 - i_extra_isize/4 - reserved words.
 func (f *FS) parseExtra(in *inode) error {
 	const st = "f2fs inode"
 	le := binary.LittleEndian
 	x := in.raw[iAddr:]
+	recorded := false
 	if in.inline&inlineExtra != 0 {
 		if !f.sb.has(featExtraAttr) {
 			return corrupt(st, -1, "inode %d has an extra attribute header but the volume lacks the extra_attr feature", in.nid)
@@ -250,14 +262,18 @@ func (f *FS) parseExtra(in *inode) error {
 			return corrupt(st, -1, "inode %d has i_extra_isize %d (want a multiple of 4 in %d..%d)", in.nid, e, minExtraIsize, maxExtraIsize)
 		}
 		in.extraIsize = e
-		if f.sb.has(featFlexInlineXat) && in.inlineXattrB {
+		if f.sb.has(featFlexInlineXat) {
+			recorded = true
 			in.xattrWords = int(le.Uint16(x[xaInlineXattr:]))
+			if in.inlineXattrB && (in.xattrWords < minInlineXattrSize || in.xattrWords > maxInlineXattrSize) {
+				return corrupt(st, -1, "inode %d records an inline xattr size of %d words (want %d..%d)", in.nid, in.xattrWords, minInlineXattrSize, maxInlineXattrSize)
+			}
 		}
 		if e >= 8 {
 			in.projID = le.Uint32(x[4:])
 		}
 	}
-	if in.inlineXattrB && (!f.sb.has(featFlexInlineXat) || in.extraIsize == 0) {
+	if !recorded && (in.inlineXattrB || in.inline&inlineDentry != 0) {
 		in.xattrWords = defaultInlineXattrAddrs
 	}
 	in.addrSlots = addrsPerIno - in.extraIsize/4 - in.xattrWords
