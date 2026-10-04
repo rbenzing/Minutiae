@@ -332,7 +332,12 @@ func (s *Session) openFS(p volume.Partition) (filesys.FileSystem, error) {
 // drivers are still tried, so one faulty probe cannot hide a filesystem a
 // later driver recognizes. Drivers are told apart by position, never by name,
 // so duplicate names cannot re-run a driver or repeat a note. The first
-// driver that matches is final, as in detect. The notes are kept for Info.
+// driver that matches is final, except that a matching driver whose Open fails
+// with an error wrapping filesys.ErrCorrupt does not stop the search (as in
+// detect.OpenWith): the later matching drivers are tried, the failure is kept
+// as a note ("driver X matched but failed to open: ...; opened as Y") and, when
+// no driver opens, the first failure is the result. Any other error is final.
+// The notes are kept for Info.
 func (s *Session) openEntry(p volume.Partition) *fsEntry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -341,6 +346,9 @@ func (s *Session) openEntry(p volume.Partition) *fsEntry {
 	}
 	e := &fsEntry{}
 	r := s.section(p)
+	var firstFailed string // name of the first driver whose Open failed as corrupt
+	var firstErr error
+	var failed []string
 	for _, d := range s.drivers() {
 		one := []detect.Driver{d}
 		fsys, err := detect.OpenWith(one, r, p.Length)
@@ -354,8 +362,25 @@ func (s *Session) openEntry(p volume.Partition) *fsEntry {
 				continue // no match; an Open that itself reports "unsupported" is a match
 			}
 		}
+		if err != nil && errors.Is(err, filesys.ErrCorrupt) {
+			if firstErr == nil {
+				firstFailed, firstErr = d.Name, err
+			}
+			failed = append(failed, fmt.Sprintf("driver %s matched but failed to open: %v", d.Name, err))
+			continue
+		}
 		e.name, e.fs, e.err = d.Name, fsys, err
 		break
+	}
+	if e.name == "" && firstErr != nil {
+		e.name, e.err = firstFailed, firstErr // nothing opened: report the first failure
+		failed = failed[1:]                   // it is the error itself, not a note
+	}
+	for _, f := range failed {
+		if e.err == nil {
+			f += "; opened as " + e.name
+		}
+		e.notes = append(e.notes, f)
 	}
 	switch {
 	case e.name == "":

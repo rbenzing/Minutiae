@@ -8,17 +8,7 @@
 # stamp_tree <dir>  gives every entry a distinct, increasing, even mtime before
 #                   1700000000 (FAT stores times in 2 second steps).
 
-# pattern <bytes> <seed>: deterministic pseudo-random bytes (sha256 counter mode).
-pattern() {
-  python3 -c '
-import hashlib, sys
-n, seed = int(sys.argv[1]), sys.argv[2]
-out, i = bytearray(), 0
-while len(out) < n:
-    out += hashlib.sha256(f"{seed}:{i}".encode()).digest()
-    i += 1
-sys.stdout.buffer.write(bytes(out[:n]))' "$1" "$2"
-}
+# (pattern <bytes> <seed> comes from lib.sh, which the sourcing script loads.)
 
 # longname <n>: the n-th 31-byte name of the big directory.
 longname() {
