@@ -204,6 +204,8 @@ func orcSkipShort(t *testing.T, name string) {
 }
 
 func TestAPFSMatchesOracle(t *testing.T) {
+	// The populated container, written by a real kernel driver (populated_oracle_test.go).
+	t.Run("populated", testPopulated)
 	t.Run("container", func(t *testing.T) {
 		for _, name := range orcFixtures {
 			t.Run(name, func(t *testing.T) {

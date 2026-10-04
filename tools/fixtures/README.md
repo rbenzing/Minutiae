@@ -17,7 +17,7 @@ docker build -t minutiae-fixtures tools/fixtures
 docker run --rm --privileged -v "$PWD:/work" -w /work minutiae-fixtures bash tools/fixtures/gen.sh all
 ```
 
-`gen.sh <fixture>` builds one fixture (`volume-gpt`, `volume-mbr`, `ext4`, `fat`, `exfat`, `f2fs`, `apfs`).
+`gen.sh <fixture>` builds one fixture (`volume-gpt`, `volume-mbr`, `ext4`, `fat`, `exfat`, `f2fs`, `apfs`; `apfs-populated` needs its own image, see "APFS populated fixture").
 `--privileged` is needed by `exfat` (see below) and is used by `f2fs` only to try a kernel mount (see "F2FS determinism"); every other fixture runs without it.
 
 With Git Bash on Windows, stop MSYS rewriting the container paths:
@@ -38,6 +38,7 @@ Scripts must keep LF line endings (`.gitattributes` enforces this).
 | `fat.sh` + `fat_tree.sh` + `fat_oracle.py` + `fat_chains.py` | `fat12`, `fat16`, `fat32` (`.img.gz` + `.expect.json`, in `internal/filesys/fat/testdata/`) | the source tree (`fat_oracle.py`: type, size, sha256, mtime), the generator's own list of deleted names, `fsck.fat -v` (geometry, data-area offset, cluster count, clusters in use) and `mshowfat` (the cluster chain of every live file and directory; the free clusters are the ones no live chain holds, `fat_chains.py` fails unless that count equals what `fsck.fat -v` reports in use; the tests compare the reader's unallocated space and every file's runs with them exactly) |
 | `exfat.sh` + `exfat_chains.py` (also `fat_tree.sh`, `fat_oracle.py`) | `exfat` (`.img.gz` + `.expect.json`, in `internal/filesys/exfat/testdata/`) | the source tree, the generator's deleted names, and `dump.exfat` (boot report: geometry, serial, label; `-c -d <path>`: the cluster chain of every live path; the free clusters are the ones no chain, bitmap, up-case table or root holds, cross-checked against dump.exfat's "Free Clusters") |
 | `apfs.sh` + `apfs_oracle.py` | `apfs-ci`, `apfs-cs`, `apfs-multichunk` (`.img.gz` + `.expect.json`, in `internal/filesys/apfs/testdata/`) | the `mkapfs` arguments (label, UUIDs, case flags) and an independent Python decoder of the finished image (see "APFS determinism and limits"); `apfsck` must accept the image |
+| `apfs-populated.sh` + `apfs_tree.py` + `apfs_populate.sh` + `apfs_guest.c` + `apfs_populated_oracle.py` (image `minutiae-fixtures-apfs`, `Dockerfile.apfs`) | `apfs-populated` (`.img.gz` + `.expect.json`, in `internal/filesys/apfs/testdata/`) | a container populated by the real `linux-apfs-rw` kernel driver under QEMU from a source tree, a snapshot included; an independent Python decode of the image compared with that source tree, plus `apfsck` (see "APFS populated fixture") |
 | `f2fs.sh` + `f2fs_tree.sh` + `f2fs_oracle.py` + `f2fs_normalize.py` | `f2fs-extra-attr`, `f2fs-default` (`.img.gz` + `.expect.json`, in `internal/filesys/f2fs/testdata/`) | the source tree handed to `sload.f2fs` (`f2fs_oracle.py tree`: type, size, sha256, mode, mtime, symlink targets), and the reports of `fsck.f2fs -l/-f/-t/-M`, `dump.f2fs -s/-n` and `blkid` on the finished image (`f2fs_oracle.py layout`: superblock and checkpoint fields, features, uuid, label, the NAT block address of every inode, the data-block extents of every file, the free main-area blocks from the SIT bitmaps). The oracle cross-checks the tools against each other (fsck vs dump on every shared field, SIT popcount vs `valid_block_count`, fsck's tree vs the source tree, the file map vs file sizes) and the generator fails on any mismatch, on an unclean `fsck.f2fs`, or when no file is fragmented |
 
 ## Determinism
@@ -160,18 +161,19 @@ allocated; and every non-zero block of the image is a verified object or a known
 raw block. Its `measured` section records what the reference leaves open (ring
 shape, drec key form, bitmap polarity, tree storage types, ...).
 
-Limits: these are EMPTY volumes. Nothing in the Docker toolchain can populate an APFS volume (see "Populating a real APFS image on Linux: what was tried"), so
+Limits: these three are EMPTY volumes (the populated one is "APFS populated fixture", below), so
 there are no files, no extra directory records (only `root` and `private-dir`),
-no xattrs, hard links, symlinks, file extents, snapshots (`apfs-snap` needs the
-kernel module) or encrypted volumes, and a single checkpoint (no ring
-wrap-around or fallback). Those paths are covered by the synthetic builder only
-and, for real data, by the manual `realimages` test.
+no xattrs, hard links, symlinks, file extents, snapshots or encrypted volumes, and a single checkpoint (no ring
+wrap-around or fallback). Files, extents, xattrs, hard links, symlinks, clones and a snapshot are
+covered by the populated fixture; encryption, compression, a second volume, several snapshots and
+ring wrap-around by the synthetic builder only and, for real data, by the manual `realimages` test.
 
 ### Supplying a real APFS image (manual `realimages` test)
 
-The committed APFS fixtures are empty, so files, extents, clones, symlinks,
-extended attributes, hard links, snapshots and directory-record name hashes on
-non-root names are validated against the synthetic builder only. An examiner can
+The committed `apfs-ci`, `apfs-cs` and `apfs-multichunk` fixtures are empty; `apfs-populated`
+covers files, extents, clones, symlinks, xattrs, hard links, one snapshot and name hashes against an image
+written by a Linux driver. Images written by Apple software (compression, encryption, several snapshots,
+fusion layouts, extended inode fields) are validated against the synthetic builder only. An examiner can
 validate them against a real, populated image with the build-tagged test
 `internal/filesys/apfs/realimages_test.go`:
 
@@ -222,46 +224,127 @@ A data volume of an iOS or other device image works the same when it is
 unencrypted; an encrypted volume is only asserted to be `ErrEncrypted`.
 `go vet -tags realimages ./...` compiles the test (the normal check does not set the tag).
 
-#### Populating a real APFS image on Linux: what was tried (Task 8)
+#### Populating a real APFS image on Linux: Docker Desktop kernel ruled out (Task 8)
 
 Goal: a populated real fixture (files, extents, symlinks, xattrs, hard links, sparse
 files, snapshots, name hashes on non-root names) with an oracle from the source tree
-and `apfsck`. It was NOT achieved; the committed fixtures stay empty and the
-populated coverage is the builder plus the manual `realimages` test above.
+and `apfsck`. The first attempt was loading the out-of-tree `linux-apfs-rw` module into
+the Docker Desktop VM kernel (`6.6.87.2-microsoft-standard-WSL2`, `CONFIG_MODVERSIONS=y`,
+no module tree). `apfs.ko` built against the matching Microsoft source, but loading it
+failed (`Invalid relocation target`, then `disagrees about version of symbol
+module_layout`: the rebuilt kernel differs from the running one). The only remaining
+way, editing the module's `__versions` table to defeat the ABI check, would load
+out-of-tree code into the kernel every container on the machine shares, so it was
+refused and not done: **no module is ever loaded into the Docker Desktop VM or the
+host kernel**. (The one `insmod -f` attempt tainted that kernel until Docker Desktop was
+restarted; `/proc/filesystems` never had `apfs`.) The route below runs the module in a
+guest kernel of its own, inside QEMU, and needs no privileges at all.
 
-- `apfsprogs` (`mkapfs`, `apfsck`) only creates and checks empty containers; there
-  is no tool in it that writes files. No userspace APFS writer exists in Debian.
-- The Linux `apfs` kernel module with write support (`linux-apfs-rw`, git
-  `923526a`) would populate a loop-mounted `mkapfs` image. The Docker Desktop
-  kernel (`6.6.87.2-microsoft-standard-WSL2`) has `CONFIG_MODULES=y`,
-  `CONFIG_MODVERSIONS=y`, `CONFIG_MODULE_FORCE_LOAD=y`, no module tree and no
-  `apfs` module, so the module had to be built out of tree against the matching
-  Microsoft kernel source (tag `linux-msft-wsl-6.6.87.2`, `/proc/config.gz`,
-  `make modules_prepare`). That works: `apfs.ko` builds (it needs `genver.sh` run
-  by hand, and `KBUILD_MODPOST_WARN=1` or a full `make vmlinux` plus
-  `cp vmlinux.symvers Module.symvers` for the exported-symbol CRCs).
-- Loading it did not work: with no `Module.symvers`, `insmod -f` fails with
-  `Invalid relocation target, existing value is nonzero for type 1`; with
-  `Module.symvers` from a full `vmlinux` build (about 35 minutes on 12 cores) the
-  load fails with `disagrees about version of symbol module_layout`, because the
-  rebuilt kernel differs from the running one in `struct module` (the running
-  kernel has `CONFIG_DEBUG_INFO_BTF_MODULES`, which needs `pahole` and a vmlinux
-  BTF section to reproduce). The remaining way is to edit the module's
-  `__versions` table so the version check passes, which deliberately defeats the
-  kernel's ABI check and loads out-of-tree code into the shared Docker Desktop VM
-  kernel; that was judged unsafe on a shared machine and not done.
-- Even with a loadable module the image would not be reproducible: the module stamps
-  create/change/access times from the kernel's real-time clock, which `faketime`
-  cannot freeze, so a normalizer that rewrites every inode time and re-checksums
-  the blocks would also be needed; and `linux-apfs-rw` cannot create snapshots or
-  clones, so those would stay builder-only anyway.
-- The first load attempt (`insmod -f`) tainted the Docker Desktop VM kernel (the
-  taint disappears when Docker Desktop is restarted); no module was ever loaded
-  (`/proc/filesystems` has no `apfs`) and the build volume was removed.
+### APFS populated fixture
 
-A machine that can run a stock Debian or Ubuntu kernel with `apfs.ko` (a VM or a
-physical Linux box, not Docker Desktop) is the way forward: `mkapfs`, `mount -t apfs`,
-populate, `umount`, `apfsck`, then a normalizer for the inode times.
+`apfs-populated` is written by the real `linux-apfs-rw` kernel driver, so file data,
+extents, clones, xattrs, hard links, symlinks, a snapshot and non-root name hashes are
+validated against an image that neither the test builder nor Minutiae wrote. It lives in
+a SEPARATE image, `minutiae-fixtures-apfs` (`Dockerfile.apfs`), so the main image's pinned
+layers and every other fixture stay byte-identical (checked: `gen.sh apfs` in the main
+image leaves `git status` clean). `apfs-populated` is deliberately not part of `all`.
+
+```bash
+docker build -f tools/fixtures/Dockerfile.apfs -t minutiae-fixtures-apfs tools/fixtures
+MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD:/work" -w /work minutiae-fixtures-apfs bash tools/fixtures/gen.sh apfs-populated
+```
+
+No `--privileged` is needed. A run takes about 1 minute.
+
+How it works (the same route as the HFS+ fixture):
+
+- `Dockerfile.apfs` (Debian 12 `bookworm-slim`, pinned by digest) installs the Debian kernel
+  `linux-image-6.1.0-53-amd64` and its `linux-headers`, `qemu-system-x86`, `busybox-static`,
+  and builds from pinned git commits `apfsprogs` v0.2.1 (`mkapfs`, `apfsck`, `apfs-snap`;
+  commit `3721463b...`) and `linux-apfs-rw` v0.3.21 (commit `8a376002...`, built out of tree
+  against those headers: `apfs.ko`, vermagic `6.1.0-53-amd64 SMP preempt mod_unload modversions`).
+- `apfs-populated.sh` formats a 32 MiB image with `mkapfs -L populated` (default:
+  case-insensitive, hashed directory-record keys) under `faketime`, with fixed UUIDs, then
+  `apfs_populate.sh` boots that Debian kernel under QEMU software emulation (`-accel tcg`, no
+  `/dev/kvm`) with a busybox initramfs holding `virtio_blk`, `libcrc32c`, `apfs.ko`, the tarballs
+  and operation lists made by `apfs_tree.py`, and a static helper `apfs_guest.c` (`FICLONE`,
+  `setxattr`, `pwrite`, `utimensat`, the snapshot ioctl). The guest mounts the image `-o readwrite`,
+  extracts the tree, writes the fragmented and sparse files, takes the snapshot `snap1`, changes the
+  tree (a deleted file, a rewritten file, a new directory), unmounts cleanly and powers off. The
+  guest clock starts at the fixture clock (`-rtc clock=vm -icount`). The module is never loaded
+  anywhere but in that guest.
+- the generator then requires `apfsck` to accept the image (exit status 0; it also checks that
+  `apfsck` did not change it) and runs the oracle, `apfs_populated_oracle.py`.
+
+What the image holds (the oracle fails the generator if any of it is missing): an fs tree of 2
+levels (2913 records, 72 nodes; a 600-entry directory); a 3 MiB file; two files of 128 blocks
+written alternately block by block with an `fsync` after each, so each is in over 100 extents; four
+sparse files (hole at the end, hole first, hole between data, no data at all); six symlinks
+(relative, absolute, dangling, to a directory, a 203-byte target, non-ASCII name); xattrs
+(embedded, empty, binary, a stream-stored 6000-byte value, and one on a directory); a three-link
+hard-link group; a clone pair sharing every extent (`FICLONE`: one physical run); NFC names
+(Latin, Greek, Cyrillic, Hangul, Japanese, an emoji, `ß`, `İ`, a titlecase digraph) and NFD names
+in another directory, case variants; 255-byte names; setuid, sticky and read-only modes, a
+non-root owner; deep nesting; the snapshot `snap1` (xid 261) whose tree differs from the live tree;
+free queues with pending blocks; four checkpoints in the ring.
+
+The oracle (`apfs_populated_oracle.py`) extends `apfs_oracle.py` (written from Apple's APFS
+reference, sharing no code with Minutiae). From the image alone it decodes the newest
+checkpoint, the container and volume object maps (with their snapshot tree), the volume
+superblock, the snapshot metadata tree, every fs-tree record of the live tree and of the
+snapshot (inodes and their extended fields, directory records and their name hashes, xattrs,
+file extents, sibling links and maps), the physical extent tree, the free queues and the space
+manager with every bitmap. It compares the result with the SOURCE TREE (`apfs_tree.py`'s
+`final/` and `snap1/` directories, `specials.json` for xattrs and clones), never with Minutiae,
+and fails unless every path, type, size, SHA-256 of the content read through the decoded
+extents, mode, owner, mtime to the nanosecond, symlink target, xattr name and value, and
+hard-link group is equal for the live tree (678 paths) and for the snapshot (677). Its other
+checks: every object checksum; every directory-record hash equals CRC-32C of the NFD,
+case-folded name as UTF-32 without the NUL (true for all 678 records, non-ASCII ones included);
+the snapshot metadata, name records, omap snapshot tree and `apfs_num_snapshots` agree;
+`sm_free_count` = the sum of `ci_free_count` = the zero bits of the bitmaps; no block that any
+reachable structure or file uses is free in a bitmap (blocks a bitmap marks allocated that
+nothing reaches are listed: here one stale metadata object of an older transaction; the main
+free queue's pending range is accounted for). The Go side compares the reader with it in
+`TestAPFSMatchesOracle/populated` (tree, types, modes, owners, sizes, mtimes, hashes, xattr
+names, per-file runs, content rebuilt from the runs, snapshot tree, record counts, exact
+`Unallocated`) and in the examine end-to-end test `TestExtractFromPopulatedAPFS` (artifacts,
+provenance, runs, snapshot extraction, exact unallocated export, `case verify`).
+
+Findings about a real driver-written image (all recorded in the oracle):
+
+- The driver stores symlink inodes with mode `0755` (Linux symlinks are `0777`); the oracle
+  asserts every symlink is `0755`. Symlink targets are in the `com.apple.fs.symlink` xattr.
+- Linux xattr names carry the fake prefix `osx.`; on the volume the names are bare
+  (`osx.com.example.small` is stored as `com.example.small`).
+- The snapshot ioctl does not flush inode changes still in memory (a symlink time change was
+  missing from the snapshot until the guest ran `sync`): the guest syncs before `snap`.
+- The driver keeps few physical-extent records (4 here); most files have `file_extent` records only.
+- Deleting or rewriting a file after the snapshot leaves its old blocks allocated (the snapshot
+  uses them); blocks freed in the newest transaction sit in a free queue and stay allocated in
+  the bitmap until a later transaction (`Unallocated` does not report them, matching the oracle).
+- The 22-bit directory-record name hash is CRC-32C (no final complement) of the UTF-32 code
+  points of the NFD name WITHOUT the terminating NUL, after Unicode case folding on a
+  case-insensitive volume (Python `casefold()` reproduces the driver's table for the names here:
+  `ß`, `İ`, `ǅ`, Greek, Cyrillic, Hangul). The Go reader verifies this hash for ASCII names only.
+
+Reproducibility: NOT byte-identical. Generated twice with the final scripts, the two images
+had different sha256 values (`d1fb63ef...` and `4454c83c...`; with three earlier runs, five
+different images in five runs). The cause is the number and timing of the transactions the
+driver commits while the guest's background writeback runs, which QEMU's emulation does not
+make deterministic; the logical content (every path, size, hash, mtime, xattr), the xid of the
+final checkpoint (264) and the record counts were the same in every run checked, while block
+addresses and some ids moved. So `expect.json` carries `generator.image_sha256` and the tests
+check it first; always regenerate `apfs-populated.img.gz` and `apfs-populated.expect.json`
+TOGETHER (a different image with the old oracle fails the sha256 check at once). `mkapfs`
+itself is deterministic under `faketime`.
+
+Not covered by the populated image: encryption, compression (`com.apple.decmpfs`), a second
+volume, several snapshots or a deleted snapshot, a case-sensitive volume (the empty `apfs-cs` has
+the flags only), fusion drives, space-manager CIB/CAB layers, deleted-entry recovery, and
+anything a macOS writer does differently from this driver. Lookup of a name that differs from
+the stored one only in Unicode normalization is not found by the reader (a documented
+approximation, `TestAPFSMatchesOracle/populated/name_lookup` logs it); case differences are found.
 
 ### F2FS determinism
 

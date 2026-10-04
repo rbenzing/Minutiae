@@ -402,7 +402,8 @@ class Tree:
     """A decoded B-tree: nodes (for the oracle) and leaf records (raw)."""
 
     def __init__(self, img, root_blk, expect_subtype, resolve, what, root_buf=None,
-                 root_what_blk=None):
+                 root_what_blk=None,
+                 allow_ghosts=False):
         self.img = img
         self.what = what
         self.expect_subtype = expect_subtype
@@ -411,6 +412,7 @@ class Tree:
         self.records = []
         self.info = None
         self.root_blk = root_blk
+        self.allow_ghosts = allow_ghosts
         self._walk(root_blk, 0, root_buf)
 
     def _walk(self, blk, depth, buf=None):
@@ -471,6 +473,8 @@ class Tree:
             else:
                 k_off, k_len, v_off, v_len = struct.unpack_from("<HHHH", buf, toc + i * 8)
             if v_off == 0xFFFF:
+                if self.allow_ghosts:
+                    continue  # a deleted record whose space is kept (driver output)
                 fail("%s: ghost entry (unexpected in mkapfs output)" % self.what)
             ks = keyarea + k_off
             vs = valend - v_off
