@@ -12,21 +12,42 @@
 # probed on 2026-10-03).
 FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
 
-RUN sed -i 's/^Components: main$/Components: main non-free/' /etc/apt/sources.list.d/debian.sources \
- && grep -q 'Components: main non-free' /etc/apt/sources.list.d/debian.sources \
+# Reproducible package set: apt reads the archive as it was on 2026-10-03
+# (snapshot.debian.org) instead of the live mirrors, and every package the
+# fixtures record (generator.packages) is pinned to the exact version used, so a
+# rebuild installs the same bytes or fails loudly (never silently another
+# kernel or qemu). Snapshot Release files expire, hence Check-Valid-Until=false.
+ARG SNAPSHOT=20261003T000000Z
+RUN printf '%s\n' \
+      'Types: deb' \
+      "URIs: http://snapshot.debian.org/archive/debian/${SNAPSHOT}/" \
+      'Suites: bookworm bookworm-updates' \
+      'Components: main non-free' \
+      'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
+      '' \
+      'Types: deb' \
+      "URIs: http://snapshot.debian.org/archive/debian-security/${SNAPSHOT}/" \
+      'Suites: bookworm-security' \
+      'Components: main non-free' \
+      'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
+      > /etc/apt/sources.list.d/debian.sources \
+ && printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\n' > /etc/apt/apt.conf.d/99snapshot \
  && apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      hfsprogs util-linux kmod faketime jq python3 gzip coreutils file \
+      hfsprogs=540.1.linux3-5+b1 util-linux=2.38.1-5+deb12u3 kmod=30+20221128-1 \
+      faketime=0.9.10-2.1 jq=1.6-2.1+deb12u2 python3=3.11.2-1+b1 gzip=1.12-1 \
+      coreutils=9.1-1 file=1:5.44-3 \
  && rm -rf /var/lib/apt/lists/*
 
 # The populated fixture is written by a real hfsplus kernel driver: Docker
 # Desktop's kernel has none, so the Debian kernel below (CONFIG_HFSPLUS_FS=m)
 # is booted under QEMU software emulation with a busybox initramfs
-# (hfsplus_populate.sh). The kernel package is pinned by name: its hfsplus
-# driver is what the fixture records (generator.packages).
+# (hfsplus_populate.sh). The kernel package is pinned by name and version: its
+# hfsplus driver is what the fixture records (generator.packages).
 RUN DEBIAN_FRONTEND=noninteractive apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      qemu-system-x86 linux-image-6.1.0-53-amd64 busybox-static cpio \
+      qemu-system-x86=1:7.2+dfsg-7+deb12u18+b3 linux-image-6.1.0-53-amd64=6.1.187-1 \
+      busybox-static=1:1.35.0-4+deb12u1+b1 cpio=2.13+dfsg-7.1 \
  && rm -rf /var/lib/apt/lists/*
 
 ENV SOURCE_DATE_EPOCH=1700000000 \

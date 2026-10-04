@@ -10,8 +10,9 @@
 # one-block filler files), deletes the odd fillers, extracts phase2.tar (a
 # 150-block file that fills the holes, so it has many extents and needs
 # extents-overflow records), unmounts and powers off. Hard links make the
-# driver create the private folder. The virtual clock is frozen to the
-# fixture clock (-rtc clock=vm with -icount), so every date the driver stamps
+# driver create the private folder. The virtual clock is pinned to the
+# fixture clock (-rtc clock=vm with -icount, and a guest loop that rewinds it
+# every 0.2 virtual seconds), so every date the driver stamps
 # is deterministic.
 #
 # Run as root in the minutiae-fixtures-hfs image (see README.md, "HFS+ fixtures").
@@ -35,7 +36,7 @@ mkdir -p "$rd"/{bin,dev,proc,sys,mnt,mods}
 python3 "$here/hfsplus_tree.py" "$work/tree"
 
 cp "$(command -v busybox)" "$rd/bin/busybox"
-for a in sh mount umount insmod date poweroff cat tar mkdir rm sync echo; do ln -s busybox "$rd/bin/$a"; done
+for a in sh mount umount insmod date sleep poweroff cat tar mkdir rm sync echo; do ln -s busybox "$rd/bin/$a"; done
 : >"$rd/modules.list"
 for m in hfsplus nls_utf8 virtio_blk virtio_pci; do
   modprobe -S "$kver" -d / --show-depends "$m" | awk '{print $2}' | while read -r p; do
@@ -52,6 +53,12 @@ mount -t sysfs none /sys
 mount -t devtmpfs none /dev
 while read -r m; do insmod "\$m" || fail "insmod \$m"; done </modules.list
 date -s "$clock_set" >/dev/null
+# Hold the clock at the fixture time: under -icount the guest runs in about
+# one virtual second, so a stamp near the end falls on either side of the next
+# second depending on host timing (one run in a few had a modify date one second
+# late). Rewinding it every 0.2 virtual seconds keeps every stamp the driver
+# makes inside the second of the fixture clock, whatever the host load.
+(while :; do date -s "$clock_set" >/dev/null; sleep 0.2; done) &
 mount -t hfsplus /dev/vda /mnt || fail mount
 cd /mnt || fail cd
 tar xf /phase1.tar || fail "extract phase 1"

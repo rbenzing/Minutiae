@@ -1,5 +1,5 @@
 #!/bin/bash
-# HFS+ fixtures: mkfs.hfsplus (hfsprogs) formats four 8 MiB images, a second,
+# HFS+ fixtures: mkfs.hfsplus (hfsprogs) formats five 8 MiB empty images, a second,
 # independent parse (hfsplus_oracle.py) plus fsck.hfsplus and blkid describe
 # them. Usage: hfsplus.sh <outdir>   (normally called by gen.sh hfsplus)
 #        hfsplus.sh check-builder <dir>   (fsck every *.img under <dir>)
@@ -129,12 +129,16 @@ done
 # fill it from the source tree of hfsplus_tree.py, and the oracle compares the
 # result with that tree (hfsplus_oracle.py --source-tree), fsck.hfsplus and blkid.
 #
-# Reproducibility: the guest clock is virtual and fixed, so every date is
-# deterministic; the one random number is the name of the hard link's hidden
-# inode ("iNode<random>", stored in the catalog and in the link records), which
-# hfsplus_normalize.py linkid rewrites to a fixed value (the guest runs again
-# if the random number has a different number of digits). Regenerating gives
-# byte-identical output.
+# Reproducibility: the guest clock is virtual (-icount) and hfsplus_populate.sh
+# rewinds it to the fixture time every 0.2 virtual seconds, so every date the
+# driver stamps is the fixture time whatever the host load (before that, a run
+# in a few stamped the volume header modify date one second late); the one
+# random number is the name of the hard link's hidden inode ("iNode<random>",
+# stored in the catalog and in the link records), which hfsplus_normalize.py
+# linkid rewrites to a fixed value (the guest runs again if the random number
+# has a different number of digits). With the apt packages pinned in
+# Dockerfile.hfs, regenerating gave byte-identical output in every run tried
+# (see README.md, "Reproducibility").
 name=hfsplus-populated
 img="$work/$name.img"
 pop_note="Populated volume written by the Linux hfsplus kernel driver (Debian 6.1.0-53, booted under QEMU by hfsplus_populate.sh) from the deterministic source tree of hfsplus_tree.py: a 3-level catalog (1674 leaf records), a 600-entry directory, a 3 MiB file, a file with 18 extents that needs extents-overflow records, symlinks, a three-link hard-link group with the hidden private folder, UTF-8 names (decomposed by the driver), a 255-unit name. The oracle compares the visible tree with the source tree and the allocation, B-trees and forks with an independent parse and fsck.hfsplus. Not covered: deleted entries (HFS+ keeps none), decmpfs-compressed files, extended attributes (the attributes file is empty), non-BMP names (the driver turns them into question marks), journaling (a mounted journaled volume is read-only for the driver), HFSX. The random hidden-inode number is normalized by hfsplus_normalize.py linkid. The alternate volume header is the one the driver wrote when it mounted (attributes word differs)."
