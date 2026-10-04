@@ -61,6 +61,9 @@ func TestBuilderMatchesEngine(t *testing.T) {
 			}
 		}
 	}
+	// Tables, indexes, overflow chains, WITHOUT ROWID tables, updates, deletes
+	// and dropped tables.
+	t.Run("tables", runTableScenarios)
 }
 
 // engineRefuses opens data in the engine (a copy) and reports whether it

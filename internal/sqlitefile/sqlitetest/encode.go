@@ -49,3 +49,59 @@ func emptyTableLeaf(p []byte, hdr, usable int) {
 	p[hdr] = 0x0d
 	put16(p[hdr+5:], uint16(usable)) // 65536 wraps to 0, as the format says
 }
+
+// putVarint encodes v as an SQLite varint: 1-9 bytes, big-endian groups of
+// seven bits with the high bit meaning "more"; a ninth byte carries eight bits.
+func putVarint(v uint64) []byte {
+	if v>>56 != 0 {
+		out := make([]byte, 9)
+		out[8] = byte(v)
+		v >>= 8
+		for i := 7; i >= 0; i-- {
+			out[i] = byte(v&0x7f) | 0x80
+			v >>= 7
+		}
+		return out
+	}
+	var low []byte // least significant group first
+	for {
+		low = append(low, byte(v&0x7f))
+		v >>= 7
+		if v == 0 {
+			break
+		}
+	}
+	out := make([]byte, len(low))
+	for i := range low {
+		out[i] = low[len(low)-1-i]
+		if i < len(low)-1 {
+			out[i] |= 0x80
+		}
+	}
+	return out
+}
+
+// intSerial returns the serial type and the big-endian bytes of v in the
+// smallest width that holds it (0 and 1 use the dedicated types 8 and 9).
+func intSerial(v int64) (uint64, []byte) {
+	switch v {
+	case 0:
+		return 8, nil
+	case 1:
+		return 9, nil
+	}
+	widths := []struct {
+		serial uint64
+		n      int
+	}{{1, 1}, {2, 2}, {3, 3}, {4, 4}, {5, 6}, {6, 8}}
+	for _, w := range widths {
+		if w.n == 8 || (v >= -(1<<(8*w.n-1)) && v < 1<<(8*w.n-1)) {
+			out := make([]byte, w.n)
+			for i := range out {
+				out[i] = byte(uint64(v) >> (8 * (w.n - 1 - i)))
+			}
+			return w.serial, out
+		}
+	}
+	panic("unreachable")
+}

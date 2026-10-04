@@ -27,6 +27,22 @@ type Options struct {
 type Builder struct {
 	o     Options
 	pages [][]byte
+
+	objs     []*Table // tables and indexes in creation order, dropped ones included
+	dirty    bool     // rows or objects changed since the last Build
+	freed    []uint32 // pages that go on the freelist at Build
+	patches  []patch  // Patch calls, replayed after every Build
+	hdrPages *hdrPages
+}
+
+type patch struct {
+	off int
+	p   []byte
+}
+
+type hdrPages struct {
+	n     uint32
+	valid bool
 }
 
 // New returns a builder for o. Invalid options (a page size that is not a
@@ -60,6 +76,7 @@ func New(o Options) *Builder {
 
 // Bytes returns a copy of the whole file.
 func (b *Builder) Bytes() []byte {
+	b.settle()
 	out := make([]byte, 0, len(b.pages)*b.o.PageSize)
 	for _, p := range b.pages {
 		out = append(out, p...)
@@ -73,6 +90,7 @@ func (b *Builder) PageSize() int { return b.o.PageSize }
 // PageBytes returns the live slice of page n (1-based): tests mutate hostile
 // cases through it. It panics for a page that does not exist.
 func (b *Builder) PageBytes(n uint32) []byte {
+	b.settle()
 	if n == 0 || int(n) > len(b.pages) {
 		panic(fmt.Sprintf("sqlitetest: page %d does not exist (the file has %d)", n, len(b.pages)))
 	}
@@ -82,12 +100,14 @@ func (b *Builder) PageBytes(n uint32) []byte {
 // Patch overwrites file bytes at off. It panics when the range is outside the
 // file.
 func (b *Builder) Patch(off int, p ...byte) {
+	b.settle()
 	if off < 0 || off+len(p) > len(b.pages)*b.o.PageSize {
 		panic(fmt.Sprintf("sqlitetest: patch of %d bytes at %d is outside the %d-byte file", len(p), off, len(b.pages)*b.o.PageSize))
 	}
 	for i, v := range p {
 		b.pages[(off+i)/b.o.PageSize][(off+i)%b.o.PageSize] = v
 	}
+	b.patches = append(b.patches, patch{off, append([]byte(nil), p...)})
 }
 
 // SetHeaderPages writes n at offset 28 (database size in pages). With valid
@@ -95,6 +115,8 @@ func (b *Builder) Patch(off int, p ...byte) {
 // counter (offset 24), so a reader trusts n; without it, it is made to
 // differ.
 func (b *Builder) SetHeaderPages(n uint32, valid bool) {
+	b.settle()
+	b.hdrPages = &hdrPages{n, valid}
 	h := b.pages[0]
 	put32(h[28:], n)
 	counter := get32(h[24:])

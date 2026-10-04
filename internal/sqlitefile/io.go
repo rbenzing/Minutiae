@@ -21,3 +21,6 @@ func readFull(r io.ReaderAt, p []byte, off int64) error {
 	}
 	return fmt.Errorf("sqlitefile: reading %d bytes at offset %d: %w", len(p), off, err)
 }
+
+// isUnavailable reports whether err says a page cannot be supplied.
+func isUnavailable(err error) bool { return errors.Is(err, ErrPageUnavailable) }
