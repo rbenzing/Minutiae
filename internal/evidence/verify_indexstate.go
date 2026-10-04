@@ -1,6 +1,9 @@
 package evidence
 
-import "context"
+import (
+	"context"
+	"slices"
+)
 
 // verifyIndexState reports the state of the full-text index (schema v3 and newer), per the plan's
 // index-state table. A current index is silent here (the comparison of its content is a separate
@@ -58,9 +61,10 @@ type danglingReindex struct {
 
 // danglingReindexes returns the records.reindex entries the audit log announced and never
 // concluded, in log order. A records.reindex.error with the same reindex id concludes one; a
-// records.reindex.done concludes every reindex announced before it, because a finished rebuild
-// supersedes any earlier one (a reindex that was cut short is concluded by the next one that
-// completes). Entries whose details cannot be decoded are problems.
+// records.reindex.done concludes the reindex it names and every reindex announced before it, because
+// a finished rebuild supersedes any earlier one (a reindex that was cut short is concluded by the next
+// one that completes). A done or error that names no open announcement is a problem and concludes
+// nothing, as is an entry whose details cannot be decoded.
 func danglingReindexes(entries []AuditEntry, rep *VerifyReport) []danglingReindex {
 	var open []danglingReindex
 	for _, e := range entries {
@@ -78,19 +82,32 @@ func danglingReindexes(entries []AuditEntry, rep *VerifyReport) []danglingReinde
 				rep.problemf("audit seq %d: %s details unreadable: %q", e.Seq, e.Action, err.Error())
 				continue
 			}
-			for i := range open {
-				if open[i].id == f.ReindexID {
-					open = append(open[:i], open[i+1:]...)
-					break
-				}
+			i := slices.IndexFunc(open, func(d danglingReindex) bool { return d.id == f.ReindexID })
+			if i < 0 {
+				orphanReindexConclusion(rep, e, f.ReindexID)
+				continue
 			}
+			open = slices.Delete(open, i, i+1)
 		case ActionReindexDone:
-			if _, err := DecodeDetails[ReindexDone](e.Details); err != nil {
+			d, err := DecodeDetails[ReindexDone](e.Details)
+			if err != nil {
 				rep.problemf("audit seq %d: %s details unreadable: %q", e.Seq, e.Action, err.Error())
 				continue
 			}
-			open = nil
+			i := slices.IndexFunc(open, func(o danglingReindex) bool { return o.id == d.ReindexID })
+			if i < 0 {
+				orphanReindexConclusion(rep, e, d.ReindexID)
+				continue
+			}
+			open = open[i+1:] // the named reindex and every one announced before it
 		}
 	}
 	return open
+}
+
+// orphanReindexConclusion reports a records.reindex.done or .error that names no open announcement:
+// the chain claims the conclusion of work it never announced (or concluded twice), which only a writer
+// of the chain can produce. It concludes nothing.
+func orphanReindexConclusion(rep *VerifyReport, e AuditEntry, id string) {
+	rep.problemf("audit seq %d: %s names reindex %q, which no earlier records.reindex announced, or which was already concluded", e.Seq, e.Action, id)
 }

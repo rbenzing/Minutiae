@@ -3,6 +3,7 @@ package evidence_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -386,5 +387,178 @@ func TestReindexCrashAfterMetaIsAVerifyNotice(t *testing.T) {
 	}
 	if got := auditActions(t, c, "records.reindex"); len(got) != 3 {
 		t.Errorf("reindex audit entries = %d, want start, start, done", len(got))
+	}
+}
+
+// TestVerifyOrphanReindexConclusionIsAProblem: a records.reindex.done or .error whose reindex id no
+// earlier records.reindex announced is a verify PROBLEM (the audit chain claims a conclusion of work it
+// never announced), with the entry's seq and the id in the text; an announced reindex that is
+// concluded by its own entry stays silent.
+func TestVerifyOrphanReindexConclusionIsAProblem(t *testing.T) {
+	const orphan = "which no earlier records.reindex announced, or which was already concluded"
+	tests := []struct {
+		name   string
+		action string
+		detail map[string]any
+		want   string
+	}{
+		{
+			"done", evidence.ActionReindexDone, evidence.ReindexDone{ReindexID: "rix-forged", NormVersion: evidence.FTSNormVersion(), Docs: map[string]int64{}}.Details(),
+			`records.reindex.done names reindex "rix-forged", ` + orphan,
+		},
+		{
+			"error", evidence.ActionReindexError, evidence.ReindexFailure{ReindexID: "rix-forged", Error: "x"}.Details(),
+			`records.reindex.error names reindex "rix-forged", ` + orphan,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := corpusCase(t)
+			if rep, err := c.Verify(); err != nil || !rep.OK() {
+				t.Fatalf("verify before the tamper = %+v, %v", rep, err)
+			}
+			entry, err := c.Audit.Append(tc.action, "", tc.detail)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rep, err := c.Verify()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rep.OK() || !containsSub(rep.Problems, fmt.Sprintf("audit seq %d: %s", entry.Seq, tc.want)) {
+				t.Errorf("verify problems = %q, want one naming seq %d: %s", rep.Problems, entry.Seq, tc.want)
+			}
+		})
+	}
+}
+
+// TestReindexCrashPoints: a process that dies (the hook panics) at each step of a reindex leaves the
+// case in a state that tells the truth. The index is searchable only while the state is current; a
+// records writer is refused while it is not; verify is OK but reports what happened in notices (never an
+// invented failure: no .error was written, because nothing was alive to write it); and the next reindex
+// concludes every earlier announcement and leaves a clean case.
+func TestReindexCrashPoints(t *testing.T) {
+	type honest struct {
+		state    string // records_meta fts_norm_version afterwards ("current" is FTSNormVersion())
+		docs     int64  // documents each FTS table holds
+		notices  []string
+		noNotice []string
+	}
+	tests := []struct {
+		name  string
+		point string
+		nth   int // the nth call of the point crashes
+		want  honest
+	}{
+		{
+			"after the announcement", "after-start-audit", 1,
+			honest{"current", int64(corpusIdx), []string{"never concluded"}, []string{"interrupted"}},
+		},
+		{
+			"after the reset", "after-reset", 1,
+			honest{"building", 0, []string{"never concluded", "interrupted"}, nil},
+		},
+		{
+			"mid-chunks", "after-chunk", 2,
+			honest{"building", 8, []string{"never concluded", "interrupted"}, nil},
+		},
+		{
+			"before the state flip", "before-meta", 1,
+			honest{"building", int64(corpusIdx), []string{"never concluded", "interrupted"}, nil},
+		},
+		{
+			"after the state flip, before done", "after-meta", 1,
+			honest{"current", int64(corpusIdx), []string{"never concluded"}, []string{"interrupted"}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c, art := corpusCase(t)
+			calls := 0
+			c.SetReindexHook(func(point string) error {
+				if point == tc.point {
+					if calls++; calls == tc.nth {
+						panic("power cut at " + point)
+					}
+				}
+				return nil
+			})
+			func() {
+				defer func() {
+					if r := recover(); r != "power cut at "+tc.point {
+						t.Fatalf("recovered %v, want the simulated crash at %s", r, tc.point)
+					}
+				}()
+				_, _ = c.ReindexText(rctx, evidence.ReindexOptions{ChunkRows: 4})
+				t.Fatalf("ReindexText returned: the hook at %s (call %d) was never reached", tc.point, tc.nth)
+			}()
+			c.SetReindexHook(nil)
+
+			if live := c.LiveIngest(); live != "" {
+				t.Errorf("the live-ingest slot still holds %q after the crash", live)
+			}
+			wantState := tc.want.state
+			if wantState == "current" {
+				wantState = evidence.FTSNormVersion()
+			}
+			if got := metaValue(t, c); got != wantState {
+				t.Errorf("state = %q, want %q", got, wantState)
+			}
+			for _, table := range evidence.FTSTables() {
+				if n := docsizeCount(t, c, table); n != tc.want.docs {
+					t.Errorf("%s holds %d documents, want %d", table, n, tc.want.docs)
+				}
+			}
+			// only the announcement: a dead process wrote no conclusion
+			es := auditActions(t, c, "records.reindex")
+			if len(es) != 1 || es[0].Action != evidence.ActionReindex {
+				t.Fatalf("reindex audit entries = %+v, want the announcement only", es)
+			}
+			// searchable and writable exactly while the state is current
+			current := tc.want.state == "current"
+			err := c.RequireIndexCurrent(rctx)
+			if current != (err == nil) || (!current && !errors.Is(err, evidence.ErrIndexNotCurrent)) {
+				t.Errorf("RequireIndexCurrent = %v with state %q", err, tc.want.state)
+			}
+			w, werr := records.NewWriter(c, records.Parser{Name: "after-crash", Version: "1"}, records.WriterOptions{})
+			if werr != nil {
+				t.Fatal(werr)
+			}
+			serr := w.Start(rctx, records.StartOptions{Artifacts: []string{art.ID}})
+			if current {
+				if serr != nil {
+					t.Errorf("Writer.Start on a current index = %v", serr)
+				} else if _, err := w.Abort(rctx, errors.New("test over")); err != nil {
+					t.Fatal(err)
+				}
+			} else if !errors.Is(serr, records.ErrIndexNotCurrent) {
+				t.Errorf("Writer.Start on a %s index = %v, want ErrIndexNotCurrent", tc.want.state, serr)
+			}
+			rep, verr := c.Verify()
+			if verr != nil || !rep.OK() {
+				t.Fatalf("verify = %+v, %v; want OK (notices only)", rep, verr)
+			}
+			for _, n := range tc.want.notices {
+				if !containsSub(rep.Notices, n) {
+					t.Errorf("notices %q lack %q", rep.Notices, n)
+				}
+			}
+			for _, n := range tc.want.noNotice {
+				if containsSub(rep.Notices, n) {
+					t.Errorf("notices %q hold %q, which the state does not warrant", rep.Notices, n)
+				}
+			}
+
+			res, err := c.ReindexText(rctx, evidence.ReindexOptions{ChunkRows: 4})
+			if err != nil || res.Indexed != int64(corpusIdx) {
+				t.Fatalf("the next reindex = %+v, %v", res, err)
+			}
+			if rep, err := c.Verify(); err != nil || !rep.OK() || len(rep.Notices) != 0 {
+				t.Errorf("verify after the next reindex = %+v, %v; want OK without notices", rep, err)
+			}
+			if got := len(auditActions(t, c, "records.reindex")); got != 3 {
+				t.Errorf("reindex audit entries = %d, want 3 (the announcement of the crash, then the new start and done)", got)
+			}
+		})
 	}
 }
