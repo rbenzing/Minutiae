@@ -15,7 +15,7 @@ Status values: `Not started` · `Spec` · `Planned` · `In progress` · `Done`
 | # | Sub-project | Scope | Depends on | Status |
 |---|---|---|---|---|
 | 1 | Foundation + Acquisition | Case/evidence core (hash-chained audit log, manifest, `artifacts.db`, verify), device abstraction, USB serial transport + raw console, Android ADB (info, pull/push, logical, rooted partition imaging), iOS (info, AFC pull, logical backup), CLI | — | Done |
-| 2 | Image & filesystem layer | Open raw/dd and E01 images; GPT/MBR; read ext4, F2FS, APFS, HFS+, FAT, exFAT; expose unallocated space | 1 | In progress |
+| 2 | Image & filesystem layer | Open raw/dd and E01 images; GPT/MBR; read ext4, F2FS, APFS, HFS+, FAT, exFAT; expose unallocated space | 1 | Done |
 | 3 | Deleted data recovery | SQLite freelist/WAL/journal record recovery; signature-based file carving; slack space; ext4 journal | 2 | Not started |
 | 4 | Artifact parsers (plugin system) | SMS/MMS, calls, contacts, calendar, browser history, WhatsApp, Telegram, Signal (where decryptable), Instagram and others, as plugins writing to `artifacts.db` | 1, 2 | Not started |
 | 5 | Unified artifact database | Indexed store of all parsed records with provenance (artifact, path, offset, deleted flag); full-text keyword search | 1 | In progress |

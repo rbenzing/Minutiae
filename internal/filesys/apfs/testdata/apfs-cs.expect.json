@@ -1,0 +1,1192 @@
+{
+  "oracle": {
+    "decoder": "tools/fixtures/apfs_oracle.py",
+    "source": "Apple File System Reference 2020-06-22; values come from the image and the mkapfs arguments, never from Minutiae"
+  },
+  "args": {
+    "label": "fixture-cs",
+    "case_sensitive": true,
+    "norm_sensitive": true,
+    "container_uuid": "2d9e4b71-c3a8-4f05-b6d2-81e7a09c5f34",
+    "volume_uuid": "e8b05d3a-6f12-4c97-a4e1-70c2b9d8f356"
+  },
+  "container": {
+    "block_size": 4096,
+    "block_count": 16384,
+    "uuid": "2d9e4b71-c3a8-4f05-b6d2-81e7a09c5f34",
+    "features": 0,
+    "readonly_compatible_features": 0,
+    "incompatible_features": 2,
+    "flags": 0,
+    "next_oid": 1124,
+    "next_xid": 2,
+    "max_file_systems": 1,
+    "fs_oids": [
+      1026
+    ],
+    "spaceman_oid": 1024,
+    "omap_oid": 169,
+    "reaper_oid": 1025,
+    "test_type": 0,
+    "efi_jumpstart": 0,
+    "keylocker": [
+      0,
+      0
+    ],
+    "blocked_out_prange": [
+      0,
+      0
+    ],
+    "evict_mapping_tree_oid": 0,
+    "ephemeral_info": [
+      17180131329,
+      0,
+      0,
+      0
+    ],
+    "ephemeral_info_decoded": {
+      "version": 1,
+      "max_fs_eph_structs": 4,
+      "min_block_count": 4
+    },
+    "counters_nonzero": {},
+    "newest_mounted_version": 0,
+    "mkb_locker": [
+      0,
+      0
+    ]
+  },
+  "checkpoint": {
+    "newest_xid": 1,
+    "superblock_ring_index": 1,
+    "desc": {
+      "base": 1,
+      "blocks": 8,
+      "next": 2,
+      "index": 0,
+      "len": 2
+    },
+    "data": {
+      "base": 9,
+      "blocks": 160,
+      "next": 4,
+      "index": 0,
+      "len": 4
+    },
+    "ring": [
+      {
+        "index": 0,
+        "block": 1,
+        "kind": "map",
+        "oid": 1,
+        "xid": 1,
+        "o_type": 1073741836,
+        "flags": 1,
+        "count": 4,
+        "mappings": [
+          {
+            "cpm_type": 2147483665,
+            "cpm_subtype": 0,
+            "cpm_size": 4096,
+            "cpm_pad": 0,
+            "cpm_fs_oid": 0,
+            "cpm_oid": 1025,
+            "cpm_paddr": 9
+          },
+          {
+            "cpm_type": 2147483653,
+            "cpm_subtype": 0,
+            "cpm_size": 4096,
+            "cpm_pad": 0,
+            "cpm_fs_oid": 0,
+            "cpm_oid": 1024,
+            "cpm_paddr": 10
+          },
+          {
+            "cpm_type": 2147483650,
+            "cpm_subtype": 9,
+            "cpm_size": 4096,
+            "cpm_pad": 0,
+            "cpm_fs_oid": 0,
+            "cpm_oid": 1028,
+            "cpm_paddr": 11
+          },
+          {
+            "cpm_type": 2147483650,
+            "cpm_subtype": 9,
+            "cpm_size": 4096,
+            "cpm_pad": 0,
+            "cpm_fs_oid": 0,
+            "cpm_oid": 1029,
+            "cpm_paddr": 12
+          }
+        ]
+      },
+      {
+        "index": 1,
+        "block": 2,
+        "kind": "superblock",
+        "oid": 1,
+        "xid": 1,
+        "o_type": 2147483649,
+        "identical_to_block0": true
+      },
+      {
+        "index": 2,
+        "block": 3,
+        "kind": "zero"
+      },
+      {
+        "index": 3,
+        "block": 4,
+        "kind": "zero"
+      },
+      {
+        "index": 4,
+        "block": 5,
+        "kind": "zero"
+      },
+      {
+        "index": 5,
+        "block": 6,
+        "kind": "zero"
+      },
+      {
+        "index": 6,
+        "block": 7,
+        "kind": "zero"
+      },
+      {
+        "index": 7,
+        "block": 8,
+        "kind": "zero"
+      }
+    ],
+    "ephemeral_objects": [
+      {
+        "block": 9,
+        "blocks": 1,
+        "oid": 1025,
+        "xid": 1,
+        "type": 17,
+        "type_name": "nx_reaper",
+        "subtype": 0,
+        "o_type": 2147483665,
+        "mapping": {
+          "cpm_type": 2147483665,
+          "cpm_subtype": 0,
+          "cpm_size": 4096,
+          "cpm_pad": 0,
+          "cpm_fs_oid": 0,
+          "cpm_oid": 1025,
+          "cpm_paddr": 9
+        }
+      },
+      {
+        "block": 10,
+        "blocks": 1,
+        "oid": 1024,
+        "xid": 1,
+        "type": 5,
+        "type_name": "spaceman",
+        "subtype": 0,
+        "o_type": 2147483653,
+        "mapping": {
+          "cpm_type": 2147483653,
+          "cpm_subtype": 0,
+          "cpm_size": 4096,
+          "cpm_pad": 0,
+          "cpm_fs_oid": 0,
+          "cpm_oid": 1024,
+          "cpm_paddr": 10
+        }
+      },
+      {
+        "block": 11,
+        "blocks": 1,
+        "oid": 1028,
+        "xid": 1,
+        "type": 2,
+        "type_name": "btree",
+        "subtype": 9,
+        "o_type": 2147483650,
+        "mapping": {
+          "cpm_type": 2147483650,
+          "cpm_subtype": 9,
+          "cpm_size": 4096,
+          "cpm_pad": 0,
+          "cpm_fs_oid": 0,
+          "cpm_oid": 1028,
+          "cpm_paddr": 11
+        }
+      },
+      {
+        "block": 12,
+        "blocks": 1,
+        "oid": 1029,
+        "xid": 1,
+        "type": 2,
+        "type_name": "btree",
+        "subtype": 9,
+        "o_type": 2147483650,
+        "mapping": {
+          "cpm_type": 2147483650,
+          "cpm_subtype": 9,
+          "cpm_size": 4096,
+          "cpm_pad": 0,
+          "cpm_fs_oid": 0,
+          "cpm_oid": 1029,
+          "cpm_paddr": 12
+        }
+      }
+    ],
+    "block0_identical_to_ring_superblock": true
+  },
+  "reaper": {
+    "nr_next_reap_id": 1,
+    "nr_completed_id": 0,
+    "nr_head": 0,
+    "nr_tail": 0,
+    "nr_flags": 1,
+    "nr_rlcount": 0,
+    "nr_type": 0,
+    "nr_size": 0,
+    "nr_fs_oid": 0,
+    "nr_oid": 0,
+    "nr_xid": 0,
+    "nr_nrle_flags": 0,
+    "nr_state_buffer_size": 3984
+  },
+  "spaceman": {
+    "sm_block_size": 4096,
+    "sm_blocks_per_chunk": 32768,
+    "sm_chunks_per_cib": 126,
+    "sm_cibs_per_cab": 507,
+    "sm_dev0_block_count": 16384,
+    "sm_dev0_chunk_count": 1,
+    "sm_dev0_cib_count": 1,
+    "sm_dev0_cab_count": 0,
+    "sm_dev0_free_count": 16185,
+    "sm_dev0_addr_offset": 384,
+    "sm_dev0_reserved": 0,
+    "sm_dev0_reserved2": 0,
+    "sm_dev1_block_count": 0,
+    "sm_dev1_chunk_count": 0,
+    "sm_dev1_cib_count": 0,
+    "sm_dev1_cab_count": 0,
+    "sm_dev1_free_count": 0,
+    "sm_dev1_addr_offset": 392,
+    "sm_dev1_reserved": 0,
+    "sm_dev1_reserved2": 0,
+    "sm_flags": 0,
+    "sm_ip_bm_tx_multiplier": 16,
+    "sm_ip_block_count": 6,
+    "sm_ip_bm_size_in_blocks": 1,
+    "sm_ip_bm_block_count": 16,
+    "sm_ip_bm_base": 179,
+    "sm_ip_base": 195,
+    "sm_fs_reserve_block_count": 0,
+    "sm_fs_reserve_alloc_count": 0,
+    "sm_fq0_count": 0,
+    "sm_fq0_tree_oid": 1028,
+    "sm_fq0_oldest_xid": 0,
+    "sm_fq0_tree_node_limit": 1,
+    "sm_fq0_pad16": 0,
+    "sm_fq0_pad32": 0,
+    "sm_fq0_reserved": 0,
+    "sm_fq1_count": 0,
+    "sm_fq1_tree_oid": 1029,
+    "sm_fq1_oldest_xid": 0,
+    "sm_fq1_tree_node_limit": 4,
+    "sm_fq1_pad16": 0,
+    "sm_fq1_pad32": 0,
+    "sm_fq1_reserved": 0,
+    "sm_fq2_count": 0,
+    "sm_fq2_tree_oid": 0,
+    "sm_fq2_oldest_xid": 0,
+    "sm_fq2_tree_node_limit": 0,
+    "sm_fq2_pad16": 0,
+    "sm_fq2_pad32": 0,
+    "sm_fq2_reserved": 0,
+    "sm_ip_bm_free_head": 1,
+    "sm_ip_bm_free_tail": 15,
+    "sm_ip_bm_xid_offset": 336,
+    "sm_ip_bitmap_offset": 344,
+    "sm_ip_bm_free_next_offset": 352,
+    "sm_version": 1,
+    "sm_struct_size": 0,
+    "header": {
+      "oid": 1024,
+      "xid": 1,
+      "o_type": 2147483653,
+      "block": 10,
+      "blocks": 1
+    },
+    "cib_blocks": [
+      {
+        "block": 196,
+        "oid": 196,
+        "xid": 1,
+        "index": 0,
+        "chunk_info_count": 1,
+        "o_type": 1073741831
+      }
+    ],
+    "cab_blocks": [],
+    "internal_pool_bitmap_blocks": [
+      179,
+      194
+    ],
+    "internal_pool_blocks": [
+      195,
+      200
+    ],
+    "internal_pool_in_use": [
+      195,
+      196
+    ]
+  },
+  "free_queues": [
+    {
+      "oid": 1028,
+      "block": 11,
+      "records": 0,
+      "node": {
+        "block": 11,
+        "oid": 1028,
+        "xid": 1,
+        "type_name": "btree",
+        "storage": "ephemeral",
+        "flags": 7,
+        "level": 0,
+        "nkeys": 0,
+        "table_space": [
+          0,
+          576
+        ],
+        "free_space": [
+          0,
+          3424
+        ],
+        "key_free_list": [
+          65535,
+          0
+        ],
+        "val_free_list": [
+          65535,
+          0
+        ],
+        "btree_info": {
+          "bt_flags": 12,
+          "bt_node_size": 4096,
+          "bt_key_size": 16,
+          "bt_val_size": 8,
+          "bt_longest_key": 16,
+          "bt_longest_val": 8,
+          "bt_key_count": 0,
+          "bt_node_count": 1
+        }
+      },
+      "btree_info": {
+        "bt_flags": 12,
+        "bt_node_size": 4096,
+        "bt_key_size": 16,
+        "bt_val_size": 8,
+        "bt_longest_key": 16,
+        "bt_longest_val": 8,
+        "bt_key_count": 0,
+        "bt_node_count": 1
+      }
+    },
+    {
+      "oid": 1029,
+      "block": 12,
+      "records": 0,
+      "node": {
+        "block": 12,
+        "oid": 1029,
+        "xid": 1,
+        "type_name": "btree",
+        "storage": "ephemeral",
+        "flags": 7,
+        "level": 0,
+        "nkeys": 0,
+        "table_space": [
+          0,
+          576
+        ],
+        "free_space": [
+          0,
+          3424
+        ],
+        "key_free_list": [
+          65535,
+          0
+        ],
+        "val_free_list": [
+          65535,
+          0
+        ],
+        "btree_info": {
+          "bt_flags": 12,
+          "bt_node_size": 4096,
+          "bt_key_size": 16,
+          "bt_val_size": 8,
+          "bt_longest_key": 16,
+          "bt_longest_val": 8,
+          "bt_key_count": 0,
+          "bt_node_count": 1
+        }
+      },
+      "btree_info": {
+        "bt_flags": 12,
+        "bt_node_size": 4096,
+        "bt_key_size": 16,
+        "bt_val_size": 8,
+        "bt_longest_key": 16,
+        "bt_longest_val": 8,
+        "bt_key_count": 0,
+        "bt_node_count": 1
+      }
+    }
+  ],
+  "chunks": [
+    {
+      "chunk": 0,
+      "cib_block": 196,
+      "ci_xid": 1,
+      "ci_addr": 0,
+      "ci_block_count": 16384,
+      "ci_free_count": 16185,
+      "ci_bitmap_addr": 195
+    }
+  ],
+  "free_ranges": [
+    [
+      177,
+      178
+    ],
+    [
+      201,
+      16383
+    ]
+  ],
+  "free_blocks": 16185,
+  "allocated_blocks": 199,
+  "container_omap": {
+    "block": 169,
+    "header": {
+      "oid": 169,
+      "xid": 1,
+      "type": 11,
+      "type_name": "omap",
+      "storage": "physical",
+      "o_type": 1073741835,
+      "o_subtype": 0
+    },
+    "om_flags": 1,
+    "om_snap_count": 0,
+    "om_tree_type": 1073741826,
+    "om_snapshot_tree_type": 1073741826,
+    "om_tree_oid": 170,
+    "om_snapshot_tree_oid": 0,
+    "om_most_recent_snap": 0,
+    "om_pending_revert_min": 0,
+    "om_pending_revert_max": 0,
+    "tree": {
+      "root_block": 170,
+      "nodes": [
+        {
+          "block": 170,
+          "oid": 170,
+          "xid": 1,
+          "type_name": "btree",
+          "storage": "physical",
+          "flags": 7,
+          "level": 0,
+          "nkeys": 1,
+          "table_space": [
+            0,
+            448
+          ],
+          "free_space": [
+            16,
+            3520
+          ],
+          "key_free_list": [
+            65535,
+            0
+          ],
+          "val_free_list": [
+            65535,
+            0
+          ],
+          "btree_info": {
+            "bt_flags": 16,
+            "bt_node_size": 4096,
+            "bt_key_size": 16,
+            "bt_val_size": 16,
+            "bt_longest_key": 16,
+            "bt_longest_val": 16,
+            "bt_key_count": 1,
+            "bt_node_count": 1
+          }
+        }
+      ]
+    },
+    "entries": [
+      {
+        "oid": 1026,
+        "xid": 1,
+        "flags": 0,
+        "size": 4096,
+        "paddr": 171
+      }
+    ]
+  },
+  "volume": {
+    "name": "fixture-cs",
+    "oid": 1026,
+    "block": 171,
+    "header": {
+      "oid": 1026,
+      "xid": 1,
+      "type": 13,
+      "type_name": "fs",
+      "storage": "virtual",
+      "o_type": 13,
+      "o_subtype": 0
+    },
+    "uuid": "e8b05d3a-6f12-4c97-a4e1-70c2b9d8f356",
+    "fs_index": 0,
+    "features": 2,
+    "readonly_compatible_features": 0,
+    "incompatible_features": 0,
+    "fs_flags": 1,
+    "role": 0,
+    "case_insensitive": false,
+    "normalization_insensitive": false,
+    "encrypted": false,
+    "unmount_time": 0,
+    "last_mod_time": 0,
+    "fs_reserve_block_count": 0,
+    "fs_quota_block_count": 0,
+    "fs_alloc_count": 5,
+    "meta_crypto": {
+      "major_version": 5,
+      "minor_version": 0,
+      "cpflags": 0,
+      "persistent_class": 6,
+      "key_os_version": 0,
+      "key_revision": 1,
+      "unused": 0
+    },
+    "root_tree_type": 2,
+    "extentref_tree_type": 1073741826,
+    "snap_meta_tree_type": 1073741826,
+    "omap_oid": 172,
+    "root_tree_oid": 1027,
+    "extentref_tree_oid": 175,
+    "snap_meta_tree_oid": 176,
+    "revert_to_xid": 0,
+    "revert_to_sblock_oid": 0,
+    "next_obj_id": 16,
+    "num_files": 0,
+    "num_directories": 0,
+    "num_symlinks": 0,
+    "num_other_fsobjects": 0,
+    "num_snapshots": 0,
+    "total_blocks_alloced": 0,
+    "total_blocks_freed": 0,
+    "formatted_by": {
+      "id": "mkapfs by eafer ()",
+      "timestamp": 1700000000000000000,
+      "timestamp_iso": "2023-11-14T22:13:20.000000000Z",
+      "last_xid": 1
+    },
+    "modified_by_nonzero": [],
+    "next_doc_id": 3,
+    "root_to_xid": 0,
+    "er_state_oid": 0,
+    "cloneinfo_id_epoch": 0,
+    "cloneinfo_xid": 0,
+    "snap_meta_ext_oid": 0,
+    "volume_group_id": "00000000-0000-0000-0000-000000000000",
+    "integrity_meta_oid": 0,
+    "fext_tree_oid": 0,
+    "fext_tree_type": 0
+  },
+  "volume_omap": {
+    "block": 172,
+    "header": {
+      "oid": 172,
+      "xid": 1,
+      "type": 11,
+      "type_name": "omap",
+      "storage": "physical",
+      "o_type": 1073741835,
+      "o_subtype": 0
+    },
+    "om_flags": 0,
+    "om_snap_count": 0,
+    "om_tree_type": 1073741826,
+    "om_snapshot_tree_type": 1073741826,
+    "om_tree_oid": 173,
+    "om_snapshot_tree_oid": 0,
+    "om_most_recent_snap": 0,
+    "om_pending_revert_min": 0,
+    "om_pending_revert_max": 0,
+    "tree": {
+      "root_block": 173,
+      "nodes": [
+        {
+          "block": 173,
+          "oid": 173,
+          "xid": 1,
+          "type_name": "btree",
+          "storage": "physical",
+          "flags": 7,
+          "level": 0,
+          "nkeys": 1,
+          "table_space": [
+            0,
+            448
+          ],
+          "free_space": [
+            16,
+            3520
+          ],
+          "key_free_list": [
+            65535,
+            0
+          ],
+          "val_free_list": [
+            65535,
+            0
+          ],
+          "btree_info": {
+            "bt_flags": 16,
+            "bt_node_size": 4096,
+            "bt_key_size": 16,
+            "bt_val_size": 16,
+            "bt_longest_key": 16,
+            "bt_longest_val": 16,
+            "bt_key_count": 1,
+            "bt_node_count": 1
+          }
+        }
+      ]
+    },
+    "entries": [
+      {
+        "oid": 1027,
+        "xid": 1,
+        "flags": 0,
+        "size": 4096,
+        "paddr": 174
+      }
+    ]
+  },
+  "fs_tree": {
+    "root_oid": 1027,
+    "root_block": 174,
+    "btree_info": {
+      "bt_flags": 64,
+      "bt_node_size": 4096,
+      "bt_key_size": 0,
+      "bt_val_size": 0,
+      "bt_longest_key": 22,
+      "bt_longest_val": 116,
+      "bt_key_count": 4,
+      "bt_node_count": 1
+    },
+    "nodes": [
+      {
+        "block": 174,
+        "oid": 1027,
+        "xid": 1,
+        "type_name": "btree",
+        "storage": "virtual",
+        "flags": 3,
+        "level": 0,
+        "nkeys": 4,
+        "table_space": [
+          0,
+          128
+        ],
+        "free_space": [
+          53,
+          3559
+        ],
+        "key_free_list": [
+          65535,
+          0
+        ],
+        "val_free_list": [
+          65535,
+          0
+        ],
+        "btree_info": {
+          "bt_flags": 64,
+          "bt_node_size": 4096,
+          "bt_key_size": 0,
+          "bt_val_size": 0,
+          "bt_longest_key": 22,
+          "bt_longest_val": 116,
+          "bt_key_count": 4,
+          "bt_node_count": 1
+        }
+      }
+    ],
+    "records": [
+      {
+        "id": 1,
+        "type": 9,
+        "type_name": "dir_rec",
+        "key_length": 22,
+        "value_length": 18,
+        "drec": {
+          "parent_id": 1,
+          "name": "private-dir",
+          "key_form": "plain",
+          "name_len_with_nul": 12,
+          "file_id": 3,
+          "date_added": 1700000000000000000,
+          "flags": 4,
+          "dirent_type": "dir",
+          "xfields": []
+        }
+      },
+      {
+        "id": 1,
+        "type": 9,
+        "type_name": "dir_rec",
+        "key_length": 15,
+        "value_length": 18,
+        "drec": {
+          "parent_id": 1,
+          "name": "root",
+          "key_form": "plain",
+          "name_len_with_nul": 5,
+          "file_id": 2,
+          "date_added": 1700000000000000000,
+          "flags": 4,
+          "dirent_type": "dir",
+          "xfields": []
+        }
+      },
+      {
+        "id": 2,
+        "type": 3,
+        "type_name": "inode",
+        "key_length": 8,
+        "value_length": 108,
+        "inode": {
+          "parent_id": 1,
+          "private_id": 2,
+          "create_time": 1700000000000000000,
+          "mod_time": 1700000000000000000,
+          "change_time": 1700000000000000000,
+          "access_time": 1700000000000000000,
+          "create_time_iso": "2023-11-14T22:13:20.000000000Z",
+          "internal_flags": 0,
+          "nchildren_or_nlink": 0,
+          "default_protection_class": 0,
+          "write_generation_counter": 0,
+          "bsd_flags": 0,
+          "owner": 0,
+          "group": 0,
+          "mode": 16877,
+          "mode_octal": "40755",
+          "uncompressed_size": 0,
+          "xfields": [
+            {
+              "type": 4,
+              "name": "name",
+              "flags": 2,
+              "size": 5,
+              "value": "root"
+            }
+          ]
+        },
+        "xfield_types": [
+          4
+        ]
+      },
+      {
+        "id": 3,
+        "type": 3,
+        "type_name": "inode",
+        "key_length": 8,
+        "value_length": 116,
+        "inode": {
+          "parent_id": 1,
+          "private_id": 3,
+          "create_time": 1700000000000000000,
+          "mod_time": 1700000000000000000,
+          "change_time": 1700000000000000000,
+          "access_time": 1700000000000000000,
+          "create_time_iso": "2023-11-14T22:13:20.000000000Z",
+          "internal_flags": 0,
+          "nchildren_or_nlink": 0,
+          "default_protection_class": 0,
+          "write_generation_counter": 0,
+          "bsd_flags": 0,
+          "owner": 0,
+          "group": 0,
+          "mode": 16877,
+          "mode_octal": "40755",
+          "uncompressed_size": 0,
+          "xfields": [
+            {
+              "type": 4,
+              "name": "name",
+              "flags": 2,
+              "size": 12,
+              "value": "private-dir"
+            }
+          ]
+        },
+        "xfield_types": [
+          4
+        ]
+      }
+    ]
+  },
+  "snap_meta_tree": {
+    "root_block": 176,
+    "nodes": [
+      {
+        "block": 176,
+        "oid": 176,
+        "xid": 1,
+        "type_name": "btree",
+        "storage": "physical",
+        "flags": 3,
+        "level": 0,
+        "nkeys": 0,
+        "table_space": [
+          0,
+          128
+        ],
+        "free_space": [
+          0,
+          3872
+        ],
+        "key_free_list": [
+          65535,
+          0
+        ],
+        "val_free_list": [
+          65535,
+          0
+        ],
+        "btree_info": {
+          "bt_flags": 80,
+          "bt_node_size": 4096,
+          "bt_key_size": 0,
+          "bt_val_size": 0,
+          "bt_longest_key": 0,
+          "bt_longest_val": 0,
+          "bt_key_count": 0,
+          "bt_node_count": 1
+        }
+      }
+    ],
+    "btree_info": {
+      "bt_flags": 80,
+      "bt_node_size": 4096,
+      "bt_key_size": 0,
+      "bt_val_size": 0,
+      "bt_longest_key": 0,
+      "bt_longest_val": 0,
+      "bt_key_count": 0,
+      "bt_node_count": 1
+    },
+    "records": []
+  },
+  "extentref_tree": {
+    "root_block": 175,
+    "nodes": [
+      {
+        "block": 175,
+        "oid": 175,
+        "xid": 1,
+        "type_name": "btree",
+        "storage": "physical",
+        "flags": 3,
+        "level": 0,
+        "nkeys": 0,
+        "table_space": [
+          0,
+          128
+        ],
+        "free_space": [
+          0,
+          3872
+        ],
+        "key_free_list": [
+          65535,
+          0
+        ],
+        "val_free_list": [
+          65535,
+          0
+        ],
+        "btree_info": {
+          "bt_flags": 80,
+          "bt_node_size": 4096,
+          "bt_key_size": 0,
+          "bt_val_size": 0,
+          "bt_longest_key": 0,
+          "bt_longest_val": 0,
+          "bt_key_count": 0,
+          "bt_node_count": 1
+        }
+      }
+    ],
+    "btree_info": {
+      "bt_flags": 80,
+      "bt_node_size": 4096,
+      "bt_key_size": 0,
+      "bt_val_size": 0,
+      "bt_longest_key": 0,
+      "bt_longest_val": 0,
+      "bt_key_count": 0,
+      "bt_node_count": 1
+    },
+    "records": []
+  },
+  "verified_object_blocks": [
+    0,
+    1,
+    2,
+    9,
+    10,
+    11,
+    12,
+    169,
+    170,
+    171,
+    172,
+    173,
+    174,
+    175,
+    176,
+    196
+  ],
+  "raw_blocks": {
+    "179": "internal-pool bitmap",
+    "180": "internal-pool bitmap",
+    "181": "internal-pool bitmap",
+    "182": "internal-pool bitmap",
+    "183": "internal-pool bitmap",
+    "184": "internal-pool bitmap",
+    "185": "internal-pool bitmap",
+    "186": "internal-pool bitmap",
+    "187": "internal-pool bitmap",
+    "188": "internal-pool bitmap",
+    "189": "internal-pool bitmap",
+    "190": "internal-pool bitmap",
+    "191": "internal-pool bitmap",
+    "192": "internal-pool bitmap",
+    "193": "internal-pool bitmap",
+    "194": "internal-pool bitmap",
+    "195": "internal pool",
+    "196": "internal pool",
+    "197": "internal pool",
+    "198": "internal pool",
+    "199": "internal pool",
+    "200": "internal pool"
+  },
+  "measured": {
+    "checkpoints_in_ring": 1,
+    "descriptor_ring": "index 0 len 2: map block(s) at ring index [0] then the superblock at 1; remaining 6 ring blocks are zero",
+    "map_blocks_immediately_before_superblock": true,
+    "block0_is_copy_of_newest_checkpoint_superblock": true,
+    "fs_tree_is_one_leaf": true,
+    "drec_key_form": "plain (j_drec_key_t) on this volume; fs-tree bt_flags=0x40",
+    "drec_hash_recipe_reproduces_stored_hashes": [],
+    "fs_tree_bt_flags": 64,
+    "fs_tree_toc_format": "kvloc (variable)",
+    "omap_tree_toc_format": "kvoff (fixed)",
+    "ci_addr_is": "first block of the chunk (chunk_no * sm_blocks_per_chunk)",
+    "ci_bitmap_addr_is": "physical block of a raw header-less bitmap block, inside the internal pool; 0 (no bitmap block) for a chunk whose every block is free: chunks []",
+    "chunks_without_bitmap_block": [],
+    "bitmap_polarity": "bit set = allocated; bit i = byte i//8, mask 1<<(i%8); bit 0 = first block of the chunk",
+    "sm_addr_offset_origin": "bytes from the start of the spaceman object",
+    "sm_addr_offset_array": "u64 CIB block addresses (1) when sm_cab_count is 0",
+    "bt_node_size": 4096,
+    "tree_types": {
+      "container_omap_tree": {
+        "type": 2,
+        "storage": "physical",
+        "raw": 1073741826
+      },
+      "volume_omap_tree": {
+        "type": 2,
+        "storage": "physical",
+        "raw": 1073741826
+      },
+      "fs_tree": {
+        "type": 2,
+        "storage": "virtual",
+        "raw": 2
+      },
+      "extentref_tree": {
+        "type": 2,
+        "storage": "physical",
+        "raw": 1073741826
+      },
+      "snap_meta_tree": {
+        "type": 2,
+        "storage": "physical",
+        "raw": 1073741826
+      },
+      "free_queues": "ephemeral"
+    },
+    "spaceman_blocks": 1,
+    "hash_trees_flag_0x80": false
+  },
+  "checks": [
+    "nx_magic is 'BSXN' (bytes NXSB at offset 32)",
+    "block size read from block 0",
+    "container fits the image (16384 blocks)",
+    "image size is exactly block_count * block_size",
+    "descriptor and data areas are contiguous (high bit clear)",
+    "descriptor and data areas do not overlap",
+    "the descriptor area holds at least one superblock",
+    "block 0 is a byte-identical copy of the newest checkpoint superblock",
+    "block 0 checksum verifies",
+    "superblock header: oid 1, ephemeral, type nx_superblock",
+    "the checkpoint's last descriptor block is its superblock",
+    "the dl-1 blocks before the superblock are checkpoint-map blocks",
+    "map blocks carry the superblock's xid",
+    "the last map block has CHECKPOINT_MAP_LAST",
+    "nx_xp_desc_next follows the checkpoint",
+    "no other descriptor block is in use (a single checkpoint)",
+    "mapping size 4096 is a block multiple",
+    "mapping paddr 9 lies in the data area",
+    "ephemeral object at 9 matches its mapping (oid 0x401)",
+    "mapping size 4096 is a block multiple",
+    "mapping paddr 10 lies in the data area",
+    "ephemeral object at 10 matches its mapping (oid 0x400)",
+    "mapping size 4096 is a block multiple",
+    "mapping paddr 11 lies in the data area",
+    "ephemeral object at 11 matches its mapping (oid 0x404)",
+    "mapping size 4096 is a block multiple",
+    "mapping paddr 12 lies in the data area",
+    "ephemeral object at 12 matches its mapping (oid 0x405)",
+    "the mapped objects exactly fill nx_xp_data_len",
+    "nx_xp_data_next follows the data run",
+    "container uuid equals the -U argument",
+    "nx_max_file_systems >= 1",
+    "exactly one volume, in slot 0",
+    "NX_INCOMPAT_VERSION2 set; v1 and Fusion clear",
+    "the reaper is mapped, type nx_reaper",
+    "container omap is MANUALLY_MANAGED",
+    "the container omap maps every volume superblock oid",
+    "the space manager is mapped, type spaceman",
+    "sm_block_size equals nx_block_size",
+    "blocks per chunk is block_size * 8",
+    "no second (Fusion) device",
+    "sm_dev[0].sm_block_count equals nx_block_count",
+    "chunk count 1 follows from block_count",
+    "CIB count 1 follows from the chunk count",
+    "CIB/CAB address array lies inside the spaceman object",
+    "the address array lists every CIB",
+    "CIB at 196 has type spaceman_cib",
+    "CIB 196 has cib_index 0",
+    "CIB 196 holds 1 chunk-info records",
+    "chunk 0: ci_addr is the first block of the chunk",
+    "chunk 0: ci_block_count 16384",
+    "chunk 0: ci_free_count within range",
+    "chunk 0: zero bits in the bitmap (16185) equal ci_free_count",
+    "chunk 0: bitmap bytes past the chunk are zero",
+    "sm_dev[0].sm_free_count (16185) equals the sum of ci_free_count",
+    "sum of ci_free_count equals the zero-bit popcount of the bitmaps",
+    "free ranges cover exactly sm_free_count blocks",
+    "internal pool lies inside the container",
+    "internal pool bitmap and pool do not overlap",
+    "internal-pool bitmap marks exactly the CIB/CAB/chunk-bitmap blocks inside the pool",
+    "free queue 0x404 is empty",
+    "free queue 0x405 is empty",
+    "the mapped free-queue roots are the ones the space manager names",
+    "volume superblock omap entry: flags 0, one block",
+    "volume superblock: type fs, virtual, oid from nx_fs_oid",
+    "apfs_magic is 'BSPA' (bytes APSB at offset 32)",
+    "apfs_fs_index is the slot (0)",
+    "volume name equals the -L argument",
+    "volume uuid equals the -u argument",
+    "volume incompatible features 0x0 match mkapfs -s=1 -z=1",
+    "case sensitivity of the volume follows the flags",
+    "normalization sensitivity follows -z",
+    "APFS_FS_UNENCRYPTED set (volume is not encrypted)",
+    "no snapshots recorded",
+    "no revert pending",
+    "volume omap is not MANUALLY_MANAGED",
+    "fs-tree root is a virtual B-tree",
+    "volume omap maps the fs-tree root oid",
+    "fs-tree key_count equals the records found",
+    "fs-tree node_count equals the nodes found",
+    "the fs tree is a single leaf",
+    "fs-tree records are sorted by (object id, type)",
+    "inodes are the root directory (2) and the private dir (3)",
+    "two directory records under the root-parent id 1: root and private-dir",
+    "directory records point at inodes 2 and 3",
+    "both inodes have parent_id 1",
+    "both inodes are directories",
+    "known xfield types only",
+    "drec key form follows the volume's normalization sensitivity",
+    "snapshot metadata tree root is a physical B-tree",
+    "extent reference tree root is a physical B-tree",
+    "the snapshot-metadata tree is empty",
+    "the extent-reference tree is empty",
+    "both empty trees say key_count 0",
+    "volume superblock xid equals the checkpoint xid",
+    "every verified object block is marked allocated in the bitmap",
+    "every bitmap / internal-pool block is marked allocated in the bitmap",
+    "no free range overlaps block 0, the checkpoint areas or the internal pool",
+    "every non-zero block is a verified object or a known raw block (stray: [])"
+  ],
+  "generator": {
+    "image_sha256": "8134ebbec403d775e9323c910d755434c546ac9ac3c042ff3fefe524bbce5209",
+    "packages": [
+      {
+        "package": "apfsprogs",
+        "version": "0.2.0-1"
+      },
+      {
+        "package": "coreutils",
+        "version": "9.7-3"
+      },
+      {
+        "package": "faketime",
+        "version": "0.9.10+2024-06-05+gba9ed5b2-0.6"
+      },
+      {
+        "package": "gzip",
+        "version": "1.13-1+deb13u1"
+      },
+      {
+        "package": "jq",
+        "version": "1.7.1-6+deb13u4"
+      },
+      {
+        "package": "python3",
+        "version": "3.13.5-1"
+      },
+      {
+        "package": "util-linux",
+        "version": "2.41.5-0+deb13u1"
+      }
+    ],
+    "commands": [
+      "truncate -s 64M /tmp/minutiae-apfs-images/apfs-cs.img",
+      "faketime -f '2023-11-14 22:13:20' mkapfs -s -z -L fixture-cs -U 2d9e4b71-c3a8-4f05-b6d2-81e7a09c5f34 -u e8b05d3a-6f12-4c97-a4e1-70c2b9d8f356 /tmp/minutiae-apfs-images/apfs-cs.img",
+      "apfsck /tmp/minutiae-apfs-images/apfs-cs.img   # exit status 0 = structurally valid",
+      "python3 tools/fixtures/apfs_oracle.py <img> fixture-cs 1 1 2d9e4b71-c3a8-4f05-b6d2-81e7a09c5f34 e8b05d3a-6f12-4c97-a4e1-70c2b9d8f356"
+    ],
+    "note": "empty container only: one volume holding the root directory and private-dir; no files, drecs, xattrs, snapshots or encryption (mkapfs cannot create them)"
+  }
+}

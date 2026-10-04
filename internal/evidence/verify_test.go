@@ -319,7 +319,8 @@ func derivedCase(t *testing.T) (*Case, ManifestRecord) {
 	}
 	d := &Derivation{
 		ParentID: parent.ID, ParentSHA256: parent.SHA256, FSType: "ext4", FSPath: "/etc/passwd",
-		Runs: []Run{{Offset: 4096, Length: 4}},
+		Runs:     []Run{{Offset: 4096, Length: 4}},
+		Snapshot: &SnapshotRef{Name: "S", Xid: 5},
 	}
 	rec, err := c.Capture("dev1", "acq1", "f.bin", derivedSource(d), func(w io.Writer) error {
 		_, err := io.WriteString(w, "data")
@@ -339,6 +340,9 @@ func TestVerifyDetectsSourceDifferingFromAudit(t *testing.T) {
 		"derived fs path": func(r *ManifestRecord) { r.Source.Derived.FSPath = "/etc/shadow" },
 		"derived runs":    func(r *ManifestRecord) { r.Source.Derived.Runs = []Run{{Offset: 8192, Length: 4}} },
 		"derivation gone": func(r *ManifestRecord) { r.Source.Derived = nil },
+		"snapshot gone":   func(r *ManifestRecord) { r.Source.Derived.Snapshot = nil },
+		"snapshot xid":    func(r *ManifestRecord) { r.Source.Derived.Snapshot.Xid = 6 },
+		"snapshot name":   func(r *ManifestRecord) { r.Source.Derived.Snapshot.Name = "other" },
 		"original path":   func(r *ManifestRecord) { r.Source.OriginalPath = "/evil/disk.img" },
 	}
 	for name, f := range tamper {

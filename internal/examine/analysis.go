@@ -2,7 +2,9 @@ package examine
 
 import (
 	"errors"
+	"fmt"
 	"maps"
+	"strconv"
 	"time"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
@@ -159,4 +161,44 @@ func runAnalysis(c *evidence.Case, deviceID, op string, details map[string]any, 
 		"analysis_id": a.sum.AnalysisID, "files": a.sum.Files, "bytes": a.sum.Bytes, "skipped": a.sum.Skipped,
 	})
 	return a.sum, err
+}
+
+// snapshotCount is the number of usable snapshots a synthetic .snapshots
+// directory reports (attribute "snapshots"); 0 when it is absent or unparsable.
+func snapshotCount(e filesys.Entry) int {
+	for _, kv := range e.Attrs {
+		if kv.Key == "snapshots" {
+			n, err := strconv.Atoi(kv.Value)
+			if err != nil || n < 0 {
+				return 0
+			}
+			return n
+		}
+	}
+	return 0
+}
+
+// snapshotsSkippedDetails is the audit entry for a recursive operation that did
+// not descend into the .snapshots directory p of a volume with n snapshots; it
+// is nil when there are none.
+func snapshotsSkippedDetails(p string, e filesys.Entry) map[string]any {
+	n := snapshotCount(e)
+	if n == 0 {
+		return nil
+	}
+	reason := fmt.Sprintf("the volume has %d snapshot(s) that are present and not included in this recursive operation; use --snapshot (image ls) or address a path below %s", n, p)
+	return map[string]any{"source": "examine", "path": p, "reason": reason, "warning": reason, "snapshots": n}
+}
+
+// noteSnapshotsSkipped writes one analysis.warning (source "examine") for the
+// .snapshots directory e at p when its volume has snapshots. It is a note, not a
+// skipped file: Summary.Skipped is unchanged.
+func (a *analysis) noteSnapshotsSkipped(p string, e filesys.Entry) error {
+	d := snapshotsSkippedDetails(p, e)
+	if d == nil {
+		return nil
+	}
+	d["analysis_id"] = a.sum.AnalysisID
+	_, err := a.c.Audit.Append("analysis.warning", a.deviceID, d)
+	return err
 }

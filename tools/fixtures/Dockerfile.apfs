@@ -1,0 +1,40 @@
+# Toolchain used to generate the POPULATED APFS real-image fixture (see
+# README.md, "APFS populated fixture"). Separate from the main Dockerfile so
+# that image's pinned layers (and every existing fixture) stay byte-identical.
+#
+# The populated image is written by the real out-of-tree linux-apfs-rw driver.
+# Docker Desktop's kernel has no apfs module and loading one into it is out of
+# bounds, so the module is built here against the headers of the Debian 12
+# (bookworm) kernel 6.1.0-53 and loaded only inside a QEMU guest running that
+# very kernel (apfs_populate.sh, TCG emulation, no --privileged).
+#
+# Base: debian:bookworm-slim, pinned by digest (as in Dockerfile.hfs).
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
+
+RUN DEBIAN_FRONTEND=noninteractive apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      util-linux kmod faketime jq python3 gzip coreutils file \
+      qemu-system-x86 linux-image-6.1.0-53-amd64 busybox-static cpio \
+      build-essential git ca-certificates linux-headers-6.1.0-53-amd64 \
+ && rm -rf /var/lib/apt/lists/*
+
+# apfsprogs (mkapfs, apfsck, apfs-snap) and the kernel driver, both from the
+# linux-apfs project at pinned commits (v0.2.1 and v0.3.21 of the tags).
+ARG APFSPROGS_COMMIT=3721463ba7f539e532907bc1d10ed5b9a97d0449
+ARG APFS_RW_COMMIT=8a3760029333fe9b5f78338d9550e72e61eaaa4a
+RUN git clone https://github.com/linux-apfs/apfsprogs.git /usr/src/apfsprogs \
+ && git -C /usr/src/apfsprogs checkout "$APFSPROGS_COMMIT" \
+ && for t in mkapfs apfsck apfs-snap; do \
+      make -C /usr/src/apfsprogs/$t && install -m 0755 /usr/src/apfsprogs/$t/$t /usr/local/bin/$t; done \
+ && git clone https://github.com/linux-apfs/linux-apfs-rw.git /usr/src/linux-apfs-rw \
+ && git -C /usr/src/linux-apfs-rw checkout "$APFS_RW_COMMIT" \
+ && make -C /usr/src/linux-apfs-rw KERNELRELEASE=6.1.0-53-amd64 \
+      KDIR=/lib/modules/6.1.0-53-amd64/build \
+ && install -D -m 0644 /usr/src/linux-apfs-rw/apfs.ko /usr/local/lib/apfs/apfs.ko \
+ && modinfo /usr/local/lib/apfs/apfs.ko
+
+ENV SOURCE_DATE_EPOCH=1700000000 \
+    TZ=UTC \
+    LC_ALL=C \
+    APFSPROGS_COMMIT=${APFSPROGS_COMMIT} \
+    APFS_RW_COMMIT=${APFS_RW_COMMIT}

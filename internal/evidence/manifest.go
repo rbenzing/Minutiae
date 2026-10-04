@@ -112,4 +112,15 @@ type Derivation struct {
 	Encrypted       bool              `json:"encrypted,omitempty"`
 	Runs            []Run             `json:"runs,omitempty"`          // image-relative byte runs (at most MaxInlineRuns)
 	RunsArtifact    string            `json:"runs_artifact,omitempty"` // id of a runs sidecar artifact
+
+	// Snapshot is set when the bytes were read from a snapshot view of the
+	// filesystem (APFS) and not from the live tree.
+	Snapshot *SnapshotRef `json:"snapshot,omitempty"`
+}
+
+// SnapshotRef names the filesystem snapshot a derived artifact was read from:
+// the snapshot's display name and its transaction id.
+type SnapshotRef struct {
+	Name string `json:"name"`
+	Xid  uint64 `json:"xid"`
 }

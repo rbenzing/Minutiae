@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
+	"github.com/rbenzing/minutiae/internal/filesys/apfs"
 	"github.com/rbenzing/minutiae/internal/filesys/exfat"
 	"github.com/rbenzing/minutiae/internal/filesys/ext4"
 	"github.com/rbenzing/minutiae/internal/filesys/f2fs"
@@ -38,6 +39,7 @@ type Driver struct {
 // driver at its place in that order, not at the end (f2fs-backup, the
 // last-resort probe of a destroyed F2FS primary superblock, stays last).
 var Drivers = []Driver{
+	{Name: "apfs", Probe: apfs.Probe, Open: openAPFS},
 	{Name: "f2fs", Probe: f2fs.Probe, Open: openF2FS},
 	{Name: "ext4", Probe: ext4.Probe, Open: openExt4},
 	{Name: "exfat", Probe: exfat.Probe, Open: openExFAT},
@@ -48,6 +50,15 @@ var Drivers = []Driver{
 	// signature inside another filesystem can never claim it. Info().Type of
 	// the opened filesystem stays "f2fs"; the name only identifies this probe.
 	{Name: "f2fs-backup", Probe: f2fs.ProbeBackup, Open: openF2FS, LastResort: true},
+}
+
+// openAPFS adapts apfs.Open (untyped nil on error, see openExt4).
+func openAPFS(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
+	fs, err := apfs.Open(r, size)
+	if err != nil {
+		return nil, err
+	}
+	return fs, nil
 }
 
 // openExt4 adapts ext4.Open. It returns an untyped nil FileSystem on error: a
@@ -161,7 +172,7 @@ func OpenWith(drivers []Driver, r io.ReaderAt, size int64) (filesys.FileSystem, 
 			if len(warnings) == 0 {
 				return fsys, nil
 			}
-			return &warned{FileSystem: fsys, warnings: warnings}, nil
+			return wrapWarned(fsys, warnings), nil
 		}
 		if !errors.Is(err, filesys.ErrCorrupt) {
 			return nil, err
@@ -217,6 +228,56 @@ func (w *warned) Info() filesys.Info {
 	info := w.FileSystem.Info()
 	info.Warnings = append(slices.Clone(w.warnings), info.Warnings...)
 	return info
+}
+
+// The optional filesystem interfaces (filesys.Snapshotter, filesys.SnapshotViewer)
+// are forwarded by wrapper types that have exactly the methods of the wrapped
+// filesystem, so a note never costs a capability and never invents one.
+type (
+	warnedSnapshotter struct {
+		*warned
+		sn filesys.Snapshotter
+	}
+	warnedViewer struct {
+		*warned
+		sv filesys.SnapshotViewer
+	}
+	warnedBoth struct {
+		*warned
+		sn filesys.Snapshotter
+		sv filesys.SnapshotViewer
+	}
+)
+
+func (w *warnedSnapshotter) SnapshotPath(p, snapshot string) (string, error) {
+	return w.sn.SnapshotPath(p, snapshot)
+}
+
+func (w *warnedViewer) EntrySnapshot(e filesys.Entry) (string, uint64, bool) {
+	return w.sv.EntrySnapshot(e)
+}
+
+func (w *warnedBoth) SnapshotPath(p, snapshot string) (string, error) {
+	return w.sn.SnapshotPath(p, snapshot)
+}
+
+func (w *warnedBoth) EntrySnapshot(e filesys.Entry) (string, uint64, bool) {
+	return w.sv.EntrySnapshot(e)
+}
+
+func wrapWarned(fsys filesys.FileSystem, warnings []string) filesys.FileSystem {
+	w := &warned{FileSystem: fsys, warnings: warnings}
+	sn, isSnap := fsys.(filesys.Snapshotter)
+	sv, isView := fsys.(filesys.SnapshotViewer)
+	switch {
+	case isSnap && isView:
+		return &warnedBoth{warned: w, sn: sn, sv: sv}
+	case isSnap:
+		return &warnedSnapshotter{warned: w, sn: sn}
+	case isView:
+		return &warnedViewer{warned: w, sv: sv}
+	}
+	return w
 }
 
 func probe(d Driver, r io.ReaderAt, size int64) (ok bool, err error) {

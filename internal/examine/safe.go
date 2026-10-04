@@ -83,7 +83,7 @@ func (s *safeFS) Open(e filesys.Entry) (f filesys.File, err error) {
 	}
 	// Size and Runs are snapshotted here so a panic in them surfaces as an
 	// Open error; ReadAt is protected on every call.
-	return &safeFile{f: inner, name: s.name, size: inner.Size(), runs: inner.Runs()}, nil
+	return &safeFile{f: inner, name: s.name, size: inner.Size(), runs: inner.Runs(), enc: filesys.FileEncrypted(inner)}, nil
 }
 
 func (s *safeFS) Unallocated() (rs []filesys.Run, err error) {
@@ -101,6 +101,7 @@ type safeFile struct {
 	name string
 	size int64
 	runs []filesys.Run
+	enc  bool // the file reported itself encrypted when it was opened
 }
 
 func (f *safeFile) ReadAt(p []byte, off int64) (n int, err error) {
@@ -115,3 +116,38 @@ func (f *safeFile) ReadAt(p []byte, off int64) (n int, err error) {
 func (f *safeFile) Size() int64 { return f.size }
 
 func (f *safeFile) Runs() []filesys.Run { return append([]filesys.Run(nil), f.runs...) }
+
+// Encrypted forwards what the file reported when it was opened
+// (filesys.EncryptedFile).
+func (f *safeFile) Encrypted() bool { return f.enc }
+
+// SnapshotPath implements filesys.Snapshotter for every wrapped filesystem: it
+// forwards to the filesystem when that keeps snapshots (a panic becomes a
+// *filesys.CorruptError) and is an ErrUnsupported error otherwise.
+func (s *safeFS) SnapshotPath(p, snapshot string) (out string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			out, err = "", panicError(s.name, "SnapshotPath", r)
+		}
+	}()
+	sn, ok := s.fs.(filesys.Snapshotter)
+	if !ok {
+		return "", errNoSnapshots()
+	}
+	return sn.SnapshotPath(p, snapshot)
+}
+
+// EntrySnapshot implements filesys.SnapshotViewer for every wrapped
+// filesystem: false when it keeps no snapshots (a panic is not a snapshot).
+func (s *safeFS) EntrySnapshot(e filesys.Entry) (name string, xid uint64, ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			name, xid, ok = "", 0, false
+		}
+	}()
+	sv, has := s.fs.(filesys.SnapshotViewer)
+	if !has {
+		return "", 0, false
+	}
+	return sv.EntrySnapshot(e)
+}

@@ -49,6 +49,21 @@ type File interface {
 	Runs() []Run
 }
 
+// EncryptedFile is implemented by a File that knows its content is stored
+// encrypted (for example a file with its own key, which only its extents
+// reveal) and is returned as stored. Entry.Encrypted is what a listing can say
+// cheaply; this reports what opening the file found.
+type EncryptedFile interface {
+	File
+	Encrypted() bool
+}
+
+// FileEncrypted reports whether f reports itself encrypted (see EncryptedFile).
+func FileEncrypted(f File) bool {
+	e, ok := f.(EncryptedFile)
+	return ok && e.Encrypted()
+}
+
 // Run is a byte range. In File.Runs an Offset of -1 is a sparse hole.
 type Run struct{ Offset, Length int64 }
 
@@ -129,6 +144,9 @@ var (
 	ErrUnsupported = errors.New("unsupported filesystem feature")
 	ErrEncrypted   = errors.New("encrypted (decryption is roadmap sub-project 10)")
 	ErrCorrupt     = errors.New("corrupt filesystem structure")
+	// ErrAmbiguous is returned when a reference (a snapshot name or xid) matches
+	// more than one object; the error lists the candidates.
+	ErrAmbiguous = errors.New("ambiguous reference")
 )
 
 // CorruptError reports a malformed on-disk structure. Offset is the byte
@@ -145,3 +163,43 @@ func (e *CorruptError) Error() string {
 
 // Is makes errors.Is(err, ErrCorrupt) true for every *CorruptError.
 func (e *CorruptError) Is(target error) bool { return target == ErrCorrupt }
+
+// ErrNeedsVolume is returned by Snapshotter.SnapshotPath for a path that names
+// no volume while the filesystem has more than one.
+var ErrNeedsVolume = errors.New("the path must name a volume")
+
+// Snapshotter is implemented by a filesystem that keeps snapshots (APFS).
+// SnapshotPath maps a path inside a volume ("/Data/docs/a.txt"; "/" alone only
+// when there is exactly one volume) to the real path of the same file in the
+// named snapshot ("/Data/.snapshots/<snapshot>/docs/a.txt"). The snapshot is
+// named by its display name or its "~raw~" alias. An unknown snapshot or volume
+// is ErrNotFound (the message lists at most 20 snapshot names, quoted), an
+// encrypted volume ErrEncrypted, a path without a volume ErrNeedsVolume. The
+// path itself is not looked up.
+type Snapshotter interface {
+	SnapshotPath(p, snapshot string) (string, error)
+}
+
+// IsSnapshotsDir reports whether e is the synthetic directory that holds a
+// volume's snapshots (attribute synthetic=snapshots). Recursive operations skip
+// it unless the examiner addresses it.
+func IsSnapshotsDir(e Entry) bool {
+	if e.Type != TypeDir {
+		return false
+	}
+	for _, kv := range e.Attrs {
+		if kv.Key == "synthetic" && kv.Value == "snapshots" {
+			return true
+		}
+	}
+	return false
+}
+
+// SnapshotViewer is implemented by filesystems that keep snapshots: it reports
+// whether e (an entry found inside a snapshot view) was read from a snapshot,
+// and which one (display name and transaction id). Extraction records it in the
+// derivation, so the provenance of snapshot bytes is explicit and not only
+// implied by the path.
+type SnapshotViewer interface {
+	EntrySnapshot(e Entry) (name string, xid uint64, ok bool)
+}

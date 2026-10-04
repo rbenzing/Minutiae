@@ -568,6 +568,35 @@ func (s *Session) Lookup(fsys filesys.FileSystem, ref string) (filesys.Entry, st
 	return filesys.Entry{}, "", fmt.Errorf("id:%s: %w", id, filesys.ErrNotFound)
 }
 
+// SnapshotPath maps a path inside a volume to the real path of the same file in
+// the named snapshot (filesys.Snapshotter). fsys is a filesystem returned by
+// FS, whose methods recover parser panics. A filesystem without snapshots is an
+// error wrapping filesys.ErrUnsupported.
+func (s *Session) SnapshotPath(fsys filesys.FileSystem, snapshot, p string) (string, error) {
+	sn, ok := fsys.(filesys.Snapshotter)
+	if !ok {
+		return "", errNoSnapshots()
+	}
+	return sn.SnapshotPath(p, snapshot)
+}
+
+func errNoSnapshots() error {
+	return fmt.Errorf("%w: filesystem has no snapshots", filesys.ErrUnsupported)
+}
+
+// NoteSnapshotsSkipped writes one analysis.warning (source "examine") to the
+// audit log when a recursive operation that walks the tree itself (image ls -r)
+// did not descend into e, the synthetic .snapshots directory at p, of a volume
+// that has snapshots. A volume without snapshots writes nothing.
+func (s *Session) NoteSnapshotsSkipped(p string, e filesys.Entry) error {
+	d := snapshotsSkippedDetails(p, e)
+	if d == nil {
+		return nil
+	}
+	_, err := s.Case.Audit.Append("analysis.warning", s.Parent.Source.DeviceID, d)
+	return err
+}
+
 // partitions lists the partitions of the table; none before ReadPartitions has
 // succeeded.
 func (s *Session) partitions() []volume.Partition {

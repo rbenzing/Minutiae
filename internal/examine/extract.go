@@ -33,7 +33,11 @@ type ExtractOptions struct {
 // into the case as derived artifacts. Each artifact records its provenance
 // (evidence.Derivation) and the run is bracketed by analysis.start and
 // analysis.end/analysis.error audit entries. Deleted entries and entries that
-// cannot be read are skipped with an analysis.warning; a failure to write
+// cannot be read are skipped with an analysis.warning. A recursive run does not
+// descend into a volume's synthetic .snapshots directory (APFS snapshots; see
+// filesys.IsSnapshotsDir): the directory itself, or a path inside it, is
+// extracted when addressed. When the volume has snapshots, one
+// analysis.warning with source "examine" notes that they were not included. A failure to write
 // the case, or a cancelled ctx, aborts the run (a partially written artifact
 // is kept and flagged incomplete).
 func (s *Session) Extract(ctx context.Context, o ExtractOptions) (Summary, error) {
@@ -117,6 +121,14 @@ func (x *extractor) target(p string, e filesys.Entry) error {
 		return filesys.Walk(x.fsys, e, p, func(wp string, we filesys.Entry, werr error) error {
 			if werr != nil {
 				return x.a.warn(wp, "directory not walked: "+werr.Error())
+			}
+			if filesys.IsSnapshotsDir(we) {
+				// A recursive run does not descend into the snapshots of a volume
+				// (they would multiply the output); address them explicitly.
+				if err := x.a.noteSnapshotsSkipped(wp, we); err != nil {
+					return err
+				}
+				return filesys.SkipDir
 			}
 			if we.Type == filesys.TypeDir && !we.Deleted {
 				return nil // its children follow
@@ -207,7 +219,12 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 	d.FSPath, d.FSID = p, e.ID
 	d.Mode, d.UID, d.GID = e.Mode, e.UID, e.GID
 	d.Times = timesMap(e.Times)
-	d.Encrypted = e.Encrypted
+	if sv, ok := x.fsys.(filesys.SnapshotViewer); ok {
+		if name, xid, in := sv.EntrySnapshot(e); in {
+			d.Snapshot = &evidence.SnapshotRef{Name: name, Xid: xid} // bytes of a snapshot view, not the live tree
+		}
+	}
+	d.Encrypted = e.Encrypted || filesys.FileEncrypted(f) // the listing sees the dstream key, the opened file also the extents
 	// The runs normally cover the whole file. A file whose allocation is
 	// truncated or corrupt may report only a prefix (filesys.File.Runs): they
 	// are then the exact provenance of the bytes that can be captured, and
