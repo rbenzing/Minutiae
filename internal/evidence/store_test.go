@@ -1,7 +1,11 @@
 package evidence
 
 import (
+	"context"
+	"database/sql/driver"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -102,5 +106,93 @@ func TestManifestAppendRead(t *testing.T) {
 	rs, err := readManifest(p)
 	if err != nil || len(rs) != 2 || rs[1].ID != "b" {
 		t.Fatalf("got %+v %v", rs, err)
+	}
+}
+
+// pragmaState reads the four settings every connection to artifacts.db needs.
+func pragmaState(t *testing.T, q func(string) (string, error)) map[string]string {
+	t.Helper()
+	got := map[string]string{}
+	for _, name := range []string{"journal_mode", "synchronous", "foreign_keys", "recursive_triggers"} {
+		v, err := q(`PRAGMA ` + name)
+		if err != nil {
+			t.Fatalf("PRAGMA %s: %v", name, err)
+		}
+		got[name] = v
+	}
+	return got
+}
+
+func assertPragmas(t *testing.T, label string, got map[string]string) {
+	t.Helper()
+	want := map[string]string{"journal_mode": "delete", "synchronous": "2", "foreign_keys": "1", "recursive_triggers": "1"}
+	for k, w := range want {
+		if got[k] != w {
+			t.Errorf("%s: PRAGMA %s = %q, want %q", label, k, got[k], w)
+		}
+	}
+}
+
+// TestFreshConnectionGetsEveryPragma: database/sql may discard a connection
+// (a driver reports driver.ErrBadConn) and open a new one. The new connection
+// must carry foreign_keys, recursive_triggers, synchronous=FULL and the DELETE
+// journal like the first one, or the immutability triggers could be bypassed by
+// INSERT OR REPLACE on it.
+func TestFreshConnectionGetsEveryPragma(t *testing.T) {
+	for _, mk := range []struct {
+		name string
+		open func(t *testing.T, p string) *Store
+	}{
+		{"OpenStore", openTestStore},
+		{"OpenExistingStore", func(t *testing.T, p string) *Store {
+			s := openTestStore(t, p)
+			if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
+			s2, err := OpenExistingStore(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = s2.Close() })
+			return s2
+		}},
+	} {
+		t.Run(mk.name, func(t *testing.T) {
+			s := mk.open(t, filepath.Join(t.TempDir(), "a.db"))
+			seedRecordTables(t, s)
+			ctx := context.Background()
+
+			// Discard the pooled connection: Raw reporting ErrBadConn makes
+			// database/sql drop it when it is returned.
+			for i := 0; i < 2; i++ {
+				c, err := s.db.Conn(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_ = c.Raw(func(any) error { return driver.ErrBadConn })
+				_ = c.Close()
+
+				fresh, err := s.db.Conn(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				assertPragmas(t, "fresh connection", pragmaState(t, func(q string) (string, error) {
+					var v any
+					err := fresh.QueryRowContext(ctx, q).Scan(&v)
+					return strings.ToLower(fmt.Sprint(v)), err
+				}))
+				// A REPLACE of an immutable row is refused on the fresh connection.
+				_, err = fresh.ExecContext(ctx, `INSERT OR REPLACE INTO parsers (id, name, version, hash) VALUES (1, 'p', '1', 'forged')`)
+				if err == nil || !strings.Contains(err.Error(), "immutable") {
+					t.Errorf("REPLACE on a fresh connection: err = %v, want immutable", err)
+				}
+				// Foreign keys are enforced on it.
+				_, err = fresh.ExecContext(ctx, `INSERT INTO record_run_artifacts (ingest_id, artifact_id) VALUES ('nope', 'nope')`)
+				if err == nil || !strings.Contains(strings.ToLower(err.Error()), "foreign key") {
+					t.Errorf("FK violation on a fresh connection: err = %v, want a foreign key error", err)
+				}
+				_ = fresh.Close()
+			}
+		})
 	}
 }

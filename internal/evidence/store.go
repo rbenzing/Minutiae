@@ -1,7 +1,9 @@
 package evidence
 
 import (
+	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,7 +11,7 @@ import (
 	"os"
 	"strings"
 
-	_ "modernc.org/sqlite" // pure-Go SQLite driver "sqlite"
+	"modernc.org/sqlite" // pure-Go SQLite driver; also registered as "sqlite" for test helpers
 )
 
 // CurrentSchema is the artifacts.db schema version this build creates and reads.
@@ -138,41 +140,84 @@ func classifyDBError(err error) error {
 	return err
 }
 
-// openDB opens the database file and sets the pragmas every connection needs:
-// foreign keys on, rollback journal (never WAL, so no -wal/-shm file appears
-// next to the evidence database) and full fsync.
+// openDB opens the database file. Every connection the pool ever opens (not
+// only the first: database/sql discards a bad connection and dials a new one)
+// is configured by dbConnector: foreign keys on, recursive triggers on, rollback
+// journal (never WAL, so no -wal/-shm file appears next to the evidence
+// database) and full fsync. The pragmas run inside Connect, so no caller can
+// obtain a connection that lacks them, and a connection that cannot be
+// configured is refused rather than used.
 func openDB(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		return nil, fmt.Errorf("open artifacts.db: %w", err)
-	}
+	db := sql.OpenDB(dbConnector{path: path})
 	db.SetMaxOpenConns(1)
-	if err := configure(db); err != nil {
+	// Prove the first connection can be made and configured now, so a bad file
+	// fails here with the real error.
+	if err := db.Ping(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return &Store{db: db}, nil
 }
 
-func configure(db *sql.DB) error {
-	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
-		return fmt.Errorf("artifacts.db pragma: %w", err)
+// dbConnector opens connections to artifacts.db through the SQLite driver and
+// configures each one. It uses the driver directly (not a DSN) so the path is
+// never parsed as a URL: Windows drive letters, spaces and '?' stay as they are.
+type dbConnector struct{ path string }
+
+func (c dbConnector) Driver() driver.Driver { return &sqlite.Driver{} }
+
+func (c dbConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	conn, err := c.Driver().Open(c.path)
+	if err != nil {
+		return nil, fmt.Errorf("open artifacts.db: %w", err)
 	}
-	// Without recursive_triggers SQLite does not fire DELETE triggers for the
-	// rows an INSERT OR REPLACE removes, which would let a REPLACE rewrite a row
-	// of an immutable table.
-	if _, err := db.Exec(`PRAGMA recursive_triggers = ON`); err != nil {
-		return fmt.Errorf("artifacts.db pragma: %w", err)
+	if err := configureConn(ctx, conn); err != nil {
+		_ = conn.Close()
+		return nil, err
 	}
-	var mode string
-	if err := db.QueryRow(`PRAGMA journal_mode = DELETE`).Scan(&mode); err != nil {
+	return conn, nil
+}
+
+// connPragmas are applied to every connection, in this order. recursive_triggers
+// matters for integrity: without it SQLite does not fire DELETE triggers for the
+// rows an INSERT OR REPLACE removes, which would let a REPLACE rewrite a row of
+// an immutable table.
+var connPragmas = []string{
+	`PRAGMA foreign_keys = ON`,
+	`PRAGMA recursive_triggers = ON`,
+	`PRAGMA synchronous = FULL`,
+}
+
+func configureConn(ctx context.Context, conn driver.Conn) error {
+	execer, ok := conn.(driver.ExecerContext)
+	if !ok {
+		return errors.New("artifacts.db: the SQLite driver cannot execute statements")
+	}
+	queryer, ok := conn.(driver.QueryerContext)
+	if !ok {
+		return errors.New("artifacts.db: the SQLite driver cannot run queries")
+	}
+	for _, p := range connPragmas {
+		if _, err := execer.ExecContext(ctx, p, nil); err != nil {
+			return fmt.Errorf("artifacts.db pragma: %w", err)
+		}
+	}
+	// journal_mode answers with the mode in force, which must be DELETE.
+	rows, err := queryer.QueryContext(ctx, `PRAGMA journal_mode = DELETE`, nil)
+	if err != nil {
 		return fmt.Errorf("artifacts.db journal_mode: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	dest := make([]driver.Value, 1)
+	if err := rows.Next(dest); err != nil {
+		return fmt.Errorf("artifacts.db journal_mode: %w", err)
+	}
+	mode := fmt.Sprint(dest[0])
+	if b, ok := dest[0].([]byte); ok {
+		mode = string(b)
 	}
 	if !strings.EqualFold(mode, "delete") {
 		return fmt.Errorf("artifacts.db journal_mode is %q, want delete", mode)
-	}
-	if _, err := db.Exec(`PRAGMA synchronous = FULL`); err != nil {
-		return fmt.Errorf("artifacts.db pragma: %w", err)
 	}
 	return nil
 }
