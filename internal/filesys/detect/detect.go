@@ -4,12 +4,15 @@
 package detect
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"slices"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/filesys/exfat"
 	"github.com/rbenzing/minutiae/internal/filesys/ext4"
+	"github.com/rbenzing/minutiae/internal/filesys/f2fs"
 	"github.com/rbenzing/minutiae/internal/filesys/fat"
 )
 
@@ -26,17 +29,33 @@ type Driver struct {
 // Drivers is the probe order, an ordered literal (spec §6: apfs, f2fs, ext4,
 // exfat, hfsplus, fat; FAT is last because its signature is the weakest). It
 // lists only the drivers that exist; a new filesystem package inserts its
-// driver at its place in that order, not at the end.
+// driver at its place in that order, not at the end (f2fs-backup, the
+// last-resort probe of a destroyed F2FS primary superblock, stays last).
 var Drivers = []Driver{
+	{Name: "f2fs", Probe: f2fs.Probe, Open: openF2FS},
 	{Name: "ext4", Probe: ext4.Probe, Open: openExt4},
 	{Name: "exfat", Probe: exfat.Probe, Open: openExFAT},
 	{Name: "fat", Probe: fat.Probe, Open: openFAT},
+	// Last resort: an F2FS volume whose primary superblock is destroyed. It
+	// comes after every other driver so that a stale or forged F2FS backup
+	// signature inside another filesystem can never claim it. Info().Type of
+	// the opened filesystem stays "f2fs"; the name only identifies this probe.
+	{Name: "f2fs-backup", Probe: f2fs.ProbeBackup, Open: openF2FS},
 }
 
 // openExt4 adapts ext4.Open. It returns an untyped nil FileSystem on error: a
 // nil *ext4.FS stored in the interface would not compare equal to nil.
 func openExt4(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
 	fs, err := ext4.Open(r, size)
+	if err != nil {
+		return nil, err
+	}
+	return fs, nil
+}
+
+// openF2FS adapts f2fs.Open (untyped nil on error, see openExt4).
+func openF2FS(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
+	fs, err := f2fs.Open(r, size)
 	if err != nil {
 		return nil, err
 	}
@@ -89,9 +108,17 @@ func Open(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
 }
 
 // OpenWith is Open over an explicit driver list. The first driver whose Probe
-// matches is used and its result is final: later drivers are not tried if its
-// Open fails.
+// matches is tried. When its Open fails with an error wrapping
+// filesys.ErrCorrupt (a damaged volume, or a signature that only looked like
+// this filesystem) the remaining drivers whose Probe matches are tried in
+// order; the first that opens is returned, its Info().Warnings leading with
+// one "driver X matched but failed to open: <err>; opened as Y" entry per
+// failed driver. When none opens, the first driver's error is returned. Any
+// other error (an I/O failure, a probe panic) is final.
 func OpenWith(drivers []Driver, r io.ReaderAt, size int64) (filesys.FileSystem, error) {
+	var firstErr error
+	var warnings []string
+	var failed []string
 	for _, d := range drivers {
 		if d.Open == nil {
 			continue
@@ -100,11 +127,45 @@ func OpenWith(drivers []Driver, r io.ReaderAt, size int64) (filesys.FileSystem, 
 		if err != nil {
 			return nil, err
 		}
-		if ok {
-			return open(d, r, size)
+		if !ok {
+			continue
 		}
+		fsys, err := open(d, r, size)
+		if err == nil {
+			if len(failed) == 0 {
+				return fsys, nil
+			}
+			for _, f := range failed {
+				warnings = append(warnings, fmt.Sprintf("%s; opened as %s", f, d.Name))
+			}
+			return &warned{FileSystem: fsys, warnings: warnings}, nil
+		}
+		if !errors.Is(err, filesys.ErrCorrupt) {
+			return nil, err
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+		failed = append(failed, fmt.Sprintf("driver %s matched but failed to open: %v", d.Name, err))
+	}
+	if firstErr != nil {
+		return nil, firstErr
 	}
 	return nil, fmt.Errorf("%w: no recognized filesystem", filesys.ErrUnsupported)
+}
+
+// warned is a filesystem opened after an earlier matching driver failed: its
+// Info().Warnings lead with the failure notes. Everything else is the wrapped
+// filesystem's.
+type warned struct {
+	filesys.FileSystem
+	warnings []string
+}
+
+func (w *warned) Info() filesys.Info {
+	info := w.FileSystem.Info()
+	info.Warnings = append(slices.Clone(w.warnings), info.Warnings...)
+	return info
 }
 
 func probe(d Driver, r io.ReaderAt, size int64) (ok bool, err error) {

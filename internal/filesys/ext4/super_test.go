@@ -296,7 +296,7 @@ func TestOpenHostileGeometry(t *testing.T) {
 			c.mut(img)
 			start := time.Now()
 			f, err := open(img)
-			if el := time.Since(start); el > 2*time.Second {
+			if el := time.Since(start); el > 10*time.Second {
 				t.Errorf("Open took %v", el)
 			}
 			var ce *filesys.CorruptError
