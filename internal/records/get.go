@@ -15,7 +15,7 @@ import (
 // and run it belongs to, the artifact's manifest record and the run that
 // superseded it, if any. ErrNotFound when there is no such record.
 //
-// A record whose artifact cannot be resolved in the manifest is an error
+// A record whose artifact id is not exactly one manifest record is an error
 // (wrapping evidence.ErrUnknownArtifact or evidence.ErrIntegrity): `case verify`
 // reports the details.
 func (r *Reader) Get(ctx context.Context, id int64) (Full, error) {
@@ -57,7 +57,7 @@ func (r *Reader) Get(ctx context.Context, id int64) (Full, error) {
 	if err != nil {
 		return Full{}, err
 	}
-	art, err := r.c.FindArtifact(full.ArtifactID)
+	art, err := r.artifactByID(full.ArtifactID)
 	if err != nil {
 		return Full{}, fmt.Errorf("records: record %d: %w", id, err)
 	}
@@ -147,4 +147,30 @@ func (r *Reader) batchAuditSeq(b BatchInfo) (int64, error) {
 		}
 	}
 	return 0, nil
+}
+
+// artifactByID resolves id as an artifact id and nothing else: no fallback to a
+// manifest path (as Case.FindArtifact has), so a record whose artifact_id was
+// rewritten to another artifact's path cannot silently show that artifact. No
+// match is evidence.ErrUnknownArtifact; more than one is evidence.ErrIntegrity.
+func (r *Reader) artifactByID(id string) (evidence.ManifestRecord, error) {
+	recs, err := r.c.Manifest()
+	if err != nil {
+		return evidence.ManifestRecord{}, fmt.Errorf("manifest unreadable: %w", err)
+	}
+	var found evidence.ManifestRecord
+	n := 0
+	for _, m := range recs {
+		if m.ID == id {
+			found = m
+			n++
+		}
+	}
+	switch {
+	case n == 1:
+		return found, nil
+	case n > 1:
+		return evidence.ManifestRecord{}, fmt.Errorf("%w: artifact id %q appears %d times in the manifest", evidence.ErrIntegrity, id, n)
+	}
+	return evidence.ManifestRecord{}, fmt.Errorf("%w: %q", evidence.ErrUnknownArtifact, id)
 }

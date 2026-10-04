@@ -231,7 +231,7 @@ func TestFilterInjectionIsInert(t *testing.T) {
 		for name, fl := range map[string]records.Filter{
 			"types":    {Types: []string{e}},
 			"artifact": {ArtifactIDs: []string{e}},
-			"path":     {PathPrefix: e},
+			"path":     {PathPrefix: strings.ReplaceAll(e, "\x00", "")}, // a NUL prefix is ErrInvalidFilter (TestPathPrefixInvalidTextIsErrInvalidFilter)
 			"parser":   {Parsers: []records.ParserRef{{Name: e}}},
 			"version":  {Parsers: []records.ParserRef{{Name: "alpha", Version: e}}},
 			"ingest":   {IngestID: e},

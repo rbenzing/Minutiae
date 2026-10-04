@@ -132,8 +132,8 @@ func (f Filter) compile(haveSuperseded bool) (where, error) {
 		w.add("("+cond+")", args...)
 	}
 	if f.PathPrefix != "" {
-		if len(f.PathPrefix) > maxPathPrefix || !utf8.ValidString(f.PathPrefix) {
-			return w, invalidFilter("path prefix is not valid UTF-8 within %d bytes", maxPathPrefix)
+		if len(f.PathPrefix) > maxPathPrefix || !utf8.ValidString(f.PathPrefix) || strings.IndexByte(f.PathPrefix, 0) >= 0 {
+			return w, invalidFilter("path prefix is not valid UTF-8 without NUL within %d bytes", maxPathPrefix)
 		}
 		// substr counts characters; the comparison is binary, so case matters and
 		// %, _ and \ are ordinary characters.
