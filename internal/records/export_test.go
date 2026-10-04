@@ -38,3 +38,9 @@ func (p prepared) Row() evidence.RecordRow { return p.row }
 
 // ApproxBytes returns the writer's size estimate of the row.
 func (p prepared) ApproxBytes() int { return p.approxBytes }
+
+// SetHook installs a test seam called at the named points of a batch and of End
+// ("after-batch-audit", "before-insert", "after-insert", "after-end-audit"),
+// always outside any transaction. An error returned at the first two fails the
+// batch; a panic simulates a process that died there.
+func (w *Writer) SetHook(f func(point string) error) { w.hook = f }
