@@ -14,6 +14,7 @@ import (
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/filesys"
+	"github.com/rbenzing/minutiae/internal/image"
 	"github.com/rbenzing/minutiae/internal/volume"
 )
 
@@ -134,6 +135,7 @@ func (x *extractor) target(p string, e filesys.Entry) error {
 func skippable(err error) bool {
 	for _, target := range []error{
 		filesys.ErrCorrupt, filesys.ErrUnsupported, filesys.ErrEncrypted, filesys.ErrDeleted, filesys.ErrNotFound,
+		image.ErrChunkCorrupt, // a damaged container chunk: the bytes before it are kept
 		io.ErrUnexpectedEOF, io.EOF,
 	} {
 		if errors.Is(err, target) {
@@ -243,7 +245,16 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 		}
 		if err == nil {
 			rec, readErr, err = x.s.capture(x.a, rel, src, func(w io.Writer) error {
-				return x.copyFile(w, f, size)
+				n, err := x.copyFile(w, f, size)
+				if errors.Is(err, image.ErrChunkCorrupt) {
+					// The bytes before the unreadable chunk are kept (the artifact is
+					// flagged incomplete), so the provenance, recorded when the manifest
+					// entry is written below, must name only the runs of those bytes.
+					if perr := x.keepPrefixRuns(rel, p, d, runs, n); perr != nil {
+						return &caseWriteError{perr}
+					}
+				}
+				return err
 			})
 		}
 		var nameErr *localNameError
@@ -313,7 +324,7 @@ func (s *Session) capture(a *analysis, rel string, src evidence.Source, fill fun
 }
 
 // copyFile streams the content of f into w, checking ctx on every read.
-func (x *extractor) copyFile(w io.Writer, f filesys.File, size int64) error {
+func (x *extractor) copyFile(w io.Writer, f filesys.File, size int64) (int64, error) {
 	tw := &trackWriter{w: w}
 	n, err := io.Copy(tw, &ctxReader{ctx: x.ctx, r: io.NewSectionReader(f, 0, size), onRead: func(n int) {
 		x.copied += int64(n)
@@ -323,13 +334,13 @@ func (x *extractor) copyFile(w io.Writer, f filesys.File, size int64) error {
 	}})
 	switch {
 	case tw.err != nil:
-		return &caseWriteError{tw.err}
+		return n, &caseWriteError{tw.err}
 	case err != nil:
-		return err
+		return n, err
 	case n != size:
-		return fmt.Errorf("content ended after %d of %d bytes: %w", n, size, io.ErrUnexpectedEOF)
+		return n, fmt.Errorf("content ended after %d of %d bytes: %w", n, size, io.ErrUnexpectedEOF)
 	}
-	return nil
+	return n, nil
 }
 
 // baseDerivation returns the parent fields shared by every derived artifact
@@ -451,4 +462,40 @@ func timesMap(t filesys.Times) map[string]string {
 		return nil
 	}
 	return m
+}
+
+// prefixRuns returns the runs that cover the first n bytes of a file whose
+// runs (in file order) are given; a run that straddles n is cut.
+func prefixRuns(runs []evidence.Run, n int64) []evidence.Run {
+	var out []evidence.Run
+	for _, r := range runs {
+		if n <= 0 {
+			break
+		}
+		if r.Length > n {
+			r.Length = n
+		}
+		out = append(out, r)
+		n -= r.Length
+	}
+	return out
+}
+
+// keepPrefixRuns narrows the provenance of a file whose read stopped after n
+// bytes (an unreadable container chunk) to the runs of those n bytes. Inline
+// runs are cut in place. When the prefix still needs a runs sidecar, a second
+// one holding only the prefix is written and replaces the reference to the
+// first, which was written before the read and stays in the case as the
+// filesystem's full list of runs for the file.
+func (x *extractor) keepPrefixRuns(rel, fsPath string, d *evidence.Derivation, runs []evidence.Run, n int64) error {
+	if len(runs) == 0 {
+		return nil
+	}
+	pre := prefixRuns(runs, n)
+	if len(pre) > evidence.MaxInlineRuns {
+		d.Runs = nil
+		return x.s.writeRunsSidecar(x.a, rel+".incomplete.runs.jsonl", pre, fsPath, d)
+	}
+	d.Runs, d.RunsArtifact = pre, ""
+	return nil
 }
