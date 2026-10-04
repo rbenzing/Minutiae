@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync/atomic"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
 )
@@ -48,6 +49,13 @@ type FS struct {
 
 	nodeBudget int       // nodes one B-tree scan may read
 	cmap       *omapView // the container object map (virtual oid to block)
+
+	vols  []*volume                 // populated nx_fs_oid slots, in slot order
+	slots [nxMaxFileSystems]*volume // the same by slot
+
+	dirBudget     atomic.Int64 // directory-record bytes this FS may still scan
+	maxDirEntries int          // entries read from one directory
+	scans         atomic.Int64 // file-system tree scans started (a work counter)
 
 	warns filesys.Warnings
 }
@@ -116,7 +124,10 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		data:   raw,
 		bs:     int(nx0.blockSize),
 		blocks: nx0.blockCount,
+
+		maxDirEntries: maxDirEntries,
 	}
+	f.dirBudget.Store(maxDirBudget)
 	f.checkBlockZero()
 
 	nx, cp, err := f.selectCheckpoint(&nx0)
@@ -154,6 +165,7 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		return nil, err
 	}
 	f.cmap = om
+	f.openVolumes()
 	return f, nil
 }
 
@@ -176,15 +188,21 @@ func (f *FS) checkBlockZero() {
 }
 
 // Info describes the container. Warnings are live: they include everything
-// reported so far, also by reads made after Open. Volumes are filled in once
-// the volume layer exists.
+// reported so far, also by reads made after Open. Volumes lists the volume names and Features has one line
+// per volume.
 func (f *FS) Info() filesys.Info {
-	return filesys.Info{
+	in := filesys.Info{
 		Type:      "apfs",
 		UUID:      formatUUID(f.nx.uuid),
 		BlockSize: f.bs,
 		Size:      f.size,
 		Features:  f.nx.featureNames(),
-		Warnings:  f.warns.Snapshot(),
 	}
+	for _, v := range f.vols {
+		in.Volumes = append(in.Volumes, v.display)
+		in.Features = append(in.Features, v.featureLine())
+		in.Encrypted = in.Encrypted || v.encrypted
+	}
+	in.Warnings = f.warns.Snapshot()
+	return in
 }

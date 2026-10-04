@@ -1,6 +1,7 @@
 package apfs
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 )
@@ -203,3 +204,135 @@ func (f *FS) ScanVolumeTree(omapPaddr, rootOid uint64, typ uint32) ([]TreeRec, e
 
 // SetNodeBudget sets the per-scan node budget.
 func (f *FS) SetNodeBudget(n int) { f.nodeBudget = n }
+
+// ParseEntryID exposes parseEntryID; kind is "root", "node" or "snaps".
+func ParseEntryID(id string) (kind string, vol int, view, ino uint64, ok bool) {
+	k, vol, view, ino, ok := parseEntryID(id)
+	return map[idKind]string{idNone: "", idRoot: "root", idNode: "node", idSnaps: "snaps"}[k], vol, view, ino, ok
+}
+
+// NodeID and SnapsID build entry IDs.
+func NodeID(vol int, view, ino uint64) string { return nodeID(vol, view, ino) }
+
+// SetDirBudget sets the bytes of directory records this FS may still scan.
+func (f *FS) SetDirBudget(n int64) { f.dirBudget.Store(n) }
+
+// DirBudget is the directory budget left.
+func (f *FS) DirBudget() int64 { return f.dirBudget.Load() }
+
+// SetMaxDirEntries sets the per-directory entry cap.
+func (f *FS) SetMaxDirEntries(n int) { f.maxDirEntries = n }
+
+// Scans counts the file-system tree scans started so far.
+func (f *FS) Scans() int64 { return f.scans.Load() }
+
+// VolumeFields is what the tests compare of a volume.
+type VolumeFields struct {
+	Slot                      int
+	Readable                  bool
+	Name                      []byte
+	Display                   string
+	RawName                   []byte
+	UUID                      [16]byte
+	Features, RoCompat        uint64
+	Incompat, FsFlags         uint64
+	Role                      uint16
+	FsIndex                   uint32
+	OmapOid, RootOid          uint64
+	RootType                  uint32
+	Snapshots, LastMod        uint64
+	Encrypted, Sealed         bool
+	CaseInsensitive, NormInsn bool
+}
+
+// VolumeFields returns the volume in slot.
+func (f *FS) VolumeFields(slot int) (VolumeFields, bool) {
+	if slot < 0 || slot >= len(f.slots) || f.slots[slot] == nil {
+		return VolumeFields{}, false
+	}
+	v := f.slots[slot]
+	return VolumeFields{
+		Slot: v.slot, Readable: v.readable, Name: v.name, Display: v.display, RawName: v.rawName,
+		UUID: v.uuid, Features: v.features, RoCompat: v.roCompat, Incompat: v.incompat, FsFlags: v.fsFlags,
+		Role: v.role, FsIndex: v.fsIndex, OmapOid: v.omapOid, RootOid: v.rootOid, RootType: v.rootType,
+		Snapshots: v.snapshots, LastMod: v.lastMod, Encrypted: v.encrypted, Sealed: v.sealed,
+		CaseInsensitive: v.caseInsen, NormInsn: v.normInsen,
+	}, true
+}
+
+// XField is one decoded extended field.
+type XField struct {
+	Type, Flags uint8
+	Data        []byte
+}
+
+// ParseXfields decodes an xf_blob_t and returns the fields and the warnings.
+func ParseXfields(b []byte) ([]XField, []string) {
+	var warns []string
+	fs := parseXfields(b, func(format string, a ...any) { warns = append(warns, fmt.Sprintf(format, a...)) })
+	var out []XField
+	for _, x := range fs {
+		out = append(out, XField{Type: x.typ, Flags: x.flags, Data: x.data})
+	}
+	return out, warns
+}
+
+// InodeFields is a decoded inode.
+type InodeFields struct {
+	Ino, ParentID, PrivateID    uint64
+	Create, Mod, Change, Access uint64
+	InternalFlags               uint64
+	Links                       int32
+	ProtClass, BsdFlags         uint32
+	UID, GID                    uint32
+	Mode                        uint16
+	UncompressedSize            uint64
+	HasDstream                  bool
+	Size                        int64
+	CryptoID                    uint64
+	XattrNames                  []string
+	XattrCount                  int
+	Symlink                     []byte
+	SymlinkSet, SymlinkOK       bool
+}
+
+// Inode decodes an inode of the volume in slot as of view.
+func (f *FS) Inode(slot int, view, ino uint64) (InodeFields, error) {
+	if slot < 0 || slot >= len(f.slots) || f.slots[slot] == nil {
+		return InodeFields{}, errors.New("no such volume")
+	}
+	in, err := f.inode(f.slots[slot], view, ino)
+	if err != nil {
+		return InodeFields{}, err
+	}
+	return InodeFields{
+		Ino: in.ino, ParentID: in.parentID, PrivateID: in.privateID,
+		Create: in.create, Mod: in.mod, Change: in.change, Access: in.access,
+		InternalFlags: in.internalFlags, Links: in.links, ProtClass: in.protClass, BsdFlags: in.bsdFlags,
+		UID: in.uid, GID: in.gid, Mode: in.mode, UncompressedSize: in.uncompressedSize,
+		HasDstream: in.hasDstream, Size: in.size, CryptoID: in.cryptoID,
+		XattrNames: in.xattrNames, XattrCount: in.xattrCount,
+		Symlink: in.symlink, SymlinkSet: in.symlinkSet, SymlinkOK: in.symlinkOK,
+	}, nil
+}
+
+// DrecInfo is a decoded directory record.
+type DrecInfo struct {
+	Name   []byte
+	FileID uint64
+	Flags  uint16
+}
+
+// DirRecords lists the directory records of directory dir of the volume in slot
+// (the directory inode itself is not required to exist).
+func (f *FS) DirRecords(slot int, view, dir uint64) ([]DrecInfo, error) {
+	if slot < 0 || slot >= len(f.slots) || f.slots[slot] == nil {
+		return nil, errors.New("no such volume")
+	}
+	var out []DrecInfo
+	err := f.scanDir(f.slots[slot], view, dir, func(d *drec) bool {
+		out = append(out, DrecInfo{Name: bytes.Clone(d.name), FileID: d.fileID, Flags: d.flags})
+		return false
+	})
+	return out, err
+}

@@ -31,6 +31,12 @@ func writeSuperblock(b []byte, o Options, g Geo, cp Checkpoint) {
 	le.PutUint64(b[160:], g.Omap)
 	le.PutUint64(b[168:], 0) // nx_reaper_oid
 	le.PutUint32(b[180:], uint32(max(len(o.Volumes), 1)))
+	for i := range o.Volumes {
+		le.PutUint64(b[184+8*i:], VolumeOid(i)) // nx_fs_oid[i]
+	}
+	for i := range o.Volumes {
+		le.PutUint64(b[184+8*i:], VolumeOid(i)) // nx_fs_oid[i]
+	}
 	var flags uint64
 	if o.CryptoSW {
 		flags |= nxCryptoSW

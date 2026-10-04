@@ -5,10 +5,6 @@
 // under apfs/testdata are the independent check.
 package apfstest
 
-// Volume describes one volume of a container. Filled in by the volume tasks;
-// a container built without volumes has none.
-type Volume struct{}
-
 // Options configures Build. The zero value builds a 4096-block container with
 // 4 KiB blocks and three checkpoints.
 type Options struct {
@@ -20,7 +16,7 @@ type Options struct {
 	DescBlocks  int    // descriptor ring blocks, default 16
 	DataBlocks  int    // default 16
 	CryptoSW    bool
-	Volumes     []Volume // Task 3/4; empty in this task
+	Volumes     []Volume // volumes, in nx_fs_oid slot order
 
 	// Omap holds the records of the container object map tree; OmapMaxKeys
 	// limits the records per node (0: as many as fit) to force a multi-level
@@ -87,12 +83,24 @@ type Geo struct {
 	// the first block after them: tests may place their own objects from there.
 	OmapNodes, OmapSnapNodes []uint64
 	Free                     uint64
+	// Volumes is where each volume was put, in slot order.
+	Volumes []VolumeGeo
 	// Checkpoints lists the checkpoints newest first.
 	Checkpoints []Checkpoint
 }
 
-// Geometry computes the layout Build uses for o.
-func Geometry(o Options) Geo {
+// layout is everything Build writes besides the checkpoint ring.
+type layout struct {
+	g    Geo
+	tree []Block // container object map tree
+	snap []Block // its snapshot tree
+	vols [][]Block
+}
+
+// layout computes where everything goes. Volumes follow the container object
+// map; their superblocks are entered in the container object map as virtual
+// oids.
+func (o Options) layout() layout {
 	o = o.norm()
 	if o.Checkpoints*(o.MapBlocks+1) > o.DescBlocks {
 		panic("apfstest: checkpoints do not fit the descriptor ring")
@@ -106,6 +114,9 @@ func Geometry(o Options) Geo {
 	if o.RingStart < 0 || o.RingStart >= o.DescBlocks {
 		panic("apfstest: RingStart outside the ring")
 	}
+	if len(o.Volumes) > maxVolumes {
+		panic("apfstest: too many volumes")
+	}
 	g := Geo{
 		BlockSize: o.BlockSize, Blocks: o.Blocks,
 		DescBase: 1, DescCount: uint64(o.DescBlocks),
@@ -117,16 +128,33 @@ func Geometry(o Options) Geo {
 	if g.Omap >= uint64(o.Blocks) {
 		panic("apfstest: container too small for its areas")
 	}
-	tree, snap := o.omapBlocks(g.Omap + 1)
+	// The number of omap nodes depends on the number of records, not on the
+	// block addresses in them: size the tree with placeholders, place the volumes
+	// after it, then pack it again with the real addresses.
+	entries := append([]OmapEntry(nil), o.Omap...)
+	for i := range o.Volumes {
+		entries = append(entries, OmapEntry{Oid: VolumeOid(i), Xid: volXid})
+	}
+	tree, snap := o.omapBlocks(g.Omap+1, entries)
+	next := g.Omap + 1 + uint64(len(tree)+len(snap))
+	var l layout
+	for i, v := range o.Volumes {
+		vg, blocks := o.buildVolume(i, v, next)
+		next += uint64(len(blocks))
+		g.Volumes = append(g.Volumes, vg)
+		l.vols = append(l.vols, blocks)
+		entries[len(o.Omap)+i].Paddr = vg.Super
+	}
+	tree, snap = o.omapBlocks(g.Omap+1, entries)
 	for _, b := range tree {
 		g.OmapNodes = append(g.OmapNodes, b.Addr)
 	}
 	for _, b := range snap {
 		g.OmapSnapNodes = append(g.OmapSnapNodes, b.Addr)
 	}
-	g.Free = g.Omap + 1 + uint64(len(tree)+len(snap))
+	g.Free = next
 	if g.Free >= uint64(o.Blocks) {
-		panic("apfstest: container too small for its object map")
+		panic("apfstest: container too small for its object map and volumes")
 	}
 	g.Checkpoints = make([]Checkpoint, o.Checkpoints)
 	for t := range o.Checkpoints { // t = 0 is the oldest
@@ -145,17 +173,23 @@ func Geometry(o Options) Geo {
 		cp.DataIndex, cp.DataLen = t, 1 // this checkpoint's spaceman copy is its only data block
 		g.Checkpoints[o.Checkpoints-1-t] = cp
 	}
-	return g
+	l.g = g
+	l.tree, l.snap = tree, snap
+	return l
 }
+
+// Geometry computes the layout Build uses for o.
+func Geometry(o Options) Geo { return o.layout().g }
 
 // Build returns a container image. Block 0 is a copy of the OLDEST
 // checkpoint's superblock (stale on purpose: a reader must not trust it); the
 // descriptor ring holds, per checkpoint, its mapping block(s) and superblock;
 // the data area holds one spaceman copy per checkpoint; the container object
-// map follows the data area.
+// map follows the data area, then the volumes.
 func Build(o Options) []byte {
 	o = o.norm()
-	g := Geometry(o)
+	l := o.layout()
+	g := l.g
 	bs := o.BlockSize
 	img := make([]byte, o.Blocks*bs)
 	blk := func(n uint64) []byte { return img[int(n)*bs : (int(n)+1)*bs] }
@@ -175,22 +209,24 @@ func Build(o Options) []byte {
 	}
 	oldest := g.Checkpoints[len(g.Checkpoints)-1]
 	om := blk(g.Omap)
-	tree, snap := o.omapBlocks(g.Omap + 1)
 	var snapRoot uint64
-	if len(snap) > 0 {
-		snapRoot = snap[0].Addr
+	if len(l.snap) > 0 {
+		snapRoot = l.snap[0].Addr
 	}
-	writeOmap(om, g.Omap, oldest.Xid, tree[0].Addr, snapRoot, len(o.OmapSnaps))
+	writeOmap(om, g.Omap, oldest.Xid, l.tree[0].Addr, snapRoot, len(o.OmapSnaps))
 	sealBlock(om)
-	Place(img, bs, tree)
-	Place(img, bs, snap)
+	Place(img, bs, l.tree)
+	Place(img, bs, l.snap)
+	for _, blocks := range l.vols {
+		Place(img, bs, blocks)
+	}
 	copy(blk(0), blk(oldest.Super))
 	return img
 }
 
-// omapBlocks packs the container object map tree and its snapshot tree, the
-// first node at block first.
-func (o Options) omapBlocks(first uint64) (tree, snap []Block) {
+// omapBlocks packs the container object map tree (records entries) and its
+// snapshot tree, the first node at block first.
+func (o Options) omapBlocks(first uint64, entries []OmapEntry) (tree, snap []Block) {
 	next := first
 	alloc := func() (uint64, uint64) {
 		a := next
@@ -198,7 +234,7 @@ func (o Options) omapBlocks(first uint64) (tree, snap []Block) {
 		return a, a
 	}
 	xid := o.Xid - uint64(o.Checkpoints-1) // the oldest checkpoint's xid, like the omap block
-	tree = PackTree(OmapTreeSpec(o.BlockSize, xid, o.OmapMaxKeys), OmapRecs(o.Omap, o.BlockSize), alloc)
+	tree = PackTree(OmapTreeSpec(o.BlockSize, xid, o.OmapMaxKeys), OmapRecs(entries, o.BlockSize), alloc)
 	if len(o.OmapSnaps) > 0 {
 		spec := TreeSpec{
 			BlockSize: o.BlockSize, Fixed: true, KeySize: 8, ValSize: 16,

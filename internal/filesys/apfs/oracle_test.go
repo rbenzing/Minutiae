@@ -7,9 +7,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -89,8 +91,21 @@ type orcExpect struct {
 	ContainerOmap orcOmap `json:"container_omap"`
 	VolumeOmap    orcOmap `json:"volume_omap"`
 	Volume        struct {
+		Name         string `json:"name"`
 		Oid          uint64 `json:"oid"`
 		Block        uint64 `json:"block"`
+		UUID         string `json:"uuid"`
+		FsIndex      uint32 `json:"fs_index"`
+		Features     uint64 `json:"features"`
+		RoCompat     uint64 `json:"readonly_compatible_features"`
+		Incompat     uint64 `json:"incompatible_features"`
+		FsFlags      uint64 `json:"fs_flags"`
+		Role         uint16 `json:"role"`
+		CaseInsens   bool   `json:"case_insensitive"`
+		NormInsens   bool   `json:"normalization_insensitive"`
+		Encrypted    bool   `json:"encrypted"`
+		LastModTime  uint64 `json:"last_mod_time"`
+		NumSnapshots uint64 `json:"num_snapshots"`
 		OmapOid      uint64 `json:"omap_oid"`
 		RootTreeOid  uint64 `json:"root_tree_oid"`
 		RootTreeType uint32 `json:"root_tree_type"`
@@ -108,6 +123,29 @@ type orcExpect struct {
 			Type        uint64 `json:"type"`
 			KeyLength   int    `json:"key_length"`
 			ValueLength int    `json:"value_length"`
+			Drec        *struct {
+				ParentID uint64 `json:"parent_id"`
+				Name     string `json:"name"`
+				KeyForm  string `json:"key_form"`
+				FileID   uint64 `json:"file_id"`
+				Flags    uint16 `json:"flags"`
+			} `json:"drec"`
+			Inode *struct {
+				ParentID         uint64 `json:"parent_id"`
+				PrivateID        uint64 `json:"private_id"`
+				CreateTime       uint64 `json:"create_time"`
+				ModTime          uint64 `json:"mod_time"`
+				ChangeTime       uint64 `json:"change_time"`
+				AccessTime       uint64 `json:"access_time"`
+				InternalFlags    uint64 `json:"internal_flags"`
+				NChildrenOrNlink int32  `json:"nchildren_or_nlink"`
+				ProtectionClass  uint32 `json:"default_protection_class"`
+				BsdFlags         uint32 `json:"bsd_flags"`
+				Owner            uint32 `json:"owner"`
+				Group            uint32 `json:"group"`
+				Mode             uint16 `json:"mode"`
+				UncompressedSize uint64 `json:"uncompressed_size"`
+			} `json:"inode"`
 		} `json:"records"`
 	} `json:"fs_tree"`
 	Verified  []uint64 `json:"verified_object_blocks"`
@@ -175,6 +213,192 @@ func TestAPFSMatchesOracle(t *testing.T) {
 			})
 		}
 	})
+	t.Run("volume", func(t *testing.T) {
+		for _, name := range orcFixtures {
+			t.Run(name, func(t *testing.T) {
+				orcSkipShort(t, name)
+				img, exp := orcLoad(t, name)
+				orcCheckVolume(t, img, exp)
+			})
+		}
+	})
+}
+
+type orcInode struct {
+	ParentID, PrivateID, CreateTime, ModTime, ChangeTime, AccessTime, InternalFlags uint64
+	Links                                                                           int32
+	Prot, Bsd, Owner, Group                                                         uint32
+	Mode                                                                            uint16
+	Uncompressed                                                                    uint64
+}
+
+type orcDrec struct {
+	Name   string
+	FileID uint64
+	Flags  uint16
+	Parent uint64
+	Form   string
+}
+
+// orcCheckVolume compares the volume superblock, the root listing and the
+// root and private-dir inodes and directory records with the oracle.
+func orcCheckVolume(t *testing.T, img []byte, exp *orcExpect) {
+	t.Helper()
+	f, err := apfs.Open(bytes.NewReader(img), int64(len(img)))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	ov := &exp.Volume
+	v, ok := f.VolumeFields(int(ov.FsIndex))
+	if !ok || !v.Readable {
+		t.Fatalf("volume %d missing or unreadable", ov.FsIndex)
+	}
+	if string(v.Name) != ov.Name || v.Display != ov.Name || v.RawName != nil {
+		t.Errorf("volume name %q (display %q), oracle %q", v.Name, v.Display, ov.Name)
+	}
+	if got := fmt.Sprintf("%x-%x-%x-%x-%x", v.UUID[0:4], v.UUID[4:6], v.UUID[6:8], v.UUID[8:10], v.UUID[10:16]); got != ov.UUID {
+		t.Errorf("volume uuid %s, oracle %s", got, ov.UUID)
+	}
+	if v.FsIndex != ov.FsIndex || v.Features != ov.Features || v.RoCompat != ov.RoCompat || v.Incompat != ov.Incompat || v.FsFlags != ov.FsFlags || v.Role != ov.Role {
+		t.Errorf("volume index/features/ro/incompat/flags/role %d/%#x/%#x/%#x/%#x/%d, oracle %d/%#x/%#x/%#x/%#x/%d",
+			v.FsIndex, v.Features, v.RoCompat, v.Incompat, v.FsFlags, v.Role, ov.FsIndex, ov.Features, ov.RoCompat, ov.Incompat, ov.FsFlags, ov.Role)
+	}
+	if v.CaseInsensitive != ov.CaseInsens || v.NormInsn != ov.NormInsens || v.Encrypted != ov.Encrypted || v.Sealed {
+		t.Errorf("volume case/normalization/encrypted/sealed %v/%v/%v/%v, oracle %v/%v/%v", v.CaseInsensitive, v.NormInsn, v.Encrypted, v.Sealed, ov.CaseInsens, ov.NormInsens, ov.Encrypted)
+	}
+	if v.Snapshots != ov.NumSnapshots || v.LastMod != ov.LastModTime || v.OmapOid != ov.OmapOid || v.RootOid != ov.RootTreeOid || v.RootType != ov.RootTreeType {
+		t.Errorf("volume snapshots/last mod/omap/root %d/%d/%d/%d/%#x, oracle %d/%d/%d/%d/%#x",
+			v.Snapshots, v.LastMod, v.OmapOid, v.RootOid, v.RootType, ov.NumSnapshots, ov.LastModTime, ov.OmapOid, ov.RootTreeOid, ov.RootTreeType)
+	}
+
+	in := f.Info()
+	if want := []string{ov.Name}; !slices.Equal(in.Volumes, want) || in.Encrypted {
+		t.Errorf("Info.Volumes %q encrypted %v, oracle %q", in.Volumes, in.Encrypted, want)
+	}
+	line := fmt.Sprintf("vol[%d] %q: role=none", ov.FsIndex, ov.Name)
+	if ov.Role != 0 {
+		t.Fatalf("oracle role %d: the expected feature line needs a role name", ov.Role)
+	}
+	if ov.CaseInsens {
+		line += ", case-insensitive"
+	}
+	if ov.NormInsens {
+		line += ", normalization-insensitive"
+	}
+	line += fmt.Sprintf(", unencrypted, snapshots=%d", ov.NumSnapshots)
+	if !contains(in.Features, line) {
+		t.Errorf("Info.Features lacks %q: %q", line, in.Features)
+	}
+
+	// The oracle's inode records, by number.
+	inodes := map[uint64]*orcInode{}
+	var drecs []orcDrec
+	for _, r := range exp.FsTree.Records {
+		switch {
+		case r.Inode != nil:
+			i := r.Inode
+			inodes[r.ID] = &orcInode{i.ParentID, i.PrivateID, i.CreateTime, i.ModTime, i.ChangeTime, i.AccessTime, i.InternalFlags, i.NChildrenOrNlink, i.ProtectionClass, i.BsdFlags, i.Owner, i.Group, i.Mode, i.UncompressedSize}
+		case r.Drec != nil:
+			d := r.Drec
+			drecs = append(drecs, orcDrec{d.Name, d.FileID, d.Flags, d.ParentID, d.KeyForm})
+		}
+	}
+	if len(inodes) != 2 || inodes[2] == nil || inodes[3] == nil {
+		t.Fatalf("oracle inodes: %v", inodes)
+	}
+	wantForm := "plain"
+	if ov.CaseInsens || ov.NormInsens {
+		wantForm = "hashed"
+	}
+	for _, d := range drecs {
+		if d.Form != wantForm {
+			t.Errorf("oracle drec %q has the %s key form, the case flags say %s", d.Name, d.Form, wantForm)
+		}
+	}
+
+	for _, ino := range []uint64{2, 3} {
+		w := inodes[ino]
+		g, err := f.Inode(int(ov.FsIndex), 0, ino)
+		if err != nil {
+			t.Fatalf("Inode(%d): %v", ino, err)
+		}
+		if g.ParentID != w.ParentID || g.PrivateID != w.PrivateID || g.Create != w.CreateTime || g.Mod != w.ModTime || g.Change != w.ChangeTime || g.Access != w.AccessTime ||
+			g.InternalFlags != w.InternalFlags || g.Links != w.Links || g.ProtClass != w.Prot || g.BsdFlags != w.Bsd || g.UID != w.Owner || g.GID != w.Group ||
+			g.Mode != w.Mode || g.UncompressedSize != w.Uncompressed {
+			t.Errorf("inode %d = %+v, oracle %+v", ino, g, *w)
+		}
+		if g.HasDstream || g.XattrCount != 0 {
+			t.Errorf("inode %d has a dstream or xattrs: %+v", ino, g)
+		}
+	}
+
+	// The directory records of the root parent (inode 1, which has no inode
+	// record of its own).
+	recs, err := f.DirRecords(int(ov.FsIndex), 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != len(drecs) {
+		t.Fatalf("%d directory records, oracle %d", len(recs), len(drecs))
+	}
+	for i, d := range drecs {
+		if d.Parent != 1 || string(recs[i].Name) != d.Name || recs[i].FileID != d.FileID || recs[i].Flags != d.Flags {
+			t.Errorf("record %d = %q -> %d (%#x), oracle %+v", i, recs[i].Name, recs[i].FileID, recs[i].Flags, d)
+		}
+	}
+
+	// The root listing, the volume entry and the (empty) directories.
+	es, err := f.ReadDir(f.Root())
+	if err != nil || len(es) != 1 {
+		t.Fatalf("root listing = %v, %v", es, err)
+	}
+	e := es[0]
+	r := inodes[2]
+	if e.Name != ov.Name || e.ID != "n:0:0:2" || e.Type != filesys.TypeDir || e.Encrypted || e.Mode != uint32(r.Mode) {
+		t.Errorf("volume entry = %+v", e)
+	}
+	for k, want := range map[string]uint64{"modified": r.ModTime, "accessed": r.AccessTime, "changed": r.ChangeTime, "created": r.CreateTime} {
+		ts := map[string]filesys.Timestamp{"modified": e.Times.Modified, "accessed": e.Times.Accessed, "changed": e.Times.Changed, "created": e.Times.Created}[k]
+		if uint64(ts.T.UnixNano()) != want || !ts.ZoneKnown {
+			t.Errorf("volume %s = %d, oracle %d", k, ts.T.UnixNano(), want)
+		}
+	}
+	wantAttrs := []filesys.KV{
+		{Key: "volume", Value: "0"},
+		{Key: "uuid", Value: ov.UUID},
+		{Key: "role", Value: "none"},
+		{Key: "case_insensitive", Value: fmt.Sprint(ov.CaseInsens)},
+		{Key: "normalization_insensitive", Value: fmt.Sprint(ov.NormInsens)},
+		{Key: "encrypted", Value: "false"},
+		{Key: "snapshots", Value: fmt.Sprint(ov.NumSnapshots)},
+	}
+	if !slices.Equal(e.Attrs, wantAttrs) {
+		t.Errorf("volume attrs = %v, want %v", e.Attrs, wantAttrs)
+	}
+	if lk, err := f.Lookup("/" + ov.Name); err != nil || lk.ID != e.ID || lk.Name != e.Name {
+		t.Errorf("Lookup(volume) = %+v, %v", lk, err)
+	}
+	if kids, err := f.ReadDir(e); err != nil || len(kids) != 0 {
+		t.Errorf("the root directory lists %v, %v; mkapfs writes no entries below it", kids, err)
+	}
+	if _, err := f.Lookup("/" + ov.Name + "/root"); !errors.Is(err, filesys.ErrNotFound) {
+		t.Errorf("Lookup below the root = %v, want ErrNotFound", err)
+	}
+	// The private directory is a directory too; it is not under the root.
+	priv := filesys.Entry{ID: "n:0:0:3"}
+	if kids, err := f.ReadDir(priv); err != nil || len(kids) != 0 {
+		t.Errorf("the private directory lists %v, %v", kids, err)
+	}
+	if _, err := f.ReadDir(filesys.Entry{ID: "n:0:0:1"}); !errors.Is(err, filesys.ErrNotFound) {
+		t.Errorf("inode 1 has no record: ReadDir = %v", err)
+	}
+	var walked int
+	if err := filesys.Walk(f, f.Root(), "/", func(string, filesys.Entry, error) error { walked++; return nil }); err != nil || walked != 1 {
+		t.Errorf("Walk visited %d entries, %v", walked, err)
+	}
+	if w := f.Info().Warnings; len(w) != 0 {
+		t.Errorf("warnings on a real container: %q", w)
+	}
 }
 
 // orcCheckOmaps compares the container and volume object maps and the volume's
