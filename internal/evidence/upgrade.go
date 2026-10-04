@@ -156,6 +156,10 @@ type UpgradeResult struct {
 // except that a dangling case.upgrade (announced, migration committed, process
 // died before the conclusion) whose `to` is the current version gets a
 // case.upgrade.done{resumed:true} (UpgradeResult.Resumed).
+//
+// If the database schema version disagrees with the version the audit log says
+// it should have (and no announced upgrade explains it), Upgrade refuses with
+// ErrIntegrity before announcing or changing anything.
 func (c *Case) Upgrade() (UpgradeResult, error) {
 	from, err := c.store.SchemaVersion()
 	if err != nil {
@@ -165,8 +169,12 @@ func (c *Case) Upgrade() (UpgradeResult, error) {
 	if from > to {
 		return UpgradeResult{}, fmt.Errorf("artifacts.db schema version %d is newer than this build supports (%d)", from, to)
 	}
+	dangling, err := c.checkSchemaMatchesAudit(from)
+	if err != nil {
+		return UpgradeResult{From: from, To: from}, err
+	}
 	if from == to {
-		resumed, err := c.resumeUpgrade(from)
+		resumed, err := c.resumeUpgrade(dangling, from)
 		return UpgradeResult{From: from, To: to, Resumed: resumed}, err
 	}
 	if _, err := c.Audit.Append(actionUpgrade, "", upgradeDetails(from, to)); err != nil {
@@ -186,14 +194,31 @@ func (c *Case) Upgrade() (UpgradeResult, error) {
 	return UpgradeResult{From: from, To: to, Upgraded: true}, nil
 }
 
-// resumeUpgrade audits the completion of a dangling upgrade to version current
-// and reports whether it did.
-func (c *Case) resumeUpgrade(current int) (bool, error) {
+// checkSchemaMatchesAudit refuses (ErrIntegrity) to go on when the database
+// schema version disagrees with what the audit log says it must be, unless an
+// announced, unconcluded upgrade explains it (the migration committed and the
+// process died before case.upgrade.done). It returns that dangling upgrade, nil
+// when there is none. Nothing is audited and nothing is changed before it
+// returns: the case is inconsistent, and `case verify` reports why.
+func (c *Case) checkSchemaMatchesAudit(dbVersion int) (*upgradeStep, error) {
 	entries, err := ReadAuditEntries(filepath.Join(c.Dir, auditFile))
 	if err != nil {
-		return false, fmt.Errorf("read audit log: %w", err)
+		return nil, fmt.Errorf("%w: read audit log: %w", ErrIntegrity, err)
 	}
-	d := auditedSchema(entries).Dangling
+	sa := auditedSchema(entries)
+	if len(sa.Problems) > 0 {
+		return nil, fmt.Errorf("%w: the audit log's schema history is inconsistent (%s); run: minutiae case verify --case %s", ErrIntegrity, sa.Problems[0], c.Dir)
+	}
+	d := sa.Dangling
+	if dbVersion == sa.Version || (d != nil && sa.Version == d.From && dbVersion == d.To) {
+		return d, nil
+	}
+	return nil, fmt.Errorf("%w: artifacts.db is at schema v%d but the audit log says v%d; refusing to upgrade (run: minutiae case verify --case %s)", ErrIntegrity, dbVersion, sa.Version, c.Dir)
+}
+
+// resumeUpgrade audits the completion of the dangling upgrade when its `to` is
+// the current version, and reports whether it did.
+func (c *Case) resumeUpgrade(d *upgradeStep, current int) (bool, error) {
 	if d == nil || d.To != current {
 		return false, nil
 	}

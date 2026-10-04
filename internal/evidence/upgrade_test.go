@@ -408,3 +408,69 @@ func TestVerifyDoneWithoutMigrationIsAProblem(t *testing.T) {
 		t.Fatalf("report = %+v", r)
 	}
 }
+
+// TestUpgradeRefusesDBBehindAudit: the audit log says the schema is v2 but the
+// database is v1 (an old copy restored). Upgrade must refuse as an integrity
+// error, announce nothing and leave the database untouched.
+func TestUpgradeRefusesDBBehindAudit(t *testing.T) {
+	c := openV1Case(t)
+	if _, err := c.Audit.Append(actionUpgradeDone, "", upgradeDoneDetails(1, 2, false)); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(c.Dir, dbFile)
+	before := fileSHA(t, dbPath)
+	n := len(auditEntries(t, c))
+	res, err := c.Upgrade()
+	if !errors.Is(err, ErrIntegrity) {
+		t.Fatalf("err = %v, want ErrIntegrity", err)
+	}
+	if res.Upgraded {
+		t.Fatalf("result = %+v", res)
+	}
+	if fileSHA(t, dbPath) != before || mustVersion(t, c) != 1 {
+		t.Fatal("the database changed")
+	}
+	if got := len(auditEntries(t, c)); got != n {
+		t.Fatalf("Upgrade appended %d audit entries before refusing", got-n)
+	}
+}
+
+// TestUpgradeRefusesDBAheadOfAudit: the database is v2 but nothing in the audit
+// log announced or recorded an upgrade (migrated outside Minutiae).
+func TestUpgradeRefusesDBAheadOfAudit(t *testing.T) {
+	c := openV1Case(t)
+	if err := c.store.migrateTo(2); err != nil {
+		t.Fatal(err)
+	}
+	n := len(auditEntries(t, c))
+	if _, err := c.Upgrade(); !errors.Is(err, ErrIntegrity) {
+		t.Fatalf("err = %v, want ErrIntegrity", err)
+	}
+	if got := len(auditEntries(t, c)); got != n {
+		t.Fatalf("Upgrade appended %d audit entries before refusing", got-n)
+	}
+}
+
+// TestUpgradeAuditFailureBlocksMigration: if case.upgrade cannot be written the
+// migration never starts (audit before write).
+func TestUpgradeAuditFailureBlocksMigration(t *testing.T) {
+	c := openV1Case(t)
+	dbPath := filepath.Join(c.Dir, dbFile)
+	before := fileSHA(t, dbPath)
+	if err := c.Audit.Close(); err != nil {
+		t.Fatal(err)
+	}
+	res, err := c.Upgrade()
+	if err == nil {
+		t.Fatal("Upgrade succeeded with a closed audit log")
+	}
+	if res.Upgraded {
+		t.Fatalf("result = %+v", res)
+	}
+	if fileSHA(t, dbPath) != before {
+		t.Fatal("artifacts.db changed although the audit entry could not be written")
+	}
+	if v := mustVersion(t, c); v != 1 {
+		t.Fatalf("version = %d, want 1", v)
+	}
+}
