@@ -150,12 +150,13 @@ func TestAddRejectsUnknownArtifact(t *testing.T) {
 	if err := w.Add(ctx, rec); !errors.Is(err, records.ErrInvalidRecord) {
 		t.Errorf("Add with no artifact = %v", err)
 	}
-	if got := len(auditOf(t, c, "")); got != before {
-		t.Errorf("%d audit entries added by rejected records", got-before)
+	// each refusal is audited as a rejection (and nothing else: no batch, no record)
+	if got, rej := len(auditOf(t, c, "")), len(auditOf(t, c, evidence.ActionAnalysisWarning)); got != before+2 || rej != 2 {
+		t.Errorf("%d audit entries added by 2 rejected records (%d analysis.warning), want 2 rejection entries", got-before, rej)
 	}
 	res, err := w.End(ctx)
-	if err != nil || res.Records != 0 {
-		t.Errorf("End = %+v, %v; nothing was added", res, err)
+	if err != nil || res.Records != 0 || res.Rejected != 2 {
+		t.Errorf("End = %+v, %v; nothing was added, 2 were rejected", res, err)
 	}
 }
 
@@ -168,11 +169,11 @@ func TestAddRejectsUndeclaredArtifact(t *testing.T) {
 	if !errors.Is(err, records.ErrUndeclaredArtifact) || !errors.Is(err, records.ErrInvalidRecord) {
 		t.Fatalf("Add of an undeclared artifact = %v, want ErrUndeclaredArtifact", err)
 	}
-	if got := len(auditOf(t, c, "")); got != before {
-		t.Errorf("%d audit entries added by a rejected record", got-before)
+	if got, rej := len(auditOf(t, c, "")), len(auditOf(t, c, evidence.ActionAnalysisWarning)); got != before+1 || rej != 1 {
+		t.Errorf("%d audit entries added by a rejected record (%d analysis.warning), want 1 rejection entry", got-before, rej)
 	}
 	res, err := w.End(ctx)
-	if err != nil || res.Records != 0 || res.Batches != 0 || count(t, c, "records") != 0 {
+	if err != nil || res.Records != 0 || res.Batches != 0 || res.Rejected != 1 || count(t, c, "records") != 0 {
 		t.Errorf("End = %+v, %v; nothing was buffered", res, err)
 	}
 }

@@ -540,12 +540,15 @@ func (c *Case) checkSupersession(ctx context.Context, rep *VerifyReport, ps *pro
 	}
 }
 
-// checkCounts requires the warning and rejection counts of a conclusion (an end,
-// error or recover entry) to be the ones the audit log proves: the records
-// writer names its ingest in every analysis.warning entry it appends, marks the
-// ones written by Writer.Reject and the single suppression note. Records refused
-// by Add leave no entry, so rejected may exceed the Reject entries but never fall
-// below them; a suppression note means at least one warning was dropped.
+// checkCounts requires the warning, suppression and rejection counts of a
+// conclusion (an end, error or recover entry) to equal what the audit log proves:
+// the records writer names its ingest in every analysis.warning entry it appends,
+// marks the entries written for a rejection (Reject, or an Add refused for an
+// invalid record) and, when the ingest concludes, writes one suppression note
+// carrying the numbers of warnings and rejections the shared cap kept out of the
+// log. So warnings equals the entries, warnings_suppressed the suppressed
+// warnings plus suppressed rejections of the note, and rejected the rejection
+// entries plus the suppressed rejections: equality, not a lower bound.
 func checkCounts(ps *problemSet, id, what string, seq int64, got IngestConclusion, tally *IngestWarningTally) {
 	var t IngestWarningTally
 	if tally != nil {
@@ -554,13 +557,21 @@ func checkCounts(ps *problemSet, id, what string, seq int64, got IngestConclusio
 	if t.Notes > 1 {
 		ps.add("lifecycle", "ingest %q: the audit log holds %d suppression notes for it, at most one is possible", id, t.Notes)
 	}
+	if t.NoteBadCounts > 0 {
+		ps.add("lifecycle", "ingest %q: the audit log holds a suppression note with missing, negative or non-integer counts", id)
+	}
+	if t.NoteEmpty > 0 {
+		ps.add("lifecycle", "ingest %q: the audit log holds a suppression note that counts no suppressed entry", id)
+	}
 	if got.Warnings != t.Warnings {
 		ps.add("lifecycle", "ingest %q: %s (audit seq %d): warnings is %d, the audit log holds %d analysis.warning entries for it", id, what, seq, got.Warnings, t.Warnings)
 	}
-	if (got.WarningsSuppressed > 0) != (t.Notes > 0) {
-		ps.add("lifecycle", "ingest %q: %s (audit seq %d): warnings_suppressed is %d, but the audit log holds %d suppression notes for it", id, what, seq, got.WarningsSuppressed, t.Notes)
+	if got.WarningsSuppressed != t.Suppressed() {
+		ps.add("lifecycle", "ingest %q: %s (audit seq %d): warnings_suppressed is %d, the audit log proves %d (%d suppressed warnings plus %d suppressed rejections)",
+			id, what, seq, got.WarningsSuppressed, t.Suppressed(), t.NoteWarnings, t.NoteRejects)
 	}
-	if got.Rejected < t.Rejects {
-		ps.add("lifecycle", "ingest %q: %s (audit seq %d): rejected is %d, but the audit log holds at least %d rejections for it", id, what, seq, got.Rejected, t.Rejects)
+	if got.Rejected != t.ProvenRejected() {
+		ps.add("lifecycle", "ingest %q: %s (audit seq %d): rejected is %d, the audit log proves %d (%d rejection entries plus %d suppressed rejections)",
+			id, what, seq, got.Rejected, t.ProvenRejected(), t.Rejects, t.NoteRejects)
 	}
 }

@@ -2,6 +2,8 @@ package records_test
 
 import (
 	"errors"
+	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -24,6 +26,31 @@ func suppressionEntries(t *testing.T, c *evidence.Case) int {
 		if r, _ := e["reason"].(string); strings.Contains(r, "further warnings suppressed") {
 			n++
 		}
+	}
+	return n
+}
+
+// suppressionNotes returns the suppression notes among the analysis.warning entries.
+func suppressionNotes(t *testing.T, c *evidence.Case) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, e := range warnEntries(t, c) {
+		if b, _ := e[evidence.WarnKeySuppression].(bool); b {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// noteCount reads one of the numbers a suppression note carries (-1 when the key is absent).
+func noteCount(e map[string]any, key string) int {
+	v, ok := e[key]
+	if !ok {
+		return -1
+	}
+	n, err := strconv.Atoi(fmt.Sprint(v))
+	if err != nil {
+		return -2
 	}
 	return n
 }
@@ -60,12 +87,12 @@ func TestIngestEndCarriesWarningsAndRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Rejected != n+m || res.Warnings != k+m || res.WarningsSuppressed != 0 {
-		t.Errorf("result rejected %d warnings %d suppressed %d, want %d, %d, 0", res.Rejected, res.Warnings, res.WarningsSuppressed, n+m, k+m)
+	if res.Rejected != n+m || res.Warnings != n+m+k || res.WarningsSuppressed != 0 {
+		t.Errorf("result rejected %d warnings %d suppressed %d, want %d, %d, 0", res.Rejected, res.Warnings, res.WarningsSuppressed, n+m, n+m+k)
 	}
 	end := details[evidence.IngestConclusion](t, auditOf(t, c, evidence.ActionIngestEnd)[0])
-	if end.Rejected != n+m || end.Warnings != k+m || end.WarningsSuppressed != 0 {
-		t.Errorf("end entry rejected %d warnings %d suppressed %d, want %d, %d, 0", end.Rejected, end.Warnings, end.WarningsSuppressed, n+m, k+m)
+	if end.Rejected != n+m || end.Warnings != n+m+k || end.WarningsSuppressed != 0 {
+		t.Errorf("end entry rejected %d warnings %d suppressed %d, want %d, %d, 0", end.Rejected, end.Warnings, end.WarningsSuppressed, n+m, n+m+k)
 	}
 	raw := auditOf(t, c, evidence.ActionIngestEnd)[0].Details
 	for _, key := range []string{"warnings", "warnings_suppressed", "rejected"} {
@@ -73,8 +100,14 @@ func TestIngestEndCarriesWarningsAndRejected(t *testing.T) {
 			t.Errorf("the end entry has no %q key: %v", key, raw)
 		}
 	}
-	if got := len(warnEntries(t, c)); got != k+m {
-		t.Errorf("%d analysis.warning entries, want %d (the Rejects write one each, the refused Adds none)", got, k+m)
+	marked := 0
+	for _, e := range warnEntries(t, c) {
+		if b, _ := e[evidence.WarnKeyRejected].(bool); b {
+			marked++
+		}
+	}
+	if got := len(warnEntries(t, c)); got != n+m+k || marked != n+m {
+		t.Errorf("%d analysis.warning entries (%d marked rejected), want %d (%d marked): every refused Add and every Reject writes one", got, marked, n+m+k, n+m)
 	}
 	if rep := mustVerify(t, c); !rep.OK() {
 		t.Errorf("verify: %q", rep.Problems)
@@ -87,22 +120,73 @@ func TestSingleRejectedAddCountsOnce(t *testing.T) {
 	if err := w.Add(ctx, refusedRecord(a.ID)); !errors.Is(err, records.ErrInvalidRecord) {
 		t.Fatalf("Add = %v", err)
 	}
-	if n := len(warnEntries(t, c)); n != 0 {
-		t.Fatalf("the writer wrote %d warning entries for a refused Add itself", n)
+	// the refusal is audited by Add itself, once, and marked as a rejection
+	ws := warnEntries(t, c)
+	if len(ws) != 1 {
+		t.Fatalf("the writer wrote %d warning entries for one refused Add, want 1", len(ws))
 	}
-	wantCounts(t, w, 0, 0, 1)
-	// the emitter's path: the caller warns about the refusal it just saw
-	if err := w.Warn(ctx, "/p", "record refused"); err != nil {
-		t.Fatal(err)
+	if b, _ := ws[0][evidence.WarnKeyRejected].(bool); !b || ws[0][evidence.WarnKeyIngest] != w.IngestID() {
+		t.Errorf("entry %v is not a rejection of this ingest", ws[0])
+	}
+	if r, _ := ws[0]["reason"].(string); !strings.HasPrefix(r, "record refused: invalid record") {
+		t.Errorf("reason = %q, want the refusal and its cause", r)
 	}
 	wantCounts(t, w, 1, 0, 1)
 	res, err := w.End(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Rejected != 1 || res.Warnings != 1 {
-		t.Errorf("result rejected %d warnings %d, want 1 and 1", res.Rejected, res.Warnings)
+	if res.Rejected != 1 || res.Warnings != 1 || res.WarningsSuppressed != 0 {
+		t.Errorf("result rejected %d warnings %d suppressed %d, want 1, 1, 0", res.Rejected, res.Warnings, res.WarningsSuppressed)
 	}
+	if rep := mustVerify(t, c); !rep.OK() {
+		t.Errorf("verify: %q", rep.Problems)
+	}
+}
+
+// TestRefusedAddAtTheCapIsCountedAndNoted: a refused Add past the shared cap
+// writes no entry of its own, is counted, and shows up in the one note.
+func TestRefusedAddAtTheCapIsCountedAndNoted(t *testing.T) {
+	c, a := setup(t)
+	w := startWriter(t, c, testParser, records.WriterOptions{}, a.ID)
+	w.SetMaxWarnings(1)
+	for range 3 {
+		if err := w.Add(ctx, refusedRecord(a.ID)); !errors.Is(err, records.ErrInvalidRecord) {
+			t.Fatalf("Add = %v", err)
+		}
+	}
+	if n := len(warnEntries(t, c)); n != 1 {
+		t.Errorf("%d entries before End, want 1 (the cap)", n)
+	}
+	wantCounts(t, w, 1, 2, 3)
+	res, err := w.End(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Rejected != 3 || res.Warnings != 1 || res.WarningsSuppressed != 2 {
+		t.Errorf("result rejected %d warnings %d suppressed %d, want 3, 1, 2", res.Rejected, res.Warnings, res.WarningsSuppressed)
+	}
+	notes := suppressionNotes(t, c)
+	if len(notes) != 1 || noteCount(notes[0], evidence.WarnKeySuppressedWarnings) != 0 || noteCount(notes[0], evidence.WarnKeySuppressedRejects) != 2 {
+		t.Fatalf("notes = %v, want one with 0 suppressed warnings and 2 suppressed rejections", notes)
+	}
+	if rep := mustVerify(t, c); !rep.OK() {
+		t.Errorf("verify: %q", rep.Problems)
+	}
+}
+
+// TestRefusedAddAuditFailureIsNotARejection: when the audit entry of a refusal
+// cannot be written the Add fails with that error (not as a refusal the caller
+// could skip) and nothing is counted.
+func TestRefusedAddAuditFailureIsNotARejection(t *testing.T) {
+	c, a := setup(t)
+	w := startWriter(t, c, testParser, records.WriterOptions{}, a.ID)
+	_ = c.Audit.Close() // every later append fails
+	err := w.Add(ctx, refusedRecord(a.ID))
+	if err == nil || errors.Is(err, records.ErrInvalidRecord) {
+		t.Fatalf("Add = %v, want the audit failure and not a validation error", err)
+	}
+	wantCounts(t, w, 0, 0, 0)
 }
 
 func TestIngestErrorEntryCarriesCounts(t *testing.T) {
@@ -121,11 +205,11 @@ func TestIngestErrorEntryCarriesCounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Rejected != 5 || res.Warnings != 2 || res.WarningsSuppressed != 2 {
-		t.Errorf("result = rejected %d warnings %d suppressed %d, want 5, 2, 2", res.Rejected, res.Warnings, res.WarningsSuppressed)
+	if res.Rejected != 5 || res.Warnings != 2 || res.WarningsSuppressed != 3 {
+		t.Errorf("result = rejected %d warnings %d suppressed %d, want 5, 2, 3", res.Rejected, res.Warnings, res.WarningsSuppressed)
 	}
 	e := details[evidence.IngestConclusion](t, auditOf(t, c, evidence.ActionIngestError)[0])
-	if e.Rejected != 5 || e.Warnings != 2 || e.WarningsSuppressed != 2 || e.Outcome != "incomplete" {
+	if e.Rejected != 5 || e.Warnings != 2 || e.WarningsSuppressed != 3 || e.Outcome != "incomplete" {
 		t.Errorf("error entry = %+v", e)
 	}
 }
@@ -158,23 +242,106 @@ func TestRejectSharesWarnCapAndCountsWhenSuppressed(t *testing.T) {
 		}
 	}
 	wantCounts(t, w, 3, 7, 10)
-	if n := suppressionEntries(t, c); n != 1 {
-		t.Errorf("%d suppression entries, want exactly 1", n)
-	}
-	if n := len(warnEntries(t, c)); n != 4 {
-		t.Errorf("%d analysis.warning entries, want 3 plus the suppression note", n)
-	}
 	// Warn and Reject draw on the same budget
 	if err := w.Warn(ctx, "/p", "r"); err != nil {
 		t.Fatal(err)
 	}
 	wantCounts(t, w, 3, 8, 10)
+	if n := len(warnEntries(t, c)); n != 3 {
+		t.Errorf("%d analysis.warning entries before End, want the 3 under the cap (the note is written at the end)", n)
+	}
 	res, err := w.End(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Rejected != 10 || res.Warnings != 3 || res.WarningsSuppressed != 8 {
 		t.Errorf("result rejected %d warnings %d suppressed %d, want 10, 3, 8", res.Rejected, res.Warnings, res.WarningsSuppressed)
+	}
+	if n := suppressionEntries(t, c); n != 1 {
+		t.Errorf("%d suppression entries, want exactly 1", n)
+	}
+	notes := suppressionNotes(t, c)
+	if len(notes) != 1 || noteCount(notes[0], evidence.WarnKeySuppressedWarnings) != 1 || noteCount(notes[0], evidence.WarnKeySuppressedRejects) != 7 {
+		t.Fatalf("notes = %v, want one carrying 1 suppressed warning and 7 suppressed rejections", notes)
+	}
+	// the note sits right before the conclusion that counts it
+	all := auditOf(t, c, "")
+	endSeq := auditOf(t, c, evidence.ActionIngestEnd)[0].Seq
+	var noteSeq int64
+	for _, e := range auditOf(t, c, evidence.ActionAnalysisWarning) {
+		if b, _ := e.Details[evidence.WarnKeySuppression].(bool); b {
+			noteSeq = e.Seq
+		}
+	}
+	if noteSeq == 0 || noteSeq >= endSeq || all[len(all)-1].Seq != endSeq {
+		t.Errorf("note seq %d, end seq %d: the note must come before records.ingest.end", noteSeq, endSeq)
+	}
+	if rep := mustVerify(t, c); !rep.OK() {
+		t.Errorf("verify: %q", rep.Problems)
+	}
+}
+
+// TestNoNoteWithoutSuppression: an ingest that stays within the cap writes no note.
+func TestNoNoteWithoutSuppression(t *testing.T) {
+	c, a := setup(t)
+	w := startWriter(t, c, testParser, records.WriterOptions{}, a.ID)
+	w.SetMaxWarnings(3)
+	for range 3 {
+		if err := w.Warn(ctx, "/p", "r"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := w.End(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(suppressionNotes(t, c)); n != 0 {
+		t.Errorf("%d suppression notes, want none", n)
+	}
+}
+
+// TestNoWarnOrRejectAfterTheNote: once the end-of-ingest note was written (by an
+// End whose conclusion could not be audited), a later Warn, Reject or refused Add
+// could not be counted by it, so each is refused and nothing is counted.
+func TestNoWarnOrRejectAfterTheNote(t *testing.T) {
+	c, a := setup(t)
+	w := startWriter(t, c, testParser, records.WriterOptions{}, a.ID)
+	w.SetMaxWarnings(1)
+	for range 3 {
+		if err := w.Warn(ctx, "/p", "r"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	boom := errors.New("stop")
+	w.SetHook(func(p string) error {
+		if p == "after-suppression-note" {
+			return boom
+		}
+		return nil
+	})
+	if _, err := w.End(ctx); !errors.Is(err, boom) {
+		t.Fatalf("End = %v, want the hook failure", err)
+	}
+	w.SetHook(nil)
+	if err := w.Warn(ctx, "/p", "r"); !errors.Is(err, records.ErrWriterClosed) {
+		t.Errorf("Warn after the note = %v, want ErrWriterClosed", err)
+	}
+	if err := w.Reject(ctx, "/p", "r"); !errors.Is(err, records.ErrWriterClosed) {
+		t.Errorf("Reject after the note = %v, want ErrWriterClosed", err)
+	}
+	if err := w.Add(ctx, refusedRecord(a.ID)); !errors.Is(err, records.ErrWriterClosed) {
+		t.Errorf("refused Add after the note = %v, want ErrWriterClosed", err)
+	}
+	wantCounts(t, w, 1, 2, 0)
+	// the conclusion (here an Abort) states exactly what the one note counted
+	res, err := w.Abort(ctx, errors.New("cause"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Warnings != 1 || res.WarningsSuppressed != 2 || res.Rejected != 0 || len(suppressionNotes(t, c)) != 1 {
+		t.Errorf("result %+v, notes %d: want warnings 1, suppressed 2, rejected 0 and the one note", res, len(suppressionNotes(t, c)))
+	}
+	if rep := mustVerify(t, c); !rep.OK() {
+		t.Errorf("verify: %q", rep.Problems)
 	}
 }
 
@@ -192,17 +359,24 @@ func TestRejectAuditsBeforeCounting(t *testing.T) {
 		wantCounts(t, w, 1, 0, 1)
 	})
 	t.Run("suppression note", func(t *testing.T) {
+		// past the cap a Reject writes nothing and is only counted; the note that
+		// carries the count is written by End, and its failure fails the End
 		c, a := setup(t)
 		w := startWriter(t, c, testParser, records.WriterOptions{}, a.ID)
 		w.SetMaxWarnings(1)
-		if err := w.Reject(ctx, "/p", "r"); err != nil {
-			t.Fatal(err)
+		for range 2 {
+			if err := w.Reject(ctx, "/p", "r"); err != nil {
+				t.Fatal(err)
+			}
 		}
+		wantCounts(t, w, 1, 1, 2)
 		_ = c.Audit.Close()
-		if err := w.Reject(ctx, "/p", "r"); err == nil {
-			t.Fatal("Reject succeeded although the suppression entry could not be written")
+		if _, err := w.End(ctx); err == nil {
+			t.Fatal("End succeeded although the suppression note could not be written")
 		}
-		wantCounts(t, w, 1, 0, 1)
+		if n := len(auditOf(t, c, evidence.ActionIngestEnd)); n != 0 {
+			t.Errorf("%d records.ingest.end entries after the failed note", n)
+		}
 	})
 }
 
@@ -276,7 +450,7 @@ func TestRejectedCountsOnlyInvalidRecordErrors(t *testing.T) {
 	if err := w.Add(ctx, refusedRecord(a.ID)); !errors.Is(err, records.ErrUnknownArtifact) {
 		t.Fatalf("unknown Add = %v", err)
 	}
-	wantCounts(t, w, 0, 0, 2)
+	wantCounts(t, w, 2, 0, 2)
 
 	// a batch failure poisons the writer: its errors are not rejections
 	boom := errors.New("boom")
@@ -289,14 +463,14 @@ func TestRejectedCountsOnlyInvalidRecordErrors(t *testing.T) {
 	if err := w.Add(ctx, recordstest.Records(a.ID, 1, 2)[0]); !errors.Is(err, boom) {
 		t.Fatalf("Add = %v, want the batch failure", err)
 	}
-	wantCounts(t, w, 0, 0, 2)
+	wantCounts(t, w, 2, 0, 2)
 	if err := w.Add(ctx, recordstest.Records(a.ID, 1, 3)[0]); !errors.Is(err, boom) {
 		t.Fatalf("Add on a poisoned writer = %v", err)
 	}
 	if err := w.Add(ctx, refusedRecord(a.ID)); !errors.Is(err, boom) {
 		t.Fatalf("refused Add on a poisoned writer = %v, want the poison", err)
 	}
-	wantCounts(t, w, 0, 0, 2)
+	wantCounts(t, w, 2, 0, 2)
 	res, err := w.Abort(ctx, boom)
 	if err != nil {
 		t.Fatal(err)
@@ -309,7 +483,7 @@ func TestRejectedCountsOnlyInvalidRecordErrors(t *testing.T) {
 	if err := w.Add(ctx, refusedRecord(a.ID)); !errors.Is(err, records.ErrWriterClosed) {
 		t.Fatalf("Add on a closed writer = %v", err)
 	}
-	wantCounts(t, w, 0, 0, 2)
+	wantCounts(t, w, 2, 0, 2)
 }
 
 func TestRejectRequiresStartedWriter(t *testing.T) {
@@ -359,7 +533,7 @@ func TestRecoverCopiesCountsOfRunMissingIngest(t *testing.T) {
 	c, a := setup(t)
 	w := countedIngestCrashedAfterEnd(t, c, a)
 	orig := details[evidence.IngestConclusion](t, auditOf(t, c, evidence.ActionIngestEnd)[0])
-	if orig.Rejected != 3 || orig.Warnings != 2 {
+	if orig.Rejected != 3 || orig.Warnings != 4 {
 		t.Fatalf("end entry = %+v", orig)
 	}
 	startWriter(t, c, records.Parser{Name: "next", Version: "1"}, records.WriterOptions{}, a.ID)
@@ -368,8 +542,8 @@ func TestRecoverCopiesCountsOfRunMissingIngest(t *testing.T) {
 		t.Fatalf("%d recover entries", len(rcs))
 	}
 	rc := details[evidence.IngestRecover](t, rcs[0])
-	if !rc.RunMissing || rc.IngestID != w.IngestID() || rc.Rejected != 3 || rc.Warnings != 2 || rc.WarningsSuppressed != 0 {
-		t.Errorf("recover entry = %+v, want the end entry's counts (rejected 3, warnings 2)", rc)
+	if !rc.RunMissing || rc.IngestID != w.IngestID() || rc.Rejected != 3 || rc.Warnings != 4 || rc.WarningsSuppressed != 0 {
+		t.Errorf("recover entry = %+v, want the end entry's counts (rejected 3, warnings 4)", rc)
 	}
 }
 
@@ -443,10 +617,12 @@ func TestOlderEndEntryWithoutCountsDecodesAndVerifies(t *testing.T) {
 }
 
 // auditedWarnings runs an ingest that dies after one committed batch: nWarn Warn
-// calls and nReject Reject calls (warnCap, when above 0, is the Warn cap) and 2
-// records. It returns the case, the artifact, the dead writer and the conclusion
-// its counters give.
-func auditedWarnings(t *testing.T, nWarn, nReject, warnCap int) (*evidence.Case, evidence.ManifestRecord, *records.Writer, evidence.IngestConclusion) {
+// calls, nReject Reject calls and nRefused refused Adds (warnCap, when above 0, is
+// the shared cap) and 2 records. With note the process dies right after the
+// end-of-ingest suppression note was audited (the ingest must have suppressed
+// something); without it the process dies before End. It returns the case, the
+// artifact, the dead writer and the conclusion its counters give.
+func auditedWarnings(t *testing.T, nWarn, nReject, nRefused, warnCap int, note bool) (*evidence.Case, evidence.ManifestRecord, *records.Writer, evidence.IngestConclusion) {
 	t.Helper()
 	c, a := setup(t)
 	w := startWriter(t, c, testParser, records.WriterOptions{BatchRows: 2}, a.ID)
@@ -463,8 +639,20 @@ func auditedWarnings(t *testing.T, nWarn, nReject, warnCap int) (*evidence.Case,
 			t.Fatal(err)
 		}
 	}
+	for range nRefused {
+		if err := w.Add(ctx, refusedRecord(a.ID)); !errors.Is(err, records.ErrInvalidRecord) {
+			t.Fatalf("Add = %v, want a validation error", err)
+		}
+	}
 	add(t, w, recordstest.Records(a.ID, 2, 1)) // one batch of 2, committed
-	w.Die()
+	if note {
+		crashAt(w, "after-suppression-note", 1)
+		if !survive(t, func() { _, _ = w.End(ctx) }) {
+			t.Fatal("the crash seam after the suppression note never fired")
+		}
+	} else {
+		w.Die()
+	}
 	warnings, suppressed, rejected := w.Counts()
 	b := details[evidence.BatchCommit](t, auditOf(t, c, evidence.ActionBatch)[0])
 	return c, a, w, evidence.IngestConclusion{
@@ -475,29 +663,36 @@ func auditedWarnings(t *testing.T, nWarn, nReject, warnCap int) (*evidence.Case,
 }
 
 // TestVerifyIngestCountsMustMatchAuditLog: warnings, warnings_suppressed and
-// rejected of records.ingest.end are proven from the analysis.warning entries
-// the writer put in the hash-chained log for that ingest. Each case re-chains an
-// end entry by hand (the audit-log anchor limit) and the recover that follows
-// copies it.
+// rejected of records.ingest.end are proven exactly from the analysis.warning
+// entries the writer put in the hash-chained log for that ingest: warnings equals
+// the entries, warnings_suppressed the suppressed warnings plus suppressed
+// rejections the one note carries, rejected the rejection entries plus the
+// suppressed rejections. Each case re-chains an end entry by hand (the audit-log
+// anchor limit) and the recover that follows copies it.
 func TestVerifyIngestCountsMustMatchAuditLog(t *testing.T) {
 	cases := []struct {
-		name                string
-		nWarn, nReject, cap int
-		mutate              func(c *evidence.IngestConclusion)
-		want                string // "" means verify must be clean
+		name                          string
+		nWarn, nReject, nRefused, cap int
+		note                          bool
+		mutate                        func(c *evidence.IngestConclusion)
+		want                          string // "" means verify must be clean
 	}{
-		{"honest counts", 3, 2, 0, func(*evidence.IngestConclusion) {}, ""},
-		{"honest counts at the cap", 5, 0, 2, func(*evidence.IngestConclusion) {}, ""},
-		{"warnings forged to zero", 3, 2, 0, func(c *evidence.IngestConclusion) { c.Warnings = 0 }, "warnings is 0, the audit log holds 5"},
-		{"warnings inflated", 3, 2, 0, func(c *evidence.IngestConclusion) { c.Warnings = 9 }, "warnings is 9, the audit log holds 5"},
-		{"rejected forged to zero", 3, 2, 0, func(c *evidence.IngestConclusion) { c.Rejected = 0 }, "rejected is 0, but the audit log holds at least 2"},
-		{"suppression invented", 3, 0, 0, func(c *evidence.IngestConclusion) { c.WarningsSuppressed = 4 }, "warnings_suppressed is 4, but the audit log holds 0 suppression notes"},
-		{"suppression erased", 5, 0, 2, func(c *evidence.IngestConclusion) { c.WarningsSuppressed = 0 }, "warnings_suppressed is 0, but the audit log holds 1 suppression notes"},
-		{"warnings counted with the note", 5, 0, 2, func(c *evidence.IngestConclusion) { c.Warnings = 3 }, "warnings is 3, the audit log holds 2"},
+		{"honest counts", 3, 2, 1, 0, false, func(*evidence.IngestConclusion) {}, ""},
+		{"honest counts at the cap", 5, 0, 0, 2, true, func(*evidence.IngestConclusion) {}, ""},
+		{"honest mixed counts at the cap", 2, 3, 2, 3, true, func(*evidence.IngestConclusion) {}, ""},
+		{"warnings forged to zero", 3, 2, 1, 0, false, func(c *evidence.IngestConclusion) { c.Warnings = 0 }, "warnings is 0, the audit log holds 6"},
+		{"warnings inflated", 3, 2, 1, 0, false, func(c *evidence.IngestConclusion) { c.Warnings = 9 }, "warnings is 9, the audit log holds 6"},
+		{"rejected forged to zero", 3, 2, 1, 0, false, func(c *evidence.IngestConclusion) { c.Rejected = 0 }, "rejected is 0, the audit log proves 3 (3 rejection entries plus 0 suppressed rejections)"},
+		{"rejected inflated", 3, 2, 1, 0, false, func(c *evidence.IngestConclusion) { c.Rejected = 7 }, "rejected is 7, the audit log proves 3 (3 rejection entries plus 0 suppressed rejections)"},
+		{"rejected without the suppressed ones", 2, 3, 2, 3, true, func(c *evidence.IngestConclusion) { c.Rejected = 3 }, "rejected is 3, the audit log proves 5 (1 rejection entries plus 4 suppressed rejections)"},
+		{"suppression invented", 3, 0, 0, 0, false, func(c *evidence.IngestConclusion) { c.WarningsSuppressed = 4 }, "warnings_suppressed is 4, the audit log proves 0 (0 suppressed warnings plus 0 suppressed rejections)"},
+		{"suppression erased", 5, 0, 0, 2, true, func(c *evidence.IngestConclusion) { c.WarningsSuppressed = 0 }, "warnings_suppressed is 0, the audit log proves 3 (3 suppressed warnings plus 0 suppressed rejections)"},
+		{"suppression understated by one", 5, 0, 0, 2, true, func(c *evidence.IngestConclusion) { c.WarningsSuppressed = 2 }, "warnings_suppressed is 2, the audit log proves 3 (3 suppressed warnings plus 0 suppressed rejections)"},
+		{"warnings counted with the note", 5, 0, 0, 2, true, func(c *evidence.IngestConclusion) { c.Warnings = 3 }, "warnings is 3, the audit log holds 2"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			c, a, w, concl := auditedWarnings(t, tc.nWarn, tc.nReject, tc.cap)
+			c, a, w, concl := auditedWarnings(t, tc.nWarn, tc.nReject, tc.nRefused, tc.cap, tc.note)
 			tc.mutate(&concl)
 			if _, err := c.Audit.Append(evidence.ActionIngestEnd, "", concl.Details()); err != nil {
 				t.Fatal(err)
@@ -518,10 +713,64 @@ func TestVerifyIngestCountsMustMatchAuditLog(t *testing.T) {
 	}
 }
 
+// TestVerifyMalformedSuppressionNotes: a note must carry non-negative integer
+// counts that are not both zero, and an ingest has at most one.
+func TestVerifyMalformedSuppressionNotes(t *testing.T) {
+	note := func(w *records.Writer, extra map[string]any) map[string]any {
+		d := map[string]any{
+			"analysis_id": "", "path": "", "reason": "forged note",
+			evidence.WarnKeyIngest: w.IngestID(), evidence.WarnKeySuppression: true,
+		}
+		for k, v := range extra {
+			d[k] = v
+		}
+		return d
+	}
+	cases := []struct {
+		name  string
+		notes func(w *records.Writer) []map[string]any
+		want  string
+	}{
+		{
+			"counts missing", func(w *records.Writer) []map[string]any { return []map[string]any{note(w, nil)} },
+			"a suppression note with missing, negative or non-integer counts",
+		},
+		{"count negative", func(w *records.Writer) []map[string]any {
+			return []map[string]any{note(w, map[string]any{evidence.WarnKeySuppressedWarnings: -1, evidence.WarnKeySuppressedRejects: 3})}
+		}, "a suppression note with missing, negative or non-integer counts"},
+		{"count fractional", func(w *records.Writer) []map[string]any {
+			return []map[string]any{note(w, map[string]any{evidence.WarnKeySuppressedWarnings: 1.5, evidence.WarnKeySuppressedRejects: 3})}
+		}, "a suppression note with missing, negative or non-integer counts"},
+		{"counts both zero", func(w *records.Writer) []map[string]any {
+			return []map[string]any{note(w, map[string]any{evidence.WarnKeySuppressedWarnings: 0, evidence.WarnKeySuppressedRejects: 0})}
+		}, "a suppression note that counts no suppressed entry"},
+		{"two notes", func(w *records.Writer) []map[string]any {
+			n := map[string]any{evidence.WarnKeySuppressedWarnings: 1, evidence.WarnKeySuppressedRejects: 0}
+			return []map[string]any{note(w, n), note(w, n)}
+		}, "the audit log holds 2 suppression notes for it, at most one is possible"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, a := setup(t)
+			w := startWriter(t, c, testParser, records.WriterOptions{}, a.ID)
+			for _, d := range tc.notes(w) {
+				if _, err := c.Audit.Append(evidence.ActionAnalysisWarning, "", d); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := w.End(ctx); err != nil {
+				t.Fatal(err)
+			}
+			rep := mustVerify(t, c)
+			expectProblems(t, rep, []string{tc.want, quoted(w.IngestID())}, "warnings is 0, the audit log holds", "warnings_suppressed is 0, the audit log proves")
+		})
+	}
+}
+
 // TestVerifyForgedUnfinishedRecoverCounts: a recover of an unfinished ingest
 // (no end entry) carries counts that the audit log must confirm too.
 func TestVerifyForgedUnfinishedRecoverCounts(t *testing.T) {
-	c, _, w, concl := auditedWarnings(t, 3, 1, 0)
+	c, _, w, concl := auditedWarnings(t, 3, 1, 0, 0, false)
 	forged := concl
 	forged.Outcome, forged.Warnings, forged.Rejected = "interrupted", 99, 0
 	rc := evidence.IngestRecover{IngestConclusion: forged, ByIngestID: "ing-forged", Reason: "forged for the test", BatchNos: []int{}}
@@ -529,12 +778,13 @@ func TestVerifyForgedUnfinishedRecoverCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	rep := mustVerify(t, c)
-	expectProblems(t, rep, []string{"warnings is 99, the audit log holds 4", "rejected is 0, but the audit log holds at least 1", quoted(w.IngestID())}, "run row")
+	expectProblems(t, rep, []string{"warnings is 99, the audit log holds 4", "rejected is 0, the audit log proves 1 (1 rejection entries plus 0 suppressed rejections)", quoted(w.IngestID())}, "run row")
 }
 
 // TestRecoveryDerivesCountsFromAuditLog: recovering an ingest that never
-// concluded (or whose Abort failed) states the warnings and rejections the log
-// proves, never zeros.
+// concluded (or whose Abort failed) states the warnings, suppressed entries and
+// rejections the log proves, never zeros. The suppressed numbers come from the
+// end-of-ingest note, so an ingest that died before writing it loses them.
 func TestRecoveryDerivesCountsFromAuditLog(t *testing.T) {
 	check := func(t *testing.T, c *evidence.Case, a evidence.ManifestRecord, id string, warnings, suppressed, rejected int) {
 		t.Helper()
@@ -555,12 +805,18 @@ func TestRecoveryDerivesCountsFromAuditLog(t *testing.T) {
 		}
 	}
 	t.Run("process died", func(t *testing.T) {
-		c, a, w, _ := auditedWarnings(t, 3, 2, 0)
-		check(t, c, a, w.IngestID(), 5, 0, 2)
+		c, a, w, _ := auditedWarnings(t, 3, 2, 1, 0, false)
+		check(t, c, a, w.IngestID(), 6, 0, 3)
 	})
-	t.Run("process died at the cap", func(t *testing.T) {
-		c, a, w, _ := auditedWarnings(t, 4, 3, 2)
-		check(t, c, a, w.IngestID(), 2, 1, 0) // the rejections past the cap leave no entry: only a lower bound is provable
+	t.Run("process died after the note", func(t *testing.T) {
+		// 4 warns, 3 rejects, 2 refused Adds under a cap of 2: the entries are the first
+		// two warns; the note carries 2 suppressed warnings and 5 suppressed rejections
+		c, a, w, _ := auditedWarnings(t, 4, 3, 2, 2, true)
+		check(t, c, a, w.IngestID(), 2, 7, 5)
+	})
+	t.Run("process died at the cap before the note", func(t *testing.T) {
+		c, a, w, _ := auditedWarnings(t, 4, 3, 2, 2, false)
+		check(t, c, a, w.IngestID(), 2, 0, 0) // nothing past the cap is provable without the note
 	})
 	t.Run("abort failed", func(t *testing.T) {
 		c, a := setup(t)
@@ -602,8 +858,11 @@ func TestWriterWarningEntriesAreMarked(t *testing.T) {
 	for range 3 {
 		_ = w.Warn(ctx, "/p", "r")
 	}
+	if _, err := w.End(ctx); err != nil {
+		t.Fatal(err)
+	}
 	ws := warnEntries(t, c)
-	if len(ws) != 4 { // warn, reject, warn, then the note
+	if len(ws) != 4 { // warn, reject, warn, then the note written by End
 		t.Fatalf("%d warning entries", len(ws))
 	}
 	for i, e := range ws {
@@ -615,9 +874,6 @@ func TestWriterWarningEntriesAreMarked(t *testing.T) {
 		if rejected != (i == 1) || note != (i == 3) {
 			t.Errorf("entry %d markers rejected=%v suppression=%v: %v", i, rejected, note, e)
 		}
-	}
-	if _, err := w.End(ctx); err != nil {
-		t.Fatal(err)
 	}
 	if rep := mustVerify(t, c); !rep.OK() {
 		t.Errorf("verify: %q", rep.Problems)

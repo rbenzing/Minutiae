@@ -81,9 +81,11 @@ type UnresolvedIngest struct {
 	AbsentBatches []int
 
 	// Warnings, WarningsSuppressed and Rejected are what the audit log proves about the ingest's
-	// analysis.warning entries (the suppression note is not a warning; WarningsSuppressed is 1 when the
-	// note exists, the least it can mean; Rejected counts the Writer.Reject entries, a lower bound: records
-	// refused by Add leave no entry). Recovery states them instead of zeros.
+	// analysis.warning entries: the entries (the suppression note is not one), the entries the cap kept out
+	// of the log and the rejections, both as the end-of-ingest suppression note states them. An ingest that
+	// died before it wrote the note has no provable suppressed entries: past the cap nothing is counted
+	// (WarningsSuppressed is 0, Rejected holds the rejection entries only). Recovery states these numbers
+	// instead of zeros.
 	Warnings           int
 	WarningsSuppressed int
 	Rejected           int
@@ -220,10 +222,7 @@ func (c *Case) UnresolvedIngests() ([]UnresolvedIngest, error) {
 		}
 		u := UnresolvedIngest{
 			Start: in.start, StartSeq: in.startSeq, Kind: IngestUnfinished,
-			Warnings: in.tally.Warnings, Rejected: in.tally.Rejects,
-		}
-		if in.tally.Notes > 0 {
-			u.WarningsSuppressed = 1
+			Warnings: in.tally.Warnings, WarningsSuppressed: in.tally.Suppressed(), Rejected: in.tally.ProvenRejected(),
 		}
 		if in.conclusion != nil {
 			u.Kind, u.Conclusion, u.ConclusionSeq, u.ConclusionTime = IngestRunMissing, in.conclusion, in.concSeq, in.concTime

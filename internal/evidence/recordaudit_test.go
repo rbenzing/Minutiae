@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"encoding/json"
 	"reflect"
 	"sort"
 	"strings"
@@ -199,5 +200,46 @@ func TestRecordAuditActionNames(t *testing.T) {
 		if got != want {
 			t.Errorf("action constant %q, want %q", got, want)
 		}
+	}
+}
+
+// TestIngestWarningTallyReadsSuppressionNotes: the numbers of a suppression note are
+// read as whole non-negative numbers (as the log decodes them, json.Number); anything
+// else adds nothing and is counted as a bad note.
+func TestIngestWarningTallyReadsSuppressionNotes(t *testing.T) {
+	note := func(w, r any) map[string]any {
+		return map[string]any{WarnKeySuppression: true, WarnKeySuppressedWarnings: w, WarnKeySuppressedRejects: r}
+	}
+	var tally IngestWarningTally
+	tally.add(map[string]any{WarnKeyIngest: "x"})
+	tally.add(map[string]any{WarnKeyIngest: "x", WarnKeyRejected: true})
+	tally.add(note(json.Number("3"), json.Number("4")))
+	if tally.Warnings != 2 || tally.Rejects != 1 || tally.Notes != 1 || tally.NoteWarnings != 3 || tally.NoteRejects != 4 ||
+		tally.Suppressed() != 7 || tally.ProvenRejected() != 5 {
+		t.Fatalf("tally = %+v", tally)
+	}
+	for name, n := range map[string]map[string]any{
+		"missing":    {WarnKeySuppression: true},
+		"negative":   note(json.Number("-1"), json.Number("2")),
+		"fractional": note(json.Number("1.5"), json.Number("2")),
+		"text":       note("3", json.Number("2")),
+		"too large":  note(json.Number("99999999999999"), json.Number("2")),
+		"bool":       note(true, json.Number("2")),
+	} {
+		var b IngestWarningTally
+		b.add(n)
+		if b.NoteBadCounts != 1 || b.Suppressed() != 0 || b.Warnings != 0 {
+			t.Errorf("%s: tally = %+v, want one bad note adding nothing", name, b)
+		}
+	}
+	var empty IngestWarningTally
+	empty.add(note(json.Number("0"), json.Number("0")))
+	if empty.NoteEmpty != 1 || empty.NoteBadCounts != 0 {
+		t.Errorf("zero note: tally = %+v", empty)
+	}
+	var native IngestWarningTally
+	native.add(note(2, float64(5)))
+	if native.NoteWarnings != 2 || native.NoteRejects != 5 {
+		t.Errorf("native numbers: tally = %+v", native)
 	}
 }
