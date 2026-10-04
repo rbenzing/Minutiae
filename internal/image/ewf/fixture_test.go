@@ -8,10 +8,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/image/ewf"
@@ -112,9 +114,6 @@ func TestOpenRealFixtureSections(t *testing.T) {
 			if w := r.Warnings(); len(w) != 0 {
 				t.Fatalf("warnings on a clean fixture: %q", w)
 			}
-			if len(segs) != v.Segments {
-				t.Fatalf("segments %d, oracle %d", len(segs), v.Segments)
-			}
 			if r.Size() != v.MediaSize || r.SectorSize() != v.BytesPerSector ||
 				r.ChunkSize() != v.BytesPerSector*v.SectorsPerChunk || r.Chunks() != v.Chunks {
 				t.Fatalf("geometry: size %d sector %d chunk %d chunks %d; oracle %+v", r.Size(), r.SectorSize(), r.ChunkSize(), r.Chunks(), v)
@@ -147,8 +146,9 @@ func TestOpenRealFixtureSections(t *testing.T) {
 			if m["md5"] != v.StoredMD5 || m["sha1"] != v.StoredSHA1 {
 				t.Fatalf("stored hashes %q %q, oracle %q %q", m["md5"], m["sha1"], v.StoredMD5, v.StoredSHA1)
 			}
-			if m["chunks"] == "" || m["segments"] == "" {
-				t.Fatalf("metadata %v", m)
+			if m["segments"] != strconv.Itoa(v.Segments) || m["chunks"] != strconv.FormatInt(v.Chunks, 10) ||
+				m["sector_count"] != strconv.FormatInt(v.Sectors, 10) {
+				t.Fatalf("metadata segments %q chunks %q sector_count %q; oracle %d, %d, %d", m["segments"], m["chunks"], m["sector_count"], v.Segments, v.Chunks, v.Sectors)
 			}
 			// header2 wins over header.
 			for field, key := range map[string]string{
@@ -216,6 +216,67 @@ func TestEWFReadAtMatchesRawFixture(t *testing.T) {
 			}
 			if w := r.Warnings(); len(w) != 0 {
 				t.Fatalf("warnings after reading a clean fixture: %q", w)
+			}
+		})
+	}
+}
+
+// TestEWFTruncatedRealFixture cuts the last segment of the real multi-segment
+// fixture mid-section: the set opens with a warning, the chunks whose table
+// survived read back exactly, and the others are ErrChunkCorrupt reads.
+func TestEWFTruncatedRealFixture(t *testing.T) {
+	exp := loadFixtureExpect(t)
+	raw := gunzipFile(t, "ewf-disk.img.gz")
+	var v *fixtureVariant
+	for i := range exp.Variants {
+		if exp.Variants[i].Name == "multi-none" {
+			v = &exp.Variants[i]
+		}
+	}
+	if v == nil || v.Segments < 3 {
+		t.Fatal("no multi-segment variant")
+	}
+	var files [][]byte
+	for _, f := range v.Files {
+		files = append(files, gunzipFile(t, f.Name+".gz"))
+	}
+	cs := int64(v.BytesPerSector * v.SectorsPerChunk)
+	last := v.Segments
+	// chunksIn[k] is how many (uncompressed) chunks segment k holds, from the
+	// oracle's sectors sections: each chunk is cs bytes plus its Adler-32.
+	chunksIn := make([]int64, last+1)
+	cutPoint := map[string]int64{}
+	for _, s := range v.Sections {
+		if s.Type == "sectors" {
+			chunksIn[s.Segment] += (s.Size - 76) / (cs + 4)
+		}
+		if s.Segment == last && (s.Type == "table2" || s.Type == "sectors") {
+			cutPoint[s.Type] = s.Offset + 76 + (s.Size-76)/2
+		}
+	}
+	var before int64
+	for k := 1; k < last; k++ {
+		before += chunksIn[k]
+	}
+	for cutIn, covered := range map[string]int64{"table2": before + chunksIn[last], "sectors": before} {
+		t.Run("cut in "+cutIn, func(t *testing.T) {
+			cut := append([][]byte(nil), files...)
+			cut[last-1] = files[last-1][:cutPoint[cutIn]]
+			r := mustOpen(t, cut)
+			if !hasWarning(r, "truncated at offset") || !hasWarning(r, "E01 set incomplete") {
+				t.Fatalf("warnings %q", r.Warnings())
+			}
+			p := make([]byte, covered*cs)
+			if n, err := r.ReadAt(p, 0); n != len(p) || (err != nil && err != io.EOF) || !bytes.Equal(p, raw[:len(p)]) {
+				t.Fatalf("covered chunks: %d bytes, %v", n, err)
+			}
+			if covered == v.Chunks {
+				return // the table survived, so nothing is uncovered
+			}
+			q := bytes.Repeat([]byte{0xAA}, 64)
+			n, err := r.ReadAt(q, covered*cs)
+			if n != 0 || !errors.Is(err, ewf.ErrChunkCorrupt) || !bytes.Equal(q, bytes.Repeat([]byte{0xAA}, 64)) {
+				t.Fatalf("first uncovered chunk: %d, %v", n, err)
 			}
 		})
 	}

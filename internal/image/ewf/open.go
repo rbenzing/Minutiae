@@ -22,6 +22,12 @@ type opener struct {
 	err2         *error2Info
 	unknown      []string
 	unknownCount int
+
+	// Per-segment limits on what overlapping or repeated sections can make
+	// the opener read (see handle).
+	budget       int64
+	budgetWarned bool
+	counts       [kDone + 1]int
 }
 
 func ioError(seg int, what string, off int64, err error) error {
@@ -61,6 +67,9 @@ func (o *opener) segment(i int) error {
 		return corrupt(n, "", "segment file %d (%q) declares segment number %d; expected %d", n, s.Name, got, n)
 	}
 
+	o.budget = s.Size
+	o.counts = [kDone + 1]int{}
+	o.budgetWarned = false
 	secs, term, err := o.walk(i)
 	if err != nil {
 		return err
@@ -88,8 +97,61 @@ func (o *opener) segment(i int) error {
 	return o.tables(i, secs)
 }
 
+// maxPerSegment caps how many sections of a kind one segment may have; real
+// writers emit one or two. Extra sections are skipped with a warning.
+var maxPerSegment = map[kind]int{
+	kHeader: 4, kHeader2: 4, kVolume: 2, kDisk: 2, kData: 4, kHash: 4, kDigest: 4, kError2: 4,
+}
+
+// payloadCost is how many payload bytes the handler of sec will read.
+func payloadCost(sec section) int64 {
+	plen := sec.payloadLen()
+	switch sec.kind {
+	case kHeader, kHeader2:
+		return min(plen, maxHeaderZ)
+	case kVolume, kDisk, kData:
+		return min(plen, volumePayloadLen)
+	case kHash:
+		return min(plen, hashPayloadLen)
+	case kDigest:
+		return min(plen, digestPayloadLen)
+	case kError2:
+		return plen
+	}
+	return 0
+}
+
+// admit applies the per-kind count cap and the per-segment payload budget
+// (the segment's own size: sections whose payloads overlap cannot make Open
+// read more than the file holds). It reports whether sec is processed.
+func (o *opener) admit(n int, sec section) bool {
+	class := sec.kind
+	if class == kDisk {
+		class = kVolume // volume and disk share one cap
+	}
+	if limit, ok := maxPerSegment[sec.kind]; ok {
+		o.counts[class]++
+		if o.counts[class] > limit {
+			o.r.warn.add("segment %d: more than %d %s sections; the extra ones are skipped", n, limit, sec.label())
+			return false
+		}
+	}
+	if payloadCost(sec) > o.budget {
+		if !o.budgetWarned {
+			o.budgetWarned = true
+			o.r.warn.add("segment %d: section payloads overlap or exceed the segment (%s at offset %d); the remaining sections are skipped", n, sec.label(), sec.off)
+		}
+		return false
+	}
+	o.budget -= payloadCost(sec)
+	return true
+}
+
 // handle processes one section of segment n.
 func (o *opener) handle(n int, s Segment, sec section) error {
+	if !o.admit(n, sec) {
+		return nil
+	}
 	switch sec.kind {
 	case kHeader, kHeader2:
 		return o.header(n, s, sec)

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -527,12 +528,8 @@ func TestEWFSectionWalkLoopIsCorrupt(t *testing.T) {
 		{"next backwards", "header", func(s *ewftest.Section, _ int64) { s.Next = 5 }},
 		{"next backwards later section", "sectors", func(s *ewftest.Section, _ int64) { s.Next = 13 }},
 		{"next == self non-terminal", "sectors", func(s *ewftest.Section, _ int64) { s.Next = s.Offset }},
-		{"next beyond EOF", "sectors", func(s *ewftest.Section, n int64) { s.Next = n + 100 }},
 		{"next overlaps own descriptor", "sectors", func(s *ewftest.Section, _ int64) { s.Next = s.Offset + 10 }},
-		{"1 GiB claimed size", "sectors", func(s *ewftest.Section, _ int64) { s.Size = 1 << 30 }},
-		{"size overflows", "sectors", func(s *ewftest.Section, _ int64) { s.Size = math.MaxInt64 }},
 		{"size below descriptor", "sectors", func(s *ewftest.Section, _ int64) { s.Size = 10 }},
-		{"next at 2^64-1", "sectors", func(s *ewftest.Section, _ int64) { s.Next = -1 }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -1021,5 +1018,172 @@ func TestOpenLayoutVariations(t *testing.T) {
 				t.Fatalf("size %d %v", r.Size(), g)
 			}
 		})
+	}
+}
+
+// pastEOF are valid-checksum descriptor mutations whose size or next runs
+// past the end of the file.
+var pastEOF = []struct {
+	name string
+	mut  func(s *ewftest.Section, fileLen int64)
+}{
+	{"next beyond EOF", func(s *ewftest.Section, n int64) { s.Next = n + 100 }},
+	{"1 GiB claimed size", func(s *ewftest.Section, _ int64) { s.Size = 1 << 30 }},
+	{"size overflows", func(s *ewftest.Section, _ int64) { s.Size = math.MaxInt64 }},
+	{"next at 2^64-1", func(s *ewftest.Section, _ int64) { s.Next = -1 }},
+}
+
+// TestEWFWalkPastEOF: a valid descriptor whose size/next runs past the end of
+// the file is corrupt in a non-last segment, but ends the walk of the LAST
+// segment with a warning (a truncated acquisition stays examinable).
+func TestEWFWalkPastEOF(t *testing.T) {
+	media := pattern(6 * 64 * 512)
+	for _, c := range pastEOF {
+		t.Run(c.name+"/non-last", func(t *testing.T) {
+			files := ewftest.Build(ewftest.Options{ChunksPerSegment: 3}, media)
+			s := section(t, files[0], "sectors")
+			c.mut(&s, int64(len(files[0])))
+			ewftest.FixDescriptor(files[0], s)
+			wantCorrupt(t, openErr(t, files))
+		})
+		t.Run(c.name+"/last", func(t *testing.T) {
+			files := ewftest.Build(ewftest.Options{ChunksPerSegment: 3}, media)
+			s := section(t, files[1], "sectors")
+			c.mut(&s, int64(len(files[1])))
+			ewftest.FixDescriptor(files[1], s)
+			r := mustOpen(t, files)
+			if !hasWarning(r, "segment 2 truncated at offset") || !hasWarning(r, "E01 set incomplete") {
+				t.Fatalf("warnings %q", r.Warnings())
+			}
+			// Segment 1 reads; segment 2 lost its sectors and tables.
+			p := make([]byte, 3*64*512)
+			if n, err := r.ReadAt(p, 0); n != len(p) || err != nil || !bytes.Equal(p, media[:len(p)]) {
+				t.Fatalf("covered chunks: %d, %v", n, err)
+			}
+			n, err := r.ReadAt(p, int64(len(p)))
+			wantChunkError(t, err, 3)
+			if n != 0 {
+				t.Fatalf("n = %d", n)
+			}
+		})
+	}
+	t.Run("descriptor cut by EOF", func(t *testing.T) {
+		files := ewftest.Build(ewftest.Options{ChunksPerSegment: 3}, media)
+		secs := ewftest.Sections(files[1])
+		cut := files[1][:secs[len(secs)-2].Offset+30] // inside the descriptor of the section before the terminal
+		r := mustOpen(t, [][]byte{files[0], cut})
+		if !hasWarning(r, "segment 2 truncated at offset") {
+			t.Fatalf("warnings %q", r.Warnings())
+		}
+		wantCorrupt(t, openErr(t, [][]byte{files[0][:secs[len(secs)-2].Offset+30], files[1]}))
+	})
+	t.Run("bad checksum stays corrupt in the last segment", func(t *testing.T) {
+		files := ewftest.Build(ewftest.Options{ChunksPerSegment: 3}, media)
+		s := section(t, files[1], "table")
+		files[1][s.Offset+50] ^= 1
+		wantCorrupt(t, openErr(t, files))
+	})
+}
+
+// descriptorsImage builds a one-segment file: header, a real volume section,
+// then n descriptors of the types typ(i), each claiming all the rest of the
+// file as its payload, then done.
+func descriptorsImage(t *testing.T, n int, typ func(i int) string) []byte {
+	t.Helper()
+	files := ewftest.Build(ewftest.Options{}, pattern(2*64*512))
+	vol := section(t, files[0], "volume")
+	total := 13 + int(vol.Size) + n*76 + 76
+	buf := make([]byte, total)
+	copy(buf, files[0][:13])
+	copy(buf[13+76:], files[0][vol.Offset+76:vol.Offset+vol.Size])
+	ewftest.FixDescriptor(buf, ewftest.Section{Type: "volume", Offset: 13, Next: 13 + vol.Size, Size: vol.Size})
+	off := 13 + vol.Size
+	for i := range n {
+		ewftest.FixDescriptor(buf, ewftest.Section{Type: typ(i), Offset: off, Next: off + 76, Size: int64(total) - off})
+		off += 76
+	}
+	ewftest.FixDescriptor(buf, ewftest.Section{Type: "done", Offset: off, Next: off})
+	return buf
+}
+
+func TestEWFOverlappingDescriptorsAreBounded(t *testing.T) {
+	buf := descriptorsImage(t, 100000, func(i int) string {
+		if i%2 == 0 {
+			return "error2"
+		}
+		return "header2"
+	})
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	start := time.Now()
+	r, err := openWithin(t, [][]byte{buf})
+	elapsed := time.Since(start)
+	runtime.ReadMemStats(&after)
+	if err != nil {
+		wantCorrupt(t, err) // failing is acceptable, hanging or allocating is not
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("Open took %v", elapsed)
+	}
+	if used := after.TotalAlloc - before.TotalAlloc; used > 256<<20 {
+		t.Fatalf("Open allocated %d bytes", used)
+	}
+	if r != nil && !hasWarning(r, "more than 4 error2 sections") {
+		t.Fatalf("warnings %q", r.Warnings())
+	}
+}
+
+func TestEWFSectionCountCapsPerSegment(t *testing.T) {
+	for typ, limit := range map[string]int{"header": 4, "header2": 4, "error2": 4, "hash": 4, "digest": 4} {
+		buf := descriptorsImage(t, 9, func(int) string { return typ })
+		r, err := openWithin(t, [][]byte{buf})
+		if err != nil {
+			t.Fatalf("%s: %v", typ, err)
+		}
+		want := fmt.Sprintf("more than %d %s sections", limit, typ)
+		if !hasWarning(r, want) {
+			t.Fatalf("%s: warnings %q, want %q", typ, r.Warnings(), want)
+		}
+	}
+}
+
+func TestEWFTerminalSizeWarns(t *testing.T) {
+	media := pattern(2 * 64 * 512)
+	for _, size := range []int64{10, 75} { // a larger size would run past the end of the file
+		files := ewftest.Build(ewftest.Options{}, media)
+		d := section(t, files[0], "done")
+		d.Size = size
+		ewftest.FixDescriptor(files[0], d)
+		r := mustOpen(t, files)
+		if !hasWarning(r, "has size") {
+			t.Fatalf("size %d: warnings %q", size, r.Warnings())
+		}
+	}
+	for _, size := range []int64{0, 76} {
+		files := ewftest.Build(ewftest.Options{}, media)
+		d := section(t, files[0], "done")
+		d.Size = size
+		ewftest.FixDescriptor(files[0], d)
+		if r := mustOpen(t, files); len(r.Warnings()) != 0 {
+			t.Fatalf("size %d: warnings %q", size, r.Warnings())
+		}
+	}
+}
+
+func TestEWFVolumeFirstSeenInLaterSegmentWarns(t *testing.T) {
+	files := ewftest.Build(ewftest.Options{ChunksPerSegment: 2}, pattern(4*64*512))
+	for _, typ := range []string{"volume", "sectors", "table", "table2", "data"} {
+		for _, s := range tableSections(files[0], typ) {
+			s.Type = "skipped"
+			ewftest.FixDescriptor(files[0], s)
+		}
+	}
+	d := section(t, files[1], "data")
+	d.Type = "volume"
+	ewftest.FixDescriptor(files[1], d)
+	r := mustOpen(t, files)
+	if !hasWarning(r, "volume section is first seen in segment 2") {
+		t.Fatalf("warnings %q", r.Warnings())
 	}
 }

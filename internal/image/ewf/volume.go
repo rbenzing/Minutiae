@@ -99,6 +99,9 @@ func (o *opener) volume(n int, s Segment, sec section) error {
 	if err != nil {
 		return err
 	}
+	if n > 1 {
+		o.r.warn.add("segment %d: the volume section is first seen in segment %d, not segment 1", n, n)
+	}
 	o.r.geo = g
 	o.haveVolume = true
 	o.volSeg = n

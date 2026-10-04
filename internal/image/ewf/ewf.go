@@ -84,7 +84,9 @@ func (r *Reader) ChunkSize() int { return int(r.geo.chunkSize) }
 func (r *Reader) Chunks() int64 { return int64(r.geo.chunks) }
 
 // Metadata returns the ordered container fields: header text, geometry,
-// stored hashes and segment names.
+// stored hashes and segment names. The "md5" and "sha1" keys are present only
+// when the container stores a non-zero hash: an all-zero stored value means
+// "not stored" and is omitted.
 func (r *Reader) Metadata() []KV { return slices.Clone(r.meta) }
 
 // Warnings returns a snapshot of the non-fatal problems met so far (a live
