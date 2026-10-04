@@ -30,6 +30,9 @@ type FS struct {
 	nat natState // NAT journal, read on first use
 	sit sitState // SIT journal, read on first use
 
+	// dirCap overrides the per-scan directory entry cap (0 = maxDirEntries).
+	dirCap int
+
 	// unallocCap bounds the runs Unallocated reports (0 = maxUnallocRuns).
 	unallocCap int
 

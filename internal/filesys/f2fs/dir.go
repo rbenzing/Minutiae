@@ -69,8 +69,10 @@ const (
 	// inode, which is already read, and cost nothing).
 	maxDirBudget = 1 << 30
 	// maxDirEntries bounds the entries one scan yields, so a hostile directory
-	// cannot make ReadDir build an unbounded list.
-	maxDirEntries = 1 << 19
+	// cannot make ReadDir build an unbounded list (ext4 parity). Live entries
+	// have precedence: deleted entries may use at most half of it, so the live
+	// ones are always listed first.
+	maxDirEntries = 1 << 18
 
 	encPrefix = "~enc~" // display form of an encrypted name: prefix + base64url(raw)
 	rawPrefix = "~raw~" // display form of a name that is not plain text: prefix + base64url(raw)
@@ -119,7 +121,8 @@ type dirScan struct {
 	enc         bool
 	wantDeleted bool
 	visit       func(*dentry) bool // false stops the scan
-	count       int
+	count       int                // entries yielded, live and deleted
+	deleted     int                // of which deleted
 	stop        bool
 }
 
@@ -220,10 +223,21 @@ func (w *dirScan) scanArea(a area, blk int64, first bool) {
 	}
 }
 
-// emit passes r to the visitor, enforcing the per-scan entry cap.
+// emit passes r to the visitor, enforcing the per-scan entry cap. Deleted
+// records are admitted only up to half the cap (and while the cap is not
+// reached): beyond that they are skipped with a warning and the scan goes on,
+// so live entries later in the directory are still listed; a live entry beyond
+// the cap ends the scan.
 func (w *dirScan) emit(r *dentry) bool {
-	if w.count >= maxDirEntries {
-		w.f.warn("directory inode %d has more than %d entries: the rest is not listed", w.dir.nid, maxDirEntries)
+	limit := w.f.dirEntryCap()
+	if r.deleted {
+		if w.deleted >= limit/2 || w.count >= limit {
+			w.f.warn("directory inode %d has more than %d deleted entries: the rest of them are not listed", w.dir.nid, limit/2)
+			return true
+		}
+		w.deleted++
+	} else if w.count >= limit {
+		w.f.warn("directory inode %d has more than %d entries: the rest is not listed", w.dir.nid, limit)
 		w.stop = true
 		return false
 	}
@@ -341,10 +355,24 @@ func displayName(raw []byte, encrypted bool) (string, []byte) {
 	switch {
 	case encrypted:
 		return encPrefix + base64.RawURLEncoding.EncodeToString(raw), slices.Clone(raw)
-	case len(raw) > 0 && utf8.Valid(raw) && !bytes.ContainsAny(raw, "\x00/") && !isDot(raw):
+	case plainName(raw):
 		return string(raw), nil
 	}
 	return rawPrefix + base64.RawURLEncoding.EncodeToString(raw), slices.Clone(raw)
+}
+
+// plainName reports whether a name of a non-encrypted directory is shown as it
+// is (valid UTF-8 without NUL or '/', not empty, not "." or "..").
+func plainName(raw []byte) bool {
+	return len(raw) > 0 && utf8.Valid(raw) && !bytes.ContainsAny(raw, "\x00/") && !isDot(raw)
+}
+
+// dirEntryCap is the per-scan entry cap.
+func (f *FS) dirEntryCap() int {
+	if f.dirCap > 0 {
+		return f.dirCap
+	}
+	return maxDirEntries
 }
 
 // ftypeToEntry maps a dentry file_type to an entry type.
@@ -474,11 +502,13 @@ func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
 //  1. an exact byte match (never in an encrypted directory, whose names are
 //     ciphertext, and never for "." or "..");
 //  2. the display form of ReadDir: "~enc~"+base64url in encrypted directories,
-//     "~raw~"+base64url elsewhere, so a real name that happens to look like a
-//     display form wins over the name that form stands for;
-//  3. in a casefold directory, strings.EqualFold when both names are valid
-//     UTF-8: an approximation of the filesystem's Unicode case folding, which
-//     it does not implement.
+//     "~raw~"+base64url elsewhere (decoded strictly: one spelling per name; in
+//     a plain directory "~raw~" stands only for the names ReadDir shows that
+//     way), so a real name that happens to look like a display form wins over
+//     the name that form stands for;
+//  3. in a casefold directory (never for "." or ".."), strings.EqualFold
+//     when both names are valid UTF-8: an approximation of the filesystem's
+//     Unicode case folding, which it does not implement.
 //
 // Empty components are ignored, "." and ".." are not special, and symlinks are
 // not followed. Deleted entries are never found.
@@ -512,16 +542,18 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 		return filesys.Entry{}, err
 	}
 	enc := in.encrypted
-	casefold := in.flags&flagCasefold != 0 && !enc && utf8.ValidString(comp)
 	exact := []byte(comp)
 	exactOK := !enc && !isDot(exact)
+	// "." and ".." are never found, by case folding either.
+	casefold := in.flags&flagCasefold != 0 && exactOK && utf8.ValidString(comp)
 	var alt []byte // the bytes a display form stands for
 	prefix := rawPrefix
 	if enc {
 		prefix = encPrefix
 	}
 	if rest, ok := strings.CutPrefix(comp, prefix); ok {
-		if b, err := base64.RawURLEncoding.DecodeString(rest); err == nil {
+		// Strict: each name has one spelling (no stray trailing bits).
+		if b, err := base64.RawURLEncoding.Strict().DecodeString(rest); err == nil {
 			alt = b
 		}
 	}
@@ -536,7 +568,9 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 		case exactOK && bytes.Equal(d.name, exact):
 			exactRec = keep(d)
 			return false
-		case altRec == nil && alt != nil && bytes.Equal(d.name, alt):
+		// In a plain directory the "~raw~" form stands only for the names
+		// ReadDir shows in that form, never for a plain name.
+		case altRec == nil && alt != nil && bytes.Equal(d.name, alt) && (enc || !plainName(d.name)):
 			altRec = keep(d)
 		case foldRec == nil && casefold && utf8.Valid(d.name) && strings.EqualFold(string(d.name), comp):
 			foldRec = keep(d)

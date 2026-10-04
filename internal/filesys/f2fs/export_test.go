@@ -126,3 +126,6 @@ func (f *FS) SetDirBudget(n int64) {
 
 // SetUnallocatedRunCap lowers the number of runs Unallocated reports.
 func (f *FS) SetUnallocatedRunCap(n int) { f.unallocCap = n }
+
+// SetDirEntryCap lowers the number of entries one directory scan yields.
+func (f *FS) SetDirEntryCap(n int) { f.dirCap = n }
