@@ -32,6 +32,8 @@ const (
 	offDataBase    = 120
 	offDescIndex   = 136
 	offDescLen     = 140
+	offDataIndex   = 144
+	offDataLen     = 148
 	offSpaceman    = 152
 	offOmap        = 160
 	offMaxFS       = 180
@@ -125,6 +127,11 @@ func TestProbe(t *testing.T) {
 	copy(bad[offMagic:], "NXSX")
 	if apfs.Probe(bytes.NewReader(bad), int64(len(bad))) {
 		t.Error("Probe accepts a wrong magic")
+	}
+	notSB := bytes.Clone(img)
+	le.PutUint32(notSB[offOType:], ephemeralFlag|5) // a spaceman, not an NX_SUPERBLOCK
+	if apfs.Probe(bytes.NewReader(notSB), int64(len(notSB))) {
+		t.Error("Probe accepts a block 0 that is not an NX_SUPERBLOCK object")
 	}
 	if apfs.Probe(failReader{}, 1<<20) {
 		t.Error("Probe accepts an unreadable image")
@@ -448,6 +455,21 @@ func TestCheckpointFallsBackToOlderValid(t *testing.T) {
 			le.PutUint32(im.blk(sb)[offDescLen:], 17)
 			im.seal(sb)
 		}, "descriptor"},
+		{"superblock cursor disagrees with its ring position", func(im *image) {
+			sb := im.g.Checkpoints[0].Super
+			le.PutUint32(im.blk(sb)[offDescIndex:], uint32(im.g.Checkpoints[0].DescIndex+1))
+			im.seal(sb)
+		}, "cursor"},
+		{"mapped object outside the data cursor range", func(im *image) {
+			sb := im.g.Checkpoints[0].Super
+			le.PutUint32(im.blk(sb)[offDataLen:], 0)
+			im.seal(sb)
+		}, "data range"},
+		{"data index moved off the mapped object", func(im *image) {
+			sb := im.g.Checkpoints[0].Super
+			le.PutUint32(im.blk(sb)[offDataIndex:], 5)
+			im.seal(sb)
+		}, "data range"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			im := newImage(t, apfstest.Options{})
@@ -775,5 +797,26 @@ func TestForgedCandidatesAreBounded(t *testing.T) {
 	}
 	if d := time.Since(start); d > 2*time.Second {
 		t.Errorf("Open took %v", d)
+	}
+}
+
+// Block 0 supplies only geometry: the checkpoint cursors, the file-system
+// count and the volume oids of its (possibly stale) copy mean nothing, so a
+// block 0 with nonsense there still mounts through the ring.
+func TestBlockZeroSuppliesOnlyGeometry(t *testing.T) {
+	im := newImage(t, apfstest.Options{})
+	b0 := im.blk(0)
+	le.PutUint32(b0[offDescLen:], 0)
+	le.PutUint32(b0[offDescIndex:], 0xFFFFFFFF)
+	le.PutUint32(b0[offMaxFS:], 101)
+	le.PutUint32(b0[offDataIndex:], 0xFFFFFFFF)
+	le.PutUint32(b0[offDataLen:], 0xFFFFFFFF)
+	im.seal(0)
+	f, err := im.open()
+	if err != nil {
+		t.Fatalf("Open with a nonsense block-0 cursor: %v", err)
+	}
+	if f.NX().Xid != 10 || f.NX().MaxFS != 1 {
+		t.Errorf("selected xid %d max fs %d, want the ring's newest checkpoint", f.NX().Xid, f.NX().MaxFS)
 	}
 }

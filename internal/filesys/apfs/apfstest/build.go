@@ -64,6 +64,8 @@ type Checkpoint struct {
 	Spaceman  uint64   // block address of this checkpoint's spaceman copy (data area)
 	DescIndex int      // nx_xp_desc_index recorded in the superblock
 	DescLen   int      // nx_xp_desc_len recorded in the superblock
+	DataIndex int      // nx_xp_data_index recorded in the superblock
+	DataLen   int      // nx_xp_data_len recorded in the superblock
 }
 
 // Geo is where Build puts things. Addresses are block numbers.
@@ -117,6 +119,7 @@ func Geometry(o Options) Geo {
 		cp.DescIndex = start
 		cp.DescLen = o.MapBlocks + 1
 		cp.Spaceman = g.DataBase + uint64(t)
+		cp.DataIndex, cp.DataLen = t, 1 // this checkpoint's spaceman copy is its only data block
 		g.Checkpoints[o.Checkpoints-1-t] = cp
 	}
 	return g

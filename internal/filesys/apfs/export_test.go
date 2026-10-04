@@ -21,7 +21,14 @@ type NXFields struct {
 	DescIndex, DescLen     uint32
 	SpacemanOid, OmapOid   uint64
 	MaxFS                  uint32
-	NextXid                uint64
+	NextXid, NextOid       uint64
+	DescNext, DataNext     uint32
+	DataIndex, DataLen     uint32
+	ReaperOid              uint64
+	FsOids                 []uint64 // nx_fs_oid, all 100 slots
+	BlockedStart           uint64
+	BlockedCount           uint64
+	EvictOid               uint64
 }
 
 // NX returns the fields of the selected checkpoint superblock.
@@ -33,6 +40,9 @@ func (f *FS) NX() NXFields {
 		UUID: n.uuid, DescBlocks: n.descBlocks, DataBlocks: n.dataBlocks,
 		DescBase: n.descBase, DataBase: n.dataBase, DescIndex: n.descIndex, DescLen: n.descLen,
 		SpacemanOid: n.spacemanOid, OmapOid: n.omapOid, MaxFS: n.maxFS, NextXid: n.nextXid,
+		NextOid: n.nextOid, DescNext: n.descNext, DataNext: n.dataNext,
+		DataIndex: n.dataIndex, DataLen: n.dataLen, ReaperOid: n.reaperOid,
+		FsOids: n.fsOid[:], BlockedStart: n.blockedStart, BlockedCount: n.blockedCount, EvictOid: n.evictOid,
 	}
 }
 

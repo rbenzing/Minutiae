@@ -56,6 +56,7 @@ type orcExpect struct {
 		Incompat     uint64   `json:"incompatible_features"`
 		Flags        uint64   `json:"flags"`
 		NextXid      uint64   `json:"next_xid"`
+		NextOid      uint64   `json:"next_oid"`
 		MaxFS        uint32   `json:"max_file_systems"`
 		FsOids       []uint64 `json:"fs_oids"`
 		SpacemanOid  uint64   `json:"spaceman_oid"`
@@ -84,7 +85,7 @@ func orcLoad(t *testing.T, name string) ([]byte, *orcExpect) {
 	dir := filepath.Join("testdata")
 	raw, err := os.ReadFile(filepath.Join(dir, name+".expect.json"))
 	if err != nil {
-		t.Skipf("no real APFS fixture %s: %v", name, err)
+		t.Fatalf("real APFS fixture %s: %v", name, err)
 	}
 	var exp orcExpect
 	if err := json.Unmarshal(raw, &exp); err != nil {
@@ -153,6 +154,25 @@ func orcCheckContainer(t *testing.T, img []byte, exp *orcExpect) {
 	if n.MaxFS != c.MaxFS || n.SpacemanOid != c.SpacemanOid || n.OmapOid != c.OmapOid || n.NextXid != c.NextXid {
 		t.Errorf("max fs %d spaceman %d omap %d next xid %d; oracle %d %d %d %d",
 			n.MaxFS, n.SpacemanOid, n.OmapOid, n.NextXid, c.MaxFS, c.SpacemanOid, c.OmapOid, c.NextXid)
+	}
+	if n.NextOid != c.NextOid || n.ReaperOid != c.ReaperOid || n.EvictOid != c.EvictMapping {
+		t.Errorf("next oid %d reaper %d evict mapping %d; oracle %d %d %d", n.NextOid, n.ReaperOid, n.EvictOid, c.NextOid, c.ReaperOid, c.EvictMapping)
+	}
+	if len(c.Blocked) != 2 || n.BlockedStart != c.Blocked[0] || n.BlockedCount != c.Blocked[1] {
+		t.Errorf("blocked-out range %d+%d; oracle %v", n.BlockedStart, n.BlockedCount, c.Blocked)
+	}
+	for i, want := range n.FsOids {
+		var oracle uint64
+		if i < len(c.FsOids) {
+			oracle = c.FsOids[i]
+		}
+		if want != oracle {
+			t.Errorf("fs oid[%d] = %d; oracle %d (list %v)", i, want, oracle, c.FsOids)
+			break
+		}
+	}
+	if n.DescNext != cp.Desc.Next || n.DataNext != cp.Data.Next || n.DataIndex != cp.Data.Index || n.DataLen != cp.Data.Len {
+		t.Errorf("cursors: desc next %d, data next/index/len %d/%d/%d; oracle %+v %+v", n.DescNext, n.DataNext, n.DataIndex, n.DataLen, cp.Desc, cp.Data)
 	}
 	if n.Xid != cp.NewestXid || f.SuperblockIndex() != cp.RingIndex {
 		t.Errorf("checkpoint xid %d ring index %d; oracle %d %d", n.Xid, f.SuperblockIndex(), cp.NewestXid, cp.RingIndex)

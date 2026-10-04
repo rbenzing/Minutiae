@@ -144,6 +144,13 @@ func (f *FS) tryCandidate(nx0 *nxSuper, c candidate, bud *selBudget) (nxSuper, c
 			nx.descBase, nx.descBlocks, nx.blockSize, nx0.descBase, nx0.descBlocks, nx0.blockSize)
 	}
 
+	// The superblock's own cursor claim must agree with where it sits: the
+	// checkpoint occupies descLen ring blocks starting at descIndex and its
+	// superblock is the last of them.
+	if pos := (int64(nx.descIndex) + int64(nx.descLen) - 1) % int64(nx.descBlocks); pos != int64(c.idx) {
+		return fail("its descriptor cursor (index %d, length %d) puts the superblock at ring index %d, not %d", nx.descIndex, nx.descLen, pos, c.idx)
+	}
+
 	// The descLen-1 blocks immediately before the superblock in the ring are
 	// its checkpoint-mapping blocks (the ring may wrap).
 	nmaps := int(nx.descLen) - 1
@@ -233,6 +240,14 @@ func (n *nxSuper) checkMapping(m mapping, bs int) string {
 	end, ok := addU64(m.paddr, nblk)
 	if !ok || m.paddr < n.dataBase || end > n.dataBase+uint64(n.dataBlocks) {
 		return fmt.Sprintf("mapping of oid %d (block %d, %d blocks) lies outside the data area [%d, +%d)", m.oid, m.paddr, nblk, n.dataBase, n.dataBlocks)
+	}
+	// The object must lie inside the live part of the data ring, [dataIndex,
+	// dataIndex+dataLen) modulo the area. Treating the data area as a ring
+	// follows the descriptor area; wrap-around is [unverified] against a real
+	// container (mkapfs writes index 0 and never wraps).
+	start := (m.paddr - n.dataBase + uint64(n.dataBlocks) - uint64(n.dataIndex)) % uint64(n.dataBlocks)
+	if start+nblk > uint64(n.dataLen) {
+		return fmt.Sprintf("mapping of oid %d (block %d, %d blocks) lies outside the checkpoint's data range (index %d, length %d)", m.oid, m.paddr, nblk, n.dataIndex, n.dataLen)
 	}
 	return ""
 }

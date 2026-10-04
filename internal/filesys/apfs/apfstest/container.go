@@ -21,12 +21,12 @@ func writeSuperblock(b []byte, o Options, g Geo, cp Checkpoint) {
 	le.PutUint32(b[108:], uint32(g.DataCount))
 	le.PutUint64(b[112:], g.DescBase)
 	le.PutUint64(b[120:], g.DataBase)
-	le.PutUint32(b[128:], uint32((cp.Index+1)%int(g.DescCount))) // nx_xp_desc_next
-	le.PutUint32(b[132:], 0)                                     // nx_xp_data_next
+	le.PutUint32(b[128:], uint32((cp.Index+1)%int(g.DescCount)))              // nx_xp_desc_next
+	le.PutUint32(b[132:], uint32((cp.DataIndex+cp.DataLen)%int(g.DataCount))) // nx_xp_data_next
 	le.PutUint32(b[136:], uint32(cp.DescIndex))
 	le.PutUint32(b[140:], uint32(cp.DescLen))
-	le.PutUint32(b[144:], 0) // nx_xp_data_index
-	le.PutUint32(b[148:], 1) // nx_xp_data_len
+	le.PutUint32(b[144:], uint32(cp.DataIndex))
+	le.PutUint32(b[148:], uint32(cp.DataLen))
 	le.PutUint64(b[152:], g.SpacemanOid)
 	le.PutUint64(b[160:], g.Omap)
 	le.PutUint64(b[168:], 0) // nx_reaper_oid

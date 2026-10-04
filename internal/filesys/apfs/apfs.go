@@ -72,8 +72,8 @@ func corrupt(structure string, off int64, format string, a ...any) error {
 func (f *FS) warn(format string, a ...any) { f.warns.Add(format, a...) }
 
 // Probe reports whether r starts with an APFS container superblock: the
-// magic "NXSB" at offset 32 and a block size that is a power of two in
-// [4096, 65536]. It reads nothing from an image of fewer than 4096 bytes.
+// magic "NXSB" at offset 32, the NX_SUPERBLOCK object type and a block size
+// that is a power of two in [4096, 65536]. It reads nothing from an image of fewer than 4096 bytes.
 func Probe(r io.ReaderAt, size int64) bool {
 	if size < probeSize {
 		return false
@@ -82,7 +82,7 @@ func Probe(r io.ReaderAt, size int64) bool {
 	if err := readFull(r, b[:], 0); err != nil {
 		return false
 	}
-	return string(b[32:36]) == nxMagic && validBlockSize(le.Uint32(b[36:]))
+	return string(b[32:36]) == nxMagic && validBlockSize(le.Uint32(b[36:])) && parseHeader(b[:]).kind() == typeNXSuperblock
 }
 
 // Open mounts the container in r (size bytes) from its newest valid
@@ -105,7 +105,7 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		return nil, corrupt("container superblock", 32, "bad magic %q, want %q", first[32:36], nxMagic)
 	}
 	nx0 := parseNX(first)
-	if err := nx0.validate(); err != nil {
+	if err := nx0.validateGeometry(); err != nil {
 		return nil, err
 	}
 	f := &FS{

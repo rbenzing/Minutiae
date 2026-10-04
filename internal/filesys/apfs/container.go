@@ -57,35 +57,41 @@ type nxSuper struct {
 	reaperOid            uint64
 	maxFS                uint32
 	flags                uint64
+	blockedStart         uint64
+	blockedCount         uint64
+	evictOid             uint64
 	fsOid                [nxMaxFileSystems]uint64
 }
 
 // parseNX decodes a superblock block (at least 1352 bytes: through nx_test_oid; the rest of the block is unused).
 func parseNX(b []byte) nxSuper {
 	n := nxSuper{
-		xid:         le.Uint64(b[16:]),
-		blockSize:   le.Uint32(b[36:]),
-		blockCount:  le.Uint64(b[40:]),
-		features:    le.Uint64(b[48:]),
-		roCompat:    le.Uint64(b[56:]),
-		incompat:    le.Uint64(b[64:]),
-		nextOid:     le.Uint64(b[88:]),
-		nextXid:     le.Uint64(b[96:]),
-		descBlocks:  le.Uint32(b[104:]),
-		dataBlocks:  le.Uint32(b[108:]),
-		descBase:    le.Uint64(b[112:]),
-		dataBase:    le.Uint64(b[120:]),
-		descNext:    le.Uint32(b[128:]),
-		dataNext:    le.Uint32(b[132:]),
-		descIndex:   le.Uint32(b[136:]),
-		descLen:     le.Uint32(b[140:]),
-		dataIndex:   le.Uint32(b[144:]),
-		dataLen:     le.Uint32(b[148:]),
-		spacemanOid: le.Uint64(b[152:]),
-		omapOid:     le.Uint64(b[160:]),
-		reaperOid:   le.Uint64(b[168:]),
-		maxFS:       le.Uint32(b[180:]),
-		flags:       le.Uint64(b[1264:]),
+		xid:          le.Uint64(b[16:]),
+		blockSize:    le.Uint32(b[36:]),
+		blockCount:   le.Uint64(b[40:]),
+		features:     le.Uint64(b[48:]),
+		roCompat:     le.Uint64(b[56:]),
+		incompat:     le.Uint64(b[64:]),
+		nextOid:      le.Uint64(b[88:]),
+		nextXid:      le.Uint64(b[96:]),
+		descBlocks:   le.Uint32(b[104:]),
+		dataBlocks:   le.Uint32(b[108:]),
+		descBase:     le.Uint64(b[112:]),
+		dataBase:     le.Uint64(b[120:]),
+		descNext:     le.Uint32(b[128:]),
+		dataNext:     le.Uint32(b[132:]),
+		descIndex:    le.Uint32(b[136:]),
+		descLen:      le.Uint32(b[140:]),
+		dataIndex:    le.Uint32(b[144:]),
+		dataLen:      le.Uint32(b[148:]),
+		spacemanOid:  le.Uint64(b[152:]),
+		omapOid:      le.Uint64(b[160:]),
+		reaperOid:    le.Uint64(b[168:]),
+		maxFS:        le.Uint32(b[180:]),
+		flags:        le.Uint64(b[1264:]),
+		blockedStart: le.Uint64(b[1240:]),
+		blockedCount: le.Uint64(b[1248:]),
+		evictOid:     le.Uint64(b[1256:]),
 	}
 	copy(n.uuid[:], b[72:88])
 	for i := range n.fsOid {
@@ -102,11 +108,13 @@ func unsupported(format string, a ...any) error {
 	return fmt.Errorf("apfs: %w: %s", filesys.ErrUnsupported, fmt.Sprintf(format, a...))
 }
 
-// validate checks the geometry a superblock claims before anything is
-// allocated or looped over on its account: block size, block count, the two
+// validateGeometry checks the geometry a superblock claims before anything is
+// allocated or looped over on its account: block size, block count and the two
 // checkpoint areas (contiguous, bounded, inside the container, disjoint, not
-// block 0) and the checkpoint ring cursor.
-func (n *nxSuper) validate() error {
+// block 0). It is all block 0 is trusted for: the checkpoint cursors, the file
+// system count and the volume oids of the block-0 copy have no meaning (it may
+// be stale) and are checked only on checkpoint candidates (validate).
+func (n *nxSuper) validateGeometry() error {
 	if n.descBlocks&areaNonContiguous != 0 || n.dataBlocks&areaNonContiguous != 0 {
 		return unsupported("non-contiguous checkpoint area (a B-tree of fragments)")
 	}
@@ -136,11 +144,26 @@ func (n *nxSuper) validate() error {
 	if n.descBase < aEnd && n.dataBase < dEnd {
 		return corrupt("container superblock", 112, "descriptor area [%d, %d) overlaps the data area [%d, %d)", n.descBase, dEnd, n.dataBase, aEnd)
 	}
+	return nil
+}
+
+// validate checks a checkpoint superblock: its geometry plus the checkpoint
+// ring and data cursors and the file-system count.
+func (n *nxSuper) validate() error {
+	if err := n.validateGeometry(); err != nil {
+		return err
+	}
 	if n.descLen == 0 || n.descLen > n.descBlocks {
 		return corrupt("container superblock", 140, "descriptor length %d is not in [1, %d]", n.descLen, n.descBlocks)
 	}
 	if n.descIndex >= n.descBlocks {
 		return corrupt("container superblock", 136, "descriptor index %d is beyond the ring of %d blocks", n.descIndex, n.descBlocks)
+	}
+	if n.dataIndex >= n.dataBlocks {
+		return corrupt("container superblock", 144, "data index %d is beyond the data area of %d blocks", n.dataIndex, n.dataBlocks)
+	}
+	if n.dataLen > n.dataBlocks {
+		return corrupt("container superblock", 148, "data length %d exceeds the data area of %d blocks", n.dataLen, n.dataBlocks)
 	}
 	if n.maxFS > nxMaxFileSystems {
 		return corrupt("container superblock", 180, "%d file systems exceeds the maximum of %d", n.maxFS, nxMaxFileSystems)
