@@ -710,3 +710,22 @@ func compactJSON(t *testing.T, raw []byte) string {
 	}
 	return b.String()
 }
+
+// TestRecordsCommandsRefuseTamperedSchema: a redefined index (here the reviewer's
+// attack: records_deleted over deleted = 0) or any other schema object that is not
+// the expected one stops list, show and stats with exit 4, naming `case verify`.
+func TestRecordsCommandsRefuseTamperedSchema(t *testing.T) {
+	rc := recDataset(t, false)
+	def := recordstest.SchemaSQL(t, rc.dir, "index", "records_deleted")
+	recordstest.RedefineSchemaObject(t, rc.dir, "index", "records_deleted", strings.Replace(def, "deleted = 1", "deleted = 0", 1))
+	for _, args := range [][]string{
+		{"records", "list", "--case", rc.dir},
+		{"records", "show", "--case", rc.dir, "1"},
+		{"records", "stats", "--case", rc.dir},
+	} {
+		code, out := run(t, Deps{}, args...)
+		if code != ExitIntegrity || !strings.Contains(out, "case verify") {
+			t.Errorf("%v on a tampered schema: exit %d: %s", args[:2], code, out)
+		}
+	}
+}

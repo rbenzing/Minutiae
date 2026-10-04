@@ -646,3 +646,48 @@ func TestRecordTablesAreStrict(t *testing.T) {
 		}
 	}
 }
+
+// TestExpectedSchemaMatchesRealDatabases: the expected objects verify compares
+// with are exactly what a fresh v1 database, a fresh v2 database and a v1
+// database upgraded to v2 hold (the v1 text is the one the v1.0.0 build wrote).
+func TestExpectedSchemaMatchesRealDatabases(t *testing.T) {
+	read := func(db *sql.DB) map[string]schemaObject {
+		t.Helper()
+		rows, err := db.Query(`SELECT type, name, tbl_name, COALESCE(sql, '') FROM sqlite_master`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m, err := scanSchemaObjects(rows)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	dir := t.TempDir()
+	v1 := buildV1DB(t, filepath.Join(dir, "v1.db"))
+	if d := schemaDifferences(mustExpected(t, 1), read(v1)); len(d) != 0 {
+		t.Errorf("a fresh v1 database differs from the expected v1 schema: %q", d)
+	}
+	if err := applyMigrations(v1, 1, 2); err != nil {
+		t.Fatal(err)
+	}
+	if d := schemaDifferences(mustExpected(t, 2), read(v1)); len(d) != 0 {
+		t.Errorf("an upgraded database differs from the expected v2 schema: %q", d)
+	}
+	s := openTestStore(t, filepath.Join(dir, "v2.db"))
+	if d := schemaDifferences(mustExpected(t, 2), read(s.db)); len(d) != 0 {
+		t.Errorf("a fresh v2 database differs from the expected v2 schema: %q", d)
+	}
+	if _, err := expectedSchema(3); err == nil {
+		t.Error("a schema this build does not know has an expected schema")
+	}
+}
+
+func mustExpected(t *testing.T, v int) map[string]schemaObject {
+	t.Helper()
+	m, err := expectedSchema(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}

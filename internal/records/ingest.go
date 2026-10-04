@@ -66,6 +66,11 @@ func (w *Writer) Start(ctx context.Context, so StartOptions) error {
 	if err := w.c.RequireSchema(2); err != nil {
 		return err
 	}
+	// nothing is audited, recovered or written against a database whose schema
+	// objects (tables, indexes, triggers, views) are not the ones this build defines
+	if err := w.c.RequireSchemaObjects(ctx); err != nil {
+		return err
+	}
 	if len(so.AnalysisID) > maxAnalysisID {
 		return fmt.Errorf("%w: analysis id is %d bytes, the cap is %d", ErrInvalidOptions, len(so.AnalysisID), maxAnalysisID)
 	}
@@ -160,7 +165,7 @@ func (w *Writer) Start(ctx context.Context, so StartOptions) error {
 // itself implies (records_meta.next_id and max(records.id)+1).
 func (w *Writer) preflight(ctx context.Context, artifacts []string, allowReingest bool) (reingest bool, next int64, err error) {
 	var covered []string
-	err = w.c.ReadTx(ctx, func(h evidence.ReadHandle) error {
+	err = w.c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {
 		for _, id := range artifacts {
 			var n int
 			if err := h.QueryRowContext(ctx, `SELECT count(*) FROM artifacts WHERE id = ?`, id).Scan(&n); err != nil {
@@ -259,7 +264,7 @@ func AlreadyIngested(ctx context.Context, c *evidence.Case, artifactID string, p
 		return false, err
 	}
 	var ok bool
-	err := c.ReadTx(ctx, func(h evidence.ReadHandle) error {
+	err := c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {
 		var err error
 		ok, err = ingestedBy(ctx, h, artifactID, p)
 		return err

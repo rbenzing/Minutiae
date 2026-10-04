@@ -33,7 +33,7 @@ func (r *Reader) Stats(ctx context.Context, f Filter, by string) ([]StatRow, err
 		return nil, err
 	}
 	var out []StatRow
-	err := r.c.ReadTx(ctx, func(h evidence.ReadHandle) error {
+	err := r.c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {
 		have, err := hasSuperseded(ctx, h)
 		if err != nil {
 			return err
@@ -79,7 +79,7 @@ func (r *Reader) Overview(ctx context.Context, f Filter) (Overview, error) {
 		return Overview{}, err
 	}
 	ov := Overview{Runs: map[string]int64{}}
-	err := r.c.ReadTx(ctx, func(h evidence.ReadHandle) error {
+	err := r.c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {
 		have, err := hasSuperseded(ctx, h)
 		if err != nil {
 			return err

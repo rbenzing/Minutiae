@@ -104,9 +104,9 @@ func TestTriggerComparisonIgnoresWhitespaceOnly(t *testing.T) {
 	}
 }
 
-// TestVerifyQuickCheckFlagged: a row that breaks a CHECK constraint (written with
-// the checks switched off, as a tamper would) makes quick_check fail.
-func TestVerifyQuickCheckFlagged(t *testing.T) {
+// TestVerifyIntegrityCheckFlagged: a row that breaks a CHECK constraint (written with
+// the checks switched off, as a tamper would) makes integrity_check fail.
+func TestVerifyIntegrityCheckFlagged(t *testing.T) {
 	c, rec := caseWithArtifact(t)
 	insertRawRecords(t, c, rec.ID, 1, 1)
 	dropImmutabilityTriggers(t, c) // an attacker removes the triggers first
@@ -127,7 +127,7 @@ func TestVerifyQuickCheckFlagged(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := mustVerify(t, c)
-	if !containsSubstr(r.Problems, "quick_check failed") {
+	if !containsSubstr(r.Problems, "integrity_check failed") {
 		t.Fatalf("report = %q", r.Problems)
 	}
 }

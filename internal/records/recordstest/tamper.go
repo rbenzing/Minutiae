@@ -644,33 +644,16 @@ func SetRecordID(t testing.TB, caseDir string, id, newID int64) {
 // its own.
 func withoutStrict(t testing.TB, caseDir, table string, fn func(db *sql.DB) error) {
 	t.Helper()
-	setSQL := func(def string) {
-		db := openTamperDB(t, caseDir)
-		defer func() { _ = db.Close() }()
-		if _, err := db.Exec(`PRAGMA writable_schema = ON`); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := db.Exec(`UPDATE sqlite_master SET sql = ? WHERE type = 'table' AND name = ?`, def, table); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var orig string
-	func() {
-		db := openTamperDB(t, caseDir)
-		defer func() { _ = db.Close() }()
-		if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&orig); err != nil {
-			t.Fatal(err)
-		}
-	}()
+	orig := schemaSQL(t, caseDir, "table", table)
 	loose := strings.NewReplacer(" STRICT, WITHOUT ROWID", " WITHOUT ROWID", " STRICT", "").Replace(orig)
-	setSQL(loose)
+	setSchemaSQL(t, caseDir, "table", table, loose)
 	tamper(t, caseDir, func(db *sql.DB) error {
 		if _, err := db.Exec(`PRAGMA ignore_check_constraints = ON`); err != nil {
 			return err
 		}
 		return fn(db)
 	})
-	setSQL(orig)
+	setSchemaSQL(t, caseDir, "table", table, orig)
 }
 
 // SetStorageClass changes the storage class of one column of the rows matching
@@ -711,4 +694,90 @@ func InjectBlobRunArtifacts(t testing.TB, caseDir string, n int) {
 			INSERT INTO record_run_artifacts (ingest_id, artifact_id) SELECT CAST('ing-blob-' || printf('%08d', i) AS BLOB), 'x' FROM s`, n)
 		return err
 	})
+}
+
+// schemaSQL returns the stored definition of a schema object.
+func schemaSQL(t testing.TB, caseDir, typ, name string) string {
+	t.Helper()
+	db := openTamperDB(t, caseDir)
+	defer func() { _ = db.Close() }()
+	var def string
+	if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = ? AND name = ?`, typ, name).Scan(&def); err != nil {
+		t.Fatalf("recordstest: %s %q: %v", typ, name, err)
+	}
+	return def
+}
+
+// setSchemaSQL rewrites the stored definition of a schema object through
+// writable_schema, leaving its b-tree as it is. SQLite only reads the new text on
+// a new connection, so this opens (and closes) its own.
+func setSchemaSQL(t testing.TB, caseDir, typ, name, def string) {
+	t.Helper()
+	db := openTamperDB(t, caseDir)
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec(`PRAGMA writable_schema = ON`); err != nil {
+		t.Fatal(err)
+	}
+	res, err := db.Exec(`UPDATE sqlite_master SET sql = ? WHERE type = ? AND name = ?`, def, typ, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		t.Fatalf("recordstest: %s %q: %d schema rows changed", typ, name, n)
+	}
+}
+
+// RedefineSchemaObject replaces the stored definition of a table, index or
+// trigger (writable_schema), as an attacker redefining `records_deleted` over
+// another predicate would: the rows and the index b-tree stay, the queries that
+// use the object now mean something else.
+func RedefineSchemaObject(t testing.TB, caseDir, typ, name, newSQL string) {
+	t.Helper()
+	setSchemaSQL(t, caseDir, typ, name, newSQL)
+}
+
+// SchemaSQL returns the stored definition of a schema object (for building a
+// redefinition from the real one).
+func SchemaSQL(t testing.TB, caseDir, typ, name string) string {
+	t.Helper()
+	return schemaSQL(t, caseDir, typ, name)
+}
+
+// CreateSchemaObject executes DDL that adds an object (a view, an extra table,
+// index or trigger) to the case's artifacts.db.
+func CreateSchemaObject(t testing.TB, caseDir, ddl string) {
+	t.Helper()
+	db := openTamperDB(t, caseDir)
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec(ddl); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// DropSchemaObject drops an index or view (`DROP INDEX` / `DROP VIEW`).
+func DropSchemaObject(t testing.TB, caseDir, typ, name string) {
+	t.Helper()
+	db := openTamperDB(t, caseDir)
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec(`DROP ` + strings.ToUpper(typ) + ` "` + name + `"`); err != nil { //nolint:gosec // test helper; typ and name come from the test
+		t.Fatal(err)
+	}
+}
+
+// DesyncIndex makes an index disagree with its table while its stored definition
+// stays exactly as it was: the index is rebuilt (REINDEX) under another
+// definition and the original text is put back. The schema text then passes a
+// comparison, `PRAGMA quick_check` says "ok" and only `PRAGMA integrity_check`,
+// which checks every index against its table, sees the desynchronised b-tree.
+func DesyncIndex(t testing.TB, caseDir, index, otherDef string) {
+	t.Helper()
+	orig := schemaSQL(t, caseDir, "index", index)
+	setSchemaSQL(t, caseDir, "index", index, otherDef)
+	db := openTamperDB(t, caseDir)
+	if _, err := db.Exec(`REINDEX "` + index + `"`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	setSchemaSQL(t, caseDir, "index", index, orig)
 }

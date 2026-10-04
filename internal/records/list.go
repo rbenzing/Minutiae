@@ -224,7 +224,7 @@ func (r *Reader) List(ctx context.Context, f Filter, p Page) (Result, error) {
 		return Result{}, err
 	}
 	var res Result
-	err = r.c.ReadTx(ctx, func(h evidence.ReadHandle) error {
+	err = r.c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {
 		have, err := hasSuperseded(ctx, h)
 		if err != nil {
 			return err
@@ -317,7 +317,7 @@ func (r *Reader) Count(ctx context.Context, f Filter, limit int) (n int64, cappe
 	if _, err := f.compile(false); err != nil {
 		return 0, false, err
 	}
-	err = r.c.ReadTx(ctx, func(h evidence.ReadHandle) error {
+	err = r.c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {
 		have, err := hasSuperseded(ctx, h)
 		if err != nil {
 			return err

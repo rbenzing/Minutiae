@@ -230,15 +230,19 @@ func (c *Case) verifyRecords(rep *VerifyReport, recs []ManifestRecord, entries [
 		rep.problemf("records unreadable: schema version: %q", err.Error())
 		return
 	}
-	if dbv < 2 {
-		return
-	}
 	ctx := context.Background()
 	ps := &problemSet{rep: rep, counts: map[string]int{}}
 	defer ps.flush()
 
-	c.verifyTriggers(ctx, rep)
-	c.verifyQuickCheck(ctx, rep)
+	// the schema objects of every schema this build knows (a v1 case too: tables or
+	// triggers planted in it are not harmless)
+	if dbv >= 1 && dbv <= CurrentSchema {
+		c.verifySchemaObjects(ctx, ps, dbv)
+	}
+	if dbv < 2 {
+		return
+	}
+	c.verifyIntegrityCheck(ctx, rep)
 
 	var audit *recordAudit
 	var sorted []auditedBatch
@@ -426,60 +430,43 @@ func (c *Case) checkBatches(rep *VerifyReport, ps *problemSet, audit *recordAudi
 	}
 }
 
-// verifyTriggers (P12) requires each of the 16 immutability triggers to exist
-// with exactly the expected definition (whitespace aside), and no other trigger.
-func (c *Case) verifyTriggers(ctx context.Context, rep *VerifyReport) {
-	found := map[string]string{}
-	err := c.ReadTx(ctx, func(h ReadHandle) error {
-		rows, err := h.QueryContext(ctx, `SELECT name, COALESCE(sql, '') FROM sqlite_master WHERE type = 'trigger' ORDER BY name`)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = rows.Close() }()
-		for rows.Next() {
-			var name, def string
-			if err := rows.Scan(&name, &def); err != nil {
-				return err
-			}
-			found[name] = def
-		}
-		return rows.Err()
-	})
+// verifySchemaObjects (P12) requires the whole of sqlite_master to be the schema this
+// build defines for the database's version: every table, index and trigger present
+// with exactly the expected definition (whitespace aside; for the 16 immutability
+// triggers that is the original P12), and no other table, index, trigger or view.
+func (c *Case) verifySchemaObjects(ctx context.Context, ps *problemSet, version int) {
+	expected, err := expectedSchema(version)
 	if err != nil {
-		unreadable(rep, "triggers", err)
+		unreadable(ps.rep, "expected schema", err)
 		return
 	}
-	expected := map[string]bool{}
-	for _, t := range ImmutabilityTriggers() {
-		expected[t.Name] = true
-		def, ok := found[t.Name]
-		switch {
-		case !ok:
-			rep.problemf("trigger %q is missing: the table %q is no longer protected against updates and deletes", t.Name, t.Table)
-		case normalizeSpace(def) != normalizeSpace(t.SQL):
-			rep.problemf("trigger %q was altered: its definition %q is not the expected %q", t.Name, def, t.SQL)
-		}
+	var found map[string]schemaObject
+	err = c.ReadTx(ctx, func(h ReadHandle) error {
+		var err error
+		found, err = readSchemaObjects(ctx, h)
+		return err
+	})
+	if err != nil {
+		unreadable(ps.rep, "schema objects", err)
+		return
 	}
-	names := make([]string, 0, len(found))
-	for n := range found {
-		if !expected[n] {
-			names = append(names, n)
-		}
-	}
-	sort.Strings(names)
-	for _, n := range names {
-		rep.problemf("trigger %q is not part of the schema", n)
+	for _, d := range schemaDifferences(expected, found) {
+		ps.add("schema", "%s", d)
 	}
 }
 
 func normalizeSpace(s string) string { return strings.Join(strings.Fields(s), " ") }
 
-// verifyQuickCheck (P10) runs SQLite's quick_check; anything but "ok" is a problem
-// (on a STRICT table it also reports a value of the wrong storage class).
-func (c *Case) verifyQuickCheck(ctx context.Context, rep *VerifyReport) {
+// verifyIntegrityCheck (P10) runs SQLite's integrity_check; anything but "ok" is a
+// problem. Unlike quick_check it verifies every index against its table, so a
+// reader-used index that no longer agrees with the rows (page-level tampering that
+// leaves the schema text intact) is found; on a STRICT table both report a value of
+// the wrong storage class. SQLite stops after 100 errors and at most 20 messages
+// are kept. Its cost, a full scan of every table and index, belongs to plan 5D.
+func (c *Case) verifyIntegrityCheck(ctx context.Context, rep *VerifyReport) {
 	var msgs []string
 	err := c.ReadTx(ctx, func(h ReadHandle) error {
-		rows, err := h.QueryContext(ctx, `SELECT quick_check FROM pragma_quick_check`)
+		rows, err := h.QueryContext(ctx, `SELECT integrity_check FROM pragma_integrity_check`)
 		if err != nil {
 			return err
 		}
@@ -496,14 +483,14 @@ func (c *Case) verifyQuickCheck(ctx context.Context, rep *VerifyReport) {
 		return rows.Err()
 	})
 	if err != nil {
-		unreadable(rep, "quick_check", err)
+		unreadable(rep, "integrity_check", err)
 		return
 	}
 	if len(msgs) == 1 && msgs[0] == "ok" {
 		return
 	}
 	for _, m := range msgs {
-		rep.problemf("quick_check failed: %q", m)
+		rep.problemf("integrity_check failed: %q", m)
 	}
 }
 

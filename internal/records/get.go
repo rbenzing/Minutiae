@@ -20,7 +20,7 @@ import (
 // reports the details.
 func (r *Reader) Get(ctx context.Context, id int64) (Full, error) {
 	var full Full
-	err := r.c.ReadTx(ctx, func(h evidence.ReadHandle) error {
+	err := r.c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {
 		have, err := hasSuperseded(ctx, h)
 		if err != nil {
 			return err
