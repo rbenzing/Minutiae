@@ -219,11 +219,19 @@ func buildTree(s treeSpec) *builtTree {
 	return t
 }
 
-// fold lower-cases a name for ordering (independent of the reader's fold).
-func fold(u []uint16) []uint16 {
-	out := make([]uint16, len(u))
-	for i, c := range u {
-		out[i] = uint16(unicode.ToLower(rune(c)))
+// fold lower-cases a name for ordering (independent of the reader's fold). Like
+// the volume's own comparison it skips the ignorable units (U+0000, U+FEFF and
+// the zero-width and bidirectional controls), which is what makes the hard-link
+// private folder, whose name starts with four NULs, sort among the H names.
+func fold(u []uint16, skipIgnorable bool) []uint16 {
+	out := make([]uint16, 0, len(u))
+	for _, c := range u {
+		switch {
+		case !skipIgnorable:
+		case c == 0, c == 0xFEFF, c >= 0x200C && c <= 0x200F, c >= 0x202A && c <= 0x202E, c >= 0x206A && c <= 0x206F:
+			continue
+		}
+		out = append(out, uint16(unicode.ToLower(rune(c))))
 	}
 	return out
 }
@@ -240,8 +248,9 @@ func cmpUnits(a, b []uint16) int {
 	return len(a) - len(b)
 }
 
-// sortCatalog orders catalog records by (parent, name).
-func sortCatalog(recs []rec, binary bool) {
+// sortCatalog orders catalog records by (parent, name); a case-folding order
+// skips the ignorable units unless rawFold asks for the plain lower-cased order.
+func sortCatalog(recs []rec, binary, rawFold bool) {
 	sort.SliceStable(recs, func(i, j int) bool {
 		a, b := recs[i], recs[j]
 		if a.parent != b.parent {
@@ -249,7 +258,7 @@ func sortCatalog(recs []rec, binary bool) {
 		}
 		an, bn := a.name, b.name
 		if !binary {
-			an, bn = fold(an), fold(bn)
+			an, bn = fold(an, !rawFold), fold(bn, !rawFold)
 		}
 		return cmpUnits(an, bn) < 0
 	})

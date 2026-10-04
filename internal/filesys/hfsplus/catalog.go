@@ -249,23 +249,20 @@ func (f *FS) catalogThread(cnid uint32) (catalogRecord, error) {
 // findRecord looks at: a real catalog has one, a forged one may hold more.
 const maxEqualRun = 64
 
-// findRecord finds the folder or file record keyed (parent, name); thread
-// records are never returned. The descent follows the tree's own order, which
-// is exact for binary (HFSX case-sensitive) trees; the records that compare
-// equal to the name (several only in a forged or approximately folded tree)
-// are examined and an exact spelling is preferred to a case-folded one. For
-// case-folding trees the fold here only approximates Apple's table, so a miss
-// falls back to a linear scan of that parent's children with the approximate
-// fold (an exotic name may stay unreachable by name); the scan reads catalog
-// nodes and is charged to the directory read budget, and a scan that the budget
-// cut short is a CorruptError, not a miss. filesys.ErrNotFound when there is
-// none; the key returned holds the name as stored.
-func (f *FS) findRecord(parent uint32, name []uint16) (catalogKey, catalogRecord, error) {
+// findRecordTree is the first phase of findRecord: the descent, which follows
+// the tree's own order (exact for binary HFSX trees, and for case-folding trees
+// it finds every name that folds equal under the tree's own order). The records
+// that compare equal to the name (several only in a forged or approximately
+// folded tree) are examined and an exact spelling is preferred. Thread records
+// are never returned. filesys.ErrNotFound when there is none; the key returned
+// holds the name as stored. A record already found is still returned when the
+// leaf chain is cut after it (the cut has been warned about).
+func (f *FS) findRecordTree(parent uint32, name []uint16) (catalogKey, catalogRecord, error) {
 	target := catalogKey{parent: parent, name: name}
 	binaryMode := f.binaryNames()
 	var gotKey catalogKey
 	var got catalogRecord
-	found, exact, run := false, false, 0 // exact: a record spelled as name was seen
+	found, run := false, 0
 	err := f.catalogScan(target, func(k catalogKey, r catalogRecord) (bool, error) {
 		if compareKeys(k, target, binaryMode) != 0 {
 			return false, nil
@@ -278,33 +275,49 @@ func (f *FS) findRecord(parent uint32, name []uint16) (catalogKey, catalogRecord
 			gotKey, got, found = k, r, true
 		}
 		if slices.Equal(k.name, name) {
-			gotKey, got, exact = k, r, true
+			gotKey, got = k, r
 			return false, nil
 		}
 		return run < maxEqualRun, nil
 	})
-	if err != nil {
+	if err != nil && (!found || !errors.Is(err, filesys.ErrCorrupt)) {
 		return gotKey, got, err
 	}
 	if found {
 		return gotKey, got, nil
 	}
-	if !binaryMode && len(name) > 0 {
-		cutShort, err := f.foldScan(parent, name, func(k catalogKey, r catalogRecord) bool {
-			if !found {
-				gotKey, got, found = k, r, true
-			}
-			if slices.Equal(k.name, name) {
-				gotKey, got, exact = k, r, true
-			}
-			return !exact
-		})
-		if err != nil {
-			return gotKey, got, err
+	return gotKey, got, fmt.Errorf("%w: no catalog record for parent %d", filesys.ErrNotFound, parent)
+}
+
+// findRecord finds the folder or file record keyed (parent, name); thread
+// records are never returned. It is findRecordTree, then, for case-folding
+// trees, a linear scan of that parent's children with the approximate fold
+// (the fold here only approximates Apple's table, so an exotic name may stay
+// unreachable by name): the scan reads catalog nodes and is charged to the
+// directory read budget, and a scan that the budget cut short is a
+// CorruptError, not a miss. An exact spelling is preferred to a folded one.
+// filesys.ErrNotFound when there is none; the key returned holds the name as
+// stored.
+func (f *FS) findRecord(parent uint32, name []uint16) (catalogKey, catalogRecord, error) {
+	gotKey, got, err := f.findRecordTree(parent, name)
+	if !errors.Is(err, filesys.ErrNotFound) || f.binaryNames() || len(name) == 0 {
+		return gotKey, got, err
+	}
+	found, exact := false, false
+	cutShort, err := f.foldScan(parent, name, func(k catalogKey, r catalogRecord) bool {
+		if !found {
+			gotKey, got, found = k, r, true
 		}
-		if cutShort && !found {
-			return gotKey, got, corrupt("catalog", -1, "the directory read budget ran out while searching folder %d for a name", parent)
+		if slices.Equal(k.name, name) {
+			gotKey, got, exact = k, r, true
 		}
+		return !exact
+	})
+	if err != nil {
+		return gotKey, got, err
+	}
+	if cutShort && !found {
+		return gotKey, got, corrupt("catalog", -1, "the directory read budget ran out while searching folder %d for a name", parent)
 	}
 	if found {
 		return gotKey, got, nil

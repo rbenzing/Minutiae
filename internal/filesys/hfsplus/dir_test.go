@@ -107,7 +107,7 @@ func sampleTree() []hfsplustest.File {
 		{Path: "/docs/readme.txt", Mode: 0o100640, UID: 501, GID: 20, Times: sampleTimes, FileType: "TEXT", FileCreator: "ttxt", DataLogical: 1234, RsrcLogical: 77, RsrcBlocks: 1},
 		{Path: "/docs/sub", Dir: true},
 		{Path: "/docs/sub/deep.bin", DataLogical: 5},
-		{Path: "/link", Mode: 0o120777, DataLogical: 11},
+		{Path: "/link", Mode: 0o120777, Data: []byte("hello world")},
 		{Path: "/dev", Mode: 0o20644},
 		{Path: "/old", ZeroMode: true, Times: &hfsplustest.Times{}},
 		{Path: "/classic-link", ZeroMode: true, FileType: "slnk", FileCreator: "rhap"},
@@ -430,7 +430,7 @@ func TestLookupFallbackScanIsChargedToBudget(t *testing.T) {
 	}
 	hidden := "f1" + string(rune(0x200F)) + "50" // U+200F between "f1" and "50"
 	files = append(files, hfsplustest.File{Path: "/d/hidden", NameUnits: units(hidden)})
-	_, _, f := buildTree(t, hfsplustest.Options{NodeSize: 1024, Blocks: 512}, files)
+	_, _, f := buildTree(t, hfsplustest.Options{NodeSize: 1024, Blocks: 512, RawFoldOrder: true}, files)
 	before := f.DirBudget()
 	e, err := f.Lookup("/d/f150")
 	if err != nil || e.Name != hidden {

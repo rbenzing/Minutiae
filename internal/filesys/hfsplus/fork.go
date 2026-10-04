@@ -34,19 +34,29 @@ type forkMap struct {
 
 // fork resolves a fork's extents (inline and extents-overflow) into a forkMap.
 // The error is a *filesys.CorruptError for inconsistent extents or an I/O
-// error from the extents-overflow tree.
+// error from the extents-overflow tree; no map is returned with it (use
+// forkPrefix for file content, which keeps the trusted prefix).
 func (f *FS) fork(fileID uint32, resource bool, fd forkData) (*forkMap, error) {
-	exts, complete, err := f.forkExtents(fileID, resource, fd)
+	m, err := f.forkPrefix(fileID, resource, fd)
 	if err != nil {
 		return nil, err
 	}
+	return m, nil
+}
+
+// forkPrefix is fork for file content: on an error the map is still returned,
+// holding exactly the extents validated before the failure (the trusted
+// prefix, see forkExtents), so a file can be opened with the bytes that can be
+// trusted. The error says why the fork is not complete.
+func (f *FS) forkPrefix(fileID uint32, resource bool, fd forkData) (*forkMap, error) {
+	exts, complete, err := f.forkExtents(fileID, resource, fd)
 	m := &forkMap{f: f, exts: exts, blockSize: int64(f.vh.blockSize), logical: fd.logicalSize, complete: complete}
 	m.first = make([]uint64, len(exts))
 	for i, e := range exts {
 		m.first[i] = m.blocks
 		m.blocks += uint64(e.count) // <= 2^20 extents x 2^32 blocks: cannot overflow
 	}
-	return m, nil
+	return m, err
 }
 
 // extentInVolume checks that [start, start+count) lies inside the volume.

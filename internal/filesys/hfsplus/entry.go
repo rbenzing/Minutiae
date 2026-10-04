@@ -124,18 +124,28 @@ func entryType(r *catalogRecord) filesys.EntryType {
 }
 
 // toEntry describes a folder or file record found under key k. Everything
-// comes from the record; for a file the thread record is looked up to flag a
-// legacy volume that has none. Only an I/O error is returned.
+// comes from the records (for a resolved hard link the iNode supplies all but
+// the name and the ID), the attributes tree and, for a file, the thread record,
+// looked up to flag a legacy volume that has none. Only an I/O error is returned.
 func (f *FS) toEntry(k catalogKey, r catalogRecord) (filesys.Entry, error) {
+	o, err := f.newObject(k, r)
+	if err != nil {
+		return filesys.Entry{}, err
+	}
+	n := &o.node
 	name, raw := displayName(k.name)
 	e := filesys.Entry{
 		Name: name, RawName: raw, ID: cnidString(r.id),
-		Type: entryType(&r),
-		Mode: uint32(r.bsd.mode), UID: r.bsd.owner, GID: r.bsd.group,
+		Type: entryType(n),
+		Mode: uint32(n.bsd.mode), UID: n.bsd.owner, GID: n.bsd.group,
 		Times: filesys.Times{
-			Created: hfsTime(r.create), Modified: hfsTime(r.contentMod),
-			Changed: hfsTime(r.attrMod), Accessed: hfsTime(r.access),
+			Created: hfsTime(n.create), Modified: hfsTime(n.contentMod),
+			Changed: hfsTime(n.attrMod), Accessed: hfsTime(n.access),
 		},
+		Encrypted: o.attrs.cprotect,
+	}
+	if o.link.kind == linkDir {
+		e.Type = filesys.TypeOther
 	}
 	if r.id != rootFolderID && r.id < firstUserCNID {
 		f.warn("catalog record %s under folder %d has the reserved id %d and cannot be opened by id", strconv.Quote(name), k.parent, r.id)
@@ -146,30 +156,68 @@ func (f *FS) toEntry(k catalogKey, r catalogRecord) (filesys.Entry, error) {
 			addAttr(&e, "private_metadata", "true")
 		}
 	} else {
-		if r.data.logicalSize > math.MaxInt64 {
-			f.warn("file %s (id %d) records a data fork size of %d bytes, beyond what can be represented", strconv.Quote(name), r.id, r.data.logicalSize)
+		size := n.data.logicalSize
+		if o.compressed && o.cmp.ok {
+			size = o.cmp.size // the uncompressed size: the data fork of a compressed file is empty
+		}
+		if size > math.MaxInt64 {
+			f.warn("file %s (id %d) records a data fork size of %d bytes, beyond what can be represented", strconv.Quote(name), r.id, size)
 			e.Size = math.MaxInt64
 		} else {
-			e.Size = int64(r.data.logicalSize)
+			e.Size = int64(size)
 		}
 	}
-	addAttr(&e, "flags", fmt.Sprintf("0x%04x", r.flags))
+	addAttr(&e, "flags", fmt.Sprintf("0x%04x", n.flags))
 	if r.typ == recFile {
-		if r.fileType != 0 {
-			addAttr(&e, "file_type", fourCC(r.fileType))
+		if n.fileType != 0 {
+			addAttr(&e, "file_type", fourCC(n.fileType))
 		}
-		if r.fileCreator != 0 {
-			addAttr(&e, "file_creator", fourCC(r.fileCreator))
+		if n.fileCreator != 0 {
+			addAttr(&e, "file_creator", fourCC(n.fileCreator))
 		}
-		if r.rsrc.logicalSize != 0 || r.rsrc.totalBlocks != 0 {
-			addAttr(&e, "rsrc_size", strconv.FormatUint(r.rsrc.logicalSize, 10))
-			addAttr(&e, "rsrc_blocks", strconv.FormatUint(uint64(r.rsrc.totalBlocks), 10))
+		if n.rsrc.logicalSize != 0 || n.rsrc.totalBlocks != 0 {
+			addAttr(&e, "rsrc_size", strconv.FormatUint(n.rsrc.logicalSize, 10))
+			addAttr(&e, "rsrc_blocks", strconv.FormatUint(uint64(n.rsrc.totalBlocks), 10))
 		}
 	}
 	if r.backup != 0 {
-		if b := hfsTime(r.backup); !b.T.IsZero() {
+		if b := hfsTime(n.backup); !b.T.IsZero() {
 			addAttr(&e, "backup_date", b.T.Format(time.RFC3339))
 		}
+	}
+	switch o.link.kind {
+	case linkFile:
+		addAttr(&e, "hardlink", "file")
+		addAttr(&e, "hardlink_inode", strconv.FormatUint(uint64(o.link.inodeNum), 10))
+		addAttr(&e, "links", strconv.FormatUint(uint64(o.link.inode.bsd.special), 10))
+	case linkDir:
+		addAttr(&e, "hardlink", "dir")
+		addAttr(&e, "hardlink_inode", strconv.FormatUint(uint64(o.link.inodeNum), 10))
+	case linkDangling:
+		addAttr(&e, "hardlink", "dangling")
+		addAttr(&e, "hardlink_inode", strconv.FormatUint(uint64(o.link.inodeNum), 10))
+	case linkInvalid:
+		addAttr(&e, "hardlink", "invalid")
+		addAttr(&e, "hardlink_inode", strconv.FormatUint(uint64(o.link.inodeNum), 10))
+	}
+	if o.compressed {
+		addAttr(&e, "compressed", o.cmp.label())
+		if o.cmp.ok {
+			addAttr(&e, "decmpfs_type", strconv.FormatUint(uint64(o.cmp.typ), 10))
+			addAttr(&e, "uncompressed_size", strconv.FormatUint(o.cmp.size, 10))
+		}
+	}
+	for _, x := range o.attrs.names {
+		addAttr(&e, "xattr", x)
+	}
+	if o.attrs.more > 0 {
+		addAttr(&e, "xattr_more", strconv.Itoa(o.attrs.more))
+	}
+	if o.attrs.unread {
+		addAttr(&e, "attributes", "unreadable")
+	}
+	if o.attrs.cprotect {
+		addAttr(&e, "cprotect", "present")
 	}
 	if r.typ == recFile {
 		if _, err := f.catalogThread(r.id); err != nil {
@@ -184,6 +232,9 @@ func (f *FS) toEntry(k catalogKey, r catalogRecord) (filesys.Entry, error) {
 			}
 		}
 	}
+	if e.Type == filesys.TypeSymlink && o.link.kind != linkDangling && o.link.kind != linkInvalid {
+		e.LinkTarget = f.linkTarget(o, e.Size)
+	}
 	return e, nil
 }
 
@@ -194,7 +245,9 @@ func (f *FS) Root() filesys.Entry {
 	cached := f.rootEntry
 	f.rootMu.Unlock()
 	if cached != nil {
-		return *cached
+		c := *cached
+		c.Attrs = slices.Clone(c.Attrs) // the cached entry must not be reachable through the copy
+		return c
 	}
 	bare := filesys.Entry{ID: cnidString(rootFolderID), Type: filesys.TypeDir}
 	k, r, err := f.folderRecord(rootFolderID)
@@ -206,15 +259,12 @@ func (f *FS) Root() filesys.Entry {
 		return bare
 	}
 	e.Name, e.RawName = "", nil // the root has no name of its own (the volume name is Info.Label)
+	cp := e
+	cp.Attrs = slices.Clone(e.Attrs)
 	f.rootMu.Lock()
-	f.rootEntry = &e
+	f.rootEntry = &cp
 	f.rootMu.Unlock()
 	return e
-}
-
-// Open is not implemented yet (file data arrives with the next task).
-func (f *FS) Open(_ filesys.Entry) (filesys.File, error) {
-	return nil, fmt.Errorf("%w: reading file data is not implemented", filesys.ErrUnsupported)
 }
 
 // Unallocated is not implemented yet.

@@ -47,9 +47,14 @@ type FS struct {
 	rootMu    sync.Mutex
 	rootEntry *filesys.Entry // the root folder as its record describes it, once readable
 
-	treeMu sync.Mutex
-	trees  [numTreeKinds]*btree // lazily opened B-trees, see tree
-	label  string               // the volume name, from the root folder thread
+	treeMu      sync.Mutex
+	trees       [numTreeKinds]*btree // lazily opened B-trees, see tree
+	attrsBroken bool                 // the attributes tree failed to open (warned once, not retried)
+	label       string               // the volume name, from the root folder thread
+
+	privMu   sync.Mutex
+	privDone bool   // the private metadata folder has been looked for
+	privID   uint32 // its CNID; 0 when the volume has none
 }
 
 // readFull reads exactly len(p) bytes at off; a read that returns all the
