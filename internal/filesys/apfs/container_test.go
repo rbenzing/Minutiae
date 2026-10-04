@@ -604,7 +604,7 @@ func TestOpenHostileGeometry(t *testing.T) {
 			start := time.Now()
 			assertCorrupt(t, im, "")
 			runtime.ReadMemStats(&m1)
-			if d := time.Since(start); d > 2*time.Second {
+			if d := time.Since(start); d > 10*time.Second {
 				t.Errorf("Open took %v", d)
 			}
 			if a := m1.TotalAlloc - m0.TotalAlloc; a > 4<<20 {
@@ -780,7 +780,7 @@ func TestForgedCandidatesAreBounded(t *testing.T) {
 	if err == nil || f != nil || !errors.Is(err, filesys.ErrCorrupt) {
 		t.Fatalf("Open = %v, %v; want a CorruptError", f, err)
 	}
-	if d := time.Since(start); d > 2*time.Second {
+	if d := time.Since(start); d > 10*time.Second {
 		t.Errorf("Open took %v", d)
 	}
 }

@@ -254,9 +254,16 @@ func TestLookupUsesTheNameHashToSearch(t *testing.T) {
 			t.Fatalf("Lookup(%s) = %q", q, e.Name)
 		}
 		// The directory is read through its own lookup too (root, many); what
-		// matters is that the final component does not scan 600 records.
-		if spent := before - f.DirBudget(); spent >= listing/2 {
+		// matters is that the final component does not scan 600 records when
+		// the name is spelled exactly. A differently spelled query is accepted
+		// only after a scan has ruled out an exact record stored under a wrong
+		// hash, so it costs about a listing.
+		spent := before - f.DirBudget()
+		if q == "entry-0300.txt" && spent >= listing/2 {
 			t.Errorf("Lookup(%s) charged %d bytes of directory budget, a full listing %d", q, spent, listing)
+		}
+		if q != "entry-0300.txt" && spent < listing/2 {
+			t.Errorf("Lookup(%s) charged only %d bytes of directory budget (listing %d): no exact-name scan ran", q, spent, listing)
 		}
 	}
 	if _, err := f.Lookup(root + "/many/entry-9999.txt"); !errors.Is(err, filesys.ErrNotFound) {
@@ -392,4 +399,95 @@ func TestUnverifiableNameIsNeverFlagged(t *testing.T) {
 			t.Errorf("Lookup(%+q) = %+q", name, e.Name)
 		}
 	}
+}
+
+// A name that exists is never answered with another file. On a case-insensitive
+// volume holding /Foo and, stored under a wrong hash, /foo (the hash search of
+// "foo" sees only Foo), Lookup("foo") must still return foo: an exact name wins
+// over a case-insensitive match, so the exact-name scan runs before the
+// insensitive match is accepted.
+func TestLookupPrefersExactNameStoredUnderWrongHash(t *testing.T) {
+	files := []apfstest.File{
+		{Path: "/Foo", Data: []byte("UPPER-FILE")},
+		{Path: "/foo", Data: []byte("lower-file"), BadHash: true},
+	}
+	for name, ni := range map[string]bool{"case-insensitive": true, "normalization-insensitive only": false} {
+		t.Run(name, func(t *testing.T) {
+			ci := ni
+			qs := []struct{ query, want string }{{"foo", "foo"}, {"Foo", "Foo"}}
+			fs := files
+			if !ci {
+				// NFC and NFD spellings on a case-sensitive, normalization-insensitive volume.
+				fs = []apfstest.File{
+					{Path: "/" + cafeNFC, Data: []byte("NFC")},
+					{Path: "/" + cafeNFD, Data: []byte("NFD"), BadHash: true},
+				}
+				qs = []struct{ query, want string }{{cafeNFD, cafeNFD}, {cafeNFC, cafeNFC}}
+			}
+			f, _ := openOpts(t, volOpts(volWith(ci, true, true, fs...)))
+			for _, q := range qs {
+				e := mustLookup(t, f, "/Data/"+q.query)
+				if e.Name != q.want {
+					t.Fatalf("Lookup(%+q) = %+q (id %s), want %+q", q.query, e.Name, e.ID, q.want)
+				}
+				if got := readAll(t, f, e); (q.want == "foo" && got != "lower-file") || (q.want == "Foo" && got != "UPPER-FILE") ||
+					(q.want == cafeNFD && got != "NFD") || (q.want == cafeNFC && got != "NFC") {
+					t.Errorf("Lookup(%+q) returned the content %q of another file", q.query, got)
+				}
+			}
+		})
+	}
+}
+
+// The exact-name scan is charged to the directory budget: a budget that is spent
+// by it ends in a CorruptError, never in the silent case-insensitive match.
+func TestLookupExactScanBudgetExhaustedIsCorrupt(t *testing.T) {
+	files := []apfstest.File{
+		{Path: "/Foo", Data: []byte("UPPER-FILE")},
+		{Path: "/foo", Data: []byte("lower-file"), BadHash: true},
+	}
+	build := func() *apfs.FS {
+		f, _ := openOpts(t, volOpts(volWith(true, true, true, files...)))
+		return f
+	}
+	f := build()
+	start := f.DirBudget()
+	if _, err := f.ReadDir(mustLookup(t, f, "/Data")); err != nil {
+		t.Fatal(err)
+	}
+	listing := start - f.DirBudget()
+	f = build()
+	start = f.DirBudget()
+	mustLookup(t, f, "/Data/Foo")
+	hash := start - f.DirBudget() // the hash search alone: one record
+	if hash <= 0 || hash >= listing {
+		t.Fatalf("hash search cost %d, listing %d: the test does not separate them", hash, listing)
+	}
+	for budget := hash; budget < hash+listing; budget += 8 {
+		f = build()
+		f.SetDirBudget(budget)
+		e, err := f.Lookup("/Data/foo")
+		// Either the budget ran out (an error) or the scan reached the exact
+		// record before it did; never the case-insensitive neighbour.
+		if err == nil && e.Name == "foo" {
+			continue
+		}
+		if !errors.Is(err, filesys.ErrCorrupt) {
+			t.Fatalf("budget %d (hash search %d, scan %d): Lookup = %+q, %v; want ErrCorrupt or the exact name, not a silent match", budget, hash, listing, e.Name, err)
+		}
+	}
+	f = build()
+	f.SetDirBudget(hash + listing)
+	if e := mustLookup(t, f, "/Data/foo"); e.Name != "foo" {
+		t.Errorf("with enough budget Lookup = %+q, want foo", e.Name)
+	}
+}
+
+func readAll(t *testing.T, f *apfs.FS, e filesys.Entry) string {
+	t.Helper()
+	fl, err := f.Open(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(readAllAt(t, fl))
 }

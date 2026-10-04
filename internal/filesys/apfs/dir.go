@@ -265,12 +265,12 @@ func (f *FS) inodeEntry(v *volume, view uint64, in *inode, name string, raw []by
 //     and "..", and the folding tables are this reader's own: see names.go).
 //     On a normalization-insensitive volume the B-tree is searched by the name
 //     hash (the keys sort by it), reading the records of one hash instead of
-//     the directory; a name that is not found that way (its record stores a
-//     wrong hash, or the hash cannot be computed) is searched for by a scan.
-//
-// Where the hash search finds only a folded match, it is returned without
-// looking for an exact name stored under a wrong hash (a driver that looks names
-// up by hash does not find such a record either).
+//     the directory. A record whose stored hash is wrong is not in that run, so
+//     an exact name is never taken to be absent because the run holds only an
+//     alias or a folded match: unless the run held the exact name, the directory
+//     is scanned for it before any other match is accepted. Both reads are
+//     charged to the directory budget; a budget spent by them is a CorruptError,
+//     never an insensitive match returned in place of a name that may exist.
 //
 // An encrypted volume can be looked up but nothing below it (ErrEncrypted).
 func (f *FS) Lookup(p string) (filesys.Entry, error) {
@@ -392,14 +392,23 @@ func (f *FS) child(v *volume, view, dirIno uint64, comp string) (filesys.Entry, 
 		}
 		return false
 	}
-	if qhash >= 0 && v.normInsen {
+	hashed := qhash >= 0 && v.normInsen
+	if hashed {
 		if err := f.scanDirHash(v, view, dirIno, qhash, match); err != nil {
 			return filesys.Entry{}, err
 		}
 	}
-	if exact == nil && alias == nil && folded == nil {
+	// Only an exact name ends the search. The hash run cannot hold an exact
+	// record stored under a wrong hash, so a hash search that found no exact name
+	// (even one that found a folded or alias match) is followed by a scan for it.
+	if exact == nil {
 		if err := f.scanDir(v, view, dirIno, match); err != nil {
 			return filesys.Entry{}, err
+		}
+		// A scan the budget cut short has not ruled an exact name out: an
+		// insensitive match found so far is not accepted on that basis.
+		if (alias != nil || folded != nil) && f.dirBudget.Load() < 0 {
+			return filesys.Entry{}, corrupt("directory", -1, "volume %d directory %d: the directory read budget of this filesystem is exhausted before an exact name could be ruled out for %q", v.slot, dirIno, comp)
 		}
 	}
 	for _, d := range []*drec{exact, alias, folded} {

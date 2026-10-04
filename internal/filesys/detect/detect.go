@@ -172,7 +172,7 @@ func OpenWith(drivers []Driver, r io.ReaderAt, size int64) (filesys.FileSystem, 
 			if len(warnings) == 0 {
 				return fsys, nil
 			}
-			return &warned{FileSystem: fsys, warnings: warnings}, nil
+			return wrapWarned(fsys, warnings), nil
 		}
 		if !errors.Is(err, filesys.ErrCorrupt) {
 			return nil, err
@@ -228,6 +228,56 @@ func (w *warned) Info() filesys.Info {
 	info := w.FileSystem.Info()
 	info.Warnings = append(slices.Clone(w.warnings), info.Warnings...)
 	return info
+}
+
+// The optional filesystem interfaces (filesys.Snapshotter, filesys.SnapshotViewer)
+// are forwarded by wrapper types that have exactly the methods of the wrapped
+// filesystem, so a note never costs a capability and never invents one.
+type (
+	warnedSnapshotter struct {
+		*warned
+		sn filesys.Snapshotter
+	}
+	warnedViewer struct {
+		*warned
+		sv filesys.SnapshotViewer
+	}
+	warnedBoth struct {
+		*warned
+		sn filesys.Snapshotter
+		sv filesys.SnapshotViewer
+	}
+)
+
+func (w *warnedSnapshotter) SnapshotPath(p, snapshot string) (string, error) {
+	return w.sn.SnapshotPath(p, snapshot)
+}
+
+func (w *warnedViewer) EntrySnapshot(e filesys.Entry) (string, uint64, bool) {
+	return w.sv.EntrySnapshot(e)
+}
+
+func (w *warnedBoth) SnapshotPath(p, snapshot string) (string, error) {
+	return w.sn.SnapshotPath(p, snapshot)
+}
+
+func (w *warnedBoth) EntrySnapshot(e filesys.Entry) (string, uint64, bool) {
+	return w.sv.EntrySnapshot(e)
+}
+
+func wrapWarned(fsys filesys.FileSystem, warnings []string) filesys.FileSystem {
+	w := &warned{FileSystem: fsys, warnings: warnings}
+	sn, isSnap := fsys.(filesys.Snapshotter)
+	sv, isView := fsys.(filesys.SnapshotViewer)
+	switch {
+	case isSnap && isView:
+		return &warnedBoth{warned: w, sn: sn, sv: sv}
+	case isSnap:
+		return &warnedSnapshotter{warned: w, sn: sn}
+	case isView:
+		return &warnedViewer{warned: w, sv: sv}
+	}
+	return w
 }
 
 func probe(d Driver, r io.ReaderAt, size int64) (ok bool, err error) {

@@ -184,6 +184,9 @@ func FuzzAPFSOpen(f *testing.F) {
 	for _, name := range orcFixtures {
 		f.Add(trimmedFixture(f, name))
 	}
+	// The populated real image has extents, extended attributes, a snapshot and
+	// non-ASCII name hashes, which the empty fixtures lack.
+	f.Add(trimmedFixture(f, "apfs-populated"))
 	f.Add(make([]byte, 4096))
 	f.Fuzz(func(t *testing.T, b []byte) {
 		fsys, err := apfs.Open(bytes.NewReader(b), int64(len(b)))
@@ -360,7 +363,7 @@ func TestOpenMutatedNeverPanics(t *testing.T) {
 			fuzzWalk(t, fsys)
 		})
 	}
-	if n < 200 || opened < n/4 {
+	if n < 50*perBlock || opened < n/4 { // 200 in the full run, 50 under -short
 		t.Errorf("%d mutations, only %d of them opened: the test is not reaching the parsers", n, opened)
 	}
 }

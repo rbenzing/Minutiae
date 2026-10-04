@@ -223,3 +223,67 @@ func TestOpenWithReportsAmbiguousSignatures(t *testing.T) {
 		})
 	}
 }
+
+type snapStub struct{ stubFS }
+
+func (*snapStub) SnapshotPath(p, snapshot string) (string, error) { return p + "@" + snapshot, nil }
+
+type viewStub struct{ stubFS }
+
+func (*viewStub) EntrySnapshot(filesys.Entry) (string, uint64, bool) { return "snap", 7, true }
+
+type bothStub struct{ stubFS }
+
+func (*bothStub) SnapshotPath(p, snapshot string) (string, error)    { return p + "@" + snapshot, nil }
+func (*bothStub) EntrySnapshot(filesys.Entry) (string, uint64, bool) { return "snap", 7, true }
+
+// A filesystem that carries notes (here an ambiguity note) keeps the optional
+// interfaces of the filesystem it wraps (Snapshotter, SnapshotViewer), and gains
+// none it did not have.
+func TestWarnedFilesystemKeepsOptionalInterfaces(t *testing.T) {
+	r := bytes.NewReader(make([]byte, 16))
+	other := detect.Driver{
+		Name:  "other",
+		Probe: func(io.ReaderAt, int64) bool { return true },
+		Open:  func(io.ReaderAt, int64) (filesys.FileSystem, error) { return &stubFS{typ: "other"}, nil },
+	}
+	for name, tc := range map[string]struct {
+		fs                 filesys.FileSystem
+		wantSnap, wantView bool
+	}{
+		"neither":     {&stubFS{typ: "x"}, false, false},
+		"snapshotter": {&snapStub{stubFS{typ: "x"}}, true, false},
+		"viewer":      {&viewStub{stubFS{typ: "x"}}, false, true},
+		"both":        {&bothStub{stubFS{typ: "x"}}, true, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			first := detect.Driver{
+				Name:  "x",
+				Probe: func(io.ReaderAt, int64) bool { return true },
+				Open:  func(io.ReaderAt, int64) (filesys.FileSystem, error) { return tc.fs, nil },
+			}
+			fsys, err := detect.OpenWith([]detect.Driver{first, other}, r, 16)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(fsys.Info().Warnings) == 0 {
+				t.Fatal("no note attached: the test does not exercise the wrapper")
+			}
+			sn, isSnap := fsys.(filesys.Snapshotter)
+			sv, isView := fsys.(filesys.SnapshotViewer)
+			if isSnap != tc.wantSnap || isView != tc.wantView {
+				t.Fatalf("Snapshotter=%v SnapshotViewer=%v, want %v %v", isSnap, isView, tc.wantSnap, tc.wantView)
+			}
+			if isSnap {
+				if got, err := sn.SnapshotPath("/V/a", "s"); err != nil || got != "/V/a@s" {
+					t.Errorf("SnapshotPath = %q, %v", got, err)
+				}
+			}
+			if isView {
+				if name, xid, ok := sv.EntrySnapshot(filesys.Entry{}); !ok || name != "snap" || xid != 7 {
+					t.Errorf("EntrySnapshot = %q %d %v", name, xid, ok)
+				}
+			}
+		})
+	}
+}
