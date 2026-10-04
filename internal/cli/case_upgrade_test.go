@@ -23,7 +23,7 @@ func TestCaseUpgradeCLI(t *testing.T) {
 	}
 
 	code, out = run(t, Deps{}, "case", "upgrade", "--case", c)
-	if code != 0 || !strings.Contains(out, "v1") || !strings.Contains(out, "v2") {
+	if code != 0 || !strings.Contains(out, "v1") || !strings.Contains(out, "v3") {
 		t.Fatalf("upgrade: %d %s", code, out)
 	}
 	code, out = run(t, Deps{}, "case", "upgrade", "--case", c)
@@ -36,16 +36,16 @@ func TestCaseUpgradeCLI(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &res); code != 0 || err != nil {
 		t.Fatalf("upgrade --json: %d %q %v", code, out, err)
 	}
-	if res["from"] != float64(2) || res["to"] != float64(2) || res["upgraded"] != false {
+	if res["from"] != float64(3) || res["to"] != float64(3) || res["upgraded"] != false || res["records_to_index"] != float64(0) {
 		t.Fatalf("json = %v", res)
 	}
 
 	code, out = run(t, Deps{Err: &bytes.Buffer{}}, "case", "info", "--case", c, "--json")
 	var info map[string]any
-	if err := json.Unmarshal([]byte(out), &info); code != 0 || err != nil || info["schema_version"] != float64(2) {
+	if err := json.Unmarshal([]byte(out), &info); code != 0 || err != nil || info["schema_version"] != float64(3) {
 		t.Fatalf("info json: %d %q %v", code, out, err)
 	}
-	if code, out = run(t, Deps{}, "case", "info", "--case", c); code != 0 || !strings.Contains(out, "Schema:") || !strings.Contains(out, "v2") {
+	if code, out = run(t, Deps{}, "case", "info", "--case", c); code != 0 || !strings.Contains(out, "Schema:") || !strings.Contains(out, "v3") {
 		t.Fatalf("info text: %d %s", code, out)
 	}
 	if code, out = run(t, Deps{}, "case", "verify", "--case", c); code != 0 || !strings.Contains(out, "OK") {
@@ -63,7 +63,7 @@ func TestCaseUpgradeJSONReportsUpgrade(t *testing.T) {
 	if err := json.Unmarshal([]byte(outS), &res); err != nil {
 		t.Fatalf("json %q: %v", outS, err)
 	}
-	if res["from"] != float64(1) || res["to"] != float64(2) || res["upgraded"] != true {
+	if res["from"] != float64(1) || res["to"] != float64(3) || res["upgraded"] != true || res["records_to_index"] != float64(0) {
 		t.Fatalf("json = %v", res)
 	}
 }
@@ -174,4 +174,45 @@ func TestCaseVerifyEscapesProblemText(t *testing.T) {
 	if !strings.Contains(out, `\x1b`) || !strings.Contains(out, string(rune(0x5c))+"u202e") {
 		t.Errorf("the escapes are not visible in the output:\n%s", out)
 	}
+}
+
+// TestCaseUpgradePrintsReindexHint: a v2 case with records upgrades to "index not built" and the
+// command says how many records are not searchable and which command builds the index; a case with
+// no records has a current index at once and gets no hint.
+func TestCaseUpgradePrintsReindexHint(t *testing.T) {
+	t.Run("text", func(t *testing.T) {
+		dir := recordstest.CopyV2Case(t)
+		code, out := run(t, Deps{}, "case", "upgrade", "--case", dir)
+		if code != 0 || !strings.Contains(out, "v2 -> v3") {
+			t.Fatalf("upgrade: %d %s", code, out)
+		}
+		for _, want := range []string{"12 records", "not searchable", "minutiae records reindex --case " + dir} {
+			if !strings.Contains(out, want) {
+				t.Errorf("output %q lacks %q", out, want)
+			}
+		}
+		// the hint is not repeated as news by a no-op upgrade, but the state is still said
+		code, out = run(t, Deps{}, "case", "upgrade", "--case", dir)
+		if code != 0 || !strings.Contains(out, "already") || !strings.Contains(out, "records reindex --case "+dir) {
+			t.Fatalf("second upgrade: %d %s", code, out)
+		}
+	})
+	t.Run("json", func(t *testing.T) {
+		dir := recordstest.CopyV2Case(t)
+		code, out := run(t, Deps{Err: &bytes.Buffer{}}, "case", "upgrade", "--case", dir, "--json")
+		var res map[string]any
+		if err := json.Unmarshal([]byte(out), &res); code != 0 || err != nil {
+			t.Fatalf("upgrade --json: %d %q %v", code, out, err)
+		}
+		if res["from"] != float64(2) || res["to"] != float64(3) || res["upgraded"] != true || res["records_to_index"] != float64(12) {
+			t.Fatalf("json = %v", res)
+		}
+	})
+	t.Run("no records, no hint", func(t *testing.T) {
+		dir := recordstest.NewV1Case(t)
+		code, out := run(t, Deps{}, "case", "upgrade", "--case", dir)
+		if code != 0 || strings.Contains(out, "reindex") || strings.Contains(out, "searchable") {
+			t.Fatalf("upgrade of an empty case: %d %s", code, out)
+		}
+	})
 }

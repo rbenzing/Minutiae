@@ -72,8 +72,8 @@ func TestMigrateV1ToV2KeepsArtifacts(t *testing.T) {
 	}
 	_ = db.Close()
 
-	s := openTestStore(t, p)
-	if v, err := s.SchemaVersion(); err != nil || v != 2 {
+	s := openTestStore(t, p) // migrates to the current schema: v1 -> v3 in one transaction
+	if v, err := s.SchemaVersion(); err != nil || v != 3 {
 		t.Fatalf("version = %d, %v", v, err)
 	}
 	h, err := s.ArtifactHashes()
@@ -674,11 +674,24 @@ func TestExpectedSchemaMatchesRealDatabases(t *testing.T) {
 	if d := schemaDifferences(mustExpected(t, 2), read(v1)); len(d) != 0 {
 		t.Errorf("an upgraded database differs from the expected v2 schema: %q", d)
 	}
-	s := openTestStore(t, filepath.Join(dir, "v2.db"))
-	if d := schemaDifferences(mustExpected(t, 2), read(s.db)); len(d) != 0 {
+	v2 := rawDB(t, filepath.Join(dir, "v2.db"))
+	if err := applyMigrations(v2, 0, 2); err != nil {
+		t.Fatal(err)
+	}
+	if d := schemaDifferences(mustExpected(t, 2), read(v2)); len(d) != 0 {
 		t.Errorf("a fresh v2 database differs from the expected v2 schema: %q", d)
 	}
-	if _, err := expectedSchema(3); err == nil {
+	if err := applyMigrations(v2, 2, 3); err != nil {
+		t.Fatal(err)
+	}
+	if d := schemaDifferences(mustExpected(t, 3), read(v2)); len(d) != 0 {
+		t.Errorf("a v2 database upgraded to v3 differs from the expected v3 schema: %q", d)
+	}
+	s := openTestStore(t, filepath.Join(dir, "v3.db"))
+	if d := schemaDifferences(mustExpected(t, 3), read(s.db)); len(d) != 0 {
+		t.Errorf("a fresh v3 database differs from the expected v3 schema: %q", d)
+	}
+	if _, err := expectedSchema(4); err == nil {
 		t.Error("a schema this build does not know has an expected schema")
 	}
 }

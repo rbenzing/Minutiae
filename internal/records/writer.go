@@ -117,13 +117,13 @@ type Writer struct {
 	warnSupp   int
 }
 
-// NewWriter checks the case is at schema v2 (evidence.ErrNeedsUpgrade
+// NewWriter checks the case is at schema v3 (evidence.ErrNeedsUpgrade
 // otherwise), the parser identity and the options.
 func NewWriter(c *evidence.Case, p Parser, o WriterOptions) (*Writer, error) {
 	if c == nil {
 		return nil, errors.New("records: no case")
 	}
-	if err := c.RequireSchema(2); err != nil {
+	if err := c.RequireSchema(3); err != nil {
 		return nil, err
 	}
 	if err := validateParser(p); err != nil {

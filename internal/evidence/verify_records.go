@@ -286,7 +286,10 @@ func (c *Case) verifyRecords(rep *VerifyReport, recs []ManifestRecord, entries [
 	parserOK := c.verifyParsers(ctx, rep, ps, audit)
 	// the tables no scan below reads row by row for another purpose
 	c.verifyClassOnly(ctx, ps, metaClasses, []string{"key"}, func(v []string) string { return fmt.Sprintf("key %q", v[0]) })
-	c.verifyMetaKeys(ctx, ps)
+	c.verifyMetaKeys(ctx, ps, dbv)
+	if dbv >= 3 {
+		c.verifyIndexState(ctx, rep)
+	}
 	c.verifyClassOnly(ctx, ps, supersededClasses, []string{"ingest_id", "artifact_id"},
 		func(v []string) string { return fmt.Sprintf("ingest %q artifact %q", v[0], v[1]) })
 
@@ -790,12 +793,17 @@ func (r VerifyReport) RecordsSummary() string {
 	return fmt.Sprintf(", %d records", r.RecordsChecked)
 }
 
-// verifyMetaKeys requires records_meta to hold only the next_id counter.
-func (c *Case) verifyMetaKeys(ctx context.Context, ps *problemSet) {
+// verifyMetaKeys requires records_meta to hold only the keys of the schema: next_id, and from
+// schema v3 on fts_norm_version (in an older schema that key is not part of it).
+func (c *Case) verifyMetaKeys(ctx context.Context, ps *problemSet, dbv int) {
 	var keys []string
+	known := ""
+	if dbv >= 3 {
+		known = " AND key IS NOT '" + MetaFTSNormVersion + "'"
+	}
 	err := c.ReadTx(ctx, func(h ReadHandle) error {
 		keys = nil
-		rows, err := h.QueryContext(ctx, `SELECT COALESCE(CAST(key AS TEXT), '') FROM records_meta WHERE key IS NOT 'next_id' ORDER BY 1 LIMIT `+strconv.Itoa(verifyMaxPerKind+1))
+		rows, err := h.QueryContext(ctx, `SELECT COALESCE(CAST(key AS TEXT), '') FROM records_meta WHERE key IS NOT 'next_id'`+known+` ORDER BY 1 LIMIT `+strconv.Itoa(verifyMaxPerKind+1))
 		if err != nil {
 			return err
 		}

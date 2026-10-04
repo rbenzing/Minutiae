@@ -15,9 +15,16 @@ import (
 )
 
 // recordTables are the tables only internal/evidence and internal/records may
-// write: the unified record tables, records_meta, and artifacts (which only
-// internal/evidence writes today).
-const recordTables = `(?:records_meta|records|record_batches|parsers|record_times|record_runs|record_run_artifacts|record_superseded|artifacts)`
+// write: the unified record tables, records_meta, artifacts (which only
+// internal/evidence writes today) and the full-text index: the two FTS5 tables,
+// their two vocab tables and the eight shadow tables SQLite keeps for them. Every
+// name is listed literally, so no pattern can miss one; an FTS5 special command
+// (the rebuild, delete or optimize forms) names its table and is a write like any
+// other.
+const recordTables = `(?:records_meta|records|record_batches|parsers|record_times|record_runs|record_run_artifacts|record_superseded|artifacts|` +
+	`records_fts|records_fts_sub|records_fts_v|records_fts_sub_v|` +
+	`records_fts_data|records_fts_idx|records_fts_docsize|records_fts_config|` +
+	`records_fts_sub_data|records_fts_sub_idx|records_fts_sub_docsize|records_fts_sub_config)`
 
 // unknown stands for an operand of a string expression that is not a constant
 // (a variable, a call): it may hold a table name, so it counts as one.
@@ -39,6 +46,7 @@ var recordWriteRE = regexp.MustCompile(`(?is)\b(?:` +
 	`update\s+(?:or\s+\w+\s+)?` + tableRef + `(?:\s+(?:as\s+)?\w+)?(?:\s+indexed\s+by\s+\w+|\s+not\s+indexed)?\s+set\b|` +
 	`delete\s+from\s+` + tableRef + `|` +
 	`alter\s+table\s+` + tableRef + `|` +
+	`create\s+virtual\s+table\s+(?:if\s+not\s+exists\s+)?` + tableRef + `|` +
 	`drop\s+(?:table|trigger|index)\b)`)
 
 // recordWriteTailRE matches a string that ends in a write verb: the first half
@@ -343,5 +351,74 @@ func TestRecordTableWriteScannerSeesConstantsAcrossFiles(t *testing.T) {
 	got := recordTableWrites(t, srcs)
 	if len(got) != 1 || got[0].File != "b.go" {
 		t.Errorf("violations = %+v, want one in b.go", got)
+	}
+}
+
+// ftsObjects are every name of the full-text index (the FTS5 tables, their vocab
+// tables and their shadow tables). Each must be in the rule's table list, flagged
+// for every write verb and for an FTS5 special command, and never flagged for a
+// plain read.
+var ftsObjects = []string{
+	"records_fts", "records_fts_sub", "records_fts_v", "records_fts_sub_v",
+	"records_fts_data", "records_fts_idx", "records_fts_docsize", "records_fts_config",
+	"records_fts_sub_data", "records_fts_sub_idx", "records_fts_sub_docsize", "records_fts_sub_config",
+}
+
+// TestRecordTableWriteScannerCoversTheFullTextIndex: the statements are assembled
+// from words at run time (strings.Join), so this file holds no violation itself.
+func TestRecordTableWriteScannerCoversTheFullTextIndex(t *testing.T) {
+	for _, name := range ftsObjects {
+		if !strings.Contains(recordTables, name+"|") && !strings.Contains(recordTables, name+")") {
+			t.Errorf("recordTables does not list %q", name)
+		}
+	}
+	// no name outside the list: every records_fts* token of the rule is one of ftsObjects
+	for _, tok := range regexp.MustCompile(`records_fts\w*`).FindAllString(recordTables, -1) {
+		found := false
+		for _, name := range ftsObjects {
+			found = found || name == tok
+		}
+		if !found {
+			t.Errorf("recordTables lists %q, which is not a known full-text object", tok)
+		}
+	}
+	flagged := func(sql string) bool {
+		src := "package x\n\nvar q = " + strconv.Quote(sql) + "\n"
+		return len(recordTableWrites(t, map[string]string{"x.go": src})) == 1
+	}
+	words := func(w ...string) string { return strings.Join(w, " ") }
+	for _, name := range ftsObjects {
+		for _, sql := range []string{
+			words("INSERT", "INTO", name, "(rowid) VALUES (1)"),
+			words("UPDATE", name, "SET x = 1"),
+			words("DELETE", "FROM", name),
+			words("DROP", "TABLE", name),
+			words("ALTER", "TABLE", name, "RENAME TO other"),
+			words("CREATE", "VIRTUAL", "TABLE", name, "USING fts5(summary)"),
+			words("CREATE", "VIRTUAL", "TABLE", "IF NOT EXISTS", name, "USING fts5(summary)"),
+			// FTS5 special commands: the command is a write to the table it names
+			words("INSERT", "INTO", name+"("+name+") VALUES('rebuild')"),
+			words("INSERT", "INTO", name+"("+name+", rank) VALUES('delete-all', 1)"),
+			words("INSERT", "INTO", name+"("+name+") VALUES('optimize')"),
+		} {
+			if !flagged(sql) {
+				t.Errorf("%q is not flagged", sql)
+			}
+		}
+		for _, sql := range []string{
+			words("SELECT", "rowid", "FROM", name, "WHERE", name, "MATCH ?"),
+			words("SELECT", "*", "FROM", name),
+			words("SELECT", "count(*)", "FROM", name+"_other"),
+			words("INSERT", "INTO", name+"_backup", "VALUES (1)"),
+			words("DELETE", "FROM", name+"_archive"),
+		} {
+			if flagged(sql) {
+				t.Errorf("%q is flagged but is harmless", sql)
+			}
+		}
+	}
+	// a builder piece: the table name comes from a variable
+	if !flagged(words("INSERT", "INTO")) {
+		t.Error("a builder piece ending in INSERT INTO is not flagged")
 	}
 }

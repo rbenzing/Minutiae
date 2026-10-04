@@ -15,12 +15,14 @@ import (
 )
 
 // CurrentSchema is the artifacts.db schema version this build creates and reads.
-const CurrentSchema = 2
+const CurrentSchema = 3
 
-// migration is one schema upgrade step, applied in a single transaction.
+// migration is one schema upgrade step. Every pending step runs in the same single transaction
+// (applyMigrations), so a chain is all or nothing.
 type migration struct {
 	pre   func(tx *sql.Tx) error // first, in the same transaction; an error rolls everything back
 	stmts []string
+	post  func(tx *sql.Tx) error // after stmts, in the same transaction; an error rolls everything back
 }
 
 // v1Statements is schema v1. It is moved here verbatim and must stay byte-identical.
@@ -53,6 +55,7 @@ var v1Statements = []string{
 var migrations = []migration{
 	{stmts: v1Statements},
 	{pre: v2Precheck, stmts: v2Statements},
+	{stmts: v3Statements, post: v3Post},
 }
 
 // Store is the case's artifacts.db.
@@ -252,9 +255,11 @@ func ensureVersionTable(db *sql.DB) error {
 	return nil
 }
 
-// applyMigrations runs migrations[from:to], each in its own transaction (the
-// pre-check, the statements and the schema_version row commit together or not
-// at all). Tests use it to build a database at an older version.
+// applyMigrations runs migrations[from:to] in ONE transaction: every pre-check, every statement,
+// every post step and every schema_version row commit together or not at all, so a failure at any
+// step leaves the database at version from, exactly as it was. (One transaction per step would
+// leave a v1 database half-way at v2 when the step to v3 fails.) Tests use it to build a database
+// at an older version.
 func applyMigrations(db *sql.DB, from, to int) error {
 	if from < 0 || from > to || to > len(migrations) {
 		return fmt.Errorf("artifacts.db cannot apply migrations %d..%d: this build knows %d", from, to, len(migrations))
@@ -262,20 +267,20 @@ func applyMigrations(db *sql.DB, from, to int) error {
 	if err := ensureVersionTable(db); err != nil {
 		return err
 	}
+	if from == to {
+		return nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
 	for i := from; i < to; i++ {
-		tx, err := db.Begin()
-		if err != nil {
-			return err
-		}
 		if err := runMigration(tx, i); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
-		if err := tx.Commit(); err != nil {
-			return err
-		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 func runMigration(tx *sql.Tx, i int) error {
@@ -287,6 +292,11 @@ func runMigration(tx *sql.Tx, i int) error {
 	}
 	for _, stmt := range m.stmts {
 		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("artifacts.db migration %d: %w", i+1, err)
+		}
+	}
+	if m.post != nil {
+		if err := m.post(tx); err != nil {
 			return fmt.Errorf("artifacts.db migration %d: %w", i+1, err)
 		}
 	}

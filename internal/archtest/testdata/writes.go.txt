@@ -96,5 +96,56 @@ var (
 )
 
 
+// the full-text index (plan 5B): the FTS5 tables, their vocab tables and their shadow tables, each
+// named literally, and FTS5 special commands (a write to the table they name).
+var (
+	ftsInsert    = "INSERT INTO records_fts (rowid, summary, body) VALUES (1, 'a', 'b')" // want
+	ftsInsertSub = "INSERT INTO records_fts_sub (rowid, summary, body) VALUES (1, 'a', 'b')" // want
+	ftsRebuild   = "INSERT INTO records_fts(records_fts) VALUES('rebuild')" // want
+	ftsOptimize  = "INSERT INTO records_fts_sub(records_fts_sub) VALUES('optimize')" // want
+	ftsDelete    = "INSERT INTO records_fts(records_fts, rank) VALUES('delete', 1)" // want
+	ftsDeleteAll = "INSERT INTO records_fts_sub(records_fts_sub) VALUES('delete-all')" // want
+	ftsIntegrity = "INSERT INTO records_fts(records_fts, rank) VALUES('integrity-check', 1)" // want
+	ftsConcat    = "INSERT INTO " + "records_fts_sub" + "(records_fts_sub) VALUES('rebuild')" // want
+	ftsConstCat  = "DELETE FROM " + ftsName // want
+	ftsDelRows   = "DELETE FROM records_fts WHERE rowid = 1" // want
+	ftsUpdate    = "UPDATE records_fts_sub SET summary = 'x'" // want
+	ftsCreate    = "CREATE VIRTUAL TABLE records_fts USING fts5(summary, body)" // want
+	ftsCreateIf  = "CREATE VIRTUAL TABLE IF NOT EXISTS records_fts_sub USING fts5(summary)" // want
+	ftsCreateV   = "CREATE VIRTUAL TABLE records_fts_v USING fts5vocab(records_fts, 'instance')" // want
+	ftsDrop      = "DROP TABLE records_fts_sub_v" // want
+	ftsAlter     = "ALTER TABLE records_fts RENAME TO elsewhere" // want
+	ftsQuoted    = "DELETE FROM \"records_fts_sub\"" // want
+	ftsSprintf   = fmt.Sprintf("INSERT INTO %s(%s) VALUES('rebuild')", "records_fts", "records_fts") // want
+
+	// every shadow table, by name
+	shData    = "DELETE FROM records_fts_data" // want
+	shIdx     = "DELETE FROM records_fts_idx" // want
+	shDocsize = "UPDATE records_fts_docsize SET sz = x'00'" // want
+	shConfig  = "INSERT OR REPLACE INTO records_fts_config (k, v) VALUES ('version', 4)" // want
+	shSubData = "UPDATE records_fts_sub_data SET block = x'00' WHERE id = 10" // want
+	shSubIdx  = "DELETE FROM records_fts_sub_idx" // want
+	shSubDoc  = "DELETE FROM records_fts_sub_docsize WHERE id = 2" // want
+	shSubCfg  = "UPDATE records_fts_sub_config SET v = 1" // want
+)
+
+const ftsName = "records_fts_data"
+
+// harmless: reads of the full-text index and look-alike names are not writes.
+var (
+	ftsMatch    = "SELECT rowid FROM records_fts WHERE records_fts MATCH ?"
+	ftsRank     = "SELECT rowid, bm25(records_fts_sub, 2.0, 1.0) FROM records_fts_sub WHERE records_fts_sub MATCH ? ORDER BY 2"
+	ftsVocab    = "SELECT term, doc, col, offset FROM records_fts_v ORDER BY term"
+	ftsVocabSub = "SELECT term FROM records_fts_sub_v"
+	ftsDocsize  = "SELECT id, sz FROM records_fts_docsize ORDER BY id"
+	ftsConfig   = "SELECT k, v FROM records_fts_sub_config"
+	ftsData     = "SELECT block FROM records_fts_data WHERE id = 1"
+	ftsIn       = "SELECT * FROM records r WHERE r.id IN (SELECT rowid FROM records_fts WHERE records_fts MATCH ?)"
+	ftsLike     = "INSERT INTO records_fts_backup VALUES (1)"
+	ftsLike2    = "DELETE FROM records_fts_archive"
+	ftsLike3    = "UPDATE records_fts_other SET a = 1"
+)
+
+
 // a comment that mentions UPDATE records SET x = 1 or DELETE FROM records is no write.
 /* INSERT INTO records (id) VALUES (1) */

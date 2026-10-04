@@ -63,7 +63,7 @@ func (w *Writer) Start(ctx context.Context, so StartOptions) error {
 	case stateClosed:
 		return ErrWriterClosed
 	}
-	if err := w.c.RequireSchema(2); err != nil {
+	if err := w.c.RequireSchema(3); err != nil {
 		return err
 	}
 	// nothing is audited, recovered or written against a database whose schema
@@ -260,7 +260,7 @@ func ingestedBy(ctx context.Context, h evidence.ReadHandle, artifactID string, p
 // It reads the database only: an ingest that concluded in the audit log but was
 // never recorded is recovered by the next Writer.Start.
 func AlreadyIngested(ctx context.Context, c *evidence.Case, artifactID string, p Parser) (bool, error) {
-	if err := c.RequireSchema(2); err != nil {
+	if err := c.RequireSchema(3); err != nil {
 		return false, err
 	}
 	var ok bool

@@ -15,7 +15,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/records/recordstest"
 )
 
-func TestNewWriterRequiresSchemaV2(t *testing.T) {
+func TestNewWriterRequiresSchemaV3(t *testing.T) {
 	c, err := evidence.Open(recordstest.NewV1Case(t))
 	if err != nil {
 		t.Fatal(err)

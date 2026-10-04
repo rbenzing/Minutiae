@@ -38,7 +38,7 @@ func newCaseUpgradeCmd(d Deps, opts *rootOptions) *cobra.Command {
 				return err
 			}
 			if opts.json {
-				return writeJSON(d.Out, map[string]any{"from": res.From, "to": res.To, "upgraded": res.Upgraded, "resumed": res.Resumed})
+				return writeJSON(d.Out, map[string]any{"from": res.From, "to": res.To, "upgraded": res.Upgraded, "resumed": res.Resumed, "records_to_index": res.RecordsToIndex})
 			}
 			switch {
 			case res.Resumed:
@@ -47,6 +47,9 @@ func newCaseUpgradeCmd(d Deps, opts *rootOptions) *cobra.Command {
 				fmt.Fprintf(d.Out, "upgraded case schema v%d -> v%d\n", res.From, res.To)
 			default:
 				fmt.Fprintf(d.Out, "case schema v%d is already current\n", res.To)
+			}
+			if res.RecordsToIndex > 0 {
+				fmt.Fprintf(d.Out, "%d records are not searchable until the full-text index is built; run: minutiae records reindex --case %s\n", res.RecordsToIndex, c.Dir)
 			}
 			return nil
 		},
