@@ -313,6 +313,9 @@ How it works (the same route as the HFS+ fixture):
   and builds from pinned git commits `apfsprogs` v0.2.1 (`mkapfs`, `apfsck`, `apfs-snap`;
   commit `3721463b...`) and `linux-apfs-rw` v0.3.21 (commit `8a376002...`, built out of tree
   against those headers: `apfs.ko`, vermagic `6.1.0-53-amd64 SMP preempt mod_unload modversions`).
+  The apt packages are pinned by version name but fetched from the live Debian mirror, which
+  drops superseded kernel versions: a rebuild after that fails until the image is moved to
+  `snapshot.debian.org` (as `Dockerfile.hfs` already is); the committed fixtures are unaffected.
 - `apfs-populated.sh` formats a 32 MiB image with `mkapfs -L populated` (default:
   case-insensitive, hashed directory-record keys) under `faketime`, with fixed UUIDs, then
   `apfs_populate.sh` boots that Debian kernel under QEMU software emulation (`-accel tcg`, no
@@ -376,7 +379,8 @@ Findings about a real driver-written image (all recorded in the oracle):
 - The 22-bit directory-record name hash is CRC-32C (no final complement) of the UTF-32 code
   points of the NFD name WITHOUT the terminating NUL, after Unicode case folding on a
   case-insensitive volume (Python `casefold()` reproduces the driver's table for the names here:
-  `ß`, `İ`, `ǅ`, Greek, Cyrillic, Hangul). The Go reader verifies this hash for ASCII names only.
+  `ß`, `İ`, `ǅ`, Greek, Cyrillic, Hangul). The Go reader verifies this hash for every name that is valid
+  UTF-8 and made only of code points assigned in Unicode 9.0 (all 678 stored hashes here verify).
 
 Reproducibility: NOT byte-identical. Generated twice with the final scripts, the two images
 had different sha256 values (`d1fb63ef...` and `4454c83c...`; with three earlier runs, five
@@ -393,8 +397,8 @@ Not covered by the populated image: encryption, compression (`com.apple.decmpfs`
 volume, several snapshots or a deleted snapshot, a case-sensitive volume (the empty `apfs-cs` has
 the flags only), fusion drives, space-manager CIB/CAB layers, deleted-entry recovery, and
 anything a macOS writer does differently from this driver. Lookup of a name that differs from
-the stored one only in Unicode normalization is not found by the reader (a documented
-approximation, `TestAPFSMatchesOracle/populated/name_lookup` logs it); case differences are found.
+the stored one only in Unicode normalization or case is found by the reader (the volume is
+normalization-insensitive; `TestAPFSMatchesOracle/populated/name_lookup` asserts NFC and NFD queries).
 
 ### F2FS determinism
 
