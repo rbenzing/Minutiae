@@ -13,10 +13,6 @@ const (
 	IndexTree
 )
 
-// WALInfo describes the write-ahead log attached to a database. Task 7 gives
-// it its fields.
-type WALInfo struct{}
-
 // JournalInfo describes the rollback journal attached to a database. Task 9
 // gives it its fields.
 type JournalInfo struct{}
