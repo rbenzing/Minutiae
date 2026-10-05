@@ -128,7 +128,7 @@ func (v *View) applyWAL(a *attachedWAL) {
 			sz := min(int64(phys)*int64(d.info.PageSize), 1<<62)
 			scratch := newWarnings(v.e.opts.Limits.MaxWarnings)
 			if pi, perr := parseHeader(hdr[:headerSize], sz, scratch); perr != nil || pi.PageSize != d.info.PageSize || pi.Reserved != d.info.Reserved {
-				v.warns.add(Warning{Code: WarnPageTypeInvalid, File: FileWAL, Page: 1, Msg: "page 1 in the WAL has a header that does not fit the database (page size, reserved bytes or structure); the database's header is kept"})
+				v.warns.add(Warning{Code: WarnWALPage1Mismatch, File: FileWAL, Page: 1, Msg: "page 1 in the WAL has a header that does not fit the database (page size, reserved bytes or structure); the database's header is kept"})
 			} else {
 				for _, x := range scratch.snapshot() {
 					x.File = FileWAL

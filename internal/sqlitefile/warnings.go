@@ -61,6 +61,7 @@ const (
 	WarnWALTornTail             = "wal-torn-tail"
 	WarnWALModeMismatch         = "wal-mode-mismatch"
 	WarnWALFramesNotApplied     = "wal-frames-not-applied"
+	WarnWALPage1Mismatch        = "wal-page1-mismatch"
 	WarnJournalHeaderInvalid    = "journal-header-invalid"
 	WarnJournalSectorInvalid    = "journal-sector-invalid"
 	WarnJournalPageSizeMismatch = "journal-page-size-mismatch"
@@ -85,7 +86,7 @@ var knownWarningCodes = map[string]bool{
 	WarnRecordInvalid: true, WarnRecordReservedSerial: true, WarnBTreeCycle: true, WarnBTreeDepth: true, WarnBTreeOrder: true, WarnBTreeShape: true,
 	WarnFreelistCycle: true, WarnFreelistCount: true, WarnFreelistLeafCount: true, WarnFreeblockChain: true,
 	WarnPtrmapMismatch: true, WarnSchemaRowInvalid: true, WarnSchemaDuplicate: true, WarnSchemaSQLUnparsed: true,
-	WarnWALHeaderInvalid: true, WarnWALPageSizeMismatch: true, WarnWALTornTail: true, WarnWALModeMismatch: true, WarnWALFramesNotApplied: true,
+	WarnWALHeaderInvalid: true, WarnWALPageSizeMismatch: true, WarnWALTornTail: true, WarnWALModeMismatch: true, WarnWALFramesNotApplied: true, WarnWALPage1Mismatch: true,
 	WarnJournalHeaderInvalid: true, WarnJournalSectorInvalid: true, WarnJournalPageSizeMismatch: true,
 	WarnJournalNoPageSize: true, WarnJournalPageInvalid: true, WarnJournalHot: true, WarnJournalSuperUnknown: true,
 	WarnJournalAndWAL: true, WarnJournalDuplicatePage: true, WarnSnapshotUnavailable: true, WarnOwnerChanged: true,

@@ -818,3 +818,33 @@ func TestStatusReportsAttachedWAL(t *testing.T) {
 		t.Error("no WAL attached, Status().WAL must be nil")
 	}
 }
+
+// TestLivePage1MismatchHasItsOwnCode: a WAL page 1 whose header does not fit
+// the database (here another page size) keeps the database's header and says
+// so with the closed-set code wal-page1-mismatch, not page-type-invalid (that
+// code means a b-tree page of the wrong kind).
+func TestLivePage1MismatchHasItsOwnCode(t *testing.T) {
+	f := newWfix(20)
+	db := walMode(f.b.Bytes())
+	p1 := bytes.Clone(db[:ovPS])
+	binary.BigEndian.PutUint16(p1[16:], uint16(ovPS*2%65536)) // another page size
+	binary.BigEndian.PutUint32(p1[40:], 77)
+	w := f.b.NewWAL(false, 1, 2, 0)
+	w.Frame(1, p1, f.b.Snapshot().Pages())
+	d, v, _ := attachLive(t, db, w.Bytes(), sqlitefile.Options{})
+	var got *sqlitefile.Warning
+	for _, x := range v.Warnings() {
+		if x.Code == "page-type-invalid" {
+			t.Errorf("page-type-invalid used for a WAL page 1: %+v", x)
+		}
+		if x.Code == "wal-page1-mismatch" {
+			got = &x
+		}
+	}
+	if got == nil || got.File != sqlitefile.FileWAL || got.Page != 1 {
+		t.Fatalf("wal-page1-mismatch (WAL file, page 1) missing: %v", v.Warnings())
+	}
+	if v.Info().SchemaCookie == 77 || v.Info().PageSize != d.Info().PageSize {
+		t.Errorf("the database's header must be kept: %+v", v.Info())
+	}
+}
