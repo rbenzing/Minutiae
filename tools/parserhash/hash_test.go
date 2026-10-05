@@ -123,7 +123,7 @@ func TestParserHashChangesOnSemanticEdit(t *testing.T) {
 }
 
 func TestParserHashStability(t *testing.T) {
-	const golden = "src1:sha256:6de7bb08276e184b5e008e4c44c669f54cb5e47714682b06ad19aaebd86eea04"
+	const golden = "src1:sha256:184daa19c1c4cd6d97100e0c2eee7bb58642fcdd53c6754ada6ae84ef814e612"
 	got := fixtureHash(t, baseSource, "data")
 	if got != golden {
 		t.Errorf("golden hash changed: got %s want %s (a change of the dump format needs a deliberate hash-v bump)", got, golden)
@@ -213,5 +213,32 @@ func TestHashFramingIsUnambiguous(t *testing.T) {
 	two := hash(scope("x"), map[string]string{"x": "1\x00m/p/y\x002"})
 	if one == two {
 		t.Error("an embedded NUL faked a file boundary")
+	}
+}
+
+// A directive separated from its declaration by blank lines or comments still
+// belongs to the next declaration: its position decides what it annotates.
+func TestDetachedDirectiveIsHashedWithNextDeclaration(t *testing.T) {
+	for name, tc := range map[string]struct{ head, mid, a, b string }{
+		"embed between vars": {
+			"package a\n\nimport _ \"embed\"\n\n", "var x string\n\n", "//go:embed data.txt\n\n// c\n", "var y string\n",
+		},
+		"noinline between funcs": {
+			"package a\n\n", "func f() {}\n\n", "//go:noinline\n\n", "func g() {}\n",
+		},
+	} {
+		first := tc.head + tc.a + tc.mid + tc.b
+		second := tc.head + tc.mid + tc.a + tc.b
+		if fixtureHash(t, first, "d") == fixtureHash(t, second, "d") {
+			t.Errorf("%s: moving a detached directive must change the hash", name)
+		}
+	}
+	// A directive after the last declaration attaches to the file end and still counts.
+	if fixtureHash(t, "package a\n\nfunc f() {}\n", "d") == fixtureHash(t, "package a\n\nfunc f() {}\n\n//go:noinline\n", "d") {
+		t.Error("a trailing directive must change the hash")
+	}
+	// Directive text is still significant, and so is its place among two directives.
+	if fixtureHash(t, "package a\n\n//go:noinline\n\nfunc f() {}\n", "d") == fixtureHash(t, "package a\n\n//go:nosplit\n\nfunc f() {}\n", "d") {
+		t.Error("directive text must change the hash")
 	}
 }

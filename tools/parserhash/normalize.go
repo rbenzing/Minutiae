@@ -20,7 +20,6 @@ const dumpFormat = "goast-v1\n"
 var (
 	posType   = reflect.TypeOf(token.Pos(0))
 	tokenType = reflect.TypeOf(token.ILLEGAL)
-	docType   = reflect.TypeFor[*ast.CommentGroup]()
 
 	// skipFields are never part of the dump: comments (the //go: and //line
 	// directives are appended separately), object resolution, and the import
@@ -32,8 +31,8 @@ var (
 )
 
 // NormalizeGo returns the formatting-insensitive form of one Go file: a
-// position-free, comment-free dump of its syntax tree with canonical imports,
-// followed by its //go: and //line directive comments in source order.
+// position-free, comment-free dump of its syntax tree with canonical imports, in which
+// every //go: and //line directive precedes the declaration it annotates.
 func NormalizeGo(src []byte, name string) (out []byte, err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -49,12 +48,30 @@ func NormalizeGo(src []byte, name string) (out []byte, err error) {
 	b.WriteString("package ")
 	dumpValue(&b, reflect.ValueOf(f.Name))
 	b.WriteByte('\n')
+	// Every directive comment belongs to the next declaration by source
+	// position (blank lines and comments between them do not matter); one
+	// after the last declaration belongs to the end of the file.
+	var directives []*ast.Comment
+	for _, cg := range f.Comments {
+		for _, c := range cg.List {
+			if isDirective(c.Text) {
+				directives = append(directives, c)
+			}
+		}
+	}
 	for _, d := range f.Decls {
 		if g, ok := d.(*ast.GenDecl); ok && g.Tok == token.IMPORT {
 			continue
 		}
+		for len(directives) > 0 && directives[0].Pos() < d.Pos() {
+			writeDirective(&b, "directive ", directives[0])
+			directives = directives[1:]
+		}
 		dumpValue(&b, reflect.ValueOf(d))
 		b.WriteByte('\n')
+	}
+	for _, c := range directives {
+		writeDirective(&b, "directive-at-end ", c)
 	}
 	lines := map[string]bool{}
 	for _, is := range f.Imports {
@@ -77,20 +94,17 @@ func NormalizeGo(src []byte, name string) (out []byte, err error) {
 		b.WriteString(l)
 		b.WriteByte('\n')
 	}
-	for _, cg := range f.Comments {
-		for _, c := range cg.List {
-			if isDirective(c.Text) {
-				b.WriteString("directive ")
-				b.WriteString(c.Text)
-				b.WriteByte('\n')
-			}
-		}
-	}
 	return b.Bytes(), nil
 }
 
 // dumpValue renders every non-zero field of v depth-first, in declaration
 // order, skipping positions and the fields in skipFields.
+func writeDirective(b *bytes.Buffer, prefix string, c *ast.Comment) {
+	b.WriteString(prefix)
+	b.WriteString(c.Text)
+	b.WriteByte('\n')
+}
+
 func dumpValue(b *bytes.Buffer, v reflect.Value) {
 	if v.Type() == posType {
 		return
@@ -112,19 +126,6 @@ func dumpValue(b *bytes.Buffer, v reflect.Value) {
 		b.WriteByte('(')
 		for i := 0; i < t.NumField(); i++ {
 			sf := t.Field(i)
-			if sf.Name == "Doc" && sf.Type == docType {
-				// Directives are hashed with the declaration they annotate.
-				if cg, _ := v.Field(i).Interface().(*ast.CommentGroup); cg != nil {
-					for _, c := range cg.List {
-						if isDirective(c.Text) {
-							b.WriteString("Doc=")
-							b.WriteString(strconv.Quote(c.Text))
-							b.WriteByte(',')
-						}
-					}
-				}
-				continue
-			}
 			if !sf.IsExported() || skipFields[sf.Name] || sf.Type == posType {
 				continue
 			}

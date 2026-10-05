@@ -64,7 +64,7 @@ func hashEntries(cfg Config, entries []Entry) ([]hashed, []Problem, error) {
 			return nil, nil, err
 		}
 		h, err := HashScope(s, func(dir, file string) ([]byte, error) {
-			return os.ReadFile(filepath.Join(dir, filepath.FromSlash(file)))
+			return readFile(filepath.Join(dir, filepath.FromSlash(file)))
 		})
 		if err != nil {
 			return nil, nil, err
@@ -239,3 +239,7 @@ func run(args []string, stdout, stderr io.Writer, entries []Entry) int {
 	}
 	return 0
 }
+
+// readFile reads the files being hashed; a variable so a test can make the
+// read fail after the scope was resolved.
+var readFile = os.ReadFile
