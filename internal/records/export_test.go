@@ -58,3 +58,21 @@ func (w *Writer) SetMaxWarnings(n int) { w.warnCap = n }
 
 // Canonical exposes the cursor-fingerprint form of a compiled query.
 func (q *TextQuery) Canonical() string { return q.canonical() }
+
+// Fingerprint exposes the listing fingerprint of f for the case caseID.
+func Fingerprint(f Filter, caseID string, desc bool) string { return f.fingerprint(caseID, desc) }
+
+// SetBeforeQuery installs the seam called right before a full-text MATCH statement runs.
+func (r *Reader) SetBeforeQuery(f func()) { r.beforeQuery = f }
+
+// SnippetScanBytes is the most bytes of a text a snippet is built from.
+const SnippetScanBytes = snippetScanBytes
+
+// RankSQL returns the statement Search runs for a rank-order query.
+func RankSQL(f Filter) string {
+	q, err := buildRank(f, false)
+	if err != nil {
+		return "error: " + err.Error()
+	}
+	return q.sql
+}

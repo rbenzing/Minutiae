@@ -225,6 +225,30 @@ func TestQueriesLeaveCaseUntouched(t *testing.T) {
 		if _, err := f.r.Overview(ctx, records.Filter{}); err != nil {
 			t.Fatal(err)
 		}
+		// the full-text readers write nothing either, and add no audit entry
+		tq, err := records.CompileQuery("r0*", records.TextOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res, err := f.r.Search(ctx, records.Filter{Text: tq}, records.Page{Limit: 5}, records.SearchOptions{Snippets: true}); err != nil || len(res.Hits) == 0 {
+			t.Fatalf("Search: %d hits, %v", len(res.Hits), err)
+		}
+		rq, err := records.CompileQuery("r0*", records.TextOptions{Rank: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.r.Search(ctx, records.Filter{Text: rq}, records.Page{Limit: 5}, records.SearchOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		if th, err := f.r.TermHits(ctx, records.Filter{}, []records.Term{{Text: "r01"}, {Text: "r01", Substring: true}}, 5); err != nil || th[0].Count != 1 {
+			t.Fatalf("TermHits: %+v, %v", th, err)
+		}
+		if _, err := f.r.IndexStatus(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := f.r.Count(ctx, records.Filter{Text: tq}, 0); err != nil {
+			t.Fatal(err)
+		}
 		// refused input changes nothing either
 		_, _ = f.r.List(ctx, records.Filter{}, records.Page{Cursor: "junk"})
 	}

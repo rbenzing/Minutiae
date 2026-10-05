@@ -1,8 +1,10 @@
 package records
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 )
@@ -29,7 +31,11 @@ const (
 // Reader reads the records of a case. It never writes: every read is one
 // evidence.Case.ReadTx (query_only, rolled back), appends nothing to the audit
 // log and holds the case's single connection only for the duration of one call.
-type Reader struct{ c *evidence.Case }
+type Reader struct {
+	c *evidence.Case
+	// beforeQuery is a test seam, called right before a full-text MATCH statement runs.
+	beforeQuery func()
+}
 
 // NewReader returns a reader for c. A case whose schema is older than v2 has no
 // record tables: the error wraps evidence.ErrNeedsUpgrade.
@@ -152,4 +158,41 @@ type Overview struct {
 	SupersededRecords int64
 	TSMin, TSMax      *int64           // Unix microseconds
 	Runs              map[string]int64 // every run of the case, by outcome
+}
+
+// readTx runs fn in one evidence.Case.ReadRecordsTx. With needIndex it first requires, inside the same
+// snapshot, a schema of v3 or newer (ErrNeedsUpgrade otherwise) and a current full-text index
+// (ErrIndexNotCurrent otherwise): every call that carries a text query goes through it.
+func (r *Reader) readTx(ctx context.Context, needIndex bool, fn func(evidence.ReadHandle) error) error {
+	return r.c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {
+		if needIndex {
+			var v int
+			if err := h.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_version`).Scan(&v); err != nil {
+				return fmt.Errorf("artifacts.db schema_version: %w", err)
+			}
+			if v < 3 {
+				return fmt.Errorf("%w: case schema v%d < v3 has no full-text index; run: minutiae case upgrade --case %s", evidence.ErrNeedsUpgrade, v, r.c.Dir)
+			}
+			if err := evidence.RequireIndexCurrentIn(ctx, h); err != nil {
+				return err
+			}
+		}
+		return fn(h)
+	})
+}
+
+// matching runs the test seam, called right before a full-text MATCH statement.
+func (r *Reader) matching() {
+	if r.beforeQuery != nil {
+		r.beforeQuery()
+	}
+}
+
+// mapTimeout turns an expired deadline into ErrSearchTimeout (wrapping the context error); a
+// cancellation stays a cancellation.
+func mapTimeout(err error) error {
+	if err != nil && errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, ErrSearchTimeout) {
+		return fmt.Errorf("%w: %w", ErrSearchTimeout, err)
+	}
+	return err
 }

@@ -469,6 +469,21 @@ func TestVerifyFTSIndexTamperWithMetaDodgingStillSafe(t *testing.T) {
 	if err := c.RequireIndexCurrent(ctx); !errors.Is(err, evidence.ErrIndexNotCurrent) {
 		t.Fatalf("RequireIndexCurrent = %v, want ErrIndexNotCurrent", err)
 	}
+	// R38: a real search and term lookup refuse too (the hidden hit is never answered around)
+	r, err := records.NewReader(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, err := records.CompileQuery("cafe", records.TextOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Search(ctx, records.Filter{Text: q}, records.Page{}, records.SearchOptions{}); !errors.Is(err, evidence.ErrIndexNotCurrent) || !strings.Contains(err.Error(), "records reindex") {
+		t.Fatalf("Search = %v, want ErrIndexNotCurrent naming records reindex", err)
+	}
+	if _, err := r.TermHits(ctx, records.Filter{}, []records.Term{{Text: "cafe"}}, 5); !errors.Is(err, evidence.ErrIndexNotCurrent) {
+		t.Fatalf("TermHits = %v, want ErrIndexNotCurrent", err)
+	}
 	// and so does the writer
 	w, err := records.NewWriter(c, testParser, records.WriterOptions{})
 	if err != nil {

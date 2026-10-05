@@ -215,6 +215,12 @@ func (r *Reader) List(ctx context.Context, f Filter, p Page) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	return r.page(ctx, f, p, limit, nil)
+}
+
+// page is List, with an optional step that runs on the page's rows inside the same read transaction
+// (Search builds its snippets there).
+func (r *Reader) page(ctx context.Context, f Filter, p Page, limit int, with func(evidence.ReadHandle, []Row) error) (Result, error) {
 	if _, err := f.compile(false); err != nil { // validate before touching the database
 		return Result{}, err
 	}
@@ -224,7 +230,7 @@ func (r *Reader) List(ctx context.Context, f Filter, p Page) (Result, error) {
 		return Result{}, err
 	}
 	var res Result
-	err = r.c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {
+	err = r.readTx(ctx, f.Text != nil, func(h evidence.ReadHandle) error {
 		have, err := hasSuperseded(ctx, h)
 		if err != nil {
 			return err
@@ -239,22 +245,28 @@ func (r *Reader) List(ctx context.Context, f Filter, p Page) (Result, error) {
 				break
 			}
 			q.args[len(q.args)-1] = want
+			if f.Text != nil {
+				r.matching()
+			}
 			if err := collect(ctx, h, q, &res.Rows); err != nil {
 				return err
 			}
+		}
+		if len(res.Rows) > limit {
+			res.Rows = res.Rows[:limit]
+			next, err := cursorAfter(res.Rows[limit-1], p.Desc, fp)
+			if err != nil {
+				return err
+			}
+			res.NextCursor = next.encode()
+		}
+		if with != nil {
+			return with(h, res.Rows)
 		}
 		return nil
 	})
 	if err != nil {
 		return Result{}, err
-	}
-	if len(res.Rows) > limit {
-		res.Rows = res.Rows[:limit]
-		next, err := cursorAfter(res.Rows[limit-1], p.Desc, fp)
-		if err != nil {
-			return Result{}, err
-		}
-		res.NextCursor = next.encode()
 	}
 	return res, nil
 }
@@ -317,7 +329,7 @@ func (r *Reader) Count(ctx context.Context, f Filter, limit int) (n int64, cappe
 	if _, err := f.compile(false); err != nil {
 		return 0, false, err
 	}
-	err = r.c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {
+	err = r.readTx(ctx, f.Text != nil, func(h evidence.ReadHandle) error {
 		have, err := hasSuperseded(ctx, h)
 		if err != nil {
 			return err
@@ -331,6 +343,9 @@ func (r *Reader) Count(ctx context.Context, f Filter, limit int) (n int64, cappe
 			lim = int64(limit) + 1
 		}
 		q := "SELECT count(*) FROM (SELECT 1" + w.fromSQL(false, false) + w.whereSQL() + " LIMIT ?)"
+		if f.Text != nil {
+			r.matching()
+		}
 		return h.QueryRowContext(ctx, q, append(w.args, lim)...).Scan(&n)
 	})
 	if err != nil {
