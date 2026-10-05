@@ -163,7 +163,7 @@ func TestScopeSkipsIgnoreTaggedGeneratorFile(t *testing.T) {
 }
 
 func TestScopeRejectsAssemblyCAndCgoSources(t *testing.T) {
-	for _, name := range []string{"x.s", "x.S", "x.c", "x.h", "x.cc", "x.cpp", "x.m", "x.f", "x.syso", "x.swig"} {
+	for _, name := range []string{"x.s", "x.S", "x.c", "x.h", "x.cc", "x.cpp", "x.m", "x.f", "x.syso", "x.swig", "x.cxx", "x.hh", "x.hpp", "x.hxx", "x.F", "x.for", "x.f90", "x.sx", "x.swigcxx"} {
 		root := writeTree(t, map[string]string{
 			"internal/parsers/a/a.go":    "package a\n",
 			"internal/parsers/a/" + name: "x",
@@ -342,5 +342,36 @@ func TestGoDirectiveRead(t *testing.T) {
 	s, err := ResolveScope(testConfig(root), testModule+"/internal/parsers/a")
 	if err != nil || s.GoDirective != "1.26" {
 		t.Fatalf("GoDirective = %q, %v", s.GoDirective, err)
+	}
+}
+
+func TestSymlinkedPackageOrGoFileIsRefused(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"internal/parsers/a/a.go": "package a\n",
+		"elsewhere/b.go":          "package a\n",
+		"elsewhere/pkg/c.go":      "package c\n",
+	})
+	link := filepath.Join(root, "internal", "parsers", "a", "b.go")
+	if err := os.Symlink(filepath.Join(root, "elsewhere", "b.go"), link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := ResolveScope(testConfig(root), testModule+"/internal/parsers/a"); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Errorf("symlinked .go file: err = %v", err)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "elsewhere", "pkg"), filepath.Join(root, "internal", "parsers", "c")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := ResolveScope(testConfig(root), testModule+"/internal/parsers/c"); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Errorf("symlinked package dir: err = %v", err)
+	}
+}
+
+func TestRegularFileStandInIsAccepted(t *testing.T) {
+	root := writeTree(t, map[string]string{"internal/parsers/a/a.go": "package a\n", "internal/parsers/a/b.go": "package a\n"})
+	if _, err := ResolveScope(testConfig(root), testModule+"/internal/parsers/a"); err != nil {
+		t.Errorf("regular files must resolve: %v", err)
 	}
 }

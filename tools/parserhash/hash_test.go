@@ -123,7 +123,7 @@ func TestParserHashChangesOnSemanticEdit(t *testing.T) {
 }
 
 func TestParserHashStability(t *testing.T) {
-	const golden = "src1:sha256:b88af6ee10f393ebf33e9c33160d4b187044d54ca2d1e9c08a28fc1e9075198c"
+	const golden = "src1:sha256:6de7bb08276e184b5e008e4c44c669f54cb5e47714682b06ad19aaebd86eea04"
 	got := fixtureHash(t, baseSource, "data")
 	if got != golden {
 		t.Errorf("golden hash changed: got %s want %s (a change of the dump format needs a deliberate hash-v bump)", got, golden)
@@ -159,5 +159,59 @@ func TestHashScopeReadError(t *testing.T) {
 	_, err = HashScope(s, func(string, string) ([]byte, error) { return []byte("package ("), nil })
 	if err == nil {
 		t.Error("syntax error in a hashed file must fail")
+	}
+}
+
+func TestDirectiveIsHashedWithItsDeclaration(t *testing.T) {
+	embed := func(first bool) string {
+		a, b := "//go:embed data.txt\n", ""
+		if !first {
+			a, b = b, a
+		}
+		return "package a\n\nimport _ \"embed\"\n\n" + a + "var x string\n\n" + b + "var y string\n"
+	}
+	if fixtureHash(t, embed(true), "d") == fixtureHash(t, embed(false), "d") {
+		t.Error("moving //go:embed between vars must change the hash")
+	}
+	noinline := func(first bool) string {
+		a, b := "//go:noinline\n", ""
+		if !first {
+			a, b = b, a
+		}
+		return "package a\n\n" + a + "func f() {}\n\n" + b + "func g() {}\n"
+	}
+	if fixtureHash(t, noinline(true), "d") == fixtureHash(t, noinline(false), "d") {
+		t.Error("moving //go:noinline between funcs must change the hash")
+	}
+}
+
+func TestLineDirectivesAreHashed(t *testing.T) {
+	src := func(d string) string { return "package a\n\nfunc f() int {\n\t" + d + "\n\treturn 1\n}\n" }
+	seen := map[string]string{}
+	for _, d := range []string{"//line a.go:10", "//line a.go:11", "/*line a.go:10*/", "/*line a.go:11*/", ""} {
+		h := fixtureHash(t, src(d), "d")
+		if prev, dup := seen[h]; dup {
+			t.Errorf("%q hashes like %q", d, prev)
+		}
+		seen[h] = d
+	}
+}
+
+func TestHashFramingIsUnambiguous(t *testing.T) {
+	scope := func(files ...string) Scope {
+		return Scope{Packages: []ScopePackage{{ImportPath: "m/p", Dir: "d", Files: files}}, GoDirective: "1.26"}
+	}
+	hash := func(s Scope, data map[string]string) string {
+		h, err := HashScope(s, func(_, f string) ([]byte, error) { return []byte(data[f]), nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h
+	}
+	// Plain concatenation of name and content is the same in both trees.
+	one := hash(scope("x", "y"), map[string]string{"x": "1", "y": "2"})
+	two := hash(scope("x"), map[string]string{"x": "1\x00m/p/y\x002"})
+	if one == two {
+		t.Error("an embedded NUL faked a file boundary")
 	}
 }

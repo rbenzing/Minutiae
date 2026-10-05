@@ -20,6 +20,7 @@ const dumpFormat = "goast-v1\n"
 var (
 	posType   = reflect.TypeOf(token.Pos(0))
 	tokenType = reflect.TypeOf(token.ILLEGAL)
+	docType   = reflect.TypeFor[*ast.CommentGroup]()
 
 	// skipFields are never part of the dump: comments (the //go: and //line
 	// directives are appended separately), object resolution, and the import
@@ -78,7 +79,7 @@ func NormalizeGo(src []byte, name string) (out []byte, err error) {
 	}
 	for _, cg := range f.Comments {
 		for _, c := range cg.List {
-			if strings.HasPrefix(c.Text, "//go:") || strings.HasPrefix(c.Text, "//line ") {
+			if isDirective(c.Text) {
 				b.WriteString("directive ")
 				b.WriteString(c.Text)
 				b.WriteByte('\n')
@@ -111,6 +112,19 @@ func dumpValue(b *bytes.Buffer, v reflect.Value) {
 		b.WriteByte('(')
 		for i := 0; i < t.NumField(); i++ {
 			sf := t.Field(i)
+			if sf.Name == "Doc" && sf.Type == docType {
+				// Directives are hashed with the declaration they annotate.
+				if cg, _ := v.Field(i).Interface().(*ast.CommentGroup); cg != nil {
+					for _, c := range cg.List {
+						if isDirective(c.Text) {
+							b.WriteString("Doc=")
+							b.WriteString(strconv.Quote(c.Text))
+							b.WriteByte(',')
+						}
+					}
+				}
+				continue
+			}
 			if !sf.IsExported() || skipFields[sf.Name] || sf.Type == posType {
 				continue
 			}
@@ -142,4 +156,11 @@ func dumpValue(b *bytes.Buffer, v reflect.Value) {
 	default:
 		fmt.Fprintf(b, "<%s>", v.Kind())
 	}
+}
+
+// isDirective reports whether a comment is a //go: directive or a line
+// directive (//line or /*line); all of them change what the compiler or the
+// runtime does, so they are hashed.
+func isDirective(text string) bool {
+	return strings.HasPrefix(text, "//go:") || strings.HasPrefix(text, "//line ") || strings.HasPrefix(text, "/*line ")
 }

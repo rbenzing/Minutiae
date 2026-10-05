@@ -47,6 +47,8 @@ var defaultPrefixes = []string{"internal/parsers/", "internal/recordtypes/", "in
 var nonGoExts = map[string]bool{
 	".s": true, ".S": true, ".c": true, ".h": true, ".cc": true,
 	".cpp": true, ".m": true, ".f": true, ".syso": true, ".swig": true,
+	".cxx": true, ".hh": true, ".hpp": true, ".hxx": true, ".F": true, ".for": true,
+	".f90": true, ".sx": true, ".swigcxx": true,
 }
 
 // listModule names the module that provides importPath ("" for the standard
@@ -138,6 +140,9 @@ func ResolveScope(cfg Config, rootImportPath string) (Scope, error) {
 // load reads one package directory and returns it with the in-scope imports to follow.
 func (r *resolver) load(importPath string) (*ScopePackage, []string, error) {
 	dir := filepath.Join(r.cfg.ModuleRoot, filepath.FromSlash(strings.TrimPrefix(importPath, r.cfg.ModulePath+"/")))
+	if fi, lerr := os.Lstat(dir); lerr == nil && fi.Mode()&fs.ModeSymlink != 0 {
+		return nil, nil, fmt.Errorf("parserhash: package directory %s is a symlink", dir)
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("parserhash: package %s: %w", importPath, err)
@@ -157,6 +162,9 @@ func (r *resolver) load(importPath string) (*ScopePackage, []string, error) {
 		}
 		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
+		}
+		if e.Type()&fs.ModeSymlink != 0 {
+			return nil, nil, fmt.Errorf("parserhash: Go file %s in %s is a symlink", name, dir)
 		}
 		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, parser.ParseComments|parser.SkipObjectResolution)
 		if err != nil {

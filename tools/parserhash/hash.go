@@ -2,8 +2,10 @@ package main
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 )
@@ -33,9 +35,8 @@ func HashScope(s Scope, read func(pkgDir, file string) ([]byte, error)) (string,
 					return "", err
 				}
 			}
-			h.Write([]byte(p.ImportPath + "/" + name + "\x00"))
-			h.Write(content)
-			h.Write([]byte{0})
+			writeFramed(h, []byte(p.ImportPath+"/"+name))
+			writeFramed(h, content)
 		}
 	}
 	mods := append([]ModuleRef(nil), s.Modules...)
@@ -45,4 +46,13 @@ func HashScope(s Scope, read func(pkgDir, file string) ([]byte, error)) (string,
 	}
 	fmt.Fprintf(h, "go %s\n", s.GoDirective)
 	return "src1:sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// writeFramed writes b preceded by its length (8 bytes, big endian), so no
+// content can fake a boundary between a name and its data or between files.
+func writeFramed(h io.Writer, b []byte) {
+	var n [8]byte
+	binary.BigEndian.PutUint64(n[:], uint64(len(b)))
+	_, _ = h.Write(n[:])
+	_, _ = h.Write(b)
 }
