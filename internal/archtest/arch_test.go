@@ -64,6 +64,7 @@ var allowed = map[string][]string{
 	"internal/recordtypes/web":             {"internal/records", "internal/recordtypes/common"},
 	"internal/recordtypes/all":             {"internal/recordtypes/message", "internal/recordtypes/call", "internal/recordtypes/contact", "internal/recordtypes/web"},
 	"tools/check":                          {},
+	"tools/parserhash":                     {"internal/parse", "internal/parsers"},
 }
 
 // "internal/cli" may import anything.
