@@ -35,8 +35,12 @@ func (b *Builder) usable() int { return b.o.PageSize - b.o.Reserved }
 
 // alloc appends a zeroed page and returns its number.
 func (b *Builder) alloc() uint32 {
-	b.pages = append(b.pages, make([]byte, b.o.PageSize))
-	return uint32(len(b.pages))
+	for {
+		b.pages = append(b.pages, make([]byte, b.o.PageSize))
+		if n := uint32(len(b.pages)); !b.isPtrmap(n) { // pointer-map pages stay reserved and zeroed
+			return n
+		}
+	}
 }
 
 // settle builds the database if rows or objects changed since the last Build.
@@ -56,6 +60,7 @@ func (b *Builder) Build() {
 	}
 	b.pages = nil
 	b.freed = nil
+	b.freeList = nil
 	b.alloc() // page 1
 	for _, t := range b.objs {
 		t.root = b.alloc()
@@ -67,7 +72,14 @@ func (b *Builder) Build() {
 		}
 	}
 	b.layoutSchema()
-	trunk, count := b.layoutFreelist()
+	var trunk, count uint32
+	if b.hasExplicit {
+		trunk, count = b.layoutExplicit()
+	} else {
+		b.freed = append(b.freed, b.userFree...)
+		trunk, count = b.layoutFreelist()
+	}
+	b.layoutPtrmap()
 
 	h := b.pages[0]
 	writeHeader(h, b.o)
@@ -81,6 +93,15 @@ func (b *Builder) Build() {
 		}
 	}
 	put32(h[40:], uint32(live)) // schema cookie
+	if b.o.AutoVacuum != 0 {
+		largest := uint32(1) // non-zero means auto-vacuum is on
+		for _, t := range b.objs {
+			if !t.dropped {
+				largest = max(largest, t.root)
+			}
+		}
+		put32(h[52:], largest)
+	}
 	if b.hdrPages != nil {
 		put32(h[28:], b.hdrPages.n)
 		counter := get32(h[24:])
@@ -135,6 +156,8 @@ func (b *Builder) layoutFreelist() (trunk, count uint32) {
 	free := slices.Clone(b.freed)
 	slices.Sort(free)
 	free = slices.Compact(free) // a dropped table lists the overflow pages of its residue cells twice
+	b.extendTo(free[len(free)-1])
+	b.freeList = free
 	maxLeaves := b.usable()/4 - 2
 	trunk = free[0]
 	for i := 0; i < len(free); {

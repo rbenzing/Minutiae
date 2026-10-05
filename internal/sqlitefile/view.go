@@ -50,6 +50,7 @@ type View struct {
 	warns *warnings
 	addr  uint32
 	sch   schemaCache
+	lists listCache
 }
 
 // Live returns the live view of the database as it is now: Attach* calls made
@@ -110,6 +111,7 @@ func (v *View) Stats() Stats { return v.st.snapshot() }
 func (v *View) Release() {
 	v.cache.clear()
 	v.sch.release(v.e.budget)
+	v.lists.release(v.e.budget)
 }
 
 // ReadPage returns a copy of page pgno as the view presents it: for a page

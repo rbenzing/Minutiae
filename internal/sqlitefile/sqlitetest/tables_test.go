@@ -549,7 +549,4 @@ func TestBuilderRejectsMisuse(t *testing.T) {
 	mustPanic("update of a missing row", func() { tb.Update(9, "x") })
 	mustPanic("unsupported value", func() { tb.Insert(2, struct{}{}) })
 	mustPanic("index of a missing table", func() { b.CreateIndex("i", "nope", "CREATE INDEX i ON nope(a)", 0) })
-	mustPanic("tables in an auto-vacuum database", func() {
-		sqlitetest.New(sqlitetest.Options{AutoVacuum: 1}).CreateTable("t", "CREATE TABLE t(a)")
-	})
 }

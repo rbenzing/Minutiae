@@ -11,7 +11,7 @@ import (
 // layout is deterministic:
 //   - page 1 is the schema table; the root page of object i (in creation
 //     order, dropped ones included) is page i+2; every other page is
-//     allocated in layout order (overflow chains as each cell is encoded,
+//     allocated in layout order (an auto-vacuum database skips its pointer-map pages) (overflow chains as each cell is encoded,
 //     leaves and interior pages as they are filled).
 //   - leaves are filled greedily in key order; interior pages keep as many
 //     children as fit. A single page that holds everything is the root.
@@ -110,9 +110,6 @@ func (b *Builder) Object(name string) *Table {
 }
 
 func (b *Builder) addObject(t *Table) *Table {
-	if b.o.AutoVacuum != 0 {
-		panic("sqlitetest: tables in an auto-vacuum database need pointer-map pages, which the builder does not write yet")
-	}
 	if b.Object(t.name) != nil {
 		panic(fmt.Sprintf("sqlitetest: object %q already exists", t.name))
 	}
