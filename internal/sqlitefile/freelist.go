@@ -7,7 +7,10 @@ import (
 	"sync"
 )
 
-// Freelist is the list of free pages as the trunk chain gives it.
+// Freelist is the list of free pages as the trunk chain gives it. Trunks and
+// Leaves are CLAIMED free: each passed the range, lock-byte, pointer-map and
+// repeat checks, but none is proven against the b-trees. A page that a tree also
+// owns is found by Layout, which is the authority for double claims.
 type Freelist struct {
 	Trunks, Leaves []uint32 // in chain order; only pages that passed every check
 	HeaderCount    uint32   // the count the header states
@@ -130,7 +133,7 @@ func (v *View) walkFreelist(ctx context.Context, l *ledger) (*Freelist, error) {
 			anomaly(WarnFreelistLeafCount, cur, "freelist trunk %d states %d leaves; a page holds at most %d, the list is cut there", cur, count, maxLeaves)
 			count = int64(maxLeaves)
 		}
-		if err := l.alloc(4 * (1 + count)); err != nil {
+		if err := l.alloc(4); err != nil {
 			return nil, err
 		}
 		fl.Trunks = append(fl.Trunks, cur)
@@ -147,6 +150,9 @@ func (v *View) walkFreelist(ctx context.Context, l *ledger) (*Freelist, error) {
 			if !seen.mark(lp) {
 				anomaly(WarnFreelistCycle, cur, "freelist trunk %d, leaf %d: page %d is already on the list; skipped", cur, k, lp)
 				continue
+			}
+			if err := l.alloc(4); err != nil { // charged per leaf actually kept
+				return nil, err
 			}
 			fl.Leaves = append(fl.Leaves, lp)
 		}

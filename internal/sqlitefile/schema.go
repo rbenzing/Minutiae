@@ -112,6 +112,12 @@ type Schema struct {
 	Objects []SchemaObject
 	Cookie  uint32
 	Format  uint32
+	// Skipped counts the damage events met while reading the schema table: a
+	// row skipped (invalid or a repeated name) and every page, cell or record
+	// of the tree that could not be read. Any value above 0 means the schema
+	// may be incomplete: a page that no listed object owns is then not
+	// necessarily an orphan.
+	Skipped int
 }
 
 // schemaCache holds the schema a view has read, and the budget it is charged.
@@ -244,22 +250,27 @@ func (v *View) Schema(ctx context.Context) (s *Schema, err error) {
 	var total int64
 	totalWarned := false
 	var ferr error
-	scanErr := v.ScanTree(ctx, 1, TableTree, func(r Row) bool {
+	scan0 := v.warns.callCount()
+	var inRows int64 // warnings raised by the callback itself (not damage met by the walk)
+	row := func(r Row) bool {
 		v.e.at("schema.row")
 		typ, name, tbl, root, sql, sst, why := schemaFields(r)
 		at := Warning{File: r.Loc.File, Page: r.Loc.Page, Offset: r.Loc.Offset}
 		if why != "" {
+			sc.Skipped++
 			at.Code, at.Msg = WarnSchemaRowInvalid, fmt.Sprintf("schema row %d skipped: %s", r.Rowid, why)
 			v.warns.add(at)
 			return true
 		}
 		key := nameClass(typ) + ":" + asciiLower(name)
 		if seen[key] {
+			sc.Skipped++
 			at.Code, at.Msg = WarnSchemaDuplicate, fmt.Sprintf("a %s named %q was already read; this row is ignored", typ, name)
 			v.warns.add(at)
 			return true
 		}
 		if len(sc.Objects) >= lim.MaxSchemaObjects {
+			sc.Skipped++
 			at.Code, at.Msg = WarnLimitReached, fmt.Sprintf("more than %d schema objects; the rest are not read", lim.MaxSchemaObjects)
 			v.warns.add(at)
 			return false
@@ -301,6 +312,12 @@ func (v *View) Schema(ctx context.Context) (s *Schema, err error) {
 		}
 		sc.Objects = append(sc.Objects, obj)
 		return true
+	}
+	scanErr := v.ScanTree(ctx, 1, TableTree, func(r Row) bool {
+		c0 := v.warns.callCount()
+		ok := row(r)
+		inRows += v.warns.callCount() - c0
+		return ok
 	})
 	if scanErr != nil {
 		return nil, scanErr
@@ -308,6 +325,9 @@ func (v *View) Schema(ctx context.Context) (s *Schema, err error) {
 	if ferr != nil {
 		return nil, ferr
 	}
+	// Damage the walk met (a page, cell or record it could not read) is every
+	// warning of the scan that the callback did not raise itself.
+	sc.Skipped += int(v.warns.callCount() - scan0 - inRows)
 	v.sch.schema, v.sch.charge = sc, l.n
 	return sc, nil
 }

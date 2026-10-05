@@ -62,6 +62,8 @@ func TestBuilderFreelistAndPtrmapMatchEngine(t *testing.T) {
 			if got := pragmaString(t, db, "integrity_check"); got != "ok" {
 				t.Fatalf("integrity_check = %q", got)
 			}
+			// The freelist_count comparison below is a consistency check of the
+			// builder against its own header; the engine evidence is integrity_check.
 			hdr := b.PageBytes(1)
 			want := strconv.Itoa(int(hdr[36])<<24 | int(hdr[37])<<16 | int(hdr[38])<<8 | int(hdr[39]))
 			if got := pragmaString(t, db, "freelist_count"); got != want {

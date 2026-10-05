@@ -320,3 +320,10 @@ func ParseCreateTableCols(sql string, maxCols int) (def TableDef, virtual bool, 
 func ParseCreateIndex(sql string) (def IndexDef, steps int) {
 	return parseIndexSQL(sql, DefaultLimits().MaxColumns)
 }
+
+// ListCharges returns the budget charged to the view's cached freelist and layout.
+func ListCharges(v *View) (freelist, layout int64) {
+	v.lists.mu.Lock()
+	defer v.lists.mu.Unlock()
+	return v.lists.flCharge, v.lists.layCharge
+}

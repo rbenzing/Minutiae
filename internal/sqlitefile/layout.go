@@ -20,6 +20,9 @@ const (
 	ClassFreelistLeaf
 	ClassPtrmap
 	ClassLockByte
+	// ClassUnattributed is a page no structure was found for while the schema
+	// was incomplete: it may belong to an object whose schema row was lost.
+	ClassUnattributed
 )
 
 func (c PageClass) String() string {
@@ -40,6 +43,8 @@ func (c PageClass) String() string {
 		return "pointer-map page"
 	case ClassLockByte:
 		return "lock-byte page"
+	case ClassUnattributed:
+		return "unattributed (schema incomplete)"
 	}
 	return fmt.Sprintf("class(%d)", uint8(c))
 }
@@ -64,6 +69,9 @@ type Layout struct {
 	Orphans      []uint32 // in page order, at most MaxOrphans
 	OrphansTotal int
 	Problems     []string
+	// SchemaIncomplete: the schema was read with damage (Schema.Skipped > 0), so
+	// no page is called an orphan; those pages are ClassUnattributed.
+	SchemaIncomplete bool
 }
 
 // claimVisitor marks nothing: the layout keeps its own claim table, so every
@@ -77,7 +85,9 @@ func (claimVisitor) mark(uint32) bool { return true }
 // page is. It allocates 5 bytes per addressable page (a class and an owner),
 // charged to the budget until Release, never from the declared page count. In an
 // auto-vacuum database every entry of the pointer map is compared with what the
-// walk found (a disagreement is a ptrmap-mismatch warning). The result is read
+// walk found (a disagreement is a ptrmap-mismatch warning). An incompletely
+// read schema (Schema.Skipped > 0) makes every unclaimed page ClassUnattributed
+// instead of an orphan, with a Problem. The result is read
 // once per view and shared: callers must not modify it.
 func (v *View) Layout(ctx context.Context) (lay *Layout, err error) {
 	defer guard(&err)
@@ -211,38 +221,40 @@ func (v *View) buildLayout(ctx context.Context, l *ledger) (*Layout, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := l.alloc(4 * (int64(len(fl.Trunks)) + int64(len(fl.Leaves)))); err != nil {
+	// The claimed lists share the freelist's slices (already charged) when every
+	// page is claimed, and are otherwise a copy charged per element appended.
+	if lay.Trunks, err = b.claimFree(fl.Trunks, ClassFreelistTrunk); err != nil {
 		return nil, err
 	}
-	for _, p := range fl.Trunks {
-		if b.claim(p, ClassFreelistTrunk, 0) {
-			lay.Trunks = append(lay.Trunks, p)
-			if err := b.expect(p, PtrFree, 0); err != nil {
-				return nil, err
-			}
-		}
-	}
-	for _, p := range fl.Leaves {
-		if b.claim(p, ClassFreelistLeaf, 0) {
-			lay.Leaves = append(lay.Leaves, p)
-			if err := b.expect(p, PtrFree, 0); err != nil {
-				return nil, err
-			}
-		}
+	if lay.Leaves, err = b.claimFree(fl.Leaves, ClassFreelistLeaf); err != nil {
+		return nil, err
 	}
 
+	// With a damaged schema a page that no listed object owns may belong to an
+	// object whose row was lost: it is unattributed, never an orphan.
+	incomplete := sc.Skipped > 0
+	lay.SchemaIncomplete = incomplete
 	keep := min(int64(v.e.opts.Limits.MaxOrphans), int64(addr))
-	if err := l.alloc(4 * keep); err != nil {
-		return nil, err
-	}
+	unattributed := 0
 	for pg := uint32(1); pg <= addr; pg++ {
 		if lay.Class[pg] != ClassOrphan {
 			continue
 		}
+		if incomplete {
+			lay.Class[pg] = ClassUnattributed
+			unattributed++
+			continue
+		}
 		lay.OrphansTotal++
 		if int64(len(lay.Orphans)) < keep {
+			if err := l.alloc(4); err != nil { // charged per orphan listed
+				return nil, err
+			}
 			lay.Orphans = append(lay.Orphans, pg)
 		}
+	}
+	if incomplete {
+		b.problem("the schema was read incompletely (%d damage events): %d pages that no listed object claims are unattributed, not orphans", sc.Skipped, unattributed)
 	}
 	sort.Slice(lay.Orphans, func(i, j int) bool { return lay.Orphans[i] < lay.Orphans[j] })
 	return lay, nil
@@ -427,4 +439,38 @@ func (b *layoutBuilder) chain(n node, c Cell, owner uint32) error {
 		cur = binary.BigEndian.Uint32(data)
 	}
 	return nil
+}
+
+// claimFree claims every page of src for the freelist as class. When all are
+// claimed it returns src itself (the freelist's own, already charged slice);
+// otherwise a copy of the claimed ones, each element charged as it is appended.
+func (b *layoutBuilder) claimFree(src []uint32, class PageClass) ([]uint32, error) {
+	var out []uint32
+	copied := false
+	for i, p := range src {
+		ok := b.claim(p, class, 0)
+		if ok {
+			if err := b.expect(p, PtrFree, 0); err != nil {
+				return nil, err
+			}
+		}
+		switch {
+		case ok && !copied:
+		case !ok && !copied:
+			if err := b.l.alloc(4 * int64(i)); err != nil {
+				return nil, err
+			}
+			copied = true
+			out = append(out, src[:i]...)
+		case ok:
+			if err := b.l.alloc(4); err != nil {
+				return nil, err
+			}
+			out = append(out, p)
+		}
+	}
+	if !copied {
+		return src, nil
+	}
+	return out, nil
 }

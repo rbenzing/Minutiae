@@ -140,6 +140,9 @@ type warnings struct {
 	seen       map[warningKey]struct{}
 	list       []Warning
 	suppressed bool
+	// calls counts every add, duplicates and suppressed ones included: a damage
+	// tally for callers that must know whether anything was met while they ran.
+	calls int64
 	// unknown, when set, is called for a code outside the closed set. Only
 	// tests set it (to panic); production records the warning as given
 	// rather than lose it.
@@ -165,6 +168,7 @@ func (w *warnings) add(x Warning) {
 	k := warningKey{x.Code, x.File, x.Page, x.Offset, x.Msg}
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.calls++
 	if _, dup := w.seen[k]; dup {
 		return
 	}
@@ -177,6 +181,13 @@ func (w *warnings) add(x Warning) {
 	}
 	w.seen[k] = struct{}{}
 	w.list = append(w.list, x)
+}
+
+// callCount returns the number of add calls so far.
+func (w *warnings) callCount() int64 {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.calls
 }
 
 // snapshot returns a copy of the warnings recorded so far, in the order they
