@@ -23,4 +23,13 @@ var (
 	ErrNoPayloadContract = errors.New("parse: record type has no payload contract")
 	// ErrUndeclaredType: a record's type is not in Meta.Emits.
 	ErrUndeclaredType = errors.New("parse: record type not declared in Meta.Emits")
+	// ErrForeignPlatform: a record is for an artifact of a platform the parser
+	// does not declare in Meta.Platforms.
+	ErrForeignPlatform = errors.New("parse: artifact platform not declared in Meta.Platforms")
+	// ErrInputChanged: an input no longer hashes to the manifest's SHA-256.
+	ErrInputChanged = errors.New("parse: input changed during the run")
+	// ErrWarningCap: a job reported more than MaxWarnings warnings.
+	ErrWarningCap = errors.New("parse: too many warnings")
+	// ErrRefusedRecords: the writer refused records the parser emitted.
+	ErrRefusedRecords = errors.New("parse: the writer refused emitted records")
 )

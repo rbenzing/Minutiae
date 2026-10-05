@@ -43,7 +43,7 @@ func TestTickPollsEveryTickEvery(t *testing.T) {
 }
 
 func TestSentinelErrorsAreDistinct(t *testing.T) {
-	all := []error{ErrBudget, ErrSealed, ErrRecordCap, ErrRejectedCap, ErrProbeLimit, ErrPayloadVersionMismatch, ErrNoPayloadContract, ErrUndeclaredType}
+	all := []error{ErrBudget, ErrSealed, ErrRecordCap, ErrRejectedCap, ErrProbeLimit, ErrPayloadVersionMismatch, ErrNoPayloadContract, ErrUndeclaredType, ErrForeignPlatform, ErrInputChanged, ErrWarningCap, ErrRefusedRecords}
 	for i, a := range all {
 		if a == nil || a.Error() == "" {
 			t.Fatalf("sentinel %d is nil or empty", i)
