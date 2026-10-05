@@ -330,7 +330,7 @@ func Summary(channel, direction, counterparty, text string) string {
 // Decode reads a stored message payload of the given payload version. Only
 // version 1 exists; any other value is ErrUnsupportedPayloadVersion. Integers are
 // canonical JSON integers (the validator refuses 1e3 and 2.0). Numbers are
-// read exactly (json.Number) and become int64 where integral, so the result
+// read exactly (json.Number) and stay json.Number inside the free-form objects, so the result
 // equals what Payload produced. Unknown fields are ignored. A payload that does
 // not satisfy the v1 contract is an error naming the path, never a value.
 func Decode(payloadV int, payload []byte) (Message, error) {

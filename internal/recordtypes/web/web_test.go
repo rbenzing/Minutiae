@@ -33,9 +33,9 @@ func fullVisit() web.Visit {
 		RedirectSource:       "10", RedirectDestination: "13",
 		DurationS: ptr(2.5), URLVisitCount: ptr(int64(7)), TypedCount: ptr(int64(0)), StatusCode: ptr(int64(200)),
 		Hidden: ptr(false), LoadSuccessful: ptr(true),
-		Raw:      map[string]any{"transition": int64(805306372), "nested": map[string]any{"a": []any{"x", int64(2), 1.5}}},
-		Recovery: map[string]any{"relation": "absent-from-live", "via": "wal", "wal": map[string]any{"frame": int64(3), "committed": true}},
-		Snapshot: map[string]any{"name": "com.apple.snap", "xid": int64(12)},
+		Raw:      map[string]any{"transition": json.Number("805306372"), "nested": map[string]any{"a": []any{"x", json.Number("2"), json.Number("1.5")}}},
+		Recovery: map[string]any{"relation": "absent-from-live", "via": "wal", "wal": map[string]any{"frame": json.Number("3"), "committed": true}},
+		Snapshot: map[string]any{"name": "com.apple.snap", "xid": json.Number("12")},
 		Deleted:  map[string]any{"source": "history_tombstones"},
 	}
 }
@@ -46,9 +46,9 @@ func fullSearch() web.Search {
 	return web.Search{
 		Term: "Cats  and DOGS", NormalizedTerm: "cats and dogs", Engine: "Example Search", EngineID: "2", URL: "HTTPS://Example.TEST/search?q=Cats+and+DOGS#top",
 		VisitID: "12", TimeSource: "urls.last_visit_time", Browser: "edge",
-		Raw:      map[string]any{"url_id": int64(4), "nested": map[string]any{"a": []any{"x"}}},
+		Raw:      map[string]any{"url_id": json.Number("4"), "nested": map[string]any{"a": []any{"x"}}},
 		Recovery: map[string]any{"relation": "superseded-version"},
-		Snapshot: map[string]any{"name": "snap", "xid": int64(2)},
+		Snapshot: map[string]any{"name": "snap", "xid": json.Number("2")},
 		Deleted:  map[string]any{"source": "x"},
 	}
 }
@@ -62,9 +62,9 @@ func fullDownload() web.Download {
 		State: "complete", DangerType: "not_dangerous", InterruptReason: "none", Browser: "brave",
 		URLChain:   []string{"HTTP://Example.TEST/redirect", "HTTPS://Example.TEST/f?a=1#frag"},
 		TotalBytes: ptr(int64(1234)), ReceivedBytes: ptr(int64(0)), Opened: ptr(false),
-		Raw:      map[string]any{"id": int64(9), "nested": map[string]any{"a": []any{"x"}}},
+		Raw:      map[string]any{"id": json.Number("9"), "nested": map[string]any{"a": []any{"x"}}},
 		Recovery: map[string]any{"relation": "uncommitted"},
-		Snapshot: map[string]any{"name": "snap", "xid": int64(2)},
+		Snapshot: map[string]any{"name": "snap", "xid": json.Number("2")},
 		Deleted:  map[string]any{"source": "x"},
 	}
 }
@@ -604,7 +604,7 @@ func TestWebBuildersOmitAbsent(t *testing.T) {
 
 func canonical(v any) bool {
 	switch x := v.(type) {
-	case string, bool, int64, float64:
+	case string, bool, int64, float64, json.Number:
 		return true
 	case []any:
 		for _, e := range x {
@@ -629,7 +629,7 @@ func TestWebPayloadIsCanonicalTypes(t *testing.T) {
 		"visit": minimalVisit().Payload(), "full visit": fullVisit().Payload(), "search": fullSearch().Payload(), "download": fullDownload().Payload(),
 	} {
 		if !canonical(p) {
-			t.Errorf("%s payload holds a type outside string, bool, int64, float64, []any, map[string]any", name)
+			t.Errorf("%s payload holds a type outside string, bool, int64, float64, json.Number, []any, map[string]any", name)
 		}
 	}
 	// nothing in the payload aliases the typed value
@@ -641,7 +641,7 @@ func TestWebPayloadIsCanonicalTypes(t *testing.T) {
 	p["deleted"].(map[string]any)["source"] = "changed"
 	p["transition_qualifiers"].([]any)[0] = "changed"
 	p["referrer"].(map[string]any)["url"] = "changed"
-	if v.Raw["transition"] != int64(805306372) || v.Recovery["via"] != "wal" || v.Snapshot["name"] != "com.apple.snap" || v.Deleted["source"] != "history_tombstones" ||
+	if v.Raw["transition"] != json.Number("805306372") || v.Recovery["via"] != "wal" || v.Snapshot["name"] != "com.apple.snap" || v.Deleted["source"] != "history_tombstones" ||
 		v.TransitionQualifiers[0] != "from_address_bar" || v.Referrer.URL != "HTTP://Example.TEST/prev#x" {
 		t.Error("the visit payload aliases the Visit")
 	}
@@ -649,13 +649,13 @@ func TestWebPayloadIsCanonicalTypes(t *testing.T) {
 	dp := d.Payload()
 	dp["url_chain"].([]any)[0] = "changed"
 	dp["raw"].(map[string]any)["id"] = "changed"
-	if d.URLChain[0] != "HTTP://Example.TEST/redirect" || d.Raw["id"] != int64(9) {
+	if d.URLChain[0] != "HTTP://Example.TEST/redirect" || d.Raw["id"] != json.Number("9") {
 		t.Error("the download payload aliases the Download")
 	}
 	s := fullSearch()
 	sp := s.Payload()
 	sp["raw"].(map[string]any)["url_id"] = "changed"
-	if s.Raw["url_id"] != int64(4) {
+	if s.Raw["url_id"] != json.Number("4") {
 		t.Error("the search payload aliases the Search")
 	}
 	// the pointer targets are copied, not pointed to
@@ -783,15 +783,15 @@ func TestWebDecodeOlderVersions(t *testing.T) {
 			TransitionQualifiers: []string{"from_address_bar"}, Referrer: &web.Referrer{VisitID: "41", URL: "https://example.test/"},
 			RedirectSource: "40", RedirectDestination: "43", DurationS: ptr(12.5), URLVisitCount: ptr(int64(3)), TypedCount: ptr(int64(1)),
 			StatusCode: ptr(int64(200)), Hidden: ptr(false), LoadSuccessful: ptr(true),
-			Raw:      map[string]any{"transition": int64(805306368), "ratio": 0.5, "tags": []any{"a"}},
-			Recovery: map[string]any{"relation": "absent-from-live", "wal": map[string]any{"frame": int64(3), "committed": true}},
-			Snapshot: map[string]any{"name": "snap-1", "xid": int64(12)}, Deleted: map[string]any{"source": "history_tombstones"},
+			Raw:      map[string]any{"transition": json.Number("805306368"), "ratio": json.Number("0.5"), "tags": []any{"a"}},
+			Recovery: map[string]any{"relation": "absent-from-live", "wal": map[string]any{"frame": json.Number("3"), "committed": true}},
+			Snapshot: map[string]any{"name": "snap-1", "xid": json.Number("12")}, Deleted: map[string]any{"source": "history_tombstones"},
 		}
 		if err != nil || !reflect.DeepEqual(v, want) {
 			t.Errorf("DecodeVisit(fixture) = %+v, %v\n want %+v", v, err, want)
 		}
 		s, err := web.DecodeSearch(1, []byte(searchFixture))
-		wantS := web.Search{Term: "Cats", NormalizedTerm: "cats", Engine: "Example", EngineID: "2", URL: "https://example.test/s?q=Cats", VisitID: "42", TimeSource: "urls.last_visit_time", Browser: "edge", Raw: map[string]any{"url_id": int64(7)}}
+		wantS := web.Search{Term: "Cats", NormalizedTerm: "cats", Engine: "Example", EngineID: "2", URL: "https://example.test/s?q=Cats", VisitID: "42", TimeSource: "urls.last_visit_time", Browser: "edge", Raw: map[string]any{"url_id": json.Number("7")}}
 		if err != nil || !reflect.DeepEqual(s, wantS) {
 			t.Errorf("DecodeSearch(fixture) = %+v, %v\n want %+v", s, err, wantS)
 		}
@@ -800,7 +800,7 @@ func TestWebDecodeOlderVersions(t *testing.T) {
 			TargetPath: "/sdcard/Download/a.pdf", CurrentPath: "/sdcard/Download/a.pdf.crdownload", URL: "https://example.test/a.pdf", Referrer: "https://example.test/",
 			TabURL: "https://example.test/tab", Mime: "application/pdf", State: "complete", DangerType: "not_dangerous", InterruptReason: "none", Browser: "chrome",
 			URLChain: []string{"https://example.test/r", "https://example.test/a.pdf"}, TotalBytes: ptr(int64(100)), ReceivedBytes: ptr(int64(100)), Opened: ptr(true),
-			Raw: map[string]any{"id": int64(3)},
+			Raw: map[string]any{"id": json.Number("3")},
 		}
 		if err != nil || !reflect.DeepEqual(d, wantD) {
 			t.Errorf("DecodeDownload(fixture) = %+v, %v\n want %+v", d, err, wantD)
@@ -894,8 +894,8 @@ func TestWebDecodeOlderVersions(t *testing.T) {
 func TestDecodeKeepsProvenance(t *testing.T) {
 	const prov = `"recovery":{"relation":"uncommitted","via":"wal","wal":{"frame":3,"salt1":7,"committed":false},"notes":["a","b"]},` +
 		`"snapshot":{"name":"snap-1","xid":12},"deleted":{"source":"history_tombstones"}`
-	wantRec := map[string]any{"relation": "uncommitted", "via": "wal", "notes": []any{"a", "b"}, "wal": map[string]any{"frame": int64(3), "salt1": int64(7), "committed": false}}
-	wantSnap := map[string]any{"name": "snap-1", "xid": int64(12)}
+	wantRec := map[string]any{"relation": "uncommitted", "via": "wal", "notes": []any{"a", "b"}, "wal": map[string]any{"frame": json.Number("3"), "salt1": json.Number("7"), "committed": false}}
+	wantSnap := map[string]any{"name": "snap-1", "xid": json.Number("12")}
 	wantDel := map[string]any{"source": "history_tombstones"}
 	v, err := web.DecodeVisit(1, []byte(`{"url":"u","browser":"chrome",`+prov+`}`))
 	s, err2 := web.DecodeSearch(1, []byte(`{"term":"t",`+prov+`}`))
@@ -1105,4 +1105,94 @@ func FuzzWebDownloadValidate(f *testing.F) {
 			return d, d.Payload(), err
 		})
 	})
+}
+
+// TestDecodeKeepsRawNumbersExact: a number in raw that does not fit an int64 or
+// float64 survives Decode and Payload unchanged, for all three types.
+func TestDecodeKeepsRawNumbersExact(t *testing.T) {
+	const raw = `"raw":{"big":18446744073709551615,"dec":1.50,"n":{"x":[9007199254740993]}}`
+	v, err := web.DecodeVisit(1, []byte(`{"url":"u","browser":"chrome",`+raw+`}`))
+	s, err2 := web.DecodeSearch(1, []byte(`{"term":"t",`+raw+`}`))
+	d, err3 := web.DecodeDownload(1, []byte(`{"url":"u",`+raw+`}`))
+	if err != nil || err2 != nil || err3 != nil {
+		t.Fatal(err, err2, err3)
+	}
+	for name, got := range map[string]struct {
+		raw map[string]any
+		p   map[string]any
+	}{"visit": {v.Raw, v.Payload()}, "search": {s.Raw, s.Payload()}, "download": {d.Raw, d.Payload()}} {
+		if got.raw["big"] != json.Number("18446744073709551615") || got.raw["dec"] != json.Number("1.50") {
+			t.Errorf("%s: Raw = %#v", name, got.raw)
+		}
+		b, err := json.Marshal(got.p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"18446744073709551615", "1.50", "9007199254740993"} {
+			if !strings.Contains(string(b), want) {
+				t.Errorf("%s: payload %s lost %s", name, b, want)
+			}
+		}
+	}
+}
+
+func TestSearchAndDownloadSummaries(t *testing.T) {
+	searches := []struct {
+		s    web.Search
+		want string
+	}{
+		{web.Search{Term: "Cats  and DOGS", NormalizedTerm: "cats and dogs"}, "Cats and DOGS"},
+		{web.Search{Term: "", NormalizedTerm: "cats"}, "cats"},
+		{web.Search{Term: "a\nb\tc"}, "a b c"},
+		{web.Search{}, ""},
+	}
+	for _, tc := range searches {
+		if got := web.SearchSummary(tc.s); got != tc.want {
+			t.Errorf("SearchSummary(%+v) = %q, want %q", tc.s, got, tc.want)
+		}
+	}
+	downloads := []struct {
+		d    web.Download
+		want string
+	}{
+		{web.Download{TargetPath: "/sdcard/Download/Report FINAL.PDF", URL: "https://example.test/f"}, "Report FINAL.PDF"},
+		{web.Download{TargetPath: `C:\Users\a\Downloads\x.zip`, URL: "https://example.test/f"}, "x.zip"},
+		{web.Download{CurrentPath: "/tmp/a.crdownload", URL: "https://example.test/f"}, "a.crdownload"},
+		{web.Download{TargetPath: "/dir/", URL: "https://example.test/f"}, "https://example.test/f"},
+		{web.Download{URL: "https://example.test/f"}, "https://example.test/f"},
+		{web.Download{}, ""},
+	}
+	for _, tc := range downloads {
+		if got := web.DownloadSummary(tc.d); got != tc.want {
+			t.Errorf("DownloadSummary(%+v) = %q, want %q", tc.d, got, tc.want)
+		}
+	}
+	// the usual rules: 80 characters, hidden characters shown, under the records cap
+	rlo := string(rune(0x202E))
+	if got := web.SearchSummary(web.Search{Term: rlo + "x"}); got != "<U+202E>x" {
+		t.Errorf("hidden character not visible: %q", got)
+	}
+	if got := web.DownloadSummary(web.Download{TargetPath: "/d/" + strings.Repeat(string(rune(0x1F600)), 1000)}); len(got) > 512 || utf8.RuneCountInString(got) > 80 || !utf8.ValidString(got) {
+		t.Errorf("download summary is %d bytes", len(got))
+	}
+	if got := web.SearchSummary(web.Search{Term: strings.Repeat("q", 1000)}); utf8.RuneCountInString(got) > 80 {
+		t.Errorf("search summary is %d characters", utf8.RuneCountInString(got))
+	}
+}
+
+// TestNumericIDsAreNeverDecodedToEmpty: an integer id keeps its exact decimal
+// string; one beyond int64 is refused by the validator rather than read as "".
+func TestNumericIDsAreNeverDecodedToEmpty(t *testing.T) {
+	v, err := web.DecodeVisit(1, []byte(`{"url":"u","browser":"chrome","visit_id":9223372036854775807,"referrer":{"visit_id":42}}`))
+	if err != nil || v.VisitID != "9223372036854775807" || v.Referrer == nil || v.Referrer.VisitID != "42" {
+		t.Errorf("max int64 id: %+v, %v", v, err)
+	}
+	for _, id := range []string{"9223372036854775808", "18446744073709551615", "99999999999999999999999"} {
+		if v, err := web.DecodeVisit(1, []byte(`{"url":"u","browser":"chrome","visit_id":`+id+`}`)); err == nil {
+			t.Errorf("visit_id %s decoded to %q without an error", id, v.VisitID)
+		}
+		if s, err := web.DecodeSearch(1, []byte(`{"term":"t","engine_id":`+id+`}`)); err == nil {
+			t.Errorf("engine_id %s decoded to %q without an error", id, s.EngineID)
+		}
+	}
 }

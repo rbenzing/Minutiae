@@ -10,6 +10,10 @@
 // The call's instants live in Record.Time/TimeEnd, not in the payload. Unknown
 // fields in a stored payload are ignored by Decode; the provenance objects
 // recovery, snapshot and deleted are never ignored.
+//
+// A parser that has to sanitise text the contract refuses (invalid UTF-8, NUL)
+// keeps the original bytes in raw (base64): the payload stores only what the
+// writer accepts, and the typed value does not flag the replacement.
 package call
 
 import (
@@ -178,7 +182,7 @@ func Summary(direction, outcome, address string) string {
 // exists; any other value is ErrUnsupportedPayloadVersion. Numbers are read
 // exactly (json.Number): integers are canonical JSON integers (the validator
 // refuses 1e3 and 2.0), durations become float64, and the numbers inside the
-// free-form objects become int64 where integral, so the result equals what Payload
+// free-form objects stay json.Number (exact, never rounded), so the result equals what Payload
 // produced. Unknown fields are ignored. A payload that does not satisfy the v1
 // contract is an error naming the path, never a value.
 func Decode(payloadV int, payload []byte) (Call, error) {

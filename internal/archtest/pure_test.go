@@ -1244,7 +1244,7 @@ func TestParserPackagesHaveNoSQL(t *testing.T) {
 // purityRequired are the pure packages that must be scanned: a rename or a
 // change of the roots that drops one fails TestPurityRulesCoverKnownPackages.
 // Every plan that creates a pure package appends it here in the same commit
-// (internal/recordtypes/common is listed; the six type packages and the others follow with their plans).
+// (the recordtypes packages are listed; the parsers and the others follow with their plans).
 var purityRequired = []string{
 	"internal/parse", "internal/recordtypes/common", "internal/recordtypes/message",
 	"internal/recordtypes/call", "internal/recordtypes/contact", "internal/recordtypes/web", "internal/recordtypes/all",

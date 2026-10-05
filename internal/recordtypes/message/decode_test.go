@@ -86,9 +86,9 @@ func TestRecordTypesDecodeOlderVersions(t *testing.T) {
 				ArtifactSHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 			}},
 			Deleted:  map[string]any{"source": "wal"},
-			Recovery: map[string]any{"relation": "uncommitted", "via": "wal", "wal": map[string]any{"frame": int64(3), "committed": false}},
-			Snapshot: map[string]any{"name": "snap-1", "xid": int64(12)},
-			Raw:      map[string]any{"date": int64(1700000000123), "ratio": 0.5, "tags": []any{"a", "b"}, "nested": map[string]any{"ok": true}},
+			Recovery: map[string]any{"relation": "uncommitted", "via": "wal", "wal": map[string]any{"frame": json.Number("3"), "committed": false}},
+			Snapshot: map[string]any{"name": "snap-1", "xid": json.Number("12")},
+			Raw:      map[string]any{"date": json.Number("1700000000123"), "ratio": json.Number("0.5"), "tags": []any{"a", "b"}, "nested": map[string]any{"ok": true}},
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("Decode(v1 fixture)\n got  %+v\n want %+v", got, want)
@@ -183,16 +183,16 @@ func TestDecodeKeepsRecoveryAndSnapshot(t *testing.T) {
 	}
 	wantRec := map[string]any{
 		"relation": "uncommitted", "via": "wal", "notes": []any{"a", "b"},
-		"wal": map[string]any{"frame": int64(3), "salt1": int64(7), "committed": false},
+		"wal": map[string]any{"frame": json.Number("3"), "salt1": json.Number("7"), "committed": false},
 	}
 	if !reflect.DeepEqual(got.Recovery, wantRec) {
 		t.Errorf("Recovery = %#v, want %#v", got.Recovery, wantRec)
 	}
-	if want := map[string]any{"name": "snap-1", "xid": int64(12)}; !reflect.DeepEqual(got.Snapshot, want) {
+	if want := map[string]any{"name": "snap-1", "xid": json.Number("12")}; !reflect.DeepEqual(got.Snapshot, want) {
 		t.Errorf("Snapshot = %#v, want %#v", got.Snapshot, want)
 	}
 	p := got.Payload()
-	if !reflect.DeepEqual(p["recovery"], wantRec) || !reflect.DeepEqual(p["snapshot"], map[string]any{"name": "snap-1", "xid": int64(12)}) {
+	if !reflect.DeepEqual(p["recovery"], wantRec) || !reflect.DeepEqual(p["snapshot"], map[string]any{"name": "snap-1", "xid": json.Number("12")}) {
 		t.Errorf("Payload dropped the provenance: recovery %#v snapshot %#v", p["recovery"], p["snapshot"])
 	}
 	if err := message.Validate(p); err != nil {
@@ -218,7 +218,37 @@ func TestDecodeKeepsRecoveryAndSnapshot(t *testing.T) {
 		wal["frame"] = "changed"
 	}
 	snap["name"] = "changed"
-	if got.Recovery["via"] != "wal" || !reflect.DeepEqual(got.Recovery["wal"], map[string]any{"frame": int64(3), "salt1": int64(7), "committed": false}) || got.Snapshot["name"] != "snap-1" {
+	if got.Recovery["via"] != "wal" || !reflect.DeepEqual(got.Recovery["wal"], map[string]any{"frame": json.Number("3"), "salt1": json.Number("7"), "committed": false}) || got.Snapshot["name"] != "snap-1" {
 		t.Error("the payload aliases the message's recovery or snapshot")
+	}
+}
+
+// TestDecodeKeepsRawNumbersExact: a number in raw that does not fit an int64 or
+// float64 survives Decode and Payload unchanged.
+func TestDecodeKeepsRawNumbersExact(t *testing.T) {
+	p := minimal().Payload()
+	p["raw"] = map[string]any{"big": json.Number("18446744073709551615"), "dec": json.Number("1.50"), "n": map[string]any{"x": []any{json.Number("9007199254740993")}}}
+	in, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := message.Decode(1, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Raw["big"] != json.Number("18446744073709551615") || m.Raw["dec"] != json.Number("1.50") {
+		t.Errorf("Raw = %#v", m.Raw)
+	}
+	b, err := json.Marshal(m.Payload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"18446744073709551615", "1.50", "9007199254740993"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("payload %s lost %s", b, want)
+		}
+	}
+	if err := message.Validate(m.Payload()); err != nil {
+		t.Errorf("rebuilt payload: %v", err)
 	}
 }

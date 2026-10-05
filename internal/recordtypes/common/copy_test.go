@@ -2,7 +2,6 @@ package common_test
 
 import (
 	"encoding/json"
-	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -63,7 +62,7 @@ func TestCopyMapStopsAtTheDepthTheValidatorRefuses(t *testing.T) {
 	}
 }
 
-func TestNormMapTurnsNumbersIntoCanonicalTypes(t *testing.T) {
+func TestNormMapKeepsNumbersExact(t *testing.T) {
 	dec := func(s string) map[string]any {
 		d := json.NewDecoder(strings.NewReader(s))
 		d.UseNumber()
@@ -73,13 +72,14 @@ func TestNormMapTurnsNumbersIntoCanonicalTypes(t *testing.T) {
 		}
 		return m
 	}
-	got := common.NormMap(dec(`{"i":3,"neg":-7,"big":9223372036854775807,"f":1.5,"e":1e3,"huge":1e999,"over":9223372036854775808,
+	got := common.NormMap(dec(`{"i":3,"neg":-7,"big":9223372036854775807,"f":1.50,"e":1e3,"huge":1e999,"over":9223372036854775808,"max":18446744073709551615,
 		"s":"x","b":true,"n":null,"m":{"a":[1,2.5,{"k":4}]}}`))
 	want := map[string]any{
-		"i": int64(3), "neg": int64(-7), "big": int64(math.MaxInt64), "f": 1.5, "e": 1000.0,
-		"huge": "1e999", "over": 9.223372036854775808e18,
-		"s": "x", "b": true, "n": nil,
-		"m": map[string]any{"a": []any{int64(1), 2.5, map[string]any{"k": int64(4)}}},
+		"i": json.Number("3"), "neg": json.Number("-7"), "big": json.Number("9223372036854775807"), "f": json.Number("1.50"),
+		"e": json.Number("1e3"), "huge": json.Number("1e999"), "over": json.Number("9223372036854775808"),
+		"max": json.Number("18446744073709551615"),
+		"s":   "x", "b": true, "n": nil,
+		"m": map[string]any{"a": []any{json.Number("1"), json.Number("2.5"), map[string]any{"k": json.Number("4")}}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("NormMap =\n %#v\nwant\n %#v", got, want)

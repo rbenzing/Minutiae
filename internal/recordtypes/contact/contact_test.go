@@ -52,9 +52,9 @@ func full() contact.Contact {
 		SourceID:        "17",
 		SourceIDs:       []string{"17", "204"},
 		Deleted:         map[string]any{"source": "raw_contacts.deleted"},
-		Recovery:        map[string]any{"relation": "absent-from-live", "via": "wal", "wal": map[string]any{"frame": int64(3), "committed": true}},
-		Snapshot:        map[string]any{"name": "com.apple.snap", "xid": int64(12)},
-		Raw:             map[string]any{"x_times_contacted": int64(4), "nested": map[string]any{"a": []any{"x", int64(2), 1.5}}},
+		Recovery:        map[string]any{"relation": "absent-from-live", "via": "wal", "wal": map[string]any{"frame": json.Number("3"), "committed": true}},
+		Snapshot:        map[string]any{"name": "com.apple.snap", "xid": json.Number("12")},
+		Raw:             map[string]any{"x_times_contacted": json.Number("4"), "nested": map[string]any{"a": []any{"x", json.Number("2"), json.Number("1.5")}}},
 	}
 }
 
@@ -235,6 +235,10 @@ func TestPayloadValidatorsRejectViolations(t *testing.T) {
 	add("deleted without source", mutate(func(p map[string]any) { p["deleted"] = map[string]any{} }), "payload.deleted.source")
 	add("deleted with empty source", mutate(func(p map[string]any) { p["deleted"] = map[string]any{"source": ""} }), "payload.deleted.source")
 	add("recovery relation", mutate(func(p map[string]any) { p["recovery"] = map[string]any{"relation": "found"} }), "payload.recovery.relation")
+	add("deleted source of the wrong type", mutate(func(p map[string]any) { p["deleted"] = map[string]any{"source": int64(1)} }), "payload.deleted.source")
+	add("recovery free key of an unsupported type", mutate(func(p map[string]any) {
+		p["recovery"] = map[string]any{"relation": "absent-from-live", "x": struct{}{}}
+	}), "payload.recovery: another key holds an unsupported value")
 	add("snapshot without name", mutate(func(p map[string]any) { p["snapshot"] = map[string]any{"xid": int64(1)} }), "payload.snapshot.name")
 	add("snapshot negative xid", mutate(func(p map[string]any) { p["snapshot"] = map[string]any{"name": "s", "xid": int64(-1)} }), "payload.snapshot.xid")
 	for _, in := range []string{"1e3", "2.0", "1E3"} {
@@ -653,7 +657,7 @@ func TestContactBuilderOmitsAbsent(t *testing.T) {
 func TestContactPayloadIsCanonicalTypes(t *testing.T) {
 	for name, c := range map[string]contact.Contact{"minimal": minimal(), "phone": phoneOnly(), "full": full()} {
 		if !canonical(c.Payload()) {
-			t.Errorf("%s payload holds a type outside string, bool, int64, float64, []any, map[string]any", name)
+			t.Errorf("%s payload holds a type outside string, bool, int64, float64, json.Number, []any, map[string]any", name)
 		}
 	}
 	c := full()
@@ -672,7 +676,7 @@ func TestContactPayloadIsCanonicalTypes(t *testing.T) {
 		ids[0] = "changed"
 	}
 	objOf(t, p, "names")["given"] = "changed"
-	if c.Raw["x_times_contacted"] != int64(4) || c.Raw["nested"].(map[string]any)["a"].([]any)[0] != "x" ||
+	if c.Raw["x_times_contacted"] != json.Number("4") || c.Raw["nested"].(map[string]any)["a"].([]any)[0] != "x" ||
 		c.Recovery["via"] != "wal" || c.Snapshot["name"] != "com.apple.snap" || c.Deleted["source"] != "raw_contacts.deleted" {
 		t.Error("the payload aliases the contact's raw, recovery, snapshot or deleted map")
 	}
@@ -697,7 +701,7 @@ func TestContactPayloadIsCanonicalTypes(t *testing.T) {
 
 func canonical(v any) bool {
 	switch x := v.(type) {
-	case string, bool, int64, float64:
+	case string, bool, int64, float64, json.Number:
 		return true
 	case []any:
 		for _, e := range x {
@@ -906,9 +910,9 @@ func TestRecordTypesDecodeOlderVersions(t *testing.T) {
 			Birthday:     "--02-29", Starred: ptr(false), PhotoPresent: ptr(true), PhotoArtifactID: "art-3",
 			SourceID: "17", SourceIDs: []string{"17", "204"},
 			Deleted:  map[string]any{"source": "raw_contacts.deleted"},
-			Recovery: map[string]any{"relation": "uncommitted", "via": "wal", "wal": map[string]any{"frame": int64(3), "committed": false}},
-			Snapshot: map[string]any{"name": "snap-1", "xid": int64(12)},
-			Raw:      map[string]any{"x_times_contacted": int64(4), "ratio": 0.5, "tags": []any{"a", "b"}, "nested": map[string]any{"ok": true}},
+			Recovery: map[string]any{"relation": "uncommitted", "via": "wal", "wal": map[string]any{"frame": json.Number("3"), "committed": false}},
+			Snapshot: map[string]any{"name": "snap-1", "xid": json.Number("12")},
+			Raw:      map[string]any{"x_times_contacted": json.Number("4"), "ratio": json.Number("0.5"), "tags": []any{"a", "b"}, "nested": map[string]any{"ok": true}},
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("Decode(v1 fixture)\n got  %+v\n want %+v", got, want)
@@ -999,19 +1003,19 @@ func TestDecodeKeepsRecoveryAndSnapshot(t *testing.T) {
 	}
 	wantRec := map[string]any{
 		"relation": "uncommitted", "via": "wal", "notes": []any{"a", "b"},
-		"wal": map[string]any{"frame": int64(3), "salt1": int64(7), "committed": false},
+		"wal": map[string]any{"frame": json.Number("3"), "salt1": json.Number("7"), "committed": false},
 	}
 	if !reflect.DeepEqual(got.Recovery, wantRec) {
 		t.Errorf("Recovery = %#v, want %#v", got.Recovery, wantRec)
 	}
-	if want := map[string]any{"name": "snap-1", "xid": int64(12)}; !reflect.DeepEqual(got.Snapshot, want) {
+	if want := map[string]any{"name": "snap-1", "xid": json.Number("12")}; !reflect.DeepEqual(got.Snapshot, want) {
 		t.Errorf("Snapshot = %#v, want %#v", got.Snapshot, want)
 	}
 	if want := map[string]any{"source": "raw_contacts.deleted"}; !reflect.DeepEqual(got.Deleted, want) {
 		t.Errorf("Deleted = %#v, want %#v", got.Deleted, want)
 	}
 	p := got.Payload()
-	if !reflect.DeepEqual(p["recovery"], wantRec) || !reflect.DeepEqual(p["snapshot"], map[string]any{"name": "snap-1", "xid": int64(12)}) ||
+	if !reflect.DeepEqual(p["recovery"], wantRec) || !reflect.DeepEqual(p["snapshot"], map[string]any{"name": "snap-1", "xid": json.Number("12")}) ||
 		!reflect.DeepEqual(p["deleted"], map[string]any{"source": "raw_contacts.deleted"}) {
 		t.Errorf("Payload dropped provenance: %v", p)
 	}
@@ -1035,4 +1039,29 @@ func makeStrings(n int) []any {
 		out[i] = "id"
 	}
 	return out
+}
+
+// TestDecodeKeepsRawNumbersExact: a number in raw that does not fit an int64 or
+// float64 survives Decode and Payload unchanged.
+func TestDecodeKeepsRawNumbersExact(t *testing.T) {
+	const in = `{"display_name":"A","raw":{"big":18446744073709551615,"dec":1.50,"n":{"x":[9007199254740993]}}}`
+	c, err := contact.Decode(1, []byte(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Raw["big"] != json.Number("18446744073709551615") || c.Raw["dec"] != json.Number("1.50") {
+		t.Errorf("Raw = %#v", c.Raw)
+	}
+	b, err := json.Marshal(c.Payload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"18446744073709551615", "1.50", "9007199254740993"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("payload %s lost %s", b, want)
+		}
+	}
+	if err := contact.Validate(c.Payload()); err != nil {
+		t.Errorf("rebuilt payload: %v", err)
+	}
 }

@@ -13,6 +13,10 @@
 // strings, never normalized (C5). Unknown fields in a stored payload are ignored
 // by Decode; the provenance objects recovery, snapshot and deleted are never
 // ignored.
+//
+// A parser that has to sanitise text the contract refuses (invalid UTF-8, NUL)
+// keeps the original bytes in raw (base64): the payload stores only what the
+// writer accepts, and the typed value does not flag the replacement.
 package contact
 
 import (

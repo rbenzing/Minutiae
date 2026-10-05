@@ -51,9 +51,9 @@ func full() message.Message {
 		BodyRawSHA256:  strings.Repeat("0f", 32),
 		BodyRawLen:     ptr(int64(123456)),
 		Deleted:        map[string]any{"source": "sqlite-freelist"},
-		Raw:            map[string]any{"flags": int64(5), "nested": map[string]any{"a": []any{"x", int64(2)}}},
-		Recovery:       map[string]any{"relation": "uncommitted", "via": "wal", "wal": map[string]any{"frame": int64(3), "committed": false}},
-		Snapshot:       map[string]any{"name": "com.apple.snap", "xid": int64(12)},
+		Raw:            map[string]any{"flags": json.Number("5"), "nested": map[string]any{"a": []any{"x", json.Number("2")}}},
+		Recovery:       map[string]any{"relation": "uncommitted", "via": "wal", "wal": map[string]any{"frame": json.Number("3"), "committed": false}},
+		Snapshot:       map[string]any{"name": "com.apple.snap", "xid": json.Number("12")},
 	}
 }
 
@@ -387,7 +387,7 @@ func TestMessageBuilderOmitsAbsent(t *testing.T) {
 func TestMessagePayloadIsCanonicalTypes(t *testing.T) {
 	for name, m := range map[string]message.Message{"minimal": minimal(), "full": full(), "group": groupMMS()} {
 		if !canonical(m.Payload()) {
-			t.Errorf("%s payload holds a type outside string, bool, int64, []any, map[string]any", name)
+			t.Errorf("%s payload holds a type outside string, bool, int64, json.Number, []any, map[string]any", name)
 		}
 	}
 	m := full()
@@ -401,10 +401,10 @@ func TestMessagePayloadIsCanonicalTypes(t *testing.T) {
 		wal["frame"] = "changed"
 	}
 	snap["name"] = "changed"
-	if m.Recovery["via"] != "wal" || !reflect.DeepEqual(m.Recovery["wal"], map[string]any{"frame": int64(3), "committed": false}) || m.Snapshot["name"] != "com.apple.snap" {
+	if m.Recovery["via"] != "wal" || !reflect.DeepEqual(m.Recovery["wal"], map[string]any{"frame": json.Number("3"), "committed": false}) || m.Snapshot["name"] != "com.apple.snap" {
 		t.Error("the payload aliases the message's recovery or snapshot maps")
 	}
-	if m.Deleted["source"] != "sqlite-freelist" || m.Raw["flags"] != int64(5) || m.Raw["nested"].(map[string]any)["a"].([]any)[0] != "x" {
+	if m.Deleted["source"] != "sqlite-freelist" || m.Raw["flags"] != json.Number("5") || m.Raw["nested"].(map[string]any)["a"].([]any)[0] != "x" {
 		t.Error("the payload aliases the message's deleted/raw maps")
 	}
 	// two calls give independent maps
@@ -417,7 +417,7 @@ func TestMessagePayloadIsCanonicalTypes(t *testing.T) {
 
 func canonical(v any) bool {
 	switch x := v.(type) {
-	case string, bool, int64:
+	case string, bool, int64, json.Number:
 		return true
 	case []any:
 		for _, e := range x {

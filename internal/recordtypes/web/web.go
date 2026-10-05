@@ -16,6 +16,10 @@
 // the validators; Decode returns them as strings. Unknown fields in a stored
 // payload are ignored by Decode; the provenance objects recovery, snapshot and
 // deleted are never ignored.
+//
+// A parser that has to sanitise text the contract refuses (invalid UTF-8, NUL)
+// keeps the original bytes in raw (base64): the payload stores only what the
+// writer accepts, and the typed value does not flag the replacement.
 package web
 
 import (
@@ -24,7 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"strconv"
+	"strings"
 
 	"github.com/rbenzing/minutiae/internal/records"
 	"github.com/rbenzing/minutiae/internal/recordtypes/common"
@@ -317,6 +321,32 @@ func VisitSummary(v Visit) string {
 	return common.SummarizeChars(v.URL, 80)
 }
 
+// SearchSummary builds the record summary of a search: the query as typed, else
+// its normalized form, at most 80 characters, one line, through
+// common.SummarizeChars (format and bidi characters are shown as <U+XXXX>).
+func SearchSummary(s Search) string {
+	if t := common.SummarizeChars(s.Term, 80); t != "" {
+		return t
+	}
+	return common.SummarizeChars(s.NormalizedTerm, 80)
+}
+
+// DownloadSummary builds the record summary of a download: the file name (the last
+// element of the target path, else of the current path; both / and \ separate
+// elements), else the URL, at most 80 characters, one line, through
+// common.SummarizeChars.
+func DownloadSummary(d Download) string {
+	for _, p := range []string{d.TargetPath, d.CurrentPath} {
+		if i := strings.LastIndexAny(p, `/\`); i >= 0 {
+			p = p[i+1:]
+		}
+		if s := common.SummarizeChars(p, 80); s != "" {
+			return s
+		}
+	}
+	return common.SummarizeChars(d.URL, 80)
+}
+
 // decodeObject parses a stored payload: one JSON object with exact numbers,
 // validated against the contract.
 func decodeObject(kind string, payloadV int, payload []byte, validate func(map[string]any) error) (map[string]any, error) {
@@ -345,7 +375,7 @@ func decodeObject(kind string, payloadV int, payload []byte, validate func(map[s
 // version 1 exists; any other value is ErrUnsupportedPayloadVersion. Numbers are
 // read exactly (json.Number): integers are canonical JSON integers, numeric ids
 // become their decimal string, durations become float64, and the numbers inside
-// the free-form objects become int64 where integral, so the result equals what
+// the free-form objects stay json.Number (exact, never rounded), so the result equals what
 // Payload produced. Unknown fields are ignored. A payload that does not satisfy
 // the v1 contract is an error naming the path, never a value.
 func DecodeVisit(payloadV int, payload []byte) (Visit, error) {
@@ -430,16 +460,14 @@ func str(m map[string]any, key string) string {
 	return s
 }
 
-// idStr reads an id that may be a string or an integer: an integer becomes its
-// canonical decimal string.
+// idStr reads an id that may be a string or an integer: an integer is its exact
+// decimal text (the validator accepts canonical int64 only), never "".
 func idStr(m map[string]any, key string) string {
 	switch x := m[key].(type) {
 	case string:
 		return x
 	case json.Number:
-		if i, err := x.Int64(); err == nil {
-			return strconv.FormatInt(i, 10)
-		}
+		return x.String()
 	}
 	return ""
 }
