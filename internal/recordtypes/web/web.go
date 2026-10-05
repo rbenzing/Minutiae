@@ -58,6 +58,7 @@ type Referrer struct{ VisitID, URL string }
 // pointer or slice) means "not known" and is absent from the payload. URL and
 // Referrer.URL are verbatim. Deleted, Recovery and Snapshot are provenance: a
 // typed reader must not present a visit that carries them as a live one (Live).
+// DurationS is a float64 view; the stored payload keeps the exact number.
 type Visit struct {
 	URL, Browser, Title, VisitID, Profile, Transition string
 	TransitionQualifiers                              []string

@@ -38,7 +38,13 @@ func hashOf(p parse.Parser, table map[string]identity) (string, bool) {
 	if p == nil {
 		return "", false
 	}
-	m := p.Meta()
+	return hashOfWith(p, p.Meta(), table)
+}
+
+// hashOfMeta is HashOf for a caller that already holds p.Meta().
+func hashOfMeta(p parse.Parser, m parse.Meta) (string, bool) { return hashOfWith(p, m, generated) }
+
+func hashOfWith(p parse.Parser, m parse.Meta, table map[string]identity) (string, bool) {
 	id, ok := table[m.Name+"@"+m.Version]
 	if !ok || id.Package == "" || id.Package != PackagePath(p) {
 		return "", false

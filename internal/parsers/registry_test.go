@@ -151,14 +151,14 @@ func TestRegistryValidateCatchesBadSets(t *testing.T) {
 			r := rules{
 				base:          base,
 				pkgPath:       func(parse.Parser) string { return goodPkg },
-				hashOf:        func(parse.Parser) (string, bool) { return "h", true },
+				hashOf:        func(parse.Parser, parse.Meta) (string, bool) { return "h", true },
 				claimsEnabled: tc.claims,
 			}
 			if tc.pkg != nil {
 				r.pkgPath = tc.pkg
 			}
 			if tc.noHash {
-				r.hashOf = func(parse.Parser) (string, bool) { return "", false }
+				r.hashOf = func(parse.Parser, parse.Meta) (string, bool) { return "", false }
 			}
 			errs := r.validate(tc.set)
 			if len(errs) != 1 || !strings.Contains(errs[0].Error(), tc.want) {
@@ -170,7 +170,7 @@ func TestRegistryValidateCatchesBadSets(t *testing.T) {
 	t.Run("a good set and claims inside mappings pass", func(t *testing.T) {
 		r := rules{
 			base: base, pkgPath: func(parse.Parser) string { return goodPkg },
-			hashOf: func(parse.Parser) (string, bool) { return "h", true }, claimsEnabled: true,
+			hashOf: func(parse.Parser, parse.Meta) (string, bool) { return "h", true }, claimsEnabled: true,
 		}
 		if errs := r.validate([]parse.Parser{mk("plain", nil), mapper(claimMeta(), "CALLS")}); len(errs) != 0 {
 			t.Errorf("errors = %v", errs)
@@ -359,5 +359,55 @@ func TestExplicitRuleSelfTest(t *testing.T) {
 		if got := len(explicitProblems(map[string]string{"x.go": tc.src})); got != tc.want {
 			t.Errorf("%s: %d problems, want %d", name, got, tc.want)
 		}
+	}
+}
+
+// countingParser counts Meta calls; with boom set Meta panics.
+type countingParser struct {
+	fake
+	calls *int
+	boom  bool
+}
+
+func (c *countingParser) Meta() parse.Meta {
+	*c.calls++
+	if c.boom {
+		panic("hostile meta")
+	}
+	return c.meta
+}
+
+func TestValidateCallsMetaOncePerParser(t *testing.T) {
+	n := 0
+	p := &countingParser{fake: fake{meta: goodMeta("once")}, calls: &n}
+	Validate([]parse.Parser{p})
+	if n != 1 {
+		t.Errorf("Meta called %d times, want 1", n)
+	}
+}
+
+func TestValidateRecoversMetaPanicNamingPackage(t *testing.T) {
+	n := 0
+	p := &countingParser{fake: fake{meta: goodMeta("boom")}, calls: &n, boom: true}
+	var errs []error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("Validate panicked: %v", r)
+			}
+		}()
+		errs = Validate([]parse.Parser{p, &fake{meta: goodMeta("next")}})
+	}()
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "Meta panicked") && strings.Contains(e.Error(), base) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("errors = %v, want one naming the package and the Meta panic", errs)
+	}
+	if n != 1 {
+		t.Errorf("Meta called %d times after a panic, want 1", n)
 	}
 }

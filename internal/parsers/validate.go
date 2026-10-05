@@ -15,7 +15,7 @@ import (
 // has a validator; no claims while claimsEnabled is false, and when the parser is a
 // parse.RowMapper every claim names a mapped table; a source hash is generated.
 func Validate(all []parse.Parser) []error {
-	return rules{base: parsersPath, pkgPath: PackagePath, hashOf: HashOf, claimsEnabled: claimsEnabled}.validate(all)
+	return rules{base: parsersPath, pkgPath: PackagePath, hashOf: hashOfMeta, claimsEnabled: claimsEnabled}.validate(all)
 }
 
 // rules is Validate with its environment injected, so the tests can exercise
@@ -23,7 +23,7 @@ func Validate(all []parse.Parser) []error {
 type rules struct {
 	base          string
 	pkgPath       func(parse.Parser) string
-	hashOf        func(parse.Parser) (string, bool)
+	hashOf        func(parse.Parser, parse.Meta) (string, bool)
 	claimsEnabled bool
 }
 
@@ -35,7 +35,11 @@ func (r rules) validate(all []parse.Parser) []error {
 			errs = append(errs, fmt.Errorf("parsers: entry %d is nil", i))
 			continue
 		}
-		m := p.Meta()
+		m, err := safeMeta(p)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("parsers: package %q: Meta panicked: %w", r.pkgPath(p), err))
+			continue
+		}
 		who := "parsers: " + m.Name + "@" + m.Version
 		if err := parse.ValidateMeta(m); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", who, err))
@@ -67,7 +71,7 @@ func (r rules) validate(all []parse.Parser) []error {
 				}
 			}
 		}
-		if _, ok := r.hashOf(p); !ok {
+		if _, ok := r.hashOf(p, m); !ok {
 			errs = append(errs, fmt.Errorf("%s: has no generated source hash", who))
 		}
 	}
@@ -89,4 +93,14 @@ func (r rules) validPackage(path string) bool {
 		}
 	}
 	return true
+}
+
+// safeMeta calls p.Meta once and turns a panic into an error.
+func safeMeta(p parse.Parser) (m parse.Meta, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%v", r)
+		}
+	}()
+	return p.Meta(), nil
 }

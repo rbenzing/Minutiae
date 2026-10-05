@@ -80,6 +80,7 @@ var ErrUnsupportedPayloadVersion = errors.New("call: unsupported payload version
 // with the call, not a contact lookup. DurationS is seconds as stored.
 // Deleted, Recovery and Snapshot are provenance: a typed reader must not present
 // a call that carries them as a live one.
+// DurationS is a float64 view; the stored payload keeps the exact number.
 type Call struct {
 	Direction, Outcome, Address, AddressPresentation, NameCached, Kind, Service, CountryISO, GeoDescription string
 	DurationS                                                                                               *float64

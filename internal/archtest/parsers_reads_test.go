@@ -27,28 +27,29 @@ func recordsSelectorProblems(name, src string) []string {
 	if err != nil {
 		return []string{name + ": " + err.Error()}
 	}
-	local := ""
+	locals := map[string]bool{}
 	var out []string
 	for _, is := range f.Imports {
 		p, _ := strconv.Unquote(is.Path.Value)
 		if p != recordsImport {
 			continue
 		}
-		local = "records"
+		local := "records"
 		if is.Name != nil {
 			local = is.Name.Name
 		}
 		if local == "." || local == "_" {
 			out = append(out, name+": imports internal/records as "+local+" (only qualified registry reads are allowed)")
-			local = ""
+			continue
 		}
+		locals[local] = true
 	}
-	if local == "" {
+	if len(locals) == 0 {
 		return out
 	}
 	ast.Inspect(f, func(n ast.Node) bool {
 		if se, ok := n.(*ast.SelectorExpr); ok {
-			if id, ok := se.X.(*ast.Ident); ok && id.Name == local && !parsersRecordsAllowed[se.Sel.Name] {
+			if id, ok := se.X.(*ast.Ident); ok && locals[id.Name] && !parsersRecordsAllowed[se.Sel.Name] {
 				out = append(out, fset.Position(se.Pos()).String()+": records."+se.Sel.Name+" is not a registry read (allowed: Types, TypeInfo, LookupType)")
 			}
 		}
@@ -106,6 +107,7 @@ func TestParsersRegistryReadsRuleSelfTest(t *testing.T) {
 		"RegisterType":    {head + "func f() { _ = records.RegisterType(records.Type{}) }\n", 2},
 		"SetValidator":    {head + "func f() { records.SetValidator(\"x\", nil) }\n", 1},
 		"aliased":         {"package p\nimport r \"" + recordsImport + "\"\nvar _ = r.NewWriter\n", 1},
+		"two aliases":     {"package p\nimport r \"" + recordsImport + "\"\nimport records \"" + recordsImport + "\"\nvar _ = records.Types\nvar _ = r.NewWriter\n", 1},
 		"dot import":      {"package p\nimport . \"" + recordsImport + "\"\n", 1},
 		"blank import":    {"package p\nimport _ \"" + recordsImport + "\"\n", 1},
 		"other package":   {"package p\nimport \"fmt\"\nvar _ = fmt.Sprint\n", 0},
