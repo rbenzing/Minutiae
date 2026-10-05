@@ -6,10 +6,12 @@ import (
 	"crypto/sha256"
 	"errors"
 	"io"
+	"io/fs"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/rbenzing/minutiae/internal/sqlitefile"
 	"github.com/rbenzing/minutiae/internal/sqlitefile/sqlitetest"
@@ -156,8 +158,8 @@ func (g *guardedReader) ReadFrom(io.Reader) (int64, error) {
 	g.t.Fatal("ReadFrom called")
 	return 0, nil
 }
-func (g *guardedReader) Sync() error        { g.t.Fatal("Sync called"); return nil }
-func (g *guardedReader) Stat() (any, error) { g.t.Fatal("Stat called"); return nil, nil }
+func (g *guardedReader) Sync() error                { g.t.Fatal("Sync called"); return nil }
+func (g *guardedReader) Stat() (fs.FileInfo, error) { g.t.Fatal("Stat called"); return nil, nil }
 
 func TestNeverWritesAndUsesOnlyReadAt(t *testing.T) {
 	b, tb := stdTable(t, sqlitetest.Options{PageSize: 512}, 800)
@@ -191,7 +193,14 @@ func TestNeverWritesAndUsesOnlyReadAt(t *testing.T) {
 	if _, err := sqlitefile.Open(bad, 4096, sqlitefile.Options{}); err == nil {
 		t.Fatal("not a database was opened")
 	}
+	// Once Open has returned, nothing may touch the reader again: a late read by a
+	// goroutine the library left behind fails the test (ReadAt checks closed).
 	bad.closed = true
+	readsAtReturn := bad.reads
+	time.Sleep(50 * time.Millisecond)
+	if bad.reads != readsAtReturn {
+		t.Errorf("%d reads after Open returned", bad.reads-readsAtReturn)
+	}
 }
 
 func TestRowCloneIsOwned(t *testing.T) {

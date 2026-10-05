@@ -39,6 +39,11 @@ type Row struct {
 	Values     []Value // as stored in the record
 	Loc        Loc
 	PayloadLen int64
+	// KeyRangeViolation is set on a table row whose rowid lies outside the key
+	// range its position in the tree promises (the separator keys of its
+	// ancestors): a doctored or damaged interior key. The row is delivered as
+	// the engine walk delivers it, and a btree-order warning is raised.
+	KeyRangeViolation bool
 }
 
 // Clone returns a copy that owns all its memory and stays valid after the

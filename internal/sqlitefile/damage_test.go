@@ -3,6 +3,7 @@ package sqlitefile_test
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"slices"
 	"testing"
 
@@ -421,7 +422,8 @@ func TestBTreeDepthCap(t *testing.T) {
 	}
 	// A lowered MaxBTreeDepth is honoured by lookups too.
 	_, v = openLive(t, data, sqlitefile.Options{Limits: sqlitefile.Limits{MaxBTreeDepth: 4}})
-	if _, ok, err := v.LookupRowid(context.Background(), 2, 1); ok || err != nil {
+	// (the path is damaged, so the answer is uncertain, never "absent")
+	if _, ok, err := v.LookupRowid(context.Background(), 2, 1); ok || !errors.Is(err, sqlitefile.ErrCorrupt) {
 		t.Errorf("lookup in a too deep tree: %v %v", ok, err)
 	}
 	if got := v.Stats().PageReads; got > 4 || !viewWarns(v, sqlitefile.WarnBTreeDepth, 0) {

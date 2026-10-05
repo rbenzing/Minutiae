@@ -2,6 +2,7 @@ package sqlitefile_test
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"testing"
 
@@ -67,8 +68,9 @@ func TestRecordInvalidMeansTheRowWasNotRead(t *testing.T) {
 		}
 		_, v := openLive(t, data, sqlitefile.Options{})
 		defer v.Release()
-		if _, ok, err := v.LookupRowid(context.Background(), tb.Root(), 3); err != nil || ok {
-			t.Fatalf("Get 3: ok %v err %v, want not found", ok, err)
+		// The row exists but cannot be read: not "absent", an uncertain answer.
+		if _, ok, err := v.LookupRowid(context.Background(), tb.Root(), 3); ok || !errors.Is(err, sqlitefile.ErrCorrupt) {
+			t.Fatalf("Get 3: ok %v err %v, want an error wrapping ErrCorrupt", ok, err)
 		}
 		if got := offsets(v, sqlitefile.WarnRecordInvalid); !slices.Equal(got, []int64{off(3)}) {
 			t.Errorf("Get 3: record-invalid at %v, want [%d]: %v", got, off(3), v.Warnings())

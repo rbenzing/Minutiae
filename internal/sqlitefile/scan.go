@@ -1,9 +1,12 @@
 package sqlitefile
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
 )
 
 // cellPoll is how many cells are parsed between two looks at the context.
@@ -17,6 +20,47 @@ type node struct {
 	h     PageHeader
 	ptrs  []CellPointer // the pointers that can be followed, in array order
 	depth int           // 1 for the root
+	bad   int           // pointers that cannot be followed
+
+	charged int64 // budget held for ptrs until walker.release
+}
+
+// ptrCost is what one followable cell pointer costs in the budget (the
+// CellPointer struct).
+const ptrCost = 24
+
+// keyBounds is the open-closed range (lo, hi] of rowids a table subtree may
+// hold, from the separator keys of its ancestors; loPg and hiPg are the
+// interior pages the bounds came from. The zero value bounds nothing.
+type keyBounds struct {
+	lo, hi       int64
+	hasLo, hasHi bool
+	loPg, hiPg   uint32
+}
+
+// holds reports whether rowid lies inside the bounds.
+func (b keyBounds) holds(rowid int64) bool {
+	return (!b.hasLo || rowid > b.lo) && (!b.hasHi || rowid <= b.hi)
+}
+
+// owner is the interior page whose key the rowid breaks.
+func (b keyBounds) owner(rowid int64) uint32 {
+	if b.hasLo && rowid <= b.lo {
+		return b.loPg
+	}
+	return b.hiPg
+}
+
+// child narrows b to the child between the keys prev (when havePrev) and key
+// (when haveKey) of interior page pg.
+func (b keyBounds) child(pg uint32, prev int64, havePrev bool, key int64, haveKey bool) keyBounds {
+	if havePrev && (!b.hasLo || prev > b.lo) {
+		b.lo, b.hasLo, b.loPg = prev, true, pg
+	}
+	if haveKey && (!b.hasHi || key < b.hi) {
+		b.hi, b.hasHi, b.hiPg = key, true, pg
+	}
+	return b
 }
 
 // frame is an interior page on the walk's stack. k counts the cells handled:
@@ -27,9 +71,10 @@ type frame struct {
 	cur  Cell // the parsed cell k
 	have bool
 	emit bool // index tree: child k is done, entry k comes next
-	// table tree: the key that bounds the subtree just walked.
-	chk    bool
-	chkKey int64
+	// table tree: the range this page's subtree may hold, and the previous key.
+	kb       keyBounds
+	prevKey  int64
+	havePrev bool
 }
 
 // walker is one traversal of a b-tree. It is used by one goroutine and one
@@ -46,6 +91,10 @@ type walker struct {
 	leafDepth int
 	lastRowid int64
 	haveRowid bool
+
+	held         int64  // pointer-list charges not yet released
+	checkOverlap bool   // a scan checks that the cells of a page do not overlap
+	dmg          string // a lookup: why its answer may not be "absent" (first reason)
 }
 
 func (v *View) newWalker(ctx context.Context, l *ledger, vis visitor, kind BTreeKind) *walker {
@@ -150,7 +199,64 @@ func (w *walker) enter(pgno uint32, depth int) (n node, ok bool, err error) {
 	if k := set.BelowContent(); k > 0 { // the engine reads these cells; one warning for the page
 		v.warn(WarnCellPointer, pgno, "%d cell pointers lie below the stored content start %d; the cells are read, as the engine reads them", k, h.ContentStart)
 	}
-	return node{pgno: pgno, data: data, loc: loc, h: h, ptrs: set.Good, depth: depth}, true, nil
+	n = node{pgno: pgno, data: data, loc: loc, h: h, ptrs: set.Good, depth: depth, bad: len(set.Bad)}
+	if w.checkOverlap {
+		if err := w.warnOverlap(n); err != nil {
+			return node{}, false, err
+		}
+	}
+	n.charged = int64(len(n.ptrs)) * ptrCost
+	if err := w.l.alloc(n.charged); err != nil {
+		return node{}, false, err
+	}
+	w.held += n.charged
+	return n, true, nil
+}
+
+// release gives back the budget held for the pointer list of n.
+func (w *walker) release(n node) {
+	w.l.free(n.charged)
+	w.held -= n.charged
+}
+
+// regionCost is what one cell region costs while a page is checked for overlap.
+const regionCost = 16
+
+// warnOverlap parses every followable cell of n and warns once for the page when
+// two cells overlap (the same cell reached by two pointers, or a cell that
+// starts inside another). The cells are read regardless; this only reports.
+func (w *walker) warnOverlap(n node) error {
+	if len(n.ptrs) < 2 {
+		return nil
+	}
+	cost := int64(len(n.ptrs)) * regionCost
+	if err := w.l.alloc(cost); err != nil {
+		return err
+	}
+	defer w.l.free(cost)
+	type region struct{ off, end int }
+	regs := make([]region, 0, len(n.ptrs))
+	for _, ptr := range n.ptrs {
+		c, err := ParseCell(n.data, w.v.info.UsableSize, n.h, ptr.Offset)
+		if err != nil {
+			continue // reported when the cell is read
+		}
+		regs = append(regs, region{ptr.Offset, ptr.Offset + c.Length})
+	}
+	slices.SortFunc(regs, func(a, b region) int { return cmp.Compare(a.off, b.off) })
+	overlaps, first := 0, [2]int{}
+	for i := 1; i < len(regs); i++ {
+		if regs[i].off < regs[i-1].end {
+			if overlaps == 0 {
+				first = [2]int{regs[i-1].off, regs[i].off}
+			}
+			overlaps++
+		}
+	}
+	if overlaps > 0 {
+		w.v.warn(WarnCellPointer, n.pgno, "%d cells overlap another (first: the cells at offsets %d and %d); all are read", overlaps, first[0], first[1])
+	}
+	return nil
 }
 
 // cell parses the cell at ptr of n, warning and reporting false when it cannot
@@ -211,7 +317,8 @@ func (w *walker) rowFor(n node, ptr CellPointer, c Cell, ovf visitor) (row Row, 
 }
 
 // leafRows delivers the cells of leaf n. stop is true when visit asked to end.
-func (w *walker) leafRows(n node, ovf visitor, visit func(Row) bool) (stop bool, err error) {
+func (w *walker) leafRows(n node, ovf visitor, kb keyBounds, visit func(Row) bool) (stop bool, err error) {
+	defer w.release(n)
 	if w.leafDepth == 0 {
 		w.leafDepth = n.depth
 	} else if w.leafDepth != n.depth {
@@ -225,11 +332,16 @@ func (w *walker) leafRows(n node, ovf visitor, visit func(Row) bool) (stop bool,
 		if !ok {
 			continue
 		}
+		violation := false
 		if c.HasRowid {
 			if w.haveRowid && c.Rowid <= w.lastRowid {
 				w.v.warn(WarnBTreeOrder, n.pgno, "rowids are not in increasing order")
 			}
 			w.lastRowid, w.haveRowid = c.Rowid, true
+			if !kb.holds(c.Rowid) {
+				violation = true
+				w.warnKeyRange(n, c, kb)
+			}
 		}
 		row, held, ok, err := w.rowFor(n, ptr, c, ovf)
 		if err != nil {
@@ -238,6 +350,7 @@ func (w *walker) leafRows(n node, ovf visitor, visit func(Row) bool) (stop bool,
 		if !ok {
 			continue
 		}
+		row.KeyRangeViolation = violation
 		more := visit(row)
 		w.l.free(held)
 		if !more {
@@ -245,6 +358,15 @@ func (w *walker) leafRows(n node, ovf visitor, visit func(Row) bool) (stop bool,
 		}
 	}
 	return false, nil
+}
+
+// warnKeyRange reports a row whose rowid is outside the range its ancestors'"'"' keys
+// give its subtree; the warning belongs to the interior page whose key is broken.
+func (w *walker) warnKeyRange(n node, c Cell, kb keyBounds) {
+	w.v.warns.add(Warning{
+		Code: WarnBTreeOrder, File: n.loc.File, Page: kb.owner(c.Rowid), Offset: n.loc.Offset + int64(c.Offset),
+		Msg: fmt.Sprintf("rowid %d on page %d is outside the key range its parents give it (%s)", c.Rowid, n.pgno, kb.describe()),
+	})
 }
 
 // ScanTree visits the rows of the b-tree rooted at root: a table tree's leaf
@@ -272,12 +394,14 @@ func (v *View) ScanTree(ctx context.Context, root uint32, kind BTreeKind, visit 
 	}
 	defer ps.release(l)
 	w := v.newWalker(ctx, l, ps, kind)
+	w.checkOverlap = true
+	defer func() { l.free(w.held) }() // pointer lists of the pages still open when the scan ends
 	n, ok, err := w.enter(root, 1)
 	if err != nil || !ok {
 		return err
 	}
 	if !n.h.Type.interior() {
-		_, err = w.leafRows(n, ps, visit)
+		_, err = w.leafRows(n, ps, keyBounds{}, visit)
 		return err
 	}
 	w.stack = append(w.stack, frame{n: n})
@@ -286,13 +410,8 @@ func (v *View) ScanTree(ctx context.Context, root uint32, kind BTreeKind, visit 
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if f.chk {
-			f.chk = false
-			if w.haveRowid && w.lastRowid > f.chkKey {
-				v.warn(WarnBTreeOrder, f.n.pgno, "a row of a subtree is above the key %d that bounds it", f.chkKey)
-			}
-		}
 		var child uint32
+		var cb keyBounds // the range the child may hold (table trees)
 		switch {
 		case f.k < len(f.n.ptrs):
 			ptr := f.n.ptrs[f.k]
@@ -329,18 +448,26 @@ func (v *View) ScanTree(ctx context.Context, root uint32, kind BTreeKind, visit 
 			if kind == IndexTree {
 				f.emit = true
 			} else {
-				f.chk, f.chkKey = true, f.cur.Rowid
+				key := f.cur.Rowid
+				if f.havePrev && key <= f.prevKey {
+					v.warn(WarnBTreeOrder, f.n.pgno, "interior keys are not increasing (%d after %d)", key, f.prevKey)
+				}
+				cb = f.kb.child(f.n.pgno, f.prevKey, f.havePrev, key, true)
+				f.prevKey, f.havePrev = key, true
 				f.have = false
 				f.k++
 			}
 		case f.k == len(f.n.ptrs):
 			f.k++
 			child = f.n.h.RightChild
+			cb = f.kb.child(f.n.pgno, f.prevKey, f.havePrev, 0, false)
 		default:
+			w.release(f.n)
 			w.stack = w.stack[:len(w.stack)-1]
 			continue
 		}
-		cn, ok, err := w.enter(child, f.n.depth+1)
+		depth := f.n.depth + 1
+		cn, ok, err := w.enter(child, depth)
 		if err != nil {
 			return err
 		}
@@ -348,13 +475,25 @@ func (v *View) ScanTree(ctx context.Context, root uint32, kind BTreeKind, visit 
 			continue
 		}
 		if !cn.h.Type.interior() {
-			stop, err := w.leafRows(cn, ps, visit)
+			stop, err := w.leafRows(cn, ps, cb, visit)
 			if err != nil || stop {
 				return err
 			}
 			continue
 		}
-		w.stack = append(w.stack, frame{n: cn})
+		w.stack = append(w.stack, frame{n: cn, kb: cb})
 	}
 	return nil
+}
+
+// describe renders the bounds for a warning (numbers only).
+func (b keyBounds) describe() string {
+	lo, hi := "-inf", "+inf"
+	if b.hasLo {
+		lo = strconv.FormatInt(b.lo, 10)
+	}
+	if b.hasHi {
+		hi = strconv.FormatInt(b.hi, 10)
+	}
+	return "above " + lo + ", up to " + hi
 }

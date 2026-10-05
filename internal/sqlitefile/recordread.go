@@ -49,18 +49,17 @@ func (e *env) readRecord(l *ledger, w *warnings, at cellCtx, p *payload, enc Enc
 	case int64(hl) > maxHdr:
 		return Record{}, 0, recordInvalid("header length %d is over the %d byte cap for %d columns", hl, maxHdr, lim.MaxColumns)
 	}
-	if err := l.alloc(int64(hl)); err != nil {
+	// The declared header length is not vouched for by any byte: the buffer grows
+	// with the bytes that exist (readValue), never from the declaration.
+	hdr, hok, err := readValue(l, p, 0, int64(hl))
+	if err != nil {
 		return Record{}, 0, err
 	}
-	hdr := make([]byte, hl)
-	if got, err := p.readAt(hdr, 0); err != nil {
-		return Record{}, 0, err
-	} else if got < len(hdr) {
-		l.free(int64(hl))
+	if !hok {
 		return Record{}, 0, recordInvalid("the %d byte header is not wholly readable", hl)
 	}
 	serials, headerLen, bodyLen, perr := ParseRecordHeader(hdr, lim.MaxColumns)
-	l.free(int64(hl))
+	l.free(int64(len(hdr)))
 	if perr != nil {
 		return Record{}, 0, perr
 	}
