@@ -46,7 +46,7 @@ Use Minutiae only on devices you are authorized to examine.
 - **iOS over usbmuxd** — device info, AFC media listing/pull, and full logical backups via an in-house mobilebackup2 (DeviceLink) implementation hardened against hostile devices
 - **USB serial** — port enumeration with VID/PID, receive-only raw console capture (`rx.bin` + timestamped transcript), modem lines de-asserted on open
 - **Image analysis** — import disk images (raw/dd, split raw, **E01/EWF** with multiple segments) into a case, read MBR/EBR and GPT partition tables, browse filesystems read-only, extract files and export unallocated space as new hashed artifacts that record their full provenance (parent image, partition, filesystem entry, byte runs). **ext2/ext3/ext4** (extents or block maps, htree and inline directories, inline data, metadata checksums), **FAT12/16/32** (long names, 2-second local times) and **exFAT** (entry sets, validated checksums, `ValidDataLength`), **F2FS** (checkpoint packs, NAT/SIT journals, inline data and dentries, encrypted names), **HFS+/HFSX** (classic-HFS wrapper, B-tree catalog with extents overflow, hard links, zlib-compressed files, per-file data-protection flag) and **APFS** (checkpoint ring, object maps, B-trees, extents with holes and clones, hard links, extended-attribute names, name hashes with normalization-insensitive lookup, read-only snapshots as views, space-manager free space; encrypted volumes are detected and refused, compressed files are listed but not extracted) filesystems are readable, with deleted-entry flagging where the format keeps deleted names (names only; HFS+ and APFS keep none) and exact unallocated-space export; each reader is verified against real images built by the standard filesystem tools with independent expected results (tree, hashes, times, cluster chains or data extents, free space; the populated HFS+ and APFS images are written by Linux kernel drivers under QEMU, with nothing loaded into the host kernel) and fuzzed against hostile input; E01 images are verified against the hashes the acquirer stored (`image info --verify`, audited) and an unreadable chunk is an error, never zeros; see [Known limitations](CLAUDE.md#9-known-limitations)
-- **Unified records database** — parsed records (messages, calls, contacts, web visits, files, events ...) live in `artifacts.db` with full provenance (artifact, source path, locator, byte range, parser identity and version, deleted/recovered flags, microsecond timestamps with their time-zone basis). Every batch of records is announced in the hash-chained audit log with a digest *before* any row is written, the record tables are immutable (triggers) and `case verify` recomputes every digest, run, supersession and range, so an altered, deleted, injected or repointed record exits `4`. A newer complete run of a parser supersedes an older one without deleting it. Existing cases are moved to the new schema only by the explicit, audited `case upgrade`. Read it with `records list|show|stats` (filters, stable keyset pagination, terminal-safe output). Parsers that fill it arrive with sub-project 4; full-text search with 5B; see [Known limitations](CLAUDE.md#9-known-limitations)
+- **Unified records database** — parsed records (messages, calls, contacts, web visits, files, events ...) live in `artifacts.db` with full provenance (artifact, source path, locator, byte range, parser identity and version, deleted/recovered flags, microsecond timestamps with their time-zone basis). Every batch of records is announced in the hash-chained audit log with a digest *before* any row is written, the record tables are immutable (triggers) and `case verify` recomputes every digest, run, supersession and range, so an altered, deleted, injected or repointed record exits `4`. A newer complete run of a parser supersedes an older one without deleting it. Existing cases are moved to the new schema only by the explicit, audited `case upgrade`. Read it with `records list|show|stats` (filters, stable keyset pagination, terminal-safe output) and search it with `records search` (a verified full-text index). Parsers that fill it arrive with sub-project 4; see [Known limitations](CLAUDE.md#9-known-limitations)
 - **Windows-safe evidence names** — device file names that are illegal on Windows (`:`, `?`, `CON`, case/8.3 collisions, names over 200 bytes) are stored under safe local names while the original remote path is preserved
 - **Single static binary** — pure Go, no cgo; one cross-platform `go run ./tools/check` gate (tidy, vet, lint, build, cross-builds, tests)
 
@@ -208,6 +208,47 @@ refuse a database whose tables, indexes, views or triggers are not the ones this
 build defines (exit 4). Hiding a superseded run uses the stored supersession
 table, which `case verify` proves equal to its recomputation from the runs.
 
+#### Full-text search
+
+`records search` finds records whose summary or body contains your words. The
+index is derived data (it never replaces a record) and `case verify` proves it
+equals what the records say. A case created before full-text search is moved in
+two explicit steps, both audited:
+
+```bash
+minutiae case upgrade   --case ./cases/CASE01     # schema v3; records are kept
+minutiae records reindex --case ./cases/CASE01    # builds the index from the records
+
+minutiae records search --case ./cases/CASE01 'meeting "second floor" -cancelled'
+minutiae records search --case ./cases/CASE01 --in body --type message --from 2026-10-01T00:00:00Z invoice OR receipt
+minutiae records search --case ./cases/CASE01 --substring 'ab-12'     # literal text, 3+ characters
+minutiae records search --case ./cases/CASE01 --rank --limit 20 password   # best matches first, no paging
+minutiae records search --case ./cases/CASE01 -- -x                       # a query that starts with -
+```
+
+| Query | Meaning |
+|---|---|
+| `foo bar` or `foo AND bar` | both words (AND is optional; upper case only) |
+| `foo OR bar` | either (`OR` in upper case; lower-case `or` is a word) |
+| `"foo bar"` | the words next to each other, in this order |
+| `foo*` | words starting with `foo` (2 or more letters or digits before the star) |
+| `-foo` or `-"foo bar"` | records without it (every group needs a positive term) |
+| anything else | plain text: `*` inside a word, `:`, parentheses, `NEAR`, `^` mean nothing special |
+
+Text is matched without case, accents, width or compatibility differences
+(`Straße` finds `STRASSE`, `café` finds `cafe`). Punctuation separates words, so
+`c++` searches the word `c` and `a-b` the phrase `a b`; use `--substring` to
+match punctuation. A run of CJK characters is one word, and emoji are not words
+(a term with no letter or digit is refused). Hits come in the order of
+`records list`, with a snippet per matching column (the match is shown between
+`⟦` and `⟧`; a snippet line without one means that column did not match);
+`--no-snippets` omits them. `--timeout` (default 30 s) bounds a search. Search
+reads only: it never changes the case.
+
+If the index is not current (a case just upgraded, or a build with a newer
+normalization), `records search` and ingesting refuse until `records reindex`
+has run; `case verify` says so in a notice.
+
 ### Verify
 
 ```bash
@@ -215,7 +256,8 @@ minutiae case info   --case ./cases/CASE01
 minutiae case verify --case ./cases/CASE01
 ```
 
-`case verify` prints each problem as a `PROBLEM:` line and each notice (an
+`case verify` also recomputes the full-text index from the records (its temporary
+files live under `<case>/tmp/`, removed when it ends). It prints each problem as a `PROBLEM:` line and each notice (an
 upgrade announced but not concluded, a recovered ingest) as a `NOTICE:` line,
 with case text escaped, and exits 4 when it found a problem.
 
@@ -226,10 +268,10 @@ Every command accepts `--json` for machine-readable output.
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | General error |
-| `2` | Usage error (bad flag, missing argument, unknown command, a bad filter, cursor or page, or a case that needs `case upgrade`) |
+| `1` | General error (also a search that ran past `--timeout`, and a reindex or an ingest refused because another ingest or reindex is active) |
+| `2` | Usage error (bad flag, missing argument, unknown command, a bad filter, cursor, page or search query, a case that needs `case upgrade`, or a full-text index that is not current: run `records reindex`) |
 | `3` | Device error (not found, unauthorized, not rooted, unsupported, write not allowed) |
-| `4` | Integrity failure (`case verify` found a problem, the audit log/database is missing or corrupt, or the records database schema is not the one this build defines) |
+| `4` | Integrity failure (`case verify` found a problem, such as a full-text index that does not equal the records; the audit log/database is missing or corrupt, or the records database schema is not the one this build defines) |
 
 ### Case layout
 
@@ -238,7 +280,7 @@ cases/CASE01/
   case.json        id, examiner, created, tool version, host
   audit.jsonl      append-only, SHA-256 hash-chained action log
   manifest.jsonl   one record per artifact (path, size, sha256, md5, source, incomplete)
-  artifacts.db     SQLite index (schema v2: artifacts + unified records tables)
+  artifacts.db     SQLite index (schema v3: artifacts, unified records tables, full-text index)
   case.lock        held while a command has the case open
   artifacts/<device>/<acquisition>/...
 ```
@@ -356,7 +398,7 @@ desktop GUI, automatic artifact classification, and AI-assisted search and
 analysis over the artifact collection (offline by default, every answer cites
 its source records). **Sub-project 5: Unified artifact database** is in
 progress: its core (the audited, verifiable record store, `case upgrade` and
-`records list|show|stats`) is in place; full-text search, the provenance chain
+`records list|show|stats`, full-text `records search` and `records reindex`) is in place; the provenance chain
 with image-offset translation, and scale work follow. See
 [docs/ROADMAP.md](docs/ROADMAP.md).
 
