@@ -112,7 +112,15 @@ func (b *Builder) layoutSchema() {
 		if t.index {
 			kind, tbl = "index", t.parent.name
 		}
-		s.rows = append(s.rows, s.newRow(rowid, []any{kind, t.name, tbl, int64(t.root), t.sql}))
+		var sqlv any = t.sql
+		if t.nullSQL {
+			sqlv = nil
+		}
+		s.rows = append(s.rows, s.newRow(rowid, []any{kind, t.name, tbl, int64(t.root), sqlv}))
+	}
+	for _, vals := range b.raw {
+		rowid++
+		s.rows = append(s.rows, s.newRow(rowid, vals))
 	}
 	s.layout()
 }

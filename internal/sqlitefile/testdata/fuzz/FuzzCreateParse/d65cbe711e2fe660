@@ -1,0 +1,2 @@
+go test fuzz v1
+string("CREATE INDEX i ON\"\"(\" \"tlower(name) COLLATE NOC;SE DESC)")

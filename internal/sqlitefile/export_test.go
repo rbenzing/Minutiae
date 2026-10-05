@@ -303,3 +303,20 @@ const MaxMapVisited = maxMapVisited
 func OverflowPageCap(lim Limits, usable int) int64 {
 	return overflowPageCap(lim.withDefaults(), usable)
 }
+
+// ---- Task 5: schema and CREATE parser ----
+
+// ParseCreateTable parses a CREATE TABLE statement with the default column cap.
+func ParseCreateTable(sql string) (def TableDef, virtual bool, steps int) {
+	return parseTableSQL(sql, DefaultLimits().MaxColumns)
+}
+
+// ParseCreateTableCols is ParseCreateTable with an explicit column cap.
+func ParseCreateTableCols(sql string, maxCols int) (def TableDef, virtual bool, steps int) {
+	return parseTableSQL(sql, maxCols)
+}
+
+// ParseCreateIndex parses a CREATE INDEX statement.
+func ParseCreateIndex(sql string) (def IndexDef, steps int) {
+	return parseIndexSQL(sql, DefaultLimits().MaxColumns)
+}

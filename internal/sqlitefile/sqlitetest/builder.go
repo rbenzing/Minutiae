@@ -33,6 +33,7 @@ type Builder struct {
 	freed    []uint32 // pages that go on the freelist at Build
 	patches  []patch  // Patch calls, replayed after every Build
 	hdrPages *hdrPages
+	raw      [][]any // schema rows added by AddSchemaRow, after the objects
 }
 
 type patch struct {

@@ -34,6 +34,7 @@ type Table struct {
 	cols    []int
 	noRowid bool
 	pk      int
+	nullSQL bool // the schema row stores NULL, not text (an automatic index)
 	root    uint32
 	dropped bool
 
@@ -786,4 +787,21 @@ func (b *Builder) writePage(pg uint32, base int, flag byte, cells []placed, righ
 		put16(p[base+hdr+2*k:], uint16(o))
 	}
 	return offs
+}
+
+// CreateAutoIndex adds an index over the given declared column numbers of
+// table whose schema row has the name given and a NULL sql, as the engine
+// writes for the index behind a UNIQUE or PRIMARY KEY constraint.
+func (b *Builder) CreateAutoIndex(name, table string, cols ...int) {
+	b.CreateIndex(name, table, "", cols...)
+	b.Object(name).nullSQL = true
+}
+
+// AddSchemaRow appends a row of five values (type, name, tbl_name, rootpage,
+// sql) to the schema table after the rows of the objects, with no b-tree
+// behind it: for views, triggers, virtual tables and for invalid rows. A value
+// is nil, an int64 or a string, as for Insert.
+func (b *Builder) AddSchemaRow(vals ...any) {
+	b.raw = append(b.raw, vals)
+	b.dirty = true
 }

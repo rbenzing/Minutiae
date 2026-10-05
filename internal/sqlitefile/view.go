@@ -38,7 +38,7 @@ func (d *DB) Status() DBStatus {
 // View is an immutable snapshot of what a database presents as live: the page
 // source stack (today the database file as found; the write-ahead log and
 // journal overlays are layered on by later tasks), the warnings found so far
-// and a page cache. It is safe for concurrent use. The cache holds up to
+// a page cache and the schema once read. It is safe for concurrent use. The cache holds up to
 // Limits.PageCacheBytes charged to the budget until Release.
 type View struct {
 	d     *DB
@@ -49,6 +49,7 @@ type View struct {
 	st    *counters
 	warns *warnings
 	addr  uint32
+	sch   schemaCache
 }
 
 // Live returns the live view of the database as it is now: Attach* calls made
@@ -106,7 +107,10 @@ func (v *View) Stats() Stats { return v.st.snapshot() }
 // Release drops the page cache and gives its budget charge back. It is
 // optional (the view stays usable and refills its cache) and exists so a
 // caller can account for the budget exactly once it is done with a view.
-func (v *View) Release() { v.cache.clear() }
+func (v *View) Release() {
+	v.cache.clear()
+	v.sch.release(v.e.budget)
+}
 
 // ReadPage returns a copy of page pgno as the view presents it: for a page
 // number outside 1..Addressable it is ErrPageUnavailable. The page is as long
