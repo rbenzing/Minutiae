@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 
@@ -671,4 +672,58 @@ func fillRand(r *rand.Rand, p []byte) {
 	for i := range p {
 		p[i] = byte(r.UintN(256))
 	}
+}
+
+// notAppliedWarning returns the wal-frames-not-applied warnings of a scan.
+func notAppliedWarning(ws []sqlitefile.Warning) []sqlitefile.Warning {
+	var out []sqlitefile.Warning
+	for _, w := range ws {
+		if w.Code == sqlitefile.WarnWALFramesNotApplied {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// TestWALFramesNotAppliedWarning: frames the engine does not apply may hold
+// evidence, so a scan says so once, with a count and the first slot of each
+// class (broken, detached, stale, uncommitted).
+func TestWALFramesNotAppliedWarning(t *testing.T) {
+	t.Run("broken detached uncommitted", func(t *testing.T) {
+		// commits at 2 and 6; slot 3 and 4 uncommitted, bit flip in 5.
+		w := buildWAL(512, false, 1, 2, []walSpec{{2, 0}, {3, 4}, {4, 0}, {5, 0}, {6, 0}, {7, 9}, {8, 9}})
+		w.PatchFrame(5, 24+10, w.Bytes()[32+4*(24+512)+24+10]^1)
+		s := scanBytes(t, w.Bytes(), 512, sqlitefile.Options{})
+		got := notAppliedWarning(s.Warnings)
+		if len(got) != 1 {
+			t.Fatalf("want exactly one wal-frames-not-applied warning, got %v", s.Warnings)
+		}
+		m := got[0].Msg
+		if got[0].File != sqlitefile.FileWAL {
+			t.Errorf("file %v", got[0].File)
+		}
+		for _, want := range []string{"uncommitted 2 (first slot 3)", "broken 1 (first slot 5)", "detached 2 (first slot 6)", "stale 0"} {
+			if !strings.Contains(m, want) {
+				t.Errorf("message %q lacks %q", m, want)
+			}
+		}
+	})
+	t.Run("stale", func(t *testing.T) {
+		s := scanBytes(t, resetScenario().Bytes(), 512, sqlitefile.Options{})
+		got := notAppliedWarning(s.Warnings)
+		if len(got) != 1 {
+			t.Fatalf("got %v", s.Warnings)
+		}
+		for _, want := range []string{"stale 4 (first slot 3)", "broken 0", "detached 0", "uncommitted 0"} {
+			if !strings.Contains(got[0].Msg, want) {
+				t.Errorf("message %q lacks %q", got[0].Msg, want)
+			}
+		}
+	})
+	t.Run("clean WAL raises none", func(t *testing.T) {
+		s := scanBytes(t, buildWAL(512, false, 1, 2, []walSpec{{2, 0}, {3, 4}}).Bytes(), 512, sqlitefile.Options{})
+		if got := notAppliedWarning(s.Warnings); len(got) != 0 {
+			t.Errorf("clean WAL warned: %v", got)
+		}
+	})
 }

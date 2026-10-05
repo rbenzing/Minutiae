@@ -242,6 +242,7 @@ func ScanWAL(wal io.ReaderAt, size int64, dbPageSize int, opts Options) (res *WA
 		in.MaxPageNumber = max(in.MaxPageNumber, f.Page)
 		s.latest[f.Page] = f.Slot
 	}
+	s.warnNotApplied(w)
 	if in.HeaderValid {
 		// The generation holding the valid chain is the one that starts at slot
 		// 1 when that slot verified; every age is the salt-1 distance from it.
@@ -253,4 +254,39 @@ func ScanWAL(wal io.ReaderAt, size int64, dbPageSize int, opts Options) (res *WA
 		}
 	}
 	return finish()
+}
+
+// warnNotApplied adds the one wal-frames-not-applied warning of a scan: frames
+// the engine does not apply (broken, detached, stale, uncommitted) may still
+// hold evidence, so they are counted by class with the first slot of each.
+func (s *WALScan) warnNotApplied(w *warnings) {
+	classes := []FrameState{FrameBroken, FrameDetached, FrameStale, FrameUncommitted}
+	var count, first [4]uint32
+	for i := range s.Frames {
+		f := &s.Frames[i]
+		for c, st := range classes {
+			if f.State == st {
+				if count[c] == 0 {
+					first[c] = f.Slot
+				}
+				count[c]++
+			}
+		}
+	}
+	if count == [4]uint32{} {
+		return
+	}
+	msg := "frames the engine does not apply:"
+	for c, st := range classes {
+		sep := ","
+		if c == 0 {
+			sep = ""
+		}
+		if count[c] == 0 {
+			msg += fmt.Sprintf("%s %s 0", sep, st)
+		} else {
+			msg += fmt.Sprintf("%s %s %d (first slot %d)", sep, st, count[c], first[c])
+		}
+	}
+	w.add(Warning{Code: WarnWALFramesNotApplied, File: FileWAL, Msg: msg})
 }
