@@ -101,6 +101,9 @@ type SchemaObject struct {
 	Table               *TableDef
 	Index               *IndexDef
 	Loc                 Loc // where the sqlite_schema row lies
+	// KeyRangeViolation: the row lies outside the key range its ancestors give it
+	// (as Row.KeyRangeViolation).
+	KeyRangeViolation bool
 }
 
 // Schema is the content of the schema table: the valid rows in rowid order,
@@ -262,7 +265,7 @@ func (v *View) Schema(ctx context.Context) (s *Schema, err error) {
 			return false
 		}
 		seen[key] = true
-		obj := SchemaObject{Type: typ, Name: name, TblName: tbl, RootPage: root, Loc: r.Loc}
+		obj := SchemaObject{Type: typ, Name: name, TblName: tbl, RootPage: root, Loc: r.Loc, KeyRangeViolation: r.KeyRangeViolation}
 		// The statement text is kept while the total stays within its cap.
 		parse := false
 		switch {
@@ -332,7 +335,7 @@ func (v *View) parseObject(obj *SchemaObject, sst sqlState, parse bool, maxCols 
 			obj.Virtual = virtual
 		}
 		obj.Table = &def
-		if !def.ParseOK && def.ParseNote != noteLimit {
+		if !def.ParseOK {
 			unparsed(def.ParseNote)
 		}
 	case "index":
@@ -345,6 +348,7 @@ func (v *View) parseObject(obj *SchemaObject, sst sqlState, parse bool, maxCols 
 			unparsed(noteEmpty)
 		case !parse:
 			def = IndexDef{Table: obj.TblName}
+			unparsed(noteLimit)
 		default:
 			def, _ = parseIndexSQL(obj.SQL, maxCols)
 			if !def.ParseOK {

@@ -52,8 +52,11 @@ func (v *View) Table(ctx context.Context, name string) (t *Table, err error) {
 		if o.Type != "table" || !asciiEqualFold(o.Name, name) {
 			continue
 		}
-		if o.Virtual || o.RootPage == 0 {
+		if o.Virtual {
 			return nil, fmt.Errorf("%w: %q is a virtual table and has no b-tree", ErrNotFound, name)
+		}
+		if o.RootPage == 0 {
+			return nil, fmt.Errorf("%w: table %q has rootpage 0 and no b-tree", ErrNotFound, name)
 		}
 		return &Table{v: v, obj: o}, nil
 	}

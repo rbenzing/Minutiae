@@ -32,6 +32,8 @@ const (
 	noteVirtual    = "virtual"
 	noteColumns    = "columns"
 	notePK         = "pk"
+	noteDupColumn  = "duplicate-column"
+	noteStrictType = "strict-type"
 )
 
 type cparser struct {
@@ -772,9 +774,24 @@ func (p *cparser) tableOptions(st *tableParse) bool {
 	}
 }
 
+var strictTypes = map[string]bool{"int": true, "integer": true, "real": true, "text": true, "blob": true, "any": true}
+
 // finish resolves the key, the affinities and the record layout.
 func (p *cparser) finish(st *tableParse) (TableDef, bool) {
 	cols := st.cols
+	// The engine refuses duplicate column names (ASCII case-insensitive) and, in a
+	// STRICT table, any declared type but INT, INTEGER, REAL, TEXT, BLOB or ANY.
+	names := make(map[string]struct{}, len(cols))
+	for i := range cols {
+		key := asciiLower(cols[i].Name)
+		if _, dup := names[key]; dup {
+			return TableDef{}, p.fail(noteDupColumn)
+		}
+		names[key] = struct{}{}
+		if st.strict && !strictTypes[asciiLower(cols[i].DeclType)] {
+			return TableDef{}, p.fail(noteStrictType)
+		}
+	}
 	def := TableDef{Columns: cols, WithoutRowid: st.without, Strict: st.strict, RowidAlias: -1, ParseOK: true}
 	pkIdx := make([]int, 0, len(st.pkNames))
 	used := make([]bool, len(cols))

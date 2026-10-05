@@ -206,13 +206,13 @@ var tableCases = []tableCase{
 		"alias=-1 stored=3 S",
 	},
 	{
-		"WITHOUT ROWID, STRICT", "CREATE TABLE t(a INTEGER PRIMARY KEY, b) WITHOUT ROWID, STRICT",
-		[]string{"a/INTEGER/I/nn/pk1/r0", "b//B/r1"},
+		"WITHOUT ROWID, STRICT", "CREATE TABLE t(a INTEGER PRIMARY KEY, b ANY) WITHOUT ROWID, STRICT",
+		[]string{"a/INTEGER/I/nn/pk1/r0", "b/ANY/B/r1"},
 		"alias=-1 stored=2 W S",
 	},
 	{
-		"STRICT, WITHOUT ROWID", "CREATE TABLE t(a PRIMARY KEY, b) STRICT, WITHOUT ROWID",
-		[]string{"a//B/nn/pk1/r0", "b//B/r1"},
+		"STRICT, WITHOUT ROWID", "CREATE TABLE t(a ANY PRIMARY KEY, b ANY) STRICT, WITHOUT ROWID",
+		[]string{"a/ANY/B/nn/pk1/r0", "b/ANY/B/r1"},
 		"alias=-1 stored=2 W S",
 	},
 	{
@@ -254,12 +254,12 @@ var tableCases = []tableCase{
 		"alias=-1 stored=2",
 	},
 	{
-		"IF NOT EXISTS, TEMP, main.t", "CREATE TEMP TABLE IF NOT EXISTS main.t(a)",
+		"IF NOT EXISTS, TEMP, temp.t", "CREATE TEMP TABLE IF NOT EXISTS temp.t(a)",
 		[]string{"a//B/r0"},
 		"alias=-1 stored=1",
 	},
 	{
-		"TEMPORARY and quoted schema", "CREATE TEMPORARY TABLE \"main\".\"t\"(a)",
+		"TEMPORARY and quoted schema", "CREATE TEMPORARY TABLE \"temp\".\"t\"(a)",
 		[]string{"a//B/r0"},
 		"alias=-1 stored=1",
 	},
@@ -452,35 +452,37 @@ var (
 
 // TestCreateParseUnparseable: text the parser cannot read sets ParseOK=false
 // with a short token note, returns no columns, and never panics or fails.
+var unparseableCases = []struct{ name, sql, note string }{
+	{"empty", "", "empty"},
+	{"blank", " \t\r\n ", "empty"},
+	{"only a comment", "-- nothing\n/* here */", "empty"},
+	{"garbage", "garbage here", "not-create"},
+	{"not a table", "CREATE VIEW v AS SELECT 1", "not-create"},
+	{"truncated list", "CREATE TABLE t(a, b", "truncated"},
+	{"truncated after name", "CREATE TABLE t", "truncated"},
+	{"truncated after open", "CREATE TABLE t(", "truncated"},
+	{"truncated option", "CREATE TABLE t(a) WITHOUT", "truncated"},
+	{"truncated default", "CREATE TABLE t(a DEFAULT", "truncated"},
+	{"unbalanced check", "CREATE TABLE t(a CHECK ((a > 0)", "unbalanced"},
+	{"extra close", "CREATE TABLE t(a))", "syntax"},
+	{"bad option", "CREATE TABLE t(a) FOO", "syntax"},
+	{"empty item", "CREATE TABLE t(a, ,b)", "syntax"},
+	{"no columns", "CREATE TABLE t()", "columns"},
+	{"create as select", "CREATE TABLE t AS SELECT 1", "ctas"},
+	{"two primary keys", "CREATE TABLE t(a INT PRIMARY KEY, b INT PRIMARY KEY)", "pk"},
+	{"primary key of an unknown column", "CREATE TABLE t(a, PRIMARY KEY(zz))", "pk"},
+	{"without rowid but no key", "CREATE TABLE t(a) WITHOUT ROWID", "pk"},
+	{"unterminated string", "CREATE TABLE t(a DEFAULT 'abc", "syntax"},
+	{"unterminated identifier", "CREATE TABLE t(\"a INT)", "syntax"},
+	{"unterminated bracket", "CREATE TABLE t([a INT)", "syntax"},
+	{"NUL byte", "CREATE TABLE t(a\x00 INT)", "syntax"},
+	{"constraint without a name", "CREATE TABLE t(a CONSTRAINT", "truncated"},
+	{"bad generated", "CREATE TABLE t(a AS b)", "syntax"},
+	{"foreign key without references", "CREATE TABLE t(a, FOREIGN KEY (a)", "truncated"},
+}
+
 func TestCreateParseUnparseable(t *testing.T) {
-	for _, c := range []struct{ name, sql, note string }{
-		{"empty", "", "empty"},
-		{"blank", " \t\r\n ", "empty"},
-		{"only a comment", "-- nothing\n/* here */", "empty"},
-		{"garbage", "garbage here", "not-create"},
-		{"not a table", "CREATE VIEW v AS SELECT 1", "not-create"},
-		{"truncated list", "CREATE TABLE t(a, b", "truncated"},
-		{"truncated after name", "CREATE TABLE t", "truncated"},
-		{"truncated after open", "CREATE TABLE t(", "truncated"},
-		{"truncated option", "CREATE TABLE t(a) WITHOUT", "truncated"},
-		{"truncated default", "CREATE TABLE t(a DEFAULT", "truncated"},
-		{"unbalanced check", "CREATE TABLE t(a CHECK ((a > 0)", "unbalanced"},
-		{"extra close", "CREATE TABLE t(a))", "syntax"},
-		{"bad option", "CREATE TABLE t(a) FOO", "syntax"},
-		{"empty item", "CREATE TABLE t(a, ,b)", "syntax"},
-		{"no columns", "CREATE TABLE t()", "columns"},
-		{"create as select", "CREATE TABLE t AS SELECT 1", "ctas"},
-		{"two primary keys", "CREATE TABLE t(a INT PRIMARY KEY, b INT PRIMARY KEY)", "pk"},
-		{"primary key of an unknown column", "CREATE TABLE t(a, PRIMARY KEY(zz))", "pk"},
-		{"without rowid but no key", "CREATE TABLE t(a) WITHOUT ROWID", "pk"},
-		{"unterminated string", "CREATE TABLE t(a DEFAULT 'abc", "syntax"},
-		{"unterminated identifier", "CREATE TABLE t(\"a INT)", "syntax"},
-		{"unterminated bracket", "CREATE TABLE t([a INT)", "syntax"},
-		{"NUL byte", "CREATE TABLE t(a\x00 INT)", "syntax"},
-		{"constraint without a name", "CREATE TABLE t(a CONSTRAINT", "truncated"},
-		{"bad generated", "CREATE TABLE t(a AS b)", "syntax"},
-		{"foreign key without references", "CREATE TABLE t(a, FOREIGN KEY (a)", "truncated"},
-	} {
+	for _, c := range unparseableCases {
 		t.Run(c.name, func(t *testing.T) {
 			def, virtual, steps := sqlitefile.ParseCreateTable(c.sql)
 			if virtual || def.ParseOK || def.ParseNote != c.note || len(def.Columns) != 0 || def.RowidAlias != -1 {

@@ -11,7 +11,9 @@ import (
 // serves interior pages from the cache. The returned Row is the caller's.
 //
 // "Absent" (ok false, nil error) is answered only when the search path was
-// clean. A path page that cannot be used, a cell the search needs that cannot be
+// clean. Clean means every page on the path proves order: its keys
+// strictly increasing and inside the range the ancestors give it (every cell of
+// each path page is parsed before an absent is answered). A path page that cannot be used, a cell the search needs that cannot be
 // parsed, interior or leaf keys that contradict their neighbours or the key
 // range their ancestors give them, a row that cannot be decoded: each ends in a
 // *CorruptError (matching ErrCorrupt) instead, because the row may exist where
@@ -195,6 +197,16 @@ func (w *walker) lookupLeaf(n node, rowid int64, kb keyBounds) (Row, bool, error
 			w.damage("a leaf key contradicts its neighbours or its key range")
 		}
 	}
+	if w.dmg == "" {
+		if err := w.proveOrder(n, kb); err != nil {
+			return Row{}, false, err
+		}
+	}
+	for i := len(w.stack) - 1; i >= 0 && w.dmg == ""; i-- {
+		if err := w.proveOrder(w.stack[i].n, w.stack[i].kb); err != nil {
+			return Row{}, false, err
+		}
+	}
 	if w.dmg == "" && lo == len(n.ptrs) && kb.hasHi {
 		if err := w.checkSibling(kb, true); err != nil {
 			return Row{}, false, err
@@ -206,6 +218,33 @@ func (w *walker) lookupLeaf(n node, rowid int64, kb keyBounds) (Row, bool, error
 		}
 	}
 	return w.absent(n.pgno)
+}
+
+// proveOrder parses every cell of page n and records damage unless the keys are
+// strictly increasing and inside kb: a binary search over a page whose cells are
+// out of order proves nothing about absence. An unparsable cell is damage too.
+func (w *walker) proveOrder(n node, kb keyBounds) error {
+	var prev int64
+	have := false
+	for i := range n.ptrs {
+		c, ok, err := w.probe(n, i)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		if have && c.Rowid <= prev {
+			w.damage("the keys of a page on the search path are not strictly increasing")
+			return nil
+		}
+		if !kb.holds(c.Rowid) {
+			w.damage("a key on the search path lies outside the range its ancestors give it")
+			return nil
+		}
+		prev, have = c.Rowid, true
+	}
+	return nil
 }
 
 // checkSibling reads the leaf next to the one the search ended in (after it when next, else before it) and
