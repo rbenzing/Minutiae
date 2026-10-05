@@ -3,6 +3,7 @@ package sqlitefile
 import (
 	"fmt"
 	"io"
+	"sync"
 )
 
 // engineRefusesBadEncoding records what the engine does with a header
@@ -21,6 +22,9 @@ type DB struct {
 	size  int64
 	info  Info
 	warns *warnings
+
+	mu  sync.RWMutex
+	wal *attachedWAL // nil until AttachWAL
 }
 
 // Open reads the header of the database file read through db. size is

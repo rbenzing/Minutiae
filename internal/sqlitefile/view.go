@@ -28,7 +28,13 @@ type DBStatus struct {
 // Status composes the header information with the state of the write-ahead
 // log and the rollback journal; both are nil while no companion is attached.
 func (d *DB) Status() DBStatus {
-	return DBStatus{Info: d.Info()}
+	s := DBStatus{Info: d.Info()}
+	if w := d.WAL(); w != nil {
+		cp := w.Info
+		cp.Generations = append([]WALGeneration(nil), w.Info.Generations...)
+		s.WAL = &cp
+	}
+	return s
 }
 
 // View is an immutable snapshot of what a database presents as live: the page
@@ -56,11 +62,17 @@ type View struct {
 func (d *DB) Live() *View {
 	st := &counters{}
 	w := newWarnings(d.env.opts.Limits.MaxWarnings)
+	d.mu.RLock() // the warnings and the attached WAL form one snapshot
+	a := d.wal
 	for _, x := range d.warns.snapshot() {
 		w.add(x)
 	}
+	d.mu.RUnlock()
 	v := &View{d: d, e: d.env, info: d.Info(), st: st, warns: w}
 	v.src = dbSource{d}
+	if a != nil {
+		v.applyWAL(a)
+	}
 	v.cache = newPageCache(d.env, v.src, d.info.PageSize, st)
 	v.addr = v.addressable()
 	return v
