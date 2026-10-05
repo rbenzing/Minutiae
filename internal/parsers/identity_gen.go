@@ -6,5 +6,5 @@ package parsers
 // and the hash of its source.
 type identity struct{ Package, Hash string }
 
-// generated maps "name@version" to the identity of the parser. It is empty in 4A.
+// generated maps "name@version" to the identity of the parser.
 var generated = map[string]identity{}

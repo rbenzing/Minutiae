@@ -21,6 +21,7 @@ func main() {
 	steps := []step{
 		{args: []string{"go", "mod", "tidy", "-diff"}},
 		{args: []string{"go", "vet", "./..."}},
+		{args: []string{"go", "run", "./tools/parserhash", "-check"}},
 		{args: []string{"go", "tool", "golangci-lint", "run", "./..."}},
 		{args: []string{"go", "build", "-o", binPath(), "./cmd/minutiae"}},
 		// Spec §2: a single static binary, no cgo, on every supported OS.
