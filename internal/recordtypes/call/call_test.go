@@ -426,6 +426,11 @@ func TestSummary(t *testing.T) {
 		{"in", "missed", "+15551234567", "call in missed +15551234567"},
 		{"out", "answered", "me@example.com", "call out answered me@example.com"},
 		{"in", "rejected", "", "call in rejected"},
+		{"", "missed", "555", "call missed 555"},
+		{"in", "", "555", "call in 555"},
+		{"", "", "555", "call 555"},
+		{"in", "", "", "call in"},
+		{"", "", "", "call"},
 		{"unknown", "unknown", "a\nb\tc", "call unknown unknown a b c"},
 	}
 	for _, tc := range cases {
@@ -465,6 +470,8 @@ func FuzzCallValidate(f *testing.F) {
 	f.Add([]byte(`{"direction":"in","outcome":"missed","duration_s":1e-400,"raw":{"a":{"b":{"c":{}}}}}`))
 	f.Add([]byte(`{"direction":"in","outcome":"missed","subscription":9223372036854775808}`))
 	f.Add([]byte(`{"direction":"in","outcome":"missed","subscription":1e3,"duration_s":1e3}`))
+	f.Add([]byte(`{"direction":"in","outcome":"missed","recovery":{},"deleted":{"source":"x"},"snapshot":{"name":"s","xid":2}}`))
+	f.Add([]byte(`{"direction":"in","outcome":"missed","snapshot":{"name":"s","xid":0}}`))
 	f.Add([]byte(`{"direction":"in","outcome":"missed","recovery":{"relation":"uncommitted"},"snapshot":{"name":"s","xid":2.0},"deleted":{"source":"x"}}`))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		dec := json.NewDecoder(strings.NewReader(string(data)))
@@ -493,6 +500,16 @@ func FuzzCallValidate(f *testing.F) {
 		}
 		if got.DurationS != nil && (*got.DurationS < 0 || math.IsNaN(*got.DurationS) || math.IsInf(*got.DurationS, 0)) {
 			t.Fatalf("a validated call decoded to a duration of %v", *got.DurationS)
+		}
+		// provenance survives Decode: a record whose payload carries recovery, snapshot or deleted (even empty) is never live
+		prov := false
+		for _, k := range []string{"recovery", "snapshot", "deleted"} {
+			if _, ok := m[k].(map[string]any); ok {
+				prov = true
+			}
+		}
+		if got.Live() == prov {
+			t.Fatalf("Live() = %v for a payload whose provenance presence is %v", got.Live(), prov)
 		}
 		if err := call.Validate(got.Payload()); err != nil {
 			t.Fatalf("the decoded call does not produce a valid payload: %v", err)

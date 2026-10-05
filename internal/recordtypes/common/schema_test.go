@@ -120,7 +120,7 @@ func TestSchemaValidate(t *testing.T) {
 		for _, bad := range []string{"1.0", "2.0", "1e3", "1E3", "1e0", "10e-1", "1.0e0", "-1.0", "01", "+1", "-", "--1", "0x10", " 1", "1 ", "1_0", "00", "-01", "1.", ".5"} {
 			wantErr(t, f, json.Number(bad), "must be an integer")
 		}
-		wantOK(t, f, json.Number("-0"))
+		wantErr(t, f, json.Number("-0"), "must be an integer") // not canonical: Decode would return 0 and re-emit "0"
 		wantOK(t, f, json.Number("0"))
 		wantOK(t, f, json.Number("-9223372036854775808"))
 		wantErr(t, f, json.Number("9223372036854775808"), "must be an integer")

@@ -494,6 +494,7 @@ func FuzzMessageValidate(f *testing.F) {
 	f.Add([]byte(`{"channel":"sms","direction":"in","kind":"text","participants":[],"participants_unknown":true,"body_truncated":true,"body_total_bytes":1e3}`))
 	f.Add([]byte(`{"channel":"sms","direction":"in","kind":"text","participants":[],"participants_unknown":true,"subscription":2.0,"thread":{"id":1E3}}`))
 	f.Add([]byte(`{"channel":"sms","direction":"in","kind":"text","participants":[],"participants_unknown":true,"recovery":{"relation":"uncommitted"},"snapshot":{"name":"s","xid":1}}`))
+	f.Add([]byte(`{"channel":"sms","direction":"in","kind":"text","participants":[],"participants_unknown":true,"recovery":{},"deleted":{"source":"x"}}`))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		dec := json.NewDecoder(strings.NewReader(string(data)))
 		dec.UseNumber()
@@ -518,6 +519,16 @@ func FuzzMessageValidate(f *testing.F) {
 		again, err := message.Decode(message.PayloadVersion, data)
 		if err != nil || !reflect.DeepEqual(got, again) {
 			t.Fatalf("Decode is not deterministic: %v", err)
+		}
+		// provenance survives Decode: a record whose payload carries recovery, snapshot or deleted (even empty) is never live
+		prov := false
+		for _, k := range []string{"recovery", "snapshot", "deleted"} {
+			if _, ok := m[k].(map[string]any); ok {
+				prov = true
+			}
+		}
+		if got.Live() == prov {
+			t.Fatalf("Live() = %v for a payload whose provenance presence is %v", got.Live(), prov)
 		}
 		if err := message.Validate(got.Payload()); err != nil {
 			t.Fatalf("the decoded message does not produce a valid payload: %v", err)

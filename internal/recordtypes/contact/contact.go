@@ -6,8 +6,9 @@
 // internal/recordtypes/common.
 //
 // The payload follows the contract of the plan's F10 table: at least one of a
-// display name, a phone, an e-mail address or an organization; everything else
-// optional and absent (never an empty string, object or list) when the parser
+// display name, a phone, an e-mail address or an organization (a tombstone, the
+// deleted marker with a non-empty source id, needs none of them: spec 9.3);
+// everything else optional and absent (never an empty string, object or list) when the parser
 // does not know it (C3). Phone numbers, e-mail addresses and names are the source
 // strings, never normalized (C5). Unknown fields in a stored payload are ignored
 // by Decode; the provenance objects recovery, snapshot and deleted are never
@@ -19,8 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
-	"strconv"
+	"slices"
 	"strings"
 
 	"github.com/rbenzing/minutiae/internal/records"
@@ -190,49 +190,18 @@ func (c Contact) Payload() map[string]any {
 		p["source_ids"] = ids
 	}
 	if c.Deleted != nil {
-		p["deleted"] = copyMap(c.Deleted)
+		p["deleted"] = common.CopyMap(c.Deleted)
 	}
 	if c.Recovery != nil {
-		p["recovery"] = copyMap(c.Recovery)
+		p["recovery"] = common.CopyMap(c.Recovery)
 	}
 	if c.Snapshot != nil {
-		p["snapshot"] = copyMap(c.Snapshot)
+		p["snapshot"] = common.CopyMap(c.Snapshot)
 	}
 	if c.Raw != nil {
-		p["raw"] = copyMap(c.Raw)
+		p["raw"] = common.CopyMap(c.Raw)
 	}
 	return p
-}
-
-// copyMap deep-copies a free-form object (maps and []any).
-func copyMap(in map[string]any) map[string]any {
-	out := make(map[string]any, len(in))
-	for k, v := range in {
-		out[k] = copyValue(v, 0)
-	}
-	return out
-}
-
-// copyValue stops copying at a depth the validator would refuse anyway.
-func copyValue(v any, depth int) any {
-	if depth > common.MaxContainerDepth {
-		return nil
-	}
-	switch x := v.(type) {
-	case map[string]any:
-		out := make(map[string]any, len(x))
-		for k, e := range x {
-			out[k] = copyValue(e, depth+1)
-		}
-		return out
-	case []any:
-		out := make([]any, len(x))
-		for i, e := range x {
-			out[i] = copyValue(e, depth+1)
-		}
-		return out
-	}
-	return v
 }
 
 // valueSchema is the contract of one element of phones, emails, urls and ims.
@@ -285,7 +254,7 @@ var schema = common.Schema{
 		{Name: "starred", Kind: common.KBool},
 		{Name: "photo", Kind: common.KObject, Obj: &common.Schema{Fields: []common.Field{
 			{Name: "present", Kind: common.KBool},
-			{Name: "artifact_id", Kind: common.KString},
+			{Name: "artifact_id", Kind: common.KString, NonEmpty: true},
 		}}},
 		{Name: "source_id", Kind: common.KString},
 		{Name: "source_ids", Kind: common.KStringArray},
@@ -295,8 +264,15 @@ var schema = common.Schema{
 
 // crossRules are the rules that span fields of one payload: the contact must say
 // who it is. An empty display name, an empty list or an organization whose fields
-// are all empty identify nobody.
+// are all empty identify nobody. The one exception is a tombstone (spec 9.3, the
+// deleted_contacts table): a payload with the deleted marker and at least one
+// non-empty source id says which source row was deleted, and nothing else.
 func crossRules(m map[string]any) error {
+	if _, ok := m["deleted"].(map[string]any); ok {
+		if ids, _ := m["source_ids"].([]any); slices.ContainsFunc(ids, func(id any) bool { s, _ := id.(string); return s != "" }) {
+			return nil
+		}
+	}
 	if s, _ := m["display_name"].(string); s != "" {
 		return nil
 	}
@@ -390,6 +366,13 @@ func Summary(c Contact) string {
 		for _, v := range []string{o.Name, o.Title, o.Department} {
 			if s := common.SummarizeChars(v, 80); s != "" {
 				return s
+			}
+		}
+	}
+	if c.Deleted != nil { // a tombstone: the source row that was deleted
+		for _, id := range c.SourceIDs {
+			if s := common.Summarize(id, 64); s != "" {
+				return "deleted contact " + s
 			}
 		}
 	}
@@ -487,16 +470,16 @@ func fromMap(m map[string]any) Contact {
 		}
 	}
 	if d, ok := m["deleted"].(map[string]any); ok {
-		out.Deleted = normMap(d, 0)
+		out.Deleted = common.NormMap(d)
 	}
 	if r, ok := m["recovery"].(map[string]any); ok {
-		out.Recovery = normMap(r, 0)
+		out.Recovery = common.NormMap(r)
 	}
 	if s, ok := m["snapshot"].(map[string]any); ok {
-		out.Snapshot = normMap(s, 0)
+		out.Snapshot = common.NormMap(s)
 	}
 	if r, ok := m["raw"].(map[string]any); ok {
-		out.Raw = normMap(r, 0)
+		out.Raw = common.NormMap(r)
 	}
 	return out
 }
@@ -526,37 +509,6 @@ func boolPtr(m map[string]any, key string) *bool {
 	return nil
 }
 
-// normMap turns the json.Number values of a free-form object into int64 (integral
-// numbers that fit) or float64, the types Payload writes.
-func normMap(in map[string]any, depth int) map[string]any {
-	out := make(map[string]any, len(in))
-	for k, v := range in {
-		out[k] = normValue(v, depth+1)
-	}
-	return out
-}
-
-func normValue(v any, depth int) any {
-	if depth > common.MaxContainerDepth {
-		return nil
-	}
-	switch x := v.(type) {
-	case json.Number:
-		if i, err := x.Int64(); err == nil {
-			return i
-		}
-		if f, err := strconv.ParseFloat(x.String(), 64); err == nil && !math.IsInf(f, 0) && !math.IsNaN(f) {
-			return f
-		}
-		return x.String()
-	case map[string]any:
-		return normMap(x, depth)
-	case []any:
-		out := make([]any, len(x))
-		for i, e := range x {
-			out[i] = normValue(e, depth+1)
-		}
-		return out
-	}
-	return v
-}
+// Live reports whether the contact is a plain live one: it carries no recovery,
+// snapshot or deleted provenance (see common.IsLive).
+func (c Contact) Live() bool { return common.IsLive(c.Recovery, c.Snapshot, c.Deleted) }

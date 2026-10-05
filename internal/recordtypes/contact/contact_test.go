@@ -169,8 +169,9 @@ func TestPayloadValidatorsRejectViolations(t *testing.T) {
 	const identifying = "at least one of display_name,phones,emails,organization must be present and not empty"
 	add("nil payload", nil, identifying)
 	add("empty payload", map[string]any{}, identifying)
+	// full() carries the deleted marker and source ids, which would make it a valid tombstone: drop the marker too
 	add("nothing identifying left", mutate(func(p map[string]any) {
-		for _, k := range []string{"display_name", "phones", "emails", "organization"} {
+		for _, k := range []string{"display_name", "phones", "emails", "organization", "deleted"} {
 			delete(p, k)
 		}
 	}), identifying)
@@ -197,6 +198,7 @@ func TestPayloadValidatorsRejectViolations(t *testing.T) {
 	}
 	add("photo.present wrong type", mutate(func(p map[string]any) { objOf(t, p, "photo")["present"] = "yes" }), "payload.photo.present")
 	add("photo.artifact_id wrong type", mutate(func(p map[string]any) { objOf(t, p, "photo")["artifact_id"] = int64(1) }), "payload.photo.artifact_id")
+	add("photo.artifact_id empty", mutate(func(p map[string]any) { objOf(t, p, "photo")["artifact_id"] = "" }), "payload.photo.artifact_id")
 	add("source_ids entry wrong type", mutate(func(p map[string]any) { p["source_ids"] = []any{"17", int64(2)} }), "payload.source_ids")
 
 	// value lists
@@ -300,20 +302,20 @@ func TestPayloadValidatorsRejectViolations(t *testing.T) {
 func TestContactAtLeastOneIdentifyingField(t *testing.T) {
 	v := func(s string) []any { return []any{map[string]any{"value": s}} }
 	refused := map[string]map[string]any{
-		"empty display_name alone":            {"display_name": ""},
-		"no fields":                           {},
-		"only a birthday":                     {"birthday": "1980-01-01"},
-		"only a source id":                    {"source_id": "17", "source_ids": []any{"17"}},
-		"only an account":                     {"accounts": []any{map[string]any{"type": "local"}}},
-		"only an url":                         {"urls": v("https://example.com")},
-		"only an im":                          {"ims": v("alex")},
-		"only an address":                     {"addresses": []any{map[string]any{"city": "Springfield"}}},
-		"empty display_name and empty lists":  {"display_name": "", "phones": []any{}, "emails": []any{}},
-		"empty organization object":           {"organization": map[string]any{}},
-		"organization of empty strings":       {"organization": map[string]any{"name": "", "title": "", "department": ""}},
-		"names only (given name, no display)": {"names": map[string]any{"given": "Alex"}},
-		"deleted tombstone with source ids":   {"deleted": map[string]any{"source": "deleted_contacts"}, "source_ids": []any{"9"}},
-		"only photo and starred":              {"photo": map[string]any{"present": true}, "starred": true},
+		"empty display_name alone":              {"display_name": ""},
+		"no fields":                             {},
+		"only a birthday":                       {"birthday": "1980-01-01"},
+		"only a source id":                      {"source_id": "17", "source_ids": []any{"17"}},
+		"only an account":                       {"accounts": []any{map[string]any{"type": "local"}}},
+		"only an url":                           {"urls": v("https://example.com")},
+		"only an im":                            {"ims": v("alex")},
+		"only an address":                       {"addresses": []any{map[string]any{"city": "Springfield"}}},
+		"empty display_name and empty lists":    {"display_name": "", "phones": []any{}, "emails": []any{}},
+		"empty organization object":             {"organization": map[string]any{}},
+		"organization of empty strings":         {"organization": map[string]any{"name": "", "title": "", "department": ""}},
+		"names only (given name, no display)":   {"names": map[string]any{"given": "Alex"}},
+		"source ids without the deleted marker": {"source_ids": []any{"9"}},
+		"only photo and starred":                {"photo": map[string]any{"present": true}, "starred": true},
 	}
 	for name, p := range refused {
 		err := contact.Validate(p)
@@ -355,6 +357,84 @@ func TestContactAtLeastOneIdentifyingField(t *testing.T) {
 	}
 	if err := contact.Validate(phoneOnly().Payload()); err != nil {
 		t.Errorf("builder phone only: %v", err)
+	}
+}
+
+// TestContactDeletedTombstone: spec 9.3 turns a row of the deleted_contacts table
+// into a minimal contact that carries the deleted marker and source_ids only. Such
+// a tombstone is valid; its identifying fields are optional. A deleted marker
+// without source ids identifies nothing and is still refused.
+func TestContactDeletedTombstone(t *testing.T) {
+	del := func() any { return map[string]any{"source": "deleted_contacts"} }
+	accepted := map[string]map[string]any{
+		"tombstone: deleted and one source id":   {"deleted": del(), "source_ids": []any{"9"}},
+		"tombstone: several source ids":          {"deleted": del(), "source_ids": []any{"9", "10"}},
+		"tombstone: one empty id, one real":      {"deleted": del(), "source_ids": []any{"", "9"}},
+		"tombstone with a recovery relation":     {"deleted": del(), "source_ids": []any{"9"}, "recovery": map[string]any{"relation": "absent-from-live"}},
+		"deleted contact that still has a name":  {"deleted": del(), "display_name": "Alex"},
+		"deleted contact with a name and an id":  {"deleted": del(), "display_name": "Alex", "source_ids": []any{"9"}},
+		"tombstone with raw and a source_id too": {"deleted": del(), "source_ids": []any{"9"}, "source_id": "9", "raw": map[string]any{"deleted_timestamp": int64(1700000000000)}},
+	}
+	for name, p := range accepted {
+		if err := contact.Validate(p); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	refused := map[string]map[string]any{
+		"deleted without source ids":         {"deleted": del()},
+		"deleted with an empty id list":      {"deleted": del(), "source_ids": []any{}},
+		"deleted with only an empty id":      {"deleted": del(), "source_ids": []any{""}},
+		"deleted with only a source_id":      {"deleted": del(), "source_id": "9"},
+		"deleted with only a birthday":       {"deleted": del(), "birthday": "1980-01-01"},
+		"source ids without deleted":         {"source_ids": []any{"9"}},
+		"deleted marker that is not valid":   {"deleted": map[string]any{"source": ""}, "source_ids": []any{"9"}},
+		"deleted marker of the wrong type":   {"deleted": true, "source_ids": []any{"9"}},
+		"deleted marker that is a string":    {"deleted": "deleted_contacts", "source_ids": []any{"9"}},
+		"deleted marker that is null":        {"deleted": nil, "source_ids": []any{"9"}},
+		"deleted without source, with an id": {"deleted": map[string]any{}, "source_ids": []any{"9"}},
+	}
+	for name, p := range refused {
+		if err := contact.Validate(p); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+
+	// the builder makes the tombstone, a real writer accepts it, Decode reads it back
+	c := contact.Contact{Deleted: map[string]any{"source": "deleted_contacts"}, SourceIDs: []string{"9"}}
+	if err := contact.Validate(c.Payload()); err != nil {
+		t.Fatalf("Validate(builder tombstone) = %v", err)
+	}
+	cs := recordstest.NewCase(t)
+	a := recordstest.AddArtifact(t, cs, "contacts2.db", make([]byte, 1<<16))
+	w, err := records.NewWriter(cs, records.Parser{Name: "contact-test", Version: "1"}, records.WriterOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := w.Start(ctx, records.StartOptions{Artifacts: []string{a.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Add(ctx, records.Record{Type: contact.Type, ArtifactID: a.ID, Summary: contact.Summary(c), Body: contact.Body(c), Deleted: true, Payload: c.Payload()}); err != nil {
+		t.Errorf("the writer refused a contact tombstone: %v", err)
+	}
+	// deleted without source ids is refused by the real writer, with the typed error
+	bad := contact.Contact{Deleted: map[string]any{"source": "deleted_contacts"}}
+	if err := w.Add(ctx, records.Record{Type: contact.Type, ArtifactID: a.ID, Summary: "bad", Deleted: true, Payload: bad.Payload()}); !errors.Is(err, records.ErrInvalidPayload) {
+		t.Errorf("Add(deleted without source ids) = %v, want ErrInvalidPayload", err)
+	}
+	if res, err := w.End(ctx); err != nil || res.Records != 1 || res.Rejected != 1 {
+		t.Fatalf("End = %+v, %v", res, err)
+	}
+	raw, err := json.Marshal(c.Payload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := contact.Decode(contact.PayloadVersion, raw)
+	if err != nil {
+		t.Fatalf("Decode(tombstone) = %v", err)
+	}
+	if !reflect.DeepEqual(got, c) {
+		t.Errorf("Decode(tombstone) = %+v, want %+v", got, c)
 	}
 }
 
@@ -653,6 +733,9 @@ func TestSummary(t *testing.T) {
 		{"skips an empty first phone", contact.Contact{DisplayName: "A", Phones: []contact.Value{{Value: ""}, {Value: "2"}}}, "A 2"},
 		{"collapses whitespace", contact.Contact{DisplayName: "A\nB\t C", Phones: []contact.Value{{Value: "1 \n 2"}}}, "A B C 1 2"},
 		{"nothing", contact.Contact{}, ""},
+		{"tombstone shows its first source id", contact.Contact{Deleted: map[string]any{"source": "deleted_contacts"}, SourceIDs: []string{"", "9", "10"}}, "deleted contact 9"},
+		{"a named deleted contact keeps its name", contact.Contact{DisplayName: "Alex", Deleted: map[string]any{"source": "x"}, SourceIDs: []string{"9"}}, "Alex"},
+		{"source ids without a deleted marker show nothing", contact.Contact{SourceIDs: []string{"9"}}, ""},
 	}
 	for _, tc := range cases {
 		if got := contact.Summary(tc.c); got != tc.want {
@@ -702,6 +785,7 @@ func FuzzContactValidate(f *testing.F) {
 	f.Add([]byte(`{"phones":[{"value":"1","primary":true},{"value":"2"}],"emails":[],"raw":{"a":{"b":{"c":{}}}}}`))
 	f.Add([]byte(`{"display_name":"A","snapshot":{"name":"s","xid":2.0},"recovery":{"relation":"uncommitted"},"deleted":{"source":"x"}}`))
 	f.Add([]byte(`{"display_name":"A","snapshot":{"name":"s","xid":1e3}}`))
+	f.Add([]byte(`{"display_name":"A","recovery":{},"deleted":{"source":"x"},"snapshot":{"name":"s","xid":2}}`))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		dec := json.NewDecoder(strings.NewReader(string(data)))
 		dec.UseNumber()
@@ -726,6 +810,16 @@ func FuzzContactValidate(f *testing.F) {
 		again, err := contact.Decode(contact.PayloadVersion, data)
 		if err != nil || !reflect.DeepEqual(got, again) {
 			t.Fatalf("Decode is not deterministic: %v", err)
+		}
+		// provenance survives Decode: a record whose payload carries recovery, snapshot or deleted (even empty) is never live
+		prov := false
+		for _, k := range []string{"recovery", "snapshot", "deleted"} {
+			if _, ok := m[k].(map[string]any); ok {
+				prov = true
+			}
+		}
+		if got.Live() == prov {
+			t.Fatalf("Live() = %v for a payload whose provenance presence is %v", got.Live(), prov)
 		}
 		if err := contact.Validate(got.Payload()); err != nil {
 			t.Fatalf("the decoded contact does not produce a valid payload: %v", err)

@@ -396,7 +396,7 @@ func asInt(v any) (int64, bool) {
 		return int64(x), true
 	case numberLike:
 		s := x.String()
-		if !jsonNumber(s) || strings.ContainsAny(s, ".eE") {
+		if !jsonNumber(s) || strings.ContainsAny(s, ".eE") || s == "-0" { // "-0" is not canonical
 			return 0, false
 		}
 		n, err := strconv.ParseInt(s, 10, 64)

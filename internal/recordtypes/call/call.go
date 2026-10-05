@@ -18,7 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 
 	"github.com/rbenzing/minutiae/internal/records"
@@ -121,49 +120,18 @@ func (c Call) Payload() map[string]any {
 		p["new"] = *c.New
 	}
 	if c.Deleted != nil {
-		p["deleted"] = copyMap(c.Deleted)
+		p["deleted"] = common.CopyMap(c.Deleted)
 	}
 	if c.Recovery != nil {
-		p["recovery"] = copyMap(c.Recovery)
+		p["recovery"] = common.CopyMap(c.Recovery)
 	}
 	if c.Snapshot != nil {
-		p["snapshot"] = copyMap(c.Snapshot)
+		p["snapshot"] = common.CopyMap(c.Snapshot)
 	}
 	if c.Raw != nil {
-		p["raw"] = copyMap(c.Raw)
+		p["raw"] = common.CopyMap(c.Raw)
 	}
 	return p
-}
-
-// copyMap deep-copies a free-form object (maps and []any).
-func copyMap(in map[string]any) map[string]any {
-	out := make(map[string]any, len(in))
-	for k, v := range in {
-		out[k] = copyValue(v, 0)
-	}
-	return out
-}
-
-// copyValue stops copying at a depth the validator would refuse anyway.
-func copyValue(v any, depth int) any {
-	if depth > common.MaxContainerDepth {
-		return nil
-	}
-	switch x := v.(type) {
-	case map[string]any:
-		out := make(map[string]any, len(x))
-		for k, e := range x {
-			out[k] = copyValue(e, depth+1)
-		}
-		return out
-	case []any:
-		out := make([]any, len(x))
-		for i, e := range x {
-			out[i] = copyValue(e, depth+1)
-		}
-		return out
-	}
-	return v
 }
 
 // The payload contract. The schema is an unexported package variable used only as
@@ -197,12 +165,13 @@ func init() { records.SetValidator(Type, Validate) }
 // <U+XXXX>). The address is absent for a hidden number. The parts are bounded
 // separately (16, 16 and 64 bytes).
 func Summary(direction, outcome, address string) string {
-	return strings.TrimRight(strings.Join([]string{
-		"call",
-		common.Summarize(direction, 16),
-		common.Summarize(outcome, 16),
-		common.Summarize(address, 64),
-	}, " "), " ")
+	parts := []string{"call"}
+	for _, p := range []string{common.Summarize(direction, 16), common.Summarize(outcome, 16), common.Summarize(address, 64)} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 // Decode reads a stored call payload of the given payload version. Only version 1
@@ -256,16 +225,16 @@ func fromMap(m map[string]any) Call {
 		out.New = &b
 	}
 	if d, ok := m["deleted"].(map[string]any); ok {
-		out.Deleted = normMap(d, 0)
+		out.Deleted = common.NormMap(d)
 	}
 	if r, ok := m["recovery"].(map[string]any); ok {
-		out.Recovery = normMap(r, 0)
+		out.Recovery = common.NormMap(r)
 	}
 	if s, ok := m["snapshot"].(map[string]any); ok {
-		out.Snapshot = normMap(s, 0)
+		out.Snapshot = common.NormMap(s)
 	}
 	if r, ok := m["raw"].(map[string]any); ok {
-		out.Raw = normMap(r, 0)
+		out.Raw = common.NormMap(r)
 	}
 	return out
 }
@@ -293,37 +262,6 @@ func floatPtr(m map[string]any, key string) *float64 {
 	return nil
 }
 
-// normMap turns the json.Number values of a free-form object into int64 (integral
-// numbers that fit) or float64, the types Payload writes.
-func normMap(in map[string]any, depth int) map[string]any {
-	out := make(map[string]any, len(in))
-	for k, v := range in {
-		out[k] = normValue(v, depth+1)
-	}
-	return out
-}
-
-func normValue(v any, depth int) any {
-	if depth > common.MaxContainerDepth {
-		return nil
-	}
-	switch x := v.(type) {
-	case json.Number:
-		if i, err := x.Int64(); err == nil {
-			return i
-		}
-		if f, err := strconv.ParseFloat(x.String(), 64); err == nil && !math.IsInf(f, 0) && !math.IsNaN(f) {
-			return f
-		}
-		return x.String()
-	case map[string]any:
-		return normMap(x, depth)
-	case []any:
-		out := make([]any, len(x))
-		for i, e := range x {
-			out[i] = normValue(e, depth+1)
-		}
-		return out
-	}
-	return v
-}
+// Live reports whether the call is a plain live one: it carries no recovery,
+// snapshot or deleted provenance (see common.IsLive).
+func (c Call) Live() bool { return common.IsLive(c.Recovery, c.Snapshot, c.Deleted) }
