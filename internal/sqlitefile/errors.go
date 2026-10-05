@@ -17,6 +17,7 @@ var (
 	ErrWithoutRowid    = errors.New("sqlitefile: table is WITHOUT ROWID")
 	ErrAlreadyAttached = errors.New("sqlitefile: companion file already attached")
 	ErrInternal        = errors.New("sqlitefile: internal error (recovered panic)")
+	ErrEngineRefuses   = errors.New("sqlitefile: the engine refuses to open this database")
 )
 
 // NotSQLiteReason says why a file is not taken for a database.
@@ -87,3 +88,18 @@ func (e *PanicError) Error() string {
 
 // Is matches ErrInternal.
 func (e *PanicError) Is(target error) bool { return target == ErrInternal }
+
+// EngineRefusalError reports a companion file that makes the engine refuse to
+// open the database at all (a WAL header of an unsupported version). The
+// library does not present such a database as live.
+type EngineRefusalError struct {
+	File   FileKind
+	Reason string
+}
+
+func (e *EngineRefusalError) Error() string {
+	return fmt.Sprintf("sqlitefile: the engine refuses to open this database (%s): %s", e.File, e.Reason)
+}
+
+// Is matches ErrEngineRefuses.
+func (e *EngineRefusalError) Is(target error) bool { return target == ErrEngineRefuses }

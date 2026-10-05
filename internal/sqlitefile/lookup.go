@@ -220,6 +220,11 @@ func (w *walker) lookupLeaf(n node, rowid int64, kb keyBounds) (Row, bool, error
 	return w.absent(n.pgno)
 }
 
+// The neighbour, descend-order and range checks above are defence in depth: the
+// ancestor and leaf proofs below subsume them for the absent answer (Task 7
+// review, M-8); they stay because each also raises the damage that explains an
+// uncertain answer.
+
 // proveOrder parses every cell of page n and records damage unless the keys are
 // strictly increasing and inside kb: a binary search over a page whose cells are
 // out of order proves nothing about absence. An unparsable cell is damage too.

@@ -111,6 +111,10 @@ func (d *DB) WAL() *WALScan {
 // warnings follow the state the last commit frame left. d.wal is a snapshot
 // taken under the lock.
 func (v *View) applyWAL(a *attachedWAL) {
+	if s := a.scan; s.Info.VersionRefused {
+		v.src = refusedSource{&EngineRefusalError{File: FileWAL, Reason: "the WAL header is sound but " + s.Info.HeaderProblem}}
+		return
+	}
 	s := a.scan
 	if !s.Info.UsedByLive || s.Info.LastCommit == 0 {
 		return
@@ -149,3 +153,11 @@ func (v *View) applyWAL(a *attachedWAL) {
 		})
 	}
 }
+
+// refusedSource is the source of a view whose database the engine would refuse
+// to open: it supplies no page and every read says why.
+type refusedSource struct{ err error }
+
+func (s refusedSource) has(uint32) bool { return false }
+
+func (s refusedSource) read(uint32) ([]byte, PageLoc, error) { return nil, PageLoc{}, s.err }

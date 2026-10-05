@@ -12,18 +12,19 @@ import (
 // result obeys the structural rules, re-checked here by an independent walk.
 func FuzzWAL(f *testing.F) {
 	for _, big := range []bool{false, true} {
-		f.Add(buildWAL(512, big, 1, 2, []walSpec{{2, 0}, {3, 4}, {4, 5}}).Bytes(), uint16(512))
-		f.Add(buildWAL(512, big, 1, 2, []walSpec{{2, 0}, {3, 0}}).Bytes(), uint16(0))
+		f.Add(buildWAL(512, big, 1, 2, []walSpec{{2, 0}, {3, 4}, {4, 5}}).Bytes(), uint32(512))
+		f.Add(buildWAL(512, big, 1, 2, []walSpec{{2, 0}, {3, 0}}).Bytes(), uint32(0))
 	}
-	f.Add(resetScenario().Bytes(), uint16(512))
-	f.Add(buildWAL(4096, false, 9, 9, []walSpec{{2, 3}}).Bytes(), uint16(8192))
+	f.Add(resetScenario().Bytes(), uint32(512))
+	f.Add(buildWAL(4096, false, 9, 9, []walSpec{{2, 3}}).Bytes(), uint32(8192))
 	torn := buildWAL(512, false, 1, 2, []walSpec{{2, 0}, {3, 4}}).Bytes()
-	f.Add(torn[:len(torn)-77], uint16(512))
+	f.Add(torn[:len(torn)-77], uint32(512))
 	flipped := buildWAL(512, false, 1, 2, []walSpec{{2, 0}, {3, 4}, {4, 5}}).Bytes()
 	flipped[32+536+40] ^= 8
-	f.Add(flipped, uint16(512))
-	f.Add([]byte{0x37, 0x7f, 0x06, 0x82}, uint16(512))
-	f.Fuzz(func(t *testing.T, data []byte, dbPS uint16) {
+	f.Add(flipped, uint32(512))
+	f.Add([]byte{0x37, 0x7f, 0x06, 0x82}, uint32(512))
+	f.Add(buildWAL(65536, false, 1, 2, []walSpec{{2, 0}, {3, 4}}).Bytes(), uint32(65536))
+	f.Fuzz(func(t *testing.T, data []byte, dbPS uint32) {
 		cb := &capBudget{limit: 256 << 20}
 		s, err := sqlitefile.ScanWAL(bytes.NewReader(data), int64(len(data)), int(dbPS), sqlitefile.Options{Budget: cb})
 		if err != nil {

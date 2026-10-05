@@ -78,6 +78,8 @@ type WALInfo struct {
 	BigEndianChecksums   bool
 	// PageSize is the page size the slots were cut by: the header's when it
 	// is a power of two in 512..65536, else the database's, else 0 (no slots).
+	// It is NOT a record of the header field: when the header is invalid the
+	// header value is not kept (HeaderProblem says what was wrong).
 	PageSize, CheckpointSeq uint32
 	Salt1, Salt2            uint32
 	FrameSlots              uint32 // complete slots in the file (saturates at MaxUint32)
@@ -98,6 +100,9 @@ type WALInfo struct {
 	MaxPageNumber uint32
 	Generations   []WALGeneration
 	UsedByLive    bool // set by AttachWAL
+	// VersionRefused: the header is sound (magic, page size, checksum) but its
+	// version is not supported; the engine refuses to open such a database.
+	VersionRefused bool
 }
 
 // WALScan is the result of ScanWAL. Frames lists every complete slot scanned,

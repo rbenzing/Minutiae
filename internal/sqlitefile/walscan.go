@@ -93,6 +93,14 @@ func ScanWAL(wal io.ReaderAt, size int64, dbPageSize int, opts Options) (res *WA
 		}
 	}
 
+	if magic&^1 == walMagic && validWALPageSize(hdrPage) && version != walVersion {
+		// The engine refuses to open a database whose log has a sound header of
+		// another version (TestEngineWALHeaderResealed).
+		if c1, c2 := WALChecksum(hdr[:24], big, 0, 0); c1 == stored1 && c2 == stored2 {
+			in.VersionRefused = true
+		}
+	}
+
 	var pageSize uint32
 	switch {
 	case validWALPageSize(hdrPage):
