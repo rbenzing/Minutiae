@@ -448,22 +448,22 @@ func TestVerifyDetectsDuplicateDocument(t *testing.T) {
 	}
 }
 
-// TestVerifyFTSIndexTamperWithMetaDodgingStillSafe: an attacker who hides a hit and also sets the
-// state to "not built" gets a clean verify with a NOTICE that says the content is not verified, but
-// neither a search nor the writer will use the index: the dodge costs availability, never a wrong hit.
+// TestVerifyFTSIndexTamperWithMetaDodgingStillSafe (R57): an attacker who hides a hit and also sets
+// the state to "not built" is NOT cleared: P11 derives the expected state from the audit log (a
+// records.reindex.done or an ingest built the index), so the edited state is a problem, the content
+// is still compared (the hidden hit is reported) and neither a search nor the writer uses the index.
 func TestVerifyFTSIndexTamperWithMetaDodgingStillSafe(t *testing.T) {
 	c := clone(t, ftsBase(t))
 	recordstest.HideFromIndex(t, c.Dir, evidence.FTSWordTable, 1)
 	recordstest.SetFTSNormVersion(t, c.Dir, "")
 	rep := mustVerify(t, c)
-	if !rep.OK() {
-		t.Fatalf("problems: %q", rep.Problems)
+	requireProblem(t, rep, "records_fts: the index state differs from the audit log", evidence.MetaFTSNormVersion)
+	requireProblem(t, rep, "records_fts: record 1: the index lacks", "(a search hit is hidden)")
+	if rep.FTSDocsChecked != ftsBaseIndexed {
+		t.Errorf("FTSDocsChecked = %d, want %d: the content was not compared", rep.FTSDocsChecked, ftsBaseIndexed)
 	}
-	if rep.FTSDocsChecked != 0 {
-		t.Errorf("FTSDocsChecked = %d: the content was not compared", rep.FTSDocsChecked)
-	}
-	if !containsNotice(rep, "the index content is not verified") {
-		t.Fatalf("notices %q: the dodge is silent", rep.Notices)
+	if containsNotice(rep, "the index content is not verified") {
+		t.Errorf("notices %q: the dodge was explained away as a notice", rep.Notices)
 	}
 	// what search relies on (Reader.Search and TermHits call it first) refuses
 	if err := c.RequireIndexCurrent(ctx); !errors.Is(err, evidence.ErrIndexNotCurrent) {
@@ -515,18 +515,37 @@ func containsNotice(rep evidence.VerifyReport, sub string) bool {
 	return false
 }
 
-// TestVerifyFTSNoticesForNonCurrentStates: every state in which the index may not answer is a NOTICE
-// that says the content is not verified, never a problem and never silence.
+// TestVerifyFTSNoticesForNonCurrentStates: every state in which the index may not answer AND that the
+// audit log explains is a NOTICE that says the content is not verified, never a problem and never
+// silence. (A state the audit log does not explain is a problem: R57.)
 func TestVerifyFTSNoticesForNonCurrentStates(t *testing.T) {
-	base := ftsBase(t)
-	for _, tc := range []struct{ name, value, want string }{
-		{"unbuilt", "", "is not built"},
-		{"building", "building", "was interrupted"},
-		{"stale version", "fts0/unicode-1.0.0/sqlite-3.0.0", "was built by"},
+	const old = "fts0/unicode-1.0.0/sqlite-3.0.0"
+	for _, tc := range []struct {
+		name, want string
+		make       func(t *testing.T) *evidence.Case
+	}{
+		{"unbuilt after an upgrade", "is not built", func(t *testing.T) *evidence.Case {
+			c := openClone(t, recordstest.CopyV2Case(t))
+			if _, err := c.Upgrade(); err != nil {
+				t.Fatal(err)
+			}
+			return c
+		}},
+		{"interrupted reindex", "was interrupted", func(t *testing.T) *evidence.Case {
+			c := clone(t, ftsBase(t))
+			forgeAudit(t, c, evidence.ActionReindex, evidence.ReindexStart{ReindexID: "rx-1", NormVersion: evidence.FTSNormVersion(), Tables: evidence.FTSTables()}.Details())
+			recordstest.SetFTSNormVersion(t, c.Dir, "building")
+			return c
+		}},
+		{"built by another pipeline version", "was built by", func(t *testing.T) *evidence.Case {
+			c := clone(t, ftsBase(t))
+			forgeReindexDone(t, c, "rx-1", old)
+			recordstest.SetFTSNormVersion(t, c.Dir, old)
+			return c
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			c := clone(t, base)
-			recordstest.SetFTSNormVersion(t, c.Dir, tc.value)
+			c := tc.make(t)
 			rep := mustVerify(t, c)
 			if !rep.OK() {
 				t.Fatalf("problems: %q", rep.Problems)
@@ -547,6 +566,123 @@ func TestVerifyFTSNoticesForNonCurrentStates(t *testing.T) {
 	}
 }
 
+// TestVerifyFTSMetaDeletedAndOtherVersionAreProblems (R57): a deleted state row and a state set to
+// another (well-formed) version differ from the audit log just the same, and the content is compared
+// whatever the state says, because the audit-derived version is this build's.
+func TestVerifyFTSMetaDeletedAndOtherVersionAreProblems(t *testing.T) {
+	base := ftsBase(t)
+	for _, tc := range []struct {
+		name   string
+		tamper func(t testing.TB, dir string)
+		want   string
+	}{
+		{"deleted", recordstest.DeleteFTSNormVersion, "is missing"},
+		{"other version", func(t testing.TB, dir string) {
+			recordstest.SetFTSNormVersion(t, dir, "fts0/unicode-1.0.0/sqlite-3.0.0")
+		}, "holds"},
+		{"building that no reindex announced", func(t testing.TB, dir string) {
+			recordstest.SetFTSNormVersion(t, dir, "building")
+		}, "holds"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := clone(t, base)
+			recordstest.HideFromIndex(t, c.Dir, evidence.FTSWordTable, 1)
+			tc.tamper(t, c.Dir)
+			rep := mustVerify(t, c)
+			requireProblem(t, rep, "the index state differs from the audit log", tc.want)
+			requireProblem(t, rep, "records_fts: record 1: the index lacks", "(a search hit is hidden)")
+			if rep.FTSDocsChecked != ftsBaseIndexed {
+				t.Errorf("FTSDocsChecked = %d, want %d", rep.FTSDocsChecked, ftsBaseIndexed)
+			}
+		})
+	}
+}
+
+// forgeAudit appends an audit entry as a writer of the chain could: valid and correctly chained,
+// produced by no run of the writer.
+func forgeAudit(t *testing.T, c *evidence.Case, action string, details map[string]any) {
+	t.Helper()
+	if _, err := c.Audit.Append(action, "", details); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func forgeReindexDone(t *testing.T, c *evidence.Case, id, version string) {
+	t.Helper()
+	forgeAudit(t, c, evidence.ActionReindex, evidence.ReindexStart{ReindexID: id, NormVersion: version, Tables: evidence.FTSTables()}.Details())
+	forgeAudit(t, c, evidence.ActionReindexDone, evidence.ReindexDone{ReindexID: id, NormVersion: version, Docs: map[string]int64{}}.Details())
+}
+
+func forgeIngestStart(t *testing.T, c *evidence.Case, id, artifactID, version string) {
+	t.Helper()
+	forgeAudit(t, c, evidence.ActionIngestStart, evidence.IngestStart{
+		IngestID: id, Parser: testParser.Name, ParserVersion: testParser.Version, ParserHash: testParser.Hash,
+		Artifacts: []string{artifactID}, BatchRows: 100, NormVersion: version,
+	}.Details())
+}
+
+// TestIngestStartRecordsNormVersion (R62): every ingest names the index version it indexes with.
+func TestIngestStartRecordsNormVersion(t *testing.T) {
+	c := clone(t, ftsBase(t))
+	entries, err := evidence.ReadAuditEntries(c.Dir + "/audit.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, e := range entries {
+		if e.Action != evidence.ActionIngestStart {
+			continue
+		}
+		n++
+		s, err := evidence.DecodeDetails[evidence.IngestStart](e.Details)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.NormVersion != evidence.FTSNormVersion() {
+			t.Errorf("seq %d: norm_version %q, want %q", e.Seq, s.NormVersion, evidence.FTSNormVersion())
+		}
+	}
+	if n == 0 {
+		t.Fatal("no ingest start in the audit log")
+	}
+}
+
+// TestVerifyIngestNormVersionMustMatchAuditDerivedIndex (R62): an ingest that claims another index
+// version than the audit log derives is a problem, unless a reindex.done made that version the
+// index's before it. The forged start is concluded by the real ingest that follows (its recovery),
+// so the lifecycle is clean and the version is the only finding.
+func TestVerifyIngestNormVersionMustMatchAuditDerivedIndex(t *testing.T) {
+	const old = "fts0/unicode-1.0.0/sqlite-3.0.0"
+	other := records.Parser{Name: "other", Version: "1"}
+	t.Run("differs", func(t *testing.T) {
+		c, art := setup(t)
+		recs, _ := recordstest.TextRecords(art.ID)
+		recordstest.Ingest(t, c, testParser, []string{art.ID}, recs[:3])
+		forgeIngestStart(t, c, "forged-ing", art.ID, old)
+		recordstest.Ingest(t, c, other, []string{art.ID}, recs[3:5])
+		rep := mustVerify(t, c)
+		requireProblem(t, rep, "records.ingest.start", `"forged-ing"`, "norm_version", old, "differs from the index version the audit log derives")
+		if len(rep.Problems) != 1 {
+			t.Errorf("problems %q: the version is the only finding", rep.Problems)
+		}
+	})
+	t.Run("covered by an earlier reindex", func(t *testing.T) {
+		c, art := setup(t)
+		recs, _ := recordstest.TextRecords(art.ID)
+		recordstest.Ingest(t, c, testParser, []string{art.ID}, recs[:3])
+		forgeReindexDone(t, c, "forged-rx", old)
+		forgeIngestStart(t, c, "forged-ing", art.ID, old)
+		if _, err := c.ReindexText(ctx, evidence.ReindexOptions{}); err != nil { // the real one: the index is current again
+			t.Fatal(err)
+		}
+		recordstest.Ingest(t, c, other, []string{art.ID}, recs[3:5])
+		rep := mustVerify(t, c)
+		if len(problemsWith(rep, "norm_version")) != 0 {
+			t.Fatalf("problems %q: an ingest that matches the index version at its time is fine", rep.Problems)
+		}
+	})
+}
+
 // TestVerifyFTSInvalidMetaIsProblem: a state that is not a version of the index at all is a problem
 // (the case cannot say what its index is).
 func TestVerifyFTSInvalidMetaIsProblem(t *testing.T) {
@@ -555,9 +691,9 @@ func TestVerifyFTSInvalidMetaIsProblem(t *testing.T) {
 		c := clone(t, base)
 		recordstest.SetFTSNormVersion(t, c.Dir, "garbage!")
 		rep := mustVerify(t, c)
-		requireProblem(t, rep, `records_meta fts_norm_version holds "garbage!", which is not a version of the full-text index`)
-		if rep.FTSDocsChecked != 0 {
-			t.Errorf("FTSDocsChecked = %d", rep.FTSDocsChecked)
+		requireProblem(t, rep, `records_meta fts_norm_version holds "garbage!", which is not a version of the full-text index`, "differs from the audit log")
+		if rep.FTSDocsChecked != ftsBaseIndexed { // R57: the audit log says this build built it, so the content is compared
+			t.Errorf("FTSDocsChecked = %d, want %d", rep.FTSDocsChecked, ftsBaseIndexed)
 		}
 	})
 	t.Run("missing key", func(t *testing.T) {

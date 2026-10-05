@@ -163,6 +163,7 @@ func (w *Writer) Start(ctx context.Context, so StartOptions) error {
 	if _, err := w.c.Audit.Append(evidence.ActionIngestStart, "", evidence.IngestStart{
 		IngestID: ingestID, Parser: w.p.Name, ParserVersion: w.p.Version, ParserHash: hash,
 		AnalysisID: so.AnalysisID, Artifacts: artifacts, BatchRows: w.opt.BatchRows, Reingest: reingest,
+		NormVersion: evidence.FTSNormVersion(),
 	}.Details()); err != nil {
 		return fmt.Errorf("audit ingest start: %w", err)
 	}

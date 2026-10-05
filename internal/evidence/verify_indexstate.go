@@ -2,6 +2,7 @@ package evidence
 
 import (
 	"context"
+	"fmt"
 	"slices"
 )
 
@@ -11,10 +12,14 @@ import (
 // because the case is intact and only unsearchable; an unreadable or invalid state is a problem,
 // because the case cannot say what its index is. A records reindex that the audit log announced and
 // never concluded is a NOTICE too, whatever the state says: the index may be partial.
-func (c *Case) verifyIndexState(ctx context.Context, rep *VerifyReport, entries []AuditEntry, auditReadable bool) (current bool) {
+func (c *Case) verifyIndexState(ctx context.Context, rep *VerifyReport, ps *problemSet, entries []AuditEntry, auditReadable bool) (current bool) {
 	remedy := "run: minutiae records reindex --case " + c.Dir
+	var derived derivedIndex
+	dangling := false
 	if auditReadable {
+		derived = deriveIndexState(entries, ps)
 		for _, d := range danglingReindexes(entries, rep) {
+			dangling = true
 			rep.noticef("%s: audit seq %d: records reindex %q was announced and never concluded (the index may be partial and its content is not verified); %s", FTSWordTable, d.seq, d.id, remedy)
 		}
 	}
@@ -34,9 +39,22 @@ func (c *Case) verifyIndexState(ctx context.Context, rep *VerifyReport, entries 
 		unreadable(rep, "full-text index state", err)
 		return false
 	}
+	// the content is compared whenever the audit log says this build built the index, whatever
+	// records_meta says; the state itself is compared with what the log derives
+	// an announced reindex that dropped rows leaves a partial index (state "building", explained by the log): nothing to compare
+	compare := !dangling && (st.Kind != IndexBuilding || !derived.explains(st.Value))
+	if derived.known {
+		compare = compare && derived.current(st.Current)
+	} else {
+		compare = compare && st.Kind == IndexCurrent
+	}
+	if st.Kind != IndexInvalid && !derived.explains(st.Value) {
+		rep.problemf("%s: the index state differs from the audit log: records_meta %s holds %q, the audit log derives %q; %s", FTSWordTable, MetaFTSNormVersion, st.Value, derived.allowed[0], remedy)
+		return compare
+	}
 	switch st.Kind {
 	case IndexCurrent:
-		return true
+		return compare
 	case IndexUnbuilt:
 		rep.noticef("%s: the full-text index is not built: %d records are not searchable and the index content is not verified; %s", FTSWordTable, records, remedy)
 	case IndexBuilding:
@@ -45,12 +63,12 @@ func (c *Case) verifyIndexState(ctx context.Context, rep *VerifyReport, entries 
 		rep.noticef("%s: the full-text index was built by %q and this build is %q: the records are not searchable and the index content is not verified; %s", FTSWordTable, st.Value, st.Current, remedy)
 	default:
 		if st.Value == "" {
-			rep.problemf("%s: records_meta %s is missing (or is not text): the state of the full-text index is unknown; %s", FTSWordTable, MetaFTSNormVersion, remedy)
-			return false
+			rep.problemf("%s: records_meta %s is missing (or is not text): the state of the full-text index is unknown%s; %s", FTSWordTable, MetaFTSNormVersion, derived.differs(), remedy)
+			return compare
 		}
-		rep.problemf("%s: records_meta %s holds %q, which is not a version of the full-text index; %s", FTSWordTable, MetaFTSNormVersion, st.Value, remedy)
+		rep.problemf("%s: records_meta %s holds %q, which is not a version of the full-text index%s; %s", FTSWordTable, MetaFTSNormVersion, st.Value, derived.differs(), remedy)
 	}
-	return false
+	return compare
 }
 
 // danglingReindex is a records.reindex entry no later entry concluded.
@@ -110,4 +128,67 @@ func danglingReindexes(entries []AuditEntry, rep *VerifyReport) []danglingReinde
 // of the chain can produce. It concludes nothing.
 func orphanReindexConclusion(rep *VerifyReport, e AuditEntry, id string) {
 	rep.problemf("audit seq %d: %s names reindex %q, which no earlier records.reindex announced, or which was already concluded", e.Seq, e.Action, id)
+}
+
+// derivedIndex is the index state the audit log accounts for (R57): verify recomputes it, it does not
+// trust records_meta. known is false while the log says nothing about the version the index was built
+// with (a case created at v3 or upgraded, with no ingest and no reindex since): then records_meta is
+// unconstrained. Otherwise allowed[0] is the version the last records.reindex.done or ingest stated,
+// and the rest are the values an announced, unconcluded reindex explains ("building", the version it
+// was building).
+type derivedIndex struct {
+	known   bool
+	allowed []string
+}
+
+func (d derivedIndex) explains(v string) bool { return !d.known || slices.Contains(d.allowed, v) }
+
+// current reports whether the audit log says the index was built by this build's pipeline version.
+func (d derivedIndex) current(version string) bool { return d.known && d.allowed[0] == version }
+
+// deriveIndexState replays the audit log: a records.reindex.done states the version, a schema upgrade
+// to v3 forgets it (the migration leaves the index unbuilt, or current when there was nothing to
+// index), a records.ingest.start states the version it indexed with and must agree with what the log
+// derived so far (a mismatch is a problem, named by audit seq), and an announced reindex allows the
+// states it passes through.
+func deriveIndexState(entries []AuditEntry, ps *problemSet) derivedIndex {
+	var d derivedIndex
+	for _, e := range entries {
+		switch e.Action {
+		case ActionCaseUpgrade:
+			from, okF := auditInt(e.Details, "from")
+			to, okT := auditInt(e.Details, "to")
+			if okF && okT && from < 3 && to >= 3 {
+				d = derivedIndex{}
+			}
+		case ActionReindex:
+			if s, err := DecodeDetails[ReindexStart](e.Details); err == nil && d.known {
+				d.allowed = append(d.allowed, indexBuildingValue, s.NormVersion)
+			}
+		case ActionReindexDone:
+			if r, err := DecodeDetails[ReindexDone](e.Details); err == nil {
+				d = derivedIndex{known: true, allowed: []string{r.NormVersion}}
+			}
+		case ActionIngestStart:
+			s, err := DecodeDetails[IngestStart](e.Details)
+			if err != nil || s.NormVersion == "" { // unreadable details are reported elsewhere; a v2 ingest has no index
+				continue
+			}
+			if d.known && !slices.Contains(d.allowed, s.NormVersion) {
+				ps.add("index-state", "%s: audit seq %d: records.ingest.start %q norm_version %q differs from the index version the audit log derives (%q)",
+					FTSWordTable, e.Seq, s.IngestID, s.NormVersion, d.allowed[0])
+				continue
+			}
+			d = derivedIndex{known: true, allowed: []string{s.NormVersion}}
+		}
+	}
+	return d
+}
+
+// differs is the clause an unreadable or invalid state adds when the audit log says what it should be.
+func (d derivedIndex) differs() string {
+	if !d.known {
+		return ""
+	}
+	return fmt.Sprintf(": the index state differs from the audit log, which derives %q", d.allowed[0])
 }

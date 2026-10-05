@@ -60,6 +60,7 @@ type IngestStart struct {
 	Artifacts     []string `json:"artifacts"` // sorted, de-duplicated, required
 	BatchRows     int      `json:"batch_rows"`
 	Reingest      bool     `json:"reingest"`
+	NormVersion   string   `json:"norm_version"` // the full-text index version the ingest indexes with (FTSNormVersion)
 }
 
 // BatchCommit is the details of records.batch: a batch announced (and fsynced)

@@ -289,7 +289,7 @@ func (c *Case) verifyRecords(rep *VerifyReport, recs []ManifestRecord, entries [
 	c.verifyMetaKeys(ctx, ps, dbv)
 	indexCurrent := false
 	if dbv >= 3 {
-		indexCurrent = c.verifyIndexState(ctx, rep, entries, auditReadable)
+		indexCurrent = c.verifyIndexState(ctx, rep, ps, entries, auditReadable)
 	}
 	c.verifyClassOnly(ctx, ps, supersededClasses, []string{"ingest_id", "artifact_id"},
 		func(v []string) string { return fmt.Sprintf("ingest %q artifact %q", v[0], v[1]) })
