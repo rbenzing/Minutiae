@@ -88,7 +88,8 @@ func ExitCode(err error) int {
 	case errors.As(err, &ue):
 		return ExitUsage
 	case errors.Is(err, evidence.ErrNeedsUpgrade), errors.Is(err, records.ErrBadCursor),
-		errors.Is(err, records.ErrInvalidFilter), errors.Is(err, records.ErrInvalidPage):
+		errors.Is(err, records.ErrInvalidFilter), errors.Is(err, records.ErrInvalidPage),
+		errors.Is(err, records.ErrInvalidQuery), errors.Is(err, records.ErrIndexNotCurrent):
 		return ExitUsage
 	case errors.Is(err, evidence.ErrIntegrity):
 		return ExitIntegrity
