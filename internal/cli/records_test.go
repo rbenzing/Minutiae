@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -43,11 +44,11 @@ func recDataset(t *testing.T, second bool) recCase {
 	recordstest.Ingest(t, c, recParser, []string{rc.art.ID}, []records.Record{
 		{
 			Type: "message", ArtifactID: rc.art.ID, Summary: "hello world", SourcePath: "/data/sms.db", Locator: "sqlite:table=sms;row=1",
-			Time: &records.Time{T: utc}, Confidence: rptr(90), Payload: map[string]any{"text": "hi", "n": int64(3)},
+			Time: &records.Time{T: utc}, Confidence: rptr(90), Payload: validPayload("message", map[string]any{"text": "hi", "n": int64(3)}),
 		},
 		{
 			Type: "call", ArtifactID: rc.art.ID, Summary: "call to mum", SourcePath: "/data/calls.db",
-			Time: &records.Time{T: time.Date(2026, 10, 4, 10, 0, 0, 0, time.UTC), Basis: records.BasisLocalUnknown}, Payload: map[string]any{},
+			Time: &records.Time{T: time.Date(2026, 10, 4, 10, 0, 0, 0, time.UTC), Basis: records.BasisLocalUnknown}, Payload: validPayload("call", nil),
 		},
 		{
 			Type: "note", ArtifactID: rc.art.ID, Summary: "a note",
@@ -58,13 +59,13 @@ func recDataset(t *testing.T, second bool) recCase {
 		{Type: "file", ArtifactID: rc.art.ID, Summary: "removed file", Deleted: true, Payload: map[string]any{}},
 		{
 			Type: "contact", ArtifactID: rc.art.ID, Summary: "carved contact", Deleted: true, Recovery: "carve", Confidence: rptr(40),
-			Time: &records.Time{T: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)}, Payload: map[string]any{},
+			Time: &records.Time{T: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)}, Payload: validPayload("contact", nil),
 		},
 	})
 	if second {
 		recordstest.Ingest(t, c, records.Parser{Name: "calls", Version: "2.0"}, []string{rc.art2.ID}, []records.Record{
-			{Type: "call", ArtifactID: rc.art2.ID, Summary: "second one", SourcePath: "/other/x", Time: &records.Time{T: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)}, Payload: map[string]any{}},
-			{Type: "call", ArtifactID: rc.art2.ID, Summary: "second two", Payload: map[string]any{}},
+			{Type: "call", ArtifactID: rc.art2.ID, Summary: "second one", SourcePath: "/other/x", Time: &records.Time{T: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)}, Payload: validPayload("call", nil)},
+			{Type: "call", ArtifactID: rc.art2.ID, Summary: "second two", Payload: validPayload("call", nil)},
 		})
 	}
 	if err := c.Close(); err != nil {
@@ -277,7 +278,7 @@ func TestRecordsListFilterFlags(t *testing.T) {
 	// --all-runs: a newer complete run of the same parser name supersedes the older
 	c := reopen(t, d)
 	recordstest.Ingest(t, c, records.Parser{Name: "sms-parser", Version: "2.0"}, []string{rc.art.ID}, []records.Record{
-		{Type: "message", ArtifactID: rc.art.ID, Summary: "newer", Time: &records.Time{T: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)}, Payload: map[string]any{}},
+		{Type: "message", ArtifactID: rc.art.ID, Summary: "newer", Time: &records.Time{T: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)}, Payload: validPayload("message", nil)},
 	})
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
@@ -401,7 +402,7 @@ func TestRecordsShowAndPayload(t *testing.T) {
 	}
 	cliJSON(t, &full, "records", "show", "--case", rc.dir, "1", "--payload")
 	if full.ID != 1 || full.Artifact.ID != rc.art.ID || full.Artifact.SHA256 != rc.art.SHA256 || full.Batch.Digest == "" ||
-		full.Batch.AuditSeq != int64(batchSeq) || full.Run.Outcome != "complete" || compactJSON(t, full.Payload) != `{"n":3,"text":"hi"}` {
+		full.Batch.AuditSeq != int64(batchSeq) || full.Run.Outcome != "complete" || compactJSON(t, full.Payload) != `{"channel":"sms","direction":"unknown","kind":"unknown","n":3,"participants":[],"participants_unknown":true,"text":"hi"}` {
 		t.Fatalf("show --json = %+v payload %s", full, full.Payload)
 	}
 }
@@ -566,7 +567,7 @@ func TestRecordsCLIEscapesRecordText(t *testing.T) {
 		Type: "message", ArtifactID: art.ID, Summary: recEvilClean, SourcePath: "/p/" + recEvilClean, Locator: "sqlite:t=" + recEvilClean,
 		Recovery: "carve", Deleted: true,
 		Body:    "line one " + recEvilClean + "\nline two\u202e " + recEvilClean + "\n\x1b[2Jline three\r\n",
-		Payload: map[string]any{"k" + recEvilClean: "v" + recEvilClean, "list": []any{recEvilClean}},
+		Payload: validPayload("message", map[string]any{"k" + recEvilClean: "v" + recEvilClean, "list": []any{recEvilClean}}),
 		Time:    &records.Time{T: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
 	}})
 	dir := c.Dir
@@ -753,4 +754,12 @@ func TestRecordsShowArtifactMissingFromManifestExits4(t *testing.T) {
 	if code != ExitIntegrity || !strings.Contains(out, "unknown artifact") {
 		t.Fatalf("show with the artifact gone: exit %d: %s", code, out)
 	}
+}
+
+// validPayload is the minimal valid payload of a record type (recordstest.ValidPayload) plus the keys
+// a test adds: the CLI links the payload validators, so a free-form payload of a validated type is refused.
+func validPayload(typ string, extra map[string]any) map[string]any {
+	p := recordstest.ValidPayload(typ)
+	maps.Copy(p, extra)
+	return p
 }

@@ -93,6 +93,7 @@ const (
 	dirDecode     = "internal/decode"
 	dirDecodePlst = "internal/decode/plist"
 	dirDecodeSQL  = "internal/decode/sqlitedb"
+	dirRTAll      = "internal/recordtypes/all"
 	dirSqlitefile = "internal/sqlitefile"
 	dirParsers    = "internal/parsers"
 )
@@ -312,13 +313,21 @@ func moduleImportAllowed(rel string, class pureClass, dirRel string) bool {
 	case rel == dirRTCommon: // payload helpers
 		return setOf(pcRTType, pcParser).has(class)
 	case under(dirRecordtype): // payload builders
-		return class == pcParser
+		// the one exception: the all package, which only blank-imports the type packages so that one import
+		// installs every validator (it holds no code of its own: it has no other import and no declaration)
+		return class == pcParser || dirRel == dirRTAll && recordTypePackages[rel]
 	case under(dirDecode): // decoders
 		return class == pcDecode || class == pcParser
 	case rel == dirSqlitefile: // the sqlite file reader: its one decoder and the parsers
 		return class == pcParser || dirRel == dirDecodeSQL
 	}
 	return false
+}
+
+// recordTypePackages are the type packages the all package links.
+var recordTypePackages = map[string]bool{
+	"internal/recordtypes/message": true, "internal/recordtypes/call": true,
+	"internal/recordtypes/contact": true, "internal/recordtypes/web": true,
 }
 
 // thirdPartyAllowed lists the non-stdlib, non-module packages and where each may be imported.
@@ -1238,7 +1247,7 @@ func TestParserPackagesHaveNoSQL(t *testing.T) {
 // (internal/recordtypes/common is listed; the six type packages and the others follow with their plans).
 var purityRequired = []string{
 	"internal/parse", "internal/recordtypes/common", "internal/recordtypes/message",
-	"internal/recordtypes/call", "internal/recordtypes/contact",
+	"internal/recordtypes/call", "internal/recordtypes/contact", "internal/recordtypes/web", "internal/recordtypes/all",
 }
 
 // purePackageRE is a second, independent description of the pure roots: any
@@ -1412,6 +1421,13 @@ func TestPurityAllowlistSelfTest(t *testing.T) {
 		{pcRTType, dirRecordtype + "/message", m + "internal/parse", true},
 		{pcRTType, dirRecordtype + "/message", m + "internal/recordtypes/common", true},
 		{pcRTType, dirRecordtype + "/message", m + "internal/recordtypes/call", false},
+		// the all package may link the four type packages, no other sibling
+		{pcRTType, dirRTAll, m + "internal/recordtypes/call", true},
+		{pcRTType, dirRTAll, m + "internal/recordtypes/contact", true},
+		{pcRTType, dirRTAll, m + "internal/recordtypes/message", true},
+		{pcRTType, dirRTAll, m + "internal/recordtypes/web", true},
+		{pcRTType, dirRTAll, m + "internal/recordtypes/other", false},
+		{pcRTType, dirRecordtype + "/web", m + "internal/recordtypes/call", false},
 		{pcRTType, dirRecordtype + "/message", "encoding/base64", false},
 		{pcRTType, dirRecordtype + "/message", "io", false},
 		{pcRTType, dirRecordtype + "/message", m + "internal/decode/plist", false},

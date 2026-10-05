@@ -60,6 +60,8 @@ var allowed = map[string][]string{
 	"internal/recordtypes/call":            {"internal/records", "internal/recordtypes/common"},
 	"internal/recordtypes/contact":         {"internal/records", "internal/recordtypes/common"},
 	"internal/recordtypes/message":         {"internal/records", "internal/recordtypes/common"},
+	"internal/recordtypes/web":             {"internal/records", "internal/recordtypes/common"},
+	"internal/recordtypes/all":             {"internal/recordtypes/message", "internal/recordtypes/call", "internal/recordtypes/contact", "internal/recordtypes/web"},
 	"tools/check":                          {},
 }
 

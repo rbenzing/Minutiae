@@ -69,14 +69,17 @@ func Records(artifactID string, n int, seed int64) []records.Record {
 	types := []string{"message", "call", "contact", "calendar_event", "location", "web_visit", "file", "event", "note"}
 	out := make([]records.Record, 0, n)
 	for i := 0; i < n; i++ {
+		typ := types[rng.IntN(len(types))]
+		// the free-form keys sit next to the minimal valid payload of the type, so a binary that links the
+		// payload validators ingests the generator's records unchanged (unknown fields are allowed)
+		payload := ValidPayload(typ)
+		payload["i"], payload["seed"], payload["text"] = i, seed, "t"+strconv.Itoa(rng.IntN(1000))
+		payload["nested"] = map[string]any{"k": []any{"a", int64(rng.IntN(100)), true, nil}}
 		r := records.Record{
-			Type:       types[rng.IntN(len(types))],
+			Type:       typ,
 			ArtifactID: artifactID,
 			Summary:    "record " + strconv.Itoa(i) + " of seed " + strconv.FormatInt(seed, 10),
-			Payload: map[string]any{
-				"i": i, "seed": seed, "text": "t" + strconv.Itoa(rng.IntN(1000)),
-				"nested": map[string]any{"k": []any{"a", int64(rng.IntN(100)), true, nil}},
-			},
+			Payload:    payload,
 		}
 		if rng.IntN(3) > 0 {
 			r.SourcePath = "/data/" + strconv.Itoa(rng.IntN(20)) + "/file" + strconv.Itoa(rng.IntN(5)) + ".db"
