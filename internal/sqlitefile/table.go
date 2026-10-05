@@ -121,7 +121,9 @@ func (t *Table) Rows(ctx context.Context, visit func(Row) bool) error {
 }
 
 // Get finds the row with the given rowid. A WITHOUT ROWID table has no rowids:
-// ErrWithoutRowid.
+// ErrWithoutRowid. Get reads the row's overflow chain as the engine does,
+// whatever else points at the same pages: an overflow chain shared by two rows
+// is detected only by a scan (Rows, View.ScanTree) or by verify, never by Get.
 func (t *Table) Get(ctx context.Context, rowid int64) (Row, bool, error) {
 	if t.kind() == IndexTree {
 		return Row{}, false, fmt.Errorf("%w: %q", ErrWithoutRowid, t.obj.Name)
