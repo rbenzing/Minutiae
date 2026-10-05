@@ -415,3 +415,17 @@ func TestVerifyFTSRefusesTmpThatIsNotAPlainDirectory(t *testing.T) {
 		}
 	})
 }
+
+// TestCheckTmpAloneRefusesANonDirectory: checkTmp has its own Lstat check (setup repeats it), so it
+// is called here on its own, where setup cannot give the same answer.
+func TestCheckTmpAloneRefusesANonDirectory(t *testing.T) {
+	c := indexedTextCase(t, 5)
+	if err := os.WriteFile(filepath.Join(c.Dir, "tmp"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var rep VerifyReport
+	c.checkTmp(&rep)
+	if len(rep.Problems) != 1 || !strings.Contains(rep.Problems[0], "case tmp is not a plain directory") {
+		t.Fatalf("checkTmp problems %q, want exactly the plain-directory problem", rep.Problems)
+	}
+}

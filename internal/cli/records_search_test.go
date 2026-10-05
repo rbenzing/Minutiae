@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
@@ -406,12 +408,33 @@ func TestRecordsSearchOnV2CaseNeedsUpgrade(t *testing.T) {
 	}
 }
 
+// lateDeadline is a context whose deadline has passed and whose timer has not fired (Err is nil).
+type lateDeadline struct{ context.Context }
+
+func (lateDeadline) Deadline() (time.Time, bool) { return time.Now().Add(-time.Second), true }
+
 func TestRecordsSearchTimeoutExit1(t *testing.T) {
 	dir := searchDataset(t)
-	code, out := run(t, Deps{}, "records", "search", "--case", dir, "alpha", "--timeout", "1ns")
-	if code != ExitError || !strings.Contains(out, "timed out") {
-		t.Fatalf("--timeout 1ns: %d %s", code, out)
+	// A deadline that has certainly passed (R58): "--timeout 1ns" is below the resolution of the
+	// Windows clock, so the test hands the command a past deadline through the seam instead.
+	old := searchContext
+	searchContext = func(ctx context.Context, _ time.Duration) (context.Context, context.CancelFunc) {
+		return context.WithDeadline(ctx, time.Now().Add(-time.Hour))
 	}
+	defer func() { searchContext = old }()
+	code, out := run(t, Deps{}, "records", "search", "--case", dir, "alpha", "--timeout", "1s")
+	if code != ExitError || !strings.Contains(out, "timed out") {
+		t.Fatalf("an expired deadline: %d %s", code, out)
+	}
+	// and one whose deadline has passed while its timer has not fired
+	searchContext = func(ctx context.Context, _ time.Duration) (context.Context, context.CancelFunc) {
+		return lateDeadline{ctx}, func() {}
+	}
+	code, out = run(t, Deps{}, "records", "search", "--case", dir, "alpha", "--timeout", "1s")
+	if code != ExitError || !strings.Contains(out, "timed out") {
+		t.Fatalf("a deadline whose timer has not fired: %d %s", code, out)
+	}
+	searchContext = old
 	if code, out := run(t, Deps{}, "records", "search", "--case", dir, "alpha", "--timeout", "0"); code != 0 {
 		t.Fatalf("--timeout 0: %d %s", code, out)
 	}

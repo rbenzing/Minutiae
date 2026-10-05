@@ -48,13 +48,16 @@ func (r *Reader) Stats(ctx context.Context, f Filter, by string) ([]StatRow, err
 		q := "SELECT " + key.expr + " AS k, count(*), min(r.ts), max(r.ts)" + w.fromSQL(key.parser, key.batch) +
 			w.whereSQL() + " GROUP BY k ORDER BY k"
 		if f.Text != nil {
-			r.matching()
+			if err := r.matching(ctx); err != nil {
+				return err
+			}
 		}
 		rows, err := h.QueryContext(ctx, q, w.args...)
 		if err != nil {
 			return fmt.Errorf("records: stats by %s: %w", by, err)
 		}
 		defer func() { _ = rows.Close() }()
+		r.started()
 		for rows.Next() {
 			var s StatRow
 			var k sql.NullString
@@ -101,7 +104,9 @@ func (r *Reader) Overview(ctx context.Context, f Filter) (Overview, error) {
 		q := "SELECT count(*), COALESCE(sum(r.deleted), 0), COALESCE(sum(r.recovered), 0), COALESCE(sum(r.ts IS NULL), 0), min(r.ts), max(r.ts)" +
 			w.fromSQL(false, false) + w.whereSQL()
 		if f.Text != nil {
-			r.matching()
+			if err := r.matching(ctx); err != nil {
+				return err
+			}
 		}
 		if err := h.QueryRowContext(ctx, q, w.args...).Scan(&ov.Records, &ov.Deleted, &ov.Recovered, &ov.Untimed, &lo, &hi); err != nil {
 			return fmt.Errorf("records: overview: %w", err)

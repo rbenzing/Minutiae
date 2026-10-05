@@ -59,7 +59,9 @@ func (r *Reader) TermHits(ctx context.Context, f Filter, terms []Term, perTermLi
 			w.conds = append(append([]string(nil), base.conds...), cond)
 			w.args = append(append([]any(nil), base.args...), q.match)
 			out[i].Term = terms[i]
-			r.matching()
+			if err := r.matching(ctx); err != nil {
+				return err
+			}
 			countSQL := "SELECT count(*)" + w.fromSQL(false, false) + w.whereSQL()
 			if err := h.QueryRowContext(ctx, countSQL, w.args...).Scan(&out[i].Count); err != nil {
 				return fmt.Errorf("records: term hits: %w", err)
@@ -67,7 +69,9 @@ func (r *Reader) TermHits(ctx context.Context, f Filter, terms []Term, perTermLi
 			if perTermLimit == 0 || out[i].Count == 0 {
 				continue
 			}
-			r.matching()
+			if err := r.matching(ctx); err != nil {
+				return err
+			}
 			idSQL := "SELECT r.id" + w.fromSQL(false, false) + w.whereSQL() + " ORDER BY r.id LIMIT ?"
 			rows, err := h.QueryContext(ctx, idSQL, append(append([]any(nil), w.args...), perTermLimit)...)
 			if err != nil {

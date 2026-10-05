@@ -1,6 +1,10 @@
 package records
 
-import "github.com/rbenzing/minutiae/internal/evidence"
+import (
+	"context"
+
+	"github.com/rbenzing/minutiae/internal/evidence"
+)
 
 // Test exports of the unexported write-time validation.
 
@@ -76,3 +80,9 @@ func RankSQL(f Filter) string {
 	}
 	return q.sql
 }
+
+// SetAfterStart installs the seam called after a statement has started and before its rows are read.
+func (r *Reader) SetAfterStart(f func()) { r.afterStart = f }
+
+// MapTimeout exposes the deadline mapping of the Reader.
+func MapTimeout(ctx context.Context, err error) error { return mapTimeout(ctx, err) }

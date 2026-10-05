@@ -155,11 +155,14 @@ func (r *Reader) searchRank(ctx context.Context, f Filter, p Page, limit int, so
 			return err
 		}
 		q.args[len(q.args)-1] = limit
-		r.matching()
+		if err := r.matching(ctx); err != nil {
+			return err
+		}
 		rows, err := h.QueryContext(ctx, q.sql, q.args...)
 		if err != nil {
 			return fmt.Errorf("records: search: %w", err)
 		}
+		r.started()
 		var found []Row
 		for rows.Next() {
 			var score float64
@@ -188,12 +191,15 @@ func (r *Reader) searchRank(ctx context.Context, f Filter, p Page, limit int, so
 // snippetScanBytes of it (a prefix cut on a rune boundary).
 func (r *Reader) hits(ctx context.Context, h evidence.ReadHandle, rows []Row, q *TextQuery, so SearchOptions) ([]Hit, error) {
 	out := make([]Hit, len(rows))
+	if err := ctxErr(ctx); err != nil {
+		return nil, err
+	}
 	for i, row := range rows {
 		out[i].Row = row
 		if !so.Snippets {
 			continue
 		}
-		if err := ctx.Err(); err != nil {
+		if err := ctxErr(ctx); err != nil { // R58: between the statements of the snippets
 			return nil, err
 		}
 		if q.column != ColBody {

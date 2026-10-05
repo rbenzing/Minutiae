@@ -1,16 +1,13 @@
 package records_test
 
 import (
-	"context"
 	"crypto/sha256"
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 	"unicode"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
@@ -66,44 +63,6 @@ func TestSearchRefusesOptionsItWouldIgnore(t *testing.T) {
 	}
 	if _, err := fx.r.Overview(ctx, ranked); !errors.Is(err, records.ErrInvalidPage) {
 		t.Errorf("Overview rank: %v", err)
-	}
-}
-
-// TestSearchDeadlineExpiresMidStatement (R53): the deadline passes while the statement runs (the seam
-// returns about a millisecond before it, on a corpus whose ranking takes far longer), and the error is
-// ErrSearchTimeout wrapping DeadlineExceeded, whatever error the driver reports for the interrupt.
-func TestSearchDeadlineExpiresMidStatement(t *testing.T) {
-	c, art := setup(t)
-	recs := recordstest.Records(art.ID, 20000, 3)
-	for i := range recs {
-		recs[i].Summary = fmt.Sprintf("common token %d", i)
-		recs[i].Body = "common words in the body of the record"
-	}
-	recordstest.Ingest(t, c, testParser, []string{art.ID}, recs)
-	r := newReader(t, c)
-	q := mustCompile(t, "common", records.TextOptions{Rank: true})
-	for name, call := range map[string]func(context.Context) error{
-		"rank": func(ctx context.Context) error {
-			_, err := r.Search(ctx, records.Filter{Text: q}, records.Page{Limit: 1000}, records.SearchOptions{})
-			return err
-		},
-		"count": func(ctx context.Context) error {
-			_, _, err := r.Count(ctx, records.Filter{Text: mustCompile(t, "common", records.TextOptions{})}, 0)
-			return err
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			dctx, cancel := context.WithTimeout(ctx, time.Second)
-			defer cancel()
-			dl, _ := dctx.Deadline()
-			r.SetBeforeQuery(func() { time.Sleep(time.Until(dl) - time.Millisecond) })
-			defer r.SetBeforeQuery(nil)
-			start := time.Now()
-			err := call(dctx)
-			if !errors.Is(err, records.ErrSearchTimeout) || !errors.Is(err, context.DeadlineExceeded) {
-				t.Fatalf("after %v: %v, want ErrSearchTimeout wrapping DeadlineExceeded", time.Since(start), err)
-			}
-		})
 	}
 }
 

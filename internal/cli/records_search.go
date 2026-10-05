@@ -22,16 +22,50 @@ const (
 	maxEchoedQueryBytes = 300
 )
 
-// cutQuery cuts s to at most maxEchoedQueryBytes on a rune boundary, with "..." when it did.
-func cutQuery(s string) string {
+// searchContext gives a search its deadline. It is a variable only so a test can hand the command a
+// deadline that has certainly passed: a timeout of 1 ns is shorter than the resolution of the
+// Windows clock, so whether such a deadline has passed when the first statement starts is not
+// defined (the clock may not have ticked), and a test of "an expired deadline" cannot rely on it.
+var searchContext = func(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, timeout)
+}
+
+// echoQuery is the query as an error message shows it: escaped first (printable), then cut to at most
+// maxEchoedQueryBytes of the escaped text, on a rune boundary and never inside an escape sequence,
+// with "..." when it was cut.
+func echoQuery(q string) string {
+	s := printable(q)
 	if len(s) <= maxEchoedQueryBytes {
 		return s
 	}
-	i := maxEchoedQueryBytes
-	for i > 0 && !utf8.RuneStart(s[i]) {
-		i--
+	i := 0
+	for i < len(s) {
+		n := escapedTokenLen(s[i:])
+		if i+n > maxEchoedQueryBytes {
+			break
+		}
+		i += n
 	}
 	return s[:i] + "..."
+}
+
+// escapedTokenLen is the length of the first token of s: a whole backslash escape (\n, \x1b, \u202e,
+// \U0001f600 ...) or one rune.
+func escapedTokenLen(s string) int {
+	if s[0] != '\\' || len(s) < 2 {
+		_, n := utf8.DecodeRuneInString(s)
+		return n
+	}
+	n := 2
+	switch s[1] {
+	case 'x':
+		n = 4
+	case 'u':
+		n = 6
+	case 'U':
+		n = 10
+	}
+	return min(n, len(s))
 }
 
 // snippetJSON is a span of a snippet in --json output: the text as stored.
@@ -117,7 +151,7 @@ func newRecordsSearchCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return usageErrorf("--timeout must not be negative, got %s", *timeout)
 		}
 		if f.Text, err = records.CompileQuery(query, to); err != nil {
-			return fmt.Errorf("query %s: %w", printable(cutQuery(query)), err)
+			return fmt.Errorf("query %s: %w", echoQuery(query), err)
 		}
 		c, r, err := openRecords(*casePath)
 		if err != nil {
@@ -127,7 +161,7 @@ func newRecordsSearchCmd(d Deps, opts *rootOptions) *cobra.Command {
 		ctx := cmd.Context()
 		if *timeout > 0 {
 			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, *timeout)
+			ctx, cancel = searchContext(ctx, *timeout)
 			defer cancel()
 		}
 		res, err := r.Search(ctx, f, records.Page{Limit: *limit, Cursor: *cursor}, records.SearchOptions{Snippets: !*noSnippets})
@@ -152,15 +186,20 @@ func newRecordsSearchCmd(d Deps, opts *rootOptions) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		for _, h := range res.Hits {
-			printHit(d.Out, h, incomplete[h.Row.ArtifactID])
-		}
-		if res.NextCursor != "" {
-			fmt.Fprintf(d.Out, "# more records: --cursor %s\n", printable(res.NextCursor))
-		}
+		printSearchText(d.Out, res, incomplete)
 		return nil
 	}
 	return cmd
+}
+
+// printSearchText prints the hits of a search page, then the cursor line.
+func printSearchText(w io.Writer, res records.SearchResult, incomplete map[string]bool) {
+	for _, h := range res.Hits {
+		printHit(w, h, incomplete[h.Row.ArtifactID])
+	}
+	if res.NextCursor != "" {
+		fmt.Fprintf(w, "# more records: --cursor %s\n", printable(res.NextCursor))
+	}
 }
 
 // printHit prints the line records list prints, then the snippet lines. The summary of the line
@@ -168,7 +207,7 @@ func newRecordsSearchCmd(d Deps, opts *rootOptions) *cobra.Command {
 // match.
 func printHit(w io.Writer, h records.Hit, artifactIncomplete bool) {
 	row := h.Row
-	parts := []string{fmt.Sprint(row.ID), rowTime(row.TS), printable(row.Type)}
+	parts := []string{fmt.Sprint(row.ID), rowTime(row.TS), escapeMarkers(printable(row.Type))}
 	if m := markers(row, artifactIncomplete); m != "" {
 		parts = append(parts, m)
 	}
@@ -206,12 +245,17 @@ func newRecordsReindexCmd(d Deps, opts *rootOptions) *cobra.Command {
 		if opts.json {
 			return writeJSON(d.Out, res)
 		}
-		from := printable(res.FromNormVersion)
-		if res.FromNormVersion == "" {
-			from = "(none)"
-		}
-		fmt.Fprintf(d.Out, "reindexed %d records (%d indexed): norm version %s -> %s\n", res.Records, res.Indexed, from, printable(res.NormVersion))
+		printReindex(d.Out, res)
 		return nil
 	}
 	return cmd
+}
+
+// printReindex prints the result of records reindex; the versions are database text and are escaped.
+func printReindex(w io.Writer, res evidence.ReindexResult) {
+	from := printable(res.FromNormVersion)
+	if res.FromNormVersion == "" {
+		from = "(none)"
+	}
+	fmt.Fprintf(w, "reindexed %d records (%d indexed): norm version %s -> %s\n", res.Records, res.Indexed, from, printable(res.NormVersion))
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 )
@@ -36,6 +37,8 @@ type Reader struct {
 	c *evidence.Case
 	// beforeQuery is a test seam, called right before a full-text MATCH statement runs.
 	beforeQuery func()
+	// afterStart is a test seam, called after a statement has started and before its rows are read.
+	afterStart func()
 }
 
 // NewReader returns a reader for c. A case whose schema is older than v2 has no
@@ -165,6 +168,11 @@ type Overview struct {
 // snapshot, a schema of v3 or newer (ErrNeedsUpgrade otherwise) and a current full-text index
 // (ErrIndexNotCurrent otherwise): every call that carries a text query goes through it.
 func (r *Reader) readTx(ctx context.Context, needIndex bool, fn func(evidence.ReadHandle) error) error {
+	if needIndex {
+		if err := ctxErr(ctx); err != nil { // R58: an expired deadline is a timeout before the first statement
+			return mapTimeout(ctx, err)
+		}
+	}
 	err := r.c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {
 		if needIndex {
 			var v int
@@ -178,7 +186,13 @@ func (r *Reader) readTx(ctx context.Context, needIndex bool, fn func(evidence.Re
 				return err
 			}
 		}
-		return fn(h)
+		if err := fn(h); err != nil {
+			return err
+		}
+		if needIndex { // R58: a deadline that passed while the calls ran is a timeout, never a late answer
+			return ctxErr(ctx)
+		}
+		return nil
 	})
 	if needIndex {
 		err = mapTimeout(ctx, err)
@@ -186,10 +200,34 @@ func (r *Reader) readTx(ctx context.Context, needIndex bool, fn func(evidence.Re
 	return err
 }
 
-// matching runs the test seam, called right before a full-text MATCH statement.
-func (r *Reader) matching() {
+// ctxErr is ctx.Err(), and DeadlineExceeded also when the context's deadline has passed but its timer
+// has not fired yet (a deadline of 1 ns is passed before any statement, whatever the timer says).
+func ctxErr(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if dl, ok := ctx.Deadline(); ok && !time.Now().Before(dl) {
+		return context.DeadlineExceeded
+	}
+	return nil
+}
+
+// matching is called right before each statement that carries the text query: it refuses an expired
+// deadline (R58) and runs the test seam.
+func (r *Reader) matching(ctx context.Context) error {
+	if err := ctxErr(ctx); err != nil {
+		return err
+	}
 	if r.beforeQuery != nil {
 		r.beforeQuery()
+	}
+	return nil
+}
+
+// started runs the test seam that fires after a statement has started, before its rows are read.
+func (r *Reader) started() {
+	if r.afterStart != nil {
+		r.afterStart()
 	}
 }
 

@@ -258,9 +258,11 @@ func (r *Reader) page(ctx context.Context, f Filter, p Page, limit int, with fun
 			}
 			q.args[len(q.args)-1] = want
 			if f.Text != nil {
-				r.matching()
+				if err := r.matching(ctx); err != nil {
+					return err
+				}
 			}
-			if err := collect(ctx, h, q, &res.Rows); err != nil {
+			if err := r.collect(ctx, h, q, &res.Rows); err != nil {
 				return err
 			}
 		}
@@ -284,12 +286,13 @@ func (r *Reader) page(ctx context.Context, f Filter, p Page, limit int, with fun
 }
 
 // collect appends the rows of q to dst.
-func collect(ctx context.Context, h evidence.ReadHandle, q query, dst *[]Row) error {
+func (r *Reader) collect(ctx context.Context, h evidence.ReadHandle, q query, dst *[]Row) error {
 	rows, err := h.QueryContext(ctx, q.sql, q.args...)
 	if err != nil {
 		return fmt.Errorf("records: list: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
+	r.started()
 	for rows.Next() {
 		row, err := scanRow(rows)
 		if err != nil {
@@ -359,7 +362,9 @@ func (r *Reader) Count(ctx context.Context, f Filter, limit int) (n int64, cappe
 		}
 		q := "SELECT count(*) FROM (SELECT 1" + w.fromSQL(false, false) + w.whereSQL() + " LIMIT ?)"
 		if f.Text != nil {
-			r.matching()
+			if err := r.matching(ctx); err != nil {
+				return err
+			}
 		}
 		return h.QueryRowContext(ctx, q, append(w.args, lim)...).Scan(&n)
 	})
