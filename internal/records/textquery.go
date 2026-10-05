@@ -124,17 +124,23 @@ func invalidQuery(format string, args ...any) error {
 // echo quotes part of the input for an error message: ASCII-escaped (so a control character, a bidi
 // override or an escape sequence never reaches a terminal) and cut to 32 characters.
 func echo(s string) string {
-	const limit = 32
-	cut := false
-	if utf8.RuneCountInString(s) > limit {
-		i := 0
-		for n := 0; n < limit; n++ {
-			_, size := utf8.DecodeRuneInString(s[i:])
-			i += size
+	const (
+		limit      = 32  // characters
+		maxEscaped = 120 // bytes of the escaped quote, so one error stays under 300 bytes
+	)
+	var b strings.Builder
+	n, cut := 0, false
+	for i, r := range s {
+		esc := strconv.QuoteToASCII(string(r))
+		esc = esc[1 : len(esc)-1]
+		if n >= limit || b.Len()+len(esc) > maxEscaped {
+			cut = i < len(s)
+			break
 		}
-		s, cut = s[:i], true
+		b.WriteString(esc)
+		n++
 	}
-	q := strconv.QuoteToASCII(s)
+	q := `"` + b.String() + `"`
 	if cut {
 		q += "..."
 	}
@@ -156,6 +162,24 @@ func checkInput(s string) error {
 // normalized text, so it holds no NUL and no control character.
 func quoteFTS(s string) string {
 	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+}
+
+// lastToken is the last run of letters and digits of s (what a prefix star attaches to), folded the
+// way the index folds, or "" when s holds none.
+func lastToken(s string) string {
+	f := evidence.FTSFoldDiacritics(s)
+	end := strings.LastIndexFunc(f, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsNumber(r) })
+	if end < 0 {
+		return ""
+	}
+	_, size := utf8.DecodeRuneInString(f[end:])
+	f = f[:end+size]
+	start := strings.LastIndexFunc(f, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsNumber(r) })
+	if start < 0 {
+		return f
+	}
+	_, size = utf8.DecodeRuneInString(f[start:])
+	return f[start+size:]
 }
 
 // countWordChars counts the letters and digits of s.
@@ -191,7 +215,8 @@ func substringTerm(text string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if utf8.RuneCountInString(n) < MinSubstringChars {
+	// count what the trigram tokenizer keeps: the marks it strips are not characters of the index
+	if utf8.RuneCountInString(evidence.FTSFoldDiacritics(n)) < MinSubstringChars {
 		return "", invalidQuery("%s is shorter than %d characters, the least a substring search can find", echo(text), MinSubstringChars)
 	}
 	return n, nil
@@ -231,6 +256,9 @@ func CompileQuery(input string, o TextOptions) (*TextQuery, error) {
 	}
 	if len(input) > MaxQueryBytes {
 		return nil, invalidQuery("the query is longer than %d bytes", MaxQueryBytes)
+	}
+	if o.Substring && len(input) > MaxTermBytes {
+		return nil, invalidQuery("a term is longer than %d bytes", MaxTermBytes)
 	}
 	if err := checkInput(input); err != nil {
 		return nil, err
@@ -378,7 +406,7 @@ func compileGrammar(input string) (string, []Needle, error) {
 		if err != nil {
 			return "", nil, err
 		}
-		if kind == NeedlePrefix && countWordChars(n) < MinPrefixChars {
+		if kind == NeedlePrefix && countWordChars(lastToken(n)) < MinPrefixChars {
 			return "", nil, invalidQuery("a prefix needs at least %d letters or digits before its star", MinPrefixChars)
 		}
 		if err := add(item{kind: kind, text: n, neg: neg}); err != nil {
@@ -414,6 +442,9 @@ func CompileTerms(terms []Term) ([]*TextQuery, error) {
 	}
 	out := make([]*TextQuery, len(terms))
 	for i, t := range terms {
+		if len(t.Text) > MaxTermBytes {
+			return nil, fmt.Errorf("term %d: %w", i+1, invalidQuery("a term is longer than %d bytes", MaxTermBytes))
+		}
 		if err := checkInput(t.Text); err != nil {
 			return nil, fmt.Errorf("term %d: %w", i+1, err)
 		}

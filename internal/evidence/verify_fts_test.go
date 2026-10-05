@@ -370,3 +370,48 @@ func TestVerifyFTSFlagsLeftoverTmp(t *testing.T) {
 		t.Fatalf("still flagged: %q", r.Problems)
 	}
 }
+
+// TestVerifyFTSRefusesTmpThatIsNotAPlainDirectory (R36): <case>/tmp that is a regular file, or a
+// symlink to a directory, is a verify problem; nothing is created or listed through it and verify
+// never removes or alters it.
+func TestVerifyFTSRefusesTmpThatIsNotAPlainDirectory(t *testing.T) {
+	const want = "case tmp is not a plain directory"
+	t.Run("regular file", func(t *testing.T) {
+		c := indexedTextCase(t, 5)
+		tmp := filepath.Join(c.Dir, "tmp")
+		if err := os.WriteFile(tmp, []byte("not a directory"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		r := mustVerify(t, c)
+		if r.OK() || !containsSubstr(r.Problems, want) {
+			t.Fatalf("problems %q, want one containing %q", r.Problems, want)
+		}
+		if b, err := os.ReadFile(tmp); err != nil || string(b) != "not a directory" {
+			t.Fatalf("verify altered or removed the file named tmp: %q, %v", b, err)
+		}
+	})
+	t.Run("symlink", func(t *testing.T) {
+		c := indexedTextCase(t, 5)
+		target := t.TempDir()
+		if err := os.WriteFile(filepath.Join(target, "x"), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, filepath.Join(c.Dir, "tmp")); err != nil {
+			t.Skipf("cannot create a symlink here: %v", err)
+		}
+		r := mustVerify(t, c)
+		if r.OK() || !containsSubstr(r.Problems, want) {
+			t.Fatalf("problems %q, want one containing %q", r.Problems, want)
+		}
+		if containsSubstr(r.Problems, "leftover temporary") {
+			t.Errorf("the target of the link was listed: %q", r.Problems)
+		}
+		ents, err := os.ReadDir(target)
+		if err != nil || len(ents) != 1 {
+			t.Fatalf("the link target holds %v, %v; want only its own file", ents, err)
+		}
+		if fi, err := os.Lstat(filepath.Join(c.Dir, "tmp")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("the link was removed or replaced: %v, %v", fi, err)
+		}
+	})
+}

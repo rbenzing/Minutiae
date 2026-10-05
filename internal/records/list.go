@@ -204,6 +204,15 @@ func buildList(f Filter, desc bool, cur *cursor, have bool) ([]query, error) {
 	return out, nil
 }
 
+// refuseRank refuses a filter whose query asks for relevance order where there is none: only Search
+// ranks, and an option is never ignored silently.
+func refuseRank(f Filter) error {
+	if f.Text != nil && f.Text.rank {
+		return fmt.Errorf("%w: a relevance-ordered query is only for Search", ErrInvalidPage)
+	}
+	return nil
+}
+
 // List returns one page of the records f selects, in the order
 // (untimed last, ts, id), or the exact reverse with Page.Desc. Pages are keyset
 // pages: across the pages of an unchanged database every row appears exactly
@@ -211,6 +220,9 @@ func buildList(f Filter, desc bool, cur *cursor, have bool) ([]query, error) {
 // holds a position and the fingerprint of the case, filter, order and direction
 // that produced it: used with any other it is ErrBadCursor.
 func (r *Reader) List(ctx context.Context, f Filter, p Page) (Result, error) {
+	if err := refuseRank(f); err != nil {
+		return Result{}, err
+	}
 	limit, err := p.limit()
 	if err != nil {
 		return Result{}, err
@@ -325,6 +337,9 @@ func (w where) fromSQL(parser, batch bool) string {
 func (r *Reader) Count(ctx context.Context, f Filter, limit int) (n int64, capped bool, err error) {
 	if limit < 0 {
 		return 0, false, fmt.Errorf("%w: count limit %d is negative", ErrInvalidPage, limit)
+	}
+	if err := refuseRank(f); err != nil {
+		return 0, false, err
 	}
 	if _, err := f.compile(false); err != nil {
 		return 0, false, err

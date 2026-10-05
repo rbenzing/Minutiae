@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 )
@@ -180,7 +181,7 @@ func (r *Reader) readTx(ctx context.Context, needIndex bool, fn func(evidence.Re
 		return fn(h)
 	})
 	if needIndex {
-		err = mapTimeout(err)
+		err = mapTimeout(ctx, err)
 	}
 	return err
 }
@@ -194,9 +195,23 @@ func (r *Reader) matching() {
 
 // mapTimeout turns an expired deadline into ErrSearchTimeout (wrapping the context error); a
 // cancellation stays a cancellation.
-func mapTimeout(err error) error {
-	if err != nil && errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, ErrSearchTimeout) {
+// A statement the driver interrupts when the deadline passes may report its own interrupt error and
+// not the context's: when the context's deadline has passed, any error that is not a cancellation is
+// the timeout.
+func mapTimeout(ctx context.Context, err error) error {
+	if err == nil || errors.Is(err, ErrSearchTimeout) || errors.Is(err, context.Canceled) {
+		return err
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
 		return fmt.Errorf("%w: %w", ErrSearchTimeout, err)
 	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) && isInterrupt(err) {
+		return fmt.Errorf("%w: %w (%w)", ErrSearchTimeout, context.DeadlineExceeded, err)
+	}
 	return err
+}
+
+// isInterrupt reports whether err is the driver's report of an interrupted statement.
+func isInterrupt(err error) bool {
+	return strings.Contains(strings.ToLower(err.Error()), "interrupt")
 }

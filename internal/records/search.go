@@ -79,6 +79,9 @@ func (r *Reader) Search(ctx context.Context, f Filter, p Page, so SearchOptions)
 	if so.Snippets && so.SnippetWidth != 0 && (so.SnippetWidth < minSnippetWidth || so.SnippetWidth > maxSnippetWidth) {
 		return SearchResult{}, fmt.Errorf("%w: snippet width %d is outside %d..%d", ErrInvalidPage, so.SnippetWidth, minSnippetWidth, maxSnippetWidth)
 	}
+	if !so.Snippets && so.SnippetWidth != 0 {
+		return SearchResult{}, fmt.Errorf("%w: a snippet width needs snippets", ErrInvalidPage)
+	}
 	var out SearchResult
 	if f.Text.rank {
 		out, err = r.searchRank(ctx, f, p, limit, so)
@@ -193,7 +196,12 @@ func (r *Reader) hits(ctx context.Context, h evidence.ReadHandle, rows []Row, q 
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		out[i].Summary = SnippetFor(row.Summary, q, so.SnippetWidth)
+		if q.column != ColBody {
+			out[i].Summary = SnippetFor(row.Summary, q, so.SnippetWidth)
+		}
+		if q.column == ColSummary {
+			continue
+		}
 		var body []byte
 		if err := h.QueryRowContext(ctx, `SELECT substr(CAST(body AS BLOB), 1, ?) FROM records WHERE id = ?`, snippetScanBytes+1, row.ID).Scan(&body); err != nil {
 			return nil, fmt.Errorf("records: snippet of record %d: %w", row.ID, err)

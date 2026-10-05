@@ -456,9 +456,9 @@ func TestSearchCursorBoundToQuery(t *testing.T) {
 			t.Errorf("%s: %v, want ErrBadCursor", tc.name, err)
 		}
 	}
-	// rank is a different listing: through List (which has no rank order) the fingerprint refuses it
-	if _, err := r.List(ctx, records.Filter{Text: mustCompile(t, "alpha OR beta", records.TextOptions{Rank: true})}, records.Page{Limit: 3, Cursor: curA}); !errors.Is(err, records.ErrBadCursor) {
-		t.Errorf("rank query: %v, want ErrBadCursor", err)
+	// rank is a different listing: List has no rank order and refuses it (R52)
+	if _, err := r.List(ctx, records.Filter{Text: mustCompile(t, "alpha OR beta", records.TextOptions{Rank: true})}, records.Page{Limit: 3, Cursor: curA}); !errors.Is(err, records.ErrInvalidPage) {
+		t.Errorf("rank query: %v, want ErrInvalidPage", err)
 	}
 	// no text: the cursor of a text search is refused by a listing without text, and the converse
 	if _, err := r.List(ctx, records.Filter{}, records.Page{Limit: 3, Cursor: curA}); !errors.Is(err, records.ErrBadCursor) {

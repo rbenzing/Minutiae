@@ -192,10 +192,20 @@ func (r *ftsVerify) setup() error {
 	if err != nil {
 		return err
 	}
-	r.tmpRoot = filepath.Join(abs, ftsTmpDir)
-	if err := os.MkdirAll(r.tmpRoot, 0o700); err != nil {
-		return fmt.Errorf("create %s: %w", r.tmpRoot, err)
+	tmpRoot := filepath.Join(abs, ftsTmpDir)
+	switch fi, err := os.Lstat(tmpRoot); {
+	case err == nil:
+		if !fi.Mode().IsDir() {
+			return errTmpNotPlain
+		}
+	case errors.Is(err, fs.ErrNotExist):
+		if err := os.Mkdir(tmpRoot, 0o700); err != nil {
+			return fmt.Errorf("create %s: %w", tmpRoot, err)
+		}
+	default:
+		return fmt.Errorf("inspect %s: %w", tmpRoot, err)
 	}
+	r.tmpRoot = tmpRoot // only a directory this run checked is ever removed again
 	var id [8]byte
 	if _, err := rand.Read(id[:]); err != nil {
 		return err
@@ -205,6 +215,9 @@ func (r *ftsVerify) setup() error {
 		return fmt.Errorf("create %s: %w", dir, err)
 	}
 	r.dir = dir
+	if fi, err := os.Lstat(dir); err != nil || !fi.Mode().IsDir() {
+		return errTmpNotPlain
+	}
 	r.tempSet = true // reset in cleanup even when setting it fails half way
 	if err := setTempStoreDirectory(dir); err != nil {
 		return fmt.Errorf("point SQLite's temporary directory at %s: %w", dir, err)
@@ -251,10 +264,22 @@ func (r *ftsVerify) cleanup() {
 	}
 }
 
+// errTmpNotPlain is the refusal of a <case>/tmp (or run directory) that is a symlink, a junction or
+// not a directory: nothing is created or listed through it.
+var errTmpNotPlain = errors.New("case tmp is not a plain directory")
+
 // checkTmp reports everything left in <case>/tmp/: a verification that was interrupted leaves its
 // private files there, and they hold text derived from the records. Like a leftover staging
 // directory it is a problem until an examiner removes it; verify never removes what it did not create.
 func (c *Case) checkTmp(rep *VerifyReport) {
+	fi, err := os.Lstat(filepath.Join(c.Dir, ftsTmpDir))
+	if errors.Is(err, fs.ErrNotExist) {
+		return
+	}
+	if err == nil && !fi.Mode().IsDir() {
+		rep.problemf("%s: %s is a symlink, a junction or not a directory (nothing is created or listed through it; remove it)", errTmpNotPlain, ftsTmpDir)
+		return
+	}
 	entries, err := os.ReadDir(filepath.Join(c.Dir, ftsTmpDir))
 	if errors.Is(err, fs.ErrNotExist) {
 		return

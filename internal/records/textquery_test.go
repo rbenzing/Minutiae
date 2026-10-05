@@ -486,3 +486,70 @@ func TestCompileTermsRefusals(t *testing.T) {
 		}
 	}
 }
+
+// TestCompileQueryFloorsCountWhatTheTokenizerIndexes (R39): the substring floor counts the
+// characters the trigram tokenizer keeps (combining marks it strips do not count) and the prefix
+// floor counts the token the star attaches to, not the whole word.
+func TestCompileQueryFloorsCountWhatTheTokenizerIndexes(t *testing.T) {
+	sub := records.TextOptions{Substring: true}
+	word := records.TextOptions{}
+	for _, tc := range []struct {
+		name, input string
+		opts        records.TextOptions
+	}{
+		{"substring ab + combining acute", "ab́", sub},
+		{"substring ab + two combining marks", "ab́̂", sub},
+		{"substring a + b + grave in blanks", " ab̀ ", sub},
+		{"prefix ab-c*", "ab-c*", word},
+		{"prefix with a combining mark only", "á*", word},
+		{"prefix of a short last token", "abc.d*", word},
+		{"phrase-less prefix a-*", "a-*", word},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			q, err := records.CompileQuery(tc.input, tc.opts)
+			if !errors.Is(err, records.ErrInvalidQuery) || q != nil {
+				t.Fatalf("CompileQuery(%q) = %v, %v; want ErrInvalidQuery", tc.input, q, err)
+			}
+		})
+	}
+	for name, input := range map[string]string{
+		"prefix a-bc* (last token has 2)": "a-bc*",
+		"prefix ab-*":                     "ab-*",
+	} {
+		if _, err := records.CompileQuery(input, word); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if _, err := records.CompileQuery("ab́c", sub); err != nil {
+		t.Errorf("a substring of 3 kept characters: %v", err)
+	}
+}
+
+// TestCompileSizeCapComesBeforeTheTextScan (R40): a substring needle or a term over 256 bytes is
+// refused for its size before the text is scanned for UTF-8 or NUL, and an echo stays short.
+func TestCompileSizeCapComesBeforeTheTextScan(t *testing.T) {
+	long := strings.Repeat("a", 300) + "\x00\xff"
+	_, err := records.CompileQuery(long, records.TextOptions{Substring: true})
+	if !errors.Is(err, records.ErrInvalidQuery) || !strings.Contains(err.Error(), "256") {
+		t.Errorf("substring: %v; want the size refusal", err)
+	}
+	_, err = records.CompileTerms([]records.Term{{Text: long}})
+	if !errors.Is(err, records.ErrInvalidQuery) || !strings.Contains(err.Error(), "256") {
+		t.Errorf("terms: %v; want the size refusal", err)
+	}
+	// 64 emoji: 256 bytes, no letter or digit; the error that echoes it stays under 300 bytes
+	emoji := strings.Repeat("\U0001F600", 64)
+	for _, call := range []func() error{
+		func() error { _, err := records.CompileQuery(emoji, records.TextOptions{}); return err },
+		func() error { _, err := records.CompileQuery(emoji, records.TextOptions{Substring: true}); return err },
+		func() error { _, err := records.CompileTerms([]records.Term{{Text: emoji}}); return err },
+	} {
+		err := call()
+		if !errors.Is(err, records.ErrInvalidQuery) {
+			t.Fatalf("64 emoji: %v; want ErrInvalidQuery", err)
+		}
+		if len(err.Error()) > 300 || rawControl(err.Error()) != 0 {
+			t.Errorf("the echo is %d bytes (%q); want at most 300 and escaped", len(err.Error()), err.Error())
+		}
+	}
+}

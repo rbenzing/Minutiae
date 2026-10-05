@@ -25,6 +25,9 @@ var statKeys = map[string]struct {
 // artifact (id), deleted ("live", "deleted" or "recovered") or run (ingest id),
 // with each group's earliest and latest ts. Groups come in key order.
 func (r *Reader) Stats(ctx context.Context, f Filter, by string) ([]StatRow, error) {
+	if err := refuseRank(f); err != nil {
+		return nil, err
+	}
 	key, ok := statKeys[by]
 	if !ok {
 		return nil, invalidFilter("cannot group by %q (type, parser, artifact, deleted or run)", by)
@@ -78,6 +81,9 @@ func (r *Reader) Stats(ctx context.Context, f Filter, by string) ([]StatRow, err
 // records of superseded runs among those f selects ignoring supersession, so
 // with the default filter it is the number of records the default listing hides.
 func (r *Reader) Overview(ctx context.Context, f Filter) (Overview, error) {
+	if err := refuseRank(f); err != nil {
+		return Overview{}, err
+	}
 	if _, err := f.compile(false); err != nil {
 		return Overview{}, err
 	}
