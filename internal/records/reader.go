@@ -164,7 +164,7 @@ type Overview struct {
 // snapshot, a schema of v3 or newer (ErrNeedsUpgrade otherwise) and a current full-text index
 // (ErrIndexNotCurrent otherwise): every call that carries a text query goes through it.
 func (r *Reader) readTx(ctx context.Context, needIndex bool, fn func(evidence.ReadHandle) error) error {
-	return r.c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {
+	err := r.c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {
 		if needIndex {
 			var v int
 			if err := h.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_version`).Scan(&v); err != nil {
@@ -179,6 +179,10 @@ func (r *Reader) readTx(ctx context.Context, needIndex bool, fn func(evidence.Re
 		}
 		return fn(h)
 	})
+	if needIndex {
+		err = mapTimeout(err)
+	}
+	return err
 }
 
 // matching runs the test seam, called right before a full-text MATCH statement.

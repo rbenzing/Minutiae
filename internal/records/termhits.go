@@ -27,18 +27,21 @@ func (r *Reader) TermHits(ctx context.Context, f Filter, terms []Term, perTermLi
 	if perTermLimit < 0 || perTermLimit > MaxTermHitIDs {
 		return nil, fmt.Errorf("%w: perTermLimit %d is outside 0..%d", ErrInvalidPage, perTermLimit, MaxTermHitIDs)
 	}
+	if len(terms) == 0 {
+		return nil, invalidFilter("TermHits needs at least one term")
+	}
+	if f.Text != nil {
+		return nil, invalidFilter("TermHits takes its text from the terms, not from the filter")
+	}
 	if _, err := f.compile(false); err != nil {
 		return nil, err
 	}
-	var qs []*TextQuery
-	if len(terms) > 0 {
-		var err error
-		if qs, err = CompileTerms(terms); err != nil {
-			return nil, err
-		}
+	qs, err := CompileTerms(terms)
+	if err != nil {
+		return nil, err
 	}
 	out := make([]TermHit, len(terms))
-	err := r.readTx(ctx, true, func(h evidence.ReadHandle) error {
+	err = r.readTx(ctx, true, func(h evidence.ReadHandle) error {
 		have, err := hasSuperseded(ctx, h)
 		if err != nil {
 			return err
@@ -87,7 +90,7 @@ func (r *Reader) TermHits(ctx context.Context, f Filter, terms []Term, perTermLi
 		return nil
 	})
 	if err != nil {
-		return nil, mapTimeout(err)
+		return nil, err
 	}
 	return out, nil
 }

@@ -7,8 +7,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"golang.org/x/text/unicode/norm"
-
 	"github.com/rbenzing/minutiae/internal/evidence"
 )
 
@@ -57,28 +55,6 @@ func attaches(r rune) bool {
 		(r >= 0x1160 && r <= 0x11FF) || (r >= 0xD7B0 && r <= 0xD7FF) || unicode.Is(unicode.M, r)
 }
 
-// foldString is the display-time comparison form of normalized text: the combining diacritical marks
-// U+0300 to U+036F are dropped (the tokenizers of the index drop them too).
-func foldString(s string) string {
-	ascii := true
-	for i := 0; i < len(s); i++ {
-		if s[i] >= utf8.RuneSelf {
-			ascii = false
-			break
-		}
-	}
-	if ascii {
-		return s
-	}
-	d := norm.NFD.String(s)
-	return strings.Map(func(r rune) rune {
-		if r >= 0x300 && r <= 0x36F {
-			return -1
-		}
-		return r
-	}, d)
-}
-
 // foldUnit is the folded normalized form of one unit of the original text, as the index sees it:
 // "" for a unit the normalization drops, " " for a blank.
 func foldUnit(unit string, memo map[string]string) string {
@@ -99,7 +75,7 @@ func foldUnit(unit string, memo map[string]string) string {
 	s := evidence.NormalizeText("|" + unit + "|")
 	out := ""
 	if len(s) >= 2 && s[0] == '|' && s[len(s)-1] == '|' {
-		out = foldString(s[1 : len(s)-1])
+		out = evidence.FTSFoldDiacritics(s[1 : len(s)-1])
 	}
 	if len(unit) <= maxMemoUnitBytes && len(memo) < maxMemoUnits {
 		memo[unit] = out
@@ -206,7 +182,7 @@ func (fx *foldIndex) find(q *TextQuery) []byteRange {
 		if len(found) >= maxSnippetMatches {
 			break
 		}
-		needle := foldString(nd.Text)
+		needle := evidence.FTSFoldDiacritics(nd.Text)
 		if nd.Kind == NeedleSubstring {
 			if needle == "" {
 				continue

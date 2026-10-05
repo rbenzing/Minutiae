@@ -703,6 +703,7 @@ func TestSearchRankReturnsBestFirstWithoutCursor(t *testing.T) {
 		"cursor":         {Limit: 2, Cursor: "anything"},
 		"limit 1001":     {Limit: records.MaxRankLimit + 1},
 		"negative limit": {Limit: -1},
+		"descending":     {Limit: 2, Desc: true}, // R43: an option is never ignored silently
 	} {
 		if _, err := r.Search(ctx, f, p, records.SearchOptions{}); !errors.Is(err, records.ErrInvalidPage) {
 			t.Errorf("%s: %v, want ErrInvalidPage", name, err)
@@ -747,6 +748,9 @@ func TestSearchRequiresText(t *testing.T) {
 		so records.SearchOptions
 	}{
 		"snippets over their limit": {records.Page{Limit: records.MaxSnippetLimit + 1}, records.SearchOptions{Snippets: true}},
+		"width below 20":            {records.Page{}, records.SearchOptions{Snippets: true, SnippetWidth: 19}},
+		"width above 400":           {records.Page{}, records.SearchOptions{Snippets: true, SnippetWidth: 401}},
+		"negative width":            {records.Page{}, records.SearchOptions{Snippets: true, SnippetWidth: -1}},
 	} {
 		if _, err := fx.r.Search(ctx, records.Filter{Text: q}, tc.p, tc.so); !errors.Is(err, records.ErrInvalidPage) {
 			t.Errorf("%s: %v, want ErrInvalidPage", name, err)
@@ -987,6 +991,10 @@ func TestSearchTimeoutMapsToErrSearchTimeout(t *testing.T) {
 			_, err := fx.r.Search(ctx, records.Filter{Text: mustCompile(t, "cafe", records.TextOptions{Rank: true})}, records.Page{}, records.SearchOptions{})
 			return err
 		},
+		"Count":    func(ctx context.Context) error { _, _, err := fx.r.Count(ctx, f, 0); return err },
+		"Stats":    func(ctx context.Context) error { _, err := fx.r.Stats(ctx, f, "type"); return err },
+		"Overview": func(ctx context.Context) error { _, err := fx.r.Overview(ctx, f); return err },
+		"List":     func(ctx context.Context) error { _, err := fx.r.List(ctx, f, records.Page{}); return err },
 		"TermHits": func(ctx context.Context) error {
 			_, err := fx.r.TermHits(ctx, records.Filter{}, []records.Term{{Text: "cafe"}}, 5)
 			return err

@@ -76,6 +76,9 @@ func (r *Reader) Search(ctx context.Context, f Filter, p Page, so SearchOptions)
 	if so.Snippets && limit > MaxSnippetLimit {
 		return SearchResult{}, fmt.Errorf("%w: limit %d is above %d with snippets (ask for none, or fewer)", ErrInvalidPage, limit, MaxSnippetLimit)
 	}
+	if so.Snippets && so.SnippetWidth != 0 && (so.SnippetWidth < minSnippetWidth || so.SnippetWidth > maxSnippetWidth) {
+		return SearchResult{}, fmt.Errorf("%w: snippet width %d is outside %d..%d", ErrInvalidPage, so.SnippetWidth, minSnippetWidth, maxSnippetWidth)
+	}
 	var out SearchResult
 	if f.Text.rank {
 		out, err = r.searchRank(ctx, f, p, limit, so)
@@ -83,7 +86,7 @@ func (r *Reader) Search(ctx context.Context, f Filter, p Page, so SearchOptions)
 		out, err = r.searchPage(ctx, f, p, limit, so)
 	}
 	if err != nil {
-		return SearchResult{}, mapTimeout(err)
+		return SearchResult{}, err
 	}
 	return out, nil
 }
@@ -128,6 +131,9 @@ func buildRank(f Filter, have bool) (query, error) {
 func (r *Reader) searchRank(ctx context.Context, f Filter, p Page, limit int, so SearchOptions) (SearchResult, error) {
 	if p.Cursor != "" {
 		return SearchResult{}, fmt.Errorf("%w: a relevance-ordered search has no cursor", ErrInvalidPage)
+	}
+	if p.Desc {
+		return SearchResult{}, fmt.Errorf("%w: a relevance-ordered search has no direction", ErrInvalidPage)
 	}
 	if limit > MaxRankLimit {
 		return SearchResult{}, fmt.Errorf("%w: limit %d is above %d for a relevance-ordered search", ErrInvalidPage, limit, MaxRankLimit)

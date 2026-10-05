@@ -14,7 +14,7 @@ import (
 )
 
 // TestTermHits: counts are exact, ids ascending and capped, terms are literal (no grammar), a
-// substring term works, an empty list is an empty answer.
+// substring term works, an empty list is refused.
 func TestTermHits(t *testing.T) {
 	fx := newTextFix(t)
 	terms := []records.Term{
@@ -61,10 +61,18 @@ func TestTermHits(t *testing.T) {
 	if err != nil || got[0].Count != 0 {
 		t.Errorf("filtered: %+v, %v", got, err)
 	}
-	// an empty list
-	got, err = fx.r.TermHits(ctx, records.Filter{}, nil, 5)
-	if err != nil || len(got) != 0 {
-		t.Errorf("empty list: %+v, %v", got, err)
+	// R48: an empty list is refused (nothing to count), before the index is looked at
+	if _, err := fx.r.TermHits(ctx, records.Filter{}, nil, 5); !errors.Is(err, records.ErrInvalidFilter) {
+		t.Errorf("empty list: %v, want ErrInvalidFilter", err)
+	}
+	recordstest.SetFTSNormVersion(t, fx.c.Dir, "")
+	if _, err := fx.r.TermHits(ctx, records.Filter{}, nil, 5); !errors.Is(err, records.ErrInvalidFilter) || errors.Is(err, records.ErrIndexNotCurrent) {
+		t.Errorf("empty list on an unbuilt index: %v, want ErrInvalidFilter first", err)
+	}
+	recordstest.SetFTSNormVersion(t, fx.c.Dir, evidence.FTSNormVersion())
+	// R45: the text comes from the terms; a Filter.Text as well has two meanings and is refused
+	if _, err := fx.r.TermHits(ctx, records.Filter{Text: mustCompile(t, "cafe", records.TextOptions{})}, terms[:1:1], 5); !errors.Is(err, records.ErrInvalidFilter) {
+		t.Errorf("TermHits with Filter.Text: %v, want ErrInvalidFilter", err)
 	}
 	// limits and bad terms
 	for _, n := range []int{-1, 100001} {
