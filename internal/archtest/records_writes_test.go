@@ -24,7 +24,8 @@ import (
 const recordTables = `(?:records_meta|records|record_batches|parsers|record_times|record_runs|record_run_artifacts|record_superseded|artifacts|` +
 	`records_fts|records_fts_sub|records_fts_v|records_fts_sub_v|` +
 	`records_fts_data|records_fts_idx|records_fts_docsize|records_fts_config|` +
-	`records_fts_sub_data|records_fts_sub_idx|records_fts_sub_docsize|records_fts_sub_config)`
+	`records_fts_sub_data|records_fts_sub_idx|records_fts_sub_docsize|records_fts_sub_config|` +
+	`sqlite_master|sqlite_schema|sqlite_temp_master|sqlite_temp_schema)`
 
 // unknown stands for an operand of a string expression that is not a constant
 // (a variable, a call): it may hold a table name, so it counts as one.
@@ -35,7 +36,7 @@ const placeholder = `(?:%(?:\[\d+\])?[-+# 0-9.]*[svq]|\x01)`
 
 // tableRef is a record table name, or a placeholder in table position, with an
 // optional main. prefix. Identifier quoting is removed by normalizeSQL first.
-const tableRef = `(?:main\s*\.\s*)?(?:\b` + recordTables + `\b|\x01)`
+const tableRef = `(?:(?:main|temp)\s*\.\s*)?(?:\b` + recordTables + `\b|\x01)`
 
 // SQL-shaped patterns over the normalized text (see normalizeSQL), so plain
 // English ("failed to update records") is not flagged: each write verb needs its
@@ -47,7 +48,8 @@ var recordWriteRE = regexp.MustCompile(`(?is)\b(?:` +
 	`delete\s+from\s+` + tableRef + `|` +
 	`alter\s+table\s+` + tableRef + `|` +
 	`create\s+virtual\s+table\s+(?:if\s+not\s+exists\s+)?` + tableRef + `|` +
-	`drop\s+(?:table|trigger|index)\b)`)
+	`drop\s+(?:table|trigger|index)\b|` +
+	`pragma\s+(?:\w+\s*\.\s*)?writable_schema\s*(?:=|\())`)
 
 // recordWriteTailRE matches a string that ends in a write verb: the first half
 // of SQL a builder finishes with a table name held in a variable.

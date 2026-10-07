@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -143,9 +144,11 @@ type ftsVerify struct {
 	rep *VerifyReport
 
 	tmpRoot string // <case>/tmp
-	dir     string // <case>/tmp/verify-<runid>
-	tempSet bool   // SQLite's temp directory was pointed at dir
-	exp     *sql.DB
+	// tmpCreated is set when this run created tmpRoot: only then is it removed again (R65).
+	tmpCreated bool
+	dir        string // <case>/tmp/verify-<runid>
+	tempSet    bool   // SQLite's temp directory was pointed at dir
+	exp        *sql.DB
 
 	// indexed is the sorted ids of the records that have a document in the rebuild.
 	indexed []int64
@@ -202,6 +205,7 @@ func (r *ftsVerify) setup() error {
 		if err := os.Mkdir(tmpRoot, 0o700); err != nil {
 			return fmt.Errorf("create %s: %w", tmpRoot, err)
 		}
+		r.tmpCreated = true
 	default:
 		return fmt.Errorf("inspect %s: %w", tmpRoot, err)
 	}
@@ -259,8 +263,8 @@ func (r *ftsVerify) cleanup() {
 			r.rep.problemf("%s: verify could not remove its temporary directory %s (it may hold text of the records): %q", FTSWordTable, r.dir, err.Error())
 		}
 	}
-	if r.tmpRoot != "" {
-		_ = os.Remove(r.tmpRoot) // only an empty directory goes
+	if r.tmpRoot != "" && r.tmpCreated {
+		_ = os.Remove(r.tmpRoot) // only a directory this run created, and only when it is empty
 	}
 }
 
@@ -280,7 +284,7 @@ func (c *Case) checkTmp(rep *VerifyReport) {
 		rep.problemf("%s: %s is a symlink, a junction or not a directory (nothing is created or listed through it; remove it)", errTmpNotPlain, ftsTmpDir)
 		return
 	}
-	entries, err := os.ReadDir(filepath.Join(c.Dir, ftsTmpDir))
+	d, err := os.Open(filepath.Join(c.Dir, ftsTmpDir))
 	if errors.Is(err, fs.ErrNotExist) {
 		return
 	}
@@ -288,7 +292,19 @@ func (c *Case) checkTmp(rep *VerifyReport) {
 		rep.problemf("temporary directory %s unreadable: %v", ftsTmpDir, err)
 		return
 	}
-	for _, e := range entries {
+	defer func() { _ = d.Close() }()
+	// at most verifyMaxPerKind entries are listed (and read): a hostile tmp of a million entries is
+	// one more line, not a million (R65)
+	entries, err := d.ReadDir(verifyMaxPerKind + 1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		rep.problemf("temporary directory %s unreadable: %v", ftsTmpDir, err)
+		return
+	}
+	for i, e := range entries {
+		if i == verifyMaxPerKind {
+			rep.problemf("further leftover entries of %s are not listed (more than %d)", ftsTmpDir, verifyMaxPerKind)
+			break
+		}
 		rep.problemf("leftover temporary directory %s/%s (an interrupted verification left text derived from the records here; remove it)", ftsTmpDir, e.Name())
 	}
 }

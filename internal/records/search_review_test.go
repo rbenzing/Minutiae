@@ -178,3 +178,11 @@ func TestSnippetFoldsSupplementaryLettersAndMarksOnManyBases(t *testing.T) {
 		t.Fatalf("only %d supplementary letters swept", checked)
 	}
 }
+
+// TestRankSearchStatementIsBounded (R67): the relevance-ordered statement sorts at most LIMIT rows.
+func TestRankSearchStatementIsBounded(t *testing.T) {
+	f := records.Filter{Text: mustCompile(t, "alpha", records.TextOptions{Rank: true})}
+	if sql := records.RankSQL(f); !strings.HasSuffix(strings.TrimSpace(sql), "LIMIT ?") {
+		t.Errorf("rank statement has no LIMIT: %s", sql)
+	}
+}

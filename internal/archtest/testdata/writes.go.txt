@@ -118,6 +118,17 @@ var (
 	ftsQuoted    = "DELETE FROM \"records_fts_sub\"" // want
 	ftsSprintf   = fmt.Sprintf("INSERT INTO %s(%s) VALUES('rebuild')", "records_fts", "records_fts") // want
 
+	// schema-level writes (R66)
+	schUpdate    = "UPDATE sqlite_master SET sql = 'x' WHERE name = 'records'" // want
+	schInsert    = "INSERT INTO sqlite_schema (type, name) VALUES ('table', 'x')" // want
+	schDelete    = "DELETE FROM sqlite_temp_master" // want
+	schWritable  = "PRAGMA writable_schema = ON" // want
+	schWritable1 = "PRAGMA writable_schema=1" // want
+	schWritableF = "pragma main.writable_schema(1)" // want
+	schTemp      = "DELETE FROM temp.records_fts_data" // want
+	schRead      = "SELECT sql FROM sqlite_master WHERE name = 'records'"
+	schPragmaRd  = "PRAGMA writable_schema"
+
 	// every shadow table, by name
 	shData    = "DELETE FROM records_fts_data" // want
 	shIdx     = "DELETE FROM records_fts_idx" // want

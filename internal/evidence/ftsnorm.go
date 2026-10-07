@@ -143,7 +143,7 @@ var (
 )
 
 // FTSNormVersion names everything the index content depends on:
-// "fts<FTSPipelineVersion>/unicode-<norm.Version>/gounicode-<unicode.Version>/xtext-<module version>/sqlite-<sqlite_version()>". The SQLite part is
+// "fts<FTSPipelineVersion>/unicode-<norm.Version>/gounicode-<unicode.Version>/xtext-<module version>/norm-<digest of NormalizeText over a probe corpus>/sqlite-<sqlite_version()>". The SQLite part is
 // read once from a scratch in-memory database. If that read fails the version carries
 // "sqlite-unknown" (and is read again on the next call), which matches no stored index version,
 // so a search or an index write is refused with "not current" rather than trusting an unnamed
@@ -156,9 +156,9 @@ func FTSNormVersion() string {
 	}
 	sv, err := sqliteVersion()
 	if err != nil {
-		return fmt.Sprintf("fts%d/unicode-%s/gounicode-%s/xtext-%s/sqlite-unknown", FTSPipelineVersion, norm.Version, unicode.Version, xTextVersion)
+		return fmt.Sprintf("fts%d/unicode-%s/gounicode-%s/xtext-%s/norm-%s/sqlite-unknown", FTSPipelineVersion, norm.Version, unicode.Version, xTextVersion, ftsNormDigest)
 	}
-	normVersion = fmt.Sprintf("fts%d/unicode-%s/gounicode-%s/xtext-%s/sqlite-%s", FTSPipelineVersion, norm.Version, unicode.Version, xTextVersion, sv)
+	normVersion = fmt.Sprintf("fts%d/unicode-%s/gounicode-%s/xtext-%s/norm-%s/sqlite-%s", FTSPipelineVersion, norm.Version, unicode.Version, xTextVersion, ftsNormDigest, sv)
 	return normVersion
 }
 

@@ -44,7 +44,7 @@ func (r *Reader) IndexStatus(ctx context.Context) (IndexStatus, error) {
 		return nil
 	})
 	if err != nil {
-		return IndexStatus{}, err
+		return IndexStatus{}, r.integrity(err)
 	}
 	return st, nil
 }

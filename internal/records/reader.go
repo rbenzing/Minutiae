@@ -197,6 +197,19 @@ func (r *Reader) readTx(ctx context.Context, needIndex bool, fn func(evidence.Re
 	if needIndex {
 		err = mapTimeout(ctx, err)
 	}
+	return r.integrity(err)
+}
+
+// integrity turns an error that says the database (or a full-text structure inside it) is
+// corrupt into evidence.ErrIntegrity (exit 4) with the remedy named, whichever Reader call met it
+// (R64); every other error is returned as it is.
+func (r *Reader) integrity(err error) error {
+	if err == nil || errors.Is(err, evidence.ErrIntegrity) {
+		return err
+	}
+	if c := evidence.ClassifyDBError(err); errors.Is(c, evidence.ErrIntegrity) {
+		return fmt.Errorf("%w (the case is damaged; run: minutiae case verify --case %s)", c, r.c.Dir)
+	}
 	return err
 }
 

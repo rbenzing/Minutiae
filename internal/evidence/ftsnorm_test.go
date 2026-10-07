@@ -342,7 +342,7 @@ func TestNormalizeLongCombiningRunIsFast(t *testing.T) {
 
 func TestFTSNormVersionShape(t *testing.T) {
 	v := FTSNormVersion()
-	re := regexp.MustCompile(`^fts3/unicode-[0-9]+\.[0-9]+\.[0-9]+/gounicode-[0-9]+\.[0-9]+\.[0-9]+/xtext-v[0-9]+\.[0-9]+\.[0-9]+/sqlite-[0-9]+\.[0-9]+\.[0-9]+$`)
+	re := regexp.MustCompile(`^fts3/unicode-[0-9]+\.[0-9]+\.[0-9]+/gounicode-[0-9]+\.[0-9]+\.[0-9]+/xtext-v[0-9]+\.[0-9]+\.[0-9]+/norm-[0-9a-f]{12}/sqlite-[0-9]+\.[0-9]+\.[0-9]+$`)
 	if !re.MatchString(v) {
 		t.Fatalf("FTSNormVersion() = %q does not match %s", v, re)
 	}

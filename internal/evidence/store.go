@@ -352,3 +352,8 @@ func (s *Store) ArtifactHashes() (map[string]string, error) {
 
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
+
+// ClassifyDBError is classifyDBError for callers outside the package: an error that says the
+// database file is corrupt or not a SQLite database (including a damaged full-text structure
+// inside a query) wraps ErrIntegrity; any other error is returned unchanged.
+func ClassifyDBError(err error) error { return classifyDBError(err) }

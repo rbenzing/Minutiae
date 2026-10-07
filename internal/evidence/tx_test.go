@@ -213,3 +213,35 @@ func TestTxRefusedAfterClose(t *testing.T) {
 		t.Error("fn ran after Close")
 	}
 }
+
+// TestReadTxUsesMemoryForTemporaryStorage (R67): inside ReadTx a sorter or temporary table never
+// spills to a file (temp_store is MEMORY, 2), and a write transaction afterwards has the default
+// (0) again, so the setting belongs to read transactions only.
+func TestReadTxUsesMemoryForTemporaryStorage(t *testing.T) {
+	c := newTestCase(t)
+	read := func() int {
+		var v int
+		err := c.ReadTx(context.Background(), func(h ReadHandle) error {
+			return h.QueryRowContext(context.Background(), `SELECT temp_store FROM pragma_temp_store`).Scan(&v)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	if v := read(); v != 2 {
+		t.Fatalf("temp_store inside ReadTx = %d, want 2 (MEMORY)", v)
+	}
+	var after int
+	if err := c.StoreTx(context.Background(), func(tx *sql.Tx) error {
+		return tx.QueryRow(`PRAGMA temp_store`).Scan(&after)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if after != 0 {
+		t.Errorf("temp_store in a write transaction = %d, want the default 0", after)
+	}
+	if v := read(); v != 2 {
+		t.Errorf("second ReadTx: temp_store = %d", v)
+	}
+}

@@ -1074,6 +1074,9 @@ func TestSearchPlanUsesTheIndexForMatch(t *testing.T) {
 			if err != nil || len(qs) != 1 {
 				t.Fatalf("%s: %d queries, %v", tc.name, len(qs), err)
 			}
+			if !strings.HasSuffix(strings.TrimSpace(qs[0].SQL), "LIMIT ?") { // R67: the sorter is bounded
+				t.Errorf("%s: the list statement has no LIMIT: %s", tc.name, qs[0].SQL)
+			}
 			plan := planOf(t, c.Dir, qs[0].SQL, qs[0].Args...)
 			t.Logf("%s desc=%v:\n  %s", tc.name, desc, strings.Join(plan, "\n  "))
 			var fts, outer string

@@ -429,3 +429,71 @@ func TestCheckTmpAloneRefusesANonDirectory(t *testing.T) {
 		t.Fatalf("checkTmp problems %q, want exactly the plain-directory problem", rep.Problems)
 	}
 }
+
+// TestCheckTmpListsAtMostFiftyEntries (R65): a hostile <case>/tmp with many entries yields the 50
+// listed problems of every other kind and one line that says more exist, never one line per entry.
+func TestCheckTmpListsAtMostFiftyEntries(t *testing.T) {
+	c := indexedTextCase(t, 5)
+	tmp := filepath.Join(c.Dir, "tmp")
+	if err := os.Mkdir(tmp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 120 {
+		if err := os.Mkdir(filepath.Join(tmp, fmt.Sprintf("verify-%03d", i)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var rep VerifyReport
+	c.checkTmp(&rep)
+	if len(rep.Problems) != verifyMaxPerKind+1 {
+		t.Fatalf("%d problems, want %d listed and one line for the rest", len(rep.Problems), verifyMaxPerKind)
+	}
+	for _, p := range rep.Problems[:verifyMaxPerKind] {
+		if !strings.Contains(p, "leftover temporary directory tmp/verify-") {
+			t.Errorf("problem %q", p)
+		}
+	}
+	if last := rep.Problems[verifyMaxPerKind]; !strings.Contains(last, "further") || !strings.Contains(last, "not listed") {
+		t.Errorf("last problem %q does not say that more entries exist", last)
+	}
+	// exactly 50 entries: all listed, no extra line
+	for i := 50; i < 120; i++ {
+		if err := os.Remove(filepath.Join(tmp, fmt.Sprintf("verify-%03d", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rep = VerifyReport{}
+	c.checkTmp(&rep)
+	if len(rep.Problems) != verifyMaxPerKind {
+		t.Errorf("%d problems for exactly %d entries", len(rep.Problems), verifyMaxPerKind)
+	}
+}
+
+// TestVerifyKeepsAPreExistingEmptyTmp (R65): verify removes what it created (its run directory, and
+// <case>/tmp only when this run created it), never an empty tmp directory that was already there.
+func TestVerifyKeepsAPreExistingEmptyTmp(t *testing.T) {
+	c := indexedTextCase(t, 5)
+	tmp := filepath.Join(c.Dir, "tmp")
+	if err := os.Mkdir(tmp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r := mustVerify(t, c)
+	if r.FTSDocsChecked != 5 {
+		t.Fatalf("P11 did not run: FTSDocsChecked = %d", r.FTSDocsChecked)
+	}
+	ents, err := os.ReadDir(tmp)
+	if err != nil {
+		t.Fatalf("the pre-existing tmp was removed: %v", err)
+	}
+	if len(ents) != 0 {
+		t.Fatalf("tmp holds %v after verify: the run directory was left", ents)
+	}
+	// and a tmp this run creates is removed again
+	if err := os.Remove(tmp); err != nil {
+		t.Fatal(err)
+	}
+	mustVerify(t, c)
+	if _, err := os.Stat(tmp); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("tmp created by the run is still there: %v", err)
+	}
+}
