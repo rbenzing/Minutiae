@@ -91,6 +91,10 @@ type JournalProv struct {
 // PageImage is one version of a page: where it lies (Loc), which source it
 // comes from (Origin, WAL, Journal) and the free spans found in it. A page image
 // that is not live is recovered data: it is never served by Live().
+// A live, freelist or orphan image whose bytes the live view serves from a WAL
+// frame or a journal record has Loc.File set to that file and Loc.Frame or
+// Loc.Record as its only pointer: WAL and Journal describe only the images of
+// recovered origins.
 type PageImage struct {
 	Number  uint32
 	Origin  Origin
@@ -98,6 +102,10 @@ type PageImage struct {
 	WAL     *WALProv
 	Journal *JournalProv
 	Spans   []Span
+	// Partial is set for a trailing partial page of the database file: Bytes is
+	// shorter than a page and Note says by how much. Nothing is padded.
+	Partial bool
+	Note    string
 
 	h *Hist
 }
@@ -190,7 +198,11 @@ func (h *Hist) Pages(ctx context.Context, visit func(PageImage) bool) (err error
 	return h.walk(ctx, func(it histItem) bool { return visit(it.img) })
 }
 
-// Summary counts the page images by origin and the free pages.
+// Summary counts the page images by origin and the free pages. FreePages and
+// FreePagesZeroed count the freelist pages the live view can read (an
+// unreadable one is skipped, with the view's own warning); LiveSpanBytes is the
+// sum of the span lengths and excludes the fragmented bytes (PageParse reports
+// those).
 func (h *Hist) Summary(ctx context.Context) (s HistSummary, err error) {
 	defer guard(&err)
 	s.PagesByOrigin = map[Origin]int64{}
@@ -284,6 +296,9 @@ func (w *histWalk) emit(o Origin, pg uint32, loc PageLoc, wal *WALProv, jr *Jour
 	}
 	w.n++
 	img := PageImage{Number: pg, Origin: o, Loc: loc, WAL: wal, Journal: jr, h: w.h}
+	if ps := w.h.d.info.PageSize; data != nil && loc.File == FileDB && len(data) < ps {
+		img.Partial, img.Note = true, fmt.Sprintf("partial-page: %d of %d bytes", len(data), ps)
+	}
 	if data != nil {
 		img.Spans = w.h.imageSpans(img, data)
 	}
@@ -393,6 +408,11 @@ func (w *histWalk) dbUnderWAL() error {
 	if h.a == nil || !h.a.scan.Info.UsedByLive || h.a.scan.Info.LastCommit == 0 {
 		return nil
 	}
+	l := h.d.env.newLedger()
+	defer l.free(l.n)
+	if err := l.alloc(4 * int64(len(h.a.scan.latest))); err != nil {
+		return fmt.Errorf("history of the database under the WAL: %w", err)
+	}
 	s := h.a.scan
 	pages := make([]uint32, 0, len(s.latest))
 	for pg := range s.latest {
@@ -429,6 +449,11 @@ func (w *histWalk) dbRolledBack() error {
 	h := w.h
 	if !h.rolled() {
 		return nil
+	}
+	l := h.d.env.newLedger()
+	defer l.free(l.n)
+	if err := l.alloc(4 * int64(len(h.jr.scan.winner))); err != nil {
+		return fmt.Errorf("history of the rolled-back pages: %w", err)
 	}
 	s := h.jr.scan
 	pages := make([]uint32, 0, len(s.winner))
@@ -499,7 +524,7 @@ func (w *histWalk) walFrames() error {
 	origins := [4]Origin{OriginWALSuperseded, OriginWALUncommitted, OriginWALStale, OriginWALUnverified}
 	gens := s.Info.Generations
 	for k, g := range groups {
-		slices.SortFunc(g, func(a, b int) int {
+		slices.SortStableFunc(g, func(a, b int) int {
 			fa, fb := &s.Frames[a], &s.Frames[b]
 			return cmp.Or(
 				cmp.Compare(fa.Page, fb.Page),
@@ -533,6 +558,11 @@ func (w *histWalk) journalRecords() error {
 	h := w.h
 	if h.jr == nil {
 		return nil
+	}
+	l := h.d.env.newLedger()
+	defer l.free(l.n)
+	if err := l.alloc(8 * int64(len(h.jr.scan.Records))); err != nil {
+		return fmt.Errorf("history of the journal: %w", err)
 	}
 	recs := h.jr.scan.Records
 	order := make([]int, len(recs))

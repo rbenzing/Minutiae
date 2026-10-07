@@ -167,7 +167,8 @@ func (s *snapSource) resolveWAL(pgno uint32) ([]byte, PageLoc, string, error) {
 // journalState is the rollback state the journal describes: which record
 // supplies each page, and the size the database had. It is the scan's own when
 // the journal is applied; for one that is not (no hot journal), it is computed
-// the same way: records in order up to the first bad checksum, the last write to
+// the same way: records in order up to the first bad checksum, page 0 or the
+// lock-byte page, the last write to
 // a page wins, pages above the initial size skipped.
 func (h *Hist) journalState() (win map[uint32]int, initial uint32, limited bool, err error) {
 	h.mu.Lock()
@@ -181,6 +182,7 @@ func (h *Hist) journalState() (win map[uint32]int, initial uint32, limited bool,
 	if !in.Applied {
 		win = map[uint32]int{}
 		if in.HeaderValid && in.PageSizeMatchesDB {
+			lock := LockBytePage(int(in.PageSize))
 			cost := int64(len(h.jr.scan.Records)) * journalMapCost
 			if err := h.d.env.budget.Alloc(cost); err != nil {
 				return nil, 0, false, fmt.Errorf("rollback state of the journal: %w", err)
@@ -190,7 +192,10 @@ func (h *Hist) journalState() (win map[uint32]int, initial uint32, limited bool,
 				if !r.ChecksumOK {
 					break
 				}
-				if r.Page != 0 && r.Page <= initial {
+				if r.Page == 0 || r.Page == lock {
+					break // playback ends here, as the scan's does
+				}
+				if r.Page <= initial {
 					win[r.Page] = i
 				}
 			}
