@@ -127,7 +127,7 @@ func CheckRecoveredRuns(rec ManifestRecord, runs []Run) []string {
 	if d := rec.Source.Derived; d != nil && len(d.Runs) > MaxInlineRuns {
 		add("records %d inline runs (more than %d; they belong in a runs sidecar)", len(d.Runs), MaxInlineRuns)
 	}
-	if len(runs) == 0 {
+	if len(runs) == 0 && rec.Size > 0 && !derivedNeedsNoRuns(rec) {
 		return append(out, pre+"records no runs")
 	}
 	if len(runs) > MaxRecoveredRuns {
@@ -156,7 +156,7 @@ func CheckRecoveredRuns(rec ManifestRecord, runs []Run) []string {
 	if !valid {
 		return out
 	}
-	if sum != rec.Size {
+	if sum != rec.Size && (len(runs) > 0 || !derivedNeedsNoRuns(rec)) {
 		add("runs cover %d bytes but the artifact holds %d", sum, rec.Size)
 	}
 	if rec.Incomplete && rec.Error == "" {
@@ -243,4 +243,11 @@ func RecoveryTrailOf(byID map[string]ManifestRecord, id string) (RecoveryTrail, 
 		cur = d.ParentID
 	}
 	return tr, found
+}
+
+// derivedNeedsNoRuns reports whether the artifact is a derived report rather
+// than bytes copied from an image: only the journal-report class is.
+func derivedNeedsNoRuns(rec ManifestRecord) bool {
+	d := rec.Source.Derived
+	return d != nil && d.Recovery != nil && d.Recovery.Class == ClassJournalReport
 }
