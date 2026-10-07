@@ -74,6 +74,7 @@ const (
 	WarnJournalDuplicatePage    = "journal-duplicate-page"
 	WarnSnapshotUnavailable     = "snapshot-unavailable"
 	WarnOwnerChanged            = "owner-changed"
+	WarnPagesUnattributed       = "pages-unattributed"
 	WarnLimitReached            = "limit-reached"
 	WarnSuppressed              = "suppressed"
 )
@@ -91,7 +92,7 @@ var knownWarningCodes = map[string]bool{
 	WarnJournalHeaderInvalid: true, WarnJournalSectorInvalid: true, WarnJournalPageSizeMismatch: true,
 	WarnJournalNoPageSize: true, WarnJournalPageInvalid: true, WarnJournalHot: true, WarnJournalSuperUnknown: true,
 	WarnJournalAndWAL: true, WarnJournalDuplicatePage: true, WarnSnapshotUnavailable: true, WarnOwnerChanged: true,
-	WarnLimitReached: true, WarnSuppressed: true,
+	WarnPagesUnattributed: true, WarnLimitReached: true, WarnSuppressed: true,
 }
 
 // Warning is one anomaly found while reading. Msg is short; any text read

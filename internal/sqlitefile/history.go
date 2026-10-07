@@ -72,11 +72,17 @@ type WALProv struct {
 	Note              string // e.g. "page-beyond-commit-size"
 }
 
+// JournalNoteBeyondInitialSize is the Note of a database page past the journal's
+// initial page count: the rollback truncates it, so no journal record holds it.
+const JournalNoteBeyondInitialSize = "page-beyond-initial-size"
+
 // JournalProv is the provenance of a page image that comes from a rollback
 // journal record, or (OriginDBRolledBack) of the journal that hides the page.
-// Record is -1 for a database page the journal's truncation hides.
+// Note is set (and Record is meaningless, 0) for a database page the journal's
+// truncation hides: no record holds an image of it.
 type JournalProv struct {
 	Record, Segment int
+	Note            string
 	ChecksumOK      bool
 	Hot, Applied    bool
 	Nonce           uint32
@@ -248,6 +254,7 @@ func (h *Hist) walk(ctx context.Context, visit func(histItem) bool) error {
 		return err
 	}
 	w.lay = lay
+	w.warnUnattributed()
 	steps := []func() error{
 		func() error { return w.classPass(OriginLiveBTree, ClassBTreeInterior, ClassBTreeLeaf) },
 		func() error { return w.classPass(OriginFreelistLeaf, ClassFreelistLeaf) },
@@ -450,7 +457,7 @@ func (w *histWalk) dbRolledBack() error {
 		if data == nil {
 			continue
 		}
-		prov := &JournalProv{Record: -1, Hot: s.Info.Hot, Applied: true, Nonce: s.Info.Nonce}
+		prov := &JournalProv{Note: JournalNoteBeyondInitialSize, Hot: s.Info.Hot, Applied: true, Nonce: s.Info.Nonce}
 		if err := w.emit(OriginDBRolledBack, uint32(pg), PageLoc{File: FileDB, Offset: PageOffset(h.d.info.PageSize, uint32(pg))}, nil, prov, data); err != nil {
 			return err
 		}
@@ -600,4 +607,20 @@ func (p PageImage) Bytes() (b []byte, err error) {
 		return nil, fmt.Errorf("%w: the image does not belong to a history", ErrPageUnavailable)
 	}
 	return p.h.readLoc(p.Loc)
+}
+
+// warnUnattributed raises the one warning that says how many pages the layout
+// could not attribute because the schema was read incompletely. The history does
+// not list them (they are neither live nor orphan), so the examiner must be told.
+// Identical warnings collapse, so repeated walks raise it once.
+func (w *histWalk) warnUnattributed() {
+	n := 0
+	for pg := uint32(1); pg <= w.lay.Addressable; pg++ {
+		if w.lay.Class[pg] == ClassUnattributed {
+			n++
+		}
+	}
+	if n > 0 {
+		w.h.warns.add(Warning{Code: WarnPagesUnattributed, File: FileDB, Msg: fmt.Sprintf("%d pages are unattributed: the schema was read incompletely, so their owner is unknown; they are not listed in the history", n)})
+	}
 }

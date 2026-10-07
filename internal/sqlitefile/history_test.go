@@ -207,7 +207,7 @@ func (m *histMaster) expected(t testing.TB, d *sqlitefile.DB) []histWant {
 		jb    = sqlitefile.OriginJournalBefore
 	)
 	committed, uncommitted := sqlitefile.FrameCommitted, sqlitefile.FrameUncommitted
-	trunc := &sqlitefile.JournalProv{Record: -1, Hot: true, Applied: true, Nonce: 0xdeadbeef}
+	trunc := &sqlitefile.JournalProv{Note: sqlitefile.JournalNoteBeyondInitialSize, Hot: true, Applied: true, Nonce: 0xdeadbeef}
 	return []histWant{
 		{origin: live, num: 1, loc: dbLoc(1)},
 		{origin: live, num: 2, loc: walLoc(4)},
