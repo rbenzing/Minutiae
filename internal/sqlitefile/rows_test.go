@@ -272,7 +272,7 @@ func TestHistoryRowsStaleGeneration(t *testing.T) {
 	rows, _ := collectRows(t, h)
 	var stale []sqlitefile.RecoveredRow
 	for _, r := range rows {
-		if r.Method == sqlitefile.MethodWALStale {
+		if r.Method == sqlitefile.MethodWALStale && *r.Rowid == 2 { // the other rows equal the live ones, but a stale generation has no as-of schema: they are not compared (owner-changed)
 			stale = append(stale, r)
 		}
 	}
@@ -286,7 +286,7 @@ func TestHistoryRowsStaleGeneration(t *testing.T) {
 	if r.WAL == nil || r.WAL.Salt1 != 0x1000 || r.WAL.Salt2 != 0x1001 || !r.WAL.Linked || r.WAL.Committed || r.WAL.Frame != 3 {
 		t.Errorf("provenance %+v", r.WAL)
 	}
-	if r.Relation != sqlitefile.RelSupersededVersion || r.TableBasis != sqlitefile.BasisSchema || intOf(t, r.Values[0]) != 23 {
+	if r.Relation != sqlitefile.RelUnknown || r.TableBasis == sqlitefile.BasisSchema || !hasNote(r, sqlitefile.NoteOwnerChanged) || intOf(t, r.Values[0]) != 23 {
 		t.Errorf("row %+v", r)
 	}
 	assertCell(t, f, r, cell3)
@@ -451,7 +451,7 @@ func TestHistoryRowsJournalPersist(t *testing.T) {
 // the live owner's rows and carries owner-changed; one that fits strictly keeps
 // BasisSchema.
 func TestBasisSchemaNeedsStrictFit(t *testing.T) {
-	build := func(oldCells func(z *sqlitetest.Table)) (db, wal []byte) {
+	build := func(era bool, oldCells func(z *sqlitetest.Table)) (db, wal []byte) {
 		b := sqlitetest.New(sqlitetest.Options{PageSize: hps})
 		live := b.CreateTable("t", "create table t(a, b not null)")
 		for id := int64(1); id <= 3; id++ {
@@ -465,12 +465,18 @@ func TestBasisSchemaNeedsStrictFit(t *testing.T) {
 		oldCells(z)
 		old := b2.Snapshot()
 		w := b.NewWAL(false, 0x1000, 0x1001, 0)
+		if era {
+			w.Frame(1, old.Page(1), 2) // the schema of the era in which page 2 held the old cells
+		}
 		w.Frame(2, old.Page(2), 2)
 		w.Frame(2, liveImg.Page(2), 2)
+		if era {
+			w.Frame(1, liveImg.Page(1), 2)
+		}
 		return db, w.Bytes()
 	}
 	t.Run("loose fit only", func(t *testing.T) {
-		db, wal := build(func(z *sqlitetest.Table) {
+		db, wal := build(false, func(z *sqlitetest.Table) {
 			for id := int64(1); id <= 3; id++ {
 				z.InsertRaw(id, []uint64{1}, []byte{byte(id)}) // one value: not enough for NOT NULL b
 			}
@@ -491,20 +497,26 @@ func TestBasisSchemaNeedsStrictFit(t *testing.T) {
 		}
 	})
 	t.Run("strict fit", func(t *testing.T) {
-		db, wal := build(func(z *sqlitetest.Table) {
+		db, wal := build(true, func(z *sqlitetest.Table) {
 			for id := int64(1); id <= 3; id++ {
 				z.Insert(id, id*7, "old")
 			}
 		})
 		_, h := openAll(t, db, wal, nil)
 		rows, _ := collectRows(t, h)
-		if len(rows) != 3 {
-			t.Fatalf("%d rows", len(rows))
-		}
+		n := 0
 		for _, r := range rows {
-			if r.TableBasis != sqlitefile.BasisSchema || r.Table != "t" || r.Relation != sqlitefile.RelSupersededVersion || hasNote(r, "owner-changed") {
+			if r.Loc.File != sqlitefile.FileWAL || r.Loc.Page != 2 {
+				continue
+			}
+			n++
+			// page 2 held z in the era of these cells: today's owner t is not their table
+			if r.TableBasis == sqlitefile.BasisSchema || r.Relation != sqlitefile.RelUnknown || !hasNote(r, "owner-changed") {
 				t.Errorf("row %+v", r)
 			}
+		}
+		if n != 3 {
+			t.Fatalf("%d rows of the old page 2 in %v", n, methods(rows))
 		}
 	})
 }

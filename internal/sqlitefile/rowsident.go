@@ -107,7 +107,7 @@ func (c candidate) idKind() idKind {
 func (rp *rowPass) identify(img PageImage, hd PageHeader, cells []imgCell) ident {
 	var notes []string
 	if o, ok := rp.ownerOf(img.Number); ok {
-		if c, ok := rp.ownerCand(o); ok && c.leafType() == hd.Type && rp.allFit(c.item, cells) {
+		if c, ok := rp.ownerCand(o); ok && c.leafType() == hd.Type && rp.allFit(c.item, cells) && rp.sameOwnerAtWrite(img, o) {
 			id := ident{basis: BasisSchema, kind: c.idKind()}
 			if c.index {
 				id.index, id.table = c.name, c.tbName

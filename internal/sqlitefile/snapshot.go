@@ -36,7 +36,10 @@ import (
 // snapshotSource returns the page source of the image's as-of state.
 func (p PageImage) snapshotSource() pageSource { return &snapSource{img: p} }
 
-type snapSource struct{ img PageImage }
+type snapSource struct {
+	img   PageImage
+	quiet bool // no snapshot-unavailable warning (an owner probe, not a read of a row)
+}
 
 func (s *snapSource) has(pgno uint32) bool { return pgno != 0 }
 
@@ -45,7 +48,7 @@ func (s *snapSource) read(pgno uint32) ([]byte, PageLoc, error) {
 	if err == nil {
 		return data, loc, nil
 	}
-	if isUnavailable(err) {
+	if isUnavailable(err) && !s.quiet {
 		h := s.img.h
 		file := FileDB
 		if s.img.WAL != nil {

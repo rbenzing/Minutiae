@@ -11,7 +11,7 @@ import (
 )
 
 // The relation of a recovered row to the live rows, computed only for a row
-// whose table was proven (BasisSchema or BasisFit): by rowid for a rowid table
+// whose table identity is structural (BasisSchema): by rowid for a rowid table
 // and through a digest set of the live rows for a WITHOUT ROWID table. Anything
 // but a clean answer is "unknown": "absent" is said only for a clean path.
 

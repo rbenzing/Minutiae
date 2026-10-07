@@ -12,8 +12,11 @@ type RowStats struct {
 	RowsByMethod                                    map[string]int64 // read in sorted key order, never by map iteration
 	DuplicateOfLive, CellsRejected, InteriorSkipped int64
 	Unknown                                         int64 // rows whose relation is RelUnknown
-	OverflowPagesFollowed                           int64
-	LimitsHit                                       []string
+	// CellsShort counts the cells (also counted in CellsRejected) whose record
+	// declares more bytes than the cell holds.
+	CellsShort            int64
+	OverflowPagesFollowed int64
+	LimitsHit             []string
 }
 
 // The notes a recovered row can carry besides the ones the caller sets.
@@ -72,6 +75,7 @@ type rowPass struct {
 	diffTotal          int64
 
 	tables  map[string]*Table
+	snaps   map[string]*snapState
 	rows    int64
 	cells   int64
 	stopped bool
@@ -91,7 +95,8 @@ func (h *Hist) Rows(ctx context.Context, visit func(RecoveredRow) bool) (st RowS
 	l := h.d.env.newLedger()
 	defer func() { l.free(l.n) }()
 	defer l.guard(&err)
-	rp := &rowPass{h: h, ctx: ctx, visit: visit, l: l, tables: map[string]*Table{}, limits: map[string]bool{}}
+	rp := &rowPass{h: h, ctx: ctx, visit: visit, l: l, tables: map[string]*Table{}, snaps: map[string]*snapState{}, limits: map[string]bool{}}
+	defer rp.releaseSnaps()
 	rp.st.RowsByMethod = map[string]int64{}
 	if err := h.live.refusal(); err != nil {
 		return RowStats{}, err
@@ -263,6 +268,7 @@ func (rp *rowPass) decode(img PageImage, c Cell, kindsOnly bool) (rec Record, p 
 	if _, _, dead := p.damaged(); rec.Truncated && !dead {
 		p.release()
 		rp.st.CellsRejected++ // the record declares more bytes than the cell holds
+		rp.st.CellsShort++
 		return Record{}, nil, 0, false, nil
 	}
 	return rec, p, held, true, nil
