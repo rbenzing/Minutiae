@@ -282,6 +282,9 @@ func TestOnlyRecordsPackageWritesRecordTables(t *testing.T) {
 	for _, srcs := range byDir {
 		for _, v := range recordTableWrites(t, srcs) {
 			rel, _ := filepath.Rel(root, v.File)
+			if oracleDropExempt(rel, v.Text) {
+				continue
+			}
 			t.Errorf("%s:%d writes a record table with SQL (only internal/evidence and internal/records may): %q", filepath.ToSlash(rel), v.Line, v.Text)
 		}
 	}

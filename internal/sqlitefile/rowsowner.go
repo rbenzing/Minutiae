@@ -55,7 +55,7 @@ func (rp *rowPass) snapStateOf(img PageImage, key string) *snapState {
 	rp.snaps[key] = st
 	h := rp.h
 	v := &View{
-		d: h.d, e: h.d.env, info: h.d.Info(), src: &snapSource{img: img, quiet: true}, st: &counters{},
+		d: h.d, e: h.d.env, info: h.live.info, src: &snapSource{img: img, quiet: true}, st: &counters{},
 		warns: newWarnings(h.d.env.opts.Limits.MaxWarnings), addr: h.live.addr,
 	}
 	v.cache = newPageCache(h.d.env, v.src, h.d.info.PageSize, v.st)
@@ -89,13 +89,14 @@ func objectName(s *Schema, o uint32) (name, typ string, ok bool) {
 // object (by name and type) in the image's own state as it does today (live
 // owner liveOwner). Anything that cannot be proven is false.
 func (rp *rowPass) sameOwnerAtWrite(img PageImage, liveOwner uint32) bool {
-	key, ok := snapKey(img)
-	if !ok {
+	if _, ok := snapKey(img); !ok {
 		return true
 	}
 	if img.Origin == OriginDBUnderWAL {
 		img.Origin = OriginDBRolledBack // the image is a page of the database file: its state is the file as found
 	}
+	img = rp.atEndOfTransaction(img)
+	key, _ := snapKey(img)
 	st := rp.snapStateOf(img, key)
 	if !st.ok || img.Number == 0 || img.Number > st.lay.Addressable {
 		return false
@@ -119,4 +120,33 @@ func (rp *rowPass) releaseSnaps() {
 			st.v.Release()
 		}
 	}
+}
+
+// atEndOfTransaction moves a WAL image to the end of the transaction that wrote
+// it: the state between the frames of one transaction is not a database, so the
+// owner is read from the state after the commit frame (or, for frames no commit
+// closes, after the last frame of their generation).
+func (rp *rowPass) atEndOfTransaction(img PageImage) PageImage {
+	if img.WAL == nil || rp.h.a == nil {
+		return img
+	}
+	frames := rp.h.a.scan.Frames
+	end := img.WAL.Frame
+	for i := int(img.WAL.Frame) - 1; i >= 0 && i < len(frames); i++ {
+		f := frames[i]
+		if f.Generation != img.WAL.Generation {
+			break
+		}
+		end = f.Slot
+		if f.DBSize != 0 {
+			break
+		}
+	}
+	if end == img.WAL.Frame {
+		return img
+	}
+	w := *img.WAL
+	w.Frame = end
+	img.WAL = &w
+	return img
 }
