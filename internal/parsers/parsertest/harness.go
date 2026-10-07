@@ -8,6 +8,7 @@ package parsertest
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -30,6 +31,10 @@ type Harness struct {
 
 	mu   sync.Mutex
 	sets map[*parse.Input]*readerSet
+
+	// test seams
+	afterSeal func()
+	warnSink  func(ctx context.Context, locator, reason string) error
 }
 
 // NewHarness creates a case in t.TempDir() at the current schema, closed by
@@ -87,6 +92,7 @@ func (h *Harness) Artifact(m evidence.ManifestRecord, data []byte) parse.Artifac
 type readerSet struct {
 	mu     sync.Mutex
 	rs     []*parse.SealedReaderAt
+	orig   []parse.Artifact // the bundle as the host holds it: facts and the unwrapped readers, for the after-run checks
 	sealed bool
 }
 
@@ -174,6 +180,7 @@ func (h *Harness) Input(p parse.Parser, primary parse.Artifact, others map[strin
 		}
 	}
 	slices.SortFunc(lk.all, func(a, b parse.Artifact) int { return strings.Compare(a.ID, b.ID) })
+	set.orig = slices.Clone(lk.all)
 
 	in := &parse.Input{
 		Job:       parse.JobInfo{ParseID: "parsertest", Job: 1, Parser: meta.Identity(FakeHash(meta.Name))},

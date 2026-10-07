@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"runtime"
+	"sort"
 	"testing"
 	"time"
 
@@ -51,14 +52,45 @@ func CanonicalRecords(rs []records.Record) []string {
 	return out
 }
 
+// CanonicalResult returns the output of a run as comparable lines: one per
+// record (CanonicalRecords), then the warnings in order, the notes by key, the
+// error text and the FINAL progress totals. Intermediate progress calls are
+// throttled timing, not output, and are left out.
+func CanonicalResult(r Result) []string {
+	out := CanonicalRecords(r.Records)
+	for _, w := range r.Warnings {
+		out = append(out, fmt.Sprintf("warning %q %q", w.Locator, w.Reason))
+	}
+	keys := make([]string, 0, len(r.Notes))
+	for k := range r.Notes {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		out = append(out, fmt.Sprintf("note %q=%q", k, r.Notes[k]))
+	}
+	if r.Err != nil {
+		out = append(out, fmt.Sprintf("error %q", r.Err.Error()))
+	} else {
+		out = append(out, "no error")
+	}
+	if n := len(r.Progress); n > 0 {
+		out = append(out, fmt.Sprintf("final progress %d/%d", r.Progress[n-1][0], r.Progress[n-1][1]))
+	} else {
+		out = append(out, "no progress")
+	}
+	return out
+}
+
 // AssertDeterministic calls newRun under four configurations and requires the
-// same canonical record sequence from all of them: the default; GOMAXPROCS(1);
-// the default again; and with time.Local set to a fixed zone that differs from
-// the machine's, so a parser that depends on the host time zone fails here even
-// though the purity rule already bans it. GOMAXPROCS and time.Local are
-// restored afterwards, also when a run fails the test. newRun must reuse the
-// same artifacts every time (a new case gives new artifact ids, which are part
-// of a record).
+// same canonical result (CanonicalResult: records, warnings, notes, error and
+// final progress) from all of them: the default; GOMAXPROCS(1); the default
+// again; and with time.Local set to a fixed zone that differs from the
+// machine's, so a parser that depends on the host time zone fails here even
+// though the purity rule already bans it. GOMAXPROCS and time.Local are process
+// globals: restored afterwards (also when a run fails the test), but it must not
+// run in parallel with other tests. newRun must reuse the same artifacts every
+// time (a new case gives new artifact ids, which are part of a record).
 func AssertDeterministic(t testing.TB, newRun func() Result) {
 	t.Helper()
 	procs, local := runtime.GOMAXPROCS(0), time.Local
@@ -80,20 +112,14 @@ func AssertDeterministic(t testing.TB, newRun func() Result) {
 		runtime.GOMAXPROCS(procs)
 		time.Local = local
 		c.apply()
-		got := CanonicalRecords(newRun().Records)
+		got := CanonicalResult(newRun())
 		if i == 0 {
 			want = got
 			continue
 		}
-		if len(got) != len(want) {
-			t.Errorf("parsertest: %s: %d records, the default run gave %d", c.name, len(got), len(want))
-			continue
-		}
-		for j := range got {
-			if got[j] != want[j] {
-				t.Errorf("parsertest: %s: record %d differs from the default run:\n got %s\nwant %s", c.name, j, got[j], want[j])
-				break
-			}
+		if d := firstDifference(got, want); d >= 0 {
+			t.Errorf("parsertest: %s: result line %d differs from the default run (%d lines, the default run gave %d):\n got %s\nwant %s",
+				c.name, d, len(got), len(want), lineAt(got, d), lineAt(want, d))
 		}
 	}
 }
@@ -113,4 +139,22 @@ func otherZone(local *time.Location) *time.Location {
 		}
 	}
 	return time.FixedZone("parsertest/other", 12*3600+1)
+}
+
+// firstDifference returns the index of the first line at which a and b differ,
+// a missing line counting as different from every line, or -1 when equal.
+func firstDifference(a, b []string) int {
+	for i := range max(len(a), len(b)) {
+		if i >= len(a) || i >= len(b) || a[i] != b[i] {
+			return i
+		}
+	}
+	return -1
+}
+
+func lineAt(lines []string, i int) string {
+	if i < len(lines) {
+		return lines[i]
+	}
+	return "<no such line>"
 }

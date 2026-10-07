@@ -438,7 +438,7 @@ func (p *Mutator) Parse(ctx context.Context, in *parse.Input, out parse.Emitter)
 		}
 	case MutateMeta:
 		if p.last != nil {
-			p.last.Emits = append(p.last.Emits, parse.Emit{Type: "call", PayloadVersion: 1})
+			p.last.Emits[0].Type = "call" // in place: an append would reallocate and never reach the Meta the host holds
 			p.last.Platforms[0] = parse.PlatformIOS
 			p.last.Inputs[0].Globs[0] = "android:**/mutated.dat"
 		}

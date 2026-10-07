@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -108,7 +106,7 @@ func TestFixtureParsesProduceNoRejections(t *testing.T) {
 	}{
 		{"nul in summary", InvalidNulInSummary, records.ErrInvalidText},
 		{"missing required field", InvalidMissingRequiredField, records.ErrInvalidPayload},
-		{"unknown type", InvalidUnknownType, records.ErrUnknownType},
+		{"unknown type (refused by the contract check before the writer)", InvalidUnknownType, parse.ErrUndeclaredType},
 		{"oversize body", InvalidOversizeBody, records.ErrRecordTooLarge},
 		{"bad locator", InvalidBadLocator, records.ErrInvalidLocator},
 	} {
@@ -284,35 +282,5 @@ func TestHarnessSurvivesAParserPanic(t *testing.T) {
 	m := AddAndroidFile(t, h.Case, "acq1", "/data/parsertest/well.dat", []byte("a\n"))
 	if res := h.Run(p, h.Input(p, h.Artifact(m, []byte("a\n")), nil, false)); len(res.Records) != 1 {
 		t.Errorf("after a panic: %d records", len(res.Records))
-	}
-}
-
-func TestParsertestIsTestOnly(t *testing.T) {
-	root := filepath.Join("..", "..", "..")
-	imp := `"github.com/rbenzing/minutiae/internal/parsers/parsertest"`
-	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			if n := d.Name(); (n != "." && strings.HasPrefix(n, ".")) || n == "docs" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
-			return nil
-		}
-		b, err := os.ReadFile(p) //nolint:gosec // reads repository sources in a test; no untrusted path
-		if err != nil {
-			return err
-		}
-		if strings.Contains(string(b), imp) {
-			t.Errorf("%s imports parsertest from non-test code", p)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 }

@@ -251,11 +251,14 @@ func TestMutatorMutatesWhatItWasGiven(t *testing.T) {
 }
 
 func TestLiarFakes(t *testing.T) {
-	h, art, _ := bundle(t, t, "liar", "x\n")
 	p := Liar{Name: "liar", Version: "1.0.0", Mode: LieUndeclaredType}
-	res := h.RunLenient(p, h.Input(p, art, nil, false))
-	if len(res.Records) != 1 || res.Records[0].Type != "call" {
-		t.Fatalf("undeclared type: %+v", res)
+	em := &testEmitter{}
+	h, art, _ := bundle(t, t, "liar", "x\n")
+	if err := p.Parse(context.Background(), h.Input(p, art, nil, false), em); err != nil {
+		t.Fatal(err)
+	}
+	if len(em.recs) != 1 || em.recs[0].Type != "call" {
+		t.Fatalf("undeclared type: %+v", em.recs)
 	}
 	for _, e := range p.Meta().Emits {
 		if e.Type == "call" {
@@ -265,6 +268,10 @@ func TestLiarFakes(t *testing.T) {
 	fp := Liar{Name: "liar", Version: "1.0.0", Mode: LieForeignPlatform}
 	if m := fp.Meta(); m.Platforms[0] != parse.PlatformIOS || !strings.HasPrefix(m.Inputs[0].Globs[0], "ios:") {
 		t.Errorf("foreign platform meta: %+v", m)
+	}
+	em = &testEmitter{}
+	if err := fp.Parse(context.Background(), h.Input(p, art, nil, false), em); err != nil || len(em.recs) != 1 || em.recs[0].Type != "message" {
+		t.Errorf("foreign platform record: %v, %+v", err, em.recs)
 	}
 }
 
@@ -289,5 +296,140 @@ func TestHogSpammerAndNondeterministic(t *testing.T) {
 	b := CanonicalRecords(h.Run(nd, h.Input(nd, art, nil, false)).Records)
 	if len(a) != 1 || len(b) != 1 || a[0] == b[0] {
 		t.Errorf("Nondeterministic gave equal output twice: %v %v", a, b)
+	}
+}
+
+// ctxProbe is an emitter that calls Err and Done on the context the parser
+// handed it, each under a timeout, and records whether they returned.
+type ctxProbe struct {
+	testEmitter
+	errReturned, doneReturned bool
+}
+
+func (e *ctxProbe) Emit(ctx context.Context, r records.Record) error {
+	e.errReturned = returnsWithin(func() { _ = ctx.Err() })
+	e.doneReturned = returnsWithin(func() { _ = ctx.Done() })
+	return e.testEmitter.Emit(ctx, r)
+}
+
+func returnsWithin(f func()) bool {
+	done := make(chan struct{})
+	go func() { f(); close(done) }() // a blocked call leaks this goroutine: the fake never unblocks it
+	select {
+	case <-done:
+		return true
+	case <-time.After(100 * time.Millisecond):
+		return false
+	}
+}
+
+func TestBlockingCtxParserContextReallyBlocks(t *testing.T) {
+	h, art, _ := bundle(t, t, "blk", "x\n")
+	p := BlockingCtxParser{Name: "blk", Version: "1.0.0"}
+	em := &ctxProbe{}
+	if err := p.Parse(context.Background(), h.Input(p, art, nil, false), em); err != nil {
+		t.Fatal(err)
+	}
+	if em.errReturned {
+		t.Error("ctx.Err() returned: the fake's context does not block")
+	}
+	if em.doneReturned {
+		t.Error("ctx.Done() returned: the fake's context does not block")
+	}
+	if len(em.recs) != 1 || em.warns != 1 {
+		t.Errorf("records %d, warnings %d", len(em.recs), em.warns)
+	}
+}
+
+func TestMutatorInputModeChangesEveryFieldItDocuments(t *testing.T) {
+	conf := 7
+	rec := &parse.RecoveryInfo{Class: "carved", Method: "m", Confidence: &conf}
+	snap := &parse.SnapshotInfo{Name: "s", Xid: 1}
+	mkArt := func() parse.Artifact {
+		return parse.Artifact{ID: "a", SHA256: "orig", Recovery: rec, Source: parse.SourceInfo{Kind: "file", Snapshot: snap}}
+	}
+	// the pointers are shared on purpose: a mutator that writes through them is seen here
+	pRec2, pSnap2 := &parse.RecoveryInfo{Class: "carved"}, &parse.SnapshotInfo{Name: "s", Xid: 1}
+	other := mkArt()
+	other.Recovery, other.Source.Snapshot = pRec2, pSnap2
+	in := &parse.Input{Primary: mkArt(), Artifacts: map[string]parse.Artifact{"primary": mkArt(), "wal": other}}
+	p := &Mutator{Name: "mut", Version: "1.0.0", Mode: MutateInput}
+	if err := p.Parse(context.Background(), in, &testEmitter{}); err != nil {
+		t.Fatal(err)
+	}
+	if in.Primary.SHA256 != "mutated" || in.Primary.Recovery != nil || in.Primary.Source.Kind != "mutated" {
+		t.Errorf("Primary: %+v", in.Primary)
+	}
+	if snap.Xid != 99 {
+		t.Errorf("the primary's snapshot was not rewritten in place: %+v", *snap)
+	}
+	a := in.Artifacts["wal"]
+	if a.SHA256 != "mutated" || a.Recovery != nil || a.Source.Kind != "mutated" {
+		t.Errorf("artifact: %+v", a)
+	}
+	if pRec2.Class != "mutated" {
+		t.Errorf("the artifact's recovery was not rewritten in place: %+v", *pRec2)
+	}
+	if pSnap2.Name != "mutated" || pSnap2.Xid != 99 {
+		t.Errorf("the artifact's snapshot was not rewritten in place: %+v", *pSnap2)
+	}
+}
+
+func TestMutatorMetaModeChangesEveryTarget(t *testing.T) {
+	p := &Mutator{Name: "mut", Version: "1.0.0", Mode: MutateMeta}
+	m := p.Meta() // the copy the host keeps
+	before := m.Clone()
+	h, art, _ := bundle(t, t, "mut", "x\n")
+	if err := p.Parse(context.Background(), h.Input(p, art, nil, false), &testEmitter{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Emits) != len(before.Emits) || m.Emits[0] == before.Emits[0] {
+		t.Errorf("Emits of the Meta the host holds: %+v, was %+v", m.Emits, before.Emits)
+	}
+	if m.Platforms[0] == before.Platforms[0] {
+		t.Errorf("Platforms of the Meta the host holds: %v", m.Platforms)
+	}
+	if m.Inputs[0].Globs[0] == before.Inputs[0].Globs[0] {
+		t.Errorf("Globs of the Meta the host holds: %v", m.Inputs[0].Globs)
+	}
+}
+
+func TestMutatorPayloadAfterEmitChangesWhatItKept(t *testing.T) {
+	h, art, _ := bundle(t, t, "mut", "x\n")
+	p := &Mutator{Name: "mut", Version: "1.0.0", Mode: MutatePayloadAfterEmit}
+	em := &testEmitter{}
+	if err := p.Parse(context.Background(), h.Input(p, art, nil, false), em); err != nil {
+		t.Fatal(err)
+	}
+	if len(em.recs) != 1 {
+		t.Fatalf("records %d", len(em.recs))
+	}
+	pl := em.recs[0].Payload
+	raw, _ := pl["raw"].(map[string]any)
+	if raw["k"] != "mutated" || pl["kind"] != "mutated" {
+		t.Errorf("the maps the parser kept were not changed after Emit: %v", pl)
+	}
+}
+
+func TestWellBehavedLinesCap(t *testing.T) {
+	h, art, _ := bundle(t, t, "cap", "a\nb\nc\nd\ne\n")
+	p := WellBehaved{Name: "cap", Version: "1.0.0", Lines: 2}
+	res := h.Run(p, h.Input(p, art, nil, false))
+	if len(res.Records) != 2 || res.Notes["lines"] != "2" {
+		t.Errorf("records %d, notes %v, want 2 lines", len(res.Records), res.Notes)
+	}
+	if n := len(res.Progress); n == 0 || res.Progress[n-1] != [2]int64{2, 2} {
+		t.Errorf("progress %v", res.Progress)
+	}
+	all := WellBehaved{Name: "cap", Version: "1.0.0"}
+	if res := h.Run(all, h.Input(all, art, nil, false)); len(res.Records) != 5 {
+		t.Errorf("no cap: %d records, want 5", len(res.Records))
+	}
+}
+
+func TestFakeMetaDeclaresTheWalCompanion(t *testing.T) {
+	m := FakeMeta("x", "1.0.0")
+	if got := m.Inputs[0].Companions; len(got) != 1 || got[0] != "-wal" {
+		t.Errorf("companions %v, want [-wal]", got)
 	}
 }
