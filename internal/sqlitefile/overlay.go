@@ -123,6 +123,7 @@ func (v *View) applyWAL(a *attachedWAL) {
 	limit := s.Info.DBPagesAfterCommit
 	ov := &walOverlay{lower: v.src, wal: a.r, walSize: a.size, scan: s, dbPageSz: d.info.PageSize, limit: limit}
 	v.src = ov
+	ov.warnUnavailable(v, v.info.FilePages, max(v.info.FilePages, s.Info.MaxPageNumber))
 	// Pages that exist in some source: the database's own, or named by a
 	// committed frame. The commit frame's size claim is an upper bound only.
 	phys := max(v.info.FilePages, s.Info.MaxPageNumber)
@@ -161,3 +162,69 @@ type refusedSource struct{ err error }
 func (s refusedSource) has(uint32) bool { return false }
 
 func (s refusedSource) read(uint32) ([]byte, PageLoc, error) { return nil, PageLoc{}, s.err }
+
+// fileLocator is implemented by overlays: it names the file that supplies page
+// pgno, so a warning about a page names the file the page came from.
+type fileLocator interface{ fileOf(pgno uint32) FileKind }
+
+// sourceFile is the file src reads page pgno from (the database file for a
+// source that does not say).
+func sourceFile(src pageSource, pgno uint32) FileKind {
+	if l, ok := src.(fileLocator); ok {
+		return l.fileOf(pgno)
+	}
+	return FileDB
+}
+
+func (o *walOverlay) fileOf(pgno uint32) FileKind {
+	if slot, ok := o.scan.latest[pgno]; ok && pgno != 0 && pgno <= o.limit && o.frameReadable(slot) {
+		return FileWAL
+	}
+	return sourceFile(o.lower, pgno)
+}
+
+// warnUnavailable adds the attach-level live-pages-unavailable warnings: the
+// committed frames that do not lie wholly inside the WAL (File=WAL) and the gap
+// pages below the commit's size that no frame and no database page supplies
+// (File=DB). Such pages are unavailable, never zero-filled (the engine would
+// zero-fill them), and a walker need not meet them for the examiner to be told.
+func (o *walOverlay) warnUnavailable(v *View, dbPages, phys uint32) {
+	var bad, firstSlot uint32
+	supplied := map[uint32]bool{}
+	for pg, slot := range o.scan.latest {
+		if pg == 0 || pg > o.limit {
+			continue
+		}
+		if !o.frameReadable(slot) {
+			bad++
+			if firstSlot == 0 || slot < firstSlot {
+				firstSlot = slot
+			}
+			continue
+		}
+		supplied[pg] = true
+	}
+	if bad > 0 {
+		v.warns.add(Warning{Code: WarnLivePagesUnavailable, File: FileWAL, Msg: fmt.Sprintf(
+			"%d committed frame(s) do not lie wholly inside the WAL (first at slot %d); their pages are unavailable, never zero-filled", bad, firstSlot)})
+	}
+	top := min(o.limit, phys)
+	if top <= dbPages {
+		return
+	}
+	n := int64(top - dbPages)
+	first := dbPages + 1
+	var have int64
+	for pg := range supplied {
+		if pg > dbPages && pg <= top {
+			have++
+		}
+	}
+	for supplied[first] {
+		first++
+	}
+	if gap := n - have; gap > 0 {
+		v.warns.add(Warning{Code: WarnLivePagesUnavailable, File: FileDB, Page: first, Msg: fmt.Sprintf(
+			"%d pages below the commit's size are in neither the WAL nor the database file (first is page %d); they are unavailable, never zero-filled", gap, first)})
+	}
+}

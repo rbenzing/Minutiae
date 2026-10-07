@@ -74,7 +74,7 @@ func (w *walker) damage(reason string) {
 // uncertain is the error of a lookup that cannot tell: the row may exist behind
 // the damage on page pgno.
 func (w *walker) uncertain(pgno uint32, reason string) error {
-	return &CorruptError{File: FileDB, Page: pgno, Reason: reason + ": the row may exist, the answer is uncertain"}
+	return &CorruptError{File: sourceFile(w.v.src, pgno), Page: pgno, Reason: reason + ": the row may exist, the answer is uncertain"}
 }
 
 // absent is the answer of a lookup that found nothing: "absent" when the path

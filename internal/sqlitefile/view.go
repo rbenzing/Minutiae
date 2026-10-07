@@ -140,5 +140,5 @@ func (v *View) ReadPage(pgno uint32) (pg Page, err error) {
 
 // warn records a warning about page pgno of the database file.
 func (v *View) warn(code string, pgno uint32, format string, a ...any) {
-	v.warns.add(Warning{Code: code, File: FileDB, Page: pgno, Msg: fmt.Sprintf(format, a...)})
+	v.warns.add(Warning{Code: code, File: sourceFile(v.src, pgno), Page: pgno, Msg: fmt.Sprintf(format, a...)})
 }

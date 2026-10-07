@@ -22,7 +22,7 @@ var goldenWarningCodes = []string{
 	"cell-too-large", "record-invalid", "record-reserved-serial", "btree-cycle", "btree-depth", "btree-order", "btree-shape", "freelist-cycle",
 	"freelist-count", "freelist-leaf-count", "freeblock-chain", "ptrmap-mismatch", "schema-row-invalid",
 	"schema-duplicate", "schema-sql-unparsed", "wal-header-invalid", "wal-page-size-mismatch", "wal-torn-tail",
-	"wal-mode-mismatch", "wal-frames-not-applied", "wal-page1-mismatch", "journal-header-invalid", "journal-sector-invalid", "journal-page-size-mismatch",
+	"wal-mode-mismatch", "wal-frames-not-applied", "wal-page1-mismatch", "live-pages-unavailable", "journal-header-invalid", "journal-sector-invalid", "journal-page-size-mismatch",
 	"journal-no-page-size", "journal-page-invalid", "journal-hot", "journal-super-unknown", "journal-and-wal",
 	"journal-duplicate-page", "snapshot-unavailable", "owner-changed", "limit-reached", "suppressed",
 }
@@ -79,8 +79,8 @@ func TestWarningCodesPinned(t *testing.T) {
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("exported Warn* constants differ from the Format reference\n got: %q\nwant: %q", got, want)
 	}
-	if len(want) != 45 {
-		t.Errorf("the golden slice has %d codes; the Format reference lists 45 (43 plus wal-frames-not-applied, ruled in Task 7, plus wal-page1-mismatch, ruled in Task 8)", len(want))
+	if len(want) != 46 {
+		t.Errorf("the golden slice has %d codes; the Format reference lists 46 (43 plus wal-frames-not-applied, wal-page1-mismatch and live-pages-unavailable, ruled in Tasks 7 and 8)", len(want))
 	}
 
 	// The collector accepts exactly this set, so a code any later test
