@@ -118,6 +118,11 @@ type Schema struct {
 	// may be incomplete: a page that no listed object owns is then not
 	// necessarily an orphan.
 	Skipped int
+
+	// maxFit is the step cap of one FitPage call (Limits.MaxFitSteps); 0 means the default.
+	maxFit  int64
+	fitOnce sync.Once // builds fit, the lookup index of the fit functions, on first use
+	fit     *fitIndex
 }
 
 // schemaCache holds the schema a view has read, and the budget it is charged.
@@ -245,7 +250,7 @@ func (v *View) Schema(ctx context.Context) (s *Schema, err error) {
 		return nil, err
 	}
 	lim := v.e.opts.Limits
-	sc := &Schema{Cookie: v.info.SchemaCookie, Format: v.info.SchemaFormat}
+	sc := &Schema{Cookie: v.info.SchemaCookie, Format: v.info.SchemaFormat, maxFit: v.e.opts.Limits.MaxFitSteps}
 	seen := map[string]bool{}
 	var total int64
 	totalWarned := false
