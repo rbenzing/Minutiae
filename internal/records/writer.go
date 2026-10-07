@@ -45,7 +45,11 @@ const (
 	maxErrorText      = 2048
 	maxWarnPath       = 4096
 	maxWarnReason     = 1024
-	maxWarnings       = 10000
+
+	// MaxWarningsPerIngest is the most analysis.warning entries (warnings and rejections together) one
+	// ingest writes; parse.MaxWarnings must equal it.
+	MaxWarningsPerIngest = 10000
+	maxWarnings          = MaxWarningsPerIngest
 )
 
 // WriterOptions tune batching. A batch is flushed when it holds BatchRows records
