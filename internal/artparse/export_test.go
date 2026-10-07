@@ -64,3 +64,14 @@ func WithClaims(r Registered, c []parse.TableClaim) Registered {
 	r.meta.Claims = c
 	return r
 }
+
+func WithBatchRows(o *Options, n int) { o.batchRows = n }
+
+// WithAuditHook installs a function called before every audit entry the host appends; an error refuses
+// the append.
+func WithAuditHook(o *Options, f func(action string, d map[string]any) error) { o.auditHook = f }
+
+// SetNewWriterForTest replaces the writer factory of a built host.
+func SetNewWriterForTest(h *Host, f func(*evidence.Case, records.Parser, records.WriterOptions) (IngestWriter, error)) {
+	h.newWriter = f
+}

@@ -27,7 +27,9 @@ type Options struct {
 	onOpen            func(artifactID string)
 	afterSize         func(artifactID string) // called once the file is open and its size checked, before it is read
 	afterStart        func()
-	wrapFile          func(artFile) artFile // wraps the opened artifact file (test seam: fault injection)
+	wrapFile          func(artFile) artFile                       // wraps the opened artifact file (test seam: fault injection)
+	batchRows         int                                         // records.WriterOptions.BatchRows of every job (0 = the writer default)
+	auditHook         func(action string, d map[string]any) error // called before each host audit append; an error refuses the append
 }
 
 // Host holds the case, the registry and the options.
@@ -42,6 +44,8 @@ type Host struct {
 	afterSize func(artifactID string)
 	afterSt   func()
 	wrapFile  func(artFile) artFile
+	batchRows int
+	auditHook func(action string, d map[string]any) error
 }
 
 // Production minimums that skipLimitMinimums lowers (the same numbers
@@ -87,6 +91,7 @@ func New(c *evidence.Case, ps []Registered, opt Options) (*Host, error) {
 	h := &Host{
 		c: c, registry: slices.Clone(ps), namers: opt.Namers, limits: opt.Limits,
 		src: opt.source, newWriter: opt.newWriter, onOpen: opt.onOpen, afterSize: opt.afterSize, afterSt: opt.afterStart, wrapFile: opt.wrapFile,
+		batchRows: opt.batchRows, auditHook: opt.auditHook,
 	}
 	if h.src == nil {
 		h.src = c

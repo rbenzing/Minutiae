@@ -3,6 +3,9 @@ package artparse_test
 import (
 	"context"
 	"errors"
+	"go/ast"
+	goparser "go/parser"
+	"go/token"
 	"io"
 	"os"
 	"path/filepath"
@@ -369,5 +372,87 @@ func TestPlanRowIsIncompleteWhenACompanionIs(t *testing.T) {
 	p := planOf(t, hostWith(t, c, nil, regFake(t, walParser{name: "w"}, "w")), artparse.Selection{})
 	if r := rowOf(t, p, "w"); !r.Incomplete || r.Status != artparse.StatusNew {
 		t.Errorf("row %+v, want a planned row marked Incomplete (its companion is)", r)
+	}
+}
+
+// Sealing what Probe was given must not seal the bundle: the Parse that follows needs its own readers
+// and Lookuper, and a Lookuper Probe kept stays sealed.
+func TestPrepareJobLeavesTheBundleUsableForParse(t *testing.T) {
+	c := newCase(t)
+	acquireStart(t, c, "D1", "A1", "logical")
+	putFile(t, c, "D1", "A1", fakePath("keep"), "x")
+	putFile(t, c, "D1", "A1", fakePath("sib"), "y")
+	kl := &keepLookup{name: "keep"}
+	h := hostWith(t, c, nil, regFake(t, kl, "keep"))
+	snap := snapshotOf(t, h)
+	jobs, _, err := h.Discover(context.Background(), snap, artparse.Selection{Parsers: []artparse.ParserRef{{Name: "keep"}}})
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("%v %v", jobs, err)
+	}
+	pr, err := artparse.PrepareJob(context.Background(), h, snap, jobs[0], "p1")
+	if err != nil || pr.Bundle == nil {
+		t.Fatalf("prepare: %+v %v", pr, err)
+	}
+	defer pr.Bundle.Close()
+	in := pr.Bundle.Input(false)
+	var b [1]byte
+	if _, err := in.Primary.R.ReadAt(b[:], 0); err != nil && !errors.Is(err, io.EOF) {
+		t.Errorf("the reader of the Parse input is sealed after Probe: %v", err)
+	}
+	found := in.Lookup.Find("android:**/parsertest/sib.dat")
+	if len(found) != 1 {
+		t.Fatalf("found %v", found)
+	}
+	if _, err := in.Lookup.Open(found[0]); err != nil {
+		t.Errorf("the Lookuper of the Parse input is sealed after Probe: %v", err)
+	}
+	if _, err := kl.lookup.Open(found[0]); !errors.Is(err, parse.ErrSealed) {
+		t.Errorf("the Lookuper Probe kept still opens: %v", err)
+	}
+}
+
+// keepLookup keeps the Lookuper Probe was given.
+type keepLookup struct {
+	name   string
+	lookup parse.Lookuper
+}
+
+func (p *keepLookup) Meta() parse.Meta { return parsertest.FakeMeta(p.name, "1.0.0") }
+func (p *keepLookup) Probe(_ context.Context, in *parse.Input) (parse.Applicability, error) {
+	p.lookup = in.Lookup
+	return parse.Applicability{Status: parse.Applicable}, nil
+}
+func (p *keepLookup) Parse(context.Context, *parse.Input, parse.Emitter) error { return nil }
+
+// The host uses the contract rules internal/parse shares with the strict test harness, not private
+// copies: the record rule in the emitter, the re-hash of every input after a job.
+func TestHostUsesTheSharedContractChecks(t *testing.T) {
+	fset := token.NewFileSet()
+	names, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	used := map[string]bool{}
+	for _, name := range names {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := goparser.ParseFile(fset, name, nil, goparser.SkipObjectResolution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			if sel, ok := n.(*ast.SelectorExpr); ok {
+				if id, ok := sel.X.(*ast.Ident); ok && id.Name == "parse" {
+					used[sel.Sel.Name] = true
+				}
+			}
+			return true
+		})
+	}
+	for _, rule := range []string{"CheckRecord", "CheckInputsUnchanged"} {
+		if !used[rule] {
+			t.Errorf("artparse does not use parse.%s", rule)
+		}
 	}
 }

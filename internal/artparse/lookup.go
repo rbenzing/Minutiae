@@ -19,6 +19,12 @@ var ErrLookupOpens = errors.New("artparse: too many Lookuper opens")
 type lookuper struct {
 	b     *bundle
 	probe *parse.ReadBudget
+	own   *sealSet // the seal set of the Probe input this Lookuper belongs to; nil for a Parse input
+}
+
+// sealed reports whether the bundle, or the Probe input this Lookuper was made for, is sealed.
+func (l *lookuper) sealed() bool {
+	return l.b.seals.isSealed() || (l.own != nil && l.own.isSealed())
 }
 
 var _ parse.Lookuper = (*lookuper)(nil)
@@ -75,7 +81,7 @@ func (l *lookuper) Find(glob string) []parse.Artifact {
 func (l *lookuper) Open(a parse.Artifact) (io.ReaderAt, error) {
 	b := l.b
 	b.mu.Lock()
-	if b.seals.isSealed() {
+	if l.sealed() {
 		b.mu.Unlock()
 		return nil, parse.ErrSealed
 	}
@@ -119,7 +125,7 @@ func (l *lookuper) Open(a parse.Artifact) (io.ReaderAt, error) {
 			return nil, err
 		}
 		switch {
-		case b.closed || b.seals.isSealed():
+		case b.closed || l.sealed():
 			loaded.close()
 			b.memUsed -= reserved
 			return nil, parse.ErrSealed
@@ -131,15 +137,15 @@ func (l *lookuper) Open(a parse.Artifact) (io.ReaderAt, error) {
 			b.opened[a.ID] = loaded
 			s = loaded
 		}
-		return b.finishOpen(a.ID, s, l.probe), nil
+		return b.finishOpen(a.ID, s, l.probe, l.own), nil
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.finishOpen(a.ID, s, l.probe), nil
+	return b.finishOpen(a.ID, s, l.probe, l.own), nil
 }
 
 // finishOpen records the open and wraps the source. b.mu is held.
-func (b *bundle) finishOpen(id string, s *source, probe *parse.ReadBudget) io.ReaderAt {
+func (b *bundle) finishOpen(id string, s *source, probe *parse.ReadBudget, own *sealSet) io.ReaderAt {
 	b.openList = append(b.openList, LookupOpen{ArtifactID: id, SHA256: s.rec.SHA256, Streamed: s.f != nil})
-	return b.seals.wrap(s, probe)
+	return b.wrapReader(s, probe, own)
 }

@@ -81,13 +81,18 @@ type sealSet struct {
 
 func (s *sealSet) wrap(r io.ReaderAt, budget *parse.ReadBudget) *parse.SealedReaderAt {
 	w := parse.NewSealedReaderAtShared(r, budget)
+	s.add(w)
+	return w
+}
+
+// add registers a reader made elsewhere (sealed at once when the set already is).
+func (s *sealSet) add(w *parse.SealedReaderAt) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.sealed {
 		w.Seal()
 	}
 	s.rs = append(s.rs, w)
-	return w
 }
 
 func (s *sealSet) seal() {
@@ -182,22 +187,19 @@ func (h *Host) loadSource(ctx context.Context, snap *Snapshot, id string, memMax
 	return s, nil
 }
 
-// rehash hashes the artifact on disk now, through a fresh OpenArtifact (so a
-// replaced file is seen, not only an edited one).
-func (h *Host) rehash(ctx context.Context, rec evidence.ManifestRecord) error {
+// hashNow hashes the artifact on disk now, through a fresh OpenArtifact (so a replaced file is seen,
+// not only an edited one), and returns the hash with the case path it was read from.
+func (h *Host) hashNow(ctx context.Context, rec evidence.ManifestRecord) (hash, path string, err error) {
 	f, now, err := h.c.OpenArtifact(rec.ID)
 	if err != nil {
-		return err
+		return "", "", err
 	}
 	defer func() { _ = f.Close() }()
-	hash := sha256.New()
-	if _, err := io.Copy(hash, ctxReader{ctx, f}); err != nil {
-		return err
+	sum := sha256.New()
+	if _, err := io.Copy(sum, ctxReader{ctx, f}); err != nil {
+		return "", "", err
 	}
-	if got := hex.EncodeToString(hash.Sum(nil)); got != rec.SHA256 {
-		return &HashMismatchError{ArtifactID: rec.ID, Path: now.Path, Want: rec.SHA256, Got: got}
-	}
-	return nil
+	return hex.EncodeToString(sum.Sum(nil)), now.Path, nil
 }
 
 // artFile is what the host needs of an opened artifact file.

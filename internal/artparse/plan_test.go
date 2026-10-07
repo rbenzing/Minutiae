@@ -297,14 +297,10 @@ func TestPlanAndRunShareOneFrontHalf(t *testing.T) {
 			t.Errorf("prepareJob does not call %s", name)
 		}
 	}
-	if _, ok := calls["Plan"]; !ok {
-		t.Fatal("Plan not found")
-	}
 	for _, fn := range []string{"Plan", "Run"} {
 		set, ok := calls[fn]
 		if !ok {
-			t.Logf("%s does not exist yet (Task 17 must call prepareJob and nothing else of the front half)", fn)
-			continue
+			t.Fatalf("%s not found: Plan and Run must both exist and reach the artifacts through prepareJob", fn)
 		}
 		if !set["prepareJob"] {
 			t.Errorf("%s does not call prepareJob", fn)

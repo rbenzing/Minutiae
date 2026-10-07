@@ -139,7 +139,7 @@ func (h *Host) prepareJob(ctx context.Context, snap *Snapshot, j Job, parseID st
 		app, perr = j.Parser.p.Probe(pctx, in)
 		return perr
 	})
-	b.seal()
+	b.sealProbe() // the Parse that follows gets inputs of its own
 	switch {
 	case g.Cancelled:
 		b.close()

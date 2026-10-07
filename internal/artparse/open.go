@@ -2,7 +2,9 @@ package artparse
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"sync"
 
@@ -26,6 +28,7 @@ type bundle struct {
 	parseID  string
 	members  []*member // the primary first, then the other roles by name
 	seals    sealSet
+	probed   sealSet         // the readers and Lookupers made for Probe inputs: sealed when Probe returns, without sealing the bundle
 	ctx      context.Context // the job context: every hash of a lookup open runs under it
 	mu       sync.Mutex      // guards the lookup state and memUsed (never held while hashing)
 	memUsed  int64
@@ -38,8 +41,9 @@ type bundle struct {
 // LookupOpen records an artifact a parser opened through its Lookuper, for the
 // parse.job.end audit entry.
 type LookupOpen struct {
-	ArtifactID, SHA256 string
-	Streamed           bool // served from the file (pre- and post-hashed) rather than from memory
+	ArtifactID string `json:"artifact_id"`
+	SHA256     string `json:"sha256"`
+	Streamed   bool   `json:"streamed"` // served from the file (pre- and post-hashed) rather than from memory
 }
 
 // openBundle verifies and loads every member of job j: the primary first, then
@@ -90,19 +94,21 @@ func (mb *member) artifact() parse.Artifact {
 func (b *bundle) input(forProbe bool) *parse.Input {
 	lim := b.h.limits
 	var probe *parse.ReadBudget // one budget per Probe call, shared by every reader of this Input
+	var own *sealSet            // sealed on its own when Probe returns
 	if forProbe {
 		probe = parse.NewReadBudget(lim.ProbeBytes)
+		own = &b.probed
 	}
 	in := &parse.Input{
 		Job:       parse.JobInfo{ParseID: b.parseID, Job: b.job.N, Parser: parse.Identity{Name: b.job.Parser.meta.Name, Version: b.job.Parser.meta.Version, Hash: b.job.Parser.hash}},
 		Artifacts: map[string]parse.Artifact{},
-		Lookup:    &lookuper{b: b, probe: probe},
+		Lookup:    &lookuper{b: b, probe: probe, own: own},
 		Limits:    lim,
 		Budget:    parse.NewBudget(lim.MemBudget).View(),
 	}
 	for i, mb := range b.members {
 		a := mb.artifact()
-		a.R = b.seals.wrap(mb.src, probe)
+		a.R = b.wrapReader(mb.src, probe, own)
 		if i == 0 {
 			in.Primary = a
 		}
@@ -115,31 +121,57 @@ func (b *bundle) input(forProbe bool) *parse.Input {
 // fail with parse.ErrSealed from now on. Idempotent and atomic.
 func (b *bundle) seal() { b.seals.seal() }
 
+// sealProbe makes every reader and Lookuper made for a Probe input fail with parse.ErrSealed from now
+// on, and leaves the bundle open for the inputs of the Parse that follows.
+func (b *bundle) sealProbe() { b.probed.seal() }
+
+// wrapReader hands out a sealed reader over r that the bundle seal reaches, and the set own (when not
+// nil) too.
+func (b *bundle) wrapReader(r io.ReaderAt, budget *parse.ReadBudget, own *sealSet) *parse.SealedReaderAt {
+	w := b.seals.wrap(r, budget)
+	if own != nil {
+		own.add(w)
+	}
+	return w
+}
+
 // recheck re-hashes every input from disk (the in-memory ones too: the case
 // file must still be what the manifest says) and every artifact opened through
 // Lookuper. A mismatch is a *HashMismatchError.
 func (b *bundle) recheck(ctx context.Context) error {
+	recs := make([]evidence.ManifestRecord, 0, len(b.members))
 	for _, mb := range b.members {
-		if err := b.h.rehash(ctx, mb.src.rec); err != nil {
-			return err
-		}
+		recs = append(recs, mb.src.rec)
 	}
 	b.mu.Lock()
-	ids := make([]string, 0, len(b.opened))
-	for id := range b.opened {
-		ids = append(ids, id)
+	opened := make([]evidence.ManifestRecord, 0, len(b.opened))
+	for _, s := range b.opened {
+		opened = append(opened, s.rec)
 	}
 	b.mu.Unlock()
-	sort.Strings(ids)
-	for _, id := range ids {
-		b.mu.Lock()
-		s := b.opened[id]
-		b.mu.Unlock()
-		if err := b.h.rehash(ctx, s.rec); err != nil {
-			return err
-		}
+	sort.Slice(opened, func(i, j int) bool { return opened[i].ID < opened[j].ID })
+	recs = append(recs, opened...)
+	want := make([]parse.Artifact, len(recs))
+	for i, rec := range recs {
+		want[i] = parse.Artifact{ID: rec.ID, SHA256: rec.SHA256}
 	}
-	return nil
+	paths := map[string]string{} // the case path each hash was read from, for the error
+	err := parse.CheckInputsUnchanged(want, func(a parse.Artifact) (string, error) {
+		var rec evidence.ManifestRecord
+		for _, r := range recs {
+			if r.ID == a.ID {
+				rec = r
+			}
+		}
+		hash, path, err := b.h.hashNow(ctx, rec)
+		paths[a.ID] = path
+		return hash, err
+	})
+	var changed *parse.InputChangedError
+	if errors.As(err, &changed) {
+		return &HashMismatchError{ArtifactID: changed.ArtifactID, Path: paths[changed.ArtifactID], Want: changed.Want, Got: changed.Got}
+	}
+	return err
 }
 
 // recheckManifest requires the manifest, read again now, to hold for every
