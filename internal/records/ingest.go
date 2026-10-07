@@ -96,14 +96,15 @@ func (w *Writer) Start(ctx context.Context, so StartOptions) error {
 	}
 	known := make(map[string]bool, len(man))
 	manByID := make(map[string]evidence.ManifestRecord, len(man))
-	for _, m := range man {
-		manByID[m.ID] = m
-	}
 	byID := make(map[string]artifactInfo, len(man))
 	for _, m := range man {
+		if known[m.ID] {
+			// as OpenArtifact: an id held twice is an integrity error, never first- or last-wins
+			return fmt.Errorf("%w: artifact id %q appears more than once in the manifest", evidence.ErrIntegrity, clip(m.ID))
+		}
 		known[m.ID] = true
-		info := artifactInfo{ID: m.ID, SHA256: m.SHA256, Size: m.Size, Incomplete: m.Incomplete}
-		byID[m.ID] = info
+		manByID[m.ID] = m
+		byID[m.ID] = artifactInfo{ID: m.ID, SHA256: m.SHA256, Size: m.Size, Incomplete: m.Incomplete}
 	}
 	declared := make(map[string]artifactInfo, len(artifacts))
 	for _, id := range artifacts {

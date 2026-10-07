@@ -71,3 +71,12 @@ func FlipArtifactByte(t testing.TB, caseDir string, rec evidence.ManifestRecord,
 		t.Fatal(err)
 	}
 }
+
+// RemoveArtifactFile deletes the artifact's file, leaving the manifest, audit log and artifacts.db
+// alone (the artifact becomes unreadable).
+func RemoveArtifactFile(t testing.TB, caseDir string, rec evidence.ManifestRecord) {
+	t.Helper()
+	if err := os.Remove(filepath.Join(caseDir, filepath.FromSlash(rec.Path))); err != nil {
+		t.Fatal(err)
+	}
+}

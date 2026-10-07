@@ -54,6 +54,17 @@ func (c *Case) verifyRecovered(rep *VerifyReport, recs []ManifestRecord) {
 	ps := &problemSet{rep: rep, counts: map[string]int{}}
 	defer ps.flush()
 
+	// the verdict on a parent is the same for every artifact derived from it: one open per parent
+	singleRawCache := map[string]bool{}
+	singleRaw := func(p ManifestRecord) bool {
+		v, ok := singleRawCache[p.ID]
+		if !ok {
+			v = c.isSingleRaw(p)
+			singleRawCache[p.ID] = v
+		}
+		return v
+	}
+
 	uniq := make([]ManifestRecord, 0, len(recs))
 	seen := make(map[string]bool, len(recs))
 	byID := make(map[string]ManifestRecord, len(recs))
@@ -125,14 +136,13 @@ func (c *Case) verifyRecovered(rep *VerifyReport, recs []ManifestRecord) {
 		// R4 and R5: the runs of recovered files and carved bytes (R5 of every class bound to the unallocated scope)
 		if recovered && d != nil {
 			runs, err := c.DerivedRuns(r, byID)
-			strict := kind == KindRecover || kind == KindCarve // the others may record no image runs (a report)
 			if err != nil {
 				ps.add(rKindRuns, "%sruns sidecar unreadable: %v", pre, err)
-			} else if strict || len(runs) > 0 {
+			} else {
 				for _, p := range CheckRecoveredRuns(r, runs) {
 					ps.add(rKindRuns, "%s", p)
 				}
-				if parent, ok := byID[d.ParentID]; ok && c.isSingleRaw(parent) {
+				if parent, ok := byID[d.ParentID]; ok && singleRaw(parent) {
 					for _, p := range runsBeyondParent(pre, runs, parent.Size) {
 						ps.add(rKindRuns, "%s", p)
 					}

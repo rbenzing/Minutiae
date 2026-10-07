@@ -805,3 +805,17 @@ func SetManifestPath(t testing.TB, caseDir, artifactID, path string) {
 	recs[i].Path = path
 	writeManifestLines(t, caseDir, recs)
 }
+
+// DuplicateManifestRecord appends a second manifest line holding the same record (same id and
+// path) as artifactID, which verify and OpenArtifact refuse as a duplicate id.
+func DuplicateManifestRecord(t testing.TB, caseDir, artifactID string) {
+	t.Helper()
+	recs := readManifestLines(t, caseDir)
+	for _, r := range recs {
+		if r.ID == artifactID {
+			writeManifestLines(t, caseDir, append(recs, r))
+			return
+		}
+	}
+	t.Fatalf("no manifest record %q", artifactID)
+}
