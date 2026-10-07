@@ -86,6 +86,14 @@ func (d *DB) view(rollback bool) *View {
 			v.warns.add(Warning{Code: WarnJournalAndWAL, File: FileJournal, Msg: "a hot journal and a WAL are both present: the rollback is applied first and the WAL's committed frames over it, as the engine does"})
 		}
 	}
+	// A hot journal the library does not apply (a differing page size, a cap)
+	// leaves an interrupted transaction in the file: that is not the live state.
+	// The journal-hot warning is already on the view.
+	if rollback && jr != nil && jr.scan.Info.Hot && !jr.scan.Info.Applied {
+		if r := jr.scan.Info.NotAppliedReason; r == "page-size-mismatch" || r == "limit-reached" {
+			v.src = refusedSource{&LiveUnavailableError{File: FileJournal, Reason: r}}
+		}
+	}
 	v.cache = newPageCache(d.env, v.src, d.info.PageSize, st)
 	v.addr = v.addressable()
 	return v

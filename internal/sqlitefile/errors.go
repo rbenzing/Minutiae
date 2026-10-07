@@ -18,6 +18,7 @@ var (
 	ErrAlreadyAttached = errors.New("sqlitefile: companion file already attached")
 	ErrInternal        = errors.New("sqlitefile: internal error (recovered panic)")
 	ErrEngineRefuses   = errors.New("sqlitefile: the engine refuses to open this database")
+	ErrLiveUnavailable = errors.New("sqlitefile: the live state is not available")
 )
 
 // NotSQLiteReason says why a file is not taken for a database.
@@ -103,3 +104,18 @@ func (e *EngineRefusalError) Error() string {
 
 // Is matches ErrEngineRefuses.
 func (e *EngineRefusalError) Is(target error) bool { return target == ErrEngineRefuses }
+
+// LiveUnavailableError reports that the live state cannot be presented: a hot
+// journal is present but is not applied, so the database file holds the bytes of
+// an interrupted, uncommitted transaction. AsFound still shows the file.
+type LiveUnavailableError struct {
+	File   FileKind
+	Reason string // the journal's NotAppliedReason
+}
+
+func (e *LiveUnavailableError) Error() string {
+	return fmt.Sprintf("sqlitefile: the live state is not available: a hot %s is present but is not applied (%s), so the database file holds an uncommitted transaction; use AsFound to read the file as found", e.File, e.Reason)
+}
+
+// Is matches ErrLiveUnavailable.
+func (e *LiveUnavailableError) Is(target error) bool { return target == ErrLiveUnavailable }

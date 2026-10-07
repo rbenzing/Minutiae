@@ -346,24 +346,6 @@ func TestLiveIgnoresNonHotJournal(t *testing.T) {
 	}
 }
 
-func TestLiveIgnoresJournalPageSizeMismatch(t *testing.T) {
-	name := "journal page size 2048 against a 1024 database"
-	j := newJfix()
-	db, journal, _ := buildCase(t, j, name)
-	_, v, info := attachJ(t, db, journal, sqlitefile.Options{})
-	if info.Applied || info.NotAppliedReason != "page-size-mismatch" || info.PageSizeMatchesDB {
-		t.Errorf("%+v", info)
-	}
-	if !viewWarns(v, sqlitefile.WarnJournalPageSizeMismatch, 0) {
-		t.Errorf("journal-page-size-mismatch missing: %v", warnCodesOf(v))
-	}
-	// deliberate: the engine rewrites the database with the journal's page size
-	// and reads a malformed file; Live() shows the file as found
-	if got := j.viewLabels(t, v); got != lab("A", 40) {
-		t.Errorf("labels %s", got)
-	}
-}
-
 func TestLiveIgnoresJournalWithUnknownSuperJournal(t *testing.T) {
 	name := "super-journal named, file absent"
 	j := newJfix()
@@ -502,9 +484,9 @@ func TestLiveAgreesWithEngineOnEveryProbeRow(t *testing.T) {
 			switch {
 			case strings.HasPrefix(c.name, "journal page size 2048"):
 				// deviation: the engine adopts the journal's page size and reads garbage;
-				// Live() does not apply the journal and warns
-				if got != lab("A", 40) {
-					t.Errorf("labels %s", got)
+				// Live() has no state to present: the file holds an uncommitted transaction
+				if _, err := tryRows(v); !errors.Is(err, sqlitefile.ErrLiveUnavailable) {
+					t.Errorf("Live: %v", err)
 				}
 				return
 			case outcome.err != "" && c.name != "initial pages 0":
