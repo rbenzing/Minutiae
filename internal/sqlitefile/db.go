@@ -24,7 +24,8 @@ type DB struct {
 	warns *warnings
 
 	mu  sync.RWMutex
-	wal *attachedWAL // nil until AttachWAL
+	wal *attachedWAL     // nil until AttachWAL
+	jr  *attachedJournal // nil until AttachJournal
 }
 
 // Open reads the header of the database file read through db. size is

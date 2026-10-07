@@ -13,10 +13,6 @@ const (
 	IndexTree
 )
 
-// JournalInfo describes the rollback journal attached to a database. Task 9
-// gives it its fields.
-type JournalInfo struct{}
-
 // DBStatus is the state of a database and its companions, for the checklist
 // that asks what the examiner is looking at.
 type DBStatus struct {
@@ -33,6 +29,11 @@ func (d *DB) Status() DBStatus {
 		cp := w.Info
 		cp.Generations = append([]WALGeneration(nil), w.Info.Generations...)
 		s.WAL = &cp
+	}
+	if j := d.Journal(); j != nil {
+		cp := j.Info
+		cp.Segments = append([]JournalSegment(nil), j.Info.Segments...)
+		s.Journal = &cp
 	}
 	return s
 }
@@ -59,19 +60,31 @@ type View struct {
 // after it do not reach it. For a plain database (no companion files) the live
 // state is the file as stored. The view's warnings start as the database's
 // and grow as scans run.
-func (d *DB) Live() *View {
+func (d *DB) Live() *View { return d.view(true) }
+
+// view builds a view of the attached companions: with rollback the applied
+// hot journal is laid over the database file first, then the WAL over that
+// (the engine's order); without it the database file as found plus the WAL.
+func (d *DB) view(rollback bool) *View {
 	st := &counters{}
 	w := newWarnings(d.env.opts.Limits.MaxWarnings)
-	d.mu.RLock() // the warnings and the attached WAL form one snapshot
-	a := d.wal
+	d.mu.RLock() // the warnings and the attached files form one snapshot
+	a, jr := d.wal, d.jr
 	for _, x := range d.warns.snapshot() {
 		w.add(x)
 	}
 	d.mu.RUnlock()
 	v := &View{d: d, e: d.env, info: d.Info(), st: st, warns: w}
 	v.src = dbSource{d}
+	rolled := rollback && jr != nil && jr.scan.Info.Applied
+	if rolled {
+		v.applyJournal(jr)
+	}
 	if a != nil {
 		v.applyWAL(a)
+		if rolled && a.scan.Info.UsedByLive {
+			v.warns.add(Warning{Code: WarnJournalAndWAL, File: FileJournal, Msg: "a hot journal and a WAL are both present: the rollback is applied first and the WAL's committed frames over it, as the engine does"})
+		}
 	}
 	v.cache = newPageCache(d.env, v.src, d.info.PageSize, st)
 	v.addr = v.addressable()
