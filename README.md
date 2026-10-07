@@ -247,7 +247,9 @@ reads only: it never changes the case.
 
 If the index is not current (a case just upgraded, or a build with a newer
 normalization), `records search` and ingesting refuse until `records reindex`
-has run; `case verify` says so in a notice.
+has run; `case verify` says so in a notice (exit 0: the index content is then not
+compared until the reindex). A state that the audit log does not explain, such as an
+edited or deleted index state, is a problem (exit 4) and the content is still compared.
 
 ### Verify
 
@@ -271,7 +273,7 @@ Every command accepts `--json` for machine-readable output.
 | `1` | General error (also a search that ran past `--timeout`, and a reindex or an ingest refused because another ingest or reindex is active) |
 | `2` | Usage error (bad flag, missing argument, unknown command, a bad filter, cursor, page or search query, a case that needs `case upgrade`, or a full-text index that is not current: run `records reindex`) |
 | `3` | Device error (not found, unauthorized, not rooted, unsupported, write not allowed) |
-| `4` | Integrity failure (`case verify` found a problem, such as a full-text index that does not equal the records; the audit log/database is missing or corrupt, or the records database schema is not the one this build defines) |
+| `4` | Integrity failure (`case verify` found a problem, such as a full-text index that does not equal the records; the audit log/database is missing or corrupt, or the records database schema is not the one this build defines; also a damaged full-text structure met by a search) |
 
 ### Case layout
 
