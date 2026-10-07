@@ -107,7 +107,7 @@ type extractor struct {
 
 const sparseTooBig = "sparse size exceeds partition length; not extracted"
 
-const deletedReason = "deleted; recovery is roadmap sub-project 3"
+const deletedReason = "deleted; use image recover (roadmap sub-project 3)"
 
 // target handles one requested entry: a file or symlink, or a directory to walk.
 func (x *extractor) target(p string, e filesys.Entry) error {
