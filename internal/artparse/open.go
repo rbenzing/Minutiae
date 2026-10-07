@@ -26,7 +26,8 @@ type bundle struct {
 	parseID  string
 	members  []*member // the primary first, then the other roles by name
 	seals    sealSet
-	mu       sync.Mutex // guards the lookup state and memUsed
+	ctx      context.Context // the job context: every hash of a lookup open runs under it
+	mu       sync.Mutex      // guards the lookup state and memUsed (never held while hashing)
 	memUsed  int64
 	opened   map[string]*source // artifacts opened through Lookuper, by id
 	openList []LookupOpen
@@ -36,13 +37,16 @@ type bundle struct {
 
 // LookupOpen records an artifact a parser opened through its Lookuper, for the
 // parse.job.end audit entry.
-type LookupOpen struct{ ArtifactID, SHA256 string }
+type LookupOpen struct {
+	ArtifactID, SHA256 string
+	Streamed           bool // served from the file (pre- and post-hashed) rather than from memory
+}
 
 // openBundle verifies and loads every member of job j: the primary first, then
 // the other roles by name. On any failure nothing escapes and every handle is
 // closed.
 func (h *Host) openBundle(ctx context.Context, snap *Snapshot, j Job, parseID string) (*bundle, error) {
-	b := &bundle{h: h, snap: snap, job: j, parseID: parseID, opened: map[string]*source{}}
+	b := &bundle{h: h, ctx: ctx, snap: snap, job: j, parseID: parseID, opened: map[string]*source{}}
 	roles := make([]string, 0, len(j.Others))
 	for role := range j.Others {
 		roles = append(roles, role)
@@ -85,9 +89,9 @@ func (mb *member) artifact() parse.Artifact {
 // reaches them all.
 func (b *bundle) input(forProbe bool) *parse.Input {
 	lim := b.h.limits
-	var probe int64
+	var probe *parse.ReadBudget // one budget per Probe call, shared by every reader of this Input
 	if forProbe {
-		probe = lim.ProbeBytes
+		probe = parse.NewReadBudget(lim.ProbeBytes)
 	}
 	in := &parse.Input{
 		Job:       parse.JobInfo{ParseID: b.parseID, Job: b.job.N, Parser: parse.Identity{Name: b.job.Parser.meta.Name, Version: b.job.Parser.meta.Version, Hash: b.job.Parser.hash}},
@@ -200,4 +204,17 @@ func (b *bundle) close() {
 	for _, s := range b.opened {
 		s.close()
 	}
+}
+
+// streamed lists the ids of the members served from the file rather than from memory: for these
+// the post-job re-hash is the only defence against a change that is undone before it (job.end
+// records them).
+func (b *bundle) streamed() []string {
+	var ids []string
+	for _, mb := range b.members {
+		if mb.src.f != nil {
+			ids = append(ids, mb.src.rec.ID)
+		}
+	}
+	return ids
 }

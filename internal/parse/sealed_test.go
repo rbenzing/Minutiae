@@ -191,3 +191,25 @@ func TestSealedReaderAtExposesOnlyReading(t *testing.T) {
 		t.Fatalf("method set = %v, want %v", names, want)
 	}
 }
+
+func TestSharedReadBudgetCountsAcrossReaders(t *testing.T) {
+	data := bytes.NewReader(make([]byte, 100))
+	b := NewReadBudget(40)
+	r1, r2 := NewSealedReaderAtShared(data, b), NewSealedReaderAtShared(data, b)
+	buf := make([]byte, 30)
+	if n, err := r1.ReadAt(buf, 0); n != 30 || err != nil {
+		t.Fatalf("first read: %d %v", n, err)
+	}
+	if n, err := r2.ReadAt(buf, 0); n != 10 || !errors.Is(err, ErrProbeLimit) {
+		t.Errorf("the second reader may read only what is left of the shared budget: n=%d err=%v, want 10 and ErrProbeLimit", n, err)
+	}
+	if n, err := r1.ReadAt(buf[:1], 0); n != 0 || !errors.Is(err, ErrProbeLimit) {
+		t.Errorf("the budget is used up for every reader: n=%d err=%v", n, err)
+	}
+	if n, err := NewSealedReaderAtShared(data, nil).ReadAt(buf, 0); n != 30 || err != nil {
+		t.Errorf("a nil budget is unlimited: n=%d err=%v", n, err)
+	}
+	if n, err := NewSealedReaderAtShared(data, NewReadBudget(0)).ReadAt(buf, 0); n != 30 || err != nil {
+		t.Errorf("a zero budget is unlimited: n=%d err=%v", n, err)
+	}
+}

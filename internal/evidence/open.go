@@ -15,7 +15,7 @@ var ErrUnknownArtifact = errors.New("unknown artifact")
 // OpenArtifact opens a manifest artifact read-only. It returns ErrIntegrity
 // (wrapped) when the file is missing, is not a regular file, lies outside the
 // case, or its size differs from the manifest, or when the manifest holds more
-// than one record with id; other I/O failures (permission, descriptor
+// than one record with id, or when the file or a directory on its path is a symlink or junction; other I/O failures (permission, descriptor
 // exhaustion) are returned plainly, as they say nothing about the evidence.
 // It returns an error wrapping ErrUnknownArtifact when id is not in the
 // manifest. Full re-hashing is Verify's job.
@@ -42,6 +42,9 @@ func (c *Case) OpenArtifact(id string) (*os.File, ManifestRecord, error) {
 	if !strings.HasPrefix(r.Path, artifactsDir+"/") || !filepath.IsLocal(local) {
 		return nil, ManifestRecord{}, fmt.Errorf("%w: artifact %s: manifest path %q is outside the case artifacts directory", ErrIntegrity, r.ID, r.Path)
 	}
+	if err := c.refuseLinks(r, local); err != nil {
+		return nil, ManifestRecord{}, err
+	}
 	f, err := os.Open(filepath.Join(c.Dir, local))
 	if err != nil {
 		return nil, ManifestRecord{}, openError(r, err)
@@ -61,6 +64,27 @@ func (c *Case) OpenArtifact(id string) (*os.File, ManifestRecord, error) {
 			ErrIntegrity, r.ID, r.Path, st.Size(), r.Size)
 	}
 	return f, r, nil
+}
+
+// refuseLinks requires every component of the artifact's path below the case directory, the file
+// included, to be a real file or directory: a symlink or junction could point outside the case and
+// still serve the same bytes. A component that does not exist is left to the open that follows.
+func (c *Case) refuseLinks(r ManifestRecord, local string) error {
+	p := c.Dir
+	for _, part := range strings.Split(local, string(filepath.Separator)) {
+		p = filepath.Join(p, part)
+		st, err := os.Lstat(p)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return openError(r, err)
+		}
+		if st.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
+			return fmt.Errorf("%w: artifact %s (%s): %q is a link, not a file or directory inside the case", ErrIntegrity, r.ID, r.Path, part)
+		}
+	}
+	return nil
 }
 
 // openError classifies a failure to open or stat an artifact file: a missing

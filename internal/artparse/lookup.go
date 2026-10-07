@@ -1,7 +1,6 @@
 package artparse
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -19,7 +18,7 @@ var ErrLookupOpens = errors.New("artparse: too many Lookuper opens")
 // the bundle.
 type lookuper struct {
 	b     *bundle
-	probe int64
+	probe *parse.ReadBudget
 }
 
 var _ parse.Lookuper = (*lookuper)(nil)
@@ -70,22 +69,27 @@ func (l *lookuper) Find(glob string) []parse.Artifact {
 
 // Open opens an artifact Find returned: the same eligibility, the same hash
 // verification and memory rules as a member, counted against MaxLookupOpens and
-// recorded for the audit, sealed with the bundle.
+// the in-memory total, recorded for the audit, sealed with the bundle. The hash
+// runs under the job's context and outside the bundle's lock, so Close and
+// Recheck never wait behind it.
 func (l *lookuper) Open(a parse.Artifact) (io.ReaderAt, error) {
 	b := l.b
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	if b.seals.isSealed() {
+		b.mu.Unlock()
 		return nil, parse.ErrSealed
 	}
 	if b.opens >= b.h.limits.MaxLookupOpens {
+		b.mu.Unlock()
 		return nil, fmt.Errorf("%w: the limit is %d", ErrLookupOpens, b.h.limits.MaxLookupOpens)
 	}
 	rec, ok := b.snap.Record(a.ID)
 	if !ok {
+		b.mu.Unlock()
 		return nil, fmt.Errorf("%w: %q", evidence.ErrUnknownArtifact, a.ID)
 	}
 	if !b.lookupEligible(rec) {
+		b.mu.Unlock()
 		return nil, fmt.Errorf("artparse: artifact %s is not available to a Lookuper", a.ID)
 	}
 	b.opens++
@@ -97,17 +101,45 @@ func (l *lookuper) Open(a parse.Artifact) (io.ReaderAt, error) {
 			}
 		}
 	}
+	var reserved int64 // in-memory budget held for the load below
 	if s == nil {
-		var err error
-		s, err = b.h.loadSource(context.Background(), b.snap, a.ID, b.h.limits.MemInputMax, b.h.limits.MemInputTotal-b.memUsed)
+		if rec.Size <= min(b.h.limits.MemInputMax, b.h.limits.MemInputTotal-b.memUsed) {
+			reserved = rec.Size
+			b.memUsed += reserved
+		}
+	}
+	b.mu.Unlock()
+
+	if s == nil {
+		loaded, err := b.h.loadSource(b.ctx, b.snap, a.ID, b.h.limits.MemInputMax, reserved)
+		b.mu.Lock()
+		defer b.mu.Unlock()
 		if err != nil {
+			b.memUsed -= reserved
 			return nil, err
 		}
-		if s.data != nil {
-			b.memUsed += s.rec.Size
+		switch {
+		case b.closed || b.seals.isSealed():
+			loaded.close()
+			b.memUsed -= reserved
+			return nil, parse.ErrSealed
+		case b.opened[a.ID] != nil: // a concurrent open of the same artifact won
+			loaded.close()
+			b.memUsed -= reserved
+			s = b.opened[a.ID]
+		default:
+			b.opened[a.ID] = loaded
+			s = loaded
 		}
-		b.opened[a.ID] = s
+		return b.finishOpen(a.ID, s, l.probe), nil
 	}
-	b.openList = append(b.openList, LookupOpen{ArtifactID: a.ID, SHA256: s.rec.SHA256})
-	return b.seals.wrap(s, l.probe), nil
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.finishOpen(a.ID, s, l.probe), nil
+}
+
+// finishOpen records the open and wraps the source. b.mu is held.
+func (b *bundle) finishOpen(id string, s *source, probe *parse.ReadBudget) io.ReaderAt {
+	b.openList = append(b.openList, LookupOpen{ArtifactID: id, SHA256: s.rec.SHA256, Streamed: s.f != nil})
+	return b.seals.wrap(s, probe)
 }

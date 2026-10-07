@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"sync"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
@@ -44,13 +43,14 @@ func (c ctxReader) Read(p []byte) (int, error) {
 // the sealed readers wrapped around it are.
 type source struct {
 	rec  evidence.ManifestRecord
-	data []byte   // non-nil when held in memory
-	f    *os.File // else the read-only handle
+	data []byte            // non-nil when held in memory
+	f    artFile           // else the read-only handle
+	sr   *io.SectionReader // the only view of f a reader gets: never past the verified size
 }
 
 func (s *source) ReadAt(p []byte, off int64) (int, error) {
-	if s.f != nil {
-		return s.f.ReadAt(p, off)
+	if s.sr != nil {
+		return s.sr.ReadAt(p, off)
 	}
 	if off < 0 {
 		return 0, fmt.Errorf("negative offset %d", off)
@@ -79,8 +79,8 @@ type sealSet struct {
 	sealed bool
 }
 
-func (s *sealSet) wrap(r io.ReaderAt, probeLimit int64) *parse.SealedReaderAt {
-	w := parse.NewSealedReaderAt(r, probeLimit)
+func (s *sealSet) wrap(r io.ReaderAt, budget *parse.ReadBudget) *parse.SealedReaderAt {
+	w := parse.NewSealedReaderAtShared(r, budget)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.sealed {
@@ -121,9 +121,13 @@ func (h *Host) loadSource(ctx context.Context, snap *Snapshot, id string, memMax
 	if h.onOpen != nil {
 		h.onOpen(id)
 	}
-	f, rec, err := h.c.OpenArtifact(id)
+	of, rec, err := h.c.OpenArtifact(id)
 	if err != nil {
 		return nil, err
+	}
+	var f artFile = of
+	if h.wrapFile != nil {
+		f = h.wrapFile(f)
 	}
 	ok := false
 	defer func() {
@@ -150,8 +154,12 @@ func (h *Host) loadSource(ctx context.Context, snap *Snapshot, id string, memMax
 			return nil, err
 		}
 		var extra [1]byte
-		if n, _ := f.Read(extra[:]); n > 0 {
+		n, rerr := f.Read(extra[:])
+		if n > 0 {
 			return nil, integrityf("artifact %s (%s): the file grew after its size was checked", id, rec.Path)
+		}
+		if rerr != nil && !errors.Is(rerr, io.EOF) {
+			return nil, rerr // an I/O failure says nothing about the evidence
 		}
 		s.data = buf
 	} else {
@@ -162,7 +170,7 @@ func (h *Host) loadSource(ctx context.Context, snap *Snapshot, id string, memMax
 		if n != size {
 			return nil, integrityf("artifact %s (%s): read %d bytes, the manifest size is %d", id, rec.Path, n, size)
 		}
-		s.f = f
+		s.f, s.sr = f, io.NewSectionReader(f, 0, size)
 	}
 	if got := hex.EncodeToString(hash.Sum(nil)); got != rec.SHA256 {
 		return nil, &HashMismatchError{ArtifactID: id, Path: rec.Path, Want: rec.SHA256, Got: got}
@@ -190,4 +198,11 @@ func (h *Host) rehash(ctx context.Context, rec evidence.ManifestRecord) error {
 		return &HashMismatchError{ArtifactID: rec.ID, Path: now.Path, Want: rec.SHA256, Got: got}
 	}
 	return nil
+}
+
+// artFile is what the host needs of an opened artifact file.
+type artFile interface {
+	io.Reader
+	io.ReaderAt
+	io.Closer
 }

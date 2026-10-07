@@ -25,3 +25,11 @@ func (b *bundle) RecheckManifest(snap *Snapshot) error { return b.recheckManifes
 func (b *bundle) Lookups() []LookupOpen                { return b.lookups() }
 func (b *bundle) Close()                               { b.close() }
 func (h *Host) Limits() parse.Limits                   { return h.limits }
+
+func WithWrapFile(o *Options, f func(ReadFile) ReadFile) {
+	o.wrapFile = func(a artFile) artFile { return f(a) }
+}
+func (b *bundle) Streamed() []string { return b.streamed() }
+
+// ReadFile is the file the host reads an artifact from.
+type ReadFile = artFile

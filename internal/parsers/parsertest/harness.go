@@ -96,8 +96,8 @@ type readerSet struct {
 	sealed bool
 }
 
-func (s *readerSet) wrap(r io.ReaderAt, limit int64) *parse.SealedReaderAt {
-	w := parse.NewSealedReaderAt(r, limit)
+func (s *readerSet) wrap(r io.ReaderAt, budget *parse.ReadBudget) *parse.SealedReaderAt {
+	w := parse.NewSealedReaderAtShared(r, budget)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.sealed {
@@ -120,7 +120,7 @@ func (s *readerSet) sealAll() {
 // bundle. It has no hash check: the host's own tests cover that.
 type lookuper struct {
 	all   []parse.Artifact // sorted by id; R is the artifact's own reader
-	limit int64
+	limit *parse.ReadBudget
 	set   *readerSet
 }
 
@@ -165,9 +165,9 @@ func (h *Harness) Input(p parse.Parser, primary parse.Artifact, others map[strin
 	}
 	primaryRole := meta.Inputs[0].Role
 	lim := parse.DefaultLimits()
-	var probe int64
+	var probe *parse.ReadBudget // one budget per Probe call, shared by every reader and Lookuper open
 	if forProbe {
-		probe = lim.ProbeBytes
+		probe = parse.NewReadBudget(lim.ProbeBytes)
 	}
 	set := &readerSet{}
 	lk := &lookuper{limit: probe, set: set}

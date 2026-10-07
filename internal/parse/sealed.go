@@ -16,15 +16,14 @@ import (
 // then behave differently under the host.
 type SealedReaderAt struct {
 	r      io.ReaderAt
-	limit  int64
-	read   atomic.Int64
+	b      *ReadBudget
 	sealed atomic.Bool
 }
 
 // NewSealedReaderAt wraps r. probeLimit is the total number of bytes ReadAt
 // may return across all calls; 0 means unlimited.
 func NewSealedReaderAt(r io.ReaderAt, probeLimit int64) *SealedReaderAt {
-	return &SealedReaderAt{r: r, limit: max(probeLimit, 0)}
+	return &SealedReaderAt{r: r, b: NewReadBudget(probeLimit)}
 }
 
 // ReadAt reads from the wrapped reader. After Seal it returns 0, ErrSealed (a
@@ -45,23 +44,23 @@ func (s *SealedReaderAt) ReadAt(p []byte, off int64) (int, error) {
 		return 0, nil
 	}
 	want := int64(len(p))
-	if s.limit > 0 {
+	if s.b.limit > 0 {
 		// Reserve before reading so concurrent readers cannot exceed the limit.
 		for {
-			cur := s.read.Load()
-			remaining := s.limit - cur
+			cur := s.b.read.Load()
+			remaining := s.b.limit - cur
 			if remaining <= 0 {
 				return 0, ErrProbeLimit
 			}
 			want = min(int64(len(p)), remaining)
-			if s.read.CompareAndSwap(cur, cur+want) {
+			if s.b.read.CompareAndSwap(cur, cur+want) {
 				break
 			}
 		}
 	}
 	n, err := s.r.ReadAt(p[:want], off)
-	if s.limit > 0 && int64(n) < want {
-		s.read.Add(-(want - int64(n))) // give back what was not returned
+	if s.b.limit > 0 && int64(n) < want {
+		s.b.read.Add(-(want - int64(n))) // give back what was not returned
 	}
 	if s.sealed.Load() {
 		return 0, ErrSealed
@@ -91,4 +90,23 @@ func Tick(ctx context.Context, i int) error {
 		return nil
 	}
 	return ctx.Err()
+}
+
+// ReadBudget is a read limit shared by several SealedReaderAts: the host gives one Probe call ONE
+// budget, whatever number of inputs and Lookuper opens it reads.
+type ReadBudget struct {
+	limit int64
+	read  atomic.Int64
+}
+
+// NewReadBudget returns a budget of limit bytes; 0 means unlimited.
+func NewReadBudget(limit int64) *ReadBudget { return &ReadBudget{limit: max(limit, 0)} }
+
+// NewSealedReaderAtShared wraps r so that its reads count against b together with every other
+// reader made from b. A nil b means unlimited.
+func NewSealedReaderAtShared(r io.ReaderAt, b *ReadBudget) *SealedReaderAt {
+	if b == nil {
+		return NewSealedReaderAt(r, 0)
+	}
+	return &SealedReaderAt{r: r, b: b}
 }

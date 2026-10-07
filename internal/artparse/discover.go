@@ -27,6 +27,7 @@ type Options struct {
 	onOpen            func(artifactID string)
 	afterSize         func(artifactID string) // called once the file is open and its size checked, before it is read
 	afterStart        func()
+	wrapFile          func(artFile) artFile // wraps the opened artifact file (test seam: fault injection)
 }
 
 // Host holds the case, the registry and the options.
@@ -40,6 +41,7 @@ type Host struct {
 	onOpen    func(artifactID string)
 	afterSize func(artifactID string)
 	afterSt   func()
+	wrapFile  func(artFile) artFile
 }
 
 // Production minimums that skipLimitMinimums lowers (the same numbers
@@ -81,7 +83,7 @@ func New(c *evidence.Case, ps []Registered, opt Options) (*Host, error) {
 	}
 	h := &Host{
 		c: c, registry: slices.Clone(ps), namers: opt.Namers, limits: opt.Limits,
-		src: opt.source, newWriter: opt.newWriter, onOpen: opt.onOpen, afterSize: opt.afterSize, afterSt: opt.afterStart,
+		src: opt.source, newWriter: opt.newWriter, onOpen: opt.onOpen, afterSize: opt.afterSize, afterSt: opt.afterStart, wrapFile: opt.wrapFile,
 	}
 	if h.src == nil {
 		h.src = c
