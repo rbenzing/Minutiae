@@ -398,7 +398,7 @@ func (h *Host) bundle(r Registered, p *candidate, groups map[string][]*candidate
 	}
 	if encryptedContent(job) {
 		job.Status = StatusUnparsed
-		job.Reason = appendReason(job.Reason, "encrypted content")
+		job.Reason = appendReason(job.Reason, "encrypted content (sub-project 10)")
 	}
 	if len(missing) > 0 {
 		if !explicit {

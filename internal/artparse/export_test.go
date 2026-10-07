@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
+	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/records"
 )
 
@@ -29,3 +30,13 @@ func SetMetaTimeout(d time.Duration) (restore func()) {
 }
 
 var AcquisitionKey = acquisitionKey
+
+// SetRegistry replaces the registry of a built host without the checks New makes, so a test can
+// plan with a parser that would not pass them.
+func SetRegistry(h *Host, ps ...Registered) { h.registry = ps }
+
+// WithEmits returns r with its declared emits replaced.
+func WithEmits(r Registered, e []parse.Emit) Registered {
+	r.meta.Emits = e
+	return r
+}
