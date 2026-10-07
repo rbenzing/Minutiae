@@ -591,7 +591,7 @@ func TestHistoryRowsFreelistLeaf(t *testing.T) {
 			switch r.TableBasis {
 			case sqlitefile.BasisFit:
 				fit++
-				if r.Table != "t" || r.Relation != sqlitefile.RelAbsentFromLive || *r.Rowid < 10 {
+				if r.Table != "t" || r.Relation != sqlitefile.RelUnknown || !hasNote(r, sqlitefile.NoteIdentityByFitOnly) || *r.Rowid < 10 {
 					t.Errorf("fit row %+v", r)
 				}
 				if *r.Rowid == 10 {
@@ -606,7 +606,7 @@ func TestHistoryRowsFreelistLeaf(t *testing.T) {
 				t.Errorf("basis %s", r.TableBasis)
 			}
 		}
-		if fit != 3 || none != 1 || st.Unknown != 1 || st.RowsByMethod[sqlitefile.MethodFreelist] != 4 {
+		if fit != 3 || none != 1 || st.Unknown != 4 || st.RowsByMethod[sqlitefile.MethodFreelist] != 4 {
 			t.Errorf("fit %d none %d stats %+v", fit, none, st)
 		}
 	})
