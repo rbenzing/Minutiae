@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/parse"
@@ -20,10 +22,11 @@ const (
 // PlanRow is one job of a plan with the status the front half of a run gave it. Status is one of the
 // status constants; Reason is the text after the colon of the F7 form status:reason.
 type PlanRow struct {
-	Job       Job
-	Status    string
-	Reason    string
-	Integrity bool // the artifact (or the manifest) did not match the evidence: exit 4 in the CLI
+	Job        Job
+	Status     string
+	Reason     string
+	Integrity  bool // the artifact (or the manifest) did not match the evidence: exit 4 in the CLI
+	Incomplete bool // a member of the bundle is an incomplete artifact (still planned; its records are flagged later)
 }
 
 // Plan lists every job of a selection with its status. Nothing is dropped: a job discovery could not
@@ -58,10 +61,36 @@ func (h *Host) Plan(ctx context.Context, sel Selection) (Plan, error) {
 		if pr.bundle != nil {
 			pr.bundle.close()
 		}
-		p.Rows = append(p.Rows, PlanRow{Job: j, Status: pr.status, Reason: pr.reason, Integrity: pr.integrity})
+		p.Rows = append(p.Rows, PlanRow{Job: j, Status: pr.status, Reason: pr.reason, Integrity: pr.integrity, Incomplete: jobIncomplete(j)})
 		p.ByStatus[pr.status]++
 	}
 	return p, nil
+}
+
+// jobIncomplete reports whether any member of the bundle is an incomplete artifact.
+func jobIncomplete(j Job) bool {
+	if j.Primary.Artifact.Incomplete {
+		return true
+	}
+	for _, m := range j.Others {
+		if m.Artifact.Incomplete {
+			return true
+		}
+	}
+	return false
+}
+
+// caseRelative removes the host path of the case directory from text that may carry it (an operating
+// system error names the file it could not open): a reason names the artifact by its case-relative
+// path only.
+func (h *Host) caseRelative(s string) string {
+	dir := h.c.Dir
+	for _, d := range []string{dir, filepath.ToSlash(dir)} {
+		s = strings.ReplaceAll(s, d+string(filepath.Separator), "")
+		s = strings.ReplaceAll(s, d+"/", "")
+		s = strings.ReplaceAll(s, d, ".")
+	}
+	return s
 }
 
 // prepared is the outcome of the front half of one job: the opened bundle (the caller owns it and
@@ -99,7 +128,7 @@ func (h *Host) prepareJob(ctx context.Context, snap *Snapshot, j Job, parseID st
 			return prepared{}, cerr
 		}
 		if errors.Is(err, evidence.ErrIntegrity) {
-			return prepared{status: StatusRefused, reason: "integrity: " + cleanAuditText(err.Error(), maxReason), integrity: true}, nil
+			return prepared{status: StatusRefused, reason: "integrity: " + cleanAuditText(h.caseRelative(err.Error()), maxReason), integrity: true}, nil
 		}
 		return prepared{}, err
 	}

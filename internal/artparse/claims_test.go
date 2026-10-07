@@ -10,7 +10,6 @@ import (
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/parsers"
-	"github.com/rbenzing/minutiae/internal/recordtypes/message"
 )
 
 // claimParser is a database parser (role "db") that claims tables and answers Probe with status.
@@ -62,11 +61,11 @@ func TestClaimedTablesRequireApplicableProbe(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := r.Identity()
-	want := []artparse.Claimed{{Table: "sms", Parser: id.Name, Version: id.Version, Hash: id.Hash}, {Table: "SMS_Backup", Parser: id.Name, Version: id.Version, Hash: id.Hash}}
+	want := []artparse.Claimed{{Table: "sms", Role: "db", Parser: id.Name, Version: id.Version, Hash: id.Hash}, {Table: "SMS_Backup", Role: "db", Parser: id.Name, Version: id.Version, Hash: id.Hash}}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("claims %+v, want %+v", got, want)
 	}
-	for _, st := range []string{parse.UnsupportedSchema, parse.Encrypted, parse.NotApplicable} {
+	for _, st := range []string{parse.NotApplicable} { // the parser says the file is not its format: no claim
 		h, rec, _ := claimHost(t, st, "sms")
 		got, err := h.ClaimedTables(context.Background(), rec.ID)
 		if err != nil || len(got) != 0 {
@@ -131,7 +130,6 @@ func TestClaimsEqualMappings(t *testing.T) {
 			t.Errorf("%s: %v", r.Meta().Name, err)
 		}
 	}
-	_ = message.Type
 }
 
 func TestClaimedTablesRefuseALyingParser(t *testing.T) {

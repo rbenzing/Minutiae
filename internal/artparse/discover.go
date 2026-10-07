@@ -81,6 +81,9 @@ func New(c *evidence.Case, ps []Registered, opt Options) (*Host, error) {
 			return nil, err
 		}
 	}
+	if err := checkClaimUniqueness(ps); err != nil {
+		return nil, err
+	}
 	h := &Host{
 		c: c, registry: slices.Clone(ps), namers: opt.Namers, limits: opt.Limits,
 		src: opt.source, newWriter: opt.newWriter, onOpen: opt.onOpen, afterSize: opt.afterSize, afterSt: opt.afterStart, wrapFile: opt.wrapFile,
