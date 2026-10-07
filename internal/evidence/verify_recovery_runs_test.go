@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -397,5 +398,41 @@ func TestVerifyRecoverAndCarveNoticedUntilR6Runs(t *testing.T) {
 		if strings.Contains(n, "not reproduced byte for byte") {
 			t.Errorf("R6 ran but the notice is still there: %s", n)
 		}
+	}
+}
+
+func TestVerifyRecoveredRunBoundIsPerParentInOneVerify(t *testing.T) {
+	// one verify, two parents with different verdicts (C41): the single raw import is bounded by its
+	// file size, the E01-signed one is not; a verdict cached under the wrong key would flip one of them
+	c, rawParent, _ := recoverParent(t)
+	e01 := make([]byte, 16384)
+	copy(e01, "EVF\x09\x0d\x0a\xff\x00")
+	src := evidence.Source{Kind: "import", DeviceID: evidencetest.ImageDevice, OriginalPath: "disk2.E01", Segment: 1, Segments: 1}
+	e01Parent, err := c.Capture(evidencetest.ImageDevice, "imp2", "disk2.E01", src, func(w io.Writer) error {
+		_, err := w.Write(e01)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	over := []evidence.Run{{Offset: 16000, Length: 1000}}
+	evidencetest.AddRecovered(t, c, e01Parent, nil, evidencetest.RecoveredSpec{
+		Path: "recovered/p1-mtfs/000001-e.bin", Runs: over, Data: bytes.Repeat([]byte{7}, 1000),
+	})
+	rawChild := evidencetest.AddRecovered(t, c, rawParent, nil, evidencetest.RecoveredSpec{
+		Path: "recovered/p1-mtfs/000002-r.bin", Runs: over, Data: bytes.Repeat([]byte{7}, 1000),
+	})
+	rep := verifyOf(t, c)
+	n := 0
+	for _, p := range rep.Problems {
+		if strings.Contains(p, "lies beyond the parent's") {
+			n++
+			if !strings.Contains(p, "000002-r.bin") {
+				t.Errorf("bound problem for the wrong artifact: %s", p)
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d bound problems, want exactly 1 (for %v):\n%s", n, rawChild.ID, strings.Join(rep.Problems, "\n"))
 	}
 }
