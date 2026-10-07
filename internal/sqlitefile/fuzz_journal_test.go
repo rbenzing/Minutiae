@@ -90,5 +90,6 @@ func FuzzJournal(f *testing.F) {
 				t.Fatalf("%d bytes charged for %d records", cb.peak, len(s.Records))
 			}
 		}
+		liveOverJournal(t, data)
 	})
 }

@@ -405,6 +405,38 @@ func journalCases() []journalCase {
 		f.b.CommitTo(w, s1)
 		return walMode(j.dbAfter), j.journal(512, -1).Bytes(), w.Bytes()
 	})
+	short := func(sector uint32, size int) buildFn {
+		return func(j *jfix, _ string) ([]byte, []byte, []byte) {
+			jr := j.f.b.NewJournal(512, 0xdeadbeef, 3)
+			jr.SetHeader(0, 0xdeadbeef, 3, sector, ovPS)
+			return j.dbAfter, jr.Bytes()[:size], nil
+		}
+	}
+	add("journal of 32 bytes, sector 32, initial pages 3", func(j *jfix, _ string) ([]byte, []byte, []byte) {
+		return j.dbAfter, j.f.b.NewJournal(32, 0xdeadbeef, 3).Bytes(), nil
+	})
+	add("journal of 511 bytes, sector 32, initial pages 3", short(32, 511))
+	add("journal of 512 bytes, sector 32, initial pages 3", short(32, 512))
+	add("initial size above the file, record for the last extra page", gapJournal([]uint32{10}))
+	add("initial size above the file, records for all extra pages", gapJournal([]uint32{8, 9, 10}))
+	add("later segment with its own nonce", func(j *jfix, _ string) ([]byte, []byte, []byte) {
+		jr := j.f.b.NewJournal(512, 0xdeadbeef, j.s0.Pages())
+		for i, pg := range j.changed {
+			if i == 2 {
+				jr.NewSegmentNonce(0x0badcafe)
+			}
+			jr.Record(pg, bytes.Clone(j.s0.Page(pg)))
+		}
+		return j.dbAfter, jr.Bytes(), nil
+	})
+	for _, n := range []int{superNameMax, superNameMax + 1} {
+		add(fmt.Sprintf("super-journal name of %d bytes, file absent, nRec 0xffffffff", n), func(j *jfix, _ string) ([]byte, []byte, []byte) {
+			jr := j.journal(512, -1)
+			jr.SetHeader(0xffffffff, 0xdeadbeef, j.s0.Pages(), 512, ovPS)
+			jr.SuperJournal(longSuperName(n))
+			return j.dbAfter, jr.Bytes(), nil
+		})
+	}
 	return cs
 }
 
@@ -493,6 +525,15 @@ var journalWants = map[string]string{
 	"super-journal named, file present": out(lab("B", 40), 7, "", false),
 	// the rollback first, then the WAL on top (the first leaf holds rows 1..9)
 	"hot journal and a WAL": out(lab("W", 5, "A", 4, "B", 31), 7, "", false),
+	// a journal under 512 bytes is never played back (the first sector check)
+	"journal of 32 bytes, sector 32, initial pages 3":                out(lab("A", 40), 7, "", false),
+	"journal of 511 bytes, sector 32, initial pages 3":               out(lab("A", 40), 7, "", false),
+	"journal of 512 bytes, sector 32, initial pages 3":               out("", 3, malformed, false),
+	"initial size above the file, record for the last extra page":    out(lab("B", 40), 10, "", false),
+	"initial size above the file, records for all extra pages":       out(lab("B", 40), 10, "", false),
+	"later segment with its own nonce":                               out(lab("B", 40), 7, "", false),
+	"super-journal name of 1040 bytes, file absent, nRec 0xffffffff": out(lab("A", 40), 7, "", false),
+	"super-journal name of 1041 bytes, file absent, nRec 0xffffffff": out(lab("B", 40), 7, "", false),
 }
 
 // engineDB writes copies of db and journal (wal nil: none) and opens them in
@@ -515,4 +556,29 @@ func (j *jfix) engineDB(t testing.TB, db, journal []byte) *sql.DB {
 func (j *jfix) engineRows(t testing.TB, db, journal, _ []byte) [][]any {
 	t.Helper()
 	return engineQuery(t, j.engineDB(t, db, journal), "select rowid, a, b from t order by rowid")
+}
+
+// superNameMax is the longest super-journal name the engine honours (measured:
+// 1040 bytes are looked up, 1041 make the engine ignore the trailer).
+const superNameMax = 1040
+
+// longSuperName is an absent path of n bytes.
+func longSuperName(n int) string {
+	const p = "/nonexistent/"
+	return p + strings.Repeat("x", n-len(p))
+}
+
+// gapJournal is a journal whose initial size is 10 pages for a 7-page database,
+// with records for the given extra pages and the changed leaves.
+func gapJournal(extra []uint32) buildFn {
+	return func(j *jfix, _ string) ([]byte, []byte, []byte) {
+		jr := j.f.b.NewJournal(512, 0xdeadbeef, 10)
+		for _, pg := range extra {
+			jr.Record(pg, junkPage())
+		}
+		for _, pg := range j.changed {
+			jr.Record(pg, bytes.Clone(j.s0.Page(pg)))
+		}
+		return j.dbAfter, jr.Bytes(), nil
+	}
 }

@@ -327,3 +327,9 @@ func ListCharges(v *View) (freelist, layout int64) {
 	defer v.lists.mu.Unlock()
 	return v.lists.flCharge, v.lists.layCharge
 }
+
+// ViewHas reports whether the view page source can supply page pgno.
+func ViewHas(v *View, pgno uint32) bool { return v.src.has(pgno) }
+
+// JournalRecordCost is the budget charge per scanned journal record.
+const JournalRecordCost = journalRecordCost

@@ -131,3 +131,11 @@ func (j *Journal) SetHeader(nRec, nonce, initial, sector, pageSize uint32) {
 
 // Bytes returns a copy of the whole file.
 func (j *Journal) Bytes() []byte { return slices.Clone(j.buf) }
+
+// NewSegmentNonce starts another segment like NewSegment, but its header carries
+// its own nonce, which checksums the records after it: SQLite writes a fresh
+// nonce in every header.
+func (j *Journal) NewSegmentNonce(nonce uint32) {
+	j.nonce = nonce
+	j.startSegment()
+}

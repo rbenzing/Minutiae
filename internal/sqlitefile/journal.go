@@ -9,16 +9,17 @@ import (
 )
 
 const (
-	journalHeaderLen   = 28
-	journalMinSector   = 32
-	journalMaxSector   = 65536
-	journalRecordCost  = 64      // per scanned record: its JournalRecord and slice growth slack
-	journalSegmentCost = 64      // per segment
-	journalMapCost     = 64      // one page-to-record map entry
-	journalChunk       = 1 << 20 // bytes read per chunk (at least one record)
-	journalMaxTrailer  = 64 << 10
-	journalMaxProblems = 20 // per-record warnings kept per scan
-	journalSampleRecs  = 64 // records sampled per candidate sector when the header is zeroed
+	journalHeaderLen    = 28
+	journalMinSector    = 32
+	journalMaxSector    = 65536
+	journalRecordCost   = 128     // per scanned record: 40 bytes of JournalRecord, three times over for append growth (old and new backing arrays)
+	journalSegmentCost  = 64      // per segment
+	journalMapCost      = 64      // one page-to-record map entry
+	journalChunk        = 1 << 20 // bytes read per chunk (at least one record)
+	journalMaxSuperName = 1040    // the longest super-journal name the engine honours (measured: 1041 bytes make it ignore the trailer)
+	journalMinFile      = 512     // a journal shorter than the engine first sector is never played back
+	journalMaxProblems  = 20      // per-record warnings kept per scan
+	journalSampleRecs   = 64      // records sampled per candidate sector when the header is zeroed
 )
 
 // JournalSegment is one header of the journal and the records it governs.
@@ -199,7 +200,7 @@ func (js *jscan) regionEnd() (int64, error) {
 		return 0, err
 	}
 	nameLen := int64(binary.BigEndian.Uint32(t[0:]))
-	if !bytes.Equal(t[8:], journalMagic) || nameLen == 0 || nameLen > journalMaxTrailer || nameLen+16 > js.size {
+	if !bytes.Equal(t[8:], journalMagic) || nameLen == 0 || nameLen > journalMaxSuperName || nameLen+16 > js.size {
 		return js.size, nil
 	}
 	if err := js.l.alloc(nameLen); err != nil {
@@ -258,6 +259,10 @@ func (js *jscan) headerAndSegments(hdr [journalHeaderLen]byte, n, regionEnd int6
 		in.PageSize = psField
 	default:
 		js.warn(WarnJournalHeaderInvalid, 24, "page size %d is not a power of two in 512..65536", psField)
+		return nil
+	}
+	if js.size < journalMinFile {
+		js.warn(WarnJournalHeaderInvalid, 0, "the file holds %d bytes, fewer than the %d of the engine first sector; the engine never plays such a journal back", js.size, journalMinFile)
 		return nil
 	}
 	if int64(in.SectorSize) > js.size {
@@ -653,6 +658,24 @@ func (v *View) applyJournal(a *attachedJournal) {
 	in := &s.Info
 	ov := &journalOverlay{lower: v.src, j: a.r, size: a.size, ps: d.info.PageSize, initial: in.InitialPages, recs: s.Records, winner: s.winner}
 	v.src = ov
+	// Pages the journal's initial size claims beyond the file that no applied
+	// record supplies are unavailable, never zero-filled (the engine zero-fills).
+	if in.InitialPages > v.info.FilePages {
+		gap := int64(in.InitialPages - v.info.FilePages)
+		for pg := range s.winner {
+			if pg > v.info.FilePages && pg <= in.InitialPages {
+				gap--
+			}
+		}
+		first := v.info.FilePages + 1
+		for hasKey(s.winner, first) {
+			first++
+		}
+		if gap > 0 {
+			v.warns.add(Warning{Code: WarnLivePagesUnavailable, File: FileDB, Page: first, Msg: fmt.Sprintf(
+				"%d pages below the journal's initial size are in neither the database file nor an applied journal record (first is page %d); they are unavailable, never zero-filled", gap, first)})
+		}
+	}
 	phys := max(v.info.FilePages, s.maxApplied)
 	info := v.info
 	if _, ok := s.winner[1]; ok {
@@ -675,3 +698,5 @@ func (v *View) applyJournal(a *attachedJournal) {
 	info.PageCount = in.InitialPages
 	v.info = info
 }
+
+func hasKey(m map[uint32]int, k uint32) bool { _, ok := m[k]; return ok }
