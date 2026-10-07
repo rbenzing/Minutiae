@@ -2,7 +2,10 @@ package evidence
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -33,9 +36,19 @@ func recoveredKindNamespace(kind string) string {
 	return ""
 }
 
-// reproducedKinds are the kinds this build can reproduce byte for byte (composed check R6);
-// every other recovered kind gets a notice.
-var reproducedKinds = []string{KindRecover, KindCarve}
+// unreproducedNotices adds, after the composed checks, a notice for every recovered kind this build
+// does not reproduce byte for byte: slack, journal and report always; recover and carve until the
+// composed reproduce check (R6) has run in this verify.
+func unreproducedNotices(rep *VerifyReport) {
+	for _, k := range []string{KindRecover, KindCarve, KindSlack, KindJournal, KindReport} {
+		if (k == KindRecover || k == KindCarve) && rep.reproduceRan {
+			continue
+		}
+		if n := rep.recoveredByKind[k]; n > 0 {
+			rep.noticef("kind %q: %d artifact(s) are not reproduced byte for byte by this build (no rule for the kind yet)", k, n)
+		}
+	}
+}
 
 func (c *Case) verifyRecovered(rep *VerifyReport, recs []ManifestRecord) {
 	ps := &problemSet{rep: rep, counts: map[string]int{}}
@@ -119,6 +132,11 @@ func (c *Case) verifyRecovered(rep *VerifyReport, recs []ManifestRecord) {
 				for _, p := range CheckRecoveredRuns(r, runs) {
 					ps.add(rKindRuns, "%s", p)
 				}
+				if parent, ok := byID[d.ParentID]; ok && c.isSingleRaw(parent) {
+					for _, p := range runsBeyondParent(pre, runs, parent.Size) {
+						ps.add(rKindRuns, "%s", p)
+					}
+				}
 			}
 		}
 	}
@@ -127,11 +145,7 @@ func (c *Case) verifyRecovered(rep *VerifyReport, recs []ManifestRecord) {
 		return
 	}
 	rep.noticef("%s", recoveredNotice(rep.RecoveredArtifacts, byClass, lowest))
-	for _, k := range []string{KindSlack, KindJournal, KindReport} {
-		if n := byKind[k]; n > 0 && !slices.Contains(reproducedKinds, k) {
-			rep.noticef("kind %q: %d artifact(s) are not reproduced byte for byte by this build (no rule for the kind yet)", k, n)
-		}
-	}
+	rep.recoveredByKind = byKind
 }
 
 // checkRecoveredPath is R3 for one recovered artifact.
@@ -191,4 +205,42 @@ func recoveredNotice(total int, byClass map[string]int, lowest *int) string {
 		s += fmt.Sprintf("; lowest confidence %d", *lowest)
 	}
 	return s + "; recovered data is not live evidence"
+}
+
+// ewfSignature is the first 8 bytes of an E01 segment; its media is larger than the file.
+const ewfSignature = "EVF\x09\x0d\x0a\xff\x00"
+
+// isSingleRaw reports whether p is one raw image file whose size is the size of the media:
+// a one-segment import that is not an EWF segment. R6 checks every other format.
+func (c *Case) isSingleRaw(p ManifestRecord) bool {
+	if p.Source.Kind != "import" || p.Source.Derived != nil || p.Source.Segments > 1 {
+		return false
+	}
+	rel, err := SanitizeRelPath(p.Path)
+	if err != nil {
+		return false
+	}
+	f, err := os.Open(filepath.Join(c.Dir, rel)) //nolint:gosec // a manifest path made case-relative above
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	head := make([]byte, len(ewfSignature))
+	n, _ := io.ReadFull(f, head)
+	return string(head[:n]) != ewfSignature
+}
+
+// runsBeyondParent is the defence-in-depth part of R4: no run of an artifact copied from a
+// single raw parent may end past the parent's size (overflow-checked).
+func runsBeyondParent(pre string, runs []Run, parentSize int64) []string {
+	var out []string
+	for i, r := range runs {
+		if r.Offset < 0 || r.Length < 0 {
+			continue // reported as not valid by CheckRecoveredRuns (holes included)
+		}
+		if r.Offset > parentSize || r.Length > parentSize-r.Offset {
+			out = append(out, fmt.Sprintf("%srun %d (offset %d, length %d) lies beyond the parent's %d bytes", pre, i, r.Offset, r.Length, parentSize))
+		}
+	}
+	return out
 }

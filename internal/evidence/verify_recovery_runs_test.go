@@ -348,3 +348,54 @@ func TestVerifyRecoveredSlackScopeComesFromTheClass(t *testing.T) {
 	evidencetest.RequireProblem(t, rep, `recovery: scope "" does not match "unallocated", which class "slack" requires`)
 	evidencetest.RequireProblem(t, rep, `scope unallocated but 32 allocated and 0 unknown bytes (class "slack")`)
 }
+
+func TestVerifyRecoveredRunBeyondRawParentIsProblem(t *testing.T) {
+	c, parent, _ := recoverParent(t) // a 16384-byte raw import
+	evidencetest.AddRecovered(t, c, parent, nil, evidencetest.RecoveredSpec{
+		Runs: []evidence.Run{{Offset: 16000, Length: 1000}}, Data: bytes.Repeat([]byte{7}, 1000),
+	})
+	rep := verifyOf(t, c)
+	evidencetest.RequireProblem(t, rep, "run 0 (offset 16000, length 1000) lies beyond the parent's 16384 bytes")
+}
+
+func TestVerifyRecoveredRunEndingAtParentEndIsFine(t *testing.T) {
+	c, parent, _ := recoverParent(t)
+	evidencetest.AddRecovered(t, c, parent, nil, evidencetest.RecoveredSpec{
+		Runs: []evidence.Run{{Offset: 15384, Length: 1000}}, Data: bytes.Repeat([]byte{7}, 1000),
+	})
+	evidencetest.RequireClean(t, verifyOf(t, c))
+}
+
+func TestVerifyRecoveredRunBoundIsSkippedForNonRawParents(t *testing.T) {
+	// an E01 set's media is larger than its file: the file size says nothing about the runs
+	data := make([]byte, 16384)
+	copy(data, "EVF\x09\x0d\x0a\xff\x00")
+	c := evidencetest.NewCase(t)
+	parent := evidencetest.AddImage(t, c, data)
+	evidencetest.AddRecovered(t, c, parent, nil, evidencetest.RecoveredSpec{
+		Runs: []evidence.Run{{Offset: 16000, Length: 1000}}, Data: bytes.Repeat([]byte{7}, 1000),
+	})
+	evidencetest.RequireClean(t, verifyOf(t, c))
+}
+
+func TestVerifyRecoverAndCarveNoticedUntilR6Runs(t *testing.T) {
+	c, parent, data := recoverParent(t)
+	run := []evidence.Run{{Offset: 0, Length: 64}}
+	evidencetest.AddRecovered(t, c, parent, data, evidencetest.RecoveredSpec{Runs: run})
+	evidencetest.AddRecovered(t, c, parent, data, evidencetest.RecoveredSpec{
+		Kind: evidence.KindCarve, Class: evidence.ClassCarved, Method: "carve-signature", Scope: "raw", Path: "carved/c1.bin", Runs: run,
+	})
+	rep := verifyOf(t, c)
+	for _, k := range []string{"recover", "carve"} {
+		evidencetest.RequireNotice(t, rep, fmt.Sprintf("kind %q: 1 artifact(s) are not reproduced byte for byte by this build", k))
+	}
+	r6 := func(_ context.Context, _ *evidence.Case, _ []evidence.ManifestRecord, rep *evidence.VerifyReport) {
+		rep.MarkReproduceRan()
+	}
+	rep = verifyOf(t, c, r6)
+	for _, n := range rep.Notices {
+		if strings.Contains(n, "not reproduced byte for byte") {
+			t.Errorf("R6 ran but the notice is still there: %s", n)
+		}
+	}
+}

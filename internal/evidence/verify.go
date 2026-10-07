@@ -34,6 +34,9 @@ type VerifyReport struct {
 	// Notices are findings that are not integrity problems (for example an
 	// announced upgrade that was never concluded); never silent.
 	Notices []string `json:"notices"`
+
+	reproduceRan    bool // R6 ran in this verify (MarkReproduceRan)
+	recoveredByKind map[string]int
 }
 
 // OK reports whether no integrity problems were found.
@@ -121,6 +124,7 @@ func (c *Case) verifyRun(ctx context.Context, observe verifyChunkObserver, check
 	c.checkUnmanifested(&rep, inManifest)
 	c.checkStaging(&rep)
 	c.runComposedChecks(ctx, &rep, recs, checks)
+	unreproducedNotices(&rep)
 
 	_, err = c.Audit.Append("verify.run", "", map[string]any{
 		"ok": rep.OK(), "artifacts_checked": rep.ArtifactsChecked,
@@ -447,3 +451,7 @@ func (r VerifyReport) RecoveredSummary() string {
 	}
 	return fmt.Sprintf(", %d recovered (%d reproduced)", r.RecoveredArtifacts, r.RecoveredReproduced)
 }
+
+// MarkReproduceRan is called by the composed reproduce check (R6) when it ran, so the built-in
+// check stops noticing that recover and carve artifacts are not reproduced by this build.
+func (r *VerifyReport) MarkReproduceRan() { r.reproduceRan = true }
