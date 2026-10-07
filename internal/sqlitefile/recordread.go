@@ -29,6 +29,13 @@ type cellCtx struct {
 // ErrLimit; an invalid header is an error wrapping ErrCorrupt. The caller
 // holds the ledger's guard.
 func (e *env) readRecord(l *ledger, w *warnings, at cellCtx, p *payload, enc Encoding, want func(col int) bool) (rec Record, held int64, err error) {
+	return e.readRecordMode(l, w, at, p, enc, want, false)
+}
+
+// readRecordMode is readRecord; with recovered set, a text or blob over
+// Limits.MaxRecoveredValueBytes is clipped to that many bytes (Clipped, true Len)
+// instead of omitted, as history values are.
+func (e *env) readRecordMode(l *ledger, w *warnings, at cellCtx, p *payload, enc Encoding, want func(col int) bool, recovered bool) (rec Record, held int64, err error) {
 	lim := e.opts.Limits
 	if p.total > lim.MaxPayloadBytes {
 		return Record{}, 0, fmt.Errorf("%w: payload of %d bytes is over the %d byte cap", ErrLimit, p.total, lim.MaxPayloadBytes)
@@ -70,7 +77,7 @@ func (e *env) readRecord(l *ledger, w *warnings, at cellCtx, p *payload, enc Enc
 	held = cost
 	enc = normEnc(enc)
 	rec = Record{Serials: serials, HeaderLen: headerLen, BodyLen: bodyLen, Values: make([]Value, len(serials))}
-	acct := rowAcct{lim: lim}
+	acct := rowAcct{lim: lim, recovered: recovered}
 	firstReserved := 0
 	pos := int64(headerLen)
 	for i, s := range serials {
@@ -95,9 +102,12 @@ func (e *env) readRecord(l *ledger, w *warnings, at cellCtx, p *payload, enc Enc
 			continue
 		}
 		var buf []byte
+		var clip bool
 		var scalarBuf [8]byte
 		if s >= 12 {
-			take, omit, _ := acct.admit(v.Kind == KindBlob, sz, i)
+			var take int64
+			var omit bool
+			take, omit, clip = acct.admit(v.Kind == KindBlob, sz, i)
 			if omit {
 				rec.Values[i] = v
 				continue
@@ -132,7 +142,7 @@ func (e *env) readRecord(l *ledger, w *warnings, at cellCtx, p *payload, enc Enc
 		}
 		v.Omitted = false
 		if !scalar(&v, s, buf) {
-			v.Bytes = buf[:len(buf):len(buf)]
+			v.Bytes, v.Clipped = buf[:len(buf):len(buf)], clip
 		}
 		rec.Values[i] = v
 	}

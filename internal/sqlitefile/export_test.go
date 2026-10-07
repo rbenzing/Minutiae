@@ -361,3 +361,7 @@ func SnapshotPayload(img PageImage, c Cell) (data []byte, damage string, err err
 	why, _, _ := p.damaged()
 	return buf[:n], why, nil
 }
+
+// HistLiveStats returns the work counters of the live view a history relates
+// its rows to.
+func HistLiveStats(h *Hist) Stats { return h.live.Stats() }
