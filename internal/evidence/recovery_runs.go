@@ -20,10 +20,12 @@ const MaxRecoveredRuns = 1 << 20
 const maxRunsLine = 256
 
 // DerivedRuns returns the image runs of a derived artifact: the inline
-// Derived.Runs, else the lines of its runs sidecar (strict JSON, one Run per
+// Derived.Runs, else the lines of its runs sidecar, which must be a regular file of kind runs
+// derived from the same parent. byID is the manifest indexed by artifact id (a caller that
+// checks many artifacts builds it once); nil makes DerivedRuns read the manifest itself. The sidecar (strict JSON, one Run per
 // line, no unknown fields, at most MaxRecoveredRuns lines of at most 256
 // bytes). An artifact with neither has no runs and no error.
-func (c *Case) DerivedRuns(rec ManifestRecord) ([]Run, error) {
+func (c *Case) DerivedRuns(rec ManifestRecord, byID map[string]ManifestRecord) ([]Run, error) {
 	d := rec.Source.Derived
 	switch {
 	case d == nil:
@@ -33,25 +35,37 @@ func (c *Case) DerivedRuns(rec ManifestRecord) ([]Run, error) {
 	case d.RunsArtifact == "":
 		return nil, nil
 	}
-	recs, err := c.Manifest()
-	if err != nil {
-		return nil, err
-	}
-	var sc *ManifestRecord
-	for i := range recs {
-		if recs[i].ID == d.RunsArtifact {
-			sc = &recs[i]
-			break
+	if byID == nil {
+		recs, err := c.Manifest()
+		if err != nil {
+			return nil, err
+		}
+		byID = make(map[string]ManifestRecord, len(recs))
+		for _, r := range recs {
+			if _, dup := byID[r.ID]; !dup {
+				byID[r.ID] = r
+			}
 		}
 	}
-	if sc == nil {
+	scRec, ok := byID[d.RunsArtifact]
+	if !ok {
 		return nil, fmt.Errorf("runs artifact %q is not in the manifest", d.RunsArtifact)
+	}
+	sc := &scRec
+	if sc.Source.Kind != "runs" || sc.Source.Derived == nil || sc.Source.Derived.ParentID != d.ParentID {
+		return nil, fmt.Errorf("runs artifact %q is not a runs sidecar of parent %q", sc.ID, d.ParentID)
 	}
 	rel := filepath.FromSlash(sc.Path)
 	if !filepath.IsLocal(rel) {
 		return nil, fmt.Errorf("runs artifact %q: path %q lies outside the case", sc.ID, sc.Path)
 	}
-	f, err := os.Open(filepath.Join(c.Dir, rel)) //nolint:gosec // a case-relative path checked above
+	full := filepath.Join(c.Dir, rel)
+	if fi, err := os.Lstat(full); err != nil {
+		return nil, fmt.Errorf("runs artifact %q: %w", sc.ID, err)
+	} else if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("runs artifact %q: %q is not a regular file", sc.ID, sc.Path)
+	}
+	f, err := os.Open(full) //nolint:gosec // a case-relative path checked above
 	if err != nil {
 		return nil, fmt.Errorf("runs artifact %q: %w", sc.ID, err)
 	}
@@ -173,9 +187,14 @@ func CheckRecoveredRuns(rec ManifestRecord, runs []Run) []string {
 			add("%d unknown bytes in a deleted-file artifact", a.Unknown)
 		}
 	}
+	// the scope of slack and journal classes comes from the class table, not from the stored field
+	scope := rv.Scope
+	if ci, ok := LookupClass(rv.Class); ok && ci.Scope != "" {
+		scope = ci.Scope
+	}
 	switch rv.Class {
 	case ClassCarved, ClassSlack, ClassJournalBlock, ClassJournalReport:
-		if rv.Scope == "unallocated" && (a.Allocated > 0 || a.Unknown > 0) {
+		if scope == "unallocated" && (a.Allocated > 0 || a.Unknown > 0) {
 			add("scope unallocated but %d allocated and %d unknown bytes (class %q)", a.Allocated, a.Unknown, rv.Class)
 		}
 	}

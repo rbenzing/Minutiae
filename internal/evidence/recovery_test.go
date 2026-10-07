@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -108,15 +110,26 @@ func TestDerivationJSONUnchangedWithoutRecovery(t *testing.T) {
 func TestVerifyDetectsRecoveryDifferingFromAudit(t *testing.T) {
 	image := bytes.Repeat([]byte("0123456789abcdef"), 512)
 	runs := []evidence.Run{{Offset: 1024, Length: 512}}
+	rv := func(f func(*evidence.Recovery)) func(*evidence.ManifestRecord) {
+		return func(r *evidence.ManifestRecord) { f(r.Source.Derived.Recovery) }
+	}
 	for _, tc := range []struct {
 		name string
-		mut  func(*evidence.Recovery)
+		mut  func(*evidence.ManifestRecord)
 	}{
-		{"method", func(r *evidence.Recovery) { r.Method = "fat-fragmented" }},
-		{"confidence", func(r *evidence.Recovery) { r.Confidence = ip(99) }},
-		{"alloc free", func(r *evidence.Recovery) { r.Alloc.Free++ }},
-		{"basis", func(r *evidence.Recovery) { r.Basis = []string{"dirent:9:9"} }},
-		{"algorithm", func(r *evidence.Recovery) { r.Algorithm = "minutiae-recover/2" }},
+		{"method", rv(func(r *evidence.Recovery) { r.Method = "fat-fragmented" })},
+		{"confidence", rv(func(r *evidence.Recovery) { r.Confidence = ip(99) })},
+		{"confidence removed", rv(func(r *evidence.Recovery) { r.Confidence = nil })},
+		{"alloc free", rv(func(r *evidence.Recovery) { r.Alloc.Free++ })},
+		{"basis", rv(func(r *evidence.Recovery) { r.Basis = []string{"dirent:9:9"} })},
+		{"algorithm", rv(func(r *evidence.Recovery) { r.Algorithm = "minutiae-recover/2" })},
+		{"class", rv(func(r *evidence.Recovery) { r.Class = evidence.ClassPostCheckpointFile })},
+		{"scope", rv(func(r *evidence.Recovery) { r.Scope = "raw" })},
+		{"content", rv(func(r *evidence.Recovery) { r.Content = "uniform" })},
+		{"excluded", rv(func(r *evidence.Recovery) { r.Excluded = []evidence.Run{{Offset: 0, Length: 1}} })},
+		{"journal", rv(func(r *evidence.Recovery) { r.Journal = &evidence.JournalRef{Seq: 1, Region: "live"} })},
+		{"params", rv(func(r *evidence.Recovery) { r.Params = map[string]string{"min_confidence": "0"} })},
+		{"recovery removed entirely", func(r *evidence.ManifestRecord) { r.Source.Derived.Recovery = nil }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := evidencetest.NewCase(t)
@@ -127,9 +140,7 @@ func TestVerifyDetectsRecoveryDifferingFromAudit(t *testing.T) {
 				t.Fatal(err)
 			}
 			evidencetest.RequireNoProblem(t, before, "source differs from audit")
-			evidencetest.RewriteManifest(t, c.Dir, rec.ID, func(r *evidence.ManifestRecord) {
-				tc.mut(r.Source.Derived.Recovery)
-			})
+			evidencetest.RewriteManifest(t, c.Dir, rec.ID, tc.mut)
 			rep, err := c.Verify()
 			if err != nil {
 				t.Fatal(err)
@@ -138,11 +149,35 @@ func TestVerifyDetectsRecoveryDifferingFromAudit(t *testing.T) {
 			evidencetest.RequireNoProblem(t, rep, "hash mismatch")
 		})
 	}
+	t.Run("a live artifact gains a recovery description", func(t *testing.T) {
+		c := evidencetest.NewCase(t)
+		parent := evidencetest.AddImage(t, c, image)
+		live, err := c.Capture("dev1", "x1", "p1-mtfs/a.bin", evidence.Source{
+			Kind: "extract", DeviceID: "dev1",
+			Derived: &evidence.Derivation{ParentID: parent.ID, ParentSHA256: parent.SHA256, Partition: 1, FSType: "mtfs", Runs: runs},
+		},
+			func(w io.Writer) error { _, err := w.Write(image[1024:1536]); return err })
+		if err != nil {
+			t.Fatal(err)
+		}
+		evidencetest.RewriteManifest(t, c.Dir, live.ID, func(r *evidence.ManifestRecord) {
+			r.Source.Derived.Recovery = &evidence.Recovery{Class: evidence.ClassDeletedFile, Method: "fat-contiguous", Confidence: ip(50), Algorithm: evidence.AlgorithmRecover}
+		})
+		rep, err := c.Verify()
+		if err != nil {
+			t.Fatal(err)
+		}
+		evidencetest.RequireProblem(t, rep, "source differs from audit")
+	})
 }
 
 func TestRecoveryCheckTable(t *testing.T) {
 	good := func(class, method string) evidence.Recovery {
-		return evidence.Recovery{Class: class, Method: method, Confidence: ip(40), Algorithm: evidence.AlgorithmRecover}
+		r := evidence.Recovery{Class: class, Method: method, Confidence: ip(40), Algorithm: evidence.AlgorithmRecover}
+		if ci, ok := evidence.LookupClass(class); ok {
+			r.Scope = ci.Scope
+		}
+		return r
 	}
 	longStr := strings.Repeat("x", 257)
 	many := func(n int) []string { return slices.Repeat([]string{"a"}, n) }
@@ -182,6 +217,70 @@ func TestRecoveryCheckTable(t *testing.T) {
 			r.Journal = &evidence.JournalRef{Seq: 2, Region: "stale"}
 			return r
 		}()),
+
+		// C25: the scope of slack and journal classes comes from the class table
+		mk("slack without scope", "slack", func() evidence.Recovery {
+			r := good("slack", "slack-file")
+			r.Confidence = ip(10)
+			r.Scope = ""
+			return r
+		}(), `recovery: scope "" does not match "unallocated", which class "slack" requires`),
+		mk("slack in scope raw", "slack", func() evidence.Recovery {
+			r := good("slack", "slack-file")
+			r.Confidence = ip(10)
+			r.Scope = "raw"
+			return r
+		}(), `recovery: scope "raw" does not match "unallocated", which class "slack" requires`),
+		mk("journal-block in scope volume", "journal", func() evidence.Recovery {
+			r := good("journal-block", "ext4-journal")
+			r.Journal = &evidence.JournalRef{Seq: 1, Region: "live"}
+			r.Scope = "volume"
+			return r
+		}(), `recovery: scope "volume" does not match "unallocated", which class "journal-block" requires`),
+		mk("journal-report without scope", "report", func() evidence.Recovery { r := good("journal-report", "ext4-journal"); r.Scope = ""; return r }(), `recovery: scope "" does not match "unallocated", which class "journal-report" requires`),
+		mk("post-checkpoint-file refuses a journal reference", "recover", func() evidence.Recovery {
+			r := good("post-checkpoint-file", "f2fs-rollforward")
+			r.Journal = &evidence.JournalRef{Seq: 1, Region: "live"}
+			return r
+		}(), `recovery: journal reference is not allowed for class "post-checkpoint-file"`),
+		mk("slack refuses a journal reference", "slack", func() evidence.Recovery {
+			r := good("slack", "slack-file")
+			r.Confidence = ip(10)
+			r.Journal = &evidence.JournalRef{Seq: 1, Region: "live"}
+			return r
+		}(), `recovery: journal reference is not allowed for class "slack"`),
+		mk("zero-length excluded run", "recover", func() evidence.Recovery {
+			r := good("deleted-file", "fat-contiguous")
+			r.Excluded = []evidence.Run{{Offset: 5, Length: 0}}
+			return r
+		}(), `recovery: excluded run 0 is not valid (negative, empty, a hole or overflowing)`),
+		mk("65 params", "recover", func() evidence.Recovery {
+			r := good("deleted-file", "fat-contiguous")
+			r.Params = map[string]string{}
+			for i := range 65 {
+				r.Params[fmt.Sprintf("key%02d", i)] = "v"
+			}
+			return r
+		}(), `recovery: params has 65 entries (at most 64)`),
+		mk("64 params are fine", "recover", func() evidence.Recovery {
+			r := good("deleted-file", "fat-contiguous")
+			r.Params = map[string]string{}
+			for i := range 64 {
+				r.Params[fmt.Sprintf("key%02d", i)] = "v"
+			}
+			return r
+		}()),
+		mk("negative excluded_runs", "recover", func() evidence.Recovery {
+			r := good("deleted-file", "fat-contiguous")
+			r.Alloc.ExcludedRuns = -1
+			return r
+		}(), `recovery: alloc values must not be negative`),
+		mk("negative unknown", "recover", func() evidence.Recovery { r := good("deleted-file", "fat-contiguous"); r.Alloc.Unknown = -1; return r }(), `recovery: alloc values must not be negative`),
+		mk("negative allocated", "recover", func() evidence.Recovery {
+			r := good("deleted-file", "fat-contiguous")
+			r.Alloc.Allocated = -1
+			return r
+		}(), `recovery: alloc values must not be negative`),
 
 		// R1
 		mk("unknown class", "recover", good("bogus", "fat-contiguous"), `recovery: class "bogus" is not known`),
@@ -403,6 +502,12 @@ func TestClassTableIsConsistent(t *testing.T) {
 		t.Error("ClassInfos exposes its table")
 	}
 	// pinned table values
+	wantScope := map[string]string{"slack": "unallocated", "journal-block": "unallocated", "journal-report": "unallocated"}
+	for _, ci := range again {
+		if ci.Scope != wantScope[ci.Class] {
+			t.Errorf("class %q scope %q want %q", ci.Class, ci.Scope, wantScope[ci.Class])
+		}
+	}
 	wantCeil := map[string]int{"deleted-file": 80, "post-checkpoint-file": 80, "carved": 70, "slack": 10, "journal-block": 100, "journal-report": 100}
 	for _, ci := range again {
 		if ci.MaxConfidence != wantCeil[ci.Class] {
@@ -613,6 +718,18 @@ func TestCheckRecoveredRuns(t *testing.T) {
 		{"deleted-file with unknown bytes", mkrec(100, del, "", evidence.AllocSummary{Free: 90, Unknown: 10}), r100, []string{pre + `10 unknown bytes in a deleted-file artifact`}},
 		{"carved unallocated with allocated bytes", mkrec(100, evidence.ClassCarved, "unallocated", evidence.AllocSummary{Free: 60, Allocated: 40}), r100, []string{pre + `scope unallocated but 40 allocated and 0 unknown bytes (class "carved")`}},
 		{"carved raw with allocated bytes", mkrec(100, evidence.ClassCarved, "raw", evidence.AllocSummary{Free: 60, Allocated: 40}), r100, nil},
+		{"slack with allocated bytes and no scope", mkrec(100, evidence.ClassSlack, "", evidence.AllocSummary{Free: 60, Allocated: 40}), r100, []string{pre + `scope unallocated but 40 allocated and 0 unknown bytes (class "slack")`}},
+		{"slack with allocated bytes and a stored scope that lies", mkrec(100, evidence.ClassSlack, "raw", evidence.AllocSummary{Free: 60, Allocated: 40}), r100, []string{pre + `scope unallocated but 40 allocated and 0 unknown bytes (class "slack")`}},
+		{"slack with unknown bytes", mkrec(100, evidence.ClassSlack, "", evidence.AllocSummary{Free: 90, Unknown: 10}), r100, []string{pre + `scope unallocated but 0 allocated and 10 unknown bytes (class "slack")`}},
+		{"journal-block with allocated bytes", mkrec(100, evidence.ClassJournalBlock, "", evidence.AllocSummary{Free: 60, Allocated: 40}), r100, []string{pre + `scope unallocated but 40 allocated and 0 unknown bytes (class "journal-block")`}},
+		{"journal-block with unknown bytes", mkrec(100, evidence.ClassJournalBlock, "", evidence.AllocSummary{Free: 90, Unknown: 10}), r100, []string{pre + `scope unallocated but 0 allocated and 10 unknown bytes (class "journal-block")`}},
+		{"journal-report with allocated bytes", mkrec(100, evidence.ClassJournalReport, "", evidence.AllocSummary{Free: 60, Allocated: 40}), r100, []string{pre + `scope unallocated but 40 allocated and 0 unknown bytes (class "journal-report")`}},
+		{"journal-report with unknown bytes", mkrec(100, evidence.ClassJournalReport, "", evidence.AllocSummary{Free: 90, Unknown: 10}), r100, []string{pre + `scope unallocated but 0 allocated and 10 unknown bytes (class "journal-report")`}},
+		{"carved unallocated with unknown bytes", mkrec(100, evidence.ClassCarved, "unallocated", evidence.AllocSummary{Free: 90, Unknown: 10}), r100, []string{pre + `scope unallocated but 0 allocated and 10 unknown bytes (class "carved")`}},
+		{"carved volume with unknown bytes", mkrec(100, evidence.ClassCarved, "volume", evidence.AllocSummary{Free: 90, Unknown: 10}), r100, nil},
+		{"slack all free is fine", mkrec(100, evidence.ClassSlack, "", free(100)), r100, nil},
+		{"negative length cancelled by the sum", mkrec(10, del, "", free(10)), []evidence.Run{{Offset: 0, Length: -5}, {Offset: 0, Length: 15}}, []string{pre + `run 0 is not valid (negative or overflowing)`}},
+		{"lengths overflow the sum", mkrec(1, del, "", free(1)), []evidence.Run{{Offset: 0, Length: math.MaxInt64}, {Offset: 0, Length: 1}}, []string{pre + `run lengths add up to more than 9223372036854775807 bytes`}},
 		{"too many runs", mkrec(int64(len(big)), del, "", free(int64(len(big)))), big, []string{pre + `too many runs (1048577, at most 1048576)`}},
 		{"too many inline runs", inline, make([]evidence.Run, 0), nil},
 	}
@@ -634,8 +751,19 @@ func TestCheckRecoveredRuns(t *testing.T) {
 func TestDerivedRunsSidecar(t *testing.T) {
 	c := evidencetest.NewCase(t)
 	parent := evidencetest.AddImage(t, c, []byte("img"))
+	idx := func() map[string]evidence.ManifestRecord {
+		recs, err := c.Manifest()
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := map[string]evidence.ManifestRecord{}
+		for _, r := range recs {
+			m[r.ID] = r
+		}
+		return m
+	}
 	sidecar := func(name string, content []byte) evidence.ManifestRecord {
-		rec, err := c.Capture("dev1", "s1", name, evidence.Source{Kind: "runs", DeviceID: "dev1"}, func(w io.Writer) error {
+		rec, err := c.Capture("dev1", "s1", name, evidence.Source{Kind: "runs", DeviceID: "dev1", Derived: &evidence.Derivation{ParentID: parent.ID, ParentSHA256: parent.SHA256}}, func(w io.Writer) error {
 			_, err := w.Write(content)
 			return err
 		})
@@ -657,27 +785,27 @@ func TestDerivedRunsSidecar(t *testing.T) {
 
 	t.Run("inline wins", func(t *testing.T) {
 		rec := evidence.ManifestRecord{Source: evidence.Source{Derived: &evidence.Derivation{Runs: []evidence.Run{{Offset: 1, Length: 2}}, RunsArtifact: "ignored"}}}
-		got, err := c.DerivedRuns(rec)
+		got, err := c.DerivedRuns(rec, nil)
 		if err != nil || !reflect.DeepEqual(got, []evidence.Run{{Offset: 1, Length: 2}}) {
 			t.Fatalf("%v %v", got, err)
 		}
 	})
 	t.Run("5000 runs", func(t *testing.T) {
 		sc := sidecar("five.runs.jsonl", lines(5000))
-		got, err := c.DerivedRuns(recFor(sc.ID))
+		got, err := c.DerivedRuns(recFor(sc.ID), idx())
 		if err != nil || len(got) != 5000 || got[4999] != (evidence.Run{Offset: 4999 * 4096, Length: 4096}) {
 			t.Fatalf("%d runs, err %v", len(got), err)
 		}
 	})
 	t.Run("last line without newline", func(t *testing.T) {
 		sc := sidecar("nonl.runs.jsonl", []byte("{\"offset\":0,\"length\":1}\n{\"offset\":5,\"length\":1}"))
-		got, err := c.DerivedRuns(recFor(sc.ID))
+		got, err := c.DerivedRuns(recFor(sc.ID), idx())
 		if err != nil || len(got) != 2 {
 			t.Fatalf("%v %v", got, err)
 		}
 	})
 	t.Run("no runs at all", func(t *testing.T) {
-		got, err := c.DerivedRuns(evidence.ManifestRecord{Source: evidence.Source{Derived: &evidence.Derivation{}}})
+		got, err := c.DerivedRuns(evidence.ManifestRecord{Source: evidence.Source{Derived: &evidence.Derivation{}}}, nil)
 		if err != nil || len(got) != 0 {
 			t.Fatalf("%v %v", got, err)
 		}
@@ -696,7 +824,7 @@ func TestDerivedRunsSidecar(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sc := sidecar(strings.ReplaceAll(tc.name, " ", "-")+".runs.jsonl", tc.content)
-			got, err := c.DerivedRuns(recFor(sc.ID))
+			got, err := c.DerivedRuns(recFor(sc.ID), idx())
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("got %d runs, err %v; want an error containing %q", len(got), err, tc.want)
 			}
@@ -704,15 +832,138 @@ func TestDerivedRunsSidecar(t *testing.T) {
 	}
 	t.Run("unknown field names the field", func(t *testing.T) {
 		sc := sidecar("uf.runs.jsonl", []byte("{\"offset\":0,\"length\":1,\"zzz\":2}\n"))
-		_, err := c.DerivedRuns(recFor(sc.ID))
+		_, err := c.DerivedRuns(recFor(sc.ID), idx())
 		if err == nil || !strings.Contains(err.Error(), "unknown field") {
 			t.Fatalf("err %v", err)
 		}
 	})
 	t.Run("missing sidecar id", func(t *testing.T) {
-		_, err := c.DerivedRuns(recFor("nope"))
+		_, err := c.DerivedRuns(recFor("nope"), idx())
 		if err == nil || !strings.Contains(err.Error(), `runs artifact "nope" is not in the manifest`) {
 			t.Fatalf("err %v", err)
 		}
 	})
+}
+
+func TestDerivedRunsSidecarMustBelongToTheArtifact(t *testing.T) {
+	c := evidencetest.NewCase(t)
+	parent := evidencetest.AddImage(t, c, []byte("img"))
+	body := []byte("{\"offset\":0,\"length\":1}\n")
+	capture := func(name string, src evidence.Source) evidence.ManifestRecord {
+		src.DeviceID = "dev1"
+		rec, err := c.Capture("dev1", "s1", name, src, func(w io.Writer) error { _, err := w.Write(body); return err })
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rec
+	}
+	index := func() map[string]evidence.ManifestRecord {
+		recs, err := c.Manifest()
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := map[string]evidence.ManifestRecord{}
+		for _, r := range recs {
+			m[r.ID] = r
+		}
+		return m
+	}
+	recFor := func(sc string) evidence.ManifestRecord {
+		return evidence.ManifestRecord{ID: "r", Source: evidence.Source{Kind: "recover", Derived: &evidence.Derivation{ParentID: parent.ID, RunsArtifact: sc}}}
+	}
+	own := &evidence.Derivation{ParentID: parent.ID, ParentSHA256: parent.SHA256}
+	t.Run("a good sidecar", func(t *testing.T) {
+		sc := capture("good.runs.jsonl", evidence.Source{Kind: "runs", Derived: own})
+		if got, err := c.DerivedRuns(recFor(sc.ID), index()); err != nil || len(got) != 1 {
+			t.Fatalf("%v %v", got, err)
+		}
+	})
+	t.Run("kind is not runs", func(t *testing.T) {
+		sc := capture("notruns.bin", evidence.Source{Kind: "import", Derived: own})
+		_, err := c.DerivedRuns(recFor(sc.ID), index())
+		if err == nil || !strings.Contains(err.Error(), "is not a runs sidecar of parent") {
+			t.Fatalf("err %v", err)
+		}
+	})
+	t.Run("another parent", func(t *testing.T) {
+		sc := capture("other.runs.jsonl", evidence.Source{Kind: "runs", Derived: &evidence.Derivation{ParentID: "someone-else"}})
+		_, err := c.DerivedRuns(recFor(sc.ID), index())
+		if err == nil || !strings.Contains(err.Error(), "is not a runs sidecar of parent") {
+			t.Fatalf("err %v", err)
+		}
+	})
+	t.Run("no derivation", func(t *testing.T) {
+		sc := capture("nod.runs.jsonl", evidence.Source{Kind: "runs"})
+		_, err := c.DerivedRuns(recFor(sc.ID), index())
+		if err == nil || !strings.Contains(err.Error(), "is not a runs sidecar of parent") {
+			t.Fatalf("err %v", err)
+		}
+	})
+	t.Run("not a regular file", func(t *testing.T) {
+		sc := capture("dir.runs.jsonl", evidence.Source{Kind: "runs", Derived: own})
+		p := filepath.Join(c.Dir, filepath.FromSlash(sc.Path))
+		if err := os.Remove(p); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(p, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		_, err := c.DerivedRuns(recFor(sc.ID), index())
+		if err == nil || !strings.Contains(err.Error(), "is not a regular file") {
+			t.Fatalf("err %v", err)
+		}
+	})
+	for _, bad := range []string{"../x.runs.jsonl", "a/../../x.runs.jsonl", "/x.runs.jsonl"} {
+		t.Run("path outside the case "+bad, func(t *testing.T) {
+			sc := capture("out"+strings.NewReplacer("/", "_", ".", "_").Replace(bad)+".runs.jsonl", evidence.Source{Kind: "runs", Derived: own})
+			idx := index()
+			r := idx[sc.ID]
+			r.Path = bad
+			idx[sc.ID] = r
+			_, err := c.DerivedRuns(recFor(sc.ID), idx)
+			if err == nil || !strings.Contains(err.Error(), "lies outside the case") {
+				t.Fatalf("err %v", err)
+			}
+		})
+	}
+	t.Run("the index replaces the manifest read", func(t *testing.T) {
+		sc := capture("idx.runs.jsonl", evidence.Source{Kind: "runs", Derived: own})
+		idx := index()
+		if err := os.Remove(filepath.Join(c.Dir, "manifest.jsonl")); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := c.DerivedRuns(recFor(sc.ID), idx); err != nil || len(got) != 1 {
+			t.Fatalf("%v %v", got, err)
+		}
+	})
+}
+
+func TestDerivedRunsLineLengthBoundary(t *testing.T) {
+	c := evidencetest.NewCase(t)
+	parent := evidencetest.AddImage(t, c, []byte("img"))
+	padded := func(n int) []byte { // a valid run line of exactly n bytes (JSON whitespace pads it)
+		line := `{"offset":0,"length":1}`
+		return []byte(line + strings.Repeat(" ", n-len(line)) + "\n")
+	}
+	for _, tc := range []struct {
+		n    int
+		fail bool
+	}{{256, false}, {257, true}} {
+		t.Run(fmt.Sprint(tc.n), func(t *testing.T) {
+			rec, err := c.Capture("dev1", "s1", fmt.Sprintf("l%d.runs.jsonl", tc.n),
+				evidence.Source{Kind: "runs", DeviceID: "dev1", Derived: &evidence.Derivation{ParentID: parent.ID}},
+				func(w io.Writer) error { _, err := w.Write(padded(tc.n)); return err })
+			if err != nil {
+				t.Fatal(err)
+			}
+			d := &evidence.Derivation{ParentID: parent.ID, RunsArtifact: rec.ID}
+			got, err := c.DerivedRuns(evidence.ManifestRecord{Source: evidence.Source{Derived: d}}, nil)
+			if tc.fail != (err != nil) {
+				t.Fatalf("%d runs, err %v; fail=%v", len(got), err, tc.fail)
+			}
+			if tc.fail && !strings.Contains(err.Error(), "longer than 256 bytes") {
+				t.Fatalf("err %v", err)
+			}
+		})
+	}
 }

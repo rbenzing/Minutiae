@@ -109,12 +109,13 @@ func (c *Case) verifyRecovered(rep *VerifyReport, recs []ManifestRecord) {
 			}
 		}
 
-		// R4 and R5: the runs of recovered files and carved bytes
-		if (kind == KindRecover || kind == KindCarve) && d != nil {
-			runs, err := c.DerivedRuns(r)
+		// R4 and R5: the runs of recovered files and carved bytes (R5 of every class bound to the unallocated scope)
+		if recovered && d != nil {
+			runs, err := c.DerivedRuns(r, byID)
+			strict := kind == KindRecover || kind == KindCarve // the others may record no image runs (a report)
 			if err != nil {
 				ps.add(rKindRuns, "%sruns sidecar unreadable: %v", pre, err)
-			} else {
+			} else if strict || len(runs) > 0 {
 				for _, p := range CheckRecoveredRuns(r, runs) {
 					ps.add(rKindRuns, "%s", p)
 				}

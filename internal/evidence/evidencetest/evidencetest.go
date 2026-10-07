@@ -88,6 +88,9 @@ func AddRecovered(t testing.TB, c *evidence.Case, parent evidence.ManifestRecord
 	if s.Path == "" {
 		s.Path = "recovered/p1-mtfs/000001-a.bin"
 	}
+	if ci, ok := evidence.LookupClass(s.Class); ok && s.Scope == "" {
+		s.Scope = ci.Scope // the classes bound to a scope take it from the table
+	}
 	if s.Partition == 0 {
 		s.Partition = 1
 	}

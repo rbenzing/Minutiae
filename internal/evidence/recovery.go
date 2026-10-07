@@ -79,7 +79,9 @@ type ClassInfo struct {
 	MaxConfidence          int
 	ConfidenceRequired     bool
 	ScopeRequired          bool
-	JournalRequired        bool
+	// Scope is the one scope the class is bound to (empty: the artifact chooses, see ScopeRequired).
+	Scope           string
+	JournalRequired bool
 }
 
 // ClassInfos returns a copy of the class table in a stable order.
@@ -126,17 +128,17 @@ var classTable = []ClassInfo{
 	{
 		Class: ClassSlack, Kind: KindSlack, Namespace: "slack",
 		MethodPrefixes: []string{"slack-"},
-		MaxConfidence:  10, ConfidenceRequired: true,
+		MaxConfidence:  10, ConfidenceRequired: true, Scope: "unallocated",
 	},
 	{
 		Class: ClassJournalBlock, Kind: KindJournal, Namespace: "journal",
 		MethodPrefixes: []string{"ext4-journal", "f2fs-rollforward"},
-		MaxConfidence:  100, JournalRequired: true,
+		MaxConfidence:  100, JournalRequired: true, Scope: "unallocated",
 	},
 	{
 		Class: ClassJournalReport, Kind: KindReport, Namespace: "reports",
 		MethodPrefixes: []string{"ext4-journal", "f2fs-rollforward"},
-		MaxConfidence:  100,
+		MaxConfidence:  100, Scope: "unallocated",
 	},
 }
 

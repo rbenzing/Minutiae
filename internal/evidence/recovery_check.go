@@ -61,9 +61,15 @@ func (r *Recovery) Check(kind string) []string {
 	if r.Algorithm == "" {
 		add("algorithm is empty")
 	}
-	if r.Scope != "" && !slices.Contains(recoveryScopes, r.Scope) {
+	switch {
+	case known && ci.Scope != "":
+		// the scope of these classes comes from the class table, never from the stored field
+		if r.Scope != ci.Scope {
+			add("scope %q does not match %q, which class %q requires", r.Scope, ci.Scope, r.Class)
+		}
+	case r.Scope != "" && !slices.Contains(recoveryScopes, r.Scope):
 		add("scope %q is not one of %s", r.Scope, strings.Join(recoveryScopes, ", "))
-	} else if r.Scope == "" && known && ci.ScopeRequired {
+	case r.Scope == "" && known && ci.ScopeRequired:
 		add("scope is required for class %q", r.Class)
 	}
 	if r.Content != "" && !slices.Contains(recoveryContents, r.Content) {

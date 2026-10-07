@@ -336,3 +336,15 @@ func TestVerifyRecoveredStreamsProblemsCapped(t *testing.T) {
 		t.Fatalf("listed %d, further lines %d; want 50 and 1:\n%s", listed, further, strings.Join(rep.Problems, "\n"))
 	}
 }
+
+func TestVerifyRecoveredSlackScopeComesFromTheClass(t *testing.T) {
+	c, parent, data := recoverParent(t)
+	evidencetest.AddRecovered(t, c, parent, data, evidencetest.RecoveredSpec{
+		Kind: evidence.KindSlack, Class: evidence.ClassSlack, Method: "slack-file", Path: "slack/s1.bin",
+		Runs: []evidence.Run{{Offset: 0, Length: 64}}, Confidence: ip(10), Alloc: &evidence.AllocSummary{Free: 32, Allocated: 32},
+		Mutate: func(r *evidence.Recovery) { r.Scope = "" },
+	})
+	rep := verifyOf(t, c)
+	evidencetest.RequireProblem(t, rep, `recovery: scope "" does not match "unallocated", which class "slack" requires`)
+	evidencetest.RequireProblem(t, rep, `scope unallocated but 32 allocated and 0 unknown bytes (class "slack")`)
+}
