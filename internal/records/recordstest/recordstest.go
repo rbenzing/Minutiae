@@ -154,3 +154,40 @@ func Ingest(t testing.TB, c *evidence.Case, p records.Parser, artifacts []string
 	}
 	return res
 }
+
+// AddDerived stores data as an artifact derived from parent (a runs-covered copy
+// of the parent's first len(data) bytes) through Capture. kind is the source
+// kind ("recover", "extract", ...); recovery is the artifact's Recovery or nil.
+// The parent must hold at least len(data) bytes.
+func AddDerived(t testing.TB, c *evidence.Case, parent evidence.ManifestRecord, name, kind string, data []byte, recovery *evidence.Recovery) evidence.ManifestRecord {
+	t.Helper()
+	d := &evidence.Derivation{
+		ParentID: parent.ID, ParentSHA256: parent.SHA256, Partition: 1, FSType: "mtfs",
+		FSPath: "/" + name, FSID: "dentry:1:1:1", Recovery: recovery,
+	}
+	if len(data) > 0 {
+		d.Runs = []evidence.Run{{Offset: 0, Length: int64(len(data))}}
+	}
+	src := evidence.Source{Kind: kind, DeviceID: "dev1", Derived: d}
+	rec, err := c.Capture("dev1", "acq-derived", name, src, func(w io.Writer) error {
+		_, err := w.Write(data)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rec
+}
+
+// AddRecovered stores a deleted-file artifact derived from parent whose Recovery
+// carries confidence (nil = none), consistent with its runs, so only the rule
+// under test can object.
+func AddRecovered(t testing.TB, c *evidence.Case, parent evidence.ManifestRecord, name string, data []byte, confidence *int) evidence.ManifestRecord {
+	t.Helper()
+	rv := &evidence.Recovery{
+		Class: evidence.ClassDeletedFile, Method: "fat-contiguous", Confidence: confidence,
+		Basis: []string{"dentry:1:1:1"}, Alloc: evidence.AllocSummary{Free: int64(len(data))},
+		Algorithm: evidence.AlgorithmRecover,
+	}
+	return AddDerived(t, c, parent, name, evidence.KindRecover, data, rv)
+}

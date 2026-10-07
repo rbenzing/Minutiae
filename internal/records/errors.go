@@ -49,3 +49,13 @@ var (
 // was interrupted, built by another normalization, or its state cannot be trusted), so a writer must
 // not add records to it. The remedy is `minutiae records reindex --case <dir>`.
 var ErrIndexNotCurrent = evidence.ErrIndexNotCurrent
+
+// A record on a recovered artifact (one that, or whose ancestor, carries a
+// Recovery) must itself be recovered and must not claim more confidence than
+// the artifact does. Both wrap ErrInvalidRecord.
+var (
+	// ErrRecoveredArtifactLiveRecord: a live record names a recovered artifact.
+	ErrRecoveredArtifactLiveRecord = fmt.Errorf("%w: a live record cannot be built on a recovered artifact", ErrInvalidRecord)
+	// ErrConfidenceAboveArtifact: the record's confidence is missing or above the recovered artifact's.
+	ErrConfidenceAboveArtifact = fmt.Errorf("%w: confidence is above that of the recovered artifact", ErrInvalidRecord)
+)

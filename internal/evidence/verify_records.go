@@ -295,6 +295,7 @@ func (c *Case) verifyRecords(rep *VerifyReport, recs []ManifestRecord, entries [
 		func(v []string) string { return fmt.Sprintf("ingest %q artifact %q", v[0], v[1]) })
 
 	acc := make([]*batchAcc, len(sorted))
+	trails := map[string]*RecoveryTrail{}
 	seenArtifact := map[string]bool{}
 	var maxID int64
 	streamed := c.streamRecords(ctx, ps, verifyChunkRows, observe, func(row RecordRow, m recordRowMeta) {
@@ -325,6 +326,7 @@ func (c *Case) verifyRecords(rep *VerifyReport, recs []ManifestRecord, entries [
 				ps.add("src-range", "record %d: range beyond artifact: bytes %d+%d of artifact %q, which holds %d bytes", row.ID, off, n, row.ArtifactID, mr.Size)
 			}
 		}
+		c.checkRecoveredProp(ps, row, manifest, trails)
 		if !auditReadable {
 			return
 		}
@@ -832,5 +834,31 @@ func (c *Case) verifyMetaKeys(ctx context.Context, ps *problemSet, dbv int) {
 	}
 	for _, k := range keys {
 		ps.add("meta-key", "records_meta holds the key %q, which is not part of the schema", k)
+	}
+}
+
+// checkRecoveredProp is rule R7: a record on an artifact that is recovered (it
+// or an ancestor carries a Recovery) must be a recovered record and must not
+// claim more confidence than the lowest on the chain. trails caches the lookup
+// per artifact id. Broken chains are reported by the derived-chain check, not here.
+func (c *Case) checkRecoveredProp(ps *problemSet, row RecordRow, manifest map[string]ManifestRecord, trails map[string]*RecoveryTrail) {
+	tr, seen := trails[row.ArtifactID]
+	if !seen {
+		if t, ok := RecoveryTrailOf(manifest, row.ArtifactID); ok {
+			tr = &t
+		}
+		trails[row.ArtifactID] = tr
+	}
+	if tr == nil {
+		return
+	}
+	switch {
+	case !row.Recovered:
+		ps.add("recovered-prop", "record %d: live record (recovered=0) on artifact %q, which is recovered (%q via %q)",
+			row.ID, row.ArtifactID, tr.Recovery.Class, tr.ArtifactID)
+	case tr.MinConfidence != nil && row.Confidence == nil:
+		ps.add("recovered-prop", "record %d: has no confidence, the recovered artifact %q is capped at %d", row.ID, row.ArtifactID, *tr.MinConfidence)
+	case tr.MinConfidence != nil && *row.Confidence > int64(*tr.MinConfidence):
+		ps.add("recovered-prop", "record %d: confidence %d is above the %d of recovered artifact %q", row.ID, *row.Confidence, *tr.MinConfidence, row.ArtifactID)
 	}
 }

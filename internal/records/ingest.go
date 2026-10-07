@@ -95,10 +95,15 @@ func (w *Writer) Start(ctx context.Context, so StartOptions) error {
 		return fmt.Errorf("read manifest: %w", err)
 	}
 	known := make(map[string]bool, len(man))
+	manByID := make(map[string]evidence.ManifestRecord, len(man))
+	for _, m := range man {
+		manByID[m.ID] = m
+	}
 	byID := make(map[string]artifactInfo, len(man))
 	for _, m := range man {
 		known[m.ID] = true
-		byID[m.ID] = artifactInfo{ID: m.ID, SHA256: m.SHA256, Size: m.Size, Incomplete: m.Incomplete}
+		info := artifactInfo{ID: m.ID, SHA256: m.SHA256, Size: m.Size, Incomplete: m.Incomplete}
+		byID[m.ID] = info
 	}
 	declared := make(map[string]artifactInfo, len(artifacts))
 	for _, id := range artifacts {
@@ -108,6 +113,9 @@ func (w *Writer) Start(ctx context.Context, so StartOptions) error {
 		info, ok := byID[id]
 		if !ok {
 			return fmt.Errorf("%w: %q is not in the manifest", ErrUnknownArtifact, clip(id))
+		}
+		if tr, ok := evidence.RecoveryTrailOf(manByID, id); ok {
+			info.Recovered, info.MaxConfidence, info.RecoveredVia = true, tr.MinConfidence, tr.ArtifactID
 		}
 		declared[id] = info
 	}
