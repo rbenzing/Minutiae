@@ -708,3 +708,38 @@ func TestEmitterConcurrentCallsSerialised(t *testing.T) {
 		t.Errorf("writer holds %d records (%v), want 100", res.Records, err)
 	}
 }
+
+// A seal that lands between a call's in-flight increment and its seal re-check must refuse the call
+// and leave nothing written (the window the re-check exists for).
+func TestEmitterSealRacingInFlightIncrementRefusesAndWritesNothing(t *testing.T) {
+	v, e := newEnv(t, nil)
+	hits := 0
+	e.SetAfterInflight(func() { hits++; e.MarkSealed() })
+	if err := e.Emit(ctx0(), v.rec()); !errors.Is(err, parse.ErrSealed) {
+		t.Fatalf("Emit racing the seal = %v, want ErrSealed", err)
+	}
+	if hits != 1 {
+		t.Fatalf("hook ran %d times, want 1", hits)
+	}
+	if n := v.spy.adds.Load(); n != 0 {
+		t.Fatalf("writer Add called %d times after the seal", n)
+	}
+	e.Seal() // must return: the refused call released its in-flight count
+	if a, r, w := e.Counts(); a != 0 || r != 0 || w != 0 {
+		t.Fatalf("counts = %d/%d/%d, want 0/0/0", a, r, w)
+	}
+}
+
+func TestEmitterWarnRacingSealRefusesAndWritesNothing(t *testing.T) {
+	v, e := newEnv(t, nil)
+	e.SetAfterInflight(func() { e.MarkSealed() })
+	if err := e.Warn(ctx0(), "loc", "why"); !errors.Is(err, parse.ErrSealed) {
+		t.Fatalf("Warn racing the seal = %v, want ErrSealed", err)
+	}
+	v.spy.mu.Lock()
+	defer v.spy.mu.Unlock()
+	if len(v.spy.warns) != 0 {
+		t.Fatalf("warn written after the seal: %v", v.spy.warns)
+	}
+	e.Seal()
+}

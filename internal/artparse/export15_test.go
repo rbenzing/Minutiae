@@ -24,3 +24,8 @@ var NewEmitter = newEmitter
 func (e *emitter) Seal()                                      { e.seal() }
 func (e *emitter) Counts() (accepted, rejected, warnings int) { return e.counts() }
 func (e *emitter) Notes() map[string]string                   { return e.notes() }
+
+// SetAfterInflight installs the interleaving hook between the in-flight increment and the seal
+// re-check; MarkSealed sets the seal flag without waiting (what a racing seal does first).
+func (e *emitter) SetAfterInflight(f func()) { e.afterInflight = f }
+func (e *emitter) MarkSealed()               { e.sealed.Store(true) }

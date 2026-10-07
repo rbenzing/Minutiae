@@ -50,6 +50,9 @@ type emitter struct {
 	pump    chan<- func()
 	report  func(done, total int64)
 
+	// afterInflight is a test seam: it runs between the in-flight increment and the seal re-check.
+	afterInflight func()
+
 	sealed   atomic.Bool
 	inflight atomic.Int64
 	accepted atomic.Int64
@@ -105,6 +108,9 @@ func (e *emitter) begin() error {
 		return err
 	}
 	e.inflight.Add(1)
+	if e.afterInflight != nil {
+		e.afterInflight()
+	}
 	if e.sealed.Load() {
 		e.inflight.Add(-1)
 		return parse.ErrSealed
