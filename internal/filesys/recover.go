@@ -48,7 +48,9 @@ var (
 	ErrNoRecovery = fmt.Errorf("%w: filesystem does not support recovery", ErrUnsupported)
 )
 
-// validMethodToken reports whether m matches [a-z][a-z0-9-]{1,31}.
+// validMethodToken reports whether m matches [a-z][a-z0-9-]{1,31}. This is a strict subset of the
+// evidence method token ([a-z][a-z0-9_-]{1,63}), so every method a reader may offer can be recorded in
+// a case; TestReaderMethodTokenIsEvidenceValid (internal/examine) keeps the two in step.
 func validMethodToken(m string) bool {
 	if len(m) < 2 || len(m) > 32 || m[0] < 'a' || m[0] > 'z' {
 		return false

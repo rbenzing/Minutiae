@@ -88,3 +88,22 @@ func TestAsFirstImplementationWins(t *testing.T) {
 type outerRec struct{ wrapFS }
 
 func (*outerRec) Recoverable(filesys.Entry) ([]filesys.Candidate, error) { return nil, nil }
+
+// A wrapper whose Underlying() is a typed nil pointer ends the chain: As must neither panic nor
+// report a capability.
+func TestAsTypedNilUnderlyingEndsTheChain(t *testing.T) {
+	var nilWrap *wrapFS
+	outer := &wrapFS{inner: nilWrap}
+	if _, ok := filesys.As[filesys.Recoverer](outer); ok {
+		t.Error("a typed-nil Underlying found a capability")
+	}
+	var nilRec *recFS
+	got, ok := filesys.As[filesys.Recoverer](&wrapFS{inner: nilRec})
+	if ok && got == nil {
+		t.Error("As returned ok with a nil Recoverer")
+	}
+	// A typed-nil receiver at the head is also the end of the chain.
+	if _, ok := filesys.As[filesys.Recoverer](nilWrap); ok {
+		t.Error("a typed-nil filesystem found a capability")
+	}
+}

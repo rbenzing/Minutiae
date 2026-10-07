@@ -25,6 +25,9 @@ func TestCheckCandidateTable(t *testing.T) {
 		{"exact prefix", cand(300, filesys.Run{Offset: 512, Length: 100}), 100},
 		{"size 0 no runs", cand(0), 0},
 		{"size equals fs", cand(fsSize, filesys.Run{Offset: 0, Length: fsSize}), fsSize},
+		{"run ends exactly at fs end", cand(10, filesys.Run{Offset: fsSize - 10, Length: 10}), 10},
+		{"method first char a", candMethod("ab"), 0},
+		{"method first char z", candMethod("zz"), 0},
 	}
 	for _, tc := range valid {
 		t.Run("valid/"+tc.name, func(t *testing.T) {
@@ -63,6 +66,11 @@ func TestCheckCandidateTable(t *testing.T) {
 		{"length negative", "run 0 has length -1", cand(10, filesys.Run{Offset: 0, Length: -1})},
 		{"overflow", "lies outside", cand(10, filesys.Run{Offset: math.MaxInt64, Length: 2})},
 		{"beyond fs", "lies outside", cand(10, filesys.Run{Offset: fsSize - 5, Length: 10})},
+		{"run ends one past fs end", "lies outside", cand(10, filesys.Run{Offset: fsSize - 9, Length: 10})},
+		{"one-byte overlap", "runs 0 and 1 overlap", cand(20, filesys.Run{Offset: 0, Length: 10}, filesys.Run{Offset: 9, Length: 10})},
+		{"one-byte overlap reversed", "overlap", cand(20, filesys.Run{Offset: 9, Length: 10}, filesys.Run{Offset: 0, Length: 10})},
+		{"method first char before a", "method", withMethod("`b")},
+		{"method first char after z", "method", withMethod("{b")},
 		{"sum over size", "cover more than the size", cand(10, filesys.Run{Offset: 0, Length: 6}, filesys.Run{Offset: 100, Length: 6})},
 		{"sum one over size", "cover more than the size", cand(10, filesys.Run{Offset: 0, Length: 6}, filesys.Run{Offset: 100, Length: 5})},
 		{"size over fs", "exceeds the", cand(fsSize + 1)},
@@ -143,4 +151,10 @@ func TestErrNotDeletedIsNotCorrupt(t *testing.T) {
 	if e.Error() != "entry is not deleted" || errors.Is(e, filesys.ErrCorrupt) || errors.Is(e, filesys.ErrNotFound) || errors.Is(e, filesys.ErrDeleted) {
 		t.Errorf("ErrNotDeleted = %v", e)
 	}
+}
+
+func candMethod(m string) filesys.Candidate {
+	c := cand(0)
+	c.Method = m
+	return c
 }
