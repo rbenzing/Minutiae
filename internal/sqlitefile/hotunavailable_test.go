@@ -74,3 +74,21 @@ func TestLiveStaysAvailableWhenJournalIsNotAppliedForOtherReasons(t *testing.T) 
 		})
 	}
 }
+
+// TestHistoryListsNothingWhenLiveIsUnavailable: the history is built on the live
+// state; when Live() has none to present (a hot journal that is not applied) Pages
+// and Summary return that error and list no image.
+func TestHistoryListsNothingWhenLiveIsUnavailable(t *testing.T) {
+	j := newJfix()
+	journal := j.journal(512, -1).Bytes()
+	d, _, _ := attachJ(t, j.dbAfter, journal, sqlitefile.Options{Limits: sqlitefile.Limits{MaxJournalRecords: 1}})
+	h := d.History()
+	t.Cleanup(h.Release)
+	n := 0
+	if err := h.Pages(context.Background(), func(sqlitefile.PageImage) bool { n++; return true }); !errors.Is(err, sqlitefile.ErrLiveUnavailable) || n != 0 {
+		t.Errorf("Pages: %v after %d images", err, n)
+	}
+	if _, err := h.Summary(context.Background()); !errors.Is(err, sqlitefile.ErrLiveUnavailable) {
+		t.Errorf("Summary: %v", err)
+	}
+}

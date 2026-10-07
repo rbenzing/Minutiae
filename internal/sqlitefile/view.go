@@ -66,14 +66,25 @@ func (d *DB) Live() *View { return d.view(true) }
 // hot journal is laid over the database file first, then the WAL over that
 // (the engine's order); without it the database file as found plus the WAL.
 func (d *DB) view(rollback bool) *View {
+	a, jr, warns := d.companions()
+	return d.viewOf(rollback, a, jr, warns)
+}
+
+// companions returns the attached files and the warnings of the database as one
+// snapshot.
+func (d *DB) companions() (a *attachedWAL, jr *attachedJournal, warns []Warning) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.wal, d.jr, d.warns.snapshot()
+}
+
+// viewOf is view over the given snapshot of the companions.
+func (d *DB) viewOf(rollback bool, a *attachedWAL, jr *attachedJournal, warns []Warning) *View {
 	st := &counters{}
 	w := newWarnings(d.env.opts.Limits.MaxWarnings)
-	d.mu.RLock() // the warnings and the attached files form one snapshot
-	a, jr := d.wal, d.jr
-	for _, x := range d.warns.snapshot() {
+	for _, x := range warns {
 		w.add(x)
 	}
-	d.mu.RUnlock()
 	v := &View{d: d, e: d.env, info: d.Info(), st: st, warns: w}
 	v.src = dbSource{d}
 	rolled := rollback && jr != nil && jr.scan.Info.Applied

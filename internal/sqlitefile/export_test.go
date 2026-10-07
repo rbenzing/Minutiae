@@ -333,3 +333,31 @@ func ViewHas(v *View, pgno uint32) bool { return v.src.has(pgno) }
 
 // JournalRecordCost is the budget charge per scanned journal record.
 const JournalRecordCost = journalRecordCost
+
+// SnapshotRead reads page pgno in the state of the writer at the time of img
+// (the as-of source of the image).
+func SnapshotRead(img PageImage, pgno uint32) ([]byte, PageLoc, error) {
+	return img.snapshotSource().read(pgno)
+}
+
+// SnapshotPayload reads the whole payload of cell c of img through the image's
+// as-of source: the bytes that could be had, and why the rest could not.
+func SnapshotPayload(img PageImage, c Cell) (data []byte, damage string, err error) {
+	e := img.h.d.env
+	l := e.newLedger()
+	defer l.free(l.n)
+	vis, err := newMapVisitor(l, 1024)
+	if err != nil {
+		return nil, "", err
+	}
+	defer vis.release(l)
+	p := newPayload(img.snapshotSource(), l, vis, img.h.d.info.UsableSize, e.overflowCap(img.h.d.info.UsableSize), c)
+	defer p.release()
+	buf := make([]byte, c.PayloadLen)
+	n, err := p.readAt(buf, 0)
+	if err != nil {
+		return nil, "", err
+	}
+	why, _, _ := p.damaged()
+	return buf[:n], why, nil
+}
