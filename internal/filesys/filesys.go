@@ -140,7 +140,7 @@ type Timestamp struct {
 // Sentinel errors, usable with errors.Is.
 var (
 	ErrNotFound    = errors.New("not found")
-	ErrDeleted     = errors.New("entry is deleted (recovery is roadmap sub-project 3)")
+	ErrDeleted     = errors.New("entry is deleted (use image recover)")
 	ErrUnsupported = errors.New("unsupported filesystem feature")
 	ErrEncrypted   = errors.New("encrypted (decryption is roadmap sub-project 10)")
 	ErrCorrupt     = errors.New("corrupt filesystem structure")
