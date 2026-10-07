@@ -41,6 +41,7 @@ var allowed = map[string][]string{
 	"internal/filesys/hfsplus":             {"internal/filesys"},
 	"internal/filesys/hfsplus/hfsplustest": {"internal/filesys", "internal/filesys/hfsplus"},
 	"internal/evidence":                    {"internal/version"},
+	"internal/evidence/evidencetest":       {"internal/evidence"},
 	"internal/examine":                     {"internal/evidence", "internal/version", "internal/device", "internal/image", "internal/volume", "internal/filesys", "internal/filesys/detect"},
 	"internal/device":                      {"internal/evidence", "internal/version"},
 	"internal/transport/serial":            {"internal/device", "internal/evidence", "internal/version"},
