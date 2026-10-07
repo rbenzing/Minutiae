@@ -25,6 +25,7 @@ type Options struct {
 	source            caseSource    // replaces the case as the reader of the manifest and audit log
 	newWriter         writerFactory // replaces records.NewWriter
 	onOpen            func(artifactID string)
+	afterSize         func(artifactID string) // called once the file is open and its size checked, before it is read
 	afterStart        func()
 }
 
@@ -37,6 +38,7 @@ type Host struct {
 	limits    parse.Limits
 	newWriter writerFactory
 	onOpen    func(artifactID string)
+	afterSize func(artifactID string)
 	afterSt   func()
 }
 
@@ -79,7 +81,7 @@ func New(c *evidence.Case, ps []Registered, opt Options) (*Host, error) {
 	}
 	h := &Host{
 		c: c, registry: slices.Clone(ps), namers: opt.Namers, limits: opt.Limits,
-		src: opt.source, newWriter: opt.newWriter, onOpen: opt.onOpen, afterSt: opt.afterStart,
+		src: opt.source, newWriter: opt.newWriter, onOpen: opt.onOpen, afterSize: opt.afterSize, afterSt: opt.afterStart,
 	}
 	if h.src == nil {
 		h.src = c
@@ -137,8 +139,14 @@ type Job struct {
 // Counts tell what discovery saw.
 type Counts struct {
 	Manifest, NotParserInput, SnapshotExcluded int
-	ByKind                                     map[string]int // every manifest record, by source kind
+	ByKind                                     map[string]int    // every manifest record, by source kind
+	MissingRole                                map[string]int    // discovered jobs dropped for a missing required role, by parser name
+	Unnamed                                    map[string]int    // eligible artifacts with no logical path, by reason
+	UnnamedList                                []UnnamedArtifact // the same artifacts, by artifact id
 }
+
+// UnnamedArtifact is an eligible artifact no namer gave a logical path.
+type UnnamedArtifact struct{ ArtifactID, Path, Reason string }
 
 // candidate is a manifest record with the logical path a namer gave it.
 type candidate struct {
@@ -147,6 +155,7 @@ type candidate struct {
 	named    bool
 	snapshot *parse.SnapshotInfo
 	group    string // acquisition and snapshot: a bundle never crosses it
+	layoutOK bool   // the manifest path has the artifacts/<device>/<acquisition>/<rest> form
 }
 
 func (c *candidate) member(role string, env Env) Member {
@@ -162,12 +171,19 @@ func (c *candidate) member(role string, env Env) Member {
 	return m
 }
 
-// acquisitionKey is the first three components of the manifest path
-// (artifacts/<device>/<acquisition>).
-func acquisitionKey(p string) string {
+// acquisitionKey is the acquisition of a manifest path: the first three
+// components, artifacts/<device>/<acquisition>. That is the layout
+// evidence.Case.NewArtifact (and so Capture) constructs: it sanitises the device
+// and acquisition ids to single path components (no slash), so two artifacts are
+// of one acquisition exactly when these three components agree.
+// TestAcquisitionKeyFollowsTheNewArtifactLayout builds artifacts through
+// NewArtifact and Capture and pins this.
+func acquisitionKey(p string) (string, bool) {
 	parts := strings.Split(p, "/")
-	n := min(3, len(parts)-1)
-	return strings.Join(parts[:max(n, 0)], "/")
+	if len(parts) < 4 || parts[0] != "artifacts" || parts[1] == "" || parts[2] == "" || parts[3] == "" {
+		return "", false
+	}
+	return strings.Join(parts[:3], "/"), true
 }
 
 func snapshotKey(s *parse.SnapshotInfo) string {
@@ -180,7 +196,7 @@ func snapshotKey(s *parse.SnapshotInfo) string {
 // Discover builds the jobs of a selection from the snapshot alone: it never
 // opens an artifact and never re-reads the manifest.
 func (h *Host) Discover(ctx context.Context, snap *Snapshot, sel Selection) ([]Job, Counts, error) {
-	counts := Counts{Manifest: len(snap.records), ByKind: map[string]int{}}
+	counts := Counts{Manifest: len(snap.records), ByKind: map[string]int{}, MissingRole: map[string]int{}, Unnamed: map[string]int{}}
 	var cands []*candidate
 	for _, m := range snap.records {
 		counts.ByKind[m.Source.Kind]++
@@ -195,6 +211,13 @@ func (h *Host) Discover(ctx context.Context, snap *Snapshot, sel Selection) ([]J
 		}
 	}
 	sort.Slice(cands, func(i, j int) bool { return cands[i].rec.ID < cands[j].rec.ID })
+	for _, c := range cands {
+		if !c.named {
+			reason := WhyNoLogical(c.rec, snap.env)
+			counts.Unnamed[reason]++
+			counts.UnnamedList = append(counts.UnnamedList, UnnamedArtifact{ArtifactID: c.rec.ID, Path: c.rec.Path, Reason: reason})
+		}
+	}
 	byID := make(map[string]*candidate, len(cands))
 	groups := map[string][]*candidate{}
 	for _, c := range cands {
@@ -229,6 +252,8 @@ func (h *Host) Discover(ctx context.Context, snap *Snapshot, sel Selection) ([]J
 				if c.named && matchesAny(globs, c.logical.Path) {
 					if job, ok := h.bundle(r, c, groups, snap.env, false); ok {
 						jobs = append(jobs, job)
+					} else {
+						counts.MissingRole[r.meta.Name]++
 					}
 				}
 			}
@@ -251,7 +276,12 @@ func (h *Host) name(m evidence.ManifestRecord, env Env) *candidate {
 	if d := m.Source.Derived; d != nil && d.Snapshot != nil {
 		c.snapshot = &parse.SnapshotInfo{Name: d.Snapshot.Name, Xid: d.Snapshot.Xid}
 	}
-	c.group = acquisitionKey(m.Path) + "\x01" + snapshotKey(c.snapshot)
+	key, ok := acquisitionKey(m.Path)
+	c.layoutOK = ok
+	if !ok {
+		key = "\x02" + m.ID // alone in its group: it is never bundled with anything
+	}
+	c.group = key + "\x01" + snapshotKey(c.snapshot)
 	for _, n := range h.namers {
 		if l, ok := n.Logical(m, env); ok {
 			c.logical, c.named = l, true
@@ -339,6 +369,11 @@ func matchesAny(gs []*parse.Glob, logical string) bool {
 // no match (and the job is not explicit).
 func (h *Host) bundle(r Registered, p *candidate, groups map[string][]*candidate, env Env, explicit bool) (Job, bool) {
 	job := Job{Parser: r, Primary: p.member(r.meta.Inputs[0].Role, env), Others: map[string]Member{}, Explicit: explicit}
+	if !p.layoutOK {
+		job.Status = StatusUnparsed
+		job.Reason = "manifest path outside the acquisition layout"
+		return job, true
+	}
 	var missing []string
 	for _, in := range r.meta.Inputs[1:] {
 		var matches []*candidate
@@ -358,6 +393,10 @@ func (h *Host) bundle(r Registered, p *candidate, groups map[string][]*candidate
 			job.Status = StatusUnparsed
 			job.Reason = appendReason(job.Reason, fmt.Sprintf("ambiguous companion for role %s: %s", in.Role, strings.Join(ids, ", ")))
 		}
+	}
+	if encryptedContent(job) {
+		job.Status = StatusUnparsed
+		job.Reason = appendReason(job.Reason, "encrypted content")
 	}
 	if len(missing) > 0 {
 		if !explicit {
@@ -440,4 +479,18 @@ func (h *Host) statusFromRuns(ctx context.Context, j *Job) error {
 		j.Reason = "not covered by an earlier run: " + strings.Join(uncovered, ", ")
 	}
 	return nil
+}
+
+// encryptedContent reports whether any member of the job is encrypted content
+// (a filesystem extract flagged Derived.Encrypted): such a job is never run.
+func encryptedContent(j Job) bool {
+	if d := j.Primary.Artifact.Source.Derived; d != nil && d.Encrypted {
+		return true
+	}
+	for _, m := range j.Others {
+		if d := m.Artifact.Source.Derived; d != nil && d.Encrypted {
+			return true
+		}
+	}
+	return false
 }

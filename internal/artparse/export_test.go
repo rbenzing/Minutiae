@@ -27,3 +27,5 @@ func SetMetaTimeout(d time.Duration) (restore func()) {
 	metaTimeout = d
 	return func() { metaTimeout = old }
 }
+
+var AcquisitionKey = acquisitionKey

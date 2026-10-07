@@ -242,3 +242,79 @@ func TestDetachedDirectiveIsHashedWithNextDeclaration(t *testing.T) {
 		t.Error("directive text must change the hash")
 	}
 }
+
+// A //line directive inside a function body is part of THAT declaration, at
+// the ordinal of the statement that follows it.
+func TestLineDirectiveInABodyIsHashedAtItsStatement(t *testing.T) {
+	body := func(at int) string {
+		stmts := []string{"a := 1", "b := 2", "c := 3"}
+		var sb strings.Builder
+		sb.WriteString("package a\n\nfunc f() int {\n")
+		for i, s := range stmts {
+			if i == at {
+				sb.WriteString("//line x.go:10\n")
+			}
+			sb.WriteString("\t" + s + "\n")
+		}
+		if at == len(stmts) {
+			sb.WriteString("//line x.go:10\n")
+		}
+		sb.WriteString("\treturn a + b + c\n}\n")
+		return sb.String()
+	}
+	seen := map[string]int{}
+	for at := 0; at <= 3; at++ {
+		h := fixtureHash(t, body(at), "d")
+		if prev, dup := seen[h]; dup {
+			t.Errorf("a directive before statement %d and before statement %d hash alike", prev, at)
+		}
+		seen[h] = at
+	}
+	// a body without the directive hashes differently from every one of them
+	plain := "package a\n\nfunc f() int {\n\ta := 1\n\tb := 2\n\tc := 3\n\treturn a + b + c\n}\n"
+	if _, dup := seen[fixtureHash(t, plain, "d")]; dup {
+		t.Error("a body without the directive hashes like one with it")
+	}
+	// it belongs to its own declaration, not to the next one
+	two := func(g string) string {
+		return "package a\n\nfunc f() {\n\t_ = 1\n" + g + "}\n\nfunc g() {}\n"
+	}
+	if fixtureHash(t, two("//line x.go:10\n"), "d") == fixtureHash(t, "package a\n\nfunc f() {\n\t_ = 1\n}\n\n//line x.go:10\nfunc g() {}\n", "d") {
+		t.Error("a directive inside f hashes like one before g")
+	}
+	// nested blocks count their own statements
+	nested := func(at int) string {
+		in := []string{"x := 1", "y := 2"}
+		var sb strings.Builder
+		sb.WriteString("package a\n\nfunc f(ok bool) {\n\tif ok {\n")
+		for i, s := range in {
+			if i == at {
+				sb.WriteString("//line x.go:10\n")
+			}
+			sb.WriteString("\t\t" + s + "\n\t\t_ = " + s[:1] + "\n")
+		}
+		sb.WriteString("\t}\n}\n")
+		return sb.String()
+	}
+	if fixtureHash(t, nested(0), "d") == fixtureHash(t, nested(1), "d") {
+		t.Error("moving a directive between the statements of a nested block must change the hash")
+	}
+	// formatting still does not matter
+	if fixtureHash(t, body(1), "d") != fixtureHash(t, strings.ReplaceAll(body(1), "\t", "    "), "d") {
+		t.Error("indentation changed the hash")
+	}
+}
+
+// A directive inside a declaration but outside any block (here a composite
+// literal) is still hashed with that declaration.
+func TestLineDirectiveOutsideABlockIsHashedWithItsDeclaration(t *testing.T) {
+	with := "package a\n\nvar x = []int{\n//line x.go:5\n\t1,\n}\n"
+	without := "package a\n\nvar x = []int{\n\t1,\n}\n"
+	if fixtureHash(t, with, "d") == fixtureHash(t, without, "d") {
+		t.Error("a //line inside a composite literal was not hashed")
+	}
+	before := "package a\n\n//line x.go:5\nvar x = []int{\n\t1,\n}\n"
+	if fixtureHash(t, with, "d") == fixtureHash(t, before, "d") {
+		t.Error("a directive inside a declaration hashes like one before it")
+	}
+}

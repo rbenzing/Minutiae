@@ -460,3 +460,118 @@ func TestPrimaryIsNeverItsOwnCompanion(t *testing.T) {
 		t.Fatalf("jobs %+v", jobs)
 	}
 }
+
+func TestMissingRequiredRoleIsCountedPerParser(t *testing.T) {
+	c := newCase(t)
+	acquireStart(t, c, "D1", "A1", "logical")
+	putFile(t, c, "D1", "A1", dbPath, "1")
+	putFile(t, c, "D1", "A1", "/data/data/com.b/databases/app.db", "2")
+	needs := func(name string) artparse.Registered {
+		m := metaFor(name, "1.0.0")
+		m.Inputs[1].Required = true
+		r, err := artparse.Register(&fake{meta: func() parse.Meta { return m }}, hashFor(name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	h := newHost(t, c, needs("needs-wal"), needs("also-needs-wal"), register(t, "p", "1.0.0"))
+	jobs, counts := discover(t, h, artparse.Selection{})
+	if len(jobs) != 2 {
+		t.Fatalf("jobs %d, want only the parser that needs no wal (twice)", len(jobs))
+	}
+	want := map[string]int{"needs-wal": 2, "also-needs-wal": 2}
+	if len(counts.MissingRole) != 2 || counts.MissingRole["needs-wal"] != 2 || counts.MissingRole["also-needs-wal"] != 2 {
+		t.Errorf("MissingRole = %v, want %v", counts.MissingRole, want)
+	}
+	// once the wal exists for one database the count drops for that bundle only
+	putFile(t, c, "D1", "A1", walPath, "w")
+	h = newHost(t, c, needs("needs-wal"))
+	_, counts = discover(t, h, artparse.Selection{})
+	if counts.MissingRole["needs-wal"] != 1 {
+		t.Errorf("after one wal: MissingRole = %v, want needs-wal:1", counts.MissingRole)
+	}
+	// an explicit job with a missing role is reported as unparsed, not counted as dropped
+	h = newHost(t, c, needs("also-needs-wal"))
+	_, counts = discover(t, h, artparse.Selection{Artifacts: []string{jobsPrimary(t, c)}})
+	if len(counts.MissingRole) != 0 {
+		t.Errorf("an explicit job was counted as dropped: %v", counts.MissingRole)
+	}
+	// nothing missing: the map is empty, not nil-dependent
+	_, counts = discover(t, newHost(t, c, register(t, "p", "1.0.0")), artparse.Selection{})
+	if len(counts.MissingRole) != 0 {
+		t.Errorf("MissingRole = %v with every role present", counts.MissingRole)
+	}
+}
+
+// jobsPrimary returns the id of the artifact at dbPath.
+func jobsPrimary(t testing.TB, c *evidence.Case) string {
+	t.Helper()
+	recs, err := c.Manifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range recs {
+		if r.Source.RemotePath == dbPath {
+			return r.ID
+		}
+	}
+	t.Fatal("no artifact at " + dbPath)
+	return ""
+}
+
+// The acquisition of an artifact is the layout evidence.Case.NewArtifact
+// builds, artifacts/<device>/<acquisition>/<rest>, with sanitised components
+// that never hold a slash. The test builds artifacts through NewArtifact and
+// Capture, so a change of that layout fails here.
+func TestAcquisitionKeyFollowsTheNewArtifactLayout(t *testing.T) {
+	c := newCase(t)
+	capture := func(dev, acq, rel string) string {
+		t.Helper()
+		return putFile(t, c, dev, acq, "/"+rel, "x").Path
+	}
+	newArtifact := func(dev, acq, rel string) string {
+		t.Helper()
+		w, err := c.NewArtifact(dev, acq, rel, evidence.Source{Kind: "file", DeviceID: dev, RemotePath: "/" + rel})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte("x")); err != nil {
+			t.Fatal(err)
+		}
+		rec, err := w.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rec.Path
+	}
+	same := []string{
+		capture("D1", "A1", "data/a.db"),
+		capture("D1", "A1", "data/deep/er/b.db"),
+		newArtifact("D1", "A1", "top.db"),
+	}
+	key := mustKey(t, same[0])
+	for _, p := range same {
+		if got := mustKey(t, p); got != key {
+			t.Errorf("%s: key %q, want %q (same device and acquisition)", p, got, key)
+		}
+	}
+	if !strings.HasPrefix(same[0], key+"/") {
+		t.Errorf("key %q is not a directory prefix of %q", key, same[0])
+	}
+	// other acquisition, other device, and components holding slashes must not merge
+	others := []string{
+		capture("D1", "A2", "data/a.db"),
+		capture("D2", "A1", "data/a.db"),
+		newArtifact("D/1", "A", "x.db"),
+		newArtifact("D", "1/A", "x.db"),
+	}
+	seen := map[string]string{key: same[0]}
+	for _, p := range others {
+		k := mustKey(t, p)
+		if prev, dup := seen[k]; dup {
+			t.Errorf("%s and %s share the acquisition key %q", p, prev, k)
+		}
+		seen[k] = p
+	}
+}

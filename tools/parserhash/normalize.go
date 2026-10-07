@@ -67,7 +67,15 @@ func NormalizeGo(src []byte, name string) (out []byte, err error) {
 			writeDirective(&b, "directive ", directives[0])
 			directives = directives[1:]
 		}
-		dumpValue(&b, reflect.ValueOf(d))
+		// A directive inside the declaration (a //line in a function body) is
+		// hashed with it, at the ordinal of the statement it precedes.
+		dm := &dumper{b: &b}
+		for len(directives) > 0 && directives[0].Pos() < d.End() {
+			dm.pending = append(dm.pending, directives[0])
+			directives = directives[1:]
+		}
+		dm.value(reflect.ValueOf(d))
+		dm.flushBefore(d.End(), "directive-in-decl ")
 		b.WriteByte('\n')
 	}
 	for _, c := range directives {
@@ -105,12 +113,56 @@ func writeDirective(b *bytes.Buffer, prefix string, c *ast.Comment) {
 	b.WriteByte('\n')
 }
 
-func dumpValue(b *bytes.Buffer, v reflect.Value) {
+// dumper renders values; pending holds the directives found inside the
+// declaration being dumped, written before the statement that follows them.
+type dumper struct {
+	b       *bytes.Buffer
+	pending []*ast.Comment
+}
+
+func dumpValue(b *bytes.Buffer, v reflect.Value) { (&dumper{b: b}).value(v) }
+
+// flushBefore writes the pending directives positioned before pos.
+func (d *dumper) flushBefore(pos token.Pos, label string) {
+	for len(d.pending) > 0 && d.pending[0].Pos() < pos {
+		writeDirective(d.b, label, d.pending[0])
+		d.pending = d.pending[1:]
+	}
+}
+
+// hasPendingIn reports whether a pending directive lies inside blk.
+func (d *dumper) hasPendingIn(blk *ast.BlockStmt) bool {
+	for _, c := range d.pending {
+		if c.Pos() > blk.Lbrace && c.Pos() < blk.Rbrace {
+			return true
+		}
+	}
+	return false
+}
+
+func (d *dumper) block(blk *ast.BlockStmt) {
+	b := d.b
+	b.WriteString("BlockStmt(List=[")
+	for i, s := range blk.List {
+		d.flushBefore(s.Pos(), fmt.Sprintf("directive@%d ", i))
+		d.value(reflect.ValueOf(s))
+		b.WriteByte(',')
+	}
+	d.flushBefore(blk.Rbrace, "directive ")
+	b.WriteString("],)")
+}
+
+func (d *dumper) value(v reflect.Value) {
+	b := d.b
 	if v.Type() == posType {
 		return
 	}
 	if v.Type() == tokenType {
 		b.WriteString(token.Token(v.Int()).String())
+		return
+	}
+	if blk, ok := v.Interface().(*ast.BlockStmt); ok && blk != nil && d.hasPendingIn(blk) {
+		d.block(blk)
 		return
 	}
 	switch v.Kind() {
@@ -119,7 +171,7 @@ func dumpValue(b *bytes.Buffer, v reflect.Value) {
 			b.WriteString("nil")
 			return
 		}
-		dumpValue(b, v.Elem())
+		d.value(v.Elem())
 	case reflect.Struct:
 		t := v.Type()
 		b.WriteString(t.Name())
@@ -135,14 +187,14 @@ func dumpValue(b *bytes.Buffer, v reflect.Value) {
 			}
 			b.WriteString(sf.Name)
 			b.WriteByte('=')
-			dumpValue(b, fv)
+			d.value(fv)
 			b.WriteByte(',')
 		}
 		b.WriteByte(')')
 	case reflect.Slice:
 		b.WriteByte('[')
 		for i := 0; i < v.Len(); i++ {
-			dumpValue(b, v.Index(i))
+			d.value(v.Index(i))
 			b.WriteByte(',')
 		}
 		b.WriteByte(']')
