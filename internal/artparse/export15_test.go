@@ -29,3 +29,6 @@ func (e *emitter) Notes() map[string]string                   { return e.notes()
 // re-check; MarkSealed sets the seal flag without waiting (what a racing seal does first).
 func (e *emitter) SetAfterInflight(f func()) { e.afterInflight = f }
 func (e *emitter) MarkSealed()               { e.sealed.Store(true) }
+
+// StuckInWriter reports whether seal gave up waiting for a writer call.
+func (e *emitter) StuckInWriter() bool { return e.stuckInWriter() }

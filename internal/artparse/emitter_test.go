@@ -28,6 +28,7 @@ type spy struct {
 	addHook func(records.Record)
 	addErr  error
 	adds    atomic.Int32
+	ctxErr  error // ctx.Err() of the last Add, read after the hook ran
 }
 
 func (s *spy) Add(ctx context.Context, r records.Record) error {
@@ -35,6 +36,9 @@ func (s *spy) Add(ctx context.Context, r records.Record) error {
 	if s.addHook != nil {
 		s.addHook(r)
 	}
+	s.mu.Lock()
+	s.ctxErr = ctx.Err()
+	s.mu.Unlock()
 	if s.addErr != nil {
 		return s.addErr
 	}
@@ -646,7 +650,7 @@ func TestEmitterProgressThrottled(t *testing.T) {
 	v, _ := newEnv(t, nil)
 	var got atomic.Int32
 	var lastDone atomic.Int64
-	pump := make(chan func(), 1)
+	pump := make(chan func(), 8) // room for every call: only the throttle may keep them out
 	e, err := artparse.NewEmitter(ctx0(), v.spy, v.reg, nil, parse.DefaultLimits(), pump, func(done, _ int64) { got.Add(1); lastDone.Store(done) })
 	if err != nil {
 		t.Fatal(err)
@@ -670,7 +674,9 @@ func TestEmitterProgressThrottled(t *testing.T) {
 		t.Errorf("last forwarded done = %d, want 100", lastDone.Load())
 	}
 	// a full pump never blocks the parser
-	pump <- func() {}
+	for len(pump) < cap(pump) {
+		pump <- func() {}
+	}
 	finished := make(chan struct{})
 	go func() { e.Progress(100, 100); close(finished) }()
 	select {

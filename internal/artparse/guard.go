@@ -2,6 +2,7 @@ package artparse
 
 import (
 	"context"
+	"errors"
 	"runtime/debug"
 	"time"
 )
@@ -17,6 +18,9 @@ type Guarded struct {
 	Cancelled bool       // the parent context was cancelled
 	Abandoned bool       // fn did not return within grace of the cancellation
 }
+
+// errGoexit is what a parser goroutine that left without returning or panicking reports.
+var errGoexit = errors.New("parser goroutine exited without returning")
 
 const (
 	maxPanicValue = 1 << 10
@@ -35,16 +39,21 @@ func guard(ctx context.Context, timeout, grace time.Duration, seal func(), pump 
 	done := make(chan Guarded, 1)
 	go func() {
 		var g Guarded
+		returned := false
 		defer func() {
 			if r := recover(); r != nil {
 				g = Guarded{Panic: &PanicInfo{
 					Value: cleanAuditText(panicText(r), maxPanicValue),
 					Stack: clipBytes(string(debug.Stack()), maxPanicStack),
 				}}
+			} else if !returned {
+				// runtime.Goexit (or any exit that is neither a return nor a panic): never a clean result
+				g = Guarded{Err: errGoexit}
 			}
 			done <- g
 		}()
 		g.Err = fn(tctx)
+		returned = true
 	}()
 
 	var flags Guarded

@@ -55,6 +55,7 @@ type emitter struct {
 
 	sealed   atomic.Bool
 	inflight atomic.Int64
+	stuck    atomic.Bool // seal gave up waiting for an in-flight writer call
 	accepted atomic.Int64
 	rejected atomic.Int64
 	warnings atomic.Int64
@@ -344,14 +345,27 @@ func (e *emitter) Progress(done, total int64) {
 	}
 }
 
-// seal refuses every later call, then waits until the writer calls already in flight have returned.
-// It takes no lock a parser call can hold.
+// seal refuses every later call, then waits until the writer calls already in flight have returned,
+// for at most Limits.GracePeriod: a call stuck in the writer must not hang the run. When the wait
+// gives up, stuckInWriter reports it and the host abandons the job. It takes no lock a parser call can
+// hold.
 func (e *emitter) seal() {
 	e.sealed.Store(true)
+	if e.stuck.Load() {
+		return
+	}
+	deadline := time.Now().Add(e.lim.GracePeriod)
 	for e.inflight.Load() > 0 {
+		if !time.Now().Before(deadline) {
+			e.stuck.Store(true)
+			return
+		}
 		time.Sleep(time.Millisecond)
 	}
 }
+
+// stuckInWriter reports whether seal gave up waiting for an in-flight writer call.
+func (e *emitter) stuckInWriter() bool { return e.stuck.Load() }
 
 // counts reports the emitter's own counters; they serve only the MaxRecords and MaxRejected caps (the
 // writer's counts are authoritative for the audit).
