@@ -480,6 +480,13 @@ func (r *run) parseJob(ctx context.Context, j Job, b *bundle, st *jobState) (run
 	}
 
 	if cause == nil {
+		_, rej, _ := em.counts()
+		if rerr := parse.CheckRefusals(rej); rerr != nil {
+			// a run that lost records must never supersede an older complete run (it would hide its records)
+			reason, cause = "records-refused", rerr
+		}
+	}
+	if cause == nil {
 		res, err := w.End(rctx)
 		if err == nil {
 			r.fill(st, res)
