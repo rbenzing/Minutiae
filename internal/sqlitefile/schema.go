@@ -123,6 +123,10 @@ type Schema struct {
 	maxFit  int64
 	fitOnce sync.Once // builds fit, the lookup index of the fit functions, on first use
 	fit     *fitIndex
+	// fitSteps are the steps the build of fit took; fitLimited says the build was
+	// cut at the step cap, so every fit is limit-reached.
+	fitSteps   int64
+	fitLimited bool
 }
 
 // schemaCache holds the schema a view has read, and the budget it is charged.

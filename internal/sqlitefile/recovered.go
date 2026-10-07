@@ -41,6 +41,7 @@ const (
 // how far it can be trusted. A fit to a table schema is evidence, not proof.
 type RecoveredRow struct {
 	Method       string
+	Origin       Origin // the page origin of the history the row comes from (journal, WAL frame class, freelist, ...)
 	Table, Index string // "" when unknown; Index set for an index entry
 	TableBasis   TableBasis
 	Rowid        *int64 // nil when lost

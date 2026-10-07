@@ -223,18 +223,11 @@ func fitTableDef(name string, def *TableDef, memo map[*TableDef]int) (fitItem, b
 }
 
 // fitIndexItem returns the fit item of an index object, or false.
-func fitIndexItem(name string, ix *IndexDef, tdef *TableDef) (fitItem, bool) {
+func fitIndexItem(name string, ix *IndexDef, tdef *TableDef, lk colLookup) (fitItem, bool) {
 	if ix == nil || !ix.ParseOK || ix.Auto || tdef == nil || !tdef.ParseOK || len(ix.Columns) == 0 {
 		return fitItem{}, false
 	}
-	find := func(n string) *Column {
-		for i := range tdef.Columns {
-			if asciiEqualFold(tdef.Columns[i].Name, n) {
-				return &tdef.Columns[i]
-			}
-		}
-		return nil
-	}
+	find := func(n string) *Column { return lk.find(tdef, n) }
 	var cols []fitCol
 	inIndex := map[string]bool{}
 	for _, ic := range ix.Columns {
@@ -281,6 +274,8 @@ func (s *Schema) buildFit() {
 	fi := &fitIndex{}
 	byName := map[string]*TableDef{}
 	memo := map[*TableDef]int{}
+	cols := colLookup{s: s, byTable: map[*TableDef]map[string]*Column{}}
+	budget := s.fitBuildCap()
 	for i := range s.Objects {
 		o := &s.Objects[i]
 		if o.Type != "table" || o.Virtual || o.Table == nil {
@@ -302,7 +297,12 @@ func (s *Schema) buildFit() {
 		if tn == "" {
 			tn = o.TblName
 		}
-		if it, ok := fitIndexItem(o.Name, o.Index, byName[asciiLower(tn)]); ok {
+		if s.fitSteps > budget {
+			s.fitLimited = true // the rest of the indexes are not read
+			break
+		}
+		s.fitSteps += int64(len(o.Index.Columns))
+		if it, ok := fitIndexItem(o.Name, o.Index, byName[asciiLower(tn)], cols); ok {
 			fi.indexes.add(it)
 		}
 	}
@@ -316,12 +316,43 @@ func (s *Schema) fitSets() *fitIndex {
 	return s.fit
 }
 
-func (s *Schema) newFitRun() *fitRun {
-	m := s.maxFit
-	if m <= 0 {
-		m = DefaultLimits().MaxFitSteps
+func (s *Schema) fitCap() int64 {
+	if s.maxFit > 0 {
+		return s.maxFit
 	}
-	return &fitRun{max: m}
+	return DefaultLimits().MaxFitSteps
+}
+
+// fitBuildCap is the step cap of resolving the index columns when the fit index
+// is built: 64 fit calls (the build happens once per schema).
+func (s *Schema) fitBuildCap() int64 { return 64 * s.fitCap() }
+
+func (s *Schema) newFitRun() *fitRun {
+	s.fitSets()
+	return &fitRun{max: s.fitCap(), limited: s.fitLimited}
+}
+
+// colLookup resolves column names of a table through a map built once per table
+// (the build charges its size to Schema.fitSteps).
+type colLookup struct {
+	s       *Schema
+	byTable map[*TableDef]map[string]*Column
+}
+
+func (c colLookup) find(t *TableDef, name string) *Column {
+	m, ok := c.byTable[t]
+	if !ok {
+		m = make(map[string]*Column, len(t.Columns))
+		c.s.fitSteps += int64(len(t.Columns))
+		for i := range t.Columns {
+			k := asciiLower(t.Columns[i].Name)
+			if _, dup := m[k]; !dup {
+				m[k] = &t.Columns[i]
+			}
+		}
+		c.byTable[t] = m
+	}
+	return m[asciiLower(name)]
 }
 
 func (fs *fitSet) names(ix []int32) []string {
