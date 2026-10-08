@@ -641,6 +641,23 @@ func TestRecordsCLIEscapesRecordText(t *testing.T) {
 
 func TestRecordsCommandsDoNotWrite(t *testing.T) {
 	rc := recDataset(t, true)
+	// a derived artifact whose runs are in a sidecar, with a ranged record (id 8): `show` reads and
+	// checks the sidecar and must still write nothing
+	c, err := evidence.Open(rc.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := recordstest.AddArtifact(t, c, "img.bin", make([]byte, 4096))
+	side := recordstest.AddRunsSidecar(t, c, parent, "f.runs.jsonl", []evidence.Run{{Offset: 100, Length: 8}})
+	derived := recordstest.AddDerivedWith(t, c, "f.bin", evidence.Source{Kind: "extract", DeviceID: "dev1", Derived: &evidence.Derivation{
+		ParentID: parent.ID, ParentSHA256: parent.SHA256, Partition: 1, FSType: "mtfs", FSPath: "/f", FSID: "nid:5", RunsArtifact: side.ID,
+	}}, []byte("abcdefgh"))
+	recordstest.Ingest(t, c, records.Parser{Name: "derived", Version: "1.0"}, []string{derived.ID}, []records.Record{{
+		Type: "note", ArtifactID: derived.ID, Summary: "on a derived artifact", Payload: map[string]any{}, Range: &records.Range{Offset: 2, Length: 4},
+	}})
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
 	snapshot := func() map[string]string {
 		out := map[string]string{}
 		err := filepath.WalkDir(rc.dir, func(p string, e fs.DirEntry, err error) error {
@@ -672,6 +689,9 @@ func TestRecordsCommandsDoNotWrite(t *testing.T) {
 		}
 		return a
 	}
+	if code, out := run(t, Deps{}, "records", "show", "8", "--case", rc.dir); code != 0 || !strings.Contains(out, "sidecar ") {
+		t.Fatalf("record 8 is not the sidecar-backed derived record: exit %d: %s", code, out)
+	}
 	before, auditBefore := snapshot(), audit()
 	for i, args := range [][]string{
 		{"records", "list"},
@@ -679,6 +699,8 @@ func TestRecordsCommandsDoNotWrite(t *testing.T) {
 		{"records", "list", "--json"},
 		{"records", "show", "1", "--payload"},
 		{"records", "show", "6"},
+		{"records", "show", "8"},
+		{"records", "show", "8", "--json"},
 		{"records", "show", "4000"},
 		{"records", "stats"},
 		{"records", "stats", "--by", "run", "--json"},
