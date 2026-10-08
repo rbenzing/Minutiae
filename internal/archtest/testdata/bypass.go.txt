@@ -1,0 +1,25 @@
+package fixture
+
+// Data for TestBypassScannerSelfTest. Lines that must be flagged carry the marker "want".
+
+type Case struct{}
+
+func (c *Case) DisableGate()        {} // want
+func (c *Case) SkipChecks() error   { return nil } // want
+func BypassAudit()                  {} // want
+func DisabledIsNotAVerb()           {}
+func DisableLower()                 {} // want
+
+const SkipAll = 1 // want
+
+var (
+	BypassFlag bool // want
+	okFlag     bool
+)
+
+type SkipKind int // want
+
+func (c *Case) disableGate()  {}
+func (c *Case) Disabler()     {}
+func (c *Case) Open()         {}
+func Skipper()                {}

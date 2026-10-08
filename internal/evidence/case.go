@@ -82,7 +82,7 @@ type Case struct {
 	verifyFTSHook     func(point string, expected *sql.DB)
 	verifyFTSCacheKiB int
 
-	// noRecoveredKindGate is a test seam only (DisableRecoveredKindGate).
+	// noRecoveredKindGate is a test seam only (AllowUndescribedRecoveredKinds in export_test.go).
 	noRecoveredKindGate bool
 }
 

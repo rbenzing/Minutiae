@@ -26,7 +26,7 @@ func recoverParent(t *testing.T) (*evidence.Case, evidence.ManifestRecord, []byt
 func rawArtifact(t *testing.T, c *evidence.Case, path string, src evidence.Source, data []byte, failure error) evidence.ManifestRecord {
 	t.Helper()
 	src.DeviceID = evidencetest.ImageDevice
-	c.DisableRecoveredKindGate() // some tests plant the undescribed recovered kinds the gate refuses
+	c.AllowUndescribedRecoveredKinds() // some tests plant the undescribed recovered kinds the gate refuses
 	rec, err := c.Capture(evidencetest.ImageDevice, evidencetest.RecoveredAcq, path, src, func(w io.Writer) error {
 		if _, err := w.Write(data); err != nil {
 			return err

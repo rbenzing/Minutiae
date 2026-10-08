@@ -570,3 +570,91 @@ func TestRecoveryDependencyEntries(t *testing.T) {
 		t.Errorf("evidencetest must list exactly internal/evidence, has %v", got)
 	}
 }
+
+// bypassName matches an exported name that disables, skips or bypasses a check: Disable, Skip or Bypass
+// followed by an upper-case letter, a digit or the end of the name (so Disabler and Skipper pass).
+func bypassName(name string) bool {
+	for _, p := range []string{"Disable", "Skip", "Bypass"} {
+		if rest, ok := strings.CutPrefix(name, p); ok {
+			if rest == "" || rest[0] < 'a' || rest[0] > 'z' {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// scanBypassNames returns the lines of src that declare an exported package-level identifier or method
+// named like a switch for an integrity check. Production code of internal/evidence has none: a test that
+// has to plant what a gate refuses uses a tamper helper or an export_test.go seam.
+func scanBypassNames(name string, src []byte) ([]int, error) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, name, src, parser.SkipObjectResolution)
+	if err != nil {
+		return nil, err
+	}
+	var lines []int
+	flag := func(id *ast.Ident) {
+		if id != nil && id.IsExported() && bypassName(id.Name) {
+			lines = append(lines, fset.Position(id.Pos()).Line)
+		}
+	}
+	for _, d := range f.Decls {
+		switch v := d.(type) {
+		case *ast.FuncDecl:
+			flag(v.Name)
+		case *ast.GenDecl:
+			for _, s := range v.Specs {
+				switch sp := s.(type) {
+				case *ast.TypeSpec:
+					flag(sp.Name)
+				case *ast.ValueSpec:
+					for _, id := range sp.Names {
+						flag(id)
+					}
+				}
+			}
+		}
+	}
+	return lines, nil
+}
+
+func TestEvidenceHasNoDisableSkipBypassIdentifiers(t *testing.T) {
+	root := repoRoot(t)
+	files := nonTestGoFiles(t, root, filepath.Join("internal", "evidence"))
+	if len(files) < 20 {
+		t.Fatalf("scanned only %d files: the walk is broken", len(files))
+	}
+	for _, p := range files {
+		src, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines, err := scanBypassNames(p, src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rel, _ := filepath.Rel(root, p)
+		for _, l := range lines {
+			t.Errorf("%s:%d exports a Disable*/Skip*/Bypass* identifier; production code must not offer a switch for an integrity gate", filepath.ToSlash(rel), l)
+		}
+	}
+}
+
+func TestBypassScannerSelfTest(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("testdata", "bypass.go.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := scanBypassNames("bypass.go.txt", src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := wantLines(src)
+	if len(want) < 6 {
+		t.Fatalf("self-test data holds only %d violating lines", len(want))
+	}
+	if !sameInts(got, want) {
+		t.Errorf("flagged lines %v, want %v", got, want)
+	}
+}
