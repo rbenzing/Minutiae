@@ -341,6 +341,7 @@ type showJSON struct {
 	Batch              batchJSON               `json:"batch"`
 	Run                *runJSON                `json:"run"`
 	SupersededBy       string                  `json:"superseded_by,omitempty"`
+	Provenance         provJSON                `json:"provenance"`
 }
 
 type namedTimeJSON struct {
@@ -423,6 +424,7 @@ func newRecordsShowCmd(d Deps, opts *rootOptions) *cobra.Command {
 				Artifact: full.Artifact, ArtifactIncomplete: full.ArtifactIncomplete,
 				Batch:        batchJSON(full.Batch),
 				SupersededBy: full.SupersededBy,
+				Provenance:   provenanceJSON(full.Provenance, full.Row),
 			}
 			if payload {
 				j.Payload = full.Payload
@@ -435,9 +437,15 @@ func newRecordsShowCmd(d Deps, opts *rootOptions) *cobra.Command {
 				}
 				j.Run = &run
 			}
-			return writeJSON(d.Out, j)
+			if err := writeJSON(d.Out, j); err != nil {
+				return err
+			}
+			return provenanceFailure(full.Provenance, *casePath)
 		}
-		return printFull(d.Out, full, payload)
+		if err := printFull(d.Out, full, payload); err != nil {
+			return err
+		}
+		return provenanceFailure(full.Provenance, *casePath)
 	}
 	return cmd
 }

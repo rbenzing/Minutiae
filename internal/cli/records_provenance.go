@@ -55,7 +55,7 @@ func provStatus(p records.Provenance, row records.Row) string {
 		}
 		return recoveredStatus(printable(v.Recovery.Class), printable(v.Recovery.Method), conf)
 	}
-	if row.Recovered {
+	if provIsRecovered(p, row) {
 		return recoveredStatus("unknown", printable(row.Method), row.Confidence)
 	}
 	return "live"
