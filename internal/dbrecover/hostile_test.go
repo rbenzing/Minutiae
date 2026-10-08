@@ -77,9 +77,18 @@ func TestWriterWarningCapBoundsTheAuditLog(t *testing.T) {
 // hostileOK checks what every run on hostile input must satisfy.
 func hostileOK(t testing.TB, c *evidence.Case, err error) {
 	t.Helper()
+	hostileOKExpecting(t, c, err, false)
+}
+
+// hostileOKExpecting is hostileOK for a case that may expect ErrInternal.
+func hostileOKExpecting(t testing.TB, c *evidence.Case, err error, expectInternal bool) {
+	t.Helper()
 	var pe *PanicError
-	if errors.As(err, &pe) {
+	if errors.As(err, &pe) && !expectInternal {
 		t.Fatalf("a panic reached the safety net: %v", pe)
+	}
+	if errors.Is(err, ErrInternal) && !expectInternal {
+		t.Fatalf("an internal error on hostile input is a bug: %v", err)
 	}
 	if errors.Is(err, evidence.ErrIntegrity) {
 		t.Fatalf("an integrity error on untouched inputs: %v", err)

@@ -26,6 +26,10 @@ var (
 // the writer caps the warnings it audits at the same number.
 const maxOutsideListed = 10_000
 
+// resolveHook is a test seam (export_test.go): resolve calls it once the
+// database input is known.
+var resolveHook func()
+
 const planNote = "assessment only: nothing was written"
 
 // pipeline is the work Run and Plan share: the inputs, the library handles and
@@ -78,6 +82,9 @@ func (p *pipeline) resolve(ctx context.Context) error {
 		return fmt.Errorf("database input: %w: %q", evidence.ErrUnknownArtifact, p.in.DB)
 	}
 	p.dbRec = man[ix]
+	if resolveHook != nil {
+		resolveHook()
+	}
 
 	var found SiblingReport
 	if !p.in.NoSiblings && (p.in.WAL == "" || p.in.Journal == "") {
@@ -547,6 +554,9 @@ func Run(ctx context.Context, c *evidence.Case, in Inputs, opts Options) (res Re
 			return
 		}
 		perr := &PanicError{Value: r}
+		if p.dbRec.ID != "" { // a panic before analysis.start still names the database it was about
+			a.parentID, a.deviceID = p.dbRec.ID, p.dbRec.Source.DeviceID
+		}
 		var counts Counts
 		if cur != nil {
 			counts = cur.counts

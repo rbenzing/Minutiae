@@ -126,3 +126,14 @@ func addDerivedFile(t testing.TB, c *evidence.Case, parent evidence.ManifestReco
 	t.Helper()
 	return recordstest.AddDerived(t, c, parent, name, "extract", data, nil)
 }
+
+// requireLimitWarning fails unless an analysis.warning names the limit.
+func requireLimitWarning(t testing.TB, es []evidence.AuditEntry, limit string) {
+	t.Helper()
+	for _, i := range indexes(es, "analysis.warning") {
+		if r, _ := es[i].Details["reason"].(string); strings.Contains(r, "limit "+limit+" reached") {
+			return
+		}
+	}
+	t.Errorf("no analysis.warning names the limit %s", limit)
+}

@@ -51,3 +51,11 @@ func SetProgressEveryForTest(n int64) func() {
 	progressEvery = n
 	return func() { progressEvery = old }
 }
+
+// SetResolveHookForTest sets the function resolve calls once the database input
+// is known, and returns the restore function.
+func SetResolveHookForTest(f func()) func() {
+	old := resolveHook
+	resolveHook = f
+	return func() { resolveHook = old }
+}

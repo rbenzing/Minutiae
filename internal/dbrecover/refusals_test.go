@@ -458,6 +458,7 @@ func TestMaxRecordsStopsCleanly(t *testing.T) {
 	if count(es, "analysis.end") != 1 || count(es, evidence.ActionIngestEnd) != 0 {
 		t.Errorf("analysis.end %d ingest.end %d", count(es, "analysis.end"), count(es, evidence.ActionIngestEnd))
 	}
+	requireLimitWarning(t, es, "max-records")
 	requireVerifyClean(t, e.c)
 }
 
@@ -468,15 +469,7 @@ func TestRunByteBudgetStopsCleanly(t *testing.T) {
 		t.Fatalf("counts %+v ingest %+v", res.Counts, res.Ingest)
 	}
 	es := readAudit(t, e.c)
-	warned := false
-	for _, i := range indexes(es, "analysis.warning") {
-		if r, _ := es[i].Details["reason"].(string); strings.Contains(r, "max-bytes") {
-			warned = true
-		}
-	}
-	if !warned {
-		t.Error("no analysis.warning names the byte budget")
-	}
+	requireLimitWarning(t, es, "max-bytes")
 	requireVerifyClean(t, e.c)
 }
 

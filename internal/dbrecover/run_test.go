@@ -619,15 +619,7 @@ func TestRunLimitStopsCleanly(t *testing.T) {
 	if l, _ := end["limits_hit"].([]any); len(l) == 0 {
 		t.Errorf("end %v", end)
 	}
-	warned := false
-	for _, i := range indexes(es, "analysis.warning") {
-		if r, _ := es[i].Details["reason"].(string); strings.Contains(r, "max-records") {
-			warned = true
-		}
-	}
-	if !warned {
-		t.Error("no analysis.warning names the limit")
-	}
+	requireLimitWarning(t, es, "max-records")
 	// exactly meeting the cap is not a limit
 	e2 := newRunEnv(t)
 	total := sumMap(libraryRowsByMethod(t, e2.f))
