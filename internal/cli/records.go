@@ -438,12 +438,12 @@ func newRecordsShowCmd(d Deps, opts *rootOptions) *cobra.Command {
 				j.Run = &run
 			}
 			if err := writeJSON(d.Out, j); err != nil {
-				return err
+				return joinIntegrity(provenanceFailure(full.Provenance, *casePath), err)
 			}
 			return provenanceFailure(full.Provenance, *casePath)
 		}
 		if err := printFull(d.Out, full, payload); err != nil {
-			return err
+			return joinIntegrity(provenanceFailure(full.Provenance, *casePath), err)
 		}
 		return provenanceFailure(full.Provenance, *casePath)
 	}

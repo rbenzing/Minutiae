@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rbenzing/minutiae/internal/device"
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/records"
 	"github.com/rbenzing/minutiae/internal/records/recordstest"
@@ -244,7 +245,7 @@ func TestProvenanceFailureCountsSuppressedProblems(t *testing.T) {
 	if err == nil || !errors.Is(err, evidence.ErrIntegrity) || ExitCode(err) != ExitIntegrity {
 		t.Fatalf("err = %v, exit %d", err, ExitCode(err))
 	}
-	if !strings.Contains(err.Error(), "found 9 problem(s)") || !strings.Contains(err.Error(), "minutiae case verify --case /cases/a") {
+	if !strings.Contains(err.Error(), "found 9 problem(s)") || !strings.Contains(err.Error(), "minutiae case verify --case '/cases/a") {
 		t.Errorf("message %q", err.Error())
 	}
 	if strings.Contains(err.Error(), "\x1b") {
@@ -366,5 +367,43 @@ func TestShowJSONTruncatedHopSaysSo(t *testing.T) {
 	h := p.Offset.Hops[len(p.Offset.Hops)-1]
 	if !h.Truncated || h.Total != 300 || len(h.Extents) != records.MaxExtentsPerHop {
 		t.Errorf("truncated %v total %d listed %d, want true 300 %d", h.Truncated, h.Total, len(h.Extents), records.MaxExtentsPerHop)
+	}
+}
+
+// E52: a failed print never masks the integrity failure; the exit stays 4 and both errors show.
+func TestRecordsShowPrintFailureDoesNotMaskIntegrity(t *testing.T) {
+	dir := damagedCase(t)
+	for _, args := range [][]string{{"records", "show", "--case", dir, "1"}, {"records", "show", "--case", dir, "--json", "1"}} {
+		var errBuf bytes.Buffer
+		code := Run(args, Deps{Out: failWriter{}, Err: &errBuf, In: strings.NewReader(""), Registry: device.NewRegistry()})
+		if code != ExitIntegrity {
+			t.Errorf("%v: exit %d, want 4; stderr %q", args, code, errBuf.String())
+		}
+		if !strings.Contains(errBuf.String(), "case verify") || (strings.Contains(strings.Join(args, " "), "--json") && !strings.Contains(errBuf.String(), "disk full")) {
+			t.Errorf("%v: stderr %q must name case verify (and, for --json, the print error)", args, errBuf.String())
+		}
+	}
+}
+
+// E53: the hint quotes the case directory for a shell.
+func TestProvenanceFailureQuotesCaseDir(t *testing.T) {
+	p := records.Provenance{Problems: []records.Problem{{Kind: records.ProblemSegment, Detail: "a"}}}
+	for dir, want := range map[string]string{
+		"/cases/my case": "--case '/cases/my case'",
+		"/cases/it's":    `--case '/cases/it'\''s'`,
+		"/cases/plain":   "--case /cases/plain",
+	} {
+		err := provenanceFailure(p, dir)
+		if err == nil || !strings.HasSuffix(err.Error(), want) {
+			t.Errorf("dir %q: err %v, want suffix %q", dir, err, want)
+		}
+	}
+}
+
+// E53: the JSON problem hop is the chain index of the failing hop, not an offset of it.
+func TestShowJSONProblemHopIsChainIndex(t *testing.T) {
+	p, _, _, _ := showProv(t, damagedCase(t), "1")
+	if len(p.Problems) == 0 || p.Problems[0].Kind != "parent-missing" || p.Problems[0].Hop != 0 {
+		t.Errorf("problems %+v, want parent-missing at hop 0", p.Problems)
 	}
 }

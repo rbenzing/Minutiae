@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/records"
@@ -159,5 +161,31 @@ func provenanceFailure(p records.Provenance, caseDir string) error {
 		return nil
 	}
 	return fmt.Errorf("%w: provenance check found %d problem(s); run: minutiae case verify --case %s",
-		evidence.ErrIntegrity, len(p.Problems)+p.ProblemsSuppressed, escapeText(caseDir))
+		evidence.ErrIntegrity, len(p.Problems)+p.ProblemsSuppressed, shellQuote(escapeText(caseDir)))
+}
+
+// joinIntegrity returns the print error alone when the chain is sound, and the integrity failure
+// joined with it when it is not: a failed print never masks an integrity failure (exit stays 4).
+func joinIntegrity(integrity, printErr error) error {
+	if integrity == nil {
+		return printErr
+	}
+	return errors.Join(integrity, printErr)
+}
+
+// shellQuote makes s one shell word: unchanged when it only holds safe characters, otherwise in
+// single quotes with each embedded single quote written as quote-backslash-quote-quote.
+func shellQuote(s string) string {
+	if s != "" && !strings.ContainsFunc(s, unsafeForShell) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func unsafeForShell(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		return false
+	}
+	return !strings.ContainsRune("_-./:@%+=,", r)
 }
