@@ -3,6 +3,7 @@ package examine_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -77,5 +78,47 @@ func TestDerivedRunsOfUnallocatedExport(t *testing.T) {
 	}
 	if len(runs) == 0 || !bytes.Equal(got, data) {
 		t.Errorf("%d runs reproduce %d bytes, want the export's %d bytes", len(runs), len(got), len(data))
+	}
+}
+
+// A cancelled export keeps a partial unallocated.bin whose sidecar still lists every run: the reader accepts
+// it, and the image bytes at the runs hold the bytes actually written as an exact prefix.
+func TestDerivedRunsOfPartialUnallocatedExport(t *testing.T) {
+	e := newRecEnv(t, delNode("/gone.txt", pat(5, 3*bs)), plain([]fstest.Node{{Path: "/keep.txt", Data: pat(9, 2*bs)}})[0])
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, err := e.s.ExportUnallocated(ctx, examine.UnallocOptions{Partition: -1, Progress: func(d, _ int64) {
+		if d > 0 {
+			cancel()
+		}
+	}})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want cancellation", err)
+	}
+	var bin evidence.ManifestRecord
+	for _, r := range mustManifest(t, e.c) {
+		if r.Source.Kind == "unallocated" {
+			bin = r
+		}
+	}
+	if bin.ID == "" || !bin.Incomplete {
+		t.Fatalf("no incomplete export: %+v", bin)
+	}
+	runs, err := e.c.DerivedRuns(bin, nil)
+	if err != nil {
+		t.Fatalf("DerivedRuns of a partial export: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(e.c.Dir, filepath.FromSlash(bin.Path)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []byte
+	var total int64
+	for _, r := range runs {
+		got = append(got, e.img[r.Offset:r.Offset+r.Length]...)
+		total += r.Length
+	}
+	if len(data) == 0 || total < int64(len(data)) || !bytes.HasPrefix(got, data) {
+		t.Errorf("runs cover %d bytes, export holds %d: image bytes are not an exact superset prefix", total, len(data))
 	}
 }

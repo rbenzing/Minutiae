@@ -65,3 +65,40 @@ func TestUnallocRunsAsRuns(t *testing.T) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
+
+func TestReadUnallocRunMapRefusesDuplicateAndCaseVariantKeys(t *testing.T) {
+	bad := map[string]string{
+		"duplicate offset":       `{"offset":0,"offset":0,"length":10,"image_offset":0}` + "\n",
+		"duplicate hidden value": `{"offset":0,"length":10,"image_offset":5,"image_offset":0}` + "\n",
+		"duplicate length":       `{"offset":0,"length":10,"length":20,"image_offset":0}` + "\n",
+		"capitalised offset":     `{"Offset":0,"length":10,"image_offset":0}` + "\n",
+		"upper-case length":      `{"offset":0,"LENGTH":10,"image_offset":0}` + "\n",
+		"mixed image_offset":     `{"offset":0,"length":10,"Image_Offset":0}` + "\n",
+		"duplicate in line 2":    `{"offset":0,"length":10,"image_offset":0}` + "\n" + `{"offset":10,"offset":10,"length":1,"image_offset":0}` + "\n",
+	}
+	for name, in := range bad {
+		if _, err := evidence.ReadUnallocRunMap(strings.NewReader(in)); !errors.Is(err, evidence.ErrIntegrity) {
+			t.Errorf("%s: err %v, want ErrIntegrity", name, err)
+		}
+	}
+}
+
+func TestReadUnallocRunMapBoundaries(t *testing.T) {
+	const base = `{"offset":0,"length":1,"image_offset":0}`
+	pad := func(n int) string { return base + strings.Repeat(" ", n-len(base)) }
+	if got, err := evidence.ReadUnallocRunMap(strings.NewReader(pad(256) + "\n")); err != nil || len(got) != 1 {
+		t.Errorf("256-byte line: %v, %v", got, err)
+	}
+	if _, err := evidence.ReadUnallocRunMap(strings.NewReader(pad(257) + "\n")); !errors.Is(err, evidence.ErrIntegrity) {
+		t.Errorf("257-byte line: err %v, want ErrIntegrity", err)
+	}
+	const length = 4096
+	ok := fmt.Sprintf(`{"offset":0,"length":%d,"image_offset":%d}`+"\n", length, int64(math.MaxInt64-length))
+	if got, err := evidence.ReadUnallocRunMap(strings.NewReader(ok)); err != nil || len(got) != 1 {
+		t.Errorf("image_offset MaxInt64-length: %v, %v", got, err)
+	}
+	over := fmt.Sprintf(`{"offset":0,"length":%d,"image_offset":%d}`+"\n", length, int64(math.MaxInt64-length+1))
+	if _, err := evidence.ReadUnallocRunMap(strings.NewReader(over)); !errors.Is(err, evidence.ErrIntegrity) {
+		t.Errorf("image_offset MaxInt64-length+1: err %v, want ErrIntegrity", err)
+	}
+}

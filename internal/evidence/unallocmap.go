@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"strings"
 )
 
 // UnallocRun is one line of an unallocated export's run map ("unallocated.runs.jsonl"): where the run
@@ -56,6 +57,9 @@ func ReadUnallocRunMap(r io.Reader) ([]UnallocRun, error) {
 		if len(out) >= MaxRecoveredRuns {
 			return nil, unallocBad("more than %d runs", MaxRecoveredRuns)
 		}
+		if err := checkUnallocKeys(line); err != nil {
+			return nil, unallocBad("line %d: %v", n, err)
+		}
 		var l unallocLineJSON
 		dec := json.NewDecoder(bytes.NewReader(line))
 		dec.DisallowUnknownFields()
@@ -85,6 +89,44 @@ func ReadUnallocRunMap(r io.Reader) ([]UnallocRun, error) {
 			return out, nil
 		}
 	}
+}
+
+// checkUnallocKeys walks the tokens of one line before it is decoded and refuses what encoding/json would
+// quietly accept: a repeated key (the last would win) and a key that differs from the exact lower-case name
+// only in case (it would match case-insensitively). Malformed JSON is left to the decoder.
+func checkUnallocKeys(line []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(line))
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return nil
+	}
+	seen := map[string]bool{}
+	for dec.More() {
+		t, err := dec.Token()
+		if err != nil {
+			return nil
+		}
+		key, ok := t.(string)
+		if !ok {
+			return nil
+		}
+		switch key {
+		case "offset", "length", "image_offset":
+		default:
+			if strings.EqualFold(key, "offset") || strings.EqualFold(key, "length") || strings.EqualFold(key, "image_offset") {
+				return fmt.Errorf("key %q is not spelled exactly", key)
+			}
+			return nil
+		}
+		if seen[key] {
+			return fmt.Errorf("key %q appears twice", key)
+		}
+		seen[key] = true
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return nil
+		}
+	}
+	return nil
 }
 
 // UnallocRunsAsRuns converts a run map to the image runs, in order.
