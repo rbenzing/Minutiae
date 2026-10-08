@@ -139,6 +139,8 @@ type Full struct {
 	// SupersededBy is the ingest id of the lowest-ending later complete run of
 	// this parser name that covers this record's artifact; "" when current.
 	SupersededBy string
+	// Provenance is the derivation chain of the artifact, checked against the manifest and the audit log.
+	Provenance Provenance
 }
 
 // StatRow is one group of Stats.

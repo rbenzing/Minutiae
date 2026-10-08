@@ -57,13 +57,23 @@ func (r *Reader) Get(ctx context.Context, id int64) (Full, error) {
 	if err != nil {
 		return Full{}, r.integrity(err)
 	}
-	art, err := r.artifactByID(full.ArtifactID)
+	man, err := r.c.Manifest()
+	if err != nil {
+		return Full{}, fmt.Errorf("records: record %d: manifest unreadable: %w", id, err)
+	}
+	art, err := artifactByID(man, full.ArtifactID)
 	if err != nil {
 		return Full{}, fmt.Errorf("records: record %d: %w", id, err)
 	}
 	full.Artifact, full.ArtifactIncomplete = art, art.Incomplete
-	if full.Batch.AuditSeq, err = r.batchAuditSeq(full.Batch); err != nil {
-		return Full{}, err
+	entries, err := r.c.ReadAudit()
+	if err != nil {
+		return Full{}, fmt.Errorf("records: %w", err)
+	}
+	full.Batch.AuditSeq = batchAuditSeq(entries, full.Batch)
+	full.Provenance = resolveChain(man, evidence.NewAuditIndex(entries), full.ArtifactID)
+	if len(full.Provenance.Chain) > 0 && full.Provenance.Chain[0].Artifact.Source.Derived == nil {
+		full.Provenance.Notes = append(full.Provenance.Notes, "artifact is not derived: no image offset")
 	}
 	return full, nil
 }
@@ -129,13 +139,9 @@ func runOf(ctx context.Context, h evidence.ReadHandle, ingestID string) (*RunInf
 // batchAuditSeq finds the audit sequence of the records.batch entry of b: 0
 // when the batch row is missing or the log holds no such entry (verify reports
 // that; Get only shows provenance).
-func (r *Reader) batchAuditSeq(b BatchInfo) (int64, error) {
+func batchAuditSeq(entries []evidence.AuditEntry, b BatchInfo) int64 {
 	if b.IngestID == "" {
-		return 0, nil
-	}
-	entries, err := r.c.ReadAudit()
-	if err != nil {
-		return 0, fmt.Errorf("records: %w", err)
+		return 0
 	}
 	for _, e := range entries {
 		if e.Action != evidence.ActionBatch {
@@ -143,10 +149,10 @@ func (r *Reader) batchAuditSeq(b BatchInfo) (int64, error) {
 		}
 		d, err := evidence.DecodeDetails[evidence.BatchCommit](e.Details)
 		if err == nil && d.IngestID == b.IngestID && d.BatchNo == b.BatchNo {
-			return e.Seq, nil
+			return e.Seq
 		}
 	}
-	return 0, nil
+	return 0
 }
 
 // artifactByID resolves id as an artifact id and nothing else: no fallback to a
@@ -154,11 +160,7 @@ func (r *Reader) batchAuditSeq(b BatchInfo) (int64, error) {
 // rewritten to another artifact's path cannot silently show that artifact. No
 // match is evidence.ErrIntegrity wrapping evidence.ErrUnknownArtifact; more than
 // one is evidence.ErrIntegrity.
-func (r *Reader) artifactByID(id string) (evidence.ManifestRecord, error) {
-	recs, err := r.c.Manifest()
-	if err != nil {
-		return evidence.ManifestRecord{}, fmt.Errorf("manifest unreadable: %w", err)
-	}
+func artifactByID(recs []evidence.ManifestRecord, id string) (evidence.ManifestRecord, error) {
 	var found evidence.ManifestRecord
 	n := 0
 	for _, m := range recs {
