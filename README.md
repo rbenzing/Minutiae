@@ -5,7 +5,7 @@
 [![Release](https://img.shields.io/github/v/release/rbenzing/Minutiae?style=for-the-badge)](https://github.com/rbenzing/Minutiae/releases/latest)
 [![Go](https://img.shields.io/badge/go-1.26-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=for-the-badge)](https://github.com/rbenzing/Minutiae/releases)
-[![CGO](https://img.shields.io/badge/cgo-none-success?style=for-the-badge)](#-building-from-source)
+[![CGO](https://img.shields.io/badge/cgo-optional-success?style=for-the-badge)](#-building-from-source)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/russellbenzing)
 
 **Forensically sound acquisition for mobile devices — finding the smallest details, including hidden and deleted data**
@@ -48,7 +48,7 @@ Use Minutiae only on devices you are authorized to examine.
 - **Image analysis** — import disk images (raw/dd, split raw, **E01/EWF** with multiple segments) into a case, read MBR/EBR and GPT partition tables, browse filesystems read-only, extract files and export unallocated space as new hashed artifacts that record their full provenance (parent image, partition, filesystem entry, byte runs). **ext2/ext3/ext4** (extents or block maps, htree and inline directories, inline data, metadata checksums), **FAT12/16/32** (long names, 2-second local times) and **exFAT** (entry sets, validated checksums, `ValidDataLength`), **F2FS** (checkpoint packs, NAT/SIT journals, inline data and dentries, encrypted names), **HFS+/HFSX** (classic-HFS wrapper, B-tree catalog with extents overflow, hard links, zlib-compressed files, per-file data-protection flag) and **APFS** (checkpoint ring, object maps, B-trees, extents with holes and clones, hard links, extended-attribute names, name hashes with normalization-insensitive lookup, read-only snapshots as views, space-manager free space; encrypted volumes are detected and refused, compressed files are listed but not extracted) filesystems are readable, with deleted-entry flagging where the format keeps deleted names (names only; HFS+ and APFS keep none) and exact unallocated-space export; each reader is verified against real images built by the standard filesystem tools with independent expected results (tree, hashes, times, cluster chains or data extents, free space; the populated HFS+ and APFS images are written by Linux kernel drivers under QEMU, with nothing loaded into the host kernel) and fuzzed against hostile input; E01 images are verified against the hashes the acquirer stored (`image info --verify`, audited) and an unreadable chunk is an error, never zeros; see [Known limitations](CLAUDE.md#9-known-limitations)
 - **Unified records database** — parsed records (messages, calls, contacts, web visits, files, events ...) live in `artifacts.db` with full provenance (artifact, source path, locator, byte range, parser identity and version, deleted/recovered flags, microsecond timestamps with their time-zone basis). Every batch of records is announced in the hash-chained audit log with a digest *before* any row is written, the record tables are immutable (triggers) and `case verify` recomputes every digest, run, supersession and range, so an altered, deleted, injected or repointed record exits `4`. A newer complete run of a parser supersedes an older one without deleting it. Existing cases are moved to the new schema only by the explicit, audited `case upgrade`. Read it with `records list|show|stats` (filters, stable keyset pagination, terminal-safe output) and search it with `records search` (a verified full-text index). Parsers that fill it arrive with sub-project 4; see [Known limitations](CLAUDE.md#9-known-limitations)
 - **Windows-safe evidence names** — device file names that are illegal on Windows (`:`, `?`, `CON`, case/8.3 collisions, names over 200 bytes) are stored under safe local names while the original remote path is preserved
-- **Single static binary** — pure Go, no cgo; one cross-platform `go run ./tools/check` gate (tidy, vet, lint, build, cross-builds, tests)
+- **Single static binary** — pure Go by default (static, no C dependency in the default build; optional cgo capabilities such as decryption and device hooks where a platform needs them); one cross-platform `go run ./tools/check` gate (tidy, vet, lint, build, cross-builds, tests)
 
 ---
 
@@ -355,7 +355,7 @@ go build -ldflags "-X github.com/rbenzing/minutiae/internal/version.Version=v1.0
 ```
 
 Run the full verification gate (tidy, vet, golangci-lint incl. gofumpt, build,
-no-cgo cross-builds, tests — with `-race` when cgo is available):
+CGO_ENABLED=0 host and cross-builds, tests — with `-race` where a C toolchain is present):
 
 ```bash
 go run ./tools/check

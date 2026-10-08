@@ -33,7 +33,7 @@ AI-derived results (11, 12) are investigative leads, never evidence:
 - every answer cites the artifact and record IDs it is based on;
 - models run offline by default. Case data leaves the host only if the examiner explicitly configures a remote model, and that choice is audited.
 
-The model and its runtime are chosen in each sub-project's spec, within the no-cgo, single-binary constraint.
+The model and its runtime are chosen in each sub-project's spec, within the default build staying single-binary and cgo-free; cgo is allowed only as the cgo policy in CLAUDE.md permits (a needed capability with no pure-Go route, fenced in dedicated packages with a `!cgo` fallback).
 
 Deferred (needs a separate legal/authority discussion before any spec):
 cloud account extraction.
