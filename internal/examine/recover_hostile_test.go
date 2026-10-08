@@ -351,8 +351,8 @@ func TestRecoverRejectsInjectedMaps(t *testing.T) {
 	}
 }
 
-// C52: with more than 16 overlapping partners the exact count of the rest is reported.
-func TestRecoverOverlapOthersIsExact(t *testing.T) {
+// C57: with more than 16 overlapping partners the count of the further overlapping RUNS is reported.
+func TestRecoverOverlapOtherRunsIsExact(t *testing.T) {
 	const n = 20
 	buildBS = 16384 // the table of 20 maps does not fit one 4 KiB block
 	t.Cleanup(func() { buildBS = bs })
@@ -378,8 +378,8 @@ func TestRecoverOverlapOthersIsExact(t *testing.T) {
 				listed++
 			}
 		}
-		if listed != 16 || !slices.Contains(as, "overlap-others=3") || anyContains(as, "overlap-listed") {
-			t.Errorf("%s: %d listed, assumptions %q, want 16 listed and overlap-others=3", r.Source.Derived.FSPath, listed, as)
+		if listed != 16 || !slices.Contains(as, "overlap-other-runs=3") || anyContains(as, "overlap-listed") {
+			t.Errorf("%s: %d listed, assumptions %q, want 16 listed and overlap-other-runs=3", r.Source.Derived.FSPath, listed, as)
 		}
 	}
 }

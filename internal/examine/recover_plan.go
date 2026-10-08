@@ -552,9 +552,9 @@ func (p *planner) selectAndFilter() {
 					c.Assumptions = append(c.Assumptions, "overlap="+cleanText(o, 200))
 				}
 				if len(partners) >= maxOverlapListed {
-					// overlapsOf lists the smallest 16 only; the rest is counted exactly (C52).
+					// overlapsOf lists the smallest 16 partners only; the further overlapping RUNS of other owners are counted (C57).
 					if n := counts[it.ID] - maxOverlapListed; n > 0 {
-						c.Assumptions = append(c.Assumptions, fmt.Sprintf("overlap-others=%d", n))
+						c.Assumptions = append(c.Assumptions, fmt.Sprintf("overlap-other-runs=%d", n))
 					}
 				}
 			}
