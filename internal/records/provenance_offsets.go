@@ -3,6 +3,7 @@ package records
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
@@ -33,10 +34,18 @@ func (r *Reader) resolveOffsets(p *Provenance, ix *evidence.ManifestIndex, rng *
 		return
 	}
 	unavailable := func(format string, a ...any) {
-		off.State, off.Reason, off.Image = OffsetUnavailable, fmt.Sprintf(format, a...), nil
+		off.State, off.Reason = OffsetUnavailable, fmt.Sprintf(format, a...)
 	}
 	if len(p.Chain) == 0 {
 		unavailable("the artifact is not in the manifest")
+		return
+	}
+	// case verify P9, for every record whatever its artifact is: the range lies inside the artifact
+	// (checked arithmetic; off+n is never computed)
+	if size := p.Chain[0].Artifact.Size; rng.Offset < 0 || rng.Length < 0 || rng.Offset > size || rng.Length > size-rng.Offset {
+		reason := fmt.Sprintf("range lies outside the artifact (%d+%d > %d)", rng.Offset, rng.Length, size)
+		p.addProblem(ProblemRangeOutside, -1, fmt.Sprintf("artifact %q: %s", p.Chain[0].Artifact.ID, reason))
+		unavailable("%s", reason)
 		return
 	}
 	if p.Chain[0].Artifact.Source.Derived == nil {
@@ -84,6 +93,13 @@ func (r *Reader) resolveOffsets(p *Provenance, ix *evidence.ManifestIndex, rng *
 			unavailable("the runs of %s could not be read: %v", art.ID, err)
 			return
 		}
+		if msg := recoveredRunsFault(art, runs); msg != "" {
+			// case verify R4: a recovered artifact records exactly the runs of the bytes it holds
+			off.Hops = append(off.Hops, oh)
+			p.addProblem(ProblemRunsInconsistent, i, fmt.Sprintf("artifact %q: %s", art.ID, msg))
+			unavailable("%s", msg)
+			return
+		}
 		var next []piece
 		for _, pc := range pieces {
 			if pc.hole {
@@ -94,7 +110,7 @@ func (r *Reader) resolveOffsets(p *Provenance, ix *evidence.ManifestIndex, rng *
 			if terr != nil {
 				off.Hops = append(off.Hops, oh)
 				kind := ProblemRunsInconsistent
-				if errors.Is(terr, errRangeOutside) {
+				if i == 0 && errors.Is(terr, errRangeOutside) {
 					kind = ProblemRangeOutside
 				}
 				reason := strings.TrimPrefix(terr.Error(), ErrOffsetUnavailable.Error()+": ")
@@ -128,9 +144,6 @@ func (r *Reader) resolveOffsets(p *Provenance, ix *evidence.ManifestIndex, rng *
 		}
 		pieces = next
 	}
-	if exceed {
-		p.Notes = append(p.Notes, noteRunsExceedSize)
-	}
 	// proof of the chain: a parent whose hash differs, or parent segments that do not check out,
 	// make the offsets refer to bytes the case does not hold
 	for _, h := range p.Chain {
@@ -145,6 +158,9 @@ func (r *Reader) resolveOffsets(p *Provenance, ix *evidence.ManifestIndex, rng *
 			return
 		}
 	}
+	if exceed {
+		p.Notes = append(p.Notes, noteRunsExceedSize)
+	}
 	off.State = OffsetTranslated
 	off.Image = make([]ImageExtent, 0, len(pieces))
 	for _, pc := range pieces {
@@ -154,6 +170,28 @@ func (r *Reader) resolveOffsets(p *Provenance, ix *evidence.ManifestIndex, rng *
 		}
 		off.Image = append(off.Image, e)
 	}
+}
+
+// recoveredRunsFault is rule R4 of case verify for a recovered kind: no hole, and the runs add up
+// to the size of the artifact whether or not it is flagged incomplete. It returns "" when the
+// artifact is not of a recovered kind or the runs are fine.
+func recoveredRunsFault(art evidence.ManifestRecord, runs []evidence.Run) string {
+	if !evidence.IsRecoveredKind(art.Source.Kind) {
+		return ""
+	}
+	var sum int64
+	for i, ru := range runs {
+		if ru.Offset == -1 {
+			return fmt.Sprintf("run %d is a hole (recovered artifacts have no holes)", i)
+		}
+		if ru.Length > 0 && sum <= math.MaxInt64-ru.Length {
+			sum += ru.Length
+		}
+	}
+	if sum != art.Size {
+		return fmt.Sprintf("runs cover %d bytes but the artifact holds %d", sum, art.Size)
+	}
+	return ""
 }
 
 // runsSource names where the runs of a derivation are held.

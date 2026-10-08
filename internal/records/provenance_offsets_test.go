@@ -309,7 +309,7 @@ func TestOffsetRunsSumDisagreesRefused(t *testing.T) {
 	r := recoveredRec(f.ID, ip(50))
 	r.Range = &records.Range{Offset: 0, Length: 2}
 	p := getOne(t, c, []string{f.ID}, r).Provenance
-	requireUnavailable(t, p, "runs cover 8 bytes but the artifact has 4")
+	requireUnavailable(t, p, "runs cover 8 bytes but the artifact holds 4")
 	if k := problemKinds(p); k[records.ProblemRunsInconsistent] != 1 {
 		t.Fatalf("%+v", p.Problems)
 	}
