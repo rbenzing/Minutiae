@@ -1,0 +1,17 @@
+{
+ "generator": {
+  "tool": "internal/sqlitefile/fixturegen_test.go",
+  "version": "",
+  "class": "A",
+  "statements": [
+   "8192 bytes of sha256 counter-mode output (seed 'encrypted-like'); not a database"
+  ],
+  "file_sha256": {
+   "encrypted-like.db": "4a0a24f20018e2c2baa36fde67f787f2cd0c00efeb2ca0d70d1354bd190e54c9"
+  }
+ },
+ "not_sqlite": true,
+ "warnings": {
+  "live": []
+ }
+}

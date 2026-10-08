@@ -680,6 +680,110 @@ exempt images are accepted by the reader on purpose:
 - `wrapped-hfsx`: Apple never embeds HFSX in a wrapper (the embedded signature must
   be `H+`); the reader accepts both on purpose.
 
+## SQLite fixtures
+
+Committed under `internal/sqlitefile/testdata/` (plan 3I, Task 14), consumed by
+`internal/sqlitefile/fixtures_test.go`. Each fixture is `<name>.db.gz`, plus
+`<name>.db-wal.gz` and/or `<name>.db-journal.gz`, plus `<name>.expect.json`
+(the oracle). The tests need no engine and no Docker.
+
+| Fixture | Class | Written by | Holds |
+|---|---|---|---|
+| `basic-utf8-4k` | A | engine | every value kind, an index, a view, 600 rows |
+| `utf16le-1k`, `utf16be-512` | A | engine | non-ASCII text, small pages, multi-level trees |
+| `overflow-wide` | A | engine | overflow chains of 1, 3 and 40 pages, a 120-column table |
+| `without-rowid` | A | engine | WITHOUT ROWID with a composite key inserted out of order, a STRICT table |
+| `addcolumn-short` | A | engine | rows written before `ALTER TABLE ADD COLUMN` (defaults) |
+| `autovacuum-incr` | A | engine | incremental auto-vacuum, pointer-map pages, deleted rows, freelist |
+| `freelist-dropped` | A | engine | dropped tables whose freelist leaves keep their rows (fit, guess and none tiers), `DELETE` residue |
+| `secure-delete` | A | engine | the same with `secure_delete=ON` (negative control: nothing recoverable) |
+| `builder-wal-generations` | A | `sqlitetest` | database + WAL: four commits over two generations, an uncommitted tail, stale frames |
+| `builder-hot-journal`, `builder-journal-multiseg` | A | `sqlitetest` | database with spilled pages + hot journal; three segments and a page journaled twice |
+| `encrypted-like` | A | generator | 8 KiB of sha256 counter-mode bytes (not SQLite) |
+| `wal-uncheckpointed`, `wal-stale-generation` | B | engine | WAL with 4 transactions; WAL restarted after `wal_checkpoint(RESTART)` with stale frames beyond the new end |
+| `hot-journal`, `persist-journal` | B | engine | database + journal copied in the middle of a transaction; `journal_mode=PERSIST` leftover (zeroed header) |
+| `sqlite3-freelist`, `sqlite3-utf16` | C | Debian `sqlite3` (python) | the freelist and UTF-16 shapes from the container's engine |
+| `sqlite3-wal-killed`, `sqlite3-hot-journal-killed` | C | Debian `sqlite3` (python) | a child process killed with `os._exit` leaves an uncheckpointed WAL / a hot journal, with no copy of open files |
+
+### Regenerate
+
+Class A and B (Go, no Docker; the engine is `modernc.org/sqlite`, a test
+dependency only):
+
+    MINUTIAE_REGEN_SQLITE_FIXTURES=1 go test ./internal/sqlitefile -run TestGenerateFixtures
+
+Class C (Docker; the image's last layer installs the Debian `sqlite3` package,
+whose libsqlite3 python's `sqlite3` module links; no `--privileged`):
+
+    docker build -t minutiae-fixtures tools/fixtures
+    docker run --rm -v "$PWD:/work" -w /work minutiae-fixtures bash tools/fixtures/gen.sh sqlite
+
+Regenerating one class never touches the other: the Go generator writes only
+the A and B names, `gen.sh sqlite` only the four C names. Regenerate a fixture
+TOGETHER with its `expect.json`: every test checks the sha256 of each
+uncompressed file against `generator.file_sha256` first, so a stale oracle (or
+a stale image) fails before anything else.
+
+The Dockerfile change is a NEW FINAL layer, so every earlier layer, and every
+fixture generated from it, is as built; no other fixture was regenerated.
+Note: Debian builds libsqlite3 with `SQLITE_SECURE_DELETE`, so a database made
+there erases freed content unless `pragma secure_delete = OFF` is set; the
+`sqlite3-freelist` scenario sets it.
+
+### The oracles (never Minutiae)
+
+`expect.json` is `{generator, header, schema, live, cells, info, freelist,
+wal, journal, as_found, history, unreachable, warnings, extra}`; values are
+typed (`{"t":"int","v":"7"}`, text, blob as base64, null, float as its bit
+pattern in hex). It differs from `lib.sh generator_json` in that `file_sha256`
+holds one hash per file (a fixture can have three files), not one image hash.
+
+* The ENGINE answers for the schema (`sqlite_schema`), the live rows (a
+  hot-journal fixture's `live` is the post-rollback state the engine returns;
+  `as_found` is the raw file plus WAL, never a rollback), `integrity_check`,
+  `freelist_count` and `page_count`, always on a COPY of the files. For the
+  container family it also records the shell's `.dbinfo` and `dbstat` output
+  (in `extra`).
+* A small independent WALKER answers for bytes: the header, every cell
+  (file, page, offset, length and the cell's bytes in `cells`), WAL frames
+  (salts, checksum chain, state, generation), journal records and the
+  freelist. It lives in `internal/sqlitefile/fixturewalk_test.go` (Go: class A
+  and B) and `sqlite_oracle.py` (class C); the two share no code with
+  `internal/sqlitefile` or with each other, and the class C files agree with
+  the Go tests, which is a third reading.
+* `history` is what the generator's own statements prove reachable: each
+  version a statement wrote (or deleted) is searched for in the non-live page
+  images (database pages under a committed frame, superseded, uncommitted and
+  stale frames, journal before-images, database pages a hot journal hides,
+  freelist leaves). Each place it is found is an entry, labelled by the rules
+  of the plan: method, origin, table basis (schema; fit or guess with the
+  identity-by-fit-only note and relation unknown; none), relation to live and
+  confidence. A row identical to its live row is not an entry. The rows of a
+  stale WAL generation have no as-of schema, so they carry the fit basis and
+  `owner-changed` (rulings C44 and C46). `unreachable` lists deleted rows and
+  `secure_delete` markers the library must not deliver.
+
+### Determinism classes
+
+* **A, byte-reproducible:** builder-written files (database, WAL, journal)
+  and engine-written database-only files (the header holds no random data;
+  the engine version is pinned by `go.mod`). `TestFixtureGeneratorIsDeterministic`
+  runs the Go generator twice in one process and compares every byte.
+* **B, not reproducible:** engine-written WAL and journal files. The engine
+  draws salts and nonces from its PRNG and exposes no seed. Committed with
+  their oracle; regenerate image and oracle together. The determinism test
+  excludes exactly these four by name.
+* **C, container family:** reproducible only where the writer is
+  deterministic. `sqlite.sh` generates twice and says which files differ: the
+  database-only fixtures and the databases next to a killed writer were
+  byte-identical, the WAL and journal files differed (class B behaviour).
+
+### Tags
+
+`go test -tags sqlitematrix ./internal/sqlitefile` runs the large engine
+matrix of Task 13 (45 live scenarios, 1448 WAL mutations); the fixtures do not
+need it.
+
 ## Adding a fixture
 
 1. Add `<name>.sh` taking the output directory as `$1`; source `lib.sh` and

@@ -18,8 +18,9 @@ declare -A fixtures=(
   [apfs]="internal/filesys/apfs/testdata"
   [apfs-populated]="internal/filesys/apfs/testdata"
   [hfsplus]="internal/filesys/hfsplus/testdata"
+  [sqlite]="internal/sqlitefile/testdata"
 )
-order=(volume-gpt volume-mbr ext4 fat exfat f2fs ewf apfs)
+order=(volume-gpt volume-mbr ext4 fat exfat f2fs ewf apfs sqlite)
 # Not in "all": each needs its own image (hfsplus: Dockerfile.hfs, minutiae-fixtures-hfs;
 # apfs-populated: Dockerfile.apfs, minutiae-fixtures-apfs).
 separate=(hfsplus apfs-populated)

@@ -29,3 +29,12 @@ RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       apfsprogs \
  && rm -rf /var/lib/apt/lists/*
+
+# sqlite3 (the command-line shell, with libsqlite3 that python3's sqlite3 module
+# links) for the SQLite fixtures: the engine that writes the container family
+# and the oracle that checks every fixture. A separate, final layer so every
+# layer above, and every fixture generated from it, stays as built.
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      sqlite3 \
+ && rm -rf /var/lib/apt/lists/*
