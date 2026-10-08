@@ -762,13 +762,124 @@ Not measured here and not to be assumed (each gets its own probe in the named pa
 and the spec §18 "from memory" items stay marked until then):
 
 - [ ] ext4 `i_block` / extent tree residue after unlink (3C)
-- [ ] `exfat-fuse` FAT-chain residue after delete (3B); the kernel exfat driver's own
-      residue is also unmeasured
+- [x] `exfat-fuse` FAT-chain residue after delete (3B): superseded by ruling F3 (the
+      fixtures use the KERNEL drivers in the QEMU guest, never exfat-fuse); the kernel
+      exfat driver KEEPS the FAT entries of a deleted chained file and ZEROES nothing
+      but the bitmap bits (see "FAT/exFAT recovery probe (3B)", P3)
 - [ ] F2FS node-block survival after unlink, and `nodiscard` mount behaviour (3D)
 - [ ] jbd2 stale journal region contents (3G)
 - [ ] F2FS roll-forward node chain after an fsync'd write and an unclean quit (3H)
 - [ ] `sqlite3` WAL / rollback-journal leftovers (3J)
 - [ ] whether the guest clock holds a fixed time without the rewind loop for a longer run
+
+## FAT/exFAT recovery probe (3B)
+
+Measured 2026-10-08 with `recover_fat_probe.sh` (library: `recover_guest.sh`) in the
+`minutiae-recover-fixtures` image of the section above: kernel `6.1.0-53-amd64`, the
+`vfat` and `exfat` drivers inside the QEMU TCG guest (`-smp 1`, no KVM, no
+`--privileged`, no FUSE, no loop device, no host mount; the guest's own `/init`
+loads the modules). The host formats (FAT16 4 MiB `mkfs.fat -F 16 -s 1 -i 1234ABCD`,
+exFAT 8 MiB `mkfs.exfat -L PROBE -c 512`, both under `faketime`, both with
+512-byte clusters) and READS the finished images with a raw Python reader
+(cross-checked with `mshowfat`, `fsck.fat` and `dump.exfat`). Run:
+
+```bash
+docker run --rm -v "$PWD:/work" -w /work minutiae-recover-fixtures bash tools/fixtures/recover_fat_probe.sh
+```
+
+The probe took about 3 minutes. Differences from the plan's wording, forced by
+measurement: the vfat guest also needs `nls_ascii` (the kernel's default
+`iocharset` is `ascii`; without it the mount fails with `IO charset ascii not
+found`); the guest links its applets itself (`busybox --install` in `/init`), so
+the host side of the scripts never names a module command; each op list runs one
+boot per stage and every stage image is kept, which is how "before" and "after" are
+both read from files.
+
+Stage sequence per filesystem (each stage is one guest boot on the previous
+stage's image; files `A.BIN`..`F.BIN`; sizes in 512-byte clusters: A 6, B 4, C 8,
+D 4, E 6, F 14): s1w write A,B,C,D; s2d `rm` B,D; s3w write E; s4f `dd
+if=/dev/zero` until ENOSPC (`FILL.BIN`); s5d `rm` A,C; s6w write F (14 clusters =
+A + C); s7d `rm` F; s9n (from an empty volume, ONE mount) write A,B,C, `rm` B,
+write D, E. exFAT only: s8v length probes.
+
+### Probe facts
+
+| Id | Fact (this run, measured) |
+|---|---|
+| P1 | vfat, `rm`: the kernel sets the directory entry's first byte to `0xE5` and keeps everything else, including first cluster and size (checked for contiguous B and D and for the two-run F). It ZEROES every FAT entry of the chain (all 4 of B, all 14 of F, the end-of-chain mark included). A deleted vfat file keeps only (first cluster, size) in its directory entry; the chain is gone |
+| P2 | vfat allocation order: ascending next-fit from the last allocated cluster, with wrap. Cluster 2 is not the first allocation (the first file of a fresh volume starts at cluster 3; cluster 2 is reached only after the search wraps: `FILL.BIN` = 23..8096 then 2). Within ONE mount a deleted file's hole is NOT reused while later clusters are free (s9n: A=3-8, B=9-12, C=13-20, `rm` B, D=21-24, E=25-30). After a fresh mount (every stage is one) the search restarts at cluster 3 and takes the lowest free clusters: after `rm` B,D, E (6 clusters) = 9-12,21-22. On a full volume with only A and C freed, F took them ascending: 3-8 then 13-20 |
+| P3 | exFAT, `rm`: (a) contiguous file (B, D; also A, C): `NoFatChain` set, entry-set types `85 C0 C1` become `05 40 41` (InUse cleared), first cluster, DataLength and ValidDataLength kept, allocation-bitmap bits CLEARED, FAT entries never written (all 0 before and after). (b) fragmented file F (clusters 18-23 and 28-35, written into the two holes of a full volume; `NoFatChain` clear): InUse cleared (`85 C0 C1` to `05 40 41`), first cluster and size kept, bitmap bits CLEARED, and the FAT entries are KEPT byte for byte (13 links and the end-of-chain `ffffffff` are all still present after the delete). **F1 gate: the kernel exFAT driver keeps the FAT entries of a deleted chained file, so Task 8 (exfat-fatchain) PROCEEDS**; the Task 13 fixture must prove it (`fat_residue: "chain-kept"`). Not tested: how long the entries survive once the freed clusters are reallocated (a reallocation rewrites them) |
+| P4 | exFAT allocation order: as vfat, except that the first allocation is the first free cluster of the heap (18 on this volume). Within one mount: next-fit (s9n: A=18-23, B=24-27, C=28-35, `rm` B, D=36-39, E=40-45; B's hole is not reused). After a fresh mount: lowest free clusters first (s3w: E = 24-27 then 36-37, a two-run file with `NoFatChain` clear). Full volume, A and C freed: F = 18-23 then 28-35, ascending |
+| P5 | exFAT `ValidDataLength` < `DataLength` with busybox tools: NO. `truncate -s 5000` on an empty file, `truncate -s 4000` on a 100-byte file, `dd seek=6 count=1` (a write past the end) and `dd seek=8 count=0` all gave ValidDataLength == DataLength (5000, 4000, 3584, 4096). The `valid-data-length` scenario is therefore builder-only (a hand-built exfattest image), not a kernel fixture |
+| P6 | `dd if=/dev/zero of=FILL.BIN bs=512` until ENOSPC leaves ZERO free clusters on both volumes (vfat 8095 clusters, exFAT 12288; free count derived from the FAT / bitmap is 0, and `dump.exfat` agrees: `Free Clusters: 0`). After `rm` of A and C (the only files freed) the free set is exactly A's and C's clusters (vfat 3-8,13-20; exFAT 18-23,28-35), and the file written next occupies exactly those clusters |
+
+Decisions that follow: the F1 gate is open (Task 8 proceeds; a stale exFAT chain
+is real on the kernel image); the `valid-data-length` scenario is builder-only
+(P5). For the F20 check of Tasks 12-13: P2 and P4 are ascending within the free
+set after a fresh mount and next-fit within a mount, so the write-order table
+may assume "ascending, no reuse of a hole inside one mount while later clusters
+are free"; the full-volume technique (free set exactly the target's clusters)
+does not depend on it and stays the rule (ruling F19).
+
+### Raw evidence (the `HEX` lines of the probe output)
+
+vfat B.BIN (32-byte directory entry, clusters 9-12) and its FAT16 entries, before
+and after `rm`:
+
+```
+entry BEFORE  422020202020202042494e200005aab16e576e570000aab16e570900d0070000
+entry AFTER   e52020202020202042494e200005aab16e576e570000aab16e570900d0070000
+FAT BEFORE    0a000b000c00ffff
+FAT AFTER     0000000000000000
+```
+
+vfat F.BIN (two runs, 3-8 and 13-20):
+
+```
+entry BEFORE  462020202020202042494e200003aab16e576e570000aab16e570300581b0000
+entry AFTER   e52020202020202042494e200003aab16e576e570000aab16e570300581b0000
+FAT BEFORE    040005000600070008000d000e000f0010001100120013001400ffff
+FAT AFTER     00000000000000000000000000000000000000000000000000000000
+```
+
+exFAT B.BIN (contiguous, clusters 24-27; the entry set is 3 x 32 bytes, printed
+here one line per entry). Stream flags byte `03` = AllocationPossible + NoFatChain:
+
+```
+BEFORE  8502d12b20000000aab16e57aab16e57aab16e57080880808000000000000000
+        c003000532ad0000d0070000000000000000000018000000d007000000000000
+        c10042002e00420049004e000000000000000000000000000000000000000000
+AFTER   0502d12b20000000aab16e57aab16e57aab16e57080880808000000000000000
+        4003000532ad0000d0070000000000000000000018000000d007000000000000
+        410042002e00420049004e000000000000000000000000000000000000000000
+FAT bytes of clusters 24-27, before and after: 00000000000000000000000000000000
+bitmap byte holding cluster 24 (clusters 18-25): before ff, after 3f
+```
+
+exFAT F.BIN (fragmented, clusters 18-23 and 28-35). Stream flags byte `01` =
+AllocationPossible only, the chain is in the FAT:
+
+```
+BEFORE  850289ea20000000aab16e57aab16e57aab16e57050580808000000000000000
+        c001000532af0000581b0000000000000000000012000000581b000000000000
+        c10046002e00420049004e000000000000000000000000000000000000000000
+AFTER   050289ea20000000aab16e57aab16e57aab16e57050580808000000000000000
+        4001000532af0000581b0000000000000000000012000000581b000000000000
+        410046002e00420049004e000000000000000000000000000000000000000000
+FAT BEFORE  13000000140000001500000016000000170000001c0000001d0000001e0000001f00000020000000210000002200000023000000ffffffff
+FAT AFTER   13000000140000001500000016000000170000001c0000001d0000001e0000001f00000020000000210000002200000023000000ffffffff
+bitmap byte holding cluster 18 (clusters 18-25): before ff, after c0
+```
+
+exFAT length probes (P5): ValidDataLength (stream offset 8) and DataLength (offset
+24) in each entry set as the guest left it:
+
+```
+T1 truncate -s 5000 on an empty file   VDL 8813000000000000  DataLength 8813000000000000
+T2 100-byte file, truncate -s 4000     VDL a00f000000000000  DataLength a00f000000000000
+T3 dd seek=6 count=1                   VDL 000e000000000000  DataLength 000e000000000000
+T4 dd seek=8 count=0                   VDL 0010000000000000  DataLength 0010000000000000
+```
 
 ## SQLite fixtures
 
