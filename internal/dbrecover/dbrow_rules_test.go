@@ -34,10 +34,10 @@ func TestTableLabelRules(t *testing.T) {
 	for _, b := range []string{"schema", "fit", "guess"} {
 		requireAccepted(t, b+" with table", with(b, func(p map[string]any) { p["table"] = "t" }))
 		requireAccepted(t, b+" with table_b64", with(b, func(p map[string]any) { p["table_b64"] = "AAEC"; p["table_valid"] = false }))
-		requireRefused(t, b+" with neither", with(b, func(p map[string]any) {}))
+		requireRefused(t, b+" with neither", with(b, func(_ map[string]any) {}))
 		requireRefused(t, b+" with both", with(b, func(p map[string]any) { p["table"] = "t"; p["table_b64"] = "AAEC" }))
 	}
-	requireAccepted(t, "none with neither", with("none", func(p map[string]any) {}))
+	requireAccepted(t, "none with neither", with("none", func(_ map[string]any) {}))
 	requireRefused(t, "none with table", with("none", func(p map[string]any) { p["table"] = "t" }))
 	requireRefused(t, "none with table_b64", with("none", func(p map[string]any) { p["table_b64"] = "AAEC" }))
 	requireRefused(t, "none with both", with("none", func(p map[string]any) { p["table"] = "t"; p["table_b64"] = "AAEC" }))
