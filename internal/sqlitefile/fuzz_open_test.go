@@ -122,7 +122,7 @@ func noPanicF(t testing.TB, what string, err error) {
 	t.Helper()
 	var pe *sqlitefile.PanicError
 	if errors.As(err, &pe) {
-		t.Fatalf("%s: panic: %v\n%s", what, pe.Value, pe.Stack)
+		t.Fatalf("%s: panic: %v", what, pe.Value)
 	}
 }
 

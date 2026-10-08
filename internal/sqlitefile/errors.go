@@ -76,11 +76,12 @@ func (e *CorruptError) Error() string {
 // Is matches ErrCorrupt.
 func (e *CorruptError) Is(target error) bool { return target == ErrCorrupt }
 
-// PanicError is a panic recovered inside an exported method. Stack holds at
-// most the first 2 KiB of the stack at the point of the panic.
+// PanicError is a panic recovered inside an exported method. The library takes
+// no stack trace (the purity rules keep it free of the runtime package): Value
+// is the recovered value, which for a runtime failure is a runtime.Error that
+// already names the faulting line.
 type PanicError struct {
 	Value any
-	Stack string
 }
 
 func (e *PanicError) Error() string {

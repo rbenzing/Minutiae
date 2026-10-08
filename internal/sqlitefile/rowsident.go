@@ -46,20 +46,22 @@ func (rp *rowPass) ownerOf(pg uint32) (uint32, bool) {
 	return o, o != 0
 }
 
-// schemaItem is the fit item of the schema table itself.
-var schemaItem = func() *fitItem {
-	it, ok := fitTableDef("sqlite_schema", sqliteSchemaDef, map[*TableDef]int{})
+// schemaItem returns the fit item of the schema table itself (nil when it cannot
+// be built); a fresh value on every call, so no package-level state is shared.
+func schemaItem() *fitItem {
+	it, ok := fitTableDef("sqlite_schema", sqliteSchemaDef(), map[*TableDef]int{})
 	if !ok {
 		return nil
 	}
 	return &it
-}()
+}
 
 // ownerCand returns the candidate for the schema object that owns a page, or
 // false when it is not something a strict fit can be tested against.
 func (rp *rowPass) ownerCand(o uint32) (candidate, bool) {
 	if o == 1 {
-		return candidate{name: "sqlite_schema", item: schemaItem}, schemaItem != nil
+		si := schemaItem()
+		return candidate{name: "sqlite_schema", item: si}, si != nil
 	}
 	k := int(o) - 2
 	if k < 0 || k >= len(rp.sch.Objects) {
@@ -262,7 +264,7 @@ func (rp *rowPass) asOfIdent(a asOf, hd PageHeader, cells []imgCell) (ident, boo
 	var it *fitItem
 	var wr bool
 	if a.num == 1 {
-		it = schemaItem
+		it = schemaItem()
 	} else if a.obj != nil && !a.obj.Virtual && a.obj.Table != nil {
 		item, ok := fitTableDef(a.obj.Name, a.obj.Table, map[*TableDef]int{})
 		if !ok {

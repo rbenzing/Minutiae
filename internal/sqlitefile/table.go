@@ -11,9 +11,9 @@ import (
 	"unicode/utf16"
 )
 
-// sqliteSchemaDef is the fixed definition of the schema table itself, which
+// sqliteSchemaDef returns a fresh copy of the fixed definition of the schema table itself, which
 // has no row of its own in the schema.
-var sqliteSchemaDef = func() *TableDef {
+func sqliteSchemaDef() *TableDef {
 	names := []string{"type", "name", "tbl_name", "rootpage", "sql"}
 	types := []string{"text", "text", "text", "integer", "text"}
 	d := &TableDef{RowidAlias: -1, StoredColumns: len(names), ParseOK: true}
@@ -21,7 +21,7 @@ var sqliteSchemaDef = func() *TableDef {
 		d.Columns = append(d.Columns, Column{Name: n, DeclType: types[i], Affinity: AffinityOf(types[i]), RecordIndex: i})
 	}
 	return d
-}()
+}
 
 // Table is a table of the schema, ready to be read.
 type Table struct {
@@ -42,7 +42,7 @@ type Index struct {
 func (v *View) Table(ctx context.Context, name string) (t *Table, err error) {
 	defer guard(&err)
 	if asciiEqualFold(name, "sqlite_master") || asciiEqualFold(name, "sqlite_schema") {
-		return &Table{v: v, obj: SchemaObject{Type: "table", Name: "sqlite_schema", TblName: "sqlite_schema", RootPage: 1, Table: sqliteSchemaDef}}, nil
+		return &Table{v: v, obj: SchemaObject{Type: "table", Name: "sqlite_schema", TblName: "sqlite_schema", RootPage: 1, Table: sqliteSchemaDef()}}, nil
 	}
 	s, err := v.Schema(ctx)
 	if err != nil {

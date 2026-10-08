@@ -1,14 +1,6 @@
 package sqlitefile
 
-import (
-	"runtime"
-	"strconv"
-	"sync/atomic"
-	"unicode/utf8"
-)
-
-// maxPanicStack is the most stack text a PanicError keeps.
-const maxPanicStack = 2048
+import "sync/atomic"
 
 // env is the internal environment of one library instance: the options with
 // resolved limits, the budget, and the test hook. The hook is set only by
@@ -77,7 +69,7 @@ func (l *ledger) free(n int64) {
 // is released; so are the charges of a call that returns an error.
 func (l *ledger) guard(err *error) {
 	if r := recover(); r != nil {
-		*err = &PanicError{Value: r, Stack: clippedStack()}
+		*err = &PanicError{Value: r}
 	}
 	if *err != nil {
 		l.free(l.n)
@@ -94,40 +86,12 @@ func (e *env) at(site string) {
 // guard is deferred in every exported method and in the five exported pure
 // parse functions (defer guard(&err)): a panic
 // becomes a *PanicError in *err. A call that does not panic keeps its own err.
-// The stack is built from runtime.Callers (runtime/debug is not used) and
-// clipped to 2 KiB.
 func guard(err *error) {
 	r := recover()
 	if r == nil {
 		return
 	}
-	*err = &PanicError{Value: r, Stack: clippedStack()}
-}
-
-func clippedStack() string {
-	pcs := make([]uintptr, 64)
-	n := runtime.Callers(2, pcs)
-	frames := runtime.CallersFrames(pcs[:n])
-	var out []byte
-	for {
-		f, more := frames.Next()
-		out = append(out, f.Function...)
-		out = append(out, "\n\t"...)
-		out = append(out, f.File...)
-		out = append(out, ':')
-		out = strconv.AppendInt(out, int64(f.Line), 10)
-		out = append(out, '\n')
-		if len(out) >= maxPanicStack || !more {
-			break
-		}
-	}
-	if len(out) > maxPanicStack {
-		out = out[:maxPanicStack]
-		for len(out) > 0 && !utf8.Valid(out) { // never cut a rune in half
-			out = out[:len(out)-1]
-		}
-	}
-	return string(out)
+	*err = &PanicError{Value: r}
 }
 
 // pureHook is the panic-injection hook of the exported pure parse functions,

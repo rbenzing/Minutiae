@@ -41,7 +41,7 @@ const (
 
 const dbMagic = "SQLite format 3\x00"
 
-var journalMagic = []byte{0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7}
+const journalMagic = "\xd9\xd5\x05\xf9\x20\xa1\x63\xd7"
 
 // sniffResult is Sniff's result with what Open needs: why the file is not a
 // database, and the bytes read.
@@ -84,7 +84,7 @@ func sniff(r io.ReaderAt, size int64) (sniffResult, error) {
 			res.PageSize = validOrZero(int(binary.BigEndian.Uint32(buf[8:])))
 		}
 		return res, nil
-	case !hasMagic && len(buf) >= len(journalMagic) && bytes.Equal(buf[:len(journalMagic)], journalMagic):
+	case !hasMagic && len(buf) >= len(journalMagic) && string(buf[:len(journalMagic)]) == journalMagic:
 		res.Kind, res.reason = SniffJournal, ReasonBadMagic
 		if len(buf) >= 28 {
 			res.PageSize = validOrZero(int(binary.BigEndian.Uint32(buf[24:])))

@@ -1,7 +1,6 @@
 package sqlitefile
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -206,7 +205,7 @@ func (js *jscan) regionEnd() (int64, error) {
 		return 0, err
 	}
 	nameLen := int64(binary.BigEndian.Uint32(t[0:]))
-	if !bytes.Equal(t[8:], journalMagic) || nameLen == 0 || nameLen > journalMaxSuperName || nameLen+16 > js.size {
+	if string(t[8:]) != journalMagic || nameLen == 0 || nameLen > journalMaxSuperName || nameLen+16 > js.size {
 		return js.size, nil
 	}
 	if err := js.l.alloc(nameLen); err != nil {
@@ -240,7 +239,7 @@ func (js *jscan) headerAndSegments(hdr [journalHeaderLen]byte, n, regionEnd int6
 		js.warn(WarnJournalHeaderInvalid, 0, "the file holds %d bytes, fewer than the %d of a header", js.size, journalHeaderLen)
 		return nil
 	}
-	if !bytes.Equal(hdr[:8], journalMagic) {
+	if string(hdr[:8]) != journalMagic {
 		js.warn(WarnJournalHeaderInvalid, 0, "the first bytes are not the journal magic")
 		return nil
 	}
@@ -301,7 +300,7 @@ func (js *jscan) walk(first [journalHeaderLen]byte, regionEnd int64) error {
 			if err := readFull(js.j, hdr[:], off); err != nil {
 				return err
 			}
-			if !bytes.Equal(hdr[:8], journalMagic) {
+			if string(hdr[:8]) != journalMagic {
 				break
 			}
 		}

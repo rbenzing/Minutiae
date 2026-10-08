@@ -1059,6 +1059,9 @@ func checkMutableState(srcs []pureSrc, class pureClass) []pureViolation {
 			for si, sp := range gd.Specs {
 				vs := sp.(*ast.ValueSpec)
 				for i := range vs.Names {
+					if allowedPackageVar(s, class, vs, i, names) {
+						continue
+					}
 					if embedVar(s.f, di, si, vs, names, class) {
 						tracked[vs.Names[i].Name] = trackedVar{kind: vkEmbed, spec: vs}
 						continue
@@ -2112,4 +2115,63 @@ func TestPurityStatelessSelfTest(t *testing.T) {
 	if got := checkStatelessParsers(parsePureSources(t, map[string]string{"a.go": a, "b.go": b}), pcParser); len(got) != 1 || got[0].File != "a.go" || got[0].Line != 3 {
 		t.Errorf("violations = %v, want the map field in a.go:3", got)
 	}
+}
+
+// TestPureHookIsTheOnlyAllowedPackageVar: the sqlitefile class has exactly one
+// package-level var that is not a constant table, sentinel or regexp: the test
+// hook `pureHook` of the exported pure parse functions (guard.go), an
+// atomic.Pointer with no initialiser (ruling C54c). The entry is named by class,
+// file, identifier and exact type; every neighbour is still state.
+func TestPureHookIsTheOnlyAllowedPackageVar(t *testing.T) {
+	const head = "package p\n\nimport \"sync/atomic\"\n\n"
+	const hook = "var pureHook atomic.Pointer[func(site string)]\n"
+	count := func(file, body string, class pureClass) int {
+		return len(checkMutableState(parsePureSources(t, map[string]string{file: head + body}), class))
+	}
+	if n := count("guard.go", hook, pcSqlitefile); n != 0 {
+		t.Errorf("the allowlisted pureHook: %d violations, want 0", n)
+	}
+	for _, class := range []pureClass{pcParse, pcRTCommon, pcRTType, pcDecode, pcParser} {
+		if n := count("guard.go", hook, class); n != 1 {
+			t.Errorf("pureHook in %s: %d violations, want 1", class, n)
+		}
+	}
+	for name, c := range map[string]struct{ file, body string }{
+		"another file":       {"x.go", hook},
+		"another name":       {"guard.go", "var otherHook atomic.Pointer[func(site string)]\n"},
+		"another type":       {"guard.go", "var pureHook func(site string)\n"},
+		"an initialiser":     {"guard.go", "var pureHook = atomic.Pointer[func(site string)]{}\n"},
+		"a neighbour":        {"guard.go", hook + "var counter int\n"},
+		"a grouped neighbor": {"guard.go", "var (\n\tpureHook atomic.Pointer[func(site string)]\n\tcounter  int\n)\n"},
+	} {
+		if n := count(c.file, c.body, pcSqlitefile); n != 1 {
+			t.Errorf("%s: %d violations, want 1", name, n)
+		}
+	}
+}
+
+// allowedPackageVar is the ONE named exception to P5 (ruling C54c): in the
+// sqlitefile class, file guard.go, the var `pureHook`, declared as
+// `atomic.Pointer[func(...)]` with no initialiser. It is the panic-injection
+// hook of the exported pure parse functions, which belong to no library
+// instance; it is nil in production and written only by test code. Nothing else
+// (another file, name, type, an initialiser, any other class) is exempt.
+func allowedPackageVar(s pureSrc, class pureClass, vs *ast.ValueSpec, i int, names map[string]string) bool {
+	if class != pcSqlitefile || path.Base(filepath.ToSlash(s.name)) != "guard.go" || vs.Names[i].Name != "pureHook" {
+		return false
+	}
+	if len(vs.Names) != 1 || len(vs.Values) != 0 || vs.Type == nil {
+		return false
+	}
+	ix, ok := vs.Type.(*ast.IndexExpr)
+	if !ok {
+		return false
+	}
+	sel, ok := ix.X.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Pointer" {
+		return false
+	}
+	pkg, ok := sel.X.(*ast.Ident)
+	_, isFunc := ix.Index.(*ast.FuncType)
+	return ok && names[pkg.Name] == "sync/atomic" && isFunc
 }

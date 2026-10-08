@@ -389,11 +389,11 @@ func ScanJournalWithHook(j io.ReaderAt, size int64, dbPageSize int, opts Options
 }
 
 // noRecover turns a recovered *PanicError back into the panic it recovered, so
-// a fuzzer fails on it with the original value and stack. The entry points keep
+// a fuzzer fails on it with the original value. The entry points keep
 // their single guard (a second code path would test something else).
 func noRecover(err error) error {
 	if pe, ok := err.(*PanicError); ok {
-		panic(fmt.Sprintf("%v\n%s", pe.Value, pe.Stack))
+		panic(fmt.Sprintf("%v", pe.Value))
 	}
 	return err
 }

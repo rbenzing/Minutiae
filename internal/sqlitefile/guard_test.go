@@ -2,7 +2,6 @@ package sqlitefile_test
 
 import (
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/sqlitefile"
@@ -24,19 +23,10 @@ func TestGuardTurnsPanicIntoPanicError(t *testing.T) {
 	if pe.Value != "boom" {
 		t.Errorf("Value = %v", pe.Value)
 	}
-	if pe.Stack == "" || !strings.Contains(pe.Stack, "sqlitefile") {
-		t.Errorf("a shallow panic should keep a stack naming the package: %q", pe.Stack)
-	}
 
 	err = sqlitefile.GuardedCall(func() error { deepPanic(500); return nil })
 	if !errors.As(err, &pe) {
 		t.Fatalf("deep panic: err = %v", err)
-	}
-	if len(pe.Stack) > 2048 {
-		t.Errorf("stack is %d bytes, want at most 2048", len(pe.Stack))
-	}
-	if len(pe.Stack) < 1500 {
-		t.Errorf("a deep panic should fill most of the 2 KiB clip, got %d bytes", len(pe.Stack))
 	}
 
 	// A runtime error is recovered too.

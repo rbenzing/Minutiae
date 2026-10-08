@@ -61,11 +61,11 @@ func TestErrorsIsAndAs(t *testing.T) {
 		t.Errorf("a raw NUL reached the message: %q", msg)
 	}
 
-	pe := &sqlitefile.PanicError{Value: "boom", Stack: "frames"}
+	pe := &sqlitefile.PanicError{Value: "boom"}
 	if !errors.Is(pe, sqlitefile.ErrInternal) || errors.Is(pe, sqlitefile.ErrCorrupt) {
 		t.Error("PanicError must match ErrInternal only")
 	}
-	if !strings.Contains(pe.Error(), "boom") || strings.Contains(pe.Error(), "frames") {
+	if !strings.Contains(pe.Error(), "boom") || strings.Contains(pe.Error(), "stack") {
 		t.Errorf("panic message must carry the value and not the stack: %q", pe.Error())
 	}
 }
