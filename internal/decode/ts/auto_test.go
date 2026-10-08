@@ -74,8 +74,8 @@ func TestCocoaAutoSentinels(t *testing.T) {
 }
 
 func TestCocoaAutoGapIsUnambiguous(t *testing.T) {
-	secLimit := float64(Max().Unix()-unixToCocoaSeconds) * 1.001
-	secFloor := -float64(unixToCocoaSeconds) * 1.001
+	secLimit := float64(Max().Unix() - unixToCocoaSeconds) // exclusive, as Max is
+	secFloor := -float64(unixToCocoaSeconds)               // inclusive, as Min is
 	const n = 5000
 	for i := 0; i < n; i++ {
 		mag := math.Pow(10, -3+22*float64(i)/float64(n-1)) // 1e-3 .. 1e19
@@ -89,7 +89,7 @@ func TestCocoaAutoGapIsUnambiguous(t *testing.T) {
 			}
 			switch unit {
 			case UnitSeconds:
-				if v > secLimit || v < secFloor {
+				if v >= secLimit || v < secFloor {
 					t.Fatalf("%v ok as seconds beyond the seconds range", v)
 				}
 			case UnitNanoseconds:
@@ -99,7 +99,7 @@ func TestCocoaAutoGapIsUnambiguous(t *testing.T) {
 			default:
 				t.Fatalf("%v ok with unit %v", v, unit)
 			}
-			if a := math.Abs(v); a > secLimit && a < 1e11 {
+			if a := math.Abs(v); a >= secLimit && a < 1e11 {
 				t.Fatalf("%v is in the gap and must never be ok", v)
 			}
 		}
@@ -111,5 +111,19 @@ func TestUnitString(t *testing.T) {
 		if got := u.String(); got != want {
 			t.Errorf("Unit(%d) = %q, want %q", u, got, want)
 		}
+	}
+}
+
+// The int64-range guard of CocoaAuto: an integral float at or beyond 2^63 must be refused as
+// nanoseconds without a float-to-int conversion (2^63 itself is the MaxInt64 sentinel float).
+func TestCocoaAutoRefusesFloatsBeyondInt64(t *testing.T) {
+	for _, v := range []float64{1 << 64, -(1 << 64), 1e30, -1e30, math.Nextafter(1<<63, 1<<64)} {
+		tm, unit, ok := CocoaAuto(v)
+		if ok || !tm.IsZero() || unit != UnitNanoseconds {
+			t.Errorf("CocoaAuto(%v) = %v %v %v, want zero, nanoseconds, not ok", v, tm, unit, ok)
+		}
+	}
+	if _, unit, ok := CocoaAuto(float64(1 << 62)); ok || unit != UnitNanoseconds {
+		t.Errorf("2^62: unit %v ok %v", unit, ok)
 	}
 }

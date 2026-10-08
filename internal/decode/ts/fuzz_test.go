@@ -46,36 +46,22 @@ func FuzzTS(f *testing.F) {
 			tm, ok := c.f()
 			inBounds(c.name, tm, ok)
 		}
-		// Classify agrees with the converter of the same kind.
+		// Classify against the documented rule, computed directly (not through convertInt).
 		st := Classify(k, i)
-		var tm time.Time
-		var ok bool
-		switch k {
-		case KindUnixSeconds:
-			tm, ok = UnixSeconds(i)
-		case KindUnixMillis:
-			tm, ok = UnixMillis(i)
-		case KindUnixMicros:
-			tm, ok = UnixMicros(i)
-		case KindUnixNanos:
-			tm, ok = UnixNanos(i)
-		case KindCocoaSeconds:
-			tm, ok = CocoaSeconds(float64(i))
-		case KindCocoaNanos:
-			tm, ok = CocoaNanos(i)
-		case KindWebKitMicros:
-			tm, ok = WebKitMicros(i)
-		case KindFileTime:
-			tm, ok = FileTime(i)
-		}
-		_ = tm
-		if (st == StatusValid) != ok {
-			t.Fatalf("Classify(%d, %d) = %v but converter ok = %v", k, i, st, ok)
+		if want, known := expectedStatus(k, i); known && st != want {
+			t.Fatalf("Classify(%d, %d) = %v, want %v", k, i, st, want)
 		}
 		if k == KindCocoaSeconds {
-			_, okf := CocoaSeconds(v)
-			if (ClassifyFloat(k, v) == StatusValid) != okf {
-				t.Fatalf("ClassifyFloat(%v) disagrees with CocoaSeconds", v)
+			fs := ClassifyFloat(k, v)
+			shifted := v + float64(unixToCocoaSeconds)
+			if fs == StatusValid && !(shifted >= float64(Min().Unix()) && shifted <= float64(Max().Unix())) {
+				t.Fatalf("ClassifyFloat(%v) valid outside the range", v)
+			}
+			if (v == 0 || v == -1) && fs != StatusSentinel {
+				t.Fatalf("ClassifyFloat(%v) = %v, want sentinel", v, fs)
+			}
+			if (math.IsNaN(v) || math.IsInf(v, 0)) && fs != StatusInvalid {
+				t.Fatalf("ClassifyFloat(%v) = %v, want invalid", v, fs)
 			}
 		}
 		_ = ClassifyFloat(k, v)
@@ -84,8 +70,59 @@ func FuzzTS(f *testing.F) {
 		if aok && unit == UnitNone {
 			t.Fatalf("CocoaAuto(%v) ok with no unit", v)
 		}
+		sentinel := v == 0 || v == -1 || v == math.MaxInt64 || v == math.MinInt64
+		switch {
+		case math.IsNaN(v) || math.IsInf(v, 0) || sentinel:
+			if unit != UnitNone || aok {
+				t.Fatalf("CocoaAuto(%v) = %v %v, want no unit and not ok", v, unit, aok)
+			}
+		case math.Abs(v) >= 1e11:
+			if unit != UnitNanoseconds {
+				t.Fatalf("CocoaAuto(%v) unit %v, want nanoseconds", v, unit)
+			}
+		default:
+			if unit != UnitSeconds {
+				t.Fatalf("CocoaAuto(%v) unit %v, want seconds", v, unit)
+			}
+		}
 		if !aok && !at.IsZero() {
 			t.Fatalf("CocoaAuto(%v) not ok but returned %v", v, at)
 		}
 	})
+}
+
+// expectedStatus is the documented rule for an integer raw value, written without the
+// package's converters: sentinels first, then the instant (floor-divided to whole Unix
+// seconds) must lie in [Min, Max). known is false for kinds this oracle does not cover.
+func expectedStatus(k Kind, v int64) (Status, bool) {
+	var per, off int64
+	switch k {
+	case KindUnixSeconds:
+		per, off = 1, 0
+	case KindUnixMillis:
+		per, off = 1_000, 0
+	case KindUnixMicros:
+		per, off = 1_000_000, 0
+	case KindUnixNanos:
+		per, off = 1_000_000_000, 0
+	case KindCocoaNanos:
+		per, off = 1_000_000_000, 978307200
+	case KindWebKitMicros:
+		per, off = 1_000_000, -11644473600
+	case KindFileTime:
+		per, off = 10_000_000, -11644473600
+	default:
+		return StatusInvalid, k > KindFileTime
+	}
+	if v == 0 || v == -1 || v == math.MaxInt64 || v == math.MinInt64 {
+		return StatusSentinel, true
+	}
+	q := v / per
+	if v%per < 0 {
+		q--
+	}
+	if sec := q + off; sec >= 0 && sec < 4102444800 { // 1970-01-01 up to 2100-01-01 exclusive
+		return StatusValid, true
+	}
+	return StatusInvalid, true
 }
