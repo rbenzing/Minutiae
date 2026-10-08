@@ -256,6 +256,9 @@ func (c *Case) UnresolvedIngests() ([]UnresolvedIngest, error) {
 func (c *Case) ReadAudit() ([]AuditEntry, error) {
 	entries, err := ReadAuditEntries(filepath.Join(c.Dir, auditFile))
 	if err != nil {
+		if errors.Is(err, errAuditCorrupt) {
+			return nil, fmt.Errorf("%w: read audit log: %w", ErrIntegrity, err)
+		}
 		return nil, fmt.Errorf("read audit log: %w", err)
 	}
 	return entries, nil

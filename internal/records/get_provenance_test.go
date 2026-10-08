@@ -2,6 +2,7 @@ package records_test
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -177,5 +178,123 @@ func TestGetHostileManifestIsBounded(t *testing.T) {
 	}
 	if p.OK() || p.Chain[0].SegmentsTotal != n || len(p.Chain[0].Segments) != records.MaxShownSegments {
 		t.Fatalf("total %d shown %d", p.Chain[0].SegmentsTotal, len(p.Chain[0].Segments))
+	}
+}
+
+// auditFailure damages audit.jsonl after the record is stored and returns what Get says.
+func getAfterAuditDamage(t *testing.T, damage func(path string)) error {
+	t.Helper()
+	c, art := setup(t)
+	res := recordstest.Ingest(t, c, testParser, []string{art.ID}, recordstest.Records(art.ID, 1, 7))
+	damage(filepath.Join(c.Dir, "audit.jsonl"))
+	_, err := newReader(t, c).Get(ctx, res.FirstID)
+	return err
+}
+
+func appendTo(t *testing.T, path, s string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // test case dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(s); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// E30: an audit log that is corrupt, torn or gone is an integrity error (exit 4), never a plain one.
+func TestGetAuditLogDamageIsIntegrity(t *testing.T) {
+	cases := map[string]func(t *testing.T, path string){
+		"corrupt line":   func(t *testing.T, p string) { appendTo(t, p, "this is not json\n") },
+		"torn last line": func(t *testing.T, p string) { appendTo(t, p, `{"seq":99,"act`) },
+		"missing file": func(t *testing.T, p string) {
+			if err := os.Remove(p); err != nil {
+				t.Skipf("cannot remove an open audit log here: %v", err)
+			}
+		},
+		"empty file": func(t *testing.T, p string) {
+			if err := os.Truncate(p, 0); err != nil {
+				t.Skipf("cannot truncate an open audit log here: %v", err)
+			}
+		},
+	}
+	for name, damage := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := getAfterAuditDamage(t, func(p string) { damage(t, p) })
+			if !errors.Is(err, evidence.ErrIntegrity) {
+				t.Fatalf("want ErrIntegrity, got %v", err)
+			}
+		})
+	}
+}
+
+// E30: a plain I/O error reading the audit log stays plain (exit 1, not 4).
+func TestGetAuditLogIOErrorStaysPlain(t *testing.T) {
+	err := getAfterAuditDamage(t, func(p string) {
+		if rmErr := os.Remove(p); rmErr != nil {
+			t.Skipf("cannot remove an open audit log here: %v", rmErr)
+		}
+		if mkErr := os.Mkdir(p, 0o700); mkErr != nil { // opens, but cannot be read as a file
+			t.Skip(mkErr)
+		}
+	})
+	if err == nil || errors.Is(err, evidence.ErrIntegrity) {
+		t.Fatalf("want a plain error, got %v", err)
+	}
+}
+
+// E30: a derivation chain deeper than MaxDerivedDepth over a 100k-artifact manifest is bounded and too-deep.
+func TestGetDeepChainOverHugeManifestIsTooDeep(t *testing.T) {
+	const fillers, links = 100000, 20
+	c, art := setup(t)
+	res := recordstest.Ingest(t, c, testParser, []string{art.ID}, recordstest.Records(art.ID, 1, 7))
+	node := func(i int) string { return fmt.Sprintf("link%d", i) }
+	recordstest.SetManifestSource(t, c.Dir, art.ID, func(s *evidence.Source) {
+		s.Kind = "extract"
+		s.Derived = &evidence.Derivation{ParentID: node(0), ParentSHA256: "x"}
+	})
+	f, err := os.OpenFile(filepath.Join(c.Dir, "manifest.jsonl"), os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // test case dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc := json.NewEncoder(f)
+	for i := 0; i < links; i++ {
+		r := evidence.ManifestRecord{ID: node(i), Path: "artifacts/" + node(i), SHA256: "x", Source: evidence.Source{Kind: "extract"}}
+		if i < links-1 {
+			r.Source.Derived = &evidence.Derivation{ParentID: node(i + 1), ParentSHA256: "x"}
+		}
+		if err := enc.Encode(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < fillers; i++ {
+		if err := enc.Encode(evidence.ManifestRecord{ID: fmt.Sprintf("f%d", i), Path: fmt.Sprintf("artifacts/f%d", i), SHA256: "y"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	full, err := newReader(t, c).Get(ctx, res.FirstID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 20*time.Second {
+		t.Fatalf("took %v", d)
+	}
+	p := full.Provenance
+	if len(p.Chain) > evidence.MaxDerivedDepth+1 || p.ReachedRoot {
+		t.Fatalf("chain %d reached root %v", len(p.Chain), p.ReachedRoot)
+	}
+	found := false
+	for _, pr := range p.Problems {
+		found = found || pr.Kind == records.ProblemTooDeep
+	}
+	if !found {
+		t.Fatalf("no too-deep problem: %+v", p.Problems)
 	}
 }

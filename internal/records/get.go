@@ -17,7 +17,15 @@ import (
 //
 // A record whose artifact id is not exactly one manifest record is an integrity
 // error (evidence.ErrIntegrity, exit 4; one that is in no manifest record also
-// wraps evidence.ErrUnknownArtifact): `case verify` reports the details.
+// wraps evidence.ErrUnknownArtifact): `case verify` reports the details. A
+// missing, empty, corrupt or torn audit log is an integrity error too; a plain
+// I/O error reading it stays a plain error.
+//
+// The manifest and the audit log are read after the database transaction has
+// closed, so they can differ in time from the row read. That is safe: the case
+// lock excludes other processes, and an ingest in this process between the two
+// reads can only add artifacts and audit entries, which the chain of an already
+// stored record never needs.
 func (r *Reader) Get(ctx context.Context, id int64) (Full, error) {
 	var full Full
 	err := r.c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {
@@ -68,7 +76,12 @@ func (r *Reader) Get(ctx context.Context, id int64) (Full, error) {
 	full.Artifact, full.ArtifactIncomplete = art, art.Incomplete
 	entries, err := r.c.ReadAudit()
 	if err != nil {
+		// a corrupt or torn log wraps evidence.ErrIntegrity (exit 4); an I/O error stays plain
 		return Full{}, fmt.Errorf("records: %w", err)
+	}
+	if len(entries) == 0 {
+		// a record exists, so the case was created with an audit log: a missing or empty one is damage
+		return Full{}, fmt.Errorf("%w: records: record %d: the audit log is missing or empty; run: minutiae case verify --case %s", evidence.ErrIntegrity, id, r.c.Dir)
 	}
 	full.Batch.AuditSeq = batchAuditSeq(entries, full.Batch)
 	full.Provenance = resolveChain(man, evidence.NewAuditIndex(entries), full.ArtifactID)
