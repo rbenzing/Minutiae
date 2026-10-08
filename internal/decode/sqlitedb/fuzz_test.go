@@ -33,6 +33,7 @@ const (
 	fuzzKeyRows     = 50
 	fuzzHistoryRows = 200
 	fuzzTimeout     = 30 * time.Second
+	fuzzSeedCap     = 64 << 10
 )
 
 // fuzzSeed is one corpus entry. invalid marks a seed that is expected not to
@@ -76,6 +77,9 @@ func fixtureSeeds(t testing.TB) []fuzzSeed {
 			if ok {
 				*f.dst = trimZeros(b)
 			}
+		}
+		if len(s.db) > fuzzSeedCap || len(s.wal) > fuzzSeedCap || len(s.journal) > fuzzSeedCap {
+			continue // large fixtures are covered by the hostile matrices; big seeds stalled the fuzz workers
 		}
 		out = append(out, s)
 	}
@@ -283,6 +287,7 @@ func fuzzRun(t testing.TB, db, wal, journal []byte, mode uint8) (scanned int) {
 			col0 = 0
 		}
 		cnt := 0
+		warn0 := len(d.Warnings())
 		serr := tb.Scan(ctx, func(r sqlitedb.Row) error {
 			checkRowInvariants(t, r)
 			if rg, role := r.Range(); r.Recovered() == nil {
@@ -319,6 +324,7 @@ func fuzzRun(t testing.TB, db, wal, journal []byte, mode uint8) (scanned int) {
 			return nil
 		})
 		fuzzTyped(t, "Scan "+n, serr)
+		cleanScan := serr == nil && len(d.Warnings()) == warn0
 		scanned += cnt
 		for _, c := range clones {
 			c.Release()
@@ -328,6 +334,13 @@ func fuzzRun(t testing.TB, db, wal, journal []byte, mode uint8) (scanned int) {
 			for id := int64(1); id <= fuzzGetRows; id++ {
 				r, ok, gerr := tb.Get(ctx, id)
 				fuzzTyped(t, fmt.Sprintf("Get %s %d", n, id), gerr)
+				_, scanned := sigs[id]
+				if scanned && gerr == nil && !ok {
+					t.Errorf("%s: Get(%d) answers not found for a row the scan delivered", n, id)
+				}
+				if scanned && cleanScan && gerr != nil {
+					t.Errorf("%s: Get(%d) failed after a clean scan: %v", n, id, gerr)
+				}
 				if gerr != nil || !ok {
 					continue
 				}
@@ -372,26 +385,32 @@ func fuzzHistory(ctx context.Context, t testing.TB, d *sqlitedb.DB, db, wal, jou
 	t.Helper()
 	lib, err := sqlitefile.Open(bytes.NewReader(db), int64(len(db)), sqlitefile.Options{})
 	if err != nil {
+		libTyped(t, "history Open", err)
 		return
 	}
 	if wal != nil {
 		if _, err := lib.AttachWAL(bytes.NewReader(wal), int64(len(wal))); err != nil {
+			libTyped(t, "history AttachWAL", err)
 			return
 		}
 	}
 	if journal != nil {
 		if _, err := lib.AttachJournal(bytes.NewReader(journal), int64(len(journal))); err != nil {
+			libTyped(t, "history AttachJournal", err)
 			return
 		}
 	}
+	h := lib.History()
+	defer h.Release()
 	n := 0
-	_, _ = lib.History().Rows(ctx, func(rr sqlitefile.RecoveredRow) bool {
+	_, herr := h.Rows(ctx, func(rr sqlitefile.RecoveredRow) bool {
 		n++
 		if rr.Index == "" && rr.Table != "" {
 			tb, ok := opened[rr.Table]
 			if !ok {
 				var terr error
 				if tb, terr = d.Table(ctx, rr.Table, nil, nil); terr != nil {
+					fuzzTyped(t, "history Table "+rr.Table, terr)
 					tb = nil
 				}
 				opened[rr.Table] = tb
@@ -410,6 +429,30 @@ func fuzzHistory(ctx context.Context, t testing.TB, d *sqlitedb.DB, db, wal, jou
 		}
 		return n < fuzzHistoryRows
 	})
+	libTyped(t, "History Rows", herr)
+}
+
+// libTyped fails on a second-reader (library) error that is not one of the
+// library's or the decoder's typed errors.
+func libTyped(t testing.TB, what string, err error) {
+	t.Helper()
+	if err == nil {
+		return
+	}
+	for _, e := range []error{
+		sqlitefile.ErrNotSQLite, sqlitefile.ErrLooksEncrypted, sqlitefile.ErrCorrupt, sqlitefile.ErrBudget,
+		sqlitefile.ErrLimit, sqlitefile.ErrPageUnavailable, sqlitefile.ErrEngineRefuses, sqlitefile.ErrLiveUnavailable,
+		sqlitefile.ErrAlreadyAttached,
+	} {
+		if errors.Is(err, e) {
+			return
+		}
+	}
+	if errors.Is(err, sqlitefile.ErrInternal) {
+		t.Errorf("%s: internal error: %v", what, err)
+		return
+	}
+	fuzzTyped(t, what, err)
 }
 
 func FuzzSQLiteDB(f *testing.F) {
@@ -455,7 +498,7 @@ func TestFuzzSeedsOpenAndScan(t *testing.T) {
 			}
 		})
 	}
-	if valid < 20 {
+	if valid < 12 {
 		t.Errorf("only %d valid seeds", valid)
 	}
 }
