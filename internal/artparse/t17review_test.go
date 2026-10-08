@@ -111,7 +111,7 @@ func TestFlushAndAbortAreBoundedBehindAStuckWriterCall(t *testing.T) {
 	select {
 	case r := <-done:
 		j := jobOf(t, r.sum, "stuck")
-		if !j.Abandoned || j.Outcome != artparse.OutcomeIncomplete || r.sum.Stopped != "abandoned" || !strings.Contains(j.Reason, "did not finish within the grace period") {
+		if !j.Abandoned || j.Outcome != artparse.OutcomeIncomplete || r.sum.Stopped != "abandoned" || !strings.Contains(j.Reason, "concluding the ingest did not finish within the grace period (a writer call is stuck)") {
 			t.Fatalf("job %+v stopped %q err %v", j, r.sum.Stopped, r.err)
 		}
 		if jobOf(t, r.sum, "next").Outcome != artparse.OutcomeNotRun {

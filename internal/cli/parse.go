@@ -461,7 +461,11 @@ func (e partialRunError) Error() string {
 	if e.n == 0 {
 		return "the run stopped early: " + e.stopped
 	}
-	return fmt.Sprintf("%d job(s) incomplete, unparsed or refused", e.n)
+	msg := fmt.Sprintf("%d job(s) incomplete, unparsed or refused", e.n)
+	if e.stopped != "" {
+		msg += "; the run stopped early: " + e.stopped
+	}
+	return msg
 }
 
 // integrityRunError is the exit-4 error of a plan or run: one line, escaped.
