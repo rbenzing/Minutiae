@@ -82,7 +82,7 @@ func TestShowProvenanceLiveExtractedFile(t *testing.T) {
 	}
 }
 
-func TestShowProvenanceRecoveredStatusFirst(t *testing.T) {
+func TestShowProvenanceRecoveredRendering(t *testing.T) {
 	p := twoHop()
 	conf := 60
 	p.Chain[0].Artifact.Source.Kind = "recover"
@@ -285,7 +285,17 @@ func TestShowProvenanceEscapesEverything(t *testing.T) {
 	p.Chain[1].Artifact.Source.DeviceID, p.Chain[1].Artifact.Source.Kind = evil("dev"), evil("kind")
 	p.Chain[0].Segments = []records.SegmentCheck{{SegmentRef: evidence.SegmentRef{ID: evil("seg")}, State: "missing"}}
 	p.Chain[0].SegmentsTotal, p.Chain[0].SegmentsBad = 1, 1
-	p.Chain[0].Audit = evidence.AuditBinding{State: evidence.AuditDiffers, Detail: evil("audit")}
+	p.Chain[0].Audit = evidence.AuditBinding{State: evidence.AuditState(evil("auditstate")), Detail: evil("audit")}
+	p.Chain[0].Artifact.SHA256 = evil("hopsha")
+	d.ParentSHA256 = evil("recordedsha")
+	p.Chain[1].Link = records.LinkHashDiffers
+	p.Chain[1].Artifact.SHA256 = evil("foundsha")
+	p.Chain[0].Segments = append(p.Chain[0].Segments, records.SegmentCheck{SegmentRef: evidence.SegmentRef{ID: "s9"}, State: evil("segstate")})
+	p.Chain[0].SegmentsTotal, p.Chain[0].SegmentsBad = 2, 2
+	p.Offset.Hops = []records.OffsetHop{
+		{From: evil("hopfrom"), To: evil("hopto"), Runs: evil("hopruns"), Total: 1},
+		{From: "f1", To: "img1", Runs: "inline", Total: 1},
+	}
 	p.Recovery = &records.RecoveryView{
 		ArtifactID: evil("recid"), MinConfidence: &conf, Recovery: evidence.Recovery{
 			Class: evil("class"), Method: evil("method"), Basis: []string{evil("basis")}, Assumptions: []string{evil("assume")},
@@ -293,7 +303,7 @@ func TestShowProvenanceEscapesEverything(t *testing.T) {
 		},
 		DeclaredRuns: &records.DeclaredRunsView{ArtifactID: evil("decl"), State: evil("state"), Detail: evil("detail")},
 	}
-	p.Problems = []records.Problem{{Kind: records.ProblemRunsSidecar, Hop: 0, Detail: evil("problem")}}
+	p.Problems = []records.Problem{{Kind: records.ProblemKind(evil("problemkind")), Hop: 0, Detail: evil("problem")}}
 	p.Notes = []string{evil("note")}
 	p.Offset.Reason = evil("reason")
 	p.Offset.State = records.OffsetUnavailable
@@ -313,6 +323,19 @@ func TestShowProvenanceEscapesEverything(t *testing.T) {
 		if strings.HasPrefix(strings.TrimSpace(l), "FAKE") {
 			t.Errorf("forged line %q", l)
 		}
+	}
+}
+
+func TestShowProvenanceRowRecoveredWithoutRecoveryView(t *testing.T) {
+	c := 40
+	out := renderProv(records.Provenance{}, records.Row{Recovered: true, Method: "carve", Confidence: &c})
+	if !strings.HasPrefix(out, "  provenance:\n    status:        RECOVERED DATA (class unknown, method carve, confidence 40; not live evidence)\n") {
+		t.Errorf("a recovered row without a recovery view must read as recovered data, class unknown:\n%s", out)
+	}
+	out = renderProv(records.Provenance{}, records.Row{Recovered: true, Method: "carve"})
+	requireLines(t, out, "    status:        RECOVERED DATA (class unknown, method carve, confidence none; not live evidence)")
+	if !strings.Contains(renderProv(records.Provenance{}, records.Row{}), "status:        live\n") {
+		t.Error("a live row must read as live")
 	}
 }
 
@@ -377,5 +400,31 @@ func TestShowProvenanceThroughTheCommand(t *testing.T) {
 	}
 	if strings.Index(out, "status:") > strings.Index(out, "checked:") {
 		t.Errorf("status not before checked")
+	}
+}
+
+// E43: a LIVE record planted on a recovered artifact (a forged row) is still introduced as recovered
+// data, first, by the real command.
+func TestShowProvenanceRecoveredStatusFirst(t *testing.T) {
+	c := recordstest.NewCase(t)
+	img := recordstest.AddArtifact(t, c, "img.bin", make([]byte, 4096))
+	rec := recordstest.AddRecovered(t, c, img, "recovered/p1-mtfs/000001-a.bin", []byte("abcdefgh"), rptr(60))
+	recordstest.Ingest(t, c, recParser, []string{rec.ID}, []records.Record{{
+		Type: "note", ArtifactID: rec.ID, Summary: "recovered note", Payload: map[string]any{}, Deleted: true, Recovery: "fat-contiguous", Confidence: rptr(50),
+	}})
+	dir := c.Dir
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	recordstest.InjectRecord(t, dir, 99, 1, rec.ID, "planted live")
+	_, out := run(t, Deps{}, "records", "show", "--case", dir, "99")
+	if !strings.Contains(out, "record 99\n") {
+		t.Fatalf("the planted record was not shown:\n%s", out)
+	}
+	if !strings.Contains(out, "  provenance:\n    status:        RECOVERED DATA (class ") || !strings.Contains(out, "not live evidence)") {
+		t.Errorf("a live record on a recovered artifact must read RECOVERED DATA first:\n%s", out)
+	}
+	if strings.Contains(out, "status:        live") {
+		t.Errorf("planted record read as live:\n%s", out)
 	}
 }
