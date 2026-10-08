@@ -123,7 +123,7 @@ func TestParserHashChangesOnSemanticEdit(t *testing.T) {
 }
 
 func TestParserHashStability(t *testing.T) {
-	const golden = "src1:sha256:184daa19c1c4cd6d97100e0c2eee7bb58642fcdd53c6754ada6ae84ef814e612"
+	const golden = "src1:sha256:fa35e3d63be20667fc4484c7bf62d038b2ebd8b1895af9a34b0cef346dedec89"
 	got := fixtureHash(t, baseSource, "data")
 	if got != golden {
 		t.Errorf("golden hash changed: got %s want %s (a change of the dump format needs a deliberate hash-v bump)", got, golden)

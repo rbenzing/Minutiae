@@ -15,7 +15,7 @@ import (
 // dumpFormat heads every normalised Go file. Changing the dump changes every
 // parser hash, so it must be a deliberate bump together with the stream header
 // in hash.go.
-const dumpFormat = "goast-v1\n"
+const dumpFormat = "goast-v2\n"
 
 var (
 	posType   = reflect.TypeOf(token.Pos(0))
@@ -27,6 +27,20 @@ var (
 	skipFields = map[string]bool{
 		"Doc": true, "Comment": true, "Comments": true,
 		"Obj": true, "Scope": true, "Unresolved": true, "Imports": true,
+	}
+
+	// layoutOnlyPos lists the token.Pos fields whose presence is not syntax of a dumped declaration,
+	// with the reason. Every other position field is dumped as its presence (Name=set), never its value.
+	layoutOnlyPos = map[string]string{
+		"File.FileStart":    "a file is never dumped as a whole; only its declarations are",
+		"File.FileEnd":      "a file is never dumped as a whole; only its declarations are",
+		"File.Package":      "a file is never dumped as a whole; only its declarations are",
+		"Comment.Slash":     "comments are never dumped; the directives are hashed as text",
+		"ImportSpec.EndPos": "imports are rendered canonically, never dumped",
+		"BasicLit.ValueEnd": "derived from the literal text, which is dumped",
+		"Directive.Slash":   "a parsed directive comment is never part of the tree; directives are hashed as text",
+		"Directive.ArgsPos": "a parsed directive comment is never part of the tree; directives are hashed as text",
+		"DirectiveArg.Pos":  "a parsed directive comment is never part of the tree; directives are hashed as text",
 	}
 )
 
@@ -178,7 +192,14 @@ func (d *dumper) value(v reflect.Value) {
 		b.WriteByte('(')
 		for i := 0; i < t.NumField(); i++ {
 			sf := t.Field(i)
-			if !sf.IsExported() || skipFields[sf.Name] || sf.Type == posType {
+			if !sf.IsExported() || skipFields[sf.Name] {
+				continue
+			}
+			if sf.Type == posType {
+				if _, layout := layoutOnlyPos[t.Name()+"."+sf.Name]; !layout && v.Field(i).Int() != 0 {
+					b.WriteString(sf.Name)
+					b.WriteString("=set,")
+				}
 				continue
 			}
 			fv := v.Field(i)

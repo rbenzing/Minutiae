@@ -10,8 +10,8 @@ func TestNormalizeGoBasics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.HasPrefix(out, []byte("goast-v1\n")) {
-		t.Errorf("missing goast-v1 header: %.30q", out)
+	if !bytes.HasPrefix(out, []byte("goast-v2\n")) {
+		t.Errorf("missing goast-v2 header: %.30q", out)
 	}
 	if !bytes.Contains(out, []byte("import - fmt")) || !bytes.Contains(out, []byte("//go:linkname h runtime.nanotime")) {
 		t.Errorf("dump lacks canonical import or directive lines:\n%s", out)
