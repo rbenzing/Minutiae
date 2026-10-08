@@ -134,11 +134,13 @@ func appendKey(w keyWriter, v Value, coll string, legacy bool) KeyStatus {
 		_, _ = w.Write([]byte{byte(v.Kind)})
 		put(uint64(len(bs)))
 		_, _ = w.Write(bs)
-	default:
+	case KindNull:
 		if legacy {
 			return KeyUnknown
 		}
-		return KeyNever
+		return KeyNever // only NULL equals nothing
+	default:
+		return KeyUnknown // a Kind this library does not define is undecidable
 	}
 	return KeyOK
 }
