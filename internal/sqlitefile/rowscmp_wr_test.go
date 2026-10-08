@@ -115,12 +115,12 @@ func TestWithoutRowidIncompleteRowsAreNeverEqualOrAbsent(t *testing.T) {
 	}
 }
 
-// TestWithoutRowidNonBinaryKeyIncompleteRowIsUnknown: when the key does not
-// compare as BINARY the whole-row digest is the key, so an incomplete history row
-// cannot be looked up at all.
+// TestWithoutRowidNonBinaryKeyIncompleteRowIsUnknown: when the key collation is
+// one the library cannot apply (custom, ruling C48) the whole-row digest is the
+// key, so an incomplete history row cannot be looked up at all.
 func TestWithoutRowidNonBinaryKeyIncompleteRowIsUnknown(t *testing.T) {
 	b := sqlitetest.New(sqlitetest.Options{PageSize: hps})
-	wr := b.CreateTableWithoutRowid("wr", "create table wr(k text collate nocase primary key, v, w default (1+1)) without rowid", 1)
+	wr := b.CreateTableWithoutRowid("wr", "create table wr(k text collate mycoll primary key, v, w default (1+1)) without rowid", 1)
 	wr.Insert(1, "ka", "va") // short: w omitted
 	wr.Insert(2, "kb", "vb", int64(2))
 	v0 := b.Snapshot()

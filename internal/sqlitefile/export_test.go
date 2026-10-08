@@ -365,3 +365,12 @@ func SnapshotPayload(img PageImage, c Cell) (data []byte, damage string, err err
 // HistLiveStats returns the work counters of the live view a history relates
 // its rows to.
 func HistLiveStats(h *Hist) Stats { return h.live.Stats() }
+
+// KeyDigest exposes keyDigest for the key equality table.
+func KeyDigest(vals []Value, colls []string) ([32]byte, bool) {
+	idx := make([]int, len(vals))
+	for i := range idx {
+		idx[i] = i
+	}
+	return keyDigest(vals, idx, colls)
+}

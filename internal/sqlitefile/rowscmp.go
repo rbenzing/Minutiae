@@ -137,7 +137,8 @@ type wrEntry struct {
 type wrSet struct {
 	byKey   map[[32]byte]wrEntry // primary-key digest (row digest when pkOK is false)
 	pk      []int                // positions of the primary-key columns in a resolved row
-	pkOK    bool                 // every key column compares as BINARY: equal keys are equal bytes
+	colls   []string             // the collation of each key column: "", BINARY, NOCASE or RTRIM
+	pkOK    bool                 // every key column's collation is one the library applies: keys are canonicalized
 	tainted bool                 // the live scan met damage or an omitted value: it may be incomplete
 	capped  bool                 // a cap was reached: the set holds nothing
 	charged int64
@@ -180,6 +181,67 @@ func digestOf(vals []Value, idx []int) (d [32]byte, complete bool) {
 	return d, complete
 }
 
+// keyDigest hashes the key columns of a resolved row by the engine's
+// equality: the numeric values 1 and 1.0 are one key, a text key is compared
+// under its column's collation (BINARY bytes, NOCASE with ASCII folded, RTRIM
+// without trailing spaces), and values of different storage classes never
+// meet. ok is false when a key value is omitted, clipped, NULL (never equal to
+// anything) or text the library cannot fold (not UTF-8 under NOCASE or RTRIM).
+func keyDigest(vals []Value, idx []int, colls []string) (d [32]byte, ok bool) {
+	h := sha256.New()
+	var b [8]byte
+	put := func(n uint64) {
+		binary.BigEndian.PutUint64(b[:], n)
+		h.Write(b[:])
+	}
+	for n, i := range idx {
+		v := vals[i]
+		if v.Omitted || v.Clipped {
+			return d, false
+		}
+		switch v.Kind {
+		case KindInt:
+			h.Write([]byte{'i'})
+			put(uint64(v.Int))
+		case KindFloat:
+			if f := v.Float; f == math.Trunc(f) && f >= -(1<<63) && f < 1<<63 {
+				h.Write([]byte{'i'}) // an integral real is the integer of the same value
+				put(uint64(int64(f)))
+			} else {
+				h.Write([]byte{'f'})
+				put(math.Float64bits(f))
+			}
+		case KindText, KindBlob:
+			bs := v.Bytes
+			if v.Kind == KindText && colls[n] != "BINARY" {
+				if v.Enc != EncUTF8 {
+					return d, false
+				}
+				switch colls[n] {
+				case "NOCASE":
+					bs = slices.Clone(bs)
+					for j, c := range bs {
+						if c >= 'A' && c <= 'Z' {
+							bs[j] = c + 32
+						}
+					}
+				case "RTRIM":
+					for len(bs) > 0 && bs[len(bs)-1] == ' ' {
+						bs = bs[:len(bs)-1]
+					}
+				}
+			}
+			h.Write([]byte{byte(v.Kind)})
+			put(uint64(len(bs)))
+			h.Write(bs)
+		default:
+			return d, false
+		}
+	}
+	copy(d[:], h.Sum(nil))
+	return d, true
+}
+
 // wrSetOf builds (once per table) the digest set of the live rows.
 func (rp *rowPass) wrSetOf(ctx context.Context, t *Table, name string) (*wrSet, error) {
 	if s, ok := rp.wr[name]; ok {
@@ -188,20 +250,30 @@ func (rp *rowPass) wrSetOf(ctx context.Context, t *Table, name string) (*wrSet, 
 	s := &wrSet{byKey: map[[32]byte]wrEntry{}, pkOK: true}
 	rp.wr[name] = s
 	def := t.Def()
-	type pkc struct{ ord, pos int }
+	type pkc struct {
+		ord, pos int
+		coll     string
+	}
 	var pks []pkc
 	for i := range def.Columns {
 		c := &def.Columns[i]
 		if c.PKOrdinal > 0 {
-			pks = append(pks, pkc{c.PKOrdinal, i})
-			if c.Collation != "" && !asciiEqualFold(c.Collation, "BINARY") {
-				s.pkOK = false
+			coll := "BINARY"
+			for _, k := range []string{"BINARY", "NOCASE", "RTRIM"} {
+				if asciiEqualFold(c.Collation, k) {
+					coll = k
+				}
 			}
+			if c.Collation != "" && !asciiEqualFold(c.Collation, coll) {
+				s.pkOK = false // a custom or unknown collation: equality is not decidable here
+			}
+			pks = append(pks, pkc{c.PKOrdinal, i, coll})
 		}
 	}
 	slices.SortFunc(pks, func(a, b pkc) int { return a.ord - b.ord })
 	for _, p := range pks {
 		s.pk = append(s.pk, p.pos)
+		s.colls = append(s.colls, p.coll)
 	}
 	if len(s.pk) == 0 {
 		s.pkOK = false
@@ -226,12 +298,18 @@ func (rp *rowPass) wrSetOf(ctx context.Context, t *Table, name string) (*wrSet, 
 		rp.diffTotal++
 		res := t.Resolve(r)
 		rowD, complete := digestOf(res, nil)
-		if r.KeyRangeViolation {
-			s.tainted = true
-		}
+		// Row.KeyRangeViolation is never set for an index tree (its cells have
+		// no rowid, scan.go leafRows), so there is nothing to taint on here.
 		key := rowD
 		if s.pkOK {
-			key, _ = digestOf(res, s.pk)
+			var keyOK bool
+			key, keyOK = keyDigest(res, s.pk, s.colls)
+			if !keyOK {
+				key, s.tainted = rowD, true // a key the engine cannot compare here: found by the row digest only
+			}
+		}
+		if _, dup := s.byKey[key]; dup {
+			s.tainted = true // two live rows with one key: damage, or a key we canonicalized wrongly
 		}
 		s.byKey[key] = wrEntry{digest: rowD, complete: complete}
 		if !complete {
@@ -273,7 +351,7 @@ func (rp *rowPass) compareWR(t *Table, name string, row *RecoveredRow) (cmpResul
 	key := rowD
 	if s.pkOK {
 		var pkDone bool
-		key, pkDone = digestOf(res, s.pk)
+		key, pkDone = keyDigest(res, s.pk, s.colls)
 		if !pkDone {
 			return cmpResult{kind: cmpUnknown, note: NoteCompareIncomplete}, nil
 		}
