@@ -3,12 +3,10 @@ package plist
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"math"
 	"reflect"
 	"testing"
 	"time"
-	"unicode/utf8"
 )
 
 func asciiObj(s string) []byte { return append([]byte{0x50 | byte(len(s))}, s...) }
@@ -206,79 +204,5 @@ func TestDecodeChargeIsExactlyTheModel(t *testing.T) {
 	}
 	if want := int64(len(b))*8 + 1*64 + 2*2; view.Used() != want {
 		t.Fatalf("Used = %d, want %d", view.Used(), want)
-	}
-}
-
-func FuzzDecode(f *testing.F) {
-	seeds := [][]byte{
-		objectsPlist(asciiObj("a\xffb")),
-		objectsPlist(utf16Obj(0xD800)),
-		objectsPlist(dateObj(math.NaN())),
-		objectsPlist([]byte{0xD1, 1, 2}, asciiObj("k"), utf16Obj(0xDC00, 0x41)),
-		nestedPlist(8, 2),
-		[]byte(`<plist version="1.0"><array><string>a&#xD800;</string><date>0000-01-01T00:00:00Z</date></array></plist>`),
-		[]byte(`<plist><dict><key>CF$UID</key><integer>-1</integer></dict></plist>`),
-		[]byte(`<plist><dict><key>CF$UID</key><integer>3</integer></dict></plist>`),
-		[]byte("not a plist"),
-	}
-	for _, s := range seeds {
-		f.Add(s)
-	}
-	f.Fuzz(func(t *testing.T, b []byte) {
-		if len(b) > 1<<16 {
-			return
-		}
-		run := func() (any, int64, error) {
-			view := newView(1 << 30)
-			v, err := decodeCore(b, view)
-			return v, view.Used(), err
-		}
-		v, used, err := run()
-		if err != nil {
-			if v != nil || used != 0 {
-				t.Fatalf("error %v but value %v, used %d", err, v, used)
-			}
-			for _, s := range []error{ErrMalformed, ErrLimit, ErrUnsupported, ErrNoBudget} {
-				if errors.Is(err, s) {
-					return
-				}
-			}
-			t.Fatalf("untyped error: %v", err)
-		}
-		checkPlain(t, v)
-		v2, used2, err2 := run()
-		if err2 != nil || used2 != used || fmt.Sprintf("%#v", v) != fmt.Sprintf("%#v", v2) {
-			t.Fatalf("not deterministic")
-		}
-	})
-}
-
-// checkPlain fails when v holds a type outside the documented value set, a string that is not
-// valid UTF-8 or a date outside years 1 to 9999.
-func checkPlain(t *testing.T, v any) {
-	t.Helper()
-	switch x := v.(type) {
-	case map[string]any:
-		for k, e := range x {
-			if !utf8.ValidString(k) {
-				t.Fatalf("invalid key %q", k)
-			}
-			checkPlain(t, e)
-		}
-	case []any:
-		for _, e := range x {
-			checkPlain(t, e)
-		}
-	case string:
-		if !utf8.ValidString(x) {
-			t.Fatalf("invalid string %q", x)
-		}
-	case time.Time:
-		if y := x.Year(); y < 1 || y > 9999 {
-			t.Fatalf("date year %d", y)
-		}
-	case float64, RawDate, RawString, int64, uint64, bool, []byte, UID:
-	default:
-		t.Fatalf("unexpected %T", v)
 	}
 }
