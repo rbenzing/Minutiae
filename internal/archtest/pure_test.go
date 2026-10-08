@@ -288,6 +288,8 @@ var stdAllow = map[string]classSet{
 	// binary formats and checksums
 	"encoding/binary": setOf(pcDecode, pcSqlitefile, pcParser), "encoding/hex": setOf(pcDecode, pcSqlitefile, pcParser),
 	"hash/crc32": setOf(pcDecode, pcSqlitefile, pcParser),
+	// token-level reading of XML plists (decode/plist: the negative CF$UID check, after the pre-scan caps)
+	"encoding/xml": setOf(pcDecode),
 	// common.CleanText keeps the original bytes (base64) or their hash
 	"encoding/base64": setOf(pcRTCommon), "crypto/sha256": setOf(pcRTCommon, pcSqlitefile),
 	// typed Decode of stored payloads
@@ -1455,6 +1457,8 @@ func TestPurityAllowlistSelfTest(t *testing.T) {
 		{pcDecode, dirDecodePlst, m + "internal/sqlitefile", false},
 		{pcDecode, dirDecodePlst, "encoding/binary", true},
 		{pcDecode, dirDecodePlst, "io", true},
+		{pcDecode, dirDecodePlst, "encoding/xml", true},
+		{pcParser, fixtureParserDir, "encoding/xml", false},
 		{pcDecode, dirDecodePlst, "hash/crc32", true},
 		{pcDecode, dirDecodeSQL, m + "internal/decode/plist", true},
 		{pcDecode, dirDecodePlst, m + "internal/records", true},

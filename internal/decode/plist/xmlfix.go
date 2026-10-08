@@ -2,7 +2,9 @@ package plist
 
 import (
 	"bytes"
+	"encoding/xml"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -157,29 +159,54 @@ func rewriteSurrogates(b []byte) (out []byte, base rune, found, ok bool) {
 	return out, base, true, true
 }
 
-// hasNegativeUID reports whether b holds a CF$UID key followed by an integer element whose
-// text starts with a minus sign. The library would read such a UID as a huge unsigned number.
-// It is conservative: a match inside a comment or CDATA section also counts.
+// hasNegativeUID reports whether the XML document b holds a CF$UID key whose next element is
+// an integer with a negative value. It reads encoding/xml tokens, so entities, comments,
+// CDATA, whitespace and attributes do not matter. The library would read such a UID as a huge
+// unsigned number. The document has passed the pre-scan, so its size, depth and element
+// count are bounded; a token error ends the scan (the library reports it).
 func hasNegativeUID(b []byte) bool {
-	const key = "CF$UID"
-	for i := 0; ; {
-		k := bytes.Index(b[i:], []byte(key))
-		if k < 0 {
+	d := xml.NewDecoder(bytes.NewReader(b))
+	var text strings.Builder
+	const (
+		none = iota
+		inKey
+		afterUIDKey
+		inInteger
+	)
+	state := none
+	for {
+		tok, err := d.Token()
+		if err != nil {
 			return false
 		}
-		i += k + len(key)
-		rest := bytes.TrimLeft(b[i:], " \t\r\n")
-		rest, ok := bytes.CutPrefix(rest, []byte("</key>"))
-		if !ok {
-			continue
-		}
-		rest = bytes.TrimLeft(rest, " \t\r\n")
-		rest, ok = bytes.CutPrefix(rest, []byte("<integer>"))
-		if !ok {
-			continue
-		}
-		if rest = bytes.TrimLeft(rest, " \t\r\n"); len(rest) > 0 && rest[0] == '-' {
-			return true
+		switch t := tok.(type) {
+		case xml.StartElement:
+			switch {
+			case t.Name == xml.Name{Local: "key"}:
+				state = inKey
+			case t.Name == xml.Name{Local: "integer"} && state == afterUIDKey:
+				state = inInteger
+			default:
+				state = none
+			}
+			text.Reset()
+		case xml.CharData:
+			if state == inKey || state == inInteger {
+				text.Write(t)
+			}
+		case xml.EndElement:
+			switch {
+			case state == inKey && t.Name == xml.Name{Local: "key"} && text.String() == "CF$UID":
+				state = afterUIDKey
+			case state == inInteger:
+				if strings.HasPrefix(strings.TrimSpace(text.String()), "-") {
+					return true
+				}
+				state = none
+			default:
+				state = none
+			}
+			text.Reset()
 		}
 	}
 }

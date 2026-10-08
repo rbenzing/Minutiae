@@ -2,6 +2,8 @@ package plist
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"time"
 )
 
@@ -28,11 +30,12 @@ const (
 // NSURL a map of base and relative; every other class a map holding "$class" and the fields.
 // $top with only "root" yields that object, otherwise a map of all its entries.
 //
-// A shared object is resolved once and every reference yields the same Go value; the output
+// A shared object is resolved once and every reference yields the same Go value (treat the
+// result as read-only: a change to one reference shows at all of them); the output
 // node count (shared or not) is capped at MaxUnarchiveNodes, so a small file that expands
 // exponentially is ErrLimit, never expanded. A reference cycle is ErrMalformed, nesting
 // deeper than MaxUnarchiveDepth is ErrLimit. The budget is charged per resolved object
-// (64 + payload bytes) and freed on any error; a nil budget is ErrNoBudget. A $archiver
+// (64 + payload bytes, list slots at 16 each) and freed on any error; a nil budget is ErrNoBudget. A $archiver
 // other than "NSKeyedArchiver" is ErrUnsupported; any other shape violation is ErrMalformed.
 func Unarchive(v any, budget Budget) (out any, err error) {
 	err = guard(func() error {
@@ -81,7 +84,8 @@ func unarchiveCore(v any, budget Budget) (any, error) {
 	}()
 	out := make(map[string]any, len(top))
 	var total uint64
-	for k, e := range top {
+	for _, k := range slices.Sorted(maps.Keys(top)) {
+		e := top[k]
 		uid, isUID := e.(UID)
 		if !isUID {
 			return nil, malformed("$top entry %q is not a UID", k)
@@ -196,6 +200,8 @@ func (u *unarchiver) build(idx uint64, depth int) (any, uint64, error) {
 		payload += len(k)
 		if n, ok := primitive(e); ok {
 			payload += n
+		} else if l, ok := e.([]any); ok {
+			payload += len(l) * 16 // the slots of the output slice
 		}
 	}
 	if err := u.charge(payload); err != nil {
@@ -301,7 +307,8 @@ func (u *unarchiver) byClass(idx uint64, name string, f map[string]any, depth in
 	}
 	out := map[string]any{"$class": name}
 	nodes := uint64(1)
-	for k, e := range f {
+	for _, k := range slices.Sorted(maps.Keys(f)) {
+		e := f[k]
 		if k == "$class" {
 			continue
 		}
@@ -373,7 +380,8 @@ func (u *unarchiver) value(e any, depth int) (any, uint64, error) {
 		}
 		out := make(map[string]any, len(x))
 		nodes := uint64(1)
-		for k, el := range x {
+		for _, k := range slices.Sorted(maps.Keys(x)) {
+			el := x[k]
 			v, n, err := u.value(el, depth+1)
 			if err != nil {
 				return nil, 0, err
