@@ -46,7 +46,7 @@ func (r *Reader) resolveRecovery(p *Provenance, row Row, byID map[string]evidenc
 	switch {
 	case !row.Recovered:
 		p.addProblem(ProblemRecoveryLive, tr.Hops, fmt.Sprintf("live record (not recovered) on recovered artifact %q (%s)", tr.ArtifactID, tr.Recovery.Class))
-	case row.Confidence == nil:
+	case tr.MinConfidence != nil && row.Confidence == nil:
 		p.addProblem(ProblemRecoveryConf, tr.Hops, fmt.Sprintf("recovered record has no confidence; artifact %q is recovered", tr.ArtifactID))
 	case tr.MinConfidence != nil && *row.Confidence > *tr.MinConfidence:
 		p.addProblem(ProblemRecoveryConf, tr.Hops, fmt.Sprintf("record confidence %d is above the chain's lowest recovery confidence %d", *row.Confidence, *tr.MinConfidence))
@@ -85,7 +85,15 @@ func declaredRunsView(byID map[string]evidence.ManifestRecord, art evidence.Mani
 	}
 	n := 0
 	for _, m := range byID {
-		if md := m.Source.Derived; md != nil && md.Recovery != nil && md.Recovery.DeclaredRunsArtifact == id {
+		md := m.Source.Derived
+		if md == nil || !evidence.IsRecoveredKind(m.Source.Kind) {
+			continue
+		}
+		// captured and declared references both count, as in checkDeclaredRuns of case verify
+		if md.RunsArtifact == id {
+			n++
+		}
+		if md.Recovery != nil && md.Recovery.DeclaredRunsArtifact == id {
 			n++
 		}
 	}
