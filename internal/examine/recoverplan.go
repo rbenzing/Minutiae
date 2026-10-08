@@ -313,6 +313,11 @@ func overlapsOfSteps(items []ownedRuns, st *overlapSteps) map[string][]string {
 		sub[n] = s
 	}
 	acc := make([][]int32, len(names))
+	// take merges the sorted list l into the owner's accumulator. The early return is a constant-factor
+	// optimisation only and is deliberately NOT visible to the step counter (it counts 1 either way): without
+	// it each call makes at most overlapKeep further insertSmall calls, which is the "+16" term already inside
+	// the bound the cost test enforces, so removing it cannot change an answer or leave the O(n log n) bound.
+	// The differential tests (TestOverlapMatchesBruteForce*) pin the answers (C51).
 	take := func(id int32, l []int32) {
 		for _, v := range l {
 			if a := acc[id]; len(a) == overlapKeep && v > a[overlapKeep-1] {

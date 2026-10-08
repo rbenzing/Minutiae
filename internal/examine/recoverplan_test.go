@@ -749,3 +749,24 @@ func TestOverlapCostIsNLogN(t *testing.T) {
 		}
 	}
 }
+
+// Exhaustive-style differential test on tiny coordinate spaces: it reaches the shapes the larger random
+// cases do not (a cell count that is a power of two with one interval spanning every cell), which pins
+// the root cover list consulted for the ancestors of an interval's first and last cell (C51).
+func TestOverlapMatchesBruteForceOnSmallSpaces(t *testing.T) {
+	rng := rand.New(rand.NewSource(51)) //nolint:gosec // seeded test data, not security
+	for iter := range 30_000 {
+		n := 2 + rng.Intn(3)
+		items := make([]ownedRuns, n)
+		for i := range items {
+			items[i].Owner = fmt.Sprintf("o%d", rng.Perm(n)[i])
+			for range 1 + rng.Intn(2) {
+				items[i].Runs = append(items[i].Runs, run(int64(rng.Intn(15)), 1+int64(rng.Intn(15))))
+			}
+		}
+		got, want := overlapsOf(items), bruteOverlaps(items)
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("iteration %d: got %v want %v items %v", iter, got, want, items)
+		}
+	}
+}
