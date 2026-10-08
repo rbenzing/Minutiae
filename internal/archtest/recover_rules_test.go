@@ -344,6 +344,12 @@ func TestRecoveredBytesReachDiskOnlyViaNewArtifact(t *testing.T) {
 	if len(files) < 5 {
 		t.Fatalf("scanned only %d examine files: the walk is broken", len(files))
 	}
+	// internal/dbrecover copies recovered database rows out of artifacts: same rule.
+	dbr := nonTestGoFiles(t, root, filepath.Join("internal", "dbrecover"))
+	if len(dbr) < 2 {
+		t.Fatalf("scanned only %d dbrecover files: the walk is broken", len(dbr))
+	}
+	files = append(files, dbr...)
 	for _, p := range files {
 		src, err := os.ReadFile(p)
 		if err != nil {
@@ -357,6 +363,23 @@ func TestRecoveredBytesReachDiskOnlyViaNewArtifact(t *testing.T) {
 		for _, l := range lines {
 			t.Errorf("%s:%d uses a write-capable os identifier (or io/ioutil); bytes reach disk only via evidence.Case.NewArtifact/Capture", filepath.ToSlash(rel), l)
 		}
+	}
+}
+
+// TestOSWriteScannerFlagsDBRecoverWrites is the twin self-test for internal/dbrecover: the same scanner
+// flags a file create, a write and a remove there, and passes read-only os use.
+func TestOSWriteScannerFlagsDBRecoverWrites(t *testing.T) {
+	const bad = "package dbrecover\n\nimport \"os\"\n\nfunc f(p string) {\n\t_ = os.WriteFile(p, nil, 0o600)\n\t_ = os.Remove(p)\n\t_, _ = os.Create(p)\n}\n"
+	got, err := scanOSWrites("dbrecover/x.go", []byte(bad))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameInts(got, []int{6, 7, 8}) {
+		t.Errorf("flagged lines %v, want [6 7 8]", got)
+	}
+	const ok = "package dbrecover\n\nimport \"os\"\n\nfunc f(p string) {\n\t_, _ = os.Stat(p)\n\t_, _ = os.Open(p)\n}\n"
+	if got, err := scanOSWrites("dbrecover/y.go", []byte(ok)); err != nil || len(got) != 0 {
+		t.Errorf("read-only use flagged: %v %v", got, err)
 	}
 }
 
