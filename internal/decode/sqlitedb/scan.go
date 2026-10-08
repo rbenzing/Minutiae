@@ -84,3 +84,52 @@ func damageFlags(raw sqlitefile.Row) RowFlags {
 	}
 	return f
 }
+
+// Get finds the row with the given rowid. found is false only when the search
+// path was read cleanly and holds no such rowid; a damaged path is an error,
+// never an absent answer. A WITHOUT ROWID table has no rowids (ErrWithoutRowid).
+// The Row is owned: it is a deep copy (see Row.Clone) that stays valid after
+// later calls, including a Get made inside a Scan callback, and stays charged
+// to the budget until the DB is released.
+func (t *Table) Get(ctx context.Context, rowid int64) (row Row, found bool, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			row, found, err = Row{}, false, fmt.Errorf("%w: %v", ErrInternal, r)
+		}
+	}()
+	db := t.db
+	if db.released {
+		return Row{}, false, ErrReleased
+	}
+	if t.def.WithoutRowid {
+		return Row{}, false, fmt.Errorf("%w: %q", ErrWithoutRowid, t.name)
+	}
+	raw, ok, libErr := t.lt.Get(ctx, rowid)
+	switch {
+	case libErr != nil:
+		return Row{}, false, wrapErr(libErr)
+	case !ok:
+		return Row{}, false, nil
+	}
+	var held int64
+	charge := func(n int64) error {
+		if err := db.budget.Alloc(n); err != nil {
+			return err
+		}
+		held += n
+		return nil
+	}
+	defer func() { db.budget.Free(held) }()
+	built, err := t.buildRow(rowInput{
+		rowid: raw.Rowid, hasRowid: raw.HasRowid, vals: t.lt.Resolve(raw), storedLen: len(raw.Values),
+		flags: damageFlags(raw), loc: raw.Loc,
+	}, charge)
+	if err != nil {
+		return Row{}, false, err
+	}
+	owned, err := built.Clone()
+	if err != nil {
+		return Row{}, false, err
+	}
+	return owned, true, nil
+}

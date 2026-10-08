@@ -1,6 +1,12 @@
 package sqlitedb
 
 import (
+	"bytes"
+	"fmt"
+	"slices"
+	"strconv"
+	"strings"
+
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/records"
 	"github.com/rbenzing/minutiae/internal/sqlitefile"
@@ -268,10 +274,15 @@ func (r Row) ExtraValues() int {
 // Loc says where the row's cell lies.
 func (r Row) Loc() Loc { return r.loc }
 
-// Range is the cell's byte range and the file it lies in.
+// Range is the byte range of the row's CELL (header, local payload and the
+// overflow pointer; the overflow pages are not in it: Loc().Overflow and
+// FlagOverflowMixed say where they lie) and the role of the file it lies in. A
+// Loc that names no known file (the zero Row) has the role "".
 func (r Row) Range() (records.Range, parse.FileRole) {
-	role := parse.RoleDB
+	var role parse.FileRole // "" for a file kind that is none of the three
 	switch r.loc.File {
+	case sqlitefile.FileDB:
+		role = parse.RoleDB
 	case sqlitefile.FileWAL:
 		role = parse.RoleWAL
 	case sqlitefile.FileJournal:
@@ -290,4 +301,138 @@ func StateOf(r parse.Row, col int) (ColState, bool) {
 		return row.State(col), true
 	}
 	return StateAbsent, false
+}
+
+// pagePartCost and recoveredCost are constant upper bounds of the memory of
+// one listed overflow page and of a RecoveredInfo, charged by Clone.
+const (
+	pagePartCost  = 64
+	recoveredCost = 256
+)
+
+// cloneCost is what a deep copy of r holds.
+func (r Row) cloneCost() int64 {
+	n := int64(len(r.vals)) * rowValueCost
+	for i := range r.vals {
+		n += int64(len(r.vals[i].Bytes))
+	}
+	for _, t := range r.text {
+		n += int64(len(t))
+	}
+	n += int64(len(r.loc.Overflow)) * pagePartCost
+	if r.rec != nil {
+		n += recoveredCost
+		for _, s := range r.rec.Notes {
+			n += int64(len(s)) + 16
+		}
+	}
+	return n
+}
+
+// Clone returns a deep copy of the row that owns all its memory: it stays
+// valid after the Scan callback that delivered r has returned and after the
+// reader has moved on. The copy is charged to the budget of the DB it came
+// from and the charge is given back when that DB is released; a refusal
+// returns the budget's error and no copy, and charges nothing. Clone after
+// Release is ErrReleased. The zero Row clones to the zero Row.
+func (r Row) Clone() (out Row, err error) {
+	if r.tbl == nil {
+		return Row{}, nil
+	}
+	db := r.tbl.db
+	if db.released {
+		return Row{}, ErrReleased
+	}
+	n := r.cloneCost()
+	if err := db.budget.Alloc(n); err != nil {
+		return Row{}, err
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			db.budget.Free(n)
+			out, err = Row{}, fmt.Errorf("%w: %v", ErrInternal, p)
+		}
+	}()
+	out = r
+	out.vals = make([]sqlitefile.Value, len(r.vals))
+	copy(out.vals, r.vals)
+	for i := range out.vals {
+		if out.vals[i].Bytes != nil {
+			out.vals[i].Bytes = bytes.Clone(r.vals[i].Bytes)
+		}
+	}
+	out.states = slices.Clone(r.states)
+	if r.text != nil {
+		out.text = make([][]byte, len(r.text))
+		for i, t := range r.text {
+			if t != nil {
+				out.text[i] = bytes.Clone(t)
+			}
+		}
+	}
+	out.loc.Overflow = slices.Clone(r.loc.Overflow)
+	if r.rec != nil {
+		rec := *r.rec
+		rec.Notes = slices.Clone(r.rec.Notes)
+		if r.rec.WAL != nil {
+			w := *r.rec.WAL
+			rec.WAL = &w
+		}
+		if r.rec.Journal != nil {
+			j := *r.rec.Journal
+			rec.Journal = &j
+		}
+		out.rec = &rec
+	}
+	return out, nil
+}
+
+// hexUpper is the digit set of the percent encoding.
+const hexUpper = "0123456789ABCDEF"
+
+// maxLocator is the longest locator the records package accepts.
+const maxLocator = 1024
+
+// encodeComponent appends s with every byte outside [A-Za-z0-9._~-] written as
+// %XX (uppercase hex).
+func encodeComponent(sb *strings.Builder, s string) {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '.', c == '_', c == '~', c == '-':
+			sb.WriteByte(c)
+		default:
+			sb.WriteByte('%')
+			sb.WriteByte(hexUpper[c>>4])
+			sb.WriteByte(hexUpper[c&15])
+		}
+	}
+}
+
+// Locator names the row: sqlite:table=<table>;rowid=<n>, followed by
+// ;wal_frame=<frame> for a cell in the WAL or ;journal_rec=<record> for a cell
+// in the journal; the table name is percent-encoded. It is empty with ok false
+// for a recovered row, a row without a rowid (WITHOUT ROWID, the zero Row) and
+// a locator longer than 1024 bytes, which the records package refuses.
+func (r Row) Locator() (string, bool) {
+	if r.tbl == nil || r.rec != nil || !r.hasRowid || len(r.tbl.name) > maxLocator {
+		return "", false
+	}
+	var sb strings.Builder
+	sb.WriteString("sqlite:table=")
+	encodeComponent(&sb, r.tbl.name)
+	sb.WriteString(";rowid=")
+	sb.WriteString(strconv.FormatInt(r.rowid, 10))
+	switch r.loc.File {
+	case sqlitefile.FileWAL:
+		sb.WriteString(";wal_frame=")
+		sb.WriteString(strconv.FormatUint(uint64(r.loc.Frame), 10))
+	case sqlitefile.FileJournal:
+		sb.WriteString(";journal_rec=")
+		sb.WriteString(strconv.Itoa(r.loc.Record))
+	}
+	if sb.Len() > maxLocator {
+		return "", false
+	}
+	return sb.String(), true
 }

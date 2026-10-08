@@ -210,3 +210,22 @@ func TestSqlitefileSurfaceUsedByRowsAndScan(_ *testing.T) {
 	pin[parse.FileRole](parse.RoleWAL)
 	pin[parse.FileRole](parse.RoleJournal)
 }
+
+// Used by Get, Clone, Locator and Range (Task 5), and by their tests.
+func TestSqlitefileSurfaceUsedByRowOps(_ *testing.T) {
+	var l sqlitefile.Loc
+	pin[int](l.OverflowTotal)
+	pin[uint32](l.Frame)
+	pin[int](l.Record)
+	var pp sqlitefile.PagePart
+	pin[uint32](pp.Page)
+	pin[sqlitefile.PageLoc](pp.At)
+	var pl sqlitefile.PageLoc
+	pin[sqlitefile.FileKind](pl.File)
+	pin[int64](pl.Offset)
+	pin[uint32](pl.Frame)
+	pin[int](pl.Record)
+	var o sqlitefile.Options
+	pin[sqlitefile.Budget](o.Budget)
+	pin[func(sqlitefile.Row) sqlitefile.Row](sqlitefile.Row.Clone)
+}
