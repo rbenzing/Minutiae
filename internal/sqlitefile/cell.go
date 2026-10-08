@@ -54,7 +54,9 @@ func LocalPayload(usable int, t PageType, payload int64) (local int64, spills bo
 // bytes present (a truncated file) or past the usable size is an error
 // wrapping ErrCorrupt. The payload length is returned as stored (only values
 // that fit an int64 are accepted); caps are the caller's.
-func ParseCell(page []byte, usable int, h PageHeader, off int) (Cell, error) {
+func ParseCell(page []byte, usable int, h PageHeader, off int) (_ Cell, err error) {
+	defer guard(&err)
+	pureAt("ParseCell")
 	hi := min(usable, len(page))
 	bad := func(format string, a ...any) (Cell, error) {
 		return Cell{}, &CorruptError{File: FileDB, Reason: fmt.Sprintf("cell at %d: "+format, append([]any{off}, a...)...)}

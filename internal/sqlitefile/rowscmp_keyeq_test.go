@@ -8,6 +8,7 @@ package sqlitefile_test
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/sqlitefile"
@@ -25,7 +26,12 @@ type keyEqRow struct {
 // row is a history row to relate to the live set.
 func runKeyEq(t *testing.T, sql string, keyCols int, old [][]any, live [][]any, want []keyEqRow) {
 	t.Helper()
-	b := sqlitetest.New(sqlitetest.Options{PageSize: hps})
+	runKeyEqOpts(t, sqlitetest.Options{PageSize: hps}, sql, keyCols, old, live, want)
+}
+
+func runKeyEqOpts(t *testing.T, opts sqlitetest.Options, sql string, keyCols int, old [][]any, live [][]any, want []keyEqRow) {
+	t.Helper()
+	b := sqlitetest.New(opts)
 	wr := b.CreateTableWithoutRowid("wr", sql, keyCols)
 	for i, r := range old {
 		wr.Insert(int64(i+1), r...)
@@ -259,4 +265,64 @@ func TestWithoutRowidKeyClauseUnknownCollationIsUnknownNeverAbsent(t *testing.T)
 			{vals: []any{"a", "old"}, want: unk, note: sqlitefile.NoteLiveUncertain},
 			{vals: []any{"b", "gone"}, want: unk, note: sqlitefile.NoteLiveUncertain},
 		})
+}
+
+// Boundaries of the key equality that mutations of keyDigest would move.
+func TestKeyDigestBoundaries(t *testing.T) {
+	i := func(n int64) sqlitefile.Value { return sqlitefile.Value{Kind: sqlitefile.KindInt, Int: n} }
+	f := func(x float64) sqlitefile.Value { return sqlitefile.Value{Kind: sqlitefile.KindFloat, Float: x} }
+	tx := func(s string) sqlitefile.Value {
+		return sqlitefile.Value{Kind: sqlitefile.KindText, Bytes: []byte(s), Len: int64(len(s)), Enc: sqlitefile.EncUTF8}
+	}
+	one := func(v sqlitefile.Value, coll string) [32]byte {
+		d, ok := sqlitefile.KeyDigest([]sqlitefile.Value{v}, []string{coll})
+		if !ok {
+			t.Fatalf("not decidable: %+v", v)
+		}
+		return d
+	}
+	// 2^63 is not an int64: it never equals the smallest integer
+	if one(i(math.MinInt64), "BINARY") == one(f(1<<63), "BINARY") {
+		t.Error("min int equals the real 2^63")
+	}
+	if one(i(math.MinInt64), "BINARY") != one(f(-(1<<63)), "BINARY") {
+		t.Error("min int differs from the real -2^63")
+	}
+	// the whole ASCII letter range folds under NOCASE, 'Z' and 'A' included
+	for _, c := range []string{"A", "Z", "M"} {
+		if one(tx(c), "NOCASE") != one(tx(strings.ToLower(c)), "NOCASE") {
+			t.Errorf("NOCASE %q differs from its lower case", c)
+		}
+	}
+	if one(tx("@"), "NOCASE") == one(tx("`"), "NOCASE") || one(tx("["), "NOCASE") == one(tx("{"), "NOCASE") {
+		t.Error("NOCASE folds a character outside A-Z")
+	}
+	// composite text keys are length prefixed: a value holding the kind byte
+	// (3, text) cannot move the boundary between two components.
+	kind := string(rune(3))
+	d1, _ := sqlitefile.KeyDigest([]sqlitefile.Value{tx("p" + kind + "r"), tx("s")}, []string{"BINARY", "BINARY"})
+	d2, _ := sqlitefile.KeyDigest([]sqlitefile.Value{tx("p"), tx("r" + kind + "s")}, []string{"BINARY", "BINARY"})
+	if d1 == d2 {
+		t.Error("composite keys with the kind byte inside a component collide")
+	}
+}
+
+// Two live rows that share a key (damage, or a key canonicalized wrongly)
+// make the live set uncertain: a history row that matches neither is unknown,
+// never absent.
+func TestWithoutRowidDuplicateLiveKeyTaintsAbsence(t *testing.T) {
+	runKeyEq(t, "create table wr(k text collate nocase primary key, v) without rowid", 1,
+		[][]any{{"gone", "old"}},
+		[][]any{{"abc", "one"}, {"ABC", "two"}},
+		[]keyEqRow{{vals: []any{"gone", "old"}, want: unk, note: sqlitefile.NoteLiveUncertain}})
+}
+
+// A live row whose key the library cannot compare (UTF-16 text under NOCASE)
+// is found by its row digest only: a history row with an integer key matches
+// nothing, and the live set is uncertain, so it is unknown, never absent.
+func TestWithoutRowidUndecidableLiveKeyTaintsAbsence(t *testing.T) {
+	runKeyEqOpts(t, sqlitetest.Options{PageSize: hps, Encoding: 2}, "create table wr(k collate nocase primary key, v) without rowid", 1,
+		[][]any{{int64(5), "old"}},
+		[][]any{{"abc", "live"}},
+		[]keyEqRow{{vals: []any{int64(5), "old"}, want: unk, note: sqlitefile.NoteLiveUncertain}})
 }

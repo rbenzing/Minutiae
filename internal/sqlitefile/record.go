@@ -61,6 +61,8 @@ func recordInvalid(format string, a ...any) error {
 // them; the caller counts and warns). A header
 // that holds no columns (length 1) is accepted, as the engine does.
 func ParseRecordHeader(b []byte, maxCols int) (serials []uint64, headerLen int, bodyLen int64, err error) {
+	defer guard(&err)
+	pureAt("ParseRecordHeader")
 	hl, n := GetVarint(b)
 	switch {
 	case n == 0:
@@ -193,7 +195,9 @@ func (a *rowAcct) admit(blob bool, n int64, col int) (take int64, omit, clip boo
 // end of b is Omitted and Truncated is set; bytes past the declared body are
 // tolerated. Values over the live caps of lim are Omitted with their true
 // Len. The values of one row are bounded by lim.MaxRowBytes.
-func DecodeRecord(b []byte, enc Encoding, lim Limits) (Record, error) {
+func DecodeRecord(b []byte, enc Encoding, lim Limits) (_ Record, err error) {
+	defer guard(&err)
+	pureAt("DecodeRecord")
 	return decodeRecord(b, enc, lim.withDefaults(), false)
 }
 

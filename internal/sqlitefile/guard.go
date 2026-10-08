@@ -3,6 +3,7 @@ package sqlitefile
 import (
 	"runtime"
 	"strconv"
+	"sync/atomic"
 	"unicode/utf8"
 )
 
@@ -11,8 +12,9 @@ const maxPanicStack = 2048
 
 // env is the internal environment of one library instance: the options with
 // resolved limits, the budget, and the test hook. The hook is set only by
-// export_test.go constructors; there is no package-level variable, so one
-// instance's injected panic never reaches another.
+// export_test.go constructors; the only package-level hook is pureHook, for the
+// exported pure parse functions that belong to no instance, so one instance's
+// injected panic never reaches another.
 type env struct {
 	opts   Options
 	budget Budget
@@ -89,7 +91,8 @@ func (e *env) at(site string) {
 	}
 }
 
-// guard is deferred in every exported method (defer guard(&err)): a panic
+// guard is deferred in every exported method and in the five exported pure
+// parse functions (defer guard(&err)): a panic
 // becomes a *PanicError in *err. A call that does not panic keeps its own err.
 // The stack is built from runtime.Callers (runtime/debug is not used) and
 // clipped to 2 KiB.
@@ -125,4 +128,16 @@ func clippedStack() string {
 		}
 	}
 	return string(out)
+}
+
+// pureHook is the panic-injection hook of the exported pure parse functions,
+// which belong to no instance: tests set it through export_test.go. It is nil
+// in production.
+var pureHook atomic.Pointer[func(site string)]
+
+// pureAt is the panic-injection site of a pure parse function.
+func pureAt(site string) {
+	if h := pureHook.Load(); h != nil {
+		(*h)(site)
+	}
 }

@@ -42,7 +42,9 @@ func (h PageHeader) pointerArrayEnd() int { return h.Base + h.HeaderSize + 2*h.C
 // file is shorter than the page size). A flag that is not one of the four
 // types, a header that does not fit in the bytes present and a cell count
 // whose pointer array does not fit are errors wrapping ErrCorrupt.
-func ParsePageHeader(page []byte, pgno uint32) (PageHeader, error) {
+func ParsePageHeader(page []byte, pgno uint32) (_ PageHeader, err error) {
+	defer guard(&err)
+	pureAt("ParsePageHeader")
 	var h PageHeader
 	if pgno == 1 {
 		h.Base = 100
@@ -132,7 +134,9 @@ func (s CellPointerSet) Err() error {
 // cell once. The error is non-nil only when the pointer array itself reaches
 // past usable (or the bytes present): then no pointer can be trusted and the
 // set is empty.
-func CellPointers(page []byte, h PageHeader, usable int) (CellPointerSet, error) {
+func CellPointers(page []byte, h PageHeader, usable int) (_ CellPointerSet, err error) {
+	defer guard(&err)
+	pureAt("CellPointers")
 	end := h.pointerArrayEnd()
 	if end > usable || end > len(page) {
 		return CellPointerSet{}, &CorruptError{File: FileDB, Reason: fmt.Sprintf("%d cell pointers reach offset %d, past the usable size %d", h.CellCount, end, usable)}

@@ -710,3 +710,21 @@ func TestJournalTrailerChecksumIsVerified(t *testing.T) {
 		t.Errorf("a trailer whose sum fails is not a trailer: %+v", s.Info)
 	}
 }
+
+// TestJournalFallbackPathIsCapped: a journal whose header was zeroed is read
+// through the no-header path; it obeys MaxJournalRecords like a headed one.
+func TestJournalFallbackPathIsCapped(t *testing.T) {
+	const ps = 1024
+	j := newJ(ps, 512, 0xABCD1234, 12)
+	for i := range 6 {
+		j.Record(uint32(i+2), jpg(ps, byte(i+9)))
+	}
+	j.Zero()
+	s := scanJ(t, j.Bytes(), ps, sqlitefile.Options{Limits: sqlitefile.Limits{MaxJournalRecords: 3}})
+	if !s.Info.ZeroedHeader || !s.Info.NonceDerived {
+		t.Fatalf("not read through the no-header path: %+v", s.Info)
+	}
+	if len(s.Records) != 3 || !jwarns(s, sqlitefile.WarnLimitReached) {
+		t.Errorf("%d records, %v; want 3 and limit-reached", len(s.Records), jcodes(s))
+	}
+}

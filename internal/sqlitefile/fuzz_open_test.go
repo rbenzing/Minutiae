@@ -14,7 +14,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"slices"
 	"testing"
 
@@ -258,10 +257,14 @@ func fuzzOpenBody(t testing.TB, f fuzzFiles) (digest [32]byte, codes []string) {
 		put("stats %+v", st)
 	}
 	hist := d.History()
+	histAddr := d.Live().Addressable()
 	np, nr := 0, 0
 	err = sqlitefile.HistoryNoRecover(ctx, hist,
 		func(p sqlitefile.PageImage) bool {
 			np++
+			if p.Number == 0 || p.Number > histAddr {
+				t.Fatalf("history page %d outside 1..%d", p.Number, histAddr)
+			}
 			put("page %d %v %+v", p.Number, p.Origin, p.Loc)
 			return np < fuzzHistCap
 		},
@@ -269,8 +272,8 @@ func fuzzOpenBody(t testing.TB, f fuzzFiles) (digest [32]byte, codes []string) {
 			nr++
 			what := fmt.Sprintf("history row %d", nr)
 			checkLoc(t, what, r.Loc, f, ps)
-			if r.Rowid == nil && r.Table != "" && r.Index == "" && false {
-				t.Fatalf("%s: no rowid", what)
+			if r.Loc.Page > histAddr {
+				t.Fatalf("%s: page %d beyond Addressable %d", what, r.Loc.Page, histAddr)
 			}
 			for i, val := range r.Values {
 				checkValue(t, fmt.Sprintf("%s value %d", what, i), val, false)
@@ -463,9 +466,6 @@ func FuzzRecord(f *testing.F) {
 		}
 		for i, v := range rec.Values {
 			checkValue(t, fmt.Sprintf("value %d", i), v, true)
-			if v.Kind == sqlitefile.KindFloat && math.IsNaN(v.Float) && false {
-				t.Fatal("NaN")
-			}
 			if s, ok := v.Text(); ok && v.Kind != sqlitefile.KindText {
 				t.Fatalf("Text() of a non-text value returned %q", s)
 			}

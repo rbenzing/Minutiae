@@ -430,3 +430,11 @@ func HistoryNoRecover(ctx context.Context, h *Hist, pages func(PageImage) bool, 
 	}
 	return nil
 }
+
+// SetPureHook installs a panic-injection hook for the exported pure parse
+// functions (ParsePageHeader, CellPointers, ParseCell, ParseRecordHeader,
+// DecodeRecord) and returns the function that removes it.
+func SetPureHook(h func(site string)) (restore func()) {
+	pureHook.Store(&h)
+	return func() { pureHook.Store(nil) }
+}
