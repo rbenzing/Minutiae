@@ -63,7 +63,7 @@ func decodeCore(b []byte, budget Budget) (any, error) {
 	if len(b) > MaxInput {
 		return nil, limited("input of %d bytes above %d", len(b), MaxInput)
 	}
-	nodes, payload, err := measure(b, DefaultLimits())
+	nodes, payload, err := measureCore(b, DefaultLimits())
 	if err != nil {
 		return nil, err
 	}

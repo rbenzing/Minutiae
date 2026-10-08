@@ -281,6 +281,17 @@ func Check(b []byte, l Limits) error {
 // the expanded string and data payload bytes (for XML, element count and text, CDATA and
 // comment bytes). Decode charges its memory budget from these.
 func measure(b []byte, l Limits) (nodes, payload uint64, err error) {
+	err = guard(func() error {
+		var e error
+		nodes, payload, e = measureCore(b, l)
+		return e
+	})
+	return nodes, payload, err
+}
+
+// measureCore is measure without the recover guard: decodeCore and the fuzz targets reach the
+// validators through it, so a panic in a validator is a failure rather than a recovered error.
+func measureCore(b []byte, l Limits) (nodes, payload uint64, err error) {
 	switch {
 	case len(b) == 0:
 		return 0, 0, malformed("empty input")
@@ -289,14 +300,9 @@ func measure(b []byte, l Limits) (nodes, payload uint64, err error) {
 			// "<01ab>" is an OpenStep data literal, not a start tag.
 			return 0, 0, fmt.Errorf("%w: neither XML nor binary plist", ErrUnsupported)
 		}
-		err = guard(func() error {
-			var e error
-			nodes, payload, e = prescanCore(b, l)
-			return e
-		})
-		return nodes, payload, err
+		return prescanCore(b, l)
 	case bytes.HasPrefix(b, []byte(bplistMagic)):
-		return measureBinary(b, l)
+		return checkCore(b, l)
 	}
 	return 0, 0, fmt.Errorf("%w: neither XML nor binary plist", ErrUnsupported)
 }

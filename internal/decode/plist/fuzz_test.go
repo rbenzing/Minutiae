@@ -1,10 +1,9 @@
 package plist
 
 import (
-	"bytes"
 	"errors"
-	"fmt"
 	"math"
+	"reflect"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -39,7 +38,81 @@ func typedErr(err error, budget bool) bool {
 	return budget && errors.Is(err, ErrNoBudget)
 }
 
-func fmtSprint(v any) string { return fmt.Sprintf("%#v", v) }
+// nanMark stands for a NaN in canon: reflect.DeepEqual is false for NaN against itself.
+type nanMark struct{}
+
+// canon returns v with every NaN float64 and every RawDate NaN replaced by nanMark, so that
+// reflect.DeepEqual can compare two decodes of the same bytes.
+func canon(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		m := make(map[string]any, len(x))
+		for k, e := range x {
+			m[k] = canon(e)
+		}
+		return m
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = canon(e)
+		}
+		return out
+	case float64:
+		if math.IsNaN(x) {
+			return nanMark{}
+		}
+	case RawDate:
+		if math.IsNaN(x.Seconds) {
+			return struct{ NaNDate nanMark }{}
+		}
+	}
+	return v
+}
+
+func sameValue(a, b any) bool { return reflect.DeepEqual(canon(a), canon(b)) }
+
+// rawStringJustified reports whether a Go string could not have held x: its 8-bit bytes are
+// not valid UTF-8, or it is UTF-16 with a surrogate unit that a Go string cannot carry (a lone
+// one in either format; in XML a character reference to a surrogate, even one of a valid
+// pair, is kept raw by design).
+func rawStringJustified(x RawString, xml bool) bool {
+	if !x.UTF16 {
+		return !utf8.Valid(x.Bytes)
+	}
+	if len(x.Bytes)%2 != 0 {
+		return false
+	}
+	units := make([]uint16, len(x.Bytes)/2)
+	for i := range units {
+		units[i] = uint16(x.Bytes[2*i])<<8 | uint16(x.Bytes[2*i+1])
+	}
+	for i := 0; i < len(units); i++ {
+		u := units[i]
+		switch {
+		case u >= 0xD800 && u < 0xDC00 && i+1 < len(units) && units[i+1] >= 0xDC00 && units[i+1] < 0xE000:
+			if xml {
+				return true
+			}
+			i++
+		case u >= 0xD800 && u < 0xE000:
+			return true
+		}
+	}
+	return false
+}
+
+// rawDateJustified reports whether a time.Time (years 1 to 9999) could not have held x: NaN,
+// an infinity, or seconds clearly outside the range (one second of slack at each end for the
+// float rounding of the boundary).
+func rawDateJustified(x RawDate) bool {
+	if math.IsNaN(x.Seconds) || math.IsInf(x.Seconds, 0) {
+		return true
+	}
+	const cocoa = 978307200
+	lo := float64(time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC).Unix() - cocoa)
+	hi := float64(time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC).Unix() - cocoa)
+	return x.Seconds < lo+1 || x.Seconds >= hi-1
+}
 
 func fuzzMarshal(v any, format int) []byte {
 	b, err := howett.Marshal(v, format)
@@ -212,15 +285,12 @@ func FuzzCheckBinary(f *testing.F) {
 		}
 		defer fuzzGuard(t, len(b))()
 		for _, in := range [][]byte{b, append([]byte(bplistMagic), b...)} {
-			ok := checkRun(t, func() (uint64, uint64, error) {
+			checkRun(t, func() (uint64, uint64, error) {
 				if err := Check(in, Limits{}); err != nil {
 					return 0, 0, err
 				}
 				return measure(in, Limits{})
 			})
-			if ok && !bytes.HasPrefix(in, []byte(bplistMagic)) && !LooksLikeXML(in) {
-				t.Fatalf("accepted a document that is neither format")
-			}
 		}
 	})
 }
@@ -233,7 +303,7 @@ func FuzzCheckBinaryNoRecover(f *testing.F) {
 		}
 		defer fuzzGuard(t, len(b))()
 		for _, in := range [][]byte{b, append([]byte(bplistMagic), b...)} {
-			checkRun(t, func() (uint64, uint64, error) { return checkCore(in, DefaultLimits()) })
+			checkRun(t, func() (uint64, uint64, error) { return measureCore(in, DefaultLimits()) })
 		}
 	})
 }
@@ -284,7 +354,7 @@ func decodeSeeds() [][]byte {
 // walkPlain fails when v holds a type outside the documented value set (the third-party
 // plist.UID included), a string that is not valid UTF-8 or a date outside years 1 to 9999,
 // and bounds the walk at 1<<20 nodes.
-func walkPlain(t *testing.T, v any) {
+func walkPlain(t *testing.T, v any, xml bool) {
 	t.Helper()
 	left := 1 << 20
 	var walk func(v any, depth int)
@@ -316,7 +386,15 @@ func walkPlain(t *testing.T, v any) {
 			if y := x.Year(); y < 1 || y > 9999 {
 				t.Fatalf("date year %d", y)
 			}
-		case float64, RawDate, RawString, int64, uint64, bool, []byte, UID:
+		case RawString:
+			if !rawStringJustified(x, xml) {
+				t.Fatalf("RawString for a string a Go string holds: %#v", x)
+			}
+		case RawDate:
+			if !rawDateJustified(x) {
+				t.Fatalf("RawDate for a date time.Time holds: %v", x.Seconds)
+			}
+		case float64, int64, uint64, bool, []byte, UID:
 		default:
 			t.Fatalf("unexpected %T", v)
 		}
@@ -345,9 +423,9 @@ func decodeContract(t *testing.T, b []byte, call func(Budget) (any, error)) {
 	if cerr := Check(b, Limits{}); cerr != nil {
 		t.Fatalf("Decode accepted bytes Check refuses: %v", cerr)
 	}
-	walkPlain(t, v)
+	walkPlain(t, v, LooksLikeXML(b))
 	v2, used2, err2 := run()
-	if err2 != nil || used2 != used || fmtSprint(v) != fmtSprint(v2) {
+	if err2 != nil || used2 != used || !sameValue(v, v2) {
 		t.Fatalf("not deterministic")
 	}
 }
@@ -396,9 +474,9 @@ func unarchiveContract(t *testing.T, b []byte, call func(any, Budget) (any, erro
 		}
 		return
 	}
-	walkPlain(t, out)
+	walkPlain(t, out, LooksLikeXML(b))
 	out2, used2, err2 := run()
-	if err2 != nil || used2 != used || fmtSprint(out) != fmtSprint(out2) {
+	if err2 != nil || used2 != used || !sameValue(out, out2) {
 		t.Fatalf("not deterministic")
 	}
 }
@@ -423,4 +501,22 @@ func FuzzUnarchiveNoRecover(f *testing.F) {
 		defer fuzzGuard(t, len(b))()
 		unarchiveContract(t, b, unarchiveCore)
 	})
+}
+
+func TestRawJustification(t *testing.T) {
+	if rawStringJustified(RawString{Bytes: []byte("abc")}, false) || !rawStringJustified(RawString{Bytes: []byte{0xff}}, false) {
+		t.Fatal("8-bit rule")
+	}
+	lone := RawString{Bytes: []byte{0xD8, 0x00}, UTF16: true}
+	pair := RawString{Bytes: []byte{0xD8, 0x3D, 0xDE, 0x00}, UTF16: true}
+	plain := RawString{Bytes: []byte{0x00, 0x41}, UTF16: true}
+	if !rawStringJustified(lone, false) || rawStringJustified(plain, false) || rawStringJustified(pair, false) || !rawStringJustified(pair, true) {
+		t.Fatal("UTF-16 rule")
+	}
+	if !rawDateJustified(RawDate{math.NaN()}) || !rawDateJustified(RawDate{math.Inf(-1)}) || !rawDateJustified(RawDate{1e13}) || rawDateJustified(RawDate{7e8}) {
+		t.Fatal("date rule")
+	}
+	if sameValue([]any{1.0}, []any{2.0}) || !sameValue([]any{math.NaN(), RawDate{math.NaN()}}, []any{math.NaN(), RawDate{math.NaN()}}) {
+		t.Fatal("sameValue")
+	}
 }
