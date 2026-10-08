@@ -13,14 +13,15 @@ const (
 	StateNull                        // stored as NULL
 	StateAbsent                      // no such column
 	StateDefaulted                   // not stored (a short record): the column's literal default
-	StateOmitted                     // not materialized (over a cap, virtual generated, non-literal default)
+	StateOmitted                     // not materialized (over a cap, non-literal default)
 	StateUnread                      // stored, but its bytes could not be read
 	StateClipped                     // only a prefix of the bytes is held
 	StateUndecodable                 // UTF-16 text that is not valid UTF-16
 	StateLost                        // a rowid that was not recovered
+	StateGenerated                   // a virtual generated column: not stored, never evaluated
 )
 
-var stateNames = [...]string{"present", "null", "absent", "defaulted", "omitted", "unread", "clipped", "undecodable", "lost"}
+var stateNames = [...]string{"present", "null", "absent", "defaulted", "omitted", "unread", "clipped", "undecodable", "lost", "generated"}
 
 func (s ColState) String() string {
 	if int(s) < len(stateNames) {
@@ -42,6 +43,9 @@ type stateInput struct {
 	storedLen int                // values the record stored
 	hasRowid  bool               // the row's rowid is known
 	truncated bool               // a recovered row whose record was cut off
+	// lengthMismatch: the record does not account for its bytes, so a column it
+	// does not hold may have been lost to the damage: it is Unread, never Defaulted.
+	lengthMismatch bool
 	// undecodable reports whether the text of column col is not valid in its
 	// encoding. It is asked only for text in a UTF-16 encoding that reached
 	// the decoding step; nil means every text decodes.
@@ -69,11 +73,11 @@ func deriveState(in stateInput, col int) ColState {
 		return StateLost
 	case v.Unread:
 		return StateUnread
-	case c.RecordIndex < 0: // virtual generated: never stored
-		return StateOmitted
+	case c.RecordIndex < 0: // virtual generated: never stored, never evaluated here
+		return StateGenerated
 	case c.RecordIndex >= in.storedLen: // the record ended before this column
 		switch {
-		case in.truncated:
+		case in.truncated || in.lengthMismatch:
 			return StateUnread
 		case v.Omitted:
 			return StateOmitted

@@ -50,9 +50,9 @@ func scanEach(t testing.TB, tb *sqlitedb.Table, fn func(i int, r sqlitedb.Row)) 
 func TestColStateStringsAndKnown(t *testing.T) {
 	all := []sqlitedb.ColState{
 		sqlitedb.StatePresent, sqlitedb.StateNull, sqlitedb.StateAbsent, sqlitedb.StateDefaulted,
-		sqlitedb.StateOmitted, sqlitedb.StateUnread, sqlitedb.StateClipped, sqlitedb.StateUndecodable, sqlitedb.StateLost,
+		sqlitedb.StateOmitted, sqlitedb.StateUnread, sqlitedb.StateClipped, sqlitedb.StateUndecodable, sqlitedb.StateLost, sqlitedb.StateGenerated,
 	}
-	names := []string{"present", "null", "absent", "defaulted", "omitted", "unread", "clipped", "undecodable", "lost"}
+	names := []string{"present", "null", "absent", "defaulted", "omitted", "unread", "clipped", "undecodable", "lost", "generated"}
 	known := map[sqlitedb.ColState]bool{sqlitedb.StatePresent: true, sqlitedb.StateNull: true, sqlitedb.StateDefaulted: true}
 	for i, s := range all {
 		if s.String() != names[i] || s.Known() != known[s] {
@@ -185,7 +185,7 @@ func TestRowidAliasReadsAsRowid(t *testing.T) {
 	})
 }
 
-func TestRowidAliasOfShortRecordIsPresent(t *testing.T) {
+func TestRowidAliasOfColumnlessRecordIsPresent(t *testing.T) {
 	tb := tableOf(t, sqlitetest.Options{}, "create table t(id integer primary key, a)", func(tt *sqlitetest.Table) {
 		tt.InsertRaw(7, nil, nil)
 	})
@@ -193,7 +193,8 @@ func TestRowidAliasOfShortRecordIsPresent(t *testing.T) {
 		if v, ok := r.Int(0); v != 7 || !ok || r.State(0) != sqlitedb.StatePresent {
 			t.Errorf("Int(0) = %d, %v state %v", v, ok, r.State(0))
 		}
-		if r.State(1) != sqlitedb.StateDefaulted || !r.IsNull(1) {
+		// A record with no columns is a length mismatch (B21): a is Unread, not Defaulted.
+		if r.State(1) != sqlitedb.StateUnread || r.IsNull(1) {
 			t.Errorf("state(1) = %v null %v", r.State(1), r.IsNull(1))
 		}
 	})
@@ -303,11 +304,11 @@ func TestVirtualGeneratedColumnIsOmittedNotNull(t *testing.T) {
 		if x, _ := r.Int(2); x != 20 {
 			t.Errorf("b = %d (the virtual column must not shift the stored ones)", x)
 		}
-		if r.State(1) != sqlitedb.StateOmitted || r.IsNull(1) || !r.Unknown(1) {
+		if r.State(1) != sqlitedb.StateGenerated || r.IsNull(1) || !r.Unknown(1) {
 			t.Errorf("v: state %v null %v", r.State(1), r.IsNull(1))
 		}
-		if r.Flags()&sqlitedb.FlagUnknownValues == 0 {
-			t.Errorf("flags %b", r.Flags())
+		if r.Flags()&sqlitedb.FlagUnknownValues != 0 {
+			t.Errorf("flags %b (a generated column is not an unknown value)", r.Flags())
 		}
 	})
 }

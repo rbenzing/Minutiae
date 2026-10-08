@@ -11,9 +11,11 @@ import (
 
 // Scan visits the live rows of the table in rowid order (the key order of a
 // WITHOUT ROWID table), never the table's indexes. fn may return ErrStop to
-// end the scan with a nil result; any other error ends it and is returned
-// unchanged. A cancelled context is returned as is. The Row is valid only
-// during the call. Scan after Release is ErrReleased.
+// end the scan with a nil result; the test is errors.Is, so a callback may wrap
+// ErrStop (fmt.Errorf("done: %w", ErrStop)) and still stop cleanly. Any other
+// error ends the scan and is returned unchanged. A cancelled context is returned
+// as is. The Row is valid only during the call. Scan after Release is
+// ErrReleased.
 func (t *Table) Scan(ctx context.Context, fn func(Row) error) (err error) {
 	defer func() {
 		if r := recover(); r != nil {

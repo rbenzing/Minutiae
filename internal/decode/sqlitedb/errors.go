@@ -7,15 +7,16 @@ import (
 
 // Sentinel errors of the decoder. Callers test them with errors.Is.
 var (
-	ErrNoBudget             = errors.New("sqlitedb: no memory budget supplied")
-	ErrNotSQLite            = errors.New("sqlitedb: not a database file")
-	ErrEncrypted            = errors.New("sqlitedb: database is encrypted")
-	ErrCorrupt              = errors.New("sqlitedb: database structure is corrupt")
-	ErrLiveUnavailable      = errors.New("sqlitedb: live view is unavailable")
-	ErrEngineRefuses        = errors.New("sqlitedb: the engine would refuse this database")
-	ErrNoSuchTable          = errors.New("sqlitedb: no such table")
-	ErrWithoutRowid         = errors.New("sqlitedb: table has no rowid")
-	ErrIndexLimit           = errors.New("sqlitedb: join index limit reached")
+	ErrNoBudget        = errors.New("sqlitedb: no memory budget supplied")
+	ErrNotSQLite       = errors.New("sqlitedb: not a database file")
+	ErrEncrypted       = errors.New("sqlitedb: database is encrypted")
+	ErrCorrupt         = errors.New("sqlitedb: database structure is corrupt")
+	ErrLiveUnavailable = errors.New("sqlitedb: live view is unavailable")
+	ErrEngineRefuses   = errors.New("sqlitedb: the engine would refuse this database")
+	ErrNoSuchTable     = errors.New("sqlitedb: no such table")
+	ErrWithoutRowid    = errors.New("sqlitedb: table has no rowid")
+	ErrIndexLimit      = errors.New("sqlitedb: join index limit reached")
+	// ErrStop ends a Scan early with a nil result; it matches with errors.Is, so a wrapped ErrStop stops too.
 	ErrStop                 = errors.New("sqlitedb: stopped by the caller")
 	ErrBadFiles             = errors.New("sqlitedb: companion files do not belong to this database")
 	ErrRowMismatch          = errors.New("sqlitedb: row does not belong to this table")

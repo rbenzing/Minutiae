@@ -67,8 +67,9 @@ type rowInput struct {
 }
 
 // rowValueCost is a constant upper bound of sizeof(sqlitefile.Value) plus the
-// state byte, charged for every column of a row while it is delivered.
-const rowValueCost = 96
+// state byte and the slice header of the decoded text, charged for every column
+// of a row while it is delivered.
+const rowValueCost = 128
 
 // buildRow derives the states, the UTF-16 decoding and the flags of a row.
 // charge is asked for the memory before it is allocated and its error ends
@@ -101,12 +102,12 @@ func (t *Table) buildRow(in rowInput, charge func(n int64) error) (Row, error) {
 		if !ok {
 			return true
 		}
-		r.text[col] = []byte(s)
+		r.text[col] = append([]byte{}, s...) // explicit: an empty text is an empty, non-nil slice
 		return false
 	}
 	si := stateInput{
 		def: def, vals: in.vals, storedLen: in.storedLen, hasRowid: in.hasRowid, truncated: in.truncated,
-		undecodable: decode,
+		lengthMismatch: in.flags&FlagLengthMismatch != 0, undecodable: decode,
 	}
 	unknown := false
 	for col := range in.vals {
@@ -118,7 +119,7 @@ func (t *Table) buildRow(in rowInput, charge func(n int64) error) (Row, error) {
 			return Row{}, chargeErr
 		}
 		r.states[col] = st
-		unknown = unknown || !st.Known()
+		unknown = unknown || (!st.Known() && st != StateGenerated)
 	}
 	if in.loc.OverflowMixed {
 		r.flags |= FlagOverflowMixed
@@ -218,7 +219,9 @@ func (r Row) Text(col int) ([]byte, bool) {
 		return nil, false
 	}
 	if isUTF16(v.Enc) {
-		if r.text == nil || r.text[col] == nil {
+		// A known UTF-16 text was decoded when the row was built (decode makes the
+		// slice non-nil even when empty), so it is not told apart by nil.
+		if r.text == nil {
 			return nil, false
 		}
 		return r.text[col], true
