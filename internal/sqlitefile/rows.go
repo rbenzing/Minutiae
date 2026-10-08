@@ -313,11 +313,12 @@ func (rp *rowPass) emitCell(img PageImage, method string, id ident, ic imgCell) 
 	}
 	uncommitted := img.Origin == OriginWALUncommitted || img.Origin == OriginDBRolledBack
 	rel := RelUnknown
-	if uncommitted {
-		rel = RelUncommitted
-	}
 	if id.basis == BasisFit || id.basis == BasisGuess {
+		// identity by fit alone: the relation is unknown whatever the origin
+		// (ruling C47); that the bytes are uncommitted is the Origin's fact
 		row.Notes = append(row.Notes, NoteIdentityByFitOnly)
+	} else if uncommitted {
+		rel = RelUncommitted
 	}
 	if id.kind != kindNone && id.basis == BasisSchema {
 		res, err := rp.compare(id, &row)

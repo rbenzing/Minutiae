@@ -487,8 +487,8 @@ func checkHistory(t *testing.T, f *histFixture) (rows []sqlitefile.RecoveredRow)
 			table = r.Table
 		}
 		if (r.TableBasis == sqlitefile.BasisFit || r.TableBasis == sqlitefile.BasisGuess) &&
-			((r.Relation != sqlitefile.RelUnknown && r.Relation != sqlitefile.RelUncommitted) || !hasNote(r, sqlitefile.NoteIdentityByFitOnly)) {
-			// never a comparison with a live row; an uncommitted image says so
+			(r.Relation != sqlitefile.RelUnknown || !hasNote(r, sqlitefile.NoteIdentityByFitOnly)) {
+			// never a comparison with a live row (ruling C47: exactly unknown; uncommitted is the origin's fact)
 			t.Errorf("%s: a %s label carries relation %s and notes %v (rulings C44, C46: no live comparison, identity-by-fit-only)", f.name, r.TableBasis, r.Relation, r.Notes)
 		}
 		if r.Index != "" {

@@ -507,8 +507,8 @@ func fxBuildHistory(t *testing.T, spec fixtureSpec, sc *fxScenario, live *fxStat
 				}
 				rel := "unknown"
 				uncommitted := im.origin == "wal-uncommitted" || im.origin == "db-rolled-back"
-				if uncommitted {
-					rel = "uncommitted"
+				if uncommitted && basis == "schema" {
+					rel = "uncommitted" // a fit or guess row stays unknown (ruling C47)
 				}
 				if basis == "schema" {
 					lr, ok := liveRaw[strings.ToLower(w.table)][c.rowid]

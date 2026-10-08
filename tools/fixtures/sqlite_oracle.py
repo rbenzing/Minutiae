@@ -695,8 +695,8 @@ def build_history(name, files, st, live_raw, wants, min_history):
                     table = ""
                 rel = "unknown"
                 unc = im["origin"] in ("wal-uncommitted", "db-rolled-back")
-                if unc:
-                    rel = "uncommitted"
+                if unc and basis == "schema":
+                    rel = "uncommitted"   # a fit or guess row stays unknown (ruling C47)
                 if basis == "schema":
                     lr = live_raw.get(w["table"].lower(), {}).get(c["rowid"])
                     if lr is not None and same(lr, c["vals"]):
