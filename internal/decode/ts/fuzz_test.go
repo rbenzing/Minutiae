@@ -20,6 +20,23 @@ func FuzzTS(f *testing.F) {
 		f.Add(int64(1), v, uint8(5))
 	}
 	f.Add(int64(3), float64(0), uint8(200))
+	// Epoch edges of every integer kind: the raw values one below, at and one above the first
+	// valid instant (1970-01-01) and the first invalid one (2100-01-01), per the oracle's units.
+	for kind, u := range map[uint8]struct{ per, off int64 }{
+		0: {1, 0}, 1: {1_000, 0}, 2: {1_000_000, 0}, 3: {1_000_000_000, 0},
+		5: {1_000_000_000, 978307200}, 6: {1_000_000, -11644473600}, 7: {10_000_000, -11644473600},
+	} {
+		lo, hi := -u.off*u.per, (4102444800-u.off)*u.per
+		for _, v := range []int64{lo - 1, lo, lo + 1, hi - 1, hi, hi + 1} {
+			f.Add(v, float64(v), kind)
+		}
+	}
+	for _, v := range []float64{
+		-978307201, -978307200, -978307199, 3124137599, 3124137600, 3124137601,
+		math.Nextafter(-978307200, 0), math.Nextafter(3124137600, 0), -0.5, 0.5,
+	} {
+		f.Add(int64(1), v, uint8(4))
+	}
 	f.Fuzz(func(t *testing.T, i int64, v float64, kind uint8) {
 		k := Kind(kind)
 		inBounds := func(name string, tm time.Time, ok bool) {
@@ -54,8 +71,13 @@ func FuzzTS(f *testing.F) {
 		if k == KindCocoaSeconds {
 			fs := ClassifyFloat(k, v)
 			shifted := v + float64(unixToCocoaSeconds)
-			if fs == StatusValid && !(shifted >= float64(Min().Unix()) && shifted <= float64(Max().Unix())) {
+			finite := v >= -1e11 && v <= 1e11 // false for NaN
+			inRange := shifted >= float64(Min().Unix()) && shifted < float64(Max().Unix())
+			if fs == StatusValid && !inRange {
 				t.Fatalf("ClassifyFloat(%v) valid outside the range", v)
+			}
+			if finite && inRange && v != 0 && v != -1 && fs != StatusValid {
+				t.Fatalf("ClassifyFloat(%v) = %v inside the range, want valid", v, fs)
 			}
 			if (v == 0 || v == -1) && fs != StatusSentinel {
 				t.Fatalf("ClassifyFloat(%v) = %v, want sentinel", v, fs)
