@@ -27,7 +27,7 @@ const (
 	NoteOwnerChanged = "owner-changed"
 	// NoteLiveUncertain: the live row could not be looked up cleanly.
 	NoteLiveUncertain = "live-lookup-uncertain"
-	// NoteIdentityByFitOnly: the table was named by the column fit alone, so
+	// NoteIdentityByFitOnly: the table was named by the column fit alone (BasisFit or BasisGuess), so
 	// the row is never compared with the live rows of that table (a rowid
 	// comparison would present a dropped table's rows as modified rows of a
 	// live lookalike). Its relation is unknown.
@@ -316,7 +316,7 @@ func (rp *rowPass) emitCell(img PageImage, method string, id ident, ic imgCell) 
 	if uncommitted {
 		rel = RelUncommitted
 	}
-	if id.basis == BasisFit {
+	if id.basis == BasisFit || id.basis == BasisGuess {
 		row.Notes = append(row.Notes, NoteIdentityByFitOnly)
 	}
 	if id.kind != kindNone && id.basis == BasisSchema {
