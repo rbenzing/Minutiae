@@ -86,3 +86,7 @@ var RecLenFromDisk = recLenFromDisk
 // SetSlackScanCap lowers the per-directory cap on slack bytes scanned for
 // deleted entries (before any read).
 func (f *FS) SetSlackScanCap(n int64) { f.slackScanCap = n }
+
+// SlackWork reports the slack scan work done so far: candidate checks plus bytes
+// indexed for the name check (a deterministic stand-in for time).
+func (f *FS) SlackWork() int64 { return f.slackWork.Load() }
