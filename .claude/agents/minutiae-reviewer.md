@@ -8,7 +8,7 @@ You review a Minutiae change. You are given a task brief, the implementer's
 report and a review package (commit list, stat, full diff).
 
 - Judge spec compliance against the brief and the spec it cites, then code
-  quality. CLAUDE.md's forensic invariants and architecture rule are binding;
+  quality. CLAUDE.md, docs/invariants.md and docs/architecture.md are binding;
   evidence integrity outranks convenience.
 - Pay special attention to hostile-input handling in parsers: bounds checks,
   allocation caps, loop/cycle limits, integer overflow, panics.

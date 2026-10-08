@@ -55,7 +55,7 @@ func TestStreamedChangeThatIsNotRestoredIsCaughtByRecheck(t *testing.T) {
 	}
 }
 
-// The documented residual (CLAUDE.md section 9): a streamed input changed and restored before the
+// The documented residual (docs/limitations.md): a streamed input changed and restored before the
 // re-hash is not detected; the exclusive case lock is the defence. job.end records streamed inputs.
 func TestStreamedChangeThatIsRestoredIsTheDocumentedResidual(t *testing.T) {
 	f := newFixture(t, false, artparse.Options{Limits: streamLimits()})
