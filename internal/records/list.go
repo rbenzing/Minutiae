@@ -204,6 +204,15 @@ func buildList(f Filter, desc bool, cur *cursor, have bool) ([]query, error) {
 	return out, nil
 }
 
+// refuseRank refuses a filter whose query asks for relevance order where there is none: only Search
+// ranks, and an option is never ignored silently.
+func refuseRank(f Filter) error {
+	if f.Text != nil && f.Text.rank {
+		return fmt.Errorf("%w: a relevance-ordered query is only for Search", ErrInvalidPage)
+	}
+	return nil
+}
+
 // List returns one page of the records f selects, in the order
 // (untimed last, ts, id), or the exact reverse with Page.Desc. Pages are keyset
 // pages: across the pages of an unchanged database every row appears exactly
@@ -211,10 +220,19 @@ func buildList(f Filter, desc bool, cur *cursor, have bool) ([]query, error) {
 // holds a position and the fingerprint of the case, filter, order and direction
 // that produced it: used with any other it is ErrBadCursor.
 func (r *Reader) List(ctx context.Context, f Filter, p Page) (Result, error) {
+	if err := refuseRank(f); err != nil {
+		return Result{}, err
+	}
 	limit, err := p.limit()
 	if err != nil {
 		return Result{}, err
 	}
+	return r.page(ctx, f, p, limit, nil)
+}
+
+// page is List, with an optional step that runs on the page's rows inside the same read transaction
+// (Search builds its snippets there).
+func (r *Reader) page(ctx context.Context, f Filter, p Page, limit int, with func(evidence.ReadHandle, []Row) error) (Result, error) {
 	if _, err := f.compile(false); err != nil { // validate before touching the database
 		return Result{}, err
 	}
@@ -224,7 +242,7 @@ func (r *Reader) List(ctx context.Context, f Filter, p Page) (Result, error) {
 		return Result{}, err
 	}
 	var res Result
-	err = r.c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {
+	err = r.readTx(ctx, f.Text != nil, func(h evidence.ReadHandle) error {
 		have, err := hasSuperseded(ctx, h)
 		if err != nil {
 			return err
@@ -239,33 +257,42 @@ func (r *Reader) List(ctx context.Context, f Filter, p Page) (Result, error) {
 				break
 			}
 			q.args[len(q.args)-1] = want
-			if err := collect(ctx, h, q, &res.Rows); err != nil {
+			if f.Text != nil {
+				if err := r.matching(ctx); err != nil {
+					return err
+				}
+			}
+			if err := r.collect(ctx, h, q, &res.Rows); err != nil {
 				return err
 			}
+		}
+		if len(res.Rows) > limit {
+			res.Rows = res.Rows[:limit]
+			next, err := cursorAfter(res.Rows[limit-1], p.Desc, fp)
+			if err != nil {
+				return err
+			}
+			res.NextCursor = next.encode()
+		}
+		if with != nil {
+			return with(h, res.Rows)
 		}
 		return nil
 	})
 	if err != nil {
 		return Result{}, err
 	}
-	if len(res.Rows) > limit {
-		res.Rows = res.Rows[:limit]
-		next, err := cursorAfter(res.Rows[limit-1], p.Desc, fp)
-		if err != nil {
-			return Result{}, err
-		}
-		res.NextCursor = next.encode()
-	}
 	return res, nil
 }
 
 // collect appends the rows of q to dst.
-func collect(ctx context.Context, h evidence.ReadHandle, q query, dst *[]Row) error {
+func (r *Reader) collect(ctx context.Context, h evidence.ReadHandle, q query, dst *[]Row) error {
 	rows, err := h.QueryContext(ctx, q.sql, q.args...)
 	if err != nil {
 		return fmt.Errorf("records: list: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
+	r.started()
 	for rows.Next() {
 		row, err := scanRow(rows)
 		if err != nil {
@@ -314,10 +341,13 @@ func (r *Reader) Count(ctx context.Context, f Filter, limit int) (n int64, cappe
 	if limit < 0 {
 		return 0, false, fmt.Errorf("%w: count limit %d is negative", ErrInvalidPage, limit)
 	}
+	if err := refuseRank(f); err != nil {
+		return 0, false, err
+	}
 	if _, err := f.compile(false); err != nil {
 		return 0, false, err
 	}
-	err = r.c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {
+	err = r.readTx(ctx, f.Text != nil, func(h evidence.ReadHandle) error {
 		have, err := hasSuperseded(ctx, h)
 		if err != nil {
 			return err
@@ -331,6 +361,11 @@ func (r *Reader) Count(ctx context.Context, f Filter, limit int) (n int64, cappe
 			lim = int64(limit) + 1
 		}
 		q := "SELECT count(*) FROM (SELECT 1" + w.fromSQL(false, false) + w.whereSQL() + " LIMIT ?)"
+		if f.Text != nil {
+			if err := r.matching(ctx); err != nil {
+				return err
+			}
+		}
 		return h.QueryRowContext(ctx, q, append(w.args, lim)...).Scan(&n)
 	})
 	if err != nil {

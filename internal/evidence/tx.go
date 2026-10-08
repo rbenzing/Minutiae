@@ -251,6 +251,11 @@ func (c *Case) ReadTx(ctx context.Context, fn func(ReadHandle) error) (err error
 	if _, err := conn.ExecContext(ctx, `PRAGMA query_only = ON`); err != nil {
 		return fmt.Errorf("artifacts.db pragma: %w", err)
 	}
+	// a sorter or temporary table of a read never spills to a file outside the case (R67); it is
+	// set here, by the transaction, and put back by restoreAfterRead
+	if _, err := conn.ExecContext(ctx, `PRAGMA temp_store = MEMORY`); err != nil {
+		return fmt.Errorf("artifacts.db pragma: %w", err)
+	}
 	var changesBefore int64
 	if err := conn.QueryRowContext(ctx, `SELECT total_changes()`).Scan(&changesBefore); err != nil {
 		return fmt.Errorf("artifacts.db: %w", err)
@@ -285,7 +290,7 @@ func restoreAfterRead(ctx context.Context, conn *sql.Conn, changesBefore int64) 
 	if changes != changesBefore {
 		problem = ErrReadTxModified
 	}
-	for _, p := range append([]string{`PRAGMA query_only = OFF`}, connPragmas...) {
+	for _, p := range append([]string{`PRAGMA query_only = OFF`, `PRAGMA temp_store = DEFAULT`}, connPragmas...) {
 		if _, err := conn.ExecContext(ctx, p); err != nil {
 			return errors.Join(problem, fmt.Errorf("artifacts.db reset pragma: %w", err))
 		}

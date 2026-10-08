@@ -682,6 +682,10 @@ func TestRecordsCommandsDoNotWrite(t *testing.T) {
 		{"records", "stats"},
 		{"records", "stats", "--by", "run", "--json"},
 		{"records", "list", "--cursor", "junk"},
+		{"records", "search", "hello"},
+		{"records", "search", "wor*", "--json", "--limit", "1"},
+		{"records", "search", "--substring", "ell", "--no-snippets"},
+		{"records", "search", "hello", "--rank"},
 	} {
 		run(t, Deps{}, append(args, "--case", rc.dir)...)
 		now := audit()

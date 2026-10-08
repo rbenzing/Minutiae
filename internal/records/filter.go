@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/rbenzing/minutiae/internal/evidence"
 )
 
 // Filter selects records. The zero value selects everything except the records
@@ -27,6 +29,9 @@ type Filter struct {
 	// IncludeSuperseded shows the records of superseded runs too; IngestID
 	// implies it (asking for one run shows that run).
 	IncludeSuperseded bool
+	// Text restricts the selection to the records the full-text query matches (nil = no text
+	// condition). It is compiled by CompileQuery or CompileTerms.
+	Text *TextQuery
 }
 
 // Limits on what a filter may carry.
@@ -199,6 +204,13 @@ func (f Filter) compile(haveSuperseded bool) (where, error) {
 		w.add("NOT " + supersededExists)
 		w.needBatch = true
 	}
+	if f.Text != nil {
+		cond, err := f.Text.matchCond()
+		if err != nil {
+			return w, err
+		}
+		w.add(cond, f.Text.match)
+	}
 	return w, nil
 }
 
@@ -251,6 +263,7 @@ func (f Filter) fingerprint(caseID string, desc bool) string {
 		MinConfidence  *int
 		IngestID       string
 		AllRuns        bool
+		Text           string `json:",omitempty"`
 	}{
 		Case: caseID, Order: listOrder, Desc: desc,
 		Types: sortedSet(f.Types), Artifacts: sortedSet(f.ArtifactIDs),
@@ -260,10 +273,29 @@ func (f Filter) fingerprint(caseID string, desc bool) string {
 		Parsers: parsers, MinConfidence: f.MinConfidence,
 		IngestID: f.IngestID, AllRuns: f.IncludeSuperseded || f.IngestID != "",
 	}
+	if f.Text != nil {
+		canon.Text = f.Text.canonical()
+	}
 	b, err := json.Marshal(canon)
 	if err != nil { // cannot happen: strings, integers and booleans
 		panic(fmt.Sprintf("records: fingerprint filter: %v", err))
 	}
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:fingerprintLen/2])
+}
+
+// matchCond is the condition that restricts a query to the records the text query matches: the
+// full-text table is one of the two constants, never taken from the query's text, and the expression
+// is the one MATCH parameter. A query that CompileQuery or CompileTerms did not produce is refused.
+func (q *TextQuery) matchCond() (string, error) {
+	if q.match == "" {
+		return "", invalidFilter("the text query was not compiled by CompileQuery or CompileTerms")
+	}
+	switch q.table {
+	case evidence.FTSWordTable:
+		return "r.id IN (SELECT rowid FROM " + evidence.FTSWordTable + " WHERE " + evidence.FTSWordTable + " MATCH ?)", nil
+	case evidence.FTSSubTable:
+		return "r.id IN (SELECT rowid FROM " + evidence.FTSSubTable + " WHERE " + evidence.FTSSubTable + " MATCH ?)", nil
+	}
+	return "", invalidFilter("the text query was not compiled by CompileQuery or CompileTerms")
 }

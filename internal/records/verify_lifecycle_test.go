@@ -395,7 +395,7 @@ func TestVerifyDetectsOrphanRecordTimes(t *testing.T) {
 		fullRecord(a.ID, 2, records.BasisLocalUnknown, 0, false),
 	})
 	recordstest.DeleteRecordKeepTimes(t, c.Dir, 1)
-	expectProblems(t, mustVerify(t, c), []string{"record_times row", "of record 1 has no record"}, "records stored", "digest mismatch")
+	expectProblems(t, mustVerify(t, c), []string{"record_times row", "of record 1 has no record"}, "records stored", "digest mismatch", "records_fts")
 }
 
 func TestVerifyArtifactHashInBatchAuditMustMatchManifest(t *testing.T) {

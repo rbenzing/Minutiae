@@ -21,10 +21,10 @@ func openTestStore(t *testing.T, p string) *Store {
 	return s
 }
 
-func TestStoreMigratesToV2(t *testing.T) {
+func TestStoreMigratesToV3(t *testing.T) {
 	s := openTestStore(t, filepath.Join(t.TempDir(), "a.db"))
 	v, err := s.SchemaVersion()
-	if err != nil || v != 2 {
+	if err != nil || v != 3 {
 		t.Fatalf("version = %d, %v", v, err)
 	}
 	for _, table := range []string{
@@ -49,6 +49,39 @@ func TestStoreMigratesToV2(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT value FROM records_meta WHERE key = 'next_id'`).Scan(&next); err != nil || next != "1" {
 		t.Fatalf("records_meta next_id = %q, %v", next, err)
 	}
+
+	// the full-text tables, their vocab tables and the 8 shadow tables (4 per FTS table, R7)
+	for _, table := range []string{
+		"records_fts", "records_fts_sub", "records_fts_v", "records_fts_sub_v",
+		"records_fts_data", "records_fts_idx", "records_fts_docsize", "records_fts_config",
+		"records_fts_sub_data", "records_fts_sub_idx", "records_fts_sub_docsize", "records_fts_sub_config",
+	} {
+		var n int
+		if err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&n); err != nil || n != 1 {
+			t.Fatalf("table %s missing (n=%d err=%v)", table, n, err)
+		}
+	}
+	var fts int
+	if err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name LIKE 'records\_fts%' ESCAPE '\'`).Scan(&fts); err != nil || fts != 12 {
+		t.Fatalf("%d full-text tables, %v; want 12 (2 FTS tables, 2 vocab tables, 8 shadow tables)", fts, err)
+	}
+	ddl := func(name string) string {
+		var q string
+		if err := s.db.QueryRow(`SELECT sql FROM sqlite_master WHERE name=?`, name).Scan(&q); err != nil {
+			t.Fatal(err)
+		}
+		return q
+	}
+	if q := ddl("records_fts"); strings.Contains(q, "prefix") || !strings.Contains(q, "unicode61 remove_diacritics 2") {
+		t.Errorf("word table DDL = %q: no prefix option and unicode61 remove_diacritics 2 expected", q)
+	}
+	if q := ddl("records_fts_sub"); strings.Contains(q, "prefix") || !strings.Contains(q, "trigram case_sensitive 0 remove_diacritics 1") {
+		t.Errorf("sub table DDL = %q: trigram case_sensitive 0 remove_diacritics 1 expected", q)
+	}
+	var norm string
+	if err := s.db.QueryRow(`SELECT value FROM records_meta WHERE key = 'fts_norm_version'`).Scan(&norm); err != nil || norm != FTSNormVersion() {
+		t.Fatalf("fts_norm_version = %q, %v; want %q", norm, err, FTSNormVersion())
+	}
 }
 
 func TestStoreMigrationIdempotent(t *testing.T) {
@@ -58,12 +91,12 @@ func TestStoreMigrationIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	var rows int
-	if err := s1.db.QueryRow(`SELECT count(*) FROM schema_version`).Scan(&rows); err != nil || rows != 2 {
+	if err := s1.db.QueryRow(`SELECT count(*) FROM schema_version`).Scan(&rows); err != nil || rows != 3 {
 		t.Fatalf("schema_version rows = %d, %v", rows, err)
 	}
 	_ = s1.Close()
 	s2 := openTestStore(t, p)
-	if err := s2.db.QueryRow(`SELECT count(*) FROM schema_version`).Scan(&rows); err != nil || rows != 2 {
+	if err := s2.db.QueryRow(`SELECT count(*) FROM schema_version`).Scan(&rows); err != nil || rows != 3 {
 		t.Fatalf("schema_version rows after reopen = %d, %v", rows, err)
 	}
 }

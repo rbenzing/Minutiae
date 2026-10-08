@@ -1,8 +1,12 @@
 package records
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
+	"time"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 )
@@ -29,7 +33,13 @@ const (
 // Reader reads the records of a case. It never writes: every read is one
 // evidence.Case.ReadTx (query_only, rolled back), appends nothing to the audit
 // log and holds the case's single connection only for the duration of one call.
-type Reader struct{ c *evidence.Case }
+type Reader struct {
+	c *evidence.Case
+	// beforeQuery is a test seam, called right before a full-text MATCH statement runs.
+	beforeQuery func()
+	// afterStart is a test seam, called after a statement has started and before its rows are read.
+	afterStart func()
+}
 
 // NewReader returns a reader for c. A case whose schema is older than v2 has no
 // record tables: the error wraps evidence.ErrNeedsUpgrade.
@@ -152,4 +162,107 @@ type Overview struct {
 	SupersededRecords int64
 	TSMin, TSMax      *int64           // Unix microseconds
 	Runs              map[string]int64 // every run of the case, by outcome
+}
+
+// readTx runs fn in one evidence.Case.ReadRecordsTx. With needIndex it first requires, inside the same
+// snapshot, a schema of v3 or newer (ErrNeedsUpgrade otherwise) and a current full-text index
+// (ErrIndexNotCurrent otherwise): every call that carries a text query goes through it.
+func (r *Reader) readTx(ctx context.Context, needIndex bool, fn func(evidence.ReadHandle) error) error {
+	if needIndex {
+		if err := ctxErr(ctx); err != nil { // R58: an expired deadline is a timeout before the first statement
+			return mapTimeout(ctx, err)
+		}
+	}
+	err := r.c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {
+		if needIndex {
+			var v int
+			if err := h.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_version`).Scan(&v); err != nil {
+				return fmt.Errorf("artifacts.db schema_version: %w", err)
+			}
+			if v < 3 {
+				return fmt.Errorf("%w: case schema v%d < v3 has no full-text index; run: minutiae case upgrade --case %s", evidence.ErrNeedsUpgrade, v, r.c.Dir)
+			}
+			if err := evidence.RequireIndexCurrentIn(ctx, h); err != nil {
+				return err
+			}
+		}
+		if err := fn(h); err != nil {
+			return err
+		}
+		if needIndex { // R58: a deadline that passed while the calls ran is a timeout, never a late answer
+			return ctxErr(ctx)
+		}
+		return nil
+	})
+	if needIndex {
+		err = mapTimeout(ctx, err)
+	}
+	return r.integrity(err)
+}
+
+// integrity turns an error that says the database (or a full-text structure inside it) is
+// corrupt into evidence.ErrIntegrity (exit 4) with the remedy named, whichever Reader call met it
+// (R64); every other error is returned as it is.
+func (r *Reader) integrity(err error) error {
+	if err == nil || errors.Is(err, evidence.ErrIntegrity) {
+		return err
+	}
+	if c := evidence.ClassifyDBError(err); errors.Is(c, evidence.ErrIntegrity) {
+		return fmt.Errorf("%w (the case is damaged; run: minutiae case verify --case %s)", c, r.c.Dir)
+	}
+	return err
+}
+
+// ctxErr is ctx.Err(), and DeadlineExceeded also when the context's deadline has passed but its timer
+// has not fired yet (a deadline of 1 ns is passed before any statement, whatever the timer says).
+func ctxErr(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if dl, ok := ctx.Deadline(); ok && !time.Now().Before(dl) {
+		return context.DeadlineExceeded
+	}
+	return nil
+}
+
+// matching is called right before each statement that carries the text query: it refuses an expired
+// deadline (R58) and runs the test seam.
+func (r *Reader) matching(ctx context.Context) error {
+	if err := ctxErr(ctx); err != nil {
+		return err
+	}
+	if r.beforeQuery != nil {
+		r.beforeQuery()
+	}
+	return nil
+}
+
+// started runs the test seam that fires after a statement has started, before its rows are read.
+func (r *Reader) started() {
+	if r.afterStart != nil {
+		r.afterStart()
+	}
+}
+
+// mapTimeout turns an expired deadline into ErrSearchTimeout (wrapping the context error); a
+// cancellation stays a cancellation.
+// A statement the driver interrupts when the deadline passes may report its own interrupt error and
+// not the context's: when the context's deadline has passed, any error that is not a cancellation is
+// the timeout.
+func mapTimeout(ctx context.Context, err error) error {
+	if err == nil || errors.Is(err, ErrSearchTimeout) || errors.Is(err, context.Canceled) {
+		return err
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%w: %w", ErrSearchTimeout, err)
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) && isInterrupt(err) {
+		return fmt.Errorf("%w: %w (%w)", ErrSearchTimeout, context.DeadlineExceeded, err)
+	}
+	return err
+}
+
+// isInterrupt reports whether err is the driver's report of an interrupted statement.
+func isInterrupt(err error) bool {
+	return strings.Contains(strings.ToLower(err.Error()), "interrupt")
 }

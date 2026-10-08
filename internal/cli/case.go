@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -38,15 +39,11 @@ func newCaseUpgradeCmd(d Deps, opts *rootOptions) *cobra.Command {
 				return err
 			}
 			if opts.json {
-				return writeJSON(d.Out, map[string]any{"from": res.From, "to": res.To, "upgraded": res.Upgraded, "resumed": res.Resumed})
+				return writeJSON(d.Out, map[string]any{"from": res.From, "to": res.To, "upgraded": res.Upgraded, "resumed": res.Resumed, "resumed_from": res.ResumedFrom, "resumed_to": res.ResumedTo, "records_to_index": res.RecordsToIndex})
 			}
-			switch {
-			case res.Resumed:
-				fmt.Fprintf(d.Out, "case schema v%d: concluded an interrupted upgrade (audited)\n", res.To)
-			case res.Upgraded:
-				fmt.Fprintf(d.Out, "upgraded case schema v%d -> v%d\n", res.From, res.To)
-			default:
-				fmt.Fprintf(d.Out, "case schema v%d is already current\n", res.To)
+			fmt.Fprint(d.Out, upgradeSummary(res))
+			if res.RecordsToIndex > 0 {
+				fmt.Fprintf(d.Out, "%d records are not searchable until the full-text index is built; run: minutiae records reindex --case %s\n", res.RecordsToIndex, c.Dir)
 			}
 			return nil
 		},
@@ -54,6 +51,22 @@ func newCaseUpgradeCmd(d Deps, opts *rootOptions) *cobra.Command {
 	cmd.Flags().StringVar(&path, "case", "", "case directory")
 	_ = cmd.MarkFlagRequired("case")
 	return cmd
+}
+
+// upgradeSummary is the text of `case upgrade`: an interrupted upgrade that was concluded (with its
+// own versions, as the audit log has them) and the upgrade that was run now (with its), one line each.
+func upgradeSummary(res evidence.UpgradeResult) string {
+	var b strings.Builder
+	if res.Resumed {
+		fmt.Fprintf(&b, "concluded an interrupted upgrade v%d -> v%d (audited)\n", res.ResumedFrom, res.ResumedTo)
+	}
+	switch {
+	case res.Upgraded:
+		fmt.Fprintf(&b, "upgraded case schema v%d -> v%d\n", res.From, res.To)
+	case !res.Resumed:
+		fmt.Fprintf(&b, "case schema v%d is already current\n", res.To)
+	}
+	return b.String()
 }
 
 func newCaseNewCmd(d Deps, opts *rootOptions) *cobra.Command {

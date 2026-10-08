@@ -108,7 +108,7 @@ func TestVerifyDetectsAlteredRecord(t *testing.T) {
 	g := ingest30(t)
 	recordstest.SetRecordSummary(t, g.c.Dir, 15, "altered after the fact")
 	rep := mustVerify(t, g.c)
-	expectProblems(t, rep, []string{"digest mismatch"})
+	expectProblems(t, rep, []string{"digest mismatch", "a search hit is invented", "a search hit is hidden"}, "records_fts") // the index still holds the old text
 	// it names the batch and the id range
 	if !strings.Contains(strings.Join(rep.Problems, "\n"), "batch 2 of ingest "+`"`+g.res.IngestID+`"`+" (ids 11..20)") {
 		t.Errorf("the problem does not name the batch and its id range: %q", rep.Problems)
@@ -148,14 +148,14 @@ func fullRecord(artifactID string, i int, basis records.Basis, off int, recovere
 func TestVerifyDetectsDeletedRecord(t *testing.T) {
 	g := ingest30(t)
 	recordstest.DeleteRecord(t, g.c.Dir, 15)
-	expectProblems(t, mustVerify(t, g.c), []string{"records stored", "digest mismatch"})
+	expectProblems(t, mustVerify(t, g.c), []string{"records stored", "digest mismatch", "which does not exist or has no indexable text (a search hit is invented)"}, "records_fts")
 }
 
 func TestVerifyDetectsErasedBatch(t *testing.T) {
 	g := ingest30(t)
 	recordstest.DeleteBatch(t, g.c.Dir, g.res.IngestID, 2)
 	rep := mustVerify(t, g.c)
-	expectProblems(t, rep, []string{"batch row missing"})
+	expectProblems(t, rep, []string{"batch row missing"}, "records_fts") // the index still holds the 10 erased records
 	if rep.RecordsChecked != 20 {
 		t.Errorf("RecordsChecked = %d, want the 20 that remain", rep.RecordsChecked)
 	}
@@ -166,8 +166,8 @@ func TestVerifyDetectsInjectedRecords(t *testing.T) {
 	bid := recordstest.InjectBatchRow(t, g.c.Dir, "ing-forged", 1, 31, 2, strings.Repeat("a", 64))
 	recordstest.InjectRecord(t, g.c.Dir, 31, bid, g.art.ID, "forged one")
 	recordstest.InjectRecord(t, g.c.Dir, 32, bid, g.art.ID, "forged two")
-	recordstest.SetNextID(t, g.c, 33) // a careful forger fixes the counter too
-	expectProblems(t, mustVerify(t, g.c), []string{"not announced", "outside every batch range"})
+	recordstest.SetNextID(t, g.c, 33)                                                                                                                         // a careful forger fixes the counter too
+	expectProblems(t, mustVerify(t, g.c), []string{"not announced", "outside every batch range", "the index lacks", "a search hit is hidden"}, "records_fts") // the forged rows are not indexed
 }
 
 func TestVerifyFlagsBatchWithoutAuditCommitment(t *testing.T) {
@@ -187,7 +187,7 @@ func TestVerifyFlagsRecordOutsideBatchRange(t *testing.T) {
 	bid := recordstest.BatchID(t, g.c, g.res.IngestID, 3)
 	recordstest.InjectRecord(t, g.c.Dir, 50, bid, g.art.ID, "stray")
 	recordstest.SetNextID(t, g.c, 51)
-	expectProblems(t, mustVerify(t, g.c), []string{"outside every batch range"})
+	expectProblems(t, mustVerify(t, g.c), []string{"outside every batch range", "a search hit is hidden"}, "records_fts") // the stray row is not indexed
 }
 
 func TestVerifyDetectsRepointedRecord(t *testing.T) {

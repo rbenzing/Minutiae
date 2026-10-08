@@ -15,14 +15,16 @@ import (
 	"github.com/rbenzing/minutiae/internal/records/recordstest"
 )
 
-func TestNewWriterRequiresSchemaV2(t *testing.T) {
-	c, err := evidence.Open(recordstest.NewV1Case(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = c.Close() }()
-	if _, err := records.NewWriter(c, testParser, records.WriterOptions{}); !errors.Is(err, evidence.ErrNeedsUpgrade) {
-		t.Fatalf("NewWriter on a v1 case = %v, want ErrNeedsUpgrade", err)
+func TestNewWriterRequiresSchemaV3(t *testing.T) {
+	for name, dir := range map[string]string{"v1": recordstest.NewV1Case(t), "v2": recordstest.CopyV2Case(t)} {
+		c, err := evidence.Open(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := records.NewWriter(c, testParser, records.WriterOptions{}); !errors.Is(err, evidence.ErrNeedsUpgrade) {
+			t.Errorf("NewWriter on a %s case = %v, want ErrNeedsUpgrade", name, err)
+		}
+		_ = c.Close()
 	}
 }
 

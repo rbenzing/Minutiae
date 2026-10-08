@@ -140,9 +140,18 @@ type UpgradeResult struct {
 	Upgraded bool
 	// Resumed is true when an announced upgrade whose migration had already
 	// committed (the process died before its conclusion was audited) was
-	// concluded now with a case.upgrade.done{resumed:true} entry. The case was
-	// already at the current schema, so Upgraded is false.
+	// concluded now with a case.upgrade.done{resumed:true} entry. When that was the whole chain the
+	// case was already at the current schema and Upgraded is false; after an older build's
+	// interrupted step the upgrade may go on (Upgraded true).
 	Resumed bool
+	// ResumedFrom and ResumedTo are the versions of the upgrade that was concluded (the audit
+	// entry's from and to), set only when Resumed is true. After an older build's interrupted 1 to 2
+	// and a new 2 to 3 they are 1 and 2 while From and To are 2 and 3.
+	ResumedFrom, ResumedTo int
+	// RecordsToIndex is the number of records that are not in the full-text index because the
+	// index is not built (a v2 case with records was upgraded): when it is above zero, run
+	// `minutiae records reindex`. It is 0 for a case with no records and for a current index.
+	RecordsToIndex int64
 }
 
 // Upgrade migrates the case database to CurrentSchema. It is the only way a
@@ -152,10 +161,15 @@ type UpgradeResult struct {
 // a pre-check failure wraps ErrMigrationBlocked and leaves the database
 // untouched).
 //
+// The whole pending chain (for example v1 to v3) is one migration in one transaction and one
+// audited {from,to} step: it commits entirely or not at all.
+//
 // A case already at the current schema is left alone and nothing is audited,
 // except that a dangling case.upgrade (announced, migration committed, process
 // died before the conclusion) whose `to` is the current version gets a
-// case.upgrade.done{resumed:true} (UpgradeResult.Resumed).
+// case.upgrade.done{resumed:true} (UpgradeResult.Resumed). A dangling upgrade whose `to` is
+// the database's version but not the current one (an older build announced 1 to 2) is concluded
+// the same way first, and the upgrade then goes on.
 //
 // If the database schema version disagrees with the version the audit log says
 // it should have (and no announced upgrade explains it), Upgrade refuses with
@@ -174,24 +188,59 @@ func (c *Case) Upgrade() (UpgradeResult, error) {
 		return UpgradeResult{From: from, To: from}, err
 	}
 	if from == to {
-		resumed, err := c.resumeUpgrade(dangling, from)
-		return UpgradeResult{From: from, To: to, Resumed: resumed}, err
+		concluded, err := c.resumeUpgrade(dangling, from)
+		res := UpgradeResult{From: from, To: to}
+		res.setResumed(concluded)
+		if err != nil {
+			return res, err
+		}
+		res.RecordsToIndex, err = c.recordsToIndex(to)
+		return res, err
 	}
-	if _, err := c.Audit.Append(ActionCaseUpgrade, "", upgradeDetails(from, to)); err != nil {
+	concluded, err := c.resumeUpgrade(dangling, from)
+	if err != nil {
 		return UpgradeResult{From: from, To: from}, err
+	}
+	res := UpgradeResult{From: from, To: from} // what has happened so far
+	res.setResumed(concluded)
+	if _, err := c.Audit.Append(ActionCaseUpgrade, "", upgradeDetails(from, to)); err != nil {
+		return res, err
 	}
 	if c.upgradeHook != nil {
 		c.upgradeHook()
 	}
 	if err := c.store.migrateTo(to); err != nil {
 		_, aerr := c.Audit.Append(ActionCaseUpgradeError, "", upgradeErrorDetails(from, to, err))
-		return UpgradeResult{From: from, To: from}, errors.Join(err, aerr)
+		return res, errors.Join(err, aerr)
 	}
+	res.To, res.Upgraded = to, true
 	if _, err := c.Audit.Append(ActionCaseUpgradeDone, "", upgradeDoneDetails(from, to, false)); err != nil {
 		// The migration is committed; the next Upgrade completes the record.
-		return UpgradeResult{From: from, To: to, Upgraded: true}, err
+		return res, err
 	}
-	return UpgradeResult{From: from, To: to, Upgraded: true}, nil
+	res.RecordsToIndex, err = c.recordsToIndex(to)
+	return res, err
+}
+
+// recordsToIndex is the number of records an unbuilt full-text index leaves unsearchable: the
+// record count when the index state is "unbuilt", 0 for any other state and for a schema older
+// than v3 (which has no index).
+func (c *Case) recordsToIndex(schema int) (int64, error) {
+	if schema < 3 {
+		return 0, nil
+	}
+	var value string
+	if err := c.store.db.QueryRow(`SELECT value FROM records_meta WHERE key = ?`, MetaFTSNormVersion).Scan(&value); err != nil {
+		return 0, fmt.Errorf("read %s: %w", MetaFTSNormVersion, err)
+	}
+	if classifyIndexValue(value, FTSNormVersion()) != IndexUnbuilt {
+		return 0, nil
+	}
+	var n int64
+	if err := c.store.db.QueryRow(`SELECT count(*) FROM records`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count records: %w", err)
+	}
+	return n, nil
 }
 
 // checkSchemaMatchesAudit refuses (ErrIntegrity) to go on when the database
@@ -220,13 +269,20 @@ func (c *Case) checkSchemaMatchesAudit(dbVersion int) (*upgradeStep, error) {
 }
 
 // resumeUpgrade audits the completion of the dangling upgrade when its `to` is
-// the current version, and reports whether it did.
-func (c *Case) resumeUpgrade(d *upgradeStep, current int) (bool, error) {
+// the current version, and returns the step it concluded (nil when there was none).
+func (c *Case) resumeUpgrade(d *upgradeStep, current int) (*upgradeStep, error) {
 	if d == nil || d.To != current {
-		return false, nil
+		return nil, nil
 	}
 	if _, err := c.Audit.Append(ActionCaseUpgradeDone, "", upgradeDoneDetails(d.From, d.To, true)); err != nil {
-		return false, err
+		return nil, err
 	}
-	return true, nil
+	return d, nil
+}
+
+// setResumed records the concluded step (nil: none) in the result.
+func (r *UpgradeResult) setResumed(d *upgradeStep) {
+	if d != nil {
+		r.Resumed, r.ResumedFrom, r.ResumedTo = true, d.From, d.To
+	}
 }

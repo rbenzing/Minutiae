@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -71,6 +72,15 @@ type Case struct {
 	// upgradeHook, when set by a test, runs between the case.upgrade audit entry
 	// and the migration.
 	upgradeHook func()
+
+	// reindexHook, when set by a test, is called at the named points of ReindexText.
+	reindexHook func(point string) error
+
+	// verifyFTSHook and verifyFTSCacheKiB are test seams of verify P11: the hook is called at the
+	// named points of the check (with the private expected-index database), and a non-zero cache
+	// size replaces the default of the expected index so a small corpus spills.
+	verifyFTSHook     func(point string, expected *sql.DB)
+	verifyFTSCacheKiB int
 }
 
 var validCaseID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)

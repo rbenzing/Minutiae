@@ -2,6 +2,7 @@ package evidence
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -237,6 +238,10 @@ func (c *Case) ReadAudit() ([]AuditEntry, error) {
 	}
 	return entries, nil
 }
+
+// ErrIngestActive is returned when the Case's live-ingest slot is taken: by a records writer that
+// was started and neither ended nor aborted, or by a running records reindex (BeginIngest).
+var ErrIngestActive = errors.New("an ingest is already active in this case")
 
 // BeginIngest registers id as the live ingest of this Case. It refuses (ok is
 // false, active names the ingest) while another ingest registered earlier is
