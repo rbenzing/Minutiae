@@ -287,3 +287,76 @@ func TestWarnedFilesystemKeepsOptionalInterfaces(t *testing.T) {
 		})
 	}
 }
+
+type recStub struct{ stubFS }
+
+func (*recStub) Recoverable(filesys.Entry) ([]filesys.Candidate, error) {
+	return []filesys.Candidate{{Method: "stub-method"}}, nil
+}
+
+type recSnapStub struct{ snapStub }
+
+func (*recSnapStub) Recoverable(filesys.Entry) ([]filesys.Candidate, error) {
+	return []filesys.Candidate{{Method: "stub-method"}}, nil
+}
+
+type recViewStub struct{ viewStub }
+
+func (*recViewStub) Recoverable(filesys.Entry) ([]filesys.Candidate, error) {
+	return []filesys.Candidate{{Method: "stub-method"}}, nil
+}
+
+type recBothStub struct{ bothStub }
+
+func (*recBothStub) Recoverable(filesys.Entry) ([]filesys.Candidate, error) {
+	return []filesys.Candidate{{Method: "stub-method"}}, nil
+}
+
+// Every note wrapper (plain, snapshotter, viewer, both) forwards Underlying, so filesys.As finds the
+// Recoverer behind the note and the wrapper itself offers none (C50).
+func TestWarnedWrappersForwardUnderlying(t *testing.T) {
+	r := bytes.NewReader(make([]byte, 16))
+	other := detect.Driver{
+		Name:  "other",
+		Probe: func(io.ReaderAt, int64) bool { return true },
+		Open:  func(io.ReaderAt, int64) (filesys.FileSystem, error) { return &stubFS{typ: "other"}, nil },
+	}
+	for name, inner := range map[string]filesys.FileSystem{
+		"plain":       &recStub{stubFS{typ: "x"}},
+		"snapshotter": &recSnapStub{snapStub{stubFS{typ: "x"}}},
+		"viewer":      &recViewStub{viewStub{stubFS{typ: "x"}}},
+		"both":        &recBothStub{bothStub{stubFS{typ: "x"}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			first := detect.Driver{
+				Name:  "x",
+				Probe: func(io.ReaderAt, int64) bool { return true },
+				Open:  func(io.ReaderAt, int64) (filesys.FileSystem, error) { return inner, nil },
+			}
+			fsys, err := detect.OpenWith([]detect.Driver{first, other}, r, 16)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(fsys.Info().Warnings) == 0 {
+				t.Fatal("no note attached: the test does not exercise the wrapper")
+			}
+			w, ok := fsys.(filesys.Wrapper)
+			if !ok {
+				t.Fatalf("%T is not a filesys.Wrapper", fsys)
+			}
+			if w.Underlying() != inner {
+				t.Errorf("Underlying() = %T, want the wrapped %T", w.Underlying(), inner)
+			}
+			if _, isRec := fsys.(filesys.Recoverer); isRec {
+				t.Error("the note wrapper itself implements Recoverer: it must not invent one")
+			}
+			rec, ok := filesys.As[filesys.Recoverer](fsys)
+			if !ok {
+				t.Fatal("filesys.As does not find the Recoverer behind the note")
+			}
+			if cs, err := rec.Recoverable(filesys.Entry{}); err != nil || len(cs) != 1 || cs[0].Method != "stub-method" {
+				t.Errorf("Recoverable = %v, %v", cs, err)
+			}
+		})
+	}
+}

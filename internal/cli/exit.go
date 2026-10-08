@@ -10,6 +10,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/artparse"
 	"github.com/rbenzing/minutiae/internal/device"
 	"github.com/rbenzing/minutiae/internal/evidence"
+	"github.com/rbenzing/minutiae/internal/examine"
 	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/image"
 	"github.com/rbenzing/minutiae/internal/records"
@@ -72,6 +73,7 @@ func isCobraUsageError(err error) bool {
 // the structure, not an integrity failure of the case itself.
 var imageErrors = []error{
 	filesys.ErrCorrupt, filesys.ErrUnsupported, filesys.ErrEncrypted, filesys.ErrDeleted,
+	filesys.ErrNotDeleted, filesys.ErrNoRecovery, examine.ErrInsufficientSpace,
 	image.ErrUnsupportedContainer, image.ErrCorruptContainer, image.ErrChunkCorrupt, evidence.ErrUnknownArtifact,
 }
 
@@ -91,7 +93,7 @@ func ExitCode(err error) int {
 	case errors.Is(err, evidence.ErrNeedsUpgrade), errors.Is(err, records.ErrBadCursor),
 		errors.Is(err, records.ErrInvalidFilter), errors.Is(err, records.ErrInvalidPage),
 		errors.Is(err, artparse.ErrSelection), errors.Is(err, artparse.ErrNotParserInput),
-		errors.Is(err, records.ErrInvalidQuery), errors.Is(err, records.ErrIndexNotCurrent):
+		errors.Is(err, records.ErrInvalidQuery), errors.Is(err, records.ErrIndexNotCurrent), errors.Is(err, examine.ErrInvalidLimit):
 		return ExitUsage
 	case errors.Is(err, evidence.ErrIntegrity):
 		return ExitIntegrity

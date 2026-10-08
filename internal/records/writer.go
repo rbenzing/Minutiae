@@ -102,30 +102,31 @@ type Writer struct {
 
 	ingest atomic.Pointer[string] // the ingest id; readable from a hook while mu is held
 
-	mu         sync.Mutex
-	state      int
-	poison     error
-	analysisID string
-	declared   map[string]artifactInfo
-	known      map[string]bool // every artifact id in the manifest at Start
-	parserHash *string
-	next       int64 // first id of the next batch
-	dbNext     int64 // records_meta.next_id and max(id)+1 as the database must hold them now (checked before every batch)
-	batchNo    int   // number of the last batch audited (committed or failed)
-	buf        []prepared
-	bufBytes   int
-	digests    []string // digests of the committed batches, in batch order
-	nrecords   int64
-	firstID    int64
-	lastID     int64
-	types      map[string]int64
-	warnings   int
-	warnCap    int  // 0 means maxWarnings
-	warnSupp   int  // entries the cap kept out of the log (warnings and rejections)
-	rejSupp    int  // of those, the rejections
-	rejected   int  // records refused: Add failures wrapping ErrInvalidRecord and Reject calls
-	began      bool // the "suppression began" note was written (the cap was hit)
-	noted      bool // the end-of-ingest suppression note was written: nothing more can be counted
+	mu              sync.Mutex
+	state           int
+	poison          error
+	analysisID      string
+	declared        map[string]artifactInfo
+	noRecoveredRule bool            // test seam only (DisableRecoveredRule)
+	known           map[string]bool // every artifact id in the manifest at Start
+	parserHash      *string
+	next            int64 // first id of the next batch
+	dbNext          int64 // records_meta.next_id and max(id)+1 as the database must hold them now (checked before every batch)
+	batchNo         int   // number of the last batch audited (committed or failed)
+	buf             []prepared
+	bufBytes        int
+	digests         []string // digests of the committed batches, in batch order
+	nrecords        int64
+	firstID         int64
+	lastID          int64
+	types           map[string]int64
+	warnings        int
+	warnCap         int  // 0 means maxWarnings
+	warnSupp        int  // entries the cap kept out of the log (warnings and rejections)
+	rejSupp         int  // of those, the rejections
+	rejected        int  // records refused: Add failures wrapping ErrInvalidRecord and Reject calls
+	began           bool // the "suppression began" note was written (the cap was hit)
+	noted           bool // the end-of-ingest suppression note was written: nothing more can be counted
 }
 
 // NewWriter checks the case is at schema v3 (evidence.ErrNeedsUpgrade
@@ -231,6 +232,9 @@ func (w *Writer) prepareRecord(r Record) (prepared, error) {
 		if r.ArtifactID != "" {
 			return prepared{}, fmt.Errorf("%w: %q", ErrUnknownArtifact, clip(r.ArtifactID))
 		}
+	}
+	if w.noRecoveredRule {
+		art.Recovered, art.MaxConfidence = false, nil
 	}
 	return prepare(r, art)
 }

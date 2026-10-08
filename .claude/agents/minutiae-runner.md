@@ -20,3 +20,4 @@ Rules:
   Write long output to the file path you were given, if any, and return
   only the summary.
 - Do not interpret, fix or speculate; if something fails, report it as is.
+- Never run `go tool golangci-lint` directly: it holds a machine-wide lock and makes a queued check.sh fail. Lint runs only inside check.sh.

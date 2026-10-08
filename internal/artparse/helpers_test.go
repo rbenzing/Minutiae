@@ -80,6 +80,16 @@ func newHost(t testing.TB, c *evidence.Case, ps ...artparse.Registered) *artpars
 func put(t testing.TB, c *evidence.Case, dev, acq, rel string, src evidence.Source, data string) evidence.ManifestRecord {
 	t.Helper()
 	src.DeviceID = dev
+	if evidence.IsRecoveredKind(src.Kind) { // the write gate wants a description; these tests are not about it
+		var d evidence.Derivation
+		if src.Derived != nil {
+			d = *src.Derived
+		}
+		if d.Recovery == nil {
+			d.Recovery = &evidence.Recovery{Class: evidence.ClassDeletedFile}
+		}
+		src.Derived = &d
+	}
 	rec, err := c.Capture(dev, acq, "files/"+rel, src, func(w io.Writer) error {
 		_, err := io.WriteString(w, data)
 		return err

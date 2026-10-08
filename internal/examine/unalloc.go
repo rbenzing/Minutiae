@@ -129,6 +129,21 @@ func (s *Session) ExportUnallocated(ctx context.Context, o UnallocOptions) (Summ
 // image in volume mode) and the image. Runs that are not are dropped, and one
 // analysis.warning says how many, so the recorded provenance is never wrong.
 func (s *Session) unallocatedRuns(a *analysis, fsys filesys.FileSystem, part volume.Partition, volumeMode bool) ([]evidence.Run, error) {
+	out, note, err := s.unallocatedRunsNote(fsys, part, volumeMode)
+	if err != nil {
+		return nil, err
+	}
+	if note != "" {
+		if err := a.warn("", note); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// unallocatedRunsNote is unallocatedRuns without the audit: it returns the note (empty when every run
+// was usable) instead of writing it, so a read-only plan can carry it and a run can audit it.
+func (s *Session) unallocatedRunsNote(fsys filesys.FileSystem, part volume.Partition, volumeMode bool) ([]evidence.Run, string, error) {
 	var (
 		valid    []filesys.Run
 		empty    int
@@ -159,20 +174,18 @@ func (s *Session) unallocatedRuns(a *analysis, fsys filesys.FileSystem, part vol
 	} else {
 		raw, err := fsys.Unallocated()
 		if err != nil {
-			return nil, fmt.Errorf("list unallocated space of partition %d: %w", part.Index, err)
+			return nil, "", fmt.Errorf("list unallocated space of partition %d: %w", part.Index, err)
 		}
 		for _, r := range raw {
 			check(r, part.Length, part.Start)
 		}
 	}
+	var note string
 	if bad > 0 || empty > 0 {
-		reason := fmt.Sprintf("ignored %d unallocated run(s) outside the %s or with a negative length (first: %s) and %d empty run(s)",
+		note = fmt.Sprintf("ignored %d unallocated run(s) outside the %s or with a negative length (first: %s) and %d empty run(s)",
 			bad, containerName(volumeMode), firstBad, empty)
 		if bad == 0 {
-			reason = fmt.Sprintf("ignored %d empty unallocated run(s)", empty)
-		}
-		if err := a.warn("", reason); err != nil {
-			return nil, err
+			note = fmt.Sprintf("ignored %d empty unallocated run(s)", empty)
 		}
 	}
 	merged := filesys.MergeRuns(valid)
@@ -180,7 +193,7 @@ func (s *Session) unallocatedRuns(a *analysis, fsys filesys.FileSystem, part vol
 	for i, r := range merged {
 		out[i] = evidence.Run{Offset: r.Offset, Length: r.Length}
 	}
-	return out, nil
+	return out, note, nil
 }
 
 func containerName(volumeMode bool) string {

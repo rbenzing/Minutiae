@@ -806,6 +806,37 @@ func SetManifestPath(t testing.TB, caseDir, artifactID, path string) {
 	writeManifestLines(t, caseDir, recs)
 }
 
+// DuplicateManifestRecord appends a second manifest line holding the same record (same id and
+// path) as artifactID, which verify and OpenArtifact refuse as a duplicate id.
+func DuplicateManifestRecord(t testing.TB, caseDir, artifactID string) {
+	t.Helper()
+	recs := readManifestLines(t, caseDir)
+	for _, r := range recs {
+		if r.ID == artifactID {
+			writeManifestLines(t, caseDir, append(recs, r))
+			return
+		}
+	}
+	t.Fatalf("no manifest record %q", artifactID)
+}
+
+// ClearRecoveryInManifest removes the Recovery description from an artifact's manifest
+// record (its kind, file and artifacts.db row stay), as a buggy writer that labelled bytes
+// recovered without describing them would have left it. Verify reports the missing
+// description (and the difference from the audit entry).
+func ClearRecoveryInManifest(t testing.TB, caseDir, artifactID string) {
+	t.Helper()
+	recs := readManifestLines(t, caseDir)
+	i := slices.IndexFunc(recs, func(r evidence.ManifestRecord) bool { return r.ID == artifactID })
+	if i < 0 || recs[i].Source.Derived == nil {
+		t.Fatalf("recordstest: artifact %q is not a derived artifact of the manifest", artifactID)
+	}
+	d := *recs[i].Source.Derived
+	d.Recovery = nil
+	recs[i].Source.Derived = &d
+	writeManifestLines(t, caseDir, recs)
+}
+
 // AppendManifestLine appends rec to manifest.jsonl as one more line and leaves
 // every other file alone: with a copy of an existing record it plants a
 // duplicate artifact id, with a new id and an existing path a duplicate path.

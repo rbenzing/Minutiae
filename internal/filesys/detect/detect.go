@@ -224,6 +224,10 @@ type warned struct {
 	warnings []string
 }
 
+// Underlying returns the wrapped filesystem, so filesys.As finds its optional interfaces (Recoverer,
+// Journaler) behind the note.
+func (w *warned) Underlying() filesys.FileSystem { return w.FileSystem }
+
 func (w *warned) Info() filesys.Info {
 	info := w.FileSystem.Info()
 	info.Warnings = append(slices.Clone(w.warnings), info.Warnings...)
