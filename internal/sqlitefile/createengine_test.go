@@ -49,6 +49,8 @@ func TestParserRefusesWhatTheEngineRefuses(t *testing.T) {
 		{"strict float", "CREATE TABLE t(a FLOAT) STRICT", false},
 		{"strict without rowid", "CREATE TABLE t(a INT PRIMARY KEY, b FLOAT) STRICT, WITHOUT ROWID", false},
 		{"non-strict free types", "CREATE TABLE t(a, b VARCHAR(10), c UNSIGNED INT)", true},
+		{"strict quoted type", `CREATE TABLE t(a "INTEGER" PRIMARY KEY, b [TEXT]) STRICT`, true},
+		{"strict quoted wrong type", `CREATE TABLE t(a "VARCHAR") STRICT`, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if got := engineAccepts(t, c.sql); got != c.ok {

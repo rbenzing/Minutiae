@@ -290,7 +290,11 @@ func (p *cparser) columnList(st *tableParse) bool {
 	}
 }
 
-type span struct{ start, end int }
+type span struct {
+	start, end int
+	unquoted   string // the token text without its quotes, when quoted is set
+	quoted     bool
+}
 
 func (p *cparser) columnDef(st *tableParse) bool {
 	if len(st.cols) >= p.maxCols {
@@ -306,7 +310,7 @@ func (p *cparser) columnDef(st *tableParse) bool {
 		t := p.peek(0)
 		if (t.kind == tkWord && !isColConstraintStart(t)) || t.kind == tkQuoted || t.kind == tkString {
 			p.next()
-			parts = append(parts, span{t.start, t.end})
+			parts = append(parts, span{start: t.start, end: t.end, unquoted: t.text, quoted: t.kind == tkQuoted || t.kind == tkString})
 			continue
 		}
 		break
@@ -316,7 +320,7 @@ func (p *cparser) columnDef(st *tableParse) bool {
 		if !p.skipGroup() {
 			return false
 		}
-		parts = append(parts, span{start, p.prevEnd})
+		parts = append(parts, span{start: start, end: p.prevEnd})
 	}
 	col.DeclType = p.declType(parts)
 	idx := len(st.cols)
@@ -334,21 +338,29 @@ func (p *cparser) columnDef(st *tableParse) bool {
 
 // declType returns the declared type: the source text from the first to the
 // last type token, or, when comments lie in between, the tokens joined by one
-// space.
+// space. A quoted type token (a double-quoted, bracketed, backtick or
+// single-quoted word) stands for its unquoted text, as the engine reads it, so
+// a "INTEGER" PRIMARY KEY column is a rowid alias and has INTEGER affinity.
 func (p *cparser) declType(parts []span) string {
 	if len(parts) == 0 {
 		return ""
 	}
 	raw := p.s[parts[0].start:parts[len(parts)-1].end]
-	if !strings.Contains(raw, "--") && !strings.Contains(raw, "/*") {
-		return raw
-	}
+	joined := strings.Contains(raw, "--") || strings.Contains(raw, "/*")
 	var b strings.Builder
 	for i, sp := range parts {
 		if i > 0 {
-			b.WriteByte(' ')
+			if joined {
+				b.WriteByte(' ')
+			} else {
+				b.WriteString(p.s[parts[i-1].end:sp.start])
+			}
 		}
-		b.WriteString(p.s[sp.start:sp.end])
+		if sp.quoted {
+			b.WriteString(sp.unquoted)
+		} else {
+			b.WriteString(p.s[sp.start:sp.end])
+		}
 	}
 	return b.String()
 }
