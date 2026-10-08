@@ -1264,7 +1264,7 @@ func TestParserPackagesHaveNoSQL(t *testing.T) {
 var purityRequired = []string{
 	"internal/parse", "internal/recordtypes/common", "internal/recordtypes/message",
 	"internal/recordtypes/call", "internal/recordtypes/contact", "internal/recordtypes/web", "internal/recordtypes/all",
-	"internal/decode/ts",
+	"internal/decode/ts", "internal/decode/plist",
 }
 
 // purePackageRE is a second, independent description of the pure roots: any
