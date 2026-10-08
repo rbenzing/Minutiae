@@ -60,26 +60,39 @@ func oracleRead(b []byte) oracleResult {
 				return fail(c)
 			}
 			pos = next
-			scanLimit = len(b)
-			if len(b)-pos > MaxScan {
-				scanLimit = pos + MaxScan
-			}
+			scanLimit = min(len(b), pos+MaxScan)
 			st = sFindClass
 		case sFindClass:
+			// The window is the offsets 0..MaxScan-1 after the header. A marker may start at any
+			// of them and is then read in full; an input that ends before a window offset
+			// exists, or inside a started marker, is truncated.
+			start := pos
 			found := -1
-			for i := pos; i < scanLimit && found < 0; i++ {
-				switch {
-				case b[i] == 8 && oracleAt(b, i+1, "NSString"):
-					found = i + 9
-				case b[i] == 15 && oracleAt(b, i+1, "NSMutableString"):
-					found = i + 16
+			for off := 0; off < MaxScan && found < 0; off++ {
+				i := start + off
+				if i >= len(b) {
+					return fail("trunc")
+				}
+				name := ""
+				switch b[i] {
+				case 8:
+					name = "NSString"
+				case 15:
+					name = "NSMutableString"
+				default:
+					continue
+				}
+				have := len(b) - i - 1
+				if have >= len(name) {
+					if string(b[i+1:i+1+len(name)]) == name {
+						found = i + 1 + len(name)
+					}
+				} else if string(b[i+1:]) == name[:have] {
+					return fail("trunc")
 				}
 			}
 			if found < 0 {
-				if len(b)-pos >= MaxScan {
-					return oracleResult{} // the window was seen in full: no string object
-				}
-				return fail("trunc")
+				return oracleResult{} // the window was seen in full: no string object
 			}
 			pos = found
 			st = sFindPlus
@@ -118,10 +131,6 @@ func oracleRead(b []byte) oracleResult {
 			return oracleResult{text: string(b[pos : pos+int(n)]), ok: true}
 		}
 	}
-}
-
-func oracleAt(b []byte, i int, s string) bool {
-	return i+len(s) <= len(b) && string(b[i:i+len(s)]) == s
 }
 
 // oracleInt decodes a typedstream integer at i and returns its end and a failure class.

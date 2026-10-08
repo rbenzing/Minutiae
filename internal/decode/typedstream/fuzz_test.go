@@ -40,6 +40,11 @@ func fuzzSeeds() [][]byte {
 		markerNoPayload(0),
 		markerNoPayload(MaxScan-100),
 		append(markerNoPayload(MaxScan), 0x01, '+', 0x01, 'x'),
+		windowStream(MaxScan-1, fullString),
+		windowStream(MaxScan, fullString),
+		windowStream(MaxScan-1, cutString),
+		windowStream(MaxScan, cutString),
+		windowStream(MaxScan, ""),
 		header(),
 		[]byte{0x04},
 		[]byte("bplist00\x00\x00"),
@@ -112,8 +117,9 @@ func extractContract(t *testing.T, b []byte, call func(Budget) (string, bool, er
 		if r.err != nil && !typedExtractErr(r.err) {
 			t.Fatalf("untyped or internal error: %v", r.err)
 		}
-		// P38: "no string object" is a claim about a full scan window.
-		if r.err == nil && len(b) < MaxScan {
+		// P38: "no string object" is a claim about a full scan window: the input must
+		// extend past the smallest header (14 bytes) plus MaxScan (P42).
+		if r.err == nil && len(b) < 14+MaxScan {
 			t.Fatalf("no-string claim on an input of %d bytes", len(b))
 		}
 	}

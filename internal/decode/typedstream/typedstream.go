@@ -23,8 +23,10 @@
 // looks for a better one, so text that itself contains the marker cannot redirect the
 // extraction.
 //
-// "No string object" (ok false, nil error) is a claim and is made only when the whole scan
-// window, MaxScan bytes after the header, was examined without finding a marker. A stream
+// A marker may START at any of the MaxScan bytes after the header (the scan window) and is
+// then read in full. "No string object" (ok false, nil error) is a claim and is made only when
+// the whole window was examined without finding a marker and the input does not end inside a
+// marker that started in it (that is ErrTruncated). A stream
 // that ends before a marker within the window is ErrTruncated ("stream ended before a string
 // object"), so a cut stream is never reported as text-less (a short complete stream without
 // a string is ErrTruncated too: conservative, a real attributedBody carries a string). A
@@ -112,8 +114,11 @@ func extractCore(b []byte, budget Budget) (string, bool, error) {
 		return "", false, err
 	}
 	scanEnd := min(len(b), pos+MaxScan)
-	nameEnd := findString(b, pos, scanEnd)
+	nameEnd, cut := findString(b, pos, scanEnd)
 	if nameEnd < 0 {
+		if cut {
+			return "", false, truncated("stream ended inside a string class name")
+		}
 		if len(b)-pos >= MaxScan {
 			// The whole window was examined: the claim "no string object" is justified.
 			return "", false, nil
@@ -208,19 +213,27 @@ func readLength(b []byte, p int) (uint64, int, error) {
 }
 
 // findString returns the end of the first class name NSString or NSMutableString (preceded by
-// its length byte) that starts before end, or -1.
-func findString(b []byte, from, end int) int {
+// its length byte) that starts before end, or -1. A marker may start at any offset of the
+// window and is read in full, past end if need be. cut reports that no marker was found but
+// the input ends inside one that started in the window.
+func findString(b []byte, from, end int) (next int, cut bool) {
 	for i := from; i < end; i++ {
+		var name string
 		switch b[i] {
 		case 8:
-			if bytes.HasPrefix(b[i+1:], []byte("NSString")) {
-				return i + 1 + 8
-			}
+			name = "NSString"
 		case 15:
-			if bytes.HasPrefix(b[i+1:], []byte("NSMutableString")) {
-				return i + 1 + 15
-			}
+			name = "NSMutableString"
+		default:
+			continue
+		}
+		rest := b[i+1:]
+		if bytes.HasPrefix(rest, []byte(name)) {
+			return i + 1 + len(name), false
+		}
+		if len(rest) < len(name) && bytes.HasPrefix([]byte(name), rest) {
+			cut = true
 		}
 	}
-	return -1
+	return -1, cut
 }
