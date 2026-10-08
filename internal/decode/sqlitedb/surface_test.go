@@ -138,6 +138,7 @@ func TestSentinelsAreDistinct(t *testing.T) {
 		"ErrBadFiles": sqlitedb.ErrBadFiles, "ErrRowMismatch": sqlitedb.ErrRowMismatch,
 		"ErrInternal": sqlitedb.ErrInternal, "ErrUnsupportedSchema": sqlitedb.ErrUnsupportedSchema,
 		"ErrUnsupportedCollation": sqlitedb.ErrUnsupportedCollation,
+		"ErrReleased":             sqlitedb.ErrReleased,
 	}
 	for n1, e1 := range all {
 		if e1 == nil {

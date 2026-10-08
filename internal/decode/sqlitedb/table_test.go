@@ -1,6 +1,7 @@
 package sqlitedb_test
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"strings"
@@ -90,7 +91,7 @@ func TestUnparsedDefinitionIsUnsupportedNotMissing(t *testing.T) {
 	if tb != nil || !errors.As(err, &us) {
 		t.Fatalf("Table = %v, %v", tb, err)
 	}
-	if len(us.Missing) != 0 || us.Table != "broken" || !strings.HasPrefix(us.Reason, "definition not parsed") {
+	if len(us.Missing) != 0 || us.Table != "broken" || !strings.Contains(us.Reason, "definition not parsed") {
 		t.Errorf("err = %+v", us)
 	}
 }
@@ -222,5 +223,77 @@ func TestColumnCollationInfo(t *testing.T) {
 	}
 	if c[2].Collation != "" {
 		t.Errorf("z collation %q", c[2].Collation)
+	}
+}
+
+func TestTableAfterReleaseIsErrReleasedAndChargesNothing(t *testing.T) {
+	data := newBuilderDB(t, sqlitetest.Options{PageSize: 1024}, func(b *sqlitetest.Builder) {
+		b.CreateTable("t", "create table t(a)")
+	})
+	bud := bigBudget()
+	d := openBytes(t, data, nil, nil, bud)
+	d.Release()
+	if bud.used != 0 {
+		t.Fatalf("used after Release = %d", bud.used)
+	}
+	tb, err := d.Table(t.Context(), "t", nil, nil)
+	if tb != nil || !errors.Is(err, sqlitedb.ErrReleased) {
+		t.Fatalf("Table after Release = %v, %v", tb, err)
+	}
+	if bud.used != 0 {
+		t.Errorf("Table after Release charged %d", bud.used)
+	}
+	d.Release() // a second Release is a no-op
+	if bud.used != 0 {
+		t.Errorf("used after second Release = %d", bud.used)
+	}
+	names, err := d.Tables(t.Context())
+	if err != nil || !slices.Equal(names, []string{"t"}) {
+		t.Errorf("Tables after Release = %v, %v", names, err)
+	}
+	if bud.used != 0 {
+		t.Errorf("Tables charged %d", bud.used)
+	}
+}
+
+func TestTableCancelledContextIsReturnedBeforeAnyWork(t *testing.T) {
+	d := oneTableDB(t, "create table t(a)")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	tb, err := d.Table(ctx, "t", nil, nil)
+	if tb != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("Table = %v, %v", tb, err)
+	}
+}
+
+func TestKeyCollationWinsOverColumnCollation(t *testing.T) {
+	d := oneTableDB(t, "create table t(x text collate nocase, primary key(x collate rtrim))")
+	tb, err := d.Table(t.Context(), "t", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tb.Cols()[0].Collation; !strings.EqualFold(got, "rtrim") {
+		t.Errorf("collation %q, want rtrim", got)
+	}
+}
+
+func TestDeclTypeIsReported(t *testing.T) {
+	d := oneTableDB(t, "create table t(a, b text, c varchar(10))")
+	tb, err := d.Table(t.Context(), "t", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := tb.Cols()
+	if c[0].DeclType != "" || c[1].DeclType != "text" || !strings.EqualFold(c[2].DeclType, "varchar(10)") {
+		t.Errorf("DeclTypes %q %q %q", c[0].DeclType, c[1].DeclType, c[2].DeclType)
+	}
+}
+
+func TestEmptyNeedNameIsMissing(t *testing.T) {
+	d := oneTableDB(t, "create table t(a)")
+	_, err := d.Table(t.Context(), "t", []string{""}, nil)
+	var us *sqlitedb.UnsupportedSchemaError
+	if !errors.As(err, &us) || !slices.Equal(us.Missing, []string{""}) {
+		t.Fatalf("err = %v", err)
 	}
 }

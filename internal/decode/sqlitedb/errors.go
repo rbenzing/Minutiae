@@ -22,6 +22,7 @@ var (
 	ErrInternal             = errors.New("sqlitedb: internal error")
 	ErrUnsupportedSchema    = errors.New("sqlitedb: schema is not supported")
 	ErrUnsupportedCollation = errors.New("sqlitedb: collation is not supported")
+	ErrReleased             = errors.New("sqlitedb: database was released")
 )
 
 // UnsupportedSchemaError says a table lacks what a decoder needs.

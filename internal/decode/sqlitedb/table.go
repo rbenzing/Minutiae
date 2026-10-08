@@ -48,13 +48,19 @@ func asciiFold(s string) string {
 
 // Table resolves the table called name (ASCII case-insensitive). Every need
 // column must exist, else the error is an *UnsupportedSchemaError naming all
-// the missing ones in need order; want columns are optional.
+// the missing ones in need order. want is accepted for future use and is never
+// an error: an optional column is found with Col, which returns -1 when this
+// variant of the table lacks it. After Release it returns ErrReleased and
+// charges nothing.
 func (db *DB) Table(ctx context.Context, name string, need, want []string) (t *Table, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			t, err = nil, fmt.Errorf("%w: %v", ErrInternal, r)
 		}
 	}()
+	if db.released {
+		return nil, ErrReleased
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
