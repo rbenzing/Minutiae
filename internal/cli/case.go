@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
+	"github.com/rbenzing/minutiae/internal/examine"
 )
 
 func openCase(path string) (*evidence.Case, error) {
@@ -146,13 +147,13 @@ func newCaseVerifyCmd(d Deps, opts *rootOptions) *cobra.Command {
 		Use:   "verify",
 		Short: "Re-hash all artifacts and check the audit chain",
 		Args:  exactArgs(0),
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, err := openCase(path)
 			if err != nil {
 				return err
 			}
 			defer func() { _ = c.Close() }()
-			rep, err := c.Verify()
+			rep, err := c.VerifyWith(cmd.Context(), examine.RecoveredCheck())
 			if err != nil {
 				return err
 			}
@@ -171,8 +172,8 @@ func newCaseVerifyCmd(d Deps, opts *rootOptions) *cobra.Command {
 				if !rep.OK() {
 					status = "FAILED"
 				}
-				fmt.Fprintf(d.Out, "%s: %d artifacts%s, %d audit entries, %d problems\n",
-					status, rep.ArtifactsChecked, rep.RecordsSummary(), rep.AuditEntries, len(rep.Problems))
+				fmt.Fprintf(d.Out, "%s: %d artifacts%s, %d audit entries, %d problems%s\n",
+					status, rep.ArtifactsChecked, rep.RecordsSummary(), rep.AuditEntries, len(rep.Problems), rep.RecoveredSummary())
 			}
 			if !rep.OK() {
 				return fmt.Errorf("%w: %d problem(s)", evidence.ErrIntegrity, len(rep.Problems))

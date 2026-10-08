@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"os"
@@ -1034,4 +1035,36 @@ func TestExtractFlagsFileThatReportsItselfEncrypted(t *testing.T) {
 	if len(got) != 2 || !got["key.bin"] || got["plain.bin"] {
 		t.Errorf("Derived.Encrypted by file = %v, want key.bin true and plain.bin false", got)
 	}
+}
+
+// A deleted entry that has recovery maps is still never extracted as a live file: `extract -r` writes
+// no artifact for it, and its analysis.warning points at `image recover`.
+func TestExtractStillSkipsDeleted(t *testing.T) {
+	c := newCase(t)
+	s, _ := session(t, c, 1,
+		fstest.Node{Path: "/live.txt", Data: []byte("live")},
+		fstest.Node{
+			Path: "/gone.txt", Data: pattern(blk, 3), Deleted: true, Freed: true,
+			Recover: []fstest.RecoverMap{{Method: "own-runs", Basis: []string{"table"}}},
+		})
+	sum := extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: []string{"/"}, Recursive: true})
+	if sum.Files != 1 || sum.Skipped != 1 || len(sum.Artifacts) != 1 || sum.Artifacts[0].Source.RemotePath != "/live.txt" {
+		t.Fatalf("summary = %+v, want only the live file extracted and one skip", sum)
+	}
+	ws := auditByAction(t, c, "analysis.warning")
+	if len(ws) != 1 {
+		t.Fatalf("warnings = %+v", ws)
+	}
+	if r, _ := ws[0].Details["reason"].(string); !strings.Contains(r, "image recover") {
+		t.Errorf("reason %q does not name image recover", r)
+	}
+	if p, _ := ws[0].Details["path"].(string); p != "/gone.txt" {
+		t.Errorf("warning path = %q", p)
+	}
+	for _, a := range auditByAction(t, c, "artifact.create") {
+		if strings.Contains(fmt.Sprint(a.Details), "gone.txt") {
+			t.Errorf("an artifact was created for the deleted file: %+v", a.Details)
+		}
+	}
+	verifyOK(t, c)
 }

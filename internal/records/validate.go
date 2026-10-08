@@ -43,6 +43,10 @@ type artifactInfo struct {
 	ID, SHA256 string
 	Size       int64
 	Incomplete bool
+	// Recovered: the artifact or an ancestor carries a Recovery (evidence.RecoveryTrailOf).
+	Recovered     bool
+	MaxConfidence *int   // the lowest confidence on the chain (RecoveryTrail.MinConfidence)
+	RecoveredVia  string // the artifact that carries the Recovery, for messages
 }
 
 // prepared is a validated record as a row, ready to be numbered and written.
@@ -140,6 +144,14 @@ func prepare(r Record, art artifactInfo) (prepared, error) {
 		}
 		method := r.Recovery
 		row.Recovered, row.RecoveryMethod = true, &method
+	}
+	if art.Recovered {
+		if r.Recovery == "" {
+			return prepared{}, fmt.Errorf("%w: artifact %q is recovered (via %q)", ErrRecoveredArtifactLiveRecord, clip(art.ID), clip(art.RecoveredVia))
+		}
+		if art.MaxConfidence != nil && (r.Confidence == nil || *r.Confidence > *art.MaxConfidence) {
+			return prepared{}, fmt.Errorf("%w: the record's confidence %s, the recovered artifact %q is capped at %d", ErrConfidenceAboveArtifact, confText(r.Confidence), clip(art.ID), *art.MaxConfidence)
+		}
 	}
 	if r.Confidence != nil {
 		if *r.Confidence < 0 || *r.Confidence > 100 {
@@ -377,4 +389,11 @@ func panicText(r any) (text string) {
 		return v.Error()
 	}
 	return fmt.Sprintf("%T", r)
+}
+
+func confText(c *int) string {
+	if c == nil {
+		return "is not stated"
+	}
+	return fmt.Sprintf("is %d", *c)
 }

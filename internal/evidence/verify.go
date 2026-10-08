@@ -2,6 +2,7 @@ package evidence
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,11 +25,18 @@ type VerifyReport struct {
 	// FTSDocsChecked is the number of documents of the word index the full-text check (P11)
 	// compared with a rebuild (0 for a case older than schema v3, and when the index is not
 	// current: its content is then not verified, see Notices).
-	FTSDocsChecked int      `json:"fts_docs_checked"`
-	Problems       []string `json:"problems"`
+	FTSDocsChecked int `json:"fts_docs_checked"`
+	// RecoveredArtifacts counts the artifacts of the five recovered kinds (set by the built-in
+	// check); RecoveredReproduced those a composed check reproduced byte for byte from the image.
+	RecoveredArtifacts  int      `json:"recovered_artifacts"`
+	RecoveredReproduced int      `json:"recovered_reproduced"`
+	Problems            []string `json:"problems"`
 	// Notices are findings that are not integrity problems (for example an
 	// announced upgrade that was never concluded); never silent.
 	Notices []string `json:"notices"`
+
+	reproduceRan    bool // R6 ran in this verify (MarkReproduceRan)
+	recoveredByKind map[string]int
 }
 
 // OK reports whether no integrity problems were found.
@@ -37,6 +45,12 @@ func (r VerifyReport) OK() bool { return len(r.Problems) == 0 }
 func (r *VerifyReport) problemf(format string, a ...any) {
 	r.Problems = append(r.Problems, fmt.Sprintf(format, a...))
 }
+
+// AddProblem appends an integrity problem; composed checks use it to report their findings.
+func (r *VerifyReport) AddProblem(format string, a ...any) { r.problemf(format, a...) }
+
+// AddNotice appends a notice (a finding that is not an integrity problem).
+func (r *VerifyReport) AddNotice(format string, a ...any) { r.noticef(format, a...) }
 
 func (r *VerifyReport) noticef(format string, a ...any) {
 	r.Notices = append(r.Notices, fmt.Sprintf(format, a...))
@@ -48,9 +62,23 @@ func (r *VerifyReport) noticef(format string, a ...any) {
 // directories. Every failure to read part of the case is a
 // reported problem, so Verify always completes; the result is audited
 // (verify.run). The returned error is only the failure to audit the result.
-func (c *Case) Verify() (VerifyReport, error) { return c.verify(nil) }
+func (c *Case) Verify() (VerifyReport, error) { return c.VerifyWith(context.Background()) }
 
+// VerifyWith is Verify plus checks composed by a layer above this package (for example the
+// byte-level reproduction of recovered artifacts, which needs the parsers this package must not
+// import). The built-in checks run first, then checks in order, each under a recover(); the
+// verify.run audit entry is written last and covers their findings. A context that ends before
+// or during a check makes the report carry "reproduce: verification cancelled" once.
+func (c *Case) VerifyWith(ctx context.Context, checks ...VerifyCheck) (VerifyReport, error) {
+	return c.verifyRun(ctx, nil, checks)
+}
+
+// verify is the test seam: the built-in checks with a chunk observer.
 func (c *Case) verify(observe verifyChunkObserver) (VerifyReport, error) {
+	return c.verifyRun(context.Background(), observe, nil)
+}
+
+func (c *Case) verifyRun(ctx context.Context, observe verifyChunkObserver, checks []VerifyCheck) (VerifyReport, error) {
 	rep := VerifyReport{Problems: []string{}, Notices: []string{}}
 	n, audited, auditProblems, err := verifyAudit(filepath.Join(c.Dir, auditFile))
 	if err != nil {
@@ -88,18 +116,22 @@ func (c *Case) verify(observe verifyChunkObserver) (VerifyReport, error) {
 	c.crossCheckAudit(&rep, recs, audited)
 	c.crossCheckDB(&rep, recs)
 	c.checkTmp(&rep)
+	c.verifyRecovered(&rep, recs)
 	c.verifyRecords(&rep, recs, audited, auditReadable, observe)
 	if auditReadable {
 		c.checkSchema(&rep, audited)
 	}
 	c.checkUnmanifested(&rep, inManifest)
 	c.checkStaging(&rep)
+	c.runComposedChecks(ctx, &rep, recs, checks)
+	unreproducedNotices(&rep)
 
 	_, err = c.Audit.Append("verify.run", "", map[string]any{
 		"ok": rep.OK(), "artifacts_checked": rep.ArtifactsChecked,
 		"audit_entries": rep.AuditEntries, "problems": len(rep.Problems),
 		"records_checked": rep.RecordsChecked, "record_batches_checked": rep.RecordBatchesChecked,
 		"record_runs_checked": rep.RecordRunsChecked, "fts_docs_checked": rep.FTSDocsChecked,
+		"recovered_artifacts": rep.RecoveredArtifacts, "recovered_reproduced": rep.RecoveredReproduced,
 	})
 	return rep, err
 }
@@ -381,3 +413,45 @@ func derivedChainProblem(byID map[string]ManifestRecord, id string) string {
 		cur = parent
 	}
 }
+
+// VerifyCheck is a check composed into VerifyWith by a layer above this package. It reports through
+// rep.AddProblem and rep.AddNotice and may set rep.RecoveredReproduced; recs is the manifest.
+type VerifyCheck func(ctx context.Context, c *Case, recs []ManifestRecord, rep *VerifyReport)
+
+// verifyCancelled is the problem of a verify whose context ended: a cancelled verify is never OK.
+const verifyCancelled = "reproduce: verification cancelled"
+
+// runComposedChecks runs checks in order after the built-in ones. A panic in a check is a problem
+// (the later checks still run); a context that ended before or during a check adds
+// verifyCancelled once and skips the checks not yet started.
+func (c *Case) runComposedChecks(ctx context.Context, rep *VerifyReport, recs []ManifestRecord, checks []VerifyCheck) {
+	for _, check := range checks {
+		if ctx.Err() != nil {
+			break
+		}
+		func() {
+			defer func() {
+				if p := recover(); p != nil {
+					rep.problemf("verify check panicked: %v", p)
+				}
+			}()
+			check(ctx, c, recs, rep)
+		}()
+	}
+	if len(checks) > 0 && ctx.Err() != nil {
+		rep.problemf("%s", verifyCancelled)
+	}
+}
+
+// RecoveredSummary is the part of the one-line verify summary that names the recovered
+// artifacts: ", N recovered (M reproduced)" when there are any, else "".
+func (r VerifyReport) RecoveredSummary() string {
+	if r.RecoveredArtifacts == 0 {
+		return ""
+	}
+	return fmt.Sprintf(", %d recovered (%d reproduced)", r.RecoveredArtifacts, r.RecoveredReproduced)
+}
+
+// MarkReproduceRan is called by the composed reproduce check (R6) when it ran, so the built-in
+// check stops noticing that recover and carve artifacts are not reproduced by this build.
+func (r *VerifyReport) MarkReproduceRan() { r.reproduceRan = true }

@@ -2,6 +2,7 @@ package examine
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
 )
@@ -83,7 +84,11 @@ func (s *safeFS) Open(e filesys.Entry) (f filesys.File, err error) {
 	}
 	// Size and Runs are snapshotted here so a panic in them surfaces as an
 	// Open error; ReadAt is protected on every call.
-	return &safeFile{f: inner, name: s.name, size: inner.Size(), runs: inner.Runs(), enc: filesys.FileEncrypted(inner)}, nil
+	sf := &safeFile{f: inner, name: s.name, size: inner.Size(), runs: inner.Runs(), enc: filesys.FileEncrypted(inner)}
+	if ar, ok := filesys.AllocatedRunsOf(inner); ok {
+		sf.alloc, sf.hasAlloc = slices.Clone(ar), true
+	}
+	return sf, nil
 }
 
 func (s *safeFS) Unallocated() (rs []filesys.Run, err error) {
@@ -102,6 +107,10 @@ type safeFile struct {
 	size int64
 	runs []filesys.Run
 	enc  bool // the file reported itself encrypted when it was opened
+
+	// allocation snapshot (filesys.AllocatedRunner), taken at Open inside the recover
+	alloc    []filesys.Run
+	hasAlloc bool
 }
 
 func (f *safeFile) ReadAt(p []byte, off int64) (n int, err error) {
@@ -150,4 +159,109 @@ func (s *safeFS) EntrySnapshot(e filesys.Entry) (name string, xid uint64, ok boo
 		return "", 0, false
 	}
 	return sv.EntrySnapshot(e)
+}
+
+// AllocatedRuns implements filesys.AllocatedRunner with the allocation the file reported when it was
+// opened (a copy); HasAllocatedRuns says whether it reported one at all.
+func (f *safeFile) AllocatedRuns() []filesys.Run { return slices.Clone(f.alloc) }
+
+// HasAllocatedRuns reports whether the wrapped file knows its allocation.
+func (f *safeFile) HasAllocatedRuns() bool { return f.hasAlloc }
+
+// SupportsRecovery reports whether the wrapped filesystem (or one it wraps) implements
+// filesys.Recoverer. Recoverable is always present on this wrapper, so callers ask this first.
+func (s *safeFS) SupportsRecovery() (ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	_, ok = filesys.As[filesys.Recoverer](s.fs)
+	return ok
+}
+
+// Recoverable implements filesys.Recoverer: it forwards to the wrapped filesystem's Recoverer (a panic
+// becomes a *filesys.CorruptError) and hands out a deep copy, so a caller cannot change the reader's
+// own slices. A filesystem without recovery is filesys.ErrNoRecovery.
+func (s *safeFS) Recoverable(e filesys.Entry) (cs []filesys.Candidate, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			cs, err = nil, panicError(s.name, "Recoverable", p)
+		}
+	}()
+	r, ok := filesys.As[filesys.Recoverer](s.fs)
+	if !ok {
+		return nil, filesys.ErrNoRecovery
+	}
+	got, err := r.Recoverable(e)
+	return copyCandidates(got), err
+}
+
+func copyCandidates(in []filesys.Candidate) []filesys.Candidate {
+	if in == nil {
+		return nil
+	}
+	out := make([]filesys.Candidate, len(in))
+	for i, c := range in {
+		out[i] = c
+		out[i].Runs = slices.Clone(c.Runs)
+		out[i].Basis = slices.Clone(c.Basis)
+		out[i].Assumptions = slices.Clone(c.Assumptions)
+		out[i].Warnings = slices.Clone(c.Warnings)
+	}
+	return out
+}
+
+// Journal implements filesys.Journaler by forwarding (filesys.ErrNoJournal when the wrapped filesystem
+// keeps none; a panic is a *filesys.CorruptError).
+func (s *safeFS) Journal() (info filesys.JournalInfo, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			info, err = filesys.JournalInfo{}, panicError(s.name, "Journal", p)
+		}
+	}()
+	j, ok := filesys.As[filesys.Journaler](s.fs)
+	if !ok {
+		return filesys.JournalInfo{}, filesys.ErrNoJournal
+	}
+	info, err = j.Journal()
+	info.Features = slices.Clone(info.Features)
+	info.Warnings = slices.Clone(info.Warnings)
+	return info, err
+}
+
+// JournalTransactions implements filesys.Journaler; each transaction handed to visit is a copy.
+func (s *safeFS) JournalTransactions(visit func(filesys.JournalTxn) bool) (err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = panicError(s.name, "JournalTransactions", p)
+		}
+	}()
+	j, ok := filesys.As[filesys.Journaler](s.fs)
+	if !ok {
+		return filesys.ErrNoJournal
+	}
+	return j.JournalTransactions(func(t filesys.JournalTxn) bool { return visit(copyTxn(t)) })
+}
+
+// JournalBlock implements filesys.Journaler.
+func (s *safeFS) JournalBlock(t filesys.JournalTxn, i int) (b []byte, r filesys.Run, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			b, r, err = nil, filesys.Run{}, panicError(s.name, "JournalBlock", p)
+		}
+	}()
+	j, ok := filesys.As[filesys.Journaler](s.fs)
+	if !ok {
+		return nil, filesys.Run{}, filesys.ErrNoJournal
+	}
+	b, r, err = j.JournalBlock(copyTxn(t), i)
+	return slices.Clone(b), r, err
+}
+
+func copyTxn(t filesys.JournalTxn) filesys.JournalTxn {
+	t.Blocks = slices.Clone(t.Blocks)
+	t.Revoked = slices.Clone(t.Revoked)
+	t.Warnings = slices.Clone(t.Warnings)
+	return t
 }

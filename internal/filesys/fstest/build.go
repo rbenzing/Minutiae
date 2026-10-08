@@ -7,6 +7,8 @@ import (
 	"path"
 	"sort"
 	"strings"
+
+	"github.com/rbenzing/minutiae/internal/filesys"
 )
 
 // BuildSpec describes an MTFS image for Build.
@@ -65,6 +67,31 @@ type Node struct {
 	UID, GID uint32
 	// MTime is the modification time in Unix seconds; 0 means absent.
 	MTime int64
+	// Freed (only with Deleted) makes the node's data blocks count as free for
+	// Unallocated, as a real delete leaves them; a Deleted node without it keeps
+	// them allocated (the existing behaviour).
+	Freed bool
+	// Recover plants the stale maps the filesystem's Recoverer returns for this
+	// deleted node (only with Deleted).
+	Recover []RecoverMap
+}
+
+// RecoverMap is one stale recovery map planted on a deleted Node. Build panics
+// when Method is empty or when RunsOf names no node.
+type RecoverMap struct {
+	// Method is the candidate method token (required).
+	Method string
+	// RunsOf is the path of the node whose laid-out runs the map uses (trimmed
+	// to the map's size, holes skipped); "" means this node.
+	RunsOf string
+	// Runs are explicit runs, used verbatim and never validated (hostile maps);
+	// they win over RunsOf.
+	Runs []filesys.Run
+	// Size is the claimed size; 0 means the size of the node the runs come from.
+	Size                         int64
+	Basis, Assumptions, Warnings []string
+	Mode                         uint32
+	Encrypted                    bool
 }
 
 // blockRun is a run in block units within the data area; start -1 is a hole.
@@ -116,14 +143,23 @@ func Build(spec BuildSpec) []byte {
 	var tableJSON []byte
 	for {
 		tbl := table{Label: spec.Label, BlockSize: bs, Entries: []record{root}}
+		abs := map[string][]run{} // laid-out runs by node path, for Recover maps that borrow them
 		for _, b := range items {
-			rec := b.rec
+			var runs []run
 			for _, r := range b.runs {
 				off := int64(-1)
 				if r.start >= 0 {
 					off = dataStart + r.start*bs
 				}
-				rec.Runs = append(rec.Runs, run{Offset: off, Length: r.n * bs})
+				runs = append(runs, run{Offset: off, Length: r.n * bs})
+			}
+			abs[b.node.Path] = runs
+		}
+		for _, b := range items {
+			rec := b.rec
+			rec.Runs = abs[b.node.Path]
+			for _, rm := range b.node.Recover {
+				rec.Recover = append(rec.Recover, resolveRecover(b.node, rm, nodes, abs))
 			}
 			tbl.Entries = append(tbl.Entries, rec)
 		}
@@ -182,6 +218,14 @@ func normalize(in []Node) map[string]Node {
 		case n.Dir && n.Link != "":
 			panic(fmt.Sprintf("fstest: %q is both Dir and Link", p))
 		}
+		if (n.Freed || len(n.Recover) > 0) && !n.Deleted {
+			panic(fmt.Sprintf("fstest: node %q has Freed or Recover but is not Deleted", p))
+		}
+		for i, rm := range n.Recover {
+			if rm.Method == "" {
+				panic(fmt.Sprintf("fstest: node %q recover map %d has no Method", p, i))
+			}
+		}
 		n.Path = p
 		nodes[p] = n
 	}
@@ -205,6 +249,7 @@ func baseRecord(p string, n Node, ids map[string]string) record {
 		ParentID:  ids[path.Dir(p)],
 		Name:      path.Base(p),
 		Deleted:   n.Deleted,
+		Freed:     n.Freed,
 		Encrypted: n.Encrypted,
 		UID:       n.UID,
 		GID:       n.GID,
@@ -274,4 +319,45 @@ func layout(b *built, bs, next int64) int64 {
 		}
 	}
 	return next
+}
+
+// resolveRecover turns a planted RecoverMap into its table form: explicit runs verbatim, otherwise the
+// laid-out runs of the node it borrows from (holes skipped), cut to the claimed size.
+func resolveRecover(self Node, rm RecoverMap, nodes map[string]Node, abs map[string][]run) recoverRec {
+	src := self
+	if rm.RunsOf != "" {
+		p := path.Clean("/" + rm.RunsOf)
+		n, ok := nodes[p]
+		if !ok {
+			panic(fmt.Sprintf("fstest: %q: recover map RunsOf %q names no node", self.Path, rm.RunsOf))
+		}
+		src = n
+	}
+	size := rm.Size
+	if size == 0 {
+		size = int64(len(src.Data))
+	}
+	out := recoverRec{
+		Method: rm.Method, Size: size, Basis: rm.Basis, Assumptions: rm.Assumptions,
+		Warnings: rm.Warnings, Mode: rm.Mode, Encrypted: rm.Encrypted,
+	}
+	if len(rm.Runs) > 0 {
+		for _, r := range rm.Runs {
+			out.Runs = append(out.Runs, run{Offset: r.Offset, Length: r.Length})
+		}
+		return out
+	}
+	left := size
+	for _, r := range abs[src.Path] {
+		if left <= 0 {
+			break
+		}
+		if r.Offset < 0 {
+			continue
+		}
+		take := min(r.Length, left)
+		out.Runs = append(out.Runs, run{Offset: r.Offset, Length: take})
+		left -= take
+	}
+	return out
 }

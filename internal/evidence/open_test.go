@@ -312,6 +312,99 @@ func TestOpenErrorClassification(t *testing.T) {
 	}
 }
 
+// C58: OpenArtifactIn applies exactly OpenArtifact's checks; the refusal matrix gives identical outcomes.
+func TestOpenArtifactInMatchesOpenArtifact(t *testing.T) {
+	c, rec := caseWithArtifact(t)
+	manifest := filepath.Join(c.Dir, manifestFile)
+	outside := filepath.Join(filepath.Dir(c.Dir), "outside-in.bin")
+	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	add := func(r ManifestRecord) {
+		t.Helper()
+		if err := appendManifest(manifest, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ids := []string{rec.ID, "nope"}
+	// duplicate id
+	add(rec)
+	// paths outside the case
+	for i, p := range []string{"../outside-in.bin", outside, filepath.ToSlash(outside), "case.json", "artifacts/../../outside-in.bin", ""} {
+		id := fmt.Sprintf("forged%d", i)
+		add(ManifestRecord{ID: id, Path: p, Size: 6})
+		ids = append(ids, id)
+	}
+	// missing file, non-regular file, size mismatch
+	add(ManifestRecord{ID: "missing", Path: "artifacts/dev1/none.bin", Size: 1})
+	dir := filepath.Join(c.Dir, "artifacts", "dir.d")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	add(ManifestRecord{ID: "isdir", Path: "artifacts/dir.d", Size: 0})
+	grown := filepath.Join(c.Dir, "artifacts", "grown.bin")
+	if err := os.WriteFile(grown, []byte("abc"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	add(ManifestRecord{ID: "grown", Path: "artifacts/grown.bin", Size: 2})
+	add(ManifestRecord{ID: "good", Path: "artifacts/grown.bin", Size: 3})
+	ids = append(ids, "missing", "isdir", "grown", "good")
+
+	recs, err := c.Manifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ix := NewManifestIndex(recs)
+	for _, id := range ids {
+		f1, r1, e1 := c.OpenArtifact(id)
+		f2, r2, e2 := c.OpenArtifactIn(ix, id)
+		if f1 != nil {
+			_ = f1.Close()
+		}
+		if f2 != nil {
+			_ = f2.Close()
+		}
+		if (f1 == nil) != (f2 == nil) || !reflect.DeepEqual(r1, r2) {
+			t.Errorf("%q: file/record differ: %v %+v vs %v %+v", id, f1 != nil, r1, f2 != nil, r2)
+		}
+		if (e1 == nil) != (e2 == nil) || (e1 != nil && e1.Error() != e2.Error()) ||
+			errors.Is(e1, ErrIntegrity) != errors.Is(e2, ErrIntegrity) || errors.Is(e1, ErrUnknownArtifact) != errors.Is(e2, ErrUnknownArtifact) {
+			t.Errorf("%q: errors differ: %v vs %v", id, e1, e2)
+		}
+	}
+}
+
+// C61 M1: a manifest path inside the case but outside artifacts/ (case.json, whose size matches) is an
+// integrity error from both open paths; only the artifacts/ prefix test refuses it.
+func TestOpenArtifactRefusesPathOutsideArtifactsDir(t *testing.T) {
+	c, _ := caseWithArtifact(t)
+	manifest := filepath.Join(c.Dir, manifestFile)
+	for i, name := range []string{"case.json", "audit.jsonl"} {
+		st, err := os.Stat(filepath.Join(c.Dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := appendManifest(manifest, ManifestRecord{ID: fmt.Sprintf("inside%d", i), Path: name, Size: st.Size()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recs, err := c.Manifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ix := NewManifestIndex(recs)
+	for _, id := range []string{"inside0", "inside1"} {
+		f1, _, e1 := c.OpenArtifact(id)
+		f2, _, e2 := c.OpenArtifactIn(ix, id)
+		if f1 != nil || f2 != nil {
+			t.Errorf("%s: a file outside artifacts/ was opened", id)
+		}
+		if !errors.Is(e1, ErrIntegrity) || !errors.Is(e2, ErrIntegrity) {
+			t.Errorf("%s: OpenArtifact %v, OpenArtifactIn %v; want ErrIntegrity from both", id, e1, e2)
+		}
+	}
+}
+
 // A symlink (or junction) in place of the artifact file, or of a directory on its path, is refused
 // even when the target holds the same bytes: the evidence must live inside the case.
 func TestOpenArtifactRefusesSymlinkedArtifact(t *testing.T) {

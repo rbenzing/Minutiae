@@ -113,6 +113,16 @@ func newPfx(t *testing.T, names ...string) *pfx {
 func pcapture(t *testing.T, c *evidence.Case, rel string, src evidence.Source, data string) evidence.ManifestRecord {
 	t.Helper()
 	src.DeviceID = "D1"
+	if evidence.IsRecoveredKind(src.Kind) { // the write gate wants a description; these tests are not about it
+		var d evidence.Derivation
+		if src.Derived != nil {
+			d = *src.Derived
+		}
+		if d.Recovery == nil {
+			d.Recovery = &evidence.Recovery{Class: evidence.ClassDeletedFile}
+		}
+		src.Derived = &d
+	}
 	rec, err := c.Capture("D1", "A1", rel, src, func(w io.Writer) error {
 		_, err := io.WriteString(w, data)
 		return err

@@ -13,7 +13,7 @@ import (
 // testOnlyPackages may be imported only from _test.go files: they hold raw-SQL
 // tamper helpers and fixtures that must never be linked into the binary (a
 // non-test import from internal/cli, which may import anything, would ship them).
-var testOnlyPackages = []string{"internal/records/recordstest", "internal/sqlitefile/sqlitetest", "internal/parsers/parsertest"}
+var testOnlyPackages = []string{"internal/records/recordstest", "internal/evidence/evidencetest", "internal/filesys/fstest", "internal/sqlitefile/sqlitetest", "internal/parsers/parsertest"}
 
 // nonTestImporters returns the non-_test.go files under root that import the
 // package module+pkg.

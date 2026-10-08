@@ -94,3 +94,7 @@ func (r *Reader) SetAfterStart(f func()) { r.afterStart = f }
 
 // MapTimeout exposes the deadline mapping of the Reader.
 func MapTimeout(ctx context.Context, err error) error { return mapTimeout(ctx, err) }
+
+// DisableRecoveredRule is a test seam: it lets a test build the forged rows
+// that verify rule R7 must catch.
+func (w *Writer) DisableRecoveredRule() { w.noRecoveredRule = true }

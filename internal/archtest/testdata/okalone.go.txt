@@ -1,0 +1,65 @@
+package fixture
+
+import "testing"
+
+// This file is data for TestOKAloneScannerSelfTest (a .txt file: it is neither
+// compiled nor scanned by the rule itself). Every line that must be flagged
+// carries the marker "want"; no other line may be flagged.
+
+func TestOKAloneNot(t *testing.T) {
+	rep := verify(t)
+	if !rep.OK() { // want
+		return
+	}
+}
+
+func TestOKAloneFalse(t *testing.T) {
+	rep := verify(t)
+	if rep.OK() == false { // want
+		return
+	}
+}
+
+func TestOKAloneFalseReversed(t *testing.T) {
+	rep := verify(t)
+	if false == rep.OK() { // want
+		return
+	}
+}
+
+func TestOKAloneInClosure(t *testing.T) {
+	t.Run("x", func(t *testing.T) {
+		if rep := verify(t); !rep.OK() { // want
+			return
+		}
+	})
+}
+
+func TestOKWithRequireProblem(t *testing.T) {
+	rep := verify(t)
+	if !rep.OK() {
+		evidencetest.RequireProblem(t, rep, "recovered kind")
+	}
+}
+
+func TestOKWithRequireProblems(t *testing.T) {
+	rep := verify(t)
+	if rep.OK() == false {
+		RequireProblems(t, rep, "a", "b")
+	}
+}
+
+func TestOKWithLineHelper(t *testing.T) {
+	rep := verify(t)
+	if !rep.OK() {
+		requireProblemLine(t, rep, "x")
+	}
+}
+
+func TestOKPositiveIsNotAFinding(t *testing.T) {
+	rep := verify(t)
+	if rep.OK() {
+		t.Fatal("clean")
+	}
+	_ = !other.Valid()
+}

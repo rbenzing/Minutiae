@@ -11,3 +11,7 @@ var V1Statements = v1Statements
 // current, records.reindex.done is not written yet). An error returned at any point fails the reindex
 // as a fault there would; a panic simulates a process that died there.
 func (c *Case) SetReindexHook(f func(point string) error) { c.reindexHook = f }
+
+// AllowUndescribedRecoveredKinds lets this Case write a recovered kind without a Recovery, so tests can
+// plant what a buggy writer would have produced and prove that verify catches it. Test-only.
+func (c *Case) AllowUndescribedRecoveredKinds() { c.noRecoveredKindGate = true }

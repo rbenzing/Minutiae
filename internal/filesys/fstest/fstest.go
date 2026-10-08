@@ -52,25 +52,38 @@ type table struct {
 }
 
 type record struct {
-	ID        string `json:"id"`
-	ParentID  string `json:"parent_id"`
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	Size      int64  `json:"size"`
-	Mode      uint32 `json:"mode,omitempty"`
-	UID       uint32 `json:"uid,omitempty"`
-	GID       uint32 `json:"gid,omitempty"`
-	MTime     int64  `json:"mtime,omitempty"`
-	Deleted   bool   `json:"deleted,omitempty"`
-	Encrypted bool   `json:"encrypted,omitempty"`
-	Link      string `json:"link,omitempty"`
-	Inline    []byte `json:"inline,omitempty"` // content stored in the table (base64); no runs
-	Runs      []run  `json:"runs,omitempty"`
+	ID        string       `json:"id"`
+	ParentID  string       `json:"parent_id"`
+	Name      string       `json:"name"`
+	Type      string       `json:"type"`
+	Size      int64        `json:"size"`
+	Mode      uint32       `json:"mode,omitempty"`
+	UID       uint32       `json:"uid,omitempty"`
+	GID       uint32       `json:"gid,omitempty"`
+	MTime     int64        `json:"mtime,omitempty"`
+	Deleted   bool         `json:"deleted,omitempty"`
+	Encrypted bool         `json:"encrypted,omitempty"`
+	Link      string       `json:"link,omitempty"`
+	Freed     bool         `json:"freed,omitempty"`   // a deleted record whose blocks are not counted as used
+	Recover   []recoverRec `json:"recover,omitempty"` // stale maps the fake Recoverer returns (deleted records)
+	Inline    []byte       `json:"inline,omitempty"`  // content stored in the table (base64); no runs
+	Runs      []run        `json:"runs,omitempty"`
 }
 
 type run struct {
 	Offset int64 `json:"offset"`
 	Length int64 `json:"length"`
+}
+
+type recoverRec struct {
+	Method      string   `json:"method"`
+	Runs        []run    `json:"runs,omitempty"`
+	Size        int64    `json:"size"`
+	Basis       []string `json:"basis,omitempty"`
+	Assumptions []string `json:"assumptions,omitempty"`
+	Warnings    []string `json:"warnings,omitempty"`
+	Mode        uint32   `json:"mode,omitempty"`
+	Encrypted   bool     `json:"encrypted,omitempty"`
 }
 
 // Encode assembles a raw MTFS image from table JSON and data-area bytes. It
@@ -394,6 +407,9 @@ func (f *mtfs) Unallocated() ([]filesys.Run, error) {
 	f.unallocOnce.Do(func() {
 		var used []filesys.Run
 		for i := range f.recs {
+			if f.recs[i].Freed {
+				continue // a real delete leaves these blocks free
+			}
 			for _, ru := range f.recs[i].Runs {
 				if ru.Offset >= 0 {
 					used = append(used, filesys.Run{Offset: ru.Offset, Length: ru.Length})

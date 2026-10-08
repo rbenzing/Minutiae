@@ -107,7 +107,7 @@ type extractor struct {
 
 const sparseTooBig = "sparse size exceeds partition length; not extracted"
 
-const deletedReason = "deleted; recovery is roadmap sub-project 3"
+const deletedReason = "deleted; use image recover (roadmap sub-project 3)"
 
 // target handles one requested entry: a file or symlink, or a directory to walk.
 func (x *extractor) target(p string, e filesys.Entry) error {
@@ -446,6 +446,7 @@ func imageRuns(raw []filesys.Run, size int64, part volume.Partition, imageSize i
 func (s *Session) writeRunsSidecar(a *analysis, rel string, runs []evidence.Run, fsPath string, d *evidence.Derivation) error {
 	sd := *d
 	sd.Runs, sd.RunsArtifact = nil, ""
+	sd.Recovery = nil // a runs sidecar describes runs, never a recovery (the recovery stays on the file)
 	src := evidence.Source{Kind: "runs", DeviceID: s.Parent.Source.DeviceID, RemotePath: fsPath, Derived: &sd}
 	rec, fillErr, err := s.capture(a, rel, src, func(w io.Writer) error {
 		return writeJSONLines(w, len(runs), func(i int) any { return runs[i] })
@@ -522,6 +523,11 @@ func prefixRuns(runs []evidence.Run, n int64) []evidence.Run {
 // recorded: the artifact then carries no runs (and says so in its error), which
 // is incomplete provenance but never wrong provenance.
 func (x *extractor) keepPrefixRuns(rel, fsPath string, d *evidence.Derivation, runs []evidence.Run, n int64) error {
+	return x.s.keepPrefixRuns(x.a, rel, fsPath, d, runs, n)
+}
+
+// keepPrefixRuns is the session-level form of extractor.keepPrefixRuns (also used by recover).
+func (s *Session) keepPrefixRuns(a *analysis, rel, fsPath string, d *evidence.Derivation, runs []evidence.Run, n int64) error {
 	if len(runs) == 0 {
 		return nil
 	}
@@ -536,7 +542,7 @@ func (x *extractor) keepPrefixRuns(rel, fsPath string, d *evidence.Derivation, r
 			name = fmt.Sprintf("%s.incomplete~%d.runs.jsonl", rel, attempt+1)
 		}
 		sd := *d // writeRunsSidecar fills in the sidecar id; keep d until it is known
-		err := x.s.writeRunsSidecar(x.a, name, pre, fsPath, &sd)
+		err := s.writeRunsSidecar(a, name, pre, fsPath, &sd)
 		var nameErr *localNameError
 		switch {
 		case err == nil:

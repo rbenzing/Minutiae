@@ -95,9 +95,15 @@ func (w *Writer) Start(ctx context.Context, so StartOptions) error {
 		return fmt.Errorf("read manifest: %w", err)
 	}
 	known := make(map[string]bool, len(man))
+	manByID := make(map[string]evidence.ManifestRecord, len(man))
 	byID := make(map[string]artifactInfo, len(man))
 	for _, m := range man {
+		if known[m.ID] {
+			// as OpenArtifact: an id held twice is an integrity error, never first- or last-wins
+			return fmt.Errorf("%w: artifact id %q appears more than once in the manifest", evidence.ErrIntegrity, clip(m.ID))
+		}
 		known[m.ID] = true
+		manByID[m.ID] = m
 		byID[m.ID] = artifactInfo{ID: m.ID, SHA256: m.SHA256, Size: m.Size, Incomplete: m.Incomplete}
 	}
 	declared := make(map[string]artifactInfo, len(artifacts))
@@ -108,6 +114,9 @@ func (w *Writer) Start(ctx context.Context, so StartOptions) error {
 		info, ok := byID[id]
 		if !ok {
 			return fmt.Errorf("%w: %q is not in the manifest", ErrUnknownArtifact, clip(id))
+		}
+		if tr, ok := evidence.RecoveryTrailOf(manByID, id); ok {
+			info.Recovered, info.MaxConfidence, info.RecoveredVia = true, tr.MinConfidence, tr.ArtifactID
 		}
 		declared[id] = info
 	}

@@ -28,6 +28,7 @@ func newImageCmd(d Deps, opts *rootOptions) *cobra.Command {
 	cmd.AddCommand(
 		newImageImportCmd(d, opts), newImageInfoCmd(d, opts), newImageLsCmd(d, opts),
 		newImageStatCmd(d, opts), newImageExtractCmd(d, opts), newImageUnallocCmd(d, opts),
+		newImageRecoverCmd(d, opts),
 	)
 	return cmd
 }

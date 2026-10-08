@@ -116,6 +116,10 @@ type Derivation struct {
 	// Snapshot is set when the bytes were read from a snapshot view of the
 	// filesystem (APFS) and not from the live tree.
 	Snapshot *SnapshotRef `json:"snapshot,omitempty"`
+
+	// Recovery is set on artifacts of the recovered kinds (recover, carve, slack,
+	// journal, report): the class, method, confidence and allocation evidence.
+	Recovery *Recovery `json:"recovery,omitempty"`
 }
 
 // SnapshotRef names the filesystem snapshot a derived artifact was read from:

@@ -680,6 +680,96 @@ exempt images are accepted by the reader on purpose:
 - `wrapped-hfsx`: Apple never embeds HFSX in a wrapper (the embedded signature must
   be `H+`); the reader accepts both on purpose.
 
+## Recovery fixtures: toolchain probe (2026-10-07)
+
+Sub-project 3 (deleted-data recovery) needs images in which a real kernel has
+written and then deleted files. This section is the measured base that plans
+3B-3H start from; nothing here is a Go test and nothing runs in the default test
+run. Files: `Dockerfile.recover`, `recover_probe.sh`.
+
+Build and run (no `--privileged`; the guest kernel runs under QEMU TCG, and every
+`modprobe`/`insmod` happens inside that guest, never in the host or the Docker VM
+kernel):
+
+```bash
+docker build -f tools/fixtures/Dockerfile.recover -t minutiae-recover-fixtures tools/fixtures
+docker run --rm -v "$PWD:/work" -w /work minutiae-recover-fixtures bash tools/fixtures/recover_probe.sh
+```
+
+(Git Bash on Windows rewrites `/work`: set `MSYS_NO_PATHCONV=1` and pass the host
+path in Windows form.) The build took about 4.5 minutes, the probe 40-70 s.
+
+### Pins
+
+- Base: `debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251`
+  (the digest `Dockerfile.hfs` pins).
+- apt reads `snapshot.debian.org` at `SNAPSHOT=20261003T000000Z` (main only; the
+  same snapshot date as the HFS+ image). Every package is pinned to an exact
+  version: `qemu-system-x86=1:7.2+dfsg-7+deb12u18+b3`,
+  `linux-image-amd64=6.1.187-1`, `linux-image-6.1.0-53-amd64=6.1.187-1`,
+  `busybox-static=1:1.35.0-4+deb12u1+b1`, `e2fsprogs=1.47.0-2+b2`,
+  `f2fs-tools=1.15.0-1`, `exfatprogs=1.2.0-1+deb12u1`,
+  `exfat-fuse=1.3.0+git20220115-2`, `dosfstools=4.2-1`,
+  `mtools=4.0.33-1+really4.0.32-1`, `sqlite3=3.40.1-2+deb12u2`,
+  `faketime=0.9.10-2.1`, `python3=3.11.2-1+b1`, `jq=1.6-2.1+deb12u2`,
+  `gzip=1.12-1`, `kmod=30+20221128-1`, `cpio=2.13+dfsg-7.1`. The kernel is the
+  concrete package `linux-image-6.1.0-53-amd64` (the metapackage `linux-image-amd64`
+  is pinned to the same version). Built image id: `minutiae-recover-fixtures`
+  (manifest sha256 `2d0f691d26bd...`, local build, not pushed).
+
+### Measured facts (this run; nothing is estimated)
+
+| Fact | Measured |
+|---|---|
+| Guest kernel | `6.1.0-53-amd64`, `/boot/vmlinuz-6.1.0-53-amd64` (8230848 bytes) |
+| QEMU | `QEMU emulator version 7.2.22 (Debian 1:7.2+dfsg-7+deb12u18+b3)`, `-accel tcg`, no KVM, `-m 512` |
+| ext4 driver | module (`CONFIG_EXT4_FS=m`; needs `crc32c_generic`, `jbd2`, `mbcache`, `crc16`); mounts under TCG: yes |
+| f2fs driver | module (`CONFIG_F2FS_FS=m`, `CONFIG_F2FS_FS_COMPRESSION=y`; needs `zstd_compress`, `lz4_compress`, `lz4hc_compress`, `crc32_generic`); mounts under TCG: yes |
+| exfat driver | module (`CONFIG_EXFAT_FS=m`, no dependencies); mounts under TCG: yes |
+| vfat driver | modules `fat` + `vfat` (`CONFIG_FAT_FS=m`, `CONFIG_VFAT_FS=m`); mounts under TCG: yes |
+| Guest actions per filesystem | write one 3-block file (12288 bytes), `sync`, `rm`, `sync`, `umount`: every step ok on all four |
+| Optional modules | `crc32c-intel` and `crc32-pclmul` fail to insert in the TCG guest (`No such device`, the CPU model lacks the feature); the generic modules work, so they are not needed |
+| Boot time (TCG) | kernel uptime 5.13 s when the modules are loaded (3.95 s and 4.28 s in two earlier runs); the whole four-filesystem guest run took 11, 12 and 16 s of wall time (qemu start to exit) |
+| Guest clock | `date -s "2023-11-14 22:13:20"` succeeds, reads back `2023-11-14 22:13:20`, and advances (`22:13:21` after `sleep 1`). The probe does not pin it against drift: `hfsplus_populate.sh` shows how (`-rtc clock=vm`, `-icount`, a rewind loop) |
+| Host tools | `mke2fs 1.47.0`, `mkfs.f2fs 1.15.0 (2022-05-13)`, `fsck.f2fs 1.15.0`, `exfatprogs 1.2.0` (`mkfs.exfat`, `dump.exfat`), `mkfs.fat`/`fsck.fat 4.2`, `mtools 4.0.32` (`mcopy`), `debugfs 1.47.0`, `sqlite3 3.40.1`, `faketime 0.9.10`, `Python 3.11.2`, `jq-1.6`, `gzip 1.12`, `BusyBox v1.35.0`, `exfat-fuse 1.3.0+git20220115-2` |
+| `faketime -f "2023-11-14 22:13:20"` on host tools | `mke2fs` (with `-U` and `-E hash_seed`): two runs identical; `mkfs.f2fs -U`: identical; `mkfs.exfat` (no serial option; the serial comes from the clock): identical; `mkfs.fat -i`: identical; `mkfs.fat` without `-i`: identical (the id comes from the clock); `dumpe2fs` shows `Filesystem created: Tue Nov 14 22:13:20 2023` |
+| Guest has no mkfs | the mkfs tools are dynamically linked and the initramfs holds only busybox: the host formats each 64 MiB disk, the guest mounts it (the brief's "mkfs inside the guest" was not done; formatting on the host is equivalent for these probes) |
+| Unclean quit | `quit` on the QEMU monitor (`-monitor unix:<sock>,server,nowait`) ends the guest at once with no flush. The probe wrote 3 blocks to ext4 with no `sync`, quit, and `fsck.ext4 -n` reported `clean, 11/16384 files, 9513/65536 blocks`, exactly the figures of a freshly formatted disk: the unsynced write never reached the image |
+| Host read-back | the guest disk is a plain raw file; after the guest exits, `e2fsck -n`, `fsck.f2fs` (on a copy; it has no dry-run switch and left the copy byte-identical), `fsck.fat -n`, `dump.exfat` and `debugfs` read it with no mount and no privileges |
+
+A guest that must be stopped uncleanly (a crash image for journal or roll-forward
+probes) is stopped with the monitor command `quit`. A build step reads the image back as above or with the Go
+readers.
+
+Reading these facts: the `/lib/modules/6.1.0-53-amd64/kernel/fs` listing in the probe
+output also shows `hfsplus`, `hfs`, `btrfs`, `xfs`, `jfs` and others as
+modules; only the four above were exercised.
+
+### QEMU images are not byte-reproducible
+
+The faketime result above holds for host-side `mkfs` only. An image a guest kernel
+has written depends on transaction timing (the number and order of journal and
+writeback commits under QEMU), as the populated HFS+ and APFS fixtures already
+showed (their determinism notes above). Regenerate such an image TOGETHER with its
+`expect.json` oracle, never one without the other, and have each test pin the image
+sha256 against the oracle first. The vfat disk's volume serial in the probe differed
+in every run (`0xeaeefad8`, `0x6af67b21`, `0x7beefb71`): the guest-side formatting
+in the probe used no fixed id and no faketime.
+
+### Unknown until the part's own probe
+
+Not measured here and not to be assumed (each gets its own probe in the named part,
+and the spec §18 "from memory" items stay marked until then):
+
+- [ ] ext4 `i_block` / extent tree residue after unlink (3C)
+- [ ] `exfat-fuse` FAT-chain residue after delete (3B); the kernel exfat driver's own
+      residue is also unmeasured
+- [ ] F2FS node-block survival after unlink, and `nodiscard` mount behaviour (3D)
+- [ ] jbd2 stale journal region contents (3G)
+- [ ] F2FS roll-forward node chain after an fsync'd write and an unclean quit (3H)
+- [ ] `sqlite3` WAL / rollback-journal leftovers (3J)
+- [ ] whether the guest clock holds a fixed time without the rewind loop for a longer run
+
 ## SQLite fixtures
 
 Committed under `internal/sqlitefile/testdata/` (plan 3I, Task 14), consumed by
