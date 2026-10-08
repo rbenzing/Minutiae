@@ -51,6 +51,9 @@ func (v *View) LookupRowid(ctx context.Context, root uint32, rowid int64) (row R
 		if n.bad > 0 {
 			w.damage("a page on the search path has cell pointers that cannot be followed")
 		}
+		if n.empty {
+			w.damage("a page on the search path is empty, which the engine treats as corrupt")
+		}
 		if !n.h.Type.interior() {
 			return w.lookupLeaf(n, rowid, kb)
 		}
@@ -296,6 +299,10 @@ func (w *walker) checkSibling(kb keyBounds, next bool) error {
 		}
 		if !found {
 			w.damage("an adjacent page cannot be used")
+			return nil
+		}
+		if cn.empty {
+			w.damage("an adjacent page is empty, which the engine treats as corrupt")
 			return nil
 		}
 		if !cn.h.Type.interior() {

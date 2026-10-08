@@ -21,6 +21,7 @@ type node struct {
 	ptrs  []CellPointer // the pointers that can be followed, in array order
 	depth int           // 1 for the root
 	bad   int           // pointers that cannot be followed
+	empty bool          // no cells below the root, or an interior root with none: the engine calls it corrupt
 
 	charged int64 // budget held for ptrs until walker.release
 }
@@ -200,6 +201,17 @@ func (w *walker) enter(pgno uint32, depth int) (n node, ok bool, err error) {
 		v.warn(WarnCellPointer, pgno, "%d cell pointers lie below the stored content start %d; the cells are read, as the engine reads them", k, h.ContentStart)
 	}
 	n = node{pgno: pgno, data: data, loc: loc, h: h, ptrs: set.Good, depth: depth, bad: len(set.Bad)}
+	if h.CellCount == 0 && pgno != 1 && (depth > 1 || h.Type.interior()) {
+		// The engine treats an empty page below the root, and an empty
+		// interior root, as corrupt: its rows and subtree would vanish
+		// silently, and a lookup through it must never be a clean absent.
+		n.empty = true
+		where := "that is an interior root"
+		if depth > 1 {
+			where = "below the root"
+		}
+		v.warn(WarnBTreeShape, pgno, "empty b-tree page %s: the engine treats it as corrupt; the rows it should hold are not delivered", where)
+	}
 	if w.checkOverlap {
 		if err := w.warnOverlap(n); err != nil {
 			return node{}, false, err
