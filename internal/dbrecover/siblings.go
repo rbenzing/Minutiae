@@ -36,6 +36,7 @@ var ErrSiblingSearch = errors.New("dbrecover: the search for a companion file fa
 // identity that was searched for, %q-quoted, so it is safe to print.
 type SiblingResult struct {
 	Status           SiblingStatus
+	Unused           string // found but not applied (D9): the reason
 	ArtifactID       string
 	Candidates       []string // ambiguous: every candidate, in manifest order
 	SearchedBy       string
@@ -51,6 +52,9 @@ type SiblingReport struct{ WAL, Journal SiblingResult }
 func (r SiblingResult) Text(role string) string {
 	switch r.Status {
 	case SiblingFound:
+		if r.Unused != "" {
+			return fmt.Sprintf("%s: artifact %s found, unused (%s) (found by %s)", role, r.ArtifactID, r.Unused, r.SearchedBy)
+		}
 		return fmt.Sprintf("%s: artifact %s (found by %s)", role, r.ArtifactID, r.SearchedBy)
 	case SiblingNone:
 		return fmt.Sprintf("%s: none found (searched by %s)", role, r.SearchedBy)

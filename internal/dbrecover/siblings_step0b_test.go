@@ -56,7 +56,7 @@ func TestSiblingExtractExactNameOnly(t *testing.T) {
 		db := fsArt("E1", kind, "IMG", 1, "/data/x.db", nil)
 		for _, bad := range []string{
 			"/data/x.db-wal ", " /data/x.db-wal", "/data/x.db-WAL", "/data/X.db-wal",
-			"/data/x.db-wal2", "/data/x.db-wal/", "data/x.db-wal", "/data/x.db-wal​",
+			"/data/x.db-wal2", "/data/x.db-wal/", "data/x.db-wal", "/data/x.db-wal" + string(rune(0x200b)),
 			"/data//x.db-wal", "/data/./x.db-wal", "/data/x.db‐wal", "/data/x.db-wal\n",
 		} {
 			man := []evidence.ManifestRecord{db, fsArt("E2", "extract", "IMG", 1, bad, nil)}

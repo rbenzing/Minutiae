@@ -1,6 +1,9 @@
 package dbrecover
 
-import "github.com/rbenzing/minutiae/internal/evidence"
+import (
+	"github.com/rbenzing/minutiae/internal/evidence"
+	"github.com/rbenzing/minutiae/internal/sqlitefile"
+)
 
 // SetCheckForTest replaces the checker run inside validateDBRow's panic guard
 // and returns the function that restores it. It exists only to let a test
@@ -24,4 +27,27 @@ func SetSiblingScanForTest(f func([]evidence.ManifestRecord, evidence.ManifestRe
 	old := siblingScan
 	siblingScan = f
 	return func() { siblingScan = old }
+}
+
+// SetAfterFlushHookForTest sets the function Run calls after its last Flush and
+// warnings, before the fresh hash of the inputs, and returns the restore function.
+func SetAfterFlushHookForTest(f func()) func() {
+	old := afterFlushHook
+	afterFlushHook = f
+	return func() { afterFlushHook = old }
+}
+
+// SetRowHookForTest sets a function that may change each recovered row before
+// it is mapped, and returns the restore function.
+func SetRowHookForTest(f func(sqlitefile.RecoveredRow) sqlitefile.RecoveredRow) func() {
+	old := rowHook
+	rowHook = f
+	return func() { rowHook = old }
+}
+
+// SetProgressEveryForTest sets how many rows lie between two Progress calls.
+func SetProgressEveryForTest(n int64) func() {
+	old := progressEvery
+	progressEvery = n
+	return func() { progressEvery = old }
 }
