@@ -310,10 +310,22 @@ func TestAbandonedParserCannotEmit(t *testing.T) {
 
 func TestAbandonmentStopsTheRun(t *testing.T) {
 	f := newRx(t, "one", "two", "three")
+	// The abandoned job is concluded by a goroutine the host stops waiting for after GracePeriod, so the run
+	// can return before the flush and abort have landed. The writer hook reports when Abort has returned.
+	aborted := make(chan struct{}, 1)
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
 	two := &rxParser{name: "two", n: 2, after: func(context.Context, *parse.Input, parse.Emitter) error { <-release; return nil }}
-	sum := f.run(f.host(shortTimeouts, wbp("one"), two, wbp("three")), artparse.Selection{})
+	sum := f.run(f.host(both(shortTimeouts, withWriter(func(w *rxWriter) {
+		w.aborted = func() { aborted <- struct{}{} }
+	})), wbp("one"), two, wbp("three")), artparse.Selection{})
+	select {
+	case <-aborted: // the one abandoned job concluded: its records and the ingest.error entry are stored
+	case <-t.Context().Done():
+		t.Fatal("the abandoned job was never concluded")
+	case <-time.After(2 * time.Minute): // safety net only: a regression fails instead of hanging
+		t.Fatal("the abandoned job was never concluded")
+	}
 	if sum.Stopped != "abandoned" || sum.Class() != artparse.ClassPartial || len(sum.Jobs) != 3 {
 		t.Fatalf("summary %+v class %v", sum, sum.Class())
 	}
