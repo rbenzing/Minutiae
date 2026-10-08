@@ -495,6 +495,7 @@ func printFull(w io.Writer, f records.Full, payload bool) error {
 	if f.SupersededBy != "" {
 		p("superseded by", "%s", printable(f.SupersededBy))
 	}
+	printProvenance(w, f.Provenance, f.Row)
 	if len(f.Times) > 0 {
 		fmt.Fprintln(w, "  times:")
 		for _, t := range namedTimes(f.Times) {
