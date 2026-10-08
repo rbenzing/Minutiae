@@ -19,8 +19,9 @@ go tool golangci-lint version   # pinned in go.mod as a tool; nothing to install
 ## 3. Definition of done (empirical)
 Run `go run ./tools/check` and observe `CHECK PASSED` in the output.
 It runs: `go mod tidy -diff`, `go vet`, `golangci-lint` (incl. gofumpt/goimports),
-`go build ./cmd/minutiae`, `CGO_ENABLED=0` cross-builds for linux/amd64 and
-darwin/arm64 (binaries discarded), `go test ./...` (with `-race` when cgo is available).
+`go build ./cmd/minutiae`, a `CGO_ENABLED=0` host build and `CGO_ENABLED=0` cross-builds for linux/amd64 and
+darwin/arm64 (binaries discarded), `go test ./...`.
+Two forms: FAST, `CGO_ENABLED=0 go run ./tools/check` (no `-race`; used for per-task commits; must print `CHECK PASSED`), and RACE, plain `go run ./tools/check` on a machine with a C toolchain (tests with `-race` and a 30 minute per-package timeout; REQUIRED before a plan merges to main). Both must pass where they apply.
 Never claim work is complete, fixed or passing without that output from the
 current code. Auto-fix formatting with `go tool golangci-lint fmt`.
 
@@ -149,6 +150,14 @@ Serial modem lines: on Linux/macOS the kernel may still pulse DTR/RTS during
 `open()` and drops them on close (HUPCL); userspace can only de-assert them
 right after open. Treat a serial open as able to reset DTR/RTS-wired targets.
 
+## 5a. cgo policy (user decision 2026-10-07)
+1. cgo is ALLOWED when a capability needs it and no pure-Go route works: decryption (sub-project 10), hooking into a device or host environment (OS or device services, drivers, vendor libraries), and native libraries that reveal artifacts no pure-Go reader can. The capability's spec names the C dependency, its version or pin, its licence, and why pure Go is not enough.
+2. Fenced: cgo code lives only in dedicated packages, in `//go:build cgo` files, each with a `!cgo` counterpart that compiles and returns an error wrapping `errors.ErrUnsupported` naming the missing capability. A capability is never silently skipped. `CGO_ENABLED=0` must always build and pass the tests on every OS.
+3. The forensic invariants still bind cgo code: bytes reach the case only through `evidence.Case.NewArtifact`/`Capture`; sources are read-only; outputs (for example decrypted data) are DERIVED artifacts with full provenance (method, library and version, where the key came from) and the original (the ciphertext) stays in the case; device writes and hooks follow the device-write rules (explicit permission, audited before the act).
+4. Hostile input: Go cannot recover a crash in C code, so a C library that reads evidence or device bytes must be fuzzed through its Go wrapper and contained so a C crash fails that one analysis closed (audited as `analysis.error`) instead of killing the process mid-write. The default is a helper subprocess; the capability's spec states the containment.
+5. Rule P4 (no non-Go source and no cgo in `internal/image`, `volume`, `filesys`, `records` and the parsers) STAYS. A parser that needs a C library gets it through a dedicated cgo package, behind an interface its spec defines. The architecture test gains an allow-list entry per cgo package when one is added (none exists yet).
+6. Builds: a pure-Go (`CGO_ENABLED=0`) static binary stays available on every OS and is the default release; a cgo-capable build is per OS, where a C toolchain exists. The release command sets `CGO_ENABLED` explicitly.
+
 ## 5. Architecture rule (enforced by `TestArchitectureDependencyRule`)
 - `internal/evidence` and `internal/version` import no other Minutiae package except `evidence → version`. `internal/evidence` also imports `golang.org/x/text` (NFKC, case folding and the diacritic rule of the full-text normalization, `ftsnorm.go`); its module version is a constant of `FTSNormVersion`, tied to `go.mod` by `TestXTextVersionMatchesGoMod`.
 - `internal/device` imports only `evidence`, `version`.
@@ -161,9 +170,11 @@ right after open. Treat a serial open as able to reset DTR/RTS-wired targets.
 - `internal/examine` is the only bridge between the parsers and the case: it imports `evidence`, `version`, `device`, `image`, `volume`, `filesys` and `filesys/detect`.
 - `internal/records` (the unified artifact database: record model, type registry, audited batch writer, ingest lifecycle, reader) imports only `evidence` and `version`; `internal/records/recordstest` (case and artifact fixtures, record generator, `NewV1Case`, the named tamper helpers) imports only `records` and `evidence`. Parsers (sub-project 4) will import `records`, never SQLite. `recordstest` is test-only: no non-`_test.go` file may import it, so it can never be linked into the binary (`TestTestOnlyPackagesAreImportedFromTestsOnly`, with a self-test that the rule flags a violation, `TestTestOnlyRuleFlagsNonTestImport`).
 - Single-writer rule (enforced by `TestOnlyRecordsPackageWritesRecordTables`): no package other than `internal/records` (and the schema code in `internal/evidence`) executes SQL that writes the record tables or `artifacts`; every record reaches `artifacts.db` through the audited `records.Writer`.
+- cgo packages follow the cgo policy (section 5a): dedicated packages, `//go:build cgo` with a `!cgo` fallback, an allow-list entry in the architecture test; none exists yet.
 - `internal/cli` may import anything.
 
 ## 6. Testing
+- Check modes: per-task commits use the FAST check (`CGO_ENABLED=0 go run ./tools/check`, no `-race`); the RACE check (plain `go run ./tools/check`, `-race`, 30 minute package timeout) is required before a plan merges to main (section 3).
 - TDD: write the failing test, see it fail, implement, see it pass.
 - Default tests never need hardware: use fakes (fake ADB server, in-memory serial, fake iOS).
 - Hardware tests use `//go:build hardware` and are run manually: `go test -tags hardware ./...`.
@@ -184,7 +195,10 @@ right after open. Treat a serial open as able to reset DTR/RTS-wired targets.
 
 ## 8. Release build
 ```bash
-go build -ldflags "-X github.com/rbenzing/minutiae/internal/version.Version=v1.0.0 -X github.com/rbenzing/minutiae/internal/version.Commit=$(git rev-parse --short HEAD)" -o bin/minutiae.exe ./cmd/minutiae
+# Default release: pure Go, static, no C dependency, any OS.
+CGO_ENABLED=0 go build -ldflags "-X github.com/rbenzing/minutiae/internal/version.Version=v1.0.0 -X github.com/rbenzing/minutiae/internal/version.Commit=$(git rev-parse --short HEAD)" -o bin/minutiae.exe ./cmd/minutiae
+# cgo-capable build (per OS, needs a C toolchain; only once a cgo capability exists, see section 5a).
+CGO_ENABLED=1 go build -ldflags "-X github.com/rbenzing/minutiae/internal/version.Version=v1.0.0 -X github.com/rbenzing/minutiae/internal/version.Commit=$(git rev-parse --short HEAD)" -o bin/minutiae-cgo.exe ./cmd/minutiae
 ```
 
 ## 9. Known limitations
