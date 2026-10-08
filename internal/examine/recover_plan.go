@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"path"
 	"slices"
 	"sort"
@@ -260,8 +261,8 @@ func (p *planner) enumerate() (targets []target, over int, err error) {
 		seen[k] = true
 		targets = append(targets, t)
 	}
-	var skips []PlanSkip // walk errors: entries that could not be listed (at most walkSkipCap)
-	moreSkips := 0
+	var skips []PlanSkip          // walk errors: entries that could not be listed (at most walkSkipCap)
+	moreSkips := map[string]int{} // further walk errors by reason
 	collect := func(root filesys.Entry, rootPath string) error {
 		return filesys.Walk(p.fsys, root, rootPath, func(wp string, we filesys.Entry, werr error) error {
 			if err := p.ctx.Err(); err != nil {
@@ -269,10 +270,10 @@ func (p *planner) enumerate() (targets []target, over int, err error) {
 			}
 			if werr != nil {
 				if len(skips) >= walkSkipCap {
-					moreSkips++
+					moreSkips[walkReason(werr)]++
 					return nil
 				}
-				skips = append(skips, PlanSkip{Path: wp, ID: we.ID, Reason: "corrupt", Detail: werr.Error()})
+				skips = append(skips, PlanSkip{Path: wp, ID: we.ID, Reason: walkReason(werr), Detail: werr.Error()})
 				return nil
 			}
 			if filesys.IsSnapshotsDir(we) {
@@ -360,11 +361,12 @@ func (p *planner) enumerate() (targets []target, over int, err error) {
 		p.plan.Items = append(p.plan.Items, RecoverItem{Path: sk.Path, ID: sk.ID, Skips: []PlanSkip{sk}})
 		p.skipped(sk.Reason)
 	}
-	if moreSkips > 0 {
+	for _, reason := range slices.Sorted(maps.Keys(moreSkips)) {
+		n := moreSkips[reason]
 		p.plan.Items = append(p.plan.Items, RecoverItem{Skips: []PlanSkip{{
-			Reason: "corrupt", Detail: fmt.Sprintf("%d further entries could not be listed; they are counted but not listed one by one", moreSkips),
+			Reason: reason, Detail: fmt.Sprintf("%d further entries could not be listed; they are counted but not listed one by one", n),
 		}}})
-		p.plan.SkippedBy["corrupt"] += moreSkips
+		p.plan.SkippedBy[reason] += n
 	}
 	return targets, over, nil
 }
@@ -760,6 +762,15 @@ var (
 	repl   = string(rune(0xFFFD))
 	nulStr = string(rune(0))
 )
+
+// walkReason names why a directory could not be listed: corruption of the structure, or any other
+// failure (an I/O error says nothing about the evidence and is never labelled corruption, C60).
+func walkReason(err error) string {
+	if errors.Is(err, filesys.ErrCorrupt) {
+		return "corrupt"
+	}
+	return "io-error"
+}
 
 // capExcluded copies the first maxExcludedListed excluded runs (the counters stay exact).
 func capExcluded(ex []evidence.Run) []evidence.Run {
