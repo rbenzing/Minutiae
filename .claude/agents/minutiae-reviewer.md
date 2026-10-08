@@ -19,3 +19,4 @@ report and a review package (commit list, stat, full diff).
   line, severity (critical / important / minor), the concrete failure scenario
   and a suggested fix. Reply with the verdicts (spec: PASS/FAIL, quality:
   APPROVED/CHANGES_REQUESTED) and the finding count.
+- Never run `go tool golangci-lint` directly: it holds a machine-wide lock and makes a queued check.sh fail. Lint runs only inside check.sh.
