@@ -107,3 +107,33 @@ func TestAsTypedNilUnderlyingEndsTheChain(t *testing.T) {
 		t.Error("a typed-nil filesystem found a capability")
 	}
 }
+
+type askingFS struct {
+	recFS
+	answer bool
+}
+
+func (a *askingFS) SupportsRecovery() bool { return a.answer }
+
+func TestSupportsRecovery(t *testing.T) {
+	tests := []struct {
+		name string
+		fs   filesys.FileSystem
+		want bool
+	}{
+		{"direct", &recFS{}, true},
+		{"behind a wrapper", &wrapFS{inner: &recFS{}}, true},
+		{"none", &baseFS{}, false},
+		{"wrapper of none", &wrapFS{inner: &baseFS{}}, false},
+		{"nil", nil, false},
+		{"self-report yes", &askingFS{answer: true}, true},
+		{"self-report no beats the Recoverable method", &askingFS{answer: false}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := filesys.SupportsRecovery(tc.fs); got != tc.want {
+				t.Errorf("SupportsRecovery = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

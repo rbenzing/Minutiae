@@ -61,3 +61,15 @@ func isNilFS(fsys FileSystem) bool {
 	}
 	return false
 }
+
+// SupportsRecovery reports whether fsys can describe where the content of a deleted entry may be: a
+// filesystem (or one it wraps) implements Recoverer. A wrapper that always has a Recoverable method but
+// forwards to something that may lack one (the panic-protecting wrapper of internal/examine) says so
+// with a SupportsRecovery() bool method, which wins. Callers use this, never a type assertion.
+func SupportsRecovery(fsys FileSystem) bool {
+	if s, ok := fsys.(interface{ SupportsRecovery() bool }); ok {
+		return s.SupportsRecovery()
+	}
+	_, ok := As[Recoverer](fsys)
+	return ok
+}

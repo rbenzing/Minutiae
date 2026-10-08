@@ -17,3 +17,10 @@ func WrapFS(name string, fsys filesys.FileSystem) (filesys.FileSystem, error) {
 
 // SetFreeBytes replaces how s asks for free disk space, to test the space check.
 func (s *Session) SetFreeBytes(f func(dir string) (int64, error)) { s.freeBytes = f }
+
+// SetRecoverCaps lowers the entry and plan-run caps of a recovery run and returns the restore function.
+func SetRecoverCaps(entries, runs int) (restore func()) {
+	e, r := recoverEntryCap, planRunCap
+	recoverEntryCap, planRunCap = entries, runs
+	return func() { recoverEntryCap, planRunCap = e, r }
+}
