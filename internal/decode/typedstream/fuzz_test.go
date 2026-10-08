@@ -117,10 +117,12 @@ func extractContract(t *testing.T, b []byte, call func(Budget) (string, bool, er
 		if r.err != nil && !typedExtractErr(r.err) {
 			t.Fatalf("untyped or internal error: %v", r.err)
 		}
-		// P38: "no string object" is a claim about a full scan window: the input must
-		// extend past the smallest header (14 bytes) plus MaxScan (P42).
-		if r.err == nil && len(b) < 14+MaxScan {
-			t.Fatalf("no-string claim on an input of %d bytes", len(b))
+		// P38/P42: "no string object" is a claim about a full scan window. The independent
+		// reader decides it exactly: the claim is made if and only if it sees the whole window
+		// and no marker.
+		o := oracleRead(b)
+		if claim := o.class == "" && !o.ok; (r.err == nil) != claim {
+			t.Fatalf("no-string claim = %v, the independent reader says %v (%+v)", r.err == nil, claim, o)
 		}
 	}
 	r2 := run()
@@ -130,7 +132,7 @@ func extractContract(t *testing.T, b []byte, call func(Budget) (string, bool, er
 	}
 }
 
-func FuzzExtractText(f *testing.F) {
+func FuzzTypedstream(f *testing.F) {
 	addSeeds(f)
 	f.Fuzz(func(t *testing.T, b []byte) {
 		if len(b) > fuzzMaxInput {
@@ -140,8 +142,8 @@ func FuzzExtractText(f *testing.F) {
 	})
 }
 
-// FuzzExtractTextNoRecover calls extractCore, so a panic is a failure, not an ErrInternal.
-func FuzzExtractTextNoRecover(f *testing.F) {
+// FuzzTypedstreamNoRecover calls extractCore, so a panic is a failure, not an ErrInternal.
+func FuzzTypedstreamNoRecover(f *testing.F) {
 	addSeeds(f)
 	f.Fuzz(func(t *testing.T, b []byte) {
 		if len(b) > fuzzMaxInput {

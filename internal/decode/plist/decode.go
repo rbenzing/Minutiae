@@ -41,7 +41,12 @@ const (
 // released by the host at the end of the job.
 //
 // A duplicate key in an XML dict keeps the last value (the library's behaviour, a known
-// property; detecting duplicates is a non-goal). NaN reals pass through.
+// property; detecting duplicates is a non-goal), but two <key> elements in a row, which would
+// drop the first key without a value, are ErrMalformed, as is any child element inside <key>
+// or <integer>. A binary set (tag 0xC) and the binary null and fill bytes are ErrMalformed: the
+// decoding library does not read them (Check still walks a set, bounding it, before the
+// library refuses it). A binary UID of 16 bytes with a non-zero high word, like a 16-byte
+// integer that does not fit 64 bits, is ErrUnsupported. NaN reals pass through.
 func Decode(b []byte, budget Budget) (v any, err error) {
 	err = guard(func() error {
 		var e error
@@ -81,8 +86,8 @@ func decodeCore(b []byte, budget Budget) (any, error) {
 	}()
 	in, norm := b, normalizer{}
 	if LooksLikeXML(b) {
-		if hasNegativeUID(b) {
-			return nil, malformed("negative CF$UID")
+		if err := checkXMLStructure(b); err != nil {
+			return nil, err
 		}
 		rewritten, base, found, ok := rewriteSurrogates(b)
 		if !ok {

@@ -330,7 +330,7 @@ func FuzzPrescanXMLNoRecover(f *testing.F) {
 	})
 }
 
-// decodeSeeds are the seeds of every Decode target; the first nine are the ones FuzzDecode
+// decodeSeeds are the seeds of every Decode target; the first nine are the ones FuzzPlist
 // has carried since Task 6.
 func decodeSeeds() [][]byte {
 	first := [][]byte{
@@ -430,7 +430,7 @@ func decodeContract(t *testing.T, b []byte, call func(Budget) (any, error)) {
 	}
 }
 
-func FuzzDecode(f *testing.F) {
+func FuzzPlist(f *testing.F) {
 	addSeeds(f, decodeSeeds())
 	f.Fuzz(func(t *testing.T, b []byte) {
 		if len(b) > fuzzMaxInput {
@@ -441,7 +441,7 @@ func FuzzDecode(f *testing.F) {
 	})
 }
 
-func FuzzDecodeNoRecover(f *testing.F) {
+func FuzzPlistNoRecover(f *testing.F) {
 	addSeeds(f, decodeSeeds())
 	f.Fuzz(func(t *testing.T, b []byte) {
 		if len(b) > fuzzMaxInput {

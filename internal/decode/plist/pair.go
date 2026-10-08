@@ -28,7 +28,7 @@ func (w *bplistWalker) normalizeBinary(i uint64, lib any) (any, error) {
 	off := w.uint(w.tableOff+i*w.offSize, w.offSize)
 	marker := w.b[off]
 	switch marker >> 4 {
-	case 0xA, 0xC:
+	case 0xA: // a set (0xC) never gets here: the decoding library refuses it
 		l, ok := lib.([]any)
 		count, hdr, err := w.header(off)
 		if err != nil {

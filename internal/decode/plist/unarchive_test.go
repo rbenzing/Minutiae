@@ -270,8 +270,8 @@ func TestUnarchiveNSDictionaryMismatch(t *testing.T) {
 		return archive(1, map[string]any{"$class": UID(2), "NS.keys": keys, "NS.objects": vals}, classRec("NSDictionary"), "k", "v", int64(5))
 	}
 	wantErr(t, dict([]any{UID(3)}, []any{UID(4), UID(4)}), ErrMalformed)
-	wantErr(t, dict([]any{UID(5)}, []any{UID(4)}), ErrMalformed) // key resolves to an integer
-	wantErr(t, dict([]any{UID(0)}, []any{UID(4)}), ErrMalformed) // key resolves to null
+	wantErr(t, dict([]any{UID(5)}, []any{UID(4)}), ErrUnsupported) // key resolves to an integer
+	wantErr(t, dict([]any{UID(0)}, []any{UID(4)}), ErrUnsupported) // key resolves to null
 	wantErr(t, archive(1, map[string]any{"$class": UID(2), "NS.objects": []any{}}, classRec("NSDictionary")), ErrMalformed)
 	wantErr(t, archive(1, map[string]any{"$class": UID(2)}, classRec("NSArray")), ErrMalformed)
 	wantErr(t, archive(1, map[string]any{"$class": UID(2), "NS.objects": "x"}, classRec("NSArray")), ErrMalformed)

@@ -64,8 +64,8 @@ func TestCocoaAutoUnitReturnedWhenOutOfRange(t *testing.T) {
 func TestCocoaAutoSentinels(t *testing.T) {
 	for _, v := range []float64{
 		0, math.Copysign(0, -1), -1, math.NaN(), math.Inf(1), math.Inf(-1),
-		math.MaxInt64, math.MinInt64,
-	} { // float64(MaxInt64) is 2^63, a sentinel of integer columns
+		math.MinInt64,
+	} { // -2^63 is the MinInt64 sentinel of integer columns; 2^63 does not fit int64: invalid
 		tm, unit, ok := CocoaAuto(v)
 		if ok || unit != UnitNone || !tm.IsZero() {
 			t.Errorf("CocoaAuto(%v) = %v %v %v, want zero, none, not ok", v, tm, unit, ok)
@@ -115,9 +115,10 @@ func TestUnitString(t *testing.T) {
 }
 
 // The int64-range guard of CocoaAuto: an integral float at or beyond 2^63 must be refused as
-// nanoseconds without a float-to-int conversion (2^63 itself is the MaxInt64 sentinel float).
+// nanoseconds without a float-to-int conversion (2^63 is the float of MaxInt64: it does not
+// fit int64, so it is invalid as nanoseconds, like ClassifyFloat).
 func TestCocoaAutoRefusesFloatsBeyondInt64(t *testing.T) {
-	for _, v := range []float64{1 << 64, -(1 << 64), 1e30, -1e30, math.Nextafter(1<<63, 1<<64)} {
+	for _, v := range []float64{1 << 63, 1 << 64, -(1 << 64), 1e30, -1e30, math.Nextafter(1<<63, 1<<64)} {
 		tm, unit, ok := CocoaAuto(v)
 		if ok || !tm.IsZero() || unit != UnitNanoseconds {
 			t.Errorf("CocoaAuto(%v) = %v %v %v, want zero, nanoseconds, not ok", v, tm, unit, ok)

@@ -92,7 +92,7 @@ func decodePlist(b []byte) (any, error) {
 func safeUnmarshal(b []byte, v any) (format int, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			format, err = plist.InvalidFormat, fmt.Errorf("mobilebackup2: malformed plist (%v)", r)
+			format, err = plist.InvalidFormat, fmt.Errorf("mb2: malformed plist (%v)", r)
 		}
 	}()
 	return unmarshal(b, v)
@@ -105,7 +105,7 @@ const MaxPlistFile = 1 << 20
 // into v. Input of more than MaxPlistFile bytes is refused. Anything the
 // decoder would parse as binary (a "bplist" prefix) must first pass the same
 // structural validation as a DeviceLink message; otherwise only an XML plist
-// is accepted. A decoder panic is returned as an error.
+// is accepted. A decoder panic is returned as an error. Every error carries the "mb2: " prefix.
 func UnmarshalPlist(b []byte, v any) error {
 	if len(b) > MaxPlistFile {
 		return fmt.Errorf("mb2: plist of %d bytes exceeds limit", len(b))
@@ -123,10 +123,13 @@ func UnmarshalPlist(b []byte, v any) error {
 		return errors.New("mb2: not a binary or XML plist")
 	}
 	format, err := safeUnmarshal(b, v)
-	if err == nil && format != plist.BinaryFormat && format != plist.XMLFormat {
-		err = errors.New("mb2: not a binary or XML plist")
+	if err != nil {
+		return fmt.Errorf("mb2: %w", err)
 	}
-	return err
+	if format != plist.BinaryFormat && format != plist.XMLFormat {
+		return errors.New("mb2: not a binary or XML plist")
+	}
+	return nil
 }
 
 // Name returns msg[0] as a string.

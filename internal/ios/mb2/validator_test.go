@@ -122,7 +122,7 @@ func TestUnmarshalPlistRefusesOddLeads(t *testing.T) {
 
 // The set tag 0xC passes the structural check (the walker bounds it like an array) and is
 // refused by the decoder, which has no set type. Over DeviceLink the refusal keeps the "mb2: "
-// prefix; UnmarshalPlist returns the decoder's own error, so only the refusal is pinned there.
+// prefix; UnmarshalPlist keeps it too (TestUnmarshalPlistErrorsKeepThePrefix).
 func TestMb2RefusesSetTag(t *testing.T) {
 	in := bplist([]byte{0xC0})
 	buf := bytes.NewBuffer(binary.BigEndian.AppendUint32(nil, uint32(len(in))))

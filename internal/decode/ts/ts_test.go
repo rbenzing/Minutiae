@@ -34,7 +34,7 @@ func convInt(k Kind, v int64) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-func TestSentinelsGiveNoTime(t *testing.T) {
+func TestSentinelTimesAreNoTime(t *testing.T) {
 	for _, k := range allKinds {
 		for _, raw := range []int64{0, -1, math.MaxInt64, math.MinInt64} {
 			tm, ok := convInt(k, raw)
@@ -72,7 +72,7 @@ func TestStatusString(t *testing.T) {
 	}
 }
 
-func TestKnownConversions(t *testing.T) {
+func TestTimestampConversions(t *testing.T) {
 	// 2023-11-14T22:13:20Z is Unix second 1700000000 (19675 days x 86400 + 80000 s).
 	nov := time.Date(2023, 11, 14, 22, 13, 20, 0, time.UTC)
 	// WebKit 13414166000000000 us = 13414166000 s; minus 11644473600 s = Unix 1769692400 =

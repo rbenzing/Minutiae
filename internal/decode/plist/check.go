@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"strconv"
 )
 
 const (
@@ -25,7 +26,11 @@ func limited(format string, a ...any) error {
 func guard(f func() error) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("%w: recovered panic: %v", ErrInternal, r)
+			msg := strconv.QuoteToASCII(fmt.Sprint(r))
+			if len(msg) > 200 {
+				msg = msg[:200]
+			}
+			err = fmt.Errorf("%w: recovered panic: %s", ErrInternal, msg)
 		}
 	}()
 	return f()
@@ -261,6 +266,13 @@ func (w *bplistWalker) visit(i uint64, depth int) (bplistNode, error) {
 			hi, lo := w.uint(off+1, 8), w.uint(off+9, 8)
 			if hi != 0 && (hi != math.MaxUint64 || lo>>63 == 0) {
 				return bplistNode{}, fmt.Errorf("%w: integer does not fit 64 bits", ErrUnsupported)
+			}
+		}
+		if marker == 0x8F {
+			// A 16-byte UID: the library keeps only the low word, so a non-zero high word
+			// would alias another object. UIDs of 9 to 15 bytes are refused by the library.
+			if w.uint(off+1, 8) != 0 {
+				return bplistNode{}, fmt.Errorf("%w: UID does not fit 64 bits", ErrUnsupported)
 			}
 		}
 	}

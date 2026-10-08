@@ -159,13 +159,25 @@ func rewriteSurrogates(b []byte) (out []byte, base rune, found, ok bool) {
 	return out, base, true, true
 }
 
-// hasNegativeUID reports whether the XML document b holds a CF$UID key whose next element is
-// an integer with a negative value. It reads encoding/xml tokens, so entities, comments,
-// CDATA, whitespace and attributes do not matter. The library would read such a UID as a huge
-// unsigned number. The document has passed the pre-scan, so its size, depth and element
-// count are bounded; a token error ends the scan (the library reports it).
-func hasNegativeUID(b []byte) bool {
+// checkXMLStructure reads the XML document b with encoding/xml tokens (entities, comments,
+// CDATA, whitespace and attributes do not matter) and refuses what the decoding library would
+// read as something else than the document says:
+//
+//   - a CF$UID key whose next element is an integer with a negative value (the library reads
+//     it as a huge unsigned UID);
+//   - any child element inside <key> or <integer> (the library skips the child and keeps the
+//     direct text, so the value is not what the document shows);
+//   - a <key> directly after a <key> in a <dict> (the library keeps only the second).
+//
+// The document has passed the pre-scan, so its size, depth and element count are bounded; a
+// token error ends the scan (the library reports it).
+func checkXMLStructure(b []byte) error {
+	type frame struct {
+		name       string
+		pendingKey bool // a dict frame: its last element was a <key>
+	}
 	d := xml.NewDecoder(bytes.NewReader(b))
+	var stack []frame
 	var text strings.Builder
 	const (
 		none = iota
@@ -177,14 +189,27 @@ func hasNegativeUID(b []byte) bool {
 	for {
 		tok, err := d.Token()
 		if err != nil {
-			return false
+			return nil
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
+			name := elementKind(t.Name)
+			if n := len(stack); n > 0 {
+				switch parent := &stack[n-1]; parent.name {
+				case "key", "integer":
+					return malformed("element inside <%s>", parent.name)
+				case "dict":
+					if name == "key" && parent.pendingKey {
+						return malformed("two <key> elements in a row")
+					}
+					parent.pendingKey = name == "key"
+				}
+			}
+			stack = append(stack, frame{name: name})
 			switch {
-			case t.Name == xml.Name{Space: t.Name.Space, Local: "key"}:
+			case name == "key":
 				state = inKey
-			case t.Name == xml.Name{Space: t.Name.Space, Local: "integer"} && state == afterUIDKey:
+			case name == "integer" && state == afterUIDKey:
 				state = inInteger
 			default:
 				state = none
@@ -195,12 +220,15 @@ func hasNegativeUID(b []byte) bool {
 				text.Write(t)
 			}
 		case xml.EndElement:
+			if n := len(stack); n > 0 {
+				stack = stack[:n-1]
+			}
 			switch {
-			case state == inKey && t.Name == xml.Name{Space: t.Name.Space, Local: "key"} && text.String() == "CF$UID":
+			case state == inKey && elementKind(t.Name) == "key" && text.String() == "CF$UID":
 				state = afterUIDKey
 			case state == inInteger:
 				if strings.HasPrefix(strings.TrimSpace(text.String()), "-") {
-					return true
+					return malformed("negative CF$UID")
 				}
 				state = none
 			default:
@@ -209,4 +237,16 @@ func hasNegativeUID(b []byte) bool {
 			text.Reset()
 		}
 	}
+}
+
+// elementKind returns "key", "integer" or "dict" for an element of that local name in any
+// namespace (the library reads elements by local name) and "" for every other element.
+func elementKind(n xml.Name) string {
+	n.Space = ""
+	for _, k := range [...]string{"key", "integer", "dict"} {
+		if n == (xml.Name{Local: k}) {
+			return k
+		}
+	}
+	return ""
 }

@@ -25,8 +25,9 @@ const (
 // into plain Go values: the object graph reachable from $top, with every UID reference
 // replaced by the object it names. Classes become values by name: NSArray, NSSet and the
 // ordered-set family a []any; NSDictionary a map[string]any (keys must resolve to strings,
-// a duplicate key keeps the last); NSString a string; NSData a []byte; NSDate a map holding
-// the raw Cocoa seconds (never a time.Time: converting a device number is decode/ts's job);
+// a duplicate key keeps the last and so loses an entry); NSString a string; NSData a
+// []byte; NSDate a map holding the raw Cocoa seconds (an integer above 2^53 rounds to a
+// float64; never a time.Time: converting a device number is decode/ts's job);
 // NSURL a map of base and relative; every other class a map holding "$class" and the fields.
 // $top with only "root" yields that object, otherwise a map of all its entries.
 //
@@ -50,8 +51,9 @@ func Unarchive(v any, budget Budget) (out any, err error) {
 }
 
 type memoEntry struct {
-	val   any
-	nodes uint64
+	val    any
+	nodes  uint64
+	height int // depth of the result below its own position
 }
 
 type unarchiver struct {
@@ -60,7 +62,11 @@ type unarchiver struct {
 	charged   int64
 	memo      map[uint64]memoEntry
 	resolving map[uint64]bool
+	peak      int // deepest output position reached since ref last reset it
 }
+
+// touch records that the output reaches depth d.
+func (u *unarchiver) touch(d int) { u.peak = max(u.peak, d) }
 
 func unarchiveCore(v any, budget Budget) (any, error) {
 	if budget == nil {
@@ -151,6 +157,11 @@ func (u *unarchiver) ref(idx uint64, depth int) (any, uint64, error) {
 		return nil, 0, malformed("reference to object %d, the archive has %d", idx, len(u.objs))
 	}
 	if m, ok := u.memo[idx]; ok {
+		// The result is shared, so it stands at this depth too: its height counts.
+		if depth+m.height > MaxUnarchiveDepth {
+			return nil, 0, limited("references nested deeper than %d", MaxUnarchiveDepth)
+		}
+		u.touch(depth + m.height)
 		return m.val, m.nodes, nil
 	}
 	if u.resolving[idx] {
@@ -158,11 +169,15 @@ func (u *unarchiver) ref(idx uint64, depth int) (any, uint64, error) {
 	}
 	u.resolving[idx] = true
 	defer delete(u.resolving, idx)
+	outer := u.peak
+	u.peak = depth
 	val, nodes, err := u.build(idx, depth)
 	if err != nil {
 		return nil, 0, err
 	}
-	u.memo[idx] = memoEntry{val, nodes}
+	height := u.peak - depth
+	u.peak = max(outer, u.peak)
+	u.memo[idx] = memoEntry{val, nodes, height}
 	return val, nodes, nil
 }
 
@@ -255,7 +270,7 @@ func (u *unarchiver) byClass(idx uint64, name string, f map[string]any, depth in
 		for i, k := range ks {
 			s, ok := k.(string)
 			if !ok {
-				return nil, 0, malformed("object %d: dictionary key %d is not a string", idx, i)
+				return nil, 0, fmt.Errorf("%w: object %d: dictionary key %d is not a string", ErrUnsupported, idx, i)
 			}
 			out[s] = vs[i]
 		}
@@ -361,6 +376,10 @@ func (u *unarchiver) value(e any, depth int) (any, uint64, error) {
 	case UID:
 		return u.ref(uint64(x), depth+1)
 	case []any:
+		if depth+1 > MaxUnarchiveDepth {
+			return nil, 0, limited("nested deeper than %d", MaxUnarchiveDepth)
+		}
+		u.touch(depth + 1)
 		out := make([]any, len(x))
 		nodes := uint64(1)
 		for i, el := range x {
@@ -378,6 +397,7 @@ func (u *unarchiver) value(e any, depth int) (any, uint64, error) {
 		if depth+1 > MaxUnarchiveDepth {
 			return nil, 0, limited("nested deeper than %d", MaxUnarchiveDepth)
 		}
+		u.touch(depth + 1)
 		out := make(map[string]any, len(x))
 		nodes := uint64(1)
 		for _, k := range slices.Sorted(maps.Keys(x)) {

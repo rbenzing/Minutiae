@@ -92,7 +92,11 @@ func FuzzTS(f *testing.F) {
 		if aok && unit == UnitNone {
 			t.Fatalf("CocoaAuto(%v) ok with no unit", v)
 		}
-		sentinel := v == 0 || v == -1 || v == math.MaxInt64 || v == math.MinInt64
+		ast, aunit := ClassifyAuto(v)
+		if aunit != unit || aok != (ast == StatusValid) {
+			t.Fatalf("CocoaAuto(%v) = %v %v but ClassifyAuto = %v %v", v, unit, aok, ast, aunit)
+		}
+		sentinel := v == 0 || v == -1 || v == math.MinInt64
 		switch {
 		case math.IsNaN(v) || math.IsInf(v, 0) || sentinel:
 			if unit != UnitNone || aok {
