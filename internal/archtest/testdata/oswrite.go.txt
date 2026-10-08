@@ -1,0 +1,45 @@
+package fixture
+
+import (
+	"io/ioutil" // want
+	"os"
+)
+
+// This file is data for TestOSWriteScannerSelfTest (a .txt file: it is neither
+// compiled nor scanned by the rule itself). Every line that must be flagged
+// carries the marker "want"; no other line may be flagged.
+
+func bad(p string) {
+	_ = os.Rename(p, p+".x")        // want
+	_ = os.Remove(p)                // want
+	_ = os.RemoveAll(p)             // want
+	_ = os.Mkdir(p, 0o700)          // want
+	_ = os.MkdirAll(p, 0o700)       // want
+	_ = os.MkdirTemp("", "x")       // want
+	_ = os.Truncate(p, 0)           // want
+	_ = os.Chmod(p, 0o600)          // want
+	_ = os.WriteFile(p, nil, 0o600) // want
+	_, _ = os.Create(p)             // want
+	_, _ = os.OpenFile(p, 0, 0)     // want
+	_, _ = os.CreateTemp("", "x")   // want
+	_ = os.Symlink(p, p+".l")       // want
+	f := os.WriteFile               // want
+	_ = f
+}
+
+func good(p string) {
+	f, err := os.Open(p)
+	if err != nil && !os.IsNotExist(err) {
+		return
+	}
+	defer f.Close()
+	var _ *os.File
+	var _ os.FileInfo
+	fi, _ := os.Stat(p)
+	_ = os.SameFile(fi, fi)
+	_ = os.ErrNotExist
+	// os.Remove(p) in a comment is not a call
+	_ = "os.Remove"
+	var os2 struct{ Remove func() }
+	os2.Remove()
+}

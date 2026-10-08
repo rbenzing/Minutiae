@@ -1,0 +1,41 @@
+package fixture
+
+import "github.com/rbenzing/minutiae/internal/evidence"
+
+// This file is data for TestRecoveredKindsScannerSelfTest (a .txt file: it is
+// neither compiled nor scanned by the rule itself). Every line that must be
+// flagged carries the marker "want"; no other line may be flagged.
+
+func build() {
+	_ = evidence.Source{Kind: evidence.KindRecover} // want
+	_ = evidence.Source{Kind: evidence.KindCarve}   // want
+	_ = evidence.Source{Kind: evidence.KindSlack}   // want
+	_ = evidence.Source{Kind: evidence.KindJournal} // want
+	_ = evidence.Source{Kind: evidence.KindReport}  // want
+	_ = evidence.Source{Kind: "recover"}            // want
+	_ = evidence.Source{Kind: "carve"}              // want
+	_ = evidence.Source{Kind: "slack"}              // want
+	_ = evidence.Source{Kind: "journal"}            // want
+	_ = evidence.Source{Kind: "report"}             // want
+	_ = evidence.Source{Kind: (evidence.KindCarve)} // want
+	_ = evidence.Source{Kind: `recover`}            // want
+
+	var s evidence.Source
+	s.Kind = evidence.KindRecover // want
+	s.Kind = "carve"              // want
+	other.Kind = KindJournal      // want
+	a, s.Kind = 1, "slack"        // want
+
+	// Harmless: other kinds, a map key named like a kind, a read, a comment.
+	_ = evidence.Source{Kind: "file"}
+	_ = evidence.Source{Kind: evidence.KindExtract}
+	_ = map[string]int{"recover": 1, "carve": 2}
+	_ = map[string]evidence.Source{"recover": {Kind: "file"}}
+	_ = evidence.Source{Remote: "recover"}
+	if s.Kind == evidence.KindRecover {
+		s.Kind = "extract"
+	}
+	// Kind: "recover" in a comment
+	label := "slack"
+	_ = label
+}

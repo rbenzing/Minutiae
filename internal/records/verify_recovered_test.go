@@ -87,7 +87,7 @@ func TestVerifyCleanRecoveredRecords(t *testing.T) {
 	if _, err := w.End(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if rep := mustVerify(t, c); !rep.OK() {
+	if rep := mustVerify(t, c); len(rep.Problems) != 0 {
 		t.Fatalf("problems: %q", rep.Problems)
 	}
 }
