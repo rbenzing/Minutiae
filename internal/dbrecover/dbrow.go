@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strconv"
+	"strings"
 
 	"github.com/rbenzing/minutiae/internal/records"
 )
@@ -21,6 +23,14 @@ const (
 	maxNameBytes = 4096
 	maxDepth     = 8
 	maxNodes     = 1 << 16
+)
+
+// The closed value sets of the payload. The type package may not import
+// sqlitefile, so these are literals; TestValidatorListsMatchSQLiteFile ties
+// them to sqlitefile's constants in both directions.
+var (
+	tableBases = []string{"schema", "fit", "guess", "none"}
+	relations  = []string{"absent-from-live", "superseded-version", "uncommitted", "unknown"}
 )
 
 func init() {
@@ -169,7 +179,55 @@ func checkField(key string, kind fieldKind, v any) error {
 	return nil
 }
 
-func validateColumn(c any, idx int) error {
+// checkTypedValue checks that a column's value agrees with its declared type.
+// A real column carries its IEEE-754 bits in float_bits (16 lower-case hex
+// digits, authoritative: NaN payloads and infinities included) and a value, if
+// any, that is exactly strconv.FormatFloat of those bits.
+func checkTypedValue(m map[string]any, idx int, absent bool) error {
+	typ, _ := m["type"].(string)
+	fb, hasBits := m["float_bits"]
+	if hasBits && typ != "real" {
+		return bad("column %d: \"float_bits\" belongs to real columns only", idx)
+	}
+	v, hasV := m["value"]
+	switch typ {
+	case "integer":
+		if _, isInt := asInt(v); hasV && !isInt {
+			return bad("column %d: an integer column's value must be an integer", idx)
+		}
+	case "text":
+		if s, isStr := v.(string); hasV && (!isStr || strings.ContainsRune(s, 0)) {
+			return bad("column %d: a text column's value must be a string without NUL", idx)
+		}
+	case "real":
+		if _, has := m["value_b64"]; has {
+			return bad("column %d: a real column has no value_b64", idx)
+		}
+		if !hasBits {
+			if absent && !hasV {
+				return nil
+			}
+			return bad("column %d: a real column needs \"float_bits\"", idx)
+		}
+		hex, isStr := fb.(string)
+		if !isStr || len(hex) != 16 || strings.ToLower(hex) != hex {
+			return bad("column %d: \"float_bits\" must be 16 lower-case hex digits", idx)
+		}
+		bits, err := strconv.ParseUint(hex, 16, 64)
+		if err != nil {
+			return bad("column %d: \"float_bits\" must be 16 lower-case hex digits", idx)
+		}
+		if hasV {
+			s, isStr := v.(string)
+			if !isStr || s != strconv.FormatFloat(math.Float64frombits(bits), 'g', -1, 64) {
+				return bad("column %d: a real column's value must be the string rendering of its float_bits", idx)
+			}
+		}
+	}
+	return nil
+}
+
+func validateColumn(c any, idx int, prev *int64) error {
 	m, ok := c.(map[string]any)
 	if !ok {
 		return bad("column %d is not an object", idx)
@@ -179,9 +237,14 @@ func validateColumn(c any, idx int) error {
 			return bad("column %d has the unknown key %q", idx, clip(k))
 		}
 	}
-	if n, ok := asInt(m["i"]); !ok || n < 0 {
-		return bad("column %d: \"i\" must be an integer >= 0", idx)
+	n, ok := asInt(m["i"])
+	if !ok || n < 0 || n >= maxColumns {
+		return bad("column %d: \"i\" must be an integer in 0..%d", idx, maxColumns-1)
 	}
+	if n <= *prev {
+		return bad("column %d: \"i\" must be greater than the previous column's", idx)
+	}
+	*prev = n
 	if err := oneOf(m, "type", "null", "integer", "real", "text", "blob"); err != nil {
 		return fmt.Errorf("column %d: %w", idx, err)
 	}
@@ -209,8 +272,12 @@ func validateColumn(c any, idx int) error {
 	unread, _ := m["unread"].(bool)
 	_, hasV := m["value"]
 	_, hasB := m["value_b64"]
-	if m["type"] != "null" && !hasV && !hasB && !omitted && !unread {
-		return bad("column %d: a %s column needs a value, value_b64, omitted or unread", idx, m["type"])
+	_, hasBits := m["float_bits"]
+	if err := checkTypedValue(m, idx, omitted || unread); err != nil {
+		return err
+	}
+	if m["type"] != "null" && !hasV && !hasB && !hasBits && !omitted && !unread {
+		return bad("column %d: a %s column needs a value, value_b64, float_bits, omitted or unread", idx, m["type"])
 	}
 	return nil
 }
@@ -224,6 +291,14 @@ func validateDBRow(payload map[string]any) (err error) {
 			err = bad("validator failed on a hostile payload: %v", r)
 		}
 	}()
+	return check(payload)
+}
+
+// check is the validator body; a variable only so export_test.go can make it
+// panic and exercise the recover guard above.
+var check = checkPayload
+
+func checkPayload(payload map[string]any) error {
 	if payload == nil {
 		return bad("payload is nil")
 	}
@@ -232,8 +307,8 @@ func validateDBRow(payload map[string]any) (err error) {
 		allowed []string
 	}{
 		{"entry_kind", []string{"table", "index"}},
-		{"table_basis", []string{"schema", "fit", "guess", "none"}},
-		{"relation", []string{"absent-from-live", "superseded-version", "uncommitted", "unknown"}},
+		{"table_basis", tableBases},
+		{"relation", relations},
 		{"file", []string{"db", "wal", "journal"}},
 	} {
 		if err := oneOf(payload, e.key, e.allowed...); err != nil {
@@ -290,8 +365,8 @@ func validateDBRow(payload map[string]any) (err error) {
 			}
 		}
 	}
-	if _, ok := payload["cell"]; !ok && !hasCarved {
-		return bad("\"cell\" may be absent only when \"carved\" is present")
+	if _, hasCell := payload["cell"]; hasCell == hasCarved {
+		return bad("exactly one of \"cell\" and \"carved\" must be present")
 	}
 	cols, ok := payload["columns"].([]any)
 	if !ok {
@@ -300,8 +375,9 @@ func validateDBRow(payload map[string]any) (err error) {
 	if len(cols) > maxColumns {
 		return bad("%d columns exceed the limit of %d", len(cols), maxColumns)
 	}
+	prev := int64(-1)
 	for i, c := range cols {
-		if err := validateColumn(c, i); err != nil {
+		if err := validateColumn(c, i, &prev); err != nil {
 			return err
 		}
 	}

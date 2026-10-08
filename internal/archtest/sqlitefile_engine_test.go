@@ -13,7 +13,7 @@ import (
 // the reader reads evidence bytes itself and never links a driver.
 var sqliteFilePackages = []string{"internal/sqlitefile", "internal/sqlitefile/sqlitetest", "internal/dbrecover"}
 
-// engineImportreports whether an import path is a SQL engine or the
+// engineImport reports whether an import path is a SQL engine or the
 // database/sql layer (modernc.org/* drivers, database/sql and its driver
 // sub-package).
 func engineImport(path string) bool {

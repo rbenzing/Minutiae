@@ -165,3 +165,24 @@ func FuzzValidateDBRow(f *testing.F) {
 		_ = validateDBRow(p)
 	})
 }
+
+// FuzzValidateDBRowJSON explores whole payload shapes: the input is decoded as
+// JSON (numbers kept exact) and validated; the validator must never panic.
+func FuzzValidateDBRowJSON(f *testing.F) {
+	for _, p := range []map[string]any{validPayload(), realPayload(0x7ff8_0000_dead_beef)} {
+		b, err := json.Marshal(p)
+		if err != nil {
+			f.Fatal(err)
+		}
+		f.Add(string(b))
+	}
+	f.Add(`{"entry_kind":"index","columns":[{"i":0,"type":"real","float_bits":"zz"}]}`)
+	f.Fuzz(func(_ *testing.T, in string) {
+		dec := json.NewDecoder(strings.NewReader(in))
+		dec.UseNumber()
+		var p map[string]any
+		if dec.Decode(&p) == nil {
+			_ = validateDBRow(p)
+		}
+	})
+}
