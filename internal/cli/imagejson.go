@@ -229,3 +229,103 @@ func newJSONSummary(s examine.Summary) jsonSummary {
 	}
 	return out
 }
+
+// jsonRecover is the JSON of a recover run (strings are the raw ones; artifacts are manifest records).
+type jsonRecover struct {
+	AnalysisID   string                    `json:"analysis_id"`
+	Considered   int                       `json:"considered"`
+	Candidates   int                       `json:"candidates"`
+	Recovered    int                       `json:"recovered"`
+	Partial      int                       `json:"partial"`
+	Uniform      int                       `json:"uniform"`
+	Overlap      int                       `json:"overlap"`
+	SkippedBy    map[string]int            `json:"skipped_by"`
+	LimitReached string                    `json:"limit_reached"`
+	Artifacts    []evidence.ManifestRecord `json:"artifacts"`
+}
+
+func newJSONRecover(s examine.RecoverSummary) jsonRecover {
+	out := jsonRecover{
+		AnalysisID: s.AnalysisID, Considered: s.Considered, Candidates: s.Candidates, Recovered: s.Recovered, Partial: s.Partial,
+		Uniform: s.Uniform, Overlap: s.Overlap, SkippedBy: s.SkippedBy, LimitReached: s.LimitReached, Artifacts: s.Artifacts,
+	}
+	if out.SkippedBy == nil {
+		out.SkippedBy = map[string]int{}
+	}
+	if out.Artifacts == nil {
+		out.Artifacts = []evidence.ManifestRecord{}
+	}
+	return out
+}
+
+type jsonRecoverCandidate struct {
+	Method       string                `json:"method"`
+	Confidence   int                   `json:"confidence"`
+	Band         string                `json:"band"`
+	Size         int64                 `json:"size"`
+	DeclaredSize int64                 `json:"declared_size"`
+	Runs         []jsonRun             `json:"runs"`
+	Excluded     []jsonRun             `json:"excluded"`
+	Alloc        evidence.AllocSummary `json:"alloc"`
+	Basis        []string              `json:"basis"`
+	Assumptions  []string              `json:"assumptions"`
+	Content      string                `json:"content"`
+	Encrypted    bool                  `json:"encrypted"`
+	Incomplete   string                `json:"incomplete,omitempty"`
+	WouldWrite   bool                  `json:"would_write"`
+	Skip         string                `json:"skip,omitempty"`
+	SkipDetail   string                `json:"skip_detail,omitempty"`
+}
+
+type jsonRecoverSkip struct {
+	Path   string `json:"path"`
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
+	Detail string `json:"detail"`
+}
+
+type jsonRecoverItem struct {
+	Path       string                 `json:"path"`
+	ID         string                 `json:"id"`
+	Type       string                 `json:"type"`
+	Name       string                 `json:"name"`
+	Candidates []jsonRecoverCandidate `json:"candidates"`
+	Skips      []jsonRecoverSkip      `json:"skips"`
+}
+
+type jsonRecoverList struct {
+	Considered   int               `json:"considered"`
+	Items        []jsonRecoverItem `json:"items"`
+	SkippedBy    map[string]int    `json:"skipped_by"`
+	LimitReached string            `json:"limit_reached"`
+}
+
+func jsonRuns(rs []evidence.Run) []jsonRun {
+	out := make([]jsonRun, len(rs))
+	for i, r := range rs {
+		out[i] = jsonRun{Offset: r.Offset, Length: r.Length}
+	}
+	return out
+}
+
+func newJSONRecoverList(p *examine.RecoverPlan) jsonRecoverList {
+	out := jsonRecoverList{Considered: p.Considered, Items: []jsonRecoverItem{}, SkippedBy: p.SkippedBy, LimitReached: p.LimitReached}
+	if out.SkippedBy == nil {
+		out.SkippedBy = map[string]int{}
+	}
+	for _, it := range p.Items {
+		ji := jsonRecoverItem{Path: it.Path, ID: it.ID, Type: it.Type.String(), Name: it.Name, Candidates: []jsonRecoverCandidate{}, Skips: []jsonRecoverSkip{}}
+		for _, c := range it.Candidates {
+			ji.Candidates = append(ji.Candidates, jsonRecoverCandidate{
+				Method: c.Method, Confidence: c.Confidence, Band: c.Band, Size: c.Size, DeclaredSize: c.DeclaredSize,
+				Runs: jsonRuns(c.Runs), Excluded: jsonRuns(c.Excluded), Alloc: c.Alloc, Basis: nonNil(c.Basis), Assumptions: nonNil(c.Assumptions),
+				Content: c.Content, Encrypted: c.Encrypted, Incomplete: c.PartialWhy(), WouldWrite: c.Skip == "", Skip: c.Skip, SkipDetail: c.SkipDetail(),
+			})
+		}
+		for _, sk := range it.Skips {
+			ji.Skips = append(ji.Skips, jsonRecoverSkip{Path: sk.Path, ID: sk.ID, Reason: sk.Reason, Detail: sk.Detail})
+		}
+		out.Items = append(out.Items, ji)
+	}
+	return out
+}

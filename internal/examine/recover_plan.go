@@ -776,3 +776,14 @@ func walkReason(err error) string {
 func capExcluded(ex []evidence.Run) []evidence.Run {
 	return slices.Clone(ex[:min(len(ex), maxExcludedListed)])
 }
+
+// SkipDetail is the human text behind Skip ("" when the candidate will be written).
+func (c PlannedCandidate) SkipDetail() string { return c.skipDetail }
+
+// PartialWhy is why the artifact will be flagged incomplete ("" when the whole map is captured).
+func (c PlannedCandidate) PartialWhy() string { return c.errText }
+
+// Counters returns the candidates, uniform and overlapping candidates the plan counted.
+func (p *RecoverPlan) Counters() (candidates, uniform, overlap int) {
+	return p.candidates, p.uniform, p.overlap
+}
