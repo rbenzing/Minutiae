@@ -334,11 +334,11 @@ func fuzzRun(t testing.TB, db, wal, journal []byte, mode uint8) (scanned int) {
 			for id := int64(1); id <= fuzzGetRows; id++ {
 				r, ok, gerr := tb.Get(ctx, id)
 				fuzzTyped(t, fmt.Sprintf("Get %s %d", n, id), gerr)
-				_, scanned := sigs[id]
-				if scanned && gerr == nil && !ok {
+				_, seen := sigs[id]
+				if seen && gerr == nil && !ok {
 					t.Errorf("%s: Get(%d) answers not found for a row the scan delivered", n, id)
 				}
-				if scanned && cleanScan && gerr != nil {
+				if seen && cleanScan && gerr != nil {
 					t.Errorf("%s: Get(%d) failed after a clean scan: %v", n, id, gerr)
 				}
 				if gerr != nil || !ok {
@@ -374,30 +374,32 @@ func fuzzRun(t testing.TB, db, wal, journal []byte, mode uint8) (scanned int) {
 	}
 
 	if mode&1 != 0 {
-		fuzzHistory(ctx, t, d, db, wal, journal, opened)
+		_ = fuzzHistory(ctx, t, d, db, wal, journal, opened, sqlitefile.Options{})
 	}
 	return scanned
 }
 
 // fuzzHistory pushes up to fuzzHistoryRows history rows of a second reader
 // through FromRecovered.
-func fuzzHistory(ctx context.Context, t testing.TB, d *sqlitedb.DB, db, wal, journal []byte, opened map[string]*sqlitedb.Table) {
+// fuzzHistory returns the error of the history walk itself (nil when an earlier
+// stage ended it).
+func fuzzHistory(ctx context.Context, t testing.TB, d *sqlitedb.DB, db, wal, journal []byte, opened map[string]*sqlitedb.Table, opts sqlitefile.Options) error {
 	t.Helper()
-	lib, err := sqlitefile.Open(bytes.NewReader(db), int64(len(db)), sqlitefile.Options{})
+	lib, err := sqlitefile.Open(bytes.NewReader(db), int64(len(db)), opts)
 	if err != nil {
 		libTyped(t, "history Open", err)
-		return
+		return nil
 	}
 	if wal != nil {
 		if _, err := lib.AttachWAL(bytes.NewReader(wal), int64(len(wal))); err != nil {
 			libTyped(t, "history AttachWAL", err)
-			return
+			return nil
 		}
 	}
 	if journal != nil {
 		if _, err := lib.AttachJournal(bytes.NewReader(journal), int64(len(journal))); err != nil {
 			libTyped(t, "history AttachJournal", err)
-			return
+			return nil
 		}
 	}
 	h := lib.History()
@@ -430,6 +432,7 @@ func fuzzHistory(ctx context.Context, t testing.TB, d *sqlitedb.DB, db, wal, jou
 		return n < fuzzHistoryRows
 	})
 	libTyped(t, "History Rows", herr)
+	return herr
 }
 
 // libTyped fails on a second-reader (library) error that is not one of the
@@ -500,5 +503,83 @@ func TestFuzzSeedsOpenAndScan(t *testing.T) {
 	}
 	if valid < 12 {
 		t.Errorf("only %d valid seeds", valid)
+	}
+}
+
+// recorder is a testing.TB that records failures instead of failing.
+type recorder struct {
+	testing.TB
+	failures []string
+}
+
+func (r *recorder) Helper() {}
+func (r *recorder) Errorf(format string, args ...any) {
+	r.failures = append(r.failures, fmt.Sprintf(format, args...))
+}
+
+// TestLibTyped pins the oracle of the second (History) reader: a typed error
+// passes, an untyped one and ErrInternal fail.
+func TestLibTyped(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		fail bool
+	}{
+		{"nil", nil, false},
+		{"library-limit", fmt.Errorf("x: %w", sqlitefile.ErrLimit), false},
+		{"library-page-unavailable", fmt.Errorf("x: %w", sqlitefile.ErrPageUnavailable), false},
+		{"decoder-corrupt", fmt.Errorf("x: %w", sqlitedb.ErrCorrupt), false},
+		{"budget", fmt.Errorf("x: %w", parse.ErrBudget), false},
+		{"untyped", errors.New("boom"), true},
+		{"library-internal", fmt.Errorf("x: %w", sqlitefile.ErrInternal), true},
+		{"decoder-internal", fmt.Errorf("x: %w", sqlitedb.ErrInternal), true},
+		{"context", context.Canceled, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := &recorder{TB: t}
+			libTyped(r, "what", c.err)
+			if failed := len(r.failures) > 0; failed != c.fail {
+				t.Errorf("failed = %v (%v), want %v", failed, r.failures, c.fail)
+			}
+		})
+	}
+}
+
+// failAfter is a library budget that refuses every request after n have been
+// granted.
+type failAfter struct{ n, seen int }
+
+func (b *failAfter) Alloc(int64) error {
+	b.seen++
+	if b.seen > b.n {
+		return fmt.Errorf("%w: refused request %d", parse.ErrBudget, b.seen)
+	}
+	return nil
+}
+func (b *failAfter) Free(int64) {}
+
+// TestFuzzHistoryRowsTypedError: a History reader whose budget runs out in the
+// walk itself returns a typed error from Rows, and the oracle accepts it. A
+// Rows error that is not typed would be recorded as a failure.
+func TestFuzzHistoryRowsTypedError(t *testing.T) {
+	ws := buildWAL(t, true)
+	d := openBytes(t, ws.db, ws.wal, nil, bigBudget())
+	walked := 0
+	for n := 0; n < 400; n++ {
+		r := &recorder{TB: t}
+		err := fuzzHistory(t.Context(), r, d, ws.db, ws.wal, nil, map[string]*sqlitedb.Table{}, sqlitefile.Options{Budget: &failAfter{n: n}})
+		if len(r.failures) > 0 {
+			t.Fatalf("after %d requests: %v", n, r.failures)
+		}
+		if err != nil {
+			if !errors.Is(err, parse.ErrBudget) && !errors.Is(err, sqlitefile.ErrBudget) {
+				t.Fatalf("after %d requests: %v", n, err)
+			}
+			walked++
+		}
+	}
+	if walked == 0 {
+		t.Error("no budget made the History walk itself fail")
 	}
 }
