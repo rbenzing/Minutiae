@@ -70,7 +70,16 @@ func (c *Case) DerivedRuns(rec ManifestRecord, byID map[string]ManifestRecord) (
 		return nil, fmt.Errorf("runs artifact %q: %w", sc.ID, err)
 	}
 	defer func() { _ = f.Close() }()
-	runs, err := readRunLines(f)
+	var runs []Run
+	if rec.Source.Kind == "unallocated" {
+		// the sidecar of an unallocated export is its own run map, not a list of Run
+		var m []UnallocRun
+		if m, err = ReadUnallocRunMap(f); err == nil {
+			runs = UnallocRunsAsRuns(m)
+		}
+	} else {
+		runs, err = readRunLines(f)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("runs artifact %q: %w", sc.ID, err)
 	}
