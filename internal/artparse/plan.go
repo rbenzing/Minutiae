@@ -124,11 +124,12 @@ func (h *Host) prepareJob(ctx context.Context, snap *Snapshot, j Job, parseID st
 	}
 	b, err := h.openBundle(ctx, snap, j, parseID)
 	if err != nil {
-		if cerr := ctx.Err(); cerr != nil {
-			return prepared{}, cerr
-		}
+		// an integrity finding is never dropped for a cancel that happens at the same moment
 		if errors.Is(err, evidence.ErrIntegrity) {
 			return prepared{status: StatusRefused, reason: "integrity: " + cleanAuditText(h.caseRelative(err.Error()), maxReason), integrity: true}, nil
+		}
+		if cerr := ctx.Err(); cerr != nil {
+			return prepared{}, cerr
 		}
 		return prepared{}, err
 	}

@@ -569,28 +569,65 @@ func (r *run) fill(st *jobState, res records.IngestResult) {
 }
 
 // abortJob concludes a failed job: Flush (unless the inputs changed: those records may describe other
-// bytes) then Abort, both on a context that outlives a cancelled run (A8). A failed Abort is a
-// run-level error: the writer released the live-ingest slot, the unconcluded ingest is recovered by
-// the next Start.
+// bytes) then Abort. A failed Abort is a run-level error: the writer released the live-ingest slot, the
+// unconcluded ingest is recovered by the next Start.
+//
+// The context: the call at the end of parseJob passes its own detached, bounded context; the other
+// callers pass the host context, which is harmless there (nothing is buffered at those points and Flush
+// is skipped for integrity) because Writer.Abort detaches itself. Flush is the only call that does not.
+//
+// When a writer call is stuck (the job is already abandoned), a stuck call may hold the writer's lock:
+// Flush and Abort then wait at most GracePeriod and the job is abandoned with that reason, never an
+// unbounded wait. The goroutine that is left waiting ends when the stuck call does.
 func (r *run) abortJob(ctx context.Context, w ingestWriter, st *jobState, outcome, reason string, cause error, em *emitter) error {
 	actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), concludeTimeout)
 	defer cancel()
-	if !st.res.Integrity {
-		if ferr := w.Flush(actx); ferr != nil {
-			reason += "; flushing the accepted records failed: " + cleanAuditText(ferr.Error(), 256)
-		}
+	type concluded struct {
+		flushErr, abortErr error
+		res                records.IngestResult
 	}
-	res, aerr := w.Abort(actx, cause)
-	if aerr != nil {
+	flush := !st.res.Integrity
+	ch := make(chan concluded, 1)
+	go func() {
+		var c concluded
+		if flush {
+			c.flushErr = w.Flush(actx)
+		}
+		c.res, c.abortErr = w.Abort(actx, cause)
+		ch <- c
+	}()
+	var c concluded
+	if st.res.Abandoned {
+		timer := time.NewTimer(r.h.limits.GracePeriod)
+		defer timer.Stop()
+		select {
+		case c = <-ch:
+		case <-timer.C:
+			st.res.Abandoned = true
+			r.sum.Stopped = StoppedAbandoned
+			if em != nil {
+				acc, rej, warn := em.counts()
+				st.res.Records, st.res.Rejected, st.res.Warnings = int64(acc), rej, warn
+			}
+			st.fail(outcome, reason+"; concluding the ingest did not finish within the grace period (a writer call is stuck)", cause)
+			return nil
+		}
+	} else {
+		c = <-ch
+	}
+	if c.flushErr != nil {
+		reason += "; flushing the accepted records failed: " + cleanAuditText(c.flushErr.Error(), 256)
+	}
+	if c.abortErr != nil {
 		if em != nil {
 			acc, rej, warn := em.counts()
 			st.res.Records, st.res.Rejected, st.res.Warnings = int64(acc), rej, warn
 		}
 		st.fail(outcome, reason, cause)
 		r.sum.Stopped = StoppedAbortFailure
-		return fmt.Errorf("concluding the ingest of job %d after %q failed: %w", st.res.Job, reason, aerr)
+		return fmt.Errorf("concluding the ingest of job %d after %q failed: %w", st.res.Job, reason, c.abortErr)
 	}
-	r.fill(st, res)
+	r.fill(st, c.res)
 	st.fail(outcome, reason, cause)
 	return nil
 }
