@@ -37,7 +37,7 @@ func TestSchemaRowNamesMustAgreeWithTheirSQL(t *testing.T) {
 		{"clean index", ix, nil},
 		{"name differs from the sql", func(b *sqlitetest.Builder) { b.CreateTable("kipds", "create table kinds(a)") }, nil},
 		{"name differs by case only", func(b *sqlitetest.Builder) { b.CreateTable("K", "create table k(a)") }, nil},
-		{"table tbl_name differs", func(b *sqlitetest.Builder) {}, patch("tableuu", "tableux")},
+		{"table tbl_name differs", func(*sqlitetest.Builder) {}, patch("tableuu", "tableux")},
 		{"index tbl_name names no table", ix, patch("indexixt", "indexixz")},
 		{"index tbl_name names another table", ix, patch("indexixt", "indexixu")},
 		{"index name differs from the sql", func(b *sqlitetest.Builder) { b.CreateIndex("iy", "t", "create index ix on t(a)", 0) }, nil},

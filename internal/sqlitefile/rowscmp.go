@@ -111,7 +111,7 @@ func unreadScalar(a, b Value) bool {
 	if a.Kind != b.Kind || (a.Kind != KindInt && a.Kind != KindFloat && a.Kind != KindNull) {
 		return false
 	}
-	return (a.Omitted || b.Omitted) && !(a.Kind == KindNull && a.Omitted && b.Omitted)
+	return (a.Omitted || b.Omitted) && (a.Kind != KindNull || !a.Omitted || !b.Omitted)
 }
 
 // sameValue compares two values. known is false when an omitted or clipped
