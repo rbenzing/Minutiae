@@ -190,12 +190,26 @@ func checkTypedValue(m map[string]any, idx int, absent bool) error {
 		return bad("column %d: \"float_bits\" belongs to real columns only", idx)
 	}
 	v, hasV := m["value"]
+	_, hasB := m["value_b64"]
+	if hasV && (typ == "null" || typ == "blob") {
+		return bad("column %d: a %s column carries no \"value\"", idx, typ)
+	}
+	if hasB && typ != "blob" && typ != "text" {
+		return bad("column %d: a %s column carries no \"value_b64\"", idx, typ)
+	}
 	switch typ {
 	case "integer":
 		if _, isInt := asInt(v); hasV && !isInt {
 			return bad("column %d: an integer column's value must be an integer", idx)
 		}
 	case "text":
+		valid, hasFlag := m["text_valid"].(bool)
+		if hasB && (!hasFlag || valid || hasV) {
+			return bad("column %d: a text column holds value_b64 only with text_valid false and no value", idx)
+		}
+		if hasFlag && !valid && !hasB && !absent {
+			return bad("column %d: text_valid false needs value_b64", idx)
+		}
 		if s, isStr := v.(string); hasV && (!isStr || strings.ContainsRune(s, 0)) {
 			return bad("column %d: a text column's value must be a string without NUL", idx)
 		}
@@ -348,6 +362,16 @@ func checkPayload(payload map[string]any) error {
 	for _, k := range []string{"page", "origin"} {
 		if _, ok := payload[k]; !ok {
 			return bad("missing %q", k)
+		}
+	}
+	if payload["entry_kind"] == "table" {
+		_, hasT := payload["table"]
+		_, hasTB := payload["table_b64"]
+		if hasT && hasTB {
+			return bad("\"table\" and \"table_b64\" are exclusive")
+		}
+		if (payload["table_basis"] != "none") != (hasT || hasTB) {
+			return bad("a table row names its table exactly when its table_basis is schema, fit or guess")
 		}
 	}
 	carved, hasCarved := payload["carved"]

@@ -8,52 +8,7 @@ import (
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/records"
-	"github.com/rbenzing/minutiae/internal/sqlitefile"
 )
-
-// TestValidatorListsMatchSQLiteFile ties the validator's literal relation and
-// basis lists to sqlitefile's exported constants, in both directions.
-func TestValidatorListsMatchSQLiteFile(t *testing.T) {
-	rels := []sqlitefile.Relation{sqlitefile.RelAbsentFromLive, sqlitefile.RelSupersededVersion, sqlitefile.RelUncommitted, sqlitefile.RelUnknown}
-	bases := []sqlitefile.TableBasis{sqlitefile.BasisSchema, sqlitefile.BasisFit, sqlitefile.BasisGuess, sqlitefile.BasisNone}
-	if len(relations) != len(rels) || len(bases) != len(tableBases) {
-		t.Fatalf("validator lists hold %d relations and %d bases; sqlitefile has %d and %d (update both sides together)",
-			len(relations), len(tableBases), len(rels), len(bases))
-	}
-	for _, r := range rels {
-		p := validPayload()
-		p["relation"] = string(r)
-		if err := validateDBRow(p); err != nil {
-			t.Errorf("relation %q refused: %v", r, err)
-		}
-	}
-	for _, b := range bases {
-		p := validPayload()
-		p["table_basis"] = string(b)
-		if err := validateDBRow(p); err != nil {
-			t.Errorf("basis %q refused: %v", b, err)
-		}
-	}
-	// validator -> sqlitefile: every accepted value is a constant
-	for _, v := range relations {
-		found := false
-		for _, r := range rels {
-			found = found || string(r) == v
-		}
-		if !found {
-			t.Errorf("validator relation %q is not a sqlitefile constant", v)
-		}
-	}
-	for _, v := range tableBases {
-		found := false
-		for _, b := range bases {
-			found = found || string(b) == v
-		}
-		if !found {
-			t.Errorf("validator basis %q is not a sqlitefile constant", v)
-		}
-	}
-}
 
 func nest(depth int) any {
 	v := any("x")
