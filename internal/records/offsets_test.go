@@ -78,7 +78,7 @@ func TestTranslateRangeTable(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(got.Extents, tc.want) && !(len(got.Extents) == 0 && len(tc.want) == 0) {
+			if !reflect.DeepEqual(got.Extents, tc.want) && (len(got.Extents) != 0 || len(tc.want) != 0) {
 				t.Fatalf("extents %+v want %+v", got.Extents, tc.want)
 			}
 			if got.Total != tc.total || got.Truncated || got.RunsExceedSize {
