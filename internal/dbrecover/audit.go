@@ -57,14 +57,15 @@ func (a *analysis) finish(cause error, details map[string]any) error {
 }
 
 func reasonToken(err error) string {
+	// an input that changed is named first: no other error hides an integrity failure
+	if errors.Is(err, ErrInputChanged) {
+		return "input-changed"
+	}
 	var re *RefusalError
 	if errors.As(err, &re) {
 		return re.Reason
 	}
-	switch {
-	case errors.Is(err, ErrInputChanged):
-		return "input-changed"
-	case errors.Is(err, ErrAmbiguousSibling):
+	if errors.Is(err, ErrAmbiguousSibling) {
 		return ReasonAmbiguousSibling
 	}
 	return "error"

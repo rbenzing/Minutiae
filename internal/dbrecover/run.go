@@ -318,11 +318,21 @@ func (s *scanState) skip(reason string) {
 // scan maps every recovered row, applies the filter and the run limits and
 // hands the record to add. A record the writer refuses as invalid is counted
 // and skipped (D14); anything else ends the pass.
-func (p *pipeline) scan(ctx context.Context, add func(records.Record) error) (*scanState, error) {
+func (p *pipeline) scan(ctx context.Context, add func(records.Record) error, track func(*scanState)) (*scanState, error) {
 	s := &scanState{counts: Counts{ByMethod: map[string]int64{}, SkippedByReason: map[string]int64{}, ConfidenceRange: map[string]ConfRange{}}}
+	if track != nil {
+		track(s)
+	}
 	m := p.mapper()
 	flt := newFilter(p.o)
-	visit := func(r sqlitefile.RecoveredRow) bool {
+	visit := func(r sqlitefile.RecoveredRow) (more bool) {
+		// A panic in the mapping or in a callback ends the pass with a PanicError of
+		// this package, before the library can turn it into its own.
+		defer func() {
+			if x := recover(); x != nil {
+				s.err, more = &PanicError{Value: x}, false
+			}
+		}()
 		if err := ctx.Err(); err != nil {
 			s.err = err
 			return false
@@ -514,16 +524,46 @@ func sumCounts(m map[string]int64) (n int64) {
 // them as db_row records, audited from analysis.start to analysis.end. The
 // order is pinned: the inputs are hashed before anything is parsed, the rows
 // are flushed and the warnings sent before the fresh hash of every input, and
-// the ingest is ended only after that hash matched.
-func Run(ctx context.Context, c *evidence.Case, in Inputs, opts Options) (Result, error) {
+// the ingest is ended only after that hash matched. An input that changed is an
+// integrity error that no cancel and no other error hides. A panic is recovered
+// into a PanicError: the writer is flushed and aborted, never ended.
+func Run(ctx context.Context, c *evidence.Case, in Inputs, opts Options) (res Result, err error) {
+	a := &analysis{c: c, id: evidence.NewAcquisitionID(time.Now())}
+	res = Result{AnalysisID: a.id, RulesHash: RulesHash()}
 	o, narrowed, err := opts.normalized()
 	if err != nil {
-		return Result{}, err
+		return res, a.finish(err, nil)
 	}
-	a := &analysis{c: c, id: evidence.NewAcquisitionID(time.Now())}
-	res := Result{AnalysisID: a.id, RulesHash: RulesHash()}
 	p := &pipeline{c: c, in: in, o: o, narrowed: narrowed}
 	defer p.release()
+	var (
+		w    *records.Writer
+		open bool       // the writer has started and has not concluded
+		cur  *scanState // the pass in progress
+	)
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		perr := &PanicError{Value: r}
+		var counts Counts
+		if cur != nil {
+			counts = cur.counts
+		}
+		var ir records.IngestResult
+		cause := error(perr)
+		if open {
+			var aerr error
+			ir, aerr = abortAfterPanic(context.WithoutCancel(ctx), w, perr)
+			cause = errors.Join(perr, aerr)
+			counts.Written = ir.Records
+		}
+		if p.set != nil {
+			res.Siblings, res.Inputs, res.Counts, res.Ingest = p.rep, p.inputInfos(), counts, ir
+		}
+		err = a.finish(cause, p.endDetails(counts, ir))
+	}()
 
 	if err := p.resolve(ctx); err != nil {
 		a.parentID, a.deviceID = p.dbRec.ID, p.dbRec.Source.DeviceID
@@ -543,37 +583,45 @@ func Run(ctx context.Context, c *evidence.Case, in Inputs, opts Options) (Result
 	if err := p.summarize(ctx); err != nil {
 		return fail(err, Counts{}, records.IngestResult{})
 	}
-	w, err := records.NewWriter(c, ParserIdentity(), records.WriterOptions{BatchRows: o.BatchRows})
+	w, err = records.NewWriter(c, ParserIdentity(), records.WriterOptions{BatchRows: o.BatchRows})
 	if err != nil {
 		return fail(err, Counts{}, records.IngestResult{})
 	}
 	if err := w.Start(ctx, records.StartOptions{AnalysisID: a.id, Artifacts: p.applied(), AllowReingest: o.AllowReingest}); err != nil {
 		return fail(err, Counts{}, records.IngestResult{})
 	}
+	open = true
 
-	s, runErr := p.scan(ctx, func(r records.Record) error { return w.Add(ctx, r) })
+	s, runErr := p.scan(ctx, func(r records.Record) error { return w.Add(ctx, r) }, func(s *scanState) { cur = s })
 	wc := context.WithoutCancel(ctx)
 	flushErr := w.Flush(wc)
 	var warnErr error
 	if flushErr == nil {
 		warnErr = p.sendWarnings(wc, w, s)
 	}
-	if runErr == nil {
-		runErr = errors.Join(flushErr, warnErr)
+	runErr = errors.Join(runErr, flushErr, warnErr)
+	if afterFlushHook != nil {
+		afterFlushHook()
 	}
-	if runErr == nil {
-		if afterFlushHook != nil {
-			afterFlushHook()
-		}
-		runErr = p.set.checkUnchanged(ctx)
+	// The fresh hash runs whatever happened before: a change of an input is an
+	// integrity failure that a cancel or another error must not hide. A run that
+	// is still going is cancelled in the hash; one that already ended is not.
+	chk := ctx
+	if runErr != nil {
+		chk = wc
+	}
+	if cerr := p.set.checkUnchanged(chk); cerr != nil {
+		runErr = errors.Join(runErr, cerr)
 	}
 	if runErr != nil {
 		ir, aerr := w.Abort(wc, runErr)
+		open = false
 		s.counts.Written = ir.Records
 		return fail(errors.Join(runErr, aerr), s.counts, ir)
 	}
 	if len(s.counts.Narrowed) > 0 || len(s.counts.LimitsHit) > 0 {
 		ir, aerr := w.Abort(wc, ErrNarrowedRun)
+		open = false
 		s.counts.Written = ir.Records
 		res.Siblings, res.Inputs, res.Counts, res.Ingest = p.rep, p.inputInfos(), s.counts, ir
 		if aerr != nil {
@@ -582,6 +630,7 @@ func Run(ctx context.Context, c *evidence.Case, in Inputs, opts Options) (Result
 		return res, a.finish(nil, p.endDetails(s.counts, ir))
 	}
 	ir, err := w.End(ctx)
+	open = false
 	s.counts.Written = ir.Records
 	if err != nil {
 		return fail(err, s.counts, ir)
@@ -590,9 +639,28 @@ func Run(ctx context.Context, c *evidence.Case, in Inputs, opts Options) (Result
 	return res, a.finish(nil, p.endDetails(s.counts, ir))
 }
 
+// abortAfterPanic flushes what the writer holds and aborts it, so the rows
+// written so far stay and the ingest is concluded incomplete. A panic in either
+// step is itself recovered.
+func abortAfterPanic(ctx context.Context, w *records.Writer, cause error) (ir records.IngestResult, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = &PanicError{Value: r}
+		}
+	}()
+	ferr := w.Flush(ctx)
+	ir, aerr := w.Abort(ctx, cause)
+	return ir, errors.Join(ferr, aerr)
+}
+
 // Plan runs the same pipeline as Run up to and including the rows, with a
 // counting visit: no writer, no audit entry, nothing written.
-func Plan(ctx context.Context, c *evidence.Case, in Inputs, opts Options) (Assessment, error) {
+func Plan(ctx context.Context, c *evidence.Case, in Inputs, opts Options) (_ Assessment, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = &PanicError{Value: r}
+		}
+	}()
 	o, narrowed, err := opts.normalized()
 	if err != nil {
 		return Assessment{}, err
@@ -608,7 +676,7 @@ func Plan(ctx context.Context, c *evidence.Case, in Inputs, opts Options) (Asses
 	if err := p.summarize(ctx); err != nil {
 		return Assessment{}, err
 	}
-	s, err := p.scan(ctx, func(records.Record) error { return nil })
+	s, err := p.scan(ctx, func(records.Record) error { return nil }, nil)
 	if err != nil {
 		return Assessment{}, err
 	}
