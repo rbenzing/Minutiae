@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/rbenzing/minutiae/internal/parse"
+	"github.com/rbenzing/minutiae/internal/sqlitefile"
 )
 
 // JoinReport counts the lookups of one joined (table, column).
@@ -134,7 +135,8 @@ func (c *Context) Match(table, col string, key parse.JoinKey) ([]parse.Row, erro
 			// entry cap, the budget, an undecidable target) is remembered, or a hostile
 			// target would cost one full scan per lookup; a cancellation or a deadline
 			// says nothing about the data and is retried.
-			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			if errors.Is(err, ErrCorrupt) || errors.Is(err, ErrIndexLimit) || errors.Is(err, parse.ErrBudget) ||
+				errors.Is(err, sqlitefile.ErrBudget) || errors.Is(err, ErrKeyUndecidable) {
 				c.failed[ik] = err
 			}
 			return nil, err
@@ -197,7 +199,7 @@ func (c *Context) Joins() []JoinReport {
 
 // Close emits at most one note per join that had a flagged lookup or an
 // unkeyed target row (key join.<table>.<column>, value
-// lookups:N,flagged:N,collation_differs:N,affinity_differs:N,unkeyed:N,undecidable:N,undecidable:N), counts
+// lookups:N,flagged:N,collation_differs:N,affinity_differs:N,unkeyed:N,undecidable:N), counts
 // them in Stats.JoinsFlushed (notes offered, not notes the sink accepted: a sink
 // may drop one) and frees the indexes and rows. It is idempotent.
 func (c *Context) Close() {

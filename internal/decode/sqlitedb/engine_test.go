@@ -347,8 +347,12 @@ func TestRowidAliasAndPrimaryKeyShapesMatchEngine(t *testing.T) {
 			if msg := diffRows(want, layerRows(t, tb)); msg != "" {
 				t.Errorf("rows: %s", msg)
 			}
+			// Skipped here: the engine's NULL-id answer is not consulted for the
+			// quoted-name shapes (their id column is not the alias) and for the
+			// WITHOUT ROWID shapes (no rowid exists to compare); both are only
+			// required not to be reported as a rowid alias.
 			if s.name == "Mixed Case" || s.name == "é" || s.without {
-				if tb.Cols()[0].RowidAlias && s.name != "e" {
+				if tb.Cols()[0].RowidAlias {
 					t.Errorf("%s: column 0 reported as a rowid alias", s.name)
 				}
 				return

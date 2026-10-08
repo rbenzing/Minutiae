@@ -1,6 +1,7 @@
 package sqlitedb_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -140,5 +141,54 @@ func TestUndecidableLookupsAreCounted(t *testing.T) {
 	c.Close()
 	if got := notes.m["join.g.k"]; got != "lookups:3,flagged:0,collation_differs:0,affinity_differs:0,unkeyed:1,undecidable:3" {
 		t.Errorf("note = %q", got)
+	}
+}
+
+// flakyReader fails every read with errFlaky while armed.
+var errFlaky = errors.New("flaky: transient read failure")
+
+type flakyReader struct {
+	r     *bytes.Reader
+	armed bool
+}
+
+func (f *flakyReader) ReadAt(p []byte, off int64) (int, error) {
+	if f.armed {
+		return 0, errFlaky
+	}
+	return f.r.ReadAt(p, off)
+}
+
+// B59: a plain I/O error says nothing about the data (it may be transient), so
+// the failed build is NOT remembered and the next Match retries and succeeds.
+func TestContextDoesNotCacheIOError(t *testing.T) {
+	data := hundredRowDB(t)
+	fr := &flakyReader{r: bytes.NewReader(data)}
+	d, err := sqlitedb.Open(t.Context(), sqlitedb.Files{DB: fr, DBSize: int64(len(data))}, bigBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Release)
+	c := sqlitedb.NewContext(t.Context(), d, &parse.Input{}, nil)
+	t.Cleanup(c.Close)
+	calls := 0
+	c.SetBuildIndex(func(ctx context.Context, tb *sqlitedb.Table, col string) (*sqlitedb.Index, error) {
+		calls++
+		if calls == 1 {
+			return nil, fmt.Errorf("scan: %w", errFlaky) // the reader failed during the build
+		}
+		return tb.Index(ctx, col, 0)
+	})
+	fr.armed = true
+	if _, err := c.Match("g", "n", sqlitedb.LiteralIntKey(1)); !errors.Is(err, errFlaky) {
+		t.Fatalf("first Match = %v, want the I/O error", err)
+	}
+	fr.armed = false
+	rows, err := c.Match("g", "n", sqlitedb.LiteralIntKey(5))
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("second Match = %d rows, %v; want the build retried and answered", len(rows), err)
+	}
+	if calls != 2 {
+		t.Errorf("builds = %d, want 2", calls)
 	}
 }

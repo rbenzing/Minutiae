@@ -252,7 +252,15 @@ func checkJoinAgainstEngine(t *testing.T, data []byte, sc, tc matrixCase) {
 		}
 	}
 	if sc.class != tc.class {
-		return // the accepted affinity gap: flagged above, pairs may differ from the engine's
+		// The accepted affinity gap is only a MISS: flagged above. A pair the layer
+		// returns that the engine does not (a false positive) always fails.
+		ours := pairsOf(lookups)
+		for p := range ours {
+			if !engine[p] {
+				t.Errorf("cross-class pair %v returned by the layer but not by the engine", p)
+			}
+		}
+		return
 	}
 	// Same class: the layer's pairs equal the engine's exactly, flagged or not
 	// (a collation flag alone never changes the pairs, because the target's
