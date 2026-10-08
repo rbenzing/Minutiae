@@ -16,14 +16,20 @@
 // "streamtyped", then a small integer (the system version, for example 0x81 0xE8 0x03 =
 // 1000). Integers: a byte below 0x80 is the value; 0x81 is followed by a 2-byte
 // little-endian value, 0x82 by 4 bytes, 0x83 by 8 bytes (refused for a length, ErrLimit).
-// Extraction rule, the only one: within the first MaxScan bytes find the first class name
+// Extraction rule, the only one: within MaxScan bytes after the header find the first class name
 // "NSString" or "NSMutableString" preceded by its length byte (the 0x84 class-record prefix
 // is not required), then the first type-encoding string "+" (bytes 0x01 0x2B) after it, then
 // the integer length, then exactly that many bytes. The first match wins and the search never
 // looks for a better one, so text that itself contains the marker cannot redirect the
-// extraction. A marker without a "+" before the end of the buffer is ErrTruncated; a stream
-// with no marker inside the scan window is a stream with no string object (ok false, no
-// error): a cut stream and a complete one without a string are not told apart.
+// extraction.
+//
+// "No string object" (ok false, nil error) is a claim and is made only when the whole scan
+// window, MaxScan bytes after the header, was examined without finding a marker. A stream
+// that ends before a marker within the window is ErrTruncated ("stream ended before a string
+// object"), so a cut stream is never reported as text-less (a short complete stream without
+// a string is ErrTruncated too: conservative, a real attributedBody carries a string). A
+// marker without its "+" encoding is never "no string object": ErrTruncated when the input
+// ends first, ErrLimit when the encoding lies past the scan window.
 //
 // Every error wraps one of the sentinels of errors.go. The package imports no other
 // Minutiae package: callers charge memory through the local Budget interface.
@@ -41,7 +47,7 @@ const (
 	// MaxText is the largest text ExtractText returns; a longer declared length is ErrLimit.
 	MaxText = 4 << 20
 	// MaxScan is how many bytes of structure are examined for the string object: the class
-	// name and the "+" encoding must lie inside the first MaxScan bytes.
+	// name and the "+" encoding must lie inside the MaxScan bytes after the header.
 	MaxScan = 1 << 16
 )
 
@@ -105,10 +111,14 @@ func extractCore(b []byte, budget Budget) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	scanEnd := min(len(b), MaxScan)
+	scanEnd := min(len(b), pos+MaxScan)
 	nameEnd := findString(b, pos, scanEnd)
 	if nameEnd < 0 {
-		return "", false, nil
+		if len(b)-pos >= MaxScan {
+			// The whole window was examined: the claim "no string object" is justified.
+			return "", false, nil
+		}
+		return "", false, truncated("stream ended before a string object")
 	}
 	plus := -1
 	for j := nameEnd; j+1 < scanEnd; j++ {
@@ -118,10 +128,10 @@ func extractCore(b []byte, budget Budget) (string, bool, error) {
 		}
 	}
 	if plus < 0 {
-		if len(b) <= MaxScan {
+		if len(b) <= scanEnd {
 			return "", false, truncated("string class without a text encoding")
 		}
-		return "", false, nil
+		return "", false, tooLong("text encoding past the scan window of %d bytes", MaxScan)
 	}
 	n, p, err := readLength(b, plus)
 	if err != nil {

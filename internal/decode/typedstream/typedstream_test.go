@@ -107,9 +107,6 @@ func TestExtractTextLengthLies(t *testing.T) {
 	if text, ok, err := extract(t, buildStream("")); err != nil || !ok || text != "" {
 		t.Fatalf("zero length: (%q, %v, %v)", text, ok, err)
 	}
-	if text, ok, err := extract(t, buildStream("x", withoutString())); err != nil || ok || text != "" {
-		t.Fatalf("no string object: (%q, %v, %v)", text, ok, err)
-	}
 }
 
 func TestExtractTextTruncatedEverywhere(t *testing.T) {
@@ -126,8 +123,6 @@ func TestExtractTextTruncatedEverywhere(t *testing.T) {
 		case got != "":
 			t.Fatalf("cut %d: text %q with ok=false", n, got)
 		case errors.Is(err, ErrTruncated), errors.Is(err, ErrNotTypedstream):
-		case err == nil && n < payloadStart:
-			// A cut before the string object began is a stream with no string object yet.
 		default:
 			t.Fatalf("cut %d: (%q, %v, %v)", n, got, ok, err)
 		}
@@ -172,9 +167,42 @@ func TestExtractTextMarkerInsidePayload(t *testing.T) {
 }
 
 func TestExtractTextNoStringObject(t *testing.T) {
-	text, ok, err := extract(t, buildStream("ignored", withoutString()))
+	// The claim "no string object" needs the whole scan window examined (P38).
+	text, ok, err := extract(t, buildStream("ignored", withoutString(), padding(MaxScan)))
 	if ok || text != "" || err != nil {
 		t.Fatalf("(%q, %v, %v)", text, ok, err)
+	}
+}
+
+func TestExtractTextShortStreamWithoutStringIsTruncated(t *testing.T) {
+	text, ok, err := extract(t, buildStream("ignored", withoutString()))
+	if ok || text != "" || !errors.Is(err, ErrTruncated) {
+		t.Fatalf("(%q, %v, %v)", text, ok, err)
+	}
+}
+
+// markerNoPayload is a header and the NSString class name followed by pad zero bytes and no
+// "+" encoding.
+func markerNoPayload(pad int) []byte {
+	b := header()
+	b = append(b, make([]byte, 10)...)
+	b = append(b, classRecord("NSString")...)
+	return append(b, make([]byte, pad)...)
+}
+
+func TestExtractTextMarkerWithoutPayload(t *testing.T) {
+	// P41: the input ends first.
+	for _, pad := range []int{0, 5, MaxScan - 100} {
+		text, ok, err := extract(t, markerNoPayload(pad))
+		if ok || text != "" || !errors.Is(err, ErrTruncated) {
+			t.Errorf("pad %d: (%q, %v, %v)", pad, text, ok, err)
+		}
+	}
+	// P41: the encoding lies past the scan window.
+	b := append(markerNoPayload(MaxScan), 0x01, '+', 0x01, 'x')
+	text, ok, err := extract(t, b)
+	if ok || text != "" || !errors.Is(err, ErrLimit) {
+		t.Fatalf("payload past window: (%q, %v, %v)", text, ok, err)
 	}
 }
 
