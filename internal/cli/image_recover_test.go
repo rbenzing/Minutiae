@@ -120,7 +120,7 @@ func recoveredRecords(t *testing.T, caseDir string) []evidence.ManifestRecord {
 	return out
 }
 
-type listJSON struct {
+type recoverListJSON struct {
 	Considered int `json:"considered"`
 	Items      []struct {
 		Path       string `json:"path"`
@@ -142,13 +142,13 @@ type listJSON struct {
 	} `json:"items"`
 }
 
-func (e *imgEnv) list(t *testing.T, args ...string) listJSON {
+func (e *imgEnv) list(t *testing.T, args ...string) recoverListJSON {
 	t.Helper()
 	code, out := e.recover(t, append([]string{"--list", "--json"}, args...)...)
 	if code != 0 {
 		t.Fatalf("recover --list: %d %s", code, out)
 	}
-	var l listJSON
+	var l recoverListJSON
 	if err := json.Unmarshal(jsonPart(out), &l); err != nil {
 		t.Fatalf("list json %q: %v", out, err)
 	}
@@ -476,7 +476,7 @@ func TestImageRecoverEscapesNames(t *testing.T) {
 	if code != 0 {
 		t.Fatal(out)
 	}
-	var l listJSON
+	var l recoverListJSON
 	if err := json.Unmarshal(jsonPart(out), &l); err != nil {
 		t.Fatal(err)
 	}

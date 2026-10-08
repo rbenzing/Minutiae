@@ -80,6 +80,19 @@ type UnresolvedIngest struct {
 	// records.batch.error entry and are not named by a recover: audited, never
 	// written.
 	AbsentBatches []int
+
+	// Warnings, WarningsSuppressed and Rejected are what the audit log proves about the ingest's
+	// analysis.warning entries: the entries (the suppression notes are not entries), the entries the cap kept out
+	// of the log and the rejections, both as the conclusion note states them. An ingest that wrote its suppression
+	// began note but died before the conclusion note has no provable suppressed entries: SuppressionUnknown is
+	// set, WarningsSuppressed is 0 and Rejected holds the rejection entries only (lower bounds). Recovery states
+	// these numbers and the flag instead of silent zeros.
+	Warnings           int
+	WarningsSuppressed int
+	Rejected           int
+	// SuppressionUnknown: the ingest wrote its suppression began note but no conclusion note, so the suppressed
+	// numbers are unknown (WarningsSuppressed and the suppressed part of Rejected are lower bounds).
+	SuppressionUnknown bool
 }
 
 // UnresolvedIngests lists, in start order, the ingests the audit log announced
@@ -108,6 +121,7 @@ func (c *Case) UnresolvedIngests() ([]UnresolvedIngest, error) {
 		recover    *IngestRecover
 		recSeq     int64
 		recTime    string
+		tally      IngestWarningTally
 	}
 	var order []*ingest
 	byID := map[string]*ingest{}
@@ -122,6 +136,10 @@ func (c *Case) UnresolvedIngests() ([]UnresolvedIngest, error) {
 				in := &ingest{start: s, startSeq: e.Seq, errored: map[int]bool{}}
 				byID[s.IngestID] = in
 				order = append(order, in)
+			}
+		case ActionAnalysisWarning:
+			if in := byID[writerWarningIngest(e.Details)]; in != nil {
+				in.tally.add(e.Details)
 			}
 		case ActionBatch:
 			b, err := DecodeDetails[BatchCommit](e.Details)
@@ -206,7 +224,11 @@ func (c *Case) UnresolvedIngests() ([]UnresolvedIngest, error) {
 		if runs[in.start.IngestID] {
 			continue
 		}
-		u := UnresolvedIngest{Start: in.start, StartSeq: in.startSeq, Kind: IngestUnfinished}
+		u := UnresolvedIngest{
+			Start: in.start, StartSeq: in.startSeq, Kind: IngestUnfinished,
+			Warnings: in.tally.Warnings, WarningsSuppressed: in.tally.Suppressed(), Rejected: in.tally.ProvenRejected(),
+			SuppressionUnknown: in.tally.Began > 0 && in.tally.Notes == 0,
+		}
 		if in.conclusion != nil {
 			u.Kind, u.Conclusion, u.ConclusionSeq, u.ConclusionTime = IngestRunMissing, in.conclusion, in.concSeq, in.concTime
 		}

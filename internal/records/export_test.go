@@ -44,7 +44,7 @@ func (p prepared) Row() evidence.RecordRow { return p.row }
 func (p prepared) ApproxBytes() int { return p.approxBytes }
 
 // SetHook installs a test seam called at the named points of a batch and of End
-// ("after-start-audit", "after-batch-audit", "before-insert", "after-insert", "after-end-audit"),
+// ("after-start-audit", "after-batch-audit", "before-insert", "after-insert", "after-end-audit", "after-suppression-began", "after-suppression-note"),
 // always outside any transaction. An error returned at the first two fails the
 // batch; a panic simulates a process that died there.
 func (w *Writer) SetHook(f func(point string) error) { w.hook = f }
@@ -59,6 +59,14 @@ const MaxWarnings = maxWarnings
 
 // SetMaxWarnings lowers the Warn cap of this writer.
 func (w *Writer) SetMaxWarnings(n int) { w.warnCap = n }
+
+// Counts returns the writer's counters of written warnings, suppressed warnings
+// and rejected records.
+func (w *Writer) Counts() (warnings, suppressed, rejected int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.warnings, w.warnSupp, w.rejected
+}
 
 // Canonical exposes the cursor-fingerprint form of a compiled query.
 func (q *TextQuery) Canonical() string { return q.canonical() }

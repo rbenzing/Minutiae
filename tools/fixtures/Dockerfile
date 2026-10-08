@@ -29,3 +29,18 @@ RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       apfsprogs \
  && rm -rf /var/lib/apt/lists/*
+
+# sqlite3 (the command-line shell, with libsqlite3 that python3's sqlite3 module
+# links) for the SQLite fixtures: the engine that writes the container family
+# and the oracle that checks every fixture. A separate, final layer so every
+# layer above, and every fixture generated from it, stays as built.
+# The exact package versions are pinned (the engine is part of the oracle) and
+# checked after the install; bump them together with a regeneration of the class
+# C fixtures. Their expect.json files record libsqlite3 3.46.1.
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      sqlite3=3.46.1-7+deb13u2 libsqlite3-0=3.46.1-7+deb13u2 \
+ && rm -rf /var/lib/apt/lists/* \
+ && test "$(dpkg-query -W -f '${Version}' sqlite3)" = "3.46.1-7+deb13u2" \
+ && test "$(dpkg-query -W -f '${Version}' libsqlite3-0)" = "3.46.1-7+deb13u2" \
+ && sqlite3 --version | grep -q '^3\.46\.1 '

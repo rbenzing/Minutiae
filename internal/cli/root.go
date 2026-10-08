@@ -12,6 +12,7 @@ import (
 
 	"github.com/rbenzing/minutiae/internal/android"
 	"github.com/rbenzing/minutiae/internal/android/adb"
+	"github.com/rbenzing/minutiae/internal/artparse"
 	"github.com/rbenzing/minutiae/internal/device"
 	"github.com/rbenzing/minutiae/internal/filesys/detect"
 	"github.com/rbenzing/minutiae/internal/ios"
@@ -28,6 +29,8 @@ type Deps struct {
 	// FSDrivers overrides the filesystem drivers used by the image commands
 	// (tests inject fakes). nil = detect.Drivers.
 	FSDrivers []detect.Driver
+	// ParserRegistry overrides the compiled-in parsers (tests inject fakes). nil = the registry built from parsers.All() and parsers.HashOf.
+	ParserRegistry func() ([]artparse.Registered, error)
 }
 
 // DefaultDeps wires the real process streams and device backends.
@@ -67,6 +70,7 @@ func newRootCmd(d Deps) *cobra.Command {
 	root.AddCommand(newIOSCmd(d, opts))
 	root.AddCommand(newImageCmd(d, opts))
 	root.AddCommand(newRecordsCmd(d, opts))
+	root.AddCommand(newParseCmd(d, opts))
 	return root
 }
 

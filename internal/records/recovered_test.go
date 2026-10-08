@@ -41,6 +41,20 @@ func recoveredRec(art string, conf *int) records.Record {
 	}
 }
 
+// requireOnlyRejectionAudited: a refused record leaves exactly one audit entry, its rejection note
+// (analysis.warning with rejected=true), and nothing else.
+func requireOnlyRejectionAudited(t *testing.T, c *evidence.Case, before int, what string) {
+	t.Helper()
+	all := auditOf(t, c, "")
+	if len(all) != before+1 {
+		t.Errorf("%s: audit grew from %d to %d entries on a refused record, want exactly one rejection note", what, before, len(all))
+		return
+	}
+	if last := all[len(all)-1]; last.Action != "analysis.warning" || last.Details["rejected"] != true {
+		t.Errorf("%s: last audit entry = %s %v, want a rejection note", what, last.Action, last.Details)
+	}
+}
+
 func TestAddRejectsLiveRecordOnRecoveredArtifact(t *testing.T) {
 	c, _, rec := recoveredCase(t, ip(55))
 	w := startOn(t, c, rec.ID)
@@ -49,9 +63,7 @@ func TestAddRejectsLiveRecordOnRecoveredArtifact(t *testing.T) {
 	if !errors.Is(err, records.ErrRecoveredArtifactLiveRecord) || !errors.Is(err, records.ErrInvalidRecord) {
 		t.Fatalf("Add = %v, want ErrRecoveredArtifactLiveRecord", err)
 	}
-	if got := len(auditOf(t, c, "")); got != before {
-		t.Errorf("audit grew from %d to %d entries on a refused record", before, got)
-	}
+	requireOnlyRejectionAudited(t, c, before, "live record")
 	if _, err := w.End(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -82,9 +94,7 @@ func TestAddRejectsConfidenceAboveArtifact(t *testing.T) {
 		if !errors.Is(err, records.ErrConfidenceAboveArtifact) || !errors.Is(err, records.ErrInvalidRecord) {
 			t.Errorf("%s: Add = %v, want ErrConfidenceAboveArtifact", name, err)
 		}
-		if got := len(auditOf(t, c, "")); got != before {
-			t.Errorf("%s: audit grew on a refused record", name)
-		}
+		requireOnlyRejectionAudited(t, c, before, name)
 	}
 }
 

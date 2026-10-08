@@ -195,15 +195,6 @@ func nonTestGoFiles(t *testing.T, root, dir string) []string {
 	return out
 }
 
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return root
-}
-
 // TestRecoveredKindsOnlyWrittenByEvidenceAndExamine: a recovered kind in a
 // Source is the claim "this artifact was recovered"; only the code that
 // creates such artifacts (evidence validates them, examine writes them, and the

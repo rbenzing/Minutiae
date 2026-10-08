@@ -1,0 +1,51 @@
+package fixture
+
+// Data for TestPurityCleanSnippet: typical parser code that every rule must accept
+// (checked as a package of class parsers/<name>, so nothing in it may be flagged).
+
+import (
+	"context"
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+	"time"
+
+	"github.com/rbenzing/minutiae/internal/parse"
+	"github.com/rbenzing/minutiae/internal/records"
+)
+
+var ErrShort = errors.New("clean: short read")
+
+var _ parse.Parser = (*cleanParser)(nil)
+
+var magic = [4]byte{'S', 'Q', 'L', 'i'}
+var kinds = map[uint8]string{1: "text", 2: "blob"}
+var epochs = [...]time.Duration{0, time.Second}
+
+type cleanParser struct{}
+
+func (cleanParser) read(ctx context.Context, r io.ReaderAt) ([]records.Record, error) {
+	var hdr [16]byte
+	if _, err := r.ReadAt(hdr[:], 0); err != nil {
+		return nil, fmt.Errorf("header: %w", err)
+	}
+	if [4]byte(hdr[:4]) != magic {
+		return nil, ErrShort
+	}
+	kind, ok := kinds[hdr[4]]
+	if !ok || len(kinds) == 0 {
+		return nil, ErrShort
+	}
+	secs := int64(binary.LittleEndian.Uint32(hdr[8:]))
+	ts := time.Date(1970, time.January, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(secs) * time.Second).Add(epochs[1])
+	var out []records.Record
+	for i := range epochs {
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
+		out = append(out, records.Record{Type: "x", Summary: strings.ToUpper(kind) + ts.Format(time.RFC3339) + fmt.Sprint(i)})
+	}
+	return out, nil
+}

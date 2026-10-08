@@ -54,9 +54,22 @@ var allowed = map[string][]string{
 	"internal/ios":                         {"internal/ios/mb2", "internal/device", "internal/evidence", "internal/version"},
 	"internal/ios/iostest":                 {"internal/ios", "internal/ios/mb2/mb2test"},
 	"internal/archtest":                    {},
+	"internal/sqlitefile":                  {},
+	"internal/sqlitefile/sqlitetest":       {"internal/sqlitefile"},
 	"internal/records":                     {"internal/evidence", "internal/version"},
 	"internal/records/recordstest":         {"internal/records", "internal/evidence"},
+	"internal/parse":                       {"internal/records"},
+	"internal/parsers":                     {"internal/parse", "internal/records"},
+	"internal/recordtypes/common":          {},
+	"internal/recordtypes/call":            {"internal/records", "internal/recordtypes/common"},
+	"internal/recordtypes/contact":         {"internal/records", "internal/recordtypes/common"},
+	"internal/recordtypes/message":         {"internal/records", "internal/recordtypes/common"},
+	"internal/recordtypes/web":             {"internal/records", "internal/recordtypes/common"},
+	"internal/recordtypes/all":             {"internal/recordtypes/message", "internal/recordtypes/call", "internal/recordtypes/contact", "internal/recordtypes/web"},
+	"internal/parsers/parsertest":          {"internal/parse", "internal/records", "internal/evidence", "internal/recordtypes/common", "internal/recordtypes/message", "internal/recordtypes/call", "internal/recordtypes/contact", "internal/recordtypes/web"},
+	"internal/artparse":                    {"internal/evidence", "internal/version", "internal/records", "internal/parse", "internal/recordtypes/all"},
 	"tools/check":                          {},
+	"tools/parserhash":                     {"internal/parse", "internal/parsers"},
 }
 
 // "internal/cli" may import anything.

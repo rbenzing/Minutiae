@@ -1,0 +1,19 @@
+# relative path <TAB> violation text <TAB> exempt (true|false)
+internal/sqlitefile/oracle_wal_test.go	drop table pad	true
+internal/sqlitefile/oracle_wal_test.go	DROP TABLE IF EXISTS pad	true
+internal/decode/x_test.go	drop trigger tg	false
+internal/sqlitefile/x_test.go	drop trigger immut_records_upd	false
+internal/sqlitefile/x_test.go	drop index records_deleted	false
+internal/sqlitefile/x_test.go	drop index if exists idx_pad	false
+internal/decode/x_test.go	drop table pad	true
+internal/sqlitefile/oracle_wal.go	drop table pad	false
+internal/sqlitefile/sqlitetest/x_test.go	drop table pad	true
+internal/records/x_test.go	drop table pad	false
+internal/cli/x_test.go	drop table pad	false
+internal/sqlitefile/x_test.go	drop table records	false
+internal/sqlitefile/x_test.go	drop table artifacts	false
+internal/sqlitefile/x_test.go	drop table <?>	false
+internal/sqlitefile/x_test.go	drop table pad; delete from records	false
+internal/sqlitefile/x_test.go	delete from <?> where rowid=?	false
+internal/sqlitefile/x_test.go	insert into records(id) values(1)	false
+internal/sqlitefile/x_test.go	alter table pad add column x	false

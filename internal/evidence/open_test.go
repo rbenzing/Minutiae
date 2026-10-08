@@ -6,8 +6,10 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -401,4 +403,62 @@ func TestOpenArtifactRefusesPathOutsideArtifactsDir(t *testing.T) {
 			t.Errorf("%s: OpenArtifact %v, OpenArtifactIn %v; want ErrIntegrity from both", id, e1, e2)
 		}
 	}
+}
+
+// A symlink (or junction) in place of the artifact file, or of a directory on its path, is refused
+// even when the target holds the same bytes: the evidence must live inside the case.
+func TestOpenArtifactRefusesSymlinkedArtifact(t *testing.T) {
+	for name, link := range map[string]func(c *Case, rec ManifestRecord, outside string) (string, error){
+		"the file": func(c *Case, rec ManifestRecord, outside string) (string, error) {
+			p := filepath.Join(c.Dir, filepath.FromSlash(rec.Path))
+			if err := os.Remove(p); err != nil {
+				return "", err
+			}
+			return p, os.Symlink(outside, p)
+		},
+		"a directory on its path": func(c *Case, rec ManifestRecord, _ string) (string, error) {
+			dir := filepath.Dir(filepath.Join(c.Dir, filepath.FromSlash(rec.Path)))
+			moved := dir + ".moved"
+			if err := os.Rename(dir, moved); err != nil {
+				return "", err
+			}
+			return dir, linkDir(moved, dir)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, rec := caseWithArtifact(t)
+			p := filepath.Join(c.Dir, filepath.FromSlash(rec.Path))
+			data, err := os.ReadFile(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			outside := filepath.Join(t.TempDir(), "same-bytes")
+			if err := os.WriteFile(outside, data, 0o600); err != nil { //nolint:gosec // test-only path under t.TempDir()
+				t.Fatal(err)
+			}
+			if _, err := link(c, rec, outside); err != nil {
+				t.Skipf("cannot create a symlink here (needs a privilege on Windows): %v", err)
+			}
+			f, _, err := c.OpenArtifact(rec.ID)
+			if f != nil {
+				_ = f.Close()
+			}
+			if !errors.Is(err, ErrIntegrity) {
+				t.Errorf("a symlinked artifact opened: err = %v, want ErrIntegrity", err)
+			}
+		})
+	}
+}
+
+// linkDir makes link point at target: a symlink, or on Windows (where that needs a privilege) a
+// directory junction, which needs none.
+func linkDir(target, link string) error {
+	err := os.Symlink(target, link)
+	if err != nil && runtime.GOOS == "windows" {
+		if out, jerr := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput(); jerr != nil { //nolint:gosec // test-only, paths made by the test
+			return fmt.Errorf("%w; mklink /J: %v: %s", err, jerr, out)
+		}
+		return nil
+	}
+	return err
 }

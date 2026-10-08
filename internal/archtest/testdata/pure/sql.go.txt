@@ -1,0 +1,64 @@
+package fixture
+
+// Data for TestNoSQLScannerSelfTest (rule P6). A line that must be flagged ends with
+// the marker "want"; plain English that merely contains the words must not be.
+
+const tblName = "records"
+const selectPrefix = "SELECT a, b "
+
+var tableVar = "t"
+
+var (
+	q1  = "SELECT a, b FROM t"                      // want
+	q2  = "select  *\n  from   t"                   // want
+	q3  = "SeLeCt x FrOm y"                         // want
+	q4  = "INSERT INTO t (a) VALUES (1)"            // want
+	q5  = "insert or replace into t(a) values(1)"   // want
+	q6  = "UPDATE t SET a = 1"                      // want
+	q7  = "DELETE FROM t WHERE a = 1"               // want
+	q8  = "CREATE TABLE x (a INTEGER)"              // want
+	q9  = "create index i on t(a)"                  // want
+	q10 = "DROP TRIGGER z;"                         // want
+	q11 = "CREATE VIEW v AS SELECT 1"               // want
+	q12 = "ALTER TABLE t ADD COLUMN c"              // want
+	q13 = "PRAGMA journal_mode=wal"                 // want
+	q14 = "ATTACH DATABASE 'x.db' AS y"             // want
+	q15 = "ATTACH 'x.db' AS y"                      // want
+	q16 = "SELECT a " + "FROM t"                    // want
+	q17 = selectPrefix + "FROM t"                   // want
+	q18 = `select "a", "b" from "t"`                // want
+	q19 = "SELECT a /* why */ FROM t"               // want
+	q20 = "SELECT %s FROM %s"                       // want
+	q21 = "SELECT a FROM " + tableVar               // want
+	q22 = "select count(*) from t"                  // want
+	q23 = "select a\n-- the table\nfrom t"          // want
+	q24 = "DELETE FROM "                            // want
+	q25 = "SELECT a, b FROM "                       // want
+	q26 = "replace into t(a) values (1)"            // want
+	q27 = "SELECT DISTINCT a FROM t"                // want
+	q28 = "select\n\ta,\n\tb\nfrom\n\tt"            // want
+	q29 = "DROP TABLE IF EXISTS t"                  // want
+	q30 = "CREATE TEMP TABLE IF NOT EXISTS x (a)"   // want
+	q31 = "UPDATE OR ROLLBACK t SET a=1"            // want
+	q32 = "SELECT max(a) AS m, b FROM t GROUP BY b" // want
+	q33 = "DROP INDEX i"                                // want
+	q34 = "drop view v;"                                // want
+	q35 = "DROP TABLE t"                                // want
+
+	// English and other text that is not a statement
+	e1  = "select an option from the menu"
+	e2  = "failed to delete from the cache"
+	e3  = "cannot update the set of rows"
+	e4  = "drop the table of contents"
+	e5  = "please insert into the slot"
+	e6  = "from here, select the best option"
+	e7  = "attach the file as a reminder"
+	e8  = "pragma"
+	e9  = "record selected from a list"
+	e10 = "SELECTED"
+	e11 = "created tables are dropped"
+	e12 = "parse: glob %q must start with android:, ios: or ./"
+	e13 = "the update failed"
+	e14 = "records"
+	e15 = selectPrefix
+)

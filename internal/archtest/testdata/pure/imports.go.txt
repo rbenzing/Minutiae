@@ -1,0 +1,90 @@
+package fixture
+
+// Data for TestPurityAllowlistSelfTest (a .txt file: neither compiled nor scanned by
+// the rules themselves). The file is checked as a package of class parsers/<name>.
+// Every import that must be refused ends with the marker "want"; no other import may
+// be refused. Imports a parser may use are the unmarked ones.
+
+import (
+	"bytes"
+	"context"
+	"encoding/binary"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"hash/crc32"
+	"io"
+	"maps"
+	"math"
+	"math/bits"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+	"unicode"
+	"unicode/utf16"
+	"unicode/utf8"
+
+	_ "embed"
+
+	"github.com/rbenzing/minutiae/internal/decode/plist"
+	"github.com/rbenzing/minutiae/internal/parse"
+	"github.com/rbenzing/minutiae/internal/records"
+	"github.com/rbenzing/minutiae/internal/recordtypes/common"
+	"github.com/rbenzing/minutiae/internal/sqlitefile"
+
+	"os"            // want
+	"os/exec"       // want
+	"os/signal"     // want
+	"log"           // want
+	"log/slog"      // want
+	"runtime"       // want
+	"runtime/debug" // want
+	"sync"          // want
+	"sync/atomic"   // want
+	"reflect"       // want
+	"net"           // want
+	"net/http"      // want
+	"unsafe"        // want
+	"database/sql"  // want
+	"math/rand"     // want
+	"math/rand/v2"  // want
+	"hash/maphash"  // want
+	"go/parser"     // want
+	"go/build"      // want
+	"bufio"         // want
+	"path/filepath" // want
+	"io/ioutil"     // want
+	"io/fs"         // want
+	"text/template" // want
+	"archive/zip"   // want
+	"compress/gzip" // want
+	"encoding/json" // want
+	"encoding/base64" // want
+	"encoding/xml"  // want
+	"crypto/sha256" // want
+	"crypto/rand"   // want
+	"regexp"        // want
+	"testing"       // want
+	"plugin"        // want
+	"syscall"       // want
+	"C"             // want
+
+	_ "os"                 // want
+	osalias "os"           // want
+	danger "unsafe"        // want
+	. "log"                // want
+
+	"howett.net/plist"                       // want
+	"golang.org/x/text/encoding/charmap"     // want
+	"github.com/someone/else/library"        // want
+	"github.com/rbenzing/minutiae/internal/evidence"                   // want
+	"github.com/rbenzing/minutiae/internal/cli"                        // want
+	"github.com/rbenzing/minutiae/internal/device"                     // want
+	"github.com/rbenzing/minutiae/internal/records/recordstest"        // want
+	"github.com/rbenzing/minutiae/internal/sqlitefile/sqlitetest"      // want
+	"github.com/rbenzing/minutiae/internal/parsers/parsertest"         // want
+	"github.com/rbenzing/minutiae/internal/parsers/other"              // want
+	"github.com/rbenzing/minutiae/internal/artparse"                   // want
+)

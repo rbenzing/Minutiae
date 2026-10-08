@@ -64,21 +64,30 @@ func TestWarnIsCappedPerIngest(t *testing.T) {
 			t.Fatalf("warning %d: %v", i, err)
 		}
 	}
-	ws := warnEntries(t, c)
-	if len(ws) != 6 {
-		t.Fatalf("%d analysis.warning entries, want 5 plus one suppression note", len(ws))
+	if n := len(warnEntries(t, c)); n != 6 {
+		t.Fatalf("%d analysis.warning entries before End, want the 5 under the cap and the suppression began note", n)
 	}
-	if r, _ := ws[5]["reason"].(string); !strings.Contains(r, "further warnings suppressed") {
-		t.Errorf("last entry = %v, want the suppression note", ws[5])
+	res, err := w.End(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := warnEntries(t, c)
+	if len(ws) != 7 {
+		t.Fatalf("%d analysis.warning entries, want 5 plus the began note and the conclusion note", len(ws))
+	}
+	if b, _ := ws[5][evidence.WarnKeySuppressionBegan].(bool); !b {
+		t.Errorf("entry 5 = %v, want the suppression began note", ws[5])
+	}
+	if r, _ := ws[6]["reason"].(string); !strings.Contains(r, "further warnings suppressed") {
+		t.Errorf("last entry = %v, want the suppression note", ws[6])
+	}
+	if ws[6]["reason"] != "further warnings suppressed (the cap is 5 per ingest): 7 warnings and 0 rejections not written" {
+		t.Errorf("note text = %q", ws[6]["reason"])
 	}
 	for _, e := range ws[:5] {
 		if e["reason"] != "r" {
 			t.Errorf("entry %v", e)
 		}
-	}
-	res, err := w.End(ctx)
-	if err != nil {
-		t.Fatal(err)
 	}
 	if res.Warnings != 5 || res.WarningsSuppressed != 7 {
 		t.Errorf("result warnings %d suppressed %d, want 5 and 7", res.Warnings, res.WarningsSuppressed)
@@ -111,37 +120,8 @@ func TestEndWithCancelledContextStillConcludes(t *testing.T) {
 	}
 }
 
-// TestAbortStaysOpenWhenItsAuditFails: Abort closes the writer only after
-// records.ingest.error is on disk, so a failed append can be retried.
-func TestAbortStaysOpenWhenItsAuditFails(t *testing.T) {
-	c, a := setup(t)
-	w := startWriter(t, c, testParser, records.WriterOptions{}, a.ID)
-	add(t, w, recordstest.Records(a.ID, 2, 1))
-	boom := errors.New("disk full")
-	w.SetHook(func(p string) error {
-		if p == "before-abort-audit" {
-			return boom
-		}
-		return nil
-	})
-	if _, err := w.Abort(ctx, errors.New("cause")); !errors.Is(err, boom) {
-		t.Fatalf("Abort = %v, want the audit failure", err)
-	}
-	if n := len(auditOf(t, c, evidence.ActionIngestError)); n != 0 {
-		t.Fatalf("%d records.ingest.error entries after the failed Abort", n)
-	}
-	if err := w.Add(ctx, recordstest.Records(a.ID, 1, 2)[0]); errors.Is(err, records.ErrWriterClosed) {
-		t.Errorf("the writer was closed by a failed Abort: %v", err)
-	}
-	w.SetHook(nil)
-	res, err := w.Abort(ctx, errors.New("cause"))
-	if err != nil || res.Outcome != "incomplete" {
-		t.Fatalf("retried Abort = %+v, %v", res, err)
-	}
-	if o := scalar[string](t, c, `SELECT outcome FROM record_runs WHERE ingest_id = ?`, w.IngestID()); o != "incomplete" {
-		t.Errorf("run outcome %q", o)
-	}
-}
+// A failed Abort is no longer retryable: it closes the writer and frees the
+// live-ingest slot (TestFailedAbortReleasesLiveIngestSlot in counts_test.go).
 
 // TestIngestIDIsSetOnlyByASuccessfulStart: a Start that fails leaves IngestID
 // empty (an id that was never audited).

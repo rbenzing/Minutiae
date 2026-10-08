@@ -1,0 +1,129 @@
+package fixture
+
+// Data for TestPurityStateSelfTest (rule P5, package-level state). A line that must
+// be flagged ends with the marker "want": a declaration that is not one of the five
+// allowed forms, or a use of an allowed variable that is not read-only.
+
+import (
+	"errors"
+	"fmt"
+	"regexp"
+	"sort"
+	"time"
+
+	"github.com/rbenzing/minutiae/internal/recordtypes/common"
+)
+
+// (a) interface assertions, (b) error sentinels, (c) regexps, (d) read-only tables, (e) a schema
+var _ iface = (*impl)(nil)
+var _ iface = impl{}
+var _ = impl(nil)
+var ErrBad = errors.New("bad")
+var errWrapped = fmt.Errorf("wrapped: %w", ErrBad)
+var nameRE = regexp.MustCompile(`^[a-z]+$`)
+var table = [...]int{1, 2, 3}
+var lookup = map[string]int{"a": 1, "b": 2}
+var names = []string{"a", "b", "c"}
+var limits = [2]time.Duration{time.Second, 2 * time.Minute}
+var rows = []struct {
+	name string
+	size int
+}{{"x", 1}, {"y", 2}}
+var grid = [2][2]int{{1, 2}, {3, 4}}
+var schema = common.Schema{Name: "x"}
+
+func reads(i int) (string, int) {
+	_ = table[1]
+	_ = len(names) + cap(names) + len(lookup)
+	for i := range table {
+		_ = i
+	}
+	for _, n := range names {
+		_ = n
+	}
+	for k, v := range lookup {
+		_, _ = k, v
+	}
+	if names == nil {
+		return "", 0
+	}
+	x := lookup["a"]
+	y := rows[0].name
+	z := grid[1][0] + int(limits[0])
+	_ = nameRE.MatchString("x")
+	nameRE.Longest() // want
+	_ = errors.Is(errWrapped, ErrBad)
+	_ = schema.Validate(nil)
+	var shadowed = []int{1}
+	shadowed[0] = 2
+	names := []string{"local"} // a new variable that only shares the name
+	names[0] = "other"
+	return y, x + z + len(names)
+}
+
+// violating declarations
+var Exported = map[string]int{"a": 1}           // want
+var ExportedTable = []int{1, 2}                 // want
+var cache = &impl{}                             // want
+var counter int                                 // want
+var hook = func() {}                            // want
+var ExportedRE = regexp.MustCompile("x")        // want
+var plain = impl{}                              // want
+var _ = sideEffect()                            // want
+var fromCall = compute()                        // want
+var pairA, pairB = pair()                       // want
+var dynamic = []string{compute()}               // want
+var nestedSlice = [][]int{{1}}                  // want
+var nestedMap = map[string][]string{"a": {"b"}} // want
+var pointers = []*impl{nil}                     // want
+var addresses = []*int{&counter}                // want
+var ExportedSchema = common.Schema{}            // want
+var emptyCache = map[string]int{}               // a literal of no constants: the writes below are what is flagged
+var errSwapped = errors.New("x")
+var reRebound = regexp.MustCompile("y")
+
+// violating uses of allowed variables
+var written = []string{"a"}
+var sorted = []string{"b", "a"}
+var passed = []int{1}
+var leaked = []int{1}
+var aliased = []int{1}
+var counted = [2]int{1, 2}
+var addressed = [2]int{1, 2}
+var deleted = map[string]int{"a": 1}
+var copied = []int{1}
+var cleared = []int{1}
+var appended = []int{1}
+var methodCalled = []time.Duration{1}
+var sliced = [3]int{1, 2, 3}
+var rangeAssigned = []int{1}
+var viaStruct = []int{1}
+var summed = [2]int{1, 2}
+var schemaAlias = common.Schema{}
+var schemaWritten = common.Schema{}
+
+func writes() []int {
+	written[0] = "x"                 // want
+	sort.Strings(sorted)             // want
+	use(passed)                      // want
+	counted[0]++                     // want
+	p := &addressed                  // want
+	delete(deleted, "a")             // want
+	copy(copied, []int{2})           // want
+	clear(cleared)                   // want
+	appended = append(appended, 2)   // want
+	_ = methodCalled[0].String()     // want
+	t := sliced[:]                   // want
+	for rangeAssigned[0] = range t { // want
+	}
+	z := aliased                  // want
+	h := holder{items: viaStruct} // want
+	_ = summed + summed           // want
+	emptyCache["k"] = 1           // want
+	errSwapped = nil              // want
+	reRebound = nil               // want
+	s2 := schemaAlias             // want
+	schemaWritten.Name = "y"      // want
+	_, _, _, _ = p, z, h, s2
+	return leaked // want
+}

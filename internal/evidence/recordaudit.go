@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 )
 
 // Audit actions of the unified artifact database. The case.upgrade actions are
@@ -15,7 +16,7 @@ const (
 	ActionIngestEnd       = "records.ingest.end"     // IngestConclusion, outcome complete
 	ActionIngestError     = "records.ingest.error"   // IngestConclusion, outcome incomplete, with error
 	ActionIngestRecover   = "records.ingest.recover" // IngestRecover
-	ActionAnalysisWarning = "analysis.warning"       // analysis_id, path, reason (the shape examine uses)
+	ActionAnalysisWarning = "analysis.warning"       // analysis_id, path, reason (the shape examine uses); the records writer adds ingest_id and, for a rejection and for the end-of-ingest suppression note, rejected / suppression (with the suppressed counts)
 	ActionReindex         = "records.reindex"        // ReindexStart, before the index is touched
 	ActionReindexDone     = "records.reindex.done"   // ReindexDone, after the index state was set to current
 	ActionReindexError    = "records.reindex.error"  // ReindexFailure
@@ -97,7 +98,18 @@ type IngestConclusion struct {
 	LastID   int64            `json:"last_id"`
 	Rollup   string           `json:"rollup"`
 	Types    map[string]int64 `json:"types"`
-	Error    string           `json:"error,omitempty"`
+	// Warnings, WarningsSuppressed and Rejected are audit-only counts (the run row holds no copy): the
+	// analysis.warning entries written for the ingest, the warnings dropped after the per-ingest cap, and the
+	// records refused (a failed Add with ErrInvalidRecord, or Writer.Reject). Entries written before these
+	// fields existed lack the keys and decode to zero.
+	Warnings           int `json:"warnings"`
+	WarningsSuppressed int `json:"warnings_suppressed"`
+	Rejected           int `json:"rejected"`
+	// SuppressionUnknown is set only by recovery of an ingest that never concluded after it began suppressing:
+	// how many entries the cap kept out of the log is then unknown (WarningsSuppressed is 0 and Rejected holds the
+	// rejection entries only: lower bounds, not the true numbers).
+	SuppressionUnknown bool   `json:"suppression_unknown,omitempty"`
+	Error              string `json:"error,omitempty"`
 }
 
 // IngestRecover is the details of records.ingest.recover: the conclusion of an
@@ -161,6 +173,115 @@ func DecodeDetails[T any](d map[string]any) (T, error) {
 		return out, fmt.Errorf("audit details: %w", err)
 	}
 	return out, nil
+}
+
+// Detail keys the records writer adds to its own analysis.warning entries, so
+// that verify and recovery can count them without trusting any text a parser
+// supplied: every writer entry names its ingest, an entry written for a
+// rejection (Writer.Reject, or an Add refused for an invalid record) carries
+// rejected=true, and the one "further warnings suppressed" note of an ingest,
+// written when the ingest concludes, carries suppression=true and the numbers of
+// entries the cap kept out of the log.
+const (
+	WarnKeyIngest      = "ingest_id"
+	WarnKeyRejected    = "rejected"
+	WarnKeySuppression = "suppression"
+	// WarnKeySuppressionBegan marks the note the writer appends the moment the shared cap is first hit, before
+	// anything is suppressed: it carries no numbers, it only proves that suppression began, so a crash before the
+	// conclusion note is still visible to recovery and verify.
+	WarnKeySuppressionBegan = "suppression_began"
+	// WarnKeySuppressedWarnings and WarnKeySuppressedRejects are the numbers the
+	// suppression note carries: the Warn calls and the rejections (Reject calls and
+	// refused Adds) the cap kept out of the log.
+	WarnKeySuppressedWarnings = "suppressed_warnings"
+	WarnKeySuppressedRejects  = "suppressed_rejections"
+)
+
+// IngestWarningTally is what the audit log proves about the warnings of one
+// ingest: Warnings analysis.warning entries (the suppression notes not counted),
+// Rejects of them written for a rejection, Notes conclusion notes and Began
+// suppression began notes (an ingest has at most one of each). NoteWarnings and NoteRejects sum what the notes say
+// the cap kept out of the log; a note whose counts are missing, negative or not
+// whole numbers adds nothing and is counted in NoteBadCounts, one whose counts
+// are both zero in NoteEmpty.
+type IngestWarningTally struct {
+	Warnings      int
+	Began         int // suppression began notes (an ingest has at most one)
+	Rejects       int
+	Notes         int
+	NoteWarnings  int
+	NoteRejects   int
+	NoteBadCounts int
+	NoteEmpty     int
+}
+
+// Suppressed is the number of entries the log proves the cap dropped.
+func (t IngestWarningTally) Suppressed() int { return t.NoteWarnings + t.NoteRejects }
+
+// ProvenRejected is the number of rejections the log proves: the rejection
+// entries plus the suppressed rejections.
+func (t IngestWarningTally) ProvenRejected() int { return t.Rejects + t.NoteRejects }
+
+// maxNoteCount bounds a number read from a suppression note, so sums cannot overflow.
+const maxNoteCount = 1 << 40
+
+// noteCount reads a non-negative whole number from a decoded audit value.
+func noteCount(v any) (int, bool) {
+	var n int64
+	switch x := v.(type) {
+	case json.Number:
+		var err error
+		if n, err = x.Int64(); err != nil {
+			return 0, false
+		}
+	case float64:
+		if x != math.Trunc(x) || x < 0 || x > maxNoteCount {
+			return 0, false
+		}
+		n = int64(x)
+	case int:
+		n = int64(x)
+	default:
+		return 0, false
+	}
+	if n < 0 || n > maxNoteCount {
+		return 0, false
+	}
+	return int(n), true
+}
+
+// add counts one analysis.warning entry of the records writer.
+func (t *IngestWarningTally) add(d map[string]any) {
+	if b, _ := d[WarnKeySuppressionBegan].(bool); b {
+		t.Began++
+		return
+	}
+	if b, _ := d[WarnKeySuppression].(bool); b {
+		t.Notes++
+		w, wok := noteCount(d[WarnKeySuppressedWarnings])
+		r, rok := noteCount(d[WarnKeySuppressedRejects])
+		switch {
+		case !wok || !rok:
+			t.NoteBadCounts++
+		case w+r == 0:
+			t.NoteEmpty++
+		default:
+			t.NoteWarnings += w
+			t.NoteRejects += r
+		}
+		return
+	}
+	t.Warnings++
+	if b, _ := d[WarnKeyRejected].(bool); b {
+		t.Rejects++
+	}
+}
+
+// writerWarningIngest returns the ingest an analysis.warning entry written by the
+// records writer names ("" for any other analysis.warning entry).
+func writerWarningIngest(d map[string]any) string {
+	s, _ := d[WarnKeyIngest].(string)
+	return s
 }
 
 // Details returns the audit details of the entry.

@@ -46,7 +46,11 @@ const (
 	maxErrorText      = 2048
 	maxWarnPath       = 4096
 	maxWarnReason     = 1024
-	maxWarnings       = 10000
+
+	// MaxWarningsPerIngest is the most analysis.warning entries (warnings and rejections together) one
+	// ingest writes; parse.MaxWarnings must equal it.
+	MaxWarningsPerIngest = 10000
+	maxWarnings          = MaxWarningsPerIngest
 )
 
 // WriterOptions tune batching. A batch is flushed when it holds BatchRows records
@@ -69,6 +73,8 @@ type IngestResult struct {
 	Warnings int // analysis.warning entries appended through Warn
 	// WarningsSuppressed counts the warnings dropped after the per-ingest cap.
 	WarningsSuppressed int
+	// Rejected counts the records refused: Add calls that failed validation (ErrInvalidRecord) and Reject calls.
+	Rejected int
 }
 
 const (
@@ -89,7 +95,7 @@ type Writer struct {
 	p   Parser
 	opt WriterOptions
 
-	// hook is a test seam, called at "after-start-audit", "after-batch-audit",
+	// hook is a test seam, called at "after-start-audit", "after-batch-audit", "after-suppression-began", "after-suppression-note",
 	// "before-insert", "after-insert", "after-end-audit" and "before-abort-audit",
 	// always outside any transaction.
 	hook func(point string) error
@@ -115,8 +121,12 @@ type Writer struct {
 	lastID          int64
 	types           map[string]int64
 	warnings        int
-	warnCap         int // 0 means maxWarnings
-	warnSupp        int
+	warnCap         int  // 0 means maxWarnings
+	warnSupp        int  // entries the cap kept out of the log (warnings and rejections)
+	rejSupp         int  // of those, the rejections
+	rejected        int  // records refused: Add failures wrapping ErrInvalidRecord and Reject calls
+	began           bool // the "suppression began" note was written (the cap was hit)
+	noted           bool // the end-of-ingest suppression note was written: nothing more can be counted
 }
 
 // NewWriter checks the case is at schema v3 (evidence.ErrNeedsUpgrade
@@ -180,28 +190,26 @@ func (w *Writer) usable() error {
 
 // Add validates r and buffers it; the batch is flushed (audited, then written)
 // when it reaches the row or byte threshold. A record that fails validation is
-// rejected with a typed error and nothing is buffered or audited. Once a batch
-// failed, every later call returns that error and the caller must Abort.
+// rejected with a typed error and nothing is buffered; the refusal is audited as
+// a rejection first (an analysis.warning entry marked rejected=true, subject to
+// the shared cap of Warn) and then counted (IngestResult.Rejected), also past the
+// cap. When that audit entry cannot be written Add returns the audit error
+// instead and nothing is counted. A poisoned or closed writer, an audit failure
+// or a database failure is not a rejection. Once a batch failed, every later call
+// returns that error and the caller must Abort.
 func (w *Writer) Add(ctx context.Context, r Record) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if err := w.usable(); err != nil {
 		return err
 	}
-	art, ok := w.declared[r.ArtifactID]
-	if !ok {
-		if w.known[r.ArtifactID] {
-			return fmt.Errorf("%w: %q", ErrUndeclaredArtifact, clip(r.ArtifactID))
-		}
-		if r.ArtifactID != "" {
-			return fmt.Errorf("%w: %q", ErrUnknownArtifact, clip(r.ArtifactID))
-		}
-	}
-	if w.noRecoveredRule {
-		art.Recovered, art.MaxConfidence = false, nil
-	}
-	p, err := prepare(r, art)
+	p, err := w.prepareRecord(r)
 	if err != nil {
+		if errors.Is(err, ErrInvalidRecord) {
+			if rerr := w.rejectLocked(r.SourcePath, "record refused: "+err.Error()); rerr != nil {
+				return rerr
+			}
+		}
 		return err
 	}
 	p.row.ParserName, p.row.ParserVersion, p.row.ParserHash = w.p.Name, w.p.Version, w.parserHash
@@ -211,6 +219,24 @@ func (w *Writer) Add(ctx context.Context, r Record) error {
 		return w.flush(ctx)
 	}
 	return nil
+}
+
+// prepareRecord checks the artifact of r against the ingest's declaration and
+// validates r. w.mu is held.
+func (w *Writer) prepareRecord(r Record) (prepared, error) {
+	art, ok := w.declared[r.ArtifactID]
+	if !ok {
+		if w.known[r.ArtifactID] {
+			return prepared{}, fmt.Errorf("%w: %q", ErrUndeclaredArtifact, clip(r.ArtifactID))
+		}
+		if r.ArtifactID != "" {
+			return prepared{}, fmt.Errorf("%w: %q", ErrUnknownArtifact, clip(r.ArtifactID))
+		}
+	}
+	if w.noRecoveredRule {
+		art.Recovered, art.MaxConfidence = false, nil
+	}
+	return prepare(r, art)
 }
 
 // Flush writes the buffered records as one batch now.
@@ -227,41 +253,130 @@ func (w *Writer) Flush(ctx context.Context) error {
 // texts are bounded (path 4096 bytes, reason 1024, cut on a rune boundary and
 // marked with "..."), NUL and invalid UTF-8 become "?". A parser is an untrusted
 // caller and the audit log can never shrink, so at most 10,000 warnings are
-// written per ingest: the next one writes a single "further warnings suppressed"
-// entry and every later one is only counted (IngestResult.WarningsSuppressed).
+// written per ingest (rejections share the budget): later ones are only counted
+// (IngestResult.WarningsSuppressed) and the ingest's conclusion is preceded by a
+// single "further warnings suppressed" note that states how many were dropped.
 func (w *Writer) Warn(_ context.Context, path, reason string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	return w.warnLocked(path, reason, false)
+}
+
+// Reject records that the caller refused a record before Add. It goes through
+// the same path as Warn (same cleaning, same per-ingest cap shared with Warn) and
+// is audited first: rejected is incremented only after the warning entry was
+// appended or, past the cap, after the rejection was counted for the
+// end-of-ingest suppression note. When the audit append fails the error is
+// returned and nothing is counted. A rejection is counted even when its
+// individual entry is suppressed by the cap. A record that Add refused for being
+// invalid is already audited and counted by Add: the caller does not Reject it
+// again. Like Warn it also works on a poisoned writer. Its audit entry is marked
+// rejected=true, so verify can prove every rejection: the entries plus the
+// suppressed rejections the note carries equal the rejected count.
+func (w *Writer) Reject(_ context.Context, path, reason string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.rejectLocked(path, reason)
+}
+
+// rejectLocked audits a rejection (or, past the cap, counts it for the note) and
+// only then counts it in rejected. w.mu is held.
+func (w *Writer) rejectLocked(path, reason string) error {
+	if err := w.warnLocked(path, reason, true); err != nil {
+		return err
+	}
+	w.rejected++
+	return nil
+}
+
+// warnLocked is the body of Warn and Reject. Every entry names its ingest (a
+// parser cannot set these keys): verify and recovery count the entries per
+// ingest and a rejection entry carries rejected=true. Past the cap nothing is
+// written: the entry is counted (warnSupp, and rejSupp for a rejection) and the
+// one suppression note, written when the ingest concludes (writeNote), carries
+// the numbers. Once that note exists nothing more can be counted, so a later
+// call is refused. w.mu is held.
+func (w *Writer) warnLocked(path, reason string, rejection bool) error {
 	switch w.state {
 	case stateNew:
 		return ErrWriterNotStarted
 	case stateClosed:
 		return ErrWriterClosed
 	}
+	if w.noted {
+		return fmt.Errorf("%w: the ingest is concluding", ErrWriterClosed)
+	}
 	limit := w.warnCap
 	if limit <= 0 {
 		limit = maxWarnings
 	}
 	if w.warnings >= limit {
-		if w.warnSupp == 0 {
-			if _, err := w.c.Audit.Append(evidence.ActionAnalysisWarning, "", map[string]any{
-				"analysis_id": w.analysisID, "path": "",
-				"reason": fmt.Sprintf("further warnings suppressed (the cap is %d per ingest)", limit),
-			}); err != nil {
-				return err
-			}
+		if err := w.writeBegan(limit); err != nil {
+			return err
 		}
 		w.warnSupp++
+		if rejection {
+			w.rejSupp++
+		}
 		return nil
 	}
-	_, err := w.c.Audit.Append(evidence.ActionAnalysisWarning, "", map[string]any{
+	d := map[string]any{
 		"analysis_id": w.analysisID, "path": cleanText(path, maxWarnPath), "reason": cleanText(reason, maxWarnReason),
-	})
+		evidence.WarnKeyIngest: w.IngestID(),
+	}
+	if rejection {
+		d[evidence.WarnKeyRejected] = true
+	}
+	_, err := w.c.Audit.Append(evidence.ActionAnalysisWarning, "", d)
 	if err != nil {
 		return err
 	}
 	w.warnings++
 	return nil
+}
+
+// writeBegan appends the "suppression began" note the first time the shared cap keeps an entry out
+// of the log, before that entry is counted. It carries no numbers; it exists so that an ingest that
+// dies before writeNote still shows in the audit log that suppression began, and recovery then
+// records the suppressed counts as unknown instead of 0. A failed append returns the error and
+// counts nothing (the next call tries again). w.mu is held.
+func (w *Writer) writeBegan(limit int) error {
+	if w.began {
+		return nil
+	}
+	if _, err := w.c.Audit.Append(evidence.ActionAnalysisWarning, "", map[string]any{
+		"analysis_id": w.analysisID, "path": "", evidence.WarnKeyIngest: w.IngestID(), evidence.WarnKeySuppressionBegan: true,
+		"reason": fmt.Sprintf("warning cap reached (%d per ingest): further warnings and rejections are counted, not written; the totals follow when the ingest concludes", limit),
+	}); err != nil {
+		return fmt.Errorf("audit suppression began note: %w", err)
+	}
+	w.began = true
+	return w.callHook("after-suppression-began")
+}
+
+// writeNote appends the one suppression note of the ingest, when the cap kept any
+// entry out of the log: it carries the number of suppressed warnings and of
+// suppressed rejections, so verify can check warnings_suppressed and rejected for
+// equality. It runs once, before the conclusion is audited; a failure leaves the
+// ingest unconcluded. w.mu is held.
+func (w *Writer) writeNote() error {
+	if w.noted || w.warnSupp == 0 {
+		return nil
+	}
+	limit := w.warnCap
+	if limit <= 0 {
+		limit = maxWarnings
+	}
+	if _, err := w.c.Audit.Append(evidence.ActionAnalysisWarning, "", map[string]any{
+		"analysis_id": w.analysisID, "path": "", evidence.WarnKeyIngest: w.IngestID(), evidence.WarnKeySuppression: true,
+		"reason": fmt.Sprintf("further warnings suppressed (the cap is %d per ingest): %d warnings and %d rejections not written",
+			limit, w.warnSupp-w.rejSupp, w.rejSupp),
+		evidence.WarnKeySuppressedWarnings: w.warnSupp - w.rejSupp, evidence.WarnKeySuppressedRejects: w.rejSupp,
+	}); err != nil {
+		return fmt.Errorf("audit suppression note: %w", err)
+	}
+	w.noted = true
+	return w.callHook("after-suppression-note")
 }
 
 // cleanText replaces NUL and invalid UTF-8 with "?" and bounds s to n bytes.
@@ -445,13 +560,15 @@ func (w *Writer) conclusion(outcome string) evidence.IngestConclusion {
 	return evidence.IngestConclusion{
 		IngestID: w.IngestID(), Outcome: outcome, Batches: len(w.digests), Records: w.nrecords,
 		FirstID: w.firstID, LastID: w.lastID, Rollup: evidence.IngestRollup(w.digests), Types: types,
+		Warnings: w.warnings, WarningsSuppressed: w.warnSupp, Rejected: w.rejected,
 	}
 }
 
 func (w *Writer) result(c evidence.IngestConclusion) IngestResult {
 	return IngestResult{
 		IngestID: c.IngestID, Outcome: c.Outcome, Batches: c.Batches, Records: c.Records, FirstID: c.FirstID,
-		LastID: c.LastID, Rollup: c.Rollup, Types: c.Types, Warnings: w.warnings, WarningsSuppressed: w.warnSupp,
+		LastID: c.LastID, Rollup: c.Rollup, Types: c.Types, Warnings: c.Warnings, WarningsSuppressed: c.WarningsSuppressed,
+		Rejected: c.Rejected,
 	}
 }
 
@@ -466,6 +583,9 @@ func (w *Writer) End(ctx context.Context) (IngestResult, error) {
 		return IngestResult{}, err
 	}
 	if err := w.flush(ctx); err != nil {
+		return IngestResult{}, err
+	}
+	if err := w.writeNote(); err != nil {
 		return IngestResult{}, err
 	}
 	concl := w.conclusion("complete")
@@ -487,7 +607,11 @@ func (w *Writer) End(ctx context.Context) (IngestResult, error) {
 // Abort concludes the ingest as incomplete: records.ingest.error is audited and
 // the run is recorded (outcome incomplete; it never supersedes). Batches that
 // were committed stay, flagged by that outcome; records still buffered are
-// dropped. It records the run even when ctx is already cancelled.
+// dropped. It records the run even when ctx is already cancelled. When Abort
+// itself fails (the before-abort hook or the audit append) the writer is closed
+// and the case's live-ingest slot is released; it is not retryable. The ingest
+// stays unconcluded in the audit log and the next Start recovers it
+// (records.ingest.recover).
 func (w *Writer) Abort(ctx context.Context, cause error) (IngestResult, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -505,11 +629,16 @@ func (w *Writer) Abort(ctx context.Context, cause error) (IngestResult, error) {
 		concl.Error = clipTo(cause.Error(), maxErrorText)
 	}
 	if err := w.callHook("before-abort-audit"); err != nil {
+		w.abandon()
+		return IngestResult{}, err
+	}
+	if err := w.writeNote(); err != nil {
+		w.abandon()
 		return IngestResult{}, err
 	}
 	e, err := w.c.Audit.Append(evidence.ActionIngestError, "", concl.Details())
 	if err != nil {
-		// the ingest is not concluded: the writer stays open so Abort can be retried
+		w.abandon()
 		return IngestResult{}, fmt.Errorf("audit ingest error: %w", err)
 	}
 	w.buf, w.bufBytes = nil, 0
@@ -518,6 +647,14 @@ func (w *Writer) Abort(ctx context.Context, cause error) (IngestResult, error) {
 		return IngestResult{}, err
 	}
 	return w.result(concl), nil
+}
+
+// abandon closes the writer after an Abort that could not audit its conclusion:
+// buffered records are dropped and the caller's deferred releaseIfClosed frees the
+// live-ingest slot. w.mu is held.
+func (w *Writer) abandon() {
+	w.buf, w.bufBytes = nil, 0
+	w.state = stateClosed
 }
 
 // storeRun records the run row of a concluded ingest; the audit entry e is the

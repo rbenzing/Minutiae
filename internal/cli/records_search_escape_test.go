@@ -121,7 +121,7 @@ func TestSearchMarksHitsOfAnIncompleteArtifact(t *testing.T) {
 	c := recordstest.NewCase(t)
 	art := recordstest.AddIncompleteArtifact(t, c, "cut.db", []byte("partial"))
 	recordstest.Ingest(t, c, recParser, []string{art.ID}, []records.Record{
-		{Type: "message", ArtifactID: art.ID, Summary: "needle one", Payload: map[string]any{}},
+		{Type: "message", ArtifactID: art.ID, Summary: "needle one", Payload: recordstest.ValidPayload("message")},
 	})
 	dir := c.Dir
 	if err := c.Close(); err != nil {

@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"encoding/json"
 	"reflect"
 	"sort"
 	"strings"
@@ -11,7 +12,8 @@ func sampleConclusion() IngestConclusion {
 	return IngestConclusion{
 		IngestID: "ing-1", Outcome: "complete", Batches: 3, Records: 12000,
 		FirstID: 1, LastID: 12000, Rollup: strings.Repeat("ab", 32),
-		Types: map[string]int64{"message": 9000, "call": 3000},
+		Types:    map[string]int64{"message": 9000, "call": 3000},
+		Warnings: 12, WarningsSuppressed: 5, Rejected: 7,
 	}
 }
 
@@ -46,6 +48,7 @@ func auditSamples() []auditSample {
 		IngestConclusion: IngestConclusion{
 			IngestID: "ing-0", Outcome: "interrupted", Batches: 1, Records: 5000, FirstID: 1, LastID: 5000,
 			Rollup: strings.Repeat("ef", 32), Types: map[string]int64{"message": 5000},
+			Warnings: 2, WarningsSuppressed: 1, Rejected: 3,
 		},
 		ByIngestID: "ing-1", Reason: "unfinished ingest found by a later start", BatchNos: []int{2, 3}, RunMissing: true,
 	}
@@ -68,17 +71,17 @@ func auditSamples() []auditSample {
 		{
 			"IngestConclusion end", end, end.Details(),
 			func(d map[string]any) (any, error) { return DecodeDetails[IngestConclusion](d) },
-			[]string{"batches", "first_id", "ingest_id", "last_id", "outcome", "records", "rollup", "types"},
+			[]string{"batches", "first_id", "ingest_id", "last_id", "outcome", "records", "rejected", "rollup", "types", "warnings", "warnings_suppressed"},
 		},
 		{
 			"IngestConclusion error", endErr, endErr.Details(),
 			func(d map[string]any) (any, error) { return DecodeDetails[IngestConclusion](d) },
-			[]string{"batches", "error", "first_id", "ingest_id", "last_id", "outcome", "records", "rollup", "types"},
+			[]string{"batches", "error", "first_id", "ingest_id", "last_id", "outcome", "records", "rejected", "rollup", "types", "warnings", "warnings_suppressed"},
 		},
 		{
 			"IngestRecover", recov, recov.Details(),
 			func(d map[string]any) (any, error) { return DecodeDetails[IngestRecover](d) },
-			[]string{"batch_nos", "batches", "by_ingest_id", "first_id", "ingest_id", "last_id", "outcome", "reason", "records", "rollup", "run_missing", "types"},
+			[]string{"batch_nos", "batches", "by_ingest_id", "first_id", "ingest_id", "last_id", "outcome", "reason", "records", "rejected", "rollup", "run_missing", "types", "warnings", "warnings_suppressed"},
 		},
 	}
 }
@@ -115,6 +118,40 @@ func TestRecordAuditDetailsRoundTrip(t *testing.T) {
 				t.Fatalf("audit round trip: %+v, %v; want %+v", got, err, s.value)
 			}
 		})
+	}
+}
+
+// TestDecodeDetailsAbsentCountsAreZero: conclusion entries written before the
+// warnings, warnings_suppressed and rejected keys existed still decode.
+func TestDecodeDetailsAbsentCountsAreZero(t *testing.T) {
+	d := sampleConclusion().Details()
+	for _, k := range []string{"warnings", "warnings_suppressed", "rejected"} {
+		if _, ok := d[k]; !ok {
+			t.Fatalf("Details has no %q", k)
+		}
+		delete(d, k)
+	}
+	got, err := DecodeDetails[IngestConclusion](d)
+	if err != nil || got.Warnings != 0 || got.WarningsSuppressed != 0 || got.Rejected != 0 || got.Records != 12000 {
+		t.Fatalf("decoded %+v, %v", got, err)
+	}
+}
+
+func TestSameConclusionComparesCounts(t *testing.T) {
+	a := sampleConclusion()
+	if !sameConclusion(a, sampleConclusion()) {
+		t.Fatal("equal conclusions differ")
+	}
+	for name, mod := range map[string]func(c *IngestConclusion){
+		"warnings":            func(c *IngestConclusion) { c.Warnings++ },
+		"warnings_suppressed": func(c *IngestConclusion) { c.WarningsSuppressed++ },
+		"rejected":            func(c *IngestConclusion) { c.Rejected++ },
+	} {
+		b := sampleConclusion()
+		mod(&b)
+		if sameConclusion(a, b) {
+			t.Errorf("%s is not compared", name)
+		}
 	}
 }
 
@@ -164,5 +201,67 @@ func TestRecordAuditActionNames(t *testing.T) {
 		if got != want {
 			t.Errorf("action constant %q, want %q", got, want)
 		}
+	}
+}
+
+// TestIngestWarningTallyReadsSuppressionNotes: the numbers of a suppression note are
+// read as whole non-negative numbers (as the log decodes them, json.Number); anything
+// else adds nothing and is counted as a bad note.
+func TestIngestWarningTallyReadsSuppressionNotes(t *testing.T) {
+	note := func(w, r any) map[string]any {
+		return map[string]any{WarnKeySuppression: true, WarnKeySuppressedWarnings: w, WarnKeySuppressedRejects: r}
+	}
+	var tally IngestWarningTally
+	tally.add(map[string]any{WarnKeyIngest: "x"})
+	tally.add(map[string]any{WarnKeyIngest: "x", WarnKeyRejected: true})
+	tally.add(note(json.Number("3"), json.Number("4")))
+	if tally.Warnings != 2 || tally.Rejects != 1 || tally.Notes != 1 || tally.NoteWarnings != 3 || tally.NoteRejects != 4 ||
+		tally.Suppressed() != 7 || tally.ProvenRejected() != 5 {
+		t.Fatalf("tally = %+v", tally)
+	}
+	for name, n := range map[string]map[string]any{
+		"missing":    {WarnKeySuppression: true},
+		"negative":   note(json.Number("-1"), json.Number("2")),
+		"fractional": note(json.Number("1.5"), json.Number("2")),
+		"text":       note("3", json.Number("2")),
+		"too large":  note(json.Number("99999999999999"), json.Number("2")),
+		"bool":       note(true, json.Number("2")),
+	} {
+		var b IngestWarningTally
+		b.add(n)
+		if b.NoteBadCounts != 1 || b.Suppressed() != 0 || b.Warnings != 0 {
+			t.Errorf("%s: tally = %+v, want one bad note adding nothing", name, b)
+		}
+	}
+	var empty IngestWarningTally
+	empty.add(note(json.Number("0"), json.Number("0")))
+	if empty.NoteEmpty != 1 || empty.NoteBadCounts != 0 {
+		t.Errorf("zero note: tally = %+v", empty)
+	}
+	var native IngestWarningTally
+	native.add(note(2, float64(5)))
+	if native.NoteWarnings != 2 || native.NoteRejects != 5 {
+		t.Errorf("native numbers: tally = %+v", native)
+	}
+}
+
+// TestIngestWarningTallyReadsBeganNote: the "suppression began" note is a marker
+// only: it is counted apart (Began), never as a warning, a rejection or a
+// conclusion note, and it adds no suppressed numbers.
+func TestIngestWarningTallyReadsBeganNote(t *testing.T) {
+	var tally IngestWarningTally
+	tally.add(map[string]any{WarnKeyIngest: "x"})
+	tally.add(map[string]any{WarnKeyIngest: "x", WarnKeySuppressionBegan: true})
+	if tally.Warnings != 1 || tally.Began != 1 || tally.Notes != 0 || tally.Rejects != 0 || tally.Suppressed() != 0 || tally.NoteBadCounts != 0 {
+		t.Fatalf("tally = %+v, want one warning and one began note", tally)
+	}
+	tally.add(map[string]any{WarnKeyIngest: "x", WarnKeySuppressionBegan: true})
+	if tally.Began != 2 {
+		t.Errorf("Began = %d after two began notes, want 2", tally.Began)
+	}
+	var other IngestWarningTally
+	other.add(map[string]any{WarnKeyIngest: "x", WarnKeySuppressionBegan: "yes"}) // not a bool: an ordinary entry
+	if other.Warnings != 1 || other.Began != 0 {
+		t.Errorf("a non-bool marker was believed: %+v", other)
 	}
 }
