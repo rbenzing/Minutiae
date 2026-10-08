@@ -56,6 +56,15 @@ type Row struct {
 	flags     RowFlags
 	loc       Loc
 	rec       *RecoveredInfo
+	charge    *rowCharge // set on an owned row (Clone, Get); shared by copies of it
+}
+
+// rowCharge is the budget charge of one owned row; copies of the row share it,
+// so it is returned once.
+type rowCharge struct {
+	db       *DB
+	n        int64
+	returned bool
 }
 
 var _ parse.Row = Row{}
@@ -313,6 +322,7 @@ const (
 // cloneCost is what a deep copy of r holds.
 func (r Row) cloneCost() int64 {
 	n := int64(len(r.vals)) * rowValueCost
+	n += int64(len(r.states)) // one byte per column
 	for i := range r.vals {
 		n += int64(len(r.vals[i].Bytes))
 	}
@@ -354,6 +364,7 @@ func (r Row) Clone() (out Row, err error) {
 		}
 	}()
 	out = r
+	out.charge = &rowCharge{db: db, n: n}
 	out.vals = make([]sqlitefile.Value, len(r.vals))
 	copy(out.vals, r.vals)
 	for i := range out.vals {
@@ -411,7 +422,8 @@ func encodeComponent(sb *strings.Builder, s string) {
 
 // Locator names the row: sqlite:table=<table>;rowid=<n>, followed by
 // ;wal_frame=<frame> for a cell in the WAL or ;journal_rec=<record> for a cell
-// in the journal; the table name is percent-encoded. It is empty with ok false
+// in the journal. The two numbers have different bases: wal_frame is the
+// 1-based WAL slot, journal_rec the 0-based journal record index; the table name is percent-encoded. It is empty with ok false
 // for a recovered row, a row without a rowid (WITHOUT ROWID, the zero Row) and
 // a locator longer than 1024 bytes, which the records package refuses.
 func (r Row) Locator() (string, bool) {
@@ -435,4 +447,17 @@ func (r Row) Locator() (string, bool) {
 		return "", false
 	}
 	return sb.String(), true
+}
+
+// Release returns the budget charge of an owned row (one from Get or Clone).
+// It is idempotent: a second call, or a call on a copy of the row, does
+// nothing. DB.Release returns everything still held, after which Release frees
+// nothing. The row still answers after Release, but it is no longer counted.
+func (r Row) Release() {
+	c := r.charge
+	if c == nil || c.returned {
+		return
+	}
+	c.returned = true
+	c.db.budget.Free(c.n)
 }
