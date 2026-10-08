@@ -299,10 +299,16 @@ func TestClassifyFloatIntegerKinds(t *testing.T) {
 		{KindWebKitMicros, 13414166000000000, StatusValid},
 		{KindCocoaSeconds, 721692800.5, StatusValid},
 		{Kind(99), 1, StatusInvalid},
+		{Kind(8), 1, StatusInvalid}, // first value past KindFileTime
+		{KindUnixMillis, 1 << 63, StatusInvalid},
+		{KindUnixMillis, -(1 << 63), StatusSentinel}, // exactly MinInt64
 	} {
 		if got := ClassifyFloat(tc.k, tc.f); got != tc.want {
 			t.Errorf("ClassifyFloat(%d, %v) = %v, want %v", tc.k, tc.f, got, tc.want)
 		}
+	}
+	if got := Classify(Kind(8), 1); got != StatusInvalid {
+		t.Errorf("Kind(8): %v", got)
 	}
 	if got := Classify(Kind(99), 1); got != StatusInvalid {
 		t.Errorf("unknown kind: %v", got)
@@ -353,6 +359,16 @@ func TestWebKitMicrosDoesNotOverflow(t *testing.T) {
 	for _, v := range []int64{math.MaxInt64 - 1, math.MinInt64 + 1} {
 		if tm, ok := WebKitMicros(v); ok || !tm.IsZero() {
 			t.Errorf("WebKitMicros(%d) = %v, %v", v, tm, ok)
+		}
+	}
+}
+
+// The float range check runs before any float-to-int conversion, so NaN is refused by a
+// failed comparison and not by the platform's conversion result (MinInt64 on amd64, 0 on arm64).
+func TestConvertFloatRefusesNaNBeforeConversion(t *testing.T) {
+	for _, v := range []float64{math.NaN(), math.Float64frombits(0x7ff8000000000123), math.Inf(1), math.Inf(-1)} {
+		if tm, st := convertFloat(v); st != StatusInvalid || !tm.IsZero() {
+			t.Errorf("convertFloat(%v) = %v %v, want invalid", v, tm, st)
 		}
 	}
 }

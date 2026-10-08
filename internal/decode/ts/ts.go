@@ -141,12 +141,12 @@ func convertInt(k Kind, v int64) (time.Time, Status) {
 // convertFloat converts Cocoa seconds.
 func convertFloat(v float64) (time.Time, Status) {
 	switch {
-	case math.IsNaN(v) || math.IsInf(v, 0):
+	case !(v >= -maxCocoaSecondsFloat && v <= maxCocoaSecondsFloat):
+		// Checked on the float before any conversion to int: NaN fails both comparisons, so it
+		// is refused on every platform, as are the infinities and huge values.
 		return time.Time{}, StatusInvalid
 	case v == 0 || v == -1: // 0 also matches -0
 		return time.Time{}, StatusSentinel
-	case v > maxCocoaSecondsFloat || v < -maxCocoaSecondsFloat:
-		return time.Time{}, StatusInvalid
 	}
 	whole := math.Floor(v)
 	ns := int64(math.Round((v - whole) * float64(nanosPerSecond)))
