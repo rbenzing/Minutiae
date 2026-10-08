@@ -177,3 +177,36 @@ func TestSqlitefileSurfaceUsedByTableResolution(_ *testing.T) {
 	pin[sqlitefile.GenKind](sqlitefile.GenVirtual)
 	pin[func(*sqlitefile.Table) uint32]((*sqlitefile.Table).RootPage)
 }
+
+// Used by Row and Scan (Task 4).
+func TestSqlitefileSurfaceUsedByRowsAndScan(_ *testing.T) {
+	pin[sqlitefile.FileKind](sqlitefile.FileDB)
+	pin[sqlitefile.FileKind](sqlitefile.FileWAL)
+	pin[sqlitefile.FileKind](sqlitefile.FileJournal)
+	pin[sqlitefile.Kind](sqlitefile.KindNull)
+	pin[sqlitefile.Kind](sqlitefile.KindInt)
+	pin[sqlitefile.Kind](sqlitefile.KindFloat)
+	pin[sqlitefile.Kind](sqlitefile.KindText)
+	pin[sqlitefile.Kind](sqlitefile.KindBlob)
+	pin[sqlitefile.Encoding](sqlitefile.EncUTF8)
+	pin[sqlitefile.Encoding](sqlitefile.EncUTF16LE)
+	pin[sqlitefile.Encoding](sqlitefile.EncUTF16BE)
+	pin[func(sqlitefile.Value) (string, bool)](sqlitefile.Value.Text)
+	var td sqlitefile.TableDef
+	pin[int](td.StoredColumns)
+	var o sqlitefile.Origin
+	var b sqlitefile.TableBasis
+	var rl sqlitefile.Relation
+	var wp *sqlitefile.WALProv
+	var jp *sqlitefile.JournalProv
+	pin[sqlitefile.Origin](o)
+	pin[sqlitefile.TableBasis](b)
+	pin[sqlitefile.Relation](rl)
+	pin[*sqlitefile.WALProv](wp)
+	pin[*sqlitefile.JournalProv](jp)
+	pin[int](parse.TickEvery)
+	pin[func(context.Context, int) error](parse.Tick)
+	pin[parse.FileRole](parse.RoleDB)
+	pin[parse.FileRole](parse.RoleWAL)
+	pin[parse.FileRole](parse.RoleJournal)
+}
