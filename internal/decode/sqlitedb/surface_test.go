@@ -161,3 +161,18 @@ func TestSentinelsAreDistinct(t *testing.T) {
 		t.Error("UnsupportedCollationError does not match its sentinel")
 	}
 }
+
+// Used by Table (Task 3).
+func TestSqlitefileSurfaceUsedByTableResolution(_ *testing.T) {
+	pin[error](sqlitefile.ErrNotFound)
+	var d sqlitefile.TableDef
+	pin[[]sqlitefile.Column](d.Columns)
+	pin[bool](d.WithoutRowid)
+	pin[int](d.RowidAlias)
+	pin[bool](d.ParseOK)
+	pin[string](d.ParseNote)
+	pin[sqlitefile.Affinity](sqlitefile.AffText)
+	pin[sqlitefile.DefaultKind](sqlitefile.DefaultLiteral)
+	pin[sqlitefile.GenKind](sqlitefile.GenVirtual)
+	pin[func(*sqlitefile.Table) uint32]((*sqlitefile.Table).RootPage)
+}
