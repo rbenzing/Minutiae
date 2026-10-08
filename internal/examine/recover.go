@@ -264,7 +264,15 @@ func (w *recoverWriter) copyRuns(out io.Writer, rel string, d *evidence.Derivati
 		}
 		rv.Alloc.Free = n
 		rv.Assumptions = append(rv.Assumptions, fmt.Sprintf("read-failed-after=%d", n))
-		return w.s.keepPrefixRuns(w.a, rel, "", d, c.Runs, n)
+		declared := d.RunsArtifact // the full declared list, written before the copy
+		if err := w.s.keepPrefixRuns(w.a, rel, "", d, c.Runs, n); err != nil {
+			return err
+		}
+		if declared != "" && d.RunsArtifact != declared {
+			// the prefix replaced the reference: keep the full list referenced and verifiable
+			rv.DeclaredRunsArtifact = declared
+		}
+		return nil
 	}
 	buf := make([]byte, copyBufSize) // one buffer for every run of the candidate
 	for _, r := range c.Runs {

@@ -1023,3 +1023,80 @@ func TestRecoverOutputPassesVerifyRules(t *testing.T) {
 	}
 	verifyOK(t, e.c)
 }
+
+// FB-1: a copy interrupted in a file with more than MaxInlineRuns runs leaves a case that
+// verifies: the full declared run list (written before the copy) stays referenced through
+// Recovery.DeclaredRunsArtifact, the captured prefix is recorded as usual and reproduces.
+func TestRecoverInterruptedManyRunsFileLeavesVerifiableCase(t *testing.T) {
+	const n = evidence.MaxInlineRuns + 4
+	const sbs = 512
+	for _, tc := range []struct {
+		name   string
+		cutAt  int // fragments copied before the interruption
+		cancel bool
+		inline bool // the captured prefix fits inline
+	}{
+		{"cancel inline prefix", 2000, true, true},
+		{"cancel prefix sidecar", 4098, true, false},
+		{"read error inline prefix", 2000, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			buildBS = sbs
+			t.Cleanup(func() { buildBS = bs })
+			data := pat(1, n*sbs)
+			node := fstest.Node{Path: "/many.bin", Data: data, Deleted: true, Freed: true, Fragments: n, Recover: []fstest.RecoverMap{{Method: mtfsRecM}}}
+			e := newRecEnv(t, node)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			opts := examine.RecoverOptions{Partition: -1, All: true}
+			if tc.cancel {
+				opts.Progress = func(done, _ int64) {
+					if done >= int64(tc.cutAt)*sbs {
+						cancel()
+					}
+				}
+			} else {
+				fi := &failingImage{Image: e.s.Image, failOff: partStart + e.layout["/many.bin"][tc.cutAt].Offset}
+				e.s.Image = fi
+				opts.Progress = func(_, _ int64) { fi.armed = true }
+			}
+			_, err := e.s.Recover(ctx, opts)
+			if tc.cancel && !errors.Is(err, context.Canceled) {
+				t.Fatalf("err = %v, want a cancel", err)
+			}
+			recs, _ := e.c.Manifest()
+			var file evidence.ManifestRecord
+			for _, r := range recs {
+				if r.Source.Kind == evidence.KindRecover {
+					file = r
+				}
+			}
+			if file.ID == "" || !file.Incomplete {
+				t.Fatalf("want one incomplete recovered artifact, manifest %d records", len(recs))
+			}
+			d := file.Source.Derived
+			decl := d.Recovery.DeclaredRunsArtifact
+			if decl == "" {
+				t.Fatal("the interrupted artifact does not reference the declared full run list")
+			}
+			if (len(d.Runs) > 0) != tc.inline || (d.RunsArtifact != "") == tc.inline || d.RunsArtifact == decl {
+				t.Errorf("captured prefix: %d inline runs, sidecar %q, declared %q (inline=%v)", len(d.Runs), d.RunsArtifact, decl, tc.inline)
+			}
+			full := file
+			fd := *d
+			fd.Runs, fd.RunsArtifact = nil, decl
+			full.Source.Derived = &fd
+			all, derr := e.c.DerivedRuns(full, nil)
+			if derr != nil || len(all) != n {
+				t.Errorf("declared list: %d runs, %v, want %d", len(all), derr, n)
+			}
+			rep, verr := e.c.VerifyWith(context.Background(), examine.RecoveredCheck())
+			if verr != nil {
+				t.Fatal(verr)
+			}
+			if !rep.OK() {
+				t.Fatalf("case verify problems: %v", rep.Problems)
+			}
+		})
+	}
+}

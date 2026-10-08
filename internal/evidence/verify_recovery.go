@@ -77,9 +77,19 @@ func (c *Case) verifyRecovered(rep *VerifyReport, recs []ManifestRecord) {
 		uniq = append(uniq, r)
 	}
 	referenced := map[string]bool{} // runs sidecars some recovered artifact names
+	refCount := map[string]int{}    // how many references (captured or declared) name each sidecar
 	for _, r := range uniq {
-		if d := r.Source.Derived; d != nil && IsRecoveredKind(r.Source.Kind) && d.RunsArtifact != "" {
+		d := r.Source.Derived
+		if d == nil || !IsRecoveredKind(r.Source.Kind) {
+			continue
+		}
+		if d.RunsArtifact != "" {
 			referenced[d.RunsArtifact] = true
+			refCount[d.RunsArtifact]++
+		}
+		if d.Recovery != nil && d.Recovery.DeclaredRunsArtifact != "" {
+			referenced[d.Recovery.DeclaredRunsArtifact] = true
+			refCount[d.Recovery.DeclaredRunsArtifact]++
 		}
 	}
 
@@ -122,6 +132,7 @@ func (c *Case) verifyRecovered(rep *VerifyReport, recs []ManifestRecord) {
 				}
 			}
 			c.checkRecoveredPath(ps, r, pre, byID)
+			checkDeclaredRuns(ps, r, pre, byID, refCount)
 		} else if inNS {
 			// A5: only a sidecar a recovered artifact names may live in a recovered namespace
 			switch {
@@ -182,6 +193,30 @@ func (c *Case) checkRecoveredPath(ps *problemSet, r ManifestRecord, pre string, 
 		if sc, ok := byID[d.RunsArtifact]; ok && (sc.Source.Kind != "runs" || path.Dir(sc.Path) != path.Dir(r.Path)) {
 			ps.add(rKindNamespace, "%sruns artifact %q is not a runs sidecar in the same directory", pre, d.RunsArtifact)
 		}
+	}
+}
+
+// checkDeclaredRuns checks the declared full run list an interrupted copy keeps referenced
+// (Recovery.DeclaredRunsArtifact): a runs sidecar of the artifact's own parent, in its own
+// directory, named by exactly one reference in the whole case. It is never used as captured runs.
+func checkDeclaredRuns(ps *problemSet, r ManifestRecord, pre string, byID map[string]ManifestRecord, refCount map[string]int) {
+	d := r.Source.Derived
+	if d == nil || d.Recovery == nil || d.Recovery.DeclaredRunsArtifact == "" {
+		return
+	}
+	id := d.Recovery.DeclaredRunsArtifact
+	sc, ok := byID[id]
+	switch {
+	case !ok:
+		ps.add(rKindNamespace, "%sdeclared runs artifact %q is not in the manifest", pre, id)
+		return
+	case sc.Source.Kind != "runs" || path.Dir(sc.Path) != path.Dir(r.Path):
+		ps.add(rKindNamespace, "%sdeclared runs artifact %q is not a runs sidecar in the same directory", pre, id)
+	case sc.Source.Derived == nil || sc.Source.Derived.ParentID != d.ParentID:
+		ps.add(rKindNamespace, "%sdeclared runs artifact %q is not a runs sidecar of the artifact's parent", pre, id)
+	}
+	if refCount[id] > 1 {
+		ps.add(rKindNamespace, "%sdeclared runs artifact %q is referenced by more than one recovered artifact", pre, id)
 	}
 }
 

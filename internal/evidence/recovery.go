@@ -51,7 +51,11 @@ type Recovery struct {
 	Content     string            `json:"content,omitempty"`
 	Algorithm   string            `json:"algorithm"`
 	Params      map[string]string `json:"params,omitempty"`
-	Journal     *JournalRef       `json:"journal,omitempty"`
+	// DeclaredRunsArtifact names the runs sidecar that holds the full run list the filesystem
+	// declared for a file whose copy was interrupted. It is never the captured runs (Runs and
+	// RunsArtifact hold those); it only keeps the declared list referenced and verifiable.
+	DeclaredRunsArtifact string      `json:"declared_runs_artifact,omitempty"`
+	Journal              *JournalRef `json:"journal,omitempty"`
 }
 
 // AllocSummary counts the bytes of the RECORDED (captured) runs by allocation
