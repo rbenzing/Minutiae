@@ -329,11 +329,14 @@ func (rp *rowPass) emitCell(img PageImage, method string, id ident, ic imgCell) 
 		row.Notes = append(row.Notes, NoteInvalidPageNumber) // the page number is not believed: nothing is compared
 	}
 	rel := RelUnknown
-	if id.basis == BasisFit || id.basis == BasisGuess {
+	switch {
+	case id.basis == BasisFit || id.basis == BasisGuess:
 		// identity by fit alone: the relation is unknown whatever the origin
 		// (ruling C47); that the bytes are uncommitted is the Origin's fact
 		row.Notes = append(row.Notes, NoteIdentityByFitOnly)
-	} else if uncommitted {
+	case id.basis == BasisNone:
+		// no table at all: unknown whatever the origin (ruling C47, final review B)
+	case uncommitted:
 		rel = RelUncommitted
 	}
 	if id.kind != kindNone && id.basis == BasisSchema && !invalid {

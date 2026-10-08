@@ -343,6 +343,9 @@ func (h *Hist) imageSpans(img PageImage, data []byte) []Span {
 // order, as the live view serves them.
 func (w *histWalk) classPass(o Origin, classes ...PageClass) error {
 	for pg := uint32(1); pg <= w.lay.Addressable; pg++ {
+		if err := w.ctx.Err(); err != nil { // every page, not only the ones emitted
+			return err
+		}
 		if !slices.Contains(classes, w.lay.Class[pg]) {
 			continue
 		}
@@ -389,6 +392,9 @@ func (w *histWalk) beyondEnd() error {
 	}
 	hi = min(hi, uint64(h.d.env.opts.Limits.MaxPages))
 	for pg := uint64(h.live.info.PageCount) + 1; pg <= hi; pg++ {
+		if err := w.ctx.Err(); err != nil {
+			return err
+		}
 		data, err := h.rawPage(uint32(pg))
 		if err != nil {
 			return err
@@ -471,6 +477,9 @@ func (w *histWalk) dbRolledBack() error {
 	}
 	slices.Sort(pages)
 	for _, pg := range pages {
+		if err := w.ctx.Err(); err != nil {
+			return err
+		}
 		data, err := h.rawPage(pg)
 		if err != nil {
 			return err
@@ -484,6 +493,9 @@ func (w *histWalk) dbRolledBack() error {
 	}
 	hi := min(uint64(h.d.info.FilePages), uint64(h.d.env.opts.Limits.MaxPages))
 	for pg := uint64(s.Info.InitialPages) + 1; pg <= hi; pg++ {
+		if err := w.ctx.Err(); err != nil {
+			return err
+		}
 		data, err := h.rawPage(uint32(pg))
 		if err != nil {
 			return err

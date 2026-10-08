@@ -792,3 +792,41 @@ func TestRecoveredRowCarriesItsOrigin(t *testing.T) {
 		t.Errorf("rolled-back row %+v", rows)
 	}
 }
+
+// TestHistoryRowsWithoutIdentityAreUnknownEvenWhenUncommitted: the relation of
+// a row whose table the schema does not prove (BasisNone, as BasisFit and
+// BasisGuess) is unknown whatever the origin; that its bytes were never
+// committed is the Origin's fact, not a relation (final review B, M-2).
+func TestHistoryRowsWithoutIdentityAreUnknownEvenWhenUncommitted(t *testing.T) {
+	b := sqlitetest.New(sqlitetest.Options{PageSize: hps})
+	p := b.CreateTable("p", "create table p(a, b)")
+	q := b.CreateTable("q", "create table q(a, b)") // the same shape: no table fits by shape alone
+	p.Insert(1, int64(1), "p")
+	q.Insert(1, int64(1), "q")
+	pad := b.CreateTable("pad", "create table pad(z)")
+	pad.Insert(1, "x")
+	gone := b.CreateTable("gone", "create table gone(a, b)")
+	gone.Insert(7, int64(7), "gone")
+	goneImage := b.Snapshot().Page(gone.Root())
+	b.DropTable("pad")
+	b.DropTable("gone")
+	pages := b.Snapshot().Pages()
+	db := walMode(withCount(b.Bytes(), pages))
+	w := b.NewWAL(false, 0x1000, 0x1001, 0)
+	w.Frame(gone.Root(), goneImage, 0) // never committed, on a page no object owns
+	_, h := openAll(t, db, w.Bytes(), nil)
+	rows, _ := collectRows(t, h)
+	n := 0
+	for _, r := range rows {
+		if r.Method != sqlitefile.MethodWALUncommitted {
+			continue
+		}
+		n++
+		if r.TableBasis != sqlitefile.BasisNone || r.Relation != sqlitefile.RelUnknown {
+			t.Errorf("uncommitted row without identity: basis %s relation %s", r.TableBasis, r.Relation)
+		}
+	}
+	if n == 0 {
+		t.Fatalf("no uncommitted WAL row: %v", methods(rows))
+	}
+}
