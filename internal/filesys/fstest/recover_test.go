@@ -301,16 +301,66 @@ func TestRecovererContractOnMTFS(t *testing.T) {
 	}
 	fstest.RecovererContract(t, contractSubject(t, fsys, cr, dupID))
 
-	// Without the optional parts the kit still runs.
+	// A reader opts out of a rule only by naming the reason, and the kit reports it.
 	s := contractSubject(t, fsys, cr, dupID)
 	s.Reads, s.Duplicate = nil, nil
-	fstest.RecovererContract(t, s)
+	s.SkipReads, s.SkipDuplicate = "the image is an in-memory slice with no counter", "this reader cannot hold two objects under one id"
+	rec := &recorder{}
+	fstest.CheckRecoverer(rec, s)
+	if len(rec.errs) != 0 {
+		t.Errorf("explicit opt-outs reported %q", rec.errs)
+	}
+	for _, want := range []string{"forged-id-read", "duplicate-corrupt"} {
+		if !rec.logged(want) {
+			t.Errorf("the kit did not report the skipped rule %q; log %q", want, rec.logs)
+		}
+	}
+	if !rec.logged("an in-memory slice") || !rec.logged("cannot hold two objects") {
+		t.Errorf("the skip reasons are not reported: %q", rec.logs)
+	}
 }
 
-type recorder struct{ errs []string }
+// A nil hook is a failure, never a silent skip.
+func TestRecovererContractFailsOnSilentSkips(t *testing.T) {
+	img, dupID := contractImage(t)
+	for _, tc := range []struct {
+		name, tag string
+		edit      func(s *fstest.RecovererSubject)
+	}{
+		{"nil Reads", "forged-id-read", func(s *fstest.RecovererSubject) { s.Reads = nil }},
+		{"nil Duplicate", "duplicate-corrupt", func(s *fstest.RecovererSubject) { s.Duplicate = nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cr := &countingReader{r: bytes.NewReader(img)}
+			fsys, err := fstest.Open(cr, int64(len(img)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := contractSubject(t, fsys, cr, dupID)
+			tc.edit(&s)
+			rec := &recorder{}
+			fstest.CheckRecoverer(rec, s)
+			if !rec.reported(tc.tag) {
+				t.Errorf("the kit skipped rule %q silently; it reported %q", tc.tag, rec.errs)
+			}
+		})
+	}
+}
+
+type recorder struct{ errs, logs []string }
 
 func (r *recorder) Helper()                   {}
 func (r *recorder) Errorf(f string, a ...any) { r.errs = append(r.errs, fmt.Sprintf(f, a...)) }
+func (r *recorder) Logf(f string, a ...any)   { r.logs = append(r.logs, fmt.Sprintf(f, a...)) }
+func (r *recorder) logged(tag string) bool {
+	for _, e := range r.logs {
+		if strings.Contains(e, tag) {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *recorder) reported(tag string) bool {
 	for _, e := range r.errs {
 		if strings.Contains(e, tag) {

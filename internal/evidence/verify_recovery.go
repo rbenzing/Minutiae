@@ -26,6 +26,9 @@ const (
 
 var ordinalPrefix = regexp.MustCompile(`^[0-9]{6,9}-`)
 
+// partDirRE is the p<N>-<fstype> directory of a partition (spec 5.1).
+var partDirRE = regexp.MustCompile(`^p[0-9]+-[A-Za-z0-9._-]+$`)
+
 // recoveredKindNamespace returns the namespace directory of a recovered kind.
 func recoveredKindNamespace(kind string) string {
 	for _, ci := range classTable {
@@ -130,6 +133,12 @@ func (c *Case) verifyRecovered(rep *VerifyReport, recs []ManifestRecord) {
 				for _, p := range d.Recovery.Check(kind) {
 					ps.add(rKindRecovery, "%s%s", pre, p)
 				}
+				if rv := d.Recovery; (len(rv.Excluded) > 0 || rv.Alloc.ExcludedRuns > 0 || rv.Alloc.ExcludedBytes > 0) && !r.Incomplete {
+					ps.add(rKindRecovery, "%sexcluded runs recorded but the artifact is not flagged incomplete", pre)
+				}
+			}
+			if d != nil && len(d.Runs) > 0 && d.RunsArtifact != "" {
+				ps.add(rKindRuns, "%srecords both inline runs and a runs sidecar", pre)
 			}
 			c.checkRecoveredPath(ps, r, pre, byID)
 			checkDeclaredRuns(ps, r, pre, byID, refCount)
@@ -176,22 +185,64 @@ func (c *Case) checkRecoveredPath(ps *problemSet, r ManifestRecord, pre string, 
 	ns, inNS := RecoveredNamespace(r.Path)
 	if !inNS || ns != want {
 		ps.add(rKindNamespace, "%sis outside the namespace %q of kind %q", pre, want, kind)
-	} else if kind == KindRecover {
-		parts := strings.Split(r.Path, "/")
-		if d := r.Source.Derived; d != nil {
-			dir, err := SanitizeRelPath(fmt.Sprintf("p%d-%s", d.Partition, d.FSType))
-			if err != nil || parts[4] != dir {
-				ps.add(rKindNamespace, "%spath directory %q does not match derivation partition %d (%q)", pre, parts[4], d.Partition, d.FSType)
-			}
-		}
-		if len(parts) < 6 || !ordinalPrefix.MatchString(parts[5]) {
-			ps.add(rKindNamespace, "%sfile name does not start with an ordinal (six to nine digits and a dash)", pre)
-		}
+	} else {
+		c.checkScopeDirectory(ps, r, pre, kind)
 	}
 	if d := r.Source.Derived; d != nil && d.RunsArtifact != "" {
 		// a sidecar missing from the manifest is reported by the derived checks and the runs check
 		if sc, ok := byID[d.RunsArtifact]; ok && (sc.Source.Kind != "runs" || path.Dir(sc.Path) != path.Dir(r.Path)) {
 			ps.add(rKindNamespace, "%sruns artifact %q is not a runs sidecar in the same directory", pre, d.RunsArtifact)
+		}
+	}
+}
+
+// checkScopeDirectory is the part of R3 that ties the directory below the namespace (spec 5.1) to the
+// derivation: recover, slack and journal artifacts sit under p<N>-<fstype> of their own partition, and a
+// carved artifact under the scope directory its Recovery.Scope names (raw, volume, or the partition for
+// unallocated space; a carve of an artifact takes any of the three forms of the layout).
+func (c *Case) checkScopeDirectory(ps *problemSet, r ManifestRecord, pre, kind string) {
+	parts := strings.Split(r.Path, "/")
+	d := r.Source.Derived
+	partDir := ""
+	if d != nil {
+		if dir, err := SanitizeRelPath(fmt.Sprintf("p%d-%s", d.Partition, d.FSType)); err == nil {
+			partDir = dir
+		}
+	}
+	switch kind {
+	case KindRecover:
+		if d != nil && parts[4] != partDir {
+			ps.add(rKindNamespace, "%spath directory %q does not match derivation partition %d (%q)", pre, parts[4], d.Partition, d.FSType)
+		}
+		if len(parts) < 6 || !ordinalPrefix.MatchString(parts[5]) {
+			ps.add(rKindNamespace, "%sfile name does not start with an ordinal (six to nine digits and a dash)", pre)
+		}
+	case KindSlack, KindJournal:
+		switch {
+		case len(parts) < 6:
+			ps.add(rKindNamespace, "%shas no partition directory below the namespace", pre)
+		case d != nil && parts[4] != partDir:
+			ps.add(rKindNamespace, "%spath directory %q does not match derivation partition %d (%q)", pre, parts[4], d.Partition, d.FSType)
+		}
+	case KindCarve:
+		if len(parts) < 6 {
+			ps.add(rKindNamespace, "%shas no scope directory below the namespace", pre)
+			return
+		}
+		dir := parts[4]
+		isPart := partDirRE.MatchString(dir)
+		if dir != "raw" && dir != "volume" && !isPart {
+			ps.add(rKindNamespace, "%sscope directory %q is not one of raw, volume or p<N>-<fstype>", pre, dir)
+			return
+		}
+		if d == nil || d.Recovery == nil {
+			return
+		}
+		scope := d.Recovery.Scope
+		ok := scope == "artifact" || (scope == "raw" && dir == "raw") || (scope == "volume" && dir == "volume") ||
+			(scope == "unallocated" && isPart && dir == partDir)
+		if scope != "" && !ok {
+			ps.add(rKindNamespace, "%sscope directory %q does not match the recovery scope %q", pre, dir, scope)
 		}
 	}
 }

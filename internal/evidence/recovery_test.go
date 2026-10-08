@@ -329,6 +329,13 @@ func TestRecoveryCheckTable(t *testing.T) {
 		mk("carved without scope", "carve", good("carved", "carve-sig"), `recovery: scope is required for class "carved"`),
 		mk("bad content", "recover", func() evidence.Recovery { r := good("deleted-file", "fat-contiguous"); r.Content = "bad"; return r }(), `recovery: content "bad" is not one of ok, uniform, type-match, type-mismatch`),
 
+		mk("deleted-file takes no scope", "recover", func() evidence.Recovery { r := good("deleted-file", "fat-contiguous"); r.Scope = "raw"; return r }(), `recovery: scope "raw" is not allowed for class "deleted-file" (only a carved artifact takes a chosen scope)`),
+		mk("post-checkpoint-file takes no scope", "recover", func() evidence.Recovery {
+			r := good("post-checkpoint-file", "f2fs-rollforward")
+			r.Scope = "volume"
+			return r
+		}(), `recovery: scope "volume" is not allowed for class "post-checkpoint-file" (only a carved artifact takes a chosen scope)`),
+		mk("carved takes each of the four scopes", "carve", func() evidence.Recovery { r := good("carved", "carve-sig"); r.Scope = "artifact"; return r }()),
 		// R2 journal reference
 		mk("journal-block needs a reference", "journal", func() evidence.Recovery { r := good("journal-block", "ext4-journal"); r.Confidence = nil; return r }(), `recovery: journal reference is required for class "journal-block"`),
 		mk("carved refuses a journal reference", "carve", func() evidence.Recovery {

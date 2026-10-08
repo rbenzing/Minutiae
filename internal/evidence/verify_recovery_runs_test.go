@@ -123,7 +123,7 @@ func TestVerifyRecoveredIncompleteDirections(t *testing.T) {
 func TestVerifyRecoveredAllocRules(t *testing.T) {
 	carved := func(scope string, a evidence.AllocSummary) evidencetest.RecoveredSpec {
 		return evidencetest.RecoveredSpec{
-			Kind: evidence.KindCarve, Class: evidence.ClassCarved, Method: "carve-jpeg", Scope: scope, Path: "carved/c1.bin",
+			Kind: evidence.KindCarve, Class: evidence.ClassCarved, Method: "carve-jpeg", Scope: scope, Path: map[string]string{"raw": "carved/raw/c1.bin", "unallocated": "carved/p1-mtfs/c1.bin"}[scope],
 			Runs: []evidence.Run{{Offset: 0, Length: 64}}, Alloc: &a,
 		}
 	}
@@ -156,10 +156,10 @@ func TestVerifyRecoveredNoticesForUnreproducedKinds(t *testing.T) {
 	c, parent, data := recoverParent(t)
 	run := []evidence.Run{{Offset: 0, Length: 64}}
 	evidencetest.AddRecovered(t, c, parent, data, evidencetest.RecoveredSpec{
-		Kind: evidence.KindSlack, Class: evidence.ClassSlack, Method: "slack-file", Path: "slack/s1.bin", Runs: run, Confidence: ip(10),
+		Kind: evidence.KindSlack, Class: evidence.ClassSlack, Method: "slack-file", Path: "slack/p1-mtfs/s1.bin", Runs: run, Confidence: ip(10),
 	})
 	evidencetest.AddRecovered(t, c, parent, data, evidencetest.RecoveredSpec{
-		Kind: evidence.KindJournal, Class: evidence.ClassJournalBlock, Method: "ext4-journal-inode", Path: "journal/j1.bin", Runs: run,
+		Kind: evidence.KindJournal, Class: evidence.ClassJournalBlock, Method: "ext4-journal-inode", Path: "journal/p1-mtfs/j1.bin", Runs: run,
 		Mutate: func(r *evidence.Recovery) { r.Journal = &evidence.JournalRef{Seq: 1, Region: "live"} },
 	})
 	evidencetest.AddRecovered(t, c, parent, data, evidencetest.RecoveredSpec{

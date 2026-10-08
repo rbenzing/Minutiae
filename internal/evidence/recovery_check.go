@@ -69,6 +69,9 @@ func (r *Recovery) Check(kind string) []string {
 		}
 	case r.Scope != "" && !slices.Contains(recoveryScopes, r.Scope):
 		add("scope %q is not one of %s", r.Scope, strings.Join(recoveryScopes, ", "))
+	case r.Scope != "" && known && !ci.ScopeRequired:
+		// spec 5.2: the scope names what a carve searched; the classes that claim a file take none
+		add("scope %q is not allowed for class %q (only a carved artifact takes a chosen scope)", r.Scope, r.Class)
 	case r.Scope == "" && known && ci.ScopeRequired:
 		add("scope is required for class %q", r.Class)
 	}

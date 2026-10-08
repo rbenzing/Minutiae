@@ -131,6 +131,9 @@ func NewManifestIndex(recs []ManifestRecord) *ManifestIndex {
 // OpenArtifactIn is OpenArtifact over a prebuilt index: the same checks with the same errors, without
 // reading the manifest.
 func (c *Case) OpenArtifactIn(ix *ManifestIndex, id string) (*os.File, ManifestRecord, error) {
+	if ix == nil {
+		return nil, ManifestRecord{}, errors.New("evidence: OpenArtifactIn needs a manifest index (see NewManifestIndex)")
+	}
 	switch n := ix.count[id]; {
 	case n == 0:
 		return nil, ManifestRecord{}, fmt.Errorf("%w: %q", ErrUnknownArtifact, id)

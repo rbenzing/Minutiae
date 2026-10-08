@@ -6,6 +6,14 @@ import "github.com/rbenzing/minutiae/internal/evidence"
 // neither compiled nor scanned by the rule itself). Every line that must be
 // flagged carries the marker "want"; no other line may be flagged.
 
+const aliasKind = evidence.KindRecover
+
+var (
+	aliasLiteral = "slack"
+	aliasOfAlias = aliasKind
+	unrelatedName = "file"
+)
+
 func build() {
 	_ = evidence.Source{Kind: evidence.KindRecover} // want
 	_ = evidence.Source{Kind: evidence.KindCarve}   // want
@@ -25,6 +33,15 @@ func build() {
 	s.Kind = "carve"              // want
 	other.Kind = KindJournal      // want
 	a, s.Kind = 1, "slack"        // want
+
+	// Names bound to a recovered kind anywhere in the package are folded.
+	_ = evidence.Source{Kind: aliasKind}     // want
+	_ = evidence.Source{Kind: aliasLiteral}  // want
+	_ = evidence.Source{Kind: aliasOfAlias}  // want
+	s.Kind = aliasKind                       // want
+	local := "carve"
+	_ = evidence.Source{Kind: local}         // want
+	_ = evidence.Source{Kind: unrelatedName} // harmless: bound to a live kind
 
 	// Harmless: other kinds, a map key named like a kind, a read, a comment.
 	_ = evidence.Source{Kind: "file"}

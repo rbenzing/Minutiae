@@ -16,8 +16,11 @@ type RecovererSubject struct {
 	Deleted   filesys.Entry  // a deleted entry the reader has maps for
 	Live      filesys.Entry  // a live entry
 	ForgedIDs []string       // ids that exist nowhere (leading zero, sign, wrong prefix, huge number, empty)
-	Reads     func() int64   // bytes/reads counter of the underlying image, for the "rejected quickly" rule; nil skips it
-	Duplicate *filesys.Entry // an entry whose id is held by two objects, when the reader can have that (nil skips)
+	Reads     func() int64   // bytes/reads counter of the underlying image, for the "rejected quickly" rule
+	Duplicate *filesys.Entry // an entry whose id is held by two objects
+	// SkipReads and SkipDuplicate are the only way to opt out of those two rules: a non-empty reason
+	// the kit reports. A nil Reads or Duplicate without one is a failure, never a silent skip.
+	SkipReads, SkipDuplicate string
 }
 
 // Reporter is the part of testing.TB the contract uses, so a test can run the contract against a
@@ -72,7 +75,12 @@ func CheckRecoverer(r Reporter, s RecovererSubject) {
 	checkForged(r, rec, s, base)
 	checkLive(r, rec, s)
 	checkForgedIDs(r, rec, s)
-	if s.Duplicate != nil {
+	switch {
+	case s.Duplicate == nil && s.SkipDuplicate == "":
+		r.Errorf("duplicate-corrupt: no Duplicate entry and no SkipDuplicate reason; the rule is never skipped silently")
+	case s.Duplicate == nil:
+		logf(r, "duplicate-corrupt: SKIPPED by the reader's declaration: %s", s.SkipDuplicate)
+	default:
 		if cs, err := rec.Recoverable(*s.Duplicate); !errors.Is(err, filesys.ErrCorrupt) || cs != nil {
 			r.Errorf("duplicate-corrupt: Recoverable(duplicate id %q) = %v, %v; want a corrupt-structure error and no candidates", s.Duplicate.ID, cs, err)
 		}
@@ -85,6 +93,13 @@ func CheckRecoverer(r Reporter, s RecovererSubject) {
 		}
 	}
 	checkRepeatable(r, rec, s, base)
+}
+
+// logf reports through the Reporter's Logf when it has one (testing.TB does).
+func logf(r Reporter, format string, args ...any) {
+	if l, ok := r.(interface{ Logf(string, ...any) }); ok {
+		l.Logf(format, args...)
+	}
 }
 
 func checkForged(r Reporter, rec filesys.Recoverer, s RecovererSubject, base []filesys.Candidate) {
@@ -133,6 +148,12 @@ func checkLive(r Reporter, rec filesys.Recoverer, s RecovererSubject) {
 
 func checkForgedIDs(r Reporter, rec filesys.Recoverer, s RecovererSubject) {
 	r.Helper()
+	switch {
+	case s.Reads == nil && s.SkipReads == "":
+		r.Errorf("forged-id-read: no Reads counter and no SkipReads reason; the rule is never skipped silently")
+	case s.Reads == nil:
+		logf(r, "forged-id-read: SKIPPED by the reader's declaration: %s", s.SkipReads)
+	}
 	for _, id := range s.ForgedIDs {
 		var before int64
 		if s.Reads != nil {

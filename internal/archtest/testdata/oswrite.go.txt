@@ -2,7 +2,14 @@ package fixture
 
 import (
 	"io/ioutil" // want
+	. "os"      // want
 	"os"
+	"errors"
+	"os/exec"
+	"syscall"
+
+	"golang.org/x/sys/unix"
+	"golang.org/x/sys/windows"
 )
 
 // This file is data for TestOSWriteScannerSelfTest (a .txt file: it is neither
@@ -25,6 +32,20 @@ func bad(p string) {
 	_ = os.Symlink(p, p+".l")       // want
 	f := os.WriteFile               // want
 	_ = f
+}
+
+func lowLevel(p string) {
+	_, _ = syscall.Open(p, syscall.O_CREAT, 0o600)     // want
+	_ = exec.Command("cp", p, p+".x")                  // want
+	_, _ = unix.Open(p, unix.O_CREAT, 0o600)           // want
+	_ = windows.CreateFile                             // want
+	_ = syscall.Unlink(p)                              // want
+	var _ syscall.Errno
+	_ = errors.Is(nil, syscall.ENAMETOOLONG)
+	var st unix.Statfs_t
+	_ = unix.Statfs(p, &st)
+	_, _ = windows.UTF16PtrFromString(p)
+	_ = windows.GetDiskFreeSpaceEx
 }
 
 func good(p string) {
