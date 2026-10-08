@@ -280,11 +280,11 @@ func checkSegments(h *Hop, segs []evidence.SegmentRef, pos map[string][]int, man
 		}
 		if state != "ok" {
 			h.SegmentsBad++
-			if ps.full(ProblemSegment) {
-				ps.suppressed++
-			} else {
-				ps.add(ProblemSegment, hop, fmt.Sprintf("segment %d (%q): %s", i+1, s.ID, state))
+			detail := ""
+			if !ps.full(ProblemSegment) { // format only what will be listed
+				detail = fmt.Sprintf("segment %d (%q): %s", i+1, s.ID, state)
 			}
+			ps.add(ProblemSegment, hop, detail)
 		}
 		if i < MaxShownSegments {
 			h.Segments = append(h.Segments, SegmentCheck{SegmentRef: s, State: state})
