@@ -685,7 +685,7 @@ exempt images are accepted by the reader on purpose:
 Committed under `internal/sqlitefile/testdata/` (plan 3I, Task 14), consumed by
 `internal/sqlitefile/fixtures_test.go`. Each fixture is `<name>.db.gz`, plus
 `<name>.db-wal.gz` and/or `<name>.db-journal.gz`, plus `<name>.expect.json`
-(the oracle). The tests need no engine and no Docker.
+(the oracle). The tests that read the fixtures need no engine and no Docker (`TestFixtureGeneratorIsDeterministic` and `TestGenerateFixtures` use `modernc.org/sqlite`, a test dependency, to generate and compare). The `expect.json` files are large because they list every cell (up to 1.7 MB for `hot-journal`, 8.6 MB in all); the images are small.
 
 | Fixture | Class | Written by | Holds |
 |---|---|---|---|
@@ -730,6 +730,8 @@ Engine versions: the class C files are made by the Debian `sqlite3` and
 record `libsqlite3 3.46.1; shell: 3.46.1`. The class A and B oracles use the
 engine of `modernc.org/sqlite` (SQLite 3.53.4 at the pinned module version),
 recorded in each expect.json. A version bump of either regenerates its class.
+
+The pinned class C layer has NOT been built since the exact pins were added (the layer before the pins was built and ran); a build check is pending, and this note goes when it passes.
 
 The Dockerfile change is a NEW FINAL layer, so every earlier layer, and every
 fixture generated from it, is as built; no other fixture was regenerated.
@@ -780,16 +782,18 @@ holds one hash per file (a fixture can have three files), not one image hash.
   draws salts and nonces from its PRNG and exposes no seed. Committed with
   their oracle; regenerate image and oracle together. The determinism test
   excludes exactly these four by name.
-* **C, container family:** reproducible only where the writer is
-  deterministic. `sqlite.sh` generates twice and says which files differ: the
+* **C, container family:** not guaranteed byte-reproducible. `sqlite.sh`
+  generates twice and says which files differ; in the runs made the
   database-only fixtures and the databases next to a killed writer were
-  byte-identical, the WAL and journal files differed (class B behaviour).
+  identical and the WAL and journal files differed (class B behaviour), but
+  the script tolerates a difference in the killed-writer family. Regenerate
+  image and oracle together.
 
 ### Tags
 
 `go test -tags sqlitematrix ./internal/sqlitefile` runs the large engine
 matrix of Task 13 (45 live scenarios, 1448 WAL mutations); the fixtures do not
-need it.
+need it. One fuzz corpus seed is committed (`internal/sqlitefile/testdata/fuzz/FuzzCreateParse/d65cbe711e2fe660`, a CREATE INDEX statement found by fuzzing and kept as a regression input); the fuzz targets otherwise run only their in-code seeds.
 
 ## Adding a fixture
 
