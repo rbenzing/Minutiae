@@ -155,9 +155,9 @@ func TestContextMatchPropagatesUndecidable(t *testing.T) {
 	}
 }
 
-// B45: KeyOf says "no key" only for a value the engine never matches; a value
-// whose state is unknown is undecidable, so a mapper cannot skip it by mistake.
-func TestKeyOfUnknownStatesAreUndecidable(t *testing.T) {
+// B45: KeyOf says "no key" (and no error) only for NULL and NaN, the values the
+// engine never matches; the undecidable states are pinned by index_test.go.
+func TestKeyOfNullAndNaNHaveNoKeyAndNoError(t *testing.T) {
 	data := newBuilderDB(t, sqlitetest.Options{PageSize: 1024}, func(b *sqlitetest.Builder) {
 		tt := b.CreateTable("t", "create table t(a, b)")
 		tt.Insert(1, nil, 5)

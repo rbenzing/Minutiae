@@ -5,6 +5,7 @@ package sqlitedb_test
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -14,6 +15,7 @@ import (
 	_ "modernc.org/sqlite" // the oracle engine (tests only)
 
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
+	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/sqlitefile/sqlitetest"
 )
 
@@ -54,32 +56,40 @@ func TestEngineReadsAStoredNaNAsNull(t *testing.T) {
 	}
 }
 
+// matrixCase is one column declaration with the collation and affinity class the
+// ENGINE gives it (written down here, not read from the layer).
 type matrixCase struct {
-	name, decl string
+	name, decl, collation string
+	class                 parse.JoinClass
 }
 
 var matrixDecls = []matrixCase{
-	{"none", ""},
-	{"integer", "integer"},
-	{"text", "text"},
-	{"nocase", "text collate nocase"},
-	{"rtrim", "text collate rtrim"},
-	{"real", "real"},
-	{"numeric", "numeric"},
-	{"blob-nocase", "blob collate nocase"},
+	{"none", "", "binary", parse.ClassBlob},
+	{"integer", "integer", "binary", parse.ClassNumeric},
+	{"text", "text", "binary", parse.ClassText},
+	{"nocase", "text collate nocase", "nocase", parse.ClassText},
+	{"rtrim", "text collate rtrim", "rtrim", parse.ClassText},
+	{"real", "real", "binary", parse.ClassNumeric},
+	{"numeric", "numeric", "binary", parse.ClassNumeric},
+	{"blob-nocase", "blob collate nocase", "nocase", parse.ClassBlob},
 }
 
-var matrixValues = []any{1, 1.0, "1", "abc", "ABC", "abc  ", []byte("abc"), []byte("ABC"), nil, 1.5, "Abc", 2}
+var matrixValues = []any{
+	1, 1.0, "1", "abc", "ABC", "abc  ", []byte("abc"), []byte("ABC"), nil, 1.5, "Abc", 2,
+	r(0xe9), r(0xc9), r(0xff), r(0x178), "caf" + r(0xe9), "CAF" + r(0xc9), r(0xe9) + "  ",
+}
 
-// B46: every pair of the engine's own JOIN is found through KeyOf + Rowids or
-// its source row is flagged, and no pair the engine does not return is
-// returned unflagged.
+// r is a non-ASCII letter (Latin-1 or beyond) kept out of the source text; NOCASE
+// folds ASCII only, so r(0xe9) and r(0xc9) must NOT meet under it.
+func r(c rune) string { return string(c) }
+
+// B46/B50: the engine JOIN (target as the left operand) against KeyOf + Rowids.
 func TestJoinsAgreeWithTheEngineJoinMatrix(t *testing.T) {
 	for _, enc := range []string{"UTF-8", "UTF-16le"} {
 		for _, sc := range matrixDecls {
 			for _, tc := range matrixDecls {
 				t.Run(fmt.Sprintf("%s/src-%s/tgt-%s", enc, sc.name, tc.name), func(t *testing.T) {
-					checkJoinAgainstEngine(t, engineWritten(t, enc, sc.decl, tc.decl))
+					checkJoinAgainstEngine(t, engineWritten(t, enc, sc.decl, tc.decl), sc, tc)
 				})
 			}
 		}
@@ -124,10 +134,10 @@ func engineWritten(t *testing.T, enc, sdecl, gdecl string) []byte {
 	return data
 }
 
-func checkJoinAgainstEngine(t *testing.T, data []byte) {
+func checkJoinAgainstEngine(t *testing.T, data []byte, sc, tc matrixCase) {
 	t.Helper()
 	db := engineOn(t, data)
-	rows, err := db.Query("select s.id, g.id from s join g on s.k = g.k")
+	rows, err := db.Query("select s.id, g.id from g join s on g.k = s.k")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,13 +167,24 @@ func checkJoinAgainstEngine(t *testing.T, data []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// B50: the flags are exact in both directions. The expectation is written
+	// down from the declarations (the engine's collation and affinity class of
+	// each column), not read from the layer: a lookup is flagged exactly when
+	// they differ.
+	var want sqlitedb.JoinFlags
+	if sc.collation != tc.collation {
+		want |= sqlitedb.JoinCollationDiffers
+	}
+	if sc.class != tc.class {
+		want |= sqlitedb.JoinAffinityDiffers
+	}
 	ours := map[[2]int64]bool{}
-	flagged := map[int64]bool{}
-	if err := src.Scan(t.Context(), func(r sqlitedb.Row) error {
-		sid, _ := r.Rowid()
-		k, ok, kerr := sqlitedb.KeyOf(r, 1)
+	lookups := 0
+	if err := src.Scan(t.Context(), func(row sqlitedb.Row) error {
+		sid, _ := row.Rowid()
+		k, ok, kerr := sqlitedb.KeyOf(row, 1)
 		if kerr != nil {
-			flagged[sid] = true
+			t.Errorf("source row %d: KeyOf: %v (every matrix value is decidable)", sid, kerr)
 			return nil
 		}
 		if !ok {
@@ -171,11 +192,16 @@ func checkJoinAgainstEngine(t *testing.T, data []byte) {
 		}
 		ids, fl, err := ix.Rowids(k)
 		if err != nil {
-			flagged[sid] = true
+			if errors.Is(err, sqlitedb.ErrKeyUndecidable) {
+				t.Errorf("source row %d: undecidable lookup %v (none expected in this matrix)", sid, err)
+			} else {
+				t.Errorf("source row %d: Rowids: %v", sid, err)
+			}
 			return nil
 		}
-		if fl != 0 {
-			flagged[sid] = true
+		lookups++
+		if fl != want {
+			t.Errorf("source row %d: flags %b, want %b (src %s/%d, tgt %s/%d)", sid, fl, want, sc.collation, sc.class, tc.collation, tc.class)
 		}
 		for _, id := range ids {
 			ours[[2]int64{sid, id}] = true
@@ -184,14 +210,23 @@ func checkJoinAgainstEngine(t *testing.T, data []byte) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if lookups == 0 {
+		t.Fatal("no lookup was made")
+	}
+	if sc.class != tc.class {
+		return // the accepted affinity gap: flagged above, pairs may differ from the engine's
+	}
+	// Same class: the layer's pairs equal the engine's exactly, flagged or not
+	// (a collation flag alone never changes the pairs, because the target's
+	// collation decides on both sides).
 	for p := range engine {
-		if !ours[p] && !flagged[p[0]] {
-			t.Errorf("engine pair %v missed with source row %d unflagged", p, p[0])
+		if !ours[p] {
+			t.Errorf("engine pair %v missed", p)
 		}
 	}
 	for p := range ours {
-		if !engine[p] && !flagged[p[0]] {
-			t.Errorf("extra unflagged pair %v", p)
+		if !engine[p] {
+			t.Errorf("extra pair %v", p)
 		}
 	}
 }

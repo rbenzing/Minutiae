@@ -14,9 +14,10 @@ import (
 type JoinReport struct {
 	Table, Column string
 	// Lookups is the number of Match calls; Flagged those with any flag;
-	// CollationDiffers and AffinityDiffers those with that flag; Unkeyed the
+	// CollationDiffers and AffinityDiffers those with that flag; Undecidable those that ended in
+	// ErrKeyUndecidable (also counted in Lookups); Unkeyed the
 	// target rows the index could not key.
-	Lookups, Flagged, CollationDiffers, AffinityDiffers, Unkeyed int64
+	Lookups, Flagged, CollationDiffers, AffinityDiffers, Unkeyed, Undecidable int64
 }
 
 // Notes is the sink a Context flushes its join notes to; parse.Emitter
@@ -36,6 +37,7 @@ type Context struct {
 	indexes map[string]*Index
 	failed  map[string]error // index builds that hit a cap or the budget: never retried
 	reports map[string]*JoinReport
+	build   func(context.Context, *Table, string) (*Index, error) // index build; a test seam, nil means Table.Index with the default cap
 	rows    []Row
 	closed  bool
 }
@@ -123,22 +125,34 @@ func (c *Context) Match(table, col string, key parse.JoinKey) ([]parse.Row, erro
 		if ferr, bad := c.failed[ik]; bad {
 			return nil, ferr
 		}
-		if ix, err = t.Index(c.ctx, col, 0); err != nil {
-			if errors.Is(err, ErrIndexLimit) || errors.Is(err, parse.ErrBudget) {
-				c.failed[ik] = err // a hostile target would otherwise cost one full scan per lookup
+		build := c.build
+		if build == nil {
+			build = func(ctx context.Context, t *Table, col string) (*Index, error) { return t.Index(ctx, col, 0) }
+		}
+		if ix, err = build(c.ctx, t, col); err != nil {
+			// B51: every failure that is a property of the data (a corrupt structure, the
+			// entry cap, the budget, an undecidable target) is remembered, or a hostile
+			// target would cost one full scan per lookup; a cancellation or a deadline
+			// says nothing about the data and is retried.
+			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				c.failed[ik] = err
 			}
 			return nil, err
 		}
 		c.indexes[ik] = ix
 	}
-	ids, flags, err := ix.Rowids(key)
-	if err != nil {
-		return nil, err
-	}
 	rep := c.reports[ik]
 	if rep == nil {
 		rep = &JoinReport{Table: t.name, Column: name, Unkeyed: int64(ix.Unkeyed())}
 		c.reports[ik] = rep
+	}
+	ids, flags, err := ix.Rowids(key)
+	if err != nil {
+		if errors.Is(err, ErrKeyUndecidable) {
+			rep.Lookups++ // B53: an undecidable lookup is counted, not lost
+			rep.Undecidable++
+		}
+		return nil, err
 	}
 	rep.Lookups++
 	if flags != 0 {
@@ -183,7 +197,7 @@ func (c *Context) Joins() []JoinReport {
 
 // Close emits at most one note per join that had a flagged lookup or an
 // unkeyed target row (key join.<table>.<column>, value
-// lookups:N,flagged:N,collation_differs:N,affinity_differs:N,unkeyed:N), counts
+// lookups:N,flagged:N,collation_differs:N,affinity_differs:N,unkeyed:N,undecidable:N,undecidable:N), counts
 // them in Stats.JoinsFlushed (notes offered, not notes the sink accepted: a sink
 // may drop one) and frees the indexes and rows. It is idempotent.
 func (c *Context) Close() {
@@ -192,13 +206,13 @@ func (c *Context) Close() {
 	}
 	c.closed = true
 	for _, r := range c.Joins() {
-		if r.Flagged == 0 && r.Unkeyed == 0 {
+		if r.Flagged == 0 && r.Unkeyed == 0 && r.Undecidable == 0 {
 			continue
 		}
 		c.Note("join."+r.Table+"."+r.Column, strings.Join([]string{
 			fmt.Sprintf("lookups:%d", r.Lookups), fmt.Sprintf("flagged:%d", r.Flagged),
 			fmt.Sprintf("collation_differs:%d", r.CollationDiffers), fmt.Sprintf("affinity_differs:%d", r.AffinityDiffers),
-			fmt.Sprintf("unkeyed:%d", r.Unkeyed),
+			fmt.Sprintf("unkeyed:%d", r.Unkeyed), fmt.Sprintf("undecidable:%d", r.Undecidable),
 		}, ","))
 		c.db.stats.JoinsFlushed++
 	}

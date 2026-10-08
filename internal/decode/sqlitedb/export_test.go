@@ -76,3 +76,11 @@ func Prov(r Row) (*sqlitefile.WALProv, *sqlitefile.JournalProv) {
 	}
 	return r.rec.WAL, r.rec.Journal
 }
+
+// SetBuildIndex replaces the index build of a Context (a test seam).
+func (c *Context) SetBuildIndex(f func(context.Context, *Table, string) (*Index, error)) { c.build = f }
+
+// SetIndexLimit makes the Context build its indexes with the given entry cap.
+func (c *Context) SetIndexLimit(n int) {
+	c.build = func(ctx context.Context, t *Table, col string) (*Index, error) { return t.Index(ctx, col, n) }
+}

@@ -189,7 +189,7 @@ func TestJoinMismatchIsFlaggedWithCount(t *testing.T) {
 	}
 	c.Close()
 	c.Close() // idempotent
-	if notes.calls != 1 || notes.m["join.tgt.n"] != "lookups:50,flagged:50,collation_differs:50,affinity_differs:50,unkeyed:0" {
+	if notes.calls != 1 || notes.m["join.tgt.n"] != "lookups:50,flagged:50,collation_differs:50,affinity_differs:50,unkeyed:0,undecidable:0" {
 		t.Errorf("notes = %d %v", notes.calls, notes.m)
 	}
 	if d.Stats().JoinsFlushed != 1 {
@@ -232,7 +232,7 @@ func TestContextNotesUnkeyedTargetRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.Close()
-	if notes.calls != 1 || notes.m["join.tgt.n"] != "lookups:1,flagged:0,collation_differs:0,affinity_differs:0,unkeyed:1" {
+	if notes.calls != 1 || notes.m["join.tgt.n"] != "lookups:1,flagged:0,collation_differs:0,affinity_differs:0,unkeyed:1,undecidable:0" {
 		t.Errorf("notes = %d %v", notes.calls, notes.m)
 	}
 }
