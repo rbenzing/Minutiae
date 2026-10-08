@@ -46,7 +46,9 @@ func NewAuditIndex(entries []AuditEntry) *AuditIndex {
 }
 
 // Bind compares rec with its artifact.create entry, decoding only the entries of rec's id, with the
-// same comparison case verify makes.
+// same comparison case verify makes. It is a consistency check over the entries the index was built
+// from: the caller must have verified the audit chain, or a forged entry binds like a real one. It does not
+// detect duplicate manifest ids either; case verify reports those separately.
 func (x *AuditIndex) Bind(rec ManifestRecord) AuditBinding {
 	es := x.byID[rec.ID]
 	switch len(es) {

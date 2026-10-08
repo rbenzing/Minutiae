@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 	"strings"
 )
 
@@ -57,7 +58,7 @@ func ReadUnallocRunMap(r io.Reader) ([]UnallocRun, error) {
 		if len(out) >= MaxRecoveredRuns {
 			return nil, unallocBad("more than %d runs", MaxRecoveredRuns)
 		}
-		if err := checkUnallocKeys(line); err != nil {
+		if err := checkExactKeys(line, "offset", "length", "image_offset"); err != nil {
 			return nil, unallocBad("line %d: %v", n, err)
 		}
 		var l unallocLineJSON
@@ -91,10 +92,10 @@ func ReadUnallocRunMap(r io.Reader) ([]UnallocRun, error) {
 	}
 }
 
-// checkUnallocKeys walks the tokens of one line before it is decoded and refuses what encoding/json would
-// quietly accept: a repeated key (the last would win) and a key that differs from the exact lower-case name
+// checkExactKeys walks the tokens of one line before it is decoded and refuses what encoding/json would
+// quietly accept: a repeated key (the last would win) and a key that differs from the exact name in names
 // only in case (it would match case-insensitively). Malformed JSON is left to the decoder.
-func checkUnallocKeys(line []byte) error {
+func checkExactKeys(line []byte, names ...string) error {
 	dec := json.NewDecoder(bytes.NewReader(line))
 	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
 		return nil
@@ -109,11 +110,11 @@ func checkUnallocKeys(line []byte) error {
 		if !ok {
 			return nil
 		}
-		switch key {
-		case "offset", "length", "image_offset":
-		default:
-			if strings.EqualFold(key, "offset") || strings.EqualFold(key, "length") || strings.EqualFold(key, "image_offset") {
-				return fmt.Errorf("key %q is not spelled exactly", key)
+		if !slices.Contains(names, key) {
+			for _, n := range names {
+				if strings.EqualFold(key, n) {
+					return fmt.Errorf("key %q is not spelled exactly", key)
+				}
 			}
 			return nil
 		}

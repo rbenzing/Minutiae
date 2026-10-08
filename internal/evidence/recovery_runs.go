@@ -108,6 +108,9 @@ func readRunLines(r io.Reader) ([]Run, error) {
 		if len(runs) >= MaxRecoveredRuns {
 			return nil, fmt.Errorf("more than %d runs", MaxRecoveredRuns)
 		}
+		if err := checkExactKeys(line, "offset", "length"); err != nil {
+			return nil, fmt.Errorf("line %d: %w", n, err)
+		}
 		var run Run
 		dec := json.NewDecoder(bytes.NewReader(line))
 		dec.DisallowUnknownFields()
