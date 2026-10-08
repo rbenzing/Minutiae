@@ -153,6 +153,11 @@ func TestRowOnRecoveredSiblingOfLiveDatabaseIsCapped(t *testing.T) {
 	if res := recordstest.Ingest(t, c, testParser, []string{live.ID}, []records.Record{rec}); res.Records != 1 {
 		t.Fatalf("stored %d", res.Records)
 	}
+	rep, err := c.Verify()
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidencetest.RequireClean(t, rep)
 }
 
 func TestRowOnCarvedDatabaseIsCapped(t *testing.T) {

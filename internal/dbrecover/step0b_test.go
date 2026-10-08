@@ -36,8 +36,14 @@ func TestClippedTextIsMarkedInSummaryAndBody(t *testing.T) {
 	if !strings.Contains(rec.Summary, "[clipped]") {
 		t.Errorf("summary %q", rec.Summary)
 	}
-	if rec.Payload["body_clipped"] != true {
-		t.Errorf("body_clipped %v with body %q", rec.Payload["body_clipped"], rec.Body)
+	if !strings.Contains(rec.Body, "[clipped]") {
+		t.Errorf("body %q lacks the inline mark", rec.Body)
+	}
+	if rec.Payload["body_clipped"] != nil {
+		t.Errorf("body_clipped %v: the body was not cut at its limit", rec.Payload["body_clipped"])
+	}
+	if rec.Payload["values_clipped"] != int64(1) {
+		t.Errorf("values_clipped %v", rec.Payload["values_clipped"])
 	}
 	if err := validateDBRow(rec.Payload); err != nil {
 		t.Error(err)
@@ -45,5 +51,19 @@ func TestClippedTextIsMarkedInSummaryAndBody(t *testing.T) {
 	clean := mustRecord(t, dbOnly(), baseRow())
 	if strings.Contains(clean.Summary, "clipped") || clean.Payload["body_clipped"] != nil {
 		t.Errorf("clean row marked: %q", clean.Summary)
+	}
+}
+
+func TestBodyClippedMeansCutAtTheByteLimit(t *testing.T) {
+	r := baseRow()
+	r.Values = []sqlitefile.Value{textV([]byte(strings.Repeat("a", 5000)), sqlitefile.EncUTF8)}
+	m := dbOnly()
+	m.maxBody = 100
+	rec := mustRecord(t, m, r)
+	if rec.Payload["body_clipped"] != true {
+		t.Errorf("body_clipped %v, want true (len %d)", rec.Payload["body_clipped"], len(rec.Body))
+	}
+	if rec.Payload["values_clipped"] != nil || strings.Contains(rec.Body, "[clipped]") {
+		t.Errorf("an unclipped input value was marked clipped: %v", rec.Payload["values_clipped"])
 	}
 }

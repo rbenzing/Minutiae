@@ -122,6 +122,9 @@ func summaryValue(v sqlitefile.Value) string {
 		if utf8.RuneCountInString(s) > summaryTextRunes {
 			s = string([]rune(s)[:summaryTextRunes]) + "..."
 		}
+		if v.Clipped {
+			s += " [clipped]"
+		}
 		return s
 	case sqlitefile.KindBlob:
 		return "<blob " + strconv.FormatInt(v.Len, 10) + ">"
@@ -172,15 +175,15 @@ func summaryOf(r sqlitefile.RecoveredRow, unread int, clipped, lenMismatch bool)
 // cut at limit bytes.
 func bodyOf(vals []sqlitefile.Value, limit int64) (string, bool) {
 	var b strings.Builder
-	clippedIn := false
 	for _, v := range vals {
 		s, ok := v.Text()
 		if !ok || strings.ContainsRune(s, 0) {
 			continue
 		}
+		// a clipped value is never presented as the whole value (J41): the
+		// mark is inline and separate from body_clipped (J42)
 		if v.Clipped {
-			// a clipped value is never presented as the whole value (J41)
-			clippedIn = true
+			s += " [clipped]"
 		}
 		piece := s
 		if b.Len() > 0 {
@@ -192,7 +195,7 @@ func bodyOf(vals []sqlitefile.Value, limit int64) (string, bool) {
 		}
 		b.WriteString(piece)
 	}
-	return b.String(), clippedIn
+	return b.String(), false
 }
 
 // rangeOf is the byte range of the cell in its artifact, or false when the
