@@ -23,10 +23,14 @@ const (
 	SiblingDisabled         SiblingStatus = "disabled"
 	SiblingNoIdentity       SiblingStatus = "no-identity"
 	SiblingOtherAcquisition SiblingStatus = "other-acquisition"
+	SiblingError            SiblingStatus = "error"
 )
 
 // ErrAmbiguousSibling: more than one artifact has the identity of a companion.
 var ErrAmbiguousSibling = errors.New("dbrecover: more than one candidate for a companion file")
+
+// ErrSiblingSearch: the search for a companion failed; the role is refused, never treated as none.
+var ErrSiblingSearch = errors.New("dbrecover: the search for a companion file failed")
 
 // SiblingResult is the outcome for one companion role. SearchedBy is the
 // identity that was searched for, %q-quoted, so it is safe to print.
@@ -55,6 +59,8 @@ func (r SiblingResult) Text(role string) string {
 			role, r.SearchedBy, quoteList(r.OtherAcquisition))
 	case SiblingAmbiguous:
 		return fmt.Sprintf("%s: ambiguous, candidates %s (searched by %s)", role, quoteList(r.Candidates), r.SearchedBy)
+	case SiblingError:
+		return fmt.Sprintf("%s: the search failed (%s); this companion is refused, not treated as absent", role, r.SearchedBy)
 	case SiblingNoIdentity:
 		return fmt.Sprintf("%s: not searched, the database has no path identity (%s)", role, r.SearchedBy)
 	case SiblingExplicit:
@@ -68,18 +74,32 @@ func (r SiblingResult) Text(role string) string {
 // Err is an ErrAmbiguousSibling listing the candidates when the result is
 // ambiguous, nil otherwise.
 func (r SiblingResult) Err(role string) error {
+	if r.Status == SiblingError {
+		return fmt.Errorf("%w: %s: %s", ErrSiblingSearch, role, r.SearchedBy)
+	}
 	if r.Status != SiblingAmbiguous {
 		return nil
 	}
 	return fmt.Errorf("%w: %s: %s; name one by artifact id or turn the search off", ErrAmbiguousSibling, role, quoteList(r.Candidates))
 }
 
+// maxListed bounds the ids shown in a text; the lists themselves stay whole.
+const maxListed = 20
+
 func quoteList(ids []string) string {
-	q := make([]string, len(ids))
-	for i, id := range ids {
+	shown := ids
+	if len(shown) > maxListed {
+		shown = shown[:maxListed]
+	}
+	q := make([]string, len(shown))
+	for i, id := range shown {
 		q[i] = quoteCap(id)
 	}
-	return strings.Join(q, ", ")
+	out := strings.Join(q, ", ")
+	if more := len(ids) - len(shown); more > 0 {
+		out += fmt.Sprintf(", %d more", more)
+	}
+	return out
 }
 
 // maxQuoted bounds the part of a path shown in SearchedBy; the match itself
@@ -106,11 +126,32 @@ var siblingScan = scanSiblings
 func FindSiblings(man []evidence.ManifestRecord, db evidence.ManifestRecord) (rep SiblingReport) {
 	defer func() {
 		if p := recover(); p != nil {
-			res := SiblingResult{Status: SiblingNoIdentity, SearchedBy: fmt.Sprintf("the search failed with an internal error: %v", p)}
+			res := SiblingResult{Status: SiblingError, SearchedBy: "internal error " + quoteCap(fmt.Sprint(p))}
 			rep = SiblingReport{WAL: res, Journal: res}
 		}
 	}()
 	return siblingScan(man, db)
+}
+
+// kindClass groups the kinds that can be paired: pulled files (file, backup) and
+// filesystem artifacts (extract, recover). Carve has no identity.
+func kindClass(kind string) string {
+	switch kind {
+	case "file", "backup":
+		return "pull"
+	case "extract", evidence.KindRecover:
+		return "fs"
+	}
+	return ""
+}
+
+// candidateOf says whether r may be a companion of a database of class: it
+// must be a database input at all (eligibleKind, the one source) and of the class.
+func candidateOf(r evidence.ManifestRecord, class string) bool {
+	if ok, _ := eligibleKind(r); !ok {
+		return false
+	}
+	return kindClass(r.Source.Kind) == class
 }
 
 // acquisitionKey is "artifacts/<device>/<acquisition>" from a manifest path.
@@ -135,6 +176,16 @@ func sameSnapshot(a, b *evidence.SnapshotRef) bool {
 }
 
 func scanSiblings(man []evidence.ManifestRecord, db evidence.ManifestRecord) SiblingReport {
+	n := 0
+	for _, r := range man {
+		if r.ID == db.ID {
+			n++
+		}
+	}
+	if n > 1 {
+		res := SiblingResult{Status: SiblingError, SearchedBy: fmt.Sprintf("the manifest holds the database id %s %d times (duplicate id)", quoteCap(db.ID), n)}
+		return SiblingReport{WAL: res, Journal: res}
+	}
 	return SiblingReport{
 		WAL:     scanOne(man, db, "-wal"),
 		Journal: scanOne(man, db, "-journal"),
@@ -147,8 +198,8 @@ func scanOne(man []evidence.ManifestRecord, db evidence.ManifestRecord, suffix s
 	}
 	var same, other []string
 	var by string
-	switch db.Source.Kind {
-	case "file", "backup":
+	switch kindClass(db.Source.Kind) {
+	case "pull":
 		key, ok := acquisitionKey(db.Path)
 		if db.Source.RemotePath == "" || db.Source.DeviceID == "" || !ok {
 			return noID("an artifact of kind " + quoteCap(db.Source.Kind) + " without a device, a remote path and an acquisition")
@@ -156,7 +207,7 @@ func scanOne(man []evidence.ManifestRecord, db evidence.ManifestRecord, suffix s
 		want := db.Source.RemotePath + suffix
 		by = fmt.Sprintf("device %s, remote path %s, acquisition %s", quoteCap(db.Source.DeviceID), quoteCap(want), quoteCap(key))
 		for _, r := range man {
-			if r.ID == db.ID || (r.Source.Kind != "file" && r.Source.Kind != "backup") {
+			if r.ID == db.ID || !candidateOf(r, "pull") {
 				continue
 			}
 			if r.Source.DeviceID != db.Source.DeviceID || r.Source.RemotePath != want {
@@ -168,7 +219,7 @@ func scanOne(man []evidence.ManifestRecord, db evidence.ManifestRecord, suffix s
 				other = append(other, r.ID)
 			}
 		}
-	case "extract", evidence.KindRecover:
+	case "fs":
 		d := db.Source.Derived
 		if d == nil || d.FSPath == "" || d.ParentID == "" {
 			return noID("an artifact of kind " + quoteCap(db.Source.Kind) + " without a filesystem path and a parent")
@@ -181,7 +232,7 @@ func scanOne(man []evidence.ManifestRecord, db evidence.ManifestRecord, suffix s
 		by = fmt.Sprintf("parent %s, partition %d, snapshot %s, path %s", quoteCap(d.ParentID), d.Partition, snap, quoteCap(want))
 		for _, r := range man {
 			rd := r.Source.Derived
-			if r.ID == db.ID || (r.Source.Kind != "extract" && r.Source.Kind != evidence.KindRecover) || rd == nil {
+			if r.ID == db.ID || !candidateOf(r, "fs") || rd == nil {
 				continue
 			}
 			if rd.ParentID == d.ParentID && rd.Partition == d.Partition && sameSnapshot(rd.Snapshot, d.Snapshot) && rd.FSPath == want {
