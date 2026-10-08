@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
@@ -120,5 +121,28 @@ func TestAdmitNegativeSizeIsInternalError(t *testing.T) {
 	stop, err := ad.admit(context.Background(), c)
 	if !errors.Is(err, errInvalidSize) || stop != "" || c.Skip != "" || b.files != 0 {
 		t.Errorf("stop %q err %v skip %q files %d", stop, err, c.Skip, b.files)
+	}
+}
+
+// C59: the scan cap is "more than four times the byte limit": a total of exactly four times is admitted.
+func TestUniformScanCapEqualityIsAdmitted(t *testing.T) {
+	const maxBytes = 1 << 20
+	img := &zeroImage{size: 64 << 20}
+	b, err := newBudget(0, maxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ad := newAdmission(b, img, false)
+	var stops []string
+	for i := range 5 {
+		c := &PlannedCandidate{Size: maxBytes, Runs: []evidence.Run{{Offset: int64(i+1) * 4096, Length: maxBytes}}}
+		stop, err := ad.admit(context.Background(), c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stops = append(stops, stop)
+	}
+	if !slices.Equal(stops, []string{"", "", "", "", "max-scan-bytes"}) {
+		t.Errorf("stops %q, want the fourth (total exactly 4 x limit) admitted and the fifth refused", stops)
 	}
 }

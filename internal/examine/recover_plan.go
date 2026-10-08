@@ -487,7 +487,7 @@ func (p *planner) evaluate(it *RecoverItem, t target, cs []filesys.Candidate) {
 			continue
 		}
 		pc.Size, pc.Runs = cut.CapturedBytes, cut.Captured
-		pc.Excluded = slices.Clone(cut.Excluded[:min(len(cut.Excluded), maxExcludedListed)])
+		pc.Excluded = capExcluded(cut.Excluded)
 		pc.Alloc = evidence.AllocSummary{Free: cut.CapturedBytes, ExcludedRuns: len(cut.Excluded), ExcludedBytes: cut.ExcludedBytes}
 		pc.cut, pc.cutState, pc.cutRuns = cut.State != "", cut.State, len(cut.Excluded)
 		pc.Basis = cleanList(c.Basis)
@@ -760,3 +760,8 @@ var (
 	repl   = string(rune(0xFFFD))
 	nulStr = string(rune(0))
 )
+
+// capExcluded copies the first maxExcludedListed excluded runs (the counters stay exact).
+func capExcluded(ex []evidence.Run) []evidence.Run {
+	return slices.Clone(ex[:min(len(ex), maxExcludedListed)])
+}

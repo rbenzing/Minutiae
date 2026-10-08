@@ -270,6 +270,13 @@ func TestRecoverNameWithSeparatorStaysFlat(t *testing.T) {
 			t.Errorf("%q: directory %q, want every artifact directly in %q", r.Path, path.Dir(r.Path), want)
 		}
 	}
+	var names []string
+	for _, r := range recs {
+		names = append(names, path.Base(r.Path))
+	}
+	if !slices.ContainsFunc(names, func(n string) bool { return strings.HasSuffix(n, "-x_y.bin") }) || !slices.ContainsFunc(names, func(n string) bool { return strings.HasSuffix(n, "-p_q.bin") }) {
+		t.Errorf("file names %q, want both separators replaced by _ (x_y.bin, p_q.bin)", names)
+	}
 	verifyOK(t, e.c)
 }
 

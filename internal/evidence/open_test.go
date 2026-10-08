@@ -2,6 +2,7 @@ package evidence
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -305,6 +306,68 @@ func TestOpenErrorClassification(t *testing.T) {
 		err := openError(r, &fs.PathError{Op: "open", Path: "p", Err: cause})
 		if errors.Is(err, ErrIntegrity) || !errors.Is(err, cause) {
 			t.Errorf("cause %v: err = %v, want a plain error wrapping the cause", cause, err)
+		}
+	}
+}
+
+// C58: OpenArtifactIn applies exactly OpenArtifact's checks; the refusal matrix gives identical outcomes.
+func TestOpenArtifactInMatchesOpenArtifact(t *testing.T) {
+	c, rec := caseWithArtifact(t)
+	manifest := filepath.Join(c.Dir, manifestFile)
+	outside := filepath.Join(filepath.Dir(c.Dir), "outside-in.bin")
+	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	add := func(r ManifestRecord) {
+		t.Helper()
+		if err := appendManifest(manifest, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ids := []string{rec.ID, "nope"}
+	// duplicate id
+	add(rec)
+	// paths outside the case
+	for i, p := range []string{"../outside-in.bin", outside, filepath.ToSlash(outside), "case.json", "artifacts/../../outside-in.bin", ""} {
+		id := fmt.Sprintf("forged%d", i)
+		add(ManifestRecord{ID: id, Path: p, Size: 6})
+		ids = append(ids, id)
+	}
+	// missing file, non-regular file, size mismatch
+	add(ManifestRecord{ID: "missing", Path: "artifacts/dev1/none.bin", Size: 1})
+	dir := filepath.Join(c.Dir, "artifacts", "dir.d")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	add(ManifestRecord{ID: "isdir", Path: "artifacts/dir.d", Size: 0})
+	grown := filepath.Join(c.Dir, "artifacts", "grown.bin")
+	if err := os.WriteFile(grown, []byte("abc"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	add(ManifestRecord{ID: "grown", Path: "artifacts/grown.bin", Size: 2})
+	add(ManifestRecord{ID: "good", Path: "artifacts/grown.bin", Size: 3})
+	ids = append(ids, "missing", "isdir", "grown", "good")
+
+	recs, err := c.Manifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ix := NewManifestIndex(recs)
+	for _, id := range ids {
+		f1, r1, e1 := c.OpenArtifact(id)
+		f2, r2, e2 := c.OpenArtifactIn(ix, id)
+		if f1 != nil {
+			_ = f1.Close()
+		}
+		if f2 != nil {
+			_ = f2.Close()
+		}
+		if (f1 == nil) != (f2 == nil) || !reflect.DeepEqual(r1, r2) {
+			t.Errorf("%q: file/record differ: %v %+v vs %v %+v", id, f1 != nil, r1, f2 != nil, r2)
+		}
+		if (e1 == nil) != (e2 == nil) || (e1 != nil && e1.Error() != e2.Error()) ||
+			errors.Is(e1, ErrIntegrity) != errors.Is(e2, ErrIntegrity) || errors.Is(e1, ErrUnknownArtifact) != errors.Is(e2, ErrUnknownArtifact) {
+			t.Errorf("%q: errors differ: %v vs %v", id, e1, e2)
 		}
 	}
 }

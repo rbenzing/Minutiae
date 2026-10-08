@@ -841,3 +841,36 @@ func bruteCounts(items []ownedRuns) map[string]int {
 	}
 	return out
 }
+
+// C59: the record limits of the planner sit exactly at their documented boundary.
+func TestFitAssumptionsKeepsTheLast64(t *testing.T) {
+	mk := func(n int) []string {
+		as := make([]string, n)
+		for i := range as {
+			as[i] = fmt.Sprintf("a%03d", i)
+		}
+		return as
+	}
+	if got := fitAssumptions(mk(64)); len(got) != 64 || got[0] != "a000" {
+		t.Errorf("64 assumptions: got %d starting %q, want all kept", len(got), got[0])
+	}
+	if got := fitAssumptions(mk(65)); len(got) != 64 || got[0] != "a001" || got[63] != "a064" {
+		t.Errorf("65 assumptions: got %d starting %q ending %q, want the first dropped", len(got), got[0], got[len(got)-1])
+	}
+}
+
+func TestCapExcludedListsAtMost256(t *testing.T) {
+	mk := func(n int) []evidence.Run {
+		rs := make([]evidence.Run, n)
+		for i := range rs {
+			rs[i] = evidence.Run{Offset: int64(i) * 10, Length: 5}
+		}
+		return rs
+	}
+	if got := capExcluded(mk(256)); len(got) != 256 {
+		t.Errorf("256 excluded runs: %d listed, want 256", len(got))
+	}
+	if got := capExcluded(mk(257)); len(got) != 256 || got[255].Offset != 2550 {
+		t.Errorf("257 excluded runs: %d listed, want the first 256", len(got))
+	}
+}

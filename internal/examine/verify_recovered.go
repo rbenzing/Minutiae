@@ -33,7 +33,7 @@ func RecoveredCheck() evidence.VerifyCheck { return VerifyRecovered }
 // problems, never aborts; nothing is written to the case. A cancelled ctx stops it at the next chunk.
 func VerifyRecovered(ctx context.Context, c *evidence.Case, recs []evidence.ManifestRecord, rep *evidence.VerifyReport) {
 	rep.MarkReproduceRan()
-	r := &reproducer{ctx: ctx, c: c, rep: rep, byID: make(map[string]evidence.ManifestRecord, len(recs))}
+	r := &reproducer{ctx: ctx, c: c, rep: rep, ix: evidence.NewManifestIndex(recs), byID: make(map[string]evidence.ManifestRecord, len(recs))}
 	type groupKey struct {
 		parent   string
 		artifact bool // a carve of scope "artifact": the parent is read as one raw artifact
@@ -82,6 +82,7 @@ type reproducer struct {
 	ctx     context.Context
 	c       *evidence.Case
 	rep     *evidence.VerifyReport
+	ix      *evidence.ManifestIndex // the manifest indexed once (C58)
 	byID    map[string]evidence.ManifestRecord
 	listed  int
 	dropped int
@@ -105,7 +106,7 @@ func (r *reproducer) group(parentID string, asArtifact bool, recs []evidence.Man
 		wantSegs []evidence.SegmentRef
 	)
 	if asArtifact {
-		f, prec, err := r.c.OpenArtifact(parentID)
+		f, prec, err := r.c.OpenArtifactIn(r.ix, parentID)
 		if err != nil {
 			r.problem(recs[0], "parent %q cannot be opened: %v (%d artifact(s) not checked)", parentID, err, len(recs))
 			return true
@@ -164,7 +165,7 @@ func (r *reproducer) one(rec evidence.ManifestRecord, rd io.ReaderAt, size int64
 	if len(runs) == 0 && rec.Size > 0 {
 		return true // "records no runs" is reported by the runs check
 	}
-	f, arec, err := r.c.OpenArtifact(rec.ID)
+	f, arec, err := r.c.OpenArtifactIn(r.ix, rec.ID)
 	if err != nil {
 		r.problem(rec, "the artifact cannot be opened: %v", err)
 		return true

@@ -38,6 +38,11 @@ func (c *Case) OpenArtifact(id string) (*os.File, ManifestRecord, error) {
 	case n > 1:
 		return nil, ManifestRecord{}, fmt.Errorf("%w: artifact id %q appears %d times in the manifest", ErrIntegrity, id, n)
 	}
+	return c.openRecord(r)
+}
+
+// openRecord applies the checks shared by OpenArtifact and OpenArtifactIn to one manifest record.
+func (c *Case) openRecord(r ManifestRecord) (*os.File, ManifestRecord, error) {
 	local := filepath.FromSlash(r.Path)
 	if !strings.HasPrefix(r.Path, artifactsDir+"/") || !filepath.IsLocal(local) {
 		return nil, ManifestRecord{}, fmt.Errorf("%w: artifact %s: manifest path %q is outside the case artifacts directory", ErrIntegrity, r.ID, r.Path)
@@ -103,4 +108,34 @@ func (c *Case) FindArtifact(ref string) (ManifestRecord, error) {
 		}
 	}
 	return ManifestRecord{}, fmt.Errorf("%w: %q", ErrUnknownArtifact, ref)
+}
+
+// ManifestIndex is a manifest read once and indexed by artifact id, for callers (case verify) that open
+// many artifacts and must not re-read the manifest for each (C58).
+type ManifestIndex struct {
+	byID  map[string]ManifestRecord
+	count map[string]int
+}
+
+// NewManifestIndex indexes recs. A duplicated id is remembered as such, so OpenArtifactIn refuses it
+// exactly as OpenArtifact does.
+func NewManifestIndex(recs []ManifestRecord) *ManifestIndex {
+	ix := &ManifestIndex{byID: make(map[string]ManifestRecord, len(recs)), count: make(map[string]int, len(recs))}
+	for _, r := range recs {
+		ix.byID[r.ID] = r
+		ix.count[r.ID]++
+	}
+	return ix
+}
+
+// OpenArtifactIn is OpenArtifact over a prebuilt index: the same checks with the same errors, without
+// reading the manifest.
+func (c *Case) OpenArtifactIn(ix *ManifestIndex, id string) (*os.File, ManifestRecord, error) {
+	switch n := ix.count[id]; {
+	case n == 0:
+		return nil, ManifestRecord{}, fmt.Errorf("%w: %q", ErrUnknownArtifact, id)
+	case n > 1:
+		return nil, ManifestRecord{}, fmt.Errorf("%w: artifact id %q appears %d times in the manifest", ErrIntegrity, id, n)
+	}
+	return c.openRecord(ix.byID[id])
 }
