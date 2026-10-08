@@ -57,18 +57,43 @@ func FuzzTranslateRange(f *testing.F) {
 			if e.Hole != (e.ImageOffset < 0) {
 				t.Fatal("hole flag")
 			}
-			if !e.Hole {
-				inRun := false
-				for _, ru := range runs {
-					if ru.Offset >= 0 && e.ImageOffset >= ru.Offset && e.ImageOffset+e.Length <= ru.Offset+ru.Length {
-						inRun = true
-						break
+			// Independent walk: find the run holding the extent's first byte.
+			var start int64
+			found := false
+			for _, ru := range runs {
+				end := start + ru.Length
+				if e.ArtifactOffset >= start && e.ArtifactOffset < end {
+					found = true
+					if e.ArtifactOffset+e.Length > end {
+						t.Fatalf("extent %+v crosses the end of its run", e)
 					}
+					if e.Hole != (ru.Offset < 0) {
+						t.Fatalf("extent %+v hole flag disagrees with run %+v", e, ru)
+					}
+					if !e.Hole && e.ImageOffset != ru.Offset+(e.ArtifactOffset-start) {
+						t.Fatalf("extent %+v is not at its run %+v", e, ru)
+					}
+					break
 				}
-				if !inRun {
-					t.Fatalf("extent %+v lies in no run", e)
-				}
+				start = end
 			}
+			if !found {
+				t.Fatalf("extent %+v starts in no run", e)
+			}
+		}
+		var wantTotal int
+		if length > 0 {
+			var start int64
+			for _, ru := range runs {
+				end := start + ru.Length
+				if start < off+length && end > off {
+					wantTotal++
+				}
+				start = end
+			}
+		}
+		if got.Total != wantTotal {
+			t.Fatalf("total %d, independent count %d", got.Total, wantTotal)
 		}
 		if !got.Truncated && sum != length {
 			t.Fatalf("sum %d != %d", sum, length)

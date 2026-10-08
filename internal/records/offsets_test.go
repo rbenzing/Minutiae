@@ -65,6 +65,19 @@ func TestTranslateRangeTable(t *testing.T) {
 			[]ImageExtent{ext(0, 10, 1000), ext(10, 10, 1005)},
 			2,
 		},
+		{"run ends exactly at MaxInt64", rs(math.MaxInt64-10, 10), 10, Range{0, 10}, []ImageExtent{ext(0, 10, math.MaxInt64-10)}, 1},
+		{
+			"run lengths sum to MaxInt64", rs(0, math.MaxInt64-1, 0, 1), math.MaxInt64,
+			Range{math.MaxInt64 - 2, 2},
+			[]ImageExtent{ext(math.MaxInt64-2, 1, math.MaxInt64-2), ext(math.MaxInt64-1, 1, 0)},
+			2,
+		},
+		{
+			"range ends at MaxInt64", rs(0, math.MaxInt64-1, 100, 1), math.MaxInt64,
+			Range{math.MaxInt64 - 5, 5},
+			[]ImageExtent{ext(math.MaxInt64-5, 4, math.MaxInt64-5), ext(math.MaxInt64-1, 1, 100)},
+			2,
+		},
 		{
 			"5000 fragments", many(5000), 50000,
 			Range{25000, 30},
