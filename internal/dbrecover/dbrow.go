@@ -62,7 +62,7 @@ var topKeys = map[string]fieldKind{
 	"truncated": kBool, "notes": kStrings, "method_confidence": kCount, "confidence_cap": kCount,
 	"sibling_artifacts": kStrings, "sibling_unused": kAny, "mixed_inputs": kBool,
 	"input_incomplete": kBool, "values_unread": kCount, "values_omitted": kCount,
-	"values_clipped": kCount, "body_clipped": kBool,
+	"values_clipped": kCount, "body_clipped": kBool, "loc_offset": kAny, "loc_length": kAny,
 }
 
 var colKeys = map[string]fieldKind{

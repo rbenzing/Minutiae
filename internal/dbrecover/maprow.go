@@ -129,7 +129,7 @@ func summaryValue(v sqlitefile.Value) string {
 	return "NULL"
 }
 
-func summaryOf(r sqlitefile.RecoveredRow, unread int, lenMismatch bool) string {
+func summaryOf(r sqlitefile.RecoveredRow, unread int, clipped, lenMismatch bool) string {
 	var head string
 	if r.Index != "" {
 		head = "index " + sanitize(r.Index, true) + ":"
@@ -146,6 +146,9 @@ func summaryOf(r sqlitefile.RecoveredRow, unread int, lenMismatch bool) string {
 	var marks string
 	if unread > 0 {
 		marks += " [unread]"
+	}
+	if clipped {
+		marks += " [clipped]"
 	}
 	if lenMismatch {
 		marks += " [len-mismatch]"
@@ -169,10 +172,15 @@ func summaryOf(r sqlitefile.RecoveredRow, unread int, lenMismatch bool) string {
 // cut at limit bytes.
 func bodyOf(vals []sqlitefile.Value, limit int64) (string, bool) {
 	var b strings.Builder
+	clippedIn := false
 	for _, v := range vals {
 		s, ok := v.Text()
 		if !ok || strings.ContainsRune(s, 0) {
 			continue
+		}
+		if v.Clipped {
+			// a clipped value is never presented as the whole value (J41)
+			clippedIn = true
 		}
 		piece := s
 		if b.Len() > 0 {
@@ -184,7 +192,7 @@ func bodyOf(vals []sqlitefile.Value, limit int64) (string, bool) {
 		}
 		b.WriteString(piece)
 	}
-	return b.String(), false
+	return b.String(), clippedIn
 }
 
 // rangeOf is the byte range of the cell in its artifact, or false when the
@@ -237,11 +245,13 @@ func (m *mapper) record(r sqlitefile.RecoveredRow) (records.Record, error) {
 		Type: TypeName, ArtifactID: ref.ArtifactID, Deleted: true, Recovery: r.Method, Confidence: &conf,
 		Locator: locatorFor(r),
 	}
+	outside := false
 	if rg, ok := rangeOf(r.Loc, ref.Size); ok {
 		rec.Range = &rg
 	} else {
 		m.outsideRange++
 		addNote("range-outside-artifact")
+		outside = true
 	}
 
 	var unread, clipped int64
@@ -268,6 +278,10 @@ func (m *mapper) record(r sqlitefile.RecoveredRow) (records.Record, error) {
 		encodeName("index", r.Index, p)
 	} else if r.Table != "" {
 		encodeName("table", r.Table, p)
+	}
+	if outside {
+		// the claim is provenance even when it cannot be a Range (J39)
+		p["loc_offset"], p["loc_length"] = r.Loc.Offset, r.Loc.Length
 	}
 	if r.Loc.Cell >= 0 {
 		p["cell"] = int64(r.Loc.Cell)
@@ -377,7 +391,7 @@ func (m *mapper) record(r sqlitefile.RecoveredRow) (records.Record, error) {
 	if bodyClipped {
 		p["body_clipped"] = true
 	}
-	rec.Summary = summaryOf(r, int(unread), slices.Contains(r.Notes, sqlitefile.NoteRecordLengthMismatch))
+	rec.Summary = summaryOf(r, int(unread), clipped > 0, slices.Contains(r.Notes, sqlitefile.NoteRecordLengthMismatch))
 	rec.Payload = p
 	if err := assertRecovered(rec); err != nil {
 		return records.Record{}, err
