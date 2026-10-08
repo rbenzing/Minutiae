@@ -146,6 +146,9 @@ func (e *env) readRecordMode(l *ledger, w *warnings, at cellCtx, p *payload, enc
 		}
 		rec.Values[i] = v
 	}
+	if !rec.Truncated {
+		rec.LengthMismatch = lengthMismatch(p.total, len(serials), headerLen, bodyLen)
+	}
 	if w != nil {
 		if acct.capped > 0 {
 			w.add(Warning{
@@ -159,6 +162,12 @@ func (e *env) readRecordMode(l *ledger, w *warnings, at cellCtx, p *payload, enc
 			w.add(Warning{
 				Code: WarnRecordReservedSerial, File: at.File, Page: at.Page, Offset: at.Offset,
 				Msg: fmt.Sprintf("reserved serial type in %d column(s), first column %d (type %d): read as NULL, as the engine reads it", rec.Reserved, firstReserved, rec.Serials[firstReserved]),
+			})
+		}
+		if rec.LengthMismatch {
+			w.add(Warning{
+				Code: WarnRecordLengthMismatch, File: at.File, Page: at.Page, Offset: at.Offset,
+				Msg: fmt.Sprintf("the payload is %d bytes but the header (%d bytes, %d columns) and body (%d bytes) account for %d: the engine calls a full-row read of this record corrupt; the values are delivered", p.total, headerLen, len(serials), bodyLen, int64(headerLen)+bodyLen),
 			})
 		}
 		if why, pg, dead := p.damaged(); dead && rec.Truncated {

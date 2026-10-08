@@ -20,6 +20,19 @@ type Record struct {
 	// view keeps such a row only when a damaged overflow chain caused it
 	// (with a warning) and skips a record that declares bytes its intact payload lacks.
 	Truncated bool
+	// LengthMismatch: the payload is not exactly header plus declared body
+	// (surplus bytes after the last value), or the header holds no columns.
+	// The engine reads such a record's values but calls a full-row read of it
+	// corrupt, so the values are delivered and the anomaly is flagged
+	// (record-length-mismatch). Never set together with Truncated.
+	LengthMismatch bool
+}
+
+// lengthMismatch reports whether a record of payload bytes, with the given
+// columns, header and body lengths, breaks the engine's rule that the body
+// ends exactly where the payload does and that a header holds a column.
+func lengthMismatch(payload int64, columns, headerLen int, bodyLen int64) bool {
+	return columns == 0 || payload != int64(headerLen)+bodyLen
 }
 
 // SerialSize is the byte length of a value of the given serial type. The
@@ -59,7 +72,9 @@ func recordInvalid(format string, a ...any) error {
 // and a body length that overflows are errors wrapping ErrCorrupt. The reserved
 // serial types 10 and 11 are accepted (zero-width NULLs, as the engine reads
 // them; the caller counts and warns). A header
-// that holds no columns (length 1) is accepted, as the engine does.
+// that holds no columns (length 1) is parsed without error; the callers that
+// know the payload length flag it (Record.LengthMismatch), because the engine
+// calls a full-row read of such a record corrupt.
 func ParseRecordHeader(b []byte, maxCols int) (serials []uint64, headerLen int, bodyLen int64, err error) {
 	defer guard(&err)
 	pureAt("ParseRecordHeader")
@@ -192,8 +207,10 @@ func (a *rowAcct) admit(blob bool, n int64, col int) (take int64, omit, clip boo
 
 // DecodeRecord decodes the record in b, the whole payload. Text and blob
 // values alias b (copy them to keep them past b). A value that lies past the
-// end of b is Omitted and Truncated is set; bytes past the declared body are
-// tolerated. Values over the live caps of lim are Omitted with their true
+// end of b is Omitted and Truncated is set; bytes past the declared body, and a
+// header with no columns, are delivered and flagged (LengthMismatch: the engine
+// reads the values but calls a full-row read corrupt). Values over the live
+// caps of lim are Omitted with their true
 // Len. The values of one row are bounded by lim.MaxRowBytes.
 func DecodeRecord(b []byte, enc Encoding, lim Limits) (_ Record, err error) {
 	defer guard(&err)
@@ -238,6 +255,9 @@ func decodeRecord(b []byte, enc Encoding, lim Limits, recovered bool) (Record, e
 			v.Bytes, v.Clipped = raw[:take:take], clip
 		}
 		rec.Values[i] = v
+	}
+	if !rec.Truncated {
+		rec.LengthMismatch = lengthMismatch(int64(len(b)), len(serials), hl, body)
 	}
 	return rec, nil
 }
