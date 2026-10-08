@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/bits"
 	"slices"
 	"sort"
 
@@ -110,7 +111,8 @@ func satAdd(a, b int64) int64 {
 // cutAtFirstNonFree keeps the longest prefix of the run sequence (in file order, byte by byte) whose
 // every byte is free. Free runs after the first non-free byte are excluded (they would shift offsets
 // in the file). Runs with no bytes are dropped; invalid runs (negative offset, wrapping end) are never
-// free. Byte counts saturate at MaxInt64.
+// free (and, as the first non-free run, they give the state "unknown", never "allocated"). Byte
+// counts saturate at MaxInt64.
 func cutAtFirstNonFree(m *freeMap, runs []evidence.Run) cutResult {
 	var out cutResult
 	cut := false
@@ -124,8 +126,10 @@ func cutAtFirstNonFree(m *freeMap, runs []evidence.Run) cutResult {
 			continue
 		}
 		var prefix int64
+		valid := false
 		if r.Offset >= 0 {
 			if _, ok := filesys.AddOK(r.Offset, r.Length); ok {
+				valid = true
 				if f, ok := m.runAt(r.Offset); ok {
 					prefix = min(r.Length, f.Offset+f.Length-r.Offset)
 				}
@@ -138,6 +142,9 @@ func cutAtFirstNonFree(m *freeMap, runs []evidence.Run) cutResult {
 		}
 		cut = true
 		out.State = m.nonFree
+		if !valid {
+			out.State = "unknown" // a run that cannot be placed is not claimed to be allocated
+		}
 		if prefix > 0 {
 			out.Captured = append(out.Captured, evidence.Run{Offset: r.Offset, Length: prefix})
 			out.CapturedBytes = satAdd(out.CapturedBytes, prefix)
@@ -159,30 +166,98 @@ type ownedRuns struct {
 
 const maxOverlapListed = 16
 
-type overlapEvent struct {
-	pos   int64
-	start bool
-	id    int // rank of the owner among the sorted distinct owners
+// overlapKeep is how many of the smallest owner ranks every tree list keeps: the 16 to report plus
+// the owner itself, which always intersects its own runs.
+const overlapKeep = maxOverlapListed + 1
+
+// overlapSteps counts the elementary operations of overlapsOf (node visits, list comparisons and
+// copies) so that a test can bound its cost without timing it. A nil counter costs nothing.
+type overlapSteps struct{ n int64 }
+
+func (s *overlapSteps) add(n int) {
+	if s != nil {
+		s.n += int64(n)
+	}
+}
+
+// insertSmall puts id into the sorted list l of at most overlapKeep distinct ranks, dropping the
+// largest when the list is full.
+func insertSmall(l []int32, id int32, st *overlapSteps) []int32 {
+	st.add(1)
+	i, found := slices.BinarySearch(l, id)
+	if found || i >= overlapKeep {
+		return l
+	}
+	st.add(len(l) - i)
+	if len(l) < overlapKeep {
+		l = append(l, 0)
+	}
+	copy(l[i+1:], l[i:])
+	l[i] = id
+	return l
+}
+
+// mergeSmall returns the overlapKeep smallest distinct ranks of two sorted lists; it returns one of
+// them unchanged when the other is empty (lists are never modified after they are built).
+func mergeSmall(a, b []int32, st *overlapSteps) []int32 {
+	switch {
+	case len(a) == 0:
+		return b
+	case len(b) == 0:
+		return a
+	}
+	out := make([]int32, 0, min(len(a)+len(b), overlapKeep))
+	i, j := 0, 0
+	for len(out) < overlapKeep && (i < len(a) || j < len(b)) {
+		st.add(1)
+		var v int32
+		switch {
+		case j >= len(b) || (i < len(a) && a[i] < b[j]):
+			v = a[i]
+			i++
+		case i >= len(a) || b[j] < a[i]:
+			v = b[j]
+			j++
+		default: // equal
+			v = a[i]
+			i++
+			j++
+		}
+		out = append(out, v)
+	}
+	return out
 }
 
 // overlapsOf maps every owner to the other owners that share at least one byte with it (sorted,
 // deduplicated, the 16 smallest when there are more; touching ranges do not overlap; one owner never
-// overlaps itself). A sweep line over the run ends and starts: a new owner is paired with the owners
-// active at that moment, and only when it is among the 17 smallest of them can it be one of the 16
-// smallest of another owner's partners, so the work per start is bounded by 16 unless the owner is
-// that small.
-func overlapsOf(items []ownedRuns) map[string][]string {
+// overlaps itself).
+//
+// The runs are half-open intervals over the compressed coordinates of their ends. Each interval is
+// stored in the O(log n) nodes of a segment tree that cover it (cover keeps only the smallest ranks
+// per node), sub is the smallest ranks of a node and everything below it, and the owners that
+// intersect an interval are exactly those in sub of its covering nodes and in cover of the ancestors
+// of its first and last cell. Every list is bounded, so the work is O(n log n) list merges of at most
+// 17 entries, whatever the input; there is no pairwise step.
+func overlapsOf(items []ownedRuns) map[string][]string { return overlapsOfSteps(items, nil) }
+
+func overlapsOfSteps(items []ownedRuns, st *overlapSteps) map[string][]string {
 	names := make([]string, 0, len(items))
 	for _, it := range items {
 		names = append(names, it.Owner)
 	}
 	slices.Sort(names)
 	names = slices.Compact(names)
-	rank := make(map[string]int, len(names))
+	st.add(len(names) * (bits.Len(uint(len(names))) + 1))
+	rank := make(map[string]int32, len(names))
 	for i, n := range names {
-		rank[n] = i
+		rank[n] = int32(i)
 	}
-	var ev []overlapEvent
+	type interval struct {
+		lo, hi int64
+		id     int32
+	}
+	var ivs []interval
+	var pos []int64
 	for _, it := range items {
 		id := rank[it.Owner]
 		for _, r := range it.Runs {
@@ -193,80 +268,90 @@ func overlapsOf(items []ownedRuns) map[string][]string {
 			if !ok {
 				continue
 			}
-			ev = append(ev, overlapEvent{r.Offset, true, id}, overlapEvent{end, false, id})
-		}
-	}
-	slices.SortFunc(ev, func(a, b overlapEvent) int {
-		switch {
-		case a.pos != b.pos:
-			if a.pos < b.pos {
-				return -1
-			}
-			return 1
-		case a.start != b.start: // ends first: touching is not overlap
-			if !a.start {
-				return -1
-			}
-			return 1
-		case a.id != b.id:
-			return a.id - b.id
-		}
-		return 0
-	})
-
-	counts := make([]int, len(names))
-	lists := make([][]int, len(names))
-	var active []int // sorted ids with counts > 0
-	add := func(owner, other int) {
-		l := lists[owner]
-		i, found := slices.BinarySearch(l, other)
-		if found || i >= maxOverlapListed {
-			return
-		}
-		l = slices.Insert(l, i, other)
-		if len(l) > maxOverlapListed {
-			l = l[:maxOverlapListed]
-		}
-		lists[owner] = l
-	}
-	for _, e := range ev {
-		if !e.start {
-			counts[e.id]--
-			if counts[e.id] == 0 {
-				i, _ := slices.BinarySearch(active, e.id)
-				active = slices.Delete(active, i, i+1)
-			}
-			continue
-		}
-		counts[e.id]++
-		if counts[e.id] > 1 {
-			continue
-		}
-		i, _ := slices.BinarySearch(active, e.id)
-		active = slices.Insert(active, i, e.id)
-		for j := 0; j < len(active) && j <= maxOverlapListed; j++ {
-			if active[j] != e.id {
-				add(e.id, active[j])
-			}
-		}
-		if i <= maxOverlapListed {
-			for _, y := range active {
-				if y != e.id {
-					add(y, e.id)
-				}
-			}
+			ivs = append(ivs, interval{r.Offset, end, id})
+			pos = append(pos, r.Offset, end)
 		}
 	}
 	out := map[string][]string{}
-	for id, l := range lists {
-		if len(l) == 0 {
-			continue
+	if len(ivs) == 0 {
+		return out
+	}
+	slices.Sort(pos)
+	pos = slices.Compact(pos)
+	st.add(len(pos) * (bits.Len(uint(len(pos))) + 1))
+	size := 1
+	for size < len(pos)-1 { // len(pos)-1 cells between consecutive positions
+		size <<= 1
+	}
+	cover := make([][]int32, 2*size)
+	cells := func(iv interval) (int, int) {
+		lo, _ := slices.BinarySearch(pos, iv.lo)
+		hi, _ := slices.BinarySearch(pos, iv.hi)
+		st.add(2 * bits.Len(uint(len(pos))))
+		return lo + size, hi + size
+	}
+	for _, iv := range ivs {
+		l, r := cells(iv)
+		for ; l < r; l, r = l>>1, r>>1 {
+			if l&1 == 1 {
+				cover[l] = insertSmall(cover[l], iv.id, st)
+				l++
+			}
+			if r&1 == 1 {
+				r--
+				cover[r] = insertSmall(cover[r], iv.id, st)
+			}
 		}
-		s := make([]string, len(l))
-		for k, o := range l {
-			s[k] = names[o]
+	}
+	sub := make([][]int32, 2*size)
+	for n := 2*size - 1; n >= 1; n-- {
+		st.add(1)
+		s := cover[n]
+		if n < size {
+			s = mergeSmall(s, mergeSmall(sub[2*n], sub[2*n+1], st), st)
 		}
-		out[names[id]] = s
+		sub[n] = s
+	}
+	acc := make([][]int32, len(names))
+	take := func(id int32, l []int32) {
+		for _, v := range l {
+			if a := acc[id]; len(a) == overlapKeep && v > a[overlapKeep-1] {
+				st.add(1)
+				return // l is sorted: nothing later can be among the smallest either
+			}
+			acc[id] = insertSmall(acc[id], v, st)
+		}
+	}
+	for _, iv := range ivs {
+		l, r := cells(iv)
+		first, last := l, r-1
+		for ; l < r; l, r = l>>1, r>>1 {
+			if l&1 == 1 {
+				take(iv.id, sub[l])
+				l++
+			}
+			if r&1 == 1 {
+				r--
+				take(iv.id, sub[r])
+			}
+		}
+		for _, leaf := range [2]int{first, last} {
+			for n := leaf; n >= 1; n >>= 1 {
+				st.add(1)
+				take(iv.id, cover[n])
+			}
+		}
+	}
+	for id, l := range acc {
+		var s []string
+		for _, o := range l {
+			if int(o) != id && len(s) < maxOverlapListed {
+				s = append(s, names[o])
+			}
+		}
+		if len(s) > 0 {
+			out[names[id]] = s
+		}
 	}
 	return out
 }

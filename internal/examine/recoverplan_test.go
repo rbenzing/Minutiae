@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/bits"
 	"math/rand"
 	"slices"
 	"strings"
@@ -98,11 +99,11 @@ func TestCutAtFirstNonFree(t *testing.T) {
 		},
 		{
 			name: "huge offset is excluded not wrapped", in: []evidence.Run{run(100, 10), run(math.MaxInt64-5, 100)},
-			captured: []evidence.Run{run(100, 10)}, excluded: []evidence.Run{run(math.MaxInt64-5, 100)}, state: "allocated", capB: 10, exclB: 100,
+			captured: []evidence.Run{run(100, 10)}, excluded: []evidence.Run{run(math.MaxInt64-5, 100)}, state: "unknown", capB: 10, exclB: 100,
 		},
 		{
 			name: "negative offset is excluded", in: []evidence.Run{run(-1, 10)},
-			excluded: []evidence.Run{run(-1, 10)}, state: "allocated", exclB: 10,
+			excluded: []evidence.Run{run(-1, 10)}, state: "unknown", exclB: 10,
 		},
 		{
 			name: "zero length runs carry no bytes", in: []evidence.Run{run(100, 0), run(100, 10), run(5, 0)},
@@ -179,6 +180,9 @@ func checkCutAgainstBitmap(t testing.TB, bm []bool, in []evidence.Run, unknown b
 	wantState := ""
 	if want < len(all) {
 		wantState = "allocated"
+		if all[want] < 0 { // the first non-free byte comes from a run that cannot be placed
+			wantState = "unknown"
+		}
 		if unknown {
 			wantState = "unknown"
 		}
@@ -399,6 +403,14 @@ func TestMethodsAreAllowedByClassTable(t *testing.T) {
 	if !ok {
 		t.Fatal("no deleted-file class")
 	}
+	if len(methodBase) == 0 {
+		t.Fatal("methodBase is empty")
+	}
+	for m, want := range specTable {
+		if got, ok := methodBase[m]; !ok || got != want {
+			t.Errorf("methodBase[%q] = %d, %v; the spec table says %d", m, got, ok, want)
+		}
+	}
 	for m := range methodBase {
 		okPrefix := false
 		for _, p := range ci.MethodPrefixes {
@@ -520,4 +532,220 @@ func TestUniformScan(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestNewFreeMapSortsAndMerges(t *testing.T) {
+	maxOff := int64(math.MaxInt64)
+	tests := []struct {
+		name string
+		in   []evidence.Run
+		want []evidence.Run
+	}{
+		{"unsorted", []evidence.Run{run(300, 10), run(100, 50)}, []evidence.Run{run(100, 50), run(300, 10)}},
+		{"adjacent runs merge", []evidence.Run{run(100, 50), run(150, 50)}, []evidence.Run{run(100, 100)}},
+		{"adjacent runs merge when unsorted", []evidence.Run{run(150, 50), run(100, 50)}, []evidence.Run{run(100, 100)}},
+		{"overlapping runs merge to the union", []evidence.Run{run(100, 60), run(150, 50)}, []evidence.Run{run(100, 100)}},
+		{"nested run is absorbed", []evidence.Run{run(100, 100), run(120, 10)}, []evidence.Run{run(100, 100)}},
+		{"a chain merges into one", []evidence.Run{run(0, 10), run(10, 10), run(20, 10), run(40, 5)}, []evidence.Run{run(0, 30), run(40, 5)}},
+		{"a gap of one byte stays", []evidence.Run{run(0, 10), run(11, 10)}, []evidence.Run{run(0, 10), run(11, 10)}},
+		{"invalid runs are dropped", []evidence.Run{run(-1, 5), run(5, 0), run(5, -1), run(maxOff, 5), run(10, 5)}, []evidence.Run{run(10, 5)}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newFreeMap(tc.in, false)
+			if !slices.Equal(m.free, tc.want) {
+				t.Fatalf("free = %v, want %v", m.free, tc.want)
+			}
+		})
+	}
+	// A run across the former seam is not cut, and the byte after the merged end is the first non-free one.
+	m := newFreeMap([]evidence.Run{run(100, 50), run(150, 50)}, false)
+	if c := cutAtFirstNonFree(m, []evidence.Run{run(100, 100)}); c.State != "" || c.CapturedBytes != 100 || len(c.Excluded) != 0 {
+		t.Errorf("cut across the seam = %+v, want no cut", c)
+	}
+	if c := cutAtFirstNonFree(m, []evidence.Run{run(100, 101)}); c.State != "allocated" || c.CapturedBytes != 100 || c.ExcludedBytes != 1 {
+		t.Errorf("cut one past the merged end = %+v", c)
+	}
+}
+
+func TestCutInvalidFirstNonFreeRunIsUnknown(t *testing.T) {
+	for _, nonFreeUnknown := range []bool{false, true} {
+		m := newFreeMap([]evidence.Run{run(100, 50)}, nonFreeUnknown)
+		for _, bad := range []evidence.Run{run(-1, 5), run(math.MaxInt64, 5), run(math.MaxInt64-2, 10)} {
+			c := cutAtFirstNonFree(m, []evidence.Run{run(100, 10), bad, run(110, 5)})
+			if c.State != "unknown" || c.CapturedBytes != 10 || !slices.Equal(c.Excluded, []evidence.Run{bad, run(110, 5)}) {
+				t.Errorf("unknownWhenNotFree=%v, invalid run %v: %+v; want state unknown (a run that cannot be placed is never claimed allocated), 10 bytes kept", nonFreeUnknown, bad, c)
+			}
+			if c := cutAtFirstNonFree(m, []evidence.Run{bad}); c.State != "unknown" || c.CapturedBytes != 0 {
+				t.Errorf("invalid run alone %v: %+v", bad, c)
+			}
+		}
+	}
+	// a valid non-free run keeps the map's own state
+	if c := cutAtFirstNonFree(newFreeMap([]evidence.Run{run(100, 50)}, false), []evidence.Run{run(500, 5)}); c.State != "allocated" {
+		t.Errorf("valid non-free run: state %q, want allocated", c.State)
+	}
+}
+
+// shortRead reads one byte fewer than asked and reports err (nil or io.EOF), as a sloppy ReaderAt may.
+type shortRead struct {
+	data []byte
+	err  error
+}
+
+func (s shortRead) ReadAt(p []byte, off int64) (int, error) {
+	if off >= int64(len(s.data)) {
+		return 0, io.EOF
+	}
+	n := copy(p, s.data[off:])
+	if n == len(p) {
+		n-- // a short read on purpose
+	}
+	return n, s.err
+}
+
+func TestUniformScanShortReadIsAnError(t *testing.T) {
+	ctx := context.Background()
+	data := make([]byte, 1000)
+	for name, rd := range map[string]io.ReaderAt{
+		"short, nil error":       shortRead{data: data},
+		"short, EOF":             shortRead{data: data, err: io.EOF},
+		"run ends one byte over": bytes.NewReader(data[:1000-1]),
+	} {
+		t.Run(name, func(t *testing.T) {
+			// the run is (500, 500) for the short readers (they fall one byte short of it) and one past the end for the last
+			length := int64(500)
+			if name == "run ends one byte over" {
+				length = 501
+			}
+			u, _, err := uniformScan(ctx, rd, []evidence.Run{run(500, length)})
+			if u || !errors.Is(err, io.ErrUnexpectedEOF) {
+				t.Fatalf("uniform=%v err=%v; want not uniform and io.ErrUnexpectedEOF", u, err)
+			}
+		})
+	}
+}
+
+func TestUniformScanOverflowIsRefusedBeforeAnyRead(t *testing.T) {
+	cr := &countReader{r: bytes.NewReader(make([]byte, 100))}
+	for _, r := range []evidence.Run{run(math.MaxInt64, 5), run(math.MaxInt64-3, 10), run(1, math.MaxInt64)} {
+		u, _, err := uniformScan(context.Background(), cr, []evidence.Run{r})
+		if u || err == nil || !strings.Contains(err.Error(), "overflows") {
+			t.Errorf("%v: uniform=%v err=%v; want an overflow error", r, u, err)
+		}
+	}
+	if cr.calls != 0 {
+		t.Errorf("the reader was called %d times for runs that overflow", cr.calls)
+	}
+}
+
+// bruteOverlaps is the oracle: every other owner sharing a byte, sorted, cut to the 16 smallest.
+func bruteOverlaps(items []ownedRuns) map[string][]string {
+	byOwner := map[string][]evidence.Run{}
+	for _, it := range items {
+		byOwner[it.Owner] = append(byOwner[it.Owner], it.Runs...)
+	}
+	names := make([]string, 0, len(byOwner))
+	for n := range byOwner {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	out := map[string][]string{}
+	for _, a := range names {
+		var l []string
+		for _, b := range names {
+			if a != b && sharesByte(byOwner[a], byOwner[b]) {
+				l = append(l, b)
+			}
+		}
+		if len(l) > 16 {
+			l = l[:16]
+		}
+		if len(l) > 0 {
+			out[a] = l
+		}
+	}
+	return out
+}
+
+func TestOverlapMatchesBruteForceWithTheCap(t *testing.T) {
+	rng := rand.New(rand.NewSource(11)) //nolint:gosec // seeded test data, not security
+	for iter := range 300 {
+		n := 17 + rng.Intn(60) // more owners than the cap of 16, so lists are cut
+		items := make([]ownedRuns, n)
+		perm := rng.Perm(n)
+		for i := range items {
+			items[i].Owner = fmt.Sprintf("n%03d", perm[i]) // names unrelated to the order of the runs
+			for range 1 + rng.Intn(3) {
+				items[i].Runs = append(items[i].Runs, run(int64(rng.Intn(600)), 1+int64(rng.Intn(400))))
+			}
+		}
+		got, want := overlapsOf(items), bruteOverlaps(items)
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("iteration %d: got %v\nwant %v\nitems %v", iter, got, want, items)
+		}
+	}
+	// A smaller owner arriving after a full list, and 18 owners with the last one ranked first.
+	for name, items := range map[string][]ownedRuns{
+		"descending names, ascending starts": descendingOwners(40, 10),
+		"descending names, one start":        descendingOwners(40, 0),
+	} {
+		if got, want := overlapsOf(items), bruteOverlaps(items); fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("%s: got %v\nwant %v", name, got, want)
+		}
+	}
+	items := make([]ownedRuns, 0, 18)
+	for i := range 18 {
+		name := fmt.Sprintf("p%02d", i+3)
+		if i == 17 {
+			name = "p02"
+		}
+		items = append(items, ownedRuns{Owner: name, Runs: []evidence.Run{run(int64(i), 1000)}})
+	}
+	if got, want := overlapsOf(items), bruteOverlaps(items); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("18 active owners, the last ranked first: got %v\nwant %v", got, want)
+	}
+}
+
+// descendingOwners builds n owners whose names descend while the starts ascend by step (step 0: all
+// the same start); every run reaches past 1000 so they all overlap.
+func descendingOwners(n int, step int64) []ownedRuns {
+	items := make([]ownedRuns, n)
+	for i := range items {
+		items[i] = ownedRuns{Owner: fmt.Sprintf("d%07d", n-1-i), Runs: []evidence.Run{run(int64(i)*step, 1000)}}
+	}
+	return items
+}
+
+// overlapCostConstant is the stated constant of the cost bound: steps <= c * n * (log2 n + 16).
+const overlapCostConstant = 64
+
+func TestOverlapCostIsNLogN(t *testing.T) {
+	sizes := []int{40000, 262144}
+	if testing.Short() {
+		sizes = sizes[:1]
+	}
+	for _, n := range sizes {
+		items := make([]ownedRuns, n) // names descend while starts ascend, all share one region
+		for i := range items {
+			items[i] = ownedRuns{Owner: fmt.Sprintf("o%07d", n-1-i), Runs: []evidence.Run{run(int64(i), int64(2*n-i))}}
+		}
+		var st overlapSteps
+		got := overlapsOfSteps(items, &st)
+		bound := int64(overlapCostConstant) * int64(n) * int64(bits.Len(uint(n))+16)
+		t.Logf("n=%d: %d steps (bound %d)", n, st.n, bound)
+		if st.n > bound {
+			t.Errorf("n=%d: %d steps, more than the bound %d (c=%d * n * (log2 n + 16))", n, st.n, bound, overlapCostConstant)
+		}
+		var want []string
+		for j := 0; len(want) < 16; j++ {
+			want = append(want, fmt.Sprintf("o%07d", j))
+		}
+		if o := got[fmt.Sprintf("o%07d", n-1)]; !slices.Equal(o, want) {
+			t.Errorf("owner o%07d lists %v, want %v", n-1, o, want)
+		}
+		if o := got["o0000000"]; len(o) != 16 || o[0] != "o0000001" || o[15] != "o0000016" {
+			t.Errorf("owner o0000000 lists %v", o)
+		}
+	}
 }
