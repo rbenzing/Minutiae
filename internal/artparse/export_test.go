@@ -75,3 +75,10 @@ func WithAuditHook(o *Options, f func(action string, d map[string]any) error) { 
 func SetNewWriterForTest(h *Host, f func(*evidence.Case, records.Parser, records.WriterOptions) (IngestWriter, error)) {
 	h.newWriter = f
 }
+
+// SetRecheckTimeout shortens the budget of the post-job re-hash; call the result to restore it.
+func SetRecheckTimeout(d time.Duration) (restore func()) {
+	old := recheckTimeout
+	recheckTimeout = d
+	return func() { recheckTimeout = old }
+}

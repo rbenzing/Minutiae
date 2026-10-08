@@ -36,6 +36,8 @@ type Plan struct {
 	Rows     []PlanRow
 	Counts   Counts
 	ByStatus map[string]int
+	// Stopped is "abandoned" when a Probe ignored its cancellation and was abandoned (a live goroutine is left; a run stops there).
+	Stopped string
 }
 
 // Plan takes one snapshot, runs discovery, then for each job the shared front half of Run,
@@ -63,6 +65,9 @@ func (h *Host) Plan(ctx context.Context, sel Selection) (Plan, error) {
 		}
 		p.Rows = append(p.Rows, PlanRow{Job: j, Status: pr.status, Reason: pr.reason, Integrity: pr.integrity, Incomplete: jobIncomplete(j)})
 		p.ByStatus[pr.status]++
+		if pr.abandoned {
+			p.Stopped = StoppedAbandoned // planning goes on: it writes nothing
+		}
 	}
 	return p, nil
 }
@@ -100,6 +105,7 @@ type prepared struct {
 	status    string
 	reason    string
 	integrity bool
+	abandoned bool // a Probe ignored its cancellation: its goroutine may still be live, so the run stops
 }
 
 func refusedWith(reason string) prepared { return prepared{status: StatusRefused, reason: reason} }
@@ -147,7 +153,7 @@ func (h *Host) prepareJob(ctx context.Context, snap *Snapshot, j Job, parseID st
 		return prepared{}, ctx.Err()
 	case g.Abandoned:
 		b.close()
-		return prepared{status: StatusUnparsed, reason: "probe failed: did not stop after its time limit"}, nil
+		return prepared{status: StatusUnparsed, reason: "probe failed: did not stop after its time limit", abandoned: true}, nil
 	case g.Panic != nil:
 		b.close()
 		return prepared{status: StatusUnparsed, reason: "probe failed: panic: " + g.Panic.Value}, nil

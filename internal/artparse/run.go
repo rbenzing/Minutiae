@@ -27,6 +27,10 @@ const (
 // the inputs, Flush, End and Abort (A8, the bound records.End itself uses).
 const concludeTimeout = 5 * time.Minute
 
+// recheckTimeout bounds the re-hash of the inputs after a job, apart from the budget of Flush, End and
+// Abort, so a slow re-hash of a large input cannot starve the conclusion (and the reverse).
+var recheckTimeout = 5 * time.Minute
+
 const (
 	maxErrorText = 2 << 10
 	maxPathText  = 4096
@@ -388,6 +392,10 @@ func (r *run) execute(ctx context.Context, j Job, pr prepared, perr error, st *j
 		st.fail(OutcomeUnparsed, "input unreadable: "+r.h.caseRelative(perr.Error()), perr)
 	case pr.bundle == nil:
 		st.res.Integrity = pr.integrity
+		if pr.abandoned {
+			st.res.Abandoned = true
+			r.sum.Stopped = StoppedAbandoned
+		}
 		switch pr.status {
 		case StatusRefused:
 			st.set(OutcomeRefused, pr.reason)
@@ -462,16 +470,25 @@ func (r *run) parseJob(ctx context.Context, j Job, b *bundle, st *jobState) (run
 	st.res.Notes = em.notes()
 	reason, cause := r.parseFailure(g, em)
 
-	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), concludeTimeout)
-	defer cancel()
-	if rerr := b.recheck(rctx); rerr != nil {
-		if errors.Is(rerr, evidence.ErrIntegrity) {
+	hctx, hcancel := context.WithTimeout(context.WithoutCancel(ctx), recheckTimeout)
+	rerr := b.recheck(hctx)
+	timedOut := hctx.Err() != nil && errors.Is(rerr, context.DeadlineExceeded)
+	hcancel()
+	if rerr != nil {
+		switch {
+		case errors.Is(rerr, evidence.ErrIntegrity):
 			st.res.Integrity = true
 			reason, cause = "input changed during or after the job: "+h.caseRelative(rerr.Error()), rerr
-		} else if cause == nil {
+		case timedOut && cause == nil:
+			// the re-hash ran out of its own budget: nothing is proven either way, so the job is never complete
+			reason, cause = "recheck-timeout", fmt.Errorf("re-reading the inputs did not finish within %v: %w", recheckTimeout, rerr)
+		case cause == nil:
 			reason, cause = "re-reading the inputs failed", fmt.Errorf("re-reading the inputs: %w", rerr)
 		}
 	}
+	// Flush, End and Abort have a budget of their own
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), concludeTimeout)
+	defer cancel()
 	if g.Cancelled || (cause != nil && ctx.Err() != nil) {
 		r.sum.Cancelled, r.sum.Stopped = true, StoppedCancelled
 	}
