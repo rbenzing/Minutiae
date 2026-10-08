@@ -38,7 +38,14 @@ func TestSameValueTable(t *testing.T) {
 		{"text vs blob of the same bytes", vText("a"), vBlob('a'), false, true},
 		{"null vs int zero", Value{}, vInt(0), false, true},
 		{"null vs null", Value{}, Value{}, true, true},
-		{"omitted null vs null", Value{Omitted: true}, Value{}, false, true},
+		{"omitted null vs null", Value{Omitted: true}, Value{}, false, false},
+		{"null vs omitted null", Value{}, Value{Omitted: true}, false, false},
+		{"both omitted nulls: not stored on both sides", Value{Omitted: true}, Value{Omitted: true}, true, true},
+		{"omitted int vs int zero", Value{Kind: KindInt, Omitted: true, Serial: 1}, vInt(0), false, false},
+		{"omitted int vs int five", Value{Kind: KindInt, Omitted: true, Serial: 1}, vInt(5), false, false},
+		{"int zero vs omitted int", vInt(0), Value{Kind: KindInt, Omitted: true, Serial: 1}, false, false},
+		{"omitted float vs float", Value{Kind: KindFloat, Omitted: true, Serial: 7}, vFloat(0), false, false},
+		{"float vs omitted float", vFloat(1.5), Value{Kind: KindFloat, Omitted: true, Serial: 7}, false, false},
 		{"float equal", vFloat(1.5), vFloat(1.5), true, true},
 		{"float differ", vFloat(1.5), vFloat(2.5), false, true},
 		{"float zero vs negative zero", vFloat(0), vFloat(math.Copysign(0, -1)), false, true},
@@ -207,6 +214,31 @@ func TestIsAnswerless(t *testing.T) {
 	for _, e := range []error{context.Canceled, errors.New("io failure"), ErrInternal} {
 		if isAnswerless(e) {
 			t.Errorf("%v is answerless", e)
+		}
+	}
+}
+
+// TestCompareValuesUnreadScalarIsValueUnread: a scalar nobody read makes the
+// comparison unknown with the reason value-unread, whether the visible values
+// are equal, different or both zero; a clipped text keeps compare-incomplete
+// (final review B, I-2).
+func TestCompareValuesUnreadScalarIsValueUnread(t *testing.T) {
+	unreadInt := Value{Kind: KindInt, Omitted: true, Serial: 1}
+	unreadFloat := Value{Kind: KindFloat, Omitted: true, Serial: 7}
+	for _, tc := range []struct {
+		name string
+		a, b []Value
+		want cmpResult
+	}{
+		{"unread int against live zero", []Value{vInt(1), unreadInt}, []Value{vInt(1), vInt(0)}, cmpResult{kind: cmpUnknown, note: NoteValueUnread}},
+		{"unread int against live five", []Value{vInt(1), unreadInt}, []Value{vInt(1), vInt(5)}, cmpResult{kind: cmpUnknown, note: NoteValueUnread}},
+		{"unread float", []Value{unreadFloat}, []Value{vFloat(2.5)}, cmpResult{kind: cmpUnknown, note: NoteValueUnread}},
+		{"unread null against a stored null", []Value{{Omitted: true}}, []Value{{}}, cmpResult{kind: cmpUnknown, note: NoteValueUnread}},
+		{"a visible difference still decides", []Value{vInt(2), unreadInt}, []Value{vInt(1), vInt(0)}, cmpResult{kind: cmpDiffer}},
+		{"clipped text keeps its own reason", []Value{vOmitted(vText("abc"))}, []Value{vText("abc")}, cmpResult{kind: cmpUnknown, note: NoteCompareIncomplete}},
+	} {
+		if got := compareValues(tc.a, tc.b); got != tc.want {
+			t.Errorf("%s: %+v, want %+v", tc.name, got, tc.want)
 		}
 	}
 }

@@ -36,6 +36,10 @@ const (
 	// NoteCompareIncomplete: a value was omitted or clipped, so the row can be
 	// neither proven equal to nor different from the live row.
 	NoteCompareIncomplete = "compare-incomplete"
+	// NoteValueUnread: a scalar value of the row (integer, real or NULL) was never
+	// read (the tail of a record in a damaged overflow chain), so no live value
+	// can be said to equal or differ from it. Its relation is unknown.
+	NoteValueUnread = "value-unread"
 	// NoteInvalidPageNumber: the page number the WAL frame or journal record
 	// states is impossible (0, the lock-byte page, past Limits.MaxPages, or for a
 	// journal record past the journal's initial size). The row's relation is

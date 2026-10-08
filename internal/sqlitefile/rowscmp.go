@@ -83,7 +83,7 @@ func compareValues(a, b []Value) cmpResult {
 	if len(a) != len(b) {
 		return cmpResult{kind: cmpDiffer}
 	}
-	unknown := false
+	unknown, unread := false, false
 	for i := range a {
 		same, known := sameValue(a[i], b[i])
 		switch {
@@ -91,7 +91,11 @@ func compareValues(a, b []Value) cmpResult {
 			return cmpResult{kind: cmpDiffer}
 		case !known:
 			unknown = true
+			unread = unread || unreadScalar(a[i], b[i])
 		}
+	}
+	if unread {
+		return cmpResult{kind: cmpUnknown, note: NoteValueUnread}
 	}
 	if unknown {
 		return cmpResult{kind: cmpUnknown, note: NoteCompareIncomplete}
@@ -99,15 +103,33 @@ func compareValues(a, b []Value) cmpResult {
 	return cmpResult{kind: cmpSame}
 }
 
+// unreadScalar reports whether a or b is an integer, real or NULL that was never
+// read (Omitted), the case of sameValue where an unread value must not be taken
+// for its zero. Two omitted NULLs are not such a case: neither side stores
+// the column (a virtual generated column or an expression default).
+func unreadScalar(a, b Value) bool {
+	if a.Kind != b.Kind || (a.Kind != KindInt && a.Kind != KindFloat && a.Kind != KindNull) {
+		return false
+	}
+	return (a.Omitted || b.Omitted) && !(a.Kind == KindNull && a.Omitted && b.Omitted)
+}
+
 // sameValue compares two values. known is false when an omitted or clipped
-// value hides the answer.
+// value hides the answer: an unread integer, real or NULL is never taken for
+// its zero value (final review B, I-2).
 func sameValue(a, b Value) (same, known bool) {
 	if a.Kind != b.Kind {
 		return false, true
 	}
 	switch a.Kind {
+	case KindNull, KindInt, KindFloat:
+		if unreadScalar(a, b) {
+			return false, false
+		}
+	}
+	switch a.Kind {
 	case KindNull:
-		return a.Omitted == b.Omitted, true
+		return true, true
 	case KindInt:
 		return a.Int == b.Int, true
 	case KindFloat:
