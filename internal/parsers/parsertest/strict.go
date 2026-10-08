@@ -164,7 +164,7 @@ func (h *Harness) run(ctx context.Context, p parse.Parser, in *parse.Input, stri
 	if warn == nil {
 		warn = w.Warn
 	}
-	em := &emitter{h: h, w: w, warn: warn, strict: strict, meta: meta, bundle: set.orig, res: Result{Notes: map[string]string{}, LateCalls: new(atomic.Int64)}}
+	em := &emitter{h: h, w: w, warn: warn, strict: strict, meta: meta, bundle: set.orig, maxNotes: noteCap(in), res: Result{Notes: map[string]string{}, LateCalls: new(atomic.Int64)}}
 	concluded := false
 	defer func() {
 		if !concluded { // a panic: release the case's live-ingest slot and let the panic go on
@@ -209,12 +209,13 @@ func (h *Harness) run(ctx context.Context, p parse.Parser, in *parse.Input, stri
 // parser may pass one that never ends) and holds no lock across the writer's
 // context. Once sealed it refuses every call and counts it.
 type emitter struct {
-	h      *Harness
-	w      *records.Writer
-	warn   func(ctx context.Context, locator, reason string) error
-	strict bool
-	meta   parse.Meta
-	bundle []parse.Artifact
+	h        *Harness
+	w        *records.Writer
+	warn     func(ctx context.Context, locator, reason string) error
+	strict   bool
+	meta     parse.Meta
+	bundle   []parse.Artifact
+	maxNotes int
 
 	mu      sync.Mutex
 	res     Result
@@ -341,6 +342,10 @@ func (e *emitter) Note(key, value string) {
 	if e.sealed {
 		e.late()
 		return
+	}
+	key, value = cleanNoteText(key, maxNoteKey), cleanNoteText(value, maxNoteValue)
+	if _, dup := e.res.Notes[key]; dup || len(e.res.Notes) >= e.maxNotes {
+		return // the host keeps the first value of a key and at most Limits.MaxNotes keys
 	}
 	e.res.Notes[key] = value
 }

@@ -236,5 +236,5 @@ func (d *dumper) value(v reflect.Value) {
 // directive (//line or /*line); all of them change what the compiler or the
 // runtime does, so they are hashed.
 func isDirective(text string) bool {
-	return strings.HasPrefix(text, "//go:") || strings.HasPrefix(text, "//line ") || strings.HasPrefix(text, "/*line ")
+	return strings.HasPrefix(text, "// +build") || strings.HasPrefix(text, "//+build") || strings.HasPrefix(text, "//go:") || strings.HasPrefix(text, "//line ") || strings.HasPrefix(text, "/*line ")
 }

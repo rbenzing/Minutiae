@@ -310,7 +310,7 @@ func moduleImportAllowed(rel string, class pureClass, dirRel string) bool {
 	case rel == "internal/records": // data types only, bounded by P3
 		return setOf(pcParse, pcRTType, pcDecode, pcSqlitefile, pcParser).has(class)
 	case rel == dirParse: // the contract
-		return setOf(pcRTCommon, pcRTType, pcDecode, pcSqlitefile, pcParser).has(class)
+		return setOf(pcDecode, pcSqlitefile, pcParser).has(class)
 	case rel == dirRTCommon: // payload helpers
 		return setOf(pcRTType, pcParser).has(class)
 	case under(dirRecordtype): // payload builders
@@ -1000,6 +1000,9 @@ climb:
 			return "assigned by a range clause"
 		}
 	}
+	if kind == vkRegexp && path >= 1 && sel == "Longest" {
+		return "Longest changes the shared regexp: compile a leftmost-longest one with MustCompilePOSIX"
+	}
 	if kind == vkSchema {
 		if call, ok := parent.(*ast.CallExpr); ok && call.Fun == node && path == 1 && sel == "Validate" {
 			return ""
@@ -1410,7 +1413,7 @@ func TestPurityAllowlistSelfTest(t *testing.T) {
 		{pcRTCommon, dirRTCommon, "crypto/sha256", true},
 		{pcRTCommon, dirRTCommon, "regexp", true},
 		{pcRTCommon, dirRTCommon, "embed", true},
-		{pcRTCommon, dirRTCommon, m + "internal/parse", true},
+		{pcRTCommon, dirRTCommon, m + "internal/parse", false},
 		{pcRTCommon, dirRTCommon, "encoding/json", false},
 		{pcRTCommon, dirRTCommon, "io", false},
 		{pcRTCommon, dirRTCommon, "context", false},
@@ -1421,7 +1424,7 @@ func TestPurityAllowlistSelfTest(t *testing.T) {
 		{pcRTType, dirRecordtype + "/message", "encoding/json", true},
 		{pcRTType, dirRecordtype + "/message", "regexp", true},
 		{pcRTType, dirRecordtype + "/message", m + "internal/records", true},
-		{pcRTType, dirRecordtype + "/message", m + "internal/parse", true},
+		{pcRTType, dirRecordtype + "/message", m + "internal/parse", false},
 		{pcRTType, dirRecordtype + "/message", m + "internal/recordtypes/common", true},
 		{pcRTType, dirRecordtype + "/message", m + "internal/recordtypes/call", false},
 		// the all package may link the four type packages, no other sibling

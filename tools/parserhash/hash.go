@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
-	"strings"
 )
 
 const streamHeader = "minutiae-parser-hash-v1\n"
@@ -30,7 +30,7 @@ func HashScope(s Scope, read func(pkgDir, file string) ([]byte, error)) (string,
 				return "", fmt.Errorf("read %s/%s: %w", p.ImportPath, name, err)
 			}
 			content := src
-			if !strings.Contains(name, "/") && strings.HasSuffix(name, ".go") {
+			if slices.Contains(p.GoFiles, name) {
 				if content, err = NormalizeGo(src, name); err != nil {
 					return "", err
 				}

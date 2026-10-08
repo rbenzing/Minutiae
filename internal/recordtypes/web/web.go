@@ -233,9 +233,9 @@ var (
 	visitSchema = common.Schema{Fields: append([]common.Field{
 		{Name: "url", Kind: common.KString, Required: true, NonEmpty: true},
 		{Name: "browser", Kind: common.KEnum, Required: true, Enum: browsers()},
-		{Name: "title", Kind: common.KString},
+		{Name: "title", Kind: common.KString, NonEmpty: true},
 		{Name: "visit_id", Kind: common.KIDString},
-		{Name: "profile", Kind: common.KString},
+		{Name: "profile", Kind: common.KString, NonEmpty: true},
 		{Name: "transition", Kind: common.KEnum, Enum: transitions()},
 		{Name: "transition_qualifiers", Kind: common.KStringArray},
 		{Name: "referrer", Kind: common.KObject, Obj: &common.Schema{Fields: []common.Field{
@@ -256,12 +256,12 @@ var (
 
 	searchSchema = common.Schema{Fields: append([]common.Field{
 		{Name: "term", Kind: common.KString, Required: true, NonEmpty: true},
-		{Name: "normalized_term", Kind: common.KString},
-		{Name: "engine", Kind: common.KString},
+		{Name: "normalized_term", Kind: common.KString, NonEmpty: true},
+		{Name: "engine", Kind: common.KString, NonEmpty: true},
 		{Name: "engine_id", Kind: common.KIDString},
 		{Name: "url", Kind: common.KString, NonEmpty: true},
 		{Name: "visit_id", Kind: common.KIDString},
-		{Name: "time_source", Kind: common.KString},
+		{Name: "time_source", Kind: common.KString, NonEmpty: true},
 		{Name: "browser", Kind: common.KEnum, Enum: browsers()},
 	}, common.CommonFields()...)}
 
@@ -272,12 +272,12 @@ var (
 		{Name: "url_chain", Kind: common.KStringArray},
 		{Name: "referrer", Kind: common.KString, NonEmpty: true},
 		{Name: "tab_url", Kind: common.KString, NonEmpty: true},
-		{Name: "mime", Kind: common.KString},
+		{Name: "mime", Kind: common.KString, NonEmpty: true},
 		{Name: "total_bytes", Kind: common.KInt, Min: new(int64)},
 		{Name: "received_bytes", Kind: common.KInt, Min: new(int64)},
-		{Name: "state", Kind: common.KString},
-		{Name: "danger_type", Kind: common.KString},
-		{Name: "interrupt_reason", Kind: common.KString},
+		{Name: "state", Kind: common.KString, NonEmpty: true},
+		{Name: "danger_type", Kind: common.KString, NonEmpty: true},
+		{Name: "interrupt_reason", Kind: common.KString, NonEmpty: true},
 		{Name: "opened", Kind: common.KBool},
 		{Name: "browser", Kind: common.KEnum, Enum: browsers()},
 	}, common.CommonFields()...), AtLeastOne: []string{"target_path", "url"}}

@@ -28,8 +28,9 @@ func NewSealedReaderAt(r io.ReaderAt, probeLimit int64) *SealedReaderAt {
 }
 
 // ReadAt reads from the wrapped reader. After Seal it returns 0, ErrSealed (a
-// read in flight when Seal is called returns 0, ErrSealed too, so no bytes are
-// delivered after the seal). Once the probe limit is used up it returns
+// read in flight when Seal is called returns 0, ErrSealed too, so no byte COUNT is
+// delivered after the seal; the caller's buffer may still have been filled by that read, so
+// the host never reads a parser's buffer). Once the probe limit is used up it returns
 // ErrProbeLimit, and a read crossing the limit is cut at it.
 func (s *SealedReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	if s == nil || s.r == nil {

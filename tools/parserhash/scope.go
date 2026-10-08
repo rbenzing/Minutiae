@@ -29,6 +29,7 @@ type ScopePackage struct {
 	ImportPath string
 	Dir        string
 	Files      []string // hashed file names relative to Dir (sorted; embedded files may contain "/")
+	GoFiles    []string // the subset of Files the package compiles: normalised as Go; every other file is hashed raw
 }
 
 // ModuleRef is a third-party module in the scope.
@@ -221,7 +222,8 @@ func (r *resolver) load(importPath string) (*ScopePackage, []string, error) {
 		files = append(files, f)
 	}
 	sort.Strings(files)
-	return &ScopePackage{ImportPath: importPath, Dir: dir, Files: files}, follow, nil
+	sort.Strings(goFiles)
+	return &ScopePackage{ImportPath: importPath, Dir: dir, Files: files, GoFiles: goFiles}, follow, nil
 }
 
 // modules resolves the third-party modules imported by the scope.

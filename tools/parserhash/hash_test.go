@@ -135,7 +135,7 @@ func TestParserHashStability(t *testing.T) {
 
 func TestGoDirectiveInHash(t *testing.T) {
 	s := Scope{
-		Packages:    []ScopePackage{{ImportPath: "m/p", Dir: "d", Files: []string{"p.go"}}},
+		Packages:    []ScopePackage{{ImportPath: "m/p", Dir: "d", Files: []string{"p.go"}, GoFiles: []string{"p.go"}}},
 		GoDirective: "1.26",
 	}
 	read := func(string, string) ([]byte, error) { return []byte("package p\n"), nil }
@@ -151,7 +151,7 @@ func TestGoDirectiveInHash(t *testing.T) {
 }
 
 func TestHashScopeReadError(t *testing.T) {
-	s := Scope{Packages: []ScopePackage{{ImportPath: "m/p", Dir: "d", Files: []string{"p.go"}}}}
+	s := Scope{Packages: []ScopePackage{{ImportPath: "m/p", Dir: "d", Files: []string{"p.go"}, GoFiles: []string{"p.go"}}}}
 	_, err := HashScope(s, func(string, string) ([]byte, error) { return nil, fmt.Errorf("boom") })
 	if err == nil {
 		t.Error("read error must fail")

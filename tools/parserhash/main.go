@@ -53,6 +53,14 @@ type hashed struct {
 func hashEntries(cfg Config, entries []Entry) ([]hashed, []Problem, error) {
 	var out []hashed
 	var probs []Problem
+	seen := map[string]bool{}
+	for _, e := range entries {
+		who := e.Name + "@" + e.Version
+		if seen[who] {
+			return nil, nil, fmt.Errorf("%s appears more than once in the registry", who)
+		}
+		seen[who] = true
+	}
 	for _, e := range entries {
 		who := e.Name + "@" + e.Version
 		if !strings.HasPrefix(e.Package, cfg.ModulePath+"/internal/parsers/") {

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Meta describes a parser: who it is, what it reads and what it may emit.
@@ -143,6 +145,9 @@ func ValidateMeta(m Meta) error {
 	if strings.TrimSpace(m.Title) == "" {
 		return fmt.Errorf("parse: meta %s: title is empty", m.Name)
 	}
+	if err := validTitle(m.Title); err != nil {
+		return fmt.Errorf("parse: meta %s: title %w", m.Name, err)
+	}
 	platforms, err := validatePlatforms(m)
 	if err != nil {
 		return err
@@ -249,6 +254,26 @@ func validateClaims(m Meta) error {
 			if asciiFoldEqual(prev.Table, c.Table) {
 				return fmt.Errorf("parse: meta %s: claim %d: table %q is claimed twice", m.Name, i, c.Table)
 			}
+		}
+	}
+	return nil
+}
+
+// maxTitle bounds the display title of a parser.
+const maxTitle = 200
+
+// validTitle requires valid UTF-8 of at most maxTitle bytes with no control character (the title is
+// printed by the command line and shown in the case).
+func validTitle(s string) error {
+	if len(s) > maxTitle {
+		return fmt.Errorf("is %d bytes, at most %d", len(s), maxTitle)
+	}
+	if !utf8.ValidString(s) {
+		return errors.New("is not valid UTF-8")
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return errors.New("holds a control character")
 		}
 	}
 	return nil

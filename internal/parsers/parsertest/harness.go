@@ -122,6 +122,14 @@ type lookuper struct {
 	all   []parse.Artifact // sorted by id; R is the artifact's own reader
 	limit *parse.ReadBudget
 	set   *readerSet
+	snap  *parse.SnapshotInfo // the snapshot of the job's own primary, nil for a live job
+}
+
+// eligible mirrors the host (artparse lookupEligible): a live artifact is always available, one
+// extracted from a snapshot only to a job whose primary comes from the same snapshot.
+func (l *lookuper) eligible(a parse.Artifact) bool {
+	s := a.Source.Snapshot
+	return s == nil || (l.snap != nil && l.snap.Name == s.Name && l.snap.Xid == s.Xid)
 }
 
 func (l *lookuper) Find(glob string) []parse.Artifact {
@@ -131,7 +139,7 @@ func (l *lookuper) Find(glob string) []parse.Artifact {
 	}
 	var out []parse.Artifact
 	for _, a := range l.all {
-		if g.Match(a.Logical) {
+		if l.eligible(a) && g.Match(a.Logical) {
 			a.R = nil
 			out = append(out, a)
 		}
@@ -141,7 +149,7 @@ func (l *lookuper) Find(glob string) []parse.Artifact {
 
 func (l *lookuper) Open(a parse.Artifact) (io.ReaderAt, error) {
 	for _, have := range l.all {
-		if have.ID == a.ID {
+		if have.ID == a.ID && l.eligible(have) {
 			return l.set.wrap(have.R, l.limit), nil
 		}
 	}
@@ -170,7 +178,7 @@ func (h *Harness) Input(p parse.Parser, primary parse.Artifact, others map[strin
 		probe = parse.NewReadBudget(lim.ProbeBytes)
 	}
 	set := &readerSet{}
-	lk := &lookuper{limit: probe, set: set}
+	lk := &lookuper{limit: probe, set: set, snap: primary.Source.Snapshot}
 	seen := map[string]bool{primary.ID: true}
 	lk.all = append(lk.all, primary)
 	for _, a := range others {

@@ -212,8 +212,8 @@ func (c Contact) Payload() map[string]any {
 func valueSchema() *common.Schema {
 	return &common.Schema{Fields: []common.Field{
 		{Name: "value", Kind: common.KString, Required: true, NonEmpty: true},
-		{Name: "label", Kind: common.KString},
-		{Name: "kind", Kind: common.KString},
+		{Name: "label", Kind: common.KString, NonEmpty: true},
+		{Name: "kind", Kind: common.KString, NonEmpty: true},
 		{Name: "primary", Kind: common.KBool},
 	}}
 }
@@ -224,13 +224,13 @@ var schema = common.Schema{
 	Fields: append([]common.Field{
 		{Name: "display_name", Kind: common.KString},
 		{Name: "names", Kind: common.KObject, Obj: &common.Schema{Fields: []common.Field{
-			{Name: "given", Kind: common.KString},
-			{Name: "family", Kind: common.KString},
-			{Name: "middle", Kind: common.KString},
-			{Name: "prefix", Kind: common.KString},
-			{Name: "suffix", Kind: common.KString},
-			{Name: "nickname", Kind: common.KString},
-			{Name: "phonetic", Kind: common.KString},
+			{Name: "given", Kind: common.KString, NonEmpty: true},
+			{Name: "family", Kind: common.KString, NonEmpty: true},
+			{Name: "middle", Kind: common.KString, NonEmpty: true},
+			{Name: "prefix", Kind: common.KString, NonEmpty: true},
+			{Name: "suffix", Kind: common.KString, NonEmpty: true},
+			{Name: "nickname", Kind: common.KString, NonEmpty: true},
+			{Name: "phonetic", Kind: common.KString, NonEmpty: true},
 		}}},
 		{Name: "organization", Kind: common.KObject, Obj: &common.Schema{Fields: []common.Field{
 			{Name: "name", Kind: common.KString},
@@ -242,25 +242,25 @@ var schema = common.Schema{
 		{Name: "urls", Kind: common.KArray, Obj: valueSchema()},
 		{Name: "ims", Kind: common.KArray, Obj: valueSchema()},
 		{Name: "addresses", Kind: common.KArray, Obj: &common.Schema{Fields: []common.Field{
-			{Name: "formatted", Kind: common.KString},
-			{Name: "street", Kind: common.KString},
-			{Name: "city", Kind: common.KString},
-			{Name: "region", Kind: common.KString},
-			{Name: "postcode", Kind: common.KString},
-			{Name: "country", Kind: common.KString},
-			{Name: "label", Kind: common.KString},
+			{Name: "formatted", Kind: common.KString, NonEmpty: true},
+			{Name: "street", Kind: common.KString, NonEmpty: true},
+			{Name: "city", Kind: common.KString, NonEmpty: true},
+			{Name: "region", Kind: common.KString, NonEmpty: true},
+			{Name: "postcode", Kind: common.KString, NonEmpty: true},
+			{Name: "country", Kind: common.KString, NonEmpty: true},
+			{Name: "label", Kind: common.KString, NonEmpty: true},
 		}}},
 		{Name: "birthday", Kind: common.KDate},
 		{Name: "accounts", Kind: common.KArray, Obj: &common.Schema{Fields: []common.Field{
-			{Name: "type", Kind: common.KString},
-			{Name: "name", Kind: common.KString},
+			{Name: "type", Kind: common.KString, NonEmpty: true},
+			{Name: "name", Kind: common.KString, NonEmpty: true},
 		}}},
 		{Name: "starred", Kind: common.KBool},
 		{Name: "photo", Kind: common.KObject, Obj: &common.Schema{Fields: []common.Field{
 			{Name: "present", Kind: common.KBool},
 			{Name: "artifact_id", Kind: common.KString, NonEmpty: true},
 		}}},
-		{Name: "source_id", Kind: common.KString},
+		{Name: "source_id", Kind: common.KString, NonEmpty: true},
 		{Name: "source_ids", Kind: common.KStringArray},
 	}, common.CommonFields()...),
 	Cross: crossRules,

@@ -51,6 +51,7 @@ func reads(i int) (string, int) {
 	y := rows[0].name
 	z := grid[1][0] + int(limits[0])
 	_ = nameRE.MatchString("x")
+	nameRE.Longest() // want
 	_ = errors.Is(errWrapped, ErrBad)
 	_ = schema.Validate(nil)
 	var shadowed = []int{1}
