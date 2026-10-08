@@ -30,12 +30,12 @@ func pctEncode(s string) string {
 	return b.String()
 }
 
-// locatorName is the encoded form of a name, or "" when it is not
-// representable (empty, invalid UTF-8, NUL). A name over LocatorNameBytes is cut
-// on a rune boundary and followed by "~" and the first 8 hex digits of the
-// SHA-256 of the whole name.
+// locatorName is the encoded form of a name, or "" for an empty name. Any byte
+// is representable (NUL and invalid UTF-8 are percent-encoded byte for byte,
+// J34). A name over LocatorNameBytes is cut on a rune boundary and followed by
+// "~" and the first 8 hex digits of the SHA-256 of the whole name.
 func locatorName(name string) string {
-	if name == "" || !utf8.ValidString(name) || strings.ContainsRune(name, 0) {
+	if name == "" {
 		return ""
 	}
 	if len(name) > LocatorNameBytes {

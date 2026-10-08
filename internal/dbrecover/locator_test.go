@@ -95,12 +95,6 @@ func TestLocatorPercentEncoding(t *testing.T) {
 			t.Errorf("%q: field separators leaked: %s", name, loc)
 		}
 	}
-	// a name that is not representable (NUL, invalid UTF-8) is left out, never mangled
-	for _, name := range []string{"a\x00b", "a\xffb"} {
-		if loc := locatorFor(row(name, 1, 0, sqlitefile.OriginOrphan, sqlitefile.FileDB)); loc != "sqlite:page=1;cell=0;file=db" {
-			t.Errorf("%q: locator %s", name, loc)
-		}
-	}
 }
 
 func TestHugeTableNameLocatorIsCapped(t *testing.T) {

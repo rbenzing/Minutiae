@@ -12,8 +12,9 @@ import (
 	"github.com/rbenzing/minutiae/internal/sqlitefile"
 )
 
-// valueBudget is what is left of a row's payload allowance, in bytes of
-// canonical JSON.
+// valueBudget is the part of a row's payload allowance that is left after the
+// degraded form of every column has been reserved (J35): the extra bytes a
+// column may spend to be encoded in full. It is a hard cap on the row.
 type valueBudget struct{ left int64 }
 
 func newValueBudget(n int64) *valueBudget { return &valueBudget{left: max(n, 0)} }
@@ -51,20 +52,35 @@ func kindName(k sqlitefile.Kind) string {
 	return "null"
 }
 
-// charge subtracts the encoded size of m from the budget, if it fits.
-func (b *valueBudget) charge(m map[string]any) bool {
-	n := encodedSize(m)
-	if n > b.left {
-		return false
+// degraded is the form of column i that carries no value: it is the reserve of
+// every column, so degrading never spends unreserved budget.
+func degraded(i int, v sqlitefile.Value) map[string]any {
+	m := map[string]any{"i": int64(i), "type": kindName(v.Kind), "omitted": "payload-budget"}
+	if v.Kind == sqlitefile.KindText || v.Kind == sqlitefile.KindBlob {
+		m["len"] = v.Len
 	}
-	b.left -= n
-	return true
+	return m
 }
 
-// encodeValue is the payload form of column i. A value whose encoded size does
-// not fit the budget becomes {i, type, len, omitted: "payload-budget"}: the
-// column is never dropped silently and never exceeds the allowance.
+// minEncodedBytes is a lower bound of the encoded size of a text or blob
+// value: a text costs at least half its stored bytes (UTF-16 to UTF-8), a
+// blob its base64 size 4*ceil(n/3). A hopeless value is refused before it is
+// expanded.
+func minEncodedBytes(v sqlitefile.Value) int64 {
+	n := int64(len(v.Bytes))
+	if v.Kind == sqlitefile.KindBlob {
+		return 4 * ((n + 2) / 3)
+	}
+	return n / 2
+}
+
+// encodeValue is the payload form of column i. The column is encoded in full
+// only when its extra size over the (already reserved) degraded form fits what
+// is left; otherwise it becomes {i, type, len, omitted: "payload-budget"}: never
+// dropped silently and never over the allowance.
 func encodeValue(i int, v sqlitefile.Value, b *valueBudget) map[string]any {
+	deg := degraded(i, v)
+	degSize := encodedSize(deg)
 	m := map[string]any{"i": int64(i), "type": kindName(v.Kind)}
 	isBytes := v.Kind == sqlitefile.KindText || v.Kind == sqlitefile.KindBlob
 	if isBytes {
@@ -88,17 +104,34 @@ func encodeValue(i int, v sqlitefile.Value, b *valueBudget) map[string]any {
 	case v.Omitted:
 		m["omitted"] = true
 	default:
-		// a text value costs at least half its stored bytes (UTF-16 to UTF-8),
-		// so a hopeless one is refused before it is expanded
-		if isBytes && int64(len(v.Bytes))/2 > b.left {
-			return b.degrade(i, v)
+		if isBytes && minEncodedBytes(v) > b.left+degSize {
+			return deg
 		}
 		fillValue(m, v)
 	}
-	if !b.charge(m) {
-		return b.degrade(i, v)
+	extra := max(encodedSize(m)-degSize, 0)
+	if extra > b.left {
+		return deg
 	}
+	b.left -= extra
 	return m
+}
+
+// encodeColumns encodes a whole row. Before any column is encoded, the
+// degraded form of every column plus its separator is reserved, so the encoded
+// columns never exceed max(allowance, that reservation): the reservation is
+// the floor of a row with this many columns.
+func encodeColumns(vals []sqlitefile.Value, allowance int64) []any {
+	var reserved int64
+	for i, v := range vals {
+		reserved += encodedSize(degraded(i, v)) + 1
+	}
+	b := newValueBudget(allowance - reserved)
+	out := make([]any, len(vals))
+	for i, v := range vals {
+		out[i] = encodeValue(i, v, b)
+	}
+	return out
 }
 
 func fillValue(m map[string]any, v sqlitefile.Value) {
@@ -120,15 +153,6 @@ func fillValue(m map[string]any, v sqlitefile.Value) {
 	case sqlitefile.KindBlob:
 		m["value_b64"] = base64.StdEncoding.EncodeToString(v.Bytes)
 	}
-}
-
-func (b *valueBudget) degrade(i int, v sqlitefile.Value) map[string]any {
-	m := map[string]any{"i": int64(i), "type": kindName(v.Kind), "omitted": "payload-budget"}
-	if v.Kind == sqlitefile.KindText || v.Kind == sqlitefile.KindBlob {
-		m["len"] = v.Len
-	}
-	b.left -= min(encodedSize(m), b.left)
-	return m
 }
 
 // encodeName stores a table or index name exactly: as text under key when it

@@ -125,8 +125,8 @@ func TestEncodedBudgetCountsEscapingAndBase64(t *testing.T) {
 		e := encodeValue(i, v, b)
 		cols = append(cols, e)
 		total += before - b.left
-		if before-b.left != encodedSize(e) {
-			t.Errorf("column %d: charged %d, encoded size %d", i, before-b.left, encodedSize(e))
+		if want := max(encodedSize(e)-encodedSize(degraded(i, v)), 0); before-b.left != want {
+			t.Errorf("column %d: charged %d, want the extra %d over the reserved degraded form", i, before-b.left, want)
 		}
 	}
 	if cols[2].(map[string]any)["omitted"] != "payload-budget" {
@@ -156,8 +156,8 @@ func TestValueBudgetDegradesLoudly(t *testing.T) {
 		t.Errorf("budget %d after degrading, was %d", b.left, left)
 	}
 	b = newValueBudget(0)
-	m := encodeValue(2, sqlitefile.Value{Kind: sqlitefile.KindInt, Int: 5}, b)
-	if m["omitted"] != "payload-budget" || m["value"] != nil || b.left != 0 {
+	m := encodeValue(2, sqlitefile.Value{Kind: sqlitefile.KindBlob, Bytes: bytes.Repeat([]byte("a"), 100), Len: 100}, b)
+	if m["omitted"] != "payload-budget" || m["value_b64"] != nil || b.left != 0 {
 		t.Errorf("exhausted budget: %v (left %d)", m, b.left)
 	}
 	p := validPayload()
