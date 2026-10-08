@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/rbenzing/minutiae/internal/artparse"
+
 	"github.com/spf13/cobra"
 
 	"github.com/rbenzing/minutiae/internal/device"
@@ -88,7 +90,8 @@ func ExitCode(err error) int {
 	case errors.As(err, &ue):
 		return ExitUsage
 	case errors.Is(err, evidence.ErrNeedsUpgrade), errors.Is(err, records.ErrBadCursor),
-		errors.Is(err, records.ErrInvalidFilter), errors.Is(err, records.ErrInvalidPage):
+		errors.Is(err, records.ErrInvalidFilter), errors.Is(err, records.ErrInvalidPage),
+		errors.Is(err, artparse.ErrSelection), errors.Is(err, artparse.ErrNotParserInput):
 		return ExitUsage
 	case errors.Is(err, evidence.ErrIntegrity):
 		return ExitIntegrity
