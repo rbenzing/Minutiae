@@ -152,7 +152,11 @@ func TestCheckedRunsSidecarProblems(t *testing.T) {
 			sc := recordstest.AddDerivedWith(t, e.c, "s.jsonl", src, []byte(good))
 			return e.index(t), e.withSidecar(t, "extract", sc.ID)
 		}},
-		{"file deleted", "sidecar", func(t *testing.T, e runsEnv) (*evidence.ManifestIndex, evidence.ManifestRecord) {
+		{"other directory", "other directory", func(t *testing.T, e runsEnv) (*evidence.ManifestIndex, evidence.ManifestRecord) {
+			sc := e.rawSidecar(t, "sub/s.jsonl", good)
+			return e.index(t), e.withSidecar(t, "extract", sc.ID)
+		}},
+		{"file deleted", "): open ", func(t *testing.T, e runsEnv) (*evidence.ManifestIndex, evidence.ManifestRecord) {
 			sc := e.rawSidecar(t, "s.jsonl", good)
 			rec := e.withSidecar(t, "extract", sc.ID)
 			if err := os.Remove(filepath.Join(e.c.Dir, filepath.FromSlash(sc.Path))); err != nil {
@@ -160,7 +164,7 @@ func TestCheckedRunsSidecarProblems(t *testing.T) {
 			}
 			return e.index(t), rec
 		}},
-		{"symlink", "sidecar", func(t *testing.T, e runsEnv) (*evidence.ManifestIndex, evidence.ManifestRecord) {
+		{"symlink", "is a link", func(t *testing.T, e runsEnv) (*evidence.ManifestIndex, evidence.ManifestRecord) {
 			sc := e.rawSidecar(t, "s.jsonl", good)
 			rec := e.withSidecar(t, "extract", sc.ID)
 			full := filepath.Join(e.c.Dir, filepath.FromSlash(sc.Path))
@@ -176,7 +180,7 @@ func TestCheckedRunsSidecarProblems(t *testing.T) {
 			}
 			return e.index(t), rec
 		}},
-		{"size differs", "sidecar", func(t *testing.T, e runsEnv) (*evidence.ManifestIndex, evidence.ManifestRecord) {
+		{"size differs", "differs from manifest size", func(t *testing.T, e runsEnv) (*evidence.ManifestIndex, evidence.ManifestRecord) {
 			sc := e.rawSidecar(t, "s.jsonl", good)
 			rec := e.withSidecar(t, "extract", sc.ID)
 			recordstest.SetArtifactFileBytes(t, e.c.Dir, sc.ID, []byte(good+good))

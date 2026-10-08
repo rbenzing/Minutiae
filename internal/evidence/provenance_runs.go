@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"strings"
 )
 
@@ -42,18 +43,19 @@ func (c *Case) CheckedRuns(ix *ManifestIndex, rec ManifestRecord) ([]Run, error)
 	if ix == nil {
 		return nil, errors.New("evidence: CheckedRuns needs a manifest index (see NewManifestIndex)")
 	}
-	switch n := ix.count[d.RunsArtifact]; {
-	case n == 0:
+	if ix.count[d.RunsArtifact] == 0 {
 		return nil, runsBad("sidecar %q of artifact %q is not in the manifest", d.RunsArtifact, rec.ID)
-	case n > 1:
-		return nil, runsBad("sidecar id %q appears %d times in the manifest", d.RunsArtifact, n)
 	}
+	// a duplicated id is refused by OpenArtifactIn below, with the count in its message
 	sc := ix.byID[d.RunsArtifact]
 	if sc.Source.Kind != "runs" {
 		return nil, runsBad("sidecar %q is of kind %q, not runs", sc.ID, sc.Source.Kind)
 	}
-	if sc.Source.Derived == nil || sc.Source.Derived.ParentID != d.ParentID {
+	if sc.Source.Derived == nil || sc.Source.Derived.ParentID != d.ParentID || sc.Source.Derived.ParentSHA256 != d.ParentSHA256 {
 		return nil, runsBad("sidecar %q is not derived from parent %q", sc.ID, d.ParentID)
+	}
+	if path.Dir(sc.Path) != path.Dir(rec.Path) {
+		return nil, runsBad("sidecar %q lies in another directory (%q) than artifact %q (%q)", sc.ID, path.Dir(sc.Path), rec.ID, path.Dir(rec.Path))
 	}
 	f, _, err := c.OpenArtifactIn(ix, sc.ID)
 	if err != nil {
