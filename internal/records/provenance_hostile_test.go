@@ -99,8 +99,11 @@ func TestSidecarReadIsBounded(t *testing.T) {
 	if elapsed > 60*time.Second {
 		t.Errorf("Get took %s", elapsed)
 	}
-	const budget = (1 << 40)
+	// The budget is relative: the heap above its GC'd baseline. The 16 MiB run slice is the only
+	// retained growth; per-line allocations kept live (about 1M lines) would exceed the margin.
+	const margin = 64 << 20
+	budget := base + margin
 	if peak > budget {
-		t.Errorf("peak live heap %d MiB exceeds the %d MiB budget", peak>>20, budget>>20)
+		t.Errorf("peak live heap %d MiB exceeds the %d MiB budget (base %d MiB + %d MiB)", peak>>20, budget>>20, base>>20, margin>>20)
 	}
 }

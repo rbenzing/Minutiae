@@ -41,6 +41,7 @@ func patternBytes(n int) []byte {
 type provImg struct {
 	e   *imgEnv
 	raw []byte
+	src string // the directory holding the import source files, outside the case
 }
 
 func newProvImg(t *testing.T, segs int, nodes ...fstest.Node) *provImg {
@@ -72,7 +73,7 @@ func newProvImg(t *testing.T, segs int, nodes ...fstest.Node) *provImg {
 		}
 		raw = append(raw, b...)
 	}
-	return &provImg{e: e, raw: raw}
+	return &provImg{e: e, raw: raw, src: dir}
 }
 
 // extractedRecord runs the real `image extract` and returns the manifest record of the new artifact.
@@ -661,10 +662,14 @@ func TestShowDoesNotModifyCaseFiles(t *testing.T) {
 	}
 	id := ingestNote(t, pi.e.c, art, &records.Range{Offset: 512, Length: 4096})
 	before := caseFileHashes(t, pi.e.c)
+	srcBefore := caseFileHashes(t, pi.src)
 	auditBefore := len(auditOf(t, pi.e.c))
 	for i, args := range [][]string{{"records", "show", id}, {"records", "show", id, "--json"}, {"records", "show", id, "--payload"}} {
 		if code, out := run(t, Deps{}, append(args, "--case", pi.e.c)...); code != 0 {
 			t.Fatalf("%v: exit %d\n%s", args, code, out)
+		}
+		if srcAfter := caseFileHashes(t, pi.src); len(srcBefore) == 0 || !mapsEqual(srcBefore, srcAfter) {
+			t.Fatalf("%v changed an import source file", args)
 		}
 		if after := caseFileHashes(t, pi.e.c); !mapsEqual(before, after) {
 			t.Fatalf("%v changed a case file other than audit.jsonl", args)

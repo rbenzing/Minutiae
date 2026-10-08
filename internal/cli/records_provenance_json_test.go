@@ -379,9 +379,25 @@ func TestRecordsShowPrintFailureDoesNotMaskIntegrity(t *testing.T) {
 		if code != ExitIntegrity {
 			t.Errorf("%v: exit %d, want 4; stderr %q", args, code, errBuf.String())
 		}
-		if !strings.Contains(errBuf.String(), "case verify") || (strings.Contains(strings.Join(args, " "), "--json") && !strings.Contains(errBuf.String(), "disk full")) {
-			t.Errorf("%v: stderr %q must name case verify (and, for --json, the print error)", args, errBuf.String())
+		if !strings.Contains(errBuf.String(), "case verify") || !strings.Contains(errBuf.String(), "disk full") {
+			t.Errorf("%v: stderr %q must name case verify and the print error", args, errBuf.String())
 		}
+	}
+}
+
+// E57: a text print failure on a healthy record is an error, never a silently truncated exit 0.
+func TestRecordsShowTextPrintFailureIsReported(t *testing.T) {
+	c := recordstest.NewCase(t)
+	a := recordstest.AddArtifact(t, c, "a.bin", []byte("x"))
+	recordstest.Ingest(t, c, recParser, []string{a.ID}, []records.Record{{Type: "note", ArtifactID: a.ID, Summary: "s", Payload: map[string]any{}}})
+	dir := c.Dir
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var errBuf bytes.Buffer
+	code := Run([]string{"records", "show", "--case", dir, "1"}, Deps{Out: failWriter{}, Err: &errBuf, In: strings.NewReader(""), Registry: device.NewRegistry()})
+	if code == 0 || !strings.Contains(errBuf.String(), "disk full") {
+		t.Errorf("exit %d, stderr %q: want a nonzero exit naming the print error", code, errBuf.String())
 	}
 }
 

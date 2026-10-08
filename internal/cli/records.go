@@ -450,7 +450,24 @@ func newRecordsShowCmd(d Deps, opts *rootOptions) *cobra.Command {
 	return cmd
 }
 
-func printFull(w io.Writer, f records.Full, payload bool) error {
+// stickyWriter remembers the first write error so a long run of prints can report it once.
+type stickyWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (s *stickyWriter) Write(b []byte) (int, error) {
+	if s.err != nil {
+		return 0, s.err
+	}
+	n, err := s.w.Write(b)
+	s.err = err
+	return n, err
+}
+
+// printFull prints the record and returns the first print error: a truncated listing is never a success.
+func printFull(out io.Writer, f records.Full, payload bool) error {
+	w := &stickyWriter{w: out}
 	p := func(label, format string, a ...any) {
 		fmt.Fprintf(w, "  %-14s"+format+"\n", append([]any{label + ":"}, a...)...)
 	}
@@ -526,7 +543,7 @@ func printFull(w io.Writer, f records.Full, payload bool) error {
 			fmt.Fprintf(w, "    %s\n", line)
 		}
 	}
-	return nil
+	return w.err
 }
 
 // prettyPayload prints a JSON payload indented, one value per line, in the

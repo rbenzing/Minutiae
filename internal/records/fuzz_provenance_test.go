@@ -45,6 +45,8 @@ func FuzzResolveChain(f *testing.F) {
 	f.Add([]byte{3, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1, 0})
 	f.Add([]byte{5, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1})                    // self and tight cycles
 	f.Add([]byte{63, 7, 2, 9, 4, 3, 0, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 3, 3, 3, 2, 1, 1, 1, 1, 0, 0, 0}) // segments
+	f.Add(dupIDsAtCap())
+	f.Add(deepChain())
 	f.Fuzz(func(t *testing.T, raw []byte) {
 		man, audited := fuzzManifest(raw)
 		ix := evidence.NewAuditIndex(auditOf(t, audited...))
@@ -77,4 +79,44 @@ func FuzzResolveChain(f *testing.F) {
 			}
 		}
 	})
+}
+
+// dupIDsAtCap encodes 64 records (the cap) whose ids collide in pairs: record i is named a(i+1)
+// when the offset byte is 1 and a(i) when it is 0, so each odd record repeats its predecessor's id.
+func dupIDsAtCap() []byte {
+	raw := []byte{63}
+	for i := range 64 {
+		raw = append(raw, byte(1-i%2), 0, 0, 1) // id offset, sha, plain file, audited
+	}
+	return raw
+}
+
+// deepChain encodes 64 records where record i is extracted from record i+1 with matching hashes
+// and the last is a plain file: the chain from a0 is far deeper than MaxDerivedDepth.
+func deepChain() []byte {
+	raw := []byte{63}
+	for i := range 64 {
+		if i == 63 {
+			raw = append(raw, 0, 0, 0, 1)
+			continue
+		}
+		raw = append(raw, 0, 0, 1, byte(i+1), 0, 0, 1) // id a(i), sha s0, extract of a(i+1) with sha s0, no segments, audited
+	}
+	return raw
+}
+
+func TestFuzzSeedsHaveTheirShape(t *testing.T) {
+	man, _ := fuzzManifest(dupIDsAtCap())
+	ids := map[string]int{}
+	for _, m := range man {
+		ids[m.ID]++
+	}
+	if len(man) != 64 || len(ids) >= 64 {
+		t.Errorf("dup seed: %d records, %d distinct ids; want 64 records with repeated ids", len(man), len(ids))
+	}
+	man, audited := fuzzManifest(deepChain())
+	p := resolveChain(man, evidence.NewAuditIndex(auditOf(t, audited...)), "a0")
+	if len(man) != 64 || len(p.Chain) <= evidence.MaxDerivedDepth {
+		t.Errorf("deep seed: %d records, chain of %d; want a chain deeper than %d", len(man), len(p.Chain), evidence.MaxDerivedDepth)
+	}
 }
