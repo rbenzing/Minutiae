@@ -26,7 +26,13 @@ func LooksLikeXML(b []byte) bool {
 // many small runs) and refuses constructs a plist never needs: a document that is not UTF-8,
 // a DOCTYPE with an internal subset or an entity, a processing instruction other than the
 // leading XML declaration, a root element that is not <plist>, and anything unterminated.
-// The zero Limits means DefaultLimits. It is conservative: when in doubt it refuses.
+// The zero Limits means DefaultLimits (a partly filled Limits is used as given); MaxDepth is
+// capped at 4096. It is conservative: when in doubt it refuses. Known properties, all in the
+// refusing direction or bounded by the caller's input cap: leading whitespace before the XML
+// declaration is refused (the declaration is only valid at byte 0, after an optional BOM);
+// tag names and attribute bytes are not charged against MaxPayload; indentation whitespace
+// inside the root is charged as payload; end tags are not matched to their start tags (the
+// decoding library is strict about that).
 // Every error wraps ErrMalformed, ErrLimit or ErrUnsupported.
 func PrescanXML(b []byte, l Limits) error {
 	return guard(func() error {
@@ -65,9 +71,7 @@ func checkXMLEncoding(b []byte) error {
 
 // prescanCore returns the element count and the text, CDATA and comment bytes it counted.
 func prescanCore(b []byte, l Limits) (nodes, payload uint64, err error) {
-	if l == (Limits{}) {
-		l = DefaultLimits()
-	}
+	l = l.effective()
 	if err := checkXMLEncoding(b); err != nil {
 		return 0, 0, err
 	}

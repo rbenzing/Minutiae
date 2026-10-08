@@ -41,9 +41,7 @@ func checkBinary(b []byte, l Limits) error {
 }
 
 func checkCore(b []byte, l Limits) error {
-	if l == (Limits{}) {
-		l = DefaultLimits()
-	}
+	l = l.effective()
 	if len(b) < len(bplistMagic)+bplistTrailer || string(b[:len(bplistMagic)]) != bplistMagic {
 		return malformed("not a binary plist")
 	}
@@ -246,9 +244,22 @@ func Check(b []byte, l Limits) error {
 	case len(b) == 0:
 		return malformed("empty input")
 	case LooksLikeXML(b):
+		if !startsLikeXMLMarkup(b) {
+			// "<01ab>" is an OpenStep data literal, not a start tag.
+			return fmt.Errorf("%w: neither XML nor binary plist", ErrUnsupported)
+		}
 		return PrescanXML(b, l)
 	case bytes.HasPrefix(b, []byte(bplistMagic)):
 		return checkBinary(b, l)
 	}
 	return fmt.Errorf("%w: neither XML nor binary plist", ErrUnsupported)
+}
+
+// startsLikeXMLMarkup reports whether the first '<' of b (after an optional BOM and ASCII
+// whitespace, as LooksLikeXML found it) is followed by something XML can start with: a name
+// character, '?' or '!'. A '<' at the very end counts as markup (the pre-scan calls it
+// malformed).
+func startsLikeXMLMarkup(b []byte) bool {
+	b = bytes.TrimLeft(bytes.TrimPrefix(b, []byte("\xef\xbb\xbf")), " \t\r\n")
+	return len(b) < 2 || b[1] == '?' || b[1] == '!' || nameStart(b[1])
 }
