@@ -56,8 +56,10 @@ type RecoveredSpec struct {
 	Path            string
 	Partition       int // default 1
 	PartitionOffset int64
-	FSType          string // default "mtfs"
-	Runs            []evidence.Run
+	// ParentSegments is recorded as Derived.ParentSegments (every segment of a split parent).
+	ParentSegments []evidence.SegmentRef
+	FSType         string // default "mtfs"
+	Runs           []evidence.Run
 	// Sidecar writes Runs as a runs sidecar artifact (kind runs) and points RunsArtifact at it.
 	Sidecar bool
 	// Data are the artifact bytes; default: the parent's bytes at Runs.
@@ -127,7 +129,8 @@ func AddRecovered(t testing.TB, c *evidence.Case, parent evidence.ManifestRecord
 	d := &evidence.Derivation{
 		ParentID: parent.ID, ParentSHA256: parent.SHA256, Partition: s.Partition,
 		PartitionOffset: s.PartitionOffset, FSType: s.FSType, FSPath: "/deleted/a.bin", FSID: "dentry:1:1:1",
-		Recovery: rec,
+		ParentSegments: s.ParentSegments,
+		Recovery:       rec,
 	}
 	dev := parent.Source.DeviceID
 	if s.Sidecar {

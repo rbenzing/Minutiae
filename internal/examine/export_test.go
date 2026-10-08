@@ -34,3 +34,10 @@ func SetWalkSkipCap(n int) (restore func()) {
 	walkSkipCap = n
 	return func() { walkSkipCap = old }
 }
+
+// SetReproduceReadObserver sees the size of every read of the reproduce check and returns the restore function.
+func SetReproduceReadObserver(f func(n int)) (restore func()) {
+	old := reproduceReadObserver
+	reproduceReadObserver = f
+	return func() { reproduceReadObserver = old }
+}
