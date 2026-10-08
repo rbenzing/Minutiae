@@ -308,6 +308,14 @@ func (v *View) Schema(ctx context.Context) (s *Schema, err error) {
 			}
 		}
 		v.parseObject(&obj, sst, parse, lim.MaxColumns, at)
+		if obj.Type == "table" && !obj.Virtual && (root < 2 || int64(root) > lim.MaxPages) {
+			// The table exists, but its root cannot be a b-tree root (page 0 is
+			// none, page 1 is the schema table): Table reports a corrupt schema
+			// entry, never an absent table.
+			bad := at
+			bad.Code, bad.Msg = WarnSchemaRowInvalid, fmt.Sprintf("table %q names root page %d, which cannot be a b-tree root; it cannot be read", name, root)
+			v.warns.add(bad)
+		}
 		cost := int64(schemaObjectCost + len(obj.SQL) + len(name) + len(tbl))
 		if obj.Table != nil {
 			cost += int64(len(obj.Table.Columns)) * schemaColumnCost

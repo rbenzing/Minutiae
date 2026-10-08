@@ -37,7 +37,8 @@ type Index struct {
 
 // Table finds the table called name (ASCII case-insensitive; "sqlite_master"
 // is the schema table's old name). A view, trigger, virtual table or an
-// unknown name is ErrNotFound.
+// unknown name is ErrNotFound; a table whose root page cannot be a b-tree root
+// is ErrCorrupt (it exists in the schema, so it is never reported absent).
 func (v *View) Table(ctx context.Context, name string) (t *Table, err error) {
 	defer guard(&err)
 	if asciiEqualFold(name, "sqlite_master") || asciiEqualFold(name, "sqlite_schema") {
@@ -55,8 +56,8 @@ func (v *View) Table(ctx context.Context, name string) (t *Table, err error) {
 		if o.Virtual {
 			return nil, fmt.Errorf("%w: %q is a virtual table and has no b-tree", ErrNotFound, name)
 		}
-		if o.RootPage == 0 {
-			return nil, fmt.Errorf("%w: table %q has rootpage 0 and no b-tree", ErrNotFound, name)
+		if o.RootPage < 2 || int64(o.RootPage) > v.e.opts.Limits.MaxPages {
+			return nil, fmt.Errorf("%w: table %q names root page %d, which cannot be a b-tree root", ErrCorrupt, name, o.RootPage)
 		}
 		return &Table{v: v, obj: o}, nil
 	}

@@ -168,20 +168,42 @@ func TestOverCapSQLRaisesTheUnparsedWarning(t *testing.T) {
 }
 
 // TestRootPageZeroErrorText: a table with rootpage 0 that is not a virtual
-// table says what it is, not "virtual table".
+// table says what it is, not "virtual table", and is a corrupt schema entry
+// (C52): the table exists in the schema, so ErrNotFound would be a false
+// absence. A warning names the table. The same holds for any root that cannot
+// be a b-tree root: page 1 (the schema table) and a page past the addressable
+// limit. A virtual table stays ErrNotFound and does not warn.
 func TestRootPageZeroErrorText(t *testing.T) {
 	b := sqlitetest.New(sqlitetest.Options{})
 	b.AddSchemaRow("table", "zero", "zero", int64(0), "CREATE TABLE zero(a)")
+	b.AddSchemaRow("table", "one", "one", int64(1), "CREATE TABLE one(a)")
+	b.AddSchemaRow("table", "huge", "huge", int64(1)<<31, "CREATE TABLE huge(a)")
 	b.AddSchemaRow("table", "vt", "vt", int64(0), "CREATE VIRTUAL TABLE vt USING fts5(a)")
 	_, v := openLive(t, b.Bytes(), sqlitefile.Options{})
 	defer v.Release()
-	_, err := v.Table(context.Background(), "zero")
-	if !errors.Is(err, sqlitefile.ErrNotFound) || strings.Contains(err.Error(), "virtual") || !strings.Contains(err.Error(), "rootpage 0") {
-		t.Errorf("rootpage 0: %v", err)
+	for _, name := range []string{"zero", "one", "huge"} {
+		_, err := v.Table(context.Background(), name)
+		if !errors.Is(err, sqlitefile.ErrCorrupt) || errors.Is(err, sqlitefile.ErrNotFound) || strings.Contains(err.Error(), "virtual") || !strings.Contains(err.Error(), "root page") || !strings.Contains(err.Error(), name) {
+			t.Errorf("%s: %v", name, err)
+		}
+		n := 0
+		for _, w := range v.Warnings() {
+			if w.Code == sqlitefile.WarnSchemaRowInvalid && strings.Contains(w.Msg, `"`+name+`"`) {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Errorf("%s: %d warnings naming the table, want 1: %v", name, n, v.Warnings())
+		}
 	}
-	_, err = v.Table(context.Background(), "vt")
+	_, err := v.Table(context.Background(), "vt")
 	if !errors.Is(err, sqlitefile.ErrNotFound) || !strings.Contains(err.Error(), "virtual table") {
 		t.Errorf("a virtual table: %v", err)
+	}
+	for _, w := range v.Warnings() {
+		if w.Code == sqlitefile.WarnSchemaRowInvalid && strings.Contains(w.Msg, `"vt"`) {
+			t.Errorf("a virtual table with rootpage 0 is legal and must not warn: %v", w)
+		}
 	}
 }
 
