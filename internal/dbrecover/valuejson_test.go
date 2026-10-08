@@ -226,7 +226,7 @@ func TestEncodedMapsAreWriterAcceptable(t *testing.T) {
 	}
 }
 
-func TestHostileNamesAreEncodedExactly(t *testing.T) {
+func TestEncodeNameIsExact(t *testing.T) {
 	for name, s := range map[string]string{
 		"nul":      "a\x00b",
 		"invalid":  "a\xff\xfeb",
