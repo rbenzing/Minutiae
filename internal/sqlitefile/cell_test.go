@@ -37,7 +37,7 @@ func TestCellParseAllTypes(t *testing.T) {
 		h    sqlitefile.PageHeader
 		cell []byte
 		want sqlitefile.Cell // Offset is set by the test
-		loc  []byte          // expected Local bytes
+		loc  []byte          // expected LocalBytes
 	}{
 		{
 			"table leaf, all local", tl,
@@ -104,8 +104,8 @@ func TestCellParseAllTypes(t *testing.T) {
 				}
 				want := c.want
 				want.Offset = off
-				local := got.Local
-				got.Local = nil
+				local := got.LocalBytes
+				got.LocalBytes = nil
 				if !reflect.DeepEqual(got, want) {
 					t.Errorf("offset %d: cell = %+v, want %+v", off, got, want)
 				}
@@ -118,10 +118,10 @@ func TestCellParseAllTypes(t *testing.T) {
 					}
 					return 0
 				}()] {
-					t.Errorf("offset %d: Local does not alias the page", off)
+					t.Errorf("offset %d: LocalBytes does not alias the page", off)
 				}
 				if cap(local) != len(local) {
-					t.Errorf("Local capacity %d exceeds its length %d (an append would overwrite the page)", cap(local), len(local))
+					t.Errorf("LocalBytes capacity %d exceeds its length %d (an append would overwrite the page)", cap(local), len(local))
 				}
 			}
 		})

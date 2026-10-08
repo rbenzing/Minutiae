@@ -178,7 +178,7 @@ func TestRecordHeaderBufferIsBoundedByRealBytes(t *testing.T) {
 	const ps = 512
 	data := make([]byte, 196)
 	copy(data, []byte{0x81, 0x8c, 0x50}) // header length 1<<14 + 12<<7 + 80 = 18000
-	c := sqlitefile.Cell{Local: data, PayloadLen: 20000}
+	c := sqlitefile.Cell{LocalBytes: data, PayloadLen: 20000}
 	env := sqlitefile.NewTestEnv(sqlitefile.Options{})
 	src := sqlitefile.NewFakeSource()
 	run := func() {

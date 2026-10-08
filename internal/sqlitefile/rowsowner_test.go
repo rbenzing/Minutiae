@@ -397,12 +397,12 @@ func checkRowLocs(t *testing.T, f files, rows []sqlitefile.RecoveredRow, usable 
 			t.Errorf("row %+v: cell rowid %d", r.Loc, c.Rowid)
 		}
 		if c.OverflowHead != 0 {
-			if int64(len(c.Local)) >= c.PayloadLen {
+			if int64(len(c.LocalBytes)) >= c.PayloadLen {
 				t.Errorf("row %+v: a spilling cell holds its whole payload locally", r.Loc)
 			}
 			continue
 		}
-		rec, err := sqlitefile.DecodeRecord(c.Local, sqlitefile.EncUTF8, sqlitefile.Limits{})
+		rec, err := sqlitefile.DecodeRecord(c.LocalBytes, sqlitefile.EncUTF8, sqlitefile.Limits{})
 		if err != nil || len(rec.Values) != len(r.Values) {
 			t.Errorf("row %+v: record %v %v", r.Loc, err, rec)
 			continue

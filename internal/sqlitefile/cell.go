@@ -6,7 +6,7 @@ import (
 	"math"
 )
 
-// Cell is one parsed b-tree cell. Local aliases the page and is read-only.
+// Cell is one parsed b-tree cell. LocalBytes aliases the page and is read-only.
 type Cell struct {
 	Index        int
 	Offset       int // in the page
@@ -15,7 +15,7 @@ type Cell struct {
 	PayloadLen   int64
 	Rowid        int64
 	HasRowid     bool
-	Local        []byte
+	LocalBytes   []byte
 	OverflowHead uint32 // 0: no overflow pointer, or a pointer to nothing
 }
 
@@ -113,7 +113,7 @@ func ParseCell(page []byte, usable int, h PageHeader, off int) (_ Cell, err erro
 	if need > int64(hi) {
 		return bad("payload of %d local bytes ends at %d, past the %d bytes available", local, need, hi)
 	}
-	c.Local = page[pos : pos+int(local) : pos+int(local)]
+	c.LocalBytes = page[pos : pos+int(local) : pos+int(local)]
 	pos += int(local)
 	if spills {
 		c.OverflowHead = binary.BigEndian.Uint32(page[pos:])

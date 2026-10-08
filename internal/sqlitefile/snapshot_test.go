@@ -307,7 +307,7 @@ func TestSnapshotOverflowChain(t *testing.T) {
 		if err != nil || damage != "" {
 			t.Fatalf("payload: %v %q", err, damage)
 		}
-		want := append(append(bytes.Clone(cell.Local), c.c3[4:]...), c.c4[4:]...)[:cell.PayloadLen]
+		want := append(append(bytes.Clone(cell.LocalBytes), c.c3[4:]...), c.c4[4:]...)[:cell.PayloadLen]
 		if !bytes.Equal(got, want) {
 			t.Errorf("the payload is not the stale generation's version (%d bytes)", len(got))
 		}
@@ -324,7 +324,7 @@ func TestSnapshotOverflowChain(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := append(bytes.Clone(cell.Local), c.c3[4:]...)
+		want := append(bytes.Clone(cell.LocalBytes), c.c3[4:]...)
 		if damage == "" || !bytes.Equal(got, want) {
 			t.Errorf("%d bytes, damage %q; want the %d bytes up to page 4", len(got), damage, len(want))
 		}

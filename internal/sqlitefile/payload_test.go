@@ -88,7 +88,7 @@ func payloadData(n int) []byte {
 }
 
 func cellFor(data []byte, local int, head uint32) sqlitefile.Cell {
-	return sqlitefile.Cell{Local: data[:local], PayloadLen: int64(len(data)), OverflowHead: head}
+	return sqlitefile.Cell{LocalBytes: data[:local], PayloadLen: int64(len(data)), OverflowHead: head}
 }
 
 func newPayloadFor(t *testing.T, env *sqlitefile.TestEnv, src *sqlitefile.FakeSource, vis sqlitefile.Visited, c sqlitefile.Cell) (*sqlitefile.TestPayload, *sqlitefile.TestLedger) {
@@ -564,7 +564,7 @@ func TestLazyPayloadNeverAssemblesHugeCell(t *testing.T) {
 	src := sqlitefile.NewFakeSource()
 	chain := payloadData(3 * (ovPage - 4))
 	chainOf(src, chain, 5, 6, 7)
-	cell := sqlitefile.Cell{Local: local, PayloadLen: total, OverflowHead: 5}
+	cell := sqlitefile.Cell{LocalBytes: local, PayloadLen: total, OverflowHead: 5}
 	budget := newRecBudget(64 << 20)
 	env := sqlitefile.NewTestEnv(sqlitefile.Options{Budget: budget})
 
@@ -633,7 +633,7 @@ func TestLazyPayloadNeverAssemblesHugeCell(t *testing.T) {
 	budget.check(t)
 
 	t.Run("over MaxPayloadBytes", func(t *testing.T) {
-		big := sqlitefile.Cell{Local: local, PayloadLen: total + 1, OverflowHead: 5}
+		big := sqlitefile.Cell{LocalBytes: local, PayloadLen: total + 1, OverflowHead: 5}
 		err := env.Call(func(l *sqlitefile.TestLedger) error {
 			vis, _ := env.NewMapVisited(l, 16)
 			_, _, _, err := env.ReadRecord(l, env.NewTestPayload(src, l, vis, ovPage, big), sqlitefile.EncUTF8, nil)

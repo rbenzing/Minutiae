@@ -55,7 +55,7 @@ type payload struct {
 func newPayload(src pageSource, l *ledger, vis visitor, usable int, maxSteps int64, c Cell) *payload {
 	return &payload{
 		src: src, l: l, vis: vis, usable: usable, maxSteps: maxSteps,
-		local: c.Local, total: c.PayloadLen, head: c.OverflowHead, next: c.OverflowHead,
+		local: c.LocalBytes, total: c.PayloadLen, head: c.OverflowHead, next: c.OverflowHead,
 		winIdx: -1,
 	}
 }

@@ -291,7 +291,7 @@ func TestRecoveredRowLocationReproducesCell(t *testing.T) {
 			t.Errorf("row %+v: cell rowid %d", r.Loc, c.Rowid)
 		}
 		if c.OverflowHead == 0 {
-			rec, err := sqlitefile.DecodeRecord(c.Local, sqlitefile.EncUTF8, sqlitefile.Limits{})
+			rec, err := sqlitefile.DecodeRecord(c.LocalBytes, sqlitefile.EncUTF8, sqlitefile.Limits{})
 			if err != nil || len(rec.Values) != len(r.Values) {
 				t.Errorf("row %+v: record %v %v", r.Loc, err, rec)
 				continue

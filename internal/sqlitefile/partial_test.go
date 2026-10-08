@@ -44,7 +44,7 @@ func TestOpenEncodingFieldFollowsEngine(t *testing.T) {
 			if err != nil || cell.Length != len(cellBytes) {
 				t.Fatalf("cell %+v, %v", cell, err)
 			}
-			rec, err := sqlitefile.DecodeRecord(cell.Local, i.Encoding, sqlitefile.Limits{})
+			rec, err := sqlitefile.DecodeRecord(cell.LocalBytes, i.Encoding, sqlitefile.Limits{})
 			if err != nil {
 				t.Fatal(err)
 			}
