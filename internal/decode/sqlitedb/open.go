@@ -40,6 +40,8 @@ type Info struct {
 // as an exact count.
 type Stats struct {
 	Scans, Rows, RowsFlagged, NewWarningsAtLeast int64
+	IndexUnkeyed                                 int64 // target rows the join indexes did not key (NULL, NaN, unknown state)
+	JoinsFlushed                                 int64 // join notes the contexts emitted at Close
 }
 
 // DB is an opened database. It is NOT safe for concurrent use: it belongs to
