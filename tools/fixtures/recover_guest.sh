@@ -14,7 +14,7 @@
 kver=$(ls /lib/modules | head -1)
 
 guest_initrd() {
-  local rd=$1 fstype=$2 opts=$3 payload=$4 ops=$5 m deps p b z
+  local rd=$1 fstype=$2 opts=$3 payload=$4 ops=$5 m deps listing p b z
   rm -rf "$rd"
   mkdir -p "$rd"/bin "$rd"/dev "$rd"/proc "$rd"/sys "$rd"/mnt "$rd"/mods "$rd"/payload
   cp "$(command -v busybox)" "$rd/bin/busybox"
@@ -27,7 +27,9 @@ guest_initrd() {
   esac
   : >"$rd/modules.list"
   for m in "$@"; do
-    deps=$(modprobe -S "$kver" -d / --show-depends "$m" 2>/dev/null | awk '$1=="insmod"{print $2}') || true
+    listing=$(modprobe -S "$kver" -d / --show-depends "$m" 2>&1) || { echo "guest_initrd: cannot resolve module $m: $listing" >&2; return 1; }
+    printf '%s\n' "$listing" | grep -Eq '^(insmod|builtin) ' || { echo "guest_initrd: module $m resolved to nothing" >&2; return 1; }
+    deps=$(printf '%s\n' "$listing" | awk '$1=="insmod"{print $2}')
     for p in $deps; do
       b=$(basename "$p")
       [ -e "$rd/mods/$b" ] || { cp "$p" "$rd/mods/$b"; echo "/mods/$b" >>"$rd/modules.list"; }

@@ -764,8 +764,8 @@ and the spec §18 "from memory" items stay marked until then):
 - [ ] ext4 `i_block` / extent tree residue after unlink (3C)
 - [x] `exfat-fuse` FAT-chain residue after delete (3B): superseded by ruling F3 (the
       fixtures use the KERNEL drivers in the QEMU guest, never exfat-fuse); the kernel
-      exfat driver KEEPS the FAT entries of a deleted chained file and ZEROES nothing
-      but the bitmap bits (see "FAT/exFAT recovery probe (3B)", P3)
+      exfat driver, on delete, clears the InUse bits of the entry set and the allocation-
+      bitmap bits and KEEPS the FAT entries of a chained file (see "FAT/exFAT recovery probe (3B)", P3)
 - [ ] F2FS node-block survival after unlink, and `nodiscard` mount behaviour (3D)
 - [ ] jbd2 stale journal region contents (3G)
 - [ ] F2FS roll-forward node chain after an fsync'd write and an unclean quit (3H)
@@ -809,7 +809,7 @@ write D, E. exFAT only: s8v length probes.
 | P1 | vfat, `rm`: the kernel sets the directory entry's first byte to `0xE5` and keeps everything else, including first cluster and size (checked for contiguous B and D and for the two-run F). It ZEROES every FAT entry of the chain (all 4 of B, all 14 of F, the end-of-chain mark included). A deleted vfat file keeps only (first cluster, size) in its directory entry; the chain is gone |
 | P2 | vfat allocation order: ascending next-fit from the last allocated cluster, with wrap. Cluster 2 is not the first allocation (the first file of a fresh volume starts at cluster 3; cluster 2 is reached only after the search wraps: `FILL.BIN` = 23..8096 then 2). Within ONE mount a deleted file's hole is NOT reused while later clusters are free (s9n: A=3-8, B=9-12, C=13-20, `rm` B, D=21-24, E=25-30). After a fresh mount (every stage is one) the search restarts at cluster 3 and takes the lowest free clusters: after `rm` B,D, E (6 clusters) = 9-12,21-22. On a full volume with only A and C freed, F took them ascending: 3-8 then 13-20 |
 | P3 | exFAT, `rm`: (a) contiguous file (B, D; also A, C): `NoFatChain` set, entry-set types `85 C0 C1` become `05 40 41` (InUse cleared), first cluster, DataLength and ValidDataLength kept, allocation-bitmap bits CLEARED, FAT entries never written (all 0 before and after). (b) fragmented file F (clusters 18-23 and 28-35, written into the two holes of a full volume; `NoFatChain` clear): InUse cleared (`85 C0 C1` to `05 40 41`), first cluster and size kept, bitmap bits CLEARED, and the FAT entries are KEPT byte for byte (13 links and the end-of-chain `ffffffff` are all still present after the delete). **F1 gate: the kernel exFAT driver keeps the FAT entries of a deleted chained file, so Task 8 (exfat-fatchain) PROCEEDS**; the Task 13 fixture must prove it (`fat_residue: "chain-kept"`). Not tested: how long the entries survive once the freed clusters are reallocated (a reallocation rewrites them) |
-| P4 | exFAT allocation order: as vfat, except that the first allocation is the first free cluster of the heap (18 on this volume). Within one mount: next-fit (s9n: A=18-23, B=24-27, C=28-35, `rm` B, D=36-39, E=40-45; B's hole is not reused). After a fresh mount: lowest free clusters first (s3w: E = 24-27 then 36-37, a two-run file with `NoFatChain` clear). Full volume, A and C freed: F = 18-23 then 28-35, ascending |
+| P4 | exFAT allocation order: as vfat, except that the first allocation is the first free cluster of the heap (18 on this volume). Wrap-around to the heap start was NOT observed on exFAT (the fill ran to the last cluster, 12289, without needing it). Within one mount: next-fit (s9n: A=18-23, B=24-27, C=28-35, `rm` B, D=36-39, E=40-45; B's hole is not reused). After a fresh mount: lowest free clusters first (s3w: E = 24-27 then 36-37, a two-run file with `NoFatChain` clear). Full volume, A and C freed: F = 18-23 then 28-35, ascending |
 | P5 | exFAT `ValidDataLength` < `DataLength` with busybox tools: NO. `truncate -s 5000` on an empty file, `truncate -s 4000` on a 100-byte file, `dd seek=6 count=1` (a write past the end) and `dd seek=8 count=0` all gave ValidDataLength == DataLength (5000, 4000, 3584, 4096). The `valid-data-length` scenario is therefore builder-only (a hand-built exfattest image), not a kernel fixture |
 | P6 | `dd if=/dev/zero of=FILL.BIN bs=512` until ENOSPC leaves ZERO free clusters on both volumes (vfat 8095 clusters, exFAT 12288; free count derived from the FAT / bitmap is 0, and `dump.exfat` agrees: `Free Clusters: 0`). After `rm` of A and C (the only files freed) the free set is exactly A's and C's clusters (vfat 3-8,13-20; exFAT 18-23,28-35), and the file written next occupies exactly those clusters |
 
@@ -853,7 +853,7 @@ AFTER   0502d12b20000000aab16e57aab16e57aab16e57080880808000000000000000
         4003000532ad0000d0070000000000000000000018000000d007000000000000
         410042002e00420049004e000000000000000000000000000000000000000000
 FAT bytes of clusters 24-27, before and after: 00000000000000000000000000000000
-bitmap byte holding cluster 24 (clusters 18-25): before ff, after 3f
+bitmap bytes 2-3 (clusters 18-33) before: ffff, after: 3ffc   (clusters 24-27 cleared, 18-23 and 28-33 untouched)
 ```
 
 exFAT F.BIN (fragmented, clusters 18-23 and 28-35). Stream flags byte `01` =
@@ -868,7 +868,53 @@ AFTER   050289ea20000000aab16e57aab16e57aab16e57050580808000000000000000
         410046002e00420049004e000000000000000000000000000000000000000000
 FAT BEFORE  13000000140000001500000016000000170000001c0000001d0000001e0000001f00000020000000210000002200000023000000ffffffff
 FAT AFTER   13000000140000001500000016000000170000001c0000001d0000001e0000001f00000020000000210000002200000023000000ffffffff
-bitmap byte holding cluster 18 (clusters 18-25): before ff, after c0
+bitmap bytes 2-4 (clusters 18-41) before: ffffff, after: c003fc   (clusters 18-23 and 28-35 cleared; 24-27 belong to E and stay set)
+```
+
+exFAT A.BIN (contiguous, clusters 18-23), C.BIN (28-35), D.BIN (36-39), deleted by `rm`
+(`HEX` lines; bitmap byte N covers clusters 2+8N .. 9+8N; FAT bytes of all these
+clusters are zero before and after, the files being `NoFatChain`):
+
+```
+A  bitmap byte 2 (clusters 18-25)  before ff  after c0      (18-23 cleared)
+C  bitmap bytes 3-4 (26-41)        before ffff after 03fc   (28-35 cleared)
+D  bitmap byte 4 (clusters 34-41)  before 3f  after 03      (36-39 cleared; 34-35 stay set, they are C; 40-41 were free)
+entry-set types for A, C, D: 85 c0 c1 before, 05 40 41 after
+```
+
+Allocation evidence (P2 vfat: FAT16 entries of clusters 2-31, two bytes each,
+little endian; P4 exFAT: bitmap bytes 0-7 = clusters 2-65). The stage names are those
+above; `ENTRY` lines are the reader's listing of the same image.
+
+```
+vfat s0  (empty)          000000000000000000...  all zero
+vfat s1w (A,B,C,D)        0000 0400 0500 0600 0700 0800 ffff 0a00 0b00 0c00 ffff 0e00 ... 1400 ffff 1600 1700 1800 ffff
+                          cluster 2 free, A starts at 3 (3->4->...->8 EOC), B 9-12, C 13-20, D 21-24
+vfat s2d (rm B,D)         0000 0400 ... 0800 ffff 0000 0000 0000 0000 0000 0e00 ... 1400 ffff 0000 0000 ...
+vfat s3w (E)              ... 0a00 0b00 0c00 1500 ... 1600 ffff   E = 9-12 then 21-22 (12->21, 22 EOC)
+vfat s4f (full)           ffff 0400 ...                  cluster 2 = ffff: FILL.BIN ends there
+vfat s4f tail, 8090-8096  9b1f 9c1f 9d1f 9e1f 9f1f a01f 0200   cluster 8096 -> 2 (wrap), 2 -> ffff
+vfat s5d (rm A,C)         ffff 0000 ... (3-8 zero)  0a00 0b00 0c00 1500 0000 ... (13-20 zero)
+vfat s6w (F)              ffff 0400 0500 0600 0700 0800 0d00 0a00 ...   F = 3-8 then 13-20 (8->13)
+vfat s9n (one boot)       0000 0400 ... 0800 ffff 0000*4 0000 0e00 ... 1400 ffff 1600 1700 1800 ffff 1a00 1b00 1c00 1d00 1e00 ffff
+                          A 3-8, (B 9-12 deleted, free), C 13-20, D 21-24, E 25-30: no hole reuse
+exfat s0 (empty)          ffff000000000000      clusters 2-17 in use (bitmap, upcase, root), 18+ free
+exfat s1w                 ffffffff3f000000      A 18-23, B 24-27, C 28-35, D 36-39
+exfat s2d (rm B,D)        ffff3ffc03000000
+exfat s3w (E)             ffffffff0f000000      E = 24-27 and 36-37 (hole B, then hole D)
+exfat s4f (full)          ffffffffffffffff      and bitmap bytes for clusters 12234-12289: ffffffffffffff
+exfat s5d (rm A,C)        ffffc003fcffffff      18-23 and 28-35 free
+exfat s6w (F)             ffffffffffffffff      F = 18-23 then 28-35
+exfat s9n (one boot)      ffff3ffcff0f0000      A 18-23, hole 24-27 (B), C 28-35, D 36-39, E 40-45
+```
+
+Listings (`ENTRY` lines of the probe output):
+
+```
+vfat  s4f   A 3-8, E 9-12,21-22, C 13-20, FILL.BIN start 23 size 4134400 chain 23-8096,2
+vfat  s9n   A 3-8, D 21-24, C 13-20, E 25-30
+exfat s4f   A 18-23, E 24-27,36-37 (NoFatChain clear), C 28-35, FILL.BIN 38-12289 (NoFatChain set)
+exfat s9n   A 18-23, D 36-39, C 28-35, E 40-45
 ```
 
 exFAT length probes (P5): ValidDataLength (stream offset 8) and DataLength (offset

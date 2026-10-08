@@ -78,7 +78,7 @@ rm /mnt/F.BIN; sync
 OPS
 done
 for fs in vfat exfat; do
-  echo "== guest stage $fs: allocation inside ONE mount (next-fit or first-fit?)"
+  echo "== guest stage $fs: allocation inside ONE boot (next-fit or first-fit?)"
   cp "$out/$fs-s0.img" "$work/$fs.img"
   stage $fs s9n "" <<'OPS'
 cp /payload/A.BIN /mnt/A.BIN; cp /payload/B.BIN /mnt/B.BIN; cp /payload/C.BIN /mnt/C.BIN; sync
@@ -196,6 +196,10 @@ class Exfat:
         o = self.coff(self.bmstart) + (c - 2) // 8
         return (self.d[o] >> ((c - 2) % 8)) & 1
 
+    def bitmap_bytes(self, lo, hi):
+        o = self.coff(self.bmstart)
+        return self.d[o + (lo - 2) // 8: o + (hi - 2) // 8 + 1]
+
     def bitmap_byte(self, c):
         o = self.coff(self.bmstart) + (c - 2) // 8
         return self.d[o: o + 1]
@@ -287,7 +291,7 @@ for s, f in st.items():
 tag = "P1" if fs == "vfat" else "P3"
 
 # deleted files: contiguous B and D (s1w -> s2d), fragmented F (s6w -> s7d)
-for label, bef, aft, name in (("contiguous B", "s1w", "s2d", "B.BIN"), ("contiguous D", "s1w", "s2d", "D.BIN"), ("fragmented F", "s6w", "s7d", "F.BIN")):
+for label, bef, aft, name in (("contiguous B", "s1w", "s2d", "B.BIN"), ("contiguous D", "s1w", "s2d", "D.BIN"), ("contiguous A", "s4f", "s5d", "A.BIN"), ("contiguous C", "s4f", "s5d", "C.BIN"), ("fragmented F", "s6w", "s7d", "F.BIN")):
     fb, fa = st[bef], st[aft]
     eb = find(fb, name)
     cl = live_chain(fb, eb)
@@ -311,8 +315,8 @@ for label, bef, aft, name in (("contiguous B", "s1w", "s2d", "B.BIN"), ("contigu
     else:
         bb = [fb.bit(c) for c in cl]
         ba = [fa.bit(c) for c in cl]
-        hx("bitmap byte before (cluster %d)" % cl[0], fb.bitmap_byte(cl[0]))
-        hx("bitmap byte after  (cluster %d)" % cl[0], fa.bitmap_byte(cl[0]))
+        hx("bitmap bytes before (clusters %d-%d: bytes %d-%d)" % (cl[0], cl[-1], (cl[0] - 2) // 8, (cl[-1] - 2) // 8), fb.bitmap_bytes(cl[0], cl[-1]))
+        hx("bitmap bytes after  (clusters %d-%d: bytes %d-%d)" % (cl[0], cl[-1], (cl[0] - 2) // 8, (cl[-1] - 2) // 8), fa.bitmap_bytes(cl[0], cl[-1]))
         print("  FACT-RAW P3 %s: nofatchain_before=%s bits_before_all_set=%s bits_after_all_clear=%s types_before=%s types_after=%s start_kept=%s size_kept=%s vdl_kept=%s" % (
             label, eb["nofat"], all(bb), not any(ba), [hex(t) for t in eb["types"]],
             [hex(t) for t in ea["types"]] if ea else None, bool(ea) and ea["start"] == eb["start"], bool(ea) and ea["size"] == eb["size"],
@@ -339,14 +343,31 @@ print("  F (14 clusters) written into the A,C holes: chain in order = %s" % fcl)
 print("  FACT-RAW %s F chain runs: %s ; F ascending: %s ; F fills exactly the holes: %s" % (
     ptag, rng(fcl), fcl == sorted(fcl), set(fcl) == set(a) | set(c)))
 
+print("== raw allocation evidence (%s)" % ptag)
+
+
+def dump_alloc(f, label):
+    if fs == "vfat":
+        hx("%s FAT16 entries, clusters 2-31" % label, b"".join(f.fat_bytes(c) for c in range(2, 32)))
+    else:
+        hx("%s bitmap bytes 0-7 (clusters 2-65)" % label, f.bitmap_bytes(2, 65))
+
+
+for s in ("s0", "s1w", "s2d", "s3w", "s4f", "s5d", "s6w"):
+    dump_alloc(st[s], s)
+if fs == "vfat":
+    hx("s4f FAT16 entries, clusters 8090-8096 (FILL tail)", b"".join(st["s4f"].fat_bytes(c) for c in range(8090, 8097)))
+else:
+    hx("s4f bitmap last bytes (clusters 12234-12289)", st["s4f"].bitmap_bytes(12234, 12289))
 n = load(fs, "%s/%s-s9n.img" % (d, fs))
+dump_alloc(n, "s9n")
 show(fs, "s9n", n)
 na, nb = live_chain(n, find(n, "A.BIN")), None
 nd = live_chain(n, find(n, "D.BIN"))
 nc = live_chain(n, find(n, "C.BIN"))
 ne = live_chain(n, find(n, "E.BIN"))
-print("  one mount: A,B,C written, rm B, then D (4 clusters, B's old size) and E (6) written: D=%s E=%s C=%s" % (rng(nd), rng(ne), rng(nc)))
-print("  FACT-RAW %s within one mount D lands after C (next-fit), not in B's hole: %s ; first allocated cluster of a fresh volume: %d" % (
+print("  one boot: A,B,C written, rm B, then D (4 clusters, B's old size) and E (6) written: D=%s E=%s C=%s" % (rng(nd), rng(ne), rng(nc)))
+print("  FACT-RAW %s within one boot D lands after C (next-fit), not in B's hole: %s ; first allocated cluster of a fresh volume: %d" % (
     ptag, min(nd) > max(nc), min(live_chain(n, find(n, "A.BIN")))))
 
 if fs == "exfat":
