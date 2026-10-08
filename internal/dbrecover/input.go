@@ -204,6 +204,19 @@ func (s *sealedSet) checkUnchanged(ctx context.Context) error {
 	return nil
 }
 
+// contributing lists the database and the companions the run applies. A
+// companion found but not applied (D9) contributed no row, so it must not lower
+// the cap or flag mixed or incomplete inputs; it stays visible in sibling_unused.
+func (s *sealedSet) contributing() []*sealedInput {
+	out := []*sealedInput{&s.DB}
+	for _, in := range []*sealedInput{s.WAL, s.Journal} {
+		if in != nil && in.Ref.Unused == "" {
+			out = append(out, in)
+		}
+	}
+	return out
+}
+
 func (s *sealedSet) close() {
 	for _, in := range s.inputs() {
 		if in.f != nil {
@@ -216,7 +229,7 @@ func (s *sealedSet) close() {
 // no input is recovered.
 func (s *sealedSet) cap() *int {
 	var m *int
-	for _, in := range s.inputs() {
+	for _, in := range s.contributing() {
 		if c := in.Ref.Cap; c != nil && (m == nil || *c < *m) {
 			v := *c
 			m = &v
@@ -227,7 +240,7 @@ func (s *sealedSet) cap() *int {
 
 // mixed reports whether some inputs are recovered and others live.
 func (s *sealedSet) mixed() bool {
-	in := s.inputs()
+	in := s.contributing()
 	for _, x := range in[1:] {
 		if x.Ref.Recovered != in[0].Ref.Recovered {
 			return true
@@ -238,7 +251,7 @@ func (s *sealedSet) mixed() bool {
 
 // incomplete reports whether any input is flagged incomplete.
 func (s *sealedSet) incomplete() bool {
-	for _, in := range s.inputs() {
+	for _, in := range s.contributing() {
 		if in.Ref.Incomplete {
 			return true
 		}
