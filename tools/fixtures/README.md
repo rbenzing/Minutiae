@@ -731,7 +731,7 @@ record `libsqlite3 3.46.1; shell: 3.46.1`. The class A and B oracles use the
 engine of `modernc.org/sqlite` (SQLite 3.53.4 at the pinned module version),
 recorded in each expect.json. A version bump of either regenerates its class.
 
-The pinned class C layer has NOT been built since the exact pins were added (the layer before the pins was built and ran); a build check is pending, and this note goes when it passes.
+The pinned class C layer was built and verified on 2026-10-08: `dpkg-query` shows `sqlite3` and `libsqlite3-0` at 3.46.1-7+deb13u2, `sqlite3 --version` is 3.46.1 and the layer's own version tests passed; no fixture was regenerated.
 
 The Dockerfile change is a NEW FINAL layer, so every earlier layer, and every
 fixture generated from it, is as built; no other fixture was regenerated.
