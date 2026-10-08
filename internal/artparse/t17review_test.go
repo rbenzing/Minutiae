@@ -217,7 +217,7 @@ type sealedProbe struct {
 
 func (p *sealedProbe) Meta() parse.Meta { return parsertest.FakeMeta(p.name, "1.0.0") }
 func (p *sealedProbe) Probe(_ context.Context, in *parse.Input) (parse.Applicability, error) {
-	p.kept.in = in
+	p.kept.store(in, nil)
 	<-p.release // ignores the context
 	return parse.Applicability{Status: parse.Applicable}, nil
 }
@@ -225,8 +225,9 @@ func (p *sealedProbe) Parse(context.Context, *parse.Input, parse.Emitter) error 
 
 func (k *rxKept) assertSealedRead(t *testing.T) {
 	t.Helper()
+	in, _ := k.load()
 	var b [1]byte
-	if _, err := k.in.Primary.R.ReadAt(b[:], 0); !errors.Is(err, parse.ErrSealed) {
+	if _, err := in.Primary.R.ReadAt(b[:], 0); !errors.Is(err, parse.ErrSealed) {
 		t.Errorf("read through an abandoned Probe's input = %v, want ErrSealed", err)
 	}
 }

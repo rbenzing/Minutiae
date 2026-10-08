@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -175,25 +176,39 @@ func rxRecord(in *parse.Input, i int) records.Record {
 
 // rxKept is what a parser kept of the handles the host gave it.
 type rxKept struct {
+	mu  sync.Mutex // a parser goroutine abandoned by design writes while the test reads
 	in  *parse.Input
 	out parse.Emitter
+}
+
+func (k *rxKept) store(in *parse.Input, out parse.Emitter) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.in, k.out = in, out
+}
+
+func (k *rxKept) load() (*parse.Input, parse.Emitter) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.in, k.out
 }
 
 // assertSealed requires every kept handle to refuse: a goroutine a parser left behind can neither emit
 // nor read.
 func (k *rxKept) assertSealed(t *testing.T) {
 	t.Helper()
-	if k.in == nil || k.out == nil {
+	in, out := k.load()
+	if in == nil || out == nil {
 		t.Fatal("the parser kept nothing")
 	}
-	if err := k.out.Emit(context.Background(), rxRecord(k.in, 99)); !errors.Is(err, parse.ErrSealed) {
+	if err := out.Emit(context.Background(), rxRecord(in, 99)); !errors.Is(err, parse.ErrSealed) {
 		t.Errorf("late Emit = %v, want ErrSealed", err)
 	}
-	if err := k.out.Warn(context.Background(), "late", "late"); !errors.Is(err, parse.ErrSealed) {
+	if err := out.Warn(context.Background(), "late", "late"); !errors.Is(err, parse.ErrSealed) {
 		t.Errorf("late Warn = %v, want ErrSealed", err)
 	}
 	var b [1]byte
-	if _, err := k.in.Primary.R.ReadAt(b[:], 0); !errors.Is(err, parse.ErrSealed) {
+	if _, err := in.Primary.R.ReadAt(b[:], 0); !errors.Is(err, parse.ErrSealed) {
 		t.Errorf("late ReadAt = %v, want ErrSealed", err)
 	}
 }
@@ -215,7 +230,7 @@ func (p *rxParser) Probe(_ context.Context, in *parse.Input) (parse.Applicabilit
 
 func (p *rxParser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) error {
 	if p.kept != nil {
-		p.kept.in, p.kept.out = in, out
+		p.kept.store(in, out)
 	}
 	for i := 1; i <= p.n; i++ {
 		if err := out.Emit(ctx, rxRecord(in, i)); err != nil {
