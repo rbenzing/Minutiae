@@ -53,7 +53,7 @@ func newImageRecoverCmd(d Deps, opts *rootOptions) *cobra.Command {
 		Short: "Recover the content of deleted filesystem entries from an image's free space into the case",
 		Long: "Recover writes derived artifacts of kind recover, each with its map, confidence and the bytes that were not\n" +
 			"captured; only bytes the filesystem reports free are copied. --list prints what a run would write and\n" +
-			"changes nothing in the case.",
+			"writes nothing but the usual case.open audit entry.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) < 1 {
 				return usageErrorf("%s: expected an image reference, got %d argument(s)", cmd.CommandPath(), len(args))
@@ -63,13 +63,13 @@ func newImageRecoverCmd(d Deps, opts *rootOptions) *cobra.Command {
 	}
 	casePath := caseFlag(cmd)
 	partition := partitionFlag(cmd, "partition index (default: the only partition with a recognized filesystem)")
-	cmd.Flags().BoolVar(&f.list, "list", false, "show what a run would write; changes nothing in the case")
+	cmd.Flags().BoolVar(&f.list, "list", false, "show what a run would write; writes nothing but the usual case.open audit entry")
 	cmd.Flags().BoolVar(&f.all, "all", false, "recover every deleted entry")
 	cmd.Flags().IntVar(&f.minConfidence, "min-confidence", 0, "skip candidates below this confidence (0..100)")
 	cmd.Flags().BoolVar(&f.allCandidates, "all-candidates", false, "write every candidate of an entry, not only the best")
 	cmd.Flags().BoolVar(&f.keepUniform, "keep-uniform", false, "write candidates whose bytes are all the same value")
-	cmd.Flags().IntVar(&f.maxFiles, "max-files", 0, "stop after this many artifacts (0: the default)")
-	cmd.Flags().Int64Var(&f.maxBytes, "max-bytes", 0, "stop after this many bytes (0: the default)")
+	cmd.Flags().IntVar(&f.maxFiles, "max-files", 0, fmt.Sprintf("stop after this many artifacts (default %d; 0 uses the default)", examine.DefaultMaxFiles))
+	cmd.Flags().Int64Var(&f.maxBytes, "max-bytes", 0, fmt.Sprintf("stop after this many bytes (default %d; 0 uses the default)", examine.DefaultMaxBytes))
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		pidx, err := partition()
 		if err != nil {
@@ -106,10 +106,7 @@ func newImageRecoverCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return withFSName(s, pidx, err)
 		}
 		if opts.json {
-			if jerr := writeJSON(d.Out, newJSONRecover(sum)); jerr != nil && err == nil {
-				err = jerr
-			}
-			return err
+			return writeRecoverJSON(d.Out, sum, err)
 		}
 		printRecoverRun(d.Out, sum)
 		return err
@@ -232,4 +229,13 @@ func printRecoverRun(w io.Writer, sum examine.RecoverSummary) {
 	printSkipReasons(w, sum.Summary)
 	printLimit(w, sum.LimitReached, sum.NotProcessed)
 	printFSWarnings(w, sum.Summary)
+}
+
+// writeRecoverJSON writes the JSON of a run and returns the run's own error; a failed write is reported
+// only when the run had no error, so an integrity error is never replaced by a write failure.
+func writeRecoverJSON(w io.Writer, sum examine.RecoverSummary, err error) error {
+	if jerr := writeJSON(w, newJSONRecover(sum)); jerr != nil && err == nil {
+		return jerr
+	}
+	return err
 }

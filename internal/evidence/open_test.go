@@ -371,3 +371,34 @@ func TestOpenArtifactInMatchesOpenArtifact(t *testing.T) {
 		}
 	}
 }
+
+// C61 M1: a manifest path inside the case but outside artifacts/ (case.json, whose size matches) is an
+// integrity error from both open paths; only the artifacts/ prefix test refuses it.
+func TestOpenArtifactRefusesPathOutsideArtifactsDir(t *testing.T) {
+	c, _ := caseWithArtifact(t)
+	manifest := filepath.Join(c.Dir, manifestFile)
+	for i, name := range []string{"case.json", "audit.jsonl"} {
+		st, err := os.Stat(filepath.Join(c.Dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := appendManifest(manifest, ManifestRecord{ID: fmt.Sprintf("inside%d", i), Path: name, Size: st.Size()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recs, err := c.Manifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ix := NewManifestIndex(recs)
+	for _, id := range []string{"inside0", "inside1"} {
+		f1, _, e1 := c.OpenArtifact(id)
+		f2, _, e2 := c.OpenArtifactIn(ix, id)
+		if f1 != nil || f2 != nil {
+			t.Errorf("%s: a file outside artifacts/ was opened", id)
+		}
+		if !errors.Is(e1, ErrIntegrity) || !errors.Is(e2, ErrIntegrity) {
+			t.Errorf("%s: OpenArtifact %v, OpenArtifactIn %v; want ErrIntegrity from both", id, e1, e2)
+		}
+	}
+}
