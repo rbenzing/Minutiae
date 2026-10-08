@@ -78,12 +78,16 @@ var allowed = map[string][]string{
 // "internal/cli" may import anything.
 const unrestricted = "internal/cli"
 
-func TestArchitectureDependencyRule(t *testing.T) {
+// moduleImports parses the import clauses of every non-test Go file under the module root and
+// returns, per package directory (slash form, relative to the root), the Minutiae packages it
+// imports: the real import graph the architecture tests are judged against.
+func moduleImports(t *testing.T) (root string, imports map[string]map[string]bool) {
+	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
-	imports := map[string]map[string]bool{}
+	imports = map[string]map[string]bool{}
 	fset := token.NewFileSet()
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -118,6 +122,11 @@ func TestArchitectureDependencyRule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return root, imports
+}
+
+func TestArchitectureDependencyRule(t *testing.T) {
+	root, imports := moduleImports(t)
 	pkgs := make([]string, 0, len(imports))
 	for p := range imports {
 		pkgs = append(pkgs, p)
@@ -151,23 +160,30 @@ func TestArchitectureDependencyRule(t *testing.T) {
 // rule allows (CLAUDE.md section 5): internal/ios/mb2 imports internal/decode/plist and nothing
 // else under internal/decode; no other backend package has any edge into internal/decode.
 func TestBackendsImportDecodeOnlyThroughMb2(t *testing.T) {
-	backends := []string{
-		"internal/transport/serial", "internal/protocol", "internal/android", "internal/ios",
-		"internal/ios/mb2", "internal/ios/mb2/mb2test", "internal/ios/iostest",
-		"internal/android/adb", "internal/android/adb/adbtest", "internal/device",
+	_, imports := moduleImports(t)
+	backendPrefixes := []string{
+		"internal/transport", "internal/protocol", "internal/android", "internal/ios", "internal/device",
+	}
+	isBackend := func(pkg string) bool {
+		for _, p := range backendPrefixes {
+			if pkg == p || strings.HasPrefix(pkg, p+"/") {
+				return true
+			}
+		}
+		return false
 	}
 	var edges []string
-	for _, b := range backends {
-		allow, known := allowed[b]
-		if !known {
-			t.Errorf("backend %s is not listed in archtest.allowed", b)
+	for pkg, imps := range imports {
+		if !isBackend(pkg) {
+			continue
 		}
-		for _, a := range allow {
-			if strings.HasPrefix(a, "internal/decode") {
-				edges = append(edges, b+" -> "+a)
+		for imp := range imps {
+			if imp == "internal/decode" || strings.HasPrefix(imp, "internal/decode/") {
+				edges = append(edges, pkg+" -> "+imp)
 			}
 		}
 	}
+	sort.Strings(edges)
 	want := []string{"internal/ios/mb2 -> internal/decode/plist"}
 	if !slices.Equal(edges, want) {
 		t.Fatalf("backend -> decode edges = %v, want exactly %v", edges, want)
