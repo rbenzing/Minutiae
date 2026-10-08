@@ -2,6 +2,7 @@ package mb2
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -38,5 +39,25 @@ func TestUnmarshalPlistErrorsKeepThePrefix(t *testing.T) {
 	unmarshal = orig
 	if err := UnmarshalPlist([]byte("<deadbeef>"), &v); err == nil || !strings.HasPrefix(err.Error(), "mb2: ") {
 		t.Fatalf("<deadbeef>: %v", err)
+	}
+}
+
+// A recovered decoder panic reads with exactly one "mb2:" prefix, on both paths.
+func TestRecoveredPanicHasSingleMb2Prefix(t *testing.T) {
+	orig := unmarshal
+	t.Cleanup(func() { unmarshal = orig })
+	unmarshal = func([]byte, any) (int, error) { panic("boom") }
+
+	var v any
+	err := UnmarshalPlist([]byte("<plist/>"), &v)
+	if err == nil || strings.Count(err.Error(), "mb2:") != 1 {
+		t.Fatalf("UnmarshalPlist: %v", err)
+	}
+	_, err = decodePlist([]byte("x"))
+	if err == nil {
+		t.Fatal("decodePlist: no error")
+	}
+	if wrapped := fmt.Errorf("mb2: decode: %w", err); strings.Count(wrapped.Error(), "mb2:") != 1 {
+		t.Fatalf("Recv wrapping: %v", wrapped)
 	}
 }

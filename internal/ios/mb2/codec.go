@@ -92,7 +92,7 @@ func decodePlist(b []byte) (any, error) {
 func safeUnmarshal(b []byte, v any) (format int, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			format, err = plist.InvalidFormat, fmt.Errorf("mb2: malformed plist (%v)", r)
+			format, err = plist.InvalidFormat, fmt.Errorf("malformed plist (%v)", r)
 		}
 	}()
 	return unmarshal(b, v)
