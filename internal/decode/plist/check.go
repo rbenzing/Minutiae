@@ -37,13 +37,25 @@ func guard(f func() error) (err error) {
 // O(objects), not its expanded size. Every error wraps ErrMalformed or ErrLimit. The zero
 // Limits means DefaultLimits. Counters saturate, so limits near MaxUint64 cannot wrap.
 func checkBinary(b []byte, l Limits) error {
-	return guard(func() error { return checkCore(b, l) })
+	_, _, err := measureBinary(b, l)
+	return err
 }
 
-func checkCore(b []byte, l Limits) error {
+// measureBinary is checkBinary that also returns the expanded node count and the expanded
+// string and data payload bytes of the document.
+func measureBinary(b []byte, l Limits) (nodes, payload uint64, err error) {
+	err = guard(func() error {
+		var e error
+		nodes, payload, e = checkCore(b, l)
+		return e
+	})
+	return
+}
+
+func checkCore(b []byte, l Limits) (nodes, payload uint64, err error) {
 	l = l.effective()
 	if len(b) < len(bplistMagic)+bplistTrailer || string(b[:len(bplistMagic)]) != bplistMagic {
-		return malformed("not a binary plist")
+		return 0, 0, malformed("not a binary plist")
 	}
 	t := b[len(b)-bplistTrailer:]
 	w := &bplistWalker{
@@ -58,22 +70,22 @@ func checkCore(b []byte, l Limits) error {
 	dataEnd := uint64(len(b) - bplistTrailer)
 	switch {
 	case w.offSize < 1 || w.offSize > 8 || w.refSize < 1 || w.refSize > 8:
-		return malformed("bad trailer sizes")
+		return 0, 0, malformed("bad trailer sizes")
 	case numObjects == 0 || numObjects > dataEnd:
-		return malformed("bad object count")
+		return 0, 0, malformed("bad object count")
 	case numObjects > l.MaxNodes:
 		// A legitimate plist references every object, so numObjects never exceeds the
 		// expanded node count; this also bounds the memo table.
-		return limited("object count %d above %d", numObjects, l.MaxNodes)
+		return 0, 0, limited("object count %d above %d", numObjects, l.MaxNodes)
 	case tableOff < uint64(len(bplistMagic)) || tableOff > dataEnd || numObjects*w.offSize > dataEnd-tableOff:
-		return malformed("bad offset table")
+		return 0, 0, malformed("bad offset table")
 	case top >= numObjects:
-		return malformed("bad top object")
+		return 0, 0, malformed("bad top object")
 	}
 	w.numObjects, w.tableOff = numObjects, tableOff
 	w.memo = make([]bplistNode, numObjects)
-	_, err := w.visit(top, 0)
-	return err
+	res, err := w.visit(top, 0)
+	return res.nodes, res.payload, err
 }
 
 type bplistNode struct {
@@ -230,6 +242,15 @@ func (w *bplistWalker) visit(i uint64, depth int) (bplistNode, error) {
 		if !ok || size > w.tableOff-off-1 {
 			return bplistNode{}, malformed("scalar runs past the object area")
 		}
+		if marker == 0x14 {
+			// A 16-byte integer is read as hi:lo. The decoding library keeps only lo, so a
+			// value that does not fit 64 bits (hi neither 0 nor all ones with lo's sign bit
+			// set) would silently decode to a wrong number: refuse it.
+			hi, lo := w.uint(off+1, 8), w.uint(off+9, 8)
+			if hi != 0 && (hi != math.MaxUint64 || lo>>63 == 0) {
+				return bplistNode{}, fmt.Errorf("%w: integer does not fit 64 bits", ErrUnsupported)
+			}
+		}
 	}
 	*n = res
 	return res, nil
@@ -240,19 +261,32 @@ func (w *bplistWalker) visit(i uint64, depth int) (bplistNode, error) {
 // and GNUstep text plists, is refused with ErrUnsupported; empty input is ErrMalformed. The
 // zero Limits means DefaultLimits. Every error wraps ErrMalformed, ErrLimit or ErrUnsupported.
 func Check(b []byte, l Limits) error {
+	_, _, err := measure(b, l)
+	return err
+}
+
+// measure is Check that also returns the document's own counts: the expanded node count and
+// the expanded string and data payload bytes (for XML, element count and text, CDATA and
+// comment bytes). Decode charges its memory budget from these.
+func measure(b []byte, l Limits) (nodes, payload uint64, err error) {
 	switch {
 	case len(b) == 0:
-		return malformed("empty input")
+		return 0, 0, malformed("empty input")
 	case LooksLikeXML(b):
 		if !startsLikeXMLMarkup(b) {
 			// "<01ab>" is an OpenStep data literal, not a start tag.
-			return fmt.Errorf("%w: neither XML nor binary plist", ErrUnsupported)
+			return 0, 0, fmt.Errorf("%w: neither XML nor binary plist", ErrUnsupported)
 		}
-		return PrescanXML(b, l)
+		err = guard(func() error {
+			var e error
+			nodes, payload, e = prescanCore(b, l)
+			return e
+		})
+		return nodes, payload, err
 	case bytes.HasPrefix(b, []byte(bplistMagic)):
-		return checkBinary(b, l)
+		return measureBinary(b, l)
 	}
-	return fmt.Errorf("%w: neither XML nor binary plist", ErrUnsupported)
+	return 0, 0, fmt.Errorf("%w: neither XML nor binary plist", ErrUnsupported)
 }
 
 // startsLikeXMLMarkup reports whether the first '<' of b (after an optional BOM and ASCII

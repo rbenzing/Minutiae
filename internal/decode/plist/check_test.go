@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -219,5 +220,32 @@ func TestGuardConvertsPanicToError(t *testing.T) {
 	sentinel := errors.New("x")
 	if err := guard(func() error { return sentinel }); err != sentinel {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// A 16-byte integer must fit 64 bits as the library reads it (hi 0, or all ones with the sign
+// bit of lo set); anything else would silently decode to the wrong number.
+func TestCheck16ByteIntegerMustFit64Bits(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		hi, lo uint64
+		ok     bool
+	}{
+		{"zero hi", 0, 1 << 63, true},
+		{"negative", math.MaxUint64, 1 << 63, true},
+		{"minus one", math.MaxUint64, math.MaxUint64, true},
+		{"hi one", 1, 0, false},
+		{"hi ones, lo positive", math.MaxUint64, 5, false},
+		{"hi high bit", 1 << 63, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := Check(int16Plist(tc.hi, tc.lo), DefaultLimits())
+			if tc.ok && err != nil {
+				t.Fatal(err)
+			}
+			if !tc.ok {
+				wantIs(t, err, ErrUnsupported)
+			}
+		})
 	}
 }
