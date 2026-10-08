@@ -236,3 +236,24 @@ func TestUnarchiveChargesListSlots(t *testing.T) {
 		t.Fatalf("Used = %d, want at least %d", view.Used(), 1000*16)
 	}
 }
+
+// P34: the library reads elements by local name, so a namespace must not hide a negative UID.
+func TestDecodeXMLNegativeUIDNamespacedSpellings(t *testing.T) {
+	for name, body := range map[string]string{
+		"prefixed key":     `<dict xmlns:x="u"><x:key>CF$UID</x:key><integer>-1</integer></dict>`,
+		"prefixed integer": `<dict xmlns:x="u"><key>CF$UID</key><x:integer>-1</x:integer></dict>`,
+		"both prefixed":    `<dict xmlns:x="u"><x:key>CF$UID</x:key><x:integer>-1</x:integer></dict>`,
+		"default xmlns":    `<dict xmlns="u"><key>CF$UID</key><integer>-1</integer></dict>`,
+		"prefixed dict":    `<x:dict xmlns:x="u"><key>CF$UID</key><integer>-1</integer></x:dict>`,
+		"all prefixed":     `<x:dict xmlns:x="u"><x:key>CF$UID</x:key><x:integer>-1</x:integer></x:dict>`,
+	} {
+		doc := `<plist version="1.0">` + body + `</plist>`
+		if _, err := Decode([]byte(doc), newView(1<<20)); !errors.Is(err, ErrMalformed) {
+			t.Fatalf("%s: err = %v, want ErrMalformed", name, err)
+		}
+		pos := strings.Replace(doc, "-1", "1", 1)
+		if got := mustDecode(t, []byte(pos)); got != any(UID(1)) {
+			t.Fatalf("%s positive: %#v", name, got)
+		}
+	}
+}

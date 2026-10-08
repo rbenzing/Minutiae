@@ -182,9 +182,9 @@ func hasNegativeUID(b []byte) bool {
 		switch t := tok.(type) {
 		case xml.StartElement:
 			switch {
-			case t.Name == xml.Name{Local: "key"}:
+			case t.Name == xml.Name{Space: t.Name.Space, Local: "key"}:
 				state = inKey
-			case t.Name == xml.Name{Local: "integer"} && state == afterUIDKey:
+			case t.Name == xml.Name{Space: t.Name.Space, Local: "integer"} && state == afterUIDKey:
 				state = inInteger
 			default:
 				state = none
@@ -196,7 +196,7 @@ func hasNegativeUID(b []byte) bool {
 			}
 		case xml.EndElement:
 			switch {
-			case state == inKey && t.Name == xml.Name{Local: "key"} && text.String() == "CF$UID":
+			case state == inKey && t.Name == xml.Name{Space: t.Name.Space, Local: "key"} && text.String() == "CF$UID":
 				state = afterUIDKey
 			case state == inInteger:
 				if strings.HasPrefix(strings.TrimSpace(text.String()), "-") {
