@@ -37,6 +37,33 @@ func TestSqlitefileSurfaceUsedByTheDecoder(_ *testing.T) {
 	pin[func(*sqlitefile.Table) string]((*sqlitefile.Table).Name)
 	pin[func(sqlitefile.Row) sqlitefile.Row](sqlitefile.Row.Clone)
 
+	// Used by Open, Info, Tables and the budget adapter (Task 2).
+	pin[sqlitefile.Budget](sqlitefile.Options{}.Budget)
+	pin[bool](sqlitefile.Options{}.SuperJournalPresent)
+	pin[error](sqlitefile.ErrNotSQLite)
+	pin[error](sqlitefile.ErrLooksEncrypted)
+	pin[error](sqlitefile.ErrCorrupt)
+	pin[error](sqlitefile.ErrBudget)
+	pin[error](sqlitefile.ErrLimit)
+	pin[error](sqlitefile.ErrPageUnavailable)
+	pin[error](sqlitefile.ErrWithoutRowid)
+	pin[error](sqlitefile.ErrInternal)
+	pin[error](sqlitefile.ErrEngineRefuses)
+	pin[error](sqlitefile.ErrLiveUnavailable)
+	var st sqlitefile.DBStatus
+	pin[sqlitefile.Info](st.Info)
+	pin[*sqlitefile.WALInfo](st.WAL)
+	pin[*sqlitefile.JournalInfo](st.Journal)
+	var sc sqlitefile.Schema
+	pin[[]sqlitefile.SchemaObject](sc.Objects)
+	var so sqlitefile.SchemaObject
+	pin[string](so.Type)
+	pin[string](so.Name)
+	pin[bool](so.Virtual)
+	var w sqlitefile.Warning
+	pin[string](w.Code)
+	pin[string](w.Msg)
+
 	var r sqlitefile.Row
 	pin[int64](r.Rowid)
 	pin[bool](r.HasRowid)

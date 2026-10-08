@@ -7,7 +7,9 @@
 // row handed to a visitor is owned by the library until the visitor returns:
 // keep a Clone, not the row.
 //
-// A database is in one of nine states (see the plan): not SQLite, encrypted,
-// corrupt, live-unavailable, and the readable ones with or without a WAL or a
-// hot journal applied. The sentinels in errors.go name the refusals.
+// A database is either refused (not SQLite, encrypted, corrupt, live view
+// unavailable, refused by the engine) or readable, with or without a WAL or a
+// hot journal applied. The sentinels in errors.go name the refusals. The host
+// owns bundle completeness: a companion file that is not supplied is neither
+// looked for nor warned about.
 package sqlitedb
