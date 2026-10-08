@@ -628,9 +628,6 @@ func sortedNotes(m map[string]string) []string {
 	return keys
 }
 
-// progressInterval is the least time between two job.progress events of --json.
-const progressInterval = 500 * time.Millisecond
-
 func newParseRunCmd(d Deps, opts *rootOptions) *cobra.Command {
 	var f parseSelFlags
 	var reparse bool
@@ -689,7 +686,6 @@ func newParseRunCmd(d Deps, opts *rootOptions) *cobra.Command {
 			defer debug.SetMemoryLimit(prev)
 
 			total := 0
-			var lastProgress time.Time
 			onEvent := func(e artparse.Event) {
 				switch e.Kind {
 				case "run.start":
@@ -706,8 +702,7 @@ func newParseRunCmd(d Deps, opts *rootOptions) *cobra.Command {
 						})
 					}
 				case "job.progress":
-					if opts.json && (e.Done == e.Total || time.Since(lastProgress) >= progressInterval) {
-						lastProgress = time.Now()
+					if opts.json {
 						_ = writeNDJSON(d.Out, map[string]any{"event": "job.progress", "job": e.Job, "done": e.Done, "total": e.Total})
 					}
 				case "job.end":
