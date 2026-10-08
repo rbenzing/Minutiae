@@ -85,6 +85,13 @@ func (r *Reader) Get(ctx context.Context, id int64) (Full, error) {
 	}
 	full.Batch.AuditSeq = batchAuditSeq(entries, full.Batch)
 	full.Provenance = resolveChain(man, evidence.NewAuditIndex(entries), full.ArtifactID)
+	byID := make(map[string]evidence.ManifestRecord, len(man))
+	for _, m := range man {
+		if _, dup := byID[m.ID]; !dup {
+			byID[m.ID] = m // a duplicate id is reported by the chain, the first record is shown
+		}
+	}
+	r.resolveRecovery(&full.Provenance, full.Row, byID)
 	if len(full.Provenance.Chain) > 0 && full.Provenance.Chain[0].Artifact.Source.Derived == nil {
 		full.Provenance.Notes = append(full.Provenance.Notes, "artifact is not derived: no image offset")
 	}
