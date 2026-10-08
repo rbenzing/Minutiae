@@ -264,6 +264,7 @@ func (rp *rowPass) decode(img PageImage, c Cell, kindsOnly bool) (rec Record, p 
 	rec, held, err = e.readRecordMode(rp.l, w, at, p, info.Encoding, want, true)
 	if err != nil {
 		p.release()
+		rp.l.free(held) // whatever the failed read still holds
 		switch {
 		case errors.Is(err, ErrCorrupt):
 			rp.st.CellsRejected++
@@ -277,6 +278,7 @@ func (rp *rowPass) decode(img PageImage, c Cell, kindsOnly bool) (rec Record, p 
 	}
 	if _, _, dead := p.damaged(); rec.Truncated && !dead {
 		p.release()
+		rp.l.free(held)       // the record is skipped: its charge goes back now, not at the end of the pass
 		rp.st.CellsRejected++ // the record declares more bytes than the cell holds
 		rp.st.CellsShort++
 		return Record{}, nil, 0, false, nil
