@@ -2,6 +2,7 @@ package sqlitedb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -33,6 +34,7 @@ type Context struct {
 	notes   Notes
 	tables  map[string]*Table
 	indexes map[string]*Index
+	failed  map[string]error // index builds that hit a cap or the budget: never retried
 	reports map[string]*JoinReport
 	rows    []Row
 	closed  bool
@@ -43,7 +45,7 @@ type Context struct {
 func NewContext(ctx context.Context, db *DB, in *parse.Input, n Notes) *Context {
 	return &Context{
 		ctx: ctx, db: db, in: in, notes: n,
-		tables: map[string]*Table{}, indexes: map[string]*Index{}, reports: map[string]*JoinReport{},
+		tables: map[string]*Table{}, indexes: map[string]*Index{}, failed: map[string]error{}, reports: map[string]*JoinReport{},
 	}
 }
 
@@ -118,7 +120,13 @@ func (c *Context) Match(table, col string, key parse.JoinKey) ([]parse.Row, erro
 	ik := asciiFold(t.name) + "\x00" + asciiFold(name)
 	ix, ok := c.indexes[ik]
 	if !ok {
+		if ferr, bad := c.failed[ik]; bad {
+			return nil, ferr
+		}
 		if ix, err = t.Index(c.ctx, col, 0); err != nil {
+			if errors.Is(err, ErrIndexLimit) || errors.Is(err, parse.ErrBudget) {
+				c.failed[ik] = err // a hostile target would otherwise cost one full scan per lookup
+			}
 			return nil, err
 		}
 		c.indexes[ik] = ix
@@ -176,7 +184,8 @@ func (c *Context) Joins() []JoinReport {
 // Close emits at most one note per join that had a flagged lookup or an
 // unkeyed target row (key join.<table>.<column>, value
 // lookups:N,flagged:N,collation_differs:N,affinity_differs:N,unkeyed:N), counts
-// them in Stats.JoinsFlushed and frees the indexes and rows. It is idempotent.
+// them in Stats.JoinsFlushed (notes offered, not notes the sink accepted: a sink
+// may drop one) and frees the indexes and rows. It is idempotent.
 func (c *Context) Close() {
 	if c == nil || c.closed {
 		return

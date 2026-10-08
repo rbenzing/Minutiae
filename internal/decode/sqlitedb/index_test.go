@@ -34,7 +34,11 @@ func firstRowKey(t testing.TB, tb *sqlitedb.Table, col int) (parse.JoinKey, bool
 	var k parse.JoinKey
 	var ok bool
 	if err := tb.Scan(t.Context(), func(r sqlitedb.Row) error {
-		k, ok = sqlitedb.KeyOf(r, col)
+		var kerr error
+		k, ok, kerr = sqlitedb.KeyOf(r, col)
+		if kerr != nil {
+			t.Fatalf("KeyOf: %v", kerr)
+		}
 		return sqlitedb.ErrStop
 	}); err != nil {
 		t.Fatal(err)
@@ -75,20 +79,21 @@ func TestKeyOfRefusesNullNaNAndUnknownStates(t *testing.T) {
 		t.Fatal(err)
 	}
 	type probe struct {
-		row int64
-		col int
-		ok  bool
+		row         int64
+		col         int
+		ok          bool
+		undecidable bool
 	}
 	probes := []probe{
-		{1, 0, false}, // NULL
-		{1, 1, true},
-		{1, 2, false}, // undecodable
-		{1, 3, false}, // virtual generated column
-		{1, 9, false}, // no such column
-		{1, -1, false},
-		{2, 0, false},
-		{2, 1, false}, // NaN
-		{2, 2, true},
+		{1, 0, false, false}, // NULL: the engine matches it with nothing
+		{1, 1, true, false},
+		{1, 2, false, true}, // undecodable UTF-16
+		{1, 3, false, true}, // virtual generated column
+		{1, 9, false, true}, // no such column
+		{1, -1, false, true},
+		{2, 0, false, false},
+		{2, 1, false, false}, // NaN: the engine reads it as NULL (TestEngineReadsAStoredNaNAsNull)
+		{2, 2, true, false},
 	}
 	for _, p := range probes {
 		seen := false
@@ -97,7 +102,11 @@ func TestKeyOfRefusesNullNaNAndUnknownStates(t *testing.T) {
 				return nil
 			}
 			seen = true
-			if k, ok := sqlitedb.KeyOf(r, p.col); ok != p.ok || (!ok && k != (parse.JoinKey{})) {
+			k, ok, err := sqlitedb.KeyOf(r, p.col)
+			if undec := errors.Is(err, sqlitedb.ErrKeyUndecidable); undec != p.undecidable || (err != nil && !undec) {
+				t.Errorf("row %d col %d: err = %v, want undecidable %v", p.row, p.col, err, p.undecidable)
+			}
+			if ok != p.ok || (!ok && k != (parse.JoinKey{})) {
 				t.Errorf("row %d col %d: KeyOf = %+v, %v; want ok %v", p.row, p.col, k, ok, p.ok)
 			}
 			return nil
@@ -106,8 +115,8 @@ func TestKeyOfRefusesNullNaNAndUnknownStates(t *testing.T) {
 			t.Fatalf("scan: %v, seen %v", err, seen)
 		}
 	}
-	if _, ok := sqlitedb.KeyOf(sqlitedb.Row{}, 0); ok {
-		t.Error("KeyOf(zero Row) ok")
+	if _, ok, err := sqlitedb.KeyOf(sqlitedb.Row{}, 0); ok || !errors.Is(err, sqlitedb.ErrKeyUndecidable) {
+		t.Errorf("KeyOf(zero Row) = %v, %v; want undecidable", ok, err)
 	}
 }
 
@@ -272,8 +281,9 @@ func TestIndexUtf16NocaseWorks(t *testing.T) {
 	if ids, _ := rowidsOf(t, ix, sqlitedb.LiteralTextKey([]byte("STRaße"))); !slices.Equal(ids, []int64{1}) {
 		t.Errorf("STRaße = %v (ASCII folding only; the rest matches exactly)", ids)
 	}
-	if ids, _ := rowidsOf(t, ix, sqlitedb.LiteralTextKey([]byte("STRASSE"))); len(ids) != 0 {
-		t.Errorf("STRASSE = %v", ids)
+	// A miss is not an absence while an undecodable row exists (B41).
+	if ids, _, err := ix.Rowids(sqlitedb.LiteralTextKey([]byte("STRASSE"))); !errors.Is(err, sqlitedb.ErrKeyUndecidable) || len(ids) != 0 {
+		t.Errorf("STRASSE = %v, %v; want ErrKeyUndecidable", ids, err)
 	}
 	if ix.Unkeyed() != 1 {
 		t.Errorf("Unkeyed = %d, want 1 (the undecodable UTF-16 value)", ix.Unkeyed())

@@ -58,3 +58,9 @@ func (e *UnsupportedCollationError) Error() string {
 
 // Is makes errors.Is(err, ErrUnsupportedCollation) true.
 func (e *UnsupportedCollationError) Is(target error) bool { return target == ErrUnsupportedCollation }
+
+// ErrKeyUndecidable says a join comparison cannot be decided: the probe key or
+// a source value is unknown, or the lookup found no row while target rows
+// exist whose keys were unknown, so a miss does not prove an absence. It is not
+// fatal to a job: the parser records the relation as unknown.
+var ErrKeyUndecidable = errors.New("sqlitedb: join key is undecidable")

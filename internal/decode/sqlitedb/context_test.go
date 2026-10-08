@@ -97,8 +97,8 @@ func TestMatchInsideScanKeepsOuterRowValid(t *testing.T) {
 	}
 	var titles, bodies []string
 	err = tb.Scan(t.Context(), func(r sqlitedb.Row) error {
-		key, ok := sqlitedb.KeyOf(r, 0)
-		if !ok {
+		key, ok, kerr := sqlitedb.KeyOf(r, 0)
+		if kerr != nil || !ok {
 			t.Fatal("no key")
 		}
 		msgs, err := c.Match("message", "thread_id", key)
@@ -165,8 +165,8 @@ func TestJoinMismatchIsFlaggedWithCount(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := src.Scan(t.Context(), func(r sqlitedb.Row) error {
-		k, ok := sqlitedb.KeyOf(r, 1) // text, NOCASE
-		if !ok {
+		k, ok, kerr := sqlitedb.KeyOf(r, 1) // text, NOCASE
+		if kerr != nil || !ok {
 			t.Fatal("no key")
 		}
 		rows, err := c.Match("tgt", "n", k) // integer, BINARY
@@ -200,7 +200,7 @@ func TestJoinMismatchIsFlaggedWithCount(t *testing.T) {
 	clean := &fakeNotes{}
 	c2 := sqlitedb.NewContext(t.Context(), d, &parse.Input{}, clean)
 	if err := src.Scan(t.Context(), func(r sqlitedb.Row) error {
-		k, _ := sqlitedb.KeyOf(r, 1)
+		k, _, _ := sqlitedb.KeyOf(r, 1)
 		rows, err := c2.Match("tgt", "a", k)
 		if err != nil || len(rows) != 1 {
 			t.Errorf("clean Match = %d rows, %v", len(rows), err)

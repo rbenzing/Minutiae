@@ -12,36 +12,48 @@ import (
 
 // KeyOf builds the join key of column col of r from the SOURCE column: the
 // value, the column's canonical collation (an unsupported one is kept as
-// written, so a join refuses it) and its affinity class. It is false for NULL,
-// an absent column, an unknown state and NaN.
-func KeyOf(r Row, col int) (parse.JoinKey, bool) {
-	if r.tbl == nil || col < 0 || col >= len(r.vals) {
-		return parse.JoinKey{}, false
+// written, so a join refuses it) and its affinity class.
+//
+// It is (zero, false, nil) only for a value the engine matches with nothing:
+// NULL and NaN (the engine reads a stored NaN as NULL). A value this layer
+// cannot decide (an absent or generated column, an omitted, unread, clipped,
+// lost or undecodable value, a kind it does not know) is an error wrapping
+// ErrKeyUndecidable: a mapper that skipped it would turn an unknown into a
+// silent non-match.
+func KeyOf(r Row, col int) (parse.JoinKey, bool, error) {
+	if r.tbl == nil || col < 0 || col >= len(r.vals) || col >= len(r.tbl.def.Columns) {
+		return parse.JoinKey{}, false, fmt.Errorf("%w: no such column %d", ErrKeyUndecidable, col)
 	}
+	st := r.State(col)
+	switch st {
+	case StateNull:
+		return parse.JoinKey{}, false, nil
+	case StatePresent, StateDefaulted:
+	default:
+		return parse.JoinKey{}, false, fmt.Errorf("%w: column %d is %s", ErrKeyUndecidable, col, st)
+	}
+	v := r.vals[col]
 	var k parse.JoinKey
-	switch v, ok := r.known(col); {
-	case !ok:
-		return parse.JoinKey{}, false
-	case v.Kind == sqlitefile.KindInt:
+	switch v.Kind {
+	case sqlitefile.KindNull:
+		return parse.JoinKey{}, false, nil
+	case sqlitefile.KindInt:
 		k = parse.JoinKey{Kind: parse.JoinInt, I: v.Int}
-	case v.Kind == sqlitefile.KindFloat:
+	case sqlitefile.KindFloat:
 		if math.IsNaN(v.Float) {
-			return parse.JoinKey{}, false
+			return parse.JoinKey{}, false, nil
 		}
 		k = parse.JoinKey{Kind: parse.JoinFloat, F: math.Float64bits(v.Float)}
-	case v.Kind == sqlitefile.KindText:
+	case sqlitefile.KindText:
 		s, ok := r.Text(col)
 		if !ok {
-			return parse.JoinKey{}, false
+			return parse.JoinKey{}, false, fmt.Errorf("%w: text of column %d is not available", ErrKeyUndecidable, col)
 		}
 		k = parse.JoinKey{Kind: parse.JoinText, S: string(s)}
-	case v.Kind == sqlitefile.KindBlob:
+	case sqlitefile.KindBlob:
 		k = parse.JoinKey{Kind: parse.JoinBlob, S: string(v.Bytes)}
 	default:
-		return parse.JoinKey{}, false
-	}
-	if col >= len(r.tbl.def.Columns) {
-		return parse.JoinKey{}, false
+		return parse.JoinKey{}, false, fmt.Errorf("%w: column %d holds a kind this layer does not know", ErrKeyUndecidable, col)
 	}
 	c := r.tbl.def.Columns[col]
 	k.Collation = sqlitefile.ColumnCollation(c)
@@ -49,7 +61,7 @@ func KeyOf(r Row, col int) (parse.JoinKey, bool) {
 		k.Collation = canon
 	}
 	k.Class = classOf(c.Affinity)
-	return k, true
+	return k, true, nil
 }
 
 func classOf(a sqlitefile.Affinity) parse.JoinClass {
@@ -74,7 +86,10 @@ func LiteralFloatKey(f float64) (parse.JoinKey, bool) {
 	return parse.JoinKey{Kind: parse.JoinFloat, F: math.Float64bits(f)}, true
 }
 
-// LiteralTextKey is the key of a text constant, the bytes as given.
+// LiteralTextKey is the key of a text constant, the bytes as given. A literal is
+// never flagged and no affinity is applied to it, so against an INTEGER or REAL
+// column it does not match "7" with 7 as the engine does for a constant
+// (documented gap, T8 M2).
 func LiteralTextKey(b []byte) parse.JoinKey { return parse.JoinKey{Kind: parse.JoinText, S: string(b)} }
 
 // LiteralBlobKey is the key of a blob constant.
@@ -107,7 +122,8 @@ type Index struct {
 	collation string // canonical
 	class     parse.JoinClass
 	m         map[[32]byte][]int64
-	unkeyed   int
+	unkeyed   int // target rows not in the index (NULL, NaN, undecided)
+	undecided int // of those, rows whose key is unknown: a miss cannot be proven
 	held      int64
 }
 
@@ -149,15 +165,22 @@ func (t *Table) Index(ctx context.Context, col string, limit int) (ix *Index, er
 	entries := 0
 	err = t.Scan(ctx, func(r Row) error {
 		rowid, _ := r.Rowid()
-		v, ok := r.known(ci)
-		if !ok {
+		switch r.State(ci) {
+		case StateNull:
+			ix.unkeyed++ // decided: the engine matches NULL with nothing
+			return nil
+		case StatePresent, StateDefaulted:
+		default:
 			ix.unkeyed++
+			ix.undecided++
 			return nil
 		}
+		v := r.vals[ci]
 		if v.Kind == sqlitefile.KindText && isUTF16(v.Enc) { // compare the decoded text in every collation
 			s, ok := r.Text(ci)
-			if !ok {
+			if !ok { // only text that decodes exactly is keyed: U+FFFD would join different values
 				ix.unkeyed++
+				ix.undecided++
 				return nil
 			}
 			v = sqlitefile.Value{Kind: sqlitefile.KindText, Bytes: s, Len: int64(len(s)), Enc: sqlitefile.EncUTF8}
@@ -168,6 +191,9 @@ func (t *Table) Index(ctx context.Context, col string, limit int) (ix *Index, er
 		}
 		if st != sqlitefile.KeyOK {
 			ix.unkeyed++
+			if st == sqlitefile.KeyUnknown {
+				ix.undecided++
+			}
 			return nil
 		}
 		if entries >= limit {
@@ -193,6 +219,11 @@ func (t *Table) Index(ctx context.Context, col string, limit int) (ix *Index, er
 // unknown state).
 func (ix *Index) Unkeyed() int { return ix.unkeyed }
 
+// Undecided is the number of target rows whose key is unknown (an unread,
+// omitted, clipped or undecodable value, or text the reader cannot fold). They
+// make every miss of Rowids an ErrKeyUndecidable.
+func (ix *Index) Undecided() int { return ix.undecided }
+
 // Release returns the index's memory to the budget and empties it. It is
 // idempotent.
 func (ix *Index) Release() {
@@ -209,10 +240,12 @@ func (ix *Index) Release() {
 // Rowids returns, in ascending order, the rowids whose indexed value equals
 // key under the target column's collation, and the flags of a lookup whose
 // source column's collation or affinity class differs from the target's. A
-// JoinNone key matches nothing; so does a key with no engine equality (NaN) or
-// a text the reader cannot fold under the target collation (invalid UTF-8 under
-// NOCASE or RTRIM). A source collation that is not supported is an
-// *UnsupportedCollationError. The slice is the caller's.
+// JoinNone key matches nothing, and so does a NaN (the engine reads it as NULL).
+// A probe the reader cannot compare (invalid UTF-8 under NOCASE or RTRIM, a
+// kind it does not know) is an error wrapping ErrKeyUndecidable, and so is a
+// lookup that finds no row while Undecided target rows exist: a miss is not a
+// proof of absence. A hit is returned normally. A source collation that is not
+// supported is an *UnsupportedCollationError. The slice is the caller's.
 func (ix *Index) Rowids(key parse.JoinKey) (rowids []int64, flags JoinFlags, err error) {
 	if key.Kind == parse.JoinNone {
 		return nil, 0, nil
@@ -243,14 +276,24 @@ func (ix *Index) Rowids(key parse.JoinKey) (rowids []int64, flags JoinFlags, err
 	case parse.JoinBlob:
 		v = sqlitefile.Value{Kind: sqlitefile.KindBlob, Bytes: []byte(key.S), Len: int64(len(key.S))}
 	default:
-		return nil, flags, nil
+		return nil, flags, fmt.Errorf("%w: unknown key kind %d", ErrKeyUndecidable, key.Kind)
 	}
 	k, st, kerr := sqlitefile.EqualityKey(v, ix.collation)
 	if kerr != nil {
 		return nil, 0, kerr
 	}
-	if st != sqlitefile.KeyOK {
+	switch st {
+	case sqlitefile.KeyOK:
+	case sqlitefile.KeyNever:
 		return nil, flags, nil
+	default:
+		return nil, flags, fmt.Errorf("%w: the probe cannot be compared under %s", ErrKeyUndecidable, ix.collation)
 	}
-	return slices.Clone(ix.m[k]), flags, nil
+	if ids := ix.m[k]; len(ids) > 0 {
+		return slices.Clone(ids), flags, nil
+	}
+	if ix.undecided > 0 {
+		return nil, flags, fmt.Errorf("%w: no row matches, but %d rows of %s.%s have keys that could not be decided", ErrKeyUndecidable, ix.undecided, ix.table, ix.column)
+	}
+	return nil, flags, nil
 }
