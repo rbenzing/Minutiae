@@ -34,6 +34,7 @@ const (
 	WarnHdrFractions            = "hdr-fractions"
 	WarnHdrEncodingInvalid      = "hdr-encoding-invalid"
 	WarnHdrVersionBytes         = "hdr-version-bytes"
+	WarnHdrSchemaFormat         = "hdr-schema-format"
 	WarnHdrCounterMismatch      = "hdr-counter-mismatch"
 	WarnPageCountClamped        = "page-count-clamped"
 	WarnPageUnavailable         = "page-unavailable"
@@ -84,7 +85,7 @@ const (
 // knownWarningCodes is the set the collector accepts (kept equal to the
 // constants above by TestWarningCodesPinned).
 var knownWarningCodes = map[string]bool{
-	WarnTruncatedFile: true, WarnHdrFractions: true, WarnHdrEncodingInvalid: true, WarnHdrVersionBytes: true,
+	WarnTruncatedFile: true, WarnHdrFractions: true, WarnHdrEncodingInvalid: true, WarnHdrVersionBytes: true, WarnHdrSchemaFormat: true,
 	WarnHdrCounterMismatch: true, WarnPageCountClamped: true, WarnPageUnavailable: true, WarnPageTypeInvalid: true,
 	WarnPageRange: true, WarnCellPointer: true, WarnCellOverflowChain: true, WarnCellTooLarge: true,
 	WarnRecordInvalid: true, WarnRecordReservedSerial: true, WarnRecordLengthMismatch: true, WarnBTreeCycle: true, WarnBTreeDepth: true, WarnBTreeOrder: true, WarnBTreeShape: true,

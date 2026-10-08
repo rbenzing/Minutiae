@@ -54,6 +54,9 @@ func (v *View) LookupRowid(ctx context.Context, root uint32, rowid int64) (row R
 		if n.empty {
 			w.damage("a page on the search path is empty, which the engine treats as corrupt")
 		}
+		if depth > engineMaxBTreeDepth {
+			w.damage("the search path is deeper than the engine follows, which it treats as corrupt")
+		}
 		if !n.h.Type.interior() {
 			return w.lookupLeaf(n, rowid, kb)
 		}

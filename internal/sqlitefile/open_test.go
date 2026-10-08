@@ -314,6 +314,11 @@ var toleratedHeaders = []toleratedHeader{
 			t.Errorf("WriteVersion = %d", i.WriteVersion)
 		}
 	}},
+	{"schema format 5", func(b *sqlitetest.Builder) { b.Patch(47, 5) }, sqlitefile.WarnHdrSchemaFormat, true, nil},
+	{"schema format 16", func(b *sqlitetest.Builder) { b.Patch(47, 16) }, sqlitefile.WarnHdrSchemaFormat, true, nil},
+	{"schema format 255", func(b *sqlitetest.Builder) { b.Patch(47, 255) }, sqlitefile.WarnHdrSchemaFormat, true, nil},
+	{"schema format 0", func(b *sqlitetest.Builder) { b.Patch(44, 0, 0, 0, 0) }, "", false, nil},
+	{"schema format 3", func(b *sqlitetest.Builder) { b.Patch(47, 3) }, "", false, nil},
 }
 
 func TestOpenToleratedHeaders(t *testing.T) {

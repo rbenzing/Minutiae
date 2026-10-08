@@ -17,7 +17,7 @@ import (
 // codes", a closed set). Adding a code means changing the reference and this
 // slice together.
 var goldenWarningCodes = []string{
-	"truncated-file", "hdr-fractions", "hdr-encoding-invalid", "hdr-version-bytes", "hdr-counter-mismatch",
+	"truncated-file", "hdr-fractions", "hdr-encoding-invalid", "hdr-version-bytes", "hdr-schema-format", "hdr-counter-mismatch",
 	"page-count-clamped", "page-unavailable", "page-type-invalid", "page-range", "cell-pointer", "cell-overflow-chain",
 	"cell-too-large", "record-invalid", "record-reserved-serial", "record-length-mismatch", "btree-cycle", "btree-depth", "btree-order", "btree-shape", "freelist-cycle",
 	"freelist-count", "freelist-leaf-count", "freeblock-chain", "ptrmap-mismatch", "schema-row-invalid",
@@ -79,8 +79,8 @@ func TestWarningCodesPinned(t *testing.T) {
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("exported Warn* constants differ from the Format reference\n got: %q\nwant: %q", got, want)
 	}
-	if len(want) != 49 {
-		t.Errorf("the golden slice has %d codes; the Format reference lists 49 (43 plus wal-frames-not-applied, wal-page1-mismatch and live-pages-unavailable, ruled in Tasks 7 and 8, pages-unattributed, ruled in Task 10 Q4, and record-length-mismatch, final review A F2, and wal-page-invalid, final review B FB-1)", len(want))
+	if len(want) != 50 {
+		t.Errorf("the golden slice has %d codes; the Format reference lists 50 (43 plus wal-frames-not-applied, wal-page1-mismatch and live-pages-unavailable, ruled in Tasks 7 and 8, pages-unattributed, ruled in Task 10 Q4, and record-length-mismatch, final review A F2, wal-page-invalid, final review B FB-1, and hdr-schema-format, final review A F5)", len(want))
 	}
 
 	// The collector accepts exactly this set, so a code any later test

@@ -707,8 +707,8 @@ func (p *cparser) primaryKeyList(st *tableParse) bool {
 	var names, colls []string
 	for {
 		t := p.next()
-		if !isName(t) || t.kind == tkString {
-			return p.failAt(t, notePK) // an expression in a key
+		if !isName(t) { // an expression in a key; a string literal names a column, as the engine reads it
+			return p.failAt(t, notePK)
 		}
 		names = append(names, t.text)
 		colls = append(colls, "")
@@ -810,8 +810,9 @@ func (p *cparser) finish(st *tableParse) (TableDef, bool) {
 	}
 	def := TableDef{Columns: cols, WithoutRowid: st.without, Strict: st.strict, RowidAlias: -1, ParseOK: true}
 	pkIdx := make([]int, 0, len(st.pkNames))
+	pkColl := make([]string, 0, len(st.pkNames)) // the collation of each entry of pkIdx
 	used := make([]bool, len(cols))
-	for _, nm := range st.pkNames {
+	for n, nm := range st.pkNames {
 		found := -1
 		for i := range cols {
 			if asciiEqualFold(cols[i].Name, nm) {
@@ -819,20 +820,35 @@ func (p *cparser) finish(st *tableParse) (TableDef, bool) {
 				break
 			}
 		}
-		if found < 0 || used[found] || cols[found].Generated != GenNone {
+		if found < 0 || cols[found].Generated != GenNone {
 			return def, p.fail(notePK)
+		}
+		coll := ""
+		if n < len(st.pkColl) {
+			coll = st.pkColl[n]
+		}
+		if used[found] {
+			// A column named twice is a key column twice (the engine keys the index
+			// by (a, a) under each collation). With one collation both keys are one
+			// key; with two they order and compare rows differently from either
+			// alone, so the identity of a row is not derived: the table stays unparsed.
+			for k, i := range pkIdx {
+				if i == found && !asciiEqualFold(pkColl[k], coll) {
+					return def, p.fail(notePK)
+				}
+			}
+			continue
 		}
 		used[found] = true
 		pkIdx = append(pkIdx, found)
+		pkColl = append(pkColl, coll)
 	}
 	if st.without && len(pkIdx) == 0 {
 		return def, p.fail(notePK)
 	}
 	for k, i := range pkIdx {
 		cols[i].PKOrdinal = k + 1
-		if k < len(st.pkColl) {
-			cols[i].KeyCollation = st.pkColl[k]
-		}
+		cols[i].KeyCollation = pkColl[k]
 	}
 	for i := range cols {
 		c := &cols[i]

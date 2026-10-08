@@ -407,7 +407,11 @@ func (b *layoutBuilder) chain(n node, c Cell, owner uint32) error {
 	usable := v.info.UsableSize
 	local, _ := LocalPayload(usable, n.h.Type, c.PayloadLen)
 	per := int64(usable - 4)
-	want := (c.PayloadLen - local + per - 1) / per
+	need := c.PayloadLen - local
+	want := need / per // not (need + per - 1) / per: that sum overflows near MaxInt64
+	if need%per != 0 {
+		want++
+	}
 	if capPages := v.e.overflowCap(usable); want > capPages {
 		v.warn(WarnCellOverflowChain, n.pgno, "the overflow chain of a cell needs %d pages; %d are followed", want, capPages)
 		want = capPages

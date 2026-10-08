@@ -26,6 +26,12 @@ type node struct {
 	charged int64 // budget held for ptrs until walker.release
 }
 
+// engineMaxBTreeDepth is the depth of a b-tree the engine can follow (its cursor
+// stack holds 20 pages; a deeper tree is corrupt for it, measured by
+// TestTreeDeeperThanTheEngineAllowsIsWarned). The library reads deeper trees up
+// to Limits.MaxBTreeDepth and warns.
+const engineMaxBTreeDepth = 20
+
 // ptrCost is what one followable cell pointer costs in the budget (the
 // CellPointer struct).
 const ptrCost = 24
@@ -154,6 +160,9 @@ func (w *walker) enter(pgno uint32, depth int) (n node, ok bool, err error) {
 	case depth > v.e.opts.Limits.MaxBTreeDepth:
 		w.skipPage(WarnBTreeDepth, pgno, "the tree is deeper than %d levels; this subtree is skipped", v.e.opts.Limits.MaxBTreeDepth)
 		return node{}, false, nil
+	}
+	if depth > engineMaxBTreeDepth {
+		v.warn(WarnBTreeDepth, pgno, "the tree is %d levels deep here; the engine allows %d and calls a deeper tree corrupt (it is read regardless, up to %d levels)", depth, engineMaxBTreeDepth, v.e.opts.Limits.MaxBTreeDepth)
 	}
 	if !w.vis.mark(pgno) {
 		if w.onStack(pgno) {

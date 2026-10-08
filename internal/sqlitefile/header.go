@@ -94,6 +94,12 @@ func parseHeader(buf []byte, size int64, w *warnings) (Info, error) {
 	if i.ReadVersion > 2 {
 		refuse(fmt.Sprintf("read version %d is above 2", i.ReadVersion))
 	}
+	if i.SchemaFormat > 4 {
+		// the engine answers "unsupported file format" to every read (measured by
+		// TestEngineRefusesToleratedHeaders); the pages are read regardless
+		add(WarnHdrSchemaFormat, 44, fmt.Sprintf("schema format %d is above 4", i.SchemaFormat))
+		refuse(fmt.Sprintf("schema format %d is above 4", i.SchemaFormat))
+	}
 
 	// Page count: the header's, when the file change counter vouches for it,
 	// else the file's.
