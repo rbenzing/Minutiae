@@ -3,4 +3,6 @@
 *.bin binary
 *.img binary
 *.gz binary
+internal/parsers/** -text
+internal/parsers/**/*.go text eol=lf
 internal/records/recordstest/testdata/** -text

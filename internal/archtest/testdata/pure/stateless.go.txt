@@ -1,0 +1,119 @@
+package fixture
+
+// Data for TestPurityStatelessSelfTest (rule P7: a parser is a stateless value). A type with
+// Meta, Probe and Parse methods is a parser; it must be a struct of basic-typed fields only and
+// declare its methods on the value. A line that must be flagged ends with the marker "want".
+
+import (
+	"context"
+	"sync"
+	"time"
+)
+
+// good: no fields, or basic fields, value receivers
+type plain struct{}
+
+func (plain) Meta() int                        { return 0 }
+func (plain) Probe(context.Context) error      { return nil }
+func (plain) Parse(context.Context) error      { return nil }
+
+type configured struct {
+	name  string
+	limit int
+	ratio float64
+	on    bool
+	b     byte
+	r     rune
+	a, c  uint16
+}
+
+func (c configured) Meta() int                   { return c.limit }
+func (configured) Probe(context.Context) error   { return nil }
+func (c configured) Parse(context.Context) error { return nil }
+
+// a method that is not part of the parser contract may have any receiver
+func (p *configured) helper() {}
+
+// bad: a pointer receiver on a parser method
+type ptrRecv struct{}
+
+func (ptrRecv) Meta() int                   { return 0 }
+func (p *ptrRecv) Probe(context.Context) error { return nil } // want
+func (ptrRecv) Parse(context.Context) error { return nil }
+
+// bad: fields that can hold state
+type withMap struct {
+	seen map[string]int // want
+}
+
+func (withMap) Meta() int                   { return 0 }
+func (withMap) Probe(context.Context) error { return nil }
+func (withMap) Parse(context.Context) error { return nil }
+
+type withSlice struct {
+	buf []byte // want
+}
+
+func (withSlice) Meta() int                   { return 0 }
+func (withSlice) Probe(context.Context) error { return nil }
+func (withSlice) Parse(context.Context) error { return nil }
+
+type withPointer struct {
+	n *int // want
+}
+
+func (withPointer) Meta() int                   { return 0 }
+func (withPointer) Probe(context.Context) error { return nil }
+func (withPointer) Parse(context.Context) error { return nil }
+
+type withNamed struct {
+	when time.Time // want
+}
+
+func (withNamed) Meta() int                   { return 0 }
+func (withNamed) Probe(context.Context) error { return nil }
+func (withNamed) Parse(context.Context) error { return nil }
+
+type withEmbedded struct {
+	sync.Mutex // want
+}
+
+func (*withEmbedded) Meta() int                { return 0 } // want
+func (withEmbedded) Probe(context.Context) error { return nil }
+func (withEmbedded) Parse(context.Context) error { return nil }
+
+type withArray struct {
+	a [4]int // want
+}
+
+func (withArray) Meta() int                   { return 0 }
+func (withArray) Probe(context.Context) error { return nil }
+func (withArray) Parse(context.Context) error { return nil }
+
+type withFunc struct {
+	f func() // want
+}
+
+func (withFunc) Meta() int                   { return 0 }
+func (withFunc) Probe(context.Context) error { return nil }
+func (withFunc) Parse(context.Context) error { return nil }
+
+// bad: not a struct at all
+type counter int // want
+
+func (counter) Meta() int                   { return 0 }
+func (counter) Probe(context.Context) error { return nil }
+func (counter) Parse(context.Context) error { return nil }
+
+// not a parser (a method is missing): its fields are not this rule's business
+type helperOnly struct {
+	cache map[string]int
+}
+
+func (helperOnly) Meta() int                   { return 0 }
+func (helperOnly) Probe(context.Context) error { return nil }
+
+// bad: redeclaring a predeclared type name would turn a "basic" field into anything
+type string map[int]int // want
+
+type int = []byte // want

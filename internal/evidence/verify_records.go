@@ -90,6 +90,7 @@ type recordAudit struct {
 	dupStart   map[string]bool
 	ends       map[string][]auditedConclusion
 	recovers   map[string][]auditedRecover
+	warns      map[string]*IngestWarningTally // the records writer's analysis.warning entries, per ingest
 }
 
 // readRecordAudit decodes the records.* entries; entries that cannot be decoded
@@ -99,7 +100,7 @@ func readRecordAudit(entries []AuditEntry, ps *problemSet) *recordAudit {
 		starts: map[string]IngestStart{}, byKey: map[batchKey]int{}, batchErr: map[batchKey]bool{},
 		recovered: map[batchKey]bool{}, parsers: map[[3]string]bool{},
 		startSeq: map[string]int64{}, dupStart: map[string]bool{},
-		ends: map[string][]auditedConclusion{}, recovers: map[string][]auditedRecover{},
+		ends: map[string][]auditedConclusion{}, recovers: map[string][]auditedRecover{}, warns: map[string]*IngestWarningTally{},
 	}
 	for _, e := range entries {
 		switch e.Action {
@@ -124,6 +125,13 @@ func readRecordAudit(entries []AuditEntry, ps *problemSet) *recordAudit {
 				continue
 			}
 			a.ends[cn.IngestID] = append(a.ends[cn.IngestID], auditedConclusion{Seq: e.Seq, Action: e.Action, Time: e.Time, IngestConclusion: cn})
+		case ActionAnalysisWarning:
+			if id := writerWarningIngest(e.Details); id != "" {
+				if a.warns[id] == nil {
+					a.warns[id] = &IngestWarningTally{}
+				}
+				a.warns[id].add(e.Details)
+			}
 		case ActionBatch:
 			b, err := DecodeDetails[BatchCommit](e.Details)
 			if err != nil {

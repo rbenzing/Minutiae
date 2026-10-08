@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/rbenzing/minutiae/internal/artparse"
 	"github.com/rbenzing/minutiae/internal/device"
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/filesys"
@@ -89,6 +90,7 @@ func ExitCode(err error) int {
 		return ExitUsage
 	case errors.Is(err, evidence.ErrNeedsUpgrade), errors.Is(err, records.ErrBadCursor),
 		errors.Is(err, records.ErrInvalidFilter), errors.Is(err, records.ErrInvalidPage),
+		errors.Is(err, artparse.ErrSelection), errors.Is(err, artparse.ErrNotParserInput),
 		errors.Is(err, records.ErrInvalidQuery), errors.Is(err, records.ErrIndexNotCurrent):
 		return ExitUsage
 	case errors.Is(err, evidence.ErrIntegrity):

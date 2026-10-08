@@ -28,7 +28,7 @@ func searchDataset(t *testing.T) string {
 	c := recordstest.NewCase(t)
 	art := recordstest.AddArtifact(t, c, "a.db", make([]byte, recordstest.ArtifactSize))
 	mk := func(typ, summary, body string) records.Record {
-		return records.Record{Type: typ, ArtifactID: art.ID, Summary: summary, Body: body, Payload: map[string]any{}}
+		return records.Record{Type: typ, ArtifactID: art.ID, Summary: summary, Body: body, Payload: recordstest.ValidPayload(typ)}
 	}
 	recordstest.Ingest(t, c, recParser, []string{art.ID}, []records.Record{
 		mk("message", "alpha report", "the quick brown fox"),
@@ -207,7 +207,7 @@ func TestRecordsSearchRank(t *testing.T) {
 	c := recordstest.NewCase(t)
 	art := recordstest.AddArtifact(t, c, "a.db", make([]byte, recordstest.ArtifactSize))
 	mk := func(summary, body string) records.Record {
-		return records.Record{Type: "note", ArtifactID: art.ID, Summary: summary, Body: body, Payload: map[string]any{}}
+		return records.Record{Type: "note", ArtifactID: art.ID, Summary: summary, Body: body, Payload: recordstest.ValidPayload("note")}
 	}
 	recordstest.Ingest(t, c, recParser, []string{art.ID}, []records.Record{
 		mk("one", "needle among many many other words that dilute the match here"),
@@ -301,9 +301,9 @@ func TestRecordsSearchCLIEscapesSnippets(t *testing.T) {
 		{
 			Type: "message", ArtifactID: art.ID, Summary: "zebra " + evil + " " + forged,
 			Body:    "zebra " + evil + " " + forged + " zebra\nnew line\u202e \x1b]0;title\x07 \u200b",
-			Payload: map[string]any{},
+			Payload: recordstest.ValidPayload("message"),
 		},
-		{Type: "message", ArtifactID: art.ID, Summary: "zebra plain", Payload: map[string]any{}},
+		{Type: "message", ArtifactID: art.ID, Summary: "zebra plain", Payload: recordstest.ValidPayload("message")},
 	})
 	_ = res
 	dir := c.Dir

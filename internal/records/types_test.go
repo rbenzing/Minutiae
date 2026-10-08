@@ -85,3 +85,58 @@ func TestRegisterTypeRules(t *testing.T) {
 		t.Errorf("payload_v = %d, want the registered 3", p.Row().PayloadV)
 	}
 }
+
+func TestTypesListsCoreSortedWithValidatorFlag(t *testing.T) {
+	core := []string{
+		"message", "call", "contact", "calendar_event", "location", "web_visit",
+		"web_search", "download", "file", "account", "app_event", "media", "note",
+		"wifi_network", "event",
+	}
+	if err := records.RegisterType(records.Type{Name: "zz_types_plain", PayloadVersion: 3}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { records.UnregisterType("zz_types_plain") })
+	if err := records.RegisterType(records.Type{Name: "zz_types_strict", PayloadVersion: 2, Validate: func(map[string]any) error { return nil }}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { records.UnregisterType("zz_types_strict") })
+	if err := records.RegisterType(records.Type{Name: "zz_types_set", PayloadVersion: 5}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { records.UnregisterType("zz_types_set") })
+	records.SetValidator("zz_types_set", func(map[string]any) error { return nil })
+
+	got := records.Types()
+	byName := map[string]records.TypeInfo{}
+	for i, ti := range got {
+		byName[ti.Name] = ti
+		if i > 0 && got[i-1].Name >= ti.Name {
+			t.Errorf("Types is not sorted by name: %q before %q", got[i-1].Name, ti.Name)
+		}
+	}
+	for _, n := range core {
+		ti, ok := byName[n]
+		if !ok {
+			t.Errorf("core type %q is missing from Types", n)
+			continue
+		}
+		if ti.PayloadVersion < 1 || ti.HasValidator {
+			t.Errorf("core type %q = %+v: want PayloadVersion >= 1 and HasValidator false", n, ti)
+		}
+	}
+	for name, want := range map[string]records.TypeInfo{
+		"zz_types_plain":  {Name: "zz_types_plain", PayloadVersion: 3, HasValidator: false},
+		"zz_types_strict": {Name: "zz_types_strict", PayloadVersion: 2, HasValidator: true},
+		"zz_types_set":    {Name: "zz_types_set", PayloadVersion: 5, HasValidator: true},
+	} {
+		if byName[name] != want {
+			t.Errorf("Types()[%s] = %+v, want %+v", name, byName[name], want)
+		}
+	}
+	// the list is a snapshot: changing it changes nothing in the registry
+	want := got[0]
+	got[0].HasValidator = !got[0].HasValidator
+	if again := records.Types(); again[0] != want {
+		t.Errorf("Types()[0] = %+v after the caller changed its copy, want %+v", again[0], want)
+	}
+}

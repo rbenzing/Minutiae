@@ -805,3 +805,11 @@ func SetManifestPath(t testing.TB, caseDir, artifactID, path string) {
 	recs[i].Path = path
 	writeManifestLines(t, caseDir, recs)
 }
+
+// AppendManifestLine appends rec to manifest.jsonl as one more line and leaves
+// every other file alone: with a copy of an existing record it plants a
+// duplicate artifact id, with a new id and an existing path a duplicate path.
+func AppendManifestLine(t testing.TB, caseDir string, rec evidence.ManifestRecord) {
+	t.Helper()
+	writeManifestLines(t, caseDir, append(readManifestLines(t, caseDir), rec))
+}
