@@ -15,6 +15,14 @@ import (
 // (migrations[:1]). It returns the case directory, closed and unlocked.
 func makeV1Case(t *testing.T) string {
 	t.Helper()
+	return makeCaseAt(t, 1)
+}
+
+// makeCaseAt builds a closed case directory whose artifacts.db is at schema version v (1 to
+// CurrentSchema) and whose audit log says so (case.create carries schema_version from v2 on, as
+// the build of that schema wrote it).
+func makeCaseAt(t *testing.T, v int) string {
+	t.Helper()
 	dir := filepath.Join(t.TempDir(), "V1CASE")
 	if err := os.MkdirAll(filepath.Join(dir, artifactsDir), 0o750); err != nil {
 		t.Fatal(err)
@@ -27,7 +35,11 @@ func makeV1Case(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := audit.Append("case.create", "", map[string]any{"id": meta.ID, "examiner": meta.Examiner, "description": ""}); err != nil {
+	details := map[string]any{"id": meta.ID, "examiner": meta.Examiner, "description": ""}
+	if v >= 2 {
+		details["schema_version"] = v
+	}
+	if _, err := audit.Append("case.create", "", details); err != nil {
 		t.Fatal(err)
 	}
 	if err := audit.Close(); err != nil {
@@ -37,7 +49,7 @@ func makeV1Case(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.migrateTo(1); err != nil {
+	if err := s.migrateTo(v); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Close(); err != nil {
@@ -161,14 +173,14 @@ func TestRequireSchemaRefusesV1(t *testing.T) {
 	}
 }
 
-func TestUpgradeIsAudited(t *testing.T) {
+func TestUpgradeV1ToV3IsAudited(t *testing.T) {
 	c := openV1Case(t)
 	rec := captureSmall(t, c)
 	res, err := c.Upgrade()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res != (UpgradeResult{From: 1, To: 2, Upgraded: true}) {
+	if res != (UpgradeResult{From: 1, To: 3, Upgraded: true}) {
 		t.Fatalf("result = %+v", res)
 	}
 	es := auditEntries(t, c)
@@ -192,14 +204,14 @@ func TestUpgradeIsAudited(t *testing.T) {
 		t.Fatalf("done is not directly after the upgrade entry: seq %d, %d", up[0].Seq, up[1].Seq)
 	}
 	for _, e := range up {
-		if got := detailInts(t, e, "from", "to"); got[0] != 1 || got[1] != 2 {
+		if got := detailInts(t, e, "from", "to"); got[0] != 1 || got[1] != 3 {
 			t.Fatalf("%s from/to = %v", e.Action, got)
 		}
 	}
 	if resumed, _ := up[1].Details["resumed"].(bool); resumed {
 		t.Fatal("a normal completion is marked resumed")
 	}
-	if v := mustVersion(t, c); v != 2 {
+	if v := mustVersion(t, c); v != 3 {
 		t.Fatalf("version = %d", v)
 	}
 	h, err := c.store.ArtifactHashes()
@@ -255,7 +267,7 @@ func TestUpgradeBlockedIsAuditedAndLeavesDBUntouched(t *testing.T) {
 	if msg, _ := last.Details["error"].(string); !strings.Contains(msg, "records table holds 1 row") {
 		t.Fatalf("error detail = %v", last.Details)
 	}
-	if got := detailInts(t, last, "from", "to"); got[0] != 1 || got[1] != 2 {
+	if got := detailInts(t, last, "from", "to"); got[0] != 1 || got[1] != 3 {
 		t.Fatalf("from/to = %v", got)
 	}
 	if after := fileSHA(t, dbPath); after != before {
@@ -276,7 +288,7 @@ func TestUpgradeNoopWhenCurrent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res != (UpgradeResult{From: 2, To: 2}) || res.Resumed {
+	if res != (UpgradeResult{From: 3, To: 3}) || res.Resumed {
 		t.Fatalf("result = %+v", res)
 	}
 	if after := len(auditEntries(t, c)); after != before {
@@ -288,10 +300,10 @@ func TestUpgradeResumesUnauditedCompletion(t *testing.T) {
 	c := openV1Case(t)
 	// The upgrade was announced and the migration committed, but the process
 	// died before case.upgrade.done reached the log.
-	if _, err := c.Audit.Append(ActionCaseUpgrade, "", upgradeDetails(1, 2)); err != nil {
+	if _, err := c.Audit.Append(ActionCaseUpgrade, "", upgradeDetails(1, 3)); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.store.migrateTo(2); err != nil {
+	if err := c.store.migrateTo(3); err != nil {
 		t.Fatal(err)
 	}
 	if r := mustVerify(t, c); !r.OK() || len(r.Notices) != 1 {
@@ -301,7 +313,7 @@ func TestUpgradeResumesUnauditedCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Upgraded || !res.Resumed || res.From != 2 || res.To != 2 {
+	if res.Upgraded || !res.Resumed || res.From != 3 || res.To != 3 || res.ResumedFrom != 1 || res.ResumedTo != 3 {
 		t.Fatalf("result = %+v", res)
 	}
 	es := auditEntries(t, c)
@@ -312,7 +324,7 @@ func TestUpgradeResumesUnauditedCompletion(t *testing.T) {
 	if resumed, _ := done.Details["resumed"].(bool); !resumed {
 		t.Fatalf("done details = %v, want resumed=true", done.Details)
 	}
-	if got := detailInts(t, done, "from", "to"); got[0] != 1 || got[1] != 2 {
+	if got := detailInts(t, done, "from", "to"); got[0] != 1 || got[1] != 3 {
 		t.Fatalf("from/to = %v", got)
 	}
 	if r := mustVerify(t, c); !r.OK() || len(r.Notices) != 0 {
@@ -505,4 +517,70 @@ func TestUpgradeAuditReadErrorClassification(t *testing.T) {
 			t.Fatalf("err = %v, want ErrIntegrity", err)
 		}
 	})
+}
+
+// TestUpgradeFailureMidChainAppliesNothingAndIsAudited: a v1 case in which records_fts_sub is
+// taken. The v1 -> v3 chain gets through every v2 statement and the creation of records_fts, then
+// fails on records_fts_sub, in the middle of the v3 step. Nothing of the chain survives (the file
+// is byte-identical, still v1), the audit log holds exactly case.upgrade{1,3} and
+// case.upgrade.error{1,3} naming the statement that failed, no upgrade is left dangling, and once
+// the obstacle is removed the same Upgrade goes through.
+func TestUpgradeFailureMidChainAppliesNothingAndIsAudited(t *testing.T) {
+	c := openV1Case(t)
+	if _, err := c.store.db.Exec(`CREATE TABLE records_fts_sub (planted TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(c.Dir, dbFile)
+	before := fileSHA(t, dbPath)
+	n := len(auditEntries(t, c))
+
+	res, err := c.Upgrade()
+	if err == nil {
+		t.Fatal("Upgrade succeeded although records_fts_sub is taken")
+	}
+	if res.Upgraded || res.From != 1 || res.To != 1 {
+		t.Fatalf("result = %+v, want nothing upgraded from v1", res)
+	}
+	if v := mustVersion(t, c); v != 1 {
+		t.Fatalf("version after the failed chain = %d, want 1", v)
+	}
+	if after := fileSHA(t, dbPath); after != before {
+		t.Fatal("a failed upgrade changed artifacts.db")
+	}
+	for _, name := range []string{"parsers", "record_batches", "records_meta", "records_fts", "records_fts_v", "records_fts_sub_v"} {
+		var cnt int
+		if err := c.store.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name = ?`, name).Scan(&cnt); err != nil || cnt != 0 {
+			t.Errorf("%s exists after the failed chain (n=%d, %v)", name, cnt, err)
+		}
+	}
+
+	es := auditEntries(t, c)[n:]
+	if len(es) != 2 || es[0].Action != ActionCaseUpgrade || es[1].Action != ActionCaseUpgradeError {
+		t.Fatalf("audit after the failed upgrade = %+v", es)
+	}
+	for _, e := range es {
+		if got := detailInts(t, e, "from", "to"); got[0] != 1 || got[1] != 3 {
+			t.Errorf("%s from/to = %v, want 1, 3", e.Action, got)
+		}
+	}
+	if msg, _ := es[1].Details["error"].(string); !strings.Contains(msg, "records_fts_sub") {
+		t.Errorf("the error entry %q does not name the table that was in the way", msg)
+	}
+	if sa := auditedSchema(auditEntries(t, c)); sa.Version != 1 || sa.Dangling != nil || len(sa.Problems) != 0 {
+		t.Fatalf("audited schema after the failed upgrade = %+v, want v1 with nothing dangling", sa)
+	}
+
+	if _, err := c.store.db.Exec(`DROP TABLE records_fts_sub`); err != nil {
+		t.Fatal(err)
+	}
+	if r := mustVerify(t, c); !r.OK() || len(r.Notices) != 0 {
+		t.Fatalf("verify after the failed upgrade and the removal of the obstacle = %+v", r)
+	}
+	res, err = c.Upgrade()
+	if err != nil || res != (UpgradeResult{From: 1, To: 3, Upgraded: true}) {
+		t.Fatalf("retry = %+v, %v", res, err)
+	}
+	if r := mustVerify(t, c); !r.OK() || len(r.Notices) != 0 {
+		t.Fatalf("verify after the retry = %+v", r)
+	}
 }

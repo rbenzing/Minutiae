@@ -1,6 +1,10 @@
 package records
 
-import "github.com/rbenzing/minutiae/internal/evidence"
+import (
+	"context"
+
+	"github.com/rbenzing/minutiae/internal/evidence"
+)
 
 // Test exports of the unexported write-time validation.
 
@@ -63,3 +67,30 @@ func (w *Writer) Counts() (warnings, suppressed, rejected int) {
 	defer w.mu.Unlock()
 	return w.warnings, w.warnSupp, w.rejected
 }
+
+// Canonical exposes the cursor-fingerprint form of a compiled query.
+func (q *TextQuery) Canonical() string { return q.canonical() }
+
+// Fingerprint exposes the listing fingerprint of f for the case caseID.
+func Fingerprint(f Filter, caseID string, desc bool) string { return f.fingerprint(caseID, desc) }
+
+// SetBeforeQuery installs the seam called right before a full-text MATCH statement runs.
+func (r *Reader) SetBeforeQuery(f func()) { r.beforeQuery = f }
+
+// SnippetScanBytes is the most bytes of a text a snippet is built from.
+const SnippetScanBytes = snippetScanBytes
+
+// RankSQL returns the statement Search runs for a rank-order query.
+func RankSQL(f Filter) string {
+	q, err := buildRank(f, false)
+	if err != nil {
+		return "error: " + err.Error()
+	}
+	return q.sql
+}
+
+// SetAfterStart installs the seam called after a statement has started and before its rows are read.
+func (r *Reader) SetAfterStart(f func()) { r.afterStart = f }
+
+// MapTimeout exposes the deadline mapping of the Reader.
+func MapTimeout(ctx context.Context, err error) error { return mapTimeout(ctx, err) }

@@ -25,6 +25,9 @@ var statKeys = map[string]struct {
 // artifact (id), deleted ("live", "deleted" or "recovered") or run (ingest id),
 // with each group's earliest and latest ts. Groups come in key order.
 func (r *Reader) Stats(ctx context.Context, f Filter, by string) ([]StatRow, error) {
+	if err := refuseRank(f); err != nil {
+		return nil, err
+	}
 	key, ok := statKeys[by]
 	if !ok {
 		return nil, invalidFilter("cannot group by %q (type, parser, artifact, deleted or run)", by)
@@ -33,7 +36,7 @@ func (r *Reader) Stats(ctx context.Context, f Filter, by string) ([]StatRow, err
 		return nil, err
 	}
 	var out []StatRow
-	err := r.c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {
+	err := r.readTx(ctx, f.Text != nil, func(h evidence.ReadHandle) error {
 		have, err := hasSuperseded(ctx, h)
 		if err != nil {
 			return err
@@ -44,11 +47,17 @@ func (r *Reader) Stats(ctx context.Context, f Filter, by string) ([]StatRow, err
 		}
 		q := "SELECT " + key.expr + " AS k, count(*), min(r.ts), max(r.ts)" + w.fromSQL(key.parser, key.batch) +
 			w.whereSQL() + " GROUP BY k ORDER BY k"
+		if f.Text != nil {
+			if err := r.matching(ctx); err != nil {
+				return err
+			}
+		}
 		rows, err := h.QueryContext(ctx, q, w.args...)
 		if err != nil {
 			return fmt.Errorf("records: stats by %s: %w", by, err)
 		}
 		defer func() { _ = rows.Close() }()
+		r.started()
 		for rows.Next() {
 			var s StatRow
 			var k sql.NullString
@@ -75,11 +84,14 @@ func (r *Reader) Stats(ctx context.Context, f Filter, by string) ([]StatRow, err
 // records of superseded runs among those f selects ignoring supersession, so
 // with the default filter it is the number of records the default listing hides.
 func (r *Reader) Overview(ctx context.Context, f Filter) (Overview, error) {
+	if err := refuseRank(f); err != nil {
+		return Overview{}, err
+	}
 	if _, err := f.compile(false); err != nil {
 		return Overview{}, err
 	}
 	ov := Overview{Runs: map[string]int64{}}
-	err := r.c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {
+	err := r.readTx(ctx, f.Text != nil, func(h evidence.ReadHandle) error {
 		have, err := hasSuperseded(ctx, h)
 		if err != nil {
 			return err
@@ -91,6 +103,11 @@ func (r *Reader) Overview(ctx context.Context, f Filter) (Overview, error) {
 		var lo, hi sql.NullInt64
 		q := "SELECT count(*), COALESCE(sum(r.deleted), 0), COALESCE(sum(r.recovered), 0), COALESCE(sum(r.ts IS NULL), 0), min(r.ts), max(r.ts)" +
 			w.fromSQL(false, false) + w.whereSQL()
+		if f.Text != nil {
+			if err := r.matching(ctx); err != nil {
+				return err
+			}
+		}
 		if err := h.QueryRowContext(ctx, q, w.args...).Scan(&ov.Records, &ov.Deleted, &ov.Recovered, &ov.Untimed, &lo, &hi); err != nil {
 			return fmt.Errorf("records: overview: %w", err)
 		}

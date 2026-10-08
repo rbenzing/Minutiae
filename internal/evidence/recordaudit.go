@@ -17,7 +17,37 @@ const (
 	ActionIngestError     = "records.ingest.error"   // IngestConclusion, outcome incomplete, with error
 	ActionIngestRecover   = "records.ingest.recover" // IngestRecover
 	ActionAnalysisWarning = "analysis.warning"       // analysis_id, path, reason (the shape examine uses); the records writer adds ingest_id and, for a rejection and for the end-of-ingest suppression note, rejected / suppression (with the suppressed counts)
+	ActionReindex         = "records.reindex"        // ReindexStart, before the index is touched
+	ActionReindexDone     = "records.reindex.done"   // ReindexDone, after the index state was set to current
+	ActionReindexError    = "records.reindex.error"  // ReindexFailure
 )
+
+// ReindexStart is the details of records.reindex: a rebuild of the full-text indexes announced (and
+// fsynced) before any index row or the index state is changed.
+type ReindexStart struct {
+	ReindexID       string   `json:"reindex_id"`
+	FromNormVersion string   `json:"from_norm_version"` // what records_meta held when the reindex began ("" when unbuilt or missing)
+	NormVersion     string   `json:"norm_version"`      // what the index will be built with (FTSNormVersion)
+	Records         int64    `json:"records"`           // rows of the records table
+	Tables          []string `json:"tables"`            // the full-text tables that are dropped and rebuilt
+}
+
+// ReindexDone is the details of records.reindex.done: the rebuilt index is complete and its state is
+// current. Docs is the number of documents each full-text table holds (its _docsize rows).
+type ReindexDone struct {
+	ReindexID      string           `json:"reindex_id"`
+	NormVersion    string           `json:"norm_version"`
+	RecordsIndexed int64            `json:"records_indexed"`
+	Docs           map[string]int64 `json:"docs"`
+}
+
+// ReindexFailure is the details of records.reindex.error: a reindex that stopped. When any index row
+// was dropped the index state stays "building" (nothing searches or writes it) until a reindex ends.
+type ReindexFailure struct {
+	ReindexID      string `json:"reindex_id"`
+	Error          string `json:"error"`
+	RecordsIndexed int64  `json:"records_indexed"`
+}
 
 // IngestStart is the details of records.ingest.start: an ingest announces the
 // parser (name, version, hash) and the artifacts it will cover before any of its
@@ -31,6 +61,7 @@ type IngestStart struct {
 	Artifacts     []string `json:"artifacts"` // sorted, de-duplicated, required
 	BatchRows     int      `json:"batch_rows"`
 	Reingest      bool     `json:"reingest"`
+	NormVersion   string   `json:"norm_version"` // the full-text index version the ingest indexes with (FTSNormVersion)
 }
 
 // BatchCommit is the details of records.batch: a batch announced (and fsynced)
@@ -252,3 +283,12 @@ func writerWarningIngest(d map[string]any) string {
 	s, _ := d[WarnKeyIngest].(string)
 	return s
 }
+
+// Details returns the audit details of the entry.
+func (x ReindexStart) Details() map[string]any { return detailsOf(x) }
+
+// Details returns the audit details of the entry.
+func (x ReindexDone) Details() map[string]any { return detailsOf(x) }
+
+// Details returns the audit details of the entry.
+func (x ReindexFailure) Details() map[string]any { return detailsOf(x) }

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/rbenzing/minutiae/internal/records"
 )
 
 func writeJSON(w io.Writer, v any) error {
@@ -49,6 +51,42 @@ func escapeKeeping(s string, keepNewline bool) string {
 			fmt.Fprintf(&b, `\U%08x`, r)
 		}
 		i += n
+	}
+	return b.String()
+}
+
+// The highlight markers of a snippet. Text that holds them is escaped, so a marker on the terminal
+// always comes from a real match.
+const (
+	markOpen  = "\u27e6"
+	markClose = "\u27e7"
+)
+
+// escapeMarkers escapes the highlight markers of text.
+func escapeMarkers(s string) string {
+	s = strings.ReplaceAll(s, markOpen, `\u27e6`)
+	return strings.ReplaceAll(s, markClose, `\u27e7`)
+}
+
+// escapeSnippet renders a snippet as one safe line: every span goes through escapeText (and its
+// markers through escapeMarkers), matches are wrapped in U+27E6 and U+27E7, and "..." marks a cut end.
+func escapeSnippet(sn *records.Snippet) string {
+	if sn == nil {
+		return ""
+	}
+	var b strings.Builder
+	if sn.LeadingCut {
+		b.WriteString("...")
+	}
+	for _, sp := range sn.Spans {
+		t := escapeMarkers(escapeText(sp.Text))
+		if sp.Match {
+			t = markOpen + t + markClose
+		}
+		b.WriteString(t)
+	}
+	if sn.TrailingCut {
+		b.WriteString("...")
 	}
 	return b.String()
 }

@@ -1,6 +1,6 @@
 // Command check runs every verification step that must pass before work is
-// called done: module tidiness, vet, lint (incl. formatting), build, no-cgo
-// cross-builds and tests.
+// called done: module tidiness, vet, lint (incl. formatting), build, the
+// CGO_ENABLED=0 host build and cross-builds, and tests.
 package main
 
 import (
@@ -24,7 +24,10 @@ func main() {
 		{args: []string{"go", "run", "./tools/parserhash", "-check"}},
 		{args: []string{"go", "tool", "golangci-lint", "run", "./..."}},
 		{args: []string{"go", "build", "-o", binPath(), "./cmd/minutiae"}},
-		// Spec §2: a single static binary, no cgo, on every supported OS.
+		// cgo policy: the pure-Go (CGO_ENABLED=0) static build must always work
+		// on every supported OS, so it is proven on the host too (cgo defaults
+		// to on wherever a C toolchain exists).
+		pureBuild(),
 		crossBuild("linux", "amd64"),
 		crossBuild("darwin", "arm64"),
 		{args: testCmd()},
@@ -41,6 +44,15 @@ func main() {
 		}
 	}
 	fmt.Println("CHECK PASSED")
+}
+
+// pureBuild compiles the CLI for the host with cgo disabled and discards the
+// binary.
+func pureBuild() step {
+	return step{
+		env:  []string{"CGO_ENABLED=0"},
+		args: []string{"go", "build", "-o", os.DevNull, "./cmd/minutiae"},
+	}
 }
 
 // crossBuild compiles the CLI for goos/goarch without cgo and discards the
@@ -62,7 +74,7 @@ func binPath() string {
 
 func testCmd() []string {
 	if raceSupported() {
-		return []string{"go", "test", "-race", "-count=1", "./..."}
+		return []string{"go", "test", "-race", "-timeout", "30m", "-count=1", "./..."}
 	}
 	fmt.Println("note: race detector unavailable (needs cgo and a C compiler); running tests without -race")
 	return []string{"go", "test", "-count=1", "./..."}

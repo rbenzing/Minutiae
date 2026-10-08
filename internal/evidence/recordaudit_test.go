@@ -35,6 +35,7 @@ func auditSamples() []auditSample {
 	start := IngestStart{
 		IngestID: "ing-1", Parser: "sms", ParserVersion: "1.2.0", ParserHash: "abc123",
 		AnalysisID: "an-1", Artifacts: []string{"a-1", "a-2"}, BatchRows: 5000, Reingest: true,
+		NormVersion: "fts3/unicode-15.0.0/sqlite-3.45.0",
 	}
 	batch := BatchCommit{
 		IngestID: "ing-1", BatchNo: 2, FirstID: 5001, Count: 5000, Digest: strings.Repeat("cd", 32), Created: "2026-10-04T10:00:00.123456789Z",
@@ -55,7 +56,7 @@ func auditSamples() []auditSample {
 		{
 			"IngestStart", start, start.Details(),
 			func(d map[string]any) (any, error) { return DecodeDetails[IngestStart](d) },
-			[]string{"analysis_id", "artifacts", "batch_rows", "ingest_id", "parser", "parser_hash", "parser_version", "reingest"},
+			[]string{"analysis_id", "artifacts", "batch_rows", "ingest_id", "norm_version", "parser", "parser_hash", "parser_version", "reingest"},
 		},
 		{
 			"BatchCommit", batch, batch.Details(),

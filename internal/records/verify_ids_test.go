@@ -26,7 +26,7 @@ func TestVerifyFlagsRecordsWithNonPositiveIDs(t *testing.T) {
 			if id <= 0 {
 				want = append(want, "id is not positive")
 			}
-			expectProblems(t, rep, want, "next_id")
+			expectProblems(t, rep, want, "next_id", "records_fts") // the forged row is not in the index either
 			if !strings.Contains(strings.Join(rep.Problems, "\n"), "record "+strconv.FormatInt(id, 10)+" ") &&
 				!strings.Contains(strings.Join(rep.Problems, "\n"), "record "+strconv.FormatInt(id, 10)+":") {
 				t.Errorf("no problem names record %d: %q", id, rep.Problems)

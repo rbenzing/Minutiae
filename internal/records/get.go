@@ -55,7 +55,7 @@ func (r *Reader) Get(ctx context.Context, id int64) (Full, error) {
 		return nil
 	})
 	if err != nil {
-		return Full{}, err
+		return Full{}, r.integrity(err)
 	}
 	art, err := r.artifactByID(full.ArtifactID)
 	if err != nil {

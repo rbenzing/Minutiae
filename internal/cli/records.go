@@ -20,7 +20,7 @@ import (
 
 func newRecordsCmd(d Deps, opts *rootOptions) *cobra.Command {
 	cmd := newGroupCmd("records", "List, show and summarise the records parsers stored in a case database")
-	cmd.AddCommand(newRecordsListCmd(d, opts), newRecordsShowCmd(d, opts), newRecordsStatsCmd(d, opts))
+	cmd.AddCommand(newRecordsListCmd(d, opts), newRecordsShowCmd(d, opts), newRecordsStatsCmd(d, opts), newRecordsSearchCmd(d, opts), newRecordsReindexCmd(d, opts))
 	return cmd
 }
 
@@ -626,6 +626,14 @@ type overviewJSON struct {
 	Runs              map[string]int64 `json:"runs"`
 }
 
+type indexJSON struct {
+	State         string `json:"state"`
+	Value         string `json:"value"`
+	Current       string `json:"current"`
+	WordDocs      int64  `json:"word_docs"`
+	SubstringDocs int64  `json:"substring_docs"`
+}
+
 type statRowJSON struct {
 	Key        string  `json:"key"`
 	Count      int64   `json:"count"`
@@ -678,9 +686,14 @@ func newRecordsStatsCmd(d Deps, opts *rootOptions) *cobra.Command {
 		if err != nil {
 			return err
 		}
+		ix, err := r.IndexStatus(cmd.Context())
+		if err != nil {
+			return err
+		}
 		if opts.json {
 			out := struct {
 				Overview overviewJSON  `json:"overview"`
+				Index    indexJSON     `json:"index"`
 				By       string        `json:"by"`
 				Rows     []statRowJSON `json:"rows"`
 			}{
@@ -689,7 +702,8 @@ func newRecordsStatsCmd(d Deps, opts *rootOptions) *cobra.Command {
 					SupersededRecords: ov.SupersededRecords, TSMin: microsPtr(ov.TSMin), TSMax: microsPtr(ov.TSMax),
 					TSMinMicro: ov.TSMin, TSMaxMicro: ov.TSMax, Runs: ov.Runs,
 				},
-				By: *by, Rows: make([]statRowJSON, 0, len(rows)),
+				Index: indexJSON{State: ix.Kind, Value: ix.Value, Current: ix.Current, WordDocs: ix.WordDocs, SubstringDocs: ix.SubstringDocs},
+				By:    *by, Rows: make([]statRowJSON, 0, len(rows)),
 			}
 			if out.Overview.Runs == nil {
 				out.Overview.Runs = map[string]int64{}
@@ -701,13 +715,13 @@ func newRecordsStatsCmd(d Deps, opts *rootOptions) *cobra.Command {
 			}
 			return writeJSON(d.Out, out)
 		}
-		printStats(d.Out, ov, *by, rows)
+		printStats(d.Out, ov, ix, *by, rows)
 		return nil
 	}
 	return cmd
 }
 
-func printStats(w io.Writer, ov records.Overview, by string, rows []records.StatRow) {
+func printStats(w io.Writer, ov records.Overview, ix records.IndexStatus, by string, rows []records.StatRow) {
 	fmt.Fprintf(w, "records:      %d (deleted %d, recovered %d, untimed %d)\n", ov.Records, ov.Deleted, ov.Recovered, ov.Untimed)
 	if ov.SupersededRecords > 0 {
 		fmt.Fprintf(w, "superseded:   %d records belong to superseded runs\n", ov.SupersededRecords)
@@ -724,7 +738,13 @@ func printStats(w io.Writer, ov records.Overview, by string, rows []records.Stat
 	if len(runs) == 0 {
 		runs = []string{"none"}
 	}
-	fmt.Fprintf(w, "runs:         %s\n\n", strings.Join(runs, ", "))
+	fmt.Fprintf(w, "runs:         %s\n", strings.Join(runs, ", "))
+	if ix.Kind == "unavailable" {
+		fmt.Fprintln(w, "index:        unavailable (the case schema is older than v3; run: minutiae case upgrade)")
+	} else {
+		fmt.Fprintf(w, "index:        %s (%s; %d word documents, %d substring documents)\n", printable(ix.Kind), printable(ix.Value), ix.WordDocs, ix.SubstringDocs)
+	}
+	fmt.Fprintln(w)
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	fmt.Fprintf(tw, "%s\tcount\tfirst\tlast\n", strings.ToUpper(by))
 	for _, s := range rows {
