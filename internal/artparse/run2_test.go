@@ -756,6 +756,9 @@ func TestStartRefusalsAreClassified(t *testing.T) {
 		if !errors.Is(err, records.ErrIngestActive) {
 			t.Fatalf("Run = %v, want ErrIngestActive", err)
 		}
+		if sum.Stopped != artparse.StoppedRunError {
+			t.Errorf("Stopped = %q, want %q", sum.Stopped, artparse.StoppedRunError)
+		}
 		if len(f.jobStarts()) != 1 || sum.Class() != artparse.ClassPartial {
 			t.Errorf("%d jobs started, class %v: the run stops at the first job", len(f.jobStarts()), sum.Class())
 		}
@@ -764,8 +767,12 @@ func TestStartRefusalsAreClassified(t *testing.T) {
 		f := newRx(t, "a", "b")
 		injected := errors.New("database on fire")
 		h := f.host(withWriter(func(w *rxWriter) { w.startErr = injected }), wbp("a"), wbp("b"))
-		if _, err := h.Run(context.Background(), artparse.RunOptions{}); !errors.Is(err, injected) {
+		sum, err := h.Run(context.Background(), artparse.RunOptions{})
+		if !errors.Is(err, injected) {
 			t.Fatalf("Run = %v", err)
+		}
+		if sum.Stopped != artparse.StoppedRunError {
+			t.Errorf("Stopped = %q, want %q", sum.Stopped, artparse.StoppedRunError)
 		}
 		if len(f.jobStarts()) != 1 {
 			t.Errorf("%d jobs started", len(f.jobStarts()))

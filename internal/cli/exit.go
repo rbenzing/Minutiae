@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/rbenzing/minutiae/internal/artparse"
-
 	"github.com/spf13/cobra"
 
+	"github.com/rbenzing/minutiae/internal/artparse"
 	"github.com/rbenzing/minutiae/internal/device"
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/filesys"

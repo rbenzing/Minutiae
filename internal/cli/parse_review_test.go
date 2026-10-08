@@ -136,7 +136,7 @@ func TestParseSize(t *testing.T) {
 			t.Errorf("parseSize(%q) = %d, %v; want %d", in, got, err, want)
 		}
 	}
-	for _, in := range []string{"", "1.5GiB", "-1", "1TiB", "lots"} {
+	for _, in := range []string{"", "1.5GiB", "-1", "1TiB", "lots", "17179869185GiB", "17592186044417MiB", "9223372036854775808"} {
 		if _, err := parseSize(in); err == nil {
 			t.Errorf("parseSize(%q) accepted", in)
 		}
@@ -155,6 +155,7 @@ func TestParseLimitFlagBoundaries(t *testing.T) {
 		{"--mem-budget", "16MiB", 0},
 		{"--mem-budget", "64GiB", 0},
 		{"--mem-budget", "65GiB", 2},
+		{"--mem-budget", "17179869185GiB", 2}, // 2^34+1 GiB wraps to 1 GiB in a 64-bit shift
 		{"--max-records", "1", 1},
 		{"--max-records", "1000000000", 0},
 		{"--max-records", "1000000001", 2},

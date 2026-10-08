@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"regexp"
 	"runtime/debug"
 	"slices"
@@ -438,17 +439,21 @@ func parseSize(s string) (int64, error) {
 	}
 	n, err := strconv.ParseInt(m[1], 10, 64)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("%s is not a size", printable(s))
 	}
+	var shift uint
 	switch m[2] {
 	case "KiB":
-		n <<= 10
+		shift = 10
 	case "MiB":
-		n <<= 20
+		shift = 20
 	case "GiB":
-		n <<= 30
+		shift = 30
 	}
-	return n, nil
+	if n > math.MaxInt64>>shift {
+		return 0, fmt.Errorf("%s is too large a size", printable(s))
+	}
+	return n << shift, nil
 }
 
 // partialRunError is a run in which some job did not complete (exit 1).
@@ -643,6 +648,7 @@ func newParseRunCmd(d Deps, opts *rootOptions) *cobra.Command {
 		Long: "Parse the selected artifacts with the compiled-in parsers and store the records in the case. One status line\n" +
 			"per job goes to stderr; the summary (or, with --json, one JSON event per line) goes to stdout. Exit 0 when every\n" +
 			"job completed or was skipped, 1 when some job was incomplete, unparsed or refused (or the run was stopped),\n" +
+			"2 for a usage error (a bad flag value, an unknown parser, a case that needs case upgrade or records reindex),\n" +
 			"4 when an input did not match the evidence.",
 		Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -686,7 +692,9 @@ func newParseRunCmd(d Deps, opts *rootOptions) *cobra.Command {
 			}
 			defer func() { _ = c.Close() }()
 
-			prev := debug.SetMemoryLimit(2 * lim.MemBudget)
+			// twice the budget, but never above a lower limit the operator set (GOMEMLIMIT)
+			cur := debug.SetMemoryLimit(-1)
+			prev := debug.SetMemoryLimit(min(cur, 2*lim.MemBudget))
 			defer debug.SetMemoryLimit(prev)
 
 			total := 0
