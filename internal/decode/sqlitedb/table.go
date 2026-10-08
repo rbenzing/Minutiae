@@ -114,10 +114,7 @@ func (t *Table) Col(name string) int {
 func (t *Table) Cols() []ColumnInfo {
 	out := make([]ColumnInfo, len(t.def.Columns))
 	for i, c := range t.def.Columns {
-		coll := c.KeyCollation
-		if coll == "" {
-			coll = c.Collation
-		}
+		coll := sqlitefile.ColumnCollation(c)
 		out[i] = ColumnInfo{
 			Name: c.Name, DeclType: c.DeclType, Affinity: c.Affinity, NotNull: c.NotNull,
 			RowidAlias: i == t.def.RowidAlias, Default: c.Default.Kind,
