@@ -50,6 +50,7 @@ func TestSqlitefileSurfaceUsedByTheDecoder(_ *testing.T) {
 	pin[error](sqlitefile.ErrInternal)
 	pin[error](sqlitefile.ErrEngineRefuses)
 	pin[error](sqlitefile.ErrLiveUnavailable)
+	pin[error](parse.ErrBudget)
 	var st sqlitefile.DBStatus
 	pin[sqlitefile.Info](st.Info)
 	pin[*sqlitefile.WALInfo](st.WAL)

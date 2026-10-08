@@ -191,7 +191,9 @@ func (db *DB) Tables(ctx context.Context) (names []string, err error) {
 	return names, nil
 }
 
-// Release frees the view and the memory charged to the budget. It is
+// Release frees the view and the memory charged to the budget. It only returns
+// memory: Tables, Info, Warnings and Stats keep working afterwards from what
+// Open read (the schema is kept). Data access must not be used after Release. It is
 // idempotent.
 func (db *DB) Release() {
 	if db == nil || db.released {
