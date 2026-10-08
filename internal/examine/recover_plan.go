@@ -94,7 +94,7 @@ type RecoverPlan struct {
 	Items        []RecoverItem
 	Considered   int
 	SkippedBy    map[string]int
-	LimitReached string // "" | "max-files" | "max-bytes" | "max-entries" | "max-plan-runs": the first limit met
+	LimitReached string // "" | "max-files" | "max-bytes" | "max-scan-bytes" | "max-entries" | "max-plan-runs": the first limit met
 	NotProcessed int
 	FSWarnings   []string // new filesystem warnings the planning raised (the unallocated note included)
 
@@ -466,6 +466,10 @@ func (p *planner) evaluate(it *RecoverItem, t target, cs []filesys.Candidate) {
 			if state == "" {
 				state = "empty map"
 			}
+			if c.Size == 0 {
+				reject("empty", "the map declares no bytes: nothing to recover")
+				continue
+			}
 			reject("no-free-bytes", "no byte of the map is free ("+state+")")
 			continue
 		}
@@ -520,6 +524,7 @@ func (p *planner) selectAndFilter() {
 		}
 	}
 	overlaps := overlapsOf(owned)
+	counts := overlapCounts(owned)
 	for i := range p.plan.Items {
 		it := &p.plan.Items[i]
 		partners := overlaps[it.ID]
@@ -534,8 +539,10 @@ func (p *planner) selectAndFilter() {
 					c.Assumptions = append(c.Assumptions, "overlap="+cleanText(o, 200))
 				}
 				if len(partners) >= maxOverlapListed {
-					// overlapsOf lists the smallest 16 only; whether there are more is not known.
-					c.Assumptions = append(c.Assumptions, fmt.Sprintf("overlap-listed=%d", maxOverlapListed))
+					// overlapsOf lists the smallest 16 only; the rest is counted exactly (C52).
+					if n := counts[it.ID] - maxOverlapListed; n > 0 {
+						c.Assumptions = append(c.Assumptions, fmt.Sprintf("overlap-others=%d", n))
+					}
 				}
 			}
 			c.Confidence, _ = confidenceFor(c.Method, c.cut, len(partners) > 0)
@@ -629,8 +636,8 @@ func (ad *admission) admit(ctx context.Context, c *PlannedCandidate) (stop strin
 	if !hit {
 		if c.Size > ad.scanCap-ad.scanned {
 			ad.b.release(c.Size)
-			c.Skip, c.skipDetail = "limit", "max-bytes: the content scan would read more than four times the byte limit"
-			return "max-bytes", nil
+			c.Skip, c.skipDetail = "limit", "max-scan-bytes: the content scan would read more than four times the byte limit"
+			return "max-scan-bytes", nil
 		}
 		uniform, _, err := uniformScan(ctx, ad.img, c.Runs)
 		if err != nil {

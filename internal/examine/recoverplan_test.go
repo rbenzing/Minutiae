@@ -770,3 +770,74 @@ func TestOverlapMatchesBruteForceOnSmallSpaces(t *testing.T) {
 		}
 	}
 }
+
+// C52: overlapCounts equals a brute-force count of the other owners' merged intervals that overlap
+// each owner's merged intervals.
+func TestOverlapCountsMatchBruteForce(t *testing.T) {
+	rng := rand.New(rand.NewSource(52)) //nolint:gosec // seeded test data, not security
+	for iter := range 300 {
+		n := 1 + rng.Intn(40)
+		items := make([]ownedRuns, n)
+		for i := range items {
+			items[i].Owner = fmt.Sprintf("n%03d", rng.Intn(n)) // repeated owners happen
+			for range 1 + rng.Intn(3) {
+				items[i].Runs = append(items[i].Runs, run(int64(rng.Intn(300)), int64(rng.Intn(120))-5))
+			}
+		}
+		got, want := overlapCounts(items), bruteCounts(items)
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("iteration %d: got %v want %v items %v", iter, got, want, items)
+		}
+	}
+	// 40 single-run owners over one region: every owner sees the 39 others (more than the list cap).
+	if c := overlapCounts(descendingOwners(40, 0)); len(c) != 40 {
+		t.Errorf("counts for %d owners, want 40", len(c))
+	} else {
+		for o, v := range c {
+			if v != 39 {
+				t.Errorf("%s: %d, want 39", o, v)
+			}
+		}
+	}
+}
+
+func bruteCounts(items []ownedRuns) map[string]int {
+	type iv struct{ s, e int64 }
+	by := map[string][]iv{}
+	for _, it := range items {
+		for _, r := range it.Runs {
+			if r.Offset >= 0 && r.Length > 0 {
+				by[it.Owner] = append(by[it.Owner], iv{r.Offset, r.Offset + r.Length})
+			}
+		}
+	}
+	merged := map[string][]iv{}
+	for o, l := range by {
+		slices.SortFunc(l, func(a, b iv) int { return int(a.s - b.s) })
+		var m []iv
+		for _, x := range l {
+			if k := len(m) - 1; k >= 0 && x.s <= m[k].e {
+				m[k].e = max(m[k].e, x.e)
+			} else {
+				m = append(m, x)
+			}
+		}
+		merged[o] = m
+	}
+	out := map[string]int{}
+	for o, l := range merged {
+		for _, q := range l {
+			for o2, l2 := range merged {
+				if o2 == o {
+					continue
+				}
+				for _, x := range l2 {
+					if x.s < q.e && q.s < x.e {
+						out[o]++
+					}
+				}
+			}
+		}
+	}
+	return out
+}

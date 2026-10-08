@@ -83,8 +83,8 @@ func TestUniformScanBytesAreCapped(t *testing.T) {
 			break
 		}
 	}
-	if stopped != "max-bytes" || limited != 1 {
-		t.Fatalf("stop = %q after %d refusals, want max-bytes", stopped, limited)
+	if stopped != "max-scan-bytes" || limited != 1 {
+		t.Fatalf("stop = %q after %d refusals, want max-scan-bytes", stopped, limited)
 	}
 	if img.bytes > 4*maxBytes {
 		t.Errorf("scanned %d bytes, cap is %d", img.bytes, 4*maxBytes)

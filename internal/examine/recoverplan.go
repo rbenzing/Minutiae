@@ -1,6 +1,7 @@
 package examine
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -436,4 +437,62 @@ func uniformScan(ctx context.Context, r io.ReaderAt, runs []evidence.Run) (bool,
 		}
 	}
 	return seen, fill, nil
+}
+
+// overlapCounts maps every owner that has at least one overlap to how many merged run intervals of OTHER
+// owners overlap its own merged intervals (C52). Each owner's runs are first merged into disjoint,
+// non-touching intervals, so for an interval [s,e) of owner A the intervals of other owners that overlap
+// it number #(starts < e) - #(ends <= s) - 1 (the 1 is A's own interval): every interval starting before
+// e and ending after s overlaps, and the two counts come from two sorted arrays by binary search, O(log n)
+// per interval and O(n log n) in all. For owners that each hold one interval (the usual entry) this is the
+// number of other owners; an owner with several disjoint intervals that all meet one interval of A is
+// counted once per interval.
+func overlapCounts(items []ownedRuns) map[string]int {
+	type iv struct{ lo, hi int64 }
+	byOwner := map[string][]iv{}
+	for _, it := range items {
+		for _, r := range it.Runs {
+			if r.Offset < 0 || r.Length <= 0 {
+				continue
+			}
+			end, ok := filesys.AddOK(r.Offset, r.Length)
+			if !ok {
+				continue
+			}
+			byOwner[it.Owner] = append(byOwner[it.Owner], iv{r.Offset, end})
+		}
+	}
+	type owned struct {
+		iv
+		owner string
+	}
+	var all []owned
+	var starts, ends []int64
+	for o, l := range byOwner {
+		slices.SortFunc(l, func(a, b iv) int { return cmp.Compare(a.lo, b.lo) })
+		var m []iv
+		for _, x := range l {
+			if k := len(m) - 1; k >= 0 && x.lo <= m[k].hi {
+				m[k].hi = max(m[k].hi, x.hi)
+			} else {
+				m = append(m, x)
+			}
+		}
+		for _, x := range m {
+			all = append(all, owned{x, o})
+			starts = append(starts, x.lo)
+			ends = append(ends, x.hi)
+		}
+	}
+	slices.Sort(starts)
+	slices.Sort(ends)
+	out := map[string]int{}
+	for _, a := range all {
+		before, _ := slices.BinarySearch(starts, a.hi) // #starts < hi
+		upTo, _ := slices.BinarySearch(ends, a.lo+1)   // #ends <= lo (lo < hi, so no overflow)
+		if n := before - upTo - 1; n > 0 {
+			out[a.owner] += n
+		}
+	}
+	return out
 }

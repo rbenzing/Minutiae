@@ -350,3 +350,45 @@ func TestRecoverRejectsInjectedMaps(t *testing.T) {
 		})
 	}
 }
+
+// C52: with more than 16 overlapping partners the exact count of the rest is reported.
+func TestRecoverOverlapOthersIsExact(t *testing.T) {
+	const n = 20
+	buildBS = 16384 // the table of 20 maps does not fit one 4 KiB block
+	t.Cleanup(func() { buildBS = bs })
+	nodes := []fstest.Node{delNode("/e00.bin", pat(1, bs))}
+	for i := 1; i < n; i++ {
+		nodes = append(nodes, delNode(fmt.Sprintf("/e%02d.bin", i), pat(byte(i+1), bs)))
+	}
+	lay := layout(t, nodes)
+	for i := 1; i < n; i++ {
+		nodes[i].Recover = []fstest.RecoverMap{{Method: mtfsRecM, Size: bs, Runs: lay["/e00.bin"]}}
+	}
+	e := newRecEnv(t, nodes...)
+	sum := e.recover(t, examine.RecoverOptions{All: true})
+	recs := recovered(t, e.c)
+	if len(recs) != n {
+		t.Fatalf("%d artifacts, want %d: %+v", len(recs), n, sum)
+	}
+	for _, r := range recs {
+		as := r.Source.Derived.Recovery.Assumptions
+		listed := 0
+		for _, a := range as {
+			if strings.HasPrefix(a, "overlap=") {
+				listed++
+			}
+		}
+		if listed != 16 || !slices.Contains(as, "overlap-others=3") || anyContains(as, "overlap-listed") {
+			t.Errorf("%s: %d listed, assumptions %q, want 16 listed and overlap-others=3", r.Source.Derived.FSPath, listed, as)
+		}
+	}
+}
+
+// C53: a candidate of size 0 is skipped as empty, not as having no free bytes.
+func TestRecoverEmptyCandidateIsEmpty(t *testing.T) {
+	e := newRecEnv(t, delNode("/z.bin", nil))
+	sum := e.recover(t, examine.RecoverOptions{All: true})
+	if sum.SkippedBy["empty"] != 1 || sum.SkippedBy["no-free-bytes"] != 0 || sum.Recovered != 0 {
+		t.Errorf("summary %+v, want one empty skip", sum)
+	}
+}
