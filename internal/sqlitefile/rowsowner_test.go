@@ -19,7 +19,10 @@ import (
 // ownerScen: the live table t(a, b not null) is on page 2. An older era of the
 // database had table z(x, y) on page 2; the WAL holds the old page 1 (schema of
 // that era) and the old page 2, then the live pages.
-func ownerScen() (db, wal []byte) {
+func ownerScen() (db, wal []byte) { return ownerScenWith(nil) }
+
+// ownerScenWith is ownerScen with a hook on the builder of the old era.
+func ownerScenWith(mod func(old *sqlitetest.Builder)) (db, wal []byte) {
 	b := sqlitetest.New(sqlitetest.Options{PageSize: hps})
 	live := b.CreateTable("t", "create table t(a, b not null)")
 	for id := int64(1); id <= 3; id++ {
@@ -32,6 +35,9 @@ func ownerScen() (db, wal []byte) {
 	for id := int64(1); id <= 3; id++ {
 		z.Insert(id, id*7, "old")
 	}
+	if mod != nil {
+		mod(b2)
+	}
 	old := b2.Snapshot()
 	w := b.NewWAL(false, 0x1000, 0x1001, 0)
 	w.Frame(1, old.Page(1), 2) // slot 1: the schema of the old era
@@ -41,9 +47,10 @@ func ownerScen() (db, wal []byte) {
 	return db, w.Bytes()
 }
 
-// TestOwnerAtWriteTimeNotToday (ruling I-1): cells written when page 2 belonged
-// to z are never BasisSchema of today's owner t and never compared with the rows
-// of t: the relation is unknown with the owner-changed note.
+// TestOwnerAtWriteTimeNotToday (rulings I-1 and C44): cells written when page 2
+// belonged to z are labelled z, the owner the image's own as-of schema names (schema
+// basis, as-of era), never t (today's owner), and never compared with the rows of
+// t: the relation is unknown with the owner-changed note.
 func TestOwnerAtWriteTimeNotToday(t *testing.T) {
 	db, wal := ownerScen()
 	_, h := openAll(t, db, wal, nil)
@@ -54,8 +61,8 @@ func TestOwnerAtWriteTimeNotToday(t *testing.T) {
 			continue
 		}
 		n++
-		if r.TableBasis == sqlitefile.BasisSchema || r.Relation != sqlitefile.RelUnknown || !hasNote(r, sqlitefile.NoteOwnerChanged) {
-			t.Errorf("row of the old era: basis %s relation %s notes %v", r.TableBasis, r.Relation, r.Notes)
+		if r.Table != "z" || r.TableBasis != sqlitefile.BasisSchema || r.Relation != sqlitefile.RelUnknown || !hasNote(r, sqlitefile.NoteOwnerChanged) {
+			t.Errorf("row of the old era: table %q basis %s relation %s notes %v, want z, schema, unknown, owner-changed", r.Table, r.TableBasis, r.Relation, r.Notes)
 		}
 	}
 	if n != 3 {
@@ -498,4 +505,127 @@ func TestRowLocationsEveryOrigin(t *testing.T) {
 			t.Errorf("no WAL row in %v", methods(rows))
 		}
 	})
+}
+
+// TestOwnerAtWriteTimeOfAPageNoTableOwnsToday (ruling I-1, C44): page 2 held the
+// cells of z when they were written, and today no b-tree owns page 2 (it is on
+// the freelist). The as-of schema still names z, so the rows are z's.
+func TestOwnerAtWriteTimeOfAPageNoTableOwnsToday(t *testing.T) {
+	b := sqlitetest.New(sqlitetest.Options{PageSize: hps})
+	pad := b.CreateTable("pad", "create table pad(p)")
+	pad.Insert(1, "x")
+	live := b.CreateTable("t", "create table t(a, b not null)")
+	for id := int64(1); id <= 3; id++ {
+		live.Insert(id, id, "live")
+	}
+	b.DropTable("pad") // page 2 is free today
+	liveImg := b.Snapshot()
+	db := walMode(withCount(b.Bytes(), liveImg.Pages()))
+	b2 := sqlitetest.New(sqlitetest.Options{PageSize: hps})
+	z := b2.CreateTable("z", "create table z(x, y)")
+	for id := int64(1); id <= 3; id++ {
+		z.Insert(id, id*7, "old")
+	}
+	old := b2.Snapshot()
+	w := b.NewWAL(false, 0x1000, 0x1001, 0)
+	w.Frame(1, old.Page(1), 3)
+	w.Frame(2, old.Page(2), 3)
+	w.Frame(1, liveImg.Page(1), 3)
+	w.Frame(2, liveImg.Page(2), 3) // the later frame that makes slot 2 history
+	_, h := openAll(t, db, w.Bytes(), nil)
+	rows, _ := collectRows(t, h)
+	n := 0
+	for _, r := range rows {
+		if r.WAL == nil || r.WAL.Frame != 2 {
+			continue
+		}
+		n++
+		if r.Table != "z" || r.TableBasis != sqlitefile.BasisSchema || r.Relation != sqlitefile.RelUnknown || !hasNote(r, sqlitefile.NoteOwnerChanged) {
+			t.Errorf("row of the old era: table %q basis %s relation %s notes %v, want z, schema, unknown, owner-changed", r.Table, r.TableBasis, r.Relation, r.Notes)
+		}
+	}
+	if n != 3 {
+		t.Fatalf("%d rows of slot 2 in %v", n, methods(rows))
+	}
+}
+
+// TestOwnerOfADamagedAsOfSchemaIsNotProven (review I-5): when the as-of schema
+// was read with damage (a skipped schema row) its owner is not taken as proven:
+// the rows fall back to the fit over today's schema.
+func TestOwnerOfADamagedAsOfSchemaIsNotProven(t *testing.T) {
+	db, wal := ownerScenWith(func(old *sqlitetest.Builder) {
+		old.AddSchemaRow(int64(5), "bad", "bad", int64(0), nil) // a schema row of the wrong shape
+	})
+	_, h := openAll(t, db, wal, nil)
+	rows, _ := collectRows(t, h)
+	n := 0
+	for _, r := range rows {
+		if r.WAL == nil || r.WAL.Frame != 2 {
+			continue
+		}
+		n++
+		if r.Table == "z" || r.TableBasis == sqlitefile.BasisSchema {
+			t.Errorf("an as-of schema with a skipped row proved the owner: table %q basis %s", r.Table, r.TableBasis)
+		}
+	}
+	if n != 3 {
+		t.Fatalf("%d rows of slot 2 in %v", n, methods(rows))
+	}
+}
+
+// TestAsOfOwnerStateCap (review I-5): the as-of views one pass builds are capped
+// at 64 distinct states: with the database-file state and 63 superseded frames
+// every owner is proven, the 65th state is refused with the limit named.
+func TestAsOfOwnerStateCap(t *testing.T) {
+	for _, tc := range []struct {
+		frames int // frames of page 2: the last is live, the others are history
+		hit    bool
+	}{{64, false}, {65, true}} {
+		b := sqlitetest.New(sqlitetest.Options{PageSize: hps})
+		tb := b.CreateTable("t", "create table t(a, b)")
+		tb.Insert(1, int64(1), "v0")
+		img := b.Snapshot()
+		db := walMode(withCount(b.Bytes(), img.Pages()))
+		w := b.NewWAL(false, 0x1000, 0x1001, 0)
+		for i := int64(1); i <= int64(tc.frames); i++ {
+			tb.Update(1, i, fmt.Sprintf("v%d", i))
+			w.Frame(2, b.Snapshot().Page(2), img.Pages()) // each frame is a commit: its own as-of state
+		}
+		_, h := openAll(t, db, w.Bytes(), nil)
+		_, st := collectRows(t, h)
+		hit := false
+		for _, l := range st.LimitsHit {
+			if l == "snapshot-owner-views" {
+				hit = true
+			}
+		}
+		if hit != tc.hit {
+			t.Errorf("%d frames: snapshot-owner-views limit hit %v, want %v (%v)", tc.frames, hit, tc.hit, st.LimitsHit)
+		}
+	}
+}
+
+// TestAsOfOwnerOfAPageBeyondTheAsOfStateIsNotProven (review I-5): a frame of
+// page 3 followed by a commit that sizes the database at 2 pages has no owner in
+// its as-of state (the page does not exist there); the rows are not labelled by
+// an owner and nothing panics.
+func TestAsOfOwnerOfAPageBeyondTheAsOfStateIsNotProven(t *testing.T) {
+	b := sqlitetest.New(sqlitetest.Options{PageSize: hps})
+	tb := b.CreateTable("t", "create table t(a, b)")
+	for id := int64(1); id <= 3; id++ {
+		tb.Insert(id, id, "live")
+	}
+	img := b.Snapshot()
+	db := walMode(withCount(b.Bytes(), img.Pages()))
+	w := b.NewWAL(false, 0x1000, 0x1001, 0)
+	w.Frame(3, img.Page(2), 0)           // slot 1: a leaf-shaped page 3 of a bigger database
+	w.Frame(2, img.Page(2), img.Pages()) // slot 2: commit; the database is 2 pages
+	w.Frame(3, img.Page(2), img.Pages()) // slot 3: the later frame of page 3
+	_, h := openAll(t, db, w.Bytes(), nil)
+	rows, _ := collectRows(t, h)
+	for _, r := range rows {
+		if r.WAL != nil && r.WAL.Frame == 1 && r.TableBasis == sqlitefile.BasisSchema && r.Table == "t" && r.Relation != sqlitefile.RelUnknown {
+			t.Errorf("a page beyond the as-of state got today's owner: %+v", r)
+		}
+	}
 }

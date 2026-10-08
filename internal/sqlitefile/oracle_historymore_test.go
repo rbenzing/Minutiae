@@ -143,8 +143,10 @@ func TestFitTiersProveConfidenceNumbers(t *testing.T) {
 				continue
 			}
 			n++
-			if r.TableBasis == sqlitefile.BasisSchema {
-				t.Errorf("a row of the dropped table g is BasisSchema of %q", r.Table)
+			// g's own schema frame is in the log, so the as-of schema names g and g is
+			// the label (ruling C44); a schema label of today's lookalike t never is.
+			if r.TableBasis == sqlitefile.BasisSchema && (r.Table != "g" || r.Relation != sqlitefile.RelUnknown || !hasNote(r, sqlitefile.NoteOwnerChanged)) {
+				t.Errorf("a row of the dropped table g: schema basis, table %q relation %s notes %v", r.Table, r.Relation, r.Notes)
 			}
 			if r.TableBasis == sqlitefile.BasisFit {
 				if sqlitefile.Confidence(r) != 60 || r.Relation != sqlitefile.RelUnknown || !hasNote(r, sqlitefile.NoteIdentityByFitOnly) {
@@ -183,6 +185,9 @@ func TestFitTiersProveConfidenceNumbers(t *testing.T) {
 			n++
 			if r.TableBasis != sqlitefile.BasisGuess || sqlitefile.Confidence(r) != 40 {
 				t.Errorf("row basis %s table %q confidence %d, want guess and 40", r.TableBasis, r.Table, sqlitefile.Confidence(r))
+			}
+			if r.Relation != sqlitefile.RelUnknown || !hasNote(r, sqlitefile.NoteIdentityByFitOnly) {
+				t.Errorf("a guess row: relation %s notes %v, want unknown with identity-by-fit-only (ruling C46)", r.Relation, r.Notes)
 			}
 		}
 		if n == 0 {

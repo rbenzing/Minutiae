@@ -106,6 +106,21 @@ func (c candidate) idKind() idKind {
 // identify says which table (or index) the cells of the image belong to.
 func (rp *rowPass) identify(img PageImage, hd PageHeader, cells []imgCell) ident {
 	var notes []string
+	if a, known := rp.asOfOwner(img); known {
+		// The image's own as-of schema names the owner. When it is another
+		// object than today's (or today nothing owns the page) that name IS the
+		// label (ruling C44): schema basis of the as-of era, never compared with
+		// the live rows, owner-changed.
+		liveName, liveTyp := "", ""
+		if o, ok := rp.ownerOf(img.Number); ok {
+			liveName, liveTyp, _ = objectName(rp.sch, o)
+		}
+		if a.name != liveName || a.typ != liveTyp {
+			if id, ok := rp.asOfIdent(a, hd, cells); ok {
+				return id
+			}
+		}
+	}
 	if o, ok := rp.ownerOf(img.Number); ok {
 		if c, ok := rp.ownerCand(o); ok && c.leafType() == hd.Type && rp.allFit(c.item, cells) && rp.sameOwnerAtWrite(img, o) {
 			id := ident{basis: BasisSchema, kind: c.idKind()}
@@ -234,4 +249,33 @@ func (fs *fitSet) keepItems(ix []int32, keep func(*fitItem) bool) []int32 {
 		}
 	}
 	return out
+}
+
+// asOfIdent labels the cells of an image with the table the image's own as-of
+// schema names as the owner of its page, when the cells fit that table strictly.
+// The identity is structural as of the image's time, not today's, so the rows
+// are never compared with the live rows (kindNone) and carry owner-changed.
+func (rp *rowPass) asOfIdent(a asOf, hd PageHeader, cells []imgCell) (ident, bool) {
+	if a.typ != "table" {
+		return ident{}, false
+	}
+	var it *fitItem
+	var wr bool
+	if a.num == 1 {
+		it = schemaItem
+	} else if a.obj != nil && !a.obj.Virtual && a.obj.Table != nil {
+		item, ok := fitTableDef(a.obj.Name, a.obj.Table, map[*TableDef]int{})
+		if !ok {
+			return ident{}, false
+		}
+		it, wr = &item, a.obj.Table.WithoutRowid
+	}
+	leaf := PageTableLeaf
+	if wr {
+		leaf = PageIndexLeaf
+	}
+	if it == nil || hd.Type != leaf || !rp.allFit(it, cells) {
+		return ident{}, false
+	}
+	return ident{table: a.name, basis: BasisSchema, notes: []string{NoteOwnerChanged}, kind: kindNone}, true
 }

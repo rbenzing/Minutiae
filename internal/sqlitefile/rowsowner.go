@@ -85,12 +85,20 @@ func objectName(s *Schema, o uint32) (name, typ string, ok bool) {
 	return s.Objects[k].Name, s.Objects[k].Type, true
 }
 
-// sameOwnerAtWrite reports whether page img.Number belonged to the same schema
-// object (by name and type) in the image's own state as it does today (live
-// owner liveOwner). Anything that cannot be proven is false.
-func (rp *rowPass) sameOwnerAtWrite(img PageImage, liveOwner uint32) bool {
+// asOfOwner is the schema object that owned page img.Number in the image's own
+// as-of state (ruling C44): its name and type, the object itself in the as-of
+// schema (nil for the schema table), its number there. known is false when it
+// cannot be proven. An image of the live state (freelist, orphan, ...) has no
+// as-of state of its own: its owner is today's, which the caller handles.
+type asOf struct {
+	name, typ string
+	obj       *SchemaObject
+	num       uint32
+}
+
+func (rp *rowPass) asOfOwner(img PageImage) (a asOf, known bool) {
 	if _, ok := snapKey(img); !ok {
-		return true
+		return asOf{}, false
 	}
 	if img.Origin == OriginDBUnderWAL {
 		img.Origin = OriginDBRolledBack // the image is a page of the database file: its state is the file as found
@@ -99,18 +107,36 @@ func (rp *rowPass) sameOwnerAtWrite(img PageImage, liveOwner uint32) bool {
 	key, _ := snapKey(img)
 	st := rp.snapStateOf(img, key)
 	if !st.ok || img.Number == 0 || img.Number > st.lay.Addressable {
-		return false
+		return asOf{}, false
 	}
 	if c := st.lay.Class[img.Number]; c != ClassBTreeInterior && c != ClassBTreeLeaf {
-		return false
+		return asOf{}, false
 	}
 	o := st.lay.Owner[img.Number]
 	if o == 0 {
-		return false
+		return asOf{}, false
 	}
-	sn, stp, ok1 := objectName(st.sch, o)
+	name, typ, ok := objectName(st.sch, o)
+	if !ok {
+		return asOf{}, false
+	}
+	a = asOf{name: name, typ: typ, num: o}
+	if o != 1 {
+		a.obj = &st.sch.Objects[int(o)-2]
+	}
+	return a, true
+}
+
+// sameOwnerAtWrite reports whether page img.Number belonged to the same schema
+// object (by name and type) in the image's own state as it does today (live
+// owner liveOwner). Anything that cannot be proven is false.
+func (rp *rowPass) sameOwnerAtWrite(img PageImage, liveOwner uint32) bool {
+	if _, ok := snapKey(img); !ok {
+		return true
+	}
+	a, ok := rp.asOfOwner(img)
 	ln, ltp, ok2 := objectName(rp.sch, liveOwner)
-	return ok1 && ok2 && sn == ln && stp == ltp
+	return ok && ok2 && a.name == ln && a.typ == ltp
 }
 
 // releaseSnaps frees the as-of views.

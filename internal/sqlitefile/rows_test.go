@@ -510,8 +510,9 @@ func TestBasisSchemaNeedsStrictFit(t *testing.T) {
 				continue
 			}
 			n++
-			// page 2 held z in the era of these cells: today's owner t is not their table
-			if r.TableBasis == sqlitefile.BasisSchema || r.Relation != sqlitefile.RelUnknown || !hasNote(r, "owner-changed") {
+			// page 2 held z in the era of these cells and z's schema frame is present:
+			// the as-of schema names z, so z is the label (ruling C44), never today's t
+			if r.Table != "z" || r.TableBasis != sqlitefile.BasisSchema || r.Relation != sqlitefile.RelUnknown || !hasNote(r, "owner-changed") {
 				t.Errorf("row %+v", r)
 			}
 		}
