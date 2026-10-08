@@ -1,6 +1,7 @@
 package plist
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -30,12 +31,12 @@ func guard(f func() error) (err error) {
 	return f()
 }
 
-// Check rejects anything that is not a well-formed binary plist whose fully expanded
+// checkBinary rejects anything that is not a well-formed binary plist whose fully expanded
 // form stays within l.MaxNodes nodes, l.MaxPayload bytes of string and data payload and
 // l.MaxDepth levels of nesting. Shared references are memoized, so a reference bomb costs
 // O(objects), not its expanded size. Every error wraps ErrMalformed or ErrLimit. The zero
 // Limits means DefaultLimits. Counters saturate, so limits near MaxUint64 cannot wrap.
-func Check(b []byte, l Limits) error {
+func checkBinary(b []byte, l Limits) error {
 	return guard(func() error { return checkCore(b, l) })
 }
 
@@ -234,4 +235,20 @@ func (w *bplistWalker) visit(i uint64, depth int) (bplistNode, error) {
 	}
 	*n = res
 	return res, nil
+}
+
+// Check validates a plist document of either accepted format before any decoding library
+// sees it: XML (PrescanXML) or Apple binary (checkBinary). Anything else, including OpenStep
+// and GNUstep text plists, is refused with ErrUnsupported; empty input is ErrMalformed. The
+// zero Limits means DefaultLimits. Every error wraps ErrMalformed, ErrLimit or ErrUnsupported.
+func Check(b []byte, l Limits) error {
+	switch {
+	case len(b) == 0:
+		return malformed("empty input")
+	case LooksLikeXML(b):
+		return PrescanXML(b, l)
+	case bytes.HasPrefix(b, []byte(bplistMagic)):
+		return checkBinary(b, l)
+	}
+	return fmt.Errorf("%w: neither XML nor binary plist", ErrUnsupported)
 }
