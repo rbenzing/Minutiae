@@ -257,13 +257,13 @@ func fuzzOpenBody(t testing.TB, f fuzzFiles) (digest [32]byte, codes []string) {
 		put("stats %+v", st)
 	}
 	hist := d.History()
-	histAddr := d.Live().Addressable()
+	histAddr := max(d.Live().Addressable(), d.AsFound().Addressable(), d.Info().FilePages) // a rollback hides (truncates) pages the file still holds
 	np, nr := 0, 0
 	err = sqlitefile.HistoryNoRecover(ctx, hist,
 		func(p sqlitefile.PageImage) bool {
 			np++
-			if p.Number == 0 || p.Number > histAddr {
-				t.Fatalf("history page %d outside 1..%d", p.Number, histAddr)
+			if dbDerived(p.Origin) && (p.Number == 0 || p.Number > histAddr) {
+				t.Fatalf("history page %d (origin %v, loc %+v) outside 1..%d", p.Number, p.Origin, p.Loc, histAddr)
 			}
 			put("page %d %v %+v", p.Number, p.Origin, p.Loc)
 			return np < fuzzHistCap
@@ -272,7 +272,7 @@ func fuzzOpenBody(t testing.TB, f fuzzFiles) (digest [32]byte, codes []string) {
 			nr++
 			what := fmt.Sprintf("history row %d", nr)
 			checkLoc(t, what, r.Loc, f, ps)
-			if r.Loc.Page > histAddr {
+			if dbDerived(r.Origin) && r.Loc.Page > histAddr {
 				t.Fatalf("%s: page %d beyond Addressable %d", what, r.Loc.Page, histAddr)
 			}
 			for i, val := range r.Values {
@@ -500,4 +500,18 @@ func FuzzSniff(f *testing.F) {
 			t.Fatalf("two sniffs differ: %+v %+v", s, s2)
 		}
 	})
+}
+
+// dbDerived reports whether a history page of this origin is a page of the
+// database file itself, so its number must be addressable. The number of a WAL
+// frame or journal record is what the file CLAIMS (a broken frame can say page
+// 0, a record any page), and a page beyond the live page count is by definition
+// not addressable: none of those is held to the live view's limit.
+func dbDerived(o sqlitefile.Origin) bool {
+	switch o {
+	case sqlitefile.OriginLiveBTree, sqlitefile.OriginFreelistLeaf, sqlitefile.OriginFreelistTrunk,
+		sqlitefile.OriginOrphan, sqlitefile.OriginDBUnderWAL, sqlitefile.OriginDBRolledBack:
+		return true
+	}
+	return false
 }
