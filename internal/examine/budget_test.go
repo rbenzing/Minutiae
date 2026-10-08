@@ -34,7 +34,8 @@ func TestBudgetAdmitMath(t *testing.T) {
 		{"one file over is refused", 2, 1000, []step{{1, ""}, {1, ""}, {1, "max-files"}}, 2, 2},
 		{"files limit wins over bytes when both are exceeded", 1, 10, []step{{1, ""}, {100, "max-files"}}, 1, 1},
 		{"zero-size files count as files", 2, 10, []step{{0, ""}, {0, ""}, {0, "max-files"}}, 2, 0},
-		{"a negative size is refused", 5, 100, []step{{-1, "max-bytes"}, {math.MinInt64, "max-bytes"}}, 0, 0},
+		{"a negative size is an invalid size, never a budget reason", 5, 100, []step{{-1, "invalid-size"}, {math.MinInt64, "invalid-size"}}, 0, 0},
+		{"files refusal wins over a negative size", 1, 100, []step{{1, ""}, {-1, "max-files"}}, 1, 1},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -206,12 +207,12 @@ func TestCheckSpace(t *testing.T) {
 			t.Errorf("err = %v", err)
 		}
 	})
-	t.Run("a negative plan is treated as zero", func(t *testing.T) {
-		if err := testSession(t, probe(freeSpaceReserve)).checkSpace(-1 << 40); err != nil {
-			t.Errorf("err = %v", err)
-		}
-		if err := testSession(t, probe(freeSpaceReserve-1)).checkSpace(-1 << 40); !errors.Is(err, ErrInsufficientSpace) {
-			t.Errorf("err = %v", err)
+	t.Run("a negative plan is an invalid size, never zero", func(t *testing.T) {
+		for _, free := range []int64{freeSpaceReserve, math.MaxInt64} {
+			err := testSession(t, probe(free)).checkSpace(-1 << 40)
+			if !errors.Is(err, errInvalidSize) || errors.Is(err, ErrInsufficientSpace) {
+				t.Errorf("free %d: err = %v, want errInvalidSize only", free, err)
+			}
 		}
 	})
 	t.Run("planned plus reserve overflow is insufficient, not wrapped", func(t *testing.T) {
@@ -390,4 +391,18 @@ func TestAnalysisEndCarriesExtraDetails(t *testing.T) {
 			t.Errorf("error = %v, want the real failure", got)
 		}
 	})
+}
+
+// When both limits are exceeded, the files limit is reported (a fixed, documented order).
+func TestBudgetBothLimitsReportMaxFiles(t *testing.T) {
+	b, err := newBudget(1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := b.admit(5); got != "" {
+		t.Fatal(got)
+	}
+	if got := b.admit(1 << 40); got != "max-files" {
+		t.Errorf("both limits exceeded: %q, want max-files", got)
+	}
 }

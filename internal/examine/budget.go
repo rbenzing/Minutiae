@@ -23,6 +23,13 @@ const (
 // ErrInvalidLimit is returned for a negative output limit (0 means the default).
 var ErrInvalidLimit = errors.New("invalid output limit")
 
+// errInvalidSize marks a negative size or plan that reached the budget. Candidates are validated before
+// admission, so it is a bug upstream: it fails closed (reason "invalid-size"), never as a budget reason.
+var errInvalidSize = errors.New("invalid-size")
+
+// reasonInvalidSize is the reason admit returns for a negative size.
+const reasonInvalidSize = "invalid-size"
+
 // ErrInsufficientSpace is returned when the case directory cannot hold the planned output plus the reserve.
 var ErrInsufficientSpace = errors.New("not enough free space in the case directory for the planned output")
 
@@ -50,14 +57,18 @@ func newBudget(maxFiles int, maxBytes int64) (*budget, error) {
 
 // admit asks to write one file of size bytes. It returns "" when the file is admitted and counted, and
 // "max-files" or "max-bytes" when a limit refuses it, in which case nothing is counted. A refusal is
-// final: the caller stops at the first refusal and does not try a smaller candidate. The files limit is
-// checked first. A negative size is refused as "max-bytes" (it must never lower the count). The check
-// cannot overflow.
+// final: the caller stops at the first refusal and does not try a smaller candidate. When both limits
+// are exceeded "max-files" is reported (the files limit is checked first: a fixed, deterministic order).
+// A negative size is a bug upstream: it returns "invalid-size" (the caller fails the run with an internal
+// error), counts nothing and is never a budget reason. The check cannot overflow.
 func (b *budget) admit(size int64) string {
 	if b.files >= b.maxFiles {
 		return "max-files"
 	}
-	if size < 0 || size > b.maxBytes-b.bytes { // bytes <= maxBytes always holds, so the subtraction is exact
+	if size < 0 {
+		return reasonInvalidSize
+	}
+	if size > b.maxBytes-b.bytes { // bytes <= maxBytes always holds, so the subtraction is exact
 		return "max-bytes"
 	}
 	b.files++
@@ -85,6 +96,9 @@ func availBytes(blocks uint64, unit int64) (int64, error) {
 // checkSpace is the refusal before the first write: the case directory must hold planned bytes plus
 // freeSpaceReserve. A failure to find out is returned as it is, never read as "enough".
 func (s *Session) checkSpace(planned int64) error {
+	if planned < 0 {
+		return fmt.Errorf("%w: planned output of %d bytes (internal error)", errInvalidSize, planned)
+	}
 	probe := s.freeBytes
 	if probe == nil {
 		probe = diskFree
@@ -93,7 +107,6 @@ func (s *Session) checkSpace(planned int64) error {
 	if err != nil {
 		return fmt.Errorf("free space of %s: %w", s.Case.Dir, err)
 	}
-	planned = max(planned, 0)
 	need, ok := filesys.AddOK(planned, freeSpaceReserve)
 	if !ok || free < need {
 		return fmt.Errorf("%w: %d bytes free, planned output %d bytes plus a reserve of %d bytes (need %d)",
