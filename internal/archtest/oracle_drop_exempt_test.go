@@ -12,10 +12,10 @@ import (
 // throwaway fixture databases with an independent engine, and drop tables in
 // them (a dropped table is exactly the evidence they need). The single-writer
 // rule stays strict for the record tables and for any non-constant table name;
-// only a DROP of a plainly named, non-record table in a _test.go file of those
+// only a DROP TABLE of a plainly named, non-record table in a _test.go file of those
 // two packages is exempt (ruling for plan 3I).
 
-var oracleDropRE = regexp.MustCompile(`(?is)^drop\s+(?:table|trigger|index)\s+(?:if\s+exists\s+)?([a-z_][a-z_0-9]*)$`)
+var oracleDropRE = regexp.MustCompile(`(?is)^drop\s+table\s+(?:if\s+exists\s+)?([a-z_][a-z_0-9]*)$`)
 
 var oracleExemptDirs = []string{"internal/sqlitefile/", "internal/decode/"}
 
