@@ -242,3 +242,37 @@ func TestSchemaRowOutOfKeyRangeIsMarked(t *testing.T) {
 		}
 	}
 }
+
+// TestKeyClauseCollationMatchesEngine: the engine compares a WITHOUT ROWID key
+// with the collation of the table-level key clause, which overrides the
+// column's own (ruling C53): the UNIQUE conflict decides.
+func TestKeyClauseCollationMatchesEngine(t *testing.T) {
+	cases := []struct {
+		ddl      string
+		a, b     string
+		conflict bool
+	}{
+		{"create table wr(k text, v, primary key (k collate nocase)) without rowid", "ABC", "abc", true},
+		{"create table wr(k text, v, primary key (k collate rtrim)) without rowid", "ab  ", "ab", true},
+		{"create table wr(k text collate nocase, v, primary key (k collate binary)) without rowid", "ABC", "abc", false},
+		{"create table wr(k text collate binary, v, primary key (k collate nocase)) without rowid", "ABC", "abc", true},
+	}
+	for _, c := range cases {
+		db, err := sql.Open("sqlite", ":memory:")
+		if err != nil {
+			t.Fatal(err)
+		}
+		db.SetMaxOpenConns(1)
+		if _, err := db.Exec(c.ddl); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec("insert into wr values(?, 1)", c.a); err != nil {
+			t.Fatal(err)
+		}
+		_, err = db.Exec("insert into wr values(?, 2)", c.b)
+		if (err != nil) != c.conflict {
+			t.Errorf("%s: %q vs %q: conflict=%v, engine says %v", c.ddl, c.a, c.b, c.conflict, err)
+		}
+		_ = db.Close()
+	}
+}

@@ -258,13 +258,17 @@ func (rp *rowPass) wrSetOf(ctx context.Context, t *Table, name string) (*wrSet, 
 	for i := range def.Columns {
 		c := &def.Columns[i]
 		if c.PKOrdinal > 0 {
+			cn := c.Collation
+			if c.KeyCollation != "" {
+				cn = c.KeyCollation // the key clause's collation governs the index
+			}
 			coll := "BINARY"
 			for _, k := range []string{"BINARY", "NOCASE", "RTRIM"} {
-				if asciiEqualFold(c.Collation, k) {
+				if asciiEqualFold(cn, k) {
 					coll = k
 				}
 			}
-			if c.Collation != "" && !asciiEqualFold(c.Collation, coll) {
+			if cn != "" && !asciiEqualFold(cn, coll) {
 				s.pkOK = false // a custom or unknown collation: equality is not decidable here
 			}
 			pks = append(pks, pkc{c.PKOrdinal, i, coll})

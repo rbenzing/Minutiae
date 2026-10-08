@@ -212,3 +212,51 @@ func TestKeyDigestEquality(t *testing.T) {
 		t.Error("UTF-16 BINARY key is not decidable")
 	}
 }
+
+// A collation written in the table-level key clause governs the key (ruling
+// C53): it is the index's collation and overrides the column's own.
+func TestWithoutRowidKeyClauseNocaseKeysAreEqual(t *testing.T) {
+	runKeyEq(t, "create table wr(k text, v, primary key (k collate nocase)) without rowid", 1,
+		[][]any{{"ABC", "old"}, {"zzz", "gone"}},
+		[][]any{{"abc", "live"}},
+		[]keyEqRow{{vals: []any{"ABC", "old"}, want: sup}, {vals: []any{"zzz", "gone"}, want: abs}})
+}
+
+func TestWithoutRowidKeyClauseRtrimKeysAreEqual(t *testing.T) {
+	runKeyEq(t, "create table wr(k text, v, primary key (k collate rtrim)) without rowid", 1,
+		[][]any{{"ab  ", "old"}, {"zz", "gone"}},
+		[][]any{{"ab", "live"}},
+		[]keyEqRow{{vals: []any{"ab  ", "old"}, want: sup}, {vals: []any{"zz", "gone"}, want: abs}})
+}
+
+// The key clause overrides the column's own collation, in both directions.
+func TestWithoutRowidKeyClauseOverridesColumnCollation(t *testing.T) {
+	runKeyEq(t, "create table wr(k text collate binary, v, primary key (k collate nocase)) without rowid", 1,
+		[][]any{{"ABC", "old"}},
+		[][]any{{"abc", "live"}},
+		[]keyEqRow{{vals: []any{"ABC", "old"}, want: sup}})
+	runKeyEq(t, "create table wr(k text collate nocase, v, primary key (k collate binary)) without rowid", 1,
+		[][]any{{"ABC", "old"}},
+		[][]any{{"abc", "live"}},
+		[]keyEqRow{{vals: []any{"ABC", "old"}, want: abs}})
+}
+
+// A composite key clause: each component keeps its own collation.
+func TestWithoutRowidKeyClauseCompositeCollations(t *testing.T) {
+	// stored key-first: a, b, v
+	runKeyEq(t, "create table wr(a text, b text, v, primary key (a collate nocase, b)) without rowid", 2,
+		[][]any{{"AB", "x", "old"}, {"AB", "X", "other"}},
+		[][]any{{"ab", "x", "live"}},
+		[]keyEqRow{{vals: []any{"AB", "x", "old"}, want: sup}, {vals: []any{"AB", "X", "other"}, want: abs}})
+}
+
+// A collation the library cannot apply in the key clause: never absent.
+func TestWithoutRowidKeyClauseUnknownCollationIsUnknownNeverAbsent(t *testing.T) {
+	runKeyEq(t, "create table wr(k text, v, primary key (k collate mycoll)) without rowid", 1,
+		[][]any{{"a", "old"}, {"b", "gone"}},
+		[][]any{{"a", "new"}},
+		[]keyEqRow{
+			{vals: []any{"a", "old"}, want: unk, note: sqlitefile.NoteLiveUncertain},
+			{vals: []any{"b", "gone"}, want: unk, note: sqlitefile.NoteLiveUncertain},
+		})
+}

@@ -188,6 +188,7 @@ type tableParse struct {
 	cols    []Column
 	pkNames []string // the primary key's columns in key order
 	pkDesc  bool     // the (single) key column is declared DESC
+	pkColl  []string // the COLLATE of each key column in a table-level key clause ("" = none)
 	havePK  bool
 	without bool
 	strict  bool
@@ -691,20 +692,23 @@ func (p *cparser) primaryKeyList(st *tableParse) bool {
 	if t := p.next(); !t.isPunct('(') {
 		return p.failAt(t, noteSyntax)
 	}
-	var names []string
+	var names, colls []string
 	for {
 		t := p.next()
 		if !isName(t) || t.kind == tkString {
 			return p.failAt(t, notePK) // an expression in a key
 		}
 		names = append(names, t.text)
+		colls = append(colls, "")
 		for {
 			switch n := p.peek(0); {
 			case n.isWord("COLLATE"):
 				p.next()
-				if _, ok := p.name(); !ok {
+				nm, ok := p.name()
+				if !ok {
 					return false
 				}
+				colls[len(colls)-1] = nm
 				continue
 			case n.isWord("ASC"):
 				p.next()
@@ -731,7 +735,7 @@ func (p *cparser) primaryKeyList(st *tableParse) bool {
 			if st.havePK {
 				return p.fail(notePK)
 			}
-			st.havePK, st.pkNames, st.pkDesc = true, names, false // the engine ignores DESC in a table constraint (TestSchemaMatchesEngine)
+			st.havePK, st.pkNames, st.pkDesc, st.pkColl = true, names, false, colls // the engine ignores DESC in a table constraint (TestSchemaMatchesEngine)
 			return true
 		default:
 			return p.failAt(t, notePK)
@@ -814,6 +818,9 @@ func (p *cparser) finish(st *tableParse) (TableDef, bool) {
 	}
 	for k, i := range pkIdx {
 		cols[i].PKOrdinal = k + 1
+		if k < len(st.pkColl) {
+			cols[i].KeyCollation = st.pkColl[k]
+		}
 	}
 	for i := range cols {
 		c := &cols[i]

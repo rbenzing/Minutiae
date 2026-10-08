@@ -56,9 +56,13 @@ type Column struct {
 	NotNull        bool
 	PKOrdinal      int // 0 = not part of the primary key, else 1-based position in it
 	Collation      string
-	Default        Default
-	Generated      GenKind
-	RecordIndex    int // position in the stored record; -1 for a virtual generated column
+	// KeyCollation is the collation written for this column in a table-level
+	// PRIMARY KEY (...) clause ("" = none). It governs the key's index and
+	// overrides Collation for key comparison.
+	KeyCollation string
+	Default      Default
+	Generated    GenKind
+	RecordIndex  int // position in the stored record; -1 for a virtual generated column
 }
 
 // TableDef is the parsed definition of a table. When ParseOK is false the
