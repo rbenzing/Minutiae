@@ -1032,3 +1032,69 @@ func (p *cparser) indexTail(def IndexDef) (IndexDef, bool) {
 	def.ParseOK = true
 	return def, true
 }
+
+// sqlNames reads the head of a CREATE statement: the kind of object (TABLE,
+// INDEX, VIEW or TRIGGER, upper case), its own name (the part after a schema
+// prefix) and, for an index or a trigger, the table it is on, as the
+// statement spells them with the quotes removed. ok is false when the
+// statement cannot be read that far; the caller then checks nothing.
+func sqlNames(sql string) (kind, name, on string, ok bool) {
+	p := newCParser(sql, 0)
+	t, hok := p.header()
+	if !hok {
+		return "", "", "", false
+	}
+	for t.isWord("TEMP") || t.isWord("TEMPORARY") || t.isWord("UNIQUE") || t.isWord("VIRTUAL") {
+		p.next()
+		t = p.peek(0)
+	}
+	if t.kind != tkWord {
+		return "", "", "", false
+	}
+	switch kind = asciiUpper(t.text); kind {
+	case "TABLE", "INDEX", "VIEW", "TRIGGER":
+	default:
+		return "", "", "", false
+	}
+	p.next()
+	p.ifNotExists()
+	qual := func() (string, bool) {
+		n, ok := p.name()
+		if !ok {
+			return "", false
+		}
+		if p.peek(0).isPunct('.') {
+			p.next()
+			return p.name()
+		}
+		return n, true
+	}
+	if name, ok = qual(); !ok {
+		return "", "", "", false
+	}
+	switch kind {
+	case "INDEX":
+		if !p.word("ON") {
+			return "", "", "", false
+		}
+	case "TRIGGER":
+		// BEFORE | AFTER | INSTEAD OF, the event and an UPDATE OF column list
+		// come first; the first bare ON is the table's.
+		const maxScan = 4096
+		for i := 0; ; i++ {
+			t := p.next()
+			if t.kind == tkEOF || t.kind == tkBad || i > maxScan {
+				return "", "", "", false
+			}
+			if t.isWord("ON") {
+				break
+			}
+		}
+	default:
+		return kind, name, "", true
+	}
+	if on, ok = qual(); !ok {
+		return "", "", "", false
+	}
+	return kind, name, on, true
+}

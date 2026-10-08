@@ -61,6 +61,9 @@ func (v *View) Table(ctx context.Context, name string) (t *Table, err error) {
 		}
 		return &Table{v: v, obj: o}, nil
 	}
+	if s.Skipped > 0 {
+		return nil, fmt.Errorf("%w: no table %q was found, but the schema was read incompletely (%d damage events): it may exist", ErrCorrupt, name, s.Skipped)
+	}
 	return nil, fmt.Errorf("%w: no table %q", ErrNotFound, name)
 }
 
@@ -77,6 +80,9 @@ func (v *View) Index(ctx context.Context, name string) (ix *Index, err error) {
 		if o.Type == "index" && asciiEqualFold(o.Name, name) && o.RootPage != 0 {
 			return &Index{v: v, obj: o}, nil
 		}
+	}
+	if s.Skipped > 0 {
+		return nil, fmt.Errorf("%w: no index %q was found, but the schema was read incompletely (%d damage events): it may exist", ErrCorrupt, name, s.Skipped)
 	}
 	return nil, fmt.Errorf("%w: no index %q", ErrNotFound, name)
 }

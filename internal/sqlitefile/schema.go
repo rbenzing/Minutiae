@@ -108,6 +108,8 @@ type SchemaObject struct {
 	// KeyRangeViolation: the row lies outside the key range its ancestors give it
 	// (as Row.KeyRangeViolation).
 	KeyRangeViolation bool
+
+	nameBad bool // the row disagrees with its own statement (already warned)
 }
 
 // Schema is the content of the schema table: the valid rows in rowid order,
@@ -122,6 +124,12 @@ type Schema struct {
 	// may be incomplete: a page that no listed object owns is then not
 	// necessarily an orphan.
 	Skipped int
+
+	// EngineRefuses lists (at most 16) the reasons the engine would refuse this
+	// schema: a row whose name or tbl_name disagrees with its own statement, an
+	// index or trigger that names no table. View.Info reports them once the
+	// schema was read.
+	EngineRefuses []string
 
 	// maxFit is the step cap of one FitPage call (Limits.MaxFitSteps); 0 means the default.
 	maxFit  int64
@@ -312,6 +320,16 @@ func (v *View) Schema(ctx context.Context) (s *Schema, err error) {
 			}
 		}
 		v.parseObject(&obj, sst, parse, lim.MaxColumns, at)
+		if parse {
+			if why := rowNameDisagreement(obj); why != "" {
+				obj.nameBad = true
+				sc.Skipped++
+				sc.refuse(why)
+				bad := at
+				bad.Code, bad.Msg = WarnSchemaRowInvalid, why+"; the engine refuses a schema like this"
+				v.warns.add(bad)
+			}
+		}
 		if obj.Type == "table" && !obj.Virtual && (root < 2 || int64(root) > lim.MaxPages) {
 			// The table exists, but its root cannot be a b-tree root (page 0 is
 			// none, page 1 is the schema table): Table reports a corrupt schema
@@ -349,6 +367,7 @@ func (v *View) Schema(ctx context.Context) (s *Schema, err error) {
 	// Damage the walk met (a page, cell or record it could not read) is every
 	// warning of the scan that the callback did not raise itself.
 	sc.Skipped += int(v.warns.callCount() - scan0 - inRows)
+	v.checkOwners(sc)
 	v.sch.schema, v.sch.charge = sc, l.n
 	return sc, nil
 }
@@ -398,5 +417,65 @@ func (v *View) parseObject(obj *SchemaObject, sst sqlState, parse bool, maxCols 
 			}
 		}
 		obj.Index = &def
+	}
+}
+
+// maxSchemaRefusals bounds Schema.EngineRefuses.
+const maxSchemaRefusals = 16
+
+func (s *Schema) refuse(why string) {
+	if len(s.EngineRefuses) < maxSchemaRefusals {
+		s.EngineRefuses = append(s.EngineRefuses, why)
+	}
+}
+
+// rowNameDisagreement says why the schema row of obj contradicts its own
+// statement, or "". The engine builds each object from the statement and then
+// looks it up under the row's name, so a different name, a table or view
+// whose tbl_name is not its name, or an index or trigger whose tbl_name is not
+// the table of its statement all make it refuse the schema. Names compare as
+// the engine compares them (ASCII case-insensitive).
+func rowNameDisagreement(obj SchemaObject) string {
+	if obj.SQL == "" {
+		return ""
+	}
+	kind, name, on, ok := sqlNames(obj.SQL)
+	if !ok || !asciiEqualFold(kind, obj.Type) {
+		return ""
+	}
+	switch {
+	case !asciiEqualFold(name, obj.Name):
+		return fmt.Sprintf("%s row is named %q but its statement creates %q", obj.Type, obj.Name, name)
+	case (obj.Type == "table" || obj.Type == "view") && !asciiEqualFold(obj.TblName, obj.Name):
+		return fmt.Sprintf("%s %q has tbl_name %q", obj.Type, obj.Name, obj.TblName)
+	case (obj.Type == "index" || obj.Type == "trigger") && !asciiEqualFold(obj.TblName, on):
+		return fmt.Sprintf("%s %q has tbl_name %q but its statement is on %q", obj.Type, obj.Name, obj.TblName, on)
+	}
+	return ""
+}
+
+// checkOwners warns for every index or trigger whose tbl_name is not a table
+// of the schema (a trigger may be on a view): the engine refuses such a
+// schema, and the object cannot be attributed. Called with the complete list.
+func (v *View) checkOwners(sc *Schema) {
+	tables := make(map[string]bool, len(sc.Objects))
+	for i := range sc.Objects {
+		if o := &sc.Objects[i]; o.Type == "table" || o.Type == "view" {
+			tables[nameClass("table")+":"+asciiLower(o.Name)+":"+o.Type] = true
+		}
+	}
+	for i := range sc.Objects {
+		o := &sc.Objects[i]
+		key := nameClass("table") + ":" + asciiLower(o.TblName) + ":"
+		switch {
+		case o.nameBad:
+			continue
+		case o.Type == "index" && !tables[key+"table"],
+			o.Type == "trigger" && !tables[key+"table"] && !tables[key+"view"]:
+			why := fmt.Sprintf("%s %q has tbl_name %q, which is not a table of the schema", o.Type, o.Name, o.TblName)
+			sc.Skipped++
+			sc.refuse(why)
+			v.warns.add(Warning{Code: WarnSchemaRowInvalid, File: o.Loc.File, Page: o.Loc.Page, Offset: o.Loc.Offset, Msg: why + "; the engine refuses a schema like this"})
+		}
 	}
 }

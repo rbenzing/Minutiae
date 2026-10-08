@@ -126,10 +126,16 @@ func (v *View) addressable() uint32 {
 	return uint32(max(n, 0))
 }
 
-// Info returns the header information of the view.
+// Info returns the header information of the view. Once the schema was read,
+// EngineRefuses also lists the reasons found in it (Schema.EngineRefuses).
 func (v *View) Info() Info {
 	i := v.info
 	i.EngineRefuses = append([]string(nil), v.info.EngineRefuses...)
+	v.sch.mu.Lock()
+	if v.sch.schema != nil {
+		i.EngineRefuses = append(i.EngineRefuses, v.sch.schema.EngineRefuses...)
+	}
+	v.sch.mu.Unlock()
 	return i
 }
 
