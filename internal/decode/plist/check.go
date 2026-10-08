@@ -3,6 +3,7 @@ package plist
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 )
 
 const (
@@ -32,12 +33,16 @@ func guard(f func() error) (err error) {
 // Check rejects anything that is not a well-formed binary plist whose fully expanded
 // form stays within l.MaxNodes nodes, l.MaxPayload bytes of string and data payload and
 // l.MaxDepth levels of nesting. Shared references are memoized, so a reference bomb costs
-// O(objects), not its expanded size. Every error wraps ErrMalformed or ErrLimit.
+// O(objects), not its expanded size. Every error wraps ErrMalformed or ErrLimit. The zero
+// Limits means DefaultLimits. Counters saturate, so limits near MaxUint64 cannot wrap.
 func Check(b []byte, l Limits) error {
 	return guard(func() error { return checkCore(b, l) })
 }
 
 func checkCore(b []byte, l Limits) error {
+	if l == (Limits{}) {
+		l = DefaultLimits()
+	}
 	if len(b) < len(bplistMagic)+bplistTrailer || string(b[:len(bplistMagic)]) != bplistMagic {
 		return malformed("not a binary plist")
 	}
@@ -121,6 +126,31 @@ func (w *bplistWalker) tooDeep() error {
 	return limited("nested deeper than %d", w.l.MaxDepth)
 }
 
+// sat adds two counters, saturating at MaxUint64 so caller limits near it cannot wrap.
+func sat(a, b uint64) uint64 {
+	if s := a + b; s >= a {
+		return s
+	}
+	return math.MaxUint64
+}
+
+// scalarSize returns the number of content bytes that follow the marker of a fixed-size
+// object (integer, real, date, UID), and false for a marker that is not valid.
+func scalarSize(marker byte) (uint64, bool) {
+	low := uint64(marker & 0x0f)
+	switch marker >> 4 {
+	case 0x1:
+		return 1 << low, low <= 4
+	case 0x2:
+		return 1 << low, low == 2 || low == 3
+	case 0x3:
+		return 8, low == 3
+	case 0x8:
+		return low + 1, true
+	}
+	return 0, true
+}
+
 func (w *bplistWalker) visit(i uint64, depth int) (bplistNode, error) {
 	if depth > w.l.MaxDepth {
 		return bplistNode{}, w.tooDeep()
@@ -141,22 +171,23 @@ func (w *bplistWalker) visit(i uint64, depth int) (bplistNode, error) {
 		return bplistNode{}, malformed("object offset out of range")
 	}
 	res := bplistNode{state: 2, nodes: 1}
-	switch typ := w.b[off] >> 4; typ {
-	case 0xA, 0xB, 0xD: // array, set, dict
+	marker := w.b[off]
+	switch typ := marker >> 4; typ {
+	case 0xA, 0xC, 0xD: // array, set, dict
 		count, hdr, err := w.header(off)
 		if err != nil {
 			return bplistNode{}, err
 		}
-		if count > w.tableOff { // bound before doubling so a dict count cannot wrap
-			return bplistNode{}, malformed("truncated container")
-		}
+		perElem := w.refSize
 		if typ == 0xD {
-			count *= 2
+			perElem *= 2 // a key and a value reference
 		}
-		start := off + hdr
-		if start+count*w.refSize > w.tableOff {
+		// off+hdr <= tableOff, and the division cannot wrap, unlike count*perElem.
+		if count > (w.tableOff-(off+hdr))/perElem {
 			return bplistNode{}, malformed("truncated container")
 		}
+		count *= perElem / w.refSize
+		start := off + hdr
 		for k := range count {
 			ref := w.uint(start+k*w.refSize, w.refSize)
 			if ref >= w.numObjects {
@@ -166,8 +197,8 @@ func (w *bplistWalker) visit(i uint64, depth int) (bplistNode, error) {
 			if err != nil {
 				return bplistNode{}, err
 			}
-			res.nodes += c.nodes
-			res.payload += c.payload
+			res.nodes = sat(res.nodes, c.nodes)
+			res.payload = sat(res.payload, c.payload)
 			res.height = max(res.height, c.height+1)
 			if res.nodes > w.l.MaxNodes {
 				return bplistNode{}, limited("expands beyond %d nodes", w.l.MaxNodes)
@@ -177,20 +208,29 @@ func (w *bplistWalker) visit(i uint64, depth int) (bplistNode, error) {
 			}
 		}
 	case 0x4, 0x5, 0x6: // data, ASCII string, UTF-16 string
-		count, _, err := w.header(off)
+		count, hdr, err := w.header(off)
 		if err != nil {
 			return bplistNode{}, err
 		}
-		if count > w.l.MaxPayload { // bound before doubling so a UTF-16 count cannot wrap
+		limit := w.l.MaxPayload
+		if typ == 0x6 {
+			limit /= 2 // compared before doubling, so the doubling cannot wrap
+		}
+		if count > limit {
 			return bplistNode{}, limited("payload above %d bytes", w.l.MaxPayload)
 		}
 		if typ == 0x6 {
 			count *= 2
 		}
-		if count > w.l.MaxPayload {
-			return bplistNode{}, limited("payload above %d bytes", w.l.MaxPayload)
+		if count > w.tableOff-(off+hdr) {
+			return bplistNode{}, malformed("string or data runs past the object area")
 		}
 		res.payload = count
+	default:
+		size, ok := scalarSize(marker)
+		if !ok || size > w.tableOff-off-1 {
+			return bplistNode{}, malformed("scalar runs past the object area")
+		}
 	}
 	*n = res
 	return res, nil

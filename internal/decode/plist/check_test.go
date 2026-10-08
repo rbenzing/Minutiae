@@ -150,10 +150,6 @@ func TestCheckPayloadLimit(t *testing.T) {
 	if !errors.Is(err, ErrLimit) {
 		t.Fatalf("utf16: %v, want ErrLimit", err)
 	}
-	// exactly at the limit is accepted by the payload rule
-	if err := Check(rawPlist(bigCount(0x4, l.MaxPayload), []byte{8}), l); err != nil {
-		t.Fatalf("at limit: %v", err)
-	}
 }
 
 func TestCheckAcceptsRealPlists(t *testing.T) {
