@@ -340,7 +340,7 @@ func TestRecoverRejectsInjectedMaps(t *testing.T) {
 					return []filesys.Candidate{tc.cand}, nil
 				}
 			}, delNode("/a.bin", pat(1, bs)))
-			sum := e.recover(t, examine.RecoverOptions{All: true})
+			sum := e.recover(t, examine.RecoverOptions{All: true, MaxPlanRuns: 1 << 22})
 			if got := len(recovered(t, e.c)); got != 0 {
 				t.Fatalf("%d artifacts written", got)
 			}
@@ -390,5 +390,22 @@ func TestRecoverEmptyCandidateIsEmpty(t *testing.T) {
 	sum := e.recover(t, examine.RecoverOptions{All: true})
 	if sum.SkippedBy["empty"] != 1 || sum.SkippedBy["no-free-bytes"] != 0 || sum.Recovered != 0 {
 		t.Errorf("summary %+v, want one empty skip", sum)
+	}
+}
+
+// The plan-run cap has a default that bounds planning memory (about 260 MiB at the default, see
+// TestOverlapPeakHeapAtPlanCapStaysBounded) and an option that raises or lowers it.
+func TestRecoverMaxPlanRunsOption(t *testing.T) {
+	var nodes []fstest.Node
+	for i := range 4 {
+		nodes = append(nodes, delNode(fmt.Sprintf("/f%d.bin", i), pat(byte(i+1), bs)))
+	}
+	e := newRecEnv(t, nodes...)
+	sum := e.recover(t, examine.RecoverOptions{All: true, MaxPlanRuns: 2})
+	if sum.LimitReached != "max-plan-runs" || sum.NotProcessed != 2 || sum.Recovered != 2 {
+		t.Errorf("limit %q not processed %d recovered %d, want max-plan-runs 2 2", sum.LimitReached, sum.NotProcessed, sum.Recovered)
+	}
+	if _, err := e.s.PlanRecovery(context.Background(), examine.RecoverOptions{All: true, MaxPlanRuns: -1}); err == nil {
+		t.Error("a negative MaxPlanRuns must be refused")
 	}
 }

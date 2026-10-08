@@ -1100,3 +1100,32 @@ func TestRecoverInterruptedManyRunsFileLeavesVerifiableCase(t *testing.T) {
 		})
 	}
 }
+
+// FB-m: the audit log of one analysis holds at most warningEntryCap analysis.warning entries and then one
+// "further warnings suppressed" entry; the counts stay exact.
+func TestRecoverWarningEntriesAreCapped(t *testing.T) {
+	defer examine.SetWarningEntryCap(3)()
+	var nodes []fstest.Node
+	for i := 0; i < 10; i++ {
+		nodes = append(nodes, delNode(fmt.Sprintf("/z%d.bin", i), make([]byte, bs)))
+	}
+	e := newRecEnv(t, nodes...)
+	sum := e.recover(t, examine.RecoverOptions{All: true})
+	if sum.Uniform != 10 || sum.SkippedBy["uniform"] != 10 || sum.Skipped != 10 {
+		t.Fatalf("counts must stay exact: %+v", sum)
+	}
+	var n, further int
+	for _, en := range auditByAction(t, e.c, "analysis.warning") {
+		n++
+		if r, _ := en.Details["reason"].(string); strings.Contains(r, "further warnings suppressed") {
+			further++
+		}
+	}
+	if n != 4 || further != 1 {
+		t.Errorf("%d warning entries, %d of them 'further suppressed'; want 3 + 1", n, further)
+	}
+	end := auditByAction(t, e.c, "analysis.end")
+	if len(end) != 1 || fmt.Sprint(end[0].Details["warnings_suppressed"]) != "7" {
+		t.Errorf("analysis.end = %+v, want warnings_suppressed 7", end)
+	}
+}

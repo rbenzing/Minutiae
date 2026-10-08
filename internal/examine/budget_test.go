@@ -406,3 +406,14 @@ func TestBudgetBothLimitsReportMaxFiles(t *testing.T) {
 		t.Errorf("both limits exceeded: %q, want max-files", got)
 	}
 }
+
+// Linux counts f_bavail in units of f_frsize, not f_bsize.
+func TestStatfsUnitPrefersFragmentSize(t *testing.T) {
+	for _, tc := range []struct{ bsize, frsize, want int64 }{
+		{4096, 1024, 1024}, {4096, 0, 4096}, {4096, -1, 4096}, {1024, 4096, 4096}, {0, 0, 0},
+	} {
+		if got := statfsUnit(tc.bsize, tc.frsize); got != tc.want {
+			t.Errorf("statfsUnit(%d, %d) = %d, want %d", tc.bsize, tc.frsize, got, tc.want)
+		}
+	}
+}

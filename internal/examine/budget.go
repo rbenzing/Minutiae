@@ -114,3 +114,12 @@ func (s *Session) checkSpace(planned int64) error {
 	}
 	return nil
 }
+
+// statfsUnit is the unit of the block counts of a statfs report: Linux counts them in fragment-size
+// units (f_frsize, when reported), not f_bsize.
+func statfsUnit(bsize, frsize int64) int64 {
+	if frsize > 0 {
+		return frsize
+	}
+	return bsize
+}

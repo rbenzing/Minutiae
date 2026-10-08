@@ -18,7 +18,7 @@ import (
 type recoverFlags struct {
 	list, all, allCandidates, keepUniform bool
 	minConfidence                         int
-	maxFiles                              int
+	maxFiles, maxPlanRuns                 int
 	maxBytes                              int64
 }
 
@@ -28,6 +28,9 @@ func (f recoverFlags) validate(refs []string) error {
 	}
 	if f.maxFiles < 0 {
 		return usageErrorf("--max-files must not be negative, got %d", f.maxFiles)
+	}
+	if f.maxPlanRuns < 0 {
+		return usageErrorf("--max-plan-runs must not be negative, got %d", f.maxPlanRuns)
 	}
 	if f.maxBytes < 0 {
 		return usageErrorf("--max-bytes must not be negative, got %d", f.maxBytes)
@@ -70,6 +73,7 @@ func newImageRecoverCmd(d Deps, opts *rootOptions) *cobra.Command {
 	cmd.Flags().BoolVar(&f.keepUniform, "keep-uniform", false, "write candidates whose bytes are all the same value")
 	cmd.Flags().IntVar(&f.maxFiles, "max-files", 0, fmt.Sprintf("stop after this many artifacts (default %d; 0 uses the default)", examine.DefaultMaxFiles))
 	cmd.Flags().Int64Var(&f.maxBytes, "max-bytes", 0, fmt.Sprintf("stop after this many bytes (default %d; 0 uses the default)", examine.DefaultMaxBytes))
+	cmd.Flags().IntVar(&f.maxPlanRuns, "max-plan-runs", 0, "stop planning after this many runs over all candidates (default 524288, about 260 MiB of memory; more runs cost more memory; 0 uses the default)")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		pidx, err := partition()
 		if err != nil {
@@ -86,7 +90,7 @@ func newImageRecoverCmd(d Deps, opts *rootOptions) *cobra.Command {
 		defer closeAll()
 		o := examine.RecoverOptions{
 			Partition: pidx, Refs: refs, All: f.all || (f.list && len(refs) == 0), MinConfidence: f.minConfidence,
-			AllCandidates: f.allCandidates, KeepUniform: f.keepUniform, MaxFiles: f.maxFiles, MaxBytes: f.maxBytes,
+			AllCandidates: f.allCandidates, KeepUniform: f.keepUniform, MaxFiles: f.maxFiles, MaxBytes: f.maxBytes, MaxPlanRuns: f.maxPlanRuns,
 		}
 		if f.list {
 			plan, err := s.PlanRecovery(cmd.Context(), o)

@@ -46,6 +46,9 @@ type analysis struct {
 	known int                // len(Info().Warnings) at the last watchFS/syncFS
 	after string             // last path extracted, named by filesystem warnings written after it
 
+	warnEntries int // analysis.warning entries asked for (written or suppressed)
+	suppressed  int // of those, how many were not written
+
 	extra map[string]any // setEnd: extra details of analysis.end and analysis.error
 }
 
@@ -64,6 +67,24 @@ func (a *analysis) warnWith(path, reason string, extra map[string]any) error {
 		d = map[string]any{}
 	}
 	d["analysis_id"], d["path"], d["reason"] = a.sum.AnalysisID, path, reason
+	return a.appendWarning(d)
+}
+
+// appendWarning writes one analysis.warning entry unless the analysis already wrote warningEntryCap of
+// them: the first one past the cap writes a single "further warnings suppressed" entry and the rest are
+// only counted (analysis.end carries warnings_suppressed). The counts of the summary stay exact.
+func (a *analysis) appendWarning(d map[string]any) error {
+	a.warnEntries++
+	if a.warnEntries > warningEntryCap {
+		a.suppressed++
+		if a.warnEntries > warningEntryCap+1 {
+			return nil
+		}
+		d = map[string]any{
+			"analysis_id": a.sum.AnalysisID, "path": "", "reason": "further warnings suppressed",
+			"warning": fmt.Sprintf("more than %d warnings: the rest are counted in analysis.end (warnings_suppressed), not written one by one", warningEntryCap),
+		}
+	}
 	_, err := a.c.Audit.Append("analysis.warning", a.deviceID, d)
 	return err
 }
@@ -84,6 +105,9 @@ func (a *analysis) endDetails(base map[string]any) map[string]any {
 		d = map[string]any{}
 	}
 	maps.Copy(d, base)
+	if a.suppressed > 0 {
+		d["warnings_suppressed"] = a.suppressed
+	}
 	return d
 }
 
@@ -149,8 +173,7 @@ func (a *analysis) fsWarning(source, text string) error {
 	if a.after != "" && source == "filesystem" {
 		details["after"] = a.after
 	}
-	_, err := a.c.Audit.Append("analysis.warning", a.deviceID, details)
-	return err
+	return a.appendWarning(details)
 }
 
 // add keeps a written artifact record (when one exists) in the summary.
@@ -230,3 +253,7 @@ func (a *analysis) noteSnapshotsSkipped(p string, e filesys.Entry) error {
 	_, err := a.c.Audit.Append("analysis.warning", a.deviceID, d)
 	return err
 }
+
+// warningEntryCap is how many analysis.warning entries one analysis writes before it writes one
+// "further warnings suppressed" entry and only counts the rest (as records.Writer.Warn does).
+var warningEntryCap = 10_000

@@ -41,3 +41,10 @@ func SetReproduceReadObserver(f func(n int)) (restore func()) {
 	reproduceReadObserver = f
 	return func() { reproduceReadObserver = old }
 }
+
+// SetWarningEntryCap lowers how many analysis.warning entries one analysis writes and returns the restore function.
+func SetWarningEntryCap(n int) (restore func()) {
+	old := warningEntryCap
+	warningEntryCap = n
+	return func() { warningEntryCap = old }
+}

@@ -27,8 +27,10 @@ import (
 const (
 	// MaxRecoverEntries caps the deleted entries one run considers; the rest are counted as limit.
 	MaxRecoverEntries = 1_000_000
-	// maxPlanRuns caps the runs the plan holds over all candidates; the rest are counted as limit.
-	maxPlanRuns = 1 << 22
+	// maxPlanRuns is the default cap on the runs the plan holds over all candidates; the rest are counted
+	// as limit. Sized so that planning (the overlap passes included) peaks under 512 MiB of heap
+	// (TestOverlapPeakHeapAtPlanCapStaysBounded); RecoverOptions.MaxPlanRuns raises or lowers it.
+	maxPlanRuns = 1 << 19
 	// maxExcludedListed is how many excluded runs Recovery.Excluded lists (the counters are exact).
 	maxExcludedListed = 256
 )
@@ -51,6 +53,7 @@ type RecoverOptions struct {
 	KeepUniform   bool
 	MaxFiles      int   // 0 = DefaultMaxFiles
 	MaxBytes      int64 // 0 = DefaultMaxBytes
+	MaxPlanRuns   int   // 0 = the default cap (1<<19 runs, about 260 MiB of planning memory); more runs cost memory
 	Progress      func(done, total int64)
 }
 
@@ -140,6 +143,9 @@ func (s *Session) recovererOf(fsys filesys.FileSystem) (filesys.Recoverer, error
 func (o RecoverOptions) validate() error {
 	if o.MinConfidence < 0 || o.MinConfidence > 100 {
 		return fmt.Errorf("min confidence %d is outside 0..100", o.MinConfidence)
+	}
+	if o.MaxPlanRuns < 0 {
+		return fmt.Errorf("max plan runs %d is negative", o.MaxPlanRuns)
 	}
 	if !o.All && len(o.Refs) == 0 {
 		return errors.New("nothing to recover: give entries or directories, or ask for all")
@@ -385,6 +391,10 @@ func (p *planner) items(targets []target) error {
 		byID[t.e.ID] = append(byID[t.e.ID], t.path)
 	}
 	runsHeld := 0
+	runCap := planRunCap
+	if p.o.MaxPlanRuns > 0 {
+		runCap = p.o.MaxPlanRuns
+	}
 	for i, t := range targets {
 		if err := p.ctx.Err(); err != nil {
 			return err
@@ -423,9 +433,9 @@ func (p *planner) items(targets []target) error {
 				for _, c := range cs {
 					runsHeld += len(c.Runs)
 				}
-				if runsHeld > planRunCap {
+				if runsHeld > runCap {
 					rest := len(targets) - i
-					p.limit("max-plan-runs", rest, fmt.Sprintf("the plan would hold more than %d runs; %d entries were not processed", planRunCap, rest))
+					p.limit("max-plan-runs", rest, fmt.Sprintf("the plan would hold more than %d runs; %d entries were not processed", runCap, rest))
 					return nil
 				}
 				p.evaluate(&it, t, cs)
