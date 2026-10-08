@@ -2,6 +2,7 @@ package sqlitefile
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"sync"
 )
@@ -373,4 +374,59 @@ func KeyDigest(vals []Value, colls []string) ([32]byte, bool) {
 		idx[i] = i
 	}
 	return keyDigest(vals, idx, colls)
+}
+
+// ---- Task 15: hooked scans and the no-recover entry points ----
+
+// ScanWALWithHook is ScanWAL with a panic-injection hook.
+func ScanWALWithHook(wal io.ReaderAt, size int64, dbPageSize int, opts Options, hook func(site string)) (*WALScan, error) {
+	return scanWALWith(wal, size, dbPageSize, opts, hook)
+}
+
+// ScanJournalWithHook is ScanJournal with a panic-injection hook.
+func ScanJournalWithHook(j io.ReaderAt, size int64, dbPageSize int, opts Options, hook func(site string)) (*JournalScan, error) {
+	return scanJournalWith(j, size, dbPageSize, opts, hook)
+}
+
+// noRecover turns a recovered *PanicError back into the panic it recovered, so
+// a fuzzer fails on it with the original value and stack. The entry points keep
+// their single guard (a second code path would test something else).
+func noRecover(err error) error {
+	if pe, ok := err.(*PanicError); ok {
+		panic(fmt.Sprintf("%v\n%s", pe.Value, pe.Stack))
+	}
+	return err
+}
+
+// OpenNoRecover is Open, panicking where Open would have recovered.
+func OpenNoRecover(db io.ReaderAt, size int64, opts Options) (*DB, error) {
+	d, err := Open(db, size, opts)
+	return d, noRecover(err)
+}
+
+// ScanWALNoRecover is ScanWAL, panicking where ScanWAL would have recovered.
+func ScanWALNoRecover(wal io.ReaderAt, size int64, dbPageSize int, opts Options) (*WALScan, error) {
+	s, err := ScanWAL(wal, size, dbPageSize, opts)
+	return s, noRecover(err)
+}
+
+// ScanJournalNoRecover is ScanJournal, panicking where it would have recovered.
+func ScanJournalNoRecover(j io.ReaderAt, size int64, dbPageSize int, opts Options) (*JournalScan, error) {
+	s, err := ScanJournal(j, size, dbPageSize, opts)
+	return s, noRecover(err)
+}
+
+// HistoryNoRecover walks the history's pages and rows, panicking where an entry
+// point would have recovered.
+func HistoryNoRecover(ctx context.Context, h *Hist, pages func(PageImage) bool, rows func(RecoveredRow) bool) error {
+	if pages != nil {
+		if err := noRecover(h.Pages(ctx, pages)); err != nil {
+			return err
+		}
+	}
+	if rows != nil {
+		_, err := h.Rows(ctx, rows)
+		return noRecover(err)
+	}
+	return nil
 }

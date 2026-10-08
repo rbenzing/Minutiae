@@ -409,7 +409,7 @@ func (w *histWalk) dbUnderWAL() error {
 		return nil
 	}
 	l := h.d.env.newLedger()
-	defer l.free(l.n)
+	defer func() { l.free(l.n) }() // l.n at return, not at the defer statement
 	if err := l.alloc(4 * int64(len(h.a.scan.latest))); err != nil {
 		return fmt.Errorf("history of the database under the WAL: %w", err)
 	}
@@ -451,7 +451,7 @@ func (w *histWalk) dbRolledBack() error {
 		return nil
 	}
 	l := h.d.env.newLedger()
-	defer l.free(l.n)
+	defer func() { l.free(l.n) }() // l.n at return, not at the defer statement
 	if err := l.alloc(4 * int64(len(h.jr.scan.winner))); err != nil {
 		return fmt.Errorf("history of the rolled-back pages: %w", err)
 	}
@@ -501,7 +501,7 @@ func (w *histWalk) walFrames() error {
 	s := h.a.scan
 	var groups [4][]int // superseded, uncommitted, stale, unverified: indexes into s.Frames
 	l := h.d.env.newLedger()
-	defer l.free(l.n)
+	defer func() { l.free(l.n) }() // l.n at return, not at the defer statement
 	if err := l.alloc(8 * int64(len(s.Frames))); err != nil {
 		return fmt.Errorf("history of the WAL: %w", err)
 	}
@@ -560,7 +560,7 @@ func (w *histWalk) journalRecords() error {
 		return nil
 	}
 	l := h.d.env.newLedger()
-	defer l.free(l.n)
+	defer func() { l.free(l.n) }() // l.n at return, not at the defer statement
 	if err := l.alloc(8 * int64(len(h.jr.scan.Records))); err != nil {
 		return fmt.Errorf("history of the journal: %w", err)
 	}

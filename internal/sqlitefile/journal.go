@@ -110,9 +110,15 @@ type jscan struct {
 // and what it keeps is charged to the budget and grows only with the records
 // actually read. The verdict (Info.Applied, Record.Applied) follows the rules
 // the engine probe recorded (TestEngineJournalRules).
-func ScanJournal(j io.ReaderAt, size int64, dbPageSize int, opts Options) (res *JournalScan, err error) {
+func ScanJournal(j io.ReaderAt, size int64, dbPageSize int, opts Options) (*JournalScan, error) {
+	return scanJournalWith(j, size, dbPageSize, opts, nil)
+}
+
+// scanJournalWith is ScanJournal with the panic-injection hook of the tests.
+func scanJournalWith(j io.ReaderAt, size int64, dbPageSize int, opts Options, hook func(site string)) (res *JournalScan, err error) {
 	defer guard(&err)
-	e := newEnv(opts, nil)
+	e := newEnv(opts, hook)
+	e.at("journalscan")
 	l := e.newLedger()
 	defer l.guard(&err)
 	defer func() {

@@ -30,9 +30,15 @@ func validWALPageSize(p uint32) bool {
 // else dbPageSize, else no slots are defined. The file is read once, in
 // disjoint chunks of whole slots (a torn tail is not read); what is kept is
 // charged to the budget and grows only with slots actually read.
-func ScanWAL(wal io.ReaderAt, size int64, dbPageSize int, opts Options) (res *WALScan, err error) {
+func ScanWAL(wal io.ReaderAt, size int64, dbPageSize int, opts Options) (*WALScan, error) {
+	return scanWALWith(wal, size, dbPageSize, opts, nil)
+}
+
+// scanWALWith is ScanWAL with the panic-injection hook of the tests.
+func scanWALWith(wal io.ReaderAt, size int64, dbPageSize int, opts Options, hook func(site string)) (res *WALScan, err error) {
 	defer guard(&err)
-	e := newEnv(opts, nil)
+	e := newEnv(opts, hook)
+	e.at("walscan")
 	l := e.newLedger()
 	defer l.guard(&err)
 	defer func() {
