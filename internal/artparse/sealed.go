@@ -115,6 +115,25 @@ func integrityf(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", evidence.ErrIntegrity, fmt.Sprintf(format, args...))
 }
 
+// classifyOpenError turns an open failure of an artifact the run's snapshot holds into an integrity
+// failure when the manifest itself is the cause: its record is gone or the manifest can no longer be
+// read. The manifest changed under the run; that is never a plain I/O failure.
+func (h *Host) classifyOpenError(snap *Snapshot, id string, err error) error {
+	if errors.Is(err, evidence.ErrIntegrity) {
+		return err
+	}
+	if _, inSnap := snap.Record(id); !inSnap {
+		return err
+	}
+	if errors.Is(err, evidence.ErrUnknownArtifact) {
+		return integrityf("artifact %s: its manifest record is gone (%v)", id, err)
+	}
+	if _, merr := h.c.Manifest(); merr != nil {
+		return integrityf("artifact %s: the manifest can no longer be read (%v)", id, merr)
+	}
+	return err
+}
+
 // loadSource opens artifact id through Case.OpenArtifact (regular file inside
 // the case, size equal to the manifest), requires the record to equal the
 // snapshot's, recomputes its SHA-256 and compares it with the manifest. An
@@ -128,7 +147,7 @@ func (h *Host) loadSource(ctx context.Context, snap *Snapshot, id string, memMax
 	}
 	of, rec, err := h.c.OpenArtifact(id)
 	if err != nil {
-		return nil, err
+		return nil, h.classifyOpenError(snap, id, err)
 	}
 	var f artFile = of
 	if h.wrapFile != nil {

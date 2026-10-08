@@ -502,6 +502,13 @@ func (r *run) parseJob(ctx context.Context, j Job, b *bundle, st *jobState) (run
 // startFailed settles a job whose Writer.Start failed.
 func (r *run) startFailed(ctx context.Context, j Job, st *jobState, err error) error {
 	switch {
+	case errors.Is(err, evidence.ErrIntegrity):
+		// an integrity finding is never dropped for a cancel that happens at the same moment
+		st.res.Integrity = true
+		st.fail(OutcomeRefused, "integrity: "+r.h.caseRelative(err.Error()), err)
+		if ctx.Err() != nil {
+			r.sum.Cancelled, r.sum.Stopped = true, StoppedCancelled
+		}
 	case ctx.Err() != nil:
 		st.fail(OutcomeIncomplete, "cancelled", err)
 		r.sum.Cancelled, r.sum.Stopped = true, StoppedCancelled
@@ -509,9 +516,6 @@ func (r *run) startFailed(ctx context.Context, j Job, st *jobState, err error) e
 		st.set(OutcomeSkipped, "already parsed by this parser version")
 	case errors.Is(err, records.ErrParserIdentityConflict):
 		st.fail(OutcomeRefused, "this build's parser differs from the one recorded for that version (a development build?)", err)
-	case errors.Is(err, evidence.ErrIntegrity):
-		st.res.Integrity = true
-		st.fail(OutcomeRefused, "integrity: "+r.h.caseRelative(err.Error()), err)
 	case errors.Is(err, records.ErrIngestActive), errors.Is(err, evidence.ErrNeedsUpgrade):
 		return err
 	default:
