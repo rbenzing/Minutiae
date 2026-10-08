@@ -289,7 +289,7 @@ var stdAllow = map[string]classSet{
 	"encoding/binary": setOf(pcDecode, pcSqlitefile, pcParser), "encoding/hex": setOf(pcDecode, pcSqlitefile, pcParser),
 	"hash/crc32": setOf(pcDecode, pcSqlitefile, pcParser),
 	// common.CleanText keeps the original bytes (base64) or their hash
-	"encoding/base64": setOf(pcRTCommon), "crypto/sha256": setOf(pcRTCommon),
+	"encoding/base64": setOf(pcRTCommon), "crypto/sha256": setOf(pcRTCommon, pcSqlitefile),
 	// typed Decode of stored payloads
 	"encoding/json": setOf(pcRTType),
 	// name and token patterns (the regexp engine is linear time)
@@ -297,7 +297,14 @@ var stdAllow = map[string]classSet{
 	// io.ReaderAt is the only way to read input; context carries cancellation (parse.Tick)
 	"io": setOf(pcParse, pcDecode, pcSqlitefile, pcParser), "context": setOf(pcParse, pcDecode, pcSqlitefile, pcParser),
 	// Budget and SealedReaderAt; no sync: nothing in a parser needs a lock
-	"sync/atomic": setOf(pcParse),
+	"sync/atomic": setOf(pcParse, pcSqlitefile),
+	// The sqlitefile class alone (ruling C54): the library is a value-semantic reader
+	// whose instances own a page cache, schema and layout caches and their locks
+	// (sync, sync/atomic, container/list for the LRU), orders with cmp and keys row
+	// digests with crypto/sha256. All of it is instance-scoped and deterministic: no
+	// clock, no goroutine, no I/O beyond the io.ReaderAt it is handed. runtime, os
+	// and the rest stay refused; the parser classes get none of these.
+	"sync": setOf(pcSqlitefile), "container/list": setOf(pcSqlitefile), "cmp": setOf(pcSqlitefile),
 	// embedded data lives only in the data packages (and is hashed by the parser identity, F1)
 	"embed": setOf(pcRTCommon, pcRTType, pcDecode, pcParser),
 }
@@ -1457,6 +1464,19 @@ func TestPurityAllowlistSelfTest(t *testing.T) {
 		{pcSqlitefile, dirSqlitefile, m + "internal/records", true},
 		{pcSqlitefile, dirSqlitefile, "regexp", false},
 		{pcSqlitefile, dirSqlitefile, "embed", false},
+		// the sqlitefile class alone gets instance-scoped caches and locks (C54)
+		{pcSqlitefile, dirSqlitefile, "sync", true},
+		{pcSqlitefile, dirSqlitefile, "sync/atomic", true},
+		{pcSqlitefile, dirSqlitefile, "container/list", true},
+		{pcSqlitefile, dirSqlitefile, "cmp", true},
+		{pcSqlitefile, dirSqlitefile, "crypto/sha256", true},
+		{pcSqlitefile, dirSqlitefile, "runtime", false},
+		{pcSqlitefile, dirSqlitefile, "os", false},
+		{pcSqlitefile, dirSqlitefile, "math/rand", false},
+		{pcParse, dirParse, "sync", false},
+		{pcDecode, dirDecodePlst, "sync", false},
+		{pcDecode, dirDecodePlst, "container/list", false},
+		{pcDecode, dirDecodePlst, "crypto/sha256", false},
 		{pcSqlitefile, dirSqlitefile, m + "internal/decode/plist", false},
 		// parsers
 		{pcParser, fixtureParserDir, m + "internal/recordtypes/message", true},
@@ -1471,6 +1491,11 @@ func TestPurityAllowlistSelfTest(t *testing.T) {
 		{pcParser, fixtureParserDir, "regexp", false},
 		{pcParser, fixtureParserDir, "encoding/json", false},
 		{pcParser, fixtureParserDir, "sync/atomic", false},
+		{pcParser, fixtureParserDir, "sync", false},
+		{pcParser, fixtureParserDir, "container/list", false},
+		{pcParser, fixtureParserDir, "cmp", false},
+		{pcParser, fixtureParserDir, "crypto/sha256", false},
+		{pcParser, fixtureParserDir, "runtime", false},
 		{pcParser, fixtureParserDir, "golang.org/x/text/encoding/charmap", false},
 		{pcParser, fixtureParserDir, "howett.net/plist", false},
 		// nobody imports the evidence package or the CLI
