@@ -18,9 +18,14 @@ const (
 	chargePerPayload   = 2
 )
 
-// Decode decodes one binary or XML plist into plain values: map[string]any, []any, string,
+// Decode decodes one binary or XML plist into plain values: map[string]any, []any, string
+// (always valid UTF-8; a string that is not is a RawString, see below),
 // int64 (uint64 above math.MaxInt64), float64, bool, []byte, time.Time (UTC; plist dates
-// carry no zone) and UID. OpenStep and GNUstep text plists are refused (ErrUnsupported), and
+// carry no zone; years 1 to 9999) and UID, plus two raw forms for what a Go string or time.Time
+// would alter: RawString (invalid UTF-8, or a lone UTF-16 surrogate, bytes kept exactly) and
+// RawDate (a NaN, infinite or out-of-range date, the stored Cocoa seconds kept exactly). A
+// dictionary key of that kind is ErrUnsupported, and an XML CF$UID with a negative integer is
+// ErrMalformed. OpenStep and GNUstep text plists are refused (ErrUnsupported), and
 // so is anything else that is not one of the two formats.
 //
 // Order: a nil budget is ErrNoBudget; input over MaxInput is ErrLimit; the document is
@@ -74,15 +79,37 @@ func decodeCore(b []byte, budget Budget) (any, error) {
 			budget.Free(estimate)
 		}
 	}()
+	in, norm := b, normalizer{}
+	if LooksLikeXML(b) {
+		if hasNegativeUID(b) {
+			return nil, malformed("negative CF$UID")
+		}
+		rewritten, base, found, ok := rewriteSurrogates(b)
+		if !ok {
+			return nil, fmt.Errorf("%w: no free private code points to stand in for surrogate references", ErrUnsupported)
+		}
+		if found {
+			in, norm = rewritten, normalizer{base: base}
+		}
+	}
 	var raw any
-	format, err := howett.Unmarshal(b, &raw)
+	format, err := howett.Unmarshal(in, &raw)
 	if err != nil {
 		return nil, malformed("%v", err)
 	}
-	if format != howett.BinaryFormat && format != howett.XMLFormat {
+	var out any
+	switch format {
+	case howett.BinaryFormat:
+		w, top, werr := newBplistWalker(b, DefaultLimits(), false)
+		if werr != nil {
+			return nil, werr
+		}
+		out, err = w.normalizeBinary(top, raw)
+	case howett.XMLFormat:
+		out, err = norm.value(raw)
+	default:
 		return nil, fmt.Errorf("%w: library read format %d", ErrUnsupported, format)
 	}
-	out, err := normalize(raw)
 	if err != nil {
 		return nil, err
 	}

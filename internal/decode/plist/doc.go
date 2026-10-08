@@ -7,6 +7,10 @@
 // shared-reference bomb is counted by a memoized walk, never expanded) and the expanded string
 // and data payload are all capped by Limits (DefaultLimits: 1<<20 nodes, depth 64, 64 MiB).
 //
+// Decode returns plain values; text that is not valid UTF-8 or holds a lone UTF-16 surrogate is a
+// RawString and a date that is not a representable instant is a RawDate, each keeping the stored
+// data exactly, so nothing is repaired or invented.
+//
 // Every error wraps exactly one of ErrMalformed, ErrLimit, ErrUnsupported, ErrInternal or
 // ErrNoBudget. ErrInternal is the recovered form of a panic and is a bug to report; it must
 // never be reachable from input. The package imports no other Minutiae package: callers

@@ -53,9 +53,20 @@ func measureBinary(b []byte, l Limits) (nodes, payload uint64, err error) {
 }
 
 func checkCore(b []byte, l Limits) (nodes, payload uint64, err error) {
+	w, top, err := newBplistWalker(b, l, true)
+	if err != nil {
+		return 0, 0, err
+	}
+	res, err := w.visit(top, 0)
+	return res.nodes, res.payload, err
+}
+
+// newBplistWalker parses the trailer of b and returns a walker over it and the index of the
+// top object. It reads no object; memo allocates the table visit needs.
+func newBplistWalker(b []byte, l Limits, memo bool) (*bplistWalker, uint64, error) {
 	l = l.effective()
 	if len(b) < len(bplistMagic)+bplistTrailer || string(b[:len(bplistMagic)]) != bplistMagic {
-		return 0, 0, malformed("not a binary plist")
+		return nil, 0, malformed("not a binary plist")
 	}
 	t := b[len(b)-bplistTrailer:]
 	w := &bplistWalker{
@@ -70,22 +81,23 @@ func checkCore(b []byte, l Limits) (nodes, payload uint64, err error) {
 	dataEnd := uint64(len(b) - bplistTrailer)
 	switch {
 	case w.offSize < 1 || w.offSize > 8 || w.refSize < 1 || w.refSize > 8:
-		return 0, 0, malformed("bad trailer sizes")
+		return nil, 0, malformed("bad trailer sizes")
 	case numObjects == 0 || numObjects > dataEnd:
-		return 0, 0, malformed("bad object count")
+		return nil, 0, malformed("bad object count")
 	case numObjects > l.MaxNodes:
 		// A legitimate plist references every object, so numObjects never exceeds the
 		// expanded node count; this also bounds the memo table.
-		return 0, 0, limited("object count %d above %d", numObjects, l.MaxNodes)
+		return nil, 0, limited("object count %d above %d", numObjects, l.MaxNodes)
 	case tableOff < uint64(len(bplistMagic)) || tableOff > dataEnd || numObjects*w.offSize > dataEnd-tableOff:
-		return 0, 0, malformed("bad offset table")
+		return nil, 0, malformed("bad offset table")
 	case top >= numObjects:
-		return 0, 0, malformed("bad top object")
+		return nil, 0, malformed("bad top object")
 	}
 	w.numObjects, w.tableOff = numObjects, tableOff
-	w.memo = make([]bplistNode, numObjects)
-	res, err := w.visit(top, 0)
-	return res.nodes, res.payload, err
+	if memo {
+		w.memo = make([]bplistNode, numObjects)
+	}
+	return w, top, nil
 }
 
 type bplistNode struct {
