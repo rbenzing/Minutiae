@@ -2004,6 +2004,11 @@ func checkStatelessParsers(srcs []pureSrc, class pureClass) []pureViolation {
 		}
 	}
 	var out []pureViolation
+	for name, ti := range types {
+		if basicTypeNames[name] {
+			out = append(out, violationAt(ti.src, ti.spec.Pos(), "P7", "type %s redeclares a predeclared type: a field of that name would no longer be a basic type", name))
+		}
+	}
 	for _, ti := range types {
 		if ti.methods["Meta"] == nil || ti.methods["Probe"] == nil || ti.methods["Parse"] == nil {
 			continue

@@ -112,3 +112,8 @@ type helperOnly struct {
 
 func (helperOnly) Meta() int                   { return 0 }
 func (helperOnly) Probe(context.Context) error { return nil }
+
+// bad: redeclaring a predeclared type name would turn a "basic" field into anything
+type string map[int]int // want
+
+type int = []byte // want
