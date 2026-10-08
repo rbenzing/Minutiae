@@ -404,7 +404,7 @@ func TestOSWriteScannerSelfTest(t *testing.T) {
 // tamperTestDirs and tamperTestPatterns find the tamper-test files of the recovery checks by name, so a
 // new file that follows the naming is covered without anyone editing a list.
 var (
-	tamperTestDirs     = []string{"internal/evidence", "internal/records", "internal/examine", "internal/cli"}
+	tamperTestDirs     = []string{"internal/evidence", "internal/records", "internal/examine", "internal/cli", "internal/dbrecover"}
 	tamperTestPatterns = []string{"*verify*recover*_test.go", "*recordrecovery*_test.go"}
 )
 
@@ -419,6 +419,7 @@ var tamperTestFilesNamed = []string{
 	"internal/examine/verify_recovered_test.go",
 	"internal/examine/verify_recovered_step0b_test.go",
 	"internal/cli/case_verify_recovered_test.go",
+	"internal/dbrecover/verify_recovered_test.go",
 }
 
 // discoverTamperTests lists (relative, slash-separated) the files of dirs under root that match a pattern.
