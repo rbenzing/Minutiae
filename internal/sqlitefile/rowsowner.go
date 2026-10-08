@@ -109,9 +109,10 @@ func (rp *rowPass) asOfOwner(img PageImage) (a asOf, known bool) {
 	img = rp.atEndOfTransaction(img)
 	key, _ := snapKey(img)
 	st := rp.snapStateOf(img, key)
-	// Number == 0 is defensive: the history never yields an image of page 0 and
-	// Class[0] is no b-tree class, so the class test below refuses it anyway
-	// (review I-5, equivalent mutant).
+	// A WAL frame or journal record states its own page number, so the history can
+	// hold an image of page 0 (flagged invalid-page-number). Number == 0 is
+	// refused here and, as Class[0] is no b-tree class, again by the class test
+	// below (review I-5, equivalent mutant).
 	if !st.ok || img.Number == 0 || img.Number > st.lay.Addressable {
 		return asOf{}, false
 	}

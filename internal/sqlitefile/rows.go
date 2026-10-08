@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // RowStats counts what one Rows pass did.
@@ -35,6 +36,11 @@ const (
 	// NoteCompareIncomplete: a value was omitted or clipped, so the row can be
 	// neither proven equal to nor different from the live row.
 	NoteCompareIncomplete = "compare-incomplete"
+	// NoteInvalidPageNumber: the page number the WAL frame or journal record
+	// states is impossible (0, the lock-byte page, past Limits.MaxPages, or for a
+	// journal record past the journal's initial size). The row's relation is
+	// unknown: no live comparison is made.
+	NoteInvalidPageNumber = "invalid-page-number"
 )
 
 // rowOrigins says which origins of Pages yield rows and with which method.
@@ -312,6 +318,10 @@ func (rp *rowPass) emitCell(img PageImage, method string, id ident, ic imgCell) 
 		row.Journal = &j
 	}
 	uncommitted := img.Origin == OriginWALUncommitted || img.Origin == OriginDBRolledBack
+	invalid := strings.HasPrefix(img.Note, NoteInvalidPageNumber+": ")
+	if invalid {
+		row.Notes = append(row.Notes, NoteInvalidPageNumber) // the page number is not believed: nothing is compared
+	}
 	rel := RelUnknown
 	if id.basis == BasisFit || id.basis == BasisGuess {
 		// identity by fit alone: the relation is unknown whatever the origin
@@ -320,7 +330,7 @@ func (rp *rowPass) emitCell(img PageImage, method string, id ident, ic imgCell) 
 	} else if uncommitted {
 		rel = RelUncommitted
 	}
-	if id.kind != kindNone && id.basis == BasisSchema {
+	if id.kind != kindNone && id.basis == BasisSchema && !invalid {
 		res, err := rp.compare(id, &row)
 		if err != nil {
 			return err

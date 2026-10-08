@@ -251,6 +251,11 @@ type histWalk struct {
 	limit int64
 	n     int64
 	lay   *Layout
+
+	// badWAL and badJournal count the frames and records that state an
+	// impossible page number; firstBadWAL and firstBadJournal name the first.
+	badWAL, badJournal           int
+	firstBadWAL, firstBadJournal uint32
 }
 
 func (h *Hist) walk(ctx context.Context, visit func(histItem) bool) error {
@@ -261,6 +266,7 @@ func (h *Hist) walk(ctx context.Context, visit func(histItem) bool) error {
 		return err
 	}
 	w := &histWalk{h: h, ctx: ctx, visit: visit, limit: h.d.env.opts.Limits.MaxHistoryPages}
+	defer w.warnImpossiblePages()
 	lay, err := h.live.Layout(ctx)
 	if err != nil {
 		return err
@@ -296,6 +302,9 @@ func (w *histWalk) emit(o Origin, pg uint32, loc PageLoc, wal *WALProv, jr *Jour
 	}
 	w.n++
 	img := PageImage{Number: pg, Origin: o, Loc: loc, WAL: wal, Journal: jr, h: w.h}
+	if w.statedPageImpossible(o, pg) {
+		img.Note = fmt.Sprintf("%s: %d", NoteInvalidPageNumber, pg)
+	}
 	if ps := w.h.d.info.PageSize; data != nil && loc.File == FileDB && len(data) < ps {
 		img.Partial, img.Note = true, fmt.Sprintf("partial-page: %d of %d bytes", len(data), ps)
 	}
@@ -652,5 +661,54 @@ func (w *histWalk) warnUnattributed() {
 	}
 	if n > 0 {
 		w.h.warns.add(Warning{Code: WarnPagesUnattributed, File: FileDB, Msg: fmt.Sprintf("%d pages are unattributed: the schema was read incompletely, so their owner is unknown; they are not listed in the history", n)})
+	}
+}
+
+// statedPageImpossible says whether a WAL frame or journal record may not name
+// page pg, and counts it. The page number of such an image is the file's own
+// statement: page 0 and the lock-byte page never hold a page, nothing past
+// Limits.MaxPages can be addressed, and the engine skips a journal record
+// above the initial size of a journal whose header is intact (a persist-mode
+// journal has a zeroed header: its initial size says nothing). Images of the database file itself state
+// nothing (their number is their position) and are never flagged.
+func (w *histWalk) statedPageImpossible(o Origin, pg uint32) bool {
+	h := w.h
+	journal := o == OriginJournalBefore
+	switch o {
+	case OriginWALSuperseded, OriginWALUncommitted, OriginWALStale, OriginWALUnverified, OriginJournalBefore:
+	default:
+		return false
+	}
+	ps := h.d.info.PageSize
+	if journal {
+		ps = int(h.journalPageSize())
+	}
+	bad := pg == 0 || int64(pg) > h.d.env.opts.Limits.MaxPages || pg == LockBytePage(ps)
+	if journal {
+		if in := &h.jr.scan.Info; in.HeaderValid && !in.ZeroedHeader && pg > in.InitialPages {
+			bad = true
+		}
+	}
+	if !bad {
+		return false
+	}
+	if journal {
+		if w.badJournal++; w.badJournal == 1 {
+			w.firstBadJournal = pg
+		}
+	} else if w.badWAL++; w.badWAL == 1 {
+		w.firstBadWAL = pg
+	}
+	return true
+}
+
+// warnImpossiblePages raises the one counted warning per source file for the
+// frames and records statedPageImpossible flagged in this walk.
+func (w *histWalk) warnImpossiblePages() {
+	if w.badWAL > 0 {
+		w.h.warns.add(Warning{Code: WarnWALPageInvalid, File: FileWAL, Page: w.firstBadWAL, Msg: fmt.Sprintf("%d WAL frames state an impossible page number (first: %d); their images and rows are marked %s and have no live comparison", w.badWAL, w.firstBadWAL, NoteInvalidPageNumber)})
+	}
+	if w.badJournal > 0 {
+		w.h.warns.add(Warning{Code: WarnJournalPageInvalid, File: FileJournal, Page: w.firstBadJournal, Msg: fmt.Sprintf("%d journal records state an impossible page number (first: %d); their images and rows are marked %s and have no live comparison", w.badJournal, w.firstBadJournal, NoteInvalidPageNumber)})
 	}
 }
