@@ -46,6 +46,6 @@ Specs and plans live in `docs/superpowers/` (gitignored, local only).
 |---|---|---|
 | 1 | `docs/superpowers/specs/2026-10-02-foundation-acquisition-design.md` | `docs/superpowers/plans/2026-10-02-1a-foundation.md`, `…-1b-serial.md`, `…-1c-android.md`, `…-1d-ios.md` |
 | 2 | `docs/superpowers/specs/2026-10-03-image-filesystem-design.md` | `docs/superpowers/plans/2026-10-03-2a-foundation.md`, then `…-2b-ext4.md`, `…-2c-fat-exfat.md`, `…-2d-f2fs.md`, `…-2e-ewf.md`, `…-2f-apfs.md`, `…-2g-hfsplus.md` |
-| 3 | `docs/superpowers/specs/2026-10-05-deleted-data-recovery-design.md` | `docs/superpowers/plans/2026-10-05-3i-sqlite-file.md` (3I SQLite file library, first), then `…-3a-…` and on (3A foundation) |
+| 3 | `docs/superpowers/specs/2026-10-05-deleted-data-recovery-design.md` | `docs/superpowers/plans/2026-10-05-3i-sqlite-file.md` (3I SQLite file library, first; done: the pure-Go reader `internal/sqlitefile` with `Live()` and `History()`), then `…-3a-…` and on (3A foundation) |
 | 4 | `docs/superpowers/specs/2026-10-05-artifact-parsers-design.md` | `docs/superpowers/plans/2026-10-05-4a-…` and on (4A contract and host; 4B needs plan 3I) |
 | 5 | `docs/superpowers/specs/2026-10-04-artifact-database-design.md` | `docs/superpowers/plans/2026-10-04-5a-records-core.md` (5A, done: schema v2, audited writer, verify, reader, `records list`, `show`, `stats`), `docs/superpowers/plans/2026-10-05-5b-full-text.md` (5B, done: schema v3, verified full-text index, `records search`, `records reindex`, P11), then `…-5c-…` and `…-5d-…` as they appear |
