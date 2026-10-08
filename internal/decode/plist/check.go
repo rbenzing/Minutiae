@@ -29,11 +29,11 @@ func guard(f func() error) (err error) {
 	return f()
 }
 
-// CheckBinary rejects anything that is not a well-formed binary plist whose fully expanded
+// Check rejects anything that is not a well-formed binary plist whose fully expanded
 // form stays within l.MaxNodes nodes, l.MaxPayload bytes of string and data payload and
 // l.MaxDepth levels of nesting. Shared references are memoized, so a reference bomb costs
 // O(objects), not its expanded size. Every error wraps ErrMalformed or ErrLimit.
-func CheckBinary(b []byte, l Limits) error {
+func Check(b []byte, l Limits) error {
 	return guard(func() error { return checkCore(b, l) })
 }
 

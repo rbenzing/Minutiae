@@ -37,7 +37,7 @@ func TestCheckRejectsPlistBombs(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			start := time.Now()
-			err := CheckBinary(nestedPlist(tc.n, tc.fan), DefaultLimits())
+			err := Check(nestedPlist(tc.n, tc.fan), DefaultLimits())
 			if time.Since(start) > time.Second {
 				t.Fatalf("check took %v", time.Since(start))
 			}
@@ -61,7 +61,7 @@ func TestCheckRejectsOverflowingCounts(t *testing.T) {
 		{"array-2^63", bigCount(0xA, 1<<63)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			wantKind(t, CheckBinary(rawPlist(tc.obj, []byte{8}), DefaultLimits()))
+			wantKind(t, Check(rawPlist(tc.obj, []byte{8}), DefaultLimits()))
 		})
 	}
 }
@@ -69,20 +69,20 @@ func TestCheckRejectsOverflowingCounts(t *testing.T) {
 func TestCheckRejectsHugeObjectTable(t *testing.T) {
 	offsets := bytes.Repeat([]byte{8}, 1<<20+1) // one more object than MaxNodes
 	offsets[0] = 10                             // top object: [1] (refSize is 3)
-	wantKind(t, CheckBinary(rawPlist([]byte{0x10, 0x00, 0xA1, 0, 0, 1}, offsets), DefaultLimits()))
+	wantKind(t, Check(rawPlist([]byte{0x10, 0x00, 0xA1, 0, 0, 1}, offsets), DefaultLimits()))
 }
 
 func TestCheckRejectsReferenceCycle(t *testing.T) {
 	// object 0 at offset 8: an array of one reference to object 0 (self reference)
 	self := rawPlist([]byte{0xA1, 0, 0, 0}, []byte{8})
-	err := CheckBinary(self, DefaultLimits())
+	err := Check(self, DefaultLimits())
 	wantKind(t, err)
 	if !errors.Is(err, ErrMalformed) {
 		t.Fatalf("self cycle is %v, want ErrMalformed", err)
 	}
 	// object 0 (offset 8) -> object 1 (offset 12) -> object 0
 	two := rawPlist([]byte{0xA1, 0, 0, 1, 0xA1, 0, 0, 0}, []byte{8, 12})
-	err = CheckBinary(two, DefaultLimits())
+	err = Check(two, DefaultLimits())
 	wantKind(t, err)
 	if !errors.Is(err, ErrMalformed) {
 		t.Fatalf("two-object cycle is %v, want ErrMalformed", err)
@@ -100,18 +100,18 @@ func mustMarshal(t *testing.T, v any) []byte {
 
 func TestCheckRejectsTruncatedEverywhere(t *testing.T) {
 	good := mustMarshal(t, map[string]any{"a": []any{1, "two", 3.5}, "b": map[string]any{"c": true}})
-	if err := CheckBinary(good, DefaultLimits()); err != nil {
+	if err := Check(good, DefaultLimits()); err != nil {
 		t.Fatalf("control: %v", err)
 	}
 	for n := range len(good) {
-		wantKind(t, CheckBinary(good[:n], DefaultLimits()))
+		wantKind(t, Check(good[:n], DefaultLimits()))
 	}
 }
 
 func TestCheckRejectsBadTrailer(t *testing.T) {
 	base := nestedPlist(3, 1)
 	tr := len(base) - 32
-	if err := CheckBinary(base, DefaultLimits()); err != nil {
+	if err := Check(base, DefaultLimits()); err != nil {
 		t.Fatalf("control: %v", err)
 	}
 	for _, tc := range []struct {
@@ -131,7 +131,7 @@ func TestCheckRejectsBadTrailer(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			b := bytes.Clone(base)
 			tc.mut(b)
-			wantKind(t, CheckBinary(b, DefaultLimits()))
+			wantKind(t, Check(b, DefaultLimits()))
 		})
 	}
 }
@@ -139,19 +139,19 @@ func TestCheckRejectsBadTrailer(t *testing.T) {
 func TestCheckPayloadLimit(t *testing.T) {
 	l := DefaultLimits()
 	// data longer than MaxPayload (header only: the length is checked before any byte is read)
-	err := CheckBinary(rawPlist(bigCount(0x4, l.MaxPayload+1), []byte{8}), l)
+	err := Check(rawPlist(bigCount(0x4, l.MaxPayload+1), []byte{8}), l)
 	wantKind(t, err)
 	if !errors.Is(err, ErrLimit) {
 		t.Fatalf("data: %v, want ErrLimit", err)
 	}
 	// a UTF-16 count that is within the limit but doubles past it
-	err = CheckBinary(rawPlist(bigCount(0x6, l.MaxPayload/2+1), []byte{8}), l)
+	err = Check(rawPlist(bigCount(0x6, l.MaxPayload/2+1), []byte{8}), l)
 	wantKind(t, err)
 	if !errors.Is(err, ErrLimit) {
 		t.Fatalf("utf16: %v, want ErrLimit", err)
 	}
 	// exactly at the limit is accepted by the payload rule
-	if err := CheckBinary(rawPlist(bigCount(0x4, l.MaxPayload), []byte{8}), l); err != nil {
+	if err := Check(rawPlist(bigCount(0x4, l.MaxPayload), []byte{8}), l); err != nil {
 		t.Fatalf("at limit: %v", err)
 	}
 }
@@ -175,39 +175,39 @@ func TestCheckAcceptsRealPlists(t *testing.T) {
 		"nested":  map[string]any{"a": map[string]any{"b": []any{map[string]any{"c": "d"}}}},
 		"longstr": string(bytes.Repeat([]byte("x"), 70000)),
 	}
-	if err := CheckBinary(mustMarshal(t, doc), DefaultLimits()); err != nil {
+	if err := Check(mustMarshal(t, doc), DefaultLimits()); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestCheckLimitsAreHonoured(t *testing.T) {
 	bomb := nestedPlist(21, 2) // 2^22 expanded nodes
-	if err := CheckBinary(bomb, DefaultLimits()); err == nil {
+	if err := Check(bomb, DefaultLimits()); err == nil {
 		t.Fatal("control: bomb accepted at defaults")
 	}
 	l := DefaultLimits()
 	l.MaxNodes = 1 << 23
-	if err := CheckBinary(bomb, l); err != nil {
+	if err := Check(bomb, l); err != nil {
 		t.Fatalf("raised MaxNodes: %v", err)
 	}
 	small := nestedPlist(10, 2) // 2^11 nodes
-	if err := CheckBinary(small, DefaultLimits()); err != nil {
+	if err := Check(small, DefaultLimits()); err != nil {
 		t.Fatalf("control: %v", err)
 	}
 	l = DefaultLimits()
 	l.MaxNodes = 100
-	err := CheckBinary(small, l)
+	err := Check(small, l)
 	wantKind(t, err)
 	if !errors.Is(err, ErrLimit) {
 		t.Fatalf("lowered MaxNodes: %v, want ErrLimit", err)
 	}
 	l = DefaultLimits()
 	l.MaxDepth = 100
-	if err := CheckBinary(nestedPlist(70, 1), l); err != nil {
+	if err := Check(nestedPlist(70, 1), l); err != nil {
 		t.Fatalf("raised MaxDepth: %v", err)
 	}
 	l.MaxDepth = 10
-	if err := CheckBinary(nestedPlist(30, 1), l); !errors.Is(err, ErrLimit) {
+	if err := Check(nestedPlist(30, 1), l); !errors.Is(err, ErrLimit) {
 		t.Fatalf("lowered MaxDepth: %v, want ErrLimit", err)
 	}
 }
