@@ -819,3 +819,20 @@ func DuplicateManifestRecord(t testing.TB, caseDir, artifactID string) {
 	}
 	t.Fatalf("no manifest record %q", artifactID)
 }
+
+// ClearRecoveryInManifest removes the Recovery description from an artifact's manifest
+// record (its kind, file and artifacts.db row stay), as a buggy writer that labelled bytes
+// recovered without describing them would have left it. Verify reports the missing
+// description (and the difference from the audit entry).
+func ClearRecoveryInManifest(t testing.TB, caseDir, artifactID string) {
+	t.Helper()
+	recs := readManifestLines(t, caseDir)
+	i := slices.IndexFunc(recs, func(r evidence.ManifestRecord) bool { return r.ID == artifactID })
+	if i < 0 || recs[i].Source.Derived == nil {
+		t.Fatalf("recordstest: artifact %q is not a derived artifact of the manifest", artifactID)
+	}
+	d := *recs[i].Source.Derived
+	d.Recovery = nil
+	recs[i].Source.Derived = &d
+	writeManifestLines(t, caseDir, recs)
+}

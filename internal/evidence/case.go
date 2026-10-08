@@ -81,6 +81,9 @@ type Case struct {
 	// size replaces the default of the expected index so a small corpus spills.
 	verifyFTSHook     func(point string, expected *sql.DB)
 	verifyFTSCacheKiB int
+
+	// noRecoveredKindGate is a test seam only (DisableRecoveredKindGate).
+	noRecoveredKindGate bool
 }
 
 var validCaseID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)

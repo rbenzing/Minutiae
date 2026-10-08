@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"errors"
 	"slices"
 	"strings"
 )
@@ -174,3 +175,14 @@ func RecoveredNamespace(artifactPath string) (string, bool) {
 	}
 	return "", false
 }
+
+// ErrRecoveredKindNeedsRecovery is returned by NewArtifact and Capture for an artifact of a
+// recovered kind that carries no Recovery description: bytes may not be labelled recovered
+// without saying how they were recovered.
+var ErrRecoveredKindNeedsRecovery = errors.New("a recovered artifact kind needs a Derived.Recovery description")
+
+// DisableRecoveredKindGate switches off the refusal of a recovered kind without a Recovery
+// for this Case. It exists only so tests can plant the artifact that a buggy writer would
+// have produced and prove that `case verify` and the records rules catch it; no command
+// calls it.
+func (c *Case) DisableRecoveredKindGate() { c.noRecoveredKindGate = true }

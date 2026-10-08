@@ -177,3 +177,16 @@ func TestRecoveredRecordIsIndexedAndSearchableAndMarked(t *testing.T) {
 		t.Errorf("case verify: %q", rep.Problems)
 	}
 }
+
+func TestAddRejectsLiveRecordOnRecoveredKindWithoutRecovery(t *testing.T) {
+	c, _, rec := recoveredCase(t, ip(55))
+	recordstest.ClearRecoveryInManifest(t, c.Dir, rec.ID)
+	w := startOn(t, c, rec.ID)
+	err := w.Add(ctx, liveRec(rec.ID))
+	if !errors.Is(err, records.ErrRecoveredArtifactLiveRecord) {
+		t.Fatalf("Add = %v, want ErrRecoveredArtifactLiveRecord for a recovered kind with no Recovery", err)
+	}
+	if _, err := w.End(ctx); err != nil {
+		t.Fatal(err)
+	}
+}

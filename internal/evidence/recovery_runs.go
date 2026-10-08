@@ -227,10 +227,19 @@ func RecoveryTrailOf(byID map[string]ManifestRecord, id string) (RecoveryTrail, 
 		}
 		seen[cur] = true
 		d := r.Source.Derived
-		if d == nil {
+		var rv *Recovery
+		if d != nil {
+			rv = d.Recovery
+		}
+		if rv == nil && IsRecoveredKind(r.Source.Kind) {
+			// bytes labelled recovered without a description are still recovered: no confidence
+			// cap, class unknown, so the writer refuses a live record and R7 reports one
+			rv = &Recovery{Class: "unknown"}
+		}
+		if d == nil && rv == nil {
 			break
 		}
-		if rv := d.Recovery; rv != nil {
+		if rv != nil {
 			if !found {
 				tr.ArtifactID, tr.Recovery, tr.Hops = cur, rv, hops
 				found = true
@@ -239,6 +248,9 @@ func RecoveryTrailOf(byID map[string]ManifestRecord, id string) (RecoveryTrail, 
 				c := *rv.Confidence
 				tr.MinConfidence = &c
 			}
+		}
+		if d == nil {
+			break
 		}
 		cur = d.ParentID
 	}

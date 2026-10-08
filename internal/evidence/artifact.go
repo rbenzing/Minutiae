@@ -121,6 +121,9 @@ func (c *Case) NewArtifact(deviceID, acqID, relPath string, src Source) (*Artifa
 	if err != nil {
 		return nil, err
 	}
+	if !c.noRecoveredKindGate && IsRecoveredKind(src.Kind) && (src.Derived == nil || src.Derived.Recovery == nil) {
+		return nil, fmt.Errorf("%w (kind %q)", ErrRecoveredKindNeedsRecovery, src.Kind)
+	}
 	if deviceID == "" || acqID == "" {
 		return nil, errors.New("artifact needs a device id and acquisition id")
 	}

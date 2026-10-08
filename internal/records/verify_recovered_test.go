@@ -111,3 +111,12 @@ func TestVerifyR7DoesNotDoubleReportBrokenChain(t *testing.T) {
 		t.Errorf("R7 reported on a chain without a recovered artifact: %q", p)
 	}
 }
+
+func TestVerifyFlagsLiveRecordOnRecoveredKindWithoutRecovery(t *testing.T) {
+	c, _, rec := recoveredCase(t, ip(55))
+	forgedIngest(t, c, []string{rec.ID}, liveRec(rec.ID))
+	recordstest.ClearRecoveryInManifest(t, c.Dir, rec.ID)
+	rep := mustVerify(t, c)
+	requireProblem(t, rep, "live record (recovered=0) on artifact", rec.ID)
+	requireProblem(t, rep, "has no recovery description")
+}
