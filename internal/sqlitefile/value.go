@@ -31,6 +31,11 @@ type Value struct {
 	Bytes   []byte // raw text (database encoding) or blob; nil when Omitted
 	Len     int64
 	Omitted bool
+	// Unread: the value is stored but its bytes could not be read (the record or
+	// its overflow chain is damaged), as opposed to a value that is not stored at
+	// all (a column past the end of a short record, a virtual generated column).
+	// An unread value is inconclusive: it is never equal or different.
+	Unread  bool
 	Clipped bool
 	Enc     Encoding // for KindText
 	Serial  uint64   // the serial type the record stored it with

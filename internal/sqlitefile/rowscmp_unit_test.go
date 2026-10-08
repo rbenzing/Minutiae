@@ -38,14 +38,15 @@ func TestSameValueTable(t *testing.T) {
 		{"text vs blob of the same bytes", vText("a"), vBlob('a'), false, true},
 		{"null vs int zero", Value{}, vInt(0), false, true},
 		{"null vs null", Value{}, Value{}, true, true},
-		{"omitted null vs null", Value{Omitted: true}, Value{}, false, false},
-		{"null vs omitted null", Value{}, Value{Omitted: true}, false, false},
+		{"unread null vs null", Value{Omitted: true, Unread: true}, Value{}, false, false},
+		{"null vs unread null", Value{}, Value{Omitted: true, Unread: true}, false, false},
+		{"both unread nulls are unknown", Value{Omitted: true, Unread: true}, Value{Omitted: true, Unread: true}, false, false},
 		{"both omitted nulls: not stored on both sides", Value{Omitted: true}, Value{Omitted: true}, true, true},
-		{"omitted int vs int zero", Value{Kind: KindInt, Omitted: true, Serial: 1}, vInt(0), false, false},
-		{"omitted int vs int five", Value{Kind: KindInt, Omitted: true, Serial: 1}, vInt(5), false, false},
-		{"int zero vs omitted int", vInt(0), Value{Kind: KindInt, Omitted: true, Serial: 1}, false, false},
-		{"omitted float vs float", Value{Kind: KindFloat, Omitted: true, Serial: 7}, vFloat(0), false, false},
-		{"float vs omitted float", vFloat(1.5), Value{Kind: KindFloat, Omitted: true, Serial: 7}, false, false},
+		{"omitted int vs int zero", Value{Kind: KindInt, Omitted: true, Unread: true, Serial: 1}, vInt(0), false, false},
+		{"omitted int vs int five", Value{Kind: KindInt, Omitted: true, Unread: true, Serial: 1}, vInt(5), false, false},
+		{"int zero vs omitted int", vInt(0), Value{Kind: KindInt, Omitted: true, Unread: true, Serial: 1}, false, false},
+		{"omitted float vs float", Value{Kind: KindFloat, Omitted: true, Unread: true, Serial: 7}, vFloat(0), false, false},
+		{"float vs omitted float", vFloat(1.5), Value{Kind: KindFloat, Omitted: true, Unread: true, Serial: 7}, false, false},
 		{"float equal", vFloat(1.5), vFloat(1.5), true, true},
 		{"float differ", vFloat(1.5), vFloat(2.5), false, true},
 		{"float zero vs negative zero", vFloat(0), vFloat(math.Copysign(0, -1)), false, true},
@@ -223,8 +224,8 @@ func TestIsAnswerless(t *testing.T) {
 // are equal, different or both zero; a clipped text keeps compare-incomplete
 // (final review B, I-2).
 func TestCompareValuesUnreadScalarIsValueUnread(t *testing.T) {
-	unreadInt := Value{Kind: KindInt, Omitted: true, Serial: 1}
-	unreadFloat := Value{Kind: KindFloat, Omitted: true, Serial: 7}
+	unreadInt := Value{Kind: KindInt, Omitted: true, Unread: true, Serial: 1}
+	unreadFloat := Value{Kind: KindFloat, Omitted: true, Unread: true, Serial: 7}
 	for _, tc := range []struct {
 		name string
 		a, b []Value
@@ -233,7 +234,7 @@ func TestCompareValuesUnreadScalarIsValueUnread(t *testing.T) {
 		{"unread int against live zero", []Value{vInt(1), unreadInt}, []Value{vInt(1), vInt(0)}, cmpResult{kind: cmpUnknown, note: NoteValueUnread}},
 		{"unread int against live five", []Value{vInt(1), unreadInt}, []Value{vInt(1), vInt(5)}, cmpResult{kind: cmpUnknown, note: NoteValueUnread}},
 		{"unread float", []Value{unreadFloat}, []Value{vFloat(2.5)}, cmpResult{kind: cmpUnknown, note: NoteValueUnread}},
-		{"unread null against a stored null", []Value{{Omitted: true}}, []Value{{}}, cmpResult{kind: cmpUnknown, note: NoteValueUnread}},
+		{"unread null against a stored null", []Value{{Omitted: true, Unread: true}}, []Value{{}}, cmpResult{kind: cmpUnknown, note: NoteValueUnread}},
 		{"a visible difference still decides", []Value{vInt(2), unreadInt}, []Value{vInt(1), vInt(0)}, cmpResult{kind: cmpDiffer}},
 		{"clipped text keeps its own reason", []Value{vOmitted(vText("abc"))}, []Value{vText("abc")}, cmpResult{kind: cmpUnknown, note: NoteCompareIncomplete}},
 	} {

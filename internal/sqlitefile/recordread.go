@@ -91,6 +91,7 @@ func (e *env) readRecordMode(l *ledger, w *warnings, at cellCtx, p *payload, enc
 		}
 		if pos > p.total || sz > p.total-pos { // declared past the end of the payload
 			rec.Truncated = true
+			v.Unread = true
 			rec.Values[i] = v
 			pos = math.MaxInt64
 			continue
@@ -119,6 +120,7 @@ func (e *env) readRecordMode(l *ledger, w *warnings, at cellCtx, p *payload, enc
 			}
 			if !ok { // the bytes are not all there: omit, never pad
 				rec.Truncated = true
+				v.Unread = true
 				rec.Values[i] = v
 				pos = math.MaxInt64 // every later value is unreadable too
 				continue
@@ -135,6 +137,7 @@ func (e *env) readRecordMode(l *ledger, w *warnings, at cellCtx, p *payload, enc
 			// unreadable one (damaged chain) is omitted like any other value.
 			if got < len(buf) {
 				rec.Truncated = true
+				v.Unread = true
 				rec.Values[i] = v
 				pos = math.MaxInt64
 				continue

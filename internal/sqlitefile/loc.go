@@ -44,6 +44,10 @@ type Row struct {
 	// ancestors): a doctored or damaged interior key. The row is delivered as
 	// the engine walk delivers it, and a btree-order warning is raised.
 	KeyRangeViolation bool
+	// LengthMismatch: the row's record is longer than its header and body
+	// account for, or has no columns (see Record.LengthMismatch); the values are
+	// delivered and a record-length-mismatch warning is raised.
+	LengthMismatch bool
 }
 
 // Clone returns a copy that owns all its memory and stays valid after the

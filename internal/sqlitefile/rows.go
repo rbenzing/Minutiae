@@ -40,6 +40,9 @@ const (
 	// read (the tail of a record in a damaged overflow chain), so no live value
 	// can be said to equal or differ from it. Its relation is unknown.
 	NoteValueUnread = "value-unread"
+	// NoteRecordLengthMismatch: the row's record holds bytes beyond its header and
+	// body, or no columns; the engine calls a full-row read of it corrupt.
+	NoteRecordLengthMismatch = "record-length-mismatch"
 	// NoteInvalidPageNumber: the page number the WAL frame or journal record
 	// states is impossible (0, the lock-byte page, past Limits.MaxPages, or for a
 	// journal record past the journal's initial size). The row's relation is
@@ -324,6 +327,9 @@ func (rp *rowPass) emitCell(img PageImage, method string, id ident, ic imgCell) 
 		row.Journal = &j
 	}
 	uncommitted := img.Origin == OriginWALUncommitted || img.Origin == OriginDBRolledBack
+	if rec.LengthMismatch {
+		row.Notes = append(row.Notes, NoteRecordLengthMismatch)
+	}
 	invalid := strings.HasPrefix(img.Note, NoteInvalidPageNumber+": ")
 	if invalid {
 		row.Notes = append(row.Notes, NoteInvalidPageNumber) // the page number is not believed: nothing is compared

@@ -237,6 +237,7 @@ func decodeRecord(b []byte, enc Encoding, lim Limits, recovered bool) (Record, e
 		v := blank(s, enc)
 		if pos > int64(len(b)) || sz > int64(len(b))-pos { // not wholly inside b
 			rec.Truncated = true
+			v.Unread = true
 			rec.Values[i] = v
 			pos = math.MaxInt64 // every later value is outside too
 			continue

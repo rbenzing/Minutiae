@@ -103,15 +103,16 @@ func compareValues(a, b []Value) cmpResult {
 	return cmpResult{kind: cmpSame}
 }
 
-// unreadScalar reports whether a or b is an integer, real or NULL that was never
-// read (Omitted), the case of sameValue where an unread value must not be taken
-// for its zero. Two omitted NULLs are not such a case: neither side stores
-// the column (a virtual generated column or an expression default).
+// unreadScalar reports whether a or b is an integer, real or NULL that is stored
+// but was never read (Unread): an unread value must not be taken for its zero.
+// A value that is not stored at all (a column past the end of a short record, a
+// virtual generated column: Omitted but not Unread) is the default on both
+// sides and compares equal.
 func unreadScalar(a, b Value) bool {
 	if a.Kind != b.Kind || (a.Kind != KindInt && a.Kind != KindFloat && a.Kind != KindNull) {
 		return false
 	}
-	return (a.Omitted || b.Omitted) && (a.Kind != KindNull || !a.Omitted || !b.Omitted)
+	return a.Unread || b.Unread
 }
 
 // sameValue compares two values. known is false when an omitted or clipped
