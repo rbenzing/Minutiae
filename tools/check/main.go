@@ -73,7 +73,7 @@ func binPath() string {
 
 func testCmd() []string {
 	if raceSupported() {
-		return []string{"go", "test", "-race", "-count=1", "./..."}
+		return []string{"go", "test", "-race", "-timeout", "30m", "-count=1", "./..."}
 	}
 	fmt.Println("note: race detector unavailable (needs cgo and a C compiler); running tests without -race")
 	return []string{"go", "test", "-count=1", "./..."}

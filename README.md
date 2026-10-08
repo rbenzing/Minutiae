@@ -355,7 +355,7 @@ go build -ldflags "-X github.com/rbenzing/minutiae/internal/version.Version=v1.0
 ```
 
 Run the full verification gate (tidy, vet, golangci-lint incl. gofumpt, build,
-CGO_ENABLED=0 host and cross-builds, tests — with `-race` where a C toolchain is present):
+CGO_ENABLED=0 host and cross-builds, tests; `CGO_ENABLED=0 go run ./tools/check` is the fast form without `-race`, plain `go run ./tools/check` adds `-race` and is required before merging a plan):
 
 ```bash
 go run ./tools/check

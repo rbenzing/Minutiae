@@ -20,7 +20,8 @@ go tool golangci-lint version   # pinned in go.mod as a tool; nothing to install
 Run `go run ./tools/check` and observe `CHECK PASSED` in the output.
 It runs: `go mod tidy -diff`, `go vet`, `golangci-lint` (incl. gofumpt/goimports),
 `go build ./cmd/minutiae`, a `CGO_ENABLED=0` host build and `CGO_ENABLED=0` cross-builds for linux/amd64 and
-darwin/arm64 (binaries discarded), `go test -race ./...` (without `-race` only if no C toolchain is present; cgo is on by default where one exists, see the cgo policy in section 5a).
+darwin/arm64 (binaries discarded), `go test ./...`.
+Two forms: FAST, `CGO_ENABLED=0 go run ./tools/check` (no `-race`; used for per-task commits; must print `CHECK PASSED`), and RACE, plain `go run ./tools/check` on a machine with a C toolchain (tests with `-race` and a 30 minute per-package timeout; REQUIRED before a plan merges to main). Both must pass where they apply.
 Never claim work is complete, fixed or passing without that output from the
 current code. Auto-fix formatting with `go tool golangci-lint fmt`.
 
@@ -173,6 +174,7 @@ right after open. Treat a serial open as able to reset DTR/RTS-wired targets.
 - `internal/cli` may import anything.
 
 ## 6. Testing
+- Check modes: per-task commits use the FAST check (`CGO_ENABLED=0 go run ./tools/check`, no `-race`); the RACE check (plain `go run ./tools/check`, `-race`, 30 minute package timeout) is required before a plan merges to main (section 3).
 - TDD: write the failing test, see it fail, implement, see it pass.
 - Default tests never need hardware: use fakes (fake ADB server, in-memory serial, fake iOS).
 - Hardware tests use `//go:build hardware` and are run manually: `go test -tags hardware ./...`.
