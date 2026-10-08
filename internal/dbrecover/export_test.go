@@ -8,3 +8,10 @@ func SetCheckForTest(f func(map[string]any) error) func() {
 	check = f
 	return func() { check = old }
 }
+
+// SetVersionForTest replaces the parser version and returns the restore function.
+func SetVersionForTest(v string) func() {
+	old := version
+	version = v
+	return func() { version = old }
+}
