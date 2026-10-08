@@ -38,6 +38,22 @@ func unavailable(format string, args ...any) error {
 	return fmt.Errorf("%w: "+format, append([]any{ErrOffsetUnavailable}, args...)...)
 }
 
+// errRangeOutside marks the refusals caused by the requested range, as opposed to the runs.
+var errRangeOutside = errors.New("range outside the artifact")
+
+// outsideError is an ErrOffsetUnavailable that also matches errRangeOutside; its text is the plain
+// refusal text.
+type outsideError struct{ msg string }
+
+func (e outsideError) Error() string { return ErrOffsetUnavailable.Error() + ": " + e.msg }
+func (e outsideError) Is(target error) bool {
+	return target == ErrOffsetUnavailable || target == errRangeOutside
+}
+
+func outside(format string, args ...any) error {
+	return outsideError{msg: fmt.Sprintf(format, args...)}
+}
+
 // TranslateRange maps the byte range r of an artifact onto image extents, one
 // extent per run piece (image-contiguous runs are not merged and runs are not
 // assumed disjoint in the image). A run with Offset -1 is a hole. It is pure
@@ -70,10 +86,10 @@ func TranslateRange(runs []evidence.Run, artifactSize int64, incomplete bool, r 
 		exceed = true
 	}
 	if r.Offset < 0 || r.Length < 0 || r.Offset > math.MaxInt64-r.Length {
-		return Translation{}, unavailable("range is negative or overflows")
+		return Translation{}, outside("range is negative or overflows")
 	}
 	if r.Offset+r.Length > artifactSize {
-		return Translation{}, unavailable("range lies outside the artifact (%d+%d > %d)", r.Offset, r.Length, artifactSize)
+		return Translation{}, outside("range lies outside the artifact (%d+%d > %d)", r.Offset, r.Length, artifactSize)
 	}
 	t := Translation{RunsExceedSize: exceed}
 	if r.Length == 0 {

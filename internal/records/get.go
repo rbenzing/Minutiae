@@ -95,6 +95,7 @@ func (r *Reader) Get(ctx context.Context, id int64) (Full, error) {
 	if len(full.Provenance.Chain) > 0 && full.Provenance.Chain[0].Artifact.Source.Derived == nil {
 		full.Provenance.Notes = append(full.Provenance.Notes, "artifact is not derived: no image offset")
 	}
+	r.resolveOffsets(&full.Provenance, evidence.NewManifestIndex(man), full.Range)
 	return full, nil
 }
 
