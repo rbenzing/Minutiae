@@ -1264,6 +1264,7 @@ func TestParserPackagesHaveNoSQL(t *testing.T) {
 var purityRequired = []string{
 	"internal/parse", "internal/recordtypes/common", "internal/recordtypes/message",
 	"internal/recordtypes/call", "internal/recordtypes/contact", "internal/recordtypes/web", "internal/recordtypes/all",
+	"internal/decode/ts",
 }
 
 // purePackageRE is a second, independent description of the pure roots: any
@@ -1877,6 +1878,7 @@ func TestPurityClassOf(t *testing.T) {
 		"internal/recordtypes":               pcRTType,
 		"internal/decode/plist":              pcDecode,
 		"internal/decode/sqlitedb":           pcDecode,
+		"internal/decode/ts":                 pcDecode,
 		"internal/sqlitefile":                pcSqlitefile,
 		"internal/parsers/androidmms":        pcParser,
 		"internal/parsers/androidmms/helper": pcParser,

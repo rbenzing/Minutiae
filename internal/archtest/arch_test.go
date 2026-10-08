@@ -56,6 +56,7 @@ var allowed = map[string][]string{
 	"internal/sqlitefile":                  {},
 	"internal/sqlitefile/sqlitetest":       {"internal/sqlitefile"},
 	"internal/records":                     {"internal/evidence", "internal/version"},
+	"internal/decode/ts":                   {},
 	"internal/records/recordstest":         {"internal/records", "internal/evidence"},
 	"internal/parse":                       {"internal/records"},
 	"internal/parsers":                     {"internal/parse", "internal/records"},
