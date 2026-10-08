@@ -1,6 +1,10 @@
 package sqlitedb
 
-import "github.com/rbenzing/minutiae/internal/sqlitefile"
+import (
+	"context"
+
+	"github.com/rbenzing/minutiae/internal/sqlitefile"
+)
 
 // WrapErr exposes the library-error mapping to the external tests.
 func WrapErr(err error) error { return wrapErr(err) }
@@ -44,4 +48,31 @@ func Scribble(r Row) (states, text, overflow, notes int) {
 		}
 	}
 	return
+}
+
+// OpenAfter is Open that calls after once the library calls have returned.
+func OpenAfter(ctx context.Context, f Files, b Budget, after func()) (*DB, error) {
+	return open(ctx, f, b, after)
+}
+
+// GetAfter is Get that calls after once the library has returned.
+func (t *Table) GetAfter(ctx context.Context, rowid int64, after func()) (Row, bool, error) {
+	return t.get(ctx, rowid, after)
+}
+
+// CloneCost exposes the size Clone charges for r.
+func (r Row) CloneCost() int64 { return r.cloneCost() }
+
+// WithRecovered returns r as a recovered row carrying the given provenance.
+func WithRecovered(r Row, w *sqlitefile.WALProv, j *sqlitefile.JournalProv) Row {
+	r.rec = &RecoveredInfo{Method: "test", WAL: w, Journal: j}
+	return r
+}
+
+// Prov returns the WAL and journal provenance pointers of a recovered row.
+func Prov(r Row) (*sqlitefile.WALProv, *sqlitefile.JournalProv) {
+	if r.rec == nil {
+		return nil, nil
+	}
+	return r.rec.WAL, r.rec.Journal
 }

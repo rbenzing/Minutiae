@@ -57,7 +57,11 @@ type DB struct {
 // Open attaches the supplied companions, takes the live view and reads the
 // schema once. A hot journal that names a super-journal is not applied (the
 // warning says so): the layer never tells the library that the file exists.
-func Open(ctx context.Context, f Files, b Budget) (db *DB, err error) {
+func Open(ctx context.Context, f Files, b Budget) (*DB, error) { return open(ctx, f, b, nil) }
+
+// open is Open with a test seam: after is called once the library calls have
+// returned, so a test can make the layer's own code panic.
+func open(ctx context.Context, f Files, b Budget, after func()) (db *DB, err error) {
 	if b == nil {
 		return nil, ErrNoBudget
 	}
@@ -98,6 +102,9 @@ func Open(ctx context.Context, f Files, b Budget) (db *DB, err error) {
 	schema, err := view.Schema(ctx)
 	if err != nil {
 		return nil, wrapErr(err)
+	}
+	if after != nil {
+		after()
 	}
 	db = &DB{lib: lib, view: view, schema: schema, budget: ad, baseWarn: len(view.Warnings())}
 	return db, nil

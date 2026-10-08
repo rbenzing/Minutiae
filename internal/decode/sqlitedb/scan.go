@@ -90,8 +90,14 @@ func damageFlags(raw sqlitefile.Row) RowFlags {
 // never an absent answer. A WITHOUT ROWID table has no rowids (ErrWithoutRowid).
 // The Row is owned: it is a deep copy (see Row.Clone) that stays valid after
 // later calls, including a Get made inside a Scan callback, and stays charged
-// to the budget until the DB is released.
-func (t *Table) Get(ctx context.Context, rowid int64) (row Row, found bool, err error) {
+// to the budget until Row.Release or DB.Release (the reader's page cache stays
+// charged until DB.Release).
+func (t *Table) Get(ctx context.Context, rowid int64) (Row, bool, error) {
+	return t.get(ctx, rowid, nil)
+}
+
+// get is Get with a test seam: after is called once the library has returned.
+func (t *Table) get(ctx context.Context, rowid int64, after func()) (row Row, found bool, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			row, found, err = Row{}, false, fmt.Errorf("%w: %v", ErrInternal, r)
@@ -105,6 +111,9 @@ func (t *Table) Get(ctx context.Context, rowid int64) (row Row, found bool, err 
 		return Row{}, false, fmt.Errorf("%w: %q", ErrWithoutRowid, t.name)
 	}
 	raw, ok, libErr := t.lt.Get(ctx, rowid)
+	if after != nil {
+		after()
+	}
 	switch {
 	case libErr != nil:
 		return Row{}, false, wrapErr(libErr)

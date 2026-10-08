@@ -423,7 +423,8 @@ func encodeComponent(sb *strings.Builder, s string) {
 // Locator names the row: sqlite:table=<table>;rowid=<n>, followed by
 // ;wal_frame=<frame> for a cell in the WAL or ;journal_rec=<record> for a cell
 // in the journal. The two numbers have different bases: wal_frame is the
-// 1-based WAL slot, journal_rec the 0-based journal record index; the table name is percent-encoded. It is empty with ok false
+// 1-based WAL slot, journal_rec the 0-based journal record index; the table
+// name is percent-encoded. It is empty with ok false
 // for a recovered row, a row without a rowid (WITHOUT ROWID, the zero Row) and
 // a locator longer than 1024 bytes, which the records package refuses.
 func (r Row) Locator() (string, bool) {
@@ -453,6 +454,8 @@ func (r Row) Locator() (string, bool) {
 // It is idempotent: a second call, or a call on a copy of the row, does
 // nothing. DB.Release returns everything still held, after which Release frees
 // nothing. The row still answers after Release, but it is no longer counted.
+// Release returns only the row's own charge: the pages the reader cached while
+// scanning stay charged until DB.Release (there is no per-page release).
 func (r Row) Release() {
 	c := r.charge
 	if c == nil || c.returned {

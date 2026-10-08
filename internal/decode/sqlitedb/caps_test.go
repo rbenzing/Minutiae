@@ -76,6 +76,40 @@ func TestBudgetExhaustedDuringScanIsAnErrorNotATruncatedScan(t *testing.T) {
 	}
 }
 
+// The decoder's own per-row charge (2 columns x RowValueCost) is refused while
+// every charge of the library succeeds: the scan must end with ErrBudget, not
+// look complete, and the callback must not run for the refused row.
+func TestDecoderRowChargeRefusalIsAnErrorNotATruncatedScan(t *testing.T) {
+	data := smallTable(t, 200)
+	b := bigBudget()
+	d := openBytes(t, data, nil, nil, b)
+	tb, err := d.Table(t.Context(), "t", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanEach(t, tb, func(int, sqlitedb.Row) {}) // warm
+	n := 0
+	err = tb.Scan(t.Context(), func(sqlitedb.Row) error {
+		n++
+		if n == 3 {
+			b.refuse = 2 * sqlitedb.RowValueCost
+		}
+		return nil
+	})
+	if !errors.Is(err, parse.ErrBudget) {
+		t.Fatalf("Scan = %v after %d rows, want parse.ErrBudget (a truncated scan must not look complete)", err, n)
+	}
+	if n != 3 {
+		t.Errorf("%d rows delivered, want 3", n)
+	}
+	b.refuse = 0
+	count := 0
+	scanEach(t, tb, func(int, sqlitedb.Row) { count++ })
+	if count != 200 {
+		t.Errorf("a later scan saw %d rows", count)
+	}
+}
+
 func TestBudgetReturnsToZeroAfterRelease(t *testing.T) {
 	data := smallTable(t, 50)
 	b := bigBudget()

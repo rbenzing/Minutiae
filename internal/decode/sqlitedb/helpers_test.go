@@ -14,10 +14,11 @@ import (
 // parse.ErrBudget and never goes negative.
 type testBudget struct {
 	limit, used, peak int64
+	refuse            int64 // when non-zero, a request of exactly this size is refused
 }
 
 func (b *testBudget) Alloc(n int64) error {
-	if n < 0 || b.used+n > b.limit {
+	if n < 0 || b.used+n > b.limit || (b.refuse != 0 && n == b.refuse) {
 		return fmt.Errorf("%w: %d bytes requested, %d of %d in use", parse.ErrBudget, n, b.used, b.limit)
 	}
 	b.used += n
