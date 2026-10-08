@@ -14,3 +14,6 @@ func (s *Session) SetNewArtifact(f func(deviceID, acqID, rel string, src evidenc
 func WrapFS(name string, fsys filesys.FileSystem) (filesys.FileSystem, error) {
 	return wrapFS(name, fsys)
 }
+
+// SetFreeBytes replaces how s asks for free disk space, to test the space check.
+func (s *Session) SetFreeBytes(f func(dir string) (int64, error)) { s.freeBytes = f }

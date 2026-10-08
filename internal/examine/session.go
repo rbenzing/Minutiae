@@ -44,6 +44,9 @@ type Session struct {
 	// newArtifact creates artifacts when set (tests inject faults); nil means Case.NewArtifact.
 	newArtifact func(deviceID, acqID, rel string, src evidence.Source) (*evidence.ArtifactWriter, error)
 
+	// freeBytes reports the free bytes of a directory (tests inject it); nil means diskFree.
+	freeBytes func(dir string) (int64, error)
+
 	mu        sync.Mutex
 	fsCache   map[int]*fsEntry
 	closeOnce sync.Once
