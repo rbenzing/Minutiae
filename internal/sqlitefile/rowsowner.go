@@ -79,6 +79,9 @@ func objectName(s *Schema, o uint32) (name, typ string, ok bool) {
 		return "sqlite_schema", "table", true
 	}
 	k := int(o) - 2
+	// k < 0 only for o == 0, which no caller passes: asOfOwner returns before
+	// this on Owner 0 and ownerOf reports ok only for a non-zero owner (the
+	// guard is defensive; mutating it changes no behaviour, review I-5).
 	if k < 0 || k >= len(s.Objects) {
 		return "", "", false
 	}
@@ -106,6 +109,9 @@ func (rp *rowPass) asOfOwner(img PageImage) (a asOf, known bool) {
 	img = rp.atEndOfTransaction(img)
 	key, _ := snapKey(img)
 	st := rp.snapStateOf(img, key)
+	// Number == 0 is defensive: the history never yields an image of page 0 and
+	// Class[0] is no b-tree class, so the class test below refuses it anyway
+	// (review I-5, equivalent mutant).
 	if !st.ok || img.Number == 0 || img.Number > st.lay.Addressable {
 		return asOf{}, false
 	}
@@ -153,6 +159,9 @@ func (rp *rowPass) releaseSnaps() {
 // owner is read from the state after the commit frame (or, for frames no commit
 // closes, after the last frame of their generation).
 func (rp *rowPass) atEndOfTransaction(img PageImage) PageImage {
+	// h.a (the WAL analysis) is nil exactly when no WAL is attached, and an
+	// image carries a WAL position only when one is: the second test is
+	// defensive (review I-5, equivalent mutant).
 	if img.WAL == nil || rp.h.a == nil {
 		return img
 	}
@@ -160,6 +169,12 @@ func (rp *rowPass) atEndOfTransaction(img PageImage) PageImage {
 	end := img.WAL.Frame
 	for i := int(img.WAL.Frame) - 1; i >= 0 && i < len(frames); i++ {
 		f := frames[i]
+		// The file keeps stale frames of an older generation past the end of the
+		// current one, so a frame of another generation can follow. resolveWAL
+		// keys pages by (generation, page, slot), so moving end onto such a slot
+		// would change nothing: the break states the intent (review I-5, the
+		// mutant is equivalent; TestAsOfTransactionEndStaysInItsGeneration pins
+		// the behaviour).
 		if f.Generation != img.WAL.Generation {
 			break
 		}

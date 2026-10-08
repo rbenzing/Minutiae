@@ -411,6 +411,10 @@ func TestFixturesAreImmutable(t *testing.T) {
 // class C is not written by Go at all. It does not compare with the committed
 // files, so an engine upgrade breaks nothing here; it only makes a
 // regeneration due.
+//
+// Unlike the other fixture tests, which need no engine, this one runs the
+// modernc.org/sqlite test dependency (the class A and B engine files are made
+// by it).
 func TestFixtureGeneratorIsDeterministic(t *testing.T) {
 	var b []string
 	for _, s := range fixtureSpecs {
@@ -835,9 +839,33 @@ func ptr(p *int64) any {
 func TestFixturesHistoryMatchesOracle(t *testing.T) {
 	eachFixture(t, func(t *testing.T, f *fxLoaded) {
 		got := fixtureHistory(t, f)
+		claimed := map[*fxDelivered]bool{}
 		for _, e := range f.exp.History {
-			matchHistory(t, f, e, got)
+			if g := matchHistory(t, f, e, got); g != nil {
+				if claimed[g] {
+					t.Errorf("%s: two oracle entries match one delivered row (%s rowid %v)", f.spec.Name, e.Method, ptr(e.Rowid))
+				}
+				claimed[g] = true
+			}
 		}
+		// The other direction (review I-4). The oracle lists the versions the
+		// generator wrote; the library also delivers every other cell of the
+		// history images (the freelist pages and old page versions hold many).
+		// Each such extra row is held to account against the BYTES, by the
+		// walker's own decoder: the cell it points at decodes to exactly the
+		// delivered values and rowid, and
+		// a label that is not structural claims no relation to the live data.
+		fs := fxNewState(fxFiles{db: f.db, wal: f.wal, journal: f.journal}, true, true)
+		extra := 0
+		for i := range got {
+			g := &got[i]
+			if claimed[g] {
+				continue
+			}
+			extra++
+			f.checkExtraRow(t, fs, g)
+		}
+		t.Logf("%s: %d oracle entries, %d further delivered rows verified against the bytes", f.spec.Name, len(f.exp.History), extra)
 		for _, u := range f.exp.Unreachable {
 			vals := fxDecAll(t, u.Values)
 			for _, g := range got {
@@ -1104,6 +1132,37 @@ func TestFixturesCarryNoVendorNames(t *testing.T) {
 		}
 		if denyHit(string(f.db)) != "" {
 			t.Errorf("%s: the database bytes contain a denied word", spec.Name)
+		}
+	}
+}
+
+// checkExtraRow verifies a delivered history row the oracle does not list.
+func (f *fxLoaded) checkExtraRow(t *testing.T, fs *fxState, g *fxDelivered) {
+	t.Helper()
+	l := g.r.Loc
+	b := f.fileBytes(recFileName(l.File))
+	where := fmt.Sprintf("%s: extra row %s %s page %d offset %d", f.spec.Name, g.r.Method, recFileName(l.File), l.Page, l.Offset)
+	if l.PageOffset < 0 || l.PageOffset+int64(fs.ps) > int64(len(b)) || l.Offset < l.PageOffset {
+		t.Errorf("%s: the location is outside its file", where)
+		return
+	}
+	page := b[l.PageOffset : l.PageOffset+int64(fs.ps)]
+	typ := page[fxHeaderBase(l.Page)]
+	c, err := fs.cellAt(page, l.Page, recFileName(l.File), l.PageOffset, typ, int(l.Offset-l.PageOffset))
+	if err != nil {
+		t.Errorf("%s: the cell does not decode: %v", where, err)
+		return
+	}
+	if len(l.Overflow) == 0 && (!sameAll(c.vals, g.values) || c.length != int(l.Length)) {
+		t.Errorf("%s: the bytes decode to %v (length %d), the library delivered %v (length %d)", where, c.vals, c.length, g.values, l.Length)
+	}
+	if c.hasRowid != (g.r.Rowid != nil) || (c.hasRowid && c.rowid != *g.r.Rowid) {
+		t.Errorf("%s: rowid %v, the cell holds %d", where, ptr(g.r.Rowid), c.rowid)
+	}
+	switch g.r.TableBasis {
+	case sqlitefile.BasisFit, sqlitefile.BasisGuess, sqlitefile.BasisNone:
+		if g.r.Relation != sqlitefile.RelUnknown {
+			t.Errorf("%s: basis %s with relation %s, want unknown", where, g.r.TableBasis, g.r.Relation)
 		}
 	}
 }
