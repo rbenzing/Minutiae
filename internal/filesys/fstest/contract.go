@@ -36,6 +36,7 @@ type Reporter interface {
 //   - forged-id-not-found / forged-id-read: each ForgedID is ErrNotFound with Reads() unchanged;
 //   - duplicate-corrupt: Duplicate is a corrupt-structure error (never a guess);
 //   - open-deleted: Open of the deleted entry is ErrDeleted, also with the flag cleared;
+//   - max-candidates: at most filesys.MaxCandidatesPerEntry candidates;
 //   - deterministic / aliasing: repeated calls are equal, and mutating an answer does not change the next.
 func RecovererContract(t *testing.T, s RecovererSubject) {
 	t.Helper()
@@ -58,6 +59,9 @@ func CheckRecoverer(r Reporter, s RecovererSubject) {
 	if len(base) == 0 {
 		r.Errorf("no-candidates: Recoverable(deleted) returned no candidates, the subject must have maps")
 		return
+	}
+	if len(base) > filesys.MaxCandidatesPerEntry {
+		r.Errorf("max-candidates: Recoverable(deleted) returned %d candidates, more than filesys.MaxCandidatesPerEntry (%d)", len(base), filesys.MaxCandidatesPerEntry)
 	}
 	size := s.FS.Info().Size
 	for i, c := range base {
@@ -164,6 +168,12 @@ func checkRepeatable(r Reporter, rec filesys.Recoverer, s RecovererSubject, base
 		}
 		for j := range first[i].Basis {
 			first[i].Basis[j] = fmt.Sprint("scribble ", j)
+		}
+		for j := range first[i].Assumptions {
+			first[i].Assumptions[j] = "scribble"
+		}
+		for j := range first[i].Warnings {
+			first[i].Warnings[j] = "scribble"
 		}
 		first[i].Method = "scribble"
 		first[i].Size = -1

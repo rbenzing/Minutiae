@@ -280,3 +280,148 @@ func mustAs[T any](t *testing.T, fsys filesys.FileSystem) T {
 	}
 	return v
 }
+
+// sharedJournalFS hands out its own slices (and checks what it is given), as a careless reader could.
+type sharedJournalFS struct {
+	filesys.FileSystem
+	info  filesys.JournalInfo
+	txn   filesys.JournalTxn
+	block []byte
+	got   filesys.JournalTxn // what JournalBlock was given
+}
+
+func (j *sharedJournalFS) Journal() (filesys.JournalInfo, error) { return j.info, nil }
+
+func (j *sharedJournalFS) JournalTransactions(visit func(filesys.JournalTxn) bool) error {
+	visit(j.txn)
+	return nil
+}
+
+func (j *sharedJournalFS) JournalBlock(t filesys.JournalTxn, _ int) ([]byte, filesys.Run, error) {
+	j.got = t
+	if len(t.Blocks) > 0 {
+		t.Blocks[0].FSBlock = 999 // a reader that writes into its argument
+	}
+	return j.block, filesys.Run{Offset: 1, Length: 2}, nil
+}
+
+func newSharedJournalFS(fsys filesys.FileSystem) *sharedJournalFS {
+	return &sharedJournalFS{
+		FileSystem: fsys,
+		info:       filesys.JournalInfo{Type: "jbd2", Features: []string{"f1"}, Warnings: []string{"w1"}},
+		txn: filesys.JournalTxn{
+			Seq: 3, Blocks: []filesys.JournalTag{{FSBlock: 5}}, Revoked: []uint64{6}, Warnings: []string{"tw"},
+		},
+		block: []byte{1, 2, 3, 4},
+	}
+}
+
+func TestSafeFSCopiesJournalAnswers(t *testing.T) {
+	fsys, _ := recImage(t)
+	pristine := newSharedJournalFS(fsys)
+	for _, tc := range []struct {
+		name   string
+		damage func(t *testing.T, j filesys.Journaler)
+	}{
+		{"Journal Features", func(_ *testing.T, j filesys.Journaler) {
+			info, _ := j.Journal()
+			info.Features[0] = "scribble"
+		}},
+		{"Journal Warnings", func(_ *testing.T, j filesys.Journaler) {
+			info, _ := j.Journal()
+			info.Warnings[0] = "scribble"
+		}},
+		{"visited Blocks", func(_ *testing.T, j filesys.Journaler) {
+			_ = j.JournalTransactions(func(tx filesys.JournalTxn) bool { tx.Blocks[0].FSBlock = 77; return true })
+		}},
+		{"visited Revoked", func(_ *testing.T, j filesys.Journaler) {
+			_ = j.JournalTransactions(func(tx filesys.JournalTxn) bool { tx.Revoked[0] = 77; return true })
+		}},
+		{"visited Warnings", func(_ *testing.T, j filesys.Journaler) {
+			_ = j.JournalTransactions(func(tx filesys.JournalTxn) bool { tx.Warnings[0] = "scribble"; return true })
+		}},
+		{"JournalBlock bytes", func(_ *testing.T, j filesys.Journaler) {
+			b, _, _ := j.JournalBlock(filesys.JournalTxn{}, 0)
+			b[0] = 0xEE
+		}},
+		{"JournalBlock input transaction", func(_ *testing.T, j filesys.Journaler) {
+			_, _, _ = j.JournalBlock(filesys.JournalTxn{Blocks: []filesys.JournalTag{{FSBlock: 1}}}, 0)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sj := newSharedJournalFS(fsys)
+			j := mustAs[filesys.Journaler](t, wrap(t, sj))
+			tc.damage(t, j)
+			if !reflect.DeepEqual(sj.info, pristine.info) || !reflect.DeepEqual(sj.txn, pristine.txn) || !bytes.Equal(sj.block, pristine.block) {
+				t.Errorf("the reader's own data was changed through the wrapper: info %+v txn %+v block %v", sj.info, sj.txn, sj.block)
+			}
+		})
+	}
+	t.Run("JournalBlock input is the caller's, untouched", func(t *testing.T) {
+		sj := newSharedJournalFS(fsys)
+		j := mustAs[filesys.Journaler](t, wrap(t, sj))
+		in := filesys.JournalTxn{Blocks: []filesys.JournalTag{{FSBlock: 1}}}
+		if _, _, err := j.JournalBlock(in, 0); err != nil {
+			t.Fatal(err)
+		}
+		if in.Blocks[0].FSBlock != 1 {
+			t.Errorf("a reader that writes into the transaction it is given changed the caller's: %+v", in)
+		}
+	})
+}
+
+// sharedAllocFile returns one shared slice for AllocatedRuns.
+type sharedAllocFile struct {
+	filesys.File
+	shared []filesys.Run
+}
+
+func (a sharedAllocFile) AllocatedRuns() []filesys.Run { return a.shared }
+
+type sharedAllocFS struct {
+	filesys.FileSystem
+	shared []filesys.Run
+}
+
+func (a sharedAllocFS) Open(e filesys.Entry) (filesys.File, error) {
+	f, err := a.FileSystem.Open(e)
+	if err != nil {
+		return nil, err
+	}
+	return sharedAllocFile{File: f, shared: a.shared}, nil
+}
+
+func TestSafeFileAllocationIsASnapshotAtOpen(t *testing.T) {
+	fsys, _ := recImage(t)
+	live, err := fsys.Lookup("/live")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := []filesys.Run{{Offset: 512, Length: 1024}}
+	f, err := wrap(t, sharedAllocFS{FileSystem: fsys, shared: shared}).Open(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared[0] = filesys.Run{Offset: -9, Length: -9} // the reader changes its slice after Open
+	got, ok := filesys.AllocatedRunsOf(f)
+	if want := []filesys.Run{{Offset: 512, Length: 1024}}; !ok || !reflect.DeepEqual(got, want) {
+		t.Errorf("AllocatedRunsOf after the reader changed its slice = %v, %v; want the snapshot taken at Open %v", got, ok, want)
+	}
+}
+
+// panicWrapFS is a Wrapper whose Underlying panics, as a hostile or buggy wrapper could.
+type panicWrapFS struct{ filesys.FileSystem }
+
+func (panicWrapFS) Underlying() filesys.FileSystem { panic("underlying") }
+
+func TestSupportsRecoveryRecoversAPanic(t *testing.T) {
+	fsys, _ := recImage(t)
+	w := wrap(t, panicWrapFS{struct{ filesys.FileSystem }{fsys}})
+	s, ok := w.(supports)
+	if !ok {
+		t.Fatal("the wrapper has no SupportsRecovery")
+	}
+	if s.SupportsRecovery() {
+		t.Error("SupportsRecovery() = true for a filesystem whose wrapper chain panics; want false")
+	}
+}

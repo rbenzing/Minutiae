@@ -266,9 +266,9 @@ func (c *countingReader) ReadAt(p []byte, off int64) (int, error) {
 // deleted twin whose id is held twice.
 func contractImage(t *testing.T) (img []byte, dupID string) {
 	t.Helper()
-	img = fstest.Build(fstest.BuildSpec{BlockSize: 1024, FreeBlocks: 2, Nodes: []fstest.Node{
+	img = fstest.Build(fstest.BuildSpec{BlockSize: 2048, FreeBlocks: 2, Nodes: []fstest.Node{
 		{Path: "/gone", Data: pattern(2*bs, 4), Deleted: true, Freed: true, Recover: []fstest.RecoverMap{
-			{Method: "own-runs", Basis: []string{"table"}},
+			{Method: "own-runs", Basis: []string{"table"}, Assumptions: []string{"a1", "a2"}, Warnings: []string{"w1"}},
 			{Method: "live-runs", RunsOf: "/live", Size: 100},
 		}},
 		{Path: "/live", Data: pattern(bs, 5)},
@@ -428,6 +428,34 @@ func TestRecovererContractCatchesBadReaders(t *testing.T) {
 				return b.FileSystem.Open(live)
 			},
 		},
+		{
+			name: "trusts the cleared Deleted flag in Open", tag: "open-deleted",
+			recov: func(b *badFS, e filesys.Entry) ([]filesys.Candidate, error) { return b.good.Recoverable(e) },
+			open: func(b *badFS, e filesys.Entry) (filesys.File, error) {
+				if e.Deleted {
+					return b.FileSystem.Open(e)
+				}
+				live, err := b.Lookup("/live")
+				if err != nil {
+					return nil, err
+				}
+				return b.FileSystem.Open(live)
+			},
+		},
+		{name: "duplicate id answers with candidates and an error", tag: "duplicate-corrupt", recov: func(b *badFS, e filesys.Entry) ([]filesys.Candidate, error) {
+			cs, err := b.good.Recoverable(e)
+			if errors.Is(err, filesys.ErrCorrupt) {
+				return []filesys.Candidate{{Method: "guess"}}, err
+			}
+			return cs, err
+		}},
+		{name: "more candidates than the cap", tag: "max-candidates", recov: func(b *badFS, e filesys.Entry) ([]filesys.Candidate, error) {
+			cs, err := b.good.Recoverable(e)
+			for len(cs) > 0 && e.ID == "2" && len(cs) <= filesys.MaxCandidatesPerEntry {
+				cs = append(cs, cs[0])
+			}
+			return cs, err
+		}},
 		{name: "answers change between calls", tag: "deterministic", recov: func(b *badFS, e filesys.Entry) ([]filesys.Candidate, error) {
 			cs, err := b.good.Recoverable(e)
 			b.calls++
@@ -488,4 +516,40 @@ func TestRecovererContractCatchesBadReaders(t *testing.T) {
 			t.Errorf("a subject without a Recoverer was not reported: %q", rec.errs)
 		}
 	})
+}
+
+// A map that borrows another node's runs skips that node's holes (a hole is not a place bytes live)
+// and, with Size 0, takes the SOURCE node's size, not the deleted node's own.
+func TestMTFSRecoverRunsOfSkipsHolesAndDefaultsToSourceSize(t *testing.T) {
+	img := fstest.Build(fstest.BuildSpec{Nodes: []fstest.Node{
+		{Path: "/sparse", Data: pattern(3*bs, 1), Hole: true},
+		{Path: "/old", Data: pattern(bs-10, 2), Deleted: true, Recover: []fstest.RecoverMap{
+			{Method: "sparse-runs", RunsOf: "/sparse", Size: 3 * bs},
+			{Method: "default-size", RunsOf: "/sparse"},
+		}},
+	}})
+	fsys := open(t, img)
+	f, err := fsys.Open(entryByName(t, fsys, "sparse"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want []filesys.Run
+	for _, r := range f.Runs() {
+		if r.Offset >= 0 {
+			want = append(want, r)
+		}
+	}
+	if len(want) != len(f.Runs())-1 || len(want) == 0 {
+		t.Fatalf("test rig: /sparse runs %v hold no single hole", f.Runs())
+	}
+	got, err := asRecoverer(t, fsys).Recoverable(entryByName(t, fsys, "old"))
+	if err != nil || len(got) != 2 {
+		t.Fatalf("Recoverable = %v, %v", got, err)
+	}
+	if !reflect.DeepEqual(got[0].Runs, want) {
+		t.Errorf("sparse-runs = %v, want the source's runs without its hole %v", got[0].Runs, want)
+	}
+	if got[1].Size != 3*bs {
+		t.Errorf("default-size candidate Size = %d, want the source node's size %d", got[1].Size, 3*bs)
+	}
 }
