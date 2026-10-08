@@ -167,6 +167,8 @@ func TestHostileSlackWorkIsLinear(t *testing.T) {
 		slackPer  = bs - 12  // each block is one 12-byte record and its slack
 		totalSize = int64(blocks) * slackPer
 	)
+	// The counter measures instrumented work only (candidate checks and index bytes), not every
+	// instruction of ReadDir. The lower bound is loose for that reason: it only proves the scan ran.
 	// The work is a count, not a time, so a loaded machine cannot fail it: one unit per 4-byte
 	// candidate checked plus one per byte indexed for the name check (once per block). A scan that
 	// rescanned for each candidate would cost about 1000 times more.

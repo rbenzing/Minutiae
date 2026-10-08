@@ -319,7 +319,13 @@ func TestAbandonmentStopsTheRun(t *testing.T) {
 	sum := f.run(f.host(both(shortTimeouts, withWriter(func(w *rxWriter) {
 		w.aborted = func() { aborted <- struct{}{} }
 	})), wbp("one"), two, wbp("three")), artparse.Selection{})
-	<-aborted // the one abandoned job concluded: its records and the ingest.error entry are stored
+	select {
+	case <-aborted: // the one abandoned job concluded: its records and the ingest.error entry are stored
+	case <-t.Context().Done():
+		t.Fatal("the abandoned job was never concluded")
+	case <-time.After(2 * time.Minute): // safety net only: a regression fails instead of hanging
+		t.Fatal("the abandoned job was never concluded")
+	}
 	if sum.Stopped != "abandoned" || sum.Class() != artparse.ClassPartial || len(sum.Jobs) != 3 {
 		t.Fatalf("summary %+v class %v", sum, sum.Class())
 	}
