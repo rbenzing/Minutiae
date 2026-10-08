@@ -42,10 +42,14 @@ type RefusalError struct {
 }
 
 func (e *RefusalError) Error() string {
-	if e.Detail == "" {
-		return e.Reason
+	msg := e.Reason
+	if e.Detail != "" {
+		msg += ": " + e.Detail
 	}
-	return e.Reason + ": " + e.Detail
+	if e.Err != nil {
+		msg += ": " + e.Err.Error()
+	}
+	return msg
 }
 
 // Unwrap returns the cause, if any.

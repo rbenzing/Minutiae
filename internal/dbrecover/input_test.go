@@ -203,7 +203,7 @@ func TestCheckUnchangedSeesChangedBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.close()
-	if err := s.checkUnchanged(context.Background(), c); err != nil {
+	if err := s.checkUnchanged(context.Background()); err != nil {
 		t.Fatalf("unchanged input: %v", err)
 	}
 	b := imageBytes()
@@ -211,7 +211,7 @@ func TestCheckUnchangedSeesChangedBytes(t *testing.T) {
 	if err := os.WriteFile(diskPath(c, a), b, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err = s.checkUnchanged(context.Background(), c)
+	err = s.checkUnchanged(context.Background())
 	var ic *InputChangedError
 	if !errors.As(err, &ic) || ic.ArtifactID != a.ID || ic.Want != a.SHA256 || ic.Got == "" || ic.Got == ic.Want {
 		t.Fatalf("err %v", err)
@@ -240,7 +240,7 @@ func TestCheckUnchangedSeesReplacedFile(t *testing.T) {
 	if err := os.WriteFile(p, b, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err = s.checkUnchanged(context.Background(), c)
+	err = s.checkUnchanged(context.Background())
 	var ic *InputChangedError
 	if !errors.As(err, &ic) {
 		t.Fatalf("err %v, want the replaced file seen by the re-open", err)
@@ -255,7 +255,7 @@ func TestCheckUnchangedIOErrorIsNotIntegrity(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = s.DB.f.Close() // the held descriptor can no longer be read
-	err = s.checkUnchanged(context.Background(), c)
+	err = s.checkUnchanged(context.Background())
 	if err == nil {
 		t.Fatal("a failed read passed")
 	}
@@ -275,17 +275,17 @@ func reopenOf(b []byte) func() (io.ReadCloser, error) {
 func TestFreshCheckComparesHeldAndReopened(t *testing.T) {
 	old, repl := []byte("old bytes"), []byte("new bytes")
 	want := sumHex(old)
-	if err := freshCheck("A1", want, bytes.NewReader(old), reopenOf(old)); err != nil {
+	if err := freshCheck(context.Background(), "A1", want, bytes.NewReader(old), reopenOf(old)); err != nil {
 		t.Errorf("same bytes: %v", err)
 	}
 	// the held descriptor still reads the old bytes, the re-open sees a replacement
-	err := freshCheck("A1", want, bytes.NewReader(old), reopenOf(repl))
+	err := freshCheck(context.Background(), "A1", want, bytes.NewReader(old), reopenOf(repl))
 	var ic *InputChangedError
 	if !errors.As(err, &ic) || ic.Got != sumHex(repl) || ic.Want != want || ic.ArtifactID != "A1" {
 		t.Errorf("replaced file: %v", err)
 	}
 	// the held bytes changed while a re-open still shows the original
-	err = freshCheck("A1", want, bytes.NewReader(repl), reopenOf(old))
+	err = freshCheck(context.Background(), "A1", want, bytes.NewReader(repl), reopenOf(old))
 	if !errors.As(err, &ic) || ic.Got != sumHex(repl) {
 		t.Errorf("changed held bytes: %v", err)
 	}
@@ -298,9 +298,9 @@ func TestFreshCheckIOErrorIsReturnedAsIs(t *testing.T) {
 	boom := errors.New("disk fell over")
 	old := []byte("old bytes")
 	for name, err := range map[string]error{
-		"held":    freshCheck("A1", sumHex(old), failReader{boom}, reopenOf(old)),
-		"reopen":  freshCheck("A1", sumHex(old), bytes.NewReader(old), func() (io.ReadCloser, error) { return nil, boom }),
-		"reading": freshCheck("A1", sumHex(old), bytes.NewReader(old), func() (io.ReadCloser, error) { return io.NopCloser(failReader{boom}), nil }),
+		"held":    freshCheck(context.Background(), "A1", sumHex(old), failReader{boom}, reopenOf(old)),
+		"reopen":  freshCheck(context.Background(), "A1", sumHex(old), bytes.NewReader(old), func() (io.ReadCloser, error) { return nil, boom }),
+		"reading": freshCheck(context.Background(), "A1", sumHex(old), bytes.NewReader(old), func() (io.ReadCloser, error) { return io.NopCloser(failReader{boom}), nil }),
 	} {
 		if !errors.Is(err, boom) {
 			t.Errorf("%s: %v does not carry the I/O error", name, err)
@@ -308,5 +308,205 @@ func TestFreshCheckIOErrorIsReturnedAsIs(t *testing.T) {
 		if errors.Is(err, evidence.ErrIntegrity) || errors.Is(err, ErrInputChanged) {
 			t.Errorf("%s: an I/O error became an integrity verdict", name)
 		}
+	}
+}
+
+func TestCheckUnchangedReopensThroughOpenArtifact(t *testing.T) {
+	c := recordstest.NewCase(t)
+	a := recordstest.AddArtifact(t, c, "app.db", imageBytes())
+	w := recordstest.AddArtifact(t, c, "app.db-wal", append(imageBytes(), 1))
+	s, err := openSet(t, c, a.ID, w.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	var asked []string
+	var got []*os.File
+	orig := s.openArtifact
+	s.openArtifact = func(id string) (*os.File, evidence.ManifestRecord, error) {
+		asked = append(asked, id)
+		f, r, err := orig(id)
+		got = append(got, f)
+		return f, r, err
+	}
+	if err := s.checkUnchanged(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 2 || asked[0] != a.ID || asked[1] != w.ID {
+		t.Fatalf("re-opened %v, want the db and the wal", asked)
+	}
+	if got[0] == s.DB.f || got[1] == s.WAL.f {
+		t.Error("the re-open returned the held descriptor, not a fresh open")
+	}
+}
+
+func TestCheckUnchangedSeesAReplacementFromTheReopen(t *testing.T) {
+	c := recordstest.NewCase(t)
+	a := recordstest.AddArtifact(t, c, "app.db", imageBytes())
+	s, err := openSet(t, c, a.ID, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	b := imageBytes()
+	b[11] ^= 1
+	alt := filepath.Join(t.TempDir(), "alt.db")
+	if err := os.WriteFile(alt, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s.openArtifact = func(string) (*os.File, evidence.ManifestRecord, error) {
+		f, err := os.Open(alt)
+		return f, a, err
+	}
+	err = s.checkUnchanged(context.Background())
+	var ic *InputChangedError
+	if !errors.As(err, &ic) || ic.ArtifactID != a.ID || ic.Got != sumHex(b) {
+		t.Fatalf("err %v, want the replacement seen through the re-open", err)
+	}
+}
+
+func flipFirstByte(t *testing.T, c *evidence.Case, r evidence.ManifestRecord) {
+	t.Helper()
+	b, err := os.ReadFile(diskPath(c, r))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b[0] ^= 0xff
+	if err := os.WriteFile(diskPath(c, r), b, 0o600); err != nil { //nolint:gosec // a path inside a temporary test case
+		t.Fatal(err)
+	}
+}
+
+func TestCheckUnchangedSeesChangedCompanions(t *testing.T) {
+	for _, role := range []string{"wal", "journal"} {
+		t.Run(role, func(t *testing.T) {
+			c := recordstest.NewCase(t)
+			db := recordstest.AddArtifact(t, c, "app.db", imageBytes())
+			comp := recordstest.AddArtifact(t, c, "app.db-"+role, append(imageBytes(), 7))
+			wal, jr := comp.ID, ""
+			if role == "journal" {
+				wal, jr = "", comp.ID
+			}
+			s, err := openSet(t, c, db.ID, wal, jr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.close()
+			if err := s.checkUnchanged(context.Background()); err != nil {
+				t.Fatalf("unchanged: %v", err)
+			}
+			flipFirstByte(t, c, comp)
+			err = s.checkUnchanged(context.Background())
+			var ic *InputChangedError
+			if !errors.As(err, &ic) || ic.ArtifactID != comp.ID {
+				t.Fatalf("err %v, want an InputChangedError naming %s", err, comp.ID)
+			}
+		})
+	}
+}
+
+func TestMixedAndIncompleteSeeCompanions(t *testing.T) {
+	c := recordstest.NewCase(t)
+	live := recordstest.AddArtifact(t, c, "app.db", imageBytes())
+	liveWAL := recordstest.AddArtifact(t, c, "app.db-wal", append(imageBytes(), 1))
+	conf := 50
+	recDB := recoveredDB(t, c, 50, evidencetest.RecoveredSpec{Path: "recovered/p1-mtfs/000002-d"})
+	man, err := c.Manifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var img evidence.ManifestRecord
+	for _, r := range man {
+		if r.ID == recDB.Source.Derived.ParentID {
+			img = r
+		}
+	}
+	recJ := evidencetest.AddRecovered(t, c, img, imageBytes(), evidencetest.RecoveredSpec{
+		Confidence: &conf, Runs: []evidence.Run{{Offset: 0, Length: 2048}}, Path: "recovered/p1-mtfs/000001-j",
+	})
+	incW := recordstest.AddIncompleteArtifact(t, c, "inc.db-wal", append(imageBytes(), 2))
+	incJ := recordstest.AddIncompleteArtifact(t, c, "inc.db-journal", append(imageBytes(), 3))
+
+	check := func(name, db, wal, jr string, mixed, incomplete bool) {
+		s, err := openSet(t, c, db, wal, jr)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		defer s.close()
+		if s.mixed() != mixed || s.incomplete() != incomplete {
+			t.Errorf("%s: mixed %v incomplete %v, want %v %v", name, s.mixed(), s.incomplete(), mixed, incomplete)
+		}
+	}
+	check("live db, recovered journal", live.ID, "", recJ.ID, true, false)
+	check("live db and wal, recovered journal", live.ID, liveWAL.ID, recJ.ID, true, false)
+	check("live db, live wal, incomplete journal", live.ID, liveWAL.ID, incJ.ID, false, true)
+	check("recovered db, live wal", recDB.ID, liveWAL.ID, "", true, false)
+	check("live db, incomplete wal", live.ID, incW.ID, "", false, true)
+	check("live db, incomplete journal", live.ID, "", incJ.ID, false, true)
+}
+
+type cancelReader struct {
+	cancel context.CancelFunc
+	n, max int
+}
+
+func (r *cancelReader) Read(p []byte) (int, error) {
+	r.n++
+	if r.n == 3 {
+		r.cancel()
+	}
+	if r.n > r.max {
+		return 0, io.EOF
+	}
+	return len(p), nil
+}
+
+func TestHashingPollsTheContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	r := &cancelReader{cancel: cancel, max: 1 << 20}
+	_, err := hashReader(ctx, r)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err %v, want context.Canceled", err)
+	}
+	if r.n > 100 {
+		t.Errorf("hash kept reading %d times after the cancel", r.n)
+	}
+	ctx, cancel = context.WithCancel(context.Background())
+	old := []byte("old bytes")
+	err = freshCheck(ctx, "A1", sumHex(old), &cancelReader{cancel: cancel, max: 1 << 20}, reopenOf(old))
+	if !errors.Is(err, context.Canceled) || errors.Is(err, evidence.ErrIntegrity) || errors.Is(err, ErrInputChanged) {
+		t.Errorf("a cancelled hash gave %v, want ctx.Err() and no integrity verdict", err)
+	}
+}
+
+func TestOpenInputsRefusesOneArtifactInTwoRoles(t *testing.T) {
+	c := recordstest.NewCase(t)
+	db := recordstest.AddArtifact(t, c, "app.db", imageBytes())
+	w := recordstest.AddArtifact(t, c, "app.db-wal", append(imageBytes(), 1))
+	for name, ids := range map[string][3]string{
+		"db as wal":      {db.ID, db.ID, ""},
+		"db as journal":  {db.ID, "", db.ID},
+		"wal as journal": {db.ID, w.ID, w.ID},
+	} {
+		_, err := openSet(t, c, ids[0], ids[1], ids[2])
+		var re *RefusalError
+		if !errors.As(err, &re) || re.Reason != ReasonBadOption {
+			t.Errorf("%s: err %v, want a bad-option refusal", name, err)
+		}
+	}
+}
+
+func TestRefusalErrorTextIncludesTheCause(t *testing.T) {
+	boom := errors.New("the underlying cause")
+	for _, e := range []*RefusalError{
+		{Reason: ReasonBadOption, Err: boom},
+		{Reason: ReasonBadOption, Detail: "a detail", Err: boom},
+	} {
+		if !strings.Contains(e.Error(), "the underlying cause") || !strings.HasPrefix(e.Error(), ReasonBadOption) {
+			t.Errorf("%q lacks the cause or the reason", e.Error())
+		}
+	}
+	if got := (&RefusalError{Reason: ReasonBadOption, Detail: "d"}).Error(); got != "bad-option: d" {
+		t.Errorf("got %q", got)
 	}
 }
