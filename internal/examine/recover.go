@@ -14,6 +14,9 @@ import (
 
 // cutError ends the copy of a candidate whose map is a prefix (some runs were not free, or the map
 // covers less than the declared size): the artifact is kept and flagged incomplete with this text.
+// flatName makes a reader-supplied name one path component: a separator never starts a directory.
+var flatName = strings.NewReplacer("/", "_", "\\", "_")
+
 type cutError struct{ msg string }
 
 func (e *cutError) Error() string { return e.msg }
@@ -201,13 +204,13 @@ func (w *recoverWriter) write(it *RecoverItem, c *PlannedCandidate) error {
 		readErr error
 	)
 	for attempt := 0; ; attempt++ {
-		rel, err := w.lp.File(dir, fmt.Sprintf("%06d-%s", c.Ordinal, it.Name))
+		rel, err := w.lp.File(dir, fmt.Sprintf("%06d-%s", c.Ordinal, flatName.Replace(it.Name)))
 		if err != nil { // an unusable name becomes "entry"
 			if rel, err = w.lp.File(dir, fmt.Sprintf("%06d-entry", c.Ordinal)); err != nil {
 				return a.warn(it.Path, "no usable local name: "+err.Error())
 			}
 		}
-		if useSidecar {
+		if useSidecar && d.RunsArtifact == "" { // written once: a name retry reuses it, so none is left unreferenced
 			err = s.writeRunsSidecar(a, rel+".runs.jsonl", runs, "", d)
 		}
 		if err == nil {
@@ -263,13 +266,14 @@ func (w *recoverWriter) copyRuns(out io.Writer, rel string, d *evidence.Derivati
 		rv.Assumptions = append(rv.Assumptions, fmt.Sprintf("read-failed-after=%d", n))
 		return w.s.keepPrefixRuns(w.a, rel, "", d, c.Runs, n)
 	}
+	buf := make([]byte, copyBufSize) // one buffer for every run of the candidate
 	for _, r := range c.Runs {
-		m, err := io.Copy(tw, &ctxReader{ctx: w.ctx, r: io.NewSectionReader(w.s.Image, r.Offset, r.Length), onRead: func(k int) {
+		m, err := io.CopyBuffer(tw, &ctxReader{ctx: w.ctx, r: io.NewSectionReader(w.s.Image, r.Offset, r.Length), onRead: func(k int) {
 			w.copied += int64(k)
 			if w.o.Progress != nil {
 				w.o.Progress(w.copied, w.total)
 			}
-		}})
+		}}, buf)
 		n += m
 		switch {
 		case tw.err != nil:

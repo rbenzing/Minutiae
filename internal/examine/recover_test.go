@@ -101,6 +101,7 @@ func newRecEnv(t *testing.T, nodes ...fstest.Node) *recEnv {
 type fsHook struct {
 	filesys.FileSystem
 	onReadDir   func(dir filesys.Entry, kids []filesys.Entry)
+	failReadDir func(dir filesys.Entry) error
 	rewriteKids func(kids []filesys.Entry) []filesys.Entry
 	recoverable func(inner filesys.Recoverer, e filesys.Entry) ([]filesys.Candidate, error)
 	unalloc     func(inner []filesys.Run) []filesys.Run
@@ -117,6 +118,11 @@ func (h *fsHook) Info() filesys.Info {
 }
 
 func (h *fsHook) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
+	if h.failReadDir != nil {
+		if err := h.failReadDir(dir); err != nil {
+			return nil, err
+		}
+	}
 	kids, err := h.FileSystem.ReadDir(dir)
 	if h.rewriteKids != nil && err == nil {
 		kids = h.rewriteKids(slices.Clone(kids))

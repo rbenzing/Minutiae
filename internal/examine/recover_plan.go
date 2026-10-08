@@ -36,6 +36,8 @@ const (
 var (
 	recoverEntryCap = MaxRecoverEntries
 	planRunCap      = maxPlanRuns
+	// walkSkipCap is how many walk errors (directories that could not be listed) the plan lists one by one.
+	walkSkipCap = 1000
 )
 
 // RecoverOptions select what Recover (and PlanRecovery) considers.
@@ -245,26 +247,31 @@ func (p *planner) enumerate() (targets []target, over int, err error) {
 	if p.o.All {
 		refs = append([]string{"/"}, refs...)
 	}
-	seen := map[[2]string]bool{}
+	seen := map[[2]string]bool{} // holds at most recoverEntryCap keys: past the cap nothing more is remembered
 	add := func(t target) {
 		k := [2]string{t.path, t.e.ID}
 		if seen[k] {
 			return
 		}
-		seen[k] = true
 		if len(targets) >= recoverEntryCap {
 			over++
 			return
 		}
+		seen[k] = true
 		targets = append(targets, t)
 	}
-	var skips []PlanSkip // walk errors: entries that could not be listed
+	var skips []PlanSkip // walk errors: entries that could not be listed (at most walkSkipCap)
+	moreSkips := 0
 	collect := func(root filesys.Entry, rootPath string) error {
 		return filesys.Walk(p.fsys, root, rootPath, func(wp string, we filesys.Entry, werr error) error {
 			if err := p.ctx.Err(); err != nil {
 				return err
 			}
 			if werr != nil {
+				if len(skips) >= walkSkipCap {
+					moreSkips++
+					return nil
+				}
 				skips = append(skips, PlanSkip{Path: wp, ID: we.ID, Reason: "corrupt", Detail: werr.Error()})
 				return nil
 			}
@@ -352,6 +359,12 @@ func (p *planner) enumerate() (targets []target, over int, err error) {
 	for _, sk := range skips {
 		p.plan.Items = append(p.plan.Items, RecoverItem{Path: sk.Path, ID: sk.ID, Skips: []PlanSkip{sk}})
 		p.skipped(sk.Reason)
+	}
+	if moreSkips > 0 {
+		p.plan.Items = append(p.plan.Items, RecoverItem{Skips: []PlanSkip{{
+			Reason: "corrupt", Detail: fmt.Sprintf("%d further entries could not be listed; they are counted but not listed one by one", moreSkips),
+		}}})
+		p.plan.SkippedBy["corrupt"] += moreSkips
 	}
 	return targets, over, nil
 }
