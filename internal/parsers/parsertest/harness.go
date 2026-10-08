@@ -83,7 +83,7 @@ func (h *Harness) Artifact(m evidence.ManifestRecord, data []byte) parse.Artifac
 			Kind: m.Source.Kind, DeviceID: m.Source.DeviceID, RemotePath: m.Source.RemotePath,
 			OriginalPath: m.Source.OriginalPath, Partition: m.Source.Partition,
 		},
-		R: parse.NewSealedReaderAt(bytes.NewReader(data), 0),
+		R: parse.NewSealedReaderAt(bytes.NewReader(data), 0).Reader(),
 	}
 }
 
@@ -96,7 +96,7 @@ type readerSet struct {
 	sealed bool
 }
 
-func (s *readerSet) wrap(r io.ReaderAt, budget *parse.ReadBudget) *parse.SealedReaderAt {
+func (s *readerSet) wrap(r io.ReaderAt, budget *parse.ReadBudget) io.ReaderAt {
 	w := parse.NewSealedReaderAtShared(r, budget)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -104,7 +104,7 @@ func (s *readerSet) wrap(r io.ReaderAt, budget *parse.ReadBudget) *parse.SealedR
 		w.Seal()
 	}
 	s.rs = append(s.rs, w)
-	return w
+	return w.Reader()
 }
 
 func (s *readerSet) sealAll() {

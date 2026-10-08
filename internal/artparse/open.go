@@ -127,12 +127,12 @@ func (b *bundle) sealProbe() { b.probed.seal() }
 
 // wrapReader hands out a sealed reader over r that the bundle seal reaches, and the set own (when not
 // nil) too.
-func (b *bundle) wrapReader(r io.ReaderAt, budget *parse.ReadBudget, own *sealSet) *parse.SealedReaderAt {
+func (b *bundle) wrapReader(r io.ReaderAt, budget *parse.ReadBudget, own *sealSet) io.ReaderAt {
 	w := b.seals.wrap(r, budget)
 	if own != nil {
 		own.add(w)
 	}
-	return w
+	return w.Reader() // the parser gets the view: ReadAt only, no Seal to reach by assertion
 }
 
 // recheck re-hashes every input from disk (the in-memory ones too: the case

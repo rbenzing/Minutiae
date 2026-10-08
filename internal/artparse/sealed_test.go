@@ -74,8 +74,8 @@ func TestReaderAtIsReadOnlyAndHoldsNoFile(t *testing.T) {
 			f := newFixture(t, false, artparse.Options{Limits: lim})
 			in := f.open(t).Input(false)
 			for role, a := range map[string]parse.Artifact{"primary": in.Primary, "role": in.Artifacts["db"]} {
-				if _, ok := a.R.(*parse.SealedReaderAt); !ok {
-					t.Errorf("%s: dynamic type %T, want *parse.SealedReaderAt", role, a.R)
+				if _, ok := a.R.(interface{ Seal() }); ok {
+					t.Errorf("%s: dynamic type %T exposes Seal to the parser", role, a.R)
 				}
 				var v any = a.R
 				if _, ok := v.(interface{ Fd() uintptr }); ok {

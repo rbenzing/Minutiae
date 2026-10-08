@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sync/atomic"
+	"time"
 )
 
 // SealedReaderAt wraps a read-only io.ReaderAt (which it never exposes) with a
@@ -110,3 +111,23 @@ func NewSealedReaderAtShared(r io.ReaderAt, b *ReadBudget) *SealedReaderAt {
 	}
 	return &SealedReaderAt{r: r, b: b}
 }
+
+// Reader returns the view of s a parser gets: an io.ReaderAt with no other method, so a parser
+// cannot reach Seal (or anything else) by a type assertion. The host and the harness keep s itself to
+// seal it.
+func (s *SealedReaderAt) Reader() io.ReaderAt { return readerView{s} }
+
+// readerView has ReadAt and nothing else; it is not comparable to or convertible back to the
+// sealed reader by a type assertion.
+type readerView struct{ s *SealedReaderAt }
+
+func (v readerView) ReadAt(p []byte, off int64) (int, error) { return v.s.ReadAt(p, off) }
+
+// WithoutDeadline returns ctx with its deadline hidden: cancellation and values flow on, Deadline
+// reports none. The host owns every time limit; a parser that read the deadline would put the start
+// time of the job into its output.
+func WithoutDeadline(ctx context.Context) context.Context { return noDeadline{ctx} }
+
+type noDeadline struct{ context.Context }
+
+func (noDeadline) Deadline() (time.Time, bool) { return time.Time{}, false }

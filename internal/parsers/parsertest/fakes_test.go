@@ -144,7 +144,11 @@ func TestSlowFakeFinishesAfterRelease(t *testing.T) {
 		t.Fatalf("a non-cooperative parser returned on a cancelled context: %v", err)
 	case <-time.After(50 * time.Millisecond):
 	}
-	in.Primary.R.(*parse.SealedReaderAt).Seal() // what the host does when it abandons the job
+	set, err := h.readersOf(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set.sealAll() // what the host does when it abandons the job
 	close(s.Release)
 	select {
 	case <-s.Done:

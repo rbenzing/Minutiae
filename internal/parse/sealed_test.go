@@ -187,7 +187,7 @@ func TestSealedReaderAtExposesOnlyReading(t *testing.T) {
 		names = append(names, typ.Method(i).Name)
 	}
 	sort.Strings(names)
-	if want := []string{"ReadAt", "Seal"}; !reflect.DeepEqual(names, want) {
+	if want := []string{"ReadAt", "Reader", "Seal"}; !reflect.DeepEqual(names, want) {
 		t.Fatalf("method set = %v, want %v", names, want)
 	}
 }

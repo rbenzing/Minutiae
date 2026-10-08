@@ -45,7 +45,7 @@ func TestParsersAreDeterministic(t *testing.T) {
 	}
 }
 
-func TestAssertDeterministicRunsFourConfigurationsAndRestores(t *testing.T) {
+func TestAssertDeterministicRunsSixteenTimesAndRestores(t *testing.T) {
 	procs, local := runtime.GOMAXPROCS(0), time.Local
 	var seenProcs []int
 	var seenZones []string
@@ -54,14 +54,20 @@ func TestAssertDeterministicRunsFourConfigurationsAndRestores(t *testing.T) {
 		seenZones = append(seenZones, time.Local.String())
 		return Result{}
 	})
-	if len(seenProcs) != 4 {
-		t.Fatalf("newRun was called %d times, want 4", len(seenProcs))
+	if len(seenProcs) != DeterminismRuns || DeterminismRuns < 16 {
+		t.Fatalf("newRun was called %d times, want DeterminismRuns = %d (at least 16)", len(seenProcs), DeterminismRuns)
 	}
-	if seenProcs[1] != 1 || seenProcs[0] != procs || seenProcs[2] != procs {
-		t.Errorf("GOMAXPROCS seen %v (machine %d)", seenProcs, procs)
-	}
-	if seenZones[3] == seenZones[0] || seenZones[0] != seenZones[1] || seenZones[0] != seenZones[2] {
-		t.Errorf("time.Local seen %v", seenZones)
+	for i := range seenProcs {
+		wantProcs := procs
+		if i%4 == 1 {
+			wantProcs = 1
+		}
+		if seenProcs[i] != wantProcs {
+			t.Errorf("run %d: GOMAXPROCS %d, want %d", i, seenProcs[i], wantProcs)
+		}
+		if (seenZones[i] != seenZones[0]) != (i%4 == 3) {
+			t.Errorf("run %d: time.Local %q (default %q)", i, seenZones[i], seenZones[0])
+		}
 	}
 	if runtime.GOMAXPROCS(0) != procs || time.Local != local {
 		t.Error("GOMAXPROCS or time.Local was not restored")
@@ -269,5 +275,32 @@ func TestCanonicalRecordsEveryFieldShowsInTheLine(t *testing.T) {
 	}
 	if CanonicalRecords([]records.Record{base})[0] != want {
 		t.Error("the canonical line of the same record is not stable")
+	}
+}
+
+// Go randomises map iteration, so one comparison catches a map-order bug only half the time; the
+// repeated runs make a miss as unlikely as 2^-15. The fake is tried several times so that the test
+// itself cannot be the flaky part.
+func TestAssertDeterministicRejectsMapIterationOrder(t *testing.T) {
+	h, art, _ := bundle(t, t, "mo", "one\ntwo\n")
+	p := MapOrder{Name: "mo", Version: "1.0.0"}
+	for attempt := 0; attempt < 5; attempt++ {
+		rec := &recorder{TB: t}
+		AssertDeterministic(rec, func() Result { return h.Run(p, h.Input(p, art, nil, false)) })
+		if rec.Failed() {
+			return
+		}
+	}
+	t.Error("AssertDeterministic accepted a parser whose output follows map iteration order, five times in a row")
+}
+
+// One instance serves every run, so a parser that keeps state between jobs disagrees with itself.
+func TestAssertDeterministicRejectsAStatefulParser(t *testing.T) {
+	h, art, _ := bundle(t, t, "st", "one\ntwo\n")
+	p := &Stateful{Name: "st", Version: "1.0.0"}
+	rec := &recorder{TB: t}
+	AssertDeterministic(rec, func() Result { return h.Run(p, h.Input(p, art, nil, false)) })
+	if !rec.Failed() {
+		t.Error("AssertDeterministic accepted a parser whose output depends on the jobs before it")
 	}
 }

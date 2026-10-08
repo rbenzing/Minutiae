@@ -173,7 +173,7 @@ func (h *Harness) run(ctx context.Context, p parse.Parser, in *parse.Input, stri
 		}
 	}()
 
-	perr := p.Parse(ctx, in, em)
+	perr := p.Parse(parse.WithoutDeadline(ctx), in, em)
 	concluded = true
 	em.seal()
 	if h.afterSeal != nil {

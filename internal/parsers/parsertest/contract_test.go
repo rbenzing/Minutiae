@@ -353,14 +353,14 @@ func TestInputReadersOfEveryRoleAreSealedAndLimited(t *testing.T) {
 	if wal.Platform != parse.PlatformAndroid {
 		t.Errorf("Artifact platform %q", wal.Platform)
 	}
-	if _, ok := wal.R.(*parse.SealedReaderAt); !ok {
-		t.Errorf("Artifact reader is %T, want *parse.SealedReaderAt", wal.R)
+	if _, ok := wal.R.(interface{ Seal() }); ok {
+		t.Errorf("Artifact reader %T exposes Seal to the parser", wal.R)
 	}
 	p := WellBehaved{Name: "well", Version: "1.0.0"}
 	in := h.Input(p, art, map[string]parse.Artifact{"wal": wal}, true)
-	r, ok := in.Artifacts["wal"].R.(*parse.SealedReaderAt)
-	if !ok {
-		t.Fatalf("a non-primary reader is %T, want *parse.SealedReaderAt", in.Artifacts["wal"].R)
+	r := in.Artifacts["wal"].R
+	if _, ok := r.(interface{ Seal() }); ok {
+		t.Fatalf("a non-primary reader %T exposes Seal to the parser", r)
 	}
 	buf := make([]byte, len(big))
 	if n, err := r.ReadAt(buf, 0); !errors.Is(err, parse.ErrProbeLimit) || int64(n) != lim.ProbeBytes {

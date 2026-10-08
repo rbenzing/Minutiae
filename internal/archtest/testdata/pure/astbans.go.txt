@@ -77,6 +77,9 @@ func clock(t tm.Time, ctx context.Context, wg group, p *int) {
 	_, _ = context.WithDeadline(ctx, t)         // want
 	_, _ = context.WithTimeoutCause(ctx, 1, nil) // want
 	_, _ = context.WithDeadlineCause(ctx, t, nil) // want
+	dl, _ := ctx.Deadline() // want
+	getDL := ctx.Deadline   // want
+	_, _ = dl, getDL
 
 	// time parsing resolves zone abbreviations against the host: only internal/decode/ts may parse
 	_, _ = time.Parse(time.RFC3339, "2020-01-01T00:00:00Z") // want

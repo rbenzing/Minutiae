@@ -541,3 +541,52 @@ func (p Nondeterministic) Parse(ctx context.Context, in *parse.Input, out parse.
 	r.Payload["raw"] = map[string]any{"r": strconv.FormatUint(rand.Uint64(), 10)} //nolint:gosec // nondeterminism is the point of this fake
 	return out.Emit(ctx, r)
 }
+
+// MapOrder emits one record per key of a map in iteration order, the mistake the repeated runs of
+// AssertDeterministic exist to catch: Go randomises map iteration, so two runs disagree.
+type MapOrder struct{ Name, Version string }
+
+// Meta implements parse.Parser.
+func (p MapOrder) Meta() parse.Meta { return FakeMeta(p.Name, p.Version) }
+
+// Probe implements parse.Parser.
+func (p MapOrder) Probe(_ context.Context, in *parse.Input) (parse.Applicability, error) {
+	return probeApplicable(in)
+}
+
+// Parse implements parse.Parser.
+func (p MapOrder) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) error {
+	for name, i := range map[string]int{"alpha": 1, "beta": 2} {
+		r := validRecord(in, i)
+		r.Summary = name
+		if err := out.Emit(ctx, r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Stateful keeps a counter in the parser value between jobs: its output depends on how many jobs
+// ran before, which the registry (one instance per parser) would make real. The purity test refuses
+// such a type in a real parser package; this fake proves AssertDeterministic catches it when one
+// instance serves every run.
+type Stateful struct {
+	Name, Version string
+	calls         int
+}
+
+// Meta implements parse.Parser.
+func (p *Stateful) Meta() parse.Meta { return FakeMeta(p.Name, p.Version) }
+
+// Probe implements parse.Parser.
+func (p *Stateful) Probe(_ context.Context, in *parse.Input) (parse.Applicability, error) {
+	return probeApplicable(in)
+}
+
+// Parse implements parse.Parser.
+func (p *Stateful) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) error {
+	p.calls++
+	r := validRecord(in, 1)
+	r.Summary = strings.Repeat("s", p.calls)
+	return out.Emit(ctx, r)
+}

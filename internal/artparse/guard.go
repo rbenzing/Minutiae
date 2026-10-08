@@ -5,6 +5,8 @@ import (
 	"errors"
 	"runtime/debug"
 	"time"
+
+	"github.com/rbenzing/minutiae/internal/parse"
 )
 
 // PanicInfo describes a panic that a guarded function raised.
@@ -52,7 +54,7 @@ func guard(ctx context.Context, timeout, grace time.Duration, seal func(), pump 
 			}
 			done <- g
 		}()
-		g.Err = fn(tctx)
+		g.Err = fn(parse.WithoutDeadline(tctx)) // the host owns every limit: the parser sees cancellation only
 		returned = true
 	}()
 

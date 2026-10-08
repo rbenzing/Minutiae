@@ -82,15 +82,23 @@ func CanonicalResult(r Result) []string {
 	return out
 }
 
-// AssertDeterministic calls newRun under four configurations and requires the
-// same canonical result (CanonicalResult: records, warnings, notes, error and
+// DeterminismRuns is the number of runs AssertDeterministic compares (the four configurations, four
+// times over): map iteration order is random, and every extra run halves the chance that a parser
+// which depends on it passes (all 15 comparisons agreeing by luck has probability 2^-15 for two keys).
+// A parser must iterate maps through slices.Sorted(maps.Keys(m)) or an equivalent.
+const DeterminismRuns = 16
+
+// AssertDeterministic calls newRun DeterminismRuns (16) times, cycling through four configurations,
+// and requires the same canonical result (CanonicalResult: records, warnings, notes, error and
 // final progress) from all of them: the default; GOMAXPROCS(1); the default
 // again; and with time.Local set to a fixed zone that differs from the
 // machine's, so a parser that depends on the host time zone fails here even
 // though the purity rule already bans it. GOMAXPROCS and time.Local are process
 // globals: restored afterwards (also when a run fails the test), but it must not
 // run in parallel with other tests. newRun must reuse the same artifacts every
-// time (a new case gives new artifact ids, which are part of a record).
+// time (a new case gives new artifact ids, which are part of a record) AND the
+// same parser value, as the registry does: one instance serves every job, so a
+// parser that keeps state between jobs disagrees with itself here.
 func AssertDeterministic(t testing.TB, newRun func() Result) {
 	t.Helper()
 	procs, local := runtime.GOMAXPROCS(0), time.Local
@@ -108,7 +116,8 @@ func AssertDeterministic(t testing.TB, newRun func() Result) {
 		{"other time zone", func() { time.Local = otherZone(local) }},
 	}
 	var want []string
-	for i, c := range configs {
+	for i := range DeterminismRuns {
+		c := configs[i%len(configs)]
 		runtime.GOMAXPROCS(procs)
 		time.Local = local
 		c.apply()

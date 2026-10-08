@@ -19,6 +19,7 @@ package archtest
 //	P4 no non-Go source                        checkNonGoSource
 //	P5 package-level state                     checkMutableState
 //	P6 no SQL                                  checkNoSQL
+//	P7 a parser is a stateless value           checkStatelessParsers
 //
 // Pure roots: internal/parse, internal/recordtypes/..., internal/decode/...,
 // internal/sqlitefile (without sqlitetest) and every directory under
@@ -488,6 +489,8 @@ func selectorBans(s pureSrc, sel *ast.SelectorExpr, names map[string]string, dir
 			return []pureViolation{violationAt(s, sel.Sel.Pos(), "P2", "use of a method named Local: results must not depend on the host time zone")}
 		case "Go":
 			return []pureViolation{violationAt(s, sel.Sel.Pos(), "P2", "use of a method named Go (the sync.WaitGroup.Go shape starts a goroutine)")}
+		case "Deadline":
+			return []pureViolation{violationAt(s, sel.Sel.Pos(), "P2", "use of a method named Deadline: the job start time and the host's limit must not reach a result (the host hands parsers a context without a deadline)")}
 		}
 		return nil
 	}
@@ -1575,6 +1578,8 @@ func TestPurityAstBansSelfTest(t *testing.T) {
 		"builtin println value":   {"func f() { q := println; _ = q }\n", 1},
 		"builtin as argument":     {"func f() { run(print) }\n", 1},
 		"time.Parse value":        {"import \"time\"\n\nvar p = time.Parse\n", 1},
+		"ctx.Deadline call":       {"import \"context\"\n\nfunc f(ctx context.Context) { _, _ = ctx.Deadline() }\n", 1},
+		"Deadline method value":   {"import \"context\"\n\nfunc f(ctx context.Context) { g := ctx.Deadline; _ = g }\n", 1},
 		"print as struct key":     {"type o struct{ print int }\n\nvar _ = o{print: 1}\n", 0},
 		"print as field":          {"type o struct{ print int }\n\nfunc f(x o) int { return x.print }\n", 0},
 		"own print value":         {"func print(string) {}\n\nvar p = print\n", 0},
@@ -1825,6 +1830,7 @@ func TestPurityCleanSnippet(t *testing.T) {
 	all = append(all, checkAstBans(srcs, pcParser, fixtureParserDir)...)
 	all = append(all, checkRecordsSelectors(srcs, pcParser)...)
 	all = append(all, checkMutableState(srcs, pcParser)...)
+	all = append(all, checkStatelessParsers(srcs, pcParser)...)
 	all = append(all, checkNoSQL(t, srcs)...)
 	for _, v := range all {
 		t.Errorf("clean snippet flagged: %s", v)
@@ -1952,4 +1958,125 @@ func embedVar(f *ast.File, di, si int, vs *ast.ValueSpec, names map[string]strin
 		}
 	}
 	return false
+}
+
+// ---------------------------------------------------------------------------
+// P7: a parser is a stateless value
+
+// checkStatelessParsers requires every parser type (a type with Meta, Probe and Parse methods)
+// of a parser package to be a struct whose fields are all basic types (or no field), with its
+// three methods declared on the value. The registry holds one instance of each parser and the
+// host calls it for every job: state kept in it would make a result depend on the jobs that ran
+// before and be a data race the day jobs run in parallel.
+func checkStatelessParsers(srcs []pureSrc, class pureClass) []pureViolation {
+	if class != pcParser {
+		return nil
+	}
+	type typeInfo struct {
+		src     pureSrc
+		spec    *ast.TypeSpec
+		methods map[string]*ast.FuncDecl
+	}
+	types := map[string]*typeInfo{}
+	for _, s := range srcs {
+		for _, d := range s.f.Decls {
+			if gd, ok := d.(*ast.GenDecl); ok && gd.Tok == token.TYPE {
+				for _, sp := range gd.Specs {
+					if ts, ok := sp.(*ast.TypeSpec); ok {
+						types[ts.Name.Name] = &typeInfo{src: s, spec: ts, methods: map[string]*ast.FuncDecl{}}
+					}
+				}
+			}
+		}
+	}
+	for _, s := range srcs {
+		for _, d := range s.f.Decls {
+			fd, ok := d.(*ast.FuncDecl)
+			if !ok || fd.Recv == nil || len(fd.Recv.List) != 1 {
+				continue
+			}
+			if ti := types[recvTypeName(fd.Recv.List[0].Type)]; ti != nil {
+				ti.methods[fd.Name.Name] = fd
+			}
+		}
+	}
+	var out []pureViolation
+	for _, ti := range types {
+		if ti.methods["Meta"] == nil || ti.methods["Probe"] == nil || ti.methods["Parse"] == nil {
+			continue
+		}
+		st, isStruct := ti.spec.Type.(*ast.StructType)
+		if !isStruct {
+			out = append(out, violationAt(ti.src, ti.spec.Pos(), "P7", "parser type %s must be a struct of basic-typed fields: the registry holds one instance for every job", ti.spec.Name.Name))
+		} else {
+			for _, f := range st.Fields.List {
+				if !basicFieldType(f.Type) {
+					out = append(out, violationAt(ti.src, f.Pos(), "P7", "parser type %s has a field that can hold state: only basic types (string, bool, numbers) are allowed", ti.spec.Name.Name))
+				}
+			}
+		}
+		for _, name := range []string{"Meta", "Probe", "Parse"} {
+			if fd := ti.methods[name]; fd != nil {
+				if _, ptr := fd.Recv.List[0].Type.(*ast.StarExpr); ptr {
+					out = append(out, violationAt(ti.src, fd.Pos(), "P7", "%s.%s has a pointer receiver: a parser is a stateless value, declare its methods on the value", ti.spec.Name.Name, name))
+				}
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].File+fmt.Sprint(out[i].Line) < out[j].File+fmt.Sprint(out[j].Line) })
+	return dedupe(out)
+}
+
+// recvTypeName returns the type name of a method receiver (T, *T or a generic T[P]).
+func recvTypeName(e ast.Expr) string {
+	switch x := e.(type) {
+	case *ast.StarExpr:
+		return recvTypeName(x.X)
+	case *ast.ParenExpr:
+		return recvTypeName(x.X)
+	case *ast.IndexExpr:
+		return recvTypeName(x.X)
+	case *ast.IndexListExpr:
+		return recvTypeName(x.X)
+	case *ast.Ident:
+		return x.Name
+	}
+	return ""
+}
+
+var basicTypeNames = map[string]bool{
+	"bool": true, "string": true, "byte": true, "rune": true,
+	"int": true, "int8": true, "int16": true, "int32": true, "int64": true,
+	"uint": true, "uint8": true, "uint16": true, "uint32": true, "uint64": true,
+	"float32": true, "float64": true,
+}
+
+// basicFieldType reports whether a field type is a predeclared basic type (an embedded field is a
+// type name too, so an embedded basic type counts as basic).
+func basicFieldType(e ast.Expr) bool {
+	id, ok := e.(*ast.Ident)
+	return ok && basicTypeNames[id.Name]
+}
+
+func TestParserPackagesAreStateless(t *testing.T) {
+	scanPure(t, func(_ *testing.T, _ string, class pureClass, srcs []pureSrc) []pureViolation {
+		return checkStatelessParsers(srcs, class)
+	})
+}
+
+func TestPurityStatelessSelfTest(t *testing.T) {
+	data := readPureFixture(t, "stateless.go.txt")
+	srcs := parsePureSources(t, map[string]string{"stateless.go": data})
+	expectLines(t, data, markedLines(data, "// want"), checkStatelessParsers(srcs, pcParser), 9)
+
+	// the rule is for parser packages only
+	if got := checkStatelessParsers(srcs, pcDecode); len(got) != 0 {
+		t.Errorf("a decode package was held to the parser rule: %v", got)
+	}
+	// the methods may be spread over files of the package
+	a := "package x\n\ntype p struct{ m map[string]int }\n\nfunc (p) Meta() int { return 0 }\n"
+	b := "package x\n\nimport \"context\"\n\nfunc (p) Probe(context.Context) error { return nil }\nfunc (p) Parse(context.Context) error { return nil }\n"
+	if got := checkStatelessParsers(parsePureSources(t, map[string]string{"a.go": a, "b.go": b}), pcParser); len(got) != 1 || got[0].File != "a.go" || got[0].Line != 3 {
+		t.Errorf("violations = %v, want the map field in a.go:3", got)
+	}
 }
