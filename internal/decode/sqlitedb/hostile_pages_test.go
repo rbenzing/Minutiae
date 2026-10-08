@@ -189,7 +189,7 @@ func TestSQLiteDBHostileDamagedPages(t *testing.T) {
 						}
 						if o.scanErr[n] == nil && o.rows[n] < want {
 							lossSeen++
-							if o.warnings == 0 {
+							if o.scanWarn == 0 {
 								t.Errorf("%s: table %q scanned %d of %d rows with no error and no warning (silent loss)", label, n, o.rows[n], want)
 							}
 						}

@@ -148,12 +148,13 @@ func TestUndecidableLookupsAreCounted(t *testing.T) {
 var errFlaky = errors.New("flaky: transient read failure")
 
 type flakyReader struct {
-	r     *bytes.Reader
-	armed bool
+	r        *bytes.Reader
+	armed    bool
+	failFrom int64 // while armed, only reads at or past this offset fail (0: all)
 }
 
 func (f *flakyReader) ReadAt(p []byte, off int64) (int, error) {
-	if f.armed {
+	if f.armed && off+int64(len(p)) > f.failFrom {
 		return 0, errFlaky
 	}
 	return f.r.ReadAt(p, off)
@@ -190,5 +191,46 @@ func TestContextDoesNotCacheIOError(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Errorf("builds = %d, want 2", calls)
+	}
+}
+
+// B67: the I/O failure comes through the real read path (a failing
+// io.ReaderAt under the default index build). It is reported as the I/O error
+// it is, never as ErrCorrupt (that would misstate the evidence), and it is not
+// remembered: the next Match, with the reader recovered, answers.
+func TestContextIOErrorThroughReaderIsNotCorruptAndNotCached(t *testing.T) {
+	data := newBuilderDB(t, sqlitetest.Options{PageSize: 1024}, func(b *sqlitetest.Builder) {
+		g := b.CreateTable("g", "create table g(id integer primary key, n integer, pad text)")
+		for i := int64(1); i <= 400; i++ {
+			g.Insert(i, i, i, "padding-padding-padding-padding")
+		}
+	})
+	fr := &flakyReader{r: bytes.NewReader(data)}
+	d, err := sqlitedb.Open(t.Context(), sqlitedb.Files{DB: fr, DBSize: int64(len(data))}, bigBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Release)
+	c := sqlitedb.NewContext(t.Context(), d, &parse.Input{}, nil)
+	t.Cleanup(c.Close)
+	// Resolve the table (its root page) while the reader works, then fail the
+	// reads of every other page: the leaves the index build has not read yet.
+	tb, err := d.Table(t.Context(), "g", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fr.failFrom = int64(tb.RootPage()) * 1024
+	fr.armed = true
+	_, err = c.Match("g", "n", sqlitedb.LiteralIntKey(1))
+	if !errors.Is(err, errFlaky) {
+		t.Fatalf("Match with a failing reader = %v, want the reader's error", err)
+	}
+	if errors.Is(err, sqlitedb.ErrCorrupt) {
+		t.Errorf("an I/O failure was reported as ErrCorrupt: %v", err)
+	}
+	fr.armed = false
+	rows, err := c.Match("g", "n", sqlitedb.LiteralIntKey(5))
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("Match after the reader recovered = %d rows, %v; the error was cached", len(rows), err)
 	}
 }
