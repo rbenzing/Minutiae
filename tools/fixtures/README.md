@@ -724,6 +724,13 @@ TOGETHER with its `expect.json`: every test checks the sha256 of each
 uncompressed file against `generator.file_sha256` first, so a stale oracle (or
 a stale image) fails before anything else.
 
+Engine versions: the class C files are made by the Debian `sqlite3` and
+`libsqlite3-0` packages pinned in the Dockerfile to 3.46.1-7+deb13u2 (SQLite
+3.46.1; the base image `debian:stable-slim` is trixie), and their expect.json
+record `libsqlite3 3.46.1; shell: 3.46.1`. The class A and B oracles use the
+engine of `modernc.org/sqlite` (SQLite 3.53.4 at the pinned module version),
+recorded in each expect.json. A version bump of either regenerates its class.
+
 The Dockerfile change is a NEW FINAL layer, so every earlier layer, and every
 fixture generated from it, is as built; no other fixture was regenerated.
 Note: Debian builds libsqlite3 with `SQLITE_SECURE_DELETE`, so a database made
