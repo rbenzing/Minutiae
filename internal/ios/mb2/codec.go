@@ -1,5 +1,6 @@
 // Package mb2 implements the host side of Apple's com.apple.mobilebackup2
-// service over the DeviceLink protocol. It imports nothing from Minutiae.
+// service over the DeviceLink protocol. Its only Minutiae import is the pure leaf decoder
+// internal/decode/plist, which validates the plists the device sends.
 package mb2
 
 import (
@@ -10,6 +11,8 @@ import (
 	"io"
 
 	"howett.net/plist"
+
+	decplist "github.com/rbenzing/minutiae/internal/decode/plist"
 )
 
 // File-transfer block codes.
@@ -59,7 +62,7 @@ func (c Codec) Recv() ([]any, error) {
 	if _, err := io.ReadFull(c.rw, b); err != nil {
 		return nil, err
 	}
-	if err := checkBinaryPlist(b); err != nil {
+	if err := checkBinary(b); err != nil {
 		return nil, err
 	}
 	v, err := decodePlist(b)
@@ -107,11 +110,16 @@ func UnmarshalPlist(b []byte, v any) error {
 	if len(b) > MaxPlistFile {
 		return fmt.Errorf("mb2: plist of %d bytes exceeds limit", len(b))
 	}
-	if bytes.HasPrefix(b, []byte("bplist")) {
-		if err := checkBinaryPlist(b); err != nil {
+	switch {
+	case bytes.HasPrefix(b, []byte("bplist")):
+		if err := checkBinary(b); err != nil {
 			return err
 		}
-	} else if !looksLikeXML(b) {
+	case decplist.LooksLikeXML(b):
+		if err := decplist.PrescanXML(trimXMLLead(b), mb2Limits()); err != nil {
+			return fmt.Errorf("mb2: %w", err)
+		}
+	default:
 		return errors.New("mb2: not a binary or XML plist")
 	}
 	format, err := safeUnmarshal(b, v)
@@ -205,9 +213,28 @@ func WriteBlock(w io.Writer, code byte, payload []byte) error {
 	return err
 }
 
-// looksLikeXML reports whether b starts (after an optional UTF-8 BOM and
-// whitespace) with '<', so the decoder's text-format fallback is never used.
-func looksLikeXML(b []byte) bool {
-	b = bytes.TrimLeft(bytes.TrimPrefix(b, []byte("\xef\xbb\xbf")), " \t\r\n")
-	return len(b) > 0 && b[0] == '<'
+// mb2Limits are the bounds applied to every device-supplied plist: the numbers of the
+// validator this package had before it used decode/plist.
+func mb2Limits() decplist.Limits {
+	return decplist.Limits{MaxNodes: 1 << 20, MaxDepth: 64, MaxPayload: maxMessage}
+}
+
+// checkBinary accepts only a well-formed binary plist within mb2Limits. XML, text and
+// anything else is refused, so a DeviceLink frame is never XML.
+func checkBinary(b []byte) error {
+	if !bytes.HasPrefix(b, []byte("bplist")) {
+		return errors.New("mb2: message is not a binary plist")
+	}
+	if err := decplist.Check(b, mb2Limits()); err != nil {
+		return fmt.Errorf("mb2: %w", err)
+	}
+	return nil
+}
+
+// trimXMLLead drops an optional UTF-8 BOM and the ASCII whitespace after it. The prescan
+// refuses whitespace before the XML declaration, but this package has always accepted it
+// (the decoder does), so only the copy handed to the prescan is trimmed; the decoder still
+// sees the original bytes and the prescan sees every other byte.
+func trimXMLLead(b []byte) []byte {
+	return bytes.TrimLeft(bytes.TrimPrefix(b, []byte("\xef\xbb\xbf")), " \t\r\n")
 }

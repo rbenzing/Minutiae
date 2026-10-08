@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -48,7 +49,7 @@ var allowed = map[string][]string{
 	"internal/android/adb":                 {},
 	"internal/android/adb/adbtest":         {},
 	"internal/android":                     {"internal/android/adb", "internal/device", "internal/evidence", "internal/version"},
-	"internal/ios/mb2":                     {},
+	"internal/ios/mb2":                     {"internal/decode/plist"},
 	"internal/ios/mb2/mb2test":             {"internal/ios/mb2"},
 	"internal/ios":                         {"internal/ios/mb2", "internal/device", "internal/evidence", "internal/version"},
 	"internal/ios/iostest":                 {"internal/ios", "internal/ios/mb2/mb2test"},
@@ -143,5 +144,32 @@ func TestArchitectureDependencyRule(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
 		t.Fatalf("root detection failed: %v", err)
+	}
+}
+
+// TestBackendsImportDecodeOnlyThroughMb2 pins the one backend -> decode edge the architecture
+// rule allows (CLAUDE.md section 5): internal/ios/mb2 imports internal/decode/plist and nothing
+// else under internal/decode; no other backend package has any edge into internal/decode.
+func TestBackendsImportDecodeOnlyThroughMb2(t *testing.T) {
+	backends := []string{
+		"internal/transport/serial", "internal/protocol", "internal/android", "internal/ios",
+		"internal/ios/mb2", "internal/ios/mb2/mb2test", "internal/ios/iostest",
+		"internal/android/adb", "internal/android/adb/adbtest", "internal/device",
+	}
+	var edges []string
+	for _, b := range backends {
+		allow, known := allowed[b]
+		if !known {
+			t.Errorf("backend %s is not listed in archtest.allowed", b)
+		}
+		for _, a := range allow {
+			if strings.HasPrefix(a, "internal/decode") {
+				edges = append(edges, b+" -> "+a)
+			}
+		}
+	}
+	want := []string{"internal/ios/mb2 -> internal/decode/plist"}
+	if !slices.Equal(edges, want) {
+		t.Fatalf("backend -> decode edges = %v, want exactly %v", edges, want)
 	}
 }

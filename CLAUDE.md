@@ -192,7 +192,7 @@ right after open. Treat a serial open as able to reset DTR/RTS-wired targets.
 ## 5. Architecture rule (enforced by `TestArchitectureDependencyRule`)
 - `internal/evidence` and `internal/version` import no other Minutiae package except `evidence → version`. `internal/evidence` also imports `golang.org/x/text` (NFKC, case folding and the diacritic rule of the full-text normalization, `ftsnorm.go`); its module version is a constant of `FTSNormVersion`, tied to `go.mod` by `TestXTextVersionMatchesGoMod`.
 - `internal/device` imports only `evidence`, `version`.
-- Backends (`transport/serial`, `protocol`, `android`, `ios`) import only `device`, `evidence`, `version` and their own sub-packages; never `cli`, never each other.
+- Backends (`transport/serial`, `protocol`, `android`, `ios`) import only `device`, `evidence`, `version` and their own sub-packages; never `cli`, never each other. The one exception: `internal/ios/mb2` imports `internal/decode/plist` (a pure leaf decoder: it validates the device's plists), which `TestArchitectureDependencyRule` allows for that package only.
 - `internal/android/adb` imports no Minutiae package.
 - `cmd/minutiae` imports only `internal/cli`.
 - Parser packages `internal/image`, `internal/volume` and `internal/filesys` import no Minutiae package (the one exception: `internal/image` may import its own sub-package `internal/image/ewf`): they work on `io.ReaderAt` and can never write to a case, so they never import `evidence`.
