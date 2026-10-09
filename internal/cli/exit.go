@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/rbenzing/minutiae/internal/artparse"
+	"github.com/rbenzing/minutiae/internal/dbrecover"
 	"github.com/rbenzing/minutiae/internal/device"
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/examine"
@@ -97,6 +98,8 @@ func ExitCode(err error) int {
 		return ExitUsage
 	case errors.Is(err, evidence.ErrIntegrity):
 		return ExitIntegrity
+	case isDBRecoverUsage(err):
+		return ExitUsage
 	}
 	for _, ie := range imageErrors {
 		if errors.Is(err, ie) {
@@ -109,4 +112,15 @@ func ExitCode(err error) int {
 		}
 	}
 	return ExitError
+}
+
+// isDBRecoverUsage says whether err is a bad option or an ambiguous companion of sqlite recover: the
+// examiner fixes the command line, so it is a usage error. The other refusals (not-sqlite, live-unavailable,
+// ineligible-kind, sibling-unusable) are exit 1.
+func isDBRecoverUsage(err error) bool {
+	if errors.Is(err, dbrecover.ErrAmbiguousSibling) {
+		return true
+	}
+	var re *dbrecover.RefusalError
+	return errors.As(err, &re) && (re.Reason == dbrecover.ReasonBadOption || re.Reason == dbrecover.ReasonAmbiguousSibling)
 }
