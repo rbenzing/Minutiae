@@ -253,6 +253,7 @@ type rxWriter struct {
 	endErr     error  // End fails with it, the real writer is not ended
 	flushErr   error  // Flush fails with it
 	concluding func() // called when the host starts to conclude the ingest (Flush, End or Abort), i.e. after the job's seal
+	aborted    func() // called after the real Abort has returned (its run row and audit entry are then stored)
 }
 
 func (w *rxWriter) conclude() {
@@ -296,6 +297,9 @@ func (w *rxWriter) Add(ctx context.Context, r records.Record) error {
 func (w *rxWriter) Abort(ctx context.Context, cause error) (records.IngestResult, error) {
 	w.conclude()
 	res, err := w.IngestWriter.Abort(ctx, cause)
+	if w.aborted != nil {
+		w.aborted()
+	}
 	if err != nil {
 		return res, err
 	}

@@ -7,8 +7,8 @@ effort: medium
 You implement exactly one task of a Minutiae implementation plan.
 
 - Read the task brief you are given first; it is your requirements. Read
-  CLAUDE.md at the repo root: its forensic invariants, architecture rule and
-  Git rules are binding.
+  CLAUDE.md at the repo root and the docs it points to (docs/invariants.md,
+  docs/architecture.md, docs/testing.md, docs/limitations.md): they are binding.
 - TDD: write the failing test, run it and see it fail, implement, see it pass.
 - Before reporting, run `go run ./tools/check` and observe `CHECK PASSED`.
   Fix formatting with `go tool golangci-lint fmt`.

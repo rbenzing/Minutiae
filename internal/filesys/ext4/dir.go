@@ -363,8 +363,11 @@ func (w *dirScan) slackScan(g *region, from, to int) {
 		to = from + int(remaining) // remaining < to-from, which is an int
 	}
 	w.slackBytes += int64(to - from)
+	var checks int64
+	defer func() { w.f.slackWork.Add(checks) }()
 	b := g.b
 	for q := from; q+direntHeader < to && !w.stop; {
+		checks++
 		inode := binary.LittleEndian.Uint32(b[q:])
 		nameLen, ftype := w.nameLen(b[q:])
 		end := q + direntHeader + nameLen
@@ -398,6 +401,7 @@ func (w *dirScan) plausibleSlack(g *region, lo, hi int) bool {
 			w.badIdx[i] = next
 		}
 		w.badFor = g
+		w.f.slackWork.Add(int64(len(g.b)))
 	}
 	return int(w.badIdx[lo]) >= hi
 }

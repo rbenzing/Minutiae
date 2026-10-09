@@ -256,9 +256,18 @@ func (c *Case) UnresolvedIngests() ([]UnresolvedIngest, error) {
 func (c *Case) ReadAudit() ([]AuditEntry, error) {
 	entries, err := ReadAuditEntries(filepath.Join(c.Dir, auditFile))
 	if err != nil {
-		return nil, fmt.Errorf("read audit log: %w", err)
+		return nil, classifyAuditReadError(err)
 	}
 	return entries, nil
+}
+
+// classifyAuditReadError keeps the class of an audit read failure: a log that cannot be parsed
+// wraps ErrIntegrity (exit 4), an I/O error stays plain.
+func classifyAuditReadError(err error) error {
+	if errors.Is(err, errAuditCorrupt) {
+		return fmt.Errorf("%w: read audit log: %w", ErrIntegrity, err)
+	}
+	return fmt.Errorf("read audit log: %w", err)
 }
 
 // ErrIngestActive is returned when the Case's live-ingest slot is taken: by a records writer that

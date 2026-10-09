@@ -288,6 +288,8 @@ var stdAllow = map[string]classSet{
 	// binary formats and checksums
 	"encoding/binary": setOf(pcDecode, pcSqlitefile, pcParser), "encoding/hex": setOf(pcDecode, pcSqlitefile, pcParser),
 	"hash/crc32": setOf(pcDecode, pcSqlitefile, pcParser),
+	// token-level reading of XML plists (decode/plist: the negative CF$UID check, after the pre-scan caps)
+	"encoding/xml": setOf(pcDecode),
 	// common.CleanText keeps the original bytes (base64) or their hash
 	"encoding/base64": setOf(pcRTCommon), "crypto/sha256": setOf(pcRTCommon, pcSqlitefile),
 	// typed Decode of stored payloads
@@ -1264,6 +1266,8 @@ func TestParserPackagesHaveNoSQL(t *testing.T) {
 var purityRequired = []string{
 	"internal/parse", "internal/recordtypes/common", "internal/recordtypes/message",
 	"internal/recordtypes/call", "internal/recordtypes/contact", "internal/recordtypes/web", "internal/recordtypes/all",
+	"internal/decode/sqlitedb",
+	"internal/decode/ts", "internal/decode/plist", "internal/decode/typedstream",
 }
 
 // purePackageRE is a second, independent description of the pure roots: any
@@ -1451,9 +1455,19 @@ func TestPurityAllowlistSelfTest(t *testing.T) {
 		{pcDecode, dirDecodePlst, "howett.net/plist", true},
 		{pcDecode, dirDecode + "/other", "howett.net/plist", false},
 		{pcDecode, dirDecodeSQL, m + "internal/sqlitefile", true},
+		{pcDecode, dirDecodeSQL, m + "internal/parse", true},
+		{pcDecode, dirDecodeSQL, m + "internal/records", true},
+		{pcDecode, dirDecodeSQL, "sync", false},
+		{pcDecode, dirDecodeSQL, "os", false},
+		{pcDecode, dirDecodeSQL, "reflect", false},
+		{pcDecode, dirDecodeSQL, "database/sql", false},
+		{pcDecode, dirDecodeSQL, "modernc.org/sqlite", false},
+		{pcDecode, dirDecodeSQL, m + "internal/sqlitefile/sqlitetest", false},
 		{pcDecode, dirDecodePlst, m + "internal/sqlitefile", false},
 		{pcDecode, dirDecodePlst, "encoding/binary", true},
 		{pcDecode, dirDecodePlst, "io", true},
+		{pcDecode, dirDecodePlst, "encoding/xml", true},
+		{pcParser, fixtureParserDir, "encoding/xml", false},
 		{pcDecode, dirDecodePlst, "hash/crc32", true},
 		{pcDecode, dirDecodeSQL, m + "internal/decode/plist", true},
 		{pcDecode, dirDecodePlst, m + "internal/records", true},
@@ -1877,6 +1891,8 @@ func TestPurityClassOf(t *testing.T) {
 		"internal/recordtypes":               pcRTType,
 		"internal/decode/plist":              pcDecode,
 		"internal/decode/sqlitedb":           pcDecode,
+		"internal/decode/ts":                 pcDecode,
+		"internal/decode/typedstream":        pcDecode,
 		"internal/sqlitefile":                pcSqlitefile,
 		"internal/parsers/androidmms":        pcParser,
 		"internal/parsers/androidmms/helper": pcParser,

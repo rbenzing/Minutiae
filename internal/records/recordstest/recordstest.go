@@ -171,15 +171,7 @@ func AddDerived(t testing.TB, c *evidence.Case, parent evidence.ManifestRecord, 
 	if len(data) > 0 {
 		d.Runs = []evidence.Run{{Offset: 0, Length: int64(len(data))}}
 	}
-	src := evidence.Source{Kind: kind, DeviceID: "dev1", Derived: d}
-	rec, err := c.Capture("dev1", "acq-derived", name, src, func(w io.Writer) error {
-		_, err := w.Write(data)
-		return err
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return rec
+	return AddDerivedWith(t, c, name, evidence.Source{Kind: kind, DeviceID: "dev1", Derived: d}, data)
 }
 
 // AddRecovered stores a deleted-file artifact derived from parent whose Recovery
