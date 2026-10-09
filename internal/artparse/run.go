@@ -27,6 +27,19 @@ const (
 // the inputs, Flush, End and Abort (A8, the bound records.End itself uses).
 const concludeTimeout = 5 * time.Minute
 
+// ConcludeTimeout bounds how long Run waits, before it returns, for the conclusion (Flush and Abort) of
+// an abandoned job to finish. A conclusion still pending after it makes Run return ErrConclusionPending.
+const ConcludeTimeout = concludeTimeout
+
+// ErrConclusionPending is returned by Run when the conclusion of an abandoned job (its Flush and Abort)
+// had not finished within ConcludeTimeout, for example because a writer call is stuck. The job is
+// reported incomplete; its buffered records and run row are not stored yet and the next Start recovers
+// the unconcluded ingest.
+var ErrConclusionPending = errors.New("the conclusion of an abandoned job is still pending")
+
+// concludeJoinTimeout is the wait Run applies (a variable only so tests can shorten it).
+var concludeJoinTimeout = ConcludeTimeout
+
 // recheckTimeout bounds the re-hash of the inputs after a job, apart from the budget of Flush, End and
 // Abort, so a slow re-hash of a large input cannot starve the conclusion (and the reverse).
 var recheckTimeout = 5 * time.Minute
@@ -65,6 +78,8 @@ type run struct {
 	sum     RunSummary
 	// totals of the jobs concluded so far, for analysis.end and analysis.error
 	rejected, warnings int
+	// conclusions detached from abandoned jobs that Run must join before it returns
+	pending []<-chan concludedIngest
 }
 
 func (r *run) emit(e Event) {
@@ -337,6 +352,9 @@ func (h *Host) Run(ctx context.Context, opt RunOptions) (RunSummary, error) {
 		nr.Outcome, nr.Reason = OutcomeNotRun, "the run stopped before this job started"
 		r.sum.Jobs = append(r.sum.Jobs, nr)
 	}
+	if jerr := r.joinConclusions(); jerr != nil {
+		runErr = errors.Join(runErr, jerr)
+	}
 	cerr := r.conclude(len(jobs) - done)
 	if runErr == nil {
 		runErr = cerr
@@ -589,6 +607,39 @@ func (r *run) fill(st *jobState, res records.IngestResult) {
 	st.res.WarningsSuppressed = res.WarningsSuppressed
 }
 
+// concludedIngest is what the detached conclusion of a failed job reports.
+type concludedIngest struct {
+	flushErr, abortErr error
+	res                records.IngestResult
+}
+
+// joinConclusions waits, for at most concludeJoinTimeout in all, for the conclusions detached from
+// abandoned jobs. Run calls it before it audits its own end and before it returns, so nothing is written
+// after the caller closes the case. A conclusion that is still pending (a stuck writer) is
+// ErrConclusionPending; one whose Abort failed is a run-level abort failure.
+func (r *run) joinConclusions() error {
+	if len(r.pending) == 0 {
+		return nil
+	}
+	timer := time.NewTimer(concludeJoinTimeout)
+	defer timer.Stop()
+	var errs []error
+	for _, ch := range r.pending {
+		select {
+		case c := <-ch:
+			if c.abortErr != nil {
+				r.sum.Stopped = StoppedAbortFailure
+				errs = append(errs, fmt.Errorf("concluding the abandoned ingest: %w", c.abortErr))
+			}
+		case <-timer.C:
+			errs = append(errs, ErrConclusionPending)
+			timer.Reset(0) // the rest are not waited for again
+		}
+	}
+	r.pending = nil
+	return errors.Join(errs...)
+}
+
 // abortJob concludes a failed job: Flush (unless the inputs changed: those records may describe other
 // bytes) then Abort. A failed Abort is a run-level error: the writer released the live-ingest slot, the
 // unconcluded ingest is recovered by the next Start.
@@ -601,23 +652,21 @@ func (r *run) fill(st *jobState, res records.IngestResult) {
 // Flush and Abort then wait at most GracePeriod and the job is abandoned with that reason, never an
 // unbounded wait. The goroutine that is left waiting ends when the stuck call does.
 func (r *run) abortJob(ctx context.Context, w ingestWriter, st *jobState, outcome, reason string, cause error, em *emitter) error {
+	// The conclusion runs on a context nothing the caller does can cancel (integrity beats cancel), and the
+	// goroutine, not this function, releases it: returning here must not cancel a Flush still in flight.
 	actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), concludeTimeout)
-	defer cancel()
-	type concluded struct {
-		flushErr, abortErr error
-		res                records.IngestResult
-	}
 	flush := !st.res.Integrity
-	ch := make(chan concluded, 1)
+	ch := make(chan concludedIngest, 1)
 	go func() {
-		var c concluded
+		defer cancel()
+		var c concludedIngest
 		if flush {
 			c.flushErr = w.Flush(actx)
 		}
 		c.res, c.abortErr = w.Abort(actx, cause)
 		ch <- c
 	}()
-	var c concluded
+	var c concludedIngest
 	if st.res.Abandoned {
 		timer := time.NewTimer(r.h.limits.GracePeriod)
 		defer timer.Stop()
@@ -631,6 +680,7 @@ func (r *run) abortJob(ctx context.Context, w ingestWriter, st *jobState, outcom
 				st.res.Records, st.res.Rejected, st.res.Warnings = int64(acc), rej, warn
 			}
 			st.fail(outcome, reason+"; concluding the ingest did not finish within the grace period (a writer call is stuck)", cause)
+			r.pending = append(r.pending, ch) // Run joins it before it returns
 			return nil
 		}
 	} else {

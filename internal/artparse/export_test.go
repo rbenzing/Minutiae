@@ -82,3 +82,10 @@ func SetRecheckTimeout(d time.Duration) (restore func()) {
 	recheckTimeout = d
 	return func() { recheckTimeout = old }
 }
+
+// SetConcludeJoinTimeout shortens the wait Run applies to a pending conclusion; call the result to restore it.
+func SetConcludeJoinTimeout(d time.Duration) (restore func()) {
+	old := concludeJoinTimeout
+	concludeJoinTimeout = d
+	return func() { concludeJoinTimeout = old }
+}
