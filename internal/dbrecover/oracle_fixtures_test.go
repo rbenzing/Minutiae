@@ -11,6 +11,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -589,5 +590,64 @@ func checkSecureDeleteFixture(t *testing.T) {
 				t.Errorf("record %d carries the marker %q of a securely deleted row", s.ID, u.Marker)
 			}
 		}
+	}
+}
+
+// testJournalSector derives the sector size of a zeroed-header journal from the
+// journal bytes alone, with the test's own checksum consensus (never the
+// library's): for each power-of-two candidate, records cut from that start vote
+// for the nonce (stored checksum minus the sampled bytes); the candidate with
+// the most agreeing records wins.
+func testJournalSector(t *testing.T, j []byte, pageSize int) int {
+	t.Helper()
+	rsz := pageSize + 8
+	best, bestVotes := 0, 0
+	for sec := 512; sec <= 65536 && sec+rsz <= len(j); sec *= 2 {
+		votes := map[uint32]int{}
+		for off := sec; off+rsz <= len(j); off += rsz {
+			if binary.BigEndian.Uint32(j[off:]) == 0 {
+				continue
+			}
+			page := j[off+4 : off+4+pageSize]
+			var sum uint32
+			for i := pageSize - 200; i > 0; i -= 200 {
+				sum += uint32(page[i])
+			}
+			votes[binary.BigEndian.Uint32(j[off+4+pageSize:])-sum]++
+		}
+		for _, c := range votes {
+			if c > bestVotes {
+				best, bestVotes = sec, c
+			}
+		}
+	}
+	if bestVotes < 2 {
+		t.Fatalf("no checksum consensus in the journal (best %d votes)", bestVotes)
+	}
+	return best
+}
+
+// TestZeroedHeaderJournalSectorIsDerivedIndependently pins the sector size of
+// the persist-mode journal (J84): the test derives it from the bytes, and the
+// library must report the same value by nonce consensus.
+func TestZeroedHeaderJournalSectorIsDerivedIndependently(t *testing.T) {
+	f := loadOracleFixture(t, "persist-journal")
+	if !bytes.Equal(f.journal[:8], make([]byte, 8)) {
+		t.Fatal("the fixture journal header is not zeroed")
+	}
+	got := testJournalSector(t, f.journal, int(f.pageSize()))
+	if got != journalSector {
+		t.Fatalf("independently derived sector %d, want %d", got, journalSector)
+	}
+	db, err := sqlitefile.Open(bytesAt{f.db}, int64(len(f.db)), sqlitefile.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := db.AttachJournal(bytesAt{f.journal}, int64(len(f.journal)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if int(info.SectorSize) != got || !info.NonceDerived {
+		t.Errorf("library sector %d nonce-derived %v, want %d and true", info.SectorSize, info.NonceDerived, got)
 	}
 }

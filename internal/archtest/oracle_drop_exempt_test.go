@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// The engine-oracle tests of internal/sqlitefile, internal/decode and internal/dbrecover build
+// The engine-oracle tests of internal/sqlitefile and internal/decode build
 // throwaway fixture databases with an independent engine, and drop tables in
 // them (a dropped table is exactly the evidence they need). The single-writer
 // rule stays strict for the record tables and for any non-constant table name;
@@ -17,7 +17,7 @@ import (
 
 var oracleDropRE = regexp.MustCompile(`(?is)^drop\s+table\s+(?:if\s+exists\s+)?([a-z_][a-z_0-9]*)$`)
 
-var oracleExemptDirs = []string{"internal/sqlitefile/", "internal/decode/", "internal/dbrecover/"}
+var oracleExemptDirs = []string{"internal/sqlitefile/", "internal/decode/"}
 
 // oracleDropExempt reports whether the violation text at repository-relative
 // path rel is such a DROP.

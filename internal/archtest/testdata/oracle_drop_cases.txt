@@ -17,8 +17,3 @@ internal/sqlitefile/x_test.go	drop table pad; delete from records	false
 internal/sqlitefile/x_test.go	delete from <?> where rowid=?	false
 internal/sqlitefile/x_test.go	insert into records(id) values(1)	false
 internal/sqlitefile/x_test.go	alter table pad add column x	false
-internal/dbrecover/oracle_engine_test.go	drop table gen_t	true
-internal/dbrecover/x_test.go	drop table records	false
-internal/dbrecover/x_test.go	drop table <?>	false
-internal/dbrecover/oracle_engine.go	drop table gen_t	false
-internal/dbrecover/x_test.go	drop trigger tg	false
