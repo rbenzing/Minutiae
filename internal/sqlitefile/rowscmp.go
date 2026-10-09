@@ -210,54 +210,12 @@ func digestOf(vals []Value, idx []int) (d [32]byte, complete bool) {
 // without trailing spaces), and values of different storage classes never
 // meet. ok is false when a key value is omitted, clipped, NULL (never equal to
 // anything) or text the library cannot fold (not UTF-8 under NOCASE or RTRIM).
+// It shares appendKey with EqualityKey; legacy mode keeps the two behaviours
+// of this comparison that differ from the engine (NaN, UTF-16).
 func keyDigest(vals []Value, idx []int, colls []string) (d [32]byte, ok bool) {
 	h := sha256.New()
-	var b [8]byte
-	put := func(n uint64) {
-		binary.BigEndian.PutUint64(b[:], n)
-		h.Write(b[:])
-	}
 	for n, i := range idx {
-		v := vals[i]
-		if v.Omitted || v.Clipped {
-			return d, false
-		}
-		switch v.Kind {
-		case KindInt:
-			h.Write([]byte{'i'})
-			put(uint64(v.Int))
-		case KindFloat:
-			if f := v.Float; f == math.Trunc(f) && f >= -(1<<63) && f < 1<<63 {
-				h.Write([]byte{'i'}) // an integral real is the integer of the same value
-				put(uint64(int64(f)))
-			} else {
-				h.Write([]byte{'f'})
-				put(math.Float64bits(f))
-			}
-		case KindText, KindBlob:
-			bs := v.Bytes
-			if v.Kind == KindText && colls[n] != "BINARY" {
-				if v.Enc != EncUTF8 {
-					return d, false
-				}
-				switch colls[n] {
-				case "NOCASE":
-					bs = slices.Clone(bs)
-					for j, c := range bs {
-						if c >= 'A' && c <= 'Z' {
-							bs[j] = c + 32
-						}
-					}
-				case "RTRIM":
-					for len(bs) > 0 && bs[len(bs)-1] == ' ' {
-						bs = bs[:len(bs)-1]
-					}
-				}
-			}
-			h.Write([]byte{byte(v.Kind)})
-			put(uint64(len(bs)))
-			h.Write(bs)
-		default:
+		if appendKey(h, vals[i], colls[n], true) != KeyOK {
 			return d, false
 		}
 	}
@@ -281,17 +239,9 @@ func (rp *rowPass) wrSetOf(ctx context.Context, t *Table, name string) (*wrSet, 
 	for i := range def.Columns {
 		c := &def.Columns[i]
 		if c.PKOrdinal > 0 {
-			cn := c.Collation
-			if c.KeyCollation != "" {
-				cn = c.KeyCollation // the key clause's collation governs the index
-			}
-			coll := "BINARY"
-			for _, k := range []string{"BINARY", "NOCASE", "RTRIM"} {
-				if asciiEqualFold(cn, k) {
-					coll = k
-				}
-			}
-			if cn != "" && !asciiEqualFold(cn, coll) {
+			coll, err := CanonicalCollation(ColumnCollation(*c))
+			if err != nil {
+				coll = "BINARY"
 				s.pkOK = false // a custom or unknown collation: equality is not decidable here
 			}
 			pks = append(pks, pkc{c.PKOrdinal, i, coll})
