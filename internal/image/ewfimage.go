@@ -108,3 +108,14 @@ const (
 	HashAbsent     = ewf.HashAbsent
 	HashUnverified = ewf.HashUnverified
 )
+
+// AcquisitionGap and AcquisitionGaps describe the media ranges an acquirer
+// could not read and zero-filled (E01 error2).
+type (
+	AcquisitionGap  = ewf.AcquisitionGap
+	AcquisitionGaps = ewf.AcquisitionGaps
+)
+
+// GapReporter is implemented by containers that record unreadable acquisition
+// ranges (EWF). Raw images do not implement it.
+type GapReporter interface{ AcquisitionGaps() AcquisitionGaps }

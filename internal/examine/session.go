@@ -464,6 +464,9 @@ type ImageInfo struct {
 	// PartitionError is why the partition table could not be read (Table is
 	// nil then and Scheme, Partitions and Unallocated are empty).
 	PartitionError string
+	// AcquisitionGaps is non-nil when the container declares ranges the acquirer
+	// could not read; the image holds zeros there (they are not device data).
+	AcquisitionGaps *image.AcquisitionGaps
 }
 
 // Info describes the image, its partition table and, per partition, the
@@ -483,6 +486,11 @@ func (s *Session) Info() ImageInfo {
 	}
 	if w, ok := s.Image.(image.Warner); ok {
 		info.Warnings = append(info.Warnings, w.Warnings()...)
+	}
+	if gr, ok := s.Image.(image.GapReporter); ok {
+		if g := gr.AcquisitionGaps(); g.Ranges > 0 {
+			info.AcquisitionGaps = &g
+		}
 	}
 	for _, seg := range s.Segments {
 		if seg.Incomplete {

@@ -216,6 +216,7 @@ func (o *opener) finish() error {
 		r.warn.add("acquisition error: %d sector range(s) (%d sectors) were unreadable at acquisition and are zero-filled in the image", e.count, e.sectors)
 	}
 	r.err2 = o.err2
+	r.gaps = buildGaps(o.err2, r.geo)
 	if covered := int64(len(r.refs)); covered < int64(r.geo.chunks) {
 		// A missing or truncated segment or table: the image opens, and the
 		// chunks without an entry fail on read (never zero-filled). A missing

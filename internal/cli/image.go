@@ -314,6 +314,20 @@ func printImageInfo(w io.Writer, info examine.ImageInfo) {
 	for _, kv := range info.Metadata {
 		field(printable(kv.Key), "%s", printable(kv.Value))
 	}
+	if g := info.AcquisitionGaps; g != nil {
+		var total int64
+		for _, k := range g.Kept {
+			total += k.Length
+		}
+		line := fmt.Sprintf("%d range(s) declared, %d bytes read as zeros (acquirer fill, not device data)", g.Ranges, total)
+		if len(g.Kept) > 0 {
+			line += fmt.Sprintf("; first: offset %d, %d bytes", g.Kept[0].Offset, g.Kept[0].Length)
+		}
+		if g.Truncated || g.Outside > 0 {
+			line += fmt.Sprintf("; %d beyond the media, list truncated: %v", g.Outside, g.Truncated)
+		}
+		field("Acq. errors", "%s", line)
+	}
 	if info.PartitionError != "" {
 		field("Partitions", "unreadable: %s", escapeText(info.PartitionError))
 		for _, warn := range info.Warnings {

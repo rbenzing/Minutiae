@@ -6,6 +6,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/examine"
 	"github.com/rbenzing/minutiae/internal/filesys"
+	"github.com/rbenzing/minutiae/internal/image"
 )
 
 // The JSON shapes of the image commands are defined here, with explicit
@@ -135,6 +136,8 @@ type jsonImageInfo struct {
 	PartitionError string `json:"partition_error,omitempty"`
 	// Verify is present only with --verify on a container that stores hashes.
 	Verify *jsonVerify `json:"verify,omitempty"`
+	// AcquisitionGaps is present when the container declares unreadable acquisition ranges.
+	AcquisitionGaps *jsonGaps `json:"acquisition_gaps,omitempty"`
 }
 
 type jsonHashCheck struct {
@@ -188,7 +191,8 @@ func newJSONImageInfo(in examine.ImageInfo) jsonImageInfo {
 		ParentID: in.ParentID, Path: in.Path, SHA256: in.SHA256, Incomplete: in.Incomplete,
 		Format: in.Format, Size: in.Size, SectorSize: in.SectorSize, Scheme: in.Scheme, DiskGUID: in.DiskGUID,
 		Metadata: []jsonKV{}, Partitions: []jsonPartition{}, Unallocated: []jsonRun{}, Warnings: nonNil(in.Warnings),
-		PartitionError: in.PartitionError,
+		PartitionError:  in.PartitionError,
+		AcquisitionGaps: newJSONGaps(in.AcquisitionGaps),
 	}
 	for _, kv := range in.Metadata {
 		out.Metadata = append(out.Metadata, jsonKV{Key: kv.Key, Value: kv.Value})
@@ -330,6 +334,28 @@ func newJSONRecoverList(p *examine.RecoverPlan) jsonRecoverList {
 			ji.Skips = append(ji.Skips, jsonRecoverSkip{Path: sk.Path, ID: sk.ID, Reason: sk.Reason, Detail: sk.Detail})
 		}
 		out.Items = append(out.Items, ji)
+	}
+	return out
+}
+
+// jsonGaps is the acquirer's record of unreadable ranges as media byte ranges,
+// as the image states them. Offsets and lengths are integers.
+type jsonGaps struct {
+	Ranges    uint64    `json:"ranges"`
+	Bytes     int64     `json:"bytes"`
+	Outside   int       `json:"outside"`
+	Truncated bool      `json:"truncated"`
+	Kept      []jsonRun `json:"kept"`
+}
+
+func newJSONGaps(g *image.AcquisitionGaps) *jsonGaps {
+	if g == nil {
+		return nil
+	}
+	out := &jsonGaps{Ranges: g.Ranges, Outside: g.Outside, Truncated: g.Truncated, Kept: []jsonRun{}}
+	for _, k := range g.Kept {
+		out.Kept = append(out.Kept, jsonRun{Offset: k.Offset, Length: k.Length})
+		out.Bytes += k.Length // merged and clipped to the media, so the sum is at most the media size
 	}
 	return out
 }
