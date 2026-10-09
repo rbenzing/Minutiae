@@ -17,8 +17,8 @@ func SetFATEntry(img []byte, l *Layout, c, v uint32) {
 		panic(fmt.Sprintf("exfattest: SetFATEntry: cluster %d outside [2, %d]", c, l.ClusterCount+1))
 	}
 	off := l.FatEntryOffset(c)
-	if off < l.FatOffset || off+4 > l.HeapOffset || off+4 > int64(len(img)) {
-		panic(fmt.Sprintf("exfattest: SetFATEntry: entry at %d leaves the FAT region [%d, %d)", off, l.FatOffset, l.HeapOffset))
+	if off < l.FatOffset || off+4 > l.FatOffset+l.FatLength || off+4 > int64(len(img)) {
+		panic(fmt.Sprintf("exfattest: SetFATEntry: entry at %d leaves the FAT region [%d, %d)", off, l.FatOffset, l.FatOffset+l.FatLength))
 	}
 	le32(img, int(off), v)
 }
@@ -69,6 +69,9 @@ func setBounds(img []byte, loc EntryLoc, who string) int {
 		panic(fmt.Sprintf("exfattest: %s: entry at %d has type %#x, not a File entry", who, loc.Offset, t))
 	}
 	n := (int(img[loc.Offset+1]) + 1) * entrySize
+	if n < 2*entrySize {
+		panic(fmt.Sprintf("exfattest: %s: entry set at %d is %d bytes, a set holds at least a primary and a stream", who, loc.Offset, n))
+	}
 	if loc.Offset+int64(n) > int64(len(img)) {
 		panic(fmt.Sprintf("exfattest: %s: entry set at %d (%d bytes) does not fit the %d-byte image", who, loc.Offset, n, len(img)))
 	}
@@ -110,6 +113,9 @@ func PatchStream(img []byte, loc EntryLoc, p StreamPatch) {
 func CorruptSetChecksum(img []byte, loc EntryLoc) {
 	if loc.Offset < 0 || loc.Offset+entrySize > int64(len(img)) {
 		panic(fmt.Sprintf("exfattest: CorruptSetChecksum: entry at %d does not fit the %d-byte image", loc.Offset, len(img)))
+	}
+	if t := img[loc.Offset]; t&0x7F != 0x05 {
+		panic(fmt.Sprintf("exfattest: CorruptSetChecksum: entry at %d has type %#x, not a File entry", loc.Offset, t))
 	}
 	o := int(loc.Offset) + 2
 	le16(img, o, ^binary.LittleEndian.Uint16(img[o:]))

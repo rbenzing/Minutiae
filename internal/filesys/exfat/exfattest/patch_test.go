@@ -201,7 +201,7 @@ func TestSetFATEntryRejectsAnEntryPastTheFATRegion(t *testing.T) {
 	img, l, _ := patchImage(t)
 	before := bytes.Clone(img)
 	short := *l
-	short.HeapOffset = l.FatOffset + 8 // the FAT claims room for two entries only
+	short.FatLength = 8 // the FAT claims room for two entries only
 	mustPanicLabelled(t, "past the FAT region", func() { SetFATEntry(img, &short, l.ClusterCount+1, 5) })
 	if !bytes.Equal(img, before) {
 		t.Fatal("a rejected write changed the image")
@@ -213,4 +213,35 @@ func TestPatchStreamRejectsASetWithoutAStreamEntry(t *testing.T) {
 	img[loc.Offset+entrySize] = 0x41 // a deleted name entry where the stream belongs
 	dl := uint64(1)
 	mustPanicLabelled(t, "entry 1 is not a stream", func() { PatchStream(img, loc, StreamPatch{DataLen: &dl}) })
+}
+
+func TestSetFATEntryIsBoundedByTheFATLengthNotTheHeap(t *testing.T) {
+	img, l, _ := patchImage(t)
+	if l.FatLength <= 0 || l.FatOffset+l.FatLength > l.HeapOffset {
+		t.Fatalf("FatLength %d does not fit [%d, %d)", l.FatLength, l.FatOffset, l.HeapOffset)
+	}
+	short := *l
+	short.FatLength = 4*int64(l.ClusterCount) + 4 // entries 0..ClusterCount fit; ClusterCount+1 does not
+	mustPanicLabelled(t, "past the FAT length", func() { SetFATEntry(img, &short, l.ClusterCount+1, 5) })
+	SetFATEntry(img, &short, l.ClusterCount, 7) // the last entry that fits still works
+	if got := binary.LittleEndian.Uint32(img[l.FatEntryOffset(l.ClusterCount):]); got != 7 {
+		t.Fatalf("entry = %d", got)
+	}
+}
+
+func TestSetBoundsRequiresAPrimaryAndAStream(t *testing.T) {
+	img, _, loc := patchImage(t)
+	img[loc.Offset+1] = 0 // a set of one entry: no room for a stream
+	dl := uint64(1)
+	mustPanicLabelled(t, "one-entry set", func() { PatchStream(img, loc, StreamPatch{DataLen: &dl}) })
+}
+
+func TestCorruptSetChecksumChecksThePrimaryType(t *testing.T) {
+	img, _, loc := patchImage(t)
+	img[loc.Offset] = 0xC0 // a stream extension where the primary belongs
+	before := bytes.Clone(img)
+	mustPanicLabelled(t, "not a File entry", func() { CorruptSetChecksum(img, loc) })
+	if !bytes.Equal(img, before) {
+		t.Fatal("a rejected write changed the image")
+	}
 }
