@@ -332,7 +332,7 @@ func TestPayloadGolden(t *testing.T) {
 	slack := sqlitefile.RecoveredRow{
 		Method: sqlitefile.MethodPageSlack, Origin: sqlitefile.OriginOrphan, TableBasis: sqlitefile.BasisNone, Values: []sqlitefile.Value{},
 		Loc:      sqlitefile.Loc{File: sqlitefile.FileDB, Page: 8, Cell: -1, Offset: 4216, Length: 33, PageOffset: 4096},
-		Relation: sqlitefile.RelUnknown,
+		Relation: sqlitefile.RelUnknown, Notes: []string{noteSlackRegionPrefix + "gap"},
 	}
 	for name, c := range map[string]struct {
 		m    *mapper
@@ -342,7 +342,7 @@ func TestPayloadGolden(t *testing.T) {
 		"wal prior": {both, wal, `{"cell":2,"columns":[{"i":0,"serial":1,"type":"integer","value":5},{"enc":"UTF-8","i":1,"len":2,"serial":17,"type":"text","value":"hi"}],"entry_kind":"table","file":"wal","method_confidence":75,"notes":["x"],"origin":"wal-superseded","page":3,"relation":"superseded-version","rowid":7,"sibling_artifacts":["A1"],"sibling_pairing":"by-name","table":"t","table_basis":"schema","wal":{"committed":true,"frame":1,"generation":0,"linked":true,"salt1":1,"salt2":2,"state":"committed"}}`},
 		"freelist":  {capped, freelist, `{"cell":0,"columns":[{"i":0,"type":"null"}],"confidence_cap":30,"entry_kind":"table","file":"db","method_confidence":60,"notes":["identity-by-fit-only"],"origin":"freelist-leaf","page":6,"relation":"unknown","rowid":null,"table":"t","table_basis":"fit"}`},
 		"journal":   {jm, journal, `{"cell":1,"columns":[],"entry_kind":"table","file":"journal","journal":{"applied":false,"checksum_ok":true,"hot":false,"nonce":7,"record":2,"segment":0},"method_confidence":70,"origin":"journal-before","overflow":{"mixed":true,"pages":[{"file":"db","offset":8192,"page":9}],"total":2},"page":4,"relation":"superseded-version","rowid":9,"sibling_artifacts":["A1"],"table":"t","table_basis":"schema"}`},
-		"slack":     {dbOnly(), slack, `{"carved":{"span_kind":"orphan","span_length":33,"span_offset":120},"columns":[],"entry_kind":"table","file":"db","method_confidence":25,"origin":"orphan","page":8,"relation":"unknown","rowid":null,"table_basis":"none"}`},
+		"slack":     {dbOnly(), slack, `{"carved":{"slack_region":"gap","span_kind":"orphan","span_length":33,"span_offset":120},"columns":[],"entry_kind":"table","file":"db","method_confidence":25,"origin":"orphan","page":8,"relation":"unknown","rowid":null,"table_basis":"none"}`},
 	} {
 		if got := goldenJSON(t, mustRecord(t, c.m, c.r)); got != c.want {
 			t.Errorf("%s:\n got  %s\n want %s", name, got, c.want)

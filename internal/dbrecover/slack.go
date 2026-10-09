@@ -29,9 +29,10 @@ package dbrecover
 //
 // So: (a) live table pages and every history image that still reads as a
 // table page are carved; (b) freeblocks are scanned like the gap, but a
-// cell whose start the engine overwrote is counted, never repaired. The bytes
-// of a freelist trunk after its leaf list (SpanTrunkTail) and the free space of
-// index pages are not carved; their non-zero bytes are counted in
+// cell whose start the engine overwrote is counted, never repaired. The tail of
+// a freelist trunk after its leaf list (SpanTrunkTail, region "freelist-trunk",
+// J85) is carved like the gap: the probe carved 17 of 17 cells correctly there.
+// The free space of index pages is not carved; its non-zero bytes are counted in
 // SlackUnparsedBytes. If the probe's numbers ever stop holding, set
 // slackCarving to false: the feature stays off and nothing else changes.
 //
@@ -48,6 +49,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/rbenzing/minutiae/internal/sqlitefile"
 )
@@ -90,6 +92,7 @@ func (s *slackStats) warn(format string, a ...any) {
 
 type slackCandidate struct {
 	off, n int
+	region string // the kind of free space it was found in
 	rowid  int64
 	rec    sqlitefile.Record
 	cell   []byte
@@ -101,115 +104,149 @@ type slackLive struct{ off, end int }
 // history (see the package comment) and delivers the cells it finds. It reads
 // the history and the live view and changes nothing.
 func carveSpans(ctx context.Context, db *sqlitefile.DB, h *sqlitefile.Hist, emit func(sqlitefile.RecoveredRow) bool) (st slackStats, err error) {
+	var k *slackCarver
 	defer func() {
 		if x := recover(); x != nil {
 			err = fmt.Errorf("slack carving: internal error: %v", x)
 		}
+		if k != nil {
+			st = k.st
+		}
 	}()
-	live := db.Live()
-	sch, err := live.Schema(ctx)
+	k, err = newSlackCarver(ctx, db, emit)
 	if err != nil {
 		return st, err
 	}
-	info := db.Info()
-	lim := sqlitefile.DefaultLimits()
-	tables := map[string]*sqlitefile.Table{}
 	var visitErr error
 	perr := h.Pages(ctx, func(img sqlitefile.PageImage) bool {
 		if err := ctx.Err(); err != nil {
 			visitErr = err
 			return false
 		}
-		var spans []sqlitefile.Span
-		for _, sp := range img.Spans {
-			if sp.Kind == sqlitefile.SpanTrunkTail {
-				continue
-			}
-			spans = append(spans, sp)
-		}
-		if img.Partial || len(img.Spans) == 0 {
-			return true
+		if len(img.Spans) == 0 {
+			return true // no free space is listed: there are no span bytes to account for
 		}
 		data, err := img.Bytes()
 		if err != nil {
-			st.warn("page %d (%s): the image could not be read: %v", img.Number, img.Origin, err)
+			k.st.warn("page %d (%s): the image could not be read: %v", img.Number, img.Origin, err)
 			return true
 		}
-		if len(img.Spans) > len(spans) {
-			for _, sp := range img.Spans {
-				if sp.Kind == sqlitefile.SpanTrunkTail {
-					st.UnparsedBytes += nonZero(data, sp.Offset, sp.Offset+sp.Length)
-				}
-			}
-		}
-		hd, err := sqlitefile.ParsePageHeader(data, img.Number)
-		if err != nil {
-			return true
-		}
-		if hd.Type != sqlitefile.PageTableLeaf && hd.Type != sqlitefile.PageTableInterior {
-			for _, sp := range spans {
-				st.UnparsedBytes += nonZero(data, sp.Offset, sp.Offset+sp.Length)
-			}
-			return true
-		}
-		cands, _, copies := scanPage(data, hd, img, spans, info, lim, &st)
-		if copies > 0 {
-			st.DroppedLiveCopy += copies
-			st.warn("page %d (%s): %d carved cell(s) are byte-equal to live cells of the same page and are not delivered", img.Number, img.Origin, copies)
-		}
-		if len(cands) == 0 {
-			return true
-		}
-		cells := make([][]sqlitefile.Value, len(cands))
-		for i, c := range cands {
-			cells[i] = c.rec.Values
-		}
-		table, basis := sch.FitPage(cells)
-		for _, c := range cands {
-			if st.Carved >= lim.MaxHistoryRows {
-				st.warn("the slack rows reached the cap of %d rows; the rest are not listed", lim.MaxHistoryRows)
-				return false
-			}
-			rid := c.rowid
-			row := sqlitefile.RecoveredRow{
-				Method: sqlitefile.MethodPageSlack, Origin: img.Origin, Table: table, TableBasis: basis,
-				Rowid: &rid, Values: c.rec.Values, Relation: sqlitefile.RelUnknown,
-				Loc: sqlitefile.Loc{
-					File: img.Loc.File, Page: img.Number, Cell: -1, Offset: img.Loc.Offset + int64(c.off), Length: int64(c.n),
-					PageOffset: img.Loc.Offset, Frame: img.Loc.Frame, Record: img.Loc.Record,
-				},
-				Notes: []string{noteBoundariesInferred},
-			}
-			if table != "" && (basis == sqlitefile.BasisFit || basis == sqlitefile.BasisGuess) {
-				row.Notes = append([]string{sqlitefile.NoteIdentityByFitOnly}, row.Notes...)
-				same, uncertain := equalsLiveRow(ctx, live, tables, table, rid, c.rec.Values)
-				switch {
-				case uncertain:
-					row.Notes = append(row.Notes, sqlitefile.NoteLiveUncertain)
-				case same:
-					row.Notes = append(row.Notes, sqlitefile.NoteEqualsLiveRow)
-					st.CrossPageEqual++
-				}
-			}
-			if img.WAL != nil {
-				w := *img.WAL
-				row.WAL = &w
-			}
-			if img.Journal != nil {
-				j := *img.Journal
-				row.Journal = &j
-			}
-			st.Carved++
-			if !emit(row) {
-				return false
-			}
-		}
-		return true
+		return k.image(img, data)
 	})
 	if visitErr != nil {
-		return st, visitErr
+		return k.st, visitErr
 	}
-	return st, perr
+	return k.st, perr
+}
+
+// slackCarver carves one page image at a time.
+type slackCarver struct {
+	ctx    context.Context
+	live   *sqlitefile.View
+	sch    *sqlitefile.Schema
+	info   sqlitefile.Info
+	lim    sqlitefile.Limits
+	tables map[string]*sqlitefile.Table
+	emit   func(sqlitefile.RecoveredRow) bool
+	st     slackStats
+}
+
+func newSlackCarver(ctx context.Context, db *sqlitefile.DB, emit func(sqlitefile.RecoveredRow) bool) (*slackCarver, error) {
+	live := db.Live()
+	sch, err := live.Schema(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &slackCarver{
+		ctx: ctx, live: live, sch: sch, info: db.Info(), lim: sqlitefile.DefaultLimits(),
+		tables: map[string]*sqlitefile.Table{}, emit: emit,
+	}, nil
+}
+
+// noteSlackRegionPrefix marks, in a row's notes, the kind of free space the
+// cell was found in; the mapper turns it into the payload's slack_region.
+const noteSlackRegionPrefix = "slack-region="
+
+func cutPrefix(s, prefix string) (string, bool) { return strings.CutPrefix(s, prefix) }
+
+// image carves one page image (data are its bytes) and delivers the cells it
+// finds; false stops the walk.
+func (k *slackCarver) image(img sqlitefile.PageImage, data []byte) bool {
+	st, info, lim := &k.st, k.info, k.lim
+	spans := img.Spans
+	skip := func() bool { // free space that is not carved: its non-zero bytes are counted
+		for _, sp := range spans {
+			st.UnparsedBytes += nonZero(data, sp.Offset, sp.Offset+sp.Length)
+		}
+		return true
+	}
+	if img.Partial {
+		return skip()
+	}
+	var hd *sqlitefile.PageHeader
+	if img.Origin != sqlitefile.OriginFreelistTrunk {
+		h, err := sqlitefile.ParsePageHeader(data, img.Number)
+		if err != nil {
+			return skip()
+		}
+		if h.Type != sqlitefile.PageTableLeaf && h.Type != sqlitefile.PageTableInterior {
+			return skip()
+		}
+		hd = &h
+	}
+	cands, _, copies := scanPage(data, hd, img, spans, info, lim, st)
+	if copies > 0 {
+		st.DroppedLiveCopy += copies
+		st.warn("page %d (%s): %d carved cell(s) are byte-equal to live cells of the same page and are not delivered", img.Number, img.Origin, copies)
+	}
+	if len(cands) == 0 {
+		return true
+	}
+	cells := make([][]sqlitefile.Value, len(cands))
+	for i, c := range cands {
+		cells[i] = c.rec.Values
+	}
+	table, basis := k.sch.FitPage(cells)
+	for _, c := range cands {
+		if st.Carved >= lim.MaxHistoryRows {
+			st.warn("the slack rows reached the cap of %d rows; the rest are not listed", lim.MaxHistoryRows)
+			return false
+		}
+		rid := c.rowid
+		row := sqlitefile.RecoveredRow{
+			Method: sqlitefile.MethodPageSlack, Origin: img.Origin, Table: table, TableBasis: basis,
+			Rowid: &rid, Values: c.rec.Values, Relation: sqlitefile.RelUnknown,
+			Loc: sqlitefile.Loc{
+				File: img.Loc.File, Page: img.Number, Cell: -1, Offset: img.Loc.Offset + int64(c.off), Length: int64(c.n),
+				PageOffset: img.Loc.Offset, Frame: img.Loc.Frame, Record: img.Loc.Record,
+			},
+			Notes: []string{noteBoundariesInferred, noteSlackRegionPrefix + c.region},
+		}
+		if table != "" && (basis == sqlitefile.BasisFit || basis == sqlitefile.BasisGuess) {
+			row.Notes = append([]string{sqlitefile.NoteIdentityByFitOnly}, row.Notes...)
+			same, uncertain := equalsLiveRow(k.ctx, k.live, k.tables, table, rid, c.rec.Values)
+			switch {
+			case uncertain:
+				row.Notes = append(row.Notes, sqlitefile.NoteLiveUncertain)
+			case same:
+				row.Notes = append(row.Notes, sqlitefile.NoteEqualsLiveRow)
+				st.CrossPageEqual++
+			}
+		}
+		if img.WAL != nil {
+			w := *img.WAL
+			row.WAL = &w
+		}
+		if img.Journal != nil {
+			j := *img.Journal
+			row.Journal = &j
+		}
+		st.Carved++
+		if !k.emit(row) {
+			return false
+		}
+	}
+	return true
 }
 
 // equalsLiveRow reports whether the live table has a row with this rowid and
@@ -272,12 +309,19 @@ func nonZero(b []byte, from, to int) (n int64) {
 // scanPage scans the spans of one table-leaf image. It returns the accepted
 // cells (ascending, non-overlapping), the live cells of the page and the count
 // of candidates that were byte copies of a live cell. Counters go into st.
-func scanPage(data []byte, hd sqlitefile.PageHeader, img sqlitefile.PageImage, spans []sqlitefile.Span, info sqlitefile.Info, lim sqlitefile.Limits, st *slackStats) (cands []slackCandidate, live []slackLive, copies int64) {
+func scanPage(data []byte, hd *sqlitefile.PageHeader, img sqlitefile.PageImage, spans []sqlitefile.Span, info sqlitefile.Info, lim sqlitefile.Limits, st *slackStats) (cands []slackCandidate, live []slackLive, copies int64) {
 	usable := info.UsableSize
 	var liveBytes [][]byte
-	if cp, err := sqlitefile.CellPointers(data, hd, usable); err == nil {
+	var cp sqlitefile.CellPointerSet
+	haveCells := false
+	if hd != nil {
+		var err error
+		cp, err = sqlitefile.CellPointers(data, *hd, usable)
+		haveCells = err == nil
+	}
+	if haveCells {
 		for _, g := range cp.Good {
-			c, err := sqlitefile.ParseCell(data, usable, hd, g.Offset)
+			c, err := sqlitefile.ParseCell(data, usable, *hd, g.Offset)
 			if err != nil || c.Offset+c.Length > len(data) {
 				continue
 			}
@@ -310,6 +354,7 @@ func scanPage(data []byte, hd sqlitefile.PageHeader, img sqlitefile.PageImage, s
 				p++
 				continue
 			}
+			c.region = regionName(sp.Kind)
 			if overlapsLive(live, c.off, c.off+c.n) {
 				st.DroppedOverlap++
 				p += c.n
@@ -428,6 +473,11 @@ func parseSlackCell(data []byte, p, end, maxLocal int, info sqlitefile.Info, lim
 // so c's body is partly another cell's bytes and must not be delivered as
 // c's. A cell wholly inside c (a record that stores a cell image, for example)
 // does not damage c. extra is the work spent.
+//
+// The read beyond the span is a rejection-only trade (J89, J93): bytes outside
+// the span are never delivered, they can only make this function refuse a
+// candidate. At worst a genuine cell is dropped (counted in DroppedCrossed,
+// documented in docs/limitations.md); a cell is never invented or repaired.
 func crossedByCandidate(data []byte, c slackCandidate, limit, maxLocal int, info sqlitefile.Info, lim sqlitefile.Limits) (crossed bool, extra int64) {
 	cEnd := c.off + c.n
 	for q := c.off + 1; q < cEnd; q++ {
@@ -442,4 +492,17 @@ func crossedByCandidate(data []byte, c slackCandidate, limit, maxLocal int, info
 		}
 	}
 	return false, extra
+}
+
+// regionName names a kind of free space for the payload's slack_region.
+func regionName(k sqlitefile.SpanKind) string {
+	switch k {
+	case sqlitefile.SpanGap:
+		return "gap"
+	case sqlitefile.SpanFreeblock:
+		return "freeblock"
+	case sqlitefile.SpanTrunkTail:
+		return "freelist-trunk"
+	}
+	return "unknown"
 }

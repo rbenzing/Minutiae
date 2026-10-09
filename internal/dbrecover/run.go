@@ -423,7 +423,7 @@ func (p *pipeline) scan(ctx context.Context, add func(records.Record) error, tra
 	// touches what Rows found: it only adds its own rows and counters.
 	if err == nil && s.err == nil && slackCarving && len(s.counts.LimitsHit) == 0 {
 		ss, serr := carveSpans(ctx, p.db, p.hist, visit)
-		c.SlackCopiesOfLive, c.SlackUnparsedBytes = ss.DroppedLiveCopy, ss.UnparsedBytes
+		c.SlackCopiesOfLive, c.SlackUnparsedBytes, c.SlackDroppedCrossed = ss.DroppedLiveCopy, ss.UnparsedBytes, ss.DroppedCrossed
 		s.slackWarns = ss.warnings
 		if err = serr; err == nil {
 			err = s.err

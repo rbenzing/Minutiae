@@ -377,11 +377,14 @@ func checkPayload(payload map[string]any) error {
 	carved, hasCarved := payload["carved"]
 	if hasCarved {
 		m, ok := carved.(map[string]any)
-		if !ok || len(m) != 3 {
-			return bad("\"carved\" must be an object of span_kind, span_offset, span_length")
+		if !ok || len(m) != 4 {
+			return bad("\"carved\" must be an object of span_kind, span_offset, span_length, slack_region")
 		}
 		if s, ok := m["span_kind"].(string); !ok || len(s) > maxNameBytes {
 			return bad("\"carved\": span_kind must be a string")
+		}
+		if s, ok := m["slack_region"].(string); !ok || len(s) > maxNameBytes {
+			return bad("\"carved\": slack_region must be a string")
 		}
 		for _, k := range []string{"span_offset", "span_length"} {
 			if n, ok := asInt(m[k]); !ok || n < 0 {

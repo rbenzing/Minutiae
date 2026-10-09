@@ -239,6 +239,14 @@ func (m *mapper) record(r sqlitefile.RecoveredRow) (records.Record, error) {
 	conf := sqlitefile.CapConfidence(base, m.cap)
 
 	notes := slices.Clone(r.Notes)
+	region := "unknown"
+	notes = slices.DeleteFunc(notes, func(n string) bool {
+		if v, ok := cutPrefix(n, noteSlackRegionPrefix); ok {
+			region = v
+			return true
+		}
+		return false
+	})
 	addNote := func(n string) {
 		if !slices.Contains(notes, n) {
 			notes = append(notes, n)
@@ -290,7 +298,7 @@ func (m *mapper) record(r sqlitefile.RecoveredRow) (records.Record, error) {
 		p["cell"] = int64(r.Loc.Cell)
 	} else {
 		p["carved"] = map[string]any{
-			"span_kind": r.Origin.String(), "span_offset": r.Loc.Offset - r.Loc.PageOffset, "span_length": r.Loc.Length,
+			"span_kind": r.Origin.String(), "span_offset": r.Loc.Offset - r.Loc.PageOffset, "span_length": r.Loc.Length, "slack_region": region,
 		}
 	}
 	if r.WAL != nil {

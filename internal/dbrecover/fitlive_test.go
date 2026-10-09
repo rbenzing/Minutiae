@@ -57,7 +57,10 @@ func TestRunCountsFitOnlyRowsEqualToLive(t *testing.T) {
 	c := recordstest.NewCase(t)
 	art := addFile(t, c, "/data/x.db", data)
 	res := mustRun(t, c, Inputs{DB: art.ID}, Options{})
-	if res.Counts.FitOnly != 3 || res.Counts.Written != 3 || res.Counts.DuplicateOfLive != 0 || res.Counts.RelationUnknown != 3 {
+	// the dropped table pad leaves one stale cell in the tail of a freelist trunk
+	// (J85): it is carved too, as the one sqlite-page-slack row
+	if res.Counts.ByMethod["sqlite-freelist"] != 3 || res.Counts.ByMethod["sqlite-page-slack"] != 1 ||
+		res.Counts.FitOnly != 4 || res.Counts.Written != 4 || res.Counts.DuplicateOfLive != 0 || res.Counts.RelationUnknown != 4 {
 		t.Fatalf("counts %+v", res.Counts)
 	}
 	for _, row := range visibleRecords(t, c) {

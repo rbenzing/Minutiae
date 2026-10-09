@@ -46,7 +46,7 @@ func TestDBRowValidatorMatrix(t *testing.T) {
 	}
 	slack := validPayload()
 	delete(slack, "cell")
-	slack["carved"] = map[string]any{"span_kind": "gap", "span_offset": int64(100), "span_length": int64(20)}
+	slack["carved"] = map[string]any{"span_kind": "gap", "span_offset": int64(100), "span_length": int64(20), "slack_region": "gap"}
 	if err := validateDBRow(slack); err != nil {
 		t.Fatalf("slack-shaped payload: %v", err)
 	}

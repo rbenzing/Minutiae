@@ -58,10 +58,13 @@ func TestValidatorBoundaries(t *testing.T) {
 		return func(p map[string]any) { delete(p, "cell"); p["carved"] = m }
 	}
 	good := func() map[string]any {
-		return map[string]any{"span_kind": "gap", "span_offset": int64(1), "span_length": int64(2)}
+		return map[string]any{"span_kind": "gap", "span_offset": int64(1), "span_length": int64(2), "slack_region": "gap"}
 	}
 	four := good()
 	four["extra"] = int64(1)
+	numRegion := good()
+	numRegion["slack_region"] = int64(3)
+	noRegion := map[string]any{"span_kind": "gap", "span_offset": int64(1), "span_length": int64(2)}
 	numKind := good()
 	numKind["span_kind"] = int64(3)
 	longKind := good()
@@ -72,7 +75,9 @@ func TestValidatorBoundaries(t *testing.T) {
 	negLen["span_length"] = int64(-1)
 	cases = append(cases,
 		tc{"carved good", carved(good()), true},
-		tc{"carved 4 keys", carved(four), false},
+		tc{"carved 5 keys", carved(four), false},
+		tc{"carved slack_region number", carved(numRegion), false},
+		tc{"carved without slack_region", carved(noRegion), false},
 		tc{"carved span_kind number", carved(numKind), false},
 		tc{"carved span_kind too long", carved(longKind), false},
 		tc{"carved negative offset", carved(negOff), false},

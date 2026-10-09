@@ -56,7 +56,7 @@ type Counts struct {
 	DuplicateOfLive, CellsRejected, InteriorSkipped, RelationUnknown, FitOnly int64
 	FreePages, FreePagesZeroed                                                int64
 	PagesByOrigin                                                             map[string]int64
-	SlackCopiesOfLive, SlackUnparsedBytes                                     int64
+	SlackCopiesOfLive, SlackUnparsedBytes, SlackDroppedCrossed                int64
 	LimitsHit                                                                 []string
 	LibraryWarnings                                                           int
 	Narrowed                                                                  []string

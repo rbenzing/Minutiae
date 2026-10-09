@@ -161,7 +161,7 @@ func countsDetails(c Counts) map[string]any {
 		"duplicate_of_live": c.DuplicateOfLive, "cells_rejected": c.CellsRejected, "interior_skipped": c.InteriorSkipped,
 		"relation_unknown": c.RelationUnknown, "fit_only": c.FitOnly, "freelist_pages": c.FreePages,
 		"freelist_pages_zeroed": c.FreePagesZeroed, "pages_by_origin": int64Map(c.PagesByOrigin),
-		"slack_copies_of_live": c.SlackCopiesOfLive, "slack_unparsed_bytes": c.SlackUnparsedBytes,
+		"slack_copies_of_live": c.SlackCopiesOfLive, "slack_unparsed_bytes": c.SlackUnparsedBytes, "slack_dropped_crossed": c.SlackDroppedCrossed,
 		"limits_hit": sortedStrings(c.LimitsHit), "narrowed": toAny(c.Narrowed), "library_warnings": int64(c.LibraryWarnings),
 		"confidence_range": ranges, "range_outside": c.RangeOutside,
 	}
