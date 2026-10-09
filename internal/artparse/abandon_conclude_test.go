@@ -46,17 +46,14 @@ func TestAbandonedConclusionSurvivesTheCallersCancel(t *testing.T) {
 		})
 	}), two)
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		select {
-		case <-entered:
-		case <-time.After(time.Minute):
+	// job.end is emitted after the grace period, when the host has stopped waiting for the conclusion and its
+	// Flush is still held: cancel the caller here, then let the Flush go. No sleeps.
+	var once sync.Once
+	sum, err := h.Run(ctx, artparse.RunOptions{OnEvent: func(e artparse.Event) {
+		if e.Kind == "job.end" {
+			once.Do(func() { cancel(); close(gate) })
 		}
-		time.Sleep(150 * time.Millisecond) // well past the 30ms grace period: Run would be returning
-		cancel()
-		time.Sleep(50 * time.Millisecond)
-		close(gate)
-	}()
-	sum, err := h.Run(ctx, artparse.RunOptions{})
+	}})
 	cancel()
 	if err != nil {
 		t.Fatalf("Run: %v", err)

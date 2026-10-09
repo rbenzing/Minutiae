@@ -623,17 +623,30 @@ func (r *run) joinConclusions() error {
 	}
 	timer := time.NewTimer(concludeJoinTimeout)
 	defer timer.Stop()
+	expired := false
 	var errs []error
+	take := func(c concludedIngest) {
+		if c.abortErr != nil {
+			// the original stop reason stays; the abort failure is returned next to it
+			errs = append(errs, fmt.Errorf("concluding the abandoned ingest: %w", c.abortErr))
+		}
+	}
 	for _, ch := range r.pending {
+		if !expired {
+			select {
+			case c := <-ch:
+				take(c)
+				continue
+			case <-timer.C:
+				expired = true
+			}
+		}
+		// the deadline has passed: a conclusion that finished by now is still taken, never called pending
 		select {
 		case c := <-ch:
-			if c.abortErr != nil {
-				r.sum.Stopped = StoppedAbortFailure
-				errs = append(errs, fmt.Errorf("concluding the abandoned ingest: %w", c.abortErr))
-			}
-		case <-timer.C:
+			take(c)
+		default:
 			errs = append(errs, ErrConclusionPending)
-			timer.Reset(0) // the rest are not waited for again
 		}
 	}
 	r.pending = nil
