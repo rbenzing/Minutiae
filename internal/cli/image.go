@@ -315,18 +315,7 @@ func printImageInfo(w io.Writer, info examine.ImageInfo) {
 		field(printable(kv.Key), "%s", printable(kv.Value))
 	}
 	if g := info.AcquisitionGaps; g != nil {
-		var total int64
-		for _, k := range g.Kept {
-			total += k.Length
-		}
-		line := fmt.Sprintf("%d range(s) declared, %d bytes read as zeros (acquirer fill, not device data)", g.Ranges, total)
-		if len(g.Kept) > 0 {
-			line += fmt.Sprintf("; first: offset %d, %d bytes", g.Kept[0].Offset, g.Kept[0].Length)
-		}
-		if g.Truncated || g.Outside > 0 {
-			line += fmt.Sprintf("; %d beyond the media, list truncated: %v", g.Outside, g.Truncated)
-		}
-		field("Acq. errors", "%s", line)
+		field("Acq. errors", "%s", gapsLine(g))
 	}
 	if info.PartitionError != "" {
 		field("Partitions", "unreadable: %s", escapeText(info.PartitionError))
@@ -879,4 +868,45 @@ func newImageUnallocCmd(d Deps, opts *rootOptions) *cobra.Command {
 		return err
 	}
 	return cmd
+}
+
+// gapsLine states what the container declares about unreadable acquisition
+// ranges: the acquirer's declaration, not a fact about the bytes.
+func gapsLine(g *image.AcquisitionGaps) string {
+	switch g.State {
+	case image.GapsAbsent:
+		return "none declared (no error2 section)"
+	case image.GapsEmpty:
+		return "none declared (the error2 section is empty)"
+	}
+	var total int64
+	for _, k := range g.Kept {
+		total += k.Length
+	}
+	var line string
+	if g.State == image.GapsDamaged {
+		line = "UNKNOWN (the error2 section is damaged and its ranges are not trusted)"
+		if len(g.Kept) == 0 {
+			return line
+		}
+		line += fmt.Sprintf("; ranges from intact sections: %d bytes in the media", total)
+	} else {
+		line = fmt.Sprintf("%d range(s) declared unreadable by the acquirer, %d bytes in the media (the image holds acquirer fill there)", g.Ranges, total)
+	}
+	switch n := len(g.Kept); {
+	case n == 1:
+		line += fmt.Sprintf("; first: offset %d, %d bytes", g.Kept[0].Offset, g.Kept[0].Length)
+	case n > 1:
+		line += fmt.Sprintf("; first of %d kept: offset %d, %d bytes", n, g.Kept[0].Offset, g.Kept[0].Length)
+	}
+	if g.Outside > 0 {
+		line += fmt.Sprintf("; %d beyond the media", g.Outside)
+	}
+	if g.Empty > 0 {
+		line += fmt.Sprintf("; %d empty", g.Empty)
+	}
+	if g.Truncated {
+		line += "; list truncated"
+	}
+	return line
 }

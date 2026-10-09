@@ -114,6 +114,15 @@ const (
 type (
 	AcquisitionGap  = ewf.AcquisitionGap
 	AcquisitionGaps = ewf.AcquisitionGaps
+	GapState        = ewf.GapState
+)
+
+// The states of a container's error2 information.
+const (
+	GapsAbsent   = ewf.GapsAbsent
+	GapsEmpty    = ewf.GapsEmpty
+	GapsDeclared = ewf.GapsDeclared
+	GapsDamaged  = ewf.GapsDamaged
 )
 
 // GapReporter is implemented by containers that record unreadable acquisition

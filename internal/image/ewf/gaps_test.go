@@ -56,3 +56,62 @@ func TestEWFAcquisitionGapsOverflowingRangeIsOutside(t *testing.T) {
 		t.Fatalf("AcquisitionGaps = %+v", g)
 	}
 }
+
+// The sector-to-byte factor is the volume section's bytes_per_sector, never a
+// constant 512.
+func TestEWFAcquisitionGapsUseBytesPerSector(t *testing.T) {
+	for _, bps := range []int{1024, 2048, 4096} {
+		media := pattern(64 * bps)
+		files := ewftest.Build(ewftest.Options{
+			BytesPerSector: bps, SectorsPerChunk: 4,
+			ErrorRanges: [][2]uint32{{1, 1}, {62, 10}}, // the second is clipped at the media end
+		}, media)
+		g := mustOpen(t, files).AcquisitionGaps()
+		want := []ewf.AcquisitionGap{
+			{Offset: int64(bps), Length: int64(bps)},
+			{Offset: int64(62 * bps), Length: int64(2 * bps)},
+		}
+		if !slices.Equal(g.Kept, want) || g.Outside != 1 || g.State != ewf.GapsDeclared {
+			t.Errorf("bps %d: %+v; want kept %v, 1 outside", bps, g, want)
+		}
+	}
+}
+
+func TestEWFAcquisitionGapsCountsEmptyRanges(t *testing.T) {
+	r := mustOpen(t, ewftest.Build(ewftest.Options{ErrorRanges: [][2]uint32{{4, 0}, {8, 2}, {9, 0}}}, pattern(64*512)))
+	g := r.AcquisitionGaps()
+	if g.Empty != 2 || g.Ranges != 3 || len(g.Kept) != 1 || g.State != ewf.GapsDeclared {
+		t.Fatalf("AcquisitionGaps = %+v; want 2 empty ranges counted", g)
+	}
+}
+
+func TestEWFAcquisitionGapsStates(t *testing.T) {
+	m := pattern(64 * 512)
+	damage := func(off int) [][]byte {
+		files := ewftest.Build(ewftest.Options{ErrorRanges: [][2]uint32{{10, 5}}}, m)
+		e := section(t, files[0], "error2")
+		files[0][int(e.Offset)+76+off] ^= 0xFF
+		return files
+	}
+	for _, tc := range []struct {
+		name  string
+		files [][]byte
+		want  ewf.GapState
+	}{
+		{"no error2 section", ewftest.Build(ewftest.Options{}, m), ewf.GapsAbsent},
+		{"empty error2 section", ewftest.Build(ewftest.Options{ErrorRanges: [][2]uint32{}}, m), ewf.GapsEmpty},
+		{"declared", ewftest.Build(ewftest.Options{ErrorRanges: [][2]uint32{{10, 5}}}, m), ewf.GapsDeclared},
+		{"damaged header", damage(3), ewf.GapsDamaged},
+		{"damaged entries", damage(520), ewf.GapsDamaged},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := mustOpen(t, tc.files).AcquisitionGaps()
+			if g.State != tc.want {
+				t.Fatalf("State = %v, want %v (%+v)", g.State, tc.want, g)
+			}
+			if tc.want == ewf.GapsDamaged && len(g.Kept) != 0 {
+				t.Fatalf("damaged ranges were used: %+v", g.Kept)
+			}
+		})
+	}
+}

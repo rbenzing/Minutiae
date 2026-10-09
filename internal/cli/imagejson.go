@@ -341,6 +341,8 @@ func newJSONRecoverList(p *examine.RecoverPlan) jsonRecoverList {
 // jsonGaps is the acquirer's record of unreadable ranges as media byte ranges,
 // as the image states them. Offsets and lengths are integers.
 type jsonGaps struct {
+	State     string    `json:"state"` // absent, empty, declared or damaged (damaged: the gaps are unknown)
+	Empty     int       `json:"empty"`
 	Ranges    uint64    `json:"ranges"`
 	Bytes     int64     `json:"bytes"`
 	Outside   int       `json:"outside"`
@@ -352,7 +354,7 @@ func newJSONGaps(g *image.AcquisitionGaps) *jsonGaps {
 	if g == nil {
 		return nil
 	}
-	out := &jsonGaps{Ranges: g.Ranges, Outside: g.Outside, Truncated: g.Truncated, Kept: []jsonRun{}}
+	out := &jsonGaps{State: g.State.String(), Empty: g.Empty, Ranges: g.Ranges, Outside: g.Outside, Truncated: g.Truncated, Kept: []jsonRun{}}
 	for _, k := range g.Kept {
 		out.Kept = append(out.Kept, jsonRun{Offset: k.Offset, Length: k.Length})
 		out.Bytes += k.Length // merged and clipped to the media, so the sum is at most the media size

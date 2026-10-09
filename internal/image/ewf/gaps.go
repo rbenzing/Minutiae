@@ -10,8 +10,45 @@ import (
 // stored and are not device data.
 type AcquisitionGap struct{ Offset, Length int64 }
 
+// GapState says what the container records about unreadable acquisition ranges.
+// "No error2 section" and "an empty error2 section" are the acquirer's
+// statements; a damaged section means the ranges are UNKNOWN (never "none").
+type GapState int
+
+const (
+	// GapsAbsent: the container has no error2 section (the zero value).
+	GapsAbsent GapState = iota
+	// GapsEmpty: an intact error2 section declares no ranges.
+	GapsEmpty
+	// GapsDeclared: the container declares one or more ranges.
+	GapsDeclared
+	// GapsDamaged: an error2 section is present but unusable (checksum failure,
+	// too small, or skipped by a bound), so the acquisition gaps are unknown.
+	GapsDamaged
+)
+
+func (s GapState) String() string {
+	switch s {
+	case GapsAbsent:
+		return "absent"
+	case GapsEmpty:
+		return "empty"
+	case GapsDeclared:
+		return "declared"
+	case GapsDamaged:
+		return "damaged"
+	}
+	return "unknown"
+}
+
 // AcquisitionGaps is the error2 information in media coordinates.
 type AcquisitionGaps struct {
+	// State distinguishes no section, an empty section, declared ranges and a
+	// damaged section (gaps unknown; Kept then holds only ranges from intact
+	// sections, if any).
+	State GapState
+	// Empty counts declared ranges of zero length (skipped, never silently).
+	Empty int
 	// Ranges is how many ranges the container declares (before merging).
 	Ranges uint64
 	// Kept are the usable ranges, clipped to the media, sorted and merged.
@@ -35,17 +72,27 @@ func (r *Reader) AcquisitionGaps() AcquisitionGaps {
 
 // buildGaps converts the sector ranges of e to media byte ranges. A sector is
 // bytes_per_sector bytes of the volume section; products are overflow-checked.
-func buildGaps(e *error2Info, g geometry) AcquisitionGaps {
-	if e == nil {
-		return AcquisitionGaps{}
+func buildGaps(e *error2Info, g geometry, seen, damaged bool) AcquisitionGaps {
+	state := GapsAbsent
+	switch {
+	case damaged:
+		state = GapsDamaged
+	case e != nil:
+		state = GapsDeclared
+	case seen:
+		state = GapsEmpty
 	}
-	out := AcquisitionGaps{Ranges: e.count, Truncated: e.count > uint64(len(e.ranges))}
+	if e == nil {
+		return AcquisitionGaps{State: state}
+	}
+	out := AcquisitionGaps{State: state, Ranges: e.count, Truncated: e.count > uint64(len(e.ranges))}
 	size := uint64(g.size)
 	for _, rg := range e.ranges {
 		off, ok1 := mulOK(uint64(rg[0]), uint64(g.bps))
 		n, ok2 := mulOK(uint64(rg[1]), uint64(g.bps))
 		switch {
 		case n == 0 && ok2:
+			out.Empty++
 			continue
 		case !ok1 || !ok2 || off >= size:
 			out.Outside++
