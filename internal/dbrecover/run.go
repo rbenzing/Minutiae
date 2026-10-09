@@ -299,12 +299,13 @@ type outsideRow struct{ path, reason string }
 
 // scanState collects what one pass over the recovered rows finds.
 type scanState struct {
-	counts  Counts
-	bytes   int64
-	added   int64
-	skipped int64
-	outside []outsideRow
-	err     error
+	counts     Counts
+	bytes      int64
+	added      int64
+	skipped    int64
+	outside    []outsideRow
+	slackWarns []string // the slack carve's warnings, sent with the library's
+	err        error
 }
 
 func recordBytes(r records.Record) int64 {
@@ -418,6 +419,16 @@ func (p *pipeline) scan(ctx context.Context, add func(records.Record) error, tra
 	for _, l := range st.LimitsHit {
 		s.limit(l)
 	}
+	// The second pass (slack, J5) reads the history again after Rows and never
+	// touches what Rows found: it only adds its own rows and counters.
+	if err == nil && s.err == nil && slackCarving && len(s.counts.LimitsHit) == 0 {
+		ss, serr := carveSpans(ctx, p.db, p.hist, visit)
+		c.SlackCopiesOfLive, c.SlackUnparsedBytes = ss.DroppedLiveCopy, ss.UnparsedBytes
+		s.slackWarns = ss.warnings
+		if err = serr; err == nil {
+			err = s.err
+		}
+	}
 	c.FreePages, c.FreePagesZeroed = p.hsum.FreePages, p.hsum.FreePagesZeroed
 	c.PagesByOrigin = map[string]int64{}
 	for o, n := range p.hsum.PagesByOrigin {
@@ -483,6 +494,11 @@ func (p *pipeline) sendWarnings(ctx context.Context, w *records.Writer, s *scanS
 	}
 	for _, l := range s.counts.LimitsHit {
 		if err := w.Warn(ctx, "", fmt.Sprintf("run limit %s reached: the rows after it were not examined or written", l)); err != nil {
+			return err
+		}
+	}
+	for _, m := range s.slackWarns {
+		if err := w.Warn(ctx, "", "slack carving: "+m); err != nil {
 			return err
 		}
 	}

@@ -461,7 +461,7 @@ func (r *oracleRun) checkEntry(t *testing.T, e oHist, s records.Full) {
 	}
 }
 
-// libraryDelivered is the set of cells (method, file, page, offset) the library
+// libraryDelivered is the set of cells (method, file, page, offset) the library and the slack carver
 // delivers for a fixture; every stored record must be one of them.
 func libraryDelivered(t *testing.T, f *oFixture) map[string]int {
 	t.Helper()
@@ -483,6 +483,13 @@ func libraryDelivered(t *testing.T, f *oFixture) map[string]int {
 	defer h.Release()
 	out := map[string]int{}
 	if _, err := h.Rows(context.Background(), func(r sqlitefile.RecoveredRow) bool {
+		out[fmt.Sprintf("%s|%s|%d|%d", r.Method, fileName(r.Loc.File), r.Loc.Page, r.Loc.Offset)]++
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// the slack carver is the second pass of the same history
+	if _, err := carveSpans(context.Background(), db, h, func(r sqlitefile.RecoveredRow) bool {
 		out[fmt.Sprintf("%s|%s|%d|%d", r.Method, fileName(r.Loc.File), r.Loc.Page, r.Loc.Offset)]++
 		return true
 	}); err != nil {

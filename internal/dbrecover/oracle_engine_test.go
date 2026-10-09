@@ -16,6 +16,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -316,13 +317,27 @@ func checkSecureDeleteEngine(t *testing.T) {
 	requireNoDeleted(t, recs, f)
 }
 
+// TestRecoverVacuumLeavesNothing: a vacuum leaves no deleted row. The rebuild
+// does leave stale copies of LIVE rows in the gaps of the new pages (and renumbers
+// their rowids): the slack carver delivers those, and each is annotated as equal
+// to a live row, never as a deleted version.
 func TestRecoverVacuumLeavesNothing(t *testing.T) {
 	f := scenario{rows: 300, deleteTo: 250, vacuum: true}.build(t)
 	recs, res := runEngine(t, f)
 	requireNoDeleted(t, recs, f)
-	requireWritten(t, recs, f.log)
-	if len(recs) != 0 || res.Counts.Written != 0 {
-		t.Errorf("%d records stored after a vacuum, want none", len(recs))
+	for _, g := range recs {
+		if g.full.Method != "sqlite-page-slack" {
+			t.Errorf("record %d (%s) after a vacuum, want only slack copies of live rows", g.full.ID, g.full.Method)
+		}
+		if g.a != nil && g.bOK && !f.log.tuples[fmt.Sprintf("%s|%s", g.a.String(), g.b)] {
+			t.Errorf("record %d holds %q that the generator never wrote", g.full.ID, g.key())
+		}
+		if notes, _ := g.payload["notes"].([]any); !slices.Contains(notes, any("equals-live-row")) {
+			t.Errorf("record %d: notes %v, want equals-live-row (a copy of a live row)", g.full.ID, notes)
+		}
+	}
+	if int64(len(recs)) != res.Counts.Written {
+		t.Errorf("%d records stored, Written %d", len(recs), res.Counts.Written)
 	}
 }
 
