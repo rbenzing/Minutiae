@@ -57,6 +57,9 @@ func (f *FS) Recoverable(e filesys.Entry) ([]filesys.Candidate, error) {
 	if uint64(first)+need-1 > uint64(f.count)+1 {
 		return nil, corrupt("recovery map", -1, "%d clusters from cluster %d run past the last cluster %d", need, first, uint64(f.count)+1)
 	}
+	// Defence only: validCluster and the run-past-the-end check above make this
+	// unreachable on valid geometry; kept so that an overflow in the offset
+	// arithmetic of a hostile geometry is a typed error, never a bad run.
 	off, ok := f.clusterOffset(first)
 	if !ok {
 		return nil, corrupt("recovery map", -1, "cluster %d has no valid offset", first)

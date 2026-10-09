@@ -163,20 +163,78 @@ func TestRecoverableFAT32UsesBothClusterHalves(t *testing.T) {
 	}
 }
 
-func TestRecoverableFATDoesNotConsultTheFAT(t *testing.T) {
-	data := bytes.Repeat([]byte("0123456789abcdef"), 70)
-	fsys, img, b := recImage(t, fattest.Options{Type: 16}, []fattest.File{{Path: "/GONE.BIN", Data: data, Deleted: true}})
-	loc := b.Find("/GONE.BIN", true)
-	want, err := fsys.Recoverable(filesys.Entry{ID: direntIDOf(loc)})
+// fatGuard fails the test on any read that touches a FAT copy once armed.
+type fatGuard struct {
+	t     *testing.T
+	r     *bytes.Reader
+	spans [][2]int64 // [start, end) of every FAT copy
+	armed atomic.Bool
+}
+
+func newFATGuard(t *testing.T, img []byte, g fattest.Geometry) *fatGuard {
+	fg := &fatGuard{t: t, r: bytes.NewReader(img)}
+	for n := 0; n < g.NumFATs; n++ {
+		lo := int64(g.FATStart(n)) * int64(g.SectorSize)
+		fg.spans = append(fg.spans, [2]int64{lo, lo + int64(g.FATSectors)*int64(g.SectorSize)})
+	}
+	return fg
+}
+
+func (g *fatGuard) ReadAt(p []byte, off int64) (int, error) {
+	if g.armed.Load() {
+		for _, s := range g.spans {
+			if off < s[1] && off+int64(len(p)) > s[0] {
+				g.t.Errorf("read of %d bytes at %d touches the FAT copy [%d, %d)", len(p), off, s[0], s[1])
+			}
+		}
+	}
+	return g.r.ReadAt(p, off)
+}
+
+// guardedRecover opens img on a reader that fails the test on any FAT read
+// after Open and ReadDir(Root), and recovers the entry at loc.
+func guardedRecover(t *testing.T, img []byte, g fattest.Geometry, loc fattest.EntryLoc) []filesys.Candidate {
+	t.Helper()
+	fg := newFATGuard(t, img, g)
+	fsys, err := fat.Open(fg, int64(len(img)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i, c := range loc.Clusters {
-		fattest.SetFATEntry(img, b.Geometry, c, uint32(0xFFF7-i)) // bad, then arbitrary values
+	if _, err := fsys.ReadDir(fsys.Root()); err != nil { // teaches the reader its directories (FAT32: the root chain)
+		t.Fatal(err)
 	}
-	got, err := reopen(t, img).Recoverable(filesys.Entry{ID: direntIDOf(loc)})
-	if err != nil || !reflect.DeepEqual(got, want) {
-		t.Fatalf("the map changed with the FAT: %v\n%+v\n%+v", err, got, want)
+	fg.armed.Store(true)
+	cs, err := fsys.Recoverable(filesys.Entry{ID: direntIDOf(loc)})
+	if err != nil || len(cs) != 1 {
+		t.Fatalf("FAT%d: %v, %d candidates", g.Type, err, len(cs))
+	}
+	return cs
+}
+
+// TestRecoverableFATDoesNotConsultTheFAT: a read of any FAT copy during
+// Recoverable fails the test (a read whose result is discarded included), and
+// the map is the same whatever the FAT holds.
+func TestRecoverableFATDoesNotConsultTheFAT(t *testing.T) {
+	data := bytes.Repeat([]byte("0123456789abcdef"), 70)
+	for _, typ := range []int{12, 16, 32} {
+		img, b := fattest.BuildLayout(fattest.Options{Type: typ}, []fattest.File{{Path: "/GONE.BIN", Data: data, Deleted: true}})
+		loc := b.Find("/GONE.BIN", true)
+		want := guardedRecover(t, img, b.Geometry, loc)
+		for i, c := range loc.Clusters {
+			v := uint32(0xFF7 - i) // bad, then arbitrary values
+			if typ == 32 {
+				v = 0x0FFFFFF7 - uint32(i)
+			}
+			fattest.SetFATEntry(img, b.Geometry, c, v)
+		}
+		if got := guardedRecover(t, img, b.Geometry, loc); !reflect.DeepEqual(got, want) {
+			t.Fatalf("FAT%d: the map changed with the FAT:\n%+v\n%+v", typ, got, want)
+		}
+		// A first cluster far from the FAT sectors the open and the listing
+		// already read, so that a cached sector cannot hide a FAT read.
+		far, size := b.Geometry.Clusters+1, uint32(100)
+		fattest.PatchEntry(img, b.Geometry, loc, &far, &size)
+		guardedRecover(t, img, b.Geometry, loc)
 	}
 }
 
@@ -322,5 +380,34 @@ func TestRecoverableMapPastATruncatedImageIsCorrupt(t *testing.T) {
 	var ce *filesys.CorruptError
 	if !errors.As(err, &ce) || len(cs) != 0 {
 		t.Fatalf("%v, %d candidates", err, len(cs))
+	}
+}
+
+// TestRecoverableSizeNotAClusterMultipleEndingInTheLastCluster: a size whose
+// last partial cluster is the volume's last cluster maps; one byte more needs a
+// further cluster and is corrupt (the cluster count rounds up, never down).
+func TestRecoverableSizeNotAClusterMultipleEndingInTheLastCluster(t *testing.T) {
+	for _, typ := range []int{12, 16, 32} {
+		_, img, b := recImage(t, fattest.Options{Type: typ}, []fattest.File{{Path: "/GONE.BIN", Data: bytes.Repeat([]byte{5}, 600), Deleted: true}})
+		loc := b.Find("/GONE.BIN", true)
+		cs := uint32(b.Geometry.SecPerClus * b.Geometry.SectorSize)
+		first := b.Geometry.Clusters // the second last cluster (the last is Clusters+1)
+		for _, tc := range []struct {
+			size    uint32
+			corrupt bool
+		}{
+			{2*cs - 1, false}, {2 * cs, false}, {cs + 1, false}, {2*cs + 1, true},
+		} {
+			size := tc.size
+			fattest.PatchEntry(img, b.Geometry, loc, &first, &size)
+			got, err := reopen(t, img).Recoverable(filesys.Entry{ID: direntIDOf(loc)})
+			var ce *filesys.CorruptError
+			switch {
+			case tc.corrupt && (!errors.As(err, &ce) || len(got) != 0):
+				t.Errorf("FAT%d size %d: %v, %d candidates; want a *CorruptError", typ, size, err, len(got))
+			case !tc.corrupt && (err != nil || len(got) != 1 || got[0].Size != int64(size)):
+				t.Errorf("FAT%d size %d: %v %+v", typ, size, err, got)
+			}
+		}
 	}
 }
