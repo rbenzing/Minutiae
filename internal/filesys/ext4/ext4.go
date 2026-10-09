@@ -7,6 +7,7 @@ package ext4
 import (
 	"errors"
 	"io"
+	"sync/atomic"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
 )
@@ -35,6 +36,9 @@ type FS struct {
 	// slackScanCap bounds the slack bytes one directory has searched for deleted
 	// entries (maxSlackScan).
 	slackScanCap int64
+	// slackWork counts the slack work done: one per 4-byte candidate checked and
+	// one per byte indexed by plausibleSlack. Tests bound it; nothing reads it.
+	slackWork atomic.Int64
 }
 
 // readFull reads exactly len(p) bytes at off; a read that returns all the
