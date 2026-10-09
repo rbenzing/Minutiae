@@ -151,6 +151,14 @@ func builderSeeds(t testing.TB) []fuzzSeed {
 		}
 	}
 	out = append(out, fuzzSeed{name: "journal-trio", db: jb.Bytes(), journal: j.Bytes(), mode: 1})
+	// B85: a WAL and a hot journal together on one base.
+	wb := companionBase(t)
+	wdb := wb.Bytes()
+	wsnap := wb.Snapshot()
+	w := wb.NewWAL(false, 0x11, 0x22, 0)
+	companionRewrite(wb, "one")
+	wb.CommitTo(w, wsnap)
+	out = append(out, fuzzSeed{name: "wal-and-journal", db: wdb, wal: w.Bytes(), journal: companionJournal(wb, wsnap, 0x1234, 0).Bytes(), mode: 1})
 	return out
 }
 

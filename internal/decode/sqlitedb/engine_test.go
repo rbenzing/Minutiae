@@ -43,8 +43,7 @@ func engineDump(t testing.TB, eng *sql.DB, d *sqlitedb.DB) (map[string][][]ev, e
 			t.Errorf("table %q: %v", n, err)
 			continue
 		}
-		_, cols := visibleCols(tb)
-		rows, err := engineRows(eng, n, cols, tb.WithoutRowid())
+		rows, err := engineRows(eng, n, engineStoredCols(t, eng, tb), tb.WithoutRowid())
 		if err != nil {
 			return nil, err
 		}
@@ -339,8 +338,7 @@ func TestRowidAliasAndPrimaryKeyShapesMatchEngine(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, cols := visibleCols(tb)
-			want, err := engineRows(eng, s.name, cols, tb.WithoutRowid())
+			want, err := engineRows(eng, s.name, engineStoredCols(t, eng, tb), tb.WithoutRowid())
 			if err != nil {
 				t.Fatal(err)
 			}

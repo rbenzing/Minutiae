@@ -185,7 +185,7 @@ func TestRowidAliasReadsAsRowid(t *testing.T) {
 	})
 }
 
-func TestRowidAliasOfColumnlessRecordIsPresent(t *testing.T) {
+func TestRowidAliasOfColumnlessRecordIsPresentAndTheRestUnread(t *testing.T) {
 	tb := tableOf(t, sqlitetest.Options{}, "create table t(id integer primary key, a)", func(tt *sqlitetest.Table) {
 		tt.InsertRaw(7, nil, nil)
 	})

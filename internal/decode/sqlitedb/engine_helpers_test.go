@@ -120,15 +120,63 @@ func engVal(x any) (ev, error) {
 
 func quoteIdent(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
 
-// visibleCols are the columns the engine's select can return: the stored ones.
-func visibleCols(tb *sqlitedb.Table) (idx []int, names []string) {
+// engineStoredCols is the engine's own list of the columns of a table that its
+// select returns: the stored ones, from pragma table_xinfo (hidden 2 marks a
+// virtual generated column, which is not stored). It asserts the layer describes
+// the same columns (names, order, Virtual flags), so a column the layer dropped,
+// renamed or mis-numbered fails here instead of silently leaving the comparison;
+// the select list of every engine comparison comes from this list, never from
+// the layer (B84).
+func engineStoredCols(t testing.TB, eng *sql.DB, tb *sqlitedb.Table) []string {
+	t.Helper()
+	rs, err := eng.Query("select name, hidden from pragma_table_xinfo(?) order by cid", tb.Name())
+	if err != nil {
+		t.Fatalf("table_xinfo(%s): %v", tb.Name(), err)
+	}
+	defer func() { _ = rs.Close() }()
+	var all, stored []string
+	var virtual []bool
+	for rs.Next() {
+		var name string
+		var hidden int
+		if err := rs.Scan(&name, &hidden); err != nil {
+			t.Fatal(err)
+		}
+		if hidden == 1 {
+			continue // a virtual table's hidden column: not a column of an ordinary table
+		}
+		all = append(all, name)
+		virtual = append(virtual, hidden == 2)
+		if hidden != 2 {
+			stored = append(stored, name)
+		}
+	}
+	if err := rs.Err(); err != nil {
+		t.Fatal(err)
+	}
+	cols := tb.Cols()
+	if len(cols) != len(all) {
+		t.Errorf("table %s: the engine has %d columns %q, the layer %d", tb.Name(), len(all), all, len(cols))
+		return stored
+	}
+	for i, c := range cols {
+		if c.Name != all[i] || c.Virtual != virtual[i] {
+			t.Errorf("table %s column %d: the engine has %q (virtual %v), the layer %q (virtual %v)", tb.Name(), i, all[i], virtual[i], c.Name, c.Virtual)
+		}
+	}
+	return stored
+}
+
+// visibleCols are the columns the layer says the engine's select can return: the
+// stored ones. Only the layer-side positions are taken from it; the engine's
+// select list comes from engineStoredCols.
+func visibleCols(tb *sqlitedb.Table) (idx []int) {
 	for i, c := range tb.Cols() {
 		if !c.Virtual {
 			idx = append(idx, i)
-			names = append(names, c.Name)
 		}
 	}
-	return idx, names
+	return idx
 }
 
 // engineRows returns the engine's rows of the table: for a rowid table
@@ -176,7 +224,7 @@ func engineRows(db *sql.DB, table string, cols []string, withoutRowid bool) ([][
 // state is not Known is the "omitted" marker carrying the state name.
 func layerRows(t testing.TB, tb *sqlitedb.Table) [][]ev {
 	t.Helper()
-	idx, _ := visibleCols(tb)
+	idx := visibleCols(tb)
 	var out [][]ev
 	err := tb.Scan(t.Context(), func(r sqlitedb.Row) error {
 		var row []ev
