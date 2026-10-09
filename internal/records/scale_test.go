@@ -118,20 +118,20 @@ func TestScale(t *testing.T) {
 	st := &scaleState{t: t, res: res, n: n, samples: int(envInt(t, "MINUTIAE_SCALE_SAMPLES", 200)), dir: dir, total: n}
 
 	clean := filepath.Join(dir, "clean", scaleCaseID)
-	mut := filepath.Join(dir, "mut", scaleCaseID)
-	mutating := phases["supersede"] || phases["superqueries"] || phases["tamper"]
-	switch {
-	case mutating && phases["ingest"]:
-		t.Fatal("ingest and the mutating phases (supersede, superqueries, tamper) never share a run")
-	case mutating && !phases["copy"] && !exists(mut):
-		t.Fatal("supersede and tamper never run on the clean case: include the copy phase")
-	case !mutating && phases["copy"]:
+	mutRoot := filepath.Join(dir, "mut")
+	mut := filepath.Join(mutRoot, scaleCaseID)
+	plan, err := planScalePhases(phases, pristineMarkerExists(mutRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutating := plan.mutating
+	if plan.copyOnly {
 		copyCase(t, clean, mut)
+		if err := writePristineMarker(mutRoot); err != nil {
+			t.Fatal(err)
+		}
 		t.Logf("copied the clean case to %s", mut)
 		return // the copy is its own run (it holds no case open and measures nothing)
-	}
-	if mutating && phases["copy"] {
-		copyCase(t, clean, mut)
 	}
 	if phases["ingest"] {
 		st.ingest(int(envInt(t, "MINUTIAE_SCALE_BATCH_ROWS", 0)))
@@ -143,6 +143,11 @@ func TestScale(t *testing.T) {
 		st.open(target)
 	}
 	defer func() { _ = st.c.Close() }()
+	if mutating { // the copy is pristine until this run: a second mutating run is refused
+		if err := consumePristineMarker(mutRoot); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	if phases["queries"] {
 		st.listMatrix("clean")
