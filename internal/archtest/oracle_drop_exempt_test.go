@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// The engine-oracle tests of internal/sqlitefile and internal/decode build
+// The engine-oracle tests of internal/sqlitefile, internal/decode and internal/dbrecover build
 // throwaway fixture databases with an independent engine, and drop tables in
 // them (a dropped table is exactly the evidence they need). The single-writer
 // rule stays strict for the record tables and for any non-constant table name;
@@ -17,7 +17,7 @@ import (
 
 var oracleDropRE = regexp.MustCompile(`(?is)^drop\s+table\s+(?:if\s+exists\s+)?([a-z_][a-z_0-9]*)$`)
 
-var oracleExemptDirs = []string{"internal/sqlitefile/", "internal/decode/"}
+var oracleExemptDirs = []string{"internal/sqlitefile/", "internal/decode/", "internal/dbrecover/"}
 
 // oracleDropExempt reports whether the violation text at repository-relative
 // path rel is such a DROP.
@@ -43,7 +43,7 @@ func oracleDropExempt(rel, text string) bool {
 }
 
 // TestOracleDropExemptionIsNarrow proves the exemption covers exactly a plain
-// DROP of a non-record table in a _test.go file of the two oracle packages. The
+// DROP of a non-record table in a _test.go file of the oracle packages. The
 // cases live in testdata/oracle_drop_cases.txt (not compiled, not scanned).
 func TestOracleDropExemptionIsNarrow(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("testdata", "oracle_drop_cases.txt"))
