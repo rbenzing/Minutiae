@@ -13,7 +13,7 @@ func (rp *rowPass) equalsLiveFit(id ident, row *RecoveredRow) (bool, error) {
 	if id.kind == kindNone || id.table == "" {
 		return false, nil
 	}
-	res, err := rp.compare(id, row)
+	res, err := rp.compareIn(id, row, true)
 	if err != nil {
 		return false, err
 	}

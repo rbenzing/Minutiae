@@ -51,6 +51,12 @@ func isAnswerless(err error) bool {
 
 // compare relates the row to the live state.
 func (rp *rowPass) compare(id ident, row *RecoveredRow) (cmpResult, error) {
+	return rp.compareIn(id, row, false)
+}
+
+// compareIn is compare; fit is true for the fit-only equality (C45), whose digest
+// sets are built apart from the schema-named ones and from their budget.
+func (rp *rowPass) compareIn(id ident, row *RecoveredRow, fit bool) (cmpResult, error) {
 	t, err := rp.table(id.table)
 	if err != nil {
 		if isAnswerless(err) {
@@ -59,7 +65,7 @@ func (rp *rowPass) compare(id ident, row *RecoveredRow) (cmpResult, error) {
 		return cmpResult{}, err
 	}
 	if id.kind == kindWithoutR {
-		return rp.compareWR(t, id.table, row)
+		return rp.compareWR(t, id.table, row, fit)
 	}
 	if row.Rowid == nil {
 		return cmpResult{kind: cmpUnknown, note: NoteLiveUncertain}, nil
@@ -265,13 +271,29 @@ func keyDigest(vals []Value, idx []int, colls []string) (d [32]byte, ok bool) {
 	return d, true
 }
 
-// wrSetOf builds (once per table) the digest set of the live rows.
-func (rp *rowPass) wrSetOf(ctx context.Context, t *Table, name string) (*wrSet, error) {
-	if s, ok := rp.wr[name]; ok {
+// fitDiffRowsTotal is the budget of the live rows the fit-only equality (C45)
+// reads in all: a bound of its own, so a fit-named table never spends the
+// budget (Limits.MaxDiffRowsTotal) the schema-named rows compare with.
+const fitDiffRowsTotal = 1 << 20
+
+// wrSetOf builds (once per table) the digest set of the live rows. fit selects
+// the sets and the budget of the fit-only equality, apart from the others.
+func (rp *rowPass) wrSetOf(ctx context.Context, t *Table, name string, fit bool) (*wrSet, error) {
+	cache, total, ceiling, limName := rp.wr, &rp.diffTotal, rp.h.d.env.opts.Limits.MaxDiffRowsTotal, "MaxDiffRowsTotal"
+	if fit {
+		if rp.wrFit == nil {
+			rp.wrFit = map[string]*wrSet{}
+		}
+		cache, total, ceiling, limName = rp.wrFit, &rp.fitDiffTotal, rp.fitDiffMax, "FitEqualityBudget"
+		if ceiling <= 0 {
+			ceiling = fitDiffRowsTotal
+		}
+	}
+	if s, ok := cache[name]; ok {
 		return s, nil
 	}
 	s := &wrSet{byKey: map[[32]byte]wrEntry{}, pkOK: true}
-	rp.wr[name] = s
+	cache[name] = s
 	def := t.Def()
 	type pkc struct {
 		ord, pos int
@@ -310,19 +332,27 @@ func (rp *rowPass) wrSetOf(ctx context.Context, t *Table, name string) (*wrSet, 
 	err := t.Rows(ctx, func(r Row) bool {
 		if int64(len(s.byKey)) >= lim.MaxDiffRows {
 			s.capped = true
-			rp.limitHit("MaxDiffRows", fmt.Sprintf("the live rows of table %q are more than Limits.MaxDiffRows (%d): its history rows are not compared", name, lim.MaxDiffRows))
+			if fit {
+				rp.limitHit(limName, fmt.Sprintf("the live rows of table %q are more than Limits.MaxDiffRows (%d): its fit-named history rows are not compared with them", name, lim.MaxDiffRows))
+			} else {
+				rp.limitHit("MaxDiffRows", fmt.Sprintf("the live rows of table %q are more than Limits.MaxDiffRows (%d): its history rows are not compared", name, lim.MaxDiffRows))
+			}
 			return false
 		}
-		if rp.diffTotal >= lim.MaxDiffRowsTotal {
+		if *total >= ceiling {
 			s.capped = true
-			rp.limitHit("MaxDiffRowsTotal", fmt.Sprintf("the live rows compared so far are more than Limits.MaxDiffRowsTotal (%d): the rest of the history rows are not compared", lim.MaxDiffRowsTotal))
+			if fit {
+				rp.limitHit(limName, fmt.Sprintf("the live rows read for the fit-named history rows are more than %d: the rest are not compared with the live rows", ceiling))
+			} else {
+				rp.limitHit(limName, fmt.Sprintf("the live rows compared so far are more than Limits.MaxDiffRowsTotal (%d): the rest of the history rows are not compared", ceiling))
+			}
 			return false
 		}
 		if cerr = rp.l.alloc(diffEntryCost); cerr != nil {
 			return false
 		}
 		s.charged += diffEntryCost
-		rp.diffTotal++
+		*total++
 		res := t.Resolve(r)
 		rowD, complete := digestOf(res, nil)
 		// Row.KeyRangeViolation is never set for an index tree (its cells have
@@ -365,8 +395,8 @@ func (rp *rowPass) wrSetOf(ctx context.Context, t *Table, name string) (*wrSet, 
 }
 
 // compareWR relates a row of a WITHOUT ROWID table to the digest set.
-func (rp *rowPass) compareWR(t *Table, name string, row *RecoveredRow) (cmpResult, error) {
-	s, err := rp.wrSetOf(rp.ctx, t, name)
+func (rp *rowPass) compareWR(t *Table, name string, row *RecoveredRow, fit bool) (cmpResult, error) {
+	s, err := rp.wrSetOf(rp.ctx, t, name, fit)
 	if err != nil {
 		return cmpResult{}, err
 	}

@@ -80,3 +80,69 @@ func TestEqualsLiveRowUnreadValueIsInconclusive(t *testing.T) {
 		})
 	}
 }
+
+// fitBudgetPass is a rowPass over a database with two WITHOUT ROWID tables of
+// three rows each, w1 and w2, and the given limits.
+func fitBudgetPass(t *testing.T, lim Limits) *rowPass {
+	t.Helper()
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 1024})
+	for _, n := range []string{"w1", "w2"} {
+		w := b.CreateTableWithoutRowid(n, "create table "+n+"(k primary key, v) without rowid", 1)
+		for i, k := range []string{"a", "b", "c"} {
+			w.Insert(int64(i), k, "v")
+		}
+	}
+	db := b.Bytes()
+	d, err := Open(bytes.NewReader(db), int64(len(db)), Options{Limits: lim})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := d.History()
+	t.Cleanup(h.Release)
+	l := h.d.env.newLedger()
+	t.Cleanup(func() { l.free(l.n) })
+	return &rowPass{h: h, ctx: context.Background(), l: l, tables: map[string]*Table{}, wr: map[string]*wrSet{}, limits: map[string]bool{}}
+}
+
+// TestFitEqualityNeverSpendsTheSchemaBudget (J80): the fit-only equality (C45)
+// has a budget of its own. With MaxDiffRowsTotal exactly the size of one live
+// table, a fit-named table visited first must leave the schema-named results
+// of the next table what they are without C45.
+func TestFitEqualityNeverSpendsTheSchemaBudget(t *testing.T) {
+	lim := Limits{MaxDiffRowsTotal: 3}
+	row := &RecoveredRow{Values: []Value{vText("a"), vText("v")}}
+	schemaID := ident{table: "w2", basis: BasisSchema, kind: kindWithoutR}
+	base, err := fitBudgetPass(t, lim).compare(schemaID, row)
+	if err != nil || base.kind != cmpSame {
+		t.Fatalf("baseline without C45: %+v, %v; want cmpSame", base, err)
+	}
+	rp := fitBudgetPass(t, lim)
+	if got, err := rp.equalsLiveFit(ident{table: "w1", basis: BasisFit, kind: kindWithoutR}, row); err != nil || !got {
+		t.Fatalf("fit-named w1: %v, %v; want an annotation", got, err)
+	}
+	got, err := rp.compare(schemaID, row)
+	if err != nil || got != base {
+		t.Errorf("schema-named result after a fit-named table: %+v, %v; the baseline is %+v", got, err, base)
+	}
+	for _, name := range rp.st.LimitsHit {
+		if name == "MaxDiffRowsTotal" {
+			t.Errorf("the fit-only equality hit the schema budget: %v", rp.st.LimitsHit)
+		}
+	}
+}
+
+// TestFitEqualityBudgetIsBounded (J80): the budget of its own is a bound, not
+// an exemption. When it is spent the row is not annotated and the cut is a
+// counted limit, never silent.
+func TestFitEqualityBudgetIsBounded(t *testing.T) {
+	rp := fitBudgetPass(t, Limits{})
+	rp.fitDiffMax = 2 // below the three live rows of w1
+	row := &RecoveredRow{Values: []Value{vText("a"), vText("v")}}
+	got, err := rp.equalsLiveFit(ident{table: "w1", basis: BasisFit, kind: kindWithoutR}, row)
+	if err != nil || got {
+		t.Errorf("equalsLiveFit = %v, %v with the budget spent; want false, nil", got, err)
+	}
+	if len(rp.st.LimitsHit) != 1 || rp.st.LimitsHit[0] != "FitEqualityBudget" {
+		t.Errorf("LimitsHit %v, want [FitEqualityBudget]", rp.st.LimitsHit)
+	}
+}

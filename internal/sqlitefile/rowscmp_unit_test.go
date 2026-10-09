@@ -63,6 +63,9 @@ func TestSameValueTable(t *testing.T) {
 		{"b omitted, same length", vText("abc"), vOmitted(vText("abc")), false, false},
 		{"a clipped, same length", vClipped(vText("abc"), 2), vText("abc"), false, false},
 		{"b clipped, same length", vText("abc"), vClipped(vText("abc"), 2), false, false},
+		{"both omitted, equal length and bytes", vOmitted(vText("abc")), vOmitted(vText("abc")), false, false},
+		{"both clipped, equal length and bytes", vClipped(vText("abc"), 2), vClipped(vText("abc"), 2), false, false},
+		{"omitted and clipped, equal length and bytes", vOmitted(vBlob(1, 2, 3)), vClipped(vBlob(1, 2, 3), 2), false, false},
 		{"empty text equal", vText(""), vText(""), true, true},
 		{"empty text vs empty blob", vText(""), vBlob(), false, true},
 	}

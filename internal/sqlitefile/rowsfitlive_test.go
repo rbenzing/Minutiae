@@ -116,3 +116,50 @@ func TestEqualsLiveRowNeverUpgradesRelationOrConfidence(t *testing.T) {
 		t.Errorf("annotated rows rank %d, the others %d", annotated, plain)
 	}
 }
+
+// TestGuessRowEqualToLiveRowIsOnlyNoted (J81): a row named by the loose fit
+// (BasisGuess) whose rowid and values equal a live row gets the note, and
+// nothing else changes: the relation stays unknown and the confidence is the
+// one of the same row without the note.
+func TestGuessRowEqualToLiveRowIsOnlyNoted(t *testing.T) {
+	b := sqlitetest.New(sqlitetest.Options{PageSize: hps})
+	live := b.CreateTable("t", "create table t(a, b, c not null)")
+	for id := int64(1); id <= 3; id++ {
+		live.Insert(id, id, "live", nil) // the builder does not enforce NOT NULL: only the loose fit accepts a NULL c
+	}
+	pad := b.CreateTable("pad", "create table pad(z)")
+	pad.Insert(1, "x")
+	gone := b.CreateTable("gone", "create table gone(a, b, c)")
+	for id := int64(1); id <= 3; id++ {
+		gone.Insert(id, id, "live", nil)
+	}
+	gone.Insert(4, int64(4), "live", nil) // no live rowid
+	b.DropTable("pad")
+	b.DropTable("gone")
+	_, h := openAll(t, b.Bytes(), nil, nil)
+	rows, st := collectRows(t, h)
+	fr := freelistRows(rows)
+	if len(fr) != 4 {
+		t.Fatalf("%d freelist rows: %v", len(fr), methods(rows))
+	}
+	for _, r := range fr {
+		if r.TableBasis != sqlitefile.BasisGuess || r.Table != "t" {
+			t.Fatalf("basis %s table %q, want a guess naming t: %+v", r.TableBasis, r.Table, r)
+		}
+		want := *r.Rowid <= 3
+		if got := hasNote(r, sqlitefile.NoteEqualsLiveRow); got != want {
+			t.Errorf("rowid %d: equals-live-row %v, want %v (notes %v)", *r.Rowid, got, want, r.Notes)
+		}
+		if r.Relation != sqlitefile.RelUnknown || !hasNote(r, sqlitefile.NoteIdentityByFitOnly) {
+			t.Errorf("rowid %d: relation %s notes %v", *r.Rowid, r.Relation, r.Notes)
+		}
+		plain := r
+		plain.Notes = []string{sqlitefile.NoteIdentityByFitOnly}
+		if a, c := sqlitefile.Confidence(r), sqlitefile.Confidence(plain); a != c {
+			t.Errorf("rowid %d: confidence %d with the notes, %d with the fit-only note alone", *r.Rowid, a, c)
+		}
+	}
+	if st.EqualsLiveFit != 3 || st.DuplicateOfLive != 0 {
+		t.Errorf("EqualsLiveFit %d DuplicateOfLive %d, want 3 and 0", st.EqualsLiveFit, st.DuplicateOfLive)
+	}
+}

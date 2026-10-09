@@ -92,6 +92,9 @@ type rowPass struct {
 	idxTable           map[string]string   // the table of each index
 	wr                 map[string]*wrSet
 	diffTotal          int64
+	fitDiffTotal       int64 // live rows read for the fit-only equality (C45): a budget apart from diffTotal
+	fitDiffMax         int64 // that budget; zero means fitDiffRowsTotal
+	wrFit              map[string]*wrSet
 
 	tables  map[string]*Table
 	snaps   map[string]*snapState
