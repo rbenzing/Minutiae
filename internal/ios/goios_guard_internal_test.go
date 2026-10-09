@@ -85,3 +85,38 @@ func TestGoIOSGuardKeepsOrdinaryErrors(t *testing.T) {
 		t.Fatalf("Values = %v, %v", vals, err)
 	}
 }
+
+// W25: the panic value is device-influenced text; it is quoted and bounded.
+func TestGoIOSRecoveredPanicValueIsQuotedAndBounded(t *testing.T) {
+	restoreSeams(t)
+	hostile := "line1\nline2\x1b[31m\x00" + strings.Repeat("A", 500)
+	goiosValues = func(goios.DeviceEntry) (map[string]any, error) { panic(hostile) }
+	dualHomedU1(t)
+	_, err := (GoIOS{}).Values(context.Background(), "U1")
+	wantRecoveredPanic(t, "Values", err)
+	msg := err.Error()
+	for _, r := range msg {
+		if r < 0x20 || r == 0x7f {
+			t.Fatalf("control byte %#x in %q", r, msg)
+		}
+	}
+	if strings.Contains(msg, strings.Repeat("A", 300)) {
+		t.Fatalf("panic value not truncated: %d bytes", len(msg))
+	}
+	if !strings.Contains(msg, `line1\nline2\x1b[31m\x00`) {
+		t.Fatalf("panic value not %%q-quoted: %q", msg)
+	}
+}
+
+// W27: the default goiosConnect returns a true nil interface on error, never a
+// typed nil that would pass a `!= nil` check.
+func TestGoIOSDefaultConnectErrorIsANilConnection(t *testing.T) {
+	dualHomedU1(t) // the fake usbmuxd answers ListDevices only, so the connect fails
+	rw, err := (GoIOS{}).OpenBackup(context.Background(), "U1")
+	if err == nil {
+		t.Fatal("OpenBackup against a usbmuxd that cannot connect must fail")
+	}
+	if rw != nil {
+		t.Fatalf("OpenBackup returned a non-nil connection (%T) with an error", rw)
+	}
+}

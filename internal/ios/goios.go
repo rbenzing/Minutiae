@@ -64,10 +64,19 @@ func (GoIOS) OpenBackup(_ context.Context, udid string) (rw io.ReadWriteCloser, 
 // guarding every index, so a panic in any call is returned as an error.
 type afcClient struct{ c *afc.Client }
 
+// maxPanicText bounds the panic value kept in an error message.
+const maxPanicText = 200
+
 // recovered turns a panic into *err; use as: defer recovered("afc list", &err).
+// The panic value can carry device-influenced text, so it is truncated to
+// maxPanicText bytes and quoted (no control bytes reach a log or terminal).
 func recovered(op string, err *error) {
 	if r := recover(); r != nil {
-		*err = fmt.Errorf("%s: go-ios panic: %v", op, r)
+		s := fmt.Sprint(r)
+		if len(s) > maxPanicText {
+			s = s[:maxPanicText]
+		}
+		*err = fmt.Errorf("%s: go-ios panic: %q", op, s)
 	}
 }
 
