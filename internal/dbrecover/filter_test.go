@@ -254,9 +254,17 @@ func TestSkippedRowsAreCountedNeverSilent(t *testing.T) {
 				}
 				return checkPayload(p)
 			})
+			var lastProgress Progress
+			opts.Progress = func(p Progress) { lastProgress = p }
 			res := mustRun(t, e.c, e.in(), opts)
 			restore()
 			c := res.Counts
+			if c.SkippedByReason["writer-rejected"] <= 0 {
+				t.Errorf("the rejected row was not counted as writer-rejected: %v", c.SkippedByReason)
+			}
+			if lastProgress.Skipped != sumMap(c.SkippedByReason) || lastProgress.Rows != c.Written {
+				t.Errorf("final progress rows %d skipped %d, counts written %d skipped %v", lastProgress.Rows, lastProgress.Skipped, c.Written, c.SkippedByReason)
+			}
 			if got := c.Written + sumMap(c.SkippedByReason); got != int64(len(all)) {
 				t.Errorf("written %d + skipped %v = %d, the library delivered %d rows", c.Written, c.SkippedByReason, got, len(all))
 			}
