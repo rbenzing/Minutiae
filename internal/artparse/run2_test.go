@@ -523,14 +523,27 @@ func TestEmitterAndBundleAreSealedOnEveryJobExitPath(t *testing.T) {
 			kept := &rxKept{}
 			p := &rxParser{name: "keep", n: 1, kept: kept, after: pa.after(cancel, release)}
 			concluded := 0
+			// An abandoned job is concluded by a goroutine the host stops waiting for after GracePeriod, so Run can
+			// return before concluding has finished; the writer hook reports when Abort has returned.
+			aborted := make(chan struct{}, 1)
 			seal := withWriter(func(w *rxWriter) {
 				w.concluding = func() { // the host starts to conclude the ingest: the job is sealed by now
 					concluded++
 					kept.assertSealed(t)
 				}
+				w.aborted = func() { aborted <- struct{}{} }
 			})
 			if _, err := f.host(both(pa.mod, seal), p).Run(ctx, artparse.RunOptions{}); err != nil {
 				t.Fatal(err)
+			}
+			if pa.name == "abandon" {
+				select {
+				case <-aborted: // the abandoned job concluded: concluded and the sealed state are stable now
+				case <-t.Context().Done():
+					t.Fatal("the abandoned job was never concluded")
+				case <-time.After(2 * time.Minute): // safety net only: a regression fails instead of hanging
+					t.Fatal("the abandoned job was never concluded")
+				}
 			}
 			if concluded == 0 {
 				t.Fatal("the ingest was never concluded")
