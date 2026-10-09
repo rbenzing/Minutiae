@@ -46,17 +46,17 @@ func SetFATEntry(img []byte, g Geometry, c, v uint32) {
 	if c < 2 || c > g.Clusters+1 {
 		panic(fmt.Sprintf("fattest: SetFATEntry: cluster %d outside [2, %d]", c, g.Clusters+1))
 	}
-	var max uint32
+	var widest uint32
 	var lo, width int // byte offset of the entry in a copy, and the bytes touched
 	switch g.Type {
 	case 12:
-		max, lo, width = 0xFFF, int(c+c/2), 2
+		widest, lo, width = 0xFFF, int(c+c/2), 2
 	case 16:
-		max, lo, width = 0xFFFF, int(c)*2, 2
+		widest, lo, width = 0xFFFF, int(c)*2, 2
 	default:
-		max, lo, width = 0x0FFFFFFF, int(c)*4, 4
+		widest, lo, width = 0x0FFFFFFF, int(c)*4, 4
 	}
-	if v > max {
+	if v > widest {
 		panic(fmt.Sprintf("fattest: SetFATEntry: value %#x does not fit a FAT%d entry", v, g.Type))
 	}
 	region := int(g.FATSectors) * g.SectorSize
