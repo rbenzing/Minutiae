@@ -37,13 +37,43 @@ func (b *Built) Find(path string, deleted bool) EntryLoc {
 }
 
 // SetFATEntry writes v as entry c of every FAT copy. FAT12 keeps the nibble
-// that belongs to the neighbouring entry; FAT32 keeps the top four bits.
+// that belongs to the neighbouring entry; FAT32 keeps the top four bits. It
+// panics, before writing anything, when c lies outside [2, Clusters+1], when a
+// copy's write would leave that copy's FATSectors region, or when v is wider
+// than the entry (0xFFF, 0xFFFF, 0x0FFFFFFF): a test helper must never
+// silently write a corrupt fixture.
 func SetFATEntry(img []byte, g Geometry, c, v uint32) {
+	if c < 2 || c > g.Clusters+1 {
+		panic(fmt.Sprintf("fattest: SetFATEntry: cluster %d outside [2, %d]", c, g.Clusters+1))
+	}
+	var max uint32
+	var lo, width int // byte offset of the entry in a copy, and the bytes touched
+	switch g.Type {
+	case 12:
+		max, lo, width = 0xFFF, int(c+c/2), 2
+	case 16:
+		max, lo, width = 0xFFFF, int(c)*2, 2
+	default:
+		max, lo, width = 0x0FFFFFFF, int(c)*4, 4
+	}
+	if v > max {
+		panic(fmt.Sprintf("fattest: SetFATEntry: value %#x does not fit a FAT%d entry", v, g.Type))
+	}
+	region := int(g.FATSectors) * g.SectorSize
+	if lo+width > region {
+		panic(fmt.Sprintf("fattest: SetFATEntry: entry %d ends at byte %d, past the %d-byte FAT copy", c, lo+width, region))
+	}
+	for n := 0; n < g.NumFATs; n++ {
+		start := int(g.FATStart(n)) * g.SectorSize
+		if start+region > len(img) {
+			panic(fmt.Sprintf("fattest: SetFATEntry: FAT copy %d ends at %d, past the %d-byte image", n, start+region, len(img)))
+		}
+	}
 	for n := 0; n < g.NumFATs; n++ {
 		t := img[int(g.FATStart(n))*g.SectorSize:]
 		switch g.Type {
 		case 12:
-			o := int(c + c/2)
+			o := lo
 			if c&1 == 0 {
 				t[o] = byte(v)
 				t[o+1] = t[o+1]&0xF0 | byte(v>>8)&0x0F
@@ -52,10 +82,10 @@ func SetFATEntry(img []byte, g Geometry, c, v uint32) {
 				t[o+1] = byte(v >> 4)
 			}
 		case 16:
-			binary.LittleEndian.PutUint16(t[c*2:], uint16(v))
+			binary.LittleEndian.PutUint16(t[lo:], uint16(v))
 		default:
-			old := binary.LittleEndian.Uint32(t[c*4:])
-			binary.LittleEndian.PutUint32(t[c*4:], old&0xF0000000|v&0x0FFFFFFF)
+			old := binary.LittleEndian.Uint32(t[lo:])
+			binary.LittleEndian.PutUint32(t[lo:], old&0xF0000000|v)
 		}
 	}
 }
@@ -65,6 +95,9 @@ func SetFATEntry(img []byte, g Geometry, c, v uint32) {
 // (bytes 20-21) is written on FAT32 only; a first cluster above 0xFFFF on
 // FAT12/16 panics.
 func PatchEntry(img []byte, g Geometry, loc EntryLoc, first *uint32, size *uint32) {
+	if loc.Offset < 0 || loc.Offset+32 > int64(len(img)) {
+		panic(fmt.Sprintf("fattest: PatchEntry: entry at %d does not fit the %d-byte image", loc.Offset, len(img)))
+	}
 	e := img[loc.Offset : loc.Offset+32]
 	if first != nil {
 		if g.Type != 32 && *first > 0xFFFF {

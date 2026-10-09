@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/filesys/fat/fattest"
@@ -170,11 +171,6 @@ func TestSetFATEntryAllTypes(t *testing.T) {
 		g := built.Geometry
 		fattest.SetFATEntry(img, g, 4, 0x9AB)
 		fattest.SetFATEntry(img, g, 7, 0x7CD)
-		defer func() {
-			if readFAT(img, g, 0, 4) != 0x9AB || readFAT(img, g, 0, 7) != 0x7CD {
-				t.Errorf("type %d: outer neighbours 4/7 changed", typ)
-			}
-		}()
 		for _, pair := range [][2]uint32{{5, 6}, {6, 5}} { // even then odd neighbour, and back
 			a, b := pair[0], pair[1]
 			before := readFAT(img, g, 0, b)
@@ -189,6 +185,9 @@ func TestSetFATEntryAllTypes(t *testing.T) {
 			if readFAT(img, g, 0, a) != 0xABC || readFAT(img, g, 0, b) != 0x123 {
 				t.Fatalf("type %d: pair %d/%d not independent", typ, a, b)
 			}
+		}
+		if readFAT(img, g, 0, 4) != 0x9AB || readFAT(img, g, 0, 7) != 0x7CD {
+			t.Fatalf("type %d: outer neighbours 4/7 changed", typ)
 		}
 		for n := 1; n < g.NumFATs; n++ {
 			x := img[int(g.FATStart(0))*g.SectorSize : int(g.FATStart(1))*g.SectorSize]
@@ -243,4 +242,80 @@ func TestPatchEntryFAT16(t *testing.T) {
 	}
 	big := uint32(0x10000)
 	mustPanic(t, "first above 0xFFFF on FAT16", func() { fattest.PatchEntry(img, built.Geometry, loc, &big, nil) })
+}
+
+func TestSetFATEntryRejectsClustersOutsideTheTable(t *testing.T) {
+	for _, typ := range []int{12, 16, 32} {
+		img, built := fattest.BuildLayout(fattest.Options{Type: typ}, nil)
+		g := built.Geometry
+		before := bytes.Clone(img)
+		for _, c := range []uint32{0, 1, g.Clusters + 2, g.Clusters + 100} {
+			mustPanicLabelled(t, "cluster outside [2, clusters+1]", func() { fattest.SetFATEntry(img, g, c, 5) })
+		}
+		if !bytes.Equal(img, before) {
+			t.Fatalf("type %d: a rejected write changed the image", typ)
+		}
+		// the first and last valid clusters are accepted
+		fattest.SetFATEntry(img, g, 2, 5)
+		fattest.SetFATEntry(img, g, g.Clusters+1, 6)
+		if readFAT(img, g, 0, 2) != 5 || readFAT(img, g, 0, g.Clusters+1) != 6 {
+			t.Fatalf("type %d: boundary clusters not written", typ)
+		}
+	}
+}
+
+func TestSetFATEntryRejectsAWriteOutsideTheFATRegion(t *testing.T) {
+	img, built := fattest.BuildLayout(fattest.Options{Type: 16}, nil)
+	g := built.Geometry
+	before := bytes.Clone(img)
+	g.FATSectors = 1 // the table claims to be one sector; cluster 300 lies beyond it
+	mustPanicLabelled(t, "write past the FAT copy", func() { fattest.SetFATEntry(img, g, 300, 5) })
+	if !bytes.Equal(img, before) {
+		t.Fatal("a rejected write changed the image")
+	}
+}
+
+func TestSetFATEntryRejectsValuesWiderThanTheEntry(t *testing.T) {
+	for _, tc := range []struct {
+		typ     int
+		ok, bad uint32
+	}{{12, 0xFFF, 0x1000}, {16, 0xFFFF, 0x10000}, {32, 0x0FFFFFFF, 0x10000000}} {
+		img, built := fattest.BuildLayout(fattest.Options{Type: tc.typ}, nil)
+		g := built.Geometry
+		before := bytes.Clone(img)
+		mustPanicLabelled(t, "value wider than the entry", func() { fattest.SetFATEntry(img, g, 5, tc.bad) })
+		if !bytes.Equal(img, before) {
+			t.Fatalf("type %d: a rejected write changed the image", tc.typ)
+		}
+		fattest.SetFATEntry(img, g, 5, tc.ok)
+		if got := readFAT(img, g, 0, 5); got != tc.ok {
+			t.Fatalf("type %d: widest value stored as %#x", tc.typ, got)
+		}
+	}
+}
+
+func TestPatchEntryRejectsAnEntryPastTheImage(t *testing.T) {
+	img, built := fattest.BuildLayout(fattest.Options{Type: 16}, []fattest.File{{Path: "/A.TXT", Data: pattern(20, 1)}})
+	size := uint32(1)
+	for _, off := range []int64{int64(len(img)) - 31, int64(len(img)), -1} {
+		loc := built.Find("/A.TXT", false)
+		loc.Offset = off
+		mustPanicLabelled(t, "entry past the image", func() { fattest.PatchEntry(img, built.Geometry, loc, nil, &size) })
+	}
+	loc := built.Find("/A.TXT", false)
+	loc.Offset = int64(len(img)) - 32 // the last whole entry is accepted
+	fattest.PatchEntry(img, built.Geometry, loc, nil, &size)
+}
+
+// mustPanicLabelled requires a panic whose message starts with "fattest:", so a
+// bare runtime index error does not pass as a deliberate check.
+func mustPanicLabelled(t *testing.T, name string, f func()) {
+	t.Helper()
+	defer func() {
+		r := recover()
+		if s, ok := r.(string); !ok || !strings.HasPrefix(s, "fattest: ") {
+			t.Errorf("%s: panic %v is not a labelled fattest panic", name, r)
+		}
+	}()
+	f()
 }
