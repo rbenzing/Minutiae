@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,13 +24,14 @@ func trunkScene() *slackScene {
 	})
 }
 
-func regionOf(r sqlitefile.RecoveredRow) string {
+func regionOf(t *testing.T, r sqlitefile.RecoveredRow) string {
+	t.Helper()
 	for _, n := range r.Notes {
-		if v, ok := cutPrefix(n, noteSlackRegionPrefix); ok {
-			return v
+		if strings.HasPrefix(n, "slack-region") {
+			t.Errorf("the slack region travels in a note %q, not in SlackRegion", n)
 		}
 	}
-	return ""
+	return r.SlackRegion
 }
 
 // J85: the tail of a freelist trunk is carved like the other free space.
@@ -45,8 +47,8 @@ func TestCarveFreelistTrunkTailRecoversCell(t *testing.T) {
 	if r.Origin != sqlitefile.OriginFreelistTrunk || r.Loc.Page != 3 || *r.Rowid != 9 || r.Loc.Length != int64(len(cell)) {
 		t.Errorf("origin %v page %d rowid %v length %d", r.Origin, r.Loc.Page, r.Rowid, r.Loc.Length)
 	}
-	if regionOf(r) != "freelist-trunk" {
-		t.Errorf("region %q, want freelist-trunk (notes %v)", regionOf(r), r.Notes)
+	if regionOf(t, r) != "freelist-trunk" {
+		t.Errorf("region %q, want freelist-trunk (notes %v)", regionOf(t, r), r.Notes)
 	}
 	if r.Loc.Offset != int64(2*1024+100) || r.Loc.PageOffset != 2*1024 {
 		t.Errorf("loc %+v", r.Loc)
@@ -73,7 +75,7 @@ func TestSlackPayloadNamesTheRegion(t *testing.T) {
 		if carved["span_kind"] != "live-btree" || carved["slack_region"] != "gap" {
 			t.Errorf("carved %v, want span_kind live-btree and slack_region gap", carved)
 		}
-		if slices.Contains(toStrings(payloadOf(t, f)["notes"]), noteSlackRegionPrefix+"gap") {
+		if slices.Contains(toStrings(payloadOf(t, f)["notes"]), "slack-region=gap") {
 			t.Errorf("notes carry the internal region marker")
 		}
 	}

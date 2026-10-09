@@ -49,7 +49,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"strings"
 
 	"github.com/rbenzing/minutiae/internal/sqlitefile"
 )
@@ -163,12 +162,6 @@ func newSlackCarver(ctx context.Context, db *sqlitefile.DB, emit func(sqlitefile
 	}, nil
 }
 
-// noteSlackRegionPrefix marks, in a row's notes, the kind of free space the
-// cell was found in; the mapper turns it into the payload's slack_region.
-const noteSlackRegionPrefix = "slack-region="
-
-func cutPrefix(s, prefix string) (string, bool) { return strings.CutPrefix(s, prefix) }
-
 // image carves one page image (data are its bytes) and delivers the cells it
 // finds; false stops the walk.
 func (k *slackCarver) image(img sqlitefile.PageImage, data []byte) bool {
@@ -220,7 +213,7 @@ func (k *slackCarver) image(img sqlitefile.PageImage, data []byte) bool {
 				File: img.Loc.File, Page: img.Number, Cell: -1, Offset: img.Loc.Offset + int64(c.off), Length: int64(c.n),
 				PageOffset: img.Loc.Offset, Frame: img.Loc.Frame, Record: img.Loc.Record,
 			},
-			Notes: []string{noteBoundariesInferred, noteSlackRegionPrefix + c.region},
+			Notes: []string{noteBoundariesInferred}, SlackRegion: c.region,
 		}
 		if table != "" && (basis == sqlitefile.BasisFit || basis == sqlitefile.BasisGuess) {
 			row.Notes = append([]string{sqlitefile.NoteIdentityByFitOnly}, row.Notes...)

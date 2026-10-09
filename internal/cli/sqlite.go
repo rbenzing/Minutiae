@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -135,9 +136,7 @@ func newSQLiteRecoverCmd(d Deps, opts *rootOptions) *cobra.Command {
 			res, err := dbrecover.Run(ctx, c, in, o)
 			if len(res.Inputs) > 0 {
 				// the summary of a run that stopped is printed too: what was written stays in the case
-				if perr := printSQLiteResult(d.Out, c, res, opts.json); perr != nil && err == nil {
-					err = perr
-				}
+				return finishSQLiteRun(d.Out, c, res, err, opts.json)
 			}
 			return err
 		},
@@ -212,6 +211,9 @@ type sqliteReportJSON struct {
 	Siblings   map[string]sqliteSiblingJSON `json:"siblings"`
 	Counts     sqliteCountsJSON             `json:"counts"`
 	Ingest     *sqliteIngestJSON            `json:"ingest,omitempty"`
+	Incomplete bool                         `json:"incomplete,omitempty"`
+	Stopped    string                       `json:"stopped,omitempty"`
+	NotStarted string                       `json:"not_started,omitempty"`
 }
 
 func siblingJSON(role string, r dbrecover.SiblingResult) sqliteSiblingJSON {
@@ -273,9 +275,12 @@ func nonNilStrings(s []string) []string {
 	return s
 }
 
+// sqliteManifest reads the manifest for the printed recovery trails; a seam so that a test can fail it.
+var sqliteManifest = func(c *evidence.Case) ([]evidence.ManifestRecord, error) { return c.Manifest() }
+
 // recoveredTrails maps each input artifact to the recovery it comes from, read from the manifest.
 func recoveredTrails(c *evidence.Case, inputs []dbrecover.InputInfo) (map[string]string, error) {
-	man, err := c.Manifest()
+	man, err := sqliteManifest(c)
 	if err != nil {
 		return nil, err
 	}
@@ -324,26 +329,54 @@ func printSQLiteAssessment(w io.Writer, c *evidence.Case, as dbrecover.Assessmen
 	return nil
 }
 
-func printSQLiteResult(w io.Writer, c *evidence.Case, res dbrecover.Result, asJSON bool) error {
+// finishSQLiteRun prints the summary of a run that resolved its inputs, then returns the run's error joined
+// with any print error: an integrity failure found while printing is never masked by the run's own error (J96).
+func finishSQLiteRun(w io.Writer, c *evidence.Case, res dbrecover.Result, runErr error, asJSON bool) error {
+	return errors.Join(runErr, printSQLiteResult(w, c, res, runErr, asJSON))
+}
+
+// printSQLiteResult prints the summary of a run. A run that failed says so on stdout (J95): "not started: <reason>"
+// when the writer never began, "stopped: <reason>" and "incomplete" when it did, so a reader of stdout alone cannot
+// take the summary for a complete run.
+func printSQLiteResult(w io.Writer, c *evidence.Case, res dbrecover.Result, runErr error, asJSON bool) error {
 	trails, err := recoveredTrails(c, res.Inputs)
 	if err != nil {
 		return err
 	}
+	notStarted := runErr != nil && res.Ingest.IngestID == ""
+	stopped := runErr != nil && !notStarted
 	if asJSON {
-		return writeJSON(w, sqliteReportJSON{
+		rep := sqliteReportJSON{
 			AnalysisID: res.AnalysisID, RulesHash: res.RulesHash, Inputs: inputsJSON(res.Inputs, trails),
-			Siblings: map[string]sqliteSiblingJSON{"wal": siblingJSON("wal", res.Siblings.WAL), "journal": siblingJSON("journal", res.Siblings.Journal)},
-			Counts:   countsJSON2(res.Counts),
-			Ingest: &sqliteIngestJSON{
+			Siblings:   map[string]sqliteSiblingJSON{"wal": siblingJSON("wal", res.Siblings.WAL), "journal": siblingJSON("journal", res.Siblings.Journal)},
+			Counts:     countsJSON2(res.Counts),
+			Incomplete: stopped,
+		}
+		if notStarted {
+			rep.NotStarted = runErr.Error()
+		} else {
+			rep.Ingest = &sqliteIngestJSON{
 				ID: res.Ingest.IngestID, Outcome: res.Ingest.Outcome, Records: res.Ingest.Records,
 				Batches: res.Ingest.Batches, Rejected: res.Ingest.Rejected,
-			},
-		})
+			}
+		}
+		if stopped {
+			rep.Stopped = runErr.Error()
+		}
+		return writeJSON(w, rep)
+	}
+	switch {
+	case notStarted:
+		fmt.Fprintf(w, "not started: %s\n", escapeText(runErr.Error()))
+	case stopped:
+		fmt.Fprintf(w, "stopped: %s\n", escapeText(runErr.Error()))
+		fmt.Fprintln(w, "incomplete: what follows is what was written before the run stopped")
 	}
 	printSQLiteBody(w, res.Inputs, trails, res.Siblings, res.Counts)
-	if res.Ingest.IngestID != "" {
+	switch {
+	case res.Ingest.IngestID != "":
 		fmt.Fprintf(w, "ingest %s %s\n", escapeText(res.Ingest.IngestID), escapeText(res.Ingest.Outcome))
-	} else {
+	case !notStarted:
 		fmt.Fprintln(w, "ingest none")
 	}
 	fmt.Fprintf(w, "analysis %s\n", escapeText(res.AnalysisID))

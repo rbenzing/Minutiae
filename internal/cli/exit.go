@@ -89,6 +89,9 @@ func ExitCode(err error) int {
 	switch {
 	case err == nil:
 		return ExitOK
+	case errors.Is(err, evidence.ErrIntegrity):
+		// first: an integrity failure joined with any other error is still exit 4 (J96)
+		return ExitIntegrity
 	case errors.As(err, &ue):
 		return ExitUsage
 	case errors.Is(err, evidence.ErrNeedsUpgrade), errors.Is(err, records.ErrBadCursor),
@@ -96,8 +99,6 @@ func ExitCode(err error) int {
 		errors.Is(err, artparse.ErrSelection), errors.Is(err, artparse.ErrNotParserInput),
 		errors.Is(err, records.ErrInvalidQuery), errors.Is(err, records.ErrIndexNotCurrent), errors.Is(err, examine.ErrInvalidLimit):
 		return ExitUsage
-	case errors.Is(err, evidence.ErrIntegrity):
-		return ExitIntegrity
 	case isDBRecoverUsage(err):
 		return ExitUsage
 	}

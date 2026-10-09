@@ -332,7 +332,7 @@ func TestPayloadGolden(t *testing.T) {
 	slack := sqlitefile.RecoveredRow{
 		Method: sqlitefile.MethodPageSlack, Origin: sqlitefile.OriginOrphan, TableBasis: sqlitefile.BasisNone, Values: []sqlitefile.Value{},
 		Loc:      sqlitefile.Loc{File: sqlitefile.FileDB, Page: 8, Cell: -1, Offset: 4216, Length: 33, PageOffset: 4096},
-		Relation: sqlitefile.RelUnknown, Notes: []string{noteSlackRegionPrefix + "gap"},
+		Relation: sqlitefile.RelUnknown, SlackRegion: "gap",
 	}
 	for name, c := range map[string]struct {
 		m    *mapper
@@ -495,7 +495,7 @@ func mutate(v reflect.Value) reflect.Value {
 // (and of its Loc) in turn and requires the record to change; a field the
 // mapper deliberately drops must be listed here with its reason.
 func TestMapperCopiesEveryRecoveredRowField(t *testing.T) {
-	dropped := map[string]string{}
+	dropped := map[string]string{"SlackRegion": "only a carved row (Cell < 0) records it; the slack golden case pins it"}
 	// the page start is not a payload key; the cell range and page number place the cell
 	droppedLoc := map[string]string{"PageOffset": "derivable from the page number and the page size; only the span of a carved row records it"}
 	m := testMapper(map[sqlitefile.FileKind]int64{sqlitefile.FileDB: 1 << 20, sqlitefile.FileWAL: 1 << 20, sqlitefile.FileJournal: 1 << 20})

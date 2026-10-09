@@ -239,14 +239,10 @@ func (m *mapper) record(r sqlitefile.RecoveredRow) (records.Record, error) {
 	conf := sqlitefile.CapConfidence(base, m.cap)
 
 	notes := slices.Clone(r.Notes)
-	region := "unknown"
-	notes = slices.DeleteFunc(notes, func(n string) bool {
-		if v, ok := cutPrefix(n, noteSlackRegionPrefix); ok {
-			region = v
-			return true
-		}
-		return false
-	})
+	region := r.SlackRegion
+	if region == "" {
+		region = "unknown"
+	}
 	addNote := func(n string) {
 		if !slices.Contains(notes, n) {
 			notes = append(notes, n)
