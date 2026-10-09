@@ -617,6 +617,7 @@ func Run(ctx context.Context, c *evidence.Case, in Inputs, opts Options) (res Re
 		return fail(err, Counts{}, records.IngestResult{})
 	}
 	open = true
+	res.WriterStarted = true
 
 	s, runErr := p.scan(ctx, func(r records.Record) error { return w.Add(ctx, r) }, func(s *scanState) { cur = s })
 	wc := context.WithoutCancel(ctx)

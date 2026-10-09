@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
 
+	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/version"
 )
 
@@ -57,6 +59,22 @@ func TestExitCodeMapping(t *testing.T) {
 	}
 	if ExitCode(usageErrorf("bad %s", "flag")) != ExitUsage {
 		t.Error("usage error should map to ExitUsage")
+	}
+}
+
+// J101: integrity first. An integrity failure joined with a usage error is exit 4 in either order, so moving the
+// integrity case below the usage cases of ExitCode fails here.
+func TestExitCodeIntegrityBeatsUsageInBothOrders(t *testing.T) {
+	usage := usageErrorf("bad flag")
+	for name, err := range map[string]error{
+		"integrity then usage": errors.Join(evidence.ErrIntegrity, usage),
+		"usage then integrity": errors.Join(usage, evidence.ErrIntegrity),
+		"wrapped both":         fmt.Errorf("x: %w", errors.Join(usage, fmt.Errorf("y: %w", evidence.ErrIntegrity))),
+		"needs upgrade":        errors.Join(evidence.ErrNeedsUpgrade, evidence.ErrIntegrity),
+	} {
+		if got := ExitCode(err); got != ExitIntegrity {
+			t.Errorf("%s: exit %d, want 4", name, got)
+		}
 	}
 }
 

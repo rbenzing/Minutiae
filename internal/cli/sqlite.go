@@ -275,12 +275,9 @@ func nonNilStrings(s []string) []string {
 	return s
 }
 
-// sqliteManifest reads the manifest for the printed recovery trails; a seam so that a test can fail it.
-var sqliteManifest = func(c *evidence.Case) ([]evidence.ManifestRecord, error) { return c.Manifest() }
-
 // recoveredTrails maps each input artifact to the recovery it comes from, read from the manifest.
 func recoveredTrails(c *evidence.Case, inputs []dbrecover.InputInfo) (map[string]string, error) {
-	man, err := sqliteManifest(c)
+	man, err := c.Manifest()
 	if err != nil {
 		return nil, err
 	}
@@ -343,7 +340,7 @@ func printSQLiteResult(w io.Writer, c *evidence.Case, res dbrecover.Result, runE
 	if err != nil {
 		return err
 	}
-	notStarted := runErr != nil && res.Ingest.IngestID == ""
+	notStarted := runErr != nil && !res.WriterStarted
 	stopped := runErr != nil && !notStarted
 	if asJSON {
 		rep := sqliteReportJSON{

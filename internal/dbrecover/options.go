@@ -68,10 +68,12 @@ type Counts struct {
 type Result struct {
 	AnalysisID string
 	Ingest     records.IngestResult
-	Inputs     []InputInfo
-	Siblings   SiblingReport
-	Counts     Counts
-	RulesHash  string
+	// WriterStarted is true once the records writer has started (an ingest exists); false for a run that stopped before.
+	WriterStarted bool
+	Inputs        []InputInfo
+	Siblings      SiblingReport
+	Counts        Counts
+	RulesHash     string
 }
 
 // Assessment is the outcome of Plan: what a Run would do, with nothing written.

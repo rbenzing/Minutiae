@@ -5,7 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -28,7 +29,7 @@ func stoppedResult() dbrecover.Result {
 	return dbrecover.Result{
 		AnalysisID: "an1", RulesHash: "h",
 		Inputs: []dbrecover.InputInfo{{Role: "db", ArtifactID: "a1", SHA256: "ab", Size: 10}},
-		Ingest: records.IngestResult{IngestID: "ing1", Outcome: "incomplete"},
+		Ingest: records.IngestResult{IngestID: "ing1", Outcome: "incomplete"}, WriterStarted: true,
 	}
 }
 
@@ -66,7 +67,7 @@ func TestSQLiteRecoverStoppedRunStatesReasonAndIncomplete(t *testing.T) {
 func TestSQLiteRecoverNotStartedSaysSo(t *testing.T) {
 	c := recordstest.NewCase(t)
 	res := stoppedResult()
-	res.Ingest = records.IngestResult{}
+	res.Ingest, res.WriterStarted = records.IngestResult{}, false
 	var out bytes.Buffer
 	boom := errors.New("summarize failed")
 	if err := finishSQLiteRun(&out, c, res, boom, false); !errors.Is(err, boom) {
@@ -110,13 +111,18 @@ func TestSQLiteRecoverRefusedRunPrintsNotStartedOnStdout(t *testing.T) {
 // J96: the print error joins the run error, and an integrity failure is never masked by a cancel.
 func TestSQLiteRecoverPrintIntegrityErrorIsNotMaskedByCancel(t *testing.T) {
 	c := recordstest.NewCase(t)
-	old := sqliteManifest
-	sqliteManifest = func(*evidence.Case) ([]evidence.ManifestRecord, error) {
-		return nil, fmt.Errorf("manifest: %w", evidence.ErrIntegrity)
+	f, err := os.OpenFile(filepath.Join(c.Dir, "manifest.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Cleanup(func() { sqliteManifest = old })
+	if _, err := f.WriteString("{this is not a manifest record\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 	var out bytes.Buffer
-	err := finishSQLiteRun(&out, c, stoppedResult(), context.Canceled, false)
+	err = finishSQLiteRun(&out, c, stoppedResult(), context.Canceled, false)
 	if err == nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("err %v, want the cancel kept", err)
 	}
@@ -158,5 +164,25 @@ func TestSQLiteRecoverRefusalsExit1(t *testing.T) {
 		if !strings.Contains(out+errOut, tc.want) {
 			t.Errorf("%s: the reason %q is not named:\n%s%s", tc.name, tc.want, out, errOut)
 		}
+	}
+}
+
+// J102: "the writer started" comes from the flag, not from a non-empty ingest id.
+func TestSQLiteRecoverWriterStartedFlagDecidesStoppedVersusNotStarted(t *testing.T) {
+	c := recordstest.NewCase(t)
+	boom := errors.New("boom")
+	started := stoppedResult()
+	started.Ingest = records.IngestResult{} // started, yet no id came back
+	var out bytes.Buffer
+	_ = finishSQLiteRun(&out, c, started, boom, false)
+	if s := out.String(); !strings.Contains(s, "stopped: boom") || strings.Contains(s, "not started") {
+		t.Errorf("a started writer without an id reads as not started:\n%s", s)
+	}
+	notStarted := stoppedResult()
+	notStarted.WriterStarted = false // an id present, yet the flag says the writer never started
+	out.Reset()
+	_ = finishSQLiteRun(&out, c, notStarted, boom, false)
+	if s := out.String(); !strings.Contains(s, "not started: boom") || strings.Contains(s, "stopped:") {
+		t.Errorf("an id without the flag reads as stopped:\n%s", s)
 	}
 }

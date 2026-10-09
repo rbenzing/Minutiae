@@ -595,3 +595,20 @@ func TestRecoverPublicEntryPointsRecoverPanics(t *testing.T) {
 		}
 	})
 }
+
+// J102: WriterStarted is set where the writer starts: true for a run that wrote, false for a refusal.
+func TestResultWriterStartedFlag(t *testing.T) {
+	e := newRunEnv(t)
+	if res := mustRun(t, e.c, e.in(), Options{}); !res.WriterStarted {
+		t.Error("a run that ingested did not set WriterStarted")
+	}
+	c := recordstest.NewCase(t)
+	a := addFile(t, c, "/data/n.db", []byte("not a database at all, just text"))
+	res, err := Run(context.Background(), c, Inputs{DB: a.ID}, Options{})
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	if res.WriterStarted {
+		t.Error("a refused run set WriterStarted")
+	}
+}
