@@ -22,6 +22,8 @@ func TestVerifyAcquisitionGapNoteShape(t *testing.T) {
 		{"empty note", "extract", &evidence.AcquisitionGapNote{}, "acquisition gap note is empty"},
 		{"negative bytes", "extract", &evidence.AcquisitionGapNote{Bytes: -1, Ranges: 1}, "negative"},
 		{"bytes without ranges", "extract", &evidence.AcquisitionGapNote{Bytes: 512}, "bytes but no ranges"},
+		{"ranges without bytes", "extract", &evidence.AcquisitionGapNote{Ranges: 1, Unknown: true}, "ranges but no bytes"},
+		{"unknown with bytes and ranges", "extract", &evidence.AcquisitionGapNote{Bytes: 512, Ranges: 1, Unknown: true}, ""},
 		{"too many first runs", "extract", &evidence.AcquisitionGapNote{Bytes: 9, Ranges: 9, First: make([]evidence.Run, 9)}, "more than 8"},
 		{"bad first run", "extract", &evidence.AcquisitionGapNote{Bytes: 1, Ranges: 1, First: []evidence.Run{{Offset: -1, Length: 1}}}, "invalid first run"},
 		{"more than the artifact holds", "extract", &evidence.AcquisitionGapNote{Bytes: 1 << 20, Ranges: 1}, "more gap bytes than the artifact"},

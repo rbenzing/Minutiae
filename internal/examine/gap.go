@@ -12,7 +12,7 @@ import (
 // maxGapWork bounds the (run, gap) pairs examined for one artifact: a hostile
 // run list that overlaps itself cannot make the overlap computation superlinear.
 // Past it the overlap is recorded as unknown.
-const maxGapWork = 1 << 22
+var maxGapWork = 1 << 22
 
 // gapNote returns the acquisition-gap note for an artifact of size bytes whose
 // image runs are runs (holes are Offset -1). runsKnown is false when the runs
@@ -32,11 +32,16 @@ func (s *Session) gapNote(runs []evidence.Run, runsKnown bool, size int64) *evid
 	if note.Unknown && (!runsKnown || len(runs) == 0) {
 		return note
 	}
+	// Runs that overlap each other (a hostile or damaged filesystem) would count
+	// a byte once per run: detect it explicitly (sort and compare), count the
+	// union once and report the figure as unknown, never as an exact one.
+	var overlap bool
+	runs, overlap = unionRuns(runs)
+	if overlap {
+		note.Unknown = true
+	}
 	work := 0
 	for _, r := range runs {
-		if r.Offset < 0 || r.Length <= 0 {
-			continue
-		}
 		end, ok := filesys.AddOK(r.Offset, r.Length)
 		if !ok {
 			note.Unknown = true
@@ -71,4 +76,38 @@ func (s *Session) gapNote(runs []evidence.Run, runsKnown bool, size int64) *evid
 		return nil
 	}
 	return note
+}
+
+// unionRuns returns the image-backed runs (holes and empty runs dropped) sorted
+// by offset with any overlap clipped away, so no byte is counted twice, and
+// reports whether any two runs overlapped. A run whose end overflows is kept
+// as it is (gapNote reports it unknown).
+func unionRuns(runs []evidence.Run) ([]evidence.Run, bool) {
+	valid := make([]evidence.Run, 0, len(runs))
+	for _, r := range runs {
+		if r.Offset >= 0 && r.Length > 0 {
+			valid = append(valid, r)
+		}
+	}
+	sort.SliceStable(valid, func(i, j int) bool { return valid[i].Offset < valid[j].Offset })
+	out := valid[:0]
+	var overlap bool
+	var maxEnd int64
+	for _, r := range valid {
+		end, ok := filesys.AddOK(r.Offset, r.Length)
+		if !ok {
+			out = append(out, r)
+			continue
+		}
+		if r.Offset < maxEnd {
+			overlap = true
+			if end <= maxEnd {
+				continue // wholly inside earlier runs
+			}
+			r = evidence.Run{Offset: maxEnd, Length: end - maxEnd}
+		}
+		maxEnd = max(maxEnd, end)
+		out = append(out, r)
+	}
+	return out, overlap
 }

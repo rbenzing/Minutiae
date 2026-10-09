@@ -216,7 +216,7 @@ func (o *opener) finish() error {
 	}
 	o.resolveHashes()
 	if e := o.err2; e != nil {
-		r.warn.add("acquisition error: %d sector range(s) (%d sectors) were unreadable at acquisition and are zero-filled in the image", e.count, e.sectors)
+		r.warn.add("acquisition error: %d sector range(s) (%d sectors) declared unreadable by the acquirer; the image holds fill there", e.count, e.sectors)
 	}
 	r.err2 = o.err2
 	r.gaps = buildGaps(o.err2, r.geo, o.err2Seen, o.err2Damaged)
