@@ -13,6 +13,8 @@ type RowStats struct {
 	RowsByMethod                                    map[string]int64 // read in sorted key order, never by map iteration
 	DuplicateOfLive, CellsRejected, InteriorSkipped int64
 	Unknown                                         int64 // rows whose relation is RelUnknown
+	// EqualsLiveFit counts the delivered fit-only rows annotated NoteEqualsLiveRow.
+	EqualsLiveFit int64
 	// CellsShort counts the cells (also counted in CellsRejected) whose record
 	// declares more bytes than the cell holds.
 	CellsShort            int64
@@ -29,10 +31,14 @@ const (
 	// NoteLiveUncertain: the live row could not be looked up cleanly.
 	NoteLiveUncertain = "live-lookup-uncertain"
 	// NoteIdentityByFitOnly: the table was named by the column fit alone (BasisFit or BasisGuess), so
-	// the row is never compared with the live rows of that table (a rowid
+	// the row's relation is never derived from the live rows of that table (a rowid
 	// comparison would present a dropped table's rows as modified rows of a
 	// live lookalike). Its relation is unknown.
 	NoteIdentityByFitOnly = "identity-by-fit-only"
+	// NoteEqualsLiveRow: a row named by the column fit alone has the rowid and the values
+	// of a live row of that table. A note only: the relation stays unknown, the
+	// confidence is unchanged and the row is not counted in DuplicateOfLive.
+	NoteEqualsLiveRow = "equals-live-row"
 	// NoteCompareIncomplete: a value was omitted or clipped, so the row can be
 	// neither proven equal to nor different from the live row.
 	NoteCompareIncomplete = "compare-incomplete"
@@ -334,12 +340,22 @@ func (rp *rowPass) emitCell(img PageImage, method string, id ident, ic imgCell) 
 	if invalid {
 		row.Notes = append(row.Notes, NoteInvalidPageNumber) // the page number is not believed: nothing is compared
 	}
-	rel := RelUnknown
+	rel, equalsLive := RelUnknown, false
 	switch {
 	case id.basis == BasisFit || id.basis == BasisGuess:
 		// identity by fit alone: the relation is unknown whatever the origin
 		// (ruling C47); that the bytes are uncommitted is the Origin's fact
 		row.Notes = append(row.Notes, NoteIdentityByFitOnly)
+		if !invalid {
+			same, err := rp.equalsLiveFit(id, &row)
+			if err != nil {
+				return err
+			}
+			if same {
+				row.Notes = append(row.Notes, NoteEqualsLiveRow)
+				equalsLive = true
+			}
+		}
 	case id.basis == BasisNone:
 		// no table at all: unknown whatever the origin (ruling C47, final review B)
 	case uncommitted:
@@ -374,6 +390,9 @@ func (rp *rowPass) emitCell(img PageImage, method string, id ident, ic imgCell) 
 	}
 	rp.rows++
 	rp.st.RowsByMethod[method]++
+	if equalsLive {
+		rp.st.EqualsLiveFit++
+	}
 	if rel == RelUnknown {
 		rp.st.Unknown++
 	}
