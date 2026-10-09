@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
 )
@@ -49,6 +50,8 @@ type FS struct {
 	ends         map[uint32]int    // directories whose end-of-directory marker was found: its entry index
 	entryBudget  int64             // directory entries this instance may still read
 	budgetWarned bool
+
+	walked atomic.Int64 // directory entries visited by deleted-name walks (a work measure for tests)
 
 	warns filesys.Warnings
 }

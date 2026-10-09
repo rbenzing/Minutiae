@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
 )
@@ -111,27 +112,36 @@ var _ filesys.Recoverer = (*FS)(nil)
 // string must stay short and clean whatever the name holds). It reads at most
 // maxLFNEntries entries before idx, in one block per directory cluster, and
 // stops at an entry that is not a deleted long-name entry, at entry 0 or at a
-// read error (the entries nearer the short entry are then all it has).
+// read or lookup error (the entries nearer the short entry are then all it has).
 //
 //	lfn=recovered, lfn_tail=unterminated: a verified long name whose farthest
 //	  entry has no terminator, so the name may be cut short
 //	lfn=recovered: a verified, terminated long name
+//	lfn=unverified: a set checks out against the short name but the long name
+//	  does not pin down the lost first character; no long name is attributed
 //	name=short-only: no long-name set verifies against the short name
+//	name=unknown: the walk could not read the entries in front of the short
+//	  entry (and no set was verified from those it did read), so whether a long
+//	  name exists is unknown; a warning is counted
 func (f *FS) deletedNameBasis(dir uint32, idx int, raw []byte) []string {
 	lo := idx - min(idx, maxLFNEntries)
 	var near [][32]byte // deleted long-name entries, the nearest first
+	failed := false     // the walk stopped on an error, not on a structural end
 walk:
 	for end := idx; end > lo; {
 		off, first, ok := f.dirRegion(dir, end-1)
 		if !ok {
+			failed = true
 			break
 		}
 		start := max(lo, first)
 		buf := make([]byte, (end-start)*32)
 		if readFull(f.r, buf, off-int64(end-1-start)*32) != nil {
+			failed = true
 			break
 		}
 		for i := end - 1; i >= start; i-- {
+			f.walked.Add(1)
 			e := buf[(i-start)*32 : (i-start+1)*32]
 			if !isLFN(e) || e[0] != 0xE5 {
 				break walk
@@ -141,13 +151,43 @@ walk:
 		end = start
 	}
 	slices.Reverse(near) // disk order
-	if _, unterminated, ok := deletedLFN(near, raw[:11]); ok {
+	if units, unterminated, ok := deletedLFN(near, raw[:11]); ok {
+		if first, found := recoverFirstByte(raw[:11], near[len(near)-1][13]); !found || !confirmsFirst(first, units) {
+			return []string{"lfn=unverified"}
+		}
 		if unterminated {
 			return []string{"lfn=recovered", "lfn_tail=unterminated"}
 		}
 		return []string{"lfn=recovered"}
 	}
+	if failed {
+		f.warn("the long-name entries before entry %d of the directory at cluster %d could not be read; its name is unknown", idx, dir)
+		return []string{"name=unknown"}
+	}
 	return []string{"name=short-only"}
+}
+
+// confirmsFirst reports whether the 8.3 derivation pins the recovered first
+// byte to the long name: a letter gives its upper case, a digit or a character
+// that is valid in a short name gives itself. Any other first character (a
+// byte of 0x80 or more, a character replaced by an underscore) leaves the byte
+// undecided, and a long name is then not attributed to the entry.
+func confirmsFirst(first byte, units []uint16) bool {
+	for _, u := range units {
+		if u == ' ' || u == '.' {
+			continue
+		}
+		switch {
+		case u >= 'a' && u <= 'z':
+			return first == byte(u)-'a'+'A'
+		case u >= 'A' && u <= 'Z' || u >= '0' && u <= '9':
+			return first == byte(u)
+		case u < 0x80 && strings.IndexByte("$%'-_@~`!(){}^#&", byte(u)) >= 0:
+			return first == byte(u)
+		}
+		return false
+	}
+	return false
 }
 
 // dirRegion returns the byte offset of entry idx of the directory at dir and

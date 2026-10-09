@@ -38,3 +38,15 @@ func (f *FS) SetDirBudget(entries int64) {
 	defer f.dmu.Unlock()
 	f.entryBudget, f.budgetWarned = entries, false
 }
+
+// MaxLocateScans is the bound on the directories one locate lists.
+const MaxLocateScans = maxLocateScans
+
+// NameWalkEntries is the number of directory entries the deleted-name walks of
+// this instance have visited: a deterministic measure of their work.
+func (f *FS) NameWalkEntries() int64 { return f.walked.Load() }
+
+// NameBasis runs the deleted-name walk for entry idx of the directory at dir.
+func (f *FS) NameBasis(dir uint32, idx int, raw []byte) []string {
+	return f.deletedNameBasis(dir, idx, raw)
+}
