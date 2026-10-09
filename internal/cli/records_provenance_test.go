@@ -334,7 +334,7 @@ func TestShowProvenanceRowRecoveredWithoutRecoveryView(t *testing.T) {
 	}
 	out = renderProv(records.Provenance{}, records.Row{Recovered: true, Method: "carve"})
 	requireLines(t, out, "    status:        RECOVERED DATA (class unknown, method carve, confidence none; not live evidence)")
-	if !strings.Contains(renderProv(records.Provenance{}, records.Row{}), "status:        live\n") {
+	if !strings.Contains(renderProv(records.Provenance{ReachedRoot: true}, records.Row{}), "status:        live\n") {
 		t.Error("a live row must read as live")
 	}
 }

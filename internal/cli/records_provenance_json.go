@@ -109,11 +109,27 @@ func provIsRecovered(p records.Provenance, row records.Row) bool {
 	return p.Recovery != nil || row.Recovered
 }
 
-func provenanceJSON(p records.Provenance, row records.Row) provJSON {
-	status := "live"
-	if provIsRecovered(p, row) {
-		status = "recovered"
+const (
+	statusLive      = "live"
+	statusRecovered = "recovered"
+	statusUnknown   = "unknown"
+)
+
+// provStatusKind is the one status rule of the text and the JSON: recovered when the chain or the
+// row says so; else unknown when the chain could not be resolved (a missing, ambiguous, cyclic or
+// too-deep parent hides what it derives from); else live.
+func provStatusKind(p records.Provenance, row records.Row) string {
+	switch {
+	case provIsRecovered(p, row):
+		return statusRecovered
+	case !p.ReachedRoot:
+		return statusUnknown
 	}
+	return statusLive
+}
+
+func provenanceJSON(p records.Provenance, row records.Row) provJSON {
+	status := provStatusKind(p, row)
 	j := provJSON{
 		Status: status, ReachedRoot: p.ReachedRoot,
 		Chain: make([]provHopJSON, len(p.Chain)),

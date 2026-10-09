@@ -31,6 +31,11 @@ func printProvenance(w io.Writer, p records.Provenance, row records.Row) {
 	for i, h := range p.Chain {
 		printProvHop(w, p, i, h)
 	}
+	reached := "no"
+	if p.ReachedRoot {
+		reached = "yes"
+	}
+	top("reached root:", "%s", reached)
 	if v := p.Recovery; v != nil {
 		top("recovery:", "%s", recoveryText(v))
 		if dr := v.DeclaredRuns; dr != nil {
@@ -55,8 +60,11 @@ func provStatus(p records.Provenance, row records.Row) string {
 		}
 		return recoveredStatus(printable(v.Recovery.Class), printable(v.Recovery.Method), conf)
 	}
-	if provIsRecovered(p, row) {
+	switch provStatusKind(p, row) {
+	case statusRecovered:
 		return recoveredStatus("unknown", printable(row.Method), row.Confidence)
+	case statusUnknown:
+		return "unknown (provenance chain not resolved; may derive from recovered data)"
 	}
 	return "live"
 }
@@ -236,7 +244,8 @@ func printProvOffset(w io.Writer, p records.Provenance) {
 			}
 		}
 	default:
-		return
+		// a state this code does not know is unknown, never absent
+		fmt.Fprintf(w, provIndent+"image offset unknown (state %s)\n", printable(string(o.State)))
 	}
 	for k, h := range o.Hops {
 		last := k == len(o.Hops)-1
