@@ -3,6 +3,7 @@ package fat
 import (
 	"encoding/binary"
 	"fmt"
+	"slices"
 	"strconv"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
@@ -42,7 +43,7 @@ func (f *FS) Recoverable(e filesys.Entry) ([]filesys.Candidate, error) {
 		Method:      MethodContiguous,
 		Size:        size,
 		Assumptions: []string{"contiguous-allocation", "size-from-directory-entry"},
-		Basis:       []string{direntID(dir, idx), "first_cluster=" + strconv.FormatUint(uint64(first), 10)},
+		Basis:       append([]string{direntID(dir, idx), "first_cluster=" + strconv.FormatUint(uint64(first), 10)}, f.deletedNameBasis(dir, idx, raw)...),
 		Mode:        it.e.Mode,
 		Times:       it.e.Times,
 	}
@@ -103,3 +104,72 @@ func (f *FS) deletedShortEntry(dir uint32, idx int) (raw []byte, err error) {
 }
 
 var _ filesys.Recoverer = (*FS)(nil)
+
+// deletedNameBasis states how far the name of the deleted short entry raw
+// (entry idx of the directory at dir) is verified, as Basis markers only: the
+// name text is never part of a basis (the listing owns display, and a basis
+// string must stay short and clean whatever the name holds). It reads at most
+// maxLFNEntries entries before idx, in one block per directory cluster, and
+// stops at an entry that is not a deleted long-name entry, at entry 0 or at a
+// read error (the entries nearer the short entry are then all it has).
+//
+//	lfn=recovered, lfn_tail=unterminated: a verified long name whose farthest
+//	  entry has no terminator, so the name may be cut short
+//	lfn=recovered: a verified, terminated long name
+//	name=short-only: no long-name set verifies against the short name
+func (f *FS) deletedNameBasis(dir uint32, idx int, raw []byte) []string {
+	lo := idx - min(idx, maxLFNEntries)
+	var near [][32]byte // deleted long-name entries, the nearest first
+walk:
+	for end := idx; end > lo; {
+		off, first, ok := f.dirRegion(dir, end-1)
+		if !ok {
+			break
+		}
+		start := max(lo, first)
+		buf := make([]byte, (end-start)*32)
+		if readFull(f.r, buf, off-int64(end-1-start)*32) != nil {
+			break
+		}
+		for i := end - 1; i >= start; i-- {
+			e := buf[(i-start)*32 : (i-start+1)*32]
+			if !isLFN(e) || e[0] != 0xE5 {
+				break walk
+			}
+			near = append(near, [32]byte(e))
+		}
+		end = start
+	}
+	slices.Reverse(near) // disk order
+	if _, unterminated, ok := deletedLFN(near, raw[:11]); ok {
+		if unterminated {
+			return []string{"lfn=recovered", "lfn_tail=unterminated"}
+		}
+		return []string{"lfn=recovered"}
+	}
+	return []string{"name=short-only"}
+}
+
+// dirRegion returns the byte offset of entry idx of the directory at dir and
+// the index of the first entry of the contiguous run (the fixed FAT12/16 root,
+// or the cluster) that holds it, so that the entries from first to idx are one
+// read.
+func (f *FS) dirRegion(dir uint32, idx int) (off int64, first int, ok bool) {
+	if dir == 0 && f.fatType != 32 {
+		if idx < 0 || idx >= f.b.rootEnt {
+			return 0, 0, false
+		}
+		return (int64(f.b.rsvd)+int64(f.b.numFATs)*int64(f.b.fatSz))*int64(f.b.bytsPerSec) + int64(idx)*32, 0, true
+	}
+	clusters, _, _ := f.dirChain(dir)
+	cs := int64(f.clusterSize())
+	k := int64(idx) * 32 / cs
+	if idx < 0 || k >= int64(len(clusters)) {
+		return 0, 0, false
+	}
+	base, ok := f.clusterOffset(clusters[k])
+	if !ok {
+		return 0, 0, false
+	}
+	return base + int64(idx)*32%cs, int(k * cs / 32), true
+}
