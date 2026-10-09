@@ -18,7 +18,7 @@ docker run --rm --privileged -v "$PWD:/work" -w /work minutiae-fixtures bash too
 ```
 
 `gen.sh <fixture>` builds one fixture (`volume-gpt`, `volume-mbr`, `ext4`, `fat`, `exfat`, `f2fs`, `ewf`, `apfs`; `hfsplus` and `apfs-populated` each need their own image, see "HFS+ fixtures" and "APFS populated fixture").
-`--privileged` is needed by `exfat` (see below) and is used by `f2fs` only to try a kernel mount (see "F2FS determinism"); every other fixture runs without it.
+`--privileged` is needed by `exfat` only (see below; `f2fs` no longer mounts, see "F2FS deleted entries come from the QEMU guest"); every other fixture runs without it.
 
 With Git Bash on Windows, stop MSYS rewriting the container paths:
 
@@ -799,6 +799,13 @@ the host side of the scripts never names a module command; each op list runs one
 boot per stage and every stage image is kept, which is how "before" and "after" are
 both read from files.
 
+The module guard (`TestRecoverFixtureScriptsLoadNoKernelModules`, internal/archtest) checks every
+`tools/fixtures/*.sh`, every Dockerfile's RUN lines and the subprocess calls of every `*.py`.
+It is a tripwire against accidental host-side kernel or privilege use, not a sandbox:
+deliberately obfuscated commands (string-built names such as `ins""mod`, indirection
+through files a script writes itself) are out of scope, and reviewers read every
+fixture script.
+
 Stage sequence per filesystem (each stage is one guest boot on the previous
 stage's image; files `A.BIN`..`F.BIN`; sizes in 512-byte clusters: A 6, B 4, C 8,
 D 4, E 6, F 14): s1w write A,B,C,D; s2d `rm` B,D; s3w write E; s4f `dd
@@ -886,6 +893,7 @@ D  bitmap byte 4 (clusters 34-41)  before 3f  after 03      (36-39 cleared; 34-3
 entry-set types for A, C, D: 85 c0 c1 before, 05 40 41 after
 ```
 
+(The words below are abridged by hand from the probe output; the raw log is not stored. Rerunning the probe regenerates it, and the stage images differ only in timestamps and serial numbers.)
 Allocation evidence (P2 vfat: FAT16 entries of clusters 2-31, two bytes each,
 little endian; P4 exFAT: bitmap bytes 0-7 = clusters 2-65). The stage names are those
 above; `ENTRY` lines are the reader's listing of the same image.
@@ -894,13 +902,13 @@ above; `ENTRY` lines are the reader's listing of the same image.
 vfat s0  (empty)          000000000000000000...  all zero
 vfat s1w (A,B,C,D)        0000 0400 0500 0600 0700 0800 ffff 0a00 0b00 0c00 ffff 0e00 ... 1400 ffff 1600 1700 1800 ffff
                           cluster 2 free, A starts at 3 (3->4->...->8 EOC), B 9-12, C 13-20, D 21-24
-vfat s2d (rm B,D)         0000 0400 ... 0800 ffff 0000 0000 0000 0000 0000 0e00 ... 1400 ffff 0000 0000 ...
+vfat s2d (rm B,D)         0000 0400 ... 0800 ffff 0000 0000 0000 0000 0e00 ... 1400 ffff 0000 0000 ...
 vfat s3w (E)              ... 0a00 0b00 0c00 1500 ... 1600 ffff   E = 9-12 then 21-22 (12->21, 22 EOC)
 vfat s4f (full)           ffff 0400 ...                  cluster 2 = ffff: FILL.BIN ends there
 vfat s4f tail, 8090-8096  9b1f 9c1f 9d1f 9e1f 9f1f a01f 0200   cluster 8096 -> 2 (wrap), 2 -> ffff
 vfat s5d (rm A,C)         ffff 0000 ... (3-8 zero)  0a00 0b00 0c00 1500 0000 ... (13-20 zero)
 vfat s6w (F)              ffff 0400 0500 0600 0700 0800 0d00 0a00 ...   F = 3-8 then 13-20 (8->13)
-vfat s9n (one boot)       0000 0400 ... 0800 ffff 0000*4 0000 0e00 ... 1400 ffff 1600 1700 1800 ffff 1a00 1b00 1c00 1d00 1e00 ffff
+vfat s9n (one boot)       0000 0400 ... 0800 ffff 0000*4 0e00 ... 1400 ffff 1600 1700 1800 ffff 1a00 1b00 1c00 1d00 1e00 ffff
                           A 3-8, (B 9-12 deleted, free), C 13-20, D 21-24, E 25-30: no hole reuse
 exfat s0 (empty)          ffff000000000000      clusters 2-17 in use (bitmap, upcase, root), 18+ free
 exfat s1w                 ffffffff3f000000      A 18-23, B 24-27, C 28-35, D 36-39
