@@ -29,32 +29,35 @@ func (GoIOS) List(context.Context) ([]Entry, error) {
 	return out, nil
 }
 
-func (GoIOS) Values(_ context.Context, udid string) (map[string]any, error) {
+func (GoIOS) Values(_ context.Context, udid string) (vals map[string]any, err error) {
+	defer recovered("lockdown values", &err)
 	d, err := entry(udid)
 	if err != nil {
 		return nil, err
 	}
-	return goios.GetValuesPlist(d)
+	return goiosValues(d)
 }
 
-func (GoIOS) OpenAFC(_ context.Context, udid string) (AFC, error) {
+func (GoIOS) OpenAFC(_ context.Context, udid string) (a AFC, err error) {
+	defer recovered("afc start service", &err)
 	d, err := entry(udid)
 	if err != nil {
 		return nil, err
 	}
-	c, err := afc.New(d)
+	c, err := goiosAFC(d)
 	if err != nil {
 		return nil, err
 	}
 	return afcClient{c: c}, nil
 }
 
-func (GoIOS) OpenBackup(_ context.Context, udid string) (io.ReadWriteCloser, error) {
+func (GoIOS) OpenBackup(_ context.Context, udid string) (rw io.ReadWriteCloser, err error) {
+	defer recovered("backup start service", &err)
 	d, err := entry(udid)
 	if err != nil {
 		return nil, err
 	}
-	return goios.ConnectToService(d, "com.apple.mobilebackup2")
+	return goiosConnect(d, "com.apple.mobilebackup2")
 }
 
 // afcClient adapts go-ios AFC. go-ios parses device responses without
@@ -111,8 +114,30 @@ func (s safeFile) Close() (err error) {
 
 const usbmuxdHint = "usbmuxd not reachable (Windows: install iTunes or the Apple Devices app for Apple Mobile Device Service; Linux: install and start usbmuxd)"
 
-// listDevices asks usbmuxd for attached devices, one entry per UDID.
-func listDevices() ([]goios.DeviceEntry, error) {
+// The go-ios calls that decode plists the device (or usbmuxd on its behalf)
+// controls. They are variables so a test can substitute a shim that panics;
+// production code always reaches go-ios through them, under recovered.
+var (
+	goiosListDevices = rawListDevices
+	goiosValues      = func(d goios.DeviceEntry) (map[string]any, error) { return goios.GetValuesPlist(d) }
+	goiosConnect     = func(d goios.DeviceEntry, service string) (io.ReadWriteCloser, error) {
+		c, err := goios.ConnectToService(d, service)
+		if err != nil {
+			return nil, err
+		}
+		return c, nil
+	}
+	goiosAFC = func(d goios.DeviceEntry) (*afc.Client, error) { return afc.New(d) }
+)
+
+// listDevices asks usbmuxd for attached devices, one entry per UDID. A panic
+// in go-ios while decoding the reply is returned as an error.
+func listDevices() (devs []goios.DeviceEntry, err error) {
+	defer recovered("usbmuxd list", &err)
+	return goiosListDevices()
+}
+
+func rawListDevices() ([]goios.DeviceEntry, error) {
 	conn, err := goios.NewUsbMuxConnectionSimple()
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", usbmuxdHint, err)
