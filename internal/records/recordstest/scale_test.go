@@ -1,6 +1,10 @@
 package recordstest_test
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -116,5 +120,70 @@ func TestScaleRecordsAreValidAndVerify(t *testing.T) {
 	rep, err := c.Verify()
 	if err != nil || !rep.OK() {
 		t.Fatalf("verify: %v %v", err, rep.Problems)
+	}
+}
+
+// inBand reports whether got is within 4.5 standard deviations (binomial) of n*p, plus one.
+func inBand(got, n int, p float64) bool {
+	mean := float64(n) * p
+	sd := math.Sqrt(mean * (1 - p))
+	return math.Abs(float64(got)-mean) <= 4.5*sd+1
+}
+
+func TestScaleMixMatchesTheModel(t *testing.T) {
+	const n = 4000
+	s, ids := scaleFixture(t, 1)
+	blk := s.Block(0, n)
+	types := map[string]int{}
+	byArt := map[string]int{}
+	untimed, deleted, recovered, nonTiny := 0, 0, 0, 0
+	for _, r := range blk {
+		types[r.Type]++
+		if r.ArtifactID != s.TinyArtifact() {
+			nonTiny++
+			byArt[r.ArtifactID]++
+		}
+		if r.Time == nil {
+			untimed++
+		}
+		if r.Deleted {
+			deleted++
+			if r.Recovery != "" {
+				recovered++
+			}
+		}
+	}
+	for typ, w := range map[string]int{"message": 50, "web_visit": 15, "call": 8, "location": 8, "file": 6, "event": 4, "contact": 3, "calendar_event": 3, "note": 3} {
+		if !inBand(types[typ], n, float64(w)/100) {
+			t.Errorf("type %s: %d of %d, want about %d%%", typ, types[typ], n, w)
+		}
+	}
+	if !inBand(byArt[ids[0]], nonTiny, 0.40) || !inBand(byArt[ids[1]], nonTiny, 0.30) {
+		t.Errorf("artifact split of %d records: a0 %d (want 40%%), a1 %d (want 30%%)", nonTiny, byArt[ids[0]], byArt[ids[1]])
+	}
+	if !inBand(untimed, n, 0.05) {
+		t.Errorf("untimed %d of %d, want about 5%%", untimed, n)
+	}
+	if !inBand(deleted, n, 0.05) {
+		t.Errorf("deleted %d of %d, want about 5%%", deleted, n)
+	}
+	if !inBand(recovered, deleted, 0.2) {
+		t.Errorf("recovered %d of %d deleted, want about 1/5", recovered, deleted)
+	}
+}
+
+// TestScaleGoldenDigest pins the generator across platforms and Go versions: the SHA-256 of the
+// stored-text size of records 0..1999 at seed 7.
+func TestScaleGoldenDigest(t *testing.T) {
+	const want = "35888ebb19c062392dd33c2687c106b6805bd654895c654c8c20888f2a7a61bc"
+	s, _ := scaleFixture(t, 7)
+	h := sha256.New()
+	for i := int64(0); i < 2000; i++ {
+		var b [8]byte
+		binary.BigEndian.PutUint64(b[:], uint64(recordstest.RowBytes(s.At(i))))
+		h.Write(b[:])
+	}
+	if got := hex.EncodeToString(h.Sum(nil)); got != want {
+		t.Fatalf("golden digest %s, want %s", got, want)
 	}
 }
