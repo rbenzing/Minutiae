@@ -68,8 +68,14 @@ type JoinKey struct {
 type MapContext interface {
 	Input() *Input
 	Note(key, value string)
-	// Column returns the index of a column of a table, or -1 when either is
-	// missing.
+	// Column returns the index of a column of a table, or -1 when the table or
+	// the column does not exist. -1 means only that: an implementation that
+	// fails for another reason (a cancelled context, an I/O error, a corrupt
+	// schema) also returns -1 because there is no error to return, but it keeps
+	// the failure and reports it from its own Err method and from Get and Match,
+	// and the host must fail the job when that failure is set at Close. A
+	// mapping may read -1 as "this variant lacks the column" only under such a
+	// host.
 	Column(table, col string) int
 	// Get returns the row with the given rowid; found is false only for a clean
 	// miss. A missing table is an error.

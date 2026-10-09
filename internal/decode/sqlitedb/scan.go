@@ -9,6 +9,28 @@ import (
 	"github.com/rbenzing/minutiae/internal/sqlitefile"
 )
 
+// charger charges the budget for what one build holds and gives it back in
+// one call. It is the single copy of the per-row charge closure.
+type charger struct {
+	db   *DB
+	held int64
+}
+
+// charge asks the budget for n bytes before they are allocated.
+func (c *charger) charge(n int64) error {
+	if err := c.db.budget.Alloc(n); err != nil {
+		return err
+	}
+	c.held += n
+	return nil
+}
+
+// release gives back everything charged so far. It is idempotent.
+func (c *charger) release() {
+	c.db.budget.Free(c.held)
+	c.held = 0
+}
+
 // Scan visits the live rows of the table in rowid order (the key order of a
 // WITHOUT ROWID table), never the table's indexes. fn may return ErrStop to
 // end the scan with a nil result; the test is errors.Is, so a callback may wrap
@@ -16,7 +38,18 @@ import (
 // error ends the scan and is returned unchanged. A cancelled context is returned
 // as is. The Row is valid only during the call. Scan after Release is
 // ErrReleased.
-func (t *Table) Scan(ctx context.Context, fn func(Row) error) (err error) {
+//
+// A row is charged to the budget before the columns are resolved for it, so the
+// resolved values (at most the column cap of them) are never held uncharged.
+func (t *Table) Scan(ctx context.Context, fn func(Row) error) error {
+	_, err := t.scan(ctx, fn)
+	return err
+}
+
+// scan is Scan that also returns what the reader did not deliver in this one
+// scan (pages and cells it skipped): a caller that must not mistake a short
+// scan for a complete one (Index) reads it.
+func (t *Table) scan(ctx context.Context, fn func(Row) error) (loss sqlitefile.ScanLoss, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("%w: %v", ErrInternal, r)
@@ -24,25 +57,17 @@ func (t *Table) Scan(ctx context.Context, fn func(Row) error) (err error) {
 	}()
 	db := t.db
 	if db.released {
-		return ErrReleased
+		return sqlitefile.ScanLoss{}, ErrReleased
 	}
 	db.stats.Scans++
 	var ferr error
 	i := 0
-	libErr := t.lt.Rows(ctx, func(raw sqlitefile.Row) bool {
-		var held int64
-		charge := func(n int64) error {
-			if err := db.budget.Alloc(n); err != nil {
-				return err
-			}
-			held += n
-			return nil
-		}
-		defer func() { db.budget.Free(held) }()
+	loss, libErr := t.lt.RowsLoss(ctx, func(raw sqlitefile.Row) bool {
+		ch := &charger{db: db}
+		defer ch.release()
 		row, err := t.buildRow(rowInput{
-			rowid: raw.Rowid, hasRowid: raw.HasRowid, vals: t.lt.Resolve(raw), storedLen: len(raw.Values),
-			flags: damageFlags(raw), loc: raw.Loc,
-		}, charge)
+			raw: raw, storedLen: len(raw.Values), flags: damageFlags(raw), loc: raw.Loc,
+		}, ch.charge)
 		if err != nil {
 			ferr = err
 			return false
@@ -66,11 +91,11 @@ func (t *Table) Scan(ctx context.Context, fn func(Row) error) (err error) {
 	})
 	switch {
 	case ferr != nil:
-		return ferr
+		return loss, ferr
 	case libErr != nil:
-		return wrapErr(libErr)
+		return loss, wrapErr(libErr)
 	}
-	return nil
+	return loss, nil
 }
 
 // damageFlags are the flags for the damage the reader raised on a row.
@@ -120,19 +145,11 @@ func (t *Table) get(ctx context.Context, rowid int64, after func()) (row Row, fo
 	case !ok:
 		return Row{}, false, nil
 	}
-	var held int64
-	charge := func(n int64) error {
-		if err := db.budget.Alloc(n); err != nil {
-			return err
-		}
-		held += n
-		return nil
-	}
-	defer func() { db.budget.Free(held) }()
+	ch := &charger{db: db}
+	defer ch.release()
 	built, err := t.buildRow(rowInput{
-		rowid: raw.Rowid, hasRowid: raw.HasRowid, vals: t.lt.Resolve(raw), storedLen: len(raw.Values),
-		flags: damageFlags(raw), loc: raw.Loc,
-	}, charge)
+		raw: raw, storedLen: len(raw.Values), flags: damageFlags(raw), loc: raw.Loc,
+	}, ch.charge)
 	if err != nil {
 		return Row{}, false, err
 	}

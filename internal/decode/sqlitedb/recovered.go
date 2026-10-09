@@ -52,7 +52,7 @@ func FromRecovered(t *Table, rr sqlitefile.RecoveredRow) (out Row, err error) {
 	}
 	raw.Values = rr.Values
 	in := rowInput{
-		rowid: raw.Rowid, hasRowid: raw.HasRowid, vals: t.lt.Resolve(raw), storedLen: len(rr.Values),
+		raw: raw, storedLen: len(rr.Values),
 		truncated: rr.Truncated, loc: rr.Loc,
 		rec: &RecoveredInfo{
 			Method: rr.Method, Origin: rr.Origin, Basis: rr.TableBasis, Relation: rr.Relation, Truncated: rr.Truncated,
@@ -62,16 +62,9 @@ func FromRecovered(t *Table, rr sqlitefile.RecoveredRow) (out Row, err error) {
 	if slices.Contains(rr.Notes, sqlitefile.NoteRecordLengthMismatch) {
 		in.flags |= FlagLengthMismatch
 	}
-	var held int64
-	charge := func(n int64) error {
-		if err := db.budget.Alloc(n); err != nil {
-			return err
-		}
-		held += n
-		return nil
-	}
-	defer func() { db.budget.Free(held) }()
-	built, err := t.buildRow(in, charge)
+	ch := &charger{db: db}
+	defer ch.release()
+	built, err := t.buildRow(in, ch.charge)
 	if err != nil {
 		return Row{}, err
 	}

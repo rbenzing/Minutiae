@@ -4,11 +4,136 @@ package sqlitedb_test
 // (see hostile_test.go).
 
 import (
+	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"slices"
 	"testing"
+
+	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
+	"github.com/rbenzing/minutiae/internal/parse"
 )
+
+// probe is one lookup a clean file answers: the row rowid of table holds key in
+// column col.
+type probe struct {
+	table, col string
+	rowid      int64
+	key        parse.JoinKey
+}
+
+const probesPerColumn = 24
+
+// cleanProbes lists, for every rowid table, the first, the middle and the last
+// non-virtual column of the clean file (one index build each per image), and
+// of each the key of rows spread evenly over the table, the first and the last
+// included (at most probesPerColumn per column). Rows are lost whole, so a
+// few columns see the same loss as all of them; the cost of the matrix is bounded.
+func cleanProbes(t *testing.T, clean []byte) []probe {
+	t.Helper()
+	d := openBytes(t, clean, nil, nil, bigBudget())
+	names, err := d.Tables(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []probe
+	for _, n := range names {
+		tb, err := d.Table(t.Context(), n, nil, nil)
+		if err != nil || tb.WithoutRowid() {
+			continue
+		}
+		var stored []int
+		for ci, c := range tb.Cols() {
+			if !c.Virtual {
+				stored = append(stored, ci)
+			}
+		}
+		var chosen []int
+		for _, i := range []int{0, len(stored) / 2, len(stored) - 1} {
+			if i >= 0 && i < len(stored) && !slices.Contains(chosen, stored[i]) {
+				chosen = append(chosen, stored[i])
+			}
+		}
+		for _, ci := range chosen {
+			c := tb.Cols()[ci]
+			var col []probe
+			err := tb.Scan(t.Context(), func(r sqlitedb.Row) error {
+				k, ok, kerr := sqlitedb.KeyOf(r, ci)
+				id, hasID := r.Rowid()
+				if kerr == nil && ok && hasID {
+					col = append(col, probe{table: n, col: c.Name, rowid: id, key: k})
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(col) <= probesPerColumn {
+				out = append(out, col...)
+				continue
+			}
+			for i := range probesPerColumn {
+				out = append(out, col[i*(len(col)-1)/(probesPerColumn-1)])
+			}
+		}
+	}
+	return out
+}
+
+// matchProbes runs every probe through Context.Match on the damaged image:
+// the row is matched, or the answer is an error (ErrKeyUndecidable when the
+// index could not decide), never a clean empty (B76). A clean empty is accepted
+// only when the damaged file's own scan delivers that rowid with a different
+// value in the column (the damage changed the value, so the key honestly no
+// longer matches). It returns how many probes were answered ErrKeyUndecidable.
+func matchProbes(t *testing.T, label string, img []byte, probes []probe) (undecided int) {
+	t.Helper()
+	b := &testBudget{limit: 128 << 20}
+	d, err := sqlitedb.Open(t.Context(), filesOf(img, nil, nil), b)
+	if err != nil {
+		return 0
+	}
+	defer d.Release()
+	c := sqlitedb.NewContext(t.Context(), d, &parse.Input{}, nil)
+	defer c.Close()
+	for _, p := range probes {
+		rows, err := c.Match(p.table, p.col, p.key)
+		switch {
+		case err == nil && len(rows) > 0:
+		case err == nil:
+			if !valueChanged(d, p) {
+				t.Errorf("%s: Match(%s.%s, row %d) answered a clean empty for a row the clean file holds", label, p.table, p.col, p.rowid)
+			}
+		case errors.Is(err, sqlitedb.ErrKeyUndecidable):
+			undecided++
+		default:
+			requireTyped(t, fmt.Sprintf("%s: Match(%s.%s, row %d)", label, p.table, p.col, p.rowid), err)
+		}
+	}
+	return undecided
+}
+
+// valueChanged reports whether the damaged file's scan delivers p.rowid with a
+// key in p.col different from p's.
+func valueChanged(d *sqlitedb.DB, p probe) bool {
+	tb, err := d.Table(context.Background(), p.table, nil, nil)
+	if err != nil {
+		return false
+	}
+	ci := tb.Col(p.col)
+	changed := false
+	_ = tb.Scan(context.Background(), func(r sqlitedb.Row) error {
+		if id, _ := r.Rowid(); id != p.rowid {
+			return nil
+		}
+		if k, ok, kerr := sqlitedb.KeyOf(r, ci); kerr != nil || !ok || k != p.key {
+			changed = true
+		}
+		return sqlitedb.ErrStop
+	})
+	return changed
+}
 
 // pageGeom reads the page size and usable size from the database header.
 func pageGeom(db []byte) (pageSize, usable int) {
@@ -164,7 +289,11 @@ func TestSQLiteDBHostileDamagedPages(t *testing.T) {
 				t.Fatal("the clean fixture scans no rows")
 			}
 			muts := pageMutations()
-			applied, lossSeen := 0, 0
+			probes := cleanProbes(t, clean)
+			if len(probes) == 0 {
+				t.Fatal("the clean fixture offers no Match probe")
+			}
+			applied, lossSeen, matchUndecided := 0, 0, 0
 			for p := 1; p <= npages; p++ {
 				for _, m := range muts {
 					img := slices.Clone(clean)
@@ -177,6 +306,7 @@ func TestSQLiteDBHostileDamagedPages(t *testing.T) {
 					if o.openErr != nil {
 						continue // a typed refusal is loud
 					}
+					matchUndecided += matchProbes(t, label, img, probes)
 					for n, want := range base.rows {
 						if _, listed := o.rows[n]; !listed {
 							if o.allWarn == 0 && o.tableErr[n] == nil {
@@ -207,6 +337,9 @@ func TestSQLiteDBHostileDamagedPages(t *testing.T) {
 			}
 			if lossSeen == 0 {
 				t.Error("no mutation lost a row: the matrix never exercised the loss rule")
+			}
+			if matchUndecided == 0 {
+				t.Error("no Match was answered ErrKeyUndecidable: the matrix never exercised the lossy index")
 			}
 		})
 	}

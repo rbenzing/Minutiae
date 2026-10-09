@@ -16,9 +16,10 @@ type JoinReport struct {
 	Table, Column string
 	// Lookups is the number of Match calls; Flagged those with any flag;
 	// CollationDiffers and AffinityDiffers those with that flag; Undecidable those that ended in
-	// ErrKeyUndecidable (also counted in Lookups); Unkeyed the
+	// ErrKeyUndecidable (also counted in Lookups); UndecidedHits the hits that
+	// carried JoinUndecided (possibly short answers, also counted in Flagged); Unkeyed the
 	// target rows the index could not key.
-	Lookups, Flagged, CollationDiffers, AffinityDiffers, Unkeyed, Undecidable int64
+	Lookups, Flagged, CollationDiffers, AffinityDiffers, Unkeyed, Undecidable, UndecidedHits int64
 }
 
 // Notes is the sink a Context flushes its join notes to; parse.Emitter
@@ -41,6 +42,7 @@ type Context struct {
 	build   func(context.Context, *Table, string) (*Index, error) // index build; a test seam, nil means Table.Index with the default cap
 	rows    []Row
 	closed  bool
+	err     error // the first failure Column could not report as -1 (see Err)
 }
 
 // NewContext returns a Context over db. ctx is used for cancellation only. n
@@ -80,20 +82,42 @@ func (c *Context) table(name string) (*Table, error) {
 	return t, nil
 }
 
-// Column returns the index of column col of table, or -1 when either is
-// missing.
+// Column returns the index of column col of table, or -1 when the table or the
+// column does not exist (a schema variant that lacks it). Any other failure
+// (a cancelled context, an I/O error, a corrupt or unsupported schema, a released
+// database) also yields -1 because the interface has no error to return, but it
+// is kept: the first one is returned by Err, and Get and Match return it before
+// they do anything. A mapper that reads -1 as "this variant lacks the column"
+// must therefore be run by a host that fails the job when Err is non-nil at Close.
 func (c *Context) Column(table, col string) int {
 	t, err := c.table(table)
 	if err != nil {
+		if !errors.Is(err, ErrNoSuchTable) {
+			c.fail(err)
+		}
 		return -1
 	}
 	return t.Col(col)
 }
 
+// fail keeps err as the Context sticky failure; the first one wins.
+func (c *Context) fail(err error) {
+	if c.err == nil {
+		c.err = err
+	}
+}
+
+// Err returns the first failure that Column could not report (see Column), or
+// nil. It is readable at any time, also after Close.
+func (c *Context) Err() error { return c.err }
+
 // Get returns the row of table with the given rowid, owned by the Context (it
 // stays charged until Close); found is false only for a clean miss. A missing
-// table is ErrNoSuchTable.
+// table is ErrNoSuchTable. A sticky failure (see Err) is returned first.
 func (c *Context) Get(table string, rowid int64) (parse.Row, bool, error) {
+	if c.err != nil {
+		return nil, false, c.err
+	}
 	t, err := c.table(table)
 	if err != nil {
 		return nil, false, err
@@ -109,8 +133,14 @@ func (c *Context) Get(table string, rowid int64) (parse.Row, bool, error) {
 // Match returns the rows of table whose column col equals key under that
 // column's collation, in rowid order, owned by the Context. The index of each
 // (table, column) is built once with the default cap. A rowid of the index that
-// no longer resolves is an error, never a dropped row.
+// no longer resolves is an error, never a dropped row. A sticky failure (see
+// Err) is returned first. A miss on an index that could not decide every target
+// row, or whose scan lost rows, is ErrKeyUndecidable; a hit on such an index is
+// counted in JoinReport.UndecidedHits.
 func (c *Context) Match(table, col string, key parse.JoinKey) ([]parse.Row, error) {
+	if c.err != nil {
+		return nil, c.err
+	}
 	t, err := c.table(table)
 	if err != nil {
 		return nil, err
@@ -132,11 +162,11 @@ func (c *Context) Match(table, col string, key parse.JoinKey) ([]parse.Row, erro
 		}
 		if ix, err = build(c.ctx, t, col); err != nil {
 			// B51: every failure that is a property of the data (a corrupt structure, the
-			// entry cap, the budget, an undecidable target) is remembered, or a hostile
+			// entry cap, the budget, a recovered panic) is remembered, or a hostile
 			// target would cost one full scan per lookup; a cancellation or a deadline
 			// says nothing about the data and is retried.
 			if errors.Is(err, ErrCorrupt) || errors.Is(err, ErrIndexLimit) || errors.Is(err, parse.ErrBudget) ||
-				errors.Is(err, sqlitefile.ErrBudget) || errors.Is(err, ErrKeyUndecidable) {
+				errors.Is(err, sqlitefile.ErrBudget) || errors.Is(err, ErrInternal) {
 				c.failed[ik] = err
 			}
 			return nil, err
@@ -159,6 +189,9 @@ func (c *Context) Match(table, col string, key parse.JoinKey) ([]parse.Row, erro
 	rep.Lookups++
 	if flags != 0 {
 		rep.Flagged++
+	}
+	if flags&JoinUndecided != 0 {
+		rep.UndecidedHits++
 	}
 	if flags&JoinCollationDiffers != 0 {
 		rep.CollationDiffers++

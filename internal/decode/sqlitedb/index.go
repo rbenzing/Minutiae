@@ -103,6 +103,10 @@ type JoinFlags uint8
 const (
 	JoinCollationDiffers JoinFlags = 1 << iota // the source column's collation differs from the target's
 	JoinAffinityDiffers                        // the source column's affinity class differs from the target's
+	// JoinUndecided marks a HIT returned by an index that could not decide every
+	// target row (a row whose key is unknown, or rows the scan lost): the answer
+	// may be short, so it is never presented as the complete set of matches.
+	JoinUndecided
 )
 
 const (
@@ -122,9 +126,10 @@ type Index struct {
 	collation string // canonical
 	class     parse.JoinClass
 	m         map[[32]byte][]int64
-	unkeyed   int // target rows not in the index (NULL, NaN, undecided)
-	undecided int // of those, rows whose key is unknown: a miss cannot be proven
-	held      int64
+	unkeyed   int                 // target rows not in the index (NULL, NaN, undecided)
+	undecided int                 // of those, rows whose key is unknown: a miss cannot be proven
+	lost      sqlitefile.ScanLoss // what the scan that built the index did not deliver
+	ch        charger             // the memory of the entries
 }
 
 // Index reads the table once and indexes column col under the column's own
@@ -133,6 +138,10 @@ type Index struct {
 // 1,000,000) is ErrIndexLimit; nothing is kept on any error. An unsupported
 // collation is an *UnsupportedCollationError, never BINARY; a WITHOUT ROWID
 // table is ErrWithoutRowid. No affinity conversion is done.
+//
+// An index built from a scan that lost rows (a skipped page or cell, counted by
+// the reader per scan) is Lossy: every miss of Rowids is then an
+// ErrKeyUndecidable naming the loss, and a hit is flagged JoinUndecided.
 func (t *Table) Index(ctx context.Context, col string, limit int) (ix *Index, err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -160,10 +169,10 @@ func (t *Table) Index(ctx context.Context, col string, limit int) (ix *Index, er
 	}
 	ix = &Index{
 		db: db, table: t.name, column: info.Name, collation: coll, class: classOf(info.Affinity),
-		m: map[[32]byte][]int64{},
+		m: map[[32]byte][]int64{}, ch: charger{db: db},
 	}
 	entries := 0
-	err = t.Scan(ctx, func(r Row) error {
+	ix.lost, err = t.scan(ctx, func(r Row) error {
 		rowid, _ := r.Rowid()
 		switch r.State(ci) {
 		case StateNull:
@@ -187,7 +196,7 @@ func (t *Table) Index(ctx context.Context, col string, limit int) (ix *Index, er
 		}
 		key, st, kerr := sqlitefile.EqualityKey(v, coll)
 		if kerr != nil {
-			return kerr
+			return fmt.Errorf("%w: %w", ErrInternal, kerr)
 		}
 		if st != sqlitefile.KeyOK {
 			ix.unkeyed++
@@ -199,10 +208,9 @@ func (t *Table) Index(ctx context.Context, col string, limit int) (ix *Index, er
 		if entries >= limit {
 			return ErrIndexLimit
 		}
-		if err := db.budget.Alloc(indexEntryCost + 32); err != nil {
+		if err := ix.ch.charge(indexEntryCost + 32); err != nil {
 			return err
 		}
-		ix.held += indexEntryCost + 32
 		entries++
 		ix.m[key] = append(ix.m[key], rowid)
 		return nil
@@ -224,16 +232,17 @@ func (ix *Index) Unkeyed() int { return ix.unkeyed }
 // make every miss of Rowids an ErrKeyUndecidable.
 func (ix *Index) Undecided() int { return ix.undecided }
 
+// Lossy reports whether the scan that built the index lost rows (the reader
+// skipped a damaged page or cell). A lossy index cannot prove any miss.
+func (ix *Index) Lossy() bool { return ix.lost.Any() }
+
 // Release returns the index's memory to the budget and empties it. It is
 // idempotent.
 func (ix *Index) Release() {
 	if ix == nil {
 		return
 	}
-	if ix.held > 0 {
-		ix.db.budget.Free(ix.held)
-		ix.held = 0
-	}
+	ix.ch.release()
 	ix.m = nil
 }
 
@@ -243,9 +252,11 @@ func (ix *Index) Release() {
 // JoinNone key matches nothing, and so does a NaN (the engine reads it as NULL).
 // A probe the reader cannot compare (invalid UTF-8 under NOCASE or RTRIM, a
 // kind it does not know) is an error wrapping ErrKeyUndecidable, and so is a
-// lookup that finds no row while Undecided target rows exist: a miss is not a
-// proof of absence. A hit is returned normally. A source collation that is not
-// supported is an *UnsupportedCollationError. The slice is the caller's.
+// lookup that finds no row while Undecided target rows exist or the index is
+// Lossy: a miss is not a proof of absence. A hit is returned, with JoinUndecided
+// set in the flags in those two cases: the set of matches may be short. A
+// source collation that is not supported is an *UnsupportedCollationError. The
+// slice is the caller's.
 func (ix *Index) Rowids(key parse.JoinKey) (rowids []int64, flags JoinFlags, err error) {
 	if key.Kind == parse.JoinNone {
 		return nil, 0, nil
@@ -280,7 +291,7 @@ func (ix *Index) Rowids(key parse.JoinKey) (rowids []int64, flags JoinFlags, err
 	}
 	k, st, kerr := sqlitefile.EqualityKey(v, ix.collation)
 	if kerr != nil {
-		return nil, 0, kerr
+		return nil, 0, fmt.Errorf("%w: %w", ErrInternal, kerr)
 	}
 	switch st {
 	case sqlitefile.KeyOK:
@@ -290,7 +301,13 @@ func (ix *Index) Rowids(key parse.JoinKey) (rowids []int64, flags JoinFlags, err
 		return nil, flags, fmt.Errorf("%w: the probe cannot be compared under %s", ErrKeyUndecidable, ix.collation)
 	}
 	if ids := ix.m[k]; len(ids) > 0 {
+		if ix.undecided > 0 || ix.lost.Any() {
+			flags |= JoinUndecided
+		}
 		return slices.Clone(ids), flags, nil
+	}
+	if ix.lost.Any() {
+		return nil, flags, fmt.Errorf("%w: no row matches, but the scan of %s.%s lost rows (%d pages, %d cells skipped as damaged)", ErrKeyUndecidable, ix.table, ix.column, ix.lost.Pages, ix.lost.Cells)
 	}
 	if ix.undecided > 0 {
 		return nil, flags, fmt.Errorf("%w: no row matches, but %d rows of %s.%s have keys that could not be decided", ErrKeyUndecidable, ix.undecided, ix.table, ix.column)

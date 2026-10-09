@@ -71,9 +71,8 @@ var _ parse.Row = Row{}
 
 // rowInput is what a Row is built from.
 type rowInput struct {
-	rowid     int64
-	hasRowid  bool
-	vals      []sqlitefile.Value // resolved, in declared column order
+	raw       sqlitefile.Row     // as stored; buildRow resolves it to the declared columns after charging for them
+	vals      []sqlitefile.Value // set by buildRow: the resolved values, in declared column order
 	storedLen int
 	truncated bool
 	flags     RowFlags // the damage flags the reader raised
@@ -88,15 +87,17 @@ const rowValueCost = 128
 
 // buildRow derives the states, the UTF-16 decoding and the flags of a row.
 // charge is asked for the memory before it is allocated and its error ends
-// the build.
+// the build. The values are resolved only after the charge for them (one slot
+// per declared column) was granted.
 func (t *Table) buildRow(in rowInput, charge func(n int64) error) (Row, error) {
 	def := &t.def
-	r := Row{
-		tbl: t, rowid: in.rowid, hasRowid: in.hasRowid, vals: in.vals, storedLen: in.storedLen,
-		flags: in.flags, loc: in.loc, rec: in.rec,
-	}
-	if err := charge(int64(len(in.vals)) * rowValueCost); err != nil {
+	if err := charge(int64(len(def.Columns)) * rowValueCost); err != nil {
 		return Row{}, err
+	}
+	in.vals = t.lt.Resolve(in.raw)
+	r := Row{
+		tbl: t, rowid: in.raw.Rowid, hasRowid: in.raw.HasRowid, vals: in.vals, storedLen: in.storedLen,
+		flags: in.flags, loc: in.loc, rec: in.rec,
 	}
 	r.states = make([]ColState, len(in.vals))
 	var chargeErr error
@@ -121,7 +122,7 @@ func (t *Table) buildRow(in rowInput, charge func(n int64) error) (Row, error) {
 		return false
 	}
 	si := stateInput{
-		def: def, vals: in.vals, storedLen: in.storedLen, hasRowid: in.hasRowid, truncated: in.truncated,
+		def: def, vals: in.vals, storedLen: in.storedLen, hasRowid: in.raw.HasRowid, truncated: in.truncated,
 		lengthMismatch: in.flags&FlagLengthMismatch != 0, undecodable: decode,
 	}
 	unknown := false
