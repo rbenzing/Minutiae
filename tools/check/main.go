@@ -24,6 +24,7 @@ func main() {
 	steps := []step{
 		{args: []string{"go", "mod", "tidy", "-diff"}},
 		{args: []string{"go", "vet", "./..."}},
+		{args: []string{"go", "vet", "-tags", "scale", "./internal/records/...", "./internal/evidence/..."}},
 		{args: []string{"go", "run", "./tools/parserhash", "-check"}},
 		{args: []string{"go", "tool", "golangci-lint", "run", "./..."}},
 		{args: []string{"go", "build", "-o", binPath(), "./cmd/minutiae"}},
