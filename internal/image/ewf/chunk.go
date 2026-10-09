@@ -116,7 +116,7 @@ func (r *Reader) decode(idx int64) ([]byte, error) {
 	}
 	if trailing > 0 {
 		if zlibStartsAt(src[len(src)-trailing:]) {
-			return nil, chunkErr(idx, ref, fmt.Errorf("another zlib stream starts %d byte(s) after the end of this chunk's: the table skips a stored chunk", trailing))
+			return nil, chunkErr(idx, ref, errors.New("a second zlib stream header follows this chunk's stream (possible forgery or padding)"))
 		}
 		r.warn.add("chunk %d (segment %d, offset %d): %d byte(s) follow the end of its zlib stream", idx, ref.seg()+1, off, trailing)
 	}

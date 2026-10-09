@@ -38,7 +38,7 @@ func TestEWFDroppedCompressedChunkIsFoundOnRead(t *testing.T) {
 	// recognized as a skipped chunk.
 	p := make([]byte, cs)
 	n, err := r.ReadAt(p, 1*cs)
-	if n != 0 || !errors.Is(err, ewf.ErrChunkCorrupt) || !strings.Contains(err.Error(), "another zlib stream") {
+	if n != 0 || !errors.Is(err, ewf.ErrChunkCorrupt) || !strings.Contains(err.Error(), "a second zlib stream header") {
 		t.Fatalf("ReadAt(chunk 1) = %d, %v", n, err)
 	}
 	res, err := r.Verify(context.Background(), nil)
@@ -73,7 +73,8 @@ func TestEWFZlibStartsAt(t *testing.T) {
 }
 
 // Every layout the builder can write, and so every legal acquirer layout it
-// models, opens with no warning (the stored-chunk heuristic of decode never fires), and the media reads back exactly.
+// models, opens with no warning (the stored-chunk heuristic of decode never
+// fires), and the media reads back exactly.
 func TestEWFDecodeAcceptsEveryBuilderLayout(t *testing.T) {
 	comps := map[string]ewftest.Compress{"none": ewftest.CompressNone, "all": ewftest.CompressAll, "mixed": ewftest.CompressMixed}
 	bases := map[string]ewftest.BaseMode{"descriptor": ewftest.BaseSectorsDescriptor, "zero": ewftest.BaseZero}
