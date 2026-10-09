@@ -18,7 +18,8 @@ func liveHeap() uint64 {
 	return s[0].Value.Uint64()
 }
 
-// peakHeap samples the live heap every few milliseconds until stop is called and returns the peak.
+// peakHeap samples the LIVE heap (a full collection first, so unswept garbage is not counted) every
+// few tens of milliseconds until stop is called and returns the peak.
 func peakHeap() (stop func() uint64) {
 	var (
 		mu   sync.Mutex
@@ -28,6 +29,7 @@ func peakHeap() (stop func() uint64) {
 	)
 	sample := []metrics.Sample{{Name: "/memory/classes/heap/objects:bytes"}}
 	read := func() {
+		runtime.GC()
 		metrics.Read(sample)
 		if sample[0].Value.Kind() == metrics.KindUint64 {
 			mu.Lock()
@@ -42,7 +44,7 @@ func peakHeap() (stop func() uint64) {
 			select {
 			case <-done:
 				return
-			case <-time.After(2 * time.Millisecond):
+			case <-time.After(20 * time.Millisecond):
 			}
 		}
 	}()

@@ -10,6 +10,8 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 // MaxRecoveredRuns is the most runs one recovered artifact may record.
@@ -86,45 +88,170 @@ func (c *Case) DerivedRuns(rec ManifestRecord, byID map[string]ManifestRecord) (
 	return runs, nil
 }
 
-func readRunLines(r io.Reader) ([]Run, error) {
-	br := bufio.NewReaderSize(r, 2*maxRunsLine)
-	var runs []Run
-	for n := 1; ; n++ {
-		line, err := br.ReadSlice('\n')
-		if errors.Is(err, bufio.ErrBufferFull) {
-			return nil, fmt.Errorf("line %d is longer than %d bytes", n, maxRunsLine)
+// runsLineGuard feeds the runs decoder one line per Read and enforces the line rules before the
+// decoder sees a byte: a line is at most maxRunsLine bytes (so the decoder never buffers more than one
+// line) and holds something besides whitespace. It counts the lines handed out, so the caller can tell
+// that a value stays on its line.
+type runsLineGuard struct {
+	br    *bufio.Reader
+	pend  []byte // the rest of the line being handed out
+	lines int    // lines handed to the decoder so far
+	err   error  // sticky: what to return once pend is drained
+}
+
+func (g *runsLineGuard) tooLong() error {
+	return &runsFormatError{fmt.Sprintf("line %d is longer than %d bytes", g.lines+1, maxRunsLine)}
+}
+
+func (g *runsLineGuard) Read(p []byte) (int, error) {
+	if len(g.pend) == 0 {
+		if g.err != nil {
+			return 0, g.err
 		}
-		if err != nil && !errors.Is(err, io.EOF) {
-			return nil, err
+		line, err := g.br.ReadSlice('\n')
+		switch {
+		case errors.Is(err, bufio.ErrBufferFull):
+			g.err = g.tooLong()
+			return 0, g.err
+		case err != nil && !errors.Is(err, io.EOF):
+			g.err = err
+			return 0, err
 		}
-		atEOF := err != nil
-		if atEOF && len(line) == 0 {
-			return runs, nil
+		body := bytes.TrimSuffix(line, []byte("\n"))
+		switch {
+		case len(line) == 0: // end of input after a terminated line
+			g.err = io.EOF
+			return 0, io.EOF
+		case len(body) > maxRunsLine:
+			g.err = g.tooLong()
+			return 0, g.err
+		case len(bytes.Trim(body, " \t\r")) == 0:
+			g.err = &runsFormatError{fmt.Sprintf("line %d is blank", g.lines+1)}
+			return 0, g.err
 		}
-		line = bytes.TrimSuffix(line, []byte("\n"))
-		if len(line) > maxRunsLine {
-			return nil, fmt.Errorf("line %d is longer than %d bytes", n, maxRunsLine)
-		}
-		if len(runs) >= MaxRecoveredRuns {
-			return nil, fmt.Errorf("more than %d runs", MaxRecoveredRuns)
-		}
-		if err := checkExactKeys(line, "offset", "length"); err != nil {
-			return nil, fmt.Errorf("line %d: %w", n, err)
-		}
-		var run Run
-		dec := json.NewDecoder(bytes.NewReader(line))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&run); err != nil {
-			return nil, fmt.Errorf("line %d: %w", n, err)
-		}
-		if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-			return nil, fmt.Errorf("line %d: more than one JSON value", n)
-		}
-		runs = append(runs, run)
-		if atEOF {
-			return runs, nil
+		g.lines++
+		g.pend = line
+		if err != nil { // io.EOF: the last line has no newline
+			g.err = io.EOF
 		}
 	}
+	n := copy(p, g.pend)
+	g.pend = g.pend[n:]
+	return n, nil
+}
+
+// readRunLines reads a runs sidecar with one streaming decoder: one JSON object per line holding
+// exactly the keys offset and length (both present, neither null), at most MaxRecoveredRuns lines of at
+// most maxRunsLine bytes. Anything wrong with the format is a *runsFormatError; a read error of r is
+// returned as it is.
+func readRunLines(r io.Reader) ([]Run, error) {
+	g := &runsLineGuard{br: bufio.NewReaderSize(r, 2*maxRunsLine)}
+	dec := json.NewDecoder(g)
+	dec.UseNumber()
+	var runs []Run
+	for n := 1; ; n++ {
+		run, err := readRunObject(dec, g, n)
+		if errors.Is(err, io.EOF) {
+			return runs, nil // no further object
+		}
+		if err != nil {
+			return nil, err
+		}
+		if len(runs) >= MaxRecoveredRuns {
+			return nil, &runsFormatError{fmt.Sprintf("more than %d runs", MaxRecoveredRuns)}
+		}
+		runs = append(runs, run)
+	}
+}
+
+// readRunObject decodes the object of line n token by token, so that every key and value stays in view:
+// a repeated key, a key that differs only in case, an unknown key or a value that is not an integer is
+// refused, and a missing key is never read as 0. It returns io.EOF when the input ends before an object.
+func readRunObject(dec *json.Decoder, g *runsLineGuard, n int) (Run, error) {
+	bad := func(format string, a ...any) (Run, error) {
+		return Run{}, &runsFormatError{fmt.Sprintf("line %d: ", n) + fmt.Sprintf(format, a...)}
+	}
+	// fail turns a decoder error into a format error unless the reader itself failed
+	fail := func(err error) (Run, error) {
+		var se *json.SyntaxError
+		var fe *runsFormatError
+		switch {
+		case errors.As(err, &fe):
+			return Run{}, fe
+		case errors.As(err, &se):
+			return bad("%v", err)
+		case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+			return bad("the object is not complete")
+		}
+		return Run{}, err
+	}
+	t, err := dec.Token()
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return Run{}, io.EOF
+		}
+		return fail(err)
+	}
+	if t != json.Delim('{') {
+		return bad("not a JSON object")
+	}
+	var offset, length *int64
+	for dec.More() {
+		kt, err := dec.Token()
+		if err != nil {
+			return fail(err)
+		}
+		key, ok := kt.(string)
+		if !ok {
+			return bad("not a JSON object")
+		}
+		var dst **int64
+		switch key {
+		case "offset":
+			dst = &offset
+		case "length":
+			dst = &length
+		default:
+			if strings.EqualFold(key, "offset") || strings.EqualFold(key, "length") {
+				return bad("key %q is not spelled exactly", key)
+			}
+			return bad("json: unknown field %q", key)
+		}
+		if *dst != nil {
+			return bad("key %q appears twice", key)
+		}
+		vt, err := dec.Token()
+		if err != nil {
+			return fail(err)
+		}
+		num, ok := vt.(json.Number)
+		if !ok {
+			if vt == nil {
+				return bad("%s is null", key)
+			}
+			return bad("%s is not an integer", key)
+		}
+		v, perr := strconv.ParseInt(num.String(), 10, 64)
+		if perr != nil {
+			return bad("%s %q is not an int64", key, num.String())
+		}
+		*dst = &v
+	}
+	if _, err := dec.Token(); err != nil { // the closing brace
+		return fail(err)
+	}
+	if offset == nil || length == nil {
+		return bad("needs offset and length")
+	}
+	if g.lines != n {
+		return bad("a value spans more than one line")
+	}
+	// the decoder holds at most this one line: after the object only whitespace may follow
+	rest, _ := io.ReadAll(dec.Buffered())
+	if len(bytes.Trim(rest, " \t\r\n")) != 0 {
+		return bad("more than one JSON value")
+	}
+	return Run{Offset: *offset, Length: *length}, nil
 }
 
 // CheckRecoveredRuns applies rules R4 and R5 to one artifact and the runs
@@ -275,3 +402,8 @@ func derivedNeedsNoRuns(rec ManifestRecord) bool {
 	d := rec.Source.Derived
 	return d != nil && d.Recovery != nil && d.Recovery.Class == ClassJournalReport
 }
+
+// runsFormatError is a sidecar that is not in the runs format (as opposed to one that could not be read).
+type runsFormatError struct{ msg string }
+
+func (e *runsFormatError) Error() string { return e.msg }

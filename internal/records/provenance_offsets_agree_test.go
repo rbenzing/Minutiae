@@ -3,6 +3,7 @@ package records_test
 import (
 	"errors"
 	"io"
+	"math"
 	"strings"
 	"testing"
 
@@ -233,5 +234,37 @@ func TestOffsetLastHopExtentsAreCappedAcrossPieces(t *testing.T) {
 	if len(p.Offset.Image) != records.MaxExtentsPerHop || len(p.Offset.Hops) != 2 ||
 		!p.Offset.Hops[1].Truncated || p.Offset.Hops[1].Total != 300 || len(p.Offset.Hops[1].Extents) != records.MaxExtentsPerHop {
 		t.Fatalf("image %d hops %+v", len(p.Offset.Image), p.Offset.Hops)
+	}
+}
+
+// FA-4: Get uses verify's R4 function, so it is never laxer: runs that add up to the size but hold an
+// empty, negative or overflowing run are flagged by both, with verify's words.
+func TestGetRecoveredInvalidRunsAgreeWithVerify(t *testing.T) {
+	data8 := []byte("abcdefgh")
+	for _, k := range []struct {
+		name       string
+		runs       []evidence.Run
+		verifyText string
+	}{
+		{"empty run beside a good one", []evidence.Run{{Offset: 100, Length: 8}, {Offset: 300, Length: 0}}, "run 1 is empty"},
+		{"negative offset", []evidence.Run{{Offset: -5, Length: 8}}, "run 0 is not valid"},
+		{"negative length beside a long one", []evidence.Run{{Offset: 100, Length: -3}, {Offset: 0, Length: 8}}, "run 0 is not valid"},
+		{"offset plus length overflows", []evidence.Run{{Offset: math.MaxInt64, Length: 8}}, "run 0 is not valid"},
+	} {
+		t.Run(k.name, func(t *testing.T) {
+			c := recordstest.NewCase(t)
+			img := recordstest.AddArtifact(t, c, "img.bin", patterned(1<<14))
+			f := recordstest.AddDerivedWith(t, c, "recovered/p1-mtfs/000001-a.bin", recoveredSource(img, k.runs), data8)
+			r := recoveredRec(f.ID, ip(50))
+			r.Range = &records.Range{Offset: 0, Length: 2}
+			p := getOne(t, c, []string{f.ID}, r).Provenance
+			if rep := verifyReport(t, c); !hasProblemText(rep, k.verifyText) {
+				t.Fatalf("verify does not say %q: %q", k.verifyText, rep.Problems)
+			}
+			requireUnavailable(t, p, k.verifyText)
+			if kinds := problemKinds(p); kinds[records.ProblemRunsInconsistent] != 1 {
+				t.Fatalf("%+v", p.Problems)
+			}
+		})
 	}
 }

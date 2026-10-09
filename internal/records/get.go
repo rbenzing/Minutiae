@@ -26,6 +26,10 @@ import (
 // lock excludes other processes, and an ingest in this process between the two
 // reads can only add artifacts and audit entries, which the chain of an already
 // stored record never needs.
+//
+// The audit chain is NOT verified here (E3): the binding of each hop to its audit entry reads the
+// log without re-checking its hash chain, so a binding shown as proven holds only as far as the log
+// is intact. `case verify` recomputes the chain; run it before relying on a provenance result.
 func (r *Reader) Get(ctx context.Context, id int64) (Full, error) {
 	var full Full
 	err := r.c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {

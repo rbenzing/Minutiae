@@ -3,7 +3,6 @@ package records
 import (
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
@@ -172,26 +171,19 @@ func (r *Reader) resolveOffsets(p *Provenance, ix *evidence.ManifestIndex, rng *
 	}
 }
 
-// recoveredRunsFault is rule R4 of case verify for a recovered kind: no hole, and the runs add up
-// to the size of the artifact whether or not it is flagged incomplete. It returns "" when the
+// recoveredRunsFault is rule R4 of case verify for a recovered kind: it IS verify's function
+// (evidence.CheckRecoveredRuns), so Get is never stricter or laxer than verify. It returns "" when the
 // artifact is not of a recovered kind or the runs are fine.
 func recoveredRunsFault(art evidence.ManifestRecord, runs []evidence.Run) string {
 	if !evidence.IsRecoveredKind(art.Source.Kind) {
 		return ""
 	}
-	var sum int64
-	for i, ru := range runs {
-		if ru.Offset == -1 {
-			return fmt.Sprintf("run %d is a hole (recovered artifacts have no holes)", i)
-		}
-		if ru.Length > 0 && sum <= math.MaxInt64-ru.Length {
-			sum += ru.Length
-		}
+	probs := evidence.CheckRecoveredRuns(art, runs)
+	for i := range probs {
+		// the artifact is named by the problem Get adds
+		probs[i] = strings.TrimPrefix(probs[i], fmt.Sprintf("artifact %q (%q): ", art.ID, art.Path))
 	}
-	if sum != art.Size {
-		return fmt.Sprintf("runs cover %d bytes but the artifact holds %d", sum, art.Size)
-	}
-	return ""
+	return strings.Join(probs, "; ")
 }
 
 // runsSource names where the runs of a derivation are held.

@@ -74,10 +74,7 @@ func (c *Case) CheckedRuns(ix *ManifestIndex, rec ManifestRecord) ([]Run, error)
 		runs, err = readRunLines(tee)
 	}
 	if err != nil {
-		if errors.Is(err, ErrIntegrity) {
-			return nil, fmt.Errorf("sidecar %q: %w", sc.ID, err)
-		}
-		return nil, runsBad("sidecar %q: %s", sc.ID, err)
+		return nil, sidecarReadError(sc.ID, err)
 	}
 	if _, err := io.Copy(io.Discard, tee); err != nil {
 		return nil, fmt.Errorf("sidecar %q: %w", sc.ID, err)
@@ -86,4 +83,14 @@ func (c *Case) CheckedRuns(ix *ManifestIndex, rec ManifestRecord) ([]Run, error)
 		return nil, runsBad("sidecar %q hashes to %s, the manifest records %s", sc.ID, got, sc.SHA256)
 	}
 	return runs, nil
+}
+
+// sidecarReadError classifies the error of reading a runs sidecar: a format error (of either sidecar
+// format) is a runs-sidecar integrity problem; a plain read error is not, and stays a read error (E36).
+func sidecarReadError(id string, err error) error {
+	var fe *runsFormatError
+	if errors.As(err, &fe) {
+		return runsBad("sidecar %q: %s", id, fe.msg)
+	}
+	return fmt.Errorf("sidecar %q: %w", id, err) // wraps ErrIntegrity itself when it is an unallocated map format error
 }
