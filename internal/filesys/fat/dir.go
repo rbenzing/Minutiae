@@ -70,6 +70,8 @@ func parseDirentID(id string) (dir uint32, idx int, ok bool) {
 	if !ok {
 		return 0, 0, false
 	}
+	// The 31-bit width is a runaway guard on the number's size, not a statement
+	// about the directory; maxDirEntries is the real limit.
 	i, ok := parseCanonical(b, 31)
 	if !ok || i >= maxDirEntries {
 		return 0, 0, false
@@ -540,9 +542,13 @@ func (f *FS) resolveDir(first uint32, hint string) error {
 	queue := []uint32{f.rootFirst()}
 	seen := map[uint32]bool{f.rootFirst(): true}
 	for scans := 0; len(queue) > 0; scans++ {
-		if scans >= maxLocateScans {
-			f.warn("directory at cluster %d not found within %d directories", first, maxLocateScans)
-			break
+		if scans >= f.locateScans {
+			// Cut off: the directory is undecidable, which is not absent.
+			f.warn("directory at cluster %d not found within %d directories", first, f.locateScans)
+			if f.knownDir(first) {
+				return nil
+			}
+			return fmt.Errorf("%w: the search for the directory at cluster %d stopped after %d directories", ErrLimit, first, f.locateScans)
 		}
 		items, err := f.listDir(queue[0])
 		queue = queue[1:]

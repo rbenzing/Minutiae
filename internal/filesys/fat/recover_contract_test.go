@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -64,7 +65,7 @@ func TestRecovererContractOnFAT(t *testing.T) {
 				},
 				Reads: rr.count,
 				SkipDuplicate: "a FAT entry id is the position of the entry (directory cluster and index), so one id cannot be held by two objects; " +
-					"a cross-linked directory is reachable under two ids and is covered by TestRecoverCrossLinkedDirectories",
+					"a cross-linked directory is reachable from two listings, but each entry in it still has the one id dirent:<cluster>:<index>; TestRecoverCrossLinkedDirectories covers it",
 			})
 		})
 	}
@@ -155,5 +156,25 @@ func TestRecoverCrossLinkedDirectories(t *testing.T) {
 		if cycles != 1 {
 			t.Errorf("FAT%d: Walk reported %d cycles, want 1 (the second appearance of the shared directory)", typ, cycles)
 		}
+	}
+}
+
+// TestRecoverableScanCapIsUndecidableNotAbsent: when the search for a directory
+// is cut off by the scan cap, the directory is undecidable, not absent. The
+// error is the typed ErrLimit naming the cap and is never ErrNotFound.
+func TestRecoverableScanCapIsUndecidableNotAbsent(t *testing.T) {
+	files := []fattest.File{{Path: "/D1", Dir: true}, {Path: "/D1/D2", Dir: true}, {Path: "/D1/D2/D3", Dir: true}, {Path: "/B.TXT", Data: []byte("b")}}
+	img := fattest.Build(fattest.Options{Type: 16}, files)
+	f, err := fat.Open(bytes.NewReader(img), int64(len(img)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.SetLocateScans(2)
+	cs, err := f.Recoverable(filesys.Entry{ID: "dirent:77:3"})
+	if cs != nil || !errors.Is(err, fat.ErrLimit) || errors.Is(err, filesys.ErrNotFound) {
+		t.Fatalf("Recoverable = %v, %v; want nil and ErrLimit (not ErrNotFound)", cs, err)
+	}
+	if !strings.Contains(err.Error(), "2") {
+		t.Errorf("error %q does not name the cap", err)
 	}
 }

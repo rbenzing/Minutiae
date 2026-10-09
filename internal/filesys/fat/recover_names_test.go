@@ -270,3 +270,28 @@ func TestRecoverableFATDoesNotConsultTheFATForASubdirectoryEntry(t *testing.T) {
 		}
 	}
 }
+
+// TestRecoverableLongNameHighFirstByteIsUnverified: the lost first byte of the
+// short name really is 0x82 (the long-name checksums are rewritten over a name
+// that starts with it) and the long name starts with a letter above 0x7F. The
+// byte is recovered exactly, but no 8.3 derivation pins a high character, so
+// the long name is not attributed: lfn=unverified. A rule that confirmed any
+// byte of 0x80 or more would call this recovered.
+func TestRecoverableLongNameHighFirstByteIsUnverified(t *testing.T) {
+	const name = "éleading deleted name.txt"
+	_, img, b := recImage(t, fattest.Options{Type: 16}, []fattest.File{{Path: "/" + name, Data: bytes.Repeat([]byte{1}, 700), Deleted: true, LongName: true}})
+	loc := b.Find("/"+name, true)
+	short := append([]byte(nil), img[loc.Offset:loc.Offset+11]...)
+	short[0] = 0x82
+	var sum byte
+	for _, c := range short {
+		sum = (sum>>1 | sum<<7) + c
+	}
+	for _, off := range loc.LFNOffsets {
+		img[off+13] = sum
+	}
+	basis := basisOf(t, reopen(t, img), loc)
+	if !slices.Contains(basis, "lfn=unverified") || slices.Contains(basis, "lfn=recovered") {
+		t.Errorf("basis %v, want lfn=unverified", basis)
+	}
+}

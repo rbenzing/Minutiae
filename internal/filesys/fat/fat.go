@@ -49,6 +49,7 @@ type FS struct {
 	dirs         map[uint32]dirLoc // directories met so far, by first cluster: where their entry is
 	ends         map[uint32]int    // directories whose end-of-directory marker was found: its entry index
 	entryBudget  int64             // directory entries this instance may still read
+	locateScans  int               // directories one locate may list (maxLocateScans; lowered by tests)
 	budgetWarned bool
 
 	walked atomic.Int64 // directory entries visited by deleted-name walks (a work measure for tests)
@@ -123,6 +124,7 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		data:      raw,
 
 		entryBudget: maxEntryBudget,
+		locateScans: maxLocateScans,
 		size:        volSize,
 		label:       b.label,
 	}
@@ -184,3 +186,7 @@ func (f *FS) readRootLabel() {
 		f.warn("root directory unreadable while looking for the volume label: %v", err)
 	}
 }
+
+// ErrLimit is returned when a bounded search is cut off by its cap: the answer
+// is undecidable, which is not the same as "not found".
+var ErrLimit = errors.New("fat: structural limit exceeded")

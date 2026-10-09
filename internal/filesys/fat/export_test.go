@@ -50,3 +50,10 @@ func (f *FS) NameWalkEntries() int64 { return f.walked.Load() }
 func (f *FS) NameBasis(dir uint32, idx int, raw []byte) []string {
 	return f.deletedNameBasis(dir, idx, raw)
 }
+
+// SetLocateScans lowers the number of directories one locate may list.
+func (f *FS) SetLocateScans(n int) {
+	f.dmu.Lock()
+	defer f.dmu.Unlock()
+	f.locateScans = n
+}
