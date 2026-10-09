@@ -21,13 +21,14 @@ const (
 	// streamed in keyset chunks (WHERE id > ? ORDER BY id LIMIT n), never with a
 	// cursor held across calls (the database has one connection).
 	verifyChunkRows = 5000
-	// verifyChunkBytes ends a chunk early when its rows are this large, so a
-	// hostile database of huge rows cannot make one chunk unbounded.
-	verifyChunkBytes = 64 << 20
 	// verifyMaxPerKind is how many problems of one kind are listed; the rest are
 	// counted in one line.
 	verifyMaxPerKind = 50
 )
+
+// verifyChunkBytes ends a chunk early when its rows are this large, so a hostile database of huge
+// rows cannot make one chunk unbounded. It is a var only so a test can lower it.
+var verifyChunkBytes = 64 << 20
 
 // verifyChunkObserver is told about every chunk query of the record rows (table
 // "records") with the number of rows it returned; only tests pass one (Case.verify).
@@ -245,12 +246,16 @@ func (c *Case) verifyRecords(rep *VerifyReport, recs []ManifestRecord, entries [
 	// the schema objects of every schema this build knows (a v1 case too: tables or
 	// triggers planted in it are not harmless)
 	if dbv >= 1 && dbv <= CurrentSchema {
+		done := c.phase("records.schema")
 		c.verifySchemaObjects(ctx, ps, dbv)
+		done()
 	}
 	if dbv < 2 {
 		return
 	}
+	doneIntegrity := c.phase("records.integrity_check")
 	c.verifyIntegrityCheck(ctx, rep)
+	doneIntegrity()
 
 	var audit *recordAudit
 	var sorted []auditedBatch
@@ -306,6 +311,7 @@ func (c *Case) verifyRecords(rep *VerifyReport, recs []ManifestRecord, entries [
 	trails := map[string]*RecoveryTrail{}
 	seenArtifact := map[string]bool{}
 	var maxID int64
+	doneStream := c.phase("records.stream")
 	streamed := c.streamRecords(ctx, ps, verifyChunkRows, observe, func(row RecordRow, m recordRowMeta) {
 		rep.RecordsChecked++
 		maxID = max(maxID, row.ID)
@@ -359,12 +365,18 @@ func (c *Case) verifyRecords(rep *VerifyReport, recs []ManifestRecord, entries [
 		acc[i].n++
 	})
 
+	doneStream()
+
+	doneBatches := c.phase("records.batches")
 	if auditReadable && streamed {
 		c.checkBatches(rep, ps, audit, sorted, acc, byKey, ok)
 	}
+	doneBatches()
+	doneLifecycle := c.phase("records.lifecycle")
 	if auditReadable {
 		c.verifyLifecycle(ctx, rep, ps, audit, manifest, byKey, ok)
 	}
+	doneLifecycle()
 	if ok {
 		announced := map[batchKey]bool{}
 		if auditReadable {

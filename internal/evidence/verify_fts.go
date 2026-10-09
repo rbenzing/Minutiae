@@ -168,17 +168,23 @@ func (c *Case) verifyFTS(ctx context.Context, ps *problemSet, observe verifyChun
 		return
 	}
 	r.hook("after-open")
-	if !r.rebuild(observe) {
+	doneRebuild := r.c.phase("fts.rebuild")
+	rebuilt := r.rebuild(observe)
+	doneRebuild()
+	if !rebuilt {
 		return
 	}
 	r.rep.FTSDocsChecked = len(r.indexed)
 	r.hook("after-rebuild")
+	doneCompare := r.c.phase("fts.compare")
 	for _, table := range FTSTables() {
 		if r.dead {
+			doneCompare()
 			return
 		}
 		r.compareTable(table)
 	}
+	doneCompare()
 }
 
 func (r *ftsVerify) hook(point string) {

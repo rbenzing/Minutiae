@@ -1,5 +1,7 @@
 package evidence
 
+import "time"
+
 // V1Statements exposes the schema v1 DDL to the external test package, which
 // may import internal/records/recordstest (an internal test cannot: import cycle).
 var V1Statements = v1Statements
@@ -15,3 +17,6 @@ func (c *Case) SetReindexHook(f func(point string) error) { c.reindexHook = f }
 // AllowUndescribedRecoveredKinds lets this Case write a recovered kind without a Recovery, so tests can
 // plant what a buggy writer would have produced and prove that verify catches it. Test-only.
 func (c *Case) AllowUndescribedRecoveredKinds() { c.noRecoveredKindGate = true }
+
+// SetPhaseHook installs an observer of the verify phase timings. Test-only.
+func (c *Case) SetPhaseHook(f func(string, time.Duration)) { c.verifyPhaseHook = f }

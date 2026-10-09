@@ -80,7 +80,9 @@ func (c *Case) verify(observe verifyChunkObserver) (VerifyReport, error) {
 
 func (c *Case) verifyRun(ctx context.Context, observe verifyChunkObserver, checks []VerifyCheck) (VerifyReport, error) {
 	rep := VerifyReport{Problems: []string{}, Notices: []string{}}
+	doneAudit := c.phase("audit")
 	n, audited, auditProblems, err := verifyAudit(filepath.Join(c.Dir, auditFile))
+	doneAudit()
 	if err != nil {
 		rep.problemf("audit log unreadable: %v", err)
 	}
@@ -94,6 +96,7 @@ func (c *Case) verifyRun(ctx context.Context, observe verifyChunkObserver, check
 	}
 	inManifest := map[string]bool{}
 	seenID := map[string]bool{}
+	doneArtifacts := c.phase("artifacts")
 	for _, r := range recs {
 		rep.ArtifactsChecked++
 		inManifest[r.Path] = true
@@ -111,6 +114,7 @@ func (c *Case) verifyRun(ctx context.Context, observe verifyChunkObserver, check
 				r.ID, r.Path, r.SHA256, r.Size, d.SHA256, d.Size)
 		}
 	}
+	doneArtifacts()
 
 	c.checkDerived(&rep, recs)
 	c.crossCheckAudit(&rep, recs, audited)

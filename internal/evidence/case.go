@@ -79,7 +79,9 @@ type Case struct {
 	// verifyFTSHook and verifyFTSCacheKiB are test seams of verify P11: the hook is called at the
 	// named points of the check (with the private expected-index database), and a non-zero cache
 	// size replaces the default of the expected index so a small corpus spills.
-	verifyFTSHook     func(point string, expected *sql.DB)
+	verifyFTSHook func(point string, expected *sql.DB)
+	// verifyPhaseHook observes the duration of each verify phase; it cannot alter a check.
+	verifyPhaseHook   func(phase string, d time.Duration)
 	verifyFTSCacheKiB int
 
 	// noRecoveredKindGate is a test seam only (AllowUndescribedRecoveredKinds in export_test.go).
