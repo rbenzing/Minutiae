@@ -117,6 +117,12 @@ type Derivation struct {
 	// filesystem (APFS) and not from the live tree.
 	Snapshot *SnapshotRef `json:"snapshot,omitempty"`
 
+	// AcquisitionGaps is set on extract and unallocated artifacts read from an
+	// image that declares unreadable acquisition ranges (E01 error2) when the
+	// artifact's bytes overlap them, or when that cannot be decided (a damaged
+	// error2 section included). Unknown is never omitted when true.
+	AcquisitionGaps *AcquisitionGapNote `json:"acquisition_gaps,omitempty"`
+
 	// Recovery is set on artifacts of the recovered kinds (recover, carve, slack,
 	// journal, report): the class, method, confidence and allocation evidence.
 	Recovery *Recovery `json:"recovery,omitempty"`

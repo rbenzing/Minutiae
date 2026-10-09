@@ -20,6 +20,12 @@ import (
 // read), wraps the disk in a 3-segment E01 set, imports it and opens it.
 func e01GapSession(t *testing.T, c *evidence.Case, nodes []fstest.Node, gapAt, gapSectors int64, zero bool) (*examine.Session, []byte) {
 	t.Helper()
+	return e01GapSessionMut(t, c, nodes, gapAt, gapSectors, zero, nil)
+}
+
+// e01GapSessionMut is e01GapSession with mutate applied to the built segments.
+func e01GapSessionMut(t *testing.T, c *evidence.Case, nodes []fstest.Node, gapAt, gapSectors int64, zero bool, mutate func([][]byte)) (*examine.Session, []byte) {
+	t.Helper()
 	data := disk(fstest.Build(fstest.BuildSpec{Label: "L", FreeBlocks: 2, Nodes: nodes}))
 	if gapSectors < 0 {
 		gapSectors = (int64(len(data)) - gapAt) / 512
@@ -32,6 +38,9 @@ func e01GapSession(t *testing.T, c *evidence.Case, nodes []fstest.Node, gapAt, g
 		ErrorRanges: [][2]uint32{{uint32(gapAt / 512), uint32(gapSectors)}},
 	}
 	segs := ewftest.Build(o, data)
+	if mutate != nil {
+		mutate(segs)
+	}
 	dir := t.TempDir()
 	paths := make([]string, len(segs))
 	for i, s := range segs {

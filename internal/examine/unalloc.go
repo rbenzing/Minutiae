@@ -88,6 +88,7 @@ func (s *Session) ExportUnallocated(ctx context.Context, o UnallocOptions) (Summ
 			return &caseWriteError{fillErr}
 		}
 
+		d.AcquisitionGaps = s.gapNote(runs, true, total)
 		d.RunsArtifact = sidecar.ID
 		var done int64
 		bin, fillErr, err := s.capture(a, dir+"/unallocated.bin",

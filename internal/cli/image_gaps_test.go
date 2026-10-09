@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -144,5 +145,18 @@ func TestImageInfoGapOutsideAndTruncatedWording(t *testing.T) {
 	text, _, doc = gapInfo(t, ewftest.Options{ErrorRanges: r})
 	if doc.Gaps == nil || !doc.Gaps.Truncated || !strings.Contains(text, "list truncated") {
 		t.Errorf("truncated: %+v\n%s", doc.Gaps, text)
+	}
+}
+
+// A file read from sectors the acquirer declared unreadable is announced in the
+// extract summary.
+func TestImageExtractPrintsGapNote(t *testing.T) {
+	e := newEWFEnv(t, ewftest.Options{ErrorRanges: [][2]uint32{{0, 96}}}) // the whole 96-sector disk
+	code, out, errs := runSplit(context.Background(), t, e.d, "image", "extract", "--case", e.c, "-r", e.recs[0].ID, "/")
+	if code != 0 {
+		t.Fatalf("extract: %d\n%s\n%s", code, out, errs)
+	}
+	if !strings.Contains(out, "acquirer-gap note") || !strings.Contains(out, "declared unreadable") {
+		t.Fatalf("no gap note in the summary:\n%s", out)
 	}
 }

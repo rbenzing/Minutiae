@@ -809,6 +809,7 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 		printSkipReasons(d.Out, sum)
 		printFSWarnings(d.Out, sum)
 		printIncomplete(d.Out, sum)
+		printGapNote(d.Out, sum)
 		if note != "" {
 			fmt.Fprintln(d.Out, note)
 		}
@@ -858,6 +859,7 @@ func newImageUnallocCmd(d Deps, opts *rootOptions) *cobra.Command {
 		}
 		fmt.Fprintf(d.Out, "exported unallocated space: %d file(s) (%s), skipped %d\n", sum.Files, humanBytes(sum.Bytes), sum.Skipped)
 		printFSWarnings(d.Out, sum)
+		printGapNote(d.Out, sum)
 		for _, a := range sum.Artifacts {
 			status := ""
 			if a.Incomplete {
@@ -909,4 +911,21 @@ func gapsLine(g *image.AcquisitionGaps) string {
 		line += "; list truncated"
 	}
 	return line
+}
+
+// printGapNote says how many artifacts overlap sectors the acquirer declared
+// unreadable (the acquirer's declaration, not a check of the bytes).
+func printGapNote(w io.Writer, sum examine.Summary) {
+	var n, unknown int
+	for _, a := range sum.Artifacts {
+		if d := a.Source.Derived; d != nil && d.AcquisitionGaps != nil {
+			n++
+			if d.AcquisitionGaps.Unknown {
+				unknown++
+			}
+		}
+	}
+	if n > 0 {
+		fmt.Fprintf(w, "note: %d artifact(s) carry an acquirer-gap note: %d overlap sectors the acquirer declared unreadable (the image holds acquirer fill there; those bytes are not device data) and %d may overlap (undecidable: Derived.acquisition_gaps unknown)\n", n, n-unknown, unknown)
+	}
 }

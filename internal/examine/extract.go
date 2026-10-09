@@ -237,6 +237,7 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 		}
 		runs = nil
 	}
+	d.AcquisitionGaps = x.s.gapNote(runs, runsErr == nil, size)
 	useSidecar := len(runs) > evidence.MaxInlineRuns
 	if !useSidecar {
 		d.Runs = runs
@@ -271,6 +272,7 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 					if perr := x.keepPrefixRuns(rel, p, d, runs, n); perr != nil {
 						return perr // a failure of the case itself
 					}
+					d.AcquisitionGaps = x.s.gapNote(prefixRuns(runs, n), true, n) // the kept bytes only
 					if n > 0 && d.Runs == nil && d.RunsArtifact == "" {
 						err = fmt.Errorf("%w (the runs of the kept bytes are not recorded: no free runs sidecar name)", err)
 					}
@@ -446,7 +448,8 @@ func imageRuns(raw []filesys.Run, size int64, part volume.Partition, imageSize i
 func (s *Session) writeRunsSidecar(a *analysis, rel string, runs []evidence.Run, fsPath string, d *evidence.Derivation) error {
 	sd := *d
 	sd.Runs, sd.RunsArtifact = nil, ""
-	sd.Recovery = nil // a runs sidecar describes runs, never a recovery (the recovery stays on the file)
+	sd.Recovery = nil        // a runs sidecar describes runs, never a recovery (the recovery stays on the file)
+	sd.AcquisitionGaps = nil // a runs sidecar describes runs, the note stays on the content artifact
 	src := evidence.Source{Kind: "runs", DeviceID: s.Parent.Source.DeviceID, RemotePath: fsPath, Derived: &sd}
 	rec, fillErr, err := s.capture(a, rel, src, func(w io.Writer) error {
 		return writeJSONLines(w, len(runs), func(i int) any { return runs[i] })
