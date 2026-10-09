@@ -165,6 +165,12 @@ the committed `exfat.img.gz` is still used by the tests; only regenerating it is
 impossible there, and the builder-based tests (`exfattest`) are the coverage that
 needs no image tools.
 
+Caveat (ruling F38): `losetup` can autoload the `loop` kernel module in the Docker
+Desktop VM or on a host where loop is a module rather than built in, and `/dev/fuse`
+needs the fuse driver. This pre-dates the rule that kernel modules load only in a QEMU
+guest and is allowed per construct by the guard test; moving the exFAT fixture to the
+QEMU guest is a backlog item, not done here.
+
 ### APFS determinism and limits
 
 `apfs.sh` makes EMPTY containers with `mkapfs` (package `apfsprogs` 0.2.0-1, a
@@ -444,19 +450,17 @@ checkpoint's `valid_block_count`, which fsck must also report as matching), `fsc
 hash is checked unchanged after the read-only tools ran. The tools print the feature bits
 in unprefixed hex (`928` is `0x928`).
 
-### F2FS deleted entries need a mountable kernel
+### F2FS deleted entries come from the QEMU guest
 
 F2FS keeps no deletion time and `sload.f2fs` cannot delete, so deleted entries exist only if
-files are removed through a kernel mount. `f2fs.sh` tries `mount -t f2fs -o loop` and, when
-it works, removes `/dir/removable-1.txt`, `-2` and `-3` and puts `/dir`'s mtime back to the
-source tree's. The Docker Desktop kernel (6.6.87.2-microsoft-standard-WSL2) has no f2fs
-module (`/proc/filesystems` lacks it, there is no `/lib/modules`, and the mount fails even
-with `--privileged`), so the committed fixtures have `"deleted": []` and a `generator.note`
-saying so; the three removable files are then ordinary live files in the oracle. Deleted-entry
-coverage is left to the `f2fstest` builder tests. The mount path has never run on a kernel
-with f2fs; if it does, the kernel stamps ctimes and checkpoint data from the real clock, so
-such images are not byte-reproducible (the note says so) and the oracle (read from the final
-image) still holds.
+files are removed through a kernel mount. `f2fs.sh` no longer tries one (ruling F37, 3B): a
+kernel mount of a modular filesystem can load a module into the Docker Desktop VM or the
+host, which this repository never does; kernel mounts happen only in the QEMU guest (3A's
+guest mounts f2fs, see "Recovery fixtures: toolchain probe"). The committed fixtures were
+always built without the mount path (the Docker Desktop kernel has no f2fs module), so
+they have `"deleted": []` and a `generator.note` saying so; the three removable files are
+ordinary live files in the oracle, and deleted-entry coverage is left to the `f2fstest`
+builder tests. Removing the mount path changes no committed fixture or oracle.
 
 ## HFS+ fixtures
 
