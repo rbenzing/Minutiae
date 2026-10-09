@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
+	"hash"
 	"math"
 	"reflect"
 	"strings"
@@ -172,16 +174,70 @@ func TestScaleMixMatchesTheModel(t *testing.T) {
 	}
 }
 
-// TestScaleGoldenDigest pins the generator across platforms and Go versions: the SHA-256 of the
-// stored-text size of records 0..1999 at seed 7.
+// digestRecord writes every field of r into h in a fixed, length-prefixed encoding, so a change to
+// any field (type, artifact choice, times, flags, confidence, text, payload) changes the digest.
+func digestRecord(h hash.Hash, r records.Record) {
+	num := func(v int64) {
+		var b [8]byte
+		binary.BigEndian.PutUint64(b[:], uint64(v))
+		h.Write(b[:])
+	}
+	str := func(s string) {
+		num(int64(len(s)))
+		h.Write([]byte(s))
+	}
+	flag := func(v bool) {
+		if v {
+			num(1)
+		} else {
+			num(0)
+		}
+	}
+	tm := func(t *records.Time) {
+		flag(t != nil)
+		if t != nil {
+			num(t.T.UnixMicro())
+			str(string(t.Basis))
+			num(int64(t.OffsetMin))
+		}
+	}
+	str(r.Type)
+	str(r.ArtifactID)
+	str(r.SourcePath)
+	str(r.Locator)
+	flag(r.Range != nil)
+	if r.Range != nil {
+		num(r.Range.Offset)
+		num(r.Range.Length)
+	}
+	tm(r.Time)
+	tm(r.TimeEnd)
+	num(int64(len(r.Times)))
+	for _, nt := range r.Times {
+		str(nt.Kind)
+		tm(&nt.Time)
+	}
+	flag(r.Deleted)
+	str(r.Recovery)
+	flag(r.Confidence != nil)
+	if r.Confidence != nil {
+		num(int64(*r.Confidence))
+	}
+	str(r.Summary)
+	str(r.Body)
+	p, _ := json.Marshal(r.Payload)
+	str(string(p))
+}
+
+// TestScaleGoldenDigest pins the generator across platforms and Go versions: the SHA-256 of every
+// field of records 0..1999 at seed 7 (type, times, artifact choice, deleted and recovered flags,
+// confidence and text), not only their sizes.
 func TestScaleGoldenDigest(t *testing.T) {
-	const want = "35888ebb19c062392dd33c2687c106b6805bd654895c654c8c20888f2a7a61bc"
+	const want = "d95ba8ed35ba3c9227f422156f46a17239b577bdef4e4af84cbc6e1114240ef4"
 	s, _ := scaleFixture(t, 7)
 	h := sha256.New()
 	for i := int64(0); i < 2000; i++ {
-		var b [8]byte
-		binary.BigEndian.PutUint64(b[:], uint64(recordstest.RowBytes(s.At(i))))
-		h.Write(b[:])
+		digestRecord(h, s.At(i))
 	}
 	if got := hex.EncodeToString(h.Sum(nil)); got != want {
 		t.Fatalf("golden digest %s, want %s", got, want)
