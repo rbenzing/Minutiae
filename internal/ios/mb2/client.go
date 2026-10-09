@@ -31,6 +31,16 @@ type BackupOptions struct {
 // counts keep the true totals.
 const MaxRecordedErrors = 1000
 
+// RemoteEnd describes a file whose data blocks were followed by a device
+// error block (0x0b, or 0x06) instead of a 0x00 success block. libimobiledevice
+// treats that as the end of the file; Minutiae records it so the file is never
+// taken as proven complete.
+type RemoteEnd struct {
+	Code    byte   // CodeErrorRemote, CodeErrorLocal or CodeNoTerminator
+	Bytes   int64  // file bytes received in that transfer before the block
+	Message string // the device's message, at most maxName bytes; empty past MaxRecordedErrors entries
+}
+
 // Result summarizes a backup.
 type Result struct {
 	BytesReceived    int64
@@ -41,6 +51,19 @@ type Result struct {
 	// Incomplete lists files (slash-separated, relative to Dir) whose transfer
 	// failed part-way; they hold only the bytes received before the failure.
 	Incomplete []string
+	// RemoteEnded lists files (slash-separated, relative to Dir) whose last
+	// transfer ended with a device error block after data. Every such file is
+	// kept (the flag set is complete). A later transfer of the same file that
+	// ends with a success block removes the entry; the device's move, copy and
+	// remove requests update it.
+	RemoteEnded map[string]RemoteEnd
+	// RemoteEndedDetailOmitted counts entries recorded without their message
+	// (the detail is capped at MaxRecordedErrors; the entries are not).
+	RemoteEndedDetailOmitted int
+	// RemovedEnds lists marks of files the device then removed or replaced
+	// (first MaxRecordedErrors); RemovedEndCount is the true total.
+	RemovedEnds     []string
+	RemovedEndCount int
 }
 
 // Client is a mobilebackup2 session on an already-started service connection.

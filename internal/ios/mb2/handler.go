@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,6 +17,8 @@ type handler struct {
 	c   *Client
 	o   BackupOptions
 	res Result
+
+	detailed int // RemoteEnded entries that kept their message
 }
 
 func (h *handler) run() error {
@@ -204,7 +207,7 @@ func (h *handler) receiveFiles() error {
 			h.res.LocalErrorCount++
 			h.res.LocalErrors = appendCapped(h.res.LocalErrors, fmt.Sprintf("%s: %v", fname, lerr))
 		}
-		ended, err := h.receiveBlocks(r, w, fname)
+		be, err := h.receiveBlocks(r, w, fname)
 		if f != nil {
 			err = errors.Join(err, f.Close())
 			if err != nil { // the file holds only what arrived before the failure
@@ -214,60 +217,145 @@ func (h *handler) receiveFiles() error {
 		if err != nil {
 			return err
 		}
-		if ended {
+		if lerr == nil {
+			h.noteEnd(filepath.ToSlash(rel), be)
+		}
+		if be.ended {
 			break
 		}
 	}
 	return h.status(0, "", nil)
 }
 
-// receiveBlocks reads one file's blocks. ended reports a zero length where a
-// block was expected, which (as in libimobiledevice) ends the whole upload.
-func (h *handler) receiveBlocks(r io.Reader, w io.Writer, fname string) (ended bool, err error) {
+// blockEnd is how one file's blocks ended.
+type blockEnd struct {
+	ended     bool   // a zero length where a block was expected ends the whole upload
+	afterData bool   // an error block followed file data
+	code      byte   // that block's code
+	msg       string // that block's message, bounded
+	fileBytes int64  // file data received in this transfer
+}
+
+// receiveBlocks reads one file's blocks. be.ended reports a zero length where
+// a block was expected, which (as in libimobiledevice) ends the whole upload.
+func (h *handler) receiveBlocks(r io.Reader, w io.Writer, fname string) (blockEnd, error) {
+	var be blockEnd
 	last := byte(0xff)
 	for {
 		n, err := ReadU32(r)
 		if err != nil {
-			return false, err
+			return be, err
 		}
 		if n == 0 {
-			return true, nil
+			be.ended = true
+			if last == CodeFileData { // data with no terminal block: the transfer was interrupted
+				be.afterData, be.code, be.msg = true, CodeNoTerminator, "zero length after file data, no success block"
+			}
+			return be, nil
 		}
 		code, err := ReadByte(r)
 		if err != nil {
-			return false, err
+			return be, err
 		}
 		payload := int64(n) - 1
 		switch code {
 		case CodeFileData:
 			copied, err := io.CopyN(w, r, payload)
 			h.res.BytesReceived += copied
+			be.fileBytes += copied
 			if h.o.Progress != nil {
 				h.o.Progress(h.res.BytesReceived)
 			}
 			if err != nil {
-				return false, err
+				return be, err
 			}
 			last = code
 		case CodeSuccess:
 			_, err := io.CopyN(io.Discard, r, payload)
-			return false, err
+			return be, err
 		case CodeErrorRemote, CodeErrorLocal:
 			// Keep at most maxName bytes of the device-supplied message and skip the rest.
 			msg := make([]byte, min(payload, maxName))
 			if _, err := io.ReadFull(r, msg); err != nil {
-				return false, err
+				return be, err
 			}
 			if _, err := io.CopyN(io.Discard, r, payload-int64(len(msg))); err != nil {
-				return false, err
+				return be, err
 			}
-			if last != CodeFileData { // after data, 0x0b is just the end marker
+			if last != CodeFileData {
 				h.res.RemoteErrorCount++
 				h.res.RemoteErrors = appendCapped(h.res.RemoteErrors, fmt.Sprintf("%s: %s", fname, msg))
+			} else {
+				be.afterData, be.code, be.msg = true, code, string(msg)
 			}
-			return false, nil
+			return be, nil
 		default:
-			return false, fmt.Errorf("unknown block code 0x%02x for %s", code, fname)
+			return be, fmt.Errorf("unknown block code 0x%02x for %s", code, fname)
+		}
+	}
+}
+
+// noteEnd records or clears the remote end of the file stored at rel. Every
+// error-ended file is recorded (the flag set is complete); only the message is
+// dropped, past MaxRecordedErrors entries, and that is counted.
+func (h *handler) noteEnd(rel string, be blockEnd) {
+	if !be.afterData {
+		delete(h.res.RemoteEnded, rel) // a later transfer with a success block replaced the content
+		return
+	}
+	if h.res.RemoteEnded == nil {
+		h.res.RemoteEnded = map[string]RemoteEnd{}
+	}
+	e := RemoteEnd{Code: be.code, Bytes: be.fileBytes}
+	if h.detailed < MaxRecordedErrors {
+		e.Message = be.msg
+		h.detailed++
+	} else {
+		h.res.RemoteEndedDetailOmitted++
+	}
+	h.res.RemoteEnded[rel] = e
+}
+
+// relKey is the key of a device path in Result.RemoteEnded: the cleaned,
+// slash-separated path relative to Dir, as receiveFiles records it.
+func relKey(p string) string { return filepath.ToSlash(filepath.Clean(filepath.FromSlash(p))) }
+
+func underKey(k, root string) bool { return k == root || strings.HasPrefix(k, root+"/") }
+
+// moveEnds carries the marks of from, and of everything below it, to to.
+func (h *handler) moveEnds(from, to string) {
+	if from == to {
+		return
+	}
+	moved := map[string]RemoteEnd{}
+	for k, e := range h.res.RemoteEnded {
+		if underKey(k, from) {
+			moved[to+k[len(from):]] = e
+			delete(h.res.RemoteEnded, k)
+		}
+	}
+	maps.Copy(h.res.RemoteEnded, moved)
+}
+
+// copyEnds marks the copies of marked files.
+func (h *handler) copyEnds(from, to string) {
+	copies := map[string]RemoteEnd{}
+	for k, e := range h.res.RemoteEnded {
+		if underKey(k, from) {
+			copies[to+k[len(from):]] = e
+		}
+	}
+	maps.Copy(h.res.RemoteEnded, copies)
+}
+
+// dropEnds is called when root is removed or its content replaced: the marks
+// under it leave RemoteEnded for the audit record in RemovedEnds.
+func (h *handler) dropEnds(root string) {
+	for k, e := range h.res.RemoteEnded {
+		if underKey(k, root) {
+			delete(h.res.RemoteEnded, k)
+			h.res.RemovedEndCount++
+			h.res.RemovedEnds = appendCapped(h.res.RemovedEnds, fmt.Sprintf("%s: code 0x%02x, %d bytes", k, e.Code, e.Bytes))
 		}
 	}
 }
@@ -327,13 +415,16 @@ func (h *handler) move(msg []any) error {
 			continue
 		}
 		_ = os.RemoveAll(dst)
+		h.dropEnds(relKey(to)) // the destination's old content is gone
 		if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
 			errs = append(errs, err)
 			continue
 		}
 		if err := os.Rename(src, dst); err != nil {
 			errs = append(errs, err)
+			continue
 		}
+		h.moveEnds(relKey(from), relKey(to))
 	}
 	return h.statusFor(errors.Join(errs...))
 }
@@ -349,7 +440,9 @@ func (h *handler) remove(msg []any) error {
 		}
 		if err != nil {
 			errs = append(errs, err)
+			continue
 		}
+		h.dropEnds(relKey(p))
 	}
 	return h.statusFor(errors.Join(errs...))
 }
@@ -368,6 +461,10 @@ func (h *handler) copyItem(msg []any) error {
 	}
 	if err == nil {
 		err = copyPath(src, dst)
+	}
+	if err == nil {
+		h.dropEnds(relKey(to)) // the copy overwrote whatever was there
+		h.copyEnds(relKey(from), relKey(to))
 	}
 	return h.statusFor(err)
 }
