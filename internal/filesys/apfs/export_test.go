@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+
+	"github.com/rbenzing/minutiae/internal/filesys"
 )
 
 // Test-only accessors, so the external apfs_test package can check internals
@@ -355,3 +357,17 @@ func (f *FS) NodeReads() int64 { return f.nodeReads.Load() }
 
 // SetUnallocCap sets the cap on the runs Unallocated reports.
 func (f *FS) SetUnallocCap(n int) { f.unallocCap = n }
+
+// ExtentRuns maps the extents of object id of volume slot as the live tree has
+// them, returning the trusted runs (an error when the map is damaged).
+func (f *FS) ExtentRuns(slot int, id uint64, size int64) ([]filesys.Run, error) {
+	v := f.slots[slot]
+	m, err := f.extentMap(v, 0, id, id, size)
+	if err != nil {
+		return nil, err
+	}
+	if m.tail != nil {
+		return m.runs, m.tail
+	}
+	return m.runs, nil
+}

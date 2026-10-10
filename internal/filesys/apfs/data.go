@@ -89,14 +89,19 @@ func (f *FS) Open(e filesys.Entry) (filesys.File, error) {
 		}
 		f.warn("volume %d inode %d: per-file encryption (crypto id %#x): the content is returned as stored on disk (ciphertext), not decrypted", v.slot, ino, id)
 	}
-	fl := &file{r: f.data, size: size, avail: m.covered, runs: m.runs, tail: m.tail, enc: cryptoAnomaly(in.cryptoID) || m.cryptoSeen}
+	return f.newFile(m, size, cryptoAnomaly(in.cryptoID) || m.cryptoSeen), nil
+}
+
+// newFile builds the readable file of a validated map.
+func (f *FS) newFile(m *fileMap, size int64, enc bool) *file {
+	fl := &file{r: f.data, size: size, avail: m.covered, runs: m.runs, tail: m.tail, enc: enc}
 	fl.starts = make([]int64, len(m.runs))
 	var at int64
 	for i, r := range m.runs {
 		fl.starts[i] = at
 		at += r.Length
 	}
-	return fl, nil
+	return fl
 }
 
 // openSymlink returns the target held in the symlink xattr.
@@ -171,6 +176,14 @@ func (b *runBuilder) addAll(rs ...filesys.Run) bool {
 // phys_block_num 0 are holes; extents entirely beyond size are ignored (the
 // scan stops there). A read failure that is not corruption is returned.
 func (f *FS) fileMap(v *volume, view uint64, in *inode, size int64) (*fileMap, error) {
+	return f.extentMap(v, view, in.privateID, in.ino, size)
+}
+
+// extentMap is fileMap for the extent records keyed by id (a file's private id,
+// or the object id of an extended-attribute stream); owner names the object in
+// messages. size is the length the caller trusts. Everything fileMap documents
+// holds here: validation per extent, the trusted prefix, holes for gaps.
+func (f *FS) extentMap(v *volume, view uint64, id, owner uint64, size int64) (*fileMap, error) {
 	m := &fileMap{}
 	rb := &runBuilder{max: f.maxFileRuns}
 	var (
@@ -182,15 +195,14 @@ func (f *FS) fileMap(v *volume, view uint64, in *inode, size int64) (*fileMap, e
 	)
 	capReason := fmt.Sprintf("more than %d runs", f.maxFileRuns)
 
-	if in.privateID == 0 || in.privateID > maxIno {
-		reason = fmt.Sprintf("the private id %d is not a valid object id", in.privateID)
+	if id == 0 || id > maxIno {
+		reason = fmt.Sprintf("the private id %d is not a valid object id", id)
 	} else {
 		t, err := f.fsTree(v, view)
 		if err != nil {
 			return nil, err
 		}
 		f.scans.Add(1)
-		id := in.privateID
 		prefix := func(key []byte) int {
 			k := le.Uint64(key)
 			kid, kt := k&jobjIDMask, uint8(k>>60)
@@ -253,7 +265,7 @@ func (f *FS) fileMap(v *volume, view uint64, in *inode, size int64) (*fileMap, e
 			}
 			if flags != 0 && !flagsWarned {
 				flagsWarned = true // one warning per file
-				f.warn("volume %d inode %d: extent at logical address %d has flags %#x, none are defined", v.slot, in.ino, logical, flags)
+				f.warn("volume %d inode %d: extent at logical address %d has flags %#x, none are defined", v.slot, owner, logical, flags)
 			}
 			if !m.cryptoSeen && cryptoAnomaly(crypto) {
 				m.crypto, m.cryptoSeen = crypto, true
@@ -279,7 +291,7 @@ func (f *FS) fileMap(v *volume, view uint64, in *inode, size int64) (*fileMap, e
 		})
 		switch {
 		case err != nil && (errors.Is(err, errNodeBudget) || (!errors.Is(err, filesys.ErrCorrupt) && !errors.Is(err, filesys.ErrNotFound) && !isShort(err))):
-			return nil, fmt.Errorf("apfs: volume %d inode %d: extents: %w", v.slot, in.ino, err)
+			return nil, fmt.Errorf("apfs: volume %d inode %d: extents: %w", v.slot, owner, err)
 		case err != nil && reason == "":
 			reason = fmt.Sprintf("the extent tree cannot be read: %v", err)
 		case ooo && reason == "":
@@ -295,8 +307,8 @@ func (f *FS) fileMap(v *volume, view uint64, in *inode, size int64) (*fileMap, e
 	}
 	m.runs, m.covered = rb.runs, pos
 	if reason != "" {
-		m.tail = corrupt("file extents", -1, "volume %d inode %d: %s", v.slot, in.ino, reason)
-		f.warn("volume %d inode %d: %s; the first %d of %d bytes are readable and the rest reads as an error", v.slot, in.ino, reason, pos, size)
+		m.tail = corrupt("file extents", -1, "volume %d inode %d: %s", v.slot, owner, reason)
+		f.warn("volume %d inode %d: %s; the first %d of %d bytes are readable and the rest reads as an error", v.slot, owner, reason, pos, size)
 	}
 	return m, nil
 }
