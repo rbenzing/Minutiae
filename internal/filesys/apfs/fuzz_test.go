@@ -54,7 +54,7 @@ func fuzzFiles() []apfstest.File {
 		{Path: "/orig.bin", Data: pattern(4*bs, 6)},
 		{Path: "/clone.bin", Clone: "/orig.bin"},
 		{Path: "/x/y/z", Dir: true},
-		{Path: "/x/y/attrs", Data: []byte("a"), Xattrs: []apfstest.Xattr{{Name: "com.apple.quarantine", Value: []byte("q")}, {Name: "stream", Value: []byte("v"), Stream: true}}},
+		{Path: "/x/y/attrs", Data: []byte("a"), Xattrs: []apfstest.Xattr{{Name: "com.apple.quarantine", Value: []byte("q")}, {Name: "stream", Value: []byte("v"), Stream: true}, {Name: "streamdata", Value: pattern(3*bs, 2), Stream: true, WriteStream: true}}},
 		{Path: "/" + strings.Repeat("n", 255), Data: []byte("long name")},
 		{Path: "/compressed", Data: pattern(50, 7), CompressedFlag: true, UncompressedSize: 9999, Xattrs: []apfstest.Xattr{{Name: "com.apple.decmpfs", Value: decmpfs(3)}}},
 	}
@@ -131,6 +131,7 @@ func fuzzWalk(t *testing.T, fsys *apfs.FS) {
 				t.Fatalf("Lookup(%q) returned an entry without an ID", p)
 			}
 		}
+		fuzzXattrs(t, fsys, e)
 		if e.Type != filesys.TypeFile && e.Type != filesys.TypeSymlink {
 			return nil
 		}
@@ -153,6 +154,8 @@ func fuzzWalk(t *testing.T, fsys *apfs.FS) {
 	for _, id := range fuzzForgedIDs {
 		_, _ = fsys.Open(filesys.Entry{ID: id})
 		_, _ = fsys.ReadDir(filesys.Entry{ID: id})
+		_, _ = fsys.Xattrs(filesys.Entry{ID: id})
+		_, _ = fsys.OpenXattr(filesys.Entry{ID: id}, "x")
 	}
 	_, _ = fsys.SnapshotPath("/Data/docs/a.txt", "S")
 	_, _ = fsys.SnapshotPath("/", "2")
@@ -166,6 +169,30 @@ func fuzzWalk(t *testing.T, fsys *apfs.FS) {
 			t.Fatalf("unallocated run %+v outside the %d-byte filesystem", r, size)
 		}
 	}
+}
+
+// fuzzXattrs lists the attributes of e and opens and reads (the first 64 KiB of)
+// every listed one, plus a name no record has. Errors of any class are fine;
+// panics, runs that break the File.Runs contract and unbounded reads are not.
+func fuzzXattrs(t *testing.T, fsys *apfs.FS, e filesys.Entry) {
+	t.Helper()
+	xs, err := fsys.Xattrs(e)
+	if err != nil {
+		return
+	}
+	for i, x := range xs {
+		if i >= 64 {
+			break
+		}
+		fl, err := fsys.OpenXattr(e, x.Name)
+		if err != nil {
+			continue
+		}
+		checkFuzzRuns(t, x.Name, fl, fsys.Info().Size)
+		buf := make([]byte, min(fl.Size(), 1<<16))
+		_, _ = fl.ReadAt(buf, 0)
+	}
+	_, _ = fsys.OpenXattr(e, "no.such.attribute")
 }
 
 // FuzzAPFSOpen runs the reader over arbitrary bytes: Open, a bounded Walk

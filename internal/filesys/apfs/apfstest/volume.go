@@ -71,12 +71,13 @@ type Times struct{ Create, Modify, Change, Access uint64 }
 // DefaultTime is the clock the builder uses for times left at zero.
 const DefaultTime = 1_700_000_000_000_000_000
 
-// Xattr is an extended attribute; Stream selects the data-stream form (the
-// builder writes a stream descriptor and no data).
+// Xattr is an extended attribute; Stream selects the data-stream form. Without
+// WriteStream the builder writes a stream descriptor and no data.
 type Xattr struct {
-	Name   string
-	Value  []byte
-	Stream bool
+	Name        string
+	Value       []byte
+	Stream      bool
+	WriteStream bool // with Stream: lay Value out in data blocks and write extent records for the stream's object id
 }
 
 // File describes one object of a volume. Missing parent directories are

@@ -181,6 +181,29 @@ func XattrVal(data []byte, stream bool) []byte {
 	return v
 }
 
+// XattrStreamVal encodes the stream form of an xattr value: the object id of
+// the stream's extents and its j_dstream_t (size, allocated size, the rest 0).
+func XattrStreamVal(oid, size uint64) []byte {
+	v := make([]byte, 4+8+40)
+	le.PutUint16(v, xattrStream)
+	le.PutUint16(v[2:], 48)
+	le.PutUint64(v[4:], oid)
+	le.PutUint64(v[12:], size)
+	le.PutUint64(v[20:], (size+4095)&^4095)
+	return v
+}
+
+// streamExtents lays data out in data blocks and returns the extent records of
+// the stream with object id oid.
+func streamExtents(da *dataAlloc, oid uint64, data []byte) []FSRecord {
+	exts, _ := da.layout(File{Data: data})
+	out := make([]FSRecord, 0, len(exts))
+	for _, e := range exts {
+		out = append(out, FSRecord{ID: oid, Type: TypeFileExtent, Key: le8(e.Logical), Val: ExtentVal(e)})
+	}
+	return out
+}
+
 // XfBlob encodes extended fields as an xf_blob_t: header, descriptors, then the
 // values each padded to 8 bytes.
 func XfBlob(fields ...XField) []byte {
@@ -445,7 +468,13 @@ func (v Volume) compile(da *dataAlloc) ([]FSRecord, map[string]uint64, counts, u
 			}
 		}
 		for _, x := range f.Xattrs {
-			recs = append(recs, FSRecord{ID: in.ino, Type: TypeXattr, Key: XattrKey(x.Name), Val: XattrVal(x.Value, x.Stream)})
+			val := XattrVal(x.Value, x.Stream)
+			if x.Stream && x.WriteStream {
+				oid := alloc(0)
+				val = XattrStreamVal(oid, uint64(len(x.Value)))
+				recs = append(recs, streamExtents(da, oid, x.Value)...)
+			}
+			recs = append(recs, FSRecord{ID: in.ino, Type: TypeXattr, Key: XattrKey(x.Name), Val: val})
 		}
 	}
 

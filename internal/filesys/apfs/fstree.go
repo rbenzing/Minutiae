@@ -130,6 +130,13 @@ func (f *FS) scanObject(t *tree, id uint64, lo, hi uint8, visit func(typ uint8, 
 // keys (negative before it, positive after it, zero inside), and only records
 // inside are visited. The records must be sorted by it within the object.
 func (f *FS) scanObjectWithin(t *tree, id uint64, lo, hi uint8, within func(key []byte) int, visit func(typ uint8, key, val []byte) (stop bool, err error)) error {
+	return f.scanObjectLimits(t, id, lo, hi, within, true, visit)
+}
+
+// scanObjectLimits is scanObjectWithin with a choice for records over the
+// format's size limits: skipOver true skips them with a warning (as before),
+// false hands them to visit, which must treat them as damaged.
+func (f *FS) scanObjectLimits(t *tree, id uint64, lo, hi uint8, within func(key []byte) int, skipOver bool, visit func(typ uint8, key, val []byte) (stop bool, err error)) error {
 	f.scans.Add(1)
 	prefix := func(key []byte) int {
 		k := le.Uint64(key)
@@ -150,7 +157,7 @@ func (f *FS) scanObjectWithin(t *tree, id uint64, lo, hi uint8, within func(key 
 		return 0
 	}
 	return t.scan(prefix, func(key, val []byte) (bool, error) {
-		if len(key) > jobjMaxKey || len(val) > jobjMaxVal {
+		if skipOver && (len(key) > jobjMaxKey || len(val) > jobjMaxVal) {
 			f.warn("file-system record of object %d has a %d-byte key and a %d-byte value, over the format limits: skipped", id, len(key), len(val))
 			return false, nil
 		}

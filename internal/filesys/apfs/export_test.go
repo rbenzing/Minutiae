@@ -348,6 +348,9 @@ const MaxFileRuns = maxFileRuns
 // SetMaxFileRuns sets the cap on the runs of one file.
 func (f *FS) SetMaxFileRuns(n int) { f.maxFileRuns = n }
 
+// SetXattrCap sets the number of xattr records one object may have (0: the default).
+func (f *FS) SetXattrCap(n int) { f.xattrMax = n }
+
 // NameHash is the stored directory-record name hash for name; ok is false when
 // the name is not verifiable (not pure ASCII).
 func NameHash(name []byte, foldCase bool) (hash uint32, ok bool) { return nameHash(name, foldCase) }
