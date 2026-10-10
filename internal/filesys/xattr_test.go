@@ -1,6 +1,7 @@
 package filesys
 
 import (
+	"encoding/base64"
 	"errors"
 	"testing"
 )
@@ -52,5 +53,33 @@ func TestErrXattrCapIsUnsupported(t *testing.T) {
 	}
 	if errors.Is(ErrXattrCap, ErrCorrupt) {
 		t.Error("a cap is a bound, not corruption")
+	}
+}
+
+type plainFS struct{}
+
+func (plainFS) Info() Info                     { return Info{Type: "plain"} }
+func (plainFS) Root() Entry                    { return Entry{} }
+func (plainFS) ReadDir(Entry) ([]Entry, error) { return nil, nil }
+func (plainFS) Lookup(string) (Entry, error)   { return Entry{}, ErrNotFound }
+func (plainFS) Open(Entry) (File, error)       { return nil, ErrNotFound }
+func (plainFS) Unallocated() ([]Run, error)    { return nil, nil }
+
+func TestXattrReaderNotFoundWhenNoLayerHasIt(t *testing.T) {
+	var fsys FileSystem = xattrWrap{inner: xattrWrap{inner: plainFS{}}}
+	if xr, ok := As[XattrReader](fsys); ok || xr != nil {
+		t.Errorf("As[XattrReader] = %v, %v over a chain with no reader, want nil, false", xr, ok)
+	}
+}
+
+// The documented display form of a raw attribute name is unpadded base64url.
+func TestXattrRawNameVectors(t *testing.T) {
+	for _, c := range []struct {
+		raw  []byte
+		want string
+	}{{[]byte{0xff}, "_w"}, {[]byte{0xfb, 0xff, 0xfe}, "-__-"}, {[]byte{0xff, 0xfe}, "__4"}} {
+		if got := base64.RawURLEncoding.EncodeToString(c.raw); got != c.want {
+			t.Errorf("raw %x = %q, want %q", c.raw, got, c.want)
+		}
 	}
 }

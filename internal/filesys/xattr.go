@@ -6,7 +6,8 @@ import "fmt"
 // XattrReader. The value is read with OpenXattr.
 //
 // Name is the display name; a name that is not valid UTF-8 or holds a NUL is
-// "~raw~" + base64url(raw). Size is the value length in bytes, -1 when the
+// "~raw~" + base64.RawURLEncoding(raw): the URL-safe alphabet, unpadded (the
+// byte 0xff is "~raw~_w", the bytes fb ff fe are "~raw~-__-"). Size is the value length in bytes, -1 when the
 // reader cannot say without reading the value. Storage is XattrInline,
 // XattrStream, XattrFork or "" when unknown.
 type Xattr struct {
@@ -35,6 +36,8 @@ var ErrXattrCap = fmt.Errorf("%w: more extended attributes than the reader will 
 // of its own reports its real image Runs (the File.Runs contract applies). An
 // unknown name is ErrNotFound; a value the reader does not extract is
 // ErrUnsupported; the value is never offered as a prefix of a damaged one.
+// Xattrs returns an error, never an empty list, when the attribute set cannot
+// be read; an empty list means the entry has none.
 // Discover it with As[XattrReader](fsys).
 type XattrReader interface {
 	Xattrs(e Entry) ([]Xattr, error)
