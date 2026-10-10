@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/records"
 	"github.com/rbenzing/minutiae/internal/sqlitefile/sqlitetest"
@@ -98,4 +99,18 @@ func tinyDB(t testing.TB, n int) []byte {
 		tb.Insert(int64(i), int64(i), int64(i)*10, fmt.Sprintf("row-%d", i))
 	}
 	return b.Bytes()
+}
+
+// openCtx opens data and returns a mapping Context over it; both are released with the test.
+func openCtx(t testing.TB, data []byte) *sqlitedb.Context {
+	t.Helper()
+	in := dbInput(t, data)
+	d, err := sqlitedb.Open(t.Context(), sqlitedb.Files{DB: in.Primary.R, DBSize: in.Primary.Size}, in.Budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Release)
+	mc := sqlitedb.NewContext(t.Context(), d, in, nil)
+	t.Cleanup(mc.Close)
+	return mc
 }
