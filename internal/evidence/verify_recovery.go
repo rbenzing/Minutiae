@@ -116,7 +116,7 @@ func (c *Case) verifyRecovered(rep *VerifyReport, recs []ManifestRecord) {
 			ps.add(rKindShape, "%scarries a recovery description (only kinds recover, carve, slack, journal and report may)", pre)
 		}
 		checkAcquisitionGaps(ps, r, pre)
-		checkExtractDeclared(ps, r, pre, byID, declared)
+		c.checkExtractDeclared(ps, r, pre, byID, declared)
 
 		ns, inNS := RecoveredNamespace(r.Path)
 		if recovered {

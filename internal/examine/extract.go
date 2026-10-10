@@ -272,17 +272,11 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 					if perr := x.keepPrefixRuns(rel, p, d, runs, n); perr != nil {
 						return perr // a failure of the case itself
 					}
-					if full != "" && full != d.RunsArtifact {
-						d.DeclaredRunsArtifact = full // the full list stays in the case; the partial artifact now names it
-					}
 					d.AcquisitionGaps = x.s.gapNote(prefixRuns(runs, n), true, n) // the kept bytes only
 					if n > 0 && d.Runs == nil && d.RunsArtifact == "" {
 						err = fmt.Errorf("%w (the runs of the kept bytes are not recorded: no free runs sidecar name)", err)
 					}
-					if full != "" {
-						// Say in the hash-chained record which artifact is the orphan.
-						err = fmt.Errorf("%w (complete run list of the file: runs artifact %s)", err, full)
-					}
+					err = noteFullRuns(d, full, err)
 				}
 				return err
 			})
@@ -561,6 +555,20 @@ func (s *Session) keepPrefixRuns(a *analysis, rel, fsPath string, d *evidence.De
 	}
 	d.Runs, d.RunsArtifact = nil, ""
 	return nil
+}
+
+// noteFullRuns links the complete run list full (written before a read that
+// stopped early) from the partial artifact's derivation d, unless it is the
+// sidecar d already captures, and names it in err (the hash-chained record). No
+// full list leaves both unchanged.
+func noteFullRuns(d *evidence.Derivation, full string, err error) error {
+	if full == "" {
+		return err
+	}
+	if full != d.RunsArtifact {
+		d.DeclaredRunsArtifact = full // the full list stays in the case; the partial artifact now names it
+	}
+	return fmt.Errorf("%w (complete run list of the file: runs artifact %s)", err, full)
 }
 
 // copyBufSize is the size of the buffer one extraction read fills.
