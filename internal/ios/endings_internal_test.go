@@ -2,6 +2,9 @@ package ios
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/ios/mb2"
@@ -35,7 +38,7 @@ func TestJudgeEndings(t *testing.T) {
 	if !errors.Is(cut["U1/bb/bbb"], errEndSizeMismatch) || !errors.Is(cut["U1/cc/ccc"], errEndUnconfirmed) || !errors.Is(cut["U1/dd/ddd"], errEndUnconfirmed) {
 		t.Fatalf("causes = %v", cut)
 	}
-	if len(rep.Samples) != 3 || rep.Samples[0][:9] != "U1/bb/bbb" {
+	if len(rep.Samples) != 3 || !strings.HasPrefix(rep.Samples[0], `"U1/bb/bbb": `) {
 		t.Fatalf("samples must list the three flagged files in path order: %q", rep.Samples)
 	}
 }
@@ -55,5 +58,34 @@ func TestJudgeEndingsBoundsSamples(t *testing.T) {
 	cut, rep := judgeEndings(ends, nil)
 	if len(rep.Samples) != maxEndingSamples || rep.Unconfirmed != len(ends) || len(cut) != len(ends) {
 		t.Fatalf("samples %d, unconfirmed %d, cut %d", len(rep.Samples), rep.Unconfirmed, len(cut))
+	}
+}
+
+// W41: a device path in a sample is quoted, like the message.
+func TestJudgeEndingsQuotesTheDevicePath(t *testing.T) {
+	_, rep := judgeEndings(map[string]mb2.RemoteEnd{
+		"u1/x": {Code: mb2.CodeErrorRemote, Bytes: 1, Path: "U1/\nX", Message: "m"},
+	}, nil)
+	if len(rep.Samples) != 1 || rep.Samples[0] != `"U1/\nX": code 0x0b, 1 bytes, "m"` {
+		t.Fatalf("samples = %q", rep.Samples)
+	}
+}
+
+// W39: when a file is both cut off and ended by an error block, the recorded
+// cause is the transfer interruption, whatever the order of the entries.
+func TestFindCutPrefersTheInterruptedTransfer(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "f")
+	if err := os.WriteFile(p, []byte("abc"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	end, cut := cutFile{fi: fi, cause: errEndUnconfirmed}, cutFile{fi: fi, cause: errTransferInterrupted}
+	for _, cuts := range [][]cutFile{{end, cut}, {cut, end}} {
+		if got := findCut(p, cuts); got == nil || got.cause != errTransferInterrupted {
+			t.Fatalf("findCut = %+v, want the interrupted transfer", got)
+		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/ios/mb2"
@@ -207,6 +208,11 @@ func TestBackupRemoteEndFollowsMoveCopyAndRemove(t *testing.T) {
 	}
 	if res.RemovedEndCount != 2 || len(res.RemovedEnds) != 2 {
 		t.Fatalf("removed marks = %d %v, want U1/c and the overwritten U1/b2", res.RemovedEndCount, res.RemovedEnds)
+	}
+	for _, s := range res.RemovedEnds { // W41: the device's path is quoted for display
+		if !strings.HasPrefix(s, `"U1/`) {
+			t.Errorf("removed mark %q: the path must be %%q-quoted", s)
+		}
 	}
 }
 

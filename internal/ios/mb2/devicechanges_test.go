@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/rbenzing/minutiae/internal/ios/mb2"
 	"github.com/rbenzing/minutiae/internal/ios/mb2/mb2test"
@@ -222,8 +223,72 @@ func TestBackupRemoteEndKeysAreFoldedWhereTheFileSystemFolds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := res.RemoteEnded["u1/keep"]; !ok || len(res.RemoteEnded) != 1 {
+	if e, ok := res.RemoteEnded["u1/keep"]; !ok || len(res.RemoteEnded) != 1 {
 		t.Fatalf("RemoteEnded = %+v, want only the folded key u1/keep", res.RemoteEnded)
+	} else if e.Path != "U1/Keep" { // W38: the path is shown as the device sent it
+		t.Fatalf("Path = %q, want the as-sent U1/Keep", e.Path)
+	}
+}
+
+// W38: under folding, the as-sent Path survives a move and a copy (only the key is folded).
+func TestBackupFoldedKeysKeepTheAsSentPathAcrossMoveAndCopy(t *testing.T) {
+	defer mb2.SetFoldCase(true)()
+	_, res, err := runBackup(t, func(d *mb2test.Device) error {
+		if err := start(d); err != nil {
+			return err
+		}
+		if err := upload(d, mb2test.Upload{DeviceName: "/a", Name: "U1/Src", Data: []byte("abc"), EndRemote: true}); err != nil {
+			return err
+		}
+		if code, _, err := d.Request("DLMessageMoveItems", map[string]any{"U1/Src": "U1/Moved"}, 0.0); err != nil || code != 0 {
+			return fmt.Errorf("move: %d %v", code, err)
+		}
+		if code, _, err := d.Request("DLMessageCopyItem", "U1/Moved", "U1/Copy"); err != nil || code != 0 {
+			return fmt.Errorf("copy: %d %v", code, err)
+		}
+		return d.Finish(0)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k, want := range map[string]string{"u1/moved": "U1/Moved", "u1/copy": "U1/Copy"} {
+		if e, ok := res.RemoteEnded[k]; !ok || e.Path != want {
+			t.Errorf("RemoteEnded[%q] = %+v, ok=%v; want Path %q", k, e, ok, want)
+		}
+	}
+	if len(res.RemoteEnded) != 2 {
+		t.Errorf("RemoteEnded = %+v", res.RemoteEnded)
+	}
+}
+
+// W40: lower-casing changes rune widths (U+0130 shrinks, U+023A grows) while
+// the total length stays equal; a mark under a moved directory must still
+// show a whole, as-sent name, never a slice cut inside a rune.
+func TestBackupCarryNeverSlicesTheDisplayPathAtAFoldedOffset(t *testing.T) {
+	defer mb2.SetFoldCase(true)()
+	const root, leaf = "U1/İ", "Ⱥ"
+	_, res, err := runBackup(t, func(d *mb2test.Device) error {
+		if err := start(d); err != nil {
+			return err
+		}
+		if err := upload(d, mb2test.Upload{DeviceName: "/a", Name: root + "/" + leaf, Data: []byte("abc"), EndRemote: true}); err != nil {
+			return err
+		}
+		if code, _, err := d.Request("DLMessageMoveItems", map[string]any{root: "U1/Z"}, 0.0); err != nil || code != 0 {
+			return fmt.Errorf("move: %d %v", code, err)
+		}
+		return d.Finish(0)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.RemoteEnded) != 1 {
+		t.Fatalf("RemoteEnded = %+v", res.RemoteEnded)
+	}
+	for k, e := range res.RemoteEnded {
+		if e.Path != "U1/Z/"+leaf || !utf8.ValidString(e.Path) {
+			t.Errorf("RemoteEnded[%q].Path = %q, want %q", k, e.Path, "U1/Z/"+leaf)
+		}
 	}
 }
 

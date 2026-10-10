@@ -55,7 +55,7 @@ func (d *Device) AcquireLogical(ctx context.Context, c *evidence.Case, _ device.
 		}
 		cuts := map[string]error{}
 		for _, rel := range res.Incomplete {
-			cuts[rel] = errTransferInterrupted
+			cuts[mb2.FoldKey(rel)] = errTransferInterrupted // the key end cuts use, so one file has one entry
 		}
 		var oracle sizeOracle
 		if len(res.RemoteEnded) > 0 {
@@ -257,12 +257,18 @@ func findCut(p string, cuts []cutFile) *cutFile {
 	if err != nil {
 		return nil
 	}
+	var found *cutFile
 	for i := range cuts {
-		if os.SameFile(fi, cuts[i].fi) {
-			return &cuts[i]
+		if !os.SameFile(fi, cuts[i].fi) {
+			continue
+		}
+		// Two entries for one file: the interrupted transfer is the stronger
+		// fact, so the recorded cause never depends on map order.
+		if found == nil || (errors.Is(cuts[i].cause, errTransferInterrupted) && !errors.Is(found.cause, errTransferInterrupted)) {
+			found = &cuts[i]
 		}
 	}
-	return nil
+	return found
 }
 
 // capturePartial stores the bytes of a cut or unconfirmed file as an artifact

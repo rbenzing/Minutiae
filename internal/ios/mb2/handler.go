@@ -404,13 +404,26 @@ type carriedMark struct {
 // carry re-keys the mark k (below key root) under the device path to: the key
 // follows the folded form, the displayed path keeps the case the device sent.
 func carry(k string, e RemoteEnd, kept bool, root, to string) carriedMark {
-	suffix := k[len(root):]
-	if len(e.Path) == len(k) { // the display form has the same shape: keep its case
-		suffix = e.Path[len(root):]
+	keySuffix := k[len(root):]
+	// The display suffix is taken from the as-sent Path by whole path segments:
+	// folding never adds or removes a "/", but it can change the width of a
+	// rune, so no byte offset of the folded key is ever applied to Path.
+	suffix := keySuffix
+	if n := strings.Count(root, "/") + 1; e.Path != "" {
+		if segs := strings.SplitN(e.Path, "/", n+1); len(segs) > n {
+			suffix = "/" + segs[n]
+		} else {
+			suffix = ""
+		}
 	}
 	e.Path = relPath(to) + suffix
-	return carriedMark{relKey(to) + k[len(root):], e, kept}
+	return carriedMark{relKey(to) + keySuffix, e, kept}
 }
+
+// FoldKey is the form of a cleaned, slash-separated device path under which
+// Result.RemoteEnded files it: lower-cased where the host file system ignores
+// case, otherwise the path unchanged.
+func FoldKey(p string) string { return foldKey(p) }
 
 // moveEnds carries the marks of from, and of everything below it, to to (both
 // device paths).
@@ -447,7 +460,7 @@ func (h *handler) dropEnds(root string) {
 	for _, k := range h.markedUnder(relKey(root)) {
 		e, _, _ := h.unmark(k)
 		h.res.RemovedEndCount++
-		h.res.RemovedEnds = appendCapped(h.res.RemovedEnds, fmt.Sprintf("%s: code 0x%02x, %d bytes", e.Path, e.Code, e.Bytes))
+		h.res.RemovedEnds = appendCapped(h.res.RemovedEnds, fmt.Sprintf("%q: code 0x%02x, %d bytes", e.Path, e.Code, e.Bytes))
 	}
 }
 

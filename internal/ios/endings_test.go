@@ -51,7 +51,7 @@ func TestBackupFlagsAFileEndedByADeviceErrorBlockAsIncomplete(t *testing.T) {
 		}
 	}
 	audit, _ := os.ReadFile(filepath.Join(c.Dir, "audit.jsonl"))
-	for _, want := range []string{`"end_unconfirmed":1`, `"end_confirmed":0`, `"end_mismatch":0`, `"reason":"end-unconfirmed"`, "U1/cut.bin: code 0x0b, 3 bytes"} {
+	for _, want := range []string{`"end_unconfirmed":1`, `"end_confirmed":0`, `"end_mismatch":0`, `"reason":"end-unconfirmed"`, `\"U1/cut.bin\": code 0x0b, 3 bytes`} {
 		if !strings.Contains(string(audit), want) {
 			t.Errorf("%s not audited:\n%s", want, audit)
 		}
@@ -147,7 +147,7 @@ func TestBackupRemovedFilesMarkStaysInTheAuditRecord(t *testing.T) {
 	}
 	<-b.ScriptErr
 	audit, _ := os.ReadFile(filepath.Join(c.Dir, "audit.jsonl"))
-	for _, want := range []string{`"end_removed_count":1`, "U1/gone.bin: code 0x0b, 3 bytes", `"end_unconfirmed":0`} {
+	for _, want := range []string{`"end_removed_count":1`, `\"U1/gone.bin\": code 0x0b, 3 bytes`, `"end_unconfirmed":0`} {
 		if !strings.Contains(string(audit), want) {
 			t.Errorf("%s not audited:\n%s", want, audit)
 		}

@@ -61,8 +61,8 @@ func judgeEndings(ends map[string]mb2.RemoteEnd, oracle sizeOracle) (cut map[str
 			if name == "" {
 				name = rel
 			}
-			// The message is raw device bytes: always quoted for display.
-			rep.Samples = append(rep.Samples, fmt.Sprintf("%s: code 0x%02x, %d bytes, %q", name, end.Code, end.Bytes, end.Message))
+			// The path and message are raw device bytes: always quoted for display.
+			rep.Samples = append(rep.Samples, fmt.Sprintf("%q: code 0x%02x, %d bytes, %q", name, end.Code, end.Bytes, end.Message))
 		}
 	}
 	return cut, rep
