@@ -31,7 +31,6 @@ type mapper struct {
 	mixed                      bool
 	capUnknown                 bool // an input is recovered with an unknown cap: rows carry the flag (J116)
 	incomplete                 bool
-	pairing                    string // "by-name" | "explicit" | "none"
 	pairingWAL, pairingJournal string
 	maxPayload                 int64
 	maxBody                    int64

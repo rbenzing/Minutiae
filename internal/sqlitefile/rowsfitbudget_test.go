@@ -57,7 +57,7 @@ func fitBudgetWarnings(h *sqlitefile.Hist) (n int, msg string) {
 
 // checkFitCapped asserts the J110 contract on the three fit-named rows of
 // fitWRFixture: delivered, unknown, never annotated equal, no narrowing.
-func checkFitCapped(t *testing.T, rows []sqlitefile.RecoveredRow, st sqlitefile.RowStats, h *sqlitefile.Hist, cap string) {
+func checkFitCapped(t *testing.T, rows []sqlitefile.RecoveredRow, st sqlitefile.RowStats, h *sqlitefile.Hist, wantCap string) {
 	t.Helper()
 	if len(rows) != 3 {
 		t.Fatalf("%d rows, want all 3 kept", len(rows))
@@ -77,8 +77,8 @@ func checkFitCapped(t *testing.T, rows []sqlitefile.RecoveredRow, st sqlitefile.
 		t.Errorf("FitEqualityCapped %d EqualsLiveFit %d, want 3 and 0", st.FitEqualityCapped, st.EqualsLiveFit)
 	}
 	n, msg := fitBudgetWarnings(h)
-	if n != 1 || !strings.Contains(msg, cap) || !strings.Contains(msg, "3 ") {
-		t.Errorf("%d fit-equality warnings %q, want one naming %s and 3 rows", n, msg, cap)
+	if n != 1 || !strings.Contains(msg, wantCap) || !strings.Contains(msg, "3 ") {
+		t.Errorf("%d fit-equality warnings %q, want one naming %s and 3 rows", n, msg, wantCap)
 	}
 }
 

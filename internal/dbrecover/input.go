@@ -285,7 +285,7 @@ const unknownCapConfidence = 25
 // artifact is labelled recovered with no description, no artifact on the chain
 // carries a confidence, or the chain was cut by a missing parent, a cycle or the
 // depth bound before one did (RecoveryTrailOf ends such a walk without error).
-func trailCap(man map[string]evidence.ManifestRecord, id string) (recovered bool, cap *int, unknown bool) {
+func trailCap(man map[string]evidence.ManifestRecord, id string) (recovered bool, ceiling *int, unknown bool) {
 	tr, found := evidence.RecoveryTrailOf(man, id)
 	if !found {
 		return false, nil, false
