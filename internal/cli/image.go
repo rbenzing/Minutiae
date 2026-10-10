@@ -580,7 +580,13 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 			})
 		default:
 			var kids []filesys.Entry
-			if kids, err = fsys.ReadDir(dir); err == nil {
+			kids, err = fsys.ReadDir(dir)
+			if err != nil {
+				// A cut listing returns the entries read with its error: print them,
+				// name the cut reason, and still fail with the error.
+				fmt.Fprintf(d.Err, "warning: %s: listing incomplete: %s\n", escapeText(dirPath), escapeText(err.Error()))
+			}
+			if len(kids) > 0 {
 				slices.SortStableFunc(kids, func(a, b filesys.Entry) int {
 					return cmp.Or(strings.Compare(a.Name, b.Name), strings.Compare(a.ID, b.ID))
 				})

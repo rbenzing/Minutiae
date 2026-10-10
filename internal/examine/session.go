@@ -541,11 +541,12 @@ func (s *Session) Lookup(fsys filesys.FileSystem, ref string) (filesys.Entry, st
 		haveMatch  bool
 		unreadable int
 		firstBad   string
+		firstErr   error
 	)
 	err := filesys.Walk(fsys, root, "/", func(p string, e filesys.Entry, werr error) error {
 		if werr != nil {
 			if unreadable++; unreadable == 1 {
-				firstBad = fmt.Sprintf("%s: %v", p, werr)
+				firstBad, firstErr = p, werr
 			}
 			return nil
 		}
@@ -566,7 +567,7 @@ func (s *Session) Lookup(fsys filesys.FileSystem, ref string) (filesys.Entry, st
 	case haveMatch:
 		return found, where, nil
 	case unreadable > 0:
-		return filesys.Entry{}, "", fmt.Errorf("id:%s: %w; %d directories could not be read (first: %s)", id, filesys.ErrNotFound, unreadable, firstBad)
+		return filesys.Entry{}, "", &SearchIncompleteError{ID: id, Unreadable: unreadable, First: firstBad, Cause: firstErr}
 	}
 	return filesys.Entry{}, "", fmt.Errorf("id:%s: %w", id, filesys.ErrNotFound)
 }
@@ -620,3 +621,21 @@ func (s *Session) needTable() error {
 	}
 	return errors.New("the partition table has not been read")
 }
+
+// SearchIncompleteError reports an entry-id search that did not find the id
+// but also could not read every directory: the id may live in one of them, so
+// the answer is unknown, never "not found". It wraps the reason the first
+// unreadable directory was cut or failed (errors.Is sees ErrLimit, ErrCorrupt,
+// ...) and never wraps filesys.ErrNotFound.
+type SearchIncompleteError struct {
+	ID         string
+	Unreadable int    // directories that could not be read completely
+	First      string // path of the first one
+	Cause      error  // why it could not be read
+}
+
+func (e *SearchIncompleteError) Error() string {
+	return fmt.Sprintf("id:%s: search incomplete: %d directories could not be read completely (first: %s: %v)", e.ID, e.Unreadable, e.First, e.Cause)
+}
+
+func (e *SearchIncompleteError) Unwrap() error { return e.Cause }

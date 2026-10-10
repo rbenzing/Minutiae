@@ -62,10 +62,17 @@ type walker struct {
 func (w *walker) walk(dir Entry, dirPath string, depth int) error {
 	kids, err := w.fsys.ReadDir(dir)
 	if err != nil {
-		if err := w.fn(dirPath, dir, err); err != nil && !errors.Is(err, SkipDir) {
-			return err
+		if err := w.fn(dirPath, dir, err); err != nil {
+			if !errors.Is(err, SkipDir) {
+				return err
+			}
+			return nil
 		}
-		return nil
+		// A cut listing returns the entries read with its error: they are
+		// still visited (the directory was reported incomplete above).
+		if len(kids) == 0 {
+			return nil
+		}
 	}
 	kids = append([]Entry(nil), kids...)
 	sort.SliceStable(kids, func(i, j int) bool {

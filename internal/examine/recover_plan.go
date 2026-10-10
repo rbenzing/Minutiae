@@ -311,12 +311,23 @@ func (p *planner) enumerate() (targets []target, over int, err error) {
 	}
 	deletedByID := map[string][]target{}
 	liveID := map[string]bool{}
+	var (
+		unreadable int
+		firstBad   string
+		firstErr   error
+	)
 	if len(wanted) > 0 {
 		err := filesys.Walk(p.fsys, p.fsys.Root(), "/", func(wp string, we filesys.Entry, werr error) error {
 			if err := p.ctx.Err(); err != nil {
 				return err
 			}
-			if werr != nil || !wanted[we.ID] {
+			if werr != nil {
+				if unreadable++; unreadable == 1 {
+					firstBad, firstErr = wp, werr
+				}
+				return nil
+			}
+			if !wanted[we.ID] {
 				return nil
 			}
 			if we.Deleted {
@@ -343,6 +354,9 @@ func (p *planner) enumerate() (targets []target, over int, err error) {
 			case liveID[id]:
 				return nil, 0, fmt.Errorf("id:%s: %w", id, filesys.ErrNotDeleted)
 			default:
+				if unreadable > 0 {
+					return nil, 0, &SearchIncompleteError{ID: id, Unreadable: unreadable, First: firstBad, Cause: firstErr}
+				}
 				return nil, 0, fmt.Errorf("id:%s: %w", id, filesys.ErrNotFound)
 			}
 			continue

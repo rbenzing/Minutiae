@@ -121,7 +121,8 @@ func TestLookupByIDReportsUnreadableDirectories(t *testing.T) {
 	var s examine.Session
 	// /b repeats directory d1 (a cycle) and /c cannot be read.
 	_, _, err := s.Lookup(fsys, "id:zzz")
-	if !errors.Is(err, filesys.ErrNotFound) || !strings.Contains(err.Error(), "not found; 2 directories could not be read (first: ") {
+	var si *examine.SearchIncompleteError
+	if errors.Is(err, filesys.ErrNotFound) || !errors.As(err, &si) || si.Unreadable != 2 || !strings.Contains(err.Error(), "search incomplete: 2 directories") {
 		t.Fatalf("Lookup(id:zzz) = %v", err)
 	}
 	if !strings.Contains(err.Error(), "/b") && !strings.Contains(err.Error(), "/c") {
