@@ -2,12 +2,63 @@ package rowrun_test
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/parse"
+	"github.com/rbenzing/minutiae/internal/records"
 	"github.com/rbenzing/minutiae/internal/sqlitefile/sqlitetest"
 )
+
+// recEmitter records everything a runner hands to the host.
+type recEmitter struct {
+	records []records.Record
+	warns   []warn
+	notes   map[string]string
+}
+
+type warn struct{ Locator, Reason string }
+
+func (e *recEmitter) Emit(_ context.Context, r records.Record) error {
+	e.records = append(e.records, r)
+	return nil
+}
+
+func (e *recEmitter) Warn(_ context.Context, locator, reason string) error {
+	e.warns = append(e.warns, warn{locator, reason})
+	return nil
+}
+
+func (e *recEmitter) Note(key, value string) {
+	if e.notes == nil {
+		e.notes = map[string]string{}
+	}
+	e.notes[key] = value
+}
+
+func (e *recEmitter) Progress(int64, int64) {}
+
+var _ parse.Emitter = (*recEmitter)(nil)
+
+// damagedDB is 300 rows of t(a) with the second leaf's cell count zeroed: the
+// rows of that leaf can never be delivered and the reader warns about it.
+func damagedDB(t testing.TB) []byte {
+	t.Helper()
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 512})
+	tb := b.CreateTable("t", "create table t(a integer)")
+	for i := int64(1); i <= 300; i++ {
+		tb.Insert(i, i)
+	}
+	data := b.Bytes()
+	leaves := tb.Leaves()
+	if len(leaves) < 3 {
+		t.Fatalf("%d leaves", len(leaves))
+	}
+	page := data[int(leaves[1]-1)*512:][:512]
+	page[3], page[4] = 0, 0
+	return data
+}
 
 // fakeMC is a MapContext with no database: Where only needs Input.
 type fakeMC struct{ in *parse.Input }
