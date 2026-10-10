@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/filesys"
@@ -783,14 +784,48 @@ func (p *planner) admit() error {
 	return nil
 }
 
-// cleanText makes reader-supplied text recordable: invalid UTF-8 and NUL become U+FFFD, and it is cut to
-// n bytes on a rune boundary.
+// cleanText makes reader-supplied text recordable without repairing it: each invalid UTF-8 byte is shown
+// as \xNN and NUL as \x00 (the text keeps what the reader said), and it is cut to n bytes on a rune
+// boundary.
 func cleanText(s string, n int) string {
-	s = strings.ToValidUTF8(s, repl)
-	if strings.ContainsRune(s, 0) {
-		s = strings.ReplaceAll(s, nulStr, repl)
+	return clipText(escapeText(s, false), n)
+}
+
+// escapeText returns s with every invalid UTF-8 byte and NUL written as \xNN; with controls also every
+// other control rune (below U+0080 as \xNN, above as \uNNNN), so that a terminal escape in a text
+// can never reach a log or a console as itself. Text that needs no change is returned as is.
+func escapeText(s string, controls bool) string {
+	needs := func(r rune, size int) bool {
+		return (r == utf8.RuneError && size <= 1) || r == 0 || (controls && unicode.IsControl(r))
 	}
-	return clipText(s, n)
+	clean := true
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if needs(r, size) {
+			clean = false
+			break
+		}
+		i += size
+	}
+	if clean {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size <= 1:
+			fmt.Fprintf(&b, "\\x%02x", s[i])
+		case needs(r, size) && r < 0x80:
+			fmt.Fprintf(&b, "\\x%02x", r)
+		case needs(r, size):
+			fmt.Fprintf(&b, "\\u%04x", r)
+		default:
+			b.WriteString(s[i : i+size])
+		}
+		i += size
+	}
+	return b.String()
 }
 
 func cleanList(in []string) []string {
@@ -800,11 +835,6 @@ func cleanList(in []string) []string {
 	}
 	return out
 }
-
-var (
-	repl   = string(rune(0xFFFD))
-	nulStr = string(rune(0))
-)
 
 // walkReason names why a directory could not be listed: corruption of the structure, or any other
 // failure (an I/O error says nothing about the evidence and is never labelled corruption, C60).
@@ -845,13 +875,9 @@ func (p *planner) readerWarnings(it *RecoverItem, ws []string) []string {
 	p.plan.ReaderWarnings += len(ws)
 	kept := make([]string, 0, min(len(ws), readerWarningCap))
 	for _, w := range ws[:min(len(ws), readerWarningCap)] {
-		// control bytes are dropped (a terminal escape in a reader text must never reach a log or a console)
-		kept = append(kept, cleanText(strings.Map(func(r rune) rune {
-			if unicode.IsControl(r) {
-				return -1
-			}
-			return r
-		}, w), 256))
+		// control runes are escaped, not dropped (a terminal escape in a reader text must never reach a log or
+		// a console as itself, and the text is not repaired)
+		kept = append(kept, cleanText(escapeText(w, true), 256))
 	}
 	for _, w := range kept {
 		it.readerWarnings = append(it.readerWarnings, PlanSkip{Path: it.Path, ID: it.ID, Reason: "reader-warning", Detail: w})

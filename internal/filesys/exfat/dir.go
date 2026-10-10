@@ -551,9 +551,12 @@ func (f *FS) Root() filesys.Entry {
 // "." or ".."; exFAT has none) in on-disk order. Each Entry carries the attrs
 // dirent (<directory first cluster>:<index of the File entry>), first_cluster
 // and size, plus valid_data_length, no_fat_chain and attributes when they
-// apply. Damage in the directory (a broken chain, an unreadable cluster) does
-// not fail the call: the entries that can be read are returned and the damage
-// is an Info warning.
+// apply. Damage in the directory (a broken chain, an unreadable cluster, the
+// entry cap or the read budget) is an Info warning and ends the listing; the
+// listing is then a prefix, so the call returns the entries read together with
+// an error wrapping the reason (filesys.ErrLimit for the caps), never an empty
+// or partial listing with a nil error. A directory of which nothing can be read
+// is an error with no entries.
 //
 // Only the ID of dir is used; the attributes and size of the Entry are
 // informational and never trusted (the directory is found, and its extent read,
@@ -569,11 +572,15 @@ func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
 		return nil, nil
 	}
 	var out []filesys.Entry
-	if err := f.scanDir(st, true, func(r *setRec) bool {
+	cut, err := f.scanDirCut(st, true, func(r *setRec) bool {
 		out = append(out, f.makeEntry(st.spec.first, r))
 		return true
-	}); err != nil {
+	})
+	if err != nil {
 		return nil, err
+	}
+	if cut != nil { // a prefix is never presented as the whole directory (F73); the entries read are returned with the error
+		return out, fmt.Errorf("directory listing is incomplete: %w", cut)
 	}
 	return out, nil
 }
@@ -591,8 +598,10 @@ var errNoChild = errors.New("no such entry")
 //     there is none, strings.EqualFold when both names are valid UTF-8.
 //
 // Empty components are ignored, "." and ".." are not special. A directory is
-// read up to the per-directory entry cap (maxDirRecords); an entry beyond it is
-// reported as not found. Deleted entries are never found.
+// read up to the per-directory entry cap (maxDirRecords); a name not
+// found in a listing that was cut (the cap, a failed read, the spent budget) is
+// an error wrapping the cut reason (filesys.ErrLimit for the caps), never
+// filesys.ErrNotFound. Deleted entries are never found.
 func (f *FS) Lookup(p string) (filesys.Entry, error) {
 	cur := f.Root()
 	for _, comp := range strings.Split(p, "/") {
@@ -637,7 +646,7 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 		}
 	}
 	var exactRec, altRec, foldRec *setRec
-	err = f.scanDir(st, false, func(r *setRec) bool {
+	cut, err := f.scanDirCut(st, false, func(r *setRec) bool {
 		switch {
 		case exact != nil && slices.Equal(r.name, exact):
 			exactRec = r
@@ -656,6 +665,9 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 		if r != nil {
 			return f.makeEntry(st.spec.first, r), nil
 		}
+	}
+	if cut != nil { // not found in a prefix: undecidable, never absent (F73)
+		return filesys.Entry{}, fmt.Errorf("%q not found in an incomplete directory listing: %w", comp, cut)
 	}
 	return filesys.Entry{}, errNoChild
 }

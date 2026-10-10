@@ -33,8 +33,8 @@ func TestCandidateWarningsReachAuditAndSummary(t *testing.T) {
 	if len(texts) != 2 {
 		t.Fatalf("%d reader-warning entries, want 2: %v", len(texts), texts)
 	}
-	if strings.ContainsRune(texts[0], 0x1b) || !strings.Contains(texts[0], "stale name") {
-		t.Errorf("first warning %q: the escape byte must be removed", texts[0])
+	if strings.ContainsRune(texts[0], 0x1b) || !strings.Contains(texts[0], "stale name") || !strings.Contains(texts[0], string(rune(92))+"x1b[31m") {
+		t.Errorf("first warning %q: the escape byte must be escaped as a backslash-x1b sequence, not dropped (F75)", texts[0])
 	}
 	if sum.ReaderWarnings != 2 || sum.Skipped != 0 {
 		t.Errorf("ReaderWarnings %d Skipped %d, want 2 and 0", sum.ReaderWarnings, sum.Skipped)
@@ -66,5 +66,25 @@ func TestCandidateWarningsAreBounded(t *testing.T) {
 	}
 	if sum.ReaderWarnings != 40 {
 		t.Errorf("ReaderWarnings %d, want 40", sum.ReaderWarnings)
+	}
+}
+
+// TestReaderWarningEscapesInvalidUTF8AndNUL (F75/F76): NUL and control runes are shown as escapes, never
+// replaced by U+FFFD and never dropped.
+func TestReaderWarningEscapesInvalidUTF8AndNUL(t *testing.T) {
+	in := "bad nul " + string([]byte{0}) + " ctl " + string(rune(0x85)) + " ok " + string(rune(0xe9))
+	e := newRecEnv(t, delNode("/w.bin", pat(10, bs), fstest.RecoverMap{Method: mtfsRecM, Warnings: []string{in}}))
+	e.recover(t, recoverAllOpts())
+	texts, _ := readerWarnEntries(t, e)
+	if len(texts) != 1 {
+		t.Fatalf("%d reader-warning entries, want 1", len(texts))
+	}
+	bsl := string(rune(92))
+	want := strings.NewReplacer("@", bsl).Replace("bad nul @x00 ctl @u0085 ok ") + string(rune(0xe9))
+	if texts[0] != want {
+		t.Errorf("warning %q, want %q", texts[0], want)
+	}
+	if strings.ContainsRune(texts[0], 0xFFFD) {
+		t.Errorf("warning %q contains U+FFFD", texts[0])
 	}
 }

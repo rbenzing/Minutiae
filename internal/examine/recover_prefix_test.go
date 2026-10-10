@@ -67,6 +67,10 @@ func TestShortMapAndCutTakeTheLowestCap(t *testing.T) {
 	if n := strings.Count(strings.Join(rv.Assumptions, "|"), "prefix-only"); n != 1 {
 		t.Errorf("prefix-only appears %d times in %v, want once", n, rv.Assumptions)
 	}
+	// F74: the cut and the short map both show, in one text (the map's shortness is what the prefix flag adds)
+	if !strings.Contains(recs[0].Error, "runs not captured") || !strings.Contains(recs[0].Error, fmt.Sprintf("; the map covers %d of %d declared bytes", 2*bs, 4*bs)) {
+		t.Errorf("error %q lacks the cut text and the covered-bytes text", recs[0].Error)
+	}
 	verifyOK(t, e.c)
 }
 

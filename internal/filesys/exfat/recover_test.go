@@ -313,3 +313,86 @@ func TestExfatResolveDirScanCapIsUndecidableNotAbsent(t *testing.T) {
 		t.Errorf("error %q does not name the cap", err)
 	}
 }
+
+// cutDirImage builds /D1/f.txt and returns a reader whose read of D1's
+// directory cluster fails once armed.
+func cutDirImage(t *testing.T) (*exfat.FS, *failRange, filesys.Entry) {
+	t.Helper()
+	files := []exfattest.File{{Path: "/D1", Dir: true}, {Path: "/D1/f.txt", Data: []byte("f")}}
+	img, l := exfattest.BuildLayout(exfattest.Options{}, files)
+	d1 := l.Find("/D1", false)
+	fr := &failRange{r: bytes.NewReader(img)}
+	fr.lo, fr.hi = l.ClusterOffset(d1.FirstCluster), l.ClusterOffset(d1.FirstCluster)+int64(l.ClusterSize)
+	f, err := exfat.Open(fr, int64(len(img)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := f.Lookup("/D1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fr.armed = true
+	return f, fr, e
+}
+
+// TestExfatReadDirUnreadableFirstChunkIsAnError (F73): an unreadable listing is
+// never an empty directory.
+func TestExfatReadDirUnreadableFirstChunkIsAnError(t *testing.T) {
+	f, _, d1 := cutDirImage(t)
+	es, err := f.ReadDir(d1)
+	if err == nil || !errors.Is(err, errInjected) || es != nil {
+		t.Fatalf("ReadDir = %v, %v; want nil and an error wrapping the read failure", es, err)
+	}
+}
+
+// TestExfatLookupMissingNameInCutListingIsAnError (F73): a name not found in a
+// listing that could not be read is undecidable, never ErrNotFound.
+func TestExfatLookupMissingNameInCutListingIsAnError(t *testing.T) {
+	f, _, _ := cutDirImage(t)
+	e, err := f.Lookup("/D1/missing.txt")
+	if err == nil || errors.Is(err, filesys.ErrNotFound) || !errors.Is(err, errInjected) {
+		t.Fatalf("Lookup = %v, %v; want an error wrapping the read failure, not ErrNotFound", e, err)
+	}
+}
+
+// TestExfatLookupCapCutIsLimitNotAbsent (F73): the per-directory entry cap cuts
+// the listing; a missing name is filesys.ErrLimit, not ErrNotFound.
+func TestExfatLookupCapCutIsLimitNotAbsent(t *testing.T) {
+	files := []exfattest.File{{Path: "/a", Data: []byte("a")}, {Path: "/b", Data: []byte("b")}, {Path: "/c", Data: []byte("c")}}
+	img, _ := exfattest.BuildLayout(exfattest.Options{}, files)
+	f := openImg(t, img)
+	f.SetDirRecordCap(1)
+	e, err := f.Lookup("/zzz")
+	if !errors.Is(err, filesys.ErrLimit) || errors.Is(err, filesys.ErrNotFound) {
+		t.Fatalf("Lookup = %v, %v; want filesys.ErrLimit", e, err)
+	}
+	if es, err := f.ReadDir(f.Root()); !errors.Is(err, filesys.ErrLimit) {
+		t.Fatalf("ReadDir = %v, %v; want filesys.ErrLimit", es, err)
+	}
+}
+
+// TestExfatRootMetaCutIsAWarning (F73): a root directory read that fails while
+// the system entries are loaded is a counted warning visible in Info.
+func TestExfatRootMetaCutIsAWarning(t *testing.T) {
+	img, l := exfattest.BuildLayout(exfattest.Options{}, []exfattest.File{{Path: "/a", Data: []byte("a")}})
+	f, err := exfat.Open(&failAll{r: bytes.NewReader(img), root: l.ClusterOffset(l.RootCluster), size: int64(l.ClusterSize)}, int64(len(img)))
+	if err != nil {
+		t.Skipf("Open fails outright: %v", err)
+	}
+	if !hasWarn(f, "unreadable") {
+		t.Errorf("no warning: %v", f.Info().Warnings)
+	}
+}
+
+type failAll struct {
+	r    *bytes.Reader
+	root int64
+	size int64
+}
+
+func (f *failAll) ReadAt(p []byte, off int64) (int, error) {
+	if off < f.root+f.size && off+int64(len(p)) > f.root {
+		return 0, errInjected
+	}
+	return f.r.ReadAt(p, off)
+}

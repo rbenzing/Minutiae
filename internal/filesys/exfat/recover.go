@@ -76,7 +76,7 @@ func (f *FS) Recoverable(e filesys.Entry) ([]filesys.Candidate, error) {
 	} else {
 		c.Basis = append(c.Basis, "fat_chain")
 	}
-	if r.nameNote != "" {
+	if r.nameNote != "" { // "truncated" never reaches here: such a set is rejected as damaged above (F63 is void)
 		c.Basis = append(c.Basis, "name="+r.nameNote)
 	}
 	if valid == 0 {
