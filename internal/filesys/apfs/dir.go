@@ -234,10 +234,21 @@ func (f *FS) inodeEntry(v *volume, view uint64, in *inode, name string, raw []by
 	// CRYPTO_SW_ID); Open reports it too when only an extent carries the id.
 	e.Encrypted = e.Type == filesys.TypeFile && cryptoAnomaly(in.cryptoID)
 	if e.Type == filesys.TypeSymlink && in.symlinkSet {
-		if in.symlinkOK {
+		switch {
+		case in.symlinkOK:
 			e.LinkTarget = string(in.symlink)
 			e.Size = int64(len(in.symlink))
-		} else {
+		case in.symlinkStream:
+			if _, target, err := f.openStreamSymlink(v, view, in); err == nil {
+				e.LinkTarget = string(target)
+				e.Size = int64(len(target))
+			} else {
+				// Shown, not hidden: the entry is flagged and warned about, the listing
+				// goes on; Open returns the real error.
+				f.warn("volume %d inode %d: the stream-stored symlink target cannot be read: %v", v.slot, in.ino, err)
+				add("symlink", "unreadable")
+			}
+		default:
 			add("symlink", "unreadable")
 		}
 	}

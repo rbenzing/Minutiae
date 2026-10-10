@@ -72,12 +72,14 @@ type inode struct {
 	size       int64 // dstream size, clamped to MaxInt64
 	cryptoID   uint64
 
-	xattrNames []string // at most maxXattrNames
-	xattrCount int      // all xattr records seen
-	symlink    []byte   // the embedded symlink target, trailing NUL removed
-	symlinkSet bool     // the object has a symlink xattr
-	symlinkOK  bool     // ... and its target is embedded (readable)
-	decmpfs    string   // the compression type the decmpfs xattr names ("unknown" when absent or unreadable)
+	xattrNames              []string // at most maxXattrNames
+	xattrCount              int      // all xattr records seen
+	symlink                 []byte   // the embedded symlink target, trailing NUL removed
+	symlinkSet              bool     // the object has a symlink xattr
+	symlinkOK               bool     // ... and its target is embedded (readable)
+	symlinkStream           bool     // ... and its target is stream-stored (captured here, read only by openStreamSymlink)
+	symlinkOID, symlinkSize uint64   // the stream's object id and declared size
+	decmpfs                 string   // the compression type the decmpfs xattr names ("unknown" when absent or unreadable)
 }
 
 func (in *inode) isDir() bool { return in.mode&modeTypeMask == modeDir }
@@ -177,13 +179,15 @@ func (f *FS) inode(v *volume, view uint64, ino uint64) (*inode, error) {
 		return nil, err
 	}
 	var (
-		in      *inode
-		xnames  []string
-		xcount  int
-		symlink []byte
-		symSet  bool
-		symOK   bool
-		decmpfs string
+		in              *inode
+		xnames          []string
+		xcount          int
+		symlink         []byte
+		symSet          bool
+		symOK           bool
+		symStream       bool
+		symOID, symSize uint64
+		decmpfs         string
 	)
 	err = f.scanObject(t, ino, fsTypeInode, fsTypeXattr, func(typ uint8, key, val []byte) (bool, error) {
 		switch typ {
@@ -216,11 +220,14 @@ func (f *FS) inode(v *volume, view uint64, ino uint64) (*inode, error) {
 			}
 			if string(name) == symlinkXattr {
 				symSet = true
-				if len(val) >= 4 && le.Uint16(val)&xattrInline != 0 {
-					n := int(le.Uint16(val[2:]))
-					if n <= len(val)-4 {
+				if len(val) >= 4 {
+					flags, n := le.Uint16(val), int(le.Uint16(val[2:]))
+					switch {
+					case flags&xattrInline != 0 && flags&xattrStream == 0 && n <= len(val)-4:
 						symlink = bytes.TrimRight(bytes.Clone(val[4:4+n]), "\x00")
 						symOK = true
+					case flags&xattrStream != 0 && flags&xattrInline == 0 && n >= xattrStreamMin && n <= len(val)-4:
+						symStream, symOID, symSize = true, le.Uint64(val[4:]), le.Uint64(val[12:])
 					}
 				}
 			}
@@ -235,6 +242,7 @@ func (f *FS) inode(v *volume, view uint64, ino uint64) (*inode, error) {
 	}
 	in.xattrNames, in.xattrCount = xnames, xcount
 	in.symlink, in.symlinkSet, in.symlinkOK = symlink, symSet, symOK
+	in.symlinkStream, in.symlinkOID, in.symlinkSize = symStream, symOID, symSize
 	in.decmpfs = decmpfs
 	if in.decmpfs == "" {
 		in.decmpfs = "unknown" // no decmpfs xattr

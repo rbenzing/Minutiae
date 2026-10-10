@@ -455,10 +455,14 @@ func (v Volume) compile(da *dataAlloc) ([]FSRecord, map[string]uint64, counts, u
 		}
 		drec(pino, name, fileID, typ, f.BadHash)
 		if f.Symlink != "" {
-			recs = append(recs, FSRecord{
-				ID: in.ino, Type: TypeXattr, Key: XattrKey(symlinkXattr),
-				Val: XattrVal(append([]byte(f.Symlink), 0), f.SymlinkStream),
-			})
+			target := append([]byte(f.Symlink), 0)
+			val := XattrVal(target, f.SymlinkStream)
+			if f.SymlinkStream && !f.SymlinkStreamNoData {
+				oid := alloc(0)
+				val = XattrStreamVal(oid, uint64(len(target)))
+				recs = append(recs, streamExtents(da, oid, target)...)
+			}
+			recs = append(recs, FSRecord{ID: in.ino, Type: TypeXattr, Key: XattrKey(symlinkXattr), Val: val})
 		}
 		if !f.Dir && f.Symlink == "" && f.Clone == "" && (len(f.Data) > 0 || f.Extents != nil) {
 			exts, start := da.layout(f)

@@ -91,10 +91,14 @@ type File struct {
 	Symlink string // target; makes the file a symlink
 	// SymlinkStream stores the symlink target as a data-stream xattr.
 	SymlinkStream bool
-	Mode          uint32 // permission bits, or a full mode when type bits are set
-	UID, GID      uint32
-	Times         Times
-	Xattrs        []Xattr
+	// SymlinkStreamNoData, with SymlinkStream, writes the stream descriptor and
+	// no extents (a damaged target). Without it SymlinkStream lays the target
+	// (with its NUL) out in data blocks.
+	SymlinkStreamNoData bool
+	Mode                uint32 // permission bits, or a full mode when type bits are set
+	UID, GID            uint32
+	Times               Times
+	Xattrs              []Xattr
 
 	LinkTo      string // Path of the file this name is a hard link to
 	LinkSibling bool   // the directory record names a sibling id, mapped to the inode

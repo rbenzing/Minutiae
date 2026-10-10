@@ -378,3 +378,6 @@ func (f *FS) ExtentRuns(slot int, id uint64, size int64) ([]filesys.Run, error) 
 // ShortInlineFile returns an inline file whose declared size exceeds its bytes
 // (the shape a forged empty-named attribute once produced).
 func ShortInlineFile() filesys.File { return &file{size: 5, avail: 5, mem: []byte("ab"), inline: true} }
+
+// SetLinkBudget sets the bytes of stream-stored symlink targets this FS may still read.
+func (f *FS) SetLinkBudget(n int64) { f.linkBudget.Store(n) }

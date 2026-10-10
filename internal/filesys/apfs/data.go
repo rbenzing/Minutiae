@@ -63,7 +63,7 @@ func (f *FS) Open(e filesys.Entry) (filesys.File, error) {
 	case modeDir:
 		return nil, fmt.Errorf("apfs: %w: inode %d of volume %d is a directory", filesys.ErrUnsupported, ino, v.slot)
 	case modeSymlink:
-		return f.openSymlink(v, in)
+		return f.openSymlink(v, view, in)
 	case modeReg:
 	default:
 		return nil, fmt.Errorf("apfs: %w: inode %d of volume %d (mode %#o) is neither a regular file nor a symlink", filesys.ErrUnsupported, ino, v.slot, in.mode)
@@ -104,14 +104,73 @@ func (f *FS) newFile(m *fileMap, size int64, enc bool) *file {
 	return fl
 }
 
+// trimTail drops the last k bytes of a run-backed file (0 < k < size): size,
+// avail, runs and starts stay consistent, so Runs still covers [0, Size())
+// exactly.
+func (fl *file) trimTail(k int64) {
+	fl.size -= k
+	fl.avail = min(fl.avail, fl.size)
+	for k > 0 && len(fl.runs) > 0 {
+		last := &fl.runs[len(fl.runs)-1]
+		if last.Length > k {
+			last.Length -= k
+			return
+		}
+		k -= last.Length
+		fl.runs = fl.runs[:len(fl.runs)-1]
+		fl.starts = fl.starts[:len(fl.starts)-1]
+	}
+}
+
+// openStreamSymlink maps and reads the stream-stored target of in. The size is
+// bounded (maxLinkStream) and the read is charged to the per-filesystem
+// linkBudget before it happens; the trailing NULs are dropped as for an
+// embedded target, and an empty result is corrupt. Errors are
+// filesys.ErrUnsupported (bound, budget), filesys.ErrCorrupt (damaged stream)
+// or an I/O error.
+func (f *FS) openStreamSymlink(v *volume, view uint64, in *inode) (*file, []byte, error) {
+	if in.symlinkSize > maxLinkStream {
+		return nil, nil, unsupported("the %d-byte target of symlink inode %d of volume %d is over the %d-byte limit", in.symlinkSize, in.ino, v.slot, maxLinkStream)
+	}
+	if f.linkBudget.Add(-int64(in.symlinkSize)) < 0 {
+		f.warn("the budget of %d bytes of stream-stored symlink targets per filesystem is spent: further targets are not read", int64(maxLinkBytes))
+		return nil, nil, unsupported("the stream-stored symlink target budget is spent (inode %d of volume %d)", in.ino, v.slot)
+	}
+	fl, err := f.streamFile(v, view, in.symlinkOID, in.ino, in.symlinkSize, "symlink stream")
+	if err != nil {
+		return nil, nil, err
+	}
+	buf := make([]byte, fl.Size()) // <= maxLinkStream
+	if n, err := fl.ReadAt(buf, 0); n != len(buf) {
+		if err == nil || errors.Is(err, io.EOF) {
+			err = io.ErrUnexpectedEOF
+		}
+		return nil, nil, err
+	}
+	target := bytes.TrimRight(buf, "\x00")
+	if len(target) == 0 {
+		return nil, nil, corrupt("symlink", -1, "volume %d inode %d: the stream-stored target is empty", v.slot, in.ino)
+	}
+	if k := int64(len(buf) - len(target)); k > 0 {
+		fl.trimTail(k)
+	}
+	return fl, target, nil
+}
+
 // openSymlink returns the target held in the symlink xattr.
-func (f *FS) openSymlink(v *volume, in *inode) (filesys.File, error) {
+func (f *FS) openSymlink(v *volume, view uint64, in *inode) (filesys.File, error) {
 	switch {
 	case in.symlinkOK:
 		n := int64(len(in.symlink))
 		return &file{size: n, avail: n, mem: slices.Clone(in.symlink), inline: true}, nil
+	case in.symlinkStream:
+		fl, _, err := f.openStreamSymlink(v, view, in)
+		if err != nil {
+			return nil, err
+		}
+		return fl, nil
 	case in.symlinkSet:
-		return nil, unsupported("the target of symlink inode %d of volume %d is stored as a data stream", in.ino, v.slot)
+		return nil, corrupt("symlink", -1, "volume %d inode %d: the target xattr has an unusable form", v.slot, in.ino)
 	}
 	return nil, corrupt("symlink", -1, "volume %d inode %d is a symlink without a target", v.slot, in.ino)
 }
@@ -414,3 +473,8 @@ func fsKeyInOrder(prev, cur []byte) bool {
 // (filesys.EncryptedFile). A listing only sees the dstream id; this also sees
 // the extents.
 func (fl *file) Encrypted() bool { return fl.enc }
+
+const (
+	maxLinkStream = 1 << 16  // longest stream-stored symlink target read
+	maxLinkBytes  = 64 << 20 // bytes of stream-stored targets one FS reads in total (listings and opens)
+)
