@@ -61,6 +61,9 @@ func reasonToken(err error) string {
 	if errors.Is(err, ErrInputChanged) {
 		return "input-changed"
 	}
+	if errors.Is(err, evidence.ErrIntegrity) { // a snapshot mismatch, a corrupt manifest line: never the generic token (J120)
+		return "integrity"
+	}
 	var re *RefusalError
 	if errors.As(err, &re) {
 		return re.Reason

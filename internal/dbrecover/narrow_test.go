@@ -1,6 +1,8 @@
 package dbrecover
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -9,6 +11,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/records"
 	"github.com/rbenzing/minutiae/internal/records/recordstest"
+	"github.com/rbenzing/minutiae/internal/sqlitefile"
 	"github.com/rbenzing/minutiae/internal/sqlitefile/sqlitetest"
 )
 
@@ -133,7 +136,7 @@ func TestSlackWorkCapRunIsNarrowedAndKeepsItsRows(t *testing.T) {
 	off, n := s.gap(t, 2)
 	s.plant(2, off+300, bytesRepeat(0x7f, (n-300)/2))
 	defer func(old int64) { slackPageBudget = old }(slackPageBudget)
-	slackPageBudget = 300
+	slackPageBudget = 3000
 	c := recordstest.NewCase(t)
 	db := addFile(t, c, "/data/slack.db", s.b.Bytes())
 	res := mustRun(t, c, Inputs{DB: db.ID}, Options{})
@@ -215,5 +218,146 @@ func TestFitEqualityBudgetSpentDoesNotNarrowTheRun(t *testing.T) {
 	}
 	if v := lastEntry(t, es, "analysis.end").Details["fit_equality_capped"]; fmt.Sprint(v) != "3" {
 		t.Errorf("analysis.end fit_equality_capped %v, want 3", v)
+	}
+}
+
+// TestSlackPanicIsAPanicError (J114): a panic while carving free space is a
+// *PanicError (errors.Is ErrInternal), like every other recovered panic.
+func TestSlackPanicIsAPanicError(t *testing.T) {
+	s := slackTwoCellScene(t)
+	db := s.open(t)
+	h := db.History()
+	defer h.Release()
+	_, err := carveSpans(t.Context(), db, h, func(sqlitefile.RecoveredRow) bool { panic("boom") })
+	var pe *PanicError
+	if !errors.Is(err, ErrInternal) || !errors.As(err, &pe) || pe.Value != "boom" {
+		t.Errorf("err %v, want a *PanicError that is ErrInternal", err)
+	}
+}
+
+// TestSlackCrossPageEqualAndOverlapAreSurfaced (J115): the counted slack drops
+// and annotations are in Counts and in analysis.end, not only in the scanner.
+func TestSlackCrossPageEqualAndOverlapAreSurfaced(t *testing.T) {
+	s := newSlackScene(func(b *sqlitetest.Builder) {
+		tb := b.CreateTable("t", "create table t(a integer, b text)")
+		tb.Insert(1, 10, "live-row-one-"+filler(30, 1))
+		u := b.CreateTable("u", "create table u(p integer)")
+		u.Insert(1, 5)
+	})
+	off, _ := s.gap(t, 3)
+	s.plant(3, off+20, slackCell(1, 10, "live-row-one-"+filler(30, 1)))
+	c := recordstest.NewCase(t)
+	db := addFile(t, c, "/data/slack.db", s.b.Bytes())
+	res := mustRun(t, c, Inputs{DB: db.ID}, Options{})
+	if res.Counts.SlackCrossPageEqual != 1 {
+		t.Errorf("SlackCrossPageEqual %d, want 1", res.Counts.SlackCrossPageEqual)
+	}
+	end := lastEntry(t, readAudit(t, c), "analysis.end").Details
+	for key, want := range map[string]int64{"slack_cross_page_equal": res.Counts.SlackCrossPageEqual, "slack_dropped_overlap": res.Counts.SlackDroppedOverlap} {
+		if got := fmt.Sprint(end[key]); got != fmt.Sprint(want) {
+			t.Errorf("analysis.end %s = %s, want %d", key, got, want)
+		}
+	}
+}
+
+// TestSlackCrossedCheckIsChargedBeforeItRuns (J121): the clone and decode of a
+// cell, and the walk of the crossed check, are charged to the page budget before
+// the work is done; a candidate whose check cannot be paid for is not delivered
+// as clean, the page is capped and the cap is counted.
+func TestSlackCrossedCheckIsChargedBeforeItRuns(t *testing.T) {
+	s := plainScene()
+	off, _ := s.gap(t, 2)
+	s.plant(2, off+10, slackCell(7, 70, "charged-"+filler(60, 7)))
+	if rows, st := s.carve(t); len(rows) != 1 || st.WorkCapped != 0 {
+		t.Fatalf("with the default budget: %d rows, %+v", len(rows), st)
+	}
+	defer func(old int64) { slackPageBudget = old }(slackPageBudget)
+	slackPageBudget = 50 // the zero run before the cell, then less than the cell's own cost
+	rows, st := s.carve(t)
+	if len(rows) != 0 || st.WorkCapped != 1 {
+		t.Errorf("%d rows, WorkCapped %d: a cell whose check exceeds the budget must be capped, not delivered", len(rows), st.WorkCapped)
+	}
+}
+
+// TestEndFailureConcludesTheWriter (J118): when End fails, the writer is
+// concluded (Abort), so the case's live-ingest slot is not held until exit.
+func TestEndFailureConcludesTheWriter(t *testing.T) {
+	e := newRunEnv(t)
+	defer SetAfterFlushHookForTest(func() {
+		if err := e.c.Audit.Close(); err != nil { // the audit append of End now fails
+			t.Error(err)
+		}
+	})()
+	_, err := Run(t.Context(), e.c, e.in(), Options{})
+	if err == nil {
+		t.Fatal("Run succeeded although the audit log was closed before End")
+	}
+	active, free := e.c.BeginIngest("probe-after-end-failure")
+	if !free {
+		t.Fatalf("the live-ingest slot is still held by %s after End failed: the writer was not concluded", active)
+	}
+	e.c.EndIngest("probe-after-end-failure")
+}
+
+// TestIntegrityFailureHasItsOwnAuditReason (J120): any integrity failure is
+// audited under the reason "integrity" (an input that changed keeps
+// "input-changed"), never the generic "error".
+func TestIntegrityFailureHasItsOwnAuditReason(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		want string
+	}{
+		"manifest snapshot mismatch": {fmt.Errorf("%w: db input a differs from the manifest snapshot", evidence.ErrIntegrity), "integrity"},
+		"joined with a cancel":       {errors.Join(context.Canceled, evidence.ErrIntegrity), "integrity"},
+		"input changed":              {&InputChangedError{ArtifactID: "a", Want: "x", Got: "y"}, "input-changed"},
+		"plain":                      {errors.New("boom"), "error"},
+		"refusal":                    {&RefusalError{Reason: ReasonBadOption}, ReasonBadOption},
+	} {
+		if got := reasonToken(tc.err); got != tc.want {
+			t.Errorf("%s: reason %q, want %q", name, got, tc.want)
+		}
+	}
+}
+
+// TestPlanSeesWhatRunWouldReject (J117): Plan judges each mapped record with
+// the writer's validator (writing nothing), so its counts and narrowing match
+// those of a Run under the same refusals.
+func TestPlanSeesWhatRunWouldReject(t *testing.T) {
+	e := newRunEnv(t)
+	reject := func() func() {
+		n := 0
+		return SetCheckForTest(func(p map[string]any) error {
+			if n++; n <= 2 {
+				return fmt.Errorf("%w: db_row: forced", records.ErrInvalidPayload)
+			}
+			return checkPayload(p)
+		})
+	}
+	restore := reject()
+	plan, err := Plan(t.Context(), e.c, e.in(), Options{})
+	restore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restore = reject()
+	run := mustRun(t, e.c, e.in(), Options{})
+	restore()
+	if plan.Counts.SkippedByReason["writer-rejected"] != 2 || plan.Counts.Written != run.Counts.Written {
+		t.Errorf("plan skipped %v written %d; run skipped %v written %d", plan.Counts.SkippedByReason, plan.Counts.Written, run.Counts.SkippedByReason, run.Counts.Written)
+	}
+	if !slices.Contains(plan.Counts.Narrowed, "writer-rejected") {
+		t.Errorf("plan narrowed %v, want writer-rejected", plan.Counts.Narrowed)
+	}
+}
+
+// TestPlanReportsAnInputThatChanged (J117): like Run, Plan hashes its inputs
+// afresh at the end; a changed input is an integrity error (exit 4).
+func TestPlanReportsAnInputThatChanged(t *testing.T) {
+	e := newRunEnv(t)
+	defer changeWAL(t, e)()
+	_, err := Plan(t.Context(), e.c, e.in(), Options{})
+	var ch *InputChangedError
+	if !errors.Is(err, evidence.ErrIntegrity) || !errors.As(err, &ch) || ch.ArtifactID != e.wal.ID {
+		t.Errorf("err %v, want an *InputChangedError for the WAL", err)
 	}
 }

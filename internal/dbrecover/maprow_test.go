@@ -301,7 +301,7 @@ func goldenJSON(t *testing.T, rec records.Record) string {
 
 func TestPayloadGolden(t *testing.T) {
 	both := testMapper(map[sqlitefile.FileKind]int64{sqlitefile.FileDB: 1 << 20, sqlitefile.FileWAL: 1 << 20})
-	both.pairing = "by-name"
+	both.pairingWAL, both.pairingJournal = "by-name", "by-name"
 	wal := sqlitefile.RecoveredRow{
 		Method: sqlitefile.MethodWALPrior, Origin: sqlitefile.OriginWALSuperseded, Table: "t", TableBasis: sqlitefile.BasisSchema,
 		Rowid:    ptr(int64(7)),
@@ -339,7 +339,7 @@ func TestPayloadGolden(t *testing.T) {
 		r    sqlitefile.RecoveredRow
 		want string
 	}{
-		"wal prior": {both, wal, `{"cell":2,"columns":[{"i":0,"serial":1,"type":"integer","value":5},{"enc":"UTF-8","i":1,"len":2,"serial":17,"type":"text","value":"hi"}],"entry_kind":"table","file":"wal","method_confidence":75,"notes":["x"],"origin":"wal-superseded","page":3,"relation":"superseded-version","rowid":7,"sibling_artifacts":["A1"],"sibling_pairing":"by-name","table":"t","table_basis":"schema","wal":{"committed":true,"frame":1,"generation":0,"linked":true,"salt1":1,"salt2":2,"state":"committed"}}`},
+		"wal prior": {both, wal, `{"cell":2,"columns":[{"i":0,"serial":1,"type":"integer","value":5},{"enc":"UTF-8","i":1,"len":2,"serial":17,"type":"text","value":"hi"}],"entry_kind":"table","file":"wal","method_confidence":75,"notes":["x"],"origin":"wal-superseded","page":3,"relation":"superseded-version","rowid":7,"sibling_artifacts":["A1"],"sibling_pairing_journal":"by-name","sibling_pairing_wal":"by-name","table":"t","table_basis":"schema","wal":{"committed":true,"frame":1,"generation":0,"linked":true,"salt1":1,"salt2":2,"state":"committed"}}`},
 		"freelist":  {capped, freelist, `{"cell":0,"columns":[{"i":0,"type":"null"}],"confidence_cap":30,"entry_kind":"table","file":"db","method_confidence":60,"notes":["identity-by-fit-only"],"origin":"freelist-leaf","page":6,"relation":"unknown","rowid":null,"table":"t","table_basis":"fit"}`},
 		"journal":   {jm, journal, `{"cell":1,"columns":[],"entry_kind":"table","file":"journal","journal":{"applied":false,"checksum_ok":true,"hot":false,"nonce":7,"record":2,"segment":0},"method_confidence":70,"origin":"journal-before","overflow":{"mixed":true,"pages":[{"file":"db","offset":8192,"page":9}],"total":2},"page":4,"relation":"superseded-version","rowid":9,"sibling_artifacts":["A1"],"table":"t","table_basis":"schema"}`},
 		"slack":     {dbOnly(), slack, `{"carved":{"slack_region":"gap","span_kind":"orphan","span_length":33,"span_offset":120},"columns":[],"entry_kind":"table","file":"db","method_confidence":25,"origin":"orphan","page":8,"relation":"unknown","rowid":null,"table_basis":"none"}`},
@@ -386,11 +386,11 @@ func TestRangeOutsideArtifactKeepsRowWithoutRange(t *testing.T) {
 		notes, _ := rec.Payload["notes"].([]any)
 		has := slices.Contains(notes, any("range-outside-artifact"))
 		if c.ok {
-			if rec.Range == nil || *rec.Range != (records.Range{Offset: c.off, Length: c.length}) || has || m.outsideRange != 0 {
-				t.Errorf("%s: range %v, note %v, counted %d", name, rec.Range, has, m.outsideRange)
+			if rec.Range == nil || *rec.Range != (records.Range{Offset: c.off, Length: c.length}) || has {
+				t.Errorf("%s: range %v, note %v", name, rec.Range, has)
 			}
-		} else if rec.Range != nil || !has || m.outsideRange != 1 || rec.Recovery == "" {
-			t.Errorf("%s: range %v, note %v, counted %d", name, rec.Range, has, m.outsideRange)
+		} else if rec.Range != nil || !has || rec.Recovery == "" {
+			t.Errorf("%s: range %v, note %v", name, rec.Range, has)
 		}
 	}
 }

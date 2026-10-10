@@ -101,14 +101,14 @@ func TestUnreadScalarNeverGetsAValue(t *testing.T) {
 func TestEncodedBudgetCountsEscapingAndBase64(t *testing.T) {
 	ctrl := bytes.Repeat([]byte{0x01}, 8<<20)
 	m := map[string]any{"value": string(ctrl)}
-	if sz := encodedSize(m); sz < 5*int64(len(ctrl)) || sz > 7*int64(len(ctrl)) {
+	if sz := mustSize(m); sz < 5*int64(len(ctrl)) || sz > 7*int64(len(ctrl)) {
 		t.Errorf("8 MiB of control characters costs %d, want about 6x raw", sz)
 	}
-	if sz := encodedSize(map[string]any{"value": strings.Repeat(`"`, 1000)}); sz < 2000 {
+	if sz := mustSize(map[string]any{"value": strings.Repeat(`"`, 1000)}); sz < 2000 {
 		t.Errorf("1000 quotes cost %d, want at least 2000", sz)
 	}
 	blob := bytes.Repeat([]byte{0xab}, 1<<20)
-	if sz := encodedSize(map[string]any{"value_b64": base64.StdEncoding.EncodeToString(blob)}); sz < 1_398_000 || sz > 1_399_000 {
+	if sz := mustSize(map[string]any{"value_b64": base64.StdEncoding.EncodeToString(blob)}); sz < 1_398_000 || sz > 1_399_000 {
 		t.Errorf("1 MiB blob costs %d, want about 1.33x", sz)
 	}
 	// through encodeValue: the charge is the encoded size and the row stays under the payload cap
@@ -125,7 +125,7 @@ func TestEncodedBudgetCountsEscapingAndBase64(t *testing.T) {
 		e := encodeValue(i, v, b)
 		cols = append(cols, e)
 		total += before - b.left
-		if want := max(encodedSize(e)-encodedSize(degraded(i, v)), 0); before-b.left != want {
+		if want := max(mustSize(e)-mustSize(degraded(i, v)), 0); before-b.left != want {
 			t.Errorf("column %d: charged %d, want the extra %d over the reserved degraded form", i, before-b.left, want)
 		}
 	}

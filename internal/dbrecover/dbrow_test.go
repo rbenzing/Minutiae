@@ -71,7 +71,7 @@ func TestDBRowValidatorMatrix(t *testing.T) {
 		"cell negative":        func(p map[string]any) { p["cell"] = int64(-1) },
 		"cell absent no carve": func(p map[string]any) { delete(p, "cell") },
 		"bad rowid":            func(p map[string]any) { p["rowid"] = "7" },
-		"bad sibling_pairing":  func(p map[string]any) { p["sibling_pairing"] = "guess" },
+		"bad sibling_pairing":  func(p map[string]any) { p["sibling_pairing_wal"] = "guess" },
 		"notes not strings":    func(p map[string]any) { p["notes"] = []any{int64(1)} },
 		"carved missing key":   func(p map[string]any) { p["carved"] = map[string]any{"span_kind": "gap"} },
 		"float payload":        func(p map[string]any) { p["page"] = 3.5 },

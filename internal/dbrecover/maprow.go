@@ -26,15 +26,15 @@ type inputRef struct {
 
 // mapper turns the recovered rows of one run into never-live db_row records.
 type mapper struct {
-	byFile       map[sqlitefile.FileKind]inputRef
-	cap          *int // minimum confidence ceiling over the whole input set (D2)
-	mixed        bool
-	capUnknown   bool // an input is recovered with an unknown cap: rows carry the flag (J116)
-	incomplete   bool
-	pairing      string // "by-name" | "explicit" | "none"
-	maxPayload   int64
-	maxBody      int64
-	outsideRange int64 // rows whose cell range lay outside their artifact
+	byFile                     map[sqlitefile.FileKind]inputRef
+	cap                        *int // minimum confidence ceiling over the whole input set (D2)
+	mixed                      bool
+	capUnknown                 bool // an input is recovered with an unknown cap: rows carry the flag (J116)
+	incomplete                 bool
+	pairing                    string // "by-name" | "explicit" | "none"
+	pairingWAL, pairingJournal string
+	maxPayload                 int64
+	maxBody                    int64
 }
 
 // Defaults of the per-row bounds (D12).
@@ -261,7 +261,6 @@ func (m *mapper) record(r sqlitefile.RecoveredRow) (records.Record, error) {
 	if rg, ok := rangeOf(r.Loc, ref.Size); ok {
 		rec.Range = &rg
 	} else {
-		m.outsideRange++
 		addNote("range-outside-artifact")
 		outside = true
 	}
@@ -350,8 +349,11 @@ func (m *mapper) record(r sqlitefile.RecoveredRow) (records.Record, error) {
 	if siblings != nil {
 		p["sibling_artifacts"] = siblings
 	}
-	if m.pairing != "" {
-		p["sibling_pairing"] = m.pairing
+	if m.pairingWAL != "" {
+		p["sibling_pairing_wal"] = m.pairingWAL
+	}
+	if m.pairingJournal != "" {
+		p["sibling_pairing_journal"] = m.pairingJournal
 	}
 	if unused != nil {
 		p["sibling_unused"] = unused
@@ -370,8 +372,15 @@ func (m *mapper) record(r sqlitefile.RecoveredRow) (records.Record, error) {
 	// size the columns against what is left of the payload allowance
 	rest := maps0(p)
 	rest["notes"] = toAny(notes)
-	allowance := maxPayload - encodedSize(rest) - payloadSlack
-	cols := encodeColumns(r.Values, allowance)
+	restSize, err := encodedSize(rest)
+	if err != nil {
+		return records.Record{}, err
+	}
+	allowance := maxPayload - restSize - payloadSlack
+	cols, err := encodeColumns(r.Values, allowance)
+	if err != nil {
+		return records.Record{}, err
+	}
 	var omitted, budget int64
 	for _, c := range cols {
 		cm := c.(map[string]any)

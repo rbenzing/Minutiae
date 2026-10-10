@@ -120,6 +120,7 @@ func TestSlackSecondPassDoesNotChangeTheFirstPass(t *testing.T) {
 			delete(b.ByMethod, "sqlite-page-slack")
 			delete(b.ConfidenceRange, "sqlite-page-slack")
 			b.SlackCopiesOfLive, b.SlackUnparsedBytes, b.SlackDroppedCrossed = 0, 0, 0
+			b.SlackDroppedOverlap, b.SlackCrossPageEqual, b.SlackWorkCapped, b.SlackRowCapped = 0, 0, 0, false
 			b.Written -= slack
 			if name == "planted gap" && slack == 0 {
 				t.Errorf("the planted cell was not carved")

@@ -65,11 +65,11 @@ func TestEncodedSizeEqualsStandardEncoding(t *testing.T) {
 			t.Fatal(err)
 		}
 		exact := int64(len(bytes.TrimSuffix(buf.Bytes(), []byte("\n"))))
-		if got := encodedSize(m); got != exact {
+		if got := mustSize(m); got != exact {
 			t.Errorf("%v: encodedSize %d, canonical %d", m, got, exact)
 		}
-		if _, ok := m["html"]; !ok && encodedSize(m) != int64(len(want)) {
-			t.Errorf("%v: encodedSize %d, Marshal %d", m, encodedSize(m), len(want))
+		if _, ok := m["html"]; !ok && mustSize(m) != int64(len(want)) {
+			t.Errorf("%v: encodedSize %d, Marshal %d", m, mustSize(m), len(want))
 		}
 	}
 }
@@ -91,7 +91,7 @@ func TestMinEncodedBytes(t *testing.T) {
 func degradedRowSize(vals []sqlitefile.Value) int64 {
 	var n int64
 	for i, v := range vals {
-		n += encodedSize(degraded(i, v)) + 1
+		n += mustSize(degraded(i, v)) + 1
 	}
 	return n
 }
@@ -105,10 +105,10 @@ func TestColumnsBudgetIsAHardCap(t *testing.T) {
 	}
 	floor := degradedRowSize(vals)
 	for _, budget := range []int64{1000, floor - 1, floor, floor + 10_000} {
-		cols := encodeColumns(vals, budget)
+		cols := mustColumns(vals, budget)
 		var total int64
 		for _, c := range cols {
-			total += encodedSize(c.(map[string]any)) + 1
+			total += mustSize(c.(map[string]any)) + 1
 		}
 		if len(cols) != len(vals) {
 			t.Fatalf("budget %d: %d columns, want %d", budget, len(cols), len(vals))
@@ -125,14 +125,14 @@ func TestColumnsFullValueOnlyWhenItFits(t *testing.T) {
 		{Kind: sqlitefile.KindBlob, Bytes: make([]byte, 3000), Len: 3000},
 		{Kind: sqlitefile.KindInt, Int: 2},
 	}
-	cols := encodeColumns(vals, degradedRowSize(vals)+200)
+	cols := mustColumns(vals, degradedRowSize(vals)+200)
 	if cols[0].(map[string]any)["value"] != int64(1) || cols[2].(map[string]any)["value"] != int64(2) {
 		t.Errorf("small values degraded: %v", cols)
 	}
 	if cols[1].(map[string]any)["omitted"] != "payload-budget" {
 		t.Errorf("a blob that cannot fit was encoded in full")
 	}
-	cols = encodeColumns(vals, 1<<20)
+	cols = mustColumns(vals, 1<<20)
 	if cols[1].(map[string]any)["value_b64"] == nil {
 		t.Errorf("a blob that fits was degraded")
 	}
@@ -147,7 +147,7 @@ func TestWideRowOfLargeValuesIsAcceptedByTheWriter(t *testing.T) {
 		vals[i] = sqlitefile.Value{Kind: sqlitefile.KindBlob, Bytes: blob, Len: int64(len(blob))}
 	}
 	p := validPayload()
-	p["columns"] = encodeColumns(vals, 12<<20)
+	p["columns"] = mustColumns(vals, 12<<20)
 	enc, err := json.Marshal(p)
 	if err != nil || len(enc) >= 16<<20 {
 		t.Fatalf("payload %d bytes (err %v), want under 16 MiB", len(enc), err)

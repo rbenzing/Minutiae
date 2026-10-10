@@ -121,7 +121,14 @@ func carveSpans(ctx context.Context, db *sqlitefile.DB, h *sqlitefile.Hist, emit
 		return st, err
 	}
 	var visitErr error
-	perr := h.Pages(ctx, func(img sqlitefile.PageImage) bool {
+	perr := h.Pages(ctx, func(img sqlitefile.PageImage) (more bool) {
+		// a panic while carving one image (or in the emit callback) is this package's
+		// PanicError, caught before the library turns it into its own (J114)
+		defer func() {
+			if x := recover(); x != nil {
+				visitErr, more = &PanicError{Value: x}, false
+			}
+		}()
 		if err := ctx.Err(); err != nil {
 			visitErr = err
 			return false
@@ -349,8 +356,12 @@ func scanPage(data []byte, hd *sqlitefile.PageHeader, img sqlitefile.PageImage, 
 				break
 			}
 			spent++
-			cost, c, ok := parseSlackCell(data, p, end, maxLocal, info, lim)
+			cost, c, ok, cut := parseSlackCell(data, p, end, maxLocal, info, lim, slackPageBudget-spent)
 			spent += cost
+			if cut {
+				capped = true
+				break
+			}
 			if !ok {
 				st.UnparsedBytes++
 				p++
@@ -367,8 +378,14 @@ func scanPage(data []byte, hd *sqlitefile.PageHeader, img sqlitefile.PageImage, 
 				p += c.n
 				continue
 			}
-			crossed, extra := crossedByCandidate(data, c, min(len(data), usable), maxLocal, info, lim)
+			crossed, extra, cut := crossedByCandidate(data, c, min(len(data), usable), maxLocal, info, lim, slackPageBudget-spent)
 			spent += extra
+			if cut {
+				// the check could not be paid for: whether the cell was overwritten is
+				// undecided, so it is not delivered as clean; the rest of the page is not examined
+				capped = true
+				break
+			}
 			if crossed {
 				// a valid cell starts inside this one and ends beyond it: the later
 				// cell was written over the tail of this one, whose bytes are damaged
@@ -428,19 +445,22 @@ func canonicalVarint(v uint64, n int) bool {
 }
 
 // parseSlackCell tests whether a whole table-leaf cell starts at data[p] and
-// ends by end. cost is the extra work the test spent (header bytes read).
-func parseSlackCell(data []byte, p, end, maxLocal int, info sqlitefile.Info, lim sqlitefile.Limits) (cost int64, c slackCandidate, ok bool) {
+// ends by end. cost is the extra work the test spent (header bytes read, and the
+// cell's own length for the clone and the decode, charged before they happen).
+// avail is the work left to the page: when the clone and decode of a cell that
+// passed the header test cost more, cut is set and nothing is cloned or decoded.
+func parseSlackCell(data []byte, p, end, maxLocal int, info sqlitefile.Info, lim sqlitefile.Limits, avail int64) (cost int64, c slackCandidate, ok, cut bool) {
 	pl, n1 := sqlitefile.GetVarint(data[p:end])
 	if n1 == 0 || !canonicalVarint(pl, n1) || pl < 2 || pl > uint64(maxLocal) {
-		return 0, c, false
+		return 0, c, false, false
 	}
 	rid, n2 := sqlitefile.GetVarint(data[p+n1 : end])
 	if n2 == 0 || !canonicalVarint(rid, n2) {
-		return 0, c, false
+		return 0, c, false, false
 	}
 	total := n1 + n2 + int(pl)
 	if p+total > end {
-		return 0, c, false
+		return 0, c, false, false
 	}
 	rec := data[p+n1+n2 : p+total]
 	if hl, _ := sqlitefile.GetVarint(rec); hl <= pl {
@@ -448,24 +468,28 @@ func parseSlackCell(data []byte, p, end, maxLocal int, info sqlitefile.Info, lim
 	}
 	serials, hl, body, err := sqlitefile.ParseRecordHeader(rec, lim.MaxColumns)
 	if err != nil || len(serials) == 0 || int64(hl)+body != int64(len(rec)) {
-		return cost, c, false
+		return cost, c, false, false
 	}
 	nonNull := false
 	for _, s := range serials {
 		if s == 10 || s == 11 {
-			return cost, c, false
+			return cost, c, false, false
 		}
 		nonNull = nonNull || s != 0
 	}
 	if !nonNull {
-		return cost, c, false
+		return cost, c, false, false
+	}
+	cost += int64(total) // the clone and the decode, charged before they run
+	if cost > avail {
+		return cost, c, false, true
 	}
 	cell := bytes.Clone(data[p : p+total])
 	r, err := sqlitefile.DecodeRecord(cell[n1+n2:], info.Encoding, lim)
 	if err != nil || r.Truncated || r.LengthMismatch {
-		return cost, c, false
+		return cost, c, false, false
 	}
-	return cost, slackCandidate{off: p, n: total, rowid: int64(rid), rec: r, cell: cell}, true
+	return cost, slackCandidate{off: p, n: total, rowid: int64(rid), rec: r, cell: cell}, true, false
 }
 
 // crossedByCandidate reports whether a cell head that is consistent with a record
@@ -474,26 +498,33 @@ func parseSlackCell(data []byte, p, end, maxLocal int, info sqlitefile.Info, lim
 // by a third cell, and is still the proof that c was overwritten). Such a cell was written over the tail of c after c was freed,
 // so c's body is partly another cell's bytes and must not be delivered as
 // c's. A cell wholly inside c (a record that stores a cell image, for example)
-// does not damage c. extra is the work spent.
+// does not damage c. extra is the work spent; cut is set when the check could
+// not be paid for within avail, so the answer is undecided (J121).
 //
 // The read beyond the span is a rejection-only trade (J89, J93): bytes outside
 // the span are never delivered, they can only make this function refuse a
 // candidate. At worst a genuine cell is dropped (counted in DroppedCrossed,
 // documented in docs/limitations.md); a cell is never invented or repaired.
-func crossedByCandidate(data []byte, c slackCandidate, limit, maxLocal int, info sqlitefile.Info, lim sqlitefile.Limits) (crossed bool, extra int64) {
+func crossedByCandidate(data []byte, c slackCandidate, limit, maxLocal int, info sqlitefile.Info, lim sqlitefile.Limits, avail int64) (crossed bool, extra int64, cut bool) {
 	cEnd := c.off + c.n
 	for q := c.off + 1; q < cEnd; q++ {
 		extra++
+		if extra > avail {
+			return false, extra, true
+		}
 		if data[q] == 0 {
 			continue
 		}
-		cost, d, ok := parseSlackCell(data, q, limit, maxLocal, info, lim)
+		cost, d, ok, cutHere := parseSlackCell(data, q, limit, maxLocal, info, lim, avail-extra)
 		extra += cost
+		if cutHere {
+			return false, extra, true
+		}
 		if ok && d.off+d.n > cEnd {
-			return true, extra
+			return true, extra, false
 		}
 	}
-	return false, extra
+	return false, extra, false
 }
 
 // regionName names a kind of free space for the payload's slack_region.

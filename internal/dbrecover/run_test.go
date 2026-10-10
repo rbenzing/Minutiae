@@ -280,8 +280,8 @@ func TestForeignWALIsWarnedAndRowsSayByName(t *testing.T) {
 		t.Error("no analysis.warning names the foreign WAL's page size")
 	}
 	for _, r := range storedRecords(t, e.c) {
-		if payloadOf(t, r)["sibling_pairing"] != "by-name" {
-			t.Errorf("record %d does not say the WAL was paired by name: %v", r.ID, payloadOf(t, r)["sibling_pairing"])
+		if payloadOf(t, r)["sibling_pairing_wal"] != "by-name" {
+			t.Errorf("record %d does not say the WAL was paired by name: %v", r.ID, payloadOf(t, r)["sibling_pairing_wal"])
 		}
 	}
 }
@@ -697,8 +697,8 @@ func TestRunSiblingRefusalsComeBeforeAnalysisStart(t *testing.T) {
 			t.Errorf("siblings %+v", res.Siblings)
 		}
 		for _, r := range storedRecords(t, e.c) {
-			if payloadOf(t, r)["sibling_pairing"] != "explicit" {
-				t.Errorf("pairing %v", payloadOf(t, r)["sibling_pairing"])
+			if p := payloadOf(t, r); p["sibling_pairing_wal"] != "explicit" || p["sibling_pairing_journal"] != "by-name" {
+				t.Errorf("pairing wal %v journal %v: the WAL was named, the journal found by name", payloadOf(t, r)["sibling_pairing_wal"], payloadOf(t, r)["sibling_pairing_journal"])
 			}
 		}
 		res = mustRun(t, e.c, Inputs{DB: e.db.ID, NoSiblings: true}, Options{AllowReingest: true})

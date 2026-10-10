@@ -49,10 +49,11 @@ func TestValidatorBoundaries(t *testing.T) {
 		{"name over cap", func(p map[string]any) { p["table"] = strings.Repeat("a", maxNameBytes+1) }, false},
 		{"table_valid string", func(p map[string]any) { p["table_valid"] = "x" }, false},
 		{"table_valid bool", func(p map[string]any) { p["table_valid"] = false }, true},
-		{"sibling_pairing x", func(p map[string]any) { p["sibling_pairing"] = "x" }, false},
-		{"sibling_pairing by-name", func(p map[string]any) { p["sibling_pairing"] = "by-name" }, true},
-		{"sibling_pairing explicit", func(p map[string]any) { p["sibling_pairing"] = "explicit" }, true},
-		{"sibling_pairing none", func(p map[string]any) { p["sibling_pairing"] = "none" }, true},
+		{"sibling_pairing_wal x", func(p map[string]any) { p["sibling_pairing_wal"] = "x" }, false},
+		{"sibling_pairing_wal by-name", func(p map[string]any) { p["sibling_pairing_wal"] = "by-name" }, true},
+		{"sibling_pairing_journal explicit", func(p map[string]any) { p["sibling_pairing_journal"] = "explicit" }, true},
+		{"sibling_pairing_journal none", func(p map[string]any) { p["sibling_pairing_journal"] = "none" }, true},
+		{"legacy single sibling_pairing is gone", func(p map[string]any) { p["sibling_pairing"] = "by-name" }, false},
 	}
 	carved := func(m map[string]any) func(p map[string]any) {
 		return func(p map[string]any) { delete(p, "cell"); p["carved"] = m }

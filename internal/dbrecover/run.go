@@ -13,7 +13,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/sqlitefile"
 )
 
-// Test seams (export_test.go): the function Run calls between its last flush and
+// Test seams (export_test.go): the function Run (and Plan) calls between its last flush and
 // the fresh hash of the inputs, a change to each row before it is mapped, and
 // the number of rows between two Progress calls.
 var (
@@ -40,11 +40,11 @@ type pipeline struct {
 	o        Options
 	narrowed []string
 
-	man     []evidence.ManifestRecord
-	dbRec   evidence.ManifestRecord
-	rep     SiblingReport
-	set     *sealedSet
-	pairing string
+	man                        []evidence.ManifestRecord
+	dbRec                      evidence.ManifestRecord
+	rep                        SiblingReport
+	set                        *sealedSet
+	pairingWAL, pairingJournal string // "explicit" | "by-name" | "none", per companion
 
 	db     *sqlitefile.DB
 	hist   *sqlitefile.Hist
@@ -114,14 +114,18 @@ func (p *pipeline) resolve(ctx context.Context) error {
 	if err := errors.Join(werr, jerr); err != nil {
 		return err
 	}
-	switch {
-	case p.in.WAL != "" || p.in.Journal != "":
-		p.pairing = "explicit"
-	case walID != "" || jrID != "":
-		p.pairing = "by-name"
-	default:
-		p.pairing = "none"
+	// how each companion came to be used, apart: naming one and finding the other by
+	// name is two different truths (J119)
+	pairingOf := func(explicit, id string) string {
+		switch {
+		case explicit != "":
+			return "explicit"
+		case id != "":
+			return "by-name"
+		}
+		return "none"
 	}
+	p.pairingWAL, p.pairingJournal = pairingOf(p.in.WAL, walID), pairingOf(p.in.Journal, jrID)
 	set, err := openInputs(ctx, p.c, man, p.dbRec.ID, walID, jrID)
 	if err != nil {
 		return err
@@ -283,7 +287,7 @@ func (p *pipeline) mapper() *mapper {
 	m := &mapper{
 		byFile: map[sqlitefile.FileKind]inputRef{sqlitefile.FileDB: p.set.DB.Ref},
 		cap:    p.set.cap(), mixed: p.set.mixed(), capUnknown: p.set.capUnknown(), incomplete: p.set.incomplete(),
-		pairing: p.pairing, maxPayload: p.o.MaxPayloadBytes, maxBody: p.o.MaxBodyBytes,
+		pairingWAL: p.pairingWAL, pairingJournal: p.pairingJournal, maxPayload: p.o.MaxPayloadBytes, maxBody: p.o.MaxBodyBytes,
 	}
 	if in := p.set.WAL; in != nil {
 		m.byFile[sqlitefile.FileWAL] = in.Ref
@@ -308,8 +312,14 @@ type scanState struct {
 	err        error
 }
 
-func recordBytes(r records.Record) int64 {
-	return int64(len(r.Summary)+len(r.Body)+len(r.Locator)) + encodedSize(r.Payload)
+// recordBytes is the size a record adds to the run's byte total, or an error
+// when its payload cannot be measured: the caller fails closed (J113).
+func recordBytes(r records.Record) (int64, error) {
+	n, err := encodedSize(r.Payload)
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(r.Summary)+len(r.Body)+len(r.Locator)) + n, nil
 }
 
 func (s *scanState) limit(name string) {
@@ -362,7 +372,11 @@ func (p *pipeline) scan(ctx context.Context, add func(records.Record) error, tra
 			s.limit("max-records")
 			return false
 		}
-		sz := recordBytes(rec)
+		sz, err := recordBytes(rec)
+		if err != nil {
+			s.err = err
+			return false
+		}
 		if s.bytes+sz > p.o.MaxBytes {
 			s.limit("max-bytes")
 			return false
@@ -676,11 +690,22 @@ func Run(ctx context.Context, c *evidence.Case, in Inputs, opts Options) (res Re
 		return res, a.finish(nil, p.endDetails(s.counts, ir))
 	}
 	ir, err := w.End(ctx)
-	open = false
-	s.counts.Written = ir.Records
 	if err != nil {
+		// End failed: conclude the writer, so its live-ingest slot is not held and the
+		// ingest is recorded incomplete (J118). A writer End already closed answers
+		// ErrWriterClosed, which is not a second failure.
+		air, aerr := w.Abort(wc, err)
+		open = false
+		if aerr != nil && !errors.Is(aerr, records.ErrWriterClosed) {
+			err = errors.Join(err, aerr)
+		} else if aerr == nil {
+			ir = air
+		}
+		s.counts.Written = ir.Records
 		return fail(err, s.counts, ir)
 	}
+	open = false
+	s.counts.Written = ir.Records
 	res.Siblings, res.Inputs, res.Counts, res.Ingest = p.rep, p.inputInfos(), s.counts, ir
 	return res, a.finish(nil, p.endDetails(s.counts, ir))
 }
@@ -722,7 +747,24 @@ func Plan(ctx context.Context, c *evidence.Case, in Inputs, opts Options) (_ Ass
 	if err := p.summarize(ctx); err != nil {
 		return Assessment{}, err
 	}
-	s, err := p.scan(ctx, func(records.Record) error { return nil }, nil)
+	// the writer's own validator judges each mapped record, so the counts match a Run (J117)
+	validate, err := records.NewValidator(c, p.applied())
+	if err != nil {
+		return Assessment{}, err
+	}
+	s, err := p.scan(ctx, func(r records.Record) error { return validate(r) }, nil)
+	if afterFlushHook != nil {
+		afterFlushHook()
+	}
+	// as Run: the inputs are hashed afresh whatever happened, and a cancel or another
+	// error does not hide a change (exit 4)
+	chk := ctx
+	if err != nil {
+		chk = context.WithoutCancel(ctx)
+	}
+	if cerr := p.set.checkUnchanged(chk); cerr != nil {
+		return Assessment{}, errors.Join(err, cerr)
+	}
 	if err != nil {
 		return Assessment{}, err
 	}

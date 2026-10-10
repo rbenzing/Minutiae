@@ -329,14 +329,16 @@ func checkPayload(payload map[string]any) error {
 			return err
 		}
 	}
-	if _, ok := payload["sibling_pairing"]; ok {
-		if err := oneOf(payload, "sibling_pairing", "by-name", "explicit", "none"); err != nil {
-			return err
+	for _, k := range []string{"sibling_pairing_wal", "sibling_pairing_journal"} {
+		if _, ok := payload[k]; ok {
+			if err := oneOf(payload, k, "by-name", "explicit", "none"); err != nil {
+				return err
+			}
 		}
 	}
 	for k, v := range payload {
 		switch k {
-		case "entry_kind", "table_basis", "relation", "file", "sibling_pairing", "columns", "carved":
+		case "entry_kind", "table_basis", "relation", "file", "sibling_pairing_wal", "sibling_pairing_journal", "columns", "carved":
 		case "rowid":
 			if _, isInt := asInt(v); v != nil && !isInt {
 				return bad("\"rowid\" must be an integer or null")

@@ -3,6 +3,7 @@ package dbrecover
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -15,9 +16,16 @@ import (
 // valueBudget is the part of a row's payload allowance that is left after the
 // degraded form of every column has been reserved (J35): the extra bytes a
 // column may spend to be encoded in full. It is a hard cap on the row.
-type valueBudget struct{ left int64 }
+type valueBudget struct {
+	left int64
+	err  error // the first size that could not be measured (errPayloadSize); the row then fails closed
+}
 
 func newValueBudget(n int64) *valueBudget { return &valueBudget{left: max(n, 0)} }
+
+// errPayloadSize: a payload could not be measured, so its size is unknown. The
+// row is refused; no sentinel size ever enters a sum (J113).
+var errPayloadSize = errors.New("dbrecover: a payload could not be measured")
 
 type countWriter struct{ n int64 }
 
@@ -28,14 +36,14 @@ func (c *countWriter) Write(p []byte) (int, error) {
 
 // encodedSize is the size of m as canonical JSON (no HTML escaping), so JSON
 // escaping and base64 growth are counted.
-func encodedSize(m map[string]any) int64 {
+func encodedSize(m map[string]any) (int64, error) {
 	var c countWriter
 	enc := json.NewEncoder(&c)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(m); err != nil {
-		return math.MaxInt64
+		return 0, fmt.Errorf("%w: %w", errPayloadSize, err)
 	}
-	return c.n - 1 // Encode appends a newline
+	return c.n - 1, nil // Encode appends a newline
 }
 
 func kindName(k sqlitefile.Kind) string {
@@ -80,7 +88,11 @@ func minEncodedBytes(v sqlitefile.Value) int64 {
 // dropped silently and never over the allowance.
 func encodeValue(i int, v sqlitefile.Value, b *valueBudget) map[string]any {
 	deg := degraded(i, v)
-	degSize := encodedSize(deg)
+	degSize, err := encodedSize(deg)
+	if err != nil {
+		b.err = errors.Join(b.err, err)
+		return deg
+	}
 	m := map[string]any{"i": int64(i), "type": kindName(v.Kind)}
 	isBytes := v.Kind == sqlitefile.KindText || v.Kind == sqlitefile.KindBlob
 	if isBytes {
@@ -109,7 +121,12 @@ func encodeValue(i int, v sqlitefile.Value, b *valueBudget) map[string]any {
 		}
 		fillValue(m, v)
 	}
-	extra := max(encodedSize(m)-degSize, 0)
+	full, err := encodedSize(m)
+	if err != nil {
+		b.err = errors.Join(b.err, err)
+		return deg
+	}
+	extra := max(full-degSize, 0)
 	if extra > b.left {
 		return deg
 	}
@@ -121,17 +138,21 @@ func encodeValue(i int, v sqlitefile.Value, b *valueBudget) map[string]any {
 // degraded form of every column plus its separator is reserved, so the encoded
 // columns never exceed max(allowance, that reservation): the reservation is
 // the floor of a row with this many columns.
-func encodeColumns(vals []sqlitefile.Value, allowance int64) []any {
+func encodeColumns(vals []sqlitefile.Value, allowance int64) ([]any, error) {
 	var reserved int64
 	for i, v := range vals {
-		reserved += encodedSize(degraded(i, v)) + 1
+		n, err := encodedSize(degraded(i, v))
+		if err != nil {
+			return nil, err
+		}
+		reserved += n + 1
 	}
 	b := newValueBudget(allowance - reserved)
 	out := make([]any, len(vals))
 	for i, v := range vals {
 		out[i] = encodeValue(i, v, b)
 	}
-	return out
+	return out, b.err
 }
 
 func fillValue(m map[string]any, v sqlitefile.Value) {
