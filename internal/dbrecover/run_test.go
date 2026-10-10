@@ -574,6 +574,9 @@ func TestWriterRejectedRowsAreCountedAndTheRunContinues(t *testing.T) {
 	if res.Ingest.Rejected != 2 {
 		t.Errorf("writer rejected %d", res.Ingest.Rejected)
 	}
+	if res.Ingest.Outcome != "incomplete" || !slices.Contains(res.Counts.Narrowed, "writer-rejected") {
+		t.Errorf("outcome %q narrowed %v: a run that lost rows is narrowed (J112)", res.Ingest.Outcome, res.Counts.Narrowed)
+	}
 }
 
 func TestNarrowedRunNeverCallsEnd(t *testing.T) {
@@ -648,7 +651,7 @@ func TestRunRefusals(t *testing.T) {
 		for name, o := range map[string]Options{
 			"unknown method": {Methods: []string{"sqlite-bogus"}}, "confidence": {MinConfidence: 101},
 			"payload": {MaxPayloadBytes: MaxPayloadBytesCeiling + 1}, "body": {MaxBodyBytes: MaxBodyBytesCeiling + 1},
-			"records": {MaxRecords: 50_000_001}, "negative": {MaxBytes: -1}, "table": {ExcludeTables: []ExcludedTable{{}}},
+			"records": {MaxRecords: 50_000_001}, "negative": {MaxBytes: -1}, "fit equality": {MaxFitEqualityRows: MaxFitEqualityRowsCeiling + 1}, "table": {ExcludeTables: []ExcludedTable{{}}},
 		} {
 			_, err := Run(context.Background(), e.c, e.in(), o)
 			var re *RefusalError

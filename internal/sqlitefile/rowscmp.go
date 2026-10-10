@@ -219,8 +219,11 @@ func digestOf(vals []Value, idx []int) (d [32]byte, complete bool) {
 // whole tuple does, whatever else is undecided; KeyUnknown means a key value
 // is omitted, clipped, unread, or text the library cannot fold (not UTF-8
 // under NOCASE or RTRIM), so the relation is undecided and must not be read
-// as "no match". Never beats Unknown: one value that equals nothing decides it. The status is the reason too:
-// compareWR reports KeyNever as NoteKeyNever and KeyUnknown as NoteKeyUnknown (ruling J103), both unknown.
+// as "no match".
+//
+// KeyNever beats KeyUnknown: one value that equals nothing decides the tuple.
+// The status is the reason too: compareWR reports KeyNever as NoteKeyNever and
+// KeyUnknown as NoteKeyUnknown (ruling J103), both with the relation unknown.
 func keyDigest(vals []Value, idx []int, colls []string) (d [32]byte, st KeyStatus) {
 	h := sha256.New()
 	for n, i := range idx {
@@ -238,11 +241,6 @@ func keyDigest(vals []Value, idx []int, colls []string) (d [32]byte, st KeyStatu
 	return d, KeyOK
 }
 
-// fitDiffRowsTotal is the budget of the live rows the fit-only equality (C45)
-// reads in all: a bound of its own, so a fit-named table never spends the
-// budget (Limits.MaxDiffRowsTotal) the schema-named rows compare with.
-const fitDiffRowsTotal = 1 << 20
-
 // wrSetOf builds (once per table) the digest set of the live rows. fit selects
 // the sets and the budget of the fit-only equality, apart from the others.
 func (rp *rowPass) wrSetOf(ctx context.Context, t *Table, name string, fit bool) (*wrSet, error) {
@@ -251,10 +249,7 @@ func (rp *rowPass) wrSetOf(ctx context.Context, t *Table, name string, fit bool)
 		if rp.wrFit == nil {
 			rp.wrFit = map[string]*wrSet{}
 		}
-		cache, total, ceiling, limName = rp.wrFit, &rp.fitDiffTotal, rp.fitDiffMax, "FitEqualityBudget"
-		if ceiling <= 0 {
-			ceiling = fitDiffRowsTotal
-		}
+		cache, total, ceiling = rp.wrFit, &rp.fitDiffTotal, rp.h.d.env.opts.Limits.MaxFitEqualityRows
 	}
 	if s, ok := cache[name]; ok {
 		return s, nil
@@ -292,7 +287,7 @@ func (rp *rowPass) wrSetOf(ctx context.Context, t *Table, name string, fit bool)
 		if int64(len(s.byKey)) >= lim.MaxDiffRows {
 			s.capped = true
 			if fit {
-				rp.limitHit(limName, fmt.Sprintf("the live rows of table %q are more than Limits.MaxDiffRows (%d): its fit-named history rows are not compared with them", name, lim.MaxDiffRows))
+				rp.fitCapped(fmt.Sprintf("Limits.MaxDiffRows (%d) is below the live rows of table %q", lim.MaxDiffRows, name))
 			} else {
 				rp.limitHit("MaxDiffRows", fmt.Sprintf("the live rows of table %q are more than Limits.MaxDiffRows (%d): its history rows are not compared", name, lim.MaxDiffRows))
 			}
@@ -301,13 +296,18 @@ func (rp *rowPass) wrSetOf(ctx context.Context, t *Table, name string, fit bool)
 		if *total >= ceiling {
 			s.capped = true
 			if fit {
-				rp.limitHit(limName, fmt.Sprintf("the live rows read for the fit-named history rows are more than %d: the rest are not compared with the live rows", ceiling))
+				rp.fitCapped(fmt.Sprintf("Limits.MaxFitEqualityRows (%d) was spent", ceiling))
 			} else {
 				rp.limitHit(limName, fmt.Sprintf("the live rows compared so far are more than Limits.MaxDiffRowsTotal (%d): the rest of the history rows are not compared", ceiling))
 			}
 			return false
 		}
 		if cerr = rp.l.alloc(diffEntryCost); cerr != nil {
+			if fit && errors.Is(cerr, ErrBudget) {
+				// an annotation never ends the pass: the set degrades to "not annotated"
+				cerr, s.capped = nil, true
+				rp.fitCapped("the memory budget was spent")
+			}
 			return false
 		}
 		s.charged += diffEntryCost
@@ -342,7 +342,12 @@ func (rp *rowPass) wrSetOf(ctx context.Context, t *Table, name string, fit bool)
 		return nil, cerr
 	}
 	if err != nil {
-		if !isAnswerless(err) {
+		switch {
+		case fit && errors.Is(err, ErrBudget):
+			// reading the live rows for an annotation outgrew the memory budget: not annotated, pass goes on
+			s.capped = true
+			rp.fitCapped("the memory budget was spent")
+		case !isAnswerless(err):
 			return nil, err
 		}
 		s.tainted = true
@@ -365,6 +370,9 @@ func (rp *rowPass) compareWR(t *Table, name string, row *RecoveredRow, fit bool)
 		return cmpResult{}, err
 	}
 	if s.capped {
+		if fit {
+			return cmpResult{kind: cmpUnknown, note: NoteFitEqualityBudget}, nil
+		}
 		return cmpResult{kind: cmpUnknown, note: "limit-reached"}, nil
 	}
 	res := t.Resolve(Row{Values: row.Values})
@@ -411,4 +419,12 @@ func liveDamaged(v *View) bool {
 		}
 	}
 	return false
+}
+
+// fitCapped records why the fit-only equality (an annotation) was cut. It is
+// never a limit hit: the run, its rows and their relations are unchanged.
+func (rp *rowPass) fitCapped(cause string) {
+	if !slices.Contains(rp.fitCauses, cause) {
+		rp.fitCauses = append(rp.fitCauses, cause)
+	}
 }

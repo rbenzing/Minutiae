@@ -424,7 +424,7 @@ func TestAddRejectionIsCountedNotFatal(t *testing.T) {
 	if res.Counts.SkippedByReason["writer-rejected"] != 3 || res.Counts.Written != total-3 {
 		t.Errorf("skipped %v written %d of %d", res.Counts.SkippedByReason, res.Counts.Written, total)
 	}
-	if res.Ingest.Rejected != 3 || res.Ingest.Outcome != "complete" {
+	if res.Ingest.Rejected != 3 || res.Ingest.Outcome != "incomplete" { // rejected rows narrow the run (J112)
 		t.Errorf("ingest %+v", res.Ingest)
 	}
 }

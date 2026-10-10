@@ -28,9 +28,12 @@ type Options struct {
 	ExcludeTables                 []ExcludedTable
 	MaxRecords, MaxBytes          int64
 	MaxPayloadBytes, MaxBodyBytes int64
-	AllowReingest                 bool
-	BatchRows                     int
-	Progress                      func(Progress)
+	// MaxFitEqualityRows bounds the live rows the fit-only equality (an annotation on rows named by the
+	// column fit alone) reads in all; 0 means the library default. Past it the annotation is unknown.
+	MaxFitEqualityRows int64
+	AllowReingest      bool
+	BatchRows          int
+	Progress           func(Progress)
 }
 
 // Progress is reported while rows are mapped.
@@ -57,6 +60,10 @@ type Counts struct {
 	FreePages, FreePagesZeroed                                                int64
 	PagesByOrigin                                                             map[string]int64
 	SlackCopiesOfLive, SlackUnparsedBytes, SlackDroppedCrossed                int64
+	SlackDroppedOverlap, SlackCrossPageEqual, SlackWorkCapped                 int64
+	SlackRowCapped                                                            bool
+	FitEqualityCapped                                                         int64
+	RecoveryCapUnknown                                                        int64 // written rows capped at the lowest method confidence because an input's cap is unknown (J116)
 	LimitsHit                                                                 []string
 	LibraryWarnings                                                           int
 	Narrowed                                                                  []string
@@ -91,6 +98,8 @@ const (
 	maxRecordsCeiling = 50_000_000
 	defaultMaxBytes   = 8 << 30
 	maxBatchRows      = 20_000
+	// MaxFitEqualityRowsCeiling is the largest MaxFitEqualityRows (the library's own ceiling).
+	MaxFitEqualityRowsCeiling = 1 << 29
 )
 
 func badOption(format string, a ...any) error {
@@ -141,6 +150,8 @@ func (o Options) normalized() (Options, []string, error) {
 		return o, nil, badOption("max payload bytes %d is outside 0..%d", o.MaxPayloadBytes, MaxPayloadBytesCeiling)
 	case o.MaxBodyBytes < 0 || o.MaxBodyBytes > MaxBodyBytesCeiling:
 		return o, nil, badOption("max body bytes %d is outside 0..%d", o.MaxBodyBytes, MaxBodyBytesCeiling)
+	case o.MaxFitEqualityRows < 0 || o.MaxFitEqualityRows > MaxFitEqualityRowsCeiling:
+		return o, nil, badOption("max fit equality rows %d is outside 0..%d", o.MaxFitEqualityRows, MaxFitEqualityRowsCeiling)
 	case o.BatchRows < 0 || o.BatchRows > maxBatchRows:
 		return o, nil, badOption("batch rows %d is outside 0..%d", o.BatchRows, maxBatchRows)
 	}

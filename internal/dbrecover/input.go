@@ -162,10 +162,7 @@ func (s *sealedSet) open(ctx context.Context, role, id string) (*sealedInput, er
 	in := &sealedInput{Rec: rec, f: f, Ref: inputRef{
 		Role: role, ArtifactID: id, SHA256: rec.SHA256, Size: rec.Size, Incomplete: rec.Incomplete,
 	}}
-	if tr, found := evidence.RecoveryTrailOf(s.man, id); found {
-		in.Ref.Recovered = true
-		in.Ref.Cap = tr.MinConfidence
-	}
+	in.Ref.Recovered, in.Ref.Cap, in.Ref.CapUnknown = trailCap(s.man, id)
 	return in, nil
 }
 
@@ -230,12 +227,28 @@ func (s *sealedSet) close() {
 func (s *sealedSet) cap() *int {
 	var m *int
 	for _, in := range s.contributing() {
-		if c := in.Ref.Cap; c != nil && (m == nil || *c < *m) {
+		c := in.Ref.Cap
+		if in.Ref.CapUnknown {
+			v := unknownCapConfidence
+			c = &v
+		}
+		if c != nil && (m == nil || *c < *m) {
 			v := *c
 			m = &v
 		}
 	}
 	return m
+}
+
+// capUnknown reports whether a contributing input is recovered with a cap that
+// cannot be known: the rows are then capped at unknownCapConfidence and flagged.
+func (s *sealedSet) capUnknown() bool {
+	for _, in := range s.contributing() {
+		if in.Ref.CapUnknown {
+			return true
+		}
+	}
+	return false
 }
 
 // mixed reports whether some inputs are recovered and others live.
@@ -257,4 +270,25 @@ func (s *sealedSet) incomplete() bool {
 		}
 	}
 	return false
+}
+
+// unknownCapConfidence is the confidence ceiling of a recovered input whose own
+// cap is unknown (J116): the lowest base confidence the spec 3.3 table gives a
+// method of the 3J records ("sqlite-page-slack 25", the paragraph "Records
+// (3J), by method token"), because provenance caps confidence and an unknown cap
+// must never be read as no cap.
+const unknownCapConfidence = 25
+
+// trailCap reads the recovery trail of an artifact. recovered says the artifact
+// or an ancestor is recovered; cap is the lowest confidence on the chain; unknown
+// is true when it is recovered and the chain names no confidence at all: the
+// artifact is labelled recovered with no description, no artifact on the chain
+// carries a confidence, or the chain was cut by a missing parent, a cycle or the
+// depth bound before one did (RecoveryTrailOf ends such a walk without error).
+func trailCap(man map[string]evidence.ManifestRecord, id string) (recovered bool, cap *int, unknown bool) {
+	tr, found := evidence.RecoveryTrailOf(man, id)
+	if !found {
+		return false, nil, false
+	}
+	return true, tr.MinConfidence, tr.MinConfidence == nil
 }

@@ -185,7 +185,7 @@ func journalUnusable(j *sqlitefile.JournalInfo) string {
 func (p *pipeline) attach() error {
 	p.facts = map[string]map[string]any{}
 	p.unused = map[string]string{}
-	db, err := sqlitefile.Open(p.set.DB.f, p.set.DB.Ref.Size, sqlitefile.Options{})
+	db, err := sqlitefile.Open(p.set.DB.f, p.set.DB.Ref.Size, sqlitefile.Options{Limits: sqlitefile.Limits{MaxFitEqualityRows: p.o.MaxFitEqualityRows}})
 	if err != nil {
 		if errors.Is(err, sqlitefile.ErrNotSQLite) {
 			return &RefusalError{Reason: ReasonNotSQLite, Err: fmt.Errorf("%w: %w", ErrNotSQLite, err)}
@@ -282,7 +282,7 @@ func (p *pipeline) inputInfos() []InputInfo {
 func (p *pipeline) mapper() *mapper {
 	m := &mapper{
 		byFile: map[sqlitefile.FileKind]inputRef{sqlitefile.FileDB: p.set.DB.Ref},
-		cap:    p.set.cap(), mixed: p.set.mixed(), incomplete: p.set.incomplete(),
+		cap:    p.set.cap(), mixed: p.set.mixed(), capUnknown: p.set.capUnknown(), incomplete: p.set.incomplete(),
 		pairing: p.pairing, maxPayload: p.o.MaxPayloadBytes, maxBody: p.o.MaxBodyBytes,
 	}
 	if in := p.set.WAL; in != nil {
@@ -383,6 +383,9 @@ func (p *pipeline) scan(ctx context.Context, add func(records.Record) error, tra
 		s.bytes += sz
 		c := &s.counts
 		c.ByMethod[r.Method]++
+		if m.capUnknown {
+			c.RecoveryCapUnknown++
+		}
 		if r.Relation == sqlitefile.RelUnknown {
 			c.RelationUnknown++
 		}
@@ -416,6 +419,7 @@ func (p *pipeline) scan(ctx context.Context, add func(records.Record) error, tra
 	st, err := p.hist.Rows(ctx, visit)
 	c := &s.counts
 	c.DuplicateOfLive, c.CellsRejected, c.InteriorSkipped = st.DuplicateOfLive, st.CellsRejected, st.InteriorSkipped
+	c.FitEqualityCapped = st.FitEqualityCapped // an annotation limit: counted and warned, never a narrowing
 	for _, l := range st.LimitsHit {
 		s.limit(l)
 	}
@@ -424,6 +428,7 @@ func (p *pipeline) scan(ctx context.Context, add func(records.Record) error, tra
 	if err == nil && s.err == nil && slackCarving && len(s.counts.LimitsHit) == 0 {
 		ss, serr := carveSpans(ctx, p.db, p.hist, visit)
 		c.SlackCopiesOfLive, c.SlackUnparsedBytes, c.SlackDroppedCrossed = ss.DroppedLiveCopy, ss.UnparsedBytes, ss.DroppedCrossed
+		c.SlackDroppedOverlap, c.SlackCrossPageEqual, c.SlackWorkCapped, c.SlackRowCapped = ss.DroppedOverlap, ss.CrossPageEqual, ss.WorkCapped, ss.RowCapped
 		s.slackWarns = ss.warnings
 		if err = serr; err == nil {
 			err = s.err
@@ -435,6 +440,17 @@ func (p *pipeline) scan(ctx context.Context, add func(records.Record) error, tra
 		c.PagesByOrigin[o.String()] = n
 	}
 	c.Narrowed = slices.Clone(p.narrowed)
+	// A run that lost rows is narrowed (J112): the writer refused some, or the slack
+	// pass stopped at a cap. It is kept and concluded incomplete, never superseding.
+	if c.SkippedByReason["writer-rejected"] > 0 {
+		c.Narrowed = append(c.Narrowed, "writer-rejected")
+	}
+	if c.SlackWorkCapped > 0 {
+		c.Narrowed = append(c.Narrowed, "slack-work-cap")
+	}
+	if c.SlackRowCapped {
+		c.Narrowed = append(c.Narrowed, "slack-row-cap")
+	}
 	if p.o.Progress != nil {
 		p.o.Progress(Progress{Rows: s.added, Skipped: s.skipped})
 	}
@@ -486,6 +502,9 @@ func (p *pipeline) sendWarnings(ctx context.Context, w *records.Writer, s *scanS
 	}
 	if p.set.incomplete() {
 		why = append(why, "an input is flagged incomplete: the rows carry input_incomplete")
+	}
+	if p.set.capUnknown() {
+		why = append(why, fmt.Sprintf("an input is recovered and its confidence cap is unknown: its rows are capped at %d and carry the note recovery-cap-unknown", unknownCapConfidence))
 	}
 	if len(why) > 0 {
 		if err := w.Warn(ctx, "", strings.Join(why, "; ")); err != nil {

@@ -162,7 +162,10 @@ func countsDetails(c Counts) map[string]any {
 		"relation_unknown": c.RelationUnknown, "fit_only": c.FitOnly, "freelist_pages": c.FreePages,
 		"freelist_pages_zeroed": c.FreePagesZeroed, "pages_by_origin": int64Map(c.PagesByOrigin),
 		"slack_copies_of_live": c.SlackCopiesOfLive, "slack_unparsed_bytes": c.SlackUnparsedBytes, "slack_dropped_crossed": c.SlackDroppedCrossed,
-		"limits_hit": sortedStrings(c.LimitsHit), "narrowed": toAny(c.Narrowed), "library_warnings": int64(c.LibraryWarnings),
+		"slack_dropped_overlap": c.SlackDroppedOverlap, "slack_cross_page_equal": c.SlackCrossPageEqual,
+		"slack_work_capped_pages": c.SlackWorkCapped, "slack_row_capped": c.SlackRowCapped, "fit_equality_capped": c.FitEqualityCapped,
+		"recovery_cap_unknown": c.RecoveryCapUnknown,
+		"limits_hit":           sortedStrings(c.LimitsHit), "narrowed": toAny(c.Narrowed), "library_warnings": int64(c.LibraryWarnings),
 		"confidence_range": ranges, "range_outside": c.RangeOutside,
 	}
 }

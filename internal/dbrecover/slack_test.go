@@ -384,8 +384,8 @@ func TestSlackIsBoundedOnHostilePages(t *testing.T) {
 	slackPageBudget = 500
 	defer func() { slackPageBudget = old }()
 	rows, st := s.carve(t)
-	if st.steps > 2*slackPageBudget*3 {
-		t.Errorf("%d steps, the per-page cap is %d", st.steps, slackPageBudget)
+	if st.WorkCapped != 1 {
+		t.Errorf("%d pages capped, want 1 (page work cap %d)", st.WorkCapped, slackPageBudget)
 	}
 	if !slices.ContainsFunc(st.warnings, func(w string) bool { return strings.Contains(w, "page 2") && strings.Contains(w, "work cap") }) {
 		t.Errorf("warnings %q: the work cap on page 2 is not reported", st.warnings)

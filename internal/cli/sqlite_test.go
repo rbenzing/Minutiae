@@ -316,6 +316,7 @@ func TestSQLiteRecoverExitCodes(t *testing.T) {
 		{"negative max-bytes", []string{e.db.ID, "--max-bytes", "-1"}, ExitUsage},
 		{"negative max-row-bytes", []string{e.db.ID, "--max-row-bytes", "-1"}, ExitUsage},
 		{"negative max-body-bytes", []string{e.db.ID, "--max-body-bytes", "-1"}, ExitUsage},
+		{"negative max-fit-equality-rows", []string{e.db.ID, "--max-fit-equality-rows", "-1"}, ExitUsage},
 		{"negative timeout", []string{e.db.ID, "--timeout", "-1s"}, ExitUsage},
 		{"bad timeout", []string{e.db.ID, "--timeout", "soon"}, ExitUsage},
 		{"no artifact", nil, ExitUsage},
@@ -523,5 +524,57 @@ func TestSQLiteRecoverEscapesEveryCaseString(t *testing.T) {
 		if strings.HasPrefix(l, "forged:") {
 			t.Errorf("a case-supplied newline forged the line %q", l)
 		}
+	}
+}
+
+// TestSQLiteRecoverJSONIncompleteFollowsTheOutcome (J125): the top-level
+// incomplete is true whenever the ingest concluded incomplete, a narrowed or a
+// limit-stopped run included, and false for a complete run.
+func TestSQLiteRecoverJSONIncompleteFollowsTheOutcome(t *testing.T) {
+	for name, tc := range map[string]struct {
+		args []string
+		want bool
+	}{
+		"complete":     {nil, false},
+		"narrowed":     {[]string{"--methods", sqlitefile.MethodFreelist}, true},
+		"limit-stoped": {[]string{"--max-records", "1"}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newSQLEnv(t, "t", "/data/app.db")
+			code, out := e.recover(t, append([]string{e.db.ID, "--json"}, tc.args...)...)
+			if code != 0 {
+				t.Fatalf("exit %d\n%s", code, out)
+			}
+			var got struct {
+				Incomplete bool `json:"incomplete"`
+				Ingest     struct {
+					Outcome string `json:"outcome"`
+				} `json:"ingest"`
+			}
+			if err := json.Unmarshal([]byte(out), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Incomplete != tc.want || (got.Ingest.Outcome == "incomplete") != tc.want {
+				t.Errorf("incomplete %v outcome %q, want incomplete %v", got.Incomplete, got.Ingest.Outcome, tc.want)
+			}
+		})
+	}
+}
+
+// TestSQLiteRecoverPrintsIncompleteReasons (J112): a run that concluded
+// incomplete without an error says so, with the reasons, before the ingest line.
+func TestSQLiteRecoverPrintsIncompleteReasons(t *testing.T) {
+	e := newSQLEnv(t, "t", "/data/app.db")
+	code, out := e.recover(t, e.db.ID, "--max-records", "1", "--methods", sqlitefile.MethodFreelist)
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	if !strings.Contains(out, "incomplete: methods, max-records\n") {
+		t.Errorf("no incomplete line naming the reasons:\n%s", out)
+	}
+	e2 := newSQLEnv(t, "t", "/data/app.db")
+	_, out2 := e2.recover(t, e2.db.ID)
+	if strings.Contains(out2, "incomplete:") {
+		t.Errorf("a complete run prints an incomplete line:\n%s", out2)
 	}
 }

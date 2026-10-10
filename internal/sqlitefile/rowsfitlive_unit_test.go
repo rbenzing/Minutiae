@@ -131,18 +131,17 @@ func TestFitEqualityNeverSpendsTheSchemaBudget(t *testing.T) {
 	}
 }
 
-// TestFitEqualityBudgetIsBounded (J80): the budget of its own is a bound, not
-// an exemption. When it is spent the row is not annotated and the cut is a
-// counted limit, never silent.
+// TestFitEqualityBudgetIsBounded (J80, J110): the budget of its own is a bound,
+// not an exemption. When it is spent the row is not annotated and the cut is
+// counted, never silent, and never a limit hit (it must not narrow the run).
 func TestFitEqualityBudgetIsBounded(t *testing.T) {
-	rp := fitBudgetPass(t, Limits{})
-	rp.fitDiffMax = 2 // below the three live rows of w1
+	rp := fitBudgetPass(t, Limits{MaxFitEqualityRows: 2}) // below the three live rows of w1
 	row := &RecoveredRow{Values: []Value{vText("a"), vText("v")}}
 	got, err := rp.equalsLiveFit(ident{table: "w1", basis: BasisFit, kind: kindWithoutR}, row)
 	if err != nil || got {
 		t.Errorf("equalsLiveFit = %v, %v with the budget spent; want false, nil", got, err)
 	}
-	if len(rp.st.LimitsHit) != 1 || rp.st.LimitsHit[0] != "FitEqualityBudget" {
-		t.Errorf("LimitsHit %v, want [FitEqualityBudget]", rp.st.LimitsHit)
+	if len(rp.st.LimitsHit) != 0 || rp.st.FitEqualityCapped != 1 {
+		t.Errorf("LimitsHit %v capped %d, want none and 1", rp.st.LimitsHit, rp.st.FitEqualityCapped)
 	}
 }

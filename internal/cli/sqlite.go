@@ -38,6 +38,7 @@ type sqliteRecoverFlags struct {
 	maxRecords, maxBytes int64
 	maxRowBytes          int64
 	maxBodyBytes         int64
+	maxFitEquality       int64
 	timeout              time.Duration
 	allowReingest        bool
 	list                 bool
@@ -56,6 +57,7 @@ func (f *sqliteRecoverFlags) register(cmd *cobra.Command) {
 	fl.Int64Var(&f.maxBytes, "max-bytes", 0, "stop after this many bytes of records (0 = default)")
 	fl.Int64Var(&f.maxRowBytes, "max-row-bytes", 0, "largest payload of one record (0 = default)")
 	fl.Int64Var(&f.maxBodyBytes, "max-body-bytes", 0, "largest body of one record (0 = default)")
+	fl.Int64Var(&f.maxFitEquality, "max-fit-equality-rows", 0, "live rows the equals-live-row annotation of fit-named rows may read in all (0 = default)")
 	fl.DurationVar(&f.timeout, "timeout", 0, "stop the run after this long, for example 30m (0 = no limit)")
 	fl.BoolVar(&f.allowReingest, "allow-reingest", false, "run again although these inputs were already recovered")
 	fl.BoolVar(&f.list, "list", false, "assess only: print what a run would do and write nothing")
@@ -68,7 +70,7 @@ func (f *sqliteRecoverFlags) inputs(artifact string) dbrecover.Inputs {
 func (f *sqliteRecoverFlags) options() (dbrecover.Options, error) {
 	o := dbrecover.Options{
 		MinConfidence: f.minConfidence, MaxRecords: f.maxRecords, MaxBytes: f.maxBytes,
-		MaxPayloadBytes: f.maxRowBytes, MaxBodyBytes: f.maxBodyBytes, AllowReingest: f.allowReingest,
+		MaxPayloadBytes: f.maxRowBytes, MaxBodyBytes: f.maxBodyBytes, MaxFitEqualityRows: f.maxFitEquality, AllowReingest: f.allowReingest,
 	}
 	if f.methods != "" {
 		for _, m := range strings.Split(f.methods, ",") {
@@ -347,7 +349,7 @@ func printSQLiteResult(w io.Writer, c *evidence.Case, res dbrecover.Result, runE
 			AnalysisID: res.AnalysisID, RulesHash: res.RulesHash, Inputs: inputsJSON(res.Inputs, trails),
 			Siblings:   map[string]sqliteSiblingJSON{"wal": siblingJSON("wal", res.Siblings.WAL), "journal": siblingJSON("journal", res.Siblings.Journal)},
 			Counts:     countsJSON2(res.Counts),
-			Incomplete: stopped,
+			Incomplete: stopped || res.Ingest.Outcome == "incomplete",
 		}
 		if notStarted {
 			rep.NotStarted = runErr.Error()
@@ -370,6 +372,14 @@ func printSQLiteResult(w io.Writer, c *evidence.Case, res dbrecover.Result, runE
 		fmt.Fprintln(w, "incomplete: what follows is what was written before the run stopped")
 	}
 	printSQLiteBody(w, res.Inputs, trails, res.Siblings, res.Counts)
+	if !stopped && res.Ingest.Outcome == "incomplete" {
+		// a run that lost or left out rows (a filter, a limit, a refusal by the writer, a cap) is not a full recovery
+		reasons := append(slices.Clone(res.Counts.Narrowed), res.Counts.LimitsHit...)
+		if len(reasons) == 0 {
+			reasons = []string{"the ingest was concluded incomplete"}
+		}
+		fmt.Fprintf(w, "incomplete: %s\n", escapeText(strings.Join(reasons, ", ")))
+	}
 	switch {
 	case res.Ingest.IngestID != "":
 		fmt.Fprintf(w, "ingest %s %s\n", escapeText(res.Ingest.IngestID), escapeText(res.Ingest.Outcome))

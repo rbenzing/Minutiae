@@ -20,6 +20,7 @@ type inputRef struct {
 	Size                     int64
 	Recovered, Incomplete    bool
 	Cap                      *int
+	CapUnknown               bool   // recovered, yet no confidence cap can be read from its trail (J116)
 	Unused                   string // "" or the reason a discovered companion was not applied (D9)
 }
 
@@ -28,6 +29,7 @@ type mapper struct {
 	byFile       map[sqlitefile.FileKind]inputRef
 	cap          *int // minimum confidence ceiling over the whole input set (D2)
 	mixed        bool
+	capUnknown   bool // an input is recovered with an unknown cap: rows carry the flag (J116)
 	incomplete   bool
 	pairing      string // "by-name" | "explicit" | "none"
 	maxPayload   int64
@@ -251,6 +253,9 @@ func (m *mapper) record(r sqlitefile.RecoveredRow) (records.Record, error) {
 	rec := records.Record{
 		Type: TypeName, ArtifactID: ref.ArtifactID, Deleted: true, Recovery: r.Method, Confidence: &conf,
 		Locator: locatorFor(r),
+	}
+	if m.capUnknown {
+		addNote("recovery-cap-unknown")
 	}
 	outside := false
 	if rg, ok := rangeOf(r.Loc, ref.Size); ok {

@@ -61,6 +61,9 @@ var slackCarving = true
 // examined plus the header bytes a candidate makes the scanner read.
 var slackPageBudget int64 = 1 << 20
 
+// slackMaxRows is a test seam: when above zero it replaces Limits.MaxHistoryRows as the cap of the slack rows.
+var slackMaxRows int64
+
 // maxSlackWarnings bounds the warnings one carve keeps.
 const maxSlackWarnings = 50
 
@@ -76,8 +79,9 @@ type slackStats struct {
 	DroppedOverlap  int64 // a candidate over a live cell: the span was not free space there
 	DroppedCrossed  int64 // a valid cell starts inside it and ends beyond it: its tail was overwritten
 	UnparsedBytes   int64 // non-zero bytes of free space that no carved cell explains
+	WorkCapped      int64 // pages whose free space was not fully examined: the page work cap was reached
+	RowCapped       bool  // the slack rows reached the row cap: the rest are not listed
 
-	steps    int64    // work units spent over all pages
 	warnings []string // bounded, in page order
 }
 
@@ -106,7 +110,7 @@ func carveSpans(ctx context.Context, db *sqlitefile.DB, h *sqlitefile.Hist, emit
 	var k *slackCarver
 	defer func() {
 		if x := recover(); x != nil {
-			err = fmt.Errorf("slack carving: internal error: %v", x)
+			err = &PanicError{Value: x}
 		}
 		if k != nil {
 			st = k.st
@@ -156,8 +160,12 @@ func newSlackCarver(ctx context.Context, db *sqlitefile.DB, emit func(sqlitefile
 	if err != nil {
 		return nil, err
 	}
+	lim := sqlitefile.DefaultLimits()
+	if slackMaxRows > 0 {
+		lim.MaxHistoryRows = slackMaxRows
+	}
 	return &slackCarver{
-		ctx: ctx, live: live, sch: sch, info: db.Info(), lim: sqlitefile.DefaultLimits(),
+		ctx: ctx, live: live, sch: sch, info: db.Info(), lim: lim,
 		tables: map[string]*sqlitefile.Table{}, emit: emit,
 	}, nil
 }
@@ -202,6 +210,7 @@ func (k *slackCarver) image(img sqlitefile.PageImage, data []byte) bool {
 	table, basis := k.sch.FitPage(cells)
 	for _, c := range cands {
 		if st.Carved >= lim.MaxHistoryRows {
+			st.RowCapped = true
 			st.warn("the slack rows reached the cap of %d rows; the rest are not listed", lim.MaxHistoryRows)
 			return false
 		}
@@ -377,6 +386,7 @@ func scanPage(data []byte, hd *sqlitefile.PageHeader, img sqlitefile.PageImage, 
 			for _, rest := range spans[si+1:] {
 				st.UnparsedBytes += nonZero(data, rest.Offset, rest.Offset+rest.Length)
 			}
+			st.WorkCapped++
 			st.warn("page %d (%s): the work cap (%d units) was reached; the rest of its free space was not examined", img.Number, img.Origin, slackPageBudget)
 			break
 		}
@@ -384,7 +394,6 @@ func scanPage(data []byte, hd *sqlitefile.PageHeader, img sqlitefile.PageImage, 
 	if crossedHere > 0 {
 		st.warn("page %d (%s): %d carved cell(s) are crossed by a later valid cell (their tail was overwritten) and are not delivered", img.Number, img.Origin, crossedHere)
 	}
-	st.steps += spent
 	return cands, live, copies
 }
 
