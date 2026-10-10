@@ -12,6 +12,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/filesys"
@@ -71,9 +72,11 @@ type PlannedCandidate struct {
 	Encrypted          bool
 	Mode               uint32
 	Times              filesys.Times
-	Skip               string // "" = will be written; else a reason token
+	Skip               string   // "" = will be written; else a reason token
+	Warnings           []string // the reader's own warnings, cleaned, at most readerWarningCap
 
 	skipDetail string
+	prefix     bool   // the map covers less than the declared size (ruling F4/F18)
 	cut        bool   // some runs were not free
 	cutState   string // state of the first non-free byte
 	cutRuns    int    // runs not (fully) captured
@@ -92,17 +95,20 @@ type RecoverItem struct {
 	Skips          []PlanSkip
 
 	notes []PlanSkip // warnings that are not skips (a cut candidate list)
-	enc   bool       // the listing flagged the entry encrypted
+
+	readerWarnings []PlanSkip // the reader's own warnings (Candidate.Warnings), audited but not skips
+	enc            bool       // the listing flagged the entry encrypted
 }
 
 // RecoverPlan is what a recovery run would do.
 type RecoverPlan struct {
-	Items        []RecoverItem
-	Considered   int
-	SkippedBy    map[string]int
-	LimitReached string // "" | "max-files" | "max-bytes" | "max-scan-bytes" | "max-entries" | "max-plan-runs": the first limit met
-	NotProcessed int
-	FSWarnings   []string // new filesystem warnings the planning raised (the unallocated note included)
+	Items          []RecoverItem
+	Considered     int
+	SkippedBy      map[string]int
+	LimitReached   string // "" | "max-files" | "max-bytes" | "max-scan-bytes" | "max-entries" | "max-plan-runs": the first limit met
+	NotProcessed   int
+	ReaderWarnings int      // reader warnings (Candidate.Warnings) of the planned candidates, all counted
+	FSWarnings     []string // new filesystem warnings the planning raised (the unallocated note included)
 
 	candidates  int
 	uniform     int
@@ -123,6 +129,7 @@ type RecoverSummary struct {
 	SkippedBy              map[string]int
 	LimitReached           string // see RecoverPlan.LimitReached
 	NotProcessed           int
+	ReaderWarnings         int // reader warnings (Candidate.Warnings) audited; not skips
 }
 
 // recovererOf returns the Recoverer of fsys, or filesys.ErrNoRecovery. Recover calls it before any audit
@@ -453,12 +460,14 @@ func (p *planner) evaluate(it *RecoverItem, t target, cs []filesys.Candidate) {
 	for _, c := range cs {
 		p.plan.candidates++
 		pc := PlannedCandidate{Method: c.Method, DeclaredSize: c.Size, Encrypted: c.Encrypted || t.e.Encrypted, Mode: c.Mode, Times: c.Times, mapRuns: len(c.Runs)}
+		pc.Warnings = p.readerWarnings(it, c.Warnings) // forwarded even when the candidate is then rejected
 		reject := func(reason, detail string) {
 			pc.Skip, pc.skipDetail = reason, detail
 			invalid = append(invalid, pc)
 			p.skipped(reason)
 		}
-		if _, err := filesys.CheckCandidate(c, p.part.Length); err != nil {
+		covered, err := filesys.CheckCandidate(c, p.part.Length)
+		if err != nil {
 			reject("invalid-map", err.Error())
 			continue
 		}
@@ -467,7 +476,11 @@ func (p *planner) evaluate(it *RecoverItem, t target, cs []filesys.Candidate) {
 			continue
 		}
 		if c.Size > 0 && len(c.Runs) == 0 {
-			reject("no-runs", fmt.Sprintf("the map declares %d bytes and has no runs", c.Size))
+			detail := fmt.Sprintf("the map declares %d bytes and has no runs", c.Size)
+			if stop := readerStop(cleanList(c.Assumptions)); stop != "" {
+				detail += "; " + stop // the reader's own reason: never an unexplained cut
+			}
+			reject("no-runs", detail)
 			continue
 		}
 		imgRuns := make([]evidence.Run, 0, len(c.Runs))
@@ -500,25 +513,45 @@ func (p *planner) evaluate(it *RecoverItem, t target, cs []filesys.Candidate) {
 		}
 		pc.Size, pc.Runs = cut.CapturedBytes, cut.Captured
 		pc.Excluded = capExcluded(cut.Excluded)
-		pc.Alloc = evidence.AllocSummary{Free: cut.CapturedBytes, ExcludedRuns: len(cut.Excluded), ExcludedBytes: cut.ExcludedBytes}
+		// A map shorter than its declared size names only a prefix of the file (ruling F4/F18): the
+		// unmapped tail is counted in ExcludedBytes (it has no runs to list), whatever the reader's reason.
+		pc.prefix = covered < c.Size
+		tail := int64(0)
+		if pc.prefix {
+			tail = c.Size - covered
+		}
+		pc.Alloc = evidence.AllocSummary{Free: cut.CapturedBytes, ExcludedRuns: len(cut.Excluded), ExcludedBytes: satAdd(cut.ExcludedBytes, tail)}
 		pc.cut, pc.cutState, pc.cutRuns = cut.State != "", cut.State, len(cut.Excluded)
 		pc.Basis = cleanList(c.Basis)
 		pc.Assumptions = cleanList(c.Assumptions)
 		if pc.Size < c.Size {
 			pc.Assumptions = append(pc.Assumptions, fmt.Sprintf("size-declared=%d", c.Size))
 		}
+		if pc.cut || pc.prefix {
+			pc.Assumptions = append(pc.Assumptions, "prefix-only")
+		}
 		if pc.cut {
-			pc.Assumptions = append(pc.Assumptions, "prefix-only", "cut-state="+pc.cutState)
+			pc.Assumptions = append(pc.Assumptions, "cut-state="+pc.cutState)
 			why := "allocated since deletion"
 			if pc.cutState == "unknown" {
 				why = "allocation state unknown"
 			}
 			pc.errText = fmt.Sprintf("%d of %d runs not captured: %s", pc.cutRuns, pc.mapRuns, why)
-		} else if pc.Size < c.Size {
+		}
+		if pc.prefix {
+			text := fmt.Sprintf("the map covers %d of %d declared bytes", covered, c.Size)
+			if stop := readerStop(pc.Assumptions); stop != "" {
+				text += "; " + stop
+			}
+			if pc.errText != "" {
+				text = pc.errText + "; " + text
+			}
+			pc.errText = text
+		} else if pc.Size < c.Size && pc.errText == "" {
 			pc.errText = fmt.Sprintf("the map covers %d of %d declared bytes", pc.Size, c.Size)
 		}
 		pc.Content = "ok"
-		pc.Confidence, _ = confidenceFor(c.Method, pc.cut, false)
+		pc.Confidence, _ = confidenceFor(c.Method, pc.cut || pc.prefix, false)
 		pc.Band = evidence.ConfidenceBand(pc.Confidence)
 		valid = append(valid, pc)
 	}
@@ -570,7 +603,7 @@ func (p *planner) selectAndFilter() {
 					}
 				}
 			}
-			c.Confidence, _ = confidenceFor(c.Method, c.cut, len(partners) > 0)
+			c.Confidence, _ = confidenceFor(c.Method, c.cut || c.prefix, len(partners) > 0)
 			c.Band = evidence.ConfidenceBand(c.Confidence)
 			c.Assumptions = fitAssumptions(c.Assumptions)
 			if c.Confidence < p.o.MinConfidence {
@@ -796,4 +829,47 @@ func (c PlannedCandidate) PartialWhy() string { return c.errText }
 // Counters returns the candidates, uniform and overlapping candidates the plan counted.
 func (p *RecoverPlan) Counters() (candidates, uniform, overlap int) {
 	return p.candidates, p.uniform, p.overlap
+}
+
+// readerWarningCap bounds the reader warnings audited for one candidate; the rest are summarised in one
+// suppression warning and still counted.
+const readerWarningCap = 16
+
+// readerWarnings turns the warnings a reader attached to a candidate into audited, counted warnings of
+// the entry (none is a skip). At most readerWarningCap are kept, cleaned and clipped to 256 bytes; the
+// rest become one "N further reader warnings suppressed" warning. It returns the kept texts.
+func (p *planner) readerWarnings(it *RecoverItem, ws []string) []string {
+	if len(ws) == 0 {
+		return nil
+	}
+	p.plan.ReaderWarnings += len(ws)
+	kept := make([]string, 0, min(len(ws), readerWarningCap))
+	for _, w := range ws[:min(len(ws), readerWarningCap)] {
+		// control bytes are dropped (a terminal escape in a reader text must never reach a log or a console)
+		kept = append(kept, cleanText(strings.Map(func(r rune) rune {
+			if unicode.IsControl(r) {
+				return -1
+			}
+			return r
+		}, w), 256))
+	}
+	for _, w := range kept {
+		it.readerWarnings = append(it.readerWarnings, PlanSkip{Path: it.Path, ID: it.ID, Reason: "reader-warning", Detail: w})
+	}
+	if n := len(ws) - len(kept); n > 0 {
+		note := fmt.Sprintf("%d further reader warnings suppressed", n)
+		it.readerWarnings = append(it.readerWarnings, PlanSkip{Path: it.Path, ID: it.ID, Reason: "reader-warnings-suppressed", Detail: note})
+	}
+	return kept
+}
+
+// readerStop returns the first stale-chain-stop assumption of a candidate (the reader's own reason why its
+// map ends early), "" when it gave none.
+func readerStop(assumptions []string) string {
+	for _, a := range assumptions {
+		if strings.HasPrefix(a, "stale-chain-stop=") {
+			return a
+		}
+	}
+	return ""
 }

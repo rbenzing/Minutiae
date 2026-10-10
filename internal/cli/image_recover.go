@@ -168,6 +168,9 @@ func printRecoverList(w io.Writer, plan *examine.RecoverPlan) {
 				line += " [not written: " + escapeText(c.Skip) + ": " + escapeText(c.SkipDetail()) + "]"
 			}
 			fmt.Fprintln(w, line)
+			for _, rw := range c.Warnings {
+				fmt.Fprintf(w, "  reader warning: %s\n", escapeText(rw))
+			}
 		}
 		if len(it.Candidates) > 0 {
 			continue // a candidate's skip is already on its own line
@@ -178,6 +181,7 @@ func printRecoverList(w io.Writer, plan *examine.RecoverPlan) {
 	}
 	fmt.Fprintf(w, "would recover %d (%d bytes), uniform %d, skipped %d, considered %d\n", written, bytes, uniform, skippedTotal(plan.SkippedBy), plan.Considered)
 	printLimit(w, plan.LimitReached, plan.NotProcessed)
+	printReaderWarnings(w, plan.ReaderWarnings)
 	if n := len(plan.FSWarnings); n > 0 {
 		fmt.Fprintf(w, "filesystem warnings: %d\n", n)
 	}
@@ -232,6 +236,7 @@ func printRecoverRun(w io.Writer, sum examine.RecoverSummary) {
 	fmt.Fprintf(w, "recovered %d (%d bytes), partial %d, uniform %d, skipped %d\n", sum.Recovered, bytes, sum.Partial, sum.Uniform, sum.Skipped)
 	printSkipReasons(w, sum.Summary)
 	printLimit(w, sum.LimitReached, sum.NotProcessed)
+	printReaderWarnings(w, sum.ReaderWarnings)
 	printFSWarnings(w, sum.Summary)
 }
 
@@ -242,4 +247,12 @@ func writeRecoverJSON(w io.Writer, sum examine.RecoverSummary, err error) error 
 		return jerr
 	}
 	return err
+}
+
+// printReaderWarnings says how many warnings the filesystem reader attached to recovery maps (counted, audited
+// as analysis.warning entries, never skips).
+func printReaderWarnings(w io.Writer, n int) {
+	if n > 0 {
+		fmt.Fprintf(w, "reader warnings: %d (see analysis.warning entries in audit.jsonl)\n", n)
+	}
 }

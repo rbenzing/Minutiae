@@ -232,24 +232,25 @@ func newJSONSummary(s examine.Summary) jsonSummary {
 
 // jsonRecover is the JSON of a recover run (strings are the raw ones; artifacts are manifest records).
 type jsonRecover struct {
-	AnalysisID   string                    `json:"analysis_id"`
-	Considered   int                       `json:"considered"`
-	Candidates   int                       `json:"candidates"`
-	Recovered    int                       `json:"recovered"`
-	Partial      int                       `json:"partial"`
-	Uniform      int                       `json:"uniform"`
-	Overlap      int                       `json:"overlap"`
-	SkippedBy    map[string]int            `json:"skipped_by"`
-	LimitReached string                    `json:"limit_reached"`
-	NotProcessed int                       `json:"not_processed"`
-	FSWarnings   int                       `json:"fs_warnings"`
-	Artifacts    []evidence.ManifestRecord `json:"artifacts"`
+	AnalysisID     string                    `json:"analysis_id"`
+	Considered     int                       `json:"considered"`
+	Candidates     int                       `json:"candidates"`
+	Recovered      int                       `json:"recovered"`
+	Partial        int                       `json:"partial"`
+	Uniform        int                       `json:"uniform"`
+	Overlap        int                       `json:"overlap"`
+	SkippedBy      map[string]int            `json:"skipped_by"`
+	LimitReached   string                    `json:"limit_reached"`
+	NotProcessed   int                       `json:"not_processed"`
+	ReaderWarnings int                       `json:"reader_warnings"`
+	FSWarnings     int                       `json:"fs_warnings"`
+	Artifacts      []evidence.ManifestRecord `json:"artifacts"`
 }
 
 func newJSONRecover(s examine.RecoverSummary) jsonRecover {
 	out := jsonRecover{
 		AnalysisID: s.AnalysisID, Considered: s.Considered, Candidates: s.Candidates, Recovered: s.Recovered, Partial: s.Partial,
-		Uniform: s.Uniform, Overlap: s.Overlap, SkippedBy: s.SkippedBy, LimitReached: s.LimitReached, NotProcessed: s.NotProcessed, FSWarnings: s.FSWarnings, Artifacts: s.Artifacts,
+		Uniform: s.Uniform, Overlap: s.Overlap, SkippedBy: s.SkippedBy, LimitReached: s.LimitReached, NotProcessed: s.NotProcessed, ReaderWarnings: s.ReaderWarnings, FSWarnings: s.FSWarnings, Artifacts: s.Artifacts,
 	}
 	if out.SkippedBy == nil {
 		out.SkippedBy = map[string]int{}
@@ -277,6 +278,7 @@ type jsonRecoverCandidate struct {
 	WouldWrite   bool                  `json:"would_write"`
 	Skip         string                `json:"skip,omitempty"`
 	SkipDetail   string                `json:"skip_detail,omitempty"`
+	Warnings     []string              `json:"warnings"`
 }
 
 type jsonRecoverSkip struct {
@@ -296,12 +298,13 @@ type jsonRecoverItem struct {
 }
 
 type jsonRecoverList struct {
-	Considered   int               `json:"considered"`
-	Items        []jsonRecoverItem `json:"items"`
-	SkippedBy    map[string]int    `json:"skipped_by"`
-	LimitReached string            `json:"limit_reached"`
-	NotProcessed int               `json:"not_processed"`
-	FSWarnings   int               `json:"fs_warnings"`
+	Considered     int               `json:"considered"`
+	Items          []jsonRecoverItem `json:"items"`
+	SkippedBy      map[string]int    `json:"skipped_by"`
+	LimitReached   string            `json:"limit_reached"`
+	NotProcessed   int               `json:"not_processed"`
+	ReaderWarnings int               `json:"reader_warnings"`
+	FSWarnings     int               `json:"fs_warnings"`
 }
 
 func jsonRuns(rs []evidence.Run) []jsonRun {
@@ -313,7 +316,7 @@ func jsonRuns(rs []evidence.Run) []jsonRun {
 }
 
 func newJSONRecoverList(p *examine.RecoverPlan) jsonRecoverList {
-	out := jsonRecoverList{Considered: p.Considered, Items: []jsonRecoverItem{}, SkippedBy: p.SkippedBy, LimitReached: p.LimitReached, NotProcessed: p.NotProcessed, FSWarnings: len(p.FSWarnings)}
+	out := jsonRecoverList{Considered: p.Considered, Items: []jsonRecoverItem{}, SkippedBy: p.SkippedBy, LimitReached: p.LimitReached, NotProcessed: p.NotProcessed, ReaderWarnings: p.ReaderWarnings, FSWarnings: len(p.FSWarnings)}
 	if out.SkippedBy == nil {
 		out.SkippedBy = map[string]int{}
 	}
@@ -323,7 +326,7 @@ func newJSONRecoverList(p *examine.RecoverPlan) jsonRecoverList {
 			ji.Candidates = append(ji.Candidates, jsonRecoverCandidate{
 				Method: c.Method, Confidence: c.Confidence, Band: c.Band, Size: c.Size, DeclaredSize: c.DeclaredSize,
 				Runs: jsonRuns(c.Runs), Excluded: jsonRuns(c.Excluded), Alloc: c.Alloc, Basis: nonNil(c.Basis), Assumptions: nonNil(c.Assumptions),
-				Content: c.Content, Encrypted: c.Encrypted, Incomplete: c.PartialWhy(), WouldWrite: c.Skip == "", Skip: c.Skip, SkipDetail: c.SkipDetail(),
+				Content: c.Content, Encrypted: c.Encrypted, Incomplete: c.PartialWhy(), WouldWrite: c.Skip == "", Skip: c.Skip, SkipDetail: c.SkipDetail(), Warnings: nonNil(c.Warnings),
 			})
 		}
 		for _, sk := range it.Skips {
