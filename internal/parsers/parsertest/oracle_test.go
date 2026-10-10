@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,7 +40,7 @@ func oracleBundle() Bundle {
 
 func goodRecord() records.Record {
 	return records.Record{
-		Type: "message", ArtifactID: "ID-DB", Locator: "sqlite:table=sms;rowid=1", Range: &records.Range{Offset: 100, Length: 40},
+		Type: "message", SourcePath: "/data/x.db", ArtifactID: "ID-DB", Locator: "sqlite:table=sms;rowid=1", Range: &records.Range{Offset: 100, Length: 40},
 		Time: utc("2023-05-01T10:00:00Z"), Times: []records.NamedTime{{Kind: "received", Time: *utc("2023-05-01T10:00:00Z")}},
 		Summary: "sms in +1555: hi", Body: "hi",
 		Payload: map[string]any{"channel": "sms", "participants": []any{}, "raw": map[string]any{"date": int64(1682935200000)}},
@@ -49,7 +50,7 @@ func goodRecord() records.Record {
 func goodExpect() Expect {
 	var exp Expect
 	exp.Records = []ExpRecord{{
-		Table: "sms", Rowid: 1, File: "db", Time: sp("2023-05-01T10:00:00Z"), Times: map[string]string{"received": "2023-05-01T10:00:00Z"},
+		Table: "sms", Rowid: 1, File: "db", Type: "message", SourcePath: "/data/x.db", Time: sp("2023-05-01T10:00:00Z"), Times: map[string]string{"received": "2023-05-01T10:00:00Z"},
 		Summary: sp("sms in +1555: hi"), Body: sp("hi"),
 		Payload: map[string]any{"channel": "sms", "participants": []any{}, "raw": map[string]any{"date": json.Number("1682935200000")}},
 	}}
@@ -67,14 +68,28 @@ func TestAssertMatchesOracleAcceptsAMatchingRun(t *testing.T) {
 
 func TestAssertMatchesOracleRefusesEveryKindOfDifference(t *testing.T) {
 	mutate := map[string]func(*Result, *Expect){
-		"missing record":     func(r *Result, _ *Expect) { r.Records = nil },
-		"extra record":       func(r *Result, _ *Expect) { r.Records = append(r.Records, goodRecord()) },
-		"wrong rowid":        func(r *Result, _ *Expect) { r.Records[0].Locator = "sqlite:table=sms;rowid=2" },
-		"wrong time":         func(r *Result, _ *Expect) { r.Records[0].Time = utc("2023-05-01T10:00:01Z") },
-		"time where none":    func(_ *Result, e *Expect) { e.Records[0].Time = nil },
-		"wrong times":        func(r *Result, _ *Expect) { r.Records[0].Times = nil },
-		"deleted":            func(r *Result, _ *Expect) { r.Records[0].Deleted = true },
-		"recovery set":       func(r *Result, _ *Expect) { r.Records[0].Deleted, r.Records[0].Recovery = true, "sqlite-freelist" },
+		"missing record":    func(r *Result, _ *Expect) { r.Records = nil },
+		"extra record":      func(r *Result, _ *Expect) { r.Records = append(r.Records, goodRecord()) },
+		"wrong rowid":       func(r *Result, _ *Expect) { r.Records[0].Locator = "sqlite:table=sms;rowid=2" },
+		"wrong time":        func(r *Result, _ *Expect) { r.Records[0].Time = utc("2023-05-01T10:00:01Z") },
+		"time where none":   func(_ *Result, e *Expect) { e.Records[0].Time = nil },
+		"wrong times":       func(r *Result, _ *Expect) { r.Records[0].Times = nil },
+		"deleted":           func(r *Result, _ *Expect) { r.Records[0].Deleted = true },
+		"recovery set":      func(r *Result, _ *Expect) { r.Records[0].Deleted, r.Records[0].Recovery = true, "sqlite-freelist" },
+		"recovery only":     func(r *Result, _ *Expect) { r.Records[0].Recovery = "sqlite-freelist" },
+		"wrong type":        func(r *Result, _ *Expect) { r.Records[0].Type = "call" },
+		"wrong source path": func(r *Result, _ *Expect) { r.Records[0].SourcePath = "/data/other.db" },
+		"no source path":    func(r *Result, _ *Expect) { r.Records[0].SourcePath = "" },
+		"extra times kind": func(r *Result, _ *Expect) {
+			r.Records[0].Times = append(r.Records[0].Times, records.NamedTime{Kind: "sent", Time: *utc("2023-05-01T10:00:00Z")})
+		},
+		"duplicate times kind": func(r *Result, e *Expect) {
+			e.Records[0].Times["sent"] = "2023-05-01T10:00:00Z"
+			r.Records[0].Times = []records.NamedTime{r.Records[0].Times[0], r.Records[0].Times[0]}
+		},
+		"range overflow": func(r *Result, _ *Expect) {
+			r.Records[0].Range = &records.Range{Offset: 100, Length: math.MaxInt64}
+		},
 		"confidence set":     func(r *Result, _ *Expect) { c := 80; r.Records[0].Confidence = &c },
 		"wrong summary":      func(r *Result, _ *Expect) { r.Records[0].Summary = "other" },
 		"wrong body":         func(r *Result, _ *Expect) { r.Records[0].Body = "ho" },
@@ -206,5 +221,49 @@ func TestLoadFixtureChecksTheHashBeforeAnything(t *testing.T) {
 	LoadFixture(rec, dir, "stale")
 	if !rec.Failed() || !strings.Contains(strings.Join(rec.errs, " "), "regenerate") {
 		t.Errorf("a stale oracle was accepted: %v", rec.errs)
+	}
+}
+
+func writeRawFixture(t *testing.T, dir, name, expect string, db []byte) {
+	t.Helper()
+	var gz bytes.Buffer
+	zw := gzip.NewWriter(&gz)
+	if _, err := zw.Write(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name+".db.gz"), gz.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name+".expect.json"), []byte(expect), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A misspelled key in an expect.json (or a role key the loader does not know) must be an
+// error: silently dropped it would disable the check it was meant to state (ruling T40/T41).
+func TestLoadFixtureRefusesUnknownKeysAndRoles(t *testing.T) {
+	db := []byte("SQLite format 3 fake body for the key checks")
+	sum := hex.EncodeToString(func() []byte { s := sha256.Sum256(db); return s[:] }())
+	cases := map[string]string{
+		"unknown record key": `{"generator":{"tool":"t","python":"3","sqlite":"3","files":{"db":"` + sum + `"}},"family":"f","variant":"v","records":[{"table":"sms","rowid":1,"file":"db","delete":true}],"warnings":[],"notes":{}}`,
+		"unknown top key":    `{"generator":{"tool":"t","python":"3","sqlite":"3","files":{"db":"` + sum + `"}},"family":"f","variant":"v","recordz":[],"warnings":[],"notes":{}}`,
+		"unknown role":       `{"generator":{"tool":"t","python":"3","sqlite":"3","files":{"db":"` + sum + `","journals":"` + sum + `"}},"family":"f","variant":"v","records":[],"warnings":[],"notes":{}}`,
+	}
+	for name, exp := range cases {
+		dir := t.TempDir()
+		writeRawFixture(t, dir, "x", exp, db)
+		rec := &recorder{TB: t}
+		LoadFixture(rec, dir, "x")
+		if !rec.Failed() {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	dir := t.TempDir()
+	writeRawFixture(t, dir, "x", `{"generator":{"tool":"t","python":"3","sqlite":"3","files":{"db":"`+sum+`"}},"family":"f","variant":"v","records":[{"table":"sms","rowid":1,"file":"db","type":"message","source_path":"/p"}],"warnings":[],"notes":{}}`, db)
+	if f := LoadFixture(t, dir, "x"); len(f.Expect.Records) != 1 || f.Expect.Records[0].SourcePath != "/p" {
+		t.Errorf("a well-formed expect.json was refused or misread: %+v", f.Expect.Records)
 	}
 }

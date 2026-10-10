@@ -17,6 +17,8 @@ import (
 // row). The mapper must return the same records (the locator is stamped by the
 // recovery host and is the one allowed difference) or the same row error: a
 // mapper may depend only on its row and its context (spec 12.1).
+// The check compares the live mapping with the rebuilt one only: it does not say that the
+// live mapping is right, so the caller also runs AssertMatchesOracle for that.
 func AssertMapperSourceAgnostic(t testing.TB, h *Harness, p parse.RowMapper, b Bundle, limit int) {
 	t.Helper()
 	in := b.Input(h, p, false)

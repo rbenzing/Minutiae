@@ -42,16 +42,18 @@ type ExtraFile struct {
 // ExpRecord is one expected record, stated literally by the generator. File is
 // "db", "wal", "journal" or "any" (the cell may lie in any of the files).
 type ExpRecord struct {
-	Table   string            `json:"table"`
-	Rowid   int64             `json:"rowid"`
-	File    string            `json:"file"`
-	Time    *string           `json:"time"`
-	TimeEnd *string           `json:"time_end"`
-	Times   map[string]string `json:"times"`
-	Deleted bool              `json:"deleted"`
-	Summary *string           `json:"summary"` // nil: not compared
-	Body    *string           `json:"body"`    // nil: no body
-	Payload map[string]any    `json:"payload"`
+	Table      string            `json:"table"`
+	Rowid      int64             `json:"rowid"`
+	File       string            `json:"file"`
+	Type       string            `json:"type"`        // the record type, compared literally
+	SourcePath string            `json:"source_path"` // the record's SourcePath, compared literally
+	Time       *string           `json:"time"`
+	TimeEnd    *string           `json:"time_end"`
+	Times      map[string]string `json:"times"`
+	Deleted    bool              `json:"deleted"`
+	Summary    *string           `json:"summary"` // nil: not compared
+	Body       *string           `json:"body"`    // nil: no body
+	Payload    map[string]any    `json:"payload"`
 }
 
 // ExpWarning is a warning the parser must raise for a row: the locator names the
@@ -99,9 +101,20 @@ func LoadFixture(t testing.TB, dir, name string) Fixture {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	f := Fixture{Name: name, Files: map[string][]byte{}}
+	dec.DisallowUnknownFields() // a misspelt key must not silently disable the check it states
 	if err := dec.Decode(&f.Expect); err != nil {
 		t.Fatalf("%s: %v", name, err)
 		return Fixture{}
+	}
+	for role := range f.Expect.Generator.Files {
+		known := false
+		for _, fr := range fixtureRoles {
+			known = known || fr.role == role
+		}
+		if !known {
+			t.Fatalf("%s: generator.files lists the unknown role %q (known: db, wal, journal): its file would never be hashed", name, role)
+			return Fixture{}
+		}
 	}
 	for _, fr := range fixtureRoles {
 		want, listed := f.Expect.Generator.Files[fr.role]
@@ -346,8 +359,14 @@ func compareRecord(t testing.TB, b Bundle, got records.Record, w ExpRecord) {
 	if !found || got.ArtifactID != art.ID {
 		t.Errorf("%s: artifact %q, want the %s artifact %q", id, got.ArtifactID, role, art.ID)
 	}
-	if got.Range == nil || got.Range.Offset < 0 || got.Range.Length <= 0 || got.Range.Offset+got.Range.Length > art.Size {
+	if got.Range == nil || got.Range.Offset < 0 || got.Range.Length <= 0 || got.Range.Length > art.Size-got.Range.Offset {
 		t.Errorf("%s: range %+v is not inside the %s artifact (%d bytes)", id, got.Range, role, art.Size)
+	}
+	if got.Type != w.Type {
+		t.Errorf("%s: Type %q, want %q", id, got.Type, w.Type)
+	}
+	if got.SourcePath != w.SourcePath {
+		t.Errorf("%s: SourcePath %q, want %q", id, got.SourcePath, w.SourcePath)
 	}
 	if got.Deleted != w.Deleted {
 		t.Errorf("%s: Deleted = %v, want %v", id, got.Deleted, w.Deleted)
@@ -364,8 +383,8 @@ func compareRecord(t testing.TB, b Bundle, got records.Record, w ExpRecord) {
 		}
 		gotTimes[nt.Kind] = nt.Time.T
 	}
-	if len(gotTimes) != len(w.Times) {
-		t.Errorf("%s: Times kinds %v, want %v", id, gotTimes, w.Times)
+	if len(got.Times) != len(w.Times) {
+		t.Errorf("%s: %d Times %v, want %d %v", id, len(got.Times), gotTimes, len(w.Times), w.Times)
 	}
 	for k, s := range w.Times {
 		wt, err := time.Parse(time.RFC3339Nano, s)
