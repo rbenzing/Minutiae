@@ -32,7 +32,11 @@ func (f *FS) Recoverable(e filesys.Entry) ([]filesys.Candidate, error) {
 		return nil, err
 	}
 	if kind == idDir {
-		if f.resolveDir(a, "") != nil {
+		st, err := f.resolveDir(a, "")
+		if err != nil {
+			return nil, err
+		}
+		if st != nil {
 			return nil, fmt.Errorf("%w: %q is a live directory", filesys.ErrNotDeleted, e.ID)
 		}
 		return nil, fmt.Errorf("%w: no live directory with first cluster %d", filesys.ErrNotFound, a)

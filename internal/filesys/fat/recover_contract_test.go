@@ -161,7 +161,7 @@ func TestRecoverCrossLinkedDirectories(t *testing.T) {
 
 // TestRecoverableScanCapIsUndecidableNotAbsent: when the search for a directory
 // is cut off by the scan cap, the directory is undecidable, not absent. The
-// error is the typed ErrLimit naming the cap and is never ErrNotFound.
+// error is the shared filesys.ErrLimit naming the cap and is never ErrNotFound.
 func TestRecoverableScanCapIsUndecidableNotAbsent(t *testing.T) {
 	files := []fattest.File{{Path: "/D1", Dir: true}, {Path: "/D1/D2", Dir: true}, {Path: "/D1/D2/D3", Dir: true}, {Path: "/B.TXT", Data: []byte("b")}}
 	img := fattest.Build(fattest.Options{Type: 16}, files)
@@ -171,10 +171,32 @@ func TestRecoverableScanCapIsUndecidableNotAbsent(t *testing.T) {
 	}
 	f.SetLocateScans(2)
 	cs, err := f.Recoverable(filesys.Entry{ID: "dirent:77:3"})
-	if cs != nil || !errors.Is(err, fat.ErrLimit) || errors.Is(err, filesys.ErrNotFound) {
-		t.Fatalf("Recoverable = %v, %v; want nil and ErrLimit (not ErrNotFound)", cs, err)
+	if cs != nil || !errors.Is(err, filesys.ErrLimit) || errors.Is(err, filesys.ErrNotFound) {
+		t.Fatalf("Recoverable = %v, %v; want nil and filesys.ErrLimit (not ErrNotFound)", cs, err)
 	}
 	if !strings.Contains(err.Error(), "2") {
 		t.Errorf("error %q does not name the cap", err)
+	}
+}
+
+// TestRecoverableUnreadableSubdirectoryIsNotAbsent (F67): when a listing in the
+// search failed and the target was not found, the subtree was unreadable: the
+// answer is a typed error wrapping the failure, never ErrNotFound.
+func TestRecoverableUnreadableSubdirectoryIsNotAbsent(t *testing.T) {
+	files := []fattest.File{{Path: "/D1", Dir: true}, {Path: "/D1/D2", Dir: true}, {Path: "/D1/D2/F.TXT", Data: []byte("f")}}
+	img, b := fattest.BuildLayout(fattest.Options{Type: 16}, files)
+	d1 := b.Find("/D1", false)
+	d2 := b.Find("/D1/D2", false)
+	fr := &failingReader{r: bytes.NewReader(img)}
+	off := b.Geometry.ClusterOffset(d1.FirstCluster)
+	fr.lo, fr.hi = off, off+int64(b.Geometry.SectorSize*b.Geometry.SecPerClus)
+	f, err := fat.Open(fr, int64(len(img)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fr.armed.Store(true)
+	cs, err := f.Recoverable(filesys.Entry{ID: fmt.Sprintf("dirent:%d:0", d2.FirstCluster)})
+	if cs != nil || err == nil || errors.Is(err, filesys.ErrNotFound) || !strings.Contains(err.Error(), "injected read failure") {
+		t.Fatalf("Recoverable = %v, %v; want nil and an error wrapping the read failure, not ErrNotFound", cs, err)
 	}
 }

@@ -144,6 +144,9 @@ var (
 	ErrUnsupported = errors.New("unsupported filesystem feature")
 	ErrEncrypted   = errors.New("encrypted (decryption is roadmap sub-project 10)")
 	ErrCorrupt     = errors.New("corrupt filesystem structure")
+	// ErrLimit marks a bounded search or walk cut off by its cap: the answer is
+	// undecidable, which is not the same as "not found". Readers wrap it.
+	ErrLimit = errors.New("structural limit exceeded")
 	// ErrAmbiguous is returned when a reference (a snapshot name or xid) matches
 	// more than one object; the error lists the candidates.
 	ErrAmbiguous = errors.New("ambiguous reference")

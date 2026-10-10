@@ -186,7 +186,3 @@ func (f *FS) readRootLabel() {
 		f.warn("root directory unreadable while looking for the volume label: %v", err)
 	}
 }
-
-// ErrLimit is returned when a bounded search is cut off by its cap: the answer
-// is undecidable, which is not the same as "not found".
-var ErrLimit = errors.New("fat: structural limit exceeded")

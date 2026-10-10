@@ -261,3 +261,55 @@ func TestExfatRecoverableEmptyNameFlag(t *testing.T) {
 		t.Errorf("basis %v lacks name=empty", cs[0].Basis)
 	}
 }
+
+// failRange fails every read that overlaps [lo, hi) once armed.
+type failRange struct {
+	r      *bytes.Reader
+	lo, hi int64
+	armed  bool
+}
+
+var errInjected = errors.New("injected read failure")
+
+func (f *failRange) ReadAt(p []byte, off int64) (int, error) {
+	if f.armed && off < f.hi && off+int64(len(p)) > f.lo {
+		return 0, errInjected
+	}
+	return f.r.ReadAt(p, off)
+}
+
+// TestExfatResolveDirUnreadableSubdirectoryIsNotAbsent (F67): a listing that
+// failed during the search makes a not-found target undecidable, never absent.
+func TestExfatResolveDirUnreadableSubdirectoryIsNotAbsent(t *testing.T) {
+	files := []exfattest.File{{Path: "/D1", Dir: true}, {Path: "/D1/D2", Dir: true}, {Path: "/D1/D2/f.txt", Data: []byte("f")}}
+	img, l := exfattest.BuildLayout(exfattest.Options{}, files)
+	d1 := l.Find("/D1", false)
+	d2 := l.Find("/D1/D2", false)
+	fr := &failRange{r: bytes.NewReader(img)}
+	fr.lo, fr.hi = l.ClusterOffset(d1.FirstCluster), l.ClusterOffset(d1.FirstCluster)+int64(l.ClusterSize)
+	f, err := exfat.Open(fr, int64(len(img)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fr.armed = true
+	cs, err := f.Recoverable(filesys.Entry{ID: "dirent:" + strconv.FormatUint(uint64(d2.FirstCluster), 10) + ":0"})
+	if cs != nil || err == nil || errors.Is(err, filesys.ErrNotFound) || !errors.Is(err, errInjected) {
+		t.Fatalf("Recoverable = %v, %v; want nil and an error wrapping the read failure, not ErrNotFound", cs, err)
+	}
+}
+
+// TestExfatResolveDirScanCapIsUndecidableNotAbsent (F64): the scan cap is a
+// typed filesys.ErrLimit, never "not found".
+func TestExfatResolveDirScanCapIsUndecidableNotAbsent(t *testing.T) {
+	files := []exfattest.File{{Path: "/D1", Dir: true}, {Path: "/D1/D2", Dir: true}, {Path: "/D1/D2/D3", Dir: true}, {Path: "/b.txt", Data: []byte("b")}}
+	img, _ := exfattest.BuildLayout(exfattest.Options{}, files)
+	f := openImg(t, img)
+	f.SetResolveDirs(2)
+	cs, err := f.Recoverable(filesys.Entry{ID: "dirent:77:3"})
+	if cs != nil || !errors.Is(err, filesys.ErrLimit) || errors.Is(err, filesys.ErrNotFound) {
+		t.Fatalf("Recoverable = %v, %v; want nil and filesys.ErrLimit (not ErrNotFound)", cs, err)
+	}
+	if !strings.Contains(err.Error(), "2") {
+		t.Errorf("error %q does not name the cap", err)
+	}
+}

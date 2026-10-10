@@ -239,10 +239,17 @@ func setSum(set []byte, restoreInUse bool) uint16 {
 // the per-directory cap is reached. Damage inside the directory is a warning;
 // only a directory of which nothing can be read is an error.
 func (f *FS) scanDir(st *dirState, wantDeleted bool, visit func(*setRec) bool) error {
+	_, err := f.scanDirCut(st, wantDeleted, visit)
+	return err
+}
+
+// scanDirCut is scanDir that also returns, when the listing is a prefix (the
+// read ended early), the reason, so a search can tell "absent" from "unread".
+func (f *FS) scanDirCut(st *dirState, wantDeleted bool, visit func(*setRec) bool) (cut error, err error) {
 	sp := st.spec
-	buf, err := f.readDirData(st)
+	buf, cut, err := f.readDirDataCut(st)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var (
 		n              = len(buf) / entrySize
@@ -265,6 +272,7 @@ scan:
 			}
 			if count >= f.dirRecordCap {
 				f.warn("directory (first cluster %d): more than %d entries; the rest are not read", sp.first, f.dirRecordCap)
+				cut = fmt.Errorf("%w: more than %d entries in the directory", filesys.ErrLimit, f.dirRecordCap)
 				break scan
 			}
 			count++
@@ -288,7 +296,7 @@ scan:
 	if orphans > 0 {
 		f.warn("directory (first cluster %d): %d secondary entries belong to no File entry and were ignored", sp.first, orphans)
 	}
-	return nil
+	return cut, nil
 }
 
 // parseSet reads the File entry set at entry i of buf. It returns the record

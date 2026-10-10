@@ -541,6 +541,7 @@ func (f *FS) resolveDir(first uint32, hint string) error {
 	// Breadth-first search from the root; every listing teaches f.dirs.
 	queue := []uint32{f.rootFirst()}
 	seen := map[uint32]bool{f.rootFirst(): true}
+	var listErr error // the first listing that failed: the subtree behind it is unknown
 	for scans := 0; len(queue) > 0; scans++ {
 		if scans >= f.locateScans {
 			// Cut off: the directory is undecidable, which is not absent.
@@ -548,11 +549,14 @@ func (f *FS) resolveDir(first uint32, hint string) error {
 			if f.knownDir(first) {
 				return nil
 			}
-			return fmt.Errorf("%w: the search for the directory at cluster %d stopped after %d directories", ErrLimit, first, f.locateScans)
+			return fmt.Errorf("%w: the search for the directory at cluster %d stopped after %d directories", filesys.ErrLimit, first, f.locateScans)
 		}
 		items, err := f.listDir(queue[0])
 		queue = queue[1:]
 		if err != nil {
+			if listErr == nil {
+				listErr = err
+			}
 			continue
 		}
 		if f.knownDir(first) {
@@ -569,6 +573,9 @@ func (f *FS) resolveDir(first uint32, hint string) error {
 	}
 	if f.knownDir(first) {
 		return nil
+	}
+	if listErr != nil { // unknown is never absent: part of the tree could not be read
+		return fmt.Errorf("the search for the directory at cluster %d could not read every directory: %w", first, listErr)
 	}
 	return fmt.Errorf("%w: no live directory starts at cluster %d", filesys.ErrNotFound, first)
 }
