@@ -45,7 +45,9 @@ func instant(k ts.Kind, raw int64, guard bool) Instant {
 		i.T, ok = ts.UnixSeconds(raw)
 	}
 	if !ok {
-		// classified valid but not convertible: never a valid status with a zero time
+		// classified valid but not convertible: never a valid status with a zero time.
+		// This defends against a future divergence between Classify and the converters in
+		// the ts package; it is unreachable today and no test claims it.
 		return Instant{Status: ts.StatusInvalid, Raw: raw}
 	}
 	return i
