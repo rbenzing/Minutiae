@@ -55,7 +55,7 @@ func (d *Device) AcquireLogical(ctx context.Context, c *evidence.Case, _ device.
 		}
 		cuts := map[string]error{}
 		for _, rel := range res.Incomplete {
-			cuts[mb2.FoldKey(rel)] = errTransferInterrupted // the key end cuts use, so one file has one entry
+			cuts[foldKey(rel)] = errTransferInterrupted // the key end cuts use, so one file has one entry
 		}
 		var oracle sizeOracle
 		if len(res.RemoteEnded) > 0 {

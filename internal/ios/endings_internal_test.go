@@ -89,3 +89,28 @@ func TestFindCutPrefersTheInterruptedTransfer(t *testing.T) {
 		}
 	}
 }
+
+// W41: the Manifest.db lookup matches on the folded key where the host folds
+// case (the key judgeEndings receives is then lower-cased), and on the path as
+// the device sent it otherwise (key and Path are then the same string).
+func TestFileIDOfMatchesOnTheFoldedKeyOrThePath(t *testing.T) {
+	id := "ab" + strings.Repeat("c", 38)
+	defer func(f func(string) string) { foldKey = f }(foldKey)
+
+	foldKey = strings.ToLower
+	if got, ok := fileIDOf("u1/ab/"+id, "U1"); !ok || got != id {
+		t.Errorf("folding: folded key not matched: %q %v", got, ok)
+	}
+	foldKey = func(p string) string { return p }
+	if got, ok := fileIDOf("U1/ab/"+id, "U1"); !ok || got != id {
+		t.Errorf("exact: path not matched: %q %v", got, ok)
+	}
+	if _, ok := fileIDOf("u1/ab/"+id, "U1"); ok {
+		t.Error("exact: a different case must not match")
+	}
+	for _, rel := range []string{"U1/cd/" + id, "U1/ab/" + id + "x", "U2/ab/" + id, "U1/ab/sub/" + id, "U1/" + id} {
+		if _, ok := fileIDOf(rel, "U1"); ok {
+			t.Errorf("%q matched", rel)
+		}
+	}
+}

@@ -3,15 +3,21 @@ package ios_test
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"howett.net/plist"
+
 	"github.com/rbenzing/minutiae/internal/device"
 	"github.com/rbenzing/minutiae/internal/evidence"
+	"github.com/rbenzing/minutiae/internal/ios"
+	"github.com/rbenzing/minutiae/internal/ios/manifestdb"
 	"github.com/rbenzing/minutiae/internal/ios/mb2"
 	"github.com/rbenzing/minutiae/internal/ios/mb2/mb2test"
+	"github.com/rbenzing/minutiae/internal/sqlitefile/sqlitetest"
 )
 
 func recordByRemote(t *testing.T, c *evidence.Case) map[string]evidence.ManifestRecord {
@@ -190,5 +196,98 @@ func TestBackupZeroLengthAfterDataIsFlaggedIncomplete(t *testing.T) {
 	<-b.ScriptErr
 	if r := recordByRemote(t, c)["U1/cut.bin"]; !r.Incomplete || r.Size != 3 {
 		t.Fatalf("cut.bin = %+v", r)
+	}
+}
+
+func manifestWith(t *testing.T, rows map[string]uint64) []byte {
+	t.Helper()
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 4096})
+	tab := b.CreateTable("Files", "CREATE TABLE Files (fileID TEXT PRIMARY KEY, domain TEXT, relativePath TEXT, flags INTEGER, file BLOB)")
+	i := int64(0)
+	for id, size := range rows {
+		i++
+		blob, err := plist.Marshal(map[string]any{
+			"$archiver": "NSKeyedArchiver", "$version": uint64(100000),
+			"$top":     map[string]any{"root": plist.UID(1)},
+			"$objects": []any{"$null", map[string]any{"Size": size, "$class": plist.UID(2)}, map[string]any{"$classname": "MBFile"}},
+		}, plist.BinaryFormat)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tab.Insert(i, id, "d", "p", int64(1), blob)
+	}
+	return b.Bytes()
+}
+
+func TestBackupConfirmsAFileEndedByADeviceErrorBlockWithManifestSize(t *testing.T) {
+	good := "ab" + strings.Repeat("c", 38)
+	bad := "cd" + strings.Repeat("e", 38)
+	manifest := manifestWith(t, map[string]uint64{good: 3, bad: 99})
+	b := fakeIPhone()
+	b.Script = uploadExtraThenFinish(0,
+		mb2test.Upload{DeviceName: "/c", Name: "U1/Status.plist", Data: statusPlist(t, "finished")},
+		mb2test.Upload{DeviceName: "/m", Name: "U1/Manifest.db", Data: manifest},
+		mb2test.Upload{DeviceName: "/g", Name: "U1/ab/" + good, Data: []byte("abc"), EndRemote: true},
+		mb2test.Upload{DeviceName: "/h", Name: "U1/cd/" + bad, Data: []byte("abc"), EndRemote: true},
+	)
+	c := newCase(t)
+	err := first(t, b).(device.LogicalAcquirer).AcquireLogical(context.Background(), c, device.LogicalOptions{}, nil)
+	if err == nil || !strings.Contains(err.Error(), "differs from the backup's own record") {
+		t.Fatalf("a proven size mismatch must fail the acquisition: %v", err)
+	}
+	<-b.ScriptErr
+	recs := recordByRemote(t, c)
+	if r := recs["U1/ab/"+good]; r.Incomplete || r.Size != 3 {
+		t.Errorf("confirmed file: %+v", r)
+	}
+	if r := recs["U1/cd/"+bad]; !r.Incomplete || !strings.Contains(r.Error, "another size") {
+		t.Errorf("mismatching file: %+v", r)
+	}
+	audit, _ := os.ReadFile(filepath.Join(c.Dir, "audit.jsonl"))
+	for _, want := range []string{`"end_confirmed":1`, `"end_mismatch":1`, `"end_unconfirmed":0`} {
+		if !strings.Contains(string(audit), want) {
+			t.Errorf("%s not audited:\n%s", want, audit)
+		}
+	}
+}
+
+// A manifest that itself ended with a device error block is not an oracle.
+func TestBackupManifestItselfCutIsNotTrusted(t *testing.T) {
+	good := "ab" + strings.Repeat("c", 38)
+	manifest := manifestWith(t, map[string]uint64{good: 3})
+	b := fakeIPhone()
+	b.Script = uploadExtraThenFinish(0,
+		mb2test.Upload{DeviceName: "/c", Name: "U1/Status.plist", Data: statusPlist(t, "finished")},
+		mb2test.Upload{DeviceName: "/g", Name: "U1/ab/" + good, Data: []byte("abc"), EndRemote: true},
+		// Re-sent with a device error block after data: the base script's Manifest.db is replaced.
+		mb2test.Upload{DeviceName: "/m", Name: "U1/Manifest.db", Data: manifest, EndRemote: true},
+	)
+	c := newCase(t)
+	if err := first(t, b).(device.LogicalAcquirer).AcquireLogical(context.Background(), c, device.LogicalOptions{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	<-b.ScriptErr
+	recs := recordByRemote(t, c)
+	if r := recs["U1/ab/"+good]; !r.Incomplete {
+		t.Errorf("a manifest that itself ended with a device error block must not confirm anything: %+v", r)
+	}
+}
+
+// W13: a backup without a file that ended with an error block never reads Manifest.db.
+func TestBackupDoesNotReadTheManifestWithoutAnErrorEndedFile(t *testing.T) {
+	calls := 0
+	t.Cleanup(ios.SetReadManifest(func(r io.ReaderAt, size int64, want func(string) bool) (*manifestdb.Declared, error) {
+		calls++
+		return manifestdb.Read(r, size, want)
+	}))
+	b := fakeIPhone()
+	b.Script = uploadThenFinish(0, statusPlist(t, "finished"))
+	c := newCase(t)
+	if err := first(t, b).(device.LogicalAcquirer).AcquireLogical(context.Background(), c, device.LogicalOptions{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	<-b.ScriptErr
+	if calls != 0 {
+		t.Fatalf("the manifest was read %d times for a backup with no error-ended file", calls)
 	}
 }

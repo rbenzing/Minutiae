@@ -4,8 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
+	"path"
+	"path/filepath"
 	"slices"
 
+	"github.com/rbenzing/minutiae/internal/ios/manifestdb"
 	"github.com/rbenzing/minutiae/internal/ios/mb2"
 )
 
@@ -68,6 +72,74 @@ func judgeEndings(ends map[string]mb2.RemoteEnd, oracle sizeOracle) (cut map[str
 	return cut, rep
 }
 
-// backupSizes returns the oracle for a finished staging directory: none until
-// the backup's Manifest.db is consulted (Task 4).
-func backupSizes(_, _ string, _ mb2.Result) sizeOracle { return nil }
+var (
+	// readManifest and foldKey are variables so a test can count or replace them.
+	readManifest = manifestdb.Read
+	foldKey      = mb2.FoldKey
+)
+
+// fileIDOf maps a staged path <udid>/<id[0:2]>/<id> to its file ID. rel is the
+// key judgeEndings receives: the folded key where the host file system folds
+// case, otherwise the path exactly as the device sent it (the two are the same
+// string then). The udid prefix is compared in that same folded or exact form.
+func fileIDOf(rel, udid string) (string, bool) {
+	dir, id := path.Split(rel)
+	if !manifestdb.ValidFileID(id) || dir != foldKey(udid)+"/"+id[:2]+"/" {
+		return "", false
+	}
+	return id, true
+}
+
+// backupSizes returns the oracle for a finished staging directory: the sizes
+// <udid>/Manifest.db declares for the files staged as <udid>/<id[0:2]>/<id>.
+// It is built only when a file ended with an error block, and it keeps only
+// those files' IDs. When the manifest cannot be used (absent, encrypted,
+// damaged, too large, itself cut off or not proven complete) every lookup
+// carries that reason and the file stays unconfirmed.
+func backupSizes(staging, udid string, res mb2.Result) sizeOracle {
+	manifestRel := udid + "/Manifest.db"
+	unavailable := func(err error) sizeOracle {
+		return func(string) (int64, bool, error) { return 0, false, fmt.Errorf("the manifest is not usable: %w", err) }
+	}
+	manifestKey := foldKey(manifestRel)
+	for _, rel := range res.Incomplete {
+		if foldKey(rel) == manifestKey {
+			return unavailable(errors.New("its transfer was cut off"))
+		}
+	}
+	if _, ended := res.RemoteEnded[manifestKey]; ended {
+		return unavailable(errors.New("it ended with a device error block after data"))
+	}
+	p := filepath.Join(staging, udid, "Manifest.db")
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return unavailable(err)
+	}
+	if !fi.Mode().IsRegular() {
+		return unavailable(fmt.Errorf("not a regular file (%s)", fi.Mode()))
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		return unavailable(err)
+	}
+	defer func() { _ = f.Close() }()
+	wanted := map[string]bool{}
+	for rel := range res.RemoteEnded {
+		if id, ok := fileIDOf(rel, udid); ok {
+			wanted[id] = true
+		}
+	}
+	declared, err := readManifest(f, fi.Size(), func(id string) bool { return wanted[id] })
+	if err != nil {
+		return unavailable(err)
+	}
+	// declared holds only the wanted IDs, in memory, so the file can be closed.
+	return func(rel string) (int64, bool, error) {
+		id, ok := fileIDOf(rel, udid)
+		if !ok {
+			return 0, false, nil
+		}
+		n, known := declared.Size(id)
+		return n, known, nil
+	}
+}
