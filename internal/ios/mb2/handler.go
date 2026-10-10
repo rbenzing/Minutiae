@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -13,12 +12,17 @@ import (
 	"syscall"
 )
 
+// errMoveNested refuses a device move whose source and destination contain
+// one another.
+var errMoveNested = errors.New("refused: source and destination are nested")
+
 type handler struct {
 	c   *Client
 	o   BackupOptions
 	res Result
 
-	detailed int // RemoteEnded entries that kept their message
+	detailed int             // live RemoteEnded entries that kept their message
+	detail   map[string]bool // live mark -> kept its message (false: omitted past the cap)
 }
 
 func (h *handler) run() error {
@@ -199,6 +203,7 @@ func (h *handler) receiveFiles() error {
 			lerr = os.MkdirAll(filepath.Dir(dst), 0o750)
 		}
 		if lerr == nil {
+			h.noteRemoved(dst) // a re-send replaces the bytes received before
 			if f, lerr = os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600); lerr == nil {
 				w = f
 			}
@@ -212,6 +217,7 @@ func (h *handler) receiveFiles() error {
 			err = errors.Join(err, f.Close())
 			if err != nil { // the file holds only what arrived before the failure
 				h.res.Incomplete = append(h.res.Incomplete, filepath.ToSlash(rel))
+				h.unmark(foldKey(filepath.ToSlash(rel))) // the old content, and its mark, are gone
 			}
 		}
 		if err != nil {
@@ -299,64 +305,135 @@ func (h *handler) receiveBlocks(r io.Reader, w io.Writer, fname string) (blockEn
 // error-ended file is recorded (the flag set is complete); only the message is
 // dropped, past MaxRecordedErrors entries, and that is counted.
 func (h *handler) noteEnd(rel string, be blockEnd) {
+	rel = foldKey(rel)
 	if !be.afterData {
-		delete(h.res.RemoteEnded, rel) // a later transfer with a success block replaced the content
+		h.unmark(rel) // a later transfer with a success block replaced the content
 		return
 	}
+	h.mark(rel, RemoteEnd{Code: be.code, Bytes: be.fileBytes, Message: be.msg}, true)
+}
+
+// mark records e under k. The message is kept while fewer than
+// MaxRecordedErrors live marks hold one (and detail is set); otherwise it is
+// dropped and counted in RemoteEndedDetailOmitted.
+func (h *handler) mark(k string, e RemoteEnd, detail bool) {
+	h.unmark(k)
 	if h.res.RemoteEnded == nil {
 		h.res.RemoteEnded = map[string]RemoteEnd{}
+		h.detail = map[string]bool{}
 	}
-	e := RemoteEnd{Code: be.code, Bytes: be.fileBytes}
-	if h.detailed < MaxRecordedErrors {
-		e.Message = be.msg
+	if detail && h.detailed < MaxRecordedErrors {
 		h.detailed++
+		h.detail[k] = true
 	} else {
+		e.Message = ""
 		h.res.RemoteEndedDetailOmitted++
+		h.detail[k] = false
 	}
-	h.res.RemoteEnded[rel] = e
+	h.res.RemoteEnded[k] = e
+}
+
+// unmark forgets the live mark k and returns it with whether it kept its
+// message; the detail budget follows the live set.
+func (h *handler) unmark(k string) (e RemoteEnd, kept, ok bool) {
+	e, ok = h.res.RemoteEnded[k]
+	if !ok {
+		return e, false, false
+	}
+	delete(h.res.RemoteEnded, k)
+	kept = h.detail[k]
+	delete(h.detail, k)
+	if kept {
+		h.detailed--
+	} else {
+		h.res.RemoteEndedDetailOmitted--
+	}
+	return e, kept, true
+}
+
+// foldKey is the form of a path used as a RemoteEnded key: folded where the
+// file system ignores case, so aliases of one file share one mark.
+func foldKey(p string) string {
+	if foldCase {
+		return strings.ToLower(p)
+	}
+	return p
+}
+
+// noteRemoved counts the received files under path (if any) that the device is
+// about to remove or replace, whether or not they carry a mark.
+func (h *handler) noteRemoved(path string) {
+	_ = filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return nil
+		}
+		h.res.RemovedFileCount++
+		if info, ierr := d.Info(); ierr == nil {
+			h.res.RemovedBytes += info.Size()
+		}
+		return nil
+	})
 }
 
 // relKey is the key of a device path in Result.RemoteEnded: the cleaned,
 // slash-separated path relative to Dir, as receiveFiles records it.
-func relKey(p string) string { return filepath.ToSlash(filepath.Clean(filepath.FromSlash(p))) }
+func relKey(p string) string {
+	return foldKey(filepath.ToSlash(filepath.Clean(filepath.FromSlash(p))))
+}
 
 func underKey(k, root string) bool { return k == root || strings.HasPrefix(k, root+"/") }
+
+// markedUnder returns the live marks of root and of everything below it.
+func (h *handler) markedUnder(root string) []string {
+	var keys []string
+	for k := range h.res.RemoteEnded {
+		if underKey(k, root) {
+			keys = append(keys, k)
+		}
+	}
+	return keys
+}
+
+// carriedMark is a mark on its way to another key.
+type carriedMark struct {
+	k    string
+	e    RemoteEnd
+	kept bool
+}
 
 // moveEnds carries the marks of from, and of everything below it, to to.
 func (h *handler) moveEnds(from, to string) {
 	if from == to {
 		return
 	}
-	moved := map[string]RemoteEnd{}
-	for k, e := range h.res.RemoteEnded {
-		if underKey(k, from) {
-			moved[to+k[len(from):]] = e
-			delete(h.res.RemoteEnded, k)
-		}
+	var moved []carriedMark
+	for _, k := range h.markedUnder(from) {
+		e, kept, _ := h.unmark(k)
+		moved = append(moved, carriedMark{to + k[len(from):], e, kept})
 	}
-	maps.Copy(h.res.RemoteEnded, moved)
+	for _, m := range moved {
+		h.mark(m.k, m.e, m.kept)
+	}
 }
 
 // copyEnds marks the copies of marked files.
 func (h *handler) copyEnds(from, to string) {
-	copies := map[string]RemoteEnd{}
-	for k, e := range h.res.RemoteEnded {
-		if underKey(k, from) {
-			copies[to+k[len(from):]] = e
-		}
+	var copies []carriedMark
+	for _, k := range h.markedUnder(from) {
+		copies = append(copies, carriedMark{to + k[len(from):], h.res.RemoteEnded[k], h.detail[k]})
 	}
-	maps.Copy(h.res.RemoteEnded, copies)
+	for _, c := range copies {
+		h.mark(c.k, c.e, c.kept)
+	}
 }
 
 // dropEnds is called when root is removed or its content replaced: the marks
 // under it leave RemoteEnded for the audit record in RemovedEnds.
 func (h *handler) dropEnds(root string) {
-	for k, e := range h.res.RemoteEnded {
-		if underKey(k, root) {
-			delete(h.res.RemoteEnded, k)
-			h.res.RemovedEndCount++
-			h.res.RemovedEnds = appendCapped(h.res.RemovedEnds, fmt.Sprintf("%s: code 0x%02x, %d bytes", k, e.Code, e.Bytes))
-		}
+	for _, k := range h.markedUnder(root) {
+		e, _, _ := h.unmark(k)
+		h.res.RemovedEndCount++
+		h.res.RemovedEnds = appendCapped(h.res.RemovedEnds, fmt.Sprintf("%s: code 0x%02x, %d bytes", k, e.Code, e.Bytes))
 	}
 }
 
@@ -414,6 +491,20 @@ func (h *handler) move(msg []any) error {
 			errs = append(errs, err)
 			continue
 		}
+		kf, kt := relKey(from), relKey(to)
+		if kf == kt { // the same path (folded where the file system folds): nothing to do
+			if _, err := os.Lstat(src); err != nil {
+				errs = append(errs, err)
+			}
+			continue
+		}
+		if underKey(kt, kf) || underKey(kf, kt) { // RemoveAll of the destination would destroy the source
+			h.res.RefusedMoveCount++
+			h.res.RefusedMoves = appendCapped(h.res.RefusedMoves, fmt.Sprintf("%s -> %s", from, to))
+			errs = append(errs, fmt.Errorf("%w: %q -> %q", errMoveNested, from, to))
+			continue
+		}
+		h.noteRemoved(dst) // counted before the removal; the device asked for it
 		_ = os.RemoveAll(dst)
 		h.dropEnds(relKey(to)) // the destination's old content is gone
 		if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
@@ -436,6 +527,7 @@ func (h *handler) remove(msg []any) error {
 		p, _ := v.(string)
 		target, err := h.local(p)
 		if err == nil {
+			h.noteRemoved(target)
 			err = os.RemoveAll(target)
 		}
 		if err != nil {
@@ -460,7 +552,7 @@ func (h *handler) copyItem(msg []any) error {
 		}
 	}
 	if err == nil {
-		err = copyPath(src, dst)
+		err = copyPath(src, dst, h.noteRemoved)
 	}
 	if err == nil {
 		h.dropEnds(relKey(to)) // the copy overwrote whatever was there
@@ -469,7 +561,9 @@ func (h *handler) copyItem(msg []any) error {
 	return h.statusFor(err)
 }
 
-func copyPath(src, dst string) error {
+// copyPath copies the tree at src to dst; replacing is called with each
+// destination file before it is overwritten.
+func copyPath(src, dst string, replacing func(path string)) error {
 	var files []string // relative paths; copied after the walk completes
 	err := filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -489,7 +583,9 @@ func copyPath(src, dst string) error {
 		return err
 	}
 	for _, rel := range files {
-		if err := copyFile(filepath.Join(src, rel), filepath.Join(dst, rel)); err != nil {
+		target := filepath.Join(dst, rel)
+		replacing(target)
+		if err := copyFile(filepath.Join(src, rel), target); err != nil {
 			return err
 		}
 	}

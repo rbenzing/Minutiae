@@ -36,9 +36,12 @@ const MaxRecordedErrors = 1000
 // treats that as the end of the file; Minutiae records it so the file is never
 // taken as proven complete.
 type RemoteEnd struct {
-	Code    byte   // CodeErrorRemote, CodeErrorLocal or CodeNoTerminator
-	Bytes   int64  // file bytes received in that transfer before the block
-	Message string // the device's message, at most maxName bytes; empty past MaxRecordedErrors entries
+	Code  byte  // CodeErrorRemote, CodeErrorLocal or CodeNoTerminator
+	Bytes int64 // file bytes received in that transfer before the block
+	// Message holds the raw device bytes, cut at maxName (possibly inside a
+	// UTF-8 rune) and never repaired; empty past MaxRecordedErrors live entries.
+	// Display it with %q.
+	Message string
 }
 
 // Result summarizes a backup.
@@ -64,6 +67,17 @@ type Result struct {
 	// (first MaxRecordedErrors); RemovedEndCount is the true total.
 	RemovedEnds     []string
 	RemovedEndCount int
+	// RemovedFileCount and RemovedBytes count, uncapped, every received file
+	// the device then removed, replaced (moved or copied over, or re-sent) or
+	// whose destination it overwrote, marked or not. RemovedBytes is a lower
+	// bound if a file's size could not be read. The bytes are not retained.
+	RemovedFileCount int
+	RemovedBytes     int64
+	// RefusedMoves lists device move requests refused because source and
+	// destination were nested (first MaxRecordedErrors); RefusedMoveCount is
+	// the true total. A move onto the same path is a no-op and not listed.
+	RefusedMoves     []string
+	RefusedMoveCount int
 }
 
 // Client is a mobilebackup2 session on an already-started service connection.

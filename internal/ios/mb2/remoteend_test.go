@@ -37,6 +37,7 @@ func TestBlockWireFormat(t *testing.T) {
 }
 
 func TestBackupRecordsRemoteEndAfterData(t *testing.T) {
+	defer mb2.SetFoldCase(false)() // keys are compared as sent
 	_, res, err := runBackup(t, func(d *mb2test.Device) error {
 		if err := d.Handshake(); err != nil {
 			return err
@@ -69,6 +70,7 @@ func TestBackupRecordsRemoteEndAfterData(t *testing.T) {
 }
 
 func TestBackupResentFileClearsItsRemoteEnd(t *testing.T) {
+	defer mb2.SetFoldCase(false)() // keys are compared as sent
 	_, res, err := runBackup(t, func(d *mb2test.Device) error {
 		if err := d.Handshake(); err != nil {
 			return err
@@ -93,6 +95,7 @@ func TestBackupResentFileClearsItsRemoteEnd(t *testing.T) {
 }
 
 func TestBackupRemoteEndMessageIsBounded(t *testing.T) {
+	defer mb2.SetFoldCase(false)() // keys are compared as sent
 	_, res, err := runBackup(t, func(d *mb2test.Device) error {
 		if err := d.Handshake(); err != nil {
 			return err
@@ -117,6 +120,7 @@ func TestBackupRemoteEndMessageIsBounded(t *testing.T) {
 // W11 (K3): file data followed by a zero length, with no success or error
 // block, is an interrupted transfer, not a normal end.
 func TestBackupZeroLengthAfterDataIsAnInterruptedTransfer(t *testing.T) {
+	defer mb2.SetFoldCase(false)() // keys are compared as sent
 	_, res, err := runBackup(t, func(d *mb2test.Device) error {
 		if err := d.Handshake(); err != nil {
 			return err
@@ -156,6 +160,7 @@ func TestBackupZeroLengthAfterDataIsAnInterruptedTransfer(t *testing.T) {
 // W10 (K2): the device moves, copies and removes files while it backs up. A
 // mark follows the content: a cut file can never lose its flag by a rename.
 func TestBackupRemoteEndFollowsMoveCopyAndRemove(t *testing.T) {
+	defer mb2.SetFoldCase(false)() // keys are compared as sent
 	_, res, err := runBackup(t, func(d *mb2test.Device) error {
 		if err := d.Handshake(); err != nil {
 			return err
@@ -207,6 +212,7 @@ func TestBackupRemoteEndFollowsMoveCopyAndRemove(t *testing.T) {
 
 // W12 (K4): the detail (message) is capped; the flag set is not.
 func TestBackupRemoteEndedKeepsEveryFileAndCapsTheDetail(t *testing.T) {
+	defer mb2.SetFoldCase(false)() // keys are compared as sent
 	const n = mb2.MaxRecordedErrors + 5
 	files := make([]mb2test.Upload, n)
 	for i := range files {
