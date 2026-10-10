@@ -54,7 +54,7 @@ func fuzzFiles() []apfstest.File {
 		{Path: "/orig.bin", Data: pattern(4*bs, 6)},
 		{Path: "/clone.bin", Clone: "/orig.bin"},
 		{Path: "/x/y/z", Dir: true},
-		{Path: "/x/y/attrs", Data: []byte("a"), Xattrs: []apfstest.Xattr{{Name: "com.apple.quarantine", Value: []byte("q")}, {Name: "stream", Value: []byte("v"), Stream: true}, {Name: "streamdata", Value: pattern(3*bs, 2), Stream: true, WriteStream: true}}},
+		{Path: "/x/y/attrs", Data: []byte("a"), Xattrs: []apfstest.Xattr{{Name: "", Value: []byte("empty-named")}, {Name: "com.apple.quarantine", Value: []byte("q")}, {Name: "stream", Value: []byte("v"), Stream: true}, {Name: "streamdata", Value: pattern(3*bs, 2), Stream: true, WriteStream: true}}},
 		{Path: "/" + strings.Repeat("n", 255), Data: []byte("long name")},
 		{Path: "/compressed", Data: pattern(50, 7), CompressedFlag: true, UncompressedSize: 9999, Xattrs: []apfstest.Xattr{{Name: "com.apple.decmpfs", Value: decmpfs(3)}}},
 	}

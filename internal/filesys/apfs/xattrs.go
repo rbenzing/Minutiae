@@ -90,14 +90,14 @@ func (f *FS) inodeExists(t *tree, ino uint64) (bool, error) {
 	return found, err
 }
 
-// xattrRecords reads every xattr record of inode ino as of view. match, when
-// not empty, is the display name of the one record whose embedded value is
+// xattrRecords reads every xattr record of inode ino as of view. When wantValue,
+// match is the display name of the records whose embedded value is
 // copied out (no other value is retained). A record with an unusable name is
 // skipped with a warning (it has no name to list); a record over the format's
 // size limits or with an undecodable value is kept as a damaged record. More
 // than the cap is filesys.ErrXattrCap (no partial list). A tree that cannot be
 // read is an error, never an empty list.
-func (f *FS) xattrRecords(v *volume, view, ino uint64, match string) ([]xattrRec, error) {
+func (f *FS) xattrRecords(v *volume, view, ino uint64, wantValue bool, match string) ([]xattrRec, error) {
 	t, err := f.fsTree(v, view)
 	if err != nil {
 		return nil, err
@@ -133,7 +133,7 @@ func (f *FS) xattrRecords(v *volume, view, ino uint64, match string) ([]xattrRec
 		r.name = bytes.Clone(name)
 		if derr != nil {
 			r.bad = corrupt("xattr", -1, "volume %d inode %d: xattr %s: %v", v.slot, ino, displayXattr(name), derr)
-		} else if match != "" && !r.stream && displayXattr(name) == match {
+		} else if wantValue && !r.stream && displayXattr(name) == match {
 			r.inline = slices.Clone(data)
 		}
 		out = append(out, r)
@@ -156,7 +156,7 @@ func (f *FS) Xattrs(e filesys.Entry) ([]filesys.Xattr, error) {
 	if err != nil {
 		return nil, err
 	}
-	recs, err := f.xattrRecords(v, view, ino, "")
+	recs, err := f.xattrRecords(v, view, ino, false, "")
 	if err != nil {
 		return nil, err
 	}
@@ -175,29 +175,36 @@ func (f *FS) OpenXattr(e filesys.Entry, name string) (filesys.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	recs, err := f.xattrRecords(v, view, ino, name)
+	recs, err := f.xattrRecords(v, view, ino, true, name)
 	if err != nil {
 		return nil, err
 	}
+	var r *xattrRec
 	for i := range recs {
-		r := &recs[i]
-		if displayXattr(r.name) != name {
+		if displayXattr(recs[i].name) != name {
 			continue
 		}
-		switch {
-		case r.bad != nil:
-			return nil, r.bad
-		case r.stream:
-			sf, err := f.streamFile(v, view, r.oid, ino, r.size, "xattr "+strconv.Quote(name))
-			if err != nil {
-				return nil, err
-			}
-			return sf, nil
+		if r != nil {
+			// Identity comes from structure: two records under one display name
+			// cannot be told apart by a guess (the first hit).
+			return nil, corrupt("xattr", -1, "volume %d inode %d: more than one extended attribute is listed as %q", v.slot, ino, name)
 		}
-		n := int64(r.inlineLen)
-		return &file{size: n, avail: n, mem: r.inline, inline: true}, nil
+		r = &recs[i]
 	}
-	return nil, notFound("inode %d of volume %d has no extended attribute %q", ino, v.slot, name)
+	switch {
+	case r == nil:
+		return nil, notFound("inode %d of volume %d has no extended attribute %q", ino, v.slot, name)
+	case r.bad != nil:
+		return nil, r.bad
+	case r.stream:
+		sf, err := f.streamFile(v, view, r.oid, ino, r.size, "xattr "+strconv.Quote(name))
+		if err != nil {
+			return nil, err
+		}
+		return sf, nil
+	}
+	n := int64(r.inlineLen)
+	return &file{size: n, avail: n, mem: r.inline, inline: true}, nil
 }
 
 // streamFile maps a stream value (xattr or symlink target) whose extents are

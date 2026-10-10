@@ -363,6 +363,9 @@ func (fl *file) ReadAt(p []byte, off int64) (int, error) {
 			return int(n), io.ErrUnexpectedEOF // unreachable: avail == size without a tail error
 		}
 		if fl.inline {
+			if int64(len(fl.mem)) < fl.avail {
+				return int(n), corrupt("file data", -1, "an inline file of %d bytes holds only %d", fl.avail, len(fl.mem))
+			}
 			n += int64(copy(p[n:want], fl.mem[pos:]))
 			continue
 		}

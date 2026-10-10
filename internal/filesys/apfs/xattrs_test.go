@@ -140,9 +140,10 @@ func TestOpenXattrStreamHostile(t *testing.T) {
 	cases := map[string]struct {
 		files []apfstest.File
 		extra []apfstest.FSRecord
+		msg   string // the reason the error must give, when a specific guard is meant
 	}{
 		"no extents (a hole)":    {files: []apfstest.File{{Path: "/h", Ino: ino, Data: []byte("x"), Xattrs: []apfstest.Xattr{{Name: "v", Value: []byte("12345"), Stream: true}}}}},
-		"bigger than the image":  {files: plain, extra: []apfstest.FSRecord{rec("v", apfstest.XattrStreamVal(0x5000, 1<<50))}},
+		"bigger than the image":  {files: plain, extra: []apfstest.FSRecord{rec("v", apfstest.XattrStreamVal(0x5000, 1<<50))}, msg: "cannot fit"},
 		"object id zero":         {files: plain, extra: []apfstest.FSRecord{rec("v", apfstest.XattrStreamVal(0, 10))}},
 		"descriptor too short":   {files: plain, extra: []apfstest.FSRecord{rec("v", short)}},
 		"stream and inline":      {files: plain, extra: []apfstest.FSRecord{rec("v", both)}},
@@ -171,6 +172,9 @@ func TestOpenXattrStreamHostile(t *testing.T) {
 			fl, err := f.OpenXattr(e, "v")
 			if !errors.Is(err, filesys.ErrCorrupt) || fl != nil {
 				t.Errorf("OpenXattr = %v, %v; want ErrCorrupt and no file", fl, err)
+			}
+			if err != nil && tc.msg != "" && !strings.Contains(err.Error(), tc.msg) {
+				t.Errorf("the error does not give the reason %q: %v", tc.msg, err)
 			}
 		})
 	}

@@ -374,3 +374,7 @@ func (f *FS) ExtentRuns(slot int, id uint64, size int64) ([]filesys.Run, error) 
 	}
 	return m.runs, nil
 }
+
+// ShortInlineFile returns an inline file whose declared size exceeds its bytes
+// (the shape a forged empty-named attribute once produced).
+func ShortInlineFile() filesys.File { return &file{size: 5, avail: 5, mem: []byte("ab"), inline: true} }
