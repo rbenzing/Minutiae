@@ -81,7 +81,9 @@ func TestKeyDigestTupleStatusKeepsNeverAndUnknownApart(t *testing.T) {
 }
 
 // The engine decides: every pair of values and collation, the digest of a one-column tuple is equal exactly when
-// the engine compares equal (a KeyNever or KeyUnknown side is never equal): 0 divergences.
+// the engine compares equal (a KeyNever or KeyUnknown side is never equal): 0 divergences. The oracle checks
+// equality only, in a UTF-8, a UTF-16le and a UTF-16be database; the status (KeyNever against KeyUnknown) is pinned
+// by the KeyDigest unit tests of this file.
 func TestEngineOracleKeyEqualityMatrix(t *testing.T) {
 	eq := func(x, y sqlitefile.Value, coll string) bool {
 		kx, sx := sqlitefile.KeyDigest([]sqlitefile.Value{x}, []string{coll})
@@ -90,15 +92,26 @@ func TestEngineOracleKeyEqualityMatrix(t *testing.T) {
 	}
 	checkEqualityAgainstEngine(t, "", evText, eq)
 	checkEqualityAgainstEngine(t, "pragma encoding='UTF-16le'", func(s string) sqlitefile.Value { return evUTF16(true, s) }, eq)
+	checkEqualityAgainstEngine(t, "pragma encoding='UTF-16be'", func(s string) sqlitefile.Value { return evUTF16(false, s) }, eq)
 }
 
-// J78 changes 1 and 4: a NaN key (stored NaN reads as NULL, as the engine does) and a NULL key never equal a live row;
-// the clean live set says "absent", where the bits comparison and the missing key said "a version" or "incomplete".
+// J78 changes 1 and 4, J103: a NaN key (stored NaN reads as NULL, as the engine does) and a NULL key never equal a
+// live row, and equal-to-nothing decides key equality, not presence: the relation is unknown with the reason
+// "key-never", never absent, whatever the live set holds.
 func TestWithoutRowidNaNNeverEqualsLive(t *testing.T) {
 	runKeyEq(t, "create table wr(k primary key, v) without rowid", 1,
 		[][]any{{math.NaN(), "old"}},
 		[][]any{{math.NaN(), "live"}},
-		[]keyEqRow{{vals: []any{nil, "old"}, want: abs}})
+		[]keyEqRow{{vals: []any{nil, "old"}, want: unk, note: "key-never"}})
+}
+
+// J103: a recovered row with a NULL key (a stored NaN reads as NULL) and a byte-identical live twin is
+// unknown/"key-never", never absent (and not the live row's twin either: the key equals nothing).
+func TestWithoutRowidNullKeyWithIdenticalLiveTwinIsUnknownNeverAbsent(t *testing.T) {
+	runKeyEq(t, "create table wr(k primary key, v) without rowid", 1,
+		[][]any{{math.NaN(), "same"}},
+		[][]any{{math.NaN(), "same"}},
+		[]keyEqRow{{vals: []any{nil, "same"}, want: unk, note: "key-never"}})
 }
 
 // J78 change 2: a UTF-16 database with a NOCASE key relates its history rows, where it was unknown.
@@ -114,16 +127,17 @@ func TestWithoutRowidUTF16NocaseKeyIsAvailable(t *testing.T) {
 }
 
 // J78 change 3, and the KeyNever/KeyUnknown split: a history row whose key is undecided (invalid UTF-8 under
-// NOCASE) has an unknown relation, never "absent", while the NaN key beside it is decided: absent.
+// NOCASE) has an unknown relation with the reason "key-unknown", and a NaN key beside it is unknown with the
+// reason "key-never" (J103): neither is ever absent.
 func TestWithoutRowidUnknownKeyIsUnknownNeverAbsent(t *testing.T) {
 	runKeyEq(t, "create table wr(k collate nocase primary key, v) without rowid", 1,
 		[][]any{{"\xffa", "old"}},
 		[][]any{{"\xffA", "live"}},
-		[]keyEqRow{{vals: []any{"\xffa", "old"}, want: unk, note: sqlitefile.NoteCompareIncomplete}})
+		[]keyEqRow{{vals: []any{"\xffa", "old"}, want: unk, note: "key-unknown"}})
 	runKeyEq(t, "create table wr(k primary key, v) without rowid", 1,
 		[][]any{{math.NaN(), "old"}},
 		[][]any{{int64(1), "live"}},
-		[]keyEqRow{{vals: []any{nil, "old"}, want: abs}})
+		[]keyEqRow{{vals: []any{nil, "old"}, want: unk, note: "key-never"}})
 }
 
 // Ordinary keys relate exactly as before the move onto EqualityKey.

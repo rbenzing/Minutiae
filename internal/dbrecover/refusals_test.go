@@ -612,3 +612,24 @@ func TestResultWriterStartedFlag(t *testing.T) {
 		t.Error("a refused run set WriterStarted")
 	}
 }
+
+// J108 (J100): a manifest line that does not parse is corruption; Run carries evidence.ErrIntegrity out of the
+// manifest read, so the CLI maps it to exit 4 and nothing masks it.
+func TestRunCorruptManifestLineIsIntegrityError(t *testing.T) {
+	c := recordstest.NewCase(t)
+	a := addFile(t, c, "/data/n.db", bytes.Repeat([]byte("not a database. "), 300))
+	f, err := os.OpenFile(filepath.Join(c.Dir, "manifest.jsonl"), os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("garbage\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Run(context.Background(), c, Inputs{DB: a.ID}, Options{})
+	if !errors.Is(err, evidence.ErrIntegrity) {
+		t.Fatalf("err %v, want evidence.ErrIntegrity", err)
+	}
+}

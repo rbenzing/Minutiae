@@ -219,7 +219,8 @@ func digestOf(vals []Value, idx []int) (d [32]byte, complete bool) {
 // whole tuple does, whatever else is undecided; KeyUnknown means a key value
 // is omitted, clipped, unread, or text the library cannot fold (not UTF-8
 // under NOCASE or RTRIM), so the relation is undecided and must not be read
-// as "no match". Never beats Unknown: one value that equals nothing decides it.
+// as "no match". Never beats Unknown: one value that equals nothing decides it. The status is the reason too:
+// compareWR reports KeyNever as NoteKeyNever and KeyUnknown as NoteKeyUnknown (ruling J103), both unknown.
 func keyDigest(vals []Value, idx []int, colls []string) (d [32]byte, st KeyStatus) {
 	h := sha256.New()
 	for n, i := range idx {
@@ -374,14 +375,11 @@ func (rp *rowPass) compareWR(t *Table, name string, row *RecoveredRow, fit bool)
 		key, kst = keyDigest(res, s.pk, s.colls)
 		switch kst {
 		case KeyUnknown:
-			return cmpResult{kind: cmpUnknown, note: NoteCompareIncomplete}, nil
+			return cmpResult{kind: cmpUnknown, note: NoteKeyUnknown}, nil
 		case KeyNever:
-			// decided: the key equals no live row, itself included. Absent, as a key that is not found is,
-			// and unknown exactly when the live set cannot say absent.
-			if s.tainted {
-				return cmpResult{kind: cmpUnknown, note: NoteLiveUncertain}, nil
-			}
-			return cmpResult{kind: cmpAbsent}, nil
+			// the key equals no live row, itself included: that decides key equality, not presence, so the
+			// row is not absent (a live twin with the same bytes may exist). Unknown, with its own reason.
+			return cmpResult{kind: cmpUnknown, note: NoteKeyNever}, nil
 		}
 	} else if !complete {
 		return cmpResult{kind: cmpUnknown, note: NoteCompareIncomplete}, nil

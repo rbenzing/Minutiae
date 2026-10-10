@@ -39,6 +39,12 @@ const (
 	// of a live row of that table. A note only: the relation stays unknown, the
 	// confidence is unchanged and the row is not counted in DuplicateOfLive.
 	NoteEqualsLiveRow = "equals-live-row"
+	// NoteKeyNever: a key value of a WITHOUT ROWID row equals nothing (NULL, NaN), so no live row can be
+	// said to be its twin; equal-to-nothing decides key equality, not presence, so the relation is unknown.
+	NoteKeyNever = "key-never"
+	// NoteKeyUnknown: a key value is omitted, clipped, unread or text the library cannot fold, so the key
+	// comparison is undecided and the relation is unknown.
+	NoteKeyUnknown = "key-unknown"
 	// NoteCompareIncomplete: a value was omitted or clipped, so the row can be
 	// neither proven equal to nor different from the live row.
 	NoteCompareIncomplete = "compare-incomplete"
