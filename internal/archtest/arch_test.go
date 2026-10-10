@@ -72,7 +72,7 @@ var allowed = map[string][]string{
 	"internal/recordtypes/message":         {"internal/records", "internal/recordtypes/common"},
 	"internal/recordtypes/web":             {"internal/records", "internal/recordtypes/common"},
 	"internal/recordtypes/all":             {"internal/recordtypes/message", "internal/recordtypes/call", "internal/recordtypes/contact", "internal/recordtypes/web"},
-	"internal/parsers/parsertest":          {"internal/parse", "internal/records", "internal/evidence", "internal/recordtypes/common", "internal/recordtypes/message", "internal/recordtypes/call", "internal/recordtypes/contact", "internal/recordtypes/web"},
+	"internal/parsers/parsertest":          {"internal/parse", "internal/records", "internal/evidence", "internal/recordtypes/common", "internal/recordtypes/message", "internal/recordtypes/call", "internal/recordtypes/contact", "internal/recordtypes/web", "internal/decode/sqlitedb", "internal/decode/sqlitedb/rowrun", "internal/sqlitefile"},
 	"internal/artparse":                    {"internal/evidence", "internal/version", "internal/records", "internal/parse", "internal/recordtypes/all"},
 	"tools/check":                          {},
 	"tools/parserhash":                     {"internal/parse", "internal/parsers"},
