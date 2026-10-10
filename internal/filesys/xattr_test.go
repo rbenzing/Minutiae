@@ -1,7 +1,6 @@
 package filesys
 
 import (
-	"encoding/base64"
 	"errors"
 	"testing"
 )
@@ -21,6 +20,10 @@ func (xattrStubFS) Xattrs(Entry) ([]Xattr, error) {
 func (xattrStubFS) OpenXattr(Entry, string) (File, error) {
 	return nil, ErrNotFound
 }
+
+// xattrBare hides the stub's XattrReader methods (it embeds only the
+// FileSystem interface).
+type xattrBare struct{ FileSystem }
 
 type xattrWrap struct{ inner FileSystem }
 
@@ -56,30 +59,27 @@ func TestErrXattrCapIsUnsupported(t *testing.T) {
 	}
 }
 
-type plainFS struct{}
-
-func (plainFS) Info() Info                     { return Info{Type: "plain"} }
-func (plainFS) Root() Entry                    { return Entry{} }
-func (plainFS) ReadDir(Entry) ([]Entry, error) { return nil, nil }
-func (plainFS) Lookup(string) (Entry, error)   { return Entry{}, ErrNotFound }
-func (plainFS) Open(Entry) (File, error)       { return nil, ErrNotFound }
-func (plainFS) Unallocated() ([]Run, error)    { return nil, nil }
-
 func TestXattrReaderNotFoundWhenNoLayerHasIt(t *testing.T) {
-	var fsys FileSystem = xattrWrap{inner: xattrWrap{inner: plainFS{}}}
+	var fsys FileSystem = xattrWrap{inner: xattrWrap{inner: xattrBare{xattrStubFS{}}}}
 	if xr, ok := As[XattrReader](fsys); ok || xr != nil {
 		t.Errorf("As[XattrReader] = %v, %v over a chain with no reader, want nil, false", xr, ok)
 	}
 }
 
-// The documented display form of a raw attribute name is unpadded base64url.
+// The documented display form of a raw name is "~raw~" + unpadded base64url,
+// produced by the one shared function every reader uses.
 func TestXattrRawNameVectors(t *testing.T) {
 	for _, c := range []struct {
 		raw  []byte
 		want string
-	}{{[]byte{0xff}, "_w"}, {[]byte{0xfb, 0xff, 0xfe}, "-__-"}, {[]byte{0xff, 0xfe}, "__4"}} {
-		if got := base64.RawURLEncoding.EncodeToString(c.raw); got != c.want {
-			t.Errorf("raw %x = %q, want %q", c.raw, got, c.want)
+	}{
+		{[]byte{0xff}, "~raw~_w"},
+		{[]byte{0xfb, 0xff, 0xfe}, "~raw~-__-"},
+		{[]byte{0xff, 0xfe}, "~raw~__4"},
+		{nil, "~raw~"},
+	} {
+		if got := RawNameAlias(c.raw); got != c.want {
+			t.Errorf("RawNameAlias(%x) = %q, want %q", c.raw, got, c.want)
 		}
 	}
 }

@@ -144,7 +144,7 @@ func displayName(units []uint16) (string, []byte) {
 	for i, u := range units {
 		raw[2*i], raw[2*i+1] = byte(u>>8), byte(u)
 	}
-	return rawPrefix + base64.RawURLEncoding.EncodeToString(raw), raw
+	return filesys.RawNameAlias(raw), raw
 }
 
 // fourCC formats a Finder type or creator code.

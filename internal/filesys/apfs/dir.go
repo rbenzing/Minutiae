@@ -2,7 +2,6 @@ package apfs
 
 import (
 	"bytes"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"slices"
@@ -105,7 +104,7 @@ func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
 		if shadow && string(d.name) == snapshotsDirName {
 			// A real directory of that name: the synthetic one wins, this one is
 			// shown (and found) in its ~raw~ form.
-			e.Name, e.RawName = rawPrefix+base64.RawURLEncoding.EncodeToString(d.name), slices.Clone(d.name)
+			e.Name, e.RawName = filesys.RawNameAlias(d.name), slices.Clone(d.name)
 		}
 		out = append(out, e)
 		return false
@@ -417,7 +416,7 @@ func (f *FS) child(v *volume, view, dirIno uint64, comp string) (filesys.Entry, 
 		}
 		e, err := f.dirEntry(v, view, d)
 		if err == nil && shadow && string(d.name) == snapshotsDirName {
-			e.Name, e.RawName = rawPrefix+base64.RawURLEncoding.EncodeToString(d.name), slices.Clone(d.name)
+			e.Name, e.RawName = filesys.RawNameAlias(d.name), slices.Clone(d.name)
 		}
 		return e, err
 	}

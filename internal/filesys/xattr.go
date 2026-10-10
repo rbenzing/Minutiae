@@ -1,13 +1,26 @@
 package filesys
 
-import "fmt"
+import (
+	"encoding/base64"
+	"fmt"
+)
+
+// RawNamePrefix starts the display form of a name that cannot be shown as it is.
+const RawNamePrefix = "~raw~"
+
+// RawNameAlias is the one display form of a stored name that is not usable as
+// text: RawNamePrefix + base64.RawURLEncoding(raw), the URL-safe alphabet,
+// unpadded. Entry names and extended-attribute names of every reader use it.
+func RawNameAlias(raw []byte) string {
+	return RawNamePrefix + base64.RawURLEncoding.EncodeToString(raw)
+}
 
 // Xattr describes one extended attribute of an entry, as listed by an
 // XattrReader. The value is read with OpenXattr.
 //
 // Name is the display name; a name that is not valid UTF-8 or holds a NUL is
-// "~raw~" + base64.RawURLEncoding(raw): the URL-safe alphabet, unpadded (the
-// byte 0xff is "~raw~_w", the bytes fb ff fe are "~raw~-__-"). Size is the value length in bytes, -1 when the
+// its RawNameAlias (for example the byte 0xff is "~raw~_w" and the bytes
+// fb ff fe are "~raw~-__-"). Size is the value length in bytes, -1 when the
 // reader cannot say without reading the value. Storage is XattrInline,
 // XattrStream, XattrFork or "" when unknown.
 type Xattr struct {
