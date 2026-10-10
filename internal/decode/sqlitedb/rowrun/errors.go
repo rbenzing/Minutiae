@@ -22,3 +22,6 @@ func (e *RowError) Error() string { return "rowrun: row not mapped: " + e.Reason
 func Unmappable(format string, args ...any) error {
 	return &RowError{Reason: fmt.Sprintf(format, args...)}
 }
+
+// ErrNilMap says a Step's mapping has no Map function.
+var ErrNilMap = errors.New("rowrun: the table mapping has no Map function")

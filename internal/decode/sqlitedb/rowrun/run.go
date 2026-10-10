@@ -60,6 +60,9 @@ type seams struct{ afterOpen func(*sqlitedb.DB) }
 // joined rows have charged half of the budget, the Context is closed and
 // reopened (at most once per 1000 rows) so a large database cannot exhaust the
 // budget through Get and Match rows.
+//
+// A nil Map is ErrNilMap. A mapper that panics is not caught here: the host
+// (examine/safe.go) recovers it.
 func Run(ctx context.Context, in *parse.Input, out parse.Emitter, steps []Step) (Report, error) {
 	return run(ctx, in, out, steps, nil)
 }
@@ -149,6 +152,9 @@ func (r *runner) newContext() { r.mc = sqlitedb.NewContext(r.ctx, r.db, r.in, r.
 // closeContext closes the current Context and reports its failure, if any.
 func (r *runner) closeContext() error {
 	mc := r.mc
+	if mc == nil {
+		return nil
+	}
 	r.mc = nil
 	mc.Close()
 	if err := mc.Err(); err != nil {
@@ -159,6 +165,9 @@ func (r *runner) closeContext() error {
 
 func (r *runner) step(st Step) error {
 	m := st.Mapping
+	if m.Map == nil {
+		return fmt.Errorf("%w: table %s", ErrNilMap, m.Table)
+	}
 	var need []string
 	for _, c := range m.Columns {
 		if c.Required {
@@ -225,6 +234,11 @@ func (r *runner) unmapped(tr *TableReport, row sqlitedb.Row, reason string) erro
 		return nil
 	}
 	r.warned++
+	if row.Recovered() != nil {
+		// No locator form exists for a recovered row (the recovery host stamps its own, plan 4G),
+		// and the live form would present recovered data as live: name the table only.
+		return r.out.Warn(r.ctx, "sqlite:table="+escapeComponent(row.Table()), "recovered row: "+reason)
+	}
 	loc, ok := row.Locator()
 	if !ok {
 		loc = "sqlite:table=" + escapeComponent(row.Table())
@@ -278,15 +292,20 @@ func (r *runner) noteSchema(t *sqlitedb.Table, m parse.TableMapping) {
 }
 
 func (r *runner) forwardWarnings() error {
+	dropped := 0
 	for _, w := range r.db.Warnings() {
 		if r.warned >= maxRunWarnings {
-			break
+			dropped++
+			continue
 		}
 		r.warned++
 		loc := fmt.Sprintf("sqlite:file=%s;page=%d;offset=%d", w.File, w.Page, w.Offset)
 		if err := r.out.Warn(r.ctx, loc, w.Code+": "+w.Msg); err != nil {
 			return err
 		}
+	}
+	if dropped > 0 {
+		r.out.Note("warnings_dropped", strconv.Itoa(dropped))
 	}
 	return nil
 }

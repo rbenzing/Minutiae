@@ -12,6 +12,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/rowrun"
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/records"
+	"github.com/rbenzing/minutiae/internal/sqlitefile"
 	"github.com/rbenzing/minutiae/internal/sqlitefile/sqlitetest"
 )
 
@@ -223,7 +224,7 @@ func TestRunNotesTheSchemaAndTheColumnsNoMappingReads(t *testing.T) {
 }
 
 func TestRunOptionalAndRequiredTables(t *testing.T) {
-	absent := parse.TableMapping{Table: "nope", Columns: []parse.ColumnSpec{{Name: "a"}}}
+	absent := parse.TableMapping{Table: "nope", Columns: []parse.ColumnSpec{{Name: "a"}}, Map: echoMapping(nil).Map}
 	em := &recEmitter{}
 	rep, err := rowrun.Run(t.Context(), dbInput(t, tinyDB(t, 1)), em, []rowrun.Step{{Mapping: echoMapping(nil)}, {Mapping: absent, Optional: true}})
 	if err != nil || em.notes["table.nope"] != "absent" || !rep.Tables[1].Absent {
@@ -245,7 +246,7 @@ func TestRunOptionalAndRequiredTables(t *testing.T) {
 // Ruling T18: a database without the identifying table (another kind of database that reached
 // Parse because a companion made Probe defer) is not a failed job.
 func TestRunIsNotApplicableWhenTheIdentifyingTableIsAbsent(t *testing.T) {
-	absent := parse.TableMapping{Table: "calls", Columns: []parse.ColumnSpec{{Name: "number", Required: true}}}
+	absent := parse.TableMapping{Table: "calls", Columns: []parse.ColumnSpec{{Name: "number", Required: true}}, Map: echoMapping(nil).Map}
 	em := &recEmitter{}
 	rep, err := rowrun.Run(t.Context(), dbInput(t, tinyDB(t, 2)), em, []rowrun.Step{{Mapping: absent, Identifying: true}, {Mapping: echoMapping(nil)}})
 	if err != nil {
@@ -318,5 +319,78 @@ func TestRunRefusesAnInputWithoutAReader(t *testing.T) {
 	in.Primary.R = nil
 	if _, err := rowrun.Run(t.Context(), in, &recEmitter{}, nil); err == nil {
 		t.Error("a primary artifact without a reader was accepted")
+	}
+}
+
+// T30: the warning for a recovered row never carries the locator of the live row with the same rowid.
+func TestUnmappedRecoveredRowWarningIsNotLiveShaped(t *testing.T) {
+	tb, rows := rowsOf(t, tinyDB(t, 1), "t")
+	id := int64(1)
+	rec, err := sqlitedb.FromRecovered(tb, sqlitefile.RecoveredRow{
+		Table: "t", Rowid: &id,
+		Values: []sqlitefile.Value{{Kind: sqlitefile.KindNull}, {Kind: sqlitefile.KindInt, Int: 10}, {Kind: sqlitefile.KindNull}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, recovered := &recEmitter{}, &recEmitter{}
+	if err := rowrun.UnmappedForTest(t.Context(), live, rows[0], "why"); err != nil {
+		t.Fatal(err)
+	}
+	if err := rowrun.UnmappedForTest(t.Context(), recovered, rec, "why"); err != nil {
+		t.Fatal(err)
+	}
+	if live.warns[0].Locator != "sqlite:table=t;rowid=1" {
+		t.Errorf("live locator = %q", live.warns[0].Locator)
+	}
+	if recovered.warns[0].Locator == live.warns[0].Locator || strings.Contains(recovered.warns[0].Locator, "rowid=") {
+		t.Errorf("recovered row's warning locator %q is live-shaped", recovered.warns[0].Locator)
+	}
+	if !strings.HasPrefix(recovered.warns[0].Reason, "recovered row:") {
+		t.Errorf("recovered row's warning reason = %q, want prefix \"recovered row:\"", recovered.warns[0].Reason)
+	}
+}
+
+// T31: library warnings beyond the cap are counted, not silently dropped.
+func TestForwardWarningsCountsWhatTheCapDrops(t *testing.T) {
+	in := dbInput(t, damagedDB(t))
+	d, err := sqlitedb.Open(t.Context(), sqlitedb.Files{DB: in.Primary.R, DBSize: in.Primary.Size}, in.Budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Release()
+	tb, err := d.Table(t.Context(), "t", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tb.Scan(t.Context(), func(sqlitedb.Row) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	n := len(d.Warnings())
+	if n == 0 {
+		t.Fatal("the damaged table produced no library warning")
+	}
+	em := &recEmitter{}
+	if err := rowrun.ForwardForTest(t.Context(), d, em, 1000); err != nil {
+		t.Fatal(err)
+	}
+	if len(em.warns) != 0 || em.notes["warnings_dropped"] != strconv.Itoa(n) {
+		t.Errorf("%d warnings, note %q; want 0 and %d", len(em.warns), em.notes["warnings_dropped"], n)
+	}
+}
+
+// T32: a nil Map is a typed error raised before any row is read.
+func TestRunRefusesAMappingWithoutMap(t *testing.T) {
+	em := &recEmitter{}
+	_, err := rowrun.Run(t.Context(), dbInput(t, tinyDB(t, 2)), em, []rowrun.Step{{Mapping: parse.TableMapping{Table: "t"}}})
+	if !errors.Is(err, rowrun.ErrNilMap) {
+		t.Errorf("err = %v, want ErrNilMap", err)
+	}
+}
+
+// T33: closing a runner that holds no Context is a no-op, not a nil dereference.
+func TestCloseContextIsNilSafe(t *testing.T) {
+	if err := rowrun.CloseNilForTest(); err != nil {
+		t.Errorf("close with no context = %v", err)
 	}
 }

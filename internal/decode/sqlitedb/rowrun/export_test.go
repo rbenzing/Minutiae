@@ -17,3 +17,18 @@ func CloseForTest(mc *sqlitedb.Context) error {
 	r := &runner{mc: mc}
 	return r.closeContext()
 }
+
+// UnmappedForTest warns about row the way the runner does for an unmapped row.
+func UnmappedForTest(ctx context.Context, out parse.Emitter, row sqlitedb.Row, reason string) error {
+	r := &runner{ctx: ctx, out: out}
+	return r.unmapped(&TableReport{}, row, reason)
+}
+
+// ForwardForTest forwards the library warnings of db after the runner has already warned n times.
+func ForwardForTest(ctx context.Context, db *sqlitedb.DB, out parse.Emitter, n int) error {
+	r := &runner{ctx: ctx, out: out, db: db, warned: n}
+	return r.forwardWarnings()
+}
+
+// CloseNilForTest closes a runner that holds no Context.
+func CloseNilForTest() error { return (&runner{}).closeContext() }
