@@ -401,6 +401,7 @@ the stored one only in Unicode normalization or case is found by the reader (the
 normalization-insensitive; `TestAPFSMatchesOracle/populated/name_lookup` asserts NFC and NFD queries).
 
 `apfs-reoracle.sh <outdir>` re-emits the expectation file for the committed image with the current oracle (no QEMU): it refuses an image whose sha256 differs from the old oracle and any change other than the added `xattr_values`.
+
 ### F2FS determinism
 
 Both F2FS images are byte-identical across runs (checked by generating twice and
