@@ -1,6 +1,7 @@
 package ios
 
 import (
+	"context"
 	"io"
 	"io/fs"
 
@@ -15,7 +16,7 @@ func SetWalkDir(f func(string, fs.WalkDirFunc) error) (restore func()) {
 }
 
 // SetReadManifest replaces the Manifest.db reader for a test; the returned func restores it.
-func SetReadManifest(f func(io.ReaderAt, int64, func(string) bool) (*manifestdb.Declared, error)) (restore func()) {
+func SetReadManifest(f func(context.Context, io.ReaderAt, int64, func(string) bool) (*manifestdb.Declared, error)) (restore func()) {
 	orig := readManifest
 	readManifest = f
 	return func() { readManifest = orig }

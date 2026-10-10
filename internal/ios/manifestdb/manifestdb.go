@@ -27,6 +27,9 @@ const MaxRows = 4_000_000
 // MaxFileBytes bounds the Manifest.db that is parsed.
 const MaxFileBytes = 1 << 30
 
+// maxRows is MaxRows; only export_test.go changes it.
+var maxRows = MaxRows
+
 // ErrTooManyRows means the Files table has more than MaxRows rows.
 var ErrTooManyRows = errors.New("manifestdb: more Files rows than the limit")
 
@@ -65,7 +68,7 @@ func (d *Declared) Size(fileID string) (int64, bool) {
 
 // Read parses the Files table of the database read through r and keeps the
 // declarations of the valid file IDs for which want returns true.
-func Read(r io.ReaderAt, size int64, want func(fileID string) bool) (*Declared, error) {
+func Read(ctx context.Context, r io.ReaderAt, size int64, want func(fileID string) bool) (*Declared, error) {
 	if size > MaxFileBytes {
 		return nil, fmt.Errorf("%w (%d bytes)", ErrTooLarge, size)
 	}
@@ -73,7 +76,6 @@ func Read(r io.ReaderAt, size int64, want func(fileID string) bool) (*Declared, 
 	if err != nil {
 		return nil, fmt.Errorf("manifestdb: %w", err)
 	}
-	ctx := context.Background()
 	t, err := db.Live().Table(ctx, "Files")
 	if err != nil {
 		return nil, fmt.Errorf("manifestdb: %w", err)
@@ -95,7 +97,7 @@ func Read(r io.ReaderAt, size int64, want func(fileID string) bool) (*Declared, 
 	var scanErr error
 	err = t.Rows(ctx, func(row sqlitefile.Row) bool {
 		rows++
-		if rows > MaxRows {
+		if rows > maxRows {
 			scanErr = ErrTooManyRows
 			return false
 		}

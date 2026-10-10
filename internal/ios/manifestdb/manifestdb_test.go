@@ -2,7 +2,9 @@ package manifestdb_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 
@@ -63,7 +65,7 @@ func TestDeclaredSizes(t *testing.T) {
 		[]any{idF, "d", "p6", int64(1), mbFile(t, uint64(9))}, // present, not wanted
 		[]any{"not-a-file-id", "d", "p7", int64(1), mbFile(t, uint64(9))},
 	)
-	d, err := manifestdb.Read(bytes.NewReader(db), int64(len(db)), func(id string) bool { return id != idF })
+	d, err := manifestdb.Read(context.Background(), bytes.NewReader(db), int64(len(db)), func(id string) bool { return id != idF })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,17 +107,78 @@ func TestReadRefusesWhatIsNotAManifest(t *testing.T) {
 		"encrypted-looking bytes": bytes.Repeat([]byte{0xA5}, 8192),
 		"empty":                   nil,
 	} {
-		if _, err := manifestdb.Read(bytes.NewReader(data), int64(len(data)), all); err == nil {
+		if _, err := manifestdb.Read(context.Background(), bytes.NewReader(data), int64(len(data)), all); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
 	other := sqlitetest.New(sqlitetest.Options{})
 	other.CreateTable("Other", "CREATE TABLE Other (a INTEGER)")
-	if _, err := manifestdb.Read(bytes.NewReader(other.Bytes()), int64(len(other.Bytes())), all); err == nil {
+	if _, err := manifestdb.Read(context.Background(), bytes.NewReader(other.Bytes()), int64(len(other.Bytes())), all); err == nil {
 		t.Error("a database without a Files table was accepted")
 	}
 	// A claimed size over the cap is refused before anything is read.
-	if _, err := manifestdb.Read(bytes.NewReader(nil), manifestdb.MaxFileBytes+1, all); !errors.Is(err, manifestdb.ErrTooLarge) {
+	if _, err := manifestdb.Read(context.Background(), bytes.NewReader(nil), manifestdb.MaxFileBytes+1, all); !errors.Is(err, manifestdb.ErrTooLarge) {
 		t.Errorf("oversized manifest err = %v", err)
+	}
+}
+
+// W43: a Size that cannot be read as a non-negative int64 stays unknown; it is
+// never coerced into a number.
+func TestUnreadableSizesStayUnknown(t *testing.T) {
+	root := func(uid plist.UID, size any) []byte {
+		b, err := plist.Marshal(map[string]any{
+			"$archiver": "NSKeyedArchiver", "$version": uint64(100000),
+			"$top":     map[string]any{"root": uid},
+			"$objects": []any{"$null", map[string]any{"Size": size, "$class": plist.UID(2)}, map[string]any{"$classname": "MBFile"}},
+		}, plist.BinaryFormat)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	ids := []string{idA, idB, idC, idD, idE, idF}
+	db := buildManifest(t,
+		[]any{ids[0], "d", "p", int64(1), root(1, int64(-1))},
+		[]any{ids[1], "d", "p", int64(1), root(1, uint64(math.MaxInt64)+1)},
+		[]any{ids[2], "d", "p", int64(1), root(1, 1.5)},
+		[]any{ids[3], "d", "p", int64(1), root(1, "12")},
+		[]any{ids[4], "d", "p", int64(1), root(9, uint64(5))},             // $top.root past $objects
+		[]any{ids[5], "d", "p", int64(1), root(1, uint64(math.MaxInt64))}, // the largest readable size
+	)
+	d, err := manifestdb.Read(context.Background(), bytes.NewReader(db), int64(len(db)), func(string) bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, id := range ids[:5] {
+		if n, known := d.Size(id); known || n != 0 {
+			t.Errorf("case %d: Size = %d, %v; want unknown", i, n, known)
+		}
+	}
+	if n, known := d.Size(ids[5]); !known || n != math.MaxInt64 {
+		t.Errorf("the largest int64 size = %d, %v", n, known)
+	}
+}
+
+func TestTooManyRowsIsAnErrorNotAPartialRead(t *testing.T) {
+	db := buildManifest(t,
+		[]any{idA, "d", "p1", int64(1), mbFile(t, uint64(1))},
+		[]any{idB, "d", "p2", int64(1), mbFile(t, uint64(2))},
+		[]any{idC, "d", "p3", int64(1), mbFile(t, uint64(3))},
+	)
+	t.Cleanup(manifestdb.SetMaxRows(2))
+	d, err := manifestdb.Read(context.Background(), bytes.NewReader(db), int64(len(db)), func(string) bool { return true })
+	if !errors.Is(err, manifestdb.ErrTooManyRows) || d != nil {
+		t.Fatalf("Read = %v, %v; want ErrTooManyRows and no partial result", d, err)
+	}
+}
+
+// W44: a cancelled context stops the read.
+func TestReadHonoursCancel(t *testing.T) {
+	db := buildManifest(t, []any{idA, "d", "p1", int64(1), mbFile(t, uint64(1))})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	d, err := manifestdb.Read(ctx, bytes.NewReader(db), int64(len(db)), func(string) bool { return true })
+	if !errors.Is(err, context.Canceled) || d != nil {
+		t.Fatalf("Read = %v, %v; want context.Canceled", d, err)
 	}
 }

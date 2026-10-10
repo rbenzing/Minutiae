@@ -48,7 +48,7 @@ func TestBackupFlagsAFileEndedByADeviceErrorBlockAsIncomplete(t *testing.T) {
 	}
 	recs := recordByRemote(t, c)
 	cut := recs["U1/cut.bin"]
-	if !cut.Incomplete || !strings.Contains(cut.Error, "no recorded size confirms the file is complete") || cut.Size != 3 {
+	if !cut.Incomplete || !strings.Contains(cut.Error, "gives no size consistent with the bytes received") || cut.Size != 3 {
 		t.Fatalf("cut.bin record = %+v", cut)
 	}
 	for _, p := range []string{"U1/Info.plist", "U1/Manifest.db", "U1/Status.plist"} {
@@ -232,7 +232,7 @@ func TestBackupConfirmsAFileEndedByADeviceErrorBlockWithManifestSize(t *testing.
 	)
 	c := newCase(t)
 	err := first(t, b).(device.LogicalAcquirer).AcquireLogical(context.Background(), c, device.LogicalOptions{}, nil)
-	if err == nil || !strings.Contains(err.Error(), "differs from the backup's own record") {
+	if err == nil || !strings.Contains(err.Error(), "differs from the backup's Manifest.db") {
 		t.Fatalf("a proven size mismatch must fail the acquisition: %v", err)
 	}
 	<-b.ScriptErr
@@ -276,9 +276,9 @@ func TestBackupManifestItselfCutIsNotTrusted(t *testing.T) {
 // W13: a backup without a file that ended with an error block never reads Manifest.db.
 func TestBackupDoesNotReadTheManifestWithoutAnErrorEndedFile(t *testing.T) {
 	calls := 0
-	t.Cleanup(ios.SetReadManifest(func(r io.ReaderAt, size int64, want func(string) bool) (*manifestdb.Declared, error) {
+	t.Cleanup(ios.SetReadManifest(func(ctx context.Context, r io.ReaderAt, size int64, want func(string) bool) (*manifestdb.Declared, error) {
 		calls++
-		return manifestdb.Read(r, size, want)
+		return manifestdb.Read(ctx, r, size, want)
 	}))
 	b := fakeIPhone()
 	b.Script = uploadThenFinish(0, statusPlist(t, "finished"))
@@ -289,5 +289,103 @@ func TestBackupDoesNotReadTheManifestWithoutAnErrorEndedFile(t *testing.T) {
 	<-b.ScriptErr
 	if calls != 0 {
 		t.Fatalf("the manifest was read %d times for a backup with no error-ended file", calls)
+	}
+}
+
+// W42: Manifest.db itself cut by the transport, with a truncated copy that
+// still parses (here the whole page-aligned manifest, sent without an end
+// marker), is not an oracle: every error-ended file stays unconfirmed and the
+// cause names the cut.
+func TestBackupManifestCutByTransportIsNotTrustedEvenWhenItParses(t *testing.T) {
+	good := "ab" + strings.Repeat("c", 38)
+	other := "cd" + strings.Repeat("e", 38)
+	manifest := manifestWith(t, map[string]uint64{good: 3, other: 3})
+	if len(manifest)%4096 != 0 {
+		t.Fatalf("test manifest is not page-aligned: %d bytes", len(manifest))
+	}
+	b := fakeIPhone()
+	b.Script = func(d *mb2test.Device) error {
+		if err := d.Handshake(); err != nil {
+			return err
+		}
+		if _, err := d.ExpectBackupRequest(); err != nil {
+			return err
+		}
+		if _, err := d.UploadFiles(
+			mb2test.Upload{DeviceName: "/a", Name: "U1/Info.plist", Data: []byte("info")},
+			mb2test.Upload{DeviceName: "/g", Name: "U1/ab/" + good, Data: []byte("abc"), EndRemote: true},
+			mb2test.Upload{DeviceName: "/h", Name: "U1/cd/" + other, Data: []byte("abc"), EndRemote: true},
+		); err != nil {
+			return err
+		}
+		return d.UploadPartial("/m", "U1/Manifest.db", manifest) // then the device disconnects
+	}
+	c := newCase(t)
+	if err := first(t, b).(device.LogicalAcquirer).AcquireLogical(context.Background(), c, device.LogicalOptions{}, nil); err == nil {
+		t.Fatal("an interrupted backup reported success")
+	}
+	<-b.ScriptErr
+	recs := recordByRemote(t, c)
+	if r := recs["U1/Manifest.db"]; !r.Incomplete {
+		t.Fatalf("the cut manifest must be flagged incomplete: %+v", r)
+	}
+	for _, id := range []string{"U1/ab/" + good, "U1/cd/" + other} {
+		r := recs[id]
+		if !r.Incomplete || !strings.Contains(r.Error, "cut off") {
+			t.Errorf("%s: a manifest cut by the transport must not confirm anything: %+v", id, r)
+		}
+	}
+	audit, _ := os.ReadFile(filepath.Join(c.Dir, "audit.jsonl"))
+	for _, want := range []string{`"end_confirmed":0`, `"end_unconfirmed":2`} {
+		if !strings.Contains(string(audit), want) {
+			t.Errorf("%s not audited:\n%s", want, audit)
+		}
+	}
+}
+
+type ctxKey struct{}
+
+// W44: the acquisition's context reaches the manifest reader.
+func TestBackupPassesItsContextToTheManifestReader(t *testing.T) {
+	good := "ab" + strings.Repeat("c", 38)
+	var seen any
+	t.Cleanup(ios.SetReadManifest(func(ctx context.Context, r io.ReaderAt, size int64, want func(string) bool) (*manifestdb.Declared, error) {
+		seen = ctx.Value(ctxKey{})
+		return manifestdb.Read(ctx, r, size, want)
+	}))
+	b := fakeIPhone()
+	b.Script = uploadExtraThenFinish(0,
+		mb2test.Upload{DeviceName: "/c", Name: "U1/Status.plist", Data: statusPlist(t, "finished")},
+		mb2test.Upload{DeviceName: "/m", Name: "U1/Manifest.db", Data: manifestWith(t, map[string]uint64{good: 3})},
+		mb2test.Upload{DeviceName: "/g", Name: "U1/ab/" + good, Data: []byte("abc"), EndRemote: true},
+	)
+	c := newCase(t)
+	ctx := context.WithValue(context.Background(), ctxKey{}, "acquisition")
+	if err := first(t, b).(device.LogicalAcquirer).AcquireLogical(ctx, c, device.LogicalOptions{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	<-b.ScriptErr
+	if seen != "acquisition" {
+		t.Fatalf("the manifest reader got a context unrelated to the acquisition's (%v)", seen)
+	}
+}
+
+// W45: what the examiner reads never says more than the evidence supports.
+func TestBackupConfirmationIsLabelledAsConsistencyWithTheManifest(t *testing.T) {
+	good := "ab" + strings.Repeat("c", 38)
+	b := fakeIPhone()
+	b.Script = uploadExtraThenFinish(0,
+		mb2test.Upload{DeviceName: "/c", Name: "U1/Status.plist", Data: statusPlist(t, "finished")},
+		mb2test.Upload{DeviceName: "/m", Name: "U1/Manifest.db", Data: manifestWith(t, map[string]uint64{good: 3})},
+		mb2test.Upload{DeviceName: "/g", Name: "U1/ab/" + good, Data: []byte("abc"), EndRemote: true},
+	)
+	c := newCase(t)
+	if err := first(t, b).(device.LogicalAcquirer).AcquireLogical(context.Background(), c, device.LogicalOptions{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	<-b.ScriptErr
+	audit, _ := os.ReadFile(filepath.Join(c.Dir, "audit.jsonl"))
+	if !strings.Contains(string(audit), `"end_confirmed_basis":"consistent with the backup's Manifest.db"`) {
+		t.Fatalf("the audited stats do not say what confirmed means:\n%s", audit)
 	}
 }

@@ -1,6 +1,7 @@
 package ios
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -14,8 +15,8 @@ import (
 )
 
 var (
-	errEndUnconfirmed  = errors.New("device ended the transfer with an error block after the file data and no recorded size confirms the file is complete")
-	errEndSizeMismatch = errors.New("device ended the transfer with an error block after the file data and the backup's own record gives another size")
+	errEndUnconfirmed  = errors.New("device ended the transfer with an error block after the file data and the backup's Manifest.db gives no size consistent with the bytes received")
+	errEndSizeMismatch = errors.New("device ended the transfer with an error block after the file data and the backup's Manifest.db gives another size")
 )
 
 // sizeOracle returns the size the backup's own metadata declares for the
@@ -96,7 +97,7 @@ func fileIDOf(rel, udid string) (string, bool) {
 // those files' IDs. When the manifest cannot be used (absent, encrypted,
 // damaged, too large, itself cut off or not proven complete) every lookup
 // carries that reason and the file stays unconfirmed.
-func backupSizes(staging, udid string, res mb2.Result) sizeOracle {
+func backupSizes(ctx context.Context, staging, udid string, res mb2.Result) sizeOracle {
 	manifestRel := udid + "/Manifest.db"
 	unavailable := func(err error) sizeOracle {
 		return func(string) (int64, bool, error) { return 0, false, fmt.Errorf("the manifest is not usable: %w", err) }
@@ -129,7 +130,7 @@ func backupSizes(staging, udid string, res mb2.Result) sizeOracle {
 			wanted[id] = true
 		}
 	}
-	declared, err := readManifest(f, fi.Size(), func(id string) bool { return wanted[id] })
+	declared, err := readManifest(ctx, f, fi.Size(), func(id string) bool { return wanted[id] })
 	if err != nil {
 		return unavailable(err)
 	}
@@ -143,3 +144,8 @@ func backupSizes(staging, udid string, res mb2.Result) sizeOracle {
 		return n, known, nil
 	}
 }
+
+// confirmedBasis is what "confirmed" means in the audited stats: the size is
+// consistent with the Manifest.db the same device wrote, which is not an
+// independent check of the file.
+const confirmedBasis = "consistent with the backup's Manifest.db"

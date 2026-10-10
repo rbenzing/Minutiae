@@ -59,7 +59,7 @@ func (d *Device) AcquireLogical(ctx context.Context, c *evidence.Case, _ device.
 		}
 		var oracle sizeOracle
 		if len(res.RemoteEnded) > 0 {
-			oracle = backupSizes(staging, d.udid, res)
+			oracle = backupSizes(ctx, staging, d.udid, res)
 		}
 		endCuts, rep := judgeEndings(res.RemoteEnded, oracle)
 		for rel, cause := range endCuts {
@@ -75,7 +75,7 @@ func (d *Device) AcquireLogical(ctx context.Context, c *evidence.Case, _ device.
 			})
 		}
 		if rep.Mismatch > 0 {
-			mismatchErr = fmt.Errorf("%d files ended with a device error block and a size that differs from the backup's own record", rep.Mismatch)
+			mismatchErr = fmt.Errorf("%d files ended with a device error block and a size that differs from the backup's Manifest.db", rep.Mismatch)
 		}
 		promoted, promoteErr := promote(c, d.udid, acq, staging, cuts)
 		_, statsErr := c.Audit.Append("acquire.stats", d.udid, map[string]any{
@@ -83,7 +83,7 @@ func (d *Device) AcquireLogical(ctx context.Context, c *evidence.Case, _ device.
 			"bytes_received": res.BytesReceived, "snapshot_state": state,
 			"local_errors": res.LocalErrors, "local_error_count": res.LocalErrorCount,
 			"remote_errors": res.RemoteErrors, "remote_error_count": res.RemoteErrorCount,
-			"end_confirmed": rep.Confirmed, "end_mismatch": rep.Mismatch, "end_unconfirmed": rep.Unconfirmed,
+			"end_confirmed": rep.Confirmed, "end_confirmed_basis": confirmedBasis, "end_mismatch": rep.Mismatch, "end_unconfirmed": rep.Unconfirmed,
 			"end_samples": rep.Samples, "end_detail_omitted": res.RemoteEndedDetailOmitted,
 			"end_removed_count": res.RemovedEndCount, "end_removed": res.RemovedEnds,
 			"cut_missing": promoted.missing,
