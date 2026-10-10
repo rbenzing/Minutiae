@@ -464,7 +464,7 @@ func (v Volume) compile(da *dataAlloc) ([]FSRecord, map[string]uint64, counts, u
 			}
 			recs = append(recs, FSRecord{ID: in.ino, Type: TypeXattr, Key: XattrKey(symlinkXattr), Val: val})
 		}
-		if !f.Dir && f.Symlink == "" && f.Clone == "" && (len(f.Data) > 0 || f.Extents != nil) {
+		if !f.Dir && (f.Symlink == "" || f.SymlinkStream) && f.Clone == "" && (len(f.Data) > 0 || f.Extents != nil) {
 			exts, start := da.layout(f)
 			dataStart[clean] = start
 			for _, e := range exts {

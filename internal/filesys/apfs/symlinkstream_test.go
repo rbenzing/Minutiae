@@ -102,3 +102,67 @@ func TestSymlinkStreamBudgetIsCumulativeAndReported(t *testing.T) {
 		t.Errorf("Open of a target past the budget = %v, %v; want ErrUnsupported and no file", fl, err)
 	}
 }
+
+// A refused entry is warned about once, however many layers refuse it.
+func TestSymlinkStreamBudgetWarnsOncePerRefusedEntry(t *testing.T) {
+	target := longTarget(5000)
+	f, _ := openOpts(t, volOpts(dataVolume(
+		apfstest.File{Path: "/a", Symlink: target, SymlinkStream: true},
+		apfstest.File{Path: "/b", Symlink: target, SymlinkStream: true},
+	)))
+	f.SetLinkBudget(int64(len(target) + 1))
+	mustReadDir(t, f, mustLookup(t, f, "/Data"))
+	var n int
+	for _, w := range f.Info().Warnings {
+		if strings.Contains(w, "budget") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d budget warnings for one refused entry, want 1: %q", n, f.Info().Warnings)
+	}
+}
+
+// The budget is spent by the bytes read, never by a declared size: hostile
+// symlinks that declare 64 KiB and have no extents spend nothing, so a
+// legitimate target after them still reads.
+func TestSymlinkStreamBudgetIsChargedByBytesRead(t *testing.T) {
+	var files []apfstest.File
+	for i := range 10 {
+		files = append(files, apfstest.File{Path: "/bad" + string(rune('a'+i)), Symlink: longTarget(65000), SymlinkStream: true, SymlinkStreamNoData: true})
+	}
+	good := longTarget(5000)
+	files = append(files, apfstest.File{Path: "/good", Symlink: good, SymlinkStream: true})
+	f, _ := openOpts(t, volOpts(dataVolume(files...)))
+	f.SetLinkBudget(100_000) // ten declared sizes would spend 650 KB
+	es := mustReadDir(t, f, mustLookup(t, f, "/Data"))
+	for i := range 10 {
+		e := byName(t, es, "bad"+string(rune('a'+i)))
+		if v, _ := attr(e, "symlink"); v != "unreadable" {
+			t.Errorf("%s: attrs %v, want symlink=unreadable", e.Name, e.Attrs)
+		}
+	}
+	if e := byName(t, es, "good"); e.LinkTarget != good {
+		t.Errorf("the legitimate target after ten hostile ones: %d bytes, attrs %v; want it read", len(e.LinkTarget), e.Attrs)
+	}
+	if got := readAllAt(t, openPath(t, f, "/Data/good")); string(got) != good {
+		t.Errorf("Open of the legitimate target differs (%d bytes)", len(got))
+	}
+}
+
+// The target comes only from the stream's own object: extents the inode has
+// under its own id are never read for it.
+func TestSymlinkStreamIgnoresTheInodesOwnExtents(t *testing.T) {
+	target := longTarget(5000)
+	wrong := bytes.Repeat([]byte("W"), len(target)+1)
+	f, _ := openOpts(t, volOpts(dataVolume(
+		apfstest.File{Path: "/l", Symlink: target, SymlinkStream: true, Data: wrong},
+	)))
+	es := mustReadDir(t, f, mustLookup(t, f, "/Data"))
+	if e := byName(t, es, "l"); e.LinkTarget != target {
+		t.Errorf("LinkTarget = %.20q (%d bytes), want the stream's target", e.LinkTarget, len(e.LinkTarget))
+	}
+	if got := readAllAt(t, openPath(t, f, "/Data/l")); string(got) != target {
+		t.Errorf("Open read %.20q (%d bytes), want the stream's target", got, len(got))
+	}
+}

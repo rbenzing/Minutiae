@@ -122,9 +122,10 @@ func (fl *file) trimTail(k int64) {
 	}
 }
 
-// openStreamSymlink maps and reads the stream-stored target of in. The size is
-// bounded (maxLinkStream) and the read is charged to the per-filesystem
-// linkBudget before it happens; the trailing NULs are dropped as for an
+// openStreamSymlink maps and reads the stream-stored target of in. The declared size is
+// bounded (maxLinkStream); the bytes to read (not the declared size) are
+// charged to the per-filesystem linkBudget once the stream is mapped, and a
+// failure before the read spends nothing. The caller warns about a refusal; the trailing NULs are dropped as for an
 // embedded target, and an empty result is corrupt. Errors are
 // filesys.ErrUnsupported (bound, budget), filesys.ErrCorrupt (damaged stream)
 // or an I/O error.
@@ -132,13 +133,13 @@ func (f *FS) openStreamSymlink(v *volume, view uint64, in *inode) (*file, []byte
 	if in.symlinkSize > maxLinkStream {
 		return nil, nil, unsupported("the %d-byte target of symlink inode %d of volume %d is over the %d-byte limit", in.symlinkSize, in.ino, v.slot, maxLinkStream)
 	}
-	if f.linkBudget.Add(-int64(in.symlinkSize)) < 0 {
-		f.warn("the budget of %d bytes of stream-stored symlink targets per filesystem is spent: further targets are not read", int64(maxLinkBytes))
-		return nil, nil, unsupported("the stream-stored symlink target budget is spent (inode %d of volume %d)", in.ino, v.slot)
-	}
 	fl, err := f.streamFile(v, view, in.symlinkOID, in.ino, in.symlinkSize, "symlink stream")
 	if err != nil {
 		return nil, nil, err
+	}
+	if f.linkBudget.Add(-fl.Size()) < 0 {
+		f.linkBudget.Add(fl.Size()) // a refused read spends nothing
+		return nil, nil, unsupported("the stream-stored symlink target budget is spent (inode %d of volume %d)", in.ino, v.slot)
 	}
 	buf := make([]byte, fl.Size()) // <= maxLinkStream
 	if n, err := fl.ReadAt(buf, 0); n != len(buf) {
