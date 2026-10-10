@@ -155,54 +155,6 @@ func TestCanonicalCollationAndColumnCollation(t *testing.T) {
 	}
 }
 
-// The two behaviours of keyDigest that differ from the engine stay as they
-// were (open question Q13): two NaNs are one key, and UTF-16 text under
-// NOCASE or RTRIM has no key.
-func TestKeyDigestLegacyQuirksArePinned(t *testing.T) {
-	d1, ok1 := sqlitefile.KeyDigest([]sqlitefile.Value{evFloat(math.NaN())}, []string{"BINARY"})
-	d2, ok2 := sqlitefile.KeyDigest([]sqlitefile.Value{evFloat(math.NaN())}, []string{"BINARY"})
-	if !ok1 || !ok2 || d1 != d2 {
-		t.Errorf("two NaNs: ok %v %v, equal %v; the legacy digest treats them as one key", ok1, ok2, d1 == d2)
-	}
-	for _, c := range []string{"NOCASE", "RTRIM"} {
-		if _, ok := sqlitefile.KeyDigest([]sqlitefile.Value{evUTF16(true, "a")}, []string{c}); ok {
-			t.Errorf("UTF-16 under %s has a legacy key", c)
-		}
-	}
-	if _, ok := sqlitefile.KeyDigest([]sqlitefile.Value{evUTF16(true, "a")}, []string{"BINARY"}); !ok {
-		t.Error("UTF-16 under BINARY has no legacy key")
-	}
-}
-
-// The two further differences of the legacy digest (ruling B38): invalid
-// UTF-8 under NOCASE or RTRIM is hashed bytewise (EqualityKey has no key for
-// it), and Unread is ignored (EqualityKey has no key for it).
-func TestKeyDigestFurtherLegacyDifferencesArePinned(t *testing.T) {
-	for _, c := range []string{"NOCASE", "RTRIM"} {
-		if _, ok := sqlitefile.KeyDigest([]sqlitefile.Value{evText("\xffA ")}, []string{c}); !ok {
-			t.Errorf("invalid UTF-8 under %s has no legacy key", c)
-		}
-		if _, st, _ := sqlitefile.EqualityKey(evText("\xffA "), c); st != sqlitefile.KeyUnknown {
-			t.Errorf("EqualityKey of invalid UTF-8 under %s: %v, want KeyUnknown", c, st)
-		}
-	}
-	// bytewise: NOCASE folds the ASCII letter after the invalid byte
-	da, _ := sqlitefile.KeyDigest([]sqlitefile.Value{evText("\xffA")}, []string{"NOCASE"})
-	db, _ := sqlitefile.KeyDigest([]sqlitefile.Value{evText("\xffa")}, []string{"NOCASE"})
-	if da != db {
-		t.Error("legacy NOCASE digest does not fold bytewise after an invalid byte")
-	}
-	un := sqlitefile.Value{Kind: sqlitefile.KindInt, Int: 5, Unread: true}
-	du, oku := sqlitefile.KeyDigest([]sqlitefile.Value{un}, []string{"BINARY"})
-	dr, okr := sqlitefile.KeyDigest([]sqlitefile.Value{evInt(5)}, []string{"BINARY"})
-	if !oku || !okr || du != dr {
-		t.Errorf("legacy digest must ignore Unread: ok %v %v equal %v", oku, okr, du == dr)
-	}
-	if _, st, _ := sqlitefile.EqualityKey(un, "BINARY"); st != sqlitefile.KeyUnknown {
-		t.Errorf("EqualityKey of an unread value: %v, want KeyUnknown", st)
-	}
-}
-
 // Only NULL never matches: a Kind the library does not define is undecidable.
 func TestEqualityKeyUnknownKindIsUnknownNeverNever(t *testing.T) {
 	for _, c := range []string{"", "NOCASE"} {
@@ -213,47 +165,19 @@ func TestEqualityKeyUnknownKindIsUnknownNeverNever(t *testing.T) {
 	}
 }
 
-// Outside the two quirks (no NaN, no UTF-16), EqualityKey and the digest of a
-// one-column tuple agree on equality, for every pair and collation.
-func TestEqualityKeyAgreesWithKeyDigestOutsideTheQuirks(t *testing.T) {
-	vals := []sqlitefile.Value{
-		evInt(0), evInt(1), evInt(-1), evInt(math.MaxInt64), evInt(math.MinInt64),
-		evFloat(0), evFloat(math.Copysign(0, -1)), evFloat(1), evFloat(1.5), evFloat(-1), evFloat(9.223372036854775807e18),
-		evFloat(math.Inf(1)), evFloat(math.Inf(-1)), evFloat(1e300),
-		evText(""), evText("a"), evText("A"), evText("a "), evText(" a"), evText("a  "), evText("é"), evText("É"), evText("1"),
-		evBlob(""), evBlob("a"), evBlob("A"), evBlob("a "), evBlob("1"),
-	}
-	for _, coll := range []string{"BINARY", "NOCASE", "RTRIM"} {
-		for i, a := range vals {
-			for j, b := range vals {
-				ka, sa, _ := sqlitefile.EqualityKey(a, coll)
-				kb, sb, _ := sqlitefile.EqualityKey(b, coll)
-				da, oa := sqlitefile.KeyDigest([]sqlitefile.Value{a}, []string{coll})
-				db, ob := sqlitefile.KeyDigest([]sqlitefile.Value{b}, []string{coll})
-				if (sa == sqlitefile.KeyOK) != oa || (sb == sqlitefile.KeyOK) != ob {
-					t.Fatalf("%s %d,%d: availability differs", coll, i, j)
-				}
-				if sa == sqlitefile.KeyOK && sb == sqlitefile.KeyOK && (ka == kb) != (da == db) {
-					t.Errorf("%s %+v vs %+v: EqualityKey equal=%v, KeyDigest equal=%v", coll, a, b, ka == kb, da == db)
-				}
-			}
-		}
-	}
-}
-
 // The layer's key equality equals the engine's: columns with BLOB affinity so
 // the bound parameters are compared with no affinity conversion.
 func TestEqualityKeyMatchesEngine(t *testing.T) {
-	checkEqualityAgainstEngine(t, "", evText)
+	checkEqualityAgainstEngine(t, "", evText, equalityKeyEqual)
 }
 
 // The same comparison in a UTF-16le database: the engine converts the bound
 // text to the database encoding, the layer decodes before folding.
 func TestEqualityKeyMatchesEngineUTF16(t *testing.T) {
-	checkEqualityAgainstEngine(t, "pragma encoding='UTF-16le'", func(s string) sqlitefile.Value { return evUTF16(true, s) })
+	checkEqualityAgainstEngine(t, "pragma encoding='UTF-16le'", func(s string) sqlitefile.Value { return evUTF16(true, s) }, equalityKeyEqual)
 }
 
-func checkEqualityAgainstEngine(t *testing.T, pragma string, evText func(string) sqlitefile.Value) {
+func checkEqualityAgainstEngine(t *testing.T, pragma string, evText func(string) sqlitefile.Value, same func(x, y sqlitefile.Value, coll string) bool) {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -303,6 +227,7 @@ func checkEqualityAgainstEngine(t *testing.T, pragma string, evText func(string)
 		{evBlob("a "), []byte("a ")},
 		{evBlob("1"), []byte("1")},
 		{evBlob(""), []byte{}},
+		{evFloat(math.NaN()), math.NaN()}, // the engine stores NaN as NULL
 		{sqlitefile.Value{}, nil},
 	}
 	type stmts struct{ ins, sel string }
@@ -324,9 +249,7 @@ func checkEqualityAgainstEngine(t *testing.T, pragma string, evText func(string)
 				if err := db.QueryRow(st.sel, y.g).Scan(&eq); err != nil {
 					t.Fatal(err)
 				}
-				kx, sx, _ := sqlitefile.EqualityKey(x.v, coll)
-				ky, sy, _ := sqlitefile.EqualityKey(y.v, coll)
-				got := sx == sqlitefile.KeyOK && sy == sqlitefile.KeyOK && kx == ky
+				got := same(x.v, y.v, coll)
 				want := eq.Valid && eq.Bool
 				if got != want {
 					t.Errorf("%s: %+v vs %+v: layer equal=%v, engine equal=%v", coll, x.v, y.v, got, want)
@@ -334,4 +257,10 @@ func checkEqualityAgainstEngine(t *testing.T, pragma string, evText func(string)
 			}
 		}
 	}
+}
+
+func equalityKeyEqual(x, y sqlitefile.Value, coll string) bool {
+	kx, sx, _ := sqlitefile.EqualityKey(x, coll)
+	ky, sy, _ := sqlitefile.EqualityKey(y, coll)
+	return sx == sqlitefile.KeyOK && sy == sqlitefile.KeyOK && kx == ky
 }

@@ -210,23 +210,31 @@ func digestOf(vals []Value, idx []int) (d [32]byte, complete bool) {
 	return d, complete
 }
 
-// keyDigest hashes the key columns of a resolved row by the engine's
-// equality: the numeric values 1 and 1.0 are one key, a text key is compared
-// under its column's collation (BINARY bytes, NOCASE with ASCII folded, RTRIM
-// without trailing spaces), and values of different storage classes never
-// meet. ok is false when a key value is omitted, clipped, NULL (never equal to
-// anything) or text the library cannot fold (not UTF-8 under NOCASE or RTRIM).
-// It shares appendKey with EqualityKey; legacy mode keeps the two behaviours
-// of this comparison that differ from the engine (NaN, UTF-16).
-func keyDigest(vals []Value, idx []int, colls []string) (d [32]byte, ok bool) {
+// keyDigest hashes the key columns of a resolved row by the engine's equality
+// (EqualityKey): the numeric values 1 and 1.0 are one key, a text key is
+// compared under its column's collation (BINARY bytes, NOCASE with ASCII
+// folded, RTRIM without trailing spaces; UTF-16 is decoded first), and values
+// of different storage classes never meet. The status keeps two answers apart
+// (ruling J78): KeyNever means a key value equals nothing (NULL, NaN), so the
+// whole tuple does, whatever else is undecided; KeyUnknown means a key value
+// is omitted, clipped, unread, or text the library cannot fold (not UTF-8
+// under NOCASE or RTRIM), so the relation is undecided and must not be read
+// as "no match". Never beats Unknown: one value that equals nothing decides it.
+func keyDigest(vals []Value, idx []int, colls []string) (d [32]byte, st KeyStatus) {
 	h := sha256.New()
 	for n, i := range idx {
-		if appendKey(h, vals[i], colls[n], true) != KeyOK {
-			return d, false
+		switch appendKey(h, vals[i], colls[n]) {
+		case KeyNever:
+			return d, KeyNever
+		case KeyUnknown:
+			st = KeyUnknown
 		}
 	}
+	if st != KeyOK {
+		return d, st
+	}
 	copy(d[:], h.Sum(nil))
-	return d, true
+	return d, KeyOK
 }
 
 // fitDiffRowsTotal is the budget of the live rows the fit-only equality (C45)
@@ -309,10 +317,15 @@ func (rp *rowPass) wrSetOf(ctx context.Context, t *Table, name string, fit bool)
 		// no rowid, scan.go leafRows), so there is nothing to taint on here.
 		key := rowD
 		if s.pkOK {
-			var keyOK bool
-			key, keyOK = keyDigest(res, s.pk, s.colls)
-			if !keyOK {
-				key, s.tainted = rowD, true // a key the engine cannot compare here: found by the row digest only
+			var kst KeyStatus
+			key, kst = keyDigest(res, s.pk, s.colls)
+			if kst != KeyOK {
+				// found by the row digest only. A key that equals nothing (NULL, NaN) is decided and taints nothing;
+				// an undecided one may hide a row the live set cannot place.
+				key = rowD
+				if kst == KeyUnknown {
+					s.tainted = true
+				}
 			}
 		}
 		if _, dup := s.byKey[key]; dup {
@@ -357,10 +370,18 @@ func (rp *rowPass) compareWR(t *Table, name string, row *RecoveredRow, fit bool)
 	rowD, complete := digestOf(res, nil)
 	key := rowD
 	if s.pkOK {
-		var pkDone bool
-		key, pkDone = keyDigest(res, s.pk, s.colls)
-		if !pkDone {
+		var kst KeyStatus
+		key, kst = keyDigest(res, s.pk, s.colls)
+		switch kst {
+		case KeyUnknown:
 			return cmpResult{kind: cmpUnknown, note: NoteCompareIncomplete}, nil
+		case KeyNever:
+			// decided: the key equals no live row, itself included. Absent, as a key that is not found is,
+			// and unknown exactly when the live set cannot say absent.
+			if s.tainted {
+				return cmpResult{kind: cmpUnknown, note: NoteLiveUncertain}, nil
+			}
+			return cmpResult{kind: cmpAbsent}, nil
 		}
 	} else if !complete {
 		return cmpResult{kind: cmpUnknown, note: NoteCompareIncomplete}, nil
