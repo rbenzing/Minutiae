@@ -215,8 +215,9 @@ func TestTxRefusedAfterClose(t *testing.T) {
 }
 
 // TestReadTxUsesMemoryForTemporaryStorage (R67): inside ReadTx a sorter or temporary table never
-// spills to a file (temp_store is MEMORY, 2), and a write transaction afterwards has the default
-// (0) again, so the setting belongs to read transactions only.
+// spills to a file (temp_store is MEMORY, 2), and a write transaction afterwards is MEMORY too
+// (ruling D47: no SQLite temp file may hold case text outside the case; the file-level proof is
+// TestIngestAndReindexLeaveNoSQLiteTempFileOutsideTheCase in internal/records).
 func TestReadTxUsesMemoryForTemporaryStorage(t *testing.T) {
 	c := newTestCase(t)
 	read := func() int {
@@ -238,10 +239,37 @@ func TestReadTxUsesMemoryForTemporaryStorage(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if after != 0 {
-		t.Errorf("temp_store in a write transaction = %d, want the default 0", after)
+	if after != 2 {
+		t.Errorf("temp_store in a write transaction = %d, want 2 (MEMORY)", after)
 	}
 	if v := read(); v != 2 {
 		t.Errorf("second ReadTx: temp_store = %d", v)
+	}
+}
+
+// TestStoreTxUsesMemoryForTemporaryStorage (M1): temp_store MEMORY (2) is set by the connector and,
+// separately, by StoreTx itself, with no ReadTx involved. The first check reads a fresh connection;
+// the second puts the pooled connection back to the default and requires StoreTx to set 2 again, so
+// removing only the StoreTx pragma (or only the connector's) fails.
+func TestStoreTxUsesMemoryForTemporaryStorage(t *testing.T) {
+	c := newTestCase(t)
+	var fresh int
+	if err := c.store.db.QueryRow(`PRAGMA temp_store`).Scan(&fresh); err != nil {
+		t.Fatal(err)
+	}
+	if fresh != 2 {
+		t.Errorf("temp_store on a freshly opened connection = %d, want 2 (MEMORY)", fresh)
+	}
+	if _, err := c.store.db.Exec(`PRAGMA temp_store = DEFAULT`); err != nil {
+		t.Fatal(err)
+	}
+	var got int
+	if err := c.StoreTx(context.Background(), func(tx *sql.Tx) error {
+		return tx.QueryRow(`PRAGMA temp_store`).Scan(&got)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got != 2 {
+		t.Errorf("temp_store in StoreTx = %d, want 2 (MEMORY)", got)
 	}
 }
