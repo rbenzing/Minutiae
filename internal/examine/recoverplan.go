@@ -372,6 +372,7 @@ var methodBase = map[string]int{
 	"ext4-extent-leaf":   55,
 	"fat-contiguous":     55,
 	"exfat-contiguous":   55,
+	"exfat-fatchain":     65,
 }
 
 // Caps (spec 3.3): the lowest applicable cap wins.

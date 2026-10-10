@@ -19,7 +19,8 @@ const (
 	// MethodContiguous: the file had a FAT chain that is not used here, so
 	// the clusters are ASSUMED to have been contiguous.
 	MethodContiguous = "exfat-contiguous"
-	// MethodFatChain: reserved for the stale-chain method (Task 8).
+	// MethodFatChain: the clusters follow the FAT chain the driver left behind
+	// (stale, unverified against reuse; examine proves freeness).
 	MethodFatChain = "exfat-fatchain"
 )
 
@@ -92,21 +93,58 @@ func (f *FS) Recoverable(e filesys.Entry) ([]filesys.Candidate, error) {
 	if uint64(r.first-fatReservedClusters)+need > uint64(f.clusterCount) {
 		return nil, corrupt(st, -1, "%d clusters from cluster %d run past the last cluster %d", need, r.first, uint64(f.clusterCount)+fatReservedClusters-1)
 	}
-	if r.noFatChain() {
+	switch {
+	case r.noFatChain():
 		c.Method = MethodNoFatChain
 		c.Assumptions = []string{"contiguity-from-no-fat-chain"}
-	} else {
-		// Until the stale-chain method (Task 8) a chained file is only assumed contiguous.
-		c.Method = MethodContiguous
-		c.Assumptions = []string{"contiguous-allocation"}
+		c.Runs = []filesys.Run{{Offset: f.clusterOff(r.first), Length: valid}}
+	default:
+		exts, stop, at, err := f.walkStaleChain(r.first, need)
+		if err != nil {
+			return nil, err
+		}
+		if stop == stopFirstFree {
+			// no chain survived: the only case where contiguity is assumed
+			c.Method = MethodContiguous
+			c.Assumptions = []string{"contiguous-allocation"}
+			c.Runs = []filesys.Run{{Offset: f.clusterOff(r.first), Length: valid}}
+			break
+		}
+		c.Method = MethodFatChain
+		c.Runs = trimRuns(f.extentRuns(exts), valid)
+		if stop == stopComplete {
+			c.Basis = append(c.Basis, "fat-chain=stale")
+			c.Assumptions = []string{"fat-chain-unverified-against-reuse"}
+			break
+		}
+		// the prefix: the clusters up to the stop, never a contiguous fallback and never a cluster after the stop
+		var got uint64
+		for _, x := range exts {
+			got += x.n
+		}
+		c.Assumptions = []string{
+			"stale-chain-stop=" + stop.String() + "@" + strconv.FormatUint(uint64(at), 10),
+			"map-covers-clusters=" + strconv.FormatUint(got, 10) + "-of-" + strconv.FormatUint(need, 10),
+		}
 	}
-	c.Runs = []filesys.Run{{Offset: f.clusterOff(r.first), Length: valid}}
 	if r.valid < r.dataLen {
 		c.Assumptions = append(c.Assumptions,
 			"data-length="+strconv.FormatUint(r.dataLen, 10),
 			"tail-beyond-valid-data-length-not-stored")
 	}
 	return []filesys.Candidate{c}, nil
+}
+
+// trimRuns cuts runs to limit bytes in total (the last cluster of a file is only partly valid).
+func trimRuns(runs []filesys.Run, limit int64) []filesys.Run {
+	for i := range runs {
+		if limit <= runs[i].Length {
+			runs[i].Length = limit
+			return runs[: i+1 : i+1]
+		}
+		limit -= runs[i].Length
+	}
+	return runs
 }
 
 var _ filesys.Recoverer = (*FS)(nil)

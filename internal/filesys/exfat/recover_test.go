@@ -109,17 +109,17 @@ func TestExfatRecoverableZeroValidLengthIsEmpty(t *testing.T) {
 	}
 }
 
-// TestExfatRecoverableChainedFileIsContiguousUntilTask8: Task 8 replaces this
-// expectation (a chained file then gets the FAT-chain method); until then a
-// file that is not NoFatChain falls back to the contiguous assumption.
-func TestExfatRecoverableChainedFileIsContiguousUntilTask8(t *testing.T) {
+// TestExfatRecoverableChainedFileFollowsTheStaleChain: a file that is not
+// NoFatChain whose FAT chain survived is recovered by the chain (Task 8), not
+// assumed contiguous.
+func TestExfatRecoverableChainedFileFollowsTheStaleChain(t *testing.T) {
 	data := bytes.Repeat([]byte{5}, 9000)
 	f, _, l := recImage(t, []exfattest.File{{Path: "/F.BIN", Data: data, Deleted: true, FatChain: true, Fragmented: true}})
 	c := one(t, f, l.Find("/F.BIN", true))
-	if c.Method != exfat.MethodContiguous || !slices.Contains(c.Assumptions, "contiguous-allocation") {
+	if c.Method != exfat.MethodFatChain || !slices.Contains(c.Assumptions, "fat-chain-unverified-against-reuse") || len(c.Runs) != 3 {
 		t.Fatalf("candidate %+v", c)
 	}
-	if slices.Contains(c.Assumptions, "contiguity-from-no-fat-chain") || !slices.Contains(c.Basis, "fat_chain") {
+	if slices.Contains(c.Assumptions, "contiguous-allocation") || !slices.Contains(c.Basis, "fat_chain") {
 		t.Errorf("assumptions %v basis %v", c.Assumptions, c.Basis)
 	}
 }

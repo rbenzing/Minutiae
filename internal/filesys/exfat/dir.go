@@ -234,17 +234,12 @@ func setSum(set []byte, restoreInUse bool) uint16 {
 	return sum
 }
 
-// scanDir calls visit for every File entry set of the directory (the deleted
-// ones too with wantDeleted) in on-disk order until visit returns false, or
-// the per-directory cap is reached. Damage inside the directory is a warning;
-// only a directory of which nothing can be read is an error.
-func (f *FS) scanDir(st *dirState, wantDeleted bool, visit func(*setRec) bool) error {
-	_, err := f.scanDirCut(st, wantDeleted, visit)
-	return err
-}
-
-// scanDirCut is scanDir that also returns, when the listing is a prefix (the
-// read ended early), the reason, so a search can tell "absent" from "unread".
+// scanDirCut calls visit for every File entry set of the directory (the
+// deleted ones too with wantDeleted) in on-disk order until visit returns
+// false, or the per-directory cap is reached. Damage inside the directory is a
+// warning; only a directory of which nothing can be read is an error. When the
+// listing is a prefix (the read ended early or the cap was hit) it also returns
+// the reason, so a search can tell "absent" from "unread".
 func (f *FS) scanDirCut(st *dirState, wantDeleted bool, visit func(*setRec) bool) (cut error, err error) {
 	sp := st.spec
 	buf, cut, err := f.readDirDataCut(st)
