@@ -25,3 +25,6 @@ func Unmappable(format string, args ...any) error {
 
 // ErrNilMap says a Step's mapping has no Map function.
 var ErrNilMap = errors.New("rowrun: the table mapping has no Map function")
+
+// ErrNilInput says a caller passed no Input, primary reader or Matcher.
+var ErrNilInput = errors.New("rowrun: the caller passed a nil input")

@@ -3,6 +3,7 @@ package rowrun_test
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
 	"strings"
 	"testing"
 
@@ -114,5 +115,15 @@ func TestProbeBudgetFailureIsAnErrorNotAnAnswer(t *testing.T) {
 	in.Budget = parse.NewBudget(1).View()
 	if got, err := rowrun.Probe(t.Context(), in, []rowrun.Req{{Table: "sms"}}); err == nil {
 		t.Errorf("Probe under an exhausted budget answered %+v", got)
+	}
+}
+
+// T36: a nil input or primary reader is a typed error, never a panic.
+func TestProbeRefusesANilInput(t *testing.T) {
+	if _, err := rowrun.Probe(t.Context(), nil, nil); !errors.Is(err, rowrun.ErrNilInput) {
+		t.Errorf("nil input: %v, want ErrNilInput", err)
+	}
+	if _, err := rowrun.Probe(t.Context(), &parse.Input{}, nil); !errors.Is(err, rowrun.ErrNilInput) {
+		t.Errorf("nil primary reader: %v, want ErrNilInput", err)
 	}
 }

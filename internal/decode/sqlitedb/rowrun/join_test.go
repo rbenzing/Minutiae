@@ -6,6 +6,7 @@ import (
 
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/rowrun"
+	"github.com/rbenzing/minutiae/internal/parse"
 )
 
 func TestMatchOnACleanTableIsDecided(t *testing.T) {
@@ -57,5 +58,58 @@ func TestMatchErrorsAndForeignContexts(t *testing.T) {
 	rows, undecided, err := rowrun.Match(fakeMC{}, "t", "a", 1)
 	if rows != nil || undecided || err != nil {
 		t.Errorf("a context without Joins: %v %v %v", rows, undecided, err)
+	}
+}
+
+// T37: ErrKeyUndecidable on a clean table, reached through a key the index cannot compare.
+func TestMatchReportsAnUndecidableKeyOnACleanTable(t *testing.T) {
+	mc := openCtx(t, tinyDB(t, 3))
+	rows, undecided, err := rowrun.MatchKeyForTest(mc, "t", "a", parse.JoinKey{Kind: parse.JoinKeyKind(200)})
+	if err != nil || !undecided || rows != nil {
+		t.Fatalf("rows %v undecided %v err %v; want nil rows, undecided, no error", rows, undecided, err)
+	}
+	var found bool
+	for _, j := range mc.Joins() {
+		if j.Table == "t" && j.Column == "a" {
+			found = true
+			if j.Undecidable != 1 {
+				t.Errorf("Undecidable = %d, want 1", j.Undecidable)
+			}
+		}
+	}
+	if !found {
+		t.Error("the undecidable lookup was not counted in the join report")
+	}
+}
+
+// T36: a caller bug is a typed error, never a panic.
+func TestMatchRefusesANilMatcher(t *testing.T) {
+	if _, _, err := rowrun.Match(nil, "t", "a", 1); !errors.Is(err, rowrun.ErrNilInput) {
+		t.Errorf("nil matcher: %v, want ErrNilInput", err)
+	}
+}
+
+// T35: the single-join accessor reads one join's counter without copying the others.
+func TestUndecidedHitsReadsOneJoin(t *testing.T) {
+	mc := openCtx(t, damagedDB(t))
+	if n := mc.UndecidedHits("t", "a"); n != 0 {
+		t.Fatalf("before any lookup: %d", n)
+	}
+	for id := int64(1); id <= 300; id++ {
+		if _, _, err := rowrun.Match(mc, "t", "a", id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var want int64
+	for _, j := range mc.Joins() {
+		if j.Table == "t" && j.Column == "a" {
+			want = j.UndecidedHits
+		}
+	}
+	if want == 0 || mc.UndecidedHits("T", "A") != want {
+		t.Errorf("UndecidedHits = %d (case-folded), Joins says %d", mc.UndecidedHits("T", "A"), want)
+	}
+	if mc.UndecidedHits("t", "nope") != 0 {
+		t.Error("an unknown join must read 0")
 	}
 }

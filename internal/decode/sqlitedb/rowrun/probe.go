@@ -29,6 +29,9 @@ const deferred = "schema checked at parse time: a -wal or -journal companion is 
 // created database keeps its schema in the WAL), so every schema finding is
 // deferred to Parse, which fails loudly instead of skipping (D4).
 func Probe(ctx context.Context, in *parse.Input, reqs []Req) (parse.Applicability, error) {
+	if in == nil || in.Primary.R == nil {
+		return parse.Applicability{}, ErrNilInput
+	}
 	_, wal := in.Artifacts["wal"]
 	_, jr := in.Artifacts["journal"]
 	companion := wal || jr

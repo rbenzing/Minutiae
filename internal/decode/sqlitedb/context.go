@@ -259,3 +259,13 @@ func (c *Context) Close() {
 	}
 	c.indexes, c.rows, c.tables = nil, nil, nil
 }
+
+// UndecidedHits returns the UndecidedHits count of one join (names compared ASCII
+// case-insensitively), 0 when the join has no report. It reads one report and
+// copies nothing, unlike Joins.
+func (c *Context) UndecidedHits(table, col string) int64 {
+	if rep := c.reports[asciiFold(table)+"\x00"+asciiFold(col)]; rep != nil {
+		return rep.UndecidedHits
+	}
+	return 0
+}

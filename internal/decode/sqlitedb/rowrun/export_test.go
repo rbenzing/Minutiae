@@ -32,3 +32,8 @@ func ForwardForTest(ctx context.Context, db *sqlitedb.DB, out parse.Emitter, n i
 
 // CloseNilForTest closes a runner that holds no Context.
 func CloseNilForTest() error { return (&runner{}).closeContext() }
+
+// MatchKeyForTest is Match with an arbitrary key, to force an undecidable key on a clean table.
+func MatchKeyForTest(m parse.MapContext, table, col string, key parse.JoinKey) ([]parse.Row, bool, error) {
+	return match(m, table, col, key)
+}
