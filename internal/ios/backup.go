@@ -18,8 +18,10 @@ import (
 // AcquireLogical records lockdown values, then runs a full mobilebackup2
 // backup into <case>/staging/<acq>/ and promotes every resulting file into
 // artifacts backup/<path>. Files received before a failure are still promoted.
-// A backup is complete only if mobilebackup2 reports success and the device's
-// Status.plist says SnapshotState == "finished"; otherwise an error is returned
+// A backup is complete only if mobilebackup2 reports success, the device's
+// Status.plist says SnapshotState == "finished", and no file ended with an
+// unconfirmed device error block (such a file is promoted flagged incomplete
+// and audited as a warning); otherwise an error is returned
 // (and audited as acquire.error) after everything received has been promoted.
 func (d *Device) AcquireLogical(ctx context.Context, c *evidence.Case, _ device.LogicalOptions, progress device.ProgressFunc) error {
 	return device.RunAcquisition(c, d.udid, "ios.backup", nil, func(acq string) error {
@@ -51,14 +53,42 @@ func (d *Device) AcquireLogical(ctx context.Context, c *evidence.Case, _ device.
 		if runErr != nil {
 			snapErr = nil // the transport failure is the primary error
 		}
-		promoted, promoteErr := promote(c, d.udid, acq, staging, res.Incomplete)
+		cuts := map[string]error{}
+		for _, rel := range res.Incomplete {
+			cuts[rel] = errTransferInterrupted
+		}
+		var oracle sizeOracle
+		if len(res.RemoteEnded) > 0 {
+			oracle = backupSizes(staging, d.udid, res)
+		}
+		endCuts, rep := judgeEndings(res.RemoteEnded, oracle)
+		for rel, cause := range endCuts {
+			if _, dup := cuts[rel]; !dup {
+				cuts[rel] = cause
+			}
+		}
+		var warnErr, mismatchErr error
+		if rep.Unconfirmed > 0 {
+			_, warnErr = c.Audit.Append("acquire.warning", d.udid, map[string]any{
+				"acquisition_id": acq, "op": "backup-end", "reason": "end-unconfirmed", "count": rep.Unconfirmed,
+				"error": errEndUnconfirmed.Error(),
+			})
+		}
+		if rep.Mismatch > 0 {
+			mismatchErr = fmt.Errorf("%d files ended with a device error block and a size that differs from the backup's own record", rep.Mismatch)
+		}
+		promoted, promoteErr := promote(c, d.udid, acq, staging, cuts)
 		_, statsErr := c.Audit.Append("acquire.stats", d.udid, map[string]any{
 			"acquisition_id": acq, "files": promoted.files, "incomplete_files": promoted.partial,
 			"bytes_received": res.BytesReceived, "snapshot_state": state,
 			"local_errors": res.LocalErrors, "local_error_count": res.LocalErrorCount,
 			"remote_errors": res.RemoteErrors, "remote_error_count": res.RemoteErrorCount,
+			"end_confirmed": rep.Confirmed, "end_mismatch": rep.Mismatch, "end_unconfirmed": rep.Unconfirmed,
+			"end_samples": rep.Samples, "end_detail_omitted": res.RemoteEndedDetailOmitted,
+			"end_removed_count": res.RemovedEndCount, "end_removed": res.RemovedEnds,
+			"cut_missing": promoted.missing,
 		})
-		return errors.Join(runErr, snapErr, promoteErr, statsErr)
+		return errors.Join(runErr, snapErr, mismatchErr, warnErr, promoteErr, statsErr)
 	})
 }
 
@@ -150,26 +180,38 @@ var walkDir = filepath.WalkDir
 // errTransferInterrupted marks a staged file whose transfer failed part-way.
 var errTransferInterrupted = errors.New("transfer interrupted")
 
-// promoteStats counts the artifacts promote created; partial ones (transfer
-// interrupted, flagged incomplete) are included in files.
-type promoteStats struct{ files, partial int }
+// promoteStats counts the artifacts promote created; partial ones (cut off or
+// not proven complete, flagged incomplete) are included in files. missing
+// counts cut marks whose staged file no longer exists (never expected, since
+// marks follow moves; counted and audited instead of dropped silently).
+type promoteStats struct{ files, partial, missing int }
+
+// cutFile is a staged file that was cut off or not proven complete, matched by
+// identity so case-folding filesystems agree.
+type cutFile struct {
+	fi    fs.FileInfo
+	cause error
+}
 
 // promote captures every staged file as an artifact, then removes staging.
-// Files named in interrupted (slash-separated, relative to staging) were cut
-// off mid-transfer: their bytes are kept as artifacts flagged incomplete,
-// which is not a promotion failure. A walk error is recorded and the walk
-// continues, so everything readable is promoted. Staging is kept if any file
-// could not be promoted or any part of it could not be walked, so nothing is
-// lost.
-func promote(c *evidence.Case, udid, acq, staging string, interrupted []string) (promoteStats, error) {
-	var cut []fs.FileInfo // matched by identity, so case-folding filesystems agree
-	for _, rel := range interrupted {
-		if fi, err := os.Stat(filepath.Join(staging, filepath.FromSlash(rel))); err == nil {
-			cut = append(cut, fi)
+// Files named in cut (slash-separated, relative to staging) were cut off
+// mid-transfer or ended with an error block that no size confirms: their bytes
+// are kept as artifacts flagged incomplete with that cause, which is not a
+// promotion failure. A walk error is recorded and the walk continues, so
+// everything readable is promoted. Staging is kept if any file could not be
+// promoted or any part of it could not be walked, so nothing is lost.
+func promote(c *evidence.Case, udid, acq, staging string, cut map[string]error) (promoteStats, error) {
+	var st promoteStats
+	var cuts []cutFile
+	for rel, cause := range cut {
+		fi, err := os.Stat(filepath.Join(staging, filepath.FromSlash(rel)))
+		if err != nil {
+			st.missing++
+			continue
 		}
+		cuts = append(cuts, cutFile{fi: fi, cause: cause})
 	}
 	var errs []error
-	var st promoteStats
 	walkErr := walkDir(staging, func(p string, de fs.DirEntry, err error) error {
 		if err != nil { // record it and keep walking: promote everything readable
 			errs = append(errs, fmt.Errorf("staging walk %s: %w", p, err))
@@ -186,8 +228,8 @@ func promote(c *evidence.Case, udid, acq, staging string, interrupted []string) 
 		rel = filepath.ToSlash(rel)
 		src := evidence.Source{Kind: "backup", DeviceID: udid, RemotePath: rel}
 		var perr error
-		if isInterrupted(p, cut) {
-			if perr = capturePartial(c, udid, acq, rel, p, src); perr == nil {
+		if cf := findCut(p, cuts); cf != nil {
+			if perr = capturePartial(c, udid, acq, rel, p, src, cf.cause); perr == nil {
 				st.partial++
 			}
 		} else {
@@ -206,32 +248,33 @@ func promote(c *evidence.Case, udid, acq, staging string, interrupted []string) 
 	return st, os.RemoveAll(staging)
 }
 
-func isInterrupted(p string, cut []fs.FileInfo) bool {
-	if len(cut) == 0 {
-		return false
+// findCut returns the cut entry for the staged file at p, or nil.
+func findCut(p string, cuts []cutFile) *cutFile {
+	if len(cuts) == 0 {
+		return nil
 	}
 	fi, err := os.Stat(p)
 	if err != nil {
-		return false
+		return nil
 	}
-	for _, c := range cut {
-		if os.SameFile(fi, c) {
-			return true
+	for i := range cuts {
+		if os.SameFile(fi, cuts[i].fi) {
+			return &cuts[i]
 		}
 	}
-	return false
+	return nil
 }
 
-// capturePartial stores the bytes of an interrupted file as an artifact
-// aborted with errTransferInterrupted, so it is flagged incomplete. The
-// error is non-nil only if the staged bytes could not all be stored.
-func capturePartial(c *evidence.Case, udid, acq, rel, p string, src evidence.Source) error {
+// capturePartial stores the bytes of a cut or unconfirmed file as an artifact
+// aborted with cause, so it is flagged incomplete. The error is non-nil only if
+// the staged bytes could not all be stored.
+func capturePartial(c *evidence.Case, udid, acq, rel, p string, src evidence.Source, cause error) error {
 	w, err := c.NewArtifact(udid, acq, "backup/"+rel, src)
 	if err != nil {
 		return err
 	}
 	copyErr := copyFrom(w, p)
-	_, abortErr := w.Abort(errors.Join(errTransferInterrupted, copyErr))
+	_, abortErr := w.Abort(errors.Join(cause, copyErr))
 	return errors.Join(copyErr, abortErr)
 }
 

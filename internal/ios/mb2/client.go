@@ -42,6 +42,10 @@ type RemoteEnd struct {
 	// UTF-8 rune) and never repaired; empty past MaxRecordedErrors live entries.
 	// Display it with %q.
 	Message string
+	// Path is the file's path as the device sent it (cleaned, slash-separated,
+	// relative to Dir), for display: the map key is folded where the file
+	// system ignores case.
+	Path string
 }
 
 // Result summarizes a backup.

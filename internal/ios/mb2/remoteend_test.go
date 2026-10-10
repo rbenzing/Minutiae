@@ -59,7 +59,7 @@ func TestBackupRecordsRemoteEndAfterData(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]mb2.RemoteEnd{
-		"U1/cut.bin": {Code: mb2.CodeErrorRemote, Bytes: 3, Message: "read failed"},
+		"U1/cut.bin": {Code: mb2.CodeErrorRemote, Bytes: 3, Message: "read failed", Path: "U1/cut.bin"},
 	}
 	if !reflect.DeepEqual(res.RemoteEnded, want) {
 		t.Fatalf("RemoteEnded = %+v, want %+v", res.RemoteEnded, want)
