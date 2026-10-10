@@ -272,6 +272,9 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 					if perr := x.keepPrefixRuns(rel, p, d, runs, n); perr != nil {
 						return perr // a failure of the case itself
 					}
+					if full != "" && full != d.RunsArtifact {
+						d.DeclaredRunsArtifact = full // the full list stays in the case; the partial artifact now names it
+					}
 					d.AcquisitionGaps = x.s.gapNote(prefixRuns(runs, n), true, n) // the kept bytes only
 					if n > 0 && d.Runs == nil && d.RunsArtifact == "" {
 						err = fmt.Errorf("%w (the runs of the kept bytes are not recorded: no free runs sidecar name)", err)
