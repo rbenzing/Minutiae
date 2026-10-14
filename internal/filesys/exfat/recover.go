@@ -81,6 +81,12 @@ func (f *FS) Recoverable(e filesys.Entry) ([]filesys.Candidate, error) {
 		c.Basis = append(c.Basis, "name="+r.nameNote)
 	}
 	if valid == 0 {
+		// An empty map has no runs and walks no chain: it still names a method (a candidate
+		// without one is malformed). The NoFatChain flag is read, nothing is assumed about clusters.
+		c.Method = MethodContiguous
+		if r.noFatChain() {
+			c.Method = MethodNoFatChain
+		}
 		if r.dataLen > 0 {
 			c.Assumptions = []string{"data-length=" + strconv.FormatUint(r.dataLen, 10)}
 		}
