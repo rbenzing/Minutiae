@@ -71,6 +71,7 @@ func newRootCmd(d Deps) *cobra.Command {
 	root.AddCommand(newImageCmd(d, opts))
 	root.AddCommand(newRecordsCmd(d, opts))
 	root.AddCommand(newParseCmd(d, opts))
+	root.AddCommand(newSQLiteCmd(d, opts))
 	return root
 }
 
