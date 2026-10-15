@@ -324,6 +324,13 @@ func containsString(s []string, v string) bool {
 // error.
 func testdataReaders(srcs []testSrc, dirs []string) (map[string]bool, error) {
 	readers := map[string]bool{}
+	for _, k := range knownTestdataReaders {
+		for _, d := range dirs {
+			if k.owner == d {
+				readers[k.reader] = true
+			}
+		}
+	}
 	for _, s := range srcs {
 		pkgDir := path.Dir(s.Path)
 		refs, err := scanFile(pkgDir, s.Src)
@@ -343,4 +350,84 @@ func testdataReaders(srcs []testSrc, dirs []string) (map[string]bool, error) {
 		}
 	}
 	return readers, nil
+}
+
+// mention is a string literal in a test source that names a testdata directory.
+type mention struct {
+	Line int
+	Text string
+}
+
+// knownTestdataReaders are the test sources that reach another package's testdata through a path
+// the scan cannot resolve (a variable root, a computed segment). Each entry names the reader, the
+// owner of the testdata and why; the owner's testdata changes make the reader affected
+// (testdataReaders). TestEveryTestdataReferenceIsResolved fails on any other unresolved mention.
+var knownTestdataReaders = []struct{ reader, owner, reason string }{
+	{"internal/archtest", "none", "the testdata paths are inputs to path predicates (hand-written strings); no testdata file is read; archtest is in the global block anyway"},
+	{"tools/parserhash", "none", "scope_test.go names testdata paths inside a virtual tree it writes to a temp directory; no repository testdata is read"},
+}
+
+// unresolvedTestdata returns the string literals of a test source in dir that name a testdata
+// directory and are neither the package's own (a path starting with "testdata") nor resolved by
+// scanFile's rules to another package's directory.
+func unresolvedTestdata(dir string, src []byte) ([]mention, error) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "", src, parser.SkipObjectResolution)
+	if err != nil {
+		return nil, err
+	}
+	handled := map[*ast.BasicLit]bool{}
+	var out []mention
+	lits := func(n ast.Node) (ls []*ast.BasicLit) {
+		ast.Inspect(n, func(m ast.Node) bool {
+			if l, ok := m.(*ast.BasicLit); ok && l.Kind == token.STRING {
+				ls = append(ls, l)
+			}
+			return true
+		})
+		return ls
+	}
+	classify := func(text string, ls []*ast.BasicLit, pos token.Pos) {
+		for _, l := range ls {
+			handled[l] = true
+		}
+		segs := strings.Split(strings.ReplaceAll(text, "\\", "/"), "/")
+		if !containsString(segs, "testdata") || segs[0] == "testdata" {
+			return
+		}
+		if _, ok := resolveTestdataRef(dir, text); ok {
+			return
+		}
+		out = append(out, mention{Line: fset.Position(pos).Line, Text: text})
+	}
+	allHandled := func(ls []*ast.BasicLit) bool {
+		for _, l := range ls {
+			if !handled[l] {
+				return false
+			}
+		}
+		return true
+	}
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.CallExpr:
+			if sel, ok := x.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Join" {
+				parts := make([]string, len(x.Args))
+				for i, a := range x.Args {
+					parts[i] = partText(a)
+				}
+				classify(strings.Join(parts, "/"), lits(x), x.Pos())
+			}
+		case *ast.BinaryExpr:
+			if ls := lits(x); x.Op == token.ADD && !allHandled(ls) {
+				classify(concatText(x), ls, x.Pos())
+			}
+		case *ast.BasicLit:
+			if s, ok := stringLit(x); ok && !handled[x] {
+				classify(s, []*ast.BasicLit{x}, x.Pos())
+			}
+		}
+		return true
+	})
+	return out, nil
 }

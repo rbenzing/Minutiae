@@ -478,3 +478,72 @@ func slowTableProblems(guards map[string]bool, table map[string]int) []string {
 	sort.Strings(out)
 	return out
 }
+
+func TestUnresolvedTestdataMentionsAreReported(t *testing.T) {
+	src := []byte(`package p
+
+import "path/filepath"
+
+func f(root, n string) {
+	_ = filepath.Join(root, "x", "testdata", "f")
+	_ = filepath.Join("testdata", "own")
+	_ = "testdata/own.bin"
+	_ = filepath.Join("..", "x", "testdata", "f")
+	_ = "../" + n + "/testdata/img"
+	_ = root + "/testdata/z"
+	_ = "a message about testdata fixtures"
+}
+`)
+	got, err := unresolvedTestdata("p/q", src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []int
+	for _, m := range got {
+		lines = append(lines, m.Line)
+	}
+	if want := []int{6, 11}; !slices.Equal(lines, want) {
+		t.Errorf("unresolved mentions at lines %v, want %v", lines, want)
+	}
+}
+
+func TestEveryTestdataReferenceIsResolved(t *testing.T) {
+	t.Chdir("../..")
+	pkgs, err := loadPackages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	srcs, err := loadTestSources(pkgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	known := map[string]bool{}
+	for _, k := range knownTestdataReaders {
+		if k.reader == "" || k.owner == "" || k.reason == "" {
+			t.Errorf("incomplete knownTestdataReaders entry %+v", k)
+		}
+		known[k.reader] = true
+	}
+	used := map[string]bool{}
+	for _, s := range srcs {
+		if strings.HasPrefix(s.Path, "tools/check/") { // its tests quote such paths
+			continue
+		}
+		ms, err := unresolvedTestdata(path.Dir(s.Path), s.Src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range ms {
+			if known[path.Dir(s.Path)] {
+				used[path.Dir(s.Path)] = true
+				continue
+			}
+			t.Errorf("%s:%d: testdata path %s is neither resolved by the scan nor the package's own; resolve it or add it to knownTestdataReaders", s.Path, m.Line, m.Text)
+		}
+	}
+	for k := range known {
+		if !used[k] {
+			t.Errorf("knownTestdataReaders lists %s but it has no unresolved testdata mention", k)
+		}
+	}
+}
