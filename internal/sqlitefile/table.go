@@ -318,3 +318,9 @@ func numericText(s string) (Value, bool) {
 	}
 	return Value{Kind: KindFloat, Float: f}, true
 }
+
+// RowsLoss is Rows that also returns what this one scan did not deliver (see
+// ScanLoss).
+func (t *Table) RowsLoss(ctx context.Context, visit func(Row) bool) (ScanLoss, error) {
+	return t.v.ScanTreeLoss(ctx, t.obj.RootPage, t.kind(), visit)
+}

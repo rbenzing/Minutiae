@@ -51,6 +51,12 @@ func isAnswerless(err error) bool {
 
 // compare relates the row to the live state.
 func (rp *rowPass) compare(id ident, row *RecoveredRow) (cmpResult, error) {
+	return rp.compareIn(id, row, false)
+}
+
+// compareIn is compare; fit is true for the fit-only equality (C45), whose digest
+// sets are built apart from the schema-named ones and from their budget.
+func (rp *rowPass) compareIn(id ident, row *RecoveredRow, fit bool) (cmpResult, error) {
 	t, err := rp.table(id.table)
 	if err != nil {
 		if isAnswerless(err) {
@@ -59,7 +65,7 @@ func (rp *rowPass) compare(id ident, row *RecoveredRow) (cmpResult, error) {
 		return cmpResult{}, err
 	}
 	if id.kind == kindWithoutR {
-		return rp.compareWR(t, id.table, row)
+		return rp.compareWR(t, id.table, row, fit)
 	}
 	if row.Rowid == nil {
 		return cmpResult{kind: cmpUnknown, note: NoteLiveUncertain}, nil
@@ -204,74 +210,52 @@ func digestOf(vals []Value, idx []int) (d [32]byte, complete bool) {
 	return d, complete
 }
 
-// keyDigest hashes the key columns of a resolved row by the engine's
-// equality: the numeric values 1 and 1.0 are one key, a text key is compared
-// under its column's collation (BINARY bytes, NOCASE with ASCII folded, RTRIM
-// without trailing spaces), and values of different storage classes never
-// meet. ok is false when a key value is omitted, clipped, NULL (never equal to
-// anything) or text the library cannot fold (not UTF-8 under NOCASE or RTRIM).
-func keyDigest(vals []Value, idx []int, colls []string) (d [32]byte, ok bool) {
+// keyDigest hashes the key columns of a resolved row by the engine's equality
+// (EqualityKey): the numeric values 1 and 1.0 are one key, a text key is
+// compared under its column's collation (BINARY bytes, NOCASE with ASCII
+// folded, RTRIM without trailing spaces; UTF-16 is decoded first), and values
+// of different storage classes never meet. The status keeps two answers apart
+// (ruling J78): KeyNever means a key value equals nothing (NULL, NaN), so the
+// whole tuple does, whatever else is undecided; KeyUnknown means a key value
+// is omitted, clipped, unread, or text the library cannot fold (not UTF-8
+// under NOCASE or RTRIM), so the relation is undecided and must not be read
+// as "no match".
+//
+// KeyNever beats KeyUnknown: one value that equals nothing decides the tuple.
+// The status is the reason too: compareWR reports KeyNever as NoteKeyNever and
+// KeyUnknown as NoteKeyUnknown (ruling J103), both with the relation unknown.
+func keyDigest(vals []Value, idx []int, colls []string) (d [32]byte, st KeyStatus) {
 	h := sha256.New()
-	var b [8]byte
-	put := func(n uint64) {
-		binary.BigEndian.PutUint64(b[:], n)
-		h.Write(b[:])
-	}
 	for n, i := range idx {
-		v := vals[i]
-		if v.Omitted || v.Clipped {
-			return d, false
+		switch appendKey(h, vals[i], colls[n]) {
+		case KeyNever:
+			return d, KeyNever
+		case KeyUnknown:
+			st = KeyUnknown
 		}
-		switch v.Kind {
-		case KindInt:
-			h.Write([]byte{'i'})
-			put(uint64(v.Int))
-		case KindFloat:
-			if f := v.Float; f == math.Trunc(f) && f >= -(1<<63) && f < 1<<63 {
-				h.Write([]byte{'i'}) // an integral real is the integer of the same value
-				put(uint64(int64(f)))
-			} else {
-				h.Write([]byte{'f'})
-				put(math.Float64bits(f))
-			}
-		case KindText, KindBlob:
-			bs := v.Bytes
-			if v.Kind == KindText && colls[n] != "BINARY" {
-				if v.Enc != EncUTF8 {
-					return d, false
-				}
-				switch colls[n] {
-				case "NOCASE":
-					bs = slices.Clone(bs)
-					for j, c := range bs {
-						if c >= 'A' && c <= 'Z' {
-							bs[j] = c + 32
-						}
-					}
-				case "RTRIM":
-					for len(bs) > 0 && bs[len(bs)-1] == ' ' {
-						bs = bs[:len(bs)-1]
-					}
-				}
-			}
-			h.Write([]byte{byte(v.Kind)})
-			put(uint64(len(bs)))
-			h.Write(bs)
-		default:
-			return d, false
-		}
+	}
+	if st != KeyOK {
+		return d, st
 	}
 	copy(d[:], h.Sum(nil))
-	return d, true
+	return d, KeyOK
 }
 
-// wrSetOf builds (once per table) the digest set of the live rows.
-func (rp *rowPass) wrSetOf(ctx context.Context, t *Table, name string) (*wrSet, error) {
-	if s, ok := rp.wr[name]; ok {
+// wrSetOf builds (once per table) the digest set of the live rows. fit selects
+// the sets and the budget of the fit-only equality, apart from the others.
+func (rp *rowPass) wrSetOf(ctx context.Context, t *Table, name string, fit bool) (*wrSet, error) {
+	cache, total, ceiling, limName := rp.wr, &rp.diffTotal, rp.h.d.env.opts.Limits.MaxDiffRowsTotal, "MaxDiffRowsTotal"
+	if fit {
+		if rp.wrFit == nil {
+			rp.wrFit = map[string]*wrSet{}
+		}
+		cache, total, ceiling = rp.wrFit, &rp.fitDiffTotal, rp.h.d.env.opts.Limits.MaxFitEqualityRows
+	}
+	if s, ok := cache[name]; ok {
 		return s, nil
 	}
 	s := &wrSet{byKey: map[[32]byte]wrEntry{}, pkOK: true}
-	rp.wr[name] = s
+	cache[name] = s
 	def := t.Def()
 	type pkc struct {
 		ord, pos int
@@ -281,17 +265,9 @@ func (rp *rowPass) wrSetOf(ctx context.Context, t *Table, name string) (*wrSet, 
 	for i := range def.Columns {
 		c := &def.Columns[i]
 		if c.PKOrdinal > 0 {
-			cn := c.Collation
-			if c.KeyCollation != "" {
-				cn = c.KeyCollation // the key clause's collation governs the index
-			}
-			coll := "BINARY"
-			for _, k := range []string{"BINARY", "NOCASE", "RTRIM"} {
-				if asciiEqualFold(cn, k) {
-					coll = k
-				}
-			}
-			if cn != "" && !asciiEqualFold(cn, coll) {
+			coll, err := CanonicalCollation(ColumnCollation(*c))
+			if err != nil {
+				coll = "BINARY"
 				s.pkOK = false // a custom or unknown collation: equality is not decidable here
 			}
 			pks = append(pks, pkc{c.PKOrdinal, i, coll})
@@ -310,29 +286,47 @@ func (rp *rowPass) wrSetOf(ctx context.Context, t *Table, name string) (*wrSet, 
 	err := t.Rows(ctx, func(r Row) bool {
 		if int64(len(s.byKey)) >= lim.MaxDiffRows {
 			s.capped = true
-			rp.limitHit("MaxDiffRows", fmt.Sprintf("the live rows of table %q are more than Limits.MaxDiffRows (%d): its history rows are not compared", name, lim.MaxDiffRows))
+			if fit {
+				rp.fitCapped(fmt.Sprintf("Limits.MaxDiffRows (%d) is below the live rows of table %q", lim.MaxDiffRows, name))
+			} else {
+				rp.limitHit("MaxDiffRows", fmt.Sprintf("the live rows of table %q are more than Limits.MaxDiffRows (%d): its history rows are not compared", name, lim.MaxDiffRows))
+			}
 			return false
 		}
-		if rp.diffTotal >= lim.MaxDiffRowsTotal {
+		if *total >= ceiling {
 			s.capped = true
-			rp.limitHit("MaxDiffRowsTotal", fmt.Sprintf("the live rows compared so far are more than Limits.MaxDiffRowsTotal (%d): the rest of the history rows are not compared", lim.MaxDiffRowsTotal))
+			if fit {
+				rp.fitCapped(fmt.Sprintf("Limits.MaxFitEqualityRows (%d) was spent", ceiling))
+			} else {
+				rp.limitHit(limName, fmt.Sprintf("the live rows compared so far are more than Limits.MaxDiffRowsTotal (%d): the rest of the history rows are not compared", ceiling))
+			}
 			return false
 		}
 		if cerr = rp.l.alloc(diffEntryCost); cerr != nil {
+			if fit && errors.Is(cerr, ErrBudget) {
+				// an annotation never ends the pass: the set degrades to "not annotated"
+				cerr, s.capped = nil, true
+				rp.fitCapped("the memory budget was spent")
+			}
 			return false
 		}
 		s.charged += diffEntryCost
-		rp.diffTotal++
+		*total++
 		res := t.Resolve(r)
 		rowD, complete := digestOf(res, nil)
 		// Row.KeyRangeViolation is never set for an index tree (its cells have
 		// no rowid, scan.go leafRows), so there is nothing to taint on here.
 		key := rowD
 		if s.pkOK {
-			var keyOK bool
-			key, keyOK = keyDigest(res, s.pk, s.colls)
-			if !keyOK {
-				key, s.tainted = rowD, true // a key the engine cannot compare here: found by the row digest only
+			var kst KeyStatus
+			key, kst = keyDigest(res, s.pk, s.colls)
+			if kst != KeyOK {
+				// found by the row digest only. A key that equals nothing (NULL, NaN) is decided and taints nothing;
+				// an undecided one may hide a row the live set cannot place.
+				key = rowD
+				if kst == KeyUnknown {
+					s.tainted = true
+				}
 			}
 		}
 		if _, dup := s.byKey[key]; dup {
@@ -348,7 +342,12 @@ func (rp *rowPass) wrSetOf(ctx context.Context, t *Table, name string) (*wrSet, 
 		return nil, cerr
 	}
 	if err != nil {
-		if !isAnswerless(err) {
+		switch {
+		case fit && errors.Is(err, ErrBudget):
+			// reading the live rows for an annotation outgrew the memory budget: not annotated, pass goes on
+			s.capped = true
+			rp.fitCapped("the memory budget was spent")
+		case !isAnswerless(err):
 			return nil, err
 		}
 		s.tainted = true
@@ -365,22 +364,30 @@ func (rp *rowPass) wrSetOf(ctx context.Context, t *Table, name string) (*wrSet, 
 }
 
 // compareWR relates a row of a WITHOUT ROWID table to the digest set.
-func (rp *rowPass) compareWR(t *Table, name string, row *RecoveredRow) (cmpResult, error) {
-	s, err := rp.wrSetOf(rp.ctx, t, name)
+func (rp *rowPass) compareWR(t *Table, name string, row *RecoveredRow, fit bool) (cmpResult, error) {
+	s, err := rp.wrSetOf(rp.ctx, t, name, fit)
 	if err != nil {
 		return cmpResult{}, err
 	}
 	if s.capped {
+		if fit {
+			return cmpResult{kind: cmpUnknown, note: NoteFitEqualityBudget}, nil
+		}
 		return cmpResult{kind: cmpUnknown, note: "limit-reached"}, nil
 	}
 	res := t.Resolve(Row{Values: row.Values})
 	rowD, complete := digestOf(res, nil)
 	key := rowD
 	if s.pkOK {
-		var pkDone bool
-		key, pkDone = keyDigest(res, s.pk, s.colls)
-		if !pkDone {
-			return cmpResult{kind: cmpUnknown, note: NoteCompareIncomplete}, nil
+		var kst KeyStatus
+		key, kst = keyDigest(res, s.pk, s.colls)
+		switch kst {
+		case KeyUnknown:
+			return cmpResult{kind: cmpUnknown, note: NoteKeyUnknown}, nil
+		case KeyNever:
+			// the key equals no live row, itself included: that decides key equality, not presence, so the
+			// row is not absent (a live twin with the same bytes may exist). Unknown, with its own reason.
+			return cmpResult{kind: cmpUnknown, note: NoteKeyNever}, nil
 		}
 	} else if !complete {
 		return cmpResult{kind: cmpUnknown, note: NoteCompareIncomplete}, nil
@@ -412,4 +419,12 @@ func liveDamaged(v *View) bool {
 		}
 	}
 	return false
+}
+
+// fitCapped records why the fit-only equality (an annotation) was cut. It is
+// never a limit hit: the run, its rows and their relations are unchanged.
+func (rp *rowPass) fitCapped(cause string) {
+	if !slices.Contains(rp.fitCauses, cause) {
+		rp.fitCauses = append(rp.fitCauses, cause)
+	}
 }

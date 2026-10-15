@@ -82,6 +82,7 @@ func (w *blockingLockedAdd) Abort(ctx context.Context, cause error) (records.Ing
 
 // Flush and Abort wait at most the grace period behind a stuck writer call; then the job is abandoned.
 func TestFlushAndAbortAreBoundedBehindAStuckWriterCall(t *testing.T) {
+	defer artparse.SetConcludeJoinTimeout(200 * time.Millisecond)()
 	f := newRx(t, "stuck", "next")
 	entered, release := make(chan struct{}), make(chan struct{})
 	t.Cleanup(func() { close(release) })
@@ -110,6 +111,9 @@ func TestFlushAndAbortAreBoundedBehindAStuckWriterCall(t *testing.T) {
 	}()
 	select {
 	case r := <-done:
+		if !errors.Is(r.err, artparse.ErrConclusionPending) {
+			t.Fatalf("Run error %v, want ErrConclusionPending: the conclusion is still pending", r.err)
+		}
 		j := jobOf(t, r.sum, "stuck")
 		if !j.Abandoned || j.Outcome != artparse.OutcomeIncomplete || r.sum.Stopped != "abandoned" || !strings.Contains(j.Reason, "concluding the ingest did not finish within the grace period (a writer call is stuck)") {
 			t.Fatalf("job %+v stopped %q err %v", j, r.sum.Stopped, r.err)

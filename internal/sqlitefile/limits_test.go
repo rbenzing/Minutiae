@@ -34,6 +34,7 @@ var capsTable = map[string]int64{
 	"MaxHistoryOverflowPages": 1 << 24,
 	"MaxDiffRows":             2000000,
 	"MaxDiffRowsTotal":        4000000,
+	"MaxFitEqualityRows":      1 << 20,
 	"MaxFitSteps":             1 << 20,
 	"MaxOrphans":              100000,
 	"MaxLocOverflow":          4096,

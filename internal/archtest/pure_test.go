@@ -1266,6 +1266,7 @@ func TestParserPackagesHaveNoSQL(t *testing.T) {
 var purityRequired = []string{
 	"internal/parse", "internal/recordtypes/common", "internal/recordtypes/message",
 	"internal/recordtypes/call", "internal/recordtypes/contact", "internal/recordtypes/web", "internal/recordtypes/all",
+	"internal/decode/sqlitedb",
 	"internal/decode/ts", "internal/decode/plist", "internal/decode/typedstream",
 }
 
@@ -1454,6 +1455,14 @@ func TestPurityAllowlistSelfTest(t *testing.T) {
 		{pcDecode, dirDecodePlst, "howett.net/plist", true},
 		{pcDecode, dirDecode + "/other", "howett.net/plist", false},
 		{pcDecode, dirDecodeSQL, m + "internal/sqlitefile", true},
+		{pcDecode, dirDecodeSQL, m + "internal/parse", true},
+		{pcDecode, dirDecodeSQL, m + "internal/records", true},
+		{pcDecode, dirDecodeSQL, "sync", false},
+		{pcDecode, dirDecodeSQL, "os", false},
+		{pcDecode, dirDecodeSQL, "reflect", false},
+		{pcDecode, dirDecodeSQL, "database/sql", false},
+		{pcDecode, dirDecodeSQL, "modernc.org/sqlite", false},
+		{pcDecode, dirDecodeSQL, m + "internal/sqlitefile/sqlitetest", false},
 		{pcDecode, dirDecodePlst, m + "internal/sqlitefile", false},
 		{pcDecode, dirDecodePlst, "encoding/binary", true},
 		{pcDecode, dirDecodePlst, "io", true},

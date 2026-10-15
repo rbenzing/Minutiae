@@ -57,6 +57,8 @@ var allowed = map[string][]string{
 	"internal/archtest":                    {},
 	"internal/sqlitefile":                  {},
 	"internal/sqlitefile/sqlitetest":       {"internal/sqlitefile"},
+	"internal/dbrecover":                   {"internal/evidence", "internal/records", "internal/sqlitefile"},
+	"internal/decode/sqlitedb":             {"internal/sqlitefile", "internal/parse", "internal/records"},
 	"internal/records":                     {"internal/evidence", "internal/version"},
 	"internal/decode/ts":                   {},
 	"internal/decode/plist":                {},
