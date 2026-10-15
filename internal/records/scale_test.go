@@ -100,6 +100,12 @@ func TestScale(t *testing.T) {
 	if dir == "" {
 		t.Fatal("set MINUTIAE_SCALE_DIR to a directory under the session scratchpad: a scale case is large and never lives in the repository or the OS temp directory")
 	}
+	// The OS temp directory is listed before and after ingest, reindex and verify (ruling D46): the
+	// listing proves something only when it is a directory no other process writes to, inside the
+	// scale directory and outside both cases.
+	if tmp := os.TempDir(); !pathWithin(dir, tmp) || pathWithin(filepath.Join(dir, "clean"), tmp) || pathWithin(filepath.Join(dir, "mut"), tmp) {
+		t.Fatalf("os.TempDir() = %q: set TMP, TEMP and TMPDIR to a directory under MINUTIAE_SCALE_DIR (%q) but outside clean/ and mut/, so the before/after listing of the OS temp directory measures this run only", tmp, dir)
+	}
 	n := envInt(t, "MINUTIAE_SCALE_N", 10_000_000)
 	phases := map[string]bool{}
 	for _, p := range strings.Split(envOr("MINUTIAE_SCALE_PHASES", "ingest,queries,search,stats,untouched,verify"), ",") {
@@ -134,7 +140,9 @@ func TestScale(t *testing.T) {
 		return // the copy is its own run (it holds no case open and measures nothing)
 	}
 	if phases["ingest"] {
+		endGuard := st.guardOSTemp("ingest")
 		st.ingest(int(envInt(t, "MINUTIAE_SCALE_BATCH_ROWS", 0)))
+		endGuard()
 	} else {
 		target := clean
 		if mutating {
@@ -163,6 +171,9 @@ func TestScale(t *testing.T) {
 	}
 	if phases["verify"] {
 		st.verify("verify", st.total, true)
+	}
+	if phases["reindex"] {
+		st.reindex()
 	}
 	if phases["supersede"] {
 		st.supersede()
@@ -605,9 +616,9 @@ func dirSize(dir string) int64 {
 
 // sampleTmp samples the size of <case>/tmp every 500 ms while verify runs; the maximum is a LOWER
 // bound of the scratch space the P11 rebuild used (ruling D21).
-func (st *scaleState) sampleTmp() (stop func() int64) {
+func (st *scaleState) sampleTmp() (stop func() (tmp, scratch int64)) {
 	var mu sync.Mutex
-	var peak int64
+	var peak, scratchPeak int64
 	done, fin := make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(fin)
@@ -619,18 +630,25 @@ func (st *scaleState) sampleTmp() (stop func() int64) {
 				return
 			case <-tick.C:
 				n := dirSize(filepath.Join(st.c.Dir, "tmp"))
+				var sc int64
+				if ds, err := filepath.Glob(filepath.Join(st.c.Dir, "tmp", "verify-*")); err == nil {
+					for _, d := range ds {
+						sc += dirSize(d)
+					}
+				}
 				mu.Lock()
 				peak = max(peak, n)
+				scratchPeak = max(scratchPeak, sc)
 				mu.Unlock()
 			}
 		}
 	}()
-	return func() int64 {
+	return func() (int64, int64) {
 		close(done)
 		<-fin
 		mu.Lock()
 		defer mu.Unlock()
-		return peak
+		return peak, scratchPeak
 	}
 }
 
@@ -642,10 +660,12 @@ func (st *scaleState) verify(name string, want int64, mustBeOK bool) evidence.Ve
 	st.c.SetVerifyPhaseHook(func(p string, d time.Duration) { phases[p] += d.Seconds() })
 	defer st.c.SetVerifyPhaseHook(nil)
 	stop := st.sampleTmp()
+	endGuard := st.guardOSTemp(name)
 	t0 := time.Now()
 	rep, err := st.c.Verify()
 	el := time.Since(t0).Seconds()
-	peak := stop()
+	endGuard()
+	peak, scratch := stop()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -656,6 +676,11 @@ func (st *scaleState) verify(name string, want int64, mustBeOK bool) evidence.Ve
 			st.res.Values["verify_tmp_bytes"] = float64(peak)
 		} else {
 			t.Log("verify_tmp_bytes: not measured (the sampler never saw a file under <case>/tmp)")
+		}
+		if scratch > 0 { // the same lower-bound reading, restricted to <case>/tmp/verify-* (ruling D46, read 2)
+			st.res.Values["verify_scratch_bytes"] = float64(scratch)
+		} else {
+			t.Log("verify_scratch_bytes: not measured (no file under <case>/tmp/verify-* was visible to the sampler)")
 		}
 		sum := 0.0
 		for p, s := range phases {
@@ -738,4 +763,51 @@ func (st *scaleState) tamper() {
 		t.Fatalf("no digest-mismatch problem names the id range holding record %d: %q", id, rep.Problems[:min(10, len(rep.Problems))])
 	}
 	st.res.Values["tamper_detected"] = 1
+}
+
+// guardOSTemp lists the OS temp directory now and returns the function that lists it again at the end
+// of a phase (ruling D46, read 1). Any difference is an evidence-text leak: it is recorded
+// (ostemp_added_<phase>) and fails the run, never reported as a number to accept. The peak resident
+// memory of the process so far is recorded as peak_rss_<phase>_bytes (ruling D50); it is the
+// high-water mark of the whole run, so a phase split into its own run reads as that phase's peak.
+func (st *scaleState) guardOSTemp(phase string) func() {
+	t := st.t
+	dir := os.TempDir()
+	before, err := snapshotTempDir(dir)
+	if err != nil {
+		t.Fatalf("listing the OS temp directory %s: %v", dir, err)
+	}
+	return func() {
+		after, err := snapshotTempDir(dir)
+		if err != nil {
+			t.Fatalf("listing the OS temp directory %s: %v", dir, err)
+		}
+		added, removed := diffTempListings(before, after)
+		st.res.Values["ostemp_added_"+phase] = float64(len(added))
+		if peak, ok := peakRSS(); ok {
+			st.res.Values["peak_rss_"+phase+"_bytes"] = float64(peak)
+		} else {
+			t.Logf("peak_rss_%s_bytes: not measured (no peak resident memory read on this platform)", phase)
+		}
+		if len(added) > 0 || len(removed) > 0 {
+			t.Errorf("%s: the OS temp directory %s changed (added %q, removed %q): SQLite temporary data left the case", phase, dir, added, removed)
+		}
+	}
+}
+
+// reindex rebuilds both full-text indexes of the copy (the work of records reindex) under the OS
+// temp guard and records its time. It runs on the copy only: it rewrites the index tables.
+func (st *scaleState) reindex() {
+	t := st.t
+	endGuard := st.guardOSTemp("reindex")
+	t0 := time.Now()
+	res, err := st.c.ReindexText(ctx, evidence.ReindexOptions{})
+	st.res.Values["reindex_s"] = time.Since(t0).Seconds()
+	endGuard()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Records != st.total {
+		t.Fatalf("reindex saw %d records, want %d", res.Records, st.total)
+	}
 }

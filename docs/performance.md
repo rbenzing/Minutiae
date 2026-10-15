@@ -31,22 +31,35 @@ apart. The measurement therefore adds a flat 64 bytes per row for those columns 
 stated and constant allowance, and every run is judged against it. The number is not the spec's ratio
 under another reading; it is this definition, and a change of it is a change of this document.
 
-### Verify spill (ruling D46)
-The scale harness samples the size of `<case>/tmp` every 500 ms while `case verify` runs
-(`verify_tmp_bytes`). That sample is a lower bound, and a sample of 0 is "not measured", never "nothing
-spilled": SQLite spill files need not be visible as directory entries (they are unlinked on Linux and
-removed at close on Windows). The spill is therefore measured two ways and the record says which one
-produced each number:
+### Verify spill and the OS temp directory (rulings D46, D50, D52)
+Implemented in the scale harness (5D-5b). The harness samples the size of `<case>/tmp` every 500 ms
+while `case verify` runs (`verify_tmp_bytes`, and `verify_scratch_bytes` for `<case>/tmp/verify-*`
+alone). Both are lower bounds and a sample of 0 is "not measured", never "nothing spilled": SQLite
+spill files need not be visible as directory entries (they are unlinked on Linux and removed at close
+on Windows). Spill is therefore measured two ways and the record says which one produced each number:
 
-1. OS temp directory unchanged: the directory the process uses as its temp directory (the scale
-   wrapper redirects `TMP`, `TEMP` and `TMPDIR` to a directory under the scratchpad) is listed before
-   and after `case verify`, and the two listings must be equal. A difference is an evidence-text leak
-   and a defect, not a number.
-2. Size of the scratch space inside the case: the size of `<case>/tmp/verify-*` read through open
-   handles while verify runs, or at its cleanup, whichever the platform allows. The value recorded in
-   `verify_tmp_bytes` is the largest size either read saw, labelled lower bound.
+1. OS temp directory unchanged (`ostemp_added_<phase>`): the directory the process uses as its temp
+   directory is listed (every file, with its size) before and after the `ingest`, `reindex` and
+   `verify` phases, and the two listings must be equal. The run refuses to start unless `TMP`, `TEMP`
+   and `TMPDIR` point to a directory under the scale directory and outside both cases, so the listing
+   covers this run only. A difference fails the run; it is a leak of evidence text and a defect, not a
+   number. A recorded 0 means "no file appeared in or vanished from the directory between the two
+   listings"; a file created and removed inside the phase is not seen (the unit-level watcher in
+   `internal/records/tempspill_test.go` polls for those, and its limit is stated there).
+2. Size of the scratch space inside the case: `verify_scratch_bytes`, the largest size of
+   `<case>/tmp/verify-*` the 500 ms sampler read while verify ran. It is read through directory
+   listing only: a reading at cleanup or through open handles is not implemented, so a spill whose
+   files are not visible by name stays "not measured".
 
-Where neither read gives a number the row stays "not measured".
+### Peak memory (ruling D50)
+`peak_rss_<phase>_bytes` is the peak resident set of the whole test process when the phase ended
+(Windows: peak working set; Linux: `VmHWM`; other platforms: not measured). It is a high-water mark
+of the process, so a phase run alone (ingest in one run, reindex in another on the copy, verify in
+another) reads as that phase's peak, and a phase that follows others in one run reads as "at most this".
+`temp_store = MEMORY` keeps SQLite temporary data in memory: if the peak at 10 million records does not
+fit the machine, the decision (ruling D50) is to move the scratch space to `<case>/tmp` through
+`temp_store_directory` and to document its one-case-per-process assumption beside `docs/limitations.md`
+(full-text temporary files).
 
 ## Machine
 (filled by the first run: CPU model, cores, RAM, disk type, OS, Go version. The spec's reference machine is 8 cores, NVMe, 16 GiB.)

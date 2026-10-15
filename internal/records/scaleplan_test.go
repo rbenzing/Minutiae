@@ -35,6 +35,9 @@ func TestScalePhasePlanRules(t *testing.T) {
 		{"tamper alone on a pristine copy", phaseSet("tamper"), true, false, false, true},
 		{"mutating without the marker", phaseSet("supersede", "superqueries", "tamper"), false, true, false, false},
 		{"mutating with ingest", phaseSet("ingest", "supersede"), true, true, false, false},
+		{"reindex mutates the copy", phaseSet("reindex"), true, false, false, true},
+		{"reindex without the marker", phaseSet("reindex"), false, true, false, false},
+		{"reindex with ingest", phaseSet("ingest", "reindex"), true, true, false, false},
 		{"clean phases need no marker", phaseSet("queries", "search", "stats", "untouched", "verify"), false, false, false, false},
 	}
 	for _, tc := range cases {
@@ -83,17 +86,17 @@ type scalePlan struct{ copyOnly, mutating bool }
 
 // planScalePhases decides what a run may do. The copy phase is a run of its own (ruling D43): with
 // any other phase it is refused, never silently turned into a copy-only run. A mutating phase
-// (supersede, superqueries, tamper) needs the pristine marker the copy left (ruling D44), and never
+// (supersede, superqueries, tamper, reindex) needs the pristine marker the copy left (ruling D44), and never
 // shares a run with ingest.
 func planScalePhases(phases map[string]bool, pristine bool) (scalePlan, error) {
-	mutating := phases["supersede"] || phases["superqueries"] || phases["tamper"]
+	mutating := phases["supersede"] || phases["superqueries"] || phases["tamper"] || phases["reindex"]
 	switch {
 	case phases["copy"] && len(phases) > 1:
 		return scalePlan{}, errors.New("the copy phase is a run of its own: run it with no other phase")
 	case mutating && phases["ingest"]:
-		return scalePlan{}, errors.New("ingest and the mutating phases (supersede, superqueries, tamper) never share a run")
+		return scalePlan{}, errors.New("ingest and the mutating phases (supersede, superqueries, tamper, reindex) never share a run")
 	case mutating && !pristine:
-		return scalePlan{}, errors.New("a mutating phase (supersede, superqueries, tamper) needs a pristine copy: run the copy phase first; a copy is mutated by one run only")
+		return scalePlan{}, errors.New("a mutating phase (supersede, superqueries, tamper, reindex) needs a pristine copy: run the copy phase first; a copy is mutated by one run only")
 	}
 	return scalePlan{copyOnly: phases["copy"], mutating: mutating}, nil
 }
