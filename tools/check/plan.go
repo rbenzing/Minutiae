@@ -63,15 +63,17 @@ func blockOf(dir string) string {
 	return ""
 }
 
-// docConsistencyPackages are the packages whose tests mention docs/*.md or CLAUDE.md. The global
-// block tests them on every affected or block run, so a documentation change cannot pass unseen.
-// TestDocConsistencyPackagesAreListed finds them by searching the test files and fails on any
-// package missing here.
-var docConsistencyPackages = []struct{ dir, why string }{
-	{"internal/archtest", "the architecture and purity rules over every package"},
-	{"internal/artparse", "fix14_test.go pins a residual documented in docs/limitations.md"},
-	{"internal/records", "tempspill_test.go pins the temporary-file rule of docs/invariants.md"},
-	{"tools/check", "TestShortTableMatchesGuards compares docs/testing.md with the Short guards"},
+// docConsistencyPackages are the packages the global block tests on every affected or block run
+// because they check the repository as a whole rather than one package: readsDocs marks a test
+// that reads docs/ or CLAUDE.md at run time. TestDocConsistencyPackagesAreListed finds the
+// runtime readers in the test sources (a mention in a comment does not count) and fails on any
+// that is missing here.
+var docConsistencyPackages = []struct {
+	dir, why  string
+	readsDocs bool
+}{
+	{"internal/archtest", "repo-wide source scans: architecture, purity and single-writer rules", false},
+	{"tools/check", "TestShortTableMatchesGuards reads docs/testing.md", true},
 }
 
 // step is one command of a check run.
@@ -150,6 +152,7 @@ type plan struct {
 	reason   string
 	base     string
 	changed  []string
+	unmapped []string // changed files that belong to no package
 	affected []string // package directories to vet, lint and test
 	blocks   []string
 	tested   []string // every package tested, for the summary
@@ -164,6 +167,8 @@ type env struct {
 	read    func(string) ([]byte, error)
 	runStep func(step) error
 	race    bool
+	// testSources lists the _test.go files of the module (for cross-package testdata readers).
+	testSources func() ([]testSrc, error)
 }
 
 // usageError marks a command-line mistake (exit 2).
@@ -174,6 +179,9 @@ func (e usageError) Error() string { return e.msg }
 func buildPlan(o options, e env) (plan, error) {
 	if o.base != "" && !o.affected {
 		return plan{}, usageError{"-base needs -affected"}
+	}
+	if e.race && (o.affected || len(o.blocks) > 0) {
+		return plan{}, usageError{"-affected and -block are not available with the race detector: the race gate is always the full form (run with CGO_ENABLED=0 or without these flags)"}
 	}
 	var named []block
 	for _, n := range o.blocks {
@@ -199,17 +207,44 @@ func buildPlan(o options, e env) (plan, error) {
 		if p.changed, err = changedFiles(e.git, p.base); err != nil {
 			return plan{}, err
 		}
-		reason, err := escalation(p.changed, pkgs, e.exists, e.read)
+		readBase := func(f string) ([]byte, error) {
+			return e.git("show", "--end-of-options", p.base+":"+f)
+		}
+		hit, unmapped := changedPackages(p.changed, pkgs)
+		p.unmapped = unmapped
+		reason, err := escalation(p.changed, pkgs, e.exists, e.read, readBase)
 		if err != nil {
 			return plan{}, err
 		}
 		if reason != "" {
 			return plan{
-				full: true, reason: reason, base: p.base, changed: p.changed,
+				full: true, reason: reason, base: p.base, changed: p.changed, unmapped: p.unmapped,
 				tested: []string{"all packages (./...)"}, steps: fullSteps(e.race),
 			}, nil
 		}
-		for _, d := range affectedClosure(pkgs, changedPackages(p.changed, pkgs)) {
+		var tdDirs []string
+		for _, q := range pkgs {
+			for _, f := range p.changed {
+				if strings.HasPrefix(f, q.Dir+"/testdata/") {
+					tdDirs = append(tdDirs, q.Dir)
+					break
+				}
+			}
+		}
+		if len(tdDirs) > 0 {
+			srcs, err := e.testSources()
+			if err != nil {
+				return plan{}, err
+			}
+			readers, err := testdataReaders(srcs, tdDirs)
+			if err != nil {
+				return plan{}, err
+			}
+			for d := range readers {
+				hit[d] = true
+			}
+		}
+		for _, d := range affectedClosure(pkgs, hit) {
 			set[d] = true
 		}
 	}
@@ -269,6 +304,15 @@ func printPlan(w io.Writer, o options, p plan) {
 		fmt.Fprintf(w, "changed files (%d):\n", len(p.changed))
 		for _, f := range p.changed {
 			fmt.Fprintf(w, "  %s\n", f)
+		}
+	}
+	if o.affected {
+		fmt.Fprintln(w, "changed files mapped to no package:")
+		for _, f := range p.unmapped {
+			fmt.Fprintf(w, "  %s\n", f)
+		}
+		if len(p.unmapped) == 0 {
+			fmt.Fprintln(w, "  (none)")
 		}
 	}
 	if !p.full {
@@ -440,6 +484,13 @@ func realEnv() env {
 			cmd.Env = append(os.Environ(), s.env...)
 			cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 			return cmd.Run()
+		},
+		testSources: func() ([]testSrc, error) {
+			pkgs, err := loadPackages()
+			if err != nil {
+				return nil, err
+			}
+			return loadTestSources(pkgs)
 		},
 		race: raceSupported(),
 	}

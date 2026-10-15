@@ -78,27 +78,6 @@ func parseGoList(data []byte, modPath, root string) ([]pkg, error) {
 	return out, nil
 }
 
-// changedPackages maps changed files to the directories of the packages they belong to: a file in
-// a package directory, under its testdata/ or embedded by it.
-func changedPackages(files []string, pkgs []pkg) map[string]bool {
-	hit := map[string]bool{}
-	for _, f := range files {
-		dir := path.Dir(f)
-		for _, p := range pkgs {
-			if p.Dir == dir || strings.HasPrefix(f, p.Dir+"/testdata/") {
-				hit[p.Dir] = true
-				continue
-			}
-			for _, e := range p.Embeds {
-				if e == f {
-					hit[p.Dir] = true
-				}
-			}
-		}
-	}
-	return hit
-}
-
 // affectedClosure returns, sorted, the seed packages plus every package that reaches one of them
 // through Imports, TestImports or XTestImports, transitively.
 func affectedClosure(pkgs []pkg, seeds map[string]bool) []string {
@@ -151,48 +130,6 @@ func toSet(s ...string) map[string]bool {
 		m[v] = true
 	}
 	return m
-}
-
-// escalation returns why the change needs the full form, or "" when it does not. A deleted .go
-// file cannot be read, so for it only the file name and the existence of its directory count; its
-// package, if it still exists, is affected anyway.
-func escalation(files []string, pkgs []pkg, exists func(string) bool, read func(string) ([]byte, error)) (string, error) {
-	pkgDirs := map[string]bool{}
-	for _, p := range pkgs {
-		pkgDirs[p.Dir] = true
-	}
-	for _, f := range files {
-		switch {
-		case f == "go.mod" || f == "go.sum" || f == ".golangci.yml":
-			return f + " changed", nil
-		case strings.HasPrefix(f, "tools/check/"):
-			return f + " changed (the check itself)", nil
-		}
-		if !strings.HasSuffix(f, ".go") || strings.HasPrefix(f, "testdata/") || strings.Contains(f, "/testdata/") {
-			continue
-		}
-		if name := strings.TrimSuffix(path.Base(f), ".go"); nameIsConstrained(name) {
-			return f + " is constrained to a GOOS or GOARCH by its name", nil
-		}
-		if !exists(f) {
-			if !pkgDirs[path.Dir(f)] {
-				return "package directory " + path.Dir(f) + " was deleted", nil
-			}
-			continue
-		}
-		data, err := read(f)
-		if err != nil {
-			return "", fmt.Errorf("reading %s: %w", f, err)
-		}
-		tag, err := constraintTag(data)
-		if err != nil {
-			return "", fmt.Errorf("%s: %w", f, err)
-		}
-		if tag != "" {
-			return f + " has a build constraint naming " + tag, nil
-		}
-	}
-	return "", nil
 }
 
 // nameIsConstrained reports the implicit _GOOS, _GOARCH and _GOOS_GOARCH file name constraints.
@@ -248,48 +185,4 @@ func firstPlatformTag(e constraint.Expr) string {
 		return firstPlatformTag(x.Y)
 	}
 	return ""
-}
-
-// changedFiles lists, sorted and slash separated, the files that differ from base (committed,
-// staged and unstaged) plus the untracked files that are not ignored. A failing git call is an
-// error, never an empty set.
-func changedFiles(git func(args ...string) ([]byte, error), base string) ([]string, error) {
-	diff, err := git("diff", "--name-only", "--no-renames", "-z", base, "--")
-	if err != nil {
-		return nil, fmt.Errorf("git diff against %s: %w", base, err)
-	}
-	others, err := git("ls-files", "--others", "--exclude-standard", "--full-name", "-z")
-	if err != nil {
-		return nil, fmt.Errorf("git ls-files --others: %w", err)
-	}
-	set := map[string]bool{}
-	for _, out := range [][]byte{diff, others} {
-		for _, f := range strings.Split(string(out), "\x00") {
-			if f != "" {
-				set[path.Clean(strings.ReplaceAll(f, "\\", "/"))] = true
-			}
-		}
-	}
-	files := make([]string, 0, len(set))
-	for f := range set {
-		files = append(files, f)
-	}
-	sort.Strings(files)
-	return files, nil
-}
-
-// resolveBase returns base, or the merge base of HEAD and main when base is empty.
-func resolveBase(git func(args ...string) ([]byte, error), base string) (string, error) {
-	if base != "" {
-		return base, nil
-	}
-	out, err := git("merge-base", "HEAD", "main")
-	if err != nil {
-		return "", fmt.Errorf("git merge-base HEAD main: %w", err)
-	}
-	b := strings.TrimSpace(string(out))
-	if b == "" {
-		return "", errors.New("git merge-base HEAD main printed nothing")
-	}
-	return b, nil
 }

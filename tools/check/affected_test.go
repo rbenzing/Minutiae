@@ -10,7 +10,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -86,16 +85,17 @@ func TestAffectedFileInTestdataBelongsToItsPackage(t *testing.T) {
 		{"b/testdata/img.bin", []string{"b"}},
 		{"b/testdata/deep/er/x.json", []string{"b"}},
 		{"b/readme.txt", []string{"b"}},
-		{"f/assets/x.txt", []string{"f"}},   // embedded
-		{"f/assets/other.txt", nil},         // not embedded, not a package file
-		{"b/testdata_not/x", nil},           // the prefix is not a path element
-		{"b/sub/testdata/x", nil},           // no package at b/sub
-		{"g/h/testdata/x", []string{"g/h"}}, // nested package, not g
-		{"docs/testing.md", nil},            // belongs to no package
+		{"f/assets/x.txt", []string{"f"}},     // embedded
+		{"f/assets/other.txt", []string{"f"}}, // nearest ancestor package
+		{"b/testdata_not/x", []string{"b"}},   // nearest ancestor package
+		{"b/sub/testdata/x", []string{"b"}},   // no package at b/sub: nearest ancestor
+		{"g/h/testdata/x", []string{"g/h"}},   // nested package, not g
+		{"docs/testing.md", nil},              // belongs to no package
 		{"b/x.go", []string{"b"}},
 	}
 	for _, c := range cases {
-		got := sortedKeys(changedPackages([]string{c.file}, pkgs))
+		hit, _ := changedPackages([]string{c.file}, pkgs)
+		got := sortedKeys(hit)
 		if !slices.Equal(got, c.want) {
 			t.Errorf("%s: packages %v, want %v", c.file, got, c.want)
 		}
@@ -140,11 +140,35 @@ func TestEscalationRules(t *testing.T) {
 		}
 		return []byte(s), nil
 	}
+	// the content of deleted files, as `git show <base>:<path>` returns it
+	deleted := map[string]string{
+		"b/gone_cgo.go":   "//go:build cgo\n\npackage b\n",
+		"b/gone_unix.go":  "//go:build unix\n\npackage b\n",
+		"b/gone_os.go":    "//go:build windows\n\npackage b\n",
+		"b/gone_plain.go": "package b\n",
+	}
+	readBase := func(p string) ([]byte, error) {
+		s, ok := deleted[p]
+		if !ok {
+			return nil, os.ErrNotExist
+		}
+		return []byte(s), nil
+	}
 	cases := []struct {
 		name string
 		file string
 		want bool
 	}{
+		{"deleted cgo file", "b/gone_cgo.go", true},
+		{"deleted unix file", "b/gone_unix.go", true},
+		{"deleted GOOS file", "b/gone_os.go", true},
+		{"deleted plain file of an existing package", "b/gone_plain.go", false},
+		{"file mapped to no package, not allow-listed", "scripts/x.sh", true},
+		{"allow-listed docs", "docs/deep/x.txt", false},
+		{"allow-listed markdown at any depth", "scripts/README.md", false},
+		{"allow-listed .gitignore", ".gitignore", false},
+		{"allow-listed agents", ".claude/agents/x.yaml", false},
+		{"allow-listed LICENSE", "LICENSE-APACHE", false},
 		{"go.mod", "go.mod", true},
 		{"go.sum", "go.sum", true},
 		{"golangci config", ".golangci.yml", true},
@@ -166,11 +190,10 @@ func TestEscalationRules(t *testing.T) {
 		{"bare GOOS name", "b/darwin.go", false},
 		{"markdown", "docs/testing.md", false},
 		{"deleted testdata go file", "b/testdata/old.go", false},
-		{"deleted file of an existing package", "b/removed.go", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			reason, err := escalation([]string{c.file}, pkgs, exists, read)
+			reason, err := escalation([]string{c.file}, pkgs, exists, read, readBase)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -181,7 +204,7 @@ func TestEscalationRules(t *testing.T) {
 	}
 	t.Run("read error is an error", func(t *testing.T) {
 		boom := errors.New("boom")
-		_, err := escalation([]string{"b/cgo.go"}, pkgs, exists, func(string) ([]byte, error) { return nil, boom })
+		_, err := escalation([]string{"b/cgo.go"}, pkgs, exists, func(string) ([]byte, error) { return nil, boom }, readBase)
 		if !errors.Is(err, boom) {
 			t.Errorf("err = %v, want boom", err)
 		}
@@ -213,9 +236,10 @@ func fakeEnv(t *testing.T, changed, untracked []string) (env, *int) {
 			}
 			return nil, errors.New("unexpected git " + strings.Join(args, " "))
 		},
-		goList: func() ([]pkg, error) { return pkgs, nil },
-		exists: func(string) bool { return true },
-		read:   func(string) ([]byte, error) { return []byte("package x\n"), nil },
+		goList:      func() ([]pkg, error) { return pkgs, nil },
+		exists:      func(string) bool { return true },
+		read:        func(string) ([]byte, error) { return []byte("package x\n"), nil },
+		testSources: func() ([]testSrc, error) { return nil, nil },
 		runStep: func(step) error {
 			*runs++
 			return nil
@@ -224,7 +248,7 @@ func fakeEnv(t *testing.T, changed, untracked []string) (env, *int) {
 }
 
 func TestNonPackageFilesAddOnlyTheGlobalBlock(t *testing.T) {
-	e, _ := fakeEnv(t, []string{"docs/testing.md", "CLAUDE.md"}, []string{"scripts/x.sh"})
+	e, _ := fakeEnv(t, []string{"docs/testing.md", "CLAUDE.md"}, []string{"LICENSE", ".gitignore", ".claude/agents/x.md"})
 	p, err := buildPlan(options{affected: true, base: "abc"}, e)
 	if err != nil {
 		t.Fatal(err)
@@ -385,58 +409,6 @@ func skipDir(root, path string, d fs.DirEntry) bool {
 	return path != root && (strings.HasPrefix(n, ".") || n == "testdata" || n == "docs" || n == "bin" || n == "cases")
 }
 
-func TestDocConsistencyPackagesAreListed(t *testing.T) {
-	root := "../.."
-	re := regexp.MustCompile(`docs/[A-Za-z_]+\.md|CLAUDE\.md`)
-	found := map[string]bool{}
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			if skipDir(root, path, d) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		b, err := os.ReadFile(path) //nolint:gosec // reads repository test sources
-		if err != nil {
-			return err
-		}
-		if re.Match(b) {
-			rel, _ := filepath.Rel(root, filepath.Dir(path))
-			found[filepath.ToSlash(rel)] = true
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	listed := map[string]bool{}
-	for _, d := range docConsistencyPackages {
-		listed[d.dir] = true
-		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(d.dir))); err != nil {
-			t.Errorf("listed doc-consistency package %s: %v", d.dir, err)
-		}
-		if d.why == "" {
-			t.Errorf("%s has no reason", d.dir)
-		}
-	}
-	for dir := range found {
-		if !listed[dir] {
-			t.Errorf("%s has tests that mention a docs file or CLAUDE.md but is not in docConsistencyPackages", dir)
-		}
-	}
-	for dir := range listed {
-		if !found[dir] {
-			t.Errorf("%s is in docConsistencyPackages but no test file mentions a docs file or CLAUDE.md", dir)
-		}
-	}
-}
-
 // shortGuards finds every test whose first statement is the standard slow-test skip.
 func shortGuards(t *testing.T, root string) map[string]bool {
 	t.Helper()
@@ -519,19 +491,8 @@ func TestShortTableMatchesGuards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	guards := shortGuards(t, root)
-	for k := range guards {
-		if _, ok := table[k]; !ok {
-			t.Errorf("%s has the slow-test Short guard but is not in the docs/testing.md table", k)
-		}
-	}
-	for k, secs := range table {
-		if !guards[k] {
-			t.Errorf("docs/testing.md lists %s as slow but its first statement is not the Short guard", k)
-		}
-		if secs < 60 {
-			t.Errorf("%s is listed with %d s, below the 60 s threshold", k, secs)
-		}
+	for _, p := range slowTableProblems(shortGuards(t, root), table) {
+		t.Error(p)
 	}
 }
 
