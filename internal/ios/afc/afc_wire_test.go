@@ -38,7 +38,9 @@ func fakeFiles() *afctest.Server {
 // our independently written fake. If framing, opcodes or field layout were
 // wrong in the fake, go-ios could not read it.
 func TestGoIOSClientReadsOurFakeAFC(t *testing.T) {
-	c := goafc.NewFromConn(goios.NewDeviceConnectionWithRWC(afctest.Pipe(fakeFiles())))
+	rw := afctest.Pipe(fakeFiles())
+	watchdog(t, rw)
+	c := goafc.NewFromConn(goios.NewDeviceConnectionWithRWC(rw))
 	t.Cleanup(func() { _ = c.Close() })
 	names, err := c.List("/DCIM")
 	if err != nil || len(names) != 2 || names[0] != "a.jpg" || names[1] != "b.txt" {
@@ -69,7 +71,9 @@ func TestGoIOSClientReadsOurFakeAFC(t *testing.T) {
 
 func TestClientReadsTheSameFake(t *testing.T) {
 	srv := fakeFiles()
-	c := afc.New(afctest.Pipe(srv))
+	rw := afctest.Pipe(srv)
+	watchdog(t, rw)
+	c := afc.New(rw)
 	t.Cleanup(func() { _ = c.Close() })
 	names, err := c.List("/DCIM")
 	if err != nil || len(names) != 2 || names[0] != "a.jpg" || names[1] != "b.txt" {
@@ -127,6 +131,7 @@ func TestClientRequestBytes(t *testing.T) {
 		},
 	} {
 		cl, srv := net.Pipe()
+		watchdog(t, cl, srv)
 		got := make(chan []byte, 1)
 		go func() {
 			buf := make([]byte, len(tc.want))
@@ -149,7 +154,9 @@ func TestMagicIsCFA6LPAA(t *testing.T) {
 
 func TestClientIsReadOnly(t *testing.T) {
 	srv := fakeFiles()
-	c := afc.New(afctest.Pipe(srv))
+	rw := afctest.Pipe(srv)
+	watchdog(t, rw)
+	c := afc.New(rw)
 	_, _ = c.List("/DCIM")
 	_, _ = c.Stat("/DCIM/b.txt")
 	f, err := c.Open("/DCIM/b.txt")

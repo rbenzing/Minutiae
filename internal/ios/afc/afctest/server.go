@@ -6,7 +6,6 @@ package afctest
 import (
 	"encoding/binary"
 	"io"
-	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,10 +28,11 @@ type Server struct {
 	// CloseAfterReply closes the connection after the first reply.
 	CloseAfterReply bool
 
-	mu   sync.Mutex
-	ops  []uint64
-	open map[uint64]*openFile
-	next uint64
+	mu     sync.Mutex
+	ops    []uint64
+	closed []uint64
+	open   map[uint64]*openFile
+	next   uint64
 }
 
 type openFile struct {
@@ -42,7 +42,7 @@ type openFile struct {
 
 // Pipe starts s on an in-memory connection and returns the client end.
 func Pipe(s *Server) io.ReadWriteCloser {
-	c, srv := net.Pipe()
+	c, srv := newConn()
 	s.open = map[uint64]*openFile{}
 	go s.serve(srv)
 	return c
@@ -70,7 +70,7 @@ func Status(num, code uint64) []byte {
 	return Frame(0x01, num, binary.LittleEndian.AppendUint64(nil, code), nil)
 }
 
-func (s *Server) serve(c net.Conn) {
+func (s *Server) serve(c io.ReadWriteCloser) {
 	defer func() { _ = c.Close() }()
 	for {
 		var h [headerSize]byte
@@ -214,10 +214,18 @@ func (s *Server) reply(op, num uint64, hp, _ []byte) []byte {
 	case 0x14: // FILE_CLOSE
 		if len(hp) >= 8 {
 			s.mu.Lock()
+			s.closed = append(s.closed, binary.LittleEndian.Uint64(hp))
 			delete(s.open, binary.LittleEndian.Uint64(hp))
 			s.mu.Unlock()
 		}
 		return Status(num, 0)
 	}
 	return Status(num, statusNoOp)
+}
+
+// Closed returns the handles the client sent in FILE_CLOSE, in order.
+func (s *Server) Closed() []uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]uint64(nil), s.closed...)
 }

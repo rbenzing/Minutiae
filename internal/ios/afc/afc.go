@@ -31,10 +31,17 @@ const (
 	maxHeaderPayload = 4096
 	maxListEntries   = 1 << 20
 	maxStatPairs     = 64
+	// The largest reply each operation can legitimately produce, checked
+	// against entire_length before the body is read.
+	maxStatPacket  = 1 << 16
+	maxSmallPacket = headerSize + maxHeaderPayload // open and close replies
+	maxReadPacket  = headerSize + MaxRead
 )
 
 const (
 	opStatus    uint64 = 0x01
+	opData      uint64 = 0x02 // the reply to read-dir, file-info and read
+	opHandle    uint64 = 0x0E // the reply to open
 	opReadDir   uint64 = 0x03
 	opFileInfo  uint64 = 0x0A
 	opFileOpen  uint64 = 0x0D
@@ -66,12 +73,21 @@ type Stat struct {
 	IsLink bool
 }
 
+// IsRegular reports whether the device called the entry a regular file. An
+// unknown st_ifmt is none of IsRegular, IsDir and IsLink: the caller decides
+// what to do with a type this client does not know.
+func (s Stat) IsRegular() bool { return s.Type == "S_IFREG" }
+
 // Client is one AFC session. Calls are serialized; Close may be called from
-// another goroutine to interrupt a blocked call.
+// another goroutine to interrupt a blocked call. Any failure other than a
+// device status (framing, I/O, protocol) ends the session: the connection is
+// closed and every later call returns that failure, so bytes that follow a
+// broken packet are never read as the next reply.
 type Client struct {
 	rw  io.ReadWriteCloser
 	mu  sync.Mutex
 	num uint64
+	err error // the failure that ended the session; guarded by mu
 }
 
 // New wraps a connection to the AFC service.
@@ -82,6 +98,7 @@ func (c *Client) Close() error { return c.rw.Close() }
 
 type response struct {
 	op      uint64
+	num     uint64
 	hdr     []byte
 	payload []byte
 }
@@ -93,8 +110,26 @@ func nul(p string) ([]byte, error) {
 	return append([]byte(p), 0), nil
 }
 
-// do sends one request and reads its reply. The caller holds c.mu.
-func (c *Client) do(op uint64, hdr []byte) (response, error) {
+// fail ends the session with err: the connection is closed and err (or the
+// failure that came first) is what every later call returns. The caller holds
+// c.mu.
+func (c *Client) fail(err error) error {
+	if c.err == nil {
+		c.err = err
+	}
+	_ = c.rw.Close()
+	return c.err
+}
+
+// do sends one request and reads its reply, which must carry the request's
+// packet number and be either want or a status (a non-zero status is the
+// device's own answer, a *StatusError, and leaves the session usable; a zero
+// status where data was expected is a protocol error). maxEntire is the
+// largest reply this call can legitimately produce. The caller holds c.mu.
+func (c *Client) do(op uint64, hdr []byte, want, maxEntire uint64) (response, error) {
+	if c.err != nil {
+		return response{}, c.err
+	}
 	c.num++
 	b := make([]byte, 0, headerSize+len(hdr))
 	for _, v := range []uint64{Magic, uint64(headerSize + len(hdr)), uint64(headerSize + len(hdr)), c.num, op} {
@@ -102,28 +137,49 @@ func (c *Client) do(op uint64, hdr []byte) (response, error) {
 	}
 	b = append(b, hdr...)
 	if _, err := c.rw.Write(b); err != nil {
-		return response{}, fmt.Errorf("afc: write: %w", err)
+		return response{}, c.fail(fmt.Errorf("afc: write: %w", err))
 	}
-	return c.read()
+	r, err := c.read(maxEntire)
+	if err != nil {
+		return response{}, c.fail(err)
+	}
+	if r.num != c.num {
+		return response{}, c.fail(fmt.Errorf("%w: a reply to packet %d arrived for packet %d", ErrProtocol, r.num, c.num))
+	}
+	if r.op == opStatus {
+		if len(r.hdr) < 8 {
+			return response{}, c.fail(fmt.Errorf("%w: status packet with a %d-byte header payload", ErrProtocol, len(r.hdr)))
+		}
+		if code := binary.LittleEndian.Uint64(r.hdr); code != 0 {
+			return r, &StatusError{Code: code}
+		}
+	}
+	if r.op != want {
+		return response{}, c.fail(fmt.Errorf("%w: operation 0x%02x answers request 0x%02x, want 0x%02x", ErrProtocol, r.op, op, want))
+	}
+	return r, nil
 }
 
-func (c *Client) read() (response, error) {
+func (c *Client) read(maxEntire uint64) (response, error) {
 	var h [headerSize]byte
 	if _, err := io.ReadFull(c.rw, h[:]); err != nil {
+		if errors.Is(err, io.EOF) { // nothing arrived at all: a cut connection, not a clean end
+			err = io.ErrUnexpectedEOF
+		}
 		return response{}, fmt.Errorf("afc: reading header: %w", err)
 	}
 	if binary.LittleEndian.Uint64(h[0:]) != Magic {
 		return response{}, fmt.Errorf("%w: bad magic", ErrProtocol)
 	}
 	entire, this := binary.LittleEndian.Uint64(h[8:]), binary.LittleEndian.Uint64(h[16:])
-	op := binary.LittleEndian.Uint64(h[32:])
+	num, op := binary.LittleEndian.Uint64(h[24:]), binary.LittleEndian.Uint64(h[32:])
 	switch {
 	case this < headerSize:
 		return response{}, fmt.Errorf("%w: this_length %d below the header size", ErrProtocol, this)
 	case entire < this:
 		return response{}, fmt.Errorf("%w: entire_length %d below this_length %d", ErrProtocol, entire, this)
-	case entire > MaxPacket:
-		return response{}, fmt.Errorf("%w: entire_length %d exceeds %d", ErrProtocol, entire, MaxPacket)
+	case entire > min(maxEntire, MaxPacket):
+		return response{}, fmt.Errorf("%w: entire_length %d exceeds %d", ErrProtocol, entire, min(maxEntire, MaxPacket))
 	case this-headerSize > maxHeaderPayload:
 		return response{}, fmt.Errorf("%w: header payload of %d bytes", ErrProtocol, this-headerSize)
 	}
@@ -137,16 +193,7 @@ func (c *Client) read() (response, error) {
 		return response{}, fmt.Errorf("afc: packet cut short (%d of %d bytes): %w", len(body), want, io.ErrUnexpectedEOF)
 	}
 	hl := this - headerSize
-	r := response{op: op, hdr: body[:hl], payload: body[hl:]}
-	if op == opStatus {
-		if len(r.hdr) < 8 {
-			return response{}, fmt.Errorf("%w: status packet with a %d-byte header payload", ErrProtocol, len(r.hdr))
-		}
-		if code := binary.LittleEndian.Uint64(r.hdr); code != 0 {
-			return r, &StatusError{Code: code}
-		}
-	}
-	return r, nil
+	return response{op: op, num: num, hdr: body[:hl], payload: body[hl:]}, nil
 }
 
 // List returns the entry names of dir without "." and "..". A listing with no
@@ -159,26 +206,30 @@ func (c *Client) List(dir string) ([]string, error) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	r, err := c.do(opReadDir, hdr)
+	r, err := c.do(opReadDir, hdr, opData, MaxPacket)
 	if err != nil {
 		return nil, fmt.Errorf("afc list %s: %w", dir, err)
-	}
-	if r.op == opStatus {
-		return nil, fmt.Errorf("afc list %s: %w: status where a listing was expected", dir, ErrProtocol)
 	}
 	strs, err := splitNul(r.payload, maxListEntries)
 	if err != nil {
-		return nil, fmt.Errorf("afc list %s: %w", dir, err)
+		return nil, fmt.Errorf("afc list %s: %w", dir, c.fail(err))
 	}
 	if len(strs) == 0 {
-		return nil, fmt.Errorf("afc list %s: %w: empty listing without \".\" and \"..\"", dir, ErrProtocol)
+		return nil, fmt.Errorf("afc list %s: %w", dir, c.fail(fmt.Errorf("%w: empty listing without \".\" and \"..\"", ErrProtocol)))
 	}
+	// Names are device evidence and are returned as sent. Two entries with one
+	// name cannot be told apart, so which one is real is undecidable.
+	seen := make(map[string]struct{}, len(strs))
 	out := make([]string, 0, len(strs))
 	for _, n := range strs {
+		if _, dup := seen[n]; dup {
+			return nil, fmt.Errorf("afc list %s: %w", dir, c.fail(fmt.Errorf("%w: entry name %q listed twice", ErrProtocol, n)))
+		}
+		seen[n] = struct{}{}
 		switch {
 		case n == "." || n == "..":
 		case n == "" || strings.ContainsRune(n, '/'):
-			return nil, fmt.Errorf("afc list %s: %w: entry name %q", dir, ErrProtocol, n)
+			return nil, fmt.Errorf("afc list %s: %w", dir, c.fail(fmt.Errorf("%w: entry name %q", ErrProtocol, n)))
 		default:
 			out = append(out, n)
 		}
@@ -211,19 +262,16 @@ func (c *Client) Stat(p string) (Stat, error) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	r, err := c.do(opFileInfo, hdr)
+	r, err := c.do(opFileInfo, hdr, opData, maxStatPacket)
 	if err != nil {
 		return Stat{}, fmt.Errorf("afc stat %s: %w", p, err)
-	}
-	if r.op == opStatus {
-		return Stat{}, fmt.Errorf("afc stat %s: %w: status where file information was expected", p, ErrProtocol)
 	}
 	strs, err := splitNul(r.payload, 2*maxStatPairs)
 	if err != nil {
-		return Stat{}, fmt.Errorf("afc stat %s: %w", p, err)
+		return Stat{}, fmt.Errorf("afc stat %s: %w", p, c.fail(err))
 	}
 	if len(strs)%2 != 0 || len(strs) > 2*maxStatPairs {
-		return Stat{}, fmt.Errorf("afc stat %s: %w: %d strings in the reply", p, ErrProtocol, len(strs))
+		return Stat{}, fmt.Errorf("afc stat %s: %w", p, c.fail(fmt.Errorf("%w: %d strings in the reply", ErrProtocol, len(strs))))
 	}
 	seen := map[string]bool{}
 	var st Stat
@@ -231,14 +279,14 @@ func (c *Client) Stat(p string) (Stat, error) {
 	for i := 0; i < len(strs); i += 2 {
 		k, v := strs[i], strs[i+1]
 		if seen[k] {
-			return Stat{}, fmt.Errorf("afc stat %s: %w: duplicate key %q", p, ErrProtocol, k)
+			return Stat{}, fmt.Errorf("afc stat %s: %w", p, c.fail(fmt.Errorf("%w: duplicate key %q", ErrProtocol, k)))
 		}
 		seen[k] = true
 		switch k {
 		case "st_size":
 			n, err := strconv.ParseUint(v, 10, 64)
 			if err != nil || n > math.MaxInt64 {
-				return Stat{}, fmt.Errorf("afc stat %s: %w: st_size %q", p, ErrProtocol, v)
+				return Stat{}, fmt.Errorf("afc stat %s: %w", p, c.fail(fmt.Errorf("%w: st_size %q", ErrProtocol, v)))
 			}
 			st.Size, haveSize = int64(n), true
 		case "st_ifmt":
@@ -247,7 +295,7 @@ func (c *Client) Stat(p string) (Stat, error) {
 		}
 	}
 	if !haveSize || !haveType {
-		return Stat{}, fmt.Errorf("afc stat %s: %w: reply lacks st_size or st_ifmt", p, ErrProtocol)
+		return Stat{}, fmt.Errorf("afc stat %s: %w", p, c.fail(fmt.Errorf("%w: reply lacks st_size or st_ifmt", ErrProtocol)))
 	}
 	return st, nil
 }
@@ -269,19 +317,21 @@ func (c *Client) Open(p string) (*File, error) {
 	hdr = append(hdr, path...)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	r, err := c.do(opFileOpen, hdr)
+	r, err := c.do(opFileOpen, hdr, opHandle, maxSmallPacket)
 	if err != nil {
 		return nil, fmt.Errorf("afc open %s: %w", p, err)
 	}
-	if r.op == opStatus || len(r.hdr) < 8 {
-		return nil, fmt.Errorf("afc open %s: %w: no file handle in the reply", p, ErrProtocol)
+	if len(r.hdr) < 8 {
+		return nil, fmt.Errorf("afc open %s: %w", p, c.fail(fmt.Errorf("%w: no file handle in the reply", ErrProtocol)))
 	}
 	return &File{c: c, handle: binary.LittleEndian.Uint64(r.hdr)}, nil
 }
 
 // Read reads up to len(p) bytes (at most MaxRead per call). An empty data
 // reply, or the end-of-data status, is io.EOF; a reply longer than requested
-// is a protocol error.
+// is a protocol error. EOF from the device is its claim, not proof that the
+// file is complete: callers compare the bytes they received with Stat.Size and
+// treat a difference as an incomplete copy.
 func (f *File) Read(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
@@ -294,7 +344,7 @@ func (f *File) Read(p []byte) (int, error) {
 	if f.closed {
 		return 0, fs.ErrClosed
 	}
-	r, err := f.c.do(opFileRead, hdr)
+	r, err := f.c.do(opFileRead, hdr, opData, maxReadPacket)
 	var se *StatusError
 	if errors.As(err, &se) && se.Code == statusEndOfData {
 		return 0, io.EOF
@@ -302,11 +352,8 @@ func (f *File) Read(p []byte) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("afc read: %w", err)
 	}
-	if r.op == opStatus {
-		return 0, fmt.Errorf("afc read: %w: status where data was expected", ErrProtocol)
-	}
 	if len(r.payload) > want {
-		return 0, fmt.Errorf("afc read: %w: %d bytes returned for a %d-byte request", ErrProtocol, len(r.payload), want)
+		return 0, fmt.Errorf("afc read: %w", f.c.fail(fmt.Errorf("%w: %d bytes returned for a %d-byte request", ErrProtocol, len(r.payload), want)))
 	}
 	if len(r.payload) == 0 {
 		return 0, io.EOF
@@ -322,7 +369,7 @@ func (f *File) Close() error {
 		return nil
 	}
 	f.closed = true
-	if _, err := f.c.do(opFileClose, binary.LittleEndian.AppendUint64(nil, f.handle)); err != nil {
+	if _, err := f.c.do(opFileClose, binary.LittleEndian.AppendUint64(nil, f.handle), opStatus, maxSmallPacket); err != nil {
 		return fmt.Errorf("afc close: %w", err)
 	}
 	return nil
