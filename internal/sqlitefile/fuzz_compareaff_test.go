@@ -3,7 +3,7 @@ package sqlitefile_test
 import (
 	"bytes"
 	"math"
-	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/sqlitefile"
@@ -49,15 +49,24 @@ func FuzzConvertForComparison(f *testing.F) {
 	f.Add(byte(2), int64(0), math.Float64bits(7.5), []byte(nil), byte(0), byte(1))
 	f.Add(byte(2), int64(0), math.Float64bits(math.NaN()), []byte(nil), byte(0), byte(1))
 	f.Add(byte(8), int64(0), uint64(0), []byte{'7', 0, '7', 0}, byte(0), byte(4)) // UTF-16LE "7"
+	big := utf16Of(false, strings.Repeat(" ", 1<<18)+"7").Bytes                   // a large UTF-16 value, so an allocation that grows with length is seen
+	f.Add(byte(8), int64(0), uint64(0), big, byte(0), byte(4))
 	f.Fuzz(func(t *testing.T, kind byte, n int64, fbits uint64, b []byte, own, other byte) {
 		v := fuzzValue(kind, n, fbits, b)
 		ao, at := sqlitefile.Affinity(own%5), sqlitefile.Affinity(other%5)
-		var m0, m1 runtime.MemStats
-		runtime.ReadMemStats(&m0)
 		got, st := sqlitefile.ConvertForComparison(v, ao, at)
-		runtime.ReadMemStats(&m1)
-		if d := m1.TotalAlloc - m0.TotalAlloc; d > uint64(4*len(b)+64<<10) {
-			t.Fatalf("allocated %d bytes for %d bytes of input", d, len(b))
+		// The cost is a small constant whatever the length and encoding: a regression
+		// to decoding or copying the whole value fails here on any large input.
+		if a := minAlloc(func() { sqlitefile.ConvertForComparison(v, ao, at) }); a > convAllocLimit {
+			t.Fatalf("allocated %d bytes for %d bytes of input; want at most %d", a, len(b), convAllocLimit)
+		}
+		// Bounded-prefix classification of UTF-16 text equals classifying the fully decoded text.
+		if v.Kind == sqlitefile.KindText && (v.Enc == sqlitefile.EncUTF16LE || v.Enc == sqlitefile.EncUTF16BE) &&
+			(at == sqlitefile.AffInteger || at == sqlitefile.AffReal || at == sqlitefile.AffNumeric) && (ao == sqlitefile.AffText || ao == sqlitefile.AffBlob) {
+			ref, rst := fullDecodeReference(v, ao, at)
+			if !sameOutcome(got, st, ref, rst) {
+				t.Fatalf("prefix outcome (kind %d status %d) differs from full decode (kind %d status %d) for %x", got.Kind, st, ref.Kind, rst, b)
+			}
 		}
 		got2, st2 := sqlitefile.ConvertForComparison(v, ao, at)
 		if st != st2 || !sameValueBits(got, got2) {
