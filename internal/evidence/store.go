@@ -187,11 +187,15 @@ func (c dbConnector) Connect(ctx context.Context) (driver.Conn, error) {
 // connPragmas are applied to every connection, in this order. recursive_triggers
 // matters for integrity: without it SQLite does not fire DELETE triggers for the
 // rows an INSERT OR REPLACE removes, which would let a REPLACE rewrite a row of
-// an immutable table.
+// an immutable table. temp_store = MEMORY keeps every SQLite temporary file (a sorter, a statement
+// journal, a temp table) out of the OS temp directory: the statements outside ReadTx (migrations,
+// ingest batches, the supersede conclusion, the full-text reindex) hold evidence text, and it must
+// never leave the case (TestIngestAndReindexLeaveNoSQLiteTempFileOutsideTheCase).
 var connPragmas = []string{
 	`PRAGMA foreign_keys = ON`,
 	`PRAGMA recursive_triggers = ON`,
 	`PRAGMA synchronous = FULL`,
+	`PRAGMA temp_store = MEMORY`,
 }
 
 func configureConn(ctx context.Context, conn driver.Conn) error {

@@ -171,8 +171,8 @@ func TestWithoutRowidClippedKeyIsUnknown(t *testing.T) {
 		t.Fatal("no row delivered")
 	}
 	for _, r := range rows {
-		if r.Relation != sqlitefile.RelUnknown || !hasNote(r, sqlitefile.NoteCompareIncomplete) {
-			t.Errorf("clipped key: relation %s notes %v, want unknown with compare-incomplete", r.Relation, r.Notes)
+		if r.Relation != sqlitefile.RelUnknown || !hasNote(r, sqlitefile.NoteKeyUnknown) {
+			t.Errorf("clipped key: relation %s notes %v, want unknown with key-unknown", r.Relation, r.Notes)
 		}
 	}
 }

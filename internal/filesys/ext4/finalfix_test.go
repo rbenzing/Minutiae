@@ -7,7 +7,6 @@ import (
 	"math"
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/filesys/ext4"
@@ -161,34 +160,42 @@ func hostileDir(t *testing.T) *ext4.FS {
 	return mustOpen(t, img)
 }
 
-func TestHostileSlackFinishesQuickly(t *testing.T) {
-	read := func(slackCap int64) (time.Duration, int) {
+func TestHostileSlackWorkIsLinear(t *testing.T) {
+	const (
+		bs        = 4096
+		blocks    = 4 * 4096 // the logical blocks of the hostile directory
+		slackPer  = bs - 12  // each block is one 12-byte record and its slack
+		totalSize = int64(blocks) * slackPer
+	)
+	// The counter measures instrumented work only (candidate checks and index bytes), not every
+	// instruction of ReadDir. The lower bound is loose for that reason: it only proves the scan ran.
+	// The work is a count, not a time, so a loaded machine cannot fail it: one unit per 4-byte
+	// candidate checked plus one per byte indexed for the name check (once per block). A scan that
+	// rescanned for each candidate would cost about 1000 times more.
+	read := func(slackCap int64) (work int64, scanned int64, n int) {
 		f := hostileDir(t)
 		f.SetSlackScanCap(slackCap)
 		d, err := f.Lookup("/d")
 		if err != nil {
 			t.Fatal(err)
 		}
-		t0 := time.Now()
 		es, err := f.ReadDir(d)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return time.Since(t0), len(es)
+		return f.SlackWork(), min(slackCap, totalSize), len(es)
 	}
-
-	// With the default cap, the whole hostile directory is read well in budget.
-	took, n := read(16 << 20)
-	if took > 10*time.Second {
-		t.Errorf("ReadDir of a hostile 16384-block directory took %v, want under 2s (%d entries)", took, n)
-	}
-
-	// With the cap out of the way, the candidate checks alone (64 MiB of hostile
-	// slack) must still stay within the budget.
-	took, n = read(math.MaxInt64)
-	t.Logf("uncapped: %v, %d entries", took, n)
-	if took > 10*time.Second {
-		t.Errorf("uncapped hostile slack took %v, want under 2s", took)
+	for _, c := range []struct {
+		name string
+		cap  int64
+	}{{"default cap", 16 << 20}, {"uncapped", math.MaxInt64}} {
+		work, scanned, n := read(c.cap)
+		t.Logf("%s: %d work units over %d slack bytes, %d entries", c.name, work, scanned, n)
+		// at most scanned/4 candidates and, per started block, one index of bs+1 bytes
+		limit := scanned/4 + (scanned/slackPer+1)*(bs+1)
+		if work < scanned/4-int64(blocks) || work > limit {
+			t.Errorf("%s: %d work units for %d slack bytes, want within [%d, %d]", c.name, work, scanned, scanned/4-int64(blocks), limit)
+		}
 	}
 }
 

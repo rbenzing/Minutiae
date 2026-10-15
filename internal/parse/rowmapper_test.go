@@ -28,6 +28,17 @@ type fakeMapContext struct {
 
 func (c *fakeMapContext) Input() *Input          { return c.in }
 func (c *fakeMapContext) Note(key, value string) { c.notes[key] = value }
+func (c *fakeMapContext) Column(_, _ string) int {
+	return -1
+}
+
+func (c *fakeMapContext) Get(_ string, _ int64) (Row, bool, error) {
+	return nil, false, nil
+}
+
+func (c *fakeMapContext) Match(_, _ string, _ JoinKey) ([]Row, error) {
+	return nil, nil
+}
 
 type fakeMapper struct {
 	meta     Meta
@@ -116,5 +127,32 @@ func TestClaimsOutsideMappings(t *testing.T) {
 				t.Fatalf("ClaimsOutsideMappings = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestJoinKeyZeroValueMatchesNothing(t *testing.T) {
+	var k JoinKey
+	if k.Kind != JoinNone || k.Class != ClassUnknown {
+		t.Fatalf("zero JoinKey = %+v, want Kind JoinNone and Class ClassUnknown", k)
+	}
+}
+
+func TestJoinKeyIsAMapKey(t *testing.T) {
+	keys := []JoinKey{
+		{},
+		{Kind: JoinInt, I: 1},
+		{Kind: JoinInt, I: 2},
+		{Kind: JoinFloat, F: 1},
+		{Kind: JoinText, S: "a"},
+		{Kind: JoinText, S: "a", Collation: "NOCASE"},
+		{Kind: JoinText, S: "a", Class: ClassText},
+		{Kind: JoinBlob, S: "a"},
+	}
+	m := map[JoinKey]int{}
+	for i, k := range keys {
+		m[k] = i
+	}
+	if len(m) != len(keys) {
+		t.Fatalf("%d distinct keys collapsed to %d map entries", len(keys), len(m))
 	}
 }

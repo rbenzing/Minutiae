@@ -70,7 +70,7 @@ func readManifest(path string) ([]ManifestRecord, error) {
 	for i, l := range lines {
 		var r ManifestRecord
 		if err := json.Unmarshal(l, &r); err != nil {
-			return nil, fmt.Errorf("manifest line %d: %w", i+1, err)
+			return nil, fmt.Errorf("manifest line %d: %w: %w", i+1, ErrIntegrity, err)
 		}
 		out = append(out, r)
 	}

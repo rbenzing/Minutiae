@@ -35,9 +35,12 @@ type Limits struct {
 	MaxHistoryPages, MaxHistoryRows     int64
 	MaxHistoryOverflowPages             int64
 	MaxDiffRows, MaxDiffRowsTotal       int64
-	MaxFitSteps                         int64
-	MaxOrphans, MaxLocOverflow          int
-	MaxWarnings                         int
+	// MaxFitEqualityRows is the budget of live rows the fit-only equality (an annotation) reads in all.
+	// Past it, fit-named rows are annotated unknown (fit-equality-budget); the run is not narrowed.
+	MaxFitEqualityRows         int64
+	MaxFitSteps                int64
+	MaxOrphans, MaxLocOverflow int
+	MaxWarnings                int
 }
 
 // DefaultLimits returns the caps of the Format reference.
@@ -64,6 +67,7 @@ func DefaultLimits() Limits {
 		MaxHistoryOverflowPages: 1 << 24,
 		MaxDiffRows:             2000000,
 		MaxDiffRowsTotal:        4000000,
+		MaxFitEqualityRows:      1 << 20,
 		MaxFitSteps:             1 << 20,
 		MaxOrphans:              100000,
 		MaxLocOverflow:          4096,
@@ -106,6 +110,7 @@ func (l Limits) withDefaults() Limits {
 	n(&l.MaxHistoryOverflowPages, d.MaxHistoryOverflowPages)
 	n(&l.MaxDiffRows, d.MaxDiffRows)
 	n(&l.MaxDiffRowsTotal, d.MaxDiffRowsTotal)
+	n(&l.MaxFitEqualityRows, d.MaxFitEqualityRows)
 	n(&l.MaxFitSteps, d.MaxFitSteps)
 	i(&l.MaxOrphans, d.MaxOrphans)
 	i(&l.MaxLocOverflow, d.MaxLocOverflow)
@@ -140,6 +145,7 @@ func ceilingLimits() Limits {
 		MaxHistoryOverflowPages: 1 << 32,
 		MaxDiffRows:             1 << 28,
 		MaxDiffRowsTotal:        1 << 29,
+		MaxFitEqualityRows:      1 << 29,
 		MaxFitSteps:             1 << 30,
 		MaxOrphans:              1 << 24,
 		MaxLocOverflow:          1 << 16,
@@ -186,6 +192,7 @@ func (l Limits) resolve() (Limits, []string) {
 	n(&l.MaxHistoryOverflowPages, c.MaxHistoryOverflowPages, "MaxHistoryOverflowPages")
 	n(&l.MaxDiffRows, c.MaxDiffRows, "MaxDiffRows")
 	n(&l.MaxDiffRowsTotal, c.MaxDiffRowsTotal, "MaxDiffRowsTotal")
+	n(&l.MaxFitEqualityRows, c.MaxFitEqualityRows, "MaxFitEqualityRows")
 	n(&l.MaxFitSteps, c.MaxFitSteps, "MaxFitSteps")
 	i(&l.MaxOrphans, c.MaxOrphans, "MaxOrphans")
 	i(&l.MaxLocOverflow, c.MaxLocOverflow, "MaxLocOverflow")

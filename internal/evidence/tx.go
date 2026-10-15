@@ -116,7 +116,7 @@ func (c *Case) StoreTx(ctx context.Context, fn func(*sql.Tx) error) error {
 		}
 		_ = conn.Close()
 	}()
-	for _, p := range []string{`PRAGMA foreign_keys = ON`, `PRAGMA recursive_triggers = ON`} {
+	for _, p := range []string{`PRAGMA foreign_keys = ON`, `PRAGMA recursive_triggers = ON`, `PRAGMA temp_store = MEMORY`} {
 		if _, err := conn.ExecContext(ctx, p); err != nil {
 			bad = true
 			return fmt.Errorf("artifacts.db pragma: %w", err)
@@ -290,7 +290,7 @@ func restoreAfterRead(ctx context.Context, conn *sql.Conn, changesBefore int64) 
 	if changes != changesBefore {
 		problem = ErrReadTxModified
 	}
-	for _, p := range append([]string{`PRAGMA query_only = OFF`, `PRAGMA temp_store = DEFAULT`}, connPragmas...) {
+	for _, p := range append([]string{`PRAGMA query_only = OFF`}, connPragmas...) {
 		if _, err := conn.ExecContext(ctx, p); err != nil {
 			return errors.Join(problem, fmt.Errorf("artifacts.db reset pragma: %w", err))
 		}

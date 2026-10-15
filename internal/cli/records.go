@@ -341,6 +341,7 @@ type showJSON struct {
 	Batch              batchJSON               `json:"batch"`
 	Run                *runJSON                `json:"run"`
 	SupersededBy       string                  `json:"superseded_by,omitempty"`
+	Provenance         provJSON                `json:"provenance"`
 }
 
 type namedTimeJSON struct {
@@ -423,6 +424,7 @@ func newRecordsShowCmd(d Deps, opts *rootOptions) *cobra.Command {
 				Artifact: full.Artifact, ArtifactIncomplete: full.ArtifactIncomplete,
 				Batch:        batchJSON(full.Batch),
 				SupersededBy: full.SupersededBy,
+				Provenance:   provenanceJSON(full.Provenance, full.Row),
 			}
 			if payload {
 				j.Payload = full.Payload
@@ -435,14 +437,37 @@ func newRecordsShowCmd(d Deps, opts *rootOptions) *cobra.Command {
 				}
 				j.Run = &run
 			}
-			return writeJSON(d.Out, j)
+			if err := writeJSON(d.Out, j); err != nil {
+				return joinIntegrity(provenanceFailure(full.Provenance, *casePath), err)
+			}
+			return provenanceFailure(full.Provenance, *casePath)
 		}
-		return printFull(d.Out, full, payload)
+		if err := printFull(d.Out, full, payload); err != nil {
+			return joinIntegrity(provenanceFailure(full.Provenance, *casePath), err)
+		}
+		return provenanceFailure(full.Provenance, *casePath)
 	}
 	return cmd
 }
 
-func printFull(w io.Writer, f records.Full, payload bool) error {
+// stickyWriter remembers the first write error so a long run of prints can report it once.
+type stickyWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (s *stickyWriter) Write(b []byte) (int, error) {
+	if s.err != nil {
+		return 0, s.err
+	}
+	n, err := s.w.Write(b)
+	s.err = err
+	return n, err
+}
+
+// printFull prints the record and returns the first print error: a truncated listing is never a success.
+func printFull(out io.Writer, f records.Full, payload bool) error {
+	w := &stickyWriter{w: out}
 	p := func(label, format string, a ...any) {
 		fmt.Fprintf(w, "  %-14s"+format+"\n", append([]any{label + ":"}, a...)...)
 	}
@@ -495,6 +520,7 @@ func printFull(w io.Writer, f records.Full, payload bool) error {
 	if f.SupersededBy != "" {
 		p("superseded by", "%s", printable(f.SupersededBy))
 	}
+	printProvenance(w, f.Provenance, f.Row)
 	if len(f.Times) > 0 {
 		fmt.Fprintln(w, "  times:")
 		for _, t := range namedTimes(f.Times) {
@@ -517,7 +543,7 @@ func printFull(w io.Writer, f records.Full, payload bool) error {
 			fmt.Fprintf(w, "    %s\n", line)
 		}
 	}
-	return nil
+	return w.err
 }
 
 // prettyPayload prints a JSON payload indented, one value per line, in the

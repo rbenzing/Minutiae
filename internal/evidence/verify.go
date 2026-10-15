@@ -206,14 +206,17 @@ func (c *Case) crossCheckAudit(rep *VerifyReport, recs []ManifestRecord, entries
 		}
 		inManifest[r.ID] = true
 		a, ok := audited[r.ID]
-		switch {
-		case !ok:
+		if !ok {
 			rep.problemf("artifact %s: in manifest but has no artifact.create audit entry", r.ID)
-		case a != (auditedArtifact{Path: r.Path, Size: r.Size, SHA256: r.SHA256, MD5: r.MD5, Incomplete: r.Incomplete}):
+			continue
+		}
+		switch auditDiff(r, a, auditedSource[r.ID]) {
+		case "":
+		case "source":
+			rep.problemf("artifact %s (%s): source differs from audit (the manifest provenance does not match its artifact.create audit entry)", r.ID, r.Path)
+		default:
 			rep.problemf("artifact %s: manifest record (path=%s size=%d sha256=%s incomplete=%t) does not match its artifact.create audit entry (path=%s size=%d sha256=%s incomplete=%t)",
 				r.ID, r.Path, r.Size, r.SHA256, r.Incomplete, a.Path, a.Size, a.SHA256, a.Incomplete)
-		case !sourceMatchesAudit(r.Source, auditedSource[r.ID]):
-			rep.problemf("artifact %s (%s): source differs from audit (the manifest provenance does not match its artifact.create audit entry)", r.ID, r.Path)
 		}
 	}
 	for _, id := range order {

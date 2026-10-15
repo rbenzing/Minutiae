@@ -13,6 +13,11 @@ type RowStats struct {
 	RowsByMethod                                    map[string]int64 // read in sorted key order, never by map iteration
 	DuplicateOfLive, CellsRejected, InteriorSkipped int64
 	Unknown                                         int64 // rows whose relation is RelUnknown
+	// EqualsLiveFit counts the delivered fit-only rows annotated NoteEqualsLiveRow.
+	EqualsLiveFit int64
+	// FitEqualityCapped counts the fit-named rows left unannotated (note NoteFitEqualityBudget) because the
+	// fit-only equality ran out of budget; it is an annotation limit and never narrows a run.
+	FitEqualityCapped int64
 	// CellsShort counts the cells (also counted in CellsRejected) whose record
 	// declares more bytes than the cell holds.
 	CellsShort            int64
@@ -29,10 +34,23 @@ const (
 	// NoteLiveUncertain: the live row could not be looked up cleanly.
 	NoteLiveUncertain = "live-lookup-uncertain"
 	// NoteIdentityByFitOnly: the table was named by the column fit alone (BasisFit or BasisGuess), so
-	// the row is never compared with the live rows of that table (a rowid
+	// the row's relation is never derived from the live rows of that table (a rowid
 	// comparison would present a dropped table's rows as modified rows of a
 	// live lookalike). Its relation is unknown.
 	NoteIdentityByFitOnly = "identity-by-fit-only"
+	// NoteEqualsLiveRow: a row named by the column fit alone has the rowid and the values
+	// of a live row of that table. A note only: the relation stays unknown, the
+	// confidence is unchanged and the row is not counted in DuplicateOfLive.
+	NoteEqualsLiveRow = "equals-live-row"
+	// NoteKeyNever: a key value of a WITHOUT ROWID row equals nothing (NULL, NaN), so no live row can be
+	// said to be its twin; equal-to-nothing decides key equality, not presence, so the relation is unknown.
+	NoteKeyNever = "key-never"
+	// NoteFitEqualityBudget: the fit-only equality could not run for this row (its budget, MaxDiffRows or the
+	// memory budget was spent), so whether it equals a live row is unknown. A note only.
+	NoteFitEqualityBudget = "fit-equality-budget"
+	// NoteKeyUnknown: a key value is omitted, clipped, unread or text the library cannot fold, so the key
+	// comparison is undecided and the relation is unknown.
+	NoteKeyUnknown = "key-unknown"
 	// NoteCompareIncomplete: a value was omitted or clipped, so the row can be
 	// neither proven equal to nor different from the live row.
 	NoteCompareIncomplete = "compare-incomplete"
@@ -86,6 +104,9 @@ type rowPass struct {
 	idxTable           map[string]string   // the table of each index
 	wr                 map[string]*wrSet
 	diffTotal          int64
+	fitDiffTotal       int64 // live rows read for the fit-only equality (C45): a budget apart from diffTotal
+	wrFit              map[string]*wrSet
+	fitCauses          []string // why the fit-only equality was cut (each once), for the one warning
 
 	tables  map[string]*Table
 	snaps   map[string]*snapState
@@ -146,6 +167,7 @@ func (h *Hist) Rows(ctx context.Context, visit func(RecoveredRow) bool) (st RowS
 	if werr != nil {
 		return RowStats{}, werr
 	}
+	rp.warnFitEqualityCapped()
 	return rp.st, nil
 }
 
@@ -334,12 +356,25 @@ func (rp *rowPass) emitCell(img PageImage, method string, id ident, ic imgCell) 
 	if invalid {
 		row.Notes = append(row.Notes, NoteInvalidPageNumber) // the page number is not believed: nothing is compared
 	}
-	rel := RelUnknown
+	rel, equalsLive := RelUnknown, false
 	switch {
 	case id.basis == BasisFit || id.basis == BasisGuess:
 		// identity by fit alone: the relation is unknown whatever the origin
 		// (ruling C47); that the bytes are uncommitted is the Origin's fact
 		row.Notes = append(row.Notes, NoteIdentityByFitOnly)
+		if !invalid {
+			res, err := rp.fitEquality(id, &row)
+			if err != nil {
+				return err
+			}
+			switch {
+			case res.kind == cmpSame:
+				row.Notes = append(row.Notes, NoteEqualsLiveRow)
+				equalsLive = true
+			case res.kind == cmpUnknown && res.note == NoteFitEqualityBudget:
+				row.Notes = append(row.Notes, NoteFitEqualityBudget)
+			}
+		}
 	case id.basis == BasisNone:
 		// no table at all: unknown whatever the origin (ruling C47, final review B)
 	case uncommitted:
@@ -374,6 +409,9 @@ func (rp *rowPass) emitCell(img PageImage, method string, id ident, ic imgCell) 
 	}
 	rp.rows++
 	rp.st.RowsByMethod[method]++
+	if equalsLive {
+		rp.st.EqualsLiveFit++
+	}
 	if rel == RelUnknown {
 		rp.st.Unknown++
 	}

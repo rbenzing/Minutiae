@@ -43,7 +43,7 @@ func oracleDropExempt(rel, text string) bool {
 }
 
 // TestOracleDropExemptionIsNarrow proves the exemption covers exactly a plain
-// DROP of a non-record table in a _test.go file of the two oracle packages. The
+// DROP of a non-record table in a _test.go file of the oracle packages. The
 // cases live in testdata/oracle_drop_cases.txt (not compiled, not scanned).
 func TestOracleDropExemptionIsNarrow(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("testdata", "oracle_drop_cases.txt"))

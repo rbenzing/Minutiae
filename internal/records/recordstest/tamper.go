@@ -844,3 +844,37 @@ func AppendManifestLine(t testing.TB, caseDir string, rec evidence.ManifestRecor
 	t.Helper()
 	writeManifestLines(t, caseDir, append(readManifestLines(t, caseDir), rec))
 }
+
+// SetManifestSource rewrites the Source of one manifest line with fn. It touches manifest.jsonl only: the
+// artifact file, artifacts.db and the audit log stay as they were, so the manifest then disagrees with the
+// audit entry that recorded the original Source.
+func SetManifestSource(t testing.TB, caseDir, artifactID string, fn func(*evidence.Source)) {
+	t.Helper()
+	recs := readManifestLines(t, caseDir)
+	found := false
+	for i := range recs {
+		if recs[i].ID == artifactID {
+			fn(&recs[i].Source)
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("recordstest: artifact %q is not in the manifest", artifactID)
+	}
+	writeManifestLines(t, caseDir, recs)
+}
+
+// SetArtifactFileBytes replaces the bytes of an artifact's file and nothing else: the manifest, artifacts.db
+// and the audit log keep the old size and hash, so the file then disagrees with all three.
+func SetArtifactFileBytes(t testing.TB, caseDir, artifactID string, data []byte) {
+	t.Helper()
+	for _, r := range readManifestLines(t, caseDir) {
+		if r.ID == artifactID {
+			if err := os.WriteFile(filepath.Join(caseDir, filepath.FromSlash(r.Path)), data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+	}
+	t.Fatalf("recordstest: artifact %q is not in the manifest", artifactID)
+}
