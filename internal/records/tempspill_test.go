@@ -149,3 +149,31 @@ func TestIngestAndReindexLeaveNoSQLiteTempFileOutsideTheCase(t *testing.T) {
 		t.Fatalf("SQLite temp files appeared outside the case (the evidence text can spill there): %q", seen)
 	}
 }
+
+// TestUpgradeAndReindexOfAV2CaseLeaveNoSQLiteTempFileOutsideTheCase runs the migration path (case
+// upgrade v2 to v3, which builds the full-text tables) and the reindex under the watcher. Limits,
+// stated plainly: the watcher is a poll, so a pass is a sampling statement and not a proof; and the
+// v2 fixture holds only 12 records, so the migration's index builds are far too small to overflow a
+// sorter. This pins that the migration path is covered by temp_store = MEMORY (a regression that
+// removed the connection pragma would show on a larger fixture, not necessarily on this one); the
+// size-sensitive proof is the ingest test above.
+func TestUpgradeAndReindexOfAV2CaseLeaveNoSQLiteTempFileOutsideTheCase(t *testing.T) {
+	dir := recordstest.CopyV2Case(t) // the case exists before the redirect
+	tmp := redirectOSTemp(t)
+	stop := watchTemp(tmp)
+	defer stop()
+	c, err := evidence.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	if _, err := c.Upgrade(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ReindexText(ctx, evidence.ReindexOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if seen := stop(); len(seen) != 0 {
+		t.Fatalf("SQLite temp files appeared outside the case during upgrade and reindex: %q", seen)
+	}
+}

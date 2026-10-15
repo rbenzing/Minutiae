@@ -117,13 +117,23 @@ var raceConcurrencyTests = []string{
 // slowRacePackages are tested under -race only through raceConcurrencyTests.
 var slowRacePackages = []string{"./internal/evidence", "./internal/records"}
 
-// testSteps returns the test steps. Without a race detector: one plain run.
+// testSteps returns the test steps. Without a race detector: one plain, cached run.
 // With it: (1) every test without -race, (2) every package except the slow
 // ones under -race, (3) the concurrency tests of the slow packages under -race.
 func testSteps() []step {
-	if !raceSupported() {
+	race := raceSupported()
+	if !race {
 		fmt.Println("note: race detector unavailable (needs cgo and a C compiler); running tests without -race")
-		return []step{{args: []string{"go", "test", "-count=1", "./..."}}}
+	}
+	return testStepsFor(race)
+}
+
+// testStepsFor is the pure decision. The FAST form (no race detector) uses Go's test cache, which
+// invalidates on any source, dependency, environment or opened-file change, so unchanged packages
+// print "(cached)". The RACE gate is the full merge gate and runs every test uncached (-count=1).
+func testStepsFor(race bool) []step {
+	if !race {
+		return []step{{args: []string{"go", "test", "./..."}}}
 	}
 	return []step{
 		{args: []string{"go", "test", "-count=1", "./..."}},

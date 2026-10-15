@@ -84,6 +84,17 @@ type frame struct {
 	havePrev bool
 }
 
+// ScanLoss counts what ONE scan did not deliver. It is a count of the walk
+// itself, not of warnings (warnings are de-duplicated and capped, so a repeat
+// of known damage adds none). Pages are b-tree pages the walk did not use
+// (skipped, or empty where the engine calls that corrupt); Cells are cells and
+// records it could not turn into a row (a pointer it could not follow, a cell
+// or a record that did not parse).
+type ScanLoss struct{ Pages, Cells int64 }
+
+// Any reports whether the scan may have missed a row.
+func (l ScanLoss) Any() bool { return l.Pages > 0 || l.Cells > 0 }
+
 // walker is one traversal of a b-tree. It is used by one goroutine and one
 // call; everything it charges goes through its ledger.
 type walker struct {
@@ -99,9 +110,10 @@ type walker struct {
 	lastRowid int64
 	haveRowid bool
 
-	held         int64  // pointer-list charges not yet released
-	checkOverlap bool   // a scan checks that the cells of a page do not overlap
-	dmg          string // a lookup: why its answer may not be "absent" (first reason)
+	held         int64    // pointer-list charges not yet released
+	checkOverlap bool     // a scan checks that the cells of a page do not overlap
+	dmg          string   // a lookup: why its answer may not be "absent" (first reason)
+	loss         ScanLoss // what this walk did not deliver
 }
 
 func (v *View) newWalker(ctx context.Context, l *ledger, vis visitor, kind BTreeKind) *walker {
@@ -122,6 +134,7 @@ func (w *walker) onStack(pgno uint32) bool {
 func (w *walker) skipPage(code string, pgno uint32, format string, a ...any) {
 	w.v.warn(code, pgno, format, a...)
 	w.v.st.pagesSkipped.Add(1)
+	w.loss.Pages++
 }
 
 func corruptReason(err error) string {
@@ -210,11 +223,13 @@ func (w *walker) enter(pgno uint32, depth int) (n node, ok bool, err error) {
 		v.warn(WarnCellPointer, pgno, "%d cell pointers lie below the stored content start %d; the cells are read, as the engine reads them", k, h.ContentStart)
 	}
 	n = node{pgno: pgno, data: data, loc: loc, h: h, ptrs: set.Good, depth: depth, bad: len(set.Bad)}
+	w.loss.Cells += int64(len(set.Bad))
 	if h.CellCount == 0 && pgno != 1 && (depth > 1 || h.Type.interior()) {
 		// The engine treats an empty page below the root, and an empty
 		// interior root, as corrupt: its rows and subtree would vanish
 		// silently, and a lookup through it must never be a clean absent.
 		n.empty = true
+		w.loss.Pages++
 		where := "that is an interior root"
 		if depth > 1 {
 			where = "below the root"
@@ -293,6 +308,7 @@ func (w *walker) cell(n node, ptr CellPointer) (Cell, bool, error) {
 	c, err := ParseCell(n.data, w.v.info.UsableSize, n.h, ptr.Offset)
 	if err != nil {
 		w.v.warn(WarnCellPointer, n.pgno, "cell %d: %s", ptr.Index, corruptReason(err))
+		w.loss.Cells++
 		return Cell{}, false, nil
 	}
 	c.Index = ptr.Index
@@ -315,9 +331,11 @@ func (w *walker) rowFor(n node, ptr CellPointer, c Cell, ovf visitor) (row Row, 
 		switch {
 		case errors.Is(err, ErrCorrupt):
 			v.warns.add(Warning{Code: WarnRecordInvalid, File: at.File, Page: at.Page, Offset: at.Offset, Msg: fmt.Sprintf("cell %d: %s", ptr.Index, corruptReason(err))})
+			w.loss.Cells++
 			return Row{}, 0, false, nil
 		case errors.Is(err, ErrLimit):
 			v.warns.add(Warning{Code: WarnLimitReached, File: at.File, Page: at.Page, Offset: at.Offset, Msg: fmt.Sprintf("cell %d: %v", ptr.Index, err)})
+			w.loss.Cells++
 			return Row{}, 0, false, nil
 		}
 		return Row{}, 0, false, err
@@ -328,6 +346,7 @@ func (w *walker) rowFor(n node, ptr CellPointer, c Cell, ovf visitor) (row Row, 
 		// values before it are kept and the rest flagged Omitted.)
 		w.l.free(held)
 		v.warns.add(Warning{Code: WarnRecordInvalid, File: at.File, Page: at.Page, Offset: at.Offset, Msg: fmt.Sprintf("cell %d: the record declares more bytes than the payload holds", ptr.Index)})
+		w.loss.Cells++
 		return Row{}, 0, false, nil
 	}
 	row = Row{
@@ -400,7 +419,15 @@ func (w *walker) warnKeyRange(n node, c Cell, kb keyBounds) {
 // (Clone keeps a row). visit returns false to end the scan early. The error is
 // for a cancelled context, an I/O error or a refused budget charge. Index
 // entries are not checked for order (that needs the collations).
-func (v *View) ScanTree(ctx context.Context, root uint32, kind BTreeKind, visit func(Row) bool) (err error) {
+func (v *View) ScanTree(ctx context.Context, root uint32, kind BTreeKind, visit func(Row) bool) error {
+	_, err := v.ScanTreeLoss(ctx, root, kind, visit)
+	return err
+}
+
+// ScanTreeLoss is ScanTree that also returns what this one scan did not
+// deliver (see ScanLoss). The loss is valid also when the scan ended early
+// (visit returned false, or err is non-nil): it counts what had been met.
+func (v *View) ScanTreeLoss(ctx context.Context, root uint32, kind BTreeKind, visit func(Row) bool) (loss ScanLoss, err error) {
 	defer guard(&err)
 	l := v.e.newLedger()
 	defer l.guard(&err)
@@ -408,29 +435,30 @@ func (v *View) ScanTree(ctx context.Context, root uint32, kind BTreeKind, visit 
 		ctx = context.Background()
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return loss, err
 	}
 	ps, err := newPageSet(l, v.addr)
 	if err != nil {
-		return err
+		return loss, err
 	}
 	defer ps.release(l)
 	w := v.newWalker(ctx, l, ps, kind)
+	defer func() { loss = w.loss }()
 	w.checkOverlap = true
 	defer func() { l.free(w.held) }() // pointer lists of the pages still open when the scan ends
 	n, ok, err := w.enter(root, 1)
 	if err != nil || !ok {
-		return err
+		return loss, err
 	}
 	if !n.h.Type.interior() {
 		_, err = w.leafRows(n, ps, keyBounds{}, visit)
-		return err
+		return loss, err
 	}
 	w.stack = append(w.stack, frame{n: n})
 	for len(w.stack) > 0 {
 		f := &w.stack[len(w.stack)-1]
 		if err := ctx.Err(); err != nil {
-			return err
+			return loss, err
 		}
 		var child uint32
 		var cb keyBounds // the range the child may hold (table trees)
@@ -440,7 +468,7 @@ func (v *View) ScanTree(ctx context.Context, root uint32, kind BTreeKind, visit 
 			if !f.have {
 				c, ok, err := w.cell(f.n, ptr)
 				if err != nil {
-					return err
+					return loss, err
 				}
 				if !ok {
 					f.k++
@@ -454,7 +482,7 @@ func (v *View) ScanTree(ctx context.Context, root uint32, kind BTreeKind, visit 
 				f.k++
 				row, held, ok, err := w.rowFor(f.n, ptr, cur, ps)
 				if err != nil {
-					return err
+					return loss, err
 				}
 				if !ok {
 					continue
@@ -462,7 +490,7 @@ func (v *View) ScanTree(ctx context.Context, root uint32, kind BTreeKind, visit 
 				more := visit(row)
 				l.free(held)
 				if !more {
-					return nil
+					return loss, nil
 				}
 				continue
 			}
@@ -491,7 +519,7 @@ func (v *View) ScanTree(ctx context.Context, root uint32, kind BTreeKind, visit 
 		depth := f.n.depth + 1
 		cn, ok, err := w.enter(child, depth)
 		if err != nil {
-			return err
+			return loss, err
 		}
 		if !ok {
 			continue
@@ -499,13 +527,13 @@ func (v *View) ScanTree(ctx context.Context, root uint32, kind BTreeKind, visit 
 		if !cn.h.Type.interior() {
 			stop, err := w.leafRows(cn, ps, cb, visit)
 			if err != nil || stop {
-				return err
+				return loss, err
 			}
 			continue
 		}
 		w.stack = append(w.stack, frame{n: cn, kb: cb})
 	}
-	return nil
+	return loss, nil
 }
 
 // describe renders the bounds for a warning (numbers only).
