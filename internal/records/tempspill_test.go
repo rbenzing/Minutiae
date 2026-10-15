@@ -134,6 +134,22 @@ func TestIngestAndReindexLeaveNoSQLiteTempFileOutsideTheCase(t *testing.T) {
 	tmp := redirectOSTemp(t)
 	stop := watchTemp(tmp)
 	defer stop()
+	// The case setup ran a ReadTx, which leaves temp_store = MEMORY on the one pooled connection, so
+	// without this reset the pragma the setup left behind would hide a missing one (ruling D53). The
+	// pooled connection goes back to the default with a tiny page cache, so any sorter or temporary
+	// table the ingest, the supersede or the reindex needs would overflow into a file. Limit, stated:
+	// every later ReadTx sets MEMORY again and leaves it, so this test fails when ReadTx, StoreTx and
+	// the connector pragmas are all gone (checked by mutation), while the write-path pragmas are pinned
+	// on their own by TestStoreTxUsesMemoryForTemporaryStorage (internal/evidence).
+	if err := c.StoreTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`PRAGMA temp_store = DEFAULT`); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`PRAGMA cache_size = 10`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	w := startWriter(t, c, testParser, records.WriterOptions{BatchRows: 2000}, a.ID)
 	add(t, w, bigRecords(a.ID, 3000))
