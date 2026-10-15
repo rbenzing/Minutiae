@@ -96,6 +96,9 @@ func Read(ctx context.Context, r io.ReaderAt, size int64, want func(fileID strin
 	rows := 0
 	var scanErr error
 	err = t.Rows(ctx, func(row sqlitefile.Row) bool {
+		if scanErr = ctx.Err(); scanErr != nil {
+			return false
+		}
 		rows++
 		if rows > maxRows {
 			scanErr = ErrTooManyRows

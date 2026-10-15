@@ -182,3 +182,45 @@ func TestReadHonoursCancel(t *testing.T) {
 		t.Fatalf("Read = %v, %v; want context.Canceled", d, err)
 	}
 }
+
+// A cap equal to the row count is not an error: only more rows than the cap are.
+func TestRowCapEqualToRowsIsAccepted(t *testing.T) {
+	db := buildManifest(t,
+		[]any{idA, "d", "p1", int64(1), mbFile(t, uint64(1))},
+		[]any{idB, "d", "p2", int64(1), mbFile(t, uint64(2))},
+		[]any{idC, "d", "p3", int64(1), mbFile(t, uint64(3))},
+	)
+	t.Cleanup(manifestdb.SetMaxRows(3))
+	d, err := manifestdb.Read(context.Background(), bytes.NewReader(db), int64(len(db)), func(string) bool { return true })
+	if err != nil {
+		t.Fatalf("Read with the cap equal to the rows: %v", err)
+	}
+	if n, known := d.Size(idC); !known || n != 3 {
+		t.Fatalf("Size(idC) = %d, %v", n, known)
+	}
+}
+
+// W44: a cancel in the middle of the row scan stops it with no partial result.
+func TestReadHonoursCancelInTheMiddleOfTheScan(t *testing.T) {
+	db := buildManifest(t,
+		[]any{idA, "d", "p1", int64(1), mbFile(t, uint64(1))},
+		[]any{idB, "d", "p2", int64(1), mbFile(t, uint64(2))},
+		[]any{idC, "d", "p3", int64(1), mbFile(t, uint64(3))},
+		[]any{idD, "d", "p4", int64(1), mbFile(t, uint64(4))},
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	seen := 0
+	d, err := manifestdb.Read(ctx, bytes.NewReader(db), int64(len(db)), func(string) bool {
+		if seen++; seen == 2 {
+			cancel()
+		}
+		return true
+	})
+	if !errors.Is(err, context.Canceled) || d != nil {
+		t.Fatalf("Read = %v, %v; want context.Canceled and no result", d, err)
+	}
+	if seen >= 4 {
+		t.Fatalf("the scan went on to row %d after the cancel", seen)
+	}
+}
