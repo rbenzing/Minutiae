@@ -315,10 +315,32 @@ func TestAbandonmentStopsTheRun(t *testing.T) {
 	aborted := make(chan struct{}, 1)
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
-	two := &rxParser{name: "two", n: 2, after: func(context.Context, *parse.Input, parse.Emitter) error { <-release; return nil }}
-	sum := f.run(f.host(both(shortTimeouts, withWriter(func(w *rxWriter) {
+	// The abandonment is triggered by an event, not by a wall-clock budget: a job timeout shorter than the time
+	// a loaded machine needs to even schedule the parser expires before it emitted anything, and records
+	// emitted after the seal are refused by design. The run is cancelled once both records are emitted; the
+	// parser ignores the cancellation, so the host abandons it after the grace period.
+	emitted := make(chan struct{})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() {
+		select {
+		case <-emitted:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	two := &rxParser{name: "two", n: 2, after: func(context.Context, *parse.Input, parse.Emitter) error {
+		close(emitted)
+		<-release
+		return nil
+	}}
+	h := f.host(both(func(o *artparse.Options) { o.Limits.GracePeriod = 30 * time.Millisecond }, withWriter(func(w *rxWriter) {
 		w.aborted = func() { aborted <- struct{}{} }
-	})), wbp("one"), two, wbp("three")), artparse.Selection{})
+	})), wbp("one"), two, wbp("three"))
+	sum, err := h.Run(ctx, artparse.RunOptions{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
 	select {
 	case <-aborted: // the one abandoned job concluded: its records and the ingest.error entry are stored
 	case <-t.Context().Done():
