@@ -54,10 +54,11 @@ func (s *Session) Extract(ctx context.Context, o ExtractOptions) (Summary, error
 	}
 	targets := make([]target, 0, len(o.Paths))
 	for _, ref := range o.Paths {
-		e, p, err := s.Lookup(fsys, ref)
+		m, err := s.LookupMatch(fsys, ref) // a deleted match after a cut is audited by LookupMatch and only warned about below
 		if err != nil {
 			return Summary{}, err
 		}
+		e, p := m.Entry, m.Path
 		if e.Type == filesys.TypeDir && !e.Deleted && !o.Recursive {
 			return Summary{}, fmt.Errorf("%s is a directory (use -r)", p)
 		}

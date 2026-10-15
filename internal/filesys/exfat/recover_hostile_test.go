@@ -130,12 +130,21 @@ func TestExfatRecoverableForgedFieldsAcrossAttrs(t *testing.T) {
 func TestExfatRecoverableEmptyFileNamesAMethod(t *testing.T) {
 	for _, chain := range []bool{false, true} {
 		img, l := exfattest.BuildLayout(exfattest.Options{ClusterCount: 256}, []exfattest.File{{Path: "/E.BIN", Deleted: true, FatChain: chain}})
+		noFat := !chain // the builder gives an empty file no flag: set it explicitly
+		exfattest.PatchStream(img, l.Find("/E.BIN", true), exfattest.StreamPatch{NoFatChain: &noFat})
 		cs := recoverableOf(t, img, l.Find("/E.BIN", true), nil)
 		if len(cs) != 1 {
 			t.Fatalf("candidates %+v", cs)
 		}
 		if _, err := filesys.CheckCandidate(cs[0], int64(len(img))); err != nil {
 			t.Errorf("fatchain=%v: malformed empty candidate %+v: %v", chain, cs[0], err)
+		}
+		want := exfat.MethodNoFatChain
+		if chain {
+			want = exfat.MethodContiguous
+		}
+		if cs[0].Method != want || len(cs[0].Runs) != 0 || len(cs[0].Assumptions) != 0 {
+			t.Errorf("fatchain=%v: Method %q, Runs %v, Assumptions %v; want %q with no runs and no assumptions", chain, cs[0].Method, cs[0].Runs, cs[0].Assumptions, want)
 		}
 	}
 }

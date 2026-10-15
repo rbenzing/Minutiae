@@ -514,10 +514,12 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 			}
 			dirRef = mapped
 		}
-		dir, dirPath, err := s.Lookup(fsys, dirRef)
+		dm, err := s.LookupMatch(fsys, dirRef)
 		if err != nil {
 			return err
 		}
+		dir, dirPath := dm.Entry, dm.Path
+		printIncompleteMatch(d.Err, dm.Incomplete)
 
 		// --json streams the array, so a huge subtree is never held in memory. It is
 		// closed only on success: a failed listing leaves invalid JSON behind.
@@ -559,12 +561,20 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 		case dir.Type != filesys.TypeDir:
 			emit(dirPath, dir)
 		case recursive:
+			var firstCut error // the first listing that failed: reported after everything read is printed
 			err = filesys.Walk(fsys, dir, dirPath, func(p string, e filesys.Entry, werr error) error {
 				if cerr := cmd.Context().Err(); cerr != nil {
 					return cerr
 				}
 				if werr != nil {
 					fmt.Fprintf(d.Err, "warning: %s: %s\n", escapeText(p), escapeText(werr.Error()))
+					// Only a listing that failed or was cut sets the exit code. The walker's own findings (a
+					// cycle, too deep, too long) are warned about as before and keep the exit code.
+					var ce *filesys.CorruptError
+					walkerFinding := errors.As(werr, &ce) && ce.Structure == "directory tree" && ce.Offset == -1
+					if firstCut == nil && !walkerFinding {
+						firstCut = werr
+					}
 					return nil
 				}
 				emit(p, e)
@@ -578,13 +588,18 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 				}
 				return jsonErr
 			})
+			if err == nil {
+				err = firstCut
+			}
 		default:
 			var kids []filesys.Entry
 			kids, err = fsys.ReadDir(dir)
 			if err != nil {
 				// A cut listing returns the entries read with its error: print them,
 				// name the cut reason, and still fail with the error.
-				fmt.Fprintf(d.Err, "warning: %s: listing incomplete: %s\n", escapeText(dirPath), escapeText(err.Error()))
+				if len(kids) > 0 { // a total failure printed nothing: the error alone says so
+					fmt.Fprintf(d.Err, "warning: %s: listing incomplete: %s\n", escapeText(dirPath), escapeText(err.Error()))
+				}
 			}
 			if len(kids) > 0 {
 				slices.SortStableFunc(kids, func(a, b filesys.Entry) int {
@@ -635,12 +650,16 @@ func newImageStatCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		known := len(fsys.Info().Warnings)
-		e, p, err := s.Lookup(fsys, args[1])
+		m, err := s.LookupMatch(fsys, args[1])
 		if err != nil {
 			printNewFSWarnings(d.Err, newFSWarnings(fsys, known))
 			return err
 		}
+		e, p := m.Entry, m.Path
 		warnings := newFSWarnings(fsys, known)
+		if m.Incomplete != nil {
+			warnings = append(warnings, "warning: "+m.Incomplete.Error())
+		}
 		if opts.json {
 			return writeJSON(d.Out, jsonStat{pathEntry: newPathEntry(p, e), Warnings: warnings})
 		}

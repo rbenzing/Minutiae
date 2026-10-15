@@ -84,6 +84,10 @@ func FuzzExfatRecoverable(f *testing.F) {
 					}
 					sum += r.Length
 				}
+				noFat := hasAttr(e, "no_fat_chain", "true")
+				if (c.Method == exfat.MethodNoFatChain) != noFat || (c.Method != exfat.MethodNoFatChain && c.Method != exfat.MethodContiguous && c.Method != exfat.MethodFatChain) {
+					t.Fatalf("%s: method %q does not match the NoFatChain flag %v", e.ID, c.Method, noFat)
+				}
 				if c.Size != sum && c.Size != 0 && !declaredShort(c) {
 					t.Fatalf("%s: Size %d but the runs add up to %d and the map is not declared short: %+v", e.ID, c.Size, sum, c)
 				}

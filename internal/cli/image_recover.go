@@ -182,6 +182,7 @@ func printRecoverList(w io.Writer, plan *examine.RecoverPlan) {
 	fmt.Fprintf(w, "would recover %d (%d bytes), uniform %d, skipped %d, considered %d\n", written, bytes, uniform, skippedTotal(plan.SkippedBy), plan.Considered)
 	printLimit(w, plan.LimitReached, plan.NotProcessed)
 	printReaderWarnings(w, plan.ReaderWarnings)
+	printIncompleteIDs(w, plan.IncompleteIDs)
 	if n := len(plan.FSWarnings); n > 0 {
 		fmt.Fprintf(w, "filesystem warnings: %d\n", n)
 	}
@@ -237,6 +238,7 @@ func printRecoverRun(w io.Writer, sum examine.RecoverSummary) {
 	printSkipReasons(w, sum.Summary)
 	printLimit(w, sum.LimitReached, sum.NotProcessed)
 	printReaderWarnings(w, sum.ReaderWarnings)
+	printIncompleteIDs(w, sum.IncompleteIDs)
 	printFSWarnings(w, sum.Summary)
 }
 
@@ -255,4 +257,27 @@ func printReaderWarnings(w io.Writer, n int) {
 	if n > 0 {
 		fmt.Fprintf(w, "reader warnings: %d (see analysis.warning entries in audit.jsonl)\n", n)
 	}
+}
+
+// printIncompleteIDs names every id whose search could not read every directory: its deleted match was kept,
+// but a live entry with the same id may exist in an unread directory (the same text is audited).
+func printIncompleteIDs(w io.Writer, ids []*examine.SearchIncompleteError) {
+	for _, inc := range ids {
+		fmt.Fprintf(w, "warning: %s\n", escapeText(inc.Error()))
+	}
+}
+
+// printIncompleteMatch is printIncompleteIDs for one lookup (nil prints nothing).
+func printIncompleteMatch(w io.Writer, inc *examine.SearchIncompleteError) {
+	if inc != nil {
+		printIncompleteIDs(w, []*examine.SearchIncompleteError{inc})
+	}
+}
+
+func incompleteTexts(ids []*examine.SearchIncompleteError) []string {
+	out := []string{}
+	for _, inc := range ids {
+		out = append(out, inc.Error())
+	}
+	return out
 }

@@ -32,7 +32,11 @@ const MaxWalkPath = 32 << 10
 // children and the walk continues with its siblings; returned for a
 // non-directory it skips the rest of the containing directory. Deleted
 // entries are passed to fn but never recursed into. If ReadDir fails, fn is
-// called a second time for that directory with the error. A non-nil error
+// called a second time for that directory with the error. A failed ReadDir
+// may still return the entries it read (a cut listing): when fn returns nil
+// for the error, Walk visits and descends into that prefix; when fn returns
+// SkipDir for the error, the prefix is dropped and the walk goes on with the
+// siblings of the directory. A non-nil error
 // from fn other than SkipDir stops the walk and is returned.
 //
 // Directory Entry.ID values must identify the directory itself (its first

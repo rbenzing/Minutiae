@@ -72,6 +72,7 @@ func (s *Session) Recover(ctx context.Context, o RecoverOptions) (RecoverSummary
 		}
 		rs.Considered, rs.Candidates, rs.Uniform, rs.Overlap = plan.Considered, plan.candidates, plan.uniform, plan.overlap
 		rs.ReaderWarnings = plan.ReaderWarnings
+		rs.IncompleteIDs = plan.IncompleteIDs
 		rs.SkippedBy, rs.LimitReached, rs.NotProcessed = plan.SkippedBy, plan.LimitReached, plan.NotProcessed
 		if err := a.syncFS(); err != nil { // what planning made the filesystem notice
 			return err
@@ -123,6 +124,14 @@ func (s *Session) auditPlan(a *analysis, plan *RecoverPlan) error {
 			reason += ": " + sk.Detail
 		}
 		return a.warnWith(sk.Path, reason, map[string]any{"id": sk.ID, "code": sk.Reason})
+	}
+	// A deleted match of an id whose search could not read every directory: kept, and named here.
+	for _, inc := range plan.IncompleteIDs {
+		d := inc.warnDetails()
+		d["analysis_id"] = a.sum.AnalysisID
+		if err := a.appendWarning(d); err != nil {
+			return err
+		}
 	}
 	for _, it := range plan.Items {
 		for _, n := range it.notes {

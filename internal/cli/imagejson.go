@@ -243,6 +243,7 @@ type jsonRecover struct {
 	LimitReached   string                    `json:"limit_reached"`
 	NotProcessed   int                       `json:"not_processed"`
 	ReaderWarnings int                       `json:"reader_warnings"`
+	IncompleteIDs  []string                  `json:"incomplete_ids"`
 	FSWarnings     int                       `json:"fs_warnings"`
 	Artifacts      []evidence.ManifestRecord `json:"artifacts"`
 }
@@ -250,7 +251,7 @@ type jsonRecover struct {
 func newJSONRecover(s examine.RecoverSummary) jsonRecover {
 	out := jsonRecover{
 		AnalysisID: s.AnalysisID, Considered: s.Considered, Candidates: s.Candidates, Recovered: s.Recovered, Partial: s.Partial,
-		Uniform: s.Uniform, Overlap: s.Overlap, SkippedBy: s.SkippedBy, LimitReached: s.LimitReached, NotProcessed: s.NotProcessed, ReaderWarnings: s.ReaderWarnings, FSWarnings: s.FSWarnings, Artifacts: s.Artifacts,
+		Uniform: s.Uniform, Overlap: s.Overlap, SkippedBy: s.SkippedBy, LimitReached: s.LimitReached, NotProcessed: s.NotProcessed, ReaderWarnings: s.ReaderWarnings, IncompleteIDs: incompleteTexts(s.IncompleteIDs), FSWarnings: s.FSWarnings, Artifacts: s.Artifacts,
 	}
 	if out.SkippedBy == nil {
 		out.SkippedBy = map[string]int{}
@@ -304,6 +305,7 @@ type jsonRecoverList struct {
 	LimitReached   string            `json:"limit_reached"`
 	NotProcessed   int               `json:"not_processed"`
 	ReaderWarnings int               `json:"reader_warnings"`
+	IncompleteIDs  []string          `json:"incomplete_ids"`
 	FSWarnings     int               `json:"fs_warnings"`
 }
 
@@ -316,7 +318,7 @@ func jsonRuns(rs []evidence.Run) []jsonRun {
 }
 
 func newJSONRecoverList(p *examine.RecoverPlan) jsonRecoverList {
-	out := jsonRecoverList{Considered: p.Considered, Items: []jsonRecoverItem{}, SkippedBy: p.SkippedBy, LimitReached: p.LimitReached, NotProcessed: p.NotProcessed, ReaderWarnings: p.ReaderWarnings, FSWarnings: len(p.FSWarnings)}
+	out := jsonRecoverList{Considered: p.Considered, Items: []jsonRecoverItem{}, SkippedBy: p.SkippedBy, LimitReached: p.LimitReached, NotProcessed: p.NotProcessed, ReaderWarnings: p.ReaderWarnings, IncompleteIDs: incompleteTexts(p.IncompleteIDs), FSWarnings: len(p.FSWarnings)}
 	if out.SkippedBy == nil {
 		out.SkippedBy = map[string]int{}
 	}

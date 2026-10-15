@@ -108,7 +108,8 @@ type RecoverPlan struct {
 	SkippedBy      map[string]int
 	LimitReached   string // "" | "max-files" | "max-bytes" | "max-scan-bytes" | "max-entries" | "max-plan-runs": the first limit met
 	NotProcessed   int
-	ReaderWarnings int      // reader warnings (Candidate.Warnings) of the planned candidates, all counted
+	ReaderWarnings int // reader warnings (Candidate.Warnings) of the planned candidates, all counted
+	IncompleteIDs  []*SearchIncompleteError
 	FSWarnings     []string // new filesystem warnings the planning raised (the unallocated note included)
 
 	candidates  int
@@ -130,7 +131,8 @@ type RecoverSummary struct {
 	SkippedBy              map[string]int
 	LimitReached           string // see RecoverPlan.LimitReached
 	NotProcessed           int
-	ReaderWarnings         int // reader warnings (Candidate.Warnings) audited; not skips
+	ReaderWarnings         int                      // reader warnings (Candidate.Warnings) audited; not skips
+	IncompleteIDs          []*SearchIncompleteError // ids whose search could not read every directory
 }
 
 // recovererOf returns the Recoverer of fsys, or filesys.ErrNoRecovery. Recover calls it before any audit
@@ -311,20 +313,14 @@ func (p *planner) enumerate() (targets []target, over int, err error) {
 	}
 	deletedByID := map[string][]target{}
 	liveID := map[string]bool{}
-	var (
-		unreadable int
-		firstBad   string
-		firstErr   error
-	)
+	var tally idSearchTally
 	if len(wanted) > 0 {
 		err := filesys.Walk(p.fsys, p.fsys.Root(), "/", func(wp string, we filesys.Entry, werr error) error {
 			if err := p.ctx.Err(); err != nil {
 				return err
 			}
 			if werr != nil {
-				if unreadable++; unreadable == 1 {
-					firstBad, firstErr = wp, werr
-				}
+				tally.add(wp, werr)
 				return nil
 			}
 			if !wanted[we.ID] {
@@ -348,14 +344,17 @@ func (p *planner) enumerate() (targets []target, over int, err error) {
 		if id, ok := strings.CutPrefix(r, "id:"); ok {
 			switch ts := deletedByID[id]; {
 			case len(ts) > 0:
+				if tally.n > 0 { // a live entry with this id may be in an unread directory: keep the match, flag it
+					p.plan.IncompleteIDs = append(p.plan.IncompleteIDs, tally.incomplete(id, ts[0].path))
+				}
 				for _, t := range ts {
 					add(t)
 				}
 			case liveID[id]:
 				return nil, 0, fmt.Errorf("id:%s: %w", id, filesys.ErrNotDeleted)
 			default:
-				if unreadable > 0 {
-					return nil, 0, &SearchIncompleteError{ID: id, Unreadable: unreadable, First: firstBad, Cause: firstErr}
+				if tally.n > 0 {
+					return nil, 0, tally.incomplete(id, "")
 				}
 				return nil, 0, fmt.Errorf("id:%s: %w", id, filesys.ErrNotFound)
 			}

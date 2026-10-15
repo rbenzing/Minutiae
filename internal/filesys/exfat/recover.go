@@ -18,6 +18,8 @@ const (
 	MethodNoFatChain = "exfat-nofatchain"
 	// MethodContiguous: the file had a FAT chain that is not used here, so
 	// the clusters are ASSUMED to have been contiguous.
+	// An empty file assumes no clusters at all: the name is kept for it (it is
+	// not renamed) and it claims no run and no assumption.
 	MethodContiguous = "exfat-contiguous"
 	// MethodFatChain: the clusters follow the FAT chain the driver left behind
 	// (stale, unverified against reuse; examine proves freeness).

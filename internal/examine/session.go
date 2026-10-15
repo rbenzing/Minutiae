@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -512,42 +513,56 @@ func (s *Session) Info() ImageInfo {
 
 var errFound = errors.New("found")
 
-// Lookup resolves "/a/b" or "id:<fs id>" (searching the whole tree by ID, live
+// Lookup resolves "/a/b" or "id:<fs id>" like LookupMatch. When the id search found only a deleted entry
+// but could not read every directory, Lookup returns that entry together with the *SearchIncompleteError,
+// so a caller that stops on an error never takes it for the only entry with that id; callers that go on
+// use LookupMatch.
+func (s *Session) Lookup(fsys filesys.FileSystem, ref string) (filesys.Entry, string, error) {
+	m, err := s.LookupMatch(fsys, ref)
+	if err != nil {
+		return filesys.Entry{}, "", err
+	}
+	if m.Incomplete != nil {
+		return m.Entry, m.Path, m.Incomplete
+	}
+	return m.Entry, m.Path, nil
+}
+
+// LookupMatch resolves "/a/b" or "id:<fs id>" (searching the whole tree by ID, live
 // and deleted entries alike, via filesys.Walk) and returns the entry with its
 // slash path. When several entries share an id a live one is preferred over a
 // deleted one. When the id is not found but some directories could not be read
 // (or a directory cycle was hit) the error says so, since the entry may be in
-// one of them.
-func (s *Session) Lookup(fsys filesys.FileSystem, ref string) (filesys.Entry, string, error) {
+// one of them. When only a deleted entry matched and some directories could not
+// be read, the entry is returned with Match.Incomplete set and one
+// analysis.warning is audited (a live entry with this id may exist in an unread
+// directory); an audit failure is returned instead.
+func (s *Session) LookupMatch(fsys filesys.FileSystem, ref string) (Match, error) {
 	id, byID := strings.CutPrefix(ref, "id:")
 	if !byID {
 		p := path.Clean("/" + ref)
 		e, err := fsys.Lookup(p)
 		if err != nil {
-			return filesys.Entry{}, "", fmt.Errorf("%s: %w", p, err)
+			return Match{}, fmt.Errorf("%s: %w", p, err)
 		}
-		return e, p, nil
+		return Match{Entry: e, Path: p}, nil
 	}
 	if id == "" {
-		return filesys.Entry{}, "", errors.New("empty entry id after \"id:\"")
+		return Match{}, errors.New("empty entry id after \"id:\"")
 	}
 	root := fsys.Root()
 	if root.ID == id {
-		return root, "/", nil
+		return Match{Entry: root, Path: "/"}, nil
 	}
 	var (
-		found      filesys.Entry
-		where      string
-		haveMatch  bool
-		unreadable int
-		firstBad   string
-		firstErr   error
+		found     filesys.Entry
+		where     string
+		haveMatch bool
+		tally     idSearchTally
 	)
 	err := filesys.Walk(fsys, root, "/", func(p string, e filesys.Entry, werr error) error {
 		if werr != nil {
-			if unreadable++; unreadable == 1 {
-				firstBad, firstErr = p, werr
-			}
+			tally.add(p, werr)
 			return nil
 		}
 		if e.ID != id {
@@ -563,13 +578,21 @@ func (s *Session) Lookup(fsys filesys.FileSystem, ref string) (filesys.Entry, st
 	})
 	switch {
 	case err != nil && !errors.Is(err, errFound):
-		return filesys.Entry{}, "", err
+		return Match{}, err
+	case haveMatch && found.Deleted && tally.n > 0:
+		inc := tally.incomplete(id, where)
+		if s.Case != nil {
+			if _, aerr := s.Case.Audit.Append("analysis.warning", s.Parent.Source.DeviceID, inc.warnDetails()); aerr != nil {
+				return Match{}, aerr
+			}
+		}
+		return Match{Entry: found, Path: where, Incomplete: inc}, nil
 	case haveMatch:
-		return found, where, nil
-	case unreadable > 0:
-		return filesys.Entry{}, "", &SearchIncompleteError{ID: id, Unreadable: unreadable, First: firstBad, Cause: firstErr}
+		return Match{Entry: found, Path: where}, nil
+	case tally.n > 0:
+		return Match{}, tally.incomplete(id, "")
 	}
-	return filesys.Entry{}, "", fmt.Errorf("id:%s: %w", id, filesys.ErrNotFound)
+	return Match{}, fmt.Errorf("id:%s: %w", id, filesys.ErrNotFound)
 }
 
 // SnapshotPath maps a path inside a volume to the real path of the same file in
@@ -622,20 +645,70 @@ func (s *Session) needTable() error {
 	return errors.New("the partition table has not been read")
 }
 
-// SearchIncompleteError reports an entry-id search that did not find the id
-// but also could not read every directory: the id may live in one of them, so
-// the answer is unknown, never "not found". It wraps the reason the first
-// unreadable directory was cut or failed (errors.Is sees ErrLimit, ErrCorrupt,
-// ...) and never wraps filesys.ErrNotFound.
+// SearchIncompleteError reports an entry-id search that could not read every directory. With Found empty
+// the id was not found: it may live in an unread directory, so the answer is unknown, never "not found".
+// With Found set, only a deleted entry (at Found) matched: it is still returned (partial work is kept) but
+// a live entry with the same id may exist in an unread directory, so it is never presented as the only
+// entry with this id. It wraps the reason the first unreadable directory was cut or failed (errors.Is
+// sees ErrLimit, ErrCorrupt, ...) and never wraps filesys.ErrNotFound.
 type SearchIncompleteError struct {
 	ID         string
-	Unreadable int    // directories that could not be read completely
-	First      string // path of the first one
-	Cause      error  // why it could not be read
+	Unreadable int      // directories that could not be read completely
+	First      string   // path of the first one
+	Cause      error    // why it could not be read
+	Dirs       []string // paths of the unread directories, at most maxIncompleteDirs
+	Found      string   // path of the deleted match that was returned; "" when nothing matched
 }
 
+// maxIncompleteDirs bounds the unread directory paths a SearchIncompleteError names.
+const maxIncompleteDirs = 10
+
 func (e *SearchIncompleteError) Error() string {
-	return fmt.Sprintf("id:%s: search incomplete: %d directories could not be read completely (first: %s: %v)", e.ID, e.Unreadable, e.First, e.Cause)
+	base := fmt.Sprintf("id:%s: search incomplete: %d directories could not be read completely (first: %s: %v)", e.ID, e.Unreadable, e.First, e.Cause)
+	if e.Found == "" {
+		return base
+	}
+	more := ""
+	if e.Unreadable > len(e.Dirs) {
+		more = fmt.Sprintf(" and %d more", e.Unreadable-len(e.Dirs))
+	}
+	return fmt.Sprintf("%s; only the deleted entry at %s matched, and a live entry with this id may exist in an unread directory (%s%s)", base, e.Found, strings.Join(e.Dirs, ", "), more)
 }
 
 func (e *SearchIncompleteError) Unwrap() error { return e.Cause }
+
+// idSearchTally collects the directories an id search could not read.
+type idSearchTally struct {
+	n     int
+	dirs  []string
+	first string
+	cause error
+}
+
+func (t *idSearchTally) add(p string, err error) {
+	if t.n++; t.n == 1 {
+		t.first, t.cause = p, err
+	}
+	if len(t.dirs) < maxIncompleteDirs {
+		t.dirs = append(t.dirs, p)
+	}
+}
+
+// incomplete builds the error for id; found is the deleted match returned despite the cut ("" when none).
+func (t *idSearchTally) incomplete(id, found string) *SearchIncompleteError {
+	return &SearchIncompleteError{ID: id, Unreadable: t.n, First: t.first, Cause: t.cause, Dirs: slices.Clone(t.dirs), Found: found}
+}
+
+// warnDetails is the analysis.warning body for a deleted match returned after an incomplete search.
+func (e *SearchIncompleteError) warnDetails() map[string]any {
+	w := e.Error()
+	return map[string]any{"source": "examine", "code": "id-search-incomplete", "id": e.ID, "path": e.Found, "reason": w, "warning": w, "unread": e.Dirs}
+}
+
+// Match is a resolved entry. Incomplete is non-nil when the entry is a deleted match of an id search that
+// could not read every directory: a live entry with the same id may exist there.
+type Match struct {
+	Entry      filesys.Entry
+	Path       string
+	Incomplete *SearchIncompleteError
+}

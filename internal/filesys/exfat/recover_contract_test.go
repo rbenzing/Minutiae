@@ -100,3 +100,37 @@ func TestExfatRecoverableCanonicalUnknownIDIsNotFoundAndBounded(t *testing.T) {
 		t.Errorf("%d reads for an unknown directory, limit %d (MaxLocateScans+1 listings of %d reads)", got, limit, perListing)
 	}
 }
+
+// TestExfatRecoverableCanonicalUnknownIDOnAWideTreeIsLimitNotAbsent (F85): with the scan cap lowered below the
+// number of directories, the search for a canonical id that is not there is undecidable (filesys.ErrLimit),
+// never ErrNotFound, and it reads within (cap+1) listings.
+func TestExfatRecoverableCanonicalUnknownIDOnAWideTreeIsLimitNotAbsent(t *testing.T) {
+	var files []exfattest.File
+	for i := 0; i < 12; i++ {
+		files = append(files, exfattest.File{Path: fmt.Sprintf("/D%02d", i), Dir: true})
+	}
+	img := exfattest.Build(exfattest.Options{ClusterCount: 512}, files)
+	one := &recReader{r: bytes.NewReader(img)}
+	f1, err := exfat.Open(one, int64(len(img)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f1.ReadDir(f1.Root()); err != nil {
+		t.Fatal(err)
+	}
+	perListing := one.calls.Load()
+	const small = 3
+	rr := &recReader{r: bytes.NewReader(img)}
+	f2, err := exfat.Open(rr, int64(len(img)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f2.SetResolveDirs(small)
+	cs, err := f2.Recoverable(filesys.Entry{ID: "dirent:400:4294967295"})
+	if cs != nil || !errors.Is(err, filesys.ErrLimit) || errors.Is(err, filesys.ErrNotFound) {
+		t.Fatalf("Recoverable = %v, %v; want nil and filesys.ErrLimit, not ErrNotFound", cs, err)
+	}
+	if got, limit := rr.calls.Load(), int64(small+1)*perListing; got > limit {
+		t.Errorf("%d reads with the cap at %d, limit %d", got, small, limit)
+	}
+}
