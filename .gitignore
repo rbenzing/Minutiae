@@ -11,3 +11,8 @@ coverage.*
 # local-only design specs and plans
 docs/superpowers/
 .superpowers/
+
+# local coordination: worktrees, the check lock and agent scratch live here, never outside the project
+.claude/worktrees/
+.claude/scratch/
+.claude/check.lock/
