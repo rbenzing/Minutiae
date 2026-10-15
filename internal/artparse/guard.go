@@ -36,7 +36,7 @@ const (
 // waiting, guard runs the functions received on pump on the CALLING goroutine, which is how progress
 // events reach the host without a race; after guard returns nothing is delivered any more.
 func guard(ctx context.Context, timeout, grace time.Duration, seal func(), pump <-chan func(), fn func(context.Context) error) Guarded {
-	tctx, cancel := context.WithTimeout(ctx, timeout)
+	tctx, cancel := newJobCtx(ctx, timeout)
 	defer cancel()
 	done := make(chan Guarded, 1)
 	go func() {
@@ -112,3 +112,7 @@ func drain(pump <-chan func()) {
 		}
 	}
 }
+
+// newJobCtx derives a job's time-limited context (a variable only so tests can make the limit expire on an
+// event instead of a wall-clock budget, see export_test.go).
+var newJobCtx = context.WithTimeout
