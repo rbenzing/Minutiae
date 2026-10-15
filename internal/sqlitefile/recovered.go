@@ -53,4 +53,5 @@ type RecoveredRow struct {
 	OverflowHead uint32 // first overflow page when the chain was not followed
 	Truncated    bool
 	Notes        []string
+	SlackRegion  string // carved rows only: the free space the cell was found in (gap, freeblock, freelist-trunk); "" otherwise
 }
