@@ -36,6 +36,8 @@ func TestSqlitefileSurfaceUsedByTheDecoder(_ *testing.T) {
 	pin[func(*sqlitefile.Table) sqlitefile.TableDef]((*sqlitefile.Table).Def)
 	pin[func(*sqlitefile.Table) string]((*sqlitefile.Table).Name)
 	pin[func(sqlitefile.Row) sqlitefile.Row](sqlitefile.Row.Clone)
+	pin[func(sqlitefile.Value, sqlitefile.Affinity, sqlitefile.Affinity) (sqlitefile.Value, sqlitefile.ConvStatus)](sqlitefile.ConvertForComparison)
+	pin[sqlitefile.ConvStatus](sqlitefile.ConvOK)
 
 	// Used by Open, Info, Tables and the budget adapter (Task 2).
 	pin[sqlitefile.Budget](sqlitefile.Options{}.Budget)
@@ -228,4 +230,6 @@ func TestSqlitefileSurfaceUsedByRowOps(_ *testing.T) {
 	var o sqlitefile.Options
 	pin[sqlitefile.Budget](o.Budget)
 	pin[func(sqlitefile.Row) sqlitefile.Row](sqlitefile.Row.Clone)
+	pin[func(sqlitefile.Value, sqlitefile.Affinity, sqlitefile.Affinity) (sqlitefile.Value, sqlitefile.ConvStatus)](sqlitefile.ConvertForComparison)
+	pin[sqlitefile.ConvStatus](sqlitefile.ConvOK)
 }

@@ -6,7 +6,6 @@ package sqlitedb_test
 import (
 	"database/sql"
 	"errors"
-	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -545,35 +544,4 @@ type joinCase struct {
 	svals, tvals            []any
 	flags                   sqlitedb.JoinFlags
 	minPairs                int
-}
-
-// T8 M2 (B88), pinned from limitations.md: the engine applies the column's
-// affinity to a constant (int_col = '7' matches the integer 7), the layer does
-// not, so LiteralTextKey("7") against an INTEGER or REAL target misses with no
-// flag. If the layer ever learns this, the limitation must be closed with it.
-func TestLiteralTextKeyAgainstANumericColumnMissesWhereTheEngineMatches(t *testing.T) {
-	data := newBuilderDB(t, sqlitetest.Options{PageSize: 1024}, func(b *sqlitetest.Builder) {
-		tt := b.CreateTable("t", "create table t(id integer primary key, i integer, r real)")
-		tt.Insert(1, nil, 7, 7.0)
-		tt.Insert(2, nil, 8, 8.0)
-	})
-	eng := engineOn(t, data)
-	tb := tableFrom(t, data, "t")
-	for _, col := range []string{"i", "r"} {
-		var n int
-		if err := eng.QueryRow(fmt.Sprintf("select count(*) from t where %s = '7'", col)).Scan(&n); err != nil || n != 1 {
-			t.Fatalf("engine: %s = '7' matched %d rows, %v; want 1", col, n, err)
-		}
-		ix, err := tb.Index(t.Context(), col, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		ids, flags, err := ix.Rowids(sqlitedb.LiteralTextKey([]byte("7")))
-		if err != nil || len(ids) != 0 || flags != 0 {
-			t.Errorf("%s: layer Rowids(LiteralTextKey 7) = %v, flags %v, %v; the documented gap is an unflagged miss", col, ids, flags, err)
-		}
-		if ids, _, err := ix.Rowids(sqlitedb.LiteralIntKey(7)); err != nil || len(ids) != 1 {
-			t.Errorf("%s: the numeric literal must match: %v, %v", col, ids, err)
-		}
-	}
 }

@@ -74,6 +74,19 @@ func classOf(a sqlitefile.Affinity) parse.JoinClass {
 	return parse.ClassBlob
 }
 
+// affOfClass is the affinity that stands for a column's class in a conversion:
+// every numeric affinity converts a constant alike (an integral real and the
+// integer of the same value are one key).
+func affOfClass(c parse.JoinClass) sqlitefile.Affinity {
+	switch c {
+	case parse.ClassNumeric:
+		return sqlitefile.AffNumeric
+	case parse.ClassText:
+		return sqlitefile.AffText
+	}
+	return sqlitefile.AffBlob
+}
+
 // LiteralIntKey is the key of an integer constant (never flagged).
 func LiteralIntKey(v int64) parse.JoinKey { return parse.JoinKey{Kind: parse.JoinInt, I: v} }
 
@@ -87,9 +100,10 @@ func LiteralFloatKey(f float64) (parse.JoinKey, bool) {
 }
 
 // LiteralTextKey is the key of a text constant, the bytes as given. A literal is
-// never flagged and no affinity is applied to it, so against an INTEGER or REAL
-// column it does not match "7" with 7 as the engine does for a constant
-// (documented gap, T8 M2).
+// never flagged, and Index.Rowids applies the target column's affinity to it as
+// the engine does for a constant: "7" finds the integer 7 in an INTEGER, REAL or
+// NUMERIC column. A text that looks like a number but cannot be converted exactly
+// (see sqlitefile.ConvertForComparison) is an ErrKeyUndecidable, never a miss.
 func LiteralTextKey(b []byte) parse.JoinKey { return parse.JoinKey{Kind: parse.JoinText, S: string(b)} }
 
 // LiteralBlobKey is the key of a blob constant.
@@ -137,7 +151,8 @@ type Index struct {
 // counted (Unkeyed, Stats.IndexUnkeyed). More than limit entries (limit <= 0 means
 // 1,000,000) is ErrIndexLimit; nothing is kept on any error. An unsupported
 // collation is an *UnsupportedCollationError, never BINARY; a WITHOUT ROWID
-// table is ErrWithoutRowid. No affinity conversion is done.
+// table is ErrWithoutRowid. The index holds the stored values; a literal probe is
+// converted at lookup (Rowids).
 //
 // An index built from a scan that lost rows (a skipped page or cell, counted by
 // the reader per scan) is Lossy: every miss of Rowids is then an
@@ -255,7 +270,10 @@ func (ix *Index) Release() {
 // lookup that finds no row while Undecided target rows exist or the index is
 // Lossy: a miss is not a proof of absence. A hit is returned, with JoinUndecided
 // set in the flags in those two cases: the set of matches may be short. A
-// source collation that is not supported is an *UnsupportedCollationError. The
+// source collation that is not supported is an *UnsupportedCollationError. A
+// literal key (Class ClassUnknown) takes the affinity of the indexed column as the
+// engine does for a constant; one that cannot be converted exactly is
+// ErrKeyUndecidable. The
 // slice is the caller's.
 func (ix *Index) Rowids(key parse.JoinKey) (rowids []int64, flags JoinFlags, err error) {
 	if key.Kind == parse.JoinNone {
@@ -288,6 +306,14 @@ func (ix *Index) Rowids(key parse.JoinKey) (rowids []int64, flags JoinFlags, err
 		v = sqlitefile.Value{Kind: sqlitefile.KindBlob, Bytes: []byte(key.S), Len: int64(len(key.S))}
 	default:
 		return nil, flags, fmt.Errorf("%w: unknown key kind %d", ErrKeyUndecidable, key.Kind)
+	}
+	if key.Class == parse.ClassUnknown {
+		// A constant has no affinity, so the engine applies the column's affinity to it.
+		conv, cst := sqlitefile.ConvertForComparison(v, sqlitefile.AffBlob, affOfClass(ix.class))
+		if cst != sqlitefile.ConvOK {
+			return nil, flags, fmt.Errorf("%w: the key cannot be converted exactly for the affinity of %s.%s", ErrKeyUndecidable, ix.table, ix.column)
+		}
+		v = conv
 	}
 	k, st, kerr := sqlitefile.EqualityKey(v, ix.collation)
 	if kerr != nil {
