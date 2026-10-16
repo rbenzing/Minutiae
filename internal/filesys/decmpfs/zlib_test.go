@@ -189,7 +189,9 @@ func TestInflateBlockDoesNotAllocateFromTheDeclaredSize(t *testing.T) {
 	if !errors.Is(err, filesys.ErrCorrupt) {
 		t.Errorf("an implausible declared size: %v, want ErrCorrupt", err)
 	}
-	// Through Open: a tiny attribute with a huge declared size.
+	// Through Open: a tiny attribute with a huge declared size. (Assertion 3,
+	// this one, is refused by the ratio check in openInline, not by the
+	// allocation bound; assertions 1 and 2 exercise inflateBlock's own bounds.)
 	if n := totalAlloc(func() { _, err = Open(value(3, 1<<40, zlibBytes(compressible(100))), nil) }); n > 1<<20 {
 		t.Errorf("Open allocated %d bytes for a declared size of 1<<40", n)
 	}
@@ -208,9 +210,19 @@ func TestInflateBlockOverrunAndCeiling(t *testing.T) {
 	if got, err := inflateBlock(zlibBytes(content), 5000); err != nil || !bytes.Equal(got, content) {
 		t.Errorf("an exact stream: %d bytes, %v", len(got), err)
 	}
-	zeros := zlibBytes(make([]byte, maxInflate+4096)) // compresses below the ratio bound's input need
-	if _, err := inflateBlock(zeros, maxInflate+1); !errors.Is(err, filesys.ErrCorrupt) {
-		t.Errorf("a declared size over the ceiling: %v, want ErrCorrupt", err)
+	// The ceiling is pinned exactly (ruling Y62): a stream that really holds
+	// maxInflate+1 bytes, declared as that, is refused before it is inflated;
+	// one of exactly maxInflate bytes is accepted. Both compress far below the
+	// ratio bound's input need, so only the ceiling can refuse the first.
+	over := zlibBytes(make([]byte, maxInflate+1))
+	if _, err := inflateBlock(over, maxInflate+1); !errors.Is(err, filesys.ErrCorrupt) {
+		t.Errorf("a block of maxInflate+1 bytes: %v, want ErrCorrupt", err)
+	}
+	if got, err := inflateBlock(zlibBytes(make([]byte, maxInflate)), maxInflate); err != nil || len(got) != maxInflate {
+		t.Errorf("a block of exactly maxInflate bytes: %d bytes, %v; want accepted", len(got), err)
+	}
+	if c, err := Open(value(3, maxInflate+1, over), nil); !errors.Is(err, filesys.ErrCorrupt) || c != nil {
+		t.Errorf("an inline payload of maxInflate+1 bytes: content %t, %v; want ErrCorrupt", c != nil, err)
 	}
 }
 
