@@ -1,10 +1,13 @@
 package records_test
 
 import (
+	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -112,6 +115,14 @@ func TestPeakRSSIsReadOnThisPlatform(t *testing.T) {
 	if !ok || v2 < v {
 		t.Fatalf("peak RSS went from %d to %d (ok %v): a high-water mark never falls", v, v2, ok)
 	}
+	// the peak is a high-water mark of the process, so it is at least the heap the runtime holds in use
+	// right now (read just before the peak): a constant or a wrong counter fails this (D64)
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	v3, ok := peakRSS()
+	if !ok || v3 < int64(ms.HeapInuse) {
+		t.Fatalf("peak RSS %d (ok %v) is below runtime HeapInuse %d: not a process high-water mark", v3, ok, ms.HeapInuse)
+	}
 	runtimeKeepAlive(buf)
 }
 
@@ -133,10 +144,47 @@ func TestPathWithinRequiresTheRoot(t *testing.T) {
 		{root + "-other", false},
 		{filepath.Dir(root), false},
 		{filepath.Join(root, "..", "x"), false},
+		{filepath.Join(root, "..tmp"), true}, // a name that merely starts with two dots is inside the root
 	}
 	for _, tc := range cases {
 		if got := pathWithin(root, tc.p); got != tc.want {
 			t.Errorf("pathWithin(%q, %q) = %v, want %v", root, tc.p, got, tc.want)
 		}
+	}
+}
+
+// scaleResult is one scale run's record (the harness in scale_test.go, build tag scale, fills it).
+type scaleResult struct {
+	Label   string             `json:"label"`
+	Commit  string             `json:"commit"`
+	Machine string             `json:"machine"`
+	TempDir string             `json:"os_temp_dir"`
+	Records int64              `json:"records"`
+	Values  map[string]float64 `json:"values"`
+	Plans   map[string]string  `json:"plans,omitempty"`
+	Phases  map[string]float64 `json:"verify_phases_s,omitempty"`
+}
+
+// newScaleResult starts a run record. The commit is passed in; the measured OS temp directory is the
+// one the ostemp_added_<phase> values were taken in (D61).
+func newScaleResult(label, commit, machine string, n int64) *scaleResult {
+	return &scaleResult{TempDir: os.TempDir(),
+		Label: label, Commit: commit, Machine: machine, Records: n,
+		Values: map[string]float64{}, Plans: map[string]string{}, Phases: map[string]float64{},
+	}
+}
+
+func TestRunRecordNamesTheMeasuredOSTempDir(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TMP", dir)
+	t.Setenv("TEMP", dir)
+	t.Setenv("TMPDIR", dir)
+	r := newScaleResult("l", "c", "m", 1)
+	if r.TempDir != os.TempDir() || r.TempDir != dir {
+		t.Fatalf("run record names os temp dir %q, want the measured %q", r.TempDir, dir)
+	}
+	b, err := json.Marshal(r)
+	if err != nil || !strings.Contains(string(b), `"os_temp_dir":`+strconv.Quote(dir)) {
+		t.Fatalf("json %s (err %v) lacks os_temp_dir", b, err)
 	}
 }

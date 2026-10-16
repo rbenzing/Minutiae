@@ -44,7 +44,7 @@ on Windows). Spill is therefore measured two ways and the record says which one 
    and `TMPDIR` point to a directory under the scale directory and outside both cases, so the listing
    covers this run only. A difference fails the run; it is a leak of evidence text and a defect, not a
    number. A recorded 0 means "no file appeared in or vanished from the directory between the two
-   listings"; a file created and removed inside the phase is not seen (the unit-level watcher in
+   listings" (the run record names the measured directory as `os_temp_dir`); a file created and removed inside the phase is not seen (the unit-level watcher in
    `internal/records/tempspill_test.go` polls for those, and its limit is stated there).
 2. Size of the scratch space inside the case: `verify_scratch_bytes`, the largest size of
    `<case>/tmp/verify-*` the 500 ms sampler read while verify ran. It is read through directory

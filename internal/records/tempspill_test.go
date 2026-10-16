@@ -135,12 +135,11 @@ func TestIngestAndReindexLeaveNoSQLiteTempFileOutsideTheCase(t *testing.T) {
 	stop := watchTemp(tmp)
 	defer stop()
 	// The case setup ran a ReadTx, which leaves temp_store = MEMORY on the one pooled connection, so
-	// without this reset the pragma the setup left behind would hide a missing one (ruling D53). The
-	// pooled connection goes back to the default with a tiny page cache, so any sorter or temporary
-	// table the ingest, the supersede or the reindex needs would overflow into a file. Limit, stated:
-	// every later ReadTx sets MEMORY again and leaves it, so this test fails when ReadTx, StoreTx and
-	// the connector pragmas are all gone (checked by mutation), while the write-path pragmas are pinned
-	// on their own by TestStoreTxUsesMemoryForTemporaryStorage (internal/evidence).
+	// the file watcher alone cannot tell a missing pragma from a pragma the setup left behind (ruling
+	// D53). The pooled connection therefore goes back to the default with a tiny page cache, so any
+	// sorter or temporary table the ingest, the supersede or the reindex needs would overflow into a
+	// file. The DETERMINISTIC signal is the pragma state read directly after the work (below, D60);
+	// the file watcher is a second signal and a sample (a poll), not a proof.
 	if err := c.StoreTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.Exec(`PRAGMA temp_store = DEFAULT`); err != nil {
 			return err
@@ -161,6 +160,16 @@ func TestIngestAndReindexLeaveNoSQLiteTempFileOutsideTheCase(t *testing.T) {
 	if _, err := c.ReindexText(ctx, evidence.ReindexOptions{}); err != nil {
 		t.Fatal(err)
 	}
+	// Direct signal (D60): a ReadTx-free read of the write connection after the work. It is exact, not a
+	// sample: with the connector, StoreTx and ReadTx pragmas all removed it reads 0 (DEFAULT) every time.
+	var ts int
+	if err := c.StoreTx(ctx, func(tx *sql.Tx) error { return tx.QueryRow(`PRAGMA temp_store`).Scan(&ts) }); err != nil {
+		t.Fatal(err)
+	}
+	if ts != 2 {
+		t.Fatalf("PRAGMA temp_store on the write connection after ingest and reindex = %d, want 2 (MEMORY)", ts)
+	}
+	// Second signal, a sample: no SQLite temp file was seen in the redirected OS temp directory.
 	if seen := stop(); len(seen) != 0 {
 		t.Fatalf("SQLite temp files appeared outside the case (the evidence text can spill there): %q", seen)
 	}

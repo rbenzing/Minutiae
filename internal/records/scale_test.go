@@ -36,16 +36,6 @@ const (
 
 var scaleTypes = []string{"message", "web_visit", "call", "location", "file", "event", "contact", "calendar_event", "note"}
 
-type scaleResult struct {
-	Label   string             `json:"label"`
-	Commit  string             `json:"commit"`
-	Machine string             `json:"machine"`
-	Records int64              `json:"records"`
-	Values  map[string]float64 `json:"values"`
-	Plans   map[string]string  `json:"plans,omitempty"`
-	Phases  map[string]float64 `json:"verify_phases_s,omitempty"`
-}
-
 type scaleState struct {
 	t       *testing.T
 	res     *scaleResult
@@ -111,10 +101,7 @@ func TestScale(t *testing.T) {
 	for _, p := range strings.Split(envOr("MINUTIAE_SCALE_PHASES", "ingest,queries,search,stats,untouched,verify"), ",") {
 		phases[strings.TrimSpace(p)] = true
 	}
-	res := &scaleResult{
-		Label: label, Commit: gitCommit(), Machine: machine, Records: n,
-		Values: map[string]float64{}, Plans: map[string]string{}, Phases: map[string]float64{},
-	}
+	res := newScaleResult(label, gitCommit(), machine, n)
 	defer func() { // partial results survive a failure
 		if out := os.Getenv("MINUTIAE_SCALE_OUT"); out != "" {
 			b, _ := json.MarshalIndent(res, "", "  ")
