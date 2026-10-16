@@ -341,6 +341,7 @@ type showJSON struct {
 	Batch              batchJSON               `json:"batch"`
 	Run                *runJSON                `json:"run"`
 	SupersededBy       string                  `json:"superseded_by,omitempty"`
+	IncompleteIngest   *gapJSON                `json:"incomplete_ingest,omitempty"`
 	Provenance         provJSON                `json:"provenance"`
 }
 
@@ -429,6 +430,10 @@ func newRecordsShowCmd(d Deps, opts *rootOptions) *cobra.Command {
 			if payload {
 				j.Payload = full.Payload
 			}
+			if full.Gap != nil {
+				g := gapOf(*full.Gap)
+				j.IncompleteIngest = &g
+			}
 			if full.Run != nil {
 				run := runJSON{
 					IngestID: full.Run.IngestID, AnalysisID: full.Run.AnalysisID, Parser: full.Run.Parser, ParserVersion: full.Run.ParserVersion,
@@ -516,6 +521,9 @@ func printFull(out io.Writer, f records.Full, payload bool) error {
 		ru := f.Run
 		p("run", "%s, %d batches, %d records (ids %d-%d), ended %s, audit seq %d",
 			printable(ru.Outcome), ru.Batches, ru.Records, ru.FirstID, ru.LastID, printable(ru.Ended), ru.AuditSeq)
+	}
+	if f.Gap != nil {
+		p("run", "%s", gapText(*f.Gap))
 	}
 	if f.SupersededBy != "" {
 		p("superseded by", "%s", printable(f.SupersededBy))
@@ -650,6 +658,8 @@ type overviewJSON struct {
 	TSMinMicro        *int64           `json:"ts_min_us"`
 	TSMaxMicro        *int64           `json:"ts_max_us"`
 	Runs              map[string]int64 `json:"runs"`
+	// Unfinished lists the ingests that are not complete in the database (never concluded, or recovered after batches were lost).
+	Unfinished []gapJSON `json:"unfinished"`
 }
 
 type indexJSON struct {
@@ -731,7 +741,7 @@ func newRecordsStatsCmd(d Deps, opts *rootOptions) *cobra.Command {
 				Overview: overviewJSON{
 					Records: ov.Records, Deleted: ov.Deleted, Recovered: ov.Recovered, Untimed: ov.Untimed,
 					SupersededRecords: ov.SupersededRecords, TSMin: microsPtr(ov.TSMin), TSMax: microsPtr(ov.TSMax),
-					TSMinMicro: ov.TSMin, TSMaxMicro: ov.TSMax, Runs: ov.Runs,
+					TSMinMicro: ov.TSMin, TSMaxMicro: ov.TSMax, Runs: ov.Runs, Unfinished: gapsJSON(ov.Gaps),
 				},
 				Index: indexJSON{State: ix.Kind, Value: ix.Value, Current: ix.Current, WordDocs: ix.WordDocs, SubstringDocs: ix.SubstringDocs},
 				By:    *by, Rows: make([]statRowJSON, 0, len(res.Rows)), More: res.More,
@@ -773,6 +783,9 @@ func printStats(w io.Writer, ov records.Overview, ix records.IndexStatus, by str
 		runs = []string{"none"}
 	}
 	fmt.Fprintf(w, "runs:         %s\n", strings.Join(runs, ", "))
+	for _, g := range ov.Gaps {
+		fmt.Fprintf(w, "unfinished:   %s\n", gapText(g))
+	}
 	if ix.Kind == "unavailable" {
 		fmt.Fprintln(w, "index:        unavailable (the case schema is older than v3; run: minutiae case upgrade)")
 	} else {
@@ -789,4 +802,43 @@ func printStats(w io.Writer, ov records.Overview, ix records.IndexStatus, by str
 		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\n", printable(s.Key), s.Count, first, last)
 	}
 	_ = tw.Flush()
+}
+
+// gapJSON is an ingest the database cannot show as complete: AbsentBatches were audited (and fsynced) but
+// their rows are not in the database (a power loss after a relaxed-sync ingest, ruling D89).
+type gapJSON struct {
+	IngestID      string `json:"ingest_id"`
+	Parser        string `json:"parser,omitempty"`
+	ParserVersion string `json:"parser_version,omitempty"`
+	Recovered     bool   `json:"recovered"`
+	AbsentBatches []int  `json:"absent_batches"`
+}
+
+func gapOf(g records.IngestGap) gapJSON {
+	return gapJSON{IngestID: g.IngestID, Parser: g.Parser, ParserVersion: g.ParserVersion, Recovered: g.Recovered, AbsentBatches: append([]int{}, g.AbsentBatches...)}
+}
+
+func gapsJSON(gs []records.IngestGap) []gapJSON {
+	out := make([]gapJSON, 0, len(gs))
+	for _, g := range gs {
+		out = append(out, gapOf(g))
+	}
+	return out
+}
+
+// gapText is the one-line statement of a gap; a run with a gap is never described as complete.
+func gapText(g records.IngestGap) string {
+	state := "never concluded (no completion record)"
+	if g.Recovered {
+		state = "recovered as interrupted"
+	}
+	s := fmt.Sprintf("INCOMPLETE ingest %s (%s %s): %s", printable(g.IngestID), printable(g.Parser), printable(g.ParserVersion), state)
+	if len(g.AbsentBatches) > 0 {
+		nos := make([]string, len(g.AbsentBatches))
+		for i, n := range g.AbsentBatches {
+			nos[i] = strconv.Itoa(n)
+		}
+		s += "; batches audited but absent from the database: " + strings.Join(nos, ", ")
+	}
+	return s
 }
