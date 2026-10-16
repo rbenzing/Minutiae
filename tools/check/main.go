@@ -13,48 +13,12 @@ import (
 	"strings"
 )
 
-type step struct {
-	env  []string // extra environment, KEY=VALUE
-	args []string
-	// prepare, when set, builds args just before the step runs; an error fails the check.
-	prepare func() ([]string, error)
-}
-
 func main() {
-	steps := []step{
-		{args: []string{"go", "mod", "tidy", "-diff"}},
-		{args: []string{"go", "vet", "./..."}},
-		{args: []string{"go", "run", "./tools/parserhash", "-check"}},
-		{args: []string{"go", "tool", "golangci-lint", "run", "./..."}},
-		{args: []string{"go", "build", "-o", binPath(), "./cmd/minutiae"}},
-		// cgo policy: the pure-Go (CGO_ENABLED=0) static build must always work
-		// on every supported OS, so it is proven on the host too (cgo defaults
-		// to on wherever a C toolchain exists).
-		pureBuild(),
-		crossBuild("linux", "amd64"),
-		crossBuild("darwin", "arm64"),
+	if _, err := os.Stat("go.mod"); err != nil {
+		fmt.Fprintln(os.Stderr, "CHECK FAILED: run tools/check from the module root")
+		os.Exit(1)
 	}
-	steps = append(steps, testSteps()...)
-	for _, s := range steps {
-		if s.prepare != nil {
-			args, err := s.prepare()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "CHECK FAILED preparing a test step: %v\n", err)
-				os.Exit(1)
-			}
-			s.args = args
-		}
-		line := strings.Join(append(append([]string{}, s.env...), s.args...), " ")
-		fmt.Printf("==> %s\n", line)
-		cmd := exec.Command(s.args[0], s.args[1:]...) //nolint:gosec // fixed, trusted command list
-		cmd.Env = append(os.Environ(), s.env...)
-		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-		if err := cmd.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "CHECK FAILED at %q: %v\n", line, err)
-			os.Exit(1)
-		}
-	}
-	fmt.Println("CHECK PASSED")
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, realEnv()))
 }
 
 // pureBuild compiles the CLI for the host with cgo disabled and discards the
@@ -116,26 +80,15 @@ var raceConcurrencyTests = []string{
 // slowRacePackages are tested under -race only through raceConcurrencyTests.
 var slowRacePackages = []string{"./internal/evidence", "./internal/records"}
 
-// testSteps returns the test steps. Without a race detector: one plain, cached run.
-// With it: (1) every test without -race, (2) every package except the slow
-// ones under -race, (3) the concurrency tests of the slow packages under -race.
-func testSteps() []step {
-	race := raceSupported()
-	if !race {
-		fmt.Println("note: race detector unavailable (needs cgo and a C compiler); running tests without -race")
-	}
-	return testStepsFor(race)
-}
-
 // testStepsFor is the pure decision. The FAST form (no race detector) uses Go's test cache, which
 // invalidates on any source, dependency, environment or opened-file change, so unchanged packages
 // print "(cached)". The RACE gate is the full merge gate and runs every test uncached (-count=1).
 func testStepsFor(race bool) []step {
 	if !race {
-		return []step{{args: []string{"go", "test", "./..."}}}
+		return []step{{args: []string{"go", "test", "-timeout", testTimeout, "./..."}}}
 	}
 	return []step{
-		{args: []string{"go", "test", "-count=1", "./..."}},
+		{args: []string{"go", "test", "-timeout", testTimeout, "-count=1", "./..."}},
 		{prepare: raceOthersCmd},
 		{prepare: raceConcurrencyCmd},
 	}
@@ -155,7 +108,7 @@ func raceOthersCmd() ([]string, error) {
 	for _, p := range slowRacePackages {
 		skip[prefix+strings.TrimPrefix(p, ".")] = true
 	}
-	args := []string{"go", "test", "-race", "-timeout", "30m", "-count=1"}
+	args := []string{"go", "test", "-race", "-timeout", testTimeout, "-count=1"}
 	n := 0
 	for _, p := range strings.Fields(string(out)) {
 		if !skip[p] {
@@ -190,7 +143,7 @@ func raceConcurrencyCmd() ([]string, error) {
 		return nil, fmt.Errorf("raceConcurrencyTests names no test: %s", strings.Join(missing, ", "))
 	}
 	pattern := "^(" + strings.Join(raceConcurrencyTests, "|") + ")$"
-	args := []string{"go", "test", "-race", "-timeout", "30m", "-count=1", "-run", pattern}
+	args := []string{"go", "test", "-race", "-timeout", testTimeout, "-count=1", "-run", pattern}
 	return append(args, slowRacePackages...), nil
 }
 
@@ -205,4 +158,22 @@ func raceSupported() bool {
 	}
 	_, err = exec.LookPath(f[1])
 	return err == nil
+}
+
+// fullSteps is the whole check: the default form, and the RACE gate when race is true.
+func fullSteps(race bool) []step {
+	steps := []step{
+		{args: []string{"go", "mod", "tidy", "-diff"}},
+		{args: []string{"go", "vet", "./..."}},
+		{args: []string{"go", "run", "./tools/parserhash", "-check"}},
+		{args: []string{"go", "tool", "golangci-lint", "run", "./..."}},
+		{args: []string{"go", "build", "-o", binPath(), "./cmd/minutiae"}},
+		// cgo policy: the pure-Go (CGO_ENABLED=0) static build must always work
+		// on every supported OS, so it is proven on the host too (cgo defaults
+		// to on wherever a C toolchain exists).
+		pureBuild(),
+		crossBuild("linux", "amd64"),
+		crossBuild("darwin", "arm64"),
+	}
+	return append(steps, testStepsFor(race)...)
 }
