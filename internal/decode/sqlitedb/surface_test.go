@@ -75,6 +75,7 @@ func TestSqlitefileSurfaceUsedByTheDecoder(_ *testing.T) {
 	pin[sqlitefile.Loc](r.Loc)
 	pin[bool](r.LengthMismatch)
 	pin[bool](r.KeyRangeViolation)
+	pin[bool](r.BeyondEngineDepth)
 
 	var v sqlitefile.Value
 	pin[sqlitefile.Kind](v.Kind)

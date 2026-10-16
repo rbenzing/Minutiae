@@ -17,12 +17,13 @@ type RowFlags uint16
 
 // The row flags.
 const (
-	FlagLengthMismatch RowFlags = 1 << iota // the record is longer than its header and body account for
-	FlagKeyRange                            // the rowid lies outside the key range its position promises
-	FlagOverflowMixed                       // overflow pages lie in a different file or frame than the cell
-	FlagExtraValues                         // the record holds values beyond the declared columns
-	FlagShortRecord                         // the record ended before the last stored column
-	FlagUnknownValues                       // some declared column is not Known
+	FlagLengthMismatch    RowFlags = 1 << iota // the record is longer than its header and body account for
+	FlagKeyRange                               // the rowid lies outside the key range its position promises
+	FlagOverflowMixed                          // overflow pages lie in a different file or frame than the cell
+	FlagExtraValues                            // the record holds values beyond the declared columns
+	FlagShortRecord                            // the record ended before the last stored column
+	FlagUnknownValues                          // some declared column is not Known
+	FlagBeyondEngineDepth                      // the row was read from a tree level deeper than the engine follows
 )
 
 // Loc says where a row's cell lies on disk.

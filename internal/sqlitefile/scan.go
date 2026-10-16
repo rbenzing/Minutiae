@@ -352,7 +352,7 @@ func (w *walker) rowFor(n node, ptr CellPointer, c Cell, ovf visitor) (row Row, 
 	row = Row{
 		Rowid: c.Rowid, HasRowid: c.HasRowid, Values: rec.Values, PayloadLen: c.PayloadLen,
 		Loc:            newLoc(n.loc, n.pgno, ptr.Index, c, p.provenance(), v.e.opts.Limits.MaxLocOverflow),
-		LengthMismatch: rec.LengthMismatch,
+		LengthMismatch: rec.LengthMismatch, BeyondEngineDepth: n.depth > engineMaxBTreeDepth,
 	}
 	return row, held, true, nil
 }

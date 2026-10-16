@@ -48,6 +48,11 @@ type Row struct {
 	// account for, or has no columns (see Record.LengthMismatch); the values are
 	// delivered and a record-length-mismatch warning is raised.
 	LengthMismatch bool
+	// BeyondEngineDepth: the row (or index entry) was read from a node deeper than
+	// the engine cursor follows (20 levels). The engine calls such a tree corrupt
+	// and would not return the row; the reader delivers it, warns btree-depth and
+	// flags every row it reads from there.
+	BeyondEngineDepth bool
 }
 
 // Clone returns a copy that owns all its memory and stays valid after the

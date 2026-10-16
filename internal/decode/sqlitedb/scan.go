@@ -107,6 +107,9 @@ func damageFlags(raw sqlitefile.Row) RowFlags {
 	if raw.KeyRangeViolation {
 		f |= FlagKeyRange
 	}
+	if raw.BeyondEngineDepth {
+		f |= FlagBeyondEngineDepth
+	}
 	return f
 }
 
