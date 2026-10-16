@@ -41,6 +41,8 @@ const (
 	defaultBatchRows  = 5000
 	maxBatchRows      = 20000
 	defaultBatchBytes = 32 << 20
+	defaultCacheKiB   = 256 << 10
+	maxCacheKiB       = 1 << 20
 	maxBatchBytes     = 1 << 30
 	maxAnalysisID     = 128
 	maxErrorText      = 2048
@@ -57,6 +59,7 @@ const (
 // or about BatchBytes bytes.
 type WriterOptions struct {
 	BatchRows  int // default 5000, max 20000
+	CacheKiB   int // page cache for batch transactions, KiB; default 262144 (256 MiB), max 1048576
 	BatchBytes int // default 32 MiB
 }
 
@@ -147,8 +150,14 @@ func NewWriter(c *evidence.Case, p Parser, o WriterOptions) (*Writer, error) {
 	if o.BatchBytes == 0 {
 		o.BatchBytes = defaultBatchBytes
 	}
+	if o.CacheKiB == 0 {
+		o.CacheKiB = defaultCacheKiB
+	}
 	if o.BatchRows < 1 || o.BatchRows > maxBatchRows {
 		return nil, fmt.Errorf("%w: BatchRows %d must be 1..%d", ErrInvalidOptions, o.BatchRows, maxBatchRows)
+	}
+	if o.CacheKiB < 1 || o.CacheKiB > maxCacheKiB {
+		return nil, fmt.Errorf("%w: CacheKiB %d must be 1..%d", ErrInvalidOptions, o.CacheKiB, maxCacheKiB)
 	}
 	if o.BatchBytes < 1 || o.BatchBytes > maxBatchBytes {
 		return nil, fmt.Errorf("%w: BatchBytes %d must be 1..%d", ErrInvalidOptions, o.BatchBytes, maxBatchBytes)
@@ -505,7 +514,7 @@ func boolInt(b bool) int {
 // failure anywhere leaves none of them.
 func (w *Writer) insertBatch(ctx context.Context, batchNo int, first int64, digest, created string, docs []evidence.FTSDoc) error {
 	n := len(w.buf)
-	return w.c.StoreTx(ctx, func(tx *sql.Tx) error {
+	return w.c.StoreTxTuned(ctx, evidence.TxTuning{CacheKiB: w.opt.CacheKiB}, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `INSERT INTO record_batches (ingest_id, batch_no, first_id, count, digest, created) VALUES (?, ?, ?, ?, ?, ?)`,
 			w.IngestID(), batchNo, first, n, digest, created)
 		if err != nil {

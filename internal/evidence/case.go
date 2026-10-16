@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rbenzing/minutiae/internal/version"
@@ -63,6 +64,9 @@ type Case struct {
 	store      *Store
 	lock       *caseLock
 	manifestMu sync.Mutex
+
+	// lastTuneKiB is the cache size of the last tuned StoreTxTuned (LastStoreTuning).
+	lastTuneKiB atomic.Int64
 
 	// liveIngest is the id of the records ingest running in this process, if any
 	// (see BeginIngest).
