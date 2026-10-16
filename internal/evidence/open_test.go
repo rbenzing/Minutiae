@@ -112,7 +112,7 @@ func TestDerivationRoundTripsThroughManifestAndAudit(t *testing.T) {
 		Mode: 0o100644, UID: 1000, GID: 1000,
 		Times:     map[string]string{"modified": "2024-01-02T03:04:05Z"},
 		Encrypted: true,
-		Runs:      []Run{{Offset: 4096, Length: 512}, {Offset: -1, Length: 1024}},
+		Runs:      []Run{{Offset: 4096, Length: 3}, {Offset: -1, Length: 1}},
 	}
 	// A real parent, so the derivation verifies cleanly.
 	parent, err := c.Capture("dev1", "acq0", "img.bin", testSrc, func(w io.Writer) error {

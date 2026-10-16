@@ -174,6 +174,7 @@ func (c *Case) verifyRecovered(rep *VerifyReport, recs []ManifestRecord) {
 		}
 	}
 
+	c.checkRunSums(ps, uniq, byID) // R8 (E41): not skipped when nothing is recovered
 	if rep.RecoveredArtifacts == 0 {
 		return
 	}
