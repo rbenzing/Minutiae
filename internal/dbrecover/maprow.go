@@ -107,6 +107,9 @@ func summaryValue(v sqlitefile.Value) string {
 	case v.Unread:
 		return "<unread>"
 	case v.Omitted:
+		if v.DefaultUndecided != sqlitefile.DefaultReasonNone {
+			return "<omitted: " + v.DefaultUndecided.String() + ">"
+		}
 		return "<omitted>"
 	}
 	switch v.Kind {

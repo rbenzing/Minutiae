@@ -115,6 +115,9 @@ func encodeValue(i int, v sqlitefile.Value, b *valueBudget) map[string]any {
 		}
 	case v.Omitted:
 		m["omitted"] = true
+		if v.DefaultUndecided != sqlitefile.DefaultReasonNone {
+			m["default_undecided"] = v.DefaultUndecided.String()
+		}
 	default:
 		if isBytes && minEncodedBytes(v) > b.left+degSize {
 			return deg

@@ -65,6 +65,8 @@ func TestEncodeValueTable(t *testing.T) {
 		{"blob", sqlitefile.Value{Kind: sqlitefile.KindBlob, Bytes: []byte{0, 1, 2}, Len: 3, Serial: 18}, map[string]any{"i": int64(3), "type": "blob", "value_b64": "AAEC", "len": int64(3), "serial": int64(18)}},
 		{"blob empty", sqlitefile.Value{Kind: sqlitefile.KindBlob, Bytes: []byte{}, Serial: 12}, map[string]any{"i": int64(3), "type": "blob", "value_b64": "", "len": int64(0), "serial": int64(12)}},
 		{"omitted text", sqlitefile.Value{Kind: sqlitefile.KindText, Omitted: true, Len: 9000, Enc: sqlitefile.EncUTF8}, map[string]any{"i": int64(3), "type": "text", "omitted": true, "len": int64(9000), "enc": "UTF-8"}},
+		{"omitted default expression", sqlitefile.Value{Omitted: true, DefaultUndecided: sqlitefile.DefaultReasonExpression}, map[string]any{"i": int64(3), "type": "null", "omitted": true, "default_undecided": "default is an expression"}},
+		{"omitted default inexact", sqlitefile.Value{Omitted: true, DefaultUndecided: sqlitefile.DefaultReasonInexactLiteral}, map[string]any{"i": int64(3), "type": "null", "omitted": true, "default_undecided": "default literal is not converted exactly"}},
 		{"unread int", sqlitefile.Value{Kind: sqlitefile.KindInt, Unread: true}, map[string]any{"i": int64(3), "type": "integer", "unread": true}},
 		{"unread real", sqlitefile.Value{Kind: sqlitefile.KindFloat, Unread: true, Float: 2.5}, map[string]any{"i": int64(3), "type": "real", "unread": true}},
 		{"unread blob", sqlitefile.Value{Kind: sqlitefile.KindBlob, Unread: true, Omitted: true, Len: 10}, map[string]any{"i": int64(3), "type": "blob", "unread": true, "omitted": true, "len": int64(10)}},
@@ -275,5 +277,27 @@ func TestEncodeNameIsExact(t *testing.T) {
 		if err := validateDBRow(p); err != nil {
 			t.Errorf("%s: the validator refuses the encoding: %v", name, err)
 		}
+	}
+}
+
+func TestUndecidedDefaultReasonIsKeptInOutput(t *testing.T) {
+	for _, r := range []sqlitefile.DefaultReason{sqlitefile.DefaultReasonExpression, sqlitefile.DefaultReasonInexactLiteral} {
+		v := sqlitefile.Value{Omitted: true, DefaultUndecided: r}
+		if got, want := summaryValue(v), "<omitted: "+r.String()+">"; got != want {
+			t.Errorf("summary %q, want %q", got, want)
+		}
+		if got := summaryValue(sqlitefile.Value{Omitted: true}); got != "<omitted>" {
+			t.Errorf("plain omitted summary %q", got)
+		}
+		p := validPayload()
+		p["columns"] = []any{map[string]any{"i": int64(0), "type": "null", "omitted": true, "default_undecided": r.String()}}
+		if err := validateDBRow(p); err != nil {
+			t.Errorf("reason %q refused: %v", r, err)
+		}
+	}
+	p := validPayload()
+	p["columns"] = []any{map[string]any{"i": int64(0), "type": "null", "omitted": true, "default_undecided": "because"}}
+	if validateDBRow(p) == nil {
+		t.Error("an unknown reason was accepted")
 	}
 }
