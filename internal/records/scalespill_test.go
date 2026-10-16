@@ -168,8 +168,8 @@ type scaleResult struct {
 // newScaleResult starts a run record. The commit is passed in; the measured OS temp directory is the
 // one the ostemp_added_<phase> values were taken in (D61).
 func newScaleResult(label, commit, machine string, n int64) *scaleResult {
-	return &scaleResult{TempDir: os.TempDir(),
-		Label: label, Commit: commit, Machine: machine, Records: n,
+	return &scaleResult{
+		Label: label, Commit: commit, Machine: machine, TempDir: os.TempDir(), Records: n,
 		Values: map[string]float64{}, Plans: map[string]string{}, Phases: map[string]float64{},
 	}
 }
