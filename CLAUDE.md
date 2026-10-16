@@ -71,6 +71,13 @@ Auto-fix formatting with `go tool golangci-lint fmt`.
   the Docker Desktop VM; fixture containers run without `--privileged` unless the fixture
   docs say otherwise.
 
+## Workspace hygiene
+- Worktrees live only under `.claude/worktrees/<id>` (gitignored), never beside the project.
+  Agent scratch lives only in `.claude/scratch/<plan>-<task>-<role>/` and is deleted before the
+  hand-back. Never write to `/tmp`, `c:\tmp` or anywhere else outside the project.
+- Leave nothing behind: no running processes or containers, no log files, no `.orig`/`.bak`
+  copies, no helper scripts or tools that are not part of the project.
+
 ## Git
 - Use `git` only. Never `gh` (not installed). For GitHub use the web UI or REST API via `curl`.
 - Never commit `cases/`, real evidence, or device dumps. `docs/superpowers/` stays local.
