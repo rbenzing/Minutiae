@@ -4,6 +4,7 @@ package device
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
@@ -110,4 +111,21 @@ func (p *progressWriter) Write(b []byte) (int, error) {
 // WriteCounter wraps w so that every write reports progress.
 func WriteCounter(w io.Writer, total int64, progress ProgressFunc) io.Writer {
 	return &progressWriter{w: w, total: total, progress: progress}
+}
+
+// ErrPartialListing marks a directory listing that returned the entries it
+// could read and failed to read others (or was cut at a limit).
+var ErrPartialListing = errors.New("listing is partial: some entries could not be read")
+
+// MarshalJSON writes mod_time as null when ModTime is the zero time: a time the
+// device did not give is unknown, never 0001-01-01.
+func (e FileEntry) MarshalJSON() ([]byte, error) {
+	type plain FileEntry
+	if e.ModTime.IsZero() {
+		return json.Marshal(struct {
+			plain
+			ModTime *time.Time `json:"mod_time"`
+		}{plain: plain(e)})
+	}
+	return json.Marshal(plain(e))
 }

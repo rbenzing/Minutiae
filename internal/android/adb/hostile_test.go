@@ -84,7 +84,7 @@ func hostileSync(t *testing.T, reply func(w io.Writer)) *adb.Sync {
 		}
 		_, _ = io.Copy(io.Discard, c) // hold the session open until the client closes it
 	})
-	s, err := c.Sync(context.Background(), "H1")
+	s, err := c.SyncWith(context.Background(), "H1", adb.SyncV1)
 	if err != nil {
 		t.Fatal(err)
 	}
