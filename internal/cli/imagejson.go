@@ -67,6 +67,9 @@ type jsonEntry struct {
 type pathEntry struct {
 	Path  string    `json:"path"`
 	Entry jsonEntry `json:"entry"`
+	// Snapshot names the snapshot an entry of an opted-in recursive listing (--include-snapshots)
+	// was read from: such an entry is historical data, never live. Absent for every other entry.
+	Snapshot string `json:"snapshot,omitempty"`
 }
 
 func newPathEntry(p string, e filesys.Entry) pathEntry {
