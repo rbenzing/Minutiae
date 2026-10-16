@@ -95,3 +95,44 @@ func TestOpenVerifyParentHonoursCancel(t *testing.T) {
 		t.Fatalf("err = %v, want context.Canceled and not an integrity error", err)
 	}
 }
+
+// X41: with three segments the progress denominator is the sum over all of them
+// from the first report on, and 100% is reached only by the last segment.
+func TestOpenVerifyParentProgressSpansThreeSegments(t *testing.T) {
+	c := newCase(t)
+	data := disk(fstest.Build(fstest.BuildSpec{Label: "L", Nodes: []fstest.Node{{Path: "/a.txt", Data: bytes.Repeat([]byte("x"), 30000)}}}))
+	recs := importImage(t, c, data, 3)
+	if len(recs) != 3 {
+		t.Fatalf("%d segments, want 3", len(recs))
+	}
+	var sum int64
+	for _, r := range recs {
+		sum += r.Size
+	}
+	type report struct{ done, total int64 }
+	var reports []report
+	opts := mtfsOpts()
+	opts.VerifyParent = true
+	opts.VerifyProgress = func(done, total int64) { reports = append(reports, report{done, total}) }
+	s, err := examine.OpenContainer(c, recs[0].ID, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	if len(reports) == 0 {
+		t.Fatal("no progress reported")
+	}
+	var prev int64
+	for i, r := range reports {
+		if r.total != sum || r.done < prev || r.done > sum {
+			t.Fatalf("report %d = %+v (previous done %d), want total %d and done rising up to it", i, r, prev, sum)
+		}
+		if r.done == sum && i != len(reports)-1 {
+			t.Fatalf("100%% reached at report %d of %d: %+v", i, len(reports), reports)
+		}
+		prev = r.done
+	}
+	if prev != sum {
+		t.Fatalf("final done = %d, want %d", prev, sum)
+	}
+}

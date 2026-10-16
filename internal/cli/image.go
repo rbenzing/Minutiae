@@ -150,8 +150,9 @@ func newImageImportCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		defer func() { _ = c.Close() }()
-		recs, err := examine.Import(cmd.Context(), c, deviceID, args, newProgress(d.Err, "import"))
-		fmt.Fprintln(d.Err)
+		prog, endProg := newLineProgress(d.Err, "import")
+		recs, err := examine.Import(cmd.Context(), c, deviceID, args, prog)
+		endProg()
 		if opts.json {
 			if len(recs) > 0 {
 				if jerr := writeJSON(d.Out, recs); jerr != nil && err == nil {
@@ -816,11 +817,12 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 				}
 			}
 		}
+		prog, endProg := newLineProgress(d.Err, "extract")
 		sum, err := s.Extract(cmd.Context(), examine.ExtractOptions{
-			Partition: pidx, Paths: paths, Recursive: recursive, Progress: newProgress(d.Err, "extract"),
+			Partition: pidx, Paths: paths, Recursive: recursive, Progress: prog,
 			MaxFiles: maxFiles, MaxBytes: maxBytes,
 		})
-		fmt.Fprintln(d.Err)
+		endProg()
 		if sum.AnalysisID == "" {
 			return err // nothing ran
 		}
@@ -890,10 +892,11 @@ func newImageUnallocCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		defer closeAll()
+		prog, endProg := newLineProgress(d.Err, "unalloc")
 		sum, err := s.ExportUnallocated(cmd.Context(), examine.UnallocOptions{
-			Partition: pidx, Volume: volumeMode, Progress: newProgress(d.Err, "unalloc"),
+			Partition: pidx, Volume: volumeMode, Progress: prog,
 		})
-		fmt.Fprintln(d.Err)
+		endProg()
 		if sum.AnalysisID == "" {
 			return err
 		}

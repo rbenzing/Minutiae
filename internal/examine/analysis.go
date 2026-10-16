@@ -27,7 +27,8 @@ type Summary struct {
 	// filesystem already had at the start are audited but not counted.
 	FSWarnings int
 	// OutputLimit is "" or the output limit that stopped the run ("max-files" or
-	// "max-bytes"): the files after the refused one were not extracted.
+	// "max-bytes"): the files after the refused one were not extracted, and they are
+	// not in Skipped either (the walk stopped; only the refused file is warned about).
 	OutputLimit string
 }
 

@@ -101,3 +101,27 @@ func TestExtractSkipsFileWhoseDataRunsOverlap(t *testing.T) {
 		})
 	}
 }
+
+// brokenFile reads as corrupt from the first byte.
+type brokenFile struct{ filesys.File }
+
+func (brokenFile) ReadAt([]byte, int64) (int, error) { return 0, filesys.ErrCorrupt }
+
+// X39: bytes admitted for a file that then could not be read are given back, so a
+// later file that fits the output limit is still extracted.
+func TestExtractBudgetRefundsAFileThatCouldNotBeRead(t *testing.T) {
+	c := newCase(t)
+	s, _ := sessionHook(t, c, hookFS{mapFile: func(e filesys.Entry, file filesys.File) filesys.File {
+		if e.Name == "a.bin" {
+			return brokenFile{file}
+		}
+		return file
+	}}, 0, budgetNodes()...)
+	sum := extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: []string{"/"}, Recursive: true, MaxBytes: int64(5 * blk)})
+	// a.bin is kept empty and incomplete and skipped (its 3 blocks are given back),
+	// b.bin fits the 5 blocks, c.bin does not: the run ends there.
+	if sum.OutputLimit != "max-bytes" || sum.Files != 1 || sum.Bytes != int64(3*blk) || len(sum.Warnings) != 2 ||
+		sum.Warnings[0].Path != "/a.bin" || sum.Warnings[1].Path != "/c.bin" {
+		t.Fatalf("summary = %+v; want b.bin extracted and the limit reached at c.bin", sum)
+	}
+}

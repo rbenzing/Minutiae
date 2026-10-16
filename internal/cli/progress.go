@@ -37,3 +37,16 @@ func newProgress(w io.Writer, label string) device.ProgressFunc {
 		}
 	}
 }
+
+// newLineProgress is newProgress plus end, which finishes the progress line
+// only if progress was printed: a command that fails before reporting any
+// leaves no stray empty line on w.
+func newLineProgress(w io.Writer, label string) (progress device.ProgressFunc, end func()) {
+	base := newProgress(w, label)
+	wrote := false
+	return func(done, total int64) { wrote = true; base(done, total) }, func() {
+		if wrote {
+			fmt.Fprintln(w)
+		}
+	}
+}

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -84,5 +85,30 @@ func TestVerifyParentOpenFailureWritesNoStrayNewline(t *testing.T) {
 	}
 	if got := errOut.String(); strings.HasPrefix(got, "\n") || strings.Contains(got, "\n\n") {
 		t.Fatalf("stderr = %q; want no empty line when no progress was printed", got)
+	}
+}
+
+// X36: import, extract and unalloc end the progress line only if progress was
+// printed; a command that fails before any progress leaves no stray empty line.
+func TestProgressCommandsWriteNoStrayNewline(t *testing.T) {
+	e := newImgEnv(t)
+	cmds := map[string][]string{
+		"import":  {"import", "--case", e.c, filepath.Join(t.TempDir(), "missing.img")},
+		"extract": {"image", "extract", "--case", e.c, e.ref, "-p", "1", "/no-such-file"},
+		"unalloc": {"image", "unalloc", "--case", e.c, e.ref, "-p", "99"},
+	}
+	for name, args := range cmds {
+		if args[0] == "import" {
+			args = append([]string{"image"}, args...)
+		}
+		var errOut bytes.Buffer
+		d := e.d
+		d.Err = &errOut
+		if code, _ := run(t, d, args...); code == 0 {
+			t.Fatalf("%s: expected a failure", name)
+		}
+		if got := errOut.String(); strings.HasPrefix(got, "\n") || strings.Contains(got, "\n\n") {
+			t.Errorf("%s: stderr = %q; want no empty line when no progress was printed", name, got)
+		}
 	}
 }

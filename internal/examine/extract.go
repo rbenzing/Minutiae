@@ -285,6 +285,7 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 
 	dir, err := x.lp.Dir(path.Dir(p))
 	if err != nil {
+		x.b.release(size)
 		return x.a.warn(p, "no usable local directory name: "+err.Error())
 	}
 	var (
@@ -294,6 +295,7 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 	for attempt := 0; ; attempt++ {
 		rel, err := x.lp.File(dir, e.Name)
 		if err != nil {
+			x.b.release(size)
 			return x.a.warn(p, "no usable local name: "+err.Error())
 		}
 		if useSidecar {
@@ -324,6 +326,7 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 			// Belt and braces: LocalPaths caps every component, so this is an
 			// OS limit it does not model (a very deep path). The entry's name,
 			// not the case, is the problem, so skip it and go on.
+			x.b.release(size)
 			return x.a.warn(p, "not extracted: "+nameErr.Error())
 		}
 		if !errors.Is(err, evidence.ErrArtifactExists) {
@@ -337,6 +340,7 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 		// APFS NFC/NFD). The exclusive create failed before any byte was read,
 		// the colliding name stays reserved and the next candidate is tried.
 		if attempt+1 >= maxNameAttempts {
+			x.b.release(size)
 			return x.a.warn(p, fmt.Sprintf("no free local name after %d attempts: %v", attempt+1, err))
 		}
 	}
@@ -348,6 +352,7 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 	case fatal(x.ctx, readErr) || !skippable(readErr):
 		return readErr
 	}
+	x.b.trim(size - rec.Size) // the unwritten part of the admitted size
 	return x.a.warn(p, fmt.Sprintf("read failed after %d of %d bytes (partial artifact kept, flagged incomplete): %v", rec.Size, size, readErr))
 }
 
