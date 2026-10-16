@@ -93,8 +93,8 @@ func TestOracleStatesTheContactRules(t *testing.T) {
 			t.Errorf("row %d: type %q source_path %q", r.Rowid, r.Type, r.SourcePath)
 		}
 	}
-	if len(fx.Expect.Records) != 10 {
-		t.Fatalf("%d records, want 10 (contact 4 identifies nobody)", len(fx.Expect.Records))
+	if len(fx.Expect.Records) != 12 {
+		t.Fatalf("%d records, want 12 (13 raw contacts; contact 4 identifies nobody)", len(fx.Expect.Records))
 	}
 	if len(fx.Expect.Warnings) != 1 || fx.Expect.Warnings[0].Rowid != 4 || !strings.Contains(fx.Expect.Warnings[0].Contains, "identifies nobody") {
 		t.Errorf("warnings %+v: contact 4 must warn", fx.Expect.Warnings)
@@ -173,5 +173,74 @@ func TestOracleStatesTheTombstonesAndTheCaps(t *testing.T) {
 		len(list(t, p["emails"])) != 1000 || num(raw["emails_total"]) != "1100" || raw["emails_truncated"] != true ||
 		len(list(t, raw["notes"])) != 100 || num(raw["notes_total"]) != "130" || raw["notes_truncated"] != true {
 		t.Errorf("caps: phones %d emails %d raw %v", len(list(t, p["phones"])), len(list(t, p["emails"])), raw)
+	}
+}
+
+func rawOf(t *testing.T, r parsertest.ExpRecord) map[string]any { return obj(t, r.Payload["raw"]) }
+
+// T68, T69: the account comes only from accounts joined through raw_contacts.account_id, and the time is the
+// AGGREGATE contact's (contacts.contact_last_updated_timestamp through contact_id), stated under a key that names
+// it and with its source; Record.Time stays unset. An unresolvable join is unknown, never "no account" or a zero time.
+func TestOracleStatesAccountsAndAggregateTimes(t *testing.T) {
+	fx := parsertest.LoadFixture(t, "testdata", "aosp-baseline")
+	byRow := map[int64]parsertest.ExpRecord{}
+	for _, r := range fx.Expect.Records {
+		byRow[r.Rowid] = r
+		if r.Table == "raw_contacts" && r.Time != nil {
+			t.Errorf("row %d: the aggregate's time must not be Record.Time: %v", r.Rowid, *r.Time)
+		}
+	}
+	acct := func(row int64) map[string]any {
+		l := list(t, byRow[row].Payload["accounts"])
+		if len(l) != 1 {
+			t.Fatalf("row %d: accounts %v", row, l)
+		}
+		return obj(t, l[0])
+	}
+	if a := acct(1); a["type"] != "com.google" || a["name"] != "alice@example.test" {
+		t.Errorf("contact 1 account %v", a)
+	}
+	if a := acct(7); a["type"] != "com.samsung.account" || a["name"] != "alice@samsung.test" {
+		t.Errorf("contact 7 account %v", a)
+	}
+	// a NULL account_id: no account and nothing flagged
+	if _, has := byRow[2].Payload["accounts"]; has || rawOf(t, byRow[2])["unknown_columns"] != nil {
+		t.Errorf("contact 2 (NULL account_id): %v", byRow[2].Payload)
+	}
+	// a dangling account_id: unknown, not "no account"
+	r12 := rawOf(t, byRow[12])
+	if _, has := byRow[12].Payload["accounts"]; has || obj(t, r12["unknown_columns"])["account_id"] != "unresolved" || num(r12["account_id"]) != "99" {
+		t.Errorf("contact 12 (dangling account_id): %v", byRow[12].Payload)
+	}
+	// a valid aggregate time, with its source
+	r1 := rawOf(t, byRow[1])
+	if byRow[1].Times["aggregate_last_updated"] != "2023-05-01T10:00:01Z" || num(r1["contact_last_updated_timestamp"]) != "1682935201000" ||
+		r1["contact_last_updated_source"] != "contacts.contact_last_updated_timestamp" || num(r1["contact_id"]) != "1" {
+		t.Errorf("contact 1 time: %v %v", byRow[1].Times, r1)
+	}
+	// a zero and a year-2100 aggregate time: raw and status, no time
+	for row, status := range map[int64]string{9: "sentinel", 10: "invalid"} {
+		r := rawOf(t, byRow[row])
+		if len(byRow[row].Times) != 0 || r["contact_last_updated_timestamp_status"] != status {
+			t.Errorf("contact %d: times %v raw %v", row, byRow[row].Times, r)
+		}
+	}
+	// a NULL contact_id: the time is unknown (never zero); a dangling one is unresolved
+	r11 := rawOf(t, byRow[11])
+	if len(byRow[11].Times) != 0 || obj(t, r11["unknown_columns"])["contact_last_updated_timestamp"] != "no-contact" || r11["contact_last_updated_timestamp"] != nil {
+		t.Errorf("contact 11 (NULL contact_id): %v", byRow[11].Payload)
+	}
+	r13 := rawOf(t, byRow[13])
+	if len(byRow[13].Times) != 0 || obj(t, r13["unknown_columns"])["contact_last_updated_timestamp"] != "unresolved" {
+		t.Errorf("contact 13 (dangling contact_id): %v", byRow[13].Payload)
+	}
+	// three raw contacts of one person: three distinct accounts, one aggregate time
+	m := parsertest.LoadFixture(t, "testdata", "multi-account")
+	want := map[int64]string{1: "com.google", 2: "com.samsung.account", 3: "com.whatsapp"}
+	for _, r := range m.Expect.Records {
+		l := list(t, r.Payload["accounts"])
+		if len(l) != 1 || obj(t, l[0])["type"] != want[r.Rowid] || r.Times["aggregate_last_updated"] != "2023-05-01T10:00:01Z" {
+			t.Errorf("multi-account row %d: %v %v", r.Rowid, r.Payload["accounts"], r.Times)
+		}
 	}
 }

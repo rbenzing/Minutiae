@@ -992,15 +992,20 @@ Its five variants are lone databases, so the oracle states the `contacts2.db` pa
 T51). The oracle restates the `contact` mapping of spec 9.3 (one record per `raw_contacts` row, `data` rows typed through
 `mimetypes`, every `dataN` read as text, `deleted_contacts` tombstones) and reads every stored value back from the engine. The
 snapshot declares `COLLATE PHONEBOOK`, which the platform registers; the generator registers a stand-in collation (no index uses it).
-The pinned tag's `raw_contacts` has no `account_name`, `account_type` or `contact_last_updated_timestamp` column (task 4b), so the
-generator drops those scenario values and the oracle states no `accounts`, no time and no `times.modified` for a raw contact; the
-oracle rules for them are in place and take effect on a snapshot that has the columns.
+The pinned tag's `raw_contacts` has no `account_name`, `account_type` or time column, so the two contacts snapshots carry the
+tag's `accounts` and `contacts` tables too (verbatim, CROSSCHECK.md; ruling T68) and the oracle follows the joins (T69): the
+account comes only from `accounts` through `raw_contacts.account_id` (inline `account_name`/`account_type` count only on a
+schema that has them); a NULL `account_id` is no account, an `account_id` with no `accounts` row is unknown
+(`unknown_columns.account_id = "unresolved"`), never "no account". The time is the AGGREGATE contact's
+`contacts.contact_last_updated_timestamp` through `raw_contacts.contact_id`: it is stated as `times.aggregate_last_updated` with
+`raw.contact_last_updated_source`, never as `Record.Time` (it is not the raw contact's own modification time); a NULL
+`contact_id` is `unknown_columns.contact_last_updated_timestamp = "no-contact"`, a dangling one `"unresolved"`, never zero.
 
 | Variant | DDL snapshot | Database state | What it exercises |
 |---|---|---|---|
-| `aosp-baseline` | `contacts-aosp-baseline.sql` | plain, 10 `raw_contacts`, 20 `data` rows for contact 1 | every mimetype, labels (named, custom, unknown type), a skipped empty value, a second name and organization row, an IM with the custom marker and AIM, a photo, a dangling `mimetype_id`, a `group_membership` row, a deleted contact, a tombstone-shaped contact (no name, source id), a contact that identifies nobody (a warning), NUL and invalid UTF-8 (`raw.text_flags`), a 400-digit number |
+| `aosp-baseline` | `contacts-aosp-baseline.sql` | plain, 13 `raw_contacts` (12 records plus 1 warning for the contact that identifies nobody), 20 `data` rows for contact 1, 3 `accounts`, 12 `contacts` | accounts: two distinct, a NULL `account_id` (no account) and a dangling one (unknown); aggregate times: valid, zero (sentinel), year 2100 (invalid), a NULL `contact_id` (unknown) and a dangling one (unresolved); every mimetype, labels (named, custom, unknown type), a skipped empty value, a second name and organization row, an IM with the custom marker and AIM, a photo, a dangling `mimetype_id`, a `group_membership` row, a deleted contact, a tombstone-shaped contact (no name, source id), a contact that identifies nobody (a warning), NUL and invalid UTF-8 (`raw.text_flags`), a 400-digit number |
 | `deleted-contacts` | `contacts-deleted-contacts.sql` | plain, 2 contacts and 2 `deleted_contacts` rows | the tombstones (a valid and a zero deletion time) |
-| `multi-account` | `contacts-aosp-baseline.sql` | plain, 3 raw contacts of one person | one record per raw contact |
+| `multi-account` | `contacts-aosp-baseline.sql` | plain, 3 raw contacts of one person (one aggregate contact) | three distinct accounts (google, samsung, whatsapp with a `data_set`), one record per raw contact, one aggregate time |
 | `unicode-rtl` | `contacts-aosp-baseline.sql` | plain, 4 contacts | Hebrew, Arabic with a right-to-left override, CJK and emoji names and labels |
 | `huge-contact` | `contacts-aosp-baseline.sql` | plain, 1 contact with 1200 phones, 1100 e-mails and 130 notes | the list cap of 1000 and the note cap of 100 with their `_total` and `_truncated` counters |
 

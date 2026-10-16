@@ -64,12 +64,20 @@ func FuzzParseCallLog(f *testing.F) {
 }
 
 // sameSizeClass maps a one-byte serial type to a different storage class of the same body
-// size (T67): an integer becomes text or a float, text becomes a blob and back, so the record
-// stays well formed and the wrong-class cell reaches the mapper.
+// size (T67, T71): an integer becomes text or a float, text becomes a blob and back, and the
+// body-less constants 0 and 1 (types 8 and 9) become empty text and an empty blob, so the record
+// stays well formed and the wrong-class cell reaches the mapper. Type 0 (NULL, the rowid alias)
+// and the multi-byte serial types (a text or blob of 58 bytes or more) are left alone.
 func sameSizeClass(st byte) (byte, bool) {
 	switch {
 	case st >= 1 && st <= 4:
 		return 15 + 2*(st-1), true // int of 1..4 bytes -> text of 1..4 bytes
+	case st == 5:
+		return 25, true // 48-bit int -> text of 6 bytes (13 + 2*6)
+	case st == 8:
+		return 13, true // the constant 0 (no body) -> empty text
+	case st == 9:
+		return 12, true // the constant 1 (no body) -> empty blob
 	case st == 6:
 		return 7, true // int64 -> float64
 	case st == 7:
@@ -80,6 +88,53 @@ func sameSizeClass(st byte) (byte, bool) {
 		return st + 1, true // blob -> text
 	}
 	return 0, false
+}
+
+// bodySize is the body length of a serial type (the file format's table), -1 for a reserved one.
+func bodySize(st int) int {
+	switch {
+	case st == 0 || st == 8 || st == 9:
+		return 0
+	case st >= 1 && st <= 4:
+		return st
+	case st == 5:
+		return 6
+	case st == 6 || st == 7:
+		return 8
+	case st >= 12:
+		return (st - 12) / 2
+	}
+	return -1
+}
+
+// Every rewrite keeps the body size (the record stays well formed) and changes the storage class.
+func TestSameSizeClassKeepsTheSizeAndChangesTheClass(t *testing.T) {
+	class := func(st int) string {
+		switch {
+		case st == 0:
+			return "null"
+		case st <= 6 || st == 8 || st == 9:
+			return "int"
+		case st == 7:
+			return "float"
+		case st%2 == 0:
+			return "blob"
+		}
+		return "text"
+	}
+	for st := 1; st < 0x80; st++ {
+		if st == 10 || st == 11 {
+			continue
+		}
+		ns, ok := sameSizeClass(byte(st))
+		if !ok {
+			t.Errorf("serial type %d has no same-size rewrite", st)
+			continue
+		}
+		if bodySize(int(ns)) != bodySize(st) || class(int(ns)) == class(st) {
+			t.Errorf("serial type %d -> %d: size %d -> %d, class %s -> %s", st, ns, bodySize(st), bodySize(int(ns)), class(st), class(int(ns)))
+		}
+	}
 }
 
 // rewriteSerialTypes gives every cell of a table leaf page (type 0x0d) the same-size storage

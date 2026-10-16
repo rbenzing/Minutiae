@@ -5,9 +5,9 @@ package androidcontacts_test
 // fixturePins is the SHA-256 of every decompressed fixture file, by "<variant>.<role>". A changed fixture
 // changes this file in the same commit, so a silent regeneration shows in review.
 var fixturePins = map[string]string{
-	"aosp-baseline.db":    "bbdafd0c4798070ecacbf85509f343f5dfdf7b9ac5d1b3a11863c9bd8162e506",
-	"deleted-contacts.db": "882078eb290d43a6247457badacf62f9978bf12e3cee7217937e913d5f15be42",
-	"huge-contact.db":     "7c95bedeac94c38d5521d3f9991d66d1bfd9201a944d8a6397558933146d66d3",
-	"multi-account.db":    "1d396eb165eeb31bc292a2195d67b8eda9358d0cfc527908c34c78a69c7e38ce",
-	"unicode-rtl.db":      "9084a8d568736d481071eedfe282a9761b0b65ff3f4fadb11ec710f089ce8ff2",
+	"aosp-baseline.db":    "a27efd03b6965aa37394ce6f19a763deea2d9696b4c1dd1199cb1875f4546add",
+	"deleted-contacts.db": "88fb4b6c390e57f08fa9470b09fd8c864483ca96e4fe34924645ba38051fcc98",
+	"huge-contact.db":     "6bd5a5007c46dd057b31573d54939b89fa7089f6391619395686069bfbed580d",
+	"multi-account.db":    "be8ec13b3d4eefe5730c4182aa88125931589fe9020d99064b59d38dba26feec",
+	"unicode-rtl.db":      "b5eb88266e18e3764c934099287e9a5c46c86bdb8ed4d801b333eb57a5900ef5",
 }

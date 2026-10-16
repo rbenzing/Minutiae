@@ -13,8 +13,11 @@ MIMES = ["vnd.android.cursor.item/name", "vnd.android.cursor.item/phone_v2", "vn
          "vnd.android.cursor.item/website", "vnd.android.cursor.item/note", "vnd.android.cursor.item/photo",
          "vnd.android.cursor.item/nickname", "vnd.android.cursor.item/group_membership"]
 NAME, PHONE, EMAIL, ORG, POSTAL, IM, WEB, NOTE, PHOTO, NICK, GROUP = range(1, 12)
-RC_MAPPED = [("display_name", True), ("account_name", False), ("account_type", False), ("starred", False), ("deleted", False),
-             ("contact_last_updated_timestamp", False), ("x_times_contacted", False), ("sourceid", False)]
+# account_name and account_type are the inline columns of old schemas (a fallback, read only when physically present);
+# the account of a current schema comes through accounts (account_id) and the time through contacts (contact_id) (T68, T69).
+RC_MAPPED = [("display_name", True), ("account_id", False), ("account_name", False), ("account_type", False), ("contact_id", False),
+             ("starred", False), ("deleted", False), ("x_times_contacted", False), ("sourceid", False)]
+AGG_SOURCE = "contacts.contact_last_updated_timestamp"
 DC_MAPPED = [("contact_id", True), ("contact_deleted_timestamp", False)]
 PHONE_T = {1: "home", 2: "mobile", 3: "work", 4: "fax_work", 5: "fax_home", 6: "pager", 7: "other"}
 EMAIL_T = {1: "home", 2: "work", 3: "other", 4: "mobile"}
@@ -70,12 +73,21 @@ def lab(table, t, custom):
 class Builder:
     def __init__(self):
         self.rc, self.data, self._n = [], [], 0
+        self.accounts = [{"_id": 1, "account_name": "alice@example.test", "account_type": "com.google"},
+                         {"_id": 2, "account_name": "alice@samsung.test", "account_type": "com.samsung.account"},
+                         {"_id": 3, "account_name": "+15551230001", "account_type": "com.whatsapp", "data_set": "wa"}]
+        self.contacts = {}
 
-    def contact(self, rid, **kw):
-        row = {"_id": rid, "account_name": "alice@example.test", "account_type": "com.google", "deleted": 0, "starred": 0,
-               "contact_last_updated_timestamp": (T0 + rid) * MS, "x_times_contacted": 0}
+    def contact(self, rid, ts=None, **kw):
+        """A raw contact of account 1 and of the aggregate contact rid, whose last update is ts (default a valid time).
+        account_id=None is no account; an id with no accounts row is dangling. contact_id=None is not aggregated; a
+        contact_id with no contacts row (the scenario names an id the table lacks) is dangling."""
+        row = {"_id": rid, "account_id": 1, "contact_id": rid, "deleted": 0, "starred": 0, "x_times_contacted": 0}
         row.update(kw)
         self.rc.append(row)
+        cid = row["contact_id"]
+        if cid is not None and cid < 90 and cid not in self.contacts:  # 90 and over name an aggregate that does not exist
+            self.contacts[cid] = {"_id": cid, "contact_last_updated_timestamp": (T0 + cid) * MS if ts is None else ts}
 
     def d(self, rid, mime, primary=0, **kw):
         self._n += 1
@@ -105,26 +117,30 @@ def baseline():
     b.d(1, NAME, data1="Second Name", data2="Second")
     b.d(1, GROUP, 0, data1="7")
     b.d(1, 99, 0, data1="dangling mimetype")
-    b.contact(2, display_name="+15559998888", account_name=None, account_type=None)
+    b.contact(2, display_name="+15559998888", account_id=None)
     b.d(2, PHONE, 0, data1="+15559998888", data2=2)
     b.contact(3, display_name="Old Contact", deleted=1, sourceid="g-3")
     b.d(3, NAME, data1="Old Contact", data2="Old", data3="Contact")
     b.d(3, PHONE, 0, data1="+15550003333", data2=1)
-    b.contact(4, display_name=None, account_name=None, account_type=None)
+    b.contact(4, display_name=None, account_id=None)
     b.contact(5, display_name="\u0645\u062d\u0645\u062f \U0001F600")
     b.d(5, NAME, data1="\u0645\u062d\u0645\u062f \U0001F600", data2="\u0645\u062d\u0645\u062f")
     b.d(5, PHONE, 0, data1="+15555550005", data2=0, data3="\u0627\u0644\u062c\u0648\u0627\u0644")
     b.contact(6, display_name=C.Raw(b"Bad\x00Name\xff"))
     b.d(6, PHONE, 0, data1=C.Raw(b"+1555\xff0006"), data2=2)
-    b.contact(7, display_name="Alice Example", account_name="alice@samsung.test", account_type="com.samsung.account")
+    b.contact(7, display_name="Alice Example", account_id=2)
     b.d(7, PHONE, 0, data1="+1 555-123-0001", data2=2)
     b.contact(8, display_name="Long Number")
     b.d(8, PHONE, 0, data1="1" * 400, data2=2)
-    b.contact(9, display_name="Zero Timestamp", contact_last_updated_timestamp=0)
+    b.contact(9, display_name="Zero Timestamp", ts=0)
     b.d(9, EMAIL, 0, data1="zero@example.test", data2=4)
-    b.contact(10, display_name="Year 2100", contact_last_updated_timestamp=4102444800000)
+    b.contact(10, display_name="Year 2100", ts=4102444800000)
     b.d(10, EMAIL, 0, data1="y2100@example.test", data2=99)
-    b.contact(11, display_name=None, deleted=1, sourceid="g-11")
+    b.contact(11, display_name=None, deleted=1, sourceid="g-11", contact_id=None)
+    b.contact(12, display_name="Dangling Account", account_id=99)
+    b.d(12, EMAIL, 0, data1="dangling@example.test", data2=1)
+    b.contact(13, display_name="Dangling Aggregate", contact_id=98)
+    b.d(13, EMAIL, 0, data1="aggregate@example.test", data2=2)
     return b
 
 
@@ -164,7 +180,7 @@ def contact_body(p):
     return "\n".join(lines)
 
 
-def expect_contact(rc, data_rows, mimes, remote, file="any"):
+def expect_contact(rc, data_rows, mimes, remote, accounts=None, aggregates=None, file="any"):
     raw, unknown, p = {}, {}, {}
     tf = set()
     rid = rc["rowid"]
@@ -183,8 +199,23 @@ def expect_contact(rc, data_rows, mimes, remote, file="any"):
     name = field(rc.get("display_name"), "display_name")
     if name:
         p["display_name"] = name
-    at = field(rc.get("account_type"), "account_type")
-    an = field(rc.get("account_name"), "account_name")
+    if "account_name" in rc or "account_type" in rc:  # an old schema: the inline columns, only when physically present
+        at = field(rc.get("account_type"), "account_type")
+        an = field(rc.get("account_name"), "account_name")
+    else:  # the account comes only from the join accounts._id = raw_contacts.account_id
+        at = an = ""
+        aid = rc.get("account_id")
+        if is_int(aid):
+            raw["account_id"] = aid
+            acct = accounts.get(aid) if accounts is not None else None
+            if acct is None:
+                unknown["account_id"] = "unresolved"  # a dangling id or no accounts table: unknown, not "no account"
+            else:
+                at = field(acct.get("account_type"), "account_type")
+                an = field(acct.get("account_name"), "account_name")
+        elif aid is not None:
+            unknown["account_id"] = "type-mismatch"
+        # a NULL account_id is a contact without an account (device-local): no account, nothing flagged
     if at or an:
         a = {}
         if at:
@@ -204,16 +235,32 @@ def expect_contact(rc, data_rows, mimes, remote, file="any"):
             p["deleted"] = {"source": "raw_contacts.deleted"}
     if is_int(rc.get("x_times_contacted")):
         raw["x_times_contacted"] = rc["x_times_contacted"]
+    # The time is the AGGREGATE contact's last update (contacts.contact_last_updated_timestamp through contact_id), never the
+    # raw contact's own modification time: it is stated under a times key that names it, with its source, and Record.Time stays unset.
     t, times = None, {}
-    ts = rc.get("contact_last_updated_timestamp")
+    cid = rc.get("contact_id")
+    ts = None
+    if is_int(cid):
+        raw["contact_id"] = cid
+        agg = aggregates.get(cid) if aggregates is not None else None
+        if agg is None:
+            unknown["contact_last_updated_timestamp"] = "unresolved"  # dangling contact_id or no contacts table
+        else:
+            ts = agg.get("contact_last_updated_timestamp")
+    elif cid is None:
+        unknown["contact_last_updated_timestamp"] = "no-contact"  # not aggregated: the time is unknown, never zero
+    else:
+        unknown["contact_id"] = "type-mismatch"
     if is_int(ts):
         st = C.classify(ts, "ms")
         raw["contact_last_updated_timestamp"] = ts
+        raw["contact_last_updated_source"] = AGG_SOURCE
         if st != "valid":
             raw["contact_last_updated_timestamp_status"] = st
         else:
-            t = C.iso(ts, "ms")
-            times["modified"] = t
+            times["aggregate_last_updated"] = C.iso(ts, "ms")
+    elif ts is not None:
+        unknown["contact_last_updated_timestamp"] = "type-mismatch"
     p["source_id"] = str(rid)
     sid = field(rc.get("sourceid"), "sourceid")
     if sid:
@@ -332,6 +379,8 @@ def expect_contact(rc, data_rows, mimes, remote, file="any"):
         raw["notes_total"], raw["notes_truncated"] = notes_total, True
     if tf:
         raw["text_flags"] = sorted(tf)
+    if unknown:
+        raw["unknown_columns"] = unknown
     p["raw"] = raw
     identifies = bool(name or phones or emails or (org and any(org.values())) or (deleted and p.get("source_ids")))
     if not identifies:
@@ -368,7 +417,9 @@ def expect_tombstone(dc, remote, file="any"):
 
 
 def oracle(files, ddl_name, variant, rc_cols, dc_cols):
-    view = C.engine_view(files, ["raw_contacts", "data", "mimetypes", "deleted_contacts"])
+    view = C.engine_view(files, ["raw_contacts", "data", "mimetypes", "deleted_contacts", "accounts", "contacts"])
+    accounts = {r["rowid"]: r for r in view["accounts"]} if "accounts" in view else None
+    aggregates = {r["rowid"]: r for r in view["contacts"]} if "contacts" in view else None
     mimes = {}
     for r in view["mimetypes"]:
         if isinstance(r.get("mimetype"), bytes):
@@ -378,7 +429,7 @@ def oracle(files, ddl_name, variant, rc_cols, dc_cols):
         by_rc.setdefault(d.get("raw_contact_id"), []).append(d)
     exp = C.expect_header(FAMILY, variant, ddl_name)
     for rc in view["raw_contacts"]:
-        e = expect_contact(rc, by_rc.get(rc["rowid"], []), mimes, REMOTE)
+        e = expect_contact(rc, by_rc.get(rc["rowid"], []), mimes, REMOTE, accounts, aggregates)
         if e is None:
             exp["warnings"].append({"table": "raw_contacts", "rowid": rc["rowid"], "contains": "identifies nobody"})
         else:
@@ -404,6 +455,10 @@ def build(work, ddl_name, variant, b, extra=None, **conn):
     with C.batch(con):
         for r in mimetype_rows():
             C.insert(con, "mimetypes", r)
+        for r in b.accounts:
+            C.insert(con, "accounts", r)
+        for r in b.contacts.values():
+            C.insert(con, "contacts", r)
         for r in b.rc:
             C.insert(con, "raw_contacts", r)
         for r in b.data:
@@ -435,7 +490,7 @@ def variant_deleted(work):
 def variant_multi(work):
     b = Builder()
     for i, (atype, aname) in enumerate([("com.google", "a@example.test"), ("com.samsung.account", "a@samsung.test"), ("com.whatsapp", "+15551230001")], 1):
-        b.contact(i, display_name="Same Person", account_type=atype, account_name=aname)
+        b.contact(i, display_name="Same Person", account_id=i, contact_id=1)
         b.d(i, PHONE, 1, data1="+15551230001", data2=2)
     return build(work, "contacts-aosp-baseline.sql", "multi-account", b)
 

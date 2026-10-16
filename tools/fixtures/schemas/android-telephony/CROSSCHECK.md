@@ -32,9 +32,13 @@ The definition at the tag is the first CREATE TABLE of the table in the file; st
 | calllog-in-contacts2.sql | calls | historical | 13 columns, all defined at CallLogDatabaseHelper.java:134 |
 | calllog-in-contacts2.sql | raw_contacts | historical | 2 columns, all defined at ContactsDatabaseHelper.java:1300 |
 | calllog-pre-presentation.sql | calls | historical | 9 columns, all defined at CallLogDatabaseHelper.java:134 |
+| contacts-aosp-baseline.sql | accounts | verified | ContactsDatabaseHelper.java:1246, 9 columns, names, order and definitions equal (T68; ContactsDatabaseHelper.java sha256 cf70e1f1... as fetched above) |
+| contacts-aosp-baseline.sql | contacts | verified | ContactsDatabaseHelper.java:1272, 16 columns, names, order and definitions equal (T68) |
 | contacts-aosp-baseline.sql | data | verified | ContactsDatabaseHelper.java:1423, 32 columns, names, order and definitions equal |
 | contacts-aosp-baseline.sql | mimetypes | verified | ContactsDatabaseHelper.java:1412, 2 columns, names, order and definitions equal |
 | contacts-aosp-baseline.sql | raw_contacts | verified | ContactsDatabaseHelper.java:1300, 36 columns, names, order and definitions equal |
+| contacts-deleted-contacts.sql | accounts | verified | ContactsDatabaseHelper.java:1246, 9 columns, names, order and definitions equal (T68) |
+| contacts-deleted-contacts.sql | contacts | verified | ContactsDatabaseHelper.java:1272, 16 columns, names, order and definitions equal (T68) |
 | contacts-deleted-contacts.sql | data | verified | ContactsDatabaseHelper.java:1423, 32 columns, names, order and definitions equal |
 | contacts-deleted-contacts.sql | deleted_contacts | verified | ContactsDatabaseHelper.java:3071, 2 columns, names, order and definitions equal |
 | contacts-deleted-contacts.sql | mimetypes | verified | ContactsDatabaseHelper.java:1412, 2 columns, names, order and definitions equal |
