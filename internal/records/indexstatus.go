@@ -54,27 +54,31 @@ func (r *Reader) IndexStatus(ctx context.Context) (IndexStatus, error) {
 
 // docTotal is the number of documents an FTS5 table holds, from its averages record (data row 1,
 // whose first SQLite varint is the total row count; P11 proves it equals a rebuild's). A missing
-// record, or an empty one (what FTS5 leaves after delete-all), is zero documents only when the table has no document-size rows; an undecodable one is an
-// integrity error, never a zero. The table is one of the two FTS table constants.
+// record, an empty one (what FTS5 leaves after delete-all) or one that decodes to zero is zero
+// documents only when the table has no document-size rows; an undecodable one is an integrity
+// error, never a zero. The table is one of the two FTS table constants.
 func docTotal(ctx context.Context, h evidence.ReadHandle, table string) (int64, error) {
 	var block []byte
 	err := h.QueryRowContext(ctx, `SELECT block FROM `+table+`_data WHERE id = 1`).Scan(&block)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && len(block) == 0) {
-		var hasDocs int
-		if err := h.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM `+table+`_docsize)`).Scan(&hasDocs); err != nil {
-			return 0, err
-		}
-		if hasDocs != 0 {
-			return 0, fmt.Errorf("%w: %s holds documents but no totals record", evidence.ErrIntegrity, table)
-		}
-		return 0, nil
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
-	v, n := evidence.SQLiteVarint(block)
-	if n == 0 || v > math.MaxInt64 {
-		return 0, fmt.Errorf("%w: the totals record of %s is unreadable", evidence.ErrIntegrity, table)
+	var v uint64
+	if len(block) > 0 {
+		var n int
+		if v, n = evidence.SQLiteVarint(block); n == 0 || v > math.MaxInt64 {
+			return 0, fmt.Errorf("%w: the totals record of %s is unreadable", evidence.ErrIntegrity, table)
+		}
 	}
-	return int64(v), nil
+	if v != 0 {
+		return int64(v), nil
+	}
+	var hasDocs int
+	if err := h.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM `+table+`_docsize)`).Scan(&hasDocs); err != nil {
+		return 0, err
+	}
+	if hasDocs != 0 {
+		return 0, fmt.Errorf("%w: %s holds documents but its totals record says none", evidence.ErrIntegrity, table)
+	}
+	return 0, nil
 }

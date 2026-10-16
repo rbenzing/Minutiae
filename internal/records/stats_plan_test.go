@@ -80,3 +80,23 @@ func TestIndexStatusRefusesAGarbageTotalsRecord(t *testing.T) {
 		t.Fatalf("a garbage totals record must be an integrity error, never a zero: %v", err)
 	}
 }
+
+// A totals record that decodes to zero while documents exist is an integrity error, never "0 documents".
+func TestIndexStatusRefusesAZeroTotalsRecordWhileDocumentsExist(t *testing.T) {
+	c, _ := bigDataset(t, 50)
+	recordstest.SetFTSTotals(t, c.Dir, "records_fts", []byte{0x00})
+	r := newReader(t, c)
+	if st, err := r.IndexStatus(ctx); !errors.Is(err, evidence.ErrIntegrity) {
+		t.Fatalf("a zero totals record with documents must be an integrity error, got %+v, %v", st, err)
+	}
+}
+
+// An empty totals block while documents exist is an integrity error too.
+func TestIndexStatusRefusesAnEmptyTotalsRecordWhileDocumentsExist(t *testing.T) {
+	c, _ := bigDataset(t, 50)
+	recordstest.SetFTSTotals(t, c.Dir, "records_fts_sub", []byte{})
+	r := newReader(t, c)
+	if st, err := r.IndexStatus(ctx); !errors.Is(err, evidence.ErrIntegrity) {
+		t.Fatalf("an empty totals record with documents must be an integrity error, got %+v, %v", st, err)
+	}
+}
