@@ -112,6 +112,11 @@ func (f *FS) fileObject(id uint32) (*object, error) {
 				}
 				f.warnSkips([]unknownSkip{s})
 			}
+			// The scan decides only when it FINDS the record: with an unreadable thread, no record
+			// found is not "not found" (the thread exists but cannot be read).
+			if unreadable != nil && errors.Is(serr, filesys.ErrNotFound) {
+				return nil, err
+			}
 			return nil, serr
 		}
 		f.warnSkips(passed)

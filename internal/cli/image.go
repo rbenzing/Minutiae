@@ -597,17 +597,15 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 		if opts.json {
 			_, jsonErr = io.WriteString(d.Out, "[")
 		}
-		// With --include-snapshots the walk enters each .snapshots directory; every entry below one
-		// is snapshot data (historical), marked as such and never presented as live.
-		var snapRoots []string
+		// Every entry at or below <volume>/.snapshots/<name> is snapshot data (historical), marked as
+		// such and never presented as live. The marker comes from the path alone, so it does not
+		// depend on where the listing starts or on what the walk entered.
+		isAPFS := fsys.Info().Type == "apfs"
 		snapshotOf := func(p string) string {
-			for _, root := range snapRoots {
-				if rest, ok := strings.CutPrefix(p, root); ok {
-					name, _, _ := strings.Cut(rest, "/")
-					return name
-				}
+			if !isAPFS {
+				return ""
 			}
-			return ""
+			return snapshotNameOfPath(p)
 		}
 		emit := func(p string, e filesys.Entry) {
 			if e.Deleted && !deleted {
@@ -656,9 +654,6 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 					return nil
 				}
 				emit(p, e)
-				if includeSnapshots && jsonErr == nil && filesys.IsSnapshotsDir(e) {
-					snapRoots = append(snapRoots, strings.TrimSuffix(p, "/")+"/")
-				}
 				if jsonErr == nil && filesys.IsSnapshotsDir(e) && !includeSnapshots {
 					// Listed, but not descended into: name a snapshot (--snapshot, or a
 					// path below .snapshots) to see inside.
@@ -1054,4 +1049,15 @@ func checkIncludeSnapshots(cmd *cobra.Command, include, recursive bool) error {
 		return usageErrorf("--include-snapshots needs -r")
 	}
 	return nil
+}
+
+// snapshotNameOfPath returns the snapshot an APFS output path lies in: the path /<volume>/.snapshots/<name>
+// or anything below it names snapshot <name>; every other path (including /<volume>/.snapshots
+// itself, which is the synthetic directory, not snapshot data) returns "".
+func snapshotNameOfPath(p string) string {
+	parts := strings.SplitN(p, "/", 5) // "", volume, ".snapshots", name, rest
+	if len(parts) < 4 || parts[0] != "" || parts[1] == "" || parts[2] != ".snapshots" || parts[3] == "" {
+		return ""
+	}
+	return parts[3]
 }

@@ -163,3 +163,101 @@ func TestImageIncludeSnapshotsConflictsWithSnapshot(t *testing.T) {
 		}
 	}
 }
+
+// snapshotListing lists every entry of `ls -r <args>` in text and in JSON and returns the path
+// each is marked with (empty: unmarked), keyed by path, checking that both forms agree.
+func snapshotListing(t *testing.T, e *imgEnv, args ...string) map[string]string {
+	t.Helper()
+	code, out := e.image(t, "ls", append([]string{e.ref}, args...)...)
+	if code != 0 {
+		t.Fatalf("ls %v: %d\n%s", args, code, out)
+	}
+	text := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		mark := ""
+		if i := strings.LastIndex(line, " [snapshot "); i >= 0 && strings.HasSuffix(line, "]") {
+			mark = strings.TrimSuffix(line[i+len(" [snapshot "):], "]")
+			line = line[:i]
+		}
+		f := strings.Fields(line)
+		text[strings.TrimSuffix(f[len(f)-1], "/")] = mark
+	}
+	_, out = e.image(t, "ls", append([]string{e.ref}, append(args, "--json")...)...)
+	var entries []struct {
+		Path     string `json:"path"`
+		Snapshot string `json:"snapshot"`
+	}
+	if err := json.Unmarshal(jsonPart(out), &entries); err != nil {
+		t.Fatalf("json: %v\n%s", err, out)
+	}
+	if len(entries) != len(text) {
+		t.Fatalf("text lists %d entries, JSON %d", len(text), len(entries))
+	}
+	for _, en := range entries {
+		if m, ok := text[en.Path]; !ok || m != en.Snapshot {
+			t.Errorf("%s: text marker %q (listed %v), JSON %q", en.Path, m, ok, en.Snapshot)
+		}
+	}
+	return text
+}
+
+// A listing that STARTS inside the snapshots still marks every entry as snapshot data, wherever it
+// starts; the marker comes from the path, not from what the walk happened to enter (Y83).
+func TestImageLsMarksSnapshotDataFromAnyStartPath(t *testing.T) {
+	e := apfsEnv(t, snapshotVolume("Data"))
+	for _, start := range []string{"/Data/.snapshots", "/Data/.snapshots/S", "/Data/.snapshots/S/docs"} {
+		got := snapshotListing(t, e, start, "-r", "--include-snapshots")
+		var below int
+		for p, m := range got {
+			if p == start || p == "/Data/.snapshots" {
+				continue // the start itself: .snapshots is synthetic; below it is checked
+			}
+			below++
+			if m != "S" {
+				t.Errorf("start %s: %s marked %q, want S", start, p, m)
+			}
+		}
+		if below == 0 {
+			t.Errorf("start %s listed nothing below it: %v", start, got)
+		}
+	}
+}
+
+// ls --snapshot S -r carries the same marker (Y84).
+func TestImageLsSnapshotFlagMarksSnapshotData(t *testing.T) {
+	e := apfsEnv(t, snapshotVolume("Data"))
+	got := snapshotListing(t, e, "/Data", "--snapshot", "S", "-r")
+	if len(got) == 0 {
+		t.Fatal("empty listing")
+	}
+	for p, m := range got {
+		if m != "S" {
+			t.Errorf("%s marked %q, want S", p, m)
+		}
+	}
+}
+
+// An opted-in listing appends no audit entry and creates no artifact (Y85).
+func TestImageLsIncludeSnapshotsWritesNothing(t *testing.T) {
+	e := apfsEnv(t, snapshotVolume("Data"))
+	audit := func() []evidence.AuditEntry {
+		entries, err := evidence.ReadAuditEntries(filepath.Join(e.c, "audit.jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return entries
+	}
+	before, beforeArts := audit(), len(manifestRecords(t, e.c))
+	if code, out := e.image(t, "ls", e.ref, "/Data", "-r", "--include-snapshots"); code != 0 {
+		t.Fatalf("ls: %d\n%s", code, out)
+	}
+	// Every command that opens the case appends its case.open; nothing else may be appended.
+	for _, en := range audit()[len(before):] {
+		if en.Action != "case.open" {
+			t.Errorf("the listing appended a %s audit entry", en.Action)
+		}
+	}
+	if n := len(manifestRecords(t, e.c)); n != beforeArts {
+		t.Errorf("the listing created %d manifest records", n-beforeArts)
+	}
+}

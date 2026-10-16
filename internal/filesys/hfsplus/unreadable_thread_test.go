@@ -191,3 +191,23 @@ func TestOpenFoldAbsorbsOnlyOneDuplicateKeyRecord(t *testing.T) {
 		t.Errorf("%d warnings name the duplicated key, want 2 (one folded into the scan's, one for the duplicate): %q", n, f.Info().Warnings)
 	}
 }
+
+// A scan that finds no file record never turns an unreadable thread into "not found": the thread
+// exists but cannot be read, so the id is corrupt, whatever the id (Y82).
+func TestOpenUnreadableThreadWithNoFileRecordIsCorrupt(t *testing.T) {
+	img, lay, _ := buildTree(t, hfsplustest.Options{}, []hfsplustest.File{{Path: "/f", Data: []byte("f")}})
+	id := lay.CNIDs["/f"]
+	th := findRec(t, img, lay, id, nil)
+	be.PutUint16(img[th.data:], 0x00FF)
+	rec := findRec(t, img, lay, 2, units("f"))
+	be.PutUint32(img[rec.data+8:], 9999) // the file record no longer carries the id
+	f := open(t, img)
+	fl, err := f.Open(filesys.Entry{ID: idOf(id)})
+	if errors.Is(err, filesys.ErrNotFound) {
+		t.Fatalf("an unreadable thread was reported as missing: %v", err)
+	}
+	wantCorrupt(t, err)
+	if fl != nil {
+		t.Error("an id with an unreadable thread and no record opened")
+	}
+}
