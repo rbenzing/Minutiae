@@ -54,9 +54,11 @@ func (r fakeRow) Text(c int) ([]byte, bool) {
 func (r fakeRow) Blob(c int) ([]byte, bool) {
 	return r.cells[c].b, r.cells[c].kind == cBlob
 }
+
 func (r fakeRow) Range() (records.Range, parse.FileRole) {
 	return records.Range{Offset: 0, Length: 10}, "db"
 }
+
 func (r fakeRow) Locator() (string, bool) { return "row:rowid=1", true }
 
 // fakeCtx knows the columns of one table by their spec order; every other table is

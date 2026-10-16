@@ -21,11 +21,18 @@ const (
 
 func callSpecs() []parse.ColumnSpec {
 	return []parse.ColumnSpec{
-		{Name: "number", Required: true, Affinity: "text"}, {Name: "date", Required: true, Affinity: "integer"},
-		{Name: "duration", Required: true, Affinity: "integer"}, {Name: "type", Required: true, Affinity: "integer"},
-		{Name: "presentation", Affinity: "integer"}, {Name: "name", Affinity: "text"}, {Name: "countryiso", Affinity: "text"},
-		{Name: "geocoded_location", Affinity: "text"}, {Name: "subscription_id", Affinity: "text"}, {Name: "features", Affinity: "integer"},
-		{Name: "is_read", Affinity: "integer"}, {Name: "new", Affinity: "integer"},
+		{Name: "number", Required: true, Affinity: "text"},
+		{Name: "date", Required: true, Affinity: "integer"},
+		{Name: "duration", Required: true, Affinity: "integer"},
+		{Name: "type", Required: true, Affinity: "integer"},
+		{Name: "presentation", Affinity: "integer"},
+		{Name: "name", Affinity: "text"},
+		{Name: "countryiso", Affinity: "text"},
+		{Name: "geocoded_location", Affinity: "text"},
+		{Name: "subscription_id", Affinity: "text"},
+		{Name: "features", Affinity: "integer"},
+		{Name: "is_read", Affinity: "integer"},
+		{Name: "new", Affinity: "integer"},
 	}
 }
 
