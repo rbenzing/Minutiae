@@ -8,9 +8,9 @@ import (
 	"strings"
 
 	goios "github.com/danielpaulus/go-ios/ios"
-	"github.com/danielpaulus/go-ios/ios/afc"
 
 	"github.com/rbenzing/minutiae/internal/device"
+	"github.com/rbenzing/minutiae/internal/ios/afc"
 )
 
 // GoIOS is the real Backend over usbmuxd (Apple Mobile Device Service on
@@ -29,69 +29,117 @@ func (GoIOS) List(context.Context) ([]Entry, error) {
 	return out, nil
 }
 
-func (GoIOS) Values(_ context.Context, udid string) (map[string]any, error) {
+func (GoIOS) Values(_ context.Context, udid string) (vals map[string]any, err error) {
+	defer recovered("lockdown values", &err)
 	d, err := entry(udid)
 	if err != nil {
 		return nil, err
 	}
-	return goios.GetValuesPlist(d)
+	return goiosValues(d)
 }
 
-func (GoIOS) OpenAFC(_ context.Context, udid string) (AFC, error) {
+func (GoIOS) OpenAFC(ctx context.Context, udid string) (a AFC, err error) {
+	defer recovered("afc start service", &err)
+	type result struct {
+		rw  io.ReadWriteCloser
+		err error
+	}
+	// The device lookup and the service start (lockdown, StartService) are
+	// go-ios calls with no deadline or cancel. They run in a guarded goroutine
+	// so a cancelled context returns at once; the buffered channel lets the
+	// goroutine finish, and a connection that arrives late is closed.
+	ch := make(chan result, 1)
+	go func() {
+		var r result
+		defer func() { ch <- r }()
+		defer recovered("afc start service", &r.err)
+		d, err := entry(udid)
+		if err != nil {
+			r.err = err
+			return
+		}
+		rw, err := goiosConnect(d, afcService)
+		if err != nil {
+			r.err = fmt.Errorf("error connecting to service %q: %w", afcService, err)
+			return
+		}
+		r.rw = rw
+	}()
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			return nil, r.err
+		}
+		return afcAdapter{c: afc.New(r.rw)}, nil
+	case <-ctx.Done():
+		go func() {
+			if r := <-ch; r.rw != nil {
+				_ = r.rw.Close()
+			}
+		}()
+		return nil, ctx.Err()
+	}
+}
+
+func (GoIOS) OpenBackup(_ context.Context, udid string) (rw io.ReadWriteCloser, err error) {
+	defer recovered("backup start service", &err)
 	d, err := entry(udid)
 	if err != nil {
 		return nil, err
 	}
-	c, err := afc.New(d)
-	if err != nil {
-		return nil, err
-	}
-	return afcClient{c: c}, nil
+	return goiosConnect(d, "com.apple.mobilebackup2")
 }
 
-func (GoIOS) OpenBackup(_ context.Context, udid string) (io.ReadWriteCloser, error) {
-	d, err := entry(udid)
-	if err != nil {
-		return nil, err
-	}
-	return goios.ConnectToService(d, "com.apple.mobilebackup2")
-}
+// afcService is the lockdown service name of the Apple File Conduit.
+const afcService = "com.apple.afc"
 
-// afcClient adapts go-ios AFC. go-ios parses device responses without
-// guarding every index, so a panic in any call is returned as an error.
-type afcClient struct{ c *afc.Client }
+// afcAdapter exposes the bounds-checked AFC client as the AFC interface. The
+// client validates the device's replies itself; the recover guard stays as
+// defence in depth against a bug of ours, never as the validation.
+type afcAdapter struct{ c *afc.Client }
+
+// maxPanicText bounds the panic value kept in an error message.
+const maxPanicText = 200
 
 // recovered turns a panic into *err; use as: defer recovered("afc list", &err).
+// The panic value can carry device-influenced text, so it is truncated to
+// maxPanicText bytes and quoted (no control bytes reach a log or terminal).
 func recovered(op string, err *error) {
 	if r := recover(); r != nil {
-		*err = fmt.Errorf("%s: go-ios panic: %v", op, r)
+		s := fmt.Sprint(r)
+		if len(s) > maxPanicText {
+			s = s[:maxPanicText]
+		}
+		*err = fmt.Errorf("%s: go-ios panic: %q", op, s)
 	}
 }
 
-func (a afcClient) List(p string) (names []string, err error) {
+func (a afcAdapter) List(p string) (names []string, err error) {
 	defer recovered("afc list", &err)
 	return a.c.List(p)
 }
 
-func (a afcClient) Stat(p string) (st FileStat, err error) {
+func (a afcAdapter) Stat(p string) (st FileStat, err error) {
 	defer recovered("afc stat", &err)
-	fi, err := a.c.Stat(p)
+	s, err := a.c.Stat(p)
 	if err != nil {
 		return FileStat{}, err
 	}
-	return FileStat{Size: fi.Size, IsDir: fi.IsDir(), IsLink: fi.IsLink()}, nil
+	out := FileStat{Size: s.Size, IsDir: s.IsDir, IsLink: s.IsLink, Type: s.Type, IsRegular: s.IsRegular()}
+	out.Unsupported = !s.IsRegular() && !s.IsDir && !s.IsLink
+	return out, nil
 }
 
-func (a afcClient) Open(p string) (rc io.ReadCloser, err error) {
+func (a afcAdapter) Open(p string) (rc io.ReadCloser, err error) {
 	defer recovered("afc open", &err)
-	f, err := a.c.Open(p, afc.READ_ONLY)
+	f, err := a.c.Open(p)
 	if err != nil {
 		return nil, err
 	}
 	return safeFile{f}, nil
 }
 
-func (a afcClient) Close() (err error) {
+func (a afcAdapter) Close() (err error) {
 	defer recovered("afc close", &err)
 	return a.c.Close()
 }
@@ -111,8 +159,29 @@ func (s safeFile) Close() (err error) {
 
 const usbmuxdHint = "usbmuxd not reachable (Windows: install iTunes or the Apple Devices app for Apple Mobile Device Service; Linux: install and start usbmuxd)"
 
-// listDevices asks usbmuxd for attached devices, one entry per UDID.
-func listDevices() ([]goios.DeviceEntry, error) {
+// The go-ios calls that decode plists the device (or usbmuxd on its behalf)
+// controls. They are variables so a test can substitute a shim that panics;
+// production code always reaches go-ios through them, under recovered.
+var (
+	goiosListDevices = rawListDevices
+	goiosValues      = func(d goios.DeviceEntry) (map[string]any, error) { return goios.GetValuesPlist(d) }
+	goiosConnect     = func(d goios.DeviceEntry, service string) (io.ReadWriteCloser, error) {
+		c, err := goios.ConnectToService(d, service)
+		if err != nil {
+			return nil, err
+		}
+		return c, nil
+	}
+)
+
+// listDevices asks usbmuxd for attached devices, one entry per UDID. A panic
+// in go-ios while decoding the reply is returned as an error.
+func listDevices() (devs []goios.DeviceEntry, err error) {
+	defer recovered("usbmuxd list", &err)
+	return goiosListDevices()
+}
+
+func rawListDevices() ([]goios.DeviceEntry, error) {
 	conn, err := goios.NewUsbMuxConnectionSimple()
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", usbmuxdHint, err)

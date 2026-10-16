@@ -77,7 +77,7 @@ func (a fakeAFC) List(dir string) ([]string, error) {
 
 func (a fakeAFC) Stat(p string) (ios.FileStat, error) {
 	if d, ok := a.files[p]; ok {
-		return ios.FileStat{Size: int64(len(d))}, nil
+		return ios.FileStat{Size: int64(len(d)), IsRegular: true}, nil
 	}
 	if _, err := a.List(p); err == nil {
 		return ios.FileStat{IsDir: true}, nil

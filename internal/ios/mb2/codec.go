@@ -23,6 +23,10 @@ const (
 	CodeFileData    byte = 0x0c
 )
 
+// CodeNoTerminator is not a wire value: it marks a file whose data blocks were
+// followed by a zero length instead of a success or error block.
+const CodeNoTerminator byte = 0xfe
+
 // EmptyParameter is DeviceLink's placeholder for an empty string argument.
 const EmptyParameter = "___EmptyParameterString___"
 
