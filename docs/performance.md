@@ -256,4 +256,4 @@ A profile, not a spec-target run. Same machine as the baseline (Intel i7-1265U, 
 | FULL (default) | 400,000 | 255.2 s | 1,567.5 records/s | 479 MB |
 | NORMAL (`--fast-sync`, write-ahead log) | 400,000 | 184.5 s | 2,167.5 records/s | 486 MB |
 
-NORMAL is 1.38 times the FULL rate (-28 % ingest time), in line with the 21 % commit and fsync share of the Task 9 profile plus the cheaper write-ahead commits. The price is the power-loss window in `docs/limitations.md`. One run of each, so the difference carries run-to-run noise of a shared laptop.
+NORMAL is 1.38 times the FULL rate (-28 % ingest time), of the same order as the 21 % commit and fsync share of the Task 9 profile. The price is the power-loss window in `docs/limitations.md`. One run of each, so the difference carries run-to-run noise of a shared laptop.

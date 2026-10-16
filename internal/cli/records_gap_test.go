@@ -80,18 +80,41 @@ func TestRecordsStatsAndShowNameTheAuditedButAbsentBatches(t *testing.T) {
 	}
 }
 
-// TestCaseVerifyOfALostRelaxedIngestFailsAndNamesTheBatch: verify never passes the case (a case with a problem exits 4, as for any
+// TestCaseVerifyOfALostRelaxedIngestFailsAndNamesTheBatch: verify never passes the case (it exits 4 exactly, D97, as for any
 // problem) and its report names the interrupted ingest and the audited-but-absent batch. The tampered rows here also leave index
 // leftovers, which verify reports too: the interrupted ingest is among the problems, never hidden by them.
 func TestCaseVerifyOfALostRelaxedIngestFailsAndNamesTheBatch(t *testing.T) {
 	dir, id := gapCase(t)
 	code, out := run(t, Deps{}, "case", "verify", "--case", dir)
-	if code == 0 {
-		t.Fatalf("verify passed:\n%s", out)
+	if code != 4 {
+		t.Fatalf("verify exit code = %d, want 4 (integrity failure):\n%s", code, out)
 	}
 	for _, want := range []string{id, "interrupted", "batch 2 of ingest"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("verify output lacks %q:\n%s", want, out)
 		}
+	}
+}
+
+// TestGapTextElidesLongBatchLists (D94): the text names the first 100 absent batches and counts the
+// rest; the JSON keeps the whole list (it is bounded by the audit log).
+func TestGapTextElidesLongBatchLists(t *testing.T) {
+	g := records.IngestGap{IngestID: "ING", Parser: "p", ParserVersion: "1"}
+	for i := 1; i <= 250; i++ {
+		g.AbsentBatches = append(g.AbsentBatches, i)
+	}
+	text := gapText(g)
+	if !strings.Contains(text, ", 100") || strings.Contains(text, "101") {
+		t.Errorf("text should list batches 1..100 only: %s", text)
+	}
+	if !strings.HasSuffix(text, "... and 150 more (250 absent batches)") {
+		t.Errorf("text lacks the elision statement: %s", text)
+	}
+	short := records.IngestGap{IngestID: "ING", AbsentBatches: []int{1, 2, 3}}
+	if got := gapText(short); strings.Contains(got, "more") || !strings.HasSuffix(got, "1, 2, 3") {
+		t.Errorf("a short list must not be elided: %s", got)
+	}
+	if got := gapOf(g).AbsentBatches; len(got) != 250 {
+		t.Errorf("the JSON keeps all %d batches, got %d", 250, len(got))
 	}
 }

@@ -826,6 +826,9 @@ func gapsJSON(gs []records.IngestGap) []gapJSON {
 	return out
 }
 
+// maxGapBatchesShown is how many absent batch numbers the text output names before it counts the rest.
+const maxGapBatchesShown = 100
+
 // gapText is the one-line statement of a gap; a run with a gap is never described as complete.
 func gapText(g records.IngestGap) string {
 	state := "never concluded (no completion record)"
@@ -834,11 +837,18 @@ func gapText(g records.IngestGap) string {
 	}
 	s := fmt.Sprintf("INCOMPLETE ingest %s (%s %s): %s", printable(g.IngestID), printable(g.Parser), printable(g.ParserVersion), state)
 	if len(g.AbsentBatches) > 0 {
-		nos := make([]string, len(g.AbsentBatches))
-		for i, n := range g.AbsentBatches {
+		shown := g.AbsentBatches
+		if len(shown) > maxGapBatchesShown {
+			shown = shown[:maxGapBatchesShown]
+		}
+		nos := make([]string, len(shown))
+		for i, n := range shown {
 			nos[i] = strconv.Itoa(n)
 		}
 		s += "; batches audited but absent from the database: " + strings.Join(nos, ", ")
+		if more := len(g.AbsentBatches) - len(shown); more > 0 { // the JSON keeps the full list (D94)
+			s += fmt.Sprintf(", ... and %d more (%d absent batches)", more, len(g.AbsentBatches))
+		}
 	}
 	return s
 }

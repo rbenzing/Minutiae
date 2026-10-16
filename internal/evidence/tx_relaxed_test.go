@@ -3,6 +3,7 @@ package evidence_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -99,5 +100,80 @@ func TestRestoreFullSyncOnAFullCaseChangesNothing(t *testing.T) {
 	}
 	if got := pragmaText(t, c, "journal_mode"); got != "delete" {
 		t.Fatalf("journal_mode = %q", got)
+	}
+}
+
+// TestRelaxedSyncIsFullAfterATransactionThatReturnsAnError: the deferred restore runs on the error
+// path too, so the pooled connection is never left on NORMAL (D93).
+func TestRelaxedSyncIsFullAfterATransactionThatReturnsAnError(t *testing.T) {
+	c := recordstest.NewCase(t)
+	boom := errors.New("boom")
+	err := c.StoreTxTuned(context.Background(), evidence.TxTuning{RelaxedSync: true}, func(tx *sql.Tx) error {
+		var s int
+		if err := tx.QueryRow("PRAGMA synchronous").Scan(&s); err != nil || s != 1 {
+			t.Errorf("inside: synchronous = %d (%v), want 1", s, err)
+		}
+		return boom
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want boom", err)
+	}
+	if got := pragma(t, c, "synchronous"); got != 2 {
+		t.Fatalf("synchronous after a failed relaxed transaction = %d, want 2 (FULL)", got)
+	}
+}
+
+// TestRelaxedSyncIsFullAfterATransactionThatPanics: the same when fn panics (the panic continues).
+func TestRelaxedSyncIsFullAfterATransactionThatPanics(t *testing.T) {
+	c := recordstest.NewCase(t)
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("the panic did not continue")
+			}
+		}()
+		_ = c.StoreTxTuned(context.Background(), evidence.TxTuning{RelaxedSync: true}, func(*sql.Tx) error {
+			panic("fn panics")
+		})
+	}()
+	if got := pragma(t, c, "synchronous"); got != 2 {
+		t.Fatalf("synchronous after a panicking relaxed transaction = %d, want 2 (FULL)", got)
+	}
+}
+
+// TestReopeningACaseLeftInWALReturnsToDeleteWithTheRowsIntact: a case closed without RestoreFullSync
+// (a crash or an abandoned ingest) is back on the rollback journal when it is opened again, and the
+// relaxed rows are still there.
+func TestReopeningACaseLeftInWALReturnsToDeleteWithTheRowsIntact(t *testing.T) {
+	ctx := context.Background()
+	c := recordstest.NewCase(t)
+	err := c.StoreTxTuned(ctx, evidence.TxTuning{RelaxedSync: true}, func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`CREATE TABLE relaxed_probe (v INTEGER)`); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`INSERT INTO relaxed_probe VALUES (1), (2), (3)`)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := pragmaText(t, c, "journal_mode"); got != "wal" {
+		t.Fatalf("journal_mode while relaxed = %q, want wal", got)
+	}
+	dir := c.Dir
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := evidence.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c2.Close() }()
+	if got := pragmaText(t, c2, "journal_mode"); got != "delete" {
+		t.Fatalf("journal_mode after reopening = %q, want delete", got)
+	}
+	var n int
+	if err := c2.StoreTx(ctx, func(tx *sql.Tx) error { return tx.QueryRow(`SELECT count(*) FROM relaxed_probe`).Scan(&n) }); err != nil || n != 3 {
+		t.Fatalf("rows after reopening = %d (%v), want 3", n, err)
 	}
 }
