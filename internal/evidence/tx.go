@@ -116,9 +116,9 @@ const maxTunedCacheKiB = 1 << 20 // 1 GiB
 // LastStoreTuning returns the tuning of the last tuned transaction (diagnostic).
 func (c *Case) LastStoreTuning() TxTuning { return TxTuning{CacheKiB: int(c.lastTuneKiB.Load())} }
 
-// StoreTxTuned is StoreTx with per-transaction settings; see TxTuning. A tuned transaction keeps
-// temp_store at MEMORY (R67: a sorter never spills outside the case) and puts cache_size and
-// temp_store back when it ends.
+// StoreTxTuned is StoreTx with per-transaction settings; see TxTuning. Like every StoreTx it sets
+// temp_store to MEMORY (R67: a sorter never spills outside the case); a tuned transaction puts
+// cache_size back when it ends, and a connection whose restore fails is discarded.
 func (c *Case) StoreTxTuned(ctx context.Context, tune TxTuning, fn func(*sql.Tx) error) error {
 	if tune.CacheKiB < 0 || tune.CacheKiB > maxTunedCacheKiB {
 		return fmt.Errorf("artifacts.db: cache size %d KiB is outside 0..%d", tune.CacheKiB, maxTunedCacheKiB)
@@ -145,29 +145,21 @@ func (c *Case) StoreTxTuned(ctx context.Context, tune TxTuning, fn func(*sql.Tx)
 		}
 	}
 	if tune.CacheKiB != 0 {
-		var prev, prevTemp int
+		var prev int
 		if err := conn.QueryRowContext(ctx, `PRAGMA cache_size`).Scan(&prev); err != nil {
 			bad = true
 			return fmt.Errorf("artifacts.db pragma: %w", err)
 		}
-		if err := conn.QueryRowContext(ctx, `PRAGMA temp_store`).Scan(&prevTemp); err != nil {
+		// temp_store is already MEMORY (set above for every StoreTx, R67, ruling D23); only the cache
+		// size is tuned and put back.
+		if _, err := conn.ExecContext(ctx, `PRAGMA cache_size = `+strconv.Itoa(-tune.CacheKiB)); err != nil {
 			bad = true
 			return fmt.Errorf("artifacts.db pragma: %w", err)
 		}
-		// MEMORY, like ReadTx: a sorter or temporary table of a bulk write never spills to a file outside
-		// the case (R67, ruling D23); both settings are put back when the transaction ends.
-		for _, p := range []string{`PRAGMA cache_size = ` + strconv.Itoa(-tune.CacheKiB), `PRAGMA temp_store = MEMORY`} {
-			if _, err := conn.ExecContext(ctx, p); err != nil {
-				bad = true
-				return fmt.Errorf("artifacts.db pragma: %w", err)
-			}
-		}
 		c.lastTuneKiB.Store(int64(tune.CacheKiB))
 		defer func() { // runs before the connection is closed or discarded (the earlier defer)
-			for _, p := range []string{`PRAGMA cache_size = ` + strconv.Itoa(prev), `PRAGMA temp_store = ` + strconv.Itoa(prevTemp)} {
-				if _, err := conn.ExecContext(context.WithoutCancel(ctx), p); err != nil {
-					bad = true
-				}
+			if _, err := conn.ExecContext(context.WithoutCancel(ctx), `PRAGMA cache_size = `+strconv.Itoa(prev)); err != nil {
+				bad = true
 			}
 		}()
 	}
