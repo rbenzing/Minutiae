@@ -919,6 +919,9 @@ The fetched files (untrusted text, kept outside the repository, never executed) 
   `mmssms-oem-extended` vendor columns are invented on purpose. `ContactsDatabaseHelper.java` no longer creates a
   `calls` table at this tag (line 2687 says it was extracted), so `calllog-in-contacts2` is the layout of older
   releases built from the call log columns, not a definition of the tag.
+  A historical snapshot is checked on column names only: the historical definitions (column affinity, the
+  `DEFAULT` values such as `error_code DEFAULT 0`, `AUTOINCREMENT` on the key) are not compared with the tag's
+  text, which differs from them.
 - `no-public-source`: none.
 
 Constants, checked by reading the fetched files (file:line at the tag): `Telephony.java` `Sms.MESSAGE_TYPE_*` lines

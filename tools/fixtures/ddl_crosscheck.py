@@ -93,9 +93,10 @@ class Source:
 
     def __init__(self, name, path):
         self.name = name
-        with open(path, encoding="utf-8", errors="replace") as f:
-            raw = f.read()
-        self.sha256 = hashlib.sha256(open(path, "rb").read()).hexdigest()
+        with open(path, "rb") as f:
+            data = f.read()
+        raw = data.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")  # as text mode would
+        self.sha256 = hashlib.sha256(data).hexdigest()
         self.text, self.strings = strip_and_mask(raw)
         self.consts = {}  # (class, NAME) -> expr
         self.supers = {}  # class -> [super simple names]
@@ -143,8 +144,9 @@ class World:
     def __init__(self, srcdir):
         self.files = {}
         for fn in sorted(os.listdir(srcdir)):
-            if fn.endswith(".java"):
-                self.files[fn] = Source(fn, os.path.join(srcdir, fn))
+            path = os.path.join(srcdir, fn)
+            if fn.endswith(".java") and not os.path.islink(path):  # a link could point outside <sourcedir>
+                self.files[fn] = Source(fn, path)
 
     def find(self, cls, name, seen=None):
         """[(source, expr)] of constant name in class cls or a super type of it (the class's own

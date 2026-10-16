@@ -22,7 +22,7 @@ func TestTelephonyDDLSnapshotsCiteTheirSourceAndHaveAVerdict(t *testing.T) {
 	}
 	cite := regexp.MustCompile(`(?m)^-- Source: .*tag android-[0-9.]+_r[0-9]+, \S+\.java`)
 	create := regexp.MustCompile(`(?m)^CREATE TABLE (\w+) `)
-	verdict := regexp.MustCompile(`\| (verified|historical|no-public-source) \|`)
+	header := regexp.MustCompile(`\(?verdict (verified|historical)\b`)
 	for _, f := range files {
 		src, err := os.ReadFile(f)
 		if err != nil {
@@ -35,11 +35,25 @@ func TestTelephonyDDLSnapshotsCiteTheirSourceAndHaveAVerdict(t *testing.T) {
 		if strings.Contains(string(src), "from memory") && !strings.Contains(string(src), "no-public-source") {
 			t.Errorf("%s still says 'from memory' for a table that has a public source", base)
 		}
+		hv := header.FindAllStringSubmatch(string(src), -1)
+		agree := len(hv) > 0
+		for _, h := range hv {
+			agree = agree && h[1] == hv[0][1]
+		}
+		if !agree {
+			t.Errorf("%s must state 'verdict verified' or 'verdict historical' at least once, and never both", base)
+			continue
+		}
 		for _, m := range create.FindAllStringSubmatch(string(src), -1) {
-			row := "| " + base + " | " + m[1] + " |"
-			i := strings.Index(string(report), row)
-			if i < 0 || !verdict.MatchString(string(report)[i:min(len(report), i+len(row)+40)]) {
+			// The row is anchored at the start of its line and its verdict is the third cell, so
+			// neither the Evidence column nor a longer row can satisfy it.
+			row := regexp.MustCompile(`(?m)^\| ` + regexp.QuoteMeta(base) + ` \| ` + regexp.QuoteMeta(m[1]) + ` \| (verified|historical|no-public-source) \|`)
+			rv := row.FindStringSubmatch(string(report))
+			switch {
+			case rv == nil:
 				t.Errorf("CROSSCHECK.md has no verdict row for %s table %s", base, m[1])
+			case rv[1] != hv[0][1]:
+				t.Errorf("%s says verdict %s but CROSSCHECK.md says %s for table %s", base, hv[0][1], rv[1], m[1])
 			}
 		}
 	}
