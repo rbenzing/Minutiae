@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -337,4 +339,91 @@ func both(fs ...func(*artparse.Options)) func(*artparse.Options) {
 func shortTimeouts(o *artparse.Options) {
 	o.Limits.Timeout = 150 * time.Millisecond
 	o.Limits.GracePeriod = 30 * time.Millisecond
+}
+
+// eventTimeout is the Limits.Timeout of a test whose job expires on an event: it never elapses, and it tells
+// the expireParseOnEvent seam which guarded call is the Parse of a job (Probe uses ProbeTimeout).
+const eventTimeout = 7 * time.Hour
+
+func eventTimeouts(o *artparse.Options) {
+	o.Limits.Timeout = eventTimeout
+	o.Limits.GracePeriod = 30 * time.Millisecond
+}
+
+// expiring is a job context that reports context.DeadlineExceeded once fired, while its parent stays live,
+// so the host classifies the end as a timeout, not a cancel.
+type expiring struct {
+	context.Context
+	fired atomic.Bool
+}
+
+func (c *expiring) Err() error {
+	if c.fired.Load() {
+		return context.DeadlineExceeded
+	}
+	return c.Context.Err()
+}
+
+// expireParseOnEvent makes the nth Parse job context (the nth guarded call with eventTimeout) expire when
+// trigger is closed; every other guarded call keeps the ordinary timeout. It restores the seam at cleanup.
+func expireParseOnEvent(t *testing.T, nth int32, trigger <-chan struct{}) {
+	t.Helper()
+	var calls atomic.Int32
+	restore := artparse.SetJobContext(func(parent context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+		if d != eventTimeout || calls.Add(1) != nth {
+			return context.WithTimeout(parent, d)
+		}
+		inner, cancel := context.WithCancel(parent)
+		c := &expiring{Context: inner}
+		go func() {
+			select {
+			case <-trigger:
+				c.fired.Store(true)
+				cancel()
+			case <-inner.Done():
+			}
+		}()
+		return c, cancel
+	})
+	t.Cleanup(restore)
+}
+
+// checkAbandonedMiddleJob asserts the shared outcome of a three-job run whose second job was abandoned
+// after it emitted two records: those are kept, the job is incomplete and abandoned, the third never starts.
+func checkAbandonedMiddleJob(t *testing.T, f *rx, sum artparse.RunSummary, wantReason string) {
+	t.Helper()
+	if sum.Stopped != "abandoned" || sum.Class() != artparse.ClassPartial || len(sum.Jobs) != 3 {
+		t.Fatalf("summary %+v class %v", sum, sum.Class())
+	}
+	if j := jobOf(t, sum, "one"); j.Outcome != artparse.OutcomeComplete {
+		t.Errorf("job 1: %+v", j)
+	}
+	j2 := jobOf(t, sum, "two")
+	if j2.Outcome != artparse.OutcomeIncomplete || !j2.Abandoned || j2.Records != 2 || !strings.Contains(j2.Reason, wantReason) {
+		t.Errorf("job 2: %+v, want incomplete, abandoned, reason %q, its 2 accepted records flushed", j2, wantReason)
+	}
+	if j3 := jobOf(t, sum, "three"); j3.Outcome != artparse.OutcomeNotRun {
+		t.Errorf("job 3: %+v, want not-run", j3)
+	}
+	if f.count("records.ingest.error") != 1 || f.count("records.ingest.start") != 2 {
+		t.Errorf("ingest errors %d, starts %d", f.count("records.ingest.error"), f.count("records.ingest.start"))
+	}
+	ends := f.jobEnds()
+	if len(ends) != 2 || !ends[1].Abandoned {
+		t.Fatalf("job.end entries %+v", ends)
+	}
+	if starts := f.jobStarts(); len(starts) != 2 {
+		t.Errorf("%d parse.job.start entries, want 2: the third job must not start", len(starts))
+	}
+	errs := f.entries("analysis.error")
+	if len(errs) != 1 || f.count("analysis.end") != 0 {
+		t.Fatalf("analysis.error %d, analysis.end %d", len(errs), f.count("analysis.end"))
+	}
+	ae := decodeEntry[artparse.AnalysisError](t, errs[0])
+	if ae.NotRun != 1 || ae.AnalysisID != sum.ParseID {
+		t.Errorf("analysis.error %+v", ae)
+	}
+	if f.nRecords() != 3+2 {
+		t.Errorf("%d records stored", f.nRecords())
+	}
 }
