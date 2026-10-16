@@ -83,7 +83,8 @@ func (mb *member) artifact() parse.Artifact {
 	rec := mb.src.rec
 	return parse.Artifact{
 		ID: rec.ID, SHA256: rec.SHA256, Platform: mb.m.Platform, Logical: mb.m.Logical,
-		Size: rec.Size, Incomplete: rec.Incomplete, Source: SourceInfo(rec),
+		Acquisition: acquisitionOf(rec),
+		Size:        rec.Size, Incomplete: rec.Incomplete, Source: SourceInfo(rec),
 	}
 }
 
