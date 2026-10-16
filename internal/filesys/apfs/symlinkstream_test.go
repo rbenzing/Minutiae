@@ -219,8 +219,11 @@ func TestSymlinkStreamFailedReadRefundsTheBudget(t *testing.T) {
 	}
 }
 
-// Concurrent opens near exhaustion: exactly as many succeed as the budget
-// holds, so a reader that is refused never starves one that would fit.
+// INTEGRATION ONLY: concurrent opens near exhaustion end with exactly as many
+// successes as the budget holds. This does NOT discriminate the charge
+// algorithm (it passed under an Add-then-refund charge too); the unit pins are
+// TestChargeLinkBudgetIsNeverObservedNegative and
+// TestSymlinkStreamRefusedChargeNeverStarvesAFittingOne.
 func TestSymlinkStreamBudgetConcurrent(t *testing.T) {
 	target := longTarget(5000)
 	f, _ := openOpts(t, volOpts(dataVolume(
@@ -295,5 +298,53 @@ func TestSymlinkStreamRefusedChargeNeverStarvesAFittingOne(t *testing.T) {
 	big.Wait()
 	if granted.Load() != small || f.LinkBudget() != 0 {
 		t.Errorf("%d of %d fitting charges granted, %d left", granted.Load(), small, f.LinkBudget())
+	}
+}
+
+// The budget is never observed below zero. A sampler reads it continuously
+// while several goroutines ask for far more than is left: a charge that is
+// taken first and refunded after a refusal (Add then refund) shows a negative
+// value to the sampler; a compare-and-swap that refuses without writing never
+// does. Deterministic in its assertion: any negative sample fails.
+func TestChargeLinkBudgetIsNeverObservedNegative(t *testing.T) {
+	f, _ := openOpts(t, volOpts(dataVolume()))
+	const left = 10
+	f.SetLinkBudget(left)
+	var askers sync.WaitGroup
+	for range 8 {
+		askers.Add(1)
+		go func() {
+			defer askers.Done()
+			for range 200000 {
+				if f.ChargeLink(100) {
+					t.Error("a charge over the budget was granted")
+					return
+				}
+			}
+		}()
+	}
+	done := make(chan struct{})
+	go func() { askers.Wait(); close(done) }()
+	var samples, negative int64
+	lowest := int64(left)
+sampling:
+	for {
+		select {
+		case <-done:
+			break sampling
+		default:
+		}
+		b := f.LinkBudget()
+		samples++
+		lowest = min(lowest, b)
+		if b < 0 {
+			negative++
+		}
+	}
+	if negative != 0 {
+		t.Errorf("the budget was observed below zero %d times in %d samples (lowest %d)", negative, samples, lowest)
+	}
+	if got := f.LinkBudget(); got != left {
+		t.Errorf("the budget is %d after only refused charges, want %d", got, left)
 	}
 }
