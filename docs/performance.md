@@ -247,3 +247,13 @@ Shares that decide the sub-steps of Task 9:
 - Commit and fsync: 21.3 % (`FlushFileBuffers` 17.1 %). The rest of the time is index maintenance inside SQLite.
 
 The miss is in the engine (full-text and B-tree index maintenance); this plan does not change it. The FTS merge share (36.5 % here) only grows with index size: each merge level rewrites more segments as the index grows, so at 400,000 records this is a floor for larger runs, not a ceiling.
+
+### Relaxed sync during ingest (5D Task 9b, rulings D89, D90 f)
+A profile, not a spec-target run. Same machine as the baseline (Intel i7-1265U, 15.4 GB RAM, NVMe, Windows 11 Pro, go1.26.8), under normal desktop load, code of a557479, `go test -tags scale -run TestScale` with `MINUTIAE_SCALE_PHASES=ingest`, 400,000 records (ruling D30), each run alone through `heavy.sh`; NORMAL is `MINUTIAE_SCALE_RELAXED_SYNC=1` (`WriterOptions.RelaxedSync`).
+
+| Ingest sync | Records | Ingest time | Rate | Peak RSS |
+|---|---|---|---|---|
+| FULL (default) | 400,000 | 255.2 s | 1,567.5 records/s | 479 MB |
+| NORMAL (`--fast-sync`, write-ahead log) | 400,000 | 184.5 s | 2,167.5 records/s | 486 MB |
+
+NORMAL is 1.38 times the FULL rate (-28 % ingest time), in line with the 21 % commit and fsync share of the Task 9 profile plus the cheaper write-ahead commits. The price is the power-loss window in `docs/limitations.md`. One run of each, so the difference carries run-to-run noise of a shared laptop; the End step (checkpoint and journal restore) is inside the NORMAL time.
