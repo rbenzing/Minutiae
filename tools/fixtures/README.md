@@ -893,3 +893,46 @@ need it. One fuzz corpus seed is committed (`internal/sqlitefile/testdata/fuzz/F
 3. Keep images small: a few hundred KiB compressed at most. The raw size is set by
    the filesystem (the smallest FAT32 image is 34 MiB, see above; every other fixture
    is at most 16 MiB raw).
+
+## DDL provenance (Android telephony, plan 4D)
+
+The eight snapshots in `tools/fixtures/schemas/android-telephony/*.sql` are cross-checked by
+`tools/fixtures/ddl_crosscheck.py` against the public provider sources at AOSP tag
+`android-14.0.0_r1` (the nearest `android-14.0.0_r*` tag present in every repository; the
+script is run with `py -3 -I <sourcedir> <schemasdir> --write-report ...`). Commits:
+`platform/packages/providers/TelephonyProvider` a1e5ac7164cbb4556226279de386518c5814c115,
+`platform/packages/providers/ContactsProvider` 224cfeaf5f85106b1ca7d323403d6764b78920f0,
+`platform/frameworks/base` 299fe6f5d6fc6f1af7c3411dcf4e5efdf7217368,
+`platform/packages/apps/Messaging` d921817eec79a8ca2354254d9e0771a8740c5867 (only `PduHeaders.java`, see below).
+The fetched files (untrusted text, kept outside the repository, never executed) and their SHA-256 are listed in
+`schemas/android-telephony/CROSSCHECK.md`, which also holds one verdict row per snapshot table:
+
+- `verified`: the snapshot is the CREATE TABLE the tag builds (`mmssms-aosp-baseline`, `calllog-features-subid`,
+  `contacts-aosp-baseline`, `contacts-deleted-contacts`; generated with `--emit`, compared column by column on name,
+  order and whole definition text). These replaced the earlier from-memory text, which lacked columns the tag creates
+  (for example `sub_id`, `creator`, `text_only`, `error_code DEFAULT -1`, `raw_contacts.account_id` instead of
+  `account_name`/`account_type`, `data.hash_id`, 36 `raw_contacts` and 54 `calls` columns) and so did not match it.
+  `data15` is declared TEXT by the source although it holds BLOB values.
+- `historical`: older or reduced variants (`mmssms-aosp-subid-alter`, `mmssms-oem-extended`,
+  `calllog-pre-presentation`, `calllog-in-contacts2`) that only use columns a CREATE TABLE of the same sources defines
+  or that the upgrade code adds with ALTER TABLE ADD COLUMN (each with its file:line in CROSSCHECK.md). The three
+  `mmssms-oem-extended` vendor columns are invented on purpose. `ContactsDatabaseHelper.java` no longer creates a
+  `calls` table at this tag (line 2687 says it was extracted), so `calllog-in-contacts2` is the layout of older
+  releases built from the call log columns, not a definition of the tag.
+- `no-public-source`: none.
+
+Constants, checked by reading the fetched files (file:line at the tag): `Telephony.java` `Sms.MESSAGE_TYPE_*` lines
+139-157 (0 all, 1 inbox, 2 sent, 3 draft, 4 outbox, 5 failed, 6 queued); `Telephony.java` `BaseMmsColumns.MESSAGE_BOX_*`
+lines 1477-1487 (0 all, 1 inbox, 2 sent, 3 drafts, 4 outbox, 5 failed); `CallLog.java` `Calls.*_TYPE` lines 862-878
+(1 incoming, 2 outgoing, 3 missed, 4 voicemail, 5 rejected, 6 blocked, 7 answered externally), `PRESENTATION_*` lines
+936-944 (1 allowed, 2 restricted, 3 unknown, 4 payphone, 5 unavailable), `FEATURES_VIDEO` line 888 (1 << 0);
+`ContactsContract.java` `CommonDataKinds.Im.PROTOCOL_*` lines 6940-6985 (-1 custom, 0 AIM, 1 MSN, 2 Yahoo, 3 Skype,
+4 QQ, 5 Google Talk, 6 ICQ, 7 Jabber, 8 NetMeeting); `Phone.TYPE_*` lines 6332-6351 (1 home, 2 mobile, 3 work,
+4 fax work, 5 fax home, 6 pager, 7 other, 8 callback, 9 car, 10 company main, 11 ISDN, 12 main, 13 other fax,
+14 radio, 15 telex, 16 TTY/TDD, 17 work mobile, 18 work pager, 19 assistant, 20 MMS); `Email.TYPE_*` lines 6606-6609
+(1 home, 2 work, 3 other, 4 mobile); `StructuredPostal.TYPE_*` lines 6757-6759 (1 home, 2 work, 3 other);
+`Website.TYPE_*` lines 7667-7673 (1 homepage, 2 blog, 3 profile, 4 home, 5 work, 6 FTP, 7 other).
+The MMS address types come from `PduHeaders.java`, which is not in `frameworks/opt/mms` at this tag (no such
+repository) nor in `frameworks/opt/telephony`; the copy in `packages/apps/Messaging`
+(`src/com/android/messaging/mmslib/pdu/PduHeaders.java`, same tag) gives FROM 0x89 = 137 (line 38), TO 0x97 = 151
+(line 54), CC 0x82 = 130 (line 31) and BCC 0x81 = 129 (line 30).
