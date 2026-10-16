@@ -19,6 +19,26 @@ const (
 	maxDentName = 4096
 )
 
+// DefaultMaxListEntries bounds a LIST when the caller gives no limit.
+const DefaultMaxListEntries = 1_000_000
+
+// maxListNameBytes bounds the entry-name bytes one LIST may deliver (a count
+// cap alone would let 1,000,000 names of 4096 bytes cost 4 GiB).
+const maxListNameBytes = 64 << 20
+
+// maxListEntriesCeiling clamps a caller-supplied limit so limit+2 cannot overflow.
+const maxListEntriesCeiling = 1 << 30
+
+// ErrListLimit means a directory listing had more entries than the limit. The
+// device still has frames pending, so the session must be closed.
+var ErrListLimit = errors.New("adb sync: directory listing exceeds the entry limit")
+
+// ListResult is what a LIST returned.
+type ListResult struct {
+	Entries []SyncEntry // without "." and ".."
+	Raw     int         // entry frames received, "." and ".." included
+}
+
 // SyncEntry is a LIST/STAT result (sync v1: 32-bit size and mtime).
 type SyncEntry struct {
 	Name  string
@@ -92,42 +112,68 @@ func (s *Sync) readFail() error {
 	return &FailError{Msg: string(msg)}
 }
 
-// List returns the entries of dir, excluding "." and "..".
+// List returns the entries of dir, excluding "." and "..", reading at most
+// DefaultMaxListEntries.
 func (s *Sync) List(dir string) ([]SyncEntry, error) {
-	if err := s.request("LIST", []byte(dir)); err != nil {
-		return nil, fmt.Errorf("adb sync list %s: %w", dir, err)
+	res, err := s.ListN(dir, DefaultMaxListEntries)
+	return res.Entries, err
+}
+
+// ListN is List with a limit on the entries read. More than max entries (or
+// more than max+2 frames: a real directory has one "." and one "..") is
+// ErrListLimit with the first max entries in the result; the session is then
+// unusable.
+func (s *Sync) ListN(dir string, max int) (ListResult, error) {
+	if max <= 0 {
+		max = DefaultMaxListEntries
 	}
-	var out []SyncEntry
+	max = min(max, maxListEntriesCeiling) // max+2 below must not overflow
+	var res ListResult
+	nameBytes := 0
+	if err := s.request("LIST", []byte(dir)); err != nil {
+		return res, fmt.Errorf("adb sync list %s: %w", dir, err)
+	}
 	for {
 		id, err := s.readID()
 		if err != nil {
-			return nil, fmt.Errorf("adb sync list %s: %w", dir, err)
+			return res, fmt.Errorf("adb sync list %s: %w", dir, err)
 		}
 		switch id {
 		case "DENT":
 			v, err := s.readU32s(4) // mode, size, mtime, namelen
 			if err != nil {
-				return nil, err
+				return res, err
 			}
 			if v[3] > maxDentName {
-				return nil, fmt.Errorf("adb sync list %s: %w: DENT name length %d exceeds %d", dir, ErrProtocol, v[3], maxDentName)
+				return res, fmt.Errorf("adb sync list %s: %w: DENT name length %d exceeds %d", dir, ErrProtocol, v[3], maxDentName)
 			}
 			name := make([]byte, v[3])
 			if _, err := io.ReadFull(s.c, name); err != nil {
-				return nil, err
+				return res, err
+			}
+			res.Raw++
+			nameBytes += len(name)
+			if nameBytes > maxListNameBytes {
+				return res, fmt.Errorf("adb sync list %s: %w (name bytes over %d)", dir, ErrListLimit, maxListNameBytes)
+			}
+			if res.Raw > max+2 {
+				return res, fmt.Errorf("adb sync list %s: %w (limit %d)", dir, ErrListLimit, max)
 			}
 			if n := string(name); n != "." && n != ".." {
-				out = append(out, SyncEntry{Name: n, Mode: v[0], Size: v[1], MTime: time.Unix(int64(v[2]), 0).UTC()})
+				if len(res.Entries) == max {
+					return res, fmt.Errorf("adb sync list %s: %w (limit %d)", dir, ErrListLimit, max)
+				}
+				res.Entries = append(res.Entries, SyncEntry{Name: n, Mode: v[0], Size: v[1], MTime: time.Unix(int64(v[2]), 0).UTC()})
 			}
 		case "DONE":
 			if _, err := s.readU32s(4); err != nil {
-				return nil, err
+				return res, err
 			}
-			return out, nil
+			return res, nil
 		case "FAIL":
-			return nil, fmt.Errorf("adb sync list %s: %w", dir, s.readFail())
+			return res, fmt.Errorf("adb sync list %s: %w", dir, s.readFail())
 		default:
-			return nil, fmt.Errorf("adb sync list %s: unexpected %q", dir, id)
+			return res, fmt.Errorf("adb sync list %s: unexpected %q", dir, id)
 		}
 	}
 }
