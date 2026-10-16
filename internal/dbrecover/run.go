@@ -152,7 +152,7 @@ func walFacts(w *sqlitefile.WALInfo) map[string]any {
 
 func journalFacts(j *sqlitefile.JournalInfo) map[string]any {
 	return map[string]any{
-		"present": j.Present, "header_valid": j.HeaderValid, "zeroed_header": j.ZeroedHeader, "hot": j.Hot, "applied": j.Applied,
+		"present": j.Present, "header_valid": j.HeaderValid, "zeroed_header": j.ZeroedHeader, "hot": j.Hot, "applied": j.Applied, "truncated": j.Truncated,
 		"not_applied_reason": j.NotAppliedReason, "has_super_journal": j.HasSuperJournal,
 		"super_journal_present": "false (not modelled)", "size": j.Size,
 		"records_total": int64(j.RecordsTotal), "records_valid": int64(j.RecordsValid), "records_bad_checksum": int64(j.RecordsBadChecksum),
