@@ -120,7 +120,7 @@ func newLsCmd(d Deps, opts *rootOptions, kind device.Kind, flag string) *cobra.C
 		es, err := t.List(cmd.Context(), args[0])
 		// A partial listing prints what was readable and still fails; any other
 		// error prints nothing: an unreadable directory is never an empty one.
-		if err != nil && !(errors.Is(err, device.ErrPartialListing) && len(es) > 0) {
+		if err != nil && (!errors.Is(err, device.ErrPartialListing) || len(es) == 0) {
 			return err
 		}
 		listErr := err
