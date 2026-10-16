@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -109,6 +110,9 @@ type SchemaObject struct {
 	// KeyRangeViolation: the row lies outside the key range its ancestors give it
 	// (as Row.KeyRangeViolation).
 	KeyRangeViolation bool
+	// BeyondEngineDepth: the schema row was read from a node of the schema tree
+	// deeper than the engine follows.
+	BeyondEngineDepth bool
 
 	nameBad bool // the row disagrees with its own statement (already warned)
 }
@@ -276,6 +280,9 @@ func (v *View) Schema(ctx context.Context) (s *Schema, err error) {
 	var inRows int64 // warnings raised by the callback itself (not damage met by the walk)
 	row := func(r Row) bool {
 		v.e.at("schema.row")
+		if r.BeyondEngineDepth && !slices.Contains(sc.EngineRefuses, schemaDeepRefusal) {
+			sc.refuse(schemaDeepRefusal)
+		}
 		typ, name, tbl, root, sql, sst, why := schemaFields(r)
 		at := Warning{File: r.Loc.File, Page: r.Loc.Page, Offset: r.Loc.Offset}
 		if why != "" {
@@ -298,7 +305,7 @@ func (v *View) Schema(ctx context.Context) (s *Schema, err error) {
 			return false
 		}
 		seen[key] = true
-		obj := SchemaObject{Type: typ, Name: name, TblName: tbl, RootPage: root, Loc: r.Loc, KeyRangeViolation: r.KeyRangeViolation}
+		obj := SchemaObject{Type: typ, Name: name, TblName: tbl, RootPage: root, Loc: r.Loc, KeyRangeViolation: r.KeyRangeViolation, BeyondEngineDepth: r.BeyondEngineDepth}
 		// The statement text is kept while the total stays within its cap.
 		parse := false
 		switch {
@@ -420,6 +427,10 @@ func (v *View) parseObject(obj *SchemaObject, sst sqlState, parse bool, maxCols 
 		obj.Index = &def
 	}
 }
+
+// schemaDeepRefusal is the Info.EngineRefuses reason of a schema table read
+// from nodes deeper than the engine cursor follows.
+const schemaDeepRefusal = "schema tree deeper than the engine follows"
 
 // maxSchemaRefusals bounds Schema.EngineRefuses.
 const maxSchemaRefusals = 16

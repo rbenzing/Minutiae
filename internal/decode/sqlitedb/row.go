@@ -96,6 +96,9 @@ func (t *Table) buildRow(in rowInput, charge func(n int64) error) (Row, error) {
 		return Row{}, err
 	}
 	in.vals = t.lt.Resolve(in.raw)
+	if t.lt.SchemaBeyondEngineDepth() {
+		in.flags |= FlagBeyondEngineDepth
+	}
 	r := Row{
 		tbl: t, rowid: in.raw.Rowid, hasRowid: in.raw.HasRowid, vals: in.vals, storedLen: in.storedLen,
 		flags: in.flags, loc: in.loc, rec: in.rec,

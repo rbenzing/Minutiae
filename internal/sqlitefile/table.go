@@ -293,3 +293,7 @@ func applyAffinity(v Value, aff Affinity) (Value, bool) {
 func (t *Table) RowsLoss(ctx context.Context, visit func(Row) bool) (ScanLoss, error) {
 	return t.v.ScanTreeLoss(ctx, t.obj.RootPage, t.kind(), visit)
 }
+
+// SchemaBeyondEngineDepth says the table was defined by a schema row read from
+// a schema tree deeper than the engine follows.
+func (t *Table) SchemaBeyondEngineDepth() bool { return t.obj.BeyondEngineDepth }

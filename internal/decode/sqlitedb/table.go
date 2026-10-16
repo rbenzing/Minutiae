@@ -103,6 +103,12 @@ func (t *Table) Name() string { return t.name }
 
 // Col returns the index of the column called name (ASCII case-insensitive), or
 // -1 when this variant of the table lacks it.
+// SchemaBeyondEngineDepth says the table is defined by a schema row read from a
+// schema tree deeper than the engine follows: the engine cannot open such a
+// database, so every row decoded through this definition carries
+// FlagBeyondEngineDepth.
+func (t *Table) SchemaBeyondEngineDepth() bool { return t.lt.SchemaBeyondEngineDepth() }
+
 func (t *Table) Col(name string) int {
 	k := asciiFold(name)
 	for i := range t.def.Columns {
