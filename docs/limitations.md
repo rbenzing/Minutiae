@@ -138,3 +138,4 @@ What the current build does not do, does approximately, or has validated only on
   ./bin/minutiae.exe serial console --port <p> --baud <n> --case ./cases/HW1
   ./bin/minutiae.exe case verify --case ./cases/HW1
   ```
+- Scale (sub-project 5, plan 5D): at 10,000,000 records `case verify` does not finish within 4 hours on the reference laptop (baseline run: `go test` timed out after 3 h 57 min inside the full-text vocabulary comparison, `verifyFTS` -> `compareVocab`). It spills SQLite temporary files to `<case>/tmp/verify-*` of about half the database size (about 25 GB peak against a 38 GB `artifacts.db`), so it also needs that much free disk. Tracked by 5D. Copy, supersede and tamper are not yet measured at 10M (they wait for the verify fix); tamper detection is proven at 301,000 records. See `docs/performance.md`.

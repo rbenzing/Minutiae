@@ -62,7 +62,9 @@ fit the machine, the decision (ruling D50) is to move the scratch space to `<cas
 (full-text temporary files).
 
 ## Machine
-(filled by the first run: CPU model, cores, RAM, disk type, OS, Go version. The spec's reference machine is 8 cores, NVMe, 16 GiB.)
+Baseline (commit 2724e52): Intel i7-1265U (10 cores, 12 threads), 15.4 GB RAM, NVMe SK hynix PC801 512 GB, Windows 11 Pro, go1.26.8. The spec's reference machine is 8 cores, NVMe, 16 GiB; this one is close in size.
+
+Background load: this is the user's working laptop, not an idle machine. The user's applications and Docker Desktop (WSL) were running during every run, so every figure is what the tool does beside normal desktop load. During the verify run free RAM briefly fell to about 910 MB; the test process held about 70 MB and the rest was outside Minutiae.
 
 ## Recorded numbers
 ```json minutiae-perf-v1
@@ -78,22 +80,140 @@ fit the machine, the decision (ruling D50) is to move the scratch space to `<cas
     {"id": "db_ratio", "op": "<=", "value": 1.6, "unit": "x"},
     {"id": "open_artifact_ms", "op": "<=", "value": 1, "unit": "ms"}
   ],
-  "runs": [],
+  "runs": [
+    {
+      "commit": "2724e52",
+      "label": "baseline",
+      "machine": "Intel i7-1265U 10 cores/12 threads, 15.4 GB RAM, NVMe SK hynix PC801 512GB, Windows 11 Pro, go1.26.8",
+      "records": 10000000,
+      "values": {
+        "bench.ingest.batch1000_rate": 1969,
+        "bench.ingest.batch20000_rate": 2814,
+        "bench.ingest.batch5000_rate": 2452,
+        "bench.read_run_lines_s": 1.469758,
+        "db_ratio": 3.9014258415427174,
+        "get_p95_ms": 172.345,
+        "ingest_rate": 1450.9638038965286,
+        "ingest_s": 6891.970684,
+        "list_p95_ms": 266198.959,
+        "matrix.list.clean.artifact_big.p50_ms": 88206.094,
+        "matrix.list.clean.artifact_big.p95_ms": 92160.103,
+        "matrix.list.clean.artifact_big.samples": 2,
+        "matrix.list.clean.artifact_tiny.p50_ms": 0,
+        "matrix.list.clean.artifact_tiny.p95_ms": 4.682,
+        "matrix.list.clean.artifact_tiny.samples": 200,
+        "matrix.list.clean.artifacts3.p50_ms": 181720.124,
+        "matrix.list.clean.artifacts3.p95_ms": 181720.124,
+        "matrix.list.clean.artifacts3.samples": 1,
+        "matrix.list.clean.deep.p95_ms": 4.303,
+        "matrix.list.clean.deleted.p50_ms": 0,
+        "matrix.list.clean.deleted.p95_ms": 5.538,
+        "matrix.list.clean.deleted.samples": 200,
+        "matrix.list.clean.minconf+type.p50_ms": 5.19,
+        "matrix.list.clean.minconf+type.p95_ms": 13.052,
+        "matrix.list.clean.minconf+type.samples": 200,
+        "matrix.list.clean.none.p50_ms": 0.696,
+        "matrix.list.clean.none.p95_ms": 3.027,
+        "matrix.list.clean.none.samples": 200,
+        "matrix.list.clean.parser.p50_ms": 330759.78,
+        "matrix.list.clean.parser.p95_ms": 330759.78,
+        "matrix.list.clean.parser.samples": 1,
+        "matrix.list.clean.path+artifact.p50_ms": 88326.27,
+        "matrix.list.clean.path+artifact.p95_ms": 88383.622,
+        "matrix.list.clean.path+artifact.samples": 2,
+        "matrix.list.clean.time+untimed.p50_ms": 436.928,
+        "matrix.list.clean.time+untimed.p95_ms": 862.49,
+        "matrix.list.clean.time+untimed.samples": 200,
+        "matrix.list.clean.time.p50_ms": 344.631,
+        "matrix.list.clean.time.p95_ms": 706.135,
+        "matrix.list.clean.time.samples": 200,
+        "matrix.list.clean.type+time.p50_ms": 40.399,
+        "matrix.list.clean.type+time.p95_ms": 240.305,
+        "matrix.list.clean.type+time.samples": 200,
+        "matrix.list.clean.type1.p50_ms": 1.625,
+        "matrix.list.clean.type1.p95_ms": 5.497,
+        "matrix.list.clean.type1.samples": 200,
+        "matrix.list.clean.type2.p50_ms": 37706.797,
+        "matrix.list.clean.type2.p95_ms": 225434.146,
+        "matrix.list.clean.type2.samples": 4,
+        "matrix.list.clean.type3.p50_ms": 266198.959,
+        "matrix.list.clean.type3.p95_ms": 266198.959,
+        "matrix.list.clean.type3.samples": 1,
+        "matrix.search.prefix.mid.type.p95_ms": 73.469,
+        "matrix.search.prefix.mid.type.samples": 200,
+        "matrix.search.prefix.mid.type.timeouts": 0,
+        "matrix.search.substring.common.p95_ms": 20004.879,
+        "matrix.search.substring.common.samples": 6,
+        "matrix.search.substring.common.timeouts": 9,
+        "matrix.search.substring.mid.p95_ms": 233.52,
+        "matrix.search.substring.mid.samples": 200,
+        "matrix.search.substring.mid.timeouts": 0,
+        "matrix.search.substring.mid.type.p95_ms": 41.429,
+        "matrix.search.substring.mid.type.samples": 200,
+        "matrix.search.substring.mid.type.timeouts": 0,
+        "matrix.search.word.common.time.p95_ms": 20006.149,
+        "matrix.search.word.common.time.samples": 6,
+        "matrix.search.word.common.time.timeouts": 9,
+        "matrix.search.word.common.type.p95_ms": 643.21,
+        "matrix.search.word.common.type.samples": 192,
+        "matrix.search.word.common.type.timeouts": 0,
+        "matrix.search.word.mid.time.p95_ms": 222.398,
+        "matrix.search.word.mid.time.samples": 200,
+        "matrix.search.word.mid.time.timeouts": 0,
+        "matrix.search.word.mid.type.p95_ms": 24.897,
+        "matrix.search.word.mid.type.samples": 200,
+        "matrix.search.word.mid.type.timeouts": 0,
+        "matrix.search.word.rare.type.p95_ms": 49.837,
+        "matrix.search.word.rare.type.samples": 200,
+        "matrix.search.word.rare.type.timeouts": 0,
+        "open_artifact_ms": 31.736368,
+        "ostemp_added_ingest": 0,
+        "peak_rss_ingest_bytes": 261042176,
+        "search_substring_p95_ms": 20004.879,
+        "search_word_p95_ms": 20006.149,
+        "start_s": 0.0940397,
+        "stats.group_s": 5.5515808,
+        "stats.index_s": 4.3313005,
+        "stats.overview_s": 94.1453441,
+        "stats_type_s": 104.0282254
+      }
+    }
+  ],
   "decisions": {
-    "stats_plan": "pending",
-    "search_plan": "pending",
-    "open_artifact_cache": "pending",
-    "ingest_hot_path": "pending",
+    "stats_plan": "apply",
+    "search_plan": "apply",
+    "open_artifact_cache": "apply",
+    "ingest_hot_path": "apply",
     "parallel_verify": "pending"
   }
 }
 ```
 
 ## Verify phases
-(`verify_phases_s` of each run that ran the verify phase, as a table: phase, seconds, share of wall.)
+Baseline, 10,000,000 records: `case verify` did not finish. The scale test was given 240 minutes and `go test` timed out after 3 h 57 min (14,227 s) with the stack inside `verifyFTS` -> `compareVocab` (`verify_fts.go:570`), the comparison of the full-text vocabulary. There is no phase table, no `verify_rate` and no `verify_phases_s` for this run: none is computed or estimated from a run that did not end (ruling D68b).
+
+Spill: the SQLite temporary files under `<case>/tmp/verify-*` peaked at about 25 GB against a 38 GB `artifacts.db` (read by the 500 ms directory sampler, so a lower bound). Free RAM briefly fell to about 910 MB while it ran.
+
+Not measured at 10M (by decision of 2026-10-16, they wait for the verify fix): copy, supersede, superqueries and tamper. Tamper detection is proven at 301,000 records (Task 4 smoke).
 
 ## Decisions
-(One line per decision: the rule, the rows, the run, the outcome.)
+One line per decision: the rule, the rows, the run, the outcome. All read the `baseline` run (10,000,000 records).
+
+- `stats_plan` = apply: `stats_type_s` 104.03 s against <= 3 s (overview 94.15 s, group 5.55 s, index status 4.33 s).
+- `search_plan` = apply: `search_word_p95_ms` 20006 ms against <= 300 ms and `search_substring_p95_ms` 20005 ms against <= 1000 ms.
+- `open_artifact_cache` = apply: `open_artifact_ms` 31.74 ms (median of 3, 10,000 manifest lines) against <= 1 ms.
+- `ingest_hot_path` = apply: `ingest_rate` 1451 records/s against >= 40,000 (the after-pragmas run is not recorded yet; one miss is enough). `BenchmarkIngest` batch 1000/5000/20000: 1969/2452/2814 records/s. `db_ratio` is 3.90 against <= 1.6 (no decision is keyed to it).
+- `parallel_verify` = pending: keyed to the `final` run, and the baseline verify did not finish.
+
+Notes (ruling D69):
+- `search_word_p95_ms` (20006 ms) and `search_substring_p95_ms` (20005 ms) sit AT the 20 s per-query timeout. The cells behind them (`matrix.search.word.common.time`, `matrix.search.substring.common`) have 6 samples and 9 timeouts each. They are LOWER BOUNDS, not measured p95s: the true p95 is at least this, and unknown.
+- `list_p95_ms` (266199 ms) is the slowest list cell, `type3`. Several list cells have too few samples for a p95: `type2` 4, `type3` 1, `artifact_big` 2, `artifacts3` 1, `parser` 1, `path+artifact` 2 (the others have 200). With 1 to 4 samples a "p95" is just the slowest sample; treat these as an order of magnitude, not as percentiles.
+- Their plans all end in `USE TEMP B-TREE FOR ORDER BY`: the filter index does not deliver the order, so the whole matching set is sorted. Worst cells:
+  - `clean.type3` (266 s, 1 sample): SEARCH r USING INDEX records_type_ts (type=?) / SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN / SEARCH b USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN / USE TEMP B-TREE FOR ORDER BY
+  - `clean.artifacts3` (182 s, 1 sample): SEARCH r USING INDEX records_artifact (artifact_id=?) / SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN / SEARCH b USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN / USE TEMP B-TREE FOR ORDER BY
+  - `clean.parser` (331 s, 1 sample): SEARCH p USING INDEX sqlite_autoindex_parsers_1 (name=?) / SEARCH r USING INDEX records_parser (parser_id=?) / SEARCH b USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN / USE TEMP B-TREE FOR ORDER BY
+- Cells that hit a time-ordered index are fast (`none` p95 3.0 ms, `type1` 5.5 ms, `deleted` 5.5 ms, `deep` 4.3 ms, `minconf+type` 13.1 ms), but `time` (706 ms), `time+untimed` (862 ms) and `type+time` (240 ms) miss 50 ms.
+- Ingest `peak_rss_ingest_bytes` 261 MB; `ostemp_added_ingest` 0.
 
 ## Profiles
 (Task 9: the top of the ingest CPU profile when the ingest decision is `apply`.)
