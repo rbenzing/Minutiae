@@ -119,15 +119,15 @@ func (s *Sync) List(dir string) ([]SyncEntry, error) {
 	return res.Entries, err
 }
 
-// ListN is List with a limit on the entries read. More than max entries (or
-// more than max+2 frames: a real directory has one "." and one "..") is
-// ErrListLimit with the first max entries in the result; the session is then
+// ListN is List with a limit on the entries read. More than limit entries (or
+// more than limit+2 frames: a real directory has one "." and one "..") is
+// ErrListLimit with the first limit entries in the result; the session is then
 // unusable.
-func (s *Sync) ListN(dir string, max int) (ListResult, error) {
-	if max <= 0 {
-		max = DefaultMaxListEntries
+func (s *Sync) ListN(dir string, limit int) (ListResult, error) {
+	if limit <= 0 {
+		limit = DefaultMaxListEntries
 	}
-	max = min(max, maxListEntriesCeiling) // max+2 below must not overflow
+	limit = min(limit, maxListEntriesCeiling) // limit+2 below must not overflow
 	var res ListResult
 	nameBytes := 0
 	if err := s.request("LIST", []byte(dir)); err != nil {
@@ -156,12 +156,12 @@ func (s *Sync) ListN(dir string, max int) (ListResult, error) {
 			if nameBytes > maxListNameBytes {
 				return res, fmt.Errorf("adb sync list %s: %w (name bytes over %d)", dir, ErrListLimit, maxListNameBytes)
 			}
-			if res.Raw > max+2 {
-				return res, fmt.Errorf("adb sync list %s: %w (limit %d)", dir, ErrListLimit, max)
+			if res.Raw > limit+2 {
+				return res, fmt.Errorf("adb sync list %s: %w (limit %d)", dir, ErrListLimit, limit)
 			}
 			if n := string(name); n != "." && n != ".." {
-				if len(res.Entries) == max {
-					return res, fmt.Errorf("adb sync list %s: %w (limit %d)", dir, ErrListLimit, max)
+				if len(res.Entries) == limit {
+					return res, fmt.Errorf("adb sync list %s: %w (limit %d)", dir, ErrListLimit, limit)
 				}
 				res.Entries = append(res.Entries, SyncEntry{Name: n, Mode: v[0], Size: v[1], MTime: time.Unix(int64(v[2]), 0).UTC()})
 			}
