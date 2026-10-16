@@ -88,11 +88,16 @@ func deepSchema(t testing.TB, n int) []byte {
 	}
 	for i := 1; i <= n; i++ {
 		name := "v" + string(rune('a'+i%26)) + string(rune('a'+i/26))
-		data = append(data, leafRows(cell(i, schemaRow("view", name, name, 0, "create view "+name+" as select 1")))...)
+		row := schemaRow("view", name, name, 0, "create view "+name+" as select 1")
+		if i == 1 { // a table with a shallow definition (depth 2) in a schema that is deep elsewhere
+			row = schemaRow("table", "s", "s", byte(2*n+3), "create table s(a)")
+		}
+		data = append(data, leafRows(cell(i, row))...)
 	}
 	data = append(data, leafRows(cell(n+1, schemaRow("table", "t", "t", byte(2*n+2), "create table t(a)")))...)
 	data = append(data, leafRows(
 		[]byte{2, 1, 2, 0}, []byte{2, 2, 2, 0}, []byte{2, 3, 2, 0})...)
+	data = append(data, leafRows([]byte{2, 1, 2, 0}, []byte{2, 2, 2, 0})...) // table s
 	binary.BigEndian.PutUint32(data[28:], uint32(len(data)/ps))
 	copy(data[92:96], data[24:28])
 	return data
@@ -156,5 +161,32 @@ func TestShallowSchemaIsNotFlagged(t *testing.T) {
 	tb, err := v.Table(context.Background(), "t")
 	if err != nil || tb.SchemaBeyondEngineDepth() {
 		t.Errorf("Table t: %v, flag %v", err, tb != nil && tb.SchemaBeyondEngineDepth())
+	}
+}
+
+// TestShallowDefinitionInADeepSchemaIsFlagged: the engine refuses the whole
+// file when any part of the schema tree is deeper than its cursor, so a table
+// whose own row lies shallow is flagged too (LX-4 U42).
+func TestShallowDefinitionInADeepSchemaIsFlagged(t *testing.T) {
+	_, v := openLive(t, deepSchema(t, 24), sqlitefile.Options{})
+	s, err := v.Schema(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.BeyondEngineDepth {
+		t.Error("Schema.BeyondEngineDepth = false")
+	}
+	for _, o := range s.Objects {
+		if o.Name == "s" && o.BeyondEngineDepth {
+			t.Error("the row of s lies at depth 2 and is not itself beyond the engine depth")
+		}
+	}
+	tb, err := v.Table(context.Background(), "s")
+	if err != nil || !tb.SchemaBeyondEngineDepth() {
+		t.Errorf("Table s: %v, SchemaBeyondEngineDepth %v", err, tb != nil && tb.SchemaBeyondEngineDepth())
+	}
+	_, v = openLive(t, deepSchema(t, 18), sqlitefile.Options{})
+	if s, err := v.Schema(context.Background()); err != nil || s.BeyondEngineDepth {
+		t.Errorf("shallow schema: %v, BeyondEngineDepth %v", err, s != nil && s.BeyondEngineDepth)
 	}
 }

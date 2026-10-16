@@ -25,6 +25,8 @@ func sqliteSchemaDef() *TableDef {
 type Table struct {
 	v   *View
 	obj SchemaObject
+	// schemaDeep: the schema table had a node deeper than the engine follows.
+	schemaDeep bool
 }
 
 // Index is an index of the schema, ready to be read.
@@ -59,7 +61,7 @@ func (v *View) Table(ctx context.Context, name string) (t *Table, err error) {
 		if o.RootPage < 2 || int64(o.RootPage) > v.e.opts.Limits.MaxPages {
 			return nil, fmt.Errorf("%w: table %q names root page %d, which cannot be a b-tree root", ErrCorrupt, name, o.RootPage)
 		}
-		return &Table{v: v, obj: o}, nil
+		return &Table{v: v, obj: o, schemaDeep: s.BeyondEngineDepth}, nil
 	}
 	if s.Skipped > 0 {
 		return nil, fmt.Errorf("%w: no table %q was found, but the schema was read incompletely (%d damage events): it may exist", ErrCorrupt, name, s.Skipped)
@@ -294,6 +296,7 @@ func (t *Table) RowsLoss(ctx context.Context, visit func(Row) bool) (ScanLoss, e
 	return t.v.ScanTreeLoss(ctx, t.obj.RootPage, t.kind(), visit)
 }
 
-// SchemaBeyondEngineDepth says the table was defined by a schema row read from
-// a schema tree deeper than the engine follows.
-func (t *Table) SchemaBeyondEngineDepth() bool { return t.obj.BeyondEngineDepth }
+// SchemaBeyondEngineDepth says the table lies in a database whose schema tree is deeper
+// than the engine follows (anywhere in it, not only at the table row): the engine
+// refuses the whole file.
+func (t *Table) SchemaBeyondEngineDepth() bool { return t.obj.BeyondEngineDepth || t.schemaDeep }

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
+	"github.com/rbenzing/minutiae/internal/sqlitefile"
 	"github.com/rbenzing/minutiae/internal/sqlitefile/sqlitetest"
 )
 
@@ -85,11 +86,16 @@ func deepSchema(t testing.TB, n int) []byte {
 	}
 	for i := 1; i <= n; i++ {
 		name := "v" + string(rune('a'+i%26)) + string(rune('a'+i/26))
-		data = append(data, leafRows(cell(i, schemaRow("view", name, name, 0, "create view "+name+" as select 1")))...)
+		row := schemaRow("view", name, name, 0, "create view "+name+" as select 1")
+		if i == 1 { // a table with a shallow definition (depth 2) in a schema that is deep elsewhere
+			row = schemaRow("table", "s", "s", byte(2*n+3), "create table s(a)")
+		}
+		data = append(data, leafRows(cell(i, row))...)
 	}
 	data = append(data, leafRows(cell(n+1, schemaRow("table", "t", "t", byte(2*n+2), "create table t(a)")))...)
 	data = append(data, leafRows(
 		[]byte{2, 1, 2, 0}, []byte{2, 2, 2, 0}, []byte{2, 3, 2, 0})...)
+	data = append(data, leafRows([]byte{2, 1, 2, 0}, []byte{2, 2, 2, 0})...) // table s
 	binary.BigEndian.PutUint32(data[28:], uint32(len(data)/ps))
 	copy(data[92:96], data[24:28])
 	return data
@@ -153,5 +159,53 @@ func TestShallowSchemaFlagsNoRow(t *testing.T) {
 	})
 	if n != 3 || d.Stats().RowsFlagged != 0 {
 		t.Errorf("rows %d, flagged %d", n, d.Stats().RowsFlagged)
+	}
+}
+
+// TestRowsOfAShallowDefinitionInADeepSchemaAreFlagged: the engine refuses the
+// whole file when any part of the schema tree is too deep, so every table is
+// flagged, not only the one whose row lies deep (LX-4 U42).
+func TestRowsOfAShallowDefinitionInADeepSchemaAreFlagged(t *testing.T) {
+	d := openBytes(t, deepSchema(t, 24), nil, nil, bigBudget())
+	tb, err := d.Table(t.Context(), "s", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tb.SchemaBeyondEngineDepth() {
+		t.Error("Table.SchemaBeyondEngineDepth = false")
+	}
+	n := 0
+	scanEach(t, tb, func(_ int, r sqlitedb.Row) {
+		n++
+		if r.Flags()&sqlitedb.FlagBeyondEngineDepth == 0 {
+			t.Errorf("a row of s is not flagged")
+		}
+	})
+	if n != 2 || d.Stats().RowsFlagged != 2 {
+		t.Errorf("rows %d, flagged %d", n, d.Stats().RowsFlagged)
+	}
+}
+
+// TestRecoveredRowOfADeepSchemaCarriesTheFlag: a recovered row is built through
+// the same definition and carries the flag too (LX-4 U45), here for the table with a shallow row; a shallow schema
+// does not add it.
+func TestRecoveredRowOfADeepSchemaCarriesTheFlag(t *testing.T) {
+	rr := sqlitefile.RecoveredRow{Table: "s", Rowid: ip(1), Values: []sqlitefile.Value{{Kind: sqlitefile.KindNull}}}
+	for _, c := range []struct {
+		n    int
+		want bool
+	}{{24, true}, {18, false}} {
+		tb, err := openBytes(t, deepSchema(t, c.n), nil, nil, bigBudget()).Table(t.Context(), "s", nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := sqlitedb.FromRecovered(tb, rr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := r.Flags()&sqlitedb.FlagBeyondEngineDepth != 0; got != c.want {
+			t.Errorf("depth %d: flag %v, want %v", c.n, got, c.want)
+		}
+		r.Release()
 	}
 }

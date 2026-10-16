@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"slices"
 	"strings"
 	"sync"
 )
@@ -135,6 +134,11 @@ type Schema struct {
 	// index or trigger that names no table. View.Info reports them once the
 	// schema was read.
 	EngineRefuses []string
+
+	// BeyondEngineDepth: some schema row was read from a node deeper than the
+	// engine cursor follows. The engine then fails schema initialisation and
+	// refuses the whole file, so every table of it is suspect.
+	BeyondEngineDepth bool
 
 	// maxFit is the step cap of one FitPage call (Limits.MaxFitSteps); 0 means the default.
 	maxFit  int64
@@ -280,7 +284,8 @@ func (v *View) Schema(ctx context.Context) (s *Schema, err error) {
 	var inRows int64 // warnings raised by the callback itself (not damage met by the walk)
 	row := func(r Row) bool {
 		v.e.at("schema.row")
-		if r.BeyondEngineDepth && !slices.Contains(sc.EngineRefuses, schemaDeepRefusal) {
+		if r.BeyondEngineDepth && !sc.BeyondEngineDepth {
+			sc.BeyondEngineDepth = true
 			sc.refuse(schemaDeepRefusal)
 		}
 		typ, name, tbl, root, sql, sst, why := schemaFields(r)

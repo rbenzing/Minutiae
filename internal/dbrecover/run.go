@@ -186,7 +186,7 @@ func journalUnusable(j *sqlitefile.JournalInfo) string {
 // attach opens the database through the library, attaches the companions and
 // reads the facts of each. A database the library cannot present is a refusal
 // (D11); so is an explicitly named companion that cannot be used (D9).
-func (p *pipeline) attach() error {
+func (p *pipeline) attach(ctx context.Context) error {
 	p.facts = map[string]map[string]any{}
 	p.unused = map[string]string{}
 	db, err := sqlitefile.Open(p.set.DB.f, p.set.DB.Ref.Size, sqlitefile.Options{Limits: sqlitefile.Limits{MaxFitEqualityRows: p.o.MaxFitEqualityRows}})
@@ -223,7 +223,20 @@ func (p *pipeline) attach() error {
 			refuse = errors.Join(refuse, p.companionUnusable("journal", in, p.in.Journal != "", why))
 		}
 	}
-	return refuse
+	if refuse != nil {
+		return refuse
+	}
+	// Some reasons show only once the schema is read (a schema tree deeper than
+	// the engine follows, a row whose name disagrees with its statement, an
+	// index on no table). The header-only Info above misses them. A schema that
+	// cannot be read is not decided here: the stages that need it report it.
+	live := db.Live() // after the companions: the view the run reads
+	if _, err := live.Schema(ctx); err == nil {
+		if why := live.Info().EngineRefuses; len(why) > 0 {
+			return &RefusalError{Reason: ReasonEngineRefuses, Detail: strings.Join(why, "; "), Err: sqlitefile.ErrEngineRefuses}
+		}
+	}
+	return nil
 }
 
 // companionUnusable records that a companion is not applied. A named one is a
@@ -636,7 +649,7 @@ func Run(ctx context.Context, c *evidence.Case, in Inputs, opts Options) (res Re
 		res.Siblings, res.Inputs, res.Counts, res.Ingest = p.rep, p.inputInfos(), counts, ir
 		return res, a.finish(err, p.endDetails(counts, ir))
 	}
-	if err := p.attach(); err != nil {
+	if err := p.attach(ctx); err != nil {
 		return fail(err, Counts{}, records.IngestResult{})
 	}
 	if err := p.summarize(ctx); err != nil {
@@ -741,7 +754,7 @@ func Plan(ctx context.Context, c *evidence.Case, in Inputs, opts Options) (_ Ass
 	if err := p.resolve(ctx); err != nil {
 		return Assessment{}, err
 	}
-	if err := p.attach(); err != nil {
+	if err := p.attach(ctx); err != nil {
 		return Assessment{}, err
 	}
 	if err := p.summarize(ctx); err != nil {

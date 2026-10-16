@@ -101,14 +101,14 @@ func (db *DB) Table(ctx context.Context, name string, need, want []string) (t *T
 // Name is the table's name as the schema spells it.
 func (t *Table) Name() string { return t.name }
 
-// Col returns the index of the column called name (ASCII case-insensitive), or
-// -1 when this variant of the table lacks it.
-// SchemaBeyondEngineDepth says the table is defined by a schema row read from a
-// schema tree deeper than the engine follows: the engine cannot open such a
-// database, so every row decoded through this definition carries
+// SchemaBeyondEngineDepth says the table lies in a database whose schema tree is
+// deeper than the engine follows, anywhere in it: the engine refuses the whole
+// file, so every row decoded through this definition carries
 // FlagBeyondEngineDepth.
 func (t *Table) SchemaBeyondEngineDepth() bool { return t.lt.SchemaBeyondEngineDepth() }
 
+// Col returns the index of the column called name (ASCII case-insensitive), or
+// -1 when this variant of the table lacks it.
 func (t *Table) Col(name string) int {
 	k := asciiFold(name)
 	for i := range t.def.Columns {
