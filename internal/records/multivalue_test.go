@@ -51,8 +51,7 @@ func TestMultiValueListEqualsOracle(t *testing.T) {
 	}{
 		{"types", records.Filter{Types: types}, func(x records.Row) bool { return in(types, x.Type) }},
 		{"artifacts", records.Filter{ArtifactIDs: art[:]}, func(x records.Row) bool { return in(art[:], x.ArtifactID) }},
-		{"types and one artifact", records.Filter{Types: types, ArtifactIDs: art[:1]},
-			func(x records.Row) bool { return in(types, x.Type) && x.ArtifactID == art[0] }},
+		{"types and one artifact", records.Filter{Types: types, ArtifactIDs: art[:1]}, func(x records.Row) bool { return in(types, x.Type) && x.ArtifactID == art[0] }},
 	}
 	for _, tc := range cases {
 		var want []records.Row
