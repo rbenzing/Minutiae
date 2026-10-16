@@ -27,6 +27,12 @@ type ExtractOptions struct {
 	Paths     []string // fs paths ("/a/b") or "id:<fs id>"
 	Recursive bool
 	Progress  func(done, total int64) // total -1 when unknown
+	// MaxFiles and MaxBytes bound what one extraction writes (0 selects
+	// DefaultMaxFiles and DefaultMaxBytes; a negative value is ErrInvalidLimit).
+	// A file larger than the bytes left, or one past the file limit, stops the run:
+	// the refusal is final, typed (Summary.OutputLimit) and reported.
+	MaxFiles int
+	MaxBytes int64
 }
 
 // Extract copies files (and symlink targets) out of the image's filesystem
@@ -43,6 +49,10 @@ type ExtractOptions struct {
 func (s *Session) Extract(ctx context.Context, o ExtractOptions) (Summary, error) {
 	if len(o.Paths) == 0 {
 		return Summary{}, errors.New("nothing to extract: no paths given")
+	}
+	b, err := newBudget(o.MaxFiles, o.MaxBytes)
+	if err != nil {
+		return Summary{}, err
 	}
 	fsys, part, err := s.FS(o.Partition)
 	if err != nil {
@@ -68,19 +78,28 @@ func (s *Session) Extract(ctx context.Context, o ExtractOptions) (Summary, error
 	x := &extractor{
 		s: s, ctx: ctx, o: o, fsys: fsys, part: part, fsType: fsType,
 		lp:   evidence.NewLocalPaths(fmt.Sprintf("p%d-%s", part.Index, fsType)),
-		done: map[doneKey]bool{},
+		done: map[doneKey]bool{}, b: b,
 	}
 	details := map[string]any{
 		"parent_id": s.Parent.ID, "partition": part.Index, "fs_type": fsType,
 		"paths": append([]string(nil), o.Paths...), "recursive": o.Recursive,
+		"max_files": b.maxFiles, "max_bytes": b.maxBytes,
 	}
 	return runAnalysis(s.Case, s.Parent.Source.DeviceID, "extract", details, func(a *analysis) error {
 		x.a = a
+		defer func() {
+			if a.sum.OutputLimit != "" {
+				a.setEnd("limit_reached", a.sum.OutputLimit)
+			}
+		}()
 		if err := a.watchFS(fsys); err != nil {
 			return err
 		}
 		for _, t := range targets {
 			if err := x.target(t.p, t.e); err != nil {
+				if errors.Is(err, errOutputLimit) {
+					return nil // the run ends at its limit; the summary says so
+				}
 				return err
 			}
 		}
@@ -103,9 +122,15 @@ type extractor struct {
 	a      *analysis
 	done   map[doneKey]bool // entries already extracted in this run
 	copied int64            // bytes streamed so far, for Progress
+	b      *budget
 }
 
 const sparseTooBig = "sparse size exceeds partition length; not extracted"
+
+const overlapTooBig = "data runs exceed partition length; not extracted"
+
+// errOutputLimit ends a run at its output limit without failing it.
+var errOutputLimit = errors.New("output limit reached")
 
 const deletedReason = "deleted; use image recover (roadmap sub-project 3)"
 
@@ -213,6 +238,19 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 		// A sparse file reads as zeros without any storage, so a hostile
 		// filesystem could make one cheap entry expand to an arbitrary size.
 		return x.a.warn(p, sparseTooBig)
+	}
+	if dataBytes(f.Runs()) > x.part.Length {
+		return x.a.warn(p, overlapTooBig)
+	}
+	if reason := x.b.admit(size); reason != "" {
+		if reason == reasonInvalidSize {
+			return fmt.Errorf("extract: negative file size %d for %s", size, p)
+		}
+		x.a.sum.OutputLimit = reason
+		if err := x.a.warn(p, fmt.Sprintf("output limit reached (%s): this file and the files after it were not extracted", reason)); err != nil {
+			return err
+		}
+		return errOutputLimit
 	}
 
 	d := x.s.baseDerivation(x.part, x.fsType)
@@ -382,6 +420,23 @@ func (s *Session) baseDerivation(part volume.Partition, fsType string) *evidence
 		d.ParentIncomplete = d.ParentIncomplete || seg.Incomplete
 	}
 	return d
+}
+
+// dataBytes sums the lengths of the runs that are backed by storage (Offset >= 0),
+// saturating at MaxInt64. Honest runs of one file cannot total more than the
+// partition holds; overlapping runs can.
+func dataBytes(runs []filesys.Run) int64 {
+	var total int64
+	for _, r := range runs {
+		if r.Offset < 0 || r.Length <= 0 {
+			continue
+		}
+		var ok bool
+		if total, ok = filesys.AddOK(total, r.Length); !ok {
+			return math.MaxInt64
+		}
+	}
+	return total
 }
 
 // holeBytes returns how many bytes of a file of size bytes are not backed by

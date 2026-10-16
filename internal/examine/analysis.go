@@ -26,6 +26,9 @@ type Summary struct {
 	// (each also an analysis.warning with source "filesystem"). Warnings the
 	// filesystem already had at the start are audited but not counted.
 	FSWarnings int
+	// OutputLimit is "" or the output limit that stopped the run ("max-files" or
+	// "max-bytes"): the files after the refused one were not extracted.
+	OutputLimit string
 }
 
 // Warning is one skipped path and why.

@@ -770,6 +770,8 @@ func printFSWarnings(w io.Writer, sum examine.Summary) {
 func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 	var recursive, includeEncrypted bool
 	var snapshot string
+	var maxFiles int
+	var maxBytes int64
 	cmd := &cobra.Command{
 		Use:   "extract <ref> <path>...",
 		Short: "Copy files out of an image's filesystem into the case",
@@ -785,8 +787,13 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 	partition := partitionFlag(cmd, "partition index (default: the only partition with a recognized filesystem)")
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "extract the live subtree of directories")
 	cmd.Flags().BoolVar(&includeEncrypted, "include-encrypted", false, "accepted for clarity: encrypted files are always extracted as ciphertext")
+	cmd.Flags().IntVar(&maxFiles, "max-files", 0, fmt.Sprintf("stop after this many files (default %d; 0 uses the default)", examine.DefaultMaxFiles))
+	cmd.Flags().Int64Var(&maxBytes, "max-bytes", 0, fmt.Sprintf("stop after this many bytes (default %d; 0 uses the default)", examine.DefaultMaxBytes))
 	cmd.Flags().StringVar(&snapshot, "snapshot", "", "extract the paths as they were in this snapshot, as xid:<n>, name:<name> or a bare name or xid that matches one snapshot (APFS; every path must name a volume, artifacts record the snapshot)")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if maxFiles < 0 || maxBytes < 0 {
+			return usageErrorf("--max-files and --max-bytes must not be negative")
+		}
 		pidx, err := partition()
 		if err != nil {
 			return err
@@ -811,6 +818,7 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 		}
 		sum, err := s.Extract(cmd.Context(), examine.ExtractOptions{
 			Partition: pidx, Paths: paths, Recursive: recursive, Progress: newProgress(d.Err, "extract"),
+			MaxFiles: maxFiles, MaxBytes: maxBytes,
 		})
 		fmt.Fprintln(d.Err)
 		if sum.AnalysisID == "" {
@@ -833,6 +841,9 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 			if jerr := writeJSON(d.Out, newJSONSummary(sum)); jerr != nil && err == nil {
 				err = jerr
 			}
+			if sum.OutputLimit != "" && err == nil {
+				err = fmt.Errorf("extract stopped at its output limit (%s)", sum.OutputLimit)
+			}
 			return err
 		}
 		fmt.Fprintf(d.Out, "extracted %d files (%s), skipped %d\n", sum.Files, humanBytes(sum.Bytes), sum.Skipped)
@@ -842,6 +853,10 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 		printGapNote(d.Out, sum)
 		if note != "" {
 			fmt.Fprintln(d.Out, note)
+		}
+		if sum.OutputLimit != "" {
+			fmt.Fprintf(d.Out, "output limit reached: %s; the remaining files were not extracted (raise --max-files or --max-bytes)\n", escapeText(sum.OutputLimit))
+			return errors.Join(err, fmt.Errorf("extract stopped at its output limit (%s)", sum.OutputLimit))
 		}
 		return err
 	}
