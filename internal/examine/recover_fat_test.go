@@ -242,16 +242,6 @@ func TestRecoverFATFragmentedFileIsNotClaimedEqual(t *testing.T) {
 	})
 }
 
-func warningNaming(t *testing.T, s *examine.Session, id string) bool {
-	t.Helper()
-	for _, a := range auditByAction(t, s.Case, "analysis.warning") {
-		if got, _ := a.Details["id"].(string); got == id {
-			return true
-		}
-	}
-	return false
-}
-
 // warningReason is the reason of the analysis.warning whose id detail is id ("" when there is none).
 func warningReason(t *testing.T, s *examine.Session, id string) string {
 	t.Helper()
