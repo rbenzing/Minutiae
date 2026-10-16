@@ -56,8 +56,9 @@ func TestOpenNoThreadFileOnRealImage(t *testing.T) {
 	// Control: the intact image opens the file through its thread.
 	check(open(t, img), "intact")
 
-	// Damage: record type 0x00FF is unknown to every reader and is skipped with a warning,
-	// exactly as if the thread record were not there. Nothing else is changed.
+	// Damage: record type 0x00FF is unknown to every reader and makes the thread UNREADABLE (never
+	// "missing": the record is there). The open skips its own thread position with a warning and
+	// the catalog scan proves the id unique. Nothing else is changed.
 	dmg := bytes.Clone(img)
 	at := bytes.Index(dmg, threadPattern(target.CNID))
 	dmg[at+9] = 0xFF
@@ -66,8 +67,8 @@ func TestOpenNoThreadFileOnRealImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lookup(%s) on the damaged image: %v", target.Path, err)
 	}
-	if v, _ := attr(e, "thread"); v != "missing" {
-		t.Fatalf("%s: attrs %+v, want thread=missing", target.Path, e.Attrs)
+	if v, _ := attr(e, "thread"); v != "unreadable" {
+		t.Fatalf("%s: attrs %+v, want thread=unreadable", target.Path, e.Attrs)
 	}
 	check(f, "no thread")
 	if !hasWarning(f.Info(), "unknown type") {

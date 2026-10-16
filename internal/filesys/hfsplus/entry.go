@@ -286,7 +286,12 @@ func (f *FS) toEntry(k catalogKey, r catalogRecord) (filesys.Entry, error) {
 	if o.attrs.cprotect {
 		addAttr(&e, "cprotect", "present")
 	}
-	if r.typ == recFile && thErr != nil {
+	var unreadable *threadUnreadableError
+	if errors.As(thErr, &unreadable) {
+		// An unknown-type record sits at the thread position: the thread is unreadable, not missing.
+		f.warn("the thread record of %s (id %d) is unreadable: %v", strconv.Quote(name), r.id, thErr)
+		addAttr(&e, "thread", "unreadable")
+	} else if r.typ == recFile && thErr != nil {
 		if errors.Is(thErr, filesys.ErrNotFound) {
 			addAttr(&e, "thread", "missing")
 		} else {

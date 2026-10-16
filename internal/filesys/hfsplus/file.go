@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
@@ -80,24 +81,37 @@ func (f *FS) newObject(k catalogKey, r catalogRecord) (*object, error) {
 // thread that disagrees with the catalog, or an id that cannot be proven
 // unique, a CorruptError.
 func (f *FS) fileObject(id uint32) (*object, error) {
-	th, err := f.catalogThread(id)
+	th, passed, err := f.lookupThread(id)
 	if err != nil {
-		if !errors.Is(err, filesys.ErrNotFound) {
+		var unreadable *threadUnreadableError
+		if !errors.Is(err, filesys.ErrNotFound) && !errors.As(err, &unreadable) {
+			f.warnSkips(passed)
 			return nil, err
 		}
 		if id >= f.vh.nextCatalogID {
+			f.warnSkips(passed)
 			return nil, fmt.Errorf("%w: %s was never issued by this volume", filesys.ErrNotFound, cnidString(id))
 		}
-		// No thread record: search the catalog for the id (own budget, uniqueness proven).
-		k, r, serr := f.scanFileByID(id)
+		// No readable thread record: search the catalog for the id (own budget, uniqueness proven).
+		k, r, unk, serr := f.scanFileByID(id)
 		if serr != nil {
+			// A scan that fails closed on an unknown-type record names it in its own warning: the
+			// lookup's skip warning for that same record is folded into it, every other one is kept.
+			for _, s := range passed {
+				if unk != nil && s.typ == unk.typ && s.k.parent == unk.k.parent && slices.Equal(s.k.name, unk.k.name) {
+					continue
+				}
+				f.warnSkips([]unknownSkip{s})
+			}
 			return nil, serr
 		}
+		f.warnSkips(passed)
 		if r.typ != recFile {
 			return nil, fmt.Errorf("%w: %s is a directory", filesys.ErrUnsupported, cnidString(id))
 		}
 		return f.newObject(k, r)
 	}
+	f.warnSkips(passed)
 	if th.typ != recFileThread {
 		return nil, fmt.Errorf("%w: %s is a directory", filesys.ErrUnsupported, cnidString(id))
 	}

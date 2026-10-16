@@ -215,59 +215,102 @@ func (f *FS) decodeLeafKind(rec []byte) (k catalogKey, r catalogRecord, ok bool,
 // less than start, in key order, until fn returns false. Records of an unknown
 // type are skipped with a warning.
 func (f *FS) catalogScan(start catalogKey, fn func(k catalogKey, r catalogRecord) (bool, error)) error {
-	return f.catalogScanWarn(start, true, fn)
-}
-
-// catalogScanWarn is catalogScan with the unknown-type warning optional: a point lookup that is
-// followed by a decision elsewhere (a thread-less open) must not report a record as skipped when
-// that decision may refuse the record instead.
-func (f *FS) catalogScanWarn(start catalogKey, warn bool, fn func(k catalogKey, r catalogRecord) (bool, error)) error {
 	t, err := f.tree(treeCatalog)
 	if err != nil {
 		return err
 	}
 	return t.scanFrom(f.catalogCmp(start), func(rec []byte) (bool, error) {
-		var (
-			r    catalogRecord
-			k    catalogKey
-			ok   bool
-			derr error
-		)
-		if warn {
-			k, r, ok, derr = f.decodeLeaf(rec)
-		} else {
-			k, r, ok, _, derr = f.decodeLeafKind(rec)
-		}
-		if derr != nil || !ok {
-			return derr == nil, derr
+		k, r, ok, err := f.decodeLeaf(rec)
+		if err != nil || !ok {
+			return err == nil, err
 		}
 		return fn(k, r)
 	})
 }
 
-// catalogThread returns the thread record of a folder or file id (the record
-// keyed (cnid, empty name)); filesys.ErrNotFound when there is none, a
-// CorruptError when the record at that key is not a thread.
-func (f *FS) catalogThread(cnid uint32) (catalogRecord, error) {
+// unknownSkip is a record of an unknown type a lookup walked past.
+type unknownSkip struct {
+	k   catalogKey
+	typ int16
+}
+
+// maxPassedUnknown bounds how many walked-past unknown records a lookup keeps to report together;
+// the rest are warned about at once.
+const maxPassedUnknown = 16
+
+// threadUnreadableError reports an unknown-type record AT the thread position (id, empty name):
+// the thread exists but cannot be read, which is not the same as no thread. It is a CorruptError.
+type threadUnreadableError struct{ *filesys.CorruptError }
+
+func (e *threadUnreadableError) Unwrap() error { return e.CorruptError }
+
+// lookupThread returns the thread record of a folder or file id (the record keyed (cnid, empty
+// name)); filesys.ErrNotFound when there is none, a CorruptError when the record at that key is
+// not a thread, a *threadUnreadableError when it has an unknown type. The unknown-type records
+// the lookup walked past are returned for the caller to report (see catalogThread): none is
+// dropped.
+func (f *FS) lookupThread(cnid uint32) (catalogRecord, []unknownSkip, error) {
 	target := catalogKey{parent: cnid}
-	var rec catalogRecord
-	found := false
-	err := f.catalogScanWarn(target, false, func(k catalogKey, r catalogRecord) (bool, error) {
+	var (
+		rec      catalogRecord
+		passed   []unknownSkip
+		found    bool
+		unreadTy int16
+		unread   bool
+	)
+	t, err := f.tree(treeCatalog)
+	if err != nil {
+		return rec, nil, err
+	}
+	err = t.scanFrom(f.catalogCmp(target), func(raw []byte) (bool, error) {
+		k, r, ok, ue, derr := f.decodeLeafKind(raw)
+		if derr != nil {
+			return false, derr
+		}
+		if ue != nil {
+			if compareKeys(k, target, f.binaryNames()) == 0 {
+				unread, unreadTy = true, ue.typ
+				return false, nil
+			}
+			if len(passed) < maxPassedUnknown {
+				passed = append(passed, unknownSkip{k: k, typ: ue.typ})
+			} else {
+				f.warn("catalog record of unknown type %d under parent %d skipped", ue.typ, k.parent)
+			}
+			return true, nil
+		}
+		if !ok {
+			return true, nil
+		}
 		if compareKeys(k, target, f.binaryNames()) == 0 {
 			rec, found = r, true
 		}
 		return false, nil
 	})
-	if err != nil {
-		return rec, err
+	switch {
+	case err != nil:
+		return rec, passed, err
+	case unread:
+		return rec, passed, &threadUnreadableError{corrupt("catalog", -1, "the thread record of id %d has the unknown type %d and cannot be read", cnid, unreadTy).(*filesys.CorruptError)}
+	case !found:
+		return rec, passed, fmt.Errorf("%w: no thread record for id %d", filesys.ErrNotFound, cnid)
+	case !rec.isThread():
+		return rec, passed, corrupt("catalog", -1, "the record keyed (%d, empty name) has type %d, not a thread", cnid, rec.typ)
 	}
-	if !found {
-		return rec, fmt.Errorf("%w: no thread record for id %d", filesys.ErrNotFound, cnid)
+	return rec, passed, nil
+}
+
+func (f *FS) warnSkips(skips []unknownSkip) {
+	for _, s := range skips {
+		f.warn("catalog record of unknown type %d under parent %d skipped", s.typ, s.k.parent)
 	}
-	if !rec.isThread() {
-		return rec, corrupt("catalog", -1, "the record keyed (%d, empty name) has type %d, not a thread", cnid, rec.typ)
-	}
-	return rec, nil
+}
+
+// catalogThread is lookupThread that reports every unknown-type record it walked past.
+func (f *FS) catalogThread(cnid uint32) (catalogRecord, error) {
+	rec, passed, err := f.lookupThread(cnid)
+	f.warnSkips(passed)
+	return rec, err
 }
 
 // maxEqualRun bounds how many records that compare equal to a searched name
@@ -447,8 +490,9 @@ func (f *FS) refuseIDScan(id uint32) error {
 // one): a CorruptError, nothing is opened. A scan the id-scan budget or the
 // record cap ends before the catalog does: a CorruptError, counted and warned,
 // never a miss.
-func (f *FS) scanFileByID(id uint32) (catalogKey, catalogRecord, error) {
+func (f *FS) scanFileByID(id uint32) (catalogKey, catalogRecord, *unknownSkip, error) {
 	var (
+		unk      *unknownSkip // the unknown-type record that made the id unprovable
 		fk       catalogKey
 		fr       catalogRecord
 		found    int
@@ -457,14 +501,14 @@ func (f *FS) scanFileByID(id uint32) (catalogKey, catalogRecord, error) {
 	)
 	t, err := f.tree(treeCatalog)
 	if err != nil {
-		return fk, fr, err
+		return fk, fr, nil, err
 	}
 	if t.depth == 0 {
-		return fk, fr, fmt.Errorf("%w: %s has no catalog record", filesys.ErrNotFound, cnidString(id))
+		return fk, fr, nil, fmt.Errorf("%w: %s has no catalog record", filesys.ErrNotFound, cnidString(id))
 	}
 	leaf, err := t.node(t.firstLeaf)
 	if err != nil {
-		return fk, fr, err
+		return fk, fr, nil, err
 	}
 	charge := func(uint32) error {
 		if !f.chargeIDScan(int64(t.nodeSize)) {
@@ -490,6 +534,7 @@ func (f *FS) scanFileByID(id uint32) (catalogKey, catalogRecord, error) {
 			}
 			// Any other unknown-type record has an unreadable id (an empty-name file or folder record
 			// is valid here): it may be a second owner, so uniqueness is unprovable.
+			unk = &unknownSkip{k: k, typ: ue.typ}
 			damaged = corrupt("catalog", -1, "uniqueness unprovable: unknown record type %d under parent %d", ue.typ, k.parent)
 			return false, nil
 		}
@@ -505,17 +550,17 @@ func (f *FS) scanFileByID(id uint32) (catalogKey, catalogRecord, error) {
 	})
 	switch {
 	case errors.Is(err, errIDScan):
-		return fk, fr, f.refuseIDScan(id)
+		return fk, fr, nil, f.refuseIDScan(id)
 	case err != nil:
-		return fk, fr, err
+		return fk, fr, nil, err
 	case damaged != nil:
 		f.warn("a catalog record that cannot be decoded stopped the search for id %d: %v", id, damaged)
-		return fk, fr, corrupt("catalog", -1, "a damaged catalog record may share id %d: the id cannot be proven unique (%v)", id, damaged)
+		return fk, fr, unk, corrupt("catalog", -1, "a damaged catalog record may share id %d: the id cannot be proven unique (%v)", id, damaged)
 	case found == 0:
-		return fk, fr, fmt.Errorf("%w: %s has no catalog record", filesys.ErrNotFound, cnidString(id))
+		return fk, fr, nil, fmt.Errorf("%w: %s has no catalog record", filesys.ErrNotFound, cnidString(id))
 	case found > 1:
 		f.warn("catalog node id %d is shared by several records, including %s and (%d, %q): the id cannot be opened", id, conflict, fk.parent, decodeLossy(fk.name))
-		return fk, fr, corrupt("catalog", -1, "catalog node id %d is shared by more than one record", id)
+		return fk, fr, nil, corrupt("catalog", -1, "catalog node id %d is shared by more than one record", id)
 	}
-	return fk, fr, nil
+	return fk, fr, nil, nil
 }
