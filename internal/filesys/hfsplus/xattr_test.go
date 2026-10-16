@@ -156,11 +156,11 @@ func TestXattrsDamagedAttributeRecordIsAnError(t *testing.T) {
 	region := img[lay.AttrOffset(0):]
 	nm := bytes.Index(region, utf16BE("com.example.one"))
 	if nm < 0 {
-		t.Skip("cannot locate the attribute name in the builder image")
+		t.Fatal("cannot locate the attribute name in the builder image: a skipped damage test would be vacuous")
 	}
 	at := bytes.Index(region[nm:], []byte{0, 0, 0, 0x10}) // kHFSPlusAttrInlineData
 	if at < 0 {
-		t.Skip("cannot locate the inline attribute record in the builder image")
+		t.Fatal("cannot locate the inline attribute record in the builder image: a skipped damage test would be vacuous")
 	}
 	region[nm+at+3] = 0x7F
 	g := open(t, img)
@@ -175,4 +175,49 @@ func utf16BE(s string) []byte {
 		b = append(b, byte(u>>8), byte(u))
 	}
 	return b
+}
+
+// A record that sits under another file id is not this file's attribute: no
+// record exists under this id, so the list is empty and the error nil. Damage
+// the reader can detect (the record type above) is ErrCorrupt instead; the two
+// must not be confused with each other.
+func TestXattrsRecordMovedToAnotherIDGivesAnEmptyList(t *testing.T) {
+	img, lay, _ := buildTree(t, hfsplustest.Options{}, []hfsplustest.File{
+		{Path: "/a", Data: []byte("a"), Attrs: []hfsplustest.Attr{{Name: "com.example.one", Value: []byte("1")}}},
+	})
+	region := img[lay.AttrOffset(0):]
+	nm := bytes.Index(region, utf16BE("com.example.one"))
+	if nm < 10 {
+		t.Fatal("cannot locate the attribute name in the builder image: a skipped damage test would be vacuous")
+	}
+	// Key: keyLength(2) pad(2) fileID(4) startBlock(4) nameLength(2) name.
+	idAt := nm - 2 - 4 - 4
+	id := be.Uint32(region[idAt:])
+	if id != lay.CNIDs["/a"] {
+		t.Fatalf("the located key id is %d, want %d", id, lay.CNIDs["/a"])
+	}
+	be.PutUint32(region[idAt:], id+1000)
+	f := open(t, img)
+	xs, err := f.Xattrs(lookupEntry(t, f, "/a"))
+	if err != nil || len(xs) != 0 {
+		t.Errorf("Xattrs with the record under another id = %+v, %v; want an empty list and no error", xs, err)
+	}
+}
+
+// A listed com.apple.decmpfs attribute whose value is not held in memory (a
+// fork-data attribute) has an unknown size, and its raw value is refused, never
+// presented as empty.
+func TestDecmpfsAttributeWithNoValueIsUnknown(t *testing.T) {
+	_, _, f := buildTree(t, hfsplustest.Options{}, []hfsplustest.File{{
+		Path: "/fork", Data: []byte("d"),
+		Attrs: []hfsplustest.Attr{{Name: attrDecmpfs, Value: bytes.Repeat([]byte{1}, 40), ForkData: true}},
+	}})
+	e := lookupEntry(t, f, "/fork")
+	xs, err := f.Xattrs(e)
+	if err != nil || len(xs) != 1 || xs[0].Name != attrDecmpfs || xs[0].Size != -1 {
+		t.Fatalf("Xattrs = %+v, %v; want the decmpfs attribute with Size -1", xs, err)
+	}
+	if fl, err := f.OpenXattr(e, attrDecmpfs); !errors.Is(err, filesys.ErrUnsupported) || fl != nil {
+		t.Errorf("OpenXattr = %v, %v; want ErrUnsupported", fl, err)
+	}
 }

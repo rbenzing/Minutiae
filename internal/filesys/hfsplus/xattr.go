@@ -49,7 +49,9 @@ func (f *FS) xattrObject(e filesys.Entry) (*object, error) {
 // docs/limitations.md), so their sizes are unknown (-1) and OpenXattr refuses
 // them. More attribute names than the listing cap, or an attributes tree that
 // could not be read completely, is filesys.ErrXattrCap / ErrCorrupt, never a
-// shortened list.
+// shortened list. A record stored under another file id is no record of this
+// file, so an empty list means "none under this id"; detectable damage is
+// ErrCorrupt (TestXattrsRecordMovedToAnotherIDGivesAnEmptyList).
 func (f *FS) Xattrs(e filesys.Entry) ([]filesys.Xattr, error) {
 	o, err := f.xattrObject(e)
 	if err != nil {
