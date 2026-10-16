@@ -27,6 +27,12 @@ type ExtractOptions struct {
 	Paths     []string // fs paths ("/a/b") or "id:<fs id>"
 	Recursive bool
 	Progress  func(done, total int64) // total -1 when unknown
+	// MaxFiles and MaxBytes bound what one extraction writes (0 selects
+	// DefaultMaxFiles and DefaultMaxBytes; a negative value is ErrInvalidLimit).
+	// A file larger than the bytes left, or one past the file limit, stops the run:
+	// the refusal is final, typed (Summary.OutputLimit) and reported.
+	MaxFiles int
+	MaxBytes int64
 }
 
 // Extract copies files (and symlink targets) out of the image's filesystem
@@ -43,6 +49,10 @@ type ExtractOptions struct {
 func (s *Session) Extract(ctx context.Context, o ExtractOptions) (Summary, error) {
 	if len(o.Paths) == 0 {
 		return Summary{}, errors.New("nothing to extract: no paths given")
+	}
+	b, err := newBudget(o.MaxFiles, o.MaxBytes)
+	if err != nil {
+		return Summary{}, err
 	}
 	fsys, part, err := s.FS(o.Partition)
 	if err != nil {
@@ -68,19 +78,28 @@ func (s *Session) Extract(ctx context.Context, o ExtractOptions) (Summary, error
 	x := &extractor{
 		s: s, ctx: ctx, o: o, fsys: fsys, part: part, fsType: fsType,
 		lp:   evidence.NewLocalPaths(fmt.Sprintf("p%d-%s", part.Index, fsType)),
-		done: map[doneKey]bool{},
+		done: map[doneKey]bool{}, b: b,
 	}
 	details := map[string]any{
 		"parent_id": s.Parent.ID, "partition": part.Index, "fs_type": fsType,
 		"paths": append([]string(nil), o.Paths...), "recursive": o.Recursive,
+		"max_files": b.maxFiles, "max_bytes": b.maxBytes,
 	}
 	return runAnalysis(s.Case, s.Parent.Source.DeviceID, "extract", details, func(a *analysis) error {
 		x.a = a
+		defer func() {
+			if a.sum.OutputLimit != "" {
+				a.setEnd("limit_reached", a.sum.OutputLimit)
+			}
+		}()
 		if err := a.watchFS(fsys); err != nil {
 			return err
 		}
 		for _, t := range targets {
 			if err := x.target(t.p, t.e); err != nil {
+				if errors.Is(err, errOutputLimit) {
+					return nil // the run ends at its limit; the summary says so
+				}
 				return err
 			}
 		}
@@ -103,9 +122,15 @@ type extractor struct {
 	a      *analysis
 	done   map[doneKey]bool // entries already extracted in this run
 	copied int64            // bytes streamed so far, for Progress
+	b      *budget
 }
 
 const sparseTooBig = "sparse size exceeds partition length; not extracted"
+
+const overlapTooBig = "data runs exceed partition length; not extracted"
+
+// errOutputLimit ends a run at its output limit without failing it.
+var errOutputLimit = errors.New("output limit reached")
 
 const deletedReason = "deleted; use image recover (roadmap sub-project 3)"
 
@@ -214,6 +239,19 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 		// filesystem could make one cheap entry expand to an arbitrary size.
 		return x.a.warn(p, sparseTooBig)
 	}
+	if dataBytes(f.Runs()) > x.part.Length {
+		return x.a.warn(p, overlapTooBig)
+	}
+	if reason := x.b.admit(size); reason != "" {
+		if reason == reasonInvalidSize {
+			return fmt.Errorf("extract: negative file size %d for %s", size, p)
+		}
+		x.a.sum.OutputLimit = reason
+		if err := x.a.warn(p, fmt.Sprintf("output limit reached (%s): this file and the files after it were not extracted", reason)); err != nil {
+			return err
+		}
+		return errOutputLimit
+	}
 
 	d := x.s.baseDerivation(x.part, x.fsType)
 	d.FSPath, d.FSID = p, e.ID
@@ -237,6 +275,7 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 		}
 		runs = nil
 	}
+	d.AcquisitionGaps = x.s.gapNote(runs, runsErr == nil, size)
 	useSidecar := len(runs) > evidence.MaxInlineRuns
 	if !useSidecar {
 		d.Runs = runs
@@ -246,6 +285,7 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 
 	dir, err := x.lp.Dir(path.Dir(p))
 	if err != nil {
+		x.b.release(size)
 		return x.a.warn(p, "no usable local directory name: "+err.Error())
 	}
 	var (
@@ -255,6 +295,7 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 	for attempt := 0; ; attempt++ {
 		rel, err := x.lp.File(dir, e.Name)
 		if err != nil {
+			x.b.release(size)
 			return x.a.warn(p, "no usable local name: "+err.Error())
 		}
 		if useSidecar {
@@ -271,13 +312,11 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 					if perr := x.keepPrefixRuns(rel, p, d, runs, n); perr != nil {
 						return perr // a failure of the case itself
 					}
+					d.AcquisitionGaps = x.s.gapNote(prefixRuns(runs, n), true, n) // the kept bytes only
 					if n > 0 && d.Runs == nil && d.RunsArtifact == "" {
 						err = fmt.Errorf("%w (the runs of the kept bytes are not recorded: no free runs sidecar name)", err)
 					}
-					if full != "" {
-						// Say in the hash-chained record which artifact is the orphan.
-						err = fmt.Errorf("%w (complete run list of the file: runs artifact %s)", err, full)
-					}
+					err = noteFullRuns(d, full, err)
 				}
 				return err
 			})
@@ -287,6 +326,7 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 			// Belt and braces: LocalPaths caps every component, so this is an
 			// OS limit it does not model (a very deep path). The entry's name,
 			// not the case, is the problem, so skip it and go on.
+			x.b.release(size)
 			return x.a.warn(p, "not extracted: "+nameErr.Error())
 		}
 		if !errors.Is(err, evidence.ErrArtifactExists) {
@@ -300,6 +340,7 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 		// APFS NFC/NFD). The exclusive create failed before any byte was read,
 		// the colliding name stays reserved and the next candidate is tried.
 		if attempt+1 >= maxNameAttempts {
+			x.b.release(size)
 			return x.a.warn(p, fmt.Sprintf("no free local name after %d attempts: %v", attempt+1, err))
 		}
 	}
@@ -311,6 +352,7 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 	case fatal(x.ctx, readErr) || !skippable(readErr):
 		return readErr
 	}
+	x.b.trim(size - rec.Size) // the unwritten part of the admitted size
 	return x.a.warn(p, fmt.Sprintf("read failed after %d of %d bytes (partial artifact kept, flagged incomplete): %v", rec.Size, size, readErr))
 }
 
@@ -385,6 +427,23 @@ func (s *Session) baseDerivation(part volume.Partition, fsType string) *evidence
 	return d
 }
 
+// dataBytes sums the lengths of the runs that are backed by storage (Offset >= 0),
+// saturating at MaxInt64. Honest runs of one file cannot total more than the
+// partition holds; overlapping runs can.
+func dataBytes(runs []filesys.Run) int64 {
+	var total int64
+	for _, r := range runs {
+		if r.Offset < 0 || r.Length <= 0 {
+			continue
+		}
+		var ok bool
+		if total, ok = filesys.AddOK(total, r.Length); !ok {
+			return math.MaxInt64
+		}
+	}
+	return total
+}
+
 // holeBytes returns how many bytes of a file of size bytes are not backed by
 // storage: the sum of its hole runs (Offset -1), saturating at MaxInt64, or,
 // for a file without runs (content inline in metadata, or entirely sparse),
@@ -446,7 +505,8 @@ func imageRuns(raw []filesys.Run, size int64, part volume.Partition, imageSize i
 func (s *Session) writeRunsSidecar(a *analysis, rel string, runs []evidence.Run, fsPath string, d *evidence.Derivation) error {
 	sd := *d
 	sd.Runs, sd.RunsArtifact = nil, ""
-	sd.Recovery = nil // a runs sidecar describes runs, never a recovery (the recovery stays on the file)
+	sd.Recovery = nil        // a runs sidecar describes runs, never a recovery (the recovery stays on the file)
+	sd.AcquisitionGaps = nil // a runs sidecar describes runs, the note stays on the content artifact
 	src := evidence.Source{Kind: "runs", DeviceID: s.Parent.Source.DeviceID, RemotePath: fsPath, Derived: &sd}
 	rec, fillErr, err := s.capture(a, rel, src, func(w io.Writer) error {
 		return writeJSONLines(w, len(runs), func(i int) any { return runs[i] })
@@ -555,6 +615,20 @@ func (s *Session) keepPrefixRuns(a *analysis, rel, fsPath string, d *evidence.De
 	}
 	d.Runs, d.RunsArtifact = nil, ""
 	return nil
+}
+
+// noteFullRuns links the complete run list full (written before a read that
+// stopped early) from the partial artifact's derivation d, unless it is the
+// sidecar d already captures, and names it in err (the hash-chained record). No
+// full list leaves both unchanged.
+func noteFullRuns(d *evidence.Derivation, full string, err error) error {
+	if full == "" {
+		return err
+	}
+	if full != d.RunsArtifact {
+		d.DeclaredRunsArtifact = full // the full list stays in the case; the partial artifact now names it
+	}
+	return fmt.Errorf("%w (complete run list of the file: runs artifact %s)", err, full)
 }
 
 // copyBufSize is the size of the buffer one extraction read fills.

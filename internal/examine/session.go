@@ -8,6 +8,7 @@
 package examine
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -28,6 +29,18 @@ import (
 type Options struct {
 	// Drivers overrides detect.Drivers (tests inject fstest). nil = detect.Drivers.
 	Drivers []detect.Driver
+	// VerifyParent re-hashes every parent segment artifact (SHA-256, MD5 and size)
+	// against the manifest at open. A difference is evidence.ErrIntegrity; nothing
+	// is cached between opens. The default open checks the size only
+	// (evidence.Case.OpenArtifact); case verify stays the authority.
+	VerifyParent bool
+	// Context cancels the VerifyParent re-hash; nil means context.Background().
+	Context context.Context
+	// VerifyProgress, when set, receives the bytes re-hashed so far and the
+	// total size of all segments during VerifyParent.
+	VerifyProgress func(done, total int64)
+	// Scan bounds the bytes a whole-media scan (VerifyContainer) may read.
+	Scan ScanBudget
 }
 
 // Session is one opened image artifact.
@@ -46,6 +59,8 @@ type Session struct {
 
 	// freeBytes reports the free bytes of a directory (tests inject it); nil means diskFree.
 	freeBytes func(dir string) (int64, error)
+
+	implausible *bool // test override of the container's size claim
 
 	mu        sync.Mutex
 	fsCache   map[int]*fsEntry
@@ -97,6 +112,11 @@ func OpenContainer(c *evidence.Case, ref string, opts Options) (*Session, error)
 		}
 	}
 
+	var total int64 // computed once: the progress denominator over all segments
+	for _, seg := range segs {
+		total += seg.Size
+	}
+	var before int64 // bytes of the segments already verified
 	files := make([]*os.File, 0, len(segs))
 	for _, seg := range segs {
 		f, rec, err := c.OpenArtifact(seg.ID)
@@ -109,6 +129,14 @@ func OpenContainer(c *evidence.Case, ref string, opts Options) (*Session, error)
 			closeFiles(files)
 			return nil, fmt.Errorf("%w: artifact %s resolved to a different record", evidence.ErrIntegrity, seg.ID)
 		}
+		if opts.VerifyParent {
+			if err := verifyParentFile(opts, f, rec, before, total); err != nil {
+				_ = f.Close()
+				closeFiles(files)
+				return nil, err
+			}
+		}
+		before += seg.Size
 		files = append(files, f)
 	}
 	img, err := openImage(files)
@@ -464,6 +492,13 @@ type ImageInfo struct {
 	// PartitionError is why the partition table could not be read (Table is
 	// nil then and Scheme, Partitions and Unallocated are empty).
 	PartitionError string
+	// AcquisitionGaps is non-nil for containers that can record unreadable
+	// acquisition ranges (E01): its State says whether there is no error2
+	// section, an empty one, declared ranges or a damaged one (gaps unknown).
+	// The ranges are the acquirer's declaration; the image holds fill there.
+	AcquisitionGaps *image.AcquisitionGaps
+	// SizeClaim is non-nil when the container's claimed size is one its own bytes cannot hold.
+	SizeClaim *image.SizeClaim
 }
 
 // Info describes the image, its partition table and, per partition, the
@@ -483,6 +518,15 @@ func (s *Session) Info() ImageInfo {
 	}
 	if w, ok := s.Image.(image.Warner); ok {
 		info.Warnings = append(info.Warnings, w.Warnings()...)
+	}
+	if gr, ok := s.Image.(image.GapReporter); ok {
+		g := gr.AcquisitionGaps()
+		info.AcquisitionGaps = &g
+	}
+	if sc, ok := s.Image.(image.SizeClaimer); ok {
+		if c := sc.SizeClaim(); c.Implausible {
+			info.SizeClaim = &c
+		}
 	}
 	for _, seg := range s.Segments {
 		if seg.Incomplete {
@@ -619,4 +663,72 @@ func (s *Session) needTable() error {
 		return s.tableErr
 	}
 	return errors.New("the partition table has not been read")
+}
+
+// verifyParentFile re-hashes f, the open file of manifest record rec, and
+// compares it with the manifest. progress counts bytes across all segments.
+func verifyParentFile(opts Options, f *os.File, rec evidence.ManifestRecord, before, total int64) error {
+	ctx := opts.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	h := evidence.NewMultiHasher()
+	buf := make([]byte, 1<<20)
+	var done int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		n, err := f.ReadAt(buf, done)
+		_, _ = h.Write(buf[:n])
+		done += int64(n)
+		if opts.VerifyProgress != nil {
+			opts.VerifyProgress(before+done, total)
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("verify parent: reading artifact %s: %w", rec.ID, err) // an I/O failure is not a finding about the evidence
+		}
+	}
+	got := h.Sum()
+	// MD5 is always recorded; an empty recorded MD5 is itself a difference, never a skipped half of the check.
+	if got.Size != rec.Size || got.SHA256 != rec.SHA256 || got.MD5 != rec.MD5 {
+		return fmt.Errorf("%w: artifact %s (%s): content differs from the manifest (SHA-256 %s, recorded %s; size %d, recorded %d)",
+			evidence.ErrIntegrity, rec.ID, rec.Path, got.SHA256, rec.SHA256, got.Size, rec.Size)
+	}
+	return nil
+}
+
+// DefaultImplausibleScanBytes is the scan budget applied to a container whose
+// claimed size its own bytes cannot hold, when the examiner gave no budget.
+const DefaultImplausibleScanBytes int64 = 64 << 30
+
+// ScanBudget bounds the bytes a whole-media scan (VerifyContainer) may read.
+type ScanBudget struct {
+	Bytes     int64 // > 0: stop after this many bytes
+	Unlimited bool  // true: no limit even for an implausible size claim
+}
+
+// ScanLimit returns the byte limit a whole-media scan runs under and why:
+// an explicit budget, no limit (Unlimited, or a plausible image with none
+// given), or DefaultImplausibleScanBytes for an implausible size claim.
+func (s *Session) ScanLimit() (limit int64, why string) {
+	switch {
+	case s.opts.Scan.Unlimited:
+		return 0, ""
+	case s.opts.Scan.Bytes > 0:
+		return s.opts.Scan.Bytes, "--max-scan-bytes"
+	}
+	implausible := false
+	if s.implausible != nil {
+		implausible = *s.implausible
+	} else if sc, ok := s.Image.(image.SizeClaimer); ok {
+		implausible = sc.SizeClaim().Implausible
+	}
+	if implausible {
+		return DefaultImplausibleScanBytes, "default for a size claim the container's bytes cannot hold"
+	}
+	return 0, ""
 }

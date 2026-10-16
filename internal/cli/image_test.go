@@ -120,6 +120,14 @@ func TestImageImportInfoLsStatExtractUnalloc(t *testing.T) {
 			t.Errorf("info lacks %q:\n%s", want, out)
 		}
 	}
+	// A raw image carries no acquisition-error record: the field is omitted, never
+	// printed as an empty list, 0 or "none" (the omission is not evidence of no gaps).
+	if strings.Contains(out, "Acq. errors") {
+		t.Errorf("raw image info prints an acquisition-error line:\n%s", out)
+	}
+	if code, jout := run(t, d, "image", "info", "--case", c, ref, "--json"); code != 0 || strings.Contains(jout, "acquisition_gaps") {
+		t.Errorf("raw image info --json: %d, must omit acquisition_gaps:\n%s", code, jout)
+	}
 	code, out = run(t, d, "image", "info", "--case", c, ref, "--verify")
 	if code != 0 || !strings.Contains(out, "container has no stored hashes") {
 		t.Fatalf("info --verify: %d %s", code, out)

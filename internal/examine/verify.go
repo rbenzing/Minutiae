@@ -3,6 +3,7 @@ package examine
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/rbenzing/minutiae/internal/image"
 )
@@ -10,6 +11,9 @@ import (
 // ErrNoStoredHashes is returned by VerifyContainer for a container that stores
 // no hashes (raw images).
 var ErrNoStoredHashes = errors.New("container has no stored hashes")
+
+// ErrScanBudget is returned by VerifyContainer when the whole-media scan stopped at its byte budget.
+var ErrScanBudget = errors.New("scan budget reached")
 
 // ContainerVerification is the outcome of VerifyContainer.
 type ContainerVerification struct {
@@ -33,17 +37,35 @@ func (s *Session) VerifyContainer(ctx context.Context, progress func(done, total
 	if !ok {
 		return ContainerVerification{}, ErrNoStoredHashes
 	}
+	limit, why := s.ScanLimit()
+	if limit > 0 {
+		var cancel context.CancelCauseFunc
+		ctx, cancel = context.WithCancelCause(ctx)
+		defer cancel(nil)
+		inner := progress
+		progress = func(done, total int64) {
+			if done >= limit && (total <= 0 || done < total) { // a scan that is already complete is not a budget stop
+				cancel(ErrScanBudget)
+			}
+			if inner != nil {
+				inner(done, total)
+			}
+		}
+	}
 	res, err := runVerify(ctx, v, s.Image.Size(), progress)
 	cv := ContainerVerification{Format: s.Image.Format(), VerifyResult: res}
 	switch {
 	case err == nil:
 		cv.Result = res.Result()
+	case errors.Is(err, context.Canceled) && errors.Is(context.Cause(ctx), ErrScanBudget):
+		cv.Result = "scan-budget"
+		err = fmt.Errorf("%w: stopped after %d of %d bytes (%s)", ErrScanBudget, res.BytesHashed, res.Size, why)
 	case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
 		cv.Result = "cancelled"
 	default:
 		cv.Result = "error"
 	}
-	if aerr := s.auditVerify(cv, err); aerr != nil {
+	if aerr := s.auditVerify(cv, err, limit, why); aerr != nil {
 		return cv, errors.Join(err, aerr)
 	}
 	return cv, err
@@ -75,7 +97,7 @@ func hashDetails(h image.HashCheck) map[string]any {
 
 // auditVerify appends the image.verify entry. The values are the strings the
 // verifier produced; nothing is recomputed here.
-func (s *Session) auditVerify(cv ContainerVerification, verr error) error {
+func (s *Session) auditVerify(cv ContainerVerification, verr error, limit int64, why string) error {
 	segs := make([]any, len(s.Segments))
 	for i, seg := range s.Segments {
 		segs[i] = map[string]any{"id": seg.ID, "sha256": seg.SHA256}
@@ -87,6 +109,10 @@ func (s *Session) auditVerify(cv ContainerVerification, verr error) error {
 	}
 	if cv.BadChunk >= 0 {
 		d["first_bad_chunk"] = cv.BadChunk
+	}
+	if limit > 0 {
+		d["scan_limit"] = limit
+		d["scan_limit_reason"] = why
 	}
 	if verr != nil {
 		d["error"] = verr.Error()
