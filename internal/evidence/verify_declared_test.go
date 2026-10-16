@@ -203,7 +203,7 @@ func TestVerifyDeclaredSidecarTamperBreaksPrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 	b = []byte(strings.Replace(string(b), `"offset":512`, `"offset":513`, 1))
-	if err := os.WriteFile(p, b, 0o600); err != nil {
+	if err := os.WriteFile(p, b, 0o600); err != nil { //nolint:gosec // a sidecar inside the temporary test case
 		t.Fatal(err)
 	}
 	rep, err = c.Verify()

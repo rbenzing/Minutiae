@@ -2,6 +2,7 @@ package cli
 
 import (
 	"cmp"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -62,10 +63,26 @@ func caseFlag(cmd *cobra.Command) *string {
 	return s
 }
 
+// openOpts are the per-command choices of how an image is opened.
+type openOpts struct {
+	ctx          context.Context
+	verifyParent bool
+}
+
+// verifyParentFlag registers --verify-parent on cmd.
+func verifyParentFlag(cmd *cobra.Command) *bool {
+	return cmd.Flags().Bool("verify-parent", false, "re-hash the parent image artifact against the manifest before use (slow on large images; `case verify` remains the authority)")
+}
+
 // openImageSession opens the case and the image artifact ref. The returned
 // function closes both. A parent flagged incomplete is reported on stderr.
 func openImageSession(d Deps, casePath, ref string) (*examine.Session, func(), error) {
-	s, closeAll, err := openImageContainer(d, casePath, ref)
+	return openImageSessionWith(d, casePath, ref, openOpts{})
+}
+
+// openImageSessionWith opens the image with the per-command choices oo.
+func openImageSessionWith(d Deps, casePath, ref string, oo openOpts) (*examine.Session, func(), error) {
+	s, closeAll, err := openImageContainerWith(d, casePath, ref, oo)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -77,15 +94,22 @@ func openImageSession(d Deps, casePath, ref string) (*examine.Session, func(), e
 	return s, closeAll, nil
 }
 
-// openImageContainer is openImageSession without reading the partition table
-// (examine.OpenContainer): what only needs the container, such as verifying
+// openImageContainerWith is openImageSessionWith without reading the partition
+// table (examine.OpenContainer): what only needs the container, such as verifying
 // it, must not depend on the partition table being readable.
-func openImageContainer(d Deps, casePath, ref string) (*examine.Session, func(), error) {
+func openImageContainerWith(d Deps, casePath, ref string, oo openOpts) (*examine.Session, func(), error) {
 	c, err := openCase(casePath)
 	if err != nil {
 		return nil, nil, err
 	}
-	s, err := examine.OpenContainer(c, ref, examine.Options{Drivers: d.FSDrivers})
+	opts := examine.Options{Drivers: d.FSDrivers, VerifyParent: oo.verifyParent, Context: oo.ctx}
+	if oo.verifyParent {
+		opts.VerifyProgress = newProgress(d.Err, "verify-parent")
+	}
+	s, err := examine.OpenContainer(c, ref, opts)
+	if oo.verifyParent {
+		fmt.Fprintln(d.Err) // end the progress line, whatever the outcome
+	}
 	if err != nil {
 		_ = c.Close()
 		return nil, nil, err
@@ -154,16 +178,17 @@ func newImageInfoCmd(d Deps, opts *rootOptions) *cobra.Command {
 		Args:  exactArgs(1),
 	}
 	casePath := caseFlag(cmd)
+	vp := verifyParentFlag(cmd)
 	cmd.Flags().BoolVar(&verify, "verify", false, "verify the container's stored hashes (raw images have none)")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		open := openImageSession
+		open := openImageSessionWith
 		if verify {
 			// Verification needs the container only: it is exactly when the
 			// partition table cannot be read that it matters. The partition
 			// table is read after the verification has been audited.
-			open = openImageContainer
+			open = openImageContainerWith
 		}
-		s, closeAll, err := open(d, *casePath, args[0])
+		s, closeAll, err := open(d, *casePath, args[0], openOpts{ctx: cmd.Context(), verifyParent: *vp})
 		if err != nil {
 			return err
 		}
@@ -487,6 +512,7 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 		},
 	}
 	casePath := caseFlag(cmd)
+	vp := verifyParentFlag(cmd)
 	partition := partitionFlag(cmd, "partition index (default: the only partition with a recognized filesystem)")
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "list the whole subtree with full paths")
 	cmd.Flags().BoolVar(&deleted, "deleted", false, "also show deleted directory entries")
@@ -500,7 +526,7 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 		if len(args) == 2 {
 			dirRef = args[1]
 		}
-		s, closeAll, err := openImageSession(d, *casePath, args[0])
+		s, closeAll, err := openImageSessionWith(d, *casePath, args[0], openOpts{ctx: cmd.Context(), verifyParent: *vp})
 		if err != nil {
 			return err
 		}
@@ -616,13 +642,14 @@ func newImageStatCmd(d Deps, opts *rootOptions) *cobra.Command {
 		Args:  exactArgs(2),
 	}
 	casePath := caseFlag(cmd)
+	vp := verifyParentFlag(cmd)
 	partition := partitionFlag(cmd, "partition index (default: the only partition with a recognized filesystem)")
 	cmd.RunE = func(_ *cobra.Command, args []string) error {
 		pidx, err := partition()
 		if err != nil {
 			return err
 		}
-		s, closeAll, err := openImageSession(d, *casePath, args[0])
+		s, closeAll, err := openImageSessionWith(d, *casePath, args[0], openOpts{ctx: cmd.Context(), verifyParent: *vp})
 		if err != nil {
 			return err
 		}
@@ -752,6 +779,7 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 		},
 	}
 	casePath := caseFlag(cmd)
+	vp := verifyParentFlag(cmd)
 	partition := partitionFlag(cmd, "partition index (default: the only partition with a recognized filesystem)")
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "extract the live subtree of directories")
 	cmd.Flags().BoolVar(&includeEncrypted, "include-encrypted", false, "accepted for clarity: encrypted files are always extracted as ciphertext")
@@ -761,7 +789,7 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		s, closeAll, err := openImageSession(d, *casePath, args[0])
+		s, closeAll, err := openImageSessionWith(d, *casePath, args[0], openOpts{ctx: cmd.Context(), verifyParent: *vp})
 		if err != nil {
 			return err
 		}
@@ -826,6 +854,7 @@ func newImageUnallocCmd(d Deps, opts *rootOptions) *cobra.Command {
 		Args:  exactArgs(1),
 	}
 	casePath := caseFlag(cmd)
+	vp := verifyParentFlag(cmd)
 	partition := partitionFlag(cmd, "export the free space of this partition's filesystem")
 	cmd.Flags().BoolVar(&volumeMode, "volume", false, "export the volume-level gaps outside every partition")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
@@ -839,7 +868,7 @@ func newImageUnallocCmd(d Deps, opts *rootOptions) *cobra.Command {
 		case !hasP && !volumeMode:
 			return usageErrorf("choose what to export: --partition N or --volume")
 		}
-		s, closeAll, err := openImageSession(d, *casePath, args[0])
+		s, closeAll, err := openImageSessionWith(d, *casePath, args[0], openOpts{ctx: cmd.Context(), verifyParent: *vp})
 		if err != nil {
 			return err
 		}

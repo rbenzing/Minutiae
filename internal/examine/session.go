@@ -8,6 +8,7 @@
 package examine
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -28,6 +29,16 @@ import (
 type Options struct {
 	// Drivers overrides detect.Drivers (tests inject fstest). nil = detect.Drivers.
 	Drivers []detect.Driver
+	// VerifyParent re-hashes every parent segment artifact (SHA-256, MD5 and size)
+	// against the manifest at open. A difference is evidence.ErrIntegrity; nothing
+	// is cached between opens. The default open checks the size only
+	// (evidence.Case.OpenArtifact); case verify stays the authority.
+	VerifyParent bool
+	// Context cancels the VerifyParent re-hash; nil means context.Background().
+	Context context.Context
+	// VerifyProgress, when set, receives the bytes re-hashed so far and the
+	// total size of all segments during VerifyParent.
+	VerifyProgress func(done, total int64)
 }
 
 // Session is one opened image artifact.
@@ -108,6 +119,13 @@ func OpenContainer(c *evidence.Case, ref string, opts Options) (*Session, error)
 			_ = f.Close()
 			closeFiles(files)
 			return nil, fmt.Errorf("%w: artifact %s resolved to a different record", evidence.ErrIntegrity, seg.ID)
+		}
+		if opts.VerifyParent {
+			if err := verifyParentFile(opts, f, rec, segs); err != nil {
+				_ = f.Close()
+				closeFiles(files)
+				return nil, err
+			}
 		}
 		files = append(files, f)
 	}
@@ -628,4 +646,48 @@ func (s *Session) needTable() error {
 		return s.tableErr
 	}
 	return errors.New("the partition table has not been read")
+}
+
+// verifyParentFile re-hashes f, the open file of manifest record rec, and
+// compares it with the manifest. progress counts bytes across all segments.
+func verifyParentFile(opts Options, f *os.File, rec evidence.ManifestRecord, segs []evidence.ManifestRecord) error {
+	ctx := opts.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var total, before int64
+	for _, s := range segs {
+		total += s.Size
+		if s.ID == rec.ID {
+			break
+		}
+		before += s.Size
+	}
+	h := evidence.NewMultiHasher()
+	buf := make([]byte, 1<<20)
+	var done int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		n, err := f.ReadAt(buf, done)
+		_, _ = h.Write(buf[:n])
+		done += int64(n)
+		if opts.VerifyProgress != nil {
+			opts.VerifyProgress(before+done, total)
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("verify parent: reading artifact %s: %w", rec.ID, err) // an I/O failure is not a finding about the evidence
+		}
+	}
+	got := h.Sum()
+	// MD5 is always recorded; an empty recorded MD5 is itself a difference, never a skipped half of the check.
+	if got.Size != rec.Size || got.SHA256 != rec.SHA256 || got.MD5 != rec.MD5 {
+		return fmt.Errorf("%w: artifact %s (%s): content differs from the manifest (SHA-256 %s, recorded %s; size %d, recorded %d)",
+			evidence.ErrIntegrity, rec.ID, rec.Path, got.SHA256, rec.SHA256, got.Size, rec.Size)
+	}
+	return nil
 }
