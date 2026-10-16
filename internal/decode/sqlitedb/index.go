@@ -272,9 +272,10 @@ func (ix *Index) Release() {
 // set in the flags in those two cases: the set of matches may be short. A
 // source collation that is not supported is an *UnsupportedCollationError. A
 // literal key (Class ClassUnknown) takes the affinity of the indexed column as the
-// engine does for a constant; one that cannot be converted exactly is
-// ErrKeyUndecidable. The
-// slice is the caller's.
+// engine does for a constant, and so does a key from a TEXT or no-affinity column
+// against a numeric column (NUMERIC affinity applies to both); a no-affinity
+// column against a TEXT column is compared as stored. A key that cannot be
+// converted exactly is ErrKeyUndecidable. The slice is the caller's.
 func (ix *Index) Rowids(key parse.JoinKey) (rowids []int64, flags JoinFlags, err error) {
 	if key.Kind == parse.JoinNone {
 		return nil, 0, nil
@@ -307,9 +308,13 @@ func (ix *Index) Rowids(key parse.JoinKey) (rowids []int64, flags JoinFlags, err
 	default:
 		return nil, flags, fmt.Errorf("%w: unknown key kind %d", ErrKeyUndecidable, key.Kind)
 	}
-	if key.Class == parse.ClassUnknown {
-		// A constant has no affinity, so the engine applies the column's affinity to it.
-		conv, cst := sqlitefile.ConvertForComparison(v, sqlitefile.AffBlob, affOfClass(ix.class))
+	// The engine applies NUMERIC affinity to a TEXT or no-affinity operand that
+	// meets a numeric column, and TEXT affinity to a constant that meets a TEXT
+	// column. A no-affinity COLUMN against a TEXT column is compared as stored
+	// (measured against the engine): only a constant (ClassUnknown) is converted
+	// there. A key that cannot be converted exactly is undecidable, never a miss.
+	if !(key.Class == parse.ClassBlob && ix.class == parse.ClassText) {
+		conv, cst := sqlitefile.ConvertForComparison(v, affOfClass(key.Class), affOfClass(ix.class))
 		if cst != sqlitefile.ConvOK {
 			return nil, flags, fmt.Errorf("%w: the key cannot be converted exactly for the affinity of %s.%s", ErrKeyUndecidable, ix.table, ix.column)
 		}
