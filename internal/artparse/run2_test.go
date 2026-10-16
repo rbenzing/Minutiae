@@ -493,6 +493,7 @@ func TestEmitterAndBundleAreSealedOnEveryJobExitPath(t *testing.T) {
 		mod   func(*artparse.Options)
 		after func(cancel context.CancelFunc, release chan struct{}) func(context.Context, *parse.Input, parse.Emitter) error
 	}
+	expire := make(chan struct{}) // closed by the timeout path's parser: the job context then expires, on an event
 	paths := []path{
 		{"success", nil, func(context.CancelFunc, chan struct{}) func(context.Context, *parse.Input, parse.Emitter) error {
 			return nil
@@ -503,8 +504,12 @@ func TestEmitterAndBundleAreSealedOnEveryJobExitPath(t *testing.T) {
 		{"panic", nil, func(context.CancelFunc, chan struct{}) func(context.Context, *parse.Input, parse.Emitter) error {
 			return func(context.Context, *parse.Input, parse.Emitter) error { panic("kaboom") }
 		}},
-		{"timeout", shortTimeouts, func(context.CancelFunc, chan struct{}) func(context.Context, *parse.Input, parse.Emitter) error {
-			return func(c context.Context, _ *parse.Input, _ parse.Emitter) error { <-c.Done(); return c.Err() }
+		{"timeout", eventTimeouts, func(context.CancelFunc, chan struct{}) func(context.Context, *parse.Input, parse.Emitter) error {
+			return func(c context.Context, _ *parse.Input, _ parse.Emitter) error {
+				close(expire)
+				<-c.Done()
+				return c.Err()
+			}
 		}},
 		{"abandon", shortTimeouts, func(_ context.CancelFunc, release chan struct{}) func(context.Context, *parse.Input, parse.Emitter) error {
 			return func(context.Context, *parse.Input, parse.Emitter) error { <-release; return nil }
@@ -520,6 +525,9 @@ func TestEmitterAndBundleAreSealedOnEveryJobExitPath(t *testing.T) {
 			defer cancel()
 			release := make(chan struct{})
 			t.Cleanup(func() { close(release) })
+			if pa.name == "timeout" {
+				expireParseOnEvent(t, 1, expire)
+			}
 			kept := &rxKept{}
 			p := &rxParser{name: "keep", n: 1, kept: kept, after: pa.after(cancel, release)}
 			concluded := 0
