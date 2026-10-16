@@ -292,6 +292,9 @@ func validateColumn(c any, idx int, prev *int64) error {
 		if s, _ := r.(string); !slices.Contains(defaultReasons, s) {
 			return bad("column %d: \"default_undecided\" has the unknown value %q", idx, clip(fmt.Sprint(r)))
 		}
+		if !omitted {
+			return bad("column %d: \"default_undecided\" needs \"omitted\"", idx)
+		}
 	}
 	unread, _ := m["unread"].(bool)
 	_, hasV := m["value"]
