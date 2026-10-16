@@ -265,7 +265,7 @@ func TestNonGoChangeRunsCachedWholeModuleTests(t *testing.T) {
 					t.Errorf("the test cache is disabled: %s", l)
 				}
 			}
-			if hasVet := slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, "go vet ") }); hasVet != c.scoped {
+			if hasVet := slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, "go vet ") && l != scaleVetLine }); hasVet != c.scoped {
 				t.Errorf("vet step present = %v, want %v", hasVet, c.scoped)
 			}
 			if !strings.Contains(p.testForm, "non-Go") {
@@ -323,5 +323,33 @@ func TestDocConsistencyPackagesAreListed(t *testing.T) {
 	}
 	if !slices.Equal(dirs, []string{"internal/archtest", "tools/check"}) {
 		t.Errorf("the global doc block is archtest and tools/check only, got %v", dirs)
+	}
+}
+
+// scaleVetLine is the step that keeps the -tags scale harness compiling (docs/testing.md, ruling D65).
+// It was lost once in a merge; every plan must carry it.
+const scaleVetLine = "go vet -tags scale ./internal/records/... ./internal/evidence/..."
+
+func TestEveryPlanVetsTheScaleTag(t *testing.T) {
+	if !slices.Contains(formatSteps(fullSteps(false)), scaleVetLine) {
+		t.Errorf("the full plan has no %q", scaleVetLine)
+	}
+	e, _ := fakeEnv(t, []string{"b/x.go"}, nil)
+	p, err := buildPlan(options{affected: true, base: "abc"}, e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.full {
+		t.Fatalf("a Go-only change escalated: %s", p.reason)
+	}
+	if !slices.Contains(formatSteps(p.steps), scaleVetLine) {
+		t.Errorf("the -affected plan has no %q:\n%s", scaleVetLine, strings.Join(formatSteps(p.steps), "\n"))
+	}
+	pb, err := buildPlan(options{blocks: []string{"case"}}, e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(formatSteps(pb.steps), scaleVetLine) {
+		t.Errorf("the -block plan has no %q", scaleVetLine)
 	}
 }

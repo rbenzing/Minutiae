@@ -112,6 +112,7 @@ func globalSteps() []step {
 		{args: []string{"go", "mod", "tidy", "-diff"}},
 		{args: []string{"go", "run", "./tools/parserhash", "-check"}},
 		{args: []string{"go", "build", "./..."}},
+		scaleVet(),
 		{args: []string{"go", "build", "-o", binPath(), "./cmd/minutiae"}},
 		pureBuild(),
 		crossBuild("linux", "amd64"),
@@ -487,4 +488,10 @@ func realEnv() env {
 // is named .go (the go tool ignores it, a test in another package may read it).
 func isTestdata(f string) bool {
 	return strings.HasPrefix(f, "testdata/") || strings.Contains(f, "/testdata/")
+}
+
+// scaleVet keeps the -tags scale harness (internal/records/scale_test.go) compiling and vetted: the
+// default build never sees it and a scale run is too expensive to find a break (docs/testing.md).
+func scaleVet() step {
+	return step{args: []string{"go", "vet", "-tags", "scale", "./internal/records/...", "./internal/evidence/..."}}
 }
