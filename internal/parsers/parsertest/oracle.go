@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -172,11 +173,32 @@ type Bundle struct {
 	ByPath  map[string]parse.Artifact // remote path -> artifact, for the extra files
 }
 
-// Bundle stores the fixture's files in h's case as an Android file acquisition:
-// the database at remotePath, the WAL and journal beside it with their suffixes,
-// the extra files at their own paths.
+// ErrEmptyRemotePath is returned by BuildBundle when the database path or an extra file's path is empty: an artifact
+// without a remote path would let a SourcePath check pass vacuously (ruling T52).
+var ErrEmptyRemotePath = errors.New("parsertest: an artifact has an empty remote path")
+
+// Bundle stores the fixture's files in h's case as an Android file acquisition: the database at remotePath,
+// the WAL and journal beside it with their suffixes, the extra files at their own paths. It fails the test on an error.
 func (f Fixture) Bundle(h *Harness, remotePath string) Bundle {
 	h.T.Helper()
+	b, err := f.BuildBundle(h, remotePath)
+	if err != nil {
+		h.T.Fatal(err)
+	}
+	return b
+}
+
+// BuildBundle is Bundle returning its error; an empty remote path is ErrEmptyRemotePath.
+func (f Fixture) BuildBundle(h *Harness, remotePath string) (Bundle, error) {
+	h.T.Helper()
+	if remotePath == "" {
+		return Bundle{}, fmt.Errorf("the database: %w", ErrEmptyRemotePath)
+	}
+	for i, x := range f.Expect.ExtraFiles {
+		if x.RemotePath == "" {
+			return Bundle{}, fmt.Errorf("extra file %d: %w", i, ErrEmptyRemotePath)
+		}
+	}
 	b := Bundle{Others: map[string]parse.Artifact{}, ByRole: map[string]parse.Artifact{}, ByPath: map[string]parse.Artifact{}}
 	add := func(path string, data []byte) parse.Artifact {
 		m := AddAndroidFile(h.T, h.Case, "acq1", path, data)
@@ -193,8 +215,7 @@ func (f Fixture) Bundle(h *Harness, remotePath string) Bundle {
 	for i, x := range f.Expect.ExtraFiles {
 		data, err := base64.StdEncoding.DecodeString(x.ContentB64)
 		if err != nil {
-			h.T.Fatalf("extra file %s: %v", x.RemotePath, err)
-			return b
+			return b, fmt.Errorf("extra file %s: %w", x.RemotePath, err)
 		}
 		var a parse.Artifact
 		if x.Device == "" || x.Device == "SER1" {
@@ -205,7 +226,7 @@ func (f Fixture) Bundle(h *Harness, remotePath string) Bundle {
 		b.Others["extra"+strconv.Itoa(i)] = a
 		b.ByPath[x.RemotePath] = a
 	}
-	return b
+	return b, nil
 }
 
 // Input is h.Input over the bundle.

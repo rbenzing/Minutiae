@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
@@ -302,5 +303,33 @@ func TestSourcePathIsThatOfTheFileHoldingTheCell(t *testing.T) {
 	AssertMatchesOracle(rec, Result{Records: []records.Record{goodRecord()}, Notes: map[string]string{"schema.sms": "columns:3"}}, oracleBundle(), exp)
 	if rec.Failed() {
 		t.Errorf("any row in the db refused: %v", rec.errs)
+	}
+}
+
+// ruling T52: an artifact with an empty remote path would let a SourcePath comparison pass vacuously.
+func TestBundleRefusesAnEmptyRemotePath(t *testing.T) {
+	h := NewHarness(t)
+	db := []byte("db bytes")
+	extra := func(path string) Fixture {
+		return Fixture{Name: "x", Files: map[string][]byte{"db": db}, Expect: Expect{ExtraFiles: []ExtraFile{{RemotePath: path, ContentB64: "YQ=="}}}}
+	}
+	for name, c := range map[string]struct {
+		fx   Fixture
+		path string
+	}{
+		"empty database path": {Fixture{Name: "x", Files: map[string][]byte{"db": db}}, ""},
+		"empty extra path":    {extra(""), "/data/x.db"},
+	} {
+		if _, err := c.fx.BuildBundle(NewHarness(t), c.path); !errors.Is(err, ErrEmptyRemotePath) {
+			t.Errorf("%s: err = %v, want ErrEmptyRemotePath", name, err)
+		}
+		rec := &recorder{TB: t}
+		c.fx.Bundle(NewHarness(rec), c.path)
+		if !rec.Failed() {
+			t.Errorf("%s: Bundle did not fail the test", name)
+		}
+	}
+	if _, err := extra("/data/a.bin").BuildBundle(h, "/data/x.db"); err != nil {
+		t.Errorf("a fixture with paths was refused: %v", err)
 	}
 }

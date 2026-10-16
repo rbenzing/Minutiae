@@ -85,16 +85,20 @@ func TestBaselineOracleStatesTheSpecRules(t *testing.T) {
 const remoteDB = "/data/user_de/0/com.android.providers.telephony/databases/mmssms.db"
 
 // Ruling T48: a record's source_path is the remote path of the file holding its cell. The oracle states it for
-// a row it places in a file; for a row that may lie in any file it states nothing and the comparer derives it
-// from the role the parser's locator reports.
+// a row it places in a file. A row that may lie in any file of a variant with a WAL or journal states nothing
+// (the comparer derives it from the role the locator reports); in a db-only variant the only possible file is
+// the db, so ruling T51 states the db path for every row, 'any' rows included.
 func TestOracleStatesTheSourcePathOfTheFileThatHoldsTheCell(t *testing.T) {
 	suffix := map[string]string{"db": "", "wal": "-wal", "journal": "-journal"}
-	walRows := 0
+	walRows, dbOnlyAny := 0, 0
 	for _, v := range variants {
 		fx := parsertest.LoadFixture(t, "testdata", v)
 		for _, r := range fx.Expect.Records {
 			want := ""
-			if r.File != "any" {
+			if _, hasWAL := fx.Files["wal"]; r.File == "any" && !hasWAL && fx.Files["journal"] == nil {
+				want = remoteDB
+				dbOnlyAny++
+			} else if r.File != "any" {
 				sfx, known := suffix[r.File]
 				if !known {
 					t.Fatalf("%s %s %d: unknown file %q", v, r.Table, r.Rowid, r.File)
@@ -108,6 +112,9 @@ func TestOracleStatesTheSourcePathOfTheFileThatHoldsTheCell(t *testing.T) {
 				walRows++
 			}
 		}
+	}
+	if dbOnlyAny == 0 {
+		t.Error("no db-only any row: the T51 rule is not exercised")
 	}
 	if walRows == 0 {
 		t.Error("no oracle row lies in a WAL: the -wal path rule is not exercised")

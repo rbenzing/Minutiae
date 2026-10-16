@@ -202,15 +202,16 @@ def summary(channel, direction, counterparty, text):
     return ("%s %s %s: %s" % (channel, direction, counterparty, text or "")).rstrip(" ")
 
 
-def source_path(file):
+def source_path(file, db_only=False):
     """Ruling T48: the remote path of the file that holds the cell. A row that may lie in any file states
-    nothing; the comparer derives the path from the role the parser's locator reports."""
+    nothing when the variant has a WAL or journal (the comparer derives the path from the role the parser's
+    locator reports); a db-only variant has one possible file, so ruling T51 states the db path for it."""
     if file == "any":
-        return ""
+        return REMOTE if db_only else ""
     return REMOTE + {"db": "", "wal": "-wal", "journal": "-journal"}[file]
 
 
-def expect_sms(r, env, file="any"):
+def expect_sms(r, env, file="any", db_only=False):
     raw, unknown = {}, {}
     typ = r.get("type")
     direction, status = {1: ("in", "received"), 2: ("out", "sent"), 3: ("out", "draft"), 4: ("out", "queued"),
@@ -268,7 +269,7 @@ def expect_sms(r, env, file="any"):
         raw["unknown_columns"] = unknown
     p["raw"] = raw
     cp = part["address"] if part else None
-    return {"table": "sms", "rowid": r["rowid"], "file": file, "type": "message", "source_path": source_path(file), "time": t, "time_end": None, "times": times, "deleted": False,
+    return {"table": "sms", "rowid": r["rowid"], "file": file, "type": "message", "source_path": source_path(file, db_only), "time": t, "time_end": None, "times": times, "deleted": False,
             "summary": summary("sms", direction, cp, bt), "body": bt, "payload": p}
 
 
@@ -276,7 +277,7 @@ def ct_lower(v):
     return None if v is None else v.decode("utf-8", "replace").lower()
 
 
-def expect_pdu(r, env, file="any"):
+def expect_pdu(r, env, file="any", db_only=False):
     raw, unknown = {}, {}
     box = r.get("msg_box")
     direction, status = {1: ("in", "received"), 2: ("out", "sent"), 3: ("out", "draft"), 4: ("out", "queued")}.get(box if is_int(box) else None, ("unknown", "unknown"))
@@ -417,7 +418,7 @@ def expect_pdu(r, env, file="any"):
         if pt["role"] == ("from" if direction == "in" else "to"):
             cp = pt["address"]
             break
-    return {"table": "pdu", "rowid": mid, "file": file, "type": "message", "source_path": source_path(file), "time": t, "time_end": None, "times": times, "deleted": False,
+    return {"table": "pdu", "rowid": mid, "file": file, "type": "message", "source_path": source_path(file, db_only), "time": t, "time_end": None, "times": times, "deleted": False,
             "summary": summary("mms", direction, cp, bt), "body": bt, "payload": p}
 
 
@@ -436,10 +437,11 @@ def oracle(files, ddl_name, variant, wal_touched=()):
         "addr": group(view.get("addr", []), "msg_id"), "part": group(view.get("part", []), "mid"),
     }
     exp = C.expect_header(FAMILY, variant, ddl_name)
+    db_only = set(files) == {"db"}
     for r in view.get("sms", []):
-        exp["records"].append(expect_sms(r, env, "wal" if ("sms", r["rowid"]) in wal_touched else "any"))
+        exp["records"].append(expect_sms(r, env, "wal" if ("sms", r["rowid"]) in wal_touched else "any", db_only))
     for r in view.get("pdu", []):
-        exp["records"].append(expect_pdu(r, env, "any"))
+        exp["records"].append(expect_pdu(r, env, "any", db_only))
     # only variants that carry the baseline MMS rows ship the attachment file
     if any(p.get("payload", {}).get("attachments") for p in exp["records"]):
         exp["extra_files"] = [{"remote_path": k, "content_b64": base64.b64encode(v).decode()} for k, v in sorted(PRESENT.items())]
