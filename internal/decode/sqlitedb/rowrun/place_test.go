@@ -30,8 +30,8 @@ func (recStub) Recovered() *sqlitedb.RecoveredInfo { return &sqlitedb.RecoveredI
 
 func bundleInput() *parse.Input {
 	return &parse.Input{Artifacts: map[string]parse.Artifact{
-		"db":  {ID: "A-DB", Size: 10000},
-		"wal": {ID: "A-WAL", Size: 5000},
+		"db":  {ID: "A-DB", Size: 10000, Source: parse.SourceInfo{RemotePath: "/d/m.db"}},
+		"wal": {ID: "A-WAL", Size: 5000, Source: parse.SourceInfo{RemotePath: "/d/m.db-wal"}},
 	}}
 }
 
@@ -41,7 +41,7 @@ func TestWhereMapsTheFileRoleToTheArtifactHoldingTheCell(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := rowrun.Place{ArtifactID: "A-WAL", Role: parse.RoleWAL, Range: records.Range{Offset: 100, Length: 50}, Locator: "sqlite:table=t;rowid=3;wal_frame=2"}
+	want := rowrun.Place{ArtifactID: "A-WAL", Role: parse.RoleWAL, Range: records.Range{Offset: 100, Length: 50}, Locator: "sqlite:table=t;rowid=3;wal_frame=2", SourcePath: "/d/m.db-wal"}
 	if got != want {
 		t.Errorf("Where = %+v, want %+v", got, want)
 	}
@@ -69,7 +69,7 @@ func TestWhereRefusesWhatItCannotAttribute(t *testing.T) {
 func TestWhereAcceptsARecoveredRowWithoutALocator(t *testing.T) {
 	row := recStub{stubRow{rng: records.Range{Offset: 10, Length: 20}, role: parse.RoleDB}}
 	got, err := rowrun.Where(fakeMC{bundleInput()}, row)
-	if err != nil || got.ArtifactID != "A-DB" || got.Locator != "" {
+	if err != nil || got.ArtifactID != "A-DB" || got.Locator != "" || got.SourcePath != "/d/m.db" {
 		t.Errorf("Where = %+v, %v; want the db artifact and no locator", got, err)
 	}
 }

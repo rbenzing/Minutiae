@@ -14,6 +14,7 @@ type Place struct {
 	Role       parse.FileRole
 	Range      records.Range
 	Locator    string // "" for a recovered row: the recovery host stamps its own (plan 4G)
+	SourcePath string // the remote path of the file that holds the cell: the db, db+"-wal" or db+"-journal" (ruling T48)
 }
 
 type locatorRow interface{ Locator() (string, bool) }
@@ -43,7 +44,7 @@ func Where(m parse.MapContext, row parse.Row) (Place, error) {
 	if rng.Offset < 0 || rng.Length <= 0 || rng.Offset > art.Size || rng.Length > art.Size-rng.Offset {
 		return Place{}, Unmappable("the cell of %s lies outside the %s artifact", row.Table(), role)
 	}
-	p := Place{ArtifactID: art.ID, Role: role, Range: rng}
+	p := Place{ArtifactID: art.ID, Role: role, Range: rng, SourcePath: art.Source.RemotePath}
 	if l, ok := row.(locatorRow); ok {
 		if loc, ok := l.Locator(); ok {
 			p.Locator = loc
