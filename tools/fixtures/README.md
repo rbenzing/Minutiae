@@ -951,6 +951,7 @@ py -3 tools/fixtures/telephony_gen.py --family mmssms --out internal/parsers/and
     --pins-go internal/parsers/androidmms/pins_test.go --pins-package androidmms_test
 py -3 tools/fixtures/telephony_gen.py --family mmssms --out <dir> --variant utf16 hot-journal   # some variants
 py -3 tools/fixtures/telephony_gen.py --family mmssms --check                                  # generate, discard
+py -3 tools/fixtures/telephony_gen.py --family calllog --out internal/parsers/androidcalllog/testdata \n    --pins-go internal/parsers/androidcalllog/pins_test.go --pins-package androidcalllog_test
 ```
 
 `--pins-go` writes the complete, already formatted `fixturePins` table (the SHA-256 of every decompressed file) and needs
@@ -974,5 +975,15 @@ fixture rows keep the raw type codes.
 | `av-freelist-512` | `mmssms-aosp-baseline.sql` | page size 512, `auto_vacuum=2`, 151 rows deleted | freelist pages |
 | `wal-uncheckpointed` | `mmssms-aosp-baseline.sql` | WAL left by a killed writer (`os._exit`) | rows only in the WAL; an edited row (`file: wal`) |
 | `hot-journal` | `mmssms-aosp-baseline.sql` | rollback journal left by a killed writer | the `journal-hot` reader warning; the oracle shows the rolled-back rows |
+
+`telephony_calllog.py` holds the call log scenario rows and oracle. Its three variants are lone databases (no WAL, no
+journal), so the oracle states the db path as `source_path` of every row (rulings T48, T51): `in-contacts2` states the
+`contacts2.db` path, the other two the `calllog.db` path.
+
+| Variant | DDL snapshot | Database state | What it exercises |
+|---|---|---|---|
+| `features-subid` | `calllog-features-subid.sql` | plain, 25 `calls` rows | every `type` 1 to 7 and 99, outgoing calls with duration 0, NULL and negative, hidden numbers (`presentation` 2, 3, 4), sentinel and year-2100 dates, a 4e9 s duration, `features` video, an ICCID-length and a decimal `subscription_id`, invalid UTF-8 in `number` and `name` |
+| `pre-presentation` | `calllog-pre-presentation.sql` | plain, 16 rows | a table without `presentation`, `features`, `is_read`, `countryiso`, `geocoded_location` and `subscription_id` |
+| `in-contacts2` | `calllog-in-contacts2.sql` | plain, 9 rows, path `contacts2.db` | the call log inside the older contacts database |
 
 The DDL snapshots and their public sources: `schemas/android-telephony/CROSSCHECK.md` (see "DDL provenance" above).

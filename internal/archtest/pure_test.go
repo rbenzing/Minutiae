@@ -1267,7 +1267,7 @@ var purityRequired = []string{
 	"internal/parse", "internal/recordtypes/common", "internal/recordtypes/message",
 	"internal/recordtypes/call", "internal/recordtypes/contact", "internal/recordtypes/web", "internal/recordtypes/all",
 	"internal/decode/sqlitedb",
-	"internal/decode/sqlitedb/rowrun", "internal/parsers/androidmms",
+	"internal/decode/sqlitedb/rowrun", "internal/parsers/androidmms", "internal/parsers/androidcalllog",
 	"internal/decode/ts", "internal/decode/plist", "internal/decode/typedstream",
 }
 
@@ -1898,6 +1898,7 @@ func TestPurityClassOf(t *testing.T) {
 		"internal/sqlitefile":                pcSqlitefile,
 		"internal/parsers/androidmms":        pcParser,
 		"internal/parsers/androidmms/helper": pcParser,
+		"internal/parsers/androidcalllog":    pcParser,
 		"internal/parsers/ios/sms":           pcParser,
 	} {
 		if got, ok := classOf(rel); !ok || got != want {
