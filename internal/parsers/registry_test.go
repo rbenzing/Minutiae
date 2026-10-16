@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -230,9 +231,17 @@ func TestPackagePath(t *testing.T) {
 	}
 }
 
-func TestIdentityGeneratedStartsEmpty(t *testing.T) {
-	if len(generated) != 0 || len(All()) != 0 {
-		t.Errorf("4A ships no parsers: generated=%d All=%d", len(generated), len(All()))
+func TestRegistryHoldsTheAndroidParsersWithGeneratedIdentities(t *testing.T) {
+	want := []string{"android.mmssms"}
+	var got []string
+	for _, p := range All() {
+		got = append(got, p.Meta().Name)
+		if _, ok := HashOf(p); !ok {
+			t.Errorf("%s has no generated identity: run go run ./tools/parserhash -write", p.Meta().Name)
+		}
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("registry = %v, want %v", got, want)
 	}
 }
 

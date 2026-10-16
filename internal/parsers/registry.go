@@ -5,14 +5,17 @@ package parsers
 
 import (
 	"github.com/rbenzing/minutiae/internal/parse"
+	"github.com/rbenzing/minutiae/internal/parsers/androidmms"
 )
 
 // claimsEnabled turns on table claims in Meta (4G flips it): until then a parser
 // declaring claims is refused.
 const claimsEnabled = false
 
-// All returns every compiled-in parser in a fixed order. The list is empty in 4A;
-// 4D to 4F append to it.
+// All returns every compiled-in parser in a fixed order: 4D adds the Android telephony
+// parsers, 4E and 4F append to it.
 func All() []parse.Parser {
-	return []parse.Parser{}
+	return []parse.Parser{
+		androidmms.Parser{},
+	}
 }

@@ -7,4 +7,6 @@ package parsers
 type identity struct{ Package, Hash string }
 
 // generated maps "name@version" to the identity of the parser.
-var generated = map[string]identity{}
+var generated = map[string]identity{
+	"android.mmssms@1.0.0": {Package: "github.com/rbenzing/minutiae/internal/parsers/androidmms", Hash: "src1:sha256:21e8afef1ee6de11852288c8e61fd538e141794e04f2e6a54ca72606a742bba4"},
+}
