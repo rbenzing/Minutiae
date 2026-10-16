@@ -3,6 +3,7 @@ package records
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -117,6 +118,38 @@ func (r *Reader) stats(ctx context.Context, f Filter, by string, limit int) (Sta
 	return out, nil
 }
 
+// overviewQuery is one scalar statement of Overview and its arguments.
+type overviewQuery struct {
+	sql  string
+	args []any
+}
+
+// overviewStatements are the six scalar statements Overview runs, each served by an index when no
+// run is superseded: the total, the deleted, recovered and untimed counts, and the first and last
+// ts. The conditions added to the filter's own are implied by the schema (CHECK recovered = 0 OR
+// deleted = 1, and (ts IS NULL) = 1 is ts IS NULL), so they select exactly what the old single scan
+// summed, but spelled so that records_deleted and records_ts apply. With superseded runs present each
+// statement also joins record_batches and probes record_superseded per row, and is not index-only
+// (measured in matrix.list.super.* and stats.super_s).
+func overviewStatements(w where) []overviewQuery {
+	mk := func(sel, extra, tail string) overviewQuery {
+		x := w
+		x.conds = slices.Clone(w.conds)
+		if extra != "" {
+			x.conds = append(x.conds, extra)
+		}
+		return overviewQuery{sql: sel + x.fromSQL(false, false) + x.whereSQL() + tail, args: slices.Clone(w.args)}
+	}
+	return []overviewQuery{
+		mk("SELECT count(*)", "", ""),
+		mk("SELECT count(*)", "r.deleted = 1", ""),
+		mk("SELECT count(*)", "r.deleted = 1 AND r.recovered = 1", ""),
+		mk("SELECT count(*)", "(r.ts IS NULL) = 1", ""),
+		mk("SELECT r.ts", "(r.ts IS NULL) = 0", " ORDER BY r.ts ASC LIMIT 1"),
+		mk("SELECT r.ts", "(r.ts IS NULL) = 0", " ORDER BY r.ts DESC LIMIT 1"),
+	}
+}
+
 // Overview summarises the records f selects: totals, the ts range, and the
 // number of runs of the whole case by outcome. SupersededRecords counts the
 // records of superseded runs among those f selects ignoring supersession, so
@@ -138,18 +171,25 @@ func (r *Reader) Overview(ctx context.Context, f Filter) (Overview, error) {
 		if err != nil {
 			return err
 		}
-		var lo, hi sql.NullInt64
-		q := "SELECT count(*), COALESCE(sum(r.deleted), 0), COALESCE(sum(r.recovered), 0), COALESCE(sum(r.ts IS NULL), 0), min(r.ts), max(r.ts)" +
-			w.fromSQL(false, false) + w.whereSQL()
 		if f.Text != nil {
 			if err := r.matching(ctx); err != nil {
 				return err
 			}
 		}
-		if err := h.QueryRowContext(ctx, q, w.args...).Scan(&ov.Records, &ov.Deleted, &ov.Recovered, &ov.Untimed, &lo, &hi); err != nil {
-			return fmt.Errorf("records: overview: %w", err)
+		qs := overviewStatements(w)
+		for i, dst := range []*int64{&ov.Records, &ov.Deleted, &ov.Recovered, &ov.Untimed} {
+			if err := h.QueryRowContext(ctx, qs[i].sql, qs[i].args...).Scan(dst); err != nil {
+				return fmt.Errorf("records: overview: %w", err)
+			}
 		}
-		if lo.Valid {
+		var lo, hi sql.NullInt64
+		for i, dst := range []*sql.NullInt64{&lo, &hi} {
+			q := qs[4+i]
+			if err := h.QueryRowContext(ctx, q.sql, q.args...).Scan(dst); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("records: overview: %w", err)
+			}
+		}
+		if lo.Valid && hi.Valid {
 			ov.TSMin, ov.TSMax = &lo.Int64, &hi.Int64
 		}
 		if have {

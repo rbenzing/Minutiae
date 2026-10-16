@@ -250,3 +250,13 @@ func DeleteFTSNormVersion(t testing.TB, caseDir string) {
 		t.Fatalf("recordstest: %d fts_norm_version rows deleted", n)
 	}
 }
+
+// SetFTSDataBlock overwrites one data row of an FTS5 table (records_fts or records_fts_sub).
+func SetFTSDataBlock(t testing.TB, caseDir, table string, id int64, block []byte) {
+	t.Helper()
+	table = ftsTable(t, table)
+	tamper(t, caseDir, func(db *sql.DB) error {
+		_, err := db.Exec(`UPDATE `+table+`_data SET block = ? WHERE id = ?`, block, id) //nolint:gosec // the table is one of two constants
+		return err
+	})
+}

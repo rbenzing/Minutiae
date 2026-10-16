@@ -30,3 +30,18 @@ func ListQueries(f Filter, desc bool, cur *Cursor, limit int, haveSuperseded boo
 	}
 	return out, nil
 }
+
+// OverviewQueries returns the six scalar statements Overview runs; haveSuperseded says
+// record_superseded is not empty.
+func OverviewQueries(f Filter, have bool) ([]Query, error) {
+	w, err := f.compile(have)
+	if err != nil {
+		return nil, err
+	}
+	qs := overviewStatements(w)
+	out := make([]Query, len(qs))
+	for i, q := range qs {
+		out[i] = Query{q.sql, q.args}
+	}
+	return out, nil
+}
