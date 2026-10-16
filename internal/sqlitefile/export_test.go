@@ -368,7 +368,7 @@ func SnapshotPayload(img PageImage, c Cell) (data []byte, damage string, err err
 func HistLiveStats(h *Hist) Stats { return h.live.Stats() }
 
 // KeyDigest exposes keyDigest for the key equality table.
-func KeyDigest(vals []Value, colls []string) ([32]byte, bool) {
+func KeyDigest(vals []Value, colls []string) ([32]byte, KeyStatus) {
 	idx := make([]int, len(vals))
 	for i := range idx {
 		idx[i] = i

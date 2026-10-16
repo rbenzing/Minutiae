@@ -79,14 +79,24 @@ func sameVals(t *testing.T, got []sqlitefile.Value, want []any) bool {
 	for i, w := range want {
 		switch x := w.(type) {
 		case string:
-			if got[i].Kind != sqlitefile.KindText || txtOf(t, got[i]) != x {
+			if got[i].Kind != sqlitefile.KindText || rawText(got[i]) != x {
 				return false
 			}
 		case int64:
 			if got[i].Kind != sqlitefile.KindInt || got[i].Int != x {
 				return false
 			}
+		case nil:
+			if got[i].Kind != sqlitefile.KindNull {
+				return false
+			}
 		case float64:
+			if math.IsNaN(x) {
+				if got[i].Kind != sqlitefile.KindFloat || !math.IsNaN(got[i].Float) {
+					return false
+				}
+				continue
+			}
 			if got[i].Kind != sqlitefile.KindFloat || got[i].Float != x {
 				return false
 			}
@@ -186,9 +196,9 @@ func TestKeyDigestEquality(t *testing.T) {
 		{"rtrim only spaces", tx("a\t"), tx("a"), "RTRIM", false},
 	}
 	for _, tc := range cases {
-		da, oka := sqlitefile.KeyDigest([]sqlitefile.Value{tc.a}, []string{tc.coll})
-		db, okb := sqlitefile.KeyDigest([]sqlitefile.Value{tc.b}, []string{tc.coll})
-		if !oka || !okb {
+		da, sta := sqlitefile.KeyDigest([]sqlitefile.Value{tc.a}, []string{tc.coll})
+		db, stb := sqlitefile.KeyDigest([]sqlitefile.Value{tc.b}, []string{tc.coll})
+		if sta != sqlitefile.KeyOK || stb != sqlitefile.KeyOK {
 			t.Errorf("%s: not ok", tc.name)
 			continue
 		}
@@ -206,15 +216,15 @@ func TestKeyDigestEquality(t *testing.T) {
 	omit := sqlitefile.Value{Kind: sqlitefile.KindText, Omitted: true, Len: 3, Enc: sqlitefile.EncUTF8}
 	clip := sqlitefile.Value{Kind: sqlitefile.KindText, Clipped: true, Bytes: []byte("a"), Len: 3, Enc: sqlitefile.EncUTF8}
 	u16 := sqlitefile.Value{Kind: sqlitefile.KindText, Bytes: []byte{'a', 0}, Len: 2, Enc: sqlitefile.EncUTF16LE}
-	for name, v := range map[string]sqlitefile.Value{"omitted": omit, "clipped": clip, "null": {Kind: sqlitefile.KindNull}} {
-		if _, ok := sqlitefile.KeyDigest([]sqlitefile.Value{v}, []string{"BINARY"}); ok {
+	for name, v := range map[string]sqlitefile.Value{"omitted": omit, "clipped": clip} {
+		if _, st := sqlitefile.KeyDigest([]sqlitefile.Value{v}, []string{"BINARY"}); st != sqlitefile.KeyUnknown {
 			t.Errorf("%s key is decidable", name)
 		}
 	}
-	if _, ok := sqlitefile.KeyDigest([]sqlitefile.Value{u16}, []string{"NOCASE"}); ok {
-		t.Error("UTF-16 NOCASE key is decidable")
+	if _, st := sqlitefile.KeyDigest([]sqlitefile.Value{u16}, []string{"NOCASE"}); st != sqlitefile.KeyOK {
+		t.Error("UTF-16 NOCASE key is not available (J78)")
 	}
-	if _, ok := sqlitefile.KeyDigest([]sqlitefile.Value{u16}, []string{"BINARY"}); !ok {
+	if _, st := sqlitefile.KeyDigest([]sqlitefile.Value{u16}, []string{"BINARY"}); st != sqlitefile.KeyOK {
 		t.Error("UTF-16 BINARY key is not decidable")
 	}
 }
@@ -275,8 +285,8 @@ func TestKeyDigestBoundaries(t *testing.T) {
 		return sqlitefile.Value{Kind: sqlitefile.KindText, Bytes: []byte(s), Len: int64(len(s)), Enc: sqlitefile.EncUTF8}
 	}
 	one := func(v sqlitefile.Value, coll string) [32]byte {
-		d, ok := sqlitefile.KeyDigest([]sqlitefile.Value{v}, []string{coll})
-		if !ok {
+		d, st := sqlitefile.KeyDigest([]sqlitefile.Value{v}, []string{coll})
+		if st != sqlitefile.KeyOK {
 			t.Fatalf("not decidable: %+v", v)
 		}
 		return d
@@ -317,12 +327,20 @@ func TestWithoutRowidDuplicateLiveKeyTaintsAbsence(t *testing.T) {
 		[]keyEqRow{{vals: []any{"gone", "old"}, want: unk, note: sqlitefile.NoteLiveUncertain}})
 }
 
-// A live row whose key the library cannot compare (UTF-16 text under NOCASE)
-// is found by its row digest only: a history row with an integer key matches
-// nothing, and the live set is uncertain, so it is unknown, never absent.
+// A live row whose key the library cannot compare (invalid UTF-8 under NOCASE, KeyUnknown) is found by its row
+// digest only: a history row with an integer key matches nothing, and the live set is uncertain, so it is
+// unknown, never absent.
 func TestWithoutRowidUndecidableLiveKeyTaintsAbsence(t *testing.T) {
-	runKeyEqOpts(t, sqlitetest.Options{PageSize: hps, Encoding: 2}, "create table wr(k collate nocase primary key, v) without rowid", 1,
+	runKeyEq(t, "create table wr(k collate nocase primary key, v) without rowid", 1,
 		[][]any{{int64(5), "old"}},
-		[][]any{{"abc", "live"}},
+		[][]any{{"\xffa", "live"}},
 		[]keyEqRow{{vals: []any{int64(5), "old"}, want: unk, note: sqlitefile.NoteLiveUncertain}})
+}
+
+// rawText is the text of v, decoded when it is valid and the stored bytes when it is not.
+func rawText(v sqlitefile.Value) string {
+	if s, ok := v.Text(); ok {
+		return s
+	}
+	return string(v.Bytes)
 }

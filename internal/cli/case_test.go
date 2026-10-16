@@ -263,3 +263,23 @@ func TestCaseVerifyCorruptDBExits4(t *testing.T) {
 		})
 	}
 }
+
+// J100: a manifest line that does not parse fails closed with exit 4 on every command that reads the manifest.
+func TestCorruptManifestLineExits4(t *testing.T) {
+	c := newCLICase(t)
+	f, err := os.OpenFile(filepath.Join(c, "manifest.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("{not a manifest record\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"case", "info", "--case", c}, {"case", "verify", "--case", c}} {
+		if code, out := run(t, Deps{}, args...); code != ExitIntegrity {
+			t.Errorf("%v: exit %d, want 4\n%s", args, code, out)
+		}
+	}
+}

@@ -62,7 +62,7 @@ func EqualityKey(v Value, collation string) (key [32]byte, st KeyStatus, err err
 		return key, KeyUnknown, err
 	}
 	h := sha256.New()
-	if st = appendKey(h, v, coll, false); st != KeyOK {
+	if st = appendKey(h, v, coll); st != KeyOK {
 		return key, st, nil
 	}
 	copy(key[:], h.Sum(nil))
@@ -74,17 +74,13 @@ type keyWriter interface{ Write(p []byte) (int, error) }
 
 // appendKey writes the canonical encoding of v under the canonical collation
 // coll and says whether it could. It writes nothing for a value without a key.
-// legacy keeps the two behaviours of the history comparison that differ from
-// the engine (open question Q13): a NaN is hashed by its bits (two NaNs are
-// one key), and UTF-16 text under NOCASE or RTRIM has no key (and invalid
-// UTF-8 is folded bytewise); NULL has no key in either mode.
-func appendKey(w keyWriter, v Value, coll string, legacy bool) KeyStatus {
+func appendKey(w keyWriter, v Value, coll string) KeyStatus {
 	var b [8]byte
 	put := func(n uint64) {
 		binary.BigEndian.PutUint64(b[:], n)
 		_, _ = w.Write(b[:])
 	}
-	if v.Omitted || v.Clipped || (v.Unread && !legacy) {
+	if v.Omitted || v.Clipped || v.Unread {
 		return KeyUnknown
 	}
 	switch v.Kind {
@@ -94,7 +90,7 @@ func appendKey(w keyWriter, v Value, coll string, legacy bool) KeyStatus {
 	case KindFloat:
 		f := v.Float
 		switch {
-		case math.IsNaN(f) && !legacy:
+		case math.IsNaN(f):
 			return KeyNever
 		case f == math.Trunc(f) && f >= -(1<<63) && f < 1<<63:
 			_, _ = w.Write([]byte{'i'}) // an integral real is the integer of the same value
@@ -106,17 +102,11 @@ func appendKey(w keyWriter, v Value, coll string, legacy bool) KeyStatus {
 	case KindText, KindBlob:
 		bs := v.Bytes
 		if v.Kind == KindText && coll != "BINARY" {
-			if legacy {
-				if v.Enc != EncUTF8 {
-					return KeyUnknown
-				}
-			} else {
-				s, ok := v.Text() // decodes UTF-16; invalid text has no folded form
-				if !ok {
-					return KeyUnknown
-				}
-				bs = []byte(s)
+			s, ok := v.Text() // decodes UTF-16; invalid text has no folded form
+			if !ok {
+				return KeyUnknown
 			}
+			bs = []byte(s)
 			switch coll {
 			case "NOCASE":
 				bs = slices.Clone(bs)
@@ -135,9 +125,6 @@ func appendKey(w keyWriter, v Value, coll string, legacy bool) KeyStatus {
 		put(uint64(len(bs)))
 		_, _ = w.Write(bs)
 	case KindNull:
-		if legacy {
-			return KeyUnknown
-		}
 		return KeyNever // only NULL equals nothing
 	default:
 		return KeyUnknown // a Kind this library does not define is undecidable
