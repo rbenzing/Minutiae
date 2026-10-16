@@ -436,7 +436,7 @@ func (r *run) parseJob(ctx context.Context, j Job, b *bundle, st *jobState) (run
 	defer b.close()
 	defer func() { st.capture(b) }()
 
-	w, err := h.newWriter(h.c, j.Parser.Identity(), records.WriterOptions{BatchRows: h.batchRows})
+	w, err := h.newWriter(h.c, j.Parser.Identity(), records.WriterOptions{BatchRows: h.batchRows, RelaxedSync: h.relaxed})
 	if err != nil {
 		if errors.Is(err, evidence.ErrNeedsUpgrade) {
 			return err

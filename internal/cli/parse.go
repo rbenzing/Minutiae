@@ -193,7 +193,7 @@ func (f *parseSelFlags) selection(regs []artparse.Registered) (artparse.Selectio
 }
 
 // openHost opens the case (taking its lock), refuses a case that needs an upgrade and builds the host.
-func openHost(casePath string, regs []artparse.Registered, lim parse.Limits) (*evidence.Case, *artparse.Host, error) {
+func openHost(casePath string, regs []artparse.Registered, lim parse.Limits, relaxed bool) (*evidence.Case, *artparse.Host, error) {
 	c, err := openCase(casePath)
 	if err != nil {
 		return nil, nil, err
@@ -202,7 +202,7 @@ func openHost(casePath string, regs []artparse.Registered, lim parse.Limits) (*e
 		_ = c.Close()
 		return nil, nil, err
 	}
-	h, err := artparse.New(c, regs, artparse.Options{Limits: lim})
+	h, err := artparse.New(c, regs, artparse.Options{Limits: lim, RelaxedSync: relaxed})
 	if err != nil {
 		_ = c.Close()
 		return nil, nil, err
@@ -385,7 +385,7 @@ func newParsePlanCmd(d Deps, opts *rootOptions) *cobra.Command {
 				return err
 			}
 			fmt.Fprintln(d.Err, discoveryNote)
-			c, h, err := openHost(f.casePath, regs, defaultParseLimits())
+			c, h, err := openHost(f.casePath, regs, defaultParseLimits(), false)
 			if err != nil {
 				return err
 			}
@@ -640,6 +640,7 @@ func sortedNotes(m map[string]string) []string {
 func newParseRunCmd(d Deps, opts *rootOptions) *cobra.Command {
 	var f parseSelFlags
 	var reparse bool
+	var fastSync bool
 	var timeout, memBudget string
 	var maxRecords int64
 	cmd := &cobra.Command{
@@ -686,7 +687,7 @@ func newParseRunCmd(d Deps, opts *rootOptions) *cobra.Command {
 			}
 			sel.Reparse = reparse
 			fmt.Fprintln(d.Err, discoveryNote)
-			c, h, err := openHost(f.casePath, regs, lim)
+			c, h, err := openHost(f.casePath, regs, lim, fastSync)
 			if err != nil {
 				return err
 			}
@@ -731,6 +732,7 @@ func newParseRunCmd(d Deps, opts *rootOptions) *cobra.Command {
 	f.register(cmd)
 	fl := cmd.Flags()
 	fl.BoolVar(&reparse, "reparse", false, "parse again the artifacts a parser already parsed (the new run supersedes the old one)")
+	fl.BoolVar(&fastSync, "fast-sync", false, "faster ingest: fsync the database less often while records are written (a power loss can lose the last batches; the run is then reported incomplete with the lost batches named; the audit log is still fsynced before every batch)")
 	fl.StringVar(&timeout, "timeout", "", "time limit for one parser job, 1s to 24h (default 1h)")
 	fl.StringVar(&memBudget, "mem-budget", "", "memory budget of one parser job, 16MiB to 64GiB (default 1GiB)")
 	fl.Int64Var(&maxRecords, "max-records", 0, "most records one job may emit, 1 to 1000000000 (default 10000000)")

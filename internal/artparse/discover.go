@@ -20,6 +20,9 @@ import (
 type Options struct {
 	Limits parse.Limits
 	Namers []Namer // nil = DefaultNamers()
+	// RelaxedSync runs every job's record batches with synchronous=NORMAL (records.WriterOptions.RelaxedSync, ruling D89):
+	// explicit and audited, off by default.
+	RelaxedSync bool
 
 	skipLimitMinimums bool          // accept Timeout, GracePeriod and ProbeTimeout below the production minimums
 	source            caseSource    // replaces the case as the reader of the manifest and audit log
@@ -45,6 +48,7 @@ type Host struct {
 	afterSt   func()
 	wrapFile  func(artFile) artFile
 	batchRows int
+	relaxed   bool
 	auditHook func(action string, d map[string]any) error
 }
 
@@ -91,7 +95,7 @@ func New(c *evidence.Case, ps []Registered, opt Options) (*Host, error) {
 	h := &Host{
 		c: c, registry: slices.Clone(ps), namers: opt.Namers, limits: opt.Limits,
 		src: opt.source, newWriter: opt.newWriter, onOpen: opt.onOpen, afterSize: opt.afterSize, afterSt: opt.afterStart, wrapFile: opt.wrapFile,
-		batchRows: opt.batchRows, auditHook: opt.auditHook,
+		batchRows: opt.batchRows, auditHook: opt.auditHook, relaxed: opt.RelaxedSync,
 	}
 	if h.src == nil {
 		h.src = c
