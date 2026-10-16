@@ -29,6 +29,7 @@ var allowed = map[string][]string{
 	"internal/filesys":                     {},
 	"internal/filesys/fstest":              {"internal/filesys"},
 	"internal/filesys/detect":              {"internal/filesys", "internal/filesys/apfs", "internal/filesys/ext4", "internal/filesys/f2fs", "internal/filesys/exfat", "internal/filesys/hfsplus", "internal/filesys/fat"},
+	"internal/filesys/decmpfs":             {"internal/filesys"},
 	"internal/filesys/apfs":                {"internal/filesys"},
 	"internal/filesys/apfs/apfstest":       {"internal/filesys", "internal/filesys/apfs"},
 	"internal/filesys/ext4":                {"internal/filesys"},
