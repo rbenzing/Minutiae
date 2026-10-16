@@ -1,0 +1,858 @@
+{
+  "generator": {
+    "image_sha256": "7e13e52a23db44a0e18f03f423657d44a4bfb8ea816978fd982db4f450ebb248",
+    "packages": [
+      {
+        "package": "busybox-static",
+        "version": "1:1.35.0-4+deb12u1+b1"
+      },
+      {
+        "package": "coreutils",
+        "version": "9.1-1"
+      },
+      {
+        "package": "cpio",
+        "version": "2.13+dfsg-7.1"
+      },
+      {
+        "package": "dosfstools",
+        "version": "4.2-1"
+      },
+      {
+        "package": "faketime",
+        "version": "0.9.10-2.1"
+      },
+      {
+        "package": "gzip",
+        "version": "1.12-1"
+      },
+      {
+        "package": "jq",
+        "version": "1.6-2.1+deb12u2"
+      },
+      {
+        "package": "kmod",
+        "version": "30+20221128-1"
+      },
+      {
+        "package": "linux-image-6.1.0-53-amd64",
+        "version": "6.1.187-1"
+      },
+      {
+        "package": "mtools",
+        "version": "4.0.33-1+really4.0.32-1"
+      },
+      {
+        "package": "python3",
+        "version": "3.11.2-1+b1"
+      },
+      {
+        "package": "qemu-system-x86",
+        "version": "1:7.2+dfsg-7+deb12u18+b3"
+      }
+    ],
+    "commands": [
+      "# source tree: mk calls of tools/fixtures/fat_recover.sh (patterns from lib.sh); guest: vfat -o utf8; allocation-order row: ascending",
+      "faketime -f '2023-11-14 22:13:20' mkfs.fat -F 32 -i 1234ABCD -s 1 -n FIXTURE -f 1 -C <img> 33040",
+      "guest boot 1: mkdir /mnt/contiguous /mnt/zero-size /mnt/reuse-all /mnt/reuse-head /mnt/cut-l /mnt/cut-h /mnt/frag-live /mnt/frag-dead /mnt/lfn /mnt/gone",
+      "guest boot 1: mkdir /mnt/reuse-all-w /mnt/reuse-head-w /mnt/cut-l-w /mnt/cut-h-w /mnt/cut-h-hid",
+      "guest boot 1: cp /payload/contiguous/target.bin /mnt/contiguous/target.bin",
+      "guest boot 1: cp /payload/zero-size/target.dat /mnt/zero-size/target.dat",
+      "guest boot 1: cp /payload/reuse-all/target.bin /mnt/reuse-all/target.bin",
+      "guest boot 1: cp /payload/reuse-head/target.bin /mnt/reuse-head/target.bin",
+      "guest boot 1: cp /payload/cut-l/target.bin /mnt/cut-l/target.bin",
+      "guest boot 1: cp /payload/cut-h/target.bin /mnt/cut-h/target.bin",
+      "guest boot 1: cp /payload/frag-live/a.bin /mnt/frag-live/a.bin",
+      "guest boot 1: cp /payload/frag-live/b.bin /mnt/frag-live/b.bin",
+      "guest boot 1: cp /payload/frag-live/c.bin /mnt/frag-live/c.bin",
+      "guest boot 1: cp /payload/frag-dead/a.bin /mnt/frag-dead/a.bin",
+      "guest boot 1: cp /payload/frag-dead/d.bin /mnt/frag-dead/d.bin",
+      "guest boot 1: cp /payload/frag-dead/c.bin /mnt/frag-dead/c.bin",
+      "guest boot 1: cp /payload/lfn/a-long-deleted-name-for-slot-reuse.bin /mnt/lfn/a-long-deleted-name-for-slot-reuse.bin",
+      "guest boot 1: cp /payload/gone/inner.bin /mnt/gone/inner.bin",
+      "guest boot 2: dd if=/dev/zero of=/mnt/fill.bin bs=512 2>/dev/null || true",
+      "guest boot 2: sync",
+      "guest boot 2: rm /mnt/frag-live/a.bin /mnt/frag-live/c.bin",
+      "guest boot 2: cp /payload/frag-live/f.bin /mnt/frag-live/f.bin",
+      "guest boot 2: rm /mnt/frag-dead/a.bin /mnt/frag-dead/c.bin",
+      "guest boot 2: cp /payload/frag-dead/f.bin /mnt/frag-dead/f.bin",
+      "guest boot 3: rm /mnt/reuse-all/target.bin",
+      "guest boot 3: cp /payload/reuse-all-w/took.bin /mnt/reuse-all-w/took.bin",
+      "guest boot 3: rm /mnt/reuse-head/target.bin",
+      "guest boot 3: cp /payload/reuse-head-w/took.bin /mnt/reuse-head-w/took.bin",
+      "guest boot 3: cp /payload/reuse-head-w/rest.bin /mnt/reuse-head-w/rest.bin",
+      "guest boot 3: rm /mnt/cut-l/target.bin",
+      "guest boot 3: cp /payload/cut-l-w/filler.bin /mnt/cut-l-w/filler.bin",
+      "guest boot 3: cp /payload/cut-l-w/tail.bin /mnt/cut-l-w/tail.bin",
+      "guest boot 3: rm /mnt/cut-h/target.bin",
+      "guest boot 3: cp /payload/cut-h-hid/filler.bin /mnt/cut-h-hid/filler.bin",
+      "guest boot 3: cp /payload/cut-h-w/tail.bin /mnt/cut-h-w/tail.bin",
+      "guest boot 3: rm /mnt/lfn/a-long-deleted-name-for-slot-reuse.bin",
+      "guest boot 3: : > /mnt/lfn/NEW.TXT",
+      "guest boot 4: rm /mnt/contiguous/target.bin /mnt/zero-size/target.dat",
+      "guest boot 4: rm /mnt/cut-l-w/filler.bin",
+      "guest boot 4: rm -r /mnt/cut-h-hid",
+      "guest boot 4: rm /mnt/frag-live/f.bin",
+      "guest boot 4: rm /mnt/frag-dead/d.bin /mnt/frag-dead/f.bin",
+      "guest boot 4: rm -r /mnt/gone",
+      "fsck.fat -n <img>   # must report a clean filesystem",
+      "fsck.fat -v -n <img>   # geometry, clusters in use",
+      "python3 tools/fixtures/fat_recover_oracle.py final <img> <src> <fsck -v output> <snapshots after boots 1-3>   # mshowfat chains, free clusters, outcomes"
+    ]
+  },
+  "type": "fat32",
+  "cluster_size": 512,
+  "data_start": 279040,
+  "cluster_count": 65535,
+  "live": [
+    {
+      "path": "/cut-h-w/tail.bin",
+      "size": 1017,
+      "sha256": "3e389fcb1a4b45a919141fb1c653444d34dc444bb16849be5532d43424184fd5",
+      "chain": [
+        [
+          46,
+          47
+        ]
+      ]
+    },
+    {
+      "path": "/cut-l-w/tail.bin",
+      "size": 1017,
+      "sha256": "66953132281ed324b2bf8dc7f077514b69d988fe3e75e0993a60636ba16a6a1d",
+      "chain": [
+        [
+          40,
+          41
+        ]
+      ]
+    },
+    {
+      "path": "/fill.bin",
+      "size": 33518080,
+      "sha256": "7a2aea7e2cce66a77b7bca43c70b63b840ad97dc3decee4a5f4e8b46c0c27312",
+      "chain": [
+        [
+          72,
+          65536
+        ]
+      ]
+    },
+    {
+      "path": "/frag-live/b.bin",
+      "size": 1529,
+      "sha256": "1bb01b2bfa9ed6cd5a0f4bdee9085a26f2d38bd4d37d545a80cdf360e5f830dc",
+      "chain": [
+        [
+          50,
+          52
+        ]
+      ]
+    },
+    {
+      "path": "/lfn/NEW.TXT",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "chain": []
+    },
+    {
+      "path": "/reuse-all-w/took.bin",
+      "size": 3065,
+      "sha256": "438ac06af4b19055850e38276621e61e31a9a7fc59186865cd1d535ebc40bff3",
+      "chain": [
+        [
+          24,
+          29
+        ]
+      ]
+    },
+    {
+      "path": "/reuse-head-w/rest.bin",
+      "size": 2041,
+      "sha256": "702396c2606492938de49eaec581dd2f9ac734b0db0a3b8104d817991ad440ad",
+      "chain": [
+        [
+          32,
+          35
+        ]
+      ]
+    },
+    {
+      "path": "/reuse-head-w/took.bin",
+      "size": 1017,
+      "sha256": "fd596191ff9c7080af5aff067d13031af5f3ae9205e0b4fb2cb70cb6a8da0ad2",
+      "chain": [
+        [
+          30,
+          31
+        ]
+      ]
+    }
+  ],
+  "free_clusters": [
+    [
+      13,
+      13
+    ],
+    [
+      18,
+      23
+    ],
+    [
+      36,
+      39
+    ],
+    [
+      42,
+      45
+    ],
+    [
+      48,
+      49
+    ],
+    [
+      53,
+      70
+    ]
+  ],
+  "deleted_entry_count": 15,
+  "deleted": [
+    {
+      "path": "/contiguous/target.bin",
+      "family": "contiguous",
+      "listed": true,
+      "size": 2553,
+      "sha256": "8dd42817c92acf6f10fe1e0f7a9ac50ffa99422b334d1a906898e9e1fdb6ba40",
+      "first_cluster": 19,
+      "true_chain": [
+        [
+          19,
+          23
+        ]
+      ],
+      "name_state": "lfn-intact",
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "fat-contiguous",
+        "range": [
+          [
+            19,
+            23
+          ]
+        ],
+        "captured": [
+          [
+            19,
+            23
+          ]
+        ],
+        "cut": false,
+        "equal_source": true,
+        "overlaps": [],
+        "confidence": 55,
+        "assumptions": [
+          "contiguous-allocation"
+        ]
+      }
+    },
+    {
+      "path": "/cut-h-hid",
+      "family": "cut-h-aux",
+      "listed": true,
+      "size": 0,
+      "sha256": "",
+      "first_cluster": 18,
+      "true_chain": [
+        [
+          18,
+          18
+        ]
+      ],
+      "name_state": "lfn-intact",
+      "expect": {
+        "outcome": "skip",
+        "skip": "not-a-file",
+        "method": "",
+        "range": [],
+        "captured": [],
+        "cut": false,
+        "equal_source": false,
+        "overlaps": [],
+        "confidence": 0,
+        "assumptions": []
+      }
+    },
+    {
+      "path": "/cut-h/target.bin",
+      "family": "cut-h",
+      "listed": true,
+      "size": 3065,
+      "sha256": "68d7244adbfcedbaa07b6840cff6bca7390d5406c76c2d267a0bd9afbf620d11",
+      "first_cluster": 42,
+      "true_chain": [
+        [
+          42,
+          47
+        ]
+      ],
+      "name_state": "lfn-intact",
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "fat-contiguous",
+        "range": [
+          [
+            42,
+            47
+          ]
+        ],
+        "captured": [
+          [
+            42,
+            45
+          ]
+        ],
+        "cut": true,
+        "equal_source": false,
+        "overlaps": [],
+        "confidence": 20,
+        "assumptions": [
+          "contiguous-allocation"
+        ]
+      }
+    },
+    {
+      "path": "/cut-l-w/filler.bin",
+      "family": "cut-l-aux",
+      "listed": true,
+      "size": 2041,
+      "sha256": "718c5c27780fe1dc423ca434a6f1345a6c029eec9d1d16362290f2155b3565a5",
+      "first_cluster": 36,
+      "true_chain": [
+        [
+          36,
+          39
+        ]
+      ],
+      "name_state": "lfn-intact",
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "fat-contiguous",
+        "range": [
+          [
+            36,
+            39
+          ]
+        ],
+        "captured": [
+          [
+            36,
+            39
+          ]
+        ],
+        "cut": false,
+        "equal_source": true,
+        "overlaps": [
+          "/cut-l/target.bin"
+        ],
+        "confidence": 30,
+        "assumptions": [
+          "contiguous-allocation"
+        ]
+      }
+    },
+    {
+      "path": "/cut-l/target.bin",
+      "family": "cut-l",
+      "listed": true,
+      "size": 3065,
+      "sha256": "67aacbdfba1720f009ee1e6b0d3e90457f2fb785ea25705942463535572345e1",
+      "first_cluster": 36,
+      "true_chain": [
+        [
+          36,
+          41
+        ]
+      ],
+      "name_state": "lfn-intact",
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "fat-contiguous",
+        "range": [
+          [
+            36,
+            41
+          ]
+        ],
+        "captured": [
+          [
+            36,
+            39
+          ]
+        ],
+        "cut": true,
+        "equal_source": false,
+        "overlaps": [
+          "/cut-l-w/filler.bin"
+        ],
+        "confidence": 20,
+        "assumptions": [
+          "contiguous-allocation"
+        ]
+      }
+    },
+    {
+      "path": "/frag-dead/c.bin",
+      "family": "frag-dead-aux",
+      "listed": true,
+      "size": 2041,
+      "sha256": "850bbd51e4f19a202107a88b0215f9610dd03f0d283ca319375597faa8170514",
+      "first_cluster": 62,
+      "true_chain": [
+        [
+          62,
+          65
+        ]
+      ],
+      "name_state": "lfn-intact",
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "fat-contiguous",
+        "range": [
+          [
+            62,
+            65
+          ]
+        ],
+        "captured": [
+          [
+            62,
+            65
+          ]
+        ],
+        "cut": false,
+        "equal_source": false,
+        "overlaps": [
+          "/frag-dead/f.bin"
+        ],
+        "confidence": 30,
+        "assumptions": [
+          "contiguous-allocation"
+        ]
+      }
+    },
+    {
+      "path": "/frag-dead/d.bin",
+      "family": "frag-dead-aux",
+      "listed": true,
+      "size": 1529,
+      "sha256": "4c7f7676dda3eeb47fff47ee3819583377bc12fb3792a79ac19ec1557d819e94",
+      "first_cluster": 59,
+      "true_chain": [
+        [
+          59,
+          61
+        ]
+      ],
+      "name_state": "lfn-intact",
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "fat-contiguous",
+        "range": [
+          [
+            59,
+            61
+          ]
+        ],
+        "captured": [
+          [
+            59,
+            61
+          ]
+        ],
+        "cut": false,
+        "equal_source": true,
+        "overlaps": [
+          "/frag-dead/f.bin"
+        ],
+        "confidence": 30,
+        "assumptions": [
+          "contiguous-allocation"
+        ]
+      }
+    },
+    {
+      "path": "/frag-dead/f.bin",
+      "family": "frag-dead",
+      "listed": true,
+      "size": 3065,
+      "sha256": "388df9614d0c7c61779cc79cbc0baedccb900de6a78d85f5d77b4b2e7472e614",
+      "first_cluster": 57,
+      "true_chain": [
+        [
+          57,
+          58
+        ],
+        [
+          62,
+          65
+        ]
+      ],
+      "name_state": "lfn-intact",
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "fat-contiguous",
+        "range": [
+          [
+            57,
+            62
+          ]
+        ],
+        "captured": [
+          [
+            57,
+            62
+          ]
+        ],
+        "cut": false,
+        "equal_source": false,
+        "overlaps": [
+          "/frag-dead/c.bin",
+          "/frag-dead/d.bin"
+        ],
+        "confidence": 30,
+        "assumptions": [
+          "contiguous-allocation"
+        ]
+      }
+    },
+    {
+      "path": "/frag-live/c.bin",
+      "family": "frag-live-aux",
+      "listed": true,
+      "size": 2041,
+      "sha256": "900143d56c93a401bad98215af677c893783b7c43c950ee2b0d3120520ca2130",
+      "first_cluster": 53,
+      "true_chain": [
+        [
+          53,
+          56
+        ]
+      ],
+      "name_state": "lfn-intact",
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "fat-contiguous",
+        "range": [
+          [
+            53,
+            56
+          ]
+        ],
+        "captured": [
+          [
+            53,
+            56
+          ]
+        ],
+        "cut": false,
+        "equal_source": false,
+        "overlaps": [],
+        "confidence": 55,
+        "assumptions": [
+          "contiguous-allocation"
+        ]
+      }
+    },
+    {
+      "path": "/frag-live/f.bin",
+      "family": "frag-live",
+      "listed": true,
+      "size": 3065,
+      "sha256": "df1aba9804f05035e366c6896c19f63d1fde2fbe7bfa1fac850f28d6236ef738",
+      "first_cluster": 48,
+      "true_chain": [
+        [
+          48,
+          49
+        ],
+        [
+          53,
+          56
+        ]
+      ],
+      "name_state": "lfn-intact",
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "fat-contiguous",
+        "range": [
+          [
+            48,
+            53
+          ]
+        ],
+        "captured": [
+          [
+            48,
+            49
+          ]
+        ],
+        "cut": true,
+        "equal_source": false,
+        "overlaps": [],
+        "confidence": 20,
+        "assumptions": [
+          "contiguous-allocation"
+        ]
+      }
+    },
+    {
+      "path": "/gone",
+      "family": "gone",
+      "listed": true,
+      "size": 0,
+      "sha256": "",
+      "first_cluster": 13,
+      "true_chain": [
+        [
+          13,
+          13
+        ]
+      ],
+      "name_state": "lfn-intact",
+      "expect": {
+        "outcome": "skip",
+        "skip": "not-a-file",
+        "method": "",
+        "range": [],
+        "captured": [],
+        "cut": false,
+        "equal_source": false,
+        "overlaps": [],
+        "confidence": 0,
+        "assumptions": []
+      }
+    },
+    {
+      "path": "/lfn/a-long-deleted-name-for-slot-reuse.bin",
+      "family": "lfn",
+      "listed": true,
+      "size": 1529,
+      "sha256": "8841b963aa530bcd0ce5809a2d1021c38f09db393a94dad512852d932e637b69",
+      "first_cluster": 66,
+      "true_chain": [
+        [
+          66,
+          68
+        ]
+      ],
+      "name_state": "lfn-tail-lost",
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "fat-contiguous",
+        "range": [
+          [
+            66,
+            68
+          ]
+        ],
+        "captured": [
+          [
+            66,
+            68
+          ]
+        ],
+        "cut": false,
+        "equal_source": true,
+        "overlaps": [],
+        "confidence": 55,
+        "assumptions": [
+          "contiguous-allocation"
+        ]
+      }
+    },
+    {
+      "path": "/reuse-all/target.bin",
+      "family": "reuse-all",
+      "listed": true,
+      "size": 3065,
+      "sha256": "6f61b2652f14da40b32843cb1b54e9e72ac0bbfb1d005cca960417c9087ff851",
+      "first_cluster": 24,
+      "true_chain": [
+        [
+          24,
+          29
+        ]
+      ],
+      "name_state": "lfn-intact",
+      "expect": {
+        "outcome": "skip",
+        "skip": "no-free-bytes",
+        "method": "",
+        "range": [
+          [
+            24,
+            29
+          ]
+        ],
+        "captured": [],
+        "cut": false,
+        "equal_source": false,
+        "overlaps": [],
+        "confidence": 0,
+        "assumptions": []
+      }
+    },
+    {
+      "path": "/reuse-head/target.bin",
+      "family": "reuse-head",
+      "listed": true,
+      "size": 3065,
+      "sha256": "72aa244f2e931da6b4b233c940c370cd2a883c70b695917b489bfa3220763f23",
+      "first_cluster": 30,
+      "true_chain": [
+        [
+          30,
+          35
+        ]
+      ],
+      "name_state": "lfn-intact",
+      "expect": {
+        "outcome": "skip",
+        "skip": "no-free-bytes",
+        "method": "",
+        "range": [
+          [
+            30,
+            35
+          ]
+        ],
+        "captured": [],
+        "cut": false,
+        "equal_source": false,
+        "overlaps": [],
+        "confidence": 0,
+        "assumptions": []
+      }
+    },
+    {
+      "path": "/zero-size/target.dat",
+      "family": "zero-size",
+      "listed": true,
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "first_cluster": 0,
+      "true_chain": [],
+      "name_state": "lfn-intact",
+      "expect": {
+        "outcome": "skip",
+        "skip": "empty",
+        "method": "",
+        "range": [],
+        "captured": [],
+        "cut": false,
+        "equal_source": false,
+        "overlaps": [],
+        "confidence": 0,
+        "assumptions": []
+      }
+    },
+    {
+      "path": "/cut-h-hid/filler.bin",
+      "family": "cut-h-aux",
+      "listed": false,
+      "size": 2041,
+      "sha256": "318afbc1ccf3aeb09419b5f19b460157d1f5802264f2c7bebb1bf327ddababb1",
+      "first_cluster": 42,
+      "true_chain": [
+        [
+          42,
+          45
+        ]
+      ],
+      "name_state": "lfn-intact",
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "fat-contiguous",
+        "range": [
+          [
+            42,
+            45
+          ]
+        ],
+        "captured": [
+          [
+            42,
+            45
+          ]
+        ],
+        "cut": false,
+        "equal_source": true,
+        "overlaps": [],
+        "confidence": 55,
+        "assumptions": [
+          "contiguous-allocation"
+        ]
+      }
+    },
+    {
+      "path": "/gone/inner.bin",
+      "family": "gone-aux",
+      "listed": false,
+      "size": 1017,
+      "sha256": "762aa93b7d4a2ca8731af0e47fac75565f53d0171b09deceb13d7710c1cd7147",
+      "first_cluster": 69,
+      "true_chain": [
+        [
+          69,
+          70
+        ]
+      ],
+      "name_state": "lfn-intact",
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "fat-contiguous",
+        "range": [
+          [
+            69,
+            70
+          ]
+        ],
+        "captured": [
+          [
+            69,
+            70
+          ]
+        ],
+        "cut": false,
+        "equal_source": true,
+        "overlaps": [],
+        "confidence": 55,
+        "assumptions": [
+          "contiguous-allocation"
+        ]
+      }
+    }
+  ],
+  "families": {
+    "contiguous-equal": 6,
+    "skip-not-a-file": 2,
+    "cut-prefix": 3,
+    "overlap": 5,
+    "not-equal-complete": 3,
+    "lfn-tail-lost": 1,
+    "skip-no-free-bytes": 2,
+    "empty": 1
+  }
+}

@@ -42,6 +42,7 @@ Scripts must keep LF line endings (`.gitattributes` enforces this).
 | `hfsplus.sh` + `hfsplus_oracle.py` + `hfsplus_normalize.py` (image `minutiae-fixtures-hfs`) | `hfsplus-empty`, `hfsx-empty`, `hfsplus-journal`, `hfsplus-1k`, `hfsplus-wrapped`, `hfsplus-populated` (`.img.gz` + `.expect.json`, in `internal/filesys/hfsplus/testdata/`; also `hfsplus_populate.sh` + `hfsplus_tree.py`) | an independent Python parse of the volume header, B-trees (extents-overflow records included), allocation bitmap and journal files, cross-checked against `fsck.hfsplus` and `blkid`; for the populated image also the source tree the Linux driver was fed (see "HFS+ fixtures") |
 | `ewf.sh` + `ewf_inspect.py` + `ewf_normalize.py` | `ewf-disk.img.gz` (the raw source disk), `ewf-<variant>.E0N.gz` (one `.gz` per segment file of `single-none`, `single-best`, `multi-none`, `seed-small`) and `ewf-fixtures.expect.json`, in `internal/image/ewf/testdata/` | the raw disk (its sha256/md5/sha1/size, built from the committed ext4 and fat12 fixtures), an independent Python decoder (`ewf_inspect.py`: every section and Adler-32, every chunk, the rebuilt media equals the raw disk byte for byte), `ewfverify`, `ewfinfo` (whitelisted geometry and hash fields) and `ewfexport -f raw` (sha256 equals the raw disk) |
 | `f2fs.sh` + `f2fs_tree.sh` + `f2fs_oracle.py` + `f2fs_normalize.py` | `f2fs-extra-attr`, `f2fs-default` (`.img.gz` + `.expect.json`, in `internal/filesys/f2fs/testdata/`) | the source tree handed to `sload.f2fs` (`f2fs_oracle.py tree`: type, size, sha256, mode, mtime, symlink targets), and the reports of `fsck.f2fs -l/-f/-t/-M`, `dump.f2fs -s/-n` and `blkid` on the finished image (`f2fs_oracle.py layout`: superblock and checkpoint fields, features, uuid, label, the NAT block address of every inode, the data-block extents of every file, the free main-area blocks from the SIT bitmaps). The oracle cross-checks the tools against each other (fsck vs dump on every shared field, SIT popcount vs `valid_block_count`, fsck's tree vs the source tree, the file map vs file sizes) and the generator fails on any mismatch, on an unclean `fsck.f2fs`, or when no file is fragmented |
+| `fat_recover.sh` + `fat_recover_oracle.py` (image `minutiae-recover-fixtures`, `Dockerfile.recover`; `gen.sh fat-recover`) | `fat12-recover`, `fat16-recover`, `fat32-recover` (`.img.gz` + `.expect.json`, in `internal/filesys/fat/testdata/recover/`) | volumes written and deleted by the kernel `vfat` driver in the QEMU guest; an independent Python reader of the finished image checked against `mshowfat`, `fsck.fat -v` and the source tree (see "FAT recovery fixtures (3B)") |
 
 ## Determinism
 
@@ -938,6 +939,94 @@ T2 100-byte file, truncate -s 4000     VDL a00f000000000000  DataLength a00f0000
 T3 dd seek=6 count=1                   VDL 000e000000000000  DataLength 000e000000000000
 T4 dd seek=8 count=0                   VDL 0010000000000000  DataLength 0010000000000000
 ```
+
+## FAT recovery fixtures (3B)
+
+`fat_recover.sh` (+ `fat_recover_oracle.py`, library `recover_guest.sh`) builds three FAT volumes that the KERNEL
+`vfat` driver writes and deletes inside the QEMU TCG guest (ruling F3: no mtools writes, no `mdel`, no kernel module on
+the host, no `--privileged`). Output, in a subdirectory so `fixture_test.go`'s `testdata/*.img.gz` glob and its
+old-schema oracle never see it (ruling F15): `internal/filesys/fat/testdata/recover/{fat12,fat16,fat32}-recover.img.gz`
+and `.expect.json` (each at most about 150 KiB gzipped, ruling F6). Regenerate image and oracle together (QEMU images are
+not byte-reproducible; `generator.image_sha256` binds them, every test checks it first):
+
+```bash
+docker build -f tools/fixtures/Dockerfile.recover -t minutiae-recover-fixtures tools/fixtures
+docker run --rm -v "$PWD:/work" -w /work minutiae-recover-fixtures bash tools/fixtures/gen.sh fat-recover
+```
+
+`fat-recover` and `exfat-recover` are in the not-in-`all` list of `gen.sh`; `gen.sh` stops, naming the image to build,
+when QEMU or the guest kernel is missing (checked for every target). `exfat-fuse`, installed by `Dockerfile.recover`,
+is unused. Self-check: `TestRecoverFixturesHoldWhatTheyClaim` (internal/filesys/fat).
+
+Images (`mkfs.fat -i 1234ABCD -n FIXTURE -s 1` under `faketime`, 512-byte clusters, guest `-t vfat -o utf8`):
+
+| Image | Size | Notes |
+|---|---|---|
+| `fat12-recover` | 1440 KiB | |
+| `fat16-recover` | 8192 KiB | |
+| `fat32-recover` | 33040 KiB, `-f 1` | the minimum for a 512-byte-cluster FAT32 (65536 clusters) with ONE FAT copy: the FAT of a full volume is nearly incompressible, and anything larger exceeds the 150 KiB budget |
+
+### How the scenarios are made (placement is never trusted: rulings F19, F22)
+
+Probe facts P2 and P6 (above) give the allocator model: next-fit with wrap inside one mount, the lowest free cluster
+at or above the first data cluster after a fresh mount, and a free set that is EXACTLY the freed files' clusters on a
+full volume. The script relies only on this: every scenario family has its own directory (deleting a target frees only
+that family's clusters and a new file cannot take its directory slot); the volume is FULL (`fill.bin` written until
+ENOSPC) before every hole-consuming or reuse step; writes go only to writer directories made in boot 1; the writing
+phase W precedes the deleting phase D (only `rm`), so the final free set is the union of the deleted files' clusters
+whatever order the allocator chose. Four guest boots, each a fresh mount on the previous boot's image:
+
+1. populate: every directory first, then the family files (the volume is not full);
+2. `fill.bin` until ENOSPC, then the hole steps: `rm a.bin c.bin` and write the 6-cluster `f.bin` (the only free
+   clusters are a's and c's, so `f.bin` is fragmented around `b.bin` / `d.bin`) in `frag-live` and `frag-dead`;
+3. phase W, one family at a time, each ending with the volume full again (the "ascending" row of F22: the writes take
+   the freed clusters in ascending order);
+4. phase D: `rm` only.
+
+The host reads the image after boots 1, 2 and 3 (`fat_recover_oracle.py snap`: the true chain of every live file,
+needed for files deleted later; the volume must be full after boot 2 and have exactly the lfn file's 3 clusters free
+after boot 3) and after boot 4 (`final`). Four boots instead of the plan's two because the true chain of a file the
+guest deletes before the image is read cannot be known otherwise (`c.bin` of the frag families, the files written in
+phase W).
+
+| Family (directory) | Steps | Final state |
+|---|---|---|
+| `contiguous` | `target.bin` (5 clusters), `rm` in D | intact on disk: contiguous-equal |
+| `zero-size` | `target.dat` (0 bytes), `rm` in D | skip `empty` |
+| `reuse-all` | `rm target.bin` (6) in W, then `/reuse-all-w/took.bin` (6) | every cluster live: skip `no-free-bytes` |
+| `reuse-head` | `rm target.bin` (6), `/reuse-head-w/took.bin` (2) then `rest.bin` (4) | head and rest live: skip `no-free-bytes` |
+| `cut-l` | `rm target.bin` (6), `/cut-l-w/filler.bin` (4, listed overwriter, `rm` in D) then `tail.bin` (2, live) | target cut after 4 clusters, overlapping the listed `filler.bin` (confidence 20; filler 30) |
+| `cut-h` | `rm target.bin` (6), `/cut-h-hid/filler.bin` (4) then `/cut-h-w/tail.bin` (2, live), `rm -r /cut-h-hid` in D | target cut after 4 clusters holding the hidden overwriter's bytes (not equal to the source, no listed overlap) |
+| `frag-live` | `a.bin` (2), `b.bin` (3, stays), `c.bin` (4); `rm a c`; `f.bin` (6) takes both holes; `rm f.bin` in D | `f.bin` is fragmented around the live `b.bin`: cut after its first fragment |
+| `frag-dead` | `a.bin` (2), `d.bin` (3), `c.bin` (4); `rm a c`; `f.bin` (6); `rm d.bin f.bin` in D | `f.bin`'s contiguous range is all free but holds `d.bin`'s bytes: complete, not equal to the source |
+| `lfn` | the ONLY entry `a-long-deleted-name-for-slot-reuse.bin` (3 clusters, 3 long-name entries); `rm`, then create the empty `NEW.TXT` | `NEW.TXT` takes the first slot (the first on-disk long-name entry, the end of the name): `lfn-tail-lost` |
+| `gone` | `gone/inner.bin` (2), `rm -r /gone` in D | the directory is a deleted `not-a-file`; `inner.bin` is under a deleted directory (`listed: false`) |
+
+Helpers of a scenario that are deleted entries too (the `c.bin` hole, `d.bin`, the writers' `filler.bin`, the hidden
+`cut-h-hid` directory) carry the family `<family>-aux`, so the self-check's per-family assertions (for example "every
+`frag-*` entry has two fragments") apply to the scenario's own file. The slot of a hole's `a.bin` is taken by `f.bin`
+(the same slot size), so only `c.bin` remains as a deleted entry there; the oracle states what the image holds either way.
+
+### The oracle (`fat_recover_oracle.py`, never Minutiae)
+
+An independent Python reader of the finished image (BPB, FAT12/16/32, directories, long names) cross-checked against
+`mshowfat` (every live chain), `fsck.fat -v` (geometry, clusters in use) and the source tree the guest was fed (every
+live file's bytes). From the image alone it derives, per deleted short entry (in every live directory, plus the first
+cluster of a deleted directory): `range` = the first cluster for ceil(size/512) clusters; `captured` = the leading part
+of `range` whose clusters are free (no live chain holds them; the count equals the FAT's zero entries and `fsck.fat -v`);
+`cut`; `outcome` (skip `not-a-file`, `empty`, `no-free-bytes`, or recover with method `fat-contiguous`);
+`equal_source` (the final bytes of `captured` equal the source, uncut only); `overlaps` (other LISTED entries whose
+captured ranges intersect); `confidence` = min(55, 20 if cut, 30 if overlaps); `name_state` (`lfn-intact` when the
+deleted long-name entries, checksummed against the short name with its first byte recovered, spell the source name,
+`lfn-tail-lost` when they spell a proper prefix, `short-only` without any); `true_chain` from the snapshot that saw the
+file live. A deleted entry is tied to its source file by directory, kind and size (and long-name text), and the script
+fails when that is not unique. The generator exits 1 with `family <name> missing: ...; re-rule, do not edit the ops`
+when a required outcome family (`contiguous-equal`, `empty`, `cut-prefix`, `skip-no-free-bytes`, `not-equal-complete`,
+`overlap`, `lfn-tail-lost`) occurs in none of the three images, and when a scenario family or the shape of the
+contiguous / fragmented files is missing from one. No test compares timestamps from these images.
+
+NOT produced by a real driver (builder tests only): cross-linked chains, bad or reserved clusters inside a range, orphan
+LFN sets, a first cluster outside the volume, a size larger than the volume.
 
 ## SQLite fixtures
 
