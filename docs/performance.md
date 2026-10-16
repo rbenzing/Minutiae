@@ -257,3 +257,8 @@ A profile, not a spec-target run. Same machine as the baseline (Intel i7-1265U, 
 | NORMAL (`--fast-sync`, write-ahead log) | 400,000 | 184.5 s | 2,167.5 records/s | 486 MB |
 
 NORMAL is 1.38 times the FULL rate (-28 % ingest time), of the same order as the 21 % commit and fsync share of the Task 9 profile. The price is the power-loss window in `docs/limitations.md`. One run of each, so the difference carries run-to-run noise of a shared laptop.
+
+### Selectivity-aware search plans (5D Task 10)
+A word or prefix that matches a large share of the records made `r.id IN (SELECT rowid FROM <fts> WHERE <fts> MATCH ?)` materialize every matching rowid before SQLite could order by time (the baseline `matrix.search.*` p95 cells above, `search_plan` = apply). A page now runs one bounded probe (`SELECT count(*) FROM (SELECT 1 FROM <fts> WHERE <fts> MATCH ? LIMIT 4096)`); fewer than 4096 hits keep the FTS-first plan, otherwise the page is driven by `records_ts` (or `records_type_ts` with exactly one type) with an `EXISTS` on the full-text rowid and the first hits end the scan. Both shapes select the same records in the same order (`TestSearchShapesReturnIdenticalPages`). Query plan of the index-first page: `SCAN r USING INDEX records_ts` (`SEARCH r USING INDEX records_type_ts (type=?)` with one type) and `SCAN records_fts EXISTS VIRTUAL TABLE INDEX 0:=M2`, no temporary b-tree for the order. The FTS-first plan was `SEARCH r USING INTEGER PRIMARY KEY` over `LIST SUBQUERY` plus `USE TEMP B-TREE FOR ORDER BY`.
+
+The 10M search re-measure is pending (D83): it runs in the idle window together with the Task 6 stats retune and the Task 8 after-pragmas run, and its `matrix.search.*` p95 values go here.

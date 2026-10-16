@@ -111,3 +111,10 @@ func (r *Reader) RowsRead() int { return int(r.rowsRead.Load()) }
 
 // SetQueryLog installs a function called with the SQL of every list query.
 func (r *Reader) SetQueryLog(f func(string)) { r.queryLog = f }
+
+// SetSearchProbeLimit changes how many hits make a text query "common" for a test.
+func SetSearchProbeLimit(n int) (restore func()) {
+	old := searchProbeLimit
+	searchProbeLimit = n
+	return func() { searchProbeLimit = old }
+}

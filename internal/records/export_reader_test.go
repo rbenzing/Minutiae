@@ -45,3 +45,14 @@ func OverviewQueries(f Filter, have bool) ([]Query, error) {
 	}
 	return out, nil
 }
+
+// SearchQueries returns the statements buildList makes for f with the text query's indexFirst shape
+// set as given.
+func SearchQueries(f Filter, desc bool, cur *Cursor, limit int, indexFirst bool) ([]Query, error) {
+	if f.Text != nil {
+		tq := *f.Text
+		tq.indexFirst = indexFirst
+		f.Text = &tq
+	}
+	return ListQueries(f, desc, cur, limit, false)
+}

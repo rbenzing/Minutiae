@@ -296,10 +296,11 @@ func (q *TextQuery) matchCond() (string, error) {
 		return "", invalidFilter("the text query was not compiled by CompileQuery or CompileTerms")
 	}
 	switch q.table {
-	case evidence.FTSWordTable:
-		return "r.id IN (SELECT rowid FROM " + evidence.FTSWordTable + " WHERE " + evidence.FTSWordTable + " MATCH ?)", nil
-	case evidence.FTSSubTable:
-		return "r.id IN (SELECT rowid FROM " + evidence.FTSSubTable + " WHERE " + evidence.FTSSubTable + " MATCH ?)", nil
+	case evidence.FTSWordTable, evidence.FTSSubTable:
+		if q.indexFirst { // a common query: the time-ordered index drives and the first hits end the scan
+			return "EXISTS (SELECT 1 FROM " + q.table + " WHERE " + q.table + ".rowid = r.id AND " + q.table + " MATCH ?)", nil
+		}
+		return "r.id IN (SELECT rowid FROM " + q.table + " WHERE " + q.table + " MATCH ?)", nil
 	}
 	return "", invalidFilter("the text query was not compiled by CompileQuery or CompileTerms")
 }

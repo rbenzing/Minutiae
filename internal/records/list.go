@@ -213,6 +213,15 @@ func buildList(f Filter, desc bool, cur *cursor, have bool) ([]query, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A common text query is driven by the time-ordered index (D14): the planner would otherwise
+	// materialize every matching rowid before it could order by time.
+	hint := ""
+	if f.Text != nil && f.Text.indexFirst {
+		hint = " INDEXED BY records_ts"
+		if len(uniqSorted(f.Types)) == 1 {
+			hint = " INDEXED BY records_type_ts"
+		}
+	}
 	var out []query
 	for _, seg := range segments(desc, cur, f.timedOnly()) {
 		w := base
@@ -221,7 +230,7 @@ func buildList(f Filter, desc bool, cur *cursor, have bool) ([]query, error) {
 		if seg.cond != "" {
 			w.add(seg.cond, seg.args...)
 		}
-		q := "SELECT " + rowColumns + ", " + supersededColumn(have) + fromRecords + joinParsers + joinBatches +
+		q := "SELECT " + rowColumns + ", " + supersededColumn(have) + fromRecords + hint + joinParsers + joinBatches +
 			w.whereSQL() + seg.order + " LIMIT ?"
 		out = append(out, query{q, append(w.args, 0)})
 	}
@@ -270,6 +279,17 @@ func (r *Reader) page(ctx context.Context, f Filter, p Page, limit int, with fun
 		have, err := hasSuperseded(ctx, h)
 		if err != nil {
 			return err
+		}
+		if f.Text != nil && !f.Text.rank {
+			n, err := r.probeText(ctx, h, f.Text)
+			if err != nil {
+				return err
+			}
+			if n >= searchProbeLimit { // a common query: the same records, driven by the time index
+				tq := *f.Text
+				tq.indexFirst = true
+				f.Text = &tq
+			}
 		}
 		parts := f.split()
 		if parts == nil {
@@ -480,3 +500,27 @@ func cmpListOrder(a, b Row) int {
 	}
 	return cmp.Compare(a.ID, b.ID)
 }
+
+// probeText counts the full-text hits of q up to searchProbeLimit, with one bounded statement, to
+// choose the plan of a page (the filter is not applied: the probe classifies the query's selectivity).
+func (r *Reader) probeText(ctx context.Context, h evidence.ReadHandle, q *TextQuery) (int, error) {
+	if q.match == "" || (q.table != evidence.FTSWordTable && q.table != evidence.FTSSubTable) {
+		return 0, invalidFilter("the text query was not compiled by CompileQuery or CompileTerms")
+	}
+	// the table is one of the two constants above, never taken from the query's text
+	stmt := "SELECT count(*) FROM (SELECT 1 FROM " + q.table + " WHERE " + q.table + " MATCH ? LIMIT ?)"
+	if err := r.matching(ctx); err != nil {
+		return 0, err
+	}
+	if r.queryLog != nil {
+		r.queryLog(stmt) // logged like every statement, so a test can count it
+	}
+	var n int
+	if err := h.QueryRowContext(ctx, stmt, q.match, searchProbeLimit).Scan(&n); err != nil {
+		return 0, fmt.Errorf("records: list: %w", err)
+	}
+	return n, nil
+}
+
+// searchProbeLimit is how many full-text hits make a query "common" (see probeText).
+var searchProbeLimit = 4096

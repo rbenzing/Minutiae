@@ -80,11 +80,12 @@ type Term struct {
 // TextQuery is a compiled search query: the full-text table, the FTS5 expression to bind as the one
 // MATCH parameter, and what a snippet should highlight. It is immutable.
 type TextQuery struct {
-	table   string
-	match   string
-	column  Column
-	rank    bool
-	needles []Needle
+	table      string
+	match      string
+	column     Column
+	rank       bool
+	indexFirst bool
+	needles    []Needle
 }
 
 // Table is the full-text table the query runs on: evidence.FTSWordTable or evidence.FTSSubTable.
