@@ -46,8 +46,13 @@ func TestAddrRoleFollowsPduHeaders(t *testing.T) {
 		known bool
 		want  string
 	}{
-		{137, true, message.RoleFrom}, {151, true, message.RoleTo}, {129, true, message.RoleBCC}, {130, true, message.RoleCC},
-		{99, true, message.RoleMember}, {0, true, message.RoleMember}, {-1, true, message.RoleMember},
+		{137, true, message.RoleFrom},
+		{151, true, message.RoleTo},
+		{129, true, message.RoleBCC},
+		{130, true, message.RoleCC},
+		{99, true, message.RoleMember},
+		{0, true, message.RoleMember},
+		{-1, true, message.RoleMember},
 		{137, false, message.RoleMember}, // the cell is NULL or unreadable: the stored number is not a code
 	} {
 		if got := addrRole(c.code, c.known); got != c.want {

@@ -12,11 +12,20 @@ import (
 
 func pduSpecs() []parse.ColumnSpec {
 	return []parse.ColumnSpec{
-		{Name: "date", Required: true, Affinity: "integer"}, {Name: "msg_box", Required: true, Affinity: "integer"},
-		{Name: "thread_id", Affinity: "integer"}, {Name: "date_sent", Affinity: "integer"}, {Name: "read", Affinity: "integer"},
-		{Name: "m_id", Affinity: "text"}, {Name: "sub", Affinity: "text"}, {Name: "m_type", Affinity: "integer"},
-		{Name: "m_size", Affinity: "integer"}, {Name: "ct_t", Affinity: "text"}, {Name: "locked", Affinity: "integer"},
-		{Name: "seen", Affinity: "integer"}, {Name: "sub_id", Affinity: "integer"}, {Name: "text_only", Affinity: "integer"},
+		{Name: "date", Required: true, Affinity: "integer"},
+		{Name: "msg_box", Required: true, Affinity: "integer"},
+		{Name: "thread_id", Affinity: "integer"},
+		{Name: "date_sent", Affinity: "integer"},
+		{Name: "read", Affinity: "integer"},
+		{Name: "m_id", Affinity: "text"},
+		{Name: "sub", Affinity: "text"},
+		{Name: "m_type", Affinity: "integer"},
+		{Name: "m_size", Affinity: "integer"},
+		{Name: "ct_t", Affinity: "text"},
+		{Name: "locked", Affinity: "integer"},
+		{Name: "seen", Affinity: "integer"},
+		{Name: "sub_id", Affinity: "integer"},
+		{Name: "text_only", Affinity: "integer"},
 	}
 }
 
