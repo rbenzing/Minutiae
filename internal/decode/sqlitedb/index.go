@@ -246,6 +246,11 @@ func (t *Table) Index(ctx context.Context, col string, limit int) (ix *Index, er
 			if aerr != nil {
 				return fmt.Errorf("%w: %w", ErrInternal, aerr)
 			}
+			// Defensive and unreachable today (U54): ConvertForComparison returns
+			// only a finite int or float (its classifier rejects NaN and infinity),
+			// and a converted value is never Omitted, Clipped or Unread, so
+			// EqualityKey is always KeyOK here. It still fails closed (altUndec)
+			// should that ever change.
 			if ast != sqlitefile.KeyOK {
 				ix.altUndec++
 				return nil

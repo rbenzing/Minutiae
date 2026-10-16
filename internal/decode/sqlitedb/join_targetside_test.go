@@ -162,12 +162,24 @@ func TestAltEntriesCountTowardTheIndexLimit(t *testing.T) {
 	if b.used != before {
 		t.Errorf("budget %d after the refused build, want %d (nothing kept)", b.used, before)
 	}
+	// U52: the bound is exact. 199 refuses at the alternative entry of the LAST
+	// row (the 200th entry), which no earlier row reaches.
+	if ix, err := tgt.Index(t.Context(), "k", 199); !errors.Is(err, sqlitedb.ErrIndexLimit) || ix != nil {
+		t.Fatalf("limit 199: err %v, index kept %t; want ErrIndexLimit at the last alternative entry", err, ix != nil)
+	}
+	if b.used != before {
+		t.Errorf("budget %d after the refused build at 199, want %d", b.used, before)
+	}
 	ix, err := tgt.Index(t.Context(), "k", 200)
 	if err != nil {
 		t.Fatalf("limit 200: %v", err)
 	}
 	if n := ix.AltEntries(); n != 100 {
 		t.Errorf("%d alternative entries, want 100", n)
+	}
+	ix.Release()
+	if b.used != before {
+		t.Errorf("budget %d after Release, want %d", b.used, before)
 	}
 }
 
@@ -262,6 +274,23 @@ func TestTargetSideConversionOfAHostileColumn(t *testing.T) {
 	}
 	if decided == 0 || undecided == 0 {
 		t.Errorf("decided %d, undecided %d: the column is meant to give both", decided, undecided)
+	}
+
+	// U53: the build keeps alternatives for this column and gives the whole
+	// budget back on Release.
+	b := bigBudget()
+	tgt := targetTable(t, data, b)
+	before := b.used
+	ix, err := tgt.Index(t.Context(), "k", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ix.AltEntries() == 0 {
+		t.Errorf("no alternative entries for a column holding numeric-looking texts")
+	}
+	ix.Release()
+	if b.used != before {
+		t.Errorf("budget %d after Release, want %d", b.used, before)
 	}
 }
 
