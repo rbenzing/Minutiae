@@ -982,8 +982,26 @@ journal), so the oracle states the db path as `source_path` of every row (ruling
 
 | Variant | DDL snapshot | Database state | What it exercises |
 |---|---|---|---|
-| `features-subid` | `calllog-features-subid.sql` | plain, 30 `calls` rows | every `type` 1 to 7 and 99, outgoing calls with duration 0, NULL and negative, hidden numbers (`presentation` 2, 3, 4), sentinel and year-2100 dates, a 4e9 s duration, `features` video, an ICCID-length and a decimal `subscription_id`, invalid UTF-8 in `number` and `name`, a BLOB `subscription_id`, a duration of 2^53+1 (not exactly a float64), and `subscription_id` text that Python `int()` accepts but `ParseInt` refuses (a non-ASCII digit, an underscore, 34 bytes) |
+| `features-subid` | `calllog-features-subid.sql` | plain, 31 `calls` rows | every `type` 1 to 7 and 99, outgoing calls with duration 0, NULL and negative, hidden numbers (`presentation` 2, 3, 4), sentinel and year-2100 dates, a 4e9 s duration, `features` video, an ICCID-length and a decimal `subscription_id`, invalid UTF-8 in `number` and `name`, a BLOB `subscription_id`, a duration of 2^53+1 (not exactly a float64), and `subscription_id` text that Python `int()` accepts but `ParseInt` refuses (a non-ASCII digit, an underscore, 34 bytes) and a negative one; every refused text is flagged `unknown_columns.subscription_id = "unparseable"` (T66) |
 | `pre-presentation` | `calllog-pre-presentation.sql` | plain, 16 rows | a table without `presentation`, `features`, `is_read`, `countryiso`, `geocoded_location` and `subscription_id` |
 | `in-contacts2` | `calllog-in-contacts2.sql` | plain, 9 rows, path `contacts2.db` | the call log inside the older contacts database |
+
+`telephony_contacts.py` holds the contacts provider scenario rows and oracle (`py -3 tools/fixtures/telephony_gen.py --family contacts
+--out internal/parsers/androidcontacts/testdata --pins-go internal/parsers/androidcontacts/pins_test.go --pins-package androidcontacts_test`).
+Its five variants are lone databases, so the oracle states the `contacts2.db` path as `source_path` of every row (rulings T48,
+T51). The oracle restates the `contact` mapping of spec 9.3 (one record per `raw_contacts` row, `data` rows typed through
+`mimetypes`, every `dataN` read as text, `deleted_contacts` tombstones) and reads every stored value back from the engine. The
+snapshot declares `COLLATE PHONEBOOK`, which the platform registers; the generator registers a stand-in collation (no index uses it).
+The pinned tag's `raw_contacts` has no `account_name`, `account_type` or `contact_last_updated_timestamp` column (task 4b), so the
+generator drops those scenario values and the oracle states no `accounts`, no time and no `times.modified` for a raw contact; the
+oracle rules for them are in place and take effect on a snapshot that has the columns.
+
+| Variant | DDL snapshot | Database state | What it exercises |
+|---|---|---|---|
+| `aosp-baseline` | `contacts-aosp-baseline.sql` | plain, 10 `raw_contacts`, 20 `data` rows for contact 1 | every mimetype, labels (named, custom, unknown type), a skipped empty value, a second name and organization row, an IM with the custom marker and AIM, a photo, a dangling `mimetype_id`, a `group_membership` row, a deleted contact, a tombstone-shaped contact (no name, source id), a contact that identifies nobody (a warning), NUL and invalid UTF-8 (`raw.text_flags`), a 400-digit number |
+| `deleted-contacts` | `contacts-deleted-contacts.sql` | plain, 2 contacts and 2 `deleted_contacts` rows | the tombstones (a valid and a zero deletion time) |
+| `multi-account` | `contacts-aosp-baseline.sql` | plain, 3 raw contacts of one person | one record per raw contact |
+| `unicode-rtl` | `contacts-aosp-baseline.sql` | plain, 4 contacts | Hebrew, Arabic with a right-to-left override, CJK and emoji names and labels |
+| `huge-contact` | `contacts-aosp-baseline.sql` | plain, 1 contact with 1200 phones, 1100 e-mails and 130 notes | the list cap of 1000 and the note cap of 100 with their `_total` and `_truncated` counters |
 
 The DDL snapshots and their public sources: `schemas/android-telephony/CROSSCHECK.md` (see "DDL provenance" above).
