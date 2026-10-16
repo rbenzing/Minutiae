@@ -217,3 +217,32 @@ Notes (ruling D69):
 
 ## Profiles
 (Task 9: the top of the ingest CPU profile when the ingest decision is `apply`.)
+
+### Ingest CPU profile (5D Task 9, step 1)
+Taken at 400,000 records, not the plan's 1,000,000 (ruling D30 caps implementer runs at 400k), with `-cpuprofile` through `heavy.sh`, label `profile`, 245 s, 251 s of samples, code of 273e1d1 (the Task 8 cache of 256 MiB included). Top 15 by cumulative time:
+
+```
+      flat  flat%   sum%        cum   cum%
+     0.02s 0.008% 0.008%    234.31s 93.19%  records_test.(*scaleState).ingest
+     0.02s 0.008% 0.016%    231.19s 91.95%  records.(*Writer).Add
+     0.02s 0.008% 0.024%    229.18s 91.15%  records.(*Writer).flush
+         0     0% 0.024%    212.35s 84.46%  evidence.(*Case).StoreTxTuned
+         0     0% 0.024%    212.33s 84.45%  records.(*Writer).insertBatch
+     0.04s 0.016%  0.04%    208.16s 82.79%  sqlite/lib.Xsqlite3_step
+     1.87s  0.74%  0.84%    208.01s 82.73%  sqlite/lib._sqlite3VdbeExec
+         0     0%  0.84%    157.06s 62.47%  records.(*Writer).insertBatch.func1
+         0     0%  0.87%    156.45s 62.22%  sqlite.(*stmt).exec
+         0     0%  0.99%    142.67s 56.74%  evidence.InsertFTSDocs
+         0     0%  1.04%    140.96s 56.06%  sqlite/lib._fts5StorageInsert
+     0.30s 0.12%  1.16%    107.28s 42.67%  sqlite/lib._fts5FlushOneHash
+     4.71s 1.87%  3.03%     91.73s 36.48%  sqlite/lib._fts5IndexMergeLevel
+         0     0% 35.46%     53.44s 21.25%  database/sql.(*Tx).Commit
+    42.9s  ..    ..         42.90s 17.06%  windows.FlushFileBuffers
+```
+
+Shares that decide the sub-steps of Task 9:
+- Preparation (`evidence.RowDigest`, `evidence.NewFTSDoc`/`NormalizeText`, `canonicalPayload`, `Writer.prepareRecord`): about 0.1 s of 251 s, 0.04 %. Far below 25 %, so parallel preparation (sub-step A) does not apply.
+- The `records` and `record_times` insert statements: 14.0 s, 5.6 %. The 56.7 % under `stmt.exec` is one statement per batch, `InsertFTSDocs`, and it is FTS5 index maintenance (`fts5FlushOneHash`, segment merges 36.5 %), not driver overhead. A multi-row INSERT (sub-step B) cannot remove it.
+- Commit and fsync: 21.3 % (`FlushFileBuffers` 17.1 %). The rest of the time is index maintenance inside SQLite.
+
+The miss is in the engine (full-text and B-tree index maintenance); this plan does not change it.
