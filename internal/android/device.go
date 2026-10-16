@@ -42,7 +42,12 @@ type Device struct {
 	state  string
 	props  map[string]string
 	su     func(string) string
+	limits WalkLimits
 }
+
+// SetWalkLimits sets the caps of a logical acquisition; zero fields keep the
+// defaults.
+func (d *Device) SetWalkLimits(l WalkLimits) { d.limits = l }
 
 func (d *Device) ID() string        { return d.serial }
 func (d *Device) Kind() device.Kind { return device.KindAndroid }

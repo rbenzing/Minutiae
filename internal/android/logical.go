@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,6 +20,45 @@ import (
 const maxNameRetries = 100
 
 var defaultRoots = []string{"/sdcard"}
+
+// Defaults bound what a hostile device can make a logical acquisition do. They
+// are far above any real phone; a hit is a typed warning, never a silent cut.
+const (
+	DefaultMaxEntriesPerDir = 1_000_000
+	DefaultMaxTotalEntries  = 10_000_000
+	DefaultMaxDepth         = 128
+	DefaultMaxPathBytes     = 512 << 20 // bytes of path text seen: the walker remembers every pulled path (W14)
+)
+
+// WalkLimits are the caps of a logical acquisition; zero fields take the defaults.
+type WalkLimits struct{ MaxEntriesPerDir, MaxTotalEntries, MaxDepth, MaxPathBytes int }
+
+func (l WalkLimits) withDefaults() WalkLimits {
+	if l.MaxEntriesPerDir <= 0 {
+		l.MaxEntriesPerDir = DefaultMaxEntriesPerDir
+	}
+	if l.MaxTotalEntries <= 0 {
+		l.MaxTotalEntries = DefaultMaxTotalEntries
+	}
+	if l.MaxPathBytes <= 0 {
+		l.MaxPathBytes = DefaultMaxPathBytes
+	}
+	if l.MaxDepth <= 0 {
+		l.MaxDepth = DefaultMaxDepth
+	}
+	return l
+}
+
+// ErrAcquisitionLimited is wrapped by the error of an acquisition that hit a
+// walk limit. Everything pulled before the limit is kept.
+var ErrAcquisitionLimited = errors.New("acquisition incomplete: a safety limit was reached")
+
+const (
+	reasonEntriesPerDir = "entries-per-dir"
+	reasonEntriesTotal  = "entries-total"
+	reasonDepth         = "depth"
+	reasonPathBytes     = "path-bytes"
+)
 
 var infoCommands = []struct{ rel, cmd string }{
 	{"device/getprop.txt", "getprop"},
@@ -48,18 +88,39 @@ func (d *Device) AcquireLogical(ctx context.Context, c *evidence.Case, opts devi
 		w := &walker{
 			ctx: ctx, d: d, c: c, acq: acq, s: s, progress: progress,
 			names: evidence.NewLocalPaths("files"), pulled: map[string]bool{},
+			lim: d.limits.withDefaults(), hits: map[string]int{},
 		}
 		defer func() { _ = w.s.Close() }()
 		for _, root := range roots {
-			if err := w.walk(root); err != nil {
+			if err := w.walk(root, 0); err != nil {
 				return err
 			}
 		}
 		_, err = c.Audit.Append("acquire.stats", d.serial, map[string]any{
 			"acquisition_id": acq, "files": w.files, "bytes": w.bytes, "skipped": w.skipped,
+			"incomplete": len(w.hits) > 0, "limit_hits": w.hits,
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		if len(w.hits) > 0 {
+			return fmt.Errorf("%w: %s", ErrAcquisitionLimited, describeHits(w.hits))
+		}
+		return nil
 	})
+}
+
+func describeHits(hits map[string]int) string {
+	keys := make([]string, 0, len(hits))
+	for k := range hits {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s x%d", k, hits[k]))
+	}
+	return strings.Join(parts, ", ")
 }
 
 type walker struct {
@@ -74,14 +135,30 @@ type walker struct {
 	files    int
 	skipped  int
 	bytes    int64
+
+	lim       WalkLimits
+	total     int  // entries listed so far
+	pathBytes int  // bytes of path text seen
+	halted    bool // a total or path-bytes cap was hit: nothing more is listed or pulled
+	hits      map[string]int
 }
 
-func (w *walker) warn(op, p string, cause error) error {
+func (w *walker) warn(op, p string, cause error) error { return w.warnReason(op, p, "", cause) }
+
+func (w *walker) warnReason(op, p, reason string, cause error) error {
 	w.skipped++
-	_, err := w.c.Audit.Append("acquire.warning", w.d.serial, map[string]any{
-		"acquisition_id": w.acq, "op": op, "path": p, "error": cause.Error(),
-	})
+	details := map[string]any{"acquisition_id": w.acq, "op": op, "path": p, "error": cause.Error()}
+	if reason != "" {
+		details["reason"] = reason
+	}
+	_, err := w.c.Audit.Append("acquire.warning", w.d.serial, details)
 	return err
+}
+
+// limit records a hit of a walk limit as a typed, audited warning.
+func (w *walker) limit(reason, p string, cause error) error {
+	w.hits[reason]++
+	return w.warnReason("limit", p, reason, cause)
 }
 
 // reopen replaces the sync session; adbd closes it after any FAIL.
@@ -107,25 +184,53 @@ func validEntryName(n string) bool {
 	return n != "" && n != "." && n != ".." && !strings.ContainsRune(n, '/') && !strings.ContainsRune(n, 0)
 }
 
-func (w *walker) walk(dir string) error {
+func (w *walker) walk(dir string, depth int) error {
 	if err := w.ctx.Err(); err != nil {
 		return err
+	}
+	if w.halted {
+		return nil
+	}
+	if depth > w.lim.MaxDepth {
+		return w.limit(reasonDepth, dir, fmt.Errorf("%d levels below the acquisition root; the limit is %d", depth, w.lim.MaxDepth))
 	}
 	local, err := w.names.Dir(dir)
 	if err != nil {
 		return err
 	}
-	entries, err := w.s.List(dir)
-	if err != nil {
-		if !isFail(err) {
+	res, err := w.s.ListN(dir, w.lim.MaxEntriesPerDir)
+	switch {
+	case err == nil:
+	case errors.Is(err, adb.ErrListLimit):
+		// The first entries are processed; the session has frames pending and is replaced.
+		if err := w.limit(reasonEntriesPerDir, dir, err); err != nil {
 			return err
 		}
+		if err := w.reopen(); err != nil {
+			return err
+		}
+	case isFail(err):
 		if err := w.warn("list", dir, err); err != nil {
 			return err
 		}
 		return w.reopen()
+	default:
+		return err
 	}
-	for _, e := range entries {
+	w.total += len(res.Entries)
+	if w.total > w.lim.MaxTotalEntries {
+		w.halted = true
+		return w.limit(reasonEntriesTotal, dir, fmt.Errorf("%d entries listed so far; the limit is %d", w.total, w.lim.MaxTotalEntries))
+	}
+	for _, e := range res.Entries {
+		if w.halted {
+			return nil
+		}
+		w.pathBytes += len(dir) + 1 + len(e.Name)
+		if w.pathBytes > w.lim.MaxPathBytes {
+			w.halted = true
+			return w.limit(reasonPathBytes, dir, fmt.Errorf("%d bytes of paths seen; the limit is %d", w.pathBytes, w.lim.MaxPathBytes))
+		}
 		if !validEntryName(e.Name) {
 			if err := w.warn("skip", dir, fmt.Errorf("invalid entry name %q in listing", e.Name)); err != nil {
 				return err
@@ -135,7 +240,7 @@ func (w *walker) walk(dir string) error {
 		p := path.Join(dir, e.Name)
 		switch {
 		case e.IsDir():
-			err = w.walk(p)
+			err = w.walk(p, depth+1)
 		case e.IsRegular():
 			err = w.pull(p, local, e)
 		default:
