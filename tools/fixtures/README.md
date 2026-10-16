@@ -193,6 +193,20 @@ the generator itself, which builds each image twice and `cmp`s them):
   fixtures are 64 MiB (one chunk) and 129 MiB (two chunks; chunk = 128 MiB at 4 KiB
   blocks). More than 126 chunks (16 GiB) would be needed for a CAB layer, which
   is too large to commit: CABs are builder-only.
+- `apfs-big.sh` makes ONE empty container of more than 16 GiB (default 17 GiB, 136
+  chunks) to learn what the real `mkapfs` writes for several chunk-info blocks (CIBs)
+  and whether a chunk-info address block (CAB) appears. Its image is never committed
+  (`*.big.img` and `*.sparse.img` are gitignored) and the script refuses to write one
+  inside the repository. Every file it writes goes under `$APFS_BIG_WORK`, a host
+  directory bind-mounted into the container, never the container's own filesystem or a
+  Docker volume (those grow the Docker Desktop virtual disk, which never shrinks).
+  Probe (writes only under the scratch directory, which it empties again):
+  `MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD:/work" -v "$SCRATCH:/scratch" -e APFS_BIG_WORK=/scratch -w /work minutiae-fixtures bash tools/fixtures/apfs-big.sh`.
+  Keep the image and write the oracle file: add `internal/filesys/apfs/testdata /scratch/apfs-bigcib.sparse.img`
+  as the two arguments. Disk cost: the image is sparse in the container, but a bind
+  mount on Windows (Docker Desktop) may not preserve holes, so keep at least 18 GiB
+  free at the scratch location (more for the kept run, which holds a second copy; or
+  lower `APFS_BIG_SIZE`, which must stay above 15.75 GiB).
 - `mkapfs` (this version) has `-s` (case-sensitive: normalization-insensitive
   flag only) and `-z` (normalization-sensitive: no flags, so also case-sensitive);
   the fixtures use the two extreme combinations.
