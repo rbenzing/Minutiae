@@ -18,6 +18,7 @@ type Stats struct {
 // counters are the live, race-free counters behind Stats.
 type counters struct {
 	pageReads, cacheHits, cellsParsed, pagesSkipped atomic.Int64
+	orderCompares                                   atomic.Int64 // key comparisons of ordered scans (test-only reading)
 }
 
 func (c *counters) snapshot() Stats {

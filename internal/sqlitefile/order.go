@@ -9,6 +9,9 @@ import (
 type KeyColumn struct {
 	Collation string
 	Desc      bool
+	// Expr: the column is an expression of an index. Its collation is not known
+	// here, so it is compared only when neither value is text.
+	Expr bool
 }
 
 // OrderStatus says whether the comparator could decide.
@@ -240,6 +243,9 @@ func OrderKeys(a, b []Value, cols []KeyColumn) (c int, n int, st OrderStatus) {
 		return 0, short, OrderUndecided
 	}
 	for i, kc := range cols {
+		if kc.Expr && (a[i].Kind == KindText || b[i].Kind == KindText) {
+			return 0, i, OrderUndecided
+		}
 		r, st := OrderValues(a[i], b[i], kc.Collation)
 		if st != OrderOK {
 			return 0, i, OrderUndecided

@@ -41,8 +41,11 @@ type Row struct {
 	PayloadLen int64
 	// KeyRangeViolation is set on a table row whose rowid lies outside the key
 	// range its position in the tree promises (the separator keys of its
-	// ancestors): a doctored or damaged interior key. The row is delivered as
-	// the engine walk delivers it, and a btree-order warning is raised.
+	// ancestors): a doctored or damaged interior key. It is also set on an
+	// entry of an index-shaped tree (a WITHOUT ROWID table, an index) that does
+	// not follow the entry before it in the engine's key order, or that repeats
+	// the key of the previous entry of a unique key. The row is delivered as the
+	// engine walk delivers it, and a btree-order warning is raised.
 	KeyRangeViolation bool
 	// LengthMismatch: the row's record is longer than its header and body
 	// account for, or has no columns (see Record.LengthMismatch); the values are

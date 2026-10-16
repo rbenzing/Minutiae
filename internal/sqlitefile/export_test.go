@@ -438,3 +438,6 @@ func SetPureHook(h func(site string)) (restore func()) {
 	pureHook.Store(&h)
 	return func() { pureHook.Store(nil) }
 }
+
+// OrderCompares is the number of key comparisons the ordered scans of this view made.
+func (v *View) OrderCompares() int64 { return v.st.orderCompares.Load() }

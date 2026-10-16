@@ -129,7 +129,8 @@ func (t *Table) kind() BTreeKind {
 // Row.Values holds the record, Resolve turns it into declared columns. visit
 // returns false to stop.
 func (t *Table) Rows(ctx context.Context, visit func(Row) bool) error {
-	return t.v.ScanTree(ctx, t.obj.RootPage, t.kind(), visit)
+	_, err := t.RowsLoss(ctx, visit)
+	return err
 }
 
 // Get finds the row with the given rowid. A WITHOUT ROWID table has no rowids:
@@ -188,8 +189,16 @@ func (i *Index) Def() IndexDef {
 
 // Entries visits the entries of the index in key order; for an index of a
 // rowid table the last value of an entry is the rowid.
+// The entries are checked for key order against the index's columns (see
+// View.ScanTreeOrdered): an entry out of order is delivered with KeyRangeViolation
+// set, and the entries that cannot be compared are counted in one warning.
 func (i *Index) Entries(ctx context.Context, visit func(Row) bool) error {
-	return i.v.ScanTree(ctx, i.obj.RootPage, IndexTree, visit)
+	order, err := i.v.indexOrder(ctx, &i.obj)
+	if err != nil {
+		return err
+	}
+	_, err = i.v.ScanTreeOrdered(ctx, i.obj.RootPage, order, visit)
+	return err
 }
 
 // columnDefault is the value a short record gives column c. A default that is
@@ -291,9 +300,13 @@ func applyAffinity(v Value, aff Affinity) (Value, bool) {
 }
 
 // RowsLoss is Rows that also returns what this one scan did not deliver (see
-// ScanLoss).
+// ScanLoss). A WITHOUT ROWID table is checked for key order against its primary key
+// (see View.ScanTreeOrdered): an entry out of order is delivered with KeyRangeViolation set.
 func (t *Table) RowsLoss(ctx context.Context, visit func(Row) bool) (ScanLoss, error) {
-	return t.v.ScanTreeLoss(ctx, t.obj.RootPage, t.kind(), visit)
+	if kind := t.kind(); kind == IndexTree {
+		return t.v.ScanTreeOrdered(ctx, t.obj.RootPage, withoutRowidOrder(t.obj.Table), visit)
+	}
+	return t.v.ScanTreeLoss(ctx, t.obj.RootPage, TableTree, visit)
 }
 
 // SchemaBeyondEngineDepth says the table lies in a database whose schema tree is deeper

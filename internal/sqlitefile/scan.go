@@ -114,6 +114,10 @@ type walker struct {
 	checkOverlap bool     // a scan checks that the cells of a page do not overlap
 	dmg          string   // a lookup: why its answer may not be "absent" (first reason)
 	loss         ScanLoss // what this walk did not deliver
+
+	ord      *orderState // an index-shaped scan that checks key order (nil: unchecked)
+	prevPage uint32      // the page and cell of the previous entry, for the order warning
+	prevCell int
 }
 
 func (v *View) newWalker(ctx context.Context, l *ledger, vis visitor, kind BTreeKind) *walker {
@@ -392,6 +396,10 @@ func (w *walker) leafRows(n node, ovf visitor, kb keyBounds, visit func(Row) boo
 			continue
 		}
 		row.KeyRangeViolation = violation
+		if err := w.checkOrder(&row); err != nil {
+			w.l.free(held)
+			return false, err
+		}
 		more := visit(row)
 		w.l.free(held)
 		if !more {
@@ -418,7 +426,8 @@ func (w *walker) warnKeyRange(n node, c Cell, kb keyBounds) {
 // warning and never fails the scan. Row.Values is valid only during visit
 // (Clone keeps a row). visit returns false to end the scan early. The error is
 // for a cancelled context, an I/O error or a refused budget charge. Index
-// entries are not checked for order (that needs the collations).
+// entries are not checked for order here (ScanTreeOrdered, Table.Rows of a
+// WITHOUT ROWID table and Index.Entries do check them).
 func (v *View) ScanTree(ctx context.Context, root uint32, kind BTreeKind, visit func(Row) bool) error {
 	_, err := v.ScanTreeLoss(ctx, root, kind, visit)
 	return err
@@ -428,6 +437,12 @@ func (v *View) ScanTree(ctx context.Context, root uint32, kind BTreeKind, visit 
 // deliver (see ScanLoss). The loss is valid also when the scan ended early
 // (visit returned false, or err is non-nil): it counts what had been met.
 func (v *View) ScanTreeLoss(ctx context.Context, root uint32, kind BTreeKind, visit func(Row) bool) (loss ScanLoss, err error) {
+	return v.scanTree(ctx, root, kind, nil, visit)
+}
+
+// scanTree is the walk behind ScanTreeLoss and ScanTreeOrdered; order is nil for a scan that
+// does not check key order.
+func (v *View) scanTree(ctx context.Context, root uint32, kind BTreeKind, order *KeyOrder, visit func(Row) bool) (loss ScanLoss, err error) {
 	defer guard(&err)
 	l := v.e.newLedger()
 	defer l.guard(&err)
@@ -445,6 +460,10 @@ func (v *View) ScanTreeLoss(ctx context.Context, root uint32, kind BTreeKind, vi
 	w := v.newWalker(ctx, l, ps, kind)
 	defer func() { loss = w.loss }()
 	w.checkOverlap = true
+	if order != nil {
+		w.ord = &orderState{order: *order}
+		defer w.finishOrder(root)
+	}
 	defer func() { l.free(w.held) }() // pointer lists of the pages still open when the scan ends
 	n, ok, err := w.enter(root, 1)
 	if err != nil || !ok {
@@ -486,6 +505,10 @@ func (v *View) ScanTreeLoss(ctx context.Context, root uint32, kind BTreeKind, vi
 				}
 				if !ok {
 					continue
+				}
+				if err := w.checkOrder(&row); err != nil {
+					l.free(held)
+					return loss, err
 				}
 				more := visit(row)
 				l.free(held)

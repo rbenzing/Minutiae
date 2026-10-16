@@ -18,7 +18,7 @@ type RowFlags uint16
 // The row flags.
 const (
 	FlagLengthMismatch    RowFlags = 1 << iota // the record is longer than its header and body account for
-	FlagKeyRange                               // the rowid lies outside the key range its position promises
+	FlagKeyRange                               // the rowid lies outside the key range its position promises, or the key of a WITHOUT ROWID row does not follow the previous one
 	FlagOverflowMixed                          // overflow pages lie in a different file or frame than the cell
 	FlagExtraValues                            // the record holds values beyond the declared columns
 	FlagShortRecord                            // the record ended before the last stored column

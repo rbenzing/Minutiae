@@ -318,8 +318,11 @@ func (rp *rowPass) wrSetOf(ctx context.Context, t *Table, name string, fit bool)
 		*total++
 		res := t.Resolve(r)
 		rowD, complete := digestOf(res, nil)
-		// Row.KeyRangeViolation is never set for an index tree (its cells have
-		// no rowid, scan.go leafRows), so there is nothing to taint on here.
+		if r.KeyRangeViolation {
+			// The key order check flagged this live row (an entry out of order or a repeated
+			// key): the live tree is damaged, so a history row's absence from it proves nothing.
+			s.tainted = true
+		}
 		key := rowD
 		if s.pkOK {
 			var kst KeyStatus
