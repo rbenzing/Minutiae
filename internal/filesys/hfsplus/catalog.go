@@ -187,20 +187,28 @@ func (f *FS) catalogCmp(target catalogKey) keyCmp {
 // unknown type (a warning is recorded and the caller moves on); malformed
 // records are errors.
 func (f *FS) decodeLeaf(rec []byte) (k catalogKey, r catalogRecord, ok bool, err error) {
+	k, r, ok, ue, err := f.decodeLeafKind(rec)
+	if ue != nil {
+		f.warn("catalog record of unknown type %d under parent %d skipped", ue.typ, k.parent)
+	}
+	return k, r, ok, err
+}
+
+// decodeLeafKind is decodeLeaf without the warning: a record of an unknown type comes back as
+// ue (with its key), not ok and without an error, for the caller to decide.
+func (f *FS) decodeLeafKind(rec []byte) (k catalogKey, r catalogRecord, ok bool, ue *unknownRecordError, err error) {
 	key, data, err := splitRecord(rec)
 	if err != nil {
-		return k, r, false, err
+		return k, r, false, nil, err
 	}
 	if k, err = parseCatalogKey(key); err != nil {
-		return k, r, false, err
+		return k, r, false, nil, err
 	}
 	r, err = decodeCatalogRecord(data)
-	var ue *unknownRecordError
 	if errors.As(err, &ue) {
-		f.warn("catalog record of unknown type %d under parent %d skipped", ue.typ, k.parent)
-		return k, r, false, nil
+		return k, r, false, ue, nil
 	}
-	return k, r, err == nil, err
+	return k, r, err == nil, nil, err
 }
 
 // catalogScan calls fn for every decoded catalog record from the first one not
@@ -452,9 +460,18 @@ func (f *FS) scanFileByID(id uint32) (catalogKey, catalogRecord, error) {
 		if examined++; examined > f.dirRecordCap() {
 			return false, errIDScan
 		}
-		k, r, ok, derr := f.decodeLeaf(rec)
+		k, r, ok, ue, derr := f.decodeLeafKind(rec)
 		if derr != nil {
 			damaged = derr // it may be a second owner of the id: stop, uniqueness is unprovable
+			return false, nil
+		}
+		if ue != nil {
+			f.warn("catalog record of unknown type %d under parent %d skipped", ue.typ, k.parent)
+			if len(k.name) == 0 {
+				return true, nil // keyed (id, empty name): a thread's position, never a file or folder record
+			}
+			// A file or folder record of an unknown type has an unreadable id: it may be a second owner.
+			damaged = corrupt("catalog", -1, "uniqueness unprovable: unknown record type %d under parent %d", ue.typ, k.parent)
 			return false, nil
 		}
 		if !ok || r.isThread() || r.id != id {

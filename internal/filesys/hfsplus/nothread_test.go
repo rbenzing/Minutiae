@@ -154,3 +154,71 @@ func TestNoThreadScanBudget(t *testing.T) {
 		t.Errorf("a file with a thread must open after the scan budget is spent: %v", err)
 	}
 }
+
+// A record of an unknown type has an unreadable id: it may be a second owner of the id
+// being opened, so the open cannot prove uniqueness and fails closed. Listings only skip it.
+func TestNoThreadUnknownRecordTypeMakesTheIDUnprovable(t *testing.T) {
+	img, lay, _ := buildTree(t, hfsplustest.Options{}, []hfsplustest.File{
+		{Path: "/legacy", NoThread: true, Data: []byte("legacy")},
+		{Path: "/other", Data: []byte("other")},
+	})
+	p := findRec(t, img, lay, 2, units("other"))
+	be.PutUint16(img[p.data:], 0x00FF) // a record type no reader knows
+	f := open(t, img)
+	fl, err := f.Open(filesys.Entry{ID: idOf(lay.CNIDs["/legacy"])})
+	wantCorrupt(t, err)
+	if fl != nil {
+		t.Error("an unprovable id must not open")
+	}
+	if !hasWarning(f.Info(), "uniqueness unprovable") {
+		t.Errorf("no warning about the unknown record: %q", f.Info().Warnings)
+	}
+	// Listings keep skipping it with a warning.
+	root := readDir(t, f, f.Root())
+	for _, e := range root {
+		if e.Name == "other" {
+			t.Error("the unknown-type record was listed")
+		}
+	}
+	if !hasWarning(f.Info(), "unknown type") {
+		t.Errorf("the listing did not warn: %q", f.Info().Warnings)
+	}
+}
+
+// The record cap ends a scan before the catalog does: a counted, typed refusal, never a miss.
+func TestNoThreadScanRecordCap(t *testing.T) {
+	_, lay, f := buildTree(t, hfsplustest.Options{}, []hfsplustest.File{
+		{Path: "/a", Data: []byte("a")},
+		{Path: "/b", Data: []byte("b")},
+		{Path: "/legacy", NoThread: true, Data: []byte("x")},
+	})
+	f.SetDirRecordCap(1)
+	fl, err := f.Open(filesys.Entry{ID: idOf(lay.CNIDs["/legacy"])})
+	wantCorrupt(t, err)
+	if fl != nil {
+		t.Error("an unproven id opened")
+	}
+	if f.IDScanRefused() != 1 {
+		t.Errorf("%d refused scans counted, want 1", f.IDScanRefused())
+	}
+	if !hasWarning(f.Info(), "thread-less") {
+		t.Errorf("no warning about the refused scan: %q", f.Info().Warnings)
+	}
+}
+
+// An empty catalog (depth 0) holds no record of any id: ErrNotFound, never a default.
+func TestNoThreadEmptyCatalogIsNotFound(t *testing.T) {
+	img, lay, _ := buildTree(t, hfsplustest.Options{}, []hfsplustest.File{
+		{Path: "/legacy", NoThread: true, Data: []byte("x")},
+	})
+	h := lay.CatalogOffset(0) + 14 // the header record: depth, root, records, first leaf, last leaf
+	be.PutUint16(img[h:], 0)
+	be.PutUint32(img[h+2:], 0)
+	be.PutUint32(img[h+10:], 0)
+	be.PutUint32(img[h+14:], 0)
+	f := open(t, img)
+	_, err := f.Open(filesys.Entry{ID: idOf(lay.CNIDs["/legacy"])})
+	if !errors.Is(err, filesys.ErrNotFound) {
+		t.Errorf("Open on an empty catalog: %v, want ErrNotFound", err)
+	}
+}
