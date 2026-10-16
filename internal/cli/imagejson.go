@@ -84,6 +84,13 @@ func newPathEntry(p string, e filesys.Entry) pathEntry {
 	return pathEntry{Path: p, Entry: je}
 }
 
+// jsonWarningItem is an item of the `image ls -r --json` array that is not an entry: a finding of the walker (a
+// cycle, nesting too deep, a path too long) at Path, so a consumer sees the listing is not whole.
+type jsonWarningItem struct {
+	Path     string   `json:"path"`
+	Warnings []string `json:"warnings"`
+}
+
 // jsonStat is the object `image stat --json` prints: the entry plus the
 // filesystem warnings its lookup raised.
 type jsonStat struct {
@@ -229,6 +236,22 @@ func newJSONSummary(s examine.Summary) jsonSummary {
 		out.Artifacts = []evidence.ManifestRecord{}
 	}
 	return out
+}
+
+// jsonUnalloc is the JSON of an unalloc run. It has no incomplete_ids: unalloc does no id search, and an empty
+// list would claim a search that never ran read everything (F97).
+type jsonUnalloc struct {
+	AnalysisID string                    `json:"analysis_id"`
+	Files      int                       `json:"files"`
+	Bytes      int64                     `json:"bytes"`
+	Skipped    int                       `json:"skipped"`
+	FSWarnings int                       `json:"fs_warnings"`
+	Artifacts  []evidence.ManifestRecord `json:"artifacts"`
+}
+
+func newJSONUnalloc(s examine.Summary) jsonUnalloc {
+	j := newJSONSummary(s)
+	return jsonUnalloc{AnalysisID: j.AnalysisID, Files: j.Files, Bytes: j.Bytes, Skipped: j.Skipped, FSWarnings: j.FSWarnings, Artifacts: j.Artifacts}
 }
 
 // jsonRecover is the JSON of a recover run (strings are the raw ones; artifacts are manifest records).

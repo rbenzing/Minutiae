@@ -97,3 +97,20 @@ func TestImageExtractJSONIncompleteIDsEmptyWhenComplete(t *testing.T) {
 		t.Errorf("incomplete_ids = %s, want []", js["incomplete_ids"])
 	}
 }
+
+// F97: unalloc does no id search, so its JSON omits incomplete_ids (extract keeps []): an empty list there
+// would claim a search that never ran read everything.
+func TestImageUnallocJSONOmitsIncompleteIDs(t *testing.T) {
+	e := newImgEnv(t)
+	code, out := e.image(t, "unalloc", e.ref, "--json", "--volume")
+	var js map[string]json.RawMessage
+	if err := json.Unmarshal(jsonPart(out), &js); err != nil || code != 0 {
+		t.Fatalf("json %q: %v (exit %d)", out, err, code)
+	}
+	if v, ok := js["incomplete_ids"]; ok {
+		t.Errorf("unalloc JSON carries incomplete_ids = %s; the key must be absent", v)
+	}
+	if _, ok := js["analysis_id"]; !ok {
+		t.Errorf("unalloc JSON lost analysis_id: %s", out)
+	}
+}

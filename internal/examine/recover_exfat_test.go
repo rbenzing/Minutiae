@@ -143,8 +143,8 @@ func TestRecoverExfatBrokenStaleChainKeepsPrefixCappedAt20(t *testing.T) {
 			if !bytes.Equal(got, data[:tc.keep*exfatCS]) || !rec.Incomplete || *rv.Confidence != 20 || rv.Method != "exfat-fatchain" {
 				t.Fatalf("artifact %d bytes (want %d), incomplete %v, method %s, confidence %d", len(got), tc.keep*exfatCS, rec.Incomplete, rv.Method, *rv.Confidence)
 			}
-			if want := tc.stop(loc.Clusters); !strings.Contains(rec.Error, want) && !hasAssumption(rv, want) {
-				t.Errorf("neither Error %q nor assumptions %v name %s", rec.Error, rv.Assumptions, want)
+			if want := tc.stop(loc.Clusters); !hasAssumption(rv, want) { // F99: the assumptions form only
+				t.Errorf("assumptions %v do not name %s (Error %q)", rv.Assumptions, want, rec.Error)
 			}
 			if tc.name == "bad" {
 				for i := 3; i < 6; i++ {

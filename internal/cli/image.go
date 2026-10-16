@@ -530,25 +530,28 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 		if opts.json {
 			_, jsonErr = io.WriteString(d.Out, "[")
 		}
+		emitJSON := func(item any) {
+			if jsonErr != nil {
+				return
+			}
+			b, merr := json.Marshal(item)
+			if merr == nil {
+				sep := "\n  "
+				if wrote > 0 {
+					sep = ",\n  "
+				}
+				_, merr = d.Out.Write(append([]byte(sep), b...))
+			}
+			jsonErr = merr
+			wrote++
+		}
 		emit := func(p string, e filesys.Entry) {
 			if e.Deleted && !deleted {
 				return
 			}
 			switch {
 			case opts.json:
-				if jsonErr != nil {
-					return
-				}
-				b, merr := json.Marshal(newPathEntry(p, e))
-				if merr == nil {
-					sep := "\n  "
-					if wrote > 0 {
-						sep = ",\n  "
-					}
-					_, merr = d.Out.Write(append([]byte(sep), b...))
-				}
-				jsonErr = merr
-				wrote++
+				emitJSON(newPathEntry(p, e))
 			case recursive:
 				fmt.Fprintln(d.Out, lsLine(p, e))
 			default:
@@ -570,7 +573,12 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 					fmt.Fprintf(d.Err, "warning: %s: %s\n", escapeText(p), escapeText(werr.Error()))
 					// Only a listing that failed or was cut sets the exit code. The walker's own findings (a
 					// cycle, too deep, too long) are warned about as before and keep the exit code.
-					if firstCut == nil && !filesys.IsWalkFinding(werr) {
+					if filesys.IsWalkFinding(werr) {
+						// A JSON consumer sees no stderr: the finding is also an item of the array (F98).
+						if opts.json {
+							emitJSON(jsonWarningItem{Path: p, Warnings: []string{werr.Error()}})
+						}
+					} else if firstCut == nil {
 						firstCut = werr
 					}
 					return nil
@@ -872,7 +880,7 @@ func newImageUnallocCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		if opts.json {
-			if jerr := writeJSON(d.Out, newJSONSummary(sum)); jerr != nil && err == nil {
+			if jerr := writeJSON(d.Out, newJSONUnalloc(sum)); jerr != nil && err == nil {
 				err = jerr
 			}
 			return err
