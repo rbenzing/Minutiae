@@ -236,6 +236,7 @@ Taken at 400,000 records, not the plan's 1,000,000 (ruling D30 caps implementer 
          0     0%  1.04%    140.96s 56.06%  sqlite/lib._fts5StorageInsert
      0.30s 0.12%  1.16%    107.28s 42.67%  sqlite/lib._fts5FlushOneHash
      4.71s 1.87%  3.03%     91.73s 36.48%  sqlite/lib._fts5IndexMergeLevel
+                                      ... (rows elided) ...
          0     0% 35.46%     53.44s 21.25%  database/sql.(*Tx).Commit
     42.9s  ..    ..         42.90s 17.06%  windows.FlushFileBuffers
 ```
