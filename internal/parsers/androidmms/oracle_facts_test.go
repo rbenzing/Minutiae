@@ -1,6 +1,9 @@
 package androidmms_test
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"testing"
@@ -20,9 +23,6 @@ func TestBaselineOracleStatesTheSpecRules(t *testing.T) {
 		byKey[r.Table+"/"+strconv.FormatInt(r.Rowid, 10)] = r
 		if r.Type != "message" {
 			t.Errorf("%s %d: type %q, want message", r.Table, r.Rowid, r.Type)
-		}
-		if r.SourcePath != remoteDB {
-			t.Errorf("%s %d: source_path %q, want %q", r.Table, r.Rowid, r.SourcePath, remoteDB)
 		}
 		if r.Deleted {
 			t.Errorf("%s %d: a live oracle row is marked deleted", r.Table, r.Rowid)
@@ -83,3 +83,47 @@ func TestBaselineOracleStatesTheSpecRules(t *testing.T) {
 }
 
 const remoteDB = "/data/user_de/0/com.android.providers.telephony/databases/mmssms.db"
+
+// Ruling T48: a record's source_path is the remote path of the file holding its cell. The oracle states it for
+// a row it places in a file; for a row that may lie in any file it states nothing and the comparer derives it
+// from the role the parser's locator reports.
+func TestOracleStatesTheSourcePathOfTheFileThatHoldsTheCell(t *testing.T) {
+	suffix := map[string]string{"db": "", "wal": "-wal", "journal": "-journal"}
+	walRows := 0
+	for _, v := range variants {
+		fx := parsertest.LoadFixture(t, "testdata", v)
+		for _, r := range fx.Expect.Records {
+			want := ""
+			if r.File != "any" {
+				sfx, known := suffix[r.File]
+				if !known {
+					t.Fatalf("%s %s %d: unknown file %q", v, r.Table, r.Rowid, r.File)
+				}
+				want = remoteDB + sfx
+			}
+			if r.SourcePath != want {
+				t.Errorf("%s %s %d (file %s): source_path %q, want %q", v, r.Table, r.Rowid, r.File, r.SourcePath, want)
+			}
+			if r.File == "wal" {
+				walRows++
+			}
+		}
+	}
+	if walRows == 0 {
+		t.Error("no oracle row lies in a WAL: the -wal path rule is not exercised")
+	}
+}
+
+// Ruling T49: the large oracle files are written compactly (one line), so a diff of a regenerated oracle is
+// a diff of its content, not of its indentation.
+func TestOracleFilesAreCompact(t *testing.T) {
+	for _, v := range variants {
+		b, err := os.ReadFile(filepath.Join("testdata", v+".expect.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := bytes.Count(b, []byte("\n")); n != 1 || !bytes.HasSuffix(b, []byte("}\n")) || bytes.Contains(b, []byte(`": `)) {
+			t.Errorf("%s.expect.json: %d newlines or spaced separators; write it with separators (',', ':') and sort_keys", v, n)
+		}
+	}
+}

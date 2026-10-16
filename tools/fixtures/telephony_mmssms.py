@@ -202,6 +202,14 @@ def summary(channel, direction, counterparty, text):
     return ("%s %s %s: %s" % (channel, direction, counterparty, text or "")).rstrip(" ")
 
 
+def source_path(file):
+    """Ruling T48: the remote path of the file that holds the cell. A row that may lie in any file states
+    nothing; the comparer derives the path from the role the parser's locator reports."""
+    if file == "any":
+        return ""
+    return REMOTE + {"db": "", "wal": "-wal", "journal": "-journal"}[file]
+
+
 def expect_sms(r, env, file="any"):
     raw, unknown = {}, {}
     typ = r.get("type")
@@ -260,7 +268,7 @@ def expect_sms(r, env, file="any"):
         raw["unknown_columns"] = unknown
     p["raw"] = raw
     cp = part["address"] if part else None
-    return {"table": "sms", "rowid": r["rowid"], "file": file, "type": "message", "source_path": REMOTE, "time": t, "time_end": None, "times": times, "deleted": False,
+    return {"table": "sms", "rowid": r["rowid"], "file": file, "type": "message", "source_path": source_path(file), "time": t, "time_end": None, "times": times, "deleted": False,
             "summary": summary("sms", direction, cp, bt), "body": bt, "payload": p}
 
 
@@ -409,7 +417,7 @@ def expect_pdu(r, env, file="any"):
         if pt["role"] == ("from" if direction == "in" else "to"):
             cp = pt["address"]
             break
-    return {"table": "pdu", "rowid": mid, "file": file, "type": "message", "source_path": REMOTE, "time": t, "time_end": None, "times": times, "deleted": False,
+    return {"table": "pdu", "rowid": mid, "file": file, "type": "message", "source_path": source_path(file), "time": t, "time_end": None, "times": times, "deleted": False,
             "summary": summary("mms", direction, cp, bt), "body": bt, "payload": p}
 
 

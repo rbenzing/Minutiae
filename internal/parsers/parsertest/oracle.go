@@ -46,7 +46,7 @@ type ExpRecord struct {
 	Rowid      int64             `json:"rowid"`
 	File       string            `json:"file"`
 	Type       string            `json:"type"`        // the record type, compared literally
-	SourcePath string            `json:"source_path"` // the record's SourcePath, compared literally
+	SourcePath string            `json:"source_path"` // the record's SourcePath; "" on a file "any" row: derived from the role its locator reports (T48)
 	Time       *string           `json:"time"`
 	TimeEnd    *string           `json:"time_end"`
 	Times      map[string]string `json:"times"`
@@ -365,8 +365,16 @@ func compareRecord(t testing.TB, b Bundle, got records.Record, w ExpRecord) {
 	if got.Type != w.Type {
 		t.Errorf("%s: Type %q, want %q", id, got.Type, w.Type)
 	}
-	if got.SourcePath != w.SourcePath {
-		t.Errorf("%s: SourcePath %q, want %q", id, got.SourcePath, w.SourcePath)
+	// ruling T48: the path of the file that holds ArtifactID's bytes (db, db-wal or db-journal), whatever the oracle says
+	if found && got.SourcePath != art.Source.RemotePath {
+		t.Errorf("%s: SourcePath %q is not the remote path %q of the %s artifact that holds the cell", id, got.SourcePath, art.Source.RemotePath, role)
+	}
+	wantPath := w.SourcePath
+	if w.File == "any" && wantPath == "" { // the cell may lie in any file: the path follows the role the locator reports
+		wantPath = art.Source.RemotePath
+	}
+	if got.SourcePath != wantPath {
+		t.Errorf("%s: SourcePath %q, want %q", id, got.SourcePath, wantPath)
 	}
 	if got.Deleted != w.Deleted {
 		t.Errorf("%s: Deleted = %v, want %v", id, got.Deleted, w.Deleted)

@@ -28,8 +28,8 @@ func utc(s string) *records.Time {
 }
 
 func oracleBundle() Bundle {
-	db := parse.Artifact{ID: "ID-DB", Size: 10000}
-	wal := parse.Artifact{ID: "ID-WAL", Size: 5000}
+	db := parse.Artifact{ID: "ID-DB", Size: 10000, Source: parse.SourceInfo{RemotePath: "/data/x.db"}}
+	wal := parse.Artifact{ID: "ID-WAL", Size: 5000, Source: parse.SourceInfo{RemotePath: "/data/x.db-wal"}}
 	img := parse.Artifact{ID: "ID-IMG", SHA256: strings.Repeat("ab", 32), Size: 77}
 	return Bundle{
 		Primary: db,
@@ -119,10 +119,10 @@ func TestAssertMatchesOracleRefusesEveryKindOfDifference(t *testing.T) {
 
 func TestAssertMatchesOracleAnyFileAndTableFilter(t *testing.T) {
 	exp := goodExpect()
-	exp.Records[0].File = "any"
+	exp.Records[0].File, exp.Records[0].SourcePath = "any", ""
 	res := Result{Records: []records.Record{goodRecord()}, Notes: map[string]string{"schema.sms": "columns:3"}}
 	res.Records[0].Locator += ";wal_frame=3"
-	res.Records[0].ArtifactID = "ID-WAL"
+	res.Records[0].ArtifactID, res.Records[0].SourcePath = "ID-WAL", "/data/x.db-wal"
 	rec := &recorder{TB: t}
 	AssertMatchesOracle(rec, res, oracleBundle(), exp)
 	if rec.Failed() {
@@ -265,5 +265,42 @@ func TestLoadFixtureRefusesUnknownKeysAndRoles(t *testing.T) {
 	writeRawFixture(t, dir, "x", `{"generator":{"tool":"t","python":"3","sqlite":"3","files":{"db":"`+sum+`"}},"family":"f","variant":"v","records":[{"table":"sms","rowid":1,"file":"db","type":"message","source_path":"/p"}],"warnings":[],"notes":{}}`, db)
 	if f := LoadFixture(t, dir, "x"); len(f.Expect.Records) != 1 || f.Expect.Records[0].SourcePath != "/p" {
 		t.Errorf("a well-formed expect.json was refused or misread: %+v", f.Expect.Records)
+	}
+}
+
+// ruling T48: a record's SourcePath is the remote path of the file that holds its ArtifactID's bytes.
+func TestSourcePathIsThatOfTheFileHoldingTheCell(t *testing.T) {
+	walRecord := func(path string) Result {
+		r := goodRecord()
+		r.Locator += ";wal_frame=3"
+		r.ArtifactID, r.SourcePath = "ID-WAL", path
+		return Result{Records: []records.Record{r}, Notes: map[string]string{"schema.sms": "columns:3"}}
+	}
+	for _, c := range []struct {
+		name, file, stated, got string
+		ok                      bool
+	}{
+		{"wal row states and reports the -wal path", "wal", "/data/x.db-wal", "/data/x.db-wal", true},
+		{"wal row reports the db path", "wal", "/data/x.db-wal", "/data/x.db", false},
+		{"wal row whose oracle states the db path", "wal", "/data/x.db", "/data/x.db", false},
+		{"any row derives -wal from the locator", "any", "", "/data/x.db-wal", true},
+		{"any row reporting the db path for a wal cell", "any", "", "/data/x.db", false},
+		{"any row whose oracle states the db path for a wal cell", "any", "/data/x.db", "/data/x.db-wal", false},
+	} {
+		exp := goodExpect()
+		exp.Records[0].File, exp.Records[0].SourcePath = c.file, c.stated
+		rec := &recorder{TB: t}
+		AssertMatchesOracle(rec, walRecord(c.got), oracleBundle(), exp)
+		if rec.Failed() == c.ok {
+			t.Errorf("%s: failed = %v, errors %v", c.name, rec.Failed(), rec.errs)
+		}
+	}
+	// an any row in the db: the derived path is the db artifact's
+	exp := goodExpect()
+	exp.Records[0].File, exp.Records[0].SourcePath = "any", ""
+	rec := &recorder{TB: t}
+	AssertMatchesOracle(rec, Result{Records: []records.Record{goodRecord()}, Notes: map[string]string{"schema.sms": "columns:3"}}, oracleBundle(), exp)
+	if rec.Failed() {
+		t.Errorf("any row in the db refused: %v", rec.errs)
 	}
 }

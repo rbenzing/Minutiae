@@ -260,7 +260,7 @@ def write_outputs(out_dir, name, files, expect):
             with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0, compresslevel=9) as z:
                 z.write(data)
     with open(os.path.join(out_dir, name + ".expect.json"), "w", encoding="utf-8", newline="\n") as f:
-        json.dump(expect, f, indent=1, ensure_ascii=False, sort_keys=True)
+        json.dump(expect, f, ensure_ascii=False, sort_keys=True, separators=(",", ":"))  # compact: one line (ruling T49)
         f.write("\n")
     return hashes
 
