@@ -28,9 +28,13 @@ go tool golangci-lint version   # pinned in go.mod as a tool
 Run `go run ./tools/check` and observe `CHECK PASSED`. It runs `go mod tidy -diff`, `go vet`,
 `tools/parserhash -check`, golangci-lint (gofumpt/goimports), the builds (host and
 `CGO_ENABLED=0` cross-builds for linux/amd64 and darwin/arm64) and `go test ./...`.
-- FAST form, `CGO_ENABLED=0 go run ./tools/check` (no `-race`): every task commit.
+- AFFECTED form, `CGO_ENABLED=0 go run ./tools/check -affected -base <BASE>` (no `-race`): every
+  task commit. It checks the changed packages and their importers plus a small global block;
+  tests slower than 60 s skip under `-short` there. A change to `go.mod`, `go.sum`,
+  `.golangci.yml`, `tools/check` or a platform-constrained file escalates to the full form.
+- FAST form, `CGO_ENABLED=0 go run ./tools/check` (no flags, no `-race`): the whole suite.
 - RACE form, plain `go run ./tools/check` with a C toolchain: required before a plan merges
-  to main (how the race step is split: `docs/testing.md`).
+  to main, full and uncached (details, blocks and flags: `docs/testing.md`).
 
 Never claim work is complete, fixed or passing without that output from the current code.
 Auto-fix formatting with `go tool golangci-lint fmt`.
@@ -66,6 +70,13 @@ Auto-fix formatting with `go tool golangci-lint fmt`.
 - Kernel modules are loaded ONLY inside a QEMU guest in a container, never into the host or
   the Docker Desktop VM; fixture containers run without `--privileged` unless the fixture
   docs say otherwise.
+
+## Workspace hygiene
+- Worktrees live only under `.claude/worktrees/<id>` (gitignored), never beside the project.
+  Agent scratch lives only in `.claude/scratch/<plan>-<task>-<role>/` and is deleted before the
+  hand-back. Never write to `/tmp`, `c:\tmp` or anywhere else outside the project.
+- Leave nothing behind: no running processes or containers, no log files, no `.orig`/`.bak`
+  copies, no helper scripts or tools that are not part of the project.
 
 ## Git
 - Use `git` only. Never `gh` (not installed). For GitHub use the web UI or REST API via `curl`.
