@@ -294,7 +294,7 @@ func popCheckTree(t *testing.T, img []byte, f *apfs.FS, root string, want []popN
 		if wx := slices.Clone(w.Xattrs); !slices.Equal(xs, wx) && (len(xs) != 0 || len(wx) != 0) {
 			report("%s: xattr names %q, oracle %q", w.Path, xs, wx)
 		}
-		if len(w.XattrValues) != 0 {
+		if popNeedsValueCheck(w) {
 			popCheckXattrValues(t, f, e, w, report)
 		}
 		if w.Type == "file" {
@@ -666,9 +666,10 @@ func popCheckXattrValues(t *testing.T, f *apfs.FS, e filesys.Entry, w popNode, r
 			report("%s: xattr %s is not listed", w.Path, name)
 			continue
 		}
-		wantStorage := filesys.XattrInline
-		if want.Storage == "stream" {
-			wantStorage = filesys.XattrStream
+		wantStorage, serr := popStorage(want.Storage)
+		if serr != nil {
+			report("%s: xattr %s: %v", w.Path, name, serr)
+			continue
 		}
 		if x.Size != want.Size || x.Storage != wantStorage {
 			report("%s: xattr %s listed as %+v, oracle size %d storage %s", w.Path, name, x, want.Size, want.Storage)
@@ -725,3 +726,20 @@ func TestPopulatedXattrValuesMatchOracle(t *testing.T) {
 	popCheckTree(t, img, f, "/"+exp.Volume.Name, exp.Live.Tree)
 	noWarnings(t, f)
 }
+
+// popStorage maps the oracle's storage word to the reader's. Only the two
+// words the oracle writes are accepted; anything else is an error here, never
+// treated as inline.
+func popStorage(word string) (string, error) {
+	switch word {
+	case "stream":
+		return filesys.XattrStream, nil
+	case "embedded":
+		return filesys.XattrInline, nil
+	}
+	return "", fmt.Errorf("unknown oracle storage word %q (want \"stream\" or \"embedded\")", word)
+}
+
+// popNeedsValueCheck reports whether the entry's xattr listing must be
+// checked against the oracle.
+func popNeedsValueCheck(w popNode) bool { return len(w.XattrValues) != 0 || len(w.Xattrs) != 0 }

@@ -400,7 +400,7 @@ anything a macOS writer does differently from this driver. Lookup of a name that
 the stored one only in Unicode normalization or case is found by the reader (the volume is
 normalization-insensitive; `TestAPFSMatchesOracle/populated/name_lookup` asserts NFC and NFD queries).
 
-`apfs-reoracle.sh <outdir>` re-emits the expectation file for the committed image with the current oracle (no QEMU): it refuses an image whose sha256 differs from the old oracle and any change other than the added `xattr_values`.
+`apfs-reoracle.sh <outdir>` re-emits the expectation file for the committed image with the current oracle (no QEMU): it refuses an image whose sha256 differs from the old oracle and any change other than the added `xattr_values`. The fixture's snapshot holds the same xattrs as the live tree, so the oracle cannot tell the two views apart: the snapshot view of xattr values is pinned by the builder test `TestXattrsReadFromTheSnapshotView`, not by this fixture.
 
 ### F2FS determinism
 
