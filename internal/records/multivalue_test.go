@@ -1,6 +1,7 @@
 package records_test
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -44,14 +45,46 @@ func TestMultiValueListEqualsOracle(t *testing.T) {
 	all := wantOrder(allRows(t, r))
 	in := func(set []string, v string) bool { return slices.Contains(set, v) }
 	types := []string{"message", "call", "message", "web_visit"} // a duplicated value is one value
-	cases := []struct {
+	var lo, hi int64
+	n := 0
+	for _, x := range all {
+		if us, ok := micros(x); ok {
+			if n == 0 {
+				lo = us
+			}
+			hi = us
+			n++
+		}
+	}
+	if n < 20 || hi <= lo {
+		t.Fatalf("dataset has %d timed rows spanning %d..%d", n, lo, hi)
+	}
+	from, to := time.UnixMicro(lo+(hi-lo)/4).UTC(), time.UnixMicro(lo+(hi-lo)*3/4).UTC()
+	window := func(untimed bool) func(records.Row) bool {
+		return func(x records.Row) bool {
+			us, ok := micros(x)
+			if !ok {
+				return untimed
+			}
+			return us >= from.UnixMicro() && us < to.UnixMicro()
+		}
+	}
+	type oracleCase struct {
 		name string
 		f    records.Filter
 		keep func(records.Row) bool
-	}{
+	}
+	cases := []oracleCase{
 		{"types", records.Filter{Types: types}, func(x records.Row) bool { return in(types, x.Type) }},
 		{"artifacts", records.Filter{ArtifactIDs: art[:]}, func(x records.Row) bool { return in(art[:], x.ArtifactID) }},
 		{"types and one artifact", records.Filter{Types: types, ArtifactIDs: art[:1]}, func(x records.Row) bool { return in(types, x.Type) && x.ArtifactID == art[0] }},
+	}
+	for _, untimed := range []bool{false, true} {
+		win := window(untimed)
+		cases = append(cases, oracleCase{fmt.Sprintf("types in a window, untimed=%v", untimed), records.Filter{Types: types, From: &from, To: &to, IncludeUntimed: untimed},
+			func(x records.Row) bool { return in(types, x.Type) && win(x) }})
+		cases = append(cases, oracleCase{fmt.Sprintf("artifacts in a window, untimed=%v", untimed), records.Filter{ArtifactIDs: art[:], From: &from, To: &to, IncludeUntimed: untimed},
+			func(x records.Row) bool { return in(art[:], x.ArtifactID) && win(x) }})
 	}
 	for _, tc := range cases {
 		var want []records.Row

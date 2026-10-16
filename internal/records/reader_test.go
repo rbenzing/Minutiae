@@ -382,6 +382,8 @@ func TestListUsesIndexes(t *testing.T) {
 		{"single type descending after an untimed row", records.Filter{Types: []string{"message"}}, &records.Cursor{D: 1, N: 1, ID: 5}, true, "records_type_ts"},
 		{"deleted only", records.Filter{Deleted: records.Only}, nil, false, "records_deleted"},
 		{"time window", records.Filter{From: &from, To: &to}, nil, false, "records_ts"},
+		{"duplicated type is one value", records.Filter{Types: []string{"message", "message"}}, nil, false, "records_type_ts"},
+		{"duplicated type descending", records.Filter{Types: []string{"message", "message"}}, nil, true, "records_type_ts"},
 		{"type and time window", records.Filter{Types: []string{"message"}, From: &from, To: &to}, nil, false, "records_type_ts"},
 		{"time window descending", records.Filter{From: &from, To: &to}, nil, true, "records_ts"},
 	} {

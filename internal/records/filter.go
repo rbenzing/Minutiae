@@ -99,19 +99,20 @@ func (f Filter) compile(haveSuperseded bool) (where, error) {
 	if len(f.Types) > maxInList || len(f.ArtifactIDs) > maxInList || len(f.Parsers) > maxInList {
 		return w, invalidFilter("an IN list holds at most %d values", maxInList)
 	}
-	switch len(f.Types) {
+	types, artifacts := uniqSorted(f.Types), uniqSorted(f.ArtifactIDs) // a repeated value is one value: a single one is "= ?"
+	switch len(types) {
 	case 0:
 	case 1:
-		w.add("r.type = ?", f.Types[0])
+		w.add("r.type = ?", types[0])
 	default:
-		w.add("r.type IN ("+placeholders(len(f.Types))+")", strArgs(f.Types)...)
+		w.add("r.type IN ("+placeholders(len(types))+")", strArgs(types)...)
 	}
-	switch len(f.ArtifactIDs) {
+	switch len(artifacts) {
 	case 0:
 	case 1:
-		w.add("r.artifact_id = ?", f.ArtifactIDs[0])
+		w.add("r.artifact_id = ?", artifacts[0])
 	default:
-		w.add("r.artifact_id IN ("+placeholders(len(f.ArtifactIDs))+")", strArgs(f.ArtifactIDs)...)
+		w.add("r.artifact_id IN ("+placeholders(len(artifacts))+")", strArgs(artifacts)...)
 	}
 	if f.From != nil || f.To != nil {
 		var parts []string
