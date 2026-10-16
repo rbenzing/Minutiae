@@ -74,17 +74,29 @@ func (f *FS) newObject(k catalogKey, r catalogRecord) (*object, error) {
 	return o, nil
 }
 
-// fileObject finds the file record of a CNID through its thread record. A
-// folder is filesys.ErrUnsupported, an unknown id (or a file without a thread
-// record, which cannot be searched for) filesys.ErrNotFound, and a thread that
-// disagrees with the catalog a CorruptError.
+// fileObject finds the file record of a CNID through its thread record, or, for
+// a file without one, by a catalog scan with its own budget (scanFileByID). A
+// folder is filesys.ErrUnsupported, an unknown id filesys.ErrNotFound, and a
+// thread that disagrees with the catalog, or an id that cannot be proven
+// unique, a CorruptError.
 func (f *FS) fileObject(id uint32) (*object, error) {
 	th, err := f.catalogThread(id)
 	if err != nil {
-		if errors.Is(err, filesys.ErrNotFound) {
-			return nil, fmt.Errorf("%w: %s has no thread record, so it cannot be found by id", filesys.ErrNotFound, cnidString(id))
+		if !errors.Is(err, filesys.ErrNotFound) {
+			return nil, err
 		}
-		return nil, err
+		if id >= f.vh.nextCatalogID {
+			return nil, fmt.Errorf("%w: %s was never issued by this volume", filesys.ErrNotFound, cnidString(id))
+		}
+		// No thread record: search the catalog for the id (own budget, uniqueness proven).
+		k, r, serr := f.scanFileByID(id)
+		if serr != nil {
+			return nil, serr
+		}
+		if r.typ != recFile {
+			return nil, fmt.Errorf("%w: %s is a directory", filesys.ErrUnsupported, cnidString(id))
+		}
+		return f.newObject(k, r)
 	}
 	if th.typ != recFileThread {
 		return nil, fmt.Errorf("%w: %s is a directory", filesys.ErrUnsupported, cnidString(id))

@@ -389,3 +389,97 @@ func (f *FS) loadLabel() {
 }
 
 const rootFolderID = 2
+
+// maxIDScanBudget is the bytes of catalog leaves all thread-less scans of one filesystem may read.
+const maxIDScanBudget = 256 << 20
+
+// errIDScan ends a scan whose budget or record cap is spent.
+var errIDScan = errors.New("id-scan budget exhausted")
+
+// chargeIDScan takes n bytes from the id-scan budget; false when it is spent.
+func (f *FS) chargeIDScan(n int64) bool {
+	f.scanMu.Lock()
+	defer f.scanMu.Unlock()
+	if f.idScanBudget < n {
+		return false
+	}
+	f.idScanBudget -= n
+	return true
+}
+
+func (f *FS) refuseIDScan(id uint32) error {
+	f.scanMu.Lock()
+	f.idScanRefused++
+	n := f.idScanRefused
+	f.scanMu.Unlock()
+	f.warn("thread-less file opens refused so far: %d (the id-scan budget of %d bytes per filesystem is spent; id %d was not searched)", n, int64(maxIDScanBudget), id)
+	return corrupt("catalog", -1, "the id-scan budget ended the search for id %d before the catalog did: the id cannot be proven unique", id)
+}
+
+// scanFileByID reads the catalog leaves in key order and returns the one file or
+// folder record whose id is id. No record: filesys.ErrNotFound. Two or more
+// records with the id, or a record that cannot be decoded (it may be the second
+// one): a CorruptError, nothing is opened. A scan the id-scan budget or the
+// record cap ends before the catalog does: a CorruptError, counted and warned,
+// never a miss.
+func (f *FS) scanFileByID(id uint32) (catalogKey, catalogRecord, error) {
+	var (
+		fk       catalogKey
+		fr       catalogRecord
+		found    int
+		conflict string
+		damaged  error
+	)
+	t, err := f.tree(treeCatalog)
+	if err != nil {
+		return fk, fr, err
+	}
+	if t.depth == 0 {
+		return fk, fr, fmt.Errorf("%w: %s has no catalog record", filesys.ErrNotFound, cnidString(id))
+	}
+	leaf, err := t.node(t.firstLeaf)
+	if err != nil {
+		return fk, fr, err
+	}
+	charge := func(uint32) error {
+		if !f.chargeIDScan(int64(t.nodeSize)) {
+			return errIDScan
+		}
+		return nil
+	}
+	examined := 0
+	err = t.scanHook(leaf, 0, charge, func(rec []byte) (bool, error) {
+		if examined++; examined > f.dirRecordCap() {
+			return false, errIDScan
+		}
+		k, r, ok, derr := f.decodeLeaf(rec)
+		if derr != nil {
+			damaged = derr // it may be a second owner of the id: stop, uniqueness is unprovable
+			return false, nil
+		}
+		if !ok || r.isThread() || r.id != id {
+			return true, nil
+		}
+		if found++; found == 1 {
+			fk, fr = k, r
+			return true, nil
+		}
+		conflict = fmt.Sprintf("(%d, %q)", k.parent, decodeLossy(k.name))
+		return false, nil
+	})
+	switch {
+	case errors.Is(err, errIDScan):
+		return fk, fr, f.refuseIDScan(id)
+	case err != nil:
+		return fk, fr, err
+	case damaged != nil:
+		f.warn("a catalog record that cannot be decoded stopped the search for id %d: %v", id, damaged)
+		return fk, fr, corrupt("catalog", -1, "a damaged catalog record may share id %d: the id cannot be proven unique (%v)", id, damaged)
+	case found == 0:
+		return fk, fr, fmt.Errorf("%w: %s has no catalog record", filesys.ErrNotFound, cnidString(id))
+	case found > 1:
+		f.warn("catalog node id %d is shared by several records, including %s and (%d, %q): the id cannot be opened", id, conflict, fk.parent, decodeLossy(fk.name))
+		return fk, fr, corrupt("catalog", -1, "catalog node id %d is shared by more than one record", id)
+	}
+	return fk, fr, nil
+}

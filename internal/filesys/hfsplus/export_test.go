@@ -211,3 +211,24 @@ func (f *FS) SetDirRecordCap(n int) { f.recCap = n }
 
 // SetUnallocCap lowers the number of free runs Unallocated reports (0 = the default).
 func (f *FS) SetUnallocCap(n int) { f.unallocCap = n }
+
+// SetIDScanBudget sets the bytes of catalog leaves the thread-less scans may still read.
+func (f *FS) SetIDScanBudget(n int64) {
+	f.scanMu.Lock()
+	f.idScanBudget = n
+	f.scanMu.Unlock()
+}
+
+// IDScanBudget returns the bytes of the id-scan budget still available.
+func (f *FS) IDScanBudget() int64 {
+	f.scanMu.Lock()
+	defer f.scanMu.Unlock()
+	return f.idScanBudget
+}
+
+// IDScanRefused returns how many thread-less opens the exhausted budget refused.
+func (f *FS) IDScanRefused() int {
+	f.scanMu.Lock()
+	defer f.scanMu.Unlock()
+	return f.idScanRefused
+}
