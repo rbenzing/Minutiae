@@ -35,6 +35,9 @@ type Device struct {
 	NoExec     bool                        // exec: is rejected with FAIL "closed" (old adbd); shell: still works
 	AfterChunk func(path string, sent int) // called after each RECV DATA chunk is written (tests use it to stall a transfer)
 	Features   []string                    // advertised by host-serial:<serial>:features; nil = DefaultFeatures, empty non-nil = a legacy device
+	EmptyDirs  map[string]bool
+	ListErrno  map[string]uint32
+	EntryErrno map[string]uint32
 }
 
 // Dent is a raw LIST entry, sent as-is (no validation of the name).
@@ -232,6 +235,7 @@ type dent struct {
 	mode  uint32
 	size  uint64
 	mtime int64
+	errno uint32
 }
 
 func listDir(d *Device, dir string) []dent {
@@ -245,10 +249,16 @@ func listDir(d *Device, dir string) []dent {
 		if i := strings.IndexByte(rest, '/'); i >= 0 {
 			children[rest[:i]] = dent{name: rest[:i], mode: modeDir}
 		} else {
-			children[rest] = dent{name: rest, mode: fileMode(f), size: sizeOf(f), mtime: f.MTime.Unix()}
+			children[rest] = dent{name: rest, mode: fileMode(f), size: sizeOf(f), mtime: f.MTime.Unix(), errno: d.EntryErrno[p]}
 		}
 	}
-	if len(children) == 0 {
+	for e := range d.EmptyDirs {
+		if rest, ok := strings.CutPrefix(e, prefix); ok {
+			name, _, _ := strings.Cut(rest, "/")
+			children[name] = dent{name: name, mode: modeDir}
+		}
+	}
+	if len(children) == 0 && !d.EmptyDirs[dir] {
 		return nil
 	}
 	names := make([]string, 0, len(children))
@@ -276,6 +286,11 @@ func (s *Server) serveSync(c net.Conn, d *Device) {
 		p := string(arg)
 		switch id {
 		case "LIST":
+			if d.ListErrno[p] != 0 {
+				// The v1 reproduction of the limitation: a bare DONE, no entry frame.
+				writeSync(c, "DONE", 0, 0, 0, 0)
+				continue
+			}
 			for _, e := range listDir(d, p) {
 				writeSync(c, "DENT", e.mode, uint32(e.size), uint32(e.mtime), uint32(len(e.name)))
 				_, _ = c.Write([]byte(e.name))
@@ -290,8 +305,14 @@ func (s *Server) serveSync(c net.Conn, d *Device) {
 				syncFail(c, "unknown sync id "+id)
 				return
 			}
+			if e := d.ListErrno[p]; e != 0 {
+				b := append([]byte("DONE"), make([]byte, dnt2Rest)...)
+				binary.LittleEndian.PutUint32(b[4:], e)
+				_, _ = c.Write(b)
+				continue
+			}
 			for _, e := range listDir(d, p) {
-				_, _ = c.Write(EncodeDNT2(0, e.mode, e.size, e.mtime, e.name))
+				_, _ = c.Write(EncodeDNT2(e.errno, e.mode, e.size, e.mtime, e.name))
 			}
 			for _, e := range d.ExtraDents[p] {
 				_, _ = c.Write(EncodeDNT2(0, e.Mode, e.Size, e.MTime, e.Name))
@@ -311,6 +332,8 @@ func (s *Server) serveSync(c net.Conn, d *Device) {
 				return
 			}
 			switch f, ok := d.Files[p]; {
+			case d.EntryErrno[p] != 0:
+				_, _ = c.Write(encodeSTA2(d.EntryErrno[p], 0, 0, 0))
 			case ok:
 				_, _ = c.Write(encodeSTA2(0, fileMode(f), sizeOf(f), f.MTime.Unix()))
 			case len(listDir(d, p)) > 0:

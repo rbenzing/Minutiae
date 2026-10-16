@@ -546,3 +546,23 @@ func (s *Sync) Close() error {
 	_ = s.request("QUIT", nil)
 	return s.c.Close()
 }
+
+// ErrListUnknown means a LIST returned no entry frame at all, not even "."
+// and "..": a directory that opened always lists those two, so this is an
+// unreadable directory or a cut listing, never an empty one.
+var ErrListUnknown = errors.New("adb sync: the listing has no entries, not even \".\" and \"..\": the directory could not be read (empty is not assumed)")
+
+// Err reports what the listing could not deliver: nil when it is complete as
+// far as the device says. An unreadable directory is never an empty one.
+func (r ListResult) Err(dir string) error {
+	switch {
+	case r.DirErrno != 0:
+		return fmt.Errorf("adb sync list %s: %w", dir, &ErrnoError{Errno: r.DirErrno})
+	case r.Raw == 0:
+		return fmt.Errorf("adb sync list %s: %w", dir, ErrListUnknown)
+	case len(r.EntryErrors) > 0:
+		first := r.EntryErrors[0]
+		return fmt.Errorf("adb sync list %s: %d entries could not be read, first %q: %w", dir, len(r.EntryErrors), first.Name, &ErrnoError{Errno: first.Errno})
+	}
+	return nil
+}
