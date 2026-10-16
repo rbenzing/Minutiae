@@ -30,6 +30,10 @@ const maxOutsideListed = 10_000
 // database input is known.
 var resolveHook func()
 
+// schemaReadHook is a test seam (export_test.go): the engine-refusal gate calls
+// it before reading the schema and takes its error as the read error.
+var schemaReadHook func() error
+
 const planNote = "assessment only: nothing was written"
 
 // pipeline is the work Run and Plan share: the inputs, the library handles and
@@ -229,12 +233,28 @@ func (p *pipeline) attach(ctx context.Context) error {
 	// Some reasons show only once the schema is read (a schema tree deeper than
 	// the engine follows, a row whose name disagrees with its statement, an
 	// index on no table). The header-only Info above misses them. A schema that
-	// cannot be read is not decided here: the stages that need it report it.
+	// cannot be read here is a refusal too (never a pass: Schema caches only
+	// successes, so a later read could succeed with the check skipped); only a
+	// cancelled context is reported as itself.
 	live := db.Live() // after the companions: the view the run reads
-	if _, err := live.Schema(ctx); err == nil {
-		if why := live.Info().EngineRefuses; len(why) > 0 {
-			return &RefusalError{Reason: ReasonEngineRefuses, Detail: strings.Join(why, "; "), Err: sqlitefile.ErrEngineRefuses}
+	var serr error
+	if schemaReadHook != nil {
+		serr = schemaReadHook()
+	}
+	if serr == nil {
+		_, serr = live.Schema(ctx)
+	}
+	if serr != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
 		}
+		if errors.Is(serr, sqlitefile.ErrLiveUnavailable) {
+			return &RefusalError{Reason: ReasonLiveUnavailable, Err: fmt.Errorf("%w: %w", ErrLiveUnavailable, serr)}
+		}
+		return &RefusalError{Reason: ReasonEngineRefuses, Detail: "the schema cannot be read: " + serr.Error(), Err: fmt.Errorf("%w: the schema cannot be read: %w", sqlitefile.ErrEngineRefuses, serr)}
+	}
+	if why := live.Info().EngineRefuses; len(why) > 0 {
+		return &RefusalError{Reason: ReasonEngineRefuses, Detail: strings.Join(why, "; "), Err: sqlitefile.ErrEngineRefuses}
 	}
 	return nil
 }

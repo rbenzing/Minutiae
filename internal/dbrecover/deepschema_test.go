@@ -1,8 +1,11 @@
 package dbrecover
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
+	"github.com/rbenzing/minutiae/internal/sqlitefile"
 	"strings"
 	"testing"
 
@@ -131,4 +134,41 @@ func TestSchemaDerivedEngineRefusalsRefuseRecovery(t *testing.T) {
 			noIngest(t, cs)
 		})
 	}
+}
+
+// TestOrphanIndexRefusesRecovery: an index naming no table is a schema-derived
+// engine refusal like the others (LX-4 U48). PASSES ON ARRIVAL: the gate of U43
+// already reads every schema-derived reason.
+func TestOrphanIndexRefusesRecovery(t *testing.T) {
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 1024})
+	b.CreateTable("t", "create table t(a)").Insert(1, "x")
+	b.CreateIndex("ix", "t", "create index ix on t(a)", 0)
+	data := bytes.Replace(b.Bytes(), []byte("indexixt"), []byte("indexixz"), 1)
+	cs := recordstest.NewCase(t)
+	db := addFile(t, cs, "/data/x.db", data)
+	_, err := Run(context.Background(), cs, Inputs{DB: db.ID}, Options{})
+	if got := refusalReason(err); got != ReasonEngineRefuses {
+		t.Fatalf("refusal reason %q (err %v), want %q", got, err, ReasonEngineRefuses)
+	}
+	noIngest(t, cs)
+}
+
+// TestUnreadableSchemaAtTheGateRefusesRecovery: a schema that cannot be read at
+// the gate is a typed refusal (engine-refuses, naming the read error), never a
+// pass: the read can succeed later, and the schema-derived reasons would then
+// never have been checked (LX-4 U47).
+func TestUnreadableSchemaAtTheGateRefusesRecovery(t *testing.T) {
+	defer SetSchemaReadHookForTest(func() error { return errors.New("injected schema read failure") })()
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 1024})
+	b.CreateTable("t", "create table t(a)").Insert(1, "x")
+	cs := recordstest.NewCase(t)
+	db := addFile(t, cs, "/data/x.db", b.Bytes())
+	_, err := Run(context.Background(), cs, Inputs{DB: db.ID}, Options{})
+	if got := refusalReason(err); got != ReasonEngineRefuses {
+		t.Fatalf("refusal reason %q (err %v), want %q", got, err, ReasonEngineRefuses)
+	}
+	if !errors.Is(err, sqlitefile.ErrEngineRefuses) || !strings.Contains(err.Error(), "injected schema read failure") {
+		t.Errorf("err %v", err)
+	}
+	noIngest(t, cs)
 }
