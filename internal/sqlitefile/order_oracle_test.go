@@ -257,6 +257,12 @@ func TestOrderValuesNaNMatchesEngine(t *testing.T) {
 // under each collation, in one engine self-join: equality and order agree with
 // OrderValues (U57). The alphabet puts NULs at every position and length.
 func TestOrderValuesEmbeddedNULExhaustiveMatchesEngine(t *testing.T) {
+	// The same alphabet in UTF-16le (U59); 1.5 s, so it runs under -short too.
+	t.Run("UTF-8", func(t *testing.T) { exhaustiveNUL(t, "", sqlitefile.EncUTF8) })
+	t.Run("UTF-16le", func(t *testing.T) { exhaustiveNUL(t, "UTF-16le", sqlitefile.EncUTF16LE) })
+}
+
+func exhaustiveNUL(t *testing.T, pragma string, enc sqlitefile.Encoding) {
 	alphabet := []string{"a", "A", "b", "\x00", " "}
 	texts := []string{""}
 	for level := texts; len(texts[len(texts)-1]) < 4; {
@@ -269,7 +275,7 @@ func TestOrderValuesEmbeddedNULExhaustiveMatchesEngine(t *testing.T) {
 		texts = append(texts, next...)
 		level = next
 	}
-	db := engineOrderDB(t, "")
+	db := engineOrderDB(t, pragma)
 	if _, err := db.Exec("create table t(id integer primary key, v)"); err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +311,7 @@ func TestOrderValuesEmbeddedNULExhaustiveMatchesEngine(t *testing.T) {
 		bad := 0
 		for i, a := range texts {
 			for j, b := range texts {
-				c, st := sqlitefile.OrderValues(evText(a), evText(b), coll)
+				c, st := sqlitefile.OrderValues(orderText(enc, a), orderText(enc, b), coll)
 				want := 0
 				switch {
 				case lt[[2]int{i, j}]:
