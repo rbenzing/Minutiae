@@ -24,6 +24,7 @@ type scriptedAFC struct {
 	sizes  map[string]int64
 	names  []string          // List returns these when set
 	other  map[string]string // path -> unsupported st_ifmt
+	forced *ios.FileStat     // Stat returns this for every path when set
 	stats  []string          // every path Stat was called with
 	opened []string          // every path Open was called with
 	block  bool
@@ -48,6 +49,9 @@ func (a *scriptedAFC) List(string) ([]string, error) {
 
 func (a *scriptedAFC) Stat(p string) (ios.FileStat, error) {
 	a.stats = append(a.stats, p)
+	if a.forced != nil {
+		return *a.forced, nil
+	}
 	if o, ok := a.other[p]; ok {
 		return ios.FileStat{Size: int64(len(a.files[p])), Type: o, Unsupported: true}, nil
 	}
@@ -56,9 +60,9 @@ func (a *scriptedAFC) Stat(p string) (ios.FileStat, error) {
 		return ios.FileStat{}, fs.ErrNotExist
 	}
 	if n, ok := a.sizes[p]; ok {
-		return ios.FileStat{Size: n}, nil
+		return ios.FileStat{Size: n, IsRegular: true}, nil
 	}
-	return ios.FileStat{Size: int64(len(d))}, nil
+	return ios.FileStat{Size: int64(len(d)), IsRegular: true}, nil
 }
 
 func (a *scriptedAFC) Open(p string) (io.ReadCloser, error) {
@@ -173,8 +177,10 @@ func (zeroReader) Read(p []byte) (int, error) { clear(p); return len(p), nil }
 // endlessAFC claims a 10-byte file and streams zeros forever.
 type endlessAFC struct{}
 
-func (endlessAFC) List(string) ([]string, error)      { return nil, nil }
-func (endlessAFC) Stat(string) (ios.FileStat, error)  { return ios.FileStat{Size: 10}, nil }
+func (endlessAFC) List(string) ([]string, error) { return nil, nil }
+func (endlessAFC) Stat(string) (ios.FileStat, error) {
+	return ios.FileStat{Size: 10, IsRegular: true}, nil
+}
 func (endlessAFC) Open(string) (io.ReadCloser, error) { return io.NopCloser(zeroReader{}), nil }
 func (endlessAFC) Close() error                       { return nil }
 
@@ -216,7 +222,9 @@ func TestPullStopsAnEndlessStreamAtTheDeclaredSize(t *testing.T) {
 // and end the pull before the first byte.
 type hugeAFC struct{ endlessAFC }
 
-func (hugeAFC) Stat(string) (ios.FileStat, error) { return ios.FileStat{Size: math.MaxInt64}, nil }
+func (hugeAFC) Stat(string) (ios.FileStat, error) {
+	return ios.FileStat{Size: math.MaxInt64, IsRegular: true}, nil
+}
 
 type hugeBackend struct{ *iostest.Backend }
 
@@ -327,5 +335,65 @@ func TestPullRecordsTheRawDevicePathAndSanitisesTheHostPath(t *testing.T) {
 		if r < 0x20 || r == 0x7f || r == ':' {
 			t.Errorf("host path %q holds %q", rec.Path, r)
 		}
+	}
+}
+
+// W60/W62: pull reads an entry only when the device positively reported a
+// regular file; directories, links, unknown types and a Backend that sets no
+// type at all are refused before Open, and the artifact is an empty incomplete
+// record with the cause.
+func TestPullRefusesWhatIsNotPositivelyARegularFile(t *testing.T) {
+	cases := map[string]ios.FileStat{
+		"directory": {IsDir: true, Type: "S_IFDIR"},
+		"link":      {IsLink: true, Size: 4, Type: "S_IFLNK"},
+		"unknown":   {Size: 4, Type: "S_IFSOCK", Unsupported: true},
+		"default":   {Size: 4},
+	}
+	for name, st := range cases {
+		t.Run(name, func(t *testing.T) {
+			a := newScriptedAFC()
+			a.files["/x"] = []byte("data")
+			a.forced = &st
+			c := newCase(t)
+			rec, err := device.PullToCase(context.Background(), c, afcDevice(t, a), "U1", "acq", "/x")
+			if !errors.Is(err, device.ErrUnsupported) {
+				t.Fatalf("err = %v, want device.ErrUnsupported", err)
+			}
+			if st.Type != "" && !strings.Contains(err.Error(), st.Type) {
+				t.Errorf("err %q does not name the type %q", err, st.Type)
+			}
+			if !rec.Incomplete || rec.Size != 0 || rec.Error == "" {
+				t.Errorf("record = %+v", rec)
+			}
+			if len(a.opened) != 0 {
+				t.Errorf("Open called for %v", a.opened)
+			}
+		})
+	}
+}
+
+func TestListRefusesAnEmptyDirectoryPath(t *testing.T) {
+	a := newScriptedAFC()
+	a.names = []string{".", "..", "n"}
+	a.files["/n"] = []byte("x")
+	es, err := afcDevice(t, a).List(context.Background(), "")
+	if !errors.Is(err, ios.ErrEmptyPath) || len(es) != 0 {
+		t.Fatalf("List = %v, %v; want ErrEmptyPath and no entry", es, err)
+	}
+	if len(a.stats) != 0 {
+		t.Fatalf("Stat called for %v", a.stats)
+	}
+}
+
+func TestPullOfADotDotPathIsRefusedWithoutAnArtifact(t *testing.T) {
+	a := newScriptedAFC()
+	a.files["/DCIM/../x"] = []byte("x")
+	c := newCase(t)
+	rec, err := device.PullToCase(context.Background(), c, afcDevice(t, a), "U1", "acq", "/DCIM/../x")
+	if err == nil || rec.ID != "" {
+		t.Fatalf("rec = %+v, err = %v; want a refusal and no artifact", rec, err)
+	}
+	if len(a.stats) != 0 || len(a.opened) != 0 {
+		t.Fatalf("the device was asked: stat %v open %v", a.stats, a.opened)
 	}
 }

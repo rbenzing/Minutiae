@@ -38,17 +38,47 @@ func (GoIOS) Values(_ context.Context, udid string) (vals map[string]any, err er
 	return goiosValues(d)
 }
 
-func (GoIOS) OpenAFC(_ context.Context, udid string) (a AFC, err error) {
+func (GoIOS) OpenAFC(ctx context.Context, udid string) (a AFC, err error) {
 	defer recovered("afc start service", &err)
-	d, err := entry(udid)
-	if err != nil {
-		return nil, err
+	type result struct {
+		rw  io.ReadWriteCloser
+		err error
 	}
-	rw, err := goiosConnect(d, afcService)
-	if err != nil {
-		return nil, fmt.Errorf("error connecting to service %q: %w", afcService, err)
+	// The device lookup and the service start (lockdown, StartService) are
+	// go-ios calls with no deadline or cancel. They run in a guarded goroutine
+	// so a cancelled context returns at once; the buffered channel lets the
+	// goroutine finish, and a connection that arrives late is closed.
+	ch := make(chan result, 1)
+	go func() {
+		var r result
+		defer func() { ch <- r }()
+		defer recovered("afc start service", &r.err)
+		d, err := entry(udid)
+		if err != nil {
+			r.err = err
+			return
+		}
+		rw, err := goiosConnect(d, afcService)
+		if err != nil {
+			r.err = fmt.Errorf("error connecting to service %q: %w", afcService, err)
+			return
+		}
+		r.rw = rw
+	}()
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			return nil, r.err
+		}
+		return afcAdapter{c: afc.New(r.rw)}, nil
+	case <-ctx.Done():
+		go func() {
+			if r := <-ch; r.rw != nil {
+				_ = r.rw.Close()
+			}
+		}()
+		return nil, ctx.Err()
 	}
-	return afcAdapter{c: afc.New(rw)}, nil
 }
 
 func (GoIOS) OpenBackup(_ context.Context, udid string) (rw io.ReadWriteCloser, err error) {
@@ -95,7 +125,7 @@ func (a afcAdapter) Stat(p string) (st FileStat, err error) {
 	if err != nil {
 		return FileStat{}, err
 	}
-	out := FileStat{Size: s.Size, IsDir: s.IsDir, IsLink: s.IsLink, Type: s.Type}
+	out := FileStat{Size: s.Size, IsDir: s.IsDir, IsLink: s.IsLink, Type: s.Type, IsRegular: s.IsRegular()}
 	out.Unsupported = !s.IsRegular() && !s.IsDir && !s.IsLink
 	return out, nil
 }

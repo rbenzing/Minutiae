@@ -240,3 +240,74 @@ func TestStatReportsAnUnknownFileTypeAsUnsupported(t *testing.T) {
 		}
 	}
 }
+
+// W60: over the real client a directory and a link are never opened.
+func TestPullOfADirectoryOrLinkSendsNoOpen(t *testing.T) {
+	for _, ifmt := range []string{"S_IFDIR", "S_IFLNK"} {
+		srv := statServer(ifmt)
+		d := goiosDevice(t, srv)
+		if _, err := d.Pull(context.Background(), "/x", io.Discard); !errors.Is(err, device.ErrUnsupported) || !strings.Contains(err.Error(), ifmt) {
+			t.Fatalf("%s: err = %v", ifmt, err)
+		}
+		for _, op := range srv.Ops() {
+			if op == 0x0D || op == 0x0F {
+				t.Fatalf("%s: operation 0x%02x was sent", ifmt, op)
+			}
+		}
+	}
+}
+
+// trackedConn records Close.
+type trackedConn struct {
+	io.ReadWriteCloser
+	closed chan struct{}
+}
+
+func (c trackedConn) Close() error { close(c.closed); return nil }
+
+// W59: the service connection (lockdown + StartService, which go-ios cannot
+// cancel) runs in a guarded goroutine; a cancelled context returns at once and
+// a connection that arrives late is closed, never leaked.
+func TestOpenAFCReturnsOnCancelAndClosesALateConnection(t *testing.T) {
+	dualHomedU1(t)
+	restoreSeams(t)
+	release := make(chan struct{})
+	entered := make(chan struct{})
+	conn := trackedConn{ReadWriteCloser: afctest.Pipe(&afctest.Server{}), closed: make(chan struct{})}
+	goiosConnect = func(goios.DeviceEntry, string) (io.ReadWriteCloser, error) {
+		close(entered)
+		<-release
+		return conn, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { _, err := (GoIOS{}).OpenAFC(ctx, "U1"); done <- err }()
+	<-entered
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v, want context.Canceled", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("OpenAFC stayed blocked in the connect after the context was cancelled")
+	}
+	close(release)
+	select {
+	case <-conn.closed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the late connection was not closed")
+	}
+}
+
+// A panic in the connect goroutine is still returned as an error.
+func TestOpenAFCPanicInTheConnectGoroutineIsAnError(t *testing.T) {
+	dualHomedU1(t)
+	restoreSeams(t)
+	goiosConnect = func(goios.DeviceEntry, string) (io.ReadWriteCloser, error) { panic("hostile StartService plist") }
+	a, err := (GoIOS{}).OpenAFC(context.Background(), "U1")
+	if a != nil {
+		t.Fatalf("OpenAFC returned %v", a)
+	}
+	wantRecoveredPanic(t, "OpenAFC", err)
+}

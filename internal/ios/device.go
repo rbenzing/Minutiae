@@ -107,6 +107,9 @@ func ctxErr(ctx context.Context, err error) error {
 
 // List lists an AFC (media domain) directory.
 func (d *Device) List(ctx context.Context, dir string) ([]device.FileEntry, error) {
+	if dir == "" {
+		return nil, ErrEmptyPath
+	}
 	a, done, err := d.openAFC(ctx)
 	if err != nil {
 		return nil, err
@@ -165,8 +168,10 @@ func (d *Device) Pull(ctx context.Context, remotePath string, w io.Writer) (int6
 	if err != nil {
 		return 0, ctxErr(ctx, err)
 	}
-	if st.Unsupported {
-		// Reading it as a regular file would invent content; the caller flags the artifact incomplete.
+	if !st.IsRegular {
+		// Only a positively reported regular file is read: a directory, a link
+		// (open follows it), an unknown type or a missing type would file
+		// invented or foreign bytes. The caller flags the artifact incomplete.
 		return 0, fmt.Errorf("afc pull %s: %w: file type %q", remotePath, device.ErrUnsupported, st.Type)
 	}
 	f, err := a.Open(remotePath)

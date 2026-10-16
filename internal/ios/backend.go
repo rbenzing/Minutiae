@@ -3,6 +3,7 @@ package ios
 
 import (
 	"context"
+	"errors"
 	"io"
 )
 
@@ -21,6 +22,9 @@ type FileStat struct {
 	// that does not report one). Unsupported is true when the device gave a
 	// type that is none of a regular file, a directory or a link: such an
 	// entry is listed as irregular and never pulled.
+	// IsRegular is true only when the device positively reported a regular
+	// file; Pull reads nothing else, so a Backend that leaves it unset is refused.
+	IsRegular   bool
 	Type        string
 	Unsupported bool
 }
@@ -41,3 +45,6 @@ type Backend interface {
 	OpenAFC(ctx context.Context, udid string) (AFC, error)
 	OpenBackup(ctx context.Context, udid string) (io.ReadWriteCloser, error)
 }
+
+// ErrEmptyPath means a listing was asked for the empty path.
+var ErrEmptyPath = errors.New("ios: empty remote path")
