@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rbenzing/minutiae/internal/android"
 	"github.com/rbenzing/minutiae/internal/android/adb"
@@ -221,5 +222,17 @@ func TestAndroidImageResolveFailureIsAudited(t *testing.T) {
 	}
 	if failed == nil || failed["acquisition_id"] != start["acquisition_id"] || !strings.Contains(fmt.Sprint(failed["error"]), "root") {
 		t.Fatalf("acquire.error = %v", failed)
+	}
+}
+
+// W70: an unknown modification time prints as "unknown", never as a zero date.
+func TestAndroidLsPrintsUnknownForAnUnknownMTime(t *testing.T) {
+	dev := cliPixel()
+	dev.Files["/sdcard/old.txt"] = adbtest.File{Data: []byte("x"), MTime: time.Date(1960, 1, 1, 0, 0, 0, 0, time.UTC)}
+	dev.Files["/sdcard/a.txt"] = adbtest.File{Data: []byte("x"), MTime: time.Date(2023, 11, 14, 22, 13, 20, 0, time.UTC)}
+	d, _ := androidDeps(t, dev)
+	code, out := run(t, d, "android", "ls", "/sdcard")
+	if code != 0 || strings.Contains(out, "0001-01-01") || !strings.Contains(out, " unknown old.txt\n") || !strings.Contains(out, " 2023-11-14 22:13:20 a.txt\n") {
+		t.Fatalf("ls: %d %q", code, out)
 	}
 }
