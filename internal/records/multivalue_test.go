@@ -81,10 +81,17 @@ func TestMultiValueListEqualsOracle(t *testing.T) {
 	}
 	for _, untimed := range []bool{false, true} {
 		win := window(untimed)
-		cases = append(cases, oracleCase{fmt.Sprintf("types in a window, untimed=%v", untimed), records.Filter{Types: types, From: &from, To: &to, IncludeUntimed: untimed},
-			func(x records.Row) bool { return in(types, x.Type) && win(x) }})
-		cases = append(cases, oracleCase{fmt.Sprintf("artifacts in a window, untimed=%v", untimed), records.Filter{ArtifactIDs: art[:], From: &from, To: &to, IncludeUntimed: untimed},
-			func(x records.Row) bool { return in(art[:], x.ArtifactID) && win(x) }})
+		cases = append(cases,
+			oracleCase{
+				name: fmt.Sprintf("types in a window, untimed=%v", untimed),
+				f:    records.Filter{Types: types, From: &from, To: &to, IncludeUntimed: untimed},
+				keep: func(x records.Row) bool { return in(types, x.Type) && win(x) },
+			},
+			oracleCase{
+				name: fmt.Sprintf("artifacts in a window, untimed=%v", untimed),
+				f:    records.Filter{ArtifactIDs: art[:], From: &from, To: &to, IncludeUntimed: untimed},
+				keep: func(x records.Row) bool { return in(art[:], x.ArtifactID) && win(x) },
+			})
 	}
 	for _, tc := range cases {
 		var want []records.Row
