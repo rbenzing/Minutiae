@@ -238,7 +238,7 @@ func (st *scaleState) ingest(batchRows int) {
 	st.c = c
 	st.ids = recordstest.AddScaleArtifacts(t, c, 40)
 	st.gen = recordstest.NewScale(recordstest.ScaleConfig{Seed: 5, Artifacts: st.ids})
-	w, err := records.NewWriter(c, records.Parser{Name: "scale-parser", Version: "1"}, records.WriterOptions{BatchRows: batchRows})
+	w, err := records.NewWriter(c, records.Parser{Name: "scale-parser", Version: "1"}, records.WriterOptions{BatchRows: batchRows, RelaxedSync: os.Getenv("MINUTIAE_SCALE_RELAXED_SYNC") == "1"})
 	if err != nil {
 		t.Fatal(err)
 	}
