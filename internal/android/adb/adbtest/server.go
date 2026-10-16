@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,9 +17,10 @@ import (
 
 // File is a file on a fake device.
 type File struct {
-	Data  []byte
-	Mode  uint32 // full st_mode; 0 means regular file 0644
-	MTime time.Time
+	Data       []byte
+	Mode       uint32 // full st_mode; 0 means regular file 0644
+	MTime      time.Time
+	ListedSize uint64 // size LIST/STAT report when non-zero (data may be smaller)
 }
 
 // Device is a fake device.
@@ -32,12 +34,15 @@ type Device struct {
 	ExtraDents map[string][]Dent           // raw entries appended to LIST of a directory (hostile listings)
 	NoExec     bool                        // exec: is rejected with FAIL "closed" (old adbd); shell: still works
 	AfterChunk func(path string, sent int) // called after each RECV DATA chunk is written (tests use it to stall a transfer)
+	Features   []string                    // advertised by host-serial:<serial>:features; nil = DefaultFeatures, empty non-nil = a legacy device
 }
 
 // Dent is a raw LIST entry, sent as-is (no validation of the name).
 type Dent struct {
-	Name              string
-	Mode, Size, MTime uint32
+	Name  string
+	Mode  uint32
+	Size  uint64
+	MTime int64
 }
 
 // Server is a fake ADB server on 127.0.0.1.
@@ -137,6 +142,16 @@ func (s *Server) handle(c net.Conn) {
 			}
 			lenString(c, b.String())
 			return
+		case strings.HasPrefix(req, "host-serial:") && strings.HasSuffix(req, ":features"):
+			serial := strings.TrimSuffix(strings.TrimPrefix(req, "host-serial:"), ":features")
+			d := s.find(serial)
+			if d == nil {
+				fail(c, "device '"+serial+"' not found")
+				return
+			}
+			okay(c)
+			lenString(c, strings.Join(d.advertised(), ","))
+			return
 		case strings.HasPrefix(req, "host:transport:"):
 			serial := strings.TrimPrefix(req, "host:transport:")
 			dev = s.find(serial)
@@ -213,8 +228,10 @@ func fileMode(f File) uint32 {
 }
 
 type dent struct {
-	name              string
-	mode, size, mtime uint32
+	name  string
+	mode  uint32
+	size  uint64
+	mtime int64
 }
 
 func listDir(d *Device, dir string) []dent {
@@ -228,7 +245,7 @@ func listDir(d *Device, dir string) []dent {
 		if i := strings.IndexByte(rest, '/'); i >= 0 {
 			children[rest[:i]] = dent{name: rest[:i], mode: modeDir}
 		} else {
-			children[rest] = dent{name: rest, mode: fileMode(f), size: uint32(len(f.Data)), mtime: uint32(f.MTime.Unix())}
+			children[rest] = dent{name: rest, mode: fileMode(f), size: sizeOf(f), mtime: f.MTime.Unix()}
 		}
 	}
 	if len(children) == 0 {
@@ -260,21 +277,46 @@ func (s *Server) serveSync(c net.Conn, d *Device) {
 		switch id {
 		case "LIST":
 			for _, e := range listDir(d, p) {
-				writeSync(c, "DENT", e.mode, e.size, e.mtime, uint32(len(e.name)))
+				writeSync(c, "DENT", e.mode, uint32(e.size), uint32(e.mtime), uint32(len(e.name)))
 				_, _ = c.Write([]byte(e.name))
 			}
 			for _, e := range d.ExtraDents[p] {
-				writeSync(c, "DENT", e.Mode, e.Size, e.MTime, uint32(len(e.Name)))
+				writeSync(c, "DENT", e.Mode, uint32(e.Size), uint32(e.MTime), uint32(len(e.Name)))
 				_, _ = c.Write([]byte(e.Name))
 			}
 			writeSync(c, "DONE", 0, 0, 0, 0)
+		case "LIS2":
+			if !d.has("ls_v2") {
+				syncFail(c, "unknown sync id "+id)
+				return
+			}
+			for _, e := range listDir(d, p) {
+				_, _ = c.Write(EncodeDNT2(0, e.mode, e.size, e.mtime, e.name))
+			}
+			for _, e := range d.ExtraDents[p] {
+				_, _ = c.Write(EncodeDNT2(0, e.Mode, e.Size, e.MTime, e.Name))
+			}
+			_, _ = c.Write(append([]byte("DONE"), make([]byte, dnt2Rest)...))
 		case "STAT":
 			if f, ok := d.Files[p]; ok {
-				writeSync(c, "STAT", fileMode(f), uint32(len(f.Data)), uint32(f.MTime.Unix()))
+				writeSync(c, "STAT", fileMode(f), uint32(sizeOf(f)), uint32(f.MTime.Unix()))
 			} else if len(listDir(d, p)) > 0 {
 				writeSync(c, "STAT", modeDir, 0, 0)
 			} else {
 				writeSync(c, "STAT", 0, 0, 0)
+			}
+		case "STA2":
+			if !d.has("stat_v2") {
+				syncFail(c, "unknown sync id "+id)
+				return
+			}
+			switch f, ok := d.Files[p]; {
+			case ok:
+				_, _ = c.Write(encodeSTA2(0, fileMode(f), sizeOf(f), f.MTime.Unix()))
+			case len(listDir(d, p)) > 0:
+				_, _ = c.Write(encodeSTA2(0, modeDir, 0, 0))
+			default:
+				_, _ = c.Write(encodeSTA2(2, 0, 0, 0)) // ENOENT
 			}
 		case "RECV":
 			if d.Unreadable[p] {
@@ -331,4 +373,52 @@ func (s *Server) serveSync(c net.Conn, d *Device) {
 			return
 		}
 	}
+}
+
+// DefaultFeatures is what a modern device advertises when Device.Features is nil.
+var DefaultFeatures = []string{"shell_v2", "cmd", "stat_v2", "ls_v2"}
+
+func sizeOf(f File) uint64 {
+	if f.ListedSize != 0 {
+		return f.ListedSize
+	}
+	return uint64(len(f.Data))
+}
+
+func (d *Device) advertised() []string {
+	if d.Features == nil {
+		return DefaultFeatures
+	}
+	return d.Features
+}
+
+func (d *Device) has(feature string) bool {
+	return slices.Contains(d.advertised(), feature)
+}
+
+const dnt2Rest = 72 // bytes after the id of a DNT2 or DONE frame
+
+func appendV2Fields(b []byte, errno, mode uint32, size uint64, mtime int64) []byte {
+	b = binary.LittleEndian.AppendUint32(b, errno)
+	b = binary.LittleEndian.AppendUint64(b, 0) // dev
+	b = binary.LittleEndian.AppendUint64(b, 0) // ino
+	b = binary.LittleEndian.AppendUint32(b, mode)
+	b = binary.LittleEndian.AppendUint32(b, 1) // nlink
+	b = binary.LittleEndian.AppendUint32(b, 0) // uid
+	b = binary.LittleEndian.AppendUint32(b, 0) // gid
+	b = binary.LittleEndian.AppendUint64(b, size)
+	b = binary.LittleEndian.AppendUint64(b, uint64(mtime))    // atime
+	b = binary.LittleEndian.AppendUint64(b, uint64(mtime))    // mtime
+	return binary.LittleEndian.AppendUint64(b, uint64(mtime)) // ctime
+}
+
+// EncodeDNT2 is one sync v2 directory entry frame.
+func EncodeDNT2(errno, mode uint32, size uint64, mtime int64, name string) []byte {
+	b := appendV2Fields([]byte("DNT2"), errno, mode, size, mtime)
+	b = binary.LittleEndian.AppendUint32(b, uint32(len(name)))
+	return append(b, name...)
+}
+
+func encodeSTA2(errno, mode uint32, size uint64, mtime int64) []byte {
+	return appendV2Fields([]byte("STA2"), errno, mode, size, mtime)
 }

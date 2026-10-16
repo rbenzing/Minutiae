@@ -145,7 +145,7 @@ func (d *Device) List(ctx context.Context, dir string) ([]device.FileEntry, erro
 	out := make([]device.FileEntry, 0, len(es))
 	for _, e := range es {
 		out = append(out, device.FileEntry{
-			Name: e.Name, Path: path.Join(dir, e.Name), Size: int64(e.Size),
+			Name: e.Name, Path: path.Join(dir, e.Name), Size: e.Size,
 			Mode: toFileMode(e.Mode), ModTime: e.MTime, IsDir: e.IsDir(),
 		})
 	}

@@ -260,7 +260,7 @@ func (w *walker) pull(p, localDir string, e adb.SyncEntry) error {
 	w.pulled[p] = true
 	src := evidence.Source{
 		Kind: "file", DeviceID: w.d.serial, RemotePath: p,
-		RemoteMode: e.Mode, RemoteMTime: e.MTime.UTC().Format(time.RFC3339), RemoteSize: int64(e.Size),
+		RemoteMode: e.Mode, RemoteMTime: e.MTime.UTC().Format(time.RFC3339), RemoteSize: e.Size,
 	}
 	var rec evidence.ManifestRecord
 	var err error
