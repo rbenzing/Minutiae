@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
@@ -117,20 +118,22 @@ func newLsCmd(d Deps, opts *rootOptions, kind device.Kind, flag string) *cobra.C
 			return err
 		}
 		es, err := t.List(cmd.Context(), args[0])
-		if err != nil {
+		// A partial listing prints what was readable and still fails; any other
+		// error prints nothing: an unreadable directory is never an empty one.
+		if err != nil && !(errors.Is(err, device.ErrPartialListing) && len(es) > 0) {
 			return err
 		}
+		listErr := err
 		if opts.json {
-			return writeJSON(d.Out, es)
+			if err := writeJSON(d.Out, es); err != nil {
+				return err
+			}
+			return listErr
 		}
 		for _, e := range es {
-			mtime := "unknown" // the zero time is how a listing says it has no time
-			if !e.ModTime.IsZero() {
-				mtime = e.ModTime.Format("2006-01-02 15:04:05")
-			}
-			fmt.Fprintf(d.Out, "%s %12d %s %s\n", e.Mode, e.Size, mtime, displayName(e.Name))
+			fmt.Fprintf(d.Out, "%s %12d %s %s\n", e.Mode, e.Size, formatModTime(e.ModTime), displayName(e.Name))
 		}
-		return nil
+		return listErr
 	}
 	return cmd
 }
@@ -240,4 +243,14 @@ func newLogicalCmd(d Deps, _ *rootOptions, kind device.Kind, flag, use, short st
 		return nil
 	}
 	return cmd
+}
+
+// formatModTime prints a modification time. The zero time is how a listing says
+// it has none (an Android sync time the device did not give, an iOS entry
+// without one): the shared ls prints "unknown" for both, never 0001-01-01.
+func formatModTime(t time.Time) string {
+	if t.IsZero() {
+		return "unknown"
+	}
+	return t.Format("2006-01-02 15:04:05")
 }

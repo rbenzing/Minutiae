@@ -111,9 +111,7 @@ func TestListLeavesAnUnknownMTimeZero(t *testing.T) {
 }
 
 // W71: a v2 listing aborted by an oversized entry (a size above int64) is not
-// a complete directory: the acquisition fails and writes no completed-stats record.
-// (Passed on arrival: the walker already returns the protocol error; Task 12 adds
-// the typed list warnings.)
+// a complete directory: the acquisition fails and writes stats flagged incomplete (W73).
 func TestListAbortedByAnOversizedEntryIsNotACompleteDirectory(t *testing.T) {
 	dev := hugeFiles(nil, knownTime)
 	dev.ExtraDents = map[string][]adbtest.Dent{"/sdcard": {{Name: "evil", Mode: 0o100644, Size: 1 << 63}}}
@@ -123,7 +121,8 @@ func TestListAbortedByAnOversizedEntryIsNotACompleteDirectory(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "protocol") {
 		t.Fatalf("err = %v, want a protocol error", err)
 	}
-	if n := len(auditActions(t, c, "acquire.stats")); n != 0 {
-		t.Fatalf("acquire.stats written for a failed listing: %d", n)
+	// W73: a failed walk still writes stats, flagged incomplete.
+	if st := auditActions(t, c, "acquire.stats"); len(st) != 1 || st[0].Details["incomplete"] != true {
+		t.Fatalf("a failed listing must write incomplete stats, got %+v", st)
 	}
 }
