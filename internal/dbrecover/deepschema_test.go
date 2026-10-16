@@ -5,11 +5,11 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"github.com/rbenzing/minutiae/internal/sqlitefile"
 	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/records/recordstest"
+	"github.com/rbenzing/minutiae/internal/sqlitefile"
 	"github.com/rbenzing/minutiae/internal/sqlitefile/sqlitetest"
 )
 
