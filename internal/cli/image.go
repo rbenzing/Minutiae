@@ -570,9 +570,7 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 					fmt.Fprintf(d.Err, "warning: %s: %s\n", escapeText(p), escapeText(werr.Error()))
 					// Only a listing that failed or was cut sets the exit code. The walker's own findings (a
 					// cycle, too deep, too long) are warned about as before and keep the exit code.
-					var ce *filesys.CorruptError
-					walkerFinding := errors.As(werr, &ce) && ce.Structure == "directory tree" && ce.Offset == -1
-					if firstCut == nil && !walkerFinding {
+					if firstCut == nil && !filesys.IsWalkFinding(werr) {
 						firstCut = werr
 					}
 					return nil
@@ -658,7 +656,7 @@ func newImageStatCmd(d Deps, opts *rootOptions) *cobra.Command {
 		e, p := m.Entry, m.Path
 		warnings := newFSWarnings(fsys, known)
 		if m.Incomplete != nil {
-			warnings = append(warnings, "warning: "+m.Incomplete.Error())
+			warnings = append(warnings, m.Incomplete.Error())
 		}
 		if opts.json {
 			return writeJSON(d.Out, jsonStat{pathEntry: newPathEntry(p, e), Warnings: warnings})
@@ -830,6 +828,7 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 		fmt.Fprintf(d.Out, "extracted %d files (%s), skipped %d\n", sum.Files, humanBytes(sum.Bytes), sum.Skipped)
 		printSkipReasons(d.Out, sum)
 		printFSWarnings(d.Out, sum)
+		printIncompleteIDs(d.Out, sum.IncompleteIDs)
 		printIncomplete(d.Out, sum)
 		if note != "" {
 			fmt.Fprintln(d.Out, note)

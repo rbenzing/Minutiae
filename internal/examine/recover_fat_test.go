@@ -252,9 +252,22 @@ func warningNaming(t *testing.T, s *examine.Session, id string) bool {
 	return false
 }
 
+// warningReason is the reason of the analysis.warning whose id detail is id ("" when there is none).
+func warningReason(t *testing.T, s *examine.Session, id string) string {
+	t.Helper()
+	for _, a := range auditByAction(t, s.Case, "analysis.warning") {
+		if got, _ := a.Details["id"].(string); got == id {
+			r, _ := a.Details["reason"].(string)
+			return r
+		}
+	}
+	return ""
+}
+
 func TestRecoverFATCorruptMapIsSkippedWithReason(t *testing.T) {
-	// 0xFFF0 lies past the last cluster; 1 is a reserved FAT index below the first data cluster.
-	for _, first := range []uint32{0xFFF0, 1} {
+	// 0xFFF0 lies past the last cluster; 1 is a reserved FAT index below the first data cluster. 0 is "no
+	// cluster" on an entry that claims a size.
+	for _, first := range []uint32{0xFFF0, 1, 0} {
 		t.Run(fmt.Sprintf("first-cluster-%#x", first), func(t *testing.T) {
 			img, b := fattest.BuildLayout(fattest.Options{Type: 16}, []fattest.File{{Path: "/GONE.BIN", Data: pattern(3*blk, 11), Deleted: true}})
 			loc := b.Find("/GONE.BIN", true)
@@ -265,8 +278,9 @@ func TestRecoverFATCorruptMapIsSkippedWithReason(t *testing.T) {
 			if sum.SkippedBy["corrupt"] != 1 || len(sum.Artifacts) != 0 {
 				t.Fatalf("SkippedBy %v, %d artifacts", sum.SkippedBy, len(sum.Artifacts))
 			}
-			if !warningNaming(t, s, fatID(loc)) {
-				t.Errorf("no analysis.warning names %s", fatID(loc))
+			reason := warningReason(t, s, fatID(loc))
+			if !strings.HasPrefix(reason, "corrupt") || !strings.Contains(reason, "first cluster") {
+				t.Errorf("warning reason for %s is %q; want a corrupt skip naming the first cluster", fatID(loc), reason)
 			}
 			verifyOK(t, s.Case)
 		})

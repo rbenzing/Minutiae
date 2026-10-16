@@ -165,3 +165,93 @@ func TestRecoverIDSearchCompleteHasNoIncompleteIDs(t *testing.T) {
 		t.Fatalf("Recover = %+v, %v", sum, err)
 	}
 }
+
+// incompleteWarnings returns the analysis.warning entries of the id-search-incomplete code for id.
+func incompleteWarnings(t *testing.T, e *recEnv, id string) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, a := range auditByAction(t, e.c, "analysis.warning") {
+		if code, _ := a.Details["code"].(string); code == "id-search-incomplete" && a.Details["id"] == id {
+			out = append(out, a.Details)
+		}
+	}
+	return out
+}
+
+// F93: one incomplete id is reported once however often it is named: one IncompleteIDs item and ONE
+// analysis.warning.
+func TestRecoverIDSearchRepeatedRefsReportOnceAndAuditOnce(t *testing.T) {
+	e := cutDirEnv(t)
+	id := idOf2(t, e, "/a.bin")
+	opts := examine.RecoverOptions{Partition: -1, Refs: []string{"id:" + id, "id:" + id}}
+	plan, err := e.s.PlanRecovery(context.Background(), opts)
+	if err != nil || len(plan.IncompleteIDs) != 1 {
+		t.Fatalf("PlanRecovery = %+v, %v; want ONE incomplete id", plan.IncompleteIDs, err)
+	}
+	sum, err := e.s.Recover(context.Background(), opts)
+	if err != nil || len(sum.IncompleteIDs) != 1 {
+		t.Fatalf("Recover = %+v, %v; want ONE incomplete id", sum.IncompleteIDs, err)
+	}
+	ws := incompleteWarnings(t, e, id)
+	if len(ws) != 1 {
+		t.Fatalf("%d id-search-incomplete warnings for %s, want exactly 1", len(ws), id)
+	}
+	if ws[0]["analysis_id"] != sum.AnalysisID {
+		t.Errorf("warning analysis_id %v, want %s", ws[0]["analysis_id"], sum.AnalysisID)
+	}
+}
+
+// F93: a single ref gives exactly one warning too (the count, not just the presence).
+func TestRecoverIDSearchSingleRefAuditsExactlyOnce(t *testing.T) {
+	e := cutDirEnv(t)
+	id := idOf2(t, e, "/a.bin")
+	if _, err := e.s.Recover(context.Background(), examine.RecoverOptions{Partition: -1, Refs: []string{"id:" + id}}); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(incompleteWarnings(t, e, id)); n != 1 {
+		t.Errorf("%d id-search-incomplete warnings, want exactly 1", n)
+	}
+}
+
+// F95: Extract of a deleted match found by an incomplete search keeps going, reports the incompleteness in its
+// summary (once, however often the id is named), and audits ONE warning inside the analysis, carrying its id.
+func TestExtractByIDAfterCutCarriesIncompleteIDsAndAnalysisID(t *testing.T) {
+	e := cutDirEnv(t)
+	id := idOf2(t, e, "/a.bin")
+	sum, err := e.s.Extract(context.Background(), examine.ExtractOptions{Partition: -1, Paths: []string{"id:" + id, "id:" + id}})
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if len(sum.IncompleteIDs) != 1 || sum.IncompleteIDs[0].ID != id || sum.IncompleteIDs[0].Found != "/a.bin" || !slices.Contains(sum.IncompleteIDs[0].Dirs, "/d") {
+		t.Fatalf("IncompleteIDs = %+v; want the one id, its match and /d", sum.IncompleteIDs)
+	}
+	ws := incompleteWarnings(t, e, id)
+	if len(ws) != 1 {
+		t.Fatalf("%d id-search-incomplete warnings, want exactly 1", len(ws))
+	}
+	if ws[0]["analysis_id"] != sum.AnalysisID {
+		t.Errorf("warning analysis_id %v, want %s", ws[0]["analysis_id"], sum.AnalysisID)
+	}
+	startAt, warnAt := -1, -1
+	for i, a := range auditEntries(t, e.c) {
+		switch {
+		case a.Action == "analysis.start":
+			startAt = i
+		case a.Action == "analysis.warning" && a.Details["code"] == "id-search-incomplete":
+			warnAt = i
+		}
+	}
+	if startAt < 0 || warnAt < startAt {
+		t.Errorf("warning at %d, analysis.start at %d; the warning belongs inside the analysis", warnAt, startAt)
+	}
+	verifyOK(t, e.c)
+}
+
+// A live match, or an id search that read everything, leaves Extract's IncompleteIDs empty.
+func TestExtractByIDCompleteSearchHasNoIncompleteIDs(t *testing.T) {
+	e, _ := newHookEnv(t, nil, fstest.Node{Path: "/live.txt", Data: pat(2, bs)})
+	sum, err := e.s.Extract(context.Background(), examine.ExtractOptions{Partition: -1, Paths: []string{"id:" + idOf2(t, e, "/live.txt")}})
+	if err != nil || sum.Files != 1 || len(sum.IncompleteIDs) != 0 {
+		t.Fatalf("Extract = %+v, %v", sum, err)
+	}
+}

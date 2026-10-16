@@ -72,7 +72,7 @@ func (s *Session) Recover(ctx context.Context, o RecoverOptions) (RecoverSummary
 		}
 		rs.Considered, rs.Candidates, rs.Uniform, rs.Overlap = plan.Considered, plan.candidates, plan.uniform, plan.overlap
 		rs.ReaderWarnings = plan.ReaderWarnings
-		rs.IncompleteIDs = plan.IncompleteIDs
+		a.sum.IncompleteIDs = plan.IncompleteIDs
 		rs.SkippedBy, rs.LimitReached, rs.NotProcessed = plan.SkippedBy, plan.LimitReached, plan.NotProcessed
 		if err := a.syncFS(); err != nil { // what planning made the filesystem notice
 			return err

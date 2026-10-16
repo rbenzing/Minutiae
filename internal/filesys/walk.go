@@ -51,7 +51,8 @@ const MaxWalkPath = 32 << 10
 // instead of being followed, so a hostile filesystem cannot make Walk loop or
 // grow without bound. For such an entry Walk calls fn(path, entry, err) once
 // with the non-nil error and never fn(path, entry, nil); the path passed for a
-// MaxWalkPath violation is truncated to MaxWalkPath bytes.
+// MaxWalkPath violation is truncated to MaxWalkPath bytes. IsWalkFinding tells
+// these findings from an error of reading a directory.
 func Walk(fsys FileSystem, dir Entry, dirPath string, fn func(path string, e Entry, err error) error) error {
 	w := &walker{fsys: fsys, fn: fn, seen: map[string]bool{dir.ID: true}}
 	return w.walk(dir, dirPath, 0)
@@ -91,10 +92,7 @@ func (w *walker) walk(dir Entry, dirPath string, depth int) error {
 			// Report it without building the oversized path; the callback gets
 			// a bounded, truncated one.
 			p := truncatePath(base + k.Name[:min(len(k.Name), 256)])
-			bad := &CorruptError{
-				Structure: "directory tree", Offset: -1,
-				Reason: fmt.Sprintf("path longer than %d bytes, ending %s", MaxWalkPath, strconv.Quote(p[max(0, len(p)-128):])),
-			}
+			bad := newWalkFinding(fmt.Sprintf("path longer than %d bytes, ending %s", MaxWalkPath, strconv.Quote(p[max(0, len(p)-128):])))
 			if err := w.fn(p, k, bad); err != nil && !errors.Is(err, SkipDir) {
 				return err
 			}
@@ -105,15 +103,9 @@ func (w *walker) walk(dir Entry, dirPath string, depth int) error {
 		if recurse {
 			var bad error
 			if w.seen[k.ID] {
-				bad = &CorruptError{
-					Structure: "directory tree", Offset: -1,
-					Reason: fmt.Sprintf("directory %q is reachable more than once (cycle) at %q", k.ID, p),
-				}
+				bad = newWalkFinding(fmt.Sprintf("directory %q is reachable more than once (cycle) at %q", k.ID, p))
 			} else if depth+1 > MaxWalkDepth {
-				bad = &CorruptError{
-					Structure: "directory tree", Offset: -1,
-					Reason: fmt.Sprintf("nesting deeper than %d at %q", MaxWalkDepth, p),
-				}
+				bad = newWalkFinding(fmt.Sprintf("nesting deeper than %d at %q", MaxWalkDepth, p))
 			}
 			if bad != nil {
 				if err := w.fn(p, k, bad); err != nil && !errors.Is(err, SkipDir) {
@@ -147,4 +139,21 @@ func truncatePath(p string) string {
 		return p[:MaxWalkPath]
 	}
 	return p
+}
+
+// walkFindingError is a *CorruptError that Walk itself raised about the tree (a cycle, nesting too deep, a
+// path too long), as opposed to a ReadDir failure or cut listing. errors.As finds the *CorruptError inside.
+type walkFindingError struct{ *CorruptError }
+
+func (e walkFindingError) Unwrap() error { return e.CorruptError }
+
+func newWalkFinding(reason string) error {
+	return walkFindingError{&CorruptError{Structure: "directory tree", Offset: -1, Reason: reason}}
+}
+
+// IsWalkFinding reports whether err is one of Walk's own findings about the tree (a cycle, nesting deeper than
+// MaxWalkDepth, a path longer than MaxWalkPath) rather than an error from reading a directory.
+func IsWalkFinding(err error) bool {
+	var f walkFindingError
+	return errors.As(err, &f)
 }

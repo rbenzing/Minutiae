@@ -26,6 +26,9 @@ type Summary struct {
 	// (each also an analysis.warning with source "filesystem"). Warnings the
 	// filesystem already had at the start are audited but not counted.
 	FSWarnings int
+	// IncompleteIDs names every id (once) whose search could not read every directory: its deleted match was
+	// kept, but a live entry with the id may exist in an unread directory. Set by recover and by extract.
+	IncompleteIDs []*SearchIncompleteError
 }
 
 // Warning is one skipped path and why.

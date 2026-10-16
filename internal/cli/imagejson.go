@@ -214,16 +214,17 @@ func newJSONImageInfo(in examine.ImageInfo) jsonImageInfo {
 }
 
 type jsonSummary struct {
-	AnalysisID string                    `json:"analysis_id"`
-	Files      int                       `json:"files"`
-	Bytes      int64                     `json:"bytes"`
-	Skipped    int                       `json:"skipped"`
-	FSWarnings int                       `json:"fs_warnings"`
-	Artifacts  []evidence.ManifestRecord `json:"artifacts"`
+	AnalysisID    string                    `json:"analysis_id"`
+	Files         int                       `json:"files"`
+	Bytes         int64                     `json:"bytes"`
+	Skipped       int                       `json:"skipped"`
+	FSWarnings    int                       `json:"fs_warnings"`
+	IncompleteIDs []string                  `json:"incomplete_ids"`
+	Artifacts     []evidence.ManifestRecord `json:"artifacts"`
 }
 
 func newJSONSummary(s examine.Summary) jsonSummary {
-	out := jsonSummary{AnalysisID: s.AnalysisID, Files: s.Files, Bytes: s.Bytes, Skipped: s.Skipped, FSWarnings: s.FSWarnings, Artifacts: s.Artifacts}
+	out := jsonSummary{AnalysisID: s.AnalysisID, Files: s.Files, Bytes: s.Bytes, Skipped: s.Skipped, FSWarnings: s.FSWarnings, IncompleteIDs: incompleteTexts(s.IncompleteIDs), Artifacts: s.Artifacts}
 	if out.Artifacts == nil {
 		out.Artifacts = []evidence.ManifestRecord{}
 	}

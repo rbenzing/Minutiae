@@ -131,8 +131,7 @@ type RecoverSummary struct {
 	SkippedBy              map[string]int
 	LimitReached           string // see RecoverPlan.LimitReached
 	NotProcessed           int
-	ReaderWarnings         int                      // reader warnings (Candidate.Warnings) audited; not skips
-	IncompleteIDs          []*SearchIncompleteError // ids whose search could not read every directory
+	ReaderWarnings         int // reader warnings (Candidate.Warnings) audited; not skips
 }
 
 // recovererOf returns the Recoverer of fsys, or filesys.ErrNoRecovery. Recover calls it before any audit
@@ -303,6 +302,7 @@ func (p *planner) enumerate() (targets []target, over int, err error) {
 	}
 	// One root walk collects every wanted id.
 	wanted := map[string]bool{}
+	flagged := map[string]bool{} // ids already reported incomplete: a repeated ref reports once
 	for _, r := range refs {
 		if id, ok := strings.CutPrefix(r, "id:"); ok {
 			if id == "" {
@@ -344,7 +344,8 @@ func (p *planner) enumerate() (targets []target, over int, err error) {
 		if id, ok := strings.CutPrefix(r, "id:"); ok {
 			switch ts := deletedByID[id]; {
 			case len(ts) > 0:
-				if tally.n > 0 { // a live entry with this id may be in an unread directory: keep the match, flag it
+				if tally.n > 0 && !flagged[id] { // a live entry with this id may be in an unread directory: keep the match, flag it
+					flagged[id] = true
 					p.plan.IncompleteIDs = append(p.plan.IncompleteIDs, tally.incomplete(id, ts[0].path))
 				}
 				for _, t := range ts {

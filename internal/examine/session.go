@@ -536,8 +536,21 @@ func (s *Session) Lookup(fsys filesys.FileSystem, ref string) (filesys.Entry, st
 // one of them. When only a deleted entry matched and some directories could not
 // be read, the entry is returned with Match.Incomplete set and one
 // analysis.warning is audited (a live entry with this id may exist in an unread
-// directory); an audit failure is returned instead.
+// directory); an audit failure is returned instead. That warning has no analysis_id: an analysis that
+// resolves refs (Extract) audits it itself, inside the analysis, with its id.
 func (s *Session) LookupMatch(fsys filesys.FileSystem, ref string) (Match, error) {
+	m, err := s.lookupMatch(fsys, ref)
+	if err == nil && m.Incomplete != nil && s.Case != nil {
+		if _, aerr := s.Case.Audit.Append("analysis.warning", s.Parent.Source.DeviceID, m.Incomplete.warnDetails()); aerr != nil {
+			return Match{}, aerr
+		}
+	}
+	return m, err
+}
+
+// lookupMatch is LookupMatch without the audit entry: the caller owes one analysis.warning for a Match with
+// Incomplete set (an analysis writes it with its own id).
+func (s *Session) lookupMatch(fsys filesys.FileSystem, ref string) (Match, error) {
 	id, byID := strings.CutPrefix(ref, "id:")
 	if !byID {
 		p := path.Clean("/" + ref)
@@ -580,13 +593,7 @@ func (s *Session) LookupMatch(fsys filesys.FileSystem, ref string) (Match, error
 	case err != nil && !errors.Is(err, errFound):
 		return Match{}, err
 	case haveMatch && found.Deleted && tally.n > 0:
-		inc := tally.incomplete(id, where)
-		if s.Case != nil {
-			if _, aerr := s.Case.Audit.Append("analysis.warning", s.Parent.Source.DeviceID, inc.warnDetails()); aerr != nil {
-				return Match{}, aerr
-			}
-		}
-		return Match{Entry: found, Path: where, Incomplete: inc}, nil
+		return Match{Entry: found, Path: where, Incomplete: tally.incomplete(id, where)}, nil
 	case haveMatch:
 		return Match{Entry: found, Path: where}, nil
 	case tally.n > 0:
