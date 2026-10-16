@@ -138,6 +138,8 @@ type jsonImageInfo struct {
 	Verify *jsonVerify `json:"verify,omitempty"`
 	// AcquisitionGaps is present when the container declares unreadable acquisition ranges.
 	AcquisitionGaps *jsonGaps `json:"acquisition_gaps,omitempty"`
+	// ImplausibleSize is true when the container's claimed size is one its own bytes cannot hold.
+	ImplausibleSize bool `json:"implausible_size,omitempty"`
 }
 
 type jsonHashCheck struct {
@@ -193,6 +195,7 @@ func newJSONImageInfo(in examine.ImageInfo) jsonImageInfo {
 		Metadata: []jsonKV{}, Partitions: []jsonPartition{}, Unallocated: []jsonRun{}, Warnings: nonNil(in.Warnings),
 		PartitionError:  in.PartitionError,
 		AcquisitionGaps: newJSONGaps(in.AcquisitionGaps),
+		ImplausibleSize: in.SizeClaim != nil,
 	}
 	for _, kv := range in.Metadata {
 		out.Metadata = append(out.Metadata, jsonKV{Key: kv.Key, Value: kv.Value})

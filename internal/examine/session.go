@@ -39,6 +39,8 @@ type Options struct {
 	// VerifyProgress, when set, receives the bytes re-hashed so far and the
 	// total size of all segments during VerifyParent.
 	VerifyProgress func(done, total int64)
+	// Scan bounds the bytes a whole-media scan (VerifyContainer) may read.
+	Scan ScanBudget
 }
 
 // Session is one opened image artifact.
@@ -57,6 +59,8 @@ type Session struct {
 
 	// freeBytes reports the free bytes of a directory (tests inject it); nil means diskFree.
 	freeBytes func(dir string) (int64, error)
+
+	implausible *bool // test override of the container's size claim
 
 	mu        sync.Mutex
 	fsCache   map[int]*fsEntry
@@ -493,6 +497,8 @@ type ImageInfo struct {
 	// section, an empty one, declared ranges or a damaged one (gaps unknown).
 	// The ranges are the acquirer's declaration; the image holds fill there.
 	AcquisitionGaps *image.AcquisitionGaps
+	// SizeClaim is non-nil when the container's claimed size is one its own bytes cannot hold.
+	SizeClaim *image.SizeClaim
 }
 
 // Info describes the image, its partition table and, per partition, the
@@ -516,6 +522,11 @@ func (s *Session) Info() ImageInfo {
 	if gr, ok := s.Image.(image.GapReporter); ok {
 		g := gr.AcquisitionGaps()
 		info.AcquisitionGaps = &g
+	}
+	if sc, ok := s.Image.(image.SizeClaimer); ok {
+		if c := sc.SizeClaim(); c.Implausible {
+			info.SizeClaim = &c
+		}
 	}
 	for _, seg := range s.Segments {
 		if seg.Incomplete {
@@ -688,4 +699,36 @@ func verifyParentFile(opts Options, f *os.File, rec evidence.ManifestRecord, bef
 			evidence.ErrIntegrity, rec.ID, rec.Path, got.SHA256, rec.SHA256, got.Size, rec.Size)
 	}
 	return nil
+}
+
+// DefaultImplausibleScanBytes is the scan budget applied to a container whose
+// claimed size its own bytes cannot hold, when the examiner gave no budget.
+const DefaultImplausibleScanBytes int64 = 64 << 30
+
+// ScanBudget bounds the bytes a whole-media scan (VerifyContainer) may read.
+type ScanBudget struct {
+	Bytes     int64 // > 0: stop after this many bytes
+	Unlimited bool  // true: no limit even for an implausible size claim
+}
+
+// ScanLimit returns the byte limit a whole-media scan runs under and why:
+// an explicit budget, no limit (Unlimited, or a plausible image with none
+// given), or DefaultImplausibleScanBytes for an implausible size claim.
+func (s *Session) ScanLimit() (limit int64, why string) {
+	switch {
+	case s.opts.Scan.Unlimited:
+		return 0, ""
+	case s.opts.Scan.Bytes > 0:
+		return s.opts.Scan.Bytes, "--max-scan-bytes"
+	}
+	implausible := false
+	if s.implausible != nil {
+		implausible = *s.implausible
+	} else if sc, ok := s.Image.(image.SizeClaimer); ok {
+		implausible = sc.SizeClaim().Implausible
+	}
+	if implausible {
+		return DefaultImplausibleScanBytes, "default for a size claim the container's bytes cannot hold"
+	}
+	return 0, ""
 }

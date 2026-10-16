@@ -128,3 +128,9 @@ const (
 // GapReporter is implemented by containers that record unreadable acquisition
 // ranges (EWF). Raw images do not implement it.
 type GapReporter interface{ AcquisitionGaps() AcquisitionGaps }
+
+// SizeClaim describes whether an E01's claimed media size can fit its files.
+type SizeClaim = ewf.SizeClaim
+
+// SizeClaimer is implemented by containers whose size is a claim (EWF).
+type SizeClaimer interface{ SizeClaim() SizeClaim }

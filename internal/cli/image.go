@@ -67,6 +67,24 @@ func caseFlag(cmd *cobra.Command) *string {
 type openOpts struct {
 	ctx          context.Context
 	verifyParent bool
+	scan         examine.ScanBudget
+}
+
+// scanBudgetFlag registers --max-scan-bytes on cmd; the returned function resolves it.
+func scanBudgetFlag(cmd *cobra.Command) func() (examine.ScanBudget, error) {
+	var n int64
+	cmd.Flags().Int64Var(&n, "max-scan-bytes", 0, "stop the whole-media verification after this many bytes (0 = no limit; without the flag there is no limit, except 64 GiB for a size claim the container's own bytes cannot hold)")
+	return func() (examine.ScanBudget, error) {
+		switch {
+		case n < 0:
+			return examine.ScanBudget{}, usageErrorf("--max-scan-bytes must not be negative, got %d", n)
+		case !cmd.Flags().Changed("max-scan-bytes"):
+			return examine.ScanBudget{}, nil
+		case n == 0:
+			return examine.ScanBudget{Unlimited: true}, nil
+		}
+		return examine.ScanBudget{Bytes: n}, nil
+	}
 }
 
 // verifyParentFlag registers --verify-parent on cmd.
@@ -102,7 +120,7 @@ func openImageContainerWith(d Deps, casePath, ref string, oo openOpts) (*examine
 	if err != nil {
 		return nil, nil, err
 	}
-	opts := examine.Options{Drivers: d.FSDrivers, VerifyParent: oo.verifyParent, Context: oo.ctx}
+	opts := examine.Options{Drivers: d.FSDrivers, VerifyParent: oo.verifyParent, Context: oo.ctx, Scan: oo.scan}
 	wrote := false
 	if oo.verifyParent {
 		base := newProgress(d.Err, "verify-parent")
@@ -182,8 +200,14 @@ func newImageInfoCmd(d Deps, opts *rootOptions) *cobra.Command {
 	}
 	casePath := caseFlag(cmd)
 	vp := verifyParentFlag(cmd)
+	scan := scanBudgetFlag(cmd)
 	cmd.Flags().BoolVar(&verify, "verify", false, "verify the container's stored hashes (raw images have none)")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		oo := openOpts{ctx: cmd.Context(), verifyParent: *vp}
+		var serr error
+		if oo.scan, serr = scan(); serr != nil {
+			return serr
+		}
 		open := openImageSessionWith
 		if verify {
 			// Verification needs the container only: it is exactly when the
@@ -191,7 +215,7 @@ func newImageInfoCmd(d Deps, opts *rootOptions) *cobra.Command {
 			// table is read after the verification has been audited.
 			open = openImageContainerWith
 		}
-		s, closeAll, err := open(d, *casePath, args[0], openOpts{ctx: cmd.Context(), verifyParent: *vp})
+		s, closeAll, err := open(d, *casePath, args[0], oo)
 		if err != nil {
 			return err
 		}
@@ -286,6 +310,9 @@ func mismatchError(cv *examine.ContainerVerification) error {
 }
 
 func unverifiedReason(cv examine.ContainerVerification) string {
+	if cv.Result == "scan-budget" {
+		return fmt.Sprintf("scan budget reached after %d of %d bytes", cv.BytesHashed, cv.Size)
+	}
 	if cv.BadChunk >= 0 {
 		return fmt.Sprintf("first unreadable chunk %d: %s", cv.BadChunk, cv.BadChunkError)
 	}
@@ -344,6 +371,9 @@ func printImageInfo(w io.Writer, info examine.ImageInfo) {
 	}
 	if g := info.AcquisitionGaps; g != nil {
 		field("Acq. errors", "%s", gapsLine(g))
+	}
+	if sc := info.SizeClaim; sc != nil {
+		field("Size claim", "implausible: the volume claims %d bytes, the container holds %d (a claim, not data)", sc.Media, sc.Stored)
 	}
 	if info.PartitionError != "" {
 		field("Partitions", "unreadable: %s", escapeText(info.PartitionError))

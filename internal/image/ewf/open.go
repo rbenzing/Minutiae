@@ -220,6 +220,7 @@ func (o *opener) finish() error {
 	}
 	r.err2 = o.err2
 	r.gaps = buildGaps(o.err2, r.geo, o.err2Seen, o.err2Damaged)
+	o.warnSizeClaim()
 	if covered := int64(len(r.refs)); covered < int64(r.geo.chunks) {
 		// A missing or truncated segment or table: the image opens, and the
 		// chunks without an entry fail on read (never zero-filled). A missing
