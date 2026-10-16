@@ -315,10 +315,32 @@ func TestAbandonmentStopsTheRun(t *testing.T) {
 	aborted := make(chan struct{}, 1)
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
-	two := &rxParser{name: "two", n: 2, after: func(context.Context, *parse.Input, parse.Emitter) error { <-release; return nil }}
-	sum := f.run(f.host(both(shortTimeouts, withWriter(func(w *rxWriter) {
+	// The abandonment is triggered by an event, not by a wall-clock budget: a job timeout shorter than the time
+	// a loaded machine needs to even schedule the parser expires before it emitted anything, and records
+	// emitted after the seal are refused by design. The run is cancelled once both records are emitted; the
+	// parser ignores the cancellation, so the host abandons it after the grace period.
+	emitted := make(chan struct{})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() {
+		select {
+		case <-emitted:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	two := &rxParser{name: "two", n: 2, after: func(context.Context, *parse.Input, parse.Emitter) error {
+		close(emitted)
+		<-release
+		return nil
+	}}
+	h := f.host(both(func(o *artparse.Options) { o.Limits.GracePeriod = 30 * time.Millisecond }, withWriter(func(w *rxWriter) {
 		w.aborted = func() { aborted <- struct{}{} }
-	})), wbp("one"), two, wbp("three")), artparse.Selection{})
+	})), wbp("one"), two, wbp("three"))
+	sum, err := h.Run(ctx, artparse.RunOptions{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
 	select {
 	case <-aborted: // the one abandoned job concluded: its records and the ingest.error entry are stored
 	case <-t.Context().Done():
@@ -326,40 +348,39 @@ func TestAbandonmentStopsTheRun(t *testing.T) {
 	case <-time.After(2 * time.Minute): // safety net only: a regression fails instead of hanging
 		t.Fatal("the abandoned job was never concluded")
 	}
-	if sum.Stopped != "abandoned" || sum.Class() != artparse.ClassPartial || len(sum.Jobs) != 3 {
-		t.Fatalf("summary %+v class %v", sum, sum.Class())
+	checkAbandonedMiddleJob(t, f, sum, "abandoned: the parser did not stop after cancellation")
+}
+
+// TestTimeoutAbandonKeepsAcceptedRecords is the timeout path of the same rule: the job's time limit expires (on
+// an event, after the parser emitted, never on a wall-clock budget a loaded machine could miss) and the
+// parser does not stop. The run is not cancelled, so the host classifies the end as a timeout.
+func TestTimeoutAbandonKeepsAcceptedRecords(t *testing.T) {
+	f := newRx(t, "one", "two", "three")
+	aborted := make(chan struct{}, 1)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	emitted := make(chan struct{})
+	expireParseOnEvent(t, 2, emitted) // the second Parse is the job of "two"
+	two := &rxParser{name: "two", n: 2, after: func(context.Context, *parse.Input, parse.Emitter) error {
+		close(emitted)
+		<-release
+		return nil
+	}}
+	h := f.host(both(eventTimeouts, withWriter(func(w *rxWriter) {
+		w.aborted = func() { aborted <- struct{}{} }
+	})), wbp("one"), two, wbp("three"))
+	sum := f.run(h, artparse.Selection{})
+	select {
+	case <-aborted:
+	case <-t.Context().Done():
+		t.Fatal("the abandoned job was never concluded")
+	case <-time.After(2 * time.Minute): // safety net only
+		t.Fatal("the abandoned job was never concluded")
 	}
-	if j := jobOf(t, sum, "one"); j.Outcome != artparse.OutcomeComplete {
-		t.Errorf("job 1: %+v", j)
+	if j := jobOf(t, sum, "two"); !j.TimedOut || sum.Cancelled {
+		t.Errorf("job 2: %+v, cancelled %v: want a timeout, not a cancel", j, sum.Cancelled)
 	}
-	j2 := jobOf(t, sum, "two")
-	if j2.Outcome != artparse.OutcomeIncomplete || !j2.Abandoned || j2.Records != 2 {
-		t.Errorf("job 2: %+v, want incomplete, abandoned, its 2 accepted records flushed", j2)
-	}
-	if j3 := jobOf(t, sum, "three"); j3.Outcome != artparse.OutcomeNotRun {
-		t.Errorf("job 3: %+v, want not-run", j3)
-	}
-	if f.count("records.ingest.error") != 1 || f.count("records.ingest.start") != 2 {
-		t.Errorf("ingest errors %d, starts %d", f.count("records.ingest.error"), f.count("records.ingest.start"))
-	}
-	ends := f.jobEnds()
-	if len(ends) != 2 || !ends[1].Abandoned {
-		t.Fatalf("job.end entries %+v", ends)
-	}
-	if starts := f.jobStarts(); len(starts) != 2 {
-		t.Errorf("%d parse.job.start entries, want 2: the third job must not start", len(starts))
-	}
-	errs := f.entries("analysis.error")
-	if len(errs) != 1 || f.count("analysis.end") != 0 {
-		t.Fatalf("analysis.error %d, analysis.end %d", len(errs), f.count("analysis.end"))
-	}
-	ae := decodeEntry[artparse.AnalysisError](t, errs[0])
-	if ae.NotRun != 1 || ae.AnalysisID != sum.ParseID {
-		t.Errorf("analysis.error %+v", ae)
-	}
-	if f.nRecords() != 3+2 {
-		t.Errorf("%d records stored", f.nRecords())
-	}
+	checkAbandonedMiddleJob(t, f, sum, "timed out and abandoned: the parser did not stop")
 }
 
 func TestJobTimeoutAbandons(t *testing.T) {
