@@ -5,7 +5,7 @@ package androidcalllog_test
 // fixturePins is the SHA-256 of every decompressed fixture file, by "<variant>.<role>". A changed fixture
 // changes this file in the same commit, so a silent regeneration shows in review.
 var fixturePins = map[string]string{
-	"features-subid.db":   "d68e7d9eea150a0d7fc9cf5f90c9f7ff7a29f17548f9828b97312817986e8201",
+	"features-subid.db":   "38457ea14d61dd81e163f4f73bc8f6c77673ad3a68f1575f458755ca4d844e42",
 	"in-contacts2.db":     "2e6606696ef127db2a57812d66fa576af4e9cebc56f5a29d12925f92e18e8b66",
 	"pre-presentation.db": "95f95216ccb29a6d698677f7bd868bc43e10391e829ea6b41778012796d44d71",
 }

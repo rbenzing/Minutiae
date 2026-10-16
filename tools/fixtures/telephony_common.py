@@ -37,6 +37,10 @@ class Raw:
         self.b = b
 
 
+class Blob(bytes):
+    """A BLOB cell as the engine reads it back (engine_view reads TEXT as plain bytes)."""
+
+
 def classify(v, unit):
     """decode/ts restated: unit 'ms' or 's'. 'valid', 'sentinel' or 'invalid'."""
     if v in SENTINELS:
@@ -228,7 +232,14 @@ def engine_view(files, tables):
             except sqlite3.OperationalError:
                 continue
             names = ["rowid"] + [d[0] for d in cur.description][1:]
-            out[t] = [dict(zip(names, r)) for r in cur.fetchall()]
+            rows = [dict(zip(names, r)) for r in cur.fetchall()]
+            kinds = con.execute("select %s from %s order by rowid" % (
+                ",".join('typeof("%s")' % n for n in names[1:]), t)).fetchall()
+            for row, kind in zip(rows, kinds):
+                for n, k in zip(names[1:], kind):
+                    if k == b"blob":  # text_factory=bytes also returns typeof() as bytes
+                        row[n] = Blob(row[n])
+            out[t] = rows
         con.close()
         return out
     finally:

@@ -1,4 +1,6 @@
 """Android call log fixtures: calllog.db variants and the calls inside contacts2.db."""
+import re
+
 import telephony_common as C
 
 FAMILY = "calllog"
@@ -10,11 +12,23 @@ CALL_MAPPED = [("number", True), ("date", True), ("duration", True), ("type", Tr
                ("countryiso", False), ("geocoded_location", False), ("subscription_id", False), ("features", False),
                ("is_read", False), ("new", False)]
 RAW_INT = ["type", "duration", "presentation", "features", "is_read", "new"]
+EXACT = 2**53  # beyond this magnitude an integer is not exactly a float64 (ruling T62)
+# The runes Go's strings.TrimSpace removes (unicode.IsSpace); Python's str.strip() differs.
+GO_SPACE = "".join(chr(c) for c in [9, 10, 11, 12, 13, 32, 0x85, 0xA0, 0x1680, *range(0x2000, 0x200B), 0x2028, 0x2029, 0x202F, 0x205F, 0x3000])
+DECIMAL = re.compile(r"[+-]?[0-9]+", re.ASCII)  # strconv.ParseInt base 10 (ruling T63)
 PRESENTATION = {1: "allowed", 2: "restricted", 3: "unknown", 4: "payphone"}
 
 
 def is_int(v):
     return isinstance(v, int) and not isinstance(v, bool)
+
+
+def parse_small(txt):
+    """The subscription parse of the mapper: text of at most 32 bytes, trimmed, then ParseInt; None when refused."""
+    if len(txt.encode("utf-8")) > 32:
+        return None
+    t = txt.strip(GO_SPACE)
+    return int(t) if DECIMAL.fullmatch(t) else None
 
 
 def call_row(i, **kw):
@@ -50,6 +64,11 @@ def calls_all():
         call_row(23, duration=4_000_000_000),
         call_row(24, date=4102444700000, duration=200),
         call_row(25, name=C.Raw(b"Al\xffice")),
+        call_row(26, subscription_id=b"\x01\x02"),
+        call_row(27, duration=EXACT + 1),
+        call_row(28, subscription_id=chr(0x663)),  # an Arabic-Indic digit: Python's int() accepts it, ParseInt refuses
+        call_row(29, subscription_id="5_0"),  # Python's int() accepts the underscore, ParseInt refuses
+        call_row(30, subscription_id=chr(0x663) * 17),  # 34 bytes: refused before any conversion
     ]
 
 
@@ -88,7 +107,9 @@ def expect_call(r, remote, file="any"):
                 C.mark(raw, key)
             if c.text:
                 p[key] = c.text
-    if dur_known and dur >= 0:
+    if dur_known and abs(dur) > EXACT:
+        unknown["duration"] = "precision"  # not exactly a float64: duration_s is not stated
+    elif dur_known and dur >= 0:
         p["duration_s"] = dur
     ft = r.get("features")
     if is_int(ft):
@@ -98,18 +119,17 @@ def expect_call(r, remote, file="any"):
         raw["subscription_id"] = sid
         if sid >= 0:
             p["subscription"] = sid
+    elif isinstance(sid, C.Blob) or (sid is not None and not isinstance(sid, bytes)):
+        unknown["subscription_id"] = "type-mismatch"  # REAL or BLOB: neither a subscription nor absent
     elif sid is not None:
         c = C.clean(sid, MAX_TEXT)
         if c.flags:
             C.mark(raw, "subscription_id")
         txt = c.text
         raw["subscription_id"] = txt
-        try:
-            v = int(txt) if len(txt) <= 32 else -1
-            if 0 <= v <= C.I64_MAX:
-                p["subscription"] = v
-        except ValueError:
-            pass
+        v = parse_small(txt)
+        if v is not None and 0 <= v <= C.I64_MAX:
+            p["subscription"] = v
     for col, key in (("is_read", "read"), ("new", "new")):
         if is_int(r.get(col)) and r[col] in (0, 1):
             p[key] = r[col] == 1

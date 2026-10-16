@@ -17,6 +17,7 @@ import (
 const (
 	maxText     = 256 << 10 // bytes of any stored text kept
 	maxDuration = 1_000_000_000
+	maxExact    = 1 << 53 // every integer up to this magnitude is exactly a float64
 )
 
 func callSpecs() []parse.ColumnSpec {
@@ -173,7 +174,12 @@ func mapCall(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 	cl.NameCached = cleanText(row, c, "name", "name_cached", raw, unknown)
 	cl.CountryISO = cleanText(row, c, "countryiso", "country_iso", raw, unknown)
 	cl.GeoDescription = cleanText(row, c, "geocoded_location", "geo_description", raw, unknown)
-	if dk == rowrun.CellValue && dur >= 0 {
+	exact := dk == rowrun.CellValue && dur >= -maxExact && dur <= maxExact
+	if dk == rowrun.CellValue && !exact {
+		// T62: beyond 2^53 an integer is not a float64; stating its rounding would invent a value.
+		unknown["duration"] = "precision"
+	}
+	if exact && dur >= 0 {
 		f := float64(dur)
 		cl.DurationS = &f
 	}
@@ -200,6 +206,9 @@ func mapCall(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 			if n, perr := parseSmall(txt); perr == nil && n >= 0 {
 				cl.Subscription = &n
 			}
+		} else {
+			// T61: a REAL or BLOB is neither a subscription nor an absence.
+			rowrun.Flag(unknown, row, "subscription_id", c.At("subscription_id"), sk)
 		}
 	default:
 		rowrun.Flag(unknown, row, "subscription_id", c.At("subscription_id"), sk)

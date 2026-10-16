@@ -1,6 +1,7 @@
 package androidcalllog_test
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -36,8 +37,8 @@ func raw(r records.Record, key string) any { return r.Payload["raw"].(map[string
 
 func TestCallMappingFromTheSpec(t *testing.T) {
 	res := featuresRun(t)
-	if len(res.Records) != 25 {
-		t.Fatalf("%d records, want 25", len(res.Records))
+	if len(res.Records) != 30 {
+		t.Fatalf("%d records, want 30", len(res.Records))
 	}
 	one := call(t, res, "1")
 	start := time.Unix(1682935200+3600, 0).UTC()
@@ -118,6 +119,21 @@ func TestCallMappingFromTheSpec(t *testing.T) {
 	if r := call(t, res, "23"); field(r, "duration_s") != float64(4_000_000_000) || r.TimeEnd != nil {
 		t.Errorf("row 23: a 4e9 s call is kept but has no end time: %v", r.TimeEnd)
 	}
+	// T61: a BLOB subscription_id is unknown, not dropped silently
+	if r := call(t, res, "26"); field(r, "subscription") != nil || unknownColumns(r)["subscription_id"] != "type-mismatch" {
+		t.Errorf("row 26: %v", r.Payload)
+	}
+	// T62: 2^53+1 is not exactly a float64
+	if r := call(t, res, "27"); field(r, "duration_s") != nil || unknownColumns(r)["duration"] != "precision" ||
+		raw(r, "duration") != int64(1<<53+1) || r.TimeEnd != nil {
+		t.Errorf("row 27: %v", r.Payload)
+	}
+	// T63: only ASCII decimal text is a subscription (Go's ParseInt), and at most 32 bytes
+	for _, id := range []string{"28", "29", "30"} {
+		if r := call(t, res, id); field(r, "subscription") != nil || raw(r, "subscription_id") == nil {
+			t.Errorf("row %s: %v", id, r.Payload)
+		}
+	}
 }
 
 // Cells of the wrong storage class are unknown, never a zero, a default or an absent column:
@@ -150,4 +166,83 @@ func TestWrongStorageClassIsUnknownNotZero(t *testing.T) {
 	if u2["date"] != "type-mismatch" || r2.Time != nil || raw(r2, "date") != nil {
 		t.Errorf("row 2: unknown_columns %v time %v", u2, r2.Time)
 	}
+}
+
+// T61: presentation, features and subscription_id of another storage class, and a number that is
+// an integer, are unknown and named in raw.unknown_columns; nothing is invented from them.
+func TestOtherStorageClassesOfTheOptionalColumnsAreUnknown(t *testing.T) {
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 1024})
+	tbl := b.CreateTable("calls", "create table calls(_id integer primary key, number text, date integer, duration integer, type integer, presentation integer, features integer, subscription_id text)")
+	base := int64(1682935200000)
+	tbl.Insert(1, int64(1), "+15550001", base, int64(5), int64(1), 2.5, "video", 1.5)
+	tbl.Insert(2, int64(2), "+15550002", base, int64(5), int64(1), int64(1), int64(0), []byte{1, 2, 3})
+	tbl.Insert(3, int64(3), int64(5550003), base, int64(5), int64(1), int64(1), int64(0), int64(3))
+	h := parsertest.NewHarness(t)
+	bundle := parsertest.Fixture{Name: "other", Files: map[string][]byte{"db": b.Bytes()}}.Bundle(h, remoteCalllog)
+	p := androidcalllog.Parser{}
+	res := h.RunLenient(p, bundle.Input(h, p, false))
+	if res.Err != nil || len(res.Records) != 3 {
+		t.Fatalf("err %v, %d records", res.Err, len(res.Records))
+	}
+	r1 := call(t, res, "1")
+	u1 := unknownColumns(r1)
+	if u1["presentation"] != "type-mismatch" || u1["features"] != "type-mismatch" || u1["subscription_id"] != "type-mismatch" {
+		t.Errorf("row 1: unknown_columns %v", u1)
+	}
+	if _, has := r1.Payload["address_presentation"]; has || field(r1, "kind") != nil || field(r1, "subscription") != nil {
+		t.Errorf("row 1 invented a value: %v", r1.Payload)
+	}
+	r2 := call(t, res, "2")
+	if u := unknownColumns(r2); u["subscription_id"] != "type-mismatch" || field(r2, "subscription") != nil {
+		t.Errorf("row 2 (BLOB subscription_id): %v", r2.Payload)
+	}
+	r3 := call(t, res, "3")
+	if u := unknownColumns(r3); u["number"] != "type-mismatch" {
+		t.Errorf("row 3 (INTEGER number): unknown_columns %v", u)
+	}
+	if _, has := r3.Payload["address"]; has || r3.Summary != "call in answered" {
+		t.Errorf("row 3 invented an address: %v summary %q", r3.Payload, r3.Summary)
+	}
+	if field(r3, "subscription") != int64(3) {
+		t.Errorf("row 3: an INTEGER subscription_id is a subscription, got %v", field(r3, "subscription"))
+	}
+}
+
+// T62: a duration beyond 2^53 is not exactly a float64, so duration_s is not stated: the column
+// is unknown ("precision"), its integer stays in raw.duration, and there is no end time.
+func TestDurationBeyondFloatPrecisionIsUnknownNotRounded(t *testing.T) {
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 1024})
+	tbl := b.CreateTable("calls", "create table calls(_id integer primary key, number text, date integer, duration integer, type integer)")
+	base := int64(1682935200000)
+	const exact = int64(1) << 53
+	tbl.Insert(1, int64(1), "+1", base, exact, int64(1))
+	tbl.Insert(2, int64(2), "+2", base, exact+1, int64(1))
+	tbl.Insert(3, int64(3), "+3", base, -(exact + 1), int64(2))
+	tbl.Insert(4, int64(4), "+4", base, int64(math.MaxInt64), int64(2))
+	h := parsertest.NewHarness(t)
+	bundle := parsertest.Fixture{Name: "prec", Files: map[string][]byte{"db": b.Bytes()}}.Bundle(h, remoteCalllog)
+	p := androidcalllog.Parser{}
+	res := h.RunLenient(p, bundle.Input(h, p, false))
+	if res.Err != nil || len(res.Records) != 4 {
+		t.Fatalf("err %v, %d records", res.Err, len(res.Records))
+	}
+	if r := call(t, res, "1"); field(r, "duration_s") != float64(exact) || raw(r, "unknown_columns") != nil {
+		t.Errorf("2^53 is exact and stated: %v", r.Payload)
+	}
+	for id, want := range map[string]int64{"2": exact + 1, "3": -(exact + 1), "4": math.MaxInt64} {
+		r := call(t, res, id)
+		u := unknownColumns(r)
+		if field(r, "duration_s") != nil || u["duration"] != "precision" || raw(r, "duration") != want || r.TimeEnd != nil {
+			t.Errorf("row %s: payload %v end %v", id, r.Payload, r.TimeEnd)
+		}
+	}
+	if r := call(t, res, "2"); field(r, "outcome") != "answered" || r.Time == nil {
+		t.Errorf("row 2: the direction and outcome do not depend on the magnitude: %v", r.Payload)
+	}
+}
+
+// unknownColumns is raw.unknown_columns, or an empty map when the record has none.
+func unknownColumns(r records.Record) map[string]any {
+	u, _ := raw(r, "unknown_columns").(map[string]any)
+	return u
 }

@@ -982,7 +982,7 @@ journal), so the oracle states the db path as `source_path` of every row (ruling
 
 | Variant | DDL snapshot | Database state | What it exercises |
 |---|---|---|---|
-| `features-subid` | `calllog-features-subid.sql` | plain, 25 `calls` rows | every `type` 1 to 7 and 99, outgoing calls with duration 0, NULL and negative, hidden numbers (`presentation` 2, 3, 4), sentinel and year-2100 dates, a 4e9 s duration, `features` video, an ICCID-length and a decimal `subscription_id`, invalid UTF-8 in `number` and `name` |
+| `features-subid` | `calllog-features-subid.sql` | plain, 30 `calls` rows | every `type` 1 to 7 and 99, outgoing calls with duration 0, NULL and negative, hidden numbers (`presentation` 2, 3, 4), sentinel and year-2100 dates, a 4e9 s duration, `features` video, an ICCID-length and a decimal `subscription_id`, invalid UTF-8 in `number` and `name`, a BLOB `subscription_id`, a duration of 2^53+1 (not exactly a float64), and `subscription_id` text that Python `int()` accepts but `ParseInt` refuses (a non-ASCII digit, an underscore, 34 bytes) |
 | `pre-presentation` | `calllog-pre-presentation.sql` | plain, 16 rows | a table without `presentation`, `features`, `is_read`, `countryiso`, `geocoded_location` and `subscription_id` |
 | `in-contacts2` | `calllog-in-contacts2.sql` | plain, 9 rows, path `contacts2.db` | the call log inside the older contacts database |
 
