@@ -105,6 +105,8 @@ func (d *Device) AcquireLogical(ctx context.Context, c *evidence.Case, opts devi
 			if err := w.walk(root, 0); err != nil {
 				// Files pulled before the failure stay in the case: say that the
 				// acquisition is incomplete before acquire.error is written.
+				// If an audit append failed, this append fails too and its error is
+				// joined: the acquisition fails closed, nothing is hidden.
 				stats := w.stats(v1, s)
 				stats["incomplete"], stats["error"] = true, err.Error()
 				_, serr := c.Audit.Append("acquire.stats", d.serial, stats)
@@ -138,17 +140,19 @@ func describeHits(hits map[string]int) string {
 }
 
 type walker struct {
-	ctx      context.Context
-	d        *Device
-	c        *evidence.Case
-	acq      string
-	s        *adb.Sync
-	progress device.ProgressFunc
-	names    *evidence.LocalPaths
-	pulled   map[string]bool // remote files already captured (overlapping roots)
-	files    int
-	skipped  int
-	bytes    int64
+	ctx          context.Context
+	d            *Device
+	c            *evidence.Case
+	acq          string
+	s            *adb.Sync
+	progress     device.ProgressFunc
+	names        *evidence.LocalPaths
+	pulled       map[string]bool // remote files already captured (overlapping roots)
+	files        int
+	skipped      int
+	flagged      int // artifacts kept but flagged incomplete (size mismatch, short pull)
+	sizeMismatch int
+	bytes        int64
 
 	lim       WalkLimits
 	total     int  // entries listed so far
@@ -314,8 +318,11 @@ func (w *walker) pull(p, localDir string, e adb.SyncEntry) error {
 		// Recv ended cleanly, so the session is intact; Capture kept the artifact
 		// and flagged it incomplete.
 		w.bytes += rec.Size
+		w.flagged++
+		w.sizeMismatch++
 		return w.warnReason("pull", p, "size-mismatch", err)
 	case isFail(err):
+		w.flagged++ // Capture kept the partial bytes, flagged incomplete
 		if werr := w.warn("pull", p, err); werr != nil {
 			return werr
 		}
@@ -389,7 +396,7 @@ func (w *walker) listProblems(dir string, res adb.ListResult) error {
 func (w *walker) stats(v1 bool, s *adb.Sync) map[string]any {
 	stats := map[string]any{
 		"acquisition_id": w.acq, "files": w.files, "bytes": w.bytes, "skipped": w.skipped,
-		"incomplete": len(w.hits) > 0, "limit_hits": w.hits, "sync_v1": v1,
+		"incomplete": len(w.hits) > 0 || w.flagged > 0, "size_mismatch": w.sizeMismatch, "limit_hits": w.hits, "sync_v1": v1,
 	}
 	if v1 {
 		stats["sync_fallback"] = s.FallbackReason()

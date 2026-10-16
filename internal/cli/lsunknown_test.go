@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"io/fs"
@@ -56,9 +57,18 @@ func TestAndroidLsUnreadableDirectoryIsAnErrorNotEmpty(t *testing.T) {
 		}
 	}
 	d, _ := androidDeps(t, lsDevice(nil))
-	code, out := run(t, d, "android", "ls", "--serial", "PX1", "/sdcard/other")
-	if code == 0 || !strings.Contains(out, "y") {
-		t.Fatalf("partial listing (v2): exit %d, output %q: want the readable entry and a failure", code, out)
+	var stdout, stderr bytes.Buffer
+	d.Out, d.Err, d.In = &stdout, &stderr, strings.NewReader("")
+	code := Run([]string{"android", "ls", "--serial", "PX1", "/sdcard/other"}, d)
+	// The readable entry is on stdout as a whole line; the failure is on stderr.
+	var entryLine bool
+	for _, l := range strings.Split(stdout.String(), "\n") {
+		if strings.HasPrefix(l, "-rw-r--r--") && strings.HasSuffix(l, " y") {
+			entryLine = true
+		}
+	}
+	if code == 0 || !entryLine || stderr.Len() == 0 {
+		t.Fatalf("partial listing (v2): exit %d, stdout %q, stderr %q: want the readable entry line on stdout and a failure", code, stdout.String(), stderr.String())
 	}
 }
 

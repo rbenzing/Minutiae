@@ -302,3 +302,20 @@ func TestLogicalWalkErrorAfterPullingWritesIncompleteStats(t *testing.T) {
 		t.Fatal("the file pulled before the failure must be kept")
 	}
 }
+
+// W77: the run's acquire.stats is incomplete when any artifact of the run is
+// (here a v2 size mismatch), not only after a limit hit, and counts them.
+func TestLogicalStatsAreIncompleteWhenAnArtifactIsFlagged(t *testing.T) {
+	_, stats := reasonCount(t, hugeDevice(nil), "size-mismatch")
+	if stats["incomplete"] != true || fmt.Sprint(stats["size_mismatch"]) != "1" {
+		t.Fatalf("stats = %v, want incomplete:true and size_mismatch:1", stats)
+	}
+	_, clean := reasonCount(t, &adbtest.Device{
+		Serial: "PX1", State: "device",
+		Commands: map[string][]byte{"getprop": []byte(getprop), "pm list packages -f": []byte("package:x\n")},
+		Files:    map[string]adbtest.File{"/sdcard/small.txt": {Data: []byte("hello")}},
+	}, "size-mismatch")
+	if clean["incomplete"] != false || fmt.Sprint(clean["size_mismatch"]) != "0" {
+		t.Fatalf("clean run stats = %v, want incomplete:false and size_mismatch:0", clean)
+	}
+}
