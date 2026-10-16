@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
@@ -54,8 +56,8 @@ func TestImageCommandsVerifyParentExit4(t *testing.T) {
 		"unalloc":       {"unalloc", e.ref, "-p", "1"},
 	}
 	for name, args := range cmds {
-		if code, out := e.image(t, args[0], append([]string{"--verify-parent"}, args[1:]...)...); code == ExitIntegrity || code == ExitUsage {
-			t.Fatalf("%s: clean parent with --verify-parent: %d %s", name, code, out)
+		if code, out := e.image(t, args[0], append([]string{"--verify-parent"}, args[1:]...)...); code != 0 {
+			t.Fatalf("%s: clean parent with --verify-parent: %d %s; want exit 0", name, code, out)
 		}
 	}
 	evidencetest.FlipArtifactByte(t, e.c, parent, parent.Size/2)
@@ -67,5 +69,20 @@ func TestImageCommandsVerifyParentExit4(t *testing.T) {
 	}
 	if code, out := e.image(t, "recover", "--verify-parent", e.ref); code != ExitUsage {
 		t.Errorf("image recover must not offer --verify-parent: %d %s", code, out)
+	}
+}
+
+// A failed open before any progress was printed leaves no stray empty line on stderr.
+func TestVerifyParentOpenFailureWritesNoStrayNewline(t *testing.T) {
+	e := newImgEnv(t)
+	var errOut bytes.Buffer
+	d := e.d
+	d.Err = &errOut
+	code, _ := run(t, d, "image", "info", "--case", e.c, "--verify-parent", "no-such-artifact")
+	if code == 0 {
+		t.Fatal("an unknown artifact opened")
+	}
+	if got := errOut.String(); strings.HasPrefix(got, "\n") || strings.Contains(got, "\n\n") {
+		t.Fatalf("stderr = %q; want no empty line when no progress was printed", got)
 	}
 }

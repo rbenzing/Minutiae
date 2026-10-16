@@ -31,7 +31,7 @@ func TestVerifyParentFileComparesEveryFact(t *testing.T) {
 		t.Cleanup(func() { _ = f.Close() })
 		return f
 	}
-	if err := verifyParentFile(Options{}, open(t), rec, []evidence.ManifestRecord{rec}); err != nil {
+	if err := verifyParentFile(Options{}, open(t), rec, 0, rec.Size); err != nil {
 		t.Fatalf("matching record: %v", err)
 	}
 	for name, mod := range map[string]func(*evidence.ManifestRecord){
@@ -43,7 +43,7 @@ func TestVerifyParentFileComparesEveryFact(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			bad := rec
 			mod(&bad)
-			if err := verifyParentFile(Options{}, open(t), bad, []evidence.ManifestRecord{bad}); !errors.Is(err, evidence.ErrIntegrity) {
+			if err := verifyParentFile(Options{}, open(t), bad, 0, bad.Size); !errors.Is(err, evidence.ErrIntegrity) {
 				t.Fatalf("a differing %s = %v, want ErrIntegrity", name, err)
 			}
 		})
@@ -62,7 +62,7 @@ func TestVerifyParentFileIOErrorIsNotIntegrity(t *testing.T) {
 	}
 	_ = f.Close() // every read now fails
 	rec := evidence.ManifestRecord{ID: "seg", Path: "seg", Size: 1}
-	err = verifyParentFile(Options{}, f, rec, []evidence.ManifestRecord{rec})
+	err = verifyParentFile(Options{}, f, rec, 0, rec.Size)
 	if err == nil || errors.Is(err, evidence.ErrIntegrity) {
 		t.Fatalf("read failure = %v, want a plain I/O error", err)
 	}
@@ -86,7 +86,7 @@ func TestVerifyParentFileProgressSpansSegments(t *testing.T) {
 	second := evidence.ManifestRecord{ID: "b", Size: 4, SHA256: s.SHA256, MD5: s.MD5}
 	var done, total int64
 	opts := Options{VerifyProgress: func(d, t int64) { done, total = d, t }}
-	if err := verifyParentFile(opts, f, second, []evidence.ManifestRecord{first, second}); err != nil {
+	if err := verifyParentFile(opts, f, second, first.Size, first.Size+second.Size); err != nil {
 		t.Fatal(err)
 	}
 	if done != 14 || total != 14 {

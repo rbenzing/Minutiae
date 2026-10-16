@@ -103,11 +103,13 @@ func openImageContainerWith(d Deps, casePath, ref string, oo openOpts) (*examine
 		return nil, nil, err
 	}
 	opts := examine.Options{Drivers: d.FSDrivers, VerifyParent: oo.verifyParent, Context: oo.ctx}
+	wrote := false
 	if oo.verifyParent {
-		opts.VerifyProgress = newProgress(d.Err, "verify-parent")
+		base := newProgress(d.Err, "verify-parent")
+		opts.VerifyProgress = func(done, total int64) { wrote = true; base(done, total) }
 	}
 	s, err := examine.OpenContainer(c, ref, opts)
-	if oo.verifyParent {
+	if wrote {
 		fmt.Fprintln(d.Err) // end the progress line, whatever the outcome
 	}
 	if err != nil {

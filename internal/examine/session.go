@@ -108,6 +108,11 @@ func OpenContainer(c *evidence.Case, ref string, opts Options) (*Session, error)
 		}
 	}
 
+	var total int64 // computed once: the progress denominator over all segments
+	for _, seg := range segs {
+		total += seg.Size
+	}
+	var before int64 // bytes of the segments already verified
 	files := make([]*os.File, 0, len(segs))
 	for _, seg := range segs {
 		f, rec, err := c.OpenArtifact(seg.ID)
@@ -121,12 +126,13 @@ func OpenContainer(c *evidence.Case, ref string, opts Options) (*Session, error)
 			return nil, fmt.Errorf("%w: artifact %s resolved to a different record", evidence.ErrIntegrity, seg.ID)
 		}
 		if opts.VerifyParent {
-			if err := verifyParentFile(opts, f, rec, segs); err != nil {
+			if err := verifyParentFile(opts, f, rec, before, total); err != nil {
 				_ = f.Close()
 				closeFiles(files)
 				return nil, err
 			}
 		}
+		before += seg.Size
 		files = append(files, f)
 	}
 	img, err := openImage(files)
@@ -650,18 +656,10 @@ func (s *Session) needTable() error {
 
 // verifyParentFile re-hashes f, the open file of manifest record rec, and
 // compares it with the manifest. progress counts bytes across all segments.
-func verifyParentFile(opts Options, f *os.File, rec evidence.ManifestRecord, segs []evidence.ManifestRecord) error {
+func verifyParentFile(opts Options, f *os.File, rec evidence.ManifestRecord, before, total int64) error {
 	ctx := opts.Context
 	if ctx == nil {
 		ctx = context.Background()
-	}
-	var total, before int64
-	for _, s := range segs {
-		total += s.Size
-		if s.ID == rec.ID {
-			break
-		}
-		before += s.Size
 	}
 	h := evidence.NewMultiHasher()
 	buf := make([]byte, 1<<20)
