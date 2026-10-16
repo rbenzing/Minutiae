@@ -246,3 +246,21 @@ func TestSqlitefileSurfaceUsedByUndecidedDefaults(_ *testing.T) {
 	pin[func(sqlitefile.DefaultReason) string](sqlitefile.DefaultReason.String)
 	pin[sqlitefile.DefaultKind](sqlitefile.DefaultInexactLiteral)
 }
+
+// The key-order API of the library (Tasks 7 and 8), which GetByKey (Task 9) builds on.
+// KeyColumn.Expr is part of the accepted surface (LX-4 U62): an index expression column
+// is compared only when neither value is text.
+func TestSqlitefileSurfaceKeyOrder(_ *testing.T) {
+	var kc sqlitefile.KeyColumn
+	pin[string](kc.Collation)
+	pin[bool](kc.Desc)
+	pin[bool](kc.Expr)
+	var ko sqlitefile.KeyOrder
+	pin[[]sqlitefile.KeyColumn](ko.Cols)
+	pin[bool](ko.Unique)
+	pin[func(a, b []sqlitefile.Value, cols []sqlitefile.KeyColumn) (int, int, sqlitefile.OrderStatus)](sqlitefile.OrderKeys)
+	pin[func(sqlitefile.Value, sqlitefile.Value, string) (int, sqlitefile.OrderStatus)](sqlitefile.OrderValues)
+	pin[sqlitefile.OrderStatus](sqlitefile.OrderOK)
+	pin[sqlitefile.OrderStatus](sqlitefile.OrderUndecided)
+	pin[func(*sqlitefile.View, context.Context, uint32, sqlitefile.KeyOrder, func(sqlitefile.Row) bool) (sqlitefile.ScanLoss, error)]((*sqlitefile.View).ScanTreeOrdered)
+}
