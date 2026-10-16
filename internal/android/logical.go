@@ -91,16 +91,29 @@ func (d *Device) AcquireLogical(ctx context.Context, c *evidence.Case, opts devi
 			lim: d.limits.withDefaults(), hits: map[string]int{},
 		}
 		defer func() { _ = w.s.Close() }()
+		v1 := s.Version() == 1
+		if v1 {
+			// Sizes and times of a v1 listing are 32-bit: say so as evidence, once.
+			if _, err := c.Audit.Append("acquire.warning", d.serial, map[string]any{
+				"acquisition_id": acq, "op": "sync", "reason": "sync-v1",
+				"error": syncV1Limitation + " (" + s.FallbackReason() + ")",
+			}); err != nil {
+				return err
+			}
+		}
 		for _, root := range roots {
 			if err := w.walk(root, 0); err != nil {
 				return err
 			}
 		}
-		_, err = c.Audit.Append("acquire.stats", d.serial, map[string]any{
+		stats := map[string]any{
 			"acquisition_id": acq, "files": w.files, "bytes": w.bytes, "skipped": w.skipped,
-			"incomplete": len(w.hits) > 0, "limit_hits": w.hits,
-		})
-		if err != nil {
+			"incomplete": len(w.hits) > 0, "limit_hits": w.hits, "sync_v1": v1,
+		}
+		if v1 {
+			stats["sync_fallback"] = s.FallbackReason()
+		}
+		if _, err = c.Audit.Append("acquire.stats", d.serial, stats); err != nil {
 			return err
 		}
 		if len(w.hits) > 0 {
@@ -109,6 +122,9 @@ func (d *Device) AcquireLogical(ctx context.Context, c *evidence.Case, opts devi
 		return nil
 	})
 }
+
+// syncV1Limitation is the disclosure recorded whenever a v1 sync session is used.
+const syncV1Limitation = "sync v1 reports 32-bit sizes and times: file sizes of 4 GiB or more are truncated, so no remote size is recorded; an empty listing is not evidence of an empty directory"
 
 func describeHits(hits map[string]int) string {
 	keys := make([]string, 0, len(hits))
@@ -258,9 +274,12 @@ func (w *walker) pull(p, localDir string, e adb.SyncEntry) error {
 		return w.warn("skip", p, errors.New("already acquired in this acquisition (overlapping roots)"))
 	}
 	w.pulled[p] = true
-	src := evidence.Source{
-		Kind: "file", DeviceID: w.d.serial, RemotePath: p,
-		RemoteMode: e.Mode, RemoteMTime: e.MTime.UTC().Format(time.RFC3339), RemoteSize: e.Size,
+	src := evidence.Source{Kind: "file", DeviceID: w.d.serial, RemotePath: p, RemoteMode: e.Mode}
+	if !e.MTimeUnknown {
+		src.RemoteMTime = e.MTime.UTC().Format(time.RFC3339)
+	}
+	if e.V2 { // a v1 size may be truncated to 32 bits: unknown, not a wrong number
+		src.RemoteSize = e.Size
 	}
 	var rec evidence.ManifestRecord
 	var err error

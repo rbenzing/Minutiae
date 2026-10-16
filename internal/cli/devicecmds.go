@@ -124,7 +124,11 @@ func newLsCmd(d Deps, opts *rootOptions, kind device.Kind, flag string) *cobra.C
 			return writeJSON(d.Out, es)
 		}
 		for _, e := range es {
-			fmt.Fprintf(d.Out, "%s %12d %s %s\n", e.Mode, e.Size, e.ModTime.Format("2006-01-02 15:04:05"), displayName(e.Name))
+			mtime := "unknown" // the zero time is how a listing says it has no time
+			if !e.ModTime.IsZero() {
+				mtime = e.ModTime.Format("2006-01-02 15:04:05")
+			}
+			fmt.Fprintf(d.Out, "%s %12d %s %s\n", e.Mode, e.Size, mtime, displayName(e.Name))
 		}
 		return nil
 	}
