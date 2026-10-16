@@ -62,6 +62,8 @@ type IngestStart struct {
 	BatchRows     int      `json:"batch_rows"`
 	Reingest      bool     `json:"reingest"`
 	NormVersion   string   `json:"norm_version"` // the full-text index version the ingest indexes with (FTSNormVersion)
+	// Sync is "normal" when the ingest ran its batches with synchronous=NORMAL (WriterOptions.RelaxedSync, ruling D89); absent means FULL.
+	Sync string `json:"sync,omitempty"`
 }
 
 // BatchCommit is the details of records.batch: a batch announced (and fsynced)

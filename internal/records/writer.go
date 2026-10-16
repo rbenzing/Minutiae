@@ -61,6 +61,11 @@ type WriterOptions struct {
 	BatchRows  int // default 5000, max 20000
 	CacheKiB   int // page cache for batch transactions, KiB; default 262144 (256 MiB), max 1048576
 	BatchBytes int // default 32 MiB
+	// RelaxedSync runs the batch transactions with synchronous=NORMAL on a write-ahead log (ruling D89, D90): a power
+	// loss can lose the last committed batches although their records.batch entries were audited and fsynced. The
+	// run is then incomplete and verify names the absent batches. End restores FULL and checkpoints before it
+	// concludes the run. Off by default; it is never implied. The start entry records sync = normal.
+	RelaxedSync bool
 }
 
 // IngestResult is what End and Abort report.
@@ -514,7 +519,7 @@ func boolInt(b bool) int {
 // failure anywhere leaves none of them.
 func (w *Writer) insertBatch(ctx context.Context, batchNo int, first int64, digest, created string, docs []evidence.FTSDoc) error {
 	n := len(w.buf)
-	return w.c.StoreTxTuned(ctx, evidence.TxTuning{CacheKiB: w.opt.CacheKiB}, func(tx *sql.Tx) error {
+	return w.c.StoreTxTuned(ctx, evidence.TxTuning{CacheKiB: w.opt.CacheKiB, RelaxedSync: w.opt.RelaxedSync}, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `INSERT INTO record_batches (ingest_id, batch_no, first_id, count, digest, created) VALUES (?, ?, ?, ?, ?, ?)`,
 			w.IngestID(), batchNo, first, n, digest, created)
 		if err != nil {
@@ -597,6 +602,12 @@ func (w *Writer) End(ctx context.Context) (IngestResult, error) {
 	if err := w.writeNote(); err != nil {
 		return IngestResult{}, err
 	}
+	// a relaxed ingest becomes durable first: FULL again, the log checkpointed and fsynced. Only then is the
+	// run concluded (audit entry, then run row), so nothing says "complete" about rows a power loss could
+	// still take (D90 b). A failure leaves the ingest unconcluded.
+	if err := w.restoreSync(ctx); err != nil {
+		return IngestResult{}, err
+	}
 	concl := w.conclusion("complete")
 	e, err := w.c.Audit.Append(evidence.ActionIngestEnd, "", concl.Details())
 	if err != nil {
@@ -611,6 +622,26 @@ func (w *Writer) End(ctx context.Context) (IngestResult, error) {
 		return IngestResult{}, err
 	}
 	return w.result(concl), nil
+}
+
+// syncName is the value of IngestStart.Sync: "normal" for a relaxed ingest, "" (absent) for FULL.
+func (w *Writer) syncName() string {
+	if w.opt.RelaxedSync {
+		return "normal"
+	}
+	return ""
+}
+
+// restoreSync ends the relaxed mode of a relaxed writer (see evidence.Case.RestoreFullSync) and then
+// fires the after-sync-restore hook. A full-sync writer has nothing to restore. w.mu is held.
+func (w *Writer) restoreSync(ctx context.Context) error {
+	if !w.opt.RelaxedSync {
+		return nil
+	}
+	if err := w.c.RestoreFullSync(ctx); err != nil {
+		return fmt.Errorf("restore full sync: %w", err)
+	}
+	return w.callHook("after-sync-restore")
 }
 
 // Abort concludes the ingest as incomplete: records.ingest.error is audited and
@@ -652,8 +683,17 @@ func (w *Writer) Abort(ctx context.Context, cause error) (IngestResult, error) {
 	}
 	w.buf, w.bufBytes = nil, 0
 	w.state = stateClosed
+	// the aborted run is incomplete whatever the log holds; still put FULL and the rollback journal back, so the
+	// case does not stay in the relaxed mode. A failure is reported after the run is recorded.
+	var restoreErr error
+	if w.opt.RelaxedSync {
+		restoreErr = w.c.RestoreFullSync(ctx)
+	}
 	if err := w.storeRun(ctx, concl, e); err != nil {
-		return IngestResult{}, err
+		return IngestResult{}, errors.Join(err, restoreErr)
+	}
+	if restoreErr != nil {
+		return w.result(concl), fmt.Errorf("restore full sync: %w", restoreErr)
 	}
 	return w.result(concl), nil
 }

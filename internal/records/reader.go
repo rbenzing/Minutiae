@@ -140,6 +140,9 @@ type Full struct {
 	ArtifactIncomplete bool
 	Batch              BatchInfo
 	Run                *RunInfo // nil when the database holds no run row for the batch's ingest
+	// Gap is set when this record's ingest is not complete in the database: it never concluded, or a later ingest recovered it after
+	// audited batches never reached the database (AbsentBatches names them). Nil when the ingest has no gap.
+	Gap *IngestGap
 	// SupersededBy is the ingest id of the lowest-ending later complete run of
 	// this parser name that covers this record's artifact; "" when current.
 	SupersededBy string
@@ -168,6 +171,9 @@ type Overview struct {
 	SupersededRecords int64
 	TSMin, TSMax      *int64           // Unix microseconds
 	Runs              map[string]int64 // every run of the case, by outcome
+	// Gaps lists every ingest of the case that is not complete in the database, with the audited-but-absent batches
+	// (a relaxed-sync ingest cut off by a power loss is one). Runs counts only concluded runs.
+	Gaps []IngestGap
 }
 
 // readTx runs fn in one evidence.Case.ReadRecordsTx. With needIndex it first requires, inside the same
@@ -272,3 +278,6 @@ func mapTimeout(ctx context.Context, err error) error {
 func isInterrupt(err error) bool {
 	return strings.Contains(strings.ToLower(err.Error()), "interrupt")
 }
+
+// IngestGap is an ingest the database cannot show as complete (see evidence.IngestGap).
+type IngestGap = evidence.IngestGap

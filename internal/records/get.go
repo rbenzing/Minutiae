@@ -88,6 +88,15 @@ func (r *Reader) Get(ctx context.Context, id int64) (Full, error) {
 		return Full{}, fmt.Errorf("%w: records: record %d: the audit log is missing or empty; run: minutiae case verify --case %s", evidence.ErrIntegrity, id, r.c.Dir)
 	}
 	full.Batch.AuditSeq = batchAuditSeq(entries, full.Batch)
+	gaps, err := r.c.IngestGapsFrom(entries)
+	if err != nil {
+		return Full{}, r.integrity(fmt.Errorf("records: record %d: %w", id, err))
+	}
+	for i := range gaps {
+		if gaps[i].IngestID == full.IngestID {
+			full.Gap = &gaps[i]
+		}
+	}
 	full.Provenance = resolveChain(man, evidence.NewAuditIndex(entries), full.ArtifactID)
 	byID := make(map[string]evidence.ManifestRecord, len(man))
 	for _, m := range man {

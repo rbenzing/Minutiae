@@ -224,5 +224,11 @@ func (r *Reader) Overview(ctx context.Context, f Filter) (Overview, error) {
 	if err != nil {
 		return Overview{}, err
 	}
+	// the ingests the database cannot show as complete (read after the transaction: the audit log is a file)
+	gaps, err := r.c.IngestGaps()
+	if err != nil {
+		return Overview{}, r.integrity(fmt.Errorf("records: overview: %w", err))
+	}
+	ov.Gaps = gaps
 	return ov, nil
 }

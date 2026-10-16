@@ -109,7 +109,12 @@ func (c *Case) UnresolvedIngests() ([]UnresolvedIngest, error) {
 	if err != nil {
 		return nil, err
 	}
+	return c.unresolvedFrom(entries)
+}
 
+// unresolvedFrom is UnresolvedIngests over audit entries already read.
+func (c *Case) unresolvedFrom(entries []AuditEntry) ([]UnresolvedIngest, error) {
+	var err error
 	type ingest struct {
 		start      IngestStart
 		startSeq   int64
@@ -304,4 +309,82 @@ func (c *Case) LiveIngest() string {
 	c.ingestMu.Lock()
 	defer c.ingestMu.Unlock()
 	return c.liveIngest
+}
+
+// IngestGap is an ingest whose rows the database may lack although the audit log announced them: one
+// that never concluded (no run row; Recovered false) or one a later ingest recovered whose recover entry
+// names batches that never reached the database (Recovered true). AbsentBatches are those batch numbers,
+// audited and never written (a records.batch.error is not among them). A relaxed-sync ingest (ruling D89)
+// cut off by a power loss is such a gap. Readers (records stats and show) report the gap so the run is
+// never taken for complete.
+type IngestGap struct {
+	IngestID      string
+	Parser        string
+	ParserVersion string
+	Recovered     bool
+	AbsentBatches []int // ascending; empty when every announced batch is stored
+}
+
+// IngestGaps lists, in start order, the ingests that are not complete in the database: the unresolved
+// ones (UnresolvedIngests, except the ingest live in this Case) and the recovered ones that lost
+// batches. It reads the audit log once and writes nothing.
+func (c *Case) IngestGaps() ([]IngestGap, error) {
+	if v, err := c.store.SchemaVersion(); err != nil {
+		return nil, fmt.Errorf("artifacts.db schema_version: %w", err)
+	} else if v < 2 {
+		return nil, nil
+	}
+	entries, err := c.ReadAudit()
+	if err != nil {
+		return nil, err
+	}
+	return c.IngestGapsFrom(entries)
+}
+
+// IngestGapsFrom is IngestGaps over audit entries the caller already read (Get shows provenance from
+// the same read).
+func (c *Case) IngestGapsFrom(entries []AuditEntry) ([]IngestGap, error) {
+	un, err := c.unresolvedFrom(entries)
+	if err != nil {
+		return nil, err
+	}
+	live := c.LiveIngest()
+	var out []IngestGap
+	unresolved := map[string]bool{}
+	for _, u := range un {
+		unresolved[u.Start.IngestID] = true
+		if u.Start.IngestID == live {
+			continue
+		}
+		out = append(out, IngestGap{
+			IngestID: u.Start.IngestID, Parser: u.Start.Parser, ParserVersion: u.Start.ParserVersion,
+			AbsentBatches: append([]int{}, u.AbsentBatches...),
+		})
+	}
+	starts := map[string]IngestStart{}
+	for _, e := range entries {
+		switch e.Action {
+		case ActionIngestStart:
+			s, err := DecodeDetails[IngestStart](e.Details)
+			if err != nil {
+				return nil, fmt.Errorf("%w: audit seq %d: %s: %w", ErrIntegrity, e.Seq, e.Action, err)
+			}
+			if _, dup := starts[s.IngestID]; !dup {
+				starts[s.IngestID] = s
+			}
+		case ActionIngestRecover:
+			r, err := DecodeDetails[IngestRecover](e.Details)
+			if err != nil {
+				return nil, fmt.Errorf("%w: audit seq %d: %s: %w", ErrIntegrity, e.Seq, e.Action, err)
+			}
+			if len(r.BatchNos) == 0 || unresolved[r.IngestID] {
+				continue // nothing was lost, or the run row is still missing (already listed above)
+			}
+			s := starts[r.IngestID]
+			nos := append([]int{}, r.BatchNos...)
+			sort.Ints(nos)
+			out = append(out, IngestGap{IngestID: r.IngestID, Parser: s.Parser, ParserVersion: s.ParserVersion, Recovered: true, AbsentBatches: nos})
+		}
+	}
+	return out, nil
 }

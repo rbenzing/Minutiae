@@ -151,6 +151,7 @@ func (w *Writer) Start(ctx context.Context, so StartOptions) error {
 		IngestID: ingestID, Parser: w.p.Name, ParserVersion: w.p.Version, ParserHash: hash,
 		AnalysisID: so.AnalysisID, Artifacts: artifacts, BatchRows: w.opt.BatchRows, Reingest: reingest,
 		NormVersion: evidence.FTSNormVersion(),
+		Sync:        w.syncName(),
 	}.Details()); err != nil {
 		return fmt.Errorf("audit ingest start: %w", err)
 	}
