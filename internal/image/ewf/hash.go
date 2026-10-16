@@ -154,10 +154,12 @@ func (o *opener) error2(n int, s Segment, sec section) error {
 	}
 	if !ok {
 		o.r.warn.add("segment %d: error2 section is smaller than %d bytes; ignored", n, error2HeaderLen)
+		o.err2Damaged = true
 		return nil
 	}
 	if got, want := binary.LittleEndian.Uint32(hdr[516:]), adler32.Checksum(hdr[:516]); got != want {
 		o.r.warn.add("segment %d: error2 section header checksum mismatch; acquisition error ranges ignored", n)
+		o.err2Damaged = true
 		return nil
 	}
 	claimed := uint64(binary.LittleEndian.Uint32(hdr))
@@ -202,9 +204,11 @@ func (o *opener) error2(n int, s Segment, sec section) error {
 		}
 		if binary.LittleEndian.Uint32(f[:]) != sum.Sum32() {
 			o.r.warn.add("segment %d: error2 entries checksum mismatch; acquisition error ranges ignored", n)
+			o.err2Damaged = true
 			return nil
 		}
 	}
+	o.err2Seen = true
 	if count == 0 {
 		return nil
 	}

@@ -96,6 +96,7 @@ func (c *Case) verifyRecovered(rep *VerifyReport, recs []ManifestRecord) {
 		}
 	}
 
+	declared := declaredRefs(uniq)
 	byClass := map[string]int{}
 	byKind := map[string]int{}
 	var lowest *int
@@ -114,6 +115,8 @@ func (c *Case) verifyRecovered(rep *VerifyReport, recs []ManifestRecord) {
 		case !recovered && d != nil && d.Recovery != nil:
 			ps.add(rKindShape, "%scarries a recovery description (only kinds recover, carve, slack, journal and report may)", pre)
 		}
+		checkAcquisitionGaps(ps, r, pre)
+		c.checkExtractDeclared(ps, r, pre, byID, declared)
 
 		ns, inNS := RecoveredNamespace(r.Path)
 		if recovered {
