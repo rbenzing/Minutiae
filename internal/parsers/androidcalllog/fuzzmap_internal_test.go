@@ -157,6 +157,9 @@ func checkMapped(t testing.TB, cells []cell) {
 			t.Errorf("subscription %v from sub id cell %+v", s, sid)
 		}
 	}
+	if _, has := r.Payload["subscription"]; sid.kind == cText && !has && unknown["subscription_id"] != "unparseable" {
+		t.Errorf("a refused text subscription_id is not flagged: %v", unknown)
+	}
 	if (sid.kind == cFloat || sid.kind == cBlob) && unknown["subscription_id"] != "type-mismatch" {
 		t.Errorf("a subscription_id of kind %d is not flagged: %v", sid.kind, unknown)
 	}

@@ -69,6 +69,7 @@ def calls_all():
         call_row(28, subscription_id=chr(0x663)),  # an Arabic-Indic digit: Python's int() accepts it, ParseInt refuses
         call_row(29, subscription_id="5_0"),  # Python's int() accepts the underscore, ParseInt refuses
         call_row(30, subscription_id=chr(0x663) * 17),  # 34 bytes: refused before any conversion
+        call_row(31, subscription_id="-3"),  # parses, but a negative subscription is refused
     ]
 
 
@@ -130,6 +131,8 @@ def expect_call(r, remote, file="any"):
         v = parse_small(txt)
         if v is not None and 0 <= v <= C.I64_MAX:
             p["subscription"] = v
+        else:
+            unknown["subscription_id"] = "unparseable"  # T66: a refused text is flagged, its raw text kept
     for col, key in (("is_read", "read"), ("new", "new")):
         if is_int(r.get(col)) and r[col] in (0, 1):
             p[key] = r[col] == 1

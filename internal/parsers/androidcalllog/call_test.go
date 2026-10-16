@@ -37,8 +37,8 @@ func raw(r records.Record, key string) any { return r.Payload["raw"].(map[string
 
 func TestCallMappingFromTheSpec(t *testing.T) {
 	res := featuresRun(t)
-	if len(res.Records) != 30 {
-		t.Fatalf("%d records, want 30", len(res.Records))
+	if len(res.Records) != 31 {
+		t.Fatalf("%d records, want 31", len(res.Records))
 	}
 	one := call(t, res, "1")
 	start := time.Unix(1682935200+3600, 0).UTC()
@@ -104,7 +104,8 @@ func TestCallMappingFromTheSpec(t *testing.T) {
 	if field(call(t, res, "18"), "kind") != "video" {
 		t.Error("features&1 is video")
 	}
-	if r := call(t, res, "20"); field(r, "subscription") != nil || raw(r, "subscription_id") != "89014103211118510720" {
+	if r := call(t, res, "20"); field(r, "subscription") != nil || raw(r, "subscription_id") != "89014103211118510720" ||
+		unknownColumns(r)["subscription_id"] != "unparseable" {
 		t.Errorf("row 20 subscription: %v", r.Payload)
 	}
 	if field(call(t, res, "21"), "subscription") != int64(2) {
@@ -129,10 +130,15 @@ func TestCallMappingFromTheSpec(t *testing.T) {
 		t.Errorf("row 27: %v", r.Payload)
 	}
 	// T63: only ASCII decimal text is a subscription (Go's ParseInt), and at most 32 bytes
-	for _, id := range []string{"28", "29", "30"} {
-		if r := call(t, res, id); field(r, "subscription") != nil || raw(r, "subscription_id") == nil {
+	// T66: and a refused text (unparseable, out of range, negative) is flagged, its raw text kept
+	for _, id := range []string{"28", "29", "30", "31"} {
+		if r := call(t, res, id); field(r, "subscription") != nil || raw(r, "subscription_id") == nil ||
+			unknownColumns(r)["subscription_id"] != "unparseable" {
 			t.Errorf("row %s: %v", id, r.Payload)
 		}
+	}
+	if u := unknownColumns(call(t, res, "21")); u["subscription_id"] != nil {
+		t.Errorf("row 21: an accepted subscription_id is flagged: %v", u)
 	}
 }
 

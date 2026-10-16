@@ -8,6 +8,6 @@ type identity struct{ Package, Hash string }
 
 // generated maps "name@version" to the identity of the parser.
 var generated = map[string]identity{
-	"android.calllog@1.0.0": {Package: "github.com/rbenzing/minutiae/internal/parsers/androidcalllog", Hash: "src1:sha256:fa0961db3e2bb68347601b88cf2260bc156f92302992f7cc6886011b6087c069"},
+	"android.calllog@1.0.1": {Package: "github.com/rbenzing/minutiae/internal/parsers/androidcalllog", Hash: "src1:sha256:21504d9141feab48c3926d1bdb46a6059e856bf212e6cda2f2cb8693f089aa77"},
 	"android.mmssms@1.0.0":  {Package: "github.com/rbenzing/minutiae/internal/parsers/androidmms", Hash: "src1:sha256:21e8afef1ee6de11852288c8e61fd538e141794e04f2e6a54ca72606a742bba4"},
 }

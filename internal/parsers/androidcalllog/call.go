@@ -205,6 +205,9 @@ func mapCall(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 			raw["subscription_id"] = txt
 			if n, perr := parseSmall(txt); perr == nil && n >= 0 {
 				cl.Subscription = &n
+			} else {
+				// T66: a refused text (not decimal, out of range, negative) is unknown, not absent; the raw text stays.
+				unknown["subscription_id"] = "unparseable"
 			}
 		} else {
 			// T61: a REAL or BLOB is neither a subscription nor an absence.
