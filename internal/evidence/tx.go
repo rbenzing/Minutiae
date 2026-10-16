@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync/atomic"
 )
 
@@ -109,6 +110,13 @@ type TxTuning struct {
 	// CacheKiB is the page cache size in KiB while the transaction runs (0 = the connection's own).
 	// The previous value is put back when it ends, whatever its outcome.
 	CacheKiB int
+	// RelaxedSync runs this transaction with synchronous=NORMAL on a write-ahead log (D89, D90): its
+	// commit is not fsynced, so a power loss can lose it and the transactions before it that no FULL
+	// commit or checkpoint has synced since. NORMAL on a rollback journal could corrupt the database,
+	// so the log is switched on first and the transaction is refused when that fails. synchronous goes
+	// back to FULL when the transaction ends; the log stays until RestoreFullSync. Only the records
+	// ingest batch path may set it, and only on the caller's explicit request.
+	RelaxedSync bool
 }
 
 const maxTunedCacheKiB = 1 << 20 // 1 GiB
@@ -143,6 +151,26 @@ func (c *Case) StoreTxTuned(ctx context.Context, tune TxTuning, fn func(*sql.Tx)
 			bad = true
 			return fmt.Errorf("artifacts.db pragma: %w", err)
 		}
+	}
+	if tune.RelaxedSync {
+		var mode string
+		if err := conn.QueryRowContext(ctx, `PRAGMA journal_mode = WAL`).Scan(&mode); err != nil {
+			bad = true
+			return fmt.Errorf("artifacts.db journal_mode: %w", err)
+		}
+		if !strings.EqualFold(mode, "wal") { // NORMAL without the log risks corruption: refuse
+			bad = true
+			return fmt.Errorf("artifacts.db journal_mode is %q, want wal for a relaxed-sync transaction", mode)
+		}
+		if _, err := conn.ExecContext(ctx, `PRAGMA synchronous = NORMAL`); err != nil {
+			bad = true
+			return fmt.Errorf("artifacts.db pragma: %w", err)
+		}
+		defer func() { // runs before the connection is closed or discarded
+			if _, err := conn.ExecContext(context.WithoutCancel(ctx), `PRAGMA synchronous = FULL`); err != nil {
+				bad = true
+			}
+		}()
 	}
 	if tune.CacheKiB != 0 {
 		var prev int
@@ -344,4 +372,50 @@ func restoreAfterRead(ctx context.Context, conn *sql.Conn, changesBefore int64) 
 		problem = errors.Join(problem, fmt.Errorf("%w: %d database(s) left attached", ErrReadTxModified, attached))
 	}
 	return problem
+}
+
+// RestoreFullSync ends the relaxed mode: synchronous goes back to FULL, the write-ahead log is
+// checkpointed into the database file (wal_checkpoint(TRUNCATE) fsyncs it, so every relaxed commit is
+// durable when this returns) and the rollback journal is restored. It fails when the checkpoint is
+// blocked or the journal mode does not come back; the case is then still in the relaxed mode and the
+// caller must not treat what it wrote as durable. On a case that never ran a relaxed transaction it
+// changes nothing.
+func (c *Case) RestoreFullSync(ctx context.Context) error {
+	if err := c.store.enterTx(ctx); err != nil {
+		return err
+	}
+	defer c.store.leaveTx()
+	conn, err := c.store.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("artifacts.db: %w", err)
+	}
+	bad := false
+	defer func() {
+		if bad {
+			discardConn(conn)
+		}
+		_ = conn.Close()
+	}()
+	if _, err := conn.ExecContext(ctx, `PRAGMA synchronous = FULL`); err != nil {
+		bad = true
+		return fmt.Errorf("artifacts.db pragma: %w", err)
+	}
+	var busy, logFrames, done int
+	if err := conn.QueryRowContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`).Scan(&busy, &logFrames, &done); err != nil {
+		bad = true
+		return fmt.Errorf("artifacts.db checkpoint: %w", err)
+	}
+	if busy != 0 {
+		return errors.New("artifacts.db checkpoint: the write-ahead log could not be checkpointed (the database is busy)")
+	}
+	var mode string
+	if err := conn.QueryRowContext(ctx, `PRAGMA journal_mode = DELETE`).Scan(&mode); err != nil {
+		bad = true
+		return fmt.Errorf("artifacts.db journal_mode: %w", err)
+	}
+	if !strings.EqualFold(mode, "delete") {
+		bad = true
+		return fmt.Errorf("artifacts.db journal_mode is %q after the restore, want delete", mode)
+	}
+	return nil
 }
