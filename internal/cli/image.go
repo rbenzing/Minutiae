@@ -73,7 +73,7 @@ type openOpts struct {
 // scanBudgetFlag registers --max-scan-bytes on cmd; the returned function resolves it.
 func scanBudgetFlag(cmd *cobra.Command) func() (examine.ScanBudget, error) {
 	var n int64
-	cmd.Flags().Int64Var(&n, "max-scan-bytes", 0, "stop the whole-media verification after this many bytes (0 = no limit; without the flag there is no limit, except 64 GiB for a size claim the container's own bytes cannot hold)")
+	cmd.Flags().Int64Var(&n, "max-scan-bytes", 0, "stop the whole-media verification after this many bytes, checked once per chunk so a stop can overshoot by up to one chunk (16 MiB); requires --verify (0 = no limit; without the flag there is no limit, except 64 GiB for a size claim the container's own bytes cannot hold)")
 	return func() (examine.ScanBudget, error) {
 		switch {
 		case n < 0:
@@ -203,6 +203,9 @@ func newImageInfoCmd(d Deps, opts *rootOptions) *cobra.Command {
 	scan := scanBudgetFlag(cmd)
 	cmd.Flags().BoolVar(&verify, "verify", false, "verify the container's stored hashes (raw images have none)")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("max-scan-bytes") && !verify {
+			return usageErrorf("--max-scan-bytes bounds the verification and requires --verify")
+		}
 		oo := openOpts{ctx: cmd.Context(), verifyParent: *vp}
 		var serr error
 		if oo.scan, serr = scan(); serr != nil {

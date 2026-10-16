@@ -59,3 +59,19 @@ func TestImageInfoShowsImplausibleSize(t *testing.T) {
 		t.Fatalf("JSON lacks implausible_size:\n%s", jout)
 	}
 }
+
+// X42: a bound the user gave is never silently dropped. --max-scan-bytes only bounds the
+// verification, so without --verify it is a usage error that names the requirement.
+func TestImageInfoMaxScanBytesRequiresVerify(t *testing.T) {
+	e := newEWFEnv(t, ewftest.Options{})
+	before := len(e.audit(t))
+	for _, v := range []string{"5000", "0"} {
+		code, out, errs := e.info(t, "--max-scan-bytes", v)
+		if code != ExitUsage || !strings.Contains(errs, "--verify") {
+			t.Fatalf("--max-scan-bytes %s without --verify: exit %d, want usage naming --verify\nstdout:\n%s\nstderr:\n%s", v, code, out, errs)
+		}
+	}
+	if n := len(newEntries(e.audit(t), before)); n != 0 {
+		t.Fatalf("a usage error audited %d entries", n)
+	}
+}

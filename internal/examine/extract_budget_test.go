@@ -2,9 +2,13 @@ package examine_test
 
 import (
 	"errors"
+	"io/fs"
 	"math"
+	"strings"
+	"syscall"
 	"testing"
 
+	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/examine"
 	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/filesys/fstest"
@@ -124,4 +128,97 @@ func TestExtractBudgetRefundsAFileThatCouldNotBeRead(t *testing.T) {
 		sum.Warnings[0].Path != "/a.bin" || sum.Warnings[1].Path != "/c.bin" {
 		t.Fatalf("summary = %+v; want b.bin extracted and the limit reached at c.bin", sum)
 	}
+}
+
+// releaseNodes is two 3-block files under a 4-block limit: b.bin fits only when a.bin's
+// admitted 3 blocks were given back.
+func releaseNodes() []fstest.Node {
+	return []fstest.Node{
+		{Path: "/a.bin", Data: pattern(3*blk, 1)},
+		{Path: "/b.bin", Data: pattern(3*blk, 2)},
+	}
+}
+
+// X44: each of the four skips before any byte is written gives the admitted size back.
+func TestExtractBudgetRefundsEachNothingWrittenSkip(t *testing.T) {
+	limit := examine.ExtractOptions{Partition: -1, Paths: []string{"/"}, Recursive: true, MaxBytes: int64(4 * blk)}
+	check := func(t *testing.T, c *evidence.Case, s *examine.Session, wantPath, wantWarn string) {
+		t.Helper()
+		sum := extractAll(t, s, limit)
+		if sum.OutputLimit != "" || sum.Files != 1 || sum.Bytes != int64(3*blk) || sum.Skipped != 1 {
+			t.Fatalf("summary = %+v; want a.bin skipped, its charge given back, b.bin extracted, no limit", sum)
+		}
+		if len(sum.Warnings) != 1 || sum.Warnings[0].Path != wantPath || !strings.Contains(sum.Warnings[0].Reason, wantWarn) {
+			t.Fatalf("warnings = %+v; want one for %s containing %q", sum.Warnings, wantPath, wantWarn)
+		}
+		verifyOK(t, c)
+	}
+	t.Run("no usable local name", func(t *testing.T) {
+		c := newCase(t)
+		s, _ := sessionHook(t, c, hookFS{mapEntry: func(e filesys.Entry) filesys.Entry {
+			if e.Name == "a.bin" {
+				e.Name = "C:" // a drive-letter name the case cannot hold
+			}
+			return e
+		}}, 0, releaseNodes()...)
+		check(t, c, s, "/C:", "no usable local name")
+	})
+	t.Run("operating system rejects the name", func(t *testing.T) {
+		c := newCase(t)
+		s, _ := session(t, c, 0, releaseNodes()...)
+		s.SetNewArtifact(func(deviceID, acqID, rel string, src evidence.Source) (*evidence.ArtifactWriter, error) {
+			if strings.HasSuffix(rel, "/a.bin") {
+				return nil, &fs.PathError{Op: "open", Path: rel, Err: syscall.ENAMETOOLONG}
+			}
+			return c.NewArtifact(deviceID, acqID, rel, src)
+		})
+		check(t, c, s, "/a.bin", "not extracted")
+	})
+	t.Run("no free local name", func(t *testing.T) {
+		c := newCase(t)
+		s, _ := session(t, c, 0, releaseNodes()...)
+		s.SetNewArtifact(func(deviceID, acqID, rel string, src evidence.Source) (*evidence.ArtifactWriter, error) {
+			if strings.HasSuffix(rel, "/a.bin") || (strings.Contains(rel, "/a~") && strings.HasSuffix(rel, ".bin")) {
+				return nil, evidence.ErrArtifactExists
+			}
+			return c.NewArtifact(deviceID, acqID, rel, src)
+		})
+		check(t, c, s, "/a.bin", "no free local name")
+	})
+	t.Run("no usable local directory name", func(t *testing.T) {
+		c := newCase(t)
+		s, _ := sessionHook(t, c, hookFS{mapEntry: func(e filesys.Entry) filesys.Entry {
+			if e.Name == "d" {
+				e.Name = "C:" // a drive-letter directory name the case cannot hold
+			}
+			return e
+		}}, 0, fstest.Node{Path: "/d/a.bin", Data: pattern(3*blk, 1)}, fstest.Node{Path: "/e.bin", Data: pattern(3*blk, 2)})
+		check(t, c, s, "/C:/a.bin", "no usable local directory name")
+	})
+}
+
+// X44: a file whose read stops part way keeps its partial bytes, flagged incomplete, and is
+// charged for the bytes written only: the rest of its admitted size is given back.
+func TestExtractBudgetTrimsAPartWrittenFile(t *testing.T) {
+	c := newCase(t)
+	s, _ := sessionHook(t, c, hookFS{mapFile: func(e filesys.Entry, file filesys.File) filesys.File {
+		if e.Name == "a.bin" {
+			return failingFile{File: file, after: blk}
+		}
+		return file
+	}}, 0, budgetNodes()...)
+	// a.bin (3 blocks admitted, 1 written) + b.bin (3) = 4 blocks fit 5; c.bin (3) does not.
+	// Untrimmed, a.bin would stay charged 3 blocks and b.bin would already be refused.
+	sum := extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: []string{"/"}, Recursive: true, MaxBytes: int64(5 * blk)})
+	if sum.OutputLimit != "max-bytes" || sum.Files != 1 || len(sum.Artifacts) != 2 || sum.Bytes != int64(3*blk) {
+		t.Fatalf("summary = %+v; want b.bin extracted besides the part-written a.bin, limit at c.bin", sum)
+	}
+	part := sum.Artifacts[0]
+	if part.Source.RemotePath != "/a.bin" || part.Size != blk || !part.Incomplete {
+		t.Fatalf("a.bin artifact = %+v; want %d bytes, flagged incomplete", part, blk)
+	}
+	if last := sum.Warnings[len(sum.Warnings)-1]; last.Path != "/c.bin" {
+		t.Fatalf("warnings = %+v; want the limit at /c.bin", sum.Warnings)
+	}
+	verifyOK(t, c)
 }
