@@ -2,8 +2,10 @@ package android
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -61,12 +63,43 @@ func limitWarnings(t *testing.T, c *evidence.Case, reason string) int {
 func requireIncompleteStats(t *testing.T, c *evidence.Case, reason string, hits int) {
 	t.Helper()
 	st := auditActions(t, c, "acquire.stats")
-	if len(st) != 1 || st[0].Details["incomplete"] != true {
+	if len(st) != 1 {
 		t.Fatalf("stats = %+v", st)
 	}
-	lh, _ := st[0].Details["limit_hits"].(map[string]any)
-	if fmt.Sprint(lh[reason]) != fmt.Sprint(hits) {
-		t.Fatalf("limit_hits = %v, want %s: %v", lh, reason, hits)
+	if err := incompleteStatsErr(st[0].Details, reason, hits); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// incompleteStatsErr checks one acquire.stats detail map: incomplete is true
+// and limit_hits[reason] is a JSON number equal to hits.
+func incompleteStatsErr(details map[string]any, reason string, hits int) error {
+	if details["incomplete"] != true {
+		return fmt.Errorf("incomplete = %v", details["incomplete"])
+	}
+	lh, _ := details["limit_hits"].(map[string]any)
+	n, ok := lh[reason].(json.Number)
+	if !ok || n.String() != strconv.Itoa(hits) {
+		return fmt.Errorf("limit_hits[%s] = %#v, want json.Number %d: %v", reason, lh[reason], hits, lh)
+	}
+	return nil
+}
+
+// W68: a string or a float where the audit holds a JSON number must fail.
+func TestIncompleteStatsErrIsStrictAboutTheValueType(t *testing.T) {
+	mk := func(v any) map[string]any {
+		return map[string]any{"incomplete": true, "limit_hits": map[string]any{"depth": v}}
+	}
+	if err := incompleteStatsErr(mk(json.Number("1")), "depth", 1); err != nil {
+		t.Fatalf("json.Number 1: %v", err)
+	}
+	for name, v := range map[string]any{"string": "1", "float": float64(1), "int": 1, "other number": json.Number("2")} {
+		if incompleteStatsErr(mk(v), "depth", 1) == nil {
+			t.Errorf("%s value %#v was accepted", name, v)
+		}
+	}
+	if incompleteStatsErr(map[string]any{"incomplete": true}, "depth", 1) == nil {
+		t.Error("missing limit_hits accepted")
 	}
 }
 
