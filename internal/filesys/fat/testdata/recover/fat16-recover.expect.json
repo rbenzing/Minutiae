@@ -1,6 +1,6 @@
 {
   "generator": {
-    "image_sha256": "039d8bcd1d975ca1f08b5dd2246480ffcc4e52c3b5b4778c2088cb44a32ee6ec",
+    "image_sha256": "b4a0196d4676068077a9a426c6ee211f3b3b36cac6002cb5ecc6085a354c7352",
     "packages": [
       {
         "package": "busybox-static",
@@ -66,7 +66,7 @@
       "guest boot 1: cp /payload/frag-live/b.bin /mnt/frag-live/b.bin",
       "guest boot 1: cp /payload/frag-live/c.bin /mnt/frag-live/c.bin",
       "guest boot 1: cp /payload/frag-dead/a.bin /mnt/frag-dead/a.bin",
-      "guest boot 1: cp /payload/frag-dead/d.bin /mnt/frag-dead/d.bin",
+      "guest boot 1: cp /payload/frag-dead/D.BIN /mnt/frag-dead/D.BIN",
       "guest boot 1: cp /payload/frag-dead/c.bin /mnt/frag-dead/c.bin",
       "guest boot 1: cp /payload/lfn/a-long-deleted-name-for-slot-reuse.bin /mnt/lfn/a-long-deleted-name-for-slot-reuse.bin",
       "guest boot 1: cp /payload/gone/inner.bin /mnt/gone/inner.bin",
@@ -93,7 +93,7 @@
       "guest boot 4: rm /mnt/cut-l-w/filler.bin",
       "guest boot 4: rm -r /mnt/cut-h-hid",
       "guest boot 4: rm /mnt/frag-live/f.bin",
-      "guest boot 4: rm /mnt/frag-dead/d.bin /mnt/frag-dead/f.bin",
+      "guest boot 4: rm /mnt/frag-dead/D.BIN /mnt/frag-dead/f.bin",
       "guest boot 4: rm -r /mnt/gone",
       "fsck.fat -n <img>   # must report a clean filesystem",
       "fsck.fat -v -n <img>   # geometry, clusters in use",
@@ -409,6 +409,47 @@
       }
     },
     {
+      "path": "/frag-dead/D.BIN",
+      "family": "frag-dead-aux",
+      "listed": true,
+      "size": 1529,
+      "sha256": "d2065a5814d8beb0864fd1ea0b11373e9e2eadbf1dc3026a3c7657b9bb81a59d",
+      "first_cluster": 58,
+      "true_chain": [
+        [
+          58,
+          60
+        ]
+      ],
+      "name_state": "short-only",
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "fat-contiguous",
+        "range": [
+          [
+            58,
+            60
+          ]
+        ],
+        "captured": [
+          [
+            58,
+            60
+          ]
+        ],
+        "cut": false,
+        "equal_source": true,
+        "overlaps": [
+          "/frag-dead/f.bin"
+        ],
+        "confidence": 30,
+        "assumptions": [
+          "contiguous-allocation"
+        ]
+      }
+    },
+    {
       "path": "/frag-dead/c.bin",
       "family": "frag-dead-aux",
       "listed": true,
@@ -440,47 +481,6 @@
         ],
         "cut": false,
         "equal_source": false,
-        "overlaps": [
-          "/frag-dead/f.bin"
-        ],
-        "confidence": 30,
-        "assumptions": [
-          "contiguous-allocation"
-        ]
-      }
-    },
-    {
-      "path": "/frag-dead/d.bin",
-      "family": "frag-dead-aux",
-      "listed": true,
-      "size": 1529,
-      "sha256": "4c7f7676dda3eeb47fff47ee3819583377bc12fb3792a79ac19ec1557d819e94",
-      "first_cluster": 58,
-      "true_chain": [
-        [
-          58,
-          60
-        ]
-      ],
-      "name_state": "lfn-intact",
-      "expect": {
-        "outcome": "recover",
-        "skip": "",
-        "method": "fat-contiguous",
-        "range": [
-          [
-            58,
-            60
-          ]
-        ],
-        "captured": [
-          [
-            58,
-            60
-          ]
-        ],
-        "cut": false,
-        "equal_source": true,
         "overlaps": [
           "/frag-dead/f.bin"
         ],
@@ -527,8 +527,8 @@
         "cut": false,
         "equal_source": false,
         "overlaps": [
-          "/frag-dead/c.bin",
-          "/frag-dead/d.bin"
+          "/frag-dead/D.BIN",
+          "/frag-dead/c.bin"
         ],
         "confidence": 30,
         "assumptions": [
@@ -854,6 +854,7 @@
     "skip-not-a-file": 2,
     "cut-prefix": 3,
     "overlap": 5,
+    "short-only": 1,
     "not-equal-complete": 3,
     "lfn-tail-lost": 1,
     "skip-no-free-bytes": 2,

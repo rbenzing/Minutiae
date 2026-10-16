@@ -978,7 +978,7 @@ whatever order the allocator chose. Four guest boots, each a fresh mount on the 
 
 1. populate: every directory first, then the family files (the volume is not full);
 2. `fill.bin` until ENOSPC, then the hole steps: `rm a.bin c.bin` and write the 6-cluster `f.bin` (the only free
-   clusters are a's and c's, so `f.bin` is fragmented around `b.bin` / `d.bin`) in `frag-live` and `frag-dead`;
+   clusters are a's and c's, so `f.bin` is fragmented around `b.bin` / `D.BIN`) in `frag-live` and `frag-dead`;
 3. phase W, one family at a time, each ending with the volume full again (the "ascending" row of F22: the writes take
    the freed clusters in ascending order);
 4. phase D: `rm` only.
@@ -998,11 +998,11 @@ phase W).
 | `cut-l` | `rm target.bin` (6), `/cut-l-w/filler.bin` (4, listed overwriter, `rm` in D) then `tail.bin` (2, live) | target cut after 4 clusters, overlapping the listed `filler.bin` (confidence 20; filler 30) |
 | `cut-h` | `rm target.bin` (6), `/cut-h-hid/filler.bin` (4) then `/cut-h-w/tail.bin` (2, live), `rm -r /cut-h-hid` in D | target cut after 4 clusters holding the hidden overwriter's bytes (not equal to the source, no listed overlap) |
 | `frag-live` | `a.bin` (2), `b.bin` (3, stays), `c.bin` (4); `rm a c`; `f.bin` (6) takes both holes; `rm f.bin` in D | `f.bin` is fragmented around the live `b.bin`: cut after its first fragment |
-| `frag-dead` | `a.bin` (2), `d.bin` (3), `c.bin` (4); `rm a c`; `f.bin` (6); `rm d.bin f.bin` in D | `f.bin`'s contiguous range is all free but holds `d.bin`'s bytes: complete, not equal to the source |
+| `frag-dead` | `a.bin` (2), `D.BIN` (3, an upper-case 8.3 name: no long-name entries, so its deleted entry is short-only, F104), `c.bin` (4); `rm a c`; `f.bin` (6); `rm D.BIN f.bin` in D | `f.bin`'s contiguous range is all free but holds `D.BIN`'s bytes: complete, not equal to the source |
 | `lfn` | the ONLY entry `a-long-deleted-name-for-slot-reuse.bin` (3 clusters, 3 long-name entries); `rm`, then create the empty `NEW.TXT` | `NEW.TXT` takes the first slot (the first on-disk long-name entry, the end of the name): `lfn-tail-lost` |
 | `gone` | `gone/inner.bin` (2), `rm -r /gone` in D | the directory is a deleted `not-a-file`; `inner.bin` is under a deleted directory (`listed: false`) |
 
-Helpers of a scenario that are deleted entries too (the `c.bin` hole, `d.bin`, the writers' `filler.bin`, the hidden
+Helpers of a scenario that are deleted entries too (the `c.bin` hole, `D.BIN`, the writers' `filler.bin`, the hidden
 `cut-h-hid` directory) carry the family `<family>-aux`, so the self-check's per-family assertions (for example "every
 `frag-*` entry has two fragments") apply to the scenario's own file. The slot of a hole's `a.bin` is taken by `f.bin`
 (the same slot size), so only `c.bin` remains as a deleted entry there; the oracle states what the image holds either way.
@@ -1022,7 +1022,7 @@ deleted long-name entries, checksummed against the short name with its first byt
 file live. A deleted entry is tied to its source file by directory, kind and size (and long-name text), and the script
 fails when that is not unique. The generator exits 1 with `family <name> missing: ...; re-rule, do not edit the ops`
 when a required outcome family (`contiguous-equal`, `empty`, `cut-prefix`, `skip-no-free-bytes`, `not-equal-complete`,
-`overlap`, `lfn-tail-lost`) occurs in none of the three images, and when a scenario family or the shape of the
+`overlap`, `lfn-tail-lost`, `short-only`) occurs in none of the three images, and when a scenario family or the shape of the
 contiguous / fragmented files is missing from one. No test compares timestamps from these images.
 
 NOT produced by a real driver (builder tests only): cross-linked chains, bad or reserved clusters inside a range, orphan

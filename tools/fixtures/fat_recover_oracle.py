@@ -458,6 +458,8 @@ def cmd_final(img, srcroot, fsck, snaps):
             bump("overlap")
         if a["name_state"] == "lfn-tail-lost":
             bump("lfn-tail-lost")
+        if a["name_state"] == "short-only":
+            bump("short-only")
     seen = {a["family"] for a in out}
     for name in set(PRIMARY.values()):
         if name not in seen:
@@ -476,7 +478,7 @@ def cmd_final(img, srcroot, fsck, snaps):
     print()
 
 
-REQUIRED = ["contiguous-equal", "empty", "cut-prefix", "skip-no-free-bytes", "not-equal-complete", "overlap", "lfn-tail-lost"]
+REQUIRED = ["contiguous-equal", "empty", "cut-prefix", "skip-no-free-bytes", "not-equal-complete", "overlap", "lfn-tail-lost", "short-only"]
 
 
 def cmd_families(paths):

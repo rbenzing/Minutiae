@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -32,13 +33,17 @@ func artifactOf(t *testing.T, sum examine.RecoverSummary, id string) evidence.Ma
 
 func recoveryOf(rec evidence.ManifestRecord) *evidence.Recovery { return rec.Source.Derived.Recovery }
 
-func hasAssumption(rv *evidence.Recovery, prefix string) bool {
+func hasAssumptionPrefix(rv *evidence.Recovery, prefix string) bool {
 	for _, a := range rv.Assumptions {
 		if strings.HasPrefix(a, prefix) {
 			return true
 		}
 	}
 	return false
+}
+
+func hasAssumption(rv *evidence.Recovery, want string) bool {
+	return slices.Contains(rv.Assumptions, want) // F103: exactly, never a prefix
 }
 
 func hasBasis(rv *evidence.Recovery, prefix string) bool {
@@ -234,7 +239,7 @@ func TestRecoverFATFragmentedFileIsNotClaimedEqual(t *testing.T) {
 		if sha256hex(readArtifact(t, s.Case, rec)) == sha256hex(frag) {
 			t.Fatal("the artifact claims the bytes of the fragmented source")
 		}
-		if *rv.Confidence > 30 || !hasAssumption(rv, "overlap=") {
+		if *rv.Confidence > 30 || !hasAssumptionPrefix(rv, "overlap=") {
 			t.Errorf("confidence %d, assumptions %v; want <= 30 with an overlap", *rv.Confidence, rv.Assumptions)
 		}
 		assertEqualsRuns(t, s.Case, rec, disk)
@@ -438,5 +443,16 @@ func TestRecoverFATListMatchesRun(t *testing.T) {
 	}
 	if len(planned) != 4 || !reflect.DeepEqual(planned, written) {
 		t.Fatalf("planned %+v\nwritten %+v", planned, written)
+	}
+}
+
+// F103: hasAssumption matches a whole assumption, so the token bad@11 is not satisfied by bad@110.
+func TestHasAssumptionMatchesExactly(t *testing.T) {
+	rv := &evidence.Recovery{Assumptions: []string{"stale-chain-stop=bad@110", "overlap=/a"}}
+	if hasAssumption(rv, "stale-chain-stop=bad@11") {
+		t.Error("hasAssumption(bad@11) matched bad@110: a prefix match passes the wrong token")
+	}
+	if !hasAssumption(rv, "stale-chain-stop=bad@110") || !hasAssumptionPrefix(rv, "overlap=") {
+		t.Error("an exact token, or a deliberate prefix, must match")
 	}
 }

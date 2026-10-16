@@ -70,7 +70,7 @@ mk /frag-live/b.bin 3
 mk /frag-live/c.bin 4
 mk /frag-live/f.bin 6
 mk /frag-dead/a.bin 2
-mk /frag-dead/d.bin 3
+mk /frag-dead/D.BIN 3
 mk /frag-dead/c.bin 4
 mk /frag-dead/f.bin 6
 mk /lfn/a-long-deleted-name-for-slot-reuse.bin 3
@@ -92,7 +92,7 @@ cp /payload/frag-live/a.bin /mnt/frag-live/a.bin
 cp /payload/frag-live/b.bin /mnt/frag-live/b.bin
 cp /payload/frag-live/c.bin /mnt/frag-live/c.bin
 cp /payload/frag-dead/a.bin /mnt/frag-dead/a.bin
-cp /payload/frag-dead/d.bin /mnt/frag-dead/d.bin
+cp /payload/frag-dead/D.BIN /mnt/frag-dead/D.BIN
 cp /payload/frag-dead/c.bin /mnt/frag-dead/c.bin
 cp /payload/lfn/a-long-deleted-name-for-slot-reuse.bin /mnt/lfn/a-long-deleted-name-for-slot-reuse.bin
 cp /payload/gone/inner.bin /mnt/gone/inner.bin
@@ -129,7 +129,7 @@ rm /mnt/contiguous/target.bin /mnt/zero-size/target.dat
 rm /mnt/cut-l-w/filler.bin
 rm -r /mnt/cut-h-hid
 rm /mnt/frag-live/f.bin
-rm /mnt/frag-dead/d.bin /mnt/frag-dead/f.bin
+rm /mnt/frag-dead/D.BIN /mnt/frag-dead/f.bin
 rm -r /mnt/gone
 EOF
 
