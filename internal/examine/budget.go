@@ -123,3 +123,10 @@ func statfsUnit(bsize, frsize int64) int64 {
 	}
 	return bsize
 }
+
+// trim gives back bytes admitted but not written (a read that ended early; the partial file stays counted).
+func (b *budget) trim(unwritten int64) {
+	if unwritten > 0 {
+		b.bytes = max(b.bytes-unwritten, 0)
+	}
+}

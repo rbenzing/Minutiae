@@ -348,7 +348,7 @@ func TestSessionInfoIncludesContainerWarnings(t *testing.T) {
 	s := openSession(t, c, recs[0].ID)
 	var found bool
 	for _, w := range s.Info().Warnings {
-		found = found || strings.Contains(w, "unreadable at acquisition")
+		found = found || strings.Contains(w, "declared unreadable by the acquirer")
 	}
 	if !found {
 		t.Fatalf("warnings %q", s.Info().Warnings)

@@ -348,7 +348,7 @@ func Build(o Options, media []byte) [][]byte {
 			if s == 0 && !o.NoData {
 				w.section("data", vol) // a single segment: data after the last table2
 			}
-			if len(o.ErrorRanges) > 0 {
+			if o.ErrorRanges != nil {
 				w.section("error2", error2Payload(o.ErrorRanges))
 			}
 			first, second := "digest", "hash"

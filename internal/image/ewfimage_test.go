@@ -151,7 +151,7 @@ func TestEWFImageMetadataAndWarnings(t *testing.T) {
 	if !ok {
 		t.Fatal("the EWF image must be a Warner")
 	}
-	if ws := w.Warnings(); len(ws) != 1 || !strings.Contains(ws[0], "unreadable at acquisition") {
+	if ws := w.Warnings(); len(ws) != 1 || !strings.Contains(ws[0], "declared unreadable by the acquirer") {
 		t.Fatalf("Warnings = %q", ws)
 	}
 	if _, ok := img.(Verifier); !ok {
