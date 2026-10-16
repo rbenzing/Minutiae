@@ -1,7 +1,6 @@
 package sqlitefile
 
 import (
-	"math"
 	"strconv"
 	"strings"
 )
@@ -529,6 +528,19 @@ func (p *cparser) defaultClause(col *Column) bool {
 		col.Default = Default{Kind: DefaultLiteral, Value: v, Text: clipMsg(p.s[start:p.prevEnd])}
 		return true
 	}
+	inexact := func() bool {
+		col.Default = Default{Kind: DefaultInexactLiteral, Text: clipMsg(p.s[start:p.prevEnd])}
+		return true
+	}
+	number := func(text string, neg bool) bool {
+		switch v, st := numberValue(text, neg); st {
+		case numExact:
+			return literal(v)
+		case numInexact:
+			return inexact()
+		}
+		return expr()
+	}
 	switch {
 	case t.isPunct('('):
 		if !p.skipGroup() {
@@ -546,16 +558,10 @@ func (p *cparser) defaultClause(col *Column) bool {
 			return expr() // a signed term that is not a number: not a literal
 		}
 		p.next()
-		if v, ok := numberValue(n.text, t.isPunct('-')); ok {
-			return literal(v)
-		}
-		return expr()
+		return number(n.text, t.isPunct('-'))
 	case t.kind == tkNumber:
 		p.next()
-		if v, ok := numberValue(t.text, false); ok {
-			return literal(v)
-		}
-		return expr()
+		return number(t.text, false)
 	case t.kind == tkString || t.kind == tkQuoted:
 		p.next()
 		return literal(textValue(t.text))
@@ -616,57 +622,59 @@ func hexVal(c byte) (byte, bool) {
 	return 0, false
 }
 
+// numStatus is the verdict of numberValue.
+type numStatus uint8
+
+const (
+	numNot     numStatus = iota // not a plain number: the default is an expression
+	numExact                    // a number this reader reproduces exactly: the returned Value
+	numInexact                  // a number, but not one this reader reproduces exactly
+)
+
 // numberValue reads a numeric literal as the engine does: hexadecimal
-// integers wrap to 64 bits, a decimal integer that does not fit is a real,
-// and the text must be a plain number (no underscores, no "inf" or "nan").
-func numberValue(text string, neg bool) (Value, bool) {
+// integers wrap to 64 bits, and the text must be a plain number (no
+// underscores, no "inf" or "nan"). A decimal goes through the classifier of
+// ConvertForComparison (an integer that fits int64, a decimal of at most 15
+// significant digits and an exponent shift of at most 22 as a real): anything
+// else that is a number (a decimal integer that does not fit, more digits, a
+// larger exponent, a longer text) is numInexact, never a rounded value. At most
+// maxNumberText+2 bytes of the text are looked at.
+func numberValue(text string, neg bool) (Value, numStatus) {
 	if isHexNumber(text) {
 		digits := text[2:]
 		if len(digits) == 0 || len(digits) > 16 {
-			return Value{}, false
+			return Value{}, numNot
 		}
 		u, err := strconv.ParseUint(digits, 16, 64)
 		if err != nil {
-			return Value{}, false
+			return Value{}, numNot
 		}
 		n := int64(u)
 		if neg {
 			n = -n
 		}
-		return Value{Kind: KindInt, Int: n}, true
+		return Value{Kind: KindInt, Int: n}, numExact
 	}
-	allDigits := true
 	for i := 0; i < len(text); i++ {
 		c := text[i]
-		if !isDigit(c) {
-			allDigits = false
-			if c != '.' && c != 'e' && c != 'E' && c != '+' && c != '-' {
-				return Value{}, false
-			}
+		if !isDigit(c) && c != '.' && c != 'e' && c != 'E' && c != '+' && c != '-' {
+			return Value{}, numNot
 		}
 	}
-	if allDigits {
-		if u, err := strconv.ParseUint(text, 10, 64); err == nil {
-			switch {
-			case u <= math.MaxInt64:
-				n := int64(u)
-				if neg {
-					n = -n
-				}
-				return Value{Kind: KindInt, Int: n}, true
-			case neg && u == 1<<63:
-				return Value{Kind: KindInt, Int: math.MinInt64}, true
-			}
-		}
-	}
-	f, err := strconv.ParseFloat(text, 64)
-	if err != nil || math.IsInf(f, 0) || math.IsNaN(f) {
-		return Value{}, false
-	}
+	var buf [maxNumberText + 2]byte
+	b := buf[:0]
 	if neg {
-		f = -f
+		b = append(b, '-')
 	}
-	return Value{Kind: KindFloat, Float: f}, true
+	b = append(b, text[:min(len(text), maxNumberText+1)]...)
+	v, class := numberOfText(b, false)
+	switch class {
+	case textConverted:
+		return v, numExact
+	case textUndecided:
+		return Value{}, numInexact
+	}
+	return Value{}, numNot
 }
 
 // tableConstraint parses one table constraint.

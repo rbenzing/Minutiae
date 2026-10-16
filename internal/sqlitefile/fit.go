@@ -180,10 +180,16 @@ type fitIndex struct {
 
 // addable reports whether a column missing from a record is explained by ALTER
 // TABLE ADD COLUMN: it is nullable or carries a literal default, and is neither
-// a generated column nor the rowid alias.
+// a generated column nor the rowid alias. A column whose default is a literal
+// this reader cannot convert exactly is not addable either: a short record then
+// fits the table only at the loose tier, so the table is named BasisGuess, not
+// BasisFit (ruling U22).
 func addable(def *TableDef, i int) bool {
 	c := &def.Columns[i]
-	return c.Generated == GenNone && i != def.RowidAlias && (!c.NotNull || c.Default.Kind == DefaultLiteral)
+	if c.Generated != GenNone || i == def.RowidAlias || defaultReason(c) == DefaultReasonInexactLiteral {
+		return false
+	}
+	return !c.NotNull || c.Default.Kind == DefaultLiteral
 }
 
 // tableMinValues is the fewest values a strict record of def holds: one past

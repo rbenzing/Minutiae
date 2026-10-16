@@ -50,7 +50,7 @@ func checkTableDef(t testing.TB, sql string, def sqlitefile.TableDef, steps int)
 		if c.PKOrdinal > 0 {
 			pks++
 		}
-		if c.Affinity > sqlitefile.AffReal || c.Default.Kind > sqlitefile.DefaultExpr || c.Generated > sqlitefile.GenStored {
+		if c.Affinity > sqlitefile.AffReal || c.Default.Kind > sqlitefile.DefaultInexactLiteral || c.Generated > sqlitefile.GenStored {
 			t.Fatalf("column %d: enumeration out of range", i)
 		}
 	}

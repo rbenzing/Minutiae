@@ -131,7 +131,13 @@ func isBlank(c byte) bool { return c == ' ' || (c >= '\t' && c <= '\r') }
 // engine's rule); any other number-like text is undecided. A NUL ends the text,
 // as the engine reads it (the text "7", NUL, "abc" is the integer 7). The
 // spellings of infinity and NaN are text.
-func numericOfText(b []byte) (Value, textClass) {
+func numericOfText(b []byte) (Value, textClass) { return numberOfText(b, true) }
+
+// numberOfText is numericOfText; collapse says whether an integral real inside
+// (-2^63, 2^63) is delivered as the integer of the same value (the engine's rule
+// for text under NUMERIC affinity) or stays a real (a DDL numeric literal, which
+// is a REAL until a column's affinity is applied to it).
+func numberOfText(b []byte, collapse bool) (Value, textClass) {
 	if k := bytes.IndexByte(b, 0); k >= 0 {
 		b = b[:k]
 	}
@@ -246,7 +252,7 @@ func numericOfText(b []byte) (Value, textClass) {
 	if err != nil || math.IsInf(f, 0) || math.IsNaN(f) {
 		return Value{}, textUndecided
 	}
-	if f == math.Trunc(f) && f > -(1<<63) && f < 1<<63 {
+	if collapse && integralInt64Real(f) {
 		return Value{Kind: KindInt, Int: int64(f)}, textConverted
 	}
 	return Value{Kind: KindFloat, Float: f}, textConverted
@@ -314,4 +320,12 @@ func utf16Prefix(b []byte, bigEndian bool, buf *[maxNumberText + 1]byte) (int, b
 		n++
 	}
 	return n, true
+}
+
+// integralInt64Real reports whether the real f becomes an integer under NUMERIC
+// affinity: the engine's rule is that f is integral and its integer ix lies
+// strictly between the smallest and the largest int64, so every integral real
+// from 9.2e18 up to, not including, 2^63 is an integer.
+func integralInt64Real(f float64) bool {
+	return f == math.Trunc(f) && f > -(1<<63) && f < 1<<63
 }

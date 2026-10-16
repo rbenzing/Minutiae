@@ -233,3 +233,14 @@ func TestSqlitefileSurfaceUsedByRowOps(_ *testing.T) {
 	pin[func(sqlitefile.Value, sqlitefile.Affinity, sqlitefile.Affinity) (sqlitefile.Value, sqlitefile.ConvStatus)](sqlitefile.ConvertForComparison)
 	pin[sqlitefile.ConvStatus](sqlitefile.ConvOK)
 }
+
+// Used by the state of a short record's column default (Task 1b).
+func TestSqlitefileSurfaceUsedByUndecidedDefaults(_ *testing.T) {
+	var v sqlitefile.Value
+	pin[sqlitefile.DefaultReason](v.DefaultUndecided)
+	pin[sqlitefile.DefaultReason](sqlitefile.DefaultReasonNone)
+	pin[sqlitefile.DefaultReason](sqlitefile.DefaultReasonExpression)
+	pin[sqlitefile.DefaultReason](sqlitefile.DefaultReasonInexactLiteral)
+	pin[func(sqlitefile.DefaultReason) string](sqlitefile.DefaultReason.String)
+	pin[sqlitefile.DefaultKind](sqlitefile.DefaultInexactLiteral)
+}

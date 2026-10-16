@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
 	"slices"
 	"strconv"
-	"strings"
 	"unicode/utf16"
 )
 
@@ -190,18 +188,19 @@ func (i *Index) Entries(ctx context.Context, visit func(Row) bool) error {
 	return i.v.ScanTree(ctx, i.obj.RootPage, IndexTree, visit)
 }
 
-// columnDefault is the value a short record gives column c.
+// columnDefault is the value a short record gives column c. A default that is
+// not a value (an expression, or a literal whose conversion for the column's
+// affinity this reader does not reproduce exactly) is Omitted and carries the
+// reason in DefaultUndecided: never a rounded number and never the unconverted
+// text.
 func columnDefault(c *Column, enc Encoding) Value {
-	switch c.Default.Kind {
-	case DefaultNone:
+	if c.Default.Kind == DefaultNone {
 		return Value{}
-	case DefaultExpr:
-		return Value{Omitted: true}
 	}
-	v, ok := applyAffinity(c.Default.Value, c.Affinity)
-	if !ok {
-		return Value{Omitted: true}
+	if r := defaultReason(c); r != DefaultReasonNone {
+		return Value{Omitted: true, DefaultUndecided: r}
 	}
+	v, _ := applyAffinity(c.Default.Value, c.Affinity)
 	switch v.Kind {
 	case KindText:
 		b := encodeTextAs(string(v.Bytes), enc)
@@ -229,9 +228,27 @@ func encodeTextAs(s string, enc Encoding) []byte {
 	return b
 }
 
+// defaultReason says why the default of c is not a value, DefaultReasonNone when
+// it is one (or there is none).
+func defaultReason(c *Column) DefaultReason {
+	switch c.Default.Kind {
+	case DefaultExpr:
+		return DefaultReasonExpression
+	case DefaultInexactLiteral:
+		return DefaultReasonInexactLiteral
+	case DefaultLiteral:
+		if _, ok := applyAffinity(c.Default.Value, c.Affinity); !ok {
+			return DefaultReasonInexactLiteral
+		}
+	}
+	return DefaultReasonNone
+}
+
 // applyAffinity converts v as the engine does when it stores a value in a
 // column of affinity aff. ok is false for a conversion this reader does not
-// reproduce (a real turned into TEXT, whose spelling is the engine's).
+// reproduce exactly: a real turned into TEXT (its spelling is the engine's) and
+// number-like text that the classifier of ConvertForComparison calls undecided
+// (too many digits, too large an exponent, too long).
 func applyAffinity(v Value, aff Affinity) (Value, bool) {
 	switch aff {
 	case AffText:
@@ -243,80 +260,23 @@ func applyAffinity(v Value, aff Affinity) (Value, bool) {
 		}
 		return v, true
 	case AffNumeric, AffInteger, AffReal:
-		switch v.Kind {
-		case KindText:
-			if n, ok := numericText(string(v.Bytes)); ok {
+		if v.Kind == KindText {
+			n, class := numericOfText(v.Bytes)
+			switch class {
+			case textConverted:
 				v = n
+			case textUndecided:
+				return Value{}, false
 			}
 		}
-		if v.Kind == KindFloat && aff != AffReal {
-			if f := v.Float; f == math.Trunc(f) && math.Abs(f) < 9.2e18 {
-				v = Value{Kind: KindInt, Int: int64(f)}
-			}
+		if v.Kind == KindFloat && aff != AffReal && integralInt64Real(v.Float) {
+			v = Value{Kind: KindInt, Int: int64(v.Float)}
 		}
 		if v.Kind == KindInt && aff == AffReal {
 			v = Value{Kind: KindFloat, Float: float64(v.Int)}
 		}
 	}
 	return v, true
-}
-
-// numericText reads text that is, in whole (surrounding blanks allowed), a
-// decimal number: an integer that fits 64 bits is an integer, any other is a
-// real. Hexadecimal, "inf", "nan" and underscores are not numbers.
-func numericText(s string) (Value, bool) {
-	s = strings.Trim(s, " \t\n\r\f\v")
-	if s == "" {
-		return Value{}, false
-	}
-	i := 0
-	if s[i] == '+' || s[i] == '-' {
-		i++
-	}
-	digits, frac := 0, 0
-	for i < len(s) && isDigit(s[i]) {
-		i++
-		digits++
-	}
-	isReal := false
-	if i < len(s) && s[i] == '.' {
-		isReal = true
-		i++
-		for i < len(s) && isDigit(s[i]) {
-			i++
-			frac++
-		}
-	}
-	if digits+frac == 0 {
-		return Value{}, false
-	}
-	if i < len(s) && (s[i] == 'e' || s[i] == 'E') {
-		j := i + 1
-		if j < len(s) && (s[j] == '+' || s[j] == '-') {
-			j++
-		}
-		k := j
-		for k < len(s) && isDigit(s[k]) {
-			k++
-		}
-		if k == j {
-			return Value{}, false
-		}
-		isReal, i = true, k
-	}
-	if i != len(s) {
-		return Value{}, false
-	}
-	if !isReal {
-		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
-			return Value{Kind: KindInt, Int: n}, true
-		}
-	}
-	f, err := strconv.ParseFloat(s, 64)
-	if err != nil || math.IsInf(f, 0) {
-		return Value{}, false
-	}
-	return Value{Kind: KindFloat, Float: f}, true
 }
 
 // RowsLoss is Rows that also returns what this one scan did not deliver (see

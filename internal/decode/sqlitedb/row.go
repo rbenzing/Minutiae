@@ -465,3 +465,13 @@ func (r Row) Release() {
 	c.returned = true
 	c.db.budget.Free(c.n)
 }
+
+// UndecidedDefault says why column col is StateDefaultUndecided: its default is
+// an expression or a literal this reader cannot convert exactly. It is
+// DefaultReasonNone for every other column.
+func (r Row) UndecidedDefault(col int) sqlitefile.DefaultReason {
+	if r.State(col) != StateDefaultUndecided {
+		return sqlitefile.DefaultReasonNone
+	}
+	return r.vals[col].DefaultUndecided
+}

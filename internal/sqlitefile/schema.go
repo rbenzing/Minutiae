@@ -25,9 +25,10 @@ type DefaultKind uint8
 
 // The kinds of default.
 const (
-	DefaultNone    DefaultKind = iota
-	DefaultLiteral             // a constant the reader can evaluate: Value
-	DefaultExpr                // CURRENT_TIMESTAMP, (expr): not evaluated
+	DefaultNone           DefaultKind = iota
+	DefaultLiteral                    // a constant the reader can evaluate: Value
+	DefaultExpr                       // CURRENT_TIMESTAMP, (expr): not evaluated
+	DefaultInexactLiteral             // a numeric literal that is not a float64 this reader reproduces exactly: not evaluated
 )
 
 // Default is a column's DEFAULT clause. Value is set for DefaultLiteral (text

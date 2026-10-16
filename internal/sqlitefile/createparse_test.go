@@ -49,6 +49,8 @@ func describeCol(c sqlitefile.Column) string {
 		s += "/d=" + defValueStr(c.Default.Value)
 	case sqlitefile.DefaultExpr:
 		s += "/dX"
+	case sqlitefile.DefaultInexactLiteral:
+		s += "/dI"
 	}
 	switch c.Generated {
 	case sqlitefile.GenVirtual:
@@ -319,8 +321,8 @@ var tableCases = []tableCase{
 		"alias=-1 stored=2",
 	},
 	{
-		"large integer default becomes real", "CREATE TABLE t(a DEFAULT 9223372036854775807, b DEFAULT -9223372036854775808, c DEFAULT 9223372036854775808)",
-		[]string{"a//B/d=9223372036854775807/r0", "b//B/d=-9223372036854775808/r1", "c//B/d=9.223372036854776e+18f/r2"},
+		"large integer default is an inexact literal, never a rounded real", "CREATE TABLE t(a DEFAULT 9223372036854775807, b DEFAULT -9223372036854775808, c DEFAULT 9223372036854775808)",
+		[]string{"a//B/d=9223372036854775807/r0", "b//B/d=-9223372036854775808/r1", "c//B/dI/r2"},
 		"alias=-1 stored=3",
 	},
 }
