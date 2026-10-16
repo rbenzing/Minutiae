@@ -152,7 +152,7 @@ func powerLoss(t *testing.T, c *evidence.Case, w *records.Writer, snapshot []byt
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(db, snapshot, 0o600); err != nil {
+	if err := os.WriteFile(db, snapshot, 0o600); err != nil { //nolint:gosec // db is inside the test's own temp case directory
 		t.Fatal(err)
 	}
 	c2, err := evidence.Open(dir)
