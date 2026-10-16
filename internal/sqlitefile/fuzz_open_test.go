@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"slices"
 	"testing"
 
@@ -368,6 +369,26 @@ func fuzzSeeds(t testing.TB) []fuzzSeed {
 		out = append(out, fuzzSeed{name: "builder freelist", db: b.Bytes()})
 		b.SetHeaderPages(0xffffffff, true)
 		out = append(out, fuzzSeed{name: "builder header claims 2^32-1 pages", db: b.Bytes(), allowed: []string{sqlitefile.WarnPageCountClamped, sqlitefile.WarnTruncatedFile}})
+	}
+	// WITHOUT ROWID keys that equal nothing (NaN, NULL), a UTF-16 NOCASE key, and a
+	// fit-named dropped table beside its live twin: the equality paths of the history rows (J111)
+	for _, o := range []sqlitetest.Options{{PageSize: 512}, {PageSize: 512, Encoding: 2}, {PageSize: 512, Encoding: 3}} {
+		b := sqlitetest.New(o)
+		live := b.CreateTableWithoutRowid("w", "create table w(k text collate nocase primary key, v) without rowid", 1)
+		live.Insert(1, "Alpha", "live")
+		live.Insert(2, "beta", "live")
+		live.Insert(3, math.NaN(), "nan")
+		live.Insert(4, nil, "null")
+		pad := b.CreateTable("pad", "create table pad(z)")
+		pad.Insert(1, "x")
+		gone := b.CreateTableWithoutRowid("gone", "create table gone(k text collate nocase primary key, v) without rowid", 1)
+		gone.Insert(1, "ALPHA", "live")
+		gone.Insert(2, "beta", "live")
+		gone.Insert(3, math.NaN(), "nan")
+		gone.Insert(4, nil, "null")
+		b.DropTable("pad")
+		b.DropTable("gone")
+		out = append(out, fuzzSeed{name: fmt.Sprintf("builder wr keys enc%d", o.Encoding), db: b.Bytes()})
 	}
 	for _, spec := range fixtureSpecs {
 		if spec.NotSQLite {

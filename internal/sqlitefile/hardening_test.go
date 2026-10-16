@@ -41,6 +41,7 @@ var ceilingTable = map[string]int64{
 	"MaxHistoryOverflowPages": 1 << 32,
 	"MaxDiffRows":             1 << 28,
 	"MaxDiffRowsTotal":        1 << 29,
+	"MaxFitEqualityRows":      1 << 29,
 	"MaxFitSteps":             1 << 30,
 	"MaxOrphans":              1 << 24,
 	"MaxLocOverflow":          1 << 16,

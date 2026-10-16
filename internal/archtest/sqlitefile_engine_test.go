@@ -11,7 +11,7 @@ import (
 
 // sqliteFilePackages are the packages that must stay free of any SQL engine:
 // the reader reads evidence bytes itself and never links a driver.
-var sqliteFilePackages = []string{"internal/sqlitefile", "internal/sqlitefile/sqlitetest"}
+var sqliteFilePackages = []string{"internal/sqlitefile", "internal/sqlitefile/sqlitetest", "internal/dbrecover"}
 
 // engineImport reports whether an import path is a SQL engine or the
 // database/sql layer (modernc.org/* drivers, database/sql and its driver
