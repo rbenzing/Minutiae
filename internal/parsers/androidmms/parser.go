@@ -40,6 +40,9 @@ func (Parser) Meta() parse.Meta {
 func probeReqs() []rowrun.Req {
 	return []rowrun.Req{
 		{Table: "sms", Need: []string{"address", "date", "type", "body"}},
+		{Table: "pdu", Need: []string{"date", "msg_box"}, Optional: true, With: []string{"addr", "part"}},
+		{Table: "addr", Need: []string{"msg_id", "address", "type"}, Optional: true},
+		{Table: "part", Need: []string{"mid", "ct"}, Optional: true},
 		{Table: "threads", Need: []string{"recipient_ids"}, Alias: "_id", Optional: true},
 		{Table: "canonical_addresses", Need: []string{"address"}, Alias: "_id", Optional: true},
 	}
@@ -52,7 +55,7 @@ func (Parser) Probe(ctx context.Context, in *parse.Input) (parse.Applicability, 
 
 // Mappings are the per-table mappings, in the order Parse runs them.
 func (Parser) Mappings() []parse.TableMapping {
-	return []parse.TableMapping{smsMapping()}
+	return []parse.TableMapping{smsMapping(), pduMapping()}
 }
 
 // Parse maps every table through rowrun.Run, which fails the job when the mapping

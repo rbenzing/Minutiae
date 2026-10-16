@@ -9,9 +9,9 @@ var fixturePins = map[string]string{
 	"aosp-subid-alter.db":    "c8fae799edd8e7ff6a81526bff6f29df9744085ea8d6213924ba1f6e7cc19bca",
 	"av-freelist-512.db":     "bbc476275e499aabf18a7dce0abf9dc29e9c495aa42dba219d9404a0c6597a29",
 	"hot-journal.db":         "0e32b99c9ddf931f6973ff4ed9e1f1dc39bdad5a89efa1f8a6671bdd6a715840",
-	"hot-journal.journal":    "fcea328825d8cb8ae05443340e53913418d89d5a5d719ec06247e4af021959d2",
+	"hot-journal.journal":    "be79fb1ad03ad05e98b096890d7b4ced8cdbd2b5410b776de9019b56ba6ff119",
 	"oem-extended.db":        "00c75c2b9df71cfd0ce1be35a259d796667e5b5e847ed14bed1ebd7ed6760139",
 	"utf16.db":               "e43549ec690334e1cae32a480587b73f707d7746d0811f4782da5cbffd1bcc2b",
 	"wal-uncheckpointed.db":  "85e8a38e28beec0d0731c963e2bc8979b2e037c96d3d66fb798af43e7ed8cd83",
-	"wal-uncheckpointed.wal": "4832ef2679a42b59a5832f32309b6c0a1b77d873144bc01b45a92e55483ee199",
+	"wal-uncheckpointed.wal": "1099bd1935d0490bfba60f150690f2d805a1ce392e5c64c1563156af52a42fef",
 }

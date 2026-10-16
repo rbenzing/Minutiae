@@ -1,5 +1,6 @@
 """Android telephony provider (mmssms.db) fixtures: variants, scenario rows, oracle."""
 import base64
+import re
 import sqlite3
 
 import telephony_common as C
@@ -197,9 +198,14 @@ def body_fields(p, c):
 
 
 def summary(channel, direction, counterparty, text):
-    if not (channel + direction + (counterparty or "") + (text or "")).isascii() or counterparty is None or len(text or "") > 80:
+    """The record summary is one line: a run of whitespace or control characters in the text becomes one space,
+    and none stays at either end (spec C-summary; common.Summarize). Only ASCII text of at most 80 characters is stated."""
+    if not (channel + direction + (counterparty or "") + (text or "")).isascii() or counterparty is None:
         return None
-    return ("%s %s %s: %s" % (channel, direction, counterparty, text or "")).rstrip(" ")
+    one_line = re.sub("[" + chr(0) + "-" + chr(32) + chr(127) + "]+", " ", text or "").strip(" ")
+    if len(one_line) > 80:
+        return None
+    return ("%s %s %s: %s" % (channel, direction, counterparty, one_line)).rstrip(" ")
 
 
 def source_path(file, db_only=False):
