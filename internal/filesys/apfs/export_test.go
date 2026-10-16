@@ -381,3 +381,9 @@ func ShortInlineFile() filesys.File { return &file{size: 5, avail: 5, mem: []byt
 
 // SetLinkBudget sets the bytes of stream-stored symlink targets this FS may still read.
 func (f *FS) SetLinkBudget(n int64) { f.linkBudget.Store(n) }
+
+// ChargeLink takes n bytes from the stream-symlink budget.
+func (f *FS) ChargeLink(n int64) bool { return f.chargeLink(n) }
+
+// LinkBudget is the stream-symlink budget left.
+func (f *FS) LinkBudget() int64 { return f.linkBudget.Load() }

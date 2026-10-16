@@ -51,14 +51,21 @@ python3 - "$old" "$work/new.json" <<'EOP'
 import json, sys
 old = json.load(open(sys.argv[1]))
 new = json.load(open(sys.argv[2]))
-def strip(x):
-    if isinstance(x, dict):
-        return {k: strip(v) for k, v in x.items() if k not in ("xattr_values", "oracle_reemit")}
-    if isinstance(x, list):
-        return [strip(v) for v in x]
-    return x
+def strip(doc):
+    # only the keys this revision adds, only where it adds them: the node
+    # lists of the live tree and of each snapshot, and generator.oracle_reemit
+    doc = json.loads(json.dumps(doc))
+    trees = [doc["live"]["tree"]] + [s["tree"] for s in doc["snapshots"]]
+    for tree in trees:
+        for node in tree:
+            node.pop("xattr_values", None)
+    doc["generator"].pop("oracle_reemit", None)
+    return doc
 if strip(old) != strip(new):
     sys.exit("the re-emitted oracle differs from the committed one in a field other than xattr_values")
 EOP
-cp "$work/new.json" "$old"
+# same directory, then rename: a failed copy never leaves a half-written oracle
+tmp=$(mktemp "$out/.apfs-populated.expect.json.XXXXXX")
+trap 'rm -rf "$work" "$tmp"' EXIT
+cp "$work/new.json" "$tmp" && chmod 644 "$tmp" && mv "$tmp" "$old"
 echo "re-emitted $old ($(stat -c %s "$old") bytes)"

@@ -122,13 +122,13 @@ func (fl *file) trimTail(k int64) {
 	}
 }
 
-// openStreamSymlink maps and reads the stream-stored target of in. The declared size is
-// bounded (maxLinkStream); the bytes to read (not the declared size) are
-// charged to the per-filesystem linkBudget once the stream is mapped, and a
-// failure before the read spends nothing. The caller warns about a refusal; the trailing NULs are dropped as for an
-// embedded target, and an empty result is corrupt. Errors are
-// filesys.ErrUnsupported (bound, budget), filesys.ErrCorrupt (damaged stream)
-// or an I/O error.
+// openStreamSymlink maps and reads the stream-stored target of in. The declared
+// size is bounded (maxLinkStream). The bytes to read (not the declared size)
+// are charged to the per-filesystem linkBudget once the stream is mapped; a
+// failure before the read, or a failed or short read, refunds the charge. The
+// caller warns about a refusal. Trailing NULs are dropped as for an embedded
+// target, and an empty result is corrupt. Errors are filesys.ErrUnsupported
+// (bound, budget), filesys.ErrCorrupt (damaged stream) or an I/O error.
 func (f *FS) openStreamSymlink(v *volume, view uint64, in *inode) (*file, []byte, error) {
 	if in.symlinkSize > maxLinkStream {
 		return nil, nil, unsupported("the %d-byte target of symlink inode %d of volume %d is over the %d-byte limit", in.symlinkSize, in.ino, v.slot, maxLinkStream)
@@ -137,12 +137,12 @@ func (f *FS) openStreamSymlink(v *volume, view uint64, in *inode) (*file, []byte
 	if err != nil {
 		return nil, nil, err
 	}
-	if f.linkBudget.Add(-fl.Size()) < 0 {
-		f.linkBudget.Add(fl.Size()) // a refused read spends nothing
+	if !f.chargeLink(fl.Size()) {
 		return nil, nil, unsupported("the stream-stored symlink target budget is spent (inode %d of volume %d)", in.ino, v.slot)
 	}
 	buf := make([]byte, fl.Size()) // <= maxLinkStream
 	if n, err := fl.ReadAt(buf, 0); n != len(buf) {
+		f.linkBudget.Add(fl.Size()) // a failed or short read spends nothing
 		if err == nil || errors.Is(err, io.EOF) {
 			err = io.ErrUnexpectedEOF
 		}
@@ -156,6 +156,21 @@ func (f *FS) openStreamSymlink(v *volume, view uint64, in *inode) (*file, []byte
 		fl.trimTail(k)
 	}
 	return fl, target, nil
+}
+
+// chargeLink takes n bytes from the stream-symlink budget; false (and nothing
+// taken) when fewer than n remain. A compare-and-swap loop, so a refused
+// reader never drives the budget transiently below zero for the others.
+func (f *FS) chargeLink(n int64) bool {
+	for {
+		cur := f.linkBudget.Load()
+		if cur < n {
+			return false
+		}
+		if f.linkBudget.CompareAndSwap(cur, cur-n) {
+			return true
+		}
+	}
 }
 
 // openSymlink returns the target held in the symlink xattr.

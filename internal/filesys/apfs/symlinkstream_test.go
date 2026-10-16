@@ -3,10 +3,15 @@ package apfs_test
 import (
 	"bytes"
 	"errors"
+	"io"
+	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
+	"github.com/rbenzing/minutiae/internal/filesys/apfs"
 	"github.com/rbenzing/minutiae/internal/filesys/apfs/apfstest"
 )
 
@@ -164,5 +169,131 @@ func TestSymlinkStreamIgnoresTheInodesOwnExtents(t *testing.T) {
 	}
 	if got := readAllAt(t, openPath(t, f, "/Data/l")); string(got) != target {
 		t.Errorf("Open read %.20q (%d bytes), want the stream's target", got, len(got))
+	}
+}
+
+// trapReader fails (with a short read) any read whose bytes contain marker
+// while armed.
+type trapReader struct {
+	r      io.ReaderAt
+	marker []byte
+	armed  atomic.Bool
+}
+
+func (r *trapReader) ReadAt(p []byte, off int64) (int, error) {
+	n, err := r.r.ReadAt(p, off)
+	if r.armed.Load() && bytes.Contains(p[:n], r.marker) {
+		return n / 2, errors.New("disk on fire")
+	}
+	return n, err
+}
+
+// A failed or short read of the target stream spends nothing: the budget
+// still holds room for exactly one legitimate target afterwards.
+func TestSymlinkStreamFailedReadRefundsTheBudget(t *testing.T) {
+	target := longTarget(5000)
+	im := newImage(t, volOpts(dataVolume(
+		apfstest.File{Path: "/a", Symlink: target, SymlinkStream: true},
+		apfstest.File{Path: "/b", Symlink: target, SymlinkStream: true},
+	)))
+	tr := &trapReader{r: bytes.NewReader(im.b), marker: []byte("seg/seg/seg/")}
+	f, err := apfs.Open(tr, int64(len(im.b)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ea, eb := mustLookup(t, f, "/Data/a"), mustLookup(t, f, "/Data/b")
+	f.SetLinkBudget(int64(len(target) + 1)) // room for exactly one target
+	tr.armed.Store(true)
+	for range 3 {
+		if fl, err := f.Open(ea); err == nil || fl != nil {
+			t.Fatalf("Open with a failing reader = %v, %v; want an error", fl, err)
+		}
+	}
+	tr.armed.Store(false)
+	fl, err := f.Open(eb)
+	if err != nil {
+		t.Fatalf("a legitimate target after three failed reads: %v", err)
+	}
+	if got := readAllAt(t, fl); string(got) != target {
+		t.Errorf("target differs (%d bytes)", len(got))
+	}
+}
+
+// Concurrent opens near exhaustion: exactly as many succeed as the budget
+// holds, so a reader that is refused never starves one that would fit.
+func TestSymlinkStreamBudgetConcurrent(t *testing.T) {
+	target := longTarget(5000)
+	f, _ := openOpts(t, volOpts(dataVolume(
+		apfstest.File{Path: "/l", Symlink: target, SymlinkStream: true},
+	)))
+	e := mustLookup(t, f, "/Data/l")
+	const fits, readers = 8, 64
+	f.SetLinkBudget(int64(fits * (len(target) + 1)))
+	var ok atomic.Int64
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for range readers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if _, err := f.Open(e); err == nil {
+				ok.Add(1)
+			} else if !errors.Is(err, filesys.ErrUnsupported) {
+				t.Errorf("Open: %v", err)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if ok.Load() != fits {
+		t.Errorf("%d opens succeeded with a budget for %d", ok.Load(), fits)
+	}
+}
+
+// A charge that cannot fit is refused without touching the budget, so readers
+// that cannot fit never make a reader that can fit fail: ten one-byte charges
+// all succeed while other goroutines keep asking for far more than is left.
+func TestSymlinkStreamRefusedChargeNeverStarvesAFittingOne(t *testing.T) {
+	f, _ := openOpts(t, volOpts(dataVolume()))
+	const small = 10
+	f.SetLinkBudget(small)
+	stop := make(chan struct{})
+	var big, fit sync.WaitGroup
+	for range 8 {
+		big.Add(1)
+		go func() {
+			defer big.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if f.ChargeLink(100) {
+					t.Error("a charge over the budget was granted")
+					return
+				}
+			}
+		}()
+	}
+	var granted atomic.Int64
+	for range small {
+		fit.Add(1)
+		go func() {
+			defer fit.Done()
+			for range 1000 { // let the big askers get going first
+				runtime.Gosched()
+			}
+			if f.ChargeLink(1) {
+				granted.Add(1)
+			}
+		}()
+	}
+	fit.Wait()
+	close(stop)
+	big.Wait()
+	if granted.Load() != small || f.LinkBudget() != 0 {
+		t.Errorf("%d of %d fitting charges granted, %d left", granted.Load(), small, f.LinkBudget())
 	}
 }
