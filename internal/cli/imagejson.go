@@ -6,6 +6,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/examine"
 	"github.com/rbenzing/minutiae/internal/filesys"
+	"github.com/rbenzing/minutiae/internal/image"
 )
 
 // The JSON shapes of the image commands are defined here, with explicit
@@ -142,6 +143,10 @@ type jsonImageInfo struct {
 	PartitionError string `json:"partition_error,omitempty"`
 	// Verify is present only with --verify on a container that stores hashes.
 	Verify *jsonVerify `json:"verify,omitempty"`
+	// AcquisitionGaps is present when the container declares unreadable acquisition ranges.
+	AcquisitionGaps *jsonGaps `json:"acquisition_gaps,omitempty"`
+	// ImplausibleSize is true when the container's claimed size is one its own bytes cannot hold.
+	ImplausibleSize bool `json:"implausible_size,omitempty"`
 }
 
 type jsonHashCheck struct {
@@ -195,7 +200,9 @@ func newJSONImageInfo(in examine.ImageInfo) jsonImageInfo {
 		ParentID: in.ParentID, Path: in.Path, SHA256: in.SHA256, Incomplete: in.Incomplete,
 		Format: in.Format, Size: in.Size, SectorSize: in.SectorSize, Scheme: in.Scheme, DiskGUID: in.DiskGUID,
 		Metadata: []jsonKV{}, Partitions: []jsonPartition{}, Unallocated: []jsonRun{}, Warnings: nonNil(in.Warnings),
-		PartitionError: in.PartitionError,
+		PartitionError:  in.PartitionError,
+		AcquisitionGaps: newJSONGaps(in.AcquisitionGaps),
+		ImplausibleSize: in.SizeClaim != nil,
 	}
 	for _, kv := range in.Metadata {
 		out.Metadata = append(out.Metadata, jsonKV{Key: kv.Key, Value: kv.Value})
@@ -227,11 +234,12 @@ type jsonSummary struct {
 	Skipped       int                       `json:"skipped"`
 	FSWarnings    int                       `json:"fs_warnings"`
 	IncompleteIDs []string                  `json:"incomplete_ids"`
+	OutputLimit   string                    `json:"output_limit,omitempty"`
 	Artifacts     []evidence.ManifestRecord `json:"artifacts"`
 }
 
 func newJSONSummary(s examine.Summary) jsonSummary {
-	out := jsonSummary{AnalysisID: s.AnalysisID, Files: s.Files, Bytes: s.Bytes, Skipped: s.Skipped, FSWarnings: s.FSWarnings, IncompleteIDs: incompleteTexts(s.IncompleteIDs), Artifacts: s.Artifacts}
+	out := jsonSummary{AnalysisID: s.AnalysisID, Files: s.Files, Bytes: s.Bytes, Skipped: s.Skipped, FSWarnings: s.FSWarnings, IncompleteIDs: incompleteTexts(s.IncompleteIDs), OutputLimit: s.OutputLimit, Artifacts: s.Artifacts}
 	if out.Artifacts == nil {
 		out.Artifacts = []evidence.ManifestRecord{}
 	}
@@ -241,17 +249,18 @@ func newJSONSummary(s examine.Summary) jsonSummary {
 // jsonUnalloc is the JSON of an unalloc run. It has no incomplete_ids: unalloc does no id search, and an empty
 // list would claim a search that never ran read everything (F97).
 type jsonUnalloc struct {
-	AnalysisID string                    `json:"analysis_id"`
-	Files      int                       `json:"files"`
-	Bytes      int64                     `json:"bytes"`
-	Skipped    int                       `json:"skipped"`
-	FSWarnings int                       `json:"fs_warnings"`
-	Artifacts  []evidence.ManifestRecord `json:"artifacts"`
+	AnalysisID  string                    `json:"analysis_id"`
+	Files       int                       `json:"files"`
+	Bytes       int64                     `json:"bytes"`
+	Skipped     int                       `json:"skipped"`
+	FSWarnings  int                       `json:"fs_warnings"`
+	OutputLimit string                    `json:"output_limit,omitempty"`
+	Artifacts   []evidence.ManifestRecord `json:"artifacts"`
 }
 
 func newJSONUnalloc(s examine.Summary) jsonUnalloc {
 	j := newJSONSummary(s)
-	return jsonUnalloc{AnalysisID: j.AnalysisID, Files: j.Files, Bytes: j.Bytes, Skipped: j.Skipped, FSWarnings: j.FSWarnings, Artifacts: j.Artifacts}
+	return jsonUnalloc{AnalysisID: j.AnalysisID, Files: j.Files, Bytes: j.Bytes, Skipped: j.Skipped, FSWarnings: j.FSWarnings, OutputLimit: j.OutputLimit, Artifacts: j.Artifacts}
 }
 
 // jsonRecover is the JSON of a recover run (strings are the raw ones; artifacts are manifest records).
@@ -359,6 +368,30 @@ func newJSONRecoverList(p *examine.RecoverPlan) jsonRecoverList {
 			ji.Skips = append(ji.Skips, jsonRecoverSkip{Path: sk.Path, ID: sk.ID, Reason: sk.Reason, Detail: sk.Detail})
 		}
 		out.Items = append(out.Items, ji)
+	}
+	return out
+}
+
+// jsonGaps is the acquirer's record of unreadable ranges as media byte ranges,
+// as the image states them. Offsets and lengths are integers.
+type jsonGaps struct {
+	State     string    `json:"state"` // absent, empty, declared or damaged (damaged: the gaps are unknown)
+	Empty     int       `json:"empty"`
+	Ranges    uint64    `json:"ranges"`
+	Bytes     int64     `json:"bytes"`
+	Outside   int       `json:"outside"`
+	Truncated bool      `json:"truncated"`
+	Kept      []jsonRun `json:"kept"`
+}
+
+func newJSONGaps(g *image.AcquisitionGaps) *jsonGaps {
+	if g == nil {
+		return nil
+	}
+	out := &jsonGaps{State: g.State.String(), Empty: g.Empty, Ranges: g.Ranges, Outside: g.Outside, Truncated: g.Truncated, Kept: []jsonRun{}}
+	for _, k := range g.Kept {
+		out.Kept = append(out.Kept, jsonRun{Offset: k.Offset, Length: k.Length})
+		out.Bytes += k.Length // merged and clipped to the media, so the sum is at most the media size
 	}
 	return out
 }

@@ -29,6 +29,10 @@ type Summary struct {
 	// IncompleteIDs names every id (once) whose search could not read every directory: its deleted match was
 	// kept, but a live entry with the id may exist in an unread directory. Set by recover and by extract.
 	IncompleteIDs []*SearchIncompleteError
+	// OutputLimit is "" or the output limit that stopped the run ("max-files" or
+	// "max-bytes"): the files after the refused one were not extracted, and they are
+	// not in Skipped either (the walk stopped; only the refused file is warned about).
+	OutputLimit string
 }
 
 // Warning is one skipped path and why.

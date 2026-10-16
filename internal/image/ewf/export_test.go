@@ -83,3 +83,6 @@ func (r *Reader) ChunkKinds() string {
 	}
 	return string(b)
 }
+
+// ZlibStartsAt exposes the stored-chunk heuristic of decode.
+func ZlibStartsAt(b []byte) bool { return zlibStartsAt(b) }

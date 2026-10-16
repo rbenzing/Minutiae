@@ -31,6 +31,23 @@ type BackupOptions struct {
 // counts keep the true totals.
 const MaxRecordedErrors = 1000
 
+// RemoteEnd describes a file whose data blocks were followed by a device
+// error block (0x0b, or 0x06) instead of a 0x00 success block. libimobiledevice
+// treats that as the end of the file; Minutiae records it so the file is never
+// taken as proven complete.
+type RemoteEnd struct {
+	Code  byte  // CodeErrorRemote, CodeErrorLocal or CodeNoTerminator
+	Bytes int64 // file bytes received in that transfer before the block
+	// Message holds the raw device bytes, cut at maxName (possibly inside a
+	// UTF-8 rune) and never repaired; empty past MaxRecordedErrors live entries.
+	// Display it with %q.
+	Message string
+	// Path is the file's path as the device sent it (cleaned, slash-separated,
+	// relative to Dir), for display: the map key is folded where the file
+	// system ignores case.
+	Path string
+}
+
 // Result summarizes a backup.
 type Result struct {
 	BytesReceived    int64
@@ -41,6 +58,30 @@ type Result struct {
 	// Incomplete lists files (slash-separated, relative to Dir) whose transfer
 	// failed part-way; they hold only the bytes received before the failure.
 	Incomplete []string
+	// RemoteEnded lists files (slash-separated, relative to Dir) whose last
+	// transfer ended with a device error block after data. Every such file is
+	// kept (the flag set is complete). A later transfer of the same file that
+	// ends with a success block removes the entry; the device's move, copy and
+	// remove requests update it.
+	RemoteEnded map[string]RemoteEnd
+	// RemoteEndedDetailOmitted counts entries recorded without their message
+	// (the detail is capped at MaxRecordedErrors; the entries are not).
+	RemoteEndedDetailOmitted int
+	// RemovedEnds lists marks of files the device then removed or replaced
+	// (first MaxRecordedErrors); RemovedEndCount is the true total.
+	RemovedEnds     []string
+	RemovedEndCount int
+	// RemovedFileCount and RemovedBytes count, uncapped, every received file
+	// the device then removed, replaced (moved or copied over, or re-sent) or
+	// whose destination it overwrote, marked or not. RemovedBytes is a lower
+	// bound if a file's size could not be read. The bytes are not retained.
+	RemovedFileCount int
+	RemovedBytes     int64
+	// RefusedMoves lists device move requests refused because source and
+	// destination were nested (first MaxRecordedErrors); RefusedMoveCount is
+	// the true total. A move onto the same path is a no-op and not listed.
+	RefusedMoves     []string
+	RefusedMoveCount int
 }
 
 // Client is a mobilebackup2 session on an already-started service connection.

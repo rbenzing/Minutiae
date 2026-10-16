@@ -42,7 +42,12 @@ type Device struct {
 	state  string
 	props  map[string]string
 	su     func(string) string
+	limits WalkLimits
 }
+
+// SetWalkLimits sets the caps of a logical acquisition; zero fields keep the
+// defaults.
+func (d *Device) SetWalkLimits(l WalkLimits) { d.limits = l }
 
 func (d *Device) ID() string        { return d.serial }
 func (d *Device) Kind() device.Kind { return device.KindAndroid }
@@ -133,18 +138,33 @@ func (d *Device) List(ctx context.Context, dir string) ([]device.FileEntry, erro
 		return nil, err
 	}
 	defer func() { _ = s.Close() }()
-	es, err := s.List(dir)
-	if err != nil {
+	res, err := s.ListN(dir, d.limits.withDefaults().MaxEntriesPerDir)
+	var partial error
+	switch {
+	case errors.Is(err, adb.ErrListLimit):
+		partial = fmt.Errorf("%w: %w", device.ErrPartialListing, mapErr(err))
+	case err != nil:
 		return nil, mapErr(err)
+	default:
+		if lerr := res.Err(dir); lerr != nil {
+			if res.DirErrno != 0 || res.Raw == 0 { // nothing readable: never an empty listing
+				return nil, mapErr(lerr)
+			}
+			partial = fmt.Errorf("%w: %w", device.ErrPartialListing, lerr)
+		}
 	}
-	out := make([]device.FileEntry, 0, len(es))
-	for _, e := range es {
-		out = append(out, device.FileEntry{
-			Name: e.Name, Path: path.Join(dir, e.Name), Size: int64(e.Size),
-			Mode: toFileMode(e.Mode), ModTime: e.MTime, IsDir: e.IsDir(),
-		})
+	out := make([]device.FileEntry, 0, len(res.Entries))
+	for _, e := range res.Entries {
+		fe := device.FileEntry{
+			Name: e.Name, Path: path.Join(dir, e.Name), Size: e.Size,
+			Mode: toFileMode(e.Mode), IsDir: e.IsDir(),
+		}
+		if !e.MTimeUnknown { // the zero ModTime means unknown
+			fe.ModTime = e.MTime
+		}
+		out = append(out, fe)
 	}
-	return out, nil
+	return out, partial
 }
 
 // Pull streams a remote file into w.

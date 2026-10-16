@@ -2,6 +2,7 @@ package cli
 
 import (
 	"cmp"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -62,10 +63,44 @@ func caseFlag(cmd *cobra.Command) *string {
 	return s
 }
 
+// openOpts are the per-command choices of how an image is opened.
+type openOpts struct {
+	ctx          context.Context
+	verifyParent bool
+	scan         examine.ScanBudget
+}
+
+// scanBudgetFlag registers --max-scan-bytes on cmd; the returned function resolves it.
+func scanBudgetFlag(cmd *cobra.Command) func() (examine.ScanBudget, error) {
+	var n int64
+	cmd.Flags().Int64Var(&n, "max-scan-bytes", 0, "stop the whole-media verification after this many bytes, checked once per chunk so a stop can overshoot by up to one chunk (16 MiB); requires --verify (0 = no limit; without the flag there is no limit, except 64 GiB for a size claim the container's own bytes cannot hold)")
+	return func() (examine.ScanBudget, error) {
+		switch {
+		case n < 0:
+			return examine.ScanBudget{}, usageErrorf("--max-scan-bytes must not be negative, got %d", n)
+		case !cmd.Flags().Changed("max-scan-bytes"):
+			return examine.ScanBudget{}, nil
+		case n == 0:
+			return examine.ScanBudget{Unlimited: true}, nil
+		}
+		return examine.ScanBudget{Bytes: n}, nil
+	}
+}
+
+// verifyParentFlag registers --verify-parent on cmd.
+func verifyParentFlag(cmd *cobra.Command) *bool {
+	return cmd.Flags().Bool("verify-parent", false, "re-hash the parent image artifact against the manifest before use (slow on large images; `case verify` remains the authority)")
+}
+
 // openImageSession opens the case and the image artifact ref. The returned
 // function closes both. A parent flagged incomplete is reported on stderr.
 func openImageSession(d Deps, casePath, ref string) (*examine.Session, func(), error) {
-	s, closeAll, err := openImageContainer(d, casePath, ref)
+	return openImageSessionWith(d, casePath, ref, openOpts{})
+}
+
+// openImageSessionWith opens the image with the per-command choices oo.
+func openImageSessionWith(d Deps, casePath, ref string, oo openOpts) (*examine.Session, func(), error) {
+	s, closeAll, err := openImageContainerWith(d, casePath, ref, oo)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -77,15 +112,24 @@ func openImageSession(d Deps, casePath, ref string) (*examine.Session, func(), e
 	return s, closeAll, nil
 }
 
-// openImageContainer is openImageSession without reading the partition table
-// (examine.OpenContainer): what only needs the container, such as verifying
+// openImageContainerWith is openImageSessionWith without reading the partition
+// table (examine.OpenContainer): what only needs the container, such as verifying
 // it, must not depend on the partition table being readable.
-func openImageContainer(d Deps, casePath, ref string) (*examine.Session, func(), error) {
+func openImageContainerWith(d Deps, casePath, ref string, oo openOpts) (*examine.Session, func(), error) {
 	c, err := openCase(casePath)
 	if err != nil {
 		return nil, nil, err
 	}
-	s, err := examine.OpenContainer(c, ref, examine.Options{Drivers: d.FSDrivers})
+	opts := examine.Options{Drivers: d.FSDrivers, VerifyParent: oo.verifyParent, Context: oo.ctx, Scan: oo.scan}
+	wrote := false
+	if oo.verifyParent {
+		base := newProgress(d.Err, "verify-parent")
+		opts.VerifyProgress = func(done, total int64) { wrote = true; base(done, total) }
+	}
+	s, err := examine.OpenContainer(c, ref, opts)
+	if wrote {
+		fmt.Fprintln(d.Err) // end the progress line, whatever the outcome
+	}
 	if err != nil {
 		_ = c.Close()
 		return nil, nil, err
@@ -124,8 +168,9 @@ func newImageImportCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		defer func() { _ = c.Close() }()
-		recs, err := examine.Import(cmd.Context(), c, deviceID, args, newProgress(d.Err, "import"))
-		fmt.Fprintln(d.Err)
+		prog, endProg := newLineProgress(d.Err, "import")
+		recs, err := examine.Import(cmd.Context(), c, deviceID, args, prog)
+		endProg()
 		if opts.json {
 			if len(recs) > 0 {
 				if jerr := writeJSON(d.Out, recs); jerr != nil && err == nil {
@@ -154,16 +199,26 @@ func newImageInfoCmd(d Deps, opts *rootOptions) *cobra.Command {
 		Args:  exactArgs(1),
 	}
 	casePath := caseFlag(cmd)
+	vp := verifyParentFlag(cmd)
+	scan := scanBudgetFlag(cmd)
 	cmd.Flags().BoolVar(&verify, "verify", false, "verify the container's stored hashes (raw images have none)")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		open := openImageSession
+		if cmd.Flags().Changed("max-scan-bytes") && !verify {
+			return usageErrorf("--max-scan-bytes bounds the verification and requires --verify")
+		}
+		oo := openOpts{ctx: cmd.Context(), verifyParent: *vp}
+		var serr error
+		if oo.scan, serr = scan(); serr != nil {
+			return serr
+		}
+		open := openImageSessionWith
 		if verify {
 			// Verification needs the container only: it is exactly when the
 			// partition table cannot be read that it matters. The partition
 			// table is read after the verification has been audited.
-			open = openImageContainer
+			open = openImageContainerWith
 		}
-		s, closeAll, err := open(d, *casePath, args[0])
+		s, closeAll, err := open(d, *casePath, args[0], oo)
 		if err != nil {
 			return err
 		}
@@ -258,6 +313,9 @@ func mismatchError(cv *examine.ContainerVerification) error {
 }
 
 func unverifiedReason(cv examine.ContainerVerification) string {
+	if cv.Result == "scan-budget" {
+		return fmt.Sprintf("scan budget reached after %d of %d bytes", cv.BytesHashed, cv.Size)
+	}
 	if cv.BadChunk >= 0 {
 		return fmt.Sprintf("first unreadable chunk %d: %s", cv.BadChunk, cv.BadChunkError)
 	}
@@ -313,6 +371,12 @@ func printImageInfo(w io.Writer, info examine.ImageInfo) {
 	field("Sector size", "%d", info.SectorSize)
 	for _, kv := range info.Metadata {
 		field(printable(kv.Key), "%s", printable(kv.Value))
+	}
+	if g := info.AcquisitionGaps; g != nil {
+		field("Acq. errors", "%s", gapsLine(g))
+	}
+	if sc := info.SizeClaim; sc != nil {
+		field("Size claim", "implausible: the volume claims %d bytes, the container holds %d (a claim, not data)", sc.Media, sc.Stored)
 	}
 	if info.PartitionError != "" {
 		field("Partitions", "unreadable: %s", escapeText(info.PartitionError))
@@ -484,6 +548,7 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 		},
 	}
 	casePath := caseFlag(cmd)
+	vp := verifyParentFlag(cmd)
 	partition := partitionFlag(cmd, "partition index (default: the only partition with a recognized filesystem)")
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "list the whole subtree with full paths")
 	cmd.Flags().BoolVar(&deleted, "deleted", false, "also show deleted directory entries")
@@ -497,7 +562,7 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 		if len(args) == 2 {
 			dirRef = args[1]
 		}
-		s, closeAll, err := openImageSession(d, *casePath, args[0])
+		s, closeAll, err := openImageSessionWith(d, *casePath, args[0], openOpts{ctx: cmd.Context(), verifyParent: *vp})
 		if err != nil {
 			return err
 		}
@@ -640,13 +705,14 @@ func newImageStatCmd(d Deps, opts *rootOptions) *cobra.Command {
 		Args:  exactArgs(2),
 	}
 	casePath := caseFlag(cmd)
+	vp := verifyParentFlag(cmd)
 	partition := partitionFlag(cmd, "partition index (default: the only partition with a recognized filesystem)")
 	cmd.RunE = func(_ *cobra.Command, args []string) error {
 		pidx, err := partition()
 		if err != nil {
 			return err
 		}
-		s, closeAll, err := openImageSession(d, *casePath, args[0])
+		s, closeAll, err := openImageSessionWith(d, *casePath, args[0], openOpts{ctx: cmd.Context(), verifyParent: *vp})
 		if err != nil {
 			return err
 		}
@@ -769,6 +835,8 @@ func printFSWarnings(w io.Writer, sum examine.Summary) {
 func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 	var recursive, includeEncrypted bool
 	var snapshot string
+	var maxFiles int
+	var maxBytes int64
 	cmd := &cobra.Command{
 		Use:   "extract <ref> <path>...",
 		Short: "Copy files out of an image's filesystem into the case",
@@ -780,16 +848,22 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 		},
 	}
 	casePath := caseFlag(cmd)
+	vp := verifyParentFlag(cmd)
 	partition := partitionFlag(cmd, "partition index (default: the only partition with a recognized filesystem)")
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "extract the live subtree of directories")
 	cmd.Flags().BoolVar(&includeEncrypted, "include-encrypted", false, "accepted for clarity: encrypted files are always extracted as ciphertext")
+	cmd.Flags().IntVar(&maxFiles, "max-files", 0, fmt.Sprintf("stop after this many files (default %d; 0 uses the default)", examine.DefaultMaxFiles))
+	cmd.Flags().Int64Var(&maxBytes, "max-bytes", 0, fmt.Sprintf("stop after this many bytes (default %d; 0 uses the default)", examine.DefaultMaxBytes))
 	cmd.Flags().StringVar(&snapshot, "snapshot", "", "extract the paths as they were in this snapshot, as xid:<n>, name:<name> or a bare name or xid that matches one snapshot (APFS; every path must name a volume, artifacts record the snapshot)")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if maxFiles < 0 || maxBytes < 0 {
+			return usageErrorf("--max-files and --max-bytes must not be negative")
+		}
 		pidx, err := partition()
 		if err != nil {
 			return err
 		}
-		s, closeAll, err := openImageSession(d, *casePath, args[0])
+		s, closeAll, err := openImageSessionWith(d, *casePath, args[0], openOpts{ctx: cmd.Context(), verifyParent: *vp})
 		if err != nil {
 			return err
 		}
@@ -807,10 +881,12 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 				}
 			}
 		}
+		prog, endProg := newLineProgress(d.Err, "extract")
 		sum, err := s.Extract(cmd.Context(), examine.ExtractOptions{
-			Partition: pidx, Paths: paths, Recursive: recursive, Progress: newProgress(d.Err, "extract"),
+			Partition: pidx, Paths: paths, Recursive: recursive, Progress: prog,
+			MaxFiles: maxFiles, MaxBytes: maxBytes,
 		})
-		fmt.Fprintln(d.Err)
+		endProg()
 		if sum.AnalysisID == "" {
 			return err // nothing ran
 		}
@@ -831,6 +907,9 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 			if jerr := writeJSON(d.Out, newJSONSummary(sum)); jerr != nil && err == nil {
 				err = jerr
 			}
+			if sum.OutputLimit != "" && err == nil {
+				err = fmt.Errorf("extract stopped at its output limit (%s)", sum.OutputLimit)
+			}
 			return err
 		}
 		fmt.Fprintf(d.Out, "extracted %d files (%s), skipped %d\n", sum.Files, humanBytes(sum.Bytes), sum.Skipped)
@@ -838,8 +917,13 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 		printFSWarnings(d.Out, sum)
 		printIncompleteIDs(d.Out, sum.IncompleteIDs)
 		printIncomplete(d.Out, sum)
+		printGapNote(d.Out, sum)
 		if note != "" {
 			fmt.Fprintln(d.Out, note)
+		}
+		if sum.OutputLimit != "" {
+			fmt.Fprintf(d.Out, "output limit reached: %s; the remaining files were not extracted (raise --max-files or --max-bytes)\n", escapeText(sum.OutputLimit))
+			return errors.Join(err, fmt.Errorf("extract stopped at its output limit (%s)", sum.OutputLimit))
 		}
 		return err
 	}
@@ -854,6 +938,7 @@ func newImageUnallocCmd(d Deps, opts *rootOptions) *cobra.Command {
 		Args:  exactArgs(1),
 	}
 	casePath := caseFlag(cmd)
+	vp := verifyParentFlag(cmd)
 	partition := partitionFlag(cmd, "export the free space of this partition's filesystem")
 	cmd.Flags().BoolVar(&volumeMode, "volume", false, "export the volume-level gaps outside every partition")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
@@ -867,15 +952,16 @@ func newImageUnallocCmd(d Deps, opts *rootOptions) *cobra.Command {
 		case !hasP && !volumeMode:
 			return usageErrorf("choose what to export: --partition N or --volume")
 		}
-		s, closeAll, err := openImageSession(d, *casePath, args[0])
+		s, closeAll, err := openImageSessionWith(d, *casePath, args[0], openOpts{ctx: cmd.Context(), verifyParent: *vp})
 		if err != nil {
 			return err
 		}
 		defer closeAll()
+		prog, endProg := newLineProgress(d.Err, "unalloc")
 		sum, err := s.ExportUnallocated(cmd.Context(), examine.UnallocOptions{
-			Partition: pidx, Volume: volumeMode, Progress: newProgress(d.Err, "unalloc"),
+			Partition: pidx, Volume: volumeMode, Progress: prog,
 		})
-		fmt.Fprintln(d.Err)
+		endProg()
 		if sum.AnalysisID == "" {
 			return err
 		}
@@ -887,6 +973,7 @@ func newImageUnallocCmd(d Deps, opts *rootOptions) *cobra.Command {
 		}
 		fmt.Fprintf(d.Out, "exported unallocated space: %d file(s) (%s), skipped %d\n", sum.Files, humanBytes(sum.Bytes), sum.Skipped)
 		printFSWarnings(d.Out, sum)
+		printGapNote(d.Out, sum)
 		for _, a := range sum.Artifacts {
 			status := ""
 			if a.Incomplete {
@@ -897,4 +984,62 @@ func newImageUnallocCmd(d Deps, opts *rootOptions) *cobra.Command {
 		return err
 	}
 	return cmd
+}
+
+// gapsLine states what the container declares about unreadable acquisition
+// ranges: the acquirer's declaration, not a fact about the bytes.
+func gapsLine(g *image.AcquisitionGaps) string {
+	switch g.State {
+	case image.GapsAbsent:
+		return "none declared (no error2 section)"
+	case image.GapsEmpty:
+		return "none declared (the error2 section is empty)"
+	}
+	var total int64
+	for _, k := range g.Kept {
+		total += k.Length
+	}
+	var line string
+	if g.State == image.GapsDamaged {
+		line = "UNKNOWN (the error2 section is damaged and its ranges are not trusted)"
+		if len(g.Kept) == 0 {
+			return line
+		}
+		line += fmt.Sprintf("; ranges from intact sections: %d bytes in the media", total)
+	} else {
+		line = fmt.Sprintf("%d range(s) declared unreadable by the acquirer, %d bytes in the media (the image holds acquirer fill there)", g.Ranges, total)
+	}
+	switch n := len(g.Kept); {
+	case n == 1:
+		line += fmt.Sprintf("; first: offset %d, %d bytes", g.Kept[0].Offset, g.Kept[0].Length)
+	case n > 1:
+		line += fmt.Sprintf("; first of %d kept: offset %d, %d bytes", n, g.Kept[0].Offset, g.Kept[0].Length)
+	}
+	if g.Outside > 0 {
+		line += fmt.Sprintf("; %d beyond the media", g.Outside)
+	}
+	if g.Empty > 0 {
+		line += fmt.Sprintf("; %d empty", g.Empty)
+	}
+	if g.Truncated {
+		line += "; list truncated"
+	}
+	return line
+}
+
+// printGapNote says how many artifacts overlap sectors the acquirer declared
+// unreadable (the acquirer's declaration, not a check of the bytes).
+func printGapNote(w io.Writer, sum examine.Summary) {
+	var n, unknown int
+	for _, a := range sum.Artifacts {
+		if d := a.Source.Derived; d != nil && d.AcquisitionGaps != nil {
+			n++
+			if d.AcquisitionGaps.Unknown {
+				unknown++
+			}
+		}
+	}
+	if n > 0 {
+		fmt.Fprintf(w, "note: %d artifact(s) carry an acquirer-gap note: %d overlap sectors the acquirer declared unreadable (the image holds acquirer fill there; those bytes are not device data) and %d may overlap (undecidable: Derived.acquisition_gaps unknown)\n", n, n-unknown, unknown)
+	}
 }

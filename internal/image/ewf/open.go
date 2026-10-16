@@ -21,6 +21,7 @@ type opener struct {
 	digestSHA1                 *[20]byte
 	hashDamaged, digestDamaged string // why a present hash/digest section is unusable, "" when it is not
 	err2                       *error2Info
+	err2Seen, err2Damaged      bool // an intact error2 section was read; one was present but unusable
 	unknown                    []string
 	unknownCount               int
 
@@ -134,6 +135,7 @@ func (o *opener) admit(n int, sec section) bool {
 		o.counts[class]++
 		if o.counts[class] > limit {
 			o.r.warn.add("segment %d: more than %d %s sections; the extra ones are skipped", n, limit, sec.label())
+			o.skippedError2(sec)
 			return false
 		}
 	}
@@ -142,6 +144,7 @@ func (o *opener) admit(n int, sec section) bool {
 			o.budgetWarned = true
 			o.r.warn.add("segment %d: section payloads overlap or exceed the segment (%s at offset %d); the remaining sections are skipped", n, sec.label(), sec.off)
 		}
+		o.skippedError2(sec)
 		return false
 	}
 	o.budget -= payloadCost(sec)
@@ -213,9 +216,11 @@ func (o *opener) finish() error {
 	}
 	o.resolveHashes()
 	if e := o.err2; e != nil {
-		r.warn.add("acquisition error: %d sector range(s) (%d sectors) were unreadable at acquisition and are zero-filled in the image", e.count, e.sectors)
+		r.warn.add("acquisition error: %d sector range(s) (%d sectors) declared unreadable by the acquirer; the image holds fill there", e.count, e.sectors)
 	}
 	r.err2 = o.err2
+	r.gaps = buildGaps(o.err2, r.geo, o.err2Seen, o.err2Damaged)
+	o.warnSizeClaim()
 	if covered := int64(len(r.refs)); covered < int64(r.geo.chunks) {
 		// A missing or truncated segment or table: the image opens, and the
 		// chunks without an entry fail on read (never zero-filled). A missing
@@ -226,4 +231,12 @@ func (o *opener) finish() error {
 	r.cache = newChunkCache(cacheCapacity(r.geo.chunkSize))
 	r.meta = o.metadata()
 	return nil
+}
+
+// skippedError2 records that an error2 section was not read (a bound skipped
+// it), so the acquisition gaps are unknown rather than none.
+func (o *opener) skippedError2(sec section) {
+	if sec.kind == kError2 {
+		o.err2Damaged = true
+	}
 }
