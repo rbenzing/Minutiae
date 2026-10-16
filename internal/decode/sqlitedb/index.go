@@ -313,7 +313,7 @@ func (ix *Index) Rowids(key parse.JoinKey) (rowids []int64, flags JoinFlags, err
 	// column. A no-affinity COLUMN against a TEXT column is compared as stored
 	// (measured against the engine): only a constant (ClassUnknown) is converted
 	// there. A key that cannot be converted exactly is undecidable, never a miss.
-	if !(key.Class == parse.ClassBlob && ix.class == parse.ClassText) {
+	if key.Class != parse.ClassBlob || ix.class != parse.ClassText {
 		conv, cst := sqlitefile.ConvertForComparison(v, affOfClass(key.Class), affOfClass(ix.class))
 		if cst != sqlitefile.ConvOK {
 			return nil, flags, fmt.Errorf("%w: the key cannot be converted exactly for the affinity of %s.%s", ErrKeyUndecidable, ix.table, ix.column)
