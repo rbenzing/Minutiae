@@ -48,3 +48,9 @@ func SetWarningEntryCap(n int) (restore func()) {
 	warningEntryCap = n
 	return func() { warningEntryCap = old }
 }
+
+// SetScanBudget sets the scan budget a session verifies under.
+func (s *Session) SetScanBudget(b ScanBudget) { s.opts.Scan = b }
+
+// SetImplausibleForTest makes the session treat its image's size claim as implausible.
+func (s *Session) SetImplausibleForTest(v bool) { s.implausible = &v }

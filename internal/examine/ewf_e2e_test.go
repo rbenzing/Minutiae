@@ -390,7 +390,7 @@ func TestE01Error2WarningInInfo(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 	var n int
 	for _, w := range s.Info().Warnings {
-		if strings.Contains(w, "acquisition error: 2 sector range(s) (7 sectors) were unreadable at acquisition") {
+		if strings.Contains(w, "acquisition error: 2 sector range(s) (7 sectors) declared unreadable by the acquirer; the image holds fill there") {
 			n++
 		}
 	}

@@ -112,10 +112,21 @@ type Derivation struct {
 	Encrypted       bool              `json:"encrypted,omitempty"`
 	Runs            []Run             `json:"runs,omitempty"`          // image-relative byte runs (at most MaxInlineRuns)
 	RunsArtifact    string            `json:"runs_artifact,omitempty"` // id of a runs sidecar artifact
+	// DeclaredRunsArtifact names, on an incomplete extract, the runs sidecar that
+	// holds the full run list the filesystem declared for the file, written before
+	// the copy was cut short. It is provenance of what was declared, never of what
+	// was captured (Runs/RunsArtifact are), and is not used to reproduce bytes.
+	DeclaredRunsArtifact string `json:"declared_runs_artifact,omitempty"`
 
 	// Snapshot is set when the bytes were read from a snapshot view of the
 	// filesystem (APFS) and not from the live tree.
 	Snapshot *SnapshotRef `json:"snapshot,omitempty"`
+
+	// AcquisitionGaps is set on extract and unallocated artifacts read from an
+	// image that declares unreadable acquisition ranges (E01 error2) when the
+	// artifact's bytes overlap them, or when that cannot be decided (a damaged
+	// error2 section included). Unknown is never omitted when true.
+	AcquisitionGaps *AcquisitionGapNote `json:"acquisition_gaps,omitempty"`
 
 	// Recovery is set on artifacts of the recovered kinds (recover, carve, slack,
 	// journal, report): the class, method, confidence and allocation evidence.
