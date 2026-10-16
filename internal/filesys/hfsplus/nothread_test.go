@@ -222,3 +222,23 @@ func TestNoThreadEmptyCatalogIsNotFound(t *testing.T) {
 		t.Errorf("Open on an empty catalog: %v, want ErrNotFound", err)
 	}
 }
+
+// Only the opened id's own thread position (id, empty name) may be skipped. An empty-name
+// record under another parent can be a file or folder record (shown in the raw form) sharing the id.
+func TestNoThreadForeignEmptyNameUnknownRecordFailsClosed(t *testing.T) {
+	img, lay, _ := buildTree(t, hfsplustest.Options{}, []hfsplustest.File{
+		{Path: "/legacy", NoThread: true, Data: []byte("legacy")},
+		{Path: "/d", Dir: true},
+	})
+	p := findRec(t, img, lay, lay.CNIDs["/d"], nil) // the folder's thread, keyed (its id, empty name)
+	be.PutUint16(img[p.data:], 0x00FF)
+	f := open(t, img)
+	fl, err := f.Open(filesys.Entry{ID: idOf(lay.CNIDs["/legacy"])})
+	wantCorrupt(t, err)
+	if fl != nil {
+		t.Error("an unprovable id must not open")
+	}
+	if !hasWarning(f.Info(), "uniqueness unprovable") {
+		t.Errorf("no warning: %q", f.Info().Warnings)
+	}
+}

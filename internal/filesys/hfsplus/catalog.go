@@ -466,11 +466,13 @@ func (f *FS) scanFileByID(id uint32) (catalogKey, catalogRecord, error) {
 			return false, nil
 		}
 		if ue != nil {
-			f.warn("catalog record of unknown type %d under parent %d skipped", ue.typ, k.parent)
-			if len(k.name) == 0 {
-				return true, nil // keyed (id, empty name): a thread's position, never a file or folder record
+			if len(k.name) == 0 && k.parent == id {
+				// Keyed (id, empty name): provably the thread position of the id being opened.
+				f.warn("catalog record of unknown type %d under parent %d skipped", ue.typ, k.parent)
+				return true, nil
 			}
-			// A file or folder record of an unknown type has an unreadable id: it may be a second owner.
+			// Any other unknown-type record has an unreadable id (an empty-name file or folder record
+			// is valid here): it may be a second owner, so uniqueness is unprovable.
 			damaged = corrupt("catalog", -1, "uniqueness unprovable: unknown record type %d under parent %d", ue.typ, k.parent)
 			return false, nil
 		}
