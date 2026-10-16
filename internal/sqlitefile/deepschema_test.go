@@ -98,12 +98,6 @@ func deepSchema(t testing.TB, n int) []byte {
 	return data
 }
 
-// interiorPage1 places an interior page body (built without the file header
-// offset) after the 100-byte header: the first 100 bytes of data are already
-// written, the body was built at offset 100 of a page, so it is returned as the
-// remaining ps-100 bytes of page 1.
-func interiorPage1(body []byte, ps int) []byte { return body[:ps-100] }
-
 // TestSchemaRowsBeyondEngineDepthAreFlagged: an object read from a schema tree
 // deeper than the engine follows is flagged, and Info.EngineRefuses says so.
 func TestSchemaRowsBeyondEngineDepthAreFlagged(t *testing.T) {
