@@ -98,3 +98,10 @@ func MapTimeout(ctx context.Context, err error) error { return mapTimeout(ctx, e
 // DisableRecoveredRule is a test seam: it lets a test build the forged rows
 // that verify rule R7 must catch.
 func (w *Writer) DisableRecoveredRule() { w.noRecoveredRule = true }
+
+// SetMaxStatGroups lowers the Stats group cap for a test.
+func SetMaxStatGroups(n int) (restore func()) {
+	old := maxStatGroups
+	maxStatGroups = n
+	return func() { maxStatGroups = old }
+}

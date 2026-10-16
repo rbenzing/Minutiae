@@ -59,3 +59,6 @@ var (
 	// ErrConfidenceAboveArtifact: the record's confidence is missing or above the recovered artifact's.
 	ErrConfidenceAboveArtifact = fmt.Errorf("%w: confidence is above that of the recovered artifact", ErrInvalidRecord)
 )
+
+// ErrStatsGroupCap: a Stats answer would hold more groups than MaxStatGroups.
+var ErrStatsGroupCap = errors.New("records: too many stat groups for one answer")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 )
@@ -21,21 +22,54 @@ var statKeys = map[string]struct {
 	"run":      {expr: "COALESCE(b.ingest_id, '')", batch: true},
 }
 
+// MaxStatGroups is the most groups one Stats answer holds.
+const MaxStatGroups = 100_000
+
+var maxStatGroups = MaxStatGroups
+
+// StatsResult is a capped Stats answer: the first groups in key order, and whether more exist.
+type StatsResult struct {
+	Rows []StatRow
+	More bool
+}
+
 // Stats counts the records f selects by one key: type, parser ("name/version"),
 // artifact (id), deleted ("live", "deleted" or "recovered") or run (ingest id),
-// with each group's earliest and latest ts. Groups come in key order.
+// with each group's earliest and latest ts. Groups come in key order. When f has
+// more than MaxStatGroups groups it returns ErrStatsGroupCap and no rows (use
+// StatsTop, or narrow the filter): a cut answer is never returned as a whole one.
 func (r *Reader) Stats(ctx context.Context, f Filter, by string) ([]StatRow, error) {
-	if err := refuseRank(f); err != nil {
+	res, err := r.stats(ctx, f, by, maxStatGroups)
+	if err != nil {
 		return nil, err
+	}
+	if res.More {
+		return nil, fmt.Errorf("%w: more than %d groups by %s (use StatsTop, or narrow the filter)", ErrStatsGroupCap, maxStatGroups, by)
+	}
+	return res.Rows, nil
+}
+
+// StatsTop is Stats limited to the first limit groups in key order (1..MaxStatGroups, else
+// ErrInvalidPage). More says that further groups exist; the cut is never silent.
+func (r *Reader) StatsTop(ctx context.Context, f Filter, by string, limit int) (StatsResult, error) {
+	if limit < 1 || limit > MaxStatGroups {
+		return StatsResult{}, fmt.Errorf("%w: group limit %d is outside 1..%d", ErrInvalidPage, limit, MaxStatGroups)
+	}
+	return r.stats(ctx, f, by, limit)
+}
+
+func (r *Reader) stats(ctx context.Context, f Filter, by string, limit int) (StatsResult, error) {
+	if err := refuseRank(f); err != nil {
+		return StatsResult{}, err
 	}
 	key, ok := statKeys[by]
 	if !ok {
-		return nil, invalidFilter("cannot group by %q (type, parser, artifact, deleted or run)", by)
+		return StatsResult{}, invalidFilter("cannot group by %q (type, parser, artifact, deleted or run)", by)
 	}
 	if _, err := f.compile(false); err != nil {
-		return nil, err
+		return StatsResult{}, err
 	}
-	var out []StatRow
+	var out StatsResult
 	err := r.readTx(ctx, f.Text != nil, func(h evidence.ReadHandle) error {
 		have, err := hasSuperseded(ctx, h)
 		if err != nil {
@@ -46,13 +80,13 @@ func (r *Reader) Stats(ctx context.Context, f Filter, by string) ([]StatRow, err
 			return err
 		}
 		q := "SELECT " + key.expr + " AS k, count(*), min(r.ts), max(r.ts)" + w.fromSQL(key.parser, key.batch) +
-			w.whereSQL() + " GROUP BY k ORDER BY k"
+			w.whereSQL() + " GROUP BY k ORDER BY k LIMIT ?"
 		if f.Text != nil {
 			if err := r.matching(ctx); err != nil {
 				return err
 			}
 		}
-		rows, err := h.QueryContext(ctx, q, w.args...)
+		rows, err := h.QueryContext(ctx, q, append(slices.Clone(w.args), limit+1)...)
 		if err != nil {
 			return fmt.Errorf("records: stats by %s: %w", by, err)
 		}
@@ -69,12 +103,16 @@ func (r *Reader) Stats(ctx context.Context, f Filter, by string) ([]StatRow, err
 			if lo.Valid {
 				s.TSMin, s.TSMax = &lo.Int64, &hi.Int64
 			}
-			out = append(out, s)
+			if len(out.Rows) == limit {
+				out.More = true // the extra group proves more exist; it is not returned
+				break
+			}
+			out.Rows = append(out.Rows, s)
 		}
 		return rows.Err()
 	})
 	if err != nil {
-		return nil, err
+		return StatsResult{}, err
 	}
 	return out, nil
 }
