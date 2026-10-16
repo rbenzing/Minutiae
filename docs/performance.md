@@ -219,7 +219,7 @@ Notes (ruling D69):
 (Task 9: the top of the ingest CPU profile when the ingest decision is `apply`.)
 
 ### Ingest CPU profile (5D Task 9, step 1)
-Taken at 400,000 records, not the plan's 1,000,000 (ruling D30 caps implementer runs at 400k), with `-cpuprofile` through `heavy.sh`, label `profile`, 245 s, 251 s of samples, code of 273e1d1 (the Task 8 cache of 256 MiB included). Top 15 by cumulative time:
+Taken at 400,000 records, not the plan's 1,000,000 (ruling D30 caps implementer runs at 400k), with `-cpuprofile` through `heavy.sh`, label `profile`, 245 s, 251 s of samples, code of 273e1d1 (the Task 8 cache of 256 MiB included). Top 15 by cumulative time (rows elided: the table is not the full top 15 and its sums are of the full profile, so they do not add up across the rows shown):
 
 ```
       flat  flat%   sum%        cum   cum%
@@ -245,4 +245,4 @@ Shares that decide the sub-steps of Task 9:
 - The `records` and `record_times` insert statements: 14.0 s, 5.6 %. The 56.7 % under `stmt.exec` is one statement per batch, `InsertFTSDocs`, and it is FTS5 index maintenance (`fts5FlushOneHash`, segment merges 36.5 %), not driver overhead. A multi-row INSERT (sub-step B) cannot remove it.
 - Commit and fsync: 21.3 % (`FlushFileBuffers` 17.1 %). The rest of the time is index maintenance inside SQLite.
 
-The miss is in the engine (full-text and B-tree index maintenance); this plan does not change it.
+The miss is in the engine (full-text and B-tree index maintenance); this plan does not change it. The FTS merge share (36.5 % here) only grows with index size: each merge level rewrites more segments as the index grows, so at 400,000 records this is a floor for larger runs, not a ceiling.
