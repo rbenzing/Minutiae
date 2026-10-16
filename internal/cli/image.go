@@ -1053,11 +1053,23 @@ func checkIncludeSnapshots(cmd *cobra.Command, include, recursive bool) error {
 
 // snapshotNameOfPath returns the snapshot an APFS output path lies in: the path /<volume>/.snapshots/<name>
 // or anything below it names snapshot <name>; every other path (including /<volume>/.snapshots
-// itself, which is the synthetic directory, not snapshot data) returns "".
+// itself, which is the synthetic directory, not snapshot data) returns "". A path below
+// <volume>/.snapshots/ whose snapshot segment is empty is still snapshot data: it fails toward
+// labelling and returns emptySnapshotSegment, which no real name can equal.
 func snapshotNameOfPath(p string) string {
 	parts := strings.SplitN(p, "/", 5) // "", volume, ".snapshots", name, rest
-	if len(parts) < 4 || parts[0] != "" || parts[1] == "" || parts[2] != ".snapshots" || parts[3] == "" {
+	if len(parts) < 4 || parts[0] != "" || parts[1] == "" || parts[2] != ".snapshots" {
 		return ""
+	}
+	if parts[3] == "" {
+		if len(parts) == 4 { // "/<volume>/.snapshots/": the synthetic directory itself
+			return ""
+		}
+		return emptySnapshotSegment
 	}
 	return parts[3]
 }
+
+// emptySnapshotSegment marks snapshot data whose path has an empty snapshot segment. It contains '/',
+// which a real snapshot name never does (the driver aliases such names to ~raw~).
+const emptySnapshotSegment = "<empty/segment>"

@@ -251,13 +251,35 @@ func TestImageLsIncludeSnapshotsWritesNothing(t *testing.T) {
 	if code, out := e.image(t, "ls", e.ref, "/Data", "-r", "--include-snapshots"); code != 0 {
 		t.Fatalf("ls: %d\n%s", code, out)
 	}
-	// Every command that opens the case appends its case.open; nothing else may be appended.
-	for _, en := range audit()[len(before):] {
-		if en.Action != "case.open" {
-			t.Errorf("the listing appended a %s audit entry", en.Action)
-		}
+	// Every command that opens the case appends its case.open; exactly that one entry (Y86).
+	added := audit()[len(before):]
+	if len(added) != 1 || added[0].Action != "case.open" {
+		t.Errorf("the listing appended %d audit entries %v, want exactly one case.open", len(added), added)
 	}
 	if n := len(manifestRecords(t, e.c)); n != beforeArts {
 		t.Errorf("the listing created %d manifest records", n-beforeArts)
+	}
+}
+
+// A path below <volume>/.snapshots/ whose snapshot segment is empty is still snapshot data (Y87):
+// it is marked with a placeholder no real name can equal (a real name never contains '/'), never live.
+func TestSnapshotNameOfPathEmptySegmentIsStillSnapshotData(t *testing.T) {
+	for _, p := range []string{"/V/.snapshots//x", "/V/.snapshots//", "/V/.snapshots//x/y"} {
+		got := snapshotNameOfPath(p)
+		if got == "" {
+			t.Errorf("%s is shown as live; it lies below .snapshots", p)
+		}
+		if !strings.Contains(got, "/") {
+			t.Errorf("%s: placeholder %q could be mistaken for a real snapshot name", p, got)
+		}
+	}
+	for _, p := range []string{"/V/.snapshots", "/V/.snapshots/", "/V/x", "/V/.snapshots/S"} {
+		want := ""
+		if p == "/V/.snapshots/S" {
+			want = "S"
+		}
+		if got := snapshotNameOfPath(p); got != want {
+			t.Errorf("%s marked %q, want %q", p, got, want)
+		}
 	}
 }
