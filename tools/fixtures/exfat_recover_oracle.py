@@ -191,7 +191,7 @@ def dump_num(report, pattern):
     return int(m.group(1))
 
 
-def analyse_live(img, v, src):
+def analyse_live(img, v, src, check_flags):
     # the root directory is a FAT chain; its length is found by following the FAT to the end
     root_chain, c = [], v.root
     while True:
@@ -237,8 +237,11 @@ def analyse_live(img, v, src):
     dfree = dump_num(rep, r"^Free Clusters:\s+(\d+)")
     if dfree != len(free):
         fail("dump.exfat reports %d free clusters, the bitmap and the live chains give %d" % (dfree, len(free)))
-    # NoFatChain cross-check: a contiguous (NoFatChain) file's FAT entries were never written
-    for m in files:
+    # NoFatChain cross-check, at SNAPSHOT time only and over the file's own run: a contiguous (NoFatChain) file's FAT
+    # entries were never written, a chained file's all are. A NoFatChain file on clusters that hold stale FAT entries of an
+    # earlier chained file fails the generator closed (it is never guessed past); the final image is not checked again,
+    # because deletes and rewrites after the snapshot may leave stale entries on a live file's clusters.
+    for m in files if check_flags else []:
         links = [v.fat(c) for c in m["clusters"]]
         if m["nofat"] and any(links):
             fail("%s: NoFatChain but its FAT entries are written" % m["path"])
@@ -266,7 +269,7 @@ def check_files(v, src, files):
 
 def cmd_snap(img, srcroot, out, expect_free):
     v, src = Vol(img), Src(srcroot)
-    _, _, files, chains, _, free, _ = analyse_live(img, v, src)
+    _, _, files, chains, _, free, _ = analyse_live(img, v, src, True)
     check_files(v, src, files)
     if expect_free != "any" and len(free) != int(expect_free):
         fail("%d free clusters, want %s (the volume must be full where the plan fills it)" % (len(free), expect_free))
@@ -295,7 +298,7 @@ def family_of(path):
 
 def cmd_final(img, srcroot, snaps):
     v, src = Vol(img), Src(srcroot)
-    live, deleted, files, chains, used, free, specials = analyse_live(img, v, src)
+    live, deleted, files, chains, used, free, specials = analyse_live(img, v, src, False)
     live_files = check_files(v, src, files)
     true, flags = {}, {}
     for s in snaps:  # later snapshots win

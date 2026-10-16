@@ -1066,7 +1066,7 @@ sets), cross-checked against the allocation bitmap (its zero bits equal the clus
 (cluster size, total clusters, `Free Clusters`), and the source tree (every live file's bytes). The pinned `dump.exfat`
 (exfatprogs 1.2.0) has no per-file option, so `no_fat_chain` is cross-checked against the FAT instead: a `NoFatChain` file's
 FAT entries are zero, a chained file's are all written (and the flag must not change between the snapshot that saw the file
-live and its deleted entry). Per deleted file the oracle adds `no_fat_chain`, `data_length`, `valid_data_length` and
+live and its deleted entry). The flag is read from the Stream entry (bit 1 of its flags), independently of the FAT; the FAT check runs over the file's own run at SNAPSHOT time only (not on the final image) and fails the generator closed on a mismatch, so a NoFatChain file that sits on clusters holding stale FAT entries of an earlier chained file stops the run instead of being guessed past. `exfat_chains.py` (the exFAT listing fixture) needs `dump.exfat -c -d <path>`, which exfatprogs 1.2.0 (this recover image) lacks: it belongs to the default `minutiae-fixtures` image, not to `minutiae-recover-fixtures`. Per deleted file the oracle adds `no_fat_chain`, `data_length`, `valid_data_length` and
 `fat_residue` (`not-chained`, `chain-kept` or `chain-cleared`, read from the FINAL FAT along the true chain); `expect.method`
 is `exfat-nofatchain` (75) when `no_fat_chain`, `exfat-fatchain` (65) when the chain is kept, else `exfat-contiguous` (55),
 with the caps 20 (cut) and 30 (overlap). The generator exits 1 naming a missing family (`nofatchain-equal`, `empty`,

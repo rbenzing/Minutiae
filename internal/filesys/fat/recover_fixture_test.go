@@ -152,3 +152,39 @@ func TestRecoverFixturesHoldWhatTheyClaim(t *testing.T) {
 		}
 	}
 }
+
+// perImageOutcomes must occur in EVERY image, not only in the three together: the short-only branch of the
+// readers needs a real-image case in each volume (F104, F108).
+var perImageOutcomes = []string{"short-only"}
+
+// missingOutcomes returns the names of required that occur zero times in families.
+func missingOutcomes(families map[string]int, required []string) []string {
+	var out []string
+	for _, k := range required {
+		if families[k] == 0 {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+func TestRecoverFixturesEveryImageHasShortOnly(t *testing.T) {
+	for _, name := range []string{"fat12-recover", "fat16-recover", "fat32-recover"} {
+		_, o := loadRecoverFixture(t, name)
+		if m := missingOutcomes(o.Families, perImageOutcomes); len(m) > 0 {
+			t.Errorf("%s: outcome families %v occur in no deleted entry of this image", name, m)
+		}
+	}
+}
+
+// A test double: an oracle whose short-only entry is gone (a regeneration that loses D.BIN's short-only state)
+// is caught by the same helper.
+func TestMissingOutcomesCatchesLostShortOnly(t *testing.T) {
+	lost := map[string]int{"contiguous-equal": 6, "lfn-tail-lost": 1}
+	if m := missingOutcomes(lost, perImageOutcomes); len(m) != 1 || m[0] != "short-only" {
+		t.Errorf("missingOutcomes = %v, want [short-only]", m)
+	}
+	if m := missingOutcomes(map[string]int{"short-only": 1}, perImageOutcomes); len(m) != 0 {
+		t.Errorf("missingOutcomes = %v, want none", m)
+	}
+}
