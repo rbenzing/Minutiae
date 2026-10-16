@@ -9,7 +9,7 @@ requires each gated decision to follow the numbers. Nothing here is asserted by 
 | Row | Target | Measured as |
 |---|---|---|
 | `ingest_rate` | >= 40,000 records/s | records divided by the time spent inside `Writer.Add` and `End` (generator CPU excluded) |
-| `list_p95_ms` | <= 50 ms | p95 of a 100-row page over the cells of `matrix.list.clean.*` that hit a time-ordered index (none, one to three types, deleted, time window, type + time window, min confidence + type, a page at depth) |
+| `list_p95_ms` | <= 50 ms | p95 of a 100-row page over the cells of `matrix.list.clean.*` that hit a time-ordered index (none, one to three types, deleted, time window, type + time window, min confidence + type, a page at depth). The set includes `type2` and `type3`, whose plans end in `USE TEMP B-TREE FOR ORDER BY`: they do not get the time order from the index, so a "hit a time-ordered index" cell is not always one that avoids a sort |
 | `search_word_p95_ms` | <= 300 ms | max p95 over word and prefix searches (first 100 hits) with a type or a time filter |
 | `search_substring_p95_ms` | <= 1000 ms | max p95 over `--substring` searches (first 100 hits) |
 | `stats_type_s` | <= 3 s | `Overview` + `Stats --by type` + `IndexStatus`, the work of `records stats --by type` |
@@ -190,7 +190,7 @@ Background load: this is the user's working laptop, not an idle machine. The use
 ```
 
 ## Verify phases
-Baseline, 10,000,000 records: `case verify` did not finish. The scale test was given 240 minutes and `go test` timed out after 3 h 57 min (14,227 s) with the stack inside `verifyFTS` -> `compareVocab` (`verify_fts.go:570`), the comparison of the full-text vocabulary. There is no phase table, no `verify_rate` and no `verify_phases_s` for this run: none is computed or estimated from a run that did not end (ruling D68b).
+Baseline, 10,000,000 records: `case verify` did not finish. The scale test was given 240 minutes and `go test` timed out after 3 h 57 min (14,227 s, the `go test` package time of 14226.689 s on the FAIL line of the verify run) with the stack inside `verifyFTS` -> `compareVocab` (`verify_fts.go:570`), the comparison of the full-text vocabulary. There is no phase table, no `verify_rate` and no `verify_phases_s` for this run: none is computed or estimated from a run that did not end (ruling D68b).
 
 Spill: the SQLite temporary files under `<case>/tmp/verify-*` peaked at about 25 GB against a 38 GB `artifacts.db` (read by the 500 ms directory sampler, so a lower bound). Free RAM briefly fell to about 910 MB while it ran.
 
@@ -207,10 +207,10 @@ One line per decision: the rule, the rows, the run, the outcome. All read the `b
 
 Notes (ruling D69):
 - `search_word_p95_ms` (20006 ms) and `search_substring_p95_ms` (20005 ms) sit AT the 20 s per-query timeout. The cells behind them (`matrix.search.word.common.time`, `matrix.search.substring.common`) have 6 samples and 9 timeouts each. They are LOWER BOUNDS, not measured p95s: the true p95 is at least this, and unknown.
-- `list_p95_ms` (266199 ms) is the slowest list cell, `type3`. Several list cells have too few samples for a p95: `type2` 4, `type3` 1, `artifact_big` 2, `artifacts3` 1, `parser` 1, `path+artifact` 2 (the others have 200). With 1 to 4 samples a "p95" is just the slowest sample; treat these as an order of magnitude, not as percentiles.
-- Their plans all end in `USE TEMP B-TREE FOR ORDER BY`: the filter index does not deliver the order, so the whole matching set is sorted. Worst cells:
-  - `clean.type3` (266 s, 1 sample): SEARCH r USING INDEX records_type_ts (type=?) / SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN / SEARCH b USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN / USE TEMP B-TREE FOR ORDER BY
-  - `clean.artifacts3` (182 s, 1 sample): SEARCH r USING INDEX records_artifact (artifact_id=?) / SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN / SEARCH b USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN / USE TEMP B-TREE FOR ORDER BY
+- `list_p95_ms` (266199 ms) is the largest value in the gated set; it comes from `type3`, a cell with 1 sample, so it is one observation, not a p95. The worst cell overall is `parser`, 330760 ms, also 1 sample and outside the gated set. Treat both as lower-confidence figures of the same kind as the search lower bounds above: an order of magnitude, not a percentile. Several list cells have too few samples for a p95: `type2` 4, `type3` 1, `artifact_big` 2, `artifacts3` 1, `parser` 1, `path+artifact` 2 (the others have 200). With 1 to 4 samples a "p95" is just the slowest sample.
+- The plans of those low-sample cells (`type2`, `type3`, `artifact_big`, `artifacts3`, `parser`, `path+artifact`) all end in `USE TEMP B-TREE FOR ORDER BY`: the filter index does not deliver the time order, so the whole matching set is sorted. `type2` and `type3` are in the gated set. Plans of the worst cells, each bullet naming the cells it covers:
+  - `clean.type2` and `clean.type3` (type2 4 samples, p95 225 s; type3 1 sample, 266 s; the same plan): SEARCH r USING INDEX records_type_ts (type=?) / SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN / SEARCH b USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN / USE TEMP B-TREE FOR ORDER BY
+  - `clean.artifacts3` (182 s, 1 sample; `artifact_big` and `path+artifact` use the same plan): SEARCH r USING INDEX records_artifact (artifact_id=?) / SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN / SEARCH b USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN / USE TEMP B-TREE FOR ORDER BY
   - `clean.parser` (331 s, 1 sample): SEARCH p USING INDEX sqlite_autoindex_parsers_1 (name=?) / SEARCH r USING INDEX records_parser (parser_id=?) / SEARCH b USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN / USE TEMP B-TREE FOR ORDER BY
 - Cells that hit a time-ordered index are fast (`none` p95 3.0 ms, `type1` 5.5 ms, `deleted` 5.5 ms, `deep` 4.3 ms, `minconf+type` 13.1 ms), but `time` (706 ms), `time+untimed` (862 ms) and `type+time` (240 ms) miss 50 ms.
 - Ingest `peak_rss_ingest_bytes` 261 MB; `ostemp_added_ingest` 0.
