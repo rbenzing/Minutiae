@@ -394,7 +394,18 @@ def main(argv):
             f.write("| File | Table | Verdict | Evidence |\n|---|---|---|---|\n")
             for fn, tbl, v, ev in rows:
                 f.write("| %s | %s | %s | %s |\n" % (fn, tbl, v, ev))
+            f.write(MMS_NOTE)
     return 1 if bad else 0
+
+
+MMS_NOTE = """
+MMS address types (ruling T42, read from the source, not generated): the file used is
+packages/apps/Messaging `src/com/android/messaging/mmslib/pdu/PduHeaders.java` at the same tag
+(PduHeaders.java above): BCC 0x81 = 129 (line 30), CC 0x82 = 130 (line 31), FROM 0x89 = 137
+(line 38), TO 0x97 = 151 (line 54). The task brief listed 130 as BCC and 129 as CC; that
+table was written from memory and swaps the two. The public source wins: the mapper
+(`addrRole`) and the Python oracle of the owning later task follow BCC = 129, CC = 130.
+"""
 
 
 if __name__ == "__main__":

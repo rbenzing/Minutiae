@@ -935,4 +935,5 @@ lines 1477-1487 (0 all, 1 inbox, 2 sent, 3 drafts, 4 outbox, 5 failed); `CallLog
 The MMS address types come from `PduHeaders.java`, which is not in `frameworks/opt/mms` at this tag (no such
 repository) nor in `frameworks/opt/telephony`; the copy in `packages/apps/Messaging`
 (`src/com/android/messaging/mmslib/pdu/PduHeaders.java`, same tag) gives FROM 0x89 = 137 (line 38), TO 0x97 = 151
-(line 54), CC 0x82 = 130 (line 31) and BCC 0x81 = 129 (line 30).
+(line 54), CC 0x82 = 130 (line 31) and BCC 0x81 = 129 (line 30). The plan brief had CC and BCC swapped (written from
+memory); the public source wins (ruling T42), and the mapper and the oracle of the owning task follow it.

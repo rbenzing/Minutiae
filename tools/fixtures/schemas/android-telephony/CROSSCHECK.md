@@ -62,3 +62,10 @@ The definition at the tag is the first CREATE TABLE of the table in the file; st
 | mmssms-oem-extended.sql | pdu | historical | 32 columns, all defined at MmsSmsDatabaseHelper.java:817 |
 | mmssms-oem-extended.sql | sms | historical | 20 columns, all defined at MmsSmsDatabaseHelper.java:1083; invented on purpose: ['is_favorite', 'msg_hash', 'sim_slot'] |
 | mmssms-oem-extended.sql | threads | historical | 11 columns, all defined at MmsSmsDatabaseHelper.java:1217 |
+
+MMS address types (ruling T42, read from the source, not generated): the file used is
+packages/apps/Messaging `src/com/android/messaging/mmslib/pdu/PduHeaders.java` at the same tag
+(`PduHeaders.java` above): BCC 0x81 = 129 (line 30), CC 0x82 = 130 (line 31), FROM 0x89 = 137
+(line 38), TO 0x97 = 151 (line 54). The task brief listed 130 as BCC and 129 as CC; that
+table was written from memory and swaps the two. The public source wins: the mapper
+(`addrRole`) and the Python oracle of the owning later task follow BCC = 129, CC = 130.
