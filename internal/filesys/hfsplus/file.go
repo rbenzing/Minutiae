@@ -143,13 +143,7 @@ func (f *FS) openObject(o *object) (filesys.File, error) {
 		if !o.cmp.ok {
 			return nil, fmt.Errorf("%w: decmpfs-compressed file (no readable decmpfs header)", filesys.ErrUnsupported)
 		}
-		switch o.cmp.typ {
-		case decmpfsTypeInline:
-			return f.openZlibInline(o)
-		case decmpfsTypeRsrc:
-			return f.openZlibRsrc(o)
-		}
-		return nil, fmt.Errorf("%w: decmpfs-compressed file (compression type %d)", filesys.ErrUnsupported, o.cmp.typ)
+		return f.openDecmpfs(o)
 	}
 	return f.openFork(o)
 }
@@ -209,4 +203,24 @@ func (f *FS) linkTarget(o *object, size int64) string {
 		return ""
 	}
 	return string(buf)
+}
+
+// openResourceFork maps the whole resource fork of o.node. A fork that is
+// damaged, shorter than its logical size or mapped incompletely is a
+// CorruptError: unlike the data fork there is no trusted-prefix content here.
+func (f *FS) openResourceFork(o *object) (filesys.File, error) {
+	fd := o.node.rsrc
+	if fd.logicalSize > math.MaxInt64 {
+		return nil, corrupt("catalog record", -1, "file %s (id %d) has a resource fork size of %d bytes", o.name(), o.node.id, fd.logicalSize)
+	}
+	size := int64(fd.logicalSize)
+	fm, err := f.forkPrefix(o.node.id, true, fd)
+	if err != nil {
+		return nil, fmt.Errorf("the resource fork of %s (id %d) cannot be mapped: %w", o.name(), o.node.id, err)
+	}
+	mapped, ok := filesys.MulOK(int64(min(fm.blocks, math.MaxInt64/uint64(fm.blockSize))), fm.blockSize)
+	if !fm.complete || !ok || mapped < size {
+		return nil, corrupt("resource fork", -1, "file %s (id %d): the fork of %d bytes is not completely mapped (%d bytes are)", o.name(), o.node.id, size, mapped)
+	}
+	return &dataFile{fm: fm, size: size, runs: fm.Runs(size)}, nil
 }

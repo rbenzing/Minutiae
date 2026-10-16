@@ -40,7 +40,7 @@ var allowed = map[string][]string{
 	"internal/filesys/fat/fattest":         {"internal/filesys", "internal/filesys/fat"},
 	"internal/filesys/exfat":               {"internal/filesys"},
 	"internal/filesys/exfat/exfattest":     {"internal/filesys", "internal/filesys/exfat"},
-	"internal/filesys/hfsplus":             {"internal/filesys"},
+	"internal/filesys/hfsplus":             {"internal/filesys", "internal/filesys/decmpfs"},
 	"internal/filesys/hfsplus/hfsplustest": {"internal/filesys", "internal/filesys/hfsplus"},
 	"internal/evidence":                    {"internal/version"},
 	"internal/evidence/evidencetest":       {"internal/evidence"},

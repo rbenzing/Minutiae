@@ -3,9 +3,9 @@
 //
 // Current state. The header parser, the typed errors and the zlib decoders
 // for types 3 and 4 exist (Open, with the ratio cap, the output ceiling and
-// the block-table checks described below). No filesystem package imports
-// decmpfs yet: hfsplus still carries its own copy of the decoder and apfs
-// reports compressed files as unsupported (Task 9 and later switch them over).
+// the block-table checks described below). hfsplus decodes through this
+// package; apfs does not import it yet and reports compressed files as
+// unsupported.
 //
 // What is decoded. Only the two layouts the HFS+ reader already shipped:
 // type 3 (a zlib stream, or a stored payload marked by a first byte whose low
