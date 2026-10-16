@@ -60,11 +60,11 @@ func docTotal(ctx context.Context, h evidence.ReadHandle, table string) (int64, 
 	var block []byte
 	err := h.QueryRowContext(ctx, `SELECT block FROM `+table+`_data WHERE id = 1`).Scan(&block)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && len(block) == 0) {
-		var any int
-		if err := h.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM `+table+`_docsize)`).Scan(&any); err != nil {
+		var hasDocs int
+		if err := h.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM `+table+`_docsize)`).Scan(&hasDocs); err != nil {
 			return 0, err
 		}
-		if any != 0 {
+		if hasDocs != 0 {
 			return 0, fmt.Errorf("%w: %s holds documents but no totals record", evidence.ErrIntegrity, table)
 		}
 		return 0, nil
