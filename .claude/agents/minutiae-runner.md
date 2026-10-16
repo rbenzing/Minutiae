@@ -17,7 +17,7 @@ Rules:
 - Never use `gh`.
 - Report briefly: the exact command, its exit code, and the relevant
   output (failing test names and their assertion lines, not whole logs).
-  Write long output to the file path you were given, if any, and return
-  only the summary.
+  If output must be captured to a file, use only the path you were given
+  under `.claude/scratch/` in the main project; never /tmp or c:\tmp.
 - Do not interpret, fix or speculate; if something fails, report it as is.
 - Never run `go tool golangci-lint` directly: it holds a machine-wide lock and makes a queued check.sh fail. Lint runs only inside check.sh.
