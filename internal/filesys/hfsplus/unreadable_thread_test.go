@@ -140,3 +140,54 @@ func TestNoThreadFileOwnParentNonEmptyNameUnknownRecordFailsClosed(t *testing.T)
 		t.Error("an unprovable id must not open")
 	}
 }
+
+// An unknown-type record AT (id, empty name) is an unreadable thread, never "not found", whatever
+// the volume header's next catalog id says (Y79).
+func TestOpenUnreadableThreadBeyondNextCNIDIsCorrupt(t *testing.T) {
+	img, lay, _ := buildTree(t, hfsplustest.Options{}, []hfsplustest.File{{Path: "/f", Data: []byte("f")}})
+	id := lay.CNIDs["/f"]
+	p := findRec(t, img, lay, id, nil)
+	be.PutUint16(img[p.data:], 0x00FF)
+	be.PutUint32(img[1024+64:], 16) // nextCatalogID at the first user id, at or below id
+	be.PutUint32(img[len(img)-1024+64:], 16)
+	if id < 16 {
+		t.Fatalf("id %d is below the first user id", id)
+	}
+	f := open(t, img)
+	fl, err := f.Open(filesys.Entry{ID: idOf(id)})
+	if errors.Is(err, filesys.ErrNotFound) {
+		t.Fatalf("an unreadable thread was reported as never issued: %v", err)
+	}
+	wantCorrupt(t, err)
+	if fl != nil {
+		t.Error("an id with an unreadable thread opened")
+	}
+	if !strings.Contains(err.Error(), "255") {
+		t.Errorf("the error does not name the record type: %v", err)
+	}
+}
+
+// The fold absorbs at most ONE lookup record: a second record with the same key (scanFrom does
+// not check strict key order) is warned about separately (Y80).
+func TestOpenFoldAbsorbsOnlyOneDuplicateKeyRecord(t *testing.T) {
+	img, lay, _ := buildTree(t, hfsplustest.Options{}, []hfsplustest.File{
+		{Path: "/legacy", NoThread: true, Data: []byte("legacy")},
+		{Path: "/zz", Data: []byte("zz")},
+		{Path: "/zy", Data: []byte("zy")},
+	})
+	zz, zy := lay.CNIDs["/zz"], lay.CNIDs["/zy"]
+	a := findRec(t, img, lay, zz, nil)
+	b := findRec(t, img, lay, zy, nil)
+	be.PutUint16(img[a.data:], 0x00FF)
+	be.PutUint16(img[b.data:], 0x00FF)
+	be.PutUint32(img[b.key+2:], zz) // both records now carry the key (zz, empty name)
+	f := open(t, img)
+	fl, err := f.Open(filesys.Entry{ID: idOf(lay.CNIDs["/legacy"])})
+	wantCorrupt(t, err)
+	if fl != nil {
+		t.Error("an unprovable id opened")
+	}
+	if n := countWarnings(f.Info(), "under parent "+strings.TrimPrefix(idOf(zz), "cnid:")); n != 2 {
+		t.Errorf("%d warnings name the duplicated key, want 2 (one folded into the scan's, one for the duplicate): %q", n, f.Info().Warnings)
+	}
+}

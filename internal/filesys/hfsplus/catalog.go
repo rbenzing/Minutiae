@@ -235,7 +235,8 @@ type unknownSkip struct {
 }
 
 // maxPassedUnknown bounds how many walked-past unknown records a lookup keeps to report together;
-// the rest are warned about at once.
+// the rest are warned about at once and are never folded into a later warning that names the same
+// record (see fileObject), so a record past the cap may be reported twice.
 const maxPassedUnknown = 16
 
 // threadUnreadableError reports an unknown-type record AT the thread position (id, empty name):

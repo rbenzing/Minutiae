@@ -88,6 +88,11 @@ func (f *FS) fileObject(id uint32) (*object, error) {
 			f.warnSkips(passed)
 			return nil, err
 		}
+		// An unreadable thread is never "not found", whatever the volume header's next id says.
+		if unreadable != nil && id >= f.vh.nextCatalogID {
+			f.warnSkips(passed)
+			return nil, err
+		}
 		if id >= f.vh.nextCatalogID {
 			f.warnSkips(passed)
 			return nil, fmt.Errorf("%w: %s was never issued by this volume", filesys.ErrNotFound, cnidString(id))
@@ -97,8 +102,12 @@ func (f *FS) fileObject(id uint32) (*object, error) {
 		if serr != nil {
 			// A scan that fails closed on an unknown-type record names it in its own warning: the
 			// lookup's skip warning for that same record is folded into it, every other one is kept.
+			// The fold absorbs at most ONE lookup record: a further record with the same key
+			// (btree.scanFrom does not check strict key order) is warned about separately.
+			folded := false
 			for _, s := range passed {
-				if unk != nil && s.typ == unk.typ && s.k.parent == unk.k.parent && slices.Equal(s.k.name, unk.k.name) {
+				if !folded && unk != nil && s.typ == unk.typ && s.k.parent == unk.k.parent && slices.Equal(s.k.name, unk.k.name) {
+					folded = true
 					continue
 				}
 				f.warnSkips([]unknownSkip{s})
