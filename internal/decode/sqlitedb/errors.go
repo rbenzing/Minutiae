@@ -3,6 +3,8 @@ package sqlitedb
 import (
 	"errors"
 	"strings"
+
+	"github.com/rbenzing/minutiae/internal/sqlitefile"
 )
 
 // Sentinel errors of the decoder. Callers test them with errors.Is.
@@ -31,6 +33,9 @@ type UnsupportedSchemaError struct {
 	Table   string
 	Missing []string
 	Reason  string
+	// Virtual marks a virtual table; the error then also satisfies
+	// errors.Is(err, sqlitefile.ErrVirtualTable).
+	Virtual bool
 }
 
 func (e *UnsupportedSchemaError) Error() string {
@@ -45,7 +50,9 @@ func (e *UnsupportedSchemaError) Error() string {
 }
 
 // Is makes errors.Is(err, ErrUnsupportedSchema) true.
-func (e *UnsupportedSchemaError) Is(target error) bool { return target == ErrUnsupportedSchema }
+func (e *UnsupportedSchemaError) Is(target error) bool {
+	return target == ErrUnsupportedSchema || (e.Virtual && target == sqlitefile.ErrVirtualTable)
+}
 
 // UnsupportedCollationError names a collation the decoder cannot compare under.
 type UnsupportedCollationError struct {
