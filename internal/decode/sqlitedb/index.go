@@ -140,10 +140,12 @@ type Index struct {
 	collation string // canonical
 	class     parse.JoinClass
 	m         map[[32]byte][]int64
-	unkeyed   int                 // target rows not in the index (NULL, NaN, undecided)
-	undecided int                 // of those, rows whose key is unknown: a miss cannot be proven
-	lost      sqlitefile.ScanLoss // what the scan that built the index did not deliver
-	ch        charger             // the memory of the entries
+	altNum    map[[32]byte][]int64 // the numeric view of a TEXT or no-affinity target's numeric-looking texts
+	altUndec  int                  // numeric-looking texts of the target that cannot be converted exactly
+	unkeyed   int                  // target rows not in the index (NULL, NaN, undecided)
+	undecided int                  // of those, rows whose key is unknown: a miss cannot be proven
+	lost      sqlitefile.ScanLoss  // what the scan that built the index did not deliver
+	ch        charger              // the memory of the entries
 }
 
 // Index reads the table once and indexes column col under the column's own
@@ -228,6 +230,38 @@ func (t *Table) Index(ctx context.Context, col string, limit int) (ix *Index, er
 		}
 		entries++
 		ix.m[key] = append(ix.m[key], rowid)
+		if ix.class == parse.ClassNumeric || v.Kind != sqlitefile.KindText {
+			return nil
+		}
+		// A numeric source column meets this TEXT or no-affinity column: the engine
+		// applies NUMERIC affinity to the target's text, so a numeric-looking text is
+		// also reachable under its number (the cost: one extra entry per such value,
+		// counted toward the limit). Nothing is rendered as text (U49).
+		conv, cst := sqlitefile.ConvertForComparison(v, affOfClass(ix.class), sqlitefile.AffNumeric)
+		switch {
+		case cst != sqlitefile.ConvOK:
+			ix.altUndec++
+		case conv.Kind == sqlitefile.KindInt || conv.Kind == sqlitefile.KindFloat:
+			akey, ast, aerr := sqlitefile.EqualityKey(conv, coll)
+			if aerr != nil {
+				return fmt.Errorf("%w: %w", ErrInternal, aerr)
+			}
+			if ast != sqlitefile.KeyOK {
+				ix.altUndec++
+				return nil
+			}
+			if entries >= limit {
+				return ErrIndexLimit
+			}
+			if err := ix.ch.charge(indexEntryCost + 32); err != nil {
+				return err
+			}
+			entries++
+			if ix.altNum == nil {
+				ix.altNum = map[[32]byte][]int64{}
+			}
+			ix.altNum[akey] = append(ix.altNum[akey], rowid)
+		}
 		return nil
 	})
 	if err != nil {
@@ -258,7 +292,7 @@ func (ix *Index) Release() {
 		return
 	}
 	ix.ch.release()
-	ix.m = nil
+	ix.m, ix.altNum = nil, nil
 }
 
 // Rowids returns, in ascending order, the rowids whose indexed value equals
@@ -331,11 +365,26 @@ func (ix *Index) Rowids(key parse.JoinKey) (rowids []int64, flags JoinFlags, err
 	default:
 		return nil, flags, fmt.Errorf("%w: the probe cannot be compared under %s", ErrKeyUndecidable, ix.collation)
 	}
-	if ids := ix.m[k]; len(ids) > 0 {
-		if ix.undecided > 0 || ix.lost.Any() {
+	// A number from a numeric column against a TEXT or no-affinity column also
+	// meets the target's texts that convert to that number.
+	viaAlt := key.Class == parse.ClassNumeric && ix.class != parse.ClassNumeric &&
+		(v.Kind == sqlitefile.KindInt || v.Kind == sqlitefile.KindFloat)
+	ids := ix.m[k]
+	if viaAlt {
+		if alt := ix.altNum[k]; len(alt) > 0 {
+			ids = slices.Concat(ids, alt)
+			slices.Sort(ids)
+			ids = slices.Compact(ids)
+		}
+	}
+	if len(ids) > 0 {
+		if ix.undecided > 0 || ix.lost.Any() || (viaAlt && ix.altUndec > 0) {
 			flags |= JoinUndecided
 		}
 		return slices.Clone(ids), flags, nil
+	}
+	if viaAlt && ix.altUndec > 0 {
+		return nil, flags, fmt.Errorf("%w: no row matches, but %d values of %s.%s are numeric-looking texts that cannot be converted exactly", ErrKeyUndecidable, ix.altUndec, ix.table, ix.column)
 	}
 	if ix.lost.Any() {
 		return nil, flags, fmt.Errorf("%w: no row matches, but the scan of %s.%s lost rows (%d pages, %d cells skipped as damaged)", ErrKeyUndecidable, ix.table, ix.column, ix.lost.Pages, ix.lost.Cells)

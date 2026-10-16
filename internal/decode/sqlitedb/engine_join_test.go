@@ -158,6 +158,9 @@ func engineTwoTables(t *testing.T, enc, sdecl, gdecl string, svals, gvals []any)
 			t.Fatalf("%s: %v", q, err)
 		}
 	}
+	if _, err := db.Exec("begin"); err != nil {
+		t.Fatal(err)
+	}
 	for i, v := range svals {
 		if _, err := db.Exec("insert into s(id, k) values(?, ?)", i+1, v); err != nil {
 			t.Fatal(err)
@@ -167,6 +170,9 @@ func engineTwoTables(t *testing.T, enc, sdecl, gdecl string, svals, gvals []any)
 		if _, err := db.Exec("insert into g(id, k) values(?, ?)", i+1, v); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if _, err := db.Exec("commit"); err != nil {
+		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
@@ -318,53 +324,30 @@ func checkJoinAgainstEngine(t *testing.T, eng *sql.DB, d *sqlitedb.DB, sc, tc ma
 			t.Errorf("source row %d: flags %b, want %b (src %s/%d, tgt %s/%d)", l.source, l.flags, want, sc.collation, sc.class, tc.collation, tc.class)
 		}
 	}
-	if probe {
-		// The probe-side directions convert the source key like a constant: the
-		// layer's pairs equal the engine's for every lookup that is decided, and a
-		// lookup that is not decided is one the rules allow (above).
-		decided := map[int64]bool{}
-		ours := map[[2]int64]bool{}
-		for _, l := range lookups {
-			if l.err == nil {
-				decided[l.source] = true
-				for _, id := range l.ids {
-					ours[[2]int64{l.source, id}] = true
-				}
+	// Every cross-class direction is strict (U49): for each lookup that is
+	// decided the layer's pairs equal the engine's, with nothing missed and
+	// nothing invented, and a lookup that is not decided is one the rules allow
+	// (above). A same-class pair has no undecided lookup at all.
+	decided := map[int64]bool{}
+	ours := map[[2]int64]bool{}
+	for _, l := range lookups {
+		if l.err == nil {
+			decided[l.source] = true
+			for _, id := range l.ids {
+				ours[[2]int64{l.source, id}] = true
 			}
 		}
-		for p := range engine {
-			if decided[p[0]] && !ours[p] {
-				t.Errorf("engine pair %v missed by the layer", p)
-			}
-		}
-		for p := range ours {
-			if !engine[p] {
-				t.Errorf("pair %v returned by the layer but not by the engine", p)
-			}
-		}
-		return
 	}
-	if sc.class != tc.class {
-		// The target-side directions stay flagged only (the next task): a pair the
-		// layer returns that the engine does not (a false positive) always fails.
-		ours := pairsOf(lookups)
-		for p := range ours {
-			if !engine[p] {
-				t.Errorf("cross-class pair %v returned by the layer but not by the engine", p)
-			}
+	for p := range engine {
+		if decided[p[0]] && !ours[p] {
+			t.Errorf("engine pair %v missed by the layer", p)
 		}
-		if sc.class == parse.ClassBlob && tc.class == parse.ClassText {
-			// U50: two columns of which neither is numeric are compared as stored, so
-			// nothing is converted and the layer must also MISS nothing: a no-affinity
-			// key finds every equal TEXT value the engine joins.
-			samePairs(t, engine, ours)
-		}
-		return
 	}
-	// Same class: the layer's pairs equal the engine's exactly, flagged or not
-	// (a collation flag alone never changes the pairs, because the target's
-	// collation decides on both sides).
-	samePairs(t, engine, pairsOf(lookups))
+	for p := range ours {
+		if !engine[p] {
+			t.Errorf("pair %v returned by the layer but not by the engine", p)
+		}
+	}
 }
 
 // probeSideDirection is true when the SOURCE key is the operand the engine
@@ -567,6 +550,7 @@ func TestMatchInsideScanMatchesEngine(t *testing.T) {
 		{"nocase", "text", "text collate nocase", []any{"abc", "ABC", "x", r(0xe9), nil}, []any{"Abc", "abc", "x", r(0xc9), "q"}},
 		{"numeric", "real", "integer", []any{1, 1.0, 2.5, -4, nil}, []any{1, -4, 7, 1}},
 		{"text-into-integer", "text", "integer", []any{"7", " 8 ", "x", "1e1", nil}, []any{7, 8, 10, 9}},
+		{"integer-into-text", "integer", "text", []any{7, 1, 3, nil}, []any{"7", "07", " 1 ", "x"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			data := engineTwoTables(t, "UTF-8", c.sdecl, c.tdecl, c.svals, c.tvals)
