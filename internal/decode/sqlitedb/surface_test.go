@@ -143,6 +143,7 @@ func TestSentinelsAreDistinct(t *testing.T) {
 		"ErrInternal": sqlitedb.ErrInternal, "ErrUnsupportedSchema": sqlitedb.ErrUnsupportedSchema,
 		"ErrUnsupportedCollation": sqlitedb.ErrUnsupportedCollation,
 		"ErrReleased":             sqlitedb.ErrReleased,
+		"ErrKeyUndecidable":       sqlitedb.ErrKeyUndecidable,
 	}
 	for n1, e1 := range all {
 		if e1 == nil {
@@ -263,4 +264,13 @@ func TestSqlitefileSurfaceKeyOrder(_ *testing.T) {
 	pin[sqlitefile.OrderStatus](sqlitefile.OrderOK)
 	pin[sqlitefile.OrderStatus](sqlitefile.OrderUndecided)
 	pin[func(*sqlitefile.View, context.Context, uint32, sqlitefile.KeyOrder, func(sqlitefile.Row) bool) (sqlitefile.ScanLoss, error)]((*sqlitefile.View).ScanTreeOrdered)
+}
+
+// Used by GetByKey (Task 9): the library's key lookup and its two errors, and the decoder's method.
+func TestSqlitefileSurfaceUsedByGetByKey(_ *testing.T) {
+	pin[func(*sqlitefile.Table, context.Context, []sqlitefile.Value) (sqlitefile.Row, bool, error)]((*sqlitefile.Table).GetByKey)
+	pin[func(*sqlitefile.View, context.Context, uint32, sqlitefile.KeyOrder, []sqlitefile.Value) (sqlitefile.Row, bool, error)]((*sqlitefile.View).LookupKey)
+	pin[error](sqlitefile.ErrKeyUndecided)
+	pin[error](sqlitefile.ErrBadKey)
+	pin[func(*sqlitedb.Table, context.Context, ...parse.JoinKey) (sqlitedb.Row, bool, error)]((*sqlitedb.Table).GetByKey)
 }

@@ -441,3 +441,6 @@ func SetPureHook(h func(site string)) (restore func()) {
 
 // OrderCompares is the number of key comparisons the ordered scans of this view made.
 func (v *View) OrderCompares() int64 { return v.st.orderCompares.Load() }
+
+// WithoutRowidOrder is the key order of a WITHOUT ROWID table as Table.Rows checks it.
+func WithoutRowidOrder(d *TableDef) KeyOrder { return withoutRowidOrder(d) }

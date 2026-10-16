@@ -154,6 +154,10 @@ func wrapErr(err error) error {
 		return fmt.Errorf("%w: %w", ErrEngineRefuses, err)
 	case errors.Is(err, sqlitefile.ErrWithoutRowid):
 		return fmt.Errorf("%w: %w", ErrWithoutRowid, err)
+	case errors.Is(err, sqlitefile.ErrKeyUndecided):
+		return fmt.Errorf("%w: %w", ErrKeyUndecidable, err)
+	case errors.Is(err, sqlitefile.ErrBadKey):
+		return &UnsupportedSchemaError{Reason: err.Error()}
 	case errors.Is(err, sqlitefile.ErrInternal):
 		return fmt.Errorf("%w: %w", ErrInternal, err)
 	}

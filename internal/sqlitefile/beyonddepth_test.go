@@ -78,7 +78,7 @@ func TestLookupFoundBeyondEngineDepthIsFlagged(t *testing.T) {
 // interior i (page i+1) has one entry of value 2i whose left child is the leaf
 // holding 2i-1 and whose right child is the next interior; the last interior
 // right child is a leaf holding 2n+1. Interior i lies at depth i, leaf i at i+1.
-func chainIndex(t *testing.T, n int) []byte {
+func chainIndex(t testing.TB, n int) []byte {
 	t.Helper()
 	const ps = 512
 	b := sqlitetest.New(sqlitetest.Options{PageSize: ps})

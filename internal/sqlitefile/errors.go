@@ -20,6 +20,8 @@ var (
 	ErrInternal        = errors.New("sqlitefile: internal error (recovered panic)")
 	ErrEngineRefuses   = errors.New("sqlitefile: the engine refuses to open this database")
 	ErrLiveUnavailable = errors.New("sqlitefile: the live state is not available")
+	ErrKeyUndecided    = errors.New("sqlitefile: the key lookup cannot be decided (a comparison the reader cannot make)")
+	ErrBadKey          = errors.New("sqlitefile: the key does not fit the table")
 )
 
 // NotSQLiteReason says why a file is not taken for a database.

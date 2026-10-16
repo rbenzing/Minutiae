@@ -172,23 +172,23 @@ func withoutRowidOrder(d *TableDef) KeyOrder {
 	if d == nil || !d.ParseOK {
 		return KeyOrder{unchecked: "the table definition is not parsed, so its key is unknown"}
 	}
-	type pk struct {
-		ord int
-		col KeyColumn
-	}
-	var keys []pk
-	for i := range d.Columns {
-		c := &d.Columns[i]
-		if c.PKOrdinal > 0 {
-			keys = append(keys, pk{c.PKOrdinal, KeyColumn{Collation: ColumnCollation(*c), Desc: c.PKDesc}})
-		}
-	}
-	slices.SortFunc(keys, func(a, b pk) int { return a.ord - b.ord })
 	o := KeyOrder{Unique: true}
-	for _, k := range keys {
-		o.Cols = append(o.Cols, k.col)
+	for _, c := range pkColumns(d) {
+		o.Cols = append(o.Cols, KeyColumn{Collation: ColumnCollation(*c), Desc: c.PKDesc})
 	}
 	return o
+}
+
+// pkColumns are the primary key columns of d in key order.
+func pkColumns(d *TableDef) []*Column {
+	var keys []*Column
+	for i := range d.Columns {
+		if d.Columns[i].PKOrdinal > 0 {
+			keys = append(keys, &d.Columns[i])
+		}
+	}
+	slices.SortFunc(keys, func(a, b *Column) int { return a.PKOrdinal - b.PKOrdinal })
+	return keys
 }
 
 // indexOrder is the order of the entries of index ix: its key columns under their collations and
