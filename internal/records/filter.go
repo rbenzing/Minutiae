@@ -133,6 +133,9 @@ func (f Filter) compile(haveSuperseded bool) (where, error) {
 		cond := strings.Join(parts, " AND ")
 		if f.IncludeUntimed {
 			cond = "(" + cond + ") OR r.ts IS NULL"
+		} else {
+			// a range bound already implies a non-NULL ts; the conjunct lets the planner seek the expression index ((ts IS NULL), ts, id)
+			cond = "(r.ts IS NULL) = 0 AND " + cond
 		}
 		w.add("("+cond+")", args...)
 	}
@@ -299,3 +302,7 @@ func (q *TextQuery) matchCond() (string, error) {
 	}
 	return "", invalidFilter("the text query was not compiled by CompileQuery or CompileTerms")
 }
+
+// timedOnly reports whether every record the filter selects has a ts: a time bound without
+// IncludeUntimed.
+func (f Filter) timedOnly() bool { return (f.From != nil || f.To != nil) && !f.IncludeUntimed }

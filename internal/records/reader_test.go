@@ -363,6 +363,7 @@ func TestListUsesIndexes(t *testing.T) {
 	}
 	cur := &records.Cursor{TS: 1_600_000_000_000_000, ID: 5}
 	nullCur := &records.Cursor{N: 1, ID: 5}
+	from, to := time.Unix(1_600_000_000, 0).UTC(), time.Unix(1_600_400_000, 0).UTC()
 	for _, tc := range []struct {
 		name  string
 		f     records.Filter
@@ -380,6 +381,9 @@ func TestListUsesIndexes(t *testing.T) {
 		{"unfiltered descending after an untimed row", records.Filter{}, &records.Cursor{D: 1, N: 1, ID: 5}, true, "records_ts"},
 		{"single type descending after an untimed row", records.Filter{Types: []string{"message"}}, &records.Cursor{D: 1, N: 1, ID: 5}, true, "records_type_ts"},
 		{"deleted only", records.Filter{Deleted: records.Only}, nil, false, "records_deleted"},
+		{"time window", records.Filter{From: &from, To: &to}, nil, false, "records_ts"},
+		{"type and time window", records.Filter{Types: []string{"message"}, From: &from, To: &to}, nil, false, "records_type_ts"},
+		{"time window descending", records.Filter{From: &from, To: &to}, nil, true, "records_ts"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			qs, err := records.ListQueries(tc.f, tc.desc, tc.cur, 101, false)
@@ -391,6 +395,9 @@ func TestListUsesIndexes(t *testing.T) {
 				t.Logf("query %d plan:\n%s", i+1, plan)
 				if strings.Contains(plan, "USE TEMP B-TREE FOR ORDER BY") {
 					t.Fatalf("query %d: the default order is not served by an index:\n%s", i+1, plan)
+				}
+				if tc.f.From != nil && !strings.Contains(plan, "SEARCH r USING INDEX") {
+					t.Fatalf("query %d: a time window must seek, not scan:\n%s", i+1, plan)
 				}
 				if !strings.Contains(plan, "INDEX "+tc.index) {
 					t.Fatalf("query %d: plan does not use %s:\n%s", i+1, tc.index, plan)

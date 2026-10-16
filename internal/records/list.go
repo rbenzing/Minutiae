@@ -1,10 +1,12 @@
 package records
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
@@ -153,7 +155,29 @@ const (
 )
 
 // segments returns the queries of the page after cur (nil = the first page).
-func segments(desc bool, cur *cursor) []segment {
+func segments(desc bool, cur *cursor, timedOnly bool) []segment {
+	segs := allSegments(desc, cur)
+	if !timedOnly {
+		return segs
+	}
+	// every selected row has a ts: the untimed segments select nothing, and the leading
+	// (ts IS NULL) of the order is constant, which lets the planner read the index in order
+	out := segs[:0:0]
+	for _, s := range segs {
+		switch {
+		case s.cond == "" && desc:
+			s.order = " ORDER BY r.ts DESC, r.id DESC"
+		case s.cond == "":
+			s.order = " ORDER BY r.ts, r.id"
+		case strings.HasPrefix(s.cond, untimed):
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+func allSegments(desc bool, cur *cursor) []segment {
 	switch {
 	case cur == nil && !desc:
 		return []segment{{order: " ORDER BY (r.ts IS NULL), r.ts, r.id"}}
@@ -190,7 +214,7 @@ func buildList(f Filter, desc bool, cur *cursor, have bool) ([]query, error) {
 		return nil, err
 	}
 	var out []query
-	for _, seg := range segments(desc, cur) {
+	for _, seg := range segments(desc, cur, f.timedOnly()) {
 		w := base
 		w.conds = slices.Clone(base.conds)
 		w.args = slices.Clone(base.args)
@@ -247,25 +271,33 @@ func (r *Reader) page(ctx context.Context, f Filter, p Page, limit int, with fun
 		if err != nil {
 			return err
 		}
-		qs, err := buildList(f, p.Desc, cur, have)
-		if err != nil {
-			return err
+		parts := f.split()
+		if parts == nil {
+			parts = []Filter{f}
 		}
-		for _, q := range qs { // one query (one open Rows) at a time
-			want := limit + 1 - len(res.Rows)
-			if want <= 0 {
-				break
+		lists := make([][]Row, len(parts))
+		for k, part := range parts {
+			qs, err := buildList(part, p.Desc, cur, have)
+			if err != nil {
+				return err
 			}
-			q.args[len(q.args)-1] = want
-			if f.Text != nil {
-				if err := r.matching(ctx); err != nil {
+			for _, q := range qs { // one query (one open Rows) at a time
+				want := limit + 1 - len(lists[k])
+				if want <= 0 {
+					break
+				}
+				q.args[len(q.args)-1] = want
+				if f.Text != nil {
+					if err := r.matching(ctx); err != nil {
+						return err
+					}
+				}
+				if err := r.collect(ctx, h, q, &lists[k]); err != nil {
 					return err
 				}
 			}
-			if err := r.collect(ctx, h, q, &res.Rows); err != nil {
-				return err
-			}
 		}
+		res.Rows = mergeRows(lists, p.Desc, limit+1)
 		if len(res.Rows) > limit {
 			res.Rows = res.Rows[:limit]
 			next, err := cursorAfter(res.Rows[limit-1], p.Desc, fp)
@@ -287,6 +319,9 @@ func (r *Reader) page(ctx context.Context, f Filter, p Page, limit int, with fun
 
 // collect appends the rows of q to dst.
 func (r *Reader) collect(ctx context.Context, h evidence.ReadHandle, q query, dst *[]Row) error {
+	if r.queryLog != nil {
+		r.queryLog(q.sql)
+	}
 	rows, err := h.QueryContext(ctx, q.sql, q.args...)
 	if err != nil {
 		return fmt.Errorf("records: list: %w", err)
@@ -298,6 +333,7 @@ func (r *Reader) collect(ctx context.Context, h evidence.ReadHandle, q query, ds
 		if err != nil {
 			return fmt.Errorf("records: list: %w", err)
 		}
+		r.rowsRead.Add(1)
 		*dst = append(*dst, row)
 	}
 	return rows.Err()
@@ -375,4 +411,72 @@ func (r *Reader) Count(ctx context.Context, f Filter, limit int) (n int64, cappe
 		return int64(limit), true, nil
 	}
 	return n, false, nil
+}
+
+// maxMerge is the longest value list answered by one ordered query per value; a longer one falls
+// back to a single IN query, which may have to sort every match.
+const maxMerge = 32
+
+func uniqSorted(ss []string) []string {
+	out := slices.Clone(ss)
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// split returns one filter per value of the first multi-valued list (Types, else ArtifactIDs) when
+// that list has 2..maxMerge distinct values, else nil. A page is the merge of the pages of the parts.
+func (f Filter) split() []Filter {
+	if vals := uniqSorted(f.Types); len(vals) >= 2 && len(vals) <= maxMerge {
+		out := make([]Filter, len(vals))
+		for i, v := range vals {
+			out[i] = f
+			out[i].Types = []string{v}
+		}
+		return out
+	}
+	if vals := uniqSorted(f.ArtifactIDs); len(uniqSorted(f.Types)) < 2 && len(vals) >= 2 && len(vals) <= maxMerge {
+		out := make([]Filter, len(vals))
+		for i, v := range vals {
+			out[i] = f
+			out[i].ArtifactIDs = []string{v}
+		}
+		return out
+	}
+	return nil
+}
+
+// mergeRows merges lists that are each in the list order (ascending, or descending when desc) and
+// returns the first n rows. The lists are disjoint (a record has one type and one artifact).
+func mergeRows(lists [][]Row, desc bool, n int) []Row {
+	var all []Row
+	for _, l := range lists {
+		all = append(all, l...)
+	}
+	slices.SortFunc(all, func(a, b Row) int {
+		c := cmpListOrder(a, b)
+		if desc {
+			return -c
+		}
+		return c
+	})
+	if len(all) > n {
+		all = all[:n]
+	}
+	return all
+}
+
+// cmpListOrder is the ascending order of ORDER BY (ts IS NULL), ts, id.
+func cmpListOrder(a, b Row) int {
+	au, bu := a.TS == nil, b.TS == nil
+	switch {
+	case au && !bu:
+		return 1
+	case bu && !au:
+		return -1
+	case !au:
+		if c := cmp.Compare(a.TS.T.UnixMicro(), b.TS.T.UnixMicro()); c != 0 {
+			return c
+		}
+	}
+	return cmp.Compare(a.ID, b.ID)
 }

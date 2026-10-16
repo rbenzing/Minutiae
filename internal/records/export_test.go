@@ -105,3 +105,9 @@ func SetMaxStatGroups(n int) (restore func()) {
 	maxStatGroups = n
 	return func() { maxStatGroups = old }
 }
+
+// RowsRead is the number of list rows scanned so far.
+func (r *Reader) RowsRead() int { return int(r.rowsRead.Load()) }
+
+// SetQueryLog installs a function called with the SQL of every list query.
+func (r *Reader) SetQueryLog(f func(string)) { r.queryLog = f }

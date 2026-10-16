@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
@@ -39,6 +40,9 @@ type Reader struct {
 	beforeQuery func()
 	// afterStart is a test seam, called after a statement has started and before its rows are read.
 	afterStart func()
+	// rowsRead counts the rows list queries scanned, queryLog sees their SQL (test diagnostics).
+	rowsRead atomic.Int64
+	queryLog func(string)
 }
 
 // NewReader returns a reader for c. A case whose schema is older than v2 has no
