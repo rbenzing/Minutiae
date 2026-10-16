@@ -789,3 +789,28 @@ func validPayload(typ string, extra map[string]any) map[string]any {
 	maps.Copy(p, extra)
 	return p
 }
+
+func TestRecordsStatsMaxGroups(t *testing.T) {
+	rc := recDataset(t, false)
+	var st struct {
+		Rows []struct{ Key string } `json:"rows"`
+		More bool                   `json:"more"`
+	}
+	cliJSON(t, &st, "records", "stats", "--case", rc.dir, "--by", "type", "--max-groups", "1")
+	if len(st.Rows) != 1 || !st.More {
+		t.Fatalf("--max-groups 1: %+v (the dataset has several types)", st)
+	}
+	cliJSON(t, &st, "records", "stats", "--case", rc.dir, "--by", "type")
+	if st.More || len(st.Rows) < 2 {
+		t.Fatalf("default cap: %+v", st)
+	}
+	code, out := run(t, Deps{}, "records", "stats", "--case", rc.dir, "--by", "type", "--max-groups", "1")
+	if code != 0 || !strings.Contains(out, "more groups exist; showing the first 1") {
+		t.Fatalf("text output: %d\n%s", code, out)
+	}
+	for _, bad := range []string{"0", "-3", "100001", "x"} {
+		if code, out := run(t, Deps{}, "records", "stats", "--case", rc.dir, "--max-groups", bad); code != ExitUsage {
+			t.Errorf("--max-groups %s: exit %d: %s", bad, code, out)
+		}
+	}
+}

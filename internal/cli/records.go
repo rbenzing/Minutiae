@@ -691,6 +691,7 @@ func newRecordsStatsCmd(d Deps, opts *rootOptions) *cobra.Command {
 	casePath := caseFlag(cmd)
 	filter := recordFilterFlags(cmd)
 	by := cmd.Flags().String("by", "type", "group by: "+strings.Join(statsKeys, ", "))
+	maxGroups := cmd.Flags().Int("max-groups", 1000, "show at most N groups (1.."+strconv.Itoa(records.MaxStatGroups)+")")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		f, err := filter()
 		if err != nil {
@@ -698,6 +699,9 @@ func newRecordsStatsCmd(d Deps, opts *rootOptions) *cobra.Command {
 		}
 		if !slices.Contains(statsKeys, *by) {
 			return usageErrorf("--by must be one of %s, got %s", strings.Join(statsKeys, ", "), printable(*by))
+		}
+		if *maxGroups < 1 || *maxGroups > records.MaxStatGroups {
+			return usageErrorf("--max-groups must be between 1 and %d, got %d", records.MaxStatGroups, *maxGroups)
 		}
 		c, r, err := openRecords(*casePath)
 		if err != nil {
@@ -708,7 +712,7 @@ func newRecordsStatsCmd(d Deps, opts *rootOptions) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		rows, err := r.Stats(cmd.Context(), f, *by)
+		res, err := r.StatsTop(cmd.Context(), f, *by, *maxGroups)
 		if err != nil {
 			return err
 		}
@@ -722,6 +726,7 @@ func newRecordsStatsCmd(d Deps, opts *rootOptions) *cobra.Command {
 				Index    indexJSON     `json:"index"`
 				By       string        `json:"by"`
 				Rows     []statRowJSON `json:"rows"`
+				More     bool          `json:"more"`
 			}{
 				Overview: overviewJSON{
 					Records: ov.Records, Deleted: ov.Deleted, Recovered: ov.Recovered, Untimed: ov.Untimed,
@@ -729,19 +734,22 @@ func newRecordsStatsCmd(d Deps, opts *rootOptions) *cobra.Command {
 					TSMinMicro: ov.TSMin, TSMaxMicro: ov.TSMax, Runs: ov.Runs,
 				},
 				Index: indexJSON{State: ix.Kind, Value: ix.Value, Current: ix.Current, WordDocs: ix.WordDocs, SubstringDocs: ix.SubstringDocs},
-				By:    *by, Rows: make([]statRowJSON, 0, len(rows)),
+				By:    *by, Rows: make([]statRowJSON, 0, len(res.Rows)), More: res.More,
 			}
 			if out.Overview.Runs == nil {
 				out.Overview.Runs = map[string]int64{}
 			}
-			for _, s := range rows {
+			for _, s := range res.Rows {
 				out.Rows = append(out.Rows, statRowJSON{
 					Key: s.Key, Count: s.Count, TSMin: microsPtr(s.TSMin), TSMax: microsPtr(s.TSMax), TSMinMicro: s.TSMin, TSMaxMicro: s.TSMax,
 				})
 			}
 			return writeJSON(d.Out, out)
 		}
-		printStats(d.Out, ov, ix, *by, rows)
+		printStats(d.Out, ov, ix, *by, res.Rows)
+		if res.More {
+			fmt.Fprintf(d.Out, "... more groups exist; showing the first %d (raise --max-groups up to %d or narrow the filters)\n", *maxGroups, records.MaxStatGroups)
+		}
 		return nil
 	}
 	return cmd
