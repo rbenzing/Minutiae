@@ -4,13 +4,12 @@ import (
 	"io"
 	"strings"
 	"testing"
-
-	"github.com/danielpaulus/go-ios/ios/afc"
 )
 
-// A go-ios AFC client without a connection panics on every call.
-func TestAFCClientConvertsGoIOSPanicsToErrors(t *testing.T) {
-	a := afcClient{c: &afc.Client{}}
+// An adapter whose client is missing panics on every call (nil pointer); the
+// guard turns that into an error, as it did for the go-ios client.
+func TestAFCAdapterConvertsPanicsToErrors(t *testing.T) {
+	a := afcAdapter{}
 	check := func(op string, err error) {
 		t.Helper()
 		if err == nil || !strings.Contains(err.Error(), "panic") {

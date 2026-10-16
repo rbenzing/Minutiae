@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -21,6 +22,10 @@ import (
 type scriptedAFC struct {
 	files  map[string][]byte
 	sizes  map[string]int64
+	names  []string          // List returns these when set
+	other  map[string]string // path -> unsupported st_ifmt
+	stats  []string          // every path Stat was called with
+	opened []string          // every path Open was called with
 	block  bool
 	closed chan struct{}
 	once   sync.Once
@@ -35,10 +40,17 @@ func (a *scriptedAFC) List(string) ([]string, error) {
 		<-a.closed
 		return nil, errors.New("afc connection closed")
 	}
+	if a.names != nil {
+		return a.names, nil
+	}
 	return []string{".", ".."}, nil
 }
 
 func (a *scriptedAFC) Stat(p string) (ios.FileStat, error) {
+	a.stats = append(a.stats, p)
+	if o, ok := a.other[p]; ok {
+		return ios.FileStat{Size: int64(len(a.files[p])), Type: o, Unsupported: true}, nil
+	}
 	d, ok := a.files[p]
 	if !ok {
 		return ios.FileStat{}, fs.ErrNotExist
@@ -50,6 +62,7 @@ func (a *scriptedAFC) Stat(p string) (ios.FileStat, error) {
 }
 
 func (a *scriptedAFC) Open(p string) (io.ReadCloser, error) {
+	a.opened = append(a.opened, p)
 	d, ok := a.files[p]
 	if !ok {
 		return nil, fs.ErrNotExist
@@ -150,5 +163,169 @@ func TestListCancelClosesAFC(t *testing.T) {
 	})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) { clear(p); return len(p), nil }
+
+// endlessAFC claims a 10-byte file and streams zeros forever.
+type endlessAFC struct{}
+
+func (endlessAFC) List(string) ([]string, error)      { return nil, nil }
+func (endlessAFC) Stat(string) (ios.FileStat, error)  { return ios.FileStat{Size: 10}, nil }
+func (endlessAFC) Open(string) (io.ReadCloser, error) { return io.NopCloser(zeroReader{}), nil }
+func (endlessAFC) Close() error                       { return nil }
+
+type endlessBackend struct{ *iostest.Backend }
+
+func (endlessBackend) OpenAFC(context.Context, string) (ios.AFC, error) { return endlessAFC{}, nil }
+
+type countWriter struct{ n int64 }
+
+func (c *countWriter) Write(p []byte) (int, error) { c.n += int64(len(p)); return len(p), nil }
+
+func TestPullStopsAnEndlessStreamAtTheDeclaredSize(t *testing.T) {
+	be := iostest.NewBackend()
+	be.Entries = []ios.Entry{{UDID: "U1", ConnectionType: "USB"}}
+	devs, err := ios.Enumerator{B: endlessBackend{be}}.List(context.Background())
+	if err != nil || len(devs) != 1 {
+		t.Fatalf("List = %v, %v", devs, err)
+	}
+	var w countWriter
+	done := make(chan error, 1)
+	go func() {
+		_, err := devs[0].(device.FileTransferer).Pull(context.Background(), "/x", &w)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "copied 11 of 10 bytes") {
+			t.Fatalf("err = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Pull never stopped an endless stream")
+	}
+	if w.n != 11 {
+		t.Fatalf("wrote %d bytes, want size+1 = 11", w.n)
+	}
+}
+
+// A size of MaxInt64 (accepted by Stat) must not wrap the copy limit negative
+// and end the pull before the first byte.
+type hugeAFC struct{ endlessAFC }
+
+func (hugeAFC) Stat(string) (ios.FileStat, error) { return ios.FileStat{Size: math.MaxInt64}, nil }
+
+type hugeBackend struct{ *iostest.Backend }
+
+func (hugeBackend) OpenAFC(context.Context, string) (ios.AFC, error) { return hugeAFC{}, nil }
+
+func TestPullWithAMaxInt64SizeStillCopies(t *testing.T) {
+	be := iostest.NewBackend()
+	be.Entries = []ios.Entry{{UDID: "U1", ConnectionType: "USB"}}
+	devs, err := ios.Enumerator{B: hugeBackend{be}}.List(context.Background())
+	if err != nil || len(devs) != 1 {
+		t.Fatal(devs, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	w := &cancelAfter{limit: 1 << 20, cancel: cancel}
+	_, _ = devs[0].(device.FileTransferer).Pull(ctx, "/x", w)
+	if w.n < 1<<20 {
+		t.Fatalf("only %d bytes copied before the stream was cut: the limit wrapped", w.n)
+	}
+}
+
+// cancelAfter counts bytes and cancels its context after limit.
+type cancelAfter struct {
+	n, limit int64
+	cancel   func()
+}
+
+func (c *cancelAfter) Write(p []byte) (int, error) {
+	c.n += int64(len(p))
+	if c.n >= c.limit {
+		c.cancel()
+	}
+	return len(p), nil
+}
+
+// W51: an entry of an unknown type is listed as irregular and is not pulled
+// as a regular file: the artifact exists, is flagged incomplete with the
+// cause, empty, and the device is never asked to open it.
+func TestPullOfAnUnsupportedTypeIsFlaggedAndAudited(t *testing.T) {
+	a := newScriptedAFC()
+	a.files["/DCIM/s"] = []byte("sock")
+	a.other = map[string]string{"/DCIM/s": "S_IFSOCK"}
+	ft := afcDevice(t, a)
+	c := newCase(t)
+	rec, err := device.PullToCase(context.Background(), c, ft, "U1", "acq", "/DCIM/s")
+	if !errors.Is(err, device.ErrUnsupported) || !strings.Contains(err.Error(), `"S_IFSOCK"`) {
+		t.Fatalf("err = %v", err)
+	}
+	if !rec.Incomplete || rec.Size != 0 || !strings.Contains(rec.Error, "S_IFSOCK") {
+		t.Fatalf("record = %+v", rec)
+	}
+	if len(a.opened) != 0 {
+		t.Fatalf("Open called for %v", a.opened)
+	}
+}
+
+func TestListReportsAnUnsupportedTypeAsIrregular(t *testing.T) {
+	a := newScriptedAFC()
+	a.names = []string{".", "..", "sock", "plain"}
+	a.files["/D/sock"], a.files["/D/plain"] = []byte("s"), []byte("p")
+	a.other = map[string]string{"/D/sock": "S_IFSOCK"}
+	es, err := afcDevice(t, a).List(context.Background(), "/D")
+	if err != nil || len(es) != 2 {
+		t.Fatalf("List = %v, %v", es, err)
+	}
+	if es[0].Name != "sock" || es[0].Mode&fs.ModeIrregular == 0 || es[0].IsDir {
+		t.Errorf("sock entry = %+v, want an irregular mode", es[0])
+	}
+	if es[1].Name != "plain" || es[1].Mode&fs.ModeIrregular != 0 {
+		t.Errorf("plain entry = %+v", es[1])
+	}
+}
+
+// W50: names and paths are device evidence. A listing returns them as sent and
+// builds each entry's path from the directory as the caller gave it (no
+// cleaning), and a pull records the raw device path while the host path is
+// sanitised.
+func TestListKeepsRawNamesAndPaths(t *testing.T) {
+	a := newScriptedAFC()
+	raw := "e\x01f\n g:h"
+	a.names = []string{".", "..", raw}
+	dir := "/a/../b//"
+	a.files["/a/../b//"+raw] = []byte("x")
+	es, err := afcDevice(t, a).List(context.Background(), dir)
+	if err != nil || len(es) != 1 {
+		t.Fatalf("List = %v, %v", es, err)
+	}
+	if es[0].Name != raw || es[0].Path != dir+raw {
+		t.Errorf("entry = %q %q, want the raw name and %q", es[0].Name, es[0].Path, dir+raw)
+	}
+	if len(a.stats) != 1 || a.stats[0] != dir+raw {
+		t.Errorf("Stat was asked for %q, want %q", a.stats, dir+raw)
+	}
+}
+
+func TestPullRecordsTheRawDevicePathAndSanitisesTheHostPath(t *testing.T) {
+	a := newScriptedAFC()
+	p := "/DCIM/e\x01f\ng:h"
+	a.files[p] = []byte("data")
+	c := newCase(t)
+	rec, err := device.PullToCase(context.Background(), c, afcDevice(t, a), "U1", "acq", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Source.RemotePath != p {
+		t.Errorf("RemotePath = %q, want the raw %q", rec.Source.RemotePath, p)
+	}
+	for _, r := range rec.Path {
+		if r < 0x20 || r == 0x7f || r == ':' {
+			t.Errorf("host path %q holds %q", rec.Path, r)
+		}
 	}
 }

@@ -17,6 +17,12 @@ type FileStat struct {
 	Size   int64
 	IsDir  bool
 	IsLink bool
+	// Type is the st_ifmt as the device reported it (empty from a source
+	// that does not report one). Unsupported is true when the device gave a
+	// type that is none of a regular file, a directory or a link: such an
+	// entry is listed as irregular and never pulled.
+	Type        string
+	Unsupported bool
 }
 
 // AFC is the media-domain file service.

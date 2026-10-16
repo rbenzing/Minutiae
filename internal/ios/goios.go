@@ -8,9 +8,9 @@ import (
 	"strings"
 
 	goios "github.com/danielpaulus/go-ios/ios"
-	"github.com/danielpaulus/go-ios/ios/afc"
 
 	"github.com/rbenzing/minutiae/internal/device"
+	"github.com/rbenzing/minutiae/internal/ios/afc"
 )
 
 // GoIOS is the real Backend over usbmuxd (Apple Mobile Device Service on
@@ -44,11 +44,11 @@ func (GoIOS) OpenAFC(_ context.Context, udid string) (a AFC, err error) {
 	if err != nil {
 		return nil, err
 	}
-	c, err := goiosAFC(d)
+	rw, err := goiosConnect(d, afcService)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error connecting to service %q: %w", afcService, err)
 	}
-	return afcClient{c: c}, nil
+	return afcAdapter{c: afc.New(rw)}, nil
 }
 
 func (GoIOS) OpenBackup(_ context.Context, udid string) (rw io.ReadWriteCloser, err error) {
@@ -60,9 +60,13 @@ func (GoIOS) OpenBackup(_ context.Context, udid string) (rw io.ReadWriteCloser, 
 	return goiosConnect(d, "com.apple.mobilebackup2")
 }
 
-// afcClient adapts go-ios AFC. go-ios parses device responses without
-// guarding every index, so a panic in any call is returned as an error.
-type afcClient struct{ c *afc.Client }
+// afcService is the lockdown service name of the Apple File Conduit.
+const afcService = "com.apple.afc"
+
+// afcAdapter exposes the bounds-checked AFC client as the AFC interface. The
+// client validates the device's replies itself; the recover guard stays as
+// defence in depth against a bug of ours, never as the validation.
+type afcAdapter struct{ c *afc.Client }
 
 // maxPanicText bounds the panic value kept in an error message.
 const maxPanicText = 200
@@ -80,30 +84,32 @@ func recovered(op string, err *error) {
 	}
 }
 
-func (a afcClient) List(p string) (names []string, err error) {
+func (a afcAdapter) List(p string) (names []string, err error) {
 	defer recovered("afc list", &err)
 	return a.c.List(p)
 }
 
-func (a afcClient) Stat(p string) (st FileStat, err error) {
+func (a afcAdapter) Stat(p string) (st FileStat, err error) {
 	defer recovered("afc stat", &err)
-	fi, err := a.c.Stat(p)
+	s, err := a.c.Stat(p)
 	if err != nil {
 		return FileStat{}, err
 	}
-	return FileStat{Size: fi.Size, IsDir: fi.IsDir(), IsLink: fi.IsLink()}, nil
+	out := FileStat{Size: s.Size, IsDir: s.IsDir, IsLink: s.IsLink, Type: s.Type}
+	out.Unsupported = !s.IsRegular() && !s.IsDir && !s.IsLink
+	return out, nil
 }
 
-func (a afcClient) Open(p string) (rc io.ReadCloser, err error) {
+func (a afcAdapter) Open(p string) (rc io.ReadCloser, err error) {
 	defer recovered("afc open", &err)
-	f, err := a.c.Open(p, afc.READ_ONLY)
+	f, err := a.c.Open(p)
 	if err != nil {
 		return nil, err
 	}
 	return safeFile{f}, nil
 }
 
-func (a afcClient) Close() (err error) {
+func (a afcAdapter) Close() (err error) {
 	defer recovered("afc close", &err)
 	return a.c.Close()
 }
@@ -136,7 +142,6 @@ var (
 		}
 		return c, nil
 	}
-	goiosAFC = func(d goios.DeviceEntry) (*afc.Client, error) { return afc.New(d) }
 )
 
 // listDevices asks usbmuxd for attached devices, one entry per UDID. A panic

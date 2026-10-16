@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"path"
+	"math"
 	"strings"
 
 	"github.com/rbenzing/minutiae/internal/device"
@@ -121,13 +121,15 @@ func (d *Device) List(ctx context.Context, dir string) ([]device.FileEntry, erro
 		if n == "." || n == ".." {
 			continue
 		}
-		p := path.Join(dir, n)
+		p := strings.TrimSuffix(dir, "/") + "/" + n
 		st, err := a.Stat(p)
 		if err != nil {
 			return nil, ctxErr(ctx, err)
 		}
 		mode := fs.FileMode(0o644)
 		switch {
+		case st.Unsupported:
+			mode = fs.ModeIrregular
 		case st.IsDir:
 			mode = fs.ModeDir | 0o755
 		case st.IsLink:
@@ -163,12 +165,22 @@ func (d *Device) Pull(ctx context.Context, remotePath string, w io.Writer) (int6
 	if err != nil {
 		return 0, ctxErr(ctx, err)
 	}
+	if st.Unsupported {
+		// Reading it as a regular file would invent content; the caller flags the artifact incomplete.
+		return 0, fmt.Errorf("afc pull %s: %w: file type %q", remotePath, device.ErrUnsupported, st.Type)
+	}
 	f, err := a.Open(remotePath)
 	if err != nil {
 		return 0, ctxErr(ctx, err)
 	}
 	defer func() { _ = f.Close() }()
-	n, err := io.Copy(w, ctxReader{ctx: ctx, r: f})
+	// One byte past the declared size is enough to prove an overlong stream; a
+	// size of MaxInt64 (accepted by Stat) must not wrap the limit negative.
+	limit := st.Size
+	if limit < math.MaxInt64 {
+		limit++
+	}
+	n, err := io.Copy(w, ctxReader{ctx: ctx, r: io.LimitReader(f, limit)})
 	if err != nil {
 		return n, ctxErr(ctx, err)
 	}

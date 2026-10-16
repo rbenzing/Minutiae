@@ -8,14 +8,13 @@ import (
 	"testing"
 
 	goios "github.com/danielpaulus/go-ios/ios"
-	"github.com/danielpaulus/go-ios/ios/afc"
 )
 
 // restoreSeams puts the go-ios seams back when the test ends.
 func restoreSeams(t *testing.T) {
 	t.Helper()
-	l, v, c, a := goiosListDevices, goiosValues, goiosConnect, goiosAFC
-	t.Cleanup(func() { goiosListDevices, goiosValues, goiosConnect, goiosAFC = l, v, c, a })
+	l, v, c := goiosListDevices, goiosValues, goiosConnect
+	t.Cleanup(func() { goiosListDevices, goiosValues, goiosConnect = l, v, c })
 }
 
 func wantRecoveredPanic(t *testing.T, what string, err error) {
@@ -45,7 +44,6 @@ func TestGoIOSStartServicePanicIsAnError(t *testing.T) {
 	dualHomedU1(t)
 	restoreSeams(t)
 	goiosConnect = func(goios.DeviceEntry, string) (io.ReadWriteCloser, error) { panic("hostile StartService plist") }
-	goiosAFC = func(goios.DeviceEntry) (*afc.Client, error) { panic("hostile StartService plist") }
 	a, err := (GoIOS{}).OpenAFC(context.Background(), "U1")
 	if a != nil {
 		t.Fatalf("OpenAFC returned a client %v with a panic", a)
