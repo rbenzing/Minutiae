@@ -118,6 +118,8 @@ func TestIndexFirstPlanIsOrderedByAnIndex(t *testing.T) {
 	}{
 		{"no type", records.Filter{Text: q}, "records_ts"},
 		{"one type", records.Filter{Types: []string{"message"}, Text: q}, "records_type_ts"},
+		{"two types", records.Filter{Types: []string{"message", "call"}, Text: q}, "records_ts"},
+		{"deleted only", records.Filter{Deleted: records.Only, Text: q}, "records_ts"},
 	} {
 		qs, err := records.SearchQueries(tc.f, false, nil, 101, true)
 		if err != nil || len(qs) == 0 {
@@ -203,5 +205,90 @@ func TestPlanFollowsTheProbe(t *testing.T) {
 				t.Errorf("%s: index hint = %v, want %v", tc.name, got, tc.wantExists)
 			}
 		}
+	}
+}
+
+// shapeDataset: two artifacts, a first run (parser 1.0) over both, a second complete run (parser 2.0)
+// over the first artifact that really supersedes the first run there, and an orphan full-text rowid.
+func shapeDataset(t *testing.T) (*evidence.Case, *records.Reader, []string, string) {
+	t.Helper()
+	c, a := setup(t)
+	b := recordstest.AddArtifact(t, c, "b.db", mib)
+	fill := func(artifact string, n int, seed int64) []records.Record {
+		recs := recordstest.Records(artifact, n, seed)
+		for i := range recs {
+			recs[i].Summary = fmt.Sprintf("common word%d unique%d", i%7, i)
+		}
+		return recs
+	}
+	run1 := recordstest.Ingest(t, c, testParser, []string{a.ID, b.ID}, append(fill(a.ID, 50, 41), fill(b.ID, 30, 42)...))
+	p2 := records.Parser{Name: testParser.Name, Version: "2.0", Hash: "abc999"}
+	recordstest.Ingest(t, c, p2, []string{a.ID}, fill(a.ID, 40, 43))
+	// an index row for a record that does not exist: it must match nothing in either shape
+	recordstest.InventIndexText(t, c.Dir, evidence.FTSWordTable, 1<<40, "common word3 unique5", "")
+	return c, newReader(t, c), []string{a.ID, b.ID}, run1.IngestID
+}
+
+// The index-first and the FTS-first shapes are two plans for one selection: for every query, filter,
+// order and page size they return the same ids in the same order (the probe limit picks the shape).
+func TestSearchShapesAgreeOnEveryFilter(t *testing.T) {
+	_, r, arts, run1 := shapeDataset(t)
+	from, to := time.Unix(1_600_000_000, 0).UTC(), time.Unix(1_600_000_000+20*3600, 0).UTC()
+	conf := 50
+	filters := map[string]records.Filter{
+		"none":              {},
+		"two types":         {Types: []string{"message", "call"}},
+		"three types":       {Types: []string{"message", "call", "file"}},
+		"one artifact":      {ArtifactIDs: arts[1:]},
+		"untimed + window":  {From: &from, To: &to, IncludeUntimed: true},
+		"deleted only":      {Deleted: records.Only},
+		"deleted none":      {Deleted: records.None},
+		"recovered only":    {Recovered: records.Only},
+		"recovered none":    {Recovered: records.None},
+		"confidence":        {MinConfidence: &conf},
+		"path prefix":       {PathPrefix: "/data/1"},
+		"superseded":        {IncludeSuperseded: true},
+		"type + time":       {Types: []string{"message"}, From: &from, To: &to},
+		"type + untimed":    {Types: []string{"message"}, From: &from, To: &to, IncludeUntimed: true},
+		"parsers":           {Parsers: []records.ParserRef{{Name: testParser.Name, Version: testParser.Version}}},
+		"parsers + all":     {Parsers: []records.ParserRef{{Name: testParser.Name, Version: testParser.Version}}, IncludeSuperseded: true},
+		"ingest id (run 1)": {IngestID: run1},
+	}
+	nonEmpty := 0
+	for _, in := range []string{"common", "word3", "unique1*", `"common word3"`, "common -word3"} {
+		q := compileWords(t, in)
+		for name, fc := range filters {
+			f := fc
+			f.Text = q
+			for _, desc := range []bool{false, true} {
+				for _, size := range []int{1, 3, 50} {
+					restore := records.SetSearchProbeLimit(1) // index-first
+					indexFirst := walkSearch(t, r, f, desc, size)
+					restore()
+					restore = records.SetSearchProbeLimit(1 << 30) // FTS-first
+					ftsFirst := walkSearch(t, r, f, desc, size)
+					restore()
+					if !slices.Equal(indexFirst, ftsFirst) {
+						t.Fatalf("%q, %s, desc=%v, page %d: index-first %d ids, FTS-first %d ids", in, name, desc, size, len(indexFirst), len(ftsFirst))
+					}
+					if len(indexFirst) > 0 {
+						nonEmpty++
+					}
+				}
+			}
+		}
+	}
+	if nonEmpty < 200 {
+		t.Fatalf("only %d comparisons returned records: the filters select nothing", nonEmpty)
+	}
+	// the data holds what the comparison needs: a superseded run is hidden by default and the orphan row matches nothing
+	q := compileWords(t, "common")
+	hidden := walkSearch(t, r, records.Filter{Text: q}, false, 50)
+	all := walkSearch(t, r, records.Filter{Text: q, IncludeSuperseded: true}, false, 50)
+	if len(all) <= len(hidden) || len(hidden) == 0 {
+		t.Fatalf("no real superseded run: %d current, %d with superseded", len(hidden), len(all))
+	}
+	if len(all) != 120 {
+		t.Fatalf("%d records match, want 120: the orphan row must match nothing", len(all))
 	}
 }
