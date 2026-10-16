@@ -215,14 +215,31 @@ func (f *FS) decodeLeafKind(rec []byte) (k catalogKey, r catalogRecord, ok bool,
 // less than start, in key order, until fn returns false. Records of an unknown
 // type are skipped with a warning.
 func (f *FS) catalogScan(start catalogKey, fn func(k catalogKey, r catalogRecord) (bool, error)) error {
+	return f.catalogScanWarn(start, true, fn)
+}
+
+// catalogScanWarn is catalogScan with the unknown-type warning optional: a point lookup that is
+// followed by a decision elsewhere (a thread-less open) must not report a record as skipped when
+// that decision may refuse the record instead.
+func (f *FS) catalogScanWarn(start catalogKey, warn bool, fn func(k catalogKey, r catalogRecord) (bool, error)) error {
 	t, err := f.tree(treeCatalog)
 	if err != nil {
 		return err
 	}
 	return t.scanFrom(f.catalogCmp(start), func(rec []byte) (bool, error) {
-		k, r, ok, err := f.decodeLeaf(rec)
-		if err != nil || !ok {
-			return err == nil, err
+		var (
+			r    catalogRecord
+			k    catalogKey
+			ok   bool
+			derr error
+		)
+		if warn {
+			k, r, ok, derr = f.decodeLeaf(rec)
+		} else {
+			k, r, ok, _, derr = f.decodeLeafKind(rec)
+		}
+		if derr != nil || !ok {
+			return derr == nil, derr
 		}
 		return fn(k, r)
 	})
@@ -235,7 +252,7 @@ func (f *FS) catalogThread(cnid uint32) (catalogRecord, error) {
 	target := catalogKey{parent: cnid}
 	var rec catalogRecord
 	found := false
-	err := f.catalogScan(target, func(k catalogKey, r catalogRecord) (bool, error) {
+	err := f.catalogScanWarn(target, false, func(k catalogKey, r catalogRecord) (bool, error) {
 		if compareKeys(k, target, f.binaryNames()) == 0 {
 			rec, found = r, true
 		}

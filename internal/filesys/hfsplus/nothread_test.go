@@ -241,4 +241,31 @@ func TestNoThreadForeignEmptyNameUnknownRecordFailsClosed(t *testing.T) {
 	if !hasWarning(f.Info(), "uniqueness unprovable") {
 		t.Errorf("no warning: %q", f.Info().Warnings)
 	}
+	if hasWarning(f.Info(), "skipped") {
+		t.Errorf("a record that fails the open closed must not also be reported as skipped: %q", f.Info().Warnings)
+	}
+}
+
+// A record keyed (the opened id, a NON-empty name) is not the id's own thread position: with an
+// unknown type its id is unreadable and uniqueness is unprovable. Placed through the builder as a
+// child of a thread-less folder, then retyped in the image bytes.
+func TestNoThreadOwnParentNonEmptyNameUnknownRecordFailsClosed(t *testing.T) {
+	img, lay, _ := buildTree(t, hfsplustest.Options{}, []hfsplustest.File{
+		{Path: "/legacy", Dir: true, NoThread: true},
+		{Path: "/legacy/kid", Data: []byte("kid")},
+	})
+	p := findRec(t, img, lay, lay.CNIDs["/legacy"], units("kid"))
+	be.PutUint16(img[p.data:], 0x00FF)
+	f := open(t, img)
+	fl, err := f.Open(filesys.Entry{ID: idOf(lay.CNIDs["/legacy"])})
+	wantCorrupt(t, err)
+	if fl != nil {
+		t.Error("an unprovable id must not open")
+	}
+	if !hasWarning(f.Info(), "uniqueness unprovable") {
+		t.Errorf("no warning: %q", f.Info().Warnings)
+	}
+	if hasWarning(f.Info(), "skipped") {
+		t.Errorf("a record that fails the open closed must not also be reported as skipped: %q", f.Info().Warnings)
+	}
 }
