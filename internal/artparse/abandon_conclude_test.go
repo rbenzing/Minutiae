@@ -35,8 +35,10 @@ func TestAbandonedConclusionSurvivesTheCallersCancel(t *testing.T) {
 	entered, gate := make(chan struct{}), make(chan struct{})
 	hold := make(chan struct{})
 	t.Cleanup(func() { close(hold) })
-	two := &rxParser{name: "two", n: 3, after: func(context.Context, *parse.Input, parse.Emitter) error { <-hold; return nil }}
-	h := f.host(both(shortTimeouts, func(o *artparse.Options) {
+	emitted := make(chan struct{})
+	expireParseOnEvent(t, 1, emitted) // the job times out once its records are emitted, not after a delay
+	two := &rxParser{name: "two", n: 3, after: func(context.Context, *parse.Input, parse.Emitter) error { close(emitted); <-hold; return nil }}
+	h := f.host(both(eventTimeouts, func(o *artparse.Options) {
 		artparse.WithNewWriter(o, func(c *evidence.Case, p records.Parser, wo records.WriterOptions) (artparse.IngestWriter, error) {
 			w, err := records.NewWriter(c, p, wo)
 			if err != nil {
