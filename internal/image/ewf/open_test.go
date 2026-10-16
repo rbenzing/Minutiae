@@ -385,7 +385,7 @@ func TestOpenError2Ranges(t *testing.T) {
 			t.Fatalf("%d %v", count, kept)
 		}
 		w := r.Warnings()
-		if len(w) != 1 || !strings.Contains(w[0], "unreadable at acquisition") || !strings.Contains(w[0], "6 sectors") {
+		if len(w) != 1 || !strings.Contains(w[0], "declared unreadable by the acquirer") || !strings.Contains(w[0], "6 sectors") {
 			t.Fatalf("warnings %q", w)
 		}
 	})

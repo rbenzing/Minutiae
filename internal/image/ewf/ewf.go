@@ -65,7 +65,8 @@ type Reader struct {
 	// could not be parsed. That is not the same as absent.
 	md5Damaged, sha1Damaged string
 	warn                    warnings
-	err2                    *error2Info // acquisition error ranges, nil when none
+	err2                    *error2Info     // acquisition error ranges, nil when none
+	gaps                    AcquisitionGaps // error2 ranges in media bytes
 
 	refs    []chunkRef // one resolved table entry per covered chunk
 	gap     *tableGap  // non-nil: chunks from gap.from onward have no proven index
