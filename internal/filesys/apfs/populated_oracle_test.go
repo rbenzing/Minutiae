@@ -656,6 +656,9 @@ func popCheckXattrValues(t *testing.T, f *apfs.FS, e filesys.Entry, w popNode, r
 		report("%s: Xattrs: %v", w.Path, err)
 		return
 	}
+	for _, g := range popValueGaps(w) {
+		report("%s", g)
+	}
 	byName := map[string]filesys.Xattr{}
 	for _, x := range listed {
 		byName[x.Name] = x
@@ -743,3 +746,23 @@ func popStorage(word string) (string, error) {
 // popNeedsValueCheck reports whether the entry's xattr listing must be
 // checked against the oracle.
 func popNeedsValueCheck(w popNode) bool { return len(w.XattrValues) != 0 || len(w.Xattrs) != 0 }
+
+// popValueGaps lists the disagreements between the oracle's xattr names and
+// its xattr values: a name without a value is never silently unchecked.
+func popValueGaps(w popNode) []string {
+	var gaps []string
+	names := map[string]bool{}
+	for _, n := range w.Xattrs {
+		names[n] = true
+		if _, ok := w.XattrValues[n]; !ok {
+			gaps = append(gaps, fmt.Sprintf("%s: xattr %s has no oracle value", w.Path, n))
+		}
+	}
+	for n := range w.XattrValues {
+		if !names[n] {
+			gaps = append(gaps, fmt.Sprintf("%s: oracle value for xattr %s, which is not in the oracle names", w.Path, n))
+		}
+	}
+	slices.Sort(gaps)
+	return gaps
+}

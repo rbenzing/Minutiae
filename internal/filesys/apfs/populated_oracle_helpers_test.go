@@ -1,6 +1,7 @@
 package apfs_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
@@ -40,5 +41,27 @@ func TestPopNeedsValueCheckWheneverNamesExist(t *testing.T) {
 	}{"user.a": {}}
 	if !popNeedsValueCheck(n) {
 		t.Error("an entry with oracle values is not checked")
+	}
+}
+
+// Every xattr name needs an oracle value, and every oracle value a name:
+// otherwise an entry's value would go unchecked without a word.
+func TestPopValueGapsReportsNamesWithoutValues(t *testing.T) {
+	type vals = map[string]struct {
+		Size    int64  `json:"size"`
+		Sha256  string `json:"sha256"`
+		Storage string `json:"storage"`
+	}
+	if g := popValueGaps(popNode{Path: "/a", Xattrs: []string{"user.a", "user.b"}}); len(g) != 2 {
+		t.Errorf("names without any value: %q, want two reports", g)
+	}
+	if g := popValueGaps(popNode{Path: "/a", Xattrs: []string{"user.a", "user.b"}, XattrValues: vals{"user.a": {}}}); len(g) != 1 || !strings.Contains(g[0], "user.b has no oracle value") {
+		t.Errorf("one name without a value: %q", g)
+	}
+	if g := popValueGaps(popNode{Path: "/a", Xattrs: []string{"user.a"}, XattrValues: vals{"user.a": {}, "user.z": {}}}); len(g) != 1 || !strings.Contains(g[0], "user.z") {
+		t.Errorf("a value without a name: %q", g)
+	}
+	if g := popValueGaps(popNode{Path: "/a", Xattrs: []string{"user.a"}, XattrValues: vals{"user.a": {}}}); len(g) != 0 {
+		t.Errorf("a consistent node was reported: %q", g)
 	}
 }
