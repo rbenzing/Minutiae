@@ -12,12 +12,22 @@ import (
 // columns are the ones Probe insists on.
 func smsSpecs() []parse.ColumnSpec {
 	return []parse.ColumnSpec{
-		{Name: "address", Required: true, Affinity: "text"}, {Name: "date", Required: true, Affinity: "integer"},
-		{Name: "type", Required: true, Affinity: "integer"}, {Name: "body", Required: true, Affinity: "text"},
-		{Name: "thread_id", Affinity: "integer"}, {Name: "date_sent", Affinity: "integer"}, {Name: "read", Affinity: "integer"},
-		{Name: "status", Affinity: "integer"}, {Name: "subject", Affinity: "text"}, {Name: "protocol", Affinity: "integer"},
-		{Name: "service_center", Affinity: "text"}, {Name: "locked", Affinity: "integer"}, {Name: "sub_id", Affinity: "integer"},
-		{Name: "error_code", Affinity: "integer"}, {Name: "creator", Affinity: "text"}, {Name: "seen", Affinity: "integer"},
+		{Name: "address", Required: true, Affinity: "text"},
+		{Name: "date", Required: true, Affinity: "integer"},
+		{Name: "type", Required: true, Affinity: "integer"},
+		{Name: "body", Required: true, Affinity: "text"},
+		{Name: "thread_id", Affinity: "integer"},
+		{Name: "date_sent", Affinity: "integer"},
+		{Name: "read", Affinity: "integer"},
+		{Name: "status", Affinity: "integer"},
+		{Name: "subject", Affinity: "text"},
+		{Name: "protocol", Affinity: "integer"},
+		{Name: "service_center", Affinity: "text"},
+		{Name: "locked", Affinity: "integer"},
+		{Name: "sub_id", Affinity: "integer"},
+		{Name: "error_code", Affinity: "integer"},
+		{Name: "creator", Affinity: "text"},
+		{Name: "seen", Affinity: "integer"},
 	}
 }
 
