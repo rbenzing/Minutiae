@@ -163,7 +163,7 @@ func (t *Table) Resolve(r Row) []Value {
 		case i == d.RowidAlias && r.HasRowid:
 			out[i] = Value{Kind: KindInt, Int: r.Rowid}
 		case c.RecordIndex >= len(r.Values):
-			out[i] = columnDefault(c, enc)
+			out[i], _ = columnDefault(c, enc)
 		default:
 			v := r.Values[c.RecordIndex]
 			if c.Affinity == AffReal && v.Kind == KindInt && !v.Omitted {
@@ -193,14 +193,11 @@ func (i *Index) Entries(ctx context.Context, visit func(Row) bool) error {
 // affinity this reader does not reproduce exactly) is Omitted and carries the
 // reason in DefaultUndecided: never a rounded number and never the unconverted
 // text.
-func columnDefault(c *Column, enc Encoding) Value {
-	if c.Default.Kind == DefaultNone {
-		return Value{}
+func columnDefault(c *Column, enc Encoding) (Value, DefaultReason) {
+	v, r := defaultValue(c)
+	if r != DefaultReasonNone {
+		return Value{Omitted: true, DefaultUndecided: r}, r
 	}
-	if r := defaultReason(c); r != DefaultReasonNone {
-		return Value{Omitted: true, DefaultUndecided: r}
-	}
-	v, _ := applyAffinity(c.Default.Value, c.Affinity)
 	switch v.Kind {
 	case KindText:
 		b := encodeTextAs(string(v.Bytes), enc)
@@ -208,7 +205,7 @@ func columnDefault(c *Column, enc Encoding) Value {
 	case KindBlob:
 		v.Bytes = bytes.Clone(v.Bytes)
 	}
-	return v
+	return v, DefaultReasonNone
 }
 
 // encodeTextAs encodes UTF-8 text in the database encoding.
@@ -231,17 +228,27 @@ func encodeTextAs(s string, enc Encoding) []byte {
 // defaultReason says why the default of c is not a value, DefaultReasonNone when
 // it is one (or there is none).
 func defaultReason(c *Column) DefaultReason {
+	_, r := defaultValue(c)
+	return r
+}
+
+// defaultValue converts the default of c once: the converted value (UTF-8, not
+// yet encoded for the database) with DefaultReasonNone, or the reason it is not
+// a value.
+func defaultValue(c *Column) (Value, DefaultReason) {
 	switch c.Default.Kind {
+	case DefaultNone:
+		return Value{}, DefaultReasonNone
 	case DefaultExpr:
-		return DefaultReasonExpression
+		return Value{}, DefaultReasonExpression
 	case DefaultInexactLiteral:
-		return DefaultReasonInexactLiteral
-	case DefaultLiteral:
-		if _, ok := applyAffinity(c.Default.Value, c.Affinity); !ok {
-			return DefaultReasonInexactLiteral
-		}
+		return Value{}, DefaultReasonInexactLiteral
 	}
-	return DefaultReasonNone
+	v, ok := applyAffinity(c.Default.Value, c.Affinity)
+	if !ok {
+		return Value{}, DefaultReasonInexactLiteral
+	}
+	return v, DefaultReasonNone
 }
 
 // applyAffinity converts v as the engine does when it stores a value in a
