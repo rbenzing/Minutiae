@@ -64,16 +64,10 @@ func blockOf(dir string) string {
 }
 
 // docConsistencyPackages are the packages the global block tests on every affected or block run
-// because they check the repository as a whole rather than one package: readsDocs marks a test
-// that reads docs/ or CLAUDE.md at run time. TestDocConsistencyPackagesAreListed finds the
-// runtime readers in the test sources (a mention in a comment does not count) and fails on any
-// that is missing here.
-var docConsistencyPackages = []struct {
-	dir, why  string
-	readsDocs bool
-}{
-	{"internal/archtest", "repo-wide source scans: architecture, purity and single-writer rules", false},
-	{"tools/check", "TestShortTableMatchesGuards reads docs/testing.md", true},
+// because they check the repository as a whole rather than one package.
+var docConsistencyPackages = []struct{ dir, why string }{
+	{"internal/archtest", "repo-wide source scans: architecture, purity and single-writer rules"},
+	{"tools/check", "TestShortTableMatchesGuards reads docs/testing.md"},
 }
 
 // step is one command of a check run.
@@ -125,17 +119,24 @@ func globalSteps() []step {
 	}
 }
 
-// affectedSteps vets, lints and tests (-short, cached) the given package directories.
-func affectedSteps(dirs []string) []step {
-	if len(dirs) == 0 {
-		return nil
-	}
+// affectedSteps vets and lints the given package directories and tests them (-short, cached). When
+// wholeModule is set the test step is the cached ./... run instead: Go's test cache records every
+// file and environment variable a test consulted, so only tests that read a changed file rerun.
+func affectedSteps(dirs []string, wholeModule bool) []step {
+	var steps []step
 	a := dirArgs(dirs)
-	return []step{
-		{args: append([]string{"go", "vet"}, a...)},
-		{args: append([]string{"go", "tool", "golangci-lint", "run"}, a...)},
-		{args: append([]string{"go", "test", "-short", "-timeout", testTimeout}, a...)},
+	if len(dirs) > 0 {
+		steps = append(steps,
+			step{args: append([]string{"go", "vet"}, a...)},
+			step{args: append([]string{"go", "tool", "golangci-lint", "run"}, a...)})
 	}
+	switch {
+	case wholeModule:
+		steps = append(steps, step{args: []string{"go", "test", "-short", "-timeout", testTimeout, "./..."}})
+	case len(dirs) > 0:
+		steps = append(steps, step{args: append([]string{"go", "test", "-short", "-timeout", testTimeout}, a...)})
+	}
+	return steps
 }
 
 // options are the command-line flags.
@@ -148,15 +149,17 @@ type options struct {
 
 // plan is the decision: what changed, what is affected and which steps run.
 type plan struct {
-	full     bool // the whole check runs
-	reason   string
-	base     string
-	changed  []string
-	unmapped []string // changed files that belong to no package
-	affected []string // package directories to vet, lint and test
-	blocks   []string
-	tested   []string // every package tested, for the summary
-	steps    []step
+	full        bool // the whole check runs
+	reason      string
+	base        string
+	changed     []string
+	unmapped    []string // changed files that belong to no package
+	testForm    string   // which test step runs, and why
+	wholeModule bool     // the test step is the cached ./... run
+	affected    []string // package directories to vet, lint and test
+	blocks      []string
+	tested      []string // every package tested, for the summary
+	steps       []step
 }
 
 // env is everything the decisions need from the outside world.
@@ -167,8 +170,6 @@ type env struct {
 	read    func(string) ([]byte, error)
 	runStep func(step) error
 	race    bool
-	// testSources lists the _test.go files of the module (for cross-package testdata readers).
-	testSources func() ([]testSrc, error)
 }
 
 // usageError marks a command-line mistake (exit 2).
@@ -222,26 +223,12 @@ func buildPlan(o options, e env) (plan, error) {
 				tested: []string{"all packages (./...)"}, steps: fullSteps(e.race),
 			}, nil
 		}
-		var tdDirs []string
-		for _, q := range pkgs {
-			for _, f := range p.changed {
-				if strings.HasPrefix(f, q.Dir+"/testdata/") {
-					tdDirs = append(tdDirs, q.Dir)
-					break
-				}
-			}
-		}
-		if len(tdDirs) > 0 {
-			srcs, err := e.testSources()
-			if err != nil {
-				return plan{}, err
-			}
-			readers, err := testdataReaders(srcs, tdDirs)
-			if err != nil {
-				return plan{}, err
-			}
-			for d := range readers {
-				hit[d] = true
+		p.testForm = "Go files only: reverse closure of the changed packages, -short, cached"
+		for _, f := range p.changed {
+			if !strings.HasSuffix(f, ".go") {
+				p.wholeModule = true
+				p.testForm = "non-Go file changed: cached ./... test step (Go's test cache reruns only the tests that read a changed file)"
+				break
 			}
 		}
 		for _, d := range affectedClosure(pkgs, hit) {
@@ -271,12 +258,15 @@ func buildPlan(o options, e env) (plan, error) {
 		sort.Strings(p.blocks)
 	}
 	p.tested = append(p.tested, p.affected...)
+	if p.wholeModule {
+		p.tested = append(p.tested, "all packages (./..., cached)")
+	}
 	for _, d := range docConsistencyPackages {
 		if !set[d.dir] {
 			p.tested = append(p.tested, d.dir)
 		}
 	}
-	p.steps = append(globalSteps(), affectedSteps(p.affected)...)
+	p.steps = append(globalSteps(), affectedSteps(p.affected, p.wholeModule)...)
 	return p, nil
 }
 
@@ -321,6 +311,9 @@ func printPlan(w io.Writer, o options, p plan) {
 			fmt.Fprintf(w, "  %s  [%s]\n", d, blockOf(d))
 		}
 		fmt.Fprintf(w, "blocks: %s\n", strings.Join(p.blocks, ", "))
+	}
+	if p.testForm != "" {
+		fmt.Fprintf(w, "tests: %s\n", p.testForm)
 	}
 	fmt.Fprintln(w, "steps:")
 	for _, s := range formatSteps(p.steps) {
@@ -484,13 +477,6 @@ func realEnv() env {
 			cmd.Env = append(os.Environ(), s.env...)
 			cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 			return cmd.Run()
-		},
-		testSources: func() ([]testSrc, error) {
-			pkgs, err := loadPackages()
-			if err != nil {
-				return nil, err
-			}
-			return loadTestSources(pkgs)
 		},
 		race: raceSupported(),
 	}

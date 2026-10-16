@@ -163,7 +163,7 @@ func TestEscalationRules(t *testing.T) {
 		{"deleted unix file", "b/gone_unix.go", true},
 		{"deleted GOOS file", "b/gone_os.go", true},
 		{"deleted plain file of an existing package", "b/gone_plain.go", false},
-		{"file mapped to no package, not allow-listed", "scripts/x.sh", true},
+		{"file mapped to no package", "scripts/x.sh", false},
 		{"allow-listed docs", "docs/deep/x.txt", false},
 		{"allow-listed markdown at any depth", "scripts/README.md", false},
 		{"allow-listed .gitignore", ".gitignore", false},
@@ -236,36 +236,14 @@ func fakeEnv(t *testing.T, changed, untracked []string) (env, *int) {
 			}
 			return nil, errors.New("unexpected git " + strings.Join(args, " "))
 		},
-		goList:      func() ([]pkg, error) { return pkgs, nil },
-		exists:      func(string) bool { return true },
-		read:        func(string) ([]byte, error) { return []byte("package x\n"), nil },
-		testSources: func() ([]testSrc, error) { return nil, nil },
+		goList: func() ([]pkg, error) { return pkgs, nil },
+		exists: func(string) bool { return true },
+		read:   func(string) ([]byte, error) { return []byte("package x\n"), nil },
 		runStep: func(step) error {
 			*runs++
 			return nil
 		},
 	}, runs
-}
-
-func TestNonPackageFilesAddOnlyTheGlobalBlock(t *testing.T) {
-	e, _ := fakeEnv(t, []string{"docs/testing.md", "CLAUDE.md"}, []string{"LICENSE", ".gitignore", ".claude/agents/x.md"})
-	p, err := buildPlan(options{affected: true, base: "abc"}, e)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.full {
-		t.Fatalf("docs-only change escalated: %s", p.reason)
-	}
-	if len(p.affected) != 0 || len(p.blocks) != 0 {
-		t.Errorf("affected %v blocks %v, want none", p.affected, p.blocks)
-	}
-	want := formatSteps(globalSteps())
-	if got := formatSteps(p.steps); !slices.Equal(got, want) {
-		t.Errorf("steps\n%s\nwant exactly the global block\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
-	}
-	if len(p.steps) == 0 {
-		t.Fatal("an affected run with nothing affected ran nothing")
-	}
 }
 
 func TestAffectedPlanSteps(t *testing.T) {

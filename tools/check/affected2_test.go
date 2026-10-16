@@ -4,14 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -40,32 +34,6 @@ func TestNearestAncestorPackageOwnsNonGoFiles(t *testing.T) {
 		if got := sortedKeys(hit); !slices.Equal(got, []string{want}) || len(unmapped) != 0 {
 			t.Errorf("%s: packages %v unmapped %v, want [%s]", file, got, unmapped, want)
 		}
-	}
-}
-
-func TestUnmappedFileEscalatesAndEveryRunPrintsTheList(t *testing.T) {
-	e, _ := fakeEnv(t, []string{"scripts/run.sh", "docs/a.md"}, nil)
-	p, err := buildPlan(options{affected: true, base: "abc"}, e)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !p.full || !strings.Contains(p.reason, "scripts/run.sh") {
-		t.Fatalf("plan full=%v reason=%q, want escalation naming scripts/run.sh", p.full, p.reason)
-	}
-	var out, errb bytes.Buffer
-	if code := run([]string{"-affected", "-base", "abc", "-list"}, &out, &errb, e); code != 0 {
-		t.Fatalf("exit %d %s", code, errb.String())
-	}
-	if !strings.Contains(out.String(), "changed files mapped to no package:\n  docs/a.md\n  scripts/run.sh\n") {
-		t.Errorf("list lacks the unmapped files:\n%s", out.String())
-	}
-	e2, _ := fakeEnv(t, []string{"b/x.go"}, nil)
-	out.Reset()
-	if code := run([]string{"-affected", "-base", "abc", "-list"}, &out, &errb, e2); code != 0 {
-		t.Fatal(errb.String())
-	}
-	if !strings.Contains(out.String(), "changed files mapped to no package:") {
-		t.Errorf("an all-mapped run omits the unmapped section:\n%s", out.String())
 	}
 }
 
@@ -240,225 +208,6 @@ func writeTree(t *testing.T, root string, files map[string]string) {
 	}
 }
 
-// ---- cross-package testdata ----
-
-func TestCrossPackageTestdataReadersAreAffected(t *testing.T) {
-	srcs := []testSrc{
-		{"p/q/a_test.go", []byte(`package q
-
-import "path/filepath"
-
-var _ = filepath.Join("..", "r", "testdata", "f.bin")
-`)},
-		{"p/q/b_test.go", []byte("package q\n\nconst c = \"../../s/testdata/z\"\n")},
-		{"p/w/c_test.go", []byte(`package w
-
-import "path/filepath"
-
-func f(name string) string { return filepath.Join("..", "kinds", name, "testdata") }
-`)},
-		{"p/x/d_test.go", []byte("package x\n\nfunc f(n string) string { return \"../\" + n + \"/testdata/img.gz\" }\n")},
-		{"p/y/e_test.go", []byte("package y\n\n// fixtures live in internal/m/testdata and example.com/m/internal/n/testdata\nvar _ = 1\n")},
-		{"p/z/own_test.go", []byte(`package z
-
-import "path/filepath"
-
-var _ = filepath.Join("testdata", "own.bin")
-`)},
-	}
-	cases := []struct {
-		changed string
-		want    []string
-	}{
-		{"p/r", []string{"p/q", "p/x"}},
-		{"s", []string{"p/q"}},
-		{"p/kinds/a", []string{"p/w"}},
-		{"internal/m", []string{"p/y"}},
-		{"internal/n", []string{"p/y"}},
-		{"p/none", []string{"p/x"}},
-		{"unrelated", nil},
-	}
-	for _, c := range cases {
-		got, err := testdataReaders(srcs, []string{c.changed})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if g := sortedKeys(got); !slices.Equal(g, c.want) {
-			t.Errorf("testdata of %s read by %v, want %v", c.changed, g, c.want)
-		}
-	}
-}
-
-func TestUnparsableTestSourceIsAnError(t *testing.T) {
-	if _, err := testdataReaders([]testSrc{{"p/a_test.go", []byte("package (")}}, []string{"x"}); err == nil {
-		t.Error("an unparsable test file was skipped silently")
-	}
-}
-
-func TestChangedTestdataAddsItsReaders(t *testing.T) {
-	e, _ := fakeEnv(t, []string{"a/testdata/f.bin"}, nil)
-	e.testSources = func() ([]testSrc, error) {
-		return []testSrc{{"e/x_test.go", []byte("package e\n\nconst c = \"../a/testdata/f.bin\"\n")}}, nil
-	}
-	p, err := buildPlan(options{affected: true, base: "abc"}, e)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// a changed; b, c, d, f import it; e reads its testdata (and g/h imports e)
-	if want := []string{"a", "b", "c", "d", "e", "f", "g/h"}; !slices.Equal(p.affected, want) {
-		t.Errorf("affected %v, want %v", p.affected, want)
-	}
-}
-
-func TestEveryRelativeTestdataReferenceInTheRepoIsFound(t *testing.T) {
-	t.Chdir("../..")
-	pkgs, err := loadPackages()
-	if err != nil {
-		t.Fatal(err)
-	}
-	srcs, err := loadTestSources(pkgs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// An independent, textual search for ".."-relative testdata references.
-	re := regexp.MustCompile(`\.\./[A-Za-z0-9_./-]*testdata|"\.\."[^)\n]*"testdata"`)
-	n := 0
-	for _, s := range srcs {
-		if strings.HasPrefix(s.Path, "tools/check/") || !re.Match(s.Src) { // the check's own tests quote such paths
-			continue
-		}
-		n++
-		refs, err := scanFile(path.Dir(s.Path), s.Src)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(refs) == 0 {
-			t.Errorf("%s has a relative testdata reference the scan did not resolve", s.Path)
-		}
-	}
-	if n < 10 {
-		t.Fatalf("only %d files with relative testdata references; the search is broken", n)
-	}
-	for changed, readers := range map[string][]string{
-		"internal/sqlitefile":      {"internal/dbrecover", "internal/decode/sqlitedb"},
-		"internal/filesys/apfs":    {"internal/examine", "internal/filesys/detect"},
-		"internal/filesys/ext4":    {"internal/examine", "internal/filesys/detect"},
-		"internal/filesys/hfsplus": {"internal/examine", "internal/filesys/detect"},
-		"internal/image/ewf":       {"internal/examine"},
-	} {
-		got, err := testdataReaders(srcs, []string{changed})
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, r := range readers {
-			if !got[r] {
-				t.Errorf("testdata of %s: reader %s not found (got %v)", changed, r, sortedKeys(got))
-			}
-		}
-	}
-}
-
-// ---- doc-consistency packages ----
-
-// docReaders returns the directories with a test that reads docs/ or CLAUDE.md at run time: a call
-// of os.ReadFile, Open, OpenFile, ReadDir or Stat with such a path among its arguments.
-func docReaders(t *testing.T, root string) map[string]bool {
-	t.Helper()
-	found := map[string]bool{}
-	fset := token.NewFileSet()
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			if skipDir(root, p, d) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(p, "_test.go") {
-			return nil
-		}
-		f, err := parser.ParseFile(fset, p, nil, 0)
-		if err != nil {
-			return err
-		}
-		ast.Inspect(f, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok || !isOSFileCall(call) {
-				return true
-			}
-			ast.Inspect(call, func(m ast.Node) bool {
-				lit, ok := m.(*ast.BasicLit)
-				if ok && lit.Kind == token.STRING && isDocPath(lit.Value) {
-					rel, _ := filepath.Rel(root, filepath.Dir(p))
-					found[filepath.ToSlash(rel)] = true
-				}
-				return true
-			})
-			return true
-		})
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return found
-}
-
-func isOSFileCall(c *ast.CallExpr) bool {
-	sel, ok := c.Fun.(*ast.SelectorExpr)
-	if !ok {
-		return false
-	}
-	id, ok := sel.X.(*ast.Ident)
-	return ok && id.Name == "os" && slices.Contains([]string{"ReadFile", "Open", "OpenFile", "ReadDir", "Stat"}, sel.Sel.Name)
-}
-
-func isDocPath(quoted string) bool {
-	s := strings.Trim(quoted, "\"`")
-	return s == "docs" || s == "CLAUDE.md" || strings.HasPrefix(s, "docs/") || strings.HasSuffix(s, "/CLAUDE.md")
-}
-
-func TestDocConsistencyPackagesAreListed(t *testing.T) {
-	root := "../.."
-	found := docReaders(t, root)
-	listed := map[string]bool{}
-	for _, d := range docConsistencyPackages {
-		listed[d.dir] = true
-		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(d.dir))); err != nil {
-			t.Errorf("listed doc-consistency package %s: %v", d.dir, err)
-		}
-		if d.why == "" {
-			t.Errorf("%s has no reason", d.dir)
-		}
-		if d.readsDocs && !found[d.dir] {
-			t.Errorf("%s is listed as reading docs at run time but no test reads docs/ or CLAUDE.md", d.dir)
-		}
-	}
-	for dir := range found {
-		if !listed[dir] {
-			t.Errorf("%s has a test that reads docs/ or CLAUDE.md but is not in docConsistencyPackages", dir)
-		}
-	}
-	if len(docConsistencyPackages) != 2 || !listed["internal/archtest"] || !listed["tools/check"] {
-		t.Errorf("the global doc block is archtest and tools/check only, got %v", docConsistencyPackages)
-	}
-}
-
-func TestDocReaderDetectionSeesRuntimeReadsNotComments(t *testing.T) {
-	root := t.TempDir()
-	writeTree(t, root, map[string]string{
-		"reads/a_test.go":   "package r\n\nimport (\n\t\"os\"\n\t\"path/filepath\"\n)\n\nvar _, _ = os.ReadFile(filepath.Join(\"..\", \"docs\", \"x.md\"))\n",
-		"claude/a_test.go":  "package r\n\nimport \"os\"\n\nvar _, _ = os.Open(\"../CLAUDE.md\")\n",
-		"comment/a_test.go": "package r\n\n// see docs/testing.md and CLAUDE.md\nvar _ = \"docs/testing.md\"\n",
-	})
-	got := docReaders(t, root)
-	if len(got) != 2 || !got["reads"] || !got["claude"] {
-		t.Errorf("readers %v, want reads and claude only", got)
-	}
-}
-
 // slowTableProblems compares the guarded tests found in the source with the docs table.
 func slowTableProblems(guards map[string]bool, table map[string]int) []string {
 	var out []string
@@ -479,71 +228,98 @@ func slowTableProblems(guards map[string]bool, table map[string]int) []string {
 	return out
 }
 
-func TestUnresolvedTestdataMentionsAreReported(t *testing.T) {
-	src := []byte(`package p
+const wholeModuleTests = "go test -short -timeout 30m ./..."
 
-import "path/filepath"
-
-func f(root, n string) {
-	_ = filepath.Join(root, "x", "testdata", "f")
-	_ = filepath.Join("testdata", "own")
-	_ = "testdata/own.bin"
-	_ = filepath.Join("..", "x", "testdata", "f")
-	_ = "../" + n + "/testdata/img"
-	_ = root + "/testdata/z"
-	_ = "a message about testdata fixtures"
-}
-`)
-	got, err := unresolvedTestdata("p/q", src)
-	if err != nil {
-		t.Fatal(err)
+func TestNonGoChangeRunsCachedWholeModuleTests(t *testing.T) {
+	cases := []struct {
+		name    string
+		changed []string
+		scoped  bool // vet and lint of the affected packages still run
+	}{
+		{"testdata", []string{"b/testdata/x.bin"}, true},
+		{"docs markdown", []string{"docs/testing.md"}, false},
+		{"fixture under a non-package directory", []string{"scripts/fixtures/x.json"}, false},
+		{"go and non-go together", []string{"b/x.go", "docs/a.md"}, true},
 	}
-	var lines []int
-	for _, m := range got {
-		lines = append(lines, m.Line)
-	}
-	if want := []int{6, 11}; !slices.Equal(lines, want) {
-		t.Errorf("unresolved mentions at lines %v, want %v", lines, want)
-	}
-}
-
-func TestEveryTestdataReferenceIsResolved(t *testing.T) {
-	t.Chdir("../..")
-	pkgs, err := loadPackages()
-	if err != nil {
-		t.Fatal(err)
-	}
-	srcs, err := loadTestSources(pkgs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	known := map[string]bool{}
-	for _, k := range knownTestdataReaders {
-		if k.reader == "" || k.owner == "" || k.reason == "" {
-			t.Errorf("incomplete knownTestdataReaders entry %+v", k)
-		}
-		known[k.reader] = true
-	}
-	used := map[string]bool{}
-	for _, s := range srcs {
-		if strings.HasPrefix(s.Path, "tools/check/") { // its tests quote such paths
-			continue
-		}
-		ms, err := unresolvedTestdata(path.Dir(s.Path), s.Src)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, m := range ms {
-			if known[path.Dir(s.Path)] {
-				used[path.Dir(s.Path)] = true
-				continue
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e, _ := fakeEnv(t, c.changed, nil)
+			p, err := buildPlan(options{affected: true, base: "abc"}, e)
+			if err != nil {
+				t.Fatal(err)
 			}
-			t.Errorf("%s:%d: testdata path %s is neither resolved by the scan nor the package's own; resolve it or add it to knownTestdataReaders", s.Path, m.Line, m.Text)
+			if p.full {
+				t.Fatalf("escalated: %s", p.reason)
+			}
+			lines := formatSteps(p.steps)
+			if !slices.Contains(lines, wholeModuleTests) {
+				t.Errorf("no cached whole-module test step in\n%s", strings.Join(lines, "\n"))
+			}
+			for _, l := range lines {
+				if strings.HasPrefix(l, "go test -short -timeout 30m ./b") {
+					t.Errorf("a scoped test step runs next to the whole-module one: %s", l)
+				}
+				if strings.Contains(l, "-count=1") {
+					t.Errorf("the test cache is disabled: %s", l)
+				}
+			}
+			if hasVet := slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, "go vet ") }); hasVet != c.scoped {
+				t.Errorf("vet step present = %v, want %v", hasVet, c.scoped)
+			}
+			if !strings.Contains(p.testForm, "non-Go file changed") {
+				t.Errorf("test form %q does not say why", p.testForm)
+			}
+		})
+	}
+}
+
+func TestGoOnlyChangeRunsReverseClosure(t *testing.T) {
+	e, _ := fakeEnv(t, []string{"b/x.go"}, []string{"e/new.go"})
+	p, err := buildPlan(options{affected: true, base: "abc"}, e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := formatSteps(p.steps)
+	if slices.Contains(lines, wholeModuleTests) {
+		t.Error("a Go-only change runs the whole module")
+	}
+	if !slices.Contains(lines, "go test -short -timeout 30m ./b ./c ./d ./e ./g/h") {
+		t.Errorf("no reverse-closure test step in\n%s", strings.Join(lines, "\n"))
+	}
+	if !strings.Contains(p.testForm, "reverse closure") {
+		t.Errorf("test form %q", p.testForm)
+	}
+}
+
+func TestListStatesTheTestFormAndUnmappedFiles(t *testing.T) {
+	e, _ := fakeEnv(t, []string{"scripts/run.sh"}, nil)
+	var out, errb bytes.Buffer
+	if code := run([]string{"-affected", "-base", "abc", "-list"}, &out, &errb, e); code != 0 {
+		t.Fatalf("exit %d %s", code, errb.String())
+	}
+	for _, w := range []string{
+		"tests: non-Go file changed: cached ./... test step",
+		"changed files mapped to no package:\n  scripts/run.sh\n",
+	} {
+		if !strings.Contains(out.String(), w) {
+			t.Errorf("-list output lacks %q:\n%s", w, out.String())
 		}
 	}
-	for k := range known {
-		if !used[k] {
-			t.Errorf("knownTestdataReaders lists %s but it has no unresolved testdata mention", k)
+}
+
+func TestDocConsistencyPackagesAreListed(t *testing.T) {
+	root := "../.."
+	var dirs []string
+	for _, d := range docConsistencyPackages {
+		dirs = append(dirs, d.dir)
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(d.dir))); err != nil {
+			t.Errorf("listed doc-consistency package %s: %v", d.dir, err)
 		}
+		if d.why == "" {
+			t.Errorf("%s has no reason", d.dir)
+		}
+	}
+	if !slices.Equal(dirs, []string{"internal/archtest", "tools/check"}) {
+		t.Errorf("the global doc block is archtest and tools/check only, got %v", dirs)
 	}
 }
