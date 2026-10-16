@@ -995,15 +995,18 @@ snapshot declares `COLLATE PHONEBOOK`, which the platform registers; the generat
 The pinned tag's `raw_contacts` has no `account_name`, `account_type` or time column, so the two contacts snapshots carry the
 tag's `accounts` and `contacts` tables too (verbatim, CROSSCHECK.md; ruling T68) and the oracle follows the joins (T69): the
 account comes only from `accounts` through `raw_contacts.account_id` (inline `account_name`/`account_type` count only on a
-schema that has them); a NULL `account_id` is no account, an `account_id` with no `accounts` row is unknown
-(`unknown_columns.account_id = "unresolved"`), never "no account". The time is the AGGREGATE contact's
-`contacts.contact_last_updated_timestamp` through `raw_contacts.contact_id`: it is stated as `times.aggregate_last_updated` with
+schema that has them); a NULL `account_id` is no account, an `account_id` with no `accounts` row is stated
+(`raw.account_state = "no-accounts-row"`), never "no account". The time is the AGGREGATE contact's
+`contacts.contact_last_updated_timestamp` through `raw.contact_id`: it is stated as `times.aggregate_last_updated` with
 `raw.contact_last_updated_source`, never as `Record.Time` (it is not the raw contact's own modification time); a NULL
-`contact_id` is `unknown_columns.contact_last_updated_timestamp = "no-contact"`, a dangling one `"unresolved"`, never zero.
+`contact_id` is `raw.aggregate_state = "no-contact-id"`, a dangling one `"no-contacts-row"`, never zero (T72). A join that cannot be
+decided (a missing `accounts` or `contacts` table, or unreadable pages) puts the table name in `raw.join_undecided`; a fixture cannot
+force that, so the parser's own tests build such databases in memory. The scenario's dangling aggregate id and the cut-off below
+which `Builder.contact` creates a `contacts` row are the named constants `DANGLING_CONTACT_ID` and `FIRST_DANGLING_CONTACT` (T74).
 
 | Variant | DDL snapshot | Database state | What it exercises |
 |---|---|---|---|
-| `aosp-baseline` | `contacts-aosp-baseline.sql` | plain, 13 `raw_contacts` (12 records plus 1 warning for the contact that identifies nobody), 20 `data` rows for contact 1, 3 `accounts`, 12 `contacts` | accounts: two distinct, a NULL `account_id` (no account) and a dangling one (unknown); aggregate times: valid, zero (sentinel), year 2100 (invalid), a NULL `contact_id` (unknown) and a dangling one (unresolved); every mimetype, labels (named, custom, unknown type), a skipped empty value, a second name and organization row, an IM with the custom marker and AIM, a photo, a dangling `mimetype_id`, a `group_membership` row, a deleted contact, a tombstone-shaped contact (no name, source id), a contact that identifies nobody (a warning), NUL and invalid UTF-8 (`raw.text_flags`), a 400-digit number |
+| `aosp-baseline` | `contacts-aosp-baseline.sql` | plain, 13 `raw_contacts` (12 records plus 1 warning for the contact that identifies nobody), 20 `data` rows for contact 1, 3 `accounts`, 11 `contacts` | accounts: two distinct, a NULL `account_id` (no account) and a dangling one (`no-accounts-row`); aggregate times: valid, zero (sentinel), year 2100 (invalid), a NULL `contact_id` (`no-contact-id`) and a dangling one (`no-contacts-row`); every mimetype, labels (named, custom, unknown type), a skipped empty value, a second name and organization row, an IM with the custom marker and AIM, a photo, a dangling `mimetype_id`, a `group_membership` row, a deleted contact, a tombstone-shaped contact (no name, source id), a contact that identifies nobody (a warning), NUL and invalid UTF-8 (`raw.text_flags`), a 400-digit number |
 | `deleted-contacts` | `contacts-deleted-contacts.sql` | plain, 2 contacts and 2 `deleted_contacts` rows | the tombstones (a valid and a zero deletion time) |
 | `multi-account` | `contacts-aosp-baseline.sql` | plain, 3 raw contacts of one person (one aggregate contact) | three distinct accounts (google, samsung, whatsapp with a `data_set`), one record per raw contact, one aggregate time |
 | `unicode-rtl` | `contacts-aosp-baseline.sql` | plain, 4 contacts | Hebrew, Arabic with a right-to-left override, CJK and emoji names and labels |

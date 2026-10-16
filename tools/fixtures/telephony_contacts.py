@@ -6,6 +6,11 @@ import telephony_common as C
 FAMILY = "contacts"
 REMOTE = "/data/user_de/0/com.android.providers.contacts/databases/contacts2.db"
 T0, MS = 1682935200, 1000
+# Contact ids from this value up name an aggregate contact that does not exist (a dangling contact_id): Builder.contact adds no
+# contacts row for them, and the scenario uses DANGLING_CONTACT_ID for its dangling example (T74).
+FIRST_DANGLING_CONTACT = 90
+DANGLING_CONTACT_ID = 98
+assert DANGLING_CONTACT_ID >= FIRST_DANGLING_CONTACT
 MAX_TEXT = 256 << 10
 MAX_LIST = 1000
 MIMES = ["vnd.android.cursor.item/name", "vnd.android.cursor.item/phone_v2", "vnd.android.cursor.item/email_v2",
@@ -86,7 +91,7 @@ class Builder:
         row.update(kw)
         self.rc.append(row)
         cid = row["contact_id"]
-        if cid is not None and cid < 90 and cid not in self.contacts:  # 90 and over name an aggregate that does not exist
+        if cid is not None and cid < FIRST_DANGLING_CONTACT and cid not in self.contacts:
             self.contacts[cid] = {"_id": cid, "contact_last_updated_timestamp": (T0 + cid) * MS if ts is None else ts}
 
     def d(self, rid, mime, primary=0, **kw):
@@ -139,7 +144,7 @@ def baseline():
     b.contact(11, display_name=None, deleted=1, sourceid="g-11", contact_id=None)
     b.contact(12, display_name="Dangling Account", account_id=99)
     b.d(12, EMAIL, 0, data1="dangling@example.test", data2=1)
-    b.contact(13, display_name="Dangling Aggregate", contact_id=98)
+    b.contact(13, display_name="Dangling Aggregate", contact_id=DANGLING_CONTACT_ID)
     b.d(13, EMAIL, 0, data1="aggregate@example.test", data2=2)
     return b
 
@@ -199,6 +204,7 @@ def expect_contact(rc, data_rows, mimes, remote, accounts=None, aggregates=None,
     name = field(rc.get("display_name"), "display_name")
     if name:
         p["display_name"] = name
+    undecided = []
     if "account_name" in rc or "account_type" in rc:  # an old schema: the inline columns, only when physically present
         at = field(rc.get("account_type"), "account_type")
         an = field(rc.get("account_name"), "account_name")
@@ -208,8 +214,10 @@ def expect_contact(rc, data_rows, mimes, remote, accounts=None, aggregates=None,
         if is_int(aid):
             raw["account_id"] = aid
             acct = accounts.get(aid) if accounts is not None else None
-            if acct is None:
-                unknown["account_id"] = "unresolved"  # a dangling id or no accounts table: unknown, not "no account"
+            if accounts is None:
+                undecided.append("accounts")  # no accounts table: the join cannot be decided, so the account is unknown
+            elif acct is None:
+                raw["account_state"] = "no-accounts-row"  # a dangling id: decided, stated; not "no account" (T72)
             else:
                 at = field(acct.get("account_type"), "account_type")
                 an = field(acct.get("account_name"), "account_name")
@@ -243,12 +251,14 @@ def expect_contact(rc, data_rows, mimes, remote, accounts=None, aggregates=None,
     if is_int(cid):
         raw["contact_id"] = cid
         agg = aggregates.get(cid) if aggregates is not None else None
-        if agg is None:
-            unknown["contact_last_updated_timestamp"] = "unresolved"  # dangling contact_id or no contacts table
+        if aggregates is None:
+            undecided.append("contacts")  # no contacts table: the join cannot be decided
+        elif agg is None:
+            raw["aggregate_state"] = "no-contacts-row"  # a dangling contact_id (T72)
         else:
             ts = agg.get("contact_last_updated_timestamp")
     elif cid is None:
-        unknown["contact_last_updated_timestamp"] = "no-contact"  # not aggregated: the time is unknown, never zero
+        raw["aggregate_state"] = "no-contact-id"  # not aggregated: the time is unknown, never zero (T72)
     else:
         unknown["contact_id"] = "type-mismatch"
     if is_int(ts):
@@ -379,6 +389,8 @@ def expect_contact(rc, data_rows, mimes, remote, accounts=None, aggregates=None,
         raw["notes_total"], raw["notes_truncated"] = notes_total, True
     if tf:
         raw["text_flags"] = sorted(tf)
+    if undecided:
+        raw["join_undecided"] = undecided
     if unknown:
         raw["unknown_columns"] = unknown
     p["raw"] = raw

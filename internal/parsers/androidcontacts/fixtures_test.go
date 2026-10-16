@@ -207,10 +207,15 @@ func TestOracleStatesAccountsAndAggregateTimes(t *testing.T) {
 	if _, has := byRow[2].Payload["accounts"]; has || rawOf(t, byRow[2])["unknown_columns"] != nil {
 		t.Errorf("contact 2 (NULL account_id): %v", byRow[2].Payload)
 	}
-	// a dangling account_id: unknown, not "no account"
+	// a dangling account_id: a decided absence of the accounts row, stated; not "no account" (T72)
 	r12 := rawOf(t, byRow[12])
-	if _, has := byRow[12].Payload["accounts"]; has || obj(t, r12["unknown_columns"])["account_id"] != "unresolved" || num(r12["account_id"]) != "99" {
+	if _, has := byRow[12].Payload["accounts"]; has || r12["account_state"] != "no-accounts-row" || num(r12["account_id"]) != "99" || r12["unknown_columns"] != nil {
 		t.Errorf("contact 12 (dangling account_id): %v", byRow[12].Payload)
+	}
+	for row, r := range byRow {
+		if r.Table == "raw_contacts" && rawOf(t, r)["join_undecided"] != nil {
+			t.Errorf("row %d: a fixture cannot force an undecidable join, yet join_undecided = %v", row, rawOf(t, r)["join_undecided"])
+		}
 	}
 	// a valid aggregate time, with its source
 	r1 := rawOf(t, byRow[1])
@@ -225,13 +230,13 @@ func TestOracleStatesAccountsAndAggregateTimes(t *testing.T) {
 			t.Errorf("contact %d: times %v raw %v", row, byRow[row].Times, r)
 		}
 	}
-	// a NULL contact_id: the time is unknown (never zero); a dangling one is unresolved
+	// a NULL contact_id: the time is unknown (never zero) and says why; a dangling one has no contacts row (T72)
 	r11 := rawOf(t, byRow[11])
-	if len(byRow[11].Times) != 0 || obj(t, r11["unknown_columns"])["contact_last_updated_timestamp"] != "no-contact" || r11["contact_last_updated_timestamp"] != nil {
+	if len(byRow[11].Times) != 0 || r11["aggregate_state"] != "no-contact-id" || r11["contact_last_updated_timestamp"] != nil || r11["unknown_columns"] != nil {
 		t.Errorf("contact 11 (NULL contact_id): %v", byRow[11].Payload)
 	}
 	r13 := rawOf(t, byRow[13])
-	if len(byRow[13].Times) != 0 || obj(t, r13["unknown_columns"])["contact_last_updated_timestamp"] != "unresolved" {
+	if len(byRow[13].Times) != 0 || r13["aggregate_state"] != "no-contacts-row" || num(r13["contact_id"]) != "98" || r13["unknown_columns"] != nil {
 		t.Errorf("contact 13 (dangling contact_id): %v", byRow[13].Payload)
 	}
 	// three raw contacts of one person: three distinct accounts, one aggregate time
