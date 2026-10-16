@@ -116,7 +116,7 @@ type JoinFlags uint8
 // The join flags.
 const (
 	JoinCollationDiffers JoinFlags = 1 << iota // the source column's collation differs from the target's
-	JoinAffinityDiffers                        // the source column's affinity class differs from the target's
+	JoinAffinityDiffers                        // the classes differ; set even where the engine converts nothing (a no-affinity source against a TEXT target)
 	// JoinUndecided marks a HIT returned by an index that could not decide every
 	// target row (a row whose key is unknown, or rows the scan lost): the answer
 	// may be short, so it is never presented as the complete set of matches.

@@ -353,6 +353,12 @@ func checkJoinAgainstEngine(t *testing.T, eng *sql.DB, d *sqlitedb.DB, sc, tc ma
 				t.Errorf("cross-class pair %v returned by the layer but not by the engine", p)
 			}
 		}
+		if sc.class == parse.ClassBlob && tc.class == parse.ClassText {
+			// U50: two columns of which neither is numeric are compared as stored, so
+			// nothing is converted and the layer must also MISS nothing: a no-affinity
+			// key finds every equal TEXT value the engine joins.
+			samePairs(t, engine, ours)
+		}
 		return
 	}
 	// Same class: the layer's pairs equal the engine's exactly, flagged or not
