@@ -186,7 +186,8 @@ func isTableConstraintStart(t token) bool {
 type tableParse struct {
 	cols    []Column
 	pkNames []string // the primary key's columns in key order
-	pkDesc  bool     // the (single) key column is declared DESC
+	pkDesc  bool     // the (single) key column of a column-level key is declared DESC
+	pkDescs []bool   // the DESC of each key column in a table-level key clause
 	pkColl  []string // the COLLATE of each key column in a table-level key clause ("" = none)
 	havePK  bool
 	without bool
@@ -713,6 +714,7 @@ func (p *cparser) primaryKeyList(st *tableParse) bool {
 		return p.failAt(t, noteSyntax)
 	}
 	var names, colls []string
+	var descs []bool
 	for {
 		t := p.next()
 		if !isName(t) { // an expression in a key; a string literal names a column, as the engine reads it
@@ -720,6 +722,7 @@ func (p *cparser) primaryKeyList(st *tableParse) bool {
 		}
 		names = append(names, t.text)
 		colls = append(colls, "")
+		descs = append(descs, false)
 		for {
 			switch n := p.peek(0); {
 			case n.isWord("COLLATE"):
@@ -735,6 +738,7 @@ func (p *cparser) primaryKeyList(st *tableParse) bool {
 				continue
 			case n.isWord("DESC"):
 				p.next()
+				descs[len(descs)-1] = true
 				continue
 			case n.isWord("AUTOINCREMENT"):
 				p.next()
@@ -755,7 +759,7 @@ func (p *cparser) primaryKeyList(st *tableParse) bool {
 			if st.havePK {
 				return p.fail(notePK)
 			}
-			st.havePK, st.pkNames, st.pkDesc, st.pkColl = true, names, false, colls // the engine ignores DESC in a table constraint (TestSchemaMatchesEngine)
+			st.havePK, st.pkNames, st.pkDesc, st.pkColl, st.pkDescs = true, names, false, colls, descs // st.pkDesc is the column-level form only: a table-level DESC never makes the rowid alias a non-alias (TestSchemaMatchesEngine)
 			return true
 		default:
 			return p.failAt(t, notePK)
@@ -819,6 +823,7 @@ func (p *cparser) finish(st *tableParse) (TableDef, bool) {
 	def := TableDef{Columns: cols, WithoutRowid: st.without, Strict: st.strict, RowidAlias: -1, ParseOK: true}
 	pkIdx := make([]int, 0, len(st.pkNames))
 	pkColl := make([]string, 0, len(st.pkNames)) // the collation of each entry of pkIdx
+	pkDesc := make([]bool, 0, len(st.pkNames))   // the declared DESC of each entry of pkIdx
 	used := make([]bool, len(cols))
 	for n, nm := range st.pkNames {
 		found := -1
@@ -831,6 +836,10 @@ func (p *cparser) finish(st *tableParse) (TableDef, bool) {
 		if found < 0 || cols[found].Generated != GenNone {
 			return def, p.fail(notePK)
 		}
+		desc := st.pkDesc && len(st.pkDescs) == 0 // the column-level form
+		if n < len(st.pkDescs) {
+			desc = st.pkDescs[n]
+		}
 		coll := ""
 		if n < len(st.pkColl) {
 			coll = st.pkColl[n]
@@ -841,7 +850,7 @@ func (p *cparser) finish(st *tableParse) (TableDef, bool) {
 			// key; with two they order and compare rows differently from either
 			// alone, so the identity of a row is not derived: the table stays unparsed.
 			for k, i := range pkIdx {
-				if i == found && !asciiEqualFold(pkColl[k], coll) {
+				if i == found && (!asciiEqualFold(pkColl[k], coll) || (st.without && pkDesc[k] != desc)) {
 					return def, p.fail(notePK)
 				}
 			}
@@ -850,6 +859,7 @@ func (p *cparser) finish(st *tableParse) (TableDef, bool) {
 		used[found] = true
 		pkIdx = append(pkIdx, found)
 		pkColl = append(pkColl, coll)
+		pkDesc = append(pkDesc, desc)
 	}
 	if st.without && len(pkIdx) == 0 {
 		return def, p.fail(notePK)
@@ -857,6 +867,7 @@ func (p *cparser) finish(st *tableParse) (TableDef, bool) {
 	for k, i := range pkIdx {
 		cols[i].PKOrdinal = k + 1
 		cols[i].KeyCollation = pkColl[k]
+		cols[i].PKDesc = st.without && pkDesc[k]
 	}
 	for i := range cols {
 		c := &cols[i]

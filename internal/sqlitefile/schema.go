@@ -61,9 +61,12 @@ type Column struct {
 	// PRIMARY KEY (...) clause ("" = none). It governs the key's index and
 	// overrides Collation for key comparison.
 	KeyCollation string
-	Default      Default
-	Generated    GenKind
-	RecordIndex  int // position in the stored record; -1 for a virtual generated column
+	// PKDesc: this key column of a WITHOUT ROWID table is declared DESC and the
+	// engine orders the key descending on it. False for a rowid table.
+	PKDesc      bool
+	Default     Default
+	Generated   GenKind
+	RecordIndex int // position in the stored record; -1 for a virtual generated column
 }
 
 // TableDef is the parsed definition of a table. When ParseOK is false the
