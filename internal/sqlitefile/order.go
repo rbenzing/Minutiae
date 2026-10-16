@@ -185,7 +185,9 @@ func orderText(a, b Value, coll string) (int, OrderStatus) {
 		ab, bb = trimSpaces(ab), trimSpaces(bb)
 		return cmpBytes(ab, bb), OrderOK
 	}
-	// NOCASE: ASCII letters folded, byte by byte, then the lengths.
+	// NOCASE as the engine's collation: ASCII letters folded, byte by byte over the
+	// common length, stopping at the first NUL (both bytes NUL: the rest is not
+	// looked at), then the lengths decide (U55).
 	n := min(len(ab), len(bb))
 	for i := range n {
 		x, y := lowerASCII(ab[i]), lowerASCII(bb[i])
@@ -194,6 +196,9 @@ func orderText(a, b Value, coll string) (int, OrderStatus) {
 				return -1, OrderOK
 			}
 			return 1, OrderOK
+		}
+		if x == 0 {
+			break
 		}
 	}
 	return cmpInt(len(ab), len(bb)), OrderOK

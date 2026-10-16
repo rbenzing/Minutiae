@@ -51,6 +51,8 @@ func orderMatrix(enc sqlitefile.Encoding) []orderEntry {
 	}
 	for _, s := range []string{
 		"", "a", "A", "a ", "a  ", "b", "B", "ab", "aB", "é", "É", "中", "\U0001f600", "a\x00b", "a\x00", "z", "éa",
+		// embedded NULs (U55): NOCASE stops at the first NUL of the common length
+		"a\x00c", "A\x00b", "a\x00B", "\x00", "\x00a", "a\x00\x00", "a\x00é", "a\x00É", "b\x00b", "a\x00 ", "a \x00", "\x00\x00",
 	} {
 		out = append(out, orderEntry{s, orderText(enc, s)})
 	}
@@ -247,6 +249,79 @@ func TestOrderValuesNaNMatchesEngine(t *testing.T) {
 		}
 		if c, _ := sqlitefile.OrderValues(byID(id), evInt(-3), ""); c != -1 {
 			t.Errorf("NaN row %d against -3: %d, want -1", id, c)
+		}
+	}
+}
+
+// Every text of up to four bytes over {a, A, b, NUL, space} against every other,
+// under each collation, in one engine self-join: equality and order agree with
+// OrderValues (U57). The alphabet puts NULs at every position and length.
+func TestOrderValuesEmbeddedNULExhaustiveMatchesEngine(t *testing.T) {
+	alphabet := []string{"a", "A", "b", "\x00", " "}
+	texts := []string{""}
+	for level := texts; len(texts[len(texts)-1]) < 4; {
+		var next []string
+		for _, s := range level {
+			for _, c := range alphabet {
+				next = append(next, s+c)
+			}
+		}
+		texts = append(texts, next...)
+		level = next
+	}
+	db := engineOrderDB(t, "")
+	if _, err := db.Exec("create table t(id integer primary key, v)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("begin"); err != nil {
+		t.Fatal(err)
+	}
+	for i, s := range texts {
+		if _, err := db.Exec("insert into t values(?, ?)", i, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec("commit"); err != nil {
+		t.Fatal(err)
+	}
+	for coll, q := range map[string]string{
+		"BINARY": "select a.id, b.id from t a, t b where a.v < b.v collate binary",
+		"NOCASE": "select a.id, b.id from t a, t b where a.v < b.v collate nocase",
+		"RTRIM":  "select a.id, b.id from t a, t b where a.v < b.v collate rtrim",
+	} {
+		lt := map[[2]int]bool{}
+		rows, err := db.Query(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for rows.Next() {
+			var x, y int
+			if err := rows.Scan(&x, &y); err != nil {
+				t.Fatal(err)
+			}
+			lt[[2]int{x, y}] = true
+		}
+		_ = rows.Close()
+		bad := 0
+		for i, a := range texts {
+			for j, b := range texts {
+				c, st := sqlitefile.OrderValues(evText(a), evText(b), coll)
+				want := 0
+				switch {
+				case lt[[2]int{i, j}]:
+					want = -1
+				case lt[[2]int{j, i}]:
+					want = 1
+				}
+				if st != sqlitefile.OrderOK || c != want {
+					if bad++; bad <= 5 {
+						t.Errorf("%s: %q vs %q: OrderValues %d (%v), the engine says %d", coll, a, b, c, st, want)
+					}
+				}
+			}
+		}
+		if len(texts) < 600 || bad > 0 {
+			t.Logf("%s: %d texts, %d disagreements", coll, len(texts), bad)
 		}
 	}
 }

@@ -36,6 +36,9 @@ func FuzzOrderValues(f *testing.F) {
 	f.Add(byte(2), int64(0), math.Float64bits(math.NaN()), []byte(nil), byte(0), int64(0), uint64(0), []byte(nil), byte(2), int64(0), math.Float64bits(1), []byte(nil), byte(0))
 	f.Add(byte(3), int64(0), uint64(0), []byte("a "), byte(3), int64(0), uint64(0), []byte("a"), byte(4), int64(0), uint64(0), []byte("a"), byte(2))
 	f.Add(byte(1), int64(math.MaxInt64), uint64(0), []byte(nil), byte(2), int64(0), math.Float64bits(float64(math.MaxInt64)), []byte(nil), byte(1), int64(math.MinInt64), uint64(0), []byte(nil), byte(0))
+	// Embedded NULs under NOCASE (U55): equal by the engine, different bytes after the NUL.
+	f.Add(byte(3), int64(0), uint64(0), []byte("a\x00b"), byte(3), int64(0), uint64(0), []byte("a\x00c"), byte(3), int64(0), uint64(0), []byte("A\x00b"), byte(2))
+	f.Add(byte(3), int64(0), uint64(0), []byte("\x00"), byte(3), int64(0), uint64(0), []byte("a\x00"), byte(3), int64(0), uint64(0), []byte("a\x00\x00"), byte(2))
 	f.Fuzz(func(t *testing.T, sa byte, na int64, fa uint64, ba []byte, sb byte, nb int64, fb uint64, bb []byte, sc byte, nc int64, fc uint64, bc []byte, collSel byte) {
 		a, b, c := fuzzOrderValue(sa, na, fa, ba), fuzzOrderValue(sb, nb, fb, bb), fuzzOrderValue(sc, nc, fc, bc)
 		coll := []string{"", "BINARY", "NOCASE", "RTRIM", "nocase"}[int(collSel)%5]

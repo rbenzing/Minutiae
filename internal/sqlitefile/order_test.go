@@ -140,3 +140,28 @@ func TestOrderValuesNaNIsNull(t *testing.T) {
 		t.Errorf("NaN against MinInt64 = %d, want -1", c)
 	}
 }
+
+// The engine's NOCASE collation stops at the first NUL of the common length and
+// then compares lengths (U55). Expected values are the engine's, pinned.
+func TestOrderValuesNocaseEmbeddedNULTable(t *testing.T) {
+	for _, tc := range []struct {
+		a, b string
+		want int
+	}{
+		{"a\x00b", "a\x00c", 0},
+		{"A\x00b", "a\x00c", 0},
+		{"a\x00B", "a\x00b", 0},
+		{"a\x00b", "a\x00", 1},
+		{"a\x00", "a", 1},
+		{"a\x00", "ab", -1},
+		{"\x00", "a", -1},
+		{"\x00x", "\x00y", 0},
+		{"\x00\x00", "\x00", 1},
+		{"a\x00é", "a\x00É", 0},
+		{"a\x00b", "a\x00\x00", 0},
+	} {
+		if c, st := sqlitefile.OrderValues(evText(tc.a), evText(tc.b), "nocase"); st != sqlitefile.OrderOK || c != tc.want {
+			t.Errorf("%q vs %q = %d, %v; the engine says %d", tc.a, tc.b, c, st, tc.want)
+		}
+	}
+}
