@@ -14,6 +14,7 @@ var (
 	ErrLimit           = errors.New("sqlitefile: structural limit exceeded")
 	ErrPageUnavailable = errors.New("sqlitefile: page not available in the file")
 	ErrNotFound        = errors.New("sqlitefile: no such table or index")
+	ErrVirtualTable    = errors.New("sqlitefile: the table is a virtual table; its content is defined by a module this reader does not interpret")
 	ErrWithoutRowid    = errors.New("sqlitefile: table is WITHOUT ROWID")
 	ErrAlreadyAttached = errors.New("sqlitefile: companion file already attached")
 	ErrInternal        = errors.New("sqlitefile: internal error (recovered panic)")

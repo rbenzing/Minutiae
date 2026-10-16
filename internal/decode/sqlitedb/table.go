@@ -66,6 +66,9 @@ func (db *DB) Table(ctx context.Context, name string, need, want []string) (t *T
 	}
 	lt, err := db.view.Table(ctx, name)
 	if err != nil {
+		if errors.Is(err, sqlitefile.ErrVirtualTable) {
+			return nil, &UnsupportedSchemaError{Table: name, Reason: "virtual table: its content is defined by a module this reader does not interpret"}
+		}
 		if errors.Is(err, sqlitefile.ErrNotFound) {
 			return nil, fmt.Errorf("%w: %w", ErrNoSuchTable, err)
 		}

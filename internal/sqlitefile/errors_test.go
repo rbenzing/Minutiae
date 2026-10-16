@@ -88,7 +88,7 @@ func TestSentinelsAreDistinct(t *testing.T) {
 	all := []error{
 		sqlitefile.ErrNotSQLite, sqlitefile.ErrLooksEncrypted, sqlitefile.ErrCorrupt, sqlitefile.ErrBudget,
 		sqlitefile.ErrLimit, sqlitefile.ErrPageUnavailable, sqlitefile.ErrNotFound, sqlitefile.ErrWithoutRowid,
-		sqlitefile.ErrAlreadyAttached, sqlitefile.ErrInternal,
+		sqlitefile.ErrAlreadyAttached, sqlitefile.ErrInternal, sqlitefile.ErrVirtualTable,
 	}
 	for i, a := range all {
 		if !strings.HasPrefix(a.Error(), "sqlitefile: ") {

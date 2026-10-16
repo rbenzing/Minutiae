@@ -210,7 +210,7 @@ func TestLiveDamagedCodes(t *testing.T) {
 // TestIsAnswerless (review M-1): the errors that only mean "the live state cannot
 // answer" and the ones that end the pass.
 func TestIsAnswerless(t *testing.T) {
-	for _, e := range []error{ErrNotFound, ErrCorrupt, ErrLimit, ErrPageUnavailable, ErrWithoutRowid} {
+	for _, e := range []error{ErrNotFound, ErrCorrupt, ErrLimit, ErrPageUnavailable, ErrWithoutRowid, ErrVirtualTable} {
 		if !isAnswerless(fmt.Errorf("wrapped: %w", e)) {
 			t.Errorf("%v is not answerless", e)
 		}

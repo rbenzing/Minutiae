@@ -49,6 +49,7 @@ func TestSqlitefileSurfaceUsedByTheDecoder(_ *testing.T) {
 	pin[error](sqlitefile.ErrLimit)
 	pin[error](sqlitefile.ErrPageUnavailable)
 	pin[error](sqlitefile.ErrWithoutRowid)
+	pin[error](sqlitefile.ErrVirtualTable)
 	pin[error](sqlitefile.ErrInternal)
 	pin[error](sqlitefile.ErrEngineRefuses)
 	pin[error](sqlitefile.ErrLiveUnavailable)

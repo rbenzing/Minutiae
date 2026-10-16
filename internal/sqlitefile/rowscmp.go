@@ -46,7 +46,7 @@ func (rp *rowPass) table(name string) (*Table, error) {
 // anything else (cancellation, the budget, an I/O error) ends the pass.
 func isAnswerless(err error) bool {
 	return errors.Is(err, ErrNotFound) || errors.Is(err, ErrCorrupt) || errors.Is(err, ErrLimit) ||
-		errors.Is(err, ErrPageUnavailable) || errors.Is(err, ErrWithoutRowid)
+		errors.Is(err, ErrPageUnavailable) || errors.Is(err, ErrWithoutRowid) || errors.Is(err, ErrVirtualTable)
 }
 
 // compare relates the row to the live state.

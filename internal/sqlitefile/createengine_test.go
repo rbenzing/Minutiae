@@ -174,7 +174,7 @@ func TestOverCapSQLRaisesTheUnparsedWarning(t *testing.T) {
 // (C52): the table exists in the schema, so ErrNotFound would be a false
 // absence. A warning names the table. The same holds for any root that cannot
 // be a b-tree root: page 1 (the schema table) and a page past the addressable
-// limit. A virtual table stays ErrNotFound and does not warn.
+// limit. A virtual table is ErrVirtualTable (it exists, so never ErrNotFound) and does not warn.
 func TestRootPageZeroErrorText(t *testing.T) {
 	b := sqlitetest.New(sqlitetest.Options{})
 	b.AddSchemaRow("table", "zero", "zero", int64(0), "CREATE TABLE zero(a)")
@@ -199,7 +199,7 @@ func TestRootPageZeroErrorText(t *testing.T) {
 		}
 	}
 	_, err := v.Table(context.Background(), "vt")
-	if !errors.Is(err, sqlitefile.ErrNotFound) || !strings.Contains(err.Error(), "virtual table") {
+	if !errors.Is(err, sqlitefile.ErrVirtualTable) || errors.Is(err, sqlitefile.ErrNotFound) {
 		t.Errorf("a virtual table: %v", err)
 	}
 	for _, w := range v.Warnings() {
