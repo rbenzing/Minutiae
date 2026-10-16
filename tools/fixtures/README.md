@@ -940,3 +940,39 @@ repository) nor in `frameworks/opt/telephony`; the copy in `packages/apps/Messag
 (`src/com/android/messaging/mmslib/pdu/PduHeaders.java`, same tag) gives FROM 0x89 = 137 (line 38), TO 0x97 = 151
 (line 54), CC 0x82 = 130 (line 31) and BCC 0x81 = 129 (line 30). The plan brief had CC and BCC swapped (written from
 memory); the public source wins (ruling T42), and the mapper and the oracle of the owning task follow it.
+
+## Telephony fixtures (plan 4D)
+
+`tools/fixtures/telephony_gen.py` builds the Android telephony databases with the host Python's bundled `sqlite3`
+(Python 3 only: no Docker, no kernel, no mounts; `py -3` on Windows, `python3` on Linux and macOS):
+
+```
+py -3 tools/fixtures/telephony_gen.py --family mmssms --out internal/parsers/androidmms/testdata \
+    --pins-go internal/parsers/androidmms/pins_test.go --pins-package androidmms_test
+py -3 tools/fixtures/telephony_gen.py --family mmssms --out <dir> --variant utf16 hot-journal   # some variants
+py -3 tools/fixtures/telephony_gen.py --family mmssms --check                                  # generate, discard
+```
+
+`--pins-go` writes the complete, already formatted `fixturePins` table (the SHA-256 of every decompressed file) and needs
+every variant. `telephony_common.py` holds the shared helpers, `telephony_mmssms.py` the scenario rows and the oracle.
+
+The oracle is the scenario oracle of spec 10.3: Python restates the mapping rules and reads the stored values back
+from the engine on a COPY of the finished files (a WAL or hot journal is applied to the copy, never to the shipped
+bytes), so a record is expected from what the engine says is in the database, not from what the generator meant to
+write. It shares no code with the Go parsers. `expect.json` names the engine (`generator.sqlite`) and the SHA-256 of
+each file; the database header differs between SQLite versions, so a fixture is regenerated together with its oracle
+and its pin. Databases are byte-reproducible; a WAL or journal holds salts drawn from the engine's PRNG and differs on
+every run. MMS address types follow the public `PduHeaders.java` (137 from, 151 to, 129 bcc, 130 cc; ruling T42); the
+fixture rows keep the raw type codes.
+
+| Variant | DDL snapshot | Database state | What it exercises |
+|---|---|---|---|
+| `aosp-baseline` | `mmssms-aosp-baseline.sql` | plain database | 22 `sms` and 6 `pdu` rows: every `type`, sentinel, seconds-in-ms and year-2100 dates, NUL and invalid UTF-8, 300 KiB body, address kinds, missing thread and recipient rows, MMS parts, attachments (one present, others unresolved), roles `from,to,to,cc,bcc,member` |
+| `aosp-subid-alter` | `mmssms-aosp-subid-alter.sql` | rows written before and after `ALTER TABLE ADD COLUMN` (`@phase 1`) | `sub_id`, `creator`, `text_only` appear mid-history |
+| `oem-extended` | `mmssms-oem-extended.sql` | plain | three invented vendor columns: `unmapped_columns.sms` |
+| `utf16` | `mmssms-aosp-baseline.sql` | page size 1024, UTF-16LE text | the text decoding path |
+| `av-freelist-512` | `mmssms-aosp-baseline.sql` | page size 512, `auto_vacuum=2`, 151 rows deleted | freelist pages |
+| `wal-uncheckpointed` | `mmssms-aosp-baseline.sql` | WAL left by a killed writer (`os._exit`) | rows only in the WAL; an edited row (`file: wal`) |
+| `hot-journal` | `mmssms-aosp-baseline.sql` | rollback journal left by a killed writer | the `journal-hot` reader warning; the oracle shows the rolled-back rows |
+
+The DDL snapshots and their public sources: `schemas/android-telephony/CROSSCHECK.md` (see "DDL provenance" above).

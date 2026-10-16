@@ -1,0 +1,473 @@
+{
+ "ddl": "mmssms-aosp-baseline.sql",
+ "extra_files": [],
+ "family": "mmssms",
+ "generator": {
+  "files": {
+   "db": "85e8a38e28beec0d0731c963e2bc8979b2e037c96d3d66fb798af43e7ed8cd83",
+   "wal": "d90675d391cae2f3833a6fc4ecf58bb43e9738ef3fe636c5743ccb500a97180c"
+  },
+  "python": "3.13.5",
+  "sqlite": "3.49.1",
+  "tool": "tools/fixtures/telephony_gen.py"
+ },
+ "notes": {
+  "schema.pdu": "columns:35;optional:thread_id,date_sent,read,m_id,sub,m_type,m_size,ct_t,locked,seen,sub_id,text_only",
+  "schema.sms": "columns:19;optional:thread_id,date_sent,read,status,subject,protocol,service_center,locked,sub_id,error_code,creator,seen",
+  "unmapped_columns.pdu": "sub_cs,ct_l,exp,m_cls,v,pri,rr,rpt_a,resp_st,st,tr_id,retr_st,retr_txt,retr_txt_cs,read_status,ct_cls,resp_txt,d_tm,d_rpt,creator",
+  "unmapped_columns.sms": "person,reply_path_present"
+ },
+ "records": [
+  {
+   "body": "hello",
+   "deleted": false,
+   "file": "any",
+   "payload": {
+    "channel": "sms",
+    "direction": "in",
+    "kind": "text",
+    "participants": [
+     {
+      "address": "+15551234567",
+      "kind": "phone",
+      "role": "from"
+     }
+    ],
+    "raw": {
+     "date": 1682935200000,
+     "date_sent": 1682935198000,
+     "error_code": -1,
+     "locked": 0,
+     "protocol": 0,
+     "read": 1,
+     "seen": 0,
+     "service_center": "+15550000001",
+     "status": -1,
+     "sub_id": -1,
+     "thread_id": 1,
+     "type": 1
+    },
+    "read": true,
+    "status": "received",
+    "text_source": "text",
+    "thread": {
+     "group": false,
+     "id": "1",
+     "members": [
+      "+15551234567"
+     ]
+    }
+   },
+   "rowid": 1,
+   "source_path": "/data/user_de/0/com.android.providers.telephony/databases/mmssms.db",
+   "summary": "sms in +15551234567: hello",
+   "table": "sms",
+   "time": "2023-05-01T10:00:00Z",
+   "time_end": null,
+   "times": {
+    "received": "2023-05-01T10:00:00Z",
+    "sent": "2023-05-01T09:59:58Z"
+   },
+   "type": "message"
+  },
+  {
+   "body": "edited in the wal",
+   "deleted": false,
+   "file": "wal",
+   "payload": {
+    "channel": "sms",
+    "direction": "out",
+    "kind": "text",
+    "participants": [
+     {
+      "address": "+15551234567",
+      "kind": "phone",
+      "role": "to"
+     }
+    ],
+    "raw": {
+     "date": 1682935320000,
+     "date_sent": 0,
+     "date_sent_status": "sentinel",
+     "error_code": -1,
+     "locked": 0,
+     "read": 1,
+     "seen": 0,
+     "status": 0,
+     "sub_id": -1,
+     "thread_id": 1,
+     "type": 2
+    },
+    "read": true,
+    "status": "sent",
+    "text_source": "text",
+    "thread": {
+     "group": false,
+     "id": "1",
+     "members": [
+      "+15551234567"
+     ]
+    }
+   },
+   "rowid": 2,
+   "source_path": "/data/user_de/0/com.android.providers.telephony/databases/mmssms.db",
+   "summary": "sms out +15551234567: edited in the wal",
+   "table": "sms",
+   "time": "2023-05-01T10:02:00Z",
+   "time_end": null,
+   "times": {
+    "sent": "2023-05-01T10:02:00Z"
+   },
+   "type": "message"
+  },
+  {
+   "body": "draft text",
+   "deleted": false,
+   "file": "any",
+   "payload": {
+    "channel": "sms",
+    "direction": "out",
+    "kind": "text",
+    "participants": [
+     {
+      "address": "+15551234567",
+      "kind": "phone",
+      "role": "to"
+     }
+    ],
+    "raw": {
+     "date": 1682935380000,
+     "date_sent": 0,
+     "date_sent_status": "sentinel",
+     "error_code": -1,
+     "locked": 0,
+     "read": 1,
+     "seen": 0,
+     "status": -1,
+     "sub_id": -1,
+     "thread_id": 1,
+     "type": 3
+    },
+    "read": true,
+    "status": "draft",
+    "text_source": "text",
+    "thread": {
+     "group": false,
+     "id": "1",
+     "members": [
+      "+15551234567"
+     ]
+    }
+   },
+   "rowid": 3,
+   "source_path": "/data/user_de/0/com.android.providers.telephony/databases/mmssms.db",
+   "summary": "sms out +15551234567: draft text",
+   "table": "sms",
+   "time": "2023-05-01T10:03:00Z",
+   "time_end": null,
+   "times": {
+    "sent": "2023-05-01T10:03:00Z"
+   },
+   "type": "message"
+  },
+  {
+   "body": null,
+   "deleted": false,
+   "file": "any",
+   "payload": {
+    "channel": "sms",
+    "direction": "in",
+    "kind": "text",
+    "participants": [
+     {
+      "address": "+15551234567",
+      "kind": "phone",
+      "role": "from"
+     }
+    ],
+    "raw": {
+     "date": 1682935440000,
+     "date_sent": 0,
+     "date_sent_status": "sentinel",
+     "error_code": -1,
+     "locked": 0,
+     "read": 0,
+     "seen": 0,
+     "status": -1,
+     "sub_id": -1,
+     "thread_id": 1,
+     "type": 1
+    },
+    "read": false,
+    "status": "received",
+    "thread": {
+     "group": false,
+     "id": "1",
+     "members": [
+      "+15551234567"
+     ]
+    }
+   },
+   "rowid": 4,
+   "source_path": "/data/user_de/0/com.android.providers.telephony/databases/mmssms.db",
+   "summary": "sms in +15551234567:",
+   "table": "sms",
+   "time": "2023-05-01T10:04:00Z",
+   "time_end": null,
+   "times": {
+    "received": "2023-05-01T10:04:00Z"
+   },
+   "type": "message"
+  },
+  {
+   "body": "no time",
+   "deleted": false,
+   "file": "any",
+   "payload": {
+    "channel": "sms",
+    "direction": "in",
+    "kind": "text",
+    "participants": [
+     {
+      "address": "+15551234567",
+      "kind": "phone",
+      "role": "from"
+     }
+    ],
+    "raw": {
+     "date": 0,
+     "date_sent": 0,
+     "date_sent_status": "sentinel",
+     "date_status": "sentinel",
+     "error_code": -1,
+     "locked": 0,
+     "read": 1,
+     "seen": 0,
+     "status": -1,
+     "sub_id": -1,
+     "thread_id": 1,
+     "type": 1
+    },
+    "read": true,
+    "status": "received",
+    "text_source": "text",
+    "thread": {
+     "group": false,
+     "id": "1",
+     "members": [
+      "+15551234567"
+     ]
+    }
+   },
+   "rowid": 5,
+   "source_path": "/data/user_de/0/com.android.providers.telephony/databases/mmssms.db",
+   "summary": "sms in +15551234567: no time",
+   "table": "sms",
+   "time": null,
+   "time_end": null,
+   "times": {},
+   "type": "message"
+  },
+  {
+   "body": "seconds in a milliseconds column",
+   "deleted": false,
+   "file": "any",
+   "payload": {
+    "channel": "sms",
+    "direction": "in",
+    "kind": "text",
+    "participants": [
+     {
+      "address": "+15551234567",
+      "kind": "phone",
+      "role": "from"
+     }
+    ],
+    "raw": {
+     "date": 1700000000,
+     "date_sent": 0,
+     "date_sent_status": "sentinel",
+     "date_status": "invalid",
+     "error_code": -1,
+     "locked": 0,
+     "read": 1,
+     "seen": 0,
+     "status": -1,
+     "sub_id": -1,
+     "thread_id": 1,
+     "type": 1
+    },
+    "read": true,
+    "status": "received",
+    "text_source": "text",
+    "thread": {
+     "group": false,
+     "id": "1",
+     "members": [
+      "+15551234567"
+     ]
+    }
+   },
+   "rowid": 6,
+   "source_path": "/data/user_de/0/com.android.providers.telephony/databases/mmssms.db",
+   "summary": "sms in +15551234567: seconds in a milliseconds column",
+   "table": "sms",
+   "time": null,
+   "time_end": null,
+   "times": {},
+   "type": "message"
+  },
+  {
+   "body": "only in the wal, a",
+   "deleted": false,
+   "file": "wal",
+   "payload": {
+    "channel": "sms",
+    "direction": "in",
+    "kind": "text",
+    "participants": [
+     {
+      "address": "+15551234567",
+      "kind": "phone",
+      "role": "from"
+     }
+    ],
+    "raw": {
+     "date": 1682935620000,
+     "date_sent": 0,
+     "date_sent_status": "sentinel",
+     "error_code": -1,
+     "locked": 0,
+     "read": 1,
+     "seen": 0,
+     "status": -1,
+     "sub_id": -1,
+     "thread_id": 1,
+     "type": 1
+    },
+    "read": true,
+    "status": "received",
+    "text_source": "text",
+    "thread": {
+     "group": false,
+     "id": "1",
+     "members": [
+      "+15551234567"
+     ]
+    }
+   },
+   "rowid": 7,
+   "source_path": "/data/user_de/0/com.android.providers.telephony/databases/mmssms.db",
+   "summary": "sms in +15551234567: only in the wal, a",
+   "table": "sms",
+   "time": "2023-05-01T10:07:00Z",
+   "time_end": null,
+   "times": {
+    "received": "2023-05-01T10:07:00Z"
+   },
+   "type": "message"
+  },
+  {
+   "body": "only in the wal, b",
+   "deleted": false,
+   "file": "wal",
+   "payload": {
+    "channel": "sms",
+    "direction": "out",
+    "kind": "text",
+    "participants": [
+     {
+      "address": "+15551234567",
+      "kind": "phone",
+      "role": "to"
+     }
+    ],
+    "raw": {
+     "date": 1682935680000,
+     "date_sent": 0,
+     "date_sent_status": "sentinel",
+     "error_code": -1,
+     "locked": 0,
+     "read": 1,
+     "seen": 0,
+     "status": -1,
+     "sub_id": -1,
+     "thread_id": 1,
+     "type": 2
+    },
+    "read": true,
+    "status": "sent",
+    "text_source": "text",
+    "thread": {
+     "group": false,
+     "id": "1",
+     "members": [
+      "+15551234567"
+     ]
+    }
+   },
+   "rowid": 8,
+   "source_path": "/data/user_de/0/com.android.providers.telephony/databases/mmssms.db",
+   "summary": "sms out +15551234567: only in the wal, b",
+   "table": "sms",
+   "time": "2023-05-01T10:08:00Z",
+   "time_end": null,
+   "times": {
+    "sent": "2023-05-01T10:08:00Z"
+   },
+   "type": "message"
+  },
+  {
+   "body": "only in the wal, c",
+   "deleted": false,
+   "file": "wal",
+   "payload": {
+    "channel": "sms",
+    "direction": "in",
+    "kind": "text",
+    "participants": [
+     {
+      "address": "+15551234567",
+      "kind": "phone",
+      "role": "from"
+     }
+    ],
+    "raw": {
+     "date": 1682935740000,
+     "date_sent": 0,
+     "date_sent_status": "sentinel",
+     "error_code": -1,
+     "locked": 0,
+     "read": 1,
+     "seen": 0,
+     "status": -1,
+     "sub_id": -1,
+     "thread_id": 1,
+     "type": 1
+    },
+    "read": true,
+    "status": "received",
+    "text_source": "text",
+    "thread": {
+     "group": false,
+     "id": "1",
+     "members": [
+      "+15551234567"
+     ]
+    }
+   },
+   "rowid": 9,
+   "source_path": "/data/user_de/0/com.android.providers.telephony/databases/mmssms.db",
+   "summary": "sms in +15551234567: only in the wal, c",
+   "table": "sms",
+   "time": "2023-05-01T10:09:00Z",
+   "time_end": null,
+   "times": {
+    "received": "2023-05-01T10:09:00Z"
+   },
+   "type": "message"
+  }
+ ],
+ "variant": "wal-uncheckpointed",
+ "warnings": []
+}
