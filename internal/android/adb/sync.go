@@ -113,7 +113,9 @@ func (s *Sync) readFail() error {
 }
 
 // List returns the entries of dir, excluding "." and "..", reading at most
-// DefaultMaxListEntries.
+// DefaultMaxListEntries. Entries returned together with a non-nil error are
+// PARTIAL: they must never be used as the whole listing. After ErrListLimit the
+// device still has frames pending and the sync session is unusable.
 func (s *Sync) List(dir string) ([]SyncEntry, error) {
 	res, err := s.ListN(dir, DefaultMaxListEntries)
 	return res.Entries, err
@@ -121,8 +123,10 @@ func (s *Sync) List(dir string) ([]SyncEntry, error) {
 
 // ListN is List with a limit on the entries read. More than limit entries (or
 // more than limit+2 frames: a real directory has one "." and one "..") is
-// ErrListLimit with the first limit entries in the result; the session is then
-// unusable.
+// ErrListLimit with the first limit entries in the result. Entries returned
+// with a non-nil error are PARTIAL and must never be used as the whole
+// listing; after ErrListLimit the sync session is unusable. A limit of zero or
+// less means DefaultMaxListEntries; a huge limit is clamped.
 func (s *Sync) ListN(dir string, limit int) (ListResult, error) {
 	if limit <= 0 {
 		limit = DefaultMaxListEntries

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"testing"
 	"time"
@@ -129,5 +130,22 @@ func TestSyncListNExactlyAtTheLimitSucceeds(t *testing.T) {
 	res, err := s.ListN("/sdcard", 3)
 	if err != nil || len(res.Entries) != 3 || res.Raw != 5 {
 		t.Fatalf("entries = %+v raw = %d, err = %v", res.Entries, res.Raw, err)
+	}
+}
+
+// A caller-supplied limit near MaxInt must be clamped: unclamped, limit+2
+// wraps negative and a three-entry directory would be refused as over-limit.
+func TestSyncListNClampsAHugeLimit(t *testing.T) {
+	s := hostileSync(t, func(w io.Writer) {
+		_, _ = w.Write(dent("."))
+		_, _ = w.Write(dent(".."))
+		for _, n := range []string{"a", "b", "c"} {
+			_, _ = w.Write(dent(n))
+		}
+		_, _ = w.Write(frame("DONE", 0, 0, 0, 0))
+	})
+	res, err := s.ListN("/sdcard", math.MaxInt)
+	if err != nil || len(res.Entries) != 3 {
+		t.Fatalf("entries = %+v, err = %v", res.Entries, err)
 	}
 }
