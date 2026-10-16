@@ -89,3 +89,11 @@ func SetConcludeJoinTimeout(d time.Duration) (restore func()) {
 	concludeJoinTimeout = d
 	return func() { concludeJoinTimeout = old }
 }
+
+// SetJobContext replaces the derivation of the time-limited context of every guarded call (Probe and
+// Parse); call the result to restore it. Tests use it to expire a job on an event, not after a delay.
+func SetJobContext(f func(parent context.Context, d time.Duration) (context.Context, context.CancelFunc)) (restore func()) {
+	old := newJobCtx
+	newJobCtx = f
+	return func() { newJobCtx = old }
+}
