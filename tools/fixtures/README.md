@@ -43,6 +43,7 @@ Scripts must keep LF line endings (`.gitattributes` enforces this).
 | `ewf.sh` + `ewf_inspect.py` + `ewf_normalize.py` | `ewf-disk.img.gz` (the raw source disk), `ewf-<variant>.E0N.gz` (one `.gz` per segment file of `single-none`, `single-best`, `multi-none`, `seed-small`) and `ewf-fixtures.expect.json`, in `internal/image/ewf/testdata/` | the raw disk (its sha256/md5/sha1/size, built from the committed ext4 and fat12 fixtures), an independent Python decoder (`ewf_inspect.py`: every section and Adler-32, every chunk, the rebuilt media equals the raw disk byte for byte), `ewfverify`, `ewfinfo` (whitelisted geometry and hash fields) and `ewfexport -f raw` (sha256 equals the raw disk) |
 | `f2fs.sh` + `f2fs_tree.sh` + `f2fs_oracle.py` + `f2fs_normalize.py` | `f2fs-extra-attr`, `f2fs-default` (`.img.gz` + `.expect.json`, in `internal/filesys/f2fs/testdata/`) | the source tree handed to `sload.f2fs` (`f2fs_oracle.py tree`: type, size, sha256, mode, mtime, symlink targets), and the reports of `fsck.f2fs -l/-f/-t/-M`, `dump.f2fs -s/-n` and `blkid` on the finished image (`f2fs_oracle.py layout`: superblock and checkpoint fields, features, uuid, label, the NAT block address of every inode, the data-block extents of every file, the free main-area blocks from the SIT bitmaps). The oracle cross-checks the tools against each other (fsck vs dump on every shared field, SIT popcount vs `valid_block_count`, fsck's tree vs the source tree, the file map vs file sizes) and the generator fails on any mismatch, on an unclean `fsck.f2fs`, or when no file is fragmented |
 | `fat_recover.sh` + `fat_recover_oracle.py` (image `minutiae-recover-fixtures`, `Dockerfile.recover`; `gen.sh fat-recover`) | `fat12-recover`, `fat16-recover`, `fat32-recover` (`.img.gz` + `.expect.json`, in `internal/filesys/fat/testdata/recover/`) | volumes written and deleted by the kernel `vfat` driver in the QEMU guest; an independent Python reader of the finished image checked against `mshowfat`, `fsck.fat -v` and the source tree (see "FAT recovery fixtures (3B)") |
+| `exfat_recover.sh` + `exfat_recover_oracle.py` (image `minutiae-recover-fixtures`; `gen.sh exfat-recover`) | `exfat-recover` (`.img.gz` + `.expect.json`, in `internal/filesys/exfat/testdata/recover/`) | a volume written and deleted by the kernel `exfat` driver in the QEMU guest; an independent Python parse of the finished image checked against the allocation bitmap, `dump.exfat` and the source tree (see "exFAT recovery fixture (3B)") |
 
 ## Determinism
 
@@ -1027,6 +1028,50 @@ contiguous / fragmented files is missing from one. No test compares timestamps f
 
 NOT produced by a real driver (builder tests only): cross-linked chains, bad or reserved clusters inside a range, orphan
 LFN sets, a first cluster outside the volume, a size larger than the volume.
+
+## exFAT recovery fixture (3B)
+
+`exfat_recover.sh` (+ `exfat_recover_oracle.py`, library `recover_guest.sh`) builds one exFAT volume that the KERNEL
+`exfat` driver writes and deletes inside the QEMU TCG guest (ruling F3: no `exfat-fuse`, no loop device, no
+`--privileged`, no kernel module on the host). Output, in a subdirectory (ruling F15):
+`internal/filesys/exfat/testdata/recover/exfat-recover.img.gz` (130494 bytes) and `.expect.json`. Regenerate image and
+oracle together (QEMU images are not byte-reproducible; `generator.image_sha256` binds them):
+
+```bash
+docker run --rm -v "$PWD:/work" -w /work minutiae-recover-fixtures bash tools/fixtures/gen.sh exfat-recover
+```
+
+The script exits 1 when it wrote no image (ruling F102), so `gen.sh exfat-recover` never reports success for nothing.
+Self-check: `TestExfatRecoverFixturesHoldWhatTheyClaim` (internal/filesys/exfat). `exfat-fuse`, installed by
+`Dockerfile.recover`, is unused.
+
+The image is 8 MiB, `mkfs.exfat -L FIXTURE -c 4096` under `faketime` (1536 clusters of 4096 bytes), guest `-t exfat`. The
+method is that of "FAT recovery fixtures (3B)" (rulings F19, F22): one directory per family, the volume FULL (`fill.bin`
+until ENOSPC) before every reuse step, writer directories made first, phase W before phase D (only `rm`), four fresh-mount
+guest boots with host snapshots after boots 1-3 for the true chains. Sizes are `k*4096-7` bytes.
+
+| Family (directory) | Steps | Final state |
+|---|---|---|
+| `contiguous` | `target.bin` (5 clusters), `rm` in D | the kernel keeps `NoFatChain` for it: `exfat-nofatchain`, equal to the source, 75 |
+| `zero-size` | `target.dat` (0 bytes), `rm` in D | skip `empty` |
+| `reuse-head` | `rm target.bin` (6), `/reuse-head-w/took.bin` (2) then `rest.bin` (4) | every cluster live: skip `no-free-bytes` |
+| `cut-h` | `rm target.bin` (6), `/cut-h-hid/filler.bin` (4) then `/cut-h-w/tail.bin` (2, live), `rm -r /cut-h-hid` in D | target cut after 4 clusters holding the hidden overwriter's bytes (20) |
+| `chained` | `a.bin` (2), `b.bin` (3, stays), `c.bin` (4); `rm a c`; `f.bin` (6) takes both holes, so it is fragmented and gets a FAT chain; `rm f.bin` in D | `f.bin`: `no_fat_chain` false, `fat_residue` `chain-kept` (probe fact P3: the kernel keeps the FAT entries), `exfat-fatchain` 65 (30 with the overlap); the hole's `c.bin` is `NoFatChain`, complete and not equal to the source |
+| `gone` | `gone/inner.bin` (2), `rm -r /gone` in D | a deleted directory (`not-a-file`); `inner.bin` is under it (`listed: false`) |
+
+`valid-data-length` is builder-only: probe fact P5 (`ValidDataLength` below `DataLength` cannot be reached with the guest's
+tools), so the oracle exits 1 if any entry has them differ. Helper entries carry the family `<family>-aux` (as in the FAT
+fixtures). The oracle is an independent Python parse of the finished image (boot sector, FAT, allocation bitmap, entry
+sets), cross-checked against the allocation bitmap (its zero bits equal the clusters no live chain holds), `dump.exfat`
+(cluster size, total clusters, `Free Clusters`), and the source tree (every live file's bytes). The pinned `dump.exfat`
+(exfatprogs 1.2.0) has no per-file option, so `no_fat_chain` is cross-checked against the FAT instead: a `NoFatChain` file's
+FAT entries are zero, a chained file's are all written (and the flag must not change between the snapshot that saw the file
+live and its deleted entry). Per deleted file the oracle adds `no_fat_chain`, `data_length`, `valid_data_length` and
+`fat_residue` (`not-chained`, `chain-kept` or `chain-cleared`, read from the FINAL FAT along the true chain); `expect.method`
+is `exfat-nofatchain` (75) when `no_fat_chain`, `exfat-fatchain` (65) when the chain is kept, else `exfat-contiguous` (55),
+with the caps 20 (cut) and 30 (overlap). The generator exits 1 naming a missing family (`nofatchain-equal`, `empty`,
+`chained`, `skip-no-free-bytes`, `cut-prefix`, `not-equal-complete`), and exits 1 with "re-rule F1" if the chained file's
+FAT chain is not kept. The FAT-fixture-only fields `name_state` do not apply (exFAT names are always whole entries).
 
 ## SQLite fixtures
 

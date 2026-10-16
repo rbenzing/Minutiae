@@ -1,0 +1,568 @@
+{
+  "generator": {
+    "image_sha256": "292e407c186e6a1eefe8a744c88af191cc3681e543806aecd1c597134c1d4984",
+    "packages": [
+      {
+        "package": "busybox-static",
+        "version": "1:1.35.0-4+deb12u1+b1"
+      },
+      {
+        "package": "coreutils",
+        "version": "9.1-1"
+      },
+      {
+        "package": "cpio",
+        "version": "2.13+dfsg-7.1"
+      },
+      {
+        "package": "exfatprogs",
+        "version": "1.2.0-1+deb12u1"
+      },
+      {
+        "package": "faketime",
+        "version": "0.9.10-2.1"
+      },
+      {
+        "package": "gzip",
+        "version": "1.12-1"
+      },
+      {
+        "package": "jq",
+        "version": "1.6-2.1+deb12u2"
+      },
+      {
+        "package": "kmod",
+        "version": "30+20221128-1"
+      },
+      {
+        "package": "linux-image-6.1.0-53-amd64",
+        "version": "6.1.187-1"
+      },
+      {
+        "package": "python3",
+        "version": "3.11.2-1+b1"
+      },
+      {
+        "package": "qemu-system-x86",
+        "version": "1:7.2+dfsg-7+deb12u18+b3"
+      }
+    ],
+    "commands": [
+      "# source tree: mk calls of tools/fixtures/exfat_recover.sh (patterns from lib.sh); guest: exfat; allocation-order row: ascending",
+      "truncate -s 8M <img>",
+      "faketime -f '2023-11-14 22:13:20' mkfs.exfat -L FIXTURE -c 4096 <img>",
+      "guest boot 1: mkdir /mnt/contiguous /mnt/zero-size /mnt/reuse-head /mnt/cut-h /mnt/chained /mnt/gone",
+      "guest boot 1: mkdir /mnt/reuse-head-w /mnt/cut-h-w /mnt/cut-h-hid",
+      "guest boot 1: cp /payload/contiguous/target.bin /mnt/contiguous/target.bin",
+      "guest boot 1: cp /payload/zero-size/target.dat /mnt/zero-size/target.dat",
+      "guest boot 1: cp /payload/reuse-head/target.bin /mnt/reuse-head/target.bin",
+      "guest boot 1: cp /payload/cut-h/target.bin /mnt/cut-h/target.bin",
+      "guest boot 1: cp /payload/chained/a.bin /mnt/chained/a.bin",
+      "guest boot 1: cp /payload/chained/b.bin /mnt/chained/b.bin",
+      "guest boot 1: cp /payload/chained/c.bin /mnt/chained/c.bin",
+      "guest boot 1: cp /payload/gone/inner.bin /mnt/gone/inner.bin",
+      "guest boot 2: dd if=/dev/zero of=/mnt/fill.bin bs=4096 2>/dev/null || true",
+      "guest boot 2: sync",
+      "guest boot 2: rm /mnt/chained/a.bin /mnt/chained/c.bin",
+      "guest boot 2: cp /payload/chained/f.bin /mnt/chained/f.bin",
+      "guest boot 3: rm /mnt/reuse-head/target.bin",
+      "guest boot 3: cp /payload/reuse-head-w/took.bin /mnt/reuse-head-w/took.bin",
+      "guest boot 3: cp /payload/reuse-head-w/rest.bin /mnt/reuse-head-w/rest.bin",
+      "guest boot 3: rm /mnt/cut-h/target.bin",
+      "guest boot 3: cp /payload/cut-h-hid/filler.bin /mnt/cut-h-hid/filler.bin",
+      "guest boot 3: cp /payload/cut-h-w/tail.bin /mnt/cut-h-w/tail.bin",
+      "guest boot 4: rm /mnt/contiguous/target.bin /mnt/zero-size/target.dat",
+      "guest boot 4: rm -r /mnt/cut-h-hid",
+      "guest boot 4: rm /mnt/chained/f.bin",
+      "guest boot 4: rm -r /mnt/gone",
+      "fsck.exfat -n <img>   # must report a clean filesystem",
+      "dump.exfat <img>   # geometry and Free Clusters, cross-checked by the oracle",
+      "python3 tools/fixtures/exfat_recover_oracle.py final <img> <src> <snapshots after boots 1-3>   # chains, bitmap, outcomes"
+    ]
+  },
+  "type": "exfat",
+  "cluster_size": 4096,
+  "data_start": 2097152,
+  "cluster_count": 1536,
+  "live": [
+    {
+      "path": "/chained/b.bin",
+      "size": 12281,
+      "sha256": "f50a20ea38f5da58defe17a46c89d6f7d6edd7ac9699c4b1999b73c9b19a4a62",
+      "chain": [
+        [
+          34,
+          36
+        ]
+      ]
+    },
+    {
+      "path": "/cut-h-w/tail.bin",
+      "size": 8185,
+      "sha256": "6ed413fd273bc213e87cb1bf95d9d377c6486c2081c6e1dddd88a92e296da119",
+      "chain": [
+        [
+          30,
+          31
+        ]
+      ]
+    },
+    {
+      "path": "/fill.bin",
+      "size": 6123520,
+      "sha256": "04d101942eaff843a8b75d3bd29efa93949dce060c33928e82b2df36458d987e",
+      "chain": [
+        [
+          43,
+          1537
+        ]
+      ]
+    },
+    {
+      "path": "/reuse-head-w/rest.bin",
+      "size": 16377,
+      "sha256": "7eafd6f32276eddd3c16342585951e968320efc393fb4568b476556a98fd739c",
+      "chain": [
+        [
+          22,
+          25
+        ]
+      ]
+    },
+    {
+      "path": "/reuse-head-w/took.bin",
+      "size": 8185,
+      "sha256": "2acfc4925fe8d7f7fb25ffebdc86db7f4573c67b6de73395e1166711fd2c6f06",
+      "chain": [
+        [
+          20,
+          21
+        ]
+      ]
+    }
+  ],
+  "free_clusters": [
+    [
+      11,
+      11
+    ],
+    [
+      14,
+      19
+    ],
+    [
+      26,
+      29
+    ],
+    [
+      32,
+      33
+    ],
+    [
+      37,
+      42
+    ]
+  ],
+  "deleted_entry_count": 8,
+  "deleted": [
+    {
+      "path": "/chained/c.bin",
+      "family": "chained-aux",
+      "listed": true,
+      "size": 16377,
+      "sha256": "297e9749c72a51bef4faa57834188a3fa92e799861ebf990d4bf812cd8434f06",
+      "true_chain": [
+        [
+          37,
+          40
+        ]
+      ],
+      "first_cluster": 37,
+      "no_fat_chain": true,
+      "data_length": 16377,
+      "valid_data_length": 16377,
+      "fat_residue": "not-chained",
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "exfat-nofatchain",
+        "range": [
+          [
+            37,
+            40
+          ]
+        ],
+        "captured": [
+          [
+            37,
+            40
+          ]
+        ],
+        "cut": false,
+        "equal_source": false,
+        "overlaps": [
+          "/chained/f.bin"
+        ],
+        "confidence": 30,
+        "assumptions": [
+          "no-fat-chain"
+        ]
+      }
+    },
+    {
+      "path": "/chained/f.bin",
+      "family": "chained",
+      "listed": true,
+      "size": 24569,
+      "sha256": "90921a150796c6f755edebcad6107f1fd380ad3e59c08dc12a626fa28ca9ac13",
+      "true_chain": [
+        [
+          32,
+          33
+        ],
+        [
+          37,
+          40
+        ]
+      ],
+      "first_cluster": 32,
+      "no_fat_chain": false,
+      "data_length": 24569,
+      "valid_data_length": 24569,
+      "fat_residue": "chain-kept",
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "exfat-fatchain",
+        "range": [
+          [
+            32,
+            33
+          ],
+          [
+            37,
+            40
+          ]
+        ],
+        "captured": [
+          [
+            32,
+            33
+          ],
+          [
+            37,
+            40
+          ]
+        ],
+        "cut": false,
+        "equal_source": true,
+        "overlaps": [
+          "/chained/c.bin"
+        ],
+        "confidence": 30,
+        "assumptions": [
+          "fat-chain-kept"
+        ]
+      }
+    },
+    {
+      "path": "/contiguous/target.bin",
+      "family": "contiguous",
+      "listed": true,
+      "size": 20473,
+      "sha256": "d2c6e66804c5818fedb9fccaa8b6205e6df04307099a389e5d46bf42cbffa19b",
+      "true_chain": [
+        [
+          15,
+          19
+        ]
+      ],
+      "first_cluster": 15,
+      "no_fat_chain": true,
+      "data_length": 20473,
+      "valid_data_length": 20473,
+      "fat_residue": "not-chained",
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "exfat-nofatchain",
+        "range": [
+          [
+            15,
+            19
+          ]
+        ],
+        "captured": [
+          [
+            15,
+            19
+          ]
+        ],
+        "cut": false,
+        "equal_source": true,
+        "overlaps": [],
+        "confidence": 75,
+        "assumptions": [
+          "no-fat-chain"
+        ]
+      }
+    },
+    {
+      "path": "/cut-h-hid",
+      "family": "cut-h-aux",
+      "listed": true,
+      "size": 4096,
+      "sha256": "",
+      "true_chain": [
+        [
+          14,
+          14
+        ]
+      ],
+      "first_cluster": 14,
+      "no_fat_chain": true,
+      "data_length": 4096,
+      "valid_data_length": 4096,
+      "fat_residue": "not-chained",
+      "expect": {
+        "outcome": "skip",
+        "skip": "not-a-file",
+        "method": "",
+        "range": [],
+        "captured": [],
+        "cut": false,
+        "equal_source": false,
+        "overlaps": [],
+        "confidence": 0,
+        "assumptions": []
+      }
+    },
+    {
+      "path": "/cut-h/target.bin",
+      "family": "cut-h",
+      "listed": true,
+      "size": 24569,
+      "sha256": "78c2455c8626b722ea8e34a44b29b3d186f64ac961f0952621be1a72fb531bbd",
+      "true_chain": [
+        [
+          26,
+          31
+        ]
+      ],
+      "first_cluster": 26,
+      "no_fat_chain": true,
+      "data_length": 24569,
+      "valid_data_length": 24569,
+      "fat_residue": "not-chained",
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "exfat-nofatchain",
+        "range": [
+          [
+            26,
+            31
+          ]
+        ],
+        "captured": [
+          [
+            26,
+            29
+          ]
+        ],
+        "cut": true,
+        "equal_source": false,
+        "overlaps": [],
+        "confidence": 20,
+        "assumptions": [
+          "no-fat-chain"
+        ]
+      }
+    },
+    {
+      "path": "/gone",
+      "family": "gone",
+      "listed": true,
+      "size": 4096,
+      "sha256": "",
+      "true_chain": [
+        [
+          11,
+          11
+        ]
+      ],
+      "first_cluster": 11,
+      "no_fat_chain": true,
+      "data_length": 4096,
+      "valid_data_length": 4096,
+      "fat_residue": "not-chained",
+      "expect": {
+        "outcome": "skip",
+        "skip": "not-a-file",
+        "method": "",
+        "range": [],
+        "captured": [],
+        "cut": false,
+        "equal_source": false,
+        "overlaps": [],
+        "confidence": 0,
+        "assumptions": []
+      }
+    },
+    {
+      "path": "/reuse-head/target.bin",
+      "family": "reuse-head",
+      "listed": true,
+      "size": 24569,
+      "sha256": "2eb65a00ff2df31880b39767e0eac2d5b8539f3e9bb8c6571611040538d88d30",
+      "true_chain": [
+        [
+          20,
+          25
+        ]
+      ],
+      "first_cluster": 20,
+      "no_fat_chain": true,
+      "data_length": 24569,
+      "valid_data_length": 24569,
+      "fat_residue": "not-chained",
+      "expect": {
+        "outcome": "skip",
+        "skip": "no-free-bytes",
+        "method": "",
+        "range": [
+          [
+            20,
+            25
+          ]
+        ],
+        "captured": [],
+        "cut": false,
+        "equal_source": false,
+        "overlaps": [],
+        "confidence": 0,
+        "assumptions": []
+      }
+    },
+    {
+      "path": "/zero-size/target.dat",
+      "family": "zero-size",
+      "listed": true,
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "true_chain": [],
+      "first_cluster": 0,
+      "no_fat_chain": false,
+      "data_length": 0,
+      "valid_data_length": 0,
+      "fat_residue": "not-chained",
+      "expect": {
+        "outcome": "skip",
+        "skip": "empty",
+        "method": "",
+        "range": [],
+        "captured": [],
+        "cut": false,
+        "equal_source": false,
+        "overlaps": [],
+        "confidence": 0,
+        "assumptions": []
+      }
+    },
+    {
+      "path": "/cut-h-hid/filler.bin",
+      "family": "cut-h-aux",
+      "listed": false,
+      "size": 16377,
+      "sha256": "48e2d1dad8002aea465c012e100211a4d6d1a3fcbb3a4359b3e8635d41d60689",
+      "true_chain": [
+        [
+          26,
+          29
+        ]
+      ],
+      "first_cluster": 26,
+      "no_fat_chain": true,
+      "data_length": 16377,
+      "valid_data_length": 16377,
+      "fat_residue": "not-chained",
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "exfat-nofatchain",
+        "range": [
+          [
+            26,
+            29
+          ]
+        ],
+        "captured": [
+          [
+            26,
+            29
+          ]
+        ],
+        "cut": false,
+        "equal_source": true,
+        "overlaps": [],
+        "confidence": 75,
+        "assumptions": [
+          "no-fat-chain"
+        ]
+      }
+    },
+    {
+      "path": "/gone/inner.bin",
+      "family": "gone-aux",
+      "listed": false,
+      "size": 8185,
+      "sha256": "935d60eb5e8b7a2de1f7de2658415a063cccc813bc8c7ffb722dff12122c8703",
+      "true_chain": [
+        [
+          41,
+          42
+        ]
+      ],
+      "first_cluster": 41,
+      "no_fat_chain": true,
+      "data_length": 8185,
+      "valid_data_length": 8185,
+      "fat_residue": "not-chained",
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "exfat-nofatchain",
+        "range": [
+          [
+            41,
+            42
+          ]
+        ],
+        "captured": [
+          [
+            41,
+            42
+          ]
+        ],
+        "cut": false,
+        "equal_source": true,
+        "overlaps": [],
+        "confidence": 75,
+        "assumptions": [
+          "no-fat-chain"
+        ]
+      }
+    }
+  ],
+  "families": {
+    "not-equal-complete": 1,
+    "overlap": 2,
+    "fatchain-equal": 1,
+    "chained": 1,
+    "nofatchain-equal": 3,
+    "skip-not-a-file": 2,
+    "cut-prefix": 1,
+    "skip-no-free-bytes": 1,
+    "empty": 1
+  }
+}
