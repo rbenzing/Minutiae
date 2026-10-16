@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -225,7 +226,7 @@ func buildPlan(o options, e env) (plan, error) {
 		}
 		p.testForm = "Go files only: reverse closure of the changed packages, -short, cached"
 		for _, f := range p.changed {
-			if !strings.HasSuffix(f, ".go") {
+			if !strings.HasSuffix(f, ".go") || isTestdata(f) || slices.Contains(p.unmapped, f) {
 				p.wholeModule = true
 				p.testForm = "non-Go file changed: cached ./... test step (Go's test cache reruns only the tests that read a changed file)"
 				break
@@ -480,4 +481,10 @@ func realEnv() env {
 		},
 		race: raceSupported(),
 	}
+}
+
+// isTestdata reports whether f lies under a testdata directory: such a file is data, even when it
+// is named .go (the go tool ignores it, a test in another package may read it).
+func isTestdata(f string) bool {
+	return strings.HasPrefix(f, "testdata/") || strings.Contains(f, "/testdata/")
 }

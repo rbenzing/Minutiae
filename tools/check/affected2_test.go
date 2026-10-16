@@ -240,6 +240,8 @@ func TestNonGoChangeRunsCachedWholeModuleTests(t *testing.T) {
 		{"docs markdown", []string{"docs/testing.md"}, false},
 		{"fixture under a non-package directory", []string{"scripts/fixtures/x.json"}, false},
 		{"go and non-go together", []string{"b/x.go", "docs/a.md"}, true},
+		{"go file under testdata", []string{"b/testdata/gen.go"}, true},
+		{"go file mapped to no package", []string{"scripts/tool.go"}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -266,7 +268,7 @@ func TestNonGoChangeRunsCachedWholeModuleTests(t *testing.T) {
 			if hasVet := slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, "go vet ") }); hasVet != c.scoped {
 				t.Errorf("vet step present = %v, want %v", hasVet, c.scoped)
 			}
-			if !strings.Contains(p.testForm, "non-Go file changed") {
+			if !strings.Contains(p.testForm, "non-Go") {
 				t.Errorf("test form %q does not say why", p.testForm)
 			}
 		})
