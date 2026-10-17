@@ -221,3 +221,42 @@ func TestAnalysisNoteSurvivesAPanicWarningAfterIt(t *testing.T) {
 		t.Errorf("fs_warnings_suppressed = %v (present %v), want 77 although an element follows the note", v, ok)
 	}
 }
+
+// A note-shaped text inside a full list is an ordinary warning: only the element at index MaxWarnings is
+// the note. The forged one at index 5 is audited as an ordinary warning, the real one at index 1000 is
+// the note and gives the count. (Mutation: dropping the `i != filesys.MaxWarnings` clause of
+// isSuppressionNote makes index 5 the note, so the real note is never audited.)
+func TestAnalysisForgedNoteInAFullListIsOrdinary(t *testing.T) {
+	c := newCase(t)
+	open := distinctWarnings(filesys.MaxWarnings)
+	open[5] = suppNote(9)
+	open = append(open, suppNote(250))
+	s := suppressedSession(t, c, open, func(*[]string, string) {})
+	sum := extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: allThree})
+	if got := noteEntries(t, c); len(got) != 2 || got[0] != suppNote(9) || got[1] != suppNote(250) {
+		t.Errorf("note-shaped entries = %q, want the forged %q then the real %q", got, suppNote(9), suppNote(250))
+	}
+	v, ok := suppressedKey(t, c, "analysis.end")
+	if !ok || fmt.Sprint(v) != "250" {
+		t.Errorf("fs_warnings_suppressed = %v (present %v), want 250 from index %d", v, ok, filesys.MaxWarnings)
+	}
+	if sum.FSWarnings != 0 {
+		t.Errorf("FSWarnings = %d, want 0", sum.FSWarnings)
+	}
+}
+
+// The dry run (PlanRecovery) shows how many warnings the filesystem dropped WHILE planning: the note's
+// count grows but the list does not, so the plan's warning list alone would count it as one warning.
+func TestPlanRecoveryReportsWarningsSuppressedDuringPlanning(t *testing.T) {
+	e, _ := newHookEnv(t, func(h *fsHook) {
+		h.warnings = append(distinctWarnings(filesys.MaxWarnings), suppNote(1))
+		h.onReadDir = func(filesys.Entry, []filesys.Entry) { h.warnings[filesys.MaxWarnings] = suppNote(251) }
+	}, delNode("/a.bin", pat(1, 2*bs)))
+	plan, err := e.s.PlanRecovery(context.Background(), examine.RecoverOptions{Partition: -1, All: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.FSWarningsSuppressed != 250 {
+		t.Errorf("FSWarningsSuppressed = %d, want 250 (251 at the end minus 1 before)", plan.FSWarningsSuppressed)
+	}
+}
