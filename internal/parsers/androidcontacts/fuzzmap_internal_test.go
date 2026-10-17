@@ -11,6 +11,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/rowrun"
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/records"
+	"github.com/rbenzing/minutiae/internal/recordtypes/common"
 	"github.com/rbenzing/minutiae/internal/recordtypes/contact"
 )
 
@@ -330,6 +331,39 @@ func checkMapped(t testing.TB, w world) {
 			t.Errorf("%d %s from %d data rows", len(l), key, len(w.data))
 		}
 	}
+	// values, not only classes: each is the cleaned text of a cell the mapping is meant to read (T80)
+	data1s := map[string]bool{}
+	for _, d := range w.data {
+		data1s[cleanOf(d[dData1])] = true
+	}
+	for _, key := range []string{"phones", "emails"} {
+		l, _ := r.Payload[key].([]any)
+		for _, e := range l {
+			if v, _ := e.(map[string]any)["value"].(string); v == "" || !data1s[v] {
+				t.Errorf("%s value %q is no data1 text of the data rows", key, v)
+			}
+		}
+	}
+	wantType, wantName := "", ""
+	switch {
+	case w.inline:
+		wantType, wantName = cleanOf(rc[colAccountType]), cleanOf(rc[colAccountName])
+	case isInt(colAccountID) && len(w.acc) == 1:
+		wantType, wantName = cleanOf(w.acc[0][1]), cleanOf(w.acc[0][0])
+	}
+	gotType, gotName := "", ""
+	if len(accounts) > 0 {
+		a, _ := accounts[0].(map[string]any)
+		gotType, _ = a["type"].(string)
+		gotName, _ = a["name"].(string)
+	}
+	if gotType != wantType || gotName != wantName {
+		t.Errorf("account %q/%q, want type %q name %q from the cells", gotType, gotName, wantType, wantName)
+	}
+	gotDisplay, _ := r.Payload["display_name"].(string)
+	if want := cleanOf(rc[colDisplayName]); gotDisplay != want {
+		t.Errorf("display_name %q, want %q from the cell", gotDisplay, want)
+	}
 	if len(w.data) == 0 {
 		for _, key := range []string{"phones", "emails", "urls", "ims", "addresses", "names", "organization", "photo"} {
 			if _, has := r.Payload[key]; has {
@@ -373,9 +407,10 @@ func goodWorld() world {
 	for i := dData1 + 1; i < len(phone); i++ {
 		phone[i] = cell{kind: cNull}
 	}
+	phone[dData1+1] = cell{kind: cText, b: []byte("wrong-column")} // data2: a value read from here is a wrong-column read
 	return world{
 		rc:   rc,
-		acc:  [][]cell{{{kind: cText, b: []byte("a@example.test")}, {kind: cText, b: []byte("com.google")}}},
+		acc:  [][]cell{{{kind: cText, b: []byte("joined@example.test")}, {kind: cText, b: []byte("com.joined")}}},
 		agg:  [][]cell{{{kind: cInt, i: 1682935201000}}},
 		data: [][]cell{phone},
 	}
@@ -441,8 +476,11 @@ func TestMapRowsGoodRowsMapAndHostileCellsAreContained(t *testing.T) {
 	if err != nil || len(recs) != 1 || recs[0].Time != nil || len(recs[0].Times) != 1 || recs[0].Times[0].Kind != contact.AggregateLastUpdated {
 		t.Fatalf("err %v, records %+v", err, recs)
 	}
-	if acc, _ := recs[0].Payload["accounts"].([]any); len(acc) != 1 {
+	if acc, _ := recs[0].Payload["accounts"].([]any); len(acc) != 1 || acc[0].(map[string]any)["type"] != "com.joined" || acc[0].(map[string]any)["name"] != "joined@example.test" {
 		t.Fatalf("accounts %v", recs[0].Payload["accounts"])
+	}
+	if ph, _ := recs[0].Payload["phones"].([]any); len(ph) != 1 || ph[0].(map[string]any)["value"] != "+15551234567" || recs[0].Payload["display_name"] != "Alice Example" {
+		t.Fatalf("phones %v, display_name %v", recs[0].Payload["phones"], recs[0].Payload["display_name"])
 	}
 	checkMapped(t, w)
 	hostile := func(k byte) cell { return cell{kind: k, f: math.NaN(), b: []byte{0xff, 0xfe}} }
@@ -519,4 +557,13 @@ func FuzzMapRows(f *testing.F) {
 	f.Fuzz(func(t *testing.T, shape, kinds, nums, texts []byte) {
 		checkMapped(t, worldFrom(shape, kinds, nums, texts))
 	})
+}
+
+// cleanOf is the text of a text cell as the mapping states it (common.CleanText, the rule cleanField applies);
+// any other cell has no text.
+func cleanOf(c cell) string {
+	if c.kind != cText {
+		return ""
+	}
+	return common.CleanText(c.b, maxText).Text
 }

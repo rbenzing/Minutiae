@@ -988,8 +988,10 @@ journal), so the oracle states the db path as `source_path` of every row (ruling
 
 `telephony_contacts.py` holds the contacts provider scenario rows and oracle (`py -3 tools/fixtures/telephony_gen.py --family contacts
 --out internal/parsers/androidcontacts/testdata --pins-go internal/parsers/androidcontacts/pins_test.go --pins-package androidcontacts_test`).
-Its five variants are lone databases, so the oracle states the `contacts2.db` path as `source_path` of every row (rulings T48,
-T51). The oracle restates the `contact` mapping of spec 9.3 (one record per `raw_contacts` row, `data` rows typed through
+Its six variants are lone databases (the sixth, `duplicate-keys`, carries an empty `-wal`, so the oracle states no path for its
+rows and the comparer derives it from the file role), so the oracle states the `contacts2.db` path as `source_path` of every row
+(rulings T48, T51). The oracle also pins the summary (display name and first phone through the summarizer's rules, a bidi or
+format character shown as `<U+XXXX>`; a name it does not restate is left unpinned, T81). The oracle restates the `contact` mapping of spec 9.3 (one record per `raw_contacts` row, `data` rows typed through
 `mimetypes`, every `dataN` read as text, `deleted_contacts` tombstones) and reads every stored value back from the engine. The
 snapshot declares `COLLATE PHONEBOOK`, which the platform registers; the generator registers a stand-in collation (no index uses it).
 The pinned tag's `raw_contacts` has no `account_name`, `account_type` or time column, so the two contacts snapshots carry the
@@ -1013,5 +1015,6 @@ which `Builder.contact` creates a `contacts` row are the named constants `DANGLI
 | `multi-account` | `contacts-aosp-baseline.sql` | plain, 3 raw contacts of one person (one aggregate contact) | three distinct accounts (google, samsung, whatsapp with a `data_set`), one record per raw contact, one aggregate time |
 | `unicode-rtl` | `contacts-aosp-baseline.sql` | plain, 4 contacts | Hebrew, Arabic with a right-to-left override, CJK and emoji names and labels |
 | `huge-contact` | `contacts-aosp-baseline.sql` | plain, 1 contact with 1200 phones, 1100 e-mails and 130 notes | the list cap of 1000 and the note cap of 100 with their `_total` and `_truncated` counters |
+| `duplicate-keys` | `contacts-aosp-baseline.sql`, with `accounts` and `contacts` re-created with a plain `_id integer` column (T79) | plain plus an empty `-wal`, 3 raw contacts, 3 `accounts` rows (key 1 twice), 4 `contacts` rows (key 1 three times) | a join key naming several rows: `raw.join_undecided = ["accounts","contacts"]` with `raw.join_duplicate = {"accounts":2,"contacts":3}`, no account and no time; a unique key and a dangling one beside it. The empty `-wal` makes the probe (which refuses a table without the rowid alias) defer to Parse |
 
 The DDL snapshots and their public sources: `schemas/android-telephony/CROSSCHECK.md` (see "DDL provenance" above).

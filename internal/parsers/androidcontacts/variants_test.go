@@ -76,6 +76,7 @@ func TestUnicodeAndRTLNamesSurviveInBodyAndSummaryIsFreeOfBidiControls(t *testin
 	if len(res.Records) == 0 {
 		t.Fatal("no records")
 	}
+	evil := false
 	for _, r := range res.Records {
 		name, _ := r.Payload["display_name"].(string)
 		if name == "" || !strings.Contains(r.Body, name) {
@@ -84,6 +85,15 @@ func TestUnicodeAndRTLNamesSurviveInBodyAndSummaryIsFreeOfBidiControls(t *testin
 		if strings.ContainsFunc(r.Summary, isBidiControl) {
 			t.Errorf("%s: a bidi control is in the summary: %q", r.Locator, r.Summary)
 		}
+		if strings.ContainsRune(name, 0x202e) { // T81: the override is SHOWN in the summary, not dropped
+			evil = true
+			if !strings.Contains(r.Summary, "<U+202E>") || !strings.Contains(r.Summary, "<U+202C>") {
+				t.Errorf("%s: the summary %q does not show the bidi controls of %q", r.Locator, r.Summary, name)
+			}
+		}
+	}
+	if !evil {
+		t.Error("the fixture has no contact with an override in its name")
 	}
 }
 

@@ -1,5 +1,6 @@
 """Android contacts provider (contacts2.db) fixtures: DDL variants, scenario rows, oracle."""
 import re
+import unicodedata
 
 import telephony_common as C
 
@@ -162,6 +163,26 @@ def capped(items, name, raw):
         raw[name + "_total"], raw[name + "_truncated"] = len(items), True
         return items[:MAX_LIST]
     return items
+
+
+def summarize(s, limit):
+    """common.Summarize for the text this oracle restates: whitespace and control runs collapse to one space, a format or
+    bidi character is SHOWN as <U+XXXX>, and the result must fit limit characters. None when the text is outside what is
+    restated (an unassigned, private-use or surrogate character, or more than limit characters: the cut is not restated)."""
+    out, pending = [], False
+    for ch in s:
+        cat = unicodedata.category(ch)
+        if ch in GO_SPACE or cat == "Cc":
+            pending = bool(out)
+            continue
+        if cat[0] == "C" and cat != "Cf":
+            return None
+        if pending:
+            out.append(" ")
+            pending = False
+        out.append("<U+%04X>" % ord(ch) if cat == "Cf" else ch)
+    r = "".join(out)
+    return r if len(r) <= limit else None
 
 
 def contact_body(p):
@@ -423,8 +444,10 @@ def expect_contact(rc, data_rows, mimes, remote, accounts=None, aggregates=None,
         return None
     first_phone = phones[0]["value"] if phones else ""
     summ = None
-    if (name + first_phone).isascii() and len(name) <= 80 and len(first_phone.encode()) <= 32 and (name or first_phone):
-        summ = " ".join(x for x in (name, first_phone) if x)
+    name_s = summarize(name, 80)  # characters; a bidi control counts as the characters of its <U+XXXX> escape
+    phone_s = summarize(first_phone, 32) if first_phone.isascii() else None  # an ASCII phone: bytes are characters
+    if name_s is not None and phone_s is not None and (name_s or phone_s):
+        summ = " ".join(x for x in (name_s, phone_s) if x)
     elif not name and not first_phone and not emails and not org and deleted:
         sid0 = p["source_ids"][0]  # a tombstone-shaped row: the summary names the deleted source row
         if sid0.isascii() and len(sid0) <= 64:
@@ -472,14 +495,16 @@ def oracle(files, ddl_name, variant, rc_cols, dc_cols):
     for d in view["data"]:
         by_rc.setdefault(d.get("raw_contact_id"), []).append(d)
     exp = C.expect_header(FAMILY, variant, ddl_name)
+    # a db-only variant has one file that can hold a cell, so the source path is stated; with a companion the comparer derives it from the role (T48, T51)
+    remote = REMOTE if set(files) == {"db"} else ""
     for rc in view["raw_contacts"]:
-        e = expect_contact(rc, by_rc.get(rc["rowid"], []), mimes, REMOTE, accounts, aggregates)
+        e = expect_contact(rc, by_rc.get(rc["rowid"], []), mimes, remote, accounts, aggregates)
         if e is None:
             exp["warnings"].append({"table": "raw_contacts", "rowid": rc["rowid"], "contains": "identifies nobody"})
         else:
             exp["records"].append(e)
     for dc in view.get("deleted_contacts", []):
-        exp["records"].append(expect_tombstone(dc, REMOTE))
+        exp["records"].append(expect_tombstone(dc, remote))
     C.note_columns(rc_cols, RC_MAPPED, "raw_contacts", exp["notes"])
     if dc_cols:
         C.note_columns(dc_cols, DC_MAPPED, "deleted_contacts", exp["notes"])
@@ -489,19 +514,29 @@ def oracle(files, ddl_name, variant, rc_cols, dc_cols):
 # ---------------------------------------------------------------- variants
 
 
-def build(work, ddl_name, variant, b, extra=None, **conn):
+def build(work, ddl_name, variant, b, extra=None, plain_keys=False, extra_files=None, **conn):
+    """plain_keys: accounts and contacts are re-created with a plain `_id integer` column in place of the rowid alias, so a
+    key can repeat (T79). That is a deliberate departure from the pinned snapshot for those two tables only; extra_files
+    (an empty -wal) makes the host's probe defer to Parse, which is how a database of another shape reaches the mapper."""
     path = work + "/k.db"
     ph = C.load_ddl(ddl_name)
     con = C.connect(path, **conn)
     # the DDL declares COLLATE PHONEBOOK, a collation the platform registers; no index uses it here, so a stand-in order does
     con.create_collation("PHONEBOOK", lambda x, y: (x > y) - (x < y))
     con.executescript(ph[0])
+    if plain_keys:
+        con.execute("drop table accounts")
+        con.execute("drop table contacts")
+        con.execute("create table accounts(_id integer, account_name text, account_type text, data_set text)")
+        con.execute("create table contacts(_id integer, contact_last_updated_timestamp integer)")
     with C.batch(con):
         for r in mimetype_rows():
             C.insert(con, "mimetypes", r)
         for r in b.accounts:
             C.insert(con, "accounts", r)
         for r in b.contacts.values():
+            C.insert(con, "contacts", r)
+        for r in getattr(b, "contacts_more", []):
             C.insert(con, "contacts", r)
         for r in b.rc:
             C.insert(con, "raw_contacts", r)
@@ -516,6 +551,7 @@ def build(work, ddl_name, variant, b, extra=None, **conn):
         dc_cols = []
     con.close()
     files = {"db": C.read(path)}
+    files.update(extra_files or {})
     return files, oracle(files, ddl_name, variant, rc_cols, dc_cols)
 
 
@@ -560,5 +596,21 @@ def variant_huge(work):
     return build(work, "contacts-aosp-baseline.sql", "huge-contact", b)
 
 
+def variant_duplicate_keys(work):
+    """Contact 1 names account 1 twice and aggregate 1 three times (plain `_id` columns); contact 2 names a unique account and
+    aggregate; contact 3 dangles on both (T79)."""
+    b = Builder()
+    b.accounts = [{"_id": 1, "account_name": "first@example.test", "account_type": "com.google"},
+                  {"_id": 1, "account_name": "second@example.test", "account_type": "com.other"},
+                  {"_id": 2, "account_name": "only@example.test", "account_type": "com.samsung.account"}]
+    b.contact(1, display_name="Twice Named", account_id=1, contact_id=1)
+    b.contacts_more = [{"_id": 1, "contact_last_updated_timestamp": (T0 + 2) * MS}, {"_id": 1, "contact_last_updated_timestamp": (T0 + 3) * MS}]
+    b.contact(2, display_name="Once Named", account_id=2, contact_id=2)
+    b.contact(3, display_name="Dangling", account_id=99, contact_id=DANGLING_CONTACT_ID)
+    for i in (1, 2, 3):
+        b.d(i, PHONE, 1, data1="+1555000000%d" % i, data2=2)
+    return build(work, "contacts-aosp-baseline.sql", "duplicate-keys", b, plain_keys=True, extra_files={"wal": b""})
+
+
 VARIANTS = {"aosp-baseline": variant_baseline, "deleted-contacts": variant_deleted, "multi-account": variant_multi,
-            "unicode-rtl": variant_rtl, "huge-contact": variant_huge}
+            "unicode-rtl": variant_rtl, "huge-contact": variant_huge, "duplicate-keys": variant_duplicate_keys}

@@ -11,7 +11,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/parsers/parsertest"
 )
 
-var variants = []string{"aosp-baseline", "deleted-contacts", "huge-contact", "multi-account", "unicode-rtl"}
+var variants = []string{"aosp-baseline", "deleted-contacts", "duplicate-keys", "huge-contact", "multi-account", "unicode-rtl"}
 
 // fixtureRemote is where every variant's database sits on the device; each is a lone database,
 // so the oracle states this path for every row (rulings T48, T51).
@@ -247,5 +247,56 @@ func TestOracleStatesAccountsAndAggregateTimes(t *testing.T) {
 		if len(l) != 1 || obj(t, l[0])["type"] != want[r.Rowid] || r.Times["aggregate_last_updated"] != "2023-05-01T10:00:01Z" {
 			t.Errorf("multi-account row %d: %v %v", r.Rowid, r.Payload["accounts"], r.Times)
 		}
+	}
+}
+
+// T79: a database whose accounts and contacts tables use a plain `_id integer` column (not the rowid alias) can hold
+// a key twice. The oracle states the join as undecided with the count, and no account and no time from it. The
+// variant ships an empty -wal so that Probe, which refuses a table without the alias, defers to Parse.
+func TestOracleStatesDuplicateJoinKeys(t *testing.T) {
+	fx := parsertest.LoadFixture(t, "testdata", "duplicate-keys")
+	if _, has := fx.Files["wal"]; !has {
+		t.Fatal("the variant must carry a -wal companion so the probe defers")
+	}
+	byRow := map[int64]parsertest.ExpRecord{}
+	for _, r := range fx.Expect.Records {
+		byRow[r.Rowid] = r
+	}
+	r1 := rawOf(t, byRow[1])
+	dup := obj(t, r1["join_duplicate"])
+	und := list(t, r1["join_undecided"])
+	if num(dup["accounts"]) != "2" || num(dup["contacts"]) != "3" || len(und) != 2 || und[0] != "accounts" || und[1] != "contacts" ||
+		byRow[1].Payload["accounts"] != nil || len(byRow[1].Times) != 0 || r1["account_state"] != nil || r1["aggregate_state"] != nil {
+		t.Errorf("contact 1 (duplicate keys): %v times %v", byRow[1].Payload, byRow[1].Times)
+	}
+	r2 := rawOf(t, byRow[2])
+	if r2["join_duplicate"] != nil || r2["join_undecided"] != nil || len(list(t, byRow[2].Payload["accounts"])) != 1 || byRow[2].Times["aggregate_last_updated"] == "" {
+		t.Errorf("contact 2 (unique keys) is decided: %v", byRow[2].Payload)
+	}
+	r3 := rawOf(t, byRow[3])
+	if r3["account_state"] != "no-accounts-row" || r3["aggregate_state"] != "no-contacts-row" || r3["join_duplicate"] != nil {
+		t.Errorf("contact 3 (dangling keys): %v", r3)
+	}
+}
+
+// T81: the oracle pins the Summary of the contacts whose names hold bidirectional controls: the control is SHOWN as
+// <U+XXXX>, never dropped and never kept raw.
+func TestOraclePinsTheSummaryOfABidiName(t *testing.T) {
+	fx := parsertest.LoadFixture(t, "testdata", "unicode-rtl")
+	var evil bool
+	for _, r := range fx.Expect.Records {
+		if r.Summary == nil {
+			t.Errorf("row %d: the summary is not pinned", r.Rowid)
+			continue
+		}
+		if strings.ContainsFunc(*r.Summary, isBidiControl) {
+			t.Errorf("row %d: a bidi control kept raw in the pinned summary %q", r.Rowid, *r.Summary)
+		}
+		if strings.Contains(*r.Summary, "<U+202E>") && strings.Contains(*r.Summary, "<U+202C>") {
+			evil = true
+		}
+	}
+	if !evil {
+		t.Error("no pinned summary shows <U+202E> and <U+202C>")
 	}
 }
