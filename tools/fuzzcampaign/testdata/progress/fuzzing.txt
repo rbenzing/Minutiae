@@ -1,0 +1,18 @@
+fuzz: elapsed: 3s, gathering baseline coverage: 0/1234 completed
+fuzz: elapsed: 6s, gathering baseline coverage: 23/1234 completed
+fuzz: elapsed: 9s, gathering baseline coverage: 160/1234 completed
+fuzz: elapsed: 12s, gathering baseline coverage: 475/1234 completed
+fuzz: elapsed: 15s, gathering baseline coverage: 811/1234 completed
+fuzz: elapsed: 18s, gathering baseline coverage: 1133/1234 completed
+fuzz: elapsed: 19s, gathering baseline coverage: 1234/1234 completed, now fuzzing with 1 workers
+fuzz: elapsed: 21s, execs: 5129 (1332/sec), new interesting: 4 (total: 1238)
+fuzz: elapsed: 24s, execs: 14587 (3152/sec), new interesting: 12 (total: 1246)
+fuzz: elapsed: 27s, execs: 25854 (3756/sec), new interesting: 19 (total: 1253)
+fuzz: elapsed: 30s, execs: 36040 (3396/sec), new interesting: 24 (total: 1258)
+fuzz: elapsed: 33s, execs: 46859 (3606/sec), new interesting: 30 (total: 1264)
+fuzz: elapsed: 36s, execs: 56721 (3288/sec), new interesting: 32 (total: 1266)
+fuzz: elapsed: 39s, execs: 66979 (3419/sec), new interesting: 38 (total: 1272)
+fuzz: elapsed: 42s, execs: 77823 (3615/sec), new interesting: 43 (total: 1277)
+fuzz: elapsed: 44s, execs: 79918 (2054/sec), new interesting: 43 (total: 1277)
+PASS
+ok  	github.com/rbenzing/minutiae/internal/decode/sqlitedb	49.834s

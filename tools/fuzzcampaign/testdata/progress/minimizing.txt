@@ -1,0 +1,19 @@
+fuzz: elapsed: 0s, gathering baseline coverage: 0/1 completed
+fuzz: elapsed: 1s, gathering baseline coverage: 1/1 completed, now fuzzing with 2 workers
+fuzz: minimizing 1535-byte failing input file
+fuzz: elapsed: 3s, minimizing
+fuzz: elapsed: 6s, minimizing
+fuzz: elapsed: 9s, minimizing
+fuzz: elapsed: 12s, minimizing
+fuzz: elapsed: 15s, minimizing
+fuzz: elapsed: 18s, minimizing
+--- FAIL: FuzzSlowMin (17.98s)
+    --- FAIL: FuzzSlowMin (0.05s)
+        f_test.go:14: boom 1508
+    
+    Failing input written to testdata\fuzz\FuzzSlowMin\fe410d8030d37f95
+    To re-run:
+    go test -run=FuzzSlowMin/fe410d8030d37f95
+FAIL
+exit status 1
+FAIL	scratch/min	22.025s

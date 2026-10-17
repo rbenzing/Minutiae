@@ -1,0 +1,1 @@
+synthetic: produced by a scratch module (go test -fuzz with a pattern that matches no fuzz target, Windows, go1.26.8), output unchanged; the test exit code was 0.
