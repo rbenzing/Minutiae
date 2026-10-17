@@ -13,6 +13,7 @@ package fattest
 import (
 	"encoding/binary"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -177,6 +178,12 @@ func Layout(o Options) Geometry {
 
 // Build returns a FAT image holding files.
 func Build(o Options, files []File) []byte {
+	img, _ := BuildLayout(o, files)
+	return img
+}
+
+// BuildLayout is Build plus where it put every entry.
+func BuildLayout(o Options, files []File) ([]byte, *Built) {
 	o = o.withDefaults()
 	g := Layout(o)
 	if g.Clusters == 0 {
@@ -192,7 +199,7 @@ func Build(o Options, files []File) []byte {
 	b.writeData()
 	b.writeFATs()
 	b.writeBoot()
-	return img
+	return img, &Built{Geometry: g, Entries: b.locs}
 }
 
 type node struct {
@@ -230,6 +237,7 @@ type builder struct {
 	nodes []*node
 	used  []bool
 	fat   []uint32
+	locs  []EntryLoc
 }
 
 func (b *builder) tree(files []File) {
@@ -578,11 +586,21 @@ func (b *builder) writeDir(d *dirNode) {
 		buf = append(buf, shortEntry(dotdot, attr, 0, self.f.Times, parent, 0)...)
 	}
 	for _, k := range d.kids {
+		loc := EntryLoc{
+			Path:       strings.Trim(k.f.Path, "/"),
+			Deleted:    k.f.Deleted,
+			Dir:        k.f.Dir,
+			DirCluster: d.firstOrRoot(),
+			Clusters:   slices.Clone(k.chain),
+		}
 		if k.lfn != nil {
 			for _, e := range lfnEntries(k, k.f.Deleted) {
+				loc.LFNOffsets = append(loc.LFNOffsets, b.entryOffset(d, len(buf)/32))
 				buf = append(buf, e...)
 			}
 		}
+		loc.Index = len(buf) / 32
+		loc.Offset = b.entryOffset(d, loc.Index)
 		attr := k.f.Attr
 		var first, size uint32
 		if k.f.Dir {
@@ -593,6 +611,8 @@ func (b *builder) writeDir(d *dirNode) {
 		if len(k.chain) > 0 {
 			first = k.chain[0]
 		}
+		loc.FirstCluster = first
+		b.locs = append(b.locs, loc)
 		e := shortEntry(k.short, attr, k.ntres, k.f.Times, first, size)
 		if k.f.Deleted {
 			e[0] = 0xE5
@@ -611,6 +631,24 @@ func (b *builder) writeDir(d *dirNode) {
 			copy(b.img[off:off+int64(b.cs)], buf[lo:min(len(buf), lo+b.cs)])
 		}
 	}
+}
+
+// firstOrRoot is the first cluster of d, or of the FAT32 root; 0 for the
+// FAT12/16 root region.
+func (d *dirNode) firstOrRoot() uint32 {
+	if d.self == nil && len(d.chain) > 0 {
+		return d.chain[0]
+	}
+	return d.first()
+}
+
+// entryOffset returns the image offset of directory entry idx of d.
+func (b *builder) entryOffset(d *dirNode, idx int) int64 {
+	if d.self == nil && b.g.Type != 32 {
+		return int64(b.g.FATStart(b.g.NumFATs))*int64(b.g.SectorSize) + int64(idx)*32
+	}
+	per := b.cs / 32
+	return b.g.ClusterOffset(d.chain[idx/per]) + int64(idx%per)*32
 }
 
 func (b *builder) writeFATs() {

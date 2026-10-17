@@ -78,7 +78,8 @@ func FakeHash(name string) string {
 func (h *Harness) Artifact(m evidence.ManifestRecord, data []byte) parse.Artifact {
 	return parse.Artifact{
 		ID: m.ID, SHA256: m.SHA256, Platform: parse.PlatformAndroid,
-		Logical: "android:" + m.Source.RemotePath, Size: m.Size, Incomplete: m.Incomplete,
+		Acquisition: acquisitionOf(m.Path),
+		Logical:     "android:" + m.Source.RemotePath, Size: m.Size, Incomplete: m.Incomplete,
 		Source: parse.SourceInfo{
 			Kind: m.Source.Kind, DeviceID: m.Source.DeviceID, RemotePath: m.Source.RemotePath,
 			OriginalPath: m.Source.OriginalPath, Partition: m.Source.Partition,
@@ -225,4 +226,14 @@ func (h *Harness) readersOf(in *parse.Input) (*readerSet, error) {
 		return s, nil
 	}
 	return nil, errors.New("parsertest: the Input was not made by Harness.Input")
+}
+
+// acquisitionOf is the acquisition of a manifest path, artifacts/<device>/<acquisition> (the layout of
+// evidence.Case.NewArtifact), or "" (unknown) for any other path; it follows artparse's acquisitionKey.
+func acquisitionOf(p string) string {
+	parts := strings.Split(p, "/")
+	if len(parts) < 4 || parts[0] != "artifacts" || parts[1] == "" || parts[2] == "" || parts[3] == "" {
+		return ""
+	}
+	return strings.Join(parts[:3], "/")
 }

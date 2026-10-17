@@ -18,7 +18,7 @@ docker run --rm --privileged -v "$PWD:/work" -w /work minutiae-fixtures bash too
 ```
 
 `gen.sh <fixture>` builds one fixture (`volume-gpt`, `volume-mbr`, `ext4`, `fat`, `exfat`, `f2fs`, `ewf`, `apfs`; `hfsplus` and `apfs-populated` each need their own image, see "HFS+ fixtures" and "APFS populated fixture").
-`--privileged` is needed by `exfat` (see below) and is used by `f2fs` only to try a kernel mount (see "F2FS determinism"); every other fixture runs without it.
+`--privileged` is needed by `exfat` only (see below; `f2fs` no longer mounts, see "F2FS deleted entries come from the QEMU guest"); every other fixture runs without it.
 
 With Git Bash on Windows, stop MSYS rewriting the container paths:
 
@@ -42,6 +42,8 @@ Scripts must keep LF line endings (`.gitattributes` enforces this).
 | `hfsplus.sh` + `hfsplus_oracle.py` + `hfsplus_normalize.py` (image `minutiae-fixtures-hfs`) | `hfsplus-empty`, `hfsx-empty`, `hfsplus-journal`, `hfsplus-1k`, `hfsplus-wrapped`, `hfsplus-populated` (`.img.gz` + `.expect.json`, in `internal/filesys/hfsplus/testdata/`; also `hfsplus_populate.sh` + `hfsplus_tree.py`) | an independent Python parse of the volume header, B-trees (extents-overflow records included), allocation bitmap and journal files, cross-checked against `fsck.hfsplus` and `blkid`; for the populated image also the source tree the Linux driver was fed (see "HFS+ fixtures") |
 | `ewf.sh` + `ewf_inspect.py` + `ewf_normalize.py` | `ewf-disk.img.gz` (the raw source disk), `ewf-<variant>.E0N.gz` (one `.gz` per segment file of `single-none`, `single-best`, `multi-none`, `seed-small`) and `ewf-fixtures.expect.json`, in `internal/image/ewf/testdata/` | the raw disk (its sha256/md5/sha1/size, built from the committed ext4 and fat12 fixtures), an independent Python decoder (`ewf_inspect.py`: every section and Adler-32, every chunk, the rebuilt media equals the raw disk byte for byte), `ewfverify`, `ewfinfo` (whitelisted geometry and hash fields) and `ewfexport -f raw` (sha256 equals the raw disk) |
 | `f2fs.sh` + `f2fs_tree.sh` + `f2fs_oracle.py` + `f2fs_normalize.py` | `f2fs-extra-attr`, `f2fs-default` (`.img.gz` + `.expect.json`, in `internal/filesys/f2fs/testdata/`) | the source tree handed to `sload.f2fs` (`f2fs_oracle.py tree`: type, size, sha256, mode, mtime, symlink targets), and the reports of `fsck.f2fs -l/-f/-t/-M`, `dump.f2fs -s/-n` and `blkid` on the finished image (`f2fs_oracle.py layout`: superblock and checkpoint fields, features, uuid, label, the NAT block address of every inode, the data-block extents of every file, the free main-area blocks from the SIT bitmaps). The oracle cross-checks the tools against each other (fsck vs dump on every shared field, SIT popcount vs `valid_block_count`, fsck's tree vs the source tree, the file map vs file sizes) and the generator fails on any mismatch, on an unclean `fsck.f2fs`, or when no file is fragmented |
+| `fat_recover.sh` + `fat_recover_oracle.py` (image `minutiae-recover-fixtures`, `Dockerfile.recover`; `gen.sh fat-recover`) | `fat12-recover`, `fat16-recover`, `fat32-recover` (`.img.gz` + `.expect.json`, in `internal/filesys/fat/testdata/recover/`) | volumes written and deleted by the kernel `vfat` driver in the QEMU guest; an independent Python reader of the finished image checked against `mshowfat`, `fsck.fat -v` and the source tree (see "FAT recovery fixtures (3B)") |
+| `exfat_recover.sh` + `exfat_recover_oracle.py` (image `minutiae-recover-fixtures`; `gen.sh exfat-recover`) | `exfat-recover` (`.img.gz` + `.expect.json`, in `internal/filesys/exfat/testdata/recover/`) | a volume written and deleted by the kernel `exfat` driver in the QEMU guest; an independent Python parse of the finished image checked against the allocation bitmap, `dump.exfat` and the source tree (see "exFAT recovery fixture (3B)") |
 
 ## Determinism
 
@@ -164,6 +166,12 @@ stops with a message that says so. If a machine cannot run privileged containers
 the committed `exfat.img.gz` is still used by the tests; only regenerating it is
 impossible there, and the builder-based tests (`exfattest`) are the coverage that
 needs no image tools.
+
+Caveat (ruling F38): `losetup` can autoload the `loop` kernel module in the Docker
+Desktop VM or on a host where loop is a module rather than built in, and `/dev/fuse`
+needs the fuse driver. This pre-dates the rule that kernel modules load only in a QEMU
+guest and is allowed per construct by the guard test; moving the exFAT fixture to the
+QEMU guest is a backlog item, not done here.
 
 ### APFS determinism and limits
 
@@ -444,19 +452,17 @@ checkpoint's `valid_block_count`, which fsck must also report as matching), `fsc
 hash is checked unchanged after the read-only tools ran. The tools print the feature bits
 in unprefixed hex (`928` is `0x928`).
 
-### F2FS deleted entries need a mountable kernel
+### F2FS deleted entries come from the QEMU guest
 
 F2FS keeps no deletion time and `sload.f2fs` cannot delete, so deleted entries exist only if
-files are removed through a kernel mount. `f2fs.sh` tries `mount -t f2fs -o loop` and, when
-it works, removes `/dir/removable-1.txt`, `-2` and `-3` and puts `/dir`'s mtime back to the
-source tree's. The Docker Desktop kernel (6.6.87.2-microsoft-standard-WSL2) has no f2fs
-module (`/proc/filesystems` lacks it, there is no `/lib/modules`, and the mount fails even
-with `--privileged`), so the committed fixtures have `"deleted": []` and a `generator.note`
-saying so; the three removable files are then ordinary live files in the oracle. Deleted-entry
-coverage is left to the `f2fstest` builder tests. The mount path has never run on a kernel
-with f2fs; if it does, the kernel stamps ctimes and checkpoint data from the real clock, so
-such images are not byte-reproducible (the note says so) and the oracle (read from the final
-image) still holds.
+files are removed through a kernel mount. `f2fs.sh` no longer tries one (ruling F37, 3B): a
+kernel mount of a modular filesystem can load a module into the Docker Desktop VM or the
+host, which this repository never does; kernel mounts happen only in the QEMU guest (3A's
+guest mounts f2fs, see "Recovery fixtures: toolchain probe"). The committed fixtures were
+always built without the mount path (the Docker Desktop kernel has no f2fs module), so
+they have `"deleted": []` and a `generator.note` saying so; the three removable files are
+ordinary live files in the oracle, and deleted-entry coverage is left to the `f2fstest`
+builder tests. Removing the mount path changes no committed fixture or oracle.
 
 ## HFS+ fixtures
 
@@ -762,13 +768,310 @@ Not measured here and not to be assumed (each gets its own probe in the named pa
 and the spec §18 "from memory" items stay marked until then):
 
 - [ ] ext4 `i_block` / extent tree residue after unlink (3C)
-- [ ] `exfat-fuse` FAT-chain residue after delete (3B); the kernel exfat driver's own
-      residue is also unmeasured
+- [x] `exfat-fuse` FAT-chain residue after delete (3B): superseded by ruling F3 (the
+      fixtures use the KERNEL drivers in the QEMU guest, never exfat-fuse); the kernel
+      exfat driver, on delete, clears the InUse bits of the entry set and the allocation-
+      bitmap bits and KEEPS the FAT entries of a chained file (see "FAT/exFAT recovery probe (3B)", P3)
 - [ ] F2FS node-block survival after unlink, and `nodiscard` mount behaviour (3D)
 - [ ] jbd2 stale journal region contents (3G)
 - [ ] F2FS roll-forward node chain after an fsync'd write and an unclean quit (3H)
 - [ ] `sqlite3` WAL / rollback-journal leftovers (3J)
 - [ ] whether the guest clock holds a fixed time without the rewind loop for a longer run
+
+## FAT/exFAT recovery probe (3B)
+
+Measured 2026-10-08 with `recover_fat_probe.sh` (library: `recover_guest.sh`) in the
+`minutiae-recover-fixtures` image of the section above: kernel `6.1.0-53-amd64`, the
+`vfat` and `exfat` drivers inside the QEMU TCG guest (`-smp 1`, no KVM, no
+`--privileged`, no FUSE, no loop device, no host mount; the guest's own `/init`
+loads the modules). The host formats (FAT16 4 MiB `mkfs.fat -F 16 -s 1 -i 1234ABCD`,
+exFAT 8 MiB `mkfs.exfat -L PROBE -c 512`, both under `faketime`, both with
+512-byte clusters) and READS the finished images with a raw Python reader
+(cross-checked with `mshowfat`, `fsck.fat` and `dump.exfat`). Run:
+
+```bash
+docker run --rm -v "$PWD:/work" -w /work minutiae-recover-fixtures bash tools/fixtures/recover_fat_probe.sh
+```
+
+The probe took about 3 minutes. Differences from the plan's wording, forced by
+measurement: the vfat guest also needs `nls_ascii` (the kernel's default
+`iocharset` is `ascii`; without it the mount fails with `IO charset ascii not
+found`); the guest links its applets itself (`busybox --install` in `/init`), so
+the host side of the scripts never names a module command; each op list runs one
+boot per stage and every stage image is kept, which is how "before" and "after" are
+both read from files.
+
+The module guard (`TestRecoverFixtureScriptsLoadNoKernelModules`, internal/archtest) checks every
+`tools/fixtures/*.sh`, every Dockerfile's RUN lines and the subprocess calls of every `*.py`.
+It is a tripwire against accidental host-side kernel or privilege use, not a sandbox:
+deliberately obfuscated commands (string-built names such as `ins""mod`, indirection
+through files a script writes itself) are out of scope, and reviewers read every
+fixture script.
+
+Stage sequence per filesystem (each stage is one guest boot on the previous
+stage's image; files `A.BIN`..`F.BIN`; sizes in 512-byte clusters: A 6, B 4, C 8,
+D 4, E 6, F 14): s1w write A,B,C,D; s2d `rm` B,D; s3w write E; s4f `dd
+if=/dev/zero` until ENOSPC (`FILL.BIN`); s5d `rm` A,C; s6w write F (14 clusters =
+A + C); s7d `rm` F; s9n (from an empty volume, ONE mount) write A,B,C, `rm` B,
+write D, E. exFAT only: s8v length probes.
+
+### Probe facts
+
+| Id | Fact (this run, measured) |
+|---|---|
+| P1 | vfat, `rm`: the kernel sets the directory entry's first byte to `0xE5` and keeps everything else, including first cluster and size (checked for contiguous B and D and for the two-run F). It ZEROES every FAT entry of the chain (all 4 of B, all 14 of F, the end-of-chain mark included). A deleted vfat file keeps only (first cluster, size) in its directory entry; the chain is gone |
+| P2 | vfat allocation order: ascending next-fit from the last allocated cluster, with wrap. Cluster 2 is not the first allocation (the first file of a fresh volume starts at cluster 3; cluster 2 is reached only after the search wraps: `FILL.BIN` = 23..8096 then 2). Within ONE mount a deleted file's hole is NOT reused while later clusters are free (s9n: A=3-8, B=9-12, C=13-20, `rm` B, D=21-24, E=25-30). After a fresh mount (every stage is one) the search restarts at cluster 3 and takes the lowest free clusters: after `rm` B,D, E (6 clusters) = 9-12,21-22. On a full volume with only A and C freed, F took them ascending: 3-8 then 13-20 |
+| P3 | exFAT, `rm`: (a) contiguous file (B, D; also A, C): `NoFatChain` set, entry-set types `85 C0 C1` become `05 40 41` (InUse cleared), first cluster, DataLength and ValidDataLength kept, allocation-bitmap bits CLEARED, FAT entries never written (all 0 before and after). (b) fragmented file F (clusters 18-23 and 28-35, written into the two holes of a full volume; `NoFatChain` clear): InUse cleared (`85 C0 C1` to `05 40 41`), first cluster and size kept, bitmap bits CLEARED, and the FAT entries are KEPT byte for byte (13 links and the end-of-chain `ffffffff` are all still present after the delete). **F1 gate: the kernel exFAT driver keeps the FAT entries of a deleted chained file, so Task 8 (exfat-fatchain) PROCEEDS**; the Task 13 fixture must prove it (`fat_residue: "chain-kept"`). Not tested: how long the entries survive once the freed clusters are reallocated (a reallocation rewrites them) |
+| P4 | exFAT allocation order: as vfat, except that the first allocation is the first free cluster of the heap (18 on this volume). Wrap-around to the heap start was NOT observed on exFAT (the fill ran to the last cluster, 12289, without needing it). Within one mount: next-fit (s9n: A=18-23, B=24-27, C=28-35, `rm` B, D=36-39, E=40-45; B's hole is not reused). After a fresh mount: lowest free clusters first (s3w: E = 24-27 then 36-37, a two-run file with `NoFatChain` clear). Full volume, A and C freed: F = 18-23 then 28-35, ascending |
+| P5 | exFAT `ValidDataLength` < `DataLength` with busybox tools: NO. `truncate -s 5000` on an empty file, `truncate -s 4000` on a 100-byte file, `dd seek=6 count=1` (a write past the end) and `dd seek=8 count=0` all gave ValidDataLength == DataLength (5000, 4000, 3584, 4096). The `valid-data-length` scenario is therefore builder-only (a hand-built exfattest image), not a kernel fixture |
+| P6 | `dd if=/dev/zero of=FILL.BIN bs=512` until ENOSPC leaves ZERO free clusters on both volumes (vfat 8095 clusters, exFAT 12288; free count derived from the FAT / bitmap is 0, and `dump.exfat` agrees: `Free Clusters: 0`). After `rm` of A and C (the only files freed) the free set is exactly A's and C's clusters (vfat 3-8,13-20; exFAT 18-23,28-35), and the file written next occupies exactly those clusters |
+
+Decisions that follow: the F1 gate is open (Task 8 proceeds; a stale exFAT chain
+is real on the kernel image); the `valid-data-length` scenario is builder-only
+(P5). For the F20 check of Tasks 12-13: P2 and P4 are ascending within the free
+set after a fresh mount and next-fit within a mount, so the write-order table
+may assume "ascending, no reuse of a hole inside one mount while later clusters
+are free"; the full-volume technique (free set exactly the target's clusters)
+does not depend on it and stays the rule (ruling F19).
+
+### Raw evidence (the `HEX` lines of the probe output)
+
+vfat B.BIN (32-byte directory entry, clusters 9-12) and its FAT16 entries, before
+and after `rm`:
+
+```
+entry BEFORE  422020202020202042494e200005aab16e576e570000aab16e570900d0070000
+entry AFTER   e52020202020202042494e200005aab16e576e570000aab16e570900d0070000
+FAT BEFORE    0a000b000c00ffff
+FAT AFTER     0000000000000000
+```
+
+vfat F.BIN (two runs, 3-8 and 13-20):
+
+```
+entry BEFORE  462020202020202042494e200003aab16e576e570000aab16e570300581b0000
+entry AFTER   e52020202020202042494e200003aab16e576e570000aab16e570300581b0000
+FAT BEFORE    040005000600070008000d000e000f0010001100120013001400ffff
+FAT AFTER     00000000000000000000000000000000000000000000000000000000
+```
+
+exFAT B.BIN (contiguous, clusters 24-27; the entry set is 3 x 32 bytes, printed
+here one line per entry). Stream flags byte `03` = AllocationPossible + NoFatChain:
+
+```
+BEFORE  8502d12b20000000aab16e57aab16e57aab16e57080880808000000000000000
+        c003000532ad0000d0070000000000000000000018000000d007000000000000
+        c10042002e00420049004e000000000000000000000000000000000000000000
+AFTER   0502d12b20000000aab16e57aab16e57aab16e57080880808000000000000000
+        4003000532ad0000d0070000000000000000000018000000d007000000000000
+        410042002e00420049004e000000000000000000000000000000000000000000
+FAT bytes of clusters 24-27, before and after: 00000000000000000000000000000000
+bitmap bytes 2-3 (clusters 18-33) before: ffff, after: 3ffc   (clusters 24-27 cleared, 18-23 and 28-33 untouched)
+```
+
+exFAT F.BIN (fragmented, clusters 18-23 and 28-35). Stream flags byte `01` =
+AllocationPossible only, the chain is in the FAT:
+
+```
+BEFORE  850289ea20000000aab16e57aab16e57aab16e57050580808000000000000000
+        c001000532af0000581b0000000000000000000012000000581b000000000000
+        c10046002e00420049004e000000000000000000000000000000000000000000
+AFTER   050289ea20000000aab16e57aab16e57aab16e57050580808000000000000000
+        4001000532af0000581b0000000000000000000012000000581b000000000000
+        410046002e00420049004e000000000000000000000000000000000000000000
+FAT BEFORE  13000000140000001500000016000000170000001c0000001d0000001e0000001f00000020000000210000002200000023000000ffffffff
+FAT AFTER   13000000140000001500000016000000170000001c0000001d0000001e0000001f00000020000000210000002200000023000000ffffffff
+bitmap bytes 2-4 (clusters 18-41) before: ffffff, after: c003fc   (clusters 18-23 and 28-35 cleared; 24-27 belong to E and stay set)
+```
+
+exFAT A.BIN (contiguous, clusters 18-23), C.BIN (28-35), D.BIN (36-39), deleted by `rm`
+(`HEX` lines; bitmap byte N covers clusters 2+8N .. 9+8N; FAT bytes of all these
+clusters are zero before and after, the files being `NoFatChain`):
+
+```
+A  bitmap byte 2 (clusters 18-25)  before ff  after c0      (18-23 cleared)
+C  bitmap bytes 3-4 (26-41)        before ffff after 03fc   (28-35 cleared)
+D  bitmap byte 4 (clusters 34-41)  before 3f  after 03      (36-39 cleared; 34-35 stay set, they are C; 40-41 were free)
+entry-set types for A, C, D: 85 c0 c1 before, 05 40 41 after
+```
+
+(The words below are abridged by hand from the probe output; the raw log is not stored. Rerunning the probe regenerates it, and the stage images differ only in timestamps and serial numbers.)
+Allocation evidence (P2 vfat: FAT16 entries of clusters 2-31, two bytes each,
+little endian; P4 exFAT: bitmap bytes 0-7 = clusters 2-65). The stage names are those
+above; `ENTRY` lines are the reader's listing of the same image.
+
+```
+vfat s0  (empty)          000000000000000000...  all zero
+vfat s1w (A,B,C,D)        0000 0400 0500 0600 0700 0800 ffff 0a00 0b00 0c00 ffff 0e00 ... 1400 ffff 1600 1700 1800 ffff
+                          cluster 2 free, A starts at 3 (3->4->...->8 EOC), B 9-12, C 13-20, D 21-24
+vfat s2d (rm B,D)         0000 0400 ... 0800 ffff 0000 0000 0000 0000 0e00 ... 1400 ffff 0000 0000 ...
+vfat s3w (E)              ... 0a00 0b00 0c00 1500 ... 1600 ffff   E = 9-12 then 21-22 (12->21, 22 EOC)
+vfat s4f (full)           ffff 0400 ...                  cluster 2 = ffff: FILL.BIN ends there
+vfat s4f tail, 8090-8096  9b1f 9c1f 9d1f 9e1f 9f1f a01f 0200   cluster 8096 -> 2 (wrap), 2 -> ffff
+vfat s5d (rm A,C)         ffff 0000 ... (3-8 zero)  0a00 0b00 0c00 1500 0000 ... (13-20 zero)
+vfat s6w (F)              ffff 0400 0500 0600 0700 0800 0d00 0a00 ...   F = 3-8 then 13-20 (8->13)
+vfat s9n (one boot)       0000 0400 ... 0800 ffff 0000*4 0e00 ... 1400 ffff 1600 1700 1800 ffff 1a00 1b00 1c00 1d00 1e00 ffff
+                          A 3-8, (B 9-12 deleted, free), C 13-20, D 21-24, E 25-30: no hole reuse
+exfat s0 (empty)          ffff000000000000      clusters 2-17 in use (bitmap, upcase, root), 18+ free
+exfat s1w                 ffffffff3f000000      A 18-23, B 24-27, C 28-35, D 36-39
+exfat s2d (rm B,D)        ffff3ffc03000000
+exfat s3w (E)             ffffffff0f000000      E = 24-27 and 36-37 (hole B, then hole D)
+exfat s4f (full)          ffffffffffffffff      and bitmap bytes for clusters 12234-12289: ffffffffffffff
+exfat s5d (rm A,C)        ffffc003fcffffff      18-23 and 28-35 free
+exfat s6w (F)             ffffffffffffffff      F = 18-23 then 28-35
+exfat s9n (one boot)      ffff3ffcff0f0000      A 18-23, hole 24-27 (B), C 28-35, D 36-39, E 40-45
+```
+
+Listings (`ENTRY` lines of the probe output):
+
+```
+vfat  s4f   A 3-8, E 9-12,21-22, C 13-20, FILL.BIN start 23 size 4134400 chain 23-8096,2
+vfat  s9n   A 3-8, D 21-24, C 13-20, E 25-30
+exfat s4f   A 18-23, E 24-27,36-37 (NoFatChain clear), C 28-35, FILL.BIN 38-12289 (NoFatChain set)
+exfat s9n   A 18-23, D 36-39, C 28-35, E 40-45
+```
+
+exFAT length probes (P5): ValidDataLength (stream offset 8) and DataLength (offset
+24) in each entry set as the guest left it:
+
+```
+T1 truncate -s 5000 on an empty file   VDL 8813000000000000  DataLength 8813000000000000
+T2 100-byte file, truncate -s 4000     VDL a00f000000000000  DataLength a00f000000000000
+T3 dd seek=6 count=1                   VDL 000e000000000000  DataLength 000e000000000000
+T4 dd seek=8 count=0                   VDL 0010000000000000  DataLength 0010000000000000
+```
+
+## FAT recovery fixtures (3B)
+
+`fat_recover.sh` (+ `fat_recover_oracle.py`, library `recover_guest.sh`) builds three FAT volumes that the KERNEL
+`vfat` driver writes and deletes inside the QEMU TCG guest (ruling F3: no mtools writes, no `mdel`, no kernel module on
+the host, no `--privileged`). Output, in a subdirectory so `fixture_test.go`'s `testdata/*.img.gz` glob and its
+old-schema oracle never see it (ruling F15): `internal/filesys/fat/testdata/recover/{fat12,fat16,fat32}-recover.img.gz`
+and `.expect.json` (each at most about 150 KiB gzipped, ruling F6). Regenerate image and oracle together (QEMU images are
+not byte-reproducible; `generator.image_sha256` binds them, every test checks it first):
+
+```bash
+docker build -f tools/fixtures/Dockerfile.recover -t minutiae-recover-fixtures tools/fixtures
+docker run --rm -v "$PWD:/work" -w /work minutiae-recover-fixtures bash tools/fixtures/gen.sh fat-recover
+```
+
+`fat-recover` and `exfat-recover` are in the not-in-`all` list of `gen.sh`; `gen.sh` stops, naming the image to build,
+when QEMU or the guest kernel is missing (checked for every target). `exfat-fuse`, installed by `Dockerfile.recover`,
+is unused. Self-check: `TestRecoverFixturesHoldWhatTheyClaim` (internal/filesys/fat).
+
+Images (`mkfs.fat -i 1234ABCD -n FIXTURE -s 1` under `faketime`, 512-byte clusters, guest `-t vfat -o utf8`):
+
+| Image | Size | Notes |
+|---|---|---|
+| `fat12-recover` | 1440 KiB | |
+| `fat16-recover` | 8192 KiB | |
+| `fat32-recover` | 33040 KiB, `-f 1` | the minimum for a 512-byte-cluster FAT32 (65536 clusters) with ONE FAT copy: the FAT of a full volume is nearly incompressible, and anything larger exceeds the 150 KiB budget |
+
+### How the scenarios are made (placement is never trusted: rulings F19, F22)
+
+Probe facts P2 and P6 (above) give the allocator model: next-fit with wrap inside one mount, the lowest free cluster
+at or above the first data cluster after a fresh mount, and a free set that is EXACTLY the freed files' clusters on a
+full volume. The script relies only on this: every scenario family has its own directory (deleting a target frees only
+that family's clusters and a new file cannot take its directory slot); the volume is FULL (`fill.bin` written until
+ENOSPC) before every hole-consuming or reuse step; writes go only to writer directories made in boot 1; the writing
+phase W precedes the deleting phase D (only `rm`), so the final free set is the union of the deleted files' clusters
+whatever order the allocator chose. Four guest boots, each a fresh mount on the previous boot's image:
+
+1. populate: every directory first, then the family files (the volume is not full);
+2. `fill.bin` until ENOSPC, then the hole steps: `rm a.bin c.bin` and write the 6-cluster `f.bin` (the only free
+   clusters are a's and c's, so `f.bin` is fragmented around `b.bin` / `D.BIN`) in `frag-live` and `frag-dead`;
+3. phase W, one family at a time, each ending with the volume full again (the "ascending" row of F22: the writes take
+   the freed clusters in ascending order);
+4. phase D: `rm` only.
+
+The host reads the image after boots 1, 2 and 3 (`fat_recover_oracle.py snap`: the true chain of every live file,
+needed for files deleted later; the volume must be full after boot 2 and have exactly the lfn file's 3 clusters free
+after boot 3) and after boot 4 (`final`). Four boots instead of the plan's two because the true chain of a file the
+guest deletes before the image is read cannot be known otherwise (`c.bin` of the frag families, the files written in
+phase W).
+
+| Family (directory) | Steps | Final state |
+|---|---|---|
+| `contiguous` | `target.bin` (5 clusters), `rm` in D | intact on disk: contiguous-equal |
+| `zero-size` | `target.dat` (0 bytes), `rm` in D | skip `empty` |
+| `reuse-all` | `rm target.bin` (6) in W, then `/reuse-all-w/took.bin` (6) | every cluster live: skip `no-free-bytes` |
+| `reuse-head` | `rm target.bin` (6), `/reuse-head-w/took.bin` (2) then `rest.bin` (4) | head and rest live: skip `no-free-bytes` |
+| `cut-l` | `rm target.bin` (6), `/cut-l-w/filler.bin` (4, listed overwriter, `rm` in D) then `tail.bin` (2, live) | target cut after 4 clusters, overlapping the listed `filler.bin` (confidence 20; filler 30) |
+| `cut-h` | `rm target.bin` (6), `/cut-h-hid/filler.bin` (4) then `/cut-h-w/tail.bin` (2, live), `rm -r /cut-h-hid` in D | target cut after 4 clusters holding the hidden overwriter's bytes (not equal to the source, no listed overlap) |
+| `frag-live` | `a.bin` (2), `b.bin` (3, stays), `c.bin` (4); `rm a c`; `f.bin` (6) takes both holes; `rm f.bin` in D | `f.bin` is fragmented around the live `b.bin`: cut after its first fragment |
+| `frag-dead` | `a.bin` (2), `D.BIN` (3, an upper-case 8.3 name: no long-name entries, so its deleted entry is short-only, F104), `c.bin` (4); `rm a c`; `f.bin` (6); `rm D.BIN f.bin` in D | `f.bin`'s contiguous range is all free but holds `D.BIN`'s bytes: complete, not equal to the source |
+| `lfn` | the ONLY entry `a-long-deleted-name-for-slot-reuse.bin` (3 clusters, 3 long-name entries); `rm`, then create the empty `NEW.TXT` | `NEW.TXT` takes the first slot (the first on-disk long-name entry, the end of the name): `lfn-tail-lost` |
+| `gone` | `gone/inner.bin` (2), `rm -r /gone` in D | the directory is a deleted `not-a-file`; `inner.bin` is under a deleted directory (`listed: false`) |
+
+Helpers of a scenario that are deleted entries too (the `c.bin` hole, `D.BIN`, the writers' `filler.bin`, the hidden
+`cut-h-hid` directory) carry the family `<family>-aux`, so the self-check's per-family assertions (for example "every
+`frag-*` entry has two fragments") apply to the scenario's own file. The slot of a hole's `a.bin` is taken by `f.bin`
+(the same slot size), so only `c.bin` remains as a deleted entry there; the oracle states what the image holds either way.
+
+### The oracle (`fat_recover_oracle.py`, never Minutiae)
+
+An independent Python reader of the finished image (BPB, FAT12/16/32, directories, long names) cross-checked against
+`mshowfat` (every live chain), `fsck.fat -v` (geometry, clusters in use) and the source tree the guest was fed (every
+live file's bytes). From the image alone it derives, per deleted short entry (in every live directory, plus the first
+cluster of a deleted directory): `range` = the first cluster for ceil(size/512) clusters; `captured` = the leading part
+of `range` whose clusters are free (no live chain holds them; the count equals the FAT's zero entries and `fsck.fat -v`);
+`cut`; `outcome` (skip `not-a-file`, `empty`, `no-free-bytes`, or recover with method `fat-contiguous`);
+`equal_source` (the final bytes of `captured` equal the source, uncut only); `overlaps` (other LISTED entries whose
+captured ranges intersect); `confidence` = min(55, 20 if cut, 30 if overlaps); `name_state` (`lfn-intact` when the
+deleted long-name entries, checksummed against the short name with its first byte recovered, spell the source name,
+`lfn-tail-lost` when they spell a proper prefix, `short-only` without any); `true_chain` from the snapshot that saw the
+file live. A deleted entry is tied to its source file by directory, kind and size (and long-name text), and the script
+fails when that is not unique. The generator exits 1 with `family <name> missing: ...; re-rule, do not edit the ops`
+when a required outcome family (`contiguous-equal`, `empty`, `cut-prefix`, `skip-no-free-bytes`, `not-equal-complete`,
+`overlap`, `lfn-tail-lost`, `short-only`) occurs in none of the three images, and when a scenario family or the shape of the
+contiguous / fragmented files is missing from one. No test compares timestamps from these images.
+
+NOT produced by a real driver (builder tests only): cross-linked chains, bad or reserved clusters inside a range, orphan
+LFN sets, a first cluster outside the volume, a size larger than the volume.
+
+## exFAT recovery fixture (3B)
+
+`exfat_recover.sh` (+ `exfat_recover_oracle.py`, library `recover_guest.sh`) builds one exFAT volume that the KERNEL
+`exfat` driver writes and deletes inside the QEMU TCG guest (ruling F3: no `exfat-fuse`, no loop device, no
+`--privileged`, no kernel module on the host). Output, in a subdirectory (ruling F15):
+`internal/filesys/exfat/testdata/recover/exfat-recover.img.gz` (130494 bytes) and `.expect.json`. Regenerate image and
+oracle together (QEMU images are not byte-reproducible; `generator.image_sha256` binds them):
+
+```bash
+docker run --rm -v "$PWD:/work" -w /work minutiae-recover-fixtures bash tools/fixtures/gen.sh exfat-recover
+```
+
+The script exits 1 when it wrote no image (ruling F102), so `gen.sh exfat-recover` never reports success for nothing.
+Self-check: `TestExfatRecoverFixturesHoldWhatTheyClaim` (internal/filesys/exfat). `exfat-fuse`, installed by
+`Dockerfile.recover`, is unused.
+
+The image is 8 MiB, `mkfs.exfat -L FIXTURE -c 4096` under `faketime` (1536 clusters of 4096 bytes), guest `-t exfat`. The
+method is that of "FAT recovery fixtures (3B)" (rulings F19, F22): one directory per family, the volume FULL (`fill.bin`
+until ENOSPC) before every reuse step, writer directories made first, phase W before phase D (only `rm`), four fresh-mount
+guest boots with host snapshots after boots 1-3 for the true chains. Sizes are `k*4096-7` bytes.
+
+| Family (directory) | Steps | Final state |
+|---|---|---|
+| `contiguous` | `target.bin` (5 clusters), `rm` in D | the kernel keeps `NoFatChain` for it: `exfat-nofatchain`, equal to the source, 75 |
+| `zero-size` | `target.dat` (0 bytes), `rm` in D | skip `empty` |
+| `reuse-head` | `rm target.bin` (6), `/reuse-head-w/took.bin` (2) then `rest.bin` (4) | every cluster live: skip `no-free-bytes` |
+| `cut-h` | `rm target.bin` (6), `/cut-h-hid/filler.bin` (4) then `/cut-h-w/tail.bin` (2, live), `rm -r /cut-h-hid` in D | target cut after 4 clusters holding the hidden overwriter's bytes (20) |
+| `chained` | `a.bin` (2), `b.bin` (3, stays), `c.bin` (4); `rm a c`; `f.bin` (6) takes both holes, so it is fragmented and gets a FAT chain; `rm f.bin` in D | `f.bin`: `no_fat_chain` false, `fat_residue` `chain-kept` (probe fact P3: the kernel keeps the FAT entries), `exfat-fatchain` 65 (30 with the overlap); the hole's `c.bin` is `NoFatChain`, complete and not equal to the source |
+| `gone` | `gone/inner.bin` (2), `rm -r /gone` in D | a deleted directory (`not-a-file`); `inner.bin` is under it (`listed: false`) |
+
+`valid-data-length` is builder-only: probe fact P5 (`ValidDataLength` below `DataLength` cannot be reached with the guest's
+tools), so the oracle exits 1 if any entry has them differ. Helper entries carry the family `<family>-aux` (as in the FAT
+fixtures). The oracle is an independent Python parse of the finished image (boot sector, FAT, allocation bitmap, entry
+sets), cross-checked against the allocation bitmap (its zero bits equal the clusters no live chain holds), `dump.exfat`
+(cluster size, total clusters, `Free Clusters`), and the source tree (every live file's bytes). The pinned `dump.exfat`
+(exfatprogs 1.2.0) has no per-file option, so `no_fat_chain` is cross-checked against the FAT instead: a `NoFatChain` file's
+FAT entries are zero, a chained file's are all written (and the flag must not change between the snapshot that saw the file
+live and its deleted entry). The flag is read from the Stream entry (bit 1 of its flags), independently of the FAT; the FAT check runs over the file's own run at SNAPSHOT time only (not on the final image) and fails the generator closed on a mismatch, so a NoFatChain file that sits on clusters holding stale FAT entries of an earlier chained file stops the run instead of being guessed past. `exfat_chains.py` (the exFAT listing fixture) needs `dump.exfat -c -d <path>`, which exfatprogs 1.2.0 (this recover image) lacks: it belongs to the default `minutiae-fixtures` image, not to `minutiae-recover-fixtures`. Per deleted file the oracle adds `no_fat_chain`, `data_length`, `valid_data_length` and
+`fat_residue` (`not-chained`, `chain-kept` or `chain-cleared`, read from the FINAL FAT along the true chain); `expect.method`
+is `exfat-nofatchain` (75) when `no_fat_chain`, `exfat-fatchain` (65) when the chain is kept, else `exfat-contiguous` (55),
+with the caps 20 (cut) and 30 (overlap). The generator exits 1 naming a missing family (`nofatchain-equal`, `empty`,
+`chained`, `skip-no-free-bytes`, `cut-prefix`, `not-equal-complete`), and exits 1 with "re-rule F1" if the chained file's
+FAT chain is not kept. The FAT-fixture-only fields `name_state` do not apply (exFAT names are always whole entries).
 
 ## SQLite fixtures
 
@@ -1016,3 +1319,128 @@ No new image: `minutiae-recover-fixtures` (`Dockerfile.recover`: Debian bookworm
 3. Keep images small: a few hundred KiB compressed at most. The raw size is set by
    the filesystem (the smallest FAT32 image is 34 MiB, see above; every other fixture
    is at most 16 MiB raw).
+
+## DDL provenance (Android telephony, plan 4D)
+
+The eight snapshots in `tools/fixtures/schemas/android-telephony/*.sql` are cross-checked by
+`tools/fixtures/ddl_crosscheck.py` against the public provider sources at AOSP tag
+`android-14.0.0_r1` (the nearest `android-14.0.0_r*` tag present in every repository; the
+script is run with `py -3 -I <sourcedir> <schemasdir> --write-report ...`). Commits:
+`platform/packages/providers/TelephonyProvider` a1e5ac7164cbb4556226279de386518c5814c115,
+`platform/packages/providers/ContactsProvider` 224cfeaf5f85106b1ca7d323403d6764b78920f0,
+`platform/frameworks/base` 299fe6f5d6fc6f1af7c3411dcf4e5efdf7217368,
+`platform/packages/apps/Messaging` d921817eec79a8ca2354254d9e0771a8740c5867 (only `PduHeaders.java`, see below).
+The fetched files (untrusted text, kept outside the repository, never executed) and their SHA-256 are listed in
+`schemas/android-telephony/CROSSCHECK.md`, which also holds one verdict row per snapshot table:
+
+- `verified`: the snapshot is the CREATE TABLE the tag builds (`mmssms-aosp-baseline`, `calllog-features-subid`,
+  `contacts-aosp-baseline`, `contacts-deleted-contacts`; generated with `--emit`, compared column by column on name,
+  order and whole definition text). These replaced the earlier from-memory text, which lacked columns the tag creates
+  (for example `sub_id`, `creator`, `text_only`, `error_code DEFAULT -1`, `raw_contacts.account_id` instead of
+  `account_name`/`account_type`, `data.hash_id`, 36 `raw_contacts` and 54 `calls` columns) and so did not match it.
+  `data15` is declared TEXT by the source although it holds BLOB values.
+- `historical`: older or reduced variants (`mmssms-aosp-subid-alter`, `mmssms-oem-extended`,
+  `calllog-pre-presentation`, `calllog-in-contacts2`) that only use columns a CREATE TABLE of the same sources defines
+  or that the upgrade code adds with ALTER TABLE ADD COLUMN (each with its file:line in CROSSCHECK.md). The three
+  `mmssms-oem-extended` vendor columns are invented on purpose. `ContactsDatabaseHelper.java` no longer creates a
+  `calls` table at this tag (line 2687 says it was extracted), so `calllog-in-contacts2` is the layout of older
+  releases built from the call log columns, not a definition of the tag.
+  A historical snapshot is checked on column names only: the historical definitions (column affinity, the
+  `DEFAULT` values such as `error_code DEFAULT 0`, `AUTOINCREMENT` on the key) are not compared with the tag's
+  text, which differs from them.
+- `no-public-source`: none.
+
+Constants, checked by reading the fetched files (file:line at the tag): `Telephony.java` `Sms.MESSAGE_TYPE_*` lines
+139-157 (0 all, 1 inbox, 2 sent, 3 draft, 4 outbox, 5 failed, 6 queued); `Telephony.java` `BaseMmsColumns.MESSAGE_BOX_*`
+lines 1477-1487 (0 all, 1 inbox, 2 sent, 3 drafts, 4 outbox, 5 failed); `CallLog.java` `Calls.*_TYPE` lines 862-878
+(1 incoming, 2 outgoing, 3 missed, 4 voicemail, 5 rejected, 6 blocked, 7 answered externally), `PRESENTATION_*` lines
+936-944 (1 allowed, 2 restricted, 3 unknown, 4 payphone, 5 unavailable), `FEATURES_VIDEO` line 888 (1 << 0);
+`ContactsContract.java` `CommonDataKinds.Im.PROTOCOL_*` lines 6940-6985 (-1 custom, 0 AIM, 1 MSN, 2 Yahoo, 3 Skype,
+4 QQ, 5 Google Talk, 6 ICQ, 7 Jabber, 8 NetMeeting); `Phone.TYPE_*` lines 6332-6351 (1 home, 2 mobile, 3 work,
+4 fax work, 5 fax home, 6 pager, 7 other, 8 callback, 9 car, 10 company main, 11 ISDN, 12 main, 13 other fax,
+14 radio, 15 telex, 16 TTY/TDD, 17 work mobile, 18 work pager, 19 assistant, 20 MMS); `Email.TYPE_*` lines 6606-6609
+(1 home, 2 work, 3 other, 4 mobile); `StructuredPostal.TYPE_*` lines 6757-6759 (1 home, 2 work, 3 other);
+`Website.TYPE_*` lines 7667-7673 (1 homepage, 2 blog, 3 profile, 4 home, 5 work, 6 FTP, 7 other).
+The MMS address types come from `PduHeaders.java`, which is not in `frameworks/opt/mms` at this tag (no such
+repository) nor in `frameworks/opt/telephony`; the copy in `packages/apps/Messaging`
+(`src/com/android/messaging/mmslib/pdu/PduHeaders.java`, same tag) gives FROM 0x89 = 137 (line 38), TO 0x97 = 151
+(line 54), CC 0x82 = 130 (line 31) and BCC 0x81 = 129 (line 30). The plan brief had CC and BCC swapped (written from
+memory); the public source wins (ruling T42), and the mapper and the oracle of the owning task follow it.
+
+## Telephony fixtures (plan 4D)
+
+`tools/fixtures/telephony_gen.py` builds the Android telephony databases with the host Python's bundled `sqlite3`
+(Python 3 only: no Docker, no kernel, no mounts; `py -3` on Windows, `python3` on Linux and macOS):
+
+```
+py -3 tools/fixtures/telephony_gen.py --family mmssms --out internal/parsers/androidmms/testdata \
+    --pins-go internal/parsers/androidmms/pins_test.go --pins-package androidmms_test
+py -3 tools/fixtures/telephony_gen.py --family mmssms --out <dir> --variant utf16 hot-journal   # some variants
+py -3 tools/fixtures/telephony_gen.py --family mmssms --check                                  # generate, discard
+py -3 tools/fixtures/telephony_gen.py --family calllog --out internal/parsers/androidcalllog/testdata \n    --pins-go internal/parsers/androidcalllog/pins_test.go --pins-package androidcalllog_test
+```
+
+`--pins-go` writes the complete, already formatted `fixturePins` table (the SHA-256 of every decompressed file) and needs
+every variant. `telephony_common.py` holds the shared helpers, `telephony_mmssms.py` the scenario rows and the oracle.
+
+The oracle is the scenario oracle of spec 10.3: Python restates the mapping rules and reads the stored values back
+from the engine on a COPY of the finished files (a WAL or hot journal is applied to the copy, never to the shipped
+bytes), so a record is expected from what the engine says is in the database, not from what the generator meant to
+write. It shares no code with the Go parsers. `expect.json` names the engine (`generator.sqlite`) and the SHA-256 of
+each file; the database header differs between SQLite versions, so a fixture is regenerated together with its oracle
+and its pin. Databases are byte-reproducible; a WAL or journal holds salts drawn from the engine's PRNG and differs on
+every run. MMS address types follow the public `PduHeaders.java` (137 from, 151 to, 129 bcc, 130 cc; ruling T42); the
+fixture rows keep the raw type codes.
+
+| Variant | DDL snapshot | Database state | What it exercises |
+|---|---|---|---|
+| `aosp-baseline` | `mmssms-aosp-baseline.sql` | plain database | 22 `sms` and 6 `pdu` rows: every `type`, sentinel, seconds-in-ms and year-2100 dates, NUL and invalid UTF-8, 300 KiB body, address kinds, missing thread and recipient rows, MMS parts, attachments (one present, others unresolved), roles `from,to,to,cc,bcc,member` |
+| `aosp-subid-alter` | `mmssms-aosp-subid-alter.sql` | rows written before and after `ALTER TABLE ADD COLUMN` (`@phase 1`) | `sub_id`, `creator`, `text_only` appear mid-history |
+| `oem-extended` | `mmssms-oem-extended.sql` | plain | three invented vendor columns: `unmapped_columns.sms` |
+| `utf16` | `mmssms-aosp-baseline.sql` | page size 1024, UTF-16LE text | the text decoding path |
+| `av-freelist-512` | `mmssms-aosp-baseline.sql` | page size 512, `auto_vacuum=2`, 151 rows deleted | freelist pages |
+| `wal-uncheckpointed` | `mmssms-aosp-baseline.sql` | WAL left by a killed writer (`os._exit`) | rows only in the WAL; an edited row (`file: wal`) |
+| `hot-journal` | `mmssms-aosp-baseline.sql` | rollback journal left by a killed writer | the `journal-hot` reader warning; the oracle shows the rolled-back rows |
+
+`telephony_calllog.py` holds the call log scenario rows and oracle. Its three variants are lone databases (no WAL, no
+journal), so the oracle states the db path as `source_path` of every row (rulings T48, T51): `in-contacts2` states the
+`contacts2.db` path, the other two the `calllog.db` path.
+
+| Variant | DDL snapshot | Database state | What it exercises |
+|---|---|---|---|
+| `features-subid` | `calllog-features-subid.sql` | plain, 31 `calls` rows | every `type` 1 to 7 and 99, outgoing calls with duration 0, NULL and negative, hidden numbers (`presentation` 2, 3, 4), sentinel and year-2100 dates, a 4e9 s duration, `features` video, an ICCID-length and a decimal `subscription_id`, invalid UTF-8 in `number` and `name`, a BLOB `subscription_id`, a duration of 2^53+1 (not exactly a float64), and `subscription_id` text that Python `int()` accepts but `ParseInt` refuses (a non-ASCII digit, an underscore, 34 bytes) and a negative one; every refused text is flagged `unknown_columns.subscription_id = "unparseable"` (T66) |
+| `pre-presentation` | `calllog-pre-presentation.sql` | plain, 16 rows | a table without `presentation`, `features`, `is_read`, `countryiso`, `geocoded_location` and `subscription_id` |
+| `in-contacts2` | `calllog-in-contacts2.sql` | plain, 9 rows, path `contacts2.db` | the call log inside the older contacts database |
+
+`telephony_contacts.py` holds the contacts provider scenario rows and oracle (`py -3 tools/fixtures/telephony_gen.py --family contacts
+--out internal/parsers/androidcontacts/testdata --pins-go internal/parsers/androidcontacts/pins_test.go --pins-package androidcontacts_test`).
+Its six variants are lone databases (the sixth, `duplicate-keys`, carries an empty `-wal`, so the oracle states no path for its
+rows and the comparer derives it from the file role), so the oracle states the `contacts2.db` path as `source_path` of every row
+(rulings T48, T51). The oracle also pins the summary (display name and first phone through the summarizer's rules, a bidi or
+format character shown as `<U+XXXX>`; a name it does not restate is left unpinned, T81). The oracle restates the `contact` mapping of spec 9.3 (one record per `raw_contacts` row, `data` rows typed through
+`mimetypes`, every `dataN` read as text, `deleted_contacts` tombstones) and reads every stored value back from the engine. The
+snapshot declares `COLLATE PHONEBOOK`, which the platform registers; the generator registers a stand-in collation (no index uses it).
+The pinned tag's `raw_contacts` has no `account_name`, `account_type` or time column, so the two contacts snapshots carry the
+tag's `accounts` and `contacts` tables too (verbatim, CROSSCHECK.md; ruling T68) and the oracle follows the joins (T69): the
+account comes only from `accounts` through `raw_contacts.account_id` (inline `account_name`/`account_type` count only on a
+schema that has them); a NULL `account_id` is no account, an `account_id` with no `accounts` row is stated
+(`raw.account_state = "no-accounts-row"`), never "no account". The time is the AGGREGATE contact's
+`contacts.contact_last_updated_timestamp` through `raw.contact_id`: it is stated as `times.aggregate_last_updated` with
+`raw.contact_last_updated_source`, never as `Record.Time` (it is not the raw contact's own modification time); a NULL
+`contact_id` is `raw.aggregate_state = "no-contact-id"`, a dangling one `"no-contacts-row"`, never zero (T72). A join that cannot be
+decided (a missing `accounts` or `contacts` table, or unreadable pages) puts the table name in `raw.join_undecided`; a fixture cannot
+force that, so the parser's own tests build such databases in memory (as they do for a joined cell of the wrong storage class,
+`raw.joined_unknown_columns`, and for a variant without `account_id` or `contact_id`, `raw.account_state = "no-account-id-column"` /
+`raw.aggregate_state = "no-contact-id-column"`; the oracle states these branches too, though no fixture reaches them). The scenario's dangling aggregate id and the cut-off below
+which `Builder.contact` creates a `contacts` row are the named constants `DANGLING_CONTACT_ID` and `FIRST_DANGLING_CONTACT` (T74).
+
+| Variant | DDL snapshot | Database state | What it exercises |
+|---|---|---|---|
+| `aosp-baseline` | `contacts-aosp-baseline.sql` | plain, 13 `raw_contacts` (12 records plus 1 warning for the contact that identifies nobody), 20 `data` rows for contact 1, 3 `accounts`, 11 `contacts` | accounts: two distinct, a NULL `account_id` (no account) and a dangling one (`no-accounts-row`); aggregate times: valid, zero (sentinel), year 2100 (invalid), a NULL `contact_id` (`no-contact-id`) and a dangling one (`no-contacts-row`); every mimetype, labels (named, custom, unknown type), a skipped empty value, a second name and organization row, an IM with the custom marker and AIM, a photo, a dangling `mimetype_id`, a `group_membership` row, a deleted contact, a tombstone-shaped contact (no name, source id), a contact that identifies nobody (a warning), NUL and invalid UTF-8 (`raw.text_flags`), a 400-digit number |
+| `deleted-contacts` | `contacts-deleted-contacts.sql` | plain, 2 contacts and 2 `deleted_contacts` rows | the tombstones (a valid and a zero deletion time) |
+| `multi-account` | `contacts-aosp-baseline.sql` | plain, 3 raw contacts of one person (one aggregate contact) | three distinct accounts (google, samsung, whatsapp with a `data_set`), one record per raw contact, one aggregate time |
+| `unicode-rtl` | `contacts-aosp-baseline.sql` | plain, 4 contacts | Hebrew, Arabic with a right-to-left override, CJK and emoji names and labels |
+| `huge-contact` | `contacts-aosp-baseline.sql` | plain, 1 contact with 1200 phones, 1100 e-mails and 130 notes | the list cap of 1000 and the note cap of 100 with their `_total` and `_truncated` counters |
+| `duplicate-keys` | `contacts-aosp-baseline.sql`, with `accounts` and `contacts` re-created with a plain `_id integer` column (T79) | plain plus an empty `-wal`, 3 raw contacts, 3 `accounts` rows (key 1 twice), 4 `contacts` rows (key 1 three times) | a join key naming several rows: `raw.join_undecided = ["accounts","contacts"]` with `raw.join_duplicate = {"accounts":2,"contacts":3}`, no account and no time; a unique key and a dangling one beside it. The empty `-wal` makes the probe (which refuses a table without the rowid alias) defer to Parse |
+
+The DDL snapshots and their public sources: `schemas/android-telephony/CROSSCHECK.md` (see "DDL provenance" above).

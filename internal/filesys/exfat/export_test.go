@@ -45,3 +45,9 @@ func (f *FS) DirRecordCap() int { return f.dirRecordCap }
 
 // SetUnallocatedRunCap lowers the number of runs Unallocated reports.
 func (f *FS) SetUnallocatedRunCap(n int) { f.unallocCap = n }
+
+// SetResolveDirs lowers the number of directories one resolveDir may scan.
+func (f *FS) SetResolveDirs(n int) { f.resolveDirs = n }
+
+// MaxLocateScans is the bound on the directories one directory search scans.
+const MaxLocateScans = maxResolveDirs
