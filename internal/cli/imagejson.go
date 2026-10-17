@@ -93,6 +93,13 @@ func newPathEntry(p string, e filesys.Entry) pathEntry {
 type jsonWarningItem struct {
 	Path     string   `json:"path"`
 	Warnings []string `json:"warnings"`
+	// Snapshot names the snapshot the finding lies in, when it lies in one: historical, never live.
+	Snapshot string `json:"snapshot,omitempty"`
+}
+
+// newWalkWarningItem is the array item for a walker finding at p; snapshotOf gives the snapshot a path lies in.
+func newWalkWarningItem(snapshotOf func(string) string, p, finding string) jsonWarningItem {
+	return jsonWarningItem{Path: p, Warnings: []string{finding}, Snapshot: snapshotOf(p)}
 }
 
 // jsonStat is the object `image stat --json` prints: the entry plus the

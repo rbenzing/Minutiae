@@ -283,3 +283,46 @@ func TestSnapshotNameOfPathEmptySegmentIsStillSnapshotData(t *testing.T) {
 		}
 	}
 }
+
+// Historical data is never presented as live in any listing mode: the non-recursive text listing marks
+// the entries at or below <volume>/.snapshots/<name> exactly as the recursive one does (Y95).
+func TestImageLsNonRecursiveMarksSnapshotData(t *testing.T) {
+	e := apfsEnv(t, snapshotVolume("Data"))
+	code, out := e.image(t, "ls", e.ref, "/Data/.snapshots/S/docs")
+	if code != 0 {
+		t.Fatalf("ls of a snapshot directory: %d\n%s", code, out)
+	}
+	var n int
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line == "" {
+			continue
+		}
+		n++
+		if !strings.HasSuffix(line, " [snapshot S]") {
+			t.Errorf("a snapshot entry is listed without the marker: %q", line)
+		}
+	}
+	if n == 0 {
+		t.Fatalf("nothing listed:\n%s", out)
+	}
+	_, out = e.image(t, "ls", e.ref, "/Data/docs")
+	if strings.Contains(out, "[snapshot") {
+		t.Errorf("a live listing carries the marker:\n%s", out)
+	}
+}
+
+// A walker finding below a snapshot names the snapshot in its JSON item (Y96).
+func TestWalkWarningItemCarriesSnapshot(t *testing.T) {
+	it := newWalkWarningItem(snapshotNameOfPath, "/Data/.snapshots/S/loop", "cycle")
+	b, err := json.Marshal(it)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"snapshot":"S"`) {
+		t.Errorf("a finding inside a snapshot lacks the snapshot field: %s", b)
+	}
+	b, _ = json.Marshal(newWalkWarningItem(snapshotNameOfPath, "/Data/docs", "cycle"))
+	if strings.Contains(string(b), `"snapshot"`) {
+		t.Errorf("a live finding names a snapshot: %s", b)
+	}
+}

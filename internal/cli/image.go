@@ -634,14 +634,16 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 				pe := newPathEntry(p, e)
 				pe.Snapshot = snap
 				emitJSON(pe)
-			case recursive:
-				line := lsLine(p, e)
+			default:
+				// Snapshot data is marked in every text mode, never shown as live.
+				line := lsLine(e.Name, e)
+				if recursive {
+					line = lsLine(p, e)
+				}
 				if snap != "" {
 					line += " [snapshot " + printable(snap) + "]"
 				}
 				fmt.Fprintln(d.Out, line)
-			default:
-				fmt.Fprintln(d.Out, lsLine(e.Name, e))
 			}
 		}
 		switch {
@@ -662,7 +664,7 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 					if filesys.IsWalkFinding(werr) {
 						// A JSON consumer sees no stderr: the finding is also an item of the array (F98).
 						if opts.json {
-							emitJSON(jsonWarningItem{Path: p, Warnings: []string{werr.Error()}})
+							emitJSON(newWalkWarningItem(snapshotOf, p, werr.Error()))
 						}
 					} else if firstCut == nil {
 						firstCut = werr

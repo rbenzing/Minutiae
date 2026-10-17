@@ -68,6 +68,7 @@ if [ $# -ge 1 ]; then
   [ $# -eq 2 ] || { echo "usage: apfs-big.sh [<outdir> <keep-image-path>]" >&2; exit 2; }
   keep=$(resolve_path "$(dirname "$2")")/$(basename "$2")
   inside_repo "$keep" && refuse_repo
+  [ ! -e "$keep" ] || { echo "refusing to overwrite the existing image $keep: delete it first" >&2; exit 2; }
   [ -d "$1" ] || { echo "the output directory $1 does not exist" >&2; exit 2; }
   out=$(cd "$1" && pwd -P)
 fi
@@ -89,6 +90,7 @@ guard() {
 if [ -n "$keep" ]; then guard "$(dirname "$keep")"; else guard "$APFS_BIG_WORK"; fi
 
 mkdir -p "$(dirname "$work")"
+[ -z "$keep" ] || mkdir -p "$(dirname "$keep")"
 label=bigcib
 cu=0b9c5d7e-3a41-4f28-9e6d-c2a8714f50b3
 vu=e47a1f90-d5c2-4b68-83a7-6f0b29d1c845
@@ -129,7 +131,11 @@ ls -ls "$img" "$work/oracle.json"
 [ -n "$keep" ] || exit 0
 gen=$(generator_json "$img" apfsprogs util-linux python3 coreutils jq faketime |
   jq --arg note "empty $size container made by mkapfs: more chunks than one CIB holds. The image is sparse and is not committed; MINUTIAE_APFS_BIG_IMAGE names a regenerated copy (apfs-big.sh <outdir> <keep-image-path>, outside the repo)." '. + {note: $note}')
+# Move first (never over an existing image), write the oracle after: an interrupted run
+# cannot leave an oracle that describes an image that was not kept.
+[ ! -e "$keep" ] || { echo "refusing to overwrite the existing image $keep" >&2; exit 2; }
+mv -n "$img" "$keep"
+[ ! -e "$img" ] || { echo "could not move the image into place" >&2; exit 1; }
 jq -n --argjson g "$gen" --slurpfile o "$work/oracle.json" '$o[0] + {generator: $g}' >"$out/apfs-bigcib.expect.json"
-mv "$img" "$keep"
 echo "kept the sparse image at $keep ($(sha256sum "$keep" | cut -d' ' -f1))"
 echo "wrote $out/apfs-bigcib.expect.json"
