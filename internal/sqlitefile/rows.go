@@ -104,6 +104,7 @@ type rowPass struct {
 	idxTable           map[string]string   // the table of each index
 	wr                 map[string]*wrSet
 	diffTotal          int64
+	probed             int64 // overflow pages the fit probes read (a budget apart from OverflowPagesFollowed)
 	fitDiffTotal       int64 // live rows read for the fit-only equality (C45): a budget apart from diffTotal
 	wrFit              map[string]*wrSet
 	fitCauses          []string // why the fit-only equality was cut (each once), for the one warning
@@ -186,6 +187,10 @@ type imgCell struct {
 	ptr  CellPointer
 	cell Cell
 	kind []Value // the record's values with no content: only the kinds are set
+	// trunc, reserved: the record was cut short, or holds reserved serial types: it cannot support a
+	// strict fit (FitCells).
+	trunc    bool
+	reserved int
 }
 
 // image reads the rows of one page image.
@@ -239,9 +244,21 @@ func (rp *rowPass) image(it histItem) error {
 		if !ok {
 			continue
 		}
+		// The kinds pass reads the header only, so a chain that dies later is not seen by it: a
+		// cell that spills is probed to its last byte, and a dead chain makes the record truncated
+		// for the fit exactly as the full read will mark the row.
+		trunc := rec.Truncated
+		if _, spills := LocalPayload(info.UsableSize, hd.Type, c.PayloadLen); spills && !trunc {
+			dead, err := rp.chainDead(img, c)
+			if err != nil {
+				p.release()
+				return err
+			}
+			trunc = dead
+		}
 		p.release()
 		kindsHeld += held
-		cells = append(cells, imgCell{ptr: ptr, cell: c, kind: rec.Values})
+		cells = append(cells, imgCell{ptr: ptr, cell: c, kind: rec.Values, trunc: trunc, reserved: rec.Reserved})
 	}
 	if len(cells) == 0 {
 		return nil
@@ -460,5 +477,49 @@ func (c *countSrc) read(pgno uint32) ([]byte, PageLoc, error) {
 		c.seen[pgno] = struct{}{}
 		c.rp.st.OverflowPagesFollowed++
 	}
+	return data, loc, err
+}
+
+// chainDead reports whether the overflow chain of cell c cannot be read to its end in the image's
+// view: the record is then truncated (the full read marks the row Truncated), and the fit must not
+// take its shape as proof. The probe reads the last byte of the payload through a source of its own
+// that counts its pages against the same cap as the history's overflow reads; a probe that reaches
+// the cap reports the chain dead (the safe side: no strict identity).
+func (rp *rowPass) chainDead(img PageImage, c Cell) (bool, error) {
+	e := rp.h.d.env
+	info := rp.h.d.info
+	vis := &mapVisitor{seen: map[uint32]struct{}{}, max: int(min(e.overflowCap(info.UsableSize), maxMapVisited))}
+	src := &probeSrc{in: img.snapshotSource(), rp: rp, seen: map[uint32]struct{}{}}
+	p := newPayload(src, rp.l, vis, info.UsableSize, e.overflowCap(info.UsableSize), c)
+	p.ctx = rp.ctx
+	defer p.release()
+	var last [1]byte
+	if _, err := p.readAt(last[:], p.total-1); err != nil {
+		return false, err
+	}
+	_, _, dead := p.damaged()
+	return dead, nil
+}
+
+// probeSrc is countSrc for the fit's probe: its reads are counted in rowPass.probed, not in the
+// stats, and stop at the same cap.
+type probeSrc struct {
+	in   pageSource
+	rp   *rowPass
+	seen map[uint32]struct{}
+}
+
+func (c *probeSrc) has(pgno uint32) bool { return c.in.has(pgno) }
+
+func (c *probeSrc) read(pgno uint32) ([]byte, PageLoc, error) {
+	_, counted := c.seen[pgno]
+	if !counted {
+		if c.rp.probed >= c.rp.h.d.env.opts.Limits.MaxHistoryOverflowPages {
+			return nil, PageLoc{}, fmt.Errorf("%w: page %d: the overflow page cap of the history is reached", ErrPageUnavailable, pgno)
+		}
+		c.seen[pgno] = struct{}{}
+		c.rp.probed++
+	}
+	data, loc, err := c.in.read(pgno)
 	return data, loc, err
 }

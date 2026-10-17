@@ -139,7 +139,11 @@ func (rp *rowPass) identify(img PageImage, hd PageHeader, cells []imgCell) ident
 	for i := range cells {
 		vals[i] = cells[i].kind
 	}
-	c, basis, limited := rp.fitPage(hd.Type, vals)
+	deny := false
+	for i := range cells {
+		deny = deny || cells[i].trunc || cells[i].reserved > 0
+	}
+	c, basis, limited := rp.fitPage(hd.Type, vals, deny)
 	if limited {
 		rp.limitHit("MaxFitSteps", "the table fit of a page image reached its step cap and named no table")
 		notes = append(notes, "fit-limit-reached")
@@ -174,7 +178,7 @@ func (rp *rowPass) allFit(it *fitItem, cells []imgCell) bool {
 // fits: strict unique is BasisFit, else loose unique BasisGuess, else none. A
 // table leaf can only belong to a rowid table; an index leaf to an index or a
 // WITHOUT ROWID table. It never names BasisSchema.
-func (rp *rowPass) fitPage(lt PageType, cells [][]Value) (candidate, TableBasis, bool) {
+func (rp *rowPass) fitPage(lt PageType, cells [][]Value, noStrict bool) (candidate, TableBasis, bool) {
 	run := rp.sch.newFitRun()
 	fi := rp.sch.fitSets()
 	var strict, loose []candidate
@@ -204,7 +208,7 @@ func (rp *rowPass) fitPage(lt PageType, cells [][]Value) (candidate, TableBasis,
 		}
 	}
 	switch {
-	case len(strict) == 1:
+	case len(strict) == 1 && !noStrict:
 		return strict[0], BasisFit, false
 	case len(loose) == 1:
 		return loose[0], BasisGuess, false

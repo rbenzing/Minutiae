@@ -440,6 +440,12 @@ func (s *Schema) FitIndexPageDetail(cells [][]Value) (index string, basis TableB
 }
 
 func (s *Schema) fitPage(fs *fitSet, cells [][]Value) (string, TableBasis, bool) {
+	return s.fitPageTier(fs, cells, false)
+}
+
+// fitPageTier is fitPage; with noStrict set the strict tier is dropped (a cell of the page is not a
+// record that can prove a shape), so the best answer is BasisGuess.
+func (s *Schema) fitPageTier(fs *fitSet, cells [][]Value, noStrict bool) (string, TableBasis, bool) {
 	run := s.newFitRun()
 	var strict, loose []int32
 	first := true
@@ -465,7 +471,7 @@ func (s *Schema) fitPage(fs *fitSet, cells [][]Value) (string, TableBasis, bool)
 		}
 	}
 	switch {
-	case len(strict) == 1:
+	case len(strict) == 1 && !noStrict:
 		return fs.items[strict[0]].name, BasisFit, false
 	case len(loose) == 1:
 		return fs.items[loose[0]].name, BasisGuess, false
@@ -486,4 +492,33 @@ func (fs *fitSet) filter(cand []int32, values []Value, tier FitTier, run *fitRun
 		}
 	}
 	return out
+}
+
+// FitCell is one cell of a page for FitCells: its values and what is known about the record.
+type FitCell struct {
+	Values    []Value
+	Truncated bool // the record ended before its declared length (later values are Omitted)
+	Reserved  int  // columns whose serial type is reserved (10, 11), read as NULL
+}
+
+// FitCells is FitPage over cells that say whether their records are trustworthy. A Truncated cell
+// (its later values are Omitted, so a short record may be a cut one, not an ALTER-added column) or
+// one with Reserved > 0 (not a record any engine wrote) can only be fitted at the loose tier: any
+// such cell in the page removes the strict tier, so the answer is at best BasisGuess.
+// FitPage(cells) equals FitCells with every cell plain.
+func (s *Schema) FitCells(cells []FitCell) (table string, basis TableBasis) {
+	table, basis, _ = s.FitCellsDetail(cells)
+	return table, basis
+}
+
+// FitCellsDetail is FitCells that also reports that the work cap was reached, in which case the
+// answer is none.
+func (s *Schema) FitCellsDetail(cells []FitCell) (table string, basis TableBasis, limitReached bool) {
+	vals := make([][]Value, len(cells))
+	deny := false
+	for i, c := range cells {
+		vals[i] = c.Values
+		deny = deny || c.Truncated || c.Reserved > 0
+	}
+	return s.fitPageTier(&s.fitSets().tables, vals, deny)
 }

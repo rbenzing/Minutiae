@@ -135,19 +135,38 @@ func descVariants() []descVariant {
 	}
 	const ddl = "create table t(x real, y integer, z, primary key(y desc, x desc)) without rowid"
 	rows := ins(38, "insert into t values(%d, %d, 'zzzz')")
+	longZ := "'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'"
 	return []descVariant{
-		{"freed-page reuse: delete all rows, re-insert", 512, true, append([]string{ddl}, rows...),
-			append([]string{"delete from t"}, ins(38, "insert into t values(%d, %d, 'wwww')")...), true},
-		{"no checkpoint", 512, false, append([]string{ddl}, rows...), []string{"update t set z = 'wwww' where y % 2 = 0"}, true},
-		{"4096-byte pages, a deeper tree", 4096, true, append([]string{ddl}, ins(3000, "insert into t values(%d, %d, 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz')")...),
-			[]string{"update t set z = 'wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww' where y % 3 = 0"}, true},
-		{"ALTER TABLE ADD COLUMN after the rows were written", 512, true, append([]string{ddl}, rows...),
-			[]string{"alter table t add column q default 7", "update t set z = 'wwww' where y % 2 = 0"}, true},
-		{"a DESC NOCASE text key", 512, true,
-			append([]string{"create table t(k text collate nocase, v, primary key(k desc)) without rowid"}, ins(38, "insert into t values('Key%03d', %d)")...),
-			[]string{"update t set v = v + 5000 where v % 2 = 0"}, true},
-		{"drop and recreate: another table owns the page now", 512, true, append([]string{ddl}, rows...),
-			[]string{"drop table t", "create table other(a, b)", "insert into other values(1, 'x'), (2, 'y'), (3, 'z')"}, false},
+		{
+			name: "freed-page reuse: delete all rows, re-insert", pageSize: 512, checkpoint: true, samePage: true,
+			setup:  append([]string{ddl}, rows...),
+			change: append([]string{"delete from t"}, ins(38, "insert into t values(%d, %d, 'wwww')")...),
+		},
+		{
+			name: "no checkpoint", pageSize: 512, samePage: true,
+			setup:  append([]string{ddl}, rows...),
+			change: []string{"update t set z = 'wwww' where y % 2 = 0"},
+		},
+		{
+			name: "4096-byte pages, a deeper tree", pageSize: 4096, checkpoint: true, samePage: true,
+			setup:  append([]string{ddl}, ins(3000, "insert into t values(%d, %d, "+longZ+")")...),
+			change: []string{"update t set z = 'w" + longZ[2:] + " where y % 3 = 0"},
+		},
+		{
+			name: "ALTER TABLE ADD COLUMN after the rows were written", pageSize: 512, checkpoint: true, samePage: true,
+			setup:  append([]string{ddl}, rows...),
+			change: []string{"alter table t add column q default 7", "update t set z = 'wwww' where y % 2 = 0"},
+		},
+		{
+			name: "a DESC NOCASE text key", pageSize: 512, checkpoint: true, samePage: true,
+			setup:  append([]string{"create table t(k text collate nocase, v, primary key(k desc)) without rowid"}, ins(38, "insert into t values('Key%03d', %d)")...),
+			change: []string{"update t set v = v + 5000 where v % 2 = 0"},
+		},
+		{
+			name: "drop and recreate: another table owns the page now", pageSize: 512, checkpoint: true,
+			setup:  append([]string{ddl}, rows...),
+			change: []string{"drop table t", "create table other(a, b)", "insert into other values(1, 'x'), (2, 'y'), (3, 'z')"},
+		},
 	}
 }
 
