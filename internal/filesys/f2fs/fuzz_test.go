@@ -52,6 +52,15 @@ func fuzzBuilderSeeds() [][]byte {
 		{Path: "/enc.bin", Data: pat(2*f2fstest.BlockSize, 4), Encrypted: true},
 		{Path: "/compressed.bin", Data: pat(3*f2fstest.BlockSize, 5), Compressed: true},
 		{Path: "/empty"},
+		// casefold directory: mixed case, names that fold to each other, non-UTF-8 and a shape the
+		// comparison was not measured for
+		{Path: "/cf", Dir: true, Casefold: true},
+		{Path: "/cf/File.TXT", Inline: true},
+		{Path: "/cf/Stra" + string(rune(0xDF)) + "e", Inline: true},
+		{Path: "/cf/STRASSE", Inline: true},
+		{Path: "/cf/bad", RawName: []byte{'A', 0xFF}, Inline: true},
+		{Path: "/cf/odd", RawName: []byte{'x', 0xFF, 'y'}, Inline: true},
+		{Path: "/cf/stray", RawName: []byte{'a', 0x80, 'b'}, Inline: true},
 	}
 	for i := range 120 { // a directory of several dentry blocks
 		files = append(files, f2fstest.File{Path: "/many/entry-with-a-long-name-" + string(rune('a'+i%26)) + string(rune('A'+i/26)) + ".txt", Data: []byte("m"), Inline: true})
@@ -61,8 +70,8 @@ func fuzzBuilderSeeds() [][]byte {
 	withNode := append([]f2fstest.File{{Path: "/big.bin", Data: pat(1000*f2fstest.BlockSize, 3)}}, files...)
 	seed := func(o f2fstest.Options, files []f2fstest.File) []byte { return trimTail(f2fstest.Build(o, files)) }
 	return [][]byte{
-		seed(f2fstest.Options{Segments: 2, Label: "SEED"}, files),
-		seed(f2fstest.Options{Segments: 5, ExtraAttr: true, InodeChksum: true, InodeCrtime: true, SBChksum: true, InlineXattr: true, CompactSum: true, Pack2Newer: true}, withNode),
+		seed(f2fstest.Options{Segments: 2, Label: "SEED", Encoding: 1}, files),
+		seed(f2fstest.Options{Segments: 5, ExtraAttr: true, InodeChksum: true, InodeCrtime: true, SBChksum: true, InlineXattr: true, CompactSum: true, Pack2Newer: true, Encoding: 1, EncodingFlags: 1}, withNode),
 	}
 }
 
@@ -74,6 +83,38 @@ var fuzzForgedIDs = []string{
 	"nid:1", "nid:2", "nid:3", "nid:4", "nid:5", "nid:6", "nid:7", "nid:8", "nid:9", "nid:10",
 	"nid:100", "nid:1000", "nid:232960", "nid:1000000000", "nid:4294967295",
 	"dentry:3:0:0", "dentry:3:7:12",
+}
+
+// fuzzSeedBudget is what the fuzz engine can take for the seeds of one target in total (the engine's own
+// limit is 100 MiB of shared memory, and a seed is held in a text form that can spend four bytes per byte).
+const fuzzSeedBudget = 90 << 20
+
+// fuzzOpenSeeds are the seeds of FuzzF2FSOpen: the builder images, the sload.f2fs fixtures cut after their
+// last used block, and zeros. The kernel-made casefold image is not a seed: its directories start 16 MiB in and
+// a seed that large would push the set over the engine's limit; the builder seeds carry casefold directories.
+func fuzzOpenSeeds(t testing.TB) [][]byte {
+	t.Helper()
+	seeds := fuzzBuilderSeeds()
+	for _, path := range fixturePaths(t) {
+		seeds = append(seeds, trimmedFixture(t, path))
+	}
+	return append(seeds, make([]byte, 16384))
+}
+
+// A seed set above the engine's limit makes `go test -fuzz` panic before it runs one input. The summed seed
+// bytes stay within the budget, and no seed exceeds fuzzSeedMax.
+func TestFuzzF2FSOpenSeedsFitTheEngine(t *testing.T) {
+	total := 0
+	for i, s := range fuzzOpenSeeds(t) {
+		if len(s) > fuzzSeedMax+4096 {
+			t.Errorf("seed %d has %d bytes, above the %d byte cap of one seed", i, len(s), fuzzSeedMax)
+		}
+		total += len(s)
+	}
+	if total > fuzzSeedBudget {
+		t.Fatalf("the FuzzF2FSOpen seeds total %d bytes, above the %d byte budget: `go test -fuzz` would panic (the engine's limit is 100 MiB); trim a seed", total, fuzzSeedBudget)
+	}
+	t.Logf("seed bytes: %d of %d", total, fuzzSeedBudget)
 }
 
 // FuzzF2FSOpen runs the reader over arbitrary bytes: Open, a bounded Walk, Open
@@ -90,13 +131,9 @@ var fuzzForgedIDs = []string{
 // one worker per CPU (the default) is memory-heavy on a many-core machine and
 // leaves little of the 60 s for the reader itself.
 func FuzzF2FSOpen(f *testing.F) {
-	for _, s := range fuzzBuilderSeeds() {
+	for _, s := range fuzzOpenSeeds(f) {
 		f.Add(s)
 	}
-	for _, path := range fixturePaths(f) {
-		f.Add(trimmedFixture(f, path))
-	}
-	f.Add(make([]byte, 16384))
 	f.Fuzz(func(t *testing.T, b []byte) {
 		fsys, err := f2fs.Open(bytes.NewReader(b), int64(len(b)))
 		if err != nil {

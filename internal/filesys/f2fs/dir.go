@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
+	"github.com/rbenzing/minutiae/internal/filesys/utf8fold"
 )
 
 // Directories. An F2FS directory is a multi-level hash table, but every block
@@ -551,18 +552,17 @@ func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
 }
 
 // Lookup resolves an absolute slash path. Within each directory the live
-// entries are searched in this order of preference over the whole directory:
-//
-//  1. an exact byte match (never in an encrypted directory, whose names are
-//     ciphertext, and never for "." or "..");
-//  2. the display form of ReadDir: "~enc~"+base64url in encrypted directories,
-//     "~raw~"+base64url elsewhere (decoded strictly: one spelling per name; in
-//     a plain directory "~raw~" stands only for the names ReadDir shows that
-//     way), so a real name that happens to look like a display form wins over
-//     the name that form stands for;
-//  3. in a casefold directory (never for "." or ".."), strings.EqualFold
-//     when both names are valid UTF-8: an approximation of the filesystem's
-//     Unicode case folding, which it does not implement.
+// entries are searched over the whole directory and the answer is decided in
+// this order (see child): an exact byte match (never in an encrypted
+// directory, whose names are ciphertext, and never for "." or ".."); the
+// display form of ReadDir ("~enc~"+base64url in encrypted directories,
+// "~raw~"+base64url elsewhere, decoded strictly: one spelling per name; in a
+// plain directory "~raw~" stands only for the names ReadDir shows that way),
+// so a real name that happens to look like a display form wins over the name
+// that form stands for; in a casefold directory, exactly one name the kernel's
+// comparison (utf8fold, utf8-12.1.0) calls the same name; filesys.ErrAmbiguous
+// for two or more; filesys.ErrUndecided when a stored name has a shape the
+// comparison was not measured for and nothing else decides; not found.
 //
 // Empty components are ignored, "." and ".." are not special, and symlinks are
 // not followed. Deleted entries are never found.
@@ -589,7 +589,31 @@ func (f *FS) Lookup(p string) (filesys.Entry, error) {
 
 var errNoChild = errors.New("no such entry")
 
-// child finds the live entry of dir named comp (see Lookup for the order).
+// casefoldSupported reports whether the volume's s_encoding and s_encoding_flags are ones this reader
+// implements: utf8-12.1.0, with at most the strict-mode flag (read, not applied: a strict volume refuses to
+// look up an invalid name, this reader still finds the bytes on disk). Anything else is not guessed.
+func (sb *superblock) casefoldSupported() bool {
+	return utf8fold.Supported(sb.encoding) && sb.encFlags&^encFlagStrict == 0
+}
+
+const encFlagStrict = 0x1 // F2FS_ENC_STRICT_MODE_FL
+
+// child finds the live entry of dir named comp. The whole directory is scanned and the answer is decided in
+// one order (rulings Z18, Z39, Z47), the same as the ext4 reader's:
+//
+//  1. an exact byte match (never in an encrypted directory, never for "." or "..");
+//  2. the display-form alias ("~raw~" or "~enc~" + base64url); two or more records with the alias bytes are
+//     filesys.ErrAmbiguous;
+//  3. in a casefold directory, exactly one entry the kernel's comparison (utf8fold) calls the same name;
+//  4. two or more such entries: filesys.ErrAmbiguous (the first two named, the rest counted);
+//  5. a directory read cut by the read budget keeps its existing error (the typed incomplete-scan error of
+//     the other causes is a later task's);
+//  6. any entry whose comparison with comp is Unknown (a name of a shape the comparison was not measured
+//     for): filesys.ErrUndecided, never "not found";
+//  7. none: errNoChild.
+//
+// A volume whose encoding is not implemented gives filesys.ErrUnsupported on a miss in a casefold
+// directory. Memory is bounded: at most two fold hits are kept, the rest are counted.
 func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 	in, err := f.dirInode(dir)
 	if err != nil {
@@ -599,7 +623,13 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 	exact := []byte(comp)
 	exactOK := !enc && !isDot(exact)
 	// "." and ".." are never found, by case folding either.
-	casefold := in.flags&flagCasefold != 0 && exactOK && utf8.ValidString(comp)
+	foldDir := in.flags&flagCasefold != 0 && exactOK
+	// a name longer than 255 bytes cannot be on disk: provably absent, so nothing is left to decide
+	supported := foldDir && f.sb.casefoldSupported() && len(exact) <= utf8fold.MaxName
+	var q *utf8fold.Query
+	if supported {
+		q = utf8fold.NewQuery(exact)
+	}
 	var alt []byte // the bytes a display form stands for
 	prefix := rawPrefix
 	if enc {
@@ -613,7 +643,11 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 			alt = b
 		}
 	}
-	var exactRec, altRec, foldRec *dentry
+	var exactRec, altRec *dentry
+	altN := 0           // records whose bytes are the alias: two or more are ambiguous
+	var hits [2]*dentry // the first two fold hits
+	nHits, nUnknown := 0, 0
+	var unknownName []byte // the first name whose comparison is Unknown
 	keep := func(d *dentry) *dentry {
 		c := *d
 		c.name = slices.Clone(d.name)
@@ -626,25 +660,55 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 			return false
 		// In a plain directory the "~raw~" form stands only for the names
 		// ReadDir shows in that form, never for a plain name.
-		case altRec == nil && alt != nil && bytes.Equal(d.name, alt) && (enc || !plainName(d.name)):
-			altRec = keep(d)
-		case foldRec == nil && casefold && utf8.Valid(d.name) && strings.EqualFold(string(d.name), comp):
-			foldRec = keep(d)
+		case alt != nil && bytes.Equal(d.name, alt) && (enc || !plainName(d.name)):
+			if altRec == nil {
+				altRec = keep(d)
+			}
+			altN++
+		case q != nil && !isDot(d.name):
+			switch q.Compare(d.name) {
+			case utf8fold.Same:
+				if nHits < len(hits) {
+					hits[nHits] = keep(d)
+				}
+				nHits++
+			case utf8fold.Unknown:
+				if nUnknown == 0 {
+					unknownName = slices.Clone(d.name)
+				}
+				nUnknown++
+			}
 		}
 		return true
 	})
 	if err != nil {
 		return filesys.Entry{}, err
 	}
-	for _, d := range []*dentry{exactRec, altRec, foldRec} {
-		if d != nil {
-			return f.dirEntry(d, in)
-		}
+	if exactRec != nil {
+		return f.dirEntry(exactRec, in)
 	}
-	if budgetCut {
+	if altN >= 2 { // fail closed: two alias matches are not one
+		return filesys.Entry{}, fmt.Errorf("%w: %q is the display form of %d records of directory inode %d", filesys.ErrAmbiguous, comp, altN, in.nid)
+	}
+	if altRec != nil {
+		return f.dirEntry(altRec, in)
+	}
+	switch {
+	case foldDir && len(exact) > utf8fold.MaxName:
+		return filesys.Entry{}, errNoChild
+	case foldDir && !supported:
+		f.warn("casefold directory inode %d: the volume's s_encoding %d (flags %#x) is not implemented, so case-insensitive lookups in casefold directories are not answered", in.nid, f.sb.encoding, f.sb.encFlags)
+		return filesys.Entry{}, fmt.Errorf("f2fs: %w: casefold directory inode %d on a volume with s_encoding %d (flags %#x); only utf8-12.1.0 is implemented", filesys.ErrUnsupported, in.nid, f.sb.encoding, f.sb.encFlags)
+	case nHits == 1:
+		return f.dirEntry(hits[0], in)
+	case nHits >= 2:
+		return filesys.Entry{}, fmt.Errorf("%w: %q matches %d names of casefold directory inode %d: %q, %q and %d more", filesys.ErrAmbiguous, comp, nHits, in.nid, hits[0].name, hits[1].name, nHits-2)
+	case budgetCut:
 		// The directory was not read to the end: "no such entry" would be a claim
 		// about the whole directory that was not checked.
 		return filesys.Entry{}, corrupt("f2fs directory", -1, "directory read budget exhausted while looking up %q in directory inode %d", comp, in.nid)
+	case nUnknown > 0:
+		return filesys.Entry{}, fmt.Errorf("f2fs: %w: casefold lookup of %q in directory inode %d: %d name(s) have a shape the comparison was not measured for (first %q), so the lookup is neither found nor absent", filesys.ErrUndecided, comp, in.nid, nUnknown, unknownName)
 	}
 	return filesys.Entry{}, errNoChild
 }

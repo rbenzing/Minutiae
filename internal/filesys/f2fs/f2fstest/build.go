@@ -73,6 +73,11 @@ type Options struct {
 	InodeCrtime                                   bool
 	Encrypt                                       bool
 
+	// Encoding is s_encoding (at superblock offset 2758); non-zero also sets the casefold feature.
+	// EncodingFlags is s_encoding_flags (2760). The builder does not import the folding package.
+	Encoding      uint16
+	EncodingFlags uint16
+
 	// LargeNATBitmap sets CP_LARGE_NAT_BITMAP_FLAG: the checkpoint checksum
 	// moves to offset 192 (covering the rest of the block too) and the NAT
 	// then SIT version bitmaps follow it.
@@ -187,6 +192,7 @@ const (
 	featInodeCrtime   = 0x100
 	featFlexInlineXat = 0x40
 	featSBChksum      = 0x800
+	featCasefold      = 0x1000
 
 	cpUmountFlag      = 0x1
 	cpCompactSumFlag  = 0x4
@@ -278,6 +284,7 @@ func features(o Options) uint32 {
 		{o.InodeCrtime, featInodeCrtime},
 		{o.InlineXattr, featFlexInlineXat},
 		{o.SBChksum, featSBChksum},
+		{o.Encoding != 0, featCasefold},
 	} {
 		if x.on {
 			f |= x.bit
@@ -333,6 +340,8 @@ func superblock(o Options, l Layout) []byte {
 	copy(b[1668:], "f2fstest")
 	copy(b[1924:], "f2fstest")
 	put32(2180, features(o))
+	le.PutUint16(b[2758:], o.Encoding)
+	le.PutUint16(b[2760:], o.EncodingFlags)
 	if o.SBChksum {
 		put32(sbSize-4, rawCRC32(superMagic, b[:sbSize-4]))
 	}

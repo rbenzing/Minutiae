@@ -59,6 +59,11 @@ const (
 //
 // checksum_offset, which mkfs sets to 3068).
 //
+// s_encoding (u16) and s_encoding_flags (u16) lie after hot_ext_count at 2757: s_encoding @2758 and
+// s_encoding_flags @2760. They were found by diffing mkfs.f2fs images made with and without
+// -O casefold -C utf8 (and with -C utf8:strict): the feature word at 2180 gains 0x1000, byte 2758 becomes 1, and
+// strict mode sets byte 2760; TestSuperblockEncodingFields reads them from the committed kernel-made image.
+//
 // The feature offset follows from that order: 124 + 2*512 (volume_name) = 1148;
 // + 4 (extension_count) + 64*8 (extension_list) = 1664; + 4 (cp_payload) = 1668;
 // + 2*256 (version, init_version) = 2180.
@@ -93,6 +98,8 @@ const (
 	sbVolumeName     = 124
 	sbCPPayload      = 1664
 	sbFeature        = 2180
+	sbEncoding       = 2758 // s_encoding u16 (1 = utf8-12.1), measured by diffing mkfs.f2fs images; see the comment above
+	sbEncodingFlags  = 2760 // s_encoding_flags u16 (bit 0 = strict)
 )
 
 // Feature bits (sb.feature).
@@ -139,6 +146,8 @@ var featureNames = []struct {
 // superblock holds the validated fields of one superblock copy.
 type superblock struct {
 	feature      uint32
+	encoding     uint16 // s_encoding (2758)
+	encFlags     uint16 // s_encoding_flags (2760)
 	blockCount   uint64 // as declared
 	segmentCount uint32
 	sectionCount uint32
@@ -205,6 +214,8 @@ func parseSuper(b []byte, base int64) (*superblock, error) {
 	}
 	sb := &superblock{
 		feature:      u32(sbFeature),
+		encoding:     le.Uint16(b[sbEncoding:]),
+		encFlags:     le.Uint16(b[sbEncodingFlags:]),
 		segmentCount: u32(sbSegmentCount),
 		sectionCount: u32(sbSectionCount),
 		segsPerSec:   u32(sbSegsPerSec),

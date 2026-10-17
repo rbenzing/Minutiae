@@ -23,7 +23,7 @@ func wantNoEntry(t *testing.T, f *f2fs.FS, path string) {
 // "." and ".." are never found by Lookup, not even through the case-folding
 // comparison of a casefold directory that holds a record with such a name.
 func TestLookupCasefoldNeverFindsDots(t *testing.T) {
-	f, _, _ := treeFS(t, treeOpts(), []f2fstest.File{
+	f, _, _ := treeFS(t, f2fstest.Options{Segments: 2, Encoding: 1}, []f2fstest.File{
 		{Path: "/cf", Dir: true, Casefold: true},
 		{Path: "/cf/first", Data: []byte("1")},
 		{Path: "/cf/dot", RawName: []byte("."), Data: []byte("d")},
