@@ -238,6 +238,17 @@ func TestOrderScanReleasesBoundsOnEveryExit(t *testing.T) {
 		}
 		rb.check(t)
 	})
+	t.Run("early stop under open frames", func(t *testing.T) {
+		rb := newRecBudget(256 << 20)
+		n := 0
+		if err := scan(context.Background(), sqlitefile.Options{Budget: rb}, func(sqlitefile.Row) bool { n++; return n < 900 }); err != nil {
+			t.Fatal(err)
+		}
+		if n != 900 {
+			t.Fatalf("stopped after %d rows, want 900", n)
+		}
+		rb.check(t)
+	})
 	t.Run("limit", func(t *testing.T) {
 		rb := newRecBudget(256 << 20)
 		n := 0
