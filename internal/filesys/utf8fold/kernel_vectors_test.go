@@ -23,7 +23,7 @@ func TestKernelVectors(t *testing.T) {
 			bad := 0
 			for _, r := range rows {
 				stored, query := decodeName(t, r.ID, "stored", r.StoredHex), decodeName(t, r.ID, "query", r.QueryHex)
-				eq, decided := Equal(query, stored)
+				eq, decided := eqd(query, stored)
 				if !decided || eq != r.Ext4 {
 					bad++
 					if bad <= 10 {

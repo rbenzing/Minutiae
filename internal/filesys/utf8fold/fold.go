@@ -8,20 +8,25 @@
 //
 // What the kernel does with a name that is not valid UTF-8 was MEASURED in a QEMU guest
 // (tools/fixtures/README.md, "Casefold lookup oracle"; 611 rows of kernel-vectors.json.gz, ext4 and F2FS
-// agreeing on every one) and is reproduced exactly, no more:
+// agreeing on every one). Only the shapes a committed vector row shows are decided (decidedShapes,
+// TestEveryDecidedShapeIsShownByAVector); each is reproduced exactly, no more:
 //
 //   - a stray continuation byte (0x80-0xBF where a character should start) that comes after at least one
 //     byte of the name is an ordinary character that folds to itself and is never dropped; the text around
 //     it is folded and normalized, and marks after it are ordered among themselves (FormUnicode);
-//   - a stray continuation byte at the start of a name, any other invalid form at the END of a name
-//     (a truncated or overlong sequence, a surrogate, a value above U+10FFFF, a lead byte 0xC0-0xFF, with
-//     stray bytes before or after the invalid lead), makes the whole name opaque: it is compared byte for
-//     byte, no folding, no normalization (FormOpaque);
+//   - one or two stray bytes at the start of a name, followed by nothing, by ASCII, or (for one) by text
+//     with a non-ASCII character and no later stray byte, make the whole name opaque; so does an invalid
+//     tail at the END of a name that has plain text (stray bytes allowed) before it, when the tail is a lone
+//     lead byte 0xC0-0xFF, a lead byte and one stray byte, ED A0 80, F4 90 80 80, F8 88 80 80 80 or FE FE:
+//     an opaque name is compared byte for byte, no folding, no normalization (FormOpaque);
 //   - U+FFFE, U+FFFF and U+10FFFF are ordinary characters.
 //
-// Every other invalid shape (an invalid byte followed by text or by a valid character, a long invalid tail,
-// nothing before the invalid byte, a stray byte next to an ignorable character) was not measured and is
-// FormUndecided: Equal reports decided == false and Key refuses. A caller must report that it cannot
+// Every other shape is FormUndecided: the empty name, a name over MaxName, an invalid byte followed by text
+// or by a valid character, any other tail, a leading stray byte with a later stray byte or an ignorable
+// character, an ignorable character before an invalid tail, and a stray byte ANYWHERE in a name that also has
+// an ignorable character. Equal reports Unknown for them and Key refuses. A caller must report that it cannot
+// decide; it must never treat the answer as "different" or fold the name by a guess. The one exception is
+// Equal's measured pair, an opaque name against itself plus a lowercase 'z'.
 // decide; it must never treat the answer as "different" or fold the name by a guess.
 //
 // A code point assigned after Unicode 12.1 has no case mapping (measured); it still takes part in mark
@@ -108,24 +113,64 @@ func (f Form) String() string {
 	}
 }
 
-// maxMeasuredTail is the longest invalid tail any measured row has (F8 88 80 80 80).
-const maxMeasuredTail = 5
-
 func isStray(b byte) bool { return b >= 0x80 && b <= 0xBF }
 
-// Classify decides how the kernel compares name; see the package comment.
-func Classify(name []byte) Form {
-	if len(name) > MaxName {
-		return FormUndecided
+// decidedShapes lists every shape label Classify can decide. A decided class must be shown by at least one
+// committed vector row (TestEveryDecidedShapeIsShownByAVector): "measured, no more".
+var decidedShapes = []string{
+	"text",         // valid UTF-8 only
+	"text+strays",  // valid text with stray continuation bytes after the first byte, no ignorable character
+	"lead1:empty",  // opaque: one stray byte first, nothing after it
+	"lead1:ascii",  // opaque: one stray byte first, then ASCII
+	"lead1:wide",   // opaque: one stray byte first, then text with a non-ASCII character
+	"lead2:empty",  // opaque: two stray bytes first
+	"lead2:ascii",  // opaque: two stray bytes first, then ASCII
+	"prefix:ascii", // before an invalid tail: ASCII text
+	"prefix:wide",  // before an invalid tail: text with a non-ASCII character
+	"prefix:ascii+strays",
+	"prefix:wide+strays",
+	"tail:lead",       // one lead byte 0xC0-0xFF at the end
+	"tail:lead+stray", // a lead byte and one stray byte at the end
+	"tail:ed-a0-80",   // a UTF-16 surrogate
+	"tail:f4-90-80-80",
+	"tail:f8-88-80-80-80",
+	"tail:fe-fe",
+}
+
+// tailKind names the invalid tail, or "" when the tail is not one of the shapes a vector shows.
+func tailKind(t []byte) string {
+	switch {
+	case len(t) == 1 && t[0] >= 0xC0:
+		return "lead"
+	case len(t) == 2 && t[0] >= 0xC0 && isStray(t[1]):
+		return "lead+stray"
+	case bytes.Equal(t, []byte{0xED, 0xA0, 0x80}):
+		return "ed-a0-80"
+	case bytes.Equal(t, []byte{0xF4, 0x90, 0x80, 0x80}):
+		return "f4-90-80-80"
+	case bytes.Equal(t, []byte{0xF8, 0x88, 0x80, 0x80, 0x80}):
+		return "f8-88-80-80-80"
+	case bytes.Equal(t, []byte{0xFE, 0xFE}):
+		return "fe-fe"
 	}
-	leading, strays, ignorable := false, 0, false
+	return ""
+}
+
+// shape classifies name and names the shape classes it is made of; Form is FormUndecided (and the labels
+// nil) for every shape that no committed vector row shows.
+func shape(name []byte) (Form, []string) {
+	if len(name) == 0 || len(name) > MaxName {
+		return FormUndecided, nil // a filesystem name is neither empty nor longer than MaxName
+	}
+	leadRun, strays, wide, ignorable := 0, 0, false, false
+	atStart := true
 	tail := -1
 	for i := 0; i < len(name); {
 		r, size := utf8.DecodeRune(name[i:])
 		if r == utf8.RuneError && size == 1 {
 			if isStray(name[i]) {
-				if i == 0 {
-					leading = true
+				if atStart {
+					leadRun++
 				}
 				strays++
 				i++
@@ -134,33 +179,62 @@ func Classify(name []byte) Form {
 			tail = i
 			break
 		}
+		atStart = false
+		if r >= 0x80 {
+			wide = true
+		}
 		if isIgnorable(r) {
 			ignorable = true
 		}
 		i += size
 	}
+	kind := "ascii"
+	if wide {
+		kind = "wide"
+	}
 	if tail < 0 {
 		switch {
-		case leading:
-			return FormOpaque
-		case strays > 0 && ignorable:
-			return FormUndecided // a stray byte next to an ignorable character was not measured
+		case leadRun == 0 && strays == 0:
+			return FormUnicode, []string{"text"}
+		case leadRun == 0 && !ignorable:
+			return FormUnicode, []string{"text+strays"}
+		case leadRun == 0:
+			return FormUndecided, nil // a stray byte anywhere in a name that also has an ignorable character
 		}
-		return FormUnicode
-	}
-	// an invalid lead byte at tail: measured only as the END of a name that has text (and no leading stray
-	// byte) before it, with a tail of invalid bytes only, at most maxMeasuredTail long
-	if tail == 0 || leading || len(name)-tail > maxMeasuredTail {
-		return FormUndecided
-	}
-	for j := tail; j < len(name); {
-		r, size := utf8.DecodeRune(name[j:])
-		if r != utf8.RuneError || size != 1 {
-			return FormUndecided // a valid character after the invalid byte
+		// opaque: one or two stray bytes first, then text with no stray byte and no ignorable character
+		if leadRun > 2 || strays != leadRun || ignorable {
+			return FormUndecided, nil
 		}
-		j++
+		rest := "empty"
+		if leadRun < len(name) {
+			rest = kind
+		}
+		label := "lead" + string(rune('0'+leadRun)) + ":" + rest
+		if !slices.Contains(decidedShapes, label) {
+			return FormUndecided, nil // two stray bytes then a non-ASCII character was not shown
+		}
+		return FormOpaque, []string{label}
 	}
-	return FormOpaque
+	// an invalid lead byte at tail: shown only as the END of a name that has text before it
+	if tail == 0 || leadRun > 0 || ignorable {
+		return FormUndecided, nil
+	}
+	tk := tailKind(name[tail:])
+	if tk == "" {
+		return FormUndecided, nil
+	}
+	prefix := "prefix:" + kind
+	if strays > 0 {
+		prefix += "+strays"
+	}
+	return FormOpaque, []string{prefix, "tail:" + tk}
+}
+
+// Classify decides how the kernel compares name; see the package comment. Only shapes that a committed
+// kernel vector shows are decided; every other shape is FormUndecided.
+func Classify(name []byte) Form {
+	f, _ := shape(name)
+	return f
 }
 
 // Key appends the comparison form of name to dst. ok is false, and dst is returned unchanged, unless name
@@ -197,31 +271,62 @@ func Key(dst, name []byte) (key []byte, ok bool) {
 	return dst, true
 }
 
-// Equal reports whether a and b are the same name under the kernel's comparison. decided is false when the
-// kernel's answer is not known: an identical name is always the same name, an opaque name differs from every
-// other name, a text name compares by Key, and anything else is undecided (equal is false then).
+// Verdict is the answer to "are these two names the same name": a tri-state, so that "cannot decide" is
+// never mistaken for "different". The zero value is Unknown.
+type Verdict int
+
+const (
+	// Unknown: the kernel's answer is not known (an empty name, a name over MaxName, a shape no vector shows).
+	Unknown Verdict = iota
+	// Same: the kernel resolves one name to the other.
+	Same
+	// Different: it does not.
+	Different
+)
+
+func (v Verdict) String() string {
+	switch v {
+	case Same:
+		return "same"
+	case Different:
+		return "different"
+	default:
+		return "unknown"
+	}
+}
+
+// Equal compares two names the way the kernel does. An empty name (a filesystem name is never empty) is
+// Unknown. Identical bytes are Same under any rule. An opaque name is Different from every other name, a
+// text name compares by Key, and a name of any other shape is Unknown. A caller must treat Unknown as
+// "cannot decide": never as Different, never as "not found".
 //
-// One undecided-looking pair is decided because it was measured: an opaque name against the same name with
-// one more byte 'z' (the negative controls of every invalid row of the vectors) are different names. The
-// kernel meets the invalid byte in the common prefix of both, falls back to comparing bytes, and the lengths
-// differ. No other extension is assumed.
-func Equal(a, b []byte) (equal, decided bool) {
+// One pair of otherwise-Unknown names is decided because it was measured: an opaque name against the same
+// name with one more byte, a lowercase 'z' (the negative controls of the invalid rows of the vectors), is
+// Different. The kernel meets the invalid byte in the common prefix of both, falls back to comparing bytes,
+// and the lengths differ. No other extension (an upper-case Z, another letter, two bytes) is assumed.
+func Equal(a, b []byte) Verdict {
+	if len(a) == 0 || len(b) == 0 {
+		return Unknown
+	}
 	if bytes.Equal(a, b) {
-		return true, true
+		return Same
 	}
 	if opaqueWithZ(a, b) || opaqueWithZ(b, a) {
-		return false, true
+		return Different
 	}
 	fa, fb := Classify(a), Classify(b)
 	switch {
 	case fa == FormUndecided || fb == FormUndecided:
-		return false, false
+		return Unknown
 	case fa == FormOpaque || fb == FormOpaque:
-		return false, true
+		return Different
 	}
 	ka, _ := Key(nil, a)
 	kb, _ := Key(nil, b)
-	return bytes.Equal(ka, kb), true
+	if bytes.Equal(ka, kb) {
+		return Same
+	}
+	return Different
 }
 
 // opaqueWithZ reports whether long is short plus one 'z' and short is an opaque name.

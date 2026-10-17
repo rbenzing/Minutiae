@@ -52,11 +52,11 @@ func FuzzKey(f *testing.F) {
 				}
 			}
 		}
-		if eq, d := Equal(a, a); !eq || !d {
+		if eq, d := eqd(a, a); len(a) > 0 && (!eq || !d) {
 			t.Fatalf("Equal(%q, %q) = (%v, %v)", a, a, eq, d)
 		}
-		e1, d1 := Equal(a, b)
-		e2, d2 := Equal(b, a)
+		e1, d1 := eqd(a, b)
+		e2, d2 := eqd(b, a)
 		if e1 != e2 || d1 != d2 {
 			t.Fatalf("Equal not symmetric for %q, %q", a, b)
 		}

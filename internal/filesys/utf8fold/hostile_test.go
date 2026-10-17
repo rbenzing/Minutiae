@@ -114,7 +114,7 @@ func TestHostileUnmeasuredShapeIsUndecided(t *testing.T) {
 			t.Errorf("Key(%q) = (%q, %v)", h, k, ok)
 		}
 		for _, other := range [][]byte{[]byte("a"), []byte("a\xffB"), {}, h[:1]} {
-			if eq, decided := Equal(h, other); decided || eq {
+			if eq, decided := eqd(h, other); decided || eq {
 				if !bytes.Equal(h, other) {
 					t.Errorf("Equal(%q, %q) = (%v, %v), want (false, false)", h, other, eq, decided)
 				}

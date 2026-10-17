@@ -41,8 +41,6 @@ func TestEqualBasics(t *testing.T) {
 		{"a\u00adb", "ab", true}, // U+00AD is ignorable
 		{"a\u200bb", "AB", true},
 		{"a", "b", false},
-		{"", "", true},
-		{"", "a", false},
 		{long(255), long(255), true},
 		{long(255), "A" + long(254), true},
 		{"\u03c2", "\u03a3", true},
@@ -50,7 +48,7 @@ func TestEqualBasics(t *testing.T) {
 		{"\ua7c7", "\ua7c8", false}, // assigned after 12.1: no case mapping
 	} {
 		for _, p := range [][2]string{{c.a, c.b}, {c.b, c.a}} {
-			eq, decided := Equal([]byte(p[0]), []byte(p[1]))
+			eq, decided := eqd([]byte(p[0]), []byte(p[1]))
 			if !decided || eq != c.want {
 				t.Errorf("Equal(%q, %q) = (%v, decided %v), want (%v, true)", p[0], p[1], eq, decided, c.want)
 			}
@@ -60,10 +58,10 @@ func TestEqualBasics(t *testing.T) {
 	if _, ok := Key(nil, []byte(long(256))); ok {
 		t.Error("Key accepted a 256-byte name")
 	}
-	if eq, decided := Equal([]byte(long(256)), []byte(long(256))); !eq || !decided {
+	if eq, decided := eqd([]byte(long(256)), []byte(long(256))); !eq || !decided {
 		t.Errorf("identical 256-byte names: (%v, %v), want (true, true): an identical name is the same name", eq, decided)
 	}
-	if eq, decided := Equal([]byte(long(256)), []byte(long(255))); eq || decided {
+	if eq, decided := eqd([]byte(long(256)), []byte(long(255))); eq || decided {
 		t.Errorf("256 versus 255 bytes: (%v, %v), want (false, false)", eq, decided)
 	}
 }
@@ -75,7 +73,7 @@ func TestClassifyMatchesTheMeasuredRule(t *testing.T) {
 		name string
 		want Form
 	}{
-		{"", FormUnicode},
+		{"", FormUndecided}, // a filesystem name is never empty
 		{"abc", FormUnicode},
 		{"\u00e9\u212a", FormUnicode},
 		{"\ufffe\uffff\U0010ffff", FormUnicode}, // noncharacters and the last code point are valid
@@ -97,6 +95,16 @@ func TestClassifyMatchesTheMeasuredRule(t *testing.T) {
 		{"x\x80\xff", FormOpaque}, // a stray byte mixed with another invalid form
 		{"x\xff\x80", FormOpaque}, // a stray byte after an invalid lead
 		{"\u00e9\x80\xff", FormOpaque},
+		// shapes that look like a measured one but are not shown by any vector (ruling Z40)
+		{"\x80x\x81", FormUndecided},    // a leading stray byte with a later stray byte
+		{"\x80­x", FormUndecided},       // a leading stray byte with an ignorable character
+		{"\x80\x80\x80", FormUndecided}, // three leading stray bytes
+		{"\x80\x80é", FormUndecided},    // two leading stray bytes then a non-ASCII character
+		{"x\xff\xff", FormUndecided},    // a tail of two lead bytes other than FE FE
+		{"x­\xff", FormUndecided},       // an ignorable-only text before an invalid tail
+		{"­\xff", FormUndecided},
+		{"\x80\x80\xff", FormUndecided},
+		{"x\xff\x80\x80", FormUndecided}, // a lead and two stray bytes at the end
 		// shapes no measurement covers
 		{"\xff", FormUndecided},                      // nothing before the invalid byte
 		{"x\xffy", FormUndecided},                    // text after the invalid byte
@@ -145,7 +153,7 @@ func TestEqualUndecidedAndOpaque(t *testing.T) {
 		{"\u00ad\x80", "\x80", false, false},
 	} {
 		for _, p := range [][2]string{{c.a, c.b}, {c.b, c.a}} {
-			eq, decided := Equal([]byte(p[0]), []byte(p[1]))
+			eq, decided := eqd([]byte(p[0]), []byte(p[1]))
 			if eq != c.equal || decided != c.decided {
 				t.Errorf("Equal(%q, %q) = (%v, %v), want (%v, %v)", p[0], p[1], eq, decided, c.equal, c.decided)
 			}
@@ -202,7 +210,7 @@ func TestKeyIsIdempotent(t *testing.T) {
 	for i := 0; i < 20000; i++ {
 		n := randomName(r)
 		k, ok := Key(nil, n)
-		if !ok {
+		if !ok || len(k) == 0 { // an all-ignorable name has an empty key, which is not a name
 			continue
 		}
 		k2, ok2 := Key(nil, k)
@@ -221,8 +229,8 @@ func TestEqualIsSymmetricAndTransitiveOverSample(t *testing.T) {
 	first := map[string][]byte{}
 	for i, a := range names {
 		b := names[(i*7919+13)%len(names)]
-		e1, d1 := Equal(a, b)
-		e2, d2 := Equal(b, a)
+		e1, d1 := eqd(a, b)
+		e2, d2 := eqd(b, a)
 		if e1 != e2 || d1 != d2 {
 			t.Fatalf("Equal(%q, %q) = (%v, %v) but reversed (%v, %v)", a, b, e1, d1, e2, d2)
 		}
@@ -232,11 +240,17 @@ func TestEqualIsSymmetricAndTransitiveOverSample(t *testing.T) {
 		k, _ := Key(nil, a)
 		if rep, ok := first[string(k)]; ok {
 			// transitivity: everything with one key is equal to the first of its class, hence to each other
-			if eq, d := Equal(a, rep); !eq || !d {
+			if eq, d := eqd(a, rep); !eq || !d {
 				t.Fatalf("%q and %q share key %q but Equal = (%v, %v)", a, rep, k, eq, d)
 			}
 		} else {
 			first[string(k)] = a
 		}
 	}
+}
+
+// eqd reads a Verdict as the two booleans the older tests were written with: equal, decided.
+func eqd(a, b []byte) (equal, decided bool) {
+	v := Equal(a, b)
+	return v == Same, v != Unknown
 }
