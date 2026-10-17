@@ -205,6 +205,7 @@ def expect_contact(rc, data_rows, mimes, remote, accounts=None, aggregates=None,
     if name:
         p["display_name"] = name
     undecided = []
+    duplicate = {}  # table -> number of rows a join key matched, when it matched more than one (T77)
     joined_unknown = {}  # cells of a JOINED row that hold no usable value, by "<table>.<column>"; unknown_columns is the mapped row's own
     if "account_name" in rc or "account_type" in rc:  # an old schema: the inline columns, only when physically present
         at = field(rc.get("account_type"), "account_type")
@@ -219,9 +220,13 @@ def expect_contact(rc, data_rows, mimes, remote, accounts=None, aggregates=None,
             raw["account_state"] = "no-account-id-column"  # neither account_id nor the inline columns: this variant cannot say
         elif is_int(aid):
             raw["account_id"] = aid
-            acct = accounts.get(aid) if accounts is not None else None
+            matches = accounts.get(aid, []) if accounts is not None else []
+            acct = matches[0] if len(matches) == 1 else None
             if accounts is None:
                 undecided.append("accounts")  # no accounts table: the join cannot be decided, so the account is unknown
+            elif len(matches) > 1:  # a key naming several rows is undecided (no guess) and says so (T77)
+                undecided.append("accounts")
+                duplicate["accounts"] = len(matches)
             elif acct is None:
                 raw["account_state"] = "no-accounts-row"  # a dangling id: decided, stated; not "no account" (T72)
             else:
@@ -261,9 +266,13 @@ def expect_contact(rc, data_rows, mimes, remote, accounts=None, aggregates=None,
         raw["aggregate_state"] = "no-contact-id-column"
     elif is_int(cid):
         raw["contact_id"] = cid
-        agg = aggregates.get(cid) if aggregates is not None else None
+        matches = aggregates.get(cid, []) if aggregates is not None else []
+        agg = matches[0] if len(matches) == 1 else None
         if aggregates is None:
             undecided.append("contacts")  # no contacts table: the join cannot be decided
+        elif len(matches) > 1:  # a key naming several rows is undecided (no guess) and says so (T77)
+            undecided.append("contacts")
+            duplicate["contacts"] = len(matches)
         elif agg is None:
             raw["aggregate_state"] = "no-contacts-row"  # a dangling contact_id (T72)
         else:
@@ -402,6 +411,8 @@ def expect_contact(rc, data_rows, mimes, remote, accounts=None, aggregates=None,
         raw["text_flags"] = sorted(tf)
     if undecided:
         raw["join_undecided"] = undecided
+    if duplicate:
+        raw["join_duplicate"] = duplicate
     if joined_unknown:
         raw["joined_unknown_columns"] = joined_unknown
     if unknown:
@@ -443,8 +454,16 @@ def expect_tombstone(dc, remote, file="any"):
 
 def oracle(files, ddl_name, variant, rc_cols, dc_cols):
     view = C.engine_view(files, ["raw_contacts", "data", "mimetypes", "deleted_contacts", "accounts", "contacts"])
-    accounts = {r["rowid"]: r for r in view["accounts"]} if "accounts" in view else None
-    aggregates = {r["rowid"]: r for r in view["contacts"]} if "contacts" in view else None
+    # the key is the _id the join compares: the rowid alias in the platform schema, so one row per key there; a table
+    # whose _id is a plain column can hold a key twice, and expect_contact states that (T77)
+    def by_key(rows):
+        out = {}
+        for r in rows:
+            out.setdefault(r.get("_id", r["rowid"]), []).append(r)
+        return out
+
+    accounts = by_key(view["accounts"]) if "accounts" in view else None
+    aggregates = by_key(view["contacts"]) if "contacts" in view else None
     mimes = {}
     for r in view["mimetypes"]:
         if isinstance(r.get("mimetype"), bytes):

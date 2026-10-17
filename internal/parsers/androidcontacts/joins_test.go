@@ -338,3 +338,39 @@ func TestPhonebookCollatedIndexDoesNotStopReading(t *testing.T) {
 		}
 	}
 }
+
+// T77: an _id that names more than one row is a corrupt table. The join is undecided (picking a row would be a
+// guess), and the record also says why: raw.join_duplicate holds the number of rows the key matched, per table.
+// The tables here have a plain _id column, not the rowid alias, which the schema probe refuses; an empty -wal
+// companion defers that decision to Parse, the way T18 does.
+func TestDuplicateJoinMatchIsUndecidedAndCounted(t *testing.T) {
+	b := newDB(1024)
+	rc := b.CreateTable("raw_contacts", rcDDL)
+	rc.Insert(1, int64(1), int64(1), int64(1), "Twice Named")
+	rc.Insert(2, int64(2), int64(2), int64(2), "Once Named")
+	ac := b.CreateTable("accounts", "create table accounts(_id integer, account_name text, account_type text, data_set text)")
+	ac.Insert(1, int64(1), "a@example.test", "com.google", nil)
+	ac.Insert(2, int64(1), "b@example.test", "com.other", nil)
+	ac.Insert(3, int64(1), "c@example.test", "com.third", nil)
+	ac.Insert(4, int64(2), "d@example.test", "com.google", nil)
+	ct := b.CreateTable("contacts", "create table contacts(_id integer, contact_last_updated_timestamp integer)")
+	ct.Insert(1, int64(1), int64(1682935201000))
+	ct.Insert(2, int64(1), int64(1682935202000))
+	ct.Insert(3, int64(2), int64(1682935203000))
+	h := parsertest.NewHarness(t)
+	bun := parsertest.Fixture{Name: "dup", Files: map[string][]byte{"db": b.Bytes(), "wal": {}}}.Bundle(h, fixtureRemote)
+	p := androidcontacts.Parser{}
+	res := h.RunLenient(p, bun.Input(h, p, false))
+	requireNoRun(t, res)
+	got := byRowid(t, res)
+	one, two := got[1], got[2]
+	raw := rawOfRec(one)
+	dup, _ := raw["join_duplicate"].(map[string]any)
+	if hasAccount(one) || len(one.Times) != 0 || !slices.Equal(undecided(one), []string{"accounts", "contacts"}) ||
+		len(dup) != 2 || dup["accounts"] != int64(3) || dup["contacts"] != int64(2) || raw["account_state"] != nil || raw["aggregate_state"] != nil {
+		t.Errorf("duplicate keys: times %v raw %v", one.Times, raw)
+	}
+	if rawOfRec(two)["join_duplicate"] != nil || !hasAccount(two) || timeKinds(two)[aggregateKey] == "" || undecided(two) != nil {
+		t.Errorf("a key that names one row is decided and not marked: %v", two.Payload)
+	}
+}

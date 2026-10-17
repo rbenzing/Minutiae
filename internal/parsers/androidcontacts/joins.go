@@ -22,6 +22,8 @@ import (
 //     "no-contacts-row" (T72);
 //   - a join the engine cannot decide (the table is missing, lacks its key, or its pages were lost) lists
 //     the table in raw.join_undecided and states neither an account nor a miss;
+//   - a key that names more than one row is undecided too (picking one would be a guess), and
+//     raw.join_duplicate = {table: rows} says it was a duplicate (T77);
 //   - a cell of a joined row that is not the wanted storage class is listed under
 //     raw.joined_unknown_columns, qualified by table (unknown_columns is reserved for the columns of the
 //     mapped raw_contacts row).
@@ -120,6 +122,7 @@ func accountOf(m parse.MapContext, row parse.Row, c rowrun.Cols, raw, unknown, j
 	switch {
 	case len(rows) > 1: // one _id names at most one row: more is a corrupt table, and picking one would be a guess
 		j.accounts = true
+		duplicate(raw, "accounts", len(rows))
 		return nil, nil
 	case len(rows) == 0:
 		if und {
@@ -162,6 +165,7 @@ func aggregateTime(m parse.MapContext, row parse.Row, c rowrun.Cols, raw, unknow
 	switch {
 	case len(rows) > 1:
 		j.contacts = true
+		duplicate(raw, "contacts", len(rows))
 		return in, false, nil
 	case len(rows) == 0:
 		if und {
@@ -185,4 +189,15 @@ func aggregateTime(m parse.MapContext, row parse.Row, c rowrun.Cols, raw, unknow
 		flagJoined(joinedUnknown, "contacts.contact_last_updated_timestamp", rows[0], col, tk)
 	}
 	return in, stated, nil
+}
+
+// duplicate records that the key matched n rows of table (T77): the join is undecided, and this says it was
+// because the key was not unique, with the number of rows it named.
+func duplicate(raw map[string]any, table string, n int) {
+	d, _ := raw["join_duplicate"].(map[string]any)
+	if d == nil {
+		d = map[string]any{}
+		raw["join_duplicate"] = d
+	}
+	d[table] = int64(n)
 }
