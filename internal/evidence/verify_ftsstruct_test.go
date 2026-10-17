@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"path/filepath"
@@ -169,5 +170,26 @@ func TestFTSStructureDoesNotAllocateFromADeclaredCount(t *testing.T) {
 	allocs := testing.AllocsPerRun(20, func() { _, _ = decodeFTSStructure(b) })
 	if allocs > 20 {
 		t.Fatalf("%v allocations for a 7-byte hostile record", allocs)
+	}
+}
+
+// The structure check on a cancelled context adds no problem of its own: the cancellation is what the
+// caller reports, and a "could not be checked" line beside it is noise. A read error on a live context
+// is still reported.
+func TestFTSStructureCheckIsQuietWhenCancelled(t *testing.T) {
+	c := indexedTextCase(t, 50)
+	run := func(ctx context.Context) []string {
+		rep := &VerifyReport{Problems: []string{}, Notices: []string{}}
+		r := &ftsVerify{c: c, ctx: ctx, ps: &problemSet{rep: rep, counts: map[string]int{}}, rep: rep, problems: map[string]int{}, listed: map[string]map[int64]bool{}}
+		r.checkUnreferenced(FTSWordTable)
+		return rep.Problems
+	}
+	if p := run(context.Background()); len(p) != 0 {
+		t.Fatalf("a live check of a clean index reports %q", p)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if p := run(ctx); len(p) != 0 {
+		t.Fatalf("a cancelled check reports %q", p)
 	}
 }

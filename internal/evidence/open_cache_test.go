@@ -240,6 +240,11 @@ func TestOpenArtifactResultCannotCorruptTheCache(t *testing.T) {
 	snap := &evidence.SnapshotRef{Name: "S", Xid: 5}
 	d := evidence.Derivation{Runs: []evidence.Run{{Offset: 0, Length: 4}, {Offset: 100, Length: 4}}, Times: map[string]string{"m": "t"}, Snapshot: snap, FSPath: "/f"}
 	f := recordstest.AddDerivedWith(t, c, "f.bin", extractSrc(img, d), patterned(8))
+	conf := 70
+	recordstest.SetManifestSource(t, c.Dir, f.ID, func(s *evidence.Source) { // planted: only the manifest line changes
+		s.Derived.Recovery = &evidence.Recovery{Class: "x", Method: "m", Confidence: &conf, Basis: []string{"b"}, Params: map[string]string{"k": "v"}, Journal: &evidence.JournalRef{Seq: 3, Region: "live"}}
+		s.Derived.AcquisitionGaps = &evidence.AcquisitionGapNote{Bytes: 4, Ranges: 1, First: []evidence.Run{{Offset: 8, Length: 4}}}
+	})
 	open := func() evidence.ManifestRecord {
 		fh, rec, err := c.OpenArtifact(f.ID)
 		if err != nil {
@@ -254,11 +259,18 @@ func TestOpenArtifactResultCannotCorruptTheCache(t *testing.T) {
 	first.Source.Derived.Times["m"] = "changed"
 	first.Source.Derived.Snapshot.Xid = 77
 	first.Source.Derived.ParentSegments = append(first.Source.Derived.ParentSegments, evidence.SegmentRef{ID: "x"})
+	first.Source.Derived.Recovery.Confidence = new(int)
+	first.Source.Derived.Recovery.Journal.Seq = 9
+	first.Source.Derived.Recovery.Basis[0] = "changed"
+	first.Source.Derived.Recovery.Params["k"] = "changed"
+	first.Source.Derived.AcquisitionGaps.First[0].Length = 99
 	got := open()
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("the cache was changed through a returned record:\n got %+v\nwant %+v", got.Source.Derived, want.Source.Derived)
 	}
-	if got.Source.Derived.Runs[0].Length != 4 || got.Source.Derived.Snapshot.Xid != 5 {
+	g := got.Source.Derived
+	if g.Runs[0].Length != 4 || g.Snapshot.Xid != 5 || *g.Recovery.Confidence != 70 || g.Recovery.Journal.Seq != 3 ||
+		g.Recovery.Basis[0] != "b" || g.Recovery.Params["k"] != "v" || g.AcquisitionGaps.First[0].Length != 4 {
 		t.Fatalf("runs %+v snapshot %+v", got.Source.Derived.Runs, got.Source.Derived.Snapshot)
 	}
 }

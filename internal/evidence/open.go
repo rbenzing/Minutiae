@@ -25,12 +25,14 @@ func sameManifestFile(a, b os.FileInfo) bool {
 	return os.SameFile(a, b) && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
 }
 
-// manifestForOpen returns the manifest for OpenArtifact (shared, read-only; OpenArtifact copies the record it returns): the cached records while the file is the same
+// manifestForOpen returns the manifest for OpenArtifact: the cached records while the file is the same
 // file with the same size and modification time, else a fresh read (cached only if the file did not
 // change while it was read). Any append through the case's own writer changes the size, so it
-// invalidates the cache too. Never used by verify, which reads Manifest and recomputes. The returned
-// slice is shared and must only be read. Residual: an external edit that restores the same size and
-// modification time is not seen here (docs/limitations.md); case verify sees it.
+// invalidates the cache too. Never used by verify, which reads Manifest and recomputes.
+//
+// The returned slice is shared and must only be read; OpenArtifact copies the one record it returns.
+// Residual: an external edit that restores the same size and modification time is not seen here
+// (docs/limitations.md); case verify sees it.
 func (c *Case) manifestForOpen() ([]ManifestRecord, error) {
 	path := filepath.Join(c.Dir, manifestFile)
 	c.mcache.mu.Lock()

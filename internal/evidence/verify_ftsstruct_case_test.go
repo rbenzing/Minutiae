@@ -66,14 +66,14 @@ func TestVerifyFlagsUnreferencedFTSRows(t *testing.T) {
 	t.Run("B a small id in _data", func(t *testing.T) {
 		c := ftsCase(t, 300)
 		recordstest.InsertFTSShadowRow(t, c.Dir, "records_fts_data", 77, []byte("x"))
-		requireProblemContaining(t, c, "data row 77 ")
+		requireProblemContaining(t, c, "data row 77 is below the segment range")
 	})
 	t.Run("B2 a small id when the structure names segment 0", func(t *testing.T) {
 		c := ftsCase(t, 300)
 		// one level, one segment with id 0: version-1 record, write counter 0
 		recordstest.ReplaceFTSStructure(t, c.Dir, "records_fts", []byte{0, 0, 0, 0, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x01})
 		recordstest.InsertFTSShadowRow(t, c.Dir, "records_fts_data", 77, []byte("x"))
-		requireProblemContaining(t, c, "data row 77 ")
+		requireProblemContaining(t, c, "data row 77 is below the segment range")
 	})
 	t.Run("C an unreferenced segment in _idx", func(t *testing.T) {
 		c := ftsCase(t, 300)

@@ -18,10 +18,12 @@ import (
 // does (_fts5StructureWrite, line 29341, writes exactly this and nothing after it).
 //
 // A "version 2" record (FTS5_STRUCTURE_V2, "\xff\x00\x00\x01" after the cookie, five more varints per
-// segment, written once a table has contentless_delete tombstones: rows with segid+65536) is never
-// written by the tables of this case, whose DDL has the empty content option and no contentless_delete. It is not
-// decoded: such a record is reported as unreadable, which is the right answer for an index this build
-// did not create. No genuine index here writes it (TestFTSStructureAccountsForEveryGenuineRow).
+// segment) is written only by a table created with contentless_delete=1 (it sets nOriginCntr, which is
+// what makes _fts5StructureWrite emit V2; such tables also keep tombstone rows under segid+65536). No
+// Minutiae table uses that option (schema_v3.go: an empty content option only), so a V2 record can only come from
+// tampering or a foreign table. It is not decoded: it is reported as unreadable, the right answer for
+// an index this build did not create (TestFTSStructureAccountsForEveryGenuineRow runs five genuine
+// workloads and finds only V1 records).
 const (
 	ftsAveragesRowID  = 1
 	ftsStructureRowID = 10
@@ -139,7 +141,9 @@ func (r *ftsVerify) checkUnreferenced(table string) {
 				return err
 			}
 			seg := id >> ftsSegidShift
-			if _, ok := segs[seg]; !ok || id < 1<<ftsSegidShift {
+			if id < 1<<ftsSegidShift {
+				report("%s: data row %d is below the segment range (only rows 1 and 10 are), so no structure can reference it", table, id)
+			} else if _, ok := segs[seg]; !ok {
 				report("%s: data row %d (segment %d) is not referenced by the index structure", table, id, seg)
 			}
 		}
@@ -163,7 +167,9 @@ func (r *ftsVerify) checkUnreferenced(table string) {
 		return sr.Err()
 	})
 	if err != nil {
-		r.rep.problemf("%s: the index structure could not be checked: %q", table, err.Error())
+		if r.ctx.Err() == nil { // a cancelled verify is reported by its caller, not once more here
+			r.fail(table, err)
+		}
 	}
 	if hidden > 0 {
 		r.rep.problemf("%s: %d further unreferenced index rows are not listed", table, hidden)
