@@ -475,7 +475,7 @@ func TestLookupNested(t *testing.T) {
 		{Path: "/plain", Dir: true},
 		{Path: "/plain/File.TXT", Data: []byte("p")},
 	}
-	img := ext4test.Build(ext4test.Options{Extents: true}, files)
+	img := ext4test.Build(ext4test.Options{Extents: true, Encoding: 1}, files)
 	f := mustOpen(t, img)
 
 	e, err := f.Lookup("/a/b/c/file.txt")
@@ -502,7 +502,7 @@ func TestLookupNested(t *testing.T) {
 	if l, err := f.Lookup("/ln"); err != nil || l.Type != filesys.TypeSymlink || l.LinkTarget != "/a" {
 		t.Errorf("symlinks are reported, not followed: %+v, %v", l, err)
 	}
-	// Case-insensitive directories compare with EqualFold; others are exact.
+	// Case-insensitive directories compare with the kernel's utf8-12.1.0 rules (Options.Encoding 1); others are exact.
 	if c, err := f.Lookup("/cf/file.txt"); err != nil || c.Name != "File.TXT" {
 		t.Errorf("casefold Lookup = %+v, %v", c, err)
 	}

@@ -100,6 +100,11 @@ type Options struct {
 	// feature and stores this value as s_checksum_seed, so the checksum seed
 	// no longer depends on the UUID.
 	CsumSeed uint32
+
+	// Encoding is s_encoding (0x27C); non-zero also sets the casefold feature. EncodingFlags is
+	// s_encoding_flags (0x27E). The builder does not import the folding package.
+	Encoding      uint16
+	EncodingFlags uint16
 }
 
 // Fixed superblock timestamp (2023-11-14), so images are reproducible.
@@ -116,6 +121,7 @@ const (
 	incompatInlineData = 0x8000
 	incompatCsumSeed   = 0x2000
 	incompatEncrypt    = 0x10000
+	incompatCasefold   = 0x20000
 
 	roSparseSuper  = 0x1
 	roLargeFile    = 0x2
@@ -401,6 +407,9 @@ func (b *builder) superblock(g, freeBlocks, freeInodes int) []byte {
 	if o.Encrypt {
 		incompat |= incompatEncrypt
 	}
+	if o.Encoding != 0 {
+		incompat |= incompatCasefold
+	}
 	if o.MetadataCsum && o.CsumSeed != 0 {
 		incompat |= incompatCsumSeed
 		le32(sb, 0x270, o.CsumSeed)
@@ -412,6 +421,8 @@ func (b *builder) superblock(g, freeBlocks, freeInodes int) []byte {
 	case o.GDTCsum:
 		ro |= roGDTCsum
 	}
+	le16(sb, 0x27C, o.Encoding)
+	le16(sb, 0x27E, o.EncodingFlags)
 	le32(sb, 0x5C, compat)
 	le32(sb, 0x60, incompat)
 	le32(sb, 0x64, ro)

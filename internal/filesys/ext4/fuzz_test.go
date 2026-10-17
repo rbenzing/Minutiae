@@ -3,6 +3,8 @@ package ext4_test
 import (
 	"bytes"
 	"errors"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
@@ -50,6 +52,24 @@ func fuzzBuilderSeeds() [][]byte {
 				{Path: "/h/one", Data: []byte("1")},
 				{Path: "/h/two", Data: []byte("2")},
 			}),
+		// casefold directories: mixed case, a name that folds to several others, non-UTF-8 and a
+		// shape the comparison was not measured for
+		ext4test.Build(ext4test.Options{Extents: true, Encoding: 1},
+			[]ext4test.File{
+				{Path: "/cf", Dir: true, Flags: 0x40000000},
+				{Path: "/cf/File.TXT"},
+				{Path: "/cf/Stra" + string(rune(0xDF)) + "e"},
+				{Path: "/cf/STRASSE"},
+				{Path: "/cf/A" + string([]byte{0xFF})},
+				{Path: "/cf/x" + string([]byte{0xFF}) + "y"},
+				{Path: "/cf/a" + string([]byte{0x80}) + "b"},
+			}),
+		ext4test.Build(ext4test.Options{Extents: true, Encoding: 1, EncodingFlags: 1},
+			[]ext4test.File{
+				{Path: "/cf", Dir: true, Flags: 0x40000000},
+				{Path: "/cf/Ab", Data: []byte("1")},
+				{Path: "/cf/aB", Data: []byte("2")},
+			}),
 	}
 }
 
@@ -64,6 +84,8 @@ func FuzzExt4Open(f *testing.F) {
 		img := gunzipFixture(f, path)
 		f.Add(img)
 	}
+	// the real casefold image (kernel-made), by name: its expect schema is not the one of the loops above
+	f.Add(gunzipFixture(f, filepath.Join("testdata", "ext4-casefold.img.gz")))
 	f.Add(make([]byte, 2048))
 	f.Fuzz(func(t *testing.T, b []byte) {
 		fsys, err := ext4.Open(bytes.NewReader(b), int64(len(b)))
@@ -72,12 +94,15 @@ func FuzzExt4Open(f *testing.F) {
 		}
 		_ = fsys.Info()
 		visited, readTotal := 0, int64(0)
-		_ = filesys.Walk(fsys, fsys.Root(), "/", func(_ string, e filesys.Entry, err error) error {
+		_ = filesys.Walk(fsys, fsys.Root(), "/", func(p string, e filesys.Entry, err error) error {
 			if err != nil {
 				return nil
 			}
 			if visited++; visited > fuzzWalkBudget {
 				return errFuzzBudget
+			}
+			if visited <= 200 { // a casefold lookup of every listed name, upper-cased: an answer or a typed error, never a panic
+				_, _ = fsys.Lookup(strings.ToUpper(p))
 			}
 			if e.Type != filesys.TypeFile && e.Type != filesys.TypeSymlink {
 				return nil

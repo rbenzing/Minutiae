@@ -150,7 +150,7 @@ func TestLookupAliasPreference(t *testing.T) {
 		{Path: "/cf/FILE", Data: []byte("f")},
 		{Path: "/cf/" + bad, Data: []byte("b")},
 	}
-	f := mustOpen(t, ext4test.Build(ext4test.Options{Extents: true, Encrypt: true}, files))
+	f := mustOpen(t, ext4test.Build(ext4test.Options{Extents: true, Encrypt: true, Encoding: 1}, files))
 
 	// Encrypted directory: only the ~enc~ form matches, never raw bytes.
 	e, err := f.Lookup("/enc/~enc~QQ")

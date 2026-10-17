@@ -5,6 +5,9 @@ import "github.com/rbenzing/minutiae/internal/filesys"
 // Test-only accessors, so the external ext4_test package can check internals
 // without widening the public API.
 
+// Encoding returns s_encoding and s_encoding_flags.
+func (f *FS) Encoding() (encoding, flags uint16) { return f.sb.encoding, f.sb.encFlags }
+
 // GroupCount returns the number of block groups read from the descriptor table.
 func (f *FS) GroupCount() int { return len(f.groups) }
 

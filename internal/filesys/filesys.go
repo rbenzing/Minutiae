@@ -150,6 +150,10 @@ var (
 	// ErrAmbiguous is returned when a reference (a snapshot name or xid) matches
 	// more than one object; the error lists the candidates.
 	ErrAmbiguous = errors.New("ambiguous reference")
+	// ErrUndecided marks a comparison or lookup whose answer is not known: a name of a shape that no
+	// measurement of the filesystem's own comparison covers (a casefold directory holds a name the
+	// comparison has not been shown for). It is not "not found" and not "different"; readers wrap it.
+	ErrUndecided = errors.New("cannot be decided")
 )
 
 // CorruptError reports a malformed on-disk structure. Offset is the byte
