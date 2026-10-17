@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 )
 
@@ -121,13 +122,16 @@ func (c *Case) verifyRun(ctx context.Context, observe verifyChunkObserver, check
 	c.crossCheckDB(&rep, recs)
 	c.checkTmp(&rep)
 	c.verifyRecovered(&rep, recs)
-	c.verifyRecords(&rep, recs, audited, auditReadable, observe)
+	c.verifyRecords(ctx, &rep, recs, audited, auditReadable, observe)
 	if auditReadable {
 		c.checkSchema(&rep, audited)
 	}
 	c.checkUnmanifested(&rep, inManifest)
 	c.checkStaging(&rep)
 	c.runComposedChecks(ctx, &rep, recs, checks)
+	if ctx.Err() != nil && !slices.Contains(rep.Problems, verifyCancelled) {
+		rep.problemf("%s", verifyCancelled) // a cancelled verify is never a pass, whichever phase it ended in
+	}
 	unreproducedNotices(&rep)
 
 	_, err = c.Audit.Append("verify.run", "", map[string]any{

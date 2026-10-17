@@ -233,13 +233,12 @@ func unreadable(rep *VerifyReport, what string, err error) {
 // It does nothing for a schema older than v2. Every failure to read part of the
 // record tables is a problem; it never aborts. entries is nil when the audit log
 // could not be read, in which case the checks that need it are skipped.
-func (c *Case) verifyRecords(rep *VerifyReport, recs []ManifestRecord, entries []AuditEntry, auditReadable bool, observe verifyChunkObserver) {
+func (c *Case) verifyRecords(ctx context.Context, rep *VerifyReport, recs []ManifestRecord, entries []AuditEntry, auditReadable bool, observe verifyChunkObserver) {
 	dbv, err := c.store.SchemaVersion()
 	if err != nil {
 		rep.problemf("records unreadable: schema version: %q", err.Error())
 		return
 	}
-	ctx := context.Background()
 	ps := &problemSet{rep: rep, counts: map[string]int{}}
 	defer ps.flush()
 

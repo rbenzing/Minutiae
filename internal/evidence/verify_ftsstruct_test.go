@@ -4,9 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // genuineFTS builds both FTS tables in a scratch file database with the real DDL and returns it.
@@ -173,8 +176,9 @@ func TestFTSStructureDoesNotAllocateFromADeclaredCount(t *testing.T) {
 	}
 }
 
-// The structure check on a cancelled context adds no problem of its own: the cancellation is what the
-// caller reports, and a "could not be checked" line beside it is noise. A read error on a live context
+// checkUnreferenced itself, on a cancelled context, adds no problem of its own: the cancellation is what the
+// verify reports (TestVerifyCancelledDuringP11, through VerifyWith), and a "could not be checked" line beside it
+// is noise. A read error on a live context
 // is still reported.
 func TestFTSStructureCheckIsQuietWhenCancelled(t *testing.T) {
 	c := indexedTextCase(t, 50)
@@ -191,5 +195,70 @@ func TestFTSStructureCheckIsQuietWhenCancelled(t *testing.T) {
 	cancel()
 	if p := run(ctx); len(p) != 0 {
 		t.Fatalf("a cancelled check reports %q", p)
+	}
+}
+
+// A read error on a live context goes through r.fail and is reported (D112).
+func TestFTSStructureReadErrorOnALiveContextIsReported(t *testing.T) {
+	c := indexedTextCase(t, 50)
+	// the structure record is gone: the read finds no row
+	if _, err := c.store.db.Exec("DELETE FROM "+FTSWordTable+"_data WHERE id = ?", ftsStructureRowID); err != nil { //nolint:gosec // a constant table name in a test
+		t.Fatal(err)
+	}
+	rep := &VerifyReport{Problems: []string{}, Notices: []string{}}
+	r := &ftsVerify{c: c, ctx: context.Background(), ps: &problemSet{rep: rep, counts: map[string]int{}}, rep: rep, problems: map[string]int{}, listed: map[string]map[int64]bool{}}
+	r.checkUnreferenced(FTSWordTable)
+	found := false
+	for _, p := range rep.Problems {
+		found = found || strings.Contains(p, FTSWordTable+": the index cannot be read")
+	}
+	if !found {
+		t.Fatalf("a failed structure read on a live context was not reported: %q", rep.Problems)
+	}
+}
+
+// A verify cancelled while P11 is rebuilding the index stops there, is never OK and says why; a problem
+// found before the cancel is still in the report (integrity is never masked by a cancel).
+func TestVerifyCancelledDuringP11(t *testing.T) {
+	c := indexedTextCase(t, 12000) // three rebuild chunks of 5000, 5000, 2000
+	// an integrity problem found before P11 starts: the artifact's bytes no longer match the manifest
+	recs, err := c.Manifest()
+	if err != nil || len(recs) == 0 {
+		t.Fatalf("manifest: %v %d", err, len(recs))
+	}
+	path := filepath.Join(c.Dir, filepath.FromSlash(recs[0].Path))
+	if err := os.WriteFile(path, []byte("tampered"), 0o600); err != nil { //nolint:gosec // a test edits its own temp case
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	chunks := 0
+	start := time.Now()
+	rep, err := c.verifyRun(ctx, func(table string, _ int) {
+		if table == "fts" {
+			chunks++
+			cancel() // the first rebuild chunk is read; the rest must not be
+		}
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chunks != 1 {
+		t.Fatalf("%d rebuild chunks were read after the cancel, want 1 (the one in flight)", chunks)
+	}
+	if time.Since(start) > 2*time.Minute {
+		t.Fatalf("a cancelled verify took %v", time.Since(start))
+	}
+	if rep.OK() {
+		t.Fatal("a cancelled verify must not be OK")
+	}
+	if !slices.Contains(rep.Problems, verifyCancelled) {
+		t.Fatalf("no %q in %q", verifyCancelled, rep.Problems)
+	}
+	if !slices.ContainsFunc(rep.Problems, func(p string) bool { return strings.Contains(p, "hash mismatch") }) {
+		t.Fatalf("the integrity problem found before the cancel is missing: %q", rep.Problems)
+	}
+	if rep.FTSDocsChecked >= 12000 {
+		t.Fatalf("FTSDocsChecked = %d: the rebuild was not cut short", rep.FTSDocsChecked)
 	}
 }
