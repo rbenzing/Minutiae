@@ -183,6 +183,7 @@ func (c *Case) verifyFTS(ctx context.Context, ps *problemSet, observe verifyChun
 			return
 		}
 		r.compareTable(table)
+		r.checkUnreferenced(table) // P11: shadow rows no structure references
 	}
 	doneCompare()
 }

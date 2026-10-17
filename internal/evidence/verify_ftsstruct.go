@@ -1,0 +1,171 @@
+package evidence
+
+import (
+	"errors"
+	"fmt"
+)
+
+// The FTS5 structure record (data row 10 of <fts>_data), pinned against the transpiled SQLite source
+// of modernc.org/sqlite v1.60.1 (lib/sqlite_g_0000000000000003.go; the C names are in brackets):
+//
+// FTS5_AVERAGES_ROWID is 1 and FTS5_STRUCTURE_ROWID is 10 (lib/sqlite.go). A segment's rows have the
+// rowid segid<<(FTS5_DATA_PAGE_B+FTS5_DATA_HEIGHT_B+FTS5_DATA_DLI_B) + height<<FTS5_DATA_PAGE_B + page,
+// with 31, 5 and 1 bits, so the segment id is rowid>>37 (_fts5DataRead and its callers, e.g. line 29801).
+// _fts5StructureDecode (line 29028) reads a 4-byte cookie, varint nLevel and varint nSegment (both at
+// most FTS5_MAX_SEGMENT = 2000), a varint write counter, then per level a varint nMerge and a varint
+// nSeg (nSeg >= nMerge) and per segment the varints segid, pgnoFirst and pgnoLast (pgnoLast >= pgnoFirst);
+// the segments of all levels add up to nSegment. SQLite does not check for trailing bytes; this decoder
+// does (_fts5StructureWrite, line 29341, writes exactly this and nothing after it).
+//
+// A "version 2" record (FTS5_STRUCTURE_V2, "\xff\x00\x00\x01" after the cookie, five more varints per
+// segment, written once a table has contentless_delete tombstones: rows with segid+65536) is never
+// written by the tables of this case, whose DDL has the empty content option and no contentless_delete. It is not
+// decoded: such a record is reported as unreadable, which is the right answer for an index this build
+// did not create. No genuine index here writes it (TestFTSStructureAccountsForEveryGenuineRow).
+const (
+	ftsAveragesRowID  = 1
+	ftsStructureRowID = 10
+	ftsSegidShift     = 37 // FTS5_DATA_PAGE_B + FTS5_DATA_HEIGHT_B + FTS5_DATA_DLI_B
+	ftsMaxSegment     = 2000
+)
+
+var errFTSStructure = errors.New("malformed FTS5 structure record")
+
+// decodeFTSStructure returns the segment ids the structure record names. It reads only what the bytes
+// hold. A level needs at least 2 bytes (merge count, segment count) and a segment at least 3 (id and
+// two page numbers), so a declared count the remaining bytes cannot hold is refused before any
+// allocation, and the result map is never sized from a declared count.
+func decodeFTSStructure(b []byte) (map[int64]struct{}, error) {
+	if len(b) < 4 {
+		return nil, fmt.Errorf("%w: %d bytes", errFTSStructure, len(b))
+	}
+	b = b[4:] // the cookie
+	next := func() (uint64, error) {
+		v, n := SQLiteVarint(b)
+		if n == 0 {
+			return 0, fmt.Errorf("%w: truncated", errFTSStructure)
+		}
+		b = b[n:]
+		return v, nil
+	}
+	nLevel, err := next()
+	if err != nil {
+		return nil, err
+	}
+	nSeg, err := next()
+	if err != nil {
+		return nil, err
+	}
+	if _, err = next(); err != nil { // the write counter
+		return nil, err
+	}
+	const perSeg = 3 // segid, pgnoFirst, pgnoLast
+	if nLevel > ftsMaxSegment || nSeg > ftsMaxSegment ||
+		nLevel > uint64(len(b)/2) || nSeg > uint64(len(b)/perSeg) {
+		return nil, fmt.Errorf("%w: %d levels and %d segments cannot fit in %d bytes", errFTSStructure, nLevel, nSeg, len(b))
+	}
+	ids := make(map[int64]struct{})
+	var total uint64
+	for l := uint64(0); l < nLevel; l++ {
+		nMerge, err := next()
+		if err != nil {
+			return nil, err
+		}
+		n, err := next()
+		if err != nil {
+			return nil, err
+		}
+		if n < nMerge || n > uint64(len(b)/perSeg) {
+			return nil, fmt.Errorf("%w: %d segments (%d merging) cannot fit in %d bytes", errFTSStructure, n, nMerge, len(b))
+		}
+		for s := uint64(0); s < n; s++ {
+			id, err := next()
+			if err != nil {
+				return nil, err
+			}
+			first, err := next()
+			if err != nil {
+				return nil, err
+			}
+			last, err := next()
+			if err != nil {
+				return nil, err
+			}
+			if id >= 1<<31 || last < first { // segid is read as a 32-bit varint
+				return nil, fmt.Errorf("%w: segment id %d, pages %d to %d", errFTSStructure, id, first, last)
+			}
+			ids[int64(id)] = struct{}{}
+			total++
+		}
+	}
+	if total != nSeg || len(b) != 0 {
+		return nil, fmt.Errorf("%w: %d segments declared, %d found, %d bytes left", errFTSStructure, nSeg, total, len(b))
+	}
+	return ids, nil
+}
+
+// checkUnreferenced is called once per FTS table from verifyFTS, inside the fts.compare phase and
+// inside the loop over FTSTables (before the phase ends and before the loop's early return). It
+// streams the data ids and the idx segment ids through one read transaction and holds nothing but
+// the structure's segment set.
+func (r *ftsVerify) checkUnreferenced(table string) {
+	shown, hidden := 0, 0
+	report := func(format string, a ...any) {
+		if shown < verifyMaxPerKind {
+			r.rep.problemf(format, a...)
+			shown++
+		} else {
+			hidden++
+		}
+	}
+	err := r.c.ReadTx(r.ctx, func(h ReadHandle) error {
+		var structure []byte
+		if err := h.QueryRowContext(r.ctx, `SELECT block FROM `+table+`_data WHERE id = ?`, ftsStructureRowID).Scan(&structure); err != nil {
+			return fmt.Errorf("read the structure record: %w", err)
+		}
+		segs, err := decodeFTSStructure(structure)
+		if err != nil {
+			r.rep.problemf("%s: the index structure record is unreadable: %q", table, err.Error())
+			return nil
+		}
+		rows, err := h.QueryContext(r.ctx, `SELECT id FROM `+table+`_data WHERE id NOT IN (?, ?)`, ftsAveragesRowID, ftsStructureRowID)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			seg := id >> ftsSegidShift
+			if _, ok := segs[seg]; !ok || id < 1<<ftsSegidShift {
+				report("%s: data row %d (segment %d) is not referenced by the index structure", table, id, seg)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		sr, err := h.QueryContext(r.ctx, `SELECT DISTINCT segid FROM `+table+`_idx`)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = sr.Close() }()
+		for sr.Next() {
+			var s int64
+			if err := sr.Scan(&s); err != nil {
+				return err
+			}
+			if _, ok := segs[s]; !ok {
+				report("%s: index row of segment %d is not referenced by the index structure", table, s)
+			}
+		}
+		return sr.Err()
+	})
+	if err != nil {
+		r.rep.problemf("%s: the index structure could not be checked: %q", table, err.Error())
+	}
+	if hidden > 0 {
+		r.rep.problemf("%s: %d further unreferenced index rows are not listed", table, hidden)
+	}
+}

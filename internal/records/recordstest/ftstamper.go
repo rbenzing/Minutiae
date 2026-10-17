@@ -260,3 +260,41 @@ func SetFTSDataBlock(t testing.TB, caseDir, table string, id int64, block []byte
 		return err
 	})
 }
+
+// InsertFTSShadowRow inserts a row into an FTS5 data table (records_fts_data or records_fts_sub_data).
+func InsertFTSShadowRow(t testing.TB, caseDir, table string, id int64, block []byte) {
+	t.Helper()
+	name := shadowTable(t, table, "_data")
+	tamper(t, caseDir, func(db *sql.DB) error {
+		_, err := db.Exec(`INSERT INTO `+name+`(id, block) VALUES (?, ?)`, id, block) //nolint:gosec // a constant table name
+		return err
+	})
+}
+
+// InsertFTSIdxRow inserts a row into an FTS5 idx table.
+func InsertFTSIdxRow(t testing.TB, caseDir, table string, segid int64, term string, pgno int64) {
+	t.Helper()
+	name := shadowTable(t, table, "_idx")
+	tamper(t, caseDir, func(db *sql.DB) error {
+		_, err := db.Exec(`INSERT INTO `+name+`(segid, term, pgno) VALUES (?, ?, ?)`, segid, term, pgno) //nolint:gosec // a constant table name
+		return err
+	})
+}
+
+// ReplaceFTSStructure overwrites the structure record (data row 10) of an FTS table.
+func ReplaceFTSStructure(t testing.TB, caseDir, table string, block []byte) {
+	t.Helper()
+	SetFTSDataBlock(t, caseDir, table, 10, block) // data row 10 is the structure record
+}
+
+// shadowTable accepts the shadow table names of the two FTS tables only.
+func shadowTable(t testing.TB, name, suffix string) string {
+	t.Helper()
+	for _, base := range evidence.FTSTables() {
+		if name == base+suffix {
+			return name
+		}
+	}
+	t.Fatalf("recordstest: %q is not a shadow table of the full-text index", name)
+	return ""
+}
