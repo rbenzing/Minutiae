@@ -72,6 +72,7 @@ const (
 	WarnJournalNoPageSize       = "journal-no-page-size"
 	WarnJournalPageInvalid      = "journal-page-invalid"
 	WarnJournalHot              = "journal-hot"
+	WarnJournalTruncated        = "journal-truncated"
 	WarnJournalSuperUnknown     = "journal-super-unknown"
 	WarnJournalAndWAL           = "journal-and-wal"
 	WarnJournalDuplicatePage    = "journal-duplicate-page"
@@ -80,6 +81,9 @@ const (
 	WarnPagesUnattributed       = "pages-unattributed"
 	WarnLimitReached            = "limit-reached"
 	WarnSuppressed              = "suppressed"
+	// WarnKeyOrderUnchecked: entries of an index-shaped tree whose order the
+	// scan could not decide (one warning per scan, with the count).
+	WarnKeyOrderUnchecked = "key-order-unchecked"
 )
 
 // knownWarningCodes is the set the collector accepts (kept equal to the
@@ -93,9 +97,9 @@ var knownWarningCodes = map[string]bool{
 	WarnPtrmapMismatch: true, WarnSchemaRowInvalid: true, WarnSchemaDuplicate: true, WarnSchemaSQLUnparsed: true,
 	WarnWALHeaderInvalid: true, WarnWALPageSizeMismatch: true, WarnWALTornTail: true, WarnWALPageInvalid: true, WarnWALModeMismatch: true, WarnWALFramesNotApplied: true, WarnWALPage1Mismatch: true, WarnLivePagesUnavailable: true,
 	WarnJournalHeaderInvalid: true, WarnJournalSectorInvalid: true, WarnJournalPageSizeMismatch: true,
-	WarnJournalNoPageSize: true, WarnJournalPageInvalid: true, WarnJournalHot: true, WarnJournalSuperUnknown: true,
+	WarnJournalNoPageSize: true, WarnJournalPageInvalid: true, WarnJournalHot: true, WarnJournalTruncated: true, WarnJournalSuperUnknown: true,
 	WarnJournalAndWAL: true, WarnJournalDuplicatePage: true, WarnSnapshotUnavailable: true, WarnOwnerChanged: true,
-	WarnPagesUnattributed: true, WarnLimitReached: true, WarnSuppressed: true,
+	WarnPagesUnattributed: true, WarnLimitReached: true, WarnSuppressed: true, WarnKeyOrderUnchecked: true,
 }
 
 // Warning is one anomaly found while reading. Msg is short; any text read

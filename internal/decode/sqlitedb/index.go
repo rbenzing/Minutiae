@@ -74,6 +74,19 @@ func classOf(a sqlitefile.Affinity) parse.JoinClass {
 	return parse.ClassBlob
 }
 
+// affOfClass is the affinity that stands for a column's class in a conversion:
+// every numeric affinity converts a constant alike (an integral real and the
+// integer of the same value are one key).
+func affOfClass(c parse.JoinClass) sqlitefile.Affinity {
+	switch c {
+	case parse.ClassNumeric:
+		return sqlitefile.AffNumeric
+	case parse.ClassText:
+		return sqlitefile.AffText
+	}
+	return sqlitefile.AffBlob
+}
+
 // LiteralIntKey is the key of an integer constant (never flagged).
 func LiteralIntKey(v int64) parse.JoinKey { return parse.JoinKey{Kind: parse.JoinInt, I: v} }
 
@@ -87,9 +100,10 @@ func LiteralFloatKey(f float64) (parse.JoinKey, bool) {
 }
 
 // LiteralTextKey is the key of a text constant, the bytes as given. A literal is
-// never flagged and no affinity is applied to it, so against an INTEGER or REAL
-// column it does not match "7" with 7 as the engine does for a constant
-// (documented gap, T8 M2).
+// never flagged, and Index.Rowids applies the target column's affinity to it as
+// the engine does for a constant: "7" finds the integer 7 in an INTEGER, REAL or
+// NUMERIC column. A text that looks like a number but cannot be converted exactly
+// (see sqlitefile.ConvertForComparison) is an ErrKeyUndecidable, never a miss.
 func LiteralTextKey(b []byte) parse.JoinKey { return parse.JoinKey{Kind: parse.JoinText, S: string(b)} }
 
 // LiteralBlobKey is the key of a blob constant.
@@ -102,7 +116,7 @@ type JoinFlags uint8
 // The join flags.
 const (
 	JoinCollationDiffers JoinFlags = 1 << iota // the source column's collation differs from the target's
-	JoinAffinityDiffers                        // the source column's affinity class differs from the target's
+	JoinAffinityDiffers                        // the classes differ; set even where the engine converts nothing (a no-affinity source against a TEXT target)
 	// JoinUndecided marks a HIT returned by an index that could not decide every
 	// target row (a row whose key is unknown, or rows the scan lost): the answer
 	// may be short, so it is never presented as the complete set of matches.
@@ -126,10 +140,12 @@ type Index struct {
 	collation string // canonical
 	class     parse.JoinClass
 	m         map[[32]byte][]int64
-	unkeyed   int                 // target rows not in the index (NULL, NaN, undecided)
-	undecided int                 // of those, rows whose key is unknown: a miss cannot be proven
-	lost      sqlitefile.ScanLoss // what the scan that built the index did not deliver
-	ch        charger             // the memory of the entries
+	altNum    map[[32]byte][]int64 // the numeric view of a TEXT or no-affinity target's numeric-looking texts
+	altUndec  int                  // numeric-looking texts of the target that cannot be converted exactly
+	unkeyed   int                  // target rows not in the index (NULL, NaN, undecided)
+	undecided int                  // of those, rows whose key is unknown: a miss cannot be proven
+	lost      sqlitefile.ScanLoss  // what the scan that built the index did not deliver
+	ch        charger              // the memory of the entries
 }
 
 // Index reads the table once and indexes column col under the column's own
@@ -137,7 +153,8 @@ type Index struct {
 // counted (Unkeyed, Stats.IndexUnkeyed). More than limit entries (limit <= 0 means
 // 1,000,000) is ErrIndexLimit; nothing is kept on any error. An unsupported
 // collation is an *UnsupportedCollationError, never BINARY; a WITHOUT ROWID
-// table is ErrWithoutRowid. No affinity conversion is done.
+// table is ErrWithoutRowid. The index holds the stored values; a literal probe is
+// converted at lookup (Rowids).
 //
 // An index built from a scan that lost rows (a skipped page or cell, counted by
 // the reader per scan) is Lossy: every miss of Rowids is then an
@@ -213,6 +230,43 @@ func (t *Table) Index(ctx context.Context, col string, limit int) (ix *Index, er
 		}
 		entries++
 		ix.m[key] = append(ix.m[key], rowid)
+		if ix.class == parse.ClassNumeric || v.Kind != sqlitefile.KindText {
+			return nil
+		}
+		// A numeric source column meets this TEXT or no-affinity column: the engine
+		// applies NUMERIC affinity to the target's text, so a numeric-looking text is
+		// also reachable under its number (the cost: one extra entry per such value,
+		// counted toward the limit). Nothing is rendered as text (U49).
+		conv, cst := sqlitefile.ConvertForComparison(v, affOfClass(ix.class), sqlitefile.AffNumeric)
+		switch {
+		case cst != sqlitefile.ConvOK:
+			ix.altUndec++
+		case conv.Kind == sqlitefile.KindInt || conv.Kind == sqlitefile.KindFloat:
+			akey, ast, aerr := sqlitefile.EqualityKey(conv, coll)
+			if aerr != nil {
+				return fmt.Errorf("%w: %w", ErrInternal, aerr)
+			}
+			// Defensive and unreachable today (U54): ConvertForComparison returns
+			// only a finite int or float (its classifier rejects NaN and infinity),
+			// and a converted value is never Omitted, Clipped or Unread, so
+			// EqualityKey is always KeyOK here. It still fails closed (altUndec)
+			// should that ever change.
+			if ast != sqlitefile.KeyOK {
+				ix.altUndec++
+				return nil
+			}
+			if entries >= limit {
+				return ErrIndexLimit
+			}
+			if err := ix.ch.charge(indexEntryCost + 32); err != nil {
+				return err
+			}
+			entries++
+			if ix.altNum == nil {
+				ix.altNum = map[[32]byte][]int64{}
+			}
+			ix.altNum[akey] = append(ix.altNum[akey], rowid)
+		}
 		return nil
 	})
 	if err != nil {
@@ -243,7 +297,7 @@ func (ix *Index) Release() {
 		return
 	}
 	ix.ch.release()
-	ix.m = nil
+	ix.m, ix.altNum = nil, nil
 }
 
 // Rowids returns, in ascending order, the rowids whose indexed value equals
@@ -255,8 +309,12 @@ func (ix *Index) Release() {
 // lookup that finds no row while Undecided target rows exist or the index is
 // Lossy: a miss is not a proof of absence. A hit is returned, with JoinUndecided
 // set in the flags in those two cases: the set of matches may be short. A
-// source collation that is not supported is an *UnsupportedCollationError. The
-// slice is the caller's.
+// source collation that is not supported is an *UnsupportedCollationError. A
+// literal key (Class ClassUnknown) takes the affinity of the indexed column as the
+// engine does for a constant, and so does a key from a TEXT or no-affinity column
+// against a numeric column (NUMERIC affinity applies to both); a no-affinity
+// column against a TEXT column is compared as stored. A key that cannot be
+// converted exactly is ErrKeyUndecidable. The slice is the caller's.
 func (ix *Index) Rowids(key parse.JoinKey) (rowids []int64, flags JoinFlags, err error) {
 	if key.Kind == parse.JoinNone {
 		return nil, 0, nil
@@ -289,6 +347,18 @@ func (ix *Index) Rowids(key parse.JoinKey) (rowids []int64, flags JoinFlags, err
 	default:
 		return nil, flags, fmt.Errorf("%w: unknown key kind %d", ErrKeyUndecidable, key.Kind)
 	}
+	// The engine applies NUMERIC affinity to a TEXT or no-affinity operand that
+	// meets a numeric column, and TEXT affinity to a constant that meets a TEXT
+	// column. A no-affinity COLUMN against a TEXT column is compared as stored
+	// (measured against the engine): only a constant (ClassUnknown) is converted
+	// there. A key that cannot be converted exactly is undecidable, never a miss.
+	if key.Class != parse.ClassBlob || ix.class != parse.ClassText {
+		conv, cst := sqlitefile.ConvertForComparison(v, affOfClass(key.Class), affOfClass(ix.class))
+		if cst != sqlitefile.ConvOK {
+			return nil, flags, fmt.Errorf("%w: the key cannot be converted exactly for the affinity of %s.%s", ErrKeyUndecidable, ix.table, ix.column)
+		}
+		v = conv
+	}
 	k, st, kerr := sqlitefile.EqualityKey(v, ix.collation)
 	if kerr != nil {
 		return nil, 0, fmt.Errorf("%w: %w", ErrInternal, kerr)
@@ -300,11 +370,26 @@ func (ix *Index) Rowids(key parse.JoinKey) (rowids []int64, flags JoinFlags, err
 	default:
 		return nil, flags, fmt.Errorf("%w: the probe cannot be compared under %s", ErrKeyUndecidable, ix.collation)
 	}
-	if ids := ix.m[k]; len(ids) > 0 {
-		if ix.undecided > 0 || ix.lost.Any() {
+	// A number from a numeric column against a TEXT or no-affinity column also
+	// meets the target's texts that convert to that number.
+	viaAlt := key.Class == parse.ClassNumeric && ix.class != parse.ClassNumeric &&
+		(v.Kind == sqlitefile.KindInt || v.Kind == sqlitefile.KindFloat)
+	ids := ix.m[k]
+	if viaAlt {
+		if alt := ix.altNum[k]; len(alt) > 0 {
+			ids = slices.Concat(ids, alt)
+			slices.Sort(ids)
+			ids = slices.Compact(ids)
+		}
+	}
+	if len(ids) > 0 {
+		if ix.undecided > 0 || ix.lost.Any() || (viaAlt && ix.altUndec > 0) {
 			flags |= JoinUndecided
 		}
 		return slices.Clone(ids), flags, nil
+	}
+	if viaAlt && ix.altUndec > 0 {
+		return nil, flags, fmt.Errorf("%w: no row matches, but %d values of %s.%s are numeric-looking texts that cannot be converted exactly", ErrKeyUndecidable, ix.altUndec, ix.table, ix.column)
 	}
 	if ix.lost.Any() {
 		return nil, flags, fmt.Errorf("%w: no row matches, but the scan of %s.%s lost rows (%d pages, %d cells skipped as damaged)", ErrKeyUndecidable, ix.table, ix.column, ix.lost.Pages, ix.lost.Cells)

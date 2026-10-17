@@ -1,7 +1,6 @@
 package sqlitefile
 
 import (
-	"math"
 	"strconv"
 	"strings"
 )
@@ -187,7 +186,8 @@ func isTableConstraintStart(t token) bool {
 type tableParse struct {
 	cols    []Column
 	pkNames []string // the primary key's columns in key order
-	pkDesc  bool     // the (single) key column is declared DESC
+	pkDesc  bool     // the (single) key column of a column-level key is declared DESC
+	pkDescs []bool   // the DESC of each key column in a table-level key clause
 	pkColl  []string // the COLLATE of each key column in a table-level key clause ("" = none)
 	havePK  bool
 	without bool
@@ -529,6 +529,19 @@ func (p *cparser) defaultClause(col *Column) bool {
 		col.Default = Default{Kind: DefaultLiteral, Value: v, Text: clipMsg(p.s[start:p.prevEnd])}
 		return true
 	}
+	inexact := func() bool {
+		col.Default = Default{Kind: DefaultInexactLiteral, Text: clipMsg(p.s[start:p.prevEnd])}
+		return true
+	}
+	number := func(text string, neg bool) bool {
+		switch v, st := numberValue(text, neg); st {
+		case numExact:
+			return literal(v)
+		case numInexact:
+			return inexact()
+		}
+		return expr()
+	}
 	switch {
 	case t.isPunct('('):
 		if !p.skipGroup() {
@@ -546,16 +559,10 @@ func (p *cparser) defaultClause(col *Column) bool {
 			return expr() // a signed term that is not a number: not a literal
 		}
 		p.next()
-		if v, ok := numberValue(n.text, t.isPunct('-')); ok {
-			return literal(v)
-		}
-		return expr()
+		return number(n.text, t.isPunct('-'))
 	case t.kind == tkNumber:
 		p.next()
-		if v, ok := numberValue(t.text, false); ok {
-			return literal(v)
-		}
-		return expr()
+		return number(t.text, false)
 	case t.kind == tkString || t.kind == tkQuoted:
 		p.next()
 		return literal(textValue(t.text))
@@ -616,57 +623,59 @@ func hexVal(c byte) (byte, bool) {
 	return 0, false
 }
 
+// numStatus is the verdict of numberValue.
+type numStatus uint8
+
+const (
+	numNot     numStatus = iota // not a plain number: the default is an expression
+	numExact                    // a number this reader reproduces exactly: the returned Value
+	numInexact                  // a number, but not one this reader reproduces exactly
+)
+
 // numberValue reads a numeric literal as the engine does: hexadecimal
-// integers wrap to 64 bits, a decimal integer that does not fit is a real,
-// and the text must be a plain number (no underscores, no "inf" or "nan").
-func numberValue(text string, neg bool) (Value, bool) {
+// integers wrap to 64 bits, and the text must be a plain number (no
+// underscores, no "inf" or "nan"). A decimal goes through the classifier of
+// ConvertForComparison (an integer that fits int64, a decimal of at most 15
+// significant digits and an exponent shift of at most 22 as a real): anything
+// else that is a number (a decimal integer that does not fit, more digits, a
+// larger exponent, a longer text) is numInexact, never a rounded value. At most
+// maxNumberText+2 bytes of the text are looked at.
+func numberValue(text string, neg bool) (Value, numStatus) {
 	if isHexNumber(text) {
 		digits := text[2:]
 		if len(digits) == 0 || len(digits) > 16 {
-			return Value{}, false
+			return Value{}, numNot
 		}
 		u, err := strconv.ParseUint(digits, 16, 64)
 		if err != nil {
-			return Value{}, false
+			return Value{}, numNot
 		}
 		n := int64(u)
 		if neg {
 			n = -n
 		}
-		return Value{Kind: KindInt, Int: n}, true
+		return Value{Kind: KindInt, Int: n}, numExact
 	}
-	allDigits := true
 	for i := 0; i < len(text); i++ {
 		c := text[i]
-		if !isDigit(c) {
-			allDigits = false
-			if c != '.' && c != 'e' && c != 'E' && c != '+' && c != '-' {
-				return Value{}, false
-			}
+		if !isDigit(c) && c != '.' && c != 'e' && c != 'E' && c != '+' && c != '-' {
+			return Value{}, numNot
 		}
 	}
-	if allDigits {
-		if u, err := strconv.ParseUint(text, 10, 64); err == nil {
-			switch {
-			case u <= math.MaxInt64:
-				n := int64(u)
-				if neg {
-					n = -n
-				}
-				return Value{Kind: KindInt, Int: n}, true
-			case neg && u == 1<<63:
-				return Value{Kind: KindInt, Int: math.MinInt64}, true
-			}
-		}
-	}
-	f, err := strconv.ParseFloat(text, 64)
-	if err != nil || math.IsInf(f, 0) || math.IsNaN(f) {
-		return Value{}, false
-	}
+	var buf [maxNumberText + 2]byte
+	b := buf[:0]
 	if neg {
-		f = -f
+		b = append(b, '-')
 	}
-	return Value{Kind: KindFloat, Float: f}, true
+	b = append(b, text[:min(len(text), maxNumberText+1)]...)
+	v, class := numberOfText(b, false)
+	switch class {
+	case textConverted:
+		return v, numExact
+	case textUndecided:
+		return Value{}, numInexact
+	}
+	return Value{}, numNot
 }
 
 // tableConstraint parses one table constraint.
@@ -705,6 +714,7 @@ func (p *cparser) primaryKeyList(st *tableParse) bool {
 		return p.failAt(t, noteSyntax)
 	}
 	var names, colls []string
+	var descs []bool
 	for {
 		t := p.next()
 		if !isName(t) { // an expression in a key; a string literal names a column, as the engine reads it
@@ -712,6 +722,7 @@ func (p *cparser) primaryKeyList(st *tableParse) bool {
 		}
 		names = append(names, t.text)
 		colls = append(colls, "")
+		descs = append(descs, false)
 		for {
 			switch n := p.peek(0); {
 			case n.isWord("COLLATE"):
@@ -727,6 +738,7 @@ func (p *cparser) primaryKeyList(st *tableParse) bool {
 				continue
 			case n.isWord("DESC"):
 				p.next()
+				descs[len(descs)-1] = true
 				continue
 			case n.isWord("AUTOINCREMENT"):
 				p.next()
@@ -747,7 +759,7 @@ func (p *cparser) primaryKeyList(st *tableParse) bool {
 			if st.havePK {
 				return p.fail(notePK)
 			}
-			st.havePK, st.pkNames, st.pkDesc, st.pkColl = true, names, false, colls // the engine ignores DESC in a table constraint (TestSchemaMatchesEngine)
+			st.havePK, st.pkNames, st.pkDesc, st.pkColl, st.pkDescs = true, names, false, colls, descs // st.pkDesc is the column-level form only: a table-level DESC never makes the rowid alias a non-alias (TestSchemaMatchesEngine)
 			return true
 		default:
 			return p.failAt(t, notePK)
@@ -811,6 +823,7 @@ func (p *cparser) finish(st *tableParse) (TableDef, bool) {
 	def := TableDef{Columns: cols, WithoutRowid: st.without, Strict: st.strict, RowidAlias: -1, ParseOK: true}
 	pkIdx := make([]int, 0, len(st.pkNames))
 	pkColl := make([]string, 0, len(st.pkNames)) // the collation of each entry of pkIdx
+	pkDesc := make([]bool, 0, len(st.pkNames))   // the declared DESC of each entry of pkIdx
 	used := make([]bool, len(cols))
 	for n, nm := range st.pkNames {
 		found := -1
@@ -823,6 +836,10 @@ func (p *cparser) finish(st *tableParse) (TableDef, bool) {
 		if found < 0 || cols[found].Generated != GenNone {
 			return def, p.fail(notePK)
 		}
+		desc := st.pkDesc && len(st.pkDescs) == 0 // the column-level form
+		if n < len(st.pkDescs) {
+			desc = st.pkDescs[n]
+		}
 		coll := ""
 		if n < len(st.pkColl) {
 			coll = st.pkColl[n]
@@ -833,7 +850,7 @@ func (p *cparser) finish(st *tableParse) (TableDef, bool) {
 			// key; with two they order and compare rows differently from either
 			// alone, so the identity of a row is not derived: the table stays unparsed.
 			for k, i := range pkIdx {
-				if i == found && !asciiEqualFold(pkColl[k], coll) {
+				if i == found && (!asciiEqualFold(pkColl[k], coll) || (st.without && pkDesc[k] != desc)) {
 					return def, p.fail(notePK)
 				}
 			}
@@ -842,6 +859,7 @@ func (p *cparser) finish(st *tableParse) (TableDef, bool) {
 		used[found] = true
 		pkIdx = append(pkIdx, found)
 		pkColl = append(pkColl, coll)
+		pkDesc = append(pkDesc, desc)
 	}
 	if st.without && len(pkIdx) == 0 {
 		return def, p.fail(notePK)
@@ -849,6 +867,7 @@ func (p *cparser) finish(st *tableParse) (TableDef, bool) {
 	for k, i := range pkIdx {
 		cols[i].PKOrdinal = k + 1
 		cols[i].KeyCollation = pkColl[k]
+		cols[i].PKDesc = st.without && pkDesc[k]
 	}
 	for i := range cols {
 		c := &cols[i]

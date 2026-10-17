@@ -46,7 +46,7 @@ func (rp *rowPass) table(name string) (*Table, error) {
 // anything else (cancellation, the budget, an I/O error) ends the pass.
 func isAnswerless(err error) bool {
 	return errors.Is(err, ErrNotFound) || errors.Is(err, ErrCorrupt) || errors.Is(err, ErrLimit) ||
-		errors.Is(err, ErrPageUnavailable) || errors.Is(err, ErrWithoutRowid)
+		errors.Is(err, ErrPageUnavailable) || errors.Is(err, ErrWithoutRowid) || errors.Is(err, ErrVirtualTable)
 }
 
 // compare relates the row to the live state.
@@ -123,8 +123,12 @@ func unreadScalar(a, b Value) bool {
 
 // sameValue compares two values. known is false when an omitted or clipped
 // value hides the answer: an unread integer, real or NULL is never taken for
-// its zero value (final review B, I-2).
+// its zero value (final review B, I-2), and an undecided column default
+// (Value.DefaultUndecided) is never taken for a NULL or for any value.
 func sameValue(a, b Value) (same, known bool) {
+	if a.DefaultUndecided != DefaultReasonNone || b.DefaultUndecided != DefaultReasonNone {
+		return false, false // a default that is not a value is neither the same as nor different from anything
+	}
 	if a.Kind != b.Kind {
 		return false, true
 	}
@@ -314,8 +318,11 @@ func (rp *rowPass) wrSetOf(ctx context.Context, t *Table, name string, fit bool)
 		*total++
 		res := t.Resolve(r)
 		rowD, complete := digestOf(res, nil)
-		// Row.KeyRangeViolation is never set for an index tree (its cells have
-		// no rowid, scan.go leafRows), so there is nothing to taint on here.
+		if r.KeyRangeViolation {
+			// The key order check flagged this live row (an entry out of order or a repeated
+			// key): the live tree is damaged, so a history row's absence from it proves nothing.
+			s.tainted = true
+		}
 		key := rowD
 		if s.pkOK {
 			var kst KeyStatus

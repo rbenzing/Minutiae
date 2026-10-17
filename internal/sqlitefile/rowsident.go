@@ -105,8 +105,9 @@ func (c candidate) idKind() idKind {
 	return kindRowid
 }
 
-// identify says which table (or index) the cells of the image belong to.
-func (rp *rowPass) identify(img PageImage, hd PageHeader, cells []imgCell) ident {
+// identify says which table (or index) the cells of the image belong to. The error is for a cancelled
+// context or a refused budget charge during the fit's overflow probe.
+func (rp *rowPass) identify(img PageImage, hd PageHeader, cells []imgCell) (ident, error) {
 	var notes []string
 	if a, known := rp.asOfOwner(img); known {
 		// The image's own as-of schema names the owner. When it is another
@@ -119,7 +120,7 @@ func (rp *rowPass) identify(img PageImage, hd PageHeader, cells []imgCell) ident
 		}
 		if a.name != liveName || a.typ != liveTyp {
 			if id, ok := rp.asOfIdent(a, hd, cells); ok {
-				return id
+				return id, nil
 			}
 		}
 	}
@@ -131,7 +132,7 @@ func (rp *rowPass) identify(img PageImage, hd PageHeader, cells []imgCell) ident
 			} else {
 				id.table = c.name
 			}
-			return id
+			return id, nil
 		}
 		notes = append(notes, NoteOwnerChanged)
 	}
@@ -139,14 +140,35 @@ func (rp *rowPass) identify(img PageImage, hd PageHeader, cells []imgCell) ident
 	for i := range cells {
 		vals[i] = cells[i].kind
 	}
-	c, basis, limited := rp.fitPage(hd.Type, vals)
+	// The fit is reached: a cell that spills is probed to the end of its chain, because the kinds pass
+	// read the header only. A chain that cannot be read makes the record truncated for the fit; a
+	// probe that reaches its cap says so and counts the cells it could not probe as truncated.
+	probeCapped := false
+	for i := range cells {
+		if cells[i].spills && !cells[i].trunc {
+			dead, capped, err := rp.chainDead(img, cells[i].cell)
+			if err != nil {
+				return ident{}, err
+			}
+			cells[i].trunc = dead
+			probeCapped = probeCapped || capped
+		}
+	}
+	if probeCapped {
+		notes = append(notes, NoteFitProbeLimit)
+	}
+	deny := false
+	for i := range cells {
+		deny = deny || cells[i].trunc || cells[i].reserved > 0
+	}
+	c, basis, limited := rp.fitPage(hd.Type, vals, deny)
 	if limited {
 		rp.limitHit("MaxFitSteps", "the table fit of a page image reached its step cap and named no table")
 		notes = append(notes, "fit-limit-reached")
 	}
 	id := ident{basis: basis, notes: notes}
 	if basis == BasisNone {
-		return id
+		return id, nil
 	}
 	if c.index {
 		id.index, id.table = c.name, c.tbName
@@ -154,7 +176,7 @@ func (rp *rowPass) identify(img PageImage, hd PageHeader, cells []imgCell) ident
 		id.table = c.name
 	}
 	id.kind = c.idKind()
-	return id
+	return id, nil
 }
 
 // allFit reports whether every cell fits the item strictly.
@@ -174,7 +196,7 @@ func (rp *rowPass) allFit(it *fitItem, cells []imgCell) bool {
 // fits: strict unique is BasisFit, else loose unique BasisGuess, else none. A
 // table leaf can only belong to a rowid table; an index leaf to an index or a
 // WITHOUT ROWID table. It never names BasisSchema.
-func (rp *rowPass) fitPage(lt PageType, cells [][]Value) (candidate, TableBasis, bool) {
+func (rp *rowPass) fitPage(lt PageType, cells [][]Value, noStrict bool) (candidate, TableBasis, bool) {
 	run := rp.sch.newFitRun()
 	fi := rp.sch.fitSets()
 	var strict, loose []candidate
@@ -204,7 +226,7 @@ func (rp *rowPass) fitPage(lt PageType, cells [][]Value) (candidate, TableBasis,
 		}
 	}
 	switch {
-	case len(strict) == 1:
+	case len(strict) == 1 && !noStrict:
 		return strict[0], BasisFit, false
 	case len(loose) == 1:
 		return loose[0], BasisGuess, false

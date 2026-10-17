@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -31,6 +32,9 @@ const (
 var (
 	tableBases = []string{"schema", "fit", "guess", "none"}
 	relations  = []string{"absent-from-live", "superseded-version", "uncommitted", "unknown"}
+	// defaultReasons are the strings of sqlitefile.DefaultReason; TestUndecidedDefaultReasonIsKeptInOutput
+	// ties them to the constants.
+	defaultReasons = []string{"default is an expression", "default literal is not converted exactly"}
 )
 
 func init() {
@@ -68,6 +72,7 @@ var topKeys = map[string]fieldKind{
 var colKeys = map[string]fieldKind{
 	"serial": kCount, "len": kCount, "enc": kName, "value": kAny, "value_b64": kB64,
 	"float_bits": kName, "text_valid": kBool, "unread": kBool, "clipped": kBool,
+	"default_undecided": kName,
 }
 
 func clip(s string) string {
@@ -281,6 +286,14 @@ func validateColumn(c any, idx int, prev *int64) error {
 			omitted = true
 		default:
 			return bad("column %d: \"omitted\" must be a boolean or a reason", idx)
+		}
+	}
+	if r, has := m["default_undecided"]; has {
+		if s, _ := r.(string); !slices.Contains(defaultReasons, s) {
+			return bad("column %d: \"default_undecided\" has the unknown value %q", idx, clip(fmt.Sprint(r)))
+		}
+		if !omitted {
+			return bad("column %d: \"default_undecided\" needs \"omitted\"", idx)
 		}
 	}
 	unread, _ := m["unread"].(bool)

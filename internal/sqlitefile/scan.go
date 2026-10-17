@@ -82,6 +82,10 @@ type frame struct {
 	kb       keyBounds
 	prevKey  int64
 	havePrev bool
+	// index tree with a key-order check: the range this page's subtree may hold (borrowed from the
+	// ancestors' frames) and the keys of the entries before and at cell k (owned, charged).
+	lo, hi      *boundKey
+	prevB, curB *boundKey
 }
 
 // ScanLoss counts what ONE scan did not deliver. It is a count of the walk
@@ -114,6 +118,10 @@ type walker struct {
 	checkOverlap bool     // a scan checks that the cells of a page do not overlap
 	dmg          string   // a lookup: why its answer may not be "absent" (first reason)
 	loss         ScanLoss // what this walk did not deliver
+
+	ord      *orderState // an index-shaped scan that checks key order (nil: unchecked)
+	prevPage uint32      // the page and cell of the previous entry, for the order warning
+	prevCell int
 }
 
 func (v *View) newWalker(ctx context.Context, l *ledger, vis visitor, kind BTreeKind) *walker {
@@ -352,13 +360,13 @@ func (w *walker) rowFor(n node, ptr CellPointer, c Cell, ovf visitor) (row Row, 
 	row = Row{
 		Rowid: c.Rowid, HasRowid: c.HasRowid, Values: rec.Values, PayloadLen: c.PayloadLen,
 		Loc:            newLoc(n.loc, n.pgno, ptr.Index, c, p.provenance(), v.e.opts.Limits.MaxLocOverflow),
-		LengthMismatch: rec.LengthMismatch,
+		LengthMismatch: rec.LengthMismatch, BeyondEngineDepth: n.depth > engineMaxBTreeDepth,
 	}
 	return row, held, true, nil
 }
 
 // leafRows delivers the cells of leaf n. stop is true when visit asked to end.
-func (w *walker) leafRows(n node, ovf visitor, kb keyBounds, visit func(Row) bool) (stop bool, err error) {
+func (w *walker) leafRows(n node, ovf visitor, kb keyBounds, lo, hi *boundKey, visit func(Row) bool) (stop bool, err error) {
 	defer w.release(n)
 	if w.leafDepth == 0 {
 		w.leafDepth = n.depth
@@ -392,6 +400,10 @@ func (w *walker) leafRows(n node, ovf visitor, kb keyBounds, visit func(Row) boo
 			continue
 		}
 		row.KeyRangeViolation = violation
+		if err := w.checkOrder(&row, lo, hi); err != nil {
+			w.l.free(held)
+			return false, err
+		}
 		more := visit(row)
 		w.l.free(held)
 		if !more {
@@ -418,7 +430,8 @@ func (w *walker) warnKeyRange(n node, c Cell, kb keyBounds) {
 // warning and never fails the scan. Row.Values is valid only during visit
 // (Clone keeps a row). visit returns false to end the scan early. The error is
 // for a cancelled context, an I/O error or a refused budget charge. Index
-// entries are not checked for order (that needs the collations).
+// entries are not checked for order here (ScanTreeOrdered, Table.Rows of a
+// WITHOUT ROWID table and Index.Entries do check them).
 func (v *View) ScanTree(ctx context.Context, root uint32, kind BTreeKind, visit func(Row) bool) error {
 	_, err := v.ScanTreeLoss(ctx, root, kind, visit)
 	return err
@@ -428,6 +441,12 @@ func (v *View) ScanTree(ctx context.Context, root uint32, kind BTreeKind, visit 
 // deliver (see ScanLoss). The loss is valid also when the scan ended early
 // (visit returned false, or err is non-nil): it counts what had been met.
 func (v *View) ScanTreeLoss(ctx context.Context, root uint32, kind BTreeKind, visit func(Row) bool) (loss ScanLoss, err error) {
+	return v.scanTree(ctx, root, kind, nil, visit)
+}
+
+// scanTree is the walk behind ScanTreeLoss and ScanTreeOrdered; order is nil for a scan that
+// does not check key order.
+func (v *View) scanTree(ctx context.Context, root uint32, kind BTreeKind, order *KeyOrder, visit func(Row) bool) (loss ScanLoss, err error) {
 	defer guard(&err)
 	l := v.e.newLedger()
 	defer l.guard(&err)
@@ -445,13 +464,17 @@ func (v *View) ScanTreeLoss(ctx context.Context, root uint32, kind BTreeKind, vi
 	w := v.newWalker(ctx, l, ps, kind)
 	defer func() { loss = w.loss }()
 	w.checkOverlap = true
+	if order != nil {
+		w.ord = &orderState{order: *order}
+		defer w.finishOrder(root)
+	}
 	defer func() { l.free(w.held) }() // pointer lists of the pages still open when the scan ends
 	n, ok, err := w.enter(root, 1)
 	if err != nil || !ok {
 		return loss, err
 	}
 	if !n.h.Type.interior() {
-		_, err = w.leafRows(n, ps, keyBounds{}, visit)
+		_, err = w.leafRows(n, ps, keyBounds{}, nil, nil, visit)
 		return loss, err
 	}
 	w.stack = append(w.stack, frame{n: n})
@@ -461,7 +484,8 @@ func (v *View) ScanTreeLoss(ctx context.Context, root uint32, kind BTreeKind, vi
 			return loss, err
 		}
 		var child uint32
-		var cb keyBounds // the range the child may hold (table trees)
+		var cb keyBounds       // the range the child may hold (table trees)
+		var clo, chi *boundKey // index tree, key-order check: the range the child may hold
 		switch {
 		case f.k < len(f.n.ptrs):
 			ptr := f.n.ptrs[f.k]
@@ -480,6 +504,7 @@ func (v *View) ScanTreeLoss(ctx context.Context, root uint32, kind BTreeKind, vi
 				cur := f.cur
 				f.emit, f.have = false, false
 				f.k++
+				w.shiftBound(f)
 				row, held, ok, err := w.rowFor(f.n, ptr, cur, ps)
 				if err != nil {
 					return loss, err
@@ -487,12 +512,28 @@ func (v *View) ScanTreeLoss(ctx context.Context, root uint32, kind BTreeKind, vi
 				if !ok {
 					continue
 				}
+				if err := w.checkOrder(&row, f.lo, f.hi); err != nil {
+					l.free(held)
+					return loss, err
+				}
 				more := visit(row)
 				l.free(held)
 				if !more {
 					return loss, nil
 				}
 				continue
+			}
+			if kind == IndexTree && w.ord != nil {
+				if err := w.boundOf(f, ptr); err != nil {
+					return loss, err
+				}
+				clo, chi = f.prevB, f.curB
+				if clo == nil {
+					clo = f.lo
+				}
+				if chi == nil {
+					chi = f.hi
+				}
 			}
 			child = f.cur.LeftChild
 			if kind == IndexTree {
@@ -511,8 +552,14 @@ func (v *View) ScanTreeLoss(ctx context.Context, root uint32, kind BTreeKind, vi
 			f.k++
 			child = f.n.h.RightChild
 			cb = f.kb.child(f.n.pgno, f.prevKey, f.havePrev, 0, false)
+			clo, chi = f.prevB, f.hi
+			if clo == nil {
+				clo = f.lo
+			}
 		default:
 			w.release(f.n)
+			w.freeBound(f.prevB)
+			w.freeBound(f.curB)
 			w.stack = w.stack[:len(w.stack)-1]
 			continue
 		}
@@ -525,13 +572,13 @@ func (v *View) ScanTreeLoss(ctx context.Context, root uint32, kind BTreeKind, vi
 			continue
 		}
 		if !cn.h.Type.interior() {
-			stop, err := w.leafRows(cn, ps, cb, visit)
+			stop, err := w.leafRows(cn, ps, cb, clo, chi, visit)
 			if err != nil || stop {
 				return loss, err
 			}
 			continue
 		}
-		w.stack = append(w.stack, frame{n: cn, kb: cb})
+		w.stack = append(w.stack, frame{n: cn, kb: cb, lo: clo, hi: chi})
 	}
 	return loss, nil
 }
