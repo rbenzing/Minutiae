@@ -6,35 +6,36 @@ import (
 	"testing"
 )
 
-// TestEveryDecidedShapeIsShownByAVector ties "measured, no more" to the data (ruling Z40): the shape
-// classes Classify can decide are exactly the ones some committed vector name is made of. A class no
-// vector shows, or a class a vector shows that decidedShapes does not list, fails.
+// TestEveryDecidedShapeIsShownByAVector ties "measured, no more" to the data (rulings Z40, Z43): the
+// composite shapes (prefix and tail and where the stray bytes sit, as one label) that Classify can decide are
+// exactly the ones some committed vector name has. A decided combination no vector shows, or a combination a
+// vector shows that decidedShapes does not list, fails.
 func TestEveryDecidedShapeIsShownByAVector(t *testing.T) {
 	v := readVectors(t)
 	seen := map[string]int{}
 	for _, r := range v.Vectors {
 		for _, h := range []string{r.StoredHex, r.QueryHex} {
 			name := decodeName(t, r.ID, "name", h)
-			form, labels := shape(name)
-			if form == FormUndecided {
-				continue
-			}
-			for _, l := range labels {
-				seen[l]++
+			var buf [320]byte
+			if label, _, ok := labelOf(name, buf[:0]); ok {
+				seen[string(label)]++
 			}
 		}
 	}
 	for _, l := range decidedShapes {
 		if seen[l] == 0 {
-			t.Errorf("shape class %q is decided but no vector row shows it", l)
+			t.Errorf("composite shape %q is decided but no vector name has it", l)
 		}
 	}
 	for l, n := range seen {
 		if !slices.Contains(decidedShapes, l) {
-			t.Errorf("a vector shows shape class %q (%d names) that decidedShapes does not list", l, n)
+			t.Errorf("a vector shows composite shape %q (%d names) that decidedShapes does not list", l, n)
 		}
 	}
-	// every undecided vector name is a measured opaque name plus 'z', decided by Equal's one extension
+	if !slices.IsSorted(decidedShapes) {
+		t.Error("decidedShapes is not sorted")
+	}
+	// every vector name is decided or is a measured opaque name plus 'z', decided by Equal's one extension
 	for _, r := range v.Vectors {
 		for _, h := range []string{r.StoredHex, r.QueryHex} {
 			name := decodeName(t, r.ID, "name", h)
@@ -64,7 +65,7 @@ func TestEqualEmptyNameIsUnknown(t *testing.T) {
 // answer Unknown on either side, and two text names compare by key.
 func TestEqualBothOrdersForEveryKindPairing(t *testing.T) {
 	text := []string{"abc", "ABC", "caf\u00e9", "cafe\u0301", "a\x80b", string(rune(0x200b))} // the last has an empty key
-	opaque := []string{"x\xff", "\x80x", "x\xc3", "e\u0301\x80\xff"}
+	opaque := []string{"x\xff", "\x80x", "x\xc3", "x\x80\xff"}
 	undecided := []string{"x\xffy", "\x80x\x81", "\u00ad\x80"}
 	check := func(a, b string, want Verdict) {
 		t.Helper()

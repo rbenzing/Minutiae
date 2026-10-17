@@ -105,6 +105,14 @@ func TestClassifyMatchesTheMeasuredRule(t *testing.T) {
 		{"\u00ad\xff", FormUndecided},
 		{"\x80\x80\xff", FormUndecided},
 		{"x\xff\x80\x80", FormUndecided}, // a lead and two stray bytes at the end
+		// combinations of a shown prefix and a shown tail that no vector shows together (ruling Z43)
+		{"\u00e9\x80\xff\x80", FormUndecided},             // wide text with a stray byte, then a lead and a stray byte
+		{"\u00e9\x80\xed\xa0\x80", FormUndecided},         // ... then a surrogate
+		{"\u00e9\x80\xf4\x90\x80\x80", FormUndecided},     // ... then F4 90 80 80
+		{"\u00e9\x80\xf8\x88\x80\x80\x80", FormUndecided}, // ... then F8 88 80 80 80
+		{"\u00e9\x80\xfe\xfe", FormUndecided},             // ... then FE FE
+		{"x\x80\xf8\x88\x80\x80\x80", FormUndecided},      // ASCII text with a stray byte, then F8 88 80 80 80
+		{"x\x80\xfe\xfe", FormUndecided},                  // ... then FE FE
 		// shapes no measurement covers
 		{"\xff", FormUndecided},                      // nothing before the invalid byte
 		{"x\xffy", FormUndecided},                    // text after the invalid byte
@@ -213,9 +221,11 @@ func TestKeyIsIdempotent(t *testing.T) {
 		if !ok || len(k) == 0 { // an all-ignorable name has an empty key, which is not a name
 			continue
 		}
+		// folding can change a name's shape (the Kelvin sign becomes k), so the key may be a shape no vector
+		// shows and is then not a name; where it is one, it is a fixed point
 		k2, ok2 := Key(nil, k)
-		if !ok2 || !bytes.Equal(k, k2) {
-			t.Fatalf("Key(%q) = %q, Key of that = (%q, %v)", n, k, k2, ok2)
+		if ok2 && !bytes.Equal(k, k2) {
+			t.Fatalf("Key(%q) = %q, Key of that = %q", n, k, k2)
 		}
 	}
 }

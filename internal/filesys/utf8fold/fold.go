@@ -21,13 +21,14 @@
 //     an opaque name is compared byte for byte, no folding, no normalization (FormOpaque);
 //   - U+FFFE, U+FFFF and U+10FFFF are ordinary characters.
 //
-// Every other shape is FormUndecided: the empty name, a name over MaxName, an invalid byte followed by text
+// A shape is the whole combination (the text before an invalid tail, where the stray bytes sit, and the tail
+// form), not its parts: a prefix and a tail that are each shown but never together are undecided. Every other
+// shape is FormUndecided: the empty name, a name over MaxName, an invalid byte followed by text
 // or by a valid character, any other tail, a leading stray byte with a later stray byte or an ignorable
 // character, an ignorable character before an invalid tail, and a stray byte ANYWHERE in a name that also has
 // an ignorable character. Equal reports Unknown for them and Key refuses. A caller must report that it cannot
 // decide; it must never treat the answer as "different" or fold the name by a guess. The one exception is
 // Equal's measured pair, an opaque name against itself plus a lowercase 'z'.
-// decide; it must never treat the answer as "different" or fold the name by a guess.
 //
 // A code point assigned after Unicode 12.1 has no case mapping (measured); it still takes part in mark
 // ordering. Runs of up to 40 combining marks are ordered completely (measured); the stream-safe limit of
@@ -113,29 +114,73 @@ func (f Form) String() string {
 	}
 }
 
-func isStray(b byte) bool { return b >= 0x80 && b <= 0xBF }
-
-// decidedShapes lists every shape label Classify can decide. A decided class must be shown by at least one
-// committed vector row (TestEveryDecidedShapeIsShownByAVector): "measured, no more".
+// decidedShapes is the exact set of composite shape labels Classify decides: every label some committed
+// kernel vector name has, and no other (TestEveryDecidedShapeIsShownByAVector checks both directions, so a
+// combination of a shown prefix and a shown tail that no vector shows together stays undecided: "measured,
+// no more"). A label is one of
+//
+//	u:text                 valid UTF-8 only (any mix of ASCII, wide and default-ignorable characters)
+//	u:s:<signature>        valid text with stray continuation bytes after the first byte
+//	o:lead:<signature>     opaque: stray bytes first, then (more) text and stray bytes
+//	o:t:<prefix>|<tail>    opaque: text (stray bytes allowed) then an invalid tail at the end
+//
+// where a signature lists the characters in order as a (ASCII), w (non-ASCII), i (default-ignorable) and s (a
+// stray byte), a run of a, w or i collapsed to one letter, and <tail> names the invalid tail. The ignorable
+// letter makes "a stray byte in a name that also has an ignorable" and "an ignorable before an invalid
+// tail" unshown, hence undecided.
 var decidedShapes = []string{
-	"text",         // valid UTF-8 only
-	"text+strays",  // valid text with stray continuation bytes after the first byte, no ignorable character
-	"lead1:empty",  // opaque: one stray byte first, nothing after it
-	"lead1:ascii",  // opaque: one stray byte first, then ASCII
-	"lead1:wide",   // opaque: one stray byte first, then text with a non-ASCII character
-	"lead2:empty",  // opaque: two stray bytes first
-	"lead2:ascii",  // opaque: two stray bytes first, then ASCII
-	"prefix:ascii", // before an invalid tail: ASCII text
-	"prefix:wide",  // before an invalid tail: text with a non-ASCII character
-	"prefix:ascii+strays",
-	"prefix:wide+strays",
-	"tail:lead",       // one lead byte 0xC0-0xFF at the end
-	"tail:lead+stray", // a lead byte and one stray byte at the end
-	"tail:ed-a0-80",   // a UTF-16 surrogate
-	"tail:f4-90-80-80",
-	"tail:f8-88-80-80-80",
-	"tail:fe-fe",
+	"o:lead:s",
+	"o:lead:sa",
+	"o:lead:saw",
+	"o:lead:ss",
+	"o:lead:ssa",
+	"o:lead:sw",
+	"o:t:as|ed-a0-80",
+	"o:t:as|f4-90-80-80",
+	"o:t:as|lead",
+	"o:t:as|lead+stray",
+	"o:t:aw|ed-a0-80",
+	"o:t:aw|f4-90-80-80",
+	"o:t:aw|f8-88-80-80-80",
+	"o:t:aw|fe-fe",
+	"o:t:aw|lead",
+	"o:t:aw|lead+stray",
+	"o:t:a|ed-a0-80",
+	"o:t:a|f4-90-80-80",
+	"o:t:a|f8-88-80-80-80",
+	"o:t:a|fe-fe",
+	"o:t:a|lead",
+	"o:t:a|lead+stray",
+	"o:t:ws|lead",
+	"o:t:w|ed-a0-80",
+	"o:t:w|f4-90-80-80",
+	"o:t:w|f8-88-80-80-80",
+	"o:t:w|fe-fe",
+	"o:t:w|lead",
+	"o:t:w|lead+stray",
+	"u:s:as",
+	"u:s:asa",
+	"u:s:asasa",
+	"u:s:asasasa",
+	"u:s:asaw",
+	"u:s:ass",
+	"u:s:asw",
+	"u:s:aswas",
+	"u:s:asws",
+	"u:s:aws",
+	"u:s:ws",
+	"u:text",
 }
+
+var decidedSet = func() map[string]struct{} {
+	m := make(map[string]struct{}, len(decidedShapes))
+	for _, s := range decidedShapes {
+		m[s] = struct{}{}
+	}
+	return m
+}()
+
+func isStray(b byte) bool { return b >= 0x80 && b <= 0xBF }
 
 // tailKind names the invalid tail, or "" when the tail is not one of the shapes a vector shows.
 func tailKind(t []byte) string {
@@ -156,25 +201,46 @@ func tailKind(t []byte) string {
 	return ""
 }
 
-// shape classifies name and names the shape classes it is made of; Form is FormUndecided (and the labels
-// nil) for every shape that no committed vector row shows.
-func shape(name []byte) (Form, []string) { return shapeOf(name, true) }
-
-// shapeOf is shape; the labels are built only when want is set, so Classify allocates nothing.
-func shapeOf(name []byte, want bool) (Form, []string) {
-	if len(name) == 0 || len(name) > MaxName {
-		return FormUndecided, nil // a filesystem name is neither empty nor longer than MaxName
+// appendSig appends the signature of part (valid text with stray bytes; the first non-stray invalid byte, if
+// any, is not in part).
+func appendSig(b, part []byte) []byte {
+	var last byte
+	for i := 0; i < len(part); {
+		r, size := utf8.DecodeRune(part[i:])
+		var c byte
+		switch {
+		case r == utf8.RuneError && size == 1:
+			c = 's'
+		case isIgnorable(r):
+			c = 'i'
+		case r < 0x80:
+			c = 'a'
+		default:
+			c = 'w'
+		}
+		i += size
+		if c != 's' && c == last {
+			continue
+		}
+		b = append(b, c)
+		last = c
 	}
-	leadRun, strays, wide, ignorable := 0, 0, false, false
-	atStart := true
+	return b
+}
+
+// labelOf computes the composite shape label of name, and the form that label would give. ok is false when
+// the name has no shape at all (empty, over MaxName, or an invalid byte not at the end in a listed tail
+// form). A label may be computed and still be undecided: only labels in decidedShapes are decided.
+func labelOf(name []byte, buf []byte) (label []byte, form Form, ok bool) {
+	if len(name) == 0 || len(name) > MaxName {
+		return nil, FormUndecided, false
+	}
+	strays := 0
 	tail := -1
 	for i := 0; i < len(name); {
 		r, size := utf8.DecodeRune(name[i:])
 		if r == utf8.RuneError && size == 1 {
 			if isStray(name[i]) {
-				if atStart {
-					leadRun++
-				}
 				strays++
 				i++
 				continue
@@ -182,74 +248,57 @@ func shapeOf(name []byte, want bool) (Form, []string) {
 			tail = i
 			break
 		}
-		atStart = false
-		if r >= 0x80 {
-			wide = true
-		}
-		if isIgnorable(r) {
-			ignorable = true
-		}
 		i += size
 	}
-	kind := "ascii"
-	if wide {
-		kind = "wide"
-	}
-	if tail < 0 {
-		switch {
-		case leadRun == 0 && strays == 0:
-			return FormUnicode, labels(want, "text")
-		case leadRun == 0 && !ignorable:
-			return FormUnicode, labels(want, "text+strays")
-		case leadRun == 0:
-			return FormUndecided, nil // a stray byte anywhere in a name that also has an ignorable character
-		}
-		// opaque: one or two stray bytes first, then text with no stray byte and no ignorable character
-		if leadRun > 2 || strays != leadRun || ignorable {
-			return FormUndecided, nil
-		}
-		rest := "empty"
-		if leadRun < len(name) {
-			rest = kind
-		}
-		if leadRun == 2 && rest == "wide" {
-			return FormUndecided, nil // two stray bytes then a non-ASCII character was not shown
-		}
-		if !want {
-			return FormOpaque, nil
-		}
-		return FormOpaque, []string{"lead" + string(rune('0'+leadRun)) + ":" + rest}
-	}
-	// an invalid lead byte at tail: shown only as the END of a name that has text before it
-	if tail == 0 || leadRun > 0 || ignorable {
-		return FormUndecided, nil
+	b := buf[:0]
+	switch {
+	case tail < 0 && strays == 0:
+		return append(b, "u:text"...), FormUnicode, true
+	case tail < 0 && isStray(name[0]):
+		b = append(b, "o:lead:"...)
+		return appendSig(b, name), FormOpaque, true
+	case tail < 0:
+		b = append(b, "u:s:"...)
+		return appendSig(b, name), FormUnicode, true
+	case tail == 0:
+		return nil, FormUndecided, false
 	}
 	tk := tailKind(name[tail:])
 	if tk == "" {
-		return FormUndecided, nil
+		return nil, FormUndecided, false
 	}
-	if !want {
-		return FormOpaque, nil
-	}
-	prefix := "prefix:" + kind
-	if strays > 0 {
-		prefix += "+strays"
-	}
-	return FormOpaque, []string{prefix, "tail:" + tk}
+	b = append(b, "o:t:"...)
+	b = appendSig(b, name[:tail])
+	b = append(b, '|')
+	return append(b, tk...), FormOpaque, true
 }
 
-func labels(want bool, l string) []string {
-	if !want {
-		return nil
+// shape classifies name and names its composite shape; Form is FormUndecided for every combination that no
+// committed vector row shows.
+func shape(name []byte) (Form, []string) {
+	var buf [320]byte
+	label, form, ok := labelOf(name, buf[:0])
+	if !ok {
+		return FormUndecided, nil
 	}
-	return []string{l}
+	if _, shown := decidedSet[string(label)]; !shown {
+		return FormUndecided, []string{string(label)}
+	}
+	return form, []string{string(label)}
 }
 
 // Classify decides how the kernel compares name; see the package comment. Only shapes that a committed
 // kernel vector shows are decided; every other shape is FormUndecided.
 func Classify(name []byte) Form {
-	f, _ := shapeOf(name, false)
-	return f
+	var buf [320]byte
+	label, form, ok := labelOf(name, buf[:0])
+	if !ok {
+		return FormUndecided
+	}
+	if _, shown := decidedSet[string(label)]; !shown {
+		return FormUndecided
+	}
+	return form
 }
 
 // Key appends the comparison form of name to dst. ok is false, and dst is returned unchanged, unless name

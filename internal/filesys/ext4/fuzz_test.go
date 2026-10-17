@@ -73,20 +73,48 @@ func fuzzBuilderSeeds() [][]byte {
 	}
 }
 
+// fuzzCasefoldSeedMax cuts the real casefold image: the start (superblock, descriptors, bitmaps, the first
+// inode tables and directories) is what a mutation can usefully damage, and the reader accepts an image
+// shorter than its block count.
+const fuzzCasefoldSeedMax = 8 << 20
+
+// fuzzSeedBudget is what the fuzz engine can take: it refuses a seed set above 100 MiB in total ("value
+// length larger than shared memory capacity") and the whole target then cannot run at all.
+const fuzzSeedBudget = 64 << 20
+
+// fuzzOpenSeeds are the seeds of FuzzExt4Open: the builder images, the mke2fs fixtures, the first 8 MiB of the
+// kernel-made casefold image (by name: its expect schema is not the one of the fixture loops), and zeros.
+func fuzzOpenSeeds(t testing.TB) [][]byte {
+	t.Helper()
+	seeds := fuzzBuilderSeeds()
+	for _, path := range fixturePaths(t) {
+		seeds = append(seeds, gunzipFixture(t, path))
+	}
+	cf := gunzipFixture(t, filepath.Join("testdata", "ext4-casefold.img.gz"))
+	seeds = append(seeds, cf[:min(len(cf), fuzzCasefoldSeedMax)])
+	return append(seeds, make([]byte, 2048))
+}
+
+// A seed set above the engine's limit makes `go test -fuzz FuzzExt4Open` panic before it runs one input
+// (the 32 MiB casefold image added whole did exactly that). The summed seed bytes stay within the budget.
+func TestFuzzExt4OpenSeedsFitTheEngine(t *testing.T) {
+	total := 0
+	for _, s := range fuzzOpenSeeds(t) {
+		total += len(s)
+	}
+	if total > fuzzSeedBudget {
+		t.Fatalf("the FuzzExt4Open seeds total %d bytes, above the %d byte budget: `go test -fuzz` would panic (the engine's limit is 100 MiB); trim a seed", total, fuzzSeedBudget)
+	}
+	t.Logf("seed bytes: %d of %d", total, fuzzSeedBudget)
+}
+
 // FuzzExt4Open runs the reader over arbitrary bytes: Open, a bounded Walk,
 // Open and read of every file, and Unallocated. It calls the ext4 functions
 // directly (not through detect.OpenWith), so a panic fails the fuzz.
 func FuzzExt4Open(f *testing.F) {
-	for _, s := range fuzzBuilderSeeds() {
+	for _, s := range fuzzOpenSeeds(f) {
 		f.Add(s)
 	}
-	for _, path := range fixturePaths(f) {
-		img := gunzipFixture(f, path)
-		f.Add(img)
-	}
-	// the real casefold image (kernel-made), by name: its expect schema is not the one of the loops above
-	f.Add(gunzipFixture(f, filepath.Join("testdata", "ext4-casefold.img.gz")))
-	f.Add(make([]byte, 2048))
 	f.Fuzz(func(t *testing.T, b []byte) {
 		fsys, err := ext4.Open(bytes.NewReader(b), int64(len(b)))
 		if err != nil {

@@ -47,8 +47,8 @@ func FuzzKey(f *testing.F) {
 			// names over MaxName, so the fixed point is only checked where the key is itself a name
 			if len(k) <= MaxName {
 				k2, ok2 := Key(nil, k)
-				if !ok2 || !bytes.Equal(k, k2) {
-					t.Fatalf("Key(%q) = %q is not a fixed point: (%q, %v)", n, k, k2, ok2)
+				if ok2 && !bytes.Equal(k, k2) {
+					t.Fatalf("Key(%q) = %q is not a fixed point: %q", n, k, k2)
 				}
 			}
 		}

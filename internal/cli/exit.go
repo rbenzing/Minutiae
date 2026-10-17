@@ -70,11 +70,12 @@ func isCobraUsageError(err error) bool {
 }
 
 // imageErrors are problems with the content of an image (corrupt, unsupported
-// or encrypted structures, unknown artifacts): exit 1 with a message naming
-// the structure, not an integrity failure of the case itself.
+// or encrypted structures, unknown artifacts, a lookup that cannot be decided):
+// exit 1 with a message naming the structure, not an integrity failure of the
+// case itself. filesys.ErrUndecided is never exit 0 and never "not found".
 var imageErrors = []error{
 	filesys.ErrCorrupt, filesys.ErrUnsupported, filesys.ErrEncrypted, filesys.ErrDeleted,
-	filesys.ErrNotDeleted, filesys.ErrNoRecovery, examine.ErrInsufficientSpace,
+	filesys.ErrNotDeleted, filesys.ErrNoRecovery, filesys.ErrUndecided, examine.ErrInsufficientSpace,
 	image.ErrUnsupportedContainer, image.ErrCorruptContainer, image.ErrChunkCorrupt, evidence.ErrUnknownArtifact,
 }
 
@@ -125,3 +126,7 @@ func isDBRecoverUsage(err error) bool {
 	var re *dbrecover.RefusalError
 	return errors.As(err, &re) && (re.Reason == dbrecover.ReasonBadOption || re.Reason == dbrecover.ReasonAmbiguousSibling)
 }
+
+// undecidedNote follows the message of a filesys.ErrUndecided error: the answer is neither "found" nor
+// "absent", and nothing was skipped or recorded as missing.
+const undecidedNote = "note: the lookup is neither found nor absent: a casefold directory holds a name of a shape the kernel's comparison was not measured for, so it cannot be shown that the name does not exist. Nothing was skipped; list the directory (image ls) to see the names."

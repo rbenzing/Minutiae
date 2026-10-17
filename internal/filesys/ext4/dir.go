@@ -756,6 +756,7 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 		}
 	}
 	var exactRec, altRec *dirRec
+	altN := 0           // records whose bytes are the alias: two or more are ambiguous
 	var hits [2]*dirRec // the first two fold hits
 	nHits, nUnknown := 0, 0
 	var unknownName []byte // the first name whose comparison is Unknown
@@ -769,8 +770,11 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 		case !enc && bytes.Equal(r.name, exact):
 			exactRec = keep(r)
 			return false
-		case altRec == nil && alt != nil && bytes.Equal(r.name, alt):
-			altRec = keep(r)
+		case alt != nil && bytes.Equal(r.name, alt):
+			if altRec == nil {
+				altRec = keep(r)
+			}
+			altN++
 		case q != nil && !isDot(r.name):
 			switch q.Compare(r.name) {
 			case utf8fold.Same:
@@ -790,10 +794,14 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 	if err != nil {
 		return filesys.Entry{}, err
 	}
-	for _, r := range []*dirRec{exactRec, altRec} {
-		if r != nil {
-			return f.dirEntry(r, enc, nil), nil
-		}
+	if exactRec != nil {
+		return f.dirEntry(exactRec, enc, nil), nil
+	}
+	if altN >= 2 { // fail closed: two alias matches are not one
+		return filesys.Entry{}, fmt.Errorf("%w: %q is the display form of %d records of directory inode %d", filesys.ErrAmbiguous, comp, altN, in.num)
+	}
+	if altRec != nil {
+		return f.dirEntry(altRec, enc, nil), nil
 	}
 	switch {
 	case foldDir && len(exact) > utf8fold.MaxName:

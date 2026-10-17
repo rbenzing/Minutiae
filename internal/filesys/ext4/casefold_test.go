@@ -547,3 +547,26 @@ func TestCasefoldAliasBeatsASingleFoldHit(t *testing.T) {
 		t.Fatalf("Lookup(alias) = %+v, %v; want the alias target", e, err)
 	}
 }
+
+// Ruling Z47 (fail closed): two records whose bytes are the alias, with no exact match, are two alias
+// matches: ErrAmbiguous, never one of them and never a fold hit.
+func TestCasefoldTwoAliasRecordsAreAmbiguous(t *testing.T) {
+	bad := string([]byte{'a', 0xFF})
+	alias := "~raw~" + base64.RawURLEncoding.EncodeToString([]byte(bad))
+	files := []ext4test.File{
+		{Path: "/cf", Dir: true, Flags: casefoldFlag},
+		{Path: "/cf/" + bad},
+		{Path: "/cf/" + bad},
+		{Path: "/cf/other"},
+	}
+	img := ext4test.Build(ext4test.Options{Extents: true, Encoding: 1}, files)
+	f := mustOpen(t, img)
+	_, err := f.Lookup("/cf/" + alias)
+	if !errors.Is(err, filesys.ErrAmbiguous) {
+		t.Fatalf("Lookup(alias) with two matching records = %v, want ErrAmbiguous", err)
+	}
+	// the exact bytes still resolve (the exact step has its own order: the first record)
+	if _, err := f.Lookup("/cf/" + bad); err != nil {
+		t.Errorf("Lookup(exact) = %v", err)
+	}
+}
