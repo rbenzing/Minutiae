@@ -13,9 +13,9 @@ import (
 	"github.com/rbenzing/minutiae/internal/sqlitefile"
 	"github.com/rbenzing/minutiae/internal/sqlitefile/sqlitetest"
 )
+
 // With Status counters: scanning n entries parses at most n + interiors cells (the comparisons are
 // counted exactly by TestOrderCheckComparisonCountIsExact).
-// the comparisons TestOrderCheckComparisonCountIsExact derives.
 func TestOrderCheckCostIsLinear(t *testing.T) {
 	const n = 300
 	b, tb := woTable(n)
