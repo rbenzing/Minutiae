@@ -65,6 +65,10 @@ type Case struct {
 	lock       *caseLock
 	manifestMu sync.Mutex
 
+	// mcache is the stat-validated manifest cache of OpenArtifact; manifestReads counts the reads of the file.
+	mcache        manifestCache
+	manifestReads atomic.Int64
+
 	// lastTuneKiB is the cache size of the last tuned StoreTxTuned (LastStoreTuning).
 	lastTuneKiB atomic.Int64
 
@@ -227,6 +231,7 @@ func writeExclusiveJSON(path string, v any) error {
 func (c *Case) Manifest() ([]ManifestRecord, error) {
 	c.manifestMu.Lock()
 	defer c.manifestMu.Unlock()
+	c.manifestReads.Add(1)
 	return readManifest(filepath.Join(c.Dir, manifestFile))
 }
 

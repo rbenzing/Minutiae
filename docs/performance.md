@@ -264,3 +264,14 @@ A word or prefix that matches a large share of the records made `r.id IN (SELECT
 Known limit (D98): the choice between the two shapes looks only at the number of full-text hits, never at the selectivity of the other filters. A common word combined with a rare filter (deleted only, one artifact, a rare type pair) is driven by `records_ts` and scans the time index across the table with one `EXISTS` per row, so it can be slower than the FTS-first plan. The result is identical either way (`TestSearchShapesAgreeOnEveryFilter`). The D83 re-measure adds cells for these combinations (a common word with deleted only, with one artifact, with a rare type pair); no code change is made before those numbers exist.
 
 The 10M search re-measure is pending (D83): it runs in the idle window together with the Task 6 stats retune and the Task 8 after-pragmas run, and its `matrix.search.*` p95 values go here.
+
+### OpenArtifact manifest cache (5D Task 12)
+A small benchmark, not a 10M run. Same machine as the baseline, `BenchmarkOpenArtifact`, `-count=3`, through `heavy.sh`, code of the Task 12 commit. ns/op, three runs each; the median of the 10,000-line row is the `open_artifact_ms` figure.
+
+| Manifest lines | Before (baseline, no cache) | After (stat-validated cache) |
+|---|---|---|
+| 100 | 501,305 / 512,234 / 521,564 | 129,608 / 169,529 / 128,050 |
+| 1,000 | 5,131,222 / 4,152,013 / 3,641,574 | 129,171 / 132,658 / 128,377 |
+| 10,000 | 31,736,368 / 31,954,174 / 30,144,010 | 208,934 / 296,430 / 193,829 |
+
+`open_artifact_ms` went from 31.74 ms to 0.209 ms (median of 3), under the <= 1 ms threshold. The remaining cost per open is the stat of the manifest, the linear scan of the cached records for the id, and the artifact file checks (link walk, open, regular-file and size checks), which the cache does not touch. The time still grows a little with the line count because the scan is linear. The cache is valid only while the manifest is the same file with the same size and modification time; the residual is in `docs/limitations.md`.

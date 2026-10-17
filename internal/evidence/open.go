@@ -7,10 +7,49 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // ErrUnknownArtifact is returned when an artifact id or path is not in the manifest.
 var ErrUnknownArtifact = errors.New("unknown artifact")
+
+// manifestCache holds the decoded manifest that OpenArtifact reuses while the file is unchanged.
+type manifestCache struct {
+	mu   sync.Mutex
+	info os.FileInfo
+	recs []ManifestRecord
+}
+
+func sameManifestFile(a, b os.FileInfo) bool {
+	return os.SameFile(a, b) && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
+}
+
+// manifestForOpen returns the manifest for OpenArtifact: the cached records while the file is the same
+// file with the same size and modification time, else a fresh read (cached only if the file did not
+// change while it was read). Any append through the case's own writer changes the size, so it
+// invalidates the cache too. Never used by verify, which reads Manifest and recomputes. The returned
+// slice is shared and must only be read. Residual: an external edit that restores the same size and
+// modification time is not seen here (docs/limitations.md); case verify sees it.
+func (c *Case) manifestForOpen() ([]ManifestRecord, error) {
+	path := filepath.Join(c.Dir, manifestFile)
+	c.mcache.mu.Lock()
+	defer c.mcache.mu.Unlock()
+	before, err := os.Stat(path)
+	if err == nil && c.mcache.info != nil && sameManifestFile(before, c.mcache.info) {
+		return c.mcache.recs, nil
+	}
+	c.mcache.info, c.mcache.recs = nil, nil
+	recs, rerr := c.Manifest()
+	if rerr != nil {
+		return nil, rerr
+	}
+	if err == nil {
+		if after, serr := os.Stat(path); serr == nil && sameManifestFile(before, after) {
+			c.mcache.info, c.mcache.recs = after, recs
+		}
+	}
+	return recs, nil
+}
 
 // OpenArtifact opens a manifest artifact read-only. It returns ErrIntegrity
 // (wrapped) when the file is missing, is not a regular file, lies outside the
@@ -20,7 +59,7 @@ var ErrUnknownArtifact = errors.New("unknown artifact")
 // It returns an error wrapping ErrUnknownArtifact when id is not in the
 // manifest. Full re-hashing is Verify's job.
 func (c *Case) OpenArtifact(id string) (*os.File, ManifestRecord, error) {
-	recs, err := c.Manifest()
+	recs, err := c.manifestForOpen()
 	if err != nil {
 		return nil, ManifestRecord{}, fmt.Errorf("manifest unreadable: %w", err)
 	}

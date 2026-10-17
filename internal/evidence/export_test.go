@@ -20,3 +20,6 @@ func (c *Case) AllowUndescribedRecoveredKinds() { c.noRecoveredKindGate = true }
 
 // SetPhaseHook installs an observer of the verify phase timings. Test-only.
 func (c *Case) SetPhaseHook(f func(string, time.Duration)) { c.verifyPhaseHook = f }
+
+// ManifestReads is the number of times the manifest file was read and decoded by this Case.
+func (c *Case) ManifestReads() int64 { return c.manifestReads.Load() }
