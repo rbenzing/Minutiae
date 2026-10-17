@@ -66,7 +66,8 @@ func (l *lookuper) Find(glob string) []parse.Artifact {
 		mb := c.member("", b.snap.env)
 		out = append(out, parse.Artifact{
 			ID: rec.ID, SHA256: rec.SHA256, Platform: mb.Platform, Logical: mb.Logical,
-			Size: rec.Size, Incomplete: rec.Incomplete, Source: SourceInfo(rec),
+			Acquisition: acquisitionOf(rec),
+			Size:        rec.Size, Incomplete: rec.Incomplete, Source: SourceInfo(rec),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })

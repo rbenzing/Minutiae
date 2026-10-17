@@ -39,7 +39,8 @@ func TestRecoverCutErrorTextAndRecoveryFields(t *testing.T) {
 		setup     func(t *testing.T) *recEnv
 		wantError string
 		wantAs    []string
-		excluded  int64
+		excluded  int64 // bytes of the excluded runs
+		tail      int64 // declared bytes the map never named (counted, no run; ruling F4/F18)
 	}{
 		{
 			"allocated since deletion", func(t *testing.T) *recEnv {
@@ -49,7 +50,7 @@ func TestRecoverCutErrorTextAndRecoveryFields(t *testing.T) {
 				return newRecEnv(t, nodes...)
 			}, "1 of 2 runs not captured: allocated since deletion",
 			[]string{"prefix-only", "cut-state=allocated"},
-			2 * bs,
+			2 * bs, 0,
 		},
 		{
 			"allocation state unknown", func(t *testing.T) *recEnv {
@@ -60,14 +61,14 @@ func TestRecoverCutErrorTextAndRecoveryFields(t *testing.T) {
 				return e
 			}, "1 of 2 runs not captured: allocation state unknown",
 			[]string{"prefix-only", "cut-state=unknown"},
-			bs,
+			bs, 0,
 		},
 		{"declared size larger than the map", func(t *testing.T) *recEnv {
 			nodes := []fstest.Node{delNode("/a-del.bin", pat(1, 2*bs))}
 			lay := layout(t, nodes)
 			nodes[0].Recover = []fstest.RecoverMap{{Method: mtfsRecM, Size: 3 * bs, Runs: lay["/a-del.bin"]}}
 			return newRecEnv(t, nodes...)
-		}, fmt.Sprintf("the map covers %d of %d declared bytes", 2*bs, 3*bs), nil, 0},
+		}, fmt.Sprintf("the map covers %d of %d declared bytes", 2*bs, 3*bs), []string{"prefix-only"}, 0, bs}, // ruling F4/F18: a short map is a prefix: prefix-only, and the unmapped tail is in ExcludedBytes
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := tc.setup(t)
@@ -92,7 +93,7 @@ func TestRecoverCutErrorTextAndRecoveryFields(t *testing.T) {
 			if !anyContains(rv.Assumptions, "size-declared=") {
 				t.Errorf("assumptions %q lack size-declared", rv.Assumptions)
 			}
-			if rv.Alloc.ExcludedBytes != tc.excluded || (tc.excluded > 0 && (len(rv.Excluded) != 1 || rv.Excluded[0].Length != tc.excluded)) {
+			if rv.Alloc.ExcludedBytes != tc.excluded+tc.tail || (tc.excluded > 0 && (len(rv.Excluded) != 1 || rv.Excluded[0].Length != tc.excluded)) {
 				t.Errorf("alloc %+v excluded %v, want %d excluded bytes", rv.Alloc, rv.Excluded, tc.excluded)
 			}
 			verifyOK(t, e.c)

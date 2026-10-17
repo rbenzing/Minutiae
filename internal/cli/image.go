@@ -579,10 +579,12 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 			}
 			dirRef = mapped
 		}
-		dir, dirPath, err := s.Lookup(fsys, dirRef)
+		dm, err := s.LookupMatch(fsys, dirRef)
 		if err != nil {
 			return err
 		}
+		dir, dirPath := dm.Entry, dm.Path
+		printIncompleteMatch(d.Err, dm.Incomplete)
 
 		// --json streams the array, so a huge subtree is never held in memory. It is
 		// closed only on success: a failed listing leaves invalid JSON behind.
@@ -593,25 +595,28 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 		if opts.json {
 			_, jsonErr = io.WriteString(d.Out, "[")
 		}
+		emitJSON := func(item any) {
+			if jsonErr != nil {
+				return
+			}
+			b, merr := json.Marshal(item)
+			if merr == nil {
+				sep := "\n  "
+				if wrote > 0 {
+					sep = ",\n  "
+				}
+				_, merr = d.Out.Write(append([]byte(sep), b...))
+			}
+			jsonErr = merr
+			wrote++
+		}
 		emit := func(p string, e filesys.Entry) {
 			if e.Deleted && !deleted {
 				return
 			}
 			switch {
 			case opts.json:
-				if jsonErr != nil {
-					return
-				}
-				b, merr := json.Marshal(newPathEntry(p, e))
-				if merr == nil {
-					sep := "\n  "
-					if wrote > 0 {
-						sep = ",\n  "
-					}
-					_, merr = d.Out.Write(append([]byte(sep), b...))
-				}
-				jsonErr = merr
-				wrote++
+				emitJSON(newPathEntry(p, e))
 			case recursive:
 				fmt.Fprintln(d.Out, lsLine(p, e))
 			default:
@@ -624,12 +629,23 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 		case dir.Type != filesys.TypeDir:
 			emit(dirPath, dir)
 		case recursive:
+			var firstCut error // the first listing that failed: reported after everything read is printed
 			err = filesys.Walk(fsys, dir, dirPath, func(p string, e filesys.Entry, werr error) error {
 				if cerr := cmd.Context().Err(); cerr != nil {
 					return cerr
 				}
 				if werr != nil {
 					fmt.Fprintf(d.Err, "warning: %s: %s\n", escapeText(p), escapeText(werr.Error()))
+					// Only a listing that failed or was cut sets the exit code. The walker's own findings (a
+					// cycle, too deep, too long) are warned about as before and keep the exit code.
+					if filesys.IsWalkFinding(werr) {
+						// A JSON consumer sees no stderr: the finding is also an item of the array (F98).
+						if opts.json {
+							emitJSON(jsonWarningItem{Path: p, Warnings: []string{werr.Error()}})
+						}
+					} else if firstCut == nil {
+						firstCut = werr
+					}
 					return nil
 				}
 				emit(p, e)
@@ -643,9 +659,20 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 				}
 				return jsonErr
 			})
+			if err == nil {
+				err = firstCut
+			}
 		default:
 			var kids []filesys.Entry
-			if kids, err = fsys.ReadDir(dir); err == nil {
+			kids, err = fsys.ReadDir(dir)
+			if err != nil {
+				// A cut listing returns the entries read with its error: print them,
+				// name the cut reason, and still fail with the error.
+				if len(kids) > 0 { // a total failure printed nothing: the error alone says so
+					fmt.Fprintf(d.Err, "warning: %s: listing incomplete: %s\n", escapeText(dirPath), escapeText(err.Error()))
+				}
+			}
+			if len(kids) > 0 {
 				slices.SortStableFunc(kids, func(a, b filesys.Entry) int {
 					return cmp.Or(strings.Compare(a.Name, b.Name), strings.Compare(a.ID, b.ID))
 				})
@@ -695,12 +722,16 @@ func newImageStatCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		known := len(fsys.Info().Warnings)
-		e, p, err := s.Lookup(fsys, args[1])
+		m, err := s.LookupMatch(fsys, args[1])
 		if err != nil {
 			printNewFSWarnings(d.Err, newFSWarnings(fsys, known))
 			return err
 		}
+		e, p := m.Entry, m.Path
 		warnings := newFSWarnings(fsys, known)
+		if m.Incomplete != nil {
+			warnings = append(warnings, m.Incomplete.Error())
+		}
 		if opts.json {
 			return writeJSON(d.Out, jsonStat{pathEntry: newPathEntry(p, e), Warnings: warnings})
 		}
@@ -884,6 +915,7 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 		fmt.Fprintf(d.Out, "extracted %d files (%s), skipped %d\n", sum.Files, humanBytes(sum.Bytes), sum.Skipped)
 		printSkipReasons(d.Out, sum)
 		printFSWarnings(d.Out, sum)
+		printIncompleteIDs(d.Out, sum.IncompleteIDs)
 		printIncomplete(d.Out, sum)
 		printGapNote(d.Out, sum)
 		if note != "" {
@@ -934,7 +966,7 @@ func newImageUnallocCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		if opts.json {
-			if jerr := writeJSON(d.Out, newJSONSummary(sum)); jerr != nil && err == nil {
+			if jerr := writeJSON(d.Out, newJSONUnalloc(sum)); jerr != nil && err == nil {
 				err = jerr
 			}
 			return err

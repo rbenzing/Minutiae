@@ -353,6 +353,7 @@ var specTable = map[string]int{
 	"ext4-extent-leaf":   55,
 	"fat-contiguous":     55,
 	"exfat-contiguous":   55,
+	"exfat-fatchain":     65,
 }
 
 func TestConfidenceRules(t *testing.T) {

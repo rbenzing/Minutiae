@@ -26,11 +26,16 @@ type RecoveryInfo struct {
 // job ends (reads then fail with ErrSealed); it is nil in Lookuper results.
 type Artifact struct {
 	ID, SHA256, Platform, Logical string
-	Size                          int64
-	Incomplete                    bool
-	Recovery                      *RecoveryInfo // non-nil only for recovered or carved artifacts
-	Source                        SourceInfo
-	R                             io.ReaderAt
+	// Acquisition is an opaque, host-defined, case-unique acquisition key (currently
+	// artifacts/<device>/<acquisition>); "" when the host does not know it. It is compared for
+	// equality only, never parsed: two artifacts are of one acquisition only when both keys are
+	// equal and non-empty; an empty key is unknown, never equal to another.
+	Acquisition string
+	Size        int64
+	Incomplete  bool
+	Recovery    *RecoveryInfo // non-nil only for recovered or carved artifacts
+	Source      SourceInfo
+	R           io.ReaderAt
 }
 
 // JobInfo identifies the invocation.

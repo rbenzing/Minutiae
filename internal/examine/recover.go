@@ -58,6 +58,7 @@ func (s *Session) Recover(ctx context.Context, o RecoverOptions) (RecoverSummary
 			a.setEnd("partial", rs.Partial)
 			a.setEnd("uniform", rs.Uniform)
 			a.setEnd("overlap", rs.Overlap)
+			a.setEnd("reader_warnings", rs.ReaderWarnings)
 			a.setEnd("skipped_by", rs.SkippedBy)
 			a.setEnd("limit_reached", rs.LimitReached)
 			a.setEnd("not_processed", rs.NotProcessed)
@@ -70,6 +71,8 @@ func (s *Session) Recover(ctx context.Context, o RecoverOptions) (RecoverSummary
 			return err
 		}
 		rs.Considered, rs.Candidates, rs.Uniform, rs.Overlap = plan.Considered, plan.candidates, plan.uniform, plan.overlap
+		rs.ReaderWarnings = plan.ReaderWarnings
+		a.sum.IncompleteIDs = plan.IncompleteIDs
 		rs.SkippedBy, rs.LimitReached, rs.NotProcessed = plan.SkippedBy, plan.LimitReached, plan.NotProcessed
 		if err := a.syncFS(); err != nil { // what planning made the filesystem notice
 			return err
@@ -122,6 +125,14 @@ func (s *Session) auditPlan(a *analysis, plan *RecoverPlan) error {
 		}
 		return a.warnWith(sk.Path, reason, map[string]any{"id": sk.ID, "code": sk.Reason})
 	}
+	// A deleted match of an id whose search could not read every directory: kept, and named here.
+	for _, inc := range plan.IncompleteIDs {
+		d := inc.warnDetails()
+		d["analysis_id"] = a.sum.AnalysisID
+		if err := a.appendWarning(d); err != nil {
+			return err
+		}
+	}
 	for _, it := range plan.Items {
 		for _, n := range it.notes {
 			if err := skip(n); err != nil {
@@ -133,6 +144,16 @@ func (s *Session) auditPlan(a *analysis, plan *RecoverPlan) error {
 				continue // counted in the summary; a limit has one note of its own
 			}
 			if err := skip(sk); err != nil {
+				return err
+			}
+		}
+		// The reader's own warnings: audited and counted, never skips (the artifact is still written).
+		for _, rw := range it.readerWarnings {
+			d := map[string]any{
+				"analysis_id": a.sum.AnalysisID, "source": "filesystem-recover", "code": rw.Reason,
+				"path": rw.Path, "id": rw.ID, "reason": rw.Detail, "warning": rw.Detail,
+			}
+			if err := a.appendWarning(d); err != nil {
 				return err
 			}
 		}
