@@ -9,6 +9,7 @@ import (
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/filesys"
+	"github.com/rbenzing/minutiae/internal/volume"
 )
 
 // Summary is the outcome of an extraction or an unallocated-space export.
@@ -316,3 +317,31 @@ func (a *analysis) noteSnapshotsSkipped(p string, e filesys.Entry) error {
 // warningEntryCap is how many analysis.warning entries one analysis writes before it writes one
 // "further warnings suppressed" entry and only counts the rest (as records.Writer.Warn does).
 var warningEntryCap = 10_000
+
+// lookupFailureReason names why a path lookup failed when the examiner must see it in the audit log: the path is
+// not there ("not-found") or the filesystem could not decide ("undecided").
+func lookupFailureReason(err error) (string, bool) {
+	switch {
+	case errors.Is(err, filesys.ErrUndecided):
+		return "undecided", true
+	case errors.Is(err, filesys.ErrNotFound):
+		return "not-found", true
+	}
+	return "", false
+}
+
+// auditLookupFailure records a run that ended before its analysis began because the path ref did not resolve:
+// an analysis.start and an analysis.error naming the path and the reason, with nothing extracted. It returns the
+// summary of that analysis and err joined with any audit failure.
+func (s *Session) auditLookupFailure(fsys filesys.FileSystem, part volume.Partition, op string, paths []string, ref, reason string, err error) (Summary, error) {
+	details := map[string]any{
+		"parent_id": s.Parent.ID, "partition": part.Index, "fs_type": fsys.Info().Type,
+		"paths": append([]string(nil), paths...),
+	}
+	return runAnalysis(s.Case, s.Parent.Source.DeviceID, op, details, func(a *analysis) error {
+		a.setEnd("path", ref)
+		a.setEnd("reason", reason)
+		a.setEnd("phase", "path lookup before any file was read")
+		return err
+	})
+}

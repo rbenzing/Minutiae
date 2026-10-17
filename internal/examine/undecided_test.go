@@ -79,3 +79,85 @@ func TestExtractOfAnUndecidedOpenIsNotSkipped(t *testing.T) {
 		t.Fatalf("Extract = %v, %+v; want an error wrapping ErrUndecided (not skipped with a warning)", err, sum)
 	}
 }
+
+func (u undecidedFS) Underlying() filesys.FileSystem { return u.FileSystem }
+
+// Ruling Z48: a path lookup that ends an extract before the analysis starts, because the path is undecided
+// or not found, is audited: an analysis.start and an analysis.error that name the path and the reason.
+// Nothing is extracted.
+func TestExtractPathLookupFailureIsAudited(t *testing.T) {
+	for _, c := range []struct {
+		path, reason string
+		want         error
+	}{
+		{"/cf/x", "undecided", filesys.ErrUndecided},
+		{"/nope", "not-found", filesys.ErrNotFound},
+	} {
+		t.Run(c.reason, func(t *testing.T) {
+			cs := newCase(t)
+			s := undecidedSession(t, cs)
+			sum, err := s.Extract(context.Background(), examine.ExtractOptions{Partition: -1, Recursive: true, Paths: []string{"/docs", c.path}})
+			if !errors.Is(err, c.want) {
+				t.Fatalf("Extract = %v, want %v", err, c.want)
+			}
+			if sum.Files != 0 || len(sum.Artifacts) != 0 {
+				t.Errorf("something was extracted before the failing lookup: %+v", sum)
+			}
+			errs := auditByAction(t, cs, "analysis.error")
+			if len(errs) != 1 {
+				t.Fatalf("%d analysis.error entries, want 1", len(errs))
+			}
+			d := errs[0].Details
+			if got, _ := d["path"].(string); got != c.path {
+				t.Errorf("analysis.error path = %q, want %q", got, c.path)
+			}
+			if got, _ := d["reason"].(string); got != c.reason {
+				t.Errorf("analysis.error reason = %q, want %q", got, c.reason)
+			}
+			if msg, _ := d["error"].(string); !strings.Contains(msg, c.path) {
+				t.Errorf("analysis.error does not name the path: %q", msg)
+			}
+			if len(auditByAction(t, cs, "analysis.start")) != 1 {
+				t.Error("no analysis.start before the analysis.error")
+			}
+			if len(auditByAction(t, cs, "analysis.end")) != 0 {
+				t.Error("an analysis.end for a failed lookup")
+			}
+		})
+	}
+}
+
+// The real recovery run plans inside its analysis, so a ref that fails to resolve is audited there; the
+// dry run (PlanRecovery) stays read-only and writes nothing.
+func TestRecoverPathLookupFailureIsAudited(t *testing.T) {
+	for _, c := range []struct {
+		path, reason string
+		want         error
+	}{
+		{"/cf/x", "undecided", filesys.ErrUndecided},
+		{"/nope", "not-found", filesys.ErrNotFound},
+	} {
+		t.Run(c.reason, func(t *testing.T) {
+			cs := newCase(t)
+			s := undecidedSession(t, cs)
+			_, err := s.Recover(context.Background(), examine.RecoverOptions{Partition: -1, Refs: []string{c.path}})
+			if !errors.Is(err, c.want) {
+				t.Fatalf("Recover = %v, want %v", err, c.want)
+			}
+			errs := auditByAction(t, cs, "analysis.error")
+			if len(errs) != 1 {
+				t.Fatalf("%d analysis.error entries, want 1", len(errs))
+			}
+			if msg, _ := errs[0].Details["error"].(string); !strings.Contains(msg, c.path) {
+				t.Errorf("analysis.error does not name the path: %q", msg)
+			}
+			before := len(auditEntries(t, cs))
+			if _, err := s.PlanRecovery(context.Background(), examine.RecoverOptions{Partition: -1, Refs: []string{c.path}}); !errors.Is(err, c.want) {
+				t.Errorf("PlanRecovery = %v, want %v", err, c.want)
+			}
+			if after := len(auditEntries(t, cs)); after != before {
+				t.Errorf("the dry run appended %d audit entries", after-before)
+			}
+		})
+	}
+}

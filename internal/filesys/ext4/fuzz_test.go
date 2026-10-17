@@ -73,10 +73,10 @@ func fuzzBuilderSeeds() [][]byte {
 	}
 }
 
-// fuzzCasefoldSeedMax cuts the real casefold image: the start (superblock, descriptors, bitmaps, the first
+// fuzzCasefoldSeedMax (4 MiB, ruling Z49) cuts the real casefold image: the start (superblock, descriptors, bitmaps, the first
 // inode tables and directories) is what a mutation can usefully damage, and the reader accepts an image
 // shorter than its block count.
-const fuzzCasefoldSeedMax = 8 << 20
+const fuzzCasefoldSeedMax = 4 << 20
 
 // fuzzSeedBudget is what the fuzz engine can take: it refuses a seed set above 100 MiB in total ("value
 // length larger than shared memory capacity") and the whole target then cannot run at all.
