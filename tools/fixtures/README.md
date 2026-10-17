@@ -885,6 +885,129 @@ holds one hash per file (a fixture can have three files), not one image hash.
 matrix of Task 13 (45 live scenarios, 1448 WAL mutations); the fixtures do not
 need it. One fuzz corpus seed is committed (`internal/sqlitefile/testdata/fuzz/FuzzCreateParse/d65cbe711e2fe660`, a CREATE INDEX statement found by fuzzing and kept as a regression input); the fuzz targets otherwise run only their in-code seeds.
 
+## Casefold lookup oracle
+
+`gen.sh casefold` (not part of `all`) asks a real Linux kernel which names a casefold directory
+treats as the same name. A QEMU guest (TCG, no KVM, the 6.1 kernel of `minutiae-recover-fixtures`)
+mounts an ext4 and an F2FS image whose directories are casefold, stores names in them and, for each
+probe, answers "does this query resolve to that stored name". The answers are the independent oracle
+for the `utf8fold` package (LX-7a Task 3): they come from the kernel's lookups, never from Minutiae.
+Files: `casefold.sh` (host driver), `casefold_guest.sh` (self-contained guest library; it does not
+source the recovery fixtures' guest library), `casefold_probes.py` (probe list; parses the Unicode
+12.1.0 files itself and shares nothing with the Go generator).
+
+Three outputs, committed together because the images are not byte-reproducible (see "QEMU images are
+not byte-reproducible"):
+
+- `internal/filesys/utf8fold/testdata/kernel-vectors.json` (the probes and the verdicts; `generator.image_sha256`
+  pins both images);
+- `internal/filesys/ext4/testdata/ext4-casefold.img.gz` and `.expect.json`;
+- `internal/filesys/f2fs/testdata/f2fs-casefold.img.gz` and `.expect.json` (directory name lists read
+  from the finished image by `debugfs ls -p` and `fsck.f2fs -t` / `dump.f2fs -i`, never by Minutiae).
+
+The two images stay out of `TestExt4MatchesOracle` and `TestF2FSMatchesOracle` (their `fixturePaths`
+skip `*-casefold.img.gz`): the casefold `.expect.json` has directory name lists only.
+
+### Regenerate
+
+```bash
+docker build -f tools/fixtures/Dockerfile.recover -t minutiae-recover-fixtures tools/fixtures
+MSYS_NO_PATHCONV=1 docker run --rm --shm-size=512m -v "C:/GIT/Minutiae:/work" -v "<scratch>:/scratch" -w /work \
+  -e CASEFOLD_WORK=/scratch/work minutiae-recover-fixtures bash tools/fixtures/gen.sh casefold
+```
+
+No `--privileged`: every `mount`, module load and attribute change happens inside the guest (the host
+segments of the scripts contain none of those words; the tripwire in `internal/archtest` checks it). The
+images (a few tens of MiB each) live in `CASEFOLD_WORK`, a bind mount of a scratch folder, never in the
+container's filesystem. The payload and the initramfs live on tmpfs (`--shm-size`): a Windows bind mount
+is case-insensitive and would merge names that differ only in case. The guest run took 170-243 s of
+wall time when the machine was idle and 630 s once under load (`timeout 1500` in `casefold_run`).
+
+### Probe protocol
+
+`casefold_probes.py --payload` writes each probe as FILE NAMES (no name is escaped, hex-decoded or
+`read` in the guest): `p/<bucket>/<id>/q/<query bytes>` and `.../s/<stored bytes>`, plus
+`s/<bucket>/<stored bytes>`. One guest boot, two virtio drives (`vda` ext4, `vdb` F2FS), mount points
+per filesystem (`/mnt/ext4-cf`, `/mnt/ext4-plain`, `/mnt/f2fs-cf`, `/mnt/f2fs-plain`; the plain ones are
+bind mounts of the `/plain` directory). The guest copies the stored names into `/cf/<bucket>` and the
+first bucket's names into `/plain`, then for each probe prints `V <id> abcd` with `a`/`c` = the stored
+name exists and `b`/`d` = `[ query -ef stored ]` (ext4, F2FS). The host aborts unless every stored name
+was present (`a` and `c` are 1; a refused stored name would record a false negative) and unless
+`debugfs ls -p` / `fsck.f2fs -t` list every stored spelling byte for byte in its bucket directory.
+
+Buckets: a bucket's stored names are pairwise distinct under the script's own fold, because a casefold
+directory keeps one entry for two names the kernel calls equal. A stored name that is not valid UTF-8
+gets a bucket of its own: the first run showed why (the kernel resolved `e` U+0301 0x80 to the entry
+already stored for U+00C9 0x80, so the second spelling was never created). 43 bucket directories.
+
+Probe categories (15488 probes): `casefold` (every `C`/`F` folding of `CaseFolding.txt`), `decomposition`
+(every canonical decomposition), `ignorable` (every `Default_Ignorable_Code_Point`: stored `ab`, query
+`a`+cp+`b`), `unmapped` (2000 assigned code points across all planes, identity, `x`/`X` and `x`/`y`
+controls), `reorder` (combining-mark reordering, runs of 2 to 40 marks, Hangul syllables versus jamo),
+`special` (U+0130, U+0131, U+1E9E, U+00DF, U+03C2/U+03C3/U+03A3, U+212A, U+2126, U+FB03, ...),
+`post-12.1` (code points assigned after Unicode 12.1: U+A7C7/U+A7C8, U+A7C9/U+A7CA, U+A7F5/U+A7F6 from
+13.0, U+A7C0/U+A7C1 and U+061D from 14.0, U+0CF3 from 15.0; the script asserts none is assigned in the
+12.1.0 `UnicodeData.txt`) and `invalid` (a lone continuation byte, overlong forms, a truncated sequence,
+a UTF-16 surrogate in UTF-8, U+FFFE/U+FFFF, U+10FFFF, bytes beyond U+10FFFF, an invalid byte after valid
+text). Every category also carries negative controls (the stored name with a trailing `z`, expected 0).
+A name containing a newline, a slash or a NUL cannot be a file name here and is never generated.
+
+### Routes and measurements (kernel `6.1.0-53-amd64`, Debian `6.1.187-1`, `Dockerfile.recover` pins)
+
+- Kernel: `CONFIG_UNICODE=y` (built in; `unicode.ko`/`utf8data.ko` appear in `modules.builtin`),
+  `CONFIG_EXT4_FS=m`, `CONFIG_F2FS_FS=m`, so no `Dockerfile.casefold` exists. Both mounts succeed;
+  `/proc/filesystems` lists both; `crc32c-intel` and `crc32-pclmul` fail to insert under TCG (`rc=19`) and
+  are not needed.
+- ext4: `mke2fs -t ext4 -O casefold -E encoding=utf8` on the host under the fake clock; `dumpe2fs -h`
+  prints `Character encoding: utf8-12.1`. The flag route is host-side `debugfs -w -R "sif /cf/NN flags
+  <old|0x40000000>"` on empty directories (`Flags: 0x80000` becomes `0x40080000`); the kernel shows `F`
+  in `lsattr`.
+- F2FS: `mkfs.f2fs -O casefold -C utf8`; `dump.f2fs -d 1` prints only `superblock features = 1000 :
+  casefold` (no encoding line). Route (a) does NOT hold: the root inode's `i_flags` is 0 after mkfs, and a
+  directory made in the guest is not casefold. Route (b) works and is the one used: `chattr +F` (the
+  e2fsprogs binary and its libraries copied into the initramfs) on each empty directory inside the guest;
+  `i_flags` of a bucket directory is `0x40001000`. `/plain` is created the same way and has `i_flags` 0.
+  Route (c) was not needed.
+- F2FS superblock, by diffing `mkfs.f2fs` images with and without `-O casefold -C utf8` (with
+  `-C utf8:strict` as a third): the feature word at superblock offset 2180 gains `0x1000`; `s_encoding`
+  is a u16 at superblock byte offset 2758 (1 = utf8-12.1), `s_encoding_flags` a u16 at 2760 (bit 0 is
+  strict). Absolute image offsets 3782 and 3784.
+- Shared xattr blocks (ruling Z17): the image has no `setfattr`/`getfattr` and busybox has no `*fattr`
+  applet, so this guest cannot create them (it would need the `attr` package or a static helper); they stay
+  builder-only. Not attempted.
+- ext4 and F2FS gave the same verdict on every one of the 15488 probes (`exceptions` is absent).
+- A small F2FS image has little user space: 64 MiB leaves 16 MiB and `-o 5` reserves 48 segments; the
+  F2FS image is 128 MiB with the default overprovisioning (about 6000 inodes need ~24 MiB).
+- `e2fsck -fn` was clean on the final ext4 image. An earlier run, with a different bucket layout, got
+  `block #84 has bad max hash` for the 5000-name htree directory `/cf/00`: the image was kept as the
+  kernel wrote it, never repaired.
+- Fold-equal pair: after the guest unmounted, `debugfs write` created `/ambig/Straße` and `/ambig/STRASSE`
+  in a casefold directory without complaint (libext2fs 1.47.0 does not refuse it) and `e2fsck -fn` accepts
+  the pair; `ext4-casefold.expect.json` carries it in `ambiguous_pair`. F2FS has no host-side writer, so its
+  `ambiguous_pair` is `null`.
+
+Verdicts the Go code must copy (the vectors are the authority; each is a measurement, not an assumption):
+
+- every `Default_Ignorable_Code_Point` is ignored, including the unassigned ones (U+00AD, U+034F,
+  U+061C, U+115F-U+1160, U+17B4-U+17B5, U+180B-U+180E, U+200B-U+200F, U+202A-U+202E, U+2060-U+206F,
+  U+3164, U+FE00-U+FE0F, U+FEFF, U+FFA0, U+FFF0-U+FFF8, U+1BCA0-U+1BCA3, U+1D173-U+1D17A, U+E0000-U+E0FFF);
+- every `C`/`F` folding and every canonical decomposition of 12.1.0 resolves; Hangul syllables equal their
+  jamo; combining marks are reordered (runs of up to 40 marks included);
+- no Turkic mapping (U+0131 is not `I`), full folding (U+00DF equals `ss`), U+212A equals `k`;
+- a code point assigned after 12.1 has NO case mapping (U+A7C7 is not U+A7C8); it still takes part in
+  mark reordering;
+- invalid UTF-8: see `kernel-vectors.json`, category `invalid` (a lone 0x80 byte compares as text, other
+  invalid forms compare byte for byte; U+FFFE, U+FFFF and U+10FFFF are ordinary names).
+
+### Pins and licence
+
+No new image: `minutiae-recover-fixtures` (`Dockerfile.recover`: Debian bookworm snapshot 20261003,
+`linux-image-6.1.0-53-amd64 6.1.187-1`, `qemu-system-x86 1:7.2+dfsg-7+deb12u18+b3`, `busybox-static
+1:1.35.0-4+deb12u1+b1`, `e2fsprogs 1.47.0-2+b2`, `f2fs-tools 1.15.0-1`). The Unicode 12.1.0 files
+(`UnicodeData.txt`, `CaseFolding.txt`, `DerivedCoreProperties.txt`) are committed gzipped in
+`internal/filesys/utf8fold/testdata/ucd-12.1.0/` with the Unicode licence (`LICENSE-unicode.txt`) and
+`SOURCES` (URLs and SHA-256 of each file).
+
 ## Adding a fixture
 
 1. Add `<name>.sh` taking the output directory as `$1`; source `lib.sh` and

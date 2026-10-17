@@ -19,11 +19,14 @@ declare -A fixtures=(
   [apfs-populated]="internal/filesys/apfs/testdata"
   [hfsplus]="internal/filesys/hfsplus/testdata"
   [sqlite]="internal/sqlitefile/testdata"
+  # casefold.sh derives the ext4 and F2FS testdata directories from $root: it writes all three outputs
+  [casefold]="internal/filesys/utf8fold/testdata"
 )
 order=(volume-gpt volume-mbr ext4 fat exfat f2fs ewf apfs sqlite)
 # Not in "all": each needs its own image (hfsplus: Dockerfile.hfs, minutiae-fixtures-hfs;
-# apfs-populated: Dockerfile.apfs, minutiae-fixtures-apfs).
-separate=(hfsplus apfs-populated)
+# apfs-populated: Dockerfile.apfs, minutiae-fixtures-apfs; casefold: the minutiae-recover-fixtures
+# image, QEMU and a guest kernel).
+separate=(hfsplus apfs-populated casefold)
 
 usage() {
   echo "usage: gen.sh <fixture>|all" >&2
@@ -51,6 +54,13 @@ if [ "${targets[0]}" = apfs-populated ] && [ ! -f /usr/local/lib/apfs/apfs.ko ];
   echo "gen.sh apfs-populated needs the linux-apfs-rw module and QEMU, which the minutiae-fixtures image does not have." >&2
   echo "Build and use the separate image: docker build -f tools/fixtures/Dockerfile.apfs -t minutiae-fixtures-apfs tools/fixtures" >&2
   echo "(see tools/fixtures/README.md, \"APFS populated fixture\")." >&2
+  exit 1
+fi
+
+if [ "${targets[0]}" = casefold ] && { ! command -v qemu-system-x86_64 >/dev/null || ! compgen -G '/boot/vmlinuz-*' >/dev/null; }; then
+  echo "gen.sh casefold needs qemu-system-x86_64 and /boot/vmlinuz-*, which the minutiae-fixtures image does not have." >&2
+  echo "Build and use the separate image: docker build -f tools/fixtures/Dockerfile.recover -t minutiae-recover-fixtures tools/fixtures" >&2
+  echo "(see tools/fixtures/README.md, \"Casefold lookup oracle\")." >&2
   exit 1
 fi
 
