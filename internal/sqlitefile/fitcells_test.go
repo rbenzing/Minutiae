@@ -88,6 +88,13 @@ func TestFitCellsPlainEqualsFitPage(t *testing.T) {
 		{{vNull()}, {vNull(), vNull()}},
 		{},
 		{{vBlob(1), vBlob(2)}},
+		{{vInt(1), vText("x"), vText("z")}, {vInt(2), vText("y"), vNull()}},
+		{{vInt(1), vText("x"), vText("z"), vInt(4)}},
+		{{vInt(1), vText("x")}, {vInt(2)}},
+		{{vInt(1)}, {vInt(2)}, {vInt(3)}},
+		{{vFloat(1.5), vText("x")}},
+		{{vText("x")}},
+		{{vNull(), vNull(), vNull()}},
 	}
 	n := 0
 	for si, s := range schemas {
@@ -104,7 +111,7 @@ func TestFitCellsPlainEqualsFitPage(t *testing.T) {
 			n++
 		}
 	}
-	if n < 20 {
+	if n < 40 {
 		t.Fatalf("%d shapes", n)
 	}
 }
