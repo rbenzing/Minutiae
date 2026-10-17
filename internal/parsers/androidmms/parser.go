@@ -15,7 +15,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "android.mmssms"
-	Version = "1.0.0"
+	Version = "1.0.1"
 )
 
 // Parser is the android.mmssms parser. It holds no state.
