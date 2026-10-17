@@ -82,7 +82,7 @@ const fuzzCasefoldSeedMax = 4 << 20
 // length larger than shared memory capacity") and the whole target then cannot run at all.
 const fuzzSeedBudget = 64 << 20
 
-// fuzzOpenSeeds are the seeds of FuzzExt4Open: the builder images, the mke2fs fixtures, the first 8 MiB of the
+// fuzzOpenSeeds are the seeds of FuzzExt4Open: the builder images, the mke2fs fixtures, the first 4 MiB of the
 // kernel-made casefold image (by name: its expect schema is not the one of the fixture loops), and zeros.
 func fuzzOpenSeeds(t testing.TB) [][]byte {
 	t.Helper()

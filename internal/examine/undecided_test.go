@@ -23,6 +23,9 @@ func (u undecidedFS) Lookup(p string) (filesys.Entry, error) {
 	if strings.HasPrefix(p, "/cf") {
 		return filesys.Entry{}, fmt.Errorf("fake: %w: lookup of %q", filesys.ErrUndecided, p)
 	}
+	if strings.HasPrefix(p, "/amb") {
+		return filesys.Entry{}, fmt.Errorf("fake: %w: %q matches 2 names", filesys.ErrAmbiguous, p)
+	}
 	return u.FileSystem.Lookup(p)
 }
 
@@ -92,6 +95,7 @@ func TestExtractPathLookupFailureIsAudited(t *testing.T) {
 	}{
 		{"/cf/x", "undecided", filesys.ErrUndecided},
 		{"/nope", "not-found", filesys.ErrNotFound},
+		{"/amb/x", "ambiguous", filesys.ErrAmbiguous},
 	} {
 		t.Run(c.reason, func(t *testing.T) {
 			cs := newCase(t)
@@ -136,6 +140,7 @@ func TestRecoverPathLookupFailureIsAudited(t *testing.T) {
 	}{
 		{"/cf/x", "undecided", filesys.ErrUndecided},
 		{"/nope", "not-found", filesys.ErrNotFound},
+		{"/amb/x", "ambiguous", filesys.ErrAmbiguous},
 	} {
 		t.Run(c.reason, func(t *testing.T) {
 			cs := newCase(t)

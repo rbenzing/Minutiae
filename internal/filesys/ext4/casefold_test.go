@@ -132,6 +132,10 @@ func TestCasefoldLookupMatchesKernel(t *testing.T) {
 		query, _ := hex.DecodeString(r.Query)
 		e, err := f.Lookup("/cf/" + r.Bucket + "/" + string(query))
 		got := err == nil && bytes.Equal(rawName(e), stored)
+		if !r.Ext4 && errors.Is(err, filesys.ErrCorrupt) {
+			// a kernel-false row passes on any error, so a corruption failure would hide here
+			t.Fatalf("row %d (%s): Lookup(%q) failed with a corruption error, not an answer: %v", r.ID, r.Category, query, err)
+		}
 		if got != r.Ext4 {
 			bad++
 			if bad <= 10 {

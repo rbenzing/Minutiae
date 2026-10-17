@@ -319,13 +319,16 @@ func (a *analysis) noteSnapshotsSkipped(p string, e filesys.Entry) error {
 var warningEntryCap = 10_000
 
 // lookupFailureReason names why a path lookup failed when the examiner must see it in the audit log: the path is
-// not there ("not-found") or the filesystem could not decide ("undecided").
+// not there ("not-found"), the filesystem could not decide ("undecided") or the name matches several entries
+// ("ambiguous").
 func lookupFailureReason(err error) (string, bool) {
 	switch {
 	case errors.Is(err, filesys.ErrUndecided):
 		return "undecided", true
 	case errors.Is(err, filesys.ErrNotFound):
 		return "not-found", true
+	case errors.Is(err, filesys.ErrAmbiguous):
+		return "ambiguous", true
 	}
 	return "", false
 }

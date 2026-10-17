@@ -85,9 +85,10 @@ var fuzzForgedIDs = []string{
 	"dentry:3:0:0", "dentry:3:7:12",
 }
 
-// fuzzSeedBudget is what the fuzz engine can take for the seeds of one target in total (the engine's own
-// limit is 100 MiB of shared memory, and a seed is held in a text form that can spend four bytes per byte).
-const fuzzSeedBudget = 90 << 20
+// fuzzSeedBudget bounds the seeds of one target in total. The engine's own limit is 100 MiB of shared memory
+// (it panics above it). The current set, 85,620,306 bytes, ran 30 s through heavy.sh for 181,492 execs; the
+// budget is 84 MiB (88,080,384 bytes), a little above that measured size and well under the limit.
+const fuzzSeedBudget = 84 << 20
 
 // fuzzOpenSeeds are the seeds of FuzzF2FSOpen: the builder images, the sload.f2fs fixtures cut after their
 // last used block, and zeros. The kernel-made casefold image is not a seed: its directories start 16 MiB in and
