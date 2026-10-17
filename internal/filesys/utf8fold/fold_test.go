@@ -154,8 +154,42 @@ func TestEqualUndecidedAndOpaque(t *testing.T) {
 }
 
 func randomName(r *rand.Rand) []byte {
-	parts := []string{"a", "A", "e", "E", "k", "K", "\u212a", "\u00e9", "\u00c9", "\u0301", "\u0323", "\u00df", "ss", "SS", "\u1e9e", "\u0131", "I", "i",
-		"\u00ad", "\u200b", "\uac00", "\u1100", "\u1161", "\u11a8", "\u03c3", "\u03c2", "\u03a3", "\u0130", "\x80", "\x81", "x", "\ufb03", "\u2126", "\u03c9"}
+	parts := []string{
+		"a",
+		"A",
+		"e",
+		"E",
+		"k",
+		"K",
+		"\u212a",
+		"\u00e9",
+		"\u00c9",
+		"\u0301",
+		"\u0323",
+		"\u00df",
+		"ss",
+		"SS",
+		"\u1e9e",
+		"\u0131",
+		"I",
+		"i",
+		"\u00ad",
+		"\u200b",
+		"\uac00",
+		"\u1100",
+		"\u1161",
+		"\u11a8",
+		"\u03c3",
+		"\u03c2",
+		"\u03a3",
+		"\u0130",
+		"\x80",
+		"\x81",
+		"x",
+		"\ufb03",
+		"\u2126",
+		"\u03c9",
+	}
 	var b []byte
 	for n := r.Intn(8); n > 0; n-- {
 		b = append(b, parts[r.Intn(len(parts))]...)

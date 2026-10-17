@@ -9,8 +9,25 @@ import (
 // FuzzKey feeds arbitrary bytes: no panic, a decided key is bounded and idempotent, Equal is symmetric, and a
 // name equals itself.
 func FuzzKey(f *testing.F) {
-	for _, s := range []string{"", "a", "Stra\u00dfe", "STRASSE", "e\u0301", "\u00e9", "a\x80b", "\x80x", "x\xff", "x\xff\x80", "\u00ad\x80",
-		"\uac00", "\u1100\u1161\u11a8", "a\u0323\u0301\u0323\u0301", "\xed\xa0\x80", "\xf4\x90\x80\x80", "x\xe2\x82"} {
+	for _, s := range []string{
+		"",
+		"a",
+		"Stra\u00dfe",
+		"STRASSE",
+		"e\u0301",
+		"\u00e9",
+		"a\x80b",
+		"\x80x",
+		"x\xff",
+		"x\xff\x80",
+		"\u00ad\x80",
+		"\uac00",
+		"\u1100\u1161\u11a8",
+		"a\u0323\u0301\u0323\u0301",
+		"\xed\xa0\x80",
+		"\xf4\x90\x80\x80",
+		"x\xe2\x82",
+	} {
 		f.Add([]byte(s), []byte(s))
 		f.Add([]byte(s), []byte("A"))
 	}
