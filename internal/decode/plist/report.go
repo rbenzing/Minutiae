@@ -7,8 +7,10 @@ import "fmt"
 // twice counts twice); UnarchiveReport counts per RESOLVED archive object (a shared object
 // counts once). Plus adds two reports of different measures and is for totals only.
 //
-// Every count is a lower bound: a duplicate inside an entry that a later entry replaced is not
-// counted. Zero is exact; a nonzero count means at least that many entries were lost.
+// Every count is a lower bound: in a binary document a duplicate inside an entry that a later
+// entry replaced is not counted; the XML scan counts every key of the document, also inside
+// such an entry, so for the same tree the XML count is at least the binary one. Zero is exact;
+// a nonzero count means at least that many entries were lost.
 type Report struct {
 	// DuplicateKeys is a lower bound on the key occurrences whose entry was replaced by a later
 	// entry with the same key; a duplicate inside an entry that a later entry replaced is not

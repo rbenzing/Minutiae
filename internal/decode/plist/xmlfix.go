@@ -205,11 +205,11 @@ func (f *xmlFrame) note(key string) uint64 {
 // token error ends the scan (the library reports it). It also counts the repeated dictionary keys:
 // one for every <key> whose text equals an earlier key of the same dict (three equal keys count
 // two). The key text is what encoding/xml reports, so entities, CDATA and text around comments
-// are one text. The set of keys of an open dict is charged up front (chargePerXMLKey).
+// are one text. The set of keys of an open dict is charged up front (chargePerXMLNode).
 //
-// The scan reads b while the library reads the surrogate-rewritten text; keys that differ only
-// by character references to surrogates could be miscounted, and such a key is ErrUnsupported
-// in the normalization anyway, so no count is returned for that document.
+// Do not fix: the scan reads b while the library reads the surrogate-rewritten text, so keys
+// that differ only by character references to surrogates could be miscounted. Such a key is
+// ErrUnsupported in the normalization anyway, so no count is returned for that document.
 func scanXMLStructure(b []byte) (dups uint64, err error) {
 	d := xml.NewDecoder(bytes.NewReader(b))
 	var stack []xmlFrame

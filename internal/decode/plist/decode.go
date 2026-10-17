@@ -16,13 +16,16 @@ const (
 	chargePerInputByte = 8
 	chargePerNode      = 64
 	chargePerPayload   = 2
-	// chargePerXMLKey is charged per node of an XML document on top of the terms above, up front:
+	// chargePerXMLNode is charged per node of an XML document on top of the terms above, up front:
 	// the encoding/xml scan and the library allocate several hundred bytes per element, and the
 	// scan holds a set of key texts per open dictionary. Measured on XML shapes of 100000 to
 	// 300000 elements (200000 duplicate-key pairs, 100000 distinct keys, 300000 integers, 100000
 	// strings) the total allocation was 1.8 to 2.5 times the charge without this term, and 0.77
-	// or less of the charge with it. An over-charge is allowed, an under-charge is not.
-	chargePerXMLKey = 640
+	// or less of the charge with it. Those shapes were flat: dictionary-heavy documents allocate
+	// more (a map per dictionary in the library and again in the normalizer), so this value is
+	// provisional until TestChargeCoversMeasuredAllocation holds it to every shape. An
+	// over-charge is allowed, an under-charge is not.
+	chargePerXMLNode = 640
 )
 
 // Decode decodes one binary or XML plist into plain values: map[string]any, []any, string
@@ -39,7 +42,7 @@ const (
 // validated and measured (Check: format gate, size, depth, expanded node count and expanded
 // payload bytes, all capped by DefaultLimits); the budget is charged
 //
-//	estimate = len(b)*8 + nodes*64 + payload*2   (+ nodes*chargePerXMLKey for an XML document)
+//	estimate = len(b)*8 + nodes*64 + payload*2   (+ nodes*chargePerXMLNode for an XML document)
 //
 // from the validator's own counts BEFORE the decoding library runs, so a refused charge
 // allocates nothing and returns an error wrapping both ErrNoBudget and the budget's error;
@@ -87,7 +90,7 @@ func decodeCore(b []byte, budget Budget, strict bool) (any, Report, error) {
 	estimate := int64(len(b))*chargePerInputByte + int64(nodes)*chargePerNode + int64(payload)*chargePerPayload
 	if LooksLikeXML(b) {
 		// The duplicate-key scan holds one set of key texts per open dictionary.
-		estimate += int64(nodes) * chargePerXMLKey
+		estimate += int64(nodes) * chargePerXMLNode
 	}
 	if err := budget.Alloc(estimate); err != nil {
 		return nil, Report{}, fmt.Errorf("%w: %w", ErrNoBudget, err)
@@ -136,8 +139,9 @@ func decodeCore(b []byte, budget Budget, strict bool) (any, Report, error) {
 	if err != nil {
 		return nil, Report{}, err
 	}
-	// The loss is the last check: a malformed or over-limit document above returns its own
-	// sentinel from the strict and the lenient entry point alike, and the deferred Free runs here.
+	// Do not fix: the strict refusal comes last on purpose. A malformed or over-limit document
+	// above returns its own sentinel from the strict and the lenient entry point alike, and the
+	// deferred Free runs here.
 	if strict && !rep.Lossless() {
 		return nil, Report{}, &LossError{Report: rep}
 	}

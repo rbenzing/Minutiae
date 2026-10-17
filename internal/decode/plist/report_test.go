@@ -88,8 +88,8 @@ func TestDecodeStrictRefusesDuplicateKeys(t *testing.T) {
 }
 
 // Passes on arrival: Check refuses the document before any duplicate is counted, so both entry
-// points return the malformed sentinel. It pins the binary half of the rule; the mutation that
-// returns the *LossError before the library runs must fail it.
+// points return the malformed sentinel. It is a pin, with no achievable mutation:
+// TestDecodeStrictAndReportAgreeOnMalformedXML guards the ordering of the refusal.
 func TestDecodeStrictAndReportAgreeOnMalformedDocuments(t *testing.T) {
 	b := objectsPlist(
 		[]byte{0xD2, 1, 1, 2, 9}, // value ref 9 is out of range

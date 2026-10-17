@@ -178,7 +178,7 @@ func TestXMLDuplicateSetIsChargedBeforeItIsBuilt(t *testing.T) {
 	if view.Used() != 0 {
 		t.Fatalf("the refused document keeps %d bytes charged", view.Used())
 	}
-	view = newView(base + int64(nodes)*chargePerXMLKey)
+	view = newView(base + int64(nodes)*chargePerXMLNode)
 	_, rep, err := DecodeReport(b, view)
 	if err != nil || rep != (Report{}) {
 		t.Fatalf("with the key term: report %+v err %v", rep, err)
