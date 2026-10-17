@@ -96,12 +96,12 @@ func TestClassifyMatchesTheMeasuredRule(t *testing.T) {
 		{"x\xff\x80", FormOpaque}, // a stray byte after an invalid lead
 		{"\u00e9\x80\xff", FormOpaque},
 		// shapes that look like a measured one but are not shown by any vector (ruling Z40)
-		{"\x80x\x81", FormUndecided},    // a leading stray byte with a later stray byte
-		{"\x80\u00adx", FormUndecided},       // a leading stray byte with an ignorable character
-		{"\x80\x80\x80", FormUndecided}, // three leading stray bytes
-		{"\x80\x80\u00e9", FormUndecided},    // two leading stray bytes then a non-ASCII character
-		{"x\xff\xff", FormUndecided},    // a tail of two lead bytes other than FE FE
-		{"x\u00ad\xff", FormUndecided},       // an ignorable-only text before an invalid tail
+		{"\x80x\x81", FormUndecided},      // a leading stray byte with a later stray byte
+		{"\x80\u00adx", FormUndecided},    // a leading stray byte with an ignorable character
+		{"\x80\x80\x80", FormUndecided},   // three leading stray bytes
+		{"\x80\x80\u00e9", FormUndecided}, // two leading stray bytes then a non-ASCII character
+		{"x\xff\xff", FormUndecided},      // a tail of two lead bytes other than FE FE
+		{"x\u00ad\xff", FormUndecided},    // an ignorable-only text before an invalid tail
 		{"\u00ad\xff", FormUndecided},
 		{"\x80\x80\xff", FormUndecided},
 		{"x\xff\x80\x80", FormUndecided}, // a lead and two stray bytes at the end

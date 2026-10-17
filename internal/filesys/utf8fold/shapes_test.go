@@ -62,7 +62,7 @@ func TestEqualEmptyNameIsUnknown(t *testing.T) {
 // an opaque name is Different from every other name whichever side it is on, an undecided name makes the
 // answer Unknown on either side, and two text names compare by key.
 func TestEqualBothOrdersForEveryKindPairing(t *testing.T) {
-	text := []string{"abc", "ABC", "caf\u00e9", "cafe\u0301", "a\x80b"}
+	text := []string{"abc", "ABC", "caf\u00e9", "cafe\u0301", "a\x80b", string(rune(0x200b))} // the last has an empty key
 	opaque := []string{"x\xff", "\x80x", "x\xc3", "e\u0301\x80\xff"}
 	undecided := []string{"x\xffy", "\x80x\x81", "\u00ad\x80"}
 	check := func(a, b string, want Verdict) {
