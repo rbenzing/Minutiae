@@ -305,6 +305,37 @@ def build(u):
         for b in (b"\x80", b"\xff", b"\xc1\x81"):
             p.add("invalid", pre + b, pre)
             p.add("invalid", pre, pre + b)
+    # Z33: five shapes the first measurement left open, and the combining-mark twins. The Go test
+    # (internal/filesys/utf8fold TestInvalidProbeSetIsComplete, z33Probes) lists the same pairs.
+    p.add("invalid", b"a\xcc\x81\x80", b"A\xcc\x81\x80")
+    e_acute, E_acute, e_comb = b"\xc3\xa9", b"\xc3\x89", b"e\xcc\x81"
+    cjk, smile = b"\xe5\xad\x97", b"\xf0\x9f\x98\x80"
+    z33 = [
+        # 1: a stray byte followed by non-ASCII text or a combining mark
+        (b"a\x80" + e_acute, b"A\x80" + E_acute), (b"a\x80" + e_comb, b"A\x80E\xcc\x81"),
+        (b"a\x80" + e_comb, b"a\x80" + e_acute), (b"x\x80" + cjk, b"X\x80" + cjk),
+        (b"a\x80\xcc\xa3\xcc\x81", b"a\x80\xcc\x81\xcc\xa3"), (b"a\x81" + e_acute, b"A\x81" + E_acute),
+        (b"x\x80\xcc\x81", b"X\x80\xcc\x81"), (b"a\x80\xcc\x81", b"a\x80\xcc\x81"),
+        (b"a\xbf" + smile, b"A\xbf" + smile),
+        # 2: a stray byte mixed with another invalid form
+        (b"x\x80\xff", b"X\x80\xff"), (b"x\x80\xff", b"x\x80\xff"), (b"x\x80\xc1\x81", b"X\x80\xc1\x81"),
+        (b"x\x80\xe2\x82", b"X\x80\xe2\x82"), (b"x\x80\xed\xa0\x80", b"X\x80\xed\xa0\x80"),
+        (b"x\x80\xf4\x90\x80\x80", b"X\x80\xf4\x90\x80\x80"), (e_acute + b"\x80\xff", E_acute + b"\x80\xff"),
+        # 3: a stray byte after an invalid lead
+        (b"x\xff\x80", b"X\xff\x80"), (b"x\xff\x80", b"x\xff\x80"), (b"x\xfe\x80", b"X\xfe\x80"),
+        (b"x\xc0\x80", b"X\xc0\x80"), (b"x\xe2\x80", b"X\xe2\x80"), (b"x\xf8\x80", b"X\xf8\x80"),
+        (e_acute + b"\xff\x80", E_acute + b"\xff\x80"), (b"x\xff\x80", b"x\xff\x81"),
+        # 4: stray bytes at the start, then more stray bytes or multi-byte characters
+        (b"\x80\x80", b"\x80\x80"), (b"\x80\x80x", b"\x80\x80X"), (b"\x80" + e_acute, b"\x80" + E_acute),
+        (b"\x80" + cjk, b"\x80" + cjk), (b"\x80" + e_comb, b"\x80" + e_acute), (b"\x80\x80", b"\x80\x81"),
+        (b"\x81" + e_acute, b"\x81" + E_acute),
+        # 5: several stray bytes with valid text between them
+        (b"a\x80b\x81c", b"A\x80B\x81C"), (b"a\x80b\x81c", b"a\x81b\x80c"), (b"x\x80" + e_acute + b"\x81", b"X\x80" + E_acute + b"\x81"),
+        (b"a\x80b\x80c", b"A\x80B\x80C"), (b"a\x80\xcc\x81b\x81", b"A\x80\xcc\x81B\x81"),
+        (b"a\x80bc\x81d\x82e", b"A\x80BC\x81D\x82E"),
+    ]
+    for s, q in z33:
+        p.add("invalid", s, q)
     p.add("invalid", b"x\xef\xbf\xbd", b"x\xff")  # U+FFFD versus a bad byte
     p.add("invalid", b"x\xc3\x89", b"x\xc3")  # a name that is a prefix of a valid one
     # Z24: the kernel's exact rule for invalid UTF-8 is MEASURED, so probe it densely.
@@ -458,7 +489,7 @@ def merge(out, verdicts, meta):
     meta_out = os.path.join(os.path.dirname(out), "kernel-vectors.meta.json")
     with open(meta_out, "w") as f:
         # the pin of the DECOMPRESSED content: the test decompresses the file and compares
-        json.dump({"vectors_sha256": sha, "rows": len(vectors), "gzip": "gzip -n -9 equivalent (python gzip, level 9, mtime 0)"}, f, indent=1)
+        json.dump({"vectors_sha256": sha, "rows": len(vectors), "gzip": "gzip, level 9, mtime 0 (Python gzip module)"}, f, indent=1)
         f.write("\n")
     print("vectors: %d, ext4/f2fs disagreements: %d, json %d bytes, sha256 %s" % (len(vectors), len(exceptions), len(raw), sha))
 

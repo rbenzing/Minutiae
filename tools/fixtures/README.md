@@ -1232,7 +1232,7 @@ source the recovery fixtures' guest library), `casefold_probes.py` (probe list; 
 Three outputs, committed together because the images are not byte-reproducible (see "QEMU images are
 not byte-reproducible"):
 
-- `internal/filesys/utf8fold/testdata/kernel-vectors.json.gz` (`gzip -n -9` equivalent) and
+- `internal/filesys/utf8fold/testdata/kernel-vectors.json.gz` (gzip, level 9, mtime 0, written by the Python gzip module; only the decompressed content is pinned) and
   `kernel-vectors.meta.json`: the probes and the verdicts (every measured row is kept), with
   `generator.image_sha256` pinning both images and `generator.fsck_exit` recording the checkers' exit
   statuses. The meta file pins the SHA-256 of the DECOMPRESSED JSON and the row count; the tests
@@ -1290,17 +1290,17 @@ was present (`a` and `c` are 1; a refused stored name would record a false negat
 Buckets: a bucket's stored names are pairwise distinct under the script's own fold, because a casefold
 directory keeps one entry for two names the kernel calls equal. A stored name that is not valid UTF-8
 gets a bucket of its own: the first run showed why (the kernel resolved `e` U+0301 0x80 to the entry
-already stored for U+00C9 0x80, so the second spelling was never created). 191 bucket directories.
+already stored for U+00C9 0x80, so the second spelling was never created). 222 bucket directories.
 The probe list has one row per (stored, query) pair: the first category to produce a pair keeps it.
 
-Probe categories (15950 probes): `casefold` (every `C`/`F` folding of `CaseFolding.txt`), `decomposition`
+Probe categories (15988 probes): `casefold` (every `C`/`F` folding of `CaseFolding.txt`), `decomposition`
 (every canonical decomposition), `ignorable` (every `Default_Ignorable_Code_Point`: stored `ab`, query
 `a`+cp+`b`), `unmapped` (2000 assigned code points across all planes, identity, `x`/`X` and `x`/`y`
 controls), `reorder` (combining-mark reordering, runs of 2 to 40 marks, Hangul syllables versus jamo),
 `special` (U+0130, U+0131, U+1E9E, U+00DF, U+03C2/U+03C3/U+03A3, U+212A, U+2126, U+FB03, ...),
 `post-12.1` (code points assigned after Unicode 12.1: U+A7C7/U+A7C8, U+A7C9/U+A7CA, U+A7F5/U+A7F6 from
 13.0, U+A7C0/U+A7C1 and U+061D from 14.0, U+0CF3 from 15.0; the script asserts none is assigned in the
-12.1.0 `UnicodeData.txt`) and `invalid` (573 rows: all 64 lone continuation bytes 0x80-0xBF after `x`,
+12.1.0 `UnicodeData.txt`) and `invalid` (611 rows: all 64 lone continuation bytes 0x80-0xBF after `x`,
 each against its upper-case twin, against the bare prefix and against `x\x80`; every lead byte
 0xC0-0xFF truncated at the end of a name; 0x80 at the start, between letters, doubled, after a
 multi-byte character and after combining marks; overlong forms, a UTF-16 surrogate in UTF-8,
@@ -1330,11 +1330,13 @@ A name containing a newline, a slash or a NUL cannot be a file name here and is 
 - Shared xattr blocks (ruling Z17): the image has no `setfattr`/`getfattr` and busybox has no `*fattr`
   applet, so this guest cannot create them (it would need the `attr` package or a static helper); they stay
   builder-only. Not attempted.
-- ext4 and F2FS gave the same verdict on every one of the 15950 probes (`exceptions` is absent).
+- ext4 and F2FS gave the same verdict on every one of the 15988 probes (`exceptions` is absent).
 - Checker exit statuses of the committed images (recorded in `generator.fsck_exit`): `fsck.ext4 -fn` 0 and
   `fsck.f2fs -f --dry-run` 0. The gate was shown to bite on damaged copies: `fsck.ext4 -fn` exits 4 when the
   group descriptors are zeroed, `fsck.f2fs` exits 255 with both superblocks zeroed and 1 with 600 main-area
-  blocks zeroed (the earlier `| tail || true` form would have recorded 0 for all of them).
+  blocks zeroed (the earlier `| tail || true` form would have recorded 0 for all of them). The F2FS gate
+  has a known blind spot: `fsck.f2fs` exited 0 when the checkpoint area was zeroed, so the gate does not
+  detect a zeroed checkpoint area.
 - A small F2FS image has little user space: 64 MiB leaves 16 MiB and `-o 5` reserves 48 segments; the
   F2FS image is 128 MiB with the default overprovisioning (about 6000 inodes need ~24 MiB).
 - `e2fsck -fn` was clean on the final ext4 image. An earlier run, with a different bucket layout, got
@@ -1358,14 +1360,25 @@ Verdicts the Go code must copy (the vectors are the authority; each is a measure
 - no Turkic mapping (U+0131 is not `I`), full folding (U+00DF equals `ss`), U+212A equals `k`;
 - a code point assigned after 12.1 has NO case mapping (U+A7C7 is not U+A7C8); it still takes part in
   mark reordering;
-- invalid UTF-8, measured by 573 `invalid` rows (ext4 and F2FS agree on all of them):
+- invalid UTF-8, measured by 611 `invalid` rows (ext4 and F2FS agree on all of them):
   - a STRAY CONTINUATION BYTE (0x80-0xBF where a character should start) that comes after at least one
     byte of the name is an ordinary character that folds to itself: `x`+b equals `X`+b for all 64 bytes, the
     text before and after it is case-folded and normalized (`é`+0x80 equals `É`+0x80, `a`+U+0323+0x80 equals
     `A`+U+0323+0x80, `a`+0x80+`b` equals `A`+0x80+`B`, doubled stray bytes too), but it is never ignored
     (`x`+b differs from `x`) and different bytes differ (`x\x80` equals `x`+b only for b = 0x80);
+  - the stray byte also behaves as text when the valid text after it is non-ASCII or a combining mark
+    (`a\x80é` equals `A\x80É`, `a\x80e`+U+0301 equals `a\x80é`, `a\x80`+U+0323+U+0301 equals
+    `a\x80`+U+0301+U+0323, a CJK or an emoji after it) and when several stray bytes have valid text between
+    them (`a\x80b\x81c` equals `A\x80B\x81C` but differs from `a\x81b\x80c`; also `a\x80b\x80c`, with a
+    non-ASCII or a combining mark between);
   - a stray continuation byte at the START of a name makes the whole name opaque: `\x80` equals itself,
-    but `\x80x` differs from `\x80X`, and `\x80x` from `\x81x`;
+    but `\x80x` differs from `\x80X`, and `\x80x` from `\x81x`; likewise `\x80\x80x` (doubled), `\x80é`,
+    `\x80e`+U+0301 against `\x80é` and `\x81é` against `\x81É` are all different (opaque), while a
+    CJK or identical name equals itself;
+  - a stray byte mixed with another invalid form makes the whole name opaque: `x\x80\xff`, `x\x80\xc1\x81`,
+    `x\x80\xe2\x82`, `x\x80`+ED A0 80, `x\x80`+F4 90 80 80 and `é\x80\xff` differ from their case twins;
+    a stray byte AFTER an invalid lead (`x\xff\x80`, `x\xfe\x80`, `x\xc0\x80`, `x\xe2\x80`, `x\xf8\x80`,
+    `é\xff\x80`) is likewise opaque, and `x\xff\x80` differs from `x\xff\x81`;
   - every other invalid form makes the whole name opaque (compared byte for byte, no case folding, no
     normalization): all 64 lead bytes 0xC0-0xFF truncated at the end of a name (`x`+lead differs from
     `X`+lead and from `x`), overlong forms (C0 AF, C1 81), a truncated sequence (E2 82), a UTF-16 surrogate
@@ -1373,7 +1386,8 @@ Verdicts the Go code must copy (the vectors are the authority; each is a measure
   - an overlong form does not resolve to its character (`xA` differs from `x` C1 81), U+FFFD does not equal
     a bad byte;
   - U+FFFE, U+FFFF and U+10FFFF are ordinary valid names (folded and normalized like any other).
-  The raw guest log and verdict lines of this run are kept in the LX-7a report folder (`task-2-fix-logs`).
+  The raw guest logs of each run are kept locally by whoever generated them (they are not committed); the
+  committed vectors are the authority.
 
 ### Pins and licence
 

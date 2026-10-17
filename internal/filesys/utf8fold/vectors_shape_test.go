@@ -232,6 +232,45 @@ func TestInvalidProbeSetIsComplete(t *testing.T) {
 	need("x\x80\x80", "x\x80")
 	need("é\x80", "É\x80")
 	need("ạ\x80", "Ạ\x80")
+	need("á\x80", "Á\x80")
+	for b := 0xC0; b <= 0xFF; b++ {
+		need("x"+string([]byte{byte(b)}), "x"+string([]byte{byte(b)})) // the lead-byte identity rows
+	}
+	need("x\x80", "x\x81")
+	need("x\x80\x80", "x\x81\x81")
+	need("\x80x", "\x81x")
+	// ruling Z33: the five shapes the first measurement left open
+	for _, p := range z33Probes {
+		need(p[0], p[1])
+	}
+}
+
+// z33Probes are the (stored, query) pairs of the five invalid shapes added by ruling Z33: (1) a stray byte
+// followed by non-ASCII text or a combining mark, (2) a stray byte mixed with another invalid form, (3) a
+// stray byte after an invalid lead, (4) stray bytes at the start followed by more stray bytes or multi-byte
+// characters, (5) several stray bytes with valid text between them. tools/fixtures/casefold_probes.py
+// lists the same pairs.
+var z33Probes = [][2]string{
+	// 1
+	{"a\x80é", "A\x80É"}, {"a\x80é", "A\x80É"}, {"a\x80é", "a\x80é"},
+	{"x\x80字", "X\x80字"}, {"a\x80̣́", "a\x80̣́"}, {"a\x81é", "A\x81É"},
+	{"x\x80́", "X\x80́"}, {"a\x80́", "a\x80́"}, {"a\xbf\U0001f600", "A\xbf\U0001f600"},
+	// 2
+	{"x\x80\xff", "X\x80\xff"}, {"x\x80\xff", "x\x80\xff"}, {"x\x80\xc1\x81", "X\x80\xc1\x81"},
+	{"x\x80\xe2\x82", "X\x80\xe2\x82"}, {"x\x80\xed\xa0\x80", "X\x80\xed\xa0\x80"},
+	{"x\x80\xf4\x90\x80\x80", "X\x80\xf4\x90\x80\x80"}, {"é\x80\xff", "É\x80\xff"},
+	// 3
+	{"x\xff\x80", "X\xff\x80"}, {"x\xff\x80", "x\xff\x80"}, {"x\xfe\x80", "X\xfe\x80"},
+	{"x\xc0\x80", "X\xc0\x80"}, {"x\xe2\x80", "X\xe2\x80"}, {"x\xf8\x80", "X\xf8\x80"},
+	{"é\xff\x80", "É\xff\x80"}, {"x\xff\x80", "x\xff\x81"},
+	// 4
+	{"\x80\x80", "\x80\x80"}, {"\x80\x80x", "\x80\x80X"}, {"\x80é", "\x80É"},
+	{"\x80字", "\x80字"}, {"\x80é", "\x80é"}, {"\x80\x80", "\x80\x81"},
+	{"\x81é", "\x81É"},
+	// 5
+	{"a\x80b\x81c", "A\x80B\x81C"}, {"a\x80b\x81c", "a\x81b\x80c"}, {"x\x80é\x81", "X\x80É\x81"},
+	{"a\x80b\x80c", "A\x80B\x80C"}, {"a\x80́b\x81", "A\x80́B\x81"},
+	{"a\x80bc\x81d\x82e", "A\x80BC\x81D\x82E"},
 }
 
 type expectDir struct {
