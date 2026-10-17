@@ -36,7 +36,7 @@ func (c *Case) verifyIndexState(ctx context.Context, rep *VerifyReport, ps *prob
 		return nil
 	})
 	if err != nil {
-		unreadable(rep, "full-text index state", err)
+		unreadable(ctx, rep, "full-text index state", err)
 		return false
 	}
 	// the content is compared whenever the audit log says this build built the index, whatever

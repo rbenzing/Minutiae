@@ -225,8 +225,8 @@ type recordRowMeta struct {
 	sig      string // typeof() of every column of the row, comma separated
 }
 
-func unreadable(rep *VerifyReport, what string, err error) {
-	if ctxCaused(err) {
+func unreadable(ctx context.Context, rep *VerifyReport, what string, err error) {
+	if ctxCaused(ctx, err) {
 		rep.cancelCut = true // the end of the verify context, reported once as "verification cancelled", is not corruption
 		return
 	}
@@ -277,7 +277,7 @@ func (c *Case) verifyRecords(ctx context.Context, rep *VerifyReport, recs []Mani
 	}
 	dbArtifacts, dbErr := c.store.ArtifactHashes()
 	if dbErr != nil {
-		unreadable(rep, "artifacts", dbErr)
+		unreadable(ctx, rep, "artifacts", dbErr)
 	}
 
 	batches, ok := c.readStoredBatches(ctx, rep, ps)
@@ -408,7 +408,7 @@ func (c *Case) verifyRecords(ctx context.Context, rep *VerifyReport, recs []Mani
 func (c *Case) checkBatches(rep *VerifyReport, ps *problemSet, audit *recordAudit, sorted []auditedBatch, acc []*batchAcc, byKey map[batchKey]storedBatch, batchesRead bool) {
 	pending := map[string]bool{}
 	if un, err := c.UnresolvedIngests(); err != nil {
-		unreadable(rep, "unresolved ingests", err)
+		unreadable(context.Background(), rep, "unresolved ingests", err)
 	} else {
 		for _, u := range un {
 			pending[u.Start.IngestID] = true
@@ -472,7 +472,7 @@ func (c *Case) checkBatches(rep *VerifyReport, ps *problemSet, audit *recordAudi
 func (c *Case) verifySchemaObjects(ctx context.Context, ps *problemSet, version int) {
 	expected, err := expectedSchema(version)
 	if err != nil {
-		unreadable(ps.rep, "expected schema", err)
+		unreadable(ctx, ps.rep, "expected schema", err)
 		return
 	}
 	var found map[string]schemaObject
@@ -482,7 +482,7 @@ func (c *Case) verifySchemaObjects(ctx context.Context, ps *problemSet, version 
 		return err
 	})
 	if err != nil {
-		unreadable(ps.rep, "schema objects", err)
+		unreadable(ctx, ps.rep, "schema objects", err)
 		return
 	}
 	for _, d := range schemaDifferences(expected, found) {
@@ -518,7 +518,7 @@ func (c *Case) verifyIntegrityCheck(ctx context.Context, rep *VerifyReport) {
 		return rows.Err()
 	})
 	if err != nil {
-		unreadable(rep, "integrity_check", err)
+		unreadable(ctx, rep, "integrity_check", err)
 		return
 	}
 	if len(msgs) == 1 && msgs[0] == "ok" {
@@ -555,7 +555,7 @@ func (c *Case) readStoredBatches(ctx context.Context, rep *VerifyReport, ps *pro
 			return rows.Err()
 		})
 		if err != nil {
-			unreadable(rep, "record_batches", err)
+			unreadable(ctx, rep, "record_batches", err)
 			return out, false
 		}
 		for i, b := range chunk {
@@ -606,7 +606,7 @@ func (c *Case) verifyParsers(ctx context.Context, rep *VerifyReport, ps *problem
 		return rs.Err()
 	})
 	if err != nil {
-		unreadable(rep, "parsers", err)
+		unreadable(ctx, rep, "parsers", err)
 		return false
 	}
 	for _, p := range rows {
@@ -723,7 +723,7 @@ func (c *Case) streamRecords(ctx context.Context, ps *problemSet, chunkRows int,
 			return ts.Err()
 		})
 		if err != nil {
-			unreadable(rep, "records", err)
+			unreadable(ctx, rep, "records", err)
 			return false
 		}
 		if observe != nil {
@@ -781,7 +781,7 @@ func (c *Case) checkTableCount(ctx context.Context, rep *VerifyReport, table str
 	})
 	switch {
 	case err != nil:
-		unreadable(rep, table+" count", err)
+		unreadable(ctx, rep, table+" count", err)
 	case n != read:
 		rep.problemf("%s holds %d rows but verify read %d of them", table, n, read)
 	}
@@ -800,7 +800,7 @@ func (c *Case) checkNextID(ctx context.Context, rep *VerifyReport, maxID int64) 
 		return h.QueryRowContext(ctx, `SELECT value FROM records_meta WHERE key = 'next_id'`).Scan(&v)
 	})
 	if err != nil {
-		unreadable(rep, "records_meta next_id", err)
+		unreadable(ctx, rep, "records_meta next_id", err)
 		return
 	}
 	n, perr := strconv.ParseInt(v, 10, 64)
@@ -852,7 +852,7 @@ func (c *Case) verifyMetaKeys(ctx context.Context, ps *problemSet, dbv int) {
 		return rows.Err()
 	})
 	if err != nil {
-		unreadable(ps.rep, "records_meta keys", err)
+		unreadable(ctx, ps.rep, "records_meta keys", err)
 		return
 	}
 	for _, k := range keys {

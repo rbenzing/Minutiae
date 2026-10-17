@@ -96,7 +96,8 @@ func hashFileContext(ctx context.Context, path string) (Digests, error) {
 	return hashReaderContext(ctx, f)
 }
 
-// ctxCaused reports whether err is the end of a context, not a failure of the thing being read.
-func ctxCaused(err error) bool {
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+// ctxCaused reports whether err is the end of the verify context ctx: ctx must really have ended and err
+// must be a context error, so a Canceled wrapped by some other reader is still a problem.
+func ctxCaused(ctx context.Context, err error) bool {
+	return ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded))
 }

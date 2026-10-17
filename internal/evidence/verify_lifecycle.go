@@ -312,7 +312,7 @@ func (c *Case) checkRuns(ctx context.Context, rep *VerifyReport, ps *problemSet,
 			return rows.Err()
 		})
 		if err != nil {
-			unreadable(rep, "record_runs", err)
+			unreadable(ctx, rep, "record_runs", err)
 			return have, false
 		}
 		for _, r := range chunk {
@@ -434,7 +434,7 @@ func (c *Case) checkCoverage(ctx context.Context, rep *VerifyReport, ps *problem
 			return rows.Err()
 		})
 		if err != nil {
-			unreadable(rep, "record_run_artifacts", err)
+			unreadable(ctx, rep, "record_run_artifacts", err)
 			return
 		}
 		for i, p := range chunk {
@@ -528,7 +528,7 @@ func (c *Case) checkSupersession(ctx context.Context, rep *VerifyReport, ps *pro
 			return rows.Err()
 		})
 		if err != nil {
-			unreadable(rep, "record_superseded", err)
+			unreadable(ctx, rep, "record_superseded", err)
 			return
 		}
 		for i, p := range pairs {

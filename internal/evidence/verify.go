@@ -99,31 +99,7 @@ func (c *Case) verifyRun(ctx context.Context, observe verifyChunkObserver, check
 	inManifest := map[string]bool{}
 	seenID := map[string]bool{}
 	doneArtifacts := c.phase("artifacts")
-	for _, r := range recs {
-		inManifest[r.Path] = true
-		if seenID[r.ID] {
-			rep.problemf("artifact %s: duplicate manifest id (%s)", r.ID, r.Path)
-		}
-		seenID[r.ID] = true
-		if rep.cancelCut || ctx.Err() != nil {
-			rep.cancelCut = true // the rest is not hashed: the artifact is still in the manifest, just not checked
-			continue
-		}
-		d, err := hashFileContext(ctx, filepath.Join(c.Dir, filepath.FromSlash(r.Path)))
-		if ctxCaused(err) {
-			rep.cancelCut = true
-			continue
-		}
-		rep.ArtifactsChecked++
-		if err != nil {
-			rep.problemf("artifact %s (%s): %v", r.ID, r.Path, err)
-			continue
-		}
-		if d.Size != r.Size || d.SHA256 != r.SHA256 || d.MD5 != r.MD5 {
-			rep.problemf("artifact %s (%s): hash mismatch: manifest sha256=%s size=%d, file sha256=%s size=%d",
-				r.ID, r.Path, r.SHA256, r.Size, d.SHA256, d.Size)
-		}
-	}
+	c.hashArtifacts(ctx, &rep, recs, inManifest, seenID)
 	doneArtifacts()
 
 	c.checkDerived(&rep, recs)
@@ -480,4 +456,35 @@ func (r *VerifyReport) MarkReproduceRan() { r.reproduceRan = true }
 // integrity finding was made, so the caller may treat it as a cancel and not as an integrity failure.
 func (r VerifyReport) CancelledOnly() bool {
 	return len(r.Problems) == 1 && r.Problems[0] == verifyCancelled
+}
+
+// hashArtifacts re-hashes every manifest artifact (phase "artifacts") and compares the result with the
+// manifest. It stops hashing when ctx ends: the remaining artifacts stay in inManifest (they are in the
+// manifest, only not checked) and the report is marked cut, so verifyRun adds the cancelled line.
+func (c *Case) hashArtifacts(ctx context.Context, rep *VerifyReport, recs []ManifestRecord, inManifest, seenID map[string]bool) {
+	for _, r := range recs {
+		inManifest[r.Path] = true
+		if seenID[r.ID] {
+			rep.problemf("artifact %s: duplicate manifest id (%s)", r.ID, r.Path)
+		}
+		seenID[r.ID] = true
+		if rep.cancelCut || ctx.Err() != nil {
+			rep.cancelCut = true // the rest is not hashed: the artifact is still in the manifest, just not checked
+			continue
+		}
+		d, err := hashFileContext(ctx, filepath.Join(c.Dir, filepath.FromSlash(r.Path)))
+		if ctxCaused(ctx, err) {
+			rep.cancelCut = true
+			continue
+		}
+		rep.ArtifactsChecked++
+		if err != nil {
+			rep.problemf("artifact %s (%s): %v", r.ID, r.Path, err)
+			continue
+		}
+		if d.Size != r.Size || d.SHA256 != r.SHA256 || d.MD5 != r.MD5 {
+			rep.problemf("artifact %s (%s): hash mismatch: manifest sha256=%s size=%d, file sha256=%s size=%d",
+				r.ID, r.Path, r.SHA256, r.Size, d.SHA256, d.Size)
+		}
+	}
 }

@@ -164,6 +164,10 @@ func (c *Case) verifyFTS(ctx context.Context, ps *problemSet, observe verifyChun
 	r := &ftsVerify{c: c, ctx: ctx, ps: ps, rep: ps.rep, problems: map[string]int{}, listed: map[string]map[int64]bool{}}
 	defer r.cleanup() // runs on a panic too
 	if err := r.setup(); err != nil {
+		if ctxCaused(ctx, err) { // cancelled before the rebuild could start: a cut, reported once by verifyRun
+			r.rep.cancelCut = true
+			return
+		}
 		r.rep.problemf("%s: the full-text index cannot be verified: its private rebuild could not be set up: %q", FTSWordTable, err.Error())
 		return
 	}
@@ -350,7 +354,7 @@ func (r *ftsVerify) addRecord(table, base string, doc int64, format string, a ..
 
 // fail reports an error that stopped a step. An error of the rebuilt index ends the whole check.
 func (r *ftsVerify) fail(table string, err error) {
-	if ctxCaused(err) {
+	if ctxCaused(r.ctx, err) {
 		r.dead = true
 		r.rep.cancelCut = true
 		return

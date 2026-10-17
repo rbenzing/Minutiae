@@ -156,7 +156,7 @@ func (c *Case) verifyClassOnly(ctx context.Context, ps *problemSet, tc tableClas
 		return rows.Err()
 	})
 	if err != nil {
-		unreadable(ps.rep, tc.table+" storage classes", err)
+		unreadable(ctx, ps.rep, tc.table+" storage classes", err)
 		return
 	}
 	for _, b := range found {
