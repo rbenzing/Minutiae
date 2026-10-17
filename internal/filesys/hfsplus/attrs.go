@@ -45,6 +45,7 @@ type attrInfo struct {
 	decmpfs  bool     // a com.apple.decmpfs attribute exists
 	value    []byte   // its inline value (nil when it is stored as a fork or is too long)
 	unread   bool     // the tree could not be read (completely): the info may be missing
+	bad      int      // damaged attribute records skipped
 }
 
 // attrTree returns the attributes tree, nil when the volume has none or when
@@ -175,6 +176,7 @@ func (f *FS) attributesOf(cnid uint32) (attrInfo, error) {
 	})
 	if bad > 0 {
 		f.warn("attributes of id %d: %d damaged records were skipped (first: %s)", cnid, bad, firstBad)
+		out.bad = bad
 	}
 	switch {
 	case err == nil:

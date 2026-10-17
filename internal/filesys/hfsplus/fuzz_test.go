@@ -47,6 +47,7 @@ func FuzzHFSPlusOpen(f *testing.F) {
 			if visited++; visited > fuzzWalkBudget {
 				return errFuzzBudget
 			}
+			fuzzXattrs(t, fsys, e)
 			if e.Type != filesys.TypeFile && e.Type != filesys.TypeSymlink {
 				return nil
 			}
@@ -152,6 +153,7 @@ func TestFuzzFixtureSeedsOpen(t *testing.T) {
 				return nil
 			}
 			if e.Type == filesys.TypeFile {
+				fuzzXattrs(t, fsys, e)
 				if file, err := fsys.Open(e); err == nil {
 					checkFuzzRuns(t, e.Name, file, fsys.Info().Size)
 				}
@@ -171,4 +173,29 @@ func TestFuzzFixtureSeedsOpen(t *testing.T) {
 			}
 		}
 	}
+}
+
+// fuzzXattrs lists the attributes of e and opens and reads (the first 64 KiB of)
+// every listed one. Errors of any class are fine; panics and reads beyond the
+// size are not.
+func fuzzXattrs(t *testing.T, fsys *hfsplus.FS, e filesys.Entry) {
+	t.Helper()
+	xs, err := fsys.Xattrs(e)
+	if err != nil {
+		return
+	}
+	for i, x := range xs {
+		if i >= 64 {
+			break
+		}
+		fl, err := fsys.OpenXattr(e, x.Name)
+		if err != nil {
+			continue
+		}
+		checkFuzzRuns(t, x.Name, fl, fsys.Info().Size)
+		buf := make([]byte, min(fl.Size(), 1<<16))
+		_, _ = fl.ReadAt(buf, 0)
+	}
+	_, _ = fsys.OpenXattr(e, "com.apple.decmpfs")
+	_, _ = fsys.OpenXattr(e, "com.apple.ResourceFork")
 }

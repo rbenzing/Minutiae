@@ -570,3 +570,54 @@ func TestExtractFromAPFSFixture(t *testing.T) {
 	}
 	verifyOK(t, c)
 }
+
+// An opted-in recursive extract of an APFS volume descends into .snapshots: every artifact
+// under a snapshot carries that snapshot's reference (name and xid) and the bytes of the
+// snapshot, no live artifact carries one, and no skip warning is written.
+func TestExtractAPFSIncludeSnapshotsProvenance(t *testing.T) {
+	if testing.Short() {
+		t.Skip("end-to-end tests are skipped under -short")
+	}
+	v := apfsData(
+		apfstest.File{Path: "/a.txt", Data: []byte("new bytes")},
+		apfstest.File{Path: "/live.txt", Data: []byte("live")},
+	)
+	v.Snapshots = []apfstest.Snapshot{{Name: "S", Files: []apfstest.File{
+		{Path: "/a.txt", Data: []byte("old bytes!")},
+		{Path: "/gone.txt", Data: []byte("gone")},
+	}}}
+	s, _ := imageSession(t, apfsImage(v))
+	c := s.Case
+	sum := extractAll(t, s, examine.ExtractOptions{Partition: -1, Paths: []string{"/Data"}, Recursive: true, IncludeSnapshots: true})
+	var live, snap int
+	for _, a := range sum.Artifacts {
+		p := a.Source.RemotePath
+		d := a.Source.Derived
+		if d == nil {
+			t.Fatalf("%s: no derivation", p)
+		}
+		if strings.HasPrefix(p, "/Data/.snapshots/S/") {
+			snap++
+			if d.Snapshot == nil || d.Snapshot.Name != "S" || d.Snapshot.Xid != 2 {
+				t.Errorf("%s: snapshot provenance = %+v, want {S 2}", p, d.Snapshot)
+			}
+			continue
+		}
+		live++
+		if d.Snapshot != nil {
+			t.Errorf("%s: a live artifact records snapshot %+v", p, d.Snapshot)
+		}
+	}
+	if live != 2 || snap != 2 {
+		t.Errorf("%d live and %d snapshot artifacts, want 2 and 2: %v", live, snap, extractedByPath(sum))
+	}
+	if got := extractedByPath(sum)["/Data/.snapshots/S/a.txt"]; string(readArtifact(t, c, got)) != "old bytes!" {
+		t.Errorf("snapshot bytes = %q", readArtifact(t, c, got))
+	}
+	for _, e := range auditByAction(t, c, "analysis.warning") {
+		if e.Details["source"] == "examine" {
+			t.Errorf("an opted-in run wrote a skip warning: %+v", e.Details)
+		}
+	}
+	verifyOK(t, c)
+}

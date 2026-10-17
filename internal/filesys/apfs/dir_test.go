@@ -312,7 +312,7 @@ func TestHardLinks(t *testing.T) {
 func TestSymlinkTarget(t *testing.T) {
 	files := []apfstest.File{
 		{Path: "/embedded", Symlink: "../target"},
-		{Path: "/stream", Symlink: "x", SymlinkStream: true},
+		{Path: "/stream", Symlink: "x", SymlinkStream: true, SymlinkStreamNoData: true},
 		{Path: "/binary", Symlink: "caf\xe9\xff"},
 	}
 	f, _ := openOpts(t, volOpts(dataVolume(files...)))

@@ -112,7 +112,7 @@ func displayName(raw []byte) (string, []byte) {
 	if plainName(raw) {
 		return string(raw), nil
 	}
-	return rawPrefix + base64.RawURLEncoding.EncodeToString(raw), slices.Clone(raw)
+	return filesys.RawNameAlias(raw), slices.Clone(raw)
 }
 
 func plainName(raw []byte) bool {

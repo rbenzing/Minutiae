@@ -273,7 +273,7 @@ func TestClonedFileReadsViaPrivateID(t *testing.T) {
 func TestSymlinkOpenReturnsTarget(t *testing.T) {
 	f, _ := openOpts(t, volOpts(dataVolume(
 		apfstest.File{Path: "/ok", Symlink: "docs/a.txt"},
-		apfstest.File{Path: "/stream", Symlink: "x", SymlinkStream: true},
+		apfstest.File{Path: "/stream", Symlink: "x", SymlinkStream: true, SymlinkStreamNoData: true},
 		apfstest.File{Path: "/notarget", Mode: 0o120777},
 	)))
 	fl := openPath(t, f, "/Data/ok")
@@ -283,8 +283,8 @@ func TestSymlinkOpenReturnsTarget(t *testing.T) {
 	if got := readAllAt(t, fl); string(got) != "docs/a.txt" {
 		t.Errorf("target = %q", got)
 	}
-	if _, err := f.Open(mustLookup(t, f, "/Data/stream")); !errors.Is(err, filesys.ErrUnsupported) {
-		t.Errorf("stream symlink: %v, want ErrUnsupported", err)
+	if _, err := f.Open(mustLookup(t, f, "/Data/stream")); !errors.Is(err, filesys.ErrCorrupt) {
+		t.Errorf("stream symlink: %v, want ErrCorrupt", err)
 	}
 	if _, err := f.Open(mustLookup(t, f, "/Data/notarget")); !errors.Is(err, filesys.ErrCorrupt) {
 		t.Errorf("symlink without a target: %v, want ErrCorrupt", err)

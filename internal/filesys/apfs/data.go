@@ -63,7 +63,7 @@ func (f *FS) Open(e filesys.Entry) (filesys.File, error) {
 	case modeDir:
 		return nil, fmt.Errorf("apfs: %w: inode %d of volume %d is a directory", filesys.ErrUnsupported, ino, v.slot)
 	case modeSymlink:
-		return f.openSymlink(v, in)
+		return f.openSymlink(v, view, in)
 	case modeReg:
 	default:
 		return nil, fmt.Errorf("apfs: %w: inode %d of volume %d (mode %#o) is neither a regular file nor a symlink", filesys.ErrUnsupported, ino, v.slot, in.mode)
@@ -89,24 +89,104 @@ func (f *FS) Open(e filesys.Entry) (filesys.File, error) {
 		}
 		f.warn("volume %d inode %d: per-file encryption (crypto id %#x): the content is returned as stored on disk (ciphertext), not decrypted", v.slot, ino, id)
 	}
-	fl := &file{r: f.data, size: size, avail: m.covered, runs: m.runs, tail: m.tail, enc: cryptoAnomaly(in.cryptoID) || m.cryptoSeen}
+	return f.newFile(m, size, cryptoAnomaly(in.cryptoID) || m.cryptoSeen), nil
+}
+
+// newFile builds the readable file of a validated map.
+func (f *FS) newFile(m *fileMap, size int64, enc bool) *file {
+	fl := &file{r: f.data, size: size, avail: m.covered, runs: m.runs, tail: m.tail, enc: enc}
 	fl.starts = make([]int64, len(m.runs))
 	var at int64
 	for i, r := range m.runs {
 		fl.starts[i] = at
 		at += r.Length
 	}
-	return fl, nil
+	return fl
+}
+
+// trimTail drops the last k bytes of a run-backed file (0 < k < size): size,
+// avail, runs and starts stay consistent, so Runs still covers [0, Size())
+// exactly.
+func (fl *file) trimTail(k int64) {
+	fl.size -= k
+	fl.avail = min(fl.avail, fl.size)
+	for k > 0 && len(fl.runs) > 0 {
+		last := &fl.runs[len(fl.runs)-1]
+		if last.Length > k {
+			last.Length -= k
+			return
+		}
+		k -= last.Length
+		fl.runs = fl.runs[:len(fl.runs)-1]
+		fl.starts = fl.starts[:len(fl.starts)-1]
+	}
+}
+
+// openStreamSymlink maps and reads the stream-stored target of in. The declared
+// size is bounded (maxLinkStream). The bytes to read (not the declared size)
+// are charged to the per-filesystem linkBudget once the stream is mapped; a
+// failure before the read, or a failed or short read, refunds the charge. The
+// caller warns about a refusal. Trailing NULs are dropped as for an embedded
+// target, and an empty result is corrupt. Errors are filesys.ErrUnsupported
+// (bound, budget), filesys.ErrCorrupt (damaged stream) or an I/O error.
+func (f *FS) openStreamSymlink(v *volume, view uint64, in *inode) (*file, []byte, error) {
+	if in.symlinkSize > maxLinkStream {
+		return nil, nil, unsupported("the %d-byte target of symlink inode %d of volume %d is over the %d-byte limit", in.symlinkSize, in.ino, v.slot, maxLinkStream)
+	}
+	fl, err := f.streamFile(v, view, in.symlinkOID, in.ino, in.symlinkSize, "symlink stream")
+	if err != nil {
+		return nil, nil, err
+	}
+	if !f.chargeLink(fl.Size()) {
+		return nil, nil, unsupported("the stream-stored symlink target budget is spent (inode %d of volume %d)", in.ino, v.slot)
+	}
+	buf := make([]byte, fl.Size()) // <= maxLinkStream
+	if n, err := fl.ReadAt(buf, 0); n != len(buf) {
+		f.linkBudget.Add(fl.Size()) // a failed or short read spends nothing
+		if err == nil || errors.Is(err, io.EOF) {
+			err = io.ErrUnexpectedEOF
+		}
+		return nil, nil, err
+	}
+	target := bytes.TrimRight(buf, "\x00")
+	if len(target) == 0 {
+		return nil, nil, corrupt("symlink", -1, "volume %d inode %d: the stream-stored target is empty", v.slot, in.ino)
+	}
+	if k := int64(len(buf) - len(target)); k > 0 {
+		fl.trimTail(k)
+	}
+	return fl, target, nil
+}
+
+// chargeLink takes n bytes from the stream-symlink budget; false (and nothing
+// taken) when fewer than n remain. A compare-and-swap loop, so a refused
+// reader never drives the budget transiently below zero for the others.
+func (f *FS) chargeLink(n int64) bool {
+	for {
+		cur := f.linkBudget.Load()
+		if cur < n {
+			return false
+		}
+		if f.linkBudget.CompareAndSwap(cur, cur-n) {
+			return true
+		}
+	}
 }
 
 // openSymlink returns the target held in the symlink xattr.
-func (f *FS) openSymlink(v *volume, in *inode) (filesys.File, error) {
+func (f *FS) openSymlink(v *volume, view uint64, in *inode) (filesys.File, error) {
 	switch {
 	case in.symlinkOK:
 		n := int64(len(in.symlink))
 		return &file{size: n, avail: n, mem: slices.Clone(in.symlink), inline: true}, nil
+	case in.symlinkStream:
+		fl, _, err := f.openStreamSymlink(v, view, in)
+		if err != nil {
+			return nil, err
+		}
+		return fl, nil
 	case in.symlinkSet:
-		return nil, unsupported("the target of symlink inode %d of volume %d is stored as a data stream", in.ino, v.slot)
+		return nil, corrupt("symlink", -1, "volume %d inode %d: the target xattr has an unusable form", v.slot, in.ino)
 	}
 	return nil, corrupt("symlink", -1, "volume %d inode %d is a symlink without a target", v.slot, in.ino)
 }
@@ -171,6 +251,14 @@ func (b *runBuilder) addAll(rs ...filesys.Run) bool {
 // phys_block_num 0 are holes; extents entirely beyond size are ignored (the
 // scan stops there). A read failure that is not corruption is returned.
 func (f *FS) fileMap(v *volume, view uint64, in *inode, size int64) (*fileMap, error) {
+	return f.extentMap(v, view, in.privateID, in.ino, size)
+}
+
+// extentMap is fileMap for the extent records keyed by id (a file's private id,
+// or the object id of an extended-attribute stream); owner names the object in
+// messages. size is the length the caller trusts. Everything fileMap documents
+// holds here: validation per extent, the trusted prefix, holes for gaps.
+func (f *FS) extentMap(v *volume, view uint64, id, owner uint64, size int64) (*fileMap, error) {
 	m := &fileMap{}
 	rb := &runBuilder{max: f.maxFileRuns}
 	var (
@@ -182,15 +270,14 @@ func (f *FS) fileMap(v *volume, view uint64, in *inode, size int64) (*fileMap, e
 	)
 	capReason := fmt.Sprintf("more than %d runs", f.maxFileRuns)
 
-	if in.privateID == 0 || in.privateID > maxIno {
-		reason = fmt.Sprintf("the private id %d is not a valid object id", in.privateID)
+	if id == 0 || id > maxIno {
+		reason = fmt.Sprintf("the private id %d is not a valid object id", id)
 	} else {
 		t, err := f.fsTree(v, view)
 		if err != nil {
 			return nil, err
 		}
 		f.scans.Add(1)
-		id := in.privateID
 		prefix := func(key []byte) int {
 			k := le.Uint64(key)
 			kid, kt := k&jobjIDMask, uint8(k>>60)
@@ -253,7 +340,7 @@ func (f *FS) fileMap(v *volume, view uint64, in *inode, size int64) (*fileMap, e
 			}
 			if flags != 0 && !flagsWarned {
 				flagsWarned = true // one warning per file
-				f.warn("volume %d inode %d: extent at logical address %d has flags %#x, none are defined", v.slot, in.ino, logical, flags)
+				f.warn("volume %d inode %d: extent at logical address %d has flags %#x, none are defined", v.slot, owner, logical, flags)
 			}
 			if !m.cryptoSeen && cryptoAnomaly(crypto) {
 				m.crypto, m.cryptoSeen = crypto, true
@@ -279,7 +366,7 @@ func (f *FS) fileMap(v *volume, view uint64, in *inode, size int64) (*fileMap, e
 		})
 		switch {
 		case err != nil && (errors.Is(err, errNodeBudget) || (!errors.Is(err, filesys.ErrCorrupt) && !errors.Is(err, filesys.ErrNotFound) && !isShort(err))):
-			return nil, fmt.Errorf("apfs: volume %d inode %d: extents: %w", v.slot, in.ino, err)
+			return nil, fmt.Errorf("apfs: volume %d inode %d: extents: %w", v.slot, owner, err)
 		case err != nil && reason == "":
 			reason = fmt.Sprintf("the extent tree cannot be read: %v", err)
 		case ooo && reason == "":
@@ -295,8 +382,8 @@ func (f *FS) fileMap(v *volume, view uint64, in *inode, size int64) (*fileMap, e
 	}
 	m.runs, m.covered = rb.runs, pos
 	if reason != "" {
-		m.tail = corrupt("file extents", -1, "volume %d inode %d: %s", v.slot, in.ino, reason)
-		f.warn("volume %d inode %d: %s; the first %d of %d bytes are readable and the rest reads as an error", v.slot, in.ino, reason, pos, size)
+		m.tail = corrupt("file extents", -1, "volume %d inode %d: %s", v.slot, owner, reason)
+		f.warn("volume %d inode %d: %s; the first %d of %d bytes are readable and the rest reads as an error", v.slot, owner, reason, pos, size)
 	}
 	return m, nil
 }
@@ -351,6 +438,9 @@ func (fl *file) ReadAt(p []byte, off int64) (int, error) {
 			return int(n), io.ErrUnexpectedEOF // unreachable: avail == size without a tail error
 		}
 		if fl.inline {
+			if int64(len(fl.mem)) < fl.avail {
+				return int(n), corrupt("file data", -1, "an inline file of %d bytes holds only %d", fl.avail, len(fl.mem))
+			}
 			n += int64(copy(p[n:want], fl.mem[pos:]))
 			continue
 		}
@@ -399,3 +489,8 @@ func fsKeyInOrder(prev, cur []byte) bool {
 // (filesys.EncryptedFile). A listing only sees the dstream id; this also sees
 // the extents.
 func (fl *file) Encrypted() bool { return fl.enc }
+
+const (
+	maxLinkStream = 1 << 16  // longest stream-stored symlink target read
+	maxLinkBytes  = 64 << 20 // bytes of stream-stored targets one FS reads in total (listings and opens)
+)
