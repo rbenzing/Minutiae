@@ -134,6 +134,65 @@ func chargeShapes() []chargeShape {
 				return []byte(`<plist version="1.0"><array>` + strings.Repeat(`<dict/>`, 300000) + `</array></plist>`)
 			},
 		},
+		// Shapes added for ruling V55. A processing instruction inside the document is refused (ErrMalformed), so
+		// the noise shape holds comments and whitespace. A binary set (tag 0xC) is refused by the decoder, so it
+		// has no shape here.
+		both("utf16cjk", func() any {
+			return repeatSlice(200000, func(i int) any { return "日本語" + strconv.Itoa(i%10) })
+		}),
+		both("nonascii", func() any {
+			return repeatSlice(200000, func(i int) any { return "é" + strconv.Itoa(i%10) })
+		}),
+		both("emoji", func() any {
+			return repeatSlice(100000, func(int) any { return "😀😀" })
+		}),
+		both("reals", func() any {
+			return repeatSlice(200000, func(i int) any { return float64(i) + 0.5 })
+		}),
+		both("wideints", func() any {
+			return repeatSlice(200000, func(i int) any {
+				if i%2 == 0 {
+					return uint64(1<<63) + uint64(i)
+				}
+				return int64(-1<<62) - int64(i)
+			})
+		}),
+		both("uids", func() any {
+			return repeatSlice(200000, func(i int) any { return howett.UID(i) })
+		}),
+		both("ninekeys", func() any {
+			return repeatSlice(40000, func(i int) any {
+				m := make(map[string]any, 9)
+				for j := range 9 {
+					m["key"+strconv.Itoa(j)] = int64(i)
+				}
+				return m
+			})
+		}),
+		both("seventeenkeys", func() any {
+			return repeatSlice(20000, func(i int) any {
+				m := make(map[string]any, 17)
+				for j := range 17 {
+					m["key"+strconv.Itoa(j)] = int64(i)
+				}
+				return m
+			})
+		}),
+		{
+			name: "xmlnoise",
+			xml: func() []byte {
+				return []byte(`<plist version="1.0"><array>` +
+					strings.Repeat("<!-- a comment of some length -->\n  <integer>1</integer>\n", 100000) +
+					`</array></plist>`)
+			},
+		},
+		{
+			name: "xmlwhitespace",
+			xml: func() []byte {
+				return []byte(`<plist version="1.0"><array>` +
+					strings.Repeat("<string>     </string>\n\t\t<string> </string>", 100000) + `</array></plist>`)
+			},
+		},
 	}
 }
 
@@ -182,6 +241,10 @@ func TestChargeCoversMeasuredAllocation(t *testing.T) {
 	}
 }
 
+// refusedAllocBound is the most a refused document may allocate: a fixed 64 KiB (it measured
+// 2632 bytes), independent of the document, so the refusal cannot be a partial decode.
+const refusedAllocBound = 64 << 10
+
 // TestMaxDocumentChargeIsRefusedNotCut pins ruling V51. The charge is held to the measurement,
 // so a document at the caps is charged more than the default memory budget: such a document is
 // refused with ErrNoBudget before the library allocates anything, never partly decoded and
@@ -193,8 +256,11 @@ func TestMaxDocumentChargeIsRefusedNotCut(t *testing.T) {
 	atCapsXML := atCaps + int64(l.MaxNodes)*chargePerXMLNode
 	t.Logf("CAP binary=%d xml=%d budget=%d (%.2f and %.2f GiB)", atCaps, atCapsXML, budget,
 		float64(atCaps)/(1<<30), float64(atCapsXML)/(1<<30))
-	if atCaps <= budget || atCapsXML <= budget {
-		t.Fatalf("the pin is vacuous: a document at the caps (binary %d, XML %d) fits the budget %d", atCaps, atCapsXML, budget)
+	if atCaps <= budget {
+		t.Fatalf("the pin is vacuous: with chargePerNode = %d a binary document at the caps is charged %d, which fits the budget %d", chargePerNode, atCaps, budget)
+	}
+	if atCapsXML <= budget {
+		t.Fatalf("the pin is vacuous: with chargePerXMLNode = %d an XML document at the caps is charged %d, which fits the budget %d", chargePerXMLNode, atCapsXML, budget)
 	}
 
 	// A real XML document beyond the default budget: 600000 empty dictionaries.
@@ -225,8 +291,8 @@ func TestMaxDocumentChargeIsRefusedNotCut(t *testing.T) {
 		}
 		delta := int64(after.TotalAlloc - before.TotalAlloc)
 		t.Logf("%s refused: %d bytes allocated for a charge of %d", name, delta, estimate)
-		if delta > estimate/100 {
-			t.Fatalf("%s: %d bytes allocated before the refusal, more than 1%% of the %d charged", name, delta, estimate)
+		if delta > refusedAllocBound {
+			t.Fatalf("%s: %d bytes allocated before the refusal, more than the fixed bound of %d (the document would be charged %d)", name, delta, refusedAllocBound, estimate)
 		}
 	}
 

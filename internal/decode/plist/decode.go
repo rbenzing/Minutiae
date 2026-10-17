@@ -19,14 +19,15 @@ const (
 	// chargePerNode and chargePerXMLNode are held to a measurement, not a guess: for every shape of
 	// TestChargeCoversMeasuredAllocation (flat and dictionary-heavy documents, deep nesting, empty
 	// containers, long strings, data, in binary and XML) the estimate is at least the bytes the call
-	// allocates, also under -race. The worst measured cases, per node, were 382 B for a binary
-	// document (a 60-deep nest of one-key dictionaries: a map in the library and another in the
-	// normalizer) and a further 1201 B for XML (300000 empty dictionaries: the encoding/xml scan, the
-	// library and the key-set bookkeeping); the constants are those figures measured under -race,
-	// rounded up with a 25 percent margin (478 and 1501). An over-charge is allowed, an
-	// under-charge is not. chargePerXMLNode is charged per XML node on top of the terms above, up
-	// front.
-	chargePerXMLNode = 1501
+	// allocates, also under -race. The worst measured total cost per node (allocation minus the
+	// input and payload terms, under -race) was 382.4 B for a binary document (a 60-deep nest of
+	// one-key dictionaries: a map in the library and another in the normalizer) and 1678.6 B for an
+	// XML document (300000 empty dictionaries: the encoding/xml scan, the library and the key-set
+	// bookkeeping). Each total carries a 25 percent margin: chargePerNode = ceil(1.25 * 382.4) =
+	// 478, and an XML node is charged chargePerNode + chargePerXMLNode = ceil(1.25 * 1678.6) =
+	// 2099, so chargePerXMLNode = 2099 - 478 = 1621. An over-charge is allowed, an under-charge is
+	// not. chargePerXMLNode is charged per XML node on top of the terms above, up front.
+	chargePerXMLNode = 1621
 )
 
 // Decode decodes one binary or XML plist into plain values: map[string]any, []any, string
@@ -43,7 +44,7 @@ const (
 // validated and measured (Check: format gate, size, depth, expanded node count and expanded
 // payload bytes, all capped by DefaultLimits); the budget is charged
 //
-//	estimate = len(b)*8 + nodes*478 + payload*2   (+ nodes*1501 for an XML document)
+//	estimate = len(b)*8 + nodes*478 + payload*2   (+ nodes*1621 for an XML document)
 //
 // from the validator's own counts BEFORE the decoding library runs, so a refused charge
 // allocates nothing and returns an error wrapping both ErrNoBudget and the budget's error;
