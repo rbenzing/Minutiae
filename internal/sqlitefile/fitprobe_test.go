@@ -243,7 +243,8 @@ func (c *cancelAt) ReadAt(p []byte, off int64) (int, error) {
 
 // A cancel that arrives while the fit's probe reads an overflow chain (a dropped table's page has no
 // owner, so the fit is reached) ends the Rows call with the context error: no row is delivered with
-// a label the probe did not finish proving.
+// a label the probe did not finish proving. The full read that follows also meets the cancelled
+// context, so this pins the outcome, not which layer reports it.
 func TestCancelWhileTheFitProbeReadsReachesTheCaller(t *testing.T) {
 	db, ov := droppedBig(t, 1)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -277,11 +278,11 @@ func TestCancelWhileTheFitProbeReadsReachesTheCaller(t *testing.T) {
 	}
 }
 
-// The probe's own layer of the cancel: the history's values are clipped to 16 bytes, so the full
-// read of the row never follows the chain, and the cancel lands on the second page of the chain,
-// where only the probe is reading (it polls before the third page). Nothing but the probe can then
-// report the cancel; a probe whose error is swallowed would deliver the row.
-func TestCancelDuringTheFitProbeIsReportedByTheProbe(t *testing.T) {
+// The same outcome when the cancel lands on the second page of the chain, with the history's
+// values clipped to 16 bytes (so the full read of the row does not follow the chain): Rows ends
+// with the context error and delivers no row. The error can come from the probe or from the
+// reads and polls that follow it; this test pins the outcome, not which of them reports it.
+func TestCancelDuringTheFitProbeReachesTheCaller(t *testing.T) {
 	db, ov := droppedBig(t, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
