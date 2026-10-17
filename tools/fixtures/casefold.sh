@@ -90,17 +90,21 @@ rd=/dev/shm/minutiae-casefold-rd # tmpfs: names that differ only in case must no
 casefold_initrd "$rd" "$payload"
 start=$(date +%s)
 casefold_run "$ext4img" "$f2fsimg" "$rd" "$work/guest.log"
-echo "TCG guest wall time: $(($(date +%s) - start)) s"
+guest_secs=$(($(date +%s) - start))
+echo "TCG guest wall time: $guest_secs s"
 rm -f "$rd.cpio.gz"
 grep -a '^V ' "$work/guest.log" >"$work/verdicts.txt"
 grep -a '^G ' "$work/guest.log" >"$work/guest-notes.txt"
 if grep -aE '^G mount (ext4|f2fs) rc=[1-9]' "$work/guest.log"; then echo "a guest filesystem step failed" >&2; exit 1; fi
-if grep -aE '^G (cp|f2fs mkdir|bind|umount|f2fs chattr).*rc=[1-9]|^G .*FAILED' "$work/guest.log"; then echo "a guest file step failed" >&2; exit 1; fi
+if grep -aE '^G (cp|f2fs mkdir|bind|umount|f2fs chattr|kambig [a-z0-9]+ (setup|first|cleanup)).*rc=[1-9]|^G .*FAILED' "$work/guest.log"; then echo "a guest file step failed" >&2; exit 1; fi
 grep -aqE '[[:space:]]ext4[[:space:]]*$' "$work/guest.log" || { echo "ext4 is not in /proc/filesystems" >&2; exit 1; }
 grep -aqE '[[:space:]]f2fs[[:space:]]*$' "$work/guest.log" || { echo "f2fs is not in /proc/filesystems" >&2; exit 1; }
 
-echo "== fold-equal pair (host side, after the guest has unmounted: the kernel refuses to create the second name)"
-# libext2fs may refuse or correct it: then the pair is dropped and the fallback is documented in the README
+echo "== fold-equal pair (host side, after the guest has unmounted)"
+# The kernel creates only one of two names it calls equal (the guest measured that: kernel_second_name in
+# the meta), so the pair is written with the host tool: libext2fs 1.47.0 does NOT refuse the second name.
+# The result is a host-tool state, not a kernel-written one, and the expect file says so (origin). Should
+# a later libext2fs refuse it, the pair is dropped and ambiguous_pair stays null.
 : >"$work/empty"
 printf 'mkdir /ambig\n' >"$work/ext4-ambig1.cmd"
 run debugfs -w -f "$work/ext4-ambig1.cmd" "$ext4img" >/dev/null
@@ -117,26 +121,48 @@ if [ "$ambig" != 2 ]; then
   debugfs -w -f "$work/ext4-ambig3.cmd" "$ext4img" >/dev/null 2>&1 || true
 fi
 
-echo "== read back"
-fsck.ext4 -fn "$ext4img" 2>&1 | tail -12 || true
+echo "== read back (the exit status of each filesystem checker gates the run: a non-zero status is a failed run)"
+# no `| tail` and no `|| true`: the status is the checker's own, and it is recorded in the generator
+if fsck.ext4 -fn "$ext4img" >"$work/fsck-ext4.txt" 2>&1; then ext4fsck=0; else ext4fsck=$?; fi
+cat "$work/fsck-ext4.txt"
 cp "$f2fsimg" "$work/f2fs-copy.img"
-fsck.f2fs -f --dry-run "$work/f2fs-copy.img" 2>&1 | tail -8 || true
+if fsck.f2fs -f --dry-run "$work/f2fs-copy.img" >"$work/fsck-f2fs.txt" 2>&1; then f2fsfsck=0; else f2fsfsck=$?; fi
+tail -12 "$work/fsck-f2fs.txt"
 rm -f "$work/f2fs-copy.img"
+echo "fsck exit status: ext4 $ext4fsck, f2fs $f2fsfsck"
+if [ "$ext4fsck" != 0 ] || [ "$f2fsfsck" != 0 ]; then
+  echo "a filesystem checker reported a problem on an image the kernel wrote: not committing (see $work/fsck-*.txt)" >&2
+  exit 1
+fi
+# a run that timed out or stopped early is a failed run: the guest log must end with GUEST-DONE (checked
+# by casefold_run) and every probe must have a verdict (checked by casefold_probes.py --vectors); never
+# commit partial vectors.
 
 kernel=$(sed -n '/G kernel: /{s/.*G kernel: //;p;q}' "$work/guest.log" | tr -d '\r')
 [ -n "$kernel" ] || { echo "no kernel version in the guest log" >&2; exit 1; }
 ext4sha=$(sha256sum <"$ext4img"); ext4sha=${ext4sha%% *}
 f2fssha=$(sha256sum <"$f2fsimg"); f2fssha=${f2fssha%% *}
+# what the kernel did with the second name of a fold-equal pair (the guest created Strasse then STRASSE)
+kernel_second() { # <fs>: the guest's mkdir status of the second name and the entries left in the directory
+  local rc n
+  rc=$(sed -n "s/.*G kambig $1 second rc=\([0-9]*\).*/\1/p" "$work/guest.log" | tr -d '\r')
+  n=$(sed -n "s/.*G kambig $1 entries=\([0-9]*\).*/\1/p" "$work/guest.log" | tr -d '\r')
+  [ -n "$rc" ] && [ -n "$n" ] || { echo "no kambig measurement for $1" >&2; return 1; }
+  echo "measured in the guest: creating the second of two fold-equal names failed with status $rc (0 means it succeeded), the directory then held $n entry(ies)"
+}
+k4=$(kernel_second ext4)
+kf=$(kernel_second f2fs)
 
-jq -n --arg kernel "$kernel" --arg e "$ext4sha" --arg f "$f2fssha" --args \
-  '{kernel: $kernel, unicode: "12.1.0", image_sha256: {ext4: $e, f2fs: $f}, commands: $ARGS.positional}' "${CMDS[@]}" >"$work/meta.json"
+jq -n --arg kernel "$kernel" --arg e "$ext4sha" --arg f "$f2fssha" --argjson ec "$ext4fsck" --argjson fc "$f2fsfsck" \
+  --argjson secs "$guest_secs" --arg k4 "$k4" --arg kf "$kf" --args \
+  '{kernel: $kernel, unicode: "12.1.0", image_sha256: {ext4: $e, f2fs: $f}, fsck_exit: {ext4: $ec, f2fs: $fc}, guest_seconds: $secs, kernel_second_name: {ext4: $k4, f2fs: $kf}, commands: $ARGS.positional}' "${CMDS[@]}" >"$work/meta.json"
 
-python3 "$probes" --vectors "$out/kernel-vectors.json" --verdicts "$work/verdicts.txt" --meta "$work/meta.json"
+python3 "$probes" --vectors "$out/kernel-vectors.json.gz" --verdicts "$work/verdicts.txt" --meta "$work/meta.json"
 python3 "$probes" --expect ext4 --image "$ext4img" --out "$ext4out/ext4-casefold.expect.json" --meta "$work/meta.json"
 python3 "$probes" --expect f2fs --image "$f2fsimg" --out "$f2fsout/f2fs-casefold.expect.json" --meta "$work/meta.json"
 
 gzip -n -9 -c "$ext4img" >"$ext4out/ext4-casefold.img.gz"
 gzip -n -9 -c "$f2fsimg" >"$f2fsout/f2fs-casefold.img.gz"
-ls -l "$ext4out/ext4-casefold.img.gz" "$f2fsout/f2fs-casefold.img.gz" "$out/kernel-vectors.json"
+ls -l "$ext4out/ext4-casefold.img.gz" "$f2fsout/f2fs-casefold.img.gz" "$out/kernel-vectors.json.gz" "$out/kernel-vectors.meta.json"
 echo "ext4 image sha256 $ext4sha"
 echo "f2fs image sha256 $f2fssha"

@@ -31,7 +31,7 @@ casefold_initrd() {
   mkdir -p "$rd"/bin "$rd"/dev "$rd"/proc "$rd"/sys "$rd"/mnt "$rd"/mods "$rd"/payload "$rd"/tmp
   cp "$(command -v busybox)" "$rd/bin/busybox"
   applets=$(busybox --list) # a variable: grep -q on a pipe would end busybox early (SIGPIPE under pipefail)
-  for a in sh mount umount cp ls cat sync echo mkdir poweroff insmod sleep date; do
+  for a in sh mount umount cp ls cat sync echo mkdir rmdir poweroff insmod sleep date; do
     printf '%s\n' "$applets" | grep -qx "$a" || { echo "casefold_initrd: busybox has no applet $a" >&2; return 1; }
     ln -s busybox "$rd/bin/$a"
   done
@@ -101,6 +101,17 @@ cp -a /payload/s/. /mnt/f2fs-cf/cf/; echo "G cp f2fs cf rc=$?"
 cp -a /payload/s/00/. /mnt/ext4-plain/; echo "G cp ext4 plain rc=$?"
 cp -a /payload/s/00/. /mnt/f2fs-plain/; echo "G cp f2fs plain rc=$?"
 sync
+# What does the kernel do with the second of two names it calls equal? Create Strasse (U+00DF) then STRASSE
+# in a fresh casefold directory of each filesystem, report the status of the second mkdir and the entries
+# left, and remove the directory again (the image keeps nothing of it).
+for fsn in ext4 f2fs; do
+  kd=/mnt/$fsn-cf/kambig
+  mkdir $kd; chattr +F $kd; echo "G kambig $fsn setup rc=$?"
+  mkdir "$kd/Straße"; echo "G kambig $fsn first rc=$?"
+  mkdir "$kd/STRASSE"; echo "G kambig $fsn second rc=$?"
+  n=0; for kf in "$kd"/*; do n=$((n+1)); done; echo "G kambig $fsn entries=$n"
+  rmdir "$kd"/* 2>/dev/null; rmdir $kd; echo "G kambig $fsn cleanup rc=$?"
+done
 echo "G probes start: $(cat /proc/uptime)"
 for bd in /payload/p/*; do
   b=${bd##*/}

@@ -22,6 +22,7 @@ is never generated (see README, "Casefold lookup oracle").
 """
 import argparse
 import gzip
+import hashlib
 import json
 import os
 import re
@@ -306,11 +307,46 @@ def build(u):
             p.add("invalid", pre, pre + b)
     p.add("invalid", b"x\xef\xbf\xbd", b"x\xff")  # U+FFFD versus a bad byte
     p.add("invalid", b"x\xc3\x89", b"x\xc3")  # a name that is a prefix of a valid one
+    # Z24: the kernel's exact rule for invalid UTF-8 is MEASURED, so probe it densely.
+    for b in range(0x80, 0xC0):  # every lone continuation byte after x
+        bb = bytes([b])
+        p.add("invalid", b"x" + bb, b"X" + bb)  # does the text before it still fold?
+        p.add("invalid", b"x" + bb, b"x")  # is the byte ignored (the name equals its prefix)?
+        p.add("invalid", b"x\x80", b"x" + bb)  # do two different continuation bytes compare equal?
+        p.add("invalid", b"x" + bb, b"x" + bb)  # identity
+    for b in range(0xC0, 0x100):  # every lead byte, truncated at the end of the name
+        bb = bytes([b])
+        p.add("invalid", b"x" + bb, b"X" + bb)
+        p.add("invalid", b"x" + bb, b"x")
+        p.add("invalid", b"x" + bb, b"x" + bb)
+    # 0x80 at the start, between letters, doubled, after a multi-byte character and after combining marks
+    p.add("invalid", b"\x80", b"\x80")
+    p.add("invalid", b"\x80x", b"\x80X")
+    p.add("invalid", b"\x80x", b"\x81x")
+    p.add("invalid", b"a\x80b", b"A\x80B")
+    p.add("invalid", b"a\x80b", b"a\x80c")
+    p.add("invalid", b"a\x80b", b"ab")
+    p.add("invalid", b"x\x80\x80", b"X\x80\x80")
+    p.add("invalid", b"x\x80\x80", b"x\x80")
+    p.add("invalid", b"x\x80\x80", b"x\x81\x81")
+    p.add("invalid", b"x\x80\x81", b"X\x80\x81")
+    for pre_s, pre_q in (
+        (b"\xc3\xa9", b"\xc3\x89"),  # e-acute / E-acute, a precomposed multi-byte character
+        (b"a\xcc\xa3", b"A\xcc\xa3"),  # a + U+0323, a combining mark other than the acute
+        (b"a\xcc\x81", b"\xc3\x81"),  # a + U+0301 against the precomposed A-acute
+        (b"\xe5\xad\x97", b"\xe5\xad\x97"),  # a CJK character
+        (b"\xf0\x9f\x98\x80", b"\xf0\x9f\x98\x80"),  # a character beyond the BMP
+        (b"\xce\xa3", b"\xcf\x82"),  # capital sigma / final sigma
+    ):
+        for tail in (b"\x80", b"\x81", b"\xbf"):
+            p.add("invalid", pre_s + tail, pre_q + tail)
+            p.add("invalid", pre_s + tail, pre_s)
+    # one row per (stored, query) pair: the first category to produce it keeps it
     seen_rows = set()
     out = []
     for r in p.rows:
-        if r not in seen_rows:
-            seen_rows.add(r)
+        if r[1:] not in seen_rows:
+            seen_rows.add(r[1:])
             out.append(r)
     return out
 
@@ -414,10 +450,17 @@ def merge(out, verdicts, meta):
     doc = {"generator": gen, "vectors": vectors}
     if exceptions:
         doc["exceptions"] = exceptions
-    with open(out, "w") as f:
-        json.dump(doc, f, separators=(",", ":"))
+    raw = (json.dumps(doc, separators=(",", ":")) + "\n").encode("utf-8")
+    sha = hashlib.sha256(raw).hexdigest()
+    with open(out, "wb") as f:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=f, compresslevel=9, mtime=0) as z:
+            z.write(raw)
+    meta_out = os.path.join(os.path.dirname(out), "kernel-vectors.meta.json")
+    with open(meta_out, "w") as f:
+        # the pin of the DECOMPRESSED content: the test decompresses the file and compares
+        json.dump({"vectors_sha256": sha, "rows": len(vectors), "gzip": "gzip -n -9 equivalent (python gzip, level 9, mtime 0)"}, f, indent=1)
         f.write("\n")
-    print("vectors: %d, ext4/f2fs disagreements: %d" % (len(vectors), len(exceptions)))
+    print("vectors: %d, ext4/f2fs disagreements: %d, json %d bytes, sha256 %s" % (len(vectors), len(exceptions), len(raw), sha))
 
 
 def run_tool(args):
@@ -498,14 +541,25 @@ def f2fs_dir_casefold(image, path):
     sys.exit("no i_flags for " + path)
 
 
+def names_entry(path, cf, names, source, full):
+    """A directory of the expect file: the count and the digest of the sorted, de-duplicated
+    lower-case hex names (each followed by a newline); the full list only where `full`."""
+    hexes = sorted({n.hex() for n in names})
+    d = {"path": path, "casefold": cf, "count": len(hexes),
+         "names_sha256": hashlib.sha256("".join(h + "\n" for h in hexes).encode()).hexdigest(), "source": source}
+    if full:
+        d["names_hex"] = hexes
+    return d
+
+
 def expect(fs, image, out, meta):
     plist = probes()
     stored = {}
     for r in plist:
         stored.setdefault(r["bucket"], set()).add(bytes.fromhex(r["stored_hex"]))
     with open(meta) as f:
-        gen = json.load(f)
-    gen = {"image_sha256": gen["image_sha256"][fs], "commands": gen["commands"]}
+        metadoc = json.load(f)
+    gen = {"image_sha256": metadoc["image_sha256"][fs], "fsck_exit": metadoc["fsck_exit"][fs], "commands": metadoc["commands"]}
     dirs = []
     if fs == "ext4":
         source = "debugfs ls -p | stat flags"
@@ -525,7 +579,7 @@ def expect(fs, image, out, meta):
             sys.exit("%s: %s lacks %d stored spellings: %s; entries starting alike: %s" % (fs, p, len(missing), [m.hex() for m in missing[:10]], near))
         if cf != (p != "/plain"):
             sys.exit("%s: %s casefold flag is %s" % (fs, p, cf))
-        dirs.append({"path": p, "casefold": cf, "names_hex": sorted(n.hex() for n in names), "source": source})
+        dirs.append(names_entry(p, cf, names, source, p == "/plain"))
     pair = None
     if fs == "ext4":
         # the optional fold-equal pair, made on the host with debugfs after the guest unmounted
@@ -533,8 +587,13 @@ def expect(fs, image, out, meta):
         if names:
             if len(names) != 2 or not caser(image, "/ambig"):
                 sys.exit("ext4: /ambig holds %d names, casefold=%s" % (len(names), caser(image, "/ambig")))
-            dirs.append({"path": "/ambig", "casefold": True, "names_hex": sorted(n.hex() for n in names), "source": source})
-            pair = {"path": "/ambig", "names_hex": sorted(n.hex() for n in names)}
+            dirs.append(names_entry("/ambig", True, names, source, True))
+            pair = {
+                "path": "/ambig",
+                "names_hex": sorted(n.hex() for n in names),
+                "origin": "host-tool (libext2fs debugfs), not kernel-written",
+                "kernel_behavior": metadoc.get("kernel_second_name", {}).get("ext4", ""),
+            }
     doc = {"generator": gen, "directories": dirs, "ambiguous_pair": pair}
     with open(out, "w") as f:
         json.dump(doc, f, separators=(",", ":"))

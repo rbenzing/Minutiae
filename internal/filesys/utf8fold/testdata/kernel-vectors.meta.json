@@ -1,0 +1,5 @@
+{
+ "vectors_sha256": "5f0977d5f4e511596094127b09aa08fcd395b65752a69de37009190436dd9a1e",
+ "rows": 15950,
+ "gzip": "gzip -n -9 equivalent (python gzip, level 9, mtime 0)"
+}
