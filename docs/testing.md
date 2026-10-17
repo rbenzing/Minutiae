@@ -40,6 +40,38 @@ This table lists every such test with its seconds from the pass and from an isol
 - Race gate: under the RACE form, `internal/evidence` and `internal/records` run under `-race` only through the explicit list `raceConcurrencyTests` in `tools/check/main.go` (every test that starts goroutines, uses `t.Parallel`, or exercises concurrent, queued or nested transactions, live-ingest exclusion, the case lock or concurrent Add), because the whole packages exceed the per-package timeout under the race detector; every test still runs in step 1 without `-race`. A new concurrency test in those packages must be added to the list, and a listed name that matches no test fails the check.
 
 
+## Fuzz stall findings (LX-8 Task 1, 2026-10-17)
+Why `go test -fuzz` of `FuzzSQLiteDB` (and other targets) shows `0/sec` for most of a run. Measured on Windows 11, go1.26.8 windows/amd64, 12 CPUs, 15.4 GB RAM, CGO_ENABLED=0, main c8e5122 (3J merged); Linux in Docker Desktop 29.7.2 (VM 8.0 GB, 12 CPUs), image `golang:1.26.8@sha256:eb36c1664dd974cde625f736e02c204383deebe03977365caaec5bf49f794348` (`go version` there: go1.26.8 linux/amd64), `--cpus 2 --memory 4g --network none`, a `git archive` copy, fresh fuzz corpus (seeds only). Every run was 40 s of `-fuzztime`. "Body" is the number of times the fuzz callback ran, counted by a throwaway file-append instrument (reverted, not committed) that is independent of the engine's counter; it was only applied to `FuzzSQLiteDB` and `FuzzFATOpen` on Windows. `FuzzOpen` (`internal/sqlitefile`) was not instrumented (3J edits that file).
+
+| Run | OS | Flags | Last reported execs (rate) | Body | New interesting |
+|---|---|---|---|---|---|
+| `FuzzSQLiteDB` E1 | Windows | default | 4053 (0/sec from elapsed 56 s to the end) | not counted | 0 |
+| `FuzzSQLiteDB` E2 | Windows | `-parallel 1` | 931 (0/sec from 13 s on) | not counted | 0 |
+| `FuzzSQLiteDB` E3 | Windows | `-fuzzminimizetime 0s` | 238746 (9289/sec) | not counted | 374 |
+| `FuzzSQLiteDB` E4 | Windows | `-parallel 1 -fuzzminimizetime 0s` | 79918 (3615/sec at 42 s, 2054/sec at 44 s) | not counted | 43 |
+| `FuzzResolveChain` E0 (control, `internal/records`) | Windows | default | 62689 (0/sec for 6 s and for 9 s in the middle of the run, and in the last window) | not counted | 18 |
+| `FuzzSQLiteDB` | Windows | default, counted | 4608 (0/sec from elapsed 29 s on) | 43415 | 0 |
+| `FuzzSQLiteDB` | Windows | `-fuzzminimizetime 0s`, counted | 7933 (222/sec) | 7970 | 18 |
+| `FuzzFATOpen` | Windows | default, counted | 15883 (45/sec at the end, about 110/sec before) | 56330 | 0 |
+| `FuzzFATOpen` | Windows | `-fuzzminimizetime 0s`, counted | 47046 (785/sec) | 47126 | 17 |
+| `FuzzRun` (`internal/dbrecover`) | Windows | default | 266 (0/sec from 32 s on) | not counted | 0 |
+| `FuzzRun` | Windows | `-fuzzminimizetime 0s` | 688 (10/sec; 16 to 20/sec before) | not counted | 178 |
+| `FuzzSQLiteDB` E5 | Linux | default | 56 (0/sec from 6 s on) | not counted | 0 |
+| `FuzzSQLiteDB` E5b | Linux | `-fuzzminimizetime 0s` | 125941 (2888/sec) | not counted | 793 |
+| `FuzzFATOpen` | Linux | default | 33 (0/sec) | not counted | 0 |
+| `FuzzRun` | Linux | default | 6 (0/sec from 6 s on) | not counted | 0 |
+| `FuzzRun` | Linux | `-fuzzminimizetime 0s` | 176 (4/sec) | not counted | 115 |
+
+Per-input cost: `TestFuzzSeedsOpenAndScan` ran its 26 valid seeds with a median of at most 0.01 s and a maximum of 0.01 s (two-decimal output), none above 100 ms; the whole test took 0.09 s.
+
+What the numbers show:
+- During the stall the body keeps running; only the counter is frozen. In the counted `FuzzSQLiteDB` run the reported execs stayed at 4608 from elapsed 26 s while the sampled body count rose from 9473 (wall 33 s) to 42441 (wall 53 s), about 33000 runs or 1650 per second (wall time includes a build of about 7 s before the engine's clock starts). `FuzzFATOpen` shows the same (15883 reported, 56330 body). With `-fuzzminimizetime 0s` the two agree to within 0.5 percent (7933 against 7970; 47046 against 47126). The engine's counter therefore does not include the work done while the stall lasts.
+- The stall ends when minimisation is switched off: `-fuzzminimizetime 0s` restores a normal rate for `FuzzSQLiteDB` on Windows (E3 9289/sec, E4 3615/sec) and on Linux (2888/sec), and it makes "new interesting" grow (E1 0 against E3 374 and Linux 0 against 793). That the extra body runs belong to the minimiser of a newly interesting input is an inference from this flag effect and from the 60 s default `-fuzzminimizetime` outlasting a 40 s run; the minimiser itself was not observed. The control target `FuzzResolveChain` shows short 0/sec windows too, so this is the engine's behaviour, not something particular to the SQLite bodies.
+- Linux reproduces it (E5: 56 execs, 0/sec), so it is not Windows-only.
+- The `FuzzSQLiteDB` body is cheap per input (seed times above), so its cost is not the cause. The default-flag runs started from a corpus of 860 entries on Windows (54 seeds plus earlier cached inputs; E1 and E2 added none, E3 grew it to 1234, E4 started from 1234, the counted runs from 1277); the Linux runs started from the 54 seeds. The rate of the counted `-fuzzminimizetime 0s` run (222/sec, after a 57 s baseline phase that took 16 s in the other counted run) is far below E3 (9289/sec) for a reason not found (machine load or the instrument); it is used only for the body-against-counter agreement, not for any rate claim.
+
+Outcome, by the plan's rules: **D-A holds** (the reported counter is not the work: the body count grows while the rate is 0, on Windows). **D-B holds in its effect and not in its literal test**: `-fuzzminimizetime 0s` restores a non-zero rate, but the body count was not flat, because the work during the stall is the invisible minimisation. **D-E is refuted** (Linux stalls the same way and recovers with `-fuzzminimizetime 0s`). **D-C is refuted for `FuzzSQLiteDB`** (median seed time at most 0.01 s, none above 100 ms, and 2888/sec on Linux without minimisation), so no split of `FuzzSQLiteDB` is called for and LX-4 Task 12 is not triggered. Consequences for the plan: a reported rate of 0 is never read as "ok"; campaigns run the targets with `-fuzzminimizetime 0s` (Task 3). Not decided by these runs: `FuzzRun`. Even with minimisation off its rate is 16 to 20/sec on Windows (12 workers) and 4 to 6/sec on Linux (2 workers), so its body is costly per input, a D-C-like finding for `FuzzRun` in `internal/dbrecover`; its seed times were not measured. `FuzzOpen` (`internal/sqlitefile`) was not measured.
+
 ## Release build
 ```bash
 # Default release: pure Go, static, no C dependency, any OS.
