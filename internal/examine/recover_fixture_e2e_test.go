@@ -17,6 +17,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/filesys/exfat"
+	"github.com/rbenzing/minutiae/internal/filesys/exfat/exfattest"
 	"github.com/rbenzing/minutiae/internal/filesys/fat"
 )
 
@@ -265,11 +266,12 @@ func checkRecoverFixture(t *testing.T, dir, name string) {
 		if len(d.Expect.Overlaps) > 0 && !hasAssumptionPrefix(rv, "overlap=") {
 			t.Errorf("%s: overlaps %v but assumptions %v name none", d.Path, d.Expect.Overlaps, rv.Assumptions)
 		}
-		if dir == "fat" { // FAT assumptions are the oracle's; the exFAT reader words its own
-			for _, a := range d.Expect.Assumptions {
-				if !hasAssumption(rv, a) {
-					t.Errorf("%s: assumption %q missing from %v", d.Path, a, rv.Assumptions)
-				}
+		for _, a := range d.Expect.Assumptions { // F110: the oracle words its tokens its own way; a fixed table maps each to the reader token
+			want, ok := exfattest.ReaderAssumptionFor(a)
+			if !ok {
+				t.Errorf("%s: the oracle token %q is not in the mapping table", d.Path, a)
+			} else if !hasAssumption(rv, want) {
+				t.Errorf("%s: oracle token %q requires %q, assumptions are %v", d.Path, a, want, rv.Assumptions)
 			}
 		}
 		hasDirent, hasFirst := false, false

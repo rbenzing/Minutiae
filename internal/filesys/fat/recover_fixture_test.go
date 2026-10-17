@@ -84,7 +84,7 @@ func loadRecoverFixture(t testing.TB, name string) ([]byte, recoverOracle) {
 
 var (
 	requiredFamilies = []string{"contiguous", "zero-size", "reuse-all", "reuse-head", "cut-l", "cut-h", "frag-live", "frag-dead", "lfn", "gone"}
-	requiredOutcomes = []string{"contiguous-equal", "empty", "cut-prefix", "skip-no-free-bytes", "not-equal-complete", "overlap", "lfn-tail-lost"}
+	requiredOutcomes = []string{"contiguous-equal", "empty", "cut-prefix", "skip-no-free-bytes", "not-equal-complete", "overlap", "lfn-tail-lost", "short-only"}
 )
 
 func TestRecoverFixturesHoldWhatTheyClaim(t *testing.T) {

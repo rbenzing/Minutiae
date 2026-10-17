@@ -9,6 +9,7 @@ import (
 
 	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/filesys/exfat"
+	"github.com/rbenzing/minutiae/internal/filesys/exfat/exfattest"
 )
 
 func entryAttr(e filesys.Entry, key string) string {
@@ -131,6 +132,14 @@ func TestExfatRecoverableMatchesOracle(t *testing.T) {
 		}
 		if c.Method != wantMethod {
 			t.Errorf("%s: method %q, want %q", d.Path, c.Method, wantMethod)
+		}
+		for _, a := range d.Expect.Assumptions { // F110: every oracle token requires the reader token the table maps it to
+			want, ok := exfattest.ReaderAssumptionFor(a)
+			if !ok {
+				t.Errorf("%s: the oracle token %q is not in the mapping table", d.Path, a)
+			} else if !slices.Contains(c.Assumptions, want) {
+				t.Errorf("%s: oracle token %q requires %q, assumptions are %v", d.Path, a, want, c.Assumptions)
+			}
 		}
 		if wantMethod != "exfat-nofatchain" && wantMethod != "exfat-fatchain" && !slices.Contains(c.Assumptions, "contiguous-allocation") {
 			t.Errorf("%s: assumptions %v lack contiguous-allocation", d.Path, c.Assumptions)
