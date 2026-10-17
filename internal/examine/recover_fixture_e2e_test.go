@@ -109,7 +109,7 @@ func fixtureIDs(t *testing.T, dir string, img []byte) map[string]string {
 		t.Fatal(err)
 	}
 	ids := map[string]string{}
-	if err := filesys.Walk(fsys, fsys.Root(), "/", func(p string, e filesys.Entry, werr error) error {
+	if err := filesys.Walk(fsys, fsys.Root(), "/", func(_ string, e filesys.Entry, werr error) error {
 		if werr != nil || !e.Deleted {
 			return nil
 		}
