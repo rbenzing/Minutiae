@@ -14,6 +14,13 @@
 // by Decode; the provenance objects recovery, snapshot and deleted are never
 // ignored.
 //
+// Time keys. Record.Time is the contact's own modification time, when its source has one
+// (spec 8.5). The Android contacts provider keeps no such time for a raw contact; the only
+// time it holds is the last update of the AGGREGATE contact the raw contact belongs to
+// (contacts.contact_last_updated_timestamp, reached through raw_contacts.contact_id). That
+// time is stated under the Record.Times key AggregateLastUpdated ("aggregate_last_updated"),
+// never as Record.Time, which stays unset for such a raw contact.
+//
 // A parser that has to sanitise text the contract refuses (invalid UTF-8, NUL)
 // keeps the original bytes in raw (base64): the payload stores only what the
 // writer accepts, and the typed value does not flag the replacement.
@@ -37,6 +44,10 @@ const (
 	Type           = "contact"
 	PayloadVersion = 1
 )
+
+// AggregateLastUpdated is the Record.Times kind of the last update of the aggregate
+// contact a raw contact belongs to (see the package documentation, "Time keys").
+const AggregateLastUpdated = "aggregate_last_updated"
 
 // ErrUnsupportedPayloadVersion is returned by Decode for a payload version this
 // package does not read.

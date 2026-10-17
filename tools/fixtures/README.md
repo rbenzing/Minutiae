@@ -1001,7 +1001,9 @@ schema that has them); a NULL `account_id` is no account, an `account_id` with n
 `raw.contact_last_updated_source`, never as `Record.Time` (it is not the raw contact's own modification time); a NULL
 `contact_id` is `raw.aggregate_state = "no-contact-id"`, a dangling one `"no-contacts-row"`, never zero (T72). A join that cannot be
 decided (a missing `accounts` or `contacts` table, or unreadable pages) puts the table name in `raw.join_undecided`; a fixture cannot
-force that, so the parser's own tests build such databases in memory. The scenario's dangling aggregate id and the cut-off below
+force that, so the parser's own tests build such databases in memory (as they do for a joined cell of the wrong storage class,
+`raw.joined_unknown_columns`, and for a variant without `account_id` or `contact_id`, `raw.account_state = "no-account-id-column"` /
+`raw.aggregate_state = "no-contact-id-column"`; the oracle states these branches too, though no fixture reaches them). The scenario's dangling aggregate id and the cut-off below
 which `Builder.contact` creates a `contacts` row are the named constants `DANGLING_CONTACT_ID` and `FIRST_DANGLING_CONTACT` (T74).
 
 | Variant | DDL snapshot | Database state | What it exercises |

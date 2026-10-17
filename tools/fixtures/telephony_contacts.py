@@ -205,13 +205,19 @@ def expect_contact(rc, data_rows, mimes, remote, accounts=None, aggregates=None,
     if name:
         p["display_name"] = name
     undecided = []
+    joined_unknown = {}  # cells of a JOINED row that hold no usable value, by "<table>.<column>"; unknown_columns is the mapped row's own
     if "account_name" in rc or "account_type" in rc:  # an old schema: the inline columns, only when physically present
         at = field(rc.get("account_type"), "account_type")
         an = field(rc.get("account_name"), "account_name")
+        for col in ("account_type", "account_name"):
+            if isinstance(rc.get(col), C.Blob):
+                unknown[col] = "type-mismatch"
     else:  # the account comes only from the join accounts._id = raw_contacts.account_id
         at = an = ""
         aid = rc.get("account_id")
-        if is_int(aid):
+        if "account_id" not in rc:
+            raw["account_state"] = "no-account-id-column"  # neither account_id nor the inline columns: this variant cannot say
+        elif is_int(aid):
             raw["account_id"] = aid
             acct = accounts.get(aid) if accounts is not None else None
             if accounts is None:
@@ -221,6 +227,9 @@ def expect_contact(rc, data_rows, mimes, remote, accounts=None, aggregates=None,
             else:
                 at = field(acct.get("account_type"), "account_type")
                 an = field(acct.get("account_name"), "account_name")
+                for col in ("account_type", "account_name"):
+                    if isinstance(acct.get(col), C.Blob):
+                        joined_unknown["accounts." + col] = "type-mismatch"
         elif aid is not None:
             unknown["account_id"] = "type-mismatch"
         # a NULL account_id is a contact without an account (device-local): no account, nothing flagged
@@ -248,7 +257,9 @@ def expect_contact(rc, data_rows, mimes, remote, accounts=None, aggregates=None,
     t, times = None, {}
     cid = rc.get("contact_id")
     ts = None
-    if is_int(cid):
+    if "contact_id" not in rc:
+        raw["aggregate_state"] = "no-contact-id-column"
+    elif is_int(cid):
         raw["contact_id"] = cid
         agg = aggregates.get(cid) if aggregates is not None else None
         if aggregates is None:
@@ -270,7 +281,7 @@ def expect_contact(rc, data_rows, mimes, remote, accounts=None, aggregates=None,
         else:
             times["aggregate_last_updated"] = C.iso(ts, "ms")
     elif ts is not None:
-        unknown["contact_last_updated_timestamp"] = "type-mismatch"
+        joined_unknown["contacts.contact_last_updated_timestamp"] = "type-mismatch"
     p["source_id"] = str(rid)
     sid = field(rc.get("sourceid"), "sourceid")
     if sid:
@@ -391,6 +402,8 @@ def expect_contact(rc, data_rows, mimes, remote, accounts=None, aggregates=None,
         raw["text_flags"] = sorted(tf)
     if undecided:
         raw["join_undecided"] = undecided
+    if joined_unknown:
+        raw["joined_unknown_columns"] = joined_unknown
     if unknown:
         raw["unknown_columns"] = unknown
     p["raw"] = raw
