@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -126,38 +127,55 @@ func TestManifestIsNeverServedFromTheOpenCache(t *testing.T) {
 	}
 }
 
-// Openers racing with a writer that appends: no race, and every artifact the writer finished is openable.
+// Openers racing with a writer that appends: no race, and every artifact the writer finished is
+// openable by the readers at once, while they also keep opening the first one.
 func TestOpenArtifactCacheIsSafeUnderConcurrentAppends(t *testing.T) {
 	c := recordstest.NewCase(t)
 	a := recordstest.AddArtifact(t, c, "a.db", []byte("aaaa"))
-	var wg sync.WaitGroup
-	errs := make(chan error, 8)
+	var (
+		mu    sync.Mutex
+		added []string // ids the writer has finished
+		wg    sync.WaitGroup
+		done  = make(chan struct{})
+		errs  = make(chan error, 16)
+	)
+	snapshot := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string{a.ID}, added...)
+	}
 	for range 4 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for range 50 {
-				if err := openAndClose(c, a.ID); err != nil {
-					errs <- err
+			for {
+				for _, id := range snapshot() {
+					if err := openAndClose(c, id); err != nil {
+						errs <- err
+						return
+					}
+				}
+				select {
+				case <-done:
 					return
+				default:
 				}
 			}
 		}()
 	}
-	var added []string
-	for i := range 5 {
+	for i := range 8 {
 		r := recordstest.AddArtifact(t, c, "n"+string(rune('a'+i))+".db", []byte("data"))
+		mu.Lock()
 		added = append(added, r.ID)
-		if err := openAndClose(c, r.ID); err != nil {
-			t.Errorf("artifact added during concurrent opens: %v", err)
-		}
+		mu.Unlock()
 	}
+	close(done)
 	wg.Wait()
 	close(errs)
 	for err := range errs {
 		t.Error(err)
 	}
-	for _, id := range added {
+	for _, id := range snapshot() {
 		if err := openAndClose(c, id); err != nil {
 			t.Error(err)
 		}
@@ -213,4 +231,34 @@ func TestOpenArtifactCacheChecksFileIdentitySizeAndTimeEach(t *testing.T) {
 			t.Fatalf("got %v, want an integrity error", err)
 		}
 	})
+}
+
+// A caller that changes the record OpenArtifact returned cannot change what the next open returns.
+func TestOpenArtifactResultCannotCorruptTheCache(t *testing.T) {
+	c := recordstest.NewCase(t)
+	img := recordstest.AddArtifact(t, c, "img.bin", patterned(1<<12))
+	snap := &evidence.SnapshotRef{Name: "S", Xid: 5}
+	d := evidence.Derivation{Runs: []evidence.Run{{Offset: 0, Length: 4}, {Offset: 100, Length: 4}}, Times: map[string]string{"m": "t"}, Snapshot: snap, FSPath: "/f"}
+	f := recordstest.AddDerivedWith(t, c, "f.bin", extractSrc(img, d), patterned(8))
+	open := func() evidence.ManifestRecord {
+		fh, rec, err := c.OpenArtifact(f.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = fh.Close()
+		return rec
+	}
+	first := open()
+	want := open()
+	first.Source.Derived.Runs[0].Length = 999
+	first.Source.Derived.Times["m"] = "changed"
+	first.Source.Derived.Snapshot.Xid = 77
+	first.Source.Derived.ParentSegments = append(first.Source.Derived.ParentSegments, evidence.SegmentRef{ID: "x"})
+	got := open()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("the cache was changed through a returned record:\n got %+v\nwant %+v", got.Source.Derived, want.Source.Derived)
+	}
+	if got.Source.Derived.Runs[0].Length != 4 || got.Source.Derived.Snapshot.Xid != 5 {
+		t.Fatalf("runs %+v snapshot %+v", got.Source.Derived.Runs, got.Source.Derived.Snapshot)
+	}
 }

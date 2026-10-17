@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -24,7 +25,7 @@ func sameManifestFile(a, b os.FileInfo) bool {
 	return os.SameFile(a, b) && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
 }
 
-// manifestForOpen returns the manifest for OpenArtifact: the cached records while the file is the same
+// manifestForOpen returns the manifest for OpenArtifact (shared, read-only; OpenArtifact copies the record it returns): the cached records while the file is the same
 // file with the same size and modification time, else a fresh read (cached only if the file did not
 // change while it was read). Any append through the case's own writer changes the size, so it
 // invalidates the cache too. Never used by verify, which reads Manifest and recomputes. The returned
@@ -76,6 +77,10 @@ func (c *Case) OpenArtifact(id string) (*os.File, ManifestRecord, error) {
 		return nil, ManifestRecord{}, fmt.Errorf("%w: %q", ErrUnknownArtifact, id)
 	case n > 1:
 		return nil, ManifestRecord{}, fmt.Errorf("%w: artifact id %q appears %d times in the manifest", ErrIntegrity, id, n)
+	}
+	// the cached slice is shared: hand the caller its own copy of the one record, so nothing it changes reaches later opens
+	if r, err = cloneDerived(r); err != nil {
+		return nil, ManifestRecord{}, fmt.Errorf("artifact %s: %w", id, err)
 	}
 	return c.openRecord(r)
 }
@@ -204,4 +209,22 @@ func (c *Case) OpenArtifactIn(ix *ManifestIndex, id string) (*os.File, ManifestR
 		return nil, ManifestRecord{}, fmt.Errorf("%w: artifact id %q appears %d times in the manifest", ErrIntegrity, id, n)
 	}
 	return c.openRecord(ix.byID[id])
+}
+
+// cloneDerived returns r with its own copy of Source.Derived (slices, map and pointers included),
+// made by a JSON round trip, the form the manifest is read from.
+func cloneDerived(r ManifestRecord) (ManifestRecord, error) {
+	if r.Source.Derived == nil {
+		return r, nil
+	}
+	b, err := json.Marshal(r.Source.Derived)
+	if err != nil {
+		return r, err
+	}
+	var d Derivation
+	if err := json.Unmarshal(b, &d); err != nil {
+		return r, err
+	}
+	r.Source.Derived = &d
+	return r, nil
 }
