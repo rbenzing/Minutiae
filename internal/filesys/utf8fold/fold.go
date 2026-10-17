@@ -158,7 +158,10 @@ func tailKind(t []byte) string {
 
 // shape classifies name and names the shape classes it is made of; Form is FormUndecided (and the labels
 // nil) for every shape that no committed vector row shows.
-func shape(name []byte) (Form, []string) {
+func shape(name []byte) (Form, []string) { return shapeOf(name, true) }
+
+// shapeOf is shape; the labels are built only when want is set, so Classify allocates nothing.
+func shapeOf(name []byte, want bool) (Form, []string) {
 	if len(name) == 0 || len(name) > MaxName {
 		return FormUndecided, nil // a filesystem name is neither empty nor longer than MaxName
 	}
@@ -195,9 +198,9 @@ func shape(name []byte) (Form, []string) {
 	if tail < 0 {
 		switch {
 		case leadRun == 0 && strays == 0:
-			return FormUnicode, []string{"text"}
+			return FormUnicode, labels(want, "text")
 		case leadRun == 0 && !ignorable:
-			return FormUnicode, []string{"text+strays"}
+			return FormUnicode, labels(want, "text+strays")
 		case leadRun == 0:
 			return FormUndecided, nil // a stray byte anywhere in a name that also has an ignorable character
 		}
@@ -209,11 +212,13 @@ func shape(name []byte) (Form, []string) {
 		if leadRun < len(name) {
 			rest = kind
 		}
-		label := "lead" + string(rune('0'+leadRun)) + ":" + rest
-		if !slices.Contains(decidedShapes, label) {
+		if leadRun == 2 && rest == "wide" {
 			return FormUndecided, nil // two stray bytes then a non-ASCII character was not shown
 		}
-		return FormOpaque, []string{label}
+		if !want {
+			return FormOpaque, nil
+		}
+		return FormOpaque, []string{"lead" + string(rune('0'+leadRun)) + ":" + rest}
 	}
 	// an invalid lead byte at tail: shown only as the END of a name that has text before it
 	if tail == 0 || leadRun > 0 || ignorable {
@@ -223,6 +228,9 @@ func shape(name []byte) (Form, []string) {
 	if tk == "" {
 		return FormUndecided, nil
 	}
+	if !want {
+		return FormOpaque, nil
+	}
 	prefix := "prefix:" + kind
 	if strays > 0 {
 		prefix += "+strays"
@@ -230,10 +238,17 @@ func shape(name []byte) (Form, []string) {
 	return FormOpaque, []string{prefix, "tail:" + tk}
 }
 
+func labels(want bool, l string) []string {
+	if !want {
+		return nil
+	}
+	return []string{l}
+}
+
 // Classify decides how the kernel compares name; see the package comment. Only shapes that a committed
 // kernel vector shows are decided; every other shape is FormUndecided.
 func Classify(name []byte) Form {
-	f, _ := shape(name)
+	f, _ := shapeOf(name, false)
 	return f
 }
 
@@ -245,7 +260,14 @@ func Key(dst, name []byte) (key []byte, ok bool) {
 	}
 	// at most len(name) code points, each adding at most maxKeyRunesPerRune items: the bound comes from the
 	// name that exists, never from anything it declares
-	items := make([]item, 0, len(name)*maxKeyRunesPerRune)
+	dst, _ = fillKey(dst, make([]item, 0, len(name)*maxKeyRunesPerRune), name)
+	return dst, true
+}
+
+// fillKey appends the key of the FormUnicode name to dst, using items (reset first) as scratch; it returns
+// both so a caller can reuse the buffers.
+func fillKey(dst []byte, items []item, name []byte) ([]byte, []item) {
+	items = items[:0]
 	for i := 0; i < len(name); {
 		r, size := utf8.DecodeRune(name[i:])
 		if r == utf8.RuneError && size == 1 { // a stray continuation byte (Classify checked the rest)
@@ -268,7 +290,7 @@ func Key(dst, name []byte) (key []byte, ok bool) {
 			dst = utf8.AppendRune(dst, it.r)
 		}
 	}
-	return dst, true
+	return dst, items
 }
 
 // Verdict is the answer to "are these two names the same name": a tri-state, so that "cannot decide" is
@@ -304,26 +326,51 @@ func (v Verdict) String() string {
 // name with one more byte, a lowercase 'z' (the negative controls of the invalid rows of the vectors), is
 // Different. The kernel meets the invalid byte in the common prefix of both, falls back to comparing bytes,
 // and the lengths differ. No other extension (an upper-case Z, another letter, two bytes) is assumed.
-func Equal(a, b []byte) Verdict {
-	if len(a) == 0 || len(b) == 0 {
+func Equal(a, b []byte) Verdict { return NewQuery(a).Compare(b) }
+
+// Query compares one name (the query) with many, as a directory scan does, without allocating for each
+// comparison: the query's form and key are computed once and the scratch buffers are reused. Compare(x)
+// returns exactly Equal(query, x). A Query is not safe for concurrent use.
+type Query struct {
+	name  []byte
+	form  Form
+	key   []byte
+	items []item
+	tmp   []byte
+}
+
+// NewQuery prepares name for comparisons.
+func NewQuery(name []byte) *Query {
+	q := &Query{name: slices.Clone(name), form: Classify(name)}
+	if q.form == FormUnicode {
+		q.key, q.items = fillKey(nil, make([]item, 0, len(name)*maxKeyRunesPerRune), name)
+	}
+	return q
+}
+
+// Compare returns Equal(query, name).
+func (q *Query) Compare(name []byte) Verdict {
+	if len(q.name) == 0 || len(name) == 0 {
 		return Unknown
 	}
-	if bytes.Equal(a, b) {
+	if bytes.Equal(q.name, name) {
 		return Same
 	}
-	if opaqueWithZ(a, b) || opaqueWithZ(b, a) {
+	if opaqueWithZ(q.name, name) || opaqueWithZ(name, q.name) {
 		return Different
 	}
-	fa, fb := Classify(a), Classify(b)
+	fn := Classify(name)
 	switch {
-	case fa == FormUndecided || fb == FormUndecided:
+	case q.form == FormUndecided || fn == FormUndecided:
 		return Unknown
-	case fa == FormOpaque || fb == FormOpaque:
+	case q.form == FormOpaque || fn == FormOpaque:
 		return Different
 	}
-	ka, _ := Key(nil, a)
-	kb, _ := Key(nil, b)
-	if bytes.Equal(ka, kb) {
+	if cap(q.items) < len(name)*maxKeyRunesPerRune {
+		q.items = make([]item, 0, len(name)*maxKeyRunesPerRune)
+	}
+	q.tmp, q.items = fillKey(q.tmp[:0], q.items, name)
+	if bytes.Equal(q.key, q.tmp) {
 		return Same
 	}
 	return Different

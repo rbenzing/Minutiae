@@ -1,6 +1,7 @@
 package utf8fold
 
 import (
+	"math/rand"
 	"slices"
 	"testing"
 )
@@ -100,4 +101,28 @@ func TestEqualBothOrdersForEveryKindPairing(t *testing.T) {
 	check("x\xff", "x\xffZ", Unknown)
 	// identical bytes are the same name under any rule, even for a shape no vector shows
 	check("x\xffy", "x\xffy", Same)
+}
+
+// A Query answers exactly like Equal, in a loop, without allocating per comparison.
+func TestQueryMatchesEqualAndDoesNotAllocate(t *testing.T) {
+	r := rand.New(rand.NewSource(5)) //nolint:gosec // a fixed-seed test generator
+	names := make([][]byte, 3000)
+	for i := range names {
+		names[i] = randomName(r)
+	}
+	names = append(names, []byte("x\xff"), []byte("x\xffz"), []byte("x\xffy"), []byte("\x80x"), []byte(""))
+	for _, qn := range names[:200] {
+		q := NewQuery(qn)
+		for _, n := range names {
+			if got, want := q.Compare(n), Equal(qn, n); got != want {
+				t.Fatalf("Query(%q).Compare(%q) = %v, Equal = %v", qn, n, got, want)
+			}
+		}
+	}
+	q := NewQuery([]byte("Stra" + string(rune(0xDF)) + "e"))
+	other := []byte("strasse" + string(rune(0x200B)))
+	q.Compare(other) // warm the scratch buffers
+	if a := testing.AllocsPerRun(50, func() { q.Compare(other) }); a != 0 {
+		t.Errorf("Compare allocated %v times per call, want 0", a)
+	}
 }
