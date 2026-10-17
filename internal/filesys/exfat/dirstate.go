@@ -1,6 +1,7 @@
 package exfat
 
 import (
+	"cmp"
 	"fmt"
 	"math"
 	"slices"
@@ -169,10 +170,17 @@ func (f *FS) readDirRange(st *dirState, off uint64, dst []byte) error {
 // returned), and only a directory of which nothing can be mapped, or whose
 // budget is spent before its first chunk, is an error.
 func (f *FS) readDirData(st *dirState) ([]byte, error) {
+	buf, _, err := f.readDirDataCut(st)
+	return buf, err
+}
+
+// readDirDataCut is readDirData that also returns, when the read ended early
+// (a failed read or the spent budget), the reason: the buffer is then a prefix.
+func (f *FS) readDirDataCut(st *dirState) (buf []byte, cut error, err error) {
 	if err := f.loadDir(st); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	buf := make([]byte, 0, min(st.limit, 1<<16))
+	buf = make([]byte, 0, min(st.limit, 1<<16))
 	for off := uint64(0); off < st.limit; {
 		n := min(st.limit-off, dirReadChunk)
 		f.dmu.Lock()
@@ -184,24 +192,24 @@ func (f *FS) readDirData(st *dirState) ([]byte, error) {
 		if over {
 			f.warn("directory read budget of %d bytes per volume exhausted (directory at first cluster %d); directories are no longer read in full", f.dirBudgetTotal, st.spec.first)
 			if len(buf) == 0 { // nothing of this directory was read: an error, never an empty listing
-				return nil, corrupt("exFAT directory", -1, "directory read budget exhausted before the directory at first cluster %d was read", st.spec.first)
+				return nil, nil, corrupt("exFAT directory", -1, "directory read budget exhausted before the directory at first cluster %d was read", st.spec.first)
 			}
-			return buf, nil
+			return buf, fmt.Errorf("%w: the directory read budget of %d bytes is spent", filesys.ErrLimit, f.dirBudgetTotal), nil
 		}
 		start := len(buf)
 		buf = slices.Grow(buf, int(n))[:start+int(n)]
 		if err := f.readDirRange(st, off, buf[start:]); err != nil {
 			f.warn("directory (first cluster %d): unreadable at byte %d: %v; the rest is not listed", st.spec.first, off, err)
-			return buf[:start], nil
+			return buf[:start], fmt.Errorf("directory unreadable at byte %d: %w", off, err), nil
 		}
 		for p := start; p < len(buf); p += entrySize {
 			if buf[p] == typeEnd {
-				return buf[:p], nil
+				return buf[:p], nil, nil
 			}
 		}
 		off += n
 	}
-	return buf, nil
+	return buf, nil, nil
 }
 
 // resolveDir returns the directory whose first cluster is first, as met on disk
@@ -209,9 +217,9 @@ func (f *FS) readDirData(st *dirState) ([]byte, error) {
 // as a hint where to look: the entry set at index I of directory P is
 // re-parsed, and nothing is taken from it that the disk does not say. Without a
 // hit the directories are scanned breadth-first from the root, within bounds.
-func (f *FS) resolveDir(first uint32, hint string) *dirState {
+func (f *FS) resolveDir(first uint32, hint string) (*dirState, error) {
 	if st := f.knownDir(first); st != nil {
-		return st
+		return st, nil
 	}
 	if p, i, ok := strings.Cut(hint, ":"); ok {
 		pc, ok1 := parseCanonical(p, 32)
@@ -219,30 +227,40 @@ func (f *FS) resolveDir(first uint32, hint string) *dirState {
 		if pst := f.knownDir(uint32(pc)); ok1 && ok2 && pst != nil {
 			_, _ = f.setIn(pst, int(ic)) // claims the directory it describes
 			if st := f.knownDir(first); st != nil {
-				return st
+				return st, nil
 			}
 		}
 	}
 	queue := []uint32{f.rootCluster}
+	var scanErr error // the first directory that could not be read: what lies behind it is unknown
 	scanned := map[uint32]bool{f.rootCluster: true}
-	for len(queue) > 0 && len(scanned) <= maxResolveDirs {
+	for len(queue) > 0 && len(scanned) <= f.resolveDirs {
 		st := f.knownDir(queue[0])
 		queue = queue[1:]
 		if st == nil {
 			continue
 		}
-		_ = f.scanDir(st, false, func(r *setRec) bool {
+		if cut, err := f.scanDirCut(st, false, func(r *setRec) bool {
 			if r.attrs&attrDirectory != 0 && r.first >= fatReservedClusters && !scanned[r.first] {
 				scanned[r.first] = true
 				queue = append(queue, r.first)
 			}
 			return true
-		})
+		}); (err != nil || cut != nil) && scanErr == nil {
+			scanErr = cmp.Or(err, cut)
+		}
 		if st := f.knownDir(first); st != nil {
-			return st
+			return st, nil
 		}
 	}
-	return nil
+	if len(queue) > 0 { // cut off by the cap: undecidable, not absent
+		f.warn("directory at cluster %d not found within %d directories", first, f.resolveDirs)
+		return nil, fmt.Errorf("%w: the search for the directory at cluster %d stopped after %d directories", filesys.ErrLimit, first, f.resolveDirs)
+	}
+	if scanErr != nil { // unknown is never absent: part of the tree could not be read
+		return nil, fmt.Errorf("the search for the directory at cluster %d could not read every directory: %w", first, scanErr)
+	}
+	return nil, nil
 }
 
 // setIn re-parses the entry set at entry index idx of directory st straight
@@ -317,7 +335,10 @@ func (f *FS) beforeEnd(st *dirState, idx uint64) (bool, error) {
 // locate returns the entry set that the ID "dirent:P:I" names, read from the
 // disk, together with the state of the directory P that holds it.
 func (f *FS) locate(p, i uint32) (*setRec, error) {
-	st := f.resolveDir(p, "")
+	st, err := f.resolveDir(p, "")
+	if err != nil {
+		return nil, err
+	}
 	if st == nil {
 		return nil, fmt.Errorf("%w: no directory with first cluster %d", filesys.ErrNotFound, p)
 	}
@@ -334,7 +355,11 @@ func (f *FS) dirOf(dir filesys.Entry) (st *dirState, empty bool, err error) {
 	}
 	if kind == idDir {
 		hint, _ := attrOf(dir, "dirent")
-		if st = f.resolveDir(a, hint); st == nil {
+		st, err = f.resolveDir(a, hint)
+		if err != nil {
+			return nil, false, err
+		}
+		if st == nil {
 			return nil, false, fmt.Errorf("%w: no live directory with first cluster %d", filesys.ErrNotFound, a)
 		}
 		return st, false, nil

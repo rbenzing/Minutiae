@@ -17,7 +17,8 @@ echo "== tool versions"
 qemu-system-x86_64 --version | head -1
 for t in "mke2fs -V" "mkfs.f2fs -V" "mkfs.exfat -V" "mkfs.fat --help" "mcopy --version" "sqlite3 --version" "faketime --version" "python3 --version" "jq --version" "gzip --version" "debugfs -V" "dump.exfat -V" "fsck.f2fs -V" "fsck.fat --help"; do
   echo "-- $t"
-  sh -c "$t" 2>&1 | head -2 || true
+  # the queries are a fixed list above: word-split on purpose, so each runs as its own command
+  $t 2>&1 | head -2 || true
 done
 echo "-- busybox"
 busybox | head -1 || true

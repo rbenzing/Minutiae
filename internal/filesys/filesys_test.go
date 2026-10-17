@@ -630,3 +630,46 @@ func TestCheckRunsPrefix(t *testing.T) {
 		}
 	}
 }
+
+// cutFS is a filesystem whose root listing is cut: ReadDir returns the entries
+// read together with a typed error (F78/F80).
+type cutFS struct {
+	filesys.FileSystem
+	dirs map[string][]filesys.Entry
+	errs map[string]error
+}
+
+func (c cutFS) Root() filesys.Entry { return filesys.Entry{ID: "r", Type: filesys.TypeDir} }
+
+func (c cutFS) ReadDir(d filesys.Entry) ([]filesys.Entry, error) {
+	return c.dirs[d.ID], c.errs[d.ID]
+}
+
+func TestWalkVisitsPrefixOfACutDirectory(t *testing.T) {
+	cut := fmt.Errorf("entry cap: %w", filesys.ErrLimit)
+	fsys := cutFS{
+		dirs: map[string][]filesys.Entry{
+			"r": {{ID: "s", Name: "sub", Type: filesys.TypeDir}, {ID: "f", Name: "f.txt", Type: filesys.TypeFile}},
+			"s": {{ID: "x", Name: "x.txt", Type: filesys.TypeFile}},
+		},
+		errs: map[string]error{"r": cut},
+	}
+	var got []visit
+	if err := filesys.Walk(fsys, fsys.Root(), "/", func(p string, e filesys.Entry, err error) error {
+		got = append(got, visit{p, e.Deleted, err})
+		return nil
+	}); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	if want := "/ /f.txt /sub /sub/x.txt"; paths(got) != want {
+		t.Fatalf("visited %q, want %q", paths(got), want)
+	}
+	if !errors.Is(got[0].err, filesys.ErrLimit) {
+		t.Errorf("the cut directory was reported with %v, want the cut reason", got[0].err)
+	}
+	for _, v := range got[1:] {
+		if v.err != nil {
+			t.Errorf("%s reported %v, want nil", v.path, v.err)
+		}
+	}
+}

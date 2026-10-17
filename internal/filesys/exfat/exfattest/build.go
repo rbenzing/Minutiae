@@ -110,6 +110,7 @@ type EntryLoc struct {
 type Layout struct {
 	SectorSize, ClusterSize int
 	FatOffset, HeapOffset   int64 // byte offsets
+	FatLength               int64 // bytes of the FAT region (0 until Build sets it)
 	ClusterCount            uint32
 	RootCluster             uint32
 	BitmapCluster           uint32
@@ -243,6 +244,7 @@ func (b *builder) geometry() {
 	b.lay = Layout{
 		SectorSize: b.ss, ClusterSize: b.cs,
 		FatOffset:    int64(fatStart * b.ss),
+		FatLength:    int64(b.fatSecs * b.ss),
 		HeapOffset:   int64(b.heapSecs) * int64(b.ss),
 		ClusterCount: uint32(b.cc),
 	}
