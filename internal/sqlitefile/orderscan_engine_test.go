@@ -471,18 +471,6 @@ func TestOrderCheckHasNoFalsePositivesOnCommittedFixtures(t *testing.T) {
 	}
 }
 
-// exprTextPairs counts the entries whose comparison with the previous one involves text in
-// the first (expression) column: the entries the check cannot decide.
-func exprTextPairs(rows []sqlitefile.Row) int {
-	n := 0
-	for i := 1; i < len(rows); i++ {
-		if rows[i-1].Values[0].Kind == sqlitefile.KindText || rows[i].Values[0].Kind == sqlitefile.KindText {
-			n++
-		}
-	}
-	return n
-}
-
 // RED against the stub, which counts nothing.
 func TestOrderCheckCountsUncheckedEntriesOnEngineFiles(t *testing.T) {
 	files := engineOrderFiles(t)
@@ -499,9 +487,9 @@ func TestOrderCheckCountsUncheckedEntriesOnEngineFiles(t *testing.T) {
 					}
 				case uncExpr:
 					sawExpr++
-					want := exprTextPairs(res.rows)
-					if want == 0 || !res.hasUnchecked || res.unchecked < want || res.unchecked > len(res.rows) {
-						t.Errorf("%s: unchecked %d (found %v), want %d to %d (the pairs with text, plus the entries whose bounds are text)", res.object, res.unchecked, res.hasUnchecked, want, len(res.rows))
+					want := exprOracle(t, f.data, res.rows)
+					if want == 0 || !res.hasUnchecked || res.unchecked != want {
+						t.Errorf("%s: unchecked %d (found %v), want %d (entries whose own value, predecessor or bound is text)", res.object, res.unchecked, res.hasUnchecked, want)
 					}
 				case uncAll:
 					sawAll++

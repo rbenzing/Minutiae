@@ -97,7 +97,8 @@ type klook struct {
 // increasing and inside the range the ancestors' entries give it) and, when the search ends at a
 // side of a leaf that has a bound, the adjacent leaf's entry next to the bound lies beyond it.
 // That is absence from the search path, not from the tree: an entry that sits in another subtree
-// than its key belongs to is not on the path, and the ordered scan is what flags it. Damage on the path is a *CorruptError (the row may exist), a comparison the reader cannot make
+// than its key belongs to is not on the path, and the ordered scan is what flags it.
+// Damage on the path is a *CorruptError (the row may exist), a comparison the reader cannot make
 // is ErrKeyUndecided, a key of the wrong length or an order that is unknown is ErrBadKey.
 // An entry that is found but lies outside its bounds or beside a neighbour it contradicts is
 // returned with KeyRangeViolation set. The returned Row is the caller's.

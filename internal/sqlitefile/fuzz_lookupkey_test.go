@@ -40,7 +40,7 @@ func lookupKeySeeds(f *testing.F) [][]byte {
 }
 
 // FuzzGetByKey: on arbitrary databases, for every WITHOUT ROWID row the scan delivers unflagged (the
-// scan flags an entry below its predecessor or outside the range its ancestors give it, Task 9b),
+// scan flags an entry below its predecessor or outside the range its ancestors give it),
 // a lookup of its own key (LookupKey: no affinity conversion, so the stored value is the probe)
 // never answers "absent", and a row it returns has that key. GetByKey itself never panics and
 // returns only typed errors. The budget is as it was found.

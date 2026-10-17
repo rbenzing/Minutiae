@@ -13,9 +13,9 @@ import (
 	"github.com/rbenzing/minutiae/internal/sqlitefile"
 	"github.com/rbenzing/minutiae/internal/sqlitefile/sqlitetest"
 )
-
-// With Status counters: scanning n entries parses at most n + interiors cells and makes
-// exactly n - 1 comparisons.
+// With Status counters: scanning n entries parses at most n + interiors cells (the comparisons are
+// counted exactly by TestOrderCheckComparisonCountIsExact).
+// the comparisons TestOrderCheckComparisonCountIsExact derives.
 func TestOrderCheckCostIsLinear(t *testing.T) {
 	const n = 300
 	b, tb := woTable(n)
@@ -24,7 +24,7 @@ func TestOrderCheckCostIsLinear(t *testing.T) {
 	if _, err := v.Table(context.Background(), "w"); err != nil { // reads the schema first
 		t.Fatal(err)
 	}
-	before, compares := v.Stats(), v.OrderCompares()
+	before := v.Stats()
 	got := scanTableRows(t, v, "w")
 	if len(got.rows) != n {
 		t.Fatalf("%d rows", len(got.rows))
@@ -32,9 +32,6 @@ func TestOrderCheckCostIsLinear(t *testing.T) {
 	parsed := v.Stats().CellsParsed - before.CellsParsed
 	if limit := int64(n + len(tb.Interiors())); parsed > limit {
 		t.Errorf("%d cells parsed for %d entries and %d interior pages, want at most %d", parsed, n, len(tb.Interiors()), limit)
-	}
-	if c := v.OrderCompares() - compares; c < n-1 || c > 3*n {
-		t.Errorf("%d comparisons for %d entries, want %d to %d (the previous entry, and at most two bounds)", c, n, n-1, 3*n)
 	}
 }
 
@@ -186,8 +183,8 @@ func TestOrderCheckHostile(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if total != n || flagged < n-1 || flagged > n {
-			t.Errorf("%d entries, %d flagged, want %d and %d or %d (the first can also lie outside its separator)", total, flagged, n, n-1, n)
+		if total != n || flagged != n {
+			t.Errorf("%d entries, %d flagged, want %d and %d: the first entry lies outside its separator, read descending, and every other is below its predecessor", total, flagged, n, n)
 		}
 		lim := sqlitefile.ResolveLimits(sqlitefile.Limits{}).MaxWarnings
 		if w := len(v.Warnings()); w > lim+1 {

@@ -405,8 +405,8 @@ func TestScanTreeOrderedAppliesDescAndUnique(t *testing.T) {
 	if f, n := run(sqlitefile.KeyOrder{Cols: []sqlitefile.KeyColumn{{}}, Unique: true}); f != 0 || n != 60 {
 		t.Errorf("ascending: flagged %d of %d", f, n)
 	}
-	if f, n := run(sqlitefile.KeyOrder{Cols: []sqlitefile.KeyColumn{{Desc: true}}}); f < 59 || n != 60 {
-		t.Errorf("descending: flagged %d of %d, want 59 or 60 of 60 (the first entry can lie outside its separator too)", f, n)
+	if f, n := run(sqlitefile.KeyOrder{Cols: []sqlitefile.KeyColumn{{Desc: true}}}); f != 60 || n != 60 {
+		t.Errorf("descending: flagged %d of %d, want 60 of 60: the first entry lies above its right separator, read descending, and every other entry is below its predecessor", f, n)
 	}
 }
 
@@ -421,4 +421,16 @@ func TestOrderKeysExprColumnIsDecidedOnlyForNonText(t *testing.T) {
 	if c, _, st := sqlitefile.OrderKeys([]sqlitefile.Value{{}}, []sqlitefile.Value{evInt(2)}, cols); st != sqlitefile.OrderOK || c != -1 {
 		t.Errorf("NULL under an expression column: %d, %v", c, st)
 	}
+}
+
+// woKeyPairTable is a WITHOUT ROWID table w(a, b, v) with the key (a, b): a is 20, b is 10..69
+// (one-byte integers, so a key byte can be patched in place), about 40-byte cells so the tree has
+// several leaves under an interior root.
+func woKeyPairTable() (*sqlitetest.Builder, *sqlitetest.Table) {
+	b := sqlitetest.New(sqlitetest.Options{PageSize: osPS})
+	tb := b.CreateTableWithoutRowid("w", "create table w(a, b, v, primary key(a, b)) without rowid", 2)
+	for i := range 60 {
+		tb.Insert(int64(i), int64(20), int64(10+i), strings.Repeat("x", 30))
+	}
+	return b, tb
 }

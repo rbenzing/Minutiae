@@ -1,6 +1,6 @@
 package sqlitefile_test
 
-// The ancestor-range check of the ordered scan (LX-4 Task 9b, U63): an entry outside the (lo, hi)
+// The ancestor-range check of the ordered scan (LX-4 U63): an entry outside the (lo, hi)
 // its ancestors' separators give its subtree is flagged, whatever its neighbours are.
 
 import (
