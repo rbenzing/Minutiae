@@ -89,7 +89,7 @@ func TestUnarchiveArrayDictSet(t *testing.T) {
 	want := map[string]any{
 		"arr":  []any{"one", int64(2), nil},
 		"dict": map[string]any{"k": "one"},
-		"set":  []any{map[string]any{"k": "one"}},
+		"set":  Set{Items: []any{map[string]any{"k": "one"}}},
 		"data": []byte{1, 2},
 	}
 	if got := unarchive(t, a); !reflect.DeepEqual(got, want) {
@@ -97,12 +97,13 @@ func TestUnarchiveArrayDictSet(t *testing.T) {
 	}
 }
 
-func TestUnarchiveDuplicateDictKeyLastWins(t *testing.T) {
+func TestUnarchiveReportDuplicateDictKeyLastWins(t *testing.T) {
 	a := archive(1,
 		map[string]any{"$class": UID(2), "NS.keys": []any{UID(3), UID(3)}, "NS.objects": []any{UID(4), UID(5)}},
 		classRec("NSDictionary"), "k", "first", "second")
-	if got := unarchive(t, a); !reflect.DeepEqual(got, map[string]any{"k": "second"}) {
-		t.Fatalf("%#v", got)
+	got, rep, err := UnarchiveReport(a, newView(1<<30))
+	if err != nil || !reflect.DeepEqual(got, map[string]any{"k": "second"}) || rep != (Report{DuplicateKeys: 1}) {
+		t.Fatalf("%#v, %+v, %v", got, rep, err)
 	}
 }
 

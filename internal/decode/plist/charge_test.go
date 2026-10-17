@@ -15,9 +15,12 @@ import (
 
 // recBudget is a Budget that records what is charged, so a test reads the estimate instead of
 // recomputing it.
-type recBudget struct{ sum int64 }
+type recBudget struct {
+	sum   int64
+	calls int // the number of Alloc calls (for Unarchive: the resolved objects)
+}
 
-func (r *recBudget) Alloc(n int64) error { r.sum += n; return nil }
+func (r *recBudget) Alloc(n int64) error { r.sum += n; r.calls++; return nil }
 func (r *recBudget) Free(n int64)        { r.sum -= n }
 
 // chargeShape is one document shape, built in the test, in the formats it exists in.

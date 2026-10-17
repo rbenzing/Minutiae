@@ -57,6 +57,8 @@ func canon(v any) any {
 			out[i] = canon(e)
 		}
 		return out
+	case Set:
+		return Set{Items: canon(x.Items).([]any), Ordered: x.Ordered}
 	case float64:
 		if math.IsNaN(x) {
 			return nanMark{}
@@ -177,6 +179,10 @@ func archiveSeeds() [][]byte {
 		fuzzMarshal(archiveDoc(), howett.XMLFormat),
 		fuzzMarshal(toLib(cyc), howett.BinaryFormat),
 		fuzzMarshal(toLib(cyc), howett.XMLFormat),
+		fuzzMarshal(toLib(setArchive("NSSet")), howett.BinaryFormat),
+		fuzzMarshal(toLib(setArchive("NSOrderedSet")), howett.XMLFormat),
+		fuzzMarshal(toLib(dupDictArchive()), howett.BinaryFormat),
+		fuzzMarshal(toLib(dupDictArchive()), howett.XMLFormat),
 	}
 }
 
@@ -396,6 +402,10 @@ func walkPlain(t *testing.T, v any, xml bool) {
 			if !rawDateJustified(x) {
 				t.Fatalf("RawDate for a date time.Time holds: %v", x.Seconds)
 			}
+		case Set:
+			for _, e := range x.Items {
+				walk(e, depth+1)
+			}
 		case float64, int64, uint64, bool, []byte, UID:
 		default:
 			t.Fatalf("unexpected %T", v)
@@ -497,6 +507,7 @@ func FuzzUnarchive(f *testing.F) {
 		}
 		defer fuzzGuard(t, len(b))()
 		unarchiveContract(t, b, Unarchive)
+		unarchiveStrictLenient(t, b)
 	})
 }
 
@@ -507,7 +518,8 @@ func FuzzUnarchiveNoRecover(f *testing.F) {
 			return
 		}
 		defer fuzzGuard(t, len(b))()
-		unarchiveContract(t, b, unarchiveCore)
+		unarchiveContract(t, b, func(v any, bu Budget) (any, error) { out, _, err := unarchiveCore(v, bu, true); return out, err })
+		unarchiveStrictLenient(t, b)
 	})
 }
 
