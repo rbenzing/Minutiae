@@ -472,7 +472,7 @@ func TestDecodeNeverReturnsErrInternalOnGeneratedInputs(t *testing.T) {
 			}
 		}
 		// the same input without the guard: a panic here is a bug fixed by validating first
-		if _, err := decodeCore(b, newView(1<<30)); errors.Is(err, ErrInternal) {
+		if _, _, err := decodeCore(b, newView(1<<30), true); errors.Is(err, ErrInternal) {
 			t.Fatalf("input %d: %v", i, err)
 		}
 	}

@@ -37,11 +37,15 @@ const (
 // from the validator's own counts BEFORE the decoding library runs, so a refused charge
 // allocates nothing and returns an error wrapping both ErrNoBudget and the budget's error;
 // then the library decodes under a recover guard and the result is normalized. On any error
-// the charge is freed. On success it stays: the caller's per-invocation budget view is
-// released by the host at the end of the job.
+// the charge is freed. On success it stays: the decoder never frees a successful charge, and
+// the caller's per-invocation budget view is dropped with the invocation.
 //
-// A duplicate key in an XML dict keeps the last value (the library's behaviour, a known
-// property; detecting duplicates is a non-goal), but two <key> elements in a row, which would
+// Decode is strict: a binary document that repeats a dictionary key is refused with a
+// *LossError (wrapping ErrUnsupported), because which value counts cannot be decided; that
+// check comes last, so a malformed or over-limit document returns the same sentinel as from
+// DecodeReport. DecodeReport is the lenient form: it keeps the last value and counts the
+// repeats in its Report. A duplicate key in an XML dict still keeps the last value without a
+// count (the library's behaviour; counted by a later task of plan LX-8), but two <key> elements in a row, which would
 // drop the first key without a value, are ErrMalformed, as is any child element inside <key>
 // or <integer>. A binary set (tag 0xC) and the binary null and fill bytes are ErrMalformed: the
 // decoding library does not read them (Check still walks a set, bounding it, before the
@@ -50,7 +54,7 @@ const (
 func Decode(b []byte, budget Budget) (v any, err error) {
 	err = guard(func() error {
 		var e error
-		v, e = decodeCore(b, budget)
+		v, _, e = decodeCore(b, budget, true)
 		return e
 	})
 	if err != nil {
@@ -61,22 +65,22 @@ func Decode(b []byte, budget Budget) (v any, err error) {
 
 // decodeCore is Decode without the recover guard: the fuzz targets and tests call it so a
 // panic in the library is a failure rather than a recovered error.
-func decodeCore(b []byte, budget Budget) (any, error) {
+func decodeCore(b []byte, budget Budget, strict bool) (any, Report, error) {
 	if budget == nil {
-		return nil, fmt.Errorf("%w: no budget", ErrNoBudget)
+		return nil, Report{}, fmt.Errorf("%w: no budget", ErrNoBudget)
 	}
 	if len(b) > MaxInput {
-		return nil, limited("input of %d bytes above %d", len(b), MaxInput)
+		return nil, Report{}, limited("input of %d bytes above %d", len(b), MaxInput)
 	}
 	nodes, payload, err := measureCore(b, DefaultLimits())
 	if err != nil {
-		return nil, err
+		return nil, Report{}, err
 	}
 	// Every term is bounded (len <= 64 MiB, nodes <= 1<<20, payload <= 64 MiB), so the sum
 	// fits an int64 with room to spare.
 	estimate := int64(len(b))*chargePerInputByte + int64(nodes)*chargePerNode + int64(payload)*chargePerPayload
 	if err := budget.Alloc(estimate); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrNoBudget, err)
+		return nil, Report{}, fmt.Errorf("%w: %w", ErrNoBudget, err)
 	}
 	ok := false
 	defer func() {
@@ -87,11 +91,11 @@ func decodeCore(b []byte, budget Budget) (any, error) {
 	in, norm := b, normalizer{}
 	if LooksLikeXML(b) {
 		if err := checkXMLStructure(b); err != nil {
-			return nil, err
+			return nil, Report{}, err
 		}
 		rewritten, base, found, ok := rewriteSurrogates(b)
 		if !ok {
-			return nil, fmt.Errorf("%w: no free private code points to stand in for surrogate references", ErrUnsupported)
+			return nil, Report{}, fmt.Errorf("%w: no free private code points to stand in for surrogate references", ErrUnsupported)
 		}
 		if found {
 			in, norm = rewritten, normalizer{base: base}
@@ -100,24 +104,31 @@ func decodeCore(b []byte, budget Budget) (any, error) {
 	var raw any
 	format, err := howett.Unmarshal(in, &raw)
 	if err != nil {
-		return nil, malformed("%v", err)
+		return nil, Report{}, malformed("%v", err)
 	}
 	var out any
+	var rep Report
 	switch format {
 	case howett.BinaryFormat:
 		w, top, werr := newBplistWalker(b, DefaultLimits(), false)
 		if werr != nil {
-			return nil, werr
+			return nil, Report{}, werr
 		}
 		out, err = w.normalizeBinary(top, raw)
+		rep = Report{DuplicateKeys: w.dups}
 	case howett.XMLFormat:
 		out, err = norm.value(raw)
 	default:
-		return nil, fmt.Errorf("%w: library read format %d", ErrUnsupported, format)
+		return nil, Report{}, fmt.Errorf("%w: library read format %d", ErrUnsupported, format)
 	}
 	if err != nil {
-		return nil, err
+		return nil, Report{}, err
+	}
+	// The loss is the last check: a malformed or over-limit document above returns its own
+	// sentinel from the strict and the lenient entry point alike, and the deferred Free runs here.
+	if strict && !rep.Lossless() {
+		return nil, Report{}, &LossError{Report: rep}
 	}
 	ok = true
-	return out, nil
+	return out, rep, nil
 }

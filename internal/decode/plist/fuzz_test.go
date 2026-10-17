@@ -343,6 +343,7 @@ func decodeSeeds() [][]byte {
 		[]byte(`<plist><dict><key>CF$UID</key><integer>-1</integer></dict></plist>`),
 		[]byte(`<plist><dict><key>CF$UID</key><integer>3</integer></dict></plist>`),
 		[]byte("not a plist"),
+		dupDictBinary(),
 	}
 	all := append(binarySeeds(), xmlSeeds()...)
 	all = append(all, refusalSeeds()...)
@@ -438,6 +439,7 @@ func FuzzPlist(f *testing.F) {
 		}
 		defer fuzzGuard(t, len(b))()
 		decodeContract(t, b, func(bu Budget) (any, error) { return Decode(b, bu) })
+		strictLenientContract(t, b, Decode, DecodeReport)
 	})
 }
 
@@ -448,14 +450,19 @@ func FuzzPlistNoRecover(f *testing.F) {
 			return
 		}
 		defer fuzzGuard(t, len(b))()
-		decodeContract(t, b, func(bu Budget) (any, error) { return decodeCore(b, bu) })
+		decodeContract(t, b, func(bu Budget) (any, error) { v, _, err := decodeCore(b, bu, true); return v, err })
+		strictLenientContract(t, b,
+			func(b []byte, bu Budget) (any, error) { v, _, err := decodeCore(b, bu, true); return v, err },
+			func(b []byte, bu Budget) (any, Report, error) { return decodeCore(b, bu, false) })
 	})
 }
 
 // unarchiveContract decodes b first and ignores what is not an archive.
 func unarchiveContract(t *testing.T, b []byte, call func(any, Budget) (any, error)) {
 	t.Helper()
-	v, err := Decode(b, newView(256<<20))
+	// The lenient form: a strict Decode would refuse a fuzzed archive that repeats a key and the
+	// helper would return before reaching call, thinning the Unarchive targets.
+	v, _, err := DecodeReport(b, newView(256<<20))
 	if err != nil {
 		return
 	}

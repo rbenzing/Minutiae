@@ -66,6 +66,7 @@ func (w *bplistWalker) normalizeBinary(i uint64, lib any) (any, error) {
 		if len(last) != len(m) {
 			return nil, w.mismatch()
 		}
+		w.dups = sat(w.dups, count-uint64(len(last)))
 		out := make(map[string]any, len(m))
 		for key, ref := range last {
 			lv, ok := m[key]

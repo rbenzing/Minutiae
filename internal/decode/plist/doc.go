@@ -11,6 +11,11 @@
 // RawString and a date that is not a representable instant is a RawDate, each keeping the stored
 // data exactly, so nothing is repaired or invented.
 //
+// Decode is strict: a document that repeats a dictionary key (binary so far) is refused with a
+// *LossError wrapping ErrUnsupported, because which value counts cannot be decided and must
+// never be resolved silently. DecodeReport is the lenient form: it keeps the last value, as the
+// format libraries do, and returns the number of repeats in its Report.
+//
 // Every error wraps exactly one of ErrMalformed, ErrLimit, ErrUnsupported, ErrInternal or
 // ErrNoBudget. ErrInternal is the recovered form of a panic and is a bug to report; it must
 // never be reachable from input. The package imports no other Minutiae package: callers

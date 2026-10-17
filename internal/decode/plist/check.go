@@ -120,6 +120,7 @@ type bplistWalker struct {
 	numObjects uint64
 	tableOff   uint64
 	memo       []bplistNode
+	dups       uint64 // dictionary key occurrences replaced by a later entry (see normalizeBinary)
 }
 
 func (w *bplistWalker) uint(off, size uint64) uint64 {
