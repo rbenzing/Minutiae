@@ -44,10 +44,10 @@ const (
 // *LossError (wrapping ErrUnsupported), because which value counts cannot be decided; that
 // check comes last, so a malformed or over-limit document returns the same sentinel as from
 // DecodeReport. DecodeReport is the lenient form: it keeps the last value and counts the
-// repeats in its Report. A duplicate key in an XML dict still keeps the last value without a
-// count (the library's behaviour; counted by a later task of plan LX-8), but two <key> elements in a row, which would
-// drop the first key without a value, are ErrMalformed, as is any child element inside <key>
-// or <integer>. A binary set (tag 0xC) and the binary null and fill bytes are ErrMalformed: the
+// repeats in its Report (a lower bound). A duplicate key in an XML dict keeps the last value
+// too (the library's behaviour) and is not yet counted; two <key> elements in a row, which
+// would drop the first key without a value, are ErrMalformed, as is any child element inside
+// <key> or <integer>. A binary set (tag 0xC) and the binary null and fill bytes are ErrMalformed: the
 // decoding library does not read them (Check still walks a set, bounding it, before the
 // library refuses it). A binary UID of 16 bytes with a non-zero high word, like a 16-byte
 // integer that does not fit 64 bits, is ErrUnsupported. NaN reals pass through.

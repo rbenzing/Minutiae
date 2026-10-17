@@ -6,8 +6,14 @@ import "fmt"
 // DecodeReport counts per OCCURRENCE in the expanded tree (a shared dictionary referenced
 // twice counts twice); UnarchiveReport counts per RESOLVED archive object (a shared object
 // counts once). Plus adds two reports of different measures and is for totals only.
+//
+// Every count is a lower bound: a duplicate inside an entry that a later entry replaced is not
+// counted. Zero is exact; a nonzero count means at least that many entries were lost.
 type Report struct {
-	DuplicateKeys uint64 // key occurrences whose entry was replaced by a later entry with the same key
+	// DuplicateKeys is a lower bound on the key occurrences whose entry was replaced by a later
+	// entry with the same key; a duplicate inside an entry that a later entry replaced is not
+	// counted. Zero is exact, a nonzero count means at least that many entries were lost.
+	DuplicateKeys uint64
 }
 
 // Lossless reports whether nothing was lost.
@@ -19,11 +25,13 @@ func (r Report) Plus(o Report) Report {
 }
 
 // LossError is the strict forms' refusal: a document that decodes only by losing something the
-// plain values cannot show. errors.Is(err, ErrUnsupported) holds; errors.As gives the Report.
+// plain values cannot show. errors.Is(err, ErrUnsupported) holds; errors.As gives the Report,
+// whose counts are lower bounds (see Report).
 type LossError struct{ Report Report }
 
+// Error says that at least that many entries would be lost: the count is a lower bound.
 func (e *LossError) Error() string {
-	return fmt.Sprintf("%v: %d duplicate dictionary key occurrence(s) would be lost (DecodeReport keeps the last value and counts them)",
+	return fmt.Sprintf("%v: at least %d duplicate dictionary key occurrence(s) would be lost, a lower bound (DecodeReport keeps the last value and counts them)",
 		ErrUnsupported, e.Report.DuplicateKeys)
 }
 

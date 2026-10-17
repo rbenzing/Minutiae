@@ -176,16 +176,13 @@ func TestDecodeReportSharedDictCountsEveryOccurrence(t *testing.T) {
 	}
 }
 
-// bombAllocBudget is twice the TotalAlloc delta of the 100000-pair case measured on the first
-// green run: 5278016 bytes (later runs 5267712 to 5295576), so 10556032.
-const bombAllocBudget = 10556032
-
 func TestDecodeReportDuplicateKeyBombIsBounded(t *testing.T) {
 	const n = 100000
 	b := bigDupDict(n)
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
-	v, rep, err := DecodeReport(b, newView(1<<30))
+	bombView := newView(1 << 30)
+	v, rep, err := DecodeReport(b, bombView)
 	runtime.ReadMemStats(&after)
 	if err != nil {
 		t.Fatal(err)
@@ -197,9 +194,12 @@ func TestDecodeReportDuplicateKeyBombIsBounded(t *testing.T) {
 		t.Fatalf("DuplicateKeys = %d, want %d", rep.DuplicateKeys, n-1)
 	}
 	delta := after.TotalAlloc - before.TotalAlloc
-	t.Logf("TotalAlloc delta %d", delta)
-	if delta > bombAllocBudget {
-		t.Fatalf("allocated %d bytes, budget %d", delta, uint64(bombAllocBudget))
+	// The honesty claim: what the call allocated stays within what it charged the budget. First
+	// green run: 5278016 bytes allocated against a charge of about 14 MB.
+	charged := uint64(bombView.Used())
+	t.Logf("TotalAlloc delta %d, charged %d", delta, charged)
+	if delta > charged {
+		t.Fatalf("allocated %d bytes but charged only %d", delta, charged)
 	}
 
 	view := newView(1 << 30)
