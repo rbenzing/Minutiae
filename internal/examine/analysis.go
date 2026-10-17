@@ -51,6 +51,7 @@ type analysis struct {
 	fsys  filesys.FileSystem // watched by watchFS, nil when none
 	seen  map[string]bool    // filesystem warnings already in the audit log
 	known int                // len(Info().Warnings) at the last watchFS/syncFS
+	noted bool               // the filesystem's suppression note was audited (once, whatever its count)
 	after string             // last path extracted, named by filesystem warnings written after it
 
 	warnEntries int // analysis.warning entries asked for (written or suppressed)
@@ -133,7 +134,13 @@ func (a *analysis) watchFS(fsys filesys.FileSystem) error {
 	a.fsys, a.seen = fsys, map[string]bool{}
 	warnings := fsys.Info().Warnings
 	a.known = len(warnings)
-	for _, w := range warnings {
+	for i, w := range warnings {
+		if isSuppressionNote(warnings, i) {
+			if err := a.auditNote("filesystem-open", w); err != nil {
+				return err
+			}
+			continue
+		}
 		if a.seen[w] {
 			continue
 		}
@@ -143,6 +150,44 @@ func (a *analysis) watchFS(fsys filesys.FileSystem) error {
 		}
 	}
 	return nil
+}
+
+// isSuppressionNote reports whether warnings[i] is the filesystem's suppression note: the element at
+// index filesys.MaxWarnings of a list longer than that which parses as a note. It is the element at
+// that index, not the last one: examine/safe.go appends a panic warning after the filesystem's own list,
+// and a note-shaped text anywhere else is an ordinary warning.
+func isSuppressionNote(warnings []string, i int) bool {
+	if i != filesys.MaxWarnings || len(warnings) <= filesys.MaxWarnings {
+		return false
+	}
+	_, ok := filesys.ParseSuppressedNote(warnings[i])
+	return ok
+}
+
+// auditNote audits the suppression note the first time it is seen. Its text changes as the count grows,
+// so the text-based dedup is not used for it and later texts are not audited again: the final count is
+// carried by analysis.end (finishFS). It is not counted in Summary.FSWarnings.
+func (a *analysis) auditNote(source, text string) error {
+	if a.noted {
+		return nil
+	}
+	a.noted = true
+	return a.fsWarning(source, text)
+}
+
+// finishFS records the final number of warnings the watched filesystem dropped as fs_warnings_suppressed
+// (a JSON number) in analysis.end / analysis.error. The count in the note grows while the list length
+// stays at filesys.MaxWarnings+1, so syncFS never looks at it again: it is read once more here.
+func (a *analysis) finishFS() {
+	if a.fsys == nil {
+		return
+	}
+	warnings := a.fsys.Info().Warnings
+	if !isSuppressionNote(warnings, filesys.MaxWarnings) {
+		return
+	}
+	n, _ := filesys.ParseSuppressedNote(warnings[filesys.MaxWarnings])
+	a.setEnd("fs_warnings_suppressed", n)
 }
 
 // syncFS writes each filesystem warning that appeared since watchFS (or the
@@ -158,7 +203,13 @@ func (a *analysis) syncFS() error {
 	if len(warnings) == a.known {
 		return nil
 	}
-	for _, w := range warnings {
+	for i, w := range warnings {
+		if isSuppressionNote(warnings, i) {
+			if err := a.auditNote("filesystem", w); err != nil {
+				return err
+			}
+			continue
+		}
 		if a.seen[w] {
 			continue
 		}
@@ -208,6 +259,7 @@ func runAnalysis(c *evidence.Case, deviceID, op string, details map[string]any, 
 	if serr := a.syncFS(); serr != nil { // warnings of work done before a failure are kept too
 		err = errors.Join(err, serr)
 	}
+	a.finishFS()
 	if err != nil {
 		_, aerr := c.Audit.Append("analysis.error", deviceID, a.endDetails(map[string]any{
 			"analysis_id": a.sum.AnalysisID, "error": err.Error(),

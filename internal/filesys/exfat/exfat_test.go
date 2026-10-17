@@ -1805,7 +1805,7 @@ func TestExfatWarningCapAndConcurrency(t *testing.T) {
 		f.Warn("another %d", i)
 	}
 	w := f.Info().Warnings
-	if len(w) != 1001 || w[1000] != "further warnings suppressed" {
+	if len(w) != 1001 || !strings.HasPrefix(w[1000], filesys.SuppressedWarning) {
 		t.Errorf("%d warnings, last %q", len(w), w[len(w)-1])
 	}
 }

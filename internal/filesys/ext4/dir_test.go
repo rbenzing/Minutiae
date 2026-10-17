@@ -1012,7 +1012,7 @@ func TestWarningsAreDedupedCappedAndConcurrencySafe(t *testing.T) {
 		f.Warn("extra %d", i)
 	}
 	ws := f.Info().Warnings
-	if len(ws) != 1001 || ws[1000] != "further warnings suppressed" {
+	if len(ws) != 1001 || !strings.HasPrefix(ws[1000], filesys.SuppressedWarning) {
 		t.Fatalf("%d warnings, last %q; want 1000 plus one suppression line", len(ws), ws[len(ws)-1])
 	}
 	f.Warn("late")

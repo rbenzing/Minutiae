@@ -196,8 +196,8 @@ func (f *FS) checkBoot(vol io.ReaderAt) {
 
 // Info describes the filesystem. Warnings is a snapshot: it holds the problems
 // found at Open and those met since by directory, chain and bitmap reads,
-// without duplicates, at most 1000 distinct ones plus one "further warnings
-// suppressed" line.
+// without duplicates, at most 1000 distinct ones plus one `further warnings
+// suppressed: N occurrences not recorded` note.
 func (f *FS) Info() filesys.Info {
 	warnings := f.warns.Snapshot()
 	major, minor := f.revision>>8, f.revision&0xFF
