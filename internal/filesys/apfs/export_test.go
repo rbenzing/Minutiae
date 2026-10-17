@@ -387,3 +387,22 @@ func (f *FS) ChargeLink(n int64) bool { return f.chargeLink(n) }
 
 // LinkBudget is the stream-symlink budget left.
 func (f *FS) LinkBudget() int64 { return f.linkBudget.Load() }
+
+// SpacemanCIBs and SpacemanCABs are the counts of chunk-info blocks and
+// chunk-info address blocks the reader decoded from the space manager. A
+// space manager that cannot be decoded yields (0, false), never a count.
+func (f *FS) SpacemanCIBs() (uint64, bool) {
+	sm, problem, err := f.loadSpaceman()
+	if err != nil || problem != "" || sm == nil {
+		return 0, false
+	}
+	return sm.cibs, true
+}
+
+func (f *FS) SpacemanCABs() (uint64, bool) {
+	sm, problem, err := f.loadSpaceman()
+	if err != nil || problem != "" || sm == nil {
+		return 0, false
+	}
+	return sm.cabs, true
+}
