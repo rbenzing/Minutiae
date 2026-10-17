@@ -1,6 +1,7 @@
 package plist
 
 import (
+	"errors"
 	"runtime"
 	"strconv"
 	"strings"
@@ -178,6 +179,10 @@ func TestUnarchiveChargeCoversMeasuredAllocation(t *testing.T) {
 			if rec.sum < allocated {
 				t.Errorf("under-charge: charged %d, allocated %d", rec.sum, allocated)
 			}
+			// A full 25 percent margin on the total: allocated/charged <= 0.80 (ruling V62).
+			if float64(allocated) > 0.80*float64(rec.sum) {
+				t.Errorf("margin below 25 percent: allocated %d is %.3f of the charge %d", allocated, float64(allocated)/float64(rec.sum), rec.sum)
+			}
 		})
 	}
 }
@@ -210,4 +215,29 @@ func archiveCostOf(a map[string]any) (payload, items int64) {
 		payload, items = payload+c.payload, items+c.items
 	}
 	return payload, items
+}
+
+// TestUnarchiveBudgetBoundarySizedFromTheConstants: the budget that an archive needs is
+// computed from the constants (objects, payload and items), an archive one byte over that
+// budget is refused with ErrNoBudget and returns nothing, and one at it decodes.
+func TestUnarchiveBudgetBoundarySizedFromTheConstants(t *testing.T) {
+	a := rootList("NSArray", 1000, func(b *archiveBuilder, _ uint64, i int) uint64 {
+		return b.add("s" + strconv.Itoa(i))
+	})
+	payload, items := archiveCostOf(a)
+	objects := int64(1000 + 1) // the root and 1000 strings; the class record is looked up, not resolved
+	need := objects*chargePerObjUA + payload + items*chargePerItemUA
+
+	out, _, err := UnarchiveReport(a, newView(need))
+	if err != nil || out == nil {
+		t.Fatalf("a budget of exactly %d: %v", need, err)
+	}
+	view := newView(need - 1)
+	out, _, err = UnarchiveReport(a, view)
+	if !errors.Is(err, ErrNoBudget) || out != nil {
+		t.Fatalf("a budget one byte short: value %v, err %v; want nil and ErrNoBudget", out != nil, err)
+	}
+	if view.Used() != 0 {
+		t.Fatalf("the refused archive keeps %d bytes charged", view.Used())
+	}
 }

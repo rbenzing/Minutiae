@@ -21,12 +21,14 @@ const (
 	// The charge of one resolved object is chargePerObjUA + its payload bytes + chargePerItemUA
 	// for every map entry and list slot of its fields (nested containers included, and the
 	// entries of the output dictionary of an NSDictionary). Both are held to a measurement by
-	// TestUnarchiveChargeCoversMeasuredAllocation, also under -race, with a 25 percent margin on
-	// the worst case of each: chargePerItemUA = ceil(1.25 * 28.2) = 36, from the shapes that are
-	// all items (a dictionary of 100000 identical keys: 8460520 bytes allocated over 300003
-	// items); chargePerObjUA = ceil(1.25 * 872.9) = 1092, the worst remainder per object with the
-	// items priced at 36 (50000 objects of an unknown class with 6 fields under -race).
-	chargePerObjUA  = 1092
+	// TestUnarchiveChargeCoversMeasuredAllocation, also under -race, with a full 25 percent margin
+	// on the total: no shape may allocate more than 0.80 of its charge (the test asserts it).
+	// chargePerItemUA = ceil(1.25 * 28.2) = 36, from the shapes that are all items (a dictionary
+	// of 100000 identical keys: 8460520 bytes allocated over 300003 items, ratio 0.78 with 36);
+	// chargePerObjUA = 1195, the smallest value that holds the worst shape (50000 objects of an
+	// unknown class with 6 fields, 64294360 bytes under -race) to 0.80 with the items priced at
+	// 36: (64294360 / 0.80 - 850016 payload - 36 * 550002 items) / 50001 objects = 1194.3.
+	chargePerObjUA  = 1195
 	chargePerItemUA = 36
 )
 

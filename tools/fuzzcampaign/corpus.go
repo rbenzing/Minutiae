@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -58,6 +59,15 @@ func checkCorpusDir(dir string) error {
 	}
 	if info.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
 		return fmt.Errorf("%w: %q is a symlink or other irregular entry", ErrUnsafeDir, dir)
+	}
+	// A symlink anywhere in the path (not only at the leaf) leads somewhere else: the resolved path
+	// must be the cleaned path itself.
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return err
+	}
+	if clean := filepath.Clean(dir); real != clean && !(runtime.GOOS == "windows" && strings.EqualFold(real, clean)) {
+		return fmt.Errorf("%w: %q resolves to %q (a symlink in the path)", ErrUnsafeDir, dir, real)
 	}
 	return nil
 }

@@ -232,3 +232,24 @@ func TestPruneCorpusRefusesASymlinkedDirectory(t *testing.T) {
 		t.Errorf("the symlink target was touched: %v", got)
 	}
 }
+
+// V42: a symlink in the middle of the path is as dangerous as one at the leaf: the leaf is a
+// plain directory, but the path leads somewhere else.
+func TestPruneCorpusRefusesASymlinkedIntermediateDirectory(t *testing.T) {
+	base := t.TempDir()
+	realDir := filepath.Join(base, "real", "a", "b", "c")
+	if err := os.MkdirAll(realDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	corpusFile(t, realDir, "keep", 1, corpusBase)
+	if err := os.Symlink(filepath.Join(base, "real"), filepath.Join(base, "link")); err != nil {
+		t.Skipf("symlinks cannot be created here: %v", err)
+	}
+	via := filepath.Join(base, "link", "a", "b", "c")
+	if removed, err := PruneCorpus(via, 0, 0); !errors.Is(err, ErrUnsafeDir) || removed != 0 {
+		t.Errorf("PruneCorpus(%q) = %d, %v; want 0, ErrUnsafeDir", via, removed, err)
+	}
+	if got := listDir(t, realDir); !slices.Equal(got, []string{"keep"}) {
+		t.Errorf("the target of the symlinked path was touched: %v", got)
+	}
+}
