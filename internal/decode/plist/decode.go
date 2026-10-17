@@ -16,6 +16,13 @@ const (
 	chargePerInputByte = 8
 	chargePerNode      = 64
 	chargePerPayload   = 2
+	// chargePerXMLKey is charged per node of an XML document on top of the terms above, up front:
+	// the encoding/xml scan and the library allocate several hundred bytes per element, and the
+	// scan holds a set of key texts per open dictionary. Measured on XML shapes of 100000 to
+	// 300000 elements (200000 duplicate-key pairs, 100000 distinct keys, 300000 integers, 100000
+	// strings) the total allocation was 1.8 to 2.5 times the charge without this term, and 0.77
+	// or less of the charge with it. An over-charge is allowed, an under-charge is not.
+	chargePerXMLKey = 640
 )
 
 // Decode decodes one binary or XML plist into plain values: map[string]any, []any, string
@@ -32,7 +39,7 @@ const (
 // validated and measured (Check: format gate, size, depth, expanded node count and expanded
 // payload bytes, all capped by DefaultLimits); the budget is charged
 //
-//	estimate = len(b)*8 + nodes*64 + payload*2
+//	estimate = len(b)*8 + nodes*64 + payload*2   (+ nodes*chargePerXMLKey for an XML document)
 //
 // from the validator's own counts BEFORE the decoding library runs, so a refused charge
 // allocates nothing and returns an error wrapping both ErrNoBudget and the budget's error;
@@ -40,14 +47,13 @@ const (
 // the charge is freed. On success it stays: the decoder never frees a successful charge, and
 // the caller's per-invocation budget view is dropped with the invocation.
 //
-// Decode is strict: a binary document that repeats a dictionary key is refused with a
-// *LossError (wrapping ErrUnsupported), because which value counts cannot be decided; that
+// Decode is strict: a document (binary or XML) that repeats a dictionary key is refused with
+// a *LossError (wrapping ErrUnsupported), because which value counts cannot be decided; that
 // check comes last, so a malformed or over-limit document returns the same sentinel as from
 // DecodeReport. DecodeReport is the lenient form: it keeps the last value and counts the
-// repeats in its Report (a lower bound). A duplicate key in an XML dict keeps the last value
-// too (the library's behaviour) and is not yet counted; two <key> elements in a row, which
-// would drop the first key without a value, are ErrMalformed, as is any child element inside
-// <key> or <integer>. A binary set (tag 0xC) and the binary null and fill bytes are ErrMalformed: the
+// repeats in its Report (a lower bound). Two <key> elements in a row, which would drop the
+// first key without a value, are ErrMalformed, as is any child element inside <key> or
+// <integer>. A binary set (tag 0xC) and the binary null and fill bytes are ErrMalformed: the
 // decoding library does not read them (Check still walks a set, bounding it, before the
 // library refuses it). A binary UID of 16 bytes with a non-zero high word, like a 16-byte
 // integer that does not fit 64 bits, is ErrUnsupported. NaN reals pass through.
@@ -79,6 +85,10 @@ func decodeCore(b []byte, budget Budget, strict bool) (any, Report, error) {
 	// Every term is bounded (len <= 64 MiB, nodes <= 1<<20, payload <= 64 MiB), so the sum
 	// fits an int64 with room to spare.
 	estimate := int64(len(b))*chargePerInputByte + int64(nodes)*chargePerNode + int64(payload)*chargePerPayload
+	if LooksLikeXML(b) {
+		// The duplicate-key scan holds one set of key texts per open dictionary.
+		estimate += int64(nodes) * chargePerXMLKey
+	}
 	if err := budget.Alloc(estimate); err != nil {
 		return nil, Report{}, fmt.Errorf("%w: %w", ErrNoBudget, err)
 	}
@@ -89,10 +99,13 @@ func decodeCore(b []byte, budget Budget, strict bool) (any, Report, error) {
 		}
 	}()
 	in, norm := b, normalizer{}
+	var rep Report
 	if LooksLikeXML(b) {
-		if err := checkXMLStructure(b); err != nil {
+		dups, err := scanXMLStructure(b)
+		if err != nil {
 			return nil, Report{}, err
 		}
+		rep.DuplicateKeys = dups
 		rewritten, base, found, ok := rewriteSurrogates(b)
 		if !ok {
 			return nil, Report{}, fmt.Errorf("%w: no free private code points to stand in for surrogate references", ErrUnsupported)
@@ -107,7 +120,6 @@ func decodeCore(b []byte, budget Budget, strict bool) (any, Report, error) {
 		return nil, Report{}, malformed("%v", err)
 	}
 	var out any
-	var rep Report
 	switch format {
 	case howett.BinaryFormat:
 		w, top, werr := newBplistWalker(b, DefaultLimits(), false)
@@ -115,7 +127,7 @@ func decodeCore(b []byte, budget Budget, strict bool) (any, Report, error) {
 			return nil, Report{}, werr
 		}
 		out, err = w.normalizeBinary(top, raw)
-		rep = Report{DuplicateKeys: w.dups}
+		rep.DuplicateKeys = sat(rep.DuplicateKeys, w.dups)
 	case howett.XMLFormat:
 		out, err = norm.value(raw)
 	default:

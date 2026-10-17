@@ -11,7 +11,7 @@
 // RawString and a date that is not a representable instant is a RawDate, each keeping the stored
 // data exactly, so nothing is repaired or invented.
 //
-// Decode is strict: a document that repeats a dictionary key (binary so far) is refused with a
+// Decode is strict: a document that repeats a dictionary key is refused with a
 // *LossError wrapping ErrUnsupported, because which value counts cannot be decided and must
 // never be resolved silently. DecodeReport is the lenient form: it keeps the last value, as the
 // format libraries do, and returns the number of repeats in its Report. That number is a lower

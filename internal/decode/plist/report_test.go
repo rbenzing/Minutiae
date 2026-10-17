@@ -213,16 +213,20 @@ func TestDecodeReportDuplicateKeyBombIsBounded(t *testing.T) {
 }
 
 func TestFuzzSeedsCoverSetsAndDuplicateKeys(t *testing.T) {
-	loss := 0
+	binaryLoss, xmlLoss := 0, 0
 	for _, s := range decodeSeeds() {
 		_, err := Decode(s, newView(256<<20))
 		var le *LossError
 		if errors.As(err, &le) {
-			loss++
+			if LooksLikeXML(s) {
+				xmlLoss++
+			} else {
+				binaryLoss++
+			}
 		}
 	}
-	if loss == 0 {
-		t.Fatalf("no decode seed makes the strict Decode return a *LossError")
+	if binaryLoss == 0 || xmlLoss == 0 {
+		t.Fatalf("seeds that make the strict Decode return a *LossError: %d binary, %d XML; want both", binaryLoss, xmlLoss)
 	}
 }
 

@@ -344,6 +344,7 @@ func decodeSeeds() [][]byte {
 		[]byte(`<plist><dict><key>CF$UID</key><integer>3</integer></dict></plist>`),
 		[]byte("not a plist"),
 		dupDictBinary(),
+		[]byte(`<plist><dict><key>a</key><integer>1</integer><key>a</key><integer>2</integer></dict></plist>`),
 	}
 	all := append(binarySeeds(), xmlSeeds()...)
 	all = append(all, refusalSeeds()...)
