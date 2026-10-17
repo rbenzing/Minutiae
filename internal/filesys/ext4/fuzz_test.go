@@ -152,7 +152,7 @@ func FuzzExt4CasefoldLookup(f *testing.F) {
 			return
 		}
 		visited := 0
-		_ = filesys.Walk(fsys, fsys.Root(), "/", func(p string, e filesys.Entry, err error) error {
+		_ = filesys.Walk(fsys, fsys.Root(), "/", func(p string, _ filesys.Entry, err error) error {
 			if err != nil {
 				return nil
 			}
