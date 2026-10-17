@@ -134,8 +134,8 @@ func TestExfatDirectoryReadBudget(t *testing.T) {
 	}
 	f.SetDirBudget(5000) // one 4096-byte chunk and a bit
 	part, err := f.ReadDir(f.Root())
-	if err != nil {
-		t.Fatal(err)
+	if !errors.Is(err, filesys.ErrLimit) { // F73: a cut listing is an error; the prefix is still returned
+		t.Fatalf("ReadDir = %v, want filesys.ErrLimit", err)
 	}
 	if len(part) == 0 || len(part) >= 200 || !hasWarn(f, "budget") {
 		t.Errorf("%d entries, warnings %v", len(part), f.Info().Warnings)

@@ -173,8 +173,8 @@ func TestJoinMismatchIsFlaggedWithCount(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if len(rows) != 0 {
-			t.Errorf("text matched integer: %d rows", len(rows))
+		if len(rows) != 1 { // the engine converts the text "7" to 7: one row each
+			t.Errorf("text matched integer: %d rows, want 1", len(rows))
 		}
 		return nil
 	}); err != nil {

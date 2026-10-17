@@ -103,7 +103,7 @@ func TestNoSuchTable(t *testing.T) {
 		b.AddSchemaRow("table", "vt", "vt", int64(0), "create virtual table vt using fts5(a)")
 	})
 	d := openBytes(t, data, nil, nil, bigBudget())
-	for _, n := range []string{"nothing", "v", "vt", ""} {
+	for _, n := range []string{"nothing", "v", ""} {
 		tb, err := d.Table(t.Context(), n, nil, nil)
 		if tb != nil || !errors.Is(err, sqlitedb.ErrNoSuchTable) || errors.Is(err, sqlitedb.ErrCorrupt) {
 			t.Errorf("Table(%q) = %v, %v", n, tb, err)

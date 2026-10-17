@@ -36,6 +36,8 @@ func TestSqlitefileSurfaceUsedByTheDecoder(_ *testing.T) {
 	pin[func(*sqlitefile.Table) sqlitefile.TableDef]((*sqlitefile.Table).Def)
 	pin[func(*sqlitefile.Table) string]((*sqlitefile.Table).Name)
 	pin[func(sqlitefile.Row) sqlitefile.Row](sqlitefile.Row.Clone)
+	pin[func(sqlitefile.Value, sqlitefile.Affinity, sqlitefile.Affinity) (sqlitefile.Value, sqlitefile.ConvStatus)](sqlitefile.ConvertForComparison)
+	pin[sqlitefile.ConvStatus](sqlitefile.ConvOK)
 
 	// Used by Open, Info, Tables and the budget adapter (Task 2).
 	pin[sqlitefile.Budget](sqlitefile.Options{}.Budget)
@@ -47,6 +49,7 @@ func TestSqlitefileSurfaceUsedByTheDecoder(_ *testing.T) {
 	pin[error](sqlitefile.ErrLimit)
 	pin[error](sqlitefile.ErrPageUnavailable)
 	pin[error](sqlitefile.ErrWithoutRowid)
+	pin[error](sqlitefile.ErrVirtualTable)
 	pin[error](sqlitefile.ErrInternal)
 	pin[error](sqlitefile.ErrEngineRefuses)
 	pin[error](sqlitefile.ErrLiveUnavailable)
@@ -72,6 +75,7 @@ func TestSqlitefileSurfaceUsedByTheDecoder(_ *testing.T) {
 	pin[sqlitefile.Loc](r.Loc)
 	pin[bool](r.LengthMismatch)
 	pin[bool](r.KeyRangeViolation)
+	pin[bool](r.BeyondEngineDepth)
 
 	var v sqlitefile.Value
 	pin[sqlitefile.Kind](v.Kind)
@@ -139,6 +143,7 @@ func TestSentinelsAreDistinct(t *testing.T) {
 		"ErrInternal": sqlitedb.ErrInternal, "ErrUnsupportedSchema": sqlitedb.ErrUnsupportedSchema,
 		"ErrUnsupportedCollation": sqlitedb.ErrUnsupportedCollation,
 		"ErrReleased":             sqlitedb.ErrReleased,
+		"ErrKeyUndecidable":       sqlitedb.ErrKeyUndecidable,
 	}
 	for n1, e1 := range all {
 		if e1 == nil {
@@ -228,4 +233,44 @@ func TestSqlitefileSurfaceUsedByRowOps(_ *testing.T) {
 	var o sqlitefile.Options
 	pin[sqlitefile.Budget](o.Budget)
 	pin[func(sqlitefile.Row) sqlitefile.Row](sqlitefile.Row.Clone)
+	pin[func(sqlitefile.Value, sqlitefile.Affinity, sqlitefile.Affinity) (sqlitefile.Value, sqlitefile.ConvStatus)](sqlitefile.ConvertForComparison)
+	pin[sqlitefile.ConvStatus](sqlitefile.ConvOK)
+}
+
+// Used by the state of a short record's column default (Task 1b).
+func TestSqlitefileSurfaceUsedByUndecidedDefaults(_ *testing.T) {
+	var v sqlitefile.Value
+	pin[sqlitefile.DefaultReason](v.DefaultUndecided)
+	pin[sqlitefile.DefaultReason](sqlitefile.DefaultReasonNone)
+	pin[sqlitefile.DefaultReason](sqlitefile.DefaultReasonExpression)
+	pin[sqlitefile.DefaultReason](sqlitefile.DefaultReasonInexactLiteral)
+	pin[func(sqlitefile.DefaultReason) string](sqlitefile.DefaultReason.String)
+	pin[sqlitefile.DefaultKind](sqlitefile.DefaultInexactLiteral)
+}
+
+// The key-order API of the library (Tasks 7 and 8), which GetByKey (Task 9) builds on.
+// KeyColumn.Expr is part of the accepted surface (LX-4 U62): an index expression column
+// is compared only when neither value is text.
+func TestSqlitefileSurfaceKeyOrder(_ *testing.T) {
+	var kc sqlitefile.KeyColumn
+	pin[string](kc.Collation)
+	pin[bool](kc.Desc)
+	pin[bool](kc.Expr)
+	var ko sqlitefile.KeyOrder
+	pin[[]sqlitefile.KeyColumn](ko.Cols)
+	pin[bool](ko.Unique)
+	pin[func(a, b []sqlitefile.Value, cols []sqlitefile.KeyColumn) (int, int, sqlitefile.OrderStatus)](sqlitefile.OrderKeys)
+	pin[func(sqlitefile.Value, sqlitefile.Value, string) (int, sqlitefile.OrderStatus)](sqlitefile.OrderValues)
+	pin[sqlitefile.OrderStatus](sqlitefile.OrderOK)
+	pin[sqlitefile.OrderStatus](sqlitefile.OrderUndecided)
+	pin[func(*sqlitefile.View, context.Context, uint32, sqlitefile.KeyOrder, func(sqlitefile.Row) bool) (sqlitefile.ScanLoss, error)]((*sqlitefile.View).ScanTreeOrdered)
+}
+
+// Used by GetByKey (Task 9): the library's key lookup and its two errors, and the decoder's method.
+func TestSqlitefileSurfaceUsedByGetByKey(_ *testing.T) {
+	pin[func(*sqlitefile.Table, context.Context, []sqlitefile.Value) (sqlitefile.Row, bool, error)]((*sqlitefile.Table).GetByKey)
+	pin[func(*sqlitefile.View, context.Context, uint32, sqlitefile.KeyOrder, []sqlitefile.Value) (sqlitefile.Row, bool, error)]((*sqlitefile.View).LookupKey)
+	pin[error](sqlitefile.ErrKeyUndecided)
+	pin[error](sqlitefile.ErrBadKey)
+	pin[func(*sqlitedb.Table, context.Context, ...parse.JoinKey) (sqlitedb.Row, bool, error)]((*sqlitedb.Table).GetByKey)
 }

@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -69,10 +70,15 @@ func (s *Session) Extract(ctx context.Context, o ExtractOptions) (Summary, error
 		p string
 	}
 	targets := make([]target, 0, len(o.Paths))
+	var incomplete []*SearchIncompleteError // one per id, in order of first mention
 	for _, ref := range o.Paths {
-		e, p, err := s.Lookup(fsys, ref)
+		m, err := s.lookupMatch(fsys, ref) // a deleted match after a cut is audited below, inside the analysis
 		if err != nil {
 			return Summary{}, err
+		}
+		e, p := m.Entry, m.Path
+		if m.Incomplete != nil && !slices.ContainsFunc(incomplete, func(i *SearchIncompleteError) bool { return i.ID == m.Incomplete.ID }) {
+			incomplete = append(incomplete, m.Incomplete)
 		}
 		if e.Type == filesys.TypeDir && !e.Deleted && !o.Recursive {
 			return Summary{}, fmt.Errorf("%s is a directory (use -r)", p)
@@ -100,6 +106,14 @@ func (s *Session) Extract(ctx context.Context, o ExtractOptions) (Summary, error
 		}()
 		if err := a.watchFS(fsys); err != nil {
 			return err
+		}
+		a.sum.IncompleteIDs = incomplete
+		for _, inc := range incomplete {
+			d := inc.warnDetails()
+			d["analysis_id"] = a.sum.AnalysisID
+			if err := a.appendWarning(d); err != nil {
+				return err
+			}
 		}
 		for _, t := range targets {
 			if err := x.target(t.p, t.e); err != nil {

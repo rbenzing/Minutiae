@@ -111,10 +111,14 @@ func TestTableRowsAndGet(t *testing.T) {
 		t.Errorf("Get on an unparseable table: %v %v", ok, err)
 	}
 	// Unknown names and non-tables.
-	for _, name := range []string{"nope", "", "idx_age", "v", "vt", "sqlite_autoindex_People_1"} {
+	for _, name := range []string{"nope", "", "idx_age", "v", "sqlite_autoindex_People_1"} {
 		if _, err := v.Table(ctx, name); !errors.Is(err, sqlitefile.ErrNotFound) {
 			t.Errorf("Table(%q): err %v, want ErrNotFound", name, err)
 		}
+	}
+	// A virtual table exists: it is ErrVirtualTable, never ErrNotFound (Task 3).
+	if _, err := v.Table(ctx, "vt"); !errors.Is(err, sqlitefile.ErrVirtualTable) || errors.Is(err, sqlitefile.ErrNotFound) {
+		t.Errorf("Table(vt): err %v, want ErrVirtualTable", err)
 	}
 	// sqlite_master is the schema table under its old name.
 	for _, name := range []string{"sqlite_master", "SQLITE_MASTER", "sqlite_schema"} {

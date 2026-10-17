@@ -67,6 +67,9 @@ func degraded(i int, v sqlitefile.Value) map[string]any {
 	if v.Kind == sqlitefile.KindText || v.Kind == sqlitefile.KindBlob {
 		m["len"] = v.Len
 	}
+	if v.Omitted && !v.Unread && v.DefaultUndecided != sqlitefile.DefaultReasonNone {
+		m["default_undecided"] = v.DefaultUndecided.String() // the reason is evidence and tiny
+	}
 	return m
 }
 
@@ -115,6 +118,9 @@ func encodeValue(i int, v sqlitefile.Value, b *valueBudget) map[string]any {
 		}
 	case v.Omitted:
 		m["omitted"] = true
+		if v.DefaultUndecided != sqlitefile.DefaultReasonNone {
+			m["default_undecided"] = v.DefaultUndecided.String()
+		}
 	default:
 		if isBytes && minEncodedBytes(v) > b.left+degSize {
 			return deg

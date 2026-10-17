@@ -154,6 +154,10 @@ func wrapErr(err error) error {
 		return fmt.Errorf("%w: %w", ErrEngineRefuses, err)
 	case errors.Is(err, sqlitefile.ErrWithoutRowid):
 		return fmt.Errorf("%w: %w", ErrWithoutRowid, err)
+	case errors.Is(err, sqlitefile.ErrKeyUndecided):
+		return fmt.Errorf("%w: %w", ErrKeyUndecidable, err)
+	case errors.Is(err, sqlitefile.ErrBadKey):
+		return &UnsupportedSchemaError{Reason: err.Error()}
 	case errors.Is(err, sqlitefile.ErrInternal):
 		return fmt.Errorf("%w: %w", ErrInternal, err)
 	}
@@ -212,4 +216,27 @@ func (db *DB) Release() {
 	defer func() { _ = recover() }() // a panic in Release must not escape; the charges are still freed below
 	defer db.budget.releaseAll()
 	db.view.Release()
+}
+
+// VirtualTables lists the virtual tables of the schema in the order the reader
+// gives them. Tables excludes them and Table refuses them with an
+// UnsupportedSchemaError, so this is how a caller learns that one exists
+// without knowing its name (unknown is never absent). The module of a virtual
+// table is not interpreted by this layer and is not reported.
+func (db *DB) VirtualTables(ctx context.Context) (names []string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			names, err = nil, fmt.Errorf("%w: %v", ErrInternal, r)
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	names = []string{}
+	for _, o := range db.schema.Objects {
+		if o.Type == "table" && o.Virtual {
+			names = append(names, o.Name)
+		}
+	}
+	return names, nil
 }

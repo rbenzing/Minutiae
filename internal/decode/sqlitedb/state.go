@@ -9,19 +9,20 @@ type ColState uint8
 // the database says. Every other state is an unknown the caller must not
 // treat as a value.
 const (
-	StatePresent     ColState = iota // stored and read
-	StateNull                        // stored as NULL
-	StateAbsent                      // no such column
-	StateDefaulted                   // not stored (a short record): the column's literal default
-	StateOmitted                     // not materialized (over a cap, non-literal default)
-	StateUnread                      // stored, but its bytes could not be read
-	StateClipped                     // only a prefix of the bytes is held
-	StateUndecodable                 // UTF-16 text that is not valid UTF-16
-	StateLost                        // a rowid that was not recovered
-	StateGenerated                   // a virtual generated column: not stored, never evaluated
+	StatePresent          ColState = iota // stored and read
+	StateNull                             // stored as NULL
+	StateAbsent                           // no such column
+	StateDefaulted                        // not stored (a short record): the column's literal default
+	StateOmitted                          // not materialized (over a cap or an unreadable part)
+	StateUnread                           // stored, but its bytes could not be read
+	StateClipped                          // only a prefix of the bytes is held
+	StateUndecodable                      // UTF-16 text that is not valid UTF-16
+	StateLost                             // a rowid that was not recovered
+	StateGenerated                        // a virtual generated column: not stored, never evaluated
+	StateDefaultUndecided                 // not stored (a short record) and the column default is not a value (see UndecidedDefault)
 )
 
-var stateNames = [...]string{"present", "null", "absent", "defaulted", "omitted", "unread", "clipped", "undecodable", "lost", "generated"}
+var stateNames = [...]string{"present", "null", "absent", "defaulted", "omitted", "unread", "clipped", "undecodable", "lost", "generated", "default-undecided"}
 
 func (s ColState) String() string {
 	if int(s) < len(stateNames) {
@@ -79,6 +80,8 @@ func deriveState(in stateInput, col int) ColState {
 		switch {
 		case in.truncated || in.lengthMismatch:
 			return StateUnread
+		case v.DefaultUndecided != sqlitefile.DefaultReasonNone:
+			return StateDefaultUndecided
 		case v.Omitted:
 			return StateOmitted
 		}

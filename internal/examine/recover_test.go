@@ -340,6 +340,12 @@ func TestRecoverNeverZeroFills(t *testing.T) {
 	if rs := recs[1].Source.Derived.Recovery.Assumptions; !slices.Contains(rs, fmt.Sprintf("size-declared=%d", 2*bs)) {
 		t.Errorf("b-del assumptions = %q, want size-declared=2*bs", rs)
 	}
+	// ruling F4/F18: a map shorter than its declared size is a prefix: prefix-only, confidence 20 (55 without the cap),
+	// and the unmapped declared bytes are in ExcludedBytes.
+	b := recs[1].Source.Derived.Recovery
+	if !slices.Contains(b.Assumptions, "prefix-only") || *b.Confidence != 20 || b.Alloc.ExcludedBytes != bs {
+		t.Errorf("b-del: assumptions %q confidence %d excluded bytes %d, want prefix-only, 20 and %d", b.Assumptions, *b.Confidence, b.Alloc.ExcludedBytes, bs)
+	}
 }
 
 func TestRecoveredArtifactEqualsRuns(t *testing.T) {

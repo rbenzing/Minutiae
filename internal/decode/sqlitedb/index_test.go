@@ -236,7 +236,7 @@ func TestIndexNumericEquality(t *testing.T) {
 	}
 }
 
-func TestIndexDoesNotCoerceAffinity(t *testing.T) {
+func TestIndexAppliesTheTargetAffinityToTheProbe(t *testing.T) {
 	src, _, _ := joinTable(t, sqlitetest.Options{}, "create table t(a text, b integer)", func(tt *sqlitetest.Table) {
 		tt.Insert(1, "7", 7)
 	})
@@ -249,8 +249,8 @@ func TestIndexDoesNotCoerceAffinity(t *testing.T) {
 	}
 	text, _ := firstRowKey(t, src, 0)
 	ids, fl := rowidsOf(t, ix, text)
-	if len(ids) != 0 || fl&sqlitedb.JoinAffinityDiffers == 0 {
-		t.Errorf("text 7 vs integer 7: ids %v flags %b; want no match, affinity flag", ids, fl)
+	if !slices.Equal(ids, []int64{1}) || fl&sqlitedb.JoinAffinityDiffers == 0 {
+		t.Errorf("text 7 vs integer 7: ids %v flags %b; want the match (the engine converts the text), affinity flag", ids, fl)
 	}
 	num, _ := firstRowKey(t, src, 1)
 	ids, fl = rowidsOf(t, ix, num)

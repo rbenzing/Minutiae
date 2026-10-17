@@ -1,0 +1,5 @@
+-- Older Android releases keep the call log in contacts2.db next to the contacts tables.
+-- Source: AOSP platform/packages/providers/ContactsProvider, tag android-14.0.0_r1, src/com/android/providers/contacts/CallLogDatabaseHelper.java (the calls columns; verdict historical). ContactsDatabaseHelper.java at this tag no longer creates a calls table (a comment at line 2687 says calls and voicemail_status were extracted into the call log database), so the combination of both tables in one file is the layout of older releases, not a definition of the tag; the raw_contacts table below is a two-column reduction of the platform definition (verdict historical).
+-- Per-table file:line and verdict: tools/fixtures/schemas/android-telephony/CROSSCHECK.md (Task 4b).
+CREATE TABLE calls (_id INTEGER PRIMARY KEY AUTOINCREMENT, number TEXT, date INTEGER, duration INTEGER, type INTEGER, new INTEGER, name TEXT, numbertype INTEGER, numberlabel TEXT, countryiso TEXT, voicemail_uri TEXT, is_read INTEGER, geocoded_location TEXT);
+CREATE TABLE raw_contacts (_id INTEGER PRIMARY KEY AUTOINCREMENT, display_name TEXT);

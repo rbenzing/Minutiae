@@ -16,7 +16,7 @@ func intPtr(v int) *int { return &v }
 
 func fullArtifact(id string) Artifact {
 	return Artifact{
-		ID: id, SHA256: "aa" + id, Platform: "android", Logical: "android:/data/" + id, Size: 123, Incomplete: true,
+		ID: id, Acquisition: "acq-" + id, SHA256: "aa" + id, Platform: "android", Logical: "android:/data/" + id, Size: 123, Incomplete: true,
 		Recovery: &RecoveryInfo{Class: "carved", Method: "sig", Confidence: intPtr(70)},
 		Source: SourceInfo{
 			Kind: "extract", DeviceID: "dev", RemotePath: "/r/" + id, OriginalPath: "/o", Partition: "p1", FSType: "ext4", FSPath: "/f",
@@ -245,4 +245,30 @@ func mutateArtifact(a *Artifact) {
 	a.Source.Encrypted, a.Source.ParentIncomplete = false, false
 	a.Source.Snapshot.Name, a.Source.Snapshot.Xid = "x", 1
 	a.Source.Snapshot = &SnapshotInfo{Name: "y"}
+}
+
+// The acquisition id is part of the Artifact contract (ruling T25): it is carried by Input.Clone
+// for the primary and for every role entry, so a parser can require that two artifacts come from
+// one acquisition of one device. The field is reached by name so a missing field is a failed
+// assertion here.
+func TestArtifactCarriesTheAcquisitionID(t *testing.T) {
+	typ := reflect.TypeOf(Artifact{})
+	if f, ok := typ.FieldByName("Acquisition"); !ok || f.Type.Kind() != reflect.String {
+		t.Fatal("parse.Artifact has no string field Acquisition")
+	}
+	in := fullInput()
+	reflect.ValueOf(&in.Primary).Elem().FieldByName("Acquisition").SetString("acq-1")
+	for role, a := range in.Artifacts {
+		a2 := a
+		reflect.ValueOf(&a2).Elem().FieldByName("Acquisition").SetString("acq-" + role)
+		in.Artifacts[role] = a2
+	}
+	c := in.Clone()
+	get := func(a Artifact) string { return reflect.ValueOf(a).FieldByName("Acquisition").String() }
+	if get(c.Primary) != "acq-1" || get(c.Artifacts["db"]) != "acq-db" || get(c.Artifacts["wal"]) != "acq-wal" {
+		t.Fatalf("Clone dropped the acquisition id: %q %q %q", get(c.Primary), get(c.Artifacts["db"]), get(c.Artifacts["wal"]))
+	}
+	if get(fullInput().Primary) != "acq-a1" {
+		t.Fatal("fullInput does not set an acquisition id (the DeepEqual clone tests would not cover the field)")
+	}
 }

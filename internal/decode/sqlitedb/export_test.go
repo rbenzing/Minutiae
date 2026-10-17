@@ -84,3 +84,13 @@ func (c *Context) SetBuildIndex(f func(context.Context, *Table, string) (*Index,
 func (c *Context) SetIndexLimit(n int) {
 	c.build = func(ctx context.Context, t *Table, col string) (*Index, error) { return t.Index(ctx, col, n) }
 }
+
+// AltEntries is the number of alternative (converted) entries the index holds:
+// the numeric view of the target's numeric-looking texts.
+func (ix *Index) AltEntries() int {
+	n := 0
+	for _, ids := range ix.altNum {
+		n += len(ids)
+	}
+	return n
+}
