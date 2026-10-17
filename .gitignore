@@ -16,3 +16,7 @@ docs/superpowers/
 .claude/worktrees/
 .claude/scratch/
 .claude/check.lock/
+
+# large generated test images (tools/fixtures/apfs-big.sh): never committed
+*.big.img
+*.sparse.img

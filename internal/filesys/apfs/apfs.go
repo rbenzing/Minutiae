@@ -60,8 +60,10 @@ type FS struct {
 	slots [nxMaxFileSystems]*volume // the same by slot
 
 	dirBudget     atomic.Int64 // directory-record bytes this FS may still scan
+	linkBudget    atomic.Int64 // bytes of stream-stored symlink targets this FS may still read
 	maxDirEntries int          // entries read from one directory
 	maxFileRuns   int          // runs one file may map
+	xattrMax      int          // 0: maxXattrRecords
 	unallocCap    int          // runs Unallocated reports (0: maxUnallocRuns)
 	scans         atomic.Int64 // file-system tree scans started (a work counter)
 
@@ -137,6 +139,7 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		maxFileRuns:   maxFileRuns,
 	}
 	f.dirBudget.Store(maxDirBudget)
+	f.linkBudget.Store(maxLinkBytes)
 	f.checkBlockZero()
 
 	nx, cp, err := f.selectCheckpoint(&nx0)

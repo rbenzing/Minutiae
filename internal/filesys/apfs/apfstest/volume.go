@@ -71,12 +71,13 @@ type Times struct{ Create, Modify, Change, Access uint64 }
 // DefaultTime is the clock the builder uses for times left at zero.
 const DefaultTime = 1_700_000_000_000_000_000
 
-// Xattr is an extended attribute; Stream selects the data-stream form (the
-// builder writes a stream descriptor and no data).
+// Xattr is an extended attribute; Stream selects the data-stream form. Without
+// WriteStream the builder writes a stream descriptor and no data.
 type Xattr struct {
-	Name   string
-	Value  []byte
-	Stream bool
+	Name        string
+	Value       []byte
+	Stream      bool
+	WriteStream bool // with Stream: lay Value out in data blocks and write extent records for the stream's object id
 }
 
 // File describes one object of a volume. Missing parent directories are
@@ -90,10 +91,14 @@ type File struct {
 	Symlink string // target; makes the file a symlink
 	// SymlinkStream stores the symlink target as a data-stream xattr.
 	SymlinkStream bool
-	Mode          uint32 // permission bits, or a full mode when type bits are set
-	UID, GID      uint32
-	Times         Times
-	Xattrs        []Xattr
+	// SymlinkStreamNoData, with SymlinkStream, writes the stream descriptor and
+	// no extents (a damaged target). Without it SymlinkStream lays the target
+	// (with its NUL) out in data blocks.
+	SymlinkStreamNoData bool
+	Mode                uint32 // permission bits, or a full mode when type bits are set
+	UID, GID            uint32
+	Times               Times
+	Xattrs              []Xattr
 
 	LinkTo      string // Path of the file this name is a hard link to
 	LinkSibling bool   // the directory record names a sibling id, mapped to the inode

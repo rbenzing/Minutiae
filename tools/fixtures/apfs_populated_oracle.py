@@ -676,6 +676,15 @@ def node_list(nodes):
              "gid": n["gid"], "mtime_ns": n["mtime_ns"], "nlink": n["nlink"], "inode": n["inode"],
              "private_id": n["private_id"], "xattrs": n["xattrs"],
              "name_hash": n["name_hash"], "date_added": n["date_added"]}
+        if n["xattr_values"]:
+            e["xattr_values"] = {
+                name: {
+                    "size": len(val),
+                    "sha256": hashlib.sha256(val).hexdigest(),
+                    "storage": "stream" if "stream_oid" in n["xattr_storage"][name] else "embedded",
+                }
+                for name, val in sorted(n["xattr_values"].items())
+            }
         if n["type"] == "file":
             e["sha256"] = n["sha256"]
             e["runs"] = merge_runs(n["runs"])

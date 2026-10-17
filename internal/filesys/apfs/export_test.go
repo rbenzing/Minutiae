@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+
+	"github.com/rbenzing/minutiae/internal/filesys"
 )
 
 // Test-only accessors, so the external apfs_test package can check internals
@@ -346,6 +348,9 @@ const MaxFileRuns = maxFileRuns
 // SetMaxFileRuns sets the cap on the runs of one file.
 func (f *FS) SetMaxFileRuns(n int) { f.maxFileRuns = n }
 
+// SetXattrCap sets the number of xattr records one object may have (0: the default).
+func (f *FS) SetXattrCap(n int) { f.xattrMax = n }
+
 // NameHash is the stored directory-record name hash for name; ok is false when
 // the name is not verifiable (not pure ASCII).
 func NameHash(name []byte, foldCase bool) (hash uint32, ok bool) { return nameHash(name, foldCase) }
@@ -355,3 +360,49 @@ func (f *FS) NodeReads() int64 { return f.nodeReads.Load() }
 
 // SetUnallocCap sets the cap on the runs Unallocated reports.
 func (f *FS) SetUnallocCap(n int) { f.unallocCap = n }
+
+// ExtentRuns maps the extents of object id of volume slot as the live tree has
+// them, returning the trusted runs (an error when the map is damaged).
+func (f *FS) ExtentRuns(slot int, id uint64, size int64) ([]filesys.Run, error) {
+	v := f.slots[slot]
+	m, err := f.extentMap(v, 0, id, id, size)
+	if err != nil {
+		return nil, err
+	}
+	if m.tail != nil {
+		return m.runs, m.tail
+	}
+	return m.runs, nil
+}
+
+// ShortInlineFile returns an inline file whose declared size exceeds its bytes
+// (the shape a forged empty-named attribute once produced).
+func ShortInlineFile() filesys.File { return &file{size: 5, avail: 5, mem: []byte("ab"), inline: true} }
+
+// SetLinkBudget sets the bytes of stream-stored symlink targets this FS may still read.
+func (f *FS) SetLinkBudget(n int64) { f.linkBudget.Store(n) }
+
+// ChargeLink takes n bytes from the stream-symlink budget.
+func (f *FS) ChargeLink(n int64) bool { return f.chargeLink(n) }
+
+// LinkBudget is the stream-symlink budget left.
+func (f *FS) LinkBudget() int64 { return f.linkBudget.Load() }
+
+// SpacemanCIBs and SpacemanCABs are the counts of chunk-info blocks and
+// chunk-info address blocks the reader decoded from the space manager. A
+// space manager that cannot be decoded yields (0, false), never a count.
+func (f *FS) SpacemanCIBs() (uint64, bool) {
+	sm, problem, err := f.loadSpaceman()
+	if err != nil || problem != "" || sm == nil {
+		return 0, false
+	}
+	return sm.cibs, true
+}
+
+func (f *FS) SpacemanCABs() (uint64, bool) {
+	sm, problem, err := f.loadSpaceman()
+	if err != nil || problem != "" || sm == nil {
+		return 0, false
+	}
+	return sm.cabs, true
+}

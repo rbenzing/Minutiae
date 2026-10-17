@@ -27,7 +27,11 @@ type ExtractOptions struct {
 	Partition int      // -1 = auto
 	Paths     []string // fs paths ("/a/b") or "id:<fs id>"
 	Recursive bool
-	Progress  func(done, total int64) // total -1 when unknown
+	// IncludeSnapshots descends into a volume's synthetic .snapshots directory in a recursive
+	// run (APFS). Default false: the directory is skipped with one analysis.warning when the
+	// volume has snapshots. The choice is recorded in the analysis details ("include_snapshots").
+	IncludeSnapshots bool
+	Progress         func(done, total int64) // total -1 when unknown
 	// MaxFiles and MaxBytes bound what one extraction writes (0 selects
 	// DefaultMaxFiles and DefaultMaxBytes; a negative value is ErrInvalidLimit).
 	// A file larger than the bytes left, or one past the file limit, stops the run:
@@ -43,8 +47,10 @@ type ExtractOptions struct {
 // cannot be read are skipped with an analysis.warning. A recursive run does not
 // descend into a volume's synthetic .snapshots directory (APFS snapshots; see
 // filesys.IsSnapshotsDir): the directory itself, or a path inside it, is
-// extracted when addressed. When the volume has snapshots, one
-// analysis.warning with source "examine" notes that they were not included. A failure to write
+// extracted when addressed, or when IncludeSnapshots is set (the choice is recorded in the
+// analysis details; each snapshot artifact keeps its snapshot provenance). When the volume has
+// snapshots and the run does not include them, one analysis.warning with source "examine"
+// notes that they were not included. A failure to write
 // the case, or a cancelled ctx, aborts the run (a partially written artifact
 // is kept and flagged incomplete).
 func (s *Session) Extract(ctx context.Context, o ExtractOptions) (Summary, error) {
@@ -88,7 +94,7 @@ func (s *Session) Extract(ctx context.Context, o ExtractOptions) (Summary, error
 	}
 	details := map[string]any{
 		"parent_id": s.Parent.ID, "partition": part.Index, "fs_type": fsType,
-		"paths": append([]string(nil), o.Paths...), "recursive": o.Recursive,
+		"paths": append([]string(nil), o.Paths...), "recursive": o.Recursive, "include_snapshots": o.IncludeSnapshots,
 		"max_files": b.maxFiles, "max_bytes": b.maxBytes,
 	}
 	return runAnalysis(s.Case, s.Parent.Source.DeviceID, "extract", details, func(a *analysis) error {
@@ -161,9 +167,9 @@ func (x *extractor) target(p string, e filesys.Entry) error {
 			if werr != nil {
 				return x.a.warn(wp, "directory not walked: "+werr.Error())
 			}
-			if filesys.IsSnapshotsDir(we) {
+			if filesys.IsSnapshotsDir(we) && !x.o.IncludeSnapshots {
 				// A recursive run does not descend into the snapshots of a volume
-				// (they would multiply the output); address them explicitly.
+				// (they would multiply the output) unless opted in; address them explicitly.
 				if err := x.a.noteSnapshotsSkipped(wp, we); err != nil {
 					return err
 				}

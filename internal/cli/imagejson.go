@@ -67,6 +67,9 @@ type jsonEntry struct {
 type pathEntry struct {
 	Path  string    `json:"path"`
 	Entry jsonEntry `json:"entry"`
+	// Snapshot names the snapshot an entry of an opted-in recursive listing (--include-snapshots)
+	// was read from: such an entry is historical data, never live. Absent for every other entry.
+	Snapshot string `json:"snapshot,omitempty"`
 }
 
 func newPathEntry(p string, e filesys.Entry) pathEntry {
@@ -90,6 +93,13 @@ func newPathEntry(p string, e filesys.Entry) pathEntry {
 type jsonWarningItem struct {
 	Path     string   `json:"path"`
 	Warnings []string `json:"warnings"`
+	// Snapshot names the snapshot the finding lies in, when it lies in one: historical, never live.
+	Snapshot string `json:"snapshot,omitempty"`
+}
+
+// newWalkWarningItem is the array item for a walker finding at p; snapshotOf gives the snapshot a path lies in.
+func newWalkWarningItem(snapshotOf func(string) string, p, finding string) jsonWarningItem {
+	return jsonWarningItem{Path: p, Warnings: []string{finding}, Snapshot: snapshotOf(p)}
 }
 
 // jsonStat is the object `image stat --json` prints: the entry plus the

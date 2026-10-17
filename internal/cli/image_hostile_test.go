@@ -154,7 +154,7 @@ func TestPrintersEscapeInfoAndEntryText(t *testing.T) {
 	})
 	printEntry(&b, "/p"+hostile, filesys.Entry{
 		Name: hostile, ID: hostile, LinkTarget: hostile, Attrs: []filesys.KV{{Key: "ak" + hostile, Value: "av" + hostile}},
-	})
+	}, "snap"+hostile)
 	out := b.String()
 	noRawControl(t, "printers", out)
 	for _, want := range []string{"warn", "fw", "err", "av", "ak", `k\x1b`} {

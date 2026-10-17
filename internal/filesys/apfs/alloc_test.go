@@ -503,7 +503,13 @@ func TestUnallocatedBitOrderAndPolarity(t *testing.T) {
 // is no warning. apfs-multichunk's second chunk has no bitmap block.
 func orcCheckUnallocated(t *testing.T, img []byte, exp *orcExpect) {
 	t.Helper()
-	f, err := apfs.Open(bytes.NewReader(img), int64(len(img)))
+	orcCheckUnallocatedAt(t, bytes.NewReader(img), int64(len(img)), exp)
+}
+
+// orcCheckUnallocatedAt is orcCheckUnallocated on any reader of size bytes.
+func orcCheckUnallocatedAt(t *testing.T, r io.ReaderAt, size int64, exp *orcExpect) {
+	t.Helper()
+	f, err := apfs.Open(r, size)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
