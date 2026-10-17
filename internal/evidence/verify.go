@@ -37,6 +37,7 @@ type VerifyReport struct {
 	Notices []string `json:"notices"`
 
 	reproduceRan    bool // R6 ran in this verify (MarkReproduceRan)
+	cancelCut       bool // a phase was cut short by the end of the verify context
 	recoveredByKind map[string]int
 }
 
@@ -99,13 +100,21 @@ func (c *Case) verifyRun(ctx context.Context, observe verifyChunkObserver, check
 	seenID := map[string]bool{}
 	doneArtifacts := c.phase("artifacts")
 	for _, r := range recs {
-		rep.ArtifactsChecked++
 		inManifest[r.Path] = true
 		if seenID[r.ID] {
 			rep.problemf("artifact %s: duplicate manifest id (%s)", r.ID, r.Path)
 		}
 		seenID[r.ID] = true
-		d, err := HashFile(filepath.Join(c.Dir, filepath.FromSlash(r.Path)))
+		if rep.cancelCut || ctx.Err() != nil {
+			rep.cancelCut = true // the rest is not hashed: the artifact is still in the manifest, just not checked
+			continue
+		}
+		d, err := hashFileContext(ctx, filepath.Join(c.Dir, filepath.FromSlash(r.Path)))
+		if ctxCaused(err) {
+			rep.cancelCut = true
+			continue
+		}
+		rep.ArtifactsChecked++
 		if err != nil {
 			rep.problemf("artifact %s (%s): %v", r.ID, r.Path, err)
 			continue
@@ -129,8 +138,8 @@ func (c *Case) verifyRun(ctx context.Context, observe verifyChunkObserver, check
 	c.checkUnmanifested(&rep, inManifest)
 	c.checkStaging(&rep)
 	c.runComposedChecks(ctx, &rep, recs, checks)
-	if ctx.Err() != nil && !slices.Contains(rep.Problems, verifyCancelled) {
-		rep.problemf("%s", verifyCancelled) // a cancelled verify is never a pass, whichever phase it ended in
+	if rep.cancelCut && !slices.Contains(rep.Problems, verifyCancelled) {
+		rep.problemf("%s", verifyCancelled) // a verify cut short is never a pass, whichever phase it ended in
 	}
 	unreproducedNotices(&rep)
 
@@ -466,3 +475,9 @@ func (r VerifyReport) RecoveredSummary() string {
 // MarkReproduceRan is called by the composed reproduce check (R6) when it ran, so the built-in
 // check stops noticing that recover and carve artifacts are not reproduced by this build.
 func (r *VerifyReport) MarkReproduceRan() { r.reproduceRan = true }
+
+// CancelledOnly reports whether the only problem is that the verify was cut short by a cancel: no
+// integrity finding was made, so the caller may treat it as a cancel and not as an integrity failure.
+func (r VerifyReport) CancelledOnly() bool {
+	return len(r.Problems) == 1 && r.Problems[0] == verifyCancelled
+}

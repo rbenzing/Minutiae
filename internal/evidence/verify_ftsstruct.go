@@ -167,9 +167,7 @@ func (r *ftsVerify) checkUnreferenced(table string) {
 		return sr.Err()
 	})
 	if err != nil {
-		if r.ctx.Err() == nil { // a cancelled verify is reported by its caller, not once more here
-			r.fail(table, err)
-		}
+		r.fail(table, err) // the end of the verify context is marked as a cut there, not reported
 	}
 	if hidden > 0 {
 		r.rep.problemf("%s: %d further unreferenced index rows are not listed", table, hidden)

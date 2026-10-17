@@ -350,6 +350,11 @@ func (r *ftsVerify) addRecord(table, base string, doc int64, format string, a ..
 
 // fail reports an error that stopped a step. An error of the rebuilt index ends the whole check.
 func (r *ftsVerify) fail(table string, err error) {
+	if ctxCaused(err) {
+		r.dead = true
+		r.rep.cancelCut = true
+		return
+	}
 	var ee expectedErr
 	if errors.As(err, &ee) {
 		r.dead = true
@@ -417,6 +422,10 @@ func (r *ftsVerify) rebuild(observe verifyChunkObserver) bool {
 		if strings.HasPrefix(p, "records holds ") || strings.HasPrefix(p, "records unreadable") {
 			incomplete = true
 		}
+	}
+	if incomplete && r.ctx.Err() != nil {
+		r.rep.cancelCut = true // the stream ended with the context; verifyRun reports that once
+		return false
 	}
 	if incomplete {
 		r.rep.problemf("%s: the records could not all be read to rebuild the index, so the index content is not verified: %q", FTSWordTable, clipText(strings.Join(side.rep.Problems, "; "), 400))

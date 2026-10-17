@@ -3,9 +3,11 @@
 package evidence
 
 import (
+	"context"
 	"crypto/md5" //nolint:gosec // MD5 is recorded alongside SHA-256 for interoperability with other forensic tools
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"hash"
 	"io"
 	"os"
@@ -59,4 +61,42 @@ func HashFile(path string) (Digests, error) {
 		return Digests{}, err
 	}
 	return h.Sum(), nil
+}
+
+// ctxReader fails a Read once its context has ended, so a long copy stops within one read of a cancel.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
+}
+
+// hashReaderContext streams r through a MultiHasher and stops with ctx.Err() soon after ctx ends.
+func hashReaderContext(ctx context.Context, r io.Reader) (Digests, error) {
+	h := NewMultiHasher()
+	if _, err := io.Copy(h, ctxReader{ctx: ctx, r: r}); err != nil {
+		return Digests{}, err
+	}
+	return h.Sum(), nil
+}
+
+// hashFileContext is HashFile that a cancelled context interrupts (case verify re-hashes every artifact,
+// which can be many gigabytes).
+func hashFileContext(ctx context.Context, path string) (Digests, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return Digests{}, err
+	}
+	defer func() { _ = f.Close() }()
+	return hashReaderContext(ctx, f)
+}
+
+// ctxCaused reports whether err is the end of a context, not a failure of the thing being read.
+func ctxCaused(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }

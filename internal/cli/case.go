@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -174,6 +175,11 @@ func newCaseVerifyCmd(d Deps, opts *rootOptions) *cobra.Command {
 				}
 				fmt.Fprintf(d.Out, "%s: %d artifacts%s, %d audit entries, %d problems%s\n",
 					status, rep.ArtifactsChecked, rep.RecordsSummary(), rep.AuditEntries, len(rep.Problems), rep.RecoveredSummary())
+			}
+			if rep.CancelledOnly() {
+				// cut short by a cancel with no other finding: a plain cancelled error (exit 1, as a cancelled parse
+				// run), never an integrity failure; any other problem next to a cancel is still exit 4
+				return fmt.Errorf("verify cancelled: %w", context.Canceled)
 			}
 			if !rep.OK() {
 				return fmt.Errorf("%w: %d problem(s)", evidence.ErrIntegrity, len(rep.Problems))

@@ -258,6 +258,11 @@ func TestVerifyCancelledDuringP11(t *testing.T) {
 	if !slices.ContainsFunc(rep.Problems, func(p string) bool { return strings.Contains(p, "hash mismatch") }) {
 		t.Fatalf("the integrity problem found before the cancel is missing: %q", rep.Problems)
 	}
+	for _, p := range rep.Problems {
+		if strings.Contains(p, "context canceled") || strings.Contains(p, "unreadable") || strings.Contains(p, "could not") {
+			t.Fatalf("cancel noise in the report: %q", p)
+		}
+	}
 	if rep.FTSDocsChecked >= 12000 {
 		t.Fatalf("FTSDocsChecked = %d: the rebuild was not cut short", rep.FTSDocsChecked)
 	}

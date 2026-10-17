@@ -226,6 +226,10 @@ type recordRowMeta struct {
 }
 
 func unreadable(rep *VerifyReport, what string, err error) {
+	if ctxCaused(err) {
+		rep.cancelCut = true // the end of the verify context, reported once as "verification cancelled", is not corruption
+		return
+	}
 	rep.problemf("records unreadable: %s: %q", what, err.Error())
 }
 
