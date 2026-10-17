@@ -184,9 +184,24 @@ func TestWithoutRowidWrongInteriorEntryIsFlagged(t *testing.T) {
 	if len(got.rows) != 60 {
 		t.Fatalf("%d rows delivered, want 60", len(got.rows))
 	}
-	want := nonAscending(t, got.rows, true)
-	if len(want) == 0 {
-		t.Fatal("the patch must make an entry descend")
+	// The patched separator (key 125, the entry at position pi) bounds its right subtree from below:
+	// every entry of that subtree, down to the next root entry, lies outside its range and is
+	// flagged, the descending one included. The patched entry itself is inside the root's range.
+	pi := -1
+	for i, r := range got.rows {
+		if r.Loc.Page == root && firstKeyInt(t, r) == 125 {
+			pi = i
+		}
+	}
+	if pi < 0 || pi+1 >= len(got.rows) {
+		t.Fatal("the patched entry was not delivered")
+	}
+	var want []int
+	for i := pi + 1; i < len(got.rows) && got.rows[i].Loc.Page != root; i++ {
+		want = append(want, i)
+	}
+	if len(nonAscending(t, got.rows, true)) == 0 || len(want) < 2 {
+		t.Fatal("the patch must make a whole subtree lie below its separator")
 	}
 	if fl := flaggedIdx(got.rows); !equalInts(fl, want) {
 		t.Fatalf("flagged entries %v, want %v", fl, want)
@@ -318,8 +333,8 @@ func TestOrderCheckUnsupportedCollationIsCountedNotSilent(t *testing.T) {
 	if ws := warningsOf(v, sqlitefile.WarnBTreeOrder); len(ws) != 0 {
 		t.Errorf("btree-order warnings for an undecidable order: %+v", ws)
 	}
-	if n, ok := uncheckedCount(t, v); !ok || n != 39 {
-		t.Errorf("unchecked count %d (found %v), want 39: every entry after the first", n, ok)
+	if n, ok := uncheckedCount(t, v); !ok || n != 40 {
+		t.Errorf("unchecked count %d (found %v), want 40: every entry (the first meets a bound)", n, ok)
 	}
 }
 
@@ -390,8 +405,8 @@ func TestScanTreeOrderedAppliesDescAndUnique(t *testing.T) {
 	if f, n := run(sqlitefile.KeyOrder{Cols: []sqlitefile.KeyColumn{{}}, Unique: true}); f != 0 || n != 60 {
 		t.Errorf("ascending: flagged %d of %d", f, n)
 	}
-	if f, n := run(sqlitefile.KeyOrder{Cols: []sqlitefile.KeyColumn{{Desc: true}}}); f != 59 || n != 60 {
-		t.Errorf("descending: flagged %d of %d, want 59 of 60", f, n)
+	if f, n := run(sqlitefile.KeyOrder{Cols: []sqlitefile.KeyColumn{{Desc: true}}}); f < 59 || n != 60 {
+		t.Errorf("descending: flagged %d of %d, want 59 or 60 of 60 (the first entry can lie outside its separator too)", f, n)
 	}
 }
 

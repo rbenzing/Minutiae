@@ -2,6 +2,7 @@ package sqlitefile_test
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"testing"
 
@@ -62,4 +63,28 @@ func TestGetByKeyDoesNotChargeBeyondThePath(t *testing.T) {
 	}
 	v.Release()
 	rb.check(t)
+}
+
+// A miss at the end of a leaf whose sibling lies under another mid-level page reads the path and
+// the sibling's descent: at most 2*depth-1 pages (U65).
+func TestGetByKeyMissWithADistantSiblingCostsAtMostTwiceTheDepth(t *testing.T) {
+	b, tb := keyTable(t, 2000)
+	data := b.Bytes()
+	depth := int64(tb.Depth())
+	mid, _, _ := pathPages(t, tb, data)
+	pm := pageAt(data, 512, mid)
+	lastLeaf := binary.BigEndian.Uint32(pm[8:12]) // the right-most child of the first mid-level page
+	pl := pageAt(data, 512, lastLeaf)
+	off := keyByteOffset(pl, len(cellOffsets(pl))-1)
+	var last int
+	if _, err := fmt.Sscanf(string(pl[off:off+6]), "k%d", &last); err != nil {
+		t.Fatal(err)
+	}
+	n := coldReads(t, data, txtKey(keyName(last+1)), "absent")
+	if n > 2*depth-1 {
+		t.Errorf("read %d pages on a tree of depth %d, want at most %d", n, depth, 2*depth-1)
+	}
+	if n <= depth {
+		t.Errorf("read %d pages: the sibling under another mid-level page was not read (depth %d)", n, depth)
+	}
 }

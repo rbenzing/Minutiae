@@ -206,7 +206,7 @@ func TestGetByKeyAbsentIsNeverAnsweredOnADamagedPath(t *testing.T) {
 			scan := scanTableRows(t, v, "wt")
 			corrupt, row := 0, 0
 			for i, r := range scan.rows {
-				if r.KeyRangeViolation || (i+1 < len(scan.rows) && scan.rows[i+1].KeyRangeViolation) {
+				if r.KeyRangeViolation {
 					continue
 				}
 				switch got := getKey(t, tbl, r.Values[0]); got.what {
@@ -476,3 +476,5 @@ var pathGapsTo = map[string]int{
 	"a mid-level entry above the key range its ancestors give it": 200,
 	"a root key below the entries of its left subtree":            79,
 }
+
+func sscanKey(s string) (n int, err error) { _, err = fmt.Sscanf(s, "k%d", &n); return }

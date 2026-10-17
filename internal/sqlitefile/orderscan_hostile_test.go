@@ -33,8 +33,8 @@ func TestOrderCheckCostIsLinear(t *testing.T) {
 	if limit := int64(n + len(tb.Interiors())); parsed > limit {
 		t.Errorf("%d cells parsed for %d entries and %d interior pages, want at most %d", parsed, n, len(tb.Interiors()), limit)
 	}
-	if c := v.OrderCompares() - compares; c != n-1 {
-		t.Errorf("%d comparisons for %d entries, want exactly %d", c, n, n-1)
+	if c := v.OrderCompares() - compares; c < n-1 || c > 3*n {
+		t.Errorf("%d comparisons for %d entries, want %d to %d (the previous entry, and at most two bounds)", c, n, n-1, 3*n)
 	}
 }
 
@@ -186,8 +186,8 @@ func TestOrderCheckHostile(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if total != n || flagged != n-1 {
-			t.Errorf("%d entries, %d flagged, want %d and %d", total, flagged, n, n-1)
+		if total != n || flagged < n-1 || flagged > n {
+			t.Errorf("%d entries, %d flagged, want %d and %d or %d (the first can also lie outside its separator)", total, flagged, n, n-1, n)
 		}
 		lim := sqlitefile.ResolveLimits(sqlitefile.Limits{}).MaxWarnings
 		if w := len(v.Warnings()); w > lim+1 {

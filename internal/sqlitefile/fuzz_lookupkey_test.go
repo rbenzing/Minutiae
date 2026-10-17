@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	keyFuzzRows   = 1200 // rows scanned: a table with more is not proven whole
+	keyFuzzRows   = 1200 // rows scanned
 	keyFuzzLookup = 200  // rows looked up per table
 )
 
@@ -39,7 +39,8 @@ func lookupKeySeeds(f *testing.F) [][]byte {
 	return seeds
 }
 
-// FuzzGetByKey: on arbitrary databases, for every WITHOUT ROWID row the scan delivers unflagged,
+// FuzzGetByKey: on arbitrary databases, for every WITHOUT ROWID row the scan delivers unflagged (the
+// scan flags an entry below its predecessor or outside the range its ancestors give it, Task 9b),
 // a lookup of its own key (LookupKey: no affinity conversion, so the stored value is the probe)
 // never answers "absent", and a row it returns has that key. GetByKey itself never panics and
 // returns only typed errors. The budget is as it was found.
@@ -77,25 +78,12 @@ func FuzzGetByKey(f *testing.F) {
 			order := sqlitefile.WithoutRowidOrder(o.Table)
 			nkey := len(order.Cols)
 			var rows []sqlitefile.Row
-			uncheckedBefore := len(warningsOf(v, sqlitefile.WarnKeyOrderUnchecked))
-			loss, err := tbl.RowsLoss(ctx, func(r sqlitefile.Row) bool {
+			_, err = tbl.RowsLoss(ctx, func(r sqlitefile.Row) bool {
 				rows = append(rows, r.Clone())
 				return len(rows) < keyFuzzRows
 			})
 			if err != nil {
 				continue
-			}
-			// Only a scan that is whole and found nothing to flag proves the in-order sequence
-			// ascending, which is what makes every delivered row reachable by its key: an entry
-			// misplaced too high is delivered unflagged (its successor is the flagged one) and
-			// lies outside the subtrees a descent visits.
-			clean := !loss.Any() && len(rows) < keyFuzzRows &&
-				len(warningsOf(v, sqlitefile.WarnKeyOrderUnchecked)) == uncheckedBefore &&
-				len(warningsOf(v, sqlitefile.WarnBTreeOrder)) == 0
-			for _, r := range rows {
-				if r.KeyRangeViolation {
-					clean = false
-				}
 			}
 			for i, r := range rows[:min(len(rows), keyFuzzLookup)] {
 				if r.KeyRangeViolation || len(r.Values) < nkey {
@@ -105,9 +93,7 @@ func FuzzGetByKey(f *testing.F) {
 				got, ok, err := v.LookupKey(ctx, o.RootPage, order, key)
 				switch {
 				case err == nil && !ok:
-					if clean {
-						t.Fatalf("%s: row %d is delivered by a clean scan and the lookup answers absent", o.Name, i)
-					}
+					t.Fatalf("%s: row %d is delivered unflagged by the scan and the lookup answers absent", o.Name, i)
 				case err == nil:
 					if c, _, st := sqlitefile.OrderKeys(got.Values, key, order.Cols); st == sqlitefile.OrderOK && c != 0 {
 						t.Fatalf("%s: row %d: the lookup returned a row with another key", o.Name, i)

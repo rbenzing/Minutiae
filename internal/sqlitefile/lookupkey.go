@@ -11,7 +11,10 @@ import (
 // column, in key order), equal under the key's own collations: the b-tree's notion of the same row.
 // Each value takes the affinity of its key column first (ConvertForComparison with own AffBlob:
 // the value is a constant), and text is put in the database's encoding. found is false only when
-// the search path was proven in order; any damage on the path is a *CorruptError ("the row may
+// the search path was proven in order: "absent from the path the key's search takes", not "absent
+// from the file". An entry misplaced into another subtree is not on that path; the ordered scan
+// (Table.Rows) flags every entry outside the range its ancestors give it, so a row the scan
+// delivers unflagged is found by its key. Any damage on the path is a *CorruptError ("the row may
 // exist"), a comparison the reader cannot make is ErrKeyUndecided, and a key of the wrong length,
 // a NULL or NaN component, a table with rowids or a table whose definition is not parsed
 // (ParseOK false) is ErrBadKey. The row is as Rows delivers it (key columns first) and is the
@@ -93,7 +96,8 @@ type klook struct {
 // nil error) is answered only when every page on the path has proven order (its entries strictly
 // increasing and inside the range the ancestors' entries give it) and, when the search ends at a
 // side of a leaf that has a bound, the adjacent leaf's entry next to the bound lies beyond it.
-// Damage on the path is a *CorruptError (the row may exist), a comparison the reader cannot make
+// That is absence from the search path, not from the tree: an entry that sits in another subtree
+// than its key belongs to is not on the path, and the ordered scan is what flags it. Damage on the path is a *CorruptError (the row may exist), a comparison the reader cannot make
 // is ErrKeyUndecided, a key of the wrong length or an order that is unknown is ErrBadKey.
 // An entry that is found but lies outside its bounds or beside a neighbour it contradicts is
 // returned with KeyRangeViolation set. The returned Row is the caller's.

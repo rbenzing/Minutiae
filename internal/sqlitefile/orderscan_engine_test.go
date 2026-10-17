@@ -500,8 +500,8 @@ func TestOrderCheckCountsUncheckedEntriesOnEngineFiles(t *testing.T) {
 				case uncExpr:
 					sawExpr++
 					want := exprTextPairs(res.rows)
-					if want == 0 || !res.hasUnchecked || res.unchecked != want {
-						t.Errorf("%s: unchecked %d (found %v), want %d", res.object, res.unchecked, res.hasUnchecked, want)
+					if want == 0 || !res.hasUnchecked || res.unchecked < want || res.unchecked > len(res.rows) {
+						t.Errorf("%s: unchecked %d (found %v), want %d to %d (the pairs with text, plus the entries whose bounds are text)", res.object, res.unchecked, res.hasUnchecked, want, len(res.rows))
 					}
 				case uncAll:
 					sawAll++
