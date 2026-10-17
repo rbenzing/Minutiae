@@ -339,6 +339,7 @@ func TestVerifyDetectsSourceDifferingFromAudit(t *testing.T) {
 	tamper := map[string]func(r *ManifestRecord){
 		"derived fs path": func(r *ManifestRecord) { r.Source.Derived.FSPath = "/etc/shadow" },
 		"derived runs":    func(r *ManifestRecord) { r.Source.Derived.Runs = []Run{{Offset: 8192, Length: 4}} },
+		"runs stripped":   func(r *ManifestRecord) { r.Source.Derived.Runs = nil },
 		"derivation gone": func(r *ManifestRecord) { r.Source.Derived = nil },
 		"snapshot gone":   func(r *ManifestRecord) { r.Source.Derived.Snapshot = nil },
 		"snapshot xid":    func(r *ManifestRecord) { r.Source.Derived.Snapshot.Xid = 6 },

@@ -15,6 +15,14 @@ func (c *Case) checkRunSums(ps *problemSet, uniq []ManifestRecord, byID map[stri
 			continue
 		}
 		pre := fmt.Sprintf("artifact %q (%q): ", r.ID, r.Path)
+		if len(d.Runs) > 0 && d.RunsArtifact != "" {
+			ps.add(rKindRuns, "%srecords both inline runs and a runs sidecar", pre)
+			continue
+		}
+		if len(d.Runs) > MaxInlineRuns {
+			ps.add(rKindRuns, "%srecords %d inline runs (more than %d; they belong in a runs sidecar)", pre, len(d.Runs), MaxInlineRuns)
+			continue
+		}
 		runs, err := c.DerivedRuns(r, byID)
 		if err != nil {
 			ps.add(rKindRuns, "%sruns unreadable: %v", pre, err)

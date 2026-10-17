@@ -64,6 +64,17 @@ func TestVerifyRunSumRule(t *testing.T) {
 		{"an unallocated export that does not add up", func(t *testing.T, c *evidence.Case, img evidence.ManifestRecord) {
 			recordstest.AddUnallocatedExport(t, c, img, []evidence.UnallocRun{{Offset: 0, Length: 4, ImageOffset: 100}, {Offset: 4, Length: 4, ImageOffset: 300}}, patterned(6))
 		}, "runs cover 8 bytes but the artifact holds 6"},
+		{"more inline runs than MaxInlineRuns (D100)", func(t *testing.T, c *evidence.Case, img evidence.ManifestRecord) {
+			runs := make([]evidence.Run, evidence.MaxInlineRuns+1)
+			for i := range runs {
+				runs[i] = evidence.Run{Offset: int64(i) * 2, Length: 1}
+			}
+			recordstest.AddDerivedWith(t, c, "f.bin", extractSrc(img, evidence.Derivation{Runs: runs}), patterned(len(runs)))
+		}, "inline runs (more than 4096"},
+		{"inline runs together with a sidecar (D101)", func(t *testing.T, c *evidence.Case, img evidence.ManifestRecord) {
+			sc := recordstest.AddRunsSidecar(t, c, img, "f.bin.runs.jsonl", []evidence.Run{{Offset: 0, Length: 8}})
+			recordstest.AddDerivedWith(t, c, "f.bin", extractSrc(img, evidence.Derivation{RunsArtifact: sc.ID, Runs: []evidence.Run{{Offset: 0, Length: 8}}}), patterned(8))
+		}, "records both inline runs and a runs sidecar"},
 		{"an incomplete artifact may have runs beyond its bytes", func(t *testing.T, c *evidence.Case, img evidence.ManifestRecord) {
 			f := recordstest.AddDerivedWith(t, c, "f.bin", extractSrc(img, evidence.Derivation{Runs: []evidence.Run{{Offset: 0, Length: 16}}}), patterned(8))
 			evidencetest.RewriteManifest(t, c.Dir, f.ID, func(r *evidence.ManifestRecord) { r.Incomplete, r.Error = true, "cut" })
