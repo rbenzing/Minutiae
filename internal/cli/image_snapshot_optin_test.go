@@ -326,3 +326,30 @@ func TestWalkWarningItemCarriesSnapshot(t *testing.T) {
 		t.Errorf("a live finding names a snapshot: %s", b)
 	}
 }
+
+// image stat marks snapshot data in text and JSON, and a live entry carries no marker (Y98).
+func TestImageStatMarksSnapshotData(t *testing.T) {
+	e := apfsEnv(t, snapshotVolume("Data"))
+	code, out := e.image(t, "stat", e.ref, "/Data/.snapshots/S/docs/old.txt")
+	if code != 0 {
+		t.Fatalf("stat: %d\n%s", code, out)
+	}
+	if !strings.Contains(out, "Snapshot:    S\n") {
+		t.Errorf("text stat of a snapshot entry lacks the Snapshot line:\n%s", out)
+	}
+	_, out = e.image(t, "stat", e.ref, "/Data/.snapshots/S/docs/old.txt", "--json")
+	var st struct {
+		Snapshot string `json:"snapshot"`
+	}
+	if err := json.Unmarshal(jsonPart(out), &st); err != nil || st.Snapshot != "S" {
+		t.Errorf("json stat snapshot = %q (%v):\n%s", st.Snapshot, err, out)
+	}
+	_, out = e.image(t, "stat", e.ref, "/Data/docs/a.txt")
+	if strings.Contains(out, "Snapshot") {
+		t.Errorf("a live stat names a snapshot:\n%s", out)
+	}
+	_, out = e.image(t, "stat", e.ref, "/Data/docs/a.txt", "--json")
+	if strings.Contains(out, `"snapshot"`) {
+		t.Errorf("a live json stat names a snapshot:\n%s", out)
+	}
+}

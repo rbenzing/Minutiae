@@ -755,19 +755,29 @@ func newImageStatCmd(d Deps, opts *rootOptions) *cobra.Command {
 		if m.Incomplete != nil {
 			warnings = append(warnings, m.Incomplete.Error())
 		}
-		if opts.json {
-			return writeJSON(d.Out, jsonStat{pathEntry: newPathEntry(p, e), Warnings: warnings})
+		// Snapshot data is historical: marked in text and JSON, never shown as live.
+		snap := ""
+		if fsys.Info().Type == "apfs" {
+			snap = snapshotNameOfPath(p)
 		}
-		printEntry(d.Out, p, e)
+		if opts.json {
+			pe := newPathEntry(p, e)
+			pe.Snapshot = snap
+			return writeJSON(d.Out, jsonStat{pathEntry: pe, Warnings: warnings})
+		}
+		printEntry(d.Out, p, e, snap)
 		printNewFSWarnings(d.Err, warnings)
 		return nil
 	}
 	return cmd
 }
 
-func printEntry(w io.Writer, p string, e filesys.Entry) {
+func printEntry(w io.Writer, p string, e filesys.Entry, snapshot string) {
 	field := func(name, value string) { fmt.Fprintf(w, "%-12s %s\n", name+":", value) }
 	field("Path", printable(p))
+	if snapshot != "" {
+		field("Snapshot", printable(snapshot))
+	}
 	field("Name", printable(e.Name))
 	if len(e.RawName) > 0 {
 		field("Raw name", hex.EncodeToString(e.RawName))
