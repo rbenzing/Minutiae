@@ -412,7 +412,7 @@ func TestKernelVectorsAreReproducibleFromTheProbeScript(t *testing.T) {
 		}
 	}
 	args := append(append([]string(nil), py[1:]...), "-I", script, "--list")
-	out, err := exec.Command(py[0], args...).Output()
+	out, err := exec.Command(py[0], args...).Output() //nolint:gosec // py comes from LookPath; the script is this repository's own
 	if err != nil {
 		t.Fatalf("probe script: %v", err)
 	}
