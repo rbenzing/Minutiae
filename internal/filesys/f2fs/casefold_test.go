@@ -517,7 +517,7 @@ func TestCasefoldLookupIsBounded(t *testing.T) {
 		for j := 0; b.Len()+4 <= 245; j++ {
 			b.WriteRune(best[(i+j)%len(best)].r)
 		}
-		b.WriteString(fmt.Sprintf("%04d", i)) // distinct names
+		fmt.Fprintf(&b, "%04d", i) // distinct names
 		names = append(names, b.String())
 	}
 	f := cfFSOpts(t, f2fstest.Options{Segments: 10, Encoding: 1}, names...)
