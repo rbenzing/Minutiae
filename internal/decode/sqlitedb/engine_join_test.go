@@ -6,10 +6,11 @@ package sqlitedb_test
 import (
 	"database/sql"
 	"errors"
-	"fmt"
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite" // the oracle engine (tests only)
@@ -157,6 +158,9 @@ func engineTwoTables(t *testing.T, enc, sdecl, gdecl string, svals, gvals []any)
 			t.Fatalf("%s: %v", q, err)
 		}
 	}
+	if _, err := db.Exec("begin"); err != nil {
+		t.Fatal(err)
+	}
 	for i, v := range svals {
 		if _, err := db.Exec("insert into s(id, k) values(?, ?)", i+1, v); err != nil {
 			t.Fatal(err)
@@ -166,6 +170,9 @@ func engineTwoTables(t *testing.T, enc, sdecl, gdecl string, svals, gvals []any)
 		if _, err := db.Exec("insert into g(id, k) values(?, ?)", i+1, v); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if _, err := db.Exec("commit"); err != nil {
+		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
@@ -301,30 +308,87 @@ func checkJoinAgainstEngine(t *testing.T, eng *sql.DB, d *sqlitedb.DB, sc, tc ma
 	if len(lookups) == 0 {
 		t.Fatal("no lookup was made")
 	}
+	probe := probeSideDirection(sc.class, tc.class)
 	for _, l := range lookups {
 		if l.err != nil {
-			t.Errorf("source row %d: %v (every matrix value is decidable)", l.source, l.err)
-			continue
+			switch {
+			case !probe:
+				t.Errorf("source row %d: %v (every matrix value is decidable outside the probe-side directions)", l.source, l.err)
+			case !errors.Is(l.err, sqlitedb.ErrKeyUndecidable):
+				t.Errorf("source row %d: %v, want nil or ErrKeyUndecidable", l.source, l.err)
+			case !mayBeUndecidable(sc.class, tc.class, matrixValues[l.source-1]):
+				t.Errorf("source row %d (%v): ErrKeyUndecidable where the rules of D1/D2 decide it: %v", l.source, matrixValues[l.source-1], l.err)
+			}
 		}
 		if l.flags != want {
 			t.Errorf("source row %d: flags %b, want %b (src %s/%d, tgt %s/%d)", l.source, l.flags, want, sc.collation, sc.class, tc.collation, tc.class)
 		}
 	}
-	if sc.class != tc.class {
-		// The accepted affinity gap is only a MISS: flagged above. A pair the layer
-		// returns that the engine does not (a false positive) always fails.
-		ours := pairsOf(lookups)
-		for p := range ours {
-			if !engine[p] {
-				t.Errorf("cross-class pair %v returned by the layer but not by the engine", p)
+	// Every cross-class direction is strict (U49): for each lookup that is
+	// decided the layer's pairs equal the engine's, with nothing missed and
+	// nothing invented, and a lookup that is not decided is one the rules allow
+	// (above). A same-class pair has no undecided lookup at all.
+	decided := map[int64]bool{}
+	ours := map[[2]int64]bool{}
+	for _, l := range lookups {
+		if l.err == nil {
+			decided[l.source] = true
+			for _, id := range l.ids {
+				ours[[2]int64{l.source, id}] = true
 			}
 		}
-		return
 	}
-	// Same class: the layer's pairs equal the engine's exactly, flagged or not
-	// (a collation flag alone never changes the pairs, because the target's
-	// collation decides on both sides).
-	samePairs(t, engine, pairsOf(lookups))
+	for p := range engine {
+		if decided[p[0]] && !ours[p] {
+			t.Errorf("engine pair %v missed by the layer", p)
+		}
+	}
+	for p := range ours {
+		if !engine[p] {
+			t.Errorf("pair %v returned by the layer but not by the engine", p)
+		}
+	}
+}
+
+// probeSideDirection is true when the SOURCE key is the operand the engine
+// converts: a TEXT or no-affinity source COLUMN against a numeric target column
+// (NUMERIC affinity is applied to both). Written from the engine, which measured
+// the plan wrong: two columns of which neither is numeric (a no-affinity source
+// against a TEXT target included) are compared as stored, with no conversion;
+// only a constant or parameter takes the column's TEXT affinity.
+func probeSideDirection(src, tgt parse.JoinClass) bool {
+	return (src == parse.ClassText || src == parse.ClassBlob) && tgt == parse.ClassNumeric
+}
+
+// mayBeUndecidable says where a probe-side lookup may legitimately be
+// ErrKeyUndecidable, written from the rules of D1/D2 and never read from the
+// layer: numeric-looking text with more than 15 significant digits (the exact
+// decimal rule excludes it).
+func mayBeUndecidable(_, tgt parse.JoinClass, v any) bool {
+	switch x := v.(type) {
+	case string:
+		if tgt != parse.ClassNumeric {
+			return false
+		}
+		s := strings.Trim(x, " \t\n\v\f\r")
+		if _, err := strconv.ParseFloat(s, 64); err != nil {
+			return false
+		}
+		digits, started := 0, false
+		for _, c := range s {
+			if c == 'e' || c == 'E' {
+				break
+			}
+			if c >= '0' && c <= '9' {
+				started = started || c != '0'
+				if started {
+					digits++
+				}
+			}
+		}
+		return digits > 15
+	}
+	return false
 }
 
 // TestJoinMatchesEngineJoin (B12): for each pair of declarations the engine's
@@ -390,33 +454,25 @@ func TestJoinMatchesEngineJoin(t *testing.T) {
 	}
 }
 
-// TestJoinAffinityDifferenceIsFlaggedAndKnownToDiffer documents the accepted
-// gap: the engine applies the numeric affinity of an INTEGER target to a TEXT
-// '7' and matches it; the layer does not convert, finds nothing, and flags
-// every such lookup.
-func TestJoinAffinityDifferenceIsFlaggedAndKnownToDiffer(t *testing.T) {
+// TestJoinAffinityIsAppliedToTheProbe (replaces the test that documented the
+// accepted gap): the engine applies the numeric affinity of an INTEGER target to
+// a TEXT '7' and matches it; the layer converts the probe the same way, returns
+// the engine's pairs, and still flags every lookup (a conversion was involved).
+func TestJoinAffinityIsAppliedToTheProbe(t *testing.T) {
 	data := engineTwoTables(t, "UTF-8", "text", "integer", []any{"7", "8", "x"}, []any{7, 8, 9})
 	engine := enginePairs(t, data)
 	if len(engine) != 2 {
 		t.Fatalf("the engine matches %d pairs, want 2 ('7' with 7, '8' with 8)", len(engine))
 	}
 	lookups := layerLookups(t, data)
-	if got := pairsOf(lookups); len(got) != 0 {
-		t.Errorf("the layer returned %v; it does not apply affinity", got)
-	}
+	samePairs(t, engine, pairsOf(lookups))
 	flagged := 0
-	missed := map[int64]bool{}
-	for p := range engine {
-		missed[p[0]] = true
-	}
 	for _, l := range lookups {
 		if l.err != nil {
 			t.Fatalf("lookup %d: %v", l.source, l.err)
 		}
 		if l.flags&sqlitedb.JoinAffinityDiffers != 0 {
 			flagged++
-		} else if missed[l.source] {
-			t.Errorf("source row %d: the engine matched it, the layer did not, and it is not flagged", l.source)
 		}
 	}
 	if flagged != len(lookups) || len(lookups) != 3 {
@@ -441,8 +497,8 @@ func TestJoinAffinityDifferenceIsFlaggedAndKnownToDiffer(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if j := c.Joins(); len(j) != 1 || j[0].AffinityDiffers != 3 || j[0].Lookups != 3 || j[0].CollationDiffers != 0 {
-		t.Errorf("Joins = %+v, want 3 lookups all flagged for affinity", j)
+	if j := c.Joins(); len(j) != 1 || j[0].AffinityDiffers != 3 || j[0].Lookups != 3 || j[0].Flagged != 3 || j[0].Undecidable != 0 || j[0].CollationDiffers != 0 {
+		t.Errorf("Joins = %+v, want 3 lookups, 3 flagged for affinity, 0 undecidable", j)
 	}
 }
 
@@ -493,6 +549,8 @@ func TestMatchInsideScanMatchesEngine(t *testing.T) {
 	}{
 		{"nocase", "text", "text collate nocase", []any{"abc", "ABC", "x", r(0xe9), nil}, []any{"Abc", "abc", "x", r(0xc9), "q"}},
 		{"numeric", "real", "integer", []any{1, 1.0, 2.5, -4, nil}, []any{1, -4, 7, 1}},
+		{"text-into-integer", "text", "integer", []any{"7", " 8 ", "x", "1e1", nil}, []any{7, 8, 10, 9}},
+		{"integer-into-text", "integer", "text", []any{7, 1, 3, nil}, []any{"7", "07", " 1 ", "x"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			data := engineTwoTables(t, "UTF-8", c.sdecl, c.tdecl, c.svals, c.tvals)
@@ -545,35 +603,4 @@ type joinCase struct {
 	svals, tvals            []any
 	flags                   sqlitedb.JoinFlags
 	minPairs                int
-}
-
-// T8 M2 (B88), pinned from limitations.md: the engine applies the column's
-// affinity to a constant (int_col = '7' matches the integer 7), the layer does
-// not, so LiteralTextKey("7") against an INTEGER or REAL target misses with no
-// flag. If the layer ever learns this, the limitation must be closed with it.
-func TestLiteralTextKeyAgainstANumericColumnMissesWhereTheEngineMatches(t *testing.T) {
-	data := newBuilderDB(t, sqlitetest.Options{PageSize: 1024}, func(b *sqlitetest.Builder) {
-		tt := b.CreateTable("t", "create table t(id integer primary key, i integer, r real)")
-		tt.Insert(1, nil, 7, 7.0)
-		tt.Insert(2, nil, 8, 8.0)
-	})
-	eng := engineOn(t, data)
-	tb := tableFrom(t, data, "t")
-	for _, col := range []string{"i", "r"} {
-		var n int
-		if err := eng.QueryRow(fmt.Sprintf("select count(*) from t where %s = '7'", col)).Scan(&n); err != nil || n != 1 {
-			t.Fatalf("engine: %s = '7' matched %d rows, %v; want 1", col, n, err)
-		}
-		ix, err := tb.Index(t.Context(), col, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		ids, flags, err := ix.Rowids(sqlitedb.LiteralTextKey([]byte("7")))
-		if err != nil || len(ids) != 0 || flags != 0 {
-			t.Errorf("%s: layer Rowids(LiteralTextKey 7) = %v, flags %v, %v; the documented gap is an unflagged miss", col, ids, flags, err)
-		}
-		if ids, _, err := ix.Rowids(sqlitedb.LiteralIntKey(7)); err != nil || len(ids) != 1 {
-			t.Errorf("%s: the numeric literal must match: %v, %v", col, ids, err)
-		}
-	}
 }

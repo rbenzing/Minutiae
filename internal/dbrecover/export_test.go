@@ -59,3 +59,11 @@ func SetResolveHookForTest(f func()) func() {
 	resolveHook = f
 	return func() { resolveHook = old }
 }
+
+// SetSchemaReadHookForTest sets a function the engine-refusal gate calls before
+// it reads the schema; an error it returns is taken as the schema read error.
+func SetSchemaReadHookForTest(f func() error) func() {
+	old := schemaReadHook
+	schemaReadHook = f
+	return func() { schemaReadHook = old }
+}

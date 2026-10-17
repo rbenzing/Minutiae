@@ -56,6 +56,7 @@ type JournalInfo struct {
 	Applied                                 bool   // Live() presents the rolled-back state
 	NotAppliedReason                        string // "not-hot", "zeroed-header", "header-invalid", "page-size-mismatch", "super-journal-unknown" or "limit-reached"
 	TrailingBytes                           int64
+	Truncated                               bool // a segment header declares more records than the file holds
 }
 
 // JournalScan is the result of ScanJournal. Records lists every whole record of
@@ -320,12 +321,20 @@ func (js *jscan) walk(first [journalHeaderLen]byte, regionEnd int64) error {
 		if nRec == math.MaxUint32 {
 			declared = min(fit, math.MaxUint32)
 		}
+		// short is decided before the record-limit clamp: a clamp by
+		// MaxJournalRecords is a cap, not a truncation, and 0xffffffff means
+		// "as many as the file holds".
+		short := nRec != math.MaxUint32 && declared > fit
 		count := min(declared, fit)
 		if rem := limitRecs - int64(len(s.Records)); count > rem {
 			count = rem
 			s.capped = true
 		}
 		seg := len(in.Segments)
+		if short {
+			in.Truncated = true
+			js.warn(WarnJournalTruncated, off, "the header of segment %d declares %d records but the file holds %d whole records after it (%d bytes left over): the journal is cut short or its count is damaged, and the file alone cannot tell which; the records present are read and the engine plays back the same ones", seg, declared, fit, max(regionEnd-recStart, 0)-fit*rsz)
+		}
 		in.Segments = append(in.Segments, JournalSegment{Offset: off, DeclaredRecords: uint32(declared), Records: uint32(count), HeaderOK: true})
 		if err := js.readRecords(recStart, count, nonce, true, seg); err != nil {
 			return err
@@ -469,7 +478,11 @@ func (js *jscan) hotWarning() {
 		return
 	}
 	if in.Applied {
-		js.warn(WarnJournalHot, 0, "a hot journal is present: Live() presents the database rolled back to its state before the interrupted transaction (%d of %d records applied); AsFound() shows the file as found", in.AppliedRecords, in.RecordsTotal)
+		note := ""
+		if in.Truncated {
+			note = ", truncated"
+		}
+		js.warn(WarnJournalHot, 0, "a hot journal is present: Live() presents the database rolled back to its state before the interrupted transaction (%d of %d records applied%s); AsFound() shows the file as found", in.AppliedRecords, in.RecordsTotal, note)
 		return
 	}
 	js.warn(WarnJournalHot, 0, "a hot journal is present but is not applied (%s)", in.NotAppliedReason)

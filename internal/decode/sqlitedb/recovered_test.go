@@ -213,8 +213,8 @@ func TestFromRecoveredShortRecordAppliesLiteralDefaults(t *testing.T) {
 	if s, ok := r.Text(2); !ok || string(s) != "x" || r.State(2) != sqlitedb.StateDefaulted {
 		t.Errorf("c = %q, %v, %v", s, ok, r.State(2))
 	}
-	if r.State(3) != sqlitedb.StateOmitted {
-		t.Errorf("d (non-literal default) = %v, want omitted", r.State(3))
+	if r.State(3) != sqlitedb.StateDefaultUndecided {
+		t.Errorf("d (non-literal default) = %v, want default-undecided", r.State(3))
 	}
 	if r.State(4) != sqlitedb.StateDefaulted || !r.IsNull(4) {
 		t.Errorf("e (no default) = %v null %v", r.State(4), r.IsNull(4))

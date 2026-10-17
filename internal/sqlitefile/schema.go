@@ -25,9 +25,10 @@ type DefaultKind uint8
 
 // The kinds of default.
 const (
-	DefaultNone    DefaultKind = iota
-	DefaultLiteral             // a constant the reader can evaluate: Value
-	DefaultExpr                // CURRENT_TIMESTAMP, (expr): not evaluated
+	DefaultNone           DefaultKind = iota
+	DefaultLiteral                    // a constant the reader can evaluate: Value
+	DefaultExpr                       // CURRENT_TIMESTAMP, (expr): not evaluated
+	DefaultInexactLiteral             // a numeric literal that is not a float64 this reader reproduces exactly: not evaluated
 )
 
 // Default is a column's DEFAULT clause. Value is set for DefaultLiteral (text
@@ -60,9 +61,12 @@ type Column struct {
 	// PRIMARY KEY (...) clause ("" = none). It governs the key's index and
 	// overrides Collation for key comparison.
 	KeyCollation string
-	Default      Default
-	Generated    GenKind
-	RecordIndex  int // position in the stored record; -1 for a virtual generated column
+	// PKDesc: this key column of a WITHOUT ROWID table is declared DESC and the
+	// engine orders the key descending on it. False for a rowid table.
+	PKDesc      bool
+	Default     Default
+	Generated   GenKind
+	RecordIndex int // position in the stored record; -1 for a virtual generated column
 }
 
 // TableDef is the parsed definition of a table. When ParseOK is false the
@@ -108,6 +112,9 @@ type SchemaObject struct {
 	// KeyRangeViolation: the row lies outside the key range its ancestors give it
 	// (as Row.KeyRangeViolation).
 	KeyRangeViolation bool
+	// BeyondEngineDepth: the schema row was read from a node of the schema tree
+	// deeper than the engine follows.
+	BeyondEngineDepth bool
 
 	nameBad bool // the row disagrees with its own statement (already warned)
 }
@@ -130,6 +137,11 @@ type Schema struct {
 	// index or trigger that names no table. View.Info reports them once the
 	// schema was read.
 	EngineRefuses []string
+
+	// BeyondEngineDepth: some schema row was read from a node deeper than the
+	// engine cursor follows. The engine then fails schema initialisation and
+	// refuses the whole file, so every table of it is suspect.
+	BeyondEngineDepth bool
 
 	// maxFit is the step cap of one FitPage call (Limits.MaxFitSteps); 0 means the default.
 	maxFit  int64
@@ -275,6 +287,10 @@ func (v *View) Schema(ctx context.Context) (s *Schema, err error) {
 	var inRows int64 // warnings raised by the callback itself (not damage met by the walk)
 	row := func(r Row) bool {
 		v.e.at("schema.row")
+		if r.BeyondEngineDepth && !sc.BeyondEngineDepth {
+			sc.BeyondEngineDepth = true
+			sc.refuse(schemaDeepRefusal)
+		}
 		typ, name, tbl, root, sql, sst, why := schemaFields(r)
 		at := Warning{File: r.Loc.File, Page: r.Loc.Page, Offset: r.Loc.Offset}
 		if why != "" {
@@ -297,7 +313,7 @@ func (v *View) Schema(ctx context.Context) (s *Schema, err error) {
 			return false
 		}
 		seen[key] = true
-		obj := SchemaObject{Type: typ, Name: name, TblName: tbl, RootPage: root, Loc: r.Loc, KeyRangeViolation: r.KeyRangeViolation}
+		obj := SchemaObject{Type: typ, Name: name, TblName: tbl, RootPage: root, Loc: r.Loc, KeyRangeViolation: r.KeyRangeViolation, BeyondEngineDepth: r.BeyondEngineDepth}
 		// The statement text is kept while the total stays within its cap.
 		parse := false
 		switch {
@@ -419,6 +435,10 @@ func (v *View) parseObject(obj *SchemaObject, sst sqlState, parse bool, maxCols 
 		obj.Index = &def
 	}
 }
+
+// schemaDeepRefusal is the Info.EngineRefuses reason of a schema table read
+// from nodes deeper than the engine cursor follows.
+const schemaDeepRefusal = "schema tree deeper than the engine follows"
 
 // maxSchemaRefusals bounds Schema.EngineRefuses.
 const maxSchemaRefusals = 16
