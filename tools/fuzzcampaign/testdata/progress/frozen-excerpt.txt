@@ -1,0 +1,6 @@
+fuzz: elapsed: 9s, gathering baseline coverage: 860/860 completed, now fuzzing with 1 workers
+fuzz: elapsed: 34s, execs: 931 (0/sec), new interesting: 0 (total: 860)
+fuzz: elapsed: 37s, execs: 931 (0/sec), new interesting: 0 (total: 860)
+fuzz: elapsed: 40s, execs: 931 (0/sec), new interesting: 0 (total: 860)
+fuzz: elapsed: 42s, execs: 931 (0/sec), new interesting: 0 (total: 860)
+ok  	github.com/rbenzing/minutiae/internal/decode/sqlitedb	46.806s

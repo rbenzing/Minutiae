@@ -1,0 +1,1 @@
+synthetic: produced by a scratch module (a target whose body takes 50 ms on inputs of 1000 bytes or more and a coverage branch only those inputs reach; Windows, go1.26.8; go test -fuzz -fuzztime 50s -fuzzminimizetime 40s -parallel 2), output unchanged; the test exit code was 0. The counter froze at 335459 from elapsed 21 s, the shape the Task 1 runs showed, with minimisation on.

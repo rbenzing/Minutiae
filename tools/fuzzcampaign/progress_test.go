@@ -16,30 +16,26 @@ func TestParseProgress(t *testing.T) {
 		line string
 		want Progress
 	}{
-		// Lines copied from testdata/progress (recorded runs).
+		// Lines from the Task 1 report or from the scratch-module logs in testdata/progress.
 		{
-			"fuzz: elapsed: 3s, gathering baseline coverage: 0/1234 completed",
-			Progress{Elapsed: 3 * time.Second, Total: 1234, Phase: "baseline"},
-		},
-		{
-			"fuzz: elapsed: 18s, gathering baseline coverage: 1133/1234 completed",
-			Progress{Elapsed: 18 * time.Second, Total: 1234, Phase: "baseline"},
+			"fuzz: elapsed: 0s, gathering baseline coverage: 0/1 completed",
+			Progress{Elapsed: 0, Total: 1, Phase: "baseline"},
 		},
 		{
 			"fuzz: elapsed: 19s, gathering baseline coverage: 1234/1234 completed, now fuzzing with 1 workers",
 			Progress{Elapsed: 19 * time.Second, Total: 1234, Phase: "fuzzing"},
 		},
 		{
-			"fuzz: elapsed: 9s, gathering baseline coverage: 860/860 completed, now fuzzing with 12 workers",
-			Progress{Elapsed: 9 * time.Second, Total: 860, Phase: "fuzzing"},
+			"fuzz: elapsed: 13s, gathering baseline coverage: 860/860 completed, now fuzzing with 12 workers",
+			Progress{Elapsed: 13 * time.Second, Total: 860, Phase: "fuzzing"},
 		},
 		{
-			"fuzz: elapsed: 21s, execs: 5129 (1332/sec), new interesting: 4 (total: 1238)",
-			Progress{Elapsed: 21 * time.Second, Execs: 5129, Rate: 1332, NewInteresting: 4, Total: 1238, Phase: "fuzzing"},
+			"fuzz: elapsed: 36s, execs: 56721 (3288/sec), new interesting: 32 (total: 1266)",
+			Progress{Elapsed: 36 * time.Second, Execs: 56721, Rate: 3288, NewInteresting: 32, Total: 1266, Phase: "fuzzing"},
 		},
 		{
-			"fuzz: elapsed: 13s, execs: 931 (0/sec), new interesting: 0 (total: 860)",
-			Progress{Elapsed: 13 * time.Second, Execs: 931, Rate: 0, NewInteresting: 0, Total: 860, Phase: "fuzzing"},
+			"fuzz: elapsed: 34s, execs: 931 (0/sec), new interesting: 0 (total: 860)",
+			Progress{Elapsed: 34 * time.Second, Execs: 931, Rate: 0, NewInteresting: 0, Total: 860, Phase: "fuzzing"},
 		},
 		{
 			"fuzz: elapsed: 3s, execs: 75148 (25044/sec), new interesting: 7 (total: 8)",
@@ -49,6 +45,7 @@ func TestParseProgress(t *testing.T) {
 			"fuzz: elapsed: 1m16s, execs: 4053 (0/sec), new interesting: 0 (total: 860)",
 			Progress{Elapsed: 76 * time.Second, Execs: 4053, Total: 860, Phase: "fuzzing"},
 		},
+		// Constructed edge cases (not log lines): a long duration, a maximal count, a CR ending.
 		{
 			"fuzz: elapsed: 1h2m3s, execs: 1 (1/sec), new interesting: 0 (total: 1)",
 			Progress{Elapsed: time.Hour + 2*time.Minute + 3*time.Second, Execs: 1, Rate: 1, Total: 1, Phase: "fuzzing"},
@@ -245,7 +242,10 @@ func TestClassifyReadsRecordedLogs(t *testing.T) {
 		want Outcome
 	}{
 		{"fuzzing.txt", 0, OK},
-		{"stalled.txt", 0, Stalled},
+		// The retained excerpt of a frozen counter is only four lines over 8 s: too short to call
+		// a stall, so it is OK. The Stalled verdict rests on the synthetic stall.txt alone.
+		{"frozen-excerpt.txt", 0, OK},
+		{"stall.txt", 0, Stalled},
 		{"baseline.txt", 0, NoProgress},
 		{"minimizing.txt", 1, Failed},
 		{"failed.txt", 1, Failed},
@@ -313,4 +313,84 @@ func TestObservationAddLine(t *testing.T) {
 // pl is a progress line at the given second.
 func pl(sec int, execs uint64, phase string) Progress {
 	return Progress{Elapsed: time.Duration(sec) * time.Second, Execs: execs, Phase: phase}
+}
+
+func TestObservationKeepsBoundedState(t *testing.T) {
+	const lines = 100000
+	var o Observation
+	// A long run: 20 growing counts, then a frozen count over 15 s, then more growth.
+	add := func(sec int, execs uint64) {
+		o.AddLine("fuzz: elapsed: " + strconv.Itoa(sec) + "s, execs: " + strconv.FormatUint(execs, 10) +
+			" (1/sec), new interesting: 0 (total: 1)")
+	}
+	n := 0
+	for ; n < 20; n++ {
+		add(n, uint64(n+1))
+	}
+	for i := 0; i < 6; i++ { // six frozen lines, 3 s apart: 15 s
+		add(20+3*i, 777)
+		n++
+	}
+	for ; n < lines; n++ {
+		add(n+100, uint64(n)+1000)
+	}
+	if len(o.Progress) != maxProgress {
+		t.Errorf("retained %d progress lines, want exactly %d", len(o.Progress), maxProgress)
+	}
+	if o.ProgressLines != lines {
+		t.Errorf("ProgressLines = %d, want %d", o.ProgressLines, lines)
+	}
+	if !o.SawExecs || !o.SawStall {
+		t.Errorf("SawExecs=%v SawStall=%v; the verdict must survive the retention cap", o.SawExecs, o.SawStall)
+	}
+	// The frozen run is inside the retained prefix here, so rebuild a run whose stall is
+	// beyond it: only the flags can know.
+	var late Observation
+	for i := range maxProgress + 10 {
+		late.AddLine("fuzz: elapsed: " + strconv.Itoa(i) + "s, execs: " + strconv.Itoa(i+1) + " (1/sec), new interesting: 0 (total: 1)")
+	}
+	for i := range 6 {
+		late.AddLine("fuzz: elapsed: " + strconv.Itoa(1000+3*i) + "s, execs: 999999 (0/sec), new interesting: 0 (total: 1)")
+	}
+	late.Started = true
+	if stalled(late.Progress) {
+		t.Fatalf("the stall is inside the retained lines; the test would prove nothing")
+	}
+	if got := Classify(late); got != Stalled {
+		t.Errorf("Classify of a stall beyond the retained lines = %q, want %q", got, Stalled)
+	}
+	if late.ProgressLines-len(late.Progress) != 10+6 {
+		t.Errorf("dropped-line count wrong: %d lines, %d kept", late.ProgressLines, len(late.Progress))
+	}
+
+	var f Observation
+	for i := range 3 * maxFailing {
+		f.AddLine("    Failing input written to testdata/fuzz/FuzzX/" + strconv.Itoa(i))
+	}
+	if len(f.Failing) != maxFailing || f.FailingTotal != 3*maxFailing {
+		t.Errorf("Failing kept %d of %d, want %d of %d", len(f.Failing), f.FailingTotal, maxFailing, 3*maxFailing)
+	}
+	if f.Failing[0] != "testdata/fuzz/FuzzX/0" || f.Failing[maxFailing-1] != "testdata/fuzz/FuzzX/"+strconv.Itoa(maxFailing-1) {
+		t.Errorf("Failing is not the first %d paths: %q", maxFailing, f.Failing)
+	}
+	if got := Classify(f); got != Failed {
+		t.Errorf("Classify = %q, want failed", got)
+	}
+	// A count alone (nothing retained) still fails the run.
+	if got := Classify(Observation{FailingTotal: 1, Started: true}); got != Failed {
+		t.Errorf("FailingTotal alone: Classify = %q, want failed", got)
+	}
+}
+
+func TestObservationCountsOverlongLines(t *testing.T) {
+	var o Observation
+	o.AddLine(strings.Repeat("x", maxLine+1))
+	o.AddLine("fuzz: elapsed: " + strings.Repeat("0", maxLine) + "3s, minimizing")
+	o.AddLine(strings.Repeat("y", maxLine)) // exactly the limit: looked at, not counted
+	if o.Overlong != 2 {
+		t.Errorf("Overlong = %d, want 2", o.Overlong)
+	}
+	if o.ProgressLines != 0 || o.Started {
+		t.Errorf("an overlong line was parsed: %+v", o)
+	}
 }

@@ -185,3 +185,50 @@ func TestPruneCorpusOnAnEmptyDir(t *testing.T) {
 		t.Errorf("a missing directory was not an error")
 	}
 }
+
+func TestPruneCorpusRefusesRelativeAndDotDotPaths(t *testing.T) {
+	base := t.TempDir()
+	deep := filepath.Join(base, "a", "b", "c")
+	if err := os.MkdirAll(deep, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	corpusFile(t, deep, "keep", 1, corpusBase)
+	sep := string(os.PathSeparator)
+	// The same directory spelled with a .. element: it resolves, but is refused.
+	dotted := base + sep + "a" + sep + "x" + sep + ".." + sep + "b" + sep + "c"
+	if err := os.MkdirAll(filepath.Join(base, "a", "x"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(base) // so that a/b/c names the directory relatively, with no .. element
+	rel := filepath.Join("a", "b", "c")
+	for _, dir := range []string{dotted, rel} {
+		if removed, err := PruneCorpus(dir, 0, 0); !errors.Is(err, ErrUnsafeDir) || removed != 0 {
+			t.Errorf("PruneCorpus(%q) = %d, %v; want 0, ErrUnsafeDir", dir, removed, err)
+		}
+	}
+	if got := listDir(t, deep); !slices.Equal(got, []string{"keep"}) {
+		t.Errorf("a refused call touched the directory: %v", got)
+	}
+}
+
+func TestPruneCorpusRefusesASymlinkedDirectory(t *testing.T) {
+	base := t.TempDir()
+	realDir := filepath.Join(base, "real", "corpus", "x")
+	if err := os.MkdirAll(realDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	corpusFile(t, realDir, "keep", 1, corpusBase)
+	link := filepath.Join(base, "link", "to", "corpus")
+	if err := os.MkdirAll(filepath.Dir(link), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realDir, link); err != nil {
+		t.Skipf("symlinks cannot be created here: %v", err)
+	}
+	if removed, err := PruneCorpus(link, 0, 0); !errors.Is(err, ErrUnsafeDir) || removed != 0 {
+		t.Errorf("PruneCorpus(symlink) = %d, %v; want 0, ErrUnsafeDir", removed, err)
+	}
+	if got := listDir(t, realDir); !slices.Equal(got, []string{"keep"}) {
+		t.Errorf("the symlink target was touched: %v", got)
+	}
+}

@@ -1,1 +1,1 @@
-synthetic: produced by a scratch module (FuzzBoom, Windows, go1.26.8): the first two lines of its output, a run cut off after the baseline phase.
+synthetic: produced by a scratch module (FuzzBoom, Windows, go1.26.8): truncated by hand to the first two lines of its output; the run was longer.

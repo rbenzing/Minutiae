@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -277,10 +278,13 @@ func TestBuildPlanMinimizeOverride(t *testing.T) {
 	}
 }
 
-// TestShippedMinimizeOverrides pins the table Task 1 produced: FuzzSQLiteDB is run with
-// minimisation off (docs/testing.md "Fuzz stall findings"), and nothing else is overridden.
+// TestShippedMinimizeOverrides pins the table Task 1 produced: FuzzSQLiteDB and FuzzFATOpen are run
+// with minimisation off (docs/testing.md "Fuzz stall findings"), and nothing else is overridden.
 func TestShippedMinimizeOverrides(t *testing.T) {
-	want := map[string]time.Duration{"internal/decode/sqlitedb.FuzzSQLiteDB": 0}
+	want := map[string]time.Duration{
+		"internal/decode/sqlitedb.FuzzSQLiteDB": 0,
+		"internal/filesys/fat.FuzzFATOpen":      0,
+	}
 	if !reflect.DeepEqual(overrides, want) {
 		t.Errorf("overrides = %v, want %v", overrides, want)
 	}
@@ -307,5 +311,35 @@ func TestTotalCapAcceptsAPlanThatFitsExactly(t *testing.T) {
 	o.PerTarget = 7*time.Minute + 1
 	if _, err := BuildPlan(mk(1), o); !errors.Is(err, ErrOverBudget) {
 		t.Fatalf("one target one nanosecond over: err = %v, want ErrOverBudget", err)
+	}
+}
+
+// Every override must name a target that exists: a renamed target would otherwise lose its
+// override silently and then classify as Stalled.
+func TestOverridesAreDiscoveredTargets(t *testing.T) {
+	found, err := Discover(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	have := map[string]bool{}
+	for _, tg := range found {
+		have[tg.Pkg+"."+tg.Name] = true
+	}
+	for key := range overrides {
+		if !have[key] {
+			t.Errorf("override %q is not a discovered fuzz target", key)
+		}
+	}
+}
+
+func TestBuildPlanChecksOptionsBeforeTheSelection(t *testing.T) {
+	o := DefaultOptions("all")
+	o.PerTarget = time.Second
+	var oe *OptionError
+	if _, err := BuildPlan(nil, o); !errors.As(err, &oe) || oe.Field != "PerTarget" {
+		t.Errorf("a bad option with an empty selection: err = %v, want the *OptionError", err)
+	}
+	if _, err := BuildPlan(nil, DefaultOptions("all")); !errors.Is(err, ErrEmptySelection) {
+		t.Errorf("good options with an empty selection: err = %v, want ErrEmptySelection", err)
 	}
 }

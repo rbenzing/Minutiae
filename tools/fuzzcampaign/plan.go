@@ -39,7 +39,7 @@ const (
 type PlanOptions struct {
 	Profile   string
 	Pkgs      []string      // narrows the profile: a Target must match the profile AND one of these prefixes
-	PerTarget time.Duration // 10s..15m
+	PerTarget time.Duration // 10s..15m; a stall can only be seen in a run of about 16 s or more (see stallSpan)
 	Minimize  time.Duration // 0..60s
 	Total     time.Duration // cap on the whole campaign, 10m..240m
 	Parallel  int           // 1..4
@@ -81,6 +81,10 @@ func (e *OptionError) Error() string {
 // (docs/testing.md, "Fuzz stall findings").
 var overrides = map[string]time.Duration{
 	"internal/decode/sqlitedb.FuzzSQLiteDB": 0,
+	// FuzzFATOpen froze the same way: its counter stopped at 33 executions on Linux and diverged
+	// from the body count on Windows, and 0s restored the rate (docs/testing.md, "Fuzz stall
+	// findings"). Without the override it would always classify as Stalled.
+	"internal/filesys/fat.FuzzFATOpen": 0,
 }
 
 func matchesPrefix(pkg, prefix string) bool {
@@ -142,11 +146,11 @@ func checkOptions(o PlanOptions) error {
 // *OptionError, an empty selection is ErrEmptySelection, and a plan whose estimate exceeds
 // Total is ErrOverBudget (naming both numbers) and the zero Plan: a plan is never shortened.
 func BuildPlan(ts []Target, o PlanOptions) (Plan, error) {
-	sel, err := List(ts, o)
-	if err != nil {
+	if err := checkOptions(o); err != nil {
 		return Plan{}, err
 	}
-	if err := checkOptions(o); err != nil {
+	sel, err := List(ts, o)
+	if err != nil {
 		return Plan{}, err
 	}
 	p := Plan{Options: o}

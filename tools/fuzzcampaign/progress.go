@@ -155,25 +155,47 @@ const (
 	Skipped     Outcome = "skipped"
 )
 
-// Observation is what was seen of one `go test -fuzz` process.
+// Bounds on what an Observation retains, whatever the volume of output.
+const (
+	maxProgress = 256 // progress lines kept, the first ones; the rest are counted
+	maxFailing  = 16  // failing-input paths kept; the rest are counted
+)
+
+// Observation is what was seen of one `go test -fuzz` process. It holds a bounded amount of
+// state: the verdict flags are updated for every line, so they stay right after the retained
+// lists are full, and everything that was not retained is counted, never dropped silently.
 type Observation struct {
-	Progress    []Progress
+	Progress    []Progress // the first maxProgress progress lines
 	Exit        int
 	TimedOut    bool
-	Failing     []string // "Failing input written to ..." paths, in order
+	Failing     []string // the first maxFailing "Failing input written to ..." paths, in order
 	Started     bool     // a "fuzz:" line, "=== RUN", or an "ok"/"PASS" line was seen
 	BuildFailed bool     // a "[build failed]" or "[setup failed]" line was seen
+
+	ProgressLines int  // every progress line seen, kept or not
+	FailingTotal  int  // every failing-input path seen, kept or not
+	Overlong      int  // lines over maxLine, which are not parsed at all
+	SawExecs      bool // some progress line had a non-zero execution count
+	SawStall      bool // a stall (see stallTracker) occurred at any point of the run
+
+	tracker stallTracker
 }
 
 // AddLine records one output line (without its newline).
 func (o *Observation) AddLine(line string) {
 	if len(line) > maxLine {
+		o.Overlong++
 		return
 	}
 	line = strings.TrimSuffix(line, "\r")
 	if p, ok := ParseProgress(line); ok {
-		o.Progress = append(o.Progress, p)
+		o.ProgressLines++
+		if len(o.Progress) < maxProgress {
+			o.Progress = append(o.Progress, p)
+		}
 		o.Started = true
+		o.SawExecs = o.SawExecs || p.Execs > 0
+		o.SawStall = o.tracker.add(p) || o.SawStall
 		return
 	}
 	trimmed := strings.TrimSpace(line)
@@ -185,23 +207,51 @@ func (o *Observation) AddLine(line string) {
 		o.BuildFailed = true
 	}
 	if path, ok := strings.CutPrefix(trimmed, "Failing input written to "); ok && path != "" {
-		o.Failing = append(o.Failing, path)
+		o.FailingTotal++
+		if len(o.Failing) < maxFailing {
+			o.Failing = append(o.Failing, path)
+		}
 	}
 }
 
-// Stall thresholds: this many consecutive "fuzzing" lines with an unchanged non-zero count
-// over at least this much elapsed time.
+// Stall thresholds. The engine prints a status line about every 3 s, so a stall needs
+// stallLines consecutive "fuzzing" lines with one unchanged non-zero count spanning at least
+// stallSpan. That cannot happen in under about 13 s of fuzzing after the first non-zero
+// count, so a target given a PerTarget below about 16 s can freeze unseen (a longer run is
+// needed to see it): the plan accepts such values, it just cannot classify a stall in them.
 const (
 	stallLines = 5
 	stallSpan  = 12 * time.Second
 )
 
+// stallTracker finds the stall incrementally, in constant space.
+type stallTracker struct {
+	start Progress // the first line of the current run of unchanged counts
+	n     int      // lines in that run, 0 when there is none
+}
+
+// add feeds the next progress line and reports whether it completes a stall.
+func (s *stallTracker) add(p Progress) bool {
+	if p.Execs == 0 || p.Phase != "fuzzing" {
+		s.n = 0
+		return false
+	}
+	if s.n > 0 && s.start.Execs == p.Execs {
+		s.n++
+	} else {
+		s.start, s.n = p, 1
+	}
+	return s.n >= stallLines && p.Elapsed-s.start.Elapsed >= stallSpan
+}
+
 // Classify decides the outcome, in this order: a failing input, a timeout, a build failure,
 // a non-zero exit, no execution at all, a stall, otherwise OK. A run in which the engine
-// never reported a non-zero execution count is NoProgress, whatever its reported rate.
+// never reported a non-zero execution count is NoProgress, whatever its reported rate. That
+// includes a run whose output has no coverage status lines at all (the "fuzz: elapsed"
+// shapes are the only ones parsed): it fails closed as NoProgress, never as OK.
 func Classify(o Observation) Outcome {
 	switch {
-	case len(o.Failing) > 0:
+	case o.FailingTotal > 0 || len(o.Failing) > 0:
 		return Failed
 	case o.TimedOut:
 		return Timeout
@@ -209,9 +259,9 @@ func Classify(o Observation) Outcome {
 		return BuildFailed
 	case o.Exit != 0:
 		return Failed
-	case !o.Started || !anyExecs(o.Progress):
+	case !o.Started || (!o.SawExecs && !anyExecs(o.Progress)):
 		return NoProgress
-	case stalled(o.Progress):
+	case o.SawStall || stalled(o.Progress):
 		return Stalled
 	}
 	return OK
@@ -226,19 +276,11 @@ func anyExecs(ps []Progress) bool {
 	return false
 }
 
-// stalled reports a run of stallLines or more consecutive "fuzzing" lines that share one
-// non-zero Execs and span at least stallSpan.
+// stalled reports whether the lines contain a stall (see stallTracker).
 func stalled(ps []Progress) bool {
-	start := 0
-	for i, p := range ps {
-		if p.Execs == 0 || p.Phase != "fuzzing" {
-			start = i + 1
-			continue
-		}
-		if i > start && ps[start].Execs != p.Execs {
-			start = i
-		}
-		if i-start+1 >= stallLines && p.Elapsed-ps[start].Elapsed >= stallSpan {
+	var t stallTracker
+	for _, p := range ps {
+		if t.add(p) {
 			return true
 		}
 	}

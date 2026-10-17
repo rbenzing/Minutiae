@@ -1,1 +1,0 @@
-Task 1 run E2 (FuzzSQLiteDB, Windows, -parallel 1), re-typed verbatim from the session output because the raw log was deleted. The PASS line is the go test line that ends such a run.
