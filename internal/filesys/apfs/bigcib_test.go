@@ -41,7 +41,7 @@ func TestAPFSBigContainerMatchesOracle(t *testing.T) {
 	if path == "" {
 		t.Skipf("%s is not set: regenerate the multi-CIB container outside the repository with tools/fixtures/apfs-big.sh <outdir> <scratch>/apfs-bigcib.sparse.img (see tools/fixtures/README.md) and set it to that path", bigImageEnv)
 	}
-	fh, err := os.Open(path)
+	fh, err := os.Open(path) //nolint:gosec // the image the operator named in MINUTIAE_APFS_BIG_IMAGE, opened read-only
 	if err != nil {
 		t.Fatal(err)
 	}
