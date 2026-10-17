@@ -255,13 +255,13 @@ func (u *ucd) tablesSource() ([]byte, error) {
 	emitMap := func(name, doc string, keys []rune, val func(rune) []rune) int {
 		p("// %sIndex is %s, sorted by code point; each entry names its run in %sRunes.\nvar %sIndex = []mapEntry{\n", name, doc, name, name)
 		var data []rune
-		max := 0
+		hi := 0
 		for _, k := range keys {
 			v := val(k)
 			p("\t{0x%X, %d, %d},\n", k, len(data), len(v))
 			data = append(data, v...)
-			if len(v) > max {
-				max = len(v)
+			if len(v) > hi {
+				hi = len(v)
 			}
 		}
 		p("}\n\nvar %sRunes = []rune{", name)
@@ -274,7 +274,7 @@ func (u *ucd) tablesSource() ([]byte, error) {
 			p("0x%X,", r)
 		}
 		p("\n}\n\n")
-		return max
+		return hi
 	}
 	sortedKeys := func(m map[rune][]rune) []rune {
 		ks := make([]rune, 0, len(m))
@@ -295,10 +295,10 @@ func (u *ucd) tablesSource() ([]byte, error) {
 	p("}\n\n")
 
 	// the largest number of runes one code point contributes to a key
-	max := 1
+	most := 1
 	consider := func(cp rune) {
-		if n := len(u.perRune(cp)); n > max {
-			max = n
+		if n := len(u.perRune(cp)); n > most {
+			most = n
 		}
 	}
 	for k := range u.decomp {
@@ -308,7 +308,7 @@ func (u *ucd) tablesSource() ([]byte, error) {
 		consider(k)
 	}
 	consider(hangulS + 1) // a LVT syllable: 3 jamo
-	p("// maxKeyRunesPerRune is the most runes one code point adds to a key, len(NFD(fold(NFD(cp)))) over the\n// canonical decomposition and full-folding lengths of the data above (not compatibility figures).\nconst maxKeyRunesPerRune = %d\n", max)
+	p("// maxKeyRunesPerRune is the most runes one code point adds to a key, len(NFD(fold(NFD(cp)))) over the\n// canonical decomposition and full-folding lengths of the data above (not compatibility figures).\nconst maxKeyRunesPerRune = %d\n", most)
 	return format.Source(b.Bytes())
 }
 
@@ -363,7 +363,7 @@ func TestNoUnicodeVersionDrift(t *testing.T) {
 			_ = zw.Close()
 			b = z.Bytes()
 		}
-		if err := os.WriteFile(filepath.Join(tmp, n), b, 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(tmp, n), b, 0o600); err != nil { //nolint:gosec // a name from the fixed list above, in t.TempDir()
 			t.Fatal(err)
 		}
 	}
@@ -403,8 +403,7 @@ func TestTablesAreSortedAndDisjoint(t *testing.T) {
 // TestExpansionBound recomputes the maximum from the generated tables, by a route that shares no code with
 // the generator or with Key, and compares it with the constant.
 func TestExpansionBound(t *testing.T) {
-	var nfd func(r rune) []rune
-	nfd = func(r rune) []rune {
+	nfd := func(r rune) []rune {
 		if r >= hangulS && r < hangulS+hangulCount {
 			return appendHangul(nil, r)
 		}
@@ -423,7 +422,7 @@ func TestExpansionBound(t *testing.T) {
 		}
 		return []rune{r}
 	}
-	max := 1
+	most := 1
 	for _, e := range append(append([]mapEntry(nil), decompIndex...), foldIndex...) {
 		n := 0
 		for _, a := range nfd(e.r) {
@@ -431,12 +430,12 @@ func TestExpansionBound(t *testing.T) {
 				n += len(nfd(f))
 			}
 		}
-		if n > max {
-			max = n
+		if n > most {
+			most = n
 		}
 	}
-	if max != maxKeyRunesPerRune {
-		t.Fatalf("recomputed maximum %d, generated constant %d", max, maxKeyRunesPerRune)
+	if most != maxKeyRunesPerRune {
+		t.Fatalf("recomputed maximum %d, generated constant %d", most, maxKeyRunesPerRune)
 	}
-	t.Logf("maxKeyRunesPerRune = %d", max)
+	t.Logf("maxKeyRunesPerRune = %d", most)
 }

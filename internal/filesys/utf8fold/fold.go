@@ -155,7 +155,7 @@ func Classify(name []byte) Form {
 	}
 	for j := tail; j < len(name); {
 		r, size := utf8.DecodeRune(name[j:])
-		if !(r == utf8.RuneError && size == 1) {
+		if r != utf8.RuneError || size != 1 {
 			return FormUndecided // a valid character after the invalid byte
 		}
 		j++

@@ -26,28 +26,28 @@ func TestEqualBasics(t *testing.T) {
 	}{
 		{"E", "e", true},
 		{"ss", "SS", true},
-		{"ss", "ß", true},
-		{"ß", "ẞ", true},
-		{"ı", "I", false}, // no Turkic mapping
-		{"ı", "i", false},
-		{"İ", "i̇", true},
-		{"K", "k", true}, // Kelvin sign
-		{"K", "K", true},
-		{"é", "é", true},
-		{"É", "é", true},
-		{"ạ́", "ạ́", true},
-		{"가", "가", true},
-		{"각", "각", true},
-		{"a­b", "ab", true}, // U+00AD is ignorable
-		{"a​b", "AB", true},
+		{"ss", "\u00df", true},
+		{"\u00df", "\u1e9e", true},
+		{"\u0131", "I", false}, // no Turkic mapping
+		{"\u0131", "i", false},
+		{"\u0130", "i\u0307", true},
+		{"\u212a", "k", true}, // Kelvin sign
+		{"\u212a", "K", true},
+		{"\u00e9", "e\u0301", true},
+		{"\u00c9", "e\u0301", true},
+		{"a\u0323\u0301", "a\u0301\u0323", true},
+		{"\uac00", "\u1100\u1161", true},
+		{"\uac01", "\u1100\u1161\u11a8", true},
+		{"a\u00adb", "ab", true}, // U+00AD is ignorable
+		{"a\u200bb", "AB", true},
 		{"a", "b", false},
 		{"", "", true},
 		{"", "a", false},
 		{long(255), long(255), true},
 		{long(255), "A" + long(254), true},
-		{"ς", "Σ", true},
-		{"σ", "ς", true},
-		{"Ꟈ", "ꟈ", false}, // assigned after 12.1: no case mapping
+		{"\u03c2", "\u03a3", true},
+		{"\u03c3", "\u03c2", true},
+		{"\ua7c7", "\ua7c8", false}, // assigned after 12.1: no case mapping
 	} {
 		for _, p := range [][2]string{{c.a, c.b}, {c.b, c.a}} {
 			eq, decided := Equal([]byte(p[0]), []byte(p[1]))
@@ -77,14 +77,14 @@ func TestClassifyMatchesTheMeasuredRule(t *testing.T) {
 	}{
 		{"", FormUnicode},
 		{"abc", FormUnicode},
-		{"éK", FormUnicode},
-		{"￾￿\U0010ffff", FormUnicode}, // noncharacters and the last code point are valid
-		{"x\x80", FormUnicode},        // a stray byte after the first byte is text
-		{"a\x80é\x81", FormUnicode},
+		{"\u00e9\u212a", FormUnicode},
+		{"\ufffe\uffff\U0010ffff", FormUnicode}, // noncharacters and the last code point are valid
+		{"x\x80", FormUnicode},                  // a stray byte after the first byte is text
+		{"a\x80\u00e9\x81", FormUnicode},
 		{"a\x80b\x81c", FormUnicode},
 		{"\x80x", FormOpaque}, // a stray byte first: opaque
 		{"\x80\x80", FormOpaque},
-		{"\x80é", FormOpaque},
+		{"\x80\u00e9", FormOpaque},
 		{"x\xff", FormOpaque}, // a lead byte truncated at the end
 		{"x\xc3", FormOpaque},
 		{"x\xe2\x82", FormOpaque},
@@ -96,16 +96,16 @@ func TestClassifyMatchesTheMeasuredRule(t *testing.T) {
 		{"x\xfe\xfe", FormOpaque},
 		{"x\x80\xff", FormOpaque}, // a stray byte mixed with another invalid form
 		{"x\xff\x80", FormOpaque}, // a stray byte after an invalid lead
-		{"é\x80\xff", FormOpaque},
+		{"\u00e9\x80\xff", FormOpaque},
 		// shapes no measurement covers
 		{"\xff", FormUndecided},                      // nothing before the invalid byte
 		{"x\xffy", FormUndecided},                    // text after the invalid byte
-		{"x\xffé", FormUndecided},                    // a valid character after the invalid byte
+		{"x\xff\u00e9", FormUndecided},               // a valid character after the invalid byte
 		{"x\xc3x", FormUndecided},                    // a truncated lead followed by text
 		{"\x80\xff", FormUndecided},                  // a leading stray byte with an invalid form
 		{"x\xff\x80\x80\x80\x80\x80", FormUndecided}, // a tail longer than any measured
-		{"­\x80", FormUndecided},                     // an ignorable character with a stray byte
-		{"a\x80­b", FormUndecided},
+		{"\u00ad\x80", FormUndecided},                // an ignorable character with a stray byte
+		{"a\x80\u00adb", FormUndecided},
 	} {
 		if got := Classify([]byte(c.name)); got != c.want {
 			t.Errorf("Classify(%q) = %v, want %v", c.name, got, c.want)
@@ -119,7 +119,7 @@ func TestKeyRejectsInvalidUTF8(t *testing.T) {
 			t.Errorf("Key(%q) = (%q, %v), want dst back unchanged and ok false", n, k, ok)
 		}
 	}
-	for _, n := range []string{"x\x80", "a\x80é", "￾"} {
+	for _, n := range []string{"x\x80", "a\x80\u00e9", "\ufffe"} {
 		if _, ok := Key(nil, []byte(n)); !ok {
 			t.Errorf("Key(%q) not ok", n)
 		}
@@ -142,7 +142,7 @@ func TestEqualUndecidedAndOpaque(t *testing.T) {
 		{"x\xffy", "x\xff", false, false},         // undecided against opaque
 		{"x\xc1\x81z", "x\xc1\x81", false, true},  // measured: the negative control of an invalid row
 		{"x\xc1\x81y", "x\xc1\x81", false, false}, // another extension was not measured
-		{"­\x80", "\x80", false, false},
+		{"\u00ad\x80", "\x80", false, false},
 	} {
 		for _, p := range [][2]string{{c.a, c.b}, {c.b, c.a}} {
 			eq, decided := Equal([]byte(p[0]), []byte(p[1]))
@@ -154,8 +154,8 @@ func TestEqualUndecidedAndOpaque(t *testing.T) {
 }
 
 func randomName(r *rand.Rand) []byte {
-	parts := []string{"a", "A", "e", "E", "k", "K", "K", "é", "É", "́", "̣", "ß", "ss", "SS", "ẞ", "ı", "I", "i",
-		"­", "​", "가", "ᄀ", "ᅡ", "ᆨ", "σ", "ς", "Σ", "İ", "\x80", "\x81", "x", "ﬃ", "Ω", "ω"}
+	parts := []string{"a", "A", "e", "E", "k", "K", "\u212a", "\u00e9", "\u00c9", "\u0301", "\u0323", "\u00df", "ss", "SS", "\u1e9e", "\u0131", "I", "i",
+		"\u00ad", "\u200b", "\uac00", "\u1100", "\u1161", "\u11a8", "\u03c3", "\u03c2", "\u03a3", "\u0130", "\x80", "\x81", "x", "\ufb03", "\u2126", "\u03c9"}
 	var b []byte
 	for n := r.Intn(8); n > 0; n-- {
 		b = append(b, parts[r.Intn(len(parts))]...)
@@ -164,7 +164,7 @@ func randomName(r *rand.Rand) []byte {
 }
 
 func TestKeyIsIdempotent(t *testing.T) {
-	r := rand.New(rand.NewSource(7))
+	r := rand.New(rand.NewSource(7)) //nolint:gosec // a fixed-seed test generator
 	for i := 0; i < 20000; i++ {
 		n := randomName(r)
 		k, ok := Key(nil, n)
@@ -179,7 +179,7 @@ func TestKeyIsIdempotent(t *testing.T) {
 }
 
 func TestEqualIsSymmetricAndTransitiveOverSample(t *testing.T) {
-	r := rand.New(rand.NewSource(11))
+	r := rand.New(rand.NewSource(11)) //nolint:gosec // a fixed-seed test generator
 	names := make([][]byte, 20000)
 	for i := range names {
 		names[i] = randomName(r)

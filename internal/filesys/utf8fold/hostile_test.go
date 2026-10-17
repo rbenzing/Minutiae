@@ -41,7 +41,7 @@ func TestKeyNeverAllocatesFromContent(t *testing.T) {
 	// one base and 126 combining marks
 	marks := []byte("a")
 	for len(marks)+2 <= MaxName {
-		marks = append(marks, "́"...)
+		marks = append(marks, "\u0301"...)
 	}
 	// the most one call may allocate: the rune buffer and the output, both bounded by MaxName*maxKeyRunesPerRune
 	limit := uint64(MaxName*maxKeyRunesPerRune*4*5 + 8192)
@@ -72,9 +72,9 @@ func TestKeyLongCombiningRunTerminates(t *testing.T) {
 	n := []byte("a")
 	for i := 0; len(n)+2 <= MaxName; i++ {
 		if i%2 == 0 {
-			n = append(n, "̣"...)
+			n = append(n, "\u0323"...)
 		} else {
-			n = append(n, "́"...)
+			n = append(n, "\u0301"...)
 		}
 	}
 	done := make(chan struct{})
@@ -85,7 +85,7 @@ func TestKeyLongCombiningRunTerminates(t *testing.T) {
 			t.Errorf("Key = (%d bytes, %v) for a %d-byte run", len(k), ok, len(n))
 		}
 		// the reordered run sorts all U+0323 (class 220) before all U+0301 (class 230)
-		if i := bytes.Index(k, []byte("́")); i >= 0 && bytes.Contains(k[i:], []byte("̣")) {
+		if i := bytes.Index(k, []byte("\u0301")); i >= 0 && bytes.Contains(k[i:], []byte("\u0323")) {
 			t.Error("marks not in canonical order")
 		}
 	}()
@@ -102,7 +102,7 @@ func TestHostileUnmeasuredShapeIsUndecided(t *testing.T) {
 	hostile := [][]byte{
 		[]byte("A\xffb"),                  // an invalid lead with text after it
 		[]byte("\xff\xfe\xfd"),            // nothing before the invalid bytes
-		[]byte("a\xe2\x82é"),              // a truncated sequence followed by a valid character
+		[]byte("a\xe2\x82\u00e9"),         // a truncated sequence followed by a valid character
 		bytes.Repeat([]byte("\xf8"), 200), // a long run of invalid leads
 		[]byte("\x80\x80\xff"),            // leading stray bytes with another invalid form
 	}
