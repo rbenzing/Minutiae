@@ -199,8 +199,9 @@ the generator itself, which builds each image twice and `cmp`s them):
   every image starts from a brand-new sparse file (`truncate -s`), never a reused one.
 - Minimum size: 512 KiB (`such tiny containers are not supported` below). The
   fixtures are 64 MiB (one chunk) and 129 MiB (two chunks; chunk = 128 MiB at 4 KiB
-  blocks). More than 126 chunks (16 GiB) would be needed for a CAB layer, which
-  is too large to commit: CABs are builder-only.
+  blocks). A CAB layer needs more than `sm_cibs_per_cab` = 507 CIBs, that is more
+  than 63,882 chunks (507 x 126), about 8 TiB: far too large to make or commit, so the
+  CAB layout is builder-only.
 - `apfs-big.sh` makes ONE empty container of more than 16 GiB (default 17 GiB, 136
   chunks) to learn what the real `mkapfs` writes for several chunk-info blocks (CIBs)
   and whether a chunk-info address block (CAB) appears. Its image is never committed
@@ -208,13 +209,26 @@ the generator itself, which builds each image twice and `cmp`s them):
   inside the repository. Every file it writes goes under `$APFS_BIG_WORK`, a host
   directory bind-mounted into the container, never the container's own filesystem or a
   Docker volume (those grow the Docker Desktop virtual disk, which never shrinks).
+  The script resolves both paths with `pwd -P` and refuses (exit 2) any that lies inside
+  the repository BEFORE it creates anything. It also refuses (exit 2, printing the
+  figures from `df -Pk`) unless the free space at the scratch location is at least the
+  image size plus 30 GiB.
   Probe (writes only under the scratch directory, which it empties again):
   `MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD:/work" -v "$SCRATCH:/scratch" -e APFS_BIG_WORK=/scratch -w /work minutiae-fixtures bash tools/fixtures/apfs-big.sh`.
   Keep the image and write the oracle file: add `internal/filesys/apfs/testdata /scratch/apfs-bigcib.sparse.img`
-  as the two arguments. Disk cost: the image is sparse in the container, but a bind
-  mount on Windows (Docker Desktop) may not preserve holes, so keep at least 18 GiB
-  free at the scratch location (more for the kept run, which holds a second copy; or
-  lower `APFS_BIG_SIZE`, which must stay above 15.75 GiB).
+  as the two arguments. The image is built once, in place, as `<keep>.partial` and
+  renamed to the keep path only when every gate has passed, so a failed run leaves no
+  image. Disk cost: a bind mount on Windows (Docker Desktop) may not preserve holes, so
+  the image may occupy its full 17 GiB; the true peak is ONE image (about 17 GiB, plus
+  the megabyte-sized oracle files), so keep at least 47 GiB free at the scratch location
+  (or lower `APFS_BIG_SIZE`, which must stay above 15.75 GiB). The run is not part of
+  `gen.sh all`. Determinism across runs is checked by hand, with one image on disk at a
+  time: build, record the image's sha256, delete the image, build again at the same
+  path and compare the two sha256 values; differing values mean the generator is not
+  deterministic.
+  Run the test on the kept image with `MINUTIAE_APFS_BIG_IMAGE=<keep path>`
+  (`TestAPFSBigContainerMatchesOracle`; without the variable it SKIPS). The image and
+  its oracle file `apfs-bigcib.expect.json` are regenerated together.
 - `mkapfs` (this version) has `-s` (case-sensitive: normalization-insensitive
   flag only) and `-z` (normalization-sensitive: no flags, so also case-sensitive);
   the fixtures use the two extreme combinations.
