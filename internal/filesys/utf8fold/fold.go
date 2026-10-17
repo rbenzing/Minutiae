@@ -273,20 +273,6 @@ func labelOf(name []byte, buf []byte) (label []byte, form Form, ok bool) {
 	return append(b, tk...), FormOpaque, true
 }
 
-// shape classifies name and names its composite shape; Form is FormUndecided for every combination that no
-// committed vector row shows.
-func shape(name []byte) (Form, []string) {
-	var buf [320]byte
-	label, form, ok := labelOf(name, buf[:0])
-	if !ok {
-		return FormUndecided, nil
-	}
-	if _, shown := decidedSet[string(label)]; !shown {
-		return FormUndecided, []string{string(label)}
-	}
-	return form, []string{string(label)}
-}
-
 // Classify decides how the kernel compares name; see the package comment. Only shapes that a committed
 // kernel vector shows are decided; every other shape is FormUndecided.
 func Classify(name []byte) Form {
