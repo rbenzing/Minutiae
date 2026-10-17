@@ -14,18 +14,19 @@ const MaxInput = 64 << 20
 // expanded payload byte the library's string or data plus the normalized copy.
 const (
 	chargePerInputByte = 8
-	chargePerNode      = 64
+	chargePerNode      = 478
 	chargePerPayload   = 2
-	// chargePerXMLNode is charged per node of an XML document on top of the terms above, up front:
-	// the encoding/xml scan and the library allocate several hundred bytes per element, and the
-	// scan holds a set of key texts per open dictionary. Measured on XML shapes of 100000 to
-	// 300000 elements (200000 duplicate-key pairs, 100000 distinct keys, 300000 integers, 100000
-	// strings) the total allocation was 1.8 to 2.5 times the charge without this term, and 0.77
-	// or less of the charge with it. Those shapes were flat: dictionary-heavy documents allocate
-	// more (a map per dictionary in the library and again in the normalizer), so this value is
-	// provisional until TestChargeCoversMeasuredAllocation holds it to every shape. An
-	// over-charge is allowed, an under-charge is not.
-	chargePerXMLNode = 640
+	// chargePerNode and chargePerXMLNode are held to a measurement, not a guess: for every shape of
+	// TestChargeCoversMeasuredAllocation (flat and dictionary-heavy documents, deep nesting, empty
+	// containers, long strings, data, in binary and XML) the estimate is at least the bytes the call
+	// allocates, also under -race. The worst measured cases, per node, were 382 B for a binary
+	// document (a 60-deep nest of one-key dictionaries: a map in the library and another in the
+	// normalizer) and a further 1201 B for XML (300000 empty dictionaries: the encoding/xml scan, the
+	// library and the key-set bookkeeping); the constants are those figures measured under -race,
+	// rounded up with a 25 percent margin (478 and 1501). An over-charge is allowed, an
+	// under-charge is not. chargePerXMLNode is charged per XML node on top of the terms above, up
+	// front.
+	chargePerXMLNode = 1501
 )
 
 // Decode decodes one binary or XML plist into plain values: map[string]any, []any, string
@@ -42,7 +43,7 @@ const (
 // validated and measured (Check: format gate, size, depth, expanded node count and expanded
 // payload bytes, all capped by DefaultLimits); the budget is charged
 //
-//	estimate = len(b)*8 + nodes*64 + payload*2   (+ nodes*chargePerXMLNode for an XML document)
+//	estimate = len(b)*8 + nodes*478 + payload*2   (+ nodes*1501 for an XML document)
 //
 // from the validator's own counts BEFORE the decoding library runs, so a refused charge
 // allocates nothing and returns an error wrapping both ErrNoBudget and the budget's error;

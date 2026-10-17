@@ -195,14 +195,14 @@ func TestDecodeXMLNegativeUIDIsMalformed(t *testing.T) {
 	}
 }
 
-// P24: the charge is exactly len*8 + nodes*64 + payload*2, so the input-byte term is pinned.
+// P24: the charge is exactly len*8 + nodes*478 + payload*2 (478 measured, see charge_test.go), so the input-byte term is pinned.
 func TestDecodeChargeIsExactlyTheModel(t *testing.T) {
 	b := objectsPlist(asciiObj("hi")) // 1 node, 2 payload bytes
 	view := newView(1 << 20)
 	if _, err := Decode(b, view); err != nil {
 		t.Fatal(err)
 	}
-	if want := int64(len(b))*8 + 1*64 + 2*2; view.Used() != want {
+	if want := int64(len(b))*8 + 1*478 + 2*2; view.Used() != want {
 		t.Fatalf("Used = %d, want %d", view.Used(), want)
 	}
 }
