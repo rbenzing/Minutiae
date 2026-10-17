@@ -6,6 +6,7 @@ package parsers
 import (
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/parsers/androidcalllog"
+	"github.com/rbenzing/minutiae/internal/parsers/androidcontacts"
 	"github.com/rbenzing/minutiae/internal/parsers/androidmms"
 )
 
@@ -19,5 +20,6 @@ func All() []parse.Parser {
 	return []parse.Parser{
 		androidmms.Parser{},
 		androidcalllog.Parser{},
+		androidcontacts.Parser{},
 	}
 }

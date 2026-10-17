@@ -1,4 +1,5 @@
 # parsers.lock: the generated source hash of every compiled-in parser.
 android.calllog 1.0.0 src1:sha256:fa0961db3e2bb68347601b88cf2260bc156f92302992f7cc6886011b6087c069
 android.calllog 1.0.1 src1:sha256:21504d9141feab48c3926d1bdb46a6059e856bf212e6cda2f2cb8693f089aa77
+android.contacts 1.0.0 src1:sha256:c334738547520a27bcd4e0b99f8f9c23cc10b30f7e4cc1e5c24ec68bd22db35a
 android.mmssms 1.0.0 src1:sha256:21e8afef1ee6de11852288c8e61fd538e141794e04f2e6a54ca72606a742bba4

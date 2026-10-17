@@ -69,7 +69,7 @@ var allowed = map[string][]string{
 	"internal/decode/typedstream":          {},
 	"internal/records/recordstest":         {"internal/records", "internal/evidence"},
 	"internal/parse":                       {"internal/records"},
-	"internal/parsers":                     {"internal/parse", "internal/records", "internal/parsers/androidmms", "internal/parsers/androidcalllog"},
+	"internal/parsers":                     {"internal/parse", "internal/records", "internal/parsers/androidmms", "internal/parsers/androidcalllog", "internal/parsers/androidcontacts"},
 	"internal/recordtypes/common":          {},
 	"internal/recordtypes/call":            {"internal/records", "internal/recordtypes/common"},
 	"internal/recordtypes/contact":         {"internal/records", "internal/recordtypes/common"},
