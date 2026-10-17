@@ -7,7 +7,9 @@ package sqlitefile_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
+	"errors"
 	"slices"
 	"testing"
 
@@ -219,4 +221,58 @@ func TestHistoryRowOfADroppedTablePageIsNotNamedByAStrictFit(t *testing.T) {
 			t.Errorf("reserved: truncated %v values %+v table %q basis %s, want whole, serial 10, t, guess", r.Truncated, r.Values, r.Table, r.TableBasis)
 		}
 	})
+}
+
+// cancelAt cancels a context when an overflow page of the chain is read after arm was set, and
+// counts the reads of those pages.
+type cancelAt struct {
+	data   []byte
+	pages  map[int64]bool // file offsets of the chain pages
+	armed  bool
+	reads  int
+	cancel func()
+}
+
+func (c *cancelAt) ReadAt(p []byte, off int64) (int, error) {
+	if c.armed && c.pages[off/hps*hps] {
+		c.reads++
+		c.cancel()
+	}
+	return bytes.NewReader(c.data).ReadAt(p, off)
+}
+
+// A cancel that arrives while the fit's probe reads an overflow chain (a dropped table's page has no
+// owner, so the fit is reached) ends the Rows call with the context error: no row is delivered with
+// a label the probe did not finish proving.
+func TestCancelWhileTheFitProbeReadsReachesTheCaller(t *testing.T) {
+	db, ov := droppedBig(t, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cr := &cancelAt{data: db, pages: map[int64]bool{}, cancel: cancel}
+	for _, pg := range ov[0] {
+		cr.pages[int64(pg-1)*hps] = true
+	}
+	d, err := sqlitefile.Open(cr, int64(len(db)), sqlitefile.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := d.History()
+	t.Cleanup(h.Release)
+	cr.armed = true
+	var got []sqlitefile.RecoveredRow
+	_, err = h.Rows(ctx, func(r sqlitefile.RecoveredRow) bool {
+		got = append(got, r)
+		return true
+	})
+	if cr.reads == 0 {
+		t.Fatal("the overflow chain was never read after the history started: the cancel did not fire")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Rows error %v, want context.Canceled", err)
+	}
+	for _, r := range got {
+		if r.Method == sqlitefile.MethodFreelist {
+			t.Errorf("a freelist row was delivered after the cancel: table %q basis %s", r.Table, r.TableBasis)
+		}
+	}
 }

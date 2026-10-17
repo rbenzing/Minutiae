@@ -85,12 +85,21 @@ func Probe(ctx context.Context, in *parse.Input, reqs []Req) (parse.Applicabilit
 			}
 		}
 		for _, w := range rq.With {
-			if _, err := db.Table(ctx, w, nil, nil); errors.Is(err, sqlitedb.ErrNoSuchTable) {
+			_, err := db.Table(ctx, w, nil, nil)
+			var wus *sqlitedb.UnsupportedSchemaError
+			switch {
+			case errors.Is(err, sqlitedb.ErrNoSuchTable):
 				if companion {
 					return deferAll()
 				}
 				return parse.Applicability{Status: parse.UnsupportedSchema, Reason: "table " + t.Name() + " exists but table " + w + " is absent"}, nil
-			} else if err != nil {
+			case errors.As(err, &wus):
+				// the table exists but cannot be read (a virtual table, an unparsed definition): not absent
+				if companion {
+					return deferAll()
+				}
+				return parse.Applicability{Status: parse.UnsupportedSchema, Reason: "table " + t.Name() + " exists but table " + w + " could not be read"}, nil
+			case err != nil:
 				return parse.Applicability{}, err
 			}
 		}
