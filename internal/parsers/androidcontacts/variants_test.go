@@ -81,7 +81,7 @@ func TestUnicodeAndRTLNamesSurviveInBodyAndSummaryIsFreeOfBidiControls(t *testin
 		if name == "" || !strings.Contains(r.Body, name) {
 			t.Errorf("%s: the searchable body lost the name %q", r.Locator, name)
 		}
-		if strings.ContainsAny(r.Summary, "‮‭‪‫‬⁦⁧⁨⁩") {
+		if strings.ContainsFunc(r.Summary, isBidiControl) {
 			t.Errorf("%s: a bidi control is in the summary: %q", r.Locator, r.Summary)
 		}
 	}
@@ -111,3 +111,7 @@ func TestDatabaseWithoutRawContactsAndWithAWALIsNotApplicableNotFailed(t *testin
 		t.Errorf("no audited warning: %+v", res.Warnings)
 	}
 }
+
+// isBidiControl reports the bidirectional embedding, override and isolate controls (U+202A to U+202E and
+// U+2066 to U+2069), written as numbers so the source holds no such character.
+func isBidiControl(r rune) bool { return (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) }
