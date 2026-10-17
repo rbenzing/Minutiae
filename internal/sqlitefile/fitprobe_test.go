@@ -276,3 +276,35 @@ func TestCancelWhileTheFitProbeReadsReachesTheCaller(t *testing.T) {
 		}
 	}
 }
+
+// The probe's own layer of the cancel: the history's values are clipped to 16 bytes, so the full
+// read of the row never follows the chain, and the cancel lands on the second page of the chain,
+// where only the probe is reading (it polls before the third page). Nothing but the probe can then
+// report the cancel; a probe whose error is swallowed would deliver the row.
+func TestCancelDuringTheFitProbeIsReportedByTheProbe(t *testing.T) {
+	db, ov := droppedBig(t, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cr := &cancelAt{data: db, pages: map[int64]bool{int64(ov[0][1]-1) * hps: true}, cancel: cancel}
+	d, err := sqlitefile.Open(cr, int64(len(db)), sqlitefile.Options{Limits: sqlitefile.Limits{MaxRecoveredValueBytes: 16}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := d.History()
+	t.Cleanup(h.Release)
+	cr.armed = true
+	var got []sqlitefile.RecoveredRow
+	_, err = h.Rows(ctx, func(r sqlitefile.RecoveredRow) bool {
+		got = append(got, r)
+		return true
+	})
+	if cr.reads == 0 {
+		t.Fatal("the second page of the chain was never read: the cancel did not fire")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Rows error %v, want context.Canceled", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("%d rows delivered after the cancel: %+v", len(got), got[0])
+	}
+}
