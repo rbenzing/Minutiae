@@ -138,3 +138,34 @@ func FuzzExt4Open(f *testing.F) {
 		}
 	})
 }
+
+// FuzzExt4CasefoldLookup mutates small casefold images (the large fixtures of FuzzExt4Open exceed the fuzz
+// engine's seed limit) and looks up names in every directory, in upper and lower case and a missing one: an
+// answer or a typed error, never a panic, and a found entry always comes with a name.
+func FuzzExt4CasefoldLookup(f *testing.F) {
+	for _, s := range fuzzBuilderSeeds()[4:] {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, b []byte) {
+		fsys, err := ext4.Open(bytes.NewReader(b), int64(len(b)))
+		if err != nil {
+			return
+		}
+		visited := 0
+		_ = filesys.Walk(fsys, fsys.Root(), "/", func(p string, e filesys.Entry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if visited++; visited > 300 {
+				return errFuzzBudget
+			}
+			for _, q := range []string{strings.ToUpper(p), strings.ToLower(p), p + "~missing"} {
+				got, err := fsys.Lookup(q)
+				if err == nil && got.Name == "" && q != "/" {
+					t.Fatalf("Lookup(%q) found an entry with no name", q)
+				}
+			}
+			return nil
+		})
+	})
+}
