@@ -268,6 +268,19 @@ A profile, not a spec-target run. Same machine as the baseline (Intel i7-1265U, 
 
 NORMAL is 1.38 times the FULL rate (-28 % ingest time), of the same order as the 21 % commit and fsync share of the Task 9 profile. The price is the power-loss window in `docs/limitations.md`. One run of each, so the difference carries run-to-run noise of a shared laptop.
 
+### Stats retune (5D Task 6b, ruling D80)
+Phase `stats` alone on the baseline's clean 10,000,000-record case (label `stats-retune`, not a run label of the record), code of acc067a (the index-only `Overview` and the totals-record `IndexStatus` of Task 6), an idle machine, through `heavy.sh`; the case had not been opened for five days (cold file cache). Each component is the worst of three calls.
+
+| Component | Baseline | Retune |
+|---|---|---|
+| `stats.overview_s` (`Overview`, six statements) | 94.145 s | 53.622 s |
+| `stats.group_s` (`Stats --by type`) | 5.552 s | 8.004 s |
+| `stats.index_s` (`IndexStatus`, totals record) | 4.331 s | 0.0026 s |
+| `stats_type_s` (sum) | 104.028 s | 61.628 s |
+| `get_p95_ms` (200 `Get` samples; not part of this task) | 172.3 ms | 265.6 ms |
+
+`stats_type_s` is 61.6 s against <= 3 s: the target is still missed, by a factor of about 20. Only the index status reached its floor (the totals record made it a point read). `Overview` still takes 53.6 s and `Stats --by type` 8.0 s, so the `group_s` floor of D22 (0.5 s) is exceeded 16 times over and goes to the Task 16 limitations line with this number. The baseline ran under desktop load straight after the ingest, this run on an idle machine against a cold cache, so a change of a few seconds either way (`group_s` rose, `get_p95_ms` rose) is not by itself a regression of the code. Opening the case for this phase appended one `case.open` entry to its `audit.jsonl` (as every earlier phase did); nothing else of the case changed (`artifacts.db`, manifest and `case.json` unchanged).
+
 ### After-pragmas ingest run (5D Task 8b, ruling D86)
 `after-pragmas`: ingest only, 2,000,000 records, label `after-pragmas`, code of acc067a (the batch transactions carry the bounded 256 MiB page cache of Task 8), FULL sync (no `--fast-sync`), alone on an idle machine (no other builder or check running), through `heavy.sh`. Ingest took 931.1 s: 2148 records/s (`ingest_rate`), `db_ratio` 3.90, `peak_rss_ingest_bytes` 533,016,576 (533 MB), `ostemp_added_ingest` 0. It is one input of the ingest decision (still `apply`, ruling D17).
 
@@ -278,9 +291,26 @@ Rate, not comparable like for like: the baseline's 1451 records/s is a 10,000,00
 ### Selectivity-aware search plans (5D Task 10)
 A word or prefix that matches a large share of the records made `r.id IN (SELECT rowid FROM <fts> WHERE <fts> MATCH ?)` materialize every matching rowid before SQLite could order by time (the baseline `matrix.search.*` p95 cells above, `search_plan` = apply). A page now runs one bounded probe (`SELECT count(*) FROM (SELECT 1 FROM <fts> WHERE <fts> MATCH ? LIMIT 4096)`); fewer than 4096 hits keep the FTS-first plan, otherwise the page is driven by `records_ts` (or `records_type_ts` with exactly one type) with an `EXISTS` on the full-text rowid and the first hits end the scan. Both shapes select the same records in the same order (`TestSearchShapesReturnIdenticalPages`). Query plan of the index-first page: `SCAN r USING INDEX records_ts` (`SEARCH r USING INDEX records_type_ts (type=?)` with one type) and `SCAN records_fts EXISTS VIRTUAL TABLE INDEX 0:=M2`, no temporary b-tree for the order. The FTS-first plan was `SEARCH r USING INTEGER PRIMARY KEY` over `LIST SUBQUERY` plus `USE TEMP B-TREE FOR ORDER BY`.
 
-Known limit (D98): the choice between the two shapes looks only at the number of full-text hits, never at the selectivity of the other filters. A common word combined with a rare filter (deleted only, one artifact, a rare type pair) is driven by `records_ts` and scans the time index across the table with one `EXISTS` per row, so it can be slower than the FTS-first plan. The result is identical either way (`TestSearchShapesAgreeOnEveryFilter`). The D83 re-measure adds cells for these combinations (a common word with deleted only, with one artifact, with a rare type pair); no code change is made before those numbers exist.
+Known limit (D98): the choice between the two shapes looks only at the number of full-text hits, never at the selectivity of the other filters. A common word combined with a rare filter (deleted only, one artifact, a rare type pair) is driven by `records_ts` and scans the time index across the table with one `EXISTS` per row, so it can be slower than the FTS-first plan. The result is identical either way (`TestSearchShapesAgreeOnEveryFilter`). The D83 re-measure added cells for these combinations (a common word with deleted only, with one artifact, with a rare type pair; results below); no code change is made before those numbers exist.
 
-The 10M search re-measure is pending (D83): it runs in the idle window together with the Task 6 stats retune and the Task 8 after-pragmas run, and its `matrix.search.*` p95 values go here.
+The 10M re-measure (D83), phase `search` alone on the baseline's clean 10,000,000-record case, label `search-retune` (not a run label of the record), code of acc067a, an idle machine, through `heavy.sh`; the case had not been opened for five days, so the operating system's file cache was cold, which the baseline's search phase (run straight after the ingest and the list matrix) was not. p95 in ms, with the sample count and the number of 20 s timeouts (the elapsed time of a timed-out query is what is recorded, and it can exceed the 20 s timeout when the deadline is noticed late, as in the 41.7 s cell, so a cell with timeouts is a lower bound; a cell with few samples ran out of its time budget):
+
+| Cell | Baseline p95 (samples / timeouts) | Retune p95 (samples / timeouts) |
+|---|---|---|
+| `word.common.type` | 643.2 (192 / 0) | 75.3 (200 / 0) |
+| `word.common.time` | 20006.1 (6 / 9) | 56.7 (200 / 0) |
+| `word.mid.type` | 24.9 (200 / 0) | 4169.7 (64 / 0) |
+| `word.mid.time` | 222.4 (200 / 0) | 3165.2 (46 / 0) |
+| `word.rare.type` | 49.8 (200 / 0) | 20559.5 (6 / 9) |
+| `prefix.mid.type` | 73.5 (200 / 0) | 20958.9 (6 / 9) |
+| `substring.common` | 20004.9 (6 / 9) | 76.5 (200 / 0) |
+| `substring.mid` | 233.5 (200 / 0) | 3717.5 (33 / 0) |
+| `substring.mid.type` | 41.4 (200 / 0) | 4438.8 (30 / 0) |
+| `selective.common.deleted` (D98) | not measured | 99.0 (200 / 0) |
+| `selective.common.artifact_tiny` (D98) | not measured | 41683.3 (5 / 8) |
+| `selective.common.typepair` (D98) | not measured | 61.7 (200 / 0) |
+
+`search_word_p95_ms` is 20958.9 ms (was 20006.1) against <= 300 and `search_substring_p95_ms` 4438.8 ms (was 20004.9) against <= 1000: both still miss. The common-word cells, which the plan targets, went from 643 ms and 20 s to 57 to 77 ms. The mid and rare cells, which the FTS-first plan answered in 25 to 233 ms in the baseline, went the other way (3 to 21 s). The likely cause, not proven by this run, is the choice D98 names: a word with at least 4096 hits flips to index-first, which walks the time index and probes the full-text index once per row, and a filter that keeps a small share of the rows (a type, a time window) makes that walk long; no EXPLAIN or profile was taken at 10M to confirm it. Of the three cells added for D98, `selective.common.artifact_tiny` (a common word in the one small artifact) is the worst (5 samples, 8 timeouts); `deleted` (99 ms) and `typepair` (62 ms) are within the 300 ms word bar. Whether the cold cache or the plan accounts for the mid and rare cells cannot be separated from this one run; the `final` run (fresh data, same code) is the second observation and is compared with these numbers in the Task 14 notes. No code change is made in this task (D98); what to do about it is for the coordinator and Task 16 (limitations).
 
 ### OpenArtifact manifest cache (5D Task 12)
 A small benchmark, not a 10M run. Same machine as the baseline, `BenchmarkOpenArtifact`, `-count=3`, through `heavy.sh`, code of the Task 12 commit. ns/op, three runs each; the median of the 10,000-line row is the `open_artifact_ms` figure.
