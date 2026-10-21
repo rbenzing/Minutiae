@@ -54,9 +54,11 @@ sub-project's scope.
 | LX-5 | Verify and audit | 1, 5 | Not started (after 5D) |
 | LX-6 | Records, full-text search and JSON output | 5 | Not started (after 5D) |
 | LX-7a | ext4, F2FS and shared filesystem readers | 2 | Done |
-| LX-8 | Parse contract, plist decoder and fuzz tooling | 4 | In progress |
+| LX-8 | Parse contract, plist decoder and fuzz tooling | 4 | Done (follow-up: the post-LX-8 fuzz campaigns are pending, see below) |
 
 The remaining LX-7 work on the FAT and exFAT readers is not yet planned.
+
+Follow-up from LX-8: the three post-LX-8 fuzz campaigns (the plist decoder, the readers profile and the parsers profile) are not yet run. The Docker VM had 1 GiB, and the engine died on each attempt. Run them once the Docker VM has at least 4 GiB, using the commands in `docs/testing.md` ("Re-run after LX-8"). Then replace the "pending" notes in `docs/testing.md` and `docs/limitations.md` with the results.
 
 ## Specs and plans
 
