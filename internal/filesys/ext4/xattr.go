@@ -9,8 +9,9 @@ import (
 
 const (
 	xattrMagic      = 0xEA020000
-	xattrHeaderSize = 32 // header of an xattr block
-	xattrEntrySize  = 16 // fixed part of an entry, before the name
+	xattrHeaderSize = 32   // header of an xattr block
+	xattrEntrySize  = 16   // fixed part of an entry, before the name
+	xattrCsumOff    = 0x10 // h_checksum in the header of an xattr block
 )
 
 // xattr is one extended attribute. Inum is non-zero when the value lives in a
@@ -48,8 +49,17 @@ func xattrPrefix(index byte) string {
 // the block named by i_file_acl. On a corrupt table it returns the attributes
 // read before the damage together with a *filesys.CorruptError.
 func (f *FS) xattrs(in *inode) ([]xattr, error) {
+	xs, _, err := f.xattrsChecked(in)
+	return xs, err
+}
+
+// xattrsChecked is xattrs that also reports whether the xattr block failed its checksum. The attributes of
+// such a block are still returned (a checksum that fails is shown, never hidden), and a warning names the
+// block. The in-inode area has no checksum of its own: the inode checksum covers it.
+func (f *FS) xattrsChecked(in *inode) ([]xattr, bool, error) {
 	var out []xattr
 	var firstErr error
+	csumBad := false
 	if !in.extraBad && in.extraIsize+4 <= len(in.extra) {
 		area := in.extra[in.extraIsize:]
 		if binary.LittleEndian.Uint32(area) == xattrMagic {
@@ -63,38 +73,61 @@ func (f *FS) xattrs(in *inode) ([]xattr, error) {
 		}
 	}
 	if in.fileACL != 0 {
-		got, err := f.xattrBlock(in.fileACL)
+		got, bad, err := f.xattrBlock(in.fileACL)
+		csumBad = bad
 		out = append(out, got...)
 		if firstErr == nil {
 			firstErr = err
 		}
 	}
-	return out, firstErr
+	return out, csumBad, firstErr
 }
 
-// xattrBlock reads and parses the extended attribute block blk. The block
-// checksum is not verified.
-func (f *FS) xattrBlock(blk uint64) ([]xattr, error) {
+// xattrBlock reads and parses the extended attribute block blk. Under metadata_csum with the crc32c type the
+// block checksum is verified: a mismatch is a warning (deduplicated by text, so a block shared by many inodes
+// warns once) and csumBad, and the attributes are still returned. Without metadata_csum, or with another
+// checksum type, h_checksum is not a checksum this reader can judge, so no verdict is made.
+func (f *FS) xattrBlock(blk uint64) ([]xattr, bool, error) {
 	const st = "ext4 xattr block"
 	if blk < uint64(f.sb.firstDataBlock) || blk >= uint64(f.sb.blocksCount) {
-		return nil, corrupt(st, -1, "i_file_acl block %d is outside the %d-block filesystem", blk, f.sb.blocksCount)
+		return nil, false, corrupt(st, -1, "i_file_acl block %d is outside the %d-block filesystem", blk, f.sb.blocksCount)
 	}
 	off, ok := filesys.MulOK(int64(blk), int64(f.sb.blockSize))
 	if !ok {
-		return nil, corrupt(st, -1, "block %d offset overflows", blk)
+		return nil, false, corrupt(st, -1, "block %d offset overflows", blk)
 	}
 	buf := make([]byte, f.sb.blockSize) // one block: bounded by the block size
 	if err := readFull(f.r, buf, off); err != nil {
-		return nil, corrupt(st, off, "read failed: %v", err)
+		return nil, false, corrupt(st, off, "read failed: %v", err)
 	}
 	if m := binary.LittleEndian.Uint32(buf); m != xattrMagic {
-		return nil, corrupt(st, off, "bad magic %#08x, want %#08x", m, uint32(xattrMagic))
+		return nil, false, corrupt(st, off, "bad magic %#08x, want %#08x", m, uint32(xattrMagic))
+	}
+	csumBad := false
+	if f.sb.metadataCsum() && f.sb.checksumType == csumTypeCRC32C {
+		stored := binary.LittleEndian.Uint32(buf[xattrCsumOff:])
+		if want := f.xattrBlockCsum(blk, buf); stored != want {
+			csumBad = true
+			f.warn("xattr block %d: checksum mismatch (stored %#08x, computed %#08x)", blk, stored, want)
+		}
 	}
 	got, err := parseXattrs(buf, xattrHeaderSize)
 	if ce, ok := err.(*filesys.CorruptError); ok {
 		ce.Offset += off
 	}
-	return got, err
+	return got, csumBad, err
+}
+
+// xattrBlockCsum is the kernel's ext4_xattr_block_csum: crc32c with the filesystem seed over the little-endian
+// 64-bit block number, then the block with its h_checksum field read as zero.
+func (f *FS) xattrBlockCsum(blk uint64, buf []byte) uint32 {
+	var nr [8]byte
+	binary.LittleEndian.PutUint64(nr[:], blk)
+	var zero [4]byte
+	c := rawCRC32C(f.sb.csumSeed, nr[:])
+	c = rawCRC32C(c, buf[:xattrCsumOff])
+	c = rawCRC32C(c, zero[:])
+	return rawCRC32C(c, buf[xattrCsumOff+4:])
 }
 
 // parseXattrs parses the entry table of an xattr container: region holds the

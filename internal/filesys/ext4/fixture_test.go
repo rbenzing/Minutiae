@@ -32,6 +32,15 @@ type oracleFile struct {
 	LinkTarget string `json:"link_target"`
 }
 
+// oracleXattr is one attribute as debugfs reports it.
+type oracleXattr struct {
+	Path    string `json:"path"`
+	Name    string `json:"name"`
+	Storage string `json:"storage"`
+	Size    int    `json:"size"`
+	SHA256  string `json:"sha256"`
+}
+
 type oracle struct {
 	Generator struct {
 		ImageSHA256 string `json:"image_sha256"`
@@ -48,6 +57,10 @@ type oracle struct {
 	// FreeBlocks are the free block ranges dumpe2fs reports, [first, last]
 	// inclusive, sorted and merged.
 	FreeBlocks [][2]int64 `json:"free_blocks"`
+	// EAInode and Xattrs are present in ext4-xattr only: the number of the inode that holds the EA-inode value, and
+	// every attribute with its size, storage kind (inode, block, ea_inode) and value sha256 (debugfs ea_get).
+	EAInode int           `json:"ea_inode"`
+	Xattrs  []oracleXattr `json:"xattrs"`
 }
 
 func fixturePaths(t testing.TB) []string {
@@ -141,6 +154,7 @@ func TestExt4MatchesOracle(t *testing.T) {
 			used := checkLive(t, fsys, want, live)
 			checkDeleted(t, want, deleted)
 			checkUnallocated(t, fsys, used, want)
+			checkXattrs(t, fsys, want, live)
 		})
 	}
 }
@@ -351,5 +365,81 @@ func checkUnallocated(t *testing.T, fsys *ext4.FS, used []filesys.Run, want orac
 		overlaps(fmt.Sprintf("the block bitmap of group %d", g), int64(bb)*bs, bs)
 		overlaps(fmt.Sprintf("the inode bitmap of group %d", g), int64(ib)*bs, bs)
 		overlaps(fmt.Sprintf("the first inode table block of group %d", g), int64(it)*bs, bs)
+	}
+}
+
+// checkXattrs compares the attributes of every live entry with the oracle's debugfs view: the listed names, and
+// for a value held in the inode or in an xattr block its size and sha256; an EA-inode value is not read here (it
+// is listed with the EA inode number, and its size and hash are Task 8's). No entry of a clean mke2fs image
+// carries xattr_csum=bad.
+func checkXattrs(t *testing.T, fsys *ext4.FS, want oracle, live map[string]filesys.Entry) {
+	t.Helper()
+	byPath := map[string][]oracleXattr{}
+	for _, a := range want.Xattrs {
+		byPath[a.Path] = append(byPath[a.Path], a)
+	}
+	for p, e := range live {
+		if v, ok := attr(e, "xattr_csum"); ok {
+			t.Errorf("%s: xattr_csum = %q on a clean image", p, v)
+		}
+		if len(want.Xattrs) == 0 {
+			continue
+		}
+		var names []string
+		for _, a := range byPath[p] {
+			names = append(names, a.Name)
+		}
+		got, _ := attr(e, "xattrs")
+		gotNames := strings.Split(got, ",")
+		if got == "" {
+			gotNames = nil
+		}
+		sort.Strings(gotNames)
+		sort.Strings(names)
+		if !slices.Equal(gotNames, names) {
+			t.Errorf("%s: xattr names %v, want (ea_list) %v", p, gotNames, names)
+		}
+	}
+	if len(want.Xattrs) == 0 {
+		return
+	}
+	for p, attrs := range byPath {
+		e, ok := live[p]
+		if !ok {
+			t.Errorf("%s: an oracle attribute on a path that is not live", p)
+			continue
+		}
+		var n uint32
+		if _, err := fmt.Sscanf(e.ID, "inode:%d", &n); err != nil {
+			t.Errorf("%s: entry id %q: %v", p, e.ID, err)
+			continue
+		}
+		in, err := fsys.Inode(n)
+		if err != nil {
+			t.Errorf("%s: %v", p, err)
+			continue
+		}
+		xs, err := fsys.Xattrs(in)
+		if err != nil {
+			t.Errorf("%s: Xattrs: %v", p, err)
+			continue
+		}
+		for _, a := range attrs {
+			i := slices.IndexFunc(xs, func(x ext4.Xattr) bool { return x.Name == a.Name })
+			if i < 0 {
+				t.Errorf("%s: attribute %s not read", p, a.Name)
+				continue
+			}
+			if a.Storage == "ea_inode" {
+				if xs[i].Inum != uint32(want.EAInode) {
+					t.Errorf("%s: %s names EA inode %d, want %d", p, a.Name, xs[i].Inum, want.EAInode)
+				}
+				continue
+			}
+			sum := sha256.Sum256(xs[i].Value)
+			if len(xs[i].Value) != a.Size || hex.EncodeToString(sum[:]) != a.SHA256 {
+				t.Errorf("%s: %s is %d bytes sha256 %x, want %d bytes %s", p, a.Name, len(xs[i].Value), sum, a.Size, a.SHA256)
+			}
+		}
 	}
 }

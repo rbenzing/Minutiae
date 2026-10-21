@@ -47,6 +47,15 @@ func fuzzBuilderSeeds() [][]byte {
 				{Path: "/idir", Dir: true, Inline: true},
 				{Path: "/idir/x", Data: []byte("y"), Inline: true},
 			}),
+		// an xattr block under metadata_csum, so a mutation of the header, the entries or h_checksum reaches the
+		// verification
+		ext4test.Build(ext4test.Options{Extents: true, MetadataCsum: true},
+			[]ext4test.File{
+				{Path: "/x", Data: []byte("x"), XattrBlock: true, Xattrs: []ext4test.Xattr{
+					{Name: "user.alpha", Value: []byte("first value")},
+					{Name: "security.selinux", Value: bytes.Repeat([]byte("v"), 200)},
+				}},
+			}),
 		ext4test.Build(ext4test.Options{Extents: true},
 			[]ext4test.File{
 				{Path: "/h", Dir: true, HTree: true},

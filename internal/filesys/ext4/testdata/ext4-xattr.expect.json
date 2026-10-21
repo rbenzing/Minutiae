@@ -1,0 +1,162 @@
+{
+  "generator": {
+    "image_sha256": "320d725859dc9d2acad4215c5d8f9a262be85ae1a60e33c152c13d5f76653209",
+    "packages": [
+      {
+        "package": "coreutils",
+        "version": "9.1-1"
+      },
+      {
+        "package": "e2fsprogs",
+        "version": "1.47.0-2+b2"
+      },
+      {
+        "package": "gzip",
+        "version": "1.12-1"
+      },
+      {
+        "package": "jq",
+        "version": "1.6-2.1+deb12u2"
+      },
+      {
+        "package": "python3",
+        "version": "3.11.2-1+b1"
+      }
+    ],
+    "commands": [
+      "# source tree: file1, file2, dir/file3, dir/gone.txt in tools/fixtures/ext4_xattr.sh",
+      "python3 tools/fixtures/ext4_oracle.py <src> --exclude /dir/gone.txt",
+      "mke2fs -q -F -t ext4 -b 1024 -O metadata_csum,64bit,ea_inode -U 0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d -E hash_seed=11112222-3333-4444-5555-666677778888,root_owner=0:0 -L fixturexattr -d /dev/shm/minutiae-ext4-xattr/src /dev/shm/minutiae-ext4-xattr/ext4-xattr.img 4M",
+      "debugfs -w -R ea_set /file1 user.small tiny /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
+      "debugfs -w -R ea_set -f /dev/shm/minutiae-ext4-xattr/v_block /file1 user.block /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
+      "debugfs -w -R ea_set -f /dev/shm/minutiae-ext4-xattr/v_huge /file2 user.huge /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
+      "debugfs -w -R ea_set /dir/file3 user.note remark /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
+      "e2fsck -fy <img>   # exit 0 or 1 accepted: repairs the parent i_blocks of the EA-inode value",
+      "debugfs -w -R ssv lastcheck 1700000000 /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
+      "debugfs -w -R sif / ctime 1700000000 /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
+      "debugfs -w -R sif / atime 1700000000 /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
+      "debugfs -w -R sif /lost+found ctime 1700000000 /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
+      "debugfs -w -R sif /lost+found atime 1700000000 /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
+      "debugfs -w -R sif /dir ctime 1700000000 /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
+      "debugfs -w -R sif /dir atime 1700000000 /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
+      "debugfs -w -R sif /file1 ctime 1700000000 /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
+      "debugfs -w -R sif /file1 atime 1700000000 /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
+      "debugfs -w -R sif /file2 ctime 1700000000 /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
+      "debugfs -w -R sif /file2 atime 1700000000 /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
+      "debugfs -w -R sif /dir/file3 ctime 1700000000 /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
+      "debugfs -w -R sif /dir/file3 atime 1700000000 /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
+      "debugfs -w -R sif /dir/gone.txt ctime 1700000000 /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
+      "debugfs -w -R sif /dir/gone.txt atime 1700000000 /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
+      "debugfs -w -R rm /dir/gone.txt /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
+      "e2fsck -fn <img>   # must report a clean filesystem",
+      "dumpe2fs <img> | python3 tools/fixtures/ext4_freeblocks.py   # free block ranges",
+      "dumpe2fs -h <img>   # label, uuid, block size, block count, features",
+      "debugfs -R 'ea_list <path>' <img>   # attribute names and sizes",
+      "debugfs -R 'ea_get -f <out> <path> <name>' <img>; sha256sum <out>   # value hashes",
+      "debugfs -R 'stat <n>' <img>   # File ACL of each file, the EA-inode flag (0x200000) of each inode"
+    ]
+  },
+  "type": "ext4",
+  "label": "fixturexattr",
+  "uuid": "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+  "block_size": 1024,
+  "size": 4194304,
+  "features": [
+    "has_journal",
+    "ext_attr",
+    "resize_inode",
+    "dir_index",
+    "filetype",
+    "extent",
+    "64bit",
+    "flex_bg",
+    "ea_inode",
+    "sparse_super",
+    "large_file",
+    "huge_file",
+    "dir_nlink",
+    "extra_isize",
+    "metadata_csum"
+  ],
+  "mke2fs_created": [
+    "/lost+found"
+  ],
+  "files": [
+    {
+      "path": "/dir",
+      "mode": 493,
+      "mtime": 1500000000,
+      "type": "dir",
+      "size": 0,
+      "sha256": ""
+    },
+    {
+      "path": "/dir/file3",
+      "mode": 420,
+      "mtime": 1500004321,
+      "type": "file",
+      "size": 11,
+      "sha256": "f1bb5f4a7208a2696394af97dcdf17c46137ed20a66b912b179b11eaf5b9f870"
+    },
+    {
+      "path": "/file1",
+      "mode": 420,
+      "mtime": 1500012963,
+      "type": "file",
+      "size": 9,
+      "sha256": "198cef2c92e80b728ae28c9978e64381fa18d9b31adf2068ca63b1d53153cf95"
+    },
+    {
+      "path": "/file2",
+      "mode": 420,
+      "mtime": 1500017284,
+      "type": "file",
+      "size": 9,
+      "sha256": "7c78e911130103a9d7760788394a4467e20bf854810f915a99b9c244b266717e"
+    }
+  ],
+  "deleted": [
+    "/dir/gone.txt"
+  ],
+  "free_blocks": [
+    [
+      1332,
+      1332
+    ],
+    [
+      1337,
+      4095
+    ]
+  ],
+  "ea_inode": 17,
+  "xattrs": [
+    {
+      "path": "/file1",
+      "name": "user.small",
+      "storage": "inode",
+      "size": 4,
+      "sha256": "8950abfda7b727630760dd35bcf5c3daa7631aff223a90f7728c0d2521dde10c"
+    },
+    {
+      "path": "/file1",
+      "name": "user.block",
+      "storage": "block",
+      "size": 300,
+      "sha256": "d0ef4a6bbc10763a8458b487b45632f0e156d5214ec4657db20f7f4863dd7cea"
+    },
+    {
+      "path": "/file2",
+      "name": "user.huge",
+      "storage": "ea_inode",
+      "size": 1024,
+      "sha256": "cd354d8c11bf422ba9465bcf50d70c4a67b3af5545078f04d0f90d5f557653fa"
+    },
+    {
+      "path": "/dir/file3",
+      "name": "user.note",
+      "storage": "inode",
+      "size": 6,
+      "sha256": "1ffcd59e73280037cb72a49668a35bc8d18e694fb59616dc63bf7171ad35e32a"
+    }
+  ]
+}

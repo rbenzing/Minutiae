@@ -80,6 +80,8 @@ type inode struct {
 
 	xattrNames []string
 	xattrErr   error
+	// xattrCsumBad: the xattr block failed its checksum (the attributes are still listed).
+	xattrCsumBad bool
 }
 
 // inode reads and decodes inode n. Out-of-range numbers, a group whose
@@ -126,12 +128,10 @@ func (f *FS) inode(n uint32) (*inode, error) {
 		return nil, err
 	}
 	in.offset = off
-	if xs, err := f.xattrs(in); err != nil {
-		in.xattrErr = err
-		in.xattrNames = xattrNames(xs)
-	} else {
-		in.xattrNames = xattrNames(xs)
-	}
+	xs, csumBad, err := f.xattrsChecked(in)
+	in.xattrErr = err
+	in.xattrCsumBad = csumBad
+	in.xattrNames = xattrNames(xs)
 	return in, nil
 }
 
@@ -345,6 +345,9 @@ func toEntry(name string, raw []byte, in *inode) filesys.Entry {
 	}
 	if in.xattrErr != nil {
 		e.Attrs = append(e.Attrs, filesys.KV{Key: "xattrs_error", Value: in.xattrErr.Error()})
+	}
+	if in.xattrCsumBad {
+		e.Attrs = append(e.Attrs, filesys.KV{Key: "xattr_csum", Value: "bad"})
 	}
 	if in.orphanNext != 0 {
 		e.Attrs = append(e.Attrs, filesys.KV{Key: "orphan_next", Value: strconv.FormatUint(uint64(in.orphanNext), 10)})
