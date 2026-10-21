@@ -25,10 +25,13 @@ type Emit struct {
 
 // InputSpec declares one input role of a parser.
 type InputSpec struct {
-	Role       string   // [a-z][a-z0-9_]{0,15}
-	Globs      []string // primary: absolute; others: relative ("./...")
-	Companions []string // suffixes appended to the primary's logical path: "-wal", "-journal", "-shm"
-	Required   bool     // the primary role is always required
+	Role  string   // [a-z][a-z0-9_]{0,15}
+	Globs []string // primary: absolute; others: relative ("./...")
+	// Companions are suffixes of the PRIMARY's logical path that fill THIS non-primary role: -wal,
+	// -journal, -shm. A suffix names at most one role. Meant for SQLite parsers; the host does not
+	// check that the primary is a database.
+	Companions []string
+	Required   bool // the primary role is always required
 }
 
 // TableClaim says a parser handles one table of a database role. Role is
@@ -203,6 +206,7 @@ func validateInputs(m Meta, platforms map[string]bool) error {
 		return fmt.Errorf("parse: meta %s: inputs is empty", m.Name)
 	}
 	roles := map[string]bool{}
+	owner := map[string]string{} // companion suffix -> the role that declares it
 	for i, in := range m.Inputs {
 		if !validRole(in.Role) {
 			return fmt.Errorf("parse: meta %s: input %d: role %q must match [a-z][a-z0-9_]{0,15}", m.Name, i, in.Role)
@@ -211,10 +215,24 @@ func validateInputs(m Meta, platforms map[string]bool) error {
 			return fmt.Errorf("parse: meta %s: role %q is declared twice", m.Name, in.Role)
 		}
 		roles[in.Role] = true
+		if i == 0 && len(in.Companions) > 0 {
+			return fmt.Errorf("parse: meta %s: the primary role %q must not declare companions: they are suffixes of the primary's own path", m.Name, in.Role)
+		}
+		// The allowed set has three members, so a list of more than three entries holds a repeat
+		// and is refused at the fourth entry at the latest.
 		for _, c := range in.Companions {
 			if !allowedCompanion(c) {
 				return fmt.Errorf("parse: meta %s: role %q: companion %q is not one of -wal, -journal, -shm", m.Name, in.Role, c)
 			}
+			if prev, ok := owner[c]; ok && prev == in.Role {
+				return fmt.Errorf("parse: meta %s: role %q: companion %q is listed twice", m.Name, in.Role, c)
+			} else if ok {
+				return fmt.Errorf("parse: meta %s: companion %q is declared by both role %q and role %q: one artifact would fill two roles", m.Name, c, prev, in.Role)
+			}
+			owner[c] = in.Role
+		}
+		if i > 0 && len(in.Globs) == 0 && len(in.Companions) == 0 {
+			return fmt.Errorf("parse: meta %s: role %q declares no globs and no companion, so it can never be filled", m.Name, in.Role)
 		}
 		if i == 0 {
 			if !in.Required {

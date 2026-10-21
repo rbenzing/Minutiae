@@ -144,9 +144,25 @@ var (
 	ErrUnsupported = errors.New("unsupported filesystem feature")
 	ErrEncrypted   = errors.New("encrypted (decryption is roadmap sub-project 10)")
 	ErrCorrupt     = errors.New("corrupt filesystem structure")
+	// ErrLimit marks a bounded search or walk cut off by its cap: the answer is
+	// undecidable, which is not the same as "not found". Readers wrap it.
+	ErrLimit = errors.New("structural limit exceeded")
 	// ErrAmbiguous is returned when a reference (a snapshot name or xid) matches
 	// more than one object; the error lists the candidates.
 	ErrAmbiguous = errors.New("ambiguous reference")
+	// ErrUndecided marks a comparison or lookup whose answer is not known: a name of a shape that no
+	// measurement of the filesystem's own comparison covers (a casefold directory holds a name the
+	// comparison has not been shown for). It is not "not found" and not "different"; readers wrap it.
+	ErrUndecided = errors.New("cannot be decided")
+	// ErrIncomplete marks a lookup that finds nothing in a directory the scan did not read to the end: the name may
+	// be in the part that was not read, so the answer is neither "found" nor "absent". The causes, per reader:
+	//   - ext4: the record cap; a damaged block map; a sparse hole inside i_size; an unreadable block; i_size above
+	//     the 64 MiB read limit; an invalid rec_len; a record whose name_len does not fit; a tail too short for a record.
+	//   - F2FS: the entry cap; a damaged block map; a dentry block shared with another directory or mapped twice;
+	//     damaged dentry slots; an unreadable block; a size above the 64 MiB read limit; the per-filesystem read budget.
+	// It is returned together with ErrLimit (the caps) or ErrCorrupt (the other causes, the budget included);
+	// readers wrap it. A cause always leaves a warning in Info (TestEveryDirectoryCutCauseLogsItsWarning).
+	ErrIncomplete = errors.New("directory not read to the end")
 )
 
 // CorruptError reports a malformed on-disk structure. Offset is the byte

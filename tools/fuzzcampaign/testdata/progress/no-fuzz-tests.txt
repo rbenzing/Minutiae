@@ -1,0 +1,2 @@
+PASS
+ok  	scratch/nofuzz	3.480s

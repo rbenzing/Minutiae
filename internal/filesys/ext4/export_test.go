@@ -1,9 +1,16 @@
 package ext4
 
-import "github.com/rbenzing/minutiae/internal/filesys"
+import (
+	"fmt"
+
+	"github.com/rbenzing/minutiae/internal/filesys"
+)
 
 // Test-only accessors, so the external ext4_test package can check internals
 // without widening the public API.
+
+// Encoding returns s_encoding and s_encoding_flags.
+func (f *FS) Encoding() (encoding, flags uint16) { return f.sb.encoding, f.sb.encFlags }
 
 // GroupCount returns the number of block groups read from the descriptor table.
 func (f *FS) GroupCount() int { return len(f.groups) }
@@ -51,8 +58,8 @@ func (in *inode) Times() filesys.Times { return in.times }
 // Inode reads inode n.
 func (f *FS) Inode(n uint32) (*Inode, error) { return f.inode(n) }
 
-// Xattrs reads the extended attributes of in.
-func (f *FS) Xattrs(in *Inode) ([]Xattr, error) { return f.xattrs(in) }
+// RawXattrs reads the extended attributes of in (the production Xattrs takes an Entry).
+func (f *FS) RawXattrs(in *Inode) ([]Xattr, error) { return f.xattrs(in) }
 
 // ToEntry converts an inode to a directory entry.
 func ToEntry(name string, raw []byte, in *Inode) filesys.Entry { return toEntry(name, raw, in) }
@@ -90,3 +97,53 @@ func (f *FS) SetSlackScanCap(n int64) { f.slackScanCap = n }
 // SlackWork reports the slack scan work done so far: candidate checks plus bytes
 // indexed for the name check (a deterministic stand-in for time).
 func (f *FS) SlackWork() int64 { return f.slackWork.Load() }
+
+// CutIfShort runs the "block map ends before i_size" check of the directory scan on inode n, after a first cut
+// of the kind given (none when firstCut is empty), and returns the cut reason the scan holds afterwards.
+func (f *FS) CutIfShort(n uint32, lblk, isizeBlocks int64, firstCut string) (string, error) {
+	in, err := f.inode(n)
+	if err != nil {
+		return "", err
+	}
+	w := &dirScan{f: f, in: in}
+	if firstCut != "" {
+		w.cutAt(false, "%s", firstCut)
+	}
+	w.cutIfShort(lblk, isizeBlocks)
+	return w.cut.reason, nil
+}
+
+// MaxEAValue is the cap on the size of a value held in an EA inode.
+const MaxEAValue = maxEAValue
+
+// EAInodeValue opens the value of the EA-inode attribute name of inode n as a file, and says whether the value
+// failed its hash.
+func (f *FS) EAInodeValue(n uint32, name string) (filesys.File, bool, error) {
+	in, err := f.inode(n)
+	if err != nil {
+		return nil, false, err
+	}
+	xs, err := f.xattrs(in)
+	if err != nil && len(xs) == 0 {
+		return nil, false, err
+	}
+	for _, x := range xs {
+		if x.Name == name {
+			fl, bad, err := f.eaInodeValue(in, x)
+			if err != nil {
+				return nil, bad, err
+			}
+			return fl, bad, nil
+		}
+	}
+	return nil, false, fmt.Errorf("inode %d has no attribute %q", n, name)
+}
+
+// SetXattrCap lowers the per-entry cap on listed attributes (before any read).
+func (f *FS) SetXattrCap(n int) { f.xattrCap = n }
+
+// SetEAHashCap lowers the bound on EA-inode value bytes hashed (before any read).
+func (f *FS) SetEAHashCap(n int64) { f.eaHashCap = n }
+
+// MaxEAHashBytes is the default bound on EA-inode value bytes hashed per filesystem.
+const MaxEAHashBytes = maxEAHashBytes

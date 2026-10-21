@@ -210,11 +210,11 @@ func (k *slackCarver) image(img sqlitefile.PageImage, data []byte) bool {
 	if len(cands) == 0 {
 		return true
 	}
-	cells := make([][]sqlitefile.Value, len(cands))
+	cells := make([]sqlitefile.FitCell, len(cands))
 	for i, c := range cands {
-		cells[i] = c.rec.Values
+		cells[i] = sqlitefile.FitCell{Values: c.rec.Values, Truncated: c.rec.Truncated, Reserved: c.rec.Reserved}
 	}
-	table, basis := k.sch.FitPage(cells)
+	table, basis := k.sch.FitCells(cells)
 	for _, c := range cands {
 		if st.Carved >= lim.MaxHistoryRows {
 			st.RowCapped = true

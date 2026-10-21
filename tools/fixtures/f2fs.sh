@@ -22,11 +22,10 @@
 # dump.f2fs -s/-n, blkid); the oracle cross-checks them against each other and
 # fails the generator on any mismatch (see f2fs_oracle.py).
 #
-# Deleted entries need a mounted F2FS (sload.f2fs cannot delete, and F2FS has
-# no dtime): when the kernel can mount it the three /dir/removable-* files are
-# removed through the mount; the Docker Desktop kernel has no f2fs module, so
-# the fixtures then have "deleted": [] and a generator.note (README.md, "F2FS
-# determinism").
+# Deleted entries: sload.f2fs cannot delete and F2FS has no dtime, and this script
+# never mounts the image (a kernel mount could load a module into the Docker
+# Desktop VM). The fixtures therefore have "deleted": [] and a generator.note
+# (README.md, "F2FS determinism"); deleted-entry images come from the QEMU guest.
 set -euo pipefail
 
 umask 022
@@ -67,32 +66,11 @@ work=$base/minutiae-f2fs # fixed name: the commands recorded in the oracle menti
 # enumeration order is creation order (a precaution, as in ext4.sh).
 imgs=${TMPDIR:-/tmp}/minutiae-f2fs-images
 cleanup() {
-  umount "$work/mnt" 2>/dev/null || true
   rm -rf "$work" "$imgs"
 }
 trap cleanup EXIT
 rm -rf "$work" "$imgs"
 mkdir "$work" "$imgs"
-
-# remove_through_mount <img> <src> <paths...>: delete files through a kernel
-# mount of the image. Returns 1, changing nothing, when the kernel cannot mount
-# F2FS (the Docker Desktop kernel cannot). The mount stamps directory ctimes
-# and checkpoints from the real clock, so images made this way are not
-# byte-reproducible; the parent directory's mtime is put back to the source
-# tree's.
-remove_through_mount() {
-  local img=$1 src=$2 p
-  shift 2
-  local mnt="$work/mnt"
-  mkdir -p "$mnt"
-  mount -t f2fs -o loop "$img" "$mnt" 2>/dev/null || return 1
-  CMDS+=("mount -t f2fs -o loop <img> <mnt>")
-  for p in "$@"; do
-    run rm "$mnt$p"
-    run touch -r "$src$(dirname "$p")" "$mnt$(dirname "$p")"
-  done
-  run umount "$mnt"
-}
 
 # build_fixture <name> <label> <uuid> <mkfs.f2fs extra args...>
 build_fixture() {
@@ -108,13 +86,12 @@ build_fixture() {
   frun mkfs.f2fs -q -f -l "$label" -U "$fsuuid" "$@" -r "$img"
   frun sload.f2fs -f "$src" -t / "$img" >"$work/$name.sload.log" 2>&1 || { tail -c 2000 "$work/$name.sload.log"; echo "sload.f2fs failed" >&2; exit 1; }
 
+  # No kernel mount of the image: a kernel mount of a modular filesystem can load
+  # a module into the Docker Desktop VM or the host, which this repository never
+  # does (docs/invariants.md; deleted-entry kernel fixtures run in the QEMU guest,
+  # which mounts f2fs: see README.md, "Recovery fixtures: toolchain probe").
   local deleted=() note=""
-  if remove_through_mount "$img" "$src" $f2fs_removable; then
-    deleted=($f2fs_removable)
-    note="the /dir/removable-* files were removed through a kernel f2fs mount, which stamps times from the real clock: this image is not byte-reproducible"
-  else
-    note="no deleted entries: the kernel of the generator container cannot mount f2fs (no module), sload.f2fs cannot delete and F2FS keeps no dtime; deleted-entry coverage comes from the builder tests"
-  fi
+  note="no deleted entries: the kernel of the generator container cannot mount f2fs (no module), sload.f2fs cannot delete and F2FS keeps no dtime; deleted-entry coverage comes from the builder tests"
 
   CMDS+=("python3 tools/fixtures/f2fs_normalize.py <img>   # replace the kernel version string in both superblock copies, fix their checksums")
   python3 "$here/f2fs_normalize.py" "$img"

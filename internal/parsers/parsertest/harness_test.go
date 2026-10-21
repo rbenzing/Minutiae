@@ -284,3 +284,15 @@ func TestHarnessSurvivesAParserPanic(t *testing.T) {
 		t.Errorf("after a panic: %d records", len(res.Records))
 	}
 }
+
+// Rulings T25 and T46: the harness hands over the acquisition of the manifest path, as the host does.
+func TestHarnessArtifactCarriesItsAcquisition(t *testing.T) {
+	h := NewHarness(t)
+	m := AddAndroidFile(t, h.Case, "acq7", "/data/x/y.db", []byte("d"))
+	if got := h.Artifact(m, []byte("d")).Acquisition; got != "artifacts/SER1/acq7" {
+		t.Errorf("Acquisition %q, want artifacts/SER1/acq7", got)
+	}
+	if got := h.Artifact(evidence.ManifestRecord{ID: "x", Path: "odd/layout"}, nil).Acquisition; got != "" {
+		t.Errorf("a path outside the layout has acquisition %q, want unknown", got)
+	}
+}

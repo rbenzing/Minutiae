@@ -17,17 +17,30 @@ const (
 )
 
 const (
-	archiverName   = "NSKeyedArchiver"
-	chargePerObjUA = 64
+	archiverName = "NSKeyedArchiver"
+	// The charge of one resolved object is chargePerObjUA + its payload bytes + chargePerItemUA
+	// for every map entry and list slot of its fields (nested containers included, and the
+	// entries of the output dictionary of an NSDictionary). Both are held to a measurement by
+	// TestUnarchiveChargeCoversMeasuredAllocation, also under -race, with a full 25 percent margin
+	// on the total: no shape may allocate more than 0.80 of its charge (the test asserts it).
+	// chargePerItemUA = ceil(1.25 * 28.2) = 36, from the shapes that are all items (a dictionary
+	// of 100000 identical keys: 8460520 bytes allocated over 300003 items, ratio 0.78 with 36);
+	// chargePerObjUA = 1195, the smallest value that holds the worst shape (50000 objects of an
+	// unknown class with 6 fields, 64294360 bytes under -race) to 0.80 with the items priced at
+	// 36: (64294360 / 0.80 - 850016 payload - 36 * 550002 items) / 50001 objects = 1194.3.
+	chargePerObjUA  = 1195
+	chargePerItemUA = 36
 )
 
 // Unarchive resolves an NSKeyedArchiver archive, given as the plain value Decode returns,
 // into plain Go values: the object graph reachable from $top, with every UID reference
-// replaced by the object it names. Classes become values by name: NSArray, NSSet and the
-// ordered-set family a []any; NSDictionary a map[string]any (keys must resolve to strings,
-// a duplicate key keeps the last and so loses an entry); NSString a string; NSData a
-// []byte; NSDate a map holding the raw Cocoa seconds (an integer above 2^53 rounds to a
-// float64; never a time.Time: converting a device number is decode/ts's job);
+// replaced by the object it names. Classes become values by name: NSArray a []any;
+// NSSet and NSMutableSet a Set, NSOrderedSet and NSMutableOrderedSet a Set{Ordered: true}
+// (items in archive order, uniqueness not checked); NSDictionary a map[string]any (keys must
+// resolve to strings; a duplicate key makes Unarchive return a *LossError, UnarchiveReport
+// keeps the last value and counts it); NSString a string; NSData a []byte; NSDate a map
+// holding the Cocoa seconds exactly as stored (float64, int64 or uint64; never a time.Time:
+// converting a device number is decode/ts's job);
 // NSURL a map of base and relative; every other class a map holding "$class" and the fields.
 // $top with only "root" yields that object, otherwise a map of all its entries.
 //
@@ -36,18 +49,36 @@ const (
 // node count (shared or not) is capped at MaxUnarchiveNodes, so a small file that expands
 // exponentially is ErrLimit, never expanded. A reference cycle is ErrMalformed, nesting
 // deeper than MaxUnarchiveDepth is ErrLimit. The budget is charged per resolved object
-// (64 + payload bytes, list slots at 16 each) and freed on any error; a nil budget is ErrNoBudget. A $archiver
+// (chargePerObjUA + payload bytes + chargePerItemUA per map entry and list slot of its
+// fields, see their comment) and freed on any error; a nil budget is ErrNoBudget. A $archiver
 // other than "NSKeyedArchiver" is ErrUnsupported; any other shape violation is ErrMalformed.
 func Unarchive(v any, budget Budget) (out any, err error) {
 	err = guard(func() error {
 		var e error
-		out, e = unarchiveCore(v, budget)
+		out, _, e = unarchiveCore(v, budget, true)
 		return e
 	})
 	if err != nil {
 		out = nil
 	}
 	return out, err
+}
+
+// UnarchiveReport is the lenient form of Unarchive: a duplicate key in an NSDictionary keeps the
+// last value (as Decode does for a dictionary) and is counted in the Report, once per resolved
+// object (a shared dictionary is resolved once), as a lower bound; Unarchive refuses such an
+// archive with a *LossError after the whole archive resolved. Every other error is the same from
+// both.
+func UnarchiveReport(v any, budget Budget) (out any, rep Report, err error) {
+	err = guard(func() error {
+		var e error
+		out, rep, e = unarchiveCore(v, budget, false)
+		return e
+	})
+	if err != nil {
+		out, rep = nil, Report{}
+	}
+	return out, rep, err
 }
 
 type memoEntry struct {
@@ -62,19 +93,20 @@ type unarchiver struct {
 	charged   int64
 	memo      map[uint64]memoEntry
 	resolving map[uint64]bool
-	peak      int // deepest output position reached since ref last reset it
+	peak      int    // deepest output position reached since ref last reset it
+	dups      uint64 // dictionary key occurrences replaced by a later entry, per resolved object
 }
 
 // touch records that the output reaches depth d.
 func (u *unarchiver) touch(d int) { u.peak = max(u.peak, d) }
 
-func unarchiveCore(v any, budget Budget) (any, error) {
+func unarchiveCore(v any, budget Budget, strict bool) (any, Report, error) {
 	if budget == nil {
-		return nil, fmt.Errorf("%w: no budget", ErrNoBudget)
+		return nil, Report{}, fmt.Errorf("%w: no budget", ErrNoBudget)
 	}
 	top, objs, err := archiveParts(v)
 	if err != nil {
-		return nil, err
+		return nil, Report{}, err
 	}
 	u := &unarchiver{
 		objs:      objs,
@@ -94,22 +126,29 @@ func unarchiveCore(v any, budget Budget) (any, error) {
 		e := top[k]
 		uid, isUID := e.(UID)
 		if !isUID {
-			return nil, malformed("$top entry %q is not a UID", k)
+			return nil, Report{}, malformed("$top entry %q is not a UID", k)
 		}
 		val, n, err := u.ref(uint64(uid), 0)
 		if err != nil {
-			return nil, err
+			return nil, Report{}, err
 		}
 		if total = sat(total, n); total > MaxUnarchiveNodes {
-			return nil, limited("archive expands beyond %d nodes", MaxUnarchiveNodes)
+			return nil, Report{}, limited("archive expands beyond %d nodes", MaxUnarchiveNodes)
 		}
 		out[k] = val
 	}
+	// Do not fix: the strict refusal comes last on purpose, after the whole archive resolved, so a
+	// malformed or over-limit archive returns its own sentinel from both entry points; the deferred
+	// Free runs on the refusal.
+	rep := Report{DuplicateKeys: u.dups}
+	if strict && !rep.Lossless() {
+		return nil, Report{}, &LossError{Report: rep}
+	}
 	ok = true
 	if root, only := out["root"]; only && len(out) == 1 {
-		return root, nil
+		return root, rep, nil
 	}
-	return out, nil
+	return out, rep, nil
 }
 
 // archiveParts checks the envelope of an archive and returns $top and $objects.
@@ -139,8 +178,36 @@ func archiveParts(v any) (top map[string]any, objs []any, err error) {
 	return top, objs, nil
 }
 
-func (u *unarchiver) charge(payload int) error {
-	n := int64(chargePerObjUA) + int64(payload)
+// fieldCost is the memory an object's fields will take: payload bytes of strings and data, and
+// items, the entries of maps and the slots of lists, counted through nested containers (the
+// walk stops at MaxUnarchiveDepth, where resolving the object fails anyway).
+type fieldCost struct{ payload, items int64 }
+
+func (c *fieldCost) add(e any, depth int) {
+	if n, ok := primitive(e); ok {
+		c.payload += int64(n)
+		return
+	}
+	if depth > MaxUnarchiveDepth {
+		return
+	}
+	switch x := e.(type) {
+	case []any:
+		c.items += int64(len(x))
+		for _, el := range x {
+			c.add(el, depth+1)
+		}
+	case map[string]any:
+		c.items += int64(len(x))
+		for k, el := range x {
+			c.payload += int64(len(k))
+			c.add(el, depth+1)
+		}
+	}
+}
+
+func (u *unarchiver) charge(payload, items int64) error {
+	n := int64(chargePerObjUA) + payload + items*chargePerItemUA
 	if err := u.budget.Alloc(n); err != nil {
 		return fmt.Errorf("%w: %w", ErrNoBudget, err)
 	}
@@ -201,7 +268,7 @@ func (u *unarchiver) build(idx uint64, depth int) (any, uint64, error) {
 		return nil, 1, nil
 	}
 	if n, ok := primitive(obj); ok {
-		if err := u.charge(n); err != nil {
+		if err := u.charge(int64(n), 0); err != nil {
 			return nil, 0, err
 		}
 		return obj, 1, nil
@@ -210,16 +277,16 @@ func (u *unarchiver) build(idx uint64, depth int) (any, uint64, error) {
 	if !ok {
 		return nil, 0, malformed("object %d is a %T, not a value or a dictionary", idx, obj)
 	}
-	payload := 0
+	var c fieldCost
+	c.items = int64(len(fields)) // the entries of the object's field map and of its output
 	for k, e := range fields {
-		payload += len(k)
-		if n, ok := primitive(e); ok {
-			payload += n
-		} else if l, ok := e.([]any); ok {
-			payload += len(l) * 16 // the slots of the output slice
-		}
+		c.payload += int64(len(k))
+		c.add(e, 0)
 	}
-	if err := u.charge(payload); err != nil {
+	if l, ok := fields["NS.keys"].([]any); ok {
+		c.items += int64(len(l)) // the entries of the output dictionary
+	}
+	if err := u.charge(c.payload, c.items); err != nil {
 		return nil, 0, err
 	}
 	name, err := u.className(idx, fields)
@@ -251,8 +318,15 @@ func (u *unarchiver) className(idx uint64, fields map[string]any) (string, error
 
 func (u *unarchiver) byClass(idx uint64, name string, f map[string]any, depth int) (any, uint64, error) {
 	switch name {
-	case "NSArray", "NSMutableArray", "NSOrderedSet", "NSMutableOrderedSet", "NSSet", "NSMutableSet":
+	case "NSArray", "NSMutableArray":
 		return u.list(idx, f, "NS.objects", depth)
+	case "NSSet", "NSMutableSet", "NSOrderedSet", "NSMutableOrderedSet":
+		items, n, err := u.list(idx, f, "NS.objects", depth)
+		if err != nil {
+			return nil, 0, err
+		}
+		ordered := name == "NSOrderedSet" || name == "NSMutableOrderedSet"
+		return Set{Items: items.([]any), Ordered: ordered}, n, nil
 	case "NSDictionary", "NSMutableDictionary":
 		keys, kn, err := u.list(idx, f, "NS.keys", depth)
 		if err != nil {
@@ -274,6 +348,7 @@ func (u *unarchiver) byClass(idx uint64, name string, f map[string]any, depth in
 			}
 			out[s] = vs[i]
 		}
+		u.dups = sat(u.dups, uint64(len(ks)-len(out)))
 		return out, sat(1, sat(kn, vn)), nil
 	case "NSString", "NSMutableString":
 		v, n, err := u.field(f, "NS.string", depth)
@@ -299,16 +374,12 @@ func (u *unarchiver) byClass(idx uint64, name string, f map[string]any, depth in
 		if err != nil {
 			return nil, 0, err
 		}
-		var secs float64
-		switch x := v.(type) {
-		case float64:
-			secs = x
-		case int64:
-			secs = float64(x)
+		switch v.(type) {
+		case float64, int64, uint64: // kept as stored: nothing is rounded or invented
 		default:
 			return nil, 0, malformed("object %d: NS.time is not a number", idx)
 		}
-		return map[string]any{"$class": "NSDate", "NS.time": secs}, sat(1, n), nil
+		return map[string]any{"$class": "NSDate", "NS.time": v}, sat(1, n), nil
 	case "NSURL":
 		base, bn, err := u.field(f, "NS.base", depth)
 		if err != nil {

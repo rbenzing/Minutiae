@@ -532,7 +532,7 @@ func snapshotRef(s *examine.Session, fsys filesys.FileSystem, snapshot, ref stri
 }
 
 func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
-	var recursive, deleted bool
+	var recursive, deleted, includeSnapshots bool
 	var snapshot string
 	cmd := &cobra.Command{
 		Use:   "ls <ref> [<path>]",
@@ -553,7 +553,11 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "list the whole subtree with full paths")
 	cmd.Flags().BoolVar(&deleted, "deleted", false, "also show deleted directory entries")
 	cmd.Flags().StringVar(&snapshot, "snapshot", "", "list the path as it was in this snapshot, as xid:<n>, name:<name> or a bare name or xid that matches one snapshot (APFS; the path must name a volume, output paths are /<volume>/.snapshots/<name>/...)")
+	cmd.Flags().BoolVar(&includeSnapshots, "include-snapshots", false, "with -r, also list each APFS volume's .snapshots (every snapshot is listed and marked as snapshot data; output grows with the number of snapshots)")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if err := checkIncludeSnapshots(cmd, includeSnapshots, recursive); err != nil {
+			return err
+		}
 		pidx, err := partition()
 		if err != nil {
 			return err
@@ -579,10 +583,12 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 			}
 			dirRef = mapped
 		}
-		dir, dirPath, err := s.Lookup(fsys, dirRef)
+		dm, err := s.LookupMatch(fsys, dirRef)
 		if err != nil {
 			return err
 		}
+		dir, dirPath := dm.Entry, dm.Path
+		printIncompleteMatch(d.Err, dm.Incomplete)
 
 		// --json streams the array, so a huge subtree is never held in memory. It is
 		// closed only on success: a failed listing leaves invalid JSON behind.
@@ -593,29 +599,51 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 		if opts.json {
 			_, jsonErr = io.WriteString(d.Out, "[")
 		}
+		// Every entry at or below <volume>/.snapshots/<name> is snapshot data (historical), marked as
+		// such and never presented as live. The marker comes from the path alone, so it does not
+		// depend on where the listing starts or on what the walk entered.
+		isAPFS := fsys.Info().Type == "apfs"
+		snapshotOf := func(p string) string {
+			if !isAPFS {
+				return ""
+			}
+			return snapshotNameOfPath(p)
+		}
+		emitJSON := func(item any) {
+			if jsonErr != nil {
+				return
+			}
+			b, merr := json.Marshal(item)
+			if merr == nil {
+				sep := "\n  "
+				if wrote > 0 {
+					sep = ",\n  "
+				}
+				_, merr = d.Out.Write(append([]byte(sep), b...))
+			}
+			jsonErr = merr
+			wrote++
+		}
 		emit := func(p string, e filesys.Entry) {
 			if e.Deleted && !deleted {
 				return
 			}
+			snap := snapshotOf(p)
 			switch {
 			case opts.json:
-				if jsonErr != nil {
-					return
-				}
-				b, merr := json.Marshal(newPathEntry(p, e))
-				if merr == nil {
-					sep := "\n  "
-					if wrote > 0 {
-						sep = ",\n  "
-					}
-					_, merr = d.Out.Write(append([]byte(sep), b...))
-				}
-				jsonErr = merr
-				wrote++
-			case recursive:
-				fmt.Fprintln(d.Out, lsLine(p, e))
+				pe := newPathEntry(p, e)
+				pe.Snapshot = snap
+				emitJSON(pe)
 			default:
-				fmt.Fprintln(d.Out, lsLine(e.Name, e))
+				// Snapshot data is marked in every text mode, never shown as live.
+				line := lsLine(e.Name, e)
+				if recursive {
+					line = lsLine(p, e)
+				}
+				if snap != "" {
+					line += " [snapshot " + printable(snap) + "]"
+				}
+				fmt.Fprintln(d.Out, line)
 			}
 		}
 		switch {
@@ -624,16 +652,27 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 		case dir.Type != filesys.TypeDir:
 			emit(dirPath, dir)
 		case recursive:
+			var firstCut error // the first listing that failed: reported after everything read is printed
 			err = filesys.Walk(fsys, dir, dirPath, func(p string, e filesys.Entry, werr error) error {
 				if cerr := cmd.Context().Err(); cerr != nil {
 					return cerr
 				}
 				if werr != nil {
 					fmt.Fprintf(d.Err, "warning: %s: %s\n", escapeText(p), escapeText(werr.Error()))
+					// Only a listing that failed or was cut sets the exit code. The walker's own findings (a
+					// cycle, too deep, too long) are warned about as before and keep the exit code.
+					if filesys.IsWalkFinding(werr) {
+						// A JSON consumer sees no stderr: the finding is also an item of the array (F98).
+						if opts.json {
+							emitJSON(newWalkWarningItem(snapshotOf, p, werr.Error()))
+						}
+					} else if firstCut == nil {
+						firstCut = werr
+					}
 					return nil
 				}
 				emit(p, e)
-				if jsonErr == nil && filesys.IsSnapshotsDir(e) {
+				if jsonErr == nil && filesys.IsSnapshotsDir(e) && !includeSnapshots {
 					// Listed, but not descended into: name a snapshot (--snapshot, or a
 					// path below .snapshots) to see inside.
 					if nerr := s.NoteSnapshotsSkipped(p, e); nerr != nil {
@@ -643,9 +682,20 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 				}
 				return jsonErr
 			})
+			if err == nil {
+				err = firstCut
+			}
 		default:
 			var kids []filesys.Entry
-			if kids, err = fsys.ReadDir(dir); err == nil {
+			kids, err = fsys.ReadDir(dir)
+			if err != nil {
+				// A cut listing returns the entries read with its error: print them,
+				// name the cut reason, and still fail with the error.
+				if len(kids) > 0 { // a total failure printed nothing: the error alone says so
+					fmt.Fprintf(d.Err, "warning: %s: listing incomplete: %s\n", escapeText(dirPath), escapeText(err.Error()))
+				}
+			}
+			if len(kids) > 0 {
 				slices.SortStableFunc(kids, func(a, b filesys.Entry) int {
 					return cmp.Or(strings.Compare(a.Name, b.Name), strings.Compare(a.ID, b.ID))
 				})
@@ -695,25 +745,39 @@ func newImageStatCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		known := len(fsys.Info().Warnings)
-		e, p, err := s.Lookup(fsys, args[1])
+		m, err := s.LookupMatch(fsys, args[1])
 		if err != nil {
 			printNewFSWarnings(d.Err, newFSWarnings(fsys, known))
 			return err
 		}
+		e, p := m.Entry, m.Path
 		warnings := newFSWarnings(fsys, known)
-		if opts.json {
-			return writeJSON(d.Out, jsonStat{pathEntry: newPathEntry(p, e), Warnings: warnings})
+		if m.Incomplete != nil {
+			warnings = append(warnings, m.Incomplete.Error())
 		}
-		printEntry(d.Out, p, e)
+		// Snapshot data is historical: marked in text and JSON, never shown as live.
+		snap := ""
+		if fsys.Info().Type == "apfs" {
+			snap = snapshotNameOfPath(p)
+		}
+		if opts.json {
+			pe := newPathEntry(p, e)
+			pe.Snapshot = snap
+			return writeJSON(d.Out, jsonStat{pathEntry: pe, Warnings: warnings})
+		}
+		printEntry(d.Out, p, e, snap)
 		printNewFSWarnings(d.Err, warnings)
 		return nil
 	}
 	return cmd
 }
 
-func printEntry(w io.Writer, p string, e filesys.Entry) {
+func printEntry(w io.Writer, p string, e filesys.Entry, snapshot string) {
 	field := func(name, value string) { fmt.Fprintf(w, "%-12s %s\n", name+":", value) }
 	field("Path", printable(p))
+	if snapshot != "" {
+		field("Snapshot", printable(snapshot))
+	}
 	field("Name", printable(e.Name))
 	if len(e.RawName) > 0 {
 		field("Raw name", hex.EncodeToString(e.RawName))
@@ -802,7 +866,7 @@ func printFSWarnings(w io.Writer, sum examine.Summary) {
 }
 
 func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
-	var recursive, includeEncrypted bool
+	var recursive, includeEncrypted, includeSnapshots bool
 	var snapshot string
 	var maxFiles int
 	var maxBytes int64
@@ -824,9 +888,13 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 	cmd.Flags().IntVar(&maxFiles, "max-files", 0, fmt.Sprintf("stop after this many files (default %d; 0 uses the default)", examine.DefaultMaxFiles))
 	cmd.Flags().Int64Var(&maxBytes, "max-bytes", 0, fmt.Sprintf("stop after this many bytes (default %d; 0 uses the default)", examine.DefaultMaxBytes))
 	cmd.Flags().StringVar(&snapshot, "snapshot", "", "extract the paths as they were in this snapshot, as xid:<n>, name:<name> or a bare name or xid that matches one snapshot (APFS; every path must name a volume, artifacts record the snapshot)")
+	cmd.Flags().BoolVar(&includeSnapshots, "include-snapshots", false, "with -r, also walk each APFS volume's .snapshots (every snapshot is extracted; output grows with the number of snapshots)")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if maxFiles < 0 || maxBytes < 0 {
 			return usageErrorf("--max-files and --max-bytes must not be negative")
+		}
+		if err := checkIncludeSnapshots(cmd, includeSnapshots, recursive); err != nil {
+			return err
 		}
 		pidx, err := partition()
 		if err != nil {
@@ -852,7 +920,7 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 		}
 		prog, endProg := newLineProgress(d.Err, "extract")
 		sum, err := s.Extract(cmd.Context(), examine.ExtractOptions{
-			Partition: pidx, Paths: paths, Recursive: recursive, Progress: prog,
+			Partition: pidx, Paths: paths, Recursive: recursive, IncludeSnapshots: includeSnapshots, Progress: prog,
 			MaxFiles: maxFiles, MaxBytes: maxBytes,
 		})
 		endProg()
@@ -884,6 +952,7 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 		fmt.Fprintf(d.Out, "extracted %d files (%s), skipped %d\n", sum.Files, humanBytes(sum.Bytes), sum.Skipped)
 		printSkipReasons(d.Out, sum)
 		printFSWarnings(d.Out, sum)
+		printIncompleteIDs(d.Out, sum.IncompleteIDs)
 		printIncomplete(d.Out, sum)
 		printGapNote(d.Out, sum)
 		if note != "" {
@@ -934,7 +1003,7 @@ func newImageUnallocCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		if opts.json {
-			if jerr := writeJSON(d.Out, newJSONSummary(sum)); jerr != nil && err == nil {
+			if jerr := writeJSON(d.Out, newJSONUnalloc(sum)); jerr != nil && err == nil {
 				err = jerr
 			}
 			return err
@@ -1011,3 +1080,40 @@ func printGapNote(w io.Writer, sum examine.Summary) {
 		fmt.Fprintf(w, "note: %d artifact(s) carry an acquirer-gap note: %d overlap sectors the acquirer declared unreadable (the image holds acquirer fill there; those bytes are not device data) and %d may overlap (undecidable: Derived.acquisition_gaps unknown)\n", n, n-unknown, unknown)
 	}
 }
+
+// checkIncludeSnapshots refuses --include-snapshots without -r (it only changes what a recursive
+// walk enters) and together with --snapshot (which already addresses one snapshot).
+func checkIncludeSnapshots(cmd *cobra.Command, include, recursive bool) error {
+	switch {
+	case !include:
+		return nil
+	case cmd.Flags().Changed("snapshot"):
+		return usageErrorf("--include-snapshots cannot be combined with --snapshot (which addresses one snapshot)")
+	case !recursive:
+		return usageErrorf("--include-snapshots needs -r")
+	}
+	return nil
+}
+
+// snapshotNameOfPath returns the snapshot an APFS output path lies in: the path /<volume>/.snapshots/<name>
+// or anything below it names snapshot <name>; every other path (including /<volume>/.snapshots
+// itself, which is the synthetic directory, not snapshot data) returns "". A path below
+// <volume>/.snapshots/ whose snapshot segment is empty is still snapshot data: it fails toward
+// labelling and returns emptySnapshotSegment, which no real name can equal.
+func snapshotNameOfPath(p string) string {
+	parts := strings.SplitN(p, "/", 5) // "", volume, ".snapshots", name, rest
+	if len(parts) < 4 || parts[0] != "" || parts[1] == "" || parts[2] != ".snapshots" {
+		return ""
+	}
+	if parts[3] == "" {
+		if len(parts) == 4 { // "/<volume>/.snapshots/": the synthetic directory itself
+			return ""
+		}
+		return emptySnapshotSegment
+	}
+	return parts[3]
+}
+
+// emptySnapshotSegment marks snapshot data whose path has an empty snapshot segment. It contains '/',
+// which a real snapshot name never does (the driver aliases such names to ~raw~).
+const emptySnapshotSegment = "<empty/segment>"

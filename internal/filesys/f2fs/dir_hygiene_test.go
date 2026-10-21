@@ -23,7 +23,7 @@ func wantNoEntry(t *testing.T, f *f2fs.FS, path string) {
 // "." and ".." are never found by Lookup, not even through the case-folding
 // comparison of a casefold directory that holds a record with such a name.
 func TestLookupCasefoldNeverFindsDots(t *testing.T) {
-	f, _, _ := treeFS(t, treeOpts(), []f2fstest.File{
+	f, _, _ := treeFS(t, f2fstest.Options{Segments: 2, Encoding: 1}, []f2fstest.File{
 		{Path: "/cf", Dir: true, Casefold: true},
 		{Path: "/cf/first", Data: []byte("1")},
 		{Path: "/cf/dot", RawName: []byte("."), Data: []byte("d")},
@@ -153,5 +153,28 @@ func TestLookupAliasRejectsNonCanonicalSpelling(t *testing.T) {
 	for _, bad := range []string{canon[:2] + "\n" + canon[2:], canon[:2] + "\r\n" + canon[2:], canon + "\n", canon + "="} {
 		wantNoEntry(t, f, "/~raw~"+bad)
 		wantNoEntry(t, f, "/enc/~enc~"+encCanon[:3]+"\n"+encCanon[3:])
+	}
+}
+
+// The ~raw~ display form is the shared one: literal spellings, computed by hand, never the function under test.
+func TestRawNameDisplayIsTheSharedAlias(t *testing.T) {
+	f, _, _ := treeFS(t, treeOpts(), []f2fstest.File{
+		{Path: "/a", RawName: []byte{0xff}, Data: []byte("1")},
+		{Path: "/b", RawName: []byte{0xfb, 0xff, 0xfe}, Data: []byte("2")},
+		{Path: "/c", RawName: []byte("a\x00b"), Data: []byte("3")},
+		{Path: "/plain", Data: []byte("4")},
+	})
+	es, err := f.ReadDir(f.Root())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, e := range es {
+		got[e.Name] = true
+	}
+	for _, want := range []string{"~raw~_w", "~raw~-__-", "~raw~YQBi", "plain"} {
+		if !got[want] {
+			t.Errorf("ReadDir lacks %q; has %v", want, got)
+		}
 	}
 }

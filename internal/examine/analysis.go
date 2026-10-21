@@ -9,6 +9,7 @@ import (
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/filesys"
+	"github.com/rbenzing/minutiae/internal/volume"
 )
 
 // Summary is the outcome of an extraction or an unallocated-space export.
@@ -26,6 +27,9 @@ type Summary struct {
 	// (each also an analysis.warning with source "filesystem"). Warnings the
 	// filesystem already had at the start are audited but not counted.
 	FSWarnings int
+	// IncompleteIDs names every id (once) whose search could not read every directory: its deleted match was
+	// kept, but a live entry with the id may exist in an unread directory. Set by recover and by extract.
+	IncompleteIDs []*SearchIncompleteError
 	// OutputLimit is "" or the output limit that stopped the run ("max-files" or
 	// "max-bytes"): the files after the refused one were not extracted, and they are
 	// not in Skipped either (the walk stopped; only the refused file is warned about).
@@ -48,6 +52,7 @@ type analysis struct {
 	fsys  filesys.FileSystem // watched by watchFS, nil when none
 	seen  map[string]bool    // filesystem warnings already in the audit log
 	known int                // len(Info().Warnings) at the last watchFS/syncFS
+	noted bool               // the filesystem's suppression note was audited (once, whatever its count)
 	after string             // last path extracted, named by filesystem warnings written after it
 
 	warnEntries int // analysis.warning entries asked for (written or suppressed)
@@ -130,7 +135,13 @@ func (a *analysis) watchFS(fsys filesys.FileSystem) error {
 	a.fsys, a.seen = fsys, map[string]bool{}
 	warnings := fsys.Info().Warnings
 	a.known = len(warnings)
-	for _, w := range warnings {
+	for i, w := range warnings {
+		if isSuppressionNote(warnings, i) {
+			if err := a.auditNote("filesystem-open", w); err != nil {
+				return err
+			}
+			continue
+		}
 		if a.seen[w] {
 			continue
 		}
@@ -140,6 +151,44 @@ func (a *analysis) watchFS(fsys filesys.FileSystem) error {
 		}
 	}
 	return nil
+}
+
+// isSuppressionNote reports whether warnings[i] is the filesystem's suppression note: the element at
+// index filesys.MaxWarnings of a list longer than that which parses as a note. It is the element at
+// that index, not the last one: examine/safe.go appends a panic warning after the filesystem's own list,
+// and a note-shaped text anywhere else is an ordinary warning.
+func isSuppressionNote(warnings []string, i int) bool {
+	if i != filesys.MaxWarnings || len(warnings) <= filesys.MaxWarnings {
+		return false
+	}
+	_, ok := filesys.ParseSuppressedNote(warnings[i])
+	return ok
+}
+
+// auditNote audits the suppression note the first time it is seen. Its text changes as the count grows,
+// so the text-based dedup is not used for it and later texts are not audited again: the final count is
+// carried by analysis.end (finishFS). It is not counted in Summary.FSWarnings.
+func (a *analysis) auditNote(source, text string) error {
+	if a.noted {
+		return nil
+	}
+	a.noted = true
+	return a.fsWarning(source, text)
+}
+
+// finishFS records the final number of warnings the watched filesystem dropped as fs_warnings_suppressed
+// (a JSON number) in analysis.end / analysis.error. The count in the note grows while the list length
+// stays at filesys.MaxWarnings+1, so syncFS never looks at it again: it is read once more here.
+func (a *analysis) finishFS() {
+	if a.fsys == nil {
+		return
+	}
+	warnings := a.fsys.Info().Warnings
+	if !isSuppressionNote(warnings, filesys.MaxWarnings) {
+		return
+	}
+	n, _ := filesys.ParseSuppressedNote(warnings[filesys.MaxWarnings])
+	a.setEnd("fs_warnings_suppressed", n)
 }
 
 // syncFS writes each filesystem warning that appeared since watchFS (or the
@@ -155,7 +204,13 @@ func (a *analysis) syncFS() error {
 	if len(warnings) == a.known {
 		return nil
 	}
-	for _, w := range warnings {
+	for i, w := range warnings {
+		if isSuppressionNote(warnings, i) {
+			if err := a.auditNote("filesystem", w); err != nil {
+				return err
+			}
+			continue
+		}
 		if a.seen[w] {
 			continue
 		}
@@ -205,6 +260,7 @@ func runAnalysis(c *evidence.Case, deviceID, op string, details map[string]any, 
 	if serr := a.syncFS(); serr != nil { // warnings of work done before a failure are kept too
 		err = errors.Join(err, serr)
 	}
+	a.finishFS()
 	if err != nil {
 		_, aerr := c.Audit.Append("analysis.error", deviceID, a.endDetails(map[string]any{
 			"analysis_id": a.sum.AnalysisID, "error": err.Error(),
@@ -261,3 +317,36 @@ func (a *analysis) noteSnapshotsSkipped(p string, e filesys.Entry) error {
 // warningEntryCap is how many analysis.warning entries one analysis writes before it writes one
 // "further warnings suppressed" entry and only counts the rest (as records.Writer.Warn does).
 var warningEntryCap = 10_000
+
+// lookupFailureReason names why a path lookup failed when the examiner must see it in the audit log: the path is
+// not there ("not-found"), the filesystem could not decide ("undecided") or the name matches several entries
+// ("ambiguous") or the directory was not read to the end ("incomplete").
+func lookupFailureReason(err error) (string, bool) {
+	switch {
+	case errors.Is(err, filesys.ErrUndecided):
+		return "undecided", true
+	case errors.Is(err, filesys.ErrNotFound):
+		return "not-found", true
+	case errors.Is(err, filesys.ErrAmbiguous):
+		return "ambiguous", true
+	case errors.Is(err, filesys.ErrIncomplete):
+		return "incomplete", true
+	}
+	return "", false
+}
+
+// auditLookupFailure records a run that ended before its analysis began because the path ref did not resolve:
+// an analysis.start and an analysis.error naming the path and the reason, with nothing extracted. It returns the
+// summary of that analysis and err joined with any audit failure.
+func (s *Session) auditLookupFailure(fsys filesys.FileSystem, part volume.Partition, op string, paths []string, ref, reason string, err error) (Summary, error) {
+	details := map[string]any{
+		"parent_id": s.Parent.ID, "partition": part.Index, "fs_type": fsys.Info().Type,
+		"paths": append([]string(nil), paths...),
+	}
+	return runAnalysis(s.Case, s.Parent.Source.DeviceID, op, details, func(a *analysis) error {
+		a.setEnd("path", ref)
+		a.setEnd("reason", reason)
+		a.setEnd("phase", "path lookup before any file was read")
+		return err
+	})
+}

@@ -1,0 +1,1 @@
+Task 1 run E2 (FuzzSQLiteDB, Windows, -parallel 1). Only these lines are real: they are the lines kept in task-1-report.md; the run was longer (46.8 s) and the rest of its log was not kept. Four frozen lines over 8 s are too short for the classifier to call a stall, so this log classifies as ok. Nothing else was added.

@@ -52,7 +52,7 @@ func TestVolumeDamageNeverPanics(t *testing.T) {
 	v := dataVolume(richFiles()...)
 	v.TreeMaxKeys = 3
 	v.Snapshots = []apfstest.Snapshot{{Name: "S", Files: richFiles()}, {Name: "T", Files: []apfstest.File{{Path: "/t", Data: pattern(2*bs, 4)}}}}
-	v.Files = append(v.Files, apfstest.File{Path: "/x/y", Xattrs: []apfstest.Xattr{{Name: "k", Value: []byte("v")}}},
+	v.Files = append(v.Files, apfstest.File{Path: "/x/y", Xattrs: []apfstest.Xattr{{Name: "k", Value: []byte("v")}, {Name: "s", Value: pattern(2*bs, 6), Stream: true, WriteStream: true}}},
 		apfstest.File{Path: "/x/data", Data: pattern(3*bs, 3), Fragments: 3, Holes: [][2]int64{{bs, bs}}, SparseTail: bs})
 	im := newImage(t, volOpts(v, apfstest.Volume{Name: "Enc", Encrypted: true}))
 	vg := im.g.Volumes[0]
@@ -61,6 +61,16 @@ func TestVolumeDamageNeverPanics(t *testing.T) {
 	walk := func(f *apfs.FS) {
 		n := 0
 		_ = filesys.Walk(f, f.Root(), "/", func(_ string, e filesys.Entry, _ error) error {
+			if xs, err := f.Xattrs(e); err == nil {
+				for i, x := range xs {
+					if i >= 16 {
+						break
+					}
+					if fl, err := f.OpenXattr(e, x.Name); err == nil {
+						_, _ = fl.ReadAt(make([]byte, 8192), 0)
+					}
+				}
+			}
 			if e.Type == filesys.TypeFile || e.Type == filesys.TypeSymlink {
 				if fl, err := f.Open(e); err == nil {
 					if _, err := filesys.CheckRunsPrefix(fl.Runs(), fl.Size(), f.Info().Size); err != nil {

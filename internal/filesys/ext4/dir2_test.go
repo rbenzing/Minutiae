@@ -150,7 +150,7 @@ func TestLookupAliasPreference(t *testing.T) {
 		{Path: "/cf/FILE", Data: []byte("f")},
 		{Path: "/cf/" + bad, Data: []byte("b")},
 	}
-	f := mustOpen(t, ext4test.Build(ext4test.Options{Extents: true, Encrypt: true}, files))
+	f := mustOpen(t, ext4test.Build(ext4test.Options{Extents: true, Encrypt: true, Encoding: 1}, files))
 
 	// Encrypted directory: only the ~enc~ form matches, never raw bytes.
 	e, err := f.Lookup("/enc/~enc~QQ")
@@ -165,11 +165,10 @@ func TestLookupAliasPreference(t *testing.T) {
 		t.Errorf("raw ciphertext bytes matched in an encrypted directory: %v", err)
 	}
 
-	// A real name that looks like a ~raw~ display form beats the alias, though
-	// the aliased entry comes first on disk.
-	e, err = f.Lookup("/" + alias)
-	if err != nil || e.Name != alias || string(readAll(t, f, e)) != "real" {
-		t.Errorf("Lookup(%s) = %+v, %v; want the real file", alias, e, err)
+	// A real name that looks like a ~raw~ display form, beside the record the form stands for, is
+	// ambiguous (ReadDir shows both under it): never the stored name (Z74).
+	if _, err = f.Lookup("/" + alias); !errors.Is(err, filesys.ErrAmbiguous) {
+		t.Errorf("Lookup(%s) = %v; want ErrAmbiguous", alias, err)
 	}
 	if e, err = f.Lookup("/" + bad); err != nil || string(readAll(t, f, e)) != "bad" {
 		t.Errorf("Lookup(bad bytes) = %+v, %v", e, err)
@@ -287,5 +286,52 @@ func TestSharedSymlinkTarget(t *testing.T) {
 		if e := byName(t, es, n); e.LinkTarget != target {
 			t.Errorf("%s target = %q", n, e.LinkTarget)
 		}
+	}
+}
+
+// The ~raw~ display form is the shared one: literal spellings, computed by hand, never the function under test.
+func TestRawNameDisplayIsTheSharedAlias(t *testing.T) {
+	files := []ext4test.File{
+		{Path: "/\xff", Data: []byte("1")},
+		{Path: "/\xfb\xff\xfe", Data: []byte("2")},
+		{Path: "/a\x00b", Data: []byte("3")},
+		{Path: "/plain", Data: []byte("4")},
+	}
+	f := mustOpen(t, ext4test.Build(ext4test.Options{Extents: true}, files))
+	es, err := f.ReadDir(f.Root())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, e := range es {
+		got[e.Name] = true
+	}
+	for _, want := range []string{"~raw~_w", "~raw~-__-", "~raw~YQBi", "plain"} {
+		if !got[want] {
+			t.Errorf("ReadDir lacks %q; has %v", want, got)
+		}
+	}
+}
+
+func TestLookupAliasRejectsNonCanonicalSpelling(t *testing.T) {
+	f := mustOpen(t, ext4test.Build(ext4test.Options{Extents: true}, []ext4test.File{{Path: "/\xff", Data: []byte("1")}}))
+	if _, err := f.Lookup("/~raw~_w"); err != nil {
+		t.Errorf("canonical alias: %v", err)
+	}
+	for _, s := range []string{"~raw~_x", "~raw~_w=", "~raw~_\nw"} {
+		if _, err := f.Lookup("/" + s); !errors.Is(err, filesys.ErrNotFound) {
+			t.Errorf("Lookup(%q) = %v; want ErrNotFound (one spelling per name)", s, err)
+		}
+	}
+}
+
+func TestLookupAliasNeverStandsForAPlainName(t *testing.T) {
+	f := mustOpen(t, ext4test.Build(ext4test.Options{Extents: true}, []ext4test.File{{Path: "/abc", Data: []byte("abc")}}))
+	if _, err := f.Lookup("/abc"); err != nil {
+		t.Fatalf("plain name: %v", err)
+	}
+	alias := "/~raw~" + base64.RawURLEncoding.EncodeToString([]byte("abc"))
+	if _, err := f.Lookup(alias); !errors.Is(err, filesys.ErrNotFound) {
+		t.Errorf("Lookup(%s) = %v; want ErrNotFound: ReadDir shows abc as abc", alias, err)
 	}
 }

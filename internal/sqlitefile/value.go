@@ -37,8 +37,12 @@ type Value struct {
 	// An unread value is inconclusive: it is never equal or different.
 	Unread  bool
 	Clipped bool
-	Enc     Encoding // for KindText
-	Serial  uint64   // the serial type the record stored it with
+	// DefaultUndecided: the value is a column default that is not stored and cannot be
+	// delivered as a value (see DefaultReason). Set only by Table.Resolve, always with
+	// Omitted; it is never read from a record.
+	DefaultUndecided DefaultReason
+	Enc              Encoding // for KindText
+	Serial           uint64   // the serial type the record stored it with
 }
 
 // Text returns a text value as a UTF-8 string. ok is false for a value that
@@ -94,4 +98,26 @@ func decodeUTF16(b []byte, bigEndian bool) (string, bool) {
 		out = utf8.AppendRune(out, u)
 	}
 	return string(out), true
+}
+
+// DefaultReason says why a column default is not delivered as a value.
+type DefaultReason uint8
+
+// The reasons.
+const (
+	DefaultReasonNone           DefaultReason = iota // the value is not an undecided default
+	DefaultReasonExpression                          // the default is an expression, which is not evaluated
+	DefaultReasonInexactLiteral                      // a literal whose conversion this reader cannot reproduce exactly
+)
+
+func (r DefaultReason) String() string {
+	switch r {
+	case DefaultReasonNone:
+		return ""
+	case DefaultReasonExpression:
+		return "default is an expression"
+	case DefaultReasonInexactLiteral:
+		return "default literal is not converted exactly"
+	}
+	return "default?"
 }

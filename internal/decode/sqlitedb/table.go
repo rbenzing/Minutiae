@@ -66,6 +66,9 @@ func (db *DB) Table(ctx context.Context, name string, need, want []string) (t *T
 	}
 	lt, err := db.view.Table(ctx, name)
 	if err != nil {
+		if errors.Is(err, sqlitefile.ErrVirtualTable) {
+			return nil, &UnsupportedSchemaError{Table: name, Virtual: true, Reason: "virtual table: its content is defined by a module this reader does not interpret"}
+		}
 		if errors.Is(err, sqlitefile.ErrNotFound) {
 			return nil, fmt.Errorf("%w: %w", ErrNoSuchTable, err)
 		}
@@ -97,6 +100,12 @@ func (db *DB) Table(ctx context.Context, name string, need, want []string) (t *T
 
 // Name is the table's name as the schema spells it.
 func (t *Table) Name() string { return t.name }
+
+// SchemaBeyondEngineDepth says the table lies in a database whose schema tree is
+// deeper than the engine follows, anywhere in it: the engine refuses the whole
+// file, so every row decoded through this definition carries
+// FlagBeyondEngineDepth.
+func (t *Table) SchemaBeyondEngineDepth() bool { return t.lt.SchemaBeyondEngineDepth() }
 
 // Col returns the index of the column called name (ASCII case-insensitive), or
 // -1 when this variant of the table lacks it.

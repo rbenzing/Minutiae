@@ -1805,7 +1805,7 @@ func TestExfatWarningCapAndConcurrency(t *testing.T) {
 		f.Warn("another %d", i)
 	}
 	w := f.Info().Warnings
-	if len(w) != 1001 || w[1000] != "further warnings suppressed" {
+	if len(w) != 1001 || !strings.HasPrefix(w[1000], filesys.SuppressedWarning) {
 		t.Errorf("%d warnings, last %q", len(w), w[len(w)-1])
 	}
 }
@@ -1820,8 +1820,8 @@ func TestExfatDirRecordCap(t *testing.T) {
 	f := openImg(t, img)
 	f.SetDirRecordCap(10)
 	es, err := f.ReadDir(f.Root())
-	if err != nil || len(es) != 10 {
-		t.Fatalf("ReadDir = %d entries, %v", len(es), err)
+	if !errors.Is(err, filesys.ErrLimit) || len(es) != 10 { // F73: a cut listing is an error; the prefix is still returned
+		t.Fatalf("ReadDir = %d entries, %v; want 10 and filesys.ErrLimit", len(es), err)
 	}
 	if !hasWarn(f, "more than 10") {
 		t.Errorf("no cap warning: %v", f.Info().Warnings)
@@ -1830,8 +1830,8 @@ func TestExfatDirRecordCap(t *testing.T) {
 	if _, err := f.Lookup("/f05"); err != nil {
 		t.Errorf("Lookup within cap: %v", err)
 	}
-	if _, err := f.Lookup("/f40"); !errors.Is(err, filesys.ErrNotFound) {
-		t.Errorf("Lookup beyond cap = %v, want ErrNotFound", err)
+	if _, err := f.Lookup("/f40"); !errors.Is(err, filesys.ErrLimit) || errors.Is(err, filesys.ErrNotFound) { // F73
+		t.Errorf("Lookup beyond cap = %v, want filesys.ErrLimit", err)
 	}
 }
 

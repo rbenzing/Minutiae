@@ -159,7 +159,39 @@ func rewriteSurrogates(b []byte) (out []byte, base rune, found, ok bool) {
 	return out, base, true, true
 }
 
-// checkXMLStructure reads the XML document b with encoding/xml tokens (entities, comments,
+// xmlFrame is one open element of the scan. A dict frame also holds the key texts read so far.
+type xmlFrame struct {
+	name       string
+	pendingKey bool // a dict frame: its last element was a <key>
+	first      string
+	seen       int                 // a dict frame: the keys read so far
+	keys       map[string]struct{} // a dict frame with two or more keys: every key text read
+}
+
+// note records the text of a <key> of this dict frame and returns 1 when an earlier key of
+// the frame had the same text, else 0. The set exists only for a dict of two or more keys.
+func (f *xmlFrame) note(key string) uint64 {
+	var dup uint64
+	switch {
+	case f.seen == 0:
+		f.first = key
+	case f.keys == nil:
+		if key == f.first {
+			dup = 1
+		}
+		f.keys = map[string]struct{}{f.first: {}, key: {}}
+	default:
+		if _, ok := f.keys[key]; ok {
+			dup = 1
+		} else {
+			f.keys[key] = struct{}{}
+		}
+	}
+	f.seen++
+	return dup
+}
+
+// scanXMLStructure reads the XML document b with encoding/xml tokens (entities, comments,
 // CDATA, whitespace and attributes do not matter) and refuses what the decoding library would
 // read as something else than the document says:
 //
@@ -170,14 +202,17 @@ func rewriteSurrogates(b []byte) (out []byte, base rune, found, ok bool) {
 //   - a <key> directly after a <key> in a <dict> (the library keeps only the second).
 //
 // The document has passed the pre-scan, so its size, depth and element count are bounded; a
-// token error ends the scan (the library reports it).
-func checkXMLStructure(b []byte) error {
-	type frame struct {
-		name       string
-		pendingKey bool // a dict frame: its last element was a <key>
-	}
+// token error ends the scan (the library reports it). It also counts the repeated dictionary keys:
+// one for every <key> whose text equals an earlier key of the same dict (three equal keys count
+// two). The key text is what encoding/xml reports, so entities, CDATA and text around comments
+// are one text. The set of keys of an open dict is charged up front (chargePerXMLNode).
+//
+// Do not fix: the scan reads b while the library reads the surrogate-rewritten text, so keys
+// that differ only by character references to surrogates could be miscounted. Such a key is
+// ErrUnsupported in the normalization anyway, so no count is returned for that document.
+func scanXMLStructure(b []byte) (dups uint64, err error) {
 	d := xml.NewDecoder(bytes.NewReader(b))
-	var stack []frame
+	var stack []xmlFrame
 	var text strings.Builder
 	const (
 		none = iota
@@ -187,9 +222,9 @@ func checkXMLStructure(b []byte) error {
 	)
 	state := none
 	for {
-		tok, err := d.Token()
-		if err != nil {
-			return nil
+		tok, terr := d.Token()
+		if terr != nil {
+			return dups, nil
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
@@ -197,15 +232,15 @@ func checkXMLStructure(b []byte) error {
 			if n := len(stack); n > 0 {
 				switch parent := &stack[n-1]; parent.name {
 				case "key", "integer":
-					return malformed("element inside <%s>", parent.name)
+					return 0, malformed("element inside <%s>", parent.name)
 				case "dict":
 					if name == "key" && parent.pendingKey {
-						return malformed("two <key> elements in a row")
+						return 0, malformed("two <key> elements in a row")
 					}
 					parent.pendingKey = name == "key"
 				}
 			}
-			stack = append(stack, frame{name: name})
+			stack = append(stack, xmlFrame{name: name})
 			switch {
 			case name == "key":
 				state = inKey
@@ -220,6 +255,9 @@ func checkXMLStructure(b []byte) error {
 				text.Write(t)
 			}
 		case xml.EndElement:
+			if n := len(stack); n >= 2 && state == inKey && elementKind(t.Name) == "key" && stack[n-2].name == "dict" {
+				dups = sat(dups, stack[n-2].note(text.String()))
+			}
 			if n := len(stack); n > 0 {
 				stack = stack[:n-1]
 			}
@@ -228,7 +266,7 @@ func checkXMLStructure(b []byte) error {
 				state = afterUIDKey
 			case state == inInteger:
 				if strings.HasPrefix(strings.TrimSpace(text.String()), "-") {
-					return malformed("negative CF$UID")
+					return 0, malformed("negative CF$UID")
 				}
 				state = none
 			default:

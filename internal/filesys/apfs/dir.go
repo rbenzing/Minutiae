@@ -2,7 +2,6 @@ package apfs
 
 import (
 	"bytes"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"slices"
@@ -105,7 +104,7 @@ func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
 		if shadow && string(d.name) == snapshotsDirName {
 			// A real directory of that name: the synthetic one wins, this one is
 			// shown (and found) in its ~raw~ form.
-			e.Name, e.RawName = rawPrefix+base64.RawURLEncoding.EncodeToString(d.name), slices.Clone(d.name)
+			e.Name, e.RawName = filesys.RawNameAlias(d.name), slices.Clone(d.name)
 		}
 		out = append(out, e)
 		return false
@@ -235,10 +234,21 @@ func (f *FS) inodeEntry(v *volume, view uint64, in *inode, name string, raw []by
 	// CRYPTO_SW_ID); Open reports it too when only an extent carries the id.
 	e.Encrypted = e.Type == filesys.TypeFile && cryptoAnomaly(in.cryptoID)
 	if e.Type == filesys.TypeSymlink && in.symlinkSet {
-		if in.symlinkOK {
+		switch {
+		case in.symlinkOK:
 			e.LinkTarget = string(in.symlink)
 			e.Size = int64(len(in.symlink))
-		} else {
+		case in.symlinkStream:
+			if _, target, err := f.openStreamSymlink(v, view, in); err == nil {
+				e.LinkTarget = string(target)
+				e.Size = int64(len(target))
+			} else {
+				// Shown, not hidden: the entry is flagged and warned about, the listing
+				// goes on; Open returns the real error.
+				f.warn("volume %d inode %d: the stream-stored symlink target cannot be read: %v", v.slot, in.ino, err)
+				add("symlink", "unreadable")
+			}
+		default:
 			add("symlink", "unreadable")
 		}
 	}
@@ -256,7 +266,8 @@ func (f *FS) inodeEntry(v *volume, view uint64, in *inode, name string, raw []by
 // name, or the "~raw~"+base64url form of its stored name; never case-folded).
 // Within a directory the live entries are matched in this order of preference:
 //
-//  1. the display name exactly;
+//  1. the display name exactly (a name that is also the "~raw~" display form of another record is
+//     filesys.ErrAmbiguous, never either record);
 //  2. the "~raw~"+base64url alias of the stored name (canonical encodings only);
 //  3. on a normalization-insensitive volume (incompat 0x8, or 0x1 which
 //     implies it), a name that is equal after Unicode normalization (NFD) and,
@@ -353,9 +364,9 @@ func (f *FS) child(v *volume, view, dirIno uint64, comp string) (filesys.Entry, 
 	alt, hasAlt := rawAlias(comp)
 	fold := v.folds() && utf8.ValidString(comp) && comp != "." && comp != ".."
 	var (
-		exact, alias, folded *drec
-		qkey                 string // comp as the volume compares names
-		qhash                = int64(-1)
+		exact, altExact, alias, folded *drec
+		qkey                           string // comp as the volume compares names
+		qhash                          = int64(-1)
 	)
 	if fold {
 		qkey = matchKey([]byte(comp), v.caseInsen)
@@ -380,9 +391,18 @@ func (f *FS) child(v *volume, view, dirIno uint64, comp string) (filesys.Entry, 
 			return false
 		}
 		switch {
-		case plain && string(d.name) == comp, !plain && isAlt:
-			exact = keep(d)
-			return true
+		case plain && string(d.name) == comp:
+			if exact == nil {
+				exact = keep(d)
+			}
+			// A query that is also a display form needs the whole directory: the record it stands for may
+			// follow, and a name with two readings is ambiguous, never the first one met (Z74).
+			return !hasAlt || altExact != nil
+		case !plain && isAlt:
+			if altExact == nil {
+				altExact = keep(d)
+			}
+			return exact != nil
 		case alias == nil && plain && isAlt:
 			alias = keep(d)
 		case folded == nil && fold && plain && (qhash < 0 || !d.hashOK || int64(d.hash) == qhash) && matchKey(d.name, v.caseInsen) == qkey:
@@ -405,9 +425,17 @@ func (f *FS) child(v *volume, view, dirIno uint64, comp string) (filesys.Entry, 
 		if err := f.scanDir(v, view, dirIno, match); err != nil {
 			return filesys.Entry{}, err
 		}
+		if altExact != nil {
+			if exact != nil {
+				return filesys.Entry{}, fmt.Errorf("%w: %q is a stored name and also the display form of another record of volume %d directory %d", filesys.ErrAmbiguous, comp, v.slot, dirIno)
+			}
+			exact = altExact
+		}
 		// A scan the budget cut short has not ruled an exact name out: an
-		// insensitive match found so far is not accepted on that basis.
-		if (alias != nil || folded != nil) && f.dirBudget.Load() < 0 {
+		// insensitive match found so far is not accepted on that basis. Nor is an
+		// exact name of a query that is also a display form (hasAlt): the other
+		// reading may be in the part not read.
+		if (alias != nil || folded != nil || (hasAlt && exact != nil)) && f.dirBudget.Load() < 0 {
 			return filesys.Entry{}, corrupt("directory", -1, "volume %d directory %d: the directory read budget of this filesystem is exhausted before an exact name could be ruled out for %q", v.slot, dirIno, comp)
 		}
 	}
@@ -417,7 +445,7 @@ func (f *FS) child(v *volume, view, dirIno uint64, comp string) (filesys.Entry, 
 		}
 		e, err := f.dirEntry(v, view, d)
 		if err == nil && shadow && string(d.name) == snapshotsDirName {
-			e.Name, e.RawName = rawPrefix+base64.RawURLEncoding.EncodeToString(d.name), slices.Clone(d.name)
+			e.Name, e.RawName = filesys.RawNameAlias(d.name), slices.Clone(d.name)
 		}
 		return e, err
 	}

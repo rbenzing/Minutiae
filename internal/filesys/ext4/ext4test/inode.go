@@ -8,15 +8,28 @@ import (
 )
 
 // Xattr is one extended attribute, with its full name ("user.comment").
+//
+// EAInode makes the builder create an EA inode (flag EXT4_EA_INODE_FL, a regular file holding Value, the
+// crc32c of Value with the filesystem seed in i_atime, computed here and not by the reader) and write the entry
+// with e_value_inum pointing at it and no value in the area. EA inodes are numbered after every listed file and
+// implied directory, in order of appearance, so with no implied directory the first is InodeNumber(len(files)).
+// EAXattrs are the EA inode's own attributes. Inum, instead of EAInode, writes the entry with that literal
+// e_value_inum and creates nothing (a dangling or looping reference). Size, when non-zero, overrides
+// e_value_size, which is otherwise len(Value).
 type Xattr struct {
-	Name  string
-	Value []byte
+	Name     string
+	Value    []byte
+	EAInode  bool
+	EAXattrs []Xattr
+	Inum     uint32
+	Size     uint32
 }
 
 // Inode flags.
 const (
 	flagExtents    = 0x80000
 	flagInlineData = 0x10000000
+	flagEAInode    = 0x200000
 )
 
 const (
@@ -63,6 +76,7 @@ func InodeNumber(i int) uint32 { return uint32(firstUserInode + i) }
 // after, then the root's.
 func (b *builder) placeFiles(files []File) {
 	all := withParents(files)
+	eas := b.eaInodes(all)
 	nums := map[string]uint32{"": rootInode}
 	kids := map[string][]dirChild{}
 	for i := range all {
@@ -76,6 +90,14 @@ func (b *builder) placeFiles(files []File) {
 			nums[all[i].Path] = num
 		}
 	}
+	for k := range eas {
+		num := InodeNumber(len(all) + k)
+		g := int(num-1) / b.ipg
+		if g >= len(b.groups) {
+			panic(fmt.Sprintf("ext4test: %d files and %d EA inodes do not fit in %d groups of %d inodes", len(all), len(eas), len(b.groups), b.ipg))
+		}
+		b.usedInodes[g] = max(b.usedInodes[g], int(num-1)%b.ipg+1)
+	}
 	for i := range all {
 		parent, name := splitPath(all[i].Path)
 		kids[parent] = append(kids[parent], dirChild{
@@ -87,6 +109,10 @@ func (b *builder) placeFiles(files []File) {
 		if !all[i].Dir {
 			b.writeInode(InodeNumber(i), b.renderInode(InodeNumber(i), &all[i]))
 		}
+	}
+	for k := range eas {
+		num := InodeNumber(len(all) + k)
+		b.writeInode(num, b.renderInode(num, &eas[k]))
 	}
 	dir := func(num uint32, f File, parentPath string) {
 		f.Data = b.dirData(num, nums[parentPath], &f, kids[f.Path])
@@ -186,7 +212,11 @@ func (b *builder) renderInode(num uint32, f *File) []byte {
 		if rest := f.Data[n:]; len(rest) > 0 || b.isz > inodeHeader {
 			// The remainder lives in the system.data attribute (always present on
 			// real inline inodes, empty when everything fits in i_block).
-			xattrs = append([]Xattr{{Name: "system.data", Value: rest}}, xattrs...)
+			sd := Xattr{Name: "system.data", Value: rest}
+			if f.sysDataInum != 0 {
+				sd = Xattr{Name: "system.data", Inum: f.sysDataInum, Size: uint32(len(rest))}
+			}
+			xattrs = append([]Xattr{sd}, xattrs...)
 		}
 	case f.Symlink != "" && len(f.Symlink) < 60:
 		copy(raw[0x28:0x28+60], f.Symlink) // fast symlink
@@ -195,6 +225,9 @@ func (b *builder) renderInode(num uint32, f *File) []byte {
 		b.putExtents(raw[0x28:0x28+60], num, f, pieces)
 	default:
 		b.putBlockMap(raw[0x28:0x28+60], f, pieces)
+	}
+	if f.eaHash != nil {
+		le32(raw, 0x8, *f.eaHash) // i_atime holds the crc32c of the value in an EA inode
 	}
 	if f.HTree {
 		flags |= flagIndex
@@ -310,7 +343,11 @@ func xattrEntry(x Xattr, valueOff int) []byte {
 	e := make([]byte, (xattrEntryLen+len(name)+3)&^3)
 	e[0], e[1] = byte(len(name)), idx
 	le16(e, 2, uint16(valueOff))
+	le32(e, 4, x.Inum) // e_value_inum: the value lives in that EA inode
 	le32(e, 8, uint32(len(x.Value)))
+	if x.Size != 0 {
+		le32(e, 8, x.Size)
+	}
 	// e_hash stays 0: the reader does not verify it.
 	copy(e[xattrEntryLen:], name)
 	return e
@@ -323,13 +360,22 @@ func encodeXattrs(area []byte, entriesOff, valueBase int, xs []Xattr) {
 	pos, end := entriesOff, len(area)
 	for _, x := range xs {
 		vlen := (len(x.Value) + 3) &^ 3
+		if x.Inum != 0 {
+			vlen = 0 // the value lives in the EA inode, not in the area
+		}
 		end -= vlen
-		e := xattrEntry(x, end-valueBase)
+		valueOff := end - valueBase
+		if x.Inum != 0 {
+			valueOff = 0 // e_value_offs is unused with e_value_inum
+		}
+		e := xattrEntry(x, valueOff)
 		if pos+len(e)+4 > end { // keep 4 zero bytes as the terminator
 			panic("ext4test: xattrs do not fit")
 		}
 		copy(area[pos:], e)
-		copy(area[end:], x.Value)
+		if x.Inum == 0 {
+			copy(area[end:], x.Value)
+		}
 		pos += len(e)
 	}
 }
@@ -360,4 +406,43 @@ func (b *builder) xattrBlock(xs []Xattr) int {
 		le32(buf, 0x10, rawCRC32C(rawCRC32C(b.seed, nr[:]), buf))
 	}
 	return blk
+}
+
+// eaInodes creates the EA inodes that the files' attributes ask for (Xattr.EAInode, File.SystemDataInEAInode),
+// rewrites those attributes in all to name them, and returns the EA inodes: the k-th is inode
+// InodeNumber(len(all)+k). Nested EA inodes (EAXattrs) take the numbers after their parent's.
+func (b *builder) eaInodes(all []File) []File {
+	var extra []File
+	var resolve func(xs []Xattr) []Xattr
+	newEA := func(value []byte, xs []Xattr) uint32 {
+		idx := len(extra)
+		extra = append(extra, File{}) // the number is reserved before the nested ones are made
+		h := rawCRC32C(b.seed, value)
+		nested := resolve(xs)
+		extra[idx] = File{Data: value, Flags: flagEAInode, eaHash: &h, Xattrs: nested}
+		return InodeNumber(len(all) + idx)
+	}
+	resolve = func(xs []Xattr) []Xattr {
+		out := slices.Clone(xs)
+		for i := range out {
+			if out[i].EAInode {
+				out[i].Inum = newEA(out[i].Value, out[i].EAXattrs)
+				out[i].EAInode, out[i].EAXattrs = false, nil
+			}
+		}
+		return out
+	}
+	for i := range all {
+		all[i].Xattrs = resolve(all[i].Xattrs)
+		if all[i].SystemDataInEAInode {
+			if !all[i].Inline {
+				panic("ext4test: SystemDataInEAInode needs Inline")
+			}
+			if len(all[i].Data) <= 60 {
+				panic("ext4test: SystemDataInEAInode needs inline data larger than i_block")
+			}
+			all[i].sysDataInum = newEA(all[i].Data[60:], nil)
+		}
+	}
+	return extra
 }

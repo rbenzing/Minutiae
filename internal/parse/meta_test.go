@@ -1,7 +1,9 @@
 package parse
 
 import (
+	"fmt"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -159,5 +161,91 @@ func TestMetaCloneKeepsNilAndEmpty(t *testing.T) {
 	c = m.Clone()
 	if c.Platforms == nil || c.Inputs[0].Globs == nil || c.Emits != nil {
 		t.Fatalf("clone changed nil/empty: %#v", c)
+	}
+}
+
+func refuses(t *testing.T, m Meta, words ...string) {
+	t.Helper()
+	err := ValidateMeta(m)
+	if err == nil {
+		t.Fatal("ValidateMeta accepted it")
+	}
+	low := strings.ToLower(err.Error())
+	for _, w := range words {
+		if !strings.Contains(low, w) {
+			t.Fatalf("error %q does not mention %q", err, w)
+		}
+	}
+}
+
+func TestValidateMetaRefusesCompanionsOnThePrimaryRole(t *testing.T) {
+	m := validMeta()
+	m.Inputs[0].Companions = []string{"-wal"}
+	refuses(t, m, "primary", "companion", m.Name)
+}
+
+func TestValidateMetaRefusesOneSuffixOnTwoRoles(t *testing.T) {
+	m := validMeta()
+	m.Inputs = append(m.Inputs, InputSpec{Role: "wal2", Companions: []string{"-wal"}})
+	refuses(t, m, "companion", "wal2", `"wal"`, m.Name)
+}
+
+func TestValidateMetaRefusesARepeatedSuffixInOneRole(t *testing.T) {
+	m := validMeta()
+	m.Inputs[1].Companions = []string{"-wal", "-wal"}
+	refuses(t, m, "companion", "-wal", "twice", m.Name)
+}
+
+func TestValidateMetaRefusesAnUnfillableRole(t *testing.T) {
+	for _, required := range []bool{true, false} {
+		m := validMeta()
+		m.Inputs = append(m.Inputs, InputSpec{Role: "extra", Required: required})
+		refuses(t, m, "companion", "extra", m.Name)
+	}
+}
+
+func TestValidateMetaAcceptsTheTelephonyShape(t *testing.T) {
+	db := InputSpec{Role: "db", Globs: []string{"android:**/databases/x.db"}, Required: true}
+	shapes := map[string][]InputSpec{
+		"db wal journal":           {db, {Role: "wal", Companions: []string{"-wal"}}, {Role: "journal", Companions: []string{"-journal"}}},
+		"with shm":                 {db, {Role: "wal", Companions: []string{"-wal"}}, {Role: "journal", Companions: []string{"-journal"}}, {Role: "shm", Companions: []string{"-shm"}}},
+		"glob and companion":       {db, {Role: "wal", Globs: []string{"./x.db-wal"}, Companions: []string{"-wal"}}},
+		"one role, three suffixes": {db, {Role: "side", Companions: []string{"-wal", "-journal", "-shm"}}},
+	}
+	for name, inputs := range shapes {
+		m := validMeta()
+		m.Inputs, m.Claims = inputs, nil
+		if err := ValidateMeta(m); err != nil {
+			t.Errorf("%s refused: %v", name, err)
+		}
+	}
+}
+
+func TestValidateMetaCompanionsHostileSizes(t *testing.T) {
+	m := validMeta()
+	big := make([]string, 100_000)
+	for i := range big {
+		big[i] = "-wal"
+	}
+	m.Inputs[1].Companions = big
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	err := ValidateMeta(m)
+	runtime.ReadMemStats(&after)
+	if err == nil || !strings.Contains(err.Error(), "companion") {
+		t.Fatalf("100,000 companions: %v", err)
+	}
+	// The refusal comes at the second entry; the figure is far below anything proportional to 100,000.
+	if got := after.TotalAlloc - before.TotalAlloc; got > 64<<10 {
+		t.Errorf("refusing 100,000 companions allocated %d bytes", got)
+	}
+
+	m = validMeta()
+	for i := 0; i < 5000; i++ {
+		m.Inputs = append(m.Inputs, InputSpec{Role: fmt.Sprintf("r%d", i), Globs: []string{"./x"}})
+	}
+	// Roles are limited only by name uniqueness: 5,000 unique roles are accepted in linear time.
+	if err := ValidateMeta(m); err != nil {
+		t.Errorf("5,000 unique roles refused: %v", err)
 	}
 }

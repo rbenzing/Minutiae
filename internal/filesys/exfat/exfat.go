@@ -58,6 +58,8 @@ type FS struct {
 
 	// dirRecordCap bounds the entry sets one directory yields (maxDirRecords).
 	dirRecordCap int
+	// resolveDirs bounds the directories one resolveDir scans (maxResolveDirs; lowered by tests).
+	resolveDirs int
 	// bitmapChunk is how much of the allocation bitmap is read at a time.
 	bitmapChunk int
 	// unallocCap bounds the runs Unallocated reports (maxUnallocRuns).
@@ -157,6 +159,7 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		revision:     bt.revision,
 		volFlags:     bt.volFlags,
 		dirRecordCap: maxDirRecords,
+		resolveDirs:  maxResolveDirs,
 		bitmapChunk:  maxBitmapChunk,
 		unallocCap:   maxUnallocRuns,
 
@@ -193,8 +196,8 @@ func (f *FS) checkBoot(vol io.ReaderAt) {
 
 // Info describes the filesystem. Warnings is a snapshot: it holds the problems
 // found at Open and those met since by directory, chain and bitmap reads,
-// without duplicates, at most 1000 distinct ones plus one "further warnings
-// suppressed" line.
+// without duplicates, at most 1000 distinct ones plus one `further warnings
+// suppressed: N occurrences not recorded` note.
 func (f *FS) Info() filesys.Info {
 	warnings := f.warns.Snapshot()
 	major, minor := f.revision>>8, f.revision&0xFF

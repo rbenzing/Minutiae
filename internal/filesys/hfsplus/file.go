@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
@@ -74,18 +75,57 @@ func (f *FS) newObject(k catalogKey, r catalogRecord) (*object, error) {
 	return o, nil
 }
 
-// fileObject finds the file record of a CNID through its thread record. A
-// folder is filesys.ErrUnsupported, an unknown id (or a file without a thread
-// record, which cannot be searched for) filesys.ErrNotFound, and a thread that
-// disagrees with the catalog a CorruptError.
+// fileObject finds the file record of a CNID through its thread record, or, for
+// a file without one, by a catalog scan with its own budget (scanFileByID). A
+// folder is filesys.ErrUnsupported, an unknown id filesys.ErrNotFound, and a
+// thread that disagrees with the catalog, or an id that cannot be proven
+// unique, a CorruptError.
 func (f *FS) fileObject(id uint32) (*object, error) {
-	th, err := f.catalogThread(id)
+	th, passed, err := f.lookupThread(id)
 	if err != nil {
-		if errors.Is(err, filesys.ErrNotFound) {
-			return nil, fmt.Errorf("%w: %s has no thread record, so it cannot be found by id", filesys.ErrNotFound, cnidString(id))
+		var unreadable *threadUnreadableError
+		if !errors.Is(err, filesys.ErrNotFound) && !errors.As(err, &unreadable) {
+			f.warnSkips(passed)
+			return nil, err
 		}
-		return nil, err
+		// An unreadable thread is never "not found", whatever the volume header's next id says.
+		if unreadable != nil && id >= f.vh.nextCatalogID {
+			f.warnSkips(passed)
+			return nil, err
+		}
+		if id >= f.vh.nextCatalogID {
+			f.warnSkips(passed)
+			return nil, fmt.Errorf("%w: %s was never issued by this volume", filesys.ErrNotFound, cnidString(id))
+		}
+		// No readable thread record: search the catalog for the id (own budget, uniqueness proven).
+		k, r, unk, serr := f.scanFileByID(id)
+		if serr != nil {
+			// A scan that fails closed on an unknown-type record names it in its own warning: the
+			// lookup's skip warning for that same record is folded into it, every other one is kept.
+			// The fold absorbs at most ONE lookup record: a further record with the same key
+			// (btree.scanFrom does not check strict key order) is warned about separately.
+			folded := false
+			for _, s := range passed {
+				if !folded && unk != nil && s.typ == unk.typ && s.k.parent == unk.k.parent && slices.Equal(s.k.name, unk.k.name) {
+					folded = true
+					continue
+				}
+				f.warnSkips([]unknownSkip{s})
+			}
+			// The scan decides only when it FINDS the record: with an unreadable thread, no record
+			// found is not "not found" (the thread exists but cannot be read).
+			if unreadable != nil && errors.Is(serr, filesys.ErrNotFound) {
+				return nil, err
+			}
+			return nil, serr
+		}
+		f.warnSkips(passed)
+		if r.typ != recFile {
+			return nil, fmt.Errorf("%w: %s is a directory", filesys.ErrUnsupported, cnidString(id))
+		}
+		return f.newObject(k, r)
 	}
+	f.warnSkips(passed)
 	if th.typ != recFileThread {
 		return nil, fmt.Errorf("%w: %s is a directory", filesys.ErrUnsupported, cnidString(id))
 	}
@@ -143,13 +183,7 @@ func (f *FS) openObject(o *object) (filesys.File, error) {
 		if !o.cmp.ok {
 			return nil, fmt.Errorf("%w: decmpfs-compressed file (no readable decmpfs header)", filesys.ErrUnsupported)
 		}
-		switch o.cmp.typ {
-		case decmpfsTypeInline:
-			return f.openZlibInline(o)
-		case decmpfsTypeRsrc:
-			return f.openZlibRsrc(o)
-		}
-		return nil, fmt.Errorf("%w: decmpfs-compressed file (compression type %d)", filesys.ErrUnsupported, o.cmp.typ)
+		return f.openDecmpfs(o)
 	}
 	return f.openFork(o)
 }
@@ -209,4 +243,24 @@ func (f *FS) linkTarget(o *object, size int64) string {
 		return ""
 	}
 	return string(buf)
+}
+
+// openResourceFork maps the whole resource fork of o.node. A fork that is
+// damaged, shorter than its logical size or mapped incompletely is a
+// CorruptError: unlike the data fork there is no trusted-prefix content here.
+func (f *FS) openResourceFork(o *object) (filesys.File, error) {
+	fd := o.node.rsrc
+	if fd.logicalSize > math.MaxInt64 {
+		return nil, corrupt("catalog record", -1, "file %s (id %d) has a resource fork size of %d bytes", o.name(), o.node.id, fd.logicalSize)
+	}
+	size := int64(fd.logicalSize)
+	fm, err := f.forkPrefix(o.node.id, true, fd)
+	if err != nil {
+		return nil, fmt.Errorf("the resource fork of %s (id %d) cannot be mapped: %w", o.name(), o.node.id, err)
+	}
+	mapped, ok := filesys.MulOK(int64(min(fm.blocks, math.MaxInt64/uint64(fm.blockSize))), fm.blockSize)
+	if !fm.complete || !ok || mapped < size {
+		return nil, corrupt("resource fork", -1, "file %s (id %d): the fork of %d bytes is not completely mapped (%d bytes are)", o.name(), o.node.id, size, mapped)
+	}
+	return &dataFile{fm: fm, size: size, runs: fm.Runs(size)}, nil
 }

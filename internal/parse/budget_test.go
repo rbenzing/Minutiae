@@ -236,3 +236,100 @@ func TestBudgetViewHasNoSetter(t *testing.T) {
 		}
 	}
 }
+
+// Two handles of one view share its outstanding amount; a second View() of
+// the same Budget keeps its own.
+func TestBudgetViewHandlesShareOutstanding(t *testing.T) {
+	b := NewBudget(10_000)
+	v := b.View()
+	h := v.handle()
+	if h == v || h.s != v.s {
+		t.Fatalf("handle must be a distinct pointer onto the same state")
+	}
+	if err := v.Alloc(300); err != nil {
+		t.Fatal(err)
+	}
+	h.Free(1000) // clamps to what the view allocated
+	if b.Used() != 0 {
+		t.Fatalf("host used = %d after the other handle freed the view's 300", b.Used())
+	}
+	if err := h.Alloc(50); err != nil {
+		t.Fatal(err)
+	}
+	other := b.View()
+	if err := other.Alloc(70); err != nil {
+		t.Fatal(err)
+	}
+	v.Free(1000)
+	if b.Used() != 70 {
+		t.Fatalf("host used = %d, want only the second view's 70 left", b.Used())
+	}
+	if (*BudgetView)(nil).handle() != nil {
+		t.Fatal("handle of a nil view must stay nil")
+	}
+}
+
+func TestBudgetViewZeroValueFailsClosed(t *testing.T) {
+	var v BudgetView
+	if err := v.Alloc(0); !errors.Is(err, ErrBudget) {
+		t.Fatalf("zero view Alloc(0): %v", err)
+	}
+	if err := v.Alloc(1); !errors.Is(err, ErrBudget) {
+		t.Fatalf("zero view Alloc(1): %v", err)
+	}
+	v.Free(5)
+	if v.Used() != 0 || v.Limit() != 0 {
+		t.Fatalf("zero view used/limit = %d/%d", v.Used(), v.Limit())
+	}
+}
+
+// Run under the race gate. The limit holds two allocations of 7 bytes, so the
+// eight goroutines contend for it: a refusal (ErrBudget) is expected and
+// tolerated, and the accounting must never exceed the limit or drift.
+func TestBudgetViewConcurrentHandlesStayConsistent(t *testing.T) {
+	b := NewBudget(14)
+	v := b.View()
+	var wg sync.WaitGroup
+	for range 8 {
+		h := v.handle()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 1000 {
+				if err := h.Alloc(7); err != nil {
+					if !errors.Is(err, ErrBudget) {
+						t.Error(err)
+						return
+					}
+					continue // refused: nothing was reserved, so nothing is freed
+				}
+				if u := h.Used(); u > h.Limit() {
+					t.Errorf("used %d exceeds the limit %d", u, h.Limit())
+				}
+				v.Free(7) // freed through the first handle: all handles share one outstanding amount
+			}
+		}()
+	}
+	wg.Wait()
+	if b.Used() != 0 || v.s.outstanding.Load() != 0 {
+		t.Fatalf("drift: used = %d, outstanding = %d", b.Used(), v.s.outstanding.Load())
+	}
+}
+
+// A zero view next to a live handle shares nothing with it: freeing through
+// the zero view leaves the live handle's state untouched.
+func TestBudgetViewFreeOnAZeroViewLeavesALiveHandleUntouched(t *testing.T) {
+	b := NewBudget(1000)
+	live := b.View()
+	if err := live.Alloc(300); err != nil {
+		t.Fatal(err)
+	}
+	h := live.handle()
+	var zero BudgetView
+	zero.Free(300)
+	zero.Free(1 << 40)
+	if b.Used() != 300 || live.s.outstanding.Load() != 300 || h.Used() != 300 {
+		t.Fatalf("after Free on a zero view: host used = %d, outstanding = %d, want 300 and 300",
+			b.Used(), live.s.outstanding.Load())
+	}
+}

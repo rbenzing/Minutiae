@@ -5,7 +5,6 @@ import (
 	"compress/gzip"
 	"compress/zlib"
 	"context"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"io"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/examine"
+	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/filesys/hfsplus/hfsplustest"
 )
 
@@ -84,7 +84,7 @@ func hfsDisplayPath(p string) string {
 			for _, u := range utf16.Encode([]rune(c)) {
 				b = append(b, byte(u>>8), byte(u))
 			}
-			parts[i] = "~raw~" + base64.RawURLEncoding.EncodeToString(b)
+			parts[i] = filesys.RawNameAlias(b)
 		}
 	}
 	return strings.Join(parts, "/")

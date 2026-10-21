@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
 )
@@ -48,7 +49,10 @@ type FS struct {
 	dirs         map[uint32]dirLoc // directories met so far, by first cluster: where their entry is
 	ends         map[uint32]int    // directories whose end-of-directory marker was found: its entry index
 	entryBudget  int64             // directory entries this instance may still read
+	locateScans  int               // directories one locate may list (maxLocateScans; lowered by tests)
 	budgetWarned bool
+
+	walked atomic.Int64 // directory entries visited by deleted-name walks (a work measure for tests)
 
 	warns filesys.Warnings
 }
@@ -120,6 +124,7 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		data:      raw,
 
 		entryBudget: maxEntryBudget,
+		locateScans: maxLocateScans,
 		size:        volSize,
 		label:       b.label,
 	}
@@ -137,7 +142,7 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 // UUID is the volume serial number as "XXXX-XXXX" (empty when the boot
 // sector has no extended boot signature). Warnings is a snapshot: it holds the
 // problems found at Open and those met since, without duplicates, at most 1000
-// distinct ones plus one "further warnings suppressed" line.
+// distinct ones plus one `further warnings suppressed: N occurrences not recorded` note.
 func (f *FS) Info() filesys.Info {
 	warnings := f.warns.Snapshot()
 	uuid := ""

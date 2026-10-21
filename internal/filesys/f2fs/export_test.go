@@ -17,6 +17,9 @@ type Geometry struct {
 	Blocks                                   int64
 }
 
+// Encoding returns s_encoding and s_encoding_flags.
+func (f *FS) Encoding() (encoding, flags uint16) { return f.sb.encoding, f.sb.encFlags }
+
 // Geometry returns the decoded superblock geometry.
 func (f *FS) Geometry() Geometry {
 	sb := f.sb

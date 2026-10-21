@@ -508,3 +508,10 @@ func encryptedContent(j Job) bool {
 	}
 	return false
 }
+
+// acquisitionOf is parse.Artifact.Acquisition for a manifest record: its acquisitionKey, or "" (unknown, never
+// equal to another) when the path does not follow the NewArtifact layout.
+func acquisitionOf(rec evidence.ManifestRecord) string {
+	key, _ := acquisitionKey(rec.Path)
+	return key
+}

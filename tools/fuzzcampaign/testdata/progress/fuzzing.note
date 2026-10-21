@@ -1,0 +1,1 @@
+Task 1 run E4 (FuzzSQLiteDB, Windows, -parallel 1 -fuzzminimizetime 0s). Only these lines are real: they are the lines kept in task-1-report.md; the run was longer and the rest of its log was not kept. Nothing else was added.

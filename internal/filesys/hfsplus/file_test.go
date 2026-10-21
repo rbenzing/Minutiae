@@ -438,16 +438,6 @@ func TestOpenForgedEntryFieldsAreIgnored(t *testing.T) {
 	}
 }
 
-func TestOpenFileWithoutThreadIsNotFound(t *testing.T) {
-	_, lay, f := buildTree(t, hfsplustest.Options{}, []hfsplustest.File{{Path: "/legacy", NoThread: true, Data: pattern(10, 1)}})
-	// Without a thread record the catalog cannot be searched by id: the entry is
-	// flagged thread=missing in listings and cannot be opened.
-	_, err := f.Open(filesys.Entry{ID: idOf(lay.CNIDs["/legacy"])})
-	if !errors.Is(err, filesys.ErrNotFound) || !strings.Contains(err.Error(), "thread") {
-		t.Errorf("Open = %v", err)
-	}
-}
-
 // An extent that lies past the end of a truncated image ends the trusted
 // prefix: Runs is that prefix (a valid CheckRunsPrefix list inside Info.Size),
 // a read at or after its end wraps filesys.ErrCorrupt (never io.ErrUnexpectedEOF

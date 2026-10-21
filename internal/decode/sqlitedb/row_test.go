@@ -50,9 +50,9 @@ func scanEach(t testing.TB, tb *sqlitedb.Table, fn func(i int, r sqlitedb.Row)) 
 func TestColStateStringsAndKnown(t *testing.T) {
 	all := []sqlitedb.ColState{
 		sqlitedb.StatePresent, sqlitedb.StateNull, sqlitedb.StateAbsent, sqlitedb.StateDefaulted,
-		sqlitedb.StateOmitted, sqlitedb.StateUnread, sqlitedb.StateClipped, sqlitedb.StateUndecodable, sqlitedb.StateLost, sqlitedb.StateGenerated,
+		sqlitedb.StateOmitted, sqlitedb.StateUnread, sqlitedb.StateClipped, sqlitedb.StateUndecodable, sqlitedb.StateLost, sqlitedb.StateGenerated, sqlitedb.StateDefaultUndecided,
 	}
-	names := []string{"present", "null", "absent", "defaulted", "omitted", "unread", "clipped", "undecodable", "lost", "generated"}
+	names := []string{"present", "null", "absent", "defaulted", "omitted", "unread", "clipped", "undecodable", "lost", "generated", "default-undecided"}
 	known := map[sqlitedb.ColState]bool{sqlitedb.StatePresent: true, sqlitedb.StateNull: true, sqlitedb.StateDefaulted: true}
 	for i, s := range all {
 		if s.String() != names[i] || s.Known() != known[s] {
@@ -235,11 +235,11 @@ func TestShortRecordsTakeColumnDefaults(t *testing.T) {
 	}
 }
 
-func TestShortRecordNonLiteralDefaultIsOmittedNotZero(t *testing.T) {
+func TestShortRecordNonLiteralDefaultIsUndecidedNotZero(t *testing.T) {
 	tb := tableOf(t, sqlitetest.Options{}, "create table t(a, b default (1+1), c default current_timestamp)", shortRecord)
 	scanEach(t, tb, func(_ int, r sqlitedb.Row) {
 		for _, col := range []int{1, 2} {
-			if r.State(col) != sqlitedb.StateOmitted || !r.Unknown(col) || r.IsNull(col) {
+			if r.State(col) != sqlitedb.StateDefaultUndecided || r.UndecidedDefault(col) != sqlitefile.DefaultReasonExpression || !r.Unknown(col) || r.IsNull(col) {
 				t.Errorf("col %d: state %v null %v", col, r.State(col), r.IsNull(col))
 			}
 			if _, ok := r.Int(col); ok {

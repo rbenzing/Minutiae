@@ -101,6 +101,8 @@ func appendKey(w keyWriter, v Value, coll string) KeyStatus {
 		}
 	case KindText, KindBlob:
 		bs := v.Bytes
+		fullLen := uint64(0) // NOCASE: the folded length, which the engine's comparison still counts after a NUL
+		nocase := false
 		if v.Kind == KindText && coll != "BINARY" {
 			s, ok := v.Text() // decodes UTF-16; invalid text has no folded form
 			if !ok {
@@ -115,6 +117,14 @@ func appendKey(w keyWriter, v Value, coll string) KeyStatus {
 						bs[j] = c + 32
 					}
 				}
+				// The engine compares NOCASE text up to the first NUL of the common
+				// length and then by length: two texts are equal when they have the
+				// same length and the same folded bytes up to and including the first
+				// NUL, whatever follows it (U55).
+				nocase, fullLen = true, uint64(len(bs))
+				if i := slices.Index(bs, 0); i >= 0 {
+					bs = bs[:i+1]
+				}
 			case "RTRIM":
 				for len(bs) > 0 && bs[len(bs)-1] == ' ' {
 					bs = bs[:len(bs)-1]
@@ -124,6 +134,9 @@ func appendKey(w keyWriter, v Value, coll string) KeyStatus {
 		_, _ = w.Write([]byte{byte(v.Kind)})
 		put(uint64(len(bs)))
 		_, _ = w.Write(bs)
+		if nocase {
+			put(fullLen)
+		}
 	case KindNull:
 		return KeyNever // only NULL equals nothing
 	default:

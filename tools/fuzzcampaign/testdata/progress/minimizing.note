@@ -1,0 +1,1 @@
+synthetic: produced by a scratch module (FuzzSlowMin, Windows, go1.26.8, -fuzzminimizetime 15s), output unchanged; the test exit code was 1. It holds the only real "minimizing" progress lines.

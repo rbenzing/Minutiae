@@ -12,6 +12,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/filesys"
@@ -71,9 +73,11 @@ type PlannedCandidate struct {
 	Encrypted          bool
 	Mode               uint32
 	Times              filesys.Times
-	Skip               string // "" = will be written; else a reason token
+	Skip               string   // "" = will be written; else a reason token
+	Warnings           []string // the reader's own warnings, cleaned, at most readerWarningCap
 
 	skipDetail string
+	prefix     bool   // the map covers less than the declared size (ruling F4/F18)
 	cut        bool   // some runs were not free
 	cutState   string // state of the first non-free byte
 	cutRuns    int    // runs not (fully) captured
@@ -92,17 +96,24 @@ type RecoverItem struct {
 	Skips          []PlanSkip
 
 	notes []PlanSkip // warnings that are not skips (a cut candidate list)
-	enc   bool       // the listing flagged the entry encrypted
+
+	readerWarnings []PlanSkip // the reader's own warnings (Candidate.Warnings), audited but not skips
+	enc            bool       // the listing flagged the entry encrypted
 }
 
 // RecoverPlan is what a recovery run would do.
 type RecoverPlan struct {
-	Items        []RecoverItem
-	Considered   int
-	SkippedBy    map[string]int
-	LimitReached string // "" | "max-files" | "max-bytes" | "max-scan-bytes" | "max-entries" | "max-plan-runs": the first limit met
-	NotProcessed int
-	FSWarnings   []string // new filesystem warnings the planning raised (the unallocated note included)
+	Items          []RecoverItem
+	Considered     int
+	SkippedBy      map[string]int
+	LimitReached   string // "" | "max-files" | "max-bytes" | "max-scan-bytes" | "max-entries" | "max-plan-runs": the first limit met
+	NotProcessed   int
+	ReaderWarnings int // reader warnings (Candidate.Warnings) of the planned candidates, all counted
+	IncompleteIDs  []*SearchIncompleteError
+	FSWarnings     []string // new filesystem warnings the planning raised (the unallocated note included)
+	// FSWarningsSuppressed is how many warnings the filesystem dropped while planning (the growth of its
+	// suppression note); the note itself is one entry of FSWarnings however large the growth is.
+	FSWarningsSuppressed uint64
 
 	candidates  int
 	uniform     int
@@ -123,6 +134,7 @@ type RecoverSummary struct {
 	SkippedBy              map[string]int
 	LimitReached           string // see RecoverPlan.LimitReached
 	NotProcessed           int
+	ReaderWarnings         int // reader warnings (Candidate.Warnings) audited; not skips
 }
 
 // recovererOf returns the Recoverer of fsys, or filesys.ErrNoRecovery. Recover calls it before any audit
@@ -178,6 +190,17 @@ func (s *Session) PlanRecovery(ctx context.Context, o RecoverOptions) (*RecoverP
 	for _, w := range fsys.Info().Warnings {
 		if !slices.Contains(before, w) {
 			plan.FSWarnings = append(plan.FSWarnings, w)
+		}
+	}
+	after := fsys.Info().Warnings
+	if isSuppressionNote(after, filesys.MaxWarnings) {
+		n2, _ := filesys.ParseSuppressedNote(after[filesys.MaxWarnings])
+		var n1 uint64
+		if isSuppressionNote(before, filesys.MaxWarnings) {
+			n1, _ = filesys.ParseSuppressedNote(before[filesys.MaxWarnings])
+		}
+		if n2 > n1 {
+			plan.FSWarningsSuppressed = n2 - n1
 		}
 	}
 	if plan.unallocNote != "" {
@@ -293,6 +316,7 @@ func (p *planner) enumerate() (targets []target, over int, err error) {
 	}
 	// One root walk collects every wanted id.
 	wanted := map[string]bool{}
+	flagged := map[string]bool{} // ids already reported incomplete: a repeated ref reports once
 	for _, r := range refs {
 		if id, ok := strings.CutPrefix(r, "id:"); ok {
 			if id == "" {
@@ -303,12 +327,17 @@ func (p *planner) enumerate() (targets []target, over int, err error) {
 	}
 	deletedByID := map[string][]target{}
 	liveID := map[string]bool{}
+	var tally idSearchTally
 	if len(wanted) > 0 {
 		err := filesys.Walk(p.fsys, p.fsys.Root(), "/", func(wp string, we filesys.Entry, werr error) error {
 			if err := p.ctx.Err(); err != nil {
 				return err
 			}
-			if werr != nil || !wanted[we.ID] {
+			if werr != nil {
+				tally.add(wp, werr)
+				return nil
+			}
+			if !wanted[we.ID] {
 				return nil
 			}
 			if we.Deleted {
@@ -329,12 +358,19 @@ func (p *planner) enumerate() (targets []target, over int, err error) {
 		if id, ok := strings.CutPrefix(r, "id:"); ok {
 			switch ts := deletedByID[id]; {
 			case len(ts) > 0:
+				if tally.n > 0 && !flagged[id] { // a live entry with this id may be in an unread directory: keep the match, flag it
+					flagged[id] = true
+					p.plan.IncompleteIDs = append(p.plan.IncompleteIDs, tally.incomplete(id, ts[0].path))
+				}
 				for _, t := range ts {
 					add(t)
 				}
 			case liveID[id]:
 				return nil, 0, fmt.Errorf("id:%s: %w", id, filesys.ErrNotDeleted)
 			default:
+				if tally.n > 0 {
+					return nil, 0, tally.incomplete(id, "")
+				}
 				return nil, 0, fmt.Errorf("id:%s: %w", id, filesys.ErrNotFound)
 			}
 			continue
@@ -453,12 +489,14 @@ func (p *planner) evaluate(it *RecoverItem, t target, cs []filesys.Candidate) {
 	for _, c := range cs {
 		p.plan.candidates++
 		pc := PlannedCandidate{Method: c.Method, DeclaredSize: c.Size, Encrypted: c.Encrypted || t.e.Encrypted, Mode: c.Mode, Times: c.Times, mapRuns: len(c.Runs)}
+		pc.Warnings = p.readerWarnings(it, c.Warnings) // forwarded even when the candidate is then rejected
 		reject := func(reason, detail string) {
 			pc.Skip, pc.skipDetail = reason, detail
 			invalid = append(invalid, pc)
 			p.skipped(reason)
 		}
-		if _, err := filesys.CheckCandidate(c, p.part.Length); err != nil {
+		covered, err := filesys.CheckCandidate(c, p.part.Length)
+		if err != nil {
 			reject("invalid-map", err.Error())
 			continue
 		}
@@ -467,7 +505,11 @@ func (p *planner) evaluate(it *RecoverItem, t target, cs []filesys.Candidate) {
 			continue
 		}
 		if c.Size > 0 && len(c.Runs) == 0 {
-			reject("no-runs", fmt.Sprintf("the map declares %d bytes and has no runs", c.Size))
+			detail := fmt.Sprintf("the map declares %d bytes and has no runs", c.Size)
+			if stop := readerStop(cleanList(c.Assumptions)); stop != "" {
+				detail += "; " + stop // the reader's own reason: never an unexplained cut
+			}
+			reject("no-runs", detail)
 			continue
 		}
 		imgRuns := make([]evidence.Run, 0, len(c.Runs))
@@ -500,25 +542,45 @@ func (p *planner) evaluate(it *RecoverItem, t target, cs []filesys.Candidate) {
 		}
 		pc.Size, pc.Runs = cut.CapturedBytes, cut.Captured
 		pc.Excluded = capExcluded(cut.Excluded)
-		pc.Alloc = evidence.AllocSummary{Free: cut.CapturedBytes, ExcludedRuns: len(cut.Excluded), ExcludedBytes: cut.ExcludedBytes}
+		// A map shorter than its declared size names only a prefix of the file (ruling F4/F18): the
+		// unmapped tail is counted in ExcludedBytes (it has no runs to list), whatever the reader's reason.
+		pc.prefix = covered < c.Size
+		tail := int64(0)
+		if pc.prefix {
+			tail = c.Size - covered
+		}
+		pc.Alloc = evidence.AllocSummary{Free: cut.CapturedBytes, ExcludedRuns: len(cut.Excluded), ExcludedBytes: satAdd(cut.ExcludedBytes, tail)}
 		pc.cut, pc.cutState, pc.cutRuns = cut.State != "", cut.State, len(cut.Excluded)
 		pc.Basis = cleanList(c.Basis)
 		pc.Assumptions = cleanList(c.Assumptions)
 		if pc.Size < c.Size {
 			pc.Assumptions = append(pc.Assumptions, fmt.Sprintf("size-declared=%d", c.Size))
 		}
+		if pc.cut || pc.prefix {
+			pc.Assumptions = append(pc.Assumptions, "prefix-only")
+		}
 		if pc.cut {
-			pc.Assumptions = append(pc.Assumptions, "prefix-only", "cut-state="+pc.cutState)
+			pc.Assumptions = append(pc.Assumptions, "cut-state="+pc.cutState)
 			why := "allocated since deletion"
 			if pc.cutState == "unknown" {
 				why = "allocation state unknown"
 			}
 			pc.errText = fmt.Sprintf("%d of %d runs not captured: %s", pc.cutRuns, pc.mapRuns, why)
-		} else if pc.Size < c.Size {
+		}
+		if pc.prefix {
+			text := fmt.Sprintf("the map covers %d of %d declared bytes", covered, c.Size)
+			if stop := readerStop(pc.Assumptions); stop != "" {
+				text += "; " + stop
+			}
+			if pc.errText != "" {
+				text = pc.errText + "; " + text
+			}
+			pc.errText = text
+		} else if pc.Size < c.Size && pc.errText == "" {
 			pc.errText = fmt.Sprintf("the map covers %d of %d declared bytes", pc.Size, c.Size)
 		}
 		pc.Content = "ok"
-		pc.Confidence, _ = confidenceFor(c.Method, pc.cut, false)
+		pc.Confidence, _ = confidenceFor(c.Method, pc.cut || pc.prefix, false)
 		pc.Band = evidence.ConfidenceBand(pc.Confidence)
 		valid = append(valid, pc)
 	}
@@ -570,7 +632,7 @@ func (p *planner) selectAndFilter() {
 					}
 				}
 			}
-			c.Confidence, _ = confidenceFor(c.Method, c.cut, len(partners) > 0)
+			c.Confidence, _ = confidenceFor(c.Method, c.cut || c.prefix, len(partners) > 0)
 			c.Band = evidence.ConfidenceBand(c.Confidence)
 			c.Assumptions = fitAssumptions(c.Assumptions)
 			if c.Confidence < p.o.MinConfidence {
@@ -750,14 +812,48 @@ func (p *planner) admit() error {
 	return nil
 }
 
-// cleanText makes reader-supplied text recordable: invalid UTF-8 and NUL become U+FFFD, and it is cut to
-// n bytes on a rune boundary.
+// cleanText makes reader-supplied text recordable without repairing it: each invalid UTF-8 byte is shown
+// as \xNN and NUL as \x00 (the text keeps what the reader said), and it is cut to n bytes on a rune
+// boundary.
 func cleanText(s string, n int) string {
-	s = strings.ToValidUTF8(s, repl)
-	if strings.ContainsRune(s, 0) {
-		s = strings.ReplaceAll(s, nulStr, repl)
+	return clipText(escapeText(s, false), n)
+}
+
+// escapeText returns s with every invalid UTF-8 byte and NUL written as \xNN; with controls also every
+// other control rune (below U+0080 as \xNN, above as \uNNNN), so that a terminal escape in a text
+// can never reach a log or a console as itself. Text that needs no change is returned as is.
+func escapeText(s string, controls bool) string {
+	needs := func(r rune, size int) bool {
+		return (r == utf8.RuneError && size <= 1) || r == 0 || (controls && unicode.IsControl(r))
 	}
-	return clipText(s, n)
+	clean := true
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if needs(r, size) {
+			clean = false
+			break
+		}
+		i += size
+	}
+	if clean {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size <= 1:
+			fmt.Fprintf(&b, "\\x%02x", s[i])
+		case needs(r, size) && r < 0x80:
+			fmt.Fprintf(&b, "\\x%02x", r)
+		case needs(r, size):
+			fmt.Fprintf(&b, "\\u%04x", r)
+		default:
+			b.WriteString(s[i : i+size])
+		}
+		i += size
+	}
+	return b.String()
 }
 
 func cleanList(in []string) []string {
@@ -767,11 +863,6 @@ func cleanList(in []string) []string {
 	}
 	return out
 }
-
-var (
-	repl   = string(rune(0xFFFD))
-	nulStr = string(rune(0))
-)
 
 // walkReason names why a directory could not be listed: corruption of the structure, or any other
 // failure (an I/O error says nothing about the evidence and is never labelled corruption, C60).
@@ -796,4 +887,43 @@ func (c PlannedCandidate) PartialWhy() string { return c.errText }
 // Counters returns the candidates, uniform and overlapping candidates the plan counted.
 func (p *RecoverPlan) Counters() (candidates, uniform, overlap int) {
 	return p.candidates, p.uniform, p.overlap
+}
+
+// readerWarningCap bounds the reader warnings audited for one candidate; the rest are summarised in one
+// suppression warning and still counted.
+const readerWarningCap = 16
+
+// readerWarnings turns the warnings a reader attached to a candidate into audited, counted warnings of
+// the entry (none is a skip). At most readerWarningCap are kept, cleaned and clipped to 256 bytes; the
+// rest become one "N further reader warnings suppressed" warning. It returns the kept texts.
+func (p *planner) readerWarnings(it *RecoverItem, ws []string) []string {
+	if len(ws) == 0 {
+		return nil
+	}
+	p.plan.ReaderWarnings += len(ws)
+	kept := make([]string, 0, min(len(ws), readerWarningCap))
+	for _, w := range ws[:min(len(ws), readerWarningCap)] {
+		// control runes are escaped, not dropped (a terminal escape in a reader text must never reach a log or
+		// a console as itself, and the text is not repaired)
+		kept = append(kept, cleanText(escapeText(w, true), 256))
+	}
+	for _, w := range kept {
+		it.readerWarnings = append(it.readerWarnings, PlanSkip{Path: it.Path, ID: it.ID, Reason: "reader-warning", Detail: w})
+	}
+	if n := len(ws) - len(kept); n > 0 {
+		note := fmt.Sprintf("%d further reader warnings suppressed", n)
+		it.readerWarnings = append(it.readerWarnings, PlanSkip{Path: it.Path, ID: it.ID, Reason: "reader-warnings-suppressed", Detail: note})
+	}
+	return kept
+}
+
+// readerStop returns the first stale-chain-stop assumption of a candidate (the reader's own reason why its
+// map ends early), "" when it gave none.
+func readerStop(assumptions []string) string {
+	for _, a := range assumptions {
+		if strings.HasPrefix(a, "stale-chain-stop=") {
+			return a
+		}
+	}
+	return ""
 }

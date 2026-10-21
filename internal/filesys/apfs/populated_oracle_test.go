@@ -30,21 +30,26 @@ import (
 const popFixture = "apfs-populated"
 
 type popNode struct {
-	Path      string     `json:"path"`
-	Type      string     `json:"type"`
-	Size      int64      `json:"size"`
-	Mode      uint32     `json:"mode"`
-	UID       uint32     `json:"uid"`
-	GID       uint32     `json:"gid"`
-	MtimeNs   int64      `json:"mtime_ns"`
-	Nlink     int        `json:"nlink"`
-	Inode     uint64     `json:"inode"`
-	PrivateID uint64     `json:"private_id"`
-	Xattrs    []string   `json:"xattrs"`
-	Sha256    string     `json:"sha256"`
-	Runs      [][2]int64 `json:"runs"`
-	Link      string     `json:"link"`
-	NameHash  *uint32    `json:"name_hash"`
+	Path        string     `json:"path"`
+	Type        string     `json:"type"`
+	Size        int64      `json:"size"`
+	Mode        uint32     `json:"mode"`
+	UID         uint32     `json:"uid"`
+	GID         uint32     `json:"gid"`
+	MtimeNs     int64      `json:"mtime_ns"`
+	Nlink       int        `json:"nlink"`
+	Inode       uint64     `json:"inode"`
+	PrivateID   uint64     `json:"private_id"`
+	Xattrs      []string   `json:"xattrs"`
+	Sha256      string     `json:"sha256"`
+	Runs        [][2]int64 `json:"runs"`
+	Link        string     `json:"link"`
+	NameHash    *uint32    `json:"name_hash"`
+	XattrValues map[string]struct {
+		Size    int64  `json:"size"`
+		Sha256  string `json:"sha256"`
+		Storage string `json:"storage"`
+	} `json:"xattr_values"`
 }
 
 type popSnapshot struct {
@@ -288,6 +293,9 @@ func popCheckTree(t *testing.T, img []byte, f *apfs.FS, root string, want []popN
 		slices.Sort(xs)
 		if wx := slices.Clone(w.Xattrs); !slices.Equal(xs, wx) && (len(xs) != 0 || len(wx) != 0) {
 			report("%s: xattr names %q, oracle %q", w.Path, xs, wx)
+		}
+		if popNeedsValueCheck(w) {
+			popCheckXattrValues(t, f, e, w, report)
 		}
 		if w.Type == "file" {
 			if v, _ := attr(e, "nlink"); v != fmt.Sprint(w.Nlink) {
@@ -639,4 +647,122 @@ func mapsEqual(a, b map[string]int) bool {
 		}
 	}
 	return true
+}
+
+func popCheckXattrValues(t *testing.T, f *apfs.FS, e filesys.Entry, w popNode, report func(string, ...any)) {
+	t.Helper()
+	listed, err := f.Xattrs(e)
+	if err != nil {
+		report("%s: Xattrs: %v", w.Path, err)
+		return
+	}
+	for _, g := range popValueGaps(w) {
+		report("%s", g)
+	}
+	byName := map[string]filesys.Xattr{}
+	for _, x := range listed {
+		byName[x.Name] = x
+	}
+	for name, want := range w.XattrValues {
+		x, ok := byName[name]
+		if !ok {
+			report("%s: xattr %s is not listed", w.Path, name)
+			continue
+		}
+		wantStorage, serr := popStorage(want.Storage)
+		if serr != nil {
+			report("%s: xattr %s: %v", w.Path, name, serr)
+			continue
+		}
+		if x.Size != want.Size || x.Storage != wantStorage {
+			report("%s: xattr %s listed as %+v, oracle size %d storage %s", w.Path, name, x, want.Size, want.Storage)
+		}
+		fl, err := f.OpenXattr(e, name)
+		if err != nil {
+			report("%s: OpenXattr(%s): %v", w.Path, name, err)
+			continue
+		}
+		b := make([]byte, fl.Size())
+		if n, rerr := fl.ReadAt(b, 0); n != len(b) && rerr != nil && !errors.Is(rerr, io.EOF) {
+			report("%s: read %s: %v", w.Path, name, rerr)
+			continue
+		}
+		sum := sha256.Sum256(b)
+		if hex.EncodeToString(sum[:]) != want.Sha256 || int64(len(b)) != want.Size {
+			report("%s: xattr %s: %d bytes sha256 %x, oracle %d bytes %s", w.Path, name, len(b), sum, want.Size, want.Sha256)
+		}
+		if (want.Storage == "stream") != (len(fl.Runs()) > 0) {
+			report("%s: xattr %s has %d runs but the oracle says %s", w.Path, name, len(fl.Runs()), want.Storage)
+		}
+	}
+	if len(byName) != len(w.Xattrs) {
+		report("%s: %d xattrs listed, oracle %d", w.Path, len(byName), len(w.Xattrs))
+	}
+}
+
+// The real fixture holds embedded, empty, binary, stream-stored (6000 bytes)
+// and directory xattrs; every value read through the reader equals the digest
+// the independent decoder computed from the image and from the source tree.
+func TestPopulatedXattrValuesMatchOracle(t *testing.T) {
+	img, exp := popLoad(t)
+	f, err := apfs.Open(bytes.NewReader(img), int64(len(img)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var withValues, streams int
+	for _, n := range exp.Live.Tree {
+		if len(n.XattrValues) != 0 {
+			withValues++
+		}
+		for _, v := range n.XattrValues {
+			if v.Storage == "stream" {
+				streams++
+			}
+		}
+	}
+	if withValues < 2 {
+		t.Fatalf("the oracle holds xattr values for %d entries; the fixture must have been re-emitted (apfs-reoracle.sh)", withValues)
+	}
+	if streams < 1 {
+		t.Fatal("no stream-stored xattr value in the oracle: the stream path would not be exercised on real bytes")
+	}
+	popCheckTree(t, img, f, "/"+exp.Volume.Name, exp.Live.Tree)
+	noWarnings(t, f)
+}
+
+// popStorage maps the oracle's storage word to the reader's. Only the two
+// words the oracle writes are accepted; anything else is an error here, never
+// treated as inline.
+func popStorage(word string) (string, error) {
+	switch word {
+	case "stream":
+		return filesys.XattrStream, nil
+	case "embedded":
+		return filesys.XattrInline, nil
+	}
+	return "", fmt.Errorf("unknown oracle storage word %q (want \"stream\" or \"embedded\")", word)
+}
+
+// popNeedsValueCheck reports whether the entry's xattr listing must be
+// checked against the oracle.
+func popNeedsValueCheck(w popNode) bool { return len(w.XattrValues) != 0 || len(w.Xattrs) != 0 }
+
+// popValueGaps lists the disagreements between the oracle's xattr names and
+// its xattr values: a name without a value is never silently unchecked.
+func popValueGaps(w popNode) []string {
+	var gaps []string
+	names := map[string]bool{}
+	for _, n := range w.Xattrs {
+		names[n] = true
+		if _, ok := w.XattrValues[n]; !ok {
+			gaps = append(gaps, fmt.Sprintf("%s: xattr %s has no oracle value", w.Path, n))
+		}
+	}
+	for n := range w.XattrValues {
+		if !names[n] {
+			gaps = append(gaps, fmt.Sprintf("%s: oracle value for xattr %s, which is not in the oracle names", w.Path, n))
+		}
+	}
+	slices.Sort(gaps)
+	return gaps
 }

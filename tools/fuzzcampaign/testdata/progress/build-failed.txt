@@ -1,0 +1,3 @@
+# scratch/build [scratch/build.test]
+.\f_test.go:6:40: undefined: undefinedSymbol
+FAIL	scratch/build [build failed]

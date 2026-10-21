@@ -150,12 +150,12 @@ func TestDecodeTypes(t *testing.T) {
 	})
 }
 
-func TestDecodeDuplicateKeysLastWins(t *testing.T) {
-	// Known property, not a guarantee worth relying on: the library keeps the last value of a
-	// duplicate key. Detecting duplicates is a non-goal.
-	got := mustDecode(t, []byte(`<plist><dict><key>a</key><integer>1</integer><key>a</key><integer>2</integer></dict></plist>`))
-	if !reflect.DeepEqual(got, map[string]any{"a": int64(2)}) {
-		t.Fatalf("%#v", got)
+func TestDecodeReportDuplicateKeysLastWins(t *testing.T) {
+	// The library keeps the last value of a duplicate key; DecodeReport keeps it too and counts
+	// the repeat (the strict refusal is TestDecodeReportCountsXMLDuplicateKeys).
+	got, rep, err := DecodeReport([]byte(`<plist><dict><key>a</key><integer>1</integer><key>a</key><integer>2</integer></dict></plist>`), newView(1<<20))
+	if err != nil || !reflect.DeepEqual(got, map[string]any{"a": int64(2)}) || rep != (Report{DuplicateKeys: 1}) {
+		t.Fatalf("%#v, %+v, %v", got, rep, err)
 	}
 }
 
@@ -472,7 +472,7 @@ func TestDecodeNeverReturnsErrInternalOnGeneratedInputs(t *testing.T) {
 			}
 		}
 		// the same input without the guard: a panic here is a bug fixed by validating first
-		if _, err := decodeCore(b, newView(1<<30)); errors.Is(err, ErrInternal) {
+		if _, _, err := decodeCore(b, newView(1<<30), true); errors.Is(err, ErrInternal) {
 			t.Fatalf("input %d: %v", i, err)
 		}
 	}

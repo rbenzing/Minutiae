@@ -2,6 +2,7 @@ package parse
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"reflect"
 	"testing"
@@ -16,7 +17,7 @@ func intPtr(v int) *int { return &v }
 
 func fullArtifact(id string) Artifact {
 	return Artifact{
-		ID: id, SHA256: "aa" + id, Platform: "android", Logical: "android:/data/" + id, Size: 123, Incomplete: true,
+		ID: id, Acquisition: "acq-" + id, SHA256: "aa" + id, Platform: "android", Logical: "android:/data/" + id, Size: 123, Incomplete: true,
 		Recovery: &RecoveryInfo{Class: "carved", Method: "sig", Confidence: intPtr(70)},
 		Source: SourceInfo{
 			Kind: "extract", DeviceID: "dev", RemotePath: "/r/" + id, OriginalPath: "/o", Partition: "p1", FSType: "ext4", FSPath: "/f",
@@ -114,7 +115,7 @@ func TestInputAndMetaCloneAreDeep(t *testing.T) {
 			t.Fatal("the clone differs from the original")
 		}
 		shared := map[string]bool{
-			".Lookup": true, ".Budget": true, // one view and one lookuper per invocation
+			".Lookup": true, ".Budget.s": true, // one lookuper and one accounting state per invocation; the two BudgetView handles are distinct
 			".Primary.R": true, ".Artifacts[].R": true, // the one sealed reader of the invocation
 		}
 		assertDisjoint(t, reflect.ValueOf(in).Elem(), reflect.ValueOf(c).Elem(), "", shared)
@@ -151,14 +152,14 @@ func TestInputAndMetaCloneAreDeep(t *testing.T) {
 		}
 	})
 
-	t.Run("the reader, lookuper and budget view are shared, not copied", func(t *testing.T) {
+	t.Run("the reader and lookuper are shared, the budget view is the parser's own handle", func(t *testing.T) {
 		in := fullInput()
 		c := in.Clone()
 		if c.Primary.R != in.Primary.R || c.Artifacts["wal"].R != in.Artifacts["wal"].R {
 			t.Fatal("Clone replaced the invocation's reader")
 		}
-		if c.Budget != in.Budget {
-			t.Fatal("Clone must keep the invocation's BudgetView (a second view would have its own outstanding amount)")
+		if c.Budget == in.Budget || c.Budget.s != in.Budget.s {
+			t.Fatal("Clone must give the parser its own BudgetView handle onto the invocation's single accounting state")
 		}
 		if c.Lookup != in.Lookup {
 			t.Fatal("Clone replaced the Lookuper")
@@ -245,4 +246,63 @@ func mutateArtifact(a *Artifact) {
 	a.Source.Encrypted, a.Source.ParentIncomplete = false, false
 	a.Source.Snapshot.Name, a.Source.Snapshot.Xid = "x", 1
 	a.Source.Snapshot = &SnapshotInfo{Name: "y"}
+}
+
+// The acquisition id is part of the Artifact contract (ruling T25): it is carried by Input.Clone
+// for the primary and for every role entry, so a parser can require that two artifacts come from
+// one acquisition of one device. The field is reached by name so a missing field is a failed
+// assertion here.
+func TestArtifactCarriesTheAcquisitionID(t *testing.T) {
+	typ := reflect.TypeOf(Artifact{})
+	if f, ok := typ.FieldByName("Acquisition"); !ok || f.Type.Kind() != reflect.String {
+		t.Fatal("parse.Artifact has no string field Acquisition")
+	}
+	in := fullInput()
+	reflect.ValueOf(&in.Primary).Elem().FieldByName("Acquisition").SetString("acq-1")
+	for role, a := range in.Artifacts {
+		a2 := a
+		reflect.ValueOf(&a2).Elem().FieldByName("Acquisition").SetString("acq-" + role)
+		in.Artifacts[role] = a2
+	}
+	c := in.Clone()
+	get := func(a Artifact) string { return reflect.ValueOf(a).FieldByName("Acquisition").String() }
+	if get(c.Primary) != "acq-1" || get(c.Artifacts["db"]) != "acq-db" || get(c.Artifacts["wal"]) != "acq-wal" {
+		t.Fatalf("Clone dropped the acquisition id: %q %q %q", get(c.Primary), get(c.Artifacts["db"]), get(c.Artifacts["wal"]))
+	}
+	if get(fullInput().Primary) != "acq-a1" {
+		t.Fatal("fullInput does not set an acquisition id (the DeepEqual clone tests would not cover the field)")
+	}
+}
+
+// TestCloneGivesTheParserItsOwnBudgetHandle pins clone isolation of the
+// pre-clone Input, which production code discards: the parser's BudgetView is
+// a separate handle onto the one accounting state, so overwriting it detaches
+// only that handle. It is not a protection of the host (the host keeps no
+// handle) and not a boundary against a parser author.
+func TestCloneGivesTheParserItsOwnBudgetHandle(t *testing.T) {
+	in := fullInput()
+	c := in.Clone()
+	if c.Budget == in.Budget {
+		t.Fatal("the clone shares the BudgetView pointer with the original")
+	}
+	if c.Budget.s != in.Budget.s {
+		t.Fatal("the handles must reach the same accounting state")
+	}
+	limit := in.Budget.Limit()
+	if err := c.Budget.Alloc(100); err != nil {
+		t.Fatal(err)
+	}
+	*c.Budget = BudgetView{} // what a misbehaving parser could do to its own Input
+	if in.Budget.Used() != 100 || in.Budget.Limit() != limit {
+		t.Fatalf("the original handle saw used=%d limit=%d after the overwrite, want 100/%d", in.Budget.Used(), in.Budget.Limit(), limit)
+	}
+	if err := in.Budget.Alloc(1); err != nil {
+		t.Fatalf("the original handle must keep allocating: %v", err)
+	}
+	if err := c.Budget.Alloc(1); !errors.Is(err, ErrBudget) {
+		t.Fatalf("the overwritten handle must fail closed, got %v", err)
+	}
+	if c.Budget.Used() != 0 || c.Budget.Limit() != 0 {
+		t.Fatalf("the overwritten handle reports used=%d limit=%d, want 0/0", c.Budget.Used(), c.Budget.Limit())
+	}
 }

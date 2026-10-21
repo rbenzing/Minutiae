@@ -43,6 +43,13 @@ type FS struct {
 	// dirBudget is how many bytes of catalog nodes listings and fallback scans may
 	// still read, shared by every call (see chargeDir); dirCap overrides the
 	// per-listing entry cap (0 = maxDirEntries).
+	// idScanBudget is how many bytes of catalog leaves the scans for files without
+	// a thread record may still read, for the whole filesystem (see chargeIDScan);
+	// idScanRefused counts the opens a spent budget refused.
+	scanMu        sync.Mutex
+	idScanBudget  int64
+	idScanRefused int
+
 	dirMu      sync.Mutex
 	dirBudget  int64
 	dirCap     int
@@ -251,7 +258,8 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		size:    end,
 		wrapped: loc.wrapped,
 
-		dirBudget: maxDirBudget,
+		dirBudget:    maxDirBudget,
+		idScanBudget: maxIDScanBudget,
 	}
 	for _, w := range warns {
 		f.warn("%s", w)

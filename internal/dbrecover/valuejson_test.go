@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"math"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -65,6 +66,8 @@ func TestEncodeValueTable(t *testing.T) {
 		{"blob", sqlitefile.Value{Kind: sqlitefile.KindBlob, Bytes: []byte{0, 1, 2}, Len: 3, Serial: 18}, map[string]any{"i": int64(3), "type": "blob", "value_b64": "AAEC", "len": int64(3), "serial": int64(18)}},
 		{"blob empty", sqlitefile.Value{Kind: sqlitefile.KindBlob, Bytes: []byte{}, Serial: 12}, map[string]any{"i": int64(3), "type": "blob", "value_b64": "", "len": int64(0), "serial": int64(12)}},
 		{"omitted text", sqlitefile.Value{Kind: sqlitefile.KindText, Omitted: true, Len: 9000, Enc: sqlitefile.EncUTF8}, map[string]any{"i": int64(3), "type": "text", "omitted": true, "len": int64(9000), "enc": "UTF-8"}},
+		{"omitted default expression", sqlitefile.Value{Omitted: true, DefaultUndecided: sqlitefile.DefaultReasonExpression}, map[string]any{"i": int64(3), "type": "null", "omitted": true, "default_undecided": "default is an expression"}},
+		{"omitted default inexact", sqlitefile.Value{Omitted: true, DefaultUndecided: sqlitefile.DefaultReasonInexactLiteral}, map[string]any{"i": int64(3), "type": "null", "omitted": true, "default_undecided": "default literal is not converted exactly"}},
 		{"unread int", sqlitefile.Value{Kind: sqlitefile.KindInt, Unread: true}, map[string]any{"i": int64(3), "type": "integer", "unread": true}},
 		{"unread real", sqlitefile.Value{Kind: sqlitefile.KindFloat, Unread: true, Float: 2.5}, map[string]any{"i": int64(3), "type": "real", "unread": true}},
 		{"unread blob", sqlitefile.Value{Kind: sqlitefile.KindBlob, Unread: true, Omitted: true, Len: 10}, map[string]any{"i": int64(3), "type": "blob", "unread": true, "omitted": true, "len": int64(10)}},
@@ -274,6 +277,81 @@ func TestEncodeNameIsExact(t *testing.T) {
 		}
 		if err := validateDBRow(p); err != nil {
 			t.Errorf("%s: the validator refuses the encoding: %v", name, err)
+		}
+	}
+}
+
+func TestUndecidedDefaultReasonIsKeptInOutput(t *testing.T) {
+	for _, r := range []sqlitefile.DefaultReason{sqlitefile.DefaultReasonExpression, sqlitefile.DefaultReasonInexactLiteral} {
+		v := sqlitefile.Value{Omitted: true, DefaultUndecided: r}
+		if got, want := summaryValue(v), "<omitted: "+r.String()+">"; got != want {
+			t.Errorf("summary %q, want %q", got, want)
+		}
+		if got := summaryValue(sqlitefile.Value{Omitted: true}); got != "<omitted>" {
+			t.Errorf("plain omitted summary %q", got)
+		}
+		p := validPayload()
+		p["columns"] = []any{map[string]any{"i": int64(0), "type": "null", "omitted": true, "default_undecided": r.String()}}
+		if err := validateDBRow(p); err != nil {
+			t.Errorf("reason %q refused: %v", r, err)
+		}
+	}
+	p := validPayload()
+	p["columns"] = []any{map[string]any{"i": int64(0), "type": "null", "omitted": true, "default_undecided": "because"}}
+	if validateDBRow(p) == nil {
+		t.Error("an unknown reason was accepted")
+	}
+}
+
+// U32: the validator's reason list is exactly the DefaultReason enum.
+func TestDefaultReasonsListEqualsTheEnum(t *testing.T) {
+	var enum []string
+	for r := sqlitefile.DefaultReasonNone + 1; r.String() != "default?"; r++ {
+		enum = append(enum, r.String())
+	}
+	if len(enum) < 2 {
+		t.Fatalf("parsed %d reasons from the enum", len(enum))
+	}
+	if len(defaultReasons) != len(enum) {
+		t.Fatalf("defaultReasons has %d entries, the enum %d: %v vs %v", len(defaultReasons), len(enum), defaultReasons, enum)
+	}
+	for _, s := range enum {
+		if !slices.Contains(defaultReasons, s) {
+			t.Errorf("defaultReasons lacks %q", s)
+		}
+	}
+}
+
+// U33: the payload-budget form of an undecided default keeps its typed reason.
+func TestDegradedFormKeepsTheUndecidedDefaultReason(t *testing.T) {
+	for _, r := range []sqlitefile.DefaultReason{sqlitefile.DefaultReasonExpression, sqlitefile.DefaultReasonInexactLiteral} {
+		m := degraded(0, sqlitefile.Value{Omitted: true, DefaultUndecided: r})
+		if m["omitted"] != "payload-budget" || m["default_undecided"] != r.String() {
+			t.Errorf("degraded %v lacks the reason %q", m, r)
+		}
+		p := validPayload()
+		p["columns"] = []any{m}
+		if err := validateDBRow(p); err != nil {
+			t.Errorf("the validator refuses the degraded form: %v", err)
+		}
+	}
+	m := degraded(0, sqlitefile.Value{Omitted: true})
+	if _, has := m["default_undecided"]; has {
+		t.Errorf("a plain omitted value gained a reason: %v", m)
+	}
+}
+
+// U34: a reason without an omitted column is not a valid payload.
+func TestValidatorRefusesAReasonOnAColumnThatIsNotOmitted(t *testing.T) {
+	for _, col := range []map[string]any{
+		{"i": int64(0), "type": "null", "default_undecided": "default is an expression"},
+		{"i": int64(0), "type": "null", "omitted": false, "default_undecided": "default is an expression"},
+		{"i": int64(0), "type": "integer", "value": int64(1), "default_undecided": "default is an expression"},
+	} {
+		p := validPayload()
+		p["columns"] = []any{col}
+		if validateDBRow(p) == nil {
+			t.Errorf("accepted %v", col)
 		}
 	}
 }

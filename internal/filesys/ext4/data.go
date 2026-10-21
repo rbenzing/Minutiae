@@ -29,6 +29,31 @@ const (
 	fastSymlinkMax = inodeBlockLen // a fast symlink target is shorter than i_block
 )
 
+// imageCutError is the error of a block map that runs into the part of the filesystem the image does not hold:
+// the block lies at or beyond the effective block count but inside the declared one. It is a *filesys.CorruptError
+// (errors.Is(err, filesys.ErrCorrupt)), and the only map error that leaves a trusted prefix (L32); any other damage
+// still fails to open. after counts the bytes mapped after the cut by extents already parsed whose blocks lie in the
+// image: they are not part of the prefix.
+type imageCutError struct {
+	*filesys.CorruptError
+	after      int64 // a lower bound: see above
+	unexamined bool  // other tree nodes or blocks were not examined, so after may be incomplete
+	damaged    bool  // the count stopped at a damaged entry of the cut extent's node, so after may be incomplete
+}
+
+func cutError(structure string, off, after int64, unexamined bool, format string, a ...any) error {
+	return &imageCutError{CorruptError: corrupt(structure, off, format, a...).(*filesys.CorruptError), after: after, unexamined: unexamined}
+}
+
+// asImageCut returns the imageCutError err is or wraps, else nil: the one test for "this map error leaves a prefix".
+func asImageCut(err error) *imageCutError {
+	var c *imageCutError
+	if errors.As(err, &c) {
+		return c
+	}
+	return nil
+}
+
 // runList accumulates the byte runs of one file in file order. Runs are
 // trimmed to size, adjacent holes and physically adjacent runs are merged, and
 // the number of runs is capped.
@@ -115,6 +140,13 @@ func (f *FS) runsPartial(in *inode) ([]filesys.Run, error) {
 		err = f.blockMapRuns(in, rl)
 	}
 	if err != nil {
+		if asImageCut(err) != nil {
+			// this check also guards dirRuns, which calls runsPartial and not openInode
+			// the runs are a prefix of the file: no hole pads the tail, and they are checked as a prefix
+			if _, cerr := filesys.CheckRunsPrefix(rl.runs, in.size, f.size); cerr != nil {
+				return nil, cerr
+			}
+		}
 		return rl.runs, err
 	}
 	if err = rl.finish(); err == nil {
@@ -128,8 +160,11 @@ func (f *FS) runsPartial(in *inode) ([]filesys.Run, error) {
 
 // readNode reads one metadata block (an extent node or an indirect block).
 func (f *FS) readNode(st string, blk uint64) ([]byte, error) {
-	if blk == 0 || blk < uint64(f.sb.firstDataBlock) || blk >= uint64(f.sb.blocksCount) {
-		return nil, corrupt(st, -1, "block %d is outside the %d-block filesystem", blk, f.sb.blocksCount)
+	if blk == 0 || blk < uint64(f.sb.firstDataBlock) || blk >= uint64(f.sb.declaredBlocks) {
+		return nil, corrupt(st, -1, "block %d is outside the %d-block filesystem", blk, f.sb.declaredBlocks)
+	}
+	if blk >= uint64(f.sb.blocksCount) {
+		return nil, cutError(st, -1, 0, true, "block %d lies beyond the end of the image (%d blocks held, %d declared)", blk, f.sb.blocksCount, f.sb.declaredBlocks)
 	}
 	off, ok := filesys.MulOK(int64(blk), int64(f.sb.blockSize))
 	if !ok {
@@ -265,10 +300,15 @@ func (w *extentWalker) node(buf []byte, wantDepth int, where int64) error {
 			return corrupt(st, where, "extent %d at block %d overlaps or precedes the previous extent (ends at %d)", i, lblk, w.next)
 		case lblk+n > 1<<32:
 			return corrupt(st, where, "extent %d (%d+%d) exceeds the 32-bit logical block range", i, lblk, n)
-		case phys+n > uint64(w.f.sb.blocksCount):
-			return corrupt(st, where, "extent %d maps blocks %d+%d beyond the %d-block filesystem", i, phys, n, w.f.sb.blocksCount)
+		case phys+n > uint64(w.f.sb.declaredBlocks):
+			return corrupt(st, where, "extent %d maps blocks %d+%d beyond the %d-block filesystem", i, phys, n, w.f.sb.declaredBlocks)
 		}
-		w.f.checkDataPointer(w.in, phys, n)
+		// The extent lies inside the declared filesystem. Past the end of the image its data cannot be read, unless
+		// it is uninitialized: that is a hole and needs no data.
+		cutHere := !uninit && phys+n > uint64(w.f.sb.blocksCount)
+		if !cutHere {
+			w.f.checkDataPointer(w.in, phys, n)
+		}
 		if lblk > w.next {
 			if err := w.rl.addBlocks(-1, int64(lblk-w.next), bs); err != nil {
 				return err
@@ -278,12 +318,56 @@ func (w *extentWalker) node(buf []byte, wantDepth int, where int64) error {
 		if uninit {
 			pb = -1 // allocated but never written: reads as zeros
 		}
+		if cutHere {
+			// the head that lies in the image (whole blocks) is the end of the prefix, then the walk stops
+			if head := w.f.sb.blocksCount - int64(phys); head > 0 {
+				if err := w.rl.addBlocks(pb, head, bs); err != nil {
+					return err
+				}
+			}
+			if w.rl.full() {
+				return nil // the part of the file that is needed lies in the image
+			}
+			after, damaged := w.afterCut(buf, i+1, entries, lblk+n)
+			err := cutError(st, where, after, len(w.visited) > 0, "extent %d maps blocks %d+%d beyond the %d blocks the image holds", i, phys, n, w.f.sb.blocksCount)
+			err.(*imageCutError).damaged = damaged
+			return err
+		}
 		if err := w.rl.addBlocks(pb, int64(n), bs); err != nil {
 			return err
 		}
 		w.next = lblk + n
 	}
 	return nil
+}
+
+// afterCut counts the bytes mapped by the leaf entries from..entries-1 of buf (already read: the leaf of the extent that
+// was cut; end is the logical block where that extent ends) whose initialized blocks lie in the image. It is a lower
+// bound: only this node is examined. The count stops at the first entry that is empty, not strictly after the previous
+// one, overlaps it or leaves the 32-bit logical range, because nothing after a damaged entry is trusted. The prefix
+// rule does not extract these bytes; the count is only reported. damaged is true when the count stopped at such an
+// entry, in any node kind (the root included): the entries after it were not counted.
+func (w *extentWalker) afterCut(buf []byte, from, entries int, end uint64) (total int64, damaged bool) {
+	le := binary.LittleEndian
+	bs, have := int64(w.f.sb.blockSize), uint64(w.f.sb.blocksCount)
+	for i := from; i < entries; i++ {
+		e := buf[extentHeaderLen+i*extentEntryLen:][:extentEntryLen]
+		lblk, n := uint64(le.Uint32(e)), uint64(le.Uint16(e[4:]))
+		uninit := n > extentMaxInit
+		if uninit {
+			n -= extentMaxInit
+		}
+		if n == 0 || lblk < end || lblk+n > 1<<32 {
+			return min(total, w.rl.size-w.rl.pos), true
+		}
+		end = lblk + n
+		phys := uint64(le.Uint32(e[8:])) | uint64(le.Uint16(e[6:]))<<32
+		if uninit || phys >= have {
+			continue // a hole needs no data; a block beyond the image is not readable
+		}
+		total += int64(min(n, have-phys)) * bs // <= 32768 * block size: cannot overflow
+	}
+	return min(total, w.rl.size-w.rl.pos), false
 }
 
 // blockMapWalker walks the direct and indirect block pointers of an ext2/3
@@ -338,8 +422,11 @@ func (w *blockMapWalker) walk(ptr uint32, level int, where int64) error {
 		w.next += span
 		return w.rl.addBlocks(-1, span, bs)
 	}
-	if uint64(ptr) >= uint64(w.f.sb.blocksCount) {
-		return corrupt(st, where, "block pointer %d is beyond the %d-block filesystem", ptr, w.f.sb.blocksCount)
+	if uint64(ptr) >= uint64(w.f.sb.declaredBlocks) {
+		return corrupt(st, where, "block pointer %d is beyond the %d-block filesystem", ptr, w.f.sb.declaredBlocks)
+	}
+	if level == 0 && uint64(ptr) >= uint64(w.f.sb.blocksCount) {
+		return cutError(st, where, 0, true, "block pointer %d lies beyond the %d blocks the image holds", ptr, w.f.sb.blocksCount)
 	}
 	if level == 0 {
 		w.f.checkDataPointer(w.in, uint64(ptr), 1)
@@ -385,7 +472,10 @@ func (f *FS) inlineData(in *inode) ([]byte, error) {
 			continue
 		}
 		if x.Inum != 0 {
-			return nil, corrupt(st, in.offset, "inode %d: system.data lives in an EA inode", in.num)
+			// No kernel was seen to write inline content into an EA inode (the inline-data path keeps system.data in
+			// the inode or xattr block), so the layout is not decoded: the file is unsupported, not corrupt.
+			f.warn("inode %d: its system.data value (inline content) is held in EA inode %d, a layout this reader does not decode", in.num, x.Inum)
+			return nil, fmt.Errorf("%w: ext4 inline data: inode %d: system.data is held in EA inode %d", filesys.ErrUnsupported, in.num, x.Inum)
 		}
 		if len(x.Value) < size-inodeBlockLen {
 			return nil, corrupt(st, in.offset, "inode %d: size %d, but only %d bytes are stored inline", in.num, size, inodeBlockLen+len(x.Value))
@@ -449,11 +539,37 @@ func (f *FS) openInode(in *inode) (filesys.File, error) {
 	case in.mode&modeTypeMask == modeSymlink && in.flags&inodeFlagExtents == 0 && in.size < fastSymlinkMax:
 		return &file{size: in.size, mem: slices.Clone(in.block[:in.size])}, nil
 	}
-	runs, err := f.runs(in)
-	if err != nil {
-		return nil, err
-	}
+	// runsPartial, not runs: a map cut by the end of the image keeps the runs before the cut (L32); every other error
+	// fails the open
+	runs, err := f.runsPartial(in)
 	fl := &file{size: in.size, runs: runs, r: f.data}
+	if err != nil {
+		cut := asImageCut(err)
+		if cut == nil {
+			return nil, err
+		}
+		covered, cerr := filesys.CheckRunsPrefix(runs, in.size, f.size)
+		if cerr != nil {
+			return nil, cerr
+		}
+		fl.avail = covered
+		fl.tail = corrupt("ext4 file data", -1, "inode %d: the image is truncated: the file's mapped blocks continue beyond it", n)
+		msg := fmt.Sprintf("file inode %d: the image is truncated: %v; the %d bytes mapped before the cut are readable and the rest reads as an error", n, err, covered)
+		switch {
+		case cut.after > 0:
+			msg += fmt.Sprintf("; at least %d bytes are also mapped after the cut by extents that lie in the image (found in the cut extent's node only; other extent-tree nodes were not examined), but a prefix is leading bytes only, so they are not extracted", cut.after)
+			if cut.damaged {
+				msg += "; the count stopped at a damaged entry and may be incomplete"
+			} else if cut.unexamined {
+				msg += "; the count may be incomplete"
+			}
+		case cut.damaged:
+			msg += "; the count stopped at a damaged entry and may be incomplete"
+		case cut.unexamined:
+			msg += "; no mapped bytes after the cut were found, but other extent-tree nodes or blocks were not examined, so the count may be incomplete"
+		}
+		f.warn("%s", msg)
+	}
 	var pos int64
 	for _, r := range runs {
 		fl.starts = append(fl.starts, pos)
@@ -466,6 +582,8 @@ func (f *FS) openInode(in *inode) (filesys.File, error) {
 // calls are safe.
 type file struct {
 	size   int64
+	avail  int64         // with tail set: the bytes the runs cover; reads at or beyond it return tail
+	tail   error         // what reading [avail, size) returns; nil when the runs cover the whole size
 	mem    []byte        // inline content (runs is nil), else nil
 	runs   []filesys.Run // covers [0, size)
 	starts []int64       // starts[i] is the file offset where runs[i] begins
@@ -475,7 +593,9 @@ type file struct {
 // Size is the content length.
 func (fl *file) Size() int64 { return fl.size }
 
-// Runs returns a copy of the filesystem-relative runs (nil for inline content).
+// Runs returns a copy of the filesystem-relative runs (nil for inline content). They cover [0, Size()) exactly
+// unless the image is truncated inside the file: then they cover only the leading bytes the image holds (nil when
+// none), and reads at or beyond their end fail with filesys.ErrCorrupt.
 func (fl *file) Runs() []filesys.Run { return slices.Clone(fl.runs) }
 
 // ReadAt reads file content; holes and uninitialized extents read as zeros.
@@ -496,6 +616,9 @@ func (fl *file) ReadAt(p []byte, off int64) (int, error) {
 	var n int64
 	for n < want {
 		pos := off + n
+		if fl.tail != nil && pos >= fl.avail {
+			return int(n), fl.tail
+		}
 		if fl.mem != nil {
 			n += int64(copy(p[n:want], fl.mem[pos:]))
 			continue
@@ -506,6 +629,9 @@ func (fl *file) ReadAt(p []byte, off int64) (int, error) {
 		}
 		r, within := fl.runs[i], pos-fl.starts[i]
 		chunk := min(want-n, r.Length-within)
+		if chunk <= 0 {
+			return int(n), io.ErrUnexpectedEOF // unreachable: the runs cover every offset below avail
+		}
 		if r.Offset < 0 {
 			clear(p[n : n+chunk])
 		} else if err := readFull(fl.r, p[n:n+chunk], r.Offset+within); err != nil {
