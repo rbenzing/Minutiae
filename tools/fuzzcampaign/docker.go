@@ -173,3 +173,45 @@ func MapDockerExit(code int) (int, string) {
 	}
 	return 1, fmt.Sprintf("unexpected container exit code %d", code)
 }
+
+// DockerVersionArgs is the argument list of the `go version` check of an image: the same
+// bounds as a campaign run (no network, memory, process and CPU limits, no mount, no
+// privilege), a recorded name and --rm, so it can be killed by name like any container.
+func DockerVersionArgs(image, name string) []string {
+	return []string{
+		"run", "--rm", "--name", name,
+		"--memory", "1g", "--memory-swap", "1g", "--cpus", "1", "--pids-limit", "256",
+		"--network", "none",
+		image, "go", "version",
+	}
+}
+
+// VersionContainerName builds the name of the version-check container from numbers only.
+func VersionContainerName(now time.Time, pid int) string {
+	return fmt.Sprintf("minutiae-fuzz-check-%d-%d", now.Unix(), pid)
+}
+
+// ImageGoVersion runs `go version` in the image under a context of at most limit and returns
+// its output. On every way out (normal exit, deadline, interrupt, error) it runs `docker kill`
+// and `docker rm -f` by the recorded name, once.
+func ImageGoVersion(ctx context.Context, image, name string, limit time.Duration) (string, error) {
+	runCtx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	defer func() {
+		bg, stop := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer stop()
+		_, _ = dockerOutput(bg, "docker", DockerKillArgs(name)...)
+		_, _ = dockerOutput(bg, "docker", DockerRemoveArgs(name)...)
+	}()
+	out, err := dockerOutput(runCtx, "docker", DockerVersionArgs(image, name)...)
+	if err != nil {
+		switch {
+		case errors.Is(runCtx.Err(), context.DeadlineExceeded):
+			return "", fmt.Errorf("the version check passed its %s limit: the container was killed", limit)
+		case ctx.Err() != nil:
+			return "", errors.New("interrupted: the version-check container was killed")
+		}
+		return "", err
+	}
+	return out, nil
+}

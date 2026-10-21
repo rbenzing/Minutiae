@@ -28,8 +28,9 @@ import (
 )
 
 var (
-	nameRE  = regexp.MustCompile(`^[A-Za-z0-9_./-]+$`)
-	imageRE = regexp.MustCompile(`^[A-Za-z0-9_.:@/-]+$`)
+	nameRE = regexp.MustCompile(`^[A-Za-z0-9_./-]+$`)
+	// imageRE must not allow a leading "-": the image is placed where docker parses options, and `docker run` has no "--" to end them.
+	imageRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.:@/-]*$`)
 )
 
 type multiFlag []string
@@ -234,11 +235,18 @@ func runHost(out, src, work string, plan Plan, o *cliOpts, stdout, stderr io.Wri
 	env.CorpusMax.Files, env.CorpusMax.Bytes = 2000, 64<<20
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	results, code := Campaign(ctx, plan, GoRunner{}, env, nowFunc().Add(o.total))
-	if b, err := ResultsJSON(results); err == nil {
-		_ = os.WriteFile(filepath.Join(out, "results.json"), b, 0o600)
+	var writeErr error
+	env.OnResult = func(rs []RunResult) {
+		if err := WriteResultsFile(out, rs); err != nil && writeErr == nil {
+			writeErr = err
+		}
 	}
+	results, code := Campaign(ctx, plan, GoRunner{}, env, nowFunc().Add(o.total))
 	fmt.Fprint(stdout, Summary(results))
+	if writeErr != nil {
+		fmt.Fprintf(stderr, "fuzzcampaign: results.json could not be written: %v\n", writeErr)
+		return 1
+	}
 	return code
 }
 
@@ -250,7 +258,7 @@ func runDockerMode(out, src string, o *cliOpts, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "fuzzcampaign: %v\n", err)
 		return 1
 	}
-	ver, err := dockerOutput(ctx, "docker", "run", "--rm", o.image, "go", "version")
+	ver, err := ImageGoVersion(ctx, o.image, VersionContainerName(nowFunc(), os.Getpid()), time.Minute)
 	if err != nil {
 		fmt.Fprintf(stderr, "fuzzcampaign: checking the image: %v\n", err)
 		return 1

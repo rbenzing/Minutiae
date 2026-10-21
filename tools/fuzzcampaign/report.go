@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
@@ -54,6 +56,24 @@ func Summary(rs []RunResult) string {
 
 // ResultsJSON encodes the results.
 func ResultsJSON(rs []RunResult) ([]byte, error) { return json.MarshalIndent(rs, "", "  ") }
+
+// WriteResultsFile writes results.json in dir through a temporary file and a rename, so a reader
+// (or a container that dies) never sees a half-written file. A failure is an error.
+func WriteResultsFile(dir string, rs []RunResult) error {
+	b, err := ResultsJSON(rs)
+	if err != nil {
+		return err
+	}
+	tmp := filepath.Join(dir, "results.json.tmp")
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, filepath.Join(dir, "results.json")); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
 
 // ParseResultsJSON decodes the results written by ResultsJSON.
 func ParseResultsJSON(b []byte) ([]RunResult, error) {

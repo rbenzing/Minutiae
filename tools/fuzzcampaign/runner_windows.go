@@ -3,24 +3,15 @@
 package main
 
 import (
-	"errors"
 	"os"
 	"os/exec"
 	"time"
 )
 
-var errUnsupported = errors.New("fuzzcampaign: process groups are not supported on Windows")
-
-// setGroup is a no-op on Windows: host mode is refused there, and the runner is only exercised
-// by its own tests.
+// setGroup is a no-op on Windows: host mode is refused there (HostModeAllowed), so the runner
+// is only exercised by its own tests, which do not use process groups.
 func setGroup(*exec.Cmd) {}
 
-// stopGroup would stop a process group; it is unsupported on Windows.
-func stopGroup(int, time.Duration) error { return errUnsupported }
-
-// stopProcess falls back to killing the process itself.
-func stopProcess(p *os.Process, grace time.Duration) {
-	if stopGroup(p.Pid, grace) != nil {
-		_ = p.Kill()
-	}
-}
+// stopProcess kills the process itself; there is no process group to stop, and the grace is
+// not used.
+func stopProcess(p *os.Process, _ time.Duration) { _ = p.Kill() }

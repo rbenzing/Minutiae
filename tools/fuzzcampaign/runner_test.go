@@ -100,7 +100,7 @@ func testEnv(t *testing.T, script map[string]string, rec *recorded) Env {
 		Limit:    func(Item) time.Duration { return 60 * time.Second },
 	}
 	env.CorpusMax.Files, env.CorpusMax.Bytes = 2000, 64<<20
-	for _, d := range []string{env.Work, env.Out} {
+	for _, d := range []string{env.Work, env.Out, env.CacheDir(Target{})} {
 		if err := os.MkdirAll(d, 0o750); err != nil {
 			t.Fatal(err)
 		}

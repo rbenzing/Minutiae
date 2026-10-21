@@ -29,6 +29,7 @@ type Env struct {
 		Files int
 		Bytes int64
 	}
+	OnResult func([]RunResult)                                                     // called with all results so far after each target; nil means none
 	BaseEnv  []string                                                              // environment of the go test process; nil means os.Environ()
 	CacheDir func(Target) string                                                   // the target's fuzz corpus cache directory; nil means <GOCACHE>/fuzz/<module>/<pkg>/<Name>
 	Command  func(dir string, env []string, name string, args ...string) *exec.Cmd // nil means exec.Command with Dir and Env set
@@ -194,7 +195,7 @@ func (GoRunner) Run(ctx context.Context, it Item, env Env) (RunResult, error) {
 	res.Findings = findings
 	notes = append(notes, fnotes...)
 
-	if pnote := pruneCorpus(env, it.Target); pnote != "" {
+	if pnote := pruneCorpus(env, it.Target, res.NewInteresting); pnote != "" {
 		notes = append(notes, pnote)
 		if res.Outcome == OK {
 			res.Outcome = Failed
@@ -367,12 +368,12 @@ func copyFileExact(src, dst string) error {
 
 // pruneCorpus prunes the target's fuzz corpus cache to the caps and returns a note for a
 // failure ("" when it worked or there was nothing to prune).
-func pruneCorpus(env Env, t Target) string {
+func pruneCorpus(env Env, t Target, newInteresting uint64) string {
 	dir := ""
 	if env.CacheDir != nil {
 		dir = env.CacheDir(t)
 	} else {
-		dir = defaultCacheDir(env.Work, t)
+		dir = defaultCacheDir(env.Work, env.BaseEnv, t)
 	}
 	if dir == "" {
 		return "corpus cache directory unknown: not pruned"
@@ -387,7 +388,14 @@ func pruneCorpus(env Env, t Target) string {
 	_, err := PruneCorpus(dir, files, bytes)
 	var skipped *SkippedError
 	switch {
-	case err == nil, errors.As(err, &skipped), errors.Is(err, fs.ErrNotExist):
+	case errors.Is(err, fs.ErrNotExist):
+		if newInteresting > 0 {
+			// The engine reported new interesting inputs, so it wrote a cache directory: a
+			// missing one means this path is wrong and the cap was not enforced.
+			return "corpus cache directory " + dir + " is missing although the target reported new interesting inputs: not pruned"
+		}
+		return ""
+	case err == nil, errors.As(err, &skipped):
 		return ""
 	}
 	return "corpus not pruned: " + err.Error()
@@ -395,8 +403,11 @@ func pruneCorpus(env Env, t Target) string {
 
 // defaultCacheDir is <GOCACHE>/fuzz/<module path>/<pkg>/<Name>, the place `go test -fuzz`
 // keeps the corpus it grows.
-func defaultCacheDir(work string, t Target) string {
-	out, err := defaultCommand(work, os.Environ(), "go", "env", "GOCACHE").Output()
+func defaultCacheDir(work string, base []string, t Target) string {
+	if base == nil {
+		base = os.Environ()
+	}
+	out, err := defaultCommand(work, base, "go", "env", "GOCACHE").Output()
 	if err != nil {
 		return ""
 	}
@@ -429,7 +440,9 @@ func Campaign(ctx context.Context, p Plan, r Runner, env Env, deadline time.Time
 	code := 0
 	for _, it := range p.Items {
 		var res RunResult
-		if need := it.Fuzztime + it.Minimize + 11*time.Minute; nowFunc().Add(need).After(deadline) {
+		if ctx.Err() != nil {
+			res = RunResult{Target: it.Target, Outcome: Skipped, Note: "cancelled: the campaign was interrupted before this target started"}
+		} else if need := it.Fuzztime + it.Minimize + 11*time.Minute; nowFunc().Add(need).After(deadline) {
 			res = RunResult{Target: it.Target, Outcome: Skipped, Note: "campaign deadline"}
 		} else if rr, err := r.Run(ctx, it, env); err != nil {
 			res = RunResult{Target: it.Target, Outcome: Failed, Note: err.Error()}
@@ -440,6 +453,9 @@ func Campaign(ctx context.Context, p Plan, r Runner, env Env, deadline time.Time
 			code = 1
 		}
 		results = append(results, res)
+		if env.OnResult != nil {
+			env.OnResult(results)
+		}
 	}
 	return results, code
 }

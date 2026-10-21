@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -13,8 +14,15 @@ import (
 
 var errCopyTooBig = errors.New("fuzzcampaign: source copy over 2 GiB")
 
-// maxCopyBytes bounds a source copy; a variable so a test can lower it.
-var maxCopyBytes int64 = 2 << 30
+// errCopySizeChanged is a file whose size differs from the one the copy checked (it grew or
+// shrank while being copied).
+var errCopySizeChanged = errors.New("fuzzcampaign: a file changed size while it was being copied")
+
+// maxCopyBytes and maxCopyFiles bound a source copy; variables so a test can lower them.
+var (
+	maxCopyBytes int64 = 2 << 30
+	maxCopyFiles       = 200000
+)
 
 // CopyStats counts what a copy did.
 type CopyStats struct {
@@ -51,7 +59,7 @@ func excluded(rel string) bool {
 func CopyTree(src, dst string) (CopyStats, error) {
 	var st CopyStats
 	if es, err := os.ReadDir(dst); err == nil && len(es) > 0 {
-		return st, fmt.Errorf("fuzzcampaign: copy destination %s is not empty", dst)
+		return st, fmt.Errorf("fuzzcampaign: copy destination %s is not empty: a second campaign needs a new -out (see \"Fuzz campaigns\" in docs/testing.md)", dst)
 	}
 	if err := os.MkdirAll(dst, 0o750); err != nil {
 		return st, err
@@ -150,18 +158,23 @@ func copyOne(src, dst, rel string, st *CopyStats, walking bool) error {
 		return fmt.Errorf("fuzzcampaign: tracked file %s cannot be copied: %w", rel, err)
 	}
 	switch {
+	case info.IsDir():
+		return nil // a submodule
+	}
+	if st.Files+st.Symlinks >= maxCopyFiles {
+		return fmt.Errorf("%w: more than %d files (at %s)", errCopyTooBig, maxCopyFiles, rel)
+	}
+	switch {
 	case info.Mode()&fs.ModeSymlink != 0:
 		st.Symlinks++
 		return nil
-	case info.IsDir():
-		return nil // a submodule
 	case !info.Mode().IsRegular():
 		return fmt.Errorf("fuzzcampaign: %s is not a regular file", rel)
 	}
 	if st.Bytes+info.Size() > maxCopyBytes {
 		return fmt.Errorf("%w (at %s)", errCopyTooBig, rel)
 	}
-	if err := copyFileExact(from, filepath.Join(dst, filepath.FromSlash(rel))); err != nil {
+	if err := copyFileLimited(from, filepath.Join(dst, filepath.FromSlash(rel)), info.Size()); err != nil {
 		return err
 	}
 	st.Files++
@@ -169,30 +182,106 @@ func copyOne(src, dst, rel string, st *CopyStats, walking bool) error {
 	return nil
 }
 
-// CheckOutDir refuses an output directory inside the source root, equal to or inside the
-// work copy, or at or under any directory named cases.
-func CheckOutDir(out, srcRoot, work string) error {
-	o, err := filepath.Abs(out)
+// copyFileLimited copies exactly size bytes: a file that grew or shrank since the size was
+// checked is errCopySizeChanged, so the 2 GiB cap cannot be passed by a growing file.
+func copyFileLimited(src, dst string, size int64) error {
+	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	for _, e := range strings.FieldsFunc(o, isSep) {
-		if strings.EqualFold(e, "cases") {
-			return fmt.Errorf("fuzzcampaign: -out %s is under a cases directory", o)
+	defer func() { _ = in.Close() }()
+	if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
+		return err
+	}
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := io.CopyN(out, in, size); err != nil {
+		_ = out.Close()
+		if errors.Is(err, io.EOF) {
+			return fmt.Errorf("%w: %s is shorter than the %d bytes checked", errCopySizeChanged, src, size)
+		}
+		return err
+	}
+	var extra [1]byte
+	if _, err := io.ReadFull(in, extra[:]); !errors.Is(err, io.EOF) {
+		_ = out.Close()
+		if err == nil {
+			return fmt.Errorf("%w: %s is longer than the %d bytes checked", errCopySizeChanged, src, size)
+		}
+		return err
+	}
+	return out.Close()
+}
+
+// resolveExisting makes p absolute and resolves every symlink or junction in its deepest
+// existing ancestor, then appends the part that does not exist yet. A dangling link is an error.
+func resolveExisting(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	var rest []string
+	for cur := abs; ; {
+		r, err := filepath.EvalSymlinks(cur)
+		if err == nil {
+			for i := len(rest) - 1; i >= 0; i-- {
+				r = filepath.Join(r, rest[i])
+			}
+			return r, nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
+		if _, lerr := os.Lstat(cur); lerr == nil {
+			return "", fmt.Errorf("fuzzcampaign: %s is a link to a path that does not exist", cur)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return abs, nil
+		}
+		rest = append(rest, filepath.Base(cur))
+		cur = parent
+	}
+}
+
+// CheckOutDir refuses an output directory inside the source root, equal to or inside the work
+// copy, or at or under any directory named cases. Each path is checked as given and with every
+// link in its deepest existing ancestor resolved, so a symlink or junction into the source or a
+// cases directory is refused too.
+func CheckOutDir(out, srcRoot, work string) error {
+	for _, p := range []string{out, srcRoot, work} {
+		if _, err := filepath.Abs(p); err != nil {
+			return err
 		}
 	}
-	s, err := filepath.Abs(srcRoot)
+	ro, err := resolveExisting(out)
 	if err != nil {
 		return err
 	}
-	if within(o, s) {
-		return fmt.Errorf("fuzzcampaign: -out %s is inside the source root %s", o, s)
-	}
-	w, err := filepath.Abs(work)
+	rs, err := resolveExisting(srcRoot)
 	if err != nil {
 		return err
 	}
-	if o == w {
+	rw, err := resolveExisting(work)
+	if err != nil {
+		return err
+	}
+	o, _ := filepath.Abs(out)
+	s, _ := filepath.Abs(srcRoot)
+	w, _ := filepath.Abs(work)
+	for _, p := range []string{o, ro} {
+		for _, e := range strings.FieldsFunc(p, isSep) {
+			if strings.EqualFold(e, "cases") {
+				return fmt.Errorf("fuzzcampaign: -out %s is under a cases directory (resolved: %s)", o, ro)
+			}
+		}
+	}
+	if within(o, s) || within(ro, rs) {
+		return fmt.Errorf("fuzzcampaign: -out %s is inside the source root %s (resolved: %s in %s)", o, s, ro, rs)
+	}
+	if o == w || ro == rw {
 		return fmt.Errorf("fuzzcampaign: -out %s is the work copy", o)
 	}
 	return nil
