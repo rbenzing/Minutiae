@@ -15,8 +15,8 @@ import (
 )
 
 // FakeMeta is the Meta every fake parser declares: platform android, primary
-// role "primary" with the glob android:**/parsertest/<name>.dat and the optional
-// companion "-wal", emitting message v1.
+// role "primary" with the glob android:**/parsertest/<name>.dat and no companions (they
+// belong to non-primary roles), emitting message v1.
 func FakeMeta(name, version string) parse.Meta {
 	return parse.Meta{
 		Name: name, Version: version, Title: name + " (test parser)",
@@ -24,7 +24,7 @@ func FakeMeta(name, version string) parse.Meta {
 		Emits:     []parse.Emit{{Type: message.Type, PayloadVersion: message.PayloadVersion}},
 		Inputs: []parse.InputSpec{{
 			Role: "primary", Globs: []string{"android:**/parsertest/" + name + ".dat"},
-			Companions: []string{"-wal"}, Required: true,
+			Required: true,
 		}},
 	}
 }

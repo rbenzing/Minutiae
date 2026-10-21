@@ -431,9 +431,8 @@ func TestWellBehavedLinesCap(t *testing.T) {
 	}
 }
 
-func TestFakeMetaDeclaresTheWalCompanion(t *testing.T) {
-	m := FakeMeta("x", "1.0.0")
-	if got := m.Inputs[0].Companions; len(got) != 1 || got[0] != "-wal" {
-		t.Errorf("companions %v, want [-wal]", got)
+func TestFakeMetaDeclaresNoCompanionOnThePrimary(t *testing.T) {
+	if got := FakeMeta("x", "1.0.0").Inputs[0].Companions; len(got) != 0 {
+		t.Errorf("the primary declares companions %v: they are suffixes of the primary's own path and are refused by ValidateMeta", got)
 	}
 }
