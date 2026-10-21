@@ -355,7 +355,7 @@ func TestXattrsInInodeAndBlock(t *testing.T) {
 			if got := in.Fields().FileACL != 0; got != inBlock {
 				t.Errorf("csum=%v block=%v: i_file_acl nonzero = %v", csum, inBlock, got)
 			}
-			got, err := f.Xattrs(in)
+			got, err := f.RawXattrs(in)
 			if err != nil {
 				t.Fatalf("csum=%v block=%v: %v", csum, inBlock, err)
 			}
@@ -374,7 +374,7 @@ func TestXattrsInInodeAndBlock(t *testing.T) {
 			}
 
 			none, _ := f.Inode(12)
-			if xs, err := f.Xattrs(none); err != nil || len(xs) != 0 {
+			if xs, err := f.RawXattrs(none); err != nil || len(xs) != 0 {
 				t.Errorf("inode without xattrs: %v, %v", xs, err)
 			}
 		}
@@ -466,7 +466,7 @@ func TestInodeBadExtraIsizeFallsBack(t *testing.T) {
 		if v, _ := attr(ext4.ToEntry("a", nil, in), "extra_isize"); v != "bad" {
 			t.Errorf("extra_isize %d: attr = %q", bad, v)
 		}
-		if _, err := f.Xattrs(in); err != nil {
+		if _, err := f.RawXattrs(in); err != nil {
 			t.Errorf("extra_isize %d: xattrs error %v", bad, err)
 		}
 	}
@@ -564,7 +564,7 @@ func TestXattrHostileInImage(t *testing.T) {
 		if err != nil {
 			t.Fatalf("block=%v: Inode: %v", inBlock, err)
 		}
-		if _, err := f.Xattrs(in); !errors.Is(err, filesys.ErrCorrupt) {
+		if _, err := f.RawXattrs(in); !errors.Is(err, filesys.ErrCorrupt) {
 			t.Errorf("block=%v: Xattrs = %v, want CorruptError", inBlock, err)
 		}
 		if _, ok := attr(ext4.ToEntry("a", nil, in), "xattrs_error"); !ok {
@@ -580,13 +580,13 @@ func TestXattrHostileInImage(t *testing.T) {
 	img[acl*1024] ^= 0xFF
 	f = mustOpen(t, img)
 	in, _ := f.Inode(11)
-	if _, err := f.Xattrs(in); !errors.Is(err, filesys.ErrCorrupt) {
+	if _, err := f.RawXattrs(in); !errors.Is(err, filesys.ErrCorrupt) {
 		t.Errorf("bad xattr block magic: %v", err)
 	}
 	put32(img, off+0x68, 0x7FFFFFFF)
 	f = mustOpen(t, img)
 	in, _ = f.Inode(11)
-	if _, err := f.Xattrs(in); !errors.Is(err, filesys.ErrCorrupt) {
+	if _, err := f.RawXattrs(in); !errors.Is(err, filesys.ErrCorrupt) {
 		t.Errorf("i_file_acl outside the filesystem: %v", err)
 	}
 }
@@ -669,7 +669,7 @@ func TestXattrErrorOffsetIsAbsolute(t *testing.T) {
 	put32(img, entry+8, 4)
 	f = mustOpen(t, img)
 	in, _ := f.Inode(11)
-	_, err := f.Xattrs(in)
+	_, err := f.RawXattrs(in)
 	var ce *filesys.CorruptError
 	if !errors.As(err, &ce) || ce.Offset != int64(entry) {
 		t.Errorf("err = %v (offset %v), want a CorruptError at image offset %d", err, ce, entry)
@@ -683,7 +683,7 @@ func TestXattrErrorOffsetIsAbsolute(t *testing.T) {
 	put32(img, blk*1024+32+8, 4)
 	f = mustOpen(t, img)
 	in, _ = f.Inode(11)
-	_, err = f.Xattrs(in)
+	_, err = f.RawXattrs(in)
 	if !errors.As(err, &ce) || ce.Offset != int64(blk*1024+32) {
 		t.Errorf("block: err = %v, want a CorruptError at image offset %d", err, blk*1024+32)
 	}

@@ -349,7 +349,7 @@ func TestEAInodeCycleTerminates(t *testing.T) {
 				// the EA inodes' own attributes are listed without being followed
 				for _, n := range []uint32{eaInum, eaInum + 1} {
 					if in, err := f.Inode(n); err == nil {
-						_, _ = f.Xattrs(in)
+						_, _ = f.RawXattrs(in)
 					}
 				}
 				done <- nil

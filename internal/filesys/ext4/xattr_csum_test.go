@@ -128,7 +128,7 @@ func TestXattrBlockChecksumMismatchWarns(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			xs, err := f.Xattrs(in)
+			xs, err := f.RawXattrs(in)
 			if err != nil || len(xs) != 2 || xs[0].Name != "user.alpha" || string(xs[0].Value) != "first value" {
 				t.Errorf("Xattrs = %+v, %v: the attributes are still returned", xs, err)
 			}
@@ -311,7 +311,7 @@ func TestXattrBlockForgedHeaderNeverPanics(t *testing.T) {
 				bad := csum && x.stored() != x.want()
 				wantXattrCsum(t, fmt.Sprintf("csum=%v off=%#x v=%#x", csum, off, v), e, bad)
 				if in, err := f.Inode(11); err == nil {
-					_, _ = f.Xattrs(in)
+					_, _ = f.RawXattrs(in)
 				}
 			}
 		}

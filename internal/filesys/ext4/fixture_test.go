@@ -420,7 +420,7 @@ func checkXattrs(t *testing.T, fsys *ext4.FS, want oracle, live map[string]files
 			t.Errorf("%s: %v", p, err)
 			continue
 		}
-		xs, err := fsys.Xattrs(in)
+		xs, err := fsys.RawXattrs(in)
 		if err != nil {
 			t.Errorf("%s: Xattrs: %v", p, err)
 			continue

@@ -23,11 +23,22 @@ func RawNameAlias(raw []byte) string {
 // fb ff fe are "~raw~-__-"). Size is the value length in bytes, -1 when the
 // reader cannot say without reading the value. Storage is XattrInline,
 // XattrStream, XattrFork or "" when unknown.
+//
+// Integrity is "" when the reader found nothing wrong with the value or does not
+// check it, else XattrHashBad or XattrHashUnchecked: a mark on this attribute
+// alone, never a verdict on its neighbours.
 type Xattr struct {
-	Name    string
-	Size    int64
-	Storage string
+	Name      string
+	Size      int64
+	Storage   string
+	Integrity string
 }
+
+// Integrity marks of an Xattr.
+const (
+	XattrHashBad       = "value_hash_bad"       // the value fails the hash the filesystem stores for it; OpenXattr still returns the bytes, with a warning
+	XattrHashUnchecked = "value_hash_unchecked" // the hash could not be checked within the reader's read bound; OpenXattr fails with ErrLimit
+)
 
 // Storage kinds of an Xattr.
 const (

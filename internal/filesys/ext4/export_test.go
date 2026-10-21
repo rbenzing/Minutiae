@@ -58,8 +58,8 @@ func (in *inode) Times() filesys.Times { return in.times }
 // Inode reads inode n.
 func (f *FS) Inode(n uint32) (*Inode, error) { return f.inode(n) }
 
-// Xattrs reads the extended attributes of in.
-func (f *FS) Xattrs(in *Inode) ([]Xattr, error) { return f.xattrs(in) }
+// RawXattrs reads the extended attributes of in (the production Xattrs takes an Entry).
+func (f *FS) RawXattrs(in *Inode) ([]Xattr, error) { return f.xattrs(in) }
 
 // ToEntry converts an inode to a directory entry.
 func ToEntry(name string, raw []byte, in *Inode) filesys.Entry { return toEntry(name, raw, in) }
@@ -138,3 +138,12 @@ func (f *FS) EAInodeValue(n uint32, name string) (filesys.File, bool, error) {
 	}
 	return nil, false, fmt.Errorf("inode %d has no attribute %q", n, name)
 }
+
+// SetXattrCap lowers the per-entry cap on listed attributes (before any read).
+func (f *FS) SetXattrCap(n int) { f.xattrCap = n }
+
+// SetEAHashCap lowers the bound on EA-inode value bytes hashed (before any read).
+func (f *FS) SetEAHashCap(n int64) { f.eaHashCap = n }
+
+// MaxEAHashBytes is the default bound on EA-inode value bytes hashed per filesystem.
+const MaxEAHashBytes = maxEAHashBytes

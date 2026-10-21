@@ -7,6 +7,7 @@ package ext4
 import (
 	"errors"
 	"io"
+	"sync"
 	"sync/atomic"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
@@ -17,7 +18,7 @@ const (
 )
 
 // FS is an opened ext2/3/4 filesystem. After Open it is safe for concurrent
-// use: the only mutable state is the warning collector, which is mutex-protected.
+// use: the mutable state is the warning collector and the EA-inode hash verdicts, both mutex-protected.
 type FS struct {
 	sb     *superblock
 	groups []groupDesc
@@ -39,6 +40,18 @@ type FS struct {
 	// slackWork counts the slack work done: one per 4-byte candidate checked and
 	// one per byte indexed by plausibleSlack. Tests bound it; nothing reads it.
 	slackWork atomic.Int64
+
+	// xattrCap bounds the attributes one entry lists (maxXattrsPerEntry).
+	xattrCap int
+	// eaMu guards eaVerdicts and serialises the hashing of EA-inode values, so one EA inode is read once.
+	eaMu sync.Mutex
+	// eaVerdicts holds the hash verdict of each EA inode already hashed (true: the hash is bad), up to
+	// maxEAVerdicts inodes. The verdict depends on the EA inode alone, never on the attribute that names it.
+	eaVerdicts map[uint32]bool
+	// eaHashed counts the value bytes hashed so far, and eaHashCap bounds them (maxEAHashBytes): the hash work is
+	// bounded per filesystem, however many EA inodes the entries name.
+	eaHashed  atomic.Int64
+	eaHashCap int64
 }
 
 // readFull reads exactly len(p) bytes at off; a read that returns all the
@@ -105,6 +118,8 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 
 		dirRecordCap: maxDirRecords,
 		slackScanCap: maxSlackScan,
+		xattrCap:     maxXattrsPerEntry,
+		eaHashCap:    maxEAHashBytes,
 	}
 	f.metaRanges = metadataRanges(sb, groups)
 	for _, w := range append(warns, gw...) {

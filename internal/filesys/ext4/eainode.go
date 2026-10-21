@@ -66,6 +66,37 @@ func (f *FS) eaInodeValue(parent *inode, x xattr) (fl *file, hashBad bool, err e
 		pos += r.Length
 	}
 
+	hashBad, err = f.eaHashVerdict(parent, x, in, fl)
+	if err != nil {
+		return nil, false, err
+	}
+	return fl, hashBad, nil
+}
+
+const (
+	// maxEAHashBytes bounds the value bytes hashed per filesystem. A hostile image can name thousands of EA
+	// inodes of 16 MiB each that share their blocks; the hash work is bounded here, and a value whose hash
+	// cannot be afforded is an error (filesys.ErrLimit), never one passed unchecked.
+	maxEAHashBytes = 512 << 20
+	// maxEAVerdicts bounds the verdicts remembered; beyond it a verdict is computed again, within the byte bound.
+	maxEAVerdicts = 1 << 16
+)
+
+// eaHashVerdict reports whether the crc32c of the value in EA inode in (seeded with the filesystem seed) differs
+// from its i_atime. The verdict depends on the EA inode alone, so it is computed once per EA inode and kept: any
+// number of attributes naming one EA inode read its value once (the repeated-read cost of ruling Z66). A
+// mismatch is a warning, once, and the value is still returned. The bytes hashed are charged to maxEAHashBytes;
+// a value that does not fit is filesys.ErrLimit.
+func (f *FS) eaHashVerdict(parent *inode, x xattr, in *inode, fl *file) (hashBad bool, err error) {
+	const st = "ext4 EA inode"
+	f.eaMu.Lock()
+	defer f.eaMu.Unlock()
+	if bad, ok := f.eaVerdicts[x.Inum]; ok {
+		return bad, nil
+	}
+	if f.eaHashed.Add(fl.size) > f.eaHashCap {
+		return false, fmt.Errorf("ext4: %w: attribute %q of inode %d: the %d-byte limit on the EA-inode value bytes hashed per filesystem is spent, so the value of EA inode %d cannot be verified", filesys.ErrLimit, x.Name, parent.num, f.eaHashCap, x.Inum)
+	}
 	buf := make([]byte, eaHashChunk)
 	sum := f.sb.csumSeed
 	for off := int64(0); off < fl.size; {
@@ -75,14 +106,20 @@ func (f *FS) eaInodeValue(parent *inode, x xattr) (fl *file, hashBad bool, err e
 			rerr = io.ErrUnexpectedEOF
 		}
 		if got != n {
-			return nil, false, bad("the value cannot be read to verify its hash: %v", rerr)
+			return false, corrupt(st, in.offset, "attribute %q of inode %d: EA inode %d: the value cannot be read to verify its hash: %v", x.Name, parent.num, x.Inum, rerr)
 		}
 		sum = rawCRC32C(sum, buf[:n])
 		off += int64(n)
 	}
-	if sum != in.atimeRaw {
+	hashBad = sum != in.atimeRaw
+	if hashBad {
 		f.warn("attribute %q of inode %d: the value in EA inode %d has crc32c %#08x, but its i_atime holds %#08x", x.Name, parent.num, x.Inum, sum, in.atimeRaw)
-		hashBad = true
 	}
-	return fl, hashBad, nil
+	if f.eaVerdicts == nil {
+		f.eaVerdicts = make(map[uint32]bool)
+	}
+	if len(f.eaVerdicts) < maxEAVerdicts {
+		f.eaVerdicts[x.Inum] = hashBad
+	}
+	return hashBad, nil
 }

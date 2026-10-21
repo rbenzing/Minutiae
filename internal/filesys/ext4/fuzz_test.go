@@ -159,6 +159,9 @@ func FuzzExt4Open(f *testing.F) {
 			if eaOpened < fuzzEAOpens {
 				eaOpened += fuzzEAValues(t, fsys, e)
 			}
+			if visited <= fuzzXattrEntries {
+				fuzzXattrReader(t, fsys, e)
+			}
 			if e.Type != filesys.TypeFile && e.Type != filesys.TypeSymlink {
 				return nil
 			}
@@ -313,7 +316,7 @@ func fuzzEAValues(t *testing.T, fsys *ext4.FS, e filesys.Entry) int {
 	if err != nil {
 		return 0
 	}
-	xs, _ := fsys.Xattrs(in)
+	xs, _ := fsys.RawXattrs(in)
 	opened := 0
 	for _, x := range xs {
 		if x.Inum == 0 {
@@ -356,4 +359,41 @@ func fuzzTruncatedSeeds() [][]byte {
 	opts.Extents = false
 	blk := ext4test.Build(opts, []ext4test.File{{Path: "/fill", Data: bytes.Repeat([]byte{8}, 30*bs)}, {Path: "/m", Data: bytes.Repeat([]byte{9}, 40*bs)}})
 	return [][]byte{ext[:74*bs+10], leaves[:74*bs+10], blk[:80*bs]}
+}
+
+// fuzzXattrEntries is how many entries of one input have their attributes listed and opened through the
+// XattrReader (every attribute of those, each read in bounded chunks).
+const fuzzXattrEntries = 200
+
+// fuzzXattrReader lists the attributes of entry e and opens each: a list or a typed error, never a panic; a
+// failed listing is a nil list; every opened value obeys the File.Runs contract and is read with a bound.
+func fuzzXattrReader(t *testing.T, fsys *ext4.FS, e filesys.Entry) {
+	t.Helper()
+	xs, err := fsys.Xattrs(e)
+	if err != nil && xs != nil {
+		t.Fatalf("Xattrs of %s returned a list (%d attributes) with the error %v: a damaged set is never offered in part", e.Name, len(xs), err)
+	}
+	for _, x := range xs {
+		if x.Size < -1 || (x.Storage != filesys.XattrInline && x.Storage != filesys.XattrStream) {
+			t.Fatalf("Xattrs of %s lists %+v: a size below -1 or a storage kind the reader does not produce", e.Name, x)
+		}
+		fl, err := fsys.OpenXattr(e, x.Name)
+		if err != nil {
+			continue
+		}
+		if x.Size >= 0 && fl.Size() != x.Size {
+			t.Fatalf("attribute %q of %s is listed with %d bytes but opens with %d", x.Name, e.Name, x.Size, fl.Size())
+		}
+		if runs := fl.Runs(); runs != nil {
+			if err := filesys.CheckRuns(runs, fl.Size(), fsys.Info().Size); err != nil {
+				t.Fatalf("runs of attribute %q of %s violate the File.Runs contract: %v", x.Name, e.Name, err)
+			}
+		}
+		buf := make([]byte, min(fl.Size(), fuzzReadChunk))
+		for off := int64(0); off < min(fl.Size(), fuzzFileMax); off += int64(len(buf)) {
+			if _, rerr := fl.ReadAt(buf, off); rerr != nil {
+				break
+			}
+		}
+	}
 }
