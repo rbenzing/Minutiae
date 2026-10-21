@@ -305,3 +305,26 @@ func offlineModuleError(stderr string) bool {
 	return strings.Contains(stderr, "GOPROXY=off") ||
 		(strings.Contains(stderr, "go: downloading") && (strings.Contains(stderr, "dial tcp") || strings.Contains(stderr, "lookup ") || strings.Contains(stderr, "connection refused") || strings.Contains(stderr, "network is unreachable")))
 }
+
+// V76: only an empty module cache with no network skips the template test; any other go list
+// failure (a compile error, a missing package) must fail it.
+func TestOfflineModuleError(t *testing.T) {
+	for _, tc := range []struct {
+		name, stderr string
+		want         bool
+	}{
+		{"goproxy off", "go: golang.org/x/sys@v0.1.0: module lookup disabled by GOPROXY=off", true},
+		{"dial tcp", "go: downloading golang.org/x/sys v0.1.0\ngo: golang.org/x/sys@v0.1.0: Get \"https://proxy.golang.org/x\": dial tcp: lookup proxy.golang.org: no such host", true},
+		{"network unreachable", "go: downloading example.com/m v1.0.0\ndial tcp 1.2.3.4:443: connect: network is unreachable", true},
+		{"connection refused", "go: downloading example.com/m v1.0.0\nconnect: connection refused", true},
+		{"compile error", "../../internal/decode/plist/x.go:3:1: syntax error: unexpected }", false},
+		{"missing package", "package example.com/nope is not in std", false},
+		{"download without a network cause", "go: downloading example.com/m v1.0.0\nverifying module: checksum mismatch", false},
+		{"network word alone", "dial tcp", false},
+		{"empty", "", false},
+	} {
+		if got := offlineModuleError(tc.stderr); got != tc.want {
+			t.Errorf("%s: offlineModuleError = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

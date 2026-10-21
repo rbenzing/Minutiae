@@ -263,7 +263,7 @@ func resolveExisting(p string) (string, error) {
 		}
 		parent := filepath.Dir(cur)
 		if parent == cur {
-			return abs, nil
+			return "", fmt.Errorf("fuzzcampaign: no ancestor of %s exists, so its final path cannot be resolved", abs)
 		}
 		rest = append(rest, filepath.Base(cur))
 		cur = parent
@@ -280,9 +280,15 @@ func CheckOutDir(out, srcRoot, work string) error {
 			return err
 		}
 	}
+	if oa, _ := filepath.Abs(out); isUNC(oa) {
+		return fmt.Errorf("fuzzcampaign: -out %s is a UNC path: identity cannot be compared across a share, use a local directory", oa)
+	}
 	ro, err := resolveExisting(out)
 	if err != nil {
 		return err
+	}
+	if isUNC(ro) {
+		return fmt.Errorf("fuzzcampaign: -out %s resolves to the UNC path %s: use a local directory", out, ro)
 	}
 	rs, err := resolveExisting(srcRoot)
 	if err != nil {
@@ -309,6 +315,17 @@ func CheckOutDir(out, srcRoot, work string) error {
 		return fmt.Errorf("fuzzcampaign: -out %s is the work copy", o)
 	}
 	return checkOutIdentity(o, s, w)
+}
+
+// isUNC reports whether p names a network share (Windows only; the extended UNC form counts).
+func isUNC(p string) bool {
+	if filepath.VolumeName(p) == "" || len(p) < 3 || !isSep(rune(p[0])) || !isSep(rune(p[1])) {
+		return false
+	}
+	if p[2] == '?' || p[2] == '.' {
+		return len(p) >= 8 && isSep(rune(p[3])) && strings.EqualFold(p[4:7], "UNC") && isSep(rune(p[7]))
+	}
+	return true
 }
 
 // within reports whether p is dir itself or below it.

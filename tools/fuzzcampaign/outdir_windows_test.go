@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -92,6 +93,51 @@ func TestStripExtendedPrefix(t *testing.T) {
 	} {
 		if got := stripExtendedPrefix(in); got != want {
 			t.Errorf("stripExtendedPrefix(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// V75: a UNC -out is refused whether or not the share can be reached (the check cannot compare
+// identity across a share), and so is an -out whose drive does not exist (no ancestor resolves).
+func TestOutDirOnAUNCPathOrAnUnresolvableDriveIsRefused(t *testing.T) {
+	base := t.TempDir()
+	src, work := filepath.Join(base, "src"), filepath.Join(base, "work")
+	if err := os.MkdirAll(src, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	for _, out := range []string{
+		"\\\\localhost\\C$\\fuzz-out", "\\\\localhost\\C$", "\\\\?\\UNC\\localhost\\C$\\fuzz-out", "\\\\no-such-host-lx8\\share\\out",
+	} {
+		if err := CheckOutDir(out, src, work); err == nil {
+			t.Errorf("-out %q is a UNC path and was accepted", out)
+		}
+	}
+	for letter := 'Z'; letter >= 'D'; letter-- {
+		drive := string(letter) + `:\`
+		if _, err := os.Stat(drive); err == nil {
+			continue
+		}
+		if err := CheckOutDir(drive+`fuzz-out`, src, work); err == nil {
+			t.Errorf("-out on the missing drive %s was accepted", drive)
+		}
+		return
+	}
+	t.Skip("every drive letter is in use")
+}
+
+func TestIsUNC(t *testing.T) {
+	for in, want := range map[string]bool{
+		"//localhost/C$/x":    true,
+		"//srv/share":         true,
+		"//?/UNC/srv/share/x": true,
+		"//?/C:/x":            false,
+		"//./C:/x":            false,
+		"C:/x":                false,
+		"relative/x":          false,
+	} {
+		p := strings.ReplaceAll(in, "/", string(filepath.Separator))
+		if got := isUNC(p); got != want {
+			t.Errorf("isUNC(%q) = %v, want %v", p, got, want)
 		}
 	}
 }
