@@ -16,9 +16,9 @@ Status values: `Not started` · `Spec` · `Planned` · `In progress` · `Done`
 |---|---|---|---|---|
 | 1 | Foundation + Acquisition | Case/evidence core (hash-chained audit log, manifest, `artifacts.db`, verify), device abstraction, USB serial transport + raw console, Android ADB (info, pull/push, logical, rooted partition imaging), iOS (info, AFC pull, logical backup), CLI | — | Done |
 | 2 | Image & filesystem layer | Open raw/dd and E01 images; GPT/MBR; read ext4, F2FS, APFS, HFS+, FAT, exFAT; expose unallocated space | 1 | Done |
-| 3 | Deleted data recovery | SQLite freelist/WAL/journal record recovery; signature-based file carving; slack space; ext4 journal | 2 | In progress (3A foundation, 3I SQLite file library and 3J SQLite record recovery done: `sqlite recover` turns deleted, WAL, journal and slack rows into `db_row` records; 3B-3H, 3K pending) |
+| 3 | Deleted data recovery | SQLite freelist/WAL/journal record recovery; signature-based file carving; slack space; ext4 journal | 2 | In progress (3A foundation, 3I SQLite file library and 3J SQLite record recovery done: `sqlite recover` turns deleted, WAL, journal and slack rows into `db_row` records; 3B FAT/exFAT deleted-file recovery done; 3C-3H, 3K pending) |
 | 4 | Artifact parsers (plugin system) | SMS/MMS, calls, contacts, calendar, browser history, WhatsApp, Telegram, Signal (where decryptable), Instagram and others, as plugins writing to `artifacts.db` | 2, 3I, 5 (4G also 3A, 3J) | In progress (4D done: android.mmssms, android.calllog and android.contacts on the 4B decoder, no claims yet; 4A started before 3I and 5 are Done: it needs only the finished records writer of 5A, 4B needs 3I, 4G needs 3A and 3J; 3J is done, so 4G can read `db_row` records, applies table claims and the `fit`/`guess` basis rule itself, and owns timestamps) |
-| 5 | Unified artifact database | Indexed store of all parsed records with provenance (artifact, path, offset, deleted flag); full-text keyword search | 1 | In progress (5A, 5B, 5C done: `records show` resolves and checks the provenance chain and translates record offsets to image offsets; 5D remains) |
+| 5 | Unified artifact database | Indexed store of all parsed records with provenance (artifact, path, offset, deleted flag); full-text keyword search | 1 | In progress (5A, 5B, 5C done: `records show` resolves and checks the provenance chain and translates record offsets to image offsets; 5D scale and close-out in progress) |
 | 6 | Analytics | Timeline, geolocation/map, communication graph, keyword lists, hash sets (NSRL / known-bad) | 4, 5 | Not started |
 | 7 | Reporting | HTML/PDF/CSV reports with hashes and chain of custody | 5 | Not started |
 | 8 | Protocol drivers | AT commands, Qualcomm EDL/diag, MediaTek BROM, UART console | 1 | Not started |
@@ -38,6 +38,26 @@ The model and its runtime are chosen in each sub-project's spec, within the defa
 Deferred (needs a separate legal/authority discussion before any spec):
 cloud account extraction.
 
+## Limitations fix program (LX)
+
+Plans that close or mitigate entries in `docs/limitations.md` without weakening any invariant.
+Each belongs to the sub-project that owns the code it changes and does not change that
+sub-project's scope.
+
+| Plan | Area | Sub-project | Status |
+|---|---|---|---|
+| LX-0 | Stale docs | — (docs only) | Not started |
+| LX-1 | Acquisition hardening (`internal/ios`, `internal/android`) | 1 | Done |
+| LX-2 | APFS and HFS+ gaps, shared decmpfs | 2 | Done |
+| LX-3 | EWF and image commands | 2 | Done |
+| LX-4 | SQLite reader and table decoder | 3 (3I), 4 (4B) | Done |
+| LX-5 | Verify and audit | 1, 5 | Not started (after 5D) |
+| LX-6 | Records, full-text search and JSON output | 5 | Not started (after 5D) |
+| LX-7a | ext4, F2FS and shared filesystem readers | 2 | Done |
+| LX-8 | Parse contract, plist decoder and fuzz tooling | 4 | In progress |
+
+The remaining LX-7 work on the FAT and exFAT readers is not yet planned.
+
 ## Specs and plans
 
 Specs and plans live in `docs/superpowers/` (gitignored, local only).
@@ -46,6 +66,7 @@ Specs and plans live in `docs/superpowers/` (gitignored, local only).
 |---|---|---|
 | 1 | `docs/superpowers/specs/2026-10-02-foundation-acquisition-design.md` | `docs/superpowers/plans/2026-10-02-1a-foundation.md`, `…-1b-serial.md`, `…-1c-android.md`, `…-1d-ios.md` |
 | 2 | `docs/superpowers/specs/2026-10-03-image-filesystem-design.md` | `docs/superpowers/plans/2026-10-03-2a-foundation.md`, then `…-2b-ext4.md`, `…-2c-fat-exfat.md`, `…-2d-f2fs.md`, `…-2e-ewf.md`, `…-2f-apfs.md`, `…-2g-hfsplus.md` |
-| 3 | `docs/superpowers/specs/2026-10-05-deleted-data-recovery-design.md` | `docs/superpowers/plans/2026-10-05-3i-sqlite-file.md` (3I SQLite file library; done: the pure-Go reader `internal/sqlitefile` with `Live()` and `History()`) and `docs/superpowers/plans/2026-10-05-3a-recovery-foundation.md` (3A foundation; done), `docs/superpowers/plans/2026-10-08-3j-sqlite-record-recovery.md` (3J SQLite record recovery; done: `internal/dbrecover`, `sqlite recover`), then 3B-3H, 3K as they appear |
+| 3 | `docs/superpowers/specs/2026-10-05-deleted-data-recovery-design.md` | `docs/superpowers/plans/2026-10-05-3i-sqlite-file.md` (3I SQLite file library; done: the pure-Go reader `internal/sqlitefile` with `Live()` and `History()`) and `docs/superpowers/plans/2026-10-05-3a-recovery-foundation.md` (3A foundation; done), `docs/superpowers/plans/2026-10-08-3j-sqlite-record-recovery.md` (3J SQLite record recovery; done: `internal/dbrecover`, `sqlite recover`), `docs/superpowers/plans/2026-10-08-3b-fat-exfat-recovery.md` (3B FAT/exFAT deleted-file recovery; done), then 3C-3H, 3K as they appear |
 | 4 | `docs/superpowers/specs/2026-10-05-artifact-parsers-design.md` | `docs/superpowers/plans/2026-10-05-4a-parser-contract.md` (4A, parser contract, host, registry, `parse list\|plan\|run`), `docs/superpowers/plans/2026-10-08-4b-table-decoder.md` (4B, SQLite table decoder), `docs/superpowers/plans/2026-10-08-4c-other-decoders.md` (4C, done: timestamp, plist and typedstream decoders), `docs/superpowers/plans/2026-10-08-4d-android-telephony.md` (4D, done: Android SMS/MMS, call log and contacts parsers), then `…-4e-…` to `…-4h-…` as they appear (4B needs plan 3I) |
-| 5 | `docs/superpowers/specs/2026-10-04-artifact-database-design.md` | `docs/superpowers/plans/2026-10-04-5a-records-core.md` (5A, done: schema v2, audited writer, verify, reader, `records list`, `show`, `stats`), `docs/superpowers/plans/2026-10-05-5b-full-text.md` (5B, done: schema v3, verified full-text index, `records search`, `records reindex`, P11), `docs/superpowers/plans/2026-10-08-5c-provenance.md` (5C, done: checked provenance chain, image-relative offsets, runs sidecar reader, recovered-data status in `records show`), then `…-5d-…` as it appears |
+| 5 | `docs/superpowers/specs/2026-10-04-artifact-database-design.md` | `docs/superpowers/plans/2026-10-04-5a-records-core.md` (5A, done: schema v2, audited writer, verify, reader, `records list`, `show`, `stats`), `docs/superpowers/plans/2026-10-05-5b-full-text.md` (5B, done: schema v3, verified full-text index, `records search`, `records reindex`, P11), `docs/superpowers/plans/2026-10-08-5c-provenance.md` (5C, done: checked provenance chain, image-relative offsets, runs sidecar reader, recovered-data status in `records show`), `docs/superpowers/plans/2026-10-08-5d-scale.md` (5D, in progress: scale and close-out) |
+| LX | `.superpowers/sdd/limitations-program.md` (program and triage) | `docs/superpowers/plans/2026-10-08-lx1-acquisition-hardening.md`, `…-lx2-apfs-hfs.md`, `…-lx3-ewf-image.md`, `docs/superpowers/plans/2026-10-14-lx4-sqlite.md`, `…-lx7a-ext4-f2fs-filesys.md`, `…-lx8-parse-plist-fuzz.md` |

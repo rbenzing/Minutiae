@@ -3,6 +3,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/android/adb"
 	"github.com/rbenzing/minutiae/internal/artparse"
 	"github.com/rbenzing/minutiae/internal/device"
+	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/filesys/detect"
 	"github.com/rbenzing/minutiae/internal/ios"
 	"github.com/rbenzing/minutiae/internal/transport/serial"
@@ -88,6 +90,9 @@ func Run(args []string, d Deps) int {
 			err = usageError{err}
 		}
 		fmt.Fprintln(d.Err, "error:", escapeMultiline(err.Error()))
+		if errors.Is(err, filesys.ErrUndecided) {
+			fmt.Fprintln(d.Err, undecidedNote)
+		}
 	}
 	return ExitCode(err)
 }

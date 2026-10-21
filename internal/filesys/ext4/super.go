@@ -147,6 +147,8 @@ type superblock struct {
 	backupBGs      [2]uint32
 	reservedGDT    uint16 // s_reserved_gdt_blocks: descriptor blocks reserved for online resize
 	checksumType   uint8
+	encoding       uint16 // s_encoding (0x27C): the casefold encoding id, 1 is utf8-12.1.0
+	encFlags       uint16 // s_encoding_flags (0x27E): bit 0 is strict mode (read, not applied)
 	csumSeed       uint32 // metadata_csum seed: s_checksum_seed with CSUM_SEED, else crc32c(~0, uuid)
 	groups         int64  // block groups described by the declared block count
 	itableBlocks   int64  // blocks in one group's inode table
@@ -229,6 +231,8 @@ func parseSuper(b []byte, imgSize int64) (*superblock, []string, error) {
 		revLevel:       le.Uint32(b[0x4C:]),
 		firstIno:       goodOldFirstIno,
 		inodeSize:      goodOldInodeSz,
+		encoding:       le.Uint16(b[0x27C:]),
+		encFlags:       le.Uint16(b[0x27E:]),
 	}
 	lbs := le.Uint32(b[0x18:])
 	if lbs > maxLogBlockSize {

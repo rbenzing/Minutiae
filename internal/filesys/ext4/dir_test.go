@@ -475,7 +475,7 @@ func TestLookupNested(t *testing.T) {
 		{Path: "/plain", Dir: true},
 		{Path: "/plain/File.TXT", Data: []byte("p")},
 	}
-	img := ext4test.Build(ext4test.Options{Extents: true}, files)
+	img := ext4test.Build(ext4test.Options{Extents: true, Encoding: 1}, files)
 	f := mustOpen(t, img)
 
 	e, err := f.Lookup("/a/b/c/file.txt")
@@ -502,7 +502,7 @@ func TestLookupNested(t *testing.T) {
 	if l, err := f.Lookup("/ln"); err != nil || l.Type != filesys.TypeSymlink || l.LinkTarget != "/a" {
 		t.Errorf("symlinks are reported, not followed: %+v, %v", l, err)
 	}
-	// Case-insensitive directories compare with EqualFold; others are exact.
+	// Case-insensitive directories compare with the kernel's utf8-12.1.0 rules (Options.Encoding 1); others are exact.
 	if c, err := f.Lookup("/cf/file.txt"); err != nil || c.Name != "File.TXT" {
 		t.Errorf("casefold Lookup = %+v, %v", c, err)
 	}
@@ -1012,7 +1012,7 @@ func TestWarningsAreDedupedCappedAndConcurrencySafe(t *testing.T) {
 		f.Warn("extra %d", i)
 	}
 	ws := f.Info().Warnings
-	if len(ws) != 1001 || ws[1000] != "further warnings suppressed" {
+	if len(ws) != 1001 || !strings.HasPrefix(ws[1000], filesys.SuppressedWarning) {
 		t.Fatalf("%d warnings, last %q; want 1000 plus one suppression line", len(ws), ws[len(ws)-1])
 	}
 	f.Warn("late")

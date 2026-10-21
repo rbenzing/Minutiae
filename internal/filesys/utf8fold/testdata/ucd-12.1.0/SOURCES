@@ -1,0 +1,13 @@
+Unicode Character Database 12.1.0 files, fetched 2026-10-16 from https://www.unicode.org/Public/12.1.0/ucd/<file>.
+Each file is committed gzip -n -9. SHA-256 below is of the UNCOMPRESSED file as fetched.
+License: LICENSE-unicode.txt (https://www.unicode.org/license.txt, fetched the same day).
+
+93ab1acd8fd9d450463b50ae77eab151a7cda48f98b25b56baed8070f80fc936  UnicodeData.txt
+9c772627c6ee77eea6a17b42927b8ee28ca05dc65d6a511062104baaf3d12294  CaseFolding.txt
+a6eb7a8671fb532fbd88c37fd7b20b5b2e7dbfc8b121f74c14abe2947db0da68  DerivedCoreProperties.txt
+e7a93b009565cfce55919a381437ac4db883e9da2126fa28b91d12732bc53d96  LICENSE.txt
+
+URLs:
+https://www.unicode.org/Public/12.1.0/ucd/UnicodeData.txt
+https://www.unicode.org/Public/12.1.0/ucd/CaseFolding.txt
+https://www.unicode.org/Public/12.1.0/ucd/DerivedCoreProperties.txt

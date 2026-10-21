@@ -916,3 +916,22 @@ func expectedEntries(files []apfstest.File) int {
 	}
 	return len(set)
 }
+
+// Z74 (identity): a stored name that is also the display form of another record is ambiguous (ReadDir shows both
+// under it), never the stored name and never whichever record the scan meets first.
+func TestLookupStoredNameThatIsAnotherRecordsAliasIsAmbiguous(t *testing.T) {
+	bin := "\xff\xfe.bin"
+	lit := rawName([]byte(bin))
+	f, _ := openOpts(t, volOpts(dataVolume(
+		apfstest.File{Path: "/bin", RawName: []byte(bin), Data: []byte("1")},
+		apfstest.File{Path: "/" + lit, Data: []byte("22")},
+	)))
+	if e, err := f.Lookup("/Data/" + lit); !errors.Is(err, filesys.ErrAmbiguous) {
+		t.Errorf("Lookup(%q) = %+v, %v; want ErrAmbiguous", lit, e, err)
+	}
+	// the raw bytes cannot be typed as a name that ReadDir shows, but the stored literal alone is found
+	g, _ := openOpts(t, volOpts(dataVolume(apfstest.File{Path: "/" + lit, Data: []byte("22")})))
+	if e := mustLookup(t, g, "/Data/"+lit); e.Size != 2 {
+		t.Errorf("a lone stored ~raw~ name = %+v", e)
+	}
+}

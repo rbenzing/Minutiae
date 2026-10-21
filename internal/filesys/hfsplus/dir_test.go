@@ -1019,3 +1019,22 @@ func TestWriteBuilderImages(t *testing.T) {
 		}
 	}
 }
+
+// Z74 (identity): a stored name that is also the display form of another record is ambiguous (ReadDir shows both
+// under it), never the stored name.
+func TestLookupStoredNameThatIsAnotherRecordsAliasIsAmbiguous(t *testing.T) {
+	display, _ := rawForm(units("a/b"))
+	files := []hfsplustest.File{
+		{Path: "/slash", NameUnits: units("a/b")},
+		{Path: "/lit", NameUnits: units(display)},
+		{Path: "/alone", NameUnits: units("~raw~AAAA")},
+	}
+	_, lay, f := buildTree(t, hfsplustest.Options{HFSX: true, CaseSensitive: true}, files)
+	if e, err := f.Lookup("/" + display); !errors.Is(err, filesys.ErrAmbiguous) {
+		t.Errorf("Lookup(%q) = %+v, %v; want ErrAmbiguous", display, e, err)
+	}
+	// a stored ~raw~ name with no record behind its alias is still found
+	if e, err := f.Lookup("/~raw~AAAA"); err != nil || e.ID != idOf(lay.CNIDs["/alone"]) {
+		t.Errorf("lone literal ~raw~ name = %+v, %v", e, err)
+	}
+}

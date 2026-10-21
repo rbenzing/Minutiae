@@ -111,6 +111,9 @@ type RecoverPlan struct {
 	ReaderWarnings int // reader warnings (Candidate.Warnings) of the planned candidates, all counted
 	IncompleteIDs  []*SearchIncompleteError
 	FSWarnings     []string // new filesystem warnings the planning raised (the unallocated note included)
+	// FSWarningsSuppressed is how many warnings the filesystem dropped while planning (the growth of its
+	// suppression note); the note itself is one entry of FSWarnings however large the growth is.
+	FSWarningsSuppressed uint64
 
 	candidates  int
 	uniform     int
@@ -187,6 +190,17 @@ func (s *Session) PlanRecovery(ctx context.Context, o RecoverOptions) (*RecoverP
 	for _, w := range fsys.Info().Warnings {
 		if !slices.Contains(before, w) {
 			plan.FSWarnings = append(plan.FSWarnings, w)
+		}
+	}
+	after := fsys.Info().Warnings
+	if isSuppressionNote(after, filesys.MaxWarnings) {
+		n2, _ := filesys.ParseSuppressedNote(after[filesys.MaxWarnings])
+		var n1 uint64
+		if isSuppressionNote(before, filesys.MaxWarnings) {
+			n1, _ = filesys.ParseSuppressedNote(before[filesys.MaxWarnings])
+		}
+		if n2 > n1 {
+			plan.FSWarningsSuppressed = n2 - n1
 		}
 	}
 	if plan.unallocNote != "" {

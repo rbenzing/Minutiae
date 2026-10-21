@@ -142,7 +142,7 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 // UUID is the volume serial number as "XXXX-XXXX" (empty when the boot
 // sector has no extended boot signature). Warnings is a snapshot: it holds the
 // problems found at Open and those met since, without duplicates, at most 1000
-// distinct ones plus one "further warnings suppressed" line.
+// distinct ones plus one `further warnings suppressed: N occurrences not recorded` note.
 func (f *FS) Info() filesys.Info {
 	warnings := f.warns.Snapshot()
 	uuid := ""

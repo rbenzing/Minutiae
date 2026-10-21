@@ -23,11 +23,24 @@ func RawNameAlias(raw []byte) string {
 // fb ff fe are "~raw~-__-"). Size is the value length in bytes, -1 when the
 // reader cannot say without reading the value. Storage is XattrInline,
 // XattrStream, XattrFork or "" when unknown.
+//
+// Integrity is "" when the reader does not check the value (it says nothing: "" is never "verified"), else
+// XattrHashOK (the value was checked against the hash the filesystem stores and matches), XattrHashBad or
+// XattrHashUnchecked: a mark on this attribute
+// alone, never a verdict on its neighbours.
 type Xattr struct {
-	Name    string
-	Size    int64
-	Storage string
+	Name      string
+	Size      int64
+	Storage   string
+	Integrity string
 }
+
+// Integrity marks of an Xattr.
+const (
+	XattrHashOK        = "value_hash_ok"        // the value was checked against the hash the filesystem stores for it and matches
+	XattrHashBad       = "value_hash_bad"       // the value fails the hash the filesystem stores for it; OpenXattr still returns the bytes, with a warning
+	XattrHashUnchecked = "value_hash_unchecked" // the hash could not be checked within the reader's read bound; OpenXattr fails with ErrLimit
+)
 
 // Storage kinds of an Xattr.
 const (
@@ -50,7 +63,9 @@ var ErrXattrCap = fmt.Errorf("%w: more extended attributes than the reader will 
 // unknown name is ErrNotFound; a value the reader does not extract is
 // ErrUnsupported; the value is never offered as a prefix of a damaged one.
 // Xattrs returns an error, never an empty list, when the attribute set cannot
-// be read; an empty list means the entry has none.
+// be read; an empty list means the entry has none. Xattr.Integrity "" means this
+// reader did not check the value, never that it verified it: a checked value is
+// XattrHashOK, XattrHashBad or XattrHashUnchecked.
 // Discover it with As[XattrReader](fsys).
 type XattrReader interface {
 	Xattrs(e Entry) ([]Xattr, error)

@@ -350,6 +350,8 @@ type jsonRecoverList struct {
 	ReaderWarnings int               `json:"reader_warnings"`
 	IncompleteIDs  []string          `json:"incomplete_ids"`
 	FSWarnings     int               `json:"fs_warnings"`
+	// FSWarningsSuppressed is how many warnings the filesystem dropped while planning (0 and omitted when none).
+	FSWarningsSuppressed uint64 `json:"fs_warnings_suppressed,omitempty"`
 }
 
 func jsonRuns(rs []evidence.Run) []jsonRun {
@@ -361,7 +363,7 @@ func jsonRuns(rs []evidence.Run) []jsonRun {
 }
 
 func newJSONRecoverList(p *examine.RecoverPlan) jsonRecoverList {
-	out := jsonRecoverList{Considered: p.Considered, Items: []jsonRecoverItem{}, SkippedBy: p.SkippedBy, LimitReached: p.LimitReached, NotProcessed: p.NotProcessed, ReaderWarnings: p.ReaderWarnings, IncompleteIDs: incompleteTexts(p.IncompleteIDs), FSWarnings: len(p.FSWarnings)}
+	out := jsonRecoverList{Considered: p.Considered, Items: []jsonRecoverItem{}, SkippedBy: p.SkippedBy, LimitReached: p.LimitReached, NotProcessed: p.NotProcessed, ReaderWarnings: p.ReaderWarnings, IncompleteIDs: incompleteTexts(p.IncompleteIDs), FSWarnings: len(p.FSWarnings), FSWarningsSuppressed: p.FSWarningsSuppressed}
 	if out.SkippedBy == nil {
 		out.SkippedBy = map[string]int{}
 	}

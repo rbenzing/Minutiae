@@ -186,6 +186,9 @@ func printRecoverList(w io.Writer, plan *examine.RecoverPlan) {
 	if n := len(plan.FSWarnings); n > 0 {
 		fmt.Fprintf(w, "filesystem warnings: %d\n", n)
 	}
+	if plan.FSWarningsSuppressed > 0 {
+		fmt.Fprintf(w, "filesystem warnings suppressed while planning: %d (the list above counts the suppression note as one)\n", plan.FSWarningsSuppressed)
+	}
 }
 
 func firstNonEmpty(a, b string) string {

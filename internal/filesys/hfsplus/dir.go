@@ -207,7 +207,8 @@ func (f *FS) listFolder(id, valence uint32) ([]filesys.Entry, error) {
 // catalog tree decides case: HFS+ and case-folding HFSX volumes ignore it,
 // case-sensitive HFSX volumes - keyCompareType 0xBC - do not; an exact spelling
 // is preferred to a folded one), then the "~raw~"+base64url display form of a
-// name that ReadDir shows that way. Names are compared as stored: no Unicode
+// name that ReadDir shows that way. A spelling that is both a stored name and the display
+// form of another record is filesys.ErrAmbiguous, never the stored name. Names are compared as stored: no Unicode
 // normalization is done, so a composed (NFC) path does not find a name stored
 // decomposed (NFD); such an entry is reachable by its listed ID.
 func (f *FS) Lookup(p string) (filesys.Entry, error) {
@@ -261,6 +262,13 @@ func (f *FS) child(parent uint32, comp string) (filesys.Entry, error) {
 		k, r, err := f.findRecordTree(parent, plain)
 		switch {
 		case err == nil && slices.Equal(k.name, plain):
+			// A stored name that is also the display form of another record is ambiguous (ReadDir shows both
+			// under it), never the stored name (Z74). Only a query that decodes as an alias needs the descent.
+			if _, ok, aerr := f.aliasChild(parent, comp); aerr != nil {
+				return filesys.Entry{}, aerr
+			} else if ok {
+				return filesys.Entry{}, fmt.Errorf("%w: %s is a stored name and also the display form of another record of folder %d", filesys.ErrAmbiguous, strconv.Quote(comp[:min(len(comp), 64)]), parent)
+			}
 			return f.toEntry(k, r)
 		case err == nil:
 			nearKey, near, haveNear = k, r, true

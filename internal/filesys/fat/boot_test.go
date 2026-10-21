@@ -732,7 +732,7 @@ func TestWarningsDedupedCappedSnapshot(t *testing.T) {
 		f.Warn("problem %d", i)
 	}
 	w := f.Info().Warnings
-	if len(w) != 1001 || w[1000] != "further warnings suppressed" {
+	if len(w) != 1001 || !strings.HasPrefix(w[1000], filesys.SuppressedWarning) {
 		t.Fatalf("len %d, last %q", len(w), w[len(w)-1])
 	}
 	// More distinct warnings do not add more lines.

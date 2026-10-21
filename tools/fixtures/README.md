@@ -17,7 +17,7 @@ docker build -t minutiae-fixtures tools/fixtures
 docker run --rm --privileged -v "$PWD:/work" -w /work minutiae-fixtures bash tools/fixtures/gen.sh all
 ```
 
-`gen.sh <fixture>` builds one fixture (`volume-gpt`, `volume-mbr`, `ext4`, `fat`, `exfat`, `f2fs`, `ewf`, `apfs`; `hfsplus` and `apfs-populated` each need their own image, see "HFS+ fixtures" and "APFS populated fixture").
+`gen.sh <fixture>` builds one fixture (`volume-gpt`, `volume-mbr`, `ext4`, `fat`, `exfat`, `f2fs`, `ewf`, `apfs`; `hfsplus`, `apfs-populated` and `ext4-xattr` each need their own image, see "HFS+ fixtures", "APFS populated fixture" and the `ext4_xattr.sh` row below).
 `--privileged` is needed by `exfat` only (see below; `f2fs` no longer mounts, see "F2FS deleted entries come from the QEMU guest"); every other fixture runs without it.
 
 With Git Bash on Windows, stop MSYS rewriting the container paths:
@@ -35,6 +35,7 @@ Scripts must keep LF line endings (`.gitattributes` enforces this).
 | `volume-gpt.sh` | `gpt-disk.img.gz`, `gpt-disk.expect.json` | `sfdisk --json`, cross-checked with `sgdisk -i` |
 | `volume-mbr.sh` | `mbr-disk.img.gz`, `mbr-disk.expect.json` | `sfdisk --json` |
 | `ext4.sh` + `ext4_oracle.py` + `ext4_freeblocks.py` | `ext4-4k-csum`, `ext4-1k-blockmap-ext2`, `ext4-inline`, `ext4-1k-metabg-uninit` (`.img.gz` + `.expect.json`, in `internal/filesys/ext4/testdata/`) | the source tree handed to `mke2fs -d` (walked by `ext4_oracle.py`: type, size, sha256, mode, mtime, symlink targets), the generator's own list of `debugfs rm` operations (deleted names), `dumpe2fs -h` (label, uuid, block size, features) and the full `dumpe2fs` report (`free_blocks`: the free block ranges, inclusive `[first, last]`, parsed by `ext4_freeblocks.py`; the tests compare the reader's unallocated space with them exactly) |
+| `ext4_xattr.sh` (+ `ext4_oracle.py`, `ext4_freeblocks.py`; NOT part of `all`, runs in the pinned `minutiae-recover-fixtures` image: `docker run --rm -v "<repo>:/work" -w /work minutiae-recover-fixtures bash tools/fixtures/gen.sh ext4-xattr`, no `--privileged`) | `ext4-xattr` (`.img.gz` + `.expect.json`, in `internal/filesys/ext4/testdata/`; 4 MiB, 1 KiB blocks, `metadata_csum,64bit,ea_inode`) | as `ext4.sh` (source tree, `debugfs rm`, `dumpe2fs`) plus `xattrs`: for each attribute, its name and size from `debugfs ea_list`, the SHA-256 of its value from `debugfs ea_get -f` then `sha256sum`, and its storage kind (`inode`, `block`, `ea_inode`), asserted by the script against `debugfs stat` (the File ACL block of `/file1`, the EA-inode flag `0x200000`); `ea_inode` is the number of the inode that holds `user.huge`. libext2fs never shares an xattr block, so there is no shared block here (the shared case is tested with the builder only). `debugfs ea_set -f` reads at most one block, so the EA-inode value is 1024 bytes. `debugfs ea_set` leaves the parent's `i_blocks` short by the EA-inode value, so the script runs `e2fsck -fy` (exit 0 or 1; its report is printed, and the xattr block of `/file1` must be byte-identical before and after, so the repair provably touched only the parent's `i_blocks`) and pins `s_lastcheck`; it also pins the ctime and atime `mke2fs -d` copied from the real clock (`sif`), except the EA inode's (they hold the hash and reference count). Byte-identical across runs (generated twice, three seconds apart). It never regenerates a committed fixture: the generator image `minutiae-fixtures` has an unpinned base |
 | `fat.sh` + `fat_tree.sh` + `fat_oracle.py` + `fat_chains.py` | `fat12`, `fat16`, `fat32` (`.img.gz` + `.expect.json`, in `internal/filesys/fat/testdata/`) | the source tree (`fat_oracle.py`: type, size, sha256, mtime), the generator's own list of deleted names, `fsck.fat -v` (geometry, data-area offset, cluster count, clusters in use) and `mshowfat` (the cluster chain of every live file and directory; the free clusters are the ones no live chain holds, `fat_chains.py` fails unless that count equals what `fsck.fat -v` reports in use; the tests compare the reader's unallocated space and every file's runs with them exactly) |
 | `exfat.sh` + `exfat_chains.py` (also `fat_tree.sh`, `fat_oracle.py`) | `exfat` (`.img.gz` + `.expect.json`, in `internal/filesys/exfat/testdata/`) | the source tree, the generator's deleted names, and `dump.exfat` (boot report: geometry, serial, label; `-c -d <path>`: the cluster chain of every live path; the free clusters are the ones no chain, bitmap, up-case table or root holds, cross-checked against dump.exfat's "Free Clusters") |
 | `apfs.sh` + `apfs_oracle.py` | `apfs-ci`, `apfs-cs`, `apfs-multichunk` (`.img.gz` + `.expect.json`, in `internal/filesys/apfs/testdata/`) | the `mkapfs` arguments (label, UUIDs, case flags) and an independent Python decoder of the finished image (see "APFS determinism and limits"); `apfsck` must accept the image |
@@ -1217,6 +1218,186 @@ holds one hash per file (a fixture can have three files), not one image hash.
 `go test -tags sqlitematrix ./internal/sqlitefile` runs the large engine
 matrix of Task 13 (45 live scenarios, 1448 WAL mutations); the fixtures do not
 need it. One fuzz corpus seed is committed (`internal/sqlitefile/testdata/fuzz/FuzzCreateParse/d65cbe711e2fe660`, a CREATE INDEX statement found by fuzzing and kept as a regression input); the fuzz targets otherwise run only their in-code seeds.
+
+## Casefold lookup oracle
+
+`gen.sh casefold` (not part of `all`) asks a real Linux kernel which names a casefold directory
+treats as the same name. A QEMU guest (TCG, no KVM, the 6.1 kernel of `minutiae-recover-fixtures`)
+mounts an ext4 and an F2FS image whose directories are casefold, stores names in them and, for each
+probe, answers "does this query resolve to that stored name". The answers are the independent oracle
+for the `utf8fold` package (LX-7a Task 3): they come from the kernel's lookups, never from Minutiae.
+Files: `casefold.sh` (host driver), `casefold_guest.sh` (self-contained guest library; it does not
+source the recovery fixtures' guest library), `casefold_probes.py` (probe list; parses the Unicode
+12.1.0 files itself and shares nothing with the Go generator).
+
+Three outputs, committed together because the images are not byte-reproducible (see "QEMU images are
+not byte-reproducible"):
+
+- `internal/filesys/utf8fold/testdata/kernel-vectors.json.gz` (gzip, level 9, mtime 0, written by the Python gzip module; only the decompressed content is pinned) and
+  `kernel-vectors.meta.json`: the probes and the verdicts (every measured row is kept), with
+  `generator.image_sha256` pinning both images and `generator.fsck_exit` recording the checkers' exit
+  statuses. The meta file pins the SHA-256 of the DECOMPRESSED JSON and the row count; the tests
+  decompress the file and compare;
+- `internal/filesys/ext4/testdata/ext4-casefold.img.gz` and `.expect.json`;
+- `internal/filesys/f2fs/testdata/f2fs-casefold.img.gz` and `.expect.json`. The directory lists are read
+  from the finished image by `debugfs ls -p` and `fsck.f2fs -t` / `dump.f2fs -i`, never by Minutiae. Each
+  directory records `count` and `names_sha256` (SHA-256 over the sorted, de-duplicated lower-case hex
+  names, each followed by a newline); the full `names_hex` list is kept only for `/plain` and `/ambig`.
+  `TestExpectJSONWellFormed` derives each bucket's expected count and digest from the vectors' stored
+  names, so the listing of the image and the vectors must agree.
+
+The two images stay out of `TestExt4MatchesOracle` and `TestF2FSMatchesOracle` (their `fixturePaths`
+skip `*-casefold.img.gz`): the casefold `.expect.json` has directory name lists only.
+
+Size exception: the oracle commits about 2.0 MB in all (two images of 690 KB and 585 KB gzipped, the
+vectors 121 KB gzipped, two expect files of about 90 KB, 450 KB of Unicode data), above the "few hundred
+KiB" guideline of "Adding a fixture". The images are what the kernel wrote (they carry ~6000 inodes and
+cannot be thinned without changing what the kernel produced), and the vectors keep every measured row
+because Task 3's tables are checked against all of them. The vectors were 2.2 MB uncompressed before
+they were gzipped.
+
+A run that timed out, stopped early, or whose checker reported a problem is a FAILED run: the generator
+exits non-zero (the guest log must end with `GUEST-DONE`, every probe needs a verdict, `fsck.ext4 -fn` and
+`fsck.f2fs -f --dry-run` must exit 0) and nothing from it may be committed.
+
+### Regenerate
+
+```bash
+docker build -f tools/fixtures/Dockerfile.recover -t minutiae-recover-fixtures tools/fixtures
+MSYS_NO_PATHCONV=1 docker run --rm --shm-size=512m -v "C:/GIT/Minutiae:/work" -v "<scratch>:/scratch" -w /work \
+  -e CASEFOLD_WORK=/scratch/work minutiae-recover-fixtures bash tools/fixtures/gen.sh casefold
+```
+
+No `--privileged`: every `mount`, module load and attribute change happens inside the guest (the host
+segments of the scripts contain none of those words; the tripwire in `internal/archtest` checks it). The
+images (a few tens of MiB each) live in `CASEFOLD_WORK`, a bind mount of a scratch folder, never in the
+container's filesystem. The payload and the initramfs live on tmpfs (`--shm-size`): a Windows bind mount
+is case-insensitive and would merge names that differ only in case. The guest run took 170-271 s of
+wall time when the machine was idle and 630 s once under load (`timeout 1500` in `casefold_run`; a timeout
+is a failed run).
+
+### Probe protocol
+
+`casefold_probes.py --payload` writes each probe as FILE NAMES (no name is escaped, hex-decoded or
+`read` in the guest): `p/<bucket>/<id>/q/<query bytes>` and `.../s/<stored bytes>`, plus
+`s/<bucket>/<stored bytes>`. One guest boot, two virtio drives (`vda` ext4, `vdb` F2FS), mount points
+per filesystem (`/mnt/ext4-cf`, `/mnt/ext4-plain`, `/mnt/f2fs-cf`, `/mnt/f2fs-plain`; the plain ones are
+bind mounts of the `/plain` directory). The guest copies the stored names into `/cf/<bucket>` and the
+first bucket's names into `/plain`, then for each probe prints `V <id> abcd` with `a`/`c` = the stored
+name exists and `b`/`d` = `[ query -ef stored ]` (ext4, F2FS). The host aborts unless every stored name
+was present (`a` and `c` are 1; a refused stored name would record a false negative) and unless
+`debugfs ls -p` / `fsck.f2fs -t` list every stored spelling byte for byte in its bucket directory.
+
+Buckets: a bucket's stored names are pairwise distinct under the script's own fold, because a casefold
+directory keeps one entry for two names the kernel calls equal. A stored name that is not valid UTF-8
+gets a bucket of its own: the first run showed why (the kernel resolved `e` U+0301 0x80 to the entry
+already stored for U+00C9 0x80, so the second spelling was never created). 222 bucket directories.
+The probe list has one row per (stored, query) pair: the first category to produce a pair keeps it.
+
+Probe categories (15988 probes): `casefold` (every `C`/`F` folding of `CaseFolding.txt`), `decomposition`
+(every canonical decomposition), `ignorable` (every `Default_Ignorable_Code_Point`: stored `ab`, query
+`a`+cp+`b`), `unmapped` (2000 assigned code points across all planes, identity, `x`/`X` and `x`/`y`
+controls), `reorder` (combining-mark reordering, runs of 2 to 40 marks, Hangul syllables versus jamo),
+`special` (U+0130, U+0131, U+1E9E, U+00DF, U+03C2/U+03C3/U+03A3, U+212A, U+2126, U+FB03, ...),
+`post-12.1` (code points assigned after Unicode 12.1: U+A7C7/U+A7C8, U+A7C9/U+A7CA, U+A7F5/U+A7F6 from
+13.0, U+A7C0/U+A7C1 and U+061D from 14.0, U+0CF3 from 15.0; the script asserts none is assigned in the
+12.1.0 `UnicodeData.txt`) and `invalid` (611 rows: all 64 lone continuation bytes 0x80-0xBF after `x`,
+each against its upper-case twin, against the bare prefix and against `x\x80`; every lead byte
+0xC0-0xFF truncated at the end of a name; 0x80 at the start, between letters, doubled, after a
+multi-byte character and after combining marks; overlong forms, a UTF-16 surrogate in UTF-8,
+U+FFFE/U+FFFF, U+10FFFF, bytes beyond U+10FFFF). Every category also carries negative controls (the stored name with a trailing `z`, expected 0).
+A name containing a newline, a slash or a NUL cannot be a file name here and is never generated.
+
+### Routes and measurements (kernel `6.1.0-53-amd64`, Debian `6.1.187-1`, `Dockerfile.recover` pins)
+
+- Kernel: `CONFIG_UNICODE=y` (built in; `unicode.ko`/`utf8data.ko` appear in `modules.builtin`),
+  `CONFIG_EXT4_FS=m`, `CONFIG_F2FS_FS=m`, so no `Dockerfile.casefold` exists. Both mounts succeed;
+  `/proc/filesystems` lists both; `crc32c-intel` and `crc32-pclmul` fail to insert under TCG (`rc=19`) and
+  are not needed.
+- ext4: `mke2fs -t ext4 -O casefold -E encoding=utf8` on the host under the fake clock; `dumpe2fs -h`
+  prints `Character encoding: utf8-12.1`. The flag route is host-side `debugfs -w -R "sif /cf/NN flags
+  <old|0x40000000>"` on empty directories (`Flags: 0x80000` becomes `0x40080000`); the kernel shows `F`
+  in `lsattr`.
+- F2FS: `mkfs.f2fs -O casefold -C utf8`; `dump.f2fs -d 1` prints only `superblock features = 1000 :
+  casefold` (no encoding line). Route (a) does NOT hold: the root inode's `i_flags` is 0 after mkfs, and a
+  directory made in the guest is not casefold. Route (b) works and is the one used: `chattr +F` (the
+  e2fsprogs binary and its libraries copied into the initramfs) on each empty directory inside the guest;
+  `i_flags` of a bucket directory is `0x40001000`. `/plain` is created the same way and has `i_flags` 0.
+  Route (c) was not needed.
+- F2FS superblock, by diffing `mkfs.f2fs` images with and without `-O casefold -C utf8` (with
+  `-C utf8:strict` as a third): the feature word at superblock offset 2180 gains `0x1000`; `s_encoding`
+  is a u16 at superblock byte offset 2758 (1 = utf8-12.1), `s_encoding_flags` a u16 at 2760 (bit 0 is
+  strict). Absolute image offsets 3782 and 3784.
+- Shared xattr blocks (ruling Z17): the image has no `setfattr`/`getfattr` and busybox has no `*fattr`
+  applet, so this guest cannot create them (it would need the `attr` package or a static helper); they stay
+  builder-only. Not attempted.
+- ext4 and F2FS gave the same verdict on every one of the 15988 probes (`exceptions` is absent).
+- Checker exit statuses of the committed images (recorded in `generator.fsck_exit`): `fsck.ext4 -fn` 0 and
+  `fsck.f2fs -f --dry-run` 0. The gate was shown to bite on damaged copies: `fsck.ext4 -fn` exits 4 when the
+  group descriptors are zeroed, `fsck.f2fs` exits 255 with both superblocks zeroed and 1 with 600 main-area
+  blocks zeroed (the earlier `| tail || true` form would have recorded 0 for all of them). The F2FS gate
+  has a known blind spot: `fsck.f2fs` exited 0 when the checkpoint area was zeroed, so the gate does not
+  detect a zeroed checkpoint area.
+- A small F2FS image has little user space: 64 MiB leaves 16 MiB and `-o 5` reserves 48 segments; the
+  F2FS image is 128 MiB with the default overprovisioning (about 6000 inodes need ~24 MiB).
+- `e2fsck -fn` was clean on the final ext4 image. An earlier run, with a different bucket layout, got
+  `block #84 has bad max hash` for the 5000-name htree directory `/cf/00`: the image was kept as the
+  kernel wrote it, never repaired.
+- Fold-equal pair: the KERNEL refuses the second name. In a fresh casefold directory the guest created
+  `Straße` and then `STRASSE` with `mkdir` on both filesystems: the second `mkdir` failed with status 1 and the
+  directory held 1 entry (ext4 and F2FS). The pair in the ext4 image is therefore a HOST-TOOL state:
+  after the guest unmounted, `debugfs write` (libext2fs 1.47.0, which does not refuse it) created
+  `/ambig/Straße` and `/ambig/STRASSE` and `e2fsck -fn` accepts them. `ext4-casefold.expect.json` carries it in
+  `ambiguous_pair` with `"origin": "host-tool (libext2fs debugfs), not kernel-written"` and the measured
+  kernel behaviour in `kernel_behavior`. F2FS has no host-side writer, so its `ambiguous_pair` is `null`.
+
+Verdicts the Go code must copy (the vectors are the authority; each is a measurement, not an assumption):
+
+- every `Default_Ignorable_Code_Point` is ignored, including the unassigned ones (U+00AD, U+034F,
+  U+061C, U+115F-U+1160, U+17B4-U+17B5, U+180B-U+180E, U+200B-U+200F, U+202A-U+202E, U+2060-U+206F,
+  U+3164, U+FE00-U+FE0F, U+FEFF, U+FFA0, U+FFF0-U+FFF8, U+1BCA0-U+1BCA3, U+1D173-U+1D17A, U+E0000-U+E0FFF);
+- every `C`/`F` folding and every canonical decomposition of 12.1.0 resolves; Hangul syllables equal their
+  jamo; combining marks are reordered (runs of up to 40 marks included);
+- no Turkic mapping (U+0131 is not `I`), full folding (U+00DF equals `ss`), U+212A equals `k`;
+- a code point assigned after 12.1 has NO case mapping (U+A7C7 is not U+A7C8); it still takes part in
+  mark reordering;
+- invalid UTF-8, measured by 611 `invalid` rows (ext4 and F2FS agree on all of them):
+  - a STRAY CONTINUATION BYTE (0x80-0xBF where a character should start) that comes after at least one
+    byte of the name is an ordinary character that folds to itself: `x`+b equals `X`+b for all 64 bytes, the
+    text before and after it is case-folded and normalized (`é`+0x80 equals `É`+0x80, `a`+U+0323+0x80 equals
+    `A`+U+0323+0x80, `a`+0x80+`b` equals `A`+0x80+`B`, doubled stray bytes too), but it is never ignored
+    (`x`+b differs from `x`) and different bytes differ (`x\x80` equals `x`+b only for b = 0x80);
+  - the stray byte also behaves as text when the valid text after it is non-ASCII or a combining mark
+    (`a\x80é` equals `A\x80É`, `a\x80e`+U+0301 equals `a\x80é`, `a\x80`+U+0323+U+0301 equals
+    `a\x80`+U+0301+U+0323, a CJK or an emoji after it) and when several stray bytes have valid text between
+    them (`a\x80b\x81c` equals `A\x80B\x81C` but differs from `a\x81b\x80c`; also `a\x80b\x80c`, with a
+    non-ASCII or a combining mark between);
+  - a stray continuation byte at the START of a name makes the whole name opaque: `\x80` equals itself,
+    but `\x80x` differs from `\x80X`, and `\x80x` from `\x81x`; likewise `\x80\x80x` (doubled), `\x80é`,
+    `\x80e`+U+0301 against `\x80é` and `\x81é` against `\x81É` are all different (opaque), while a
+    CJK or identical name equals itself;
+  - a stray byte mixed with another invalid form makes the whole name opaque: `x\x80\xff`, `x\x80\xc1\x81`,
+    `x\x80\xe2\x82`, `x\x80`+ED A0 80, `x\x80`+F4 90 80 80 and `é\x80\xff` differ from their case twins;
+    a stray byte AFTER an invalid lead (`x\xff\x80`, `x\xfe\x80`, `x\xc0\x80`, `x\xe2\x80`, `x\xf8\x80`,
+    `é\xff\x80`) is likewise opaque, and `x\xff\x80` differs from `x\xff\x81`;
+  - every other invalid form makes the whole name opaque (compared byte for byte, no case folding, no
+    normalization): all 64 lead bytes 0xC0-0xFF truncated at the end of a name (`x`+lead differs from
+    `X`+lead and from `x`), overlong forms (C0 AF, C1 81), a truncated sequence (E2 82), a UTF-16 surrogate
+    (ED A0 80), code points above U+10FFFF (F4 90 80 80, F8 88 80 80 80), FF, FE FE;
+  - an overlong form does not resolve to its character (`xA` differs from `x` C1 81), U+FFFD does not equal
+    a bad byte;
+  - U+FFFE, U+FFFF and U+10FFFF are ordinary valid names (folded and normalized like any other).
+  The raw guest logs of each run are kept locally by whoever generated them (they are not committed); the
+  committed vectors are the authority.
+
+### Pins and licence
+
+No new image: `minutiae-recover-fixtures` (`Dockerfile.recover`: Debian bookworm snapshot 20261003,
+`linux-image-6.1.0-53-amd64 6.1.187-1`, `qemu-system-x86 1:7.2+dfsg-7+deb12u18+b3`, `busybox-static
+1:1.35.0-4+deb12u1+b1`, `e2fsprogs 1.47.0-2+b2`, `f2fs-tools 1.15.0-1`). The Unicode 12.1.0 files
+(`UnicodeData.txt`, `CaseFolding.txt`, `DerivedCoreProperties.txt`) are committed gzipped in
+`internal/filesys/utf8fold/testdata/ucd-12.1.0/` with the Unicode licence (`LICENSE-unicode.txt`) and
+`SOURCES` (URLs and SHA-256 of each file).
 
 ## Adding a fixture
 

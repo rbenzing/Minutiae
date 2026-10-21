@@ -99,10 +99,21 @@ type oracle struct {
 func fixturePaths(t testing.TB) []string {
 	t.Helper()
 	paths, err := filepath.Glob(filepath.Join("testdata", "*.img.gz"))
-	if err != nil || len(paths) == 0 {
-		t.Fatalf("no fixtures in testdata (glob err %v)", err)
+	if err != nil {
+		t.Fatalf("glob testdata: %v", err)
 	}
-	return paths
+	// the casefold images have their own schema (*-casefold.expect.json: directory name lists) and
+	// their own tests; they never join the loops written for mke2fs/sload.f2fs trees
+	kept := paths[:0]
+	for _, p := range paths {
+		if !strings.HasSuffix(p, "-casefold.img.gz") {
+			kept = append(kept, p)
+		}
+	}
+	if len(kept) == 0 {
+		t.Fatal("no fixtures in testdata")
+	}
+	return kept
 }
 
 // gunzipFixture returns the decompressed image of a *.img.gz fixture.

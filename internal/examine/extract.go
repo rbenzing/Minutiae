@@ -74,6 +74,11 @@ func (s *Session) Extract(ctx context.Context, o ExtractOptions) (Summary, error
 	for _, ref := range o.Paths {
 		m, err := s.lookupMatch(fsys, ref) // a deleted match after a cut is audited below, inside the analysis
 		if err != nil {
+			if reason, ok := lookupFailureReason(err); ok {
+				// the run ends before its analysis starts: write the analysis.start/analysis.error pair that names
+				// the path (nothing was extracted), so the failure is in the audit log
+				return s.auditLookupFailure(fsys, part, "extract", o.Paths, ref, reason, err)
+			}
 			return Summary{}, err
 		}
 		e, p := m.Entry, m.Path

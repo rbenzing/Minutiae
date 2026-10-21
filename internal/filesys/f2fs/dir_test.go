@@ -394,7 +394,7 @@ func TestLookupNested(t *testing.T) {
 		{Path: "/gone", Data: []byte("g"), Deleted: true},
 		{Path: "/sym", Symlink: "/a/b", Inline: true},
 	}
-	f, _, tree := treeFS(t, treeOpts(), files)
+	f, _, tree := treeFS(t, f2fstest.Options{Segments: 2, Encoding: 1}, files)
 	b64 := base64.RawURLEncoding.EncodeToString
 	for _, tc := range []struct {
 		path string
