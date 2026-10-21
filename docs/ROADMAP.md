@@ -53,7 +53,7 @@ sub-project's scope.
 | LX-4 | SQLite reader and table decoder | 3 (3I), 4 (4B) | Done |
 | LX-5 | Verify and audit | 1, 5 | Not started (after 5D) |
 | LX-6 | Records, full-text search and JSON output | 5 | Not started (after 5D) |
-| LX-7a | ext4, F2FS and shared filesystem readers | 2 | In progress |
+| LX-7a | ext4, F2FS and shared filesystem readers | 2 | Done |
 | LX-8 | Parse contract, plist decoder and fuzz tooling | 4 | In progress |
 
 The remaining LX-7 work on the FAT and exFAT readers is not yet planned.
