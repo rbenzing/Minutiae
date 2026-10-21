@@ -26,6 +26,7 @@ The dependency rule is enforced by `TestArchitectureDependencyRule` (`internal/a
 - iOS AFC (LX-1): `internal/ios/afc` (the bounds-checked read-only AFC client) and `internal/ios/afc/afctest` (its fake device, which re-encodes the wire itself) import no Minutiae package; `internal/ios` imports `internal/ios/afc`.
 - cgo packages follow the cgo policy (the cgo policy (docs/architecture.md)): dedicated packages, `//go:build cgo` with a `!cgo` fallback, an allow-list entry in the architecture test; none exists yet.
 - `internal/cli` may import anything.
+- `tools/fuzzcampaign` (L120, plan LX-8) imports no Minutiae package, runs fuzzers only in a throwaway copy of the source (never in the working tree) and, in docker mode, only with a host-made copy that excludes `cases/` and every untracked file.
 
 
 ## cgo policy (user decision 2026-10-07)

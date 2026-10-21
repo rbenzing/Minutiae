@@ -62,14 +62,22 @@ func checkCorpusDir(dir string) error {
 	}
 	// A symlink anywhere in the path (not only at the leaf) leads somewhere else: the resolved path
 	// must be the cleaned path itself.
-	real, err := filepath.EvalSymlinks(dir)
+	resolved, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		return err
 	}
-	if clean := filepath.Clean(dir); real != clean && !(runtime.GOOS == "windows" && strings.EqualFold(real, clean)) {
-		return fmt.Errorf("%w: %q resolves to %q (a symlink in the path)", ErrUnsafeDir, dir, real)
+	if !samePath(resolved, filepath.Clean(dir)) {
+		return fmt.Errorf("%w: %q resolves to %q (a symlink in the path)", ErrUnsafeDir, dir, resolved)
 	}
 	return nil
+}
+
+// samePath compares two cleaned paths; Windows paths are case-insensitive.
+func samePath(a, b string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 type corpusEntry struct {
