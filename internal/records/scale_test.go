@@ -456,6 +456,15 @@ func (st *scaleState) searchMatrix() {
 		{"substring.common", "substring", func(int) records.Filter { return records.Filter{Text: qSubCommon} }},
 		{"substring.mid", "substring", func(int) records.Filter { return records.Filter{Text: qSubMid} }},
 		{"substring.mid.type", "substring", func(i int) records.Filter { return records.Filter{Types: one(i), Text: qSubMid} }},
+		// D98: a common word with a rare filter. The plan choice looks only at the number of full-text
+		// hits, so these cells measure what that costs; they are not part of the two spec rows.
+		{"selective.common.deleted", "selective", func(int) records.Filter { return records.Filter{Deleted: records.Only, Text: qCommon} }},
+		{"selective.common.artifact_tiny", "selective", func(int) records.Filter {
+			return records.Filter{ArtifactIDs: []string{st.gen.TinyArtifact()}, Text: qCommon}
+		}},
+		{"selective.common.typepair", "selective", func(int) records.Filter {
+			return records.Filter{Types: []string{"calendar_event", "note"}, Text: qCommon}
+		}},
 	}
 	word, sub := 0.0, 0.0
 	for _, c := range cells {
@@ -478,9 +487,10 @@ func (st *scaleState) searchMatrix() {
 		st.res.Values[key+".p95_ms"] = p95
 		st.res.Values[key+".samples"] = float64(len(ms))
 		st.res.Values[key+".timeouts"] = float64(timeouts)
-		if c.kind == "word" {
+		switch c.kind {
+		case "word":
 			word = max(word, p95)
-		} else {
+		case "substring":
 			sub = max(sub, p95)
 		}
 	}
