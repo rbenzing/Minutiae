@@ -283,9 +283,11 @@ func TestBudgetViewZeroValueFailsClosed(t *testing.T) {
 	}
 }
 
-// Run under the race gate.
+// Run under the race gate. The limit holds two allocations of 7 bytes, so the
+// eight goroutines contend for it: a refusal (ErrBudget) is expected and
+// tolerated, and the accounting must never exceed the limit or drift.
 func TestBudgetViewConcurrentHandlesStayConsistent(t *testing.T) {
-	b := NewBudget(1 << 20)
+	b := NewBudget(14)
 	v := b.View()
 	var wg sync.WaitGroup
 	for range 8 {
@@ -295,8 +297,11 @@ func TestBudgetViewConcurrentHandlesStayConsistent(t *testing.T) {
 			defer wg.Done()
 			for range 1000 {
 				if err := h.Alloc(7); err != nil {
-					t.Error(err)
-					return
+					if !errors.Is(err, ErrBudget) {
+						t.Error(err)
+						return
+					}
+					continue // refused: nothing was reserved, so nothing is freed
 				}
 				if u := h.Used(); u > h.Limit() {
 					t.Errorf("used %d exceeds the limit %d", u, h.Limit())
@@ -308,5 +313,23 @@ func TestBudgetViewConcurrentHandlesStayConsistent(t *testing.T) {
 	wg.Wait()
 	if b.Used() != 0 || v.s.outstanding.Load() != 0 {
 		t.Fatalf("drift: used = %d, outstanding = %d", b.Used(), v.s.outstanding.Load())
+	}
+}
+
+// A zero view next to a live handle shares nothing with it: freeing through
+// the zero view leaves the live handle's state untouched.
+func TestBudgetViewFreeOnAZeroViewLeavesALiveHandleUntouched(t *testing.T) {
+	b := NewBudget(1000)
+	live := b.View()
+	if err := live.Alloc(300); err != nil {
+		t.Fatal(err)
+	}
+	h := live.handle()
+	var zero BudgetView
+	zero.Free(300)
+	zero.Free(1 << 40)
+	if b.Used() != 300 || live.s.outstanding.Load() != 300 || h.Used() != 300 {
+		t.Fatalf("after Free on a zero view: host used = %d, outstanding = %d, want 300 and 300",
+			b.Used(), live.s.outstanding.Load())
 	}
 }
