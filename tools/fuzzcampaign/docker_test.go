@@ -117,7 +117,7 @@ func TestDockerPrepareArgsDownloadOnlyWhatThePackagesNeed(t *testing.T) {
 		"../../internal/decode/plist", "../../internal/decode/ts").Output()
 	if err != nil {
 		var ee *exec.ExitError
-		if errors.As(err, &ee) && strings.Contains(string(ee.Stderr), "GOPROXY=off") {
+		if errors.As(err, &ee) && offlineModuleError(string(ee.Stderr)) {
 			t.Skipf("the template run needs the module cache, which this offline environment does not have: %s", ee.Stderr)
 		}
 		t.Fatalf("go list: %v", err)
@@ -297,4 +297,11 @@ func TestCheckImageGoVersionRefusesAMismatch(t *testing.T) {
 	if err := CheckImageGoVersion("go version go1.26.8 linux/amd64", "module x\n"); err == nil {
 		t.Errorf("a go.mod without a toolchain line was accepted")
 	}
+}
+
+// offlineModuleError reports whether go list failed only because the module cache is empty and
+// there is no network (GOPROXY=off, or a download that could not be made).
+func offlineModuleError(stderr string) bool {
+	return strings.Contains(stderr, "GOPROXY=off") ||
+		(strings.Contains(stderr, "go: downloading") && (strings.Contains(stderr, "dial tcp") || strings.Contains(stderr, "lookup ") || strings.Contains(stderr, "connection refused") || strings.Contains(stderr, "network is unreachable")))
 }

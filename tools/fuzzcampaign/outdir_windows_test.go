@@ -53,3 +53,45 @@ func TestOutDirThroughAJunctionIsRefused(t *testing.T) {
 		}
 	}
 }
+
+// Task 3d: a junction into a subdirectory of the source (not the root, not the work copy) is
+// refused too: the final path of the deepest existing ancestor is compared by containment.
+func TestOutDirThroughAJunctionIntoASourceSubdirIsRefused(t *testing.T) {
+	base := t.TempDir()
+	src := filepath.Join(base, "src")
+	sub := filepath.Join(src, "sub")
+	if err := os.MkdirAll(filepath.Join(sub, "deep"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	work := filepath.Join(base, "work")
+	toSub := filepath.Join(base, "to-sub")
+	mkJunction(t, toSub, sub)
+	for _, out := range []string{toSub, filepath.Join(toSub, "new"), filepath.Join(toSub, "deep"), filepath.Join(toSub, "new", "deeper")} {
+		if err := CheckOutDir(out, src, work); err == nil {
+			t.Errorf("-out %q reaches a subdirectory of the source through a junction and was accepted", out)
+		}
+	}
+	other := filepath.Join(base, "other")
+	if err := os.MkdirAll(other, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	toOther := filepath.Join(base, "to-other")
+	mkJunction(t, toOther, other)
+	if err := CheckOutDir(filepath.Join(toOther, "new"), src, work); err != nil {
+		t.Errorf("a junction to an unrelated directory was refused: %v", err)
+	}
+}
+
+func TestStripExtendedPrefix(t *testing.T) {
+	sep := string(filepath.Separator)
+	ext := sep + sep + "?" + sep
+	for in, want := range map[string]string{
+		ext + "C:" + sep + "a":                             "C:" + sep + "a",
+		ext + "UNC" + sep + "srv" + sep + "sh" + sep + "a": sep + sep + "srv" + sep + "sh" + sep + "a",
+		"C:" + sep + "plain":                               "C:" + sep + "plain",
+	} {
+		if got := stripExtendedPrefix(in); got != want {
+			t.Errorf("stripExtendedPrefix(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

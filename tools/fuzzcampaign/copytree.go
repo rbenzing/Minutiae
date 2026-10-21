@@ -234,6 +234,9 @@ func resolveExisting(p string) (string, error) {
 	for cur := abs; ; {
 		r, err := filepath.EvalSymlinks(cur)
 		if err == nil {
+			if r, err = finalDir(r); err != nil {
+				return "", err
+			}
 			for i := len(rest) - 1; i >= 0; i-- {
 				r = filepath.Join(r, rest[i])
 			}
@@ -245,8 +248,16 @@ func resolveExisting(p string) (string, error) {
 		if _, lerr := os.Lstat(cur); lerr == nil {
 			if _, serr := os.Stat(cur); serr == nil {
 				// It exists and can be reached, but the resolver cannot follow it (a Windows
-				// junction, or a path under one); the identity check in CheckOutDir covers it.
-				return abs, nil
+				// junction, or a path under one); its final path comes from the OS, and the identity check
+				// in CheckOutDir covers it as well.
+				r, ferr := finalDir(cur)
+				if ferr != nil {
+					return "", ferr
+				}
+				for i := len(rest) - 1; i >= 0; i-- {
+					r = filepath.Join(r, rest[i])
+				}
+				return r, nil
 			}
 			return "", fmt.Errorf("fuzzcampaign: %s is a link to a path that does not exist", cur)
 		}
