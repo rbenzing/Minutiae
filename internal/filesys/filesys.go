@@ -154,10 +154,14 @@ var (
 	// measurement of the filesystem's own comparison covers (a casefold directory holds a name the
 	// comparison has not been shown for). It is not "not found" and not "different"; readers wrap it.
 	ErrUndecided = errors.New("cannot be decided")
-	// ErrIncomplete marks a lookup that finds nothing in a directory the scan did not read to the end (a record
-	// cap, a damaged or unreadable block, a damaged block map, a sparse hole, a size above the read limit): the
-	// name may be in the part that was not read, so the answer is neither "found" nor "absent". It is
-	// returned together with ErrLimit (the cap) or ErrCorrupt (the other causes); readers wrap it.
+	// ErrIncomplete marks a lookup that finds nothing in a directory the scan did not read to the end: the name may
+	// be in the part that was not read, so the answer is neither "found" nor "absent". The causes, per reader:
+	//   - ext4: the record cap; a damaged block map; a sparse hole inside i_size; an unreadable block; i_size above
+	//     the 64 MiB read limit; an invalid rec_len; a record whose name_len does not fit; a tail too short for a record.
+	//   - F2FS: the entry cap; a damaged block map; a dentry block shared with another directory or mapped twice;
+	//     damaged dentry slots; an unreadable block; a size above the 64 MiB read limit; the per-filesystem read budget.
+	// It is returned together with ErrLimit (the caps) or ErrCorrupt (the other causes, the budget included);
+	// readers wrap it. A cause always leaves a warning in Info (TestEveryDirectoryCutCauseLogsItsWarning).
 	ErrIncomplete = errors.New("directory not read to the end")
 )
 
