@@ -40,8 +40,9 @@ func xattrDisplayName(name string) string {
 
 // Xattrs lists the attributes of the inode e names: the in-inode area first, then the xattr block. A value in the
 // inode or the block is XattrInline; a value in an EA inode is XattrStream with the size the EA inode really has,
-// and the mark XattrHashBad when its value fails the stored hash (XattrHashUnchecked when the hash work bound is
-// spent). An attribute whose EA inode is damaged is listed with Size -1 and fails in OpenXattr with ErrCorrupt.
+// and the mark XattrHashOK when its value matches the stored hash, XattrHashBad when it fails it
+// (XattrHashUnchecked when the hash work bound is spent). An attribute whose EA inode is damaged is listed with
+// Size -1, no mark, and fails in OpenXattr with ErrCorrupt. Inline values carry no mark: "" is never "verified".
 // A table that cannot be read is an error, never a partial or an empty list; more than the cap is
 // filesys.ErrXattrCap.
 func (f *FS) Xattrs(e filesys.Entry) ([]filesys.Xattr, error) {
