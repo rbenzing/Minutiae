@@ -108,8 +108,13 @@ func TestOutDirOnAUNCPathOrAnUnresolvableDriveIsRefused(t *testing.T) {
 	for _, out := range []string{
 		"\\\\localhost\\C$\\fuzz-out", "\\\\localhost\\C$", "\\\\?\\UNC\\localhost\\C$\\fuzz-out", "\\\\no-such-host-lx8\\share\\out",
 	} {
-		if err := CheckOutDir(out, src, work); err == nil {
+		// The lexical rule must be what refuses it (V79): an unreachable share is also refused by
+		// the resolver, and that refusal would not name "UNC".
+		err := CheckOutDir(out, src, work)
+		if err == nil {
 			t.Errorf("-out %q is a UNC path and was accepted", out)
+		} else if !strings.Contains(err.Error(), "UNC") {
+			t.Errorf("-out %q was refused for another reason, the error must name UNC: %v", out, err)
 		}
 	}
 	for letter := 'Z'; letter >= 'D'; letter-- {
