@@ -22,3 +22,8 @@ func DecodeRawNameAlias(s string) (raw []byte, ok bool) {
 	}
 	return b, true
 }
+
+// The "~enc~" display form of an encrypted name is the same encoding behind another prefix (ciphertext is shown
+// as base64.RawURLEncoding of its bytes), so the readers decode it by swapping the prefix for RawNamePrefix and
+// calling DecodeRawNameAlias: there is one strict decoder, and an empty payload, padding, line breaks and a
+// non-canonical spelling are rejected for both prefixes alike.

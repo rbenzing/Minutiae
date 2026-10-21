@@ -587,9 +587,9 @@ func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
 // directory, whose names are ciphertext, and never for "." or ".."); the
 // display form of ReadDir ("~enc~"+base64url in encrypted directories,
 // "~raw~"+base64url elsewhere, decoded strictly: one spelling per name; in a
-// plain directory "~raw~" stands only for the names ReadDir shows that way),
-// so a real name that happens to look like a display form wins over the name
-// that form stands for; the incomplete-scan error (filesys.ErrLimit or filesys.ErrIncomplete) when the scan
+// plain directory "~raw~" stands only for the names ReadDir shows that way);
+// a real name that is also the display form of another record is filesys.ErrAmbiguous,
+// never the real name (and with the scan cut it is the incomplete-scan error); the incomplete-scan error (filesys.ErrLimit or filesys.ErrIncomplete) when the scan
 // did not read the whole directory, never "not found"; in a casefold directory, exactly one name the kernel's
 // comparison (utf8fold, utf8-12.1.0) calls the same name; filesys.ErrAmbiguous
 // for two or more; filesys.ErrUndecided when a stored name has a shape the
@@ -632,7 +632,9 @@ const encFlagStrict = 0x1 // F2FS_ENC_STRICT_MODE_FL
 // child finds the live entry of dir named comp. The whole directory is scanned and the answer is decided in
 // one order (rulings Z18, Z39, Z47), the same as the ext4 reader's:
 //
-//  1. an exact byte match (never in an encrypted directory, never for "." or "..");
+//  1. an exact byte match (never in an encrypted directory, never for "." or ".."), unless the query is also the
+//     display form of another record: then filesys.ErrAmbiguous, or the incomplete-scan error when the scan was
+//     cut (Z74);
 //  2. the display-form alias ("~raw~" or "~enc~" + base64url); two or more records with the alias bytes are
 //     filesys.ErrAmbiguous;
 //  3. the incomplete-scan error when the scan did not read the whole directory (the entry cap, a damaged or
@@ -688,8 +690,12 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 	cut, err := f.scanDirCut(in, false, func(d *dentry) bool {
 		switch {
 		case exactOK && bytes.Equal(d.name, exact):
-			exactRec = keep(d)
-			return false
+			if exactRec == nil {
+				exactRec = keep(d)
+			}
+			// The scan ends here unless the query is also the display form of a record: that record may
+			// still follow, and a name with two readings is ambiguous, never the first one (Z74).
+			return alt != nil
 		// In a plain directory the "~raw~" form stands only for the names
 		// ReadDir shows in that form, never for a plain name.
 		case alt != nil && bytes.Equal(d.name, alt) && (enc || !plainName(d.name)):
@@ -717,6 +723,12 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 		return filesys.Entry{}, err
 	}
 	if exactRec != nil {
+		if altRec != nil { // a stored name that is also the display form of another record
+			return filesys.Entry{}, fmt.Errorf("%w: %q is a stored name and also the display form of another record of directory inode %d", filesys.ErrAmbiguous, comp, in.nid)
+		}
+		if alt != nil && cut.reason != "" { // the record the display form stands for may be in the part not read
+			return filesys.Entry{}, incompleteLookup(in.nid, comp, cut)
+		}
 		return f.dirEntry(exactRec, in)
 	}
 	if altN >= 2 { // fail closed: two alias matches are not one

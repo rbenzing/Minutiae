@@ -165,11 +165,10 @@ func TestLookupAliasPreference(t *testing.T) {
 		t.Errorf("raw ciphertext bytes matched in an encrypted directory: %v", err)
 	}
 
-	// A real name that looks like a ~raw~ display form beats the alias, though
-	// the aliased entry comes first on disk.
-	e, err = f.Lookup("/" + alias)
-	if err != nil || e.Name != alias || string(readAll(t, f, e)) != "real" {
-		t.Errorf("Lookup(%s) = %+v, %v; want the real file", alias, e, err)
+	// A real name that looks like a ~raw~ display form, beside the record the form stands for, is
+	// ambiguous (ReadDir shows both under it): never the stored name (Z74).
+	if _, err = f.Lookup("/" + alias); !errors.Is(err, filesys.ErrAmbiguous) {
+		t.Errorf("Lookup(%s) = %v; want ErrAmbiguous", alias, err)
 	}
 	if e, err = f.Lookup("/" + bad); err != nil || string(readAll(t, f, e)) != "bad" {
 		t.Errorf("Lookup(bad bytes) = %+v, %v", e, err)
