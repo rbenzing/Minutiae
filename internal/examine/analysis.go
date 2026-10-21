@@ -320,7 +320,7 @@ var warningEntryCap = 10_000
 
 // lookupFailureReason names why a path lookup failed when the examiner must see it in the audit log: the path is
 // not there ("not-found"), the filesystem could not decide ("undecided") or the name matches several entries
-// ("ambiguous").
+// ("ambiguous") or the directory was not read to the end ("incomplete").
 func lookupFailureReason(err error) (string, bool) {
 	switch {
 	case errors.Is(err, filesys.ErrUndecided):
@@ -329,6 +329,8 @@ func lookupFailureReason(err error) (string, bool) {
 		return "not-found", true
 	case errors.Is(err, filesys.ErrAmbiguous):
 		return "ambiguous", true
+	case errors.Is(err, filesys.ErrIncomplete):
+		return "incomplete", true
 	}
 	return "", false
 }

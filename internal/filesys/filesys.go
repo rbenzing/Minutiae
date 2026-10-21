@@ -154,6 +154,11 @@ var (
 	// measurement of the filesystem's own comparison covers (a casefold directory holds a name the
 	// comparison has not been shown for). It is not "not found" and not "different"; readers wrap it.
 	ErrUndecided = errors.New("cannot be decided")
+	// ErrIncomplete marks a lookup that finds nothing in a directory the scan did not read to the end (a record
+	// cap, a damaged or unreadable block, a damaged block map, a sparse hole, a size above the read limit): the
+	// name may be in the part that was not read, so the answer is neither "found" nor "absent". It is
+	// returned together with ErrLimit (the cap) or ErrCorrupt (the other causes); readers wrap it.
+	ErrIncomplete = errors.New("directory not read to the end")
 )
 
 // CorruptError reports a malformed on-disk structure. Offset is the byte

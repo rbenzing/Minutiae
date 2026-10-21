@@ -97,3 +97,16 @@ func TestExitCodeOfAnUndecidedLookup(t *testing.T) {
 		t.Error("an undecided error is also not-found")
 	}
 }
+
+// An incomplete directory read is an error of the image content: exit 1, never "not found".
+func TestExitCodeOfAnIncompleteLookup(t *testing.T) {
+	for _, cause := range []error{filesys.ErrCorrupt, filesys.ErrLimit} {
+		err := fmt.Errorf("/d/x: %w", fmt.Errorf("ext4: %w: %w: lookup cannot be decided", cause, filesys.ErrIncomplete))
+		if got := ExitCode(err); got != ExitError {
+			t.Errorf("ExitCode(%v) = %d, want %d", cause, got, ExitError)
+		}
+		if errors.Is(err, filesys.ErrNotFound) {
+			t.Error("an incomplete error is also not-found")
+		}
+	}
+}

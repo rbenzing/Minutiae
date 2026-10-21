@@ -75,7 +75,7 @@ func isCobraUsageError(err error) bool {
 // case itself. filesys.ErrUndecided is never exit 0 and never "not found".
 var imageErrors = []error{
 	filesys.ErrCorrupt, filesys.ErrUnsupported, filesys.ErrEncrypted, filesys.ErrDeleted,
-	filesys.ErrNotDeleted, filesys.ErrNoRecovery, filesys.ErrUndecided, examine.ErrInsufficientSpace,
+	filesys.ErrNotDeleted, filesys.ErrNoRecovery, filesys.ErrUndecided, filesys.ErrIncomplete, filesys.ErrLimit, examine.ErrInsufficientSpace,
 	image.ErrUnsupportedContainer, image.ErrCorruptContainer, image.ErrChunkCorrupt, evidence.ErrUnknownArtifact,
 }
 

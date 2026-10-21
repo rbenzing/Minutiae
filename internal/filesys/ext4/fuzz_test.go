@@ -2,6 +2,7 @@ package ext4_test
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -174,6 +175,7 @@ func FuzzExt4CasefoldLookup(f *testing.F) {
 	for _, s := range fuzzBuilderSeeds()[4:] {
 		f.Add(s)
 	}
+	f.Add(fuzzCutSeed(f)) // a directory whose second block has a forged rec_len: the cut property is exercised by the seed
 	f.Fuzz(func(t *testing.T, b []byte) {
 		fsys, err := ext4.Open(bytes.NewReader(b), int64(len(b)))
 		if err != nil {
@@ -192,8 +194,73 @@ func FuzzExt4CasefoldLookup(f *testing.F) {
 				if err == nil && got.Name == "" && q != "/" {
 					t.Fatalf("Lookup(%q) found an entry with no name", q)
 				}
+				if errors.Is(err, filesys.ErrNotFound) {
+					assertNoCutBehindNotFound(t, fsys, q)
+				}
 			}
 			return nil
 		})
 	})
+}
+
+// scanCutWarnings are the texts of the warnings a directory scan gives for a part of a directory it did not
+// examine (the cuts of dir.go).
+var scanCutWarnings = []string{
+	"its block map is damaged", "(sparse directory)", "is unreadable", "exceeds the 64 MiB directory limit",
+	"too short for a record", "the rest of the block is not read", "does not fit rec_len", "entries; the rest are not read",
+}
+
+// assertNoCutBehindNotFound fails when Lookup(q) said "not found" in a directory about which a scan warned that
+// it did not read all of it: the lookup must then have answered with the incomplete error. Warnings are
+// deduplicated and capped, so a missing warning proves nothing; a present one does.
+func assertNoCutBehindNotFound(t *testing.T, fsys filesys.FileSystem, q string) {
+	t.Helper()
+	i := strings.LastIndexByte(q, '/')
+	if i < 0 || len(q)-i-1 > 255 {
+		return // no parent, or a name no directory record can hold
+	}
+	parent := q[:i]
+	if parent == "" {
+		parent = "/"
+	}
+	pe, err := fsys.Lookup(parent)
+	if err != nil {
+		return
+	}
+	prefix := "directory " + strings.Replace(pe.ID, ":", " ", 1)
+	for _, w := range fsys.Info().Warnings {
+		if !strings.Contains(w, prefix+":") && !strings.Contains(w, prefix+",") {
+			continue
+		}
+		for _, c := range scanCutWarnings {
+			if strings.Contains(w, c) {
+				t.Fatalf("Lookup(%q) said not found in a directory that was not read to the end: %s", q, w)
+			}
+		}
+	}
+}
+
+// fuzzCutSeed is a two-block directory /d whose second block starts with a record of rec_len 0, so a lookup in
+// /d that finds nothing must be the incomplete error (and the scan warns that the rest of the block is not read).
+func fuzzCutSeed(tb testing.TB) []byte {
+	tb.Helper()
+	img := ext4test.Build(ext4test.Options{Extents: true}, []ext4test.File{
+		{Path: "/d", Dir: true},
+		{Path: "/d/a", Data: []byte("a")},
+		{Path: "/d/b", Data: []byte("b"), NewBlock: true},
+	})
+	fsys, err := ext4.Open(bytes.NewReader(img), int64(len(img)))
+	if err != nil {
+		tb.Fatal(err)
+	}
+	d, err := fsys.Lookup("/d")
+	if err != nil {
+		tb.Fatal(err)
+	}
+	runs, err := fsys.DirRuns(d)
+	if err != nil || len(runs) == 0 || runs[0].Length < 2048 {
+		tb.Fatalf("directory runs %+v, %v: want two blocks in the first run", runs, err)
+	}
+	binary.LittleEndian.PutUint16(img[runs[0].Offset+1024+4:], 0)
+	return img
 }

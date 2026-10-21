@@ -33,8 +33,8 @@ const (
 	// maxDirRecords bounds the entries one directory yields (live and deleted
 	// for ReadDir, live for Lookup), so a hostile directory cannot make ReadDir
 	// build an unbounded list. A directory with more entries is cut off at the
-	// cap with a warning, for Lookup too: an entry beyond the cap is reported as
-	// not found.
+	// cap with a warning; ReadDir returns what it read, while a Lookup that
+	// finds nothing in a cut directory returns filesys.ErrLimit, never not found.
 	maxDirRecords = 1 << 18
 	// maxSlackScan bounds the slack bytes one directory has searched for deleted
 	// entries. Slack is normally a few bytes per record, so a directory that
@@ -114,6 +114,23 @@ type dirScan struct {
 	slackBytes   int64    // slack bytes searched for deleted records so far
 	badIdx       []uint32 // see plausibleSlack
 	badFor       *region  // the region badIdx describes
+	cut          scanCut  // why the scan did not examine every record (the first reason)
+}
+
+// scanCut is the first reason a directory scan did not examine every record of the directory. A lookup that
+// finds nothing in such a directory cannot say "not found". limit marks the record cap (reported as
+// filesys.ErrLimit); every other cause is a damaged or unreadable region (filesys.ErrCorrupt).
+type scanCut struct {
+	reason string
+	limit  bool
+}
+
+// cutAt records the first reason the scan is incomplete. A checksum-bad block is NOT a cut: its records are
+// still examined.
+func (w *dirScan) cutAt(limit bool, format string, a ...any) {
+	if w.cut.reason == "" {
+		w.cut = scanCut{reason: fmt.Sprintf(format, a...), limit: limit}
+	}
 }
 
 // scanDir calls visit for every live record of directory in and, with
@@ -126,15 +143,29 @@ type dirScan struct {
 // never as live. Only an inline directory whose data cannot
 // be read is an error.
 func (f *FS) scanDir(in *inode, wantDeleted bool, visit func(*dirRec) bool) error {
+	_, err := f.scanDirCut(in, wantDeleted, visit)
+	return err
+}
+
+// scanDirCut is scanDir that also says why the scan did not examine every record (the zero scanCut when it
+// did): the record cap, an invalid rec_len, a too-short tail, a record whose name_len does not fit, an
+// unreadable block, a damaged block map, a sparse hole inside i_size, blocks missing from the map, or an i_size
+// above the 64 MiB read limit. Stopping because the visitor returned false is not a cut.
+func (f *FS) scanDirCut(in *inode, wantDeleted bool, visit func(*dirRec) bool) (scanCut, error) {
 	w := &dirScan{f: f, in: in, wantDeleted: wantDeleted, visit: visit, index: in.flags&inodeFlagIndex != 0, enc: in.flags&inodeFlagEncrypt != 0}
 	if f.sb.metadataCsum() {
 		w.seed = f.inodeSeed(in)
 	}
 	if in.flags&inodeFlagInlineData != 0 {
-		return w.inline()
+		err := w.inline()
+		return w.cut, err
+	}
+	if in.size > maxDirBytes {
+		w.cutAt(false, "i_size %d is above the 64 MiB directory read limit, only the first 64 MiB are read", in.size)
 	}
 	runs, isizeBlocks, err := f.dirRuns(in)
 	if err != nil {
+		w.cutAt(false, "the block map is damaged (%v)", err)
 		f.warn("directory inode %d: its block map is damaged (%v); only the entries in the blocks mapped before the damage are listed", in.num, err)
 	}
 	w.isizeBlocks = isizeBlocks
@@ -146,6 +177,7 @@ func (f *FS) scanDir(in *inode, wantDeleted bool, visit func(*dirRec) bool) erro
 		}
 		if r.Offset < 0 {
 			if lblk < isizeBlocks {
+				w.cutAt(false, "logical blocks %d-%d are not mapped (sparse directory)", lblk, min(lblk+r.Length/bs, isizeBlocks)-1)
 				f.warn("directory inode %d: no blocks at logical blocks %d-%d (sparse directory)", in.num, lblk, min(lblk+r.Length/bs, isizeBlocks)-1)
 			}
 			lblk += r.Length / bs
@@ -154,6 +186,7 @@ func (f *FS) scanDir(in *inode, wantDeleted bool, visit func(*dirRec) bool) erro
 		for pos := int64(0); pos+bs <= r.Length && !w.stop; pos += bs {
 			buf := make([]byte, bs) // one block: bounded by the block size
 			if err := readFull(f.r, buf, r.Offset+pos); err != nil {
+				w.cutAt(false, "block %d is unreadable (%v)", (r.Offset+pos)/bs, err)
 				f.warn("directory inode %d: block %d is unreadable: %v", in.num, (r.Offset+pos)/bs, err)
 			} else {
 				w.block(buf, (r.Offset+pos)/bs, lblk)
@@ -161,7 +194,10 @@ func (f *FS) scanDir(in *inode, wantDeleted bool, visit func(*dirRec) bool) erro
 			lblk++
 		}
 	}
-	return nil
+	if !w.stop && lblk < isizeBlocks {
+		w.cutAt(false, "the block map ends at logical block %d, i_size covers %d", lblk, isizeBlocks)
+	}
+	return w.cut, nil
 }
 
 // dirRuns maps directory in's blocks: the runs (Offset -1 is a hole), the
@@ -306,17 +342,20 @@ func (w *dirScan) records(g *region) {
 	for off := 0; off < g.limit && !w.stop; {
 		rec++
 		if off+direntMin > n {
+			w.cutAt(false, "%s holds %d trailing bytes at offset %d, too short for a record", g.what, n-off, off)
 			w.f.warn("directory inode %d, %s: %d trailing bytes at offset %d are too short for a record", w.in.num, g.what, n-off, off)
 			return
 		}
 		inode := binary.LittleEndian.Uint32(b[off:])
 		recLen := w.recLen(binary.LittleEndian.Uint16(b[off+4:]))
 		if recLen < direntMin || recLen%4 != 0 || off+recLen > n {
+			w.cutAt(false, "%s has an invalid rec_len %d at offset %d, so the rest of the block is not read", g.what, recLen, off)
 			w.f.warn("directory inode %d, %s: invalid rec_len %d at offset %d; the rest of the block is not read", w.in.num, g.what, recLen, off)
 			return
 		}
 		nameLen, ftype := w.nameLen(b[off:])
 		if direntHeader+nameLen > recLen {
+			w.cutAt(false, "%s has a record at offset %d whose name_len %d does not fit rec_len %d, so it is skipped", g.what, off, nameLen, recLen)
 			w.f.warn("directory inode %d, %s: name_len %d does not fit rec_len %d at offset %d; the record is skipped", w.in.num, g.what, nameLen, recLen, off)
 			off += recLen
 			continue
@@ -420,6 +459,7 @@ func (w *dirScan) emit(g *region, r *dirRec) {
 		r.deleted, r.wasLive = true, true
 	}
 	if w.count >= w.f.dirRecordCap {
+		w.cutAt(true, "more than %d entries, the rest are not read", w.f.dirRecordCap)
 		w.f.warn("directory inode %d: more than %d entries; the rest are not read", w.in.num, w.f.dirRecordCap)
 		w.stop = true
 		return
@@ -675,7 +715,8 @@ func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
 // directory, whose names are ciphertext: there only the "~enc~" form matches);
 // the display form of ReadDir ("~enc~"+base64url in encrypted directories,
 // "~raw~"+base64url elsewhere, so a real name that happens to look like a
-// display form wins over the name that form stands for); in a casefold
+// display form wins over the name that form stands for); the incomplete-scan
+// error when the scan was cut; in a casefold
 // directory, exactly one name the kernel's comparison (utf8fold, utf8-12.1.0)
 // calls the same name; filesys.ErrAmbiguous for two or more; filesys.ErrUndecided
 // when a stored name has a shape the comparison was not measured for and nothing
@@ -683,7 +724,9 @@ func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
 //
 // Empty components are ignored, "." and ".." are not special, and symlinks are
 // not followed. A directory is read up to the per-directory entry cap
-// (maxDirRecords); an entry beyond it is reported as not found.
+// (maxDirRecords). A lookup that finds nothing in a directory the scan did not
+// finish (cap, damaged or unreadable block or map, hole, over 64 MiB) is the
+// incomplete-scan error (filesys.ErrLimit or filesys.ErrIncomplete), never not found.
 func (f *FS) Lookup(p string) (filesys.Entry, error) {
 	cur := f.Root()
 	for _, comp := range strings.Split(p, "/") {
@@ -765,7 +808,7 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 		c.name = slices.Clone(r.name)
 		return &c
 	}
-	err = f.scanDir(in, false, func(r *dirRec) bool {
+	cut, err := f.scanDirCut(in, false, func(r *dirRec) bool {
 		switch {
 		case !enc && bytes.Equal(r.name, exact):
 			exactRec = keep(r)
@@ -806,6 +849,10 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 	switch {
 	case foldDir && len(exact) > utf8fold.MaxName:
 		return filesys.Entry{}, errNoChild
+	case cut.reason != "":
+		// the scan did not examine the whole directory: whatever is not found, or not yet ambiguous, may be in
+		// the part that was not read, so the answer is the typed incomplete error, never a fold decision
+		return filesys.Entry{}, incompleteLookup(in.num, comp, cut)
 	case foldDir && !supported:
 		f.warn("casefold directory inode %d: the volume's s_encoding %d (flags %#x) is not implemented, so case-insensitive lookups in casefold directories are not answered", in.num, f.sb.encoding, f.sb.encFlags)
 		return filesys.Entry{}, fmt.Errorf("ext4: %w: casefold directory inode %d on a volume with s_encoding %d (flags %#x); only utf8-12.1.0 is implemented", filesys.ErrUnsupported, in.num, f.sb.encoding, f.sb.encFlags)
@@ -817,4 +864,14 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 		return filesys.Entry{}, fmt.Errorf("ext4: %w: casefold lookup of %q in directory inode %d: %d name(s) have a shape the comparison was not measured for (first %q), so the lookup is neither found nor absent", filesys.ErrUndecided, comp, in.num, nUnknown, unknownName)
 	}
 	return filesys.Entry{}, errNoChild
+}
+
+// incompleteLookup is the error of a lookup that found no exact or alias match in a directory the scan did not
+// finish: filesys.ErrLimit for the record cap and filesys.ErrCorrupt for a damaged or unreadable region, both
+// together with filesys.ErrIncomplete; never "not found".
+func incompleteLookup(dirInode uint32, comp string, cut scanCut) error {
+	if cut.limit {
+		return fmt.Errorf("ext4: %w: %w: directory inode %d: lookup of %q cannot be decided: %s", filesys.ErrLimit, filesys.ErrIncomplete, dirInode, comp, cut.reason)
+	}
+	return fmt.Errorf("%w: %w", corrupt("ext4 directory", -1, "directory inode %d: lookup of %q cannot be decided: %s", dirInode, comp, cut.reason), filesys.ErrIncomplete)
 }
