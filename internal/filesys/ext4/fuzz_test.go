@@ -114,6 +114,7 @@ func fuzzOpenSeeds(t testing.TB) [][]byte {
 	}
 	cf := gunzipFixture(t, filepath.Join("testdata", "ext4-casefold.img.gz"))
 	seeds = append(seeds, cf[:min(len(cf), fuzzCasefoldSeedMax)])
+	seeds = append(seeds, fuzzTruncatedSeeds()...)
 	return append(seeds, make([]byte, 2048))
 }
 
@@ -165,9 +166,18 @@ func FuzzExt4Open(f *testing.F) {
 			if err != nil || file.Size() > fuzzFileMax || readTotal >= fuzzReadBudget {
 				return nil
 			}
+			covered := file.Size()
 			if runs := file.Runs(); runs != nil {
-				if err := filesys.CheckRuns(runs, file.Size(), fsys.Info().Size); err != nil {
+				// a file cut by a truncated image lists a prefix (L32): the runs are valid, and a read past them is ErrCorrupt
+				cov, err := filesys.CheckRunsPrefix(runs, file.Size(), fsys.Info().Size)
+				if err != nil {
 					t.Fatalf("runs of %s violate the File.Runs contract: %v", e.Name, err)
+				}
+				covered = cov
+			}
+			if covered < file.Size() {
+				if _, rerr := file.ReadAt(make([]byte, 1), covered); !errors.Is(rerr, filesys.ErrCorrupt) {
+					t.Fatalf("%s: a read at the end of its %d-byte prefix returned %v, want ErrCorrupt", e.Name, covered, rerr)
 				}
 			}
 			buf := make([]byte, min(file.Size(), fuzzReadChunk))
@@ -327,4 +337,23 @@ func fuzzEAValues(t *testing.T, fsys *ext4.FS, e filesys.Entry) int {
 		}
 	}
 	return opened
+}
+
+// fuzzTruncatedSeeds are builder images cut inside a file's data (L32), so the fuzz body opens and reads files that
+// carry a prefix. Two groups of 64 blocks: group 0 holds data blocks 9..64, group 1's data starts at block 73, and the
+// root directory fills a gap of group 0. A file too big for group 0 lands in group 1, and the cut falls inside it
+// with the directory intact: an extent file (cut inside its third extent), the same with its extents in two leaf
+// blocks (the index node is cut), and a block-map file (cut inside its direct pointers).
+func fuzzTruncatedSeeds() [][]byte {
+	const bs = 1024
+	opts := ext4test.Options{BlockSize: bs, Extents: true, Groups: 2, BlocksPerGroup: 64, InodesPerGroup: 16}
+	var ps []ext4test.Piece
+	for i := range 4 {
+		ps = append(ps, ext4test.Piece{Block: 20 * i, Data: bytes.Repeat([]byte{byte(i + 1)}, 20*bs)})
+	}
+	ext := ext4test.Build(opts, []ext4test.File{{Path: "/small", Data: []byte("s")}, {Path: "/f", Pieces: ps, Scatter: true}})
+	leaves := ext4test.Build(opts, []ext4test.File{{Path: "/small", Data: []byte("s")}, {Path: "/f", Pieces: ps, Scatter: true, ExtentLeaves: 2}})
+	opts.Extents = false
+	blk := ext4test.Build(opts, []ext4test.File{{Path: "/fill", Data: bytes.Repeat([]byte{8}, 30*bs)}, {Path: "/m", Data: bytes.Repeat([]byte{9}, 40*bs)}})
+	return [][]byte{ext[:74*bs+10], leaves[:74*bs+10], blk[:80*bs]}
 }
