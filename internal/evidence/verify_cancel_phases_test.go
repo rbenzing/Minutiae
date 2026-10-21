@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/rbenzing/minutiae/internal/evidence"
 )
 
 // D117: a cancel at the end of ANY phase, on a clean case, is either a clean cut (the cancelled line
@@ -51,5 +53,27 @@ func TestVerifyCancelAtTheEndOfEveryPhase(t *testing.T) {
 				t.Fatalf("cancel at the end of %s: problems %q, want only the cancelled line", phase, rep.Problems)
 			}
 		})
+	}
+}
+
+// D120: with a composed check (as on the CLI) a cancel after the last cancellable phase is not
+// invisible: the composed checks see the ended context, so the verify is a cancelled one.
+func TestVerifyCancelAtFTSCompareWithAComposedCheck(t *testing.T) {
+	c := ftsCase(t, 300)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c.SetPhaseHook(func(name string, _ time.Duration) {
+		if name == "fts.compare" {
+			cancel()
+		}
+	})
+	defer c.SetPhaseHook(nil)
+	trivial := func(context.Context, *evidence.Case, []evidence.ManifestRecord, *evidence.VerifyReport) {}
+	rep, err := c.VerifyWith(ctx, trivial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.CancelledOnly() {
+		t.Fatalf("a cancel at fts.compare with a composed check: problems %q, want only the cancelled line", rep.Problems)
 	}
 }
