@@ -531,3 +531,100 @@ func TestFuzzTruncatedSeedsCarryPrefixes(t *testing.T) {
 		}
 	}
 }
+
+// ttCutWarning returns the truncation warning of the reader.
+func ttCutWarning(t *testing.T, f *ext4.FS) string {
+	t.Helper()
+	for _, s := range f.Info().Warnings {
+		if strings.Contains(s, "the image is truncated") && strings.Contains(s, "inode") {
+			return s
+		}
+	}
+	t.Fatalf("no truncation warning in %q", f.Info().Warnings)
+	return ""
+}
+
+// Z67: the after-cut figure comes from the cut extent's own node only. Under an index node the other nodes are not
+// examined, so the warning says "at least" and that the count may be incomplete, also when the figure is 0.
+func TestTruncatedWarningUnderIndexNodeSaysCountMayBeIncomplete(t *testing.T) {
+	data := ttPat(12*ttBS, 12)
+	var ps []ext4test.Piece
+	for i := range 6 {
+		ps = append(ps, ext4test.Piece{Block: 2 * i, Data: data[2*i*ttBS : (2*i+2)*ttBS]})
+	}
+	base := ext4test.Build(ext4test.Options{BlockSize: ttBS, Extents: true}, []ext4test.File{
+		{Path: "/f", Pieces: ps, Scatter: true, ExtentLeaves: 2},
+	})
+	root := ttExtentRoot(t, base, 2, 1)
+	leaf1 := int64(binary.LittleEndian.Uint32(base[root+12+4:]))
+	leaf2 := int64(binary.LittleEndian.Uint32(base[root+24+4:]))
+	// the second leaf is cut away; in the first, extent 1 is moved beyond the image (a cut inside leaf 1)
+	patch := func(exts ...int) []byte {
+		b := bytes.Clone(base)
+		for _, k := range exts {
+			binary.LittleEndian.PutUint32(b[leaf1*ttBS+12+int64(k)*12+8:], 900)
+		}
+		return b
+	}
+	t.Run("figure above zero", func(t *testing.T) {
+		f, fl := ttOpenCut(t, patch(1), leaf2*ttBS, "/f")
+		ttCheckPrefix(t, fl, data, 2*ttBS, f.Info().Size)
+		w := ttCutWarning(t, f)
+		for _, want := range []string{"at least 2048 bytes", "not examined", "the count may be incomplete"} {
+			if !strings.Contains(w, want) {
+				t.Errorf("warning %q lacks %q", w, want)
+			}
+		}
+	})
+	t.Run("figure zero", func(t *testing.T) {
+		f, fl := ttOpenCut(t, patch(1, 2), leaf2*ttBS, "/f")
+		ttCheckPrefix(t, fl, data, 2*ttBS, f.Info().Size)
+		w := ttCutWarning(t, f)
+		if !strings.Contains(w, "may be incomplete") || !strings.Contains(w, "not examined") || strings.Contains(w, "at least") {
+			t.Errorf("warning %q: want the may-be-incomplete sentence without a figure", w)
+		}
+	})
+	t.Run("root node is complete", func(t *testing.T) {
+		img, d := ttScatterImage()
+		runs := ttRuns(t, img, "/f")
+		f, fl := ttOpenCut(t, img, runs[2].Offset+ttBS+100, "/f")
+		ttCheckPrefix(t, fl, d, 5*ttBS, f.Info().Size)
+		if w := ttCutWarning(t, f); strings.Contains(w, "may be incomplete") {
+			t.Errorf("warning %q: an extent in the inode has no unexamined nodes", w)
+		}
+	})
+}
+
+// Z68: the count stops at the first later entry that overlaps or does not increase: nothing after a damaged
+// entry is trusted.
+func TestTruncatedWarningCountStopsAtADamagedEntry(t *testing.T) {
+	data := ttPat(8*ttBS, 13)
+	var ps []ext4test.Piece
+	for i := range 4 {
+		ps = append(ps, ext4test.Piece{Block: 2 * i, Data: data[2*i*ttBS : (2*i+2)*ttBS]})
+	}
+	base := ext4test.Build(ext4test.Options{BlockSize: ttBS, Extents: true}, []ext4test.File{
+		{Path: "/f", Pieces: ps, Scatter: true},
+	})
+	root := ttExtentRoot(t, base, 4, 0)
+	binary.LittleEndian.PutUint32(base[root+12+12+8:], 900) // extent 1 is beyond the image: the cut
+	warn := func(b []byte) string {
+		f := mustOpen(t, b[:200*ttBS])
+		e, err := f.Lookup("/f")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Open(e); err != nil {
+			t.Fatal(err)
+		}
+		return ttCutWarning(t, f)
+	}
+	if w := warn(base); !strings.Contains(w, "at least 4096 bytes") {
+		t.Errorf("control: warning %q does not count the two intact entries", w)
+	}
+	forged := bytes.Clone(base)
+	binary.LittleEndian.PutUint32(forged[root+12+24:], 1) // extent 2 starts inside extent 0..1: overlaps
+	if w := warn(forged); strings.Contains(w, "also mapped after the cut") {
+		t.Errorf("warning %q counts entries after an overlapping one", w)
+	}
+}
