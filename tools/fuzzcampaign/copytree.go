@@ -14,11 +14,14 @@ import (
 
 var errCopyTooBig = errors.New("fuzzcampaign: source copy over 2 GiB")
 
+// errTooManyFiles is a source copy of more than maxCopyFiles files, symlinks and directories.
+var errTooManyFiles = errors.New("fuzzcampaign: source copy has too many entries")
+
 // errCopySizeChanged is a file whose size differs from the one the copy checked (it grew or
 // shrank while being copied).
 var errCopySizeChanged = errors.New("fuzzcampaign: a file changed size while it was being copied")
 
-// maxCopyBytes and maxCopyFiles bound a source copy; variables so a test can lower them.
+// maxCopyBytes bounds the bytes and maxCopyFiles the entries (files, symlinks, directories) of a source copy; variables so a test can lower them.
 var (
 	maxCopyBytes int64 = 2 << 30
 	maxCopyFiles       = 200000
@@ -27,6 +30,7 @@ var (
 // CopyStats counts what a copy did.
 type CopyStats struct {
 	Files, Symlinks int
+	Dirs            int // directories seen by the non-git walk, counted toward maxCopyFiles
 	Bytes           int64
 	Tracked         bool // the copy took the tracked files of a git tree
 }
@@ -103,6 +107,10 @@ func CopyTree(src, dst string) (CopyStats, error) {
 			return nil
 		}
 		if d.IsDir() {
+			if st.Files+st.Symlinks+st.Dirs >= maxCopyFiles {
+				return fmt.Errorf("%w: more than %d (at %s)", errTooManyFiles, maxCopyFiles, rel)
+			}
+			st.Dirs++
 			return nil
 		}
 		return copyOne(src, dst, rel, &st, true)
@@ -161,8 +169,8 @@ func copyOne(src, dst, rel string, st *CopyStats, walking bool) error {
 	case info.IsDir():
 		return nil // a submodule
 	}
-	if st.Files+st.Symlinks >= maxCopyFiles {
-		return fmt.Errorf("%w: more than %d files (at %s)", errCopyTooBig, maxCopyFiles, rel)
+	if st.Files+st.Symlinks+st.Dirs >= maxCopyFiles {
+		return fmt.Errorf("%w: more than %d (at %s)", errTooManyFiles, maxCopyFiles, rel)
 	}
 	switch {
 	case info.Mode()&fs.ModeSymlink != 0:
@@ -235,6 +243,11 @@ func resolveExisting(p string) (string, error) {
 			return "", err
 		}
 		if _, lerr := os.Lstat(cur); lerr == nil {
+			if _, serr := os.Stat(cur); serr == nil {
+				// It exists and can be reached, but the resolver cannot follow it (a Windows
+				// junction, or a path under one); the identity check in CheckOutDir covers it.
+				return abs, nil
+			}
 			return "", fmt.Errorf("fuzzcampaign: %s is a link to a path that does not exist", cur)
 		}
 		parent := filepath.Dir(cur)
@@ -284,7 +297,7 @@ func CheckOutDir(out, srcRoot, work string) error {
 	if o == w || ro == rw {
 		return fmt.Errorf("fuzzcampaign: -out %s is the work copy", o)
 	}
-	return nil
+	return checkOutIdentity(o, s, w)
 }
 
 // within reports whether p is dir itself or below it.
@@ -300,4 +313,56 @@ func HostModeAllowed(goos string) error {
 		return errors.New("fuzzcampaign: -mode host is not supported on Windows (the engine's exec counter stalls there, see \"Fuzz stall findings\" in docs/testing.md): use -mode docker; see docs/testing.md")
 	}
 	return nil
+}
+
+// sameDirAs reports whether the existing path p and dir are the same directory. Identity
+// (os.SameFile) follows junctions that filepath.EvalSymlinks does not resolve on Windows. A
+// dir that does not exist is never the same as anything; any other stat error is returned.
+func sameDirAs(p string, dir os.FileInfo) (bool, error) {
+	st, err := os.Stat(p)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	return os.SameFile(st, dir), nil
+}
+
+// checkOutIdentity refuses an -out one of whose existing ancestors (or itself) is the same
+// directory as the source root, the work copy or a cases directory next to or in the source.
+func checkOutIdentity(out, srcRoot, work string) error {
+	forbidden := map[string]string{
+		srcRoot:                         "the source root",
+		work:                            "the work copy",
+		filepath.Join(srcRoot, "cases"): "a cases directory",
+		filepath.Join(filepath.Dir(srcRoot), "cases"): "a cases directory",
+	}
+	infos := map[string]os.FileInfo{}
+	for p := range forbidden {
+		st, err := os.Stat(p)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return err
+		}
+		infos[p] = st
+	}
+	for cur := out; ; {
+		for p, st := range infos {
+			same, err := sameDirAs(cur, st)
+			if err != nil {
+				return err
+			}
+			if same {
+				return fmt.Errorf("fuzzcampaign: -out %s is, or is under, %s (%s) reached through a link or junction at %s", out, forbidden[p], p, cur)
+			}
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return nil
+		}
+		cur = parent
+	}
 }

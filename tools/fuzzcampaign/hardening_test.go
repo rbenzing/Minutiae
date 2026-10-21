@@ -260,8 +260,8 @@ func TestCopyRefusesTooManyFiles(t *testing.T) {
 	old := maxCopyFiles
 	maxCopyFiles = 3
 	t.Cleanup(func() { maxCopyFiles = old })
-	if _, err := CopyTree(src, filepath.Join(t.TempDir(), "copy")); !errors.Is(err, errCopyTooBig) {
-		t.Errorf("err = %v, want errCopyTooBig for four empty files over a cap of three", err)
+	if _, err := CopyTree(src, filepath.Join(t.TempDir(), "copy")); !errors.Is(err, errTooManyFiles) {
+		t.Errorf("err = %v, want errTooManyFiles for four empty files over a cap of three", err)
 	}
 	maxCopyFiles = 4
 	if _, err := CopyTree(src, filepath.Join(t.TempDir(), "copy2")); err != nil {
@@ -333,5 +333,62 @@ func TestDockerModeChecksTheImageThroughTheBoundedCheck(t *testing.T) {
 	}
 	if kills != 1 {
 		t.Errorf("%d kill calls, want 1 (cleanup by name)", kills)
+	}
+}
+
+// V72: the file-count cap is its own error, not the "over 2 GiB" one.
+func TestFileCapIsNotTheByteCapError(t *testing.T) {
+	src := t.TempDir()
+	writeTree(t, src, map[string]string{"a": "", "b": "", "c": ""})
+	old := maxCopyFiles
+	maxCopyFiles = 2
+	t.Cleanup(func() { maxCopyFiles = old })
+	_, err := CopyTree(src, filepath.Join(t.TempDir(), "copy"))
+	if !errors.Is(err, errTooManyFiles) || errors.Is(err, errCopyTooBig) {
+		t.Fatalf("err = %v, want errTooManyFiles and not errCopyTooBig", err)
+	}
+	if strings.Contains(err.Error(), "2 GiB") {
+		t.Errorf("the file-count error talks about bytes: %v", err)
+	}
+}
+
+// V74: directories count toward the cap in the non-git walk.
+func TestCopyCapCountsDirectories(t *testing.T) {
+	src := t.TempDir()
+	for _, d := range []string{"d1", "d2", "d3", "d4"} {
+		if err := os.MkdirAll(filepath.Join(src, d), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := maxCopyFiles
+	maxCopyFiles = 3
+	t.Cleanup(func() { maxCopyFiles = old })
+	if _, err := CopyTree(src, filepath.Join(t.TempDir(), "copy")); !errors.Is(err, errTooManyFiles) {
+		t.Errorf("err = %v, want errTooManyFiles for four empty directories over a cap of three", err)
+	}
+	maxCopyFiles = 4
+	if _, err := CopyTree(src, filepath.Join(t.TempDir(), "copy2")); err != nil {
+		t.Errorf("four directories at a cap of four: %v", err)
+	}
+}
+
+// V73: a failed write leaves no temporary file behind, and an empty plan is refused before
+// any run (so there is never a campaign without a results.json).
+func TestWriteResultsFileRemovesItsTempFileOnAWriteFailure(t *testing.T) {
+	dir := t.TempDir()
+	old := writeFile
+	writeFile = func(name string, b []byte, perm os.FileMode) error {
+		_ = os.WriteFile(name, b[:len(b)/2], perm)
+		return errors.New("disk full")
+	}
+	t.Cleanup(func() { writeFile = old })
+	if err := WriteResultsFile(dir, []RunResult{{Target: Target{Pkg: "p", Name: "FuzzA"}, Outcome: OK}}); err == nil {
+		t.Fatal("a failed write was not an error")
+	}
+	if es, _ := os.ReadDir(dir); len(es) != 0 {
+		t.Errorf("%d entries left after a failed write, want none", len(es))
+	}
+	if _, err := BuildPlan(nil, DefaultOptions("all")); !errors.Is(err, ErrEmptySelection) {
+		t.Errorf("an empty plan is not refused before the run: %v", err)
 	}
 }

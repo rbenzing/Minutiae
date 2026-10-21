@@ -57,6 +57,9 @@ func Summary(rs []RunResult) string {
 // ResultsJSON encodes the results.
 func ResultsJSON(rs []RunResult) ([]byte, error) { return json.MarshalIndent(rs, "", "  ") }
 
+// writeFile is os.WriteFile; a variable so a test can make the write fail part way.
+var writeFile = os.WriteFile
+
 // WriteResultsFile writes results.json in dir through a temporary file and a rename, so a reader
 // (or a container that dies) never sees a half-written file. A failure is an error.
 func WriteResultsFile(dir string, rs []RunResult) error {
@@ -65,7 +68,8 @@ func WriteResultsFile(dir string, rs []RunResult) error {
 		return err
 	}
 	tmp := filepath.Join(dir, "results.json.tmp")
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	if err := writeFile(tmp, b, 0o600); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
 	if err := os.Rename(tmp, filepath.Join(dir, "results.json")); err != nil {
