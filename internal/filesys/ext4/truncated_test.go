@@ -621,10 +621,15 @@ func TestTruncatedWarningCountStopsAtADamagedEntry(t *testing.T) {
 	}
 	if w := warn(base); !strings.Contains(w, "at least 4096 bytes") {
 		t.Errorf("control: warning %q does not count the two intact entries", w)
+	} else if strings.Contains(w, "damaged entry") {
+		t.Errorf("control: warning %q names a damaged entry in an intact node", w)
 	}
 	forged := bytes.Clone(base)
 	binary.LittleEndian.PutUint32(forged[root+12+24:], 1) // extent 2 starts inside extent 0..1: overlaps
 	if w := warn(forged); strings.Contains(w, "also mapped after the cut") {
 		t.Errorf("warning %q counts entries after an overlapping one", w)
+	}
+	if w := warn(forged); !strings.Contains(w, "stopped at a damaged entry and may be incomplete") {
+		t.Errorf("warning %q does not say the count stopped at a damaged entry (root node)", w)
 	}
 }

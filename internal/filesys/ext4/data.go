@@ -38,6 +38,7 @@ type imageCutError struct {
 	*filesys.CorruptError
 	after      int64 // a lower bound: see above
 	unexamined bool  // other tree nodes or blocks were not examined, so after may be incomplete
+	damaged    bool  // the count stopped at a damaged entry of the cut extent's node, so after may be incomplete
 }
 
 func cutError(structure string, off, after int64, unexamined bool, format string, a ...any) error {
@@ -140,6 +141,7 @@ func (f *FS) runsPartial(in *inode) ([]filesys.Run, error) {
 	}
 	if err != nil {
 		if asImageCut(err) != nil {
+			// this check also guards dirRuns, which calls runsPartial and not openInode
 			// the runs are a prefix of the file: no hole pads the tail, and they are checked as a prefix
 			if _, cerr := filesys.CheckRunsPrefix(rl.runs, in.size, f.size); cerr != nil {
 				return nil, cerr
@@ -326,7 +328,10 @@ func (w *extentWalker) node(buf []byte, wantDepth int, where int64) error {
 			if w.rl.full() {
 				return nil // the part of the file that is needed lies in the image
 			}
-			return cutError(st, where, w.afterCut(buf, i+1, entries, lblk+n), len(w.visited) > 0, "extent %d maps blocks %d+%d beyond the %d blocks the image holds", i, phys, n, w.f.sb.blocksCount)
+			after, damaged := w.afterCut(buf, i+1, entries, lblk+n)
+			err := cutError(st, where, after, len(w.visited) > 0, "extent %d maps blocks %d+%d beyond the %d blocks the image holds", i, phys, n, w.f.sb.blocksCount)
+			err.(*imageCutError).damaged = damaged
+			return err
 		}
 		if err := w.rl.addBlocks(pb, int64(n), bs); err != nil {
 			return err
@@ -340,11 +345,11 @@ func (w *extentWalker) node(buf []byte, wantDepth int, where int64) error {
 // was cut; end is the logical block where that extent ends) whose initialized blocks lie in the image. It is a lower
 // bound: only this node is examined. The count stops at the first entry that is empty, not strictly after the previous
 // one, overlaps it or leaves the 32-bit logical range, because nothing after a damaged entry is trusted. The prefix
-// rule does not extract these bytes; the count is only reported.
-func (w *extentWalker) afterCut(buf []byte, from, entries int, end uint64) int64 {
+// rule does not extract these bytes; the count is only reported. damaged is true when the count stopped at such an
+// entry, in any node kind (the root included): the entries after it were not counted.
+func (w *extentWalker) afterCut(buf []byte, from, entries int, end uint64) (total int64, damaged bool) {
 	le := binary.LittleEndian
 	bs, have := int64(w.f.sb.blockSize), uint64(w.f.sb.blocksCount)
-	var total int64
 	for i := from; i < entries; i++ {
 		e := buf[extentHeaderLen+i*extentEntryLen:][:extentEntryLen]
 		lblk, n := uint64(le.Uint32(e)), uint64(le.Uint16(e[4:]))
@@ -353,7 +358,7 @@ func (w *extentWalker) afterCut(buf []byte, from, entries int, end uint64) int64
 			n -= extentMaxInit
 		}
 		if n == 0 || lblk < end || lblk+n > 1<<32 {
-			break
+			return min(total, w.rl.size-w.rl.pos), true
 		}
 		end = lblk + n
 		phys := uint64(le.Uint32(e[8:])) | uint64(le.Uint16(e[6:]))<<32
@@ -362,7 +367,7 @@ func (w *extentWalker) afterCut(buf []byte, from, entries int, end uint64) int64
 		}
 		total += int64(min(n, have-phys)) * bs // <= 32768 * block size: cannot overflow
 	}
-	return min(total, w.rl.size-w.rl.pos)
+	return min(total, w.rl.size-w.rl.pos), false
 }
 
 // blockMapWalker walks the direct and indirect block pointers of an ext2/3
@@ -553,9 +558,13 @@ func (f *FS) openInode(in *inode) (filesys.File, error) {
 		switch {
 		case cut.after > 0:
 			msg += fmt.Sprintf("; at least %d bytes are also mapped after the cut by extents that lie in the image (found in the cut extent's node only; other extent-tree nodes were not examined), but a prefix is leading bytes only, so they are not extracted", cut.after)
-			if cut.unexamined {
+			if cut.damaged {
+				msg += "; the count stopped at a damaged entry and may be incomplete"
+			} else if cut.unexamined {
 				msg += "; the count may be incomplete"
 			}
+		case cut.damaged:
+			msg += "; the count stopped at a damaged entry and may be incomplete"
 		case cut.unexamined:
 			msg += "; no mapped bytes after the cut were found, but other extent-tree nodes or blocks were not examined, so the count may be incomplete"
 		}
