@@ -155,3 +155,26 @@ func TestLookupAliasRejectsNonCanonicalSpelling(t *testing.T) {
 		wantNoEntry(t, f, "/enc/~enc~"+encCanon[:3]+"\n"+encCanon[3:])
 	}
 }
+
+// The ~raw~ display form is the shared one: literal spellings, computed by hand, never the function under test.
+func TestRawNameDisplayIsTheSharedAlias(t *testing.T) {
+	f, _, _ := treeFS(t, treeOpts(), []f2fstest.File{
+		{Path: "/a", RawName: []byte{0xff}, Data: []byte("1")},
+		{Path: "/b", RawName: []byte{0xfb, 0xff, 0xfe}, Data: []byte("2")},
+		{Path: "/c", RawName: []byte("a\x00b"), Data: []byte("3")},
+		{Path: "/plain", Data: []byte("4")},
+	})
+	es, err := f.ReadDir(f.Root())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, e := range es {
+		got[e.Name] = true
+	}
+	for _, want := range []string{"~raw~_w", "~raw~-__-", "~raw~YQBi", "plain"} {
+		if !got[want] {
+			t.Errorf("ReadDir lacks %q; has %v", want, got)
+		}
+	}
+}

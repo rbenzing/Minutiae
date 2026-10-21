@@ -44,7 +44,6 @@ const (
 	maxLinkTarget = 4096
 
 	encPrefix = "~enc~" // display form of an encrypted name: prefix + base64url(raw)
-	rawPrefix = "~raw~" // display form of a name that is not valid UTF-8
 )
 
 // inodeID is the Entry.ID of inode n.
@@ -508,10 +507,16 @@ func displayName(raw []byte, encrypted bool) (string, []byte) {
 	switch {
 	case encrypted:
 		return encPrefix + base64.RawURLEncoding.EncodeToString(raw), slices.Clone(raw)
-	case len(raw) > 0 && utf8.Valid(raw) && !bytes.ContainsAny(raw, "\x00/"):
+	case plainName(raw):
 		return string(raw), nil
 	}
-	return rawPrefix + base64.RawURLEncoding.EncodeToString(raw), slices.Clone(raw)
+	return filesys.RawNameAlias(raw), slices.Clone(raw)
+}
+
+// plainName reports whether a name of a non-encrypted directory is shown as it is: not empty, valid UTF-8, no NUL or
+// '/'. Every other name is shown as its filesys.RawNameAlias, and only those names the alias stands for.
+func plainName(raw []byte) bool {
+	return len(raw) > 0 && utf8.Valid(raw) && !bytes.ContainsAny(raw, "\x00/")
 }
 
 // direntType maps a dirent file_type to an entry type.
@@ -801,15 +806,16 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 	if supported {
 		q = utf8fold.NewQuery(exact)
 	}
-	var alt []byte // the bytes a display form stands for
-	prefix := rawPrefix
+	var alt []byte // the bytes a display form stands for: one spelling per name
 	if enc {
-		prefix = encPrefix
-	}
-	if rest, ok := strings.CutPrefix(comp, prefix); ok {
-		if b, err := base64.RawURLEncoding.DecodeString(rest); err == nil {
-			alt = b
+		if rest, ok := strings.CutPrefix(comp, encPrefix); ok {
+			// the ~enc~ form is ciphertext shown as the same encoding behind another prefix
+			if b, ok := filesys.DecodeRawNameAlias(filesys.RawNamePrefix + rest); ok {
+				alt = b
+			}
 		}
+	} else if b, ok := filesys.DecodeRawNameAlias(comp); ok {
+		alt = b
 	}
 	var exactRec, altRec *dirRec
 	altN := 0           // records whose bytes are the alias: two or more are ambiguous
@@ -826,7 +832,8 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 		case !enc && bytes.Equal(r.name, exact):
 			exactRec = keep(r)
 			return false
-		case alt != nil && bytes.Equal(r.name, alt):
+		// in a plain directory the ~raw~ form stands only for the names ReadDir shows in that form
+		case alt != nil && bytes.Equal(r.name, alt) && (enc || !plainName(r.name)):
 			if altRec == nil {
 				altRec = keep(r)
 			}

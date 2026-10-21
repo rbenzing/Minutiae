@@ -77,7 +77,6 @@ const (
 	maxDirEntries = 1 << 18
 
 	encPrefix = "~enc~" // display form of an encrypted name: prefix + base64url(raw)
-	rawPrefix = "~raw~" // display form of a name that is not plain text: prefix + base64url(raw)
 
 	flagCasefold = 0x40000000 // F2FS_CASEFOLD_FL (FS_CASEFOLD_FL)
 
@@ -448,7 +447,7 @@ func displayName(raw []byte, encrypted bool) (string, []byte) {
 	case plainName(raw):
 		return string(raw), nil
 	}
-	return rawPrefix + base64.RawURLEncoding.EncodeToString(raw), slices.Clone(raw)
+	return filesys.RawNameAlias(raw), slices.Clone(raw)
 }
 
 // plainName reports whether a name of a non-encrypted directory is shown as it
@@ -666,17 +665,15 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 		q = utf8fold.NewQuery(exact)
 	}
 	var alt []byte // the bytes a display form stands for
-	prefix := rawPrefix
 	if enc {
-		prefix = encPrefix
-	}
-	if rest, ok := strings.CutPrefix(comp, prefix); ok {
-		// Each name has one spelling: the text must be exactly what encoding the
-		// decoded bytes gives. (The decoder skips embedded CR/LF and, even strict,
-		// would accept them; the round trip rejects those and any other variant.)
-		if b, err := base64.RawURLEncoding.Strict().DecodeString(rest); err == nil && base64.RawURLEncoding.EncodeToString(b) == rest {
-			alt = b
+		if rest, ok := strings.CutPrefix(comp, encPrefix); ok {
+			// the ~enc~ form is ciphertext shown as the same encoding behind another prefix
+			if b, ok := filesys.DecodeRawNameAlias(filesys.RawNamePrefix + rest); ok {
+				alt = b
+			}
 		}
+	} else if b, ok := filesys.DecodeRawNameAlias(comp); ok {
+		alt = b
 	}
 	var exactRec, altRec *dentry
 	altN := 0           // records whose bytes are the alias: two or more are ambiguous

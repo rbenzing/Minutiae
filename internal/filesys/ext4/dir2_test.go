@@ -289,3 +289,50 @@ func TestSharedSymlinkTarget(t *testing.T) {
 		}
 	}
 }
+
+// The ~raw~ display form is the shared one: literal spellings, computed by hand, never the function under test.
+func TestRawNameDisplayIsTheSharedAlias(t *testing.T) {
+	files := []ext4test.File{
+		{Path: "/\xff", Data: []byte("1")},
+		{Path: "/\xfb\xff\xfe", Data: []byte("2")},
+		{Path: "/a\x00b", Data: []byte("3")},
+		{Path: "/plain", Data: []byte("4")},
+	}
+	f := mustOpen(t, ext4test.Build(ext4test.Options{Extents: true}, files))
+	es, err := f.ReadDir(f.Root())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, e := range es {
+		got[e.Name] = true
+	}
+	for _, want := range []string{"~raw~_w", "~raw~-__-", "~raw~YQBi", "plain"} {
+		if !got[want] {
+			t.Errorf("ReadDir lacks %q; has %v", want, got)
+		}
+	}
+}
+
+func TestLookupAliasRejectsNonCanonicalSpelling(t *testing.T) {
+	f := mustOpen(t, ext4test.Build(ext4test.Options{Extents: true}, []ext4test.File{{Path: "/\xff", Data: []byte("1")}}))
+	if _, err := f.Lookup("/~raw~_w"); err != nil {
+		t.Errorf("canonical alias: %v", err)
+	}
+	for _, s := range []string{"~raw~_x", "~raw~_w=", "~raw~_\nw"} {
+		if _, err := f.Lookup("/" + s); !errors.Is(err, filesys.ErrNotFound) {
+			t.Errorf("Lookup(%q) = %v; want ErrNotFound (one spelling per name)", s, err)
+		}
+	}
+}
+
+func TestLookupAliasNeverStandsForAPlainName(t *testing.T) {
+	f := mustOpen(t, ext4test.Build(ext4test.Options{Extents: true}, []ext4test.File{{Path: "/abc", Data: []byte("abc")}}))
+	if _, err := f.Lookup("/abc"); err != nil {
+		t.Fatalf("plain name: %v", err)
+	}
+	alias := "/~raw~" + base64.RawURLEncoding.EncodeToString([]byte("abc"))
+	if _, err := f.Lookup(alias); !errors.Is(err, filesys.ErrNotFound) {
+		t.Errorf("Lookup(%s) = %v; want ErrNotFound: ReadDir shows abc as abc", alias, err)
+	}
+}
