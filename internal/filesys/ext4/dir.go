@@ -194,10 +194,23 @@ func (f *FS) scanDirCut(in *inode, wantDeleted bool, visit func(*dirRec) bool) (
 			lblk++
 		}
 	}
-	if !w.stop && lblk < isizeBlocks {
-		w.cutAt(false, "the block map ends at logical block %d, i_size covers %d", lblk, isizeBlocks)
+	if !w.stop {
+		w.cutIfShort(lblk, isizeBlocks)
 	}
 	return w.cut, nil
+}
+
+// cutIfShort records the cut (and logs it) when the runs ended at logical block lblk, before the isizeBlocks
+// blocks i_size covers. dirRuns pads a sound map with a trailing hole to the 64 MiB read limit, and a damaged map
+// has already recorded and logged its own cut (cutAt keeps the first, and only a new cut is logged here), so no
+// image reaches this as the first cause: it is a defensive check, pinned on the helper by
+// TestDirectoryMapEndingShortIsACutAndWarns.
+func (w *dirScan) cutIfShort(lblk, isizeBlocks int64) {
+	if lblk >= isizeBlocks || w.cut.reason != "" {
+		return
+	}
+	w.cutAt(false, "the block map ends at logical block %d, i_size covers %d", lblk, isizeBlocks)
+	w.f.warn("directory inode %d: the block map ends at logical block %d but i_size covers %d blocks", w.in.num, lblk, isizeBlocks)
 }
 
 // dirRuns maps directory in's blocks: the runs (Offset -1 is a hole), the

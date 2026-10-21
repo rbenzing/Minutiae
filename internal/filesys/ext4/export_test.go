@@ -93,3 +93,18 @@ func (f *FS) SetSlackScanCap(n int64) { f.slackScanCap = n }
 // SlackWork reports the slack scan work done so far: candidate checks plus bytes
 // indexed for the name check (a deterministic stand-in for time).
 func (f *FS) SlackWork() int64 { return f.slackWork.Load() }
+
+// CutIfShort runs the "block map ends before i_size" check of the directory scan on inode n, after a first cut
+// of the kind given (none when firstCut is empty), and returns the cut reason the scan holds afterwards.
+func (f *FS) CutIfShort(n uint32, lblk, isizeBlocks int64, firstCut string) (string, error) {
+	in, err := f.inode(n)
+	if err != nil {
+		return "", err
+	}
+	w := &dirScan{f: f, in: in}
+	if firstCut != "" {
+		w.cutAt(false, "%s", firstCut)
+	}
+	w.cutIfShort(lblk, isizeBlocks)
+	return w.cut.reason, nil
+}

@@ -94,3 +94,38 @@ func TestEveryDirectoryCutCauseLogsItsWarning(t *testing.T) {
 		})
 	}
 }
+
+// TestDirectoryMapEndingShortIsACutAndWarns pins the one cause of the table above that no image reaches (a sound
+// map is padded to the read limit and a damaged one has already recorded and logged its own cut): the check, on
+// its helper. Mutation: drop the warning or the cut from cutIfShort, or log over an earlier cut; a row fails.
+func TestDirectoryMapEndingShortIsACutAndWarns(t *testing.T) {
+	dirInum := ext4test.InodeNumber(0) // /d
+	for _, tc := range []struct {
+		name        string
+		lblk, isize int64
+		first       string
+		cut         string // the cut reason expected afterwards
+		warns       bool
+	}{
+		{"covers i_size", 2, 2, "", "", false},
+		{"beyond i_size", 3, 2, "", "", false},
+		{"empty directory", 0, 0, "", "", false},
+		{"ends short", 1, 2, "", "the block map ends at logical block 1, i_size covers 2", true},
+		{"ends at once", 0, 5, "", "the block map ends at logical block 0, i_size covers 5", true},
+		{"an earlier cut is kept and not logged again", 1, 2, "damaged", "damaged", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := mustOpen(t, ext4test.Build(ext4test.Options{Extents: true}, dFiles("a", "b")))
+			reason, err := f.CutIfShort(dirInum, tc.lblk, tc.isize, tc.first)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reason != tc.cut {
+				t.Errorf("cut = %q, want %q", reason, tc.cut)
+			}
+			if got := hasWarning(f.Info(), "the block map ends at logical block"); got != tc.warns {
+				t.Errorf("warned = %v, want %v: %v", got, tc.warns, f.Info().Warnings)
+			}
+		})
+	}
+}

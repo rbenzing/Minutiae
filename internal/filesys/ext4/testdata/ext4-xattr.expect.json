@@ -31,7 +31,7 @@
       "debugfs -w -R ea_set -f /dev/shm/minutiae-ext4-xattr/v_block /file1 user.block /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
       "debugfs -w -R ea_set -f /dev/shm/minutiae-ext4-xattr/v_huge /file2 user.huge /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
       "debugfs -w -R ea_set /dir/file3 user.note remark /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
-      "e2fsck -fy <img>   # exit 0 or 1 accepted: repairs the parent i_blocks of the EA-inode value",
+      "e2fsck -fy <img>   # exit 0 or 1 accepted: repairs the parent i_blocks of the EA-inode value; the xattr block of /file1 must be byte-identical before and after",
       "debugfs -w -R ssv lastcheck 1700000000 /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
       "debugfs -w -R sif / ctime 1700000000 /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",
       "debugfs -w -R sif / atime 1700000000 /dev/shm/minutiae-ext4-xattr/ext4-xattr.img",

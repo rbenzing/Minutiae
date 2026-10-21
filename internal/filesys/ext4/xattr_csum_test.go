@@ -3,6 +3,7 @@ package ext4_test
 import (
 	"encoding/binary"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 
@@ -190,7 +191,7 @@ func TestXattrBlockChecksumVerified(t *testing.T) {
 		img := gunzipFixture(t, path)
 		f := mustOpen(t, img)
 		if got := xattrBlockWarnings(f.Info()); len(got) != 0 {
-			t.Errorf("warnings on the kernel-format fixture: %q", got)
+			t.Errorf("warnings on the libext2fs-written fixture: %q", got)
 		}
 		blocks := 0
 		for _, p := range []string{"/file1", "/file2", "/dir/file3"} {
@@ -314,5 +315,102 @@ func TestXattrBlockForgedHeaderNeverPanics(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// sparseImage is an image of a declared size whose bytes are zero except for the segments given: a 16 TiB
+// filesystem needs only the blocks the test reads.
+type sparseImage struct {
+	size int64
+	segs []sparseSeg
+}
+
+type sparseSeg struct {
+	off int64
+	b   []byte
+}
+
+func (s *sparseImage) ReadAt(p []byte, off int64) (int, error) {
+	if off < 0 || off >= s.size {
+		return 0, io.EOF
+	}
+	n := int(min(int64(len(p)), s.size-off))
+	clear(p[:n])
+	for _, g := range s.segs {
+		lo, hi := max(off, g.off), min(off+int64(n), g.off+int64(len(g.b)))
+		if lo < hi {
+			copy(p[lo-off:hi-off], g.b[lo-g.off:hi-g.off])
+		}
+	}
+	if n < len(p) {
+		return n, io.EOF
+	}
+	return n, nil
+}
+
+// TestXattrBlockChecksumAbove32BitBlockNumber: with the 64bit feature i_file_acl has a high half, and the
+// checksum covers the block number as 64 bits. A builder image is declared to hold 2^32 + 4096 blocks (a sparse
+// reader serves only the blocks that matter), the xattr block of /x is moved to block 2^32 + blk with i_file_acl_hi
+// set, and its checksum is computed here from the 8-byte number. Mutation: a 32-bit block number in
+// xattrBlockCsum; the verifying block then warns and this test fails.
+func TestXattrBlockChecksumAbove32BitBlockNumber(t *testing.T) {
+	x := newXattrImage(t, ext4test.Options{MetadataCsum: true, Bit64: true, BlockSize: 4096})
+	const hiBlocks = 1 << 32
+	newBlk := uint64(hiBlocks) + uint64(x.blk)
+	blockBytes := append([]byte(nil), x.img[x.start:x.start+x.bs]...)
+	img := append([]byte(nil), x.img...)
+	// 4096 blocks per group would not fit the table limit at 1024 per group: 32768 per group keeps it at 8 MiB.
+	put32(img, 1024+0x20, 32768)
+	put32(img, 1024+0x4, 4096) // s_blocks_count_lo
+	put32(img, 1024+0x150, 1)  // s_blocks_count_hi: 2^32 + 4096 blocks
+	ino := inodeOff(t, mustOpen(t, x.img), x.bs, 256, 128, 11)
+	put16(img, ino+0x76, 1) // i_file_acl_high
+	if got := le32(img, ino+0x68); int(got) != x.blk {
+		t.Fatalf("i_file_acl_lo = %d, want %d", got, x.blk)
+	}
+	var nr [8]byte
+	binary.LittleEndian.PutUint64(nr[:], newBlk)
+	clear(blockBytes[offXattrCsum : offXattrCsum+4])
+	want := ext4.RawCRC32C(ext4.RawCRC32C(x.seed(), nr[:]), blockBytes)
+	binary.LittleEndian.PutUint32(blockBytes[offXattrCsum:], want)
+	r := &sparseImage{size: (hiBlocks + 4096) * int64(x.bs), segs: []sparseSeg{
+		{0, img}, {int64(newBlk) * int64(x.bs), blockBytes},
+	}}
+	f, err := ext4.Open(r, r.size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := f.Lookup("/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	in, err := f.Inode(11)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := in.Fields().FileACL; got != newBlk {
+		t.Fatalf("i_file_acl = %d, want %d (above 2^32)", got, newBlk)
+	}
+	if v, _ := attr(e, "xattrs"); v != "user.alpha,user.omega" {
+		t.Errorf("xattrs = %q: the block above 2^32 was not read", v)
+	}
+	if got := xattrBlockWarnings(f.Info()); len(got) != 0 {
+		t.Errorf("a block whose 64-bit checksum verifies warned: %q", got)
+	}
+	wantXattrCsum(t, "block above 2^32", e, false)
+
+	// The same block with one value byte flipped must warn, naming the 64-bit block number.
+	blockBytes[x.bs-1] ^= 0x55
+	f, err = ext4.Open(r, r.size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err = f.Lookup("/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantXattrCsum(t, "damaged block above 2^32", e, true)
+	if got := xattrBlockWarnings(f.Info()); len(got) != 1 || !strings.Contains(got[0], fmt.Sprintf("xattr block %d: checksum mismatch", newBlk)) {
+		t.Errorf("warnings = %q", got)
 	}
 }

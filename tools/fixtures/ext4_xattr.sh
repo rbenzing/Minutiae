@@ -77,12 +77,29 @@ run debugfs -w -R "ea_set -f $work/v_block /file1 user.block" "$img" >/dev/null
 run debugfs -w -R "ea_set -f $work/v_huge /file2 user.huge" "$img" >/dev/null
 run debugfs -w -R "ea_set /dir/file3 user.note remark" "$img" >/dev/null
 
-CMDS+=("e2fsck -fy <img>   # exit 0 or 1 accepted: repairs the parent i_blocks of the EA-inode value")
+# The repair must touch nothing but the parent's i_blocks: the xattr block of /file1 (the one block the kernel
+# format check relies on) is read before and after and must be byte-identical, and e2fsck's own report is kept
+# (printed, and in fsck.log until the script ends).
+xblock() { # the bytes of the File ACL block of /file1
+  local b
+  b=$(debugfs -R "stat /file1" "$img" 2>/dev/null | sed -n 's/^File ACL: *\([0-9]*\).*/\1/p')
+  [ -n "$b" ] && [ "$b" != 0 ] || {
+    echo "/file1 has no xattr block" >&2
+    exit 1
+  }
+  dd if="$img" bs=1024 skip="$b" count=1 status=none | sha256sum
+}
+before=$(xblock)
+CMDS+=("e2fsck -fy <img>   # exit 0 or 1 accepted: repairs the parent i_blocks of the EA-inode value; the xattr block of /file1 must be byte-identical before and after")
 rc=0
 e2fsck -fy "$img" >"$work/fsck.log" 2>&1 || rc=$?
+cat "$work/fsck.log"
 [ "$rc" -le 1 ] || {
-  cat "$work/fsck.log"
   echo "e2fsck failed ($rc)" >&2
+  exit 1
+}
+[ "$(xblock)" = "$before" ] || {
+  echo "e2fsck changed the xattr block of /file1: the fixture would no longer be the libext2fs block" >&2
   exit 1
 }
 run debugfs -w -R "ssv lastcheck $E2FSPROGS_FAKE_TIME" "$img" >/dev/null
