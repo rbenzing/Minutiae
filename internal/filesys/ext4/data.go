@@ -385,7 +385,10 @@ func (f *FS) inlineData(in *inode) ([]byte, error) {
 			continue
 		}
 		if x.Inum != 0 {
-			return nil, corrupt(st, in.offset, "inode %d: system.data lives in an EA inode", in.num)
+			// No kernel was seen to write inline content into an EA inode (the inline-data path keeps system.data in
+			// the inode or xattr block), so the layout is not decoded: the file is unsupported, not corrupt.
+			f.warn("inode %d: its system.data value (inline content) is held in EA inode %d, a layout this reader does not decode", in.num, x.Inum)
+			return nil, fmt.Errorf("%w: ext4 inline data: inode %d: system.data is held in EA inode %d", filesys.ErrUnsupported, in.num, x.Inum)
 		}
 		if len(x.Value) < size-inodeBlockLen {
 			return nil, corrupt(st, in.offset, "inode %d: size %d, but only %d bytes are stored inline", in.num, size, inodeBlockLen+len(x.Value))

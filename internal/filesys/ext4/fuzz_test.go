@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,6 +19,7 @@ const (
 	fuzzFileMax    = 1 << 20 // files larger than this are opened but not read
 	fuzzReadBudget = 8 << 20 // bytes read per input
 	fuzzReadChunk  = 64 << 10
+	fuzzEAOpens    = 20 // EA-inode values opened per input: each is hashed whole, up to 16 MiB
 )
 
 var errFuzzBudget = errors.New("walk budget reached")
@@ -46,6 +48,16 @@ func fuzzBuilderSeeds() [][]byte {
 				{Path: "/tiny", Data: []byte("inline"), Inline: true},
 				{Path: "/idir", Dir: true, Inline: true},
 				{Path: "/idir/x", Data: []byte("y"), Inline: true},
+			}),
+		// values held in EA inodes: a plain one, one that names itself, and inline content whose system.data is in an EA
+		// inode (the unsupported layout)
+		ext4test.Build(ext4test.Options{Extents: true, InlineData: true, MetadataCsum: true},
+			[]ext4test.File{
+				{Path: "/e", Data: []byte("e"), Xattrs: []ext4test.Xattr{
+					{Name: "user.ea", Value: bytes.Repeat([]byte("ea value "), 300), EAInode: true},
+					{Name: "user.loop", Value: []byte("loop"), EAInode: true, EAXattrs: []ext4test.Xattr{{Name: "user.self", Inum: 14, Size: 4}}},
+				}},
+				{Path: "/sd", Data: bytes.Repeat([]byte("s"), 150), Inline: true, SystemDataInEAInode: true},
 			}),
 		// an xattr block under metadata_csum, so a mutation of the header, the entries or h_checksum reaches the
 		// verification
@@ -132,6 +144,7 @@ func FuzzExt4Open(f *testing.F) {
 		}
 		_ = fsys.Info()
 		visited, readTotal := 0, int64(0)
+		eaOpened := 0
 		_ = filesys.Walk(fsys, fsys.Root(), "/", func(p string, e filesys.Entry, err error) error {
 			if err != nil {
 				return nil
@@ -141,6 +154,9 @@ func FuzzExt4Open(f *testing.F) {
 			}
 			if visited <= 200 { // a casefold lookup of every listed name, upper-cased: an answer or a typed error, never a panic
 				_, _ = fsys.Lookup(strings.ToUpper(p))
+			}
+			if eaOpened < fuzzEAOpens {
+				eaOpened += fuzzEAValues(t, fsys, e)
 			}
 			if e.Type != filesys.TypeFile && e.Type != filesys.TypeSymlink {
 				return nil
@@ -272,4 +288,43 @@ func fuzzCutSeed(tb testing.TB) []byte {
 	}
 	binary.LittleEndian.PutUint16(img[runs[0].Offset+1024+4:], 0)
 	return img
+}
+
+// fuzzEAValues opens every attribute value of entry e that is held in an EA inode and reads it in bounded
+// chunks: a value or a typed error, never a panic, and its runs obey the File.Runs contract. It returns how many
+// values it opened.
+func fuzzEAValues(t *testing.T, fsys *ext4.FS, e filesys.Entry) int {
+	t.Helper()
+	var n uint32
+	if _, err := fmt.Sscanf(e.ID, "inode:%d", &n); err != nil {
+		return 0
+	}
+	in, err := fsys.Inode(n)
+	if err != nil {
+		return 0
+	}
+	xs, _ := fsys.Xattrs(in)
+	opened := 0
+	for _, x := range xs {
+		if x.Inum == 0 {
+			continue
+		}
+		opened++
+		fl, _, err := fsys.EAInodeValue(n, x.Name)
+		if err != nil {
+			continue
+		}
+		if runs := fl.Runs(); runs != nil {
+			if err := filesys.CheckRuns(runs, fl.Size(), fsys.Info().Size); err != nil {
+				t.Fatalf("runs of the EA-inode value %s violate the File.Runs contract: %v", x.Name, err)
+			}
+		}
+		buf := make([]byte, min(fl.Size(), fuzzReadChunk))
+		for off := int64(0); off < min(fl.Size(), fuzzFileMax); off += int64(len(buf)) {
+			if _, rerr := fl.ReadAt(buf, off); rerr != nil {
+				break
+			}
+		}
+	}
+	return opened
 }

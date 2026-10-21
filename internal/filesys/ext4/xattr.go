@@ -15,11 +15,14 @@ const (
 )
 
 // xattr is one extended attribute. Inum is non-zero when the value lives in a
-// separate EA inode (ea_inode feature); Value is then nil and not read.
+// separate EA inode (ea_inode feature); Value is then nil and the value is read through eaInodeValue.
 type xattr struct {
 	Name  string
 	Value []byte
 	Inum  uint32
+	// ValueSize is e_value_size, kept only for a value held in an EA inode (Inum != 0): it is what the EA inode's
+	// i_size must equal, and nothing is ever sized from it.
+	ValueSize uint32
 }
 
 // xattrPrefix maps e_name_index to the name prefix.
@@ -160,7 +163,8 @@ func parseXattrs(region []byte, entriesOff int) ([]xattr, error) {
 		x := xattr{Name: xattrPrefix(index) + string(region[pos+xattrEntrySize:nameEnd]), Inum: inum}
 		switch {
 		case inum != 0:
-			// Value stored in an EA inode: not read here.
+			// Value stored in an EA inode: read through eaInodeValue, not here.
+			x.ValueSize = uint32(valueSize)
 		case valueSize > 0:
 			if valueOff+valueSize > uint64(len(region)) {
 				return out, corrupt(st, int64(pos), "value of %d bytes at offset %d lies outside the %d-byte area", valueSize, valueOff, len(region))

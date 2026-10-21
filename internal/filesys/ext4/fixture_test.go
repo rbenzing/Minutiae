@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -369,8 +370,8 @@ func checkUnallocated(t *testing.T, fsys *ext4.FS, used []filesys.Run, want orac
 }
 
 // checkXattrs compares the attributes of every live entry with the oracle's debugfs view: the listed names, and
-// for a value held in the inode or in an xattr block its size and sha256; an EA-inode value is not read here (it
-// is listed with the EA inode number, and its size and hash are Task 8's). No entry of a clean mke2fs image
+// for a value held in the inode, in an xattr block or in an EA inode its size and sha256 (an EA-inode value is read
+// through eaInodeValue and its stored hash must verify). No entry of a clean mke2fs image
 // carries xattr_csum=bad.
 func checkXattrs(t *testing.T, fsys *ext4.FS, want oracle, live map[string]filesys.Entry) {
 	t.Helper()
@@ -433,6 +434,19 @@ func checkXattrs(t *testing.T, fsys *ext4.FS, want oracle, live map[string]files
 			if a.Storage == "ea_inode" {
 				if xs[i].Inum != uint32(want.EAInode) {
 					t.Errorf("%s: %s names EA inode %d, want %d", p, a.Name, xs[i].Inum, want.EAInode)
+				}
+				fl, bad, err := fsys.EAInodeValue(n, a.Name)
+				if err != nil {
+					t.Errorf("%s: %s: %v", p, a.Name, err)
+					continue
+				}
+				val := make([]byte, fl.Size())
+				if _, err := fl.ReadAt(val, 0); err != nil && !errors.Is(err, io.EOF) {
+					t.Errorf("%s: %s: read: %v", p, a.Name, err)
+				}
+				sum := sha256.Sum256(val)
+				if len(val) != a.Size || hex.EncodeToString(sum[:]) != a.SHA256 || bad {
+					t.Errorf("%s: %s is %d bytes sha256 %x (hash failed: %v), want %d bytes %s", p, a.Name, len(val), sum, bad, a.Size, a.SHA256)
 				}
 				continue
 			}

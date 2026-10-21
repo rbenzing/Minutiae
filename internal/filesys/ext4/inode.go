@@ -44,6 +44,7 @@ const (
 // Inode flags used so far.
 const (
 	inodeFlagEncrypt = 0x800
+	inodeFlagEAInode = 0x200000 // EXT4_EA_INODE_FL: the inode holds the value of an extended attribute
 )
 
 // Mode type bits.
@@ -78,16 +79,41 @@ type inode struct {
 	nsInvalid       bool   // a raw nanosecond field was >= 1e9 and was clamped
 	offset          int64  // byte offset of the inode in the image
 
+	atimeRaw uint32 // i_atime as stored: in an EA inode it is the crc32c of the value
+
 	xattrNames []string
 	xattrErr   error
 	// xattrCsumBad: the xattr block failed its checksum (the attributes are still listed).
 	xattrCsumBad bool
+	// systemDataEA: an inline-data inode whose system.data value is held in an EA inode (unsupported).
+	systemDataEA bool
 }
 
-// inode reads and decodes inode n. Out-of-range numbers, a group whose
+// inode reads and decodes inode n and its extended attributes. See rawInode.
+func (f *FS) inode(n uint32) (*inode, error) {
+	in, err := f.rawInode(n)
+	if err != nil {
+		return nil, err
+	}
+	xs, csumBad, err := f.xattrsChecked(in)
+	in.xattrErr = err
+	in.xattrCsumBad = csumBad
+	in.xattrNames = xattrNames(xs)
+	if in.flags&inodeFlagInlineData != 0 {
+		for _, x := range xs {
+			if x.Name == "system.data" && x.Inum != 0 {
+				in.systemDataEA = true
+			}
+		}
+	}
+	return in, nil
+}
+
+// rawInode reads and decodes inode n WITHOUT its extended attributes, so it can never recurse into an EA inode.
+// Out-of-range numbers, a group whose
 // descriptor is unusable, and a size beyond int64 are *filesys.CorruptError; a
 // checksum mismatch is not an error (csumOK=false).
-func (f *FS) inode(n uint32) (*inode, error) {
+func (f *FS) rawInode(n uint32) (*inode, error) {
 	const st = "ext4 inode"
 	sb := f.sb
 	if n < 1 || n > sb.inodesCount {
@@ -128,10 +154,6 @@ func (f *FS) inode(n uint32) (*inode, error) {
 		return nil, err
 	}
 	in.offset = off
-	xs, csumBad, err := f.xattrsChecked(in)
-	in.xattrErr = err
-	in.xattrCsumBad = csumBad
-	in.xattrNames = xattrNames(xs)
 	return in, nil
 }
 
@@ -155,6 +177,7 @@ func (f *FS) decodeInode(n uint32, raw []byte) (*inode, error) {
 		links:      le.Uint16(raw[iLinks:]),
 		flags:      le.Uint32(raw[iFlags:]),
 		generation: le.Uint32(raw[iGeneration:]),
+		atimeRaw:   le.Uint32(raw[iAtime:]),
 		fileACL:    uint64(le.Uint32(raw[iFileACLLo:])),
 	}
 	// The flags are honoured as they are (they decide how i_block is read), but
@@ -348,6 +371,9 @@ func toEntry(name string, raw []byte, in *inode) filesys.Entry {
 	}
 	if in.xattrCsumBad {
 		e.Attrs = append(e.Attrs, filesys.KV{Key: "xattr_csum", Value: "bad"})
+	}
+	if in.systemDataEA {
+		e.Attrs = append(e.Attrs, filesys.KV{Key: "system_data", Value: "unsupported"})
 	}
 	if in.orphanNext != 0 {
 		e.Attrs = append(e.Attrs, filesys.KV{Key: "orphan_next", Value: strconv.FormatUint(uint64(in.orphanNext), 10)})

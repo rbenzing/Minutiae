@@ -66,6 +66,14 @@ type File struct {
 	HTree    bool
 	NewBlock bool
 	Flags    uint32
+
+	// SystemDataInEAInode (an Inline file whose content exceeds i_block) writes the system.data entry with
+	// e_value_inum pointing at a builder-made EA inode that holds the rest of the content, instead of the value in
+	// the xattr area. No kernel was seen to write this layout; it exists to test that a reader refuses it.
+	SystemDataInEAInode bool
+
+	eaHash      *uint32 // set on the EA inodes the builder creates: the value hash stored in i_atime
+	sysDataInum uint32  // SystemDataInEAInode: the EA inode that holds the system.data value
 }
 
 // Piece is file content placed at logical block Block. With Uninit the extent

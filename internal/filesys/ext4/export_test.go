@@ -1,6 +1,10 @@
 package ext4
 
-import "github.com/rbenzing/minutiae/internal/filesys"
+import (
+	"fmt"
+
+	"github.com/rbenzing/minutiae/internal/filesys"
+)
 
 // Test-only accessors, so the external ext4_test package can check internals
 // without widening the public API.
@@ -107,4 +111,30 @@ func (f *FS) CutIfShort(n uint32, lblk, isizeBlocks int64, firstCut string) (str
 	}
 	w.cutIfShort(lblk, isizeBlocks)
 	return w.cut.reason, nil
+}
+
+// MaxEAValue is the cap on the size of a value held in an EA inode.
+const MaxEAValue = maxEAValue
+
+// EAInodeValue opens the value of the EA-inode attribute name of inode n as a file, and says whether the value
+// failed its hash.
+func (f *FS) EAInodeValue(n uint32, name string) (filesys.File, bool, error) {
+	in, err := f.inode(n)
+	if err != nil {
+		return nil, false, err
+	}
+	xs, err := f.xattrs(in)
+	if err != nil && len(xs) == 0 {
+		return nil, false, err
+	}
+	for _, x := range xs {
+		if x.Name == name {
+			fl, bad, err := f.eaInodeValue(in, x)
+			if err != nil {
+				return nil, bad, err
+			}
+			return fl, bad, nil
+		}
+	}
+	return nil, false, fmt.Errorf("inode %d has no attribute %q", n, name)
 }
