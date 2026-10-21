@@ -377,6 +377,11 @@ func fuzzXattrReader(t *testing.T, fsys *ext4.FS, e filesys.Entry) {
 		if x.Size < -1 || (x.Storage != filesys.XattrInline && x.Storage != filesys.XattrStream) {
 			t.Fatalf("Xattrs of %s lists %+v: a size below -1 or a storage kind the reader does not produce", e.Name, x)
 		}
+		switch x.Integrity {
+		case "", filesys.XattrHashOK, filesys.XattrHashBad, filesys.XattrHashUnchecked:
+		default:
+			t.Fatalf("Xattrs of %s lists %+v: an Integrity value that is not a known mark", e.Name, x)
+		}
 		fl, err := fsys.OpenXattr(e, x.Name)
 		if err != nil {
 			continue

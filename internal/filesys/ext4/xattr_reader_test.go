@@ -70,8 +70,9 @@ func TestXattrReaderListsAllStorages(t *testing.T) {
 			if wantStorage == "" {
 				t.Fatalf("%s: the oracle storage %q is not one this test knows", a.Name, a.Storage)
 			}
-			if x.Storage != wantStorage || x.Size != int64(a.Size) || x.Integrity != "" {
-				t.Errorf("%s %s: listed %+v, want storage %s size %d and no mark (%s)", p, a.Name, x, wantStorage, a.Size, a.Storage)
+			wantMark := map[string]string{"ea_inode": filesys.XattrHashOK}[a.Storage] // only an EA-inode value is hashed (Z75)
+			if x.Storage != wantStorage || x.Size != int64(a.Size) || x.Integrity != wantMark {
+				t.Errorf("%s %s: listed %+v, want storage %s size %d and mark %q (%s)", p, a.Name, x, wantStorage, a.Size, wantMark, a.Storage)
 			}
 			fl, err := f.OpenXattr(xent(n), a.Name)
 			if err != nil {
@@ -236,7 +237,7 @@ func TestXattrReaderDamagedValueFailsOnlyThatAttribute(t *testing.T) {
 	}
 	for name, want := range map[string]filesys.Xattr{
 		"user.inline": {Name: "user.inline", Size: 5, Storage: filesys.XattrInline},
-		"user.good":   {Name: "user.good", Size: 3000, Storage: filesys.XattrStream},
+		"user.good":   {Name: "user.good", Size: 3000, Storage: filesys.XattrStream, Integrity: filesys.XattrHashOK},
 		"user.bad":    {Name: "user.bad", Size: -1, Storage: filesys.XattrStream},
 	} {
 		if x, _ := xattrByName(xs, name); x != want {
@@ -253,8 +254,8 @@ func TestXattrReaderDamagedValueFailsOnlyThatAttribute(t *testing.T) {
 	}
 }
 
-// The hash mark (Z65) is on the attribute whose EA inode fails it, and on no other (an inline neighbour and an
-// attribute whose EA inode is intact stay unmarked). The bytes are still returned, with one warning.
+// The hash mark (Z65) is on the attribute whose EA inode fails it, and on no other (an inline neighbour stays "" and an
+// attribute whose EA inode is intact is XattrHashOK, Z75). The bytes are still returned, with one warning.
 // Mutation: mark every EA-inode attribute; the user.good check fails.
 func TestXattrReaderHashBadMarksOnlyThatAttribute(t *testing.T) {
 	img, _, bad := eaPairImage(t)
@@ -270,7 +271,7 @@ func TestXattrReaderHashBadMarksOnlyThatAttribute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, mark := range map[string]string{"user.inline": "", "user.good": "", "user.bad": filesys.XattrHashBad} {
+	for name, mark := range map[string]string{"user.inline": "", "user.good": filesys.XattrHashOK, "user.bad": filesys.XattrHashBad} {
 		if x, ok := xattrByName(xs, name); !ok || x.Integrity != mark || x.Size < 0 {
 			t.Errorf("%s listed as %+v (found %v); want mark %q and its size", name, x, ok, mark)
 		}
@@ -333,7 +334,7 @@ func TestXattrReaderManyEntriesOnOneEAInodeReadItOnce(t *testing.T) {
 					t.Fatalf("round %d: Xattrs = %d attributes, %v", round, len(list), err)
 				}
 				for _, x := range list {
-					if x.Size != int64(len(v)) || x.Storage != filesys.XattrStream || (x.Integrity == filesys.XattrHashBad) != flip {
+					if x.Size != int64(len(v)) || x.Storage != filesys.XattrStream || (x.Integrity == filesys.XattrHashBad) != flip || (x.Integrity == filesys.XattrHashOK) == flip {
 						t.Fatalf("round %d: %+v; want size %d, stream, hash bad %v", round, x, len(v), flip)
 					}
 					if _, err := f.OpenXattr(xent(eaParent), x.Name); err != nil {
@@ -368,7 +369,7 @@ func TestXattrReaderHashWorkIsBounded(t *testing.T) {
 	}
 	xa, _ := xattrByName(xs, "user.a")
 	xb, _ := xattrByName(xs, "user.b")
-	if xa.Integrity != "" || xa.Size != int64(len(a)) {
+	if xa.Integrity != filesys.XattrHashOK || xa.Size != int64(len(a)) {
 		t.Errorf("user.a listed as %+v; want it checked", xa)
 	}
 	if xb.Integrity != filesys.XattrHashUnchecked || xb.Size != -1 {
@@ -496,6 +497,59 @@ func TestXattrReaderViaFilesysAs(t *testing.T) {
 		xs, err := xr.Xattrs(xent(11))
 		if err != nil || len(xs) != 1 || xs[0].Name != "user.a" {
 			t.Errorf("%s: Xattrs = %v, %v", name, xs, err)
+		}
+	}
+}
+
+// rangeFailReader fails every read that touches a range of the image.
+type rangeFailReader struct {
+	r      io.ReaderAt
+	ranges []filesys.Run
+}
+
+func (c *rangeFailReader) ReadAt(p []byte, off int64) (int, error) {
+	for _, r := range c.ranges {
+		if min(off+int64(len(p)), r.Offset+r.Length) > max(off, r.Offset) {
+			return 0, errors.New("injected read failure")
+		}
+	}
+	return c.r.ReadAt(p, off)
+}
+
+// Ruling Z77: a value that cannot be read to verify its hash is remembered as corrupt, so listing it again does
+// not charge its bytes to the hash bound again and drain the budget of the attributes beside it.
+// Mutation: do not cache the failure; the second listing spends the bound on user.a again and user.b is unchecked.
+func TestXattrReaderUnreadableValueIsChargedOnce(t *testing.T) {
+	a, b := eaValue(40000), eaValue(30000)
+	files := []ext4test.File{{Path: "/x", Data: []byte("x"), Xattrs: []ext4test.Xattr{
+		{Name: "user.a", Value: a, EAInode: true},
+		{Name: "user.b", Value: b, EAInode: true},
+	}}}
+	img := ext4test.Build(ext4test.Options{Extents: true, MetadataCsum: true}, files)
+	probe, err := mustOpen(t, img).OpenXattr(xent(11), "user.a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := ext4.Open(&rangeFailReader{r: bytes.NewReader(img), ranges: probe.Runs()}, int64(len(img)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.SetEAHashCap(int64(len(a)) + int64(len(b))) // exactly one failed read of a and one read of b fit
+	for round := range 3 {
+		xs, err := f.Xattrs(xent(11))
+		if err != nil || len(xs) != 2 {
+			t.Fatalf("round %d: Xattrs = %v, %v", round, xs, err)
+		}
+		xa, _ := xattrByName(xs, "user.a")
+		xb, _ := xattrByName(xs, "user.b")
+		if xa.Size != -1 || xa.Integrity != "" {
+			t.Errorf("round %d: user.a listed as %+v; want size -1 and no mark (it is damaged, not over the bound)", round, xa)
+		}
+		if xb.Integrity != filesys.XattrHashOK || xb.Size != int64(len(b)) {
+			t.Errorf("round %d: user.b listed as %+v; want it checked", round, xb)
+		}
+		if fl, err := f.OpenXattr(xent(11), "user.a"); !errors.Is(err, filesys.ErrCorrupt) || fl != nil {
+			t.Errorf("round %d: OpenXattr(user.a) = %v, %v; want ErrCorrupt", round, fl, err)
 		}
 	}
 }

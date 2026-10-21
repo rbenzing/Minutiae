@@ -45,9 +45,9 @@ type FS struct {
 	xattrCap int
 	// eaMu guards eaVerdicts and serialises the hashing of EA-inode values, so one EA inode is read once.
 	eaMu sync.Mutex
-	// eaVerdicts holds the hash verdict of each EA inode already hashed (true: the hash is bad), up to
+	// eaVerdicts holds the hash verdict of each EA inode already hashed (the hash is bad, or the value cannot be read), up to
 	// maxEAVerdicts inodes. The verdict depends on the EA inode alone, never on the attribute that names it.
-	eaVerdicts map[uint32]bool
+	eaVerdicts map[uint32]eaVerdict
 	// eaHashed counts the value bytes hashed so far, and eaHashCap bounds them (maxEAHashBytes): the hash work is
 	// bounded per filesystem, however many EA inodes the entries name.
 	eaHashed  atomic.Int64

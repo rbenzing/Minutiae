@@ -86,17 +86,39 @@ const (
 // from its i_atime. The verdict depends on the EA inode alone, so it is computed once per EA inode and kept: any
 // number of attributes naming one EA inode read its value once (the repeated-read cost of ruling Z66). A
 // mismatch is a warning, once, and the value is still returned. The bytes hashed are charged to maxEAHashBytes;
-// a value that does not fit is filesys.ErrLimit.
+// a value that does not fit is filesys.ErrLimit. An unreadable value is remembered too (Z77).
 func (f *FS) eaHashVerdict(parent *inode, x xattr, in *inode, fl *file) (hashBad bool, err error) {
-	const st = "ext4 EA inode"
 	f.eaMu.Lock()
 	defer f.eaMu.Unlock()
-	if bad, ok := f.eaVerdicts[x.Inum]; ok {
-		return bad, nil
+	if v, ok := f.eaVerdicts[x.Inum]; ok {
+		return v.bad, v.err
 	}
 	if f.eaHashed.Add(fl.size) > f.eaHashCap {
 		return false, fmt.Errorf("ext4: %w: attribute %q of inode %d: the %d-byte limit on the EA-inode value bytes hashed per filesystem is spent, so the value of EA inode %d cannot be verified", filesys.ErrLimit, x.Name, parent.num, f.eaHashCap, x.Inum)
 	}
+	hashBad, err = f.hashEAValue(parent, x, in, fl)
+	// The bytes are charged once, so the outcome is kept whatever it is (Z77): a value that cannot be read must not
+	// spend the bound again each time it is listed or opened. Only the limit error above is not kept, because it
+	// charges nothing and may succeed once the work is not shared.
+	if f.eaVerdicts == nil {
+		f.eaVerdicts = make(map[uint32]eaVerdict)
+	}
+	if len(f.eaVerdicts) < maxEAVerdicts {
+		f.eaVerdicts[x.Inum] = eaVerdict{bad: hashBad, err: err}
+	}
+	return hashBad, err
+}
+
+// eaVerdict is the remembered outcome of hashing one EA inode's value: the hash is bad, or the value cannot be read.
+type eaVerdict struct {
+	bad bool
+	err error
+}
+
+// hashEAValue streams the value of EA inode in through crc32c (seeded with the filesystem seed) and compares it
+// with i_atime. A mismatch is a warning and the value is still returned; an unreadable value is ErrCorrupt.
+func (f *FS) hashEAValue(parent *inode, x xattr, in *inode, fl *file) (hashBad bool, err error) {
+	const st = "ext4 EA inode"
 	buf := make([]byte, eaHashChunk)
 	sum := f.sb.csumSeed
 	for off := int64(0); off < fl.size; {
@@ -114,12 +136,6 @@ func (f *FS) eaHashVerdict(parent *inode, x xattr, in *inode, fl *file) (hashBad
 	hashBad = sum != in.atimeRaw
 	if hashBad {
 		f.warn("attribute %q of inode %d: the value in EA inode %d has crc32c %#08x, but its i_atime holds %#08x", x.Name, parent.num, x.Inum, sum, in.atimeRaw)
-	}
-	if f.eaVerdicts == nil {
-		f.eaVerdicts = make(map[uint32]bool)
-	}
-	if len(f.eaVerdicts) < maxEAVerdicts {
-		f.eaVerdicts[x.Inum] = hashBad
 	}
 	return hashBad, nil
 }

@@ -79,6 +79,7 @@ func (f *FS) listXattr(in *inode, x xattr) filesys.Xattr {
 	case err != nil:
 	default:
 		l.Size = fl.Size()
+		l.Integrity = filesys.XattrHashOK // the value was hashed and the hash matched
 		if bad {
 			l.Integrity = filesys.XattrHashBad
 		}
