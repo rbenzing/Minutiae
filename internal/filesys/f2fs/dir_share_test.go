@@ -80,8 +80,12 @@ func TestDirectoriesSharingDentryBlocks(t *testing.T) {
 		if _, err := f.Lookup("/d/x"); err != nil {
 			t.Errorf("Lookup in the owner: %v", err)
 		}
-		wantNoEntry(t, f, "/e/x")
-		wantNoEntry(t, f, "/f/x")
+		// /e and /f map a block they do not own: their dentries are not in view, so the name is not known to be
+		// absent (Z13): the incomplete error, never not found.
+		for _, p := range []string{"/e/x", "/f/x"} {
+			_, err := f.Lookup(p)
+			wantIncomplete(t, "Lookup("+p+") in a directory whose only block another directory owns", err, false)
+		}
 	})
 
 	t.Run("sharer first", func(t *testing.T) {

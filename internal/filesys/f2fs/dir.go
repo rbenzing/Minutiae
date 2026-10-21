@@ -126,6 +126,22 @@ type dirScan struct {
 	count       int                // entries yielded, live and deleted
 	deleted     int                // of which deleted
 	stop        bool
+	cut         scanCut // why the scan did not examine every record (the first reason)
+}
+
+// scanCut is the first reason a directory scan did not examine every record of the directory. A lookup that
+// finds nothing in such a directory cannot say "not found". limit marks the live-entry cap (reported as
+// filesys.ErrLimit); every other cause is a damaged, unreadable or unaffordable region (filesys.ErrCorrupt).
+type scanCut struct {
+	reason string
+	limit  bool
+}
+
+// cutAt records the first reason the scan is incomplete.
+func (w *dirScan) cutAt(limit bool, format string, a ...any) {
+	if w.cut.reason == "" {
+		w.cut = scanCut{reason: fmt.Sprintf(format, a...), limit: limit}
+	}
 }
 
 // plausibleName reports whether name can be the name of a deleted slot: not
@@ -221,6 +237,7 @@ func (w *dirScan) scanArea(a area, blk int64, first bool) {
 		if a.inlined {
 			where = "inline dentries"
 		}
+		w.cutAt(false, "%s holds %d damaged dentry slots (first: %s)", where, bad, firstBad)
 		f.warn("directory inode %d, %s: %d damaged dentry slots, not listed (first: %s)", w.dir.nid, where, bad, firstBad)
 	}
 }
@@ -242,6 +259,7 @@ func (w *dirScan) emit(r *dentry) bool {
 		}
 		w.deleted++
 	} else if w.count >= limit {
+		w.cutAt(true, "more than %d entries, the rest are not read", limit)
 		w.f.warn("directory inode %d has more than %d entries: the rest is not listed", w.dir.nid, limit)
 		w.stop = true
 		return false
@@ -285,24 +303,33 @@ func (f *FS) chargeDir(n int64) bool {
 // is charged to the read budget, so the map holds at most
 // maxDirBudget/blockSize addresses.
 func (f *FS) scanDir(dir *inode, wantDeleted bool, visit func(*dentry) bool) error {
-	_, err := f.scanDirBudget(dir, wantDeleted, visit)
+	_, err := f.scanDirCut(dir, wantDeleted, visit)
 	return err
 }
 
-// scanDirBudget is scanDir that also reports whether the scan stopped short
-// because the directory read budget ran out after the first block, so a caller
-// that needs the whole directory (Lookup) can tell "not found" from "not looked
-// at everything".
-func (f *FS) scanDirBudget(dir *inode, wantDeleted bool, visit func(*dentry) bool) (budgetCut bool, err error) {
+// scanDirCut is scanDir that also says why the scan did not examine every record (the zero scanCut when it
+// did): the live-entry cap, an unreadable block, a damaged block map, a dentry block that another directory (or
+// this scan) already read, damaged dentry slots, the 64 MiB read limit, or the per-filesystem read budget running
+// out after the first block. Stopping because the visitor returned false is not a cut. A caller that needs the
+// whole directory (Lookup) tells "not found" from "not looked at everything" with it. Holes are not a cut: a
+// directory's hash table is sparse by design.
+func (f *FS) scanDirCut(dir *inode, wantDeleted bool, visit func(*dentry) bool) (scanCut, error) {
 	w := &dirScan{f: f, dir: dir, enc: dir.encrypted, wantDeleted: wantDeleted, visit: visit}
+	err := w.scan()
+	return w.cut, err
+}
+
+func (w *dirScan) scan() error {
+	f, dir := w.f, w.dir
 	if dir.inline&inlineDentry != 0 {
-		return false, w.inline()
+		return w.inline()
 	}
 	if dir.size == 0 {
-		return false, nil
+		return nil
 	}
 	nb := (dir.size-1)/blockSize + 1
 	if nb > maxDirBlocks {
+		w.cutAt(false, "i_size %d is above the 64 MiB directory read limit, only the first 64 MiB are read", dir.size)
 		f.warn("directory inode %d is %d bytes: only the first 64 MiB are read", dir.nid, dir.size)
 		nb = maxDirBlocks
 	}
@@ -311,8 +338,9 @@ func (f *FS) scanDirBudget(dir *inode, wantDeleted bool, visit func(*dentry) boo
 	runs, err := f.runs(&capped)
 	if err != nil {
 		if !errors.Is(err, filesys.ErrCorrupt) {
-			return false, err
+			return err
 		}
+		w.cutAt(false, "the block map is damaged (%v)", err)
 		f.warn("directory inode %d: its block map is damaged (%v); only the entries in the blocks mapped before the damage are listed", dir.nid, err)
 	}
 	buf := make([]byte, blockSize)
@@ -328,25 +356,28 @@ func (f *FS) scanDirBudget(dir *inode, wantDeleted bool, visit func(*dentry) boo
 			}
 			addr := r.Offset + off
 			if owner, shared := f.dentryBlockOwner(addr, dir.nid, seen); shared {
+				w.cutAt(false, "dentry block %d is shared by directories %d and %d, so it is skipped", addr/blockSize, owner, dir.nid)
 				f.warn("dentry block %d shared by directories %d and %d; skipped", addr/blockSize, owner, dir.nid)
 				continue
 			}
 			if !f.chargeDir(blockSize) {
+				w.cutAt(false, "directory read budget exhausted")
 				f.warn("directory read budget of %d bytes per filesystem exhausted (directory inode %d); directories are no longer read in full", int64(maxDirBudget), dir.nid)
 				if !read {
-					return true, corrupt("f2fs directory", -1, "directory read budget exhausted before directory inode %d was read", dir.nid)
+					return fmt.Errorf("%w: %w", corrupt("f2fs directory", -1, "directory read budget exhausted before directory inode %d was read", dir.nid), filesys.ErrIncomplete)
 				}
-				return true, nil
+				return nil
 			}
 			read = true
 			f.claimDentryBlock(addr, dir.nid)
 			seen[addr] = struct{}{}
 			if err := readFull(f.data, buf, addr); err != nil {
 				if isIOError(err) {
-					return false, readError("f2fs directory", addr, err)
+					return readError("f2fs directory", addr, err)
 				}
+				w.cutAt(false, "block %d is unreadable (%v)", idx, err)
 				f.warn("directory inode %d: block %d is unreadable (%v); the rest is not listed", dir.nid, idx, err)
-				return false, nil
+				return nil
 			}
 			w.scanArea(area{b: buf, bitmap: 0, ents: dentriesOff, names: filenamesOff, max: nrDentryInBlock}, idx, idx == 0)
 		}
@@ -354,7 +385,7 @@ func (f *FS) scanDirBudget(dir *inode, wantDeleted bool, visit func(*dentry) boo
 			break
 		}
 	}
-	return false, nil
+	return nil
 }
 
 // dentryBlockOwner reports whether the dentry block at byte address addr must
@@ -559,7 +590,8 @@ func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
 // "~raw~"+base64url elsewhere, decoded strictly: one spelling per name; in a
 // plain directory "~raw~" stands only for the names ReadDir shows that way),
 // so a real name that happens to look like a display form wins over the name
-// that form stands for; in a casefold directory, exactly one name the kernel's
+// that form stands for; the incomplete-scan error (filesys.ErrLimit or filesys.ErrIncomplete) when the scan
+// did not read the whole directory, never "not found"; in a casefold directory, exactly one name the kernel's
 // comparison (utf8fold, utf8-12.1.0) calls the same name; filesys.ErrAmbiguous
 // for two or more; filesys.ErrUndecided when a stored name has a shape the
 // comparison was not measured for and nothing else decides; not found.
@@ -604,10 +636,13 @@ const encFlagStrict = 0x1 // F2FS_ENC_STRICT_MODE_FL
 //  1. an exact byte match (never in an encrypted directory, never for "." or "..");
 //  2. the display-form alias ("~raw~" or "~enc~" + base64url); two or more records with the alias bytes are
 //     filesys.ErrAmbiguous;
-//  3. in a casefold directory, exactly one entry the kernel's comparison (utf8fold) calls the same name;
-//  4. two or more such entries: filesys.ErrAmbiguous (the first two named, the rest counted);
-//  5. a directory read cut by the read budget keeps its existing error (the typed incomplete-scan error of
-//     the other causes is a later task's);
+//  3. the incomplete-scan error when the scan did not read the whole directory (the entry cap, a damaged or
+//     unreadable block, a damaged block map, a skipped shared block, damaged dentry slots, the 64 MiB limit,
+//     the read budget): filesys.ErrLimit for the cap, else a corruption error, both matching
+//     filesys.ErrIncomplete. Every cut is decided BEFORE any fold decision: what lies in the unread part
+//     could change a fold hit into an exact match, a second hit or an undecidable name;
+//  4. in a casefold directory, exactly one entry the kernel's comparison (utf8fold) calls the same name;
+//  5. two or more such entries: filesys.ErrAmbiguous (the first two named, the rest counted);
 //  6. any entry whose comparison with comp is Unknown (a name of a shape the comparison was not measured
 //     for): filesys.ErrUndecided, never "not found";
 //  7. none: errNoChild.
@@ -653,7 +688,7 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 		c.name = slices.Clone(d.name)
 		return &c
 	}
-	budgetCut, err := f.scanDirBudget(in, false, func(d *dentry) bool {
+	cut, err := f.scanDirCut(in, false, func(d *dentry) bool {
 		switch {
 		case exactOK && bytes.Equal(d.name, exact):
 			exactRec = keep(d)
@@ -696,6 +731,10 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 	switch {
 	case foldDir && len(exact) > utf8fold.MaxName:
 		return filesys.Entry{}, errNoChild
+	case cut.reason != "":
+		// the scan did not examine the whole directory: whatever is not found, or not yet ambiguous, may be in
+		// the part that was not read, so the answer is the typed incomplete error, never a fold decision
+		return filesys.Entry{}, incompleteLookup(in.nid, comp, cut)
 	case foldDir && !supported:
 		f.warn("casefold directory inode %d: the volume's s_encoding %d (flags %#x) is not implemented, so case-insensitive lookups in casefold directories are not answered", in.nid, f.sb.encoding, f.sb.encFlags)
 		return filesys.Entry{}, fmt.Errorf("f2fs: %w: casefold directory inode %d on a volume with s_encoding %d (flags %#x); only utf8-12.1.0 is implemented", filesys.ErrUnsupported, in.nid, f.sb.encoding, f.sb.encFlags)
@@ -703,12 +742,19 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 		return f.dirEntry(hits[0], in)
 	case nHits >= 2:
 		return filesys.Entry{}, fmt.Errorf("%w: %q matches %d names of casefold directory inode %d: %q, %q and %d more", filesys.ErrAmbiguous, comp, nHits, in.nid, hits[0].name, hits[1].name, nHits-2)
-	case budgetCut:
-		// The directory was not read to the end: "no such entry" would be a claim
-		// about the whole directory that was not checked.
-		return filesys.Entry{}, corrupt("f2fs directory", -1, "directory read budget exhausted while looking up %q in directory inode %d", comp, in.nid)
 	case nUnknown > 0:
 		return filesys.Entry{}, fmt.Errorf("f2fs: %w: casefold lookup of %q in directory inode %d: %d name(s) have a shape the comparison was not measured for (first %q), so the lookup is neither found nor absent", filesys.ErrUndecided, comp, in.nid, nUnknown, unknownName)
 	}
 	return filesys.Entry{}, errNoChild
+}
+
+// incompleteLookup is the error of a lookup that found no exact or alias match in a directory the scan did not
+// finish: filesys.ErrLimit for the entry cap and filesys.ErrCorrupt for a damaged, unreadable or unaffordable
+// region (the read budget keeps its corruption error), both together with filesys.ErrIncomplete; never "not
+// found".
+func incompleteLookup(dirNID uint32, comp string, cut scanCut) error {
+	if cut.limit {
+		return fmt.Errorf("f2fs: %w: %w: directory inode %d: lookup of %q cannot be decided: %s", filesys.ErrLimit, filesys.ErrIncomplete, dirNID, comp, cut.reason)
+	}
+	return fmt.Errorf("%w: %w", corrupt("f2fs directory", -1, "directory inode %d: lookup of %q cannot be decided: %s", dirNID, comp, cut.reason), filesys.ErrIncomplete)
 }

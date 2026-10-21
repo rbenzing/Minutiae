@@ -3,6 +3,10 @@ package f2fs_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
@@ -273,4 +277,161 @@ func trimTail(img []byte) []byte {
 		end--
 	}
 	return img[:min(len(img), end+4096)]
+}
+
+// lookupBase is the image FuzzF2FSLookup edits: a plain directory of two dentry blocks, a casefold directory with
+// names that fold to each other, and a few files. An F2FS image has a metadata area of 16 MiB or more, which the
+// fuzz engine cannot mutate at speed as a whole input (it spends seconds per execution on it), so the fuzzed
+// input is a small list of byte edits applied to this image instead.
+type lookupBase struct {
+	img    []byte
+	tree   *f2fstest.Tree
+	blocks []int // the 4 KiB blocks of img with a nonzero byte, the only ones edits address
+}
+
+var (
+	lookupBaseOnce sync.Once
+	lookupBaseVal  lookupBase
+)
+
+func fuzzLookupBase() *lookupBase {
+	lookupBaseOnce.Do(func() {
+		files := []f2fstest.File{{Path: "/d", Dir: true}, {Path: "/cf", Dir: true, Casefold: true}, {Path: "/a.txt", Data: []byte("hello"), Inline: true}}
+		for i := range 250 {
+			files = append(files, f2fstest.File{Path: fmt.Sprintf("/d/f%03d", i), Inline: true})
+		}
+		for _, n := range []string{"Stra" + string(rune(0xDF)) + "e", "STRASSE", "File.TXT", "x"} {
+			files = append(files, f2fstest.File{Path: "/cf/" + n, Inline: true})
+		}
+		files = append(files, f2fstest.File{Path: "/cf/bad", RawName: []byte{'A', 0xFF}, Inline: true})
+		img, tree := f2fstest.BuildTree(f2fstest.Options{Segments: 2, Encoding: 1}, files)
+		b := lookupBase{img: img, tree: tree}
+		for blk := 0; blk*bs < len(img); blk++ {
+			if bytes.ContainsFunc(img[blk*bs:min(len(img), (blk+1)*bs)], func(r rune) bool { return r != 0 }) {
+				b.blocks = append(b.blocks, blk)
+			}
+		}
+		lookupBaseVal = b
+	})
+	return &lookupBaseVal
+}
+
+// edit encodes one byte edit of the base image: block selector (2 bytes, an index into the nonzero blocks),
+// offset in the block (2 bytes) and the new value.
+func (b *lookupBase) edit(blockAddr, off int, val byte) []byte {
+	idx := slices.Index(b.blocks, blockAddr)
+	if idx < 0 {
+		panic("block is not in the base image")
+	}
+	return []byte{byte(idx), byte(idx >> 8), byte(off), byte(off >> 8), val}
+}
+
+// apply returns a copy of the base image with the edits of in applied (trailing bytes that do not make a whole
+// edit are ignored).
+func (b *lookupBase) apply(in []byte) []byte {
+	img := bytes.Clone(b.img)
+	for ; len(in) >= 5; in = in[5:] {
+		blk := b.blocks[(int(in[0])|int(in[1])<<8)%len(b.blocks)]
+		img[blk*bs+(int(in[2])|int(in[3])<<8)%bs] = in[4]
+	}
+	return img
+}
+
+// FuzzF2FSLookup applies byte edits to a small builder image (see lookupBase), then looks up, in every directory
+// the walk finds, the name in upper case and a name that is not there: an answer or a typed error, never a panic,
+// and a found entry always has an ID. It also holds the cut property (Z13): a lookup that said "not found" in a
+// directory about which a scan warned that part of it was not read is a failure; it must have answered with the
+// incomplete error. The second seed damages a dentry slot of /d, so the property is exercised by the seeds.
+//
+// Run the gate as
+//
+//	go test ./internal/filesys/f2fs -run '^$' -fuzz '^FuzzF2FSLookup$' -fuzztime 30s -fuzzminimizetime 0 -parallel 2
+func FuzzF2FSLookup(f *testing.F) {
+	base := fuzzLookupBase()
+	f.Add([]byte{})
+	// name_len of the record in slot 5 of /d's first dentry block becomes 0: a damaged slot
+	f.Add(base.edit(int(base.tree.DirBlocks["/d"][0]), 30+5*11+8, 0))
+	f.Fuzz(func(t *testing.T, in []byte) {
+		b := base.apply(in)
+		fsys, err := f2fs.Open(bytes.NewReader(b), int64(len(b)))
+		if err != nil {
+			return
+		}
+		visited := 0
+		_ = filesys.Walk(fsys, fsys.Root(), "/", func(p string, _ filesys.Entry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if visited++; visited > 300 {
+				return errFuzzBudget
+			}
+			for _, q := range []string{strings.ToUpper(p), p + "~missing"} {
+				got, err := fsys.Lookup(q)
+				if err == nil && got.ID == "" {
+					t.Fatalf("Lookup(%q) returned an entry without an ID", q)
+				}
+				if errors.Is(err, filesys.ErrNotFound) {
+					assertNoCutBehindNotFound(t, fsys, q)
+				}
+			}
+			return nil
+		})
+	})
+}
+
+// scanCutWarnings are the texts of the warnings a directory scan gives for a part of a directory it did not
+// read (the cuts of dir.go). The entry cap's text is not among them: the walk's ReadDir counts deleted records
+// toward the cap and a live-only lookup does not, so that warning does not prove the lookup was cut (the cap has
+// unit tests).
+var scanCutWarnings = []string{
+	"its block map is damaged", "is unreadable", "damaged dentry slots", "only the first 64 MiB are read", "directory read budget of",
+}
+
+// assertNoCutBehindNotFound fails when Lookup(q) said "not found" in a directory about which a scan warned that
+// it did not read all of it. Warnings are deduplicated and capped, so a missing warning proves nothing; a present
+// one does.
+func assertNoCutBehindNotFound(t *testing.T, fsys filesys.FileSystem, q string) {
+	t.Helper()
+	i := strings.LastIndexByte(q, '/')
+	if i < 0 {
+		return
+	}
+	parent := q[:i]
+	if parent == "" {
+		parent = "/"
+	}
+	pe, err := fsys.Lookup(parent)
+	if err != nil || pe.Type != filesys.TypeDir {
+		return
+	}
+	nid, ok := strings.CutPrefix(pe.ID, "nid:")
+	if !ok {
+		return
+	}
+	for _, w := range fsys.Info().Warnings {
+		cut := strings.Contains(w, "shared by directories") && strings.HasSuffix(w, "and "+nid+"; skipped")
+		if !cut && mentionsDirInode(w, nid) {
+			for _, c := range scanCutWarnings {
+				cut = cut || strings.Contains(w, c)
+			}
+		}
+		if cut {
+			t.Fatalf("Lookup(%q) said not found in a directory that was not read to the end: %s", q, w)
+		}
+	}
+}
+
+// mentionsDirInode reports whether warning w names "directory inode <nid>" (not a longer number).
+func mentionsDirInode(w, nid string) bool {
+	prefix := "directory inode " + nid
+	for off := 0; ; {
+		j := strings.Index(w[off:], prefix)
+		if j < 0 {
+			return false
+		}
+		off += j + len(prefix)
+		if off == len(w) || w[off] < '0' || w[off] > '9' {
+			return true
+		}
+	}
 }
