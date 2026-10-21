@@ -66,44 +66,60 @@ func (b *Budget) Limit() int64 {
 }
 
 // View returns a fresh view for one invocation.
-func (b *Budget) View() *BudgetView { return &BudgetView{b: b} }
+func (b *Budget) View() *BudgetView { return &BudgetView{s: &viewState{b: b}} }
 
-// BudgetView lets a decoder account allocations against the host's budget.
-// Free can only return what this view allocated (it clamps to the view's
-// outstanding amount), so a parser cannot free the host's accounting or
-// another invocation's. There is no way to read or change the limit other
-// than Limit, which only reports it.
-type BudgetView struct {
+// viewState is the accounting behind one invocation's view: the host's Budget
+// and the bytes this invocation has allocated and not yet freed. Every handle
+// onto the view points at the same viewState.
+type viewState struct {
 	b           *Budget
 	outstanding atomic.Int64
 }
 
-// Alloc reserves n bytes of the host's budget, as Budget.Alloc; a nil view
-// fails closed.
-func (v *BudgetView) Alloc(n int64) error {
+// BudgetView lets a decoder account allocations against the host's budget.
+// It is a handle onto the invocation's accounting state. Free can only return
+// what the view allocated (it clamps to the view's outstanding amount), so a
+// parser cannot free the host's accounting or another invocation's. There is
+// no way to read or change the limit other than Limit, which only reports it.
+// The zero value is a handle onto nothing and fails closed like a nil view.
+type BudgetView struct{ s *viewState }
+
+// handle returns a new BudgetView onto the same accounting state; a nil view
+// stays nil. Input.Clone hands the parser such a handle, so overwriting it
+// (*in.Budget = BudgetView{}) detaches only that handle.
+func (v *BudgetView) handle() *BudgetView {
 	if v == nil {
+		return nil
+	}
+	return &BudgetView{s: v.s}
+}
+
+// Alloc reserves n bytes of the host's budget, as Budget.Alloc; a nil or zero
+// view fails closed.
+func (v *BudgetView) Alloc(n int64) error {
+	if v == nil || v.s == nil {
 		return fmt.Errorf("%w: no budget", ErrBudget)
 	}
-	if err := v.b.Alloc(n); err != nil {
+	if err := v.s.b.Alloc(n); err != nil {
 		return err
 	}
-	v.outstanding.Add(n)
+	v.s.outstanding.Add(n)
 	return nil
 }
 
-// Free returns up to n bytes this view allocated and not yet freed.
+// Free returns up to n bytes the view allocated and not yet freed.
 func (v *BudgetView) Free(n int64) {
-	if v == nil || n <= 0 {
+	if v == nil || v.s == nil || n <= 0 {
 		return
 	}
 	for {
-		out := v.outstanding.Load()
+		out := v.s.outstanding.Load()
 		give := min(n, out)
 		if give <= 0 {
 			return
 		}
-		if v.outstanding.CompareAndSwap(out, out-give) {
-			v.b.Free(give)
+		if v.s.outstanding.CompareAndSwap(out, out-give) {
+			v.s.b.Free(give)
 			return
 		}
 	}
@@ -111,16 +127,16 @@ func (v *BudgetView) Free(n int64) {
 
 // Used returns the host's total bytes in use.
 func (v *BudgetView) Used() int64 {
-	if v == nil {
+	if v == nil || v.s == nil {
 		return 0
 	}
-	return v.b.Used()
+	return v.s.b.Used()
 }
 
 // Limit returns the host's limit.
 func (v *BudgetView) Limit() int64 {
-	if v == nil {
+	if v == nil || v.s == nil {
 		return 0
 	}
-	return v.b.Limit()
+	return v.s.b.Limit()
 }

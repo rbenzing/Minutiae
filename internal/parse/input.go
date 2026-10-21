@@ -57,13 +57,17 @@ type Lookuper interface {
 
 // Input is everything a parser invocation receives. Every value reachable
 // from an Input handed to a parser is a copy the host made for that
-// invocation (see Clone), except the reader, the Lookuper and the BudgetView,
-// which are the host's single sealed handles for that invocation.
+// invocation (see Clone), except the reader and the Lookuper, which are the
+// host's single sealed handles for that invocation.
 //
-// Budget and Lookup are shared with the host: a parser that assigns through the Budget pointer
-// (*in.Budget = BudgetView{}) damages only its own accounting, and the host's limits do not
-// depend on it. Parsers are trusted in-repo code (the threat model of the purity rules), so this is
-// documented, not defended; a defence would pass the budget as an interface value.
+// Budget is the parser's own BudgetView handle onto the invocation's accounting
+// state: a parser that assigns through the pointer (*in.Budget = BudgetView{})
+// detaches only that handle, whose later allocations then fail closed. That is
+// all it protects: the host keeps no handle of its own, its limits do not
+// depend on the view, and parse.NewBudget is exported, so the view is
+// cooperative accounting for a trusted parser's decoders, not a boundary
+// against a parser author. Lookup is an interface whose only implementation is
+// unexported.
 type Input struct {
 	Job       JobInfo
 	Primary   Artifact

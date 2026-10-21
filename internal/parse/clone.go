@@ -43,14 +43,17 @@ func (a Artifact) clone() Artifact {
 // Artifacts, Recovery, Source and Snapshot, so a parser that mutates what it
 // holds cannot change the host's tables or another invocation's. Primary and
 // the entries of Artifacts are copied separately. The readers, the Lookuper and
-// the BudgetView are the invocation's single handles and are shared (a second
-// BudgetView would carry its own outstanding amount). A nil Input clones to nil.
+// the BudgetView handle is new: the parser gets its own BudgetView value onto the
+// invocation's single accounting state, so overwriting it (*in.Budget =
+// BudgetView{}) detaches only that handle and never the Input the host holds. A
+// nil Input clones to nil.
 func (in *Input) Clone() *Input {
 	if in == nil {
 		return nil
 	}
 	c := *in
 	c.Primary = in.Primary.clone()
+	c.Budget = in.Budget.handle()
 	if in.Artifacts != nil {
 		c.Artifacts = make(map[string]Artifact, len(in.Artifacts))
 		for role, a := range in.Artifacts {
