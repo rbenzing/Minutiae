@@ -177,6 +177,16 @@ Background load: this is the user's working laptop, not an idle machine. The use
         "stats.overview_s": 94.1453441,
         "stats_type_s": 104.0282254
       }
+    },
+    {
+      "commit": "acc067a",
+      "label": "after-pragmas",
+      "machine": "Intel i7-1265U 10 cores/12 threads, 15.4 GB RAM, NVMe SK hynix PC801 512GB, Windows 11 Pro, go1.26.8",
+      "records": 2000000,
+      "values": {
+        "db_ratio": 3.900564515150823,
+        "ingest_rate": 2148.0704092413634
+      }
     }
   ],
   "decisions": {
@@ -202,7 +212,7 @@ One line per decision: the rule, the rows, the run, the outcome. All read the `b
 - `stats_plan` = apply: `stats_type_s` 104.03 s against <= 3 s (overview 94.15 s, group 5.55 s, index status 4.33 s).
 - `search_plan` = apply: `search_word_p95_ms` 20006 ms against <= 300 ms and `search_substring_p95_ms` 20005 ms against <= 1000 ms.
 - `open_artifact_cache` = apply: `open_artifact_ms` 31.74 ms (median of 3, 10,000 manifest lines) against <= 1 ms.
-- `ingest_hot_path` = apply: `ingest_rate` 1451 records/s against >= 40,000 (the after-pragmas run is not recorded yet; one miss is enough). `BenchmarkIngest` batch 1000/5000/20000: 1969/2452/2814 records/s. `db_ratio` is 3.90 against <= 1.6 (no decision is keyed to it).
+- `ingest_hot_path` = apply: `ingest_rate` 1451 records/s against >= 40,000 (one miss is enough); the 2,000,000-record `after-pragmas` run (code of acc067a, 256 MiB batch page cache) ingested at 2148 records/s, also against >= 40,000, with `db_ratio` 3.90 at 2M as at 10M (no decision is keyed to `db_ratio`). The decision stays `apply` whatever the later runs say (ruling D17). `BenchmarkIngest` batch 1000/5000/20000: 1969/2452/2814 records/s. `db_ratio` is 3.90 against <= 1.6 (no decision is keyed to it).
 - `parallel_verify` = pending: keyed to the `final` run, and the baseline verify did not finish.
 
 Notes (ruling D69):
@@ -257,6 +267,13 @@ A profile, not a spec-target run. Same machine as the baseline (Intel i7-1265U, 
 | NORMAL (`--fast-sync`, write-ahead log) | 400,000 | 184.5 s | 2,167.5 records/s | 486 MB |
 
 NORMAL is 1.38 times the FULL rate (-28 % ingest time), of the same order as the 21 % commit and fsync share of the Task 9 profile. The price is the power-loss window in `docs/limitations.md`. One run of each, so the difference carries run-to-run noise of a shared laptop.
+
+### After-pragmas ingest run (5D Task 8b, ruling D86)
+`after-pragmas`: ingest only, 2,000,000 records, label `after-pragmas`, code of acc067a (the batch transactions carry the bounded 256 MiB page cache of Task 8), FULL sync (no `--fast-sync`), alone on an idle machine (no other builder or check running), through `heavy.sh`. Ingest took 931.1 s: 2148 records/s (`ingest_rate`), `db_ratio` 3.90, `peak_rss_ingest_bytes` 533,016,576 (533 MB), `ostemp_added_ingest` 0. It is one input of the ingest decision (still `apply`, ruling D17).
+
+Peak memory against the baseline (D86): the baseline's 10,000,000-record ingest peaked at 261 MB; this 2,000,000-record ingest peaked at 533 MB, 272 MB more at one fifth of the records, consistent with, but not proven to be, the 256 MiB page cache the baseline did not have (the cache is a ceiling held once filled; the baseline used SQLite's default). The 400,000-record profiles above read 479 MB (FULL) and 486 MB (NORMAL) on the code of Tasks 8 and 9b. This is the peak of the whole test process (ruling D50), so it also includes the generator.
+
+Rate, not comparable like for like: the baseline's 1451 records/s is a 10,000,000-record average over 6892 s and the rate falls as the index grows, so the two figures differ in size as well as in code; the figure at 400,000 records on the Task 9b code was 1567.5 records/s (FULL). Nothing here is a claim that the cache alone moved the rate.
 
 ### Selectivity-aware search plans (5D Task 10)
 A word or prefix that matches a large share of the records made `r.id IN (SELECT rowid FROM <fts> WHERE <fts> MATCH ?)` materialize every matching rowid before SQLite could order by time (the baseline `matrix.search.*` p95 cells above, `search_plan` = apply). A page now runs one bounded probe (`SELECT count(*) FROM (SELECT 1 FROM <fts> WHERE <fts> MATCH ? LIMIT 4096)`); fewer than 4096 hits keep the FTS-first plan, otherwise the page is driven by `records_ts` (or `records_type_ts` with exactly one type) with an `EXISTS` on the full-text rowid and the first hits end the scan. Both shapes select the same records in the same order (`TestSearchShapesReturnIdenticalPages`). Query plan of the index-first page: `SCAN r USING INDEX records_ts` (`SEARCH r USING INDEX records_type_ts (type=?)` with one type) and `SCAN records_fts EXISTS VIRTUAL TABLE INDEX 0:=M2`, no temporary b-tree for the order. The FTS-first plan was `SEARCH r USING INTEGER PRIMARY KEY` over `LIST SUBQUERY` plus `USE TEMP B-TREE FOR ORDER BY`.
