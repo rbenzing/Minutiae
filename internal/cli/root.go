@@ -33,6 +33,8 @@ type Deps struct {
 	FSDrivers []detect.Driver
 	// ParserRegistry overrides the compiled-in parsers (tests inject fakes). nil = the registry built from parsers.All() and parsers.HashOf.
 	ParserRegistry func() ([]artparse.Registered, error)
+	// ErrTerminal forces the verify status display on or off (tests); the zero value detects a console on Err.
+	ErrTerminal TerminalMode
 }
 
 // DefaultDeps wires the real process streams and device backends.
