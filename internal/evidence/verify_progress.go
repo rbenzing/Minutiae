@@ -2,6 +2,7 @@ package evidence
 
 import (
 	"context"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -85,6 +86,38 @@ func (c *Case) VerifyObserved(ctx context.Context, p *VerifyProgress, checks ...
 }
 
 func noopAdd(int64) {}
+
+// addTotal adds n to a progress total. A total with a negative term, or one that would overflow, is
+// unknown (-1) and stays so: a wrong number would be shown as a fact.
+func addTotal(total, n int64) int64 {
+	if total < 0 || n < 0 || total > math.MaxInt64-n {
+		return -1
+	}
+	return total + n
+}
+
+// artifactBytesTotal is the unit total of the "artifacts" phase: the sizes of every manifest record,
+// duplicates included, because hashArtifacts re-hashes every record it is given. -1 when unknown.
+func artifactBytesTotal(recs []ManifestRecord) int64 {
+	var total int64
+	for _, r := range recs {
+		total = addTotal(total, r.Size)
+	}
+	return total
+}
+
+// auditedRecordsTotal is the unit total of "records.stream": the records the audit log announced and the
+// database holds a batch row for (not an errored or recovered batch). -1 when unknown.
+func auditedRecordsTotal(batches []auditedBatch, stored map[batchKey]storedBatch, audit *recordAudit) int64 {
+	var total int64
+	for _, b := range batches {
+		k := batchKey{b.IngestID, b.BatchNo}
+		if _, ok := stored[k]; ok && !audit.batchErr[k] && !audit.recovered[k] {
+			total = addTotal(total, int64(b.Count))
+		}
+	}
+	return total
+}
 
 // countedPhase is phase for a phase with an inner counter: total units are expected (-1 when
 // unknown) and add moves the counter by n. Without an observer add is a no-op.

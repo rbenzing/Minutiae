@@ -100,11 +100,7 @@ func (c *Case) verifyRun(ctx context.Context, observe verifyChunkObserver, p *Ve
 	}
 	inManifest := map[string]bool{}
 	seenID := map[string]bool{}
-	var artifactBytes int64
-	for _, r := range recs {
-		artifactBytes += r.Size
-	}
-	doneArtifacts, addBytes := c.countedPhase("artifacts", artifactBytes, "bytes")
+	doneArtifacts, addBytes := c.countedPhase("artifacts", artifactBytesTotal(recs), "bytes")
 	c.hashArtifacts(ctx, &rep, recs, inManifest, seenID, addBytes)
 	doneArtifacts()
 

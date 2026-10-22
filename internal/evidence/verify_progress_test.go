@@ -158,3 +158,69 @@ func TestVerifyProgressSnapshotIsRaceFree(t *testing.T) {
 		t.Fatalf("after the verify the observer still shows phase %q", s.Phase)
 	}
 }
+
+// streamSnapshotAfterAudit appends one audit entry about the last batch of a 6000-record case (batches of
+// 5000 and 1000), verifies with an observer and returns the snapshot at the end of records.stream.
+func streamSnapshotAfterAudit(t *testing.T, action string, details func(ingest string, batchNo int) map[string]any) evidence.VerifyProgressSnapshot {
+	t.Helper()
+	c := ftsCase(t, 6000)
+	entries, err := c.ReadAudit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var last evidence.BatchCommit
+	batches := 0
+	for _, e := range entries {
+		if e.Action != evidence.ActionBatch {
+			continue
+		}
+		b, err := evidence.DecodeDetails[evidence.BatchCommit](e.Details)
+		if err != nil {
+			t.Fatal(err)
+		}
+		last, batches = b, batches+1
+	}
+	if batches != 2 || last.Count != 1000 {
+		t.Fatalf("%d batches, last of %d records; want 2 and 1000", batches, last.Count)
+	}
+	if _, err := c.Audit.Append(action, "", details(last.IngestID, last.BatchNo)); err != nil {
+		t.Fatal(err)
+	}
+	return snapshotsAtPhaseEnds(t, c)["records.stream"]
+}
+
+func TestVerifyProgressTotalSkipsAnErroredBatch(t *testing.T) {
+	s := streamSnapshotAfterAudit(t, evidence.ActionBatchError, func(ingest string, no int) map[string]any {
+		return map[string]any{"ingest_id": ingest, "batch_no": no, "error": "injected"}
+	})
+	if s.Total != 5000 {
+		t.Errorf("records.stream total = %d, want 5000 (the errored batch of 1000 is not counted)", s.Total)
+	}
+}
+
+func TestVerifyProgressTotalSkipsARecoveredBatch(t *testing.T) {
+	s := streamSnapshotAfterAudit(t, evidence.ActionIngestRecover, func(ingest string, no int) map[string]any {
+		return map[string]any{"ingest_id": ingest, "batch_nos": []int{no}}
+	})
+	if s.Total != 5000 {
+		t.Errorf("records.stream total = %d, want 5000 (the recovered batch of 1000 is not counted)", s.Total)
+	}
+}
+
+func TestVerifyProgressArtifactBytesEndAtTotalWithDuplicateManifestID(t *testing.T) {
+	c := ftsCase(t, 300)
+	path := filepath.Join(c.Dir, "manifest.jsonl")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.Split(bytes.TrimRight(b, "\n"), []byte("\n"))
+	dup := append(append([]byte{}, b...), append(lines[len(lines)-1], '\n')...)
+	if err := os.WriteFile(path, dup, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := snapshotsAtPhaseEnds(t, c)["artifacts"]
+	if s.Total <= 0 || s.Done != s.Total {
+		t.Errorf("artifacts at its end = %+v, want Done == Total > 0 (a duplicate id is hashed like any other record)", s)
+	}
+}

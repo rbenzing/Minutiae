@@ -303,13 +303,7 @@ func (c *Case) verifyRecords(ctx context.Context, rep *VerifyReport, recs []Mani
 	// counters, or -1 (unknown) when the audit log or the stored batches cannot be read
 	recordsTotal := int64(-1)
 	if auditReadable && ok {
-		recordsTotal = 0
-		for _, b := range audit.batches {
-			k := batchKey{b.IngestID, b.BatchNo}
-			if _, stored := byKey[k]; stored && !audit.batchErr[k] && !audit.recovered[k] {
-				recordsTotal += int64(b.Count)
-			}
-		}
+		recordsTotal = auditedRecordsTotal(audit.batches, byKey, audit)
 	}
 
 	parserOK := c.verifyParsers(ctx, rep, ps, audit)
