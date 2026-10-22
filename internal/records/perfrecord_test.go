@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -22,6 +24,9 @@ type perfRun struct {
 	Machine string             `json:"machine"`
 	Records int64              `json:"records"`
 	Values  map[string]float64 `json:"values"`
+	// Unfinished names the rows whose phase did not end (a timeout); such a row has no value and its
+	// decision stays pending: an unfinished phase is never turned into a number.
+	Unfinished []string `json:"unfinished,omitempty"`
 }
 
 type perfDoc struct {
@@ -138,6 +143,12 @@ func TestPerformanceRecordIsConsistent(t *testing.T) {
 				if id == "open_artifact_ms" {
 					continue
 				}
+				if slices.Contains(f.Unfinished, id) {
+					if _, has := f.Values[id]; has {
+						t.Errorf("the %s run lists %s as unfinished but records a value", label, id)
+					}
+					continue
+				}
 				if _, ok := f.Values[id]; !ok {
 					t.Errorf("the %s run has no value for %s", label, id)
 				}
@@ -160,6 +171,10 @@ func TestPerformanceRecordIsConsistent(t *testing.T) {
 				missing = true
 				continue
 			}
+			if slices.Contains(run.Unfinished, row.id) {
+				missing = true
+				continue
+			}
 			if d.missed(t, run, row.id) {
 				want = "apply"
 			}
@@ -167,7 +182,7 @@ func TestPerformanceRecordIsConsistent(t *testing.T) {
 		if missing && want == "skip" {
 			want = "pending" // a run is not recorded yet and no recorded row has missed
 		}
-		if got != want {
+		if got != want && !(want == "pending" && strings.HasPrefix(got, "pending: ")) {
 			t.Errorf("decision %s is %q, but the recorded numbers say %q", rule.decision, got, want)
 		}
 	}

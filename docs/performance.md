@@ -187,6 +187,108 @@ Background load: this is the user's working laptop, not an idle machine. The use
         "db_ratio": 3.900564515150823,
         "ingest_rate": 2148.0704092413634
       }
+    },
+    {
+      "commit": "7e8c2ff",
+      "label": "final",
+      "machine": "Intel i7-1265U 10 cores/12 threads, 15.4 GB RAM, NVMe SK hynix PC801 512GB, Windows 11 Pro, go1.26.8",
+      "records": 10000000,
+      "unfinished": ["verify_rate"],
+      "values": {
+        "db_ratio": 3.8978788141812015,
+        "get_p95_ms": 274.366,
+        "ingest_rate": 1630.549279610738,
+        "ingest_s": 6132.9026513,
+        "list_p95_ms": 19.623,
+        "matrix.list.clean.artifact_big.p50_ms": 81038.294,
+        "matrix.list.clean.artifact_big.p95_ms": 81085.605,
+        "matrix.list.clean.artifact_big.samples": 2,
+        "matrix.list.clean.artifact_tiny.p50_ms": 0.585,
+        "matrix.list.clean.artifact_tiny.p95_ms": 3.731,
+        "matrix.list.clean.artifact_tiny.samples": 200,
+        "matrix.list.clean.artifacts3.p50_ms": 170433.633,
+        "matrix.list.clean.artifacts3.p95_ms": 170433.633,
+        "matrix.list.clean.artifacts3.samples": 1,
+        "matrix.list.clean.deep.p95_ms": 4.246,
+        "matrix.list.clean.deleted.p50_ms": 1.011,
+        "matrix.list.clean.deleted.p95_ms": 2.766,
+        "matrix.list.clean.deleted.samples": 200,
+        "matrix.list.clean.minconf+type.p50_ms": 5.73,
+        "matrix.list.clean.minconf+type.p95_ms": 8.396,
+        "matrix.list.clean.minconf+type.samples": 200,
+        "matrix.list.clean.none.p50_ms": 1.025,
+        "matrix.list.clean.none.p95_ms": 2.868,
+        "matrix.list.clean.none.samples": 200,
+        "matrix.list.clean.parser.p50_ms": 307639.941,
+        "matrix.list.clean.parser.p95_ms": 307639.941,
+        "matrix.list.clean.parser.samples": 1,
+        "matrix.list.clean.path+artifact.p50_ms": 80652.874,
+        "matrix.list.clean.path+artifact.p95_ms": 83466.33,
+        "matrix.list.clean.path+artifact.samples": 2,
+        "matrix.list.clean.time+untimed.p50_ms": 409.788,
+        "matrix.list.clean.time+untimed.p95_ms": 825.013,
+        "matrix.list.clean.time+untimed.samples": 200,
+        "matrix.list.clean.time.p50_ms": 11.831,
+        "matrix.list.clean.time.p95_ms": 19.623,
+        "matrix.list.clean.time.samples": 200,
+        "matrix.list.clean.type+time.p50_ms": 9.358,
+        "matrix.list.clean.type+time.p95_ms": 14.235,
+        "matrix.list.clean.type+time.samples": 200,
+        "matrix.list.clean.type1.p50_ms": 1.779,
+        "matrix.list.clean.type1.p95_ms": 3.917,
+        "matrix.list.clean.type1.samples": 200,
+        "matrix.list.clean.type2.p50_ms": 3.176,
+        "matrix.list.clean.type2.p95_ms": 9.273,
+        "matrix.list.clean.type2.samples": 200,
+        "matrix.list.clean.type3.p50_ms": 4.415,
+        "matrix.list.clean.type3.p95_ms": 7.022,
+        "matrix.list.clean.type3.samples": 200,
+        "matrix.search.prefix.mid.type.p95_ms": 20997.526,
+        "matrix.search.prefix.mid.type.samples": 6,
+        "matrix.search.prefix.mid.type.timeouts": 9,
+        "matrix.search.selective.common.artifact_tiny.p95_ms": 43778.837,
+        "matrix.search.selective.common.artifact_tiny.samples": 4,
+        "matrix.search.selective.common.artifact_tiny.timeouts": 7,
+        "matrix.search.selective.common.deleted.p95_ms": 103.83,
+        "matrix.search.selective.common.deleted.samples": 200,
+        "matrix.search.selective.common.deleted.timeouts": 0,
+        "matrix.search.selective.common.typepair.p95_ms": 63.743,
+        "matrix.search.selective.common.typepair.samples": 200,
+        "matrix.search.selective.common.typepair.timeouts": 0,
+        "matrix.search.substring.common.p95_ms": 72.965,
+        "matrix.search.substring.common.samples": 200,
+        "matrix.search.substring.common.timeouts": 0,
+        "matrix.search.substring.mid.p95_ms": 4225.281,
+        "matrix.search.substring.mid.samples": 33,
+        "matrix.search.substring.mid.timeouts": 0,
+        "matrix.search.substring.mid.type.p95_ms": 8957.068,
+        "matrix.search.substring.mid.type.samples": 25,
+        "matrix.search.substring.mid.type.timeouts": 0,
+        "matrix.search.word.common.time.p95_ms": 58.233,
+        "matrix.search.word.common.time.samples": 200,
+        "matrix.search.word.common.time.timeouts": 0,
+        "matrix.search.word.common.type.p95_ms": 36.57,
+        "matrix.search.word.common.type.samples": 200,
+        "matrix.search.word.common.type.timeouts": 0,
+        "matrix.search.word.mid.time.p95_ms": 3148.635,
+        "matrix.search.word.mid.time.samples": 47,
+        "matrix.search.word.mid.time.timeouts": 0,
+        "matrix.search.word.mid.type.p95_ms": 2551.753,
+        "matrix.search.word.mid.type.samples": 76,
+        "matrix.search.word.mid.type.timeouts": 0,
+        "matrix.search.word.rare.type.p95_ms": 21044.128,
+        "matrix.search.word.rare.type.samples": 6,
+        "matrix.search.word.rare.type.timeouts": 9,
+        "ostemp_added_ingest": 0,
+        "peak_rss_ingest_bytes": 747417600,
+        "search_substring_p95_ms": 8957.068,
+        "search_word_p95_ms": 21044.128,
+        "start_s": 0.0636404,
+        "stats.group_s": 7.4582118,
+        "stats.index_s": 0.0031243,
+        "stats.overview_s": 25.7279989,
+        "stats_type_s": 33.189335
+      }
     }
   ],
   "decisions": {
@@ -194,7 +296,7 @@ Background load: this is the user's working laptop, not an idle machine. The use
     "search_plan": "apply",
     "open_artifact_cache": "apply",
     "ingest_hot_path": "apply",
-    "parallel_verify": "pending"
+    "parallel_verify": "pending: P11 speed-up first (user decision 2026-10-22)"
   }
 }
 ```
@@ -206,6 +308,15 @@ Spill: the SQLite temporary files under `<case>/tmp/verify-*` peaked at about 25
 
 Not measured at 10M (by decision of 2026-10-16, they wait for the verify fix): copy, supersede, superqueries and tamper. Tamper detection is proven at 301,000 records (Task 4 smoke).
 
+### `final` run (code of 7e8c2ff, 10,000,000 records, label `final`)
+`case verify` did not finish, twice. Both attempts ran on the clean `final` case, alone on an idle machine, through `heavy.sh`, and ended in the `go test` timeout panic (the harness sets the limit 3 minutes below the wrapper's):
+1. Limit 120 minutes: `panic: test timed out after 1h57m0s` (package time 7028.652 s). The stack was in `verifyFTS` -> `streamRecords` (`verify_fts.go:407` and `:447`, the full-text rebuild of P11, called from `verify_fts.go:176`). The SQLite scratch space under `<case>/tmp/verify-*` had grown to 16 GB when last read by hand at 15:50 (free disk fell from 43 to 20 GB over the attempt, read by `df`), and was gone after the process ended.
+2. Limit 240 minutes: `panic: test timed out after 3h57m0s` (14,227 s). The stack was in `verifyFTS` -> `compareVocab` (`verify_fts.go:466`, `:654`, `:694`, `:584`), the comparison of the rebuilt and the stored vocabulary, the same place as the baseline.
+
+There is no phase table, no `verify_phases_s` and no `verify_rate` for the `final` run, and none is estimated (ruling D68b); the run record lists `verify_rate` under `unfinished`. All that the second attempt proves is a bound: 10,000,000 records were not verified in 14,227 s, so `verify_rate` is below about 703 records/s, against a target of >= 100,000 (a factor of at least 140). The first attempt's 1h57m is not a rate either. Time spent in each earlier phase of `case verify` was not recorded by either attempt. Peak memory and scratch-space size of verify were not recorded (the process was killed).
+
+Not run in `final` (stopped by the coordinator after the second timeout, user decision 2026-10-22): `copy`, `supersede`, `superqueries` and `tamper` at 10M, and therefore no `matrix.list.super.*`, `stats.super_s` or tamper detection at 10M (tamper detection stays proven at 301,000 records by the Task 4 smoke). `parallel_verify` stays pending: P11 is to be made faster first, in a new task with a spec amendment, and Task 15 does not start.
+
 ## Decisions
 One line per decision: the rule, the rows, the run, the outcome. All read the `baseline` run (10,000,000 records).
 
@@ -213,7 +324,18 @@ One line per decision: the rule, the rows, the run, the outcome. All read the `b
 - `search_plan` = apply: `search_word_p95_ms` 20006 ms against <= 300 ms and `search_substring_p95_ms` 20005 ms against <= 1000 ms.
 - `open_artifact_cache` = apply: `open_artifact_ms` 31.74 ms (median of 3, 10,000 manifest lines) against <= 1 ms.
 - `ingest_hot_path` = apply: `ingest_rate` 1451 records/s against >= 40,000 (one miss is enough); the 2,000,000-record `after-pragmas` run (code of acc067a, 256 MiB batch page cache) ingested at 2148 records/s, also against >= 40,000, with `db_ratio` 3.90 at 2M as at 10M (no decision is keyed to `db_ratio`). The decision stays `apply` whatever the later runs say (ruling D17). `BenchmarkIngest` batch 1000/5000/20000: 1969/2452/2814 records/s. `db_ratio` is 3.90 against <= 1.6 (no decision is keyed to it).
-- `parallel_verify` = pending: keyed to the `final` run, and the baseline verify did not finish.
+- `parallel_verify` = pending: P11 speed-up first (user decision 2026-10-22). The `final` verify did not finish in 14,227 s (`verify_rate` below about 703 records/s against >= 100,000); the plan's rule would read `apply`, but it needs a measured `verify_rate`, none exists, and the decision is not made from a bound. Task 15 does not start.
+
+The `final` run against the seven spec rows (baseline against final, 10,000,000 records; ruling D2: judged strictly as measured):
+- `ingest_rate`: miss, 1630.5 records/s against >= 40,000 (baseline 1451.0; ingest 6132.9 s; peak RSS 747 MB against 261 MB; `ostemp_added_ingest` 0). `db_ratio` miss, 3.898 against <= 1.6 (baseline 3.901).
+- `list_p95_ms`: pass, 19.6 ms against <= 50 (baseline 266,199 ms, a 1-sample cell). Outside the gated set, the plans that sort the match set still take minutes: `artifact_big` 81 s, `artifacts3` 170 s, `path+artifact` 83 s, `parser` 308 s (1 to 2 samples each) and `time+untimed` 825 ms.
+- `search_word_p95_ms`: miss, 21,044 ms against <= 300 (baseline 20,006). `search_substring_p95_ms`: miss, 8957 ms against <= 1000 (baseline 20,005). The common-word cells now pass (`word.common.type` 36.6 ms, `word.common.time` 58.2 ms, `substring.common` 73.0 ms), while `word.mid.type` (2552 ms), `word.mid.time` (3149 ms), `substring.mid` (4225 ms), `substring.mid.type` (8957 ms) and the timeouts of `word.rare.type` (9) and `prefix.mid.type` (9) reproduce the `search-retune` figures on freshly ingested data, so the cold file cache named in the retune notes does not explain them. The D98 cells: `selective.common.deleted` 103.8 ms and `typepair` 63.7 ms; `artifact_tiny` 43,779 ms with 7 timeouts.
+- `stats_type_s`: miss, 33.19 s against <= 3 (baseline 104.03 s; overview 25.73 s, group 7.46 s, index status 0.003 s).
+- `verify_rate`: not measured (see above).
+- `open_artifact_ms`: 0.209 ms, a benchmark (Task 12 notes), not part of the `final` run.
+- Invariants of the harness that did run held: the ingest recorded the full count, `queries`, `search`, `stats` and `untouched` passed (queries left the case's tree hash and audit count unchanged), `ostemp_added_ingest` was 0.
+
+What the plan did about each miss and what is left (Task 16 carries them to `docs/limitations.md` with these numbers): ingest (FTS5 maintenance and fsync dominate, the profile above; relaxed sync is available and off by default); search (index-first fixed the common words only; the selectivity of the other filters is not considered, D98); stats (index-only `Overview` cut 94.1 s to 25.7 s, and 25.7 s and `group_s` 7.5 s remain); `db_ratio` (no change made); verify (P11, above). Others of the list matrix that sort a large match set are the residual of Task 7.
 
 Notes (ruling D69):
 - `search_word_p95_ms` (20006 ms) and `search_substring_p95_ms` (20005 ms) sit AT the 20 s per-query timeout. The cells behind them (`matrix.search.word.common.time`, `matrix.search.substring.common`) have 6 samples and 9 timeouts each. They are LOWER BOUNDS, not measured p95s: the true p95 is at least this, and unknown.
