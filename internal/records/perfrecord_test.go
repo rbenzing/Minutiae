@@ -182,7 +182,7 @@ func TestPerformanceRecordIsConsistent(t *testing.T) {
 		if missing && want == "skip" {
 			want = "pending" // a run is not recorded yet and no recorded row has missed
 		}
-		if got != want && !(want == "pending" && strings.HasPrefix(got, "pending: ")) {
+		if got != want && (want != "pending" || !strings.HasPrefix(got, "pending: ")) {
 			t.Errorf("decision %s is %q, but the recorded numbers say %q", rule.decision, got, want)
 		}
 	}
