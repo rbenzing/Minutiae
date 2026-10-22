@@ -89,7 +89,9 @@ type Case struct {
 	// size replaces the default of the expected index so a small corpus spills.
 	verifyFTSHook func(point string, expected *sql.DB)
 	// verifyPhaseHook observes the duration of each verify phase; it cannot alter a check.
-	verifyPhaseHook   func(phase string, d time.Duration)
+	verifyPhaseHook func(phase string, d time.Duration)
+	// verifyProgress is the observer of the verify running now (nil when none); set for the run only.
+	verifyProgress    *VerifyProgress
 	verifyFTSCacheKiB int
 
 	// noRecoveredKindGate is a test seam only (AllowUndescribedRecoveredKinds in export_test.go).

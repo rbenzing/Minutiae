@@ -42,21 +42,21 @@ func TestHashPhaseMarksTheVerifyAsCut(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		rep := VerifyReport{Problems: []string{}, Notices: []string{}}
-		c.hashArtifacts(ctx, &rep, recs, map[string]bool{}, map[string]bool{})
+		c.hashArtifacts(ctx, &rep, recs, map[string]bool{}, map[string]bool{}, nil)
 		if !rep.cancelCut || rep.ArtifactsChecked != 0 || len(rep.Problems) != 0 {
 			t.Fatalf("cut=%v checked=%d problems=%q", rep.cancelCut, rep.ArtifactsChecked, rep.Problems)
 		}
 	})
 	t.Run("dead in the middle of the artifact", func(t *testing.T) {
 		rep := VerifyReport{Problems: []string{}, Notices: []string{}}
-		c.hashArtifacts(&stepCtx{Context: context.Background(), n: 1}, &rep, recs, map[string]bool{}, map[string]bool{})
+		c.hashArtifacts(&stepCtx{Context: context.Background(), n: 1}, &rep, recs, map[string]bool{}, map[string]bool{}, nil)
 		if !rep.cancelCut || rep.ArtifactsChecked != 0 || len(rep.Problems) != 0 {
 			t.Fatalf("cut=%v checked=%d problems=%q", rep.cancelCut, rep.ArtifactsChecked, rep.Problems)
 		}
 	})
 	t.Run("alive", func(t *testing.T) {
 		rep := VerifyReport{Problems: []string{}, Notices: []string{}}
-		c.hashArtifacts(context.Background(), &rep, recs, map[string]bool{}, map[string]bool{})
+		c.hashArtifacts(context.Background(), &rep, recs, map[string]bool{}, map[string]bool{}, nil)
 		if rep.cancelCut || rep.ArtifactsChecked != len(recs) || len(rep.Problems) != 0 {
 			t.Fatalf("cut=%v checked=%d problems=%q", rep.cancelCut, rep.ArtifactsChecked, rep.Problems)
 		}

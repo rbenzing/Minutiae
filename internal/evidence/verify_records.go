@@ -299,6 +299,19 @@ func (c *Case) verifyRecords(ctx context.Context, rep *VerifyReport, recs []Mani
 		}
 	}
 
+	// the records the audit log announced and the database holds a batch row for: the unit of the progress
+	// counters, or -1 (unknown) when the audit log or the stored batches cannot be read
+	recordsTotal := int64(-1)
+	if auditReadable && ok {
+		recordsTotal = 0
+		for _, b := range audit.batches {
+			k := batchKey{b.IngestID, b.BatchNo}
+			if _, stored := byKey[k]; stored && !audit.batchErr[k] && !audit.recovered[k] {
+				recordsTotal += int64(b.Count)
+			}
+		}
+	}
+
 	parserOK := c.verifyParsers(ctx, rep, ps, audit)
 	// the tables no scan below reads row by row for another purpose
 	c.verifyClassOnly(ctx, ps, metaClasses, []string{"key"}, func(v []string) string { return fmt.Sprintf("key %q", v[0]) })
@@ -314,8 +327,14 @@ func (c *Case) verifyRecords(ctx context.Context, rep *VerifyReport, recs []Mani
 	trails := map[string]*RecoveryTrail{}
 	seenArtifact := map[string]bool{}
 	var maxID int64
-	doneStream := c.phase("records.stream")
-	streamed := c.streamRecords(ctx, ps, verifyChunkRows, observe, func(row RecordRow, m recordRowMeta) {
+	doneStream, addStreamed := c.countedPhase("records.stream", recordsTotal, "records")
+	streamObserve := func(table string, rows int) {
+		addStreamed(int64(rows))
+		if observe != nil {
+			observe(table, rows)
+		}
+	}
+	streamed := c.streamRecords(ctx, ps, verifyChunkRows, streamObserve, func(row RecordRow, m recordRowMeta) {
 		rep.RecordsChecked++
 		maxID = max(maxID, row.ID)
 		if !seenArtifact[row.ArtifactID] {
@@ -400,7 +419,7 @@ func (c *Case) verifyRecords(ctx context.Context, rep *VerifyReport, recs []Mani
 	if indexCurrent {
 		// P11: the index is compared with a rebuild from the records (after the record checks, which
 		// authenticate the rows the rebuild reads)
-		c.verifyFTS(ctx, ps, observe)
+		c.verifyFTS(ctx, ps, observe, recordsTotal)
 	}
 }
 

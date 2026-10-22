@@ -160,7 +160,7 @@ type ftsVerify struct {
 	listed map[string]map[int64]bool
 }
 
-func (c *Case) verifyFTS(ctx context.Context, ps *problemSet, observe verifyChunkObserver) {
+func (c *Case) verifyFTS(ctx context.Context, ps *problemSet, observe verifyChunkObserver, recordsTotal int64) {
 	r := &ftsVerify{c: c, ctx: ctx, ps: ps, rep: ps.rep, problems: map[string]int{}, listed: map[string]map[int64]bool{}}
 	defer r.cleanup() // runs on a panic too
 	if err := r.setup(); err != nil {
@@ -172,8 +172,13 @@ func (c *Case) verifyFTS(ctx context.Context, ps *problemSet, observe verifyChun
 		return
 	}
 	r.hook("after-open")
-	doneRebuild := r.c.phase("fts.rebuild")
-	rebuilt := r.rebuild(observe)
+	doneRebuild, addRebuilt := r.c.countedPhase("fts.rebuild", recordsTotal, "records")
+	rebuilt := r.rebuild(func(table string, rows int) {
+		addRebuilt(int64(rows))
+		if observe != nil {
+			observe(table, rows)
+		}
+	})
 	doneRebuild()
 	if !rebuilt {
 		return
