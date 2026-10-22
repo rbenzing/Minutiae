@@ -147,8 +147,7 @@ type ftsIdxBuilder struct {
 	// dlTerm is the last term seen: the term of the doclist the open doclist index belongs to
 	dlTerm []byte
 
-	dl       map[int64]*ftsDlidxRow
-	fullKeys int
+	dl map[int64]*ftsDlidxRow
 }
 
 func newFTSIdxBuilder(seg ftsSegment, pgsz int, emit func(ftsIdxRow)) *ftsIdxBuilder {
