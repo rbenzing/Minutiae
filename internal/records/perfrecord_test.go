@@ -54,8 +54,8 @@ var perfRules = []struct {
 }
 
 // knownRuns are the only run labels a record may hold. final-post is the whole final run repeated
-// after Task 15, labelled with the code it measures.
-var knownRuns = map[string]bool{"baseline": true, "after-pragmas": true, "after-hot-path": true, "final": true, "final-post": true}
+// after Task 15, labelled with the code it measures. phases-2m is the 2M per-phase verify run of 5D-14c.
+var knownRuns = map[string]bool{"baseline": true, "after-pragmas": true, "after-hot-path": true, "final": true, "final-post": true, "phases-2m": true}
 
 // specTargets are the bars of spec section 11, frozen here so an edit of the document cannot move one.
 var specTargets = map[string]perfTarget{

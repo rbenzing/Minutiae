@@ -289,6 +289,25 @@ Background load: this is the user's working laptop, not an idle machine. The use
         "stats.overview_s": 25.7279989,
         "stats_type_s": 33.189335
       }
+    },
+    {
+      "commit": "65be2b0",
+      "label": "phases-2m",
+      "machine": "Intel i7-1265U 10 cores/12 threads, 15.4 GB RAM, NVMe SK hynix PC801 512GB, Windows 11 Pro, go1.26.8",
+      "records": 2000000,
+      "values": {
+        "db_ratio": 3.9006946544454326,
+        "ingest_rate": 2233.582647950401,
+        "ingest_s": 895.422429,
+        "ostemp_added_ingest": 0,
+        "ostemp_added_verify": 0,
+        "peak_rss_ingest_bytes": 533004288,
+        "peak_rss_verify_bytes": 868171776,
+        "start_s": 0.0589376,
+        "verify_rate": 417.1744085268196,
+        "verify_s": 4794.1579328,
+        "verify_scratch_bytes": 991232
+      }
     }
   ],
   "decisions": {
@@ -316,6 +335,46 @@ Not measured at 10M (by decision of 2026-10-16, they wait for the verify fix): c
 There is no phase table, no `verify_phases_s` and no `verify_rate` for the `final` run, and none is estimated (ruling D68b); the run record lists `verify_rate` under `unfinished`. All that the second attempt proves is a bound: 10,000,000 records were not verified in 14,227 s, so `verify_rate` is below about 703 records/s, against a target of >= 100,000 (a factor of at least 140). The first attempt's 1h57m is not a rate either. Time spent in each earlier phase of `case verify` was not recorded by either attempt. Peak memory and scratch-space size of verify were not recorded (the process was killed).
 
 Not run in `final` (stopped by the coordinator after the second timeout, user decision 2026-10-22): `copy`, `supersede`, `superqueries` and `tamper` at 10M, and therefore no `matrix.list.super.*`, `stats.super_s` or tamper detection at 10M (tamper detection stays proven at 301,000 records by the Task 4 smoke). `parallel_verify` stays pending: P11 is to be made faster first, in a new task with a spec amendment, and Task 15 does not start.
+
+
+### Verify phases (2M, `phases-2m`, code of 65be2b0)
+`case verify` finished on a fresh 2,000,000-record case ingested for this run (895.4 s, 2,233.6 records/s; `heavy.sh`, `go test -v`, idle machine, ingest and verify as separate runs). `verify_s` is 4,794.2 s and `verify_rate` 417.2 records/s, against a target of >= 100,000. Peak resident memory of verify was 868 MB, its SQLite scratch space 0.99 MB, and the OS temp directory was unchanged. Seconds are the `verify_phases_s` of the run; the share is of `verify_s`. The top-level rows and `other` sum to 100%; the indented rows are nested inside `fts.compare`.
+
+| Phase | Seconds | Share |
+|---|---:|---:|
+| `audit` | 0.05 | 0.00% |
+| `artifacts` (re-hash of the artifacts) | 0.15 | 0.00% |
+| `records.schema` | 0.00 | 0.00% |
+| `records.integrity_check` (P10) | 328.33 | 6.85% |
+| `records.stream` | 30.96 | 0.65% |
+| `records.batches` | 0.04 | 0.00% |
+| `records.lifecycle` | 0.00 | 0.00% |
+| `fts.rebuild` | 641.48 | 13.38% |
+| `fts.compare` | 3,792.90 | 79.12% |
+| &nbsp;&nbsp;`records_fts/vocab` | 326.31 | 6.81% |
+| &nbsp;&nbsp;`records_fts/docsize` | 3.25 | 0.07% |
+| &nbsp;&nbsp;`records_fts/config` | 0.00 | 0.00% |
+| &nbsp;&nbsp;`records_fts/totals` | 0.00 | 0.00% |
+| &nbsp;&nbsp;`records_fts/reachability` | 81.61 | 1.70% |
+| &nbsp;&nbsp;`records_fts/unreferenced` | 0.43 | 0.01% |
+| &nbsp;&nbsp;`records_fts_sub/vocab` | 2,496.12 | 52.07% |
+| &nbsp;&nbsp;`records_fts_sub/docsize` | 3.46 | 0.07% |
+| &nbsp;&nbsp;`records_fts_sub/config` | 0.00 | 0.00% |
+| &nbsp;&nbsp;`records_fts_sub/totals` | 0.00 | 0.00% |
+| &nbsp;&nbsp;`records_fts_sub/reachability` | 836.81 | 17.45% |
+| &nbsp;&nbsp;`records_fts_sub/unreferenced` | 44.89 | 0.94% |
+| `other` | 0.26 | 0.01% |
+| Total | 4,794.16 | 100% |
+
+P11 (the full-text check, `fts.rebuild` + `fts.compare`) is 4,434.38 s, 92.50% of `verify_s`. The two vocabulary comparisons are 2,822.44 s (58.87%), and `records_fts_sub` alone is 3,381.29 s (70.53%).
+
+#### Projection (linear, x5; not a measurement)
+This is a linear projection of the 2M seconds above to 10,000,000 records (x5). No 10M verify has finished, and a real run may differ (the `final` run did not end in 14,227 s). It is an input to the target decision, not a result.
+
+- `records.integrity_check` (P10): 328.33 s at 2M, 1,641.7 s projected at 10M, against the 100 s that a rate of 100,000 records/s allows for the whole of 10M (16.4 times the budget by itself).
+- P11: 4,434.38 s at 2M, 22,171.9 s (6.2 h) projected at 10M.
+- The floor inputs, the phases that cannot be made cheaper without weakening a check (2M, then x5): P10 328.33 s, 1,641.7 s; `records.stream` 30.96 s, 154.8 s; artifact re-hash 0.15 s, 0.7 s; audit chain 0.05 s, 0.2 s. Their sum is 359.48 s at 2M and 1,797.4 s projected.
+- All the phases other than P11 together (the time no task of this plan changes) are 359.78 s at 2M and 1,798.9 s projected; the rest of the 10M total is P11.
 
 ## Decisions
 One line per decision: the rule, the rows, the run, the outcome. All read the `baseline` run (10,000,000 records).
