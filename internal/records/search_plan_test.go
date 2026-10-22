@@ -336,7 +336,7 @@ func TestSearchShapesAgreeOnEveryFilter(t *testing.T) {
 		{"defaults", 4096, 262144, 4096},
 	}
 	// S8: each cell runs the shape its config asks for (every query has more than one hit, so the
-	// documented exceptions are: a prefix, phrase, negation or OR decides at once and never takes EXISTS;
+	// documented exceptions are: a prefix, phrase, negation or OR never takes EXISTS (hinted IN, the unhinted IN under a tiny filter, S12);
 	// a filter that is not index-served, or has no condition, is not probed and so is never tiny)
 	seen := map[records.SearchShape]bool{}
 	multi := map[string]bool{"unique1*": true, `"common word3"`: true, "common -word3": true}
@@ -350,6 +350,8 @@ func TestSearchShapesAgreeOnEveryFilter(t *testing.T) {
 		switch {
 		case cfg == "FTS-first" || cfg == "defaults":
 			want = records.ShapeFTSFirst
+		case multi[in] && cfg == "no hint" && probed[filter]:
+			want = records.ShapeFTSFirst // S12: a tiny filter always drops the hint
 		case cfg == "hinted IN" || multi[in]:
 			want = records.ShapeHintedIN
 		case cfg == "no hint" && probed[filter]:
@@ -450,12 +452,12 @@ func TestTinyFilterDropsTheHint(t *testing.T) {
 		}
 		undo()
 	}
-	// a prefix decides at once (hinted IN): it is neither probed against the filter nor turned into EXISTS
+	// a prefix with a tiny filter drops the hint (S12) and is never turned into EXISTS
 	undo := records.SetSearchFilterProbe(1 << 30)
 	defer undo()
 	for _, got := range listShapes(t, r, records.Filter{ArtifactIDs: arts[1:], Text: compileWords(t, "unique1*")}) {
-		if got != records.ShapeHintedIN {
-			t.Errorf("a prefix with a tiny filter: shape %s, want the hinted IN", shapeName(got))
+		if got != records.ShapeFTSFirst {
+			t.Errorf("a prefix with a tiny filter: shape %s, want the unhinted IN", shapeName(got))
 		}
 	}
 }
@@ -492,9 +494,9 @@ func TestFilterProbeIsBoundedAndConditional(t *testing.T) {
 			t.Fatalf("%+v: a filter no index serves must run no filter probe, got %q", nf, probes)
 		}
 	}
-	// a prefix decides without the filter
-	if n := run(records.Filter{ArtifactIDs: arts[1:], Text: compileWords(t, "unique1*")}); n != 0 {
-		t.Fatalf("a prefix needs no filter probe, got %q", probes)
+	// a prefix asks the filter too (S12), once
+	if n := run(records.Filter{ArtifactIDs: arts[1:], Text: compileWords(t, "unique1*")}); n != 1 {
+		t.Fatalf("a prefix runs one filter probe, got %q", probes)
 	}
 	restore()
 	restore = records.SetSearchBands(1<<30, 1<<30)
@@ -522,8 +524,9 @@ func TestProbesRunInStages(t *testing.T) {
 		want  string
 	}{
 		{"rare query", records.Filter{Text: compileWords(t, "common")}, [2]int{1000, 2000}, 1 << 30, "text:1000"},
-		{"prefix with a filter decides at once", records.Filter{Types: typed, Text: compileWords(t, "unique1*")}, [2]int{100, 300}, 1 << 30, "text:100"},
-		{"phrase decides at once", records.Filter{Text: compileWords(t, `"common word3"`)}, [2]int{100, 300}, 1 << 30, "text:100"},
+		{"prefix, tiny filter (S12: the filter is probed)", records.Filter{Types: typed, Text: compileWords(t, "unique1*")}, [2]int{100, 300}, 1 << 30, "text:100 filter:1073741824"},
+		{"prefix, filter not tiny decides without the large probe", records.Filter{Types: typed, Text: compileWords(t, "unique1*")}, [2]int{100, 300}, 0, "text:100 filter:0"},
+		{"phrase, no filter, decides at once", records.Filter{Text: compileWords(t, `"common word3"`)}, [2]int{100, 300}, 1 << 30, "text:100"},
 		{"plain word, tiny filter", records.Filter{Types: typed, Text: compileWords(t, "common")}, [2]int{100, 300}, 1 << 30, "text:100 filter:1073741824"},
 		{"plain word, filter not tiny", records.Filter{Types: typed, Text: compileWords(t, "common")}, [2]int{100, 300}, 0, "text:100 filter:0 text:301"},
 		{"plain word, no filter", records.Filter{Text: compileWords(t, "common")}, [2]int{100, 300}, 1 << 30, "text:100 text:301"},
@@ -538,6 +541,32 @@ func TestProbesRunInStages(t *testing.T) {
 		undoB()
 		if s := strings.Join(got, " "); s != tc.want {
 			t.Errorf("%s: probes %q, want %q", tc.name, s, tc.want)
+		}
+	}
+}
+
+// S12: a tiny filter always drops the hint, whatever the class of the query. With the hint, the
+// ORDER BY ts LIMIT walk of records_ts would check the IN set on nearly every record of the case before
+// it found the few the filter selects.
+func TestTinyFilterNeverKeepsTheHint(t *testing.T) {
+	c, r, arts, _ := shapeDataset(t)
+	defer records.SetSearchBands(2, 300)() // every query below has more than 2 hits
+	for _, in := range []string{"unique1*", `"common word3"`, "word3 OR word4", "common -word3"} {
+		f := records.Filter{ArtifactIDs: arts[1:], Text: compileWords(t, in)} // artifact b: 30 of 120 records
+		shapes := listShapes(t, r, f)
+		for _, s := range shapes {
+			if s != records.ShapeFTSFirst && s != records.ShapeExistsNoHint {
+				t.Errorf("%q: shape %s keeps the hint on a tiny filter", in, shapeName(s))
+			}
+		}
+		qs, err := records.SearchQueries(f, false, nil, 101, shapes[0])
+		if err != nil || len(qs) == 0 {
+			t.Fatal(err)
+		}
+		for _, q := range qs {
+			if plan := explain(t, c, q.SQL, q.Args); strings.Contains(plan, "records_ts") {
+				t.Errorf("%q: the plan walks records_ts:\n%s", in, plan)
+			}
 		}
 	}
 }

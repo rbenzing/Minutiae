@@ -519,9 +519,10 @@ const (
 
 // chooseShape picks the plan of a page from bounded probes in the page's read transaction, in stages
 // so that each page pays only for what it needs: (1) a text probe up to searchProbeLimit hits decides a
-// rare query; (2) with that many hits, a prefix or multi-term query decides at once (hinted IN: it never
-// takes EXISTS); (3) otherwise a filter probe, when every condition of the filter is served by an
-// index, decides a tiny filter (EXISTS without the hint); (4) only a plain word with no tiny filter
+// rare query; (2) with that many hits, a filter probe, when every condition of the filter is served by an
+// index, decides a tiny filter, which always drops the hint (S12: EXISTS for a plain word, the unhinted
+// IN for a prefix or multi-term query, which never takes EXISTS); (3) a prefix or multi-term query that is
+// not tiny is the hinted IN with no further probe; (4) only a plain word with no tiny filter
 // pays for the large text probe that separates the hinted IN from EXISTS.
 func (r *Reader) chooseShape(ctx context.Context, h evidence.ReadHandle, f Filter, have bool) (searchShape, error) {
 	hits, err := r.probeText(ctx, h, f.Text, searchProbeLimit)
@@ -531,12 +532,15 @@ func (r *Reader) chooseShape(ctx context.Context, h evidence.ReadHandle, f Filte
 	if hits < searchProbeLimit {
 		return shapeFTSFirst, nil
 	}
-	if f.Text.reexpands() {
-		return shapeHintedIN, nil
-	}
 	tiny, err := r.probeFilter(ctx, h, f, have)
 	if err != nil {
 		return shapeFTSFirst, err
+	}
+	if f.Text.reexpands() { // never EXISTS; a tiny filter still drops the hint (S12), else no further probe
+		if tiny {
+			return shapeFTSFirst, nil
+		}
+		return shapeHintedIN, nil
 	}
 	if tiny {
 		return shapeExistsNoHint, nil
