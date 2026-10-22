@@ -151,7 +151,7 @@ func TestStatusSpinnerMovesOnlyWithProgress(t *testing.T) {
 	src := &fakeSource{s: countedSnap("records.stream", 1, 10, "records", time.Second)}
 	var buf bytes.Buffer
 	tick := make(chan time.Time)
-	stop := startStatus(&buf, src, tick, now, nil, true)
+	stop := startStatus(&buf, src, tick, now, nil, true, 0)
 	for range 4 { // the fourth send returns only once the third frame is drawn
 		tick <- statusNow
 	}
@@ -162,7 +162,7 @@ func TestStatusSpinnerMovesOnlyWithProgress(t *testing.T) {
 
 	buf.Reset()
 	tick = make(chan time.Time)
-	stop = startStatus(&buf, src, tick, now, nil, true)
+	stop = startStatus(&buf, src, tick, now, nil, true, 0)
 	tick <- statusNow
 	tick <- statusNow // the first frame is drawn
 	src.bumpSeq()
@@ -179,7 +179,7 @@ func TestStatusStopClearsTheLineAndNothingFollows(t *testing.T) {
 	src := &fakeSource{s: countedSnap("records.stream", 1, 10, "records", time.Second)}
 	var buf bytes.Buffer
 	tick := make(chan time.Time)
-	stop := startStatus(&buf, src, tick, now, nil, true)
+	stop := startStatus(&buf, src, tick, now, nil, true, 0)
 	tick <- statusNow
 	tick <- statusNow
 	stop()
@@ -190,11 +190,11 @@ func TestStatusStopClearsTheLineAndNothingFollows(t *testing.T) {
 	if last := out[strings.LastIndex(out[:len(out)-1], "\r"):]; strings.TrimSpace(last) != "" {
 		t.Errorf("the clear sequence is %q, want only spaces between two returns", last)
 	}
-	// nothing drawn: nothing cleared
-	var empty bytes.Buffer
-	startStatus(&empty, src, make(chan time.Time), now, nil, true)()
-	if empty.Len() != 0 {
-		t.Errorf("a status that drew nothing wrote %q", empty.String())
+	// the first frame is drawn at start, before any tick, and stop clears it
+	var first bytes.Buffer
+	startStatus(&first, src, make(chan time.Time), now, nil, true, 0)()
+	if !strings.Contains(first.String(), "records.stream") || !strings.HasSuffix(first.String(), "") {
+		t.Errorf("no tick: %q, want a pre-drawn frame and the clear sequence", first.String())
 	}
 }
 
@@ -204,7 +204,7 @@ func TestStatusCancelledChannelShowsCancelling(t *testing.T) {
 	tick := make(chan time.Time)
 	cancelled := make(chan struct{})
 	close(cancelled)
-	stop := startStatus(&buf, src, tick, func() time.Time { return statusNow }, cancelled, false)
+	stop := startStatus(&buf, src, tick, func() time.Time { return statusNow }, cancelled, false, 0)
 	tick <- statusNow
 	tick <- statusNow
 	stop()
@@ -217,7 +217,7 @@ func TestSpinnerGlyphsFallBackToASCII(t *testing.T) {
 	src := &fakeSource{s: countedSnap("records.stream", 1, 10, "records", time.Second)}
 	var buf bytes.Buffer
 	tick := make(chan time.Time)
-	stop := startStatus(&buf, src, tick, func() time.Time { return statusNow }, nil, false)
+	stop := startStatus(&buf, src, tick, func() time.Time { return statusNow }, nil, false, 0)
 	for range 12 {
 		tick <- statusNow
 		src.bumpSeq()
@@ -295,5 +295,28 @@ func TestLocaleUTF8(t *testing.T) {
 		if got := localeUTF8(env(c.m)); got != c.want {
 			t.Errorf("%v: %v", c.m, got)
 		}
+	}
+}
+
+func TestStatusFramesAreCutToTheTerminalWidth(t *testing.T) {
+	src := &fakeSource{s: countedSnap("fts.compare/records_fts_trigram/vocabulary-merge", 123456789, 987654321, "records", time.Hour)}
+	var buf bytes.Buffer
+	tick := make(chan time.Time)
+	stop := startStatus(&buf, src, tick, func() time.Time { return statusNow }, nil, true, 30)
+	tick <- statusNow
+	tick <- statusNow
+	stop()
+	frames := strings.Split(buf.String(), "\r")
+	drawn := 0
+	for _, f := range frames {
+		if n := len([]rune(f)); n > 29 {
+			t.Errorf("frame %q is %d runes wide, want at most 29 on a 30-column console", f, n)
+		}
+		if strings.Contains(f, "fts.compare") {
+			drawn++
+		}
+	}
+	if drawn == 0 {
+		t.Fatalf("nothing drawn: %q", buf.String())
 	}
 }

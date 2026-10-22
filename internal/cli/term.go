@@ -52,3 +52,16 @@ func localeUTF8(getenv func(string) string) bool {
 	}
 	return false
 }
+
+// defaultStatusWidth is the width assumed when the console cannot say.
+const defaultStatusWidth = 79
+
+// statusWidth is the column count of the console behind d.Err, or defaultStatusWidth when unknown.
+func statusWidth(d Deps) int {
+	if f, ok := d.Err.(*os.File); ok && f != nil {
+		if w, ok := termWidth(f); ok {
+			return w
+		}
+	}
+	return defaultStatusWidth
+}

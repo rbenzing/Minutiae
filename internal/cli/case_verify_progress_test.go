@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/rbenzing/minutiae/internal/device"
+	"github.com/rbenzing/minutiae/internal/evidence"
 )
 
 // taggedLog records every write of stdout and stderr in one order.
@@ -114,7 +116,7 @@ func TestStatusLineClearedBeforeStdout(t *testing.T) {
 		}
 	}
 	if !drawn {
-		t.Skip("verify finished before the first refresh; the clear sequence was not exercised")
+		t.Fatal("no status frame was drawn before stdout: the pre-draw is missing")
 	}
 }
 
@@ -199,5 +201,27 @@ func TestCaseVerifyOpenErrorHasNoOutcomeLine(t *testing.T) {
 	_, off := runTagged(context.Background(), t, TerminalOff, "case", "verify", "--case", missing)
 	if got, want := on.joined("err"), off.joined("err"); got != want || !strings.Contains(got, "error:") || strings.Contains(got, "verify ") {
 		t.Errorf("open error stderr with the display on %q, off %q", got, want)
+	}
+}
+
+func TestCaseVerifyOtherErrorKeepsTodaysOutputAndClearsTheLine(t *testing.T) {
+	old := runVerify
+	runVerify = func(context.Context, *evidence.Case, *evidence.VerifyProgress) (evidence.VerifyReport, error) {
+		return evidence.VerifyReport{}, errors.New("boom")
+	}
+	t.Cleanup(func() { runVerify = old })
+	dir := cleanVerifyCase(t)
+	code, on := runTagged(context.Background(), t, TerminalOn, "case", "verify", "--case", dir)
+	_, off := runTagged(context.Background(), t, TerminalOff, "case", "verify", "--case", dir)
+	errs := on.joined("err")
+	if code != ExitError || strings.Contains(errs, "verify finished") || strings.Contains(errs, "verify failed") || strings.Contains(errs, "verify cancelled") {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+	pre := strings.TrimSuffix(errs, "error: boom\n")
+	if pre == errs || !strings.HasSuffix(pre, "\r") || strings.TrimSpace(pre[strings.LastIndex(pre[:len(pre)-1], "\r"):]) != "" {
+		t.Errorf("stderr %q, want only the cleared status line and the error line", errs)
+	}
+	if off.joined("err") != "error: boom\n" || on.joined("out") != off.joined("out") {
+		t.Errorf("off-terminal output differs: %q", off.joined("err"))
 	}
 }

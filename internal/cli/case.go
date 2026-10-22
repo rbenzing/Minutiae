@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -165,13 +166,14 @@ func newCaseVerifyCmd(d Deps, opts *rootOptions) *cobra.Command {
 			// the status line and the outcome line exist only on a terminal stderr outside --json
 			var prog *evidence.VerifyProgress
 			stopStatus := func() {}
+			defer func() { stopStatus() }() // a panic or an early return still clears the line
 			if !opts.json && errIsTerminal(d) {
 				prog = evidence.NewVerifyProgress()
 				ticker := time.NewTicker(statusInterval)
-				stopDraw := startStatus(d.Err, prog, ticker.C, time.Now, cmd.Context().Done(), consoleUTF8())
-				stopStatus = func() { stopDraw(); ticker.Stop() }
+				stopDraw := startStatus(d.Err, prog, ticker.C, time.Now, cmd.Context().Done(), consoleUTF8(), statusWidth(d))
+				stopStatus = sync.OnceFunc(func() { stopDraw(); ticker.Stop() })
 			}
-			rep, err := c.VerifyObserved(cmd.Context(), prog, examine.RecoveredCheck())
+			rep, err := runVerify(cmd.Context(), c, prog)
 			stopStatus() // the line is cleared before anything reaches stdout
 			if err != nil {
 				if line, ok := outcomeLine(rep, err); ok && prog != nil {
@@ -214,4 +216,9 @@ func newCaseVerifyCmd(d Deps, opts *rootOptions) *cobra.Command {
 	cmd.Flags().StringVar(&path, "case", "", "case directory")
 	_ = cmd.MarkFlagRequired("case")
 	return cmd
+}
+
+// runVerify is the verify call of `case verify` (a variable so a test can make it fail).
+var runVerify = func(ctx context.Context, c *evidence.Case, p *evidence.VerifyProgress) (evidence.VerifyReport, error) {
+	return c.VerifyObserved(ctx, p, examine.RecoveredCheck())
 }

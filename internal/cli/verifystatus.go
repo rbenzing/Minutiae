@@ -134,33 +134,40 @@ func group(n int64) string {
 
 // startStatus draws a frame on w at every tick until stop is called. stop returns only after the loop has
 // exited and, when something was drawn, has cleared the line, so it can run before any stdout output.
-func startStatus(w io.Writer, src progressSource, tick <-chan time.Time, now func() time.Time, cancelled <-chan struct{}, unicode bool) (stop func()) {
+func startStatus(w io.Writer, src progressSource, tick <-chan time.Time, now func() time.Time, cancelled <-chan struct{}, unicode bool, cols int) (stop func()) {
+	if cols < 2 {
+		cols = defaultStatusWidth
+	}
 	quit := make(chan struct{})
 	exited := make(chan struct{})
 	width := 0
+	st := &statusState{}
+	draw := func() {
+		isCancelling := false
+		select {
+		case <-cancelled: // a nil channel never fires
+			isCancelling = true
+		default:
+		}
+		line := fitWidth(renderStatus(src.Snapshot(), st, now(), isCancelling, unicode), cols-1) // never the last column: no wrap
+		n := utf8.RuneCountInString(line)
+		pad := ""
+		if n < width {
+			pad = strings.Repeat(" ", width-n)
+		}
+		_, _ = io.WriteString(w, ""+line+pad)
+		width = max(width, n)
+	}
+	draw() // the first frame is drawn now, not a tick later
 	go func() {
 		defer close(exited)
-		st := &statusState{}
 		for {
 			select {
 			case <-quit:
 				return
 			case <-tick:
 			}
-			isCancelling := false
-			select {
-			case <-cancelled: // a nil channel never fires
-				isCancelling = true
-			default:
-			}
-			line := renderStatus(src.Snapshot(), st, now(), isCancelling, unicode)
-			n := utf8.RuneCountInString(line)
-			pad := ""
-			if n < width {
-				pad = strings.Repeat(" ", width-n)
-			}
-			_, _ = io.WriteString(w, "\r"+line+pad)
-			width = max(width, n)
+			draw()
 		}
 	}()
 	return func() {
@@ -191,4 +198,12 @@ func outcomeLine(rep evidence.VerifyReport, err error) (string, bool) {
 	default:
 		return fmt.Sprintf("verify finished: %d problems (exit 4)", len(rep.Problems)), true
 	}
+}
+
+// fitWidth cuts line to at most n runes.
+func fitWidth(line string, n int) string {
+	if utf8.RuneCountInString(line) <= n {
+		return line
+	}
+	return string([]rune(line)[:max(n, 0)])
 }
