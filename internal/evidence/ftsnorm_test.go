@@ -17,140 +17,144 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-// TestNormalizeTable pins every step of the pipeline (plan "NormalizeText", pipeline version 1) and
+// normalizeTableCases pins every step of the pipeline (plan "NormalizeText", pipeline version 1) and
 // the spec §13 cases. The expected values are written as escapes so the source holds no ambiguous
-// glyph and no invisible control character.
+// glyph and no invisible control character. It is a package variable so that the tokenizer replica
+// corpus test (fts5tok_corpus_test.go) can feed the same inputs to the index.
+var normalizeTableCases = []struct {
+	name, in, want string
+}{
+	// the empty string and trivia
+	{"empty", "", ""},
+	{"ascii lower stays", "plain text 123", "plain text 123"},
+	{"ascii upper folds", "Hello WORLD", "hello world"},
+
+	// step 1: invalid UTF-8 and NUL
+	{"invalid byte becomes U+FFFD", "a\xffb", "a\ufffdb"},
+	{"each invalid byte becomes one U+FFFD", "a\xff\xfeb", "a\ufffd\ufffdb"},
+	{"truncated sequence is invalid", "a\xe2\x82", "a\ufffd\ufffd"},
+	{"overlong encoding is invalid", "\xc0\xaf", "\ufffd\ufffd"},
+	{"encoded surrogate is invalid", "\xed\xa0\x80", "\ufffd\ufffd\ufffd"},
+	{"a real U+FFFD stays", "a\ufffdb", "a\ufffdb"},
+	{"NUL becomes a space", "a\x00b", "a b"},
+	{"NUL run is one space", "a\x00\x00\x00b", "a b"},
+	{"only NUL is empty (trimmed)", "\x00", ""},
+
+	// step 2: Cf dropped
+	{"bidi override U+202E removed", "ab\u202ecd", "abcd"},
+	{"bidi isolate U+2066 and pop U+2069 removed", "a\u2066b\u2069c", "abc"},
+	{"left-to-right mark removed", "a\u200eb", "ab"},
+	{"zero width space U+200B separates words (R32)", "a\u200bb", "a b"},
+	{"zero width space run is one space", "a\u200b\u200b\u200bb", "a b"},
+	{"zero width space beside a space is one space", "a \u200bb\u200b c", "a b c"},
+	{"zero width space beside a dropped Cf is one space", "a\u2060\u200b\u00adb", "a b"},
+	{"zero width non-joiner U+200C dropped (R32)", "a\u200cb", "ab"},
+	{"zero width joiner U+200D dropped (R32)", "a\u200db", "ab"},
+	{"word joiner U+2060 dropped (R32)", "a\u2060b", "ab"},
+	{"leading zero width space is trimmed", "\u200ba", "a"},
+	{"trailing zero width space is trimmed", "a\u200b", "a"},
+	{"soft hyphen removed", "co\u00adoperate", "cooperate"},
+	{"BOM removed", "\ufeffabc", "abc"},
+	{"tag character removed", "a\U000e0001b", "ab"},
+	{"only Cf gives nothing", "\u202e\ufeff\u200c\u200d\u2060", ""},
+	{"only a zero width space is empty (trimmed)", "\u200b\u202e\ufeff", ""},
+
+	// step 2: Cc, Zs, Zl, Zp become one space each, then runs collapse (R14)
+	{"newline", "a\nb", "a b"},
+	{"tab", "a\tb", "a b"},
+	{"carriage return", "a\rb", "a b"},
+	{"vertical tab and form feed", "a\vb\fc", "a b c"},
+	{"C0 control", "a\x01b", "a b"},
+	{"DEL", "a\x7fb", "a b"},
+	{"C1 control", "a\u0085b", "a b"},
+	{"no-break space", "a\u00a0b", "a b"},
+	{"ideographic space", "a\u3000b", "a b"},
+	{"en quad and thin space", "a\u2000b\u2009c", "a b c"},
+	{"line separator U+2028", "a\u2028b", "a b"},
+	{"paragraph separator U+2029", "a\u2029b", "a b"},
+	{"CRLF is one space", "a\r\nb", "a b"},
+	{"LFLF is one space", "a\n\nb", "a b"},
+	{"two tabs are one space", "a\t\tb", "a b"},
+	{"mixed whitespace run is one space", "a \t\r\n\u00a0\u2028 b", "a b"},
+	{"run of ordinary spaces is one space", "a      b", "a b"},
+	{"Cf between spaces joins the run", "a \u200b b", "a b"},
+	{"leading run is trimmed", " \n\t a", "a"},
+	{"trailing run is trimmed", "a \r\n", "a"},
+	{"a query with a trailing newline equals the bare word", "foo\n", "foo"},
+	{"a space-wrapped phrase is trimmed on both sides", "  foo bar \t", "foo bar"},
+	{"only whitespace is empty (trimmed)", " \t\n ", ""},
+
+	// steps 3-5: NFKC, case folding
+	{"NFC e-acute", "caf\u00e9", "caf\u00e9"},
+	{"NFD e-acute composes", "cafe\u0301", "caf\u00e9"},
+	{"capital E-acute folds", "CAF\u00c9", "caf\u00e9"},
+	{"NFD capital E-acute folds and composes", "CAFE\u0301", "caf\u00e9"},
+	{"fullwidth letters and digits", "\uff21\uff22\uff23\uff11\uff12\uff13", "abc123"},
+	{"fullwidth punctuation", "\uff21\uff01", "a!"},
+	{"half-width katakana", "\uff76\uff80\uff76\uff85", "\u30ab\u30bf\u30ab\u30ca"},
+	{"half-width katakana with voiced mark composes", "\uff76\uff9e", "\u30ac"},
+	{"sharp s", "Stra\u00dfe", "strasse"},
+	{"capital sharp s", "STRA\u1e9eE", "strasse"},
+	{"fi ligature", "\ufb01sh", "fish"},
+	{"ffl ligature", "o\ufb04ce", "offlce"},
+	{"long s", "\u017fun", "sun"},
+	{"circled digits", "\u2460\u2461", "12"},
+	{"superscript two", "x\u00b2", "x2"},
+	{"trade mark sign", "a\u2122", "atm"},
+	{"vulgar fraction one half uses the fraction slash", "\u00bd", "1\u20442"},
+	{"Kelvin sign", "\u212a", "k"},
+	{"Angstrom sign", "\u212b", "\u00e5"},
+	{"Ohm sign", "\u2126", "\u03c9"},
+	{"titlecase dz digraph", "\u01c5", "d\u017e"},
+	{"final sigma folds like sigma", "\u03a3\u0391\u03a3 \u03c3\u03b1\u03c2", "\u03c3\u03b1\u03c3 \u03c3\u03b1\u03c3"},
+	{"Cyrillic folds", "\u041f\u0420\u0418\u0412\u0415\u0422", "\u043f\u0440\u0438\u0432\u0435\u0442"},
+	{"Armenian folds", "\u0531", "\u0561"},
+	{"Cherokee capital maps to the small letter", "\u13a0", "\uab70"},
+	{"Cherokee small letter stays", "\uab70", "\uab70"},
+	{"Cherokee capital last of the range", "\u13ef", "\uabbf"},
+	{"Cherokee capital extension", "\u13f0", "\u13f8"},
+	{"Cherokee small extension stays", "\u13f8", "\u13f8"},
+	{"Hangul jamo compose (NFKC)", "\u1112\u1161\u11ab", "\ud55c"},
+	{"compatibility jamo (NFKC)", "\u3131", "\u1100"},
+	{"Arabic presentation form", "\ufe8d", "\u0627"},
+	{"U+FDFA expands to 18 characters", "\ufdfa", "\u0635\u0644\u0649 \u0627\u0644\u0644\u0647 \u0639\u0644\u064a\u0647 \u0648\u0633\u0644\u0645"},
+
+	// CJK and Hangul are unchanged (apart from NFKC)
+	{"CJK unchanged", "\u65e5\u672c\u8a9e\u306e\u30c6\u30ad\u30b9\u30c8", "\u65e5\u672c\u8a9e\u306e\u30c6\u30ad\u30b9\u30c8"},
+	{"Hangul syllables unchanged", "\ud55c\uad6d\uc5b4", "\ud55c\uad6d\uc5b4"},
+	{"CJK compatibility ideograph maps to its unified form", "\uf900", "\u8c48"},
+	{"ideographic space between CJK", "\u65e5\u3000\u672c", "\u65e5 \u672c"},
+
+	// emoji keep their base; joiners are Cf and go
+	{"thumbs up with skin tone", "\U0001f44d\U0001f3fd", "\U0001f44d\U0001f3fd"},
+	{"ZWJ family loses the joiner, keeps every base", "\U0001f468\u200d\U0001f469\u200d\U0001f467", "\U0001f468\U0001f469\U0001f467"},
+	{"flag", "\U0001f1fa\U0001f1f8", "\U0001f1fa\U0001f1f8"},
+	{"keycap loses the variation selector", "1\ufe0f\u20e3", "1\u20e3"},
+	{"emoji variation selector VS16 dropped", "\u2764\ufe0f", "\u2764"},
+	{"text variation selector VS15 dropped", "\u2764\ufe0e", "\u2764"},
+	{"VS1 U+FE00 dropped", "a\ufe00b", "ab"},
+	{"a lone VS16 is empty", "\ufe0f", ""},
+	{"ideographic variation selector U+E0100 dropped", "\u8fbb\U000e0100", "\u8fbb"},
+	{"last ideographic variation selector U+E01EF dropped", "\u8fbb\U000e01ef", "\u8fbb"},
+	{"VS between a base and a combining mark does not block composition", "e\ufe0f\u0301", "\u00e9"},
+
+	// steps 6-7: the Turkish mappings
+	{"dotted capital I", "\u0130stanbul", "istanbul"},
+	{"plain capital", "ISTANBUL", "istanbul"},
+	{"dotless i", "\u0131spirta", "ispirta"},
+	{"dotless i capital partner", "I\u0307", "i"},
+	{"i with combining dot", "i\u0307", "i"},
+	{"dotless i followed by a combining dot", "\u0131\u0307", "i"},
+	{"dotted capital I followed by a combining dot", "\u0130\u0307", "i"},
+	{"several combining dots after i", "i\u0307\u0307\u0307", "i"},
+	{"combining dot after another letter stays", "a\u0307", "\u0227"},
+	{"combining dot after a space stays (the leading space is trimmed)", " \u0307", "\u0307"},
+	{"combining dot after an inner space stays", "a \u0307", "a \u0307"},
+}
+
+// TestNormalizeTable runs normalizeTableCases.
 func TestNormalizeTable(t *testing.T) {
-	cases := []struct {
-		name, in, want string
-	}{
-		// the empty string and trivia
-		{"empty", "", ""},
-		{"ascii lower stays", "plain text 123", "plain text 123"},
-		{"ascii upper folds", "Hello WORLD", "hello world"},
-
-		// step 1: invalid UTF-8 and NUL
-		{"invalid byte becomes U+FFFD", "a\xffb", "a\ufffdb"},
-		{"each invalid byte becomes one U+FFFD", "a\xff\xfeb", "a\ufffd\ufffdb"},
-		{"truncated sequence is invalid", "a\xe2\x82", "a\ufffd\ufffd"},
-		{"overlong encoding is invalid", "\xc0\xaf", "\ufffd\ufffd"},
-		{"encoded surrogate is invalid", "\xed\xa0\x80", "\ufffd\ufffd\ufffd"},
-		{"a real U+FFFD stays", "a\ufffdb", "a\ufffdb"},
-		{"NUL becomes a space", "a\x00b", "a b"},
-		{"NUL run is one space", "a\x00\x00\x00b", "a b"},
-		{"only NUL is empty (trimmed)", "\x00", ""},
-
-		// step 2: Cf dropped
-		{"bidi override U+202E removed", "ab\u202ecd", "abcd"},
-		{"bidi isolate U+2066 and pop U+2069 removed", "a\u2066b\u2069c", "abc"},
-		{"left-to-right mark removed", "a\u200eb", "ab"},
-		{"zero width space U+200B separates words (R32)", "a\u200bb", "a b"},
-		{"zero width space run is one space", "a\u200b\u200b\u200bb", "a b"},
-		{"zero width space beside a space is one space", "a \u200bb\u200b c", "a b c"},
-		{"zero width space beside a dropped Cf is one space", "a\u2060\u200b\u00adb", "a b"},
-		{"zero width non-joiner U+200C dropped (R32)", "a\u200cb", "ab"},
-		{"zero width joiner U+200D dropped (R32)", "a\u200db", "ab"},
-		{"word joiner U+2060 dropped (R32)", "a\u2060b", "ab"},
-		{"leading zero width space is trimmed", "\u200ba", "a"},
-		{"trailing zero width space is trimmed", "a\u200b", "a"},
-		{"soft hyphen removed", "co\u00adoperate", "cooperate"},
-		{"BOM removed", "\ufeffabc", "abc"},
-		{"tag character removed", "a\U000e0001b", "ab"},
-		{"only Cf gives nothing", "\u202e\ufeff\u200c\u200d\u2060", ""},
-		{"only a zero width space is empty (trimmed)", "\u200b\u202e\ufeff", ""},
-
-		// step 2: Cc, Zs, Zl, Zp become one space each, then runs collapse (R14)
-		{"newline", "a\nb", "a b"},
-		{"tab", "a\tb", "a b"},
-		{"carriage return", "a\rb", "a b"},
-		{"vertical tab and form feed", "a\vb\fc", "a b c"},
-		{"C0 control", "a\x01b", "a b"},
-		{"DEL", "a\x7fb", "a b"},
-		{"C1 control", "a\u0085b", "a b"},
-		{"no-break space", "a\u00a0b", "a b"},
-		{"ideographic space", "a\u3000b", "a b"},
-		{"en quad and thin space", "a\u2000b\u2009c", "a b c"},
-		{"line separator U+2028", "a\u2028b", "a b"},
-		{"paragraph separator U+2029", "a\u2029b", "a b"},
-		{"CRLF is one space", "a\r\nb", "a b"},
-		{"LFLF is one space", "a\n\nb", "a b"},
-		{"two tabs are one space", "a\t\tb", "a b"},
-		{"mixed whitespace run is one space", "a \t\r\n\u00a0\u2028 b", "a b"},
-		{"run of ordinary spaces is one space", "a      b", "a b"},
-		{"Cf between spaces joins the run", "a \u200b b", "a b"},
-		{"leading run is trimmed", " \n\t a", "a"},
-		{"trailing run is trimmed", "a \r\n", "a"},
-		{"a query with a trailing newline equals the bare word", "foo\n", "foo"},
-		{"a space-wrapped phrase is trimmed on both sides", "  foo bar \t", "foo bar"},
-		{"only whitespace is empty (trimmed)", " \t\n ", ""},
-
-		// steps 3-5: NFKC, case folding
-		{"NFC e-acute", "caf\u00e9", "caf\u00e9"},
-		{"NFD e-acute composes", "cafe\u0301", "caf\u00e9"},
-		{"capital E-acute folds", "CAF\u00c9", "caf\u00e9"},
-		{"NFD capital E-acute folds and composes", "CAFE\u0301", "caf\u00e9"},
-		{"fullwidth letters and digits", "\uff21\uff22\uff23\uff11\uff12\uff13", "abc123"},
-		{"fullwidth punctuation", "\uff21\uff01", "a!"},
-		{"half-width katakana", "\uff76\uff80\uff76\uff85", "\u30ab\u30bf\u30ab\u30ca"},
-		{"half-width katakana with voiced mark composes", "\uff76\uff9e", "\u30ac"},
-		{"sharp s", "Stra\u00dfe", "strasse"},
-		{"capital sharp s", "STRA\u1e9eE", "strasse"},
-		{"fi ligature", "\ufb01sh", "fish"},
-		{"ffl ligature", "o\ufb04ce", "offlce"},
-		{"long s", "\u017fun", "sun"},
-		{"circled digits", "\u2460\u2461", "12"},
-		{"superscript two", "x\u00b2", "x2"},
-		{"trade mark sign", "a\u2122", "atm"},
-		{"vulgar fraction one half uses the fraction slash", "\u00bd", "1\u20442"},
-		{"Kelvin sign", "\u212a", "k"},
-		{"Angstrom sign", "\u212b", "\u00e5"},
-		{"Ohm sign", "\u2126", "\u03c9"},
-		{"titlecase dz digraph", "\u01c5", "d\u017e"},
-		{"final sigma folds like sigma", "\u03a3\u0391\u03a3 \u03c3\u03b1\u03c2", "\u03c3\u03b1\u03c3 \u03c3\u03b1\u03c3"},
-		{"Cyrillic folds", "\u041f\u0420\u0418\u0412\u0415\u0422", "\u043f\u0440\u0438\u0432\u0435\u0442"},
-		{"Armenian folds", "\u0531", "\u0561"},
-		{"Cherokee capital maps to the small letter", "\u13a0", "\uab70"},
-		{"Cherokee small letter stays", "\uab70", "\uab70"},
-		{"Cherokee capital last of the range", "\u13ef", "\uabbf"},
-		{"Cherokee capital extension", "\u13f0", "\u13f8"},
-		{"Cherokee small extension stays", "\u13f8", "\u13f8"},
-		{"Hangul jamo compose (NFKC)", "\u1112\u1161\u11ab", "\ud55c"},
-		{"compatibility jamo (NFKC)", "\u3131", "\u1100"},
-		{"Arabic presentation form", "\ufe8d", "\u0627"},
-		{"U+FDFA expands to 18 characters", "\ufdfa", "\u0635\u0644\u0649 \u0627\u0644\u0644\u0647 \u0639\u0644\u064a\u0647 \u0648\u0633\u0644\u0645"},
-
-		// CJK and Hangul are unchanged (apart from NFKC)
-		{"CJK unchanged", "\u65e5\u672c\u8a9e\u306e\u30c6\u30ad\u30b9\u30c8", "\u65e5\u672c\u8a9e\u306e\u30c6\u30ad\u30b9\u30c8"},
-		{"Hangul syllables unchanged", "\ud55c\uad6d\uc5b4", "\ud55c\uad6d\uc5b4"},
-		{"CJK compatibility ideograph maps to its unified form", "\uf900", "\u8c48"},
-		{"ideographic space between CJK", "\u65e5\u3000\u672c", "\u65e5 \u672c"},
-
-		// emoji keep their base; joiners are Cf and go
-		{"thumbs up with skin tone", "\U0001f44d\U0001f3fd", "\U0001f44d\U0001f3fd"},
-		{"ZWJ family loses the joiner, keeps every base", "\U0001f468\u200d\U0001f469\u200d\U0001f467", "\U0001f468\U0001f469\U0001f467"},
-		{"flag", "\U0001f1fa\U0001f1f8", "\U0001f1fa\U0001f1f8"},
-		{"keycap loses the variation selector", "1\ufe0f\u20e3", "1\u20e3"},
-		{"emoji variation selector VS16 dropped", "\u2764\ufe0f", "\u2764"},
-		{"text variation selector VS15 dropped", "\u2764\ufe0e", "\u2764"},
-		{"VS1 U+FE00 dropped", "a\ufe00b", "ab"},
-		{"a lone VS16 is empty", "\ufe0f", ""},
-		{"ideographic variation selector U+E0100 dropped", "\u8fbb\U000e0100", "\u8fbb"},
-		{"last ideographic variation selector U+E01EF dropped", "\u8fbb\U000e01ef", "\u8fbb"},
-		{"VS between a base and a combining mark does not block composition", "e\ufe0f\u0301", "\u00e9"},
-
-		// steps 6-7: the Turkish mappings
-		{"dotted capital I", "\u0130stanbul", "istanbul"},
-		{"plain capital", "ISTANBUL", "istanbul"},
-		{"dotless i", "\u0131spirta", "ispirta"},
-		{"dotless i capital partner", "I\u0307", "i"},
-		{"i with combining dot", "i\u0307", "i"},
-		{"dotless i followed by a combining dot", "\u0131\u0307", "i"},
-		{"dotted capital I followed by a combining dot", "\u0130\u0307", "i"},
-		{"several combining dots after i", "i\u0307\u0307\u0307", "i"},
-		{"combining dot after another letter stays", "a\u0307", "\u0227"},
-		{"combining dot after a space stays (the leading space is trimmed)", " \u0307", "\u0307"},
-		{"combining dot after an inner space stays", "a \u0307", "a \u0307"},
-	}
+	cases := normalizeTableCases
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			got := NormalizeText(c.in)
@@ -448,19 +452,23 @@ func (x *tokenizerIndex) sub(query string) []int64 {
 	return probeMatch(x.t, x.db, "records_fts_sub", probeQuote(NormalizeText(query)))
 }
 
+// normalizeAgreeClasses holds one class per row: spellings that NormalizeText must make meet. The
+// replica corpus test (fts5tok_corpus_test.go) also feeds them to the index.
+var normalizeAgreeClasses = [][]string{
+	{"caf\u00e9", "cafe\u0301", "CAF\u00c9", "cafe", "CAFE"}, // accents: Go keeps them, the tokenizers drop them
+	{"Stra\u00dfe", "STRASSE", "strasse", "STRA\u1e9eE"},
+	{"\u0130stanbul", "ISTANBUL", "\u0131stanbul", "istanbul", "i\u0307stanbul"},
+	{"\uff21\uff22\uff23\uff11\uff12\uff13", "abc123", "ABC123"},
+	{"o\ufb04ce", "offlce"},
+	{"\u212aelvin", "kelvin", "KELVIN"},
+	{"\u03a3\u0391\u03a3", "\u03c3\u03b1\u03c2", "\u03c3\u03b1\u03c3"},
+	{"co\u00adoperate", "cooperate", "co\u2060operate"},
+	{"co\u200boperate", "co operate"},
+}
+
 func TestNormalizeAndTokenizersAgree(t *testing.T) {
 	// One document per spelling of each class; every spelling as a query finds the whole class.
-	classes := [][]string{
-		{"caf\u00e9", "cafe\u0301", "CAF\u00c9", "cafe", "CAFE"}, // accents: Go keeps them, the tokenizers drop them
-		{"Stra\u00dfe", "STRASSE", "strasse", "STRA\u1e9eE"},
-		{"\u0130stanbul", "ISTANBUL", "\u0131stanbul", "istanbul", "i\u0307stanbul"},
-		{"\uff21\uff22\uff23\uff11\uff12\uff13", "abc123", "ABC123"},
-		{"o\ufb04ce", "offlce"},
-		{"\u212aelvin", "kelvin", "KELVIN"},
-		{"\u03a3\u0391\u03a3", "\u03c3\u03b1\u03c2", "\u03c3\u03b1\u03c3"},
-		{"co\u00adoperate", "cooperate", "co\u2060operate"},
-		{"co\u200boperate", "co operate"},
-	}
+	classes := normalizeAgreeClasses
 	for _, class := range classes {
 		x := newTokenizerIndex(t, class...)
 		want := make([]int64, len(class))

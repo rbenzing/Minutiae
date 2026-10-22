@@ -23,3 +23,40 @@ func (c *Case) SetPhaseHook(f func(string, time.Duration)) { c.verifyPhaseHook =
 
 // ManifestReads is the number of times the manifest file was read and decoded by this Case.
 func (c *Case) ManifestReads() int64 { return c.manifestReads.Load() }
+
+// FTSReplicaToken is one token of a Go replica of an FTS5 tokenizer: the term and its position in the column.
+type FTSReplicaToken struct {
+	Term string
+	Pos  int
+}
+
+// FTSReplicaTokens returns the tokens the replica of the tokenizer of an FTS table (FTSWordTable or
+// FTSSubTable) produces for text, or nil for any other table name.
+func FTSReplicaTokens(table, text string) []FTSReplicaToken {
+	tok := ftsTokenizer(table)
+	if tok == nil {
+		return nil
+	}
+	var out []FTSReplicaToken
+	tok(text, func(term []byte, pos int) { out = append(out, FTSReplicaToken{string(term), pos}) })
+	return out
+}
+
+// FTSProbeCorpus is the fixed corpus of the tokenizer self-test.
+func FTSProbeCorpus() []string { return ftsProbeCorpus }
+
+// FTSReplicaMaxTokenSize is the byte length at which FTS5 cuts a token.
+const FTSReplicaMaxTokenSize = fts5MaxTokenSize
+
+// NormalizeCorpusInputs returns the input strings of TestNormalizeTable and of
+// TestNormalizeAndTokenizersAgree, so the tokenizer replicas can be run over them from the external test package.
+func NormalizeCorpusInputs() []string {
+	var out []string
+	for _, c := range normalizeTableCases {
+		out = append(out, c.in, c.want)
+	}
+	for _, class := range normalizeAgreeClasses {
+		out = append(out, class...)
+	}
+	return out
+}
