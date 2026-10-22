@@ -18,6 +18,7 @@ This table lists every such test with its seconds from the pass and from an isol
 
 | Test | Package | Seconds |
 |---|---|---|
+| `TestFTS5DecodeEqualsVocabOnGenuineIndexes` | `internal/evidence` | 62 |
 
 ## Rules and fixtures
 - Check modes: per-task commits use the AFFECTED check (see "Check forms"); the whole-suite FAST check (`CGO_ENABLED=0 go run ./tools/check`, no `-race`) uses the test cache; the RACE check (plain `go run ./tools/check`: all tests without `-race`, then `-race` on all packages but `internal/evidence` and `internal/records`, then `-race` on the named concurrency tests of those two; 30 minute package timeout) is required before a plan merges to main and runs every test uncached (`-count=1`) (CLAUDE.md, Definition of done).
