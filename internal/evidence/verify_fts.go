@@ -468,6 +468,8 @@ func (r *ftsVerify) compareTable(table string) {
 		name string
 		run  func(string) error
 	}{{"vocab", r.compareVocab}, {"docsize", r.compareDocsize}, {"config", r.compareConfig}, {"totals", r.compareTotals}} {
+		// done() runs before r.fail on purpose: the production phase hook only
+		// records the time, so ending the phase first cannot change what r.fail reports.
 		done := r.c.phase("fts.compare/" + table + "/" + s.name)
 		err := s.run(table)
 		done()
