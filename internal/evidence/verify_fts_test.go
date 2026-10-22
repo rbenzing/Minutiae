@@ -497,3 +497,35 @@ func TestVerifyKeepsAPreExistingEmptyTmp(t *testing.T) {
 		t.Fatalf("tmp created by the run is still there: %v", err)
 	}
 }
+
+// 5D-14b: the reachability step is timed only on a table where it runs (one with no content problem).
+func TestVerifyFTSReachabilitySubPhaseOnlyWhenItRuns(t *testing.T) {
+	c := indexedTextCase(t, 50)
+	if _, err := c.store.db.Exec(`INSERT INTO records_fts(records_fts, rowid, summary, body) VALUES ('delete', 5, ?, ?)`, normalizeFor(5)...); err != nil {
+		t.Fatal(err)
+	}
+	var seen []string
+	c.SetPhaseHook(func(name string, _ time.Duration) { seen = append(seen, name) })
+	rep, err := c.Verify()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubstr(rep.Problems, "a search hit is hidden") {
+		t.Fatalf("the tampered index was not reported: %q", rep.Problems)
+	}
+	count := func(want string) int {
+		n := 0
+		for _, s := range seen {
+			if s == want {
+				n++
+			}
+		}
+		return n
+	}
+	if n := count("fts.compare/records_fts/reachability"); n != 0 {
+		t.Errorf("reachability of the failing table reported %d times", n)
+	}
+	if n := count("fts.compare/records_fts_sub/reachability"); n != 1 {
+		t.Errorf("reachability of the clean table reported %d times in %v", n, seen)
+	}
+}

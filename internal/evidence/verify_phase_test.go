@@ -1,6 +1,7 @@
 package evidence_test
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -39,4 +40,30 @@ func countOf(ss []string, s string) int {
 		}
 	}
 	return n
+}
+
+// 5D-14b: every compare step of P11 is timed on its own, inside fts.compare.
+func TestVerifyFTSCompareSubPhasesAreTimed(t *testing.T) {
+	c := ftsCase(t, 300)
+	var seen []string
+	c.SetPhaseHook(func(name string, _ time.Duration) { seen = append(seen, name) })
+	rep, err := c.Verify()
+	if err != nil || !rep.OK() {
+		t.Fatalf("verify: %v %v", err, rep.Problems)
+	}
+	compare := slices.Index(seen, "fts.compare")
+	if compare < 0 {
+		t.Fatalf("fts.compare missing from %v", seen)
+	}
+	for _, table := range []string{"records_fts", "records_fts_sub"} {
+		for _, step := range []string{"vocab", "docsize", "config", "totals", "reachability", "unreferenced"} {
+			name := "fts.compare/" + table + "/" + step
+			if n := countOf(seen, name); n != 1 {
+				t.Errorf("sub-phase %q reported %d times in %v", name, n, seen)
+			}
+			if i := slices.Index(seen, name); i > compare {
+				t.Errorf("sub-phase %q ends after fts.compare", name)
+			}
+		}
+	}
 }

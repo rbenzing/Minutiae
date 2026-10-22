@@ -187,7 +187,9 @@ func (c *Case) verifyFTS(ctx context.Context, ps *problemSet, observe verifyChun
 			return
 		}
 		r.compareTable(table)
+		doneUnref := r.c.phase("fts.compare/" + table + "/unreferenced")
 		r.checkUnreferenced(table) // P11: shadow rows no structure references
+		doneUnref()
 	}
 	doneCompare()
 }
@@ -462,8 +464,14 @@ func (r *ftsVerify) hasDoc(id int64) bool {
 // compareTable compares one index with its rebuild.
 func (r *ftsVerify) compareTable(table string) {
 	unreadable := false
-	for _, step := range []func(string) error{r.compareVocab, r.compareDocsize, r.compareConfig, r.compareTotals} {
-		if err := step(table); err != nil {
+	for _, s := range []struct {
+		name string
+		run  func(string) error
+	}{{"vocab", r.compareVocab}, {"docsize", r.compareDocsize}, {"config", r.compareConfig}, {"totals", r.compareTotals}} {
+		done := r.c.phase("fts.compare/" + table + "/" + s.name)
+		err := s.run(table)
+		done()
+		if err != nil {
 			r.fail(table, err)
 			if r.dead {
 				return
@@ -473,7 +481,10 @@ func (r *ftsVerify) compareTable(table string) {
 	}
 	r.hook("compared:" + table)
 	if r.problems[table] == 0 && !unreadable {
-		if err := r.checkReachability(table); err != nil {
+		done := r.c.phase("fts.compare/" + table + "/reachability")
+		err := r.checkReachability(table)
+		done()
+		if err != nil {
 			r.fail(table, err)
 		}
 		r.hook("reached:" + table)

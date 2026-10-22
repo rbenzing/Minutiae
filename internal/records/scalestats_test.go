@@ -3,6 +3,7 @@ package records_test
 import (
 	"math"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -79,3 +80,21 @@ var errTimeIt = &timeItError{}
 type timeItError struct{}
 
 func (*timeItError) Error() string { return "timeIt test error" }
+
+// topLevelPhaseSum adds the phases without a "/" in their name: a name "<parent>/<table>/<step>" is
+// nested inside its parent and already counted there.
+func topLevelPhaseSum(phases map[string]float64) float64 {
+	sum := 0.0
+	for p, s := range phases {
+		if !strings.Contains(p, "/") {
+			sum += s
+		}
+	}
+	return sum
+}
+
+func TestTopLevelPhaseSumSkipsSubPhases(t *testing.T) {
+	if got := topLevelPhaseSum(map[string]float64{"a": 1, "b": 2, "b/x/y": 5}); got != 3 {
+		t.Fatalf("topLevelPhaseSum = %v, want 3", got)
+	}
+}

@@ -654,7 +654,10 @@ func (st *scaleState) sampleTmp() (stop func() (tmp, scratch int64)) {
 func (st *scaleState) verify(name string, want int64, mustBeOK bool) evidence.VerifyReport {
 	t := st.t
 	phases := map[string]float64{}
-	st.c.SetVerifyPhaseHook(func(p string, d time.Duration) { phases[p] += d.Seconds() })
+	st.c.SetVerifyPhaseHook(func(p string, d time.Duration) {
+		phases[p] += d.Seconds()
+		t.Logf("verify phase %s %.1fs", p, d.Seconds()) // a run that times out still shows its finished phases
+	})
 	defer st.c.SetVerifyPhaseHook(nil)
 	stop := st.sampleTmp()
 	endGuard := st.guardOSTemp(name)
@@ -679,12 +682,10 @@ func (st *scaleState) verify(name string, want int64, mustBeOK bool) evidence.Ve
 		} else {
 			t.Log("verify_scratch_bytes: not measured (no file under <case>/tmp/verify-* was visible to the sampler)")
 		}
-		sum := 0.0
 		for p, s := range phases {
 			st.res.Phases[p] = s
-			sum += s
 		}
-		st.res.Phases["other"] = el - sum // the checks no phase wraps (derived chain, cross checks, ...)
+		st.res.Phases["other"] = el - topLevelPhaseSum(phases) // the checks no phase wraps (derived chain, cross checks, ...)
 	}
 	if mustBeOK {
 		if !rep.OK() {
