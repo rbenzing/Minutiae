@@ -18,15 +18,16 @@ func TestVerifyCancelAtTheEndOfEveryPhase(t *testing.T) {
 		"artifacts",
 		"records.schema",
 		"records.integrity_check",
+		"fts.selftest",
+		"records.stream/fts.expected",
 		"records.stream",
 		"records.batches",
 		"records.lifecycle",
-		"fts.rebuild",
 	}
-	for _, table := range []string{"records_fts", "records_fts_sub"} { // the P11 compare steps, in run order (5D-14b)
-		for _, step := range []string{"vocab", "docsize", "config", "totals", "reachability", "unreferenced"} {
-			phases = append(phases, "fts.compare/"+table+"/"+step)
-		}
+	phases = append(phases, ftsIndexPhases()...) // the index pass of P11, in run order (5D-14i)
+	phases = append(phases, "fts.rebuild")
+	for _, table := range []string{"records_fts", "records_fts_sub"} { // the interim comparison with a rebuild, in run order
+		phases = append(phases, "fts.compare/"+table+"/reachability")
 	}
 	phases = append(phases, "fts.compare")
 	for _, phase := range phases {
@@ -48,7 +49,7 @@ func TestVerifyCancelAtTheEndOfEveryPhase(t *testing.T) {
 			if !seen {
 				t.Fatalf("phase %q never ran", phase)
 			}
-			if phase == "fts.compare" || phase == "fts.compare/records_fts_sub/unreferenced" { // nothing after it reads with the context
+			if phase == "fts.compare" || phase == "fts.compare/records_fts_sub/reachability" { // nothing after it reads with the context
 				if !rep.OK() {
 					t.Fatalf("a cancel after the last cancellable phase failed a clean verify: %q", rep.Problems)
 				}

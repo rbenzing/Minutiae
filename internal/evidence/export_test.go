@@ -69,3 +69,17 @@ func SetFTSReplicaOverride(f func(table string) func(string, func([]byte, int)))
 	ftsReplicaOverride = f
 	return func() { ftsReplicaOverride = old }
 }
+
+// FTSBucketReport is what the index pass of P11 concluded: the number of (table, bucket) pairs whose digests
+// were compared, and the number of failing buckets of each table (word, substring).
+type FTSBucketReport struct {
+	Compared int
+	Failing  [2]int
+}
+
+// SetFTSBucketObserver installs a test seam called once, when the index pass of P11 is done.
+func (c *Case) SetFTSBucketObserver(f func(FTSBucketReport)) {
+	c.verifyFTSInspect = func(r *ftsVerify) {
+		f(FTSBucketReport{Compared: r.bucketsCompared, Failing: [2]int{len(r.failing[0]), len(r.failing[1])}})
+	}
+}

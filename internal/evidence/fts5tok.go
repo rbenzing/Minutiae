@@ -315,7 +315,8 @@ func fts5PinError(version, sourceID string) error {
 // blobs) with what the replicas produce. Any difference, and any other SQLite than the one the tables were
 // measured against, wraps errFTSReplica. Any other error means the reference itself could not be built; the
 // caller treats both as a failure of the check (a fail-closed problem, never a pass). It also returns the
-// fresh _config rows of each table, read before the first insert.
+// fresh _config rows of each table, read before the first insert: also with a replica mismatch (the rows are
+// true whatever the replica does), but not when the SQLite is not the pinned one.
 func ftsSelfTest(ctx context.Context) (ftsReference, error) {
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -355,6 +356,9 @@ func ftsSelfTest(ctx context.Context) (ftsReference, error) {
 	}
 	for _, table := range FTSTables() {
 		if err := ftsSelfTestTable(ctx, conn, table); err != nil {
+			if errors.Is(err, errFTSReplica) {
+				return ref, err // the fresh _config rows are still true: the tokenizer-independent checks use them
+			}
 			return ftsReference{}, err
 		}
 	}
