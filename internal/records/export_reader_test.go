@@ -56,3 +56,13 @@ func SearchQueries(f Filter, desc bool, cur *Cursor, limit int, shape SearchShap
 	}
 	return ListQueries(f, desc, cur, limit, false)
 }
+
+// OverviewTypesQuery returns the one statement OverviewAndTypes scans the records with.
+func OverviewTypesQuery(f Filter, have bool) (Query, error) {
+	w, err := f.compile(have)
+	if err != nil {
+		return Query{}, err
+	}
+	q := overviewTypesStatement(w)
+	return Query{q.sql, q.args}, nil
+}

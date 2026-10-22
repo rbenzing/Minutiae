@@ -718,11 +718,15 @@ func newRecordsStatsCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		defer func() { _ = c.Close() }()
-		ov, err := r.Overview(cmd.Context(), f)
-		if err != nil {
-			return err
+		var ov records.Overview
+		var res records.StatsResult
+		if *by == "type" { // one covering pass answers the overview and the groups (same numbers as two statements)
+			ov, res, err = r.OverviewAndTypes(cmd.Context(), f, *maxGroups)
+		} else {
+			if ov, err = r.Overview(cmd.Context(), f); err == nil {
+				res, err = r.StatsTop(cmd.Context(), f, *by, *maxGroups)
+			}
 		}
-		res, err := r.StatsTop(cmd.Context(), f, *by, *maxGroups)
 		if err != nil {
 			return err
 		}
