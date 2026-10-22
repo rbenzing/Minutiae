@@ -80,9 +80,9 @@ func TestSearchShapesReturnIdenticalPages(t *testing.T) {
 			return x.TS != nil && !x.TS.T.Before(from) && x.TS.T.Before(to)
 		}},
 	}
-	// 1 forces the index-first shape for every query, the default chooses, 1<<30 forces FTS-first
-	for _, probe := range []int{1, 4096, 1 << 30} {
-		restore := records.SetSearchProbeLimit(probe)
+	// (1, 0) forces EXISTS, (1, 1<<30) the hinted IN, the defaults choose, (1<<30, 1<<30) forces FTS-first
+	for _, probe := range [][2]int{{1, 0}, {1, 1 << 30}, {4096, 262144}, {1 << 30, 1 << 30}} {
+		restore := records.SetSearchBands(probe[0], probe[1])
 		for _, qc := range queries {
 			q := compileWords(t, qc.in)
 			for _, fc := range filters {
@@ -99,7 +99,7 @@ func TestSearchShapesReturnIdenticalPages(t *testing.T) {
 					f := fc.f
 					f.Text = q
 					if got := walkSearch(t, r, f, desc, 7); !slices.Equal(got, want) {
-						t.Fatalf("probe %d, %q, %s, desc=%v: %d ids, oracle %d", probe, qc.in, fc.name, desc, len(got), len(want))
+						t.Fatalf("bands %v, %q, %s, desc=%v: %d ids, oracle %d", probe, qc.in, fc.name, desc, len(got), len(want))
 					}
 				}
 			}
@@ -121,7 +121,7 @@ func TestIndexFirstPlanIsOrderedByAnIndex(t *testing.T) {
 		{"two types", records.Filter{Types: []string{"message", "call"}, Text: q}, "records_ts"},
 		{"deleted only", records.Filter{Deleted: records.Only, Text: q}, "records_ts"},
 	} {
-		qs, err := records.SearchQueries(tc.f, false, nil, 101, true)
+		qs, err := records.SearchQueries(tc.f, false, nil, 101, records.ShapeExists)
 		if err != nil || len(qs) == 0 {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
@@ -135,9 +135,35 @@ func TestIndexFirstPlanIsOrderedByAnIndex(t *testing.T) {
 	}
 }
 
+// The hinted IN shape is ordered by the same index: the set is built once, the order needs no sort.
+func TestHintedINPlanIsOrderedByAnIndex(t *testing.T) {
+	c, _, _ := searchDataset(t)
+	for _, tc := range []struct {
+		name  string
+		f     records.Filter
+		index string
+	}{
+		{"no type", records.Filter{Text: compileWords(t, "common")}, "records_ts"},
+		{"one type", records.Filter{Types: []string{"message"}, Text: compileWords(t, "common")}, "records_type_ts"},
+		{"prefix", records.Filter{Text: compileWords(t, "unique1*")}, "records_ts"},
+	} {
+		qs, err := records.SearchQueries(tc.f, false, nil, 101, records.ShapeHintedIN)
+		if err != nil || len(qs) == 0 {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		for _, sq := range qs {
+			plan := explain(t, c, sq.SQL, sq.Args)
+			if !strings.Contains(plan, "INDEX "+tc.index) || !strings.Contains(plan, "LIST SUBQUERY") || strings.Contains(plan, "USE TEMP B-TREE FOR ORDER BY") ||
+				(!strings.HasPrefix(plan, "SCAN r") && !strings.HasPrefix(plan, "SEARCH r")) {
+				t.Fatalf("%s: not driven by %s in time order:\n%s", tc.name, tc.index, plan)
+			}
+		}
+	}
+}
+
 func TestIndexFirstNeverErrorsOnAnyFilterShape(t *testing.T) {
 	_, r, art := searchDataset(t)
-	restore := records.SetSearchProbeLimit(1)
+	restore := records.SetSearchBands(1, 0)
 	defer restore()
 	from, to := time.Unix(1_600_000_000, 0).UTC(), time.Unix(1_600_000_000+20*3600, 0).UTC()
 	q := compileWords(t, "common")
@@ -159,7 +185,7 @@ func TestIndexFirstNeverErrorsOnAnyFilterShape(t *testing.T) {
 
 func TestSearchProbeIsBoundedAndOncePerPage(t *testing.T) {
 	_, r, _ := searchDataset(t)
-	restore := records.SetSearchProbeLimit(5)
+	restore := records.SetSearchBands(5, 50)
 	defer restore()
 	var probes []string
 	r.SetQueryLog(func(q string) {
@@ -175,34 +201,77 @@ func TestSearchProbeIsBoundedAndOncePerPage(t *testing.T) {
 	}
 }
 
+// shapeOf names the plan shape of a logged list statement.
+func shapeOf(s string) records.SearchShape {
+	exists := strings.Contains(s, "EXISTS (SELECT 1 FROM records_fts")
+	hint := strings.Contains(s, "INDEXED BY")
+	switch {
+	case exists && hint:
+		return records.ShapeExists
+	case exists:
+		return records.ShapeExistsNoHint
+	case hint:
+		return records.ShapeHintedIN
+	}
+	return records.ShapeFTSFirst
+}
+
+func shapeName(s records.SearchShape) string {
+	return map[records.SearchShape]string{
+		records.ShapeFTSFirst: "FTS-first", records.ShapeHintedIN: "hinted IN",
+		records.ShapeExists: "EXISTS", records.ShapeExistsNoHint: "EXISTS without hint",
+	}[s]
+}
+
+// listShapes runs one search page and returns the shape of every list statement it made.
+func listShapes(t *testing.T, r *records.Reader, f records.Filter) []records.SearchShape {
+	t.Helper()
+	var shapes []records.SearchShape
+	r.SetQueryLog(func(s string) {
+		if strings.HasPrefix(s, "SELECT ") && strings.Contains(s, " FROM records r") && !strings.HasPrefix(s, "SELECT count(*)") {
+			shapes = append(shapes, shapeOf(s))
+		}
+	})
+	defer r.SetQueryLog(nil)
+	if _, err := r.Search(ctx, f, records.Page{Limit: 10}, records.SearchOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(shapes) == 0 {
+		t.Fatal("no list statement logged")
+	}
+	return shapes
+}
+
+// The plan has three bands by the number of full-text hits: fewer than the probe limit is FTS-first,
+// up to the IN limit is the hinted IN, more is EXISTS; a prefix or multi-term query never takes EXISTS.
+// "common" matches exactly 600 of the 600 records, so a limit of 600 or 599 sits on the boundary.
 func TestPlanFollowsTheProbe(t *testing.T) {
 	_, r, _ := searchDataset(t)
-	q := compileWords(t, "common")
+	type band struct{ probe, in int }
 	for _, tc := range []struct {
-		name       string
-		limit      int
-		wantExists bool
-	}{{"common query (probe at 1)", 1, true}, {"rare query (probe above the hits)", 1 << 30, false}} {
-		restore := records.SetSearchProbeLimit(tc.limit)
-		var lists []string
-		r.SetQueryLog(func(s string) {
-			if strings.HasPrefix(s, "SELECT r.") || strings.HasPrefix(s, "SELECT ") && strings.Contains(s, " FROM records r") {
-				lists = append(lists, s)
-			}
-		})
-		if _, err := r.Search(ctx, records.Filter{Text: q}, records.Page{Limit: 10}, records.SearchOptions{}); err != nil {
-			t.Fatal(err)
-		}
+		name  string
+		query string
+		b     band
+		want  records.SearchShape
+	}{
+		{"defaults: 600 hits are a rare query", "common", band{4096, 262144}, records.ShapeFTSFirst},
+		{"hits one below the probe limit", "common", band{601, 1 << 30}, records.ShapeFTSFirst},
+		{"hits at the probe limit", "common", band{600, 1 << 30}, records.ShapeHintedIN},
+		{"hits at the IN limit", "common", band{1, 600}, records.ShapeHintedIN},
+		{"hits one above the IN limit", "common", band{1, 599}, records.ShapeExists},
+		{"a prefix never takes EXISTS", "unique1*", band{1, 0}, records.ShapeHintedIN},
+		{"a multi-term query never takes EXISTS", "common word3", band{1, 0}, records.ShapeHintedIN},
+		{"a phrase never takes EXISTS", `"common word3"`, band{1, 0}, records.ShapeHintedIN},
+		{"a negation never takes EXISTS", "common -word3", band{1, 0}, records.ShapeHintedIN},
+		{"an OR never takes EXISTS", "word3 OR word4", band{1, 0}, records.ShapeHintedIN},
+		{"a single word does", "word3", band{1, 0}, records.ShapeExists},
+	} {
+		restore := records.SetSearchBands(tc.b.probe, tc.b.in)
+		shapes := listShapes(t, r, records.Filter{Text: compileWords(t, tc.query)})
 		restore()
-		if len(lists) == 0 {
-			t.Fatalf("%s: no list statement logged", tc.name)
-		}
-		for _, s := range lists {
-			if got := strings.Contains(s, "EXISTS (SELECT 1 FROM records_fts"); got != tc.wantExists {
-				t.Errorf("%s: index-first shape = %v, want %v:\n%s", tc.name, got, tc.wantExists, s)
-			}
-			if got := strings.Contains(s, "INDEXED BY records_ts"); got != tc.wantExists {
-				t.Errorf("%s: index hint = %v, want %v", tc.name, got, tc.wantExists)
+		for _, got := range shapes {
+			if got != tc.want {
+				t.Errorf("%s: shape %s, want %s", tc.name, shapeName(got), shapeName(tc.want))
 			}
 		}
 	}
@@ -229,8 +298,8 @@ func shapeDataset(t *testing.T) (*evidence.Case, *records.Reader, []string, stri
 	return c, newReader(t, c), []string{a.ID, b.ID}, run1.IngestID
 }
 
-// The index-first and the FTS-first shapes are two plans for one selection: for every query, filter,
-// order and page size they return the same ids in the same order (the probe limit picks the shape).
+// The four plan shapes are plans for one selection: for every query, filter,
+// order and page size they return the same ids in the same order (the bands and the filter probe pick the shape).
 func TestSearchShapesAgreeOnEveryFilter(t *testing.T) {
 	_, r, arts, run1 := shapeDataset(t)
 	from, to := time.Unix(1_600_000_000, 0).UTC(), time.Unix(1_600_000_000+20*3600, 0).UTC()
@@ -254,6 +323,24 @@ func TestSearchShapesAgreeOnEveryFilter(t *testing.T) {
 		"parsers + all":     {Parsers: []records.ParserRef{{Name: testParser.Name, Version: testParser.Version}}, IncludeSuperseded: true},
 		"ingest id (run 1)": {IngestID: run1},
 	}
+	// every plan shape: FTS-first, the hinted IN, EXISTS, and EXISTS without the hint (a tiny filter)
+	type config struct {
+		name           string
+		probe, in, fil int
+	}
+	configs := []config{
+		{"FTS-first", 1 << 30, 1 << 30, 0},
+		{"hinted IN", 1, 1 << 30, 0},
+		{"EXISTS", 1, 0, 0},
+		{"no hint", 1, 0, 1 << 30},
+		{"defaults", 4096, 262144, 4096},
+	}
+	seen := map[records.SearchShape]bool{}
+	r.SetQueryLog(func(s string) {
+		if strings.HasPrefix(s, "SELECT ") && strings.Contains(s, " FROM records r") && !strings.HasPrefix(s, "SELECT count(*)") {
+			seen[shapeOf(s)] = true
+		}
+	})
 	nonEmpty := 0
 	for _, in := range []string{"common", "word3", "unique1*", `"common word3"`, "common -word3"} {
 		q := compileWords(t, in)
@@ -262,20 +349,30 @@ func TestSearchShapesAgreeOnEveryFilter(t *testing.T) {
 			f.Text = q
 			for _, desc := range []bool{false, true} {
 				for _, size := range []int{1, 3, 50} {
-					restore := records.SetSearchProbeLimit(1) // index-first
-					indexFirst := walkSearch(t, r, f, desc, size)
-					restore()
-					restore = records.SetSearchProbeLimit(1 << 30) // FTS-first
-					ftsFirst := walkSearch(t, r, f, desc, size)
-					restore()
-					if !slices.Equal(indexFirst, ftsFirst) {
-						t.Fatalf("%q, %s, desc=%v, page %d: index-first %d ids, FTS-first %d ids", in, name, desc, size, len(indexFirst), len(ftsFirst))
-					}
-					if len(indexFirst) > 0 {
-						nonEmpty++
+					var want []int64
+					for k, cf := range configs {
+						restoreB := records.SetSearchBands(cf.probe, cf.in)
+						restoreF := records.SetSearchFilterProbe(cf.fil)
+						got := walkSearch(t, r, f, desc, size)
+						restoreF()
+						restoreB()
+						if k == 0 {
+							want = got
+							if len(got) > 0 {
+								nonEmpty++
+							}
+						} else if !slices.Equal(got, want) {
+							t.Fatalf("%q, %s, desc=%v, page %d: %s %d ids, FTS-first %d ids", in, name, desc, size, cf.name, len(got), len(want))
+						}
 					}
 				}
 			}
+		}
+	}
+	r.SetQueryLog(nil)
+	for _, s := range []records.SearchShape{records.ShapeFTSFirst, records.ShapeHintedIN, records.ShapeExists, records.ShapeExistsNoHint} {
+		if !seen[s] {
+			t.Errorf("the %s shape never ran: the comparison does not cover it", shapeName(s))
 		}
 	}
 	if nonEmpty < 200 {
@@ -290,5 +387,84 @@ func TestSearchShapesAgreeOnEveryFilter(t *testing.T) {
 	}
 	if len(all) != 120 {
 		t.Fatalf("%d records match, want 120: the orphan row must match nothing", len(all))
+	}
+}
+
+// A filter that selects few records drops the index hint: the filter's own index drives the query and
+// the full-text rowid is checked per record, instead of scanning the time index across the table.
+func TestTinyFilterDropsTheHint(t *testing.T) {
+	c, r, arts, _ := shapeDataset(t)
+	q := compileWords(t, "common")
+	f := records.Filter{ArtifactIDs: arts[1:], Text: q} // artifact b: 30 records of 120
+	qs, err := records.SearchQueries(f, false, nil, 101, records.ShapeExistsNoHint)
+	if err != nil || len(qs) == 0 {
+		t.Fatal(err)
+	}
+	for _, sq := range qs {
+		plan := explain(t, c, sq.SQL, sq.Args)
+		if !strings.Contains(plan, "records_artifact") || strings.Contains(plan, "records_ts") || strings.Contains(plan, "INDEXED BY") {
+			t.Fatalf("not driven by the filter's index:\n%s", plan)
+		}
+	}
+	// end to end: a filter under the probe limit drops the hint, one at or over it keeps the hint
+	restore := records.SetSearchBands(1, 0)
+	defer restore()
+	for _, tc := range []struct {
+		name  string
+		limit int
+		want  records.SearchShape
+	}{
+		{"under the filter probe", 31, records.ShapeExistsNoHint},
+		{"at the filter probe", 30, records.ShapeExists},
+	} {
+		undo := records.SetSearchFilterProbe(tc.limit)
+		for _, got := range listShapes(t, r, f) {
+			if got != tc.want {
+				t.Errorf("%s: shape %s, want %s", tc.name, shapeName(got), shapeName(tc.want))
+			}
+		}
+		undo()
+	}
+	// a prefix with a tiny filter is not turned into EXISTS either
+	undo := records.SetSearchFilterProbe(1 << 30)
+	defer undo()
+	for _, got := range listShapes(t, r, records.Filter{ArtifactIDs: arts[1:], Text: compileWords(t, "unique1*")}) {
+		if got != records.ShapeFTSFirst {
+			t.Errorf("a prefix with a tiny filter: shape %s, want the unhinted IN", shapeName(got))
+		}
+	}
+}
+
+// The filter probe is one bounded statement per page, run only when the query is not FTS-first and a
+// filter is present.
+func TestFilterProbeIsBoundedAndConditional(t *testing.T) {
+	_, r, arts, _ := shapeDataset(t)
+	var probes []string
+	r.SetQueryLog(func(s string) {
+		if strings.HasPrefix(s, "SELECT count(*) FROM (SELECT 1 FROM records r") {
+			probes = append(probes, s)
+		}
+	})
+	run := func(f records.Filter) int {
+		probes = nil
+		if _, err := r.Search(ctx, f, records.Page{Limit: 10}, records.SearchOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		return len(probes)
+	}
+	q := compileWords(t, "common")
+	restore := records.SetSearchBands(1, 0)
+	defer restore()
+	if n := run(records.Filter{ArtifactIDs: arts[1:], Text: q}); n != 1 || !strings.HasSuffix(probes[0], "LIMIT ?)") {
+		t.Fatalf("a filtered common query must run one bounded filter probe, got %q", probes)
+	}
+	if n := run(records.Filter{Text: q}); n != 0 {
+		t.Fatalf("an unfiltered query needs no filter probe, got %q", probes)
+	}
+	restore()
+	restore = records.SetSearchBands(1<<30, 1<<30)
+	defer restore()
+	if n := run(records.Filter{ArtifactIDs: arts[1:], Text: q}); n != 0 {
+		t.Fatalf("an FTS-first query needs no filter probe, got %q", probes)
 	}
 }

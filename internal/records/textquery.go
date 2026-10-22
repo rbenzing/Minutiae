@@ -80,12 +80,12 @@ type Term struct {
 // TextQuery is a compiled search query: the full-text table, the FTS5 expression to bind as the one
 // MATCH parameter, and what a snippet should highlight. It is immutable.
 type TextQuery struct {
-	table      string
-	match      string
-	column     Column
-	rank       bool
-	indexFirst bool
-	needles    []Needle
+	table   string
+	match   string
+	column  Column
+	rank    bool
+	shape   searchShape // the plan shape of a page, set by the page from its probes (never part of the query's identity)
+	needles []Needle
 }
 
 // Table is the full-text table the query runs on: evidence.FTSWordTable or evidence.FTSSubTable.
@@ -466,4 +466,32 @@ func CompileTerms(terms []Term) ([]*TextQuery, error) {
 		out[i] = q
 	}
 	return out, nil
+}
+
+// reexpands reports whether matching the query once per record is expensive: a prefix (re-expanded on
+// every record), a negation, an OR or AND, or a term that is more than one token. Such a query never
+// takes the per-record EXISTS shape. The test is conservative: a query it cannot show to be a single
+// plain word, or a single substring, counts as multi-term.
+func (q *TextQuery) reexpands() bool {
+	if len(q.needles) != 1 {
+		return true
+	}
+	n := q.needles[0]
+	switch n.Kind {
+	case NeedlePrefix:
+		return true
+	case NeedleSubstring:
+	default:
+		for _, r := range n.Text {
+			if !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsMark(r) {
+				return true
+			}
+		}
+	}
+	for _, op := range []string{" AND ", " OR ", " NOT ", "*"} {
+		if strings.Contains(q.match, op) {
+			return true
+		}
+	}
+	return false
 }
