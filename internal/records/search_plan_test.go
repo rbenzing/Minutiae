@@ -185,7 +185,7 @@ func TestIndexFirstNeverErrorsOnAnyFilterShape(t *testing.T) {
 
 func TestSearchProbeIsBoundedAndOncePerPage(t *testing.T) {
 	_, r, _ := searchDataset(t)
-	restore := records.SetSearchBands(5, 50)
+	restore := records.SetSearchBands(1000, 2000) // 600 hits: a rare query, one small probe (the stages are TestProbesRunInStages)
 	defer restore()
 	var probes []string
 	r.SetQueryLog(func(q string) {
@@ -335,12 +335,35 @@ func TestSearchShapesAgreeOnEveryFilter(t *testing.T) {
 		{"no hint", 1, 0, 1 << 30},
 		{"defaults", 4096, 262144, 4096},
 	}
+	// S8: each cell runs the shape its config asks for (every query has more than one hit, so the
+	// documented exceptions are: a prefix, phrase, negation or OR decides at once and never takes EXISTS;
+	// a filter that is not index-served, or has no condition, is not probed and so is never tiny)
 	seen := map[records.SearchShape]bool{}
-	r.SetQueryLog(func(s string) {
-		if strings.HasPrefix(s, "SELECT ") && strings.Contains(s, " FROM records r") && !strings.HasPrefix(s, "SELECT count(*)") {
-			seen[shapeOf(s)] = true
+	multi := map[string]bool{"unique1*": true, `"common word3"`: true, "common -word3": true}
+	probed := map[string]bool{
+		"two types": true, "three types": true, "one artifact": true, "untimed + window": true, "deleted only": true,
+		"deleted none": true, "type + time": true, "type + untimed": true,
+	}
+	assertShape := func(cfg, in, filter string, f records.Filter) {
+		t.Helper()
+		var want records.SearchShape
+		switch {
+		case cfg == "FTS-first" || cfg == "defaults":
+			want = records.ShapeFTSFirst
+		case cfg == "hinted IN" || multi[in]:
+			want = records.ShapeHintedIN
+		case cfg == "no hint" && probed[filter]:
+			want = records.ShapeExistsNoHint
+		default:
+			want = records.ShapeExists
 		}
-	})
+		for _, got := range listShapes(t, r, f) {
+			seen[got] = true
+			if got != want {
+				t.Errorf("%s, %q, %s: shape %s, want %s", cfg, in, filter, shapeName(got), shapeName(want))
+			}
+		}
+	}
 	nonEmpty := 0
 	for _, in := range []string{"common", "word3", "unique1*", `"common word3"`, "common -word3"} {
 		q := compileWords(t, in)
@@ -353,6 +376,9 @@ func TestSearchShapesAgreeOnEveryFilter(t *testing.T) {
 					for k, cf := range configs {
 						restoreB := records.SetSearchBands(cf.probe, cf.in)
 						restoreF := records.SetSearchFilterProbe(cf.fil)
+						if !desc && size == 1 {
+							assertShape(cf.name, in, name, f)
+						}
 						got := walkSearch(t, r, f, desc, size)
 						restoreF()
 						restoreB()
@@ -369,7 +395,6 @@ func TestSearchShapesAgreeOnEveryFilter(t *testing.T) {
 			}
 		}
 	}
-	r.SetQueryLog(nil)
 	for _, s := range []records.SearchShape{records.ShapeFTSFirst, records.ShapeHintedIN, records.ShapeExists, records.ShapeExistsNoHint} {
 		if !seen[s] {
 			t.Errorf("the %s shape never ran: the comparison does not cover it", shapeName(s))
@@ -425,12 +450,12 @@ func TestTinyFilterDropsTheHint(t *testing.T) {
 		}
 		undo()
 	}
-	// a prefix with a tiny filter is not turned into EXISTS either
+	// a prefix decides at once (hinted IN): it is neither probed against the filter nor turned into EXISTS
 	undo := records.SetSearchFilterProbe(1 << 30)
 	defer undo()
 	for _, got := range listShapes(t, r, records.Filter{ArtifactIDs: arts[1:], Text: compileWords(t, "unique1*")}) {
-		if got != records.ShapeFTSFirst {
-			t.Errorf("a prefix with a tiny filter: shape %s, want the unhinted IN", shapeName(got))
+		if got != records.ShapeHintedIN {
+			t.Errorf("a prefix with a tiny filter: shape %s, want the hinted IN", shapeName(got))
 		}
 	}
 }
@@ -461,10 +486,58 @@ func TestFilterProbeIsBoundedAndConditional(t *testing.T) {
 	if n := run(records.Filter{Text: q}); n != 0 {
 		t.Fatalf("an unfiltered query needs no filter probe, got %q", probes)
 	}
+	// S7: a filter with a condition no index serves is never probed and keeps the hint
+	for _, nf := range []records.Filter{{Types: []string{"message"}, PathPrefix: "/data/1", Text: q}, {ArtifactIDs: arts[1:], Recovered: records.Only, Text: q}, {Types: []string{"message"}, Parsers: []records.ParserRef{{Name: testParser.Name}}, Text: q}} {
+		if n := run(nf); n != 0 {
+			t.Fatalf("%+v: a filter no index serves must run no filter probe, got %q", nf, probes)
+		}
+	}
+	// a prefix decides without the filter
+	if n := run(records.Filter{ArtifactIDs: arts[1:], Text: compileWords(t, "unique1*")}); n != 0 {
+		t.Fatalf("a prefix needs no filter probe, got %q", probes)
+	}
 	restore()
 	restore = records.SetSearchBands(1<<30, 1<<30)
 	defer restore()
 	if n := run(records.Filter{ArtifactIDs: arts[1:], Text: q}); n != 0 {
 		t.Fatalf("an FTS-first query needs no filter probe, got %q", probes)
+	}
+}
+
+// The probes run in stages: a rare query costs one small text probe; a prefix or multi-term query with
+// many hits decides at once; a plain word asks the filter first, and only a plain word with no tiny
+// filter pays for the large text probe.
+func TestProbesRunInStages(t *testing.T) {
+	_, r, _ := searchDataset(t)
+	defer records.SetSearchBands(100, 300)()
+	defer records.SetSearchFilterProbe(1 << 30)()
+	var got []string
+	r.SetProbeLog(func(kind string, limit int) { got = append(got, fmt.Sprintf("%s:%d", kind, limit)) })
+	typed := []string{"message"}
+	for _, tc := range []struct {
+		name  string
+		f     records.Filter
+		bands [2]int
+		fil   int
+		want  string
+	}{
+		{"rare query", records.Filter{Text: compileWords(t, "common")}, [2]int{1000, 2000}, 1 << 30, "text:1000"},
+		{"prefix with a filter decides at once", records.Filter{Types: typed, Text: compileWords(t, "unique1*")}, [2]int{100, 300}, 1 << 30, "text:100"},
+		{"phrase decides at once", records.Filter{Text: compileWords(t, `"common word3"`)}, [2]int{100, 300}, 1 << 30, "text:100"},
+		{"plain word, tiny filter", records.Filter{Types: typed, Text: compileWords(t, "common")}, [2]int{100, 300}, 1 << 30, "text:100 filter:1073741824"},
+		{"plain word, filter not tiny", records.Filter{Types: typed, Text: compileWords(t, "common")}, [2]int{100, 300}, 0, "text:100 filter:0 text:301"},
+		{"plain word, no filter", records.Filter{Text: compileWords(t, "common")}, [2]int{100, 300}, 1 << 30, "text:100 text:301"},
+	} {
+		undoB := records.SetSearchBands(tc.bands[0], tc.bands[1])
+		undoF := records.SetSearchFilterProbe(tc.fil)
+		got = nil
+		if _, err := r.Search(ctx, tc.f, records.Page{Limit: 10}, records.SearchOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		undoF()
+		undoB()
+		if s := strings.Join(got, " "); s != tc.want {
+			t.Errorf("%s: probes %q, want %q", tc.name, s, tc.want)
+		}
 	}
 }

@@ -137,3 +137,6 @@ const (
 	ShapeExists       = shapeExists
 	ShapeExistsNoHint = shapeExistsNoHint
 )
+
+// SetProbeLog installs a function called with the kind ("text" or "filter") and the LIMIT of every probe.
+func (r *Reader) SetProbeLog(f func(kind string, limit int)) { r.probeLog = f }
