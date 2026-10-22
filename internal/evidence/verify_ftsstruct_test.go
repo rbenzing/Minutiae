@@ -8,14 +8,20 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 // genuineFTS builds both FTS tables in a scratch file database with the real DDL and returns it.
-func genuineFTS(t *testing.T) *sql.DB {
+func genuineFTS(t testing.TB) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(t.TempDir(), "g.db")))
+	return newGenuineFTS(t, filepath.Join(t.TempDir(), "g.db"))
+}
+
+func newGenuineFTS(t testing.TB, path string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,15 +37,65 @@ func genuineFTS(t *testing.T) *sql.DB {
 	return db
 }
 
-func fill(t *testing.T, db *sql.DB, from, n, words int) {
+// fillText is the text of document i: a summary and a body of words tokens.
+func fillText(i, words int) (summary, body string) {
+	var b strings.Builder
+	for w := 0; w < words; w++ {
+		fmt.Fprintf(&b, "w%d_%d ", (i*7+w)%997, i%13)
+	}
+	return fmt.Sprintf("s%d", i), b.String()
+}
+
+// genuineImage caches the file of a workload's database for the whole test binary.
+type genuineImage struct {
+	once sync.Once
+	data []byte
+}
+
+var genuineBuilt sync.Map // workload name -> *genuineImage
+
+// genuineFTSWorkload returns a private copy of the database that the named workload builds. The workload
+// runs once per test binary, because the merge workloads take many seconds and several tests read them
+// (they never write to the copy they get, and the copy is deleted with the test).
+func genuineFTSWorkload(t testing.TB, name string, load func(testing.TB, *sql.DB)) *sql.DB {
+	t.Helper()
+	v, _ := genuineBuilt.LoadOrStore(name, &genuineImage{})
+	img := v.(*genuineImage)
+	img.once.Do(func() {
+		path := filepath.Join(t.TempDir(), "w.db")
+		db := newGenuineFTS(t, path)
+		load(t, db)
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		img.data = data
+	})
+	if img.data == nil {
+		t.Fatalf("workload %q did not build", name)
+	}
+	path := filepath.Join(t.TempDir(), "g.db")
+	if err := os.WriteFile(path, img.data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+func fill(t testing.TB, db *sql.DB, from, n, words int) {
 	t.Helper()
 	for _, table := range FTSTables() {
 		for i := from; i < from+n; i++ {
-			var b strings.Builder
-			for w := 0; w < words; w++ {
-				fmt.Fprintf(&b, "w%d_%d ", (i*7+w)%997, i%13)
-			}
-			probeExec(t, db, "INSERT INTO "+table+"(rowid, summary, body) VALUES (?, ?, ?)", i, fmt.Sprintf("s%d", i), b.String())
+			summary, body := fillText(i, words)
+			probeExec(t, db, "INSERT INTO "+table+"(rowid, summary, body) VALUES (?, ?, ?)", i, summary, body)
 		}
 	}
 }
@@ -96,15 +152,17 @@ func accounted(t *testing.T, db *sql.DB, table string) {
 	_ = ir.Close()
 }
 
-func TestFTSStructureAccountsForEveryGenuineRow(t *testing.T) {
-	workloads := map[string]func(t *testing.T, db *sql.DB){
-		"one document": func(t *testing.T, db *sql.DB) { fill(t, db, 1, 1, 5) },
-		"many small inserts, merges": func(t *testing.T, db *sql.DB) {
+// genuineFTSWorkloads are the five shapes of genuine index the structure, leaf and index tests share: each loads
+// both FTS tables of a fresh genuineFTS database. They take a testing.TB so that fuzz targets can seed from them.
+func genuineFTSWorkloads() map[string]func(testing.TB, *sql.DB) {
+	return map[string]func(testing.TB, *sql.DB){
+		"one document": func(t testing.TB, db *sql.DB) { fill(t, db, 1, 1, 5) },
+		"many small inserts, merges": func(t testing.TB, db *sql.DB) {
 			for i := 0; i < 60; i++ {
 				fill(t, db, 1+i*50, 50, 40)
 			}
 		},
-		"after optimize": func(t *testing.T, db *sql.DB) {
+		"after optimize": func(t testing.TB, db *sql.DB) {
 			for i := 0; i < 20; i++ {
 				fill(t, db, 1+i*50, 50, 40)
 			}
@@ -112,12 +170,12 @@ func TestFTSStructureAccountsForEveryGenuineRow(t *testing.T) {
 				probeExec(t, db, "INSERT INTO "+table+"("+table+") VALUES('optimize')")
 			}
 		},
-		"one huge body": func(t *testing.T, db *sql.DB) {
+		"one huge body": func(t testing.TB, db *sql.DB) {
 			for _, table := range FTSTables() {
 				probeExec(t, db, "INSERT INTO "+table+"(rowid, summary, body) VALUES (1, 's', ?)", strings.Repeat("alpha beta gamma delta ", 9000))
 			}
 		},
-		"after delete-all and refill": func(t *testing.T, db *sql.DB) {
+		"after delete-all and refill": func(t testing.TB, db *sql.DB) {
 			fill(t, db, 1, 300, 20)
 			for _, table := range FTSTables() {
 				probeExec(t, db, "INSERT INTO "+table+"("+table+") VALUES('delete-all')")
@@ -125,10 +183,12 @@ func TestFTSStructureAccountsForEveryGenuineRow(t *testing.T) {
 			fill(t, db, 1000, 100, 20)
 		},
 	}
-	for name, load := range workloads {
+}
+
+func TestFTSStructureAccountsForEveryGenuineRow(t *testing.T) {
+	for name, load := range genuineFTSWorkloads() {
 		t.Run(name, func(t *testing.T) {
-			db := genuineFTS(t)
-			load(t, db)
+			db := genuineFTSWorkload(t, name, load)
 			for _, table := range FTSTables() {
 				accounted(t, db, table)
 			}

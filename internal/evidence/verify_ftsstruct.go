@@ -38,70 +38,13 @@ var errFTSStructure = errors.New("malformed FTS5 structure record")
 // two page numbers), so a declared count the remaining bytes cannot hold is refused before any
 // allocation, and the result map is never sized from a declared count.
 func decodeFTSStructure(b []byte) (map[int64]struct{}, error) {
-	if len(b) < 4 {
-		return nil, fmt.Errorf("%w: %d bytes", errFTSStructure, len(b))
-	}
-	b = b[4:] // the cookie
-	next := func() (uint64, error) {
-		v, n := SQLiteVarint(b)
-		if n == 0 {
-			return 0, fmt.Errorf("%w: truncated", errFTSStructure)
-		}
-		b = b[n:]
-		return v, nil
-	}
-	nLevel, err := next()
+	segs, err := decodeFTSStructureSegments(b)
 	if err != nil {
 		return nil, err
 	}
-	nSeg, err := next()
-	if err != nil {
-		return nil, err
-	}
-	if _, err = next(); err != nil { // the write counter
-		return nil, err
-	}
-	const perSeg = 3 // segid, pgnoFirst, pgnoLast
-	if nLevel > ftsMaxSegment || nSeg > ftsMaxSegment ||
-		nLevel > uint64(len(b)/2) || nSeg > uint64(len(b)/perSeg) {
-		return nil, fmt.Errorf("%w: %d levels and %d segments cannot fit in %d bytes", errFTSStructure, nLevel, nSeg, len(b))
-	}
-	ids := make(map[int64]struct{})
-	var total uint64
-	for l := uint64(0); l < nLevel; l++ {
-		nMerge, err := next()
-		if err != nil {
-			return nil, err
-		}
-		n, err := next()
-		if err != nil {
-			return nil, err
-		}
-		if n < nMerge || n > uint64(len(b)/perSeg) {
-			return nil, fmt.Errorf("%w: %d segments (%d merging) cannot fit in %d bytes", errFTSStructure, n, nMerge, len(b))
-		}
-		for s := uint64(0); s < n; s++ {
-			id, err := next()
-			if err != nil {
-				return nil, err
-			}
-			first, err := next()
-			if err != nil {
-				return nil, err
-			}
-			last, err := next()
-			if err != nil {
-				return nil, err
-			}
-			if id >= 1<<31 || last < first { // segid is read as a 32-bit varint
-				return nil, fmt.Errorf("%w: segment id %d, pages %d to %d", errFTSStructure, id, first, last)
-			}
-			ids[int64(id)] = struct{}{}
-			total++
-		}
-	}
-	if total != nSeg || len(b) != 0 {
-		return nil, fmt.Errorf("%w: %d segments declared, %d found, %d bytes left", errFTSStructure, nSeg, total, len(b))
+	ids := make(map[int64]struct{}, len(segs)) // len(segs) counts segments actually decoded, not a declared count
+	for _, s := range segs {
+		ids[s.ID] = struct{}{}
 	}
 	return ids, nil
 }
