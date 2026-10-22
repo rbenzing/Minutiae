@@ -32,11 +32,11 @@ import (
 //   - the vocab of each index ((term, record, column, offset), in term, record, column, offset order);
 //   - its _docsize rows (the size of every document), its _config rows, and its totals record
 //     (_data row 1);
-//   - what MATCH finds for every term of the rebuilt vocabulary: the shadow table <table>_idx (the
-//     b-tree index over the leaf pages of a segment) is invisible to the vocab, to PRAGMA
-//     integrity_check and to FTS5's own check when rows of it are deleted, yet MATCH then loses hits.
-//     Only tables whose content already matched are examined this way (a table with a content
-//     difference fails verify anyway).
+//   - the index structures the content comparison cannot see: the shadow table <table>_idx (the b-tree
+//     index over the leaf pages of a segment) and the doclist indexes are invisible to the vocab, to
+//     PRAGMA integrity_check and to FTS5's own check when rows of them are deleted, yet a search then loses
+//     hits. They are recomputed from the leaf pages and compared exactly (fts5idx.go, 5D Task 14j); a
+//     difference is confirmed by asking the case index for the first term of the affected page.
 //
 // The case's own database is read through ReadTx, as everywhere else. EXCEPTION to the "read
 // everything through ReadHandle" rule: the rebuilt index lives in a second, private database that
@@ -55,8 +55,6 @@ const (
 	// ftsExpectedCacheKiB is the page cache of the rebuilt index: it stays in memory up to this size and
 	// spills to a file in the run directory beyond it.
 	ftsExpectedCacheKiB = 262144
-	// ftsReachChunk is the number of terms whose MATCH results are compared inside one read transaction.
-	ftsReachChunk = 500
 	// ftsMaxConfigRows bounds the _config rows read from a (possibly tampered) index.
 	ftsMaxConfigRows = 1000
 )
@@ -154,14 +152,16 @@ type ftsVerify struct {
 	indexed []int64
 	// dead is set when the rebuilt index failed: nothing more can be compared.
 	dead bool
-	// problems counts the problems of each table (the reachability pass runs only on a table with none).
+	// problems counts the problems of each table.
 	problems map[string]int
 	// listed holds the records already listed under a problem kind (so one record is listed once).
 	listed map[string]map[int64]bool
+	// observe is told about the pages the index pass has read (table "fts-data").
+	observe verifyChunkObserver
 }
 
 func (c *Case) verifyFTS(ctx context.Context, ps *problemSet, observe verifyChunkObserver, recordsTotal int64) {
-	r := &ftsVerify{c: c, ctx: ctx, ps: ps, rep: ps.rep, problems: map[string]int{}, listed: map[string]map[int64]bool{}}
+	r := &ftsVerify{c: c, ctx: ctx, ps: ps, rep: ps.rep, problems: map[string]int{}, listed: map[string]map[int64]bool{}, observe: observe}
 	defer r.cleanup() // runs on a panic too
 	if err := r.setup(); err != nil {
 		if ctxCaused(ctx, err) { // cancelled before the rebuild could start: a cut, reported once by verifyRun
@@ -206,8 +206,7 @@ func (r *ftsVerify) hook(point string) {
 }
 
 // setup creates the run directory, points SQLite's temp directory at it and creates the rebuilt
-// index (both tables, their vocab tables, and the row-type vocab tables the reachability pass lists
-// terms with).
+// index (both tables and their vocab tables).
 func (r *ftsVerify) setup() error {
 	abs, err := filepath.Abs(r.c.Dir)
 	if err != nil {
@@ -256,7 +255,7 @@ func (r *ftsVerify) setup() error {
 	for _, table := range FTSTables() {
 		ddl, _ := FTSTableDDL(table)
 		vocab, _ := FTSVocabDDL(table)
-		for _, stmt := range []string{ddl, vocab, `CREATE VIRTUAL TABLE ` + table + `_vr USING fts5vocab(` + table + `, 'row')`} {
+		for _, stmt := range []string{ddl, vocab} {
 			if _, err := r.exp.ExecContext(r.ctx, stmt); err != nil {
 				return fmt.Errorf("create the rebuilt %s: %w", table, err)
 			}
@@ -468,7 +467,6 @@ func (r *ftsVerify) hasDoc(id int64) bool {
 
 // compareTable compares one index with its rebuild.
 func (r *ftsVerify) compareTable(table string) {
-	unreadable := false
 	for _, s := range []struct {
 		name string
 		run  func(string) error
@@ -483,19 +481,16 @@ func (r *ftsVerify) compareTable(table string) {
 			if r.dead {
 				return
 			}
-			unreadable = true
 		}
 	}
 	r.hook("compared:" + table)
-	if r.problems[table] == 0 && !unreadable {
-		done := r.c.phase("fts.compare/" + table + "/reachability")
-		err := r.checkReachability(table)
-		done()
-		if err != nil {
-			r.fail(table, err)
-		}
-		r.hook("reached:" + table)
+	done := r.c.phase("fts.compare/" + table + "/index")
+	err := r.indexPass(table)
+	done()
+	if err != nil {
+		r.fail(table, err)
 	}
+	r.hook("reached:" + table)
 }
 
 // cell is one value of a table together with its storage class.
@@ -950,145 +945,3 @@ func (r *ftsVerify) compareTotals(table string) error {
 
 // ftsQuote renders s as one FTS5 string (a phrase of the tokens of s): quotes are doubled.
 func ftsQuote(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
-
-// checkReachability proves that every term of the rebuilt vocabulary finds exactly the rebuilt
-// documents in the case's index through MATCH. See the comment at the top of the file for why the
-// vocab comparison alone is not enough. The oracle is MATCH on the rebuilt index with the same
-// expression, so a term the tokenizer would split on a second pass is judged the way a healthy
-// index judges it.
-func (r *ftsVerify) checkReachability(table string) error {
-	after := ""
-	listQ := `SELECT typeof(term), term FROM ` + table + `_vr WHERE term > ? ORDER BY term LIMIT ` + strconv.Itoa(ftsReachChunk) //nolint:gosec // the table is one of the two FTS table constants
-	problems := 0
-	for {
-		terms, err := r.nextTerms(listQ, after)
-		if err != nil {
-			return err
-		}
-		if len(terms) == 0 {
-			return nil
-		}
-		err = r.c.ReadTx(r.ctx, func(h ReadHandle) error {
-			for _, term := range terms {
-				msg, err := r.matchDiff(h, table, term)
-				if err != nil {
-					return err
-				}
-				if msg == "" {
-					continue
-				}
-				problems++
-				if problems <= verifyMaxPerKind {
-					r.add(table, "fts-unreachable", "%s", msg)
-				}
-				if problems >= verifyMaxPerKind {
-					r.rep.problemf("%s: the check of what each search finds stopped after %d terms with a wrong result; the later terms were not checked", table, problems)
-					return errStop
-				}
-			}
-			return nil
-		})
-		if errors.Is(err, errStop) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		after = terms[len(terms)-1]
-	}
-}
-
-// nextTerms lists the next chunk of terms of the rebuild after the given one.
-func (r *ftsVerify) nextTerms(q, after string) ([]string, error) {
-	rows, err := r.exp.QueryContext(r.ctx, q, after)
-	if err != nil {
-		return nil, expectedErr{err}
-	}
-	defer func() { _ = rows.Close() }()
-	var terms []string
-	for rows.Next() {
-		var typ string
-		var term any
-		if err := rows.Scan(&typ, &term); err != nil {
-			return nil, expectedErr{err}
-		}
-		s, ok := term.(string)
-		if typ != "text" || !ok {
-			return nil, expectedErr{fmt.Errorf("the rebuilt vocab lists a term of storage class %s", typ)}
-		}
-		terms = append(terms, s)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, expectedErr{err}
-	}
-	return terms, nil
-}
-
-// matchDiff compares the MATCH results of term on the case's index (inside h) and on the rebuild.
-// It returns "" when they are the same document list, otherwise the problem text; an error only for
-// a failure of the rebuild (a failure of the case's index is the problem).
-func (r *ftsVerify) matchDiff(h ReadHandle, table, term string) (string, error) {
-	q := `SELECT typeof(rowid), rowid FROM ` + table + ` WHERE ` + table + ` MATCH ? ORDER BY rowid` //nolint:gosec // the table is one of the two FTS table constants
-	match := ftsQuote(term)
-	er, err := r.exp.QueryContext(r.ctx, q, match)
-	if err != nil {
-		return "", expectedErr{err}
-	}
-	defer func() { _ = er.Close() }()
-	fr, err := h.QueryContext(r.ctx, q, match)
-	if err != nil {
-		return fmt.Sprintf("%s: a search for %q fails: %q", table, clipText(term, 80), clipText(err.Error(), 200)), nil
-	}
-	defer func() { _ = fr.Close() }()
-	next := func(rows *sql.Rows, expected bool) (id int64, ok bool, bad string, err error) {
-		if !rows.Next() {
-			if e := rows.Err(); e != nil {
-				if expected {
-					return 0, false, "", expectedErr{e}
-				}
-				return 0, false, fmt.Sprintf("%s: a search for %q fails: %q", table, clipText(term, 80), clipText(e.Error(), 200)), nil
-			}
-			return 0, false, "", nil
-		}
-		var typ string
-		var v any
-		if e := rows.Scan(&typ, &v); e != nil {
-			if expected {
-				return 0, false, "", expectedErr{e}
-			}
-			return 0, false, fmt.Sprintf("%s: a search for %q fails: %q", table, clipText(term, 80), clipText(e.Error(), 200)), nil
-		}
-		n, isInt := v.(int64)
-		if typ != "integer" || !isInt {
-			if expected {
-				return 0, false, "", expectedErr{errors.New("the rebuilt index returned a rowid that is not an integer")}
-			}
-			return 0, false, fmt.Sprintf("%s: a search for %q returns a rowid of storage class %s", table, clipText(term, 80), typ), nil
-		}
-		return n, true, "", nil
-	}
-	var fid, eid int64
-	var fok, eok bool
-	var bad string
-	if fid, fok, bad, err = next(fr, false); err != nil || bad != "" {
-		return bad, err
-	}
-	if eid, eok, bad, err = next(er, true); err != nil || bad != "" {
-		return bad, err
-	}
-	for fok || eok {
-		switch {
-		case fok && (!eok || fid < eid):
-			return fmt.Sprintf("%s: a search for %q finds record %d, which a rebuild does not (a search hit is invented)", table, clipText(term, 80), fid), nil
-		case eok && (!fok || eid < fid):
-			return fmt.Sprintf("%s: a search for %q does not find record %d (a search hit is lost: the index structure no longer reaches it)", table, clipText(term, 80), eid), nil
-		}
-		if fid, fok, bad, err = next(fr, false); err != nil || bad != "" {
-			return bad, err
-		}
-		if eid, eok, bad, err = next(er, true); err != nil || bad != "" {
-			return bad, err
-		}
-	}
-	return "", nil
-}

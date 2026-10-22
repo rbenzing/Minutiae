@@ -24,7 +24,7 @@ func TestVerifyCancelAtTheEndOfEveryPhase(t *testing.T) {
 		"fts.rebuild",
 	}
 	for _, table := range []string{"records_fts", "records_fts_sub"} { // the P11 compare steps, in run order (5D-14b)
-		for _, step := range []string{"vocab", "docsize", "config", "totals", "reachability", "unreferenced"} {
+		for _, step := range []string{"vocab", "docsize", "config", "totals", "index", "unreferenced"} {
 			phases = append(phases, "fts.compare/"+table+"/"+step)
 		}
 	}

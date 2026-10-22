@@ -498,8 +498,9 @@ func TestVerifyKeepsAPreExistingEmptyTmp(t *testing.T) {
 	}
 }
 
-// 5D-14b: the reachability step is timed only on a table where it runs (one with no content problem).
-func TestVerifyFTSReachabilitySubPhaseOnlyWhenItRuns(t *testing.T) {
+// 5D-14j: the index step recomputes from the leaf pages and needs nothing of the rebuild, so it runs on a table
+// that has a content problem too (a content problem must not hide an index one).
+func TestVerifyFTSIndexSubPhaseRunsOnEveryTable(t *testing.T) {
 	c := indexedTextCase(t, 50)
 	if _, err := c.store.db.Exec(`INSERT INTO records_fts(records_fts, rowid, summary, body) VALUES ('delete', 5, ?, ?)`, normalizeFor(5)...); err != nil {
 		t.Fatal(err)
@@ -522,10 +523,9 @@ func TestVerifyFTSReachabilitySubPhaseOnlyWhenItRuns(t *testing.T) {
 		}
 		return n
 	}
-	if n := count("fts.compare/records_fts/reachability"); n != 0 {
-		t.Errorf("reachability of the failing table reported %d times", n)
-	}
-	if n := count("fts.compare/records_fts_sub/reachability"); n != 1 {
-		t.Errorf("reachability of the clean table reported %d times in %v", n, seen)
+	for _, table := range FTSTables() {
+		if n := count("fts.compare/" + table + "/index"); n != 1 {
+			t.Errorf("the index step of %s reported %d times in %v", table, n, seen)
+		}
 	}
 }

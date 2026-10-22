@@ -56,7 +56,7 @@ func TestVerifyFTSCompareSubPhasesAreTimed(t *testing.T) {
 		t.Fatalf("fts.compare missing from %v", seen)
 	}
 	for _, table := range []string{"records_fts", "records_fts_sub"} {
-		for _, step := range []string{"vocab", "docsize", "config", "totals", "reachability", "unreferenced"} {
+		for _, step := range []string{"vocab", "docsize", "config", "totals", "index", "unreferenced"} {
 			name := "fts.compare/" + table + "/" + step
 			if n := countOf(seen, name); n != 1 {
 				t.Errorf("sub-phase %q reported %d times in %v", name, n, seen)
