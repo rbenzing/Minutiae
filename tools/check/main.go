@@ -66,6 +66,7 @@ var raceConcurrencyTests = []string{
 	"TestConcurrentTxQueueAndSucceed",
 	"TestNestedTxFailsWhileOthersAreQueued",
 	"TestQueuedTxHonoursContext",
+	"TestVerifyProgressSnapshotIsRaceFree",
 	// internal/records
 	"TestAddConcurrent",
 	"TestAddConcurrentWithIndex",

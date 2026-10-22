@@ -72,15 +72,17 @@ func (c *Case) Verify() (VerifyReport, error) { return c.VerifyWith(context.Back
 // verify.run audit entry is written last and covers their findings. A context that ends before
 // or during a check makes the report carry "reproduce: verification cancelled" once.
 func (c *Case) VerifyWith(ctx context.Context, checks ...VerifyCheck) (VerifyReport, error) {
-	return c.verifyRun(ctx, nil, checks)
+	return c.verifyRun(ctx, nil, nil, checks)
 }
 
 // verify is the test seam: the built-in checks with a chunk observer.
 func (c *Case) verify(observe verifyChunkObserver) (VerifyReport, error) {
-	return c.verifyRun(context.Background(), observe, nil)
+	return c.verifyRun(context.Background(), observe, nil, nil)
 }
 
-func (c *Case) verifyRun(ctx context.Context, observe verifyChunkObserver, checks []VerifyCheck) (VerifyReport, error) {
+func (c *Case) verifyRun(ctx context.Context, observe verifyChunkObserver, p *VerifyProgress, checks []VerifyCheck) (VerifyReport, error) {
+	c.verifyProgress = p
+	defer func() { c.verifyProgress = nil }()
 	rep := VerifyReport{Problems: []string{}, Notices: []string{}}
 	doneAudit := c.phase("audit")
 	n, audited, auditProblems, err := verifyAudit(filepath.Join(c.Dir, auditFile))
@@ -98,8 +100,8 @@ func (c *Case) verifyRun(ctx context.Context, observe verifyChunkObserver, check
 	}
 	inManifest := map[string]bool{}
 	seenID := map[string]bool{}
-	doneArtifacts := c.phase("artifacts")
-	c.hashArtifacts(ctx, &rep, recs, inManifest, seenID)
+	doneArtifacts, addBytes := c.countedPhase("artifacts", artifactBytesTotal(recs), "bytes")
+	c.hashArtifacts(ctx, &rep, recs, inManifest, seenID, addBytes)
 	doneArtifacts()
 
 	c.checkDerived(&rep, recs)
@@ -113,7 +115,11 @@ func (c *Case) verifyRun(ctx context.Context, observe verifyChunkObserver, check
 	}
 	c.checkUnmanifested(&rep, inManifest)
 	c.checkStaging(&rep)
-	c.runComposedChecks(ctx, &rep, recs, checks)
+	if len(checks) > 0 {
+		doneChecks := c.phase("checks") // so the display never shows a finished phase while a composed check works
+		c.runComposedChecks(ctx, &rep, recs, checks)
+		doneChecks()
+	}
 	if rep.cancelCut && !slices.Contains(rep.Problems, verifyCancelled) {
 		rep.problemf("%s", verifyCancelled) // a verify cut short is never a pass, whichever phase it ended in
 	}
@@ -461,7 +467,7 @@ func (r VerifyReport) CancelledOnly() bool {
 // hashArtifacts re-hashes every manifest artifact (phase "artifacts") and compares the result with the
 // manifest. It stops hashing when ctx ends: the remaining artifacts stay in inManifest (they are in the
 // manifest, only not checked) and the report is marked cut, so verifyRun adds the cancelled line.
-func (c *Case) hashArtifacts(ctx context.Context, rep *VerifyReport, recs []ManifestRecord, inManifest, seenID map[string]bool) {
+func (c *Case) hashArtifacts(ctx context.Context, rep *VerifyReport, recs []ManifestRecord, inManifest, seenID map[string]bool, addBytes func(int64)) {
 	for _, r := range recs {
 		inManifest[r.Path] = true
 		if seenID[r.ID] {
@@ -472,7 +478,7 @@ func (c *Case) hashArtifacts(ctx context.Context, rep *VerifyReport, recs []Mani
 			rep.cancelCut = true // the rest is not hashed: the artifact is still in the manifest, just not checked
 			continue
 		}
-		d, err := hashFileContext(ctx, filepath.Join(c.Dir, filepath.FromSlash(r.Path)))
+		d, err := hashFileContext(ctx, filepath.Join(c.Dir, filepath.FromSlash(r.Path)), addBytes)
 		if ctxCaused(ctx, err) {
 			rep.cancelCut = true
 			continue

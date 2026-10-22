@@ -239,7 +239,7 @@ func TestVerifyCancelledDuringP11(t *testing.T) {
 			chunks++
 			cancel() // the first rebuild chunk is read; the rest must not be
 		}
-	}, nil)
+	}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

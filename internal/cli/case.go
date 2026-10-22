@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -151,11 +153,32 @@ func newCaseVerifyCmd(d Deps, opts *rootOptions) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, err := openCase(path)
 			if err != nil {
+				// a case that does not open for an integrity reason (a corrupt audit log) is the integrity failure the
+				// outcome line names; any other open error keeps today's output
+				if !opts.json && errIsTerminal(d) {
+					if line, ok := outcomeLine(evidence.VerifyReport{}, err); ok {
+						fmt.Fprintln(d.Err, line)
+					}
+				}
 				return err
 			}
 			defer func() { _ = c.Close() }()
-			rep, err := c.VerifyWith(cmd.Context(), examine.RecoveredCheck())
+			// the status line and the outcome line exist only on a terminal stderr outside --json
+			var prog *evidence.VerifyProgress
+			stopStatus := func() {}
+			defer func() { stopStatus() }() // a panic or an early return still clears the line
+			if !opts.json && errIsTerminal(d) {
+				prog = evidence.NewVerifyProgress()
+				ticker := time.NewTicker(statusInterval)
+				stopDraw := startStatus(d.Err, prog, ticker.C, time.Now, cmd.Context().Done(), consoleUTF8(), statusWidth(d))
+				stopStatus = sync.OnceFunc(func() { stopDraw(); ticker.Stop() })
+			}
+			rep, err := runVerify(cmd.Context(), c, prog)
+			stopStatus() // the line is cleared before anything reaches stdout
 			if err != nil {
+				if line, ok := outcomeLine(rep, err); ok && prog != nil {
+					fmt.Fprintln(d.Err, line)
+				}
 				return err
 			}
 			if opts.json {
@@ -176,6 +199,9 @@ func newCaseVerifyCmd(d Deps, opts *rootOptions) *cobra.Command {
 				fmt.Fprintf(d.Out, "%s: %d artifacts%s, %d audit entries, %d problems%s\n",
 					status, rep.ArtifactsChecked, rep.RecordsSummary(), rep.AuditEntries, len(rep.Problems), rep.RecoveredSummary())
 			}
+			if line, ok := outcomeLine(rep, nil); ok && prog != nil {
+				fmt.Fprintln(d.Err, line)
+			}
 			if rep.CancelledOnly() {
 				// cut short by a cancel with no other finding: a plain cancelled error (exit 1, as a cancelled parse
 				// run), never an integrity failure; any other problem next to a cancel is still exit 4
@@ -190,4 +216,9 @@ func newCaseVerifyCmd(d Deps, opts *rootOptions) *cobra.Command {
 	cmd.Flags().StringVar(&path, "case", "", "case directory")
 	_ = cmd.MarkFlagRequired("case")
 	return cmd
+}
+
+// runVerify is the verify call of `case verify` (a variable so a test can make it fail).
+var runVerify = func(ctx context.Context, c *evidence.Case, p *evidence.VerifyProgress) (evidence.VerifyReport, error) {
+	return c.VerifyObserved(ctx, p, examine.RecoveredCheck())
 }

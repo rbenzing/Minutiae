@@ -67,19 +67,29 @@ func HashFile(path string) (Digests, error) {
 type ctxReader struct {
 	ctx context.Context
 	r   io.Reader
+	add func(int64) // optional: told how many bytes each Read returned (the verify progress counter)
 }
 
 func (c ctxReader) Read(p []byte) (int, error) {
 	if err := c.ctx.Err(); err != nil {
 		return 0, err
 	}
-	return c.r.Read(p)
+	n, err := c.r.Read(p)
+	if c.add != nil && n > 0 {
+		c.add(int64(n))
+	}
+	return n, err
 }
 
 // hashReaderContext streams r through a MultiHasher and stops with ctx.Err() soon after ctx ends.
 func hashReaderContext(ctx context.Context, r io.Reader) (Digests, error) {
+	return hashReaderProgress(ctx, r, nil)
+}
+
+// hashReaderProgress is hashReaderContext that reports the bytes read through add (which may be nil).
+func hashReaderProgress(ctx context.Context, r io.Reader, add func(int64)) (Digests, error) {
 	h := NewMultiHasher()
-	if _, err := io.Copy(h, ctxReader{ctx: ctx, r: r}); err != nil {
+	if _, err := io.Copy(h, ctxReader{ctx: ctx, r: r, add: add}); err != nil {
 		return Digests{}, err
 	}
 	return h.Sum(), nil
@@ -87,13 +97,13 @@ func hashReaderContext(ctx context.Context, r io.Reader) (Digests, error) {
 
 // hashFileContext is HashFile that a cancelled context interrupts (case verify re-hashes every artifact,
 // which can be many gigabytes).
-func hashFileContext(ctx context.Context, path string) (Digests, error) {
+func hashFileContext(ctx context.Context, path string, add func(int64)) (Digests, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return Digests{}, err
 	}
 	defer func() { _ = f.Close() }()
-	return hashReaderContext(ctx, f)
+	return hashReaderProgress(ctx, f, add)
 }
 
 // ctxCaused reports whether err is the end of the verify context ctx: ctx must really have ended and err
