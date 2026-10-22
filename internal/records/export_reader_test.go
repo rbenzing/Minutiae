@@ -46,13 +46,23 @@ func OverviewQueries(f Filter, have bool) ([]Query, error) {
 	return out, nil
 }
 
-// SearchQueries returns the statements buildList makes for f with the text query's indexFirst shape
+// SearchQueries returns the statements buildList makes for f with the text query's plan shape
 // set as given.
-func SearchQueries(f Filter, desc bool, cur *Cursor, limit int, indexFirst bool) ([]Query, error) {
+func SearchQueries(f Filter, desc bool, cur *Cursor, limit int, shape SearchShape) ([]Query, error) {
 	if f.Text != nil {
 		tq := *f.Text
-		tq.indexFirst = indexFirst
+		tq.shape = shape
 		f.Text = &tq
 	}
 	return ListQueries(f, desc, cur, limit, false)
+}
+
+// OverviewTypesQuery returns the one statement OverviewAndTypes scans the records with.
+func OverviewTypesQuery(f Filter, have bool) (Query, error) {
+	w, err := f.compile(have)
+	if err != nil {
+		return Query{}, err
+	}
+	q := overviewTypesStatement(w)
+	return Query{q.sql, q.args}, nil
 }

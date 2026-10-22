@@ -577,3 +577,28 @@ func TestFTS5IdxConfirmingSearchFindsGenuineHits(t *testing.T) {
 		})
 	}
 }
+
+// a doclist index row that is gone is a difference too (the index pass of verify, not only the standalone check)
+func TestVerifyFTSDlidxRowDeletedIsAProblem(t *testing.T) {
+	c, rec := caseWithArtifact(t)
+	insertTextRecords(t, c, rec.ID, 6000, tamperText)
+	if _, err := c.ReindexText(context.Background(), ReindexOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := c.store.db.Exec("DELETE FROM records_fts_data WHERE id IN (SELECT id FROM records_fts_data WHERE id >= ? AND (id >> 36) & 1 = 1 LIMIT 1)", 1<<ftsSegidShift)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		t.Fatalf("%d doclist index rows deleted", n)
+	}
+	n := 0
+	for _, p := range withoutIntegrity(ftsProblems(mustVerify(t, c))) {
+		if strings.Contains(p, "the doclist index of term") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d doclist index lines", n)
+	}
+}

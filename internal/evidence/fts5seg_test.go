@@ -65,6 +65,13 @@ func decodeFTSTable(t testing.TB, db *sql.DB, table string, sink ftsSink) error 
 	t.Helper()
 	for _, seg := range ftsStructureOf(t, db, table) {
 		r := newFTSSegReader(seg)
+		if seg.Empty() {
+			// lingering rows of an emptied segment are not decoded (D143)
+			if err := r.Finish(); err != nil {
+				return err
+			}
+			continue
+		}
 		for _, p := range ftsLeafPages(t, db, table, seg.ID) {
 			if err := r.Page(p.pgno, p.block, sink); err != nil {
 				return err
@@ -173,6 +180,9 @@ func hasDlidxRows(t testing.TB, db *sql.DB, table string) bool {
 }
 
 func TestFTS5DecodeEqualsVocabOnGenuineIndexes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow (> 60 s): runs in the merge gate")
+	}
 	check := func(t *testing.T, db *sql.DB) {
 		for _, table := range FTSTables() {
 			requireDecodeEqualsVocab(t, db, table)
@@ -689,5 +699,41 @@ func TestFTS5LeafDoesNotAllocateFromDeclaredSizes(t *testing.T) {
 	})
 	if allocs > 6 {
 		t.Fatalf("%v allocations for a page that declares a huge poslist", allocs)
+	}
+}
+
+// A genuine index in the middle of an incremental merge holds segments that _fts5TrimSegments emptied: the
+// structure still lists them, with pages 0 to 0 and no leaf rows (5D-14h2 D143). The decoder reads nothing
+// for such a segment and never calls it a missing page; the postings of the table still equal fts5vocab at
+// every step of the merge.
+func TestFTS5DecodeAcceptsEmptiedSegmentsOfAnIncrementalMerge(t *testing.T) {
+	db := genuineFTS(t)
+	probeExec(t, db, "INSERT INTO records_fts(records_fts, rank) VALUES('automerge', 0)")
+	fill(t, db, 1, 120, 20)
+	emptied := 0
+	for step := 0; step < 400; step++ {
+		for _, table := range FTSTables() {
+			probeExec(t, db, "INSERT INTO "+table+"("+table+", rank) VALUES('merge', 1)")
+		}
+		for _, seg := range ftsStructureOf(t, db, FTSWordTable) {
+			if seg.First == 0 && seg.Last == 0 {
+				emptied++
+				if !seg.Empty() {
+					t.Fatalf("segment %d has pages 0 to 0 and is not Empty()", seg.ID)
+				}
+			} else if seg.Empty() {
+				t.Fatalf("segment %d (pages %d to %d) is Empty()", seg.ID, seg.First, seg.Last)
+			}
+		}
+		for _, table := range FTSTables() {
+			requireDecodeEqualsVocab(t, db, table)
+		}
+	}
+	if emptied == 0 {
+		t.Fatal("the merge workload never produced an emptied segment, so it proves nothing")
+	}
+	r := newFTSSegReader(ftsSegment{ID: 7})
+	if err := r.Page(0, []byte{0, 0, 0, 5, 1}, ftsSink{}); err == nil {
+		t.Fatal("an emptied segment accepted a page")
 	}
 }

@@ -297,7 +297,7 @@ func (q *TextQuery) matchCond() (string, error) {
 	}
 	switch q.table {
 	case evidence.FTSWordTable, evidence.FTSSubTable:
-		if q.indexFirst { // a common query: the time-ordered index drives and the first hits end the scan
+		if q.shape == shapeExists || q.shape == shapeExistsNoHint { // a common query: the first hits end the scan
 			return "EXISTS (SELECT 1 FROM " + q.table + " WHERE " + q.table + ".rowid = r.id AND " + q.table + " MATCH ?)", nil
 		}
 		return "r.id IN (SELECT rowid FROM " + q.table + " WHERE " + q.table + " MATCH ?)", nil

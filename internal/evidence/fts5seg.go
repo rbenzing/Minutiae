@@ -55,13 +55,18 @@ import (
 //
 // Facts established on genuine indexes (TestFTS5DecodeEqualsVocabOnGenuineIndexes and the other tests of
 // this file): a genuine leaf is never empty (every flush follows a write of at least one byte), so szLeaf
-// 4 is refused; every page First..Last of a segment exists, none is skipped; and the first page of a segment
-// starts with a term at offset 4.
+// 4 is refused; every page First..Last of a segment exists, none is skipped, with ONE exception (5D-14h2 D143):
+// in the middle of an incremental merge ("INSERT INTO t(t, rank) VALUES('merge', N)") _fts5TrimSegments leaves
+// the structure listing a segment with First == Last == 0 and no leaf rows; ftsSegment.Empty() marks it and the
+// reader reads nothing for it. And the first page of any other segment starts with a term at offset 4.
 //
 // Bounds (CLAUDE.md): nothing is sized from a declared count or length. The term buffer grows only by
 // suffix bytes that are present in the page and never past fts5MaxTokenSize+1; a declared poslist size is
 // only a counter that the following bytes decrement. Every loop consumes at least one byte per iteration.
 // Rowids and positions are added with overflow checks.
+// The rowid-delta bound assumes positive rowids, as Minutiae's are (record ids start at 1, and an FTS rowid is a
+// record id): a delta is refused above MaxInt64 or when the sum does not exceed the previous rowid, which is
+// exact for a previous rowid >= 0. A segment that holds negative rowids is outside what this decoder promises.
 
 const (
 	ftsMainPrefix  = 0x30 // FTS5_MAIN_PREFIX '0'
@@ -91,6 +96,11 @@ type ftsSegment struct {
 	First, Last int64
 }
 
+// Empty says the segment holds no leaf pages: _fts5TrimSegments, in the middle of an incremental merge, leaves
+// the structure listing a merged-away segment with pages 0 to 0 and deletes its rows (5D-14h2 D143). Its
+// _data rows, if a tampered index has any, are still unreferenced-row candidates for checkUnreferenced.
+func (s ftsSegment) Empty() bool { return s.First == 0 && s.Last == 0 }
+
 // ftsSegmentAge numbers the segments of a structure: a larger number is newer (see the file comment).
 func ftsSegmentAge(segs []ftsSegment) map[int64]int {
 	order := slices.Clone(segs)
@@ -109,6 +119,11 @@ func ftsSegmentAge(segs []ftsSegment) map[int64]int {
 
 // ftsSink receives what the decoder finds. Any func may be nil. The term slices are valid only during
 // the call.
+//
+// Contract (5D-14h2 D147): the decoder calls the funcs while it decodes a page, before it knows that the page,
+// or a later page of the segment, is valid. When Page or Finish returns an error the caller must discard
+// everything that segment contributed through the sink; only a segment whose pages and Finish all returned
+// nil has contributed real postings. Task 14i enforces it.
 type ftsSink struct {
 	// Posting is one position of a term in a record. The term is as fts5vocab shows it (no index prefix byte).
 	Posting func(term []byte, rowid int64, col int, off int64)
@@ -174,7 +189,11 @@ type ftsSegReader struct {
 }
 
 func newFTSSegReader(seg ftsSegment) *ftsSegReader {
-	return &ftsSegReader{seg: seg, next: seg.First}
+	r := &ftsSegReader{seg: seg, next: seg.First}
+	if seg.Empty() {
+		r.next = seg.Last + 1 // nothing to read
+	}
+	return r
 }
 
 func (s *ftsSegReader) fail(off int, reason string) error {
@@ -236,6 +255,9 @@ func (s *ftsSegReader) Finish() error {
 	if s.err != nil {
 		return s.err
 	}
+	if s.seg.Empty() {
+		return nil // an emptied segment (D143) holds no page, no term and nothing to miss
+	}
 	s.pgno = s.next
 	switch {
 	case s.next != s.seg.Last+1:
@@ -250,6 +272,8 @@ func (s *ftsSegReader) Finish() error {
 
 func (s *ftsSegReader) page(block []byte) error {
 	switch {
+	case s.seg.Empty():
+		return s.fail(0, "page of an empty segment")
 	case s.pgno < s.seg.First || s.pgno > s.seg.Last:
 		return s.fail(0, "page outside the segment")
 	case s.pgno > s.next:
@@ -545,7 +569,7 @@ func (s *ftsSegReader) onPosition(v uint64, at int) error {
 		if v < 2 {
 			return s.fail(at, "invalid first position after a column")
 		}
-		s.off, s.have, s.pend = int64(v-2), true, 0
+		s.off, s.pend = int64(v-2), 0
 	default:
 		switch {
 		case v == 0:
@@ -557,11 +581,12 @@ func (s *ftsSegReader) onPosition(v uint64, at int) error {
 			return s.fail(at, "position not ascending")
 		}
 		s.off += int64(v - 2)
-		if s.off > math.MaxInt32 {
-			return s.fail(at, "position out of range")
-		}
-		s.have = true
 	}
+	// one bound for both ways to reach an offset (an offset is a 31-bit position in FTS5)
+	if s.off > math.MaxInt32 {
+		return s.fail(at, "position out of range")
+	}
+	s.have = true
 	if !s.del && s.sink.Posting != nil {
 		s.sink.Posting(s.term[1:], s.rowid, s.col, s.off)
 	}

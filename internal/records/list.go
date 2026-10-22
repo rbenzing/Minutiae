@@ -214,9 +214,10 @@ func buildList(f Filter, desc bool, cur *cursor, have bool) ([]query, error) {
 		return nil, err
 	}
 	// A common text query is driven by the time-ordered index (D14): the planner would otherwise
-	// materialize every matching rowid before it could order by time.
+	// materialize every matching rowid before it could order by time. A tiny filter or a rare query
+	// carries no hint (the planner or the filter's own index drives).
 	hint := ""
-	if f.Text != nil && f.Text.indexFirst {
+	if f.Text != nil && (f.Text.shape == shapeHintedIN || f.Text.shape == shapeExists) {
 		hint = " INDEXED BY records_ts"
 		if len(uniqSorted(f.Types)) == 1 {
 			hint = " INDEXED BY records_type_ts"
@@ -281,15 +282,13 @@ func (r *Reader) page(ctx context.Context, f Filter, p Page, limit int, with fun
 			return err
 		}
 		if f.Text != nil && !f.Text.rank {
-			n, err := r.probeText(ctx, h, f.Text)
+			shape, err := r.chooseShape(ctx, h, f, have)
 			if err != nil {
 				return err
 			}
-			if n >= searchProbeLimit { // a common query: the same records, driven by the time index
-				tq := *f.Text
-				tq.indexFirst = true
-				f.Text = &tq
-			}
+			tq := *f.Text
+			tq.shape = shape
+			f.Text = &tq
 		}
 		parts := f.split()
 		if parts == nil {
@@ -501,9 +500,64 @@ func cmpListOrder(a, b Row) int {
 	return cmp.Compare(a.ID, b.ID)
 }
 
-// probeText counts the full-text hits of q up to searchProbeLimit, with one bounded statement, to
-// choose the plan of a page (the filter is not applied: the probe classifies the query's selectivity).
-func (r *Reader) probeText(ctx context.Context, h evidence.ReadHandle, q *TextQuery) (int, error) {
+// searchShape is the plan of a text-search page. Every shape selects the same records in the same order
+// (a plan is never part of a cursor).
+type searchShape int
+
+const (
+	// shapeFTSFirst: r.id IN (full-text rowids), no hint; the planner is free. A rare query.
+	shapeFTSFirst searchShape = iota
+	// shapeHintedIN: the same IN set, with the time-order index hint: the set is built once and the
+	// first hits in time order end the scan. A query with many hits that cannot afford a per-record probe.
+	shapeHintedIN
+	// shapeExists: the hinted index drives, with one EXISTS on the full-text rowid per record. A very
+	// common single word: no set is ever built.
+	shapeExists
+	// shapeExistsNoHint: EXISTS per record without the hint, so the filter's own index drives. A tiny filter.
+	shapeExistsNoHint
+)
+
+// chooseShape picks the plan of a page from bounded probes in the page's read transaction, in stages
+// so that each page pays only for what it needs: (1) a text probe up to searchProbeLimit hits decides a
+// rare query; (2) with that many hits, a filter probe, when every condition of the filter is served by an
+// index, decides a tiny filter, which always drops the hint (S12: EXISTS for a plain word, the unhinted
+// IN for a prefix or multi-term query, which never takes EXISTS); (3) a prefix or multi-term query that is
+// not tiny is the hinted IN with no further probe; (4) only a plain word with no tiny filter
+// pays for the large text probe that separates the hinted IN from EXISTS.
+func (r *Reader) chooseShape(ctx context.Context, h evidence.ReadHandle, f Filter, have bool) (searchShape, error) {
+	hits, err := r.probeText(ctx, h, f.Text, searchProbeLimit)
+	if err != nil {
+		return shapeFTSFirst, err
+	}
+	if hits < searchProbeLimit {
+		return shapeFTSFirst, nil
+	}
+	tiny, err := r.probeFilter(ctx, h, f, have)
+	if err != nil {
+		return shapeFTSFirst, err
+	}
+	if f.Text.reexpands() { // never EXISTS; a tiny filter still drops the hint (S12), else no further probe
+		if tiny {
+			return shapeFTSFirst, nil
+		}
+		return shapeHintedIN, nil
+	}
+	if tiny {
+		return shapeExistsNoHint, nil
+	}
+	hits, err = r.probeText(ctx, h, f.Text, searchINLimit+1)
+	if err != nil {
+		return shapeFTSFirst, err
+	}
+	if hits <= searchINLimit {
+		return shapeHintedIN, nil
+	}
+	return shapeExists, nil
+}
+
+// probeText counts the full-text hits of q up to limit, with one bounded statement (the filter is not
+// applied: the probe classifies the query's selectivity).
+func (r *Reader) probeText(ctx context.Context, h evidence.ReadHandle, q *TextQuery, limit int) (int, error) {
 	if q.match == "" || (q.table != evidence.FTSWordTable && q.table != evidence.FTSSubTable) {
 		return 0, invalidFilter("the text query was not compiled by CompileQuery or CompileTerms")
 	}
@@ -515,12 +569,61 @@ func (r *Reader) probeText(ctx context.Context, h evidence.ReadHandle, q *TextQu
 	if r.queryLog != nil {
 		r.queryLog(stmt) // logged like every statement, so a test can count it
 	}
+	if r.probeLog != nil {
+		r.probeLog("text", limit)
+	}
 	var n int
-	if err := h.QueryRowContext(ctx, stmt, q.match, searchProbeLimit).Scan(&n); err != nil {
+	if err := h.QueryRowContext(ctx, stmt, q.match, limit).Scan(&n); err != nil {
 		return 0, fmt.Errorf("records: list: %w", err)
 	}
 	return n, nil
 }
 
-// searchProbeLimit is how many full-text hits make a query "common" (see probeText).
-var searchProbeLimit = 4096
+// indexedFilter reports whether the filter has a condition of its own and every condition is served by
+// an index (type, artifact_id, a ts range, deleted). Any other filter (a path prefix, parsers,
+// confidence, recovered, an ingest id) could make the probe itself scan the table, so it is never
+// probed and keeps the hint.
+func indexedFilter(f Filter) bool {
+	if f.Recovered != Any || f.PathPrefix != "" || len(f.Parsers) > 0 || f.MinConfidence != nil || f.IngestID != "" {
+		return false
+	}
+	return len(f.Types) > 0 || len(f.ArtifactIDs) > 0 || f.From != nil || f.To != nil || f.Deleted != Any
+}
+
+// probeFilter reports whether the filter, without its text query, selects fewer than searchFilterProbe
+// records: one bounded count in the page's read transaction (never ANALYZE: that would write into the
+// case). A filter that is not indexedFilter is never tiny and never probed.
+func (r *Reader) probeFilter(ctx context.Context, h evidence.ReadHandle, f Filter, have bool) (bool, error) {
+	if !indexedFilter(f) {
+		return false, nil
+	}
+	f.Text = nil
+	w, err := f.compile(have) // the real selection, superseded hiding included
+	if err != nil {
+		return false, err
+	}
+	stmt := "SELECT count(*) FROM (SELECT 1" + w.fromSQL(false, false) + w.whereSQL() + " LIMIT ?)"
+	if err := r.matching(ctx); err != nil {
+		return false, err
+	}
+	if r.queryLog != nil {
+		r.queryLog(stmt)
+	}
+	if r.probeLog != nil {
+		r.probeLog("filter", searchFilterProbe)
+	}
+	var n int
+	if err := h.QueryRowContext(ctx, stmt, append(w.args, searchFilterProbe)...).Scan(&n); err != nil {
+		return false, fmt.Errorf("records: list: %w", err)
+	}
+	return n < searchFilterProbe, nil
+}
+
+// The plan bands, by full-text hits: fewer than searchProbeLimit is FTS-first, up to searchINLimit is
+// the hinted IN, more is EXISTS. A filter that selects fewer than searchFilterProbe records drops the
+// hint. They are variables only so that a test can move them.
+var (
+	searchProbeLimit  = 4096
+	searchINLimit     = 262144
+	searchFilterProbe = 4096
+)

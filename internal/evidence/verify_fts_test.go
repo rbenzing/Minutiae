@@ -498,9 +498,9 @@ func TestVerifyKeepsAPreExistingEmptyTmp(t *testing.T) {
 	}
 }
 
-// 5D-14j: the index step recomputes from the leaf pages and needs nothing of the rebuild, so it runs on a table
-// that has a content problem too (a content problem must not hide an index one).
-func TestVerifyFTSIndexSubPhaseRunsOnEveryTable(t *testing.T) {
+// 5D-14j: the reachability step is gone: the _idx and doclist-index recomputation is part of the decode step of the
+// index pass, which runs on every table, whatever its content (a content problem must not hide an index one).
+func TestVerifyFTSNoReachabilityStepAndDecodeRunsOnEveryTable(t *testing.T) {
 	c := indexedTextCase(t, 50)
 	if _, err := c.store.db.Exec(`INSERT INTO records_fts(records_fts, rowid, summary, body) VALUES ('delete', 5, ?, ?)`, normalizeFor(5)...); err != nil {
 		t.Fatal(err)
@@ -524,8 +524,11 @@ func TestVerifyFTSIndexSubPhaseRunsOnEveryTable(t *testing.T) {
 		return n
 	}
 	for _, table := range FTSTables() {
-		if n := count("fts.compare/" + table + "/index"); n != 1 {
-			t.Errorf("the index step of %s reported %d times in %v", table, n, seen)
+		if n := count("fts.index/" + table + "/decode"); n != 1 {
+			t.Errorf("the decode step of %s reported %d times in %v", table, n, seen)
+		}
+		if n := count("fts.compare/" + table + "/reachability"); n != 0 {
+			t.Errorf("the reachability step of %s still runs", table)
 		}
 	}
 }

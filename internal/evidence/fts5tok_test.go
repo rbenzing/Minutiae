@@ -456,12 +456,17 @@ func TestFTS5TokenTablesAreCurrent(t *testing.T) {
 // The four contexts of a code point c. Two letters on each side keep the trigram windows meaningful.
 var tokContexts = []struct {
 	name  string
-	frame func(c string) string
+	frame func(table, c string) string
 }{
-	{"alone", func(c string) string { return c }},
-	{"start", func(c string) string { return c + "yz" }},
-	{"end", func(c string) string { return "xw" + c }},
-	{"middle", func(c string) string { return "xw" + c + "yz" }},
+	{"alone", func(table, c string) string {
+		if table == FTSSubTable { // a lone character has no trigram window: give it one neighbour on each side (D141)
+			return "x" + c + "y"
+		}
+		return c
+	}},
+	{"start", func(_, c string) string { return c + "yz" }},
+	{"end", func(_, c string) string { return "xw" + c }},
+	{"middle", func(_, c string) string { return "xw" + c + "yz" }},
 }
 
 // tokPack is the number of probes of one differential document. The probes of a document are framed by
@@ -490,7 +495,7 @@ func TestFTS5ReplicaMatchesSQLiteOnEveryCodePoint(t *testing.T) {
 						pack := batch[i:min(i+tokPack, len(batch))]
 						frames := make([]string, len(pack))
 						for j, c := range pack {
-							frames[j] = ctx.frame(string(c))
+							frames[j] = ctx.frame(table, string(c))
 						}
 						docs = append(docs, tokDoc{text: strings.Join(frames, " "), body: (i/tokPack)%2 == 1})
 						packs = append(packs, pack)
@@ -506,7 +511,7 @@ func TestFTS5ReplicaMatchesSQLiteOnEveryCodePoint(t *testing.T) {
 						}
 						before := bad
 						for _, c := range packs[i] {
-							one := []tokDoc{{text: ctx.frame(string(c))}}
+							one := []tokDoc{{text: ctx.frame(table, string(c))}}
 							diffReplica(table, one, tokIndex(t, db, table, one), 1, func(s string) { report(fmt.Sprintf("U+%04X: %s", c, s)) })
 						}
 						if bad == before { // a probe leaked into its neighbour: never let that pass
@@ -596,7 +601,7 @@ func TestSQLiteVarintEncoderRoundTrips(t *testing.T) {
 func TestFTSProbeCorpusCoversEveryTableRange(t *testing.T) {
 	seen := map[rune]bool{}
 	long := false
-	for _, s := range ftsProbeCorpus {
+	for _, s := range ftsProbeCorpus() {
 		if !utf8.ValidString(s) || strings.ContainsRune(s, 0) {
 			t.Fatalf("probe %q is not valid UTF-8 without NUL", clipText(s, 40))
 		}
@@ -753,6 +758,31 @@ func TestFTS5PinErrorNamesAnyOtherSQLite(t *testing.T) {
 	} {
 		if err := fts5PinError(c[0], c[1]); !errors.Is(err, errFTSReplica) {
 			t.Errorf("fts5PinError(%q, %q) = %v, want errFTSReplica", c[0], c[1], err)
+		}
+	}
+}
+
+// TestFTSReplicaOverrideIsNeverSetByProductionCode pins D142: the seam is read by ftsTokenizer and assigned
+// only by test files.
+func TestFTSReplicaOverrideIsNeverSetByProductionCode(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, line := range strings.Split(string(b), "\n") {
+			if strings.Contains(line, "ftsReplicaOverride =") || strings.Contains(line, "ftsReplicaOverride=") {
+				if !strings.HasPrefix(strings.TrimSpace(line), "var ftsReplicaOverride") {
+					t.Errorf("%s:%d assigns ftsReplicaOverride in production code", f, i+1)
+				}
+			}
 		}
 	}
 }

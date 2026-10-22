@@ -43,6 +43,7 @@ type Reader struct {
 	// rowsRead counts the rows list queries scanned, queryLog sees their SQL (test diagnostics).
 	rowsRead atomic.Int64
 	queryLog func(string)
+	probeLog func(kind string, limit int) // test diagnostics: every probe with its LIMIT
 }
 
 // NewReader returns a reader for c. A case whose schema is older than v2 has no

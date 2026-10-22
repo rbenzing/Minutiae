@@ -88,6 +88,8 @@ type Case struct {
 	// named points of the check (with the private expected-index database), and a non-zero cache
 	// size replaces the default of the expected index so a small corpus spills.
 	verifyFTSHook func(point string, expected *sql.DB)
+	// verifyFTSInspect, when set by a test, is told what the index pass of P11 concluded, once all tables are done.
+	verifyFTSInspect func(r *ftsVerify)
 	// verifyPhaseHook observes the duration of each verify phase; it cannot alter a check.
 	verifyPhaseHook func(phase string, d time.Duration)
 	// verifyProgress is the observer of the verify running now (nil when none); set for the run only.

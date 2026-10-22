@@ -1,38 +1,24 @@
 package evidence
 
-import (
-	"errors"
-)
+// The glue between the index pass (verify_ftsindex.go) and the recomputation of fts5idx.go (5D Task 14j).
 
-// indexPass recomputes the _idx rows and the doclist indexes of one table from its leaf pages and
-// compares them with the stored ones (fts5idx.go). It needs nothing of the rebuilt index. Every difference
-// is a problem (kind fts-idx, 50 listed per table and one count line); the leaf pages that are not valid
-// are fts-leaf problems. For the first 50 differences per table a search for the first term of the affected
-// page, restricted to its first record, then says whether a hit is really lost (V13).
-func (r *ftsVerify) indexPass(table string) error {
-	var hits []ftsLostHit
-	err := r.c.ReadTx(r.ctx, func(h ReadHandle) error {
-		_, err := checkFTSIndex(r.ctx, h, table, func(f ftsIdxFinding) {
-			kind := "fts-idx"
-			if f.Kind == ftsLeafBad {
-				kind = "fts-leaf"
-			}
-			r.add(table, kind, "%s", f.text(table))
-			if f.Confirm != nil && len(hits) < verifyMaxPerKind {
-				hits = append(hits, *f.Confirm)
-			}
-		}, func(pages int) {
-			if r.observe != nil {
-				r.observe("fts-data", pages)
-			}
-		})
-		if errors.Is(err, errFTSIdxStructure) {
-			return nil // checkUnreferenced reports an unreadable structure record
-		}
-		return err
-	})
-	if err != nil || len(hits) == 0 {
-		return err
+// idxFinding reports one difference of the recomputation: kind fts-idx, 50 listed per table and one count line;
+// the leaf pages that are not valid are reported by the pass itself (fts-leaf). The first 50 differences per
+// table that name a page's first term are kept for the confirmation by search (V13).
+func (r *ftsVerify) idxFinding(table string, f ftsIdxFinding) {
+	r.add(table, "fts-idx", "%s", f.text(table))
+	if f.Confirm != nil && len(r.idxHits) < verifyMaxPerKind {
+		r.idxHits = append(r.idxHits, *f.Confirm)
+	}
+}
+
+// confirmIdxHits asks the case index, for each kept difference, for the first term of the affected page
+// restricted to its first record: when no row comes back, a hit is really lost.
+func (r *ftsVerify) confirmIdxHits(table string) error {
+	hits := r.idxHits
+	r.idxHits = nil
+	if len(hits) == 0 {
+		return nil
 	}
 	return r.c.ReadTx(r.ctx, func(h ReadHandle) error {
 		for _, hit := range hits {

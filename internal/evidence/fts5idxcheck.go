@@ -286,52 +286,132 @@ func (c *idxCursor) extra() {
 	c.r.report(ftsIdxFinding{Kind: ftsIdxWrong, Seg: c.seg.ID, Page: s.page, Term: s.term, WantPage: s.page})
 }
 
-// segment checks one segment.
-func (r *ftsIdxRun) segment(seg ftsSegment) error {
+// ftsIdxSeg is the check of one segment: the _idx cursor, the builder fed by the decoder's leaf callback,
+// and the doclist-index rows. The index pass of verify (readLeaves) and checkFTSIndex both drive it.
+type ftsIdxSeg struct {
+	r      *ftsIdxRun
+	seg    ftsSegment
+	rd     *ftsSegReader
+	b      *ftsIdxBuilder
+	rows   *sql.Rows
+	cur    *idxCursor
+	cmpErr error
+	ended  bool // the leaf pages are over
+}
+
+// beginSegment opens the check of a segment that is not Empty. rd is the reader that decodes its pages.
+func (r *ftsIdxRun) beginSegment(seg ftsSegment, rd *ftsSegReader) (*ftsIdxSeg, error) {
 	r.st.Segments++
-	if seg.First == 0 && seg.Last == 0 { // drained by a merge (D143)
-		r.st.Empty++
-		return nil
-	}
 	if seg.First > 1 {
 		r.st.Trimmed++
 	}
 	// the row id of a page is segid<<37+page: a segment id that does not fit has no rows
 	if seg.ID >= 1<<(63-ftsSegidShift)-1 {
-		return fmt.Errorf("segment id %d does not fit a row id", seg.ID)
+		return nil, fmt.Errorf("segment id %d does not fit a row id", seg.ID)
 	}
-	base := seg.ID << ftsSegidShift
 	ir, err := r.q.QueryContext(r.ctx, `SELECT typeof(term), term, typeof(pgno), pgno FROM `+r.table+`_idx WHERE segid = ? ORDER BY term`, seg.ID) //nolint:gosec // the table is one of the two FTS table constants
+	if err != nil {
+		return nil, err
+	}
+	s := &ftsIdxSeg{r: r, seg: seg, rd: rd, rows: ir}
+	s.cur = &idxCursor{r: r, seg: seg, rows: ir}
+	if err := s.cur.advance(); err != nil {
+		_ = ir.Close()
+		return nil, err
+	}
+	s.b = newFTSIdxBuilder(seg, r.pgsz, func(e ftsIdxRow) {
+		if r.rowSeen != nil {
+			r.rowSeen(e)
+		}
+		if s.cmpErr == nil {
+			s.cmpErr = s.cur.compare(e)
+		}
+	})
+	return s, nil
+}
+
+// leaf is the callback for ftsSink.Leaf.
+func (s *ftsIdxSeg) leaf(l ftsLeafInfo) {
+	if s.cmpErr == nil {
+		s.b.leaf(l, s.rd.term)
+	}
+}
+
+// endLeaves says the leaf pages decoded completely (Finish succeeded): the last rows are compared.
+func (s *ftsIdxSeg) endLeaves() error {
+	if s.ended {
+		return s.cmpErr
+	}
+	s.ended = true
+	if s.cmpErr == nil {
+		s.b.finish()
+	}
+	for s.cmpErr == nil && s.cur.has {
+		s.cur.extra()
+		s.cmpErr = s.cur.advance()
+	}
+	return s.cmpErr
+}
+
+// dlidx compares one stored doclist-index row; it needs endLeaves first.
+func (s *ftsIdxSeg) dlidx(id int64, block []byte) {
+	r := s.r
+	level := int(id >> 31 & 31)
+	pgno := id & (1<<31 - 1)
+	want, ok := s.b.dl[id]
+	if !ok {
+		if s.seg.First > 1 && pgno < s.seg.First {
+			r.st.StaleDlidxRows++
+			return
+		}
+		r.report(ftsIdxFinding{Kind: ftsDlidxExtra, Seg: s.seg.ID, Page: pgno, Level: level})
+		return
+	}
+	delete(s.b.dl, id)
+	if !bytes.Equal(want.Block, block) {
+		r.report(ftsIdxFinding{Kind: ftsDlidxDiffers, Seg: s.seg.ID, Page: pgno, Level: level, Term: want.Term, Confirm: &ftsLostHit{Term: want.Term, Rowid: want.FirstRowid}})
+		return
+	}
+	r.st.DlidxRows++
+}
+
+// endDlidx reports the doclist-index rows the leaf pages produce and the index does not hold.
+func (s *ftsIdxSeg) endDlidx() {
+	missing := make([]*ftsDlidxRow, 0, len(s.b.dl))
+	for _, row := range s.b.dl {
+		missing = append(missing, row)
+	}
+	slices.SortFunc(missing, func(a, c *ftsDlidxRow) int { return int(a.ID - c.ID) })
+	for _, row := range missing {
+		s.r.report(ftsIdxFinding{Kind: ftsDlidxDiffers, Seg: s.seg.ID, Page: row.Pgno, Level: row.Level, Term: row.Term, Confirm: &ftsLostHit{Term: row.Term, Rowid: row.FirstRowid}})
+	}
+}
+
+func (s *ftsIdxSeg) close() { _ = s.rows.Close() }
+
+// segment checks one segment on its own: it reads the rows of the segment from _data itself.
+func (r *ftsIdxRun) segment(seg ftsSegment) error {
+	if seg.Empty() { // drained by a merge (D143)
+		r.st.Segments++
+		r.st.Empty++
+		return nil
+	}
+	rd := newFTSSegReader(seg)
+	s, err := r.beginSegment(seg, rd)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = ir.Close() }()
-	cur := &idxCursor{r: r, seg: seg, rows: ir}
-	if err := cur.advance(); err != nil {
-		return err
-	}
+	defer s.close()
+	base := seg.ID << ftsSegidShift
 	dr, err := r.q.QueryContext(r.ctx, `SELECT id, block FROM `+r.table+`_data WHERE id >= ? AND id < ? ORDER BY id`, base, base+1<<ftsSegidShift) //nolint:gosec // the table is one of the two FTS table constants
 	if err != nil {
 		return err
 	}
 	defer func() { _ = dr.Close() }()
-
-	rd := newFTSSegReader(seg)
-	var cmpErr error
-	b := newFTSIdxBuilder(seg, r.pgsz, func(e ftsIdxRow) {
-		if r.rowSeen != nil {
-			r.rowSeen(e)
-		}
-		if cmpErr == nil {
-			cmpErr = cur.compare(e)
-		}
-	})
-	sink := ftsSink{Leaf: func(l ftsLeafInfo) { b.leaf(l, rd.term) }}
+	sink := ftsSink{Leaf: s.leaf}
 	bad := false
-	leavesDone := false
 	endLeaves := func() error {
-		leavesDone = true
-		if bad {
+		if s.ended || bad {
 			return nil
 		}
 		if err := rd.Finish(); err != nil {
@@ -339,12 +419,7 @@ func (r *ftsIdxRun) segment(seg ftsSegment) error {
 			r.report(ftsIdxFinding{Kind: ftsLeafBad, Seg: seg.ID, Err: err})
 			return nil
 		}
-		b.finish()
-		for cmpErr == nil && cur.has {
-			cur.extra()
-			cmpErr = cur.advance()
-		}
-		return cmpErr
+		return s.endLeaves()
 	}
 	for dr.Next() {
 		var id int64
@@ -353,7 +428,7 @@ func (r *ftsIdxRun) segment(seg ftsSegment) error {
 			return err
 		}
 		local := id - base
-		if local < 1<<31 { // a leaf page
+		if local < ftsLeafLimit { // a leaf page
 			if bad {
 				continue
 			}
@@ -362,8 +437,8 @@ func (r *ftsIdxRun) segment(seg ftsSegment) error {
 				r.report(ftsIdxFinding{Kind: ftsLeafBad, Seg: seg.ID, Err: err})
 				continue
 			}
-			if cmpErr != nil {
-				return cmpErr
+			if s.cmpErr != nil {
+				return s.cmpErr
 			}
 			r.st.Pages++
 			if r.pending++; r.pending >= ftsIdxProgressPages {
@@ -374,58 +449,24 @@ func (r *ftsIdxRun) segment(seg ftsSegment) error {
 			}
 			continue
 		}
-		if !leavesDone {
-			if err := endLeaves(); err != nil {
-				return err
-			}
+		if err := endLeaves(); err != nil {
+			return err
 		}
 		if bad || local&ftsDlidxFlag == 0 {
 			continue // an interior page of the old format cannot occur in an index SQLite 3.53 writes
 		}
-		r.dlidxRow(seg, b, id, block)
+		s.dlidx(id, block)
 	}
 	if err := dr.Err(); err != nil {
 		return err
 	}
-	if !leavesDone {
-		if err := endLeaves(); err != nil {
-			return err
-		}
+	if err := endLeaves(); err != nil {
+		return err
 	}
-	if bad {
-		return nil
-	}
-	// what the leaf pages produce and the index does not hold
-	missing := make([]*ftsDlidxRow, 0, len(b.dl))
-	for _, row := range b.dl {
-		missing = append(missing, row)
-	}
-	slices.SortFunc(missing, func(a, c *ftsDlidxRow) int { return int(a.ID - c.ID) })
-	for _, row := range missing {
-		r.report(ftsIdxFinding{Kind: ftsDlidxDiffers, Seg: seg.ID, Page: row.Pgno, Level: row.Level, Term: row.Term, Confirm: &ftsLostHit{Term: row.Term, Rowid: row.FirstRowid}})
+	if !bad {
+		s.endDlidx()
 	}
 	return nil
-}
-
-// dlidxRow compares one stored doclist-index row with the recomputed one.
-func (r *ftsIdxRun) dlidxRow(seg ftsSegment, b *ftsIdxBuilder, id int64, block []byte) {
-	level := int(id >> 31 & 31)
-	pgno := id & (1<<31 - 1)
-	want, ok := b.dl[id]
-	if !ok {
-		if seg.First > 1 && pgno < seg.First {
-			r.st.StaleDlidxRows++
-			return
-		}
-		r.report(ftsIdxFinding{Kind: ftsDlidxExtra, Seg: seg.ID, Page: pgno, Level: level})
-		return
-	}
-	delete(b.dl, id)
-	if !bytes.Equal(want.Block, block) {
-		r.report(ftsIdxFinding{Kind: ftsDlidxDiffers, Seg: seg.ID, Page: pgno, Level: level, Term: want.Term, Confirm: &ftsLostHit{Term: want.Term, Rowid: want.FirstRowid}})
-		return
-	}
-	r.st.DlidxRows++
 }
 
 // ftsLostHitTerm is the term of a hit as a search is asked for it: without the index prefix byte.

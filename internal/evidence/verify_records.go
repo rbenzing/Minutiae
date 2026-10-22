@@ -321,6 +321,11 @@ func (c *Case) verifyRecords(ctx context.Context, rep *VerifyReport, recs []Mani
 	trails := map[string]*RecoveryTrail{}
 	seenArtifact := map[string]bool{}
 	var maxID int64
+	// P11 starts before the stream: the tokenizer self-test, then the expected side the stream feeds
+	var fv *ftsVerify
+	if indexCurrent {
+		fv = c.startFTS(ctx, ps, sorted, observe)
+	}
 	doneStream, addStreamed := c.countedPhase("records.stream", recordsTotal, "records")
 	streamObserve := func(table string, rows int) {
 		addStreamed(int64(rows))
@@ -329,6 +334,9 @@ func (c *Case) verifyRecords(ctx context.Context, rep *VerifyReport, recs []Mani
 		}
 	}
 	streamed := c.streamRecords(ctx, ps, verifyChunkRows, streamObserve, func(row RecordRow, m recordRowMeta) {
+		if fv != nil {
+			fv.ex.row(row)
+		}
 		rep.RecordsChecked++
 		maxID = max(maxID, row.ID)
 		if !seenArtifact[row.ArtifactID] {
@@ -381,6 +389,10 @@ func (c *Case) verifyRecords(ctx context.Context, rep *VerifyReport, recs []Mani
 		acc[i].n++
 	})
 
+	if fv != nil {
+		fv.ex.finish(streamed)
+		c.phaseSpan("records.stream/fts.expected", fv.ex.busy) // the consumer's time, summed over the rows and reported once
+	}
 	doneStream()
 
 	doneBatches := c.phase("records.batches")
@@ -410,10 +422,10 @@ func (c *Case) verifyRecords(ctx context.Context, rep *VerifyReport, recs []Mani
 	if streamed {
 		c.checkNextID(ctx, rep, maxID)
 	}
-	if indexCurrent {
-		// P11: the index is compared with a rebuild from the records (after the record checks, which
-		// authenticate the rows the rebuild reads)
-		c.verifyFTS(ctx, ps, observe, recordsTotal)
+	if fv != nil {
+		// P11: the index is compared with what the records produce (after the record checks, which
+		// authenticate the rows it is computed from)
+		c.verifyFTS(fv, recordsTotal)
 	}
 }
 
