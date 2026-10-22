@@ -192,43 +192,189 @@ func (r *Reader) Overview(ctx context.Context, f Filter) (Overview, error) {
 		if lo.Valid && hi.Valid {
 			ov.TSMin, ov.TSMax = &lo.Int64, &hi.Int64
 		}
-		if have {
-			all := f
-			all.IncludeSuperseded = true
-			aw, err := all.compile(have)
-			if err != nil {
-				return err
-			}
-			aw.add(supersededExists)
-			aw.needBatch = true
-			q := "SELECT count(*)" + aw.fromSQL(false, true) + aw.whereSQL()
-			if err := h.QueryRowContext(ctx, q, aw.args...).Scan(&ov.SupersededRecords); err != nil {
-				return fmt.Errorf("records: overview: %w", err)
-			}
-		}
-		rows, err := h.QueryContext(ctx, `SELECT outcome, count(*) FROM record_runs GROUP BY outcome`)
-		if err != nil {
-			return fmt.Errorf("records: overview: %w", err)
-		}
-		defer func() { _ = rows.Close() }()
-		for rows.Next() {
-			var outcome string
-			var n int64
-			if err := rows.Scan(&outcome, &n); err != nil {
-				return fmt.Errorf("records: overview: %w", err)
-			}
-			ov.Runs[outcome] = n
-		}
-		return rows.Err()
+		return overviewRest(ctx, h, f, have, &ov)
 	})
 	if err != nil {
 		return Overview{}, err
 	}
-	// the ingests the database cannot show as complete (read after the transaction: the audit log is a file)
+	if err := r.overviewGaps(&ov); err != nil {
+		return Overview{}, err
+	}
+	return ov, nil
+}
+
+// overviewRest reads what the scalar statements do not: the records of superseded runs among those f
+// selects, and every run of the case by outcome.
+func overviewRest(ctx context.Context, h evidence.ReadHandle, f Filter, have bool, ov *Overview) error {
+	if have {
+		all := f
+		all.IncludeSuperseded = true
+		aw, err := all.compile(have)
+		if err != nil {
+			return err
+		}
+		aw.add(supersededExists)
+		aw.needBatch = true
+		q := "SELECT count(*)" + aw.fromSQL(false, true) + aw.whereSQL()
+		if err := h.QueryRowContext(ctx, q, aw.args...).Scan(&ov.SupersededRecords); err != nil {
+			return fmt.Errorf("records: overview: %w", err)
+		}
+	}
+	rows, err := h.QueryContext(ctx, `SELECT outcome, count(*) FROM record_runs GROUP BY outcome`)
+	if err != nil {
+		return fmt.Errorf("records: overview: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var outcome string
+		var n int64
+		if err := rows.Scan(&outcome, &n); err != nil {
+			return fmt.Errorf("records: overview: %w", err)
+		}
+		ov.Runs[outcome] = n
+	}
+	return rows.Err()
+}
+
+// overviewGaps adds the ingests the database cannot show as complete (read after the transaction: the
+// audit log is a file).
+func (r *Reader) overviewGaps(ov *Overview) error {
 	gaps, err := r.c.IngestGaps()
 	if err != nil {
-		return Overview{}, r.integrity(fmt.Errorf("records: overview: %w", err))
+		return r.integrity(fmt.Errorf("records: overview: %w", err))
 	}
 	ov.Gaps = gaps
-	return ov, nil
+	return nil
+}
+
+// overviewTypesStatement is the one statement of OverviewAndTypes: a group per (type, timed or not)
+// with its count and ts range, in key order. When no run is superseded it is a covering scan of
+// records_type_ts, whose key is (type, ts IS NULL, ts, id), so no temporary b-tree is built.
+func overviewTypesStatement(w where) overviewQuery {
+	return overviewQuery{
+		sql: "SELECT r.type, (r.ts IS NULL), count(*), min(r.ts), max(r.ts)" + w.fromSQL(false, false) + w.whereSQL() +
+			" GROUP BY r.type, (r.ts IS NULL) ORDER BY r.type, (r.ts IS NULL)",
+		args: slices.Clone(w.args),
+	}
+}
+
+// OverviewAndTypes is Overview and StatsTop(f, "type", limit) answered from one snapshot, with the
+// total, the untimed count, the ts range and the type groups computed from a single scan of the
+// records instead of one scan each. Every number is recomputed from the rows, none is read from a
+// stored count; the deleted and recovered counts and the runs are separate statements, as in Overview.
+// The result equals Overview and StatsTop run apart on an unchanged database, field for field; the
+// group cut is the same (the first limit types in key order, More when further types exist), and the
+// overview still counts every type.
+func (r *Reader) OverviewAndTypes(ctx context.Context, f Filter, limit int) (Overview, StatsResult, error) {
+	if err := refuseRank(f); err != nil {
+		return Overview{}, StatsResult{}, err
+	}
+	if limit < 1 || limit > MaxStatGroups {
+		return Overview{}, StatsResult{}, fmt.Errorf("%w: group limit %d is outside 1..%d", ErrInvalidPage, limit, MaxStatGroups)
+	}
+	if _, err := f.compile(false); err != nil {
+		return Overview{}, StatsResult{}, err
+	}
+	ov := Overview{Runs: map[string]int64{}}
+	var out StatsResult
+	err := r.readTx(ctx, f.Text != nil, func(h evidence.ReadHandle) error {
+		have, err := hasSuperseded(ctx, h)
+		if err != nil {
+			return err
+		}
+		w, err := f.compile(have)
+		if err != nil {
+			return err
+		}
+		if f.Text != nil {
+			if err := r.matching(ctx); err != nil {
+				return err
+			}
+		}
+		if err := r.scanTypeGroups(ctx, h, w, limit, &ov, &out); err != nil {
+			return err
+		}
+		qs := overviewStatements(w)
+		for i, dst := range []*int64{&ov.Deleted, &ov.Recovered} {
+			if err := h.QueryRowContext(ctx, qs[1+i].sql, qs[1+i].args...).Scan(dst); err != nil {
+				return fmt.Errorf("records: overview: %w", err)
+			}
+		}
+		return overviewRest(ctx, h, f, have, &ov)
+	})
+	if err != nil {
+		return Overview{}, StatsResult{}, err
+	}
+	if err := r.overviewGaps(&ov); err != nil {
+		return Overview{}, StatsResult{}, err
+	}
+	return ov, out, nil
+}
+
+// scanTypeGroups runs the single pass: it sums every group into ov (records, untimed, ts range) and
+// folds the timed and untimed group of a type into one StatRow, keeping at most limit of them.
+func (r *Reader) scanTypeGroups(ctx context.Context, h evidence.ReadHandle, w where, limit int, ov *Overview, out *StatsResult) error {
+	q := overviewTypesStatement(w)
+	rows, err := h.QueryContext(ctx, q.sql, q.args...)
+	if err != nil {
+		return fmt.Errorf("records: stats by type: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	r.started()
+	var cur StatRow
+	have := false // cur holds a type
+	flush := func() {
+		if !have {
+			return
+		}
+		if len(out.Rows) == limit {
+			out.More = true // a further type exists; it is not returned
+		} else {
+			out.Rows = append(out.Rows, cur)
+		}
+		have = false
+	}
+	for rows.Next() {
+		var k sql.NullString
+		var untimed bool
+		var n int64
+		var lo, hi sql.NullInt64
+		if err := rows.Scan(&k, &untimed, &n, &lo, &hi); err != nil {
+			return fmt.Errorf("records: stats by type: %w", err)
+		}
+		if have && cur.Key != k.String {
+			flush()
+		}
+		if !have {
+			cur, have = StatRow{Key: k.String}, true
+		}
+		cur.Count += n
+		ov.Records += n
+		if untimed {
+			ov.Untimed += n
+			continue
+		}
+		if !lo.Valid || !hi.Valid { // a timed group always has a ts range
+			return fmt.Errorf("records: stats by type: a timed group of %q has no ts range", k.String)
+		}
+		if cur.TSMin == nil || lo.Int64 < *cur.TSMin {
+			cur.TSMin = &lo.Int64
+		}
+		if cur.TSMax == nil || hi.Int64 > *cur.TSMax {
+			cur.TSMax = &hi.Int64
+		}
+		if ov.TSMin == nil || lo.Int64 < *ov.TSMin {
+			v := lo.Int64
+			ov.TSMin = &v
+		}
+		if ov.TSMax == nil || hi.Int64 > *ov.TSMax {
+			v := hi.Int64
+			ov.TSMax = &v
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("records: stats by type: %w", err)
+	}
+	flush()
+	return nil
 }

@@ -112,9 +112,31 @@ func (r *Reader) RowsRead() int { return int(r.rowsRead.Load()) }
 // SetQueryLog installs a function called with the SQL of every list query.
 func (r *Reader) SetQueryLog(f func(string)) { r.queryLog = f }
 
-// SetSearchProbeLimit changes how many hits make a text query "common" for a test.
-func SetSearchProbeLimit(n int) (restore func()) {
-	old := searchProbeLimit
-	searchProbeLimit = n
-	return func() { searchProbeLimit = old }
+// SetSearchBands changes the plan bands for a test: the hits at which a text query leaves the FTS-first
+// plan, and the most hits a hinted IN set may hold.
+func SetSearchBands(probe, in int) (restore func()) {
+	oldP, oldI := searchProbeLimit, searchINLimit
+	searchProbeLimit, searchINLimit = probe, in
+	return func() { searchProbeLimit, searchINLimit = oldP, oldI }
 }
+
+// SetSearchFilterProbe changes how many filtered records make a filter "tiny" for a test.
+func SetSearchFilterProbe(n int) (restore func()) {
+	old := searchFilterProbe
+	searchFilterProbe = n
+	return func() { searchFilterProbe = old }
+}
+
+// SearchShape is a plan shape of a search page.
+type SearchShape = searchShape
+
+// The shapes, for SearchQueries.
+const (
+	ShapeFTSFirst     = shapeFTSFirst
+	ShapeHintedIN     = shapeHintedIN
+	ShapeExists       = shapeExists
+	ShapeExistsNoHint = shapeExistsNoHint
+)
+
+// SetProbeLog installs a function called with the kind ("text" or "filter") and the LIMIT of every probe.
+func (r *Reader) SetProbeLog(f func(kind string, limit int)) { r.probeLog = f }
