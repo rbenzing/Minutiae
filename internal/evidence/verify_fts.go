@@ -30,8 +30,9 @@ import (
 // proves against the running SQLite) and compares it with what the strict decoder reads from the leaf
 // pages (verify_ftsindex.go). That is the index pass, run as the phase fts.index.
 //
-// What is left of the older design is an INTERIM comparison with a rebuild by SQLite (removed by 14k): verify rebuilds both indexes from the records into a private temporary database, with the code
-// the writer uses (NewFTSDoc, insertFTSDocs), and
+// What is left of the older design is an INTERIM comparison with a rebuild by SQLite (replaced by the per-batch
+// localization of 5D-14k): verify rebuilds both indexes from the records into a private temporary database, with
+// the code the writer uses (NewFTSDoc, insertFTSDocs), and
 //
 //   - for a table with a failing bucket, compares the vocab of each index ((term, record, column, offset),
 //     in term, record, column, offset order) with the rebuild, entry by entry, to name what differs.
@@ -154,7 +155,7 @@ type ftsVerify struct {
 	indexed []int64
 	// dead is set when the rebuilt index failed: nothing more can be compared.
 	dead bool
-	// problems counts the problems of each table .
+	// problems counts the problems of each table.
 	problems map[string]int
 	// listed holds the records already listed under a problem kind (so one record is listed once).
 	listed map[string]map[int64]bool
@@ -168,7 +169,7 @@ type ftsVerify struct {
 	ex      *ftsExpect
 	found   *ftsDigester
 	// bad holds, per table, the buckets of a delete marker: they are looked at again whatever the sums say
-	bad     [2]map[ftsBucketKey]bool
+	bad     [2]ftsBucketSet
 	failing [2][]ftsBucketKey // the failing buckets of each table, once its pass is done
 	// bucketsCompared counts the buckets the digests were compared for (tests read it)
 	bucketsCompared int
@@ -180,7 +181,7 @@ type ftsVerify struct {
 func (c *Case) newFTSVerify(ctx context.Context, ps *problemSet, sorted []auditedBatch, observe verifyChunkObserver) *ftsVerify {
 	return &ftsVerify{
 		c: c, ctx: ctx, ps: ps, rep: ps.rep, problems: map[string]int{}, listed: map[string]map[int64]bool{},
-		sorted: sorted, observe: observe, bad: [2]map[ftsBucketKey]bool{{}, {}},
+		sorted: sorted, observe: observe,
 	}
 }
 
@@ -306,6 +307,9 @@ func (r *ftsVerify) indexTable(table string) {
 		}
 	} else {
 		r.failing[ftsTableIndex(table)] = r.failingBuckets(table)
+		if slices.Contains(r.failing[ftsTableIndex(table)], ftsOverflowBucket) {
+			r.add(table, "fts-digest", "%s: postings sit in more than %d id blocks outside every audited batch (too many unaudited id blocks): the blocks past that are counted together and cannot be told apart", table, ftsMaxOutsideBuckets)
+		}
 	}
 	if !step("totals", r.compareTotalsRecomputed) || !step("config", r.compareConfig) {
 		return

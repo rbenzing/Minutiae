@@ -114,7 +114,9 @@ func ftsIdxPgsz(ctx context.Context, q ftsQuerier, table string) (int, error) {
 		if err := rows.Scan(&typ, &v); err != nil {
 			return 0, err
 		}
-		// FTS5 accepts 32 <= pgsz <= 65536; anything else is a config difference compareConfig reports
+		// FTS5 accepts 32 <= pgsz <= 65536; anything else is a config difference compareConfig reports. The page size
+		// then falls back to the default (4050), so the doclist-index findings that follow in the same run are
+		// consequences of that reported difference, not separate tampering (D159).
 		if n, ok := v.(int64); ok && typ == "integer" && n >= 32 && n <= 65536 {
 			pgsz = int(n)
 		}
@@ -306,7 +308,7 @@ func (r *ftsIdxRun) beginSegment(seg ftsSegment, rd *ftsSegReader) (*ftsIdxSeg, 
 		r.st.Trimmed++
 	}
 	// the row id of a page is segid<<37+page: a segment id that does not fit has no rows
-	if seg.ID >= 1<<(63-ftsSegidShift)-1 {
+	if seg.ID >= ftsSegIDLimit {
 		return nil, fmt.Errorf("segment id %d does not fit a row id", seg.ID)
 	}
 	ir, err := r.q.QueryContext(r.ctx, `SELECT typeof(term), term, typeof(pgno), pgno FROM `+r.table+`_idx WHERE segid = ? ORDER BY term`, seg.ID) //nolint:gosec // the table is one of the two FTS table constants

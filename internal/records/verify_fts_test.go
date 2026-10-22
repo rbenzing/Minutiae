@@ -745,9 +745,10 @@ const idxCorpusRecords = 3000
 
 // TestVerifyDetectsIdxTamper (R5, R29): deleting rows of <table>_idx (the b-tree index over the leaf
 // pages of a segment) makes MATCH lose hits while the leaf pages, the vocab, PRAGMA integrity_check
-// and FTS5's own integrity-check all stay silent. P11 therefore also proves MATCH reachability: for
-// every term of the rebuilt vocabulary, MATCH on the case index returns exactly the rebuilt document
-// set. Repointed or altered rows are caught by integrity_check (P10).
+// and FTS5's own integrity-check all stay silent. P11 therefore recomputes the _idx rows (and the doclist
+// indexes and page footers) from the leaf pages and compares them exactly; a difference is confirmed by a MATCH
+// on the first term of the affected page, whose lost hit is the line asserted below. Repointed or altered rows
+// are caught by integrity_check (P10).
 func TestVerifyDetectsIdxTamper(t *testing.T) {
 	base := bulkBase(t, idxCorpusRecords)
 	lostSearches := func(t *testing.T, c *evidence.Case, table string) int {
@@ -787,7 +788,7 @@ func TestVerifyDetectsIdxTamper(t *testing.T) {
 			if len(problemsWith(rep, "integrity_check")) != 0 {
 				t.Errorf("integrity_check reported it: %q", rep.Problems)
 			}
-			// the logical content equals a rebuild: only the reachability check sees it
+			// the logical content equals a rebuild: only the _idx recomputation sees it
 			for _, p := range rep.Problems {
 				if strings.Contains(p, "the index lacks") || strings.Contains(p, "is invented") || strings.Contains(p, "totals differ") || strings.Contains(p, "size entry") {
 					t.Errorf("a content problem beside the reachability one: %s", p)

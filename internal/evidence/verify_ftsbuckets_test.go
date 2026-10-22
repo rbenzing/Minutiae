@@ -92,3 +92,62 @@ func TestVerifyProgressIndexPassPagesEndAtTotal(t *testing.T) {
 		}
 	}
 }
+
+// TestVerifyFTSPostingOnlyInAnOutsideBlock (D154): a posting under a rowid that no audited batch and no record
+// holds sits in an "outside" block: its bucket fails, and the record is named as one that does not exist.
+func TestVerifyFTSPostingOnlyInAnOutsideBlock(t *testing.T) {
+	c := ftsCase(t, 6000)
+	const ghost = 9_000_000
+	recordstest.InventIndexText(t, c.Dir, evidence.FTSWordTable, ghost, "zzghostsummary", "zzghostbody")
+	var got evidence.FTSBucketReport
+	c.SetFTSBucketObserver(func(r evidence.FTSBucketReport) { got = r })
+	rep, err := c.Verify()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.OK() {
+		t.Fatal("an invented posting passed")
+	}
+	if got.Failing != [2]int{1, 0} {
+		t.Fatalf("failing buckets %v, want only the outside block of the word table", got.Failing)
+	}
+	want := `records_fts: the index holds "zzghostbody" (body, offset 0) for record 9000000, which does not exist or has no indexable text (a search hit is invented)`
+	if !problemsHold(rep.Problems, want) {
+		t.Fatalf("no %q in %q", want, rep.Problems)
+	}
+}
+
+// TestVerifyFTSPostingMovedBetweenTwoAuditedBatches (D154): the postings of a record in batch 1 are removed and
+// the same words are indexed under a record of batch 2: both buckets fail, and both records are named.
+func TestVerifyFTSPostingMovedBetweenTwoAuditedBatches(t *testing.T) {
+	c := ftsCase(t, 6000) // batches of 5000 (ids 1..5000) and 1000 (ids 5001..6000)
+	recordstest.HideFromIndex(t, c.Dir, evidence.FTSWordTable, 10)
+	recordstest.InventIndexText(t, c.Dir, evidence.FTSWordTable, 5500, "zzmovedsummary", "zzmovedbody")
+	var got evidence.FTSBucketReport
+	c.SetFTSBucketObserver(func(r evidence.FTSBucketReport) { got = r })
+	rep, err := c.Verify()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Failing != [2]int{2, 0} {
+		t.Fatalf("failing buckets %v, want both batches of the word table", got.Failing)
+	}
+	for _, want := range []string{
+		"records_fts: record 10: the index lacks",
+		`records_fts: record 5500: the index holds "zzmovedbody"`,
+	} {
+		if !problemsHold(rep.Problems, want) {
+			t.Errorf("no problem starting %q in %q", want, rep.Problems)
+		}
+	}
+}
+
+// problemsHold reports whether some problem contains want.
+func problemsHold(problems []string, want string) bool {
+	for _, p := range problems {
+		if strings.Contains(p, want) {
+			return true
+		}
+	}
+	return false
+}

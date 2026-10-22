@@ -58,6 +58,14 @@ type ftsBucketKey struct {
 	block int64
 }
 
+// ftsMaxOutsideBuckets bounds the distinct "outside" id blocks one table, one set of delete-marker buckets or one
+// set of failing buckets holds (D150): a hostile index can name a different block with every posting. Past it the
+// buckets fold into ftsOverflowBucket, which is always a PROBLEM and is never localized. A var so a test can lower it.
+var ftsMaxOutsideBuckets = 1_000_000
+
+// ftsOverflowBucket is where the outside blocks past ftsMaxOutsideBuckets are counted.
+var ftsOverflowBucket = ftsBucketKey{batch: -2}
+
 // ftsBucketOf is the bucket of a record id (V7). Both sides use this one function.
 func ftsBucketOf(sorted []auditedBatch, id int64) ftsBucketKey {
 	if i, ok := findBatch(sorted, id); ok {
@@ -70,6 +78,10 @@ func ftsBucketOf(sorted []auditedBatch, id int64) ftsBucketKey {
 // the outside blocks by id.
 func ftsBucketLess(a, b ftsBucketKey) bool {
 	switch {
+	case a == ftsOverflowBucket:
+		return false
+	case b == ftsOverflowBucket:
+		return true
 	case a.batch >= 0 && b.batch >= 0:
 		return a.batch < b.batch
 	case a.batch >= 0:
@@ -84,6 +96,9 @@ func ftsBucketLess(a, b ftsBucketKey) bool {
 type ftsDigester struct {
 	block cipher.Block
 	sums  [2]map[ftsBucketKey]*ftsSum
+
+	// outside counts the distinct outside-block buckets of each table (the cap of D150)
+	outside [2]int
 
 	// the cached chain after the term blocks
 	haveChain  bool
@@ -127,8 +142,18 @@ func (d *ftsDigester) sum(table int, k ftsBucketKey) *ftsSum {
 	}
 	s := d.sums[table][k]
 	if s == nil {
-		s = &ftsSum{}
-		d.sums[table][k] = s
+		store := k
+		if k.batch == -1 {
+			if d.outside[table] >= ftsMaxOutsideBuckets {
+				store = ftsOverflowBucket // the cap of D150: counted, not lost
+			} else {
+				d.outside[table]++
+			}
+		}
+		if s = d.sums[table][store]; s == nil {
+			s = &ftsSum{}
+			d.sums[table][store] = s
+		}
 	}
 	d.haveLast, d.lastTable, d.lastKey, d.lastSum = true, table, k, s
 	return s
@@ -196,4 +221,38 @@ func appendFTSMessage(dst []byte, table int, term []byte, rowid int64, col int, 
 	binary.BigEndian.PutUint32(bz[8:12], uint32(off))
 	bz[12] = byte(col)
 	return append(dst, bz[:]...)
+}
+
+// ftsBucketSet is a set of buckets whose outside blocks are capped like the digester's (D150).
+type ftsBucketSet struct {
+	m       map[ftsBucketKey]struct{}
+	outside int
+}
+
+func (s *ftsBucketSet) add(k ftsBucketKey) {
+	if s.m == nil {
+		s.m = map[ftsBucketKey]struct{}{}
+	}
+	if _, ok := s.m[k]; !ok && k.batch == -1 {
+		if s.outside >= ftsMaxOutsideBuckets {
+			k = ftsOverflowBucket
+		} else {
+			s.outside++
+		}
+	}
+	s.m[k] = struct{}{}
+}
+
+func (s *ftsBucketSet) has(k ftsBucketKey) bool {
+	_, ok := s.m[k]
+	return ok
+}
+
+// keys lists the buckets (in no order).
+func (s *ftsBucketSet) keys() []ftsBucketKey {
+	out := make([]ftsBucketKey, 0, len(s.m))
+	for k := range s.m {
+		out = append(out, k)
+	}
+	return out
 }

@@ -38,6 +38,9 @@ const (
 	ftsPageMask = int64(1)<<ftsSegidShift - 1
 	// ftsLeafLimit is the first local id that is not a leaf page: the page number has 31 bits.
 	ftsLeafLimit = int64(1) << 31
+	// ftsSegIDLimit is the first segment id a data row id cannot name (segid<<37 would overflow). The structure
+	// record lets an id be up to 2^31-1, so a tampered one can name a segment that has no possible row (D158).
+	ftsSegIDLimit = int64(1)<<(63-ftsSegidShift) - 1
 )
 
 // ftsSegRun is the state of one segment while the pass reads it.
@@ -51,7 +54,7 @@ type ftsSegRun struct {
 
 	dels    []int64 // the first record ids of delete markers (listed), at most verifyMaxPerKind
 	nDel    int
-	delBkts map[ftsBucketKey]struct{}
+	delBkts ftsBucketSet
 }
 
 // indexPass decodes every leaf page of table and folds the postings into r.found. It returns an error only
@@ -83,7 +86,7 @@ func (r *ftsVerify) indexPass(table string) error {
 			if i > 0 && segs[i-1].ID == s.ID {
 				return fmt.Errorf("%w: segment %d is listed twice", errFTSStructure, s.ID)
 			}
-			if !s.Empty() {
+			if !s.Empty() && s.ID < ftsSegIDLimit {
 				total += s.Last - s.First + 1
 			}
 		}
@@ -125,6 +128,12 @@ func (r *ftsVerify) readLeaves(h ReadHandle, table string, ti int, segs []ftsSeg
 	si := 0 // the segment the rows are at
 	start := func(s ftsSegment) *ftsSegRun {
 		run := &ftsSegRun{seg: s, rd: newFTSSegReader(s)}
+		if !s.Empty() && s.ID >= ftsSegIDLimit {
+			// D158: the segment cannot have data rows; one problem for this segment, the others are still read
+			run.failed = true
+			r.add(table, "fts-leaf", "%s: segment %d cannot have data rows (its id is beyond the largest a data row id can hold, %d): the segment is not verified", table, s.ID, ftsSegIDLimit-1)
+			return run
+		}
 		if !s.Empty() && idxErr == nil {
 			var err error
 			if run.idx, err = ir.beginSegment(s, run.rd); err != nil {
@@ -151,10 +160,7 @@ func (r *ftsVerify) readLeaves(h ReadHandle, table string, ti int, segs []ftsSeg
 			if len(run.dels) < verifyMaxPerKind {
 				run.dels = append(run.dels, rowid)
 			}
-			if run.delBkts == nil {
-				run.delBkts = map[ftsBucketKey]struct{}{}
-			}
-			run.delBkts[ftsBucketOf(r.sorted, rowid)] = struct{}{}
+			run.delBkts.add(ftsBucketOf(r.sorted, rowid))
 		}
 		return sk
 	}
@@ -200,8 +206,13 @@ func (r *ftsVerify) readLeaves(h ReadHandle, table string, ti int, segs []ftsSeg
 			if err := r.closeLeaves(table, cur); err != nil {
 				return err
 			}
-			if cur.idx != nil && !cur.failed && local&ftsDlidxFlag != 0 {
-				cur.idx.dlidx(id, block)
+			if local&ftsDlidxFlag != 0 {
+				if cur.idx != nil && !cur.failed {
+					cur.idx.dlidx(id, block)
+				}
+			} else {
+				// an interior (height) page: no search reads it and a genuine index of this case holds none (D156)
+				r.add(table, "fts-unexpected", "%s: data row %d (segment %d) is an interior page of the segment, which a genuine index of this case never holds", table, id, seg)
 			}
 			continue
 		}
@@ -265,8 +276,8 @@ func (r *ftsVerify) endSegment(table string, ti int, run *ftsSegRun) error {
 	if rest := run.nDel - len(run.dels); rest > 0 {
 		r.addUnlisted(table, "fts-delete", rest)
 	}
-	for b := range run.delBkts {
-		r.bad[ti][b] = true
+	for b := range run.delBkts.m {
+		r.bad[ti].add(b)
 	}
 	return nil
 }
@@ -326,7 +337,7 @@ func (r *ftsVerify) failingBuckets(table string) []ftsBucketKey {
 			gs = *g
 		}
 		r.bucketsCompared++
-		if ws != gs || r.bad[ti][k] {
+		if ws != gs || r.bad[ti].has(k) || k == ftsOverflowBucket {
 			out = append(out, k)
 		}
 	}
@@ -336,7 +347,7 @@ func (r *ftsVerify) failingBuckets(table string) []ftsBucketKey {
 	for k := range got {
 		check(k)
 	}
-	for k := range r.bad[ti] {
+	for k := range r.bad[ti].m {
 		check(k)
 	}
 	slices.SortFunc(out, func(a, b ftsBucketKey) int {
@@ -358,6 +369,10 @@ func (r *ftsVerify) describeBuckets(keys []ftsBucketKey) string {
 		if i == 5 {
 			parts = append(parts, fmt.Sprintf("and %d more", len(keys)-5))
 			break
+		}
+		if k == ftsOverflowBucket {
+			parts = append(parts, fmt.Sprintf("the ids of every block past the first %d unaudited ones", ftsMaxOutsideBuckets))
+			continue
 		}
 		if k.batch >= 0 && k.batch < len(r.sorted) {
 			b := r.sorted[k.batch]
