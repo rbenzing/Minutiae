@@ -216,7 +216,7 @@ func TestVerifyProgressArtifactBytesEndAtTotalWithDuplicateManifestID(t *testing
 	}
 	lines := bytes.Split(bytes.TrimRight(b, "\n"), []byte("\n"))
 	dup := append(append([]byte{}, b...), append(lines[len(lines)-1], '\n')...)
-	if err := os.WriteFile(path, dup, 0o600); err != nil {
+	if err := os.WriteFile(path, dup, 0o600); err != nil { //nolint:gosec // inside a temporary test case
 		t.Fatal(err)
 	}
 	s := snapshotsAtPhaseEnds(t, c)["artifacts"]
