@@ -3,6 +3,7 @@ package evidence
 import (
 	"slices"
 	"strings"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -13,7 +14,8 @@ import (
 // separators, token characters, marks and trigram windows all matter. It also holds a token longer than
 // fts5MaxTokenSize (the cut), runs of 3-byte characters across the cut, and the shapes the full-text index
 // sees most. Every string is valid UTF-8 without NUL. The corpus is a pure function of the committed tables.
-var ftsProbeCorpus = buildFTSProbeCorpus()
+// It is built on first use (D140) and shared: callers must not modify it.
+var ftsProbeCorpus = sync.OnceValue(buildFTSProbeCorpus)
 
 func buildFTSProbeCorpus() []string {
 	edge := map[rune]bool{}

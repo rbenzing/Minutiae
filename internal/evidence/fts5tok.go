@@ -395,7 +395,7 @@ func ftsSelfTestTable(ctx context.Context, conn *sql.Conn, table string) error {
 	if tok == nil {
 		return fmt.Errorf("tokenizer reference database: no replica for %s", table)
 	}
-	corpus := ftsProbeCorpus
+	corpus := ftsProbeCorpus()
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("tokenizer reference database: %w", err)

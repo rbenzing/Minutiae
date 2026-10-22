@@ -43,7 +43,7 @@ func FTSReplicaTokens(table, text string) []FTSReplicaToken {
 }
 
 // FTSProbeCorpus is the fixed corpus of the tokenizer self-test.
-func FTSProbeCorpus() []string { return ftsProbeCorpus }
+func FTSProbeCorpus() []string { return ftsProbeCorpus() }
 
 // FTSReplicaMaxTokenSize is the byte length at which FTS5 cuts a token.
 const FTSReplicaMaxTokenSize = fts5MaxTokenSize
@@ -59,4 +59,13 @@ func NormalizeCorpusInputs() []string {
 		out = append(out, class...)
 	}
 	return out
+}
+
+// SetFTSReplicaOverride makes the tokenizer of a table answer f (nil keeps the replica) until the returned
+// function is called. It is the only way outside this package's own tests to set the override, and it
+// lives in a test file so that no production code can (D142).
+func SetFTSReplicaOverride(f func(table string) func(string, func([]byte, int))) (restore func()) {
+	old := ftsReplicaOverride
+	ftsReplicaOverride = f
+	return func() { ftsReplicaOverride = old }
 }
