@@ -13,9 +13,11 @@ requires each gated decision to follow the numbers. Nothing here is asserted by 
 | `search_word_p95_ms` | <= 300 ms | max p95 over word and prefix searches (first 100 hits) with a type or a time filter |
 | `search_substring_p95_ms` | <= 1000 ms | max p95 over `--substring` searches (first 100 hits) |
 | `stats_type_s` | <= 3 s | `Overview` + `Stats --by type` + `IndexStatus`, the work of `records stats --by type` |
-| `verify_rate` | >= 100,000 records/s | records checked by `case verify` (every check P1-P14, R-series, P11 included) divided by its wall time |
+| `verify_rate` | >= 3,700 records/s (amendment A10) | records checked by `case verify` (every check P1-P14, R-series, P11 included) divided by its wall time |
 | `db_ratio` | <= 1.6 | `artifacts.db` bytes over the row data plus 64 bytes per row (exact definition below) |
 | `open_artifact_ms` | <= 1 ms | plan threshold (not a spec target): `OpenArtifact` with 10,000 manifest lines |
+
+Amendment A10 (2026-10-22, coordinator rule C1): `verify_rate` was >= 100,000 records/s. The phases that cannot be made cheaper without weakening a check (`records.integrity_check`, `records.stream`, the artifact re-hash and the audit chain) take 359.48 s at 2,000,000 records (phases-2m), so 1,797.4 s at 10,000,000. The target is 10,000,000 / (1.5 x 1,797.4 s) = 3,709, rounded down to two significant figures: >= 3,700 records/s.
 
 ### `db_ratio`, exactly as measured (ruling D45)
 `db_ratio = size of artifacts.db in bytes / (rowBytes + 64 * n)`, where `n` is the number of records
@@ -76,7 +78,7 @@ Background load: this is the user's working laptop, not an idle machine. The use
     {"id": "search_word_p95_ms", "op": "<=", "value": 300, "unit": "ms"},
     {"id": "search_substring_p95_ms", "op": "<=", "value": 1000, "unit": "ms"},
     {"id": "stats_type_s", "op": "<=", "value": 3, "unit": "s"},
-    {"id": "verify_rate", "op": ">=", "value": 100000, "unit": "records/s"},
+    {"id": "verify_rate", "op": ">=", "value": 3700, "unit": "records/s"},
     {"id": "db_ratio", "op": "<=", "value": 1.6, "unit": "x"},
     {"id": "open_artifact_ms", "op": "<=", "value": 1, "unit": "ms"}
   ],

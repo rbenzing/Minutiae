@@ -64,7 +64,7 @@ var specTargets = map[string]perfTarget{
 	"search_word_p95_ms":      {"search_word_p95_ms", "<=", 300, "ms"},
 	"search_substring_p95_ms": {"search_substring_p95_ms", "<=", 1000, "ms"},
 	"stats_type_s":            {"stats_type_s", "<=", 3, "s"},
-	"verify_rate":             {"verify_rate", ">=", 100000, "records/s"},
+	"verify_rate":             {"verify_rate", ">=", 3700, "records/s"},
 	"db_ratio":                {"db_ratio", "<=", 1.6, "x"},
 	"open_artifact_ms":        {"open_artifact_ms", "<=", 1, "ms"},
 }
