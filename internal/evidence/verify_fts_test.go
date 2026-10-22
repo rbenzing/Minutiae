@@ -295,6 +295,11 @@ func normalizeFor(i int) []any {
 // every hit look invented, never a clean result.
 func TestVerifyFTSExpectedIndexLostIsAProblem(t *testing.T) {
 	c := indexedTextCase(t, 40)
+	// the rebuild is used (by the vocab comparison) only for a table with a failing bucket since 5D-14j removed the
+	// reachability pass: delete the entries of record 5 so that a bucket fails
+	if _, err := c.store.db.Exec(`INSERT INTO records_fts(records_fts, rowid, summary, body) VALUES ('delete', 5, ?, ?)`, normalizeFor(5)...); err != nil {
+		t.Fatal(err)
+	}
 	c.verifyFTSHook = func(point string, expected *sql.DB) {
 		if point != "after-rebuild" {
 			return

@@ -46,7 +46,7 @@ func TestVerifyCancelAtTheEndOfEveryPhase(t *testing.T) {
 			if !seen {
 				t.Fatalf("phase %q never ran", phase)
 			}
-			if phase == "fts.compare" { // nothing after it reads with the context
+			if phase == "fts.compare" || phase == "fts.rebuild" { // nothing after it reads with the context on a clean case (5D-14j removed the reachability pass)
 				if !rep.OK() {
 					t.Fatalf("a cancel after the last cancellable phase failed a clean verify: %q", rep.Problems)
 				}
