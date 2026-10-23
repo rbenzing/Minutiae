@@ -94,6 +94,9 @@ type Case struct {
 	verifyFTSDone func(r *ftsVerify)
 	// verifyPhaseHook observes the duration of each verify phase; it cannot alter a check.
 	verifyPhaseHook func(phase string, d time.Duration)
+	// verifyWorkersN, when positive, is the number of workers verify uses for the per-row work of a chunk (a
+	// test seam, set only by SetVerifyWorkers in tests; the default is min(GOMAXPROCS, 8)).
+	verifyWorkersN int
 	// verifyProgress is the observer of the verify running now (nil when none); set for the run only.
 	verifyProgress    *VerifyProgress
 	verifyFTSCacheKiB int

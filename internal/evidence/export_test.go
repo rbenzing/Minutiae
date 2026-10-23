@@ -127,3 +127,15 @@ func SetFTSLocalizeLimits(maxBuckets, roundPostings, foundCap int) (restore func
 	}
 	return func() { ftsLocalizeMaxBuckets, ftsLocalizeRoundPostings, ftsLocalizeFoundCap = ob, or, of }
 }
+
+// SetVerifyWorkers sets the number of workers verify uses for the per-row work of a chunk (0 restores the
+// default, min(GOMAXPROCS, 8)). Test-only.
+func (c *Case) SetVerifyWorkers(n int) { c.verifyWorkersN = n }
+
+// SetVerifyChunkBytes lowers the byte size at which verify ends a chunk of record rows, so a small case spans
+// several chunks. The returned function restores it. Test-only.
+func SetVerifyChunkBytes(n int) (restore func()) {
+	old := verifyChunkBytes
+	verifyChunkBytes = n
+	return func() { verifyChunkBytes = old }
+}

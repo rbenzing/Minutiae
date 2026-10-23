@@ -188,6 +188,13 @@ func (d *ftsDigester) termChain(table int, term []byte) [16]byte {
 // add folds one posting into the sum of its bucket. table is 0 for the word index and 1 for the
 // substring index; col is 0 for the summary and 1 for the body.
 func (d *ftsDigester) add(table int, b ftsBucketKey, term []byte, rowid int64, col int, off int64) {
+	mac := d.mac(table, term, rowid, col, off)
+	d.sum(table, b).addMAC(&mac)
+}
+
+// mac is the CBC-MAC of one posting. It touches only d's chain cache, so a digester made for one call
+// (ftsDigester{block: ...}) can compute MACs on any goroutine while the key schedule is shared.
+func (d *ftsDigester) mac(table int, term []byte, rowid int64, col int, off int64) [16]byte {
 	st := d.termChain(table, term)
 	var blk [16]byte
 	binary.BigEndian.PutUint64(blk[:8], uint64(rowid))
@@ -197,7 +204,7 @@ func (d *ftsDigester) add(table int, b ftsBucketKey, term []byte, rowid int64, c
 		st[i] ^= blk[i]
 	}
 	d.block.Encrypt(st[:], st[:])
-	d.sum(table, b).addMAC(&st)
+	return st
 }
 
 // appendFTSMessage appends the message M of a posting (the specification above, written out in full; the

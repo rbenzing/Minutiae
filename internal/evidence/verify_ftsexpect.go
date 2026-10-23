@@ -37,14 +37,6 @@ type ftsExpect struct {
 	dig    *ftsDigester
 	tok    [2]func(string, func([]byte, int))
 
-	// the posting being folded (set before a tokenizer runs, read by emit)
-	curTable  int
-	curBucket ftsBucketKey
-	curID     int64
-	curCol    int
-	curCount  uint64
-	emitFn    func([]byte, int)
-
 	pend         [2][]ftsPendingSize
 	sinceCompare int
 	nextLo       int64 // the first id of the next _docsize window
@@ -79,15 +71,53 @@ func (r *ftsVerify) newFTSExpect(sorted []auditedBatch, key [16]byte, enabled bo
 		}
 		e.tok[i] = tok
 	}
-	e.emitFn = func(term []byte, pos int) {
-		e.dig.add(e.curTable, e.curBucket, term, e.curID, e.curCol, int64(pos))
-		e.curCount++
-	}
 	return e, nil
 }
 
-// row folds one record. It is called from the records.stream consumer, after the chunk's ReadTx has closed.
-func (e *ftsExpect) row(row RecordRow) {
+// ftsRowFold is what one indexable record contributes to the expected side: the sum of the MACs of its
+// postings per table (a record belongs to one bucket, and a sum modulo 2^128 does not depend on the order
+// it is added in), the tokens of each column per table, and the bucket. It is a pure function of the record
+// (compute), so it is made on the worker pool; the stream goroutine folds it in id order (fold).
+type ftsRowFold struct {
+	has    bool
+	id     int64
+	bucket ftsBucketKey
+	sums   [2]ftsSum
+	counts [2][2]uint64
+}
+
+// compute derives the contribution of one record. It reads e's tokenizers, key schedule and batches and
+// writes nothing shared, so any number of goroutines may call it. The zero fold is returned for a record
+// without indexable text, and when the expected side is not enabled.
+func (e *ftsExpect) compute(row RecordRow) ftsRowFold {
+	var f ftsRowFold
+	if !e.enabled {
+		return f
+	}
+	doc, has := NewFTSDoc(row.ID, row.Summary, row.Body)
+	if !has {
+		return f
+	}
+	f.has, f.id, f.bucket = true, doc.ID, ftsBucketOf(e.sorted, doc.ID)
+	d := ftsDigester{block: e.dig.block} // this call's own chain cache
+	var t, col int
+	emit := func(term []byte, pos int) {
+		m := d.mac(t, term, doc.ID, col, int64(pos))
+		f.sums[t].addMAC(&m)
+		f.counts[t][col]++
+	}
+	for t = range e.tok {
+		for c, text := range [2]string{doc.Summary, doc.Body} {
+			col = c
+			e.tok[t](text, emit)
+		}
+	}
+	return f
+}
+
+// fold adds one record's contribution. It is called from the records.stream consumer, in id order, after the
+// chunk's ReadTx has closed.
+func (e *ftsExpect) fold(f ftsRowFold) {
 	if !e.enabled || e.stopped {
 		return
 	}
@@ -95,33 +125,28 @@ func (e *ftsExpect) row(row RecordRow) {
 		e.stopped = true
 		return
 	}
+	if !f.has {
+		return
+	}
 	var t0 time.Time
 	if e.timed {
 		t0 = time.Now()
 		defer func() { e.busy += time.Since(t0) }()
 	}
-	doc, has := NewFTSDoc(row.ID, row.Summary, row.Body)
-	if !has {
-		return
-	}
-	e.curID, e.curBucket = doc.ID, ftsBucketOf(e.sorted, doc.ID)
 	for t := range e.tok {
-		e.curTable = t
-		var counts [2]uint64
-		for col, text := range [2]string{doc.Summary, doc.Body} {
-			e.curCol, e.curCount = col, 0
-			e.tok[t](text, e.emitFn)
-			counts[col] = e.curCount
-			e.tokens[t][col] += e.curCount
+		if f.sums[t].n > 0 {
+			e.dig.sum(t, f.bucket).addSum(f.sums[t])
 		}
-		p := ftsPendingSize{id: doc.ID}
-		blob := appendSQLiteVarint(appendSQLiteVarint(p.b[:0], counts[0]), counts[1])
+		e.tokens[t][0] += f.counts[t][0]
+		e.tokens[t][1] += f.counts[t][1]
+		p := ftsPendingSize{id: f.id}
+		blob := appendSQLiteVarint(appendSQLiteVarint(p.b[:0], f.counts[t][0]), f.counts[t][1])
 		p.n = uint8(len(blob))
 		e.pend[t] = append(e.pend[t], p)
 	}
 	e.docs++
 	if e.sinceCompare++; e.sinceCompare >= ftsDocsizeWindow {
-		e.compareWindow(doc.ID)
+		e.compareWindow(f.id)
 	}
 }
 

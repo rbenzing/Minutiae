@@ -3,11 +3,13 @@ package evidence
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Record verification (schema v2): triggers, quick_check, the audited batches
@@ -223,6 +225,24 @@ type recordRowMeta struct {
 	parserID int64
 	hasParse bool
 	sig      string // typeof() of every column of the row, comma separated
+	d        rowDerived
+}
+
+// rowDerived is the per-row work of a verify chunk, computed on the worker pool before the stream goroutine
+// folds it (5D-15b): the row digest and what the expected side of P11 derives from the row. It is a pure
+// function of the row and of data no worker writes.
+type rowDerived struct {
+	digest    [32]byte
+	hasDigest bool
+	fts       ftsRowFold
+}
+
+// streamPrep is the per-row work streamRecordsWith runs for every chunk on c.verifyWorkers() goroutines,
+// after the chunk's record_times are attached and before fn sees the first row. fn must be pure (it runs
+// concurrently). wall sums the wall time of those runs.
+type streamPrep struct {
+	fn   func(RecordRow) rowDerived
+	wall time.Duration
 }
 
 func unreadable(ctx context.Context, rep *VerifyReport, what string, err error) {
@@ -333,9 +353,27 @@ func (c *Case) verifyRecords(ctx context.Context, rep *VerifyReport, recs []Mani
 			observe(table, rows)
 		}
 	}
-	streamed := c.streamRecords(ctx, ps, verifyChunkRows, streamObserve, func(row RecordRow, m recordRowMeta) {
+	// the per-row work of a chunk (the row digest, the expected postings of the row) runs on the worker pool;
+	// everything below, which depends on the order of the rows, runs on this goroutine (5D-15b)
+	prep := &streamPrep{fn: func(row RecordRow) rowDerived {
+		var d rowDerived
+		if auditReadable {
+			if _, in := findBatch(sorted, row.ID); in {
+				sha := ""
+				if mr, ok := manifest[row.ArtifactID]; ok {
+					sha = mr.SHA256
+				}
+				d.digest, d.hasDigest = RowDigest(row, sha), true
+			}
+		}
 		if fv != nil {
-			fv.ex.row(row)
+			d.fts = fv.ex.compute(row)
+		}
+		return d
+	}}
+	streamed := c.streamRecordsWith(ctx, ps, math.MinInt64, math.MaxInt64, verifyChunkRows, streamObserve, prep, func(row RecordRow, m recordRowMeta) {
+		if fv != nil {
+			fv.ex.fold(m.d.fts)
 		}
 		rep.RecordsChecked++
 		maxID = max(maxID, row.ID)
@@ -381,17 +419,14 @@ func (c *Case) verifyRecords(ctx context.Context, rep *VerifyReport, recs []Mani
 		if acc[i] == nil {
 			acc[i] = &batchAcc{digest: NewBatchDigest()}
 		}
-		sha := ""
-		if mr, ok := manifest[row.ArtifactID]; ok {
-			sha = mr.SHA256
-		}
-		acc[i].digest.Add(RowDigest(row, sha))
+		acc[i].digest.Add(m.d.digest)
 		acc[i].n++
 	})
 
 	if fv != nil {
 		fv.ex.finish(streamed)
-		c.phaseSpan("records.stream/fts.expected", fv.ex.busy) // the consumer's time, summed over the rows and reported once
+		// the wall time of the parallel per-row work (which includes the row digests) and of the folding, reported once
+		c.phaseSpan("records.stream/fts.expected", fv.ex.busy+prep.wall)
 	}
 	doneStream()
 
@@ -683,6 +718,15 @@ func (c *Case) streamRecords(ctx context.Context, ps *problemSet, chunkRows int,
 // records of one failing bucket with it (5D-14k). The whole-table counts are compared only when the range is
 // the whole table, because a part of the table has no count to compare.
 func (c *Case) streamRecordsBetween(ctx context.Context, ps *problemSet, lo, hi int64, chunkRows int, observe verifyChunkObserver, fn func(RecordRow, recordRowMeta)) bool {
+	return c.streamRecordsWith(ctx, ps, lo, hi, chunkRows, observe, nil, fn)
+}
+
+// streamRecordsWith is streamRecordsBetween with the per-row work prep (nil: none). The work of a chunk is
+// computed on the worker pool; fn then sees the rows in id order on this goroutine, each with its result in
+// recordRowMeta.d, so everything order-dependent (the batch digests, the buckets, the problem lists) is
+// folded exactly as a serial run folds it. A worker that fails (errVerifyWorker) is a problem of kind scan
+// and ends the stream; the end of the context is a cut, never a problem.
+func (c *Case) streamRecordsWith(ctx context.Context, ps *problemSet, lo, hi int64, chunkRows int, observe verifyChunkObserver, prep *streamPrep, fn func(RecordRow, recordRowMeta)) bool {
 	rep := ps.rep
 	whole := lo == math.MinInt64 && hi == math.MaxInt64
 	after := lo // math.MinInt64 is below every possible id: a tampered database may hold ids <= 0
@@ -781,6 +825,22 @@ func (c *Case) streamRecordsBetween(ctx context.Context, ps *problemSet, lo, hi 
 				continue
 			}
 			rows[i].Times = append(rows[i].Times, t.RecordTime)
+		}
+		if prep != nil {
+			t0 := time.Now()
+			derived, err := mapOrdered(ctx, c.verifyWorkers(), rows, prep.fn)
+			prep.wall += time.Since(t0)
+			switch {
+			case errors.Is(err, errVerifyWorker):
+				ps.add("scan", "the digests of the records after id %d could not be computed: %v", after, err)
+				return false
+			case err != nil:
+				unreadable(ctx, rep, "records", err) // the end of the context is a cut
+				return false
+			}
+			for i := range metas {
+				metas[i].d = derived[i]
+			}
 		}
 		for i, r := range rows {
 			recordsClasses.check(ps, metas[i].sig, func() string { return fmt.Sprintf("id %d", r.ID) })
