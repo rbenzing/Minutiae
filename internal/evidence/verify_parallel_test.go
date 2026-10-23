@@ -43,7 +43,9 @@ func verifyWith(t *testing.T, c *evidence.Case, n int) (evidence.VerifyReport, [
 	return rep, b
 }
 
-// requireSameReport verifies c with each worker count and requires the report of one worker.
+// requireSameReport verifies c with each worker count and requires the report of one worker. The one-worker
+// baseline also runs through mapOrdered (one goroutine), not through the code that existed before 5D-15b; its
+// equivalence to that code rests on the unchanged full-text and record tests, which run with the default workers.
 func requireSameReport(t *testing.T, c *evidence.Case) evidence.VerifyReport {
 	t.Helper()
 	serial, want := verifyWith(t, c, 1)

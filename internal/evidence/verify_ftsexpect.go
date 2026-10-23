@@ -134,6 +134,8 @@ func (e *ftsExpect) fold(f ftsRowFold) {
 		defer func() { e.busy += time.Since(t0) }()
 	}
 	for t := range e.tok {
+		// a row without a posting must not create its bucket: an empty sum is equal to a missing one, but the bucket
+		// would use up the cap of outside id blocks (D179, TestVerifyFTSRowsWithoutPostingsDoNotConsumeTheOutsideCap)
 		if f.sums[t].n > 0 {
 			e.dig.sum(t, f.bucket).addSum(f.sums[t])
 		}

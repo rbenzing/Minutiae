@@ -185,3 +185,29 @@ func TestVerifyFTSConsistentOverflowIsStillAProblem(t *testing.T) {
 		t.Errorf("the overflow bucket is silent: %q", ftsProblems(rep))
 	}
 }
+
+// TestVerifyFTSRowsWithoutPostingsDoNotConsumeTheOutsideCap (D179): a record that yields no posting (text the
+// tokenizers drop, here "!!") contributes nothing to a bucket, so such records in many id blocks outside every audited
+// batch must not use up the cap of ftsMaxOutsideBuckets nor create the overflow bucket. Records WITH text in
+// the same blocks do, which is the control: the same case then reports the overflow.
+func TestVerifyFTSRowsWithoutPostingsDoNotConsumeTheOutsideCap(t *testing.T) {
+	withOutsideCap(t, 3)
+	blocks := func(text func(int) (string, string)) VerifyReport {
+		c, rec := caseWithArtifact(t)
+		var ids []int64
+		for b := range int64(12) { // twelve blocks of 2^16 ids, none of them in an audited batch
+			ids = append(ids, b<<16+1)
+		}
+		insertTextRecordsAt(t, c, rec.ID, ids, text)
+		if _, err := c.ReindexText(t.Context(), ReindexOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		return mustVerify(t, c)
+	}
+	if rep := blocks(func(int) (string, string) { return "!!", "" }); containsSubstr(rep.Problems, "too many unaudited id blocks") {
+		t.Fatalf("records without any posting used up the outside cap: %q", ftsProblems(rep))
+	}
+	if rep := blocks(func(i int) (string, string) { return fmt.Sprintf("w%08d", i), "" }); !containsSubstr(rep.Problems, "too many unaudited id blocks") {
+		t.Fatalf("control: records with text in 12 blocks must exceed the cap of 3: %q", ftsProblems(rep))
+	}
+}
