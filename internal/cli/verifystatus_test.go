@@ -320,3 +320,21 @@ func TestStatusFramesAreCutToTheTerminalWidth(t *testing.T) {
 		t.Fatalf("nothing drawn: %q", buf.String())
 	}
 }
+
+// A concurrent verify shows the phase that started last and names the ones running beside it; with none beside it the
+// line is the one of a serial verify.
+func TestRenderStatusNamesPhasesRunningTogether(t *testing.T) {
+	s := countedSnap("records.stream", 4_000_000, 10_000_000, "records", 100*time.Second)
+	alone := renderStatus(s, stateMoved(5, time.Second), statusNow, false, true)
+	if strings.Contains(alone, "also running") {
+		t.Errorf("a phase alone names others: %q", alone)
+	}
+	s.Also = []string{"records.integrity_check", "fts.index/records_fts/decode"}
+	line := renderStatus(s, stateMoved(5, time.Second), statusNow, false, true)
+	if !strings.HasPrefix(line, alone) || !strings.HasSuffix(line, "| also running: records.integrity_check, fts.index/records_fts/decode") {
+		t.Errorf("line %q is not the single-phase line %q plus the phases beside it", line, alone)
+	}
+	if c := renderStatus(s, stateMoved(5, time.Second), statusNow, true, true); strings.Contains(c, "also running") {
+		t.Errorf("the cancelling line names other phases: %q", c)
+	}
+}

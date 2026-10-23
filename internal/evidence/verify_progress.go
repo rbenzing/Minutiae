@@ -3,6 +3,7 @@ package evidence
 import (
 	"context"
 	"math"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -13,7 +14,8 @@ import (
 // can watch a verify but never change, skip or slow a check.
 type VerifyProgress struct {
 	mu      sync.Mutex
-	stack   []*progressFrame // the running phases, outermost first
+	stack   []*progressFrame // the running phases, oldest first (concurrent phases are siblings, not a chain)
+	focus   *progressFrame   // the phase whose hook is running now (set under the hook lock), nil otherwise
 	seq     atomic.Uint64
 	updates atomic.Uint64 // counter updates only (a test seam: one per chunk)
 }
@@ -37,12 +39,16 @@ type VerifyProgressSnapshot struct {
 	Total   int64     // units expected; -1 when unknown
 	Unit    string    // "records", "bytes" or "pages"
 	Seq     uint64    // changes on every phase start, phase end and counter update
+	Also    []string  // the other phases running at the same moment (concurrent phases), oldest first; nil when none
 }
 
 // NewVerifyProgress returns an observer with nothing running.
 func NewVerifyProgress() *VerifyProgress { return &VerifyProgress{} }
 
-// Snapshot reports the innermost running phase and its counter.
+// Snapshot reports the phase that started last, or the one whose hook is running, with its counter, and the other
+// phases running at the same moment. Phases of a concurrent verify are siblings: the phases that contain the
+// reported one (a parent "fts.index" of "fts.index/<table>/<step>") are not listed beside it, only the ones that run
+// next to it. The whole look is taken under one lock.
 func (p *VerifyProgress) Snapshot() VerifyProgressSnapshot {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -51,11 +57,27 @@ func (p *VerifyProgress) Snapshot() VerifyProgressSnapshot {
 		return s
 	}
 	f := p.stack[len(p.stack)-1]
+	if p.focus != nil {
+		f = p.focus
+	}
 	s.Phase, s.Started, s.Counted = f.name, f.started, f.counted
 	if f.counted {
 		s.Done, s.Total, s.Unit = f.done.Load(), f.total, f.unit
 	}
+	for _, o := range p.stack {
+		if o != f && !strings.HasPrefix(f.name, o.name+"/") {
+			s.Also = append(s.Also, o.name)
+		}
+	}
 	return s
+}
+
+// setFocus names the phase whose hook is about to run, so that a snapshot taken by the hook names that phase and not
+// the one that happens to have started last on another goroutine; nil clears it.
+func (p *VerifyProgress) setFocus(f *progressFrame) {
+	p.mu.Lock()
+	p.focus = f
+	p.mu.Unlock()
 }
 
 func (p *VerifyProgress) begin(name string, counted bool, total int64, unit string) *progressFrame {
@@ -131,7 +153,7 @@ func (c *Case) countedPhase(name string, total int64, unit string) (done func(),
 	start := time.Now()
 	return func() {
 			if h != nil {
-				h(name, time.Since(start))
+				c.hookWithFocus(p, f, name, time.Since(start))
 			}
 			p.end(f)
 		}, func(n int64) {

@@ -65,7 +65,7 @@ func (r *ftsVerify) checkUnreferenced(table string) {
 			hidden++
 		}
 	}
-	err := r.c.ReadTx(r.ctx, func(h ReadHandle) error {
+	err := r.readTx(func(h ReadHandle) error {
 		var structure []byte
 		if err := h.QueryRowContext(r.ctx, `SELECT block FROM `+table+`_data WHERE id = ?`, ftsStructureRowID).Scan(&structure); err != nil {
 			return fmt.Errorf("read the structure record: %w", err)

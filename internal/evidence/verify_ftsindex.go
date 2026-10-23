@@ -63,7 +63,7 @@ type ftsSegRun struct {
 func (r *ftsVerify) indexPass(table string) error {
 	ti := ftsTableIndex(table)
 	var done func()
-	err := r.c.ReadTx(r.ctx, func(h ReadHandle) error {
+	err := r.readTx(func(h ReadHandle) error {
 		var structure []byte
 		if err := h.QueryRowContext(r.ctx, `SELECT block FROM `+table+`_data WHERE id = ?`, ftsStructureRowID).Scan(&structure); err != nil { //nolint:gosec // the table is one of the two FTS table constants
 			return fmt.Errorf("read the structure record: %w", err)

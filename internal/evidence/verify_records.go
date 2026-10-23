@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -276,9 +277,28 @@ func (c *Case) verifyRecords(ctx context.Context, rep *VerifyReport, recs []Mani
 	if dbv < 2 {
 		return
 	}
+	// P10 runs on its own goroutine and its own read-only connection beside the record stream and the index pass
+	// (5D-15c), unless the serial order is asked for or a second connection cannot be made
+	var readers *verifyReaders
+	if !c.verifySerial {
+		if rd, err := openVerifyReaders(ctx, filepath.Join(c.Dir, dbFile)); err == nil {
+			readers = rd
+			if c.verifyReadersHook != nil {
+				c.verifyReadersHook(rd.db)
+			}
+		}
+	}
+	defer readers.close() // every path; runs after the abort below, which runs after any panic of a phase
+	doneOverlap := c.overlapSpan()
 	doneIntegrity := c.phase("records.integrity_check")
-	c.verifyIntegrityCheck(ctx, rep)
-	doneIntegrity()
+	var p10 *integrityRun
+	if readers != nil {
+		p10 = c.startIntegrityCheck(ctx, readers, len(rep.Problems), doneIntegrity)
+		defer p10.abortUnlessJoined()
+	} else {
+		c.verifyIntegrityCheck(ctx, rep)
+		doneIntegrity()
+	}
 
 	var audit *recordAudit
 	var sorted []auditedBatch
@@ -345,6 +365,7 @@ func (c *Case) verifyRecords(ctx context.Context, rep *VerifyReport, recs []Mani
 	var fv *ftsVerify
 	if indexCurrent {
 		fv = c.startFTS(ctx, ps, sorted, observe)
+		fv.readers = readers
 	}
 	doneStream, addStreamed := c.countedPhase("records.stream", recordsTotal, "records")
 	streamObserve := func(table string, rows int) {
@@ -462,6 +483,10 @@ func (c *Case) verifyRecords(ctx context.Context, rep *VerifyReport, recs []Mani
 		// authenticate the rows it is computed from)
 		c.verifyFTS(fv)
 	}
+	if p10 != nil {
+		p10.join(rep) // its problems go where the serial order puts them: before everything found since
+	}
+	doneOverlap()
 }
 
 // checkBatches compares every audited batch with its stored row and its rows.
@@ -559,9 +584,19 @@ func normalizeSpace(s string) string { return strings.Join(strings.Fields(s), " 
 // the wrong storage class. SQLite stops after 100 errors and at most 20 messages
 // are kept. Its cost, a full scan of every table and index, belongs to plan 5D.
 func (c *Case) verifyIntegrityCheck(ctx context.Context, rep *VerifyReport) {
+	c.integrityCheck(ctx, ctx, c.ReadTx, rep)
+}
+
+// integrityCheck is P10 on the connection read gives: the case connection (ReadTx) in the serial order, a connection
+// of the read-only pool beside the other phases. The statement runs under qctx; ctx is the verify context, on which
+// "the verify was ended" is decided (it is qctx, or its parent).
+func (c *Case) integrityCheck(ctx, qctx context.Context, read func(context.Context, func(ReadHandle) error) error, rep *VerifyReport) {
+	if c.verifyIntegrityHook != nil {
+		c.verifyIntegrityHook()
+	}
 	var msgs []string
-	err := c.ReadTx(ctx, func(h ReadHandle) error {
-		rows, err := h.QueryContext(ctx, `SELECT integrity_check FROM pragma_integrity_check`)
+	err := read(qctx, func(h ReadHandle) error {
+		rows, err := h.QueryContext(qctx, `SELECT integrity_check FROM pragma_integrity_check`)
 		if err != nil {
 			return err
 		}

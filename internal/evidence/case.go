@@ -101,6 +101,16 @@ type Case struct {
 	verifyProgress    *VerifyProgress
 	verifyFTSCacheKiB int
 
+	// verifySerial, set only by SetVerifyConcurrency(false) in tests, makes verify run every phase one after the
+	// other on the case connection, as before 5D-15c (the baseline of TestVerifyConcurrentPhasesEqualSerial).
+	verifySerial bool
+	// verifyReadersHook, when set by a test, is told the read-only pool of a concurrent verify once it is open.
+	verifyReadersHook func(*sql.DB)
+	// verifyIntegrityHook, when set by a test, runs inside P10 before its query (on the P10 goroutine when concurrent).
+	verifyIntegrityHook func()
+	// verifyHookMu serialises the calls of verifyPhaseHook, which concurrent phases would otherwise make at once.
+	verifyHookMu sync.Mutex
+
 	// noRecoveredKindGate is a test seam only (AllowUndescribedRecoveredKinds in export_test.go).
 	noRecoveredKindGate bool
 }

@@ -78,6 +78,13 @@ var raceConcurrencyTests = []string{
 	"TestVerifyParallelCancelKeepsFindings",
 	"TestVerifyParallelProgressCounters",
 	"TestVerifyParallelEqualsSerial",
+	"TestVerifyConcurrentPhasesEqualSerial",
+	"TestVerifyConcurrentCancelKeepsFindings",
+	"TestVerifyIntegrityCheckConnectionIsReadOnly",
+	"TestVerifyIntegrityCheckRunsBesideTheStream",
+	"TestVerifyPhaseHookCallsNeverOverlap",
+	"TestVerifyTablesAreDecodedTogether",
+	"TestVerifyPhaseTimesSumToWallTime",
 	// internal/records
 	"TestAddConcurrent",
 	"TestAddConcurrentWithIndex",

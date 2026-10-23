@@ -20,7 +20,7 @@ func (r *ftsVerify) confirmIdxHits(table string) error {
 	if len(hits) == 0 {
 		return nil
 	}
-	return r.c.ReadTx(r.ctx, func(h ReadHandle) error {
+	return r.readTx(func(h ReadHandle) error {
 		for _, hit := range hits {
 			lost, err := r.confirmLostHit(h, table, hit.Term, hit.Rowid)
 			if err != nil {

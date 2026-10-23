@@ -3,12 +3,14 @@ package evidence
 import (
 	"context"
 	"math"
+	"slices"
 	"testing"
 	"time"
 )
 
 func TestVerifyProgressUpdatesOncePerChunk(t *testing.T) {
 	c := indexedTextCase(t, 12000)
+	c.verifySerial = true // P10 would otherwise end at any moment of the stream: the count between the two ends is that of the serial order
 	p := NewVerifyProgress()
 	var before, after uint64
 	c.verifyPhaseHook = func(name string, _ time.Duration) {
@@ -52,5 +54,36 @@ func TestProgressTotalsBecomeUnknownOnNegativeOrOverflow(t *testing.T) {
 	}
 	if got := auditedRecordsTotal(mk(math.MaxInt, 1), stored, audit); got != -1 {
 		t.Errorf("overflow = %d, want -1", got)
+	}
+}
+
+// Concurrent phases are siblings on the stack: the snapshot names the one that started last (or the one whose hook is
+// running) and lists the others, except the phases that contain it.
+func TestSnapshotNamesConcurrentPhases(t *testing.T) {
+	p := NewVerifyProgress()
+	p10 := p.begin("records.integrity_check", false, 0, "")
+	parent := p.begin("fts.index", false, 0, "")
+	t0 := p.begin("fts.index/records_fts/decode", true, 10, "pages")
+	t1 := p.begin("fts.index/records_fts_sub/decode", true, 10, "pages")
+	s := p.Snapshot()
+	if s.Phase != "fts.index/records_fts_sub/decode" || !slices.Equal(s.Also, []string{"records.integrity_check", "fts.index/records_fts/decode"}) {
+		t.Fatalf("snapshot = %+v, want the last started phase and the other two, not the parent fts.index", s)
+	}
+	p.setFocus(t0)
+	s = p.Snapshot()
+	if s.Phase != "fts.index/records_fts/decode" || !slices.Equal(s.Also, []string{"records.integrity_check", "fts.index/records_fts_sub/decode"}) {
+		t.Fatalf("snapshot with the focus on table 0 = %+v", s)
+	}
+	p.setFocus(nil)
+	p.end(p10) // not the last started: the others stay
+	p.end(t1)
+	s = p.Snapshot()
+	if s.Phase != "fts.index/records_fts/decode" || len(s.Also) != 0 {
+		t.Fatalf("snapshot after two ends = %+v, want table 0 alone (its parent contains it)", s)
+	}
+	p.end(t0)
+	p.end(parent)
+	if s := p.Snapshot(); s.Phase != "" || s.Also != nil {
+		t.Fatalf("snapshot with nothing running = %+v", s)
 	}
 }

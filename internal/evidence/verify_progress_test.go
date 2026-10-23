@@ -64,7 +64,11 @@ func snapshotsAtPhaseEnds(t *testing.T, c *evidence.Case) map[string]evidence.Ve
 	t.Helper()
 	p := evidence.NewVerifyProgress()
 	got := map[string]evidence.VerifyProgressSnapshot{}
-	c.SetPhaseHook(func(name string, _ time.Duration) { got[name] = p.Snapshot() })
+	c.SetPhaseHook(func(name string, _ time.Duration) {
+		if name != evidence.VerifyOverlapPhase { // a hook event only, not a phase of the observer
+			got[name] = p.Snapshot()
+		}
+	})
 	if _, err := c.VerifyObserved(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}

@@ -39,8 +39,16 @@ type statusState struct {
 }
 
 // renderStatus draws one frame. The spinner advances only when Seq changed since the last frame, so a
-// frozen run shows a frozen glyph.
+// frozen run shows a frozen glyph. Phases that run beside the one shown (a concurrent verify) are named after it.
 func renderStatus(s evidence.VerifyProgressSnapshot, st *statusState, now time.Time, cancelling, unicode bool) string {
+	line := renderPhase(s, st, now, cancelling, unicode)
+	if len(s.Also) > 0 && !cancelling {
+		line += "  | also running: " + strings.Join(s.Also, ", ")
+	}
+	return line
+}
+
+func renderPhase(s evidence.VerifyProgressSnapshot, st *statusState, now time.Time, cancelling, unicode bool) string {
 	switch {
 	case !st.seen:
 		st.seen, st.lastSeq, st.lastMove = true, s.Seq, now

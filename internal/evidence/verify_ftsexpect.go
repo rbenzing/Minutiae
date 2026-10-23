@@ -266,7 +266,7 @@ func (r *ftsVerify) compareTotalsRecomputed(table string) error {
 	}
 	q := `SELECT typeof(id), id, typeof(block), block FROM ` + table + `_data WHERE id = 1 LIMIT 2` //nolint:gosec // the table is one of the two FTS table constants
 	var found []keyedRow
-	err := r.c.ReadTx(r.ctx, func(h ReadHandle) error {
+	err := r.readTx(func(h ReadHandle) error {
 		rows, err := h.QueryContext(r.ctx, q)
 		if err != nil {
 			return err
@@ -303,7 +303,7 @@ func (c *Case) phaseSpan(name string, d time.Duration) {
 		f = p.begin(name, false, 0, "")
 	}
 	if h != nil {
-		h(name, d)
+		c.hookWithFocus(p, f, name, d)
 	}
 	if p != nil {
 		p.end(f)

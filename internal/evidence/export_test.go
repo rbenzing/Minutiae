@@ -139,3 +139,11 @@ func SetVerifyChunkBytes(n int) (restore func()) {
 	verifyChunkBytes = n
 	return func() { verifyChunkBytes = old }
 }
+
+// SetVerifyConcurrency(false) makes verify run every phase one after the other on the case connection, the
+// order of the code before 5D-15c; the default is true. Test-only: it is the baseline the concurrent run must equal.
+func (c *Case) SetVerifyConcurrency(on bool) { c.verifySerial = !on }
+
+// SetVerifyReadersHook installs f, which is given the read-only pool of a concurrent verify as soon as it is open
+// (once per verify). Test-only.
+func (c *Case) SetVerifyReadersHook(f func(*sql.DB)) { c.verifyReadersHook = f }

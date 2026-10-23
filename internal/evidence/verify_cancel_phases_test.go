@@ -27,6 +27,8 @@ func TestVerifyCancelAtTheEndOfEveryPhase(t *testing.T) {
 	phases = append(phases, ftsIndexPhases()...) // the index pass of P11, in run order (5D-14i); fts.index is last (5D-14k)
 	for _, phase := range phases {
 		t.Run(phase, func(t *testing.T) {
+			// P10 ends at no fixed point of the other phases when it runs beside them: its end is a point of the serial order only
+			c.SetVerifyConcurrency(phase != "records.integrity_check")
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			seen := false

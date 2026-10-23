@@ -276,6 +276,7 @@ func TestVerifyCancelDuringTheRebuildStreamOfALocalizationRound(t *testing.T) {
 // the bucket is still named as not localized, so the report is not a bare cancel (the CLI exits 4, not 1).
 func TestVerifyCancelDuringTheIndexPassKeepsTheKnownFailingBuckets(t *testing.T) {
 	c := indexedTextCase(t, 300)
+	c.verifySerial = true // the cancel lands in table 1's pass while table 0's is over: an order only the serial pass has
 	if _, err := c.store.db.Exec(`INSERT INTO records_fts(rowid, summary, body) VALUES (7, 'zzinvented', 'zzinventedbody')`); err != nil {
 		t.Fatal(err)
 	}

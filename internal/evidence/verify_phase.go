@@ -22,10 +22,22 @@ func (c *Case) phase(name string) func() {
 	}
 	return func() {
 		if h != nil {
-			h(name, time.Since(start))
+			c.hookWithFocus(p, f, name, time.Since(start))
 		}
 		if p != nil {
 			p.end(f)
 		}
 	}
+}
+
+// hookWithFocus calls the phase hook for the phase f (nil without an observer). The calls are serialised, and the
+// observer's snapshot, while the hook runs, names f whatever other phases run beside it.
+func (c *Case) hookWithFocus(p *VerifyProgress, f *progressFrame, name string, d time.Duration) {
+	c.verifyHookMu.Lock()
+	defer c.verifyHookMu.Unlock()
+	if p != nil {
+		p.setFocus(f)
+		defer p.setFocus(nil)
+	}
+	c.verifyPhaseHook(name, d)
 }

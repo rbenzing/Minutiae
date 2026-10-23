@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rbenzing/minutiae/internal/evidence"
 )
 
 // pct is the nearest-rank percentile (p in 0..1) of samples in milliseconds.
@@ -81,12 +83,14 @@ type timeItError struct{}
 
 func (*timeItError) Error() string { return "timeIt test error" }
 
-// topLevelPhaseSum adds the phases without a "/" in their name: a name "<parent>/<table>/<step>" is
-// nested inside its parent and already counted there.
+// topLevelPhaseSum adds the wall time of the top-level phases. A name "<parent>/<table>/<step>" is nested inside
+// its parent and already counted there; a phase inside the overlap span of a concurrent verify
+// (evidence.VerifyPhaseOverlapped) may run beside another, so only the span, which is wall time, is counted for them
+// (5D-15c, D183).
 func topLevelPhaseSum(phases map[string]float64) float64 {
 	sum := 0.0
 	for p, s := range phases {
-		if !strings.Contains(p, "/") {
+		if !strings.Contains(p, "/") && !evidence.VerifyPhaseOverlapped(p) {
 			sum += s
 		}
 	}
@@ -96,5 +100,15 @@ func topLevelPhaseSum(phases map[string]float64) float64 {
 func TestTopLevelPhaseSumSkipsSubPhases(t *testing.T) {
 	if got := topLevelPhaseSum(map[string]float64{"a": 1, "b": 2, "b/x/y": 5}); got != 3 {
 		t.Fatalf("topLevelPhaseSum = %v, want 3", got)
+	}
+}
+
+func TestTopLevelPhaseSumCountsTheOverlapSpanNotThePhasesInIt(t *testing.T) {
+	phases := map[string]float64{
+		"audit": 1, "artifacts": 2,
+		evidence.VerifyOverlapPhase: 10, "records.integrity_check": 9, "records.stream": 4, "fts.index": 5, "fts.index/t/decode": 3,
+	}
+	if got := topLevelPhaseSum(phases); got != 13 {
+		t.Fatalf("topLevelPhaseSum = %v, want 13 (audit, artifacts and the span)", got)
 	}
 }

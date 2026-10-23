@@ -147,6 +147,8 @@ type ftsVerify struct {
 	dir        string // <case>/tmp/verify-<runid>
 	tempSet    bool   // SQLite's temp directory was pointed at dir
 	exp        *sql.DB
+	// readers is the read-only pool of a concurrent verify (verify_readers.go), nil in the serial order
+	readers *verifyReaders
 
 	// indexed is the sorted ids of the records that have a document in the rebuild.
 	indexed []int64
@@ -244,12 +246,7 @@ func (c *Case) verifyFTS(r *ftsVerify) {
 		defer func() { c.verifyFTSDone(r) }()
 	}
 	doneIndex := c.phase("fts.index")
-	for _, table := range FTSTables() {
-		if r.dead {
-			break
-		}
-		r.indexTable(table)
-	}
+	r.indexTables()                    // together on the read-only pool of a concurrent verify, in table order otherwise
 	if r.ctx.Err() != nil && !r.dead { // the verify ended during the last step: it may have been cut short
 		r.rep.cancelCut = true
 		r.dead = true
@@ -741,7 +738,7 @@ func (r *ftsVerify) compareConfig(table string) error {
 	want := r.ref.config[table]
 	q := `SELECT typeof(k), k, typeof(v), v FROM ` + table + `_config ORDER BY k LIMIT ` + strconv.Itoa(ftsMaxConfigRows+1) //nolint:gosec // the table is one of the two FTS table constants
 	var found []keyedRow
-	err := r.c.ReadTx(r.ctx, func(h ReadHandle) error {
+	err := r.readTx(func(h ReadHandle) error {
 		rows, err := h.QueryContext(r.ctx, q)
 		if err != nil {
 			return err
