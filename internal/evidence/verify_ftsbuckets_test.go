@@ -111,6 +111,9 @@ func TestVerifyFTSPostingOnlyInAnOutsideBlock(t *testing.T) {
 	if got.Failing != [2]int{1, 0} {
 		t.Fatalf("failing buckets %v, want only the outside block of the word table", got.Failing)
 	}
+	if problemsHold(rep.Problems, "own rebuild there") {
+		t.Errorf("an invented posting was taken for a replica mismatch: %q", rep.Problems)
+	}
 	want := `records_fts: the index holds "zzghostbody" (body, offset 0) for record 9000000, which does not exist or has no indexable text (a search hit is invented)`
 	if !problemsHold(rep.Problems, want) {
 		t.Fatalf("no %q in %q", want, rep.Problems)
@@ -131,6 +134,9 @@ func TestVerifyFTSPostingMovedBetweenTwoAuditedBatches(t *testing.T) {
 	}
 	if got.Failing != [2]int{2, 0} {
 		t.Fatalf("failing buckets %v, want both batches of the word table", got.Failing)
+	}
+	if problemsHold(rep.Problems, "own rebuild there") {
+		t.Errorf("a moved posting was taken for a replica mismatch: %q", rep.Problems)
 	}
 	for _, want := range []string{
 		"records_fts: record 10: the index lacks",

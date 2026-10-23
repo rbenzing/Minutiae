@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 )
 
 // The index pass of P11 (5D-14i): the leaf pages of each FTS table are decoded strictly (fts5seg.go) in
@@ -264,6 +263,9 @@ func (r *ftsVerify) endSegment(table string, ti int, run *ftsSegRun) error {
 		run.idx.close()
 		run.idx = nil
 	}
+	if run.failed {
+		r.segFailed[ti]++
+	}
 	if err != nil || run.failed {
 		return err
 	}
@@ -360,26 +362,4 @@ func (r *ftsVerify) failingBuckets(table string) []ftsBucketKey {
 		return 0
 	})
 	return out
-}
-
-// describeBuckets names up to five buckets for a PROBLEM line.
-func (r *ftsVerify) describeBuckets(keys []ftsBucketKey) string {
-	var parts []string
-	for i, k := range keys {
-		if i == 5 {
-			parts = append(parts, fmt.Sprintf("and %d more", len(keys)-5))
-			break
-		}
-		if k == ftsOverflowBucket {
-			parts = append(parts, fmt.Sprintf("the ids of every block past the first %d unaudited ones", ftsMaxOutsideBuckets))
-			continue
-		}
-		if k.batch >= 0 && k.batch < len(r.sorted) {
-			b := r.sorted[k.batch]
-			parts = append(parts, fmt.Sprintf("batch %d of ingest %q (ids %d..%d)", b.BatchNo, b.IngestID, b.FirstID, b.lastID()))
-		} else {
-			parts = append(parts, fmt.Sprintf("the ids %d..%d outside every audited batch", k.block<<16, k.block<<16+0xFFFF))
-		}
-	}
-	return strings.Join(parts, ", ")
 }

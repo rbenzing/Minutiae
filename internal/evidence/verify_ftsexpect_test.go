@@ -141,10 +141,10 @@ func TestVerifyFTSSelfTestFailureIsAProblem(t *testing.T) {
 	}
 }
 
-// TestVerifyFTSReplicaBlindSpotIsAProblem (V15): a replica that differs from SQLite where the self-test corpus
+// TestVerifyLocalizationReplicaMismatchFailsClosed (V15, was TestVerifyFTSReplicaBlindSpotIsAProblem): a replica that differs from SQLite where the self-test corpus
 // does not look makes a bucket fail while the index equals SQLite's own rebuild. That is a PROBLEM that names
 // the batch, never a pass and never silent.
-func TestVerifyFTSReplicaBlindSpotIsAProblem(t *testing.T) {
+func TestVerifyLocalizationReplicaMismatchFailsClosed(t *testing.T) {
 	c := indexedTextCase(t, 50)
 	old := ftsReplicaOverride
 	t.Cleanup(func() { ftsReplicaOverride = old })
@@ -165,10 +165,10 @@ func TestVerifyFTSReplicaBlindSpotIsAProblem(t *testing.T) {
 	if rep.OK() {
 		t.Fatal("a replica that disagrees with SQLite passed")
 	}
-	if containsSubstr(rep.Problems, "tokenizer replica does not match this SQLite") {
+	if containsSubstr(rep.Problems, "the postings, sizes and totals of the index are not verified") {
 		t.Fatalf("the self-test was meant not to see the blind spot: %q", rep.Problems)
 	}
-	if n := countContaining(rep.Problems, "though a search finds what a rebuild by SQLite holds"); n != 1 {
+	if n := countContaining(rep.Problems, "the postings differ from the tokenizer replica's, but the index equals SQLite's own rebuild there"); n != 1 {
 		t.Fatalf("%d bucket lines in %q, want 1", n, ftsProblems(rep))
 	}
 	if containsSubstr(rep.Problems, "the index lacks") || containsSubstr(rep.Problems, "is invented") {
@@ -209,11 +209,14 @@ func TestVerifyFTSDeleteMarkerIsAProblem(t *testing.T) {
 	if !containsSubstr(rep.Problems, "records_fts: record 5: the index lacks") {
 		t.Errorf("the hidden postings of record 5 are not reported: %q", ftsProblems(rep))
 	}
-	if containsSubstr(rep.Problems, "though a search finds what a rebuild by SQLite holds") {
+	if containsSubstr(rep.Problems, "the index equals SQLite's own rebuild there") {
 		t.Errorf("the rebuild explained the failing bucket, yet the unexplained-bucket line is there: %q", ftsProblems(rep))
 	}
-	if countOf(seen, "fts.compare/records_fts/vocab") != 1 {
-		t.Errorf("the vocab comparison did not run for the table with a failing bucket: %v", seen)
+	if countOf(seen, "fts.localize") != 1 {
+		t.Errorf("the failing bucket was not localized: %v", seen)
+	}
+	if containsSubstr(rep.Problems, "twice") {
+		t.Errorf("a delete marker over a posting is no duplicate: %q", ftsProblems(rep))
 	}
 }
 
@@ -317,8 +320,8 @@ func lastLeaf(t *testing.T, c *Case, table string) (seg, id int64) {
 }
 
 // TestVerifyFTSFailedSegmentContributesNothing (D147): a segment that fails after all its postings were
-// decoded still contributes none of them, so its buckets fail and the rebuild is asked (the failing bucket is
-// never explained away by postings of a segment that is not valid).
+// decoded still contributes none of them, so its buckets fail and are named as not localized (the failing bucket is
+// never explained away by postings of a segment that is not valid, and no hit is claimed hidden for a segment that cannot be read).
 func TestVerifyFTSFailedSegmentContributesNothing(t *testing.T) {
 	c := indexedTextCase(t, 300)
 	seg, id := lastLeaf(t, c, FTSWordTable)
@@ -331,8 +334,14 @@ func TestVerifyFTSFailedSegmentContributesNothing(t *testing.T) {
 	if !containsSubstr(rep.Problems, want) {
 		t.Fatalf("no %q in %q", want, ftsProblems(rep))
 	}
-	if !containsSubstr(rep.Problems, "though a search finds what a rebuild by SQLite holds") {
-		t.Errorf("the postings of the failed segment were used: its buckets did not fail: %q", ftsProblems(rep))
+	if !containsSubstr(rep.Problems, "records_fts: 1 batches whose index postings differ from their records were not localized (a segment of this index is not a valid leaf") {
+		t.Errorf("the postings of the failed segment were used, or its failing bucket is silent: %q", ftsProblems(rep))
+	}
+	if containsSubstr(rep.Problems, "the index lacks") || containsSubstr(rep.Problems, "is invented") {
+		t.Errorf("a table with a segment that does not decode was compared entry by entry: %q", ftsProblems(rep))
+	}
+	if rep.FTSDocsChecked != 0 {
+		t.Errorf("FTSDocsChecked = %d with a segment that does not decode", rep.FTSDocsChecked)
 	}
 }
 

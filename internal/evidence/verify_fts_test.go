@@ -109,40 +109,74 @@ func TestVerifyFTSCleanIndexHasNoFTSProblems(t *testing.T) {
 	}
 }
 
-// TestVerifyFTSStreamsInChunks: the rebuild reads the record rows in keyset chunks of at most 5000
-// rows, never by one query: ceil(12000/5000) chunk reads, reported by table "fts".
+// TestVerifyFTSStreamsInChunks (rewritten for 5D-14k): a clean verify reads the record rows in ONE stream, in
+// keyset chunks of at most 5000 rows (ceil(12000/5000) chunk reads, table "records"), and creates no rebuild
+// stream and no scratch area. Only a failing bucket is read again, and then only the rows of that bucket, in the
+// same chunks (table "fts-localize"); the index pages are read in the "fts-data" chunks.
 func TestVerifyFTSStreamsInChunks(t *testing.T) {
-	c := indexedTextCase(t, 12000)
-	var fts, recs []int
-	start := time.Now()
-	c.verifyFTSHook = func(point string, _ *sql.DB) {
-		t.Logf("P11 %-22s at +%v", point, time.Since(start).Round(time.Millisecond))
+	want := []int{5000, 5000, 2000}
+	collect := func(c *Case) (recs, local []int, pages int, r VerifyReport) {
+		t.Helper()
+		var err error
+		r, err = c.verify(func(table string, rows int) {
+			switch table {
+			case "records":
+				recs = append(recs, rows)
+			case "fts-localize":
+				local = append(local, rows)
+			case "fts-data":
+				pages += rows
+			}
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return recs, local, pages, r
 	}
-	r, err := c.verify(func(table string, rows int) {
-		switch table {
-		case "fts":
-			fts = append(fts, rows)
-		case "records":
-			recs = append(recs, rows)
+	t.Run("clean", func(t *testing.T) {
+		c := indexedTextCase(t, 12000)
+		scratchSeen := false
+		c.verifyFTSHook = func(string, *sql.DB) {
+			if _, err := os.Stat(filepath.Join(c.Dir, "tmp")); err == nil {
+				scratchSeen = true
+			}
+		}
+		recs, local, pages, r := collect(c)
+		if !slices.Equal(recs, want) {
+			t.Fatalf("record scan chunk reads = %v, want %v", recs, want)
+		}
+		if len(local) != 0 {
+			t.Fatalf("a clean verify read the records a second time: %v", local)
+		}
+		if pages == 0 {
+			t.Fatal("no index pages were read")
+		}
+		if scratchSeen {
+			t.Fatal("a clean verify created a scratch area")
+		}
+		if p := ftsProblems(r); len(p) != 0 {
+			t.Fatalf("full-text problems: %q", p)
+		}
+		if r.FTSDocsChecked != 12000 {
+			t.Fatalf("FTSDocsChecked = %d, want 12000", r.FTSDocsChecked)
 		}
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("P11 + verify of 12000 records (two indexes): %v", time.Since(start))
-	want := []int{5000, 5000, 2000}
-	if !slices.Equal(fts, want) {
-		t.Fatalf("full-text rebuild chunk reads = %v, want %v", fts, want)
-	}
-	if !slices.Equal(recs, want) {
-		t.Fatalf("record scan chunk reads = %v, want %v", recs, want)
-	}
-	if p := ftsProblems(r); len(p) != 0 {
-		t.Fatalf("full-text problems: %q", p)
-	}
-	if r.FTSDocsChecked != 12000 {
-		t.Fatalf("FTSDocsChecked = %d, want 12000", r.FTSDocsChecked)
-	}
+	t.Run("failing bucket", func(t *testing.T) {
+		c := indexedTextCase(t, 12000) // all 12000 ids fall in one bucket (a block of 2^16 ids)
+		if _, err := c.store.db.Exec(`INSERT INTO records_fts(records_fts, rowid, summary, body) VALUES ('delete', 5, ?, ?)`, normalizeFor(5)...); err != nil {
+			t.Fatal(err)
+		}
+		recs, local, _, r := collect(c)
+		if !slices.Equal(recs, want) {
+			t.Fatalf("record scan chunk reads = %v, want %v", recs, want)
+		}
+		if !slices.Equal(local, want) {
+			t.Fatalf("localization chunk reads = %v, want %v (the rows of the one failing bucket)", local, want)
+		}
+		if !containsSubstr(r.Problems, "a search hit is hidden") {
+			t.Fatalf("the tampered index was not localized: %q", ftsProblems(r))
+		}
+	})
 }
 
 // onlyRunDir returns the one verify-* directory under <case>/tmp while a verification runs.
@@ -201,15 +235,49 @@ func spillWorks(t *testing.T) {
 	probeExec(t, db, `ROLLBACK`)
 }
 
-// TestVerifyFTSLeavesNoTemporaryFiles: the expected index and every SQLite spill file live under
-// <case>/tmp/verify-<runid>/ (asserted positively: a spill file existed there during the run),
-// never in the operating system's temporary directories, and nothing is left afterwards: not after a
-// clean verify, not after a failing one, not after a panic, and SQLite's process-wide temp
-// directory is back to its default.
+// TestVerifyFTSLeavesNoTemporaryFiles (rewritten for 5D-14k): a clean verify creates no scratch area at all
+// (asserted positively: <case>/tmp does not exist during the run); a verify that localizes a failing bucket keeps
+// the scratch databases and every SQLite spill file under <case>/tmp/verify-<runid>/ (asserted positively: a
+// spill file existed there during the run), never in the operating system's temporary directories, and nothing
+// is left afterwards: not after a clean verify, not after a failing one, not after a panic, and SQLite's
+// process-wide temp directory is back to its default.
 func TestVerifyFTSLeavesNoTemporaryFiles(t *testing.T) {
 	osTemp := redirectOSTemp(t)
-	run := func(t *testing.T, c *Case, mustSpill bool) VerifyReport {
+	hide5 := func(t *testing.T, c *Case) {
 		t.Helper()
+		if _, err := c.store.db.Exec(`INSERT INTO records_fts(records_fts, rowid, summary, body) VALUES ('delete', 5, ?, ?)`, normalizeFor(5)...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Run("clean", func(t *testing.T) {
+		c := indexedTextCase(t, 6000)
+		c.verifyFTSCacheKiB = 256
+		var points []string
+		c.verifyFTSHook = func(point string, exp *sql.DB) {
+			points = append(points, point)
+			if exp != nil {
+				t.Errorf("the scratch index existed at %q on a clean case", point)
+			}
+			if _, err := os.Stat(filepath.Join(c.Dir, "tmp")); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("tmp exists at %q on a clean case: %v", point, err)
+			}
+		}
+		r := mustVerify(t, c)
+		if len(points) == 0 {
+			t.Fatal("the hook never ran, so the test shows nothing")
+		}
+		if p := ftsProblems(r); len(p) != 0 {
+			t.Fatalf("full-text problems: %q", p)
+		}
+		if _, err := os.Stat(filepath.Join(c.Dir, "tmp")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("tmp after a clean verify: %v", err)
+		}
+		assertNoSpillIn(t, osTemp)
+		spillWorks(t)
+	})
+	t.Run("failing", func(t *testing.T) {
+		c := indexedTextCase(t, 6000)
+		hide5(t, c)
 		c.verifyFTSCacheKiB = 256
 		spilled := false
 		c.verifyFTSHook = func(point string, _ *sql.DB) {
@@ -227,29 +295,9 @@ func TestVerifyFTSLeavesNoTemporaryFiles(t *testing.T) {
 			}
 		}
 		r := mustVerify(t, c)
-		if mustSpill && !spilled {
+		if !spilled {
 			t.Fatal("no spill file existed in the run directory during the run: the test does not show where spill files go")
 		}
-		return r
-	}
-	t.Run("clean", func(t *testing.T) {
-		c := indexedTextCase(t, 6000)
-		r := run(t, c, true)
-		if p := ftsProblems(r); len(p) != 0 {
-			t.Fatalf("full-text problems: %q", p)
-		}
-		if _, err := os.Stat(filepath.Join(c.Dir, "tmp")); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("tmp after a clean verify: %v", err)
-		}
-		assertNoSpillIn(t, osTemp)
-		spillWorks(t)
-	})
-	t.Run("failing", func(t *testing.T) {
-		c := indexedTextCase(t, 6000)
-		if _, err := c.store.db.Exec(`INSERT INTO records_fts(records_fts, rowid, summary, body) VALUES ('delete', 5, ?, ?)`, normalizeFor(5)...); err != nil {
-			t.Fatal(err)
-		}
-		r := run(t, c, true)
 		if !containsSubstr(r.Problems, "a search hit is hidden") {
 			t.Fatalf("the tampered index was not reported: %q", ftsProblems(r))
 		}
@@ -261,6 +309,7 @@ func TestVerifyFTSLeavesNoTemporaryFiles(t *testing.T) {
 	})
 	t.Run("panic", func(t *testing.T) {
 		c := indexedTextCase(t, 6000)
+		hide5(t, c)
 		c.verifyFTSCacheKiB = 256
 		c.verifyFTSHook = func(point string, _ *sql.DB) {
 			if point == "after-rebuild" {

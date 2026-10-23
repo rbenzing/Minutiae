@@ -277,10 +277,11 @@ func TestFTSStructureReadErrorOnALiveContextIsReported(t *testing.T) {
 	}
 }
 
-// A verify cancelled while P11 is rebuilding the index stops there, is never OK and says why; a problem
+// A verify cancelled while P11 reads the index pages (5D-14k: the index pass, there is no whole-index rebuild any
+// more) stops there, is never OK and says why; a problem
 // found before the cancel is still in the report (integrity is never masked by a cancel).
 func TestVerifyCancelledDuringP11(t *testing.T) {
-	c := indexedTextCase(t, 12000) // three rebuild chunks of 5000, 5000, 2000
+	c := indexedTextCase(t, 12000) // three record chunks of 5000, 5000, 2000; the index pages are read after them
 	// an integrity problem found before P11 starts: the artifact's bytes no longer match the manifest
 	recs, err := c.Manifest()
 	if err != nil || len(recs) == 0 {
@@ -295,16 +296,16 @@ func TestVerifyCancelledDuringP11(t *testing.T) {
 	chunks := 0
 	start := time.Now()
 	rep, err := c.verifyRun(ctx, func(table string, _ int) {
-		if table == "fts" {
+		if table == "fts-data" {
 			chunks++
-			cancel() // the first rebuild chunk is read; the rest must not be
+			cancel() // the first chunk of index pages is read; the rest must not be
 		}
 	}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if chunks != 1 {
-		t.Fatalf("%d rebuild chunks were read after the cancel, want 1 (the one in flight)", chunks)
+		t.Fatalf("%d chunks of index pages were read after the cancel, want 1 (the one in flight)", chunks)
 	}
 	if time.Since(start) > 2*time.Minute {
 		t.Fatalf("a cancelled verify took %v", time.Since(start))
@@ -323,7 +324,7 @@ func TestVerifyCancelledDuringP11(t *testing.T) {
 			t.Fatalf("cancel noise in the report: %q", p)
 		}
 	}
-	if rep.FTSDocsChecked >= 12000 {
-		t.Fatalf("FTSDocsChecked = %d: the rebuild was not cut short", rep.FTSDocsChecked)
+	if rep.FTSDocsChecked != 0 {
+		t.Fatalf("FTSDocsChecked = %d: a cut comparison counts no document", rep.FTSDocsChecked)
 	}
 }

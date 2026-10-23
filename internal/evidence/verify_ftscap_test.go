@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -138,5 +139,49 @@ func TestStartFTSDrawsADifferentNonZeroKeyEachRun(t *testing.T) {
 				t.Errorf("runs %d and %d drew the same key", j, i)
 			}
 		}
+	}
+}
+
+// TestVerifyFTSConsistentOverflowIsStillAProblem (D150): records and postings that agree in every one of the more
+// than ftsMaxOutsideBuckets blocks still make the overflow bucket fail: the blocks past the cap are not told
+// apart, so nothing is claimed about them, and the overflow bucket comes last in the order of the failing buckets.
+func TestVerifyFTSConsistentOverflowIsStillAProblem(t *testing.T) {
+	withOutsideCap(t, 5)
+	c, rec := caseWithArtifact(t)
+	var ids []int64
+	for b := range int64(20) { // twenty blocks of 2^16 ids
+		ids = append(ids, b<<16+1, b<<16+2)
+	}
+	insertTextRecordsAt(t, c, rec.ID, ids, func(i int) (string, string) {
+		return fmt.Sprintf("w%08d", i), fmt.Sprintf("x%08d", i) // terms that ascend with the id: both sides meet the blocks in the same order
+	})
+	if _, err := c.ReindexText(t.Context(), ReindexOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	// one more difference in a block with its own bucket, so that the order of the failing buckets shows
+	s, b := fmt.Sprintf("w%08d", 3<<16+1), fmt.Sprintf("x%08d", 3<<16+1)
+	if _, err := c.store.db.Exec(`INSERT INTO records_fts(records_fts, rowid, summary, body) VALUES ('delete', ?, ?, ?)`, 3<<16+1, s, b); err != nil {
+		t.Fatal(err)
+	}
+	var failing []ftsBucketKey
+	c.verifyFTSInspect = func(r *ftsVerify) {
+		failing = r.failing[0]
+		for range 50 { // the order is a sort of map keys: it must not depend on the order they come in
+			again := r.failingBuckets(FTSWordTable)
+			if len(again) != len(failing) || again[len(again)-1] != ftsOverflowBucket {
+				t.Errorf("failing buckets %v: the overflow bucket must be last", again)
+				break
+			}
+		}
+	}
+	rep := mustVerify(t, c)
+	if !containsSubstr(rep.Problems, "too many unaudited id blocks") {
+		t.Fatalf("no overflow problem in %q", ftsProblems(rep))
+	}
+	if len(failing) == 0 || failing[len(failing)-1] != ftsOverflowBucket {
+		t.Fatalf("failing buckets %v: the overflow bucket must be last", failing)
+	}
+	if !containsSubstr(rep.Problems, "were not localized") {
+		t.Errorf("the overflow bucket is silent: %q", ftsProblems(rep))
 	}
 }

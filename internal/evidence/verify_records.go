@@ -425,7 +425,7 @@ func (c *Case) verifyRecords(ctx context.Context, rep *VerifyReport, recs []Mani
 	if fv != nil {
 		// P11: the index is compared with what the records produce (after the record checks, which
 		// authenticate the rows it is computed from)
-		c.verifyFTS(fv, recordsTotal)
+		c.verifyFTS(fv)
 	}
 }
 
@@ -660,7 +660,7 @@ var recordsSelect = `SELECT r.id, r.batch_id, r.parser_id, r.type, r.payload_v, 
 	r.src_offset, r.src_length, r.ts, r.ts_end, r.ts_basis, r.tz_offset_min, r.deleted, r.recovered, r.recovery_method,
 	r.confidence, p.name, p.version, p.hash, r.summary, r.body, r.payload, ` + recordsClasses.signature("r.") + `
 	FROM records r LEFT JOIN parsers p ON p.id = r.parser_id
-	WHERE r.id >= ? ORDER BY r.id LIMIT ?`
+	WHERE r.id >= ? AND r.id <= ? ORDER BY r.id LIMIT ?`
 
 var (
 	timesSelectAll = `SELECT record_id, kind, ts, ts_basis, tz_offset_min, ` + timesClasses.signature("") +
@@ -676,8 +676,16 @@ var (
 // chunk of rows it is handed before the next chunk is read). It reports whether
 // every chunk could be read.
 func (c *Case) streamRecords(ctx context.Context, ps *problemSet, chunkRows int, observe verifyChunkObserver, fn func(RecordRow, recordRowMeta)) bool {
+	return c.streamRecordsBetween(ctx, ps, math.MinInt64, math.MaxInt64, chunkRows, observe, fn)
+}
+
+// streamRecordsBetween is streamRecords for the ids lo to hi (both included): P11's localization reads the
+// records of one failing bucket with it (5D-14k). The whole-table counts are compared only when the range is
+// the whole table, because a part of the table has no count to compare.
+func (c *Case) streamRecordsBetween(ctx context.Context, ps *problemSet, lo, hi int64, chunkRows int, observe verifyChunkObserver, fn func(RecordRow, recordRowMeta)) bool {
 	rep := ps.rep
-	after := int64(math.MinInt64) // below every possible id: a tampered database may hold ids <= 0
+	whole := lo == math.MinInt64 && hi == math.MaxInt64
+	after := lo // math.MinInt64 is below every possible id: a tampered database may hold ids <= 0
 	var nRows, nTimes int64
 	for {
 		var rows []RecordRow
@@ -686,7 +694,7 @@ func (c *Case) streamRecords(ctx context.Context, ps *problemSet, chunkRows int,
 		more := false
 		err := c.ReadTx(ctx, func(h ReadHandle) error {
 			rows, metas, times, more = nil, nil, nil, false
-			rs, err := h.QueryContext(ctx, recordsSelect, after, chunkRows)
+			rs, err := h.QueryContext(ctx, recordsSelect, after, hi, chunkRows)
 			if err != nil {
 				return err
 			}
@@ -729,9 +737,11 @@ func (c *Case) streamRecords(ctx context.Context, ps *problemSet, chunkRows int,
 			// the record_times of this id range: after the previous chunk's last id
 			// up to this chunk's last id (all the rest for the final chunk).
 			q, args := timesSelectAll, []any{after}
-			if more {
-				q, args = timesSelectRange,
-					[]any{after, rows[len(rows)-1].ID}
+			switch {
+			case more:
+				q, args = timesSelectRange, []any{after, rows[len(rows)-1].ID}
+			case hi < math.MaxInt64:
+				q, args = timesSelectRange, []any{after, hi}
 			}
 			ts, err := h.QueryContext(ctx, q, args...)
 			if err != nil {
@@ -783,9 +793,11 @@ func (c *Case) streamRecords(ctx context.Context, ps *problemSet, chunkRows int,
 		if more {
 			last = rows[len(rows)-1].ID
 		}
-		if !more || last == math.MaxInt64 {
-			c.checkTableCount(ctx, rep, "records", nRows)
-			c.checkTableCount(ctx, rep, "record_times", nTimes)
+		if !more || last == math.MaxInt64 || last >= hi {
+			if whole {
+				c.checkTableCount(ctx, rep, "records", nRows)
+				c.checkTableCount(ctx, rep, "record_times", nTimes)
+			}
 			return true
 		}
 		// every keyset scan must advance: the next chunk starts above this one's last key

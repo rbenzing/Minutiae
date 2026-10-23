@@ -24,33 +24,30 @@ import (
 // P11: the full-text indexes equal what the verified records produce.
 //
 // The records are authenticated by P4 (their digests are bound to the audit log), and the index is
-// a pure function of them (NormalizeText, the two FTS5 tokenizers). Since 5D-14i verify RECOMPUTES the
-// index content inside the record stream (verify_ftsexpect.go: the digests of the postings per audited
-// batch, the _docsize blobs and the totals record, from Go replicas of the tokenizers that a self-test
-// proves against the running SQLite) and compares it with what the strict decoder reads from the leaf
-// pages (verify_ftsindex.go). That is the index pass, run as the phase fts.index.
+// a pure function of them (NormalizeText, the two FTS5 tokenizers). Verify RECOMPUTES the index content
+// inside the record stream (verify_ftsexpect.go: the digests of the postings per audited batch, the
+// _docsize blobs and the totals record, from Go replicas of the tokenizers that a self-test proves against
+// the running SQLite) and compares it with what the strict decoder reads from the leaf pages
+// (verify_ftsindex.go). That is the index pass, run as the phase fts.index. The index structures the vocab
+// cannot see (the shadow table <table>_idx, the doclist indexes, the page footers) are recomputed from the
+// leaf pages inside the same pass and compared exactly (fts5idx.go); a difference is confirmed by asking the
+// case index for the first term of the affected page.
 //
-// What is left of the older design is an INTERIM comparison with a rebuild by SQLite (replaced by the per-batch
-// localization of 5D-14k): verify rebuilds both indexes from the records into a private temporary database, with
-// the code the writer uses (NewFTSDoc, insertFTSDocs), and
-//
-//   - for a table with a failing bucket, compares the vocab of each index ((term, record, column, offset),
-//     in term, record, column, offset order) with the rebuild, entry by entry, to name what differs.
-//
-// The index structures the vocab cannot see (the shadow table <table>_idx, the doclist indexes, the page
-// footers) are recomputed from the leaf pages inside the index pass and compared exactly (fts5idx.go,
-// 5D Task 14j); a difference is confirmed by asking the case index for the first term of the affected page.
+// A clean verify ends there and creates no scratch area. Only when a bucket fails (an audited batch whose digests
+// differ, or that holds a delete marker) does verify look at the failing buckets again, with SQLite's own
+// tokenizer, to list the records that differ (verify_ftslocal.go, the phase fts.localize): at most 64 buckets,
+// in rounds, and every bucket that is not localized is named, never silent.
 //
 // The case's own database is read through ReadTx, as everywhere else. EXCEPTION to the "read
-// everything through ReadHandle" rule: the rebuilt index lives in a second, private database that
-// verify creates and writes itself (an unnamed SQLite database, one pinned connection); it is not
-// the case's database, holds no evidence the case does not hold already, and is discarded at the
-// end. It is the only place two result sets are open at once (one on each database).
+// everything through ReadHandle" rule: the localization writes two private scratch databases (the
+// rebuild by SQLite, and the postings the pages hold with their segment age; unnamed SQLite databases, one
+// pinned connection each); they are not the case's database, hold no evidence the case does not hold already,
+// and are discarded at the end.
 //
-// Evidence-derived text never leaves the case directory: the private database and every spill file
+// Evidence-derived text never leaves the case directory: the scratch databases and every spill file
 // of SQLite live under <case>/tmp/verify-<runid>/ (created 0700, removed when verify ends, on
 // every path). SQLite's temp directory is process-wide state (PRAGMA temp_store_directory): it is
-// set before the rebuild and reset in a defer. The command line runs one command per process.
+// set before the first localization round and reset in a defer. The command line runs one command per process.
 
 const (
 	// ftsTmpDir is the directory of the case that holds the private files of a verification.
@@ -173,6 +170,12 @@ type ftsVerify struct {
 	failing [2][]ftsBucketKey // the failing buckets of each table, once its pass is done
 	// bucketsCompared counts the buckets the digests were compared for (tests read it)
 	bucketsCompared int
+	// segFailed counts, per table, the segments that did not decode in the index pass (D153): the localization skips such a table
+	segFailed [2]int
+	// indexFailed is set when the index pass could not read a table
+	indexFailed bool
+	// lc is the state of the localization (verify_ftslocal.go), nil until a bucket fails
+	lc *ftsLocalState
 	// idxHits are the differences of the _idx and doclist-index recomputation kept for the confirmation by search
 	idxHits []ftsLostHit
 }
@@ -230,10 +233,14 @@ func (c *Case) startFTS(ctx context.Context, ps *problemSet, sorted []auditedBat
 }
 
 // verifyFTS finishes P11 after the record stream: the index pass (strict decoding of the leaf pages, the
-// digests compared, totals, configuration and unreferenced rows), then the interim comparison with a rebuild
-// by SQLite, which looks closer at the tables whose digest differs and checks what a search finds.
-func (c *Case) verifyFTS(r *ftsVerify, recordsTotal int64) {
+// digests compared, totals, configuration and unreferenced rows), then, only when a bucket fails, the
+// localization of the failing buckets with SQLite's own tokenizer (verify_ftslocal.go). A clean verify creates
+// no scratch area.
+func (c *Case) verifyFTS(r *ftsVerify) {
 	defer r.cleanup() // runs on a panic too
+	if c.verifyFTSDone != nil {
+		defer func() { c.verifyFTSDone(r) }()
+	}
 	doneIndex := c.phase("fts.index")
 	for _, table := range FTSTables() {
 		if r.dead {
@@ -241,6 +248,13 @@ func (c *Case) verifyFTS(r *ftsVerify, recordsTotal int64) {
 		}
 		r.indexTable(table)
 	}
+	if r.ctx.Err() != nil && !r.dead { // the verify ended during the last step: it may have been cut short
+		r.rep.cancelCut = true
+		r.dead = true
+	}
+	// the content comparison ran to its end only when the expected side is complete, every table was read, no
+	// segment failed to decode and every failing bucket was localized (D153)
+	complete := r.ex != nil && r.ex.complete && !r.dead && !r.indexFailed && r.segFailed == [2]int{}
 	doneIndex()
 	r.hook("after-index")
 	if c.verifyFTSInspect != nil {
@@ -249,41 +263,10 @@ func (c *Case) verifyFTS(r *ftsVerify, recordsTotal int64) {
 	if r.dead {
 		return
 	}
-	observe := r.observe
-	ctx := r.ctx
-	if err := r.setup(); err != nil {
-		if ctxCaused(ctx, err) { // cancelled before the rebuild could start: a cut, reported once by verifyRun
-			r.rep.cancelCut = true
-			return
-		}
-		r.rep.problemf("%s: the full-text index cannot be verified: its private rebuild could not be set up: %q", FTSWordTable, err.Error())
-		return
+	r.localize(map[string][]ftsBucketKey{FTSWordTable: r.failing[0], FTSSubTable: r.failing[1]})
+	if complete && !r.dead && r.localizedAll() {
+		r.rep.FTSDocsChecked = int(r.ex.docs)
 	}
-	r.hook("after-open")
-	doneRebuild, addRebuilt := r.c.countedPhase("fts.rebuild", recordsTotal, "records")
-	rebuilt := r.rebuild(func(table string, rows int) {
-		addRebuilt(int64(rows))
-		if observe != nil {
-			observe(table, rows)
-		}
-	})
-	doneRebuild()
-	if !rebuilt {
-		return
-	}
-	if r.ex != nil && r.ex.complete {
-		r.rep.FTSDocsChecked = len(r.indexed) // the content comparison ran to its end (the records and the leaf pages agree on every document)
-	}
-	r.hook("after-rebuild")
-	doneCompare := r.c.phase("fts.compare")
-	for _, table := range FTSTables() {
-		if r.dead {
-			doneCompare()
-			return
-		}
-		r.compareTable(table)
-	}
-	doneCompare()
 }
 
 // indexTable runs the steps of the index pass on one table: the leaf pages and their digests, the totals
@@ -302,6 +285,7 @@ func (r *ftsVerify) indexTable(table string) {
 	// record is read
 	if err := r.indexPass(table); err != nil {
 		r.fail(table, err)
+		r.indexFailed = true
 		if r.dead {
 			return
 		}
@@ -381,6 +365,23 @@ func (r *ftsVerify) setup() error {
 			}
 		}
 	}
+	// the found postings of a round live in a second private database of the same run directory
+	if r.lc == nil {
+		r.lc = newFTSLocalState()
+	}
+	r.lc.loc = sql.OpenDB(&expectedConnector{cacheKiB: r.c.verifyFTSCacheKiB})
+	r.lc.loc.SetMaxOpenConns(1)
+	r.lc.loc.SetMaxIdleConns(1)
+	r.lc.loc.SetConnMaxLifetime(0)
+	r.lc.loc.SetConnMaxIdleTime(0)
+	for _, stmt := range []string{
+		`CREATE TABLE found (tbl INTEGER NOT NULL, term BLOB NOT NULL, doc INTEGER NOT NULL, age INTEGER NOT NULL, del INTEGER NOT NULL, col INTEGER NOT NULL, off INTEGER NOT NULL)`,
+		`CREATE INDEX found_k ON found (tbl, term, doc, age)`,
+	} {
+		if _, err := r.lc.loc.ExecContext(r.ctx, stmt); err != nil {
+			return fmt.Errorf("create the found postings: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -389,6 +390,9 @@ func (r *ftsVerify) setup() error {
 func (r *ftsVerify) cleanup() {
 	if r.exp != nil {
 		_ = r.exp.Close()
+	}
+	if r.lc != nil && r.lc.loc != nil {
+		_ = r.lc.loc.Close()
 	}
 	if r.tempSet {
 		if err := setTempStoreDirectory(""); err != nil {
@@ -498,73 +502,6 @@ func (r *ftsVerify) fail(table string, err error) {
 	r.add(table, "fts-unreadable", "%s: the index cannot be read: %q", table, clipText(err.Error(), 300))
 }
 
-// rebuild streams the records (one stream, the one the record scan uses) and writes the documents of
-// each chunk into the rebuilt index in a transaction of its own. It reports whether the rebuild is complete.
-func (r *ftsVerify) rebuild(observe verifyChunkObserver) bool {
-	sctx, cancel := context.WithCancelCause(r.ctx)
-	defer cancel(nil)
-	var (
-		docs    []FTSDoc
-		size    int
-		stepErr error
-	)
-	flush := func() {
-		if len(docs) == 0 || stepErr != nil {
-			return
-		}
-		stepErr = r.writeDocs(docs)
-		if stepErr != nil {
-			cancel(stepErr)
-			return
-		}
-		for _, d := range docs {
-			r.indexed = append(r.indexed, d.ID)
-		}
-		docs, size = docs[:0], 0
-	}
-	// The record problems this stream notices (storage classes, orphan times) were reported by the
-	// record scan; they are collected into a report of their own.
-	side := &problemSet{rep: &VerifyReport{Problems: []string{}, Notices: []string{}}, counts: map[string]int{}}
-	obs := func(_ string, rows int) {
-		if observe != nil {
-			observe("fts", rows)
-		}
-	}
-	ok := r.c.streamRecords(sctx, side, verifyChunkRows, obs, func(row RecordRow, _ recordRowMeta) {
-		if stepErr != nil {
-			return
-		}
-		if doc, has := NewFTSDoc(row.ID, row.Summary, row.Body); has {
-			docs = append(docs, doc)
-			size += len(doc.Summary) + len(doc.Body)
-			if len(docs) >= verifyChunkRows || size >= reindexChunkBytes {
-				flush()
-			}
-		}
-	})
-	flush()
-	if stepErr != nil {
-		r.fail(FTSWordTable, stepErr)
-		return false
-	}
-	incomplete := !ok
-	for _, p := range side.rep.Problems {
-		if strings.HasPrefix(p, "records holds ") || strings.HasPrefix(p, "records unreadable") {
-			incomplete = true
-		}
-	}
-	if incomplete && r.ctx.Err() != nil {
-		r.rep.cancelCut = true // the stream ended with the context; verifyRun reports that once
-		return false
-	}
-	if incomplete {
-		r.rep.problemf("%s: the records could not all be read to rebuild the index, so the index content is not verified: %q", FTSWordTable, clipText(strings.Join(side.rep.Problems, "; "), 400))
-		return false
-	}
-	slices.Sort(r.indexed) // already ascending (keyset order); sorted again so a binary search never depends on it
-	return true
-}
-
 func (r *ftsVerify) writeDocs(docs []FTSDoc) error {
 	tx, err := r.exp.BeginTx(r.ctx, nil)
 	if err != nil {
@@ -583,35 +520,6 @@ func (r *ftsVerify) writeDocs(docs []FTSDoc) error {
 func (r *ftsVerify) hasDoc(id int64) bool {
 	_, ok := slices.BinarySearch(r.indexed, id)
 	return ok
-}
-
-// compareTable is the interim comparison of one index with a rebuild by SQLite (removed by 14j and 14k, which
-// replace it with the exact recomputation and a per-batch localization). The vocab of the rebuild is compared
-// only for a table that has a failing bucket: it names the entries that differ. When no entry differs although
-// a bucket fails, the digest of the leaf pages disagrees with what a search sees, and with the records: that is
-// the tokenizer replica against SQLite, or a stale posting in a segment, and it is a PROBLEM (never silent, V15).
-func (r *ftsVerify) compareTable(table string) {
-	unreadable := false
-	if failing := r.failing[ftsTableIndex(table)]; len(failing) > 0 {
-		before := r.problems[table]
-		// done() runs before r.fail on purpose: the production phase hook only
-		// records the time, so ending the phase first cannot change what r.fail reports.
-		done := r.c.phase("fts.compare/" + table + "/vocab")
-		err := r.compareVocab(table)
-		done()
-		if err != nil {
-			r.fail(table, err)
-			if r.dead {
-				return
-			}
-			unreadable = true
-		}
-		if !unreadable && r.problems[table] == before {
-			r.add(table, "fts-digest", "%s: the postings stored in the leaf pages differ from what the records produce in %d audited batches (%s), though a search finds what a rebuild by SQLite holds: the tokenizer replica and SQLite disagree, or a segment holds a posting a search no longer sees",
-				table, len(failing), r.describeBuckets(failing))
-		}
-	}
-	r.hook("compared:" + table)
 }
 
 // cell is one value of a table together with its storage class.
@@ -781,76 +689,6 @@ func vocabEntryOf(tt string, term any, td string, doc any, tc string, col any, t
 }
 
 const vocabSelect = `SELECT typeof(term), term, typeof(doc), doc, typeof(col), col, typeof(offset), offset FROM `
-
-// compareVocab merges the vocab of the case's index with the vocab of the rebuild.
-func (r *ftsVerify) compareVocab(table string) error {
-	q := vocabSelect + ftsVocabName(table) //nolint:gosec // the table is one of the two FTS table constants
-	err := r.c.ReadTx(r.ctx, func(h ReadHandle) error {
-		fr, err := h.QueryContext(r.ctx, q)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = fr.Close() }()
-		er, err := r.exp.QueryContext(r.ctx, q)
-		if err != nil {
-			return expectedErr{err}
-		}
-		defer func() { _ = er.Close() }()
-		f := &vocabIter{
-			rows:  fr,
-			onBad: func(msg string) { r.add(table, "fts-unreadable", "%s: the index lists %s", table, msg) },
-			onDup: func(e ftsEntry) {
-				r.add(table, "fts-order", "%s: record %d: the index lists %s twice", table, e.doc, e)
-			},
-			onOrder: func(prev, cur ftsEntry) {
-				r.add(table, "fts-order", "%s: the index lists its entries out of order: record %d %s follows record %d %s, so its entries cannot be compared", table, cur.doc, cur, prev.doc, prev)
-			},
-		}
-		e := &vocabIter{rows: er, expected: true}
-		if err := f.next(); err != nil {
-			return err
-		}
-		if err := e.next(); err != nil {
-			return err
-		}
-		for f.has || e.has {
-			c := 0
-			switch {
-			case !f.has:
-				c = 1
-			case !e.has:
-				c = -1
-			default:
-				c = cmpEntry(f.cur, e.cur)
-			}
-			switch {
-			case c == 0:
-				if err := f.next(); err != nil {
-					return err
-				}
-				if err := e.next(); err != nil {
-					return err
-				}
-			case c < 0:
-				r.invented(table, f.cur)
-				if err := f.next(); err != nil {
-					return err
-				}
-			default:
-				r.addRecord(table, "fts-hidden", e.cur.doc,
-					"%s: record %d: the index lacks %s, which the text of the record holds (a search hit is hidden)", table, e.cur.doc, e.cur)
-				if err := e.next(); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	})
-	if errors.Is(err, errStop) {
-		return nil
-	}
-	return err
-}
 
 func (r *ftsVerify) invented(table string, e ftsEntry) {
 	if r.hasDoc(e.doc) {

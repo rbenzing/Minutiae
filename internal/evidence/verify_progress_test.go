@@ -92,8 +92,8 @@ func TestVerifyProgressCountersAtPhaseEnds(t *testing.T) {
 	if s := got["records.stream"]; !s.Counted || s.Unit != "records" || s.Done != 300 || s.Total != 300 {
 		t.Errorf("records.stream at its end = %+v, want records 300 of 300", s)
 	}
-	if s := got["fts.rebuild"]; !s.Counted || s.Unit != "records" || s.Done != 300 || s.Total != 300 {
-		t.Errorf("fts.rebuild at its end = %+v, want records 300 of 300", s)
+	if s, ok := got["fts.rebuild"]; ok {
+		t.Errorf("fts.rebuild ended on a clean case (5D-14k removed it): %+v", s)
 	}
 	if s, ok := got["records.integrity_check"]; !ok || s.Counted {
 		t.Errorf("records.integrity_check at its end = %+v (seen %v), want an uncounted phase", s, ok)

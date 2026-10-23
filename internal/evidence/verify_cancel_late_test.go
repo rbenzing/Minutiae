@@ -14,7 +14,7 @@ func TestVerifyCancelAfterEveryPhaseFinishedStaysClean(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	c.SetPhaseHook(func(name string, _ time.Duration) {
-		if name == "fts.compare" { // the last phase that reads with the context
+		if name == "fts.index" { // the last phase that reads with the context on a clean case
 			cancel()
 		}
 	})

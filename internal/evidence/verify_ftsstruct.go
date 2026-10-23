@@ -49,8 +49,8 @@ func decodeFTSStructure(b []byte) (map[int64]struct{}, error) {
 	return ids, nil
 }
 
-// checkUnreferenced is called once per FTS table from verifyFTS, inside the fts.compare phase and
-// inside the loop over FTSTables (before the phase ends and before the loop's early return). It
+// checkUnreferenced is called once per FTS table from indexTable, as the step fts.index/<table>/unreferenced of
+// the index pass. It
 // streams the data ids and the idx segment ids through one read transaction and holds nothing but
 // the structure's segment set.
 func (r *ftsVerify) checkUnreferenced(table string) {

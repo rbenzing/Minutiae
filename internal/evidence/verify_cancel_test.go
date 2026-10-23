@@ -91,7 +91,7 @@ func TestVerifyCancelAddsOnlyTheCancelledLine(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	rep, err := c.verifyRun(ctx, func(table string, _ int) {
-		if table == "fts" {
+		if table == "fts-data" {
 			cancel()
 		}
 	}, nil, nil)

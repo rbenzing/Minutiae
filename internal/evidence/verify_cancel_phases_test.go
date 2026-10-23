@@ -24,9 +24,7 @@ func TestVerifyCancelAtTheEndOfEveryPhase(t *testing.T) {
 		"records.batches",
 		"records.lifecycle",
 	}
-	phases = append(phases, ftsIndexPhases()...) // the index pass of P11, in run order (5D-14i)
-	phases = append(phases, "fts.rebuild")
-	phases = append(phases, "fts.compare")
+	phases = append(phases, ftsIndexPhases()...) // the index pass of P11, in run order (5D-14i); fts.index is last (5D-14k)
 	for _, phase := range phases {
 		t.Run(phase, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
@@ -46,7 +44,7 @@ func TestVerifyCancelAtTheEndOfEveryPhase(t *testing.T) {
 			if !seen {
 				t.Fatalf("phase %q never ran", phase)
 			}
-			if phase == "fts.compare" || phase == "fts.rebuild" { // nothing after it reads with the context on a clean case (5D-14j removed the reachability pass)
+			if phase == "fts.index" { // nothing after it reads with the context on a clean case: the localization runs only for a failing bucket (5D-14k)
 				if !rep.OK() {
 					t.Fatalf("a cancel after the last cancellable phase failed a clean verify: %q", rep.Problems)
 				}
@@ -66,7 +64,7 @@ func TestVerifyCancelAtFTSCompareWithAComposedCheck(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	c.SetPhaseHook(func(name string, _ time.Duration) {
-		if name == "fts.compare" {
+		if name == "fts.index" {
 			cancel()
 		}
 	})
@@ -77,6 +75,6 @@ func TestVerifyCancelAtFTSCompareWithAComposedCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !rep.CancelledOnly() {
-		t.Fatalf("a cancel at fts.compare with a composed check: problems %q, want only the cancelled line", rep.Problems)
+		t.Fatalf("a cancel at the end of fts.index with a composed check: problems %q, want only the cancelled line", rep.Problems)
 	}
 }

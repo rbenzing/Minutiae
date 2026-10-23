@@ -1,6 +1,9 @@
 package evidence
 
-import "time"
+import (
+	"database/sql"
+	"time"
+)
 
 // V1Statements exposes the schema v1 DDL to the external test package, which
 // may import internal/records/recordstest (an internal test cannot: import cycle).
@@ -82,4 +85,45 @@ func (c *Case) SetFTSBucketObserver(f func(FTSBucketReport)) {
 	c.verifyFTSInspect = func(r *ftsVerify) {
 		f(FTSBucketReport{Compared: r.bucketsCompared, Failing: [2]int{len(r.failing[0]), len(r.failing[1])}})
 	}
+}
+
+// SetFTSHook installs a test seam called at the named points of P11: "after-index" (the index pass is over),
+// "after-open" (the scratch area of the first localization round exists), "after-rebuild" (the records of a
+// localization round are rebuilt) and "compared:<table>" (a round's comparison of one table is over).
+func (c *Case) SetFTSHook(f func(point string)) {
+	c.verifyFTSHook = func(point string, _ *sql.DB) { f(point) }
+}
+
+// FTSLocalizeReport is what P11 concluded about localization.
+type FTSLocalizeReport struct {
+	Rebuilt int // buckets rebuilt with SQLite's tokenizer
+	Done    int // (table, bucket) pairs whose comparison ran
+}
+
+// SetFTSLocalizeObserver installs a test seam called once, when P11 is over.
+func (c *Case) SetFTSLocalizeObserver(f func(FTSLocalizeReport)) {
+	c.verifyFTSDone = func(r *ftsVerify) {
+		var rep FTSLocalizeReport
+		if r.lc != nil {
+			rep.Rebuilt = r.lc.rebuilt
+			rep.Done = len(r.lc.done[0]) + len(r.lc.done[1])
+		}
+		f(rep)
+	}
+}
+
+// SetFTSLocalizeLimits replaces the bounds of the localization (buckets, expected postings per round, found rows
+// per round) until the returned function is called; a zero keeps the default of that bound.
+func SetFTSLocalizeLimits(maxBuckets, roundPostings, foundCap int) (restore func()) {
+	ob, or, of := ftsLocalizeMaxBuckets, ftsLocalizeRoundPostings, ftsLocalizeFoundCap
+	if maxBuckets != 0 {
+		ftsLocalizeMaxBuckets = maxBuckets
+	}
+	if roundPostings != 0 {
+		ftsLocalizeRoundPostings = roundPostings
+	}
+	if foundCap != 0 {
+		ftsLocalizeFoundCap = foundCap
+	}
+	return func() { ftsLocalizeMaxBuckets, ftsLocalizeRoundPostings, ftsLocalizeFoundCap = ob, or, of }
 }
