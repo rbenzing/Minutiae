@@ -95,6 +95,7 @@ func buildFoldIndex(text string) *foldIndex {
 	fx := &foldIndex{units: make([]int, 0, len(text)/2+1), owner: make([]int32, 0, len(text))}
 	memo := map[string]string{}
 	lastBlank := false
+	lastUni := false // the last written rune is a CJK unigram letter (combining marks after it keep this)
 	for i := 0; i < len(text); {
 		start := i
 		_, size := utf8.DecodeRuneInString(text[i:])
@@ -108,12 +109,27 @@ func buildFoldIndex(text string) *foldIndex {
 		}
 		u := int32(len(fx.units))
 		fx.units = append(fx.units, start)
-		for _, r := range foldUnit(text[start:i], memo) {
+		folded := foldUnit(text[start:i], memo)
+		if first, _ := utf8.DecodeRuneInString(folded); lastUni && evidence.IsFTSUnigram(first) {
+			// NormalizeText separates two CJK letters (M11); the space belongs to this unit
+			cat.WriteByte(' ')
+			fx.owner = append(fx.owner, u)
+			lastBlank = false
+			lastUni = false
+		}
+		for _, r := range folded {
 			// leading blanks are trimmed and runs of blanks collapsed, as NormalizeText does
 			if r == ' ' && (cat.Len() == 0 || lastBlank) {
 				continue
 			}
 			lastBlank = r == ' '
+			switch {
+			case evidence.IsFTSUnigram(r):
+				lastUni = true
+			case lastUni && unicode.Is(unicode.M, r):
+			default:
+				lastUni = false
+			}
 			n, _ := cat.WriteRune(r)
 			for k := 0; k < n; k++ {
 				fx.owner = append(fx.owner, u)

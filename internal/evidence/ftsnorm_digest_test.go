@@ -8,7 +8,7 @@ import (
 // pinnedNormDigest is the digest of NormalizeText and FTSFoldDiacritics over the probe corpus. It
 // changes only when the behaviour of the normalization changes: then bump FTSPipelineVersion, revisit
 // the tests that pin the normalization and re-pin this constant (R63).
-const pinnedNormDigest = "8c99c9c2d190"
+const pinnedNormDigest = "86cd6b8e9f68"
 
 // TestNormDigestIsPinned: a patched or replaced x/text with the same version string changes what
 // NormalizeText returns for some probe, so the digest, and with it FTSNormVersion, changes (R63).
@@ -92,6 +92,28 @@ func TestNormProbeCorpusCoversTheRulesOfThePipeline(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("the probe corpus has no %s", want.name)
+		}
+	}
+}
+
+// TestNormProbeCorpusExercisesSegmentation: pipeline step 8 changes at least one probe, including a
+// squared katakana word, a letter with a combining mark and an iteration mark.
+func TestNormProbeCorpusExercisesSegmentation(t *testing.T) {
+	changed := map[rune]bool{}
+	for _, p := range normProbeCorpus() {
+		n := NormalizeText(p)
+		if segmentUnigrams(n) != n {
+			t.Errorf("NormalizeText(%q) = %q is not a fixed point of segmentUnigrams", p, n)
+		}
+		for _, r := range n {
+			if IsFTSUnigram(r) && strings.ContainsRune(n, ' ') {
+				changed[r] = true
+			}
+		}
+	}
+	for _, r := range []rune{0x6771, 0x30a2, 0x30d1, 0x3005} {
+		if !changed[r] {
+			t.Errorf("no probe holding U+%04X is segmented", r)
 		}
 	}
 }

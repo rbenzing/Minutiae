@@ -73,7 +73,7 @@ func TestNormalizeIsContextFree(t *testing.T) {
 	if testing.Short() {
 		contexts = contexts[:3]
 	} else {
-		contexts = contexts[:6]
+		contexts = append(contexts[:6:6], [2]string{"日", "本"}) // CJK letters: the segmentation step (full mode only)
 	}
 	bad := 0
 	sweepRunes(func(r rune) {

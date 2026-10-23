@@ -91,7 +91,7 @@ var normalizeTableCases = []struct {
 	{"NFD capital E-acute folds and composes", "CAFE\u0301", "caf\u00e9"},
 	{"fullwidth letters and digits", "\uff21\uff22\uff23\uff11\uff12\uff13", "abc123"},
 	{"fullwidth punctuation", "\uff21\uff01", "a!"},
-	{"half-width katakana", "\uff76\uff80\uff76\uff85", "\u30ab\u30bf\u30ab\u30ca"},
+	{"half-width katakana", "\uff76\uff80\uff76\uff85", "\u30ab \u30bf \u30ab \u30ca"},
 	{"half-width katakana with voiced mark composes", "\uff76\uff9e", "\u30ac"},
 	{"sharp s", "Stra\u00dfe", "strasse"},
 	{"capital sharp s", "STRA\u1e9eE", "strasse"},
@@ -119,8 +119,8 @@ var normalizeTableCases = []struct {
 	{"Arabic presentation form", "\ufe8d", "\u0627"},
 	{"U+FDFA expands to 18 characters", "\ufdfa", "\u0635\u0644\u0649 \u0627\u0644\u0644\u0647 \u0639\u0644\u064a\u0647 \u0648\u0633\u0644\u0645"},
 
-	// CJK and Hangul are unchanged (apart from NFKC)
-	{"CJK unchanged", "\u65e5\u672c\u8a9e\u306e\u30c6\u30ad\u30b9\u30c8", "\u65e5\u672c\u8a9e\u306e\u30c6\u30ad\u30b9\u30c8"},
+	// CJK letters are separated (pipeline step 8); Hangul is unchanged (apart from NFKC)
+	{"CJK letters are separated", "\u65e5\u672c\u8a9e\u306e\u30c6\u30ad\u30b9\u30c8", "\u65e5 \u672c \u8a9e \u306e \u30c6 \u30ad \u30b9 \u30c8"},
 	{"Hangul syllables unchanged", "\ud55c\uad6d\uc5b4", "\ud55c\uad6d\uc5b4"},
 	{"CJK compatibility ideograph maps to its unified form", "\uf900", "\u8c48"},
 	{"ideographic space between CJK", "\u65e5\u3000\u672c", "\u65e5 \u672c"},
@@ -346,7 +346,7 @@ func TestNormalizeLongCombiningRunIsFast(t *testing.T) {
 
 func TestFTSNormVersionShape(t *testing.T) {
 	v := FTSNormVersion()
-	re := regexp.MustCompile(`^fts3/unicode-[0-9]+\.[0-9]+\.[0-9]+/gounicode-[0-9]+\.[0-9]+\.[0-9]+/xtext-v[0-9]+\.[0-9]+\.[0-9]+/norm-[0-9a-f]{12}/sqlite-[0-9]+\.[0-9]+\.[0-9]+$`)
+	re := regexp.MustCompile(`^fts4/unicode-[0-9]+\.[0-9]+\.[0-9]+/gounicode-[0-9]+\.[0-9]+\.[0-9]+/xtext-v[0-9]+\.[0-9]+\.[0-9]+/norm-[0-9a-f]{12}/sqlite-[0-9]+\.[0-9]+\.[0-9]+$`)
 	if !re.MatchString(v) {
 		t.Fatalf("FTSNormVersion() = %q does not match %s", v, re)
 	}
@@ -362,8 +362,8 @@ func TestFTSNormVersionShape(t *testing.T) {
 	if !strings.Contains(v, "/gounicode-"+unicode.Version+"/") {
 		t.Errorf("FTSNormVersion() = %q does not contain the Go unicode version %q", v, unicode.Version)
 	}
-	if FTSPipelineVersion != 3 {
-		t.Errorf("FTSPipelineVersion = %d, want 3 (bump it by hand only with a change of NormalizeText)", FTSPipelineVersion)
+	if FTSPipelineVersion != 4 {
+		t.Errorf("FTSPipelineVersion = %d, want 4 (bump it by hand only with a change of NormalizeText)", FTSPipelineVersion)
 	}
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -510,6 +510,9 @@ func TestNormalizeKnownSilentMisses(t *testing.T) {
 		"i \u2764\ufe0f you",                               // 7: an emoji with a variation selector
 		"foo",                                              // 8: the word at the end of a field
 		"foo, bar",                                         // 9: the word before punctuation
+		"東。京",                                              // 10: two CJK letters with an ideographic full stop between
+		"東,京",                                              // 11: likewise with a comma
+		"東\n京",                                             // 12: likewise with a newline
 	)
 	type probe struct {
 		name  string
@@ -522,11 +525,13 @@ func TestNormalizeKnownSilentMisses(t *testing.T) {
 		{"emoji by word", x.word("\U0001f600"), nil, "symbols (category So) are not token characters in unicode61", "word"},
 		{"word beside an emoji", x.word("smile"), []int64{1}, "the words around an emoji are found", "word"},
 		{"emoji inside a longer substring", x.sub("e \U0001f600 s"), []int64{1}, "the trigram index holds symbols", "sub"},
-		{"CJK sub-run by word misses", x.word("\u65e5\u672c"), nil, "unicode61 makes one token of a CJK run", "word"},
-		{"CJK whole run by word", x.word("\u65e5\u672c\u8a9e\u306e\u30c6\u30ad\u30b9\u30c8"), []int64{2}, "the whole run is the token", "word"},
+		{"CJK sub-run by word is found", x.word("日本"), []int64{2}, "every CJK letter is a token, so the word is the phrase of its letters", "word"},
+		{"CJK whole run by word", x.word("\u65e5\u672c\u8a9e\u306e\u30c6\u30ad\u30b9\u30c8"), []int64{2}, "the phrase of all its letters", "word"},
 		{"CJK sub-run by prefix", probeMatch(t, x.db, "records_fts", probeQuote(NormalizeText("\u65e5\u672c"))+" *"), []int64{2}, "a prefix finds the start of a run", "word"},
 		{"CJK sub-run by substring", x.sub("\u672c\u8a9e\u306e"), []int64{2}, "the trigram index finds any 3-character piece", "sub"},
-		{"CJK piece shorter than a trigram", x.sub("\u672c\u8a9e"), nil, "a 2-character substring is below the trigram minimum", "sub"},
+		{"a 2-letter CJK piece is 3 characters after segmentation", x.sub("本語"), []int64{2}, "the segmentation space is a trigram character", "sub"},
+		{"CJK word across a full stop by word (separator conflation)", x.word("東京"), []int64{10, 11, 12}, "a non-token separator leaves the letters adjacent (M23)", "word"},
+		{"CJK word across a full stop by substring", x.sub("東京"), []int64{12}, "the trigram index keeps punctuation; a newline became a space (M23)", "sub"},
 		{"ZWSP separates words: the first word", x.word("foo"), []int64{3, 8, 9}, "U+200B maps to a space (R32), so the two words stay two tokens", "word"},
 		{"ZWSP separates words: the second word", x.word("bar"), []int64{3, 9}, "likewise", "word"},
 		{"ZWSP separates words: the phrase", x.word("foo bar"), []int64{3, 9}, "and the phrase with a space finds them", "word"},
