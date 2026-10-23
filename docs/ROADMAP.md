@@ -46,7 +46,7 @@ sub-project's scope.
 
 | Plan | Area | Sub-project | Status |
 |---|---|---|---|
-| LX-0 | Stale docs | — (docs only) | Not started |
+| LX-0 | Stale docs | — (docs only) | Done |
 | LX-1 | Acquisition hardening (`internal/ios`, `internal/android`) | 1 | Done |
 | LX-2 | APFS and HFS+ gaps, shared decmpfs | 2 | Done |
 | LX-3 | EWF and image commands | 2 | Done |
