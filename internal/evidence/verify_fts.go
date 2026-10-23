@@ -199,7 +199,7 @@ func (c *Case) newFTSVerify(ctx context.Context, ps *problemSet, sorted []audite
 func (c *Case) startFTS(ctx context.Context, ps *problemSet, sorted []auditedBatch, observe verifyChunkObserver) *ftsVerify {
 	r := c.newFTSVerify(ctx, ps, sorted, observe)
 	done := c.phase("fts.selftest")
-	ref, err := ftsSelfTest(ctx)
+	ref, err := ftsSelfTestCached(ctx)
 	done()
 	enabled := true
 	switch {
