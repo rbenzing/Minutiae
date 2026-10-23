@@ -138,3 +138,32 @@ func TestVerifyCleanOnSegmentedCJK(t *testing.T) {
 		t.Fatalf("FTSDocsChecked = %d, want the %d indexable records", rep.FTSDocsChecked, indexable)
 	}
 }
+
+// TestCJKPrefixCountsTheRun (M10, L86): a star after a CJK letter counts the run of CJK letters
+// before it, so `東京*` is accepted and `京*` alone is not.
+func TestCJKPrefixCountsTheRun(t *testing.T) {
+	q, err := records.CompileQuery(cp(0x6771, 0x4eac, '*'), records.TextOptions{})
+	if err != nil {
+		t.Fatalf("a two-letter CJK prefix: %v", err)
+	}
+	if want := `("` + cp(0x6771, ' ', 0x4eac) + `" *)`; q.Match() != want {
+		t.Errorf("Match() = %q, want %q", q.Match(), want)
+	}
+	if _, err := records.CompileQuery(cp(0x4eac, '*'), records.TextOptions{}); !errors.Is(err, records.ErrInvalidQuery) {
+		t.Errorf("a one-letter CJK prefix: %v, want ErrInvalidQuery", err)
+	}
+	if _, err := records.CompileQuery("ab"+cp(0x4eac, '*'), records.TextOptions{}); err != nil {
+		t.Errorf("ab + one CJK letter and a star: %v", err)
+	}
+	if _, err := records.CompileQuery(cp(0x6771, 0x4eac, 0x90fd, '*'), records.TextOptions{}); err != nil {
+		t.Errorf("a three-letter CJK prefix: %v", err)
+	}
+	_, r := cjkCase(t,
+		cp(0x6771, 0x4eac, 0x90fd, 0x5e81), // 1
+		cp(0x6771, 0x4eac)+"tower",         // 2
+		cp(0x4eac, 0x90fd),                 // 3
+	)
+	if got := searchIDs(t, r, cp(0x6771, 0x4eac, '*'), records.TextOptions{}); !slices.Equal(got, []int64{1, 2}) {
+		t.Errorf("search of the prefix: %v, want [1 2]", got)
+	}
+}

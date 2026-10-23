@@ -407,7 +407,7 @@ func compileGrammar(input string) (string, []Needle, error) {
 		if err != nil {
 			return "", nil, err
 		}
-		if kind == NeedlePrefix && countWordChars(lastToken(n)) < MinPrefixChars {
+		if kind == NeedlePrefix && prefixChars(n) < MinPrefixChars {
 			return "", nil, invalidQuery("a prefix needs at least %d letters or digits before its star", MinPrefixChars)
 		}
 		if err := add(item{kind: kind, text: n, neg: neg}); err != nil {
@@ -494,4 +494,30 @@ func (q *TextQuery) reexpands() bool {
 		}
 	}
 	return false
+}
+
+// prefixChars is the number of letters and digits a prefix star counts on the normalized term n.
+// When the token the star attaches to is one CJK letter (the index holds each as a token of its own),
+// it is the run of CJK letters before the star, one space apart, back to the first other rune (M10);
+// otherwise it is the letters and digits of that token.
+func prefixChars(n string) int {
+	t := lastToken(n)
+	if r, size := utf8.DecodeRuneInString(t); size != len(t) || !evidence.IsFTSUnigram(r) {
+		return countWordChars(t)
+	}
+	f := []rune(evidence.FTSFoldDiacritics(n))
+	count, i := 0, len(f)
+	for i > 0 {
+		r := f[i-1]
+		switch {
+		case evidence.IsFTSUnigram(r):
+			count++
+		case unicode.Is(unicode.M, r):
+		case r == ' ' && i > 1 && evidence.IsFTSUnigram(f[i-2]):
+		default:
+			return count
+		}
+		i--
+	}
+	return count
 }
