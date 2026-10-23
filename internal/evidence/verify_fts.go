@@ -254,13 +254,16 @@ func (c *Case) verifyFTS(r *ftsVerify) {
 	}
 	// the content comparison ran to its end only when the expected side is complete, every table was read, no
 	// segment failed to decode and every failing bucket was localized (D153)
-	complete := r.ex != nil && r.ex.complete && !r.dead && !r.indexFailed && r.segFailed == [2]int{}
 	doneIndex()
 	r.hook("after-index")
 	if c.verifyFTSInspect != nil {
 		c.verifyFTSInspect(r)
 	}
+	complete := r.ex != nil && r.ex.complete && !r.dead && !r.indexFailed && r.segFailed == [2]int{}
 	if r.dead {
+		// the pass ended early (the context, a lost scratch database): the buckets already known to fail are
+		// still named, so a cancel never turns a finding into a clean cut (D162)
+		r.reportKnownUnlocalized()
 		return
 	}
 	r.localize(map[string][]ftsBucketKey{FTSWordTable: r.failing[0], FTSSubTable: r.failing[1]})

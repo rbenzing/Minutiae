@@ -368,6 +368,9 @@ func TestVerifyFTSExpectedIndexLostIsAProblem(t *testing.T) {
 	if r.OK() || !containsSubstr(r.Problems, "expected index lost") {
 		t.Fatalf("verify did not report the lost expected index: problems %q", r.Problems)
 	}
+	if !containsSubstr(r.Problems, "were not localized (the index could not be read again)") {
+		t.Fatalf("the unlocalized bucket is silent or has the wrong reason: %q", r.Problems)
+	}
 	// no comparison ran against an empty rebuild
 	if containsSubstr(r.Problems, "a search hit is invented") || containsSubstr(r.Problems, "a search hit is hidden") {
 		t.Fatalf("hits were reported against a lost rebuild: %q", ftsProblems(r))

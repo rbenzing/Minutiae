@@ -23,9 +23,7 @@ type VerifyReport struct {
 	RecordsChecked       int `json:"records_checked"`
 	RecordBatchesChecked int `json:"record_batches_checked"`
 	RecordRunsChecked    int `json:"record_runs_checked"`
-	// FTSDocsChecked is the number of documents of the word index the full-text check (P11)
-	// compared with a rebuild (0 for a case older than schema v3, and when the index is not
-	// current: its content is then not verified, see Notices).
+	// FTSDocsChecked is the number of documents of the word index for which the full-text check (P11) ran its comparison to the end (the expected side complete, every table read, no segment that fails to decode, every failing bucket localized). It does not mean they passed: the problems say what differs.
 	FTSDocsChecked int `json:"fts_docs_checked"`
 	// RecoveredArtifacts counts the artifacts of the five recovered kinds (set by the built-in
 	// check); RecoveredReproduced those a composed check reproduced byte for byte from the image.

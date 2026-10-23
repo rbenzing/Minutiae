@@ -147,6 +147,7 @@ const (
 // the reasons a failing bucket is not localized (the text of the closing line)
 const (
 	ftsReasonCut     = "the verification ended before they were rebuilt"
+	ftsReasonReread  = "the index could not be read again"
 	ftsReasonSegment = "a segment of this index is not a valid leaf, so what the index holds cannot be listed"
 	ftsReasonOverrun = "the ids of every block past the first unaudited ones are one bucket that cannot be rebuilt"
 )
@@ -199,8 +200,8 @@ func (r *ftsVerify) localizeRounds(buckets []ftsLocBucket, add func(int64)) {
 					lc.done[ti][b.key] = true
 				case roundCapped:
 					lc.reason[ti][b.key] = fmt.Sprintf("the batches hold more index rows than the cap of %d rows per round", ftsLocalizeFoundCap)
-				default:
-					lc.reason[ti][b.key] = ftsReasonCut
+				case roundCut:
+					lc.reason[ti][b.key] = r.cutReason()
 				}
 			}
 		}
@@ -220,8 +221,8 @@ func (r *ftsVerify) localizeRounds(buckets []ftsLocBucket, add func(int64)) {
 				lc.reason[ti][b.key] = ftsReasonOverrun
 			case skipped[ti]:
 				lc.reason[ti][b.key] = ftsReasonSegment
-			case r.dead || r.ctx.Err() != nil:
-				lc.reason[ti][b.key] = ftsReasonCut
+			case r.dead:
+				lc.reason[ti][b.key] = r.cutReason()
 			case full:
 				lc.reason[ti][b.key] = fmt.Sprintf("every kind of difference already lists its %d items", verifyMaxPerKind)
 			default:
@@ -229,6 +230,35 @@ func (r *ftsVerify) localizeRounds(buckets []ftsLocBucket, add func(int64)) {
 			}
 		}
 	}
+}
+
+// cutReason says why a round stopped: the end of the verify context, or a read error of the case or of a scratch
+// database (D166).
+func (r *ftsVerify) cutReason() string {
+	if r.ctx.Err() != nil {
+		return ftsReasonCut
+	}
+	return ftsReasonReread
+}
+
+// reportKnownUnlocalized names the failing buckets the index pass knew when it ended early (D162): none of them
+// was localized, and a finding is never dropped because the verify was cut.
+func (r *ftsVerify) reportKnownUnlocalized() {
+	buckets := r.localBuckets(map[string][]ftsBucketKey{FTSWordTable: r.failing[0], FTSSubTable: r.failing[1]})
+	if len(buckets) == 0 {
+		return
+	}
+	if r.lc == nil {
+		r.lc = newFTSLocalState()
+	}
+	for _, b := range buckets {
+		for ti := range b.fails {
+			if b.fails[ti] {
+				r.lc.reason[ti][b.key] = r.cutReason()
+			}
+		}
+	}
+	r.reportNotLocalized(buckets)
 }
 
 // bucketRange is the id range that holds every record of a bucket (an outside block shares its range with the
@@ -661,11 +691,14 @@ func (r *ftsVerify) reportNotLocalized(buckets []ftsLocBucket) {
 	lc := r.lc
 	for ti, table := range FTSTables() {
 		var names, reasons []string
+		count := 0
 		for _, b := range buckets {
 			if !b.fails[ti] || lc.done[ti][b.key] {
 				continue
 			}
-			names = append(names, r.bucketName(b.key))
+			if count++; count <= verifyMaxPerKind {
+				names = append(names, r.bucketName(b.key))
+			}
 			why := lc.reason[ti][b.key]
 			if why == "" {
 				why = ftsReasonCut
@@ -674,15 +707,15 @@ func (r *ftsVerify) reportNotLocalized(buckets []ftsLocBucket) {
 				reasons = append(reasons, why)
 			}
 		}
-		if len(names) == 0 {
+		if count == 0 {
 			continue
 		}
 		shown := names
-		if len(shown) > verifyMaxPerKind {
-			shown = append(slices.Clone(names[:verifyMaxPerKind]), fmt.Sprintf("and %d more", len(names)-verifyMaxPerKind))
+		if count > verifyMaxPerKind {
+			shown = append(slices.Clone(names), fmt.Sprintf("and %d more", count-verifyMaxPerKind))
 		}
 		r.add(table, "fts-localize", "%s: %d batches whose index postings differ from their records were not localized (%s): %s",
-			table, len(names), strings.Join(reasons, "; "), strings.Join(shown, ", "))
+			table, count, strings.Join(reasons, "; "), strings.Join(shown, ", "))
 	}
 }
 

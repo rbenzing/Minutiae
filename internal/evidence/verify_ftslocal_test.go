@@ -269,3 +269,83 @@ func TestVerifyCancelDuringTheRebuildStreamOfALocalizationRound(t *testing.T) {
 		t.Errorf("the scratch area is still there: %v", err)
 	}
 }
+
+// TestVerifyCancelDuringTheIndexPassKeepsTheKnownFailingBuckets (D162): table 0 is tampered without a delete marker,
+// so its failing bucket is known only from the digests. A cancel at the first chunk of table 1's pages ends the pass;
+// the bucket is still named as not localized, so the report is not a bare cancel (the CLI exits 4, not 1).
+func TestVerifyCancelDuringTheIndexPassKeepsTheKnownFailingBuckets(t *testing.T) {
+	c := indexedTextCase(t, 300)
+	if _, err := c.store.db.Exec(`INSERT INTO records_fts(rowid, summary, body) VALUES (7, 'zzinvented', 'zzinventedbody')`); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	chunks := 0
+	rep, err := c.verifyRun(ctx, func(table string, _ int) {
+		if table == "fts-data" {
+			if chunks++; chunks == 2 { // the first chunk is table 0's last, the second is table 1's first
+				cancel()
+			}
+		}
+	}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(rep.Problems, verifyCancelled) {
+		t.Fatalf("no cancelled line in %q", rep.Problems)
+	}
+	if !containsSubstr(rep.Problems, "records_fts: 1 batches whose index postings differ from their records were not localized (the verification ended before they were rebuilt)") {
+		t.Fatalf("the known failing bucket is not named: %q", ftsProblems(rep))
+	}
+	if rep.CancelledOnly() {
+		t.Fatal("a finding was masked by the cancel: the report is only a cancel")
+	}
+}
+
+// TestVerifyFTSIncompleteRecordStreamChecksNoDocument (D163): when the expected side did not see the whole record
+// stream (without the verify being dead), no document is counted as checked.
+func TestVerifyFTSIncompleteRecordStreamChecksNoDocument(t *testing.T) {
+	c := indexedTextCase(t, 50)
+	c.verifyFTSInspect = func(r *ftsVerify) { r.ex.complete = false }
+	rep := mustVerify(t, c)
+	if rep.FTSDocsChecked != 0 {
+		t.Fatalf("FTSDocsChecked = %d for an incomplete record stream", rep.FTSDocsChecked)
+	}
+}
+
+// TestVerifyLocalizationNamesAtMost50BatchesAndCountsTheRest (D165): the closing line lists 50 names and counts all.
+func TestVerifyLocalizationNamesAtMost50BatchesAndCountsTheRest(t *testing.T) {
+	c, rec := caseWithArtifact(t)
+	var ids []int64
+	for b := range int64(60) {
+		ids = append(ids, b<<16+1)
+	}
+	insertTextRecordsAt(t, c, rec.ID, ids, ftsText)
+	if _, err := c.ReindexText(t.Context(), ReindexOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.store.db.Exec(`INSERT INTO records_fts(records_fts, rank) VALUES ('automerge', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	defer func(old int) { ftsLocalizeMaxBuckets = old }(ftsLocalizeMaxBuckets)
+	ftsLocalizeMaxBuckets = 1
+	for _, id := range ids {
+		s, b := ftsText(int(id))
+		if _, err := c.store.db.Exec(`INSERT INTO records_fts(records_fts, rowid, summary, body) VALUES ('delete', ?, ?, ?)`, id, NormalizeText(s), NormalizeText(b)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rep := mustVerify(t, c)
+	var line string
+	for _, p := range rep.Problems {
+		if strings.HasPrefix(p, "records_fts: 59 batches whose index postings differ from their records were not localized") {
+			line = p
+		}
+	}
+	if line == "" {
+		t.Fatalf("no line for 59 unlocalized batches in %q", ftsProblems(rep))
+	}
+	if n := strings.Count(line, "outside every audited batch"); n != 50 || !strings.Contains(line, "and 9 more") {
+		t.Fatalf("%d names, want 50 and \"and 9 more\": %s", n, line)
+	}
+}
