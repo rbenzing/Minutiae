@@ -874,7 +874,26 @@ func (st *scaleState) reindex() {
 func (st *scaleState) tamper64() {
 	t := st.t
 	batches := envInt(t, "MINUTIAE_SCALE_TAMPER_BATCHES", 64) // 64 is the localization bound; more shows the not-localized line
+	entries, err := st.c.ReadAudit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	audited := int64(0)
+	for _, e := range entries {
+		if e.Action == evidence.ActionBatch {
+			audited++
+		}
+	}
+	if audited < 1 {
+		t.Fatalf("tamper64: the case has no audited batch (%d audit entries)", len(entries))
+	}
+	if batches < 1 || batches > audited {
+		t.Fatalf("tamper64: MINUTIAE_SCALE_TAMPER_BATCHES=%d, want 1..%d (the audited batches of the case)", batches, audited)
+	}
 	step := st.total / batches
+	if size := (st.total + audited - 1) / audited; step < size { // one altered record per batch needs a step of at least a batch
+		t.Fatalf("tamper64: %d records apart is less than the batch size %d (%d records in %d audited batches)", step, size, st.total, audited)
+	}
 	var ids []int64
 	for k := int64(0); k < batches; k++ {
 		ids = append(ids, k*step+step/2+1)
