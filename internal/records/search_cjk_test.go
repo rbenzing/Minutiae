@@ -112,6 +112,7 @@ func TestOldPipelineIndexIsNotCurrentAfterTheBump(t *testing.T) {
 
 // TestVerifyCleanOnSegmentedCJK (Review Focus 4): the segmented text, mixed with Latin and with a
 // combining mark after kana, is what the index holds and what P11 verify recomputes: no problem.
+// It checks that the index and P11 agree; it is not a segmentation oracle (TestSearchFindsCJKWordsInsideARun is).
 func TestVerifyCleanOnSegmentedCJK(t *testing.T) {
 	c, art := setup(t)
 	texts := []string{
@@ -165,5 +166,16 @@ func TestCJKPrefixCountsTheRun(t *testing.T) {
 	)
 	if got := searchIDs(t, r, cp(0x6771, 0x4eac, '*'), records.TextOptions{}); !slices.Equal(got, []int64{1, 2}) {
 		t.Errorf("search of the prefix: %v, want [1 2]", got)
+	}
+}
+
+// TestCJKPrefixStepsOverMarks (LX6-T5-1): a combining mark kept after a CJK letter does not break
+// the run, so U+20DD between two letters still counts both, and a lone marked letter is refused.
+func TestCJKPrefixStepsOverMarks(t *testing.T) {
+	if _, err := records.CompileQuery(cp(0x6771, 0x20dd, 0x4eac, '*'), records.TextOptions{}); err != nil {
+		t.Errorf("two CJK letters with a mark between them: %v", err)
+	}
+	if _, err := records.CompileQuery(cp(0x4eac, 0x20dd, '*'), records.TextOptions{}); !errors.Is(err, records.ErrInvalidQuery) {
+		t.Errorf("one marked CJK letter and a star: %v, want ErrInvalidQuery", err)
 	}
 }

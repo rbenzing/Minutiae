@@ -513,11 +513,21 @@ func prefixChars(n string) int {
 		case evidence.IsFTSUnigram(r):
 			count++
 		case unicode.Is(unicode.M, r):
-		case r == ' ' && i > 1 && evidence.IsFTSUnigram(f[i-2]):
+		case r == ' ' && unigramBeforeMarks(f, i-1):
 		default:
 			return count
 		}
 		i--
 	}
 	return count
+}
+
+// unigramBeforeMarks reports whether the rune before f[i], with any combining marks that belong to it
+// stepped back over, is a CJK letter.
+func unigramBeforeMarks(f []rune, i int) bool {
+	i--
+	for i >= 0 && unicode.Is(unicode.M, f[i]) {
+		i--
+	}
+	return i >= 0 && evidence.IsFTSUnigram(f[i])
 }
