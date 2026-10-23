@@ -64,7 +64,7 @@ fit the machine, the decision (ruling D50) is to move the scratch space to `<cas
 (full-text temporary files).
 
 ## Machine
-The Task 14m runs (`verify-2m`, `verify-10m`, `search-stats-10m`) ran on an idle machine: no builder or check ran beside them (the "Background load" paragraph below describes the baseline run only).
+The Task 14m runs (`verify-2m`, `verify-10m`, `search-stats-10m`) and the Task 15d runs (`verify-2m-parallel`, `verify-10m-parallel`) ran on an idle machine: no builder or check ran beside them (the "Background load" paragraph below describes the baseline run only).
 
 Baseline (commit 2724e52): Intel i7-1265U (10 cores, 12 threads), 15.4 GB RAM, NVMe SK hynix PC801 512 GB, Windows 11 Pro, go1.26.8. The spec's reference machine is 8 cores, NVMe, 16 GiB; this one is close in size.
 
@@ -368,6 +368,35 @@ Background load: this is the user's working laptop, not an idle machine. The use
       }
     },
     {
+      "commit": "542e7af",
+      "label": "verify-2m-parallel",
+      "machine": "Intel i7-1265U 10 cores/12 threads, 15.4 GB RAM, NVMe SK hynix PC801 512GB, Windows 11 Pro, go1.26.8",
+      "records": 2000000,
+      "values": {
+        "db_ratio": 3.899720581543355,
+        "ingest_rate": 2206.5084526349906,
+        "ingest_s": 906.4093988,
+        "ostemp_added_ingest": 0,
+        "ostemp_added_verify": 0,
+        "peak_rss_ingest_bytes": 551833600,
+        "peak_rss_verify_bytes": 119291904,
+        "verify_rate": 4765.8584011573585,
+        "verify_s": 419.6515783
+      }
+    },
+    {
+      "commit": "542e7af",
+      "label": "verify-10m-parallel",
+      "machine": "Intel i7-1265U 10 cores/12 threads, 15.4 GB RAM, NVMe SK hynix PC801 512GB, Windows 11 Pro, go1.26.8",
+      "records": 10000000,
+      "values": {
+        "ostemp_added_verify": 0,
+        "peak_rss_verify_bytes": 202805248,
+        "verify_rate": 3231.639268602733,
+        "verify_s": 3094.40478
+      }
+    },
+    {
       "commit": "d16cba3",
       "label": "search-stats-10m",
       "machine": "Intel i7-1265U 10 cores/12 threads, 15.4 GB RAM, NVMe SK hynix PC801 512GB, Windows 11 Pro, go1.26.8",
@@ -606,6 +635,43 @@ In the `verify-2m` record the `tamper70.*` keys are the 70-batch run: the harnes
 
 Not measured at 10M: copy, supersede, superqueries, tamper and the localization (decision of 2026-10-16 and ruling C6: the 10M case is read-only). Tamper detection and localization are proven at 2M above and at 301,000 records by the Task 4 smoke.
 
+### Verify after the parallel redesign (`verify-2m-parallel` and `verify-10m-parallel`, 5D Task 15d)
+The code is that of 542e7af, which holds Task 15a (`checkUnreferenced` linear), 15b (the per-row work of the record stream on up to 8 workers) and 15c (`records.integrity_check` on its own read-only pool beside the stream and the index pass, the two full-text tables decoded together). Same machine as Task 14m, idle (no builder or check ran beside the runs; `check.sh` passed before the first run and had finished), every run alone through `heavy.sh`, `go test -v`, phases as separate runs, `GOMAXPROCS` at its default. `verify-2m-parallel` is a fresh 2,000,000-record case ingested for this task; `verify-10m-parallel` is the 10,000,000-record clean case of the baseline run, opened read-only apart from audit lines. Seconds are the `verify_phases_s` of the run. Phases overlap now, so the phase times below do not add up to `verify_s`; the wall time is `verify_s`, and the harness sums only the top-level phases that do not overlap plus the `records.overlap` span (D183). The 14m figures are the "before" column: they were measured on d16cba3, before Tasks 15a to 15c, so the difference is the effect of all three; the three were not separated, and a serial run of the new code (`SetVerifyConcurrency(false)`, one worker) was not made because that seam is a test-only export of `internal/evidence` that the scale harness in `internal/records` cannot reach.
+
+| Run | Records | `verify_s` | `verify_rate` | Peak RSS | `ostemp_added_verify` | Against 3,700 records/s |
+|---|---:|---:|---:|---:|---:|---|
+| `verify-2m` (14m, d16cba3) | 2,000,000 | 681.41 s | 2,935.1 records/s | 107 MB | 0 | miss (79.3%) |
+| `verify-2m-parallel` | 2,000,000 | 419.65 s | 4,765.9 records/s | 119 MB | 0 | pass (128.8%) |
+| `verify-10m` (14m, d16cba3) | 10,000,000 | 4,632.90 s | 2,158.5 records/s | 172 MB | 0 | miss (58.3%) |
+| `verify-10m-parallel` | 10,000,000 | 3,094.40 s | 3,231.6 records/s | 203 MB | 0 | miss (87.3%) |
+
+The speed-up on the same machine is 1.62 times at 2M (681.41 to 419.65 s) and 1.50 times at 10M (4,632.90 to 3,094.40 s). At 10M the target allows 2,702.7 s, so the verify is 391.7 s over the budget.
+
+| Phase (seconds) | 2M before | 2M parallel | 10M before | 10M parallel |
+|---|---:|---:|---:|---:|
+| `audit` | 0.06 | 0.06 | 0.16 | 0.15 |
+| `artifacts` (re-hash) | 0.19 | 0.14 | 1.19 | 1.23 |
+| `fts.selftest` | 0.32 | 0.35 | 0.31 | 0.35 |
+| `records.integrity_check` (P10) | 374.70 | 419.41 | 2,554.86 | 3,093.00 |
+| `records.stream` | 174.20 | 117.41 | 894.04 | 568.65 |
+| &nbsp;&nbsp;`records.stream/fts.expected` | 142.80 | 79.51 | 722.73 | 356.53 |
+| `fts.index` | 131.85 | 83.87 | 1,182.02 | 821.34 |
+| &nbsp;&nbsp;`records_fts/decode` | 10.32 | 12.47 | 72.63 | 85.53 |
+| &nbsp;&nbsp;`records_fts_sub/decode` | 117.74 | 83.85 | 679.20 | 821.27 |
+| &nbsp;&nbsp;`records_fts_sub/unreferenced` | 3.39 | 0.01 | 428.21 | 0.07 |
+| `records.batches` + `records.lifecycle` + `records.schema` | 0.04 | 0.04 | 0.20 | 0.22 |
+| `records.overlap` (span, wall time) | not recorded | 419.41 | not recorded | 3,093.00 |
+| `other` | 0.05 | 0.04 | 0.12 | 0.01 |
+| `verify_s` (wall) | 681.41 | 419.65 | 4,632.90 | 3,094.40 |
+
+"Before" is serial, so its phase times add up to `verify_s`; in the parallel columns the sum of `records.stream` and `fts.index` is 201.28 s at 2M and 1,389.99 s at 10M, and both run beside P10. Measured at 10M: the `records.overlap` span (3,093.00 s) equals P10's own time to the printed digits, and `verify_s` is that span plus 1.40 s for `audit`, `artifacts`, `fts.selftest` and the rest. So the verify time is P10's time, and the parallel work (stream and index, 1,389.99 s in sequence) is fully hidden behind it. The index no longer carries a quadratic step: `records_fts_sub/unreferenced` is 0.07 s at 10M (428.21 s before) and 0.01 s at 2M (3.39 s).
+
+What kept the target from being met at 10M: P10 took 3,093.00 s beside the other work against 2,554.86 s alone in the 14m run (538.1 s, 21.1% longer; at 2M 419.41 against 374.70 s, 11.9% longer). The cause of that slowdown was not isolated (a serial run of the new code was not made, and the 14m figure is of the older code; contention for the disk and the CPU, and the three extra connections' page caches, are candidates, not findings). Even with the other work free, the parallel P10 time alone is 3,093.00 s, 390.3 s over the budget; it would fit only if P10 ran at its 14m speed (2,554.86 s). The two decode phases of the full-text tables also ran longer beside P10 (`records_fts_sub/decode` 821.27 against 679.20 s), which does not matter for the wall time while P10 is the longest.
+
+The conditions of a clean run held. 10M: `artifacts.db` is unchanged in size (40,547,237,888 bytes) and modification time (2026-10-16 01:31:25); the audit log went from 2,051 to 2,053 lines (`case.open`, `verify.run`); `<case>/tmp` pre-existed as an empty directory (modification time 2026-10-16 08:27, unchanged), so no scratch area was created; the case directory after the run holds `artifacts`, `artifacts.db`, `audit.jsonl`, `case.json`, `case.lock`, `manifest.jsonl` and `tmp` only, with no `-wal`, `-shm` or `-journal` file (a listing after the run; during the run the 500 ms sampler saw no file under `<case>/tmp`, `verify_tmp_bytes` and `verify_scratch_bytes` stay "not measured"). 2M: the case directory after the verify holds no `tmp` directory and no `-wal`, `-shm` or `-journal` file. `ostemp_added_verify` is 0 in both. The ingest of the fresh 2M case (the step before `verify-2m-parallel`) took 906.41 s, 2,206.5 records/s, `db_ratio` 3.8997, peak RSS 552 MB, `ostemp_added_ingest` 0.
+
+Result against the target: `verify_rate` at 10,000,000 records is 3,231.6 records/s against >= 3,700 (A10): a miss, at 87.3% of the target. The 2M run passes (4,765.9 records/s), but the decision reads the 10M run. The target was not changed and no check was weakened.
+
 ### P11 spike (5D Task 14f)
 Throwaway spike of the P11 redesign (rulings C1, C5, C6). The code is not committed (it lived in `internal/evidence/p11spike*_test.go` behind the `p11spike` build tag and was deleted); it ran on the tree of 815d057. The machine is the one in "Machine" above (Intel i7-1265U 10 cores/12 threads, 15.4 GB RAM, NVMe SK hynix PC801 512GB, Windows 11 Pro, go1.26.8), idle, through `heavy.sh`, on a fresh 2,000,000-record case ingested for this task (956.4 s). The spike is single-threaded.
 
@@ -637,13 +703,14 @@ What was measured, as wall seconds each:
 Verdict (mechanical rule of the plan, go bar P11 at 2M of at most 443 s): **GO**. The slower run is 283.52 s, ratio 15.6 against the required 10; the differential has 0 differences; all 800 buckets are equal on the clean case.
 
 ## Decisions
-One line per decision: the rule, the rows, the run, the outcome. All read the `baseline` run (10,000,000 records), except `parallel_verify`, which reads `verify-10m` (ruling C2).
+One line per decision: the rule, the rows, the run, the outcome. All read the `baseline` run (10,000,000 records), except `parallel_verify`, which reads `verify-10m-parallel` since Task 15d (ruling C2, then the amendment of Addendum P; it read `verify-10m` in Task 14m).
 
 - `stats_plan` = apply: `stats_type_s` 104.03 s against <= 3 s (overview 94.15 s, group 5.55 s, index status 4.33 s).
 - `search_plan` = apply: `search_word_p95_ms` 20006 ms against <= 300 ms and `search_substring_p95_ms` 20005 ms against <= 1000 ms.
 - `open_artifact_cache` = apply: `open_artifact_ms` 31.74 ms (median of 3, 10,000 manifest lines) against <= 1 ms.
 - `ingest_hot_path` = apply: `ingest_rate` 1451 records/s against >= 40,000 (one miss is enough); the 2,000,000-record `after-pragmas` run (code of acc067a, 256 MiB batch page cache) ingested at 2148 records/s, also against >= 40,000, with `db_ratio` 3.90 at 2M as at 10M (no decision is keyed to `db_ratio`). The decision stays `apply` whatever the later runs say (ruling D17). `BenchmarkIngest` batch 1000/5000/20000: 1969/2452/2814 records/s. `db_ratio` is 3.90 against <= 1.6 (no decision is keyed to it).
 - `parallel_verify` = apply (Task 14m, ruling C2: read from `verify-10m`, the verify after the P11 redesign; it was pending from the `final` run, which never finished): `verify_rate` 2,158.5 records/s (4,632.90 s for 10,000,000 records) against >= 3,700 (amendment A10), a miss at 58.3% of the target. `verify-2m` (2,935.1 records/s, 681.41 s) also misses, and is not part of the rule. The phase that dominates is `records.integrity_check` (P10, SQLite's own check): 2,554.86 s, 55.15% of `verify_s`, then `fts.index` 1,182.02 s (25.51%) and `records.stream` 894.04 s (19.30%). To meet the target the whole verify must fit 2,702.7 s; P10 alone takes 2,554.86 s of that, so the target can be met only if the other phases run in parallel with P10 and P10 itself does not get slower (P10 and `records.stream` in sequence are 3,448.90 s). Nothing was relaxed to reach a number.
+- `parallel_verify` = apply, the final 5D verify result (Task 15d, read from `verify-10m-parallel`, code of 542e7af after Tasks 15a to 15c): `verify_rate` 3,231.6 records/s (3,094.40 s for 10,000,000 records) against >= 3,700 (A10), a miss at 87.3% of the target and 391.7 s over the 2,702.7 s budget. `verify-2m-parallel` passes (4,765.9 records/s, 419.65 s) and is not part of the rule. Per phase at 10M (wall seconds): `records.integrity_check` 3,093.00 (it was 2,554.86 alone in the 14m run), `records.stream` 568.65, `fts.index` 821.34 (its `records_fts_sub/unreferenced` 0.07, it was 428.21), `records.overlap` 3,093.00, rest 1.40; the stream and the index (1,389.99 s in sequence) are hidden behind P10, so the verify time is P10 time. The target is not changed and nothing was relaxed; the remaining miss is recorded in `docs/limitations.md`. The speed-up against the 14m serial run is 1.50 times at 10M and 1.62 times at 2M.
 
 The Task 14m runs against the spec rows they measured (10,000,000 records; judged strictly as measured):
 - `search_word_p95_ms`: pass, 121.4 ms against <= 300 (`final` 21,044). `search_substring_p95_ms`: pass, 128.3 ms against <= 1000 (`final` 8,957).
