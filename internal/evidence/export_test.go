@@ -147,3 +147,11 @@ func (c *Case) SetVerifyConcurrency(on bool) { c.verifySerial = !on }
 // SetVerifyReadersHook installs f, which is given the read-only pool of a concurrent verify as soon as it is open
 // (once per verify). Test-only.
 func (c *Case) SetVerifyReadersHook(f func(*sql.DB)) { c.verifyReadersHook = f }
+
+// SetReaderPragmas replaces the statements run on every connection of the verify read pool (a test makes query_only
+// fail this way) until the returned function is called. Test-only.
+func SetReaderPragmas(p []string) (restore func()) {
+	old := readerPragmas
+	readerPragmas = p
+	return func() { readerPragmas = old }
+}

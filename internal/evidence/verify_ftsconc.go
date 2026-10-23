@@ -71,14 +71,14 @@ func (r *ftsVerify) indexTables() {
 // tableView is a copy of r for one table's goroutine. Everything the index pass of a table writes is replaced by a
 // private value (mergeView puts it back); what is shared is read only during the pass: the expected side, the
 // audited batches, the tokenizer reference, the case and the read-only pool. A new field of ftsVerify that the index
-// pass writes must be given its private value here and merged in mergeView.
+// pass writes must be given its private value here and merged in mergeView. The pass must NEVER call ex.dig.sum()
+// (or fold into ex.dig): the expected side is shared and read only here, and sum() creates buckets and moves caches.
 func (r *ftsVerify) tableView(ctx context.Context, obsMu *sync.Mutex) *ftsVerify {
 	v := *r
 	v.ctx = ctx
 	v.rep = &VerifyReport{Problems: []string{}, Notices: []string{}}
 	counts := maps.Clone(r.ps.counts)
 	v.ps = &problemSet{rep: v.rep, counts: counts}
-	v.problems = map[string]int{}
 	v.listed = map[string]map[int64]bool{}
 	v.idxHits = nil
 	v.bucketsCompared, v.unrefOps = 0, 0
@@ -105,18 +105,18 @@ func (r *ftsVerify) mergeView(ti int, v *ftsVerify, base map[string]int) {
 	for k, n := range v.ps.counts {
 		r.ps.counts[k] += n - base[k]
 	}
-	for t, n := range v.problems {
-		r.problems[t] += n
-	}
 	for k, set := range v.listed {
 		r.listed[k] = set
 	}
+	// kept for faithfulness to the serial loop (equivalent today: the end of verifyFTS marks a dead verify whenever the
+	// context ended, and the index pass has no other cause of dead)
 	r.dead = r.dead || v.dead
 	r.indexFailed = r.indexFailed || v.indexFailed
 	r.bucketsCompared += v.bucketsCompared
 	r.unrefOps += v.unrefOps
 	r.bad[ti], r.segFailed[ti], r.failing[ti] = v.bad[ti], v.segFailed[ti], v.failing[ti]
 	if r.found != nil {
+		// kept for faithfulness: nothing after the pass reads the found sums for the report, but the state must be the serial one
 		r.found.sums[ti], r.found.outside[ti] = v.found.sums[ti], v.found.outside[ti]
 		r.found.haveLast = false
 	}

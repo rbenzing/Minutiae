@@ -59,3 +59,30 @@ func TestOpenVerifyReadersReachesTheSameFile(t *testing.T) {
 		t.Fatal("the pool created the missing database")
 	}
 }
+
+// D184: a connection that does not report query_only = 1 is refused, whatever the reason it is not.
+func TestOpenVerifyReadersRefusesAConnectionWithoutQueryOnly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "x.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE t (x INTEGER)`); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	old := readerPragmas
+	defer func() { readerPragmas = old }()
+	readerPragmas = []string{`PRAGMA temp_store = MEMORY`}
+	if rd, err := openVerifyReaders(t.Context(), path); err == nil {
+		rd.close()
+		t.Fatal("a pool without query_only was opened")
+	} else if !strings.Contains(err.Error(), "query_only") {
+		t.Fatalf("err = %v", err)
+	}
+	readerPragmas = []string{`PRAGMA no_such_pragma_statement(`} // a statement that fails is refused too
+	if rd, err := openVerifyReaders(t.Context(), path); err == nil {
+		rd.close()
+		t.Fatal("a pool whose pragma failed was opened")
+	}
+}

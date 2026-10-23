@@ -286,6 +286,9 @@ func (c *Case) verifyRecords(ctx context.Context, rep *VerifyReport, recs []Mani
 			if c.verifyReadersHook != nil {
 				c.verifyReadersHook(rd.db)
 			}
+		} else if c.verifyPhaseHook != nil {
+			// the serial order runs instead; said to the hook only (a report notice would break byte equality)
+			c.callPhaseHook(VerifyReadersUnavailable, 0)
 		}
 	}
 	defer readers.close() // every path; runs after the abort below, which runs after any panic of a phase

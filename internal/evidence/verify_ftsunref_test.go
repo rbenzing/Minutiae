@@ -95,7 +95,7 @@ func TestCheckUnreferencedBoundaries(t *testing.T) {
 			}
 			slices.Sort(want)
 			rep := &VerifyReport{Problems: []string{}, Notices: []string{}}
-			r := &ftsVerify{c: c, ctx: context.Background(), ps: &problemSet{rep: rep, counts: map[string]int{}}, rep: rep, problems: map[string]int{}, listed: map[string]map[int64]bool{}}
+			r := &ftsVerify{c: c, ctx: context.Background(), ps: &problemSet{rep: rep, counts: map[string]int{}}, rep: rep, listed: map[string]map[int64]bool{}}
 			r.checkUnreferenced(table)
 			var got []int64
 			for _, p := range rep.Problems {

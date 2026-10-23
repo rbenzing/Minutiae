@@ -88,6 +88,10 @@ func (c *Case) overlapSpan() func() {
 // this one in their place.
 const VerifyOverlapPhase = "records.overlap"
 
+// VerifyReadersUnavailable is the phase hook event (duration 0, hook only, never a report notice) of a verify whose
+// read-only pool could not be opened: the phases then run one after the other on the case connection.
+const VerifyReadersUnavailable = "records.readers_unavailable"
+
 // VerifyPhaseOverlapped reports whether the top-level phase name lies inside VerifyOverlapPhase.
 func VerifyPhaseOverlapped(name string) bool {
 	switch name {

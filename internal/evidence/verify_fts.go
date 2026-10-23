@@ -117,10 +117,12 @@ func runPragma(ctx context.Context, conn driver.Conn, stmt string) error {
 	dest := make([]driver.Value, len(rows.Columns()))
 	for {
 		if err := rows.Next(dest); err != nil {
-			break
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return fmt.Errorf("%s: %w", stmt, err)
 		}
 	}
-	return nil
 }
 
 // setTempStoreDirectory sets SQLite's temporary-file directory, which is process-wide and cannot be
@@ -154,8 +156,6 @@ type ftsVerify struct {
 	indexed []int64
 	// dead is set when the rebuilt index failed: nothing more can be compared.
 	dead bool
-	// problems counts the problems of each table.
-	problems map[string]int
 	// listed holds the records already listed under a problem kind (so one record is listed once).
 	listed map[string]map[int64]bool
 
@@ -187,7 +187,7 @@ type ftsVerify struct {
 // newFTSVerify makes the state of one P11 run. It owns nothing that needs cleanup until setup runs.
 func (c *Case) newFTSVerify(ctx context.Context, ps *problemSet, sorted []auditedBatch, observe verifyChunkObserver) *ftsVerify {
 	return &ftsVerify{
-		c: c, ctx: ctx, ps: ps, rep: ps.rep, problems: map[string]int{}, listed: map[string]map[int64]bool{},
+		c: c, ctx: ctx, ps: ps, rep: ps.rep, listed: map[string]map[int64]bool{},
 		sorted: sorted, observe: observe,
 	}
 }
@@ -461,7 +461,6 @@ func ftsKind(table, base string) string {
 }
 
 func (r *ftsVerify) add(table, base, format string, a ...any) {
-	r.problems[table]++
 	r.ps.add(ftsKind(table, base), format, a...)
 }
 
@@ -475,7 +474,6 @@ func (r *ftsVerify) addRecord(table, base string, doc int64, format string, a ..
 		r.listed[kind] = set
 	}
 	if set[doc] {
-		r.problems[table]++
 		return
 	}
 	if len(set) < verifyMaxPerKind {
@@ -788,6 +786,5 @@ func ftsQuote(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) +
 // addUnlisted counts n problems of a kind that are not listed one by one (the caller has already listed
 // verifyMaxPerKind of them with add): they appear in the "further ... problems are not listed" line.
 func (r *ftsVerify) addUnlisted(table, base string, n int) {
-	r.problems[table] += n
 	r.ps.counts[ftsKind(table, base)] += n
 }

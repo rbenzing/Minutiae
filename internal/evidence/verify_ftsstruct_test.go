@@ -244,7 +244,7 @@ func TestFTSStructureCheckIsQuietWhenCancelled(t *testing.T) {
 	c := indexedTextCase(t, 50)
 	run := func(ctx context.Context) []string {
 		rep := &VerifyReport{Problems: []string{}, Notices: []string{}}
-		r := &ftsVerify{c: c, ctx: ctx, ps: &problemSet{rep: rep, counts: map[string]int{}}, rep: rep, problems: map[string]int{}, listed: map[string]map[int64]bool{}}
+		r := &ftsVerify{c: c, ctx: ctx, ps: &problemSet{rep: rep, counts: map[string]int{}}, rep: rep, listed: map[string]map[int64]bool{}}
 		r.checkUnreferenced(FTSWordTable)
 		return rep.Problems
 	}
@@ -266,7 +266,7 @@ func TestFTSStructureReadErrorOnALiveContextIsReported(t *testing.T) {
 		t.Fatal(err)
 	}
 	rep := &VerifyReport{Problems: []string{}, Notices: []string{}}
-	r := &ftsVerify{c: c, ctx: context.Background(), ps: &problemSet{rep: rep, counts: map[string]int{}}, rep: rep, problems: map[string]int{}, listed: map[string]map[int64]bool{}}
+	r := &ftsVerify{c: c, ctx: context.Background(), ps: &problemSet{rep: rep, counts: map[string]int{}}, rep: rep, listed: map[string]map[int64]bool{}}
 	r.checkUnreferenced(FTSWordTable)
 	found := false
 	for _, p := range rep.Problems {
@@ -335,7 +335,7 @@ func TestCheckUnreferencedIsLinear(t *testing.T) {
 	ops := func(n int) (int, int) {
 		c := indexedTextCase(t, n)
 		rep := &VerifyReport{Problems: []string{}, Notices: []string{}}
-		r := &ftsVerify{c: c, ctx: context.Background(), ps: &problemSet{rep: rep, counts: map[string]int{}}, rep: rep, problems: map[string]int{}, listed: map[string]map[int64]bool{}}
+		r := &ftsVerify{c: c, ctx: context.Background(), ps: &problemSet{rep: rep, counts: map[string]int{}}, rep: rep, listed: map[string]map[int64]bool{}}
 		r.checkUnreferenced(FTSSubTable)
 		if len(rep.Problems) != 0 {
 			t.Fatalf("n=%d: %q", n, rep.Problems)

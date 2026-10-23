@@ -172,18 +172,44 @@ func TestVerifyIntegrityCheckConnectionIsReadOnly(t *testing.T) {
 		var writeErrs []error
 		c.SetVerifyReadersHook(func(db *sql.DB) {
 			opened = db
-			for _, stmt := range []string{
-				`CREATE TABLE zz_probe (x)`,
-				`INSERT INTO parsers (name, version, hash) VALUES ('zz', '1', NULL)`,
-				`UPDATE records SET summary = 'zz'`,
-				`DELETE FROM records`,
-			} {
-				_, err := db.Exec(stmt)
-				writeErrs = append(writeErrs, err)
+			// three connections pinned at once, each probed on its own goroutine
+			var wg sync.WaitGroup
+			var mu sync.Mutex
+			var conns []*sql.Conn
+			for range 3 {
+				conn, err := db.Conn(context.Background())
+				if err != nil {
+					t.Errorf("pinning a connection: %v", err)
+					return
+				}
+				conns = append(conns, conn)
 			}
-			var queryOnly int
-			if err := db.QueryRow(`PRAGMA query_only`).Scan(&queryOnly); err != nil || queryOnly != 1 {
-				t.Errorf("a connection of the pool has query_only = %d (%v), want 1", queryOnly, err)
+			for _, conn := range conns {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					var errs []error
+					for _, stmt := range []string{
+						`CREATE TABLE zz_probe (x)`,
+						`INSERT INTO parsers (name, version, hash) VALUES ('zz', '1', NULL)`,
+						`UPDATE records SET summary = 'zz'`,
+						`DELETE FROM records`,
+					} {
+						_, err := conn.ExecContext(context.Background(), stmt)
+						errs = append(errs, err)
+					}
+					var queryOnly int
+					if err := conn.QueryRowContext(context.Background(), `PRAGMA query_only`).Scan(&queryOnly); err != nil || queryOnly != 1 {
+						t.Errorf("a connection of the pool has query_only = %d (%v), want 1", queryOnly, err)
+					}
+					mu.Lock()
+					writeErrs = append(writeErrs, errs...)
+					mu.Unlock()
+				}()
+			}
+			wg.Wait()
+			for _, conn := range conns {
+				_ = conn.Close()
 			}
 		})
 		ctx := context.Background()
@@ -194,6 +220,7 @@ func TestVerifyIntegrityCheckConnectionIsReadOnly(t *testing.T) {
 		}
 		// the verify itself appends to the audit log only; artifacts.db must be as it was
 		before := hashDB(c)
+		filesBefore := listDir(t, c.Dir)
 		rep, err := c.VerifyWith(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -204,12 +231,18 @@ func TestVerifyIntegrityCheckConnectionIsReadOnly(t *testing.T) {
 		if opened == nil {
 			t.Fatal("verify did not open a read-only connection: P10 does not run beside the stream")
 		}
-		if len(writeErrs) != 4 {
-			t.Fatalf("%d write probes ran, want 4", len(writeErrs))
+		if len(writeErrs) != 12 {
+			t.Fatalf("%d write probes ran, want 12 (4 on each of 3 connections)", len(writeErrs))
 		}
 		for i, err := range writeErrs {
 			if err == nil || !strings.Contains(strings.ToLower(err.Error()), "readonly") && !strings.Contains(strings.ToLower(err.Error()), "read-only") && !strings.Contains(strings.ToLower(err.Error()), "read only") {
 				t.Errorf("write probe %d: err = %v, want a read-only refusal", i, err)
+			}
+		}
+		filesAfter := listDir(t, c.Dir)
+		for _, f := range append(slices.Clone(filesBefore), filesAfter...) {
+			if strings.HasSuffix(f, "-wal") || strings.HasSuffix(f, "-shm") || strings.HasSuffix(f, "-journal") {
+				t.Errorf("a SQLite side file %q exists around the verify", f)
 			}
 		}
 		if got := hashDB(c); got != before {
@@ -282,4 +315,49 @@ func TestVerifyPhaseTimesSumToWallTime(t *testing.T) {
 	if sum > wall {
 		t.Fatalf("the top-level phases (with the span) sum to %s, more than the %s the verify took: %v", sum, wall, phases)
 	}
+}
+
+// D184 and D185: when the pool cannot be opened (here: query_only cannot be set) verify runs the serial order on the
+// case connection, reports the same findings byte for byte, says so to the phase hook only, and opens no pool.
+func TestVerifyFallsBackToTheSerialOrderWhenThePoolCannotBeOpened(t *testing.T) {
+	c := ftsCase(t, 300)
+	recordstest.SetRecordSummary(t, c.Dir, 7, "altered in place")
+	_, want := verifyMode(t, c, false)
+	defer evidence.SetReaderPragmas([]string{`PRAGMA temp_store = MEMORY`})()
+	var events []string
+	c.SetPhaseHook(func(name string, _ time.Duration) {
+		if name == evidence.VerifyReadersUnavailable {
+			events = append(events, name)
+		}
+	})
+	defer c.SetPhaseHook(nil)
+	c.SetVerifyReadersHook(func(*sql.DB) { t.Error("a pool was opened") })
+	rep, got := verifyMode(t, c, true)
+	if string(got) != string(want) {
+		t.Fatalf("the fallback changed the report:\nserial   %s\nfallback %s", want, got)
+	}
+	if len(events) != 1 {
+		t.Fatalf("the hook was told %d times that the pool is unavailable, want once", len(events))
+	}
+	if len(rep.Notices) != 0 && !slices.Equal(rep.Notices, []string{}) {
+		for _, n := range rep.Notices {
+			if strings.Contains(n, "pool") || strings.Contains(n, "read-only") {
+				t.Errorf("the fallback reached the report: %q", n)
+			}
+		}
+	}
+}
+
+// listDir returns the names of the entries of dir.
+func listDir(t *testing.T, dir string) []string {
+	t.Helper()
+	es, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, e := range es {
+		out = append(out, e.Name())
+	}
+	return out
 }

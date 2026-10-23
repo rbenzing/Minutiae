@@ -73,13 +73,41 @@ func (c roConnector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 	// query_only makes SQLite refuse every write; temp_store = MEMORY keeps a sorter or temporary b-tree of
 	// integrity_check out of the OS temp directory, as ReadTx does for the case connection
-	for _, p := range []string{`PRAGMA query_only = ON`, `PRAGMA temp_store = MEMORY`} {
+	for _, p := range readerPragmas {
 		if err := runPragma(ctx, conn, p); err != nil {
 			_ = conn.Close()
 			return nil, err
 		}
 	}
+	// fail closed: a connection that does not report query_only = 1 is never handed out
+	var qo int
+	if err := readQueryOnly(ctx, conn, &qo); err != nil || qo != 1 {
+		_ = conn.Close()
+		return nil, fmt.Errorf("artifacts.db read-only connection: query_only is %d (%v), refusing it", qo, err)
+	}
 	return conn, nil
+}
+
+// readerPragmas are run on every connection of the pool, in order (a variable so a test can make query_only fail).
+var readerPragmas = []string{`PRAGMA query_only = ON`, `PRAGMA temp_store = MEMORY`}
+
+// readQueryOnly reads PRAGMA query_only back from a raw connection.
+func readQueryOnly(ctx context.Context, conn driver.Conn, out *int) error {
+	rows, err := conn.(driver.QueryerContext).QueryContext(ctx, `PRAGMA query_only`, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	dest := make([]driver.Value, 1)
+	if err := rows.Next(dest); err != nil {
+		return err
+	}
+	v, ok := dest[0].(int64)
+	if !ok {
+		return fmt.Errorf("unexpected value %v", dest[0])
+	}
+	*out = int(v)
+	return nil
 }
 
 // openVerifyReaders opens the pool for the database file at path and proves that a connection can be made.
