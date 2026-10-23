@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestStreamRecordsBetweenReadsOnlyTheRange (5D-14k): on 12,000 records, the range [5001, 5100] yields exactly
@@ -280,16 +281,25 @@ func TestVerifyCancelDuringTheIndexPassKeepsTheKnownFailingBuckets(t *testing.T)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	chunks := 0
+	var ended []string
+	c.verifyPhaseHook = func(name string, _ time.Duration) { ended = append(ended, name) }
+	chunks, atCancel := 0, []string(nil)
 	rep, err := c.verifyRun(ctx, func(table string, _ int) {
 		if table == "fts-data" {
 			if chunks++; chunks == 2 { // the first chunk is table 0's last, the second is table 1's first
+				atCancel = slices.Clone(ended)
 				cancel()
 			}
 		}
 	}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// D169: the cancel must land in table 1's pass, not merely be the second chunk of anything: table 0's decode
+	// phase has ended and table 1's has not.
+	if chunks != 2 || !slices.Contains(atCancel, "fts.index/records_fts/decode") ||
+		slices.Contains(atCancel, "fts.index/records_fts_sub/decode") {
+		t.Fatalf("the cancel did not land in table 1's pass: %d chunks, phases ended by then %q", chunks, atCancel)
 	}
 	if !slices.Contains(rep.Problems, verifyCancelled) {
 		t.Fatalf("no cancelled line in %q", rep.Problems)
