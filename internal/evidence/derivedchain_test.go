@@ -3,6 +3,7 @@ package evidence
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -44,32 +45,25 @@ func TestDerivedChainWalk(t *testing.T) {
 		name string
 		by   map[string]ManifestRecord
 		id   string
-		want string // "" = no problem; else a substring
+		want chainResult
 	}{
-		{"root, no derivation", chainOf(0), "a0", ""},
-		{"one hop", chainOf(1), "a1", ""},
-		{"16 hops is the limit and fine", chainOf(16), "a16", ""},
-		{"17 hops is too deep", chainOf(17), "a17", "derived chain"},
-		{"17 hops is too deep: names the limit", chainOf(17), "a17", "16"},
-		{"an artifact inside the limit of a long chain is fine", chainOf(17), "a16", ""},
-		{"a cycle", cyc, "a1", "cycle"},
-		{"a cycle seen from a member", cyc, "a0", "derived chain"},
-		{"an artifact deriving from itself", self, "s", "cycle"},
-		{"missing parent: left to the single-hop check", missing, "a3", ""},
-		{"wrong parent sha: left to the single-hop check", wrongSHA, "a3", ""},
-		{"an id that is not in the manifest", chainOf(1), "ghost", ""},
+		{"root, no derivation", chainOf(0), "a0", chainResult{}},
+		{"one hop", chainOf(1), "a1", chainResult{}},
+		{"16 hops is the limit and fine", chainOf(16), "a16", chainResult{}},
+		{"17 hops is too deep", chainOf(17), "a17", chainResult{TooDeep: true}},
+		{"an artifact inside the limit of a long chain is fine", chainOf(17), "a16", chainResult{}},
+		{"a cycle", cyc, "a1", chainResult{Cycle: []string{"a0", "a1", "a2"}}},
+		{"a cycle seen from a member", cyc, "a0", chainResult{Cycle: []string{"a0", "a1", "a2"}}},
+		{"an artifact deriving from itself", self, "s", chainResult{Cycle: []string{"s"}}},
+		{"missing parent: left to the single-hop check", missing, "a3", chainResult{}},
+		{"wrong parent sha: left to the single-hop check", wrongSHA, "a3", chainResult{}},
+		{"an id that is not in the manifest", chainOf(1), "ghost", chainResult{}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := derivedChainProblem(tc.by, tc.id)
-			if tc.want == "" {
-				if got != "" {
-					t.Fatalf("derivedChainProblem = %q, want no problem", got)
-				}
-				return
-			}
-			if !strings.Contains(got, tc.want) {
-				t.Fatalf("derivedChainProblem = %q, want it to contain %q", got, tc.want)
+			got := derivedChainWalk(tc.by, tc.id)
+			if got.TooDeep != tc.want.TooDeep || !slices.Equal(got.Cycle, tc.want.Cycle) {
+				t.Fatalf("derivedChainWalk = %+v, want %+v", got, tc.want)
 			}
 		})
 	}
@@ -156,5 +150,78 @@ func TestBrokenParentIsReportedOnce(t *testing.T) {
 	}
 	if countContaining(r.Problems, "derived chain") != 0 {
 		t.Errorf("the walk repeated a single-hop problem: %q", r.Problems)
+	}
+}
+
+// cycleRecs hand-builds a cycle of n artifacts <prefix>00.. (each derived from the next, the last
+// from the first) and `tails` artifacts <prefix>t0.. deriving from the first member, every hop
+// carrying its parent's real SHA256. Capture generates ids and cannot close a cycle.
+func cycleRecs(prefix string, n, tails int) []ManifestRecord {
+	id := func(i int) string { return fmt.Sprintf("%s%02d", prefix, i%n) }
+	var out []ManifestRecord
+	for i := 0; i < n; i++ {
+		out = append(out, ManifestRecord{
+			ID: id(i), Path: id(i), SHA256: "sha-" + id(i),
+			Source: Source{Derived: &Derivation{ParentID: id(i + 1), ParentSHA256: "sha-" + id(i+1)}},
+		})
+	}
+	for i := 0; i < tails; i++ {
+		tid := fmt.Sprintf("%st%d", prefix, i)
+		out = append(out, ManifestRecord{
+			ID: tid, Path: tid, SHA256: "sha-" + tid,
+			Source: Source{Derived: &Derivation{ParentID: id(0), ParentSHA256: "sha-" + id(0)}},
+		})
+	}
+	return out
+}
+
+func derivedProblems(t *testing.T, recs []ManifestRecord) []string {
+	t.Helper()
+	c := newTestCase(t)
+	var rep VerifyReport
+	c.checkDerived(&rep, recs)
+	return rep.Problems
+}
+
+func TestVerifyReportsACycleOnce(t *testing.T) {
+	probs := derivedProblems(t, cycleRecs("c", 5, 2))
+	if len(probs) != 1 {
+		t.Fatalf("problems = %q, want exactly one", probs)
+	}
+	p := probs[0]
+	for _, want := range []string{"derived chain has a cycle", "5 artifacts", "2 further", `"c00"`, `"c04"`} {
+		if !strings.Contains(p, want) {
+			t.Errorf("problem %q lacks %q", p, want)
+		}
+	}
+	if i0, i4 := strings.Index(p, `"c00"`), strings.Index(p, `"c04"`); i0 < 0 || i4 < i0 {
+		t.Errorf("member ids not in sorted order: %q", p)
+	}
+	if rep := (VerifyReport{Problems: probs}); rep.OK() {
+		t.Error("a report with a cycle problem is OK")
+	}
+}
+
+func TestVerifyReportsTwoCyclesTwice(t *testing.T) {
+	recs := append(cycleRecs("z", 2, 0), cycleRecs("b", 3, 0)...)
+	probs := derivedProblems(t, recs)
+	if len(probs) != 2 {
+		t.Fatalf("problems = %q, want two", probs)
+	}
+	if !strings.Contains(probs[0], "3 artifacts") || !strings.Contains(probs[1], "2 artifacts") {
+		t.Errorf("order is not by smallest id (b before z): %q", probs)
+	}
+}
+
+func TestVerifyCycleListsAtMostEightMembers(t *testing.T) {
+	probs := derivedProblems(t, cycleRecs("m", 12, 0))
+	if len(probs) != 1 {
+		t.Fatalf("problems = %q", probs)
+	}
+	if n := strings.Count(probs[0], `"m`); n != 8 {
+		t.Errorf("%d ids named, want 8: %s", n, probs[0])
+	}
+	if !strings.Contains(probs[0], "and 4 more") || !strings.Contains(probs[0], "12 artifacts") {
+		t.Errorf("problem = %s", probs[0])
 	}
 }
