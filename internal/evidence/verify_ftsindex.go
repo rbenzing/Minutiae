@@ -27,7 +27,8 @@ import (
 // A segment the structure lists with pages 0 to 0 (Empty, D143) is not read, whatever rows of it exist: a
 // genuine index never holds any, and the rows left behind by a tampered one cannot be reached by any search
 // (they belong to no segment of the structure), so they can cause neither a hidden nor an invented hit. Their
-// content is not verified (limitations.md, D149); checkUnreferenced still names them as unreferenced rows.
+// content is not verified (limitations.md, D149). checkUnreferenced does not name them either: their segment is listed, so
+// their ids lie inside a referenced range, which it does not read (5D-15a).
 
 const (
 	// ftsPagesPerTick is the number of leaf pages between two updates of the page counter and two looks at
