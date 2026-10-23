@@ -411,3 +411,61 @@ func TestBudgetSpentBeforeFirstEntryStaysCorruptOnly(t *testing.T) {
 		t.Errorf("a directory that could not be started matches ErrIncomplete: %v", err)
 	}
 }
+
+// A scan that was cut returns an exact match of a real name (it cannot be
+// displaced by a record in the unread part only if the match is exact), and
+// nothing else: a case-insensitive match could be a different record than the
+// one the whole directory would have chosen.
+func TestCutLookupReturnsOnlyAnExactMatch(t *testing.T) {
+	img, _, _ := cutDirImage(t, 6)
+	f := openImg(t, img)
+	f.SetDirEntryCap(4) // "." and ".." count: F00.TXT and F01.TXT are read
+	if e, err := f.Lookup("/D/F01.TXT"); err != nil || e.Name != "F01.TXT" {
+		t.Errorf("exact match in a cut listing = %q, %v; want F01.TXT", e.Name, err)
+	}
+	_, err := f.Lookup("/D/f01.txt")
+	wantIncomplete(t, "fold-only match in a cut listing", err, true)
+}
+
+// The label of a root directory that was not read to the end is undecided: the
+// warning says so and shows the BPB label as the BPB's.
+func TestRootLabelWarnsWhenTheRootListingIsCut(t *testing.T) {
+	o := fattest.Options{Type: 32}
+	g := fattest.Layout(o)
+	img := build(o)
+	copy(img[offLabel32:offLabel32+11], "BPB LABEL  ")
+	cs := g.SectorSize * g.SecPerClus
+	n := (65536*32+cs-1)/cs + 1 // one cluster more than the chain bound reads
+	for c := 2; c < 2+n; c++ {
+		off := g.ClusterOffset(uint32(c))
+		for e := 0; e < cs/32; e++ {
+			ent := img[off+int64(e)*32:][:32]
+			copy(ent, "FILLER  BIN")
+			ent[11] = 0x20
+		}
+		next := uint32(c + 1)
+		if c == 1+n {
+			next = 0x0FFFFFFF
+		}
+		setFATs(img, g, uint32(c), next)
+	}
+	f := openImg(t, img)
+	if f.Info().Label != "BPB LABEL" {
+		t.Errorf("Label %q, want the BPB's", f.Info().Label)
+	}
+	w := f.Info().Warnings
+	if len(w) == 0 {
+		t.Fatal("no warning for a cut root listing")
+	}
+	var got string
+	for _, s := range w {
+		if strings.Contains(s, "volume label") {
+			got = s
+		}
+	}
+	for _, want := range []string{"volume label could not be decided from the root directory", `the BPB's label "BPB LABEL"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("label warning %q lacks %q (all warnings: %q)", got, want, w)
+		}
+	}
+}

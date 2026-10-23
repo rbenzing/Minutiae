@@ -763,13 +763,16 @@ func (f *FS) child(first uint32, comp string) (dirItem, error) {
 			break
 		}
 	}
-	for _, it := range []*dirItem{exact, viaRaw, fold} {
+	if exact != nil { // an exact match of a real name stands on a cut scan
+		return *exact, nil
+	}
+	if cut.isCut() { // the full-directory preference could pick a record in the unread part
+		return dirItem{}, incompleteLookup(first, comp, cut)
+	}
+	for _, it := range []*dirItem{viaRaw, fold} {
 		if it != nil {
 			return *it, nil
 		}
-	}
-	if cut.isCut() { // the name may be in the part that was not read
-		return dirItem{}, incompleteLookup(first, comp, cut)
 	}
 	return dirItem{}, errNoChild
 }
