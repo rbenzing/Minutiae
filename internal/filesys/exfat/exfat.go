@@ -43,11 +43,14 @@ type FS struct {
 	heapOff      int64  // byte offset of cluster 2
 	fatOff       int64  // byte offset of the FAT
 	fatEntries   uint32 // FAT entries that exist and are within the cluster count
-	clusterCount uint32 // clusters 2 .. clusterCount+1
-	rootCluster  uint32
-	serial       uint32
-	revision     uint16
-	volFlags     uint16
+	clusterCount uint32 // clusters 2 .. clusterCount+1, clamped to the image
+	// declaredClusters is the cluster count the boot sector declares, capped at
+	// the format maximum (at least clusterCount).
+	declaredClusters uint32
+	rootCluster      uint32
+	serial           uint32
+	revision         uint16
+	volFlags         uint16
 
 	label  string
 	bitmap meta // the Allocation Bitmap entry of the root directory
@@ -145,23 +148,24 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 	}
 	vol := io.NewSectionReader(r, 0, g.size)
 	f := &FS{
-		r:            filesys.NewCachedReader(vol, cacheBlockSize, cacheBlocks),
-		data:         vol,
-		size:         g.size,
-		ss:           g.ss,
-		cs:           g.cs,
-		heapOff:      g.heapOff,
-		fatOff:       g.fatOff,
-		fatEntries:   g.fatEntries,
-		clusterCount: g.clusterCount,
-		rootCluster:  g.rootCluster,
-		serial:       bt.serial,
-		revision:     bt.revision,
-		volFlags:     bt.volFlags,
-		dirRecordCap: maxDirRecords,
-		resolveDirs:  maxResolveDirs,
-		bitmapChunk:  maxBitmapChunk,
-		unallocCap:   maxUnallocRuns,
+		r:                filesys.NewCachedReader(vol, cacheBlockSize, cacheBlocks),
+		data:             vol,
+		size:             g.size,
+		ss:               g.ss,
+		cs:               g.cs,
+		heapOff:          g.heapOff,
+		fatOff:           g.fatOff,
+		fatEntries:       g.fatEntries,
+		clusterCount:     g.clusterCount,
+		declaredClusters: g.declaredClusters,
+		rootCluster:      g.rootCluster,
+		serial:           bt.serial,
+		revision:         bt.revision,
+		volFlags:         bt.volFlags,
+		dirRecordCap:     maxDirRecords,
+		resolveDirs:      maxResolveDirs,
+		bitmapChunk:      maxBitmapChunk,
+		unallocCap:       maxUnallocRuns,
 
 		dirs:           map[uint32]*dirState{g.rootCluster: {spec: dirSpec{first: g.rootCluster, whole: true}}},
 		dirBudget:      maxDirBudget,

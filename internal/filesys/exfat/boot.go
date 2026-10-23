@@ -133,8 +133,12 @@ type geometry struct {
 	fatOff       int64 // byte offset of the first FAT
 	fatEntries   uint32
 	clusterCount uint32
-	rootCluster  uint32
-	warnings     []string
+	// declaredClusters is ClusterCount as the boot sector states it (capped at
+	// maxClusterCount), before the clamp to the image: a truncated image keeps
+	// the declared heap, so a file in the cut part is a prefix, not corrupt.
+	declaredClusters uint32
+	rootCluster      uint32
+	warnings         []string
 }
 
 // layout validates the boot sector fields against the image size and returns
@@ -173,6 +177,7 @@ func (bt *boot) layout(imageSize int64) (*geometry, error) {
 		return nil, corrupt("exFAT boot sector", offClusterCnt, "ClusterCount is 0")
 	}
 	cc := uint64(bt.clusterCount)
+	g.declaredClusters = uint32(min(cc, maxClusterCount))
 	fits := uint64(g.size-g.heapOff) / uint64(g.cs)
 	limit := min(fits, maxClusterCount)
 	if cc > limit {

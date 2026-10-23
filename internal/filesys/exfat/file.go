@@ -104,6 +104,15 @@ func (f *FS) Open(e filesys.Entry) (filesys.File, error) {
 
 // openExtent builds the file of size bytes (valid of them initialised) whose
 // chain starts at first.
+//
+// A chain that ends early after a valid first cluster (end of chain, free,
+// reserved or bad cluster, a cluster outside the readable heap, a loop, a
+// NoFatChain run past the end of a truncated image) gives the clusters before
+// the problem as a trusted prefix: reads at or beyond it fail with a corrupt
+// error, never zeros, and one warning names the counts. A first cluster in the
+// part of the declared heap the image does not hold gives an empty prefix.
+// A first cluster outside the DECLARED heap, a DataLength the declared heap
+// cannot hold and a ValidDataLength above DataLength still fail.
 func (f *FS) openExtent(first uint32, size, valid int64, noFat bool) (filesys.File, error) {
 	const st = "exFAT file"
 	switch {
@@ -112,36 +121,74 @@ func (f *FS) openExtent(first uint32, size, valid int64, noFat bool) (filesys.Fi
 	case valid > size:
 		return nil, corrupt(st, -1, "ValidDataLength %d exceeds DataLength %d", valid, size)
 	}
-	runs := []filesys.Run{}
-	if size > 0 {
-		capacity, ok := filesys.MulOK(int64(f.clusterCount), f.cs)
-		if !ok || size > capacity {
-			return nil, corrupt(st, -1, "DataLength %d is larger than the %d bytes of the cluster heap", size, capacity)
-		}
-		need := uint64(size+f.cs-1) / uint64(f.cs) // size <= capacity: cannot overflow
-		exts, err := f.chain(first, need, true, noFat)
+	fl := &file{size: size, avail: size, r: f.data}
+	if size == 0 {
+		fl.runs = []filesys.Run{} // an empty file has no runs, and that is a complete answer
+		return fl, nil
+	}
+	capacity, ok := filesys.MulOK(int64(f.declaredClusters), f.cs)
+	if !ok || size > capacity {
+		return nil, corrupt(st, -1, "DataLength %d is larger than the %d bytes of the cluster heap", size, capacity)
+	}
+	if first < fatReservedClusters || first-fatReservedClusters >= f.declaredClusters {
+		return nil, corrupt("exFAT cluster chain", -1, "first cluster %d is not a cluster of the volume (2-%d)", first, uint64(f.declaredClusters)+1)
+	}
+	need := uint64(size+f.cs-1) / uint64(f.cs) // size <= capacity: cannot overflow
+	var (
+		exts   []extent
+		reason string // why the chain stops short; empty for a whole chain
+	)
+	if !f.validCluster(first) {
+		reason = fmt.Sprintf("cluster %d lies beyond the end of the image", first)
+	} else {
+		var err error
+		exts, err = f.chain(first, need, true, noFat)
 		if err != nil {
-			return nil, fmt.Errorf("DataLength %d needs %d clusters: %w", size, need, err)
-		}
-		remaining := valid
-		for _, x := range exts {
-			if remaining == 0 {
-				break
+			var ce *filesys.CorruptError
+			if !errors.As(err, &ce) {
+				return nil, fmt.Errorf("DataLength %d needs %d clusters: %w", size, need, err)
 			}
-			n := min(int64(x.n)*f.cs, remaining) // an extent lies inside the heap: cannot overflow
-			runs = append(runs, filesys.Run{Offset: f.clusterOff(x.first), Length: n})
-			remaining -= n
+			reason = err.Error()
 		}
+	}
+	var got uint64
+	for _, x := range exts {
+		got += x.n
+	}
+	whole := reason == "" && got >= need
+	// The zeros after ValidDataLength are format-defined, but only a chain that
+	// covers all of DataLength proves the hole is really there; a prefix ends at
+	// min(chain bytes, ValidDataLength) (an under-claim, never an over-claim).
+	limit := valid
+	if !whole {
+		limit = min(valid, int64(min(got, need))*f.cs)
+	}
+	remaining := limit
+	for _, x := range exts {
+		if remaining == 0 {
+			break
+		}
+		n := min(int64(x.n)*f.cs, remaining) // an extent lies inside the heap: cannot overflow
+		fl.starts = append(fl.starts, limit-remaining)
+		fl.runs = append(fl.runs, filesys.Run{Offset: f.clusterOff(x.first), Length: n})
+		remaining -= n
+	}
+	if whole {
 		if size > valid {
-			runs = append(runs, filesys.Run{Offset: -1, Length: size - valid})
+			fl.starts = append(fl.starts, valid)
+			fl.runs = append(fl.runs, filesys.Run{Offset: -1, Length: size - valid})
 		}
+		return fl, nil
 	}
-	fl := &file{size: size, runs: runs, r: f.data}
-	var pos int64
-	for _, r := range runs {
-		fl.starts = append(fl.starts, pos)
-		pos += r.Length
+	fl.avail = limit
+	why := ""
+	if reason != "" {
+		why = ": " + reason
 	}
+	f.warn("file at cluster %d: chain shorter than DataLength: %d of %d clusters (%d of %d bytes)%s; the missing tail reads as an error",
+		first, got, need, min(int64(got)*f.cs, size), size, why)
+	fl.tail = corrupt("exFAT file data", -1, "the cluster chain from cluster %d is shorter than DataLength (%d of %d clusters): bytes %d-%d cannot be read%s",
+		first, got, need, limit, size, why)
 	return fl, nil
 }
 
@@ -149,8 +196,10 @@ func (f *FS) openExtent(first uint32, size, valid int64, noFat bool) (filesys.Fi
 // calls are safe.
 type file struct {
 	size   int64
-	runs   []filesys.Run // covers [0, size); the last may be a hole
+	avail  int64         // bytes the runs cover (== size unless the chain is short)
+	runs   []filesys.Run // covers [0, avail); a whole file's last may be a hole
 	starts []int64       // starts[i] is the file offset where runs[i] begins
+	tail   error         // what reading [avail, size) returns; nil when avail == size
 	r      io.ReaderAt   // the volume, for non-hole runs
 }
 
@@ -158,10 +207,14 @@ type file struct {
 func (fl *file) Size() int64 { return fl.size }
 
 // Runs returns a copy of the volume-relative runs: the clusters up to
-// ValidDataLength, then one hole run for the rest.
+// ValidDataLength, then one hole run for the rest. When the chain is shorter
+// than DataLength (or a truncated image cuts it) the list is the trusted prefix
+// only, without a hole run, and reads at or beyond it fail with a corrupt error.
 func (fl *file) Runs() []filesys.Run { return slices.Clone(fl.runs) }
 
-// ReadAt reads file content; the part past ValidDataLength reads as zeros.
+// ReadAt reads file content; the part past ValidDataLength reads as zeros when
+// the chain is whole. Bytes past a short chain are a *filesys.CorruptError,
+// never zeros.
 func (fl *file) ReadAt(p []byte, off int64) (int, error) {
 	if off < 0 {
 		return 0, errors.New("exfat: negative read offset")
@@ -179,6 +232,12 @@ func (fl *file) ReadAt(p []byte, off int64) (int, error) {
 	var n int64
 	for n < want {
 		pos := off + n
+		if pos >= fl.avail {
+			if fl.tail != nil {
+				return int(n), fl.tail
+			}
+			return int(n), io.ErrUnexpectedEOF // unreachable: avail == size without a tail error
+		}
 		i := sort.Search(len(fl.starts), func(i int) bool { return fl.starts[i] > pos }) - 1
 		if i < 0 {
 			return int(n), io.ErrUnexpectedEOF // unreachable: starts[0] is 0

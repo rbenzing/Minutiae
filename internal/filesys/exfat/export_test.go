@@ -12,6 +12,10 @@ func (f *FS) SetDirRecordCap(n int) { f.dirRecordCap = n }
 // ClusterCount returns the cluster count the reader uses (after clamping).
 func (f *FS) ClusterCount() uint32 { return f.clusterCount }
 
+// DeclaredClusterCount returns the cluster count the boot sector declares
+// (before the clamp to the image).
+func (f *FS) DeclaredClusterCount() uint32 { return f.declaredClusters }
+
 // UpcaseLoaded reports whether an up-case table is in use for Lookup.
 func (f *FS) UpcaseLoaded() bool { return f.upcase != nil }
 

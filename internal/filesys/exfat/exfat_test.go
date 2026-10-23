@@ -1319,10 +1319,12 @@ func TestExfatHostile(t *testing.T) {
 		le32(bad, int(lay.FatEntryOffset(sf[1])), sf[1]) // 1 -> 1
 		f := openImg(t, bad)
 		es, _ := f.ReadDir(f.Root())
-		for _, name := range []string{"loop.bin", "self.bin"} {
-			if _, err := f.Open(byName(t, es, name)); !errors.Is(err, filesys.ErrCorrupt) {
-				t.Errorf("Open(%s) = %v, want a corrupt error", name, err)
+		for _, name := range []string{"loop.bin", "self.bin"} { // a loop is a trusted prefix of the two clusters before it
+			fl, err := f.Open(byName(t, es, name))
+			if err != nil {
+				t.Fatalf("Open(%s) = %v, want a prefix", name, err)
 			}
+			checkPrefix(t, f, fl, data, 2*4096)
 		}
 		// A cycle in a directory chain ends the listing with a warning.
 		dc := lay.Find("/dir", false).Clusters
@@ -1354,26 +1356,18 @@ func TestExfatHostile(t *testing.T) {
 		data := pattern(3*4096, 5)
 		img, lay := base(exfattest.File{Path: "/f.bin", Data: data, FatChain: true})
 		cl := lay.Find("/f.bin", false).Clusters
-		for name, v := range map[string]uint32{"free": 0, "reserved": 1, "bad cluster": 0xFFFFFFF7, "beyond": lay.ClusterCount + 2, "huge": 0xFFFFFFF0} {
+		for _, v := range map[string]uint32{"free": 0, "reserved": 1, "bad cluster": 0xFFFFFFF7, "beyond": lay.ClusterCount + 2, "huge": 0xFFFFFFF0} {
 			bad := bytes.Clone(img)
 			le32(bad, int(lay.FatEntryOffset(cl[0])), v)
 			f := openImg(t, bad)
-			e, err := f.Lookup("/f.bin")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := f.Open(e); !errors.Is(err, filesys.ErrCorrupt) {
-				t.Errorf("%s: Open = %v, want a corrupt error", name, err)
-			}
+			fl := openPrefixFile(t, f, "/f.bin")
+			checkPrefix(t, f, fl, data, 4096)
 		}
 		// End of chain too early: DataLength exceeds the chain capacity.
 		bad := bytes.Clone(img)
 		le32(bad, int(lay.FatEntryOffset(cl[1])), 0xFFFFFFFF)
 		f := openImg(t, bad)
-		e, _ := f.Lookup("/f.bin")
-		if _, err := f.Open(e); !errors.Is(err, filesys.ErrCorrupt) {
-			t.Errorf("short chain: Open = %v", err)
-		}
+		checkPrefix(t, f, openPrefixFile(t, f, "/f.bin"), data, 2*4096)
 		// Any of the EOC values ends a chain.
 		for _, eoc := range []uint32{0xFFFFFFF8, 0xFFFFFFFE, 0xFFFFFFFF} {
 			ok := bytes.Clone(img)
@@ -1420,10 +1414,26 @@ func TestExfatHostile(t *testing.T) {
 			patch(path, func(s []byte) { le32(s[20:], 0, 0xFFFFFFFF) }) // beyond the heap
 			patch(path, func(s []byte) { le32(s[20:], 0, lay.ClusterCount+2) })
 		}
-		// A NoFatChain file that runs off the end of the heap.
-		patch("/nofat.bin", func(s []byte) { le32(s[20:], 0, lay.ClusterCount+1) })
-		// DataLength just beyond the chain.
-		patch("/chain.bin", func(s []byte) { le64(s[24:], 0, 3*4096) })
+		// A NoFatChain file that runs off the end of the heap keeps the cluster
+		// that is inside it as a trusted prefix.
+		{
+			bad := bytes.Clone(img)
+			loc := lay.Find("/nofat.bin", false)
+			first := lay.ClusterCount + 1
+			exfattest.PatchStream(bad, loc, exfattest.StreamPatch{First: &first})
+			f := openImg(t, bad)
+			off := lay.ClusterOffset(first)
+			want := append(bytes.Clone(bad[off:off+4096]), make([]byte, 4096)...)
+			checkPrefix(t, f, openPrefixFile(t, f, "/nofat.bin"), want, 4096)
+		}
+		// DataLength just beyond the chain: the chain's clusters are the prefix.
+		{
+			bad := bytes.Clone(img)
+			big := uint64(3 * 4096)
+			exfattest.PatchStream(bad, lay.Find("/chain.bin", false), exfattest.StreamPatch{DataLen: &big})
+			f := openImg(t, bad)
+			checkPrefix(t, f, openPrefixFile(t, f, "/chain.bin"), append(bytes.Clone(data), make([]byte, 4096)...), 2*4096)
+		}
 		// Spare capacity is fine: DataLength less than the chain holds.
 		bad := bytes.Clone(img)
 		loc := lay.Find("/chain.bin", false)
@@ -1759,8 +1769,9 @@ func TestInfoWarningsAccumulateAcrossReads(t *testing.T) {
 			t.Error("Info().Warnings aliases the live list")
 		}
 	}
-	if _, err := f.Open(byName(t, es, "loop.bin")); err == nil {
-		t.Fatal("cyclic chain opened")
+	// A cyclic chain is a trusted prefix with a warning, not an open failure.
+	if _, err := f.Open(byName(t, es, "loop.bin")); err != nil || !hasWarn(f, "chain shorter than DataLength") {
+		t.Fatalf("cyclic chain: Open = %v, warnings %v", err, f.Info().Warnings)
 	}
 	n1 := len(f.Info().Warnings)
 	if _, err := f.ReadDir(byName(t, es, "d")); err != nil {
