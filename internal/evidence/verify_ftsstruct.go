@@ -3,6 +3,8 @@ package evidence
 import (
 	"errors"
 	"fmt"
+	"math"
+	"slices"
 )
 
 // The FTS5 structure record (data row 10 of <fts>_data), pinned against the transpiled SQLite source
@@ -73,25 +75,59 @@ func (r *ftsVerify) checkUnreferenced(table string) {
 			r.rep.problemf("%s: the index structure record is unreadable: %q", table, err.Error())
 			return nil
 		}
-		rows, err := h.QueryContext(r.ctx, `SELECT id FROM `+table+`_data WHERE id NOT IN (?, ?)`, ftsAveragesRowID, ftsStructureRowID)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = rows.Close() }()
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
+		// Only the gaps between the referenced segments' id ranges are read: a clean index holds no row
+		// there, so each gap costs one b-tree seek and the (large) referenced segments are never scanned.
+		// The gaps come in ascending id order, which is the order a full scan reported them in.
+		scan := func(lo, hi int64) error {
+			r.unrefOps++
+			rows, err := h.QueryContext(r.ctx, `SELECT id FROM `+table+`_data WHERE id >= ? AND id <= ? AND id NOT IN (?, ?)`,
+				lo, hi, ftsAveragesRowID, ftsStructureRowID)
+			if err != nil {
 				return err
 			}
-			seg := id >> ftsSegidShift
-			if id < 1<<ftsSegidShift {
-				report("%s: data row %d is below the segment range (only rows 1 and 10 are), so no structure can reference it", table, id)
-			} else if _, ok := segs[seg]; !ok {
-				report("%s: data row %d (segment %d) is not referenced by the index structure", table, id, seg)
+			defer func() { _ = rows.Close() }()
+			for rows.Next() {
+				r.unrefOps++
+				var id int64
+				if err := rows.Scan(&id); err != nil {
+					return err
+				}
+				seg := id >> ftsSegidShift
+				if id < 1<<ftsSegidShift {
+					report("%s: data row %d is below the segment range (only rows 1 and 10 are), so no structure can reference it", table, id)
+				} else if _, ok := segs[seg]; !ok {
+					report("%s: data row %d (segment %d) is not referenced by the index structure", table, id, seg)
+				}
+			}
+			return rows.Err()
+		}
+		// a segment id is below 1<<31 but a row id has 63 bits: segments from 1<<26 on can hold no row, and
+		// segment 0 is the range of the rows 1 and 10 and of every "small" id, which no segment owns
+		const maxRowSeg = 1 << (63 - ftsSegidShift)
+		sorted := make([]int64, 0, len(segs))
+		for s := range segs {
+			if s >= 1 && s < maxRowSeg {
+				sorted = append(sorted, s)
 			}
 		}
-		if err := rows.Err(); err != nil {
-			return err
+		slices.Sort(sorted)
+		next, open := int64(math.MinInt64), true // the start of the current gap
+		for _, s := range sorted {
+			if start := s << ftsSegidShift; start > next {
+				if err := scan(next, start-1); err != nil {
+					return err
+				}
+			}
+			if s+1 >= maxRowSeg {
+				open = false
+				break
+			}
+			next = (s + 1) << ftsSegidShift
+		}
+		if open {
+			if err := scan(next, math.MaxInt64); err != nil {
+				return err
+			}
 		}
 		sr, err := h.QueryContext(r.ctx, `SELECT DISTINCT segid FROM `+table+`_idx`)
 		if err != nil {
@@ -99,6 +135,7 @@ func (r *ftsVerify) checkUnreferenced(table string) {
 		}
 		defer func() { _ = sr.Close() }()
 		for sr.Next() {
+			r.unrefOps++
 			var s int64
 			if err := sr.Scan(&s); err != nil {
 				return err

@@ -328,3 +328,30 @@ func TestVerifyCancelledDuringP11(t *testing.T) {
 		t.Fatalf("FTSDocsChecked = %d: a cut comparison counts no document", rep.FTSDocsChecked)
 	}
 }
+
+// The accounting of shadow rows is linear in the unreferenced rows, not in the table (5D-15a): a clean index
+// costs a bounded number of range probes however many data rows it holds. Counted operations, not time.
+func TestCheckUnreferencedIsLinear(t *testing.T) {
+	ops := func(n int) (int, int) {
+		c := indexedTextCase(t, n)
+		rep := &VerifyReport{Problems: []string{}, Notices: []string{}}
+		r := &ftsVerify{c: c, ctx: context.Background(), ps: &problemSet{rep: rep, counts: map[string]int{}}, rep: rep, problems: map[string]int{}, listed: map[string]map[int64]bool{}}
+		r.checkUnreferenced(FTSSubTable)
+		if len(rep.Problems) != 0 {
+			t.Fatalf("n=%d: %q", n, rep.Problems)
+		}
+		var rows int
+		if err := c.store.db.QueryRow("SELECT count(*) FROM " + FTSSubTable + "_data").Scan(&rows); err != nil {
+			t.Fatal(err)
+		}
+		return r.unrefOps, rows
+	}
+	small, smallRows := ops(5000)
+	large, largeRows := ops(20000)
+	if largeRows < 3*smallRows {
+		t.Fatalf("the workloads do not scale: %d and %d data rows", smallRows, largeRows)
+	}
+	if large > 3*small || large > largeRows/4 {
+		t.Fatalf("operations grew from %d to %d for %d to %d data rows", small, large, smallRows, largeRows)
+	}
+}

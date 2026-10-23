@@ -165,6 +165,8 @@ type ftsVerify struct {
 	haveRef bool
 	ex      *ftsExpect
 	found   *ftsDigester
+	// unrefOps counts the shadow rows and range probes checkUnreferenced touched (TestCheckUnreferencedIsLinear).
+	unrefOps int
 	// bad holds, per table, the buckets of a delete marker: they are looked at again whatever the sums say
 	bad     [2]ftsBucketSet
 	failing [2][]ftsBucketKey // the failing buckets of each table, once its pass is done
