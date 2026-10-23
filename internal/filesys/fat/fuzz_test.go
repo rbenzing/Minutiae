@@ -3,6 +3,7 @@ package fat_test
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,12 +71,15 @@ func FuzzFATOpen(f *testing.F) {
 		}
 		_ = fsys.Info()
 		visited, readTotal := 0, int64(0)
-		_ = filesys.Walk(fsys, fsys.Root(), "/", func(_ string, e filesys.Entry, err error) error {
+		_ = filesys.Walk(fsys, fsys.Root(), "/", func(p string, e filesys.Entry, err error) error {
 			if err != nil {
 				return nil
 			}
 			if visited++; visited > fuzzWalkBudget {
 				return errFuzzBudget
+			}
+			if e.Type == filesys.TypeDir && !e.Deleted {
+				checkMissingLookup(t, fsys, p, e)
 			}
 			if e.Type != filesys.TypeFile && e.Type != filesys.TypeSymlink {
 				return nil
@@ -167,4 +171,22 @@ func trimTail(img []byte) []byte {
 		end--
 	}
 	return img[:min(len(img), end+4096)]
+}
+
+// checkMissingLookup looks up a name that cannot be in the directory dir (at
+// walk path p) and holds the lookup to the listing: not found is accepted only
+// when ReadDir of the same directory returned a nil error (a directory that was
+// not read to the end cannot say a name is absent).
+func checkMissingLookup(t *testing.T, fsys *fat.FS, p string, dir filesys.Entry) {
+	t.Helper()
+	if got, err := fsys.Lookup(p); err != nil || got.ID != dir.ID {
+		return // the path names another directory (duplicate names) or none
+	}
+	_, err := fsys.Lookup(strings.TrimSuffix(p, "/") + "/\x01missing\x01")
+	if !errors.Is(err, filesys.ErrNotFound) {
+		return
+	}
+	if _, listErr := fsys.ReadDir(dir); listErr != nil {
+		t.Fatalf("Lookup of a missing name in %q says not found, but ReadDir of it failed: %v", p, listErr)
+	}
 }

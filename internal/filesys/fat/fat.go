@@ -49,6 +49,7 @@ type FS struct {
 	dirs         map[uint32]dirLoc // directories met so far, by first cluster: where their entry is
 	ends         map[uint32]int    // directories whose end-of-directory marker was found: its entry index
 	entryBudget  int64             // directory entries this instance may still read
+	dirEntryCap  int               // entries read from one directory (maxDirEntries; lowered by tests)
 	locateScans  int               // directories one locate may list (maxLocateScans; lowered by tests)
 	budgetWarned bool
 
@@ -124,6 +125,7 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		data:      raw,
 
 		entryBudget: maxEntryBudget,
+		dirEntryCap: maxDirEntries,
 		locateScans: maxLocateScans,
 		size:        volSize,
 		label:       b.label,

@@ -90,7 +90,10 @@ func TestDirectoryReadBudget(t *testing.T) {
 		f.SetDirBudget(16) // one 512-byte root sector
 		// Exhausted part-way through the directory: the entries read so far are
 		// listed, with a warning.
-		part := readDir(t, f, "/")
+		part, err := f.ReadDir(f.Root())
+		if !errors.Is(err, filesys.ErrIncomplete) || !errors.Is(err, filesys.ErrLimit) {
+			t.Errorf("ReadDir cut by the budget = %v, want an error matching ErrIncomplete and ErrLimit", err)
+		}
 		if len(part) == 0 || len(part) >= 200 || !hasWarning(f, "budget") {
 			t.Errorf("%d entries, warnings %q", len(part), f.Info().Warnings)
 		}
@@ -100,8 +103,8 @@ func TestDirectoryReadBudget(t *testing.T) {
 			t.Errorf("after exhaustion ReadDir = %d entries, %v; want a CorruptError \"directory read budget exhausted\"", len(again), err)
 		}
 		f.SetDirBudget(20) // 20 entries: fewer than the root has
-		if part := readDir(t, f, "/"); len(part) >= 200 {
-			t.Errorf("entry budget ignored: %d entries", len(part))
+		if part, err := f.ReadDir(f.Root()); len(part) >= 200 || !errors.Is(err, filesys.ErrIncomplete) {
+			t.Errorf("entry budget ignored: %d entries, %v", len(part), err)
 		}
 	})
 	t.Run("walk reports a directory the budget no longer covers", func(t *testing.T) {

@@ -114,10 +114,20 @@ func (f *FS) dirChain(first uint32) ([]uint32, bool, error) {
 		return c.clusters, c.truncated, c.err
 	}
 	cs := f.clusterSize()
-	clusters, truncated, err := f.chainN(first, (maxDirEntries*32+cs-1)/cs)
+	clusters, truncated, err := f.chainN(first, (f.dirEntryCap*32+cs-1)/cs)
 	f.dc = &dirChainEntry{first: first, clusters: clusters, truncated: truncated, err: err}
 	return clusters, truncated, err
 }
+
+// scanCut says why a scan did not read a directory to its end: the zero value
+// is a complete scan. limit is set when a bound of the reader caused it (the
+// entry cap, the directory-chain bound, the spent read budget) and not damage.
+type scanCut struct {
+	reason string
+	limit  bool
+}
+
+func (c scanCut) isCut() bool { return c.reason != "" }
 
 // scanDir calls fn with each 32-byte entry (and its index) of the directory that
 // starts at first, up to the first end-of-directory entry (0x00, not passed) or
@@ -126,7 +136,8 @@ func (f *FS) dirChain(first uint32) ([]uint32, bool, error) {
 // before the problem have been passed, read says how many, and the error is
 // returned.
 func (f *FS) scanDir(first uint32, fn func(idx int, e []byte) (stop bool)) (read int, err error) {
-	return f.scan(first, true, fn)
+	read, _, err = f.scan(first, true, fn)
+	return read, err
 }
 
 // errBudget is the error of a directory that cannot be started because the
@@ -135,11 +146,15 @@ func errBudget(first uint32) error {
 	return corrupt("directory", -1, "directory read budget exhausted before the directory at cluster %d was read", first)
 }
 
-// scan is scanDir with the choice of charging the directory read budget. A
-// charged scan whose budget is spent before its first entry returns an error
-// (never an empty listing); one cut short after entries were read returns them
-// with a nil error (the budget warning is recorded).
-func (f *FS) scan(first uint32, charged bool, fn func(idx int, e []byte) (stop bool)) (read int, err error) {
+// scan is scanDir with the choice of charging the directory read budget and
+// the cut it reports. The scan is cut when it stopped before an end-of-directory
+// entry without fn asking for it: the entry cap, the directory-chain bound, a
+// chain error or a failed read, the budget spent after the first entry. Damage
+// after the end marker is not a cut. A charged scan whose budget is spent
+// before its first entry returns an error (never an empty listing, and not a
+// cut: nothing of the directory was read); one cut short after entries were read
+// returns them with a nil error and the cut (the budget warning is recorded).
+func (f *FS) scan(first uint32, charged bool, fn func(idx int, e []byte) (stop bool)) (read int, cut scanCut, err error) {
 	idx := 0
 	exhausted := false
 	visit := func(chunk []byte) (stop bool) {
@@ -149,10 +164,11 @@ func (f *FS) scan(first uint32, charged bool, fn func(idx int, e []byte) (stop b
 		}
 		for i := 0; i+32 <= len(chunk); i += 32 {
 			if chunk[i] == 0x00 {
-				return true
+				return true // the end of the directory
 			}
-			if idx >= maxDirEntries {
-				f.warn("directory at cluster %d has more than %d entries: the rest is not listed", first, maxDirEntries)
+			if idx >= f.dirEntryCap {
+				f.warn("directory at cluster %d has more than %d entries: the rest is not listed", first, f.dirEntryCap)
+				cut = scanCut{reason: fmt.Sprintf("the directory has more than %d entries", f.dirEntryCap), limit: true}
 				return true
 			}
 			cur := idx
@@ -163,9 +179,20 @@ func (f *FS) scan(first uint32, charged bool, fn func(idx int, e []byte) (stop b
 		}
 		return false
 	}
+	// stopped is the result of a scan whose visit asked to stop: the end marker,
+	// fn, the entry cap (cut is set) or the spent budget.
+	stopped := func() (int, scanCut, error) {
+		if exhausted {
+			if idx == 0 {
+				return idx, scanCut{}, errBudget(first)
+			}
+			return idx, scanCut{reason: "the directory read budget is spent", limit: true}, nil
+		}
+		return idx, cut, nil
+	}
 	bps := f.b.bytsPerSec
 	if first == 0 && f.fatType == 32 {
-		return 0, corrupt("directory", -1, "a directory cannot start at cluster 0 on FAT32")
+		return 0, scanCut{}, corrupt("directory", -1, "a directory cannot start at cluster 0 on FAT32")
 	}
 	if first == 0 {
 		start := (int64(f.b.rsvd) + int64(f.b.numFATs)*int64(f.b.fatSz)) * int64(bps) // inside the volume: checked by parseBoot
@@ -174,16 +201,16 @@ func (f *FS) scan(first uint32, charged bool, fn func(idx int, e []byte) (stop b
 		for off := int64(0); off < total; off += int64(bps) {
 			chunk := buf[:min(int64(bps), total-off)]
 			if err := readFull(f.r, chunk, start+off); err != nil {
-				return idx, corrupt("root directory", start+off, "read failed: %v", err)
+				return idx, scanCut{reason: fmt.Sprintf("the root directory cannot be read at offset %d: %v", start+off, err)}, corrupt("root directory", start+off, "read failed: %v", err)
 			}
 			if visit(chunk) {
-				return idx, budgetErr(exhausted, idx, first)
+				return stopped()
 			}
 		}
-		return idx, nil
+		return idx, scanCut{}, nil
 	}
 	if charged && !f.chargeDir(first, 0) {
-		return 0, errBudget(first) // the warning is recorded
+		return 0, scanCut{}, errBudget(first) // the warning is recorded
 	}
 	clusters, truncated, chainErr := f.dirChain(first)
 	cs := f.clusterSize()
@@ -191,39 +218,37 @@ func (f *FS) scan(first uint32, charged bool, fn func(idx int, e []byte) (stop b
 	for _, c := range clusters {
 		off, ok := f.clusterOffset(c)
 		if !ok {
-			return idx, corrupt("directory", -1, "cluster %d has no valid offset", c)
+			err := corrupt("directory", -1, "cluster %d has no valid offset", c)
+			return idx, scanCut{reason: fmt.Sprintf("cluster %d has no valid offset", c)}, err
 		}
 		for pos := 0; pos < cs; pos += len(buf) {
 			if err := readFull(f.r, buf, off+int64(pos)); err != nil {
-				return idx, corrupt("directory", off+int64(pos), "read failed: %v", err)
+				return idx, scanCut{reason: fmt.Sprintf("the directory cannot be read at offset %d: %v", off+int64(pos), err)}, corrupt("directory", off+int64(pos), "read failed: %v", err)
 			}
 			if visit(buf) {
-				return idx, budgetErr(exhausted, idx, first)
+				return stopped()
 			}
 		}
 	}
-	if truncated && chainErr == nil {
-		f.warn("directory at cluster %d is longer than %d entries: the rest is not listed", first, maxDirEntries)
+	switch {
+	case chainErr != nil:
+		return idx, scanCut{reason: fmt.Sprintf("the directory chain is damaged after %d entries: %v", idx, chainErr)}, chainErr
+	case truncated:
+		f.warn("directory at cluster %d is longer than %d entries: the rest is not listed", first, f.dirEntryCap)
+		return idx, scanCut{reason: fmt.Sprintf("the directory chain is longer than %d entries", f.dirEntryCap), limit: true}, nil
 	}
-	return idx, chainErr
-}
-
-// budgetErr is the error of a scan stopped by the spent budget: only when no
-// entry was read yet.
-func budgetErr(exhausted bool, read int, first uint32) error {
-	if exhausted && read == 0 {
-		return errBudget(first)
-	}
-	return nil
+	return idx, scanCut{}, nil
 }
 
 // dirEnd returns the index of the first end-of-directory entry (0x00) of the
 // directory that starts at first: the entries from there on are not part of the
 // directory, whatever bytes they hold. It is maxDirEntries when the directory
 // has no end marker within the entries that can be read, and also when the
-// directory cannot be scanned (a broken chain: the callers then meet the same
-// problem themselves). The scan is not charged to the directory read budget (it
-// reads at most one directory, once: the result is remembered).
+// scan was cut or failed (a broken chain: the callers then meet the same
+// problem themselves). A cut index is never taken as the end marker: an entry ID
+// beyond a cut is undecidable, not beyond the end. The scan is not charged to
+// the directory read budget (it reads at most one directory, once: the result is
+// remembered).
 func (f *FS) dirEnd(first uint32) int {
 	f.dmu.Lock()
 	n, ok := f.ends[first]
@@ -231,8 +256,8 @@ func (f *FS) dirEnd(first uint32) int {
 	if ok {
 		return n
 	}
-	read, err := f.scan(first, false, func(int, []byte) bool { return false })
-	if err != nil {
+	read, cut, err := f.scan(first, false, func(int, []byte) bool { return false })
+	if err != nil || cut.isCut() {
 		return maxDirEntries
 	}
 	f.dmu.Lock()
@@ -402,15 +427,16 @@ func (f *FS) makeItem(e []byte, idx int, dir uint32, deleted bool, units []uint1
 
 // listDir lists the directory that starts at first (0: the fixed FAT12/16
 // root): live and deleted entries in disk order. When the directory is damaged
-// part-way, the entries before the damage are returned and the damage is an
-// Info warning; only a directory of which nothing can be read is an error.
-func (f *FS) listDir(first uint32) ([]dirItem, error) {
+// part-way, the entries before the damage are returned with the cut (the damage
+// is also an Info warning); only a directory of which nothing can be read is an
+// error.
+func (f *FS) listDir(first uint32) ([]dirItem, scanCut, error) {
 	var (
 		items   []dirItem
 		lfn     lfnAsm
 		pending [][32]byte // deleted long-name entries right before the current one
 	)
-	read, err := f.scanDir(first, func(idx int, e []byte) bool {
+	read, cut, err := f.scan(first, true, func(idx int, e []byte) bool {
 		switch {
 		case isLFN(e) && e[0] != 0xE5:
 			pending = pending[:0]
@@ -454,12 +480,34 @@ func (f *FS) listDir(first uint32) ([]dirItem, error) {
 	})
 	if err != nil {
 		if read == 0 {
-			return nil, err
+			return nil, cut, err
 		}
 		f.warn("directory at cluster %d is damaged after %d entries: %v", first, read, err)
 	}
 	f.learnDirs(first, items)
-	return items, nil
+	return items, cut, nil
+}
+
+// incompleteLookup is the error of a lookup of comp that found nothing in the
+// directory at first, which the scan did not read to the end: the name may be in
+// the part that was not read.
+func incompleteLookup(first uint32, comp string, cut scanCut) error {
+	return cutError(first, fmt.Sprintf("lookup of %q cannot be decided", comp), cut)
+}
+
+// cutListing is the error of a listing that was cut: it comes with the entries
+// that were read.
+func cutListing(first uint32, cut scanCut) error {
+	return cutError(first, "listing is incomplete", cut)
+}
+
+// cutError wraps filesys.ErrIncomplete together with filesys.ErrLimit (a bound
+// of the reader) or a *filesys.CorruptError (damage or a failed read).
+func cutError(first uint32, what string, cut scanCut) error {
+	if cut.limit {
+		return fmt.Errorf("fat: %w: %w: directory at cluster %d: %s: %s", filesys.ErrLimit, filesys.ErrIncomplete, first, what, cut.reason)
+	}
+	return fmt.Errorf("%w: %w", corrupt("directory", -1, "directory at cluster %d: %s: %s", first, what, cut.reason), filesys.ErrIncomplete)
 }
 
 // noteDir records a directory (f.dmu held), within the bound.
@@ -551,7 +599,10 @@ func (f *FS) resolveDir(first uint32, hint string) error {
 			}
 			return fmt.Errorf("%w: the search for the directory at cluster %d stopped after %d directories", filesys.ErrLimit, first, f.locateScans)
 		}
-		items, err := f.listDir(queue[0])
+		items, cut, err := f.listDir(queue[0])
+		if err == nil && cut.isCut() && listErr == nil {
+			listErr = cutListing(queue[0], cut) // the subdirectories of the entries read are still searched
+		}
 		queue = queue[1:]
 		if err != nil {
 			if listErr == nil {
@@ -649,23 +700,29 @@ func (f *FS) liveEntryAt(p uint32, idx int) ([]byte, error) {
 // and the volume label are omitted. The directory is identified by dir.ID alone
 // and re-read from the volume: Entry fields and Attrs the caller changed have no
 // effect (attrs only hint where to look). A directory chain that loops, breaks
-// or exceeds 65536 entries yields the entries read so far and an Info warning.
+// or exceeds 65536 entries, a failed read and the spent budget cut the listing:
+// it yields the entries read so far together with an error matching
+// filesys.ErrIncomplete (and filesys.ErrLimit for the entry cap, the chain bound
+// and the budget; a *filesys.CorruptError for damage), and an Info warning.
 // A directory that cannot be started because the per-volume directory read
 // budget is spent is a *filesys.CorruptError ("directory read budget
 // exhausted"), never an empty listing; one cut short by it is listed as far as
-// it was read, with the budget warning.
+// it was read, with the budget warning and the ErrIncomplete error.
 func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
 	first, err := f.dirTarget(dir)
 	if err != nil {
 		return nil, err
 	}
-	items, err := f.listDir(first)
+	items, cut, err := f.listDir(first)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]filesys.Entry, len(items))
 	for i := range items {
 		out[i] = items[i].e
+	}
+	if cut.isCut() {
+		return out, cutListing(first, cut)
 	}
 	return out, nil
 }
@@ -675,9 +732,10 @@ var errNoChild = errors.New("no such entry")
 // child finds the live entry named comp in the directory at first. Preference
 // over the whole directory: an exact match of the long or the short name, then
 // the "~raw~" display form, then a case-insensitive match (FAT is not case
-// sensitive).
+// sensitive). When nothing matches and the scan did not read the directory to
+// the end, the answer is the incomplete-lookup error, never "no such entry".
 func (f *FS) child(first uint32, comp string) (dirItem, error) {
-	items, err := f.listDir(first)
+	items, cut, err := f.listDir(first)
 	if err != nil {
 		return dirItem{}, err
 	}
@@ -710,12 +768,17 @@ func (f *FS) child(first uint32, comp string) (dirItem, error) {
 			return *it, nil
 		}
 	}
+	if cut.isCut() { // the name may be in the part that was not read
+		return dirItem{}, incompleteLookup(first, comp, cut)
+	}
 	return dirItem{}, errNoChild
 }
 
 // Lookup resolves an absolute slash path through live entries only. Names are
 // matched as described at child: long and 8.3 names, case-insensitively.
-// Empty components are ignored, "." and ".." are not special.
+// Empty components are ignored, "." and ".." are not special. A name that is
+// not found in a directory that was cut (see ReadDir) is an error matching
+// filesys.ErrIncomplete, never filesys.ErrNotFound.
 func (f *FS) Lookup(p string) (filesys.Entry, error) {
 	cur, first := f.Root(), f.rootFirst()
 	for _, comp := range strings.Split(p, "/") {
