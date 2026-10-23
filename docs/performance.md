@@ -64,6 +64,8 @@ fit the machine, the decision (ruling D50) is to move the scratch space to `<cas
 (full-text temporary files).
 
 ## Machine
+The Task 14m runs (`verify-2m`, `verify-10m`, `search-stats-10m`) ran on an idle machine: no builder or check ran beside them (the "Background load" paragraph below describes the baseline run only).
+
 Baseline (commit 2724e52): Intel i7-1265U (10 cores, 12 threads), 15.4 GB RAM, NVMe SK hynix PC801 512 GB, Windows 11 Pro, go1.26.8. The spec's reference machine is 8 cores, NVMe, 16 GiB; this one is close in size.
 
 Background load: this is the user's working laptop, not an idle machine. The user's applications and Docker Desktop (WSL) were running during every run, so every figure is what the tool does beside normal desktop load. During the verify run free RAM briefly fell to about 910 MB; the test process held about 70 MB and the rest was outside Minutiae.
@@ -310,6 +312,150 @@ Background load: this is the user's working laptop, not an idle machine. The use
         "verify_s": 4794.1579328,
         "verify_scratch_bytes": 991232
       }
+    },
+    {
+      "commit": "d16cba3",
+      "label": "verify-2m",
+      "machine": "Intel i7-1265U 10 cores/12 threads, 15.4 GB RAM, NVMe SK hynix PC801 512GB, Windows 11 Pro, go1.26.8",
+      "records": 2000000,
+      "values": {
+        "db_ratio": 3.8982436977302855,
+        "ingest_rate": 2154.359719197471,
+        "ingest_s": 928.3500718,
+        "ostemp_added_ingest": 0,
+        "ostemp_added_verify": 0,
+        "ostemp_added_verify_super": 0,
+        "peak_rss_ingest_bytes": 562814976,
+        "peak_rss_verify_bytes": 107249664,
+        "peak_rss_verify_super_bytes": 92258304,
+        "start_s": 0.0786731,
+        "tamper.localize_s": 76.5,
+        "tamper.ostemp_added": 0,
+        "tamper.peak_rss_bytes": 349990912,
+        "tamper.verify_s": 663.0443208,
+        "tamper64.batches": 64,
+        "tamper64.digest_mismatch_lines": 50,
+        "tamper64.localize_s": 4887,
+        "tamper64.not_localized_lines": 0,
+        "tamper64.ostemp_added": 0,
+        "tamper64.peak_rss_bytes": 383840256,
+        "tamper64.problems": 359,
+        "tamper64.verify_s": 5507.2149064,
+        "tamper70.batches": 70,
+        "tamper70.digest_mismatch_lines": 50,
+        "tamper70.localize_s": 4863.6,
+        "tamper70.not_localized_lines": 2,
+        "tamper70.ostemp_added": 0,
+        "tamper70.peak_rss_bytes": 384684032,
+        "tamper70.problems": 361,
+        "tamper70.verify_s": 5493.1762162,
+        "tamper_detected": 1,
+        "verify_rate": 2935.1098717076143,
+        "verify_s": 681.4054967,
+        "verify_super_s": 632.2116076
+      }
+    },
+    {
+      "commit": "d16cba3",
+      "label": "verify-10m",
+      "machine": "Intel i7-1265U 10 cores/12 threads, 15.4 GB RAM, NVMe SK hynix PC801 512GB, Windows 11 Pro, go1.26.8",
+      "records": 10000000,
+      "values": {
+        "ostemp_added_verify": 0,
+        "peak_rss_verify_bytes": 171675648,
+        "verify_rate": 2158.4750856362225,
+        "verify_s": 4632.9003594
+      }
+    },
+    {
+      "commit": "d16cba3",
+      "label": "search-stats-10m",
+      "machine": "Intel i7-1265U 10 cores/12 threads, 15.4 GB RAM, NVMe SK hynix PC801 512GB, Windows 11 Pro, go1.26.8",
+      "records": 10000000,
+      "values": {
+        "get_p95_ms": 270.786,
+        "matrix.search.prefix.mid.type.p95_ms": 77.541,
+        "matrix.search.prefix.mid.type.samples": 200,
+        "matrix.search.prefix.mid.type.timeouts": 0,
+        "matrix.search.selective.common.artifact_tiny.p95_ms": 13.209,
+        "matrix.search.selective.common.artifact_tiny.samples": 200,
+        "matrix.search.selective.common.artifact_tiny.timeouts": 0,
+        "matrix.search.selective.common.deleted.p95_ms": 119.619,
+        "matrix.search.selective.common.deleted.samples": 200,
+        "matrix.search.selective.common.deleted.timeouts": 0,
+        "matrix.search.selective.common.pathprefix.p95_ms": 1042.93,
+        "matrix.search.selective.common.pathprefix.samples": 119,
+        "matrix.search.selective.common.pathprefix.timeouts": 0,
+        "matrix.search.selective.common.typepair.p95_ms": 97.141,
+        "matrix.search.selective.common.typepair.samples": 200,
+        "matrix.search.selective.common.typepair.timeouts": 0,
+        "matrix.search.substring.common.p95_ms": 128.345,
+        "matrix.search.substring.common.samples": 200,
+        "matrix.search.substring.common.timeouts": 0,
+        "matrix.search.substring.mid.p95_ms": 61.657,
+        "matrix.search.substring.mid.samples": 200,
+        "matrix.search.substring.mid.timeouts": 0,
+        "matrix.search.substring.mid.type.p95_ms": 59.307,
+        "matrix.search.substring.mid.type.samples": 200,
+        "matrix.search.substring.mid.type.timeouts": 0,
+        "matrix.search.word.common.time.p95_ms": 92.288,
+        "matrix.search.word.common.time.samples": 200,
+        "matrix.search.word.common.time.timeouts": 0,
+        "matrix.search.word.common.type.p95_ms": 121.36,
+        "matrix.search.word.common.type.samples": 200,
+        "matrix.search.word.common.type.timeouts": 0,
+        "matrix.search.word.mid.time.p95_ms": 37.502,
+        "matrix.search.word.mid.time.samples": 200,
+        "matrix.search.word.mid.time.timeouts": 0,
+        "matrix.search.word.mid.type.p95_ms": 26.807,
+        "matrix.search.word.mid.type.samples": 200,
+        "matrix.search.word.mid.type.timeouts": 0,
+        "matrix.search.word.rare.type.p95_ms": 52.451,
+        "matrix.search.word.rare.type.samples": 200,
+        "matrix.search.word.rare.type.timeouts": 0,
+        "probe.common.deleted.filter_cold_ms": 0,
+        "probe.common.deleted.filter_mean_ms": 0.14829,
+        "probe.common.deleted.filter_tiny": 0,
+        "probe.common.deleted.hits262145": 262145,
+        "probe.common.deleted.hits4096": 4096,
+        "probe.common.deleted.text262145_cold_ms": 15.3938,
+        "probe.common.deleted.text262145_mean_ms": 15.077095,
+        "probe.common.deleted.text4096_cold_ms": 0,
+        "probe.common.deleted.text4096_mean_ms": 0.30491,
+        "probe.common.hits262145": 262145,
+        "probe.common.hits4096": 4096,
+        "probe.common.text262145_cold_ms": 16.5986,
+        "probe.common.text262145_mean_ms": 15.170295,
+        "probe.common.text4096_cold_ms": 1.6139,
+        "probe.common.text4096_mean_ms": 0.28572,
+        "probe.common.type.filter_cold_ms": 0.6717,
+        "probe.common.type.filter_mean_ms": 0.23489,
+        "probe.common.type.filter_tiny": 0,
+        "probe.common.type.hits262145": 262145,
+        "probe.common.type.hits4096": 4096,
+        "probe.common.type.text262145_cold_ms": 15.7459,
+        "probe.common.type.text262145_mean_ms": 14.99334,
+        "probe.common.type.text4096_cold_ms": 0.5231,
+        "probe.common.type.text4096_mean_ms": 0.31452,
+        "probe.mid.hits262145": 33064,
+        "probe.mid.hits4096": 4096,
+        "probe.mid.text262145_cold_ms": 1.8748,
+        "probe.mid.text262145_mean_ms": 2.299735,
+        "probe.mid.text4096_cold_ms": 1.27,
+        "probe.mid.text4096_mean_ms": 0.304425,
+        "probe.prefix.hits262145": 199887,
+        "probe.prefix.hits4096": 4096,
+        "probe.prefix.text262145_cold_ms": 22.4498,
+        "probe.prefix.text262145_mean_ms": 23.068825,
+        "probe.prefix.text4096_cold_ms": 12.23,
+        "probe.prefix.text4096_mean_ms": 11.478965,
+        "search_substring_p95_ms": 128.345,
+        "search_word_p95_ms": 121.36,
+        "stats.group_s": 6.2182176,
+        "stats.index_s": 0,
+        "stats.overview_s": 36.5856217,
+        "stats_type_s": 42.8038393
+      }
     }
   ],
   "decisions": {
@@ -317,7 +463,7 @@ Background load: this is the user's working laptop, not an idle machine. The use
     "search_plan": "apply",
     "open_artifact_cache": "apply",
     "ingest_hot_path": "apply",
-    "parallel_verify": "pending: P11 speed-up first (user decision 2026-10-22)"
+    "parallel_verify": "apply"
   }
 }
 ```
@@ -336,7 +482,7 @@ Not measured at 10M (by decision of 2026-10-16, they wait for the verify fix): c
 
 There is no phase table, no `verify_phases_s` and no `verify_rate` for the `final` run, and none is estimated (ruling D68b); the run record lists `verify_rate` under `unfinished`. All that the second attempt proves is a bound: 10,000,000 records were not verified in 14,227 s, so `verify_rate` is below about 703 records/s, against a target of >= 100,000 (a factor of at least 140). The first attempt's 1h57m is not a rate either. Time spent in each earlier phase of `case verify` was not recorded by either attempt. Peak memory and scratch-space size of verify were not recorded (the process was killed).
 
-Not run in `final` (stopped by the coordinator after the second timeout, user decision 2026-10-22): `copy`, `supersede`, `superqueries` and `tamper` at 10M, and therefore no `matrix.list.super.*`, `stats.super_s` or tamper detection at 10M (tamper detection stays proven at 301,000 records by the Task 4 smoke). `parallel_verify` stays pending: P11 is to be made faster first, in a new task with a spec amendment, and Task 15 does not start.
+Not run in `final` (stopped by the coordinator after the second timeout, user decision 2026-10-22): `copy`, `supersede`, `superqueries` and `tamper` at 10M, and therefore no `matrix.list.super.*`, `stats.super_s` or tamper detection at 10M (tamper detection stays proven at 301,000 records by the Task 4 smoke). `parallel_verify` stayed pending at that time, to make P11 faster first; it is decided by the `verify-10m` run below.
 
 
 ### Verify phases (2M, `phases-2m`, code of 65be2b0)
@@ -378,6 +524,86 @@ This is a linear projection of the 2M seconds above to 10,000,000 records (x5). 
 - The floor inputs, the phases that cannot be made cheaper without weakening a check (2M, then x5): P10 328.33 s, 1,641.7 s; `records.stream` 30.96 s, 154.8 s; artifact re-hash 0.15 s, 0.7 s; audit chain 0.05 s, 0.2 s. Their sum is 359.48 s at 2M and 1,797.4 s projected.
 - All the phases other than P11 together (the time no task of this plan changes) are 359.78 s at 2M and 1,798.9 s projected; the rest of the 10M total is P11.
 
+### Verify phases after the P11 redesign (`verify-2m` and `verify-10m`, 5D Task 14m)
+The code is that of d16cba3 (the P11 digest and `_idx` recomputation of Tasks 14g to 14k, no rebuild and no vocabulary comparison). The harness additions of this task (the `probes` and `tamper64` phases and the path-prefix cell, `internal/records/scale_test.go`) were in the working tree and are committed with these numbers. Every run went alone through `heavy.sh` on an idle machine (no builder or check running), `go test -v`, the phases as separate runs. `verify-2m` is a fresh 2,000,000-record case ingested for this task; `verify-10m` is the 10,000,000-record clean case of the baseline run (ingested by earlier code and kept read-only, ruling C6; its `artifacts.db` is unchanged in size and modification time after the run and its audit log gained two entries, `case.open` and `verify.run`). Seconds are the `verify_phases_s` of the run; the share is of `verify_s`. The top-level rows and `other` sum to 100%; the indented rows are nested inside the row above them.
+
+| Run | Records | `verify_s` | `verify_rate` | Peak RSS | `ostemp_added_verify` | Scratch |
+|---|---:|---:|---:|---:|---:|---|
+| `phases-2m` (before the redesign) | 2,000,000 | 4,794.16 s | 417.2 records/s | 868 MB | 0 | 0.99 MB |
+| `verify-2m` | 2,000,000 | 681.41 s | 2,935.1 records/s | 107 MB | 0 | none created |
+| `verify-10m` | 10,000,000 | 4,632.90 s | 2,158.5 records/s | 172 MB | 0 | none created |
+
+Against the target of >= 3,700 records/s (A10), `verify-2m` misses (79.3%) and `verify-10m` misses (58.3%); the decision reads `verify-10m` (ruling C2). The 2M verify is 7.04 times faster than `phases-2m` (417.2 to 2,935.1 records/s); the 10M verify, which did not finish in 14,227 s before, finishes in 4,632.9 s (77.2 min).
+
+A clean verify creates no scratch area: `verify_scratch_bytes` and `verify_tmp_bytes` stay "not measured" (the 500 ms sampler saw no file under `<case>/tmp`), and the stronger direct reading agrees. At 2M the case has no `tmp` directory after the run. At 10M `<case>/tmp` existed before the run as an empty directory left by the earlier attempts (2026-10-16), was not touched (same modification time) and holds no `verify-*` entry afterwards. The OS temp directory was unchanged in every run.
+
+#### 2M (`verify-2m`)
+Ingest (as its own run, 928.4 s, 2,154.4 records/s, `db_ratio` 3.898, peak RSS 563 MB, `ostemp_added_ingest` 0), then verify:
+
+| Phase | Seconds | Share |
+|---|---:|---:|
+| `audit` | 0.06 | 0.01% |
+| `artifacts` (re-hash of the artifacts) | 0.19 | 0.03% |
+| `records.schema` | 0.00 | 0.00% |
+| `records.integrity_check` (P10) | 374.70 | 54.99% |
+| `fts.selftest` | 0.32 | 0.05% |
+| `records.stream` | 174.20 | 25.56% |
+| &nbsp;&nbsp;`records.stream/fts.expected` | 142.80 | 20.96% |
+| `records.batches` | 0.04 | 0.01% |
+| `records.lifecycle` | 0.00 | 0.00% |
+| `fts.index` | 131.85 | 19.35% |
+| &nbsp;&nbsp;`records_fts/decode` | 10.32 | 1.51% |
+| &nbsp;&nbsp;`records_fts/totals` | 0.00 | 0.00% |
+| &nbsp;&nbsp;`records_fts/config` | 0.00 | 0.00% |
+| &nbsp;&nbsp;`records_fts/unreferenced` | 0.39 | 0.06% |
+| &nbsp;&nbsp;`records_fts_sub/decode` | 117.74 | 17.28% |
+| &nbsp;&nbsp;`records_fts_sub/totals` | 0.00 | 0.00% |
+| &nbsp;&nbsp;`records_fts_sub/config` | 0.00 | 0.00% |
+| &nbsp;&nbsp;`records_fts_sub/unreferenced` | 3.39 | 0.50% |
+| `other` | 0.05 | 0.01% |
+| Total | 681.41 | 100% |
+(top-level sum 681.41 s)
+
+#### 10M (`verify-10m`)
+
+| Phase | Seconds | Share |
+|---|---:|---:|
+| `audit` | 0.16 | 0.00% |
+| `artifacts` (re-hash of the artifacts) | 1.19 | 0.03% |
+| `records.schema` | 0.00 | 0.00% |
+| `records.integrity_check` (P10) | 2,554.86 | 55.15% |
+| `fts.selftest` | 0.31 | 0.01% |
+| `records.stream` | 894.04 | 19.30% |
+| &nbsp;&nbsp;`records.stream/fts.expected` | 722.73 | 15.60% |
+| `records.batches` | 0.19 | 0.00% |
+| `records.lifecycle` | 0.01 | 0.00% |
+| `fts.index` | 1,182.02 | 25.51% |
+| &nbsp;&nbsp;`records_fts/decode` | 72.63 | 1.57% |
+| &nbsp;&nbsp;`records_fts/totals` | 0.00 | 0.00% |
+| &nbsp;&nbsp;`records_fts/config` | 0.00 | 0.00% |
+| &nbsp;&nbsp;`records_fts/unreferenced` | 1.97 | 0.04% |
+| &nbsp;&nbsp;`records_fts_sub/decode` | 679.20 | 14.66% |
+| &nbsp;&nbsp;`records_fts_sub/totals` | 0.00 | 0.00% |
+| &nbsp;&nbsp;`records_fts_sub/config` | 0.00 | 0.00% |
+| &nbsp;&nbsp;`records_fts_sub/unreferenced` | 428.21 | 9.24% |
+| `other` | 0.12 | 0.00% |
+| Total | 4,632.90 | 100% |
+(top-level sum 4632.90 s)
+
+What dominates at 10M: `records.integrity_check` (P10, SQLite's own `PRAGMA integrity_check` over the 40.5 GB database) takes 2,554.86 s, 55.15% of `verify_s`; then `fts.index` (the index decode and recomputation) 1,182.02 s, 25.51%; then `records.stream` 894.04 s, 19.30%, of which the expected side (NFD, tokenizer replicas and the digest, `records.stream/fts.expected`) is 722.73 s. Inside `fts.index`, `records_fts_sub/decode` is 679.20 s and `records_fts_sub/unreferenced` 428.21 s. That last phase took 3.39 s at 2M: 126 times for 5 times the records, a growth this task did not investigate (the whole of `fts.index` grew 8.96 times, P10 6.82 times, `records.stream` 5.13 times).
+
+The target of 3,700 records/s allows 2,702.7 s for 10M records. P10 alone is 2,554.86 s, 94.5% of that budget, so it does not exceed it, but P10 plus `records.stream` is 3,448.90 s, which does. The four phases the A10 floor named (P10, `records.stream`, the artifact re-hash and the audit chain) sum to 3,450.25 s at 10M, against the 1,797.4 s that the 2M `phases-2m` run projected (1.92 times): P10 grew 6.82 times from 2M instead of 5, and `records.stream` now carries the expected-side work of the digest. No check was weakened for any of these numbers.
+
+#### Tamper detection at 2M and the cost of localization (`verify-2m`, D14, D167)
+All on copies of the 2M case (the copy phase of the harness, 45 s and 32 s), one mutating run per copy.
+- Clean verify of the copy (the harness calls it `verify_super`; no supersede was run, so it is a plain clean verify): 632.21 s, peak RSS 92 MB.
+- One record (id 1,000,000) altered in place: verify detects it (`tamper_detected` = 1: a digest-mismatch problem names the id range holding the record). 663.04 s, of which `fts.localize` 76.5 s; peak RSS 350 MB.
+- 64 failing batches (one record altered in each of 64 audited batches, ids 15,626 to 1,984,376 in steps of 31,250): 359 problems, 50 digest-mismatch lines (the names are capped at 50, D165), no not-localized line, because all 64 failing batches were localized (the bound is met exactly). Wall time 5,507.21 s (91.8 min), of which `fts.localize` 4,887.0 s; peak RSS 384 MB; the OS temp directory unchanged.
+- 70 failing batches (the same, 70 batches, 28,571 records apart): 361 problems, 50 digest-mismatch lines and 2 not-localized lines, one per table, each naming the 6 batches left over (batches 369, 375, 380, 386, 392 and 398, ids 1,840,001..1,845,000 to 1,985,001..1,990,000) with the reason "at most 64 batches are rebuilt and listed". Wall time 5,493.18 s, `fts.localize` 4,863.6 s, peak RSS 385 MB.
+- The cost: `fts.localize` takes 76.4 s per batch (4,887.0 s over 64 batches, 4,863.6 s over the 64 rebuilt of the 70), the same as the 76.5 s of the single batch, so each round held one batch and read the index again. The verify of 64 failing batches takes 8.1 times as long as a clean verify at 2M. At 10M this was not measured. If the per-batch cost grows as `fts.index` did (8.96 times from 2M to 10M), 64 batches would cost about 12 hours on top of the verify; that is a projection from a ratio, not a measurement, and the bound of 64 batches limits the number of rounds, not the time of a round.
+
+Not measured at 10M: copy, supersede, superqueries, tamper and the localization (decision of 2026-10-16 and ruling C6: the 10M case is read-only). Tamper detection and localization are proven at 2M above and at 301,000 records by the Task 4 smoke.
+
 ### P11 spike (5D Task 14f)
 Throwaway spike of the P11 redesign (rulings C1, C5, C6). The code is not committed (it lived in `internal/evidence/p11spike*_test.go` behind the `p11spike` build tag and was deleted); it ran on the tree of 815d057. The machine is the one in "Machine" above (Intel i7-1265U 10 cores/12 threads, 15.4 GB RAM, NVMe SK hynix PC801 512GB, Windows 11 Pro, go1.26.8), idle, through `heavy.sh`, on a fresh 2,000,000-record case ingested for this task (956.4 s). The spike is single-threaded.
 
@@ -409,13 +635,20 @@ What was measured, as wall seconds each:
 Verdict (mechanical rule of the plan, go bar P11 at 2M of at most 443 s): **GO**. The slower run is 283.52 s, ratio 15.6 against the required 10; the differential has 0 differences; all 800 buckets are equal on the clean case.
 
 ## Decisions
-One line per decision: the rule, the rows, the run, the outcome. All read the `baseline` run (10,000,000 records).
+One line per decision: the rule, the rows, the run, the outcome. All read the `baseline` run (10,000,000 records), except `parallel_verify`, which reads `verify-10m` (ruling C2).
 
 - `stats_plan` = apply: `stats_type_s` 104.03 s against <= 3 s (overview 94.15 s, group 5.55 s, index status 4.33 s).
 - `search_plan` = apply: `search_word_p95_ms` 20006 ms against <= 300 ms and `search_substring_p95_ms` 20005 ms against <= 1000 ms.
 - `open_artifact_cache` = apply: `open_artifact_ms` 31.74 ms (median of 3, 10,000 manifest lines) against <= 1 ms.
 - `ingest_hot_path` = apply: `ingest_rate` 1451 records/s against >= 40,000 (one miss is enough); the 2,000,000-record `after-pragmas` run (code of acc067a, 256 MiB batch page cache) ingested at 2148 records/s, also against >= 40,000, with `db_ratio` 3.90 at 2M as at 10M (no decision is keyed to `db_ratio`). The decision stays `apply` whatever the later runs say (ruling D17). `BenchmarkIngest` batch 1000/5000/20000: 1969/2452/2814 records/s. `db_ratio` is 3.90 against <= 1.6 (no decision is keyed to it).
-- `parallel_verify` = pending: P11 speed-up first (user decision 2026-10-22). The `final` verify did not finish in 14,227 s (`verify_rate` below about 703 records/s against >= 100,000); the plan's rule would read `apply`, but it needs a measured `verify_rate`, none exists, and the decision is not made from a bound. Task 15 does not start.
+- `parallel_verify` = apply (Task 14m, ruling C2: read from `verify-10m`, the verify after the P11 redesign; it was pending from the `final` run, which never finished): `verify_rate` 2,158.5 records/s (4,632.90 s for 10,000,000 records) against >= 3,700 (amendment A10), a miss at 58.3% of the target. `verify-2m` (2,935.1 records/s, 681.41 s) also misses, and is not part of the rule. The phase that dominates is `records.integrity_check` (P10, SQLite's own check): 2,554.86 s, 55.15% of `verify_s`, then `fts.index` 1,182.02 s (25.51%) and `records.stream` 894.04 s (19.30%). To meet the target the whole verify must fit 2,702.7 s; P10 alone takes 2,554.86 s of that, so the target can be met only if the other phases run in parallel with P10 and P10 itself does not get slower (P10 and `records.stream` in sequence are 3,448.90 s). Nothing was relaxed to reach a number.
+
+The Task 14m runs against the spec rows they measured (10,000,000 records; judged strictly as measured):
+- `search_word_p95_ms`: pass, 121.4 ms against <= 300 (`final` 21,044). `search_substring_p95_ms`: pass, 128.3 ms against <= 1000 (`final` 8,957).
+- `stats_type_s`: miss, 42.80 s against <= 3 (`final` 33.19 s; overview 36.59 s, group 6.22 s).
+- `verify_rate`: miss, 2,158.5 records/s against >= 3,700 (`verify-10m`; `verify-2m` 2,935.1). Both new, measured rates.
+- Outside the rows: `selective.common.pathprefix` 1,042.9 ms (S13, misses the 300 ms word bar it is not part of); the 64-batch localization at 2M takes 5,507 s.
+- Not re-measured: `ingest_rate`, `db_ratio`, `list_p95_ms` and `open_artifact_ms` (Task 14m did not measure them; the last measured values stay those of `final` and the Task 12 benchmark).
 
 The `final` run against the seven spec rows (baseline against final, 10,000,000 records; ruling D2: judged strictly as measured):
 - `ingest_rate`: miss, 1630.5 records/s against >= 40,000 (baseline 1451.0; ingest 6132.9 s; peak RSS 747 MB against 261 MB; `ostemp_added_ingest` 0). `db_ratio` miss, 3.898 against <= 1.6 (baseline 3.901).
@@ -524,6 +757,42 @@ The 10M re-measure (D83), phase `search` alone on the baseline's clean 10,000,00
 | `selective.common.typepair` (D98) | not measured | 61.7 (200 / 0) |
 
 `search_word_p95_ms` is 20958.9 ms (was 20006.1) against <= 300 and `search_substring_p95_ms` 4438.8 ms (was 20004.9) against <= 1000: both still miss. The common-word cells, which the plan targets, went from 643 ms and 20 s to 57 to 77 ms. The mid and rare cells, which the FTS-first plan answered in 25 to 233 ms in the baseline, went the other way (3 to 21 s). The likely cause, not proven by this run, is the choice D98 names: a word with at least 4096 hits flips to index-first, which walks the time index and probes the full-text index once per row, and a filter that keeps a small share of the rows (a type, a time window) makes that walk long; no EXPLAIN or profile was taken at 10M to confirm it. Of the three cells added for D98, `selective.common.artifact_tiny` (a common word in the one small artifact) is the worst (5 samples, 8 timeouts); `deleted` (99 ms) and `typepair` (62 ms) are within the 300 ms word bar. Whether the cold cache or the plan accounts for the mid and rare cells cannot be separated from this one run; the `final` run (fresh data, same code) is the second observation and is compared with these numbers in the Task 14 notes. No code change is made in this task (D98); what to do about it is for the coordinator and Task 16 (limitations).
+
+### The 10M search and stats re-measure (`search-stats-10m`, 5D Task 14m)
+Phases `search` and `stats` (and, as a separate invocation of the same case and code, `probes`) on the 10,000,000-record clean case, code of d16cba3 (Task 14n bands and filter probe, Task 14o single-pass stats), an idle machine, through `heavy.sh`, `go test -v`. The case had just been read by the `verify-10m` run, so the file cache held whatever the end of that verify left; it is neither the cold state of `search-retune` nor the fresh-ingest state of `final`. p95 in ms of 200 samples unless stated, no cell timed out. The list matrix (`queries`) was not re-measured: nothing in the list path changed since `final`.
+
+| Cell | `final` p95 (samples / timeouts) | `search-stats-10m` p95 | Bar |
+|---|---|---|---|
+| `word.common.type` | 36.6 (200 / 0) | 121.4 | 300 (word row) |
+| `word.common.time` | 58.2 (200 / 0) | 92.3 | 300 |
+| `word.mid.type` | 2,551.8 (76 / 0) | 26.8 | 300 |
+| `word.mid.time` | 3,148.6 (47 / 0) | 37.5 | 300 |
+| `word.rare.type` | 21,044.1 (6 / 9) | 52.5 | 300 |
+| `prefix.mid.type` | 20,997.5 (6 / 9) | 77.5 | 300 |
+| `substring.common` | 73.0 (200 / 0) | 128.3 | 1,000 (substring row) |
+| `substring.mid` | 4,225.3 (33 / 0) | 61.7 | 1,000 |
+| `substring.mid.type` | 8,957.1 (25 / 0) | 59.3 | 1,000 |
+| `selective.common.deleted` (D98) | 103.8 (200 / 0) | 119.6 | none |
+| `selective.common.artifact_tiny` (D98) | 43,778.8 (4 / 7) | 13.2 | none |
+| `selective.common.typepair` (D98) | 63.7 (200 / 0) | 97.1 | none |
+| `selective.common.pathprefix` (S13, new) | not measured | 1,042.9 (119 samples: the 120 s cell budget ended first) | none |
+
+- `search_word_p95_ms` 121.4 ms against <= 300: pass (was 21,044). `search_substring_p95_ms` 128.3 ms against <= 1000: pass (was 8,957).
+- The common-word cells are 1.6 to 3.3 times slower than in `final` (`word.common.type` 36.6 to 121.4 ms, `word.common.time` 58.2 to 92.3 ms, `substring.common` 73.0 to 128.3 ms). The probes below (15 ms for the large one) explain a part, not all, of the difference, and no profile was taken to attribute the rest. They stay far under the bars. One run of each, so the difference also carries the run-to-run noise of a laptop.
+- S13: a path prefix with a common word (`/data/7/`, one of 200 directories of the generated source paths, not served by an index, so the filter is never probed and the plan keeps the hint) costs 1,042.9 ms at p95, over the 300 ms bar of the word row (the cell is not part of that row). The plan walks the time index and tests the prefix per row, as `docs/limitations.md` says. It is the one search cell that misses a bar.
+- S14 (a superseded run present, where the filter probe joins `record_batches`): not measured. No superseded 10M case exists (the 10M case is read-only and its supersede and superqueries phases were not run), and the 2M copies of this task were not superseded.
+- Probe cost (S6), warm, mean of 20 calls after the first, in the page's own read transaction, ms. The hits column is capped by the probe's LIMIT:
+
+| Query | Text probe, LIMIT 4096 | hits | Text probe, LIMIT 262145 | hits | Filter probe (LIMIT 4096) |
+|---|---:|---:|---:|---:|---:|
+| common word | 0.29 | 4,096 | 15.17 | 262,145 | not run (no filter) |
+| mid word | 0.30 | 4,096 | 2.30 | 33,064 | not run |
+| prefix | 11.48 | 4,096 | 23.07 | 199,887 | not run |
+| common word, type filter (`note`) | 0.31 | 4,096 | 14.99 | 262,145 | 0.23 (not tiny) |
+| common word, deleted only | 0.30 | 4,096 | 15.08 | 262,145 | 0.15 (not tiny) |
+
+The large probe costs 15 ms on the common word and 23 ms on the prefix. The first call alone read 15.4 to 22.4 ms for those, within 1.5 ms of the mean; the index pages had been read by the search matrix in the invocation before, so these are warm costs and a cold cost was not measured. The platform clock ticks in steps of several ms, so single calls read as multiples of the step and the mean of 20 is the figure. The filter probe is below 0.3 ms.
+- Stats (`stats_type_s`, worst of three calls each): 42.80 s against <= 3: miss (was 33.19 s in `final`, 61.63 s in `stats-retune`, 104.03 s in the baseline). `stats.overview_s` 36.59 s, `stats.group_s` 6.22 s, `stats.index_s` below the clock step. The worst call is the first, with a file cache that the verify before it had filled with other pages. `get_p95_ms` 270.8 ms.
 
 ### OpenArtifact manifest cache (5D Task 12)
 A small benchmark, not a 10M run. Same machine as the baseline, `BenchmarkOpenArtifact`, `-count=3`, through `heavy.sh`, code of the Task 12 commit. ns/op, three runs each; the median of the 10,000-line row is the `open_artifact_ms` figure.

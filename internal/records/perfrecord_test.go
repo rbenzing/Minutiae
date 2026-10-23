@@ -38,8 +38,8 @@ type perfDoc struct {
 
 // perfRules: a decision is "apply" when ANY of its (run, row) pairs missed its target, "skip" when
 // none did, and "pending" only while one of its runs does not exist yet (ruling D17: the ingest
-// decision reads the 10M baseline as well as the 2M after-pragmas run; ruling D24: the parallel-verify
-// decision is keyed to the pre-change final run, never to final-post).
+// decision reads the 10M baseline as well as the 2M after-pragmas run; ruling D24, superseded by C2 of 5D-14m: the parallel-verify
+// decision is keyed to the verify-10m run (the verify after the P11 redesign), never to final-post).
 type perfRow struct{ run, id string }
 
 var perfRules = []struct {
@@ -50,12 +50,12 @@ var perfRules = []struct {
 	{"search_plan", []perfRow{{"baseline", "search_word_p95_ms"}, {"baseline", "search_substring_p95_ms"}}},
 	{"open_artifact_cache", []perfRow{{"baseline", "open_artifact_ms"}}},
 	{"ingest_hot_path", []perfRow{{"baseline", "ingest_rate"}, {"after-pragmas", "ingest_rate"}}},
-	{"parallel_verify", []perfRow{{"final", "verify_rate"}}},
+	{"parallel_verify", []perfRow{{"verify-10m", "verify_rate"}}},
 }
 
 // knownRuns are the only run labels a record may hold. final-post is the whole final run repeated
 // after Task 15, labelled with the code it measures. phases-2m is the 2M per-phase verify run of 5D-14c.
-var knownRuns = map[string]bool{"baseline": true, "after-pragmas": true, "after-hot-path": true, "final": true, "final-post": true, "phases-2m": true}
+var knownRuns = map[string]bool{"baseline": true, "after-pragmas": true, "after-hot-path": true, "final": true, "final-post": true, "phases-2m": true, "verify-2m": true, "verify-10m": true, "search-stats-10m": true}
 
 // specTargets are the bars of spec section 11, frozen here so an edit of the document cannot move one.
 var specTargets = map[string]perfTarget{

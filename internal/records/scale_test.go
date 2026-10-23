@@ -150,6 +150,9 @@ func TestScale(t *testing.T) {
 	if phases["search"] {
 		st.searchMatrix()
 	}
+	if phases["probes"] {
+		st.probeCosts()
+	}
 	if phases["stats"] {
 		st.statsAndGet()
 	}
@@ -171,6 +174,9 @@ func TestScale(t *testing.T) {
 	}
 	if phases["tamper"] {
 		st.tamper()
+	}
+	if phases["tamper64"] {
+		st.tamper64()
 	}
 }
 
@@ -465,6 +471,10 @@ func (st *scaleState) searchMatrix() {
 		{"selective.common.typepair", "selective", func(int) records.Filter {
 			return records.Filter{Types: []string{"calendar_event", "note"}, Text: qCommon}
 		}},
+		// S13: a path prefix is not served by an index, so the filter is never probed and keeps the hint.
+		{"selective.common.pathprefix", "selective", func(int) records.Filter {
+			return records.Filter{PathPrefix: "/data/7/", Text: qCommon}
+		}},
 	}
 	word, sub := 0.0, 0.0
 	for _, c := range cells {
@@ -496,6 +506,53 @@ func (st *scaleState) searchMatrix() {
 	}
 	st.res.Values["search_word_p95_ms"] = word
 	st.res.Values["search_substring_p95_ms"] = sub
+}
+
+// probeCosts times the bounded probes of a search page on the common, mid and prefix queries (14n/S6):
+// the first call alone (cold) and the mean of probeReps further calls, in ms. The clock of the platform
+// ticks in steps of several ms, so a single call reads as a multiple of the step and the mean is the
+// figure to read. A tiny type filter and a deleted-only filter are measured beside the unfiltered
+// query, because the filter probe only runs for an indexed filter.
+func (st *scaleState) probeCosts() {
+	t := st.t
+	const probeReps = 20
+	compile := func(in string) *records.TextQuery {
+		q, err := records.CompileQuery(in, records.TextOptions{})
+		if err != nil {
+			t.Fatalf("compile %q: %v", in, err)
+		}
+		return q
+	}
+	common, mid := st.gen.Word(20), st.gen.Word(2000)
+	cells := []struct {
+		name string
+		f    records.Filter
+	}{
+		{"common", records.Filter{Text: compile(common)}},
+		{"mid", records.Filter{Text: compile(mid)}},
+		{"prefix", records.Filter{Text: compile(mid[:3] + "*")}},
+		{"common.type", records.Filter{Types: []string{"note"}, Text: compile(common)}},
+		{"common.deleted", records.Filter{Deleted: records.Only, Text: compile(common)}},
+	}
+	ms := func(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
+	for _, c := range cells {
+		pc, err := st.rd.ScaleProbeCost(ctx, c.f, probeReps)
+		if err != nil {
+			t.Fatalf("probe cost %s: %v", c.name, err)
+		}
+		key := "probe." + c.name
+		st.res.Values[key+".text4096_cold_ms"], st.res.Values[key+".text4096_mean_ms"] = ms(pc.TextSmallCold), ms(pc.TextSmallMean)
+		st.res.Values[key+".text262145_cold_ms"], st.res.Values[key+".text262145_mean_ms"] = ms(pc.TextLargeCold), ms(pc.TextLargeMean)
+		st.res.Values[key+".hits4096"], st.res.Values[key+".hits262145"] = float64(pc.HitsSmall), float64(pc.HitsLarge)
+		if pc.FilterProbed {
+			st.res.Values[key+".filter_cold_ms"], st.res.Values[key+".filter_mean_ms"] = ms(pc.FilterCold), ms(pc.FilterMean)
+			tiny := 0.0
+			if pc.Tiny {
+				tiny = 1
+			}
+			st.res.Values[key+".filter_tiny"] = tiny
+		}
+	}
 }
 
 func (st *scaleState) statsAndGet() {
@@ -808,4 +865,43 @@ func (st *scaleState) reindex() {
 	if res.Records != st.total {
 		t.Fatalf("reindex saw %d records, want %d", res.Records, st.total)
 	}
+}
+
+// tamper64 (D167): on a pristine copy, one record in each of 64 different audited batches is altered in
+// place, so at least 64 batches of the full-text index differ from their records. Verify must report
+// every one of them as a problem and the localization must stop at its bound with the not-localized
+// line. The wall time of the verify, the problems and that line are recorded.
+func (st *scaleState) tamper64() {
+	t := st.t
+	batches := envInt(t, "MINUTIAE_SCALE_TAMPER_BATCHES", 64) // 64 is the localization bound; more shows the not-localized line
+	step := st.total / batches
+	var ids []int64
+	for k := int64(0); k < batches; k++ {
+		ids = append(ids, k*step+step/2+1)
+	}
+	for _, id := range ids {
+		recordstest.SetRecordSummary(t, st.c.Dir, id, "tampered in place")
+	}
+	rep := st.verify("verify_tamper64", st.total, false)
+	if rep.OK() {
+		t.Fatalf("verify did not notice %d records altered in place", len(ids))
+	}
+	digest, notLocalized := 0, 0
+	for _, p := range rep.Problems {
+		if strings.Contains(p, "digest mismatch") {
+			digest++
+		}
+		if strings.Contains(p, "not localized") {
+			notLocalized++
+			t.Logf("not-localized line: %.600s", p)
+		}
+	}
+	t.Logf("tamper64: %d problems, %d digest-mismatch lines, %d not-localized lines", len(rep.Problems), digest, notLocalized)
+	for _, p := range rep.Problems[:min(8, len(rep.Problems))] {
+		t.Logf("tamper64 problem: %.300s", p)
+	}
+	st.res.Values["tamper64.batches"] = float64(batches)
+	st.res.Values["tamper64.problems"] = float64(len(rep.Problems))
+	st.res.Values["tamper64.digest_mismatch_lines"] = float64(digest)
+	st.res.Values["tamper64.not_localized_lines"] = float64(notLocalized)
 }
