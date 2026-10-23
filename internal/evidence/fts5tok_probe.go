@@ -7,7 +7,7 @@ import (
 	"unicode/utf8"
 )
 
-// ftsProbeCorpus is the fixed text the self-test indexes into a fresh SQLite to prove, at every verify, that
+// ftsProbeCorpus is the fixed text the self-test indexes into a fresh SQLite to prove, once per process (fts5tok_memo.go), that
 // the tokenizer replicas still agree with the SQLite that built the index. It is built from the generated
 // tables: the first and the last code point of every range of fts5tok_tables.go and the code point on each
 // side of it (a boundary is where a wrong table would differ), mixed with ASCII letters in framings that make
