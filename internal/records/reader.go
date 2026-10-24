@@ -177,17 +177,26 @@ type Overview struct {
 	Gaps []IngestGap
 }
 
+// txMode says what a read transaction checks: deadline the expired-deadline checks and the timeout mapping,
+// requireIndex the schema and the current full-text index.
+type txMode struct{ deadline, requireIndex bool }
+
 // readTx runs fn in one evidence.Case.ReadRecordsTx. With needIndex it first requires, inside the same
 // snapshot, a schema of v3 or newer (ErrNeedsUpgrade otherwise) and a current full-text index
 // (ErrIndexNotCurrent otherwise): every call that carries a text query goes through it.
 func (r *Reader) readTx(ctx context.Context, needIndex bool, fn func(evidence.ReadHandle) error) error {
-	if needIndex {
+	return r.readTxMode(ctx, txMode{deadline: needIndex, requireIndex: needIndex}, fn)
+}
+
+// readTxMode is readTx with the two checks apart: a scan search needs the deadline and no index (M26c).
+func (r *Reader) readTxMode(ctx context.Context, m txMode, fn func(evidence.ReadHandle) error) error {
+	if m.deadline {
 		if err := ctxErr(ctx); err != nil { // R58: an expired deadline is a timeout before the first statement
 			return mapTimeout(ctx, err)
 		}
 	}
 	err := r.c.ReadRecordsTx(ctx, func(h evidence.ReadHandle) error {
-		if needIndex {
+		if m.requireIndex {
 			var v int
 			if err := h.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_version`).Scan(&v); err != nil {
 				return fmt.Errorf("artifacts.db schema_version: %w", err)
@@ -202,12 +211,12 @@ func (r *Reader) readTx(ctx context.Context, needIndex bool, fn func(evidence.Re
 		if err := fn(h); err != nil {
 			return err
 		}
-		if needIndex { // R58: a deadline that passed while the calls ran is a timeout, never a late answer
+		if m.deadline { // R58: a deadline that passed while the calls ran is a timeout, never a late answer
 			return ctxErr(ctx)
 		}
 		return nil
 	})
-	if needIndex {
+	if m.deadline {
 		err = mapTimeout(ctx, err)
 	}
 	return r.integrity(err)

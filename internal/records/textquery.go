@@ -52,6 +52,9 @@ type TextOptions struct {
 	Column Column
 	// Rank asks for relevance order. It is refused with Substring.
 	Rank bool
+	// Scan reads the stored text of the selected records instead of the index (L85): it needs Substring,
+	// finds needles of any length and any character, and is only for Search.
+	Scan bool
 }
 
 // NeedleKind says how a positive term of a query matches, for the snippet that shows it.
@@ -86,6 +89,7 @@ type TextQuery struct {
 	rank    bool
 	shape   searchShape // the plan shape of a page, set by the page from its probes (never part of the query's identity)
 	needles []Needle
+	scan    bool // the query is answered by reading the stored text (match is the folded key)
 }
 
 // Table is the full-text table the query runs on: evidence.FTSWordTable or evidence.FTSSubTable.
@@ -116,6 +120,18 @@ func columnName(c Column) string {
 	default:
 		return "any"
 	}
+}
+
+// ErrNotIndexable marks a refusal the full-text index cannot serve, whatever the input: a substring needle
+// under MinSubstringChars, a term with no letter or digit. It is wrapped with ErrInvalidQuery, and a
+// scan search (TextOptions.Scan) can answer it.
+var ErrNotIndexable = errors.New("the full-text index cannot hold this term")
+
+// scanTable stands for the table of a scan query: there is none.
+const scanTable = "scan"
+
+func notIndexable(format string, args ...any) error {
+	return fmt.Errorf("%w: %w: %s", ErrInvalidQuery, ErrNotIndexable, fmt.Sprintf(format, args...))
 }
 
 func invalidQuery(format string, args ...any) error {
@@ -205,7 +221,7 @@ func normalizeTerm(text string) (string, error) {
 	case n == "":
 		return "", invalidQuery("%s has nothing to search for (it is blank, control or zero-width characters)", echo(text))
 	case countWordChars(n) == 0:
-		return "", invalidQuery("%s has no letter or digit to search for", echo(text))
+		return "", notIndexable("%s has no letter or digit to search for", echo(text))
 	}
 	return n, nil
 }
@@ -218,7 +234,7 @@ func substringTerm(text string) (string, error) {
 	}
 	// count what the trigram tokenizer keeps: the marks it strips are not characters of the index
 	if utf8.RuneCountInString(evidence.FTSFoldDiacritics(n)) < MinSubstringChars {
-		return "", invalidQuery("%s is shorter than %d characters, the least a substring search can find", echo(text), MinSubstringChars)
+		return "", notIndexable("%s is shorter than %d characters, the least a substring search can find", echo(text), MinSubstringChars)
 	}
 	return n, nil
 }
@@ -255,6 +271,9 @@ func CompileQuery(input string, o TextOptions) (*TextQuery, error) {
 	if o.Substring && o.Rank {
 		return nil, invalidQuery("relevance ranking is not available for a substring search")
 	}
+	if o.Scan && (!o.Substring || o.Rank) {
+		return nil, invalidQuery("a scan search needs Substring and has no relevance ranking")
+	}
 	if len(input) > MaxQueryBytes {
 		return nil, invalidQuery("the query is longer than %d bytes", MaxQueryBytes)
 	}
@@ -265,6 +284,16 @@ func CompileQuery(input string, o TextOptions) (*TextQuery, error) {
 		return nil, err
 	}
 	q := &TextQuery{column: o.Column, rank: o.Rank}
+	if o.Scan {
+		n := evidence.NormalizeText(input)
+		k := evidence.FTSTrigramFold(n)
+		if k == "" {
+			return nil, invalidQuery("%s has nothing to search for (it is blank, control, zero-width or only combining characters)", echo(input))
+		}
+		q.table, q.match, q.scan = scanTable, k, true
+		q.needles = []Needle{{Kind: NeedleSubstring, Text: n}}
+		return q, nil
+	}
 	if o.Substring {
 		n, err := substringTerm(input)
 		if err != nil {

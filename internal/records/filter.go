@@ -301,6 +301,8 @@ func (q *TextQuery) matchCond() (string, error) {
 			return "EXISTS (SELECT 1 FROM " + q.table + " WHERE " + q.table + ".rowid = r.id AND " + q.table + " MATCH ?)", nil
 		}
 		return "r.id IN (SELECT rowid FROM " + q.table + " WHERE " + q.table + " MATCH ?)", nil
+	case scanTable:
+		return "", invalidFilter("a scan query is only for Search")
 	}
 	return "", invalidFilter("the text query was not compiled by CompileQuery or CompileTerms")
 }
