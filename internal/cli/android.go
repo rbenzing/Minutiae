@@ -138,7 +138,7 @@ func newAndroidImageCmd(d Deps, opts *rootOptions) *cobra.Command {
 		})
 		fmt.Fprintln(d.Err)
 		if rec.ID != "" {
-			printRecords(d, opts, []evidence.ManifestRecord{rec})
+			return joinJSON(err, printRecords(d, opts, []evidence.ManifestRecord{rec}))
 		}
 		return err
 	}

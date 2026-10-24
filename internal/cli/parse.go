@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -699,34 +698,35 @@ func newParseRunCmd(d Deps, opts *rootOptions) *cobra.Command {
 			defer debug.SetMemoryLimit(prev)
 
 			total := 0
+			stream := &jsonStream{w: d.Out, errw: d.Err}
 			onEvent := func(e artparse.Event) {
 				switch e.Kind {
 				case "run.start":
 					total = e.Jobs
 					if opts.json {
-						_ = writeNDJSON(d.Out, map[string]any{"event": "run.start", "parse_id": e.ParseID, "jobs": e.Jobs})
+						stream.ndjson(map[string]any{"event": "run.start", "parse_id": e.ParseID, "jobs": e.Jobs})
 					}
 				case "job.start":
 					if opts.json {
 						r := e.Result
-						_ = writeNDJSON(d.Out, map[string]any{
+						stream.ndjson(map[string]any{
 							"event": "job.start", "job": e.Job, "parser": r.Parser, "version": r.Version, "artifact_id": r.ArtifactID,
 							"logical_path": r.Logical, "platform": r.Platform,
 						})
 					}
 				case "job.progress":
 					if opts.json {
-						_ = writeNDJSON(d.Out, map[string]any{"event": "job.progress", "job": e.Job, "done": e.Done, "total": e.Total})
+						stream.ndjson(map[string]any{"event": "job.progress", "job": e.Job, "done": e.Done, "total": e.Total})
 					}
 				case "job.end":
 					fmt.Fprintln(d.Err, statusLine(*e.Result, total))
 					if opts.json {
-						_ = writeNDJSON(d.Out, jobToJSON("job.end", *e.Result))
+						stream.ndjson(jobToJSON("job.end", *e.Result))
 					}
 				}
 			}
 			sum, runErr := h.Run(cmd.Context(), artparse.RunOptions{Selection: sel, OnEvent: onEvent})
-			return finishRun(d, opts, sum, runErr)
+			return joinJSON(finishRun(d, opts, sum, runErr), stream.finish())
 		},
 	}
 	f.register(cmd)
@@ -739,36 +739,43 @@ func newParseRunCmd(d Deps, opts *rootOptions) *cobra.Command {
 	return cmd
 }
 
-func writeNDJSON(w io.Writer, v any) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	_, err = w.Write(append(b, '\n'))
-	return err
-}
-
 // finishRun prints the summary and maps the outcome to the error that sets the exit code: integrity
 // (exit 4) beats everything, then a run-level error, then a partial run (exit 1).
 func finishRun(d Deps, opts *rootOptions, sum artparse.RunSummary, runErr error) error {
-	if sum.ParseID != "" {
-		if opts.json {
-			jobs := []jobJSON{}
-			for _, j := range sum.Jobs {
-				jobs = append(jobs, jobToJSON("", j))
-			}
-			outcomes := map[string]int{}
-			for _, j := range sum.Jobs {
-				outcomes[j.Outcome]++
-			}
-			_ = writeNDJSON(d.Out, map[string]any{
-				"event": "summary", "parse_id": sum.ParseID, "class": className(sum.Class()), "stopped": sum.Stopped,
-				"cancelled": sum.Cancelled, "records": sum.Records, "outcomes": outcomes, "jobs": jobs,
-			})
-		} else {
-			writeRunSummaryText(d.Out, sum, opts.verbose)
-		}
+	jerr := writeRunSummary(d, opts, sum)
+	return joinJSON(runOutcome(d, sum, runErr), jerr)
+}
+
+// writeRunSummary prints the summary of a run. A JSON summary that cannot be written safely is refused
+// (stderr says so) and the refusal is returned, to be joined after the run's own outcome.
+func writeRunSummary(d Deps, opts *rootOptions, sum artparse.RunSummary) error {
+	if sum.ParseID == "" {
+		return nil
 	}
+	if opts.json {
+		jobs := []jobJSON{}
+		for _, j := range sum.Jobs {
+			jobs = append(jobs, jobToJSON("", j))
+		}
+		outcomes := map[string]int{}
+		for _, j := range sum.Jobs {
+			outcomes[j.Outcome]++
+		}
+		err := writeNDJSON(d.Out, map[string]any{
+			"event": "summary", "parse_id": sum.ParseID, "class": className(sum.Class()), "stopped": sum.Stopped,
+			"cancelled": sum.Cancelled, "records": sum.Records, "outcomes": outcomes, "jobs": jobs,
+		})
+		if err != nil {
+			fmt.Fprintf(d.Err, "summary line not written: %s\n", escapeText(err.Error()))
+		}
+		return err
+	}
+	writeRunSummaryText(d.Out, sum, opts.verbose)
+	return nil
+}
+
+// runOutcome maps the outcome of a run to the error that sets the exit code.
+func runOutcome(d Deps, sum artparse.RunSummary, runErr error) error {
 	abandoned := sum.Stopped == artparse.StoppedAbandoned
 	for _, j := range sum.Jobs {
 		abandoned = abandoned || j.Abandoned

@@ -78,7 +78,7 @@ func newInfoCmd(d Deps, opts *rootOptions, kind device.Kind, flag string) *cobra
 			defer func() { _ = c.Close() }()
 			err = device.RunAcquisition(c, dv.ID(), "info", nil, func(acq string) error {
 				src := evidence.Source{Kind: "info", DeviceID: dv.ID()}
-				_, err := c.Capture(dv.ID(), acq, "device/info.json", src, func(w io.Writer) error { return writeJSON(w, info) })
+				_, err := c.Capture(dv.ID(), acq, "device/info.json", src, func(w io.Writer) error { return writeJSONArtifact(w, info) })
 				return err
 			})
 			if err != nil {
@@ -169,8 +169,7 @@ func newPullCmd(d Deps, opts *rootOptions, kind device.Kind, flag string) *cobra
 			}
 			return nil
 		})
-		printRecords(d, opts, recs)
-		return err
+		return joinJSON(err, printRecords(d, opts, recs))
 	}
 	return cmd
 }
@@ -189,7 +188,7 @@ func displayName(s string) string {
 // printRecords prints the artifacts that were created; a zero-value record
 // (the artifact could not even be created) is skipped — its error is reported
 // separately.
-func printRecords(d Deps, opts *rootOptions, recs []evidence.ManifestRecord) {
+func printRecords(d Deps, opts *rootOptions, recs []evidence.ManifestRecord) error {
 	created := make([]evidence.ManifestRecord, 0, len(recs))
 	for _, r := range recs {
 		if r.ID != "" {
@@ -198,8 +197,7 @@ func printRecords(d Deps, opts *rootOptions, recs []evidence.ManifestRecord) {
 	}
 	recs = created
 	if opts.json {
-		_ = writeJSON(d.Out, recs)
-		return
+		return writeJSON(d.Out, recs)
 	}
 	for _, r := range recs {
 		status := ""
@@ -208,6 +206,7 @@ func printRecords(d Deps, opts *rootOptions, recs []evidence.ManifestRecord) {
 		}
 		fmt.Fprintf(d.Out, "%s  %s  %s%s\n", r.SHA256, humanBytes(r.Size), r.Path, status)
 	}
+	return nil
 }
 
 func newLogicalCmd(d Deps, _ *rootOptions, kind device.Kind, flag, use, short string, withRoots bool) *cobra.Command {

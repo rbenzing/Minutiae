@@ -245,13 +245,10 @@ func printRecoverRun(w io.Writer, sum examine.RecoverSummary) {
 	printFSWarnings(w, sum.Summary)
 }
 
-// writeRecoverJSON writes the JSON of a run and returns the run's own error; a failed write is reported
-// only when the run had no error, so an integrity error is never replaced by a write failure.
+// writeRecoverJSON writes the JSON of a run and returns the run's own error; a failed or refused JSON write is joined
+// after the run error, so an integrity error is never replaced by it.
 func writeRecoverJSON(w io.Writer, sum examine.RecoverSummary, err error) error {
-	if jerr := writeJSON(w, newJSONRecover(sum)); jerr != nil && err == nil {
-		return jerr
-	}
-	return err
+	return joinJSON(err, writeJSON(w, newJSONRecover(sum)))
 }
 
 // printReaderWarnings says how many warnings the filesystem reader attached to recovery maps (counted, audited

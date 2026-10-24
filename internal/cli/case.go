@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -181,36 +182,29 @@ func newCaseVerifyCmd(d Deps, opts *rootOptions) *cobra.Command {
 				}
 				return err
 			}
+			var jerr error
 			if opts.json {
-				if err := writeJSON(d.Out, rep); err != nil {
-					return err
+				if jerr = writeJSON(d.Out, rep); jerr != nil {
+					// nothing was written to stdout: the report goes to stderr as text, so no finding is lost
+					printVerifyText(d.Err, rep)
 				}
 			} else {
-				for _, n := range rep.Notices {
-					fmt.Fprintln(d.Out, "NOTICE:", escapeText(n))
-				}
-				for _, p := range rep.Problems {
-					fmt.Fprintln(d.Out, "PROBLEM:", escapeText(p))
-				}
-				status := "OK"
-				if !rep.OK() {
-					status = "FAILED"
-				}
-				fmt.Fprintf(d.Out, "%s: %d artifacts%s, %d audit entries, %d problems%s\n",
-					status, rep.ArtifactsChecked, rep.RecordsSummary(), rep.AuditEntries, len(rep.Problems), rep.RecoveredSummary())
+				printVerifyText(d.Out, rep)
 			}
 			if line, ok := outcomeLine(rep, nil); ok && prog != nil {
 				fmt.Fprintln(d.Err, line)
 			}
+			// a refused JSON output never decides the exit code over the report: a report that is not OK is
+			// exit 4 whatever the writer did, a clean one with a refused JSON is exit 1
+			var verr error
 			if rep.CancelledOnly() {
 				// cut short by a cancel with no other finding: a plain cancelled error (exit 1, as a cancelled parse
 				// run), never an integrity failure; any other problem next to a cancel is still exit 4
-				return fmt.Errorf("verify cancelled: %w", context.Canceled)
+				verr = fmt.Errorf("verify cancelled: %w", context.Canceled)
+			} else if !rep.OK() {
+				verr = fmt.Errorf("%w: %d problem(s)", evidence.ErrIntegrity, len(rep.Problems))
 			}
-			if !rep.OK() {
-				return fmt.Errorf("%w: %d problem(s)", evidence.ErrIntegrity, len(rep.Problems))
-			}
-			return nil
+			return joinJSON(verr, jerr)
 		},
 	}
 	cmd.Flags().StringVar(&path, "case", "", "case directory")
@@ -221,4 +215,21 @@ func newCaseVerifyCmd(d Deps, opts *rootOptions) *cobra.Command {
 // runVerify is the verify call of `case verify` (a variable so a test can make it fail).
 var runVerify = func(ctx context.Context, c *evidence.Case, p *evidence.VerifyProgress) (evidence.VerifyReport, error) {
 	return c.VerifyObserved(ctx, p, examine.RecoveredCheck())
+}
+
+// printVerifyText prints a verification report as text: the notices, the problems (each escaped, one
+// line each) and the status line.
+func printVerifyText(w io.Writer, rep evidence.VerifyReport) {
+	for _, n := range rep.Notices {
+		fmt.Fprintln(w, "NOTICE:", escapeText(n))
+	}
+	for _, p := range rep.Problems {
+		fmt.Fprintln(w, "PROBLEM:", escapeText(p))
+	}
+	status := "OK"
+	if !rep.OK() {
+		status = "FAILED"
+	}
+	fmt.Fprintf(w, "%s: %d artifacts%s, %d audit entries, %d problems%s\n",
+		status, rep.ArtifactsChecked, rep.RecordsSummary(), rep.AuditEntries, len(rep.Problems), rep.RecoveredSummary())
 }
