@@ -245,3 +245,33 @@ func TestCorruptSetChecksumChecksThePrimaryType(t *testing.T) {
 		t.Fatal("a rejected write changed the image")
 	}
 }
+
+func TestFixNameHashMatchesAFreshBuild(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		opts   Options
+		unit   uint16
+		rename string
+	}{
+		{"ascii", Options{}, 'x', "xello.txt"},
+		{"accent", Options{}, 0xE9, "éello.txt"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			img, l := BuildLayout(c.opts, []File{{Path: "/Hello.txt", Data: []byte("x")}})
+			loc := l.Find("/Hello.txt", false)
+			binary.LittleEndian.PutUint16(img[loc.Offset+64+2:], c.unit) // first Name unit
+			FixSetChecksum(img, loc.Offset)
+			FixNameHash(img, loc.Offset)
+			fresh, fl := BuildLayout(c.opts, []File{{Path: "/" + c.rename, Data: []byte("x")}})
+			fo := fl.Find("/"+c.rename, false).Offset
+			if !bytes.Equal(img[loc.Offset:loc.Offset+96], fresh[fo:fo+96]) {
+				t.Fatalf("set after FixNameHash\n% x\nfresh build\n% x", img[loc.Offset:loc.Offset+96], fresh[fo:fo+96])
+			}
+		})
+	}
+}
+
+func TestFixNameHashRejectsANonSet(t *testing.T) {
+	img, _, _ := patchImage(t)
+	mustPanicLabelled(t, "not a File entry", func() { FixNameHash(img, 0) })
+}

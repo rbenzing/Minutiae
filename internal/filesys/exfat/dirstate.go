@@ -43,6 +43,12 @@ type dirState struct {
 	exts   []extent // clusters of the directory, in order
 	cum    []uint64 // cum[i] is the number of clusters before exts[i]
 	limit  uint64   // bytes of directory data (a multiple of 32)
+	// cut is why the mapped data may be shorter than the directory: a damaged
+	// chain (a loop, a free, bad or out-of-range cluster, an early end) or a
+	// size above the per-directory byte limit. A read that reaches limit
+	// without an end-of-directory entry is cut by it (N6); one that finds the
+	// end marker is not, whatever lies beyond.
+	cut error
 
 	// What setIn has learned about the end of the directory (guarded by
 	// FS.dmu): the entries [0, clean) hold no end marker; once a marker is
@@ -93,7 +99,8 @@ func (f *FS) loadDir(st *dirState) error {
 	}
 	st.loaded = true
 	sp := st.spec
-	maxClusters := max(uint64(maxDirBytes)/uint64(f.cs), 1)
+	maxBytes := f.dirByteLimit
+	maxClusters := max(uint64(maxBytes)/uint64(f.cs), 1)
 	var (
 		exts  []extent
 		cerr  error
@@ -103,13 +110,15 @@ func (f *FS) loadDir(st *dirState) error {
 		exts, cerr = f.chain(sp.first, maxClusters, false, false)
 		limit = clusterTotal(exts) * uint64(f.cs)
 		if clusterTotal(exts) == maxClusters {
-			f.warn("directory (first cluster %d) is %d MiB or larger; only the first %d MiB are read", sp.first, maxDirBytes>>20, maxDirBytes>>20)
+			f.warn("directory (first cluster %d) is %d bytes or larger, the per-directory limit; only the first %d bytes are read", sp.first, maxBytes, maxBytes)
+			st.cut = corrupt("exFAT directory", -1, "the directory (first cluster %d) is larger than the %d-byte per-directory limit", sp.first, maxBytes)
 		}
 	} else {
 		size := sp.size
-		if size > maxDirBytes {
-			f.warn("directory (first cluster %d): DataLength %d exceeds the %d MiB limit; only the first %d MiB are read", sp.first, sp.size, maxDirBytes>>20, maxDirBytes>>20)
-			size = maxDirBytes
+		if size > maxBytes {
+			f.warn("directory (first cluster %d): DataLength %d exceeds the %d-byte per-directory limit; only the first %d bytes are read", sp.first, sp.size, maxBytes, maxBytes)
+			st.cut = corrupt("exFAT directory", -1, "the directory (first cluster %d) has DataLength %d, above the %d-byte per-directory limit", sp.first, sp.size, maxBytes)
+			size = maxBytes
 		}
 		if size <= 0 {
 			return nil
@@ -123,6 +132,7 @@ func (f *FS) loadDir(st *dirState) error {
 			return cerr
 		}
 		f.warn("directory (first cluster %d): %v; only the part before the damage is read", sp.first, cerr)
+		st.cut = cerr
 	}
 	st.exts = exts
 	var n uint64
@@ -209,7 +219,7 @@ func (f *FS) readDirDataCut(st *dirState) (buf []byte, cut error, err error) {
 		}
 		off += n
 	}
-	return buf, nil, nil
+	return buf, st.cut, nil // the mapped data ended without an end marker: a cut when the chain or the size was cut (N6)
 }
 
 // resolveDir returns the directory whose first cluster is first, as met on disk

@@ -12,9 +12,10 @@
 // Entry except its ID, and derive deleted/directory state and every extent
 // (first cluster, DataLength, ValidDataLength, NoFatChain) from the entry set
 // they re-read from the disk; a directory known by first cluster has the extent
-// of the first live entry set met on disk that claimed it. TexFAT (a second
-// FAT and bitmap) is not interpreted: the first FAT and the first bitmap are
-// read.
+// of the first live entry set met on disk that claimed it. On a TexFAT volume
+// (two FATs) the FAT and Allocation Bitmap that VolumeFlags ActiveFat names are
+// read; the inactive copies are compared in Unallocated and a difference is a
+// warning (builder images only: no pinned fixture image is TexFAT).
 package exfat
 
 import (
@@ -39,25 +40,36 @@ type FS struct {
 	data io.ReaderAt // uncached view for file content, clamped to size
 	size int64       // volume size in bytes (VolumeLength clamped to the image)
 
-	ss, cs       int64  // bytes per sector and per cluster
-	heapOff      int64  // byte offset of cluster 2
-	fatOff       int64  // byte offset of the FAT
-	fatEntries   uint32 // FAT entries that exist and are within the cluster count
-	clusterCount uint32 // clusters 2 .. clusterCount+1
-	rootCluster  uint32
-	serial       uint32
-	revision     uint16
-	volFlags     uint16
+	ss, cs  int64 // bytes per sector and per cluster
+	heapOff int64 // byte offset of cluster 2
+	fatOff  int64 // byte offset of the active FAT
+	numFats int   // NumberOfFats: 1, or 2 on a TexFAT volume
+	// inactiveFatOff is the byte offset of the stale FAT of a TexFAT volume (-1 with one FAT).
+	inactiveFatOff int64
+	fatEntries     uint32 // FAT entries that exist and are within the cluster count
+	clusterCount   uint32 // clusters 2 .. clusterCount+1, clamped to the image
+	// declaredClusters is the cluster count the boot sector declares, capped at
+	// the format maximum (at least clusterCount).
+	declaredClusters uint32
+	rootCluster      uint32
+	serial           uint32
+	revision         uint16
+	volFlags         uint16
+	activeFat        int // 0 or 1: the FAT and bitmap in use
 
 	label  string
-	bitmap meta // the Allocation Bitmap entry of the root directory
-	upMeta meta // the Up-case Table entry of the root directory
+	bitmap meta // the Allocation Bitmap entry of the active bitmap (BitmapFlags bit 0 equals activeFat)
+	// inactiveBitmap is the entry of the other bitmap (not present when the root has none).
+	inactiveBitmap meta
+	upMeta         meta // the Up-case Table entry of the root directory
 	// upcase maps every UTF-16 unit to its up-case form; nil when the volume
 	// has no usable table (Lookup then folds with strings.EqualFold).
 	upcase *[65536]uint16
 
 	// dirRecordCap bounds the entry sets one directory yields (maxDirRecords).
 	dirRecordCap int
+	// dirByteLimit bounds the bytes read of one directory (maxDirBytes; lowered by tests).
+	dirByteLimit int64
 	// resolveDirs bounds the directories one resolveDir scans (maxResolveDirs; lowered by tests).
 	resolveDirs int
 	// bitmapChunk is how much of the allocation bitmap is read at a time.
@@ -145,23 +157,28 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 	}
 	vol := io.NewSectionReader(r, 0, g.size)
 	f := &FS{
-		r:            filesys.NewCachedReader(vol, cacheBlockSize, cacheBlocks),
-		data:         vol,
-		size:         g.size,
-		ss:           g.ss,
-		cs:           g.cs,
-		heapOff:      g.heapOff,
-		fatOff:       g.fatOff,
-		fatEntries:   g.fatEntries,
-		clusterCount: g.clusterCount,
-		rootCluster:  g.rootCluster,
-		serial:       bt.serial,
-		revision:     bt.revision,
-		volFlags:     bt.volFlags,
-		dirRecordCap: maxDirRecords,
-		resolveDirs:  maxResolveDirs,
-		bitmapChunk:  maxBitmapChunk,
-		unallocCap:   maxUnallocRuns,
+		r:                filesys.NewCachedReader(vol, cacheBlockSize, cacheBlocks),
+		data:             vol,
+		size:             g.size,
+		ss:               g.ss,
+		cs:               g.cs,
+		heapOff:          g.heapOff,
+		fatOff:           g.fatOff,
+		numFats:          g.numFats,
+		inactiveFatOff:   g.inactiveFatOff,
+		activeFat:        g.activeFat,
+		fatEntries:       g.fatEntries,
+		clusterCount:     g.clusterCount,
+		declaredClusters: g.declaredClusters,
+		rootCluster:      g.rootCluster,
+		serial:           bt.serial,
+		revision:         bt.revision,
+		volFlags:         bt.volFlags,
+		dirRecordCap:     maxDirRecords,
+		dirByteLimit:     maxDirBytes,
+		resolveDirs:      maxResolveDirs,
+		bitmapChunk:      maxBitmapChunk,
+		unallocCap:       maxUnallocRuns,
 
 		dirs:           map[uint32]*dirState{g.rootCluster: {spec: dirSpec{first: g.rootCluster, whole: true}}},
 		dirBudget:      maxDirBudget,
@@ -207,6 +224,9 @@ func (f *FS) Info() filesys.Info {
 	}
 	if f.volFlags&0x4 != 0 {
 		features = append(features, "media failure")
+	}
+	if f.numFats == 2 {
+		features = append(features, fmt.Sprintf("TexFAT: 2 FATs, active FAT %d", f.activeFat+1))
 	}
 	return filesys.Info{
 		Type:      "exfat",
