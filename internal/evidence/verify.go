@@ -396,7 +396,11 @@ func (c *Case) checkDerived(rep *VerifyReport, recs []ManifestRecord) {
 		groups = append(groups, g)
 	}
 	slices.SortFunc(groups, func(a, b *cycleGroup) int { return strings.Compare(a.members[0], b.members[0]) })
-	for _, g := range groups {
+	for i, g := range groups {
+		if i == verifyMaxPerKind {
+			rep.problemf("%d further cycles are not listed", len(groups)-verifyMaxPerKind)
+			break
+		}
 		rep.problemf("%s", cycleProblem(g))
 	}
 	if chainProblems > verifyMaxPerKind {

@@ -225,3 +225,20 @@ func TestVerifyCycleListsAtMostEightMembers(t *testing.T) {
 		t.Errorf("problem = %s", probs[0])
 	}
 }
+
+func TestVerifyCycleProblemsAreCapped(t *testing.T) {
+	var recs []ManifestRecord
+	for i := 0; i < verifyMaxPerKind+10; i++ {
+		recs = append(recs, cycleRecs(fmt.Sprintf("p%03d", i), 2, 0)...)
+	}
+	probs := derivedProblems(t, recs)
+	if len(probs) != verifyMaxPerKind+1 {
+		t.Fatalf("%d problems, want %d cycle problems plus one summary", len(probs), verifyMaxPerKind)
+	}
+	if want := "10 further cycles are not listed"; probs[len(probs)-1] != want {
+		t.Errorf("last problem = %q, want %q", probs[len(probs)-1], want)
+	}
+	if rep := (VerifyReport{Problems: probs}); rep.OK() {
+		t.Error("OK")
+	}
+}
