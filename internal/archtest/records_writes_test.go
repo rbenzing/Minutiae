@@ -57,23 +57,78 @@ var recordWriteTailRE = regexp.MustCompile(`(?is)\b(?:insert\s+(?:or\s+\w+\s+)?i
 
 var (
 	placeholderRE   = regexp.MustCompile(placeholder)
-	blockCommentRE  = regexp.MustCompile(`(?s)/\*.*?\*/`)
-	lineCommentRE   = regexp.MustCompile(`--[^\n]*`)
-	quotedIdentREs  = []*regexp.Regexp{regexp.MustCompile(`"([^"]*)"`), regexp.MustCompile("`([^`]*)`"), regexp.MustCompile(`\[([^\]]*)\]`)}
 	whitespaceRunRE = regexp.MustCompile(`\s+`)
 )
 
+// lexSQL walks a SQL string once, quote-aware: 'literals' (with ”) are kept
+// verbatim; "x", `x` and [x] identifiers are unquoted; -- and /* */ comments
+// outside quotes become one space. An unterminated literal, identifier or block
+// comment keeps the rest of the string as plain text (conservative: a write
+// after it is still seen). Unquoted text is not lexed again.
+func lexSQL(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		c := s[i]
+		switch {
+		case c == '\'':
+			j := i + 1
+			for ; j < len(s); j++ {
+				if s[j] == '\'' {
+					if j+1 < len(s) && s[j+1] == '\'' {
+						j++
+						continue
+					}
+					break
+				}
+			}
+			if j >= len(s) { // unterminated: the rest stays plain text
+				b.WriteString(s[i:])
+				return b.String()
+			}
+			b.WriteString(s[i : j+1])
+			i = j + 1
+		case c == '"' || c == '`' || c == '[':
+			closer := c
+			if c == '[' {
+				closer = ']'
+			}
+			j := strings.IndexByte(s[i+1:], closer)
+			if j < 0 {
+				b.WriteString(s[i:])
+				return b.String()
+			}
+			b.WriteString(s[i+1 : i+1+j])
+			i += j + 2
+		case c == '-' && i+1 < len(s) && s[i+1] == '-':
+			b.WriteByte(' ')
+			j := strings.IndexByte(s[i:], '\n')
+			if j < 0 {
+				return b.String()
+			}
+			i += j // the newline itself stays
+		case c == '/' && i+1 < len(s) && s[i+1] == '*':
+			j := strings.Index(s[i+2:], "*/")
+			if j < 0 {
+				b.WriteString(s[i:])
+				return b.String()
+			}
+			b.WriteByte(' ')
+			i += j + 4
+		default:
+			b.WriteByte(c)
+			i++
+		}
+	}
+	return b.String()
+}
+
 // normalizeSQL prepares a constant SQL string for matching: printf verbs and
-// unknown operands become one placeholder, /* */ and -- comments are removed,
-// "x", `x` and [x] identifiers are unquoted and whitespace runs collapse to one
-// space, so quoting, comments and line breaks cannot hide a statement.
+// unknown operands become one placeholder, lexSQL removes comments and
+// unquotes identifiers, and whitespace runs collapse to one space, so quoting,
+// comments and line breaks cannot hide a statement.
 func normalizeSQL(s string) string {
 	s = placeholderRE.ReplaceAllString(s, unknown)
-	s = blockCommentRE.ReplaceAllString(s, " ")
-	s = lineCommentRE.ReplaceAllString(s, " ")
-	for _, re := range quotedIdentREs {
-		s = re.ReplaceAllString(s, "$1")
-	}
+	s = lexSQL(s)
 	return strings.TrimSpace(whitespaceRunRE.ReplaceAllString(s, " "))
 }
 
@@ -328,7 +383,7 @@ func TestRecordTableWriteScannerSelfTest(t *testing.T) {
 			want[i+1] = true
 		}
 	}
-	if len(want) < 25 {
+	if len(want) < 81 {
 		t.Fatalf("only %d lines are marked as violations: the test data was damaged", len(want))
 	}
 	got := map[int]bool{}
@@ -434,5 +489,32 @@ func TestRecordTableWriteScannerCoversTheFullTextIndex(t *testing.T) {
 	// a builder piece: the table name comes from a variable
 	if !flagged(words("INSERT", "INTO")) {
 		t.Error("a builder piece ending in INSERT INTO is not flagged")
+	}
+}
+
+// TestLexSQLIsQuoteAware pins the quote-aware lexer (L90): a comment marker
+// inside a string literal or a quoted identifier is not a comment, a comment
+// outside quotes is one space, and an unterminated literal, identifier or
+// block comment keeps the rest of the string as plain text.
+func TestLexSQLIsQuoteAware(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"line marker in literal", `SELECT '--'; INSERT INTO t1`, `SELECT '--'; INSERT INTO t1`},
+		{"block markers in literals", `SELECT '/*'; DELETE FROM t1; SELECT '*/'`, `SELECT '/*'; DELETE FROM t1; SELECT '*/'`},
+		{"doubled quote", `SELECT 'it''s -- x'; DELETE FROM t2`, `SELECT 'it''s -- x'; DELETE FROM t2`},
+		{"double-quoted identifier", `SELECT "--" FROM t; UPDATE t1 SET x = 1`, `SELECT -- FROM t; UPDATE t1 SET x = 1`},
+		{"bracket identifier", `SELECT [a--b] FROM t`, `SELECT a--b FROM t`},
+		{"backtick identifier", "SELECT `a/*b` FROM t", `SELECT a/*b FROM t`},
+		{"line comment", `SELECT 1 -- DELETE FROM t1`, `SELECT 1`},
+		{"line comment ends at newline", "SELECT 1 -- x\nFROM t", `SELECT 1 FROM t`},
+		{"block comment", `SELECT 1 /* DELETE FROM t1 */ FROM t`, `SELECT 1 FROM t`},
+		{"unterminated literal", `SELECT '/* never closed; DELETE FROM t1`, `SELECT '/* never closed; DELETE FROM t1`},
+		{"unterminated block comment", `SELECT 1 /* open; DELETE FROM t1`, `SELECT 1 /* open; DELETE FROM t1`},
+		{"unterminated double quote", `SELECT "open -- x; DELETE FROM t1`, `SELECT "open -- x; DELETE FROM t1`},
+		{"unterminated bracket", `SELECT [open -- x; DELETE FROM t1`, `SELECT [open -- x; DELETE FROM t1`},
+		{"placeholder first", `SELECT %s -- c`, "SELECT \x01"},
+	} {
+		if got := normalizeSQL(tc.in); got != tc.want {
+			t.Errorf("%s: normalizeSQL(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
+		}
 	}
 }
