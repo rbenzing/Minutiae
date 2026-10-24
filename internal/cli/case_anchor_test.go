@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -301,5 +302,20 @@ func TestInsideDir(t *testing.T) {
 		if got, err := insideDir(d, p); err != nil || got != want {
 			t.Errorf("insideDir(%q) = %v, %v; want %v", p, got, err, want)
 		}
+	}
+}
+
+func TestCaseAnchorFileWriteFailureNamesEntryAndPath(t *testing.T) {
+	dir := cleanVerifyCase(t)
+	old := writeAnchorFile
+	writeAnchorFile = func(string, []byte, os.FileMode) error { return errors.New("disk full") }
+	t.Cleanup(func() { writeAnchorFile = old })
+	file := filepath.Join(t.TempDir(), "a.anchor")
+	code, out := run(t, Deps{}, "case", "anchor", "--case", dir, "--out", file)
+	if code != ExitError || !strings.Contains(out, file) || !strings.Contains(out, "partially") || !strings.Contains(out, "case.anchor audit entry (seq ") || !strings.Contains(out, "disk full") {
+		t.Fatalf("exit %d: %s", code, out)
+	}
+	if countAction(auditActions(t, dir), "case.anchor") != 1 {
+		t.Fatal("the audit entry must exist: audit before the act")
 	}
 }

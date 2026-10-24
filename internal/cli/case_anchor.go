@@ -10,7 +10,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -107,45 +106,8 @@ func printAnchorLine(w io.Writer, r *evidence.AnchorResult) {
 	}
 }
 
-// insideDir reports whether p lies inside dir, both made absolute with the symlinks of their existing
-// parts resolved (so a symlinked parent cannot hide a path inside the case).
-func insideDir(dir, p string) (bool, error) {
-	d, err := resolvedPath(dir)
-	if err != nil {
-		return false, err
-	}
-	q, err := resolvedPath(p)
-	if err != nil {
-		return false, err
-	}
-	rel, err := filepath.Rel(d, q)
-	if err != nil {
-		return false, nil //nolint:nilerr // different volumes: not inside
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel), nil
-}
-
-// resolvedPath is the absolute, lexically clean form of p with the symlinks of its longest existing
-// prefix resolved.
-func resolvedPath(p string) (string, error) {
-	abs, err := filepath.Abs(p)
-	if err != nil {
-		return "", err
-	}
-	rest := ""
-	cur := abs
-	for {
-		if r, err := filepath.EvalSymlinks(cur); err == nil {
-			return filepath.Join(r, rest), nil
-		}
-		parent := filepath.Dir(cur)
-		if parent == cur {
-			return abs, nil
-		}
-		rest = filepath.Join(filepath.Base(cur), rest)
-		cur = parent
-	}
-}
+// insideDir reports whether p lies inside dir (evidence.PathInside: the one implementation, shared with verify).
+func insideDir(dir, p string) (bool, error) { return evidence.PathInside(dir, p) }
 
 // writeNewFile creates path with O_EXCL (an existing file, or a symlink, is an error), writes data and syncs.
 func writeNewFile(path string, data []byte, perm os.FileMode) error {
@@ -217,8 +179,8 @@ func newCaseAnchorCmd(d Deps, opts *rootOptions) *cobra.Command {
 				return err
 			}
 			if out != "" {
-				if err := writeNewFile(out, an.Marshal(), 0o600); err != nil {
-					return fmt.Errorf("anchor file %s (the case.anchor audit entry was written): %w", out, err)
+				if err := writeAnchorFile(out, an.Marshal(), 0o600); err != nil {
+					return fmt.Errorf("anchor file %s was not written completely (it may exist partially; it is not removed): the case.anchor audit entry (seq %d) was written, re-anchor to a new path: %w", escapeText(out), an.Seq, err)
 				}
 			}
 			if opts.json {
@@ -282,3 +244,6 @@ func newCaseAnchorKeygenCmd(d Deps, _ *rootOptions) *cobra.Command {
 	cmd.Flags().StringVar(&out, "out", "", "private key file to create (the public key goes to FILE.pub)")
 	return cmd
 }
+
+// writeAnchorFile writes the anchor file of case anchor (a variable so a test can make the write fail).
+var writeAnchorFile = writeNewFile
