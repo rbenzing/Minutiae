@@ -43,6 +43,9 @@ func recoveredKindNamespace(kind string) string {
 // does not reproduce byte for byte: slack, journal and report always; recover and carve until the
 // composed reproduce check (R6) has run in this verify.
 func unreproducedNotices(rep *VerifyReport) {
+	if rep.deletedFiles > 0 && !rep.allocationRan {
+		rep.noticef("%d deleted-file artifact(s): allocation not rechecked against the filesystem (this verify did not compose check R9)", rep.deletedFiles)
+	}
 	for _, k := range []string{KindRecover, KindCarve, KindSlack, KindJournal, KindReport} {
 		if (k == KindRecover || k == KindCarve) && rep.reproduceRan {
 			continue
@@ -128,6 +131,9 @@ func (c *Case) verifyRecovered(rep *VerifyReport, recs []ManifestRecord) {
 					cls = "unknown"
 				}
 				byClass[cls]++
+				if kind == KindRecover && cls == ClassDeletedFile {
+					rep.deletedFiles++
+				}
 				if cf := d.Recovery.Confidence; cf != nil && (lowest == nil || *cf < *lowest) {
 					v := *cf
 					lowest = &v

@@ -162,9 +162,12 @@ func showClean(t *testing.T, dir, id string) provTestJSON {
 	return p
 }
 
-func verifyClean(t *testing.T, dir string) {
+func verifyClean(t *testing.T, dir string) { verifyCleanWith(t, Deps{}, dir) }
+
+// verifyCleanWith is verifyClean with the drivers of a case whose recoveries sit on a test filesystem.
+func verifyCleanWith(t *testing.T, d Deps, dir string) {
 	t.Helper()
-	if code, out := run(t, Deps{}, "case", "verify", "--case", dir); code != 0 {
+	if code, out := run(t, d, "case", "verify", "--case", dir); code != 0 {
 		t.Fatalf("case verify: %d\n%s", code, out)
 	}
 }
@@ -489,11 +492,13 @@ func TestRecordsShowAPFSSnapshotProvenance(t *testing.T) {
 
 func TestRecordsShowRecoveredArtifactEndToEnd(t *testing.T) {
 	c := recordstest.NewCase(t)
-	imgBytes := patternBytes(4096)
+	// the parent is a real filesystem image whose free blocks hold the bytes, so case verify (R9) can re-open it
+	node := patternBytes(4096)
+	imgBytes, at := freedDisk(t, node)
 	img := recordstest.AddArtifact(t, c, "img.bin", imgBytes)
 	conf := 60
-	data := imgBytes[:8]
-	rec := incompleteRecovered(t, c, img, data, &conf)
+	data := node[:8]
+	rec := incompleteRecovered(t, c, img, data, at[0], &conf)
 	recordstest.Ingest(t, c, recParser, []string{rec.ID}, []records.Record{
 		{Type: "note", ArtifactID: rec.ID, Summary: "inside", Payload: map[string]any{}, Deleted: true, Recovery: "fat-contiguous", Confidence: rptr(50), Range: &records.Range{Offset: 2, Length: 4}},
 		{Type: "note", ArtifactID: rec.ID, Summary: "past", Payload: map[string]any{}, Deleted: true, Recovery: "fat-contiguous", Confidence: rptr(50), Range: &records.Range{Offset: 0, Length: 1}},
@@ -502,7 +507,7 @@ func TestRecordsShowRecoveredArtifactEndToEnd(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
-	verifyClean(t, dir)
+	verifyCleanWith(t, Deps{FSDrivers: mtfsDrivers}, dir)
 	// 1: inside the captured prefix
 	p := showClean(t, dir, "1")
 	if p.Status != "recovered" || p.Recovery == nil || p.Recovery.Recovery.Class != evidence.ClassDeletedFile ||
@@ -688,11 +693,11 @@ func TestShowDoesNotModifyCaseFiles(t *testing.T) {
 
 // incompleteRecovered stores a deleted-file artifact derived from img whose copy was cut off: it holds
 // data, the metadata named 100 more bytes that were not captured (so it is flagged incomplete).
-func incompleteRecovered(t *testing.T, c *evidence.Case, img evidence.ManifestRecord, data []byte, conf *int) evidence.ManifestRecord {
+func incompleteRecovered(t *testing.T, c *evidence.Case, img evidence.ManifestRecord, data []byte, at int64, conf *int) evidence.ManifestRecord {
 	t.Helper()
 	src := evidence.Source{Kind: evidence.KindRecover, DeviceID: "dev1", Derived: &evidence.Derivation{
-		ParentID: img.ID, ParentSHA256: img.SHA256, Partition: 1, FSType: "mtfs", FSPath: "/a", FSID: "dentry:1:1:1",
-		Runs: []evidence.Run{{Offset: 0, Length: int64(len(data))}},
+		ParentID: img.ID, ParentSHA256: img.SHA256, Partition: 1, PartitionOffset: freedPartStart, FSType: "mtfs", FSPath: "/a", FSID: "dentry:1:1:1",
+		Runs: []evidence.Run{{Offset: at, Length: int64(len(data))}},
 		Recovery: &evidence.Recovery{
 			Class: evidence.ClassDeletedFile, Method: "fat-contiguous", Confidence: conf, Basis: []string{"dentry:1:1:1"},
 			Alloc:     evidence.AllocSummary{Free: int64(len(data)), ExcludedRuns: 1, ExcludedBytes: 100},

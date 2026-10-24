@@ -402,7 +402,8 @@ func TestSQLiteRecoverChainChangedInputIsExit4AndSupersedesNothing(t *testing.T)
 // The same chain with artifacts written through evidencetest.AddRecovered, and the WAL named explicitly.
 func TestEvidencetestRecoveredFallback(t *testing.T) {
 	dbBytes, walBytes := chainFiles()
-	img := slices.Concat(dbBytes, walBytes)
+	// the parent is a real filesystem image whose free blocks hold the two files, so case verify (R9) can re-open it
+	img, at := freedDisk(t, dbBytes, walBytes)
 	dir := newCLICase(t)
 	c, err := evidence.Open(dir)
 	if err != nil {
@@ -410,10 +411,10 @@ func TestEvidencetestRecoveredFallback(t *testing.T) {
 	}
 	parent := evidencetest.AddImage(t, c, img)
 	db := evidencetest.AddRecovered(t, c, parent, img, evidencetest.RecoveredSpec{
-		Path: "recovered/p1-mtfs/000001-app.db", Runs: []evidence.Run{{Offset: 0, Length: int64(len(dbBytes))}},
+		Path: "recovered/p1-mtfs/000001-app.db", PartitionOffset: freedPartStart, Runs: []evidence.Run{{Offset: at[0], Length: int64(len(dbBytes))}},
 	})
 	wal := evidencetest.AddRecovered(t, c, parent, img, evidencetest.RecoveredSpec{
-		Path: "recovered/p1-mtfs/000002-app.db-wal", Runs: []evidence.Run{{Offset: int64(len(dbBytes)), Length: int64(len(walBytes))}},
+		Path: "recovered/p1-mtfs/000002-app.db-wal", PartitionOffset: freedPartStart, Runs: []evidence.Run{{Offset: at[1], Length: int64(len(walBytes))}},
 	})
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
@@ -430,7 +431,7 @@ func TestEvidencetestRecoveredFallback(t *testing.T) {
 			t.Errorf("row %d: recovered %v deleted %v confidence %v", r.ID, r.Recovered, r.Deleted, r.Confidence)
 		}
 	}
-	if code, out := run(t, Deps{}, "case", "verify", "--case", dir); code != 0 || strings.Contains(out, "PROBLEM:") || !strings.Contains(out, "2 recovered (2 reproduced)") {
+	if code, out := run(t, Deps{FSDrivers: mtfsDrivers}, "case", "verify", "--case", dir); code != 0 || strings.Contains(out, "PROBLEM:") || !strings.Contains(out, "2 recovered (2 reproduced)") {
 		t.Errorf("case verify: %d\n%s", code, out)
 	}
 }

@@ -245,6 +245,8 @@ func TestVerifyChecksStartsWithReproduce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// the fake parent is a plain image with no filesystem: R9 cannot re-open it and says so (never a silent pass)
+	evidencetest.RequireProblem(t, rep, "allocation: partition 1 of parent")
 	if rep.RecoveredReproduced != 1 {
 		t.Errorf("reproduced = %d, want 1 (problems %q)", rep.RecoveredReproduced, rep.Problems)
 	}

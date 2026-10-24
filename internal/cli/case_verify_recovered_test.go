@@ -105,10 +105,20 @@ func TestCaseVerifyCleanPlainCaseSummaryUnchanged(t *testing.T) {
 }
 
 func TestCaseVerifyJSONHasRecoveredCounts(t *testing.T) {
-	dir := recoveredCase(t, func([]byte) evidencetest.RecoveredSpec {
-		return evidencetest.RecoveredSpec{Runs: verifyRuns}
-	})
-	code, out := run(t, Deps{}, "case", "verify", "--case", dir, "--json")
+	// the parent is a real filesystem image whose free blocks hold the recovered bytes, so R9 can re-open it
+	node := recPat(7, 256<<10)
+	disk, at := freedDisk(t, node)
+	dir := newCLICase(t)
+	c, err := evidence.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs := []evidence.Run{{Offset: at[0] + 4096, Length: 8192}, {Offset: at[0] + 100000, Length: 5000}}
+	evidencetest.AddRecovered(t, c, evidencetest.AddImage(t, c, disk), disk, evidencetest.RecoveredSpec{Runs: runs, PartitionOffset: freedPartStart})
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	code, out := run(t, Deps{FSDrivers: mtfsDrivers}, "case", "verify", "--case", dir, "--json")
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -116,7 +126,7 @@ func TestCaseVerifyJSONHasRecoveredCounts(t *testing.T) {
 	if err := json.Unmarshal(jsonPart(out), &rep); err != nil {
 		t.Fatalf("json %q: %v", out, err)
 	}
-	if rep["recovered_artifacts"] != float64(1) || rep["recovered_reproduced"] != float64(1) {
-		t.Errorf("recovered counts %v / %v, want 1 / 1", rep["recovered_artifacts"], rep["recovered_reproduced"])
+	if rep["recovered_artifacts"] != float64(1) || rep["recovered_reproduced"] != float64(1) || rep["allocation_rechecked"] != float64(1) {
+		t.Errorf("recovered counts %v / %v and allocation_rechecked %v, want 1 / 1 / 1", rep["recovered_artifacts"], rep["recovered_reproduced"], rep["allocation_rechecked"])
 	}
 }
