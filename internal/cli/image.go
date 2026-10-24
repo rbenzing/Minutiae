@@ -256,18 +256,18 @@ func newImageInfoCmd(d Deps, opts *rootOptions) *cobra.Command {
 				fmt.Fprintln(d.Out, note)
 			}
 		}
+		var jerr error
 		if opts.json {
 			out := newJSONImageInfo(info)
 			if cv != nil {
 				out.Verify = newJSONVerify(*cv, verr)
 			}
-			if err := writeJSON(d.Out, out); err != nil {
-				return err
-			}
+			jerr = writeJSON(d.Out, out)
 		} else if cv != nil {
 			printVerification(d.Out, *cv)
 		}
-		return errors.Join(verifyOutcome(cv, verr), perr)
+		// a refused or failed JSON write never hides the verification outcome (a mismatch stays exit 4)
+		return joinJSON(errors.Join(verifyOutcome(cv, verr), perr), jerr)
 	}
 	return cmd
 }

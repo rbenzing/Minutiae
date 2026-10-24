@@ -393,22 +393,21 @@ func newParsePlanCmd(d Deps, opts *rootOptions) *cobra.Command {
 			if perr != nil && len(plan.Rows) == 0 {
 				return perr
 			}
+			var jerr error
 			if opts.json {
 				rows := []planRowJSON{}
 				for _, r := range plan.Rows {
 					rows = append(rows, planRowToJSON(r))
 				}
-				if err := writeJSON(d.Out, struct {
+				jerr = writeJSON(d.Out, struct {
 					Rows   []planRowJSON `json:"rows"`
 					Counts countsJSON    `json:"counts"`
-				}{rows, planCountsJSON(plan.Counts, plan.ByStatus)}); err != nil {
-					return err
-				}
-			} else if err := writePlanText(d.Out, plan); err != nil {
-				return err
+				}{rows, planCountsJSON(plan.Counts, plan.ByStatus)})
+			} else {
+				jerr = writePlanText(d.Out, plan)
 			}
 			if perr != nil {
-				return perr
+				return joinJSON(perr, jerr)
 			}
 			var bad []string
 			for _, r := range plan.Rows {
@@ -417,9 +416,9 @@ func newParsePlanCmd(d Deps, opts *rootOptions) *cobra.Command {
 				}
 			}
 			if len(bad) > 0 {
-				return integrityRunError(len(bad), bad, nil)
+				return joinJSON(integrityRunError(len(bad), bad, nil), jerr)
 			}
-			return nil
+			return jerr
 		},
 	}
 	f.register(cmd)

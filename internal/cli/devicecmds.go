@@ -125,10 +125,7 @@ func newLsCmd(d Deps, opts *rootOptions, kind device.Kind, flag string) *cobra.C
 		}
 		listErr := err
 		if opts.json {
-			if err := writeJSON(d.Out, es); err != nil {
-				return err
-			}
-			return listErr
+			return joinJSON(listErr, writeJSON(d.Out, es))
 		}
 		for _, e := range es {
 			fmt.Fprintf(d.Out, "%s %12d %s %s\n", e.Mode, e.Size, formatModTime(e.ModTime), displayName(e.Name))

@@ -148,21 +148,41 @@ func terminalSafeJSON(b []byte) ([]byte, error) {
 // valid UTF-8, naming its path. It stops at json.Marshaler, encoding.TextMarshaler and []byte values
 // (their output is checked after encoding) and skips fields the encoder would not write.
 func checkJSONUTF8(v any) error {
-	return checkJSONValue(reflect.ValueOf(v), "", 0)
+	return checkJSONValue(reflect.ValueOf(v), nil, 0)
 }
 
-func jsonPathOrTop(path string) string {
-	if path == "" {
+// jsonPathNode is one step of the path to a value; the text is built only when an error needs it.
+type jsonPathNode struct {
+	parent *jsonPathNode
+	kind   byte // 'f' field, 'i' index, 'k' map key
+	field  string
+	idx    int
+	key    reflect.Value
+}
+
+func (n *jsonPathNode) String() string {
+	if n == nil {
 		return "(top level)"
 	}
-	return path
-}
-
-func jsonFieldPath(path, name string) string {
-	if path == "" {
-		return name
+	var b strings.Builder
+	var steps []*jsonPathNode
+	for p := n; p != nil; p = p.parent {
+		steps = append(steps, p)
 	}
-	return path + "." + name
+	for i := len(steps) - 1; i >= 0; i-- {
+		switch s := steps[i]; s.kind {
+		case 'f':
+			if b.Len() > 0 {
+				b.WriteByte('.')
+			}
+			b.WriteString(s.field)
+		case 'i':
+			fmt.Fprintf(&b, "[%d]", s.idx)
+		default:
+			fmt.Fprintf(&b, "[%q]", s.key)
+		}
+	}
+	return b.String()
 }
 
 func implementsMarshaler(v reflect.Value) bool {
@@ -175,12 +195,12 @@ func implementsMarshaler(v reflect.Value) bool {
 	return false
 }
 
-func checkJSONValue(v reflect.Value, path string, depth int) error {
+func checkJSONValue(v reflect.Value, path *jsonPathNode, depth int) error {
 	if !v.IsValid() {
 		return nil
 	}
 	if depth > maxJSONCheckDepth {
-		return fmt.Errorf("%w: at %s", errJSONTooDeep, jsonPathOrTop(path))
+		return fmt.Errorf("%w: at %s", errJSONTooDeep, path.String())
 	}
 	if implementsMarshaler(v) {
 		return nil
@@ -188,7 +208,7 @@ func checkJSONValue(v reflect.Value, path string, depth int) error {
 	switch v.Kind() {
 	case reflect.String:
 		if !utf8.ValidString(v.String()) {
-			return fmt.Errorf("%w: at %s", errJSONNotUTF8, jsonPathOrTop(path))
+			return fmt.Errorf("%w: at %s", errJSONNotUTF8, path.String())
 		}
 	case reflect.Interface:
 		if v.IsNil() {
@@ -208,9 +228,9 @@ func checkJSONValue(v reflect.Value, path string, depth int) error {
 		for it.Next() {
 			k := it.Key()
 			if k.Kind() == reflect.String && !implementsMarshaler(k) && !utf8.ValidString(k.String()) {
-				return fmt.Errorf("%w: at %s, a map key (%s)", errJSONNotUTF8, jsonPathOrTop(path), strconv.QuoteToASCII(k.String()))
+				return fmt.Errorf("%w: at %s, a map key (%s)", errJSONNotUTF8, path.String(), strconv.QuoteToASCII(k.String()))
 			}
-			if err := checkJSONValue(it.Value(), fmt.Sprintf("%s[%q]", path, k), depth+1); err != nil {
+			if err := checkJSONValue(it.Value(), &jsonPathNode{parent: path, kind: 'k', key: k}, depth+1); err != nil {
 				return err
 			}
 		}
@@ -219,7 +239,7 @@ func checkJSONValue(v reflect.Value, path string, depth int) error {
 			return nil // base64 text or numbers
 		}
 		for i := range v.Len() {
-			if err := checkJSONValue(v.Index(i), path+"["+strconv.Itoa(i)+"]", depth+1); err != nil {
+			if err := checkJSONValue(v.Index(i), &jsonPathNode{parent: path, kind: 'i', idx: i}, depth+1); err != nil {
 				return err
 			}
 		}
@@ -227,7 +247,7 @@ func checkJSONValue(v reflect.Value, path string, depth int) error {
 	return nil
 }
 
-func checkJSONStruct(v reflect.Value, path string, depth int) error {
+func checkJSONStruct(v reflect.Value, path *jsonPathNode, depth int) error {
 	t := v.Type()
 	for i := range t.NumField() {
 		sf := t.Field(i)
@@ -262,7 +282,7 @@ func checkJSONStruct(v reflect.Value, path string, depth int) error {
 				fv = fv.Elem()
 			}
 			if depth+1 > maxJSONCheckDepth {
-				return fmt.Errorf("%w: at %s", errJSONTooDeep, jsonPathOrTop(path))
+				return fmt.Errorf("%w: at %s", errJSONTooDeep, path.String())
 			}
 			if err := checkJSONStruct(fv, path, depth+1); err != nil {
 				return err
@@ -272,7 +292,7 @@ func checkJSONStruct(v reflect.Value, path string, depth int) error {
 		if name == "" {
 			name = sf.Name
 		}
-		if err := checkJSONValue(fv, jsonFieldPath(path, name), depth+1); err != nil {
+		if err := checkJSONValue(fv, &jsonPathNode{parent: path, kind: 'f', field: name}, depth+1); err != nil {
 			return err
 		}
 	}

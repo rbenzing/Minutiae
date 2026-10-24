@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/filesys/detect"
 	"github.com/rbenzing/minutiae/internal/filesys/fstest"
+	"github.com/rbenzing/minutiae/internal/image/ewf/ewftest"
 	"github.com/rbenzing/minutiae/internal/records/recordstest"
 )
 
@@ -128,5 +130,32 @@ func TestStreamingJSONStopsAtTheRefusedElement(t *testing.T) {
 	s2.ndjson(map[string]string{"event": "fine"})
 	if err := s2.finish(); err != nil {
 		t.Errorf("clean stream: %v", err)
+	}
+}
+
+// A failed or refused JSON write is joined after the command's own error: here the write fails (a
+// full disk), which takes the same path as a refusal, and the integrity exit survives it.
+func TestImageInfoJSONFailureKeepsMismatchExit4(t *testing.T) {
+	probe := newEWFEnv(t, ewftest.Options{})
+	flipped, _ := hex.DecodeString(probe.md5)
+	flipped[0] ^= 1
+	e := newEWFEnv(t, ewftest.Options{MD5Override: flipped})
+	var errb bytes.Buffer
+	d := e.d
+	d.Out, d.Err, d.In, d.Registry = failWriter{}, &errb, strings.NewReader(""), device.NewRegistry()
+	code := Run([]string{"--json", "image", "info", "--case", e.c, e.recs[0].ID, "--verify"}, d)
+	if code != ExitIntegrity || !strings.Contains(errb.String(), "disk full") || !strings.Contains(errb.String(), "stored MD5 differs") {
+		t.Errorf("exit %d, stderr %q; want 4 naming both the mismatch and the write failure", code, errb.String())
+	}
+}
+
+func TestParsePlanJSONFailureKeepsIntegrityExit4(t *testing.T) {
+	p := newPfx(t, "a", "b")
+	p.flip("a")
+	var errb bytes.Buffer
+	d := Deps{In: strings.NewReader(""), Out: failWriter{}, Err: &errb, Registry: device.NewRegistry(), ParserRegistry: registry(t, "", good("a"), good("b"))}
+	code := Run([]string{"--json", "parse", "plan", "--case", p.dir}, d)
+	if code != ExitIntegrity || !strings.Contains(errb.String(), "disk full") || !strings.Contains(errb.String(), "integrity failure") {
+		t.Errorf("exit %d, stderr %q; want 4 naming the integrity failure and the write failure", code, errb.String())
 	}
 }
