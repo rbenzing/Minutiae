@@ -22,7 +22,7 @@ func recordsPreamble(ctx context.Context, d Deps, c *evidence.Case, verify bool)
 		fmt.Fprintln(d.Err, lastVerifyNotice(c.Audit))
 		return nil
 	}
-	rep, err := runVerify(ctx, c, nil)
+	rep, err := runVerify(ctx, d, c, nil)
 	if err != nil {
 		return err
 	}
