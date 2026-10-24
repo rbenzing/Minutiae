@@ -873,3 +873,20 @@ A small benchmark, not a 10M run. Same machine as the baseline, `BenchmarkOpenAr
 | 10,000 | 31,736,368 / 31,954,174 / 30,144,010 | 208,934 / 296,430 / 193,829 |
 
 `open_artifact_ms` went from 31.74 ms to 0.209 ms (median of 3), under the <= 1 ms threshold. The remaining cost per open is the stat of the manifest, the linear scan of the cached records for the id, and the artifact file checks (link walk, open, regular-file and size checks), which the cache does not touch. The time still grows a little with the line count because the scan is linear. The cache is valid only while the manifest is the same file with the same size and modification time; the residual is in `docs/limitations.md`.
+
+### LX-6 normalization and ingest check
+Not a 10M run (ruling M17): the scan and the run index sit off the list and search SQL paths, and the plan-shape tests are unedited. Figures, not gates. Same machine as the other benchmarks (12th Gen Intel Core i7-1265U), `go test -run '^$' -bench ... -count 3` through `heavy.sh`, BASE `028f386` against the LX-6 branch. The benchmark file was copied into the BASE tree.
+
+`BenchmarkNormalizeText` (200-byte ascii, `café Straße` repeated, `日本語のテキスト` repeated), ns/op, three runs each:
+
+| Input | BASE | LX-6 | B/op, allocs/op (BASE, LX-6) |
+|---|---|---|---|
+| ascii | 12,437 / 11,633 / 11,616 | 10,970 / 11,908 / 12,170 | 672, 3 (both) |
+| latin | 16,516 / 15,535 / 15,027 | 18,072 / 14,820 / 14,830 | 1,232, 5 (both) |
+| cjk | 16,564 / 18,391 / 17,649 | 21,576 / 21,808 / 20,354 | 896, 3 and 1,312, 4 |
+
+The ascii and latin paths are unchanged within noise: the segmentation step returns its input without allocating when the text holds no Han, Hiragana or Katakana letter. Text with CJK letters costs about 20% more (one extra allocation for the inserted spaces), which is the work of putting a space between letters.
+
+`BenchmarkIngest/batch1000` (records/s, three runs): BASE 3,794 / 3,688 / 3,552; LX-6 3,577 / 3,604 / 4,227. No difference beyond run-to-run noise; the ingest corpus is ASCII.
+
+The deterministic guard is `TestNormalizeTextASCIICostGuard` (at most 500 microseconds per 200 ascii bytes, about 40 times the measured cost) together with `TestSegmentUnigramsIsAFreeNoOpWithoutCJK` (0 allocations when there is nothing to segment).
