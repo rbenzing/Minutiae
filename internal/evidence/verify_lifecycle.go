@@ -180,6 +180,7 @@ func (c *Case) checkIngest(rep *VerifyReport, ps *problemSet, audit *recordAudit
 		}
 		rep.noticef("ingest %q was recovered by ingest %q (records.ingest.recover, audit seq %d): %s; announced batches that never reached the database: %v",
 			id, rc.ByIngestID, rc.Seq, reason, rc.BatchNos)
+		checkRecoverEntry(rep, ps, audit, id, rc, byKey, batchesRead)
 	}
 	okRules := true
 	switch {
@@ -614,4 +615,55 @@ func checkCounts(ps *problemSet, id, what string, seq int64, got IngestConclusio
 		ps.add("lifecycle", "ingest %q: %s (audit seq %d): rejected is %d, the audit log proves %d (%d rejection entries plus %d suppressed rejections)",
 			id, what, seq, got.Rejected, t.ProvenRejected(), t.Rejects, t.NoteRejects)
 	}
+}
+
+// checkRecoverEntry applies the rules (L67 part i) to the one records.ingest.recover
+// entry rc of ingest id. The entry is the next ingest's own claim about what never
+// reached the database; the audited batches and the stored rows are the evidence it
+// must agree with, so a forged recover cannot hide a batch the log announced and
+// the database holds, nor invent one. Every text is a problem (exit 4) except a
+// recovering ingest with no records.ingest.start at all, which the writer really
+// produces (Start recovers, then preflight refuses the reingest and writes no start).
+func checkRecoverEntry(rep *VerifyReport, ps *problemSet, audit *recordAudit, id string, rc *auditedRecover, byKey map[batchKey]storedBatch, batchesRead bool) {
+	seen := make(map[int]bool, len(rc.BatchNos))
+	for _, n := range rc.BatchNos {
+		k := batchKey{id, n}
+		bi, announced := audit.byKey[k]
+		switch {
+		case seen[n]:
+			ps.add("lifecycle", "ingest %q: records.ingest.recover (audit seq %d) names batch %d more than once", id, rc.Seq, n)
+		case !announced:
+			ps.add("lifecycle", "ingest %q: records.ingest.recover (audit seq %d) names batch %d, which was never announced (no records.batch entry)", id, rc.Seq, n)
+		case hasStored(byKey, k, batchesRead):
+			ps.add("lifecycle", "ingest %q: records.ingest.recover (audit seq %d) names batch %d as never written, but its row is stored", id, rc.Seq, n)
+		case audit.batchErr[k]:
+			ps.add("lifecycle", "ingest %q: records.ingest.recover (audit seq %d) names batch %d, which records.batch.error already explains", id, rc.Seq, n)
+		case audit.batches[bi].Seq > rc.Seq:
+			ps.add("lifecycle", "ingest %q: records.ingest.recover (audit seq %d) names batch %d, announced at audit seq %d, after the recover entry", id, rc.Seq, n, audit.batches[bi].Seq)
+		}
+		seen[n] = true
+	}
+	switch by := rc.ByIngestID; by {
+	case "":
+		ps.add("lifecycle", "ingest %q: records.ingest.recover (audit seq %d) names no recovering ingest (by_ingest_id is empty)", id, rc.Seq)
+	case id:
+		ps.add("lifecycle", "ingest %q: records.ingest.recover (audit seq %d) names the recovered ingest itself as the recovering one", id, rc.Seq)
+	default:
+		startSeq, started := audit.startSeq[by]
+		switch {
+		case !started:
+			rep.noticef("ingest %q was recovered by ingest %q, which has no records.ingest.start (its start failed after it recovered, or this entry was not written by the writer)", id, by)
+		case startSeq < rc.Seq:
+			ps.add("lifecycle", "ingest %q: records.ingest.recover (audit seq %d) names recovering ingest %q, whose records.ingest.start (audit seq %d) comes before it", id, rc.Seq, by, startSeq)
+		}
+	}
+}
+
+// hasStored reports whether the record_batches rows were read and hold k.
+func hasStored(byKey map[batchKey]storedBatch, k batchKey, batchesRead bool) bool {
+	if !batchesRead {
+		return false
+	}
+	_, ok := byKey[k]
+	return ok
 }
