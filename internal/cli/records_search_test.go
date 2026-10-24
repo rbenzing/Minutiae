@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"path/filepath"
@@ -340,7 +341,15 @@ func TestRecordsSearchCLIEscapesSnippets(t *testing.T) {
 			t.Errorf("an unescaped marker on the list line: %q", line)
 		}
 	}
-	// --json keeps the text as given
+	// --json refuses the row whose summary is not valid UTF-8 (it never repairs it to U+FFFD) and writes
+	// nothing; the text output above escaped the bad bytes
+	var errBuf bytes.Buffer
+	code, jout := run(t, Deps{Err: &errBuf}, "records", "search", "--case", dir, "zebra", "--json")
+	if code != ExitError || jout != "" || !strings.Contains(errBuf.String(), "valid UTF-8") {
+		t.Errorf("--json over an invalid summary: exit %d, stdout %q, stderr %q; want a refusal with exit 1 and no output", code, jout, errBuf.String())
+	}
+	// with the bad row made valid again, --json decodes to the text as given
+	recordstest.SetRecordSummary(t, dir, 2, "zebra plain")
 	var l jsonSearch
 	cliJSON(t, &l, "records", "search", "--case", dir, "zebra")
 	if len(l.Records) != 2 {

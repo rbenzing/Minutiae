@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -173,9 +172,7 @@ func newImageImportCmd(d Deps, opts *rootOptions) *cobra.Command {
 		endProg()
 		if opts.json {
 			if len(recs) > 0 {
-				if jerr := writeJSON(d.Out, recs); jerr != nil && err == nil {
-					err = jerr
-				}
+				err = joinJSON(err, writeJSON(d.Out, recs))
 			}
 			return err
 		}
@@ -259,18 +256,18 @@ func newImageInfoCmd(d Deps, opts *rootOptions) *cobra.Command {
 				fmt.Fprintln(d.Out, note)
 			}
 		}
+		var jerr error
 		if opts.json {
 			out := newJSONImageInfo(info)
 			if cv != nil {
 				out.Verify = newJSONVerify(*cv, verr)
 			}
-			if err := writeJSON(d.Out, out); err != nil {
-				return err
-			}
+			jerr = writeJSON(d.Out, out)
 		} else if cv != nil {
 			printVerification(d.Out, *cv)
 		}
-		return errors.Join(verifyOutcome(cv, verr), perr)
+		// a refused or failed JSON write never hides the verification outcome (a mismatch stays exit 4)
+		return joinJSON(errors.Join(verifyOutcome(cv, verr), perr), jerr)
 	}
 	return cmd
 }
@@ -592,12 +589,9 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 
 		// --json streams the array, so a huge subtree is never held in memory. It is
 		// closed only on success: a failed listing leaves invalid JSON behind.
-		var (
-			wrote   int
-			jsonErr error
-		)
+		stream := &jsonStream{w: d.Out, errw: d.Err}
 		if opts.json {
-			_, jsonErr = io.WriteString(d.Out, "[")
+			_, stream.err = io.WriteString(d.Out, "[")
 		}
 		// Every entry at or below <volume>/.snapshots/<name> is snapshot data (historical), marked as
 		// such and never presented as live. The marker comes from the path alone, so it does not
@@ -610,19 +604,18 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return snapshotNameOfPath(p)
 		}
 		emitJSON := func(item any) {
-			if jsonErr != nil {
-				return
-			}
-			b, merr := json.Marshal(item)
-			if merr == nil {
+			stream.emit(func() error {
+				b, merr := marshalSafe(item) // an element that cannot be written safely is refused whole
+				if merr != nil {
+					return merr
+				}
 				sep := "\n  "
-				if wrote > 0 {
+				if stream.n > 0 {
 					sep = ",\n  "
 				}
 				_, merr = d.Out.Write(append([]byte(sep), b...))
-			}
-			jsonErr = merr
-			wrote++
+				return merr
+			})
 		}
 		emit := func(p string, e filesys.Entry) {
 			if e.Deleted && !deleted {
@@ -672,7 +665,7 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 					return nil
 				}
 				emit(p, e)
-				if jsonErr == nil && filesys.IsSnapshotsDir(e) && !includeSnapshots {
+				if stream.err == nil && filesys.IsSnapshotsDir(e) && !includeSnapshots {
 					// Listed, but not descended into: name a snapshot (--snapshot, or a
 					// path below .snapshots) to see inside.
 					if nerr := s.NoteSnapshotsSkipped(p, e); nerr != nil {
@@ -680,7 +673,7 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 					}
 					return filesys.SkipDir
 				}
-				return jsonErr
+				return stream.err
 			})
 			if err == nil {
 				err = firstCut
@@ -705,12 +698,17 @@ func newImageLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 				}
 			}
 		}
-		if err == nil {
-			err = jsonErr
+		if opts.json && stream.err != nil {
+			// the array stays unclosed: stderr says where the output stopped, and a result error of the
+			// listing itself (an integrity failure) still decides the exit code
+			_ = stream.finish()
+			if !errors.Is(err, stream.err) {
+				err = joinJSON(err, stream.err)
+			}
 		}
 		if opts.json && err == nil {
 			closer := "]\n"
-			if wrote > 0 {
+			if stream.n > 0 {
 				closer = "\n]\n"
 			}
 			_, err = io.WriteString(d.Out, closer)
@@ -941,9 +939,7 @@ func newImageExtractCmd(d Deps, opts *rootOptions) *cobra.Command {
 			if note != "" {
 				fmt.Fprintln(d.Err, note)
 			}
-			if jerr := writeJSON(d.Out, newJSONSummary(sum)); jerr != nil && err == nil {
-				err = jerr
-			}
+			err = joinJSON(err, writeJSON(d.Out, newJSONSummary(sum)))
 			if sum.OutputLimit != "" && err == nil {
 				err = fmt.Errorf("extract stopped at its output limit (%s)", sum.OutputLimit)
 			}
@@ -1003,9 +999,7 @@ func newImageUnallocCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		if opts.json {
-			if jerr := writeJSON(d.Out, newJSONUnalloc(sum)); jerr != nil && err == nil {
-				err = jerr
-			}
+			err = joinJSON(err, writeJSON(d.Out, newJSONUnalloc(sum)))
 			return err
 		}
 		fmt.Fprintf(d.Out, "exported unallocated space: %d file(s) (%s), skipped %d\n", sum.Files, humanBytes(sum.Bytes), sum.Skipped)
