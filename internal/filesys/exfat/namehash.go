@@ -1,8 +1,8 @@
 package exfat
 
 // nameHash is the NameHash of a File entry set's Stream Extension, as the
-// published exFAT specification defines it (Stream Extension DirectoryEntry,
-// NameHash field, section 7.6, with its algorithm): over the up-cased name's
+// published exFAT specification defines it (the NameHash field of the Stream
+// Extension directory entry, with its algorithm): over the up-cased name's
 // UTF-16LE bytes, low byte first, the 16-bit hash is rotated right by one bit
 // and the byte added. up is the volume's up-case mapping; the caller verifies
 // only with a usable table.
