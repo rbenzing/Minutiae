@@ -95,8 +95,10 @@ func TestRecordAuditDetailsRoundTrip(t *testing.T) {
 				keys = append(keys, k)
 			}
 			sort.Strings(keys)
-			if !reflect.DeepEqual(keys, s.keys) {
-				t.Errorf("detail keys = %v, want %v", keys, s.keys)
+			want := append([]string{"layout"}, s.keys...) // every details map carries the layout version
+			sort.Strings(want)
+			if !reflect.DeepEqual(keys, want) {
+				t.Errorf("detail keys = %v, want %v", keys, want)
 			}
 			got, err := s.decode(s.details)
 			if err != nil || !reflect.DeepEqual(got, s.value) {

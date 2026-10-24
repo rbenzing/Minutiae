@@ -87,7 +87,11 @@ func (r *Reader) Get(ctx context.Context, id int64) (Full, error) {
 		// a record exists, so the case was created with an audit log: a missing or empty one is damage
 		return Full{}, fmt.Errorf("%w: records: record %d: the audit log is missing or empty; run: minutiae case verify --case %s", evidence.ErrIntegrity, id, r.c.Dir)
 	}
-	full.Batch.AuditSeq = batchAuditSeq(entries, full.Batch)
+	seq, err := batchAuditSeq(entries, full.Batch)
+	if err != nil {
+		return Full{}, r.integrity(fmt.Errorf("records: record %d: %w", id, err))
+	}
+	full.Batch.AuditSeq = seq
 	gaps, err := r.c.IngestGapsFrom(entries)
 	if err != nil {
 		return Full{}, r.integrity(fmt.Errorf("records: record %d: %w", id, err))
@@ -172,21 +176,26 @@ func runOf(ctx context.Context, h evidence.ReadHandle, ingestID string) (*RunInf
 
 // batchAuditSeq finds the audit sequence of the records.batch entry of b: 0
 // when the batch row is missing or the log holds no such entry (verify reports
-// that; Get only shows provenance).
-func batchAuditSeq(entries []evidence.AuditEntry, b BatchInfo) int64 {
+// that; Get only shows provenance). A batch entry whose details cannot be decoded (a newer
+// layout included, evidence.ErrAuditLayoutNewer) is an integrity-class error: this build cannot say which entry is
+// the batch's, and "no entry" would be a lie.
+func batchAuditSeq(entries []evidence.AuditEntry, b BatchInfo) (int64, error) {
 	if b.IngestID == "" {
-		return 0
+		return 0, nil
 	}
 	for _, e := range entries {
 		if e.Action != evidence.ActionBatch {
 			continue
 		}
 		d, err := evidence.DecodeDetails[evidence.BatchCommit](e.Details)
-		if err == nil && d.IngestID == b.IngestID && d.BatchNo == b.BatchNo {
-			return e.Seq
+		if err != nil { // an entry this build cannot decode is never "no entry"
+			return 0, fmt.Errorf("%w: audit seq %d: %s: %w", evidence.ErrIntegrity, e.Seq, e.Action, err)
+		}
+		if d.IngestID == b.IngestID && d.BatchNo == b.BatchNo {
+			return e.Seq, nil
 		}
 	}
-	return 0
+	return 0, nil
 }
 
 // artifactByID resolves id as an artifact id and nothing else: no fallback to a

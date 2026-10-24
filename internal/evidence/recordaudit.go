@@ -3,9 +3,48 @@ package evidence
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
+	"strconv"
 )
+
+// RecordsAuditLayout is the layout version of the records.* audit details this build writes and reads.
+const RecordsAuditLayout = 1
+
+// recordsLayoutKey is the details key that carries the layout version.
+const recordsLayoutKey = "layout"
+
+// ErrAuditLayoutNewer is matched by an AuditLayoutError.
+var ErrAuditLayoutNewer = errors.New("records audit entry written with a newer layout")
+
+// AuditLayoutError is returned by DecodeDetails for details whose "layout" is above RecordsAuditLayout.
+type AuditLayoutError struct{ Layout, Known int64 }
+
+func (e *AuditLayoutError) Error() string {
+	return fmt.Sprintf("records audit layout %d is newer than this build reads (up to %d)", e.Layout, e.Known)
+}
+
+// Unwrap makes the error match ErrAuditLayoutNewer.
+func (e *AuditLayoutError) Unwrap() error { return ErrAuditLayoutNewer }
+
+// withLayout adds the layout version to a details map built by detailsOf.
+func withLayout(m map[string]any) map[string]any {
+	m[recordsLayoutKey] = json.Number(strconv.Itoa(RecordsAuditLayout))
+	return m
+}
+
+// auditProblemText is the verify text for details DecodeDetails refused: a newer layout is named as such
+// (verify cannot check what this build cannot read, and says which build can), any other failure keeps
+// the "details unreadable" text.
+func auditProblemText(e AuditEntry, err error) string {
+	var le *AuditLayoutError
+	if errors.As(err, &le) {
+		return fmt.Sprintf("audit seq %d: %s was written with records audit layout %d; this build reads layouts up to %d (verify it with the build that wrote it)",
+			e.Seq, e.Action, le.Layout, le.Known)
+	}
+	return fmt.Sprintf("audit seq %d: %s details unreadable: %q", e.Seq, e.Action, err.Error())
+}
 
 // Audit actions of the unified artifact database. The case.upgrade actions are
 // declared with the upgrade code (ActionCaseUpgrade and friends).
@@ -143,19 +182,77 @@ func detailsOf(v any) map[string]any {
 }
 
 // Details returns the audit details of the entry.
-func (x IngestStart) Details() map[string]any { return detailsOf(x) }
+func (x IngestStart) Details() map[string]any { return withLayout(detailsOf(x)) }
 
 // Details returns the audit details of the entry.
-func (x BatchCommit) Details() map[string]any { return detailsOf(x) }
+func (x BatchCommit) Details() map[string]any { return withLayout(detailsOf(x)) }
 
 // Details returns the audit details of the entry.
-func (x BatchFailure) Details() map[string]any { return detailsOf(x) }
+func (x BatchFailure) Details() map[string]any { return withLayout(detailsOf(x)) }
 
 // Details returns the audit details of the entry.
-func (x IngestConclusion) Details() map[string]any { return detailsOf(x) }
+func (x IngestConclusion) Details() map[string]any { return withLayout(detailsOf(x)) }
 
 // Details returns the audit details of the entry.
-func (x IngestRecover) Details() map[string]any { return detailsOf(x) }
+func (x IngestRecover) Details() map[string]any { return withLayout(detailsOf(x)) }
+
+// allDigits reports whether s is a non-empty run of ASCII digits.
+func allDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return s != ""
+}
+
+// stripLayout returns d without its "layout" key (the caller's map is not changed) after checking it: absent
+// means layout 1, an integer 1..RecordsAuditLayout is accepted, a larger integer is an *AuditLayoutError, and
+// anything else (0, a negative, a fraction, text, a bool, null, a number beyond int64) is a plain error.
+func stripLayout(d map[string]any) (map[string]any, error) {
+	v, has := d[recordsLayoutKey]
+	if !has {
+		return d, nil
+	}
+	var n int64
+	switch x := v.(type) {
+	case json.Number:
+		var err error
+		if n, err = x.Int64(); err != nil {
+			if allDigits(x.String()) { // a whole number above int64: certainly newer, never a plain error that could mask exit 4
+				return nil, &AuditLayoutError{Layout: math.MaxInt64, Known: RecordsAuditLayout}
+			}
+			return nil, fmt.Errorf("audit details: layout %q is not an integer", x.String())
+		}
+	case float64:
+		if x > 1<<53 && x <= math.MaxFloat64 && x == math.Trunc(x) {
+			return nil, &AuditLayoutError{Layout: math.MaxInt64, Known: RecordsAuditLayout}
+		}
+		if x != math.Trunc(x) || x < 1 {
+			return nil, fmt.Errorf("audit details: layout %v is not a valid layout number", x)
+		}
+		n = int64(x)
+	case int:
+		n = int64(x)
+	case int64:
+		n = x
+	default:
+		return nil, fmt.Errorf("audit details: layout of type %T is not an integer", v)
+	}
+	if n < 1 {
+		return nil, fmt.Errorf("audit details: layout %d is not a valid layout number", n)
+	}
+	if n > RecordsAuditLayout {
+		return nil, &AuditLayoutError{Layout: n, Known: RecordsAuditLayout}
+	}
+	out := make(map[string]any, len(d))
+	for k, x := range d {
+		if k != recordsLayoutKey {
+			out[k] = x
+		}
+	}
+	return out, nil
+}
 
 // DecodeDetails decodes the details of an audit entry (as read from the log, or
 // as built by Details) into a codec type. Numbers must be integers where the
@@ -165,6 +262,10 @@ func (x IngestRecover) Details() map[string]any { return detailsOf(x) }
 // database, where a missing one cannot match.
 func DecodeDetails[T any](d map[string]any) (T, error) {
 	var out T
+	d, err := stripLayout(d)
+	if err != nil {
+		return out, err
+	}
 	b, err := json.Marshal(d)
 	if err != nil {
 		return out, fmt.Errorf("audit details: %w", err)
@@ -287,10 +388,10 @@ func writerWarningIngest(d map[string]any) string {
 }
 
 // Details returns the audit details of the entry.
-func (x ReindexStart) Details() map[string]any { return detailsOf(x) }
+func (x ReindexStart) Details() map[string]any { return withLayout(detailsOf(x)) }
 
 // Details returns the audit details of the entry.
-func (x ReindexDone) Details() map[string]any { return detailsOf(x) }
+func (x ReindexDone) Details() map[string]any { return withLayout(detailsOf(x)) }
 
 // Details returns the audit details of the entry.
-func (x ReindexFailure) Details() map[string]any { return detailsOf(x) }
+func (x ReindexFailure) Details() map[string]any { return withLayout(detailsOf(x)) }
