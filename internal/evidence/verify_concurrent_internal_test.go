@@ -20,7 +20,7 @@ func TestVerifyIntegrityCheckRunsBesideTheStream(t *testing.T) {
 	c.verifyIntegrityHook = func() {
 		select {
 		case <-started:
-		case <-time.After(20 * time.Second):
+		case <-time.After(2 * time.Minute): // only the serial order waits this long; under -race on a loaded machine the stream has needed more than 20 s to read its first chunk
 			timedOut = true // the serial order: the stream cannot start before P10 is over
 		}
 	}

@@ -66,6 +66,13 @@ Follow-ups from sub-project 5 (5D, plan `2026-10-08-5d-scale.md` with the verify
 
 Follow-up from LX-8: the three post-LX-8 fuzz campaigns (the plist decoder, the readers profile and the parsers profile) are not yet run. The Docker VM had 1 GiB, and the engine died on each attempt. Run them once the Docker VM has at least 4 GiB, using the commands in `docs/testing.md` ("Re-run after LX-8"). Then replace the "pending" notes in `docs/testing.md` and `docs/limitations.md` with the results.
 
+Follow-ups from LX-5, LX-6 and LX-7b (none is scheduled):
+- Every case indexed before LX-6 (full-text pipeline version 3) needs `records reindex` before a text search; `case verify` reports it as a notice, not a problem.
+- The race gate's named `internal/evidence` tests take about 22 of their 30 minutes under `-race` on a loaded machine; profile the list before it outgrows the limit.
+- `records search --scan` over a tampered case may read one oversized record body before it refuses it (bounded to that record).
+- The manifest reader has no per-line length cap.
+- The TexFAT handling of the exFAT reader is checked on builder images only; a real TexFAT image would be its first independent oracle.
+
 ## Specs and plans
 
 Specs and plans live in `docs/superpowers/` (gitignored, local only).
