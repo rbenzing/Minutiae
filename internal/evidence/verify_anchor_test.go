@@ -421,3 +421,25 @@ func TestVerifyRunAuditRecordsTheAnchor(t *testing.T) {
 		}
 	}
 }
+
+func TestAnchorCreatedAndToolVersionMustMatchTheEntry(t *testing.T) {
+	c, _ := anchorCase(t)
+	a, err := c.Anchor(context.Background(), nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cr := a
+	cr.Created = "2001-01-01T00:00:00Z"
+	rep := verifyAnchored(t, c, evidence.VerifyOptions{Anchor: &cr})
+	evidencetest.RequireProblem(t, rep, "anchor: created ")
+	tv := a
+	tv.ToolVersion = "v0.0.0-forged"
+	rep = verifyAnchored(t, c, evidence.VerifyOptions{Anchor: &tv})
+	evidencetest.RequireProblem(t, rep, "anchor: tool_version ")
+	if rep.OK() || rep.Anchor == nil || rep.Anchor.OK {
+		t.Errorf("OK=%v anchor=%+v", rep.OK(), rep.Anchor)
+	}
+	// a head literal carries neither field and is not flagged
+	rep = verifyAnchored(t, c, evidence.VerifyOptions{Anchor: headOf(a)})
+	evidencetest.RequireClean(t, rep)
+}

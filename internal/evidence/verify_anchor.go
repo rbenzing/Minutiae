@@ -108,6 +108,14 @@ func (c *Case) anchorAudit(rep *VerifyReport, ar *anchorRun, entries []AuditEntr
 		ar.problemf(rep, "audit seq %d has hash %s, the anchor records %s (the log up to the anchor was rewritten)", a.Seq, e.Hash, a.Hash)
 		return
 	}
+	if a.CaseID != "" { // a head literal carries neither field
+		if a.Created != e.Time {
+			ar.problemf(rep, "created %q differs from the time of audit seq %d (%q)", a.Created, a.Seq, e.Time)
+		}
+		if a.ToolVersion != e.ToolVersion {
+			ar.problemf(rep, "tool_version %q differs from audit seq %d (%q)", a.ToolVersion, a.Seq, e.ToolVersion)
+		}
+	}
 	if e.Action != ActionCaseAnchor {
 		rep.noticef("anchor: audit seq %d is %s, not %s: record batches not checked", a.Seq, e.Action, ActionCaseAnchor)
 		return

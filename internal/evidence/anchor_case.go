@@ -83,7 +83,7 @@ func (c *Case) Anchor(ctx context.Context, signer ed25519.PrivateKey, out string
 	}
 	_, entries, problems, err := verifyAudit(filepath.Join(c.Dir, auditFile))
 	if err != nil {
-		return AuditAnchor{}, fmt.Errorf("anchor: audit log unreadable: %w", err)
+		return AuditAnchor{}, fmt.Errorf("%w: anchor: the audit log is unreadable: %w", ErrIntegrity, err)
 	}
 	if len(problems) > 0 {
 		return AuditAnchor{}, fmt.Errorf("%w: the audit log does not verify, so it is not anchored: %s", ErrIntegrity, problems[0])

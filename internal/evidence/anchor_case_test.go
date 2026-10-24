@@ -214,3 +214,33 @@ func TestCaseAnchorSchemaV1HasNullBatches(t *testing.T) {
 		t.Errorf("decoded batches = %+v", d.RecordBatches)
 	}
 }
+
+// TestCaseAnchorUnreadableAuditLogIsIntegrity pins that a missing or unreadable audit log fails closed
+// (ErrIntegrity) and nothing is written. The missing log PASSES ON ARRIVAL (it is an empty log); the
+// unreadable one (a directory in its place) is an I/O error that must wrap ErrIntegrity too.
+func TestCaseAnchorUnreadableAuditLogIsIntegrity(t *testing.T) {
+	for _, name := range []string{"missing", "unreadable"} {
+		t.Run(name, func(t *testing.T) {
+			c, _ := anchorCase(t)
+			if err := c.Audit.Close(); err != nil {
+				t.Fatal(err)
+			}
+			p := filepath.Join(c.Dir, "audit.jsonl")
+			if err := os.Remove(p); err != nil {
+				t.Fatal(err)
+			}
+			if name == "unreadable" {
+				if err := os.Mkdir(p, 0o750); err != nil {
+					t.Fatal(err)
+				}
+			}
+			a, err := c.Anchor(context.Background(), nil, "")
+			if !errors.Is(err, evidence.ErrIntegrity) {
+				t.Fatalf("err = %v, want ErrIntegrity", err)
+			}
+			if a.Seq != 0 || a.Hash != "" {
+				t.Errorf("an anchor came back: %+v", a)
+			}
+		})
+	}
+}
