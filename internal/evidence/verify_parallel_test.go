@@ -15,14 +15,19 @@ const parallelChunkBytes = 100000 // about 100 of the 1,000-byte rows of the sca
 
 // parallelCase holds 1,400 records in two ingests (two audited batches), read in chunks of about 100 rows (the byte cut is lowered).
 func parallelCase(t *testing.T) (*evidence.Case, []string) {
+	return parallelCaseSized(t, 700, parallelChunkBytes)
+}
+
+// parallelCaseSized holds 2*perIngest records in two ingests, read in chunks of chunkBytes.
+func parallelCaseSized(t *testing.T, perIngest, chunkBytes int) (*evidence.Case, []string) {
 	t.Helper()
-	t.Cleanup(evidence.SetVerifyChunkBytes(parallelChunkBytes))
+	t.Cleanup(evidence.SetVerifyChunkBytes(chunkBytes))
 	c := recordstest.NewCase(t)
 	ids := recordstest.AddScaleArtifacts(t, c, 4)
 	gen := recordstest.NewScale(recordstest.ScaleConfig{Seed: 2, Artifacts: ids})
 	p := records.Parser{Name: "par", Version: "1"}
-	recordstest.Ingest(t, c, p, ids, gen.Block(0, 700))
-	recordstest.Ingest(t, c, records.Parser{Name: "par", Version: "2"}, ids, gen.Block(700, 700))
+	recordstest.Ingest(t, c, p, ids, gen.Block(0, perIngest))
+	recordstest.Ingest(t, c, records.Parser{Name: "par", Version: "2"}, ids, gen.Block(int64(perIngest), perIngest))
 	return c, ids
 }
 
@@ -78,20 +83,23 @@ func TestVerifyParallelEqualsSerial(t *testing.T) {
 	})
 	// record damage in both ingests and in the first and last chunks, and damage to both full-text indexes
 	t.Run("damaged", func(t *testing.T) {
-		c, ids := parallelCase(t)
-		recordstest.SetRecordSummary(t, c.Dir, 77, "altered in place")     // first ingest
-		recordstest.DeleteRecord(t, c.Dir, 900)                            // second ingest
-		recordstest.RepointRecord(t, c.Dir, 1100, ids[1])                  // second ingest
-		recordstest.SetRecordSummary(t, c.Dir, 1390, "altered at the end") // the last chunk
-		recordstest.HideFromIndex(t, c.Dir, "records_fts", 17)             // a record missing from the word index
-		recordstest.HideFromIndex(t, c.Dir, "records_fts_sub", 1150)       // and from the substring index
+		c, ids := parallelCaseSized(t, 50, 5000)                         // 100 records, about 5 rows per chunk: localizing the failing full-text batches rebuilds them, which costs minutes at 1,400 records under -race
+		recordstest.SetRecordSummary(t, c.Dir, 7, "altered in place")    // first ingest
+		recordstest.DeleteRecord(t, c.Dir, 75)                           // second ingest
+		recordstest.RepointRecord(t, c.Dir, 80, ids[1])                  // second ingest
+		recordstest.SetRecordSummary(t, c.Dir, 98, "altered at the end") // the last chunk
+		recordstest.HideFromIndex(t, c.Dir, "records_fts", 3)            // a record missing from the word index
+		recordstest.HideFromIndex(t, c.Dir, "records_fts_sub", 60)       // and from the substring index
 		recordstest.InventIndexText(t, c.Dir, "records_fts_sub", 5, "zzzz", "yyyy")
-		recordstest.InventIndexText(t, c.Dir, "records_fts", 1380, "qqqq", "pppp")
-		recordstest.CorruptDocsize(t, c.Dir, "records_fts", 300)
+		recordstest.InventIndexText(t, c.Dir, "records_fts", 95, "qqqq", "pppp")
+		recordstest.CorruptDocsize(t, c.Dir, "records_fts", 30)
 		rep := requireSameReport(t, c)
 		if rep.OK() {
 			t.Fatal("the damaged case must fail verify")
 		}
+		// the failing batches were localized to records (the per-record listing of the full-text pass)
+		requireProblem(t, rep, "a search hit is hidden")
+		requireProblem(t, rep, "a search hit is invented")
 		requireProblem(t, rep, "digest mismatch")
 		requireProblem(t, rep, "records_fts")
 	})
