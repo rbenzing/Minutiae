@@ -36,11 +36,15 @@ func (p iosWellBehaved) Meta() parse.Meta {
 	return m
 }
 
-// TestFuzzParseIOSAcceptsAnIOSParser: FuzzParseIOS bundles the bytes as an iOS artifact, so a parser declared for iOS emits records that
-// the platform check accepts, which FuzzParse (Android artifacts) could never give it (4F-R25).
+// FuzzParseIOS must hand the parser iOS artifacts: the records of an iOS parser then pass the platform
+// check. Over Android artifacts (the Bundle of FuzzParse) every record would be refused with a warning,
+// which the lenient emitter does not turn into a failure, so the test requires records and no warning.
 func TestFuzzParseIOSAcceptsAnIOSParser(t *testing.T) {
 	p := iosWellBehaved{WellBehaved{Name: "fz", Version: "1.0.0"}}
-	FuzzParseIOS(t, p, "/private/var/parsertest/fz.dat", "ios:HomeDomain/parsertest/fz.dat", []byte("a\nb\n"), nil, nil)
+	res := fuzzIOS(t, p, "/private/var/parsertest/fz.dat", "ios:HomeDomain/parsertest/fz.dat", []byte("a\nb\n"), nil, nil)
+	if len(res.Records) != 2 || len(res.Warnings) != 0 {
+		t.Errorf("records %d warnings %v, want 2 records and none", len(res.Records), res.Warnings)
+	}
 }
 
 func TestFuzzParseBundleUsesTheBundleItIsGiven(t *testing.T) {

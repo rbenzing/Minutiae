@@ -314,6 +314,7 @@ def tombstones_all():
 def lit(v):
     """A SQL literal for the statements a killed child runs."""
     if isinstance(v, float):
+        assert math.isfinite(v), "a non-finite REAL has no SQL literal"
         return repr(v)
     if isinstance(v, (bytes, bytearray)) and not isinstance(v, C.Raw):
         return "x'%s'" % bytes(v).hex()
