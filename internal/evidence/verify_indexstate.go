@@ -90,14 +90,14 @@ func danglingReindexes(entries []AuditEntry, rep *VerifyReport) []danglingReinde
 		case ActionReindex:
 			s, err := DecodeDetails[ReindexStart](e.Details)
 			if err != nil {
-				rep.problemf("audit seq %d: %s details unreadable: %q", e.Seq, e.Action, err.Error())
+				rep.problemf("%s", auditProblemText(e, err))
 				continue
 			}
 			open = append(open, danglingReindex{id: s.ReindexID, seq: e.Seq})
 		case ActionReindexError:
 			f, err := DecodeDetails[ReindexFailure](e.Details)
 			if err != nil {
-				rep.problemf("audit seq %d: %s details unreadable: %q", e.Seq, e.Action, err.Error())
+				rep.problemf("%s", auditProblemText(e, err))
 				continue
 			}
 			i := slices.IndexFunc(open, func(d danglingReindex) bool { return d.id == f.ReindexID })
@@ -109,7 +109,7 @@ func danglingReindexes(entries []AuditEntry, rep *VerifyReport) []danglingReinde
 		case ActionReindexDone:
 			d, err := DecodeDetails[ReindexDone](e.Details)
 			if err != nil {
-				rep.problemf("audit seq %d: %s details unreadable: %q", e.Seq, e.Action, err.Error())
+				rep.problemf("%s", auditProblemText(e, err))
 				continue
 			}
 			i := slices.IndexFunc(open, func(o danglingReindex) bool { return o.id == d.ReindexID })

@@ -111,7 +111,7 @@ func readRecordAudit(entries []AuditEntry, ps *problemSet) *recordAudit {
 		case ActionIngestStart:
 			s, err := DecodeDetails[IngestStart](e.Details)
 			if err != nil {
-				ps.add("audit", "audit seq %d: %s details unreadable: %q", e.Seq, e.Action, err.Error())
+				ps.add("audit", "%s", auditProblemText(e, err))
 				continue
 			}
 			if _, dup := a.starts[s.IngestID]; !dup {
@@ -125,7 +125,7 @@ func readRecordAudit(entries []AuditEntry, ps *problemSet) *recordAudit {
 		case ActionIngestEnd, ActionIngestError:
 			cn, err := DecodeDetails[IngestConclusion](e.Details)
 			if err != nil {
-				ps.add("audit", "audit seq %d: %s details unreadable: %q", e.Seq, e.Action, err.Error())
+				ps.add("audit", "%s", auditProblemText(e, err))
 				continue
 			}
 			a.ends[cn.IngestID] = append(a.ends[cn.IngestID], auditedConclusion{Seq: e.Seq, Action: e.Action, Time: e.Time, IngestConclusion: cn})
@@ -139,7 +139,7 @@ func readRecordAudit(entries []AuditEntry, ps *problemSet) *recordAudit {
 		case ActionBatch:
 			b, err := DecodeDetails[BatchCommit](e.Details)
 			if err != nil {
-				ps.add("audit", "audit seq %d: %s details unreadable: %q", e.Seq, e.Action, err.Error())
+				ps.add("audit", "%s", auditProblemText(e, err))
 				continue
 			}
 			if b.FirstID < 1 || b.Count < 1 || b.FirstID > math.MaxInt64-int64(b.Count) {
@@ -156,14 +156,14 @@ func readRecordAudit(entries []AuditEntry, ps *problemSet) *recordAudit {
 		case ActionBatchError:
 			b, err := DecodeDetails[BatchFailure](e.Details)
 			if err != nil {
-				ps.add("audit", "audit seq %d: %s details unreadable: %q", e.Seq, e.Action, err.Error())
+				ps.add("audit", "%s", auditProblemText(e, err))
 				continue
 			}
 			a.batchErr[batchKey{b.IngestID, b.BatchNo}] = true
 		case ActionIngestRecover:
 			r, err := DecodeDetails[IngestRecover](e.Details)
 			if err != nil {
-				ps.add("audit", "audit seq %d: %s details unreadable: %q", e.Seq, e.Action, err.Error())
+				ps.add("audit", "%s", auditProblemText(e, err))
 				continue
 			}
 			a.recovers[r.IngestID] = append(a.recovers[r.IngestID], auditedRecover{Seq: e.Seq, Time: e.Time, IngestRecover: r})
