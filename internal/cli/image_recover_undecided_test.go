@@ -125,8 +125,8 @@ func TestImageRecoverReusedOnlyExitsZero(t *testing.T) {
 	}
 }
 
-// An integrity error is never masked by the undecided count (exit 4 wins).
-func TestImageRecoverIntegrityBeatsUndecided(t *testing.T) {
+// The exit code of a run that failed its integrity AND has undecided entries is 4 (ExitCode and the error join only; no seam fails an evidence write mid-run without a new production hook, so the end-to-end case is not tested).
+func TestImageRecoverExitCodeBeatsUndecided(t *testing.T) {
 	integrity := fmt.Errorf("x: %w", evidence.ErrIntegrity)
 	err := undecidedBatchError(integrity, 3)
 	if !errors.Is(err, evidence.ErrIntegrity) || !errors.Is(err, filesys.ErrUndecided) {
@@ -143,5 +143,29 @@ func TestImageRecoverIntegrityBeatsUndecided(t *testing.T) {
 	}
 	if err := undecidedBatchError(integrity, 0); err != integrity {
 		t.Errorf("the run's own error was replaced: %v", err)
+	}
+}
+
+func TestImageRecoverReusedAndUndecidedMixed(t *testing.T) {
+	nodes := append(twoDeleted(), recNode("/c-del.bin", recPat(3, recBS)), recNode("/d-del.bin", recPat(4, recBS)))
+	e := newRecoverEnv(t, nodes...)
+	e.d = Deps{FSDrivers: answerDrivers(map[string]error{
+		"a-del.bin": fmt.Errorf("%w: inode 12 is allocated", filesys.ErrReused),
+		"c-del.bin": filesys.ErrUndecided,
+		"d-del.bin": fmt.Errorf("%w: %w", filesys.ErrLimit, filesys.ErrIncomplete),
+	})}
+	code, out, errOut := e.recoverSplit("--all", "--json")
+	var rep struct {
+		Recovered int            `json:"recovered"`
+		SkippedBy map[string]int `json:"skipped_by"`
+	}
+	if err := json.NewDecoder(strings.NewReader(out)).Decode(&rep); err != nil {
+		t.Fatalf("json %q: %v", out, err)
+	}
+	if code != 1 || rep.Recovered != 1 || rep.SkippedBy["reused"] != 1 || rep.SkippedBy["undecided"] != 2 || len(rep.SkippedBy) != 2 {
+		t.Errorf("exit %d, recovered %d, skipped_by %v; want 1, 1, reused 1 and undecided 2", code, rep.Recovered, rep.SkippedBy)
+	}
+	if !strings.Contains(errOut, "2 deleted entries could not be decided") {
+		t.Errorf("stderr %q does not name the undecided count (reused must not be counted)", errOut)
 	}
 }
