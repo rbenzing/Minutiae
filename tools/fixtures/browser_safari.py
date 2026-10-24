@@ -245,7 +245,8 @@ def columns_notes(con, table, mapped, notes):
     """The notes rowrun writes (schema.<t>, unmapped_columns.<t>); the rowid alias id is never unmapped."""
     cols = C.columns(con, table)
     names = [n.lower() for n, _ in mapped]
-    opt = [n for n, req in mapped if not req and n in cols]
+    lowered = [c.lower() for c in cols]
+    opt = [n for n, req in mapped if not req and n.lower() in lowered]
     v = "columns:%d" % len(cols)
     if opt:
         v += ";optional:" + ",".join(opt)

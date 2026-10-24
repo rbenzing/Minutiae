@@ -82,7 +82,7 @@ var allowed = map[string][]string{
 	"internal/parsers/androidmms":          {"internal/decode/sqlitedb", "internal/decode/sqlitedb/rowrun", "internal/parse", "internal/records", "internal/recordtypes/common", "internal/recordtypes/message"},
 	"internal/parsers/androidcalllog":      {"internal/decode/sqlitedb/rowrun", "internal/decode/ts", "internal/parse", "internal/records", "internal/recordtypes/call", "internal/recordtypes/common"},
 	"internal/parsers/androidcontacts":     {"internal/decode/sqlitedb", "internal/decode/sqlitedb/rowrun", "internal/parse", "internal/records", "internal/recordtypes/common", "internal/recordtypes/contact"},
-	"internal/parsers/safari":              {"internal/decode/sqlitedb", "internal/decode/sqlitedb/rowrun", "internal/decode/ts", "internal/parse", "internal/records", "internal/recordtypes/common", "internal/recordtypes/web"},
+	"internal/parsers/safari":              {"internal/decode/sqlitedb", "internal/decode/sqlitedb/rowrun", "internal/decode/ts", "internal/parse", "internal/records", "internal/recordtypes/common", "internal/recordtypes/web", "internal/sqlitefile"},
 	"internal/artparse":                    {"internal/evidence", "internal/version", "internal/records", "internal/parse", "internal/recordtypes/all"},
 	"tools/check":                          {},
 	"tools/fuzzcampaign":                   {},
