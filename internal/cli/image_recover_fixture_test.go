@@ -144,6 +144,9 @@ func TestImageRecoverFixturesVerifyClean(t *testing.T) {
 			if code != 0 || !strings.Contains(out, "NOTICE:") || !strings.Contains(out, "recovered artifact(s)") || !strings.Contains(out, want) {
 				t.Fatalf("case verify: exit %d, want 0 with the recovered notice and %q:\n%s", code, want, out)
 			}
+			if got := lastVerifyRun(t, c)["allocation_rechecked"]; got != float64(recovered) {
+				t.Errorf("allocation_rechecked = %v, want the %d deleted-file recoveries (R9 reads the real filesystem)", got, recovered)
+			}
 
 			// flip one byte of one recovered artifact: verify recomputes the bytes from the image and exits 4
 			var victim string

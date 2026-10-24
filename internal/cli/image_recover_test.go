@@ -206,6 +206,9 @@ func TestImageRecoverAllWritesAndVerifies(t *testing.T) {
 	if !strings.Contains(out, "NOTICE:") || !strings.Contains(out, "recovered artifact(s)") || !strings.Contains(out, "2 recovered (2 reproduced)") {
 		t.Errorf("verify output lacks the recovered notice or summary:\n%s", out)
 	}
+	if got := lastVerifyRun(t, e.c)["allocation_rechecked"]; got != float64(2) {
+		t.Errorf("allocation_rechecked = %v, want 2 (R9 re-opened the parent with the test drivers)", got)
+	}
 }
 
 func TestImageRecoverRefsAndDirectory(t *testing.T) {

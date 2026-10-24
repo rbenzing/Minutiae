@@ -69,3 +69,11 @@ func SetReproduceOneHook(f func(id string)) (restore func()) {
 	reproduceOneHook = f
 	return func() { reproduceOneHook = old }
 }
+
+// SetAllocationArtifactHook runs f with the artifact id at the start of each artifact's allocation check and
+// returns the restore function.
+func SetAllocationArtifactHook(f func(id string)) (restore func()) {
+	old := allocationArtifactHook
+	allocationArtifactHook = f
+	return func() { allocationArtifactHook = old }
+}

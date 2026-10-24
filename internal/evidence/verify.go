@@ -28,8 +28,12 @@ type VerifyReport struct {
 	FTSDocsChecked int `json:"fts_docs_checked"`
 	// RecoveredArtifacts counts the artifacts of the five recovered kinds (set by the built-in
 	// check); RecoveredReproduced those a composed check reproduced byte for byte from the image.
-	RecoveredArtifacts  int      `json:"recovered_artifacts"`
-	RecoveredReproduced int      `json:"recovered_reproduced"`
+	RecoveredArtifacts  int `json:"recovered_artifacts"`
+	RecoveredReproduced int `json:"recovered_reproduced"`
+	// AllocationRechecked counts the deleted-file artifacts all of whose runs the composed allocation check (R9)
+	// found inside the space the filesystem reports unallocated. 0 together with the notices means "not
+	// rechecked", never "checked and clean".
+	AllocationRechecked int      `json:"allocation_rechecked"`
 	Problems            []string `json:"problems"`
 	// Notices are findings that are not integrity problems (for example an
 	// announced upgrade that was never concluded); never silent.
@@ -38,6 +42,8 @@ type VerifyReport struct {
 	Anchor *AnchorResult `json:"anchor"`
 
 	reproduceRan    bool // R6 ran in this verify (MarkReproduceRan)
+	allocationRan   bool // R9 ran in this verify (MarkAllocationRan)
+	deletedFiles    int  // recover artifacts of class deleted-file (set by the built-in check)
 	cancelCut       bool // a phase was cut short by the end of the verify context
 	recoveredByKind map[string]int
 }
@@ -151,6 +157,7 @@ func (c *Case) verifyRun(ctx context.Context, observe verifyChunkObserver, o Ver
 		"records_checked": rep.RecordsChecked, "record_batches_checked": rep.RecordBatchesChecked,
 		"record_runs_checked": rep.RecordRunsChecked, "fts_docs_checked": rep.FTSDocsChecked,
 		"recovered_artifacts": rep.RecoveredArtifacts, "recovered_reproduced": rep.RecoveredReproduced,
+		"allocation_rechecked": rep.AllocationRechecked,
 	}
 	if rep.Anchor != nil {
 		details["anchor_seq"], details["anchor_hash"], details["anchor_ok"] = rep.Anchor.Seq, rep.Anchor.Hash, rep.Anchor.OK
@@ -479,6 +486,10 @@ func (r VerifyReport) RecoveredSummary() string {
 // MarkReproduceRan is called by the composed reproduce check (R6) when it ran, so the built-in
 // check stops noticing that recover and carve artifacts are not reproduced by this build.
 func (r *VerifyReport) MarkReproduceRan() { r.reproduceRan = true }
+
+// MarkAllocationRan is called by the composed allocation check (R9) when it ran, so the built-in check
+// stops noticing that deleted-file runs were not rechecked against the filesystem.
+func (r *VerifyReport) MarkAllocationRan() { r.allocationRan = true }
 
 // CancelledOnly reports whether the only problem is that the verify was cut short by a cancel: no
 // integrity finding was made, so the caller may treat it as a cancel and not as an integrity failure.
