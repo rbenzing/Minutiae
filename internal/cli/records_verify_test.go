@@ -148,10 +148,10 @@ func TestRecordsVerifyCancelledExits1(t *testing.T) {
 	rc := recDataset(t, false)
 	orig := runVerify
 	t.Cleanup(func() { runVerify = orig })
-	runVerify = func(ctx context.Context, d Deps, c *evidence.Case, p *evidence.VerifyProgress) (evidence.VerifyReport, error) {
+	runVerify = func(ctx context.Context, d Deps, c *evidence.Case, o evidence.VerifyOptions) (evidence.VerifyReport, error) {
 		cctx, cancel := context.WithCancel(ctx)
 		cancel()
-		return orig(cctx, d, c, p)
+		return orig(cctx, d, c, o)
 	}
 	code, out, errOut := runSplit(context.Background(), t, Deps{}, "records", "list", "--verify", "--case", rc.dir)
 	if code != ExitError || out != "" || !strings.Contains(errOut, "verify cancelled") || strings.Contains(errOut, "integrity") {
