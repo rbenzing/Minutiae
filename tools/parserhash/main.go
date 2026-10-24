@@ -17,11 +17,18 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/parsers"
 )
 
-// Entry is one compiled-in parser as the registry reports it.
-type Entry struct{ Name, Version, Package string }
+// Entry is one identity as the registry reports it: a compiled-in parser, or the
+// typed recovery identity "<name>.recover" of a claiming parser. Extra lists the
+// further packages the hash covers (the recovery runner); Package alone is the
+// parser's own package for both.
+type Entry struct {
+	Name, Version, Package string
+	Extra                  []string
+}
 
 // Problem is one reason -check fails.
 type Problem struct{ Parser, Message string }
@@ -32,10 +39,20 @@ const (
 )
 
 func entriesFromRegistry() []Entry {
+	return entriesFor(parsers.All(), parsers.PackagePath, parsers.RecoveryRunnerPath())
+}
+
+// entriesFor lists every parser, and after each claiming parser its
+// "<name>.recover" identity, whose hash also covers the runner package.
+func entriesFor(ps []parse.Parser, pkgOf func(parse.Parser) string, runner string) []Entry {
 	var out []Entry
-	for _, p := range parsers.All() {
+	for _, p := range ps {
 		m := p.Meta()
-		out = append(out, Entry{Name: m.Name, Version: m.Version, Package: parsers.PackagePath(p)})
+		pkg := pkgOf(p)
+		out = append(out, Entry{Name: m.Name, Version: m.Version, Package: pkg})
+		if len(m.Claims) != 0 {
+			out = append(out, Entry{Name: parse.RecoveryName(m.Name), Version: m.Version, Package: pkg, Extra: []string{runner}})
+		}
 	}
 	return out
 }
@@ -67,7 +84,7 @@ func hashEntries(cfg Config, entries []Entry) ([]hashed, []Problem, error) {
 			probs = append(probs, Problem{who, fmt.Sprintf("package %q is outside %s/internal/parsers", e.Package, cfg.ModulePath)})
 			continue
 		}
-		s, err := ResolveScope(cfg, e.Package)
+		s, err := ResolveUnion(cfg, append([]string{e.Package}, e.Extra...))
 		if err != nil {
 			return nil, nil, err
 		}
