@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -104,7 +105,9 @@ func newRecordsSearchCmd(d Deps, opts *rootOptions) *cobra.Command {
 			"Nothing else is syntax: a star inside a word, a colon, parentheses or NEAR are plain text. Text is\n" +
 			"matched without case, accents, width or compatibility differences. A query that starts with - needs\n" +
 			"-- before it: minutiae records search --case C -- -x. --substring searches the whole input as one\n" +
-			"literal substring of at least 3 characters (no grammar). --in limits the search to the summary or\n" +
+			"literal substring of at least 3 characters (no grammar). --scan reads the stored text of every selected\n" +
+			"record instead of the index (slow, bounded by --timeout): it also finds needles the index cannot hold\n" +
+			"(under 3 characters, emoji, symbols) and implies --substring. --in limits the search to the summary or\n" +
 			"the body. Hits come in the order of records list, with snippets (the match between U+27E6 and\n" +
 			"U+27E7, ... where text is cut); --no-snippets omits them, --rank returns the best hits first (at most\n" +
 			"1000, no cursor). A case whose full-text index is not current needs: minutiae records reindex.",
@@ -115,6 +118,7 @@ func newRecordsSearchCmd(d Deps, opts *rootOptions) *cobra.Command {
 	fl := cmd.Flags()
 	substring := fl.Bool("substring", false, "search the whole query as one literal substring (3 or more characters)")
 	in := fl.String("in", "any", "search only the summary or the body: summary or body")
+	scan := fl.Bool("scan", false, "read the stored text of every selected record instead of the index (slow; finds needles the index cannot hold: under 3 characters, emoji, symbols); implies --substring")
 	rank := fl.Bool("rank", false, "best matches first (at most 1000 hits; no --cursor, no --substring)")
 	limit := fl.Int("limit", records.DefaultLimit, fmt.Sprintf("hits per page (1-%d; with snippets 1-%d; with --rank 1-%d)", maxSearchLimit, records.MaxSnippetLimit, records.MaxRankLimit))
 	cursor := fl.String("cursor", "", "continue after the page that ended with this cursor")
@@ -126,7 +130,7 @@ func newRecordsSearchCmd(d Deps, opts *rootOptions) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		to := records.TextOptions{Substring: *substring, Rank: *rank}
+		to := records.TextOptions{Substring: *substring || *scan, Scan: *scan, Rank: *rank}
 		switch *in {
 		case "any":
 		case "summary":
@@ -145,12 +149,17 @@ func newRecordsSearchCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return usageErrorf("--limit above %d needs --no-snippets, got %d", records.MaxSnippetLimit, *limit)
 		case *rank && *cursor != "":
 			return usageErrorf("--rank has no pages: it cannot be combined with --cursor")
+		case *rank && *scan:
+			return usageErrorf("--rank cannot be combined with --scan")
 		case *rank && *substring:
 			return usageErrorf("--rank cannot be combined with --substring")
 		case *timeout < 0:
 			return usageErrorf("--timeout must not be negative, got %s", *timeout)
 		}
 		if f.Text, err = records.CompileQuery(query, to); err != nil {
+			if errors.Is(err, records.ErrNotIndexable) && !*scan {
+				err = fmt.Errorf("%w; --substring --scan reads the stored text instead (slow)", err)
+			}
 			return fmt.Errorf("query %s: %w", echoQuery(query), err)
 		}
 		c, r, err := openRecords(*casePath)
@@ -172,6 +181,7 @@ func newRecordsSearchCmd(d Deps, opts *rootOptions) *cobra.Command {
 			out := struct {
 				Records    []hitJSON `json:"records"`
 				NextCursor string    `json:"next_cursor"`
+				Scanned    *int64    `json:"scanned,omitempty"`
 			}{Records: make([]hitJSON, 0, len(res.Hits)), NextCursor: res.NextCursor}
 			for _, h := range res.Hits {
 				hj := hitJSON{rowJSON: recRowJSON(h.Row)}
@@ -180,6 +190,9 @@ func newRecordsSearchCmd(d Deps, opts *rootOptions) *cobra.Command {
 				}
 				out.Records = append(out.Records, hj)
 			}
+			if *scan {
+				out.Scanned = &res.Scanned
+			}
 			return writeJSON(d.Out, out)
 		}
 		incomplete, err := incompleteArtifacts(c)
@@ -187,6 +200,9 @@ func newRecordsSearchCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		printSearchText(d.Out, res, incomplete)
+		if *scan {
+			fmt.Fprintf(d.Err, "note: --scan read %d records (stored text, no index)\n", res.Scanned)
+		}
 		return nil
 	}
 	return cmd
