@@ -9,6 +9,9 @@ func (f *FS) Warn(format string, a ...any) { f.warn(format, a...) }
 // SetDirRecordCap lowers the per-directory entry-set cap (before any read).
 func (f *FS) SetDirRecordCap(n int) { f.dirRecordCap = n }
 
+// SetDirByteLimit lowers the per-directory byte limit (before any read).
+func (f *FS) SetDirByteLimit(n int64) { f.dirByteLimit = n }
+
 // ClusterCount returns the cluster count the reader uses (after clamping).
 func (f *FS) ClusterCount() uint32 { return f.clusterCount }
 

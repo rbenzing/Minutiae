@@ -3,6 +3,7 @@ package exfat_test
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,12 +65,15 @@ func FuzzExfatOpen(f *testing.F) {
 		}
 		_ = fsys.Info()
 		visited, readTotal := 0, int64(0)
-		_ = filesys.Walk(fsys, fsys.Root(), "/", func(_ string, e filesys.Entry, err error) error {
+		_ = filesys.Walk(fsys, fsys.Root(), "/", func(p string, e filesys.Entry, err error) error {
 			if err != nil {
 				return nil
 			}
 			if visited++; visited > fuzzWalkBudget {
 				return errFuzzBudget
+			}
+			if e.Type == filesys.TypeDir {
+				checkFuzzMissingName(t, fsys, p, e)
 			}
 			if e.Type != filesys.TypeFile && e.Type != filesys.TypeSymlink {
 				return nil
@@ -100,6 +104,24 @@ func FuzzExfatOpen(f *testing.F) {
 			}
 		}
 	})
+}
+
+// checkFuzzMissingName is the N20 property: the lookup of a name that is not
+// in a directory is ErrNotFound only if ReadDir of that same directory returned
+// a nil error (a listing that was cut or unreadable never makes a name absent).
+// It applies when the path p resolves to the directory e itself.
+func checkFuzzMissingName(t *testing.T, fsys *exfat.FS, p string, e filesys.Entry) {
+	t.Helper()
+	if got, err := fsys.Lookup(p); err != nil || got.ID != e.ID {
+		return
+	}
+	_, err := fsys.Lookup(strings.TrimSuffix(p, "/") + "/§missing§")
+	if !errors.Is(err, filesys.ErrNotFound) {
+		return
+	}
+	if _, lerr := fsys.ReadDir(e); lerr != nil {
+		t.Fatalf("Lookup of a missing name in %q is ErrNotFound but ReadDir of it returned %v", p, lerr)
+	}
 }
 
 // checkFuzzRuns checks the File.Runs contract of a file the reader opened:

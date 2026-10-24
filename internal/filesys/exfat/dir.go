@@ -1,7 +1,6 @@
 package exfat
 
 import (
-	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -55,7 +54,6 @@ const (
 	dirReadChunk = 4096
 
 	damagedPrefix = "~damaged~" // name of a damaged set that has no name: prefix + entry index
-	rawPrefix     = "~raw~"     // display form of a name that is not usable UTF-8: prefix + base64url(UTF-16LE)
 )
 
 // meta flags of the bitmap entry.
@@ -140,8 +138,8 @@ func (f *FS) loadRootMeta() {
 }
 
 // loadUpcase reads and decodes the up-case table. A table that is too large,
-// unreadable or fails its checksum is not used (Lookup falls back to
-// strings.EqualFold) and is reported through Info().Warnings.
+// unreadable or fails its checksum is not used (Lookup then does no case-insensitive
+// folding at all, N2) and is reported through Info().Warnings.
 func (f *FS) loadUpcase(m meta) {
 	if !m.present {
 		return
@@ -291,6 +289,9 @@ scan:
 	if orphans > 0 {
 		f.warn("directory (first cluster %d): %d secondary entries belong to no File entry and were ignored", sp.first, orphans)
 	}
+	if cut != nil { // every cut is a prefix of the directory: the typed incomplete-scan error wraps the cause (N6)
+		cut = fmt.Errorf("%w: %w", filesys.ErrIncomplete, cut)
+	}
 	return cut, nil
 }
 
@@ -403,7 +404,8 @@ func validUTF16(u []uint16) bool {
 // displayName returns the Entry.Name for an on-disk name and the RawName to
 // keep. A valid UTF-16 name without NUL or '/' that is not "." or ".." is shown
 // as it is (RawName is then nil); any other name is shown losslessly as
-// "~raw~" + base64url of its UTF-16LE bytes. Lookup accepts both forms.
+// filesys.RawNameAlias of its UTF-16LE bytes, the one shared spelling. Lookup
+// accepts both forms (see Lookup for the order).
 func displayName(u []uint16) (string, []byte) {
 	if len(u) > 0 && validUTF16(u) && !slices.Contains(u, 0) && !slices.Contains(u, '/') {
 		if name := string(utf16.Decode(u)); name != "." && name != ".." {
@@ -414,7 +416,7 @@ func displayName(u []uint16) (string, []byte) {
 	for _, c := range u {
 		raw = binary.LittleEndian.AppendUint16(raw, c)
 	}
-	return rawPrefix + base64.RawURLEncoding.EncodeToString(raw), raw
+	return filesys.RawNameAlias(raw), raw
 }
 
 func addAttr(e *filesys.Entry, key, value string) {
@@ -475,8 +477,10 @@ func (f *FS) makeEntry(dirFirst uint32, r *setRec) filesys.Entry {
 	e.Size = int64(min(r.dataLen, math.MaxInt64))
 	// A live directory is identified by its first cluster (so that Walk sees a
 	// cross-linked or looping directory twice); everything else, and a
-	// directory without a cluster, by where its entry set lies.
-	if isDir && !r.deleted && r.first >= fatReservedClusters {
+	// directory without a cluster, by where its entry set lies. A damaged set is
+	// never claimed, so it is named by its position too: dirOf then reports the
+	// damage instead of "no such directory".
+	if isDir && !r.deleted && !r.damaged && r.first >= fatReservedClusters {
 		e.ID = dirID(r.first)
 	} else {
 		e.ID = direntID(dirFirst, r.idx)
@@ -575,7 +579,7 @@ func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
 		return nil, err
 	}
 	if cut != nil { // a prefix is never presented as the whole directory (F73); the entries read are returned with the error
-		return out, fmt.Errorf("directory listing is incomplete: %w", cut)
+		return out, fmt.Errorf("exfat: directory (first cluster %d): %w", st.spec.first, cut)
 	}
 	return out, nil
 }
@@ -583,20 +587,32 @@ func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
 var errNoChild = errors.New("no such entry")
 
 // Lookup resolves an absolute slash path. Within each directory the live
-// entries are searched in this order of preference over the whole directory:
+// entries are searched over the WHOLE directory, and the answer is decided in
+// this order:
 //
-//  1. an exact match of the UTF-16 name;
-//  2. the display form of ReadDir, "~raw~"+base64url, so a real name that
-//     happens to look like a display form wins over the name that form stands
-//     for;
-//  3. a case-insensitive match: through the volume's up-case table, or, when
-//     there is none, strings.EqualFold when both names are valid UTF-8.
+//  1. an exact match of the UTF-16 name; two records with that exact name, or
+//     a query that is also the canonical display form of another record, are
+//     filesys.ErrAmbiguous (with the scan cut, the latter is the
+//     incomplete-scan error);
+//  2. the canonical display form of ReadDir ("~raw~" + base64url, one
+//     spelling per name), which stands only for records shown in that form;
+//     two such records are filesys.ErrAmbiguous;
+//  3. the scan was cut (the entry cap, the read budget, an unreadable chunk, a
+//     damaged directory chain, the per-directory byte limit): an error
+//     wrapping filesys.ErrIncomplete and the cause, never filesys.ErrNotFound;
+//  4. a live entry set whose name could not be read in full (no Stream
+//     Extension, NameLength 0, fewer name units than NameLength): such a set
+//     never matches, and the lookup is filesys.ErrUndecided;
+//  5. exactly one case-insensitive match through the volume's up-case table;
+//  6. two or more: filesys.ErrAmbiguous naming the first two and the count;
+//  7. a volume without a usable up-case table (absent, oversized, unreadable,
+//     checksum mismatch) folds nothing: a miss is filesys.ErrUndecided when
+//     some stored name has the query's length in UTF-16 units (the table maps
+//     one unit to one unit, so names of another length can never match);
+//  8. not found.
 //
-// Empty components are ignored, "." and ".." are not special. A directory is
-// read up to the per-directory entry cap (maxDirRecords); a name not
-// found in a listing that was cut (the cap, a failed read, the spent budget) is
-// an error wrapping the cut reason (filesys.ErrLimit for the caps), never
-// filesys.ErrNotFound. Deleted entries are never found.
+// Empty components are ignored, "." and ".." are not special (and are never
+// matched by folding). Deleted entries are never found.
 func (f *FS) Lookup(p string) (filesys.Entry, error) {
 	cur := f.Root()
 	for _, comp := range strings.Split(p, "/") {
@@ -618,6 +634,25 @@ func (f *FS) Lookup(p string) (filesys.Entry, error) {
 	return cur, nil
 }
 
+// nameUnreadable reports whether the set's name could not be read in full: it
+// has no Stream Extension, NameLength 0, or fewer name units than NameLength.
+func (r *setRec) nameUnreadable() bool {
+	return r.nameNote != "" || (r.damaged && len(r.name) == 0)
+}
+
+// incompleteLookup is the error of a lookup in a directory that was not read to
+// the end; cut carries filesys.ErrLimit or filesys.ErrCorrupt.
+func incompleteLookup(dirFirst uint32, comp string, cut error) error {
+	if !errors.Is(cut, filesys.ErrIncomplete) {
+		cut = fmt.Errorf("%w: %w", filesys.ErrIncomplete, cut)
+	}
+	return fmt.Errorf("exfat: directory (first cluster %d): lookup of %q cannot be decided: %w", dirFirst, comp, cut)
+}
+
+func undecidedLookup(dirFirst uint32, comp, why string) error {
+	return fmt.Errorf("exfat: %w: lookup of %q in directory (first cluster %d): %s", filesys.ErrUndecided, comp, dirFirst, why)
+}
+
 // child finds the live entry of dir named comp (see Lookup for the order).
 func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 	st, empty, err := f.dirOf(dir)
@@ -627,58 +662,108 @@ func (f *FS) child(dir filesys.Entry, comp string) (filesys.Entry, error) {
 	if empty {
 		return filesys.Entry{}, errNoChild
 	}
+	first := st.spec.first
 	var exact []uint16 // comp as UTF-16, when it is valid UTF-8
 	if utf8.ValidString(comp) {
 		exact = utf16.Encode([]rune(comp))
 	}
-	var alt []uint16 // the name a display form stands for
-	if rest, ok := strings.CutPrefix(comp, rawPrefix); ok {
-		if b, err := base64.RawURLEncoding.DecodeString(rest); err == nil && len(b)%2 == 0 {
-			alt = make([]uint16, len(b)/2)
-			for i := range alt {
-				alt[i] = binary.LittleEndian.Uint16(b[2*i:])
-			}
+	var alt []uint16 // the name the canonical display form comp stands for
+	if raw, ok := filesys.DecodeRawNameAlias(comp); ok && len(raw)%2 == 0 {
+		alt = make([]uint16, len(raw)/2)
+		for i := range alt {
+			alt[i] = binary.LittleEndian.Uint16(raw[2*i:])
 		}
 	}
-	var exactRec, altRec, foldRec *setRec
+	var (
+		exactRecs, aliasRecs, foldRecs [2]*setRec // at most the first two of each kind
+		nExact, nAlias, nFold          int
+		unreadable, sameLen            int
+	)
+	canFold := exact != nil && comp != "." && comp != ".."
 	cut, err := f.scanDirCut(st, false, func(r *setRec) bool {
+		if r.nameUnreadable() {
+			unreadable++
+			return true
+		}
 		switch {
 		case exact != nil && slices.Equal(r.name, exact):
-			exactRec = r
-			return false
-		case altRec == nil && alt != nil && slices.Equal(r.name, alt):
-			altRec = r
-		case foldRec == nil && exact != nil && f.foldEqual(r.name, exact, comp):
-			foldRec = r
+			if nExact < len(exactRecs) {
+				exactRecs[nExact] = r
+			}
+			nExact++
+		case alt != nil && slices.Equal(r.name, alt) && isRawShown(r):
+			if nAlias < len(aliasRecs) {
+				aliasRecs[nAlias] = r
+			}
+			nAlias++
+		case canFold && f.foldEqual(r.name, exact):
+			if nFold < len(foldRecs) {
+				foldRecs[nFold] = r
+			}
+			nFold++
+		case exact != nil && len(r.name) == len(exact):
+			sameLen++
 		}
 		return true
 	})
 	if err != nil {
 		return filesys.Entry{}, err
 	}
-	for _, r := range []*setRec{exactRec, altRec, foldRec} {
-		if r != nil {
-			return f.makeEntry(st.spec.first, r), nil
+	switch { // 1: an exact match of a real name
+	case nExact > 1:
+		return filesys.Entry{}, fmt.Errorf("exfat: %w: %d entries of directory (first cluster %d) are named %q", filesys.ErrAmbiguous, nExact, first, comp)
+	case nExact == 1 && alt != nil: // comp is also a display form: another record may be shown as it
+		if cut != nil {
+			return filesys.Entry{}, incompleteLookup(first, comp, cut)
 		}
+		if nAlias > 0 {
+			return filesys.Entry{}, fmt.Errorf("exfat: %w: %q in directory (first cluster %d) is a stored name and also the display form of another entry", filesys.ErrAmbiguous, comp, first)
+		}
+		return f.makeEntry(first, exactRecs[0]), nil
+	case nExact == 1:
+		return f.makeEntry(first, exactRecs[0]), nil
 	}
-	if cut != nil { // not found in a prefix: undecidable, never absent (F73)
-		return filesys.Entry{}, fmt.Errorf("%q not found in an incomplete directory listing: %w", comp, cut)
+	switch { // 2: the canonical display form
+	case nAlias > 1:
+		return filesys.Entry{}, fmt.Errorf("exfat: %w: %d entries of directory (first cluster %d) are shown as %q", filesys.ErrAmbiguous, nAlias, first, comp)
+	case nAlias == 1:
+		return f.makeEntry(first, aliasRecs[0]), nil
 	}
-	return filesys.Entry{}, errNoChild
+	if cut != nil { // 3: not found in a prefix is undecidable, never absent (F73)
+		return filesys.Entry{}, incompleteLookup(first, comp, cut)
+	}
+	if unreadable > 0 { // 4
+		return filesys.Entry{}, undecidedLookup(first, comp, fmt.Sprintf("%d live entry set(s) have a name that cannot be read in full", unreadable))
+	}
+	switch { // 5, 6: the volume's own case folding
+	case nFold == 1:
+		return f.makeEntry(first, foldRecs[0]), nil
+	case nFold > 1:
+		n0, _ := displayName(foldRecs[0].name)
+		n1, _ := displayName(foldRecs[1].name)
+		return filesys.Entry{}, fmt.Errorf("exfat: %w: %q in directory (first cluster %d) matches %d entries ignoring case, the first two are %q and %q", filesys.ErrAmbiguous, comp, first, nFold, n0, n1)
+	}
+	if f.upcase == nil && sameLen > 0 { // 7: no table, no fold; a name of this length might have matched
+		return filesys.Entry{}, undecidedLookup(first, comp, fmt.Sprintf("the volume has no usable up-case table, and %d name(s) have the query's length", sameLen))
+	}
+	return filesys.Entry{}, errNoChild // 8
 }
 
-// foldEqual reports whether the on-disk name and the query (given both as
-// UTF-16 and as a string) are equal ignoring case.
-func (f *FS) foldEqual(name, query []uint16, q string) bool {
-	if f.upcase != nil {
-		return len(name) == len(query) && equalUpper(f, name, query)
-	}
-	return validUTF16(name) && strings.EqualFold(string(utf16.Decode(name)), q)
+// isRawShown reports whether ReadDir shows the set in the "~raw~" form.
+func isRawShown(r *setRec) bool {
+	_, raw := displayName(r.name)
+	return raw != nil
 }
 
-func equalUpper(f *FS, a, b []uint16) bool {
-	for i := range a {
-		if f.upcase[a[i]] != f.upcase[b[i]] {
+// foldEqual reports whether the on-disk name and the query are equal ignoring
+// case, by the volume's up-case table. Without a usable table nothing is
+// folded: exFAT defines the rule on the volume, so any other would be a guess.
+func (f *FS) foldEqual(name, query []uint16) bool {
+	if f.upcase == nil || len(name) != len(query) {
+		return false
+	}
+	for i := range name {
+		if f.upcase[name[i]] != f.upcase[query[i]] {
 			return false
 		}
 	}

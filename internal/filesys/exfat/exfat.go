@@ -61,6 +61,8 @@ type FS struct {
 
 	// dirRecordCap bounds the entry sets one directory yields (maxDirRecords).
 	dirRecordCap int
+	// dirByteLimit bounds the bytes read of one directory (maxDirBytes; lowered by tests).
+	dirByteLimit int64
 	// resolveDirs bounds the directories one resolveDir scans (maxResolveDirs; lowered by tests).
 	resolveDirs int
 	// bitmapChunk is how much of the allocation bitmap is read at a time.
@@ -163,6 +165,7 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		revision:         bt.revision,
 		volFlags:         bt.volFlags,
 		dirRecordCap:     maxDirRecords,
+		dirByteLimit:     maxDirBytes,
 		resolveDirs:      maxResolveDirs,
 		bitmapChunk:      maxBitmapChunk,
 		unallocCap:       maxUnallocRuns,
