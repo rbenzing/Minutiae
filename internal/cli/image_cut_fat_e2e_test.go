@@ -74,6 +74,7 @@ func TestImageCutFATDirectoryExitsNonZeroAndIsAudited(t *testing.T) {
 	}
 	for _, args := range [][]string{
 		{"ls", ref, "/D/missing"},
+		{"ls", ref, "/D/alpha.txt"},
 		{"extract", "-r", ref, "/D/missing"},
 	} {
 		code, stdout, stderr := do(args...)
