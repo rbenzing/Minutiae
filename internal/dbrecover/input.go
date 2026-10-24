@@ -230,7 +230,9 @@ func (s *sealedSet) cap() *int {
 		c := in.Ref.Cap
 		if in.Ref.CapUnknown {
 			v := unknownCapConfidence
-			c = &v
+			if c == nil || *c > v {
+				c = &v
+			}
 		}
 		if c != nil && (m == nil || *c < *m) {
 			v := *c
@@ -284,11 +286,20 @@ const unknownCapConfidence = 25
 // is true when it is recovered and the chain names no confidence at all: the
 // artifact is labelled recovered with no description, no artifact on the chain
 // carries a confidence, or the chain was cut by a missing parent, a cycle or the
-// depth bound before one did (RecoveryTrailOf ends such a walk without error).
+// depth bound (RecoveryTrailOf ends such a walk without error and sets Cut). A cut
+// chain is unknown even after a confidence was found: a lower one may lie beyond
+// the cut (3J residual R1), so the ceiling is the lower of that confidence and
+// unknownCapConfidence.
 func trailCap(man map[string]evidence.ManifestRecord, id string) (recovered bool, ceiling *int, unknown bool) {
 	tr, found := evidence.RecoveryTrailOf(man, id)
 	if !found {
 		return false, nil, false
 	}
-	return true, tr.MinConfidence, tr.MinConfidence == nil
+	ceiling = tr.MinConfidence
+	unknown = tr.MinConfidence == nil || tr.Cut
+	if tr.Cut && ceiling != nil && *ceiling > unknownCapConfidence {
+		v := unknownCapConfidence
+		ceiling = &v
+	}
+	return true, ceiling, unknown
 }
