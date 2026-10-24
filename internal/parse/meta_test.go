@@ -43,7 +43,7 @@ func TestValidateMeta(t *testing.T) {
 		{"a role that is only a companion", func(m *Meta) { m.Inputs[1] = InputSpec{Role: "journal", Companions: []string{"-journal", "-shm"}} }},
 		{"a single input", func(m *Meta) { m.Inputs = m.Inputs[:1]; m.Claims = nil }},
 		{"role of 16 characters", func(m *Meta) { m.Inputs[1].Role = "a123456789012345" }},
-		{"name of 64 characters", func(m *Meta) { m.Name = "a" + strings.Repeat("b", 63) }},
+		{"name of 64 characters (no claims)", func(m *Meta) { m.Name = "a" + strings.Repeat("b", 63); m.Claims = nil }},
 		{"title of 200 bytes", func(m *Meta) { m.Title = strings.Repeat("t", 200) }},
 		{"title with non-ASCII text", func(m *Meta) { m.Title = "Nachrichten und Anrufe äö" }},
 		{"versions with several digits", func(m *Meta) { m.Version = "10.200.3000" }},
