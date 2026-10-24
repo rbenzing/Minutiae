@@ -150,10 +150,11 @@ func TestRegistryValidateCatchesBadSets(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := rules{
-				base:          base,
-				pkgPath:       func(parse.Parser) string { return goodPkg },
-				hashOf:        func(parse.Parser, parse.Meta) (string, bool) { return "h", true },
-				claimsEnabled: tc.claims,
+				base:           base,
+				pkgPath:        func(parse.Parser) string { return goodPkg },
+				hashOf:         func(parse.Parser, parse.Meta) (string, bool) { return "h", true },
+				claimsEnabled:  tc.claims,
+				recoveryHashOf: func(parse.Parser, parse.Meta) (string, bool) { return "r", true },
 			}
 			if tc.pkg != nil {
 				r.pkgPath = tc.pkg
@@ -172,6 +173,7 @@ func TestRegistryValidateCatchesBadSets(t *testing.T) {
 		r := rules{
 			base: base, pkgPath: func(parse.Parser) string { return goodPkg },
 			hashOf: func(parse.Parser, parse.Meta) (string, bool) { return "h", true }, claimsEnabled: true,
+			recoveryHashOf: func(parse.Parser, parse.Meta) (string, bool) { return "r", true },
 		}
 		if errs := r.validate([]parse.Parser{mk("plain", nil), mapper(claimMeta(), "CALLS")}); len(errs) != 0 {
 			t.Errorf("errors = %v", errs)
@@ -418,5 +420,65 @@ func TestValidateRecoversMetaPanicNamingPackage(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("Meta called %d times after a panic, want 1", n)
+	}
+}
+
+func claimingFixture() (*fakeMapper, *fake) {
+	m := goodMeta("a")
+	m.Claims = []parse.TableClaim{{Role: "db", Table: "calls"}}
+	return &fakeMapper{fake{meta: m, mappings: []parse.TableMapping{{Table: "calls"}}}}, &fake{meta: goodMeta("b")}
+}
+
+func rulesWithRecovery(recovery bool, claimsOn bool) rules {
+	return rules{
+		base: base, pkgPath: func(parse.Parser) string { return goodPkg },
+		hashOf:         func(parse.Parser, parse.Meta) (string, bool) { return "h", true },
+		recoveryHashOf: func(parse.Parser, parse.Meta) (string, bool) { return "r", recovery },
+		claimsEnabled:  claimsOn,
+	}
+}
+
+func TestValidateRequiresRecoveryHashForClaims(t *testing.T) {
+	claiming, plain := claimingFixture()
+	errs := rulesWithRecovery(false, true).validate([]parse.Parser{claiming})
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "has no generated recovery hash") {
+		t.Fatalf("claims and no recovery hash: %v", errs)
+	}
+	if errs := rulesWithRecovery(false, true).validate([]parse.Parser{plain}); len(errs) != 0 {
+		t.Errorf("no claims and no recovery hash: %v", errs)
+	}
+	if errs := rulesWithRecovery(true, true).validate([]parse.Parser{claiming, plain}); len(errs) != 0 {
+		t.Errorf("claims with a recovery hash: %v", errs)
+	}
+}
+
+func TestRecoveryHashOfLooksUpRecoverNameAtVersionAndPackage(t *testing.T) {
+	p := &fake{meta: goodMeta("x.y")}
+	table := map[string]identity{
+		"x.y@1.0.0":         {Package: PackagePath(p), Hash: "live"},
+		"x.y.recover@1.0.0": {Package: PackagePath(p), Hash: "rec"},
+	}
+	if h, ok := recoveryHashOfWith(p, p.Meta(), table); !ok || h != "rec" {
+		t.Errorf("recoveryHashOf = %q, %v", h, ok)
+	}
+	elsewhere := map[string]identity{"x.y.recover@1.0.0": {Package: base + "/elsewhere", Hash: "r"}}
+	if _, ok := recoveryHashOfWith(p, p.Meta(), elsewhere); ok {
+		t.Error("another package inherited the recovery identity")
+	}
+	if _, ok := recoveryHashOfWith(p, p.Meta(), map[string]identity{"x.y@1.0.0": table["x.y@1.0.0"]}); ok {
+		t.Error("the live identity was served as the recovery identity")
+	}
+	if _, ok := RecoveryHashOf(nil); ok {
+		t.Error("nil has a recovery identity")
+	}
+}
+
+func TestClaimsEnabled(t *testing.T) {
+	if !claimsEnabled {
+		t.Fatal("claims are disabled")
+	}
+	claiming, _ := claimingFixture()
+	if errs := rulesWithRecovery(true, claimsEnabled).validate([]parse.Parser{claiming}); len(errs) != 0 {
+		t.Errorf("the real constant still refuses claims: %v", errs)
 	}
 }
