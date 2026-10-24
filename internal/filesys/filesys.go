@@ -150,9 +150,12 @@ var (
 	// ErrAmbiguous is returned when a reference (a snapshot name or xid) matches
 	// more than one object; the error lists the candidates.
 	ErrAmbiguous = errors.New("ambiguous reference")
-	// ErrUndecided marks a comparison or lookup whose answer is not known: a name of a shape that no
+	// ErrUndecided marks a comparison, lookup or recovery whose answer is not known: a name of a shape that no
 	// measurement of the filesystem's own comparison covers (a casefold directory holds a name the
 	// comparison has not been shown for). It is not "not found" and not "different"; readers wrap it.
+	// A Recoverer also returns it (or ErrIncomplete or ErrLimit) for an entry whose recoverability cannot be
+	// decided: a batch recovery counts that entry as the skip "undecided", keeps the decided work and exits 1
+	// naming the count; it is never exit 0 and never "not found".
 	ErrUndecided = errors.New("cannot be decided")
 	// ErrIncomplete marks a lookup that finds nothing in a directory the scan did not read to the end: the name may
 	// be in the part that was not read, so the answer is neither "found" nor "absent". The causes, per reader:
