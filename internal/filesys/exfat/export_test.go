@@ -61,3 +61,6 @@ const MaxLocateScans = maxResolveDirs
 
 // NameHash exposes the NameHash computation.
 var NameHash = nameHash
+
+// ActiveFat returns the FAT index (0 or 1) the reader uses.
+func (f *FS) ActiveFat() int { return f.activeFat }

@@ -24,6 +24,8 @@ const (
 	offNumFats     = 110
 	offPercentUsed = 112
 
+	volActiveFat = 0x0001 // VolumeFlags bit 0: ActiveFat
+
 	oemName = "EXFAT   "
 
 	minSectorShift  = 9
@@ -127,12 +129,16 @@ func checkBootChecksum(region []byte, ss int) (stored, want uint32, ok bool) {
 
 // geometry is the validated layout of a volume.
 type geometry struct {
-	ss, cs       int64 // bytes per sector and per cluster
-	size         int64 // volume size in bytes (VolumeLength clamped to the image)
-	heapOff      int64 // byte offset of cluster 2
-	fatOff       int64 // byte offset of the first FAT
-	fatEntries   uint32
-	clusterCount uint32
+	ss, cs  int64 // bytes per sector and per cluster
+	size    int64 // volume size in bytes (VolumeLength clamped to the image)
+	heapOff int64 // byte offset of cluster 2
+	fatOff  int64 // byte offset of the active FAT
+	// inactiveFatOff is the byte offset of the other FAT of a TexFAT volume, -1 with one FAT.
+	inactiveFatOff int64
+	numFats        int
+	activeFat      int // 0 or 1
+	fatEntries     uint32
+	clusterCount   uint32
 	// declaredClusters is ClusterCount as the boot sector states it (capped at
 	// maxClusterCount), before the clamp to the image: a truncated image keeps
 	// the declared heap, so a file in the cut part is a prefix, not corrupt.
@@ -169,7 +175,29 @@ func (bt *boot) layout(imageSize int64) (*geometry, error) {
 		return nil, corrupt("exFAT boot sector", offHeapOffset, "ClusterHeapOffset %d lies inside the FAT region (ends at sector %d)", bt.heapOffset, fatEnd)
 	}
 	g.heapOff = int64(bt.heapOffset) * g.ss // < 2^44
-	g.fatOff = int64(bt.fatOffset) * g.ss
+	// TexFAT. The published exFAT specification (read at
+	// learn.microsoft.com/windows/win32/fileio/exfat-specification, via a
+	// page-fetch summary, not a copy of the document) states:
+	// VolumeFlags ActiveFat (section 3.1.13.1) is 0 for the First FAT
+	// and First Allocation Bitmap, 1 for the Second ones, and 1 is possible
+	// only when NumberOfFats (section 3.1.16) is 2; the inactive FAT and bitmap
+	// are stale. The Allocation Bitmap entry's BitmapFlags bit 0 (the
+	// BitmapIdentifier, section 7.1.2.1) says which bitmap it describes; the
+	// first bitmap goes with the first FAT, the second with the second FAT.
+	firstFat := int64(bt.fatOffset) * g.ss
+	g.numFats = int(bt.numFats)
+	g.fatOff, g.inactiveFatOff = firstFat, -1
+	if bt.numFats == 2 {
+		secondFat := firstFat + int64(bt.fatLength)*g.ss // < 2^45
+		if bt.volFlags&volActiveFat != 0 {
+			g.activeFat = 1
+			g.fatOff, g.inactiveFatOff = secondFat, firstFat
+		} else {
+			g.inactiveFatOff = secondFat
+		}
+	} else if bt.volFlags&volActiveFat != 0 {
+		g.warnings = append(g.warnings, "ActiveFat is 1 but NumberOfFats is 1: the only FAT and bitmap are read")
+	}
 	if g.heapOff >= g.size {
 		return nil, corrupt("exFAT boot sector", offHeapOffset, "the cluster heap (byte %d) lies beyond the %d-byte volume", g.heapOff, g.size)
 	}

@@ -44,6 +44,7 @@ func fuzzBuilderSeeds() [][]byte {
 		trimTail(exfattest.Build(exfattest.Options{OneSectorClusters: true, ClusterCount: 512, FragmentBitmap: true}, files)),
 		trimTail(exfattest.Build(exfattest.Options{BytesPerSectorShift: 12, SectorsPerClusterShift: 1, BadBootChecksum: true}, files[:3])),
 		trimTail(exfattest.Build(exfattest.Options{NoUpcase: true}, files[:2])),
+		trimTail(exfattest.Build(exfattest.Options{NumberOfFats: 2, ActiveFat: 1, ClusterCount: 64}, files[:2])),
 	}
 }
 

@@ -189,15 +189,23 @@ const (
 // root directory's Allocation Bitmap entry; if that is missing, unreadable or
 // shorter than the cluster count needs, the problem is reported through
 // Info().Warnings and the clusters it does not cover are never reported as
-// free. Bits past the cluster count are ignored.
+// free. Bits past the cluster count are ignored. On a TexFAT volume the bitmap
+// is the one ActiveFat names, never the other, and the inactive FAT and bitmap
+// are compared with the active ones (a difference is a warning).
 //
 // The bitmap is not trusted blindly: the clusters of the allocation bitmap, of
 // the up-case table and of the root directory, and the clusters the FAT marks
 // bad, are never reported as free even when the bitmap says so. At most
 // maxUnallocRuns runs are reported (a warning says when the rest is cut off).
 func (f *FS) Unallocated() ([]filesys.Run, error) {
+	f.compareCopies()
 	if !f.bitmap.present {
-		f.warn("allocation bitmap: the root directory has no Allocation Bitmap entry; no free space is reported")
+		if f.inactiveBitmap.present {
+			// Never the stale bitmap: its free clusters may be allocated.
+			f.warn("TexFAT: no Allocation Bitmap entry for the active bitmap (BitmapFlags %d); no free space is reported", f.activeFat)
+		} else {
+			f.warn("allocation bitmap: the root directory has no Allocation Bitmap entry; no free space is reported")
+		}
 		return nil, nil
 	}
 	need := (uint64(f.clusterCount) + 7) / 8
@@ -355,4 +363,115 @@ func (f *FS) badClusterRuns() (runs []filesys.Run, ok bool) {
 		c += n
 	}
 	return runs, true
+}
+
+// readExtentsAt fills dst from the bytes of exts starting off bytes into them
+// (the clusters of one extent are consecutive). The extents must hold at least
+// off+len(dst) bytes.
+func (f *FS) readExtentsAt(exts []extent, off uint64, dst []byte) error {
+	done := 0
+	for _, e := range exts {
+		size := e.n * uint64(f.cs) // inside the heap: cannot overflow
+		if off >= size {
+			off -= size
+			continue
+		}
+		n := min(uint64(len(dst)-done), size-off)
+		if err := readFull(f.r, dst[done:done+int(n)], f.clusterOff(e.first)+int64(off)); err != nil {
+			return err
+		}
+		done += int(n)
+		off = 0
+		if done == len(dst) {
+			return nil
+		}
+	}
+	return fmt.Errorf("only %d of %d bytes are mapped", done, len(dst))
+}
+
+// compareCopies compares, on a two-FAT (TexFAT) volume, the inactive FAT with
+// the active one and the inactive Allocation Bitmap with the active one, and
+// warns on the first difference of each. The inactive copy is stale by
+// definition (published specification, ActiveFat and section 4), so a
+// difference is expected after an interrupted transaction and is only reported;
+// the inactive copy is never used. Each copy is read in chunks of at most
+// f.bitmapChunk bytes; nothing is allocated from a declared size.
+func (f *FS) compareCopies() {
+	if f.numFats != 2 || f.inactiveFatOff < 0 {
+		return
+	}
+	// The FAT entries that exist and are within the cluster count.
+	if at, ok := f.firstDifference(uint64(f.fatEntries)*4, func(dst []byte, off uint64, inactive bool) error {
+		base := f.fatOff
+		if inactive {
+			base = f.inactiveFatOff
+		}
+		return readFull(f.data, dst, base+int64(off))
+	}); !ok {
+		f.warn("TexFAT: the inactive FAT cannot be compared with the active one")
+	} else if at >= 0 {
+		f.warn("TexFAT: the inactive FAT differs from the active one (first difference at byte %d); the inactive copy is stale by definition and is not used", at)
+	}
+
+	if !f.bitmap.present || !f.inactiveBitmap.present {
+		return
+	}
+	need := (uint64(f.clusterCount) + 7) / 8
+	n := min(need, f.bitmap.length, f.inactiveBitmap.length)
+	if f.bitmap.length != f.inactiveBitmap.length {
+		f.warn("TexFAT: the inactive Allocation Bitmap has length %d, the active one %d", f.inactiveBitmap.length, f.bitmap.length)
+	}
+	if n == 0 {
+		return
+	}
+	nclusters := (n + uint64(f.cs) - 1) / uint64(f.cs)
+	act, err1 := f.metaExtents(f.bitmap.first, nclusters)
+	ina, err2 := f.metaExtents(f.inactiveBitmap.first, nclusters)
+	if err1 != nil || err2 != nil {
+		f.warn("TexFAT: the inactive Allocation Bitmap cannot be compared with the active one (cannot be located)")
+		return
+	}
+	if at, ok := f.firstDifference(n, func(dst []byte, off uint64, inactive bool) error {
+		if inactive {
+			return f.readExtentsAt(ina, off, dst)
+		}
+		return f.readExtentsAt(act, off, dst)
+	}); !ok {
+		f.warn("TexFAT: the inactive Allocation Bitmap cannot be compared with the active one")
+	} else if at >= 0 {
+		f.warn("TexFAT: the inactive Allocation Bitmap differs from the active one (first difference at byte %d); the inactive copy is stale by definition and is not used", at)
+	}
+}
+
+// firstDifference compares total bytes of two copies, read through read in
+// chunks of at most f.bitmapChunk bytes, and returns the offset of the first
+// differing byte (-1 for none). ok is false when a read failed first.
+func (f *FS) firstDifference(total uint64, read func(dst []byte, off uint64, inactive bool) error) (at int64, ok bool) {
+	if total == 0 {
+		return -1, true
+	}
+	size := min(total, uint64(f.bitmapChunk))
+	a, b := make([]byte, size), make([]byte, size)
+	for off := uint64(0); off < total; {
+		n := min(total-off, size)
+		if read(a[:n], off, false) != nil || read(b[:n], off, true) != nil {
+			return -1, false
+		}
+		if i := mismatch(a[:n], b[:n]); i >= 0 {
+			return int64(off) + int64(i), true
+		}
+		off += n
+	}
+	return -1, true
+}
+
+// mismatch returns the index of the first differing byte of a and b (equal
+// lengths), or -1.
+func mismatch(a, b []byte) int {
+	for i := range a {
+		if a[i] != b[i] {
+			return i
+		}
+	}
+	return -1
 }

@@ -97,6 +97,7 @@ func (f *FS) loadRootMeta() {
 		return
 	}
 	var (
+		bitmaps  [2]meta // by BitmapFlags bit 0
 		up       meta
 		haveUp   bool
 		haveName bool
@@ -108,10 +109,12 @@ func (f *FS) loadRootMeta() {
 		case typeEnd:
 			i = len(buf)
 		case typeBitmap:
+			// BitmapFlags bit 0 (BitmapIdentifier, section 7.1.2.1 of the
+			// published specification) says which bitmap the entry describes;
+			// the first one met per value is kept.
 			m := meta{present: true, first: le.Uint32(e[20:]), length: le.Uint64(e[24:]), aux: uint32(e[1])}
-			// A TexFAT volume has two bitmaps; the first (flag bit clear) is read.
-			if !f.bitmap.present || (f.bitmap.aux&bitmapSecond != 0 && m.aux&bitmapSecond == 0) {
-				f.bitmap = m
+			if k := m.aux & bitmapSecond; !bitmaps[k].present {
+				bitmaps[k] = m
 			}
 		case typeUpcase:
 			if !haveUp {
@@ -134,6 +137,7 @@ func (f *FS) loadRootMeta() {
 			}
 		}
 	}
+	f.bitmap, f.inactiveBitmap = bitmaps[f.activeFat], bitmaps[1-f.activeFat]
 	f.upMeta = up
 	f.loadUpcase(up)
 }
