@@ -32,9 +32,16 @@ func TestVerifyCancelAtTheEndOfEveryPhase(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			seen := false
+			p10Ended := false
 			c.SetPhaseHook(func(name string, _ time.Duration) {
+				if name == "records.integrity_check" {
+					p10Ended = true
+				}
 				if name == phase {
 					seen = true
+				}
+				// fts.index: P10 runs beside the index pass and may end after it, so the cancel waits for both
+				if seen && (phase != "fts.index" || p10Ended) {
 					cancel()
 				}
 			})

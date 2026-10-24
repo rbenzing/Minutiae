@@ -57,3 +57,12 @@ func (f *FS) SetLocateScans(n int) {
 	defer f.dmu.Unlock()
 	f.locateScans = n
 }
+
+// SetDirEntryCap lowers the number of entries one directory scan reads (and the
+// chain bound derived from it); rawEntry keeps the constant.
+func (f *FS) SetDirEntryCap(n int) {
+	f.dmu.Lock()
+	defer f.dmu.Unlock()
+	f.dirEntryCap = n
+	f.dc = nil
+}

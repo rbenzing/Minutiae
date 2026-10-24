@@ -49,6 +49,7 @@ type FS struct {
 	dirs         map[uint32]dirLoc // directories met so far, by first cluster: where their entry is
 	ends         map[uint32]int    // directories whose end-of-directory marker was found: its entry index
 	entryBudget  int64             // directory entries this instance may still read
+	dirEntryCap  int               // entries read from one directory (maxDirEntries; lowered by tests)
 	locateScans  int               // directories one locate may list (maxLocateScans; lowered by tests)
 	budgetWarned bool
 
@@ -124,6 +125,7 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		data:      raw,
 
 		entryBudget: maxEntryBudget,
+		dirEntryCap: maxDirEntries,
 		locateScans: maxLocateScans,
 		size:        volSize,
 		label:       b.label,
@@ -159,19 +161,13 @@ func (f *FS) Info() filesys.Info {
 	}
 }
 
-// scanRoot calls fn with each 32-byte entry of the root directory up to the
-// first end-of-directory entry (0x00, not passed to fn) or maxDirEntries
-// entries, until fn returns true. If the FAT32 root chain breaks, the entries
-// before the break are still passed and the chain error is returned.
-func (f *FS) scanRoot(fn func(e []byte) (stop bool)) error {
-	_, err := f.scanDir(f.rootFirst(), func(_ int, e []byte) bool { return fn(e) })
-	return err
-}
-
 // readRootLabel sets the label from the volume-label entry of the root
-// directory. Reading problems are warnings: the BPB label stays in force.
+// directory. When the root listing is cut (the entry cap, the chain bound, a
+// damaged chain, a failed read) before a label entry was found, the label of
+// the volume could not be decided from the root directory: a warning says so,
+// and the BPB label that stays in force is shown as the BPB's.
 func (f *FS) readRootLabel() {
-	err := f.scanRoot(func(e []byte) bool {
+	_, cut, err := f.scan(f.rootFirst(), true, func(_ int, e []byte) bool {
 		attr := e[11]
 		if e[0] == 0xE5 || attr&0x0F == 0x0F || attr&0x18 != 0x08 {
 			return false // deleted, long-name or not a volume label
@@ -182,7 +178,16 @@ func (f *FS) readRootLabel() {
 		}
 		return false
 	})
-	if err != nil {
-		f.warn("root directory unreadable while looking for the volume label: %v", err)
+	if !cut.isCut() && err == nil {
+		return
 	}
+	why := cut.reason
+	if why == "" {
+		why = err.Error()
+	}
+	shown := "no label is reported"
+	if f.label != "" {
+		shown = fmt.Sprintf("the label reported is the BPB's label %q, not a decided volume label", f.label)
+	}
+	f.warn("root directory unreadable while looking for the volume label: the volume label could not be decided from the root directory (%s); %s", why, shown)
 }
