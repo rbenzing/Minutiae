@@ -58,3 +58,6 @@ func (f *FS) SetResolveDirs(n int) { f.resolveDirs = n }
 
 // MaxLocateScans is the bound on the directories one directory search scans.
 const MaxLocateScans = maxResolveDirs
+
+// NameHash exposes the NameHash computation.
+var NameHash = nameHash

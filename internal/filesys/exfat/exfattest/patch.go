@@ -120,3 +120,93 @@ func CorruptSetChecksum(img []byte, loc EntryLoc) {
 	o := int(loc.Offset) + 2
 	le16(img, o, ^binary.LittleEndian.Uint16(img[o:]))
 }
+
+// imageUpper returns the up-case function of img: the table its root directory
+// names (read from the contiguous clusters the builder allocates for it), or
+// the identity for an image without one. It panics on an image it cannot read.
+func imageUpper(img []byte) func(uint16) uint16 {
+	id := func(u uint16) uint16 { return u }
+	if len(img) < 120 {
+		panic("exfattest: FixNameHash: image shorter than a boot sector")
+	}
+	ss, cs := 1<<img[108], 1<<(int(img[108])+int(img[109]))
+	heap := int64(binary.LittleEndian.Uint32(img[88:])) * int64(ss)
+	fat := int64(binary.LittleEndian.Uint32(img[80:])) * int64(ss)
+	clusterOff := func(c uint32) int64 { return heap + int64(c-2)*int64(cs) }
+	c := binary.LittleEndian.Uint32(img[96:])
+	for n := 0; n < 1<<16; n++ {
+		off := clusterOff(c)
+		if c < 2 || off < 0 || off+int64(cs) > int64(len(img)) {
+			panic(fmt.Sprintf("exfattest: FixNameHash: root cluster %d is outside the image", c))
+		}
+		for e := off; e < off+int64(cs); e += entrySize {
+			switch img[e] {
+			case 0x00:
+				return id
+			case 0x82:
+				first, length := binary.LittleEndian.Uint32(img[e+20:]), binary.LittleEndian.Uint64(img[e+24:])
+				if length > 1<<17 || clusterOff(first)+int64(length) > int64(len(img)) {
+					panic("exfattest: FixNameHash: up-case table outside the image")
+				}
+				data := img[clusterOff(first) : clusterOff(first)+int64(length)]
+				t := make([]uint16, 1<<16)
+				for i := range t {
+					t[i] = uint16(i)
+				}
+				idx := 0
+				for i := 0; i+2 <= len(data) && idx < len(t); i += 2 {
+					v := binary.LittleEndian.Uint16(data[i:])
+					if v == 0xFFFF && i+4 <= len(data) {
+						idx += int(binary.LittleEndian.Uint16(data[i+2:]))
+						i += 2
+						continue
+					}
+					t[idx] = v
+					idx++
+				}
+				return func(u uint16) uint16 { return t[u] }
+			}
+		}
+		next := fat + int64(c)*4
+		if next+4 > int64(len(img)) {
+			return id
+		}
+		c = binary.LittleEndian.Uint32(img[next:])
+		if c < 2 || c >= 0xFFFFFFF7 {
+			return id
+		}
+	}
+	return id
+}
+
+// FixNameHash recomputes bytes 4-5 (NameHash) of the Stream Extension of the
+// entry set at image offset setOffset from its Name entries and the image's
+// own up-case table, then the set checksum. Tests that rewrite a name call it
+// so the patched name is still a consistent set (the NameHash is verified for
+// listing).
+func FixNameHash(img []byte, setOffset int64) {
+	n := setBounds(img, EntryLoc{Offset: setOffset}, "FixNameHash")
+	st := img[setOffset+entrySize:]
+	nameLen := int(st[3])
+	var units []uint16
+	for e := 2 * entrySize; e+entrySize <= n && len(units) < nameLen; e += entrySize {
+		ent := img[setOffset+int64(e) : setOffset+int64(e)+entrySize]
+		if ent[0]&0x7F != 0x41 {
+			continue
+		}
+		for u := 0; u < 15 && len(units) < nameLen; u++ {
+			units = append(units, binary.LittleEndian.Uint16(ent[2+2*u:]))
+		}
+	}
+	up := imageUpper(img)
+	var h uint16
+	for _, u := range units {
+		u = up(u)
+		for _, c := range [2]byte{byte(u), byte(u >> 8)} {
+			h = (h&1)<<15 | h>>1
+			h += uint16(c)
+		}
+	}
+	le16(img, int(setOffset)+entrySize+4, h)
+	FixSetChecksum(img, setOffset)
+}

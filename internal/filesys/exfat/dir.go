@@ -77,6 +77,7 @@ type setRec struct {
 
 	flags    byte // GeneralSecondaryFlags of the Stream Extension
 	name     []uint16
+	nameHash uint16 // NameHash of the Stream Extension (bytes 4-5)
 	valid    uint64 // ValidDataLength
 	first    uint32
 	dataLen  uint64
@@ -345,10 +346,11 @@ func (f *FS) parseSet(buf []byte, i, base int, dirFirst uint32, deleted bool) (*
 		accessed:  le.Uint32(p[16:]),
 		createInc: p[20], modifyInc: p[21],
 		createOff: p[22], modifyOff: p[23], accessOff: p[24],
-		flags:   st[1],
-		valid:   le.Uint64(st[8:]),
-		first:   le.Uint32(st[20:]),
-		dataLen: le.Uint64(st[24:]),
+		flags:    st[1],
+		nameHash: le.Uint16(st[4:]),
+		valid:    le.Uint64(st[8:]),
+		first:    le.Uint32(st[20:]),
+		dataLen:  le.Uint64(st[24:]),
 	}
 	nameLen := int(st[3])
 	wantNames := (nameLen + namePerEntry - 1) / namePerEntry
@@ -514,6 +516,18 @@ func (f *FS) makeEntry(dirFirst uint32, r *setRec) filesys.Entry {
 	}
 	if r.nameNote != "" {
 		addAttr(&e, "name", r.nameNote)
+	}
+	// The NameHash is verified for listing only: lookup and recovery do not use
+	// it. Only a name read in full, with the volume's up-case table, can be
+	// verified; anything else is flagged unverified, never presented as
+	// verified. A set without a Stream Extension has no hash to check.
+	if !r.damaged || len(r.name) > 0 {
+		if r.nameUnreadable() || f.upcase == nil {
+			addAttr(&e, "name_hash", "unverified")
+		} else if want := nameHash(f.upper, r.name); want != r.nameHash {
+			addAttr(&e, "name_hash", "bad")
+			f.warn("directory (first cluster %d), entry %d: NameHash %#04x does not match the name (computed %#04x)", dirFirst, r.idx, r.nameHash, want)
+		}
 	}
 	var badTimes []string
 	for _, t := range [...]struct {
