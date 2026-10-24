@@ -276,10 +276,10 @@ func TestScanRefusesABodyAboveTheIngestCap(t *testing.T) {
 func TestScanQueryIsOnlyForSearch(t *testing.T) {
 	_, r := scanCase(t)
 	f := records.Filter{Text: mustCompile(t, "Hello", scanOpts(records.TextOptions{}))}
-	if _, err := r.List(ctx, f, records.Page{Limit: 5}); !errors.Is(err, records.ErrInvalidFilter) || !strings.Contains(err.Error(), "only for Search") {
+	if _, err := r.List(ctx, f, records.Page{Limit: 5}); !errors.Is(err, records.ErrInvalidFilter) || !strings.Contains(err.Error(), "a scan query is not for List or Count") {
 		t.Errorf("List: %v", err)
 	}
-	if _, _, err := r.Count(ctx, f, 0); !errors.Is(err, records.ErrInvalidFilter) || !strings.Contains(err.Error(), "only for Search") {
+	if _, _, err := r.Count(ctx, f, 0); !errors.Is(err, records.ErrInvalidFilter) || !strings.Contains(err.Error(), "a scan query is not for List or Count") {
 		t.Errorf("Count: %v", err)
 	}
 }
@@ -347,5 +347,23 @@ func TestScanSnippetHighlightsShortNeedle(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("spans %+v hold no matched heart", res.Hits[0].Summary.Spans)
+	}
+}
+
+// TestScanChecksTheBodySizeWhateverMatched (LX6-T6-2): an over-cap body is an integrity error even on
+// a record whose summary matches, and in a summary-only search.
+func TestScanChecksTheBodySizeWhateverMatched(t *testing.T) {
+	c, art := setup(t)
+	recordstest.Ingest(t, c, testParser, []string{art.ID}, []records.Record{
+		{Type: "note", ArtifactID: art.ID, Summary: "needle", Body: "body", Payload: recordstest.ValidPayload("note")},
+	})
+	r := newReader(t, c)
+	recordstest.SetRecordColumn(t, c.Dir, 1, "body", strings.Repeat("a", 4<<20+1))
+	for _, col := range []records.Column{records.ColAny, records.ColSummary} {
+		f := records.Filter{Text: mustCompile(t, "needle", scanOpts(records.TextOptions{Column: col}))}
+		_, err := r.Search(ctx, f, records.Page{Limit: 5}, records.SearchOptions{})
+		if !errors.Is(err, evidence.ErrIntegrity) || !strings.Contains(err.Error(), "record 1") {
+			t.Errorf("column %d: %v, want ErrIntegrity naming record 1", col, err)
+		}
 	}
 }

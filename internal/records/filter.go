@@ -302,7 +302,7 @@ func (q *TextQuery) matchCond() (string, error) {
 		}
 		return "r.id IN (SELECT rowid FROM " + q.table + " WHERE " + q.table + " MATCH ?)", nil
 	case scanTable:
-		return "", invalidFilter("a scan query is only for Search")
+		return "", invalidFilter("a scan query is not for List or Count, only for Search")
 	}
 	return "", invalidFilter("the text query was not compiled by CompileQuery or CompileTerms")
 }

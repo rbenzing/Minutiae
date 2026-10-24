@@ -125,12 +125,6 @@ func scanKeyContains(s, key string) bool {
 
 // scanMatches tests the columns the query is limited to; the columns are tested separately.
 func scanMatches(ctx context.Context, h evidence.ReadHandle, row Row, q *TextQuery) (bool, error) {
-	if q.column != ColBody && scanKeyContains(row.Summary, q.match) {
-		return true, nil
-	}
-	if q.column == ColSummary {
-		return false, nil
-	}
 	var size sql.NullInt64
 	var body []byte
 	if err := h.QueryRowContext(ctx, `SELECT length(CAST(body AS BLOB)), substr(CAST(body AS BLOB), 1, ?) FROM records WHERE id = ?`,
@@ -139,6 +133,12 @@ func scanMatches(ctx context.Context, h evidence.ReadHandle, row Row, q *TextQue
 	}
 	if size.Int64 > maxScanBodyBytes {
 		return false, fmt.Errorf("%w: the body of record %d is %d bytes, above the %d ingest accepts", evidence.ErrIntegrity, row.ID, size.Int64, maxScanBodyBytes)
+	}
+	if q.column != ColBody && scanKeyContains(row.Summary, q.match) {
+		return true, nil
+	}
+	if q.column == ColSummary {
+		return false, nil
 	}
 	return scanKeyContains(string(body), q.match), nil
 }
