@@ -26,6 +26,12 @@ func e01GapSession(t *testing.T, c *evidence.Case, nodes []fstest.Node, gapAt, g
 // e01GapSessionMut is e01GapSession with mutate applied to the built segments.
 func e01GapSessionMut(t *testing.T, c *evidence.Case, nodes []fstest.Node, gapAt, gapSectors int64, zero bool, mutate func([][]byte)) (*examine.Session, []byte) {
 	t.Helper()
+	return e01GapSessionOpts(t, c, nodes, gapAt, gapSectors, zero, mutate, mtfsOpts())
+}
+
+// e01GapSessionOpts is e01GapSessionMut with the session options given.
+func e01GapSessionOpts(t *testing.T, c *evidence.Case, nodes []fstest.Node, gapAt, gapSectors int64, zero bool, mutate func([][]byte), opts examine.Options) (*examine.Session, []byte) {
+	t.Helper()
 	data := disk(fstest.Build(fstest.BuildSpec{Label: "L", FreeBlocks: 2, Nodes: nodes}))
 	if gapSectors < 0 {
 		gapSectors = (int64(len(data)) - gapAt) / 512
@@ -50,7 +56,7 @@ func e01GapSessionMut(t *testing.T, c *evidence.Case, nodes []fstest.Node, gapAt
 		}
 	}
 	recs := importPaths(t, c, paths)
-	s, err := examine.Open(c, recs[0].ID, mtfsOpts())
+	s, err := examine.Open(c, recs[0].ID, opts)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

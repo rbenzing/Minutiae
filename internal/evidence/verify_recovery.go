@@ -46,6 +46,9 @@ func unreproducedNotices(rep *VerifyReport) {
 	if rep.deletedFiles > 0 && !rep.allocationRan {
 		rep.noticef("%d deleted-file artifact(s): allocation not rechecked against the filesystem (this verify did not compose check R9)", rep.deletedFiles)
 	}
+	if rep.gapArtifacts > 0 && !rep.gapsRan {
+		rep.noticef("%d extract or unallocated artifact(s): acquisition-gap notes shape-checked only, not recomputed (this verify did not compose check R10)", rep.gapArtifacts)
+	}
 	for _, k := range []string{KindRecover, KindCarve, KindSlack, KindJournal, KindReport} {
 		if (k == KindRecover || k == KindCarve) && rep.reproduceRan {
 			continue
@@ -119,6 +122,9 @@ func (c *Case) verifyRecovered(rep *VerifyReport, recs []ManifestRecord) {
 			ps.add(rKindShape, "%scarries a recovery description (only kinds recover, carve, slack, journal and report may)", pre)
 		}
 		checkAcquisitionGaps(ps, r, pre)
+		if kind == "extract" || kind == "unallocated" {
+			rep.gapArtifacts++
+		}
 		c.checkExtractDeclared(ps, r, pre, byID, declared)
 
 		ns, inNS := RecoveredNamespace(r.Path)
