@@ -80,3 +80,33 @@ func RemoveArtifactFile(t testing.TB, caseDir string, rec evidence.ManifestRecor
 		t.Fatal(err)
 	}
 }
+
+// RechainAudit rewrites audit.jsonl with the entries mut returns for the log as it is, renumbering seq from 1 and
+// recomputing prev_hash and hash of every line, so the chain is valid again: what a forger with file access can do.
+// The case must be closed (its open audit log would chain from the old head).
+func RechainAudit(t testing.TB, caseDir string, mut func([]evidence.AuditEntry) []evidence.AuditEntry) {
+	t.Helper()
+	p := filepath.Join(caseDir, "audit.jsonl")
+	entries, err := evidence.ReadAuditEntries(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	prev := evidence.GenesisHash
+	for i, e := range mut(entries) {
+		e.Seq, e.PrevHash, e.Hash = int64(i+1), prev, ""
+		if e.Hash, err = evidence.AuditEntryHash(e); err != nil {
+			t.Fatal(err)
+		}
+		line, err := json.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out.Write(line)
+		out.WriteByte('\n')
+		prev = e.Hash
+	}
+	if err := os.WriteFile(p, out.Bytes(), 0o600); err != nil { //nolint:gosec // test helper on a case directory the test created
+		t.Fatal(err)
+	}
+}

@@ -104,7 +104,7 @@ func (p *VerifyProgress) end(f *progressFrame) {
 // VerifyObserved is VerifyWith that also feeds p (which may be nil: then it is VerifyWith). The
 // observer only watches: the report is the same with or without it.
 func (c *Case) VerifyObserved(ctx context.Context, p *VerifyProgress, checks ...VerifyCheck) (VerifyReport, error) {
-	return c.verifyRun(ctx, nil, p, checks)
+	return c.VerifyWithOptions(ctx, VerifyOptions{Progress: p, Checks: checks})
 }
 
 func noopAdd(int64) {}

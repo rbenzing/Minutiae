@@ -304,14 +304,14 @@ func TestVerifyReportJSONShape(t *testing.T) {
 	}
 	for _, k := range []string{
 		"audit_entries", "artifacts_checked", "records_checked", "record_batches_checked", "record_runs_checked",
-		"fts_docs_checked", "problems", "notices", "recovered_artifacts", "recovered_reproduced",
+		"fts_docs_checked", "problems", "notices", "recovered_artifacts", "recovered_reproduced", "anchor",
 	} {
 		if _, ok := m[k]; !ok {
 			t.Errorf("report JSON has no %q: %s", k, b)
 		}
 	}
-	if len(m) != 10 {
-		t.Errorf("report JSON has %d keys, want 10: %s", len(m), b)
+	if len(m) != 11 {
+		t.Errorf("report JSON has %d keys, want 11: %s", len(m), b)
 	}
 }
 
