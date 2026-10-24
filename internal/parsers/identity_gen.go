@@ -8,7 +8,7 @@ type identity struct{ Package, Hash string }
 
 // generated maps "name@version" to the identity of the parser.
 var generated = map[string]identity{
-	"android.calllog@1.0.2":  {Package: "github.com/rbenzing/minutiae/internal/parsers/androidcalllog", Hash: "src1:sha256:dced6337627725564bf507b9b6e72d2c73978c2299c0bf8eae8339bf8ef4fe74"},
-	"android.contacts@1.0.1": {Package: "github.com/rbenzing/minutiae/internal/parsers/androidcontacts", Hash: "src1:sha256:c57708f80af0a93f7f4229003f5cdfbdadef2f3bcbfa64a98cb40569fae421b5"},
-	"android.mmssms@1.0.1":   {Package: "github.com/rbenzing/minutiae/internal/parsers/androidmms", Hash: "src1:sha256:345bcacf16be4a19517f383f6506eb057535f32554157d4b15657eade82e750f"},
+	"android.calllog@1.0.3":  {Package: "github.com/rbenzing/minutiae/internal/parsers/androidcalllog", Hash: "src1:sha256:4eb8a278c1d5ccf4cfa19788198d64b5770f66092cb144209941ba1b39a3ca5a"},
+	"android.contacts@1.0.2": {Package: "github.com/rbenzing/minutiae/internal/parsers/androidcontacts", Hash: "src1:sha256:aaa7ed40b0afce60aa3971ce33921f9c6de6a7ecfc32d0e0605448b20b719c1f"},
+	"android.mmssms@1.0.2":   {Package: "github.com/rbenzing/minutiae/internal/parsers/androidmms", Hash: "src1:sha256:9a7e2225b899807b5fd710a866d8f8f016f09566cb588035c236a0160bf15cb1"},
 }

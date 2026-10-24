@@ -13,7 +13,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "android.calllog"
-	Version = "1.0.2"
+	Version = "1.0.3"
 )
 
 // Parser is the android.calllog parser. It holds no state.

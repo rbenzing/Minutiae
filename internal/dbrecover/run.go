@@ -375,7 +375,11 @@ func (p *pipeline) scan(ctx context.Context, add func(records.Record) error, tra
 		track(s)
 	}
 	m := p.mapper()
-	flt := newFilter(p.o)
+	live, err := p.db.Live().Schema(ctx) // read and cached by the checks before the run
+	if err != nil {
+		return nil, err
+	}
+	flt := newFilter(p.o, live)
 	visit := func(r sqlitefile.RecoveredRow) (more bool) {
 		// A panic in the mapping or in a callback ends the pass with a PanicError of
 		// this package, before the library can turn it into its own.
