@@ -177,10 +177,13 @@ type filter struct {
 	methods map[string]bool // nil: every method
 	minConf int
 	claimed map[string]bool // ASCII-folded names of the tables another parser claims
+	live    *sqlitefile.Schema
 }
 
-func newFilter(o Options) filter {
-	f := filter{minConf: o.MinConfidence}
+// newFilter builds the filter of a run; live is the LIVE schema, against which
+// a claimed row must strictly fit (sqlitefile.ClaimMatch).
+func newFilter(o Options, live *sqlitefile.Schema) filter {
+	f := filter{minConf: o.MinConfidence, live: live}
 	if len(o.Methods) > 0 {
 		f.methods = map[string]bool{}
 		for _, m := range o.Methods {
@@ -197,21 +200,25 @@ func newFilter(o Options) filter {
 }
 
 // keep reports whether the row is written and, when not, the reason it is
-// counted under. conf is the confidence after the input cap. Only a table row
-// whose table the schema names is excluded as claimed: a row placed by fit or
-// guess may belong to another table, and an index entry is not a table row, so
-// both are kept (D7).
+// counted under. conf is the confidence after the input cap. A row is excluded
+// as claimed only when sqlitefile.ClaimMatch says so: a table row of basis
+// schema or fit whose values strictly fit the live definition of its table. A
+// guess, a row of no table, an index entry and a row carved from page slack are
+// kept (D7, 4G-R3, 4G-R22).
 func (f filter) keep(r sqlitefile.RecoveredRow, conf int) (bool, string) {
 	switch {
 	case f.methods != nil && !f.methods[r.Method]:
 		return false, "method-filtered"
 	case conf < f.minConf:
 		return false, "below-min-confidence"
-	case f.claimed != nil && r.Index == "" && r.TableBasis == sqlitefile.BasisSchema && f.claimed[asciiFold(r.Table)]:
+	case f.claimed != nil && f.live != nil && f.live.ClaimMatch(r, f.isClaimed) == sqlitefile.ClaimYes:
 		return false, "excluded-by-claim"
 	}
 	return true, ""
 }
+
+// isClaimed reports whether the table is one a parser claims (ASCII fold).
+func (f filter) isClaimed(table string) bool { return f.claimed[asciiFold(table)] }
 
 // asciiFold lowercases the ASCII letters only, as SQLite compares names.
 func asciiFold(s string) string {

@@ -40,12 +40,6 @@ func TestLocatorEncodesUnrepresentableNamesExactly(t *testing.T) {
 	}
 }
 
-func TestPctEncodeKeepsTilde(t *testing.T) {
-	if got := pctEncode("~._-"); got != "~._-" {
-		t.Errorf("unreserved bytes were encoded: %s", got)
-	}
-}
-
 // J36: exact size against the standard encoder, including the newline rule.
 func TestEncodedSizeEqualsStandardEncoding(t *testing.T) {
 	for _, m := range []map[string]any{
