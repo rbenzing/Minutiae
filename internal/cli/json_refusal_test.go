@@ -159,3 +159,39 @@ func TestParsePlanJSONFailureKeepsIntegrityExit4(t *testing.T) {
 		t.Errorf("exit %d, stderr %q; want 4 naming the integrity failure and the write failure", code, errb.String())
 	}
 }
+
+// TestCaseVerifyJSONNewKeysAreSafeAndRefusalKeepsExit4: the LX-5 keys (anchor, allocation_rechecked,
+// gap_notes_recomputed) are always present and go through the safe writer with the rest of the report,
+// and a refused JSON write next to a failed anchor still exits 4 with the ANCHOR line on stderr.
+func TestCaseVerifyJSONNewKeysAreSafeAndRefusalKeepsExit4(t *testing.T) {
+	old := runVerify
+	t.Cleanup(func() { runVerify = old })
+	dir := cleanVerifyCase(t)
+
+	runVerify = func(context.Context, Deps, *evidence.Case, evidence.VerifyOptions) (evidence.VerifyReport, error) {
+		return evidence.VerifyReport{Notices: []string{"note \u202e here"}}, nil
+	}
+	code, out, errs := runSplit(context.Background(), t, Deps{}, "--json", "case", "verify", "--case", dir)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+	for _, want := range []string{`"anchor": null`, `"allocation_rechecked": 0`, `"gap_notes_recomputed": 0`, `note \u202e here`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.ContainsRune(out, 0x202e) {
+		t.Errorf("stdout holds a raw bidi control: %q", out)
+	}
+
+	runVerify = func(context.Context, Deps, *evidence.Case, evidence.VerifyOptions) (evidence.VerifyReport, error) {
+		return evidence.VerifyReport{
+			Problems: []string{"anchor: bad \xff byte"},
+			Anchor:   &evidence.AnchorResult{Seq: 3, Hash: strings.Repeat("a", 64)},
+		}, nil
+	}
+	code, out, errs = runSplit(context.Background(), t, Deps{}, "--json", "case", "verify", "--case", dir)
+	if code != ExitIntegrity || out != "" || !strings.Contains(errs, "ANCHOR: FAILED") || !strings.Contains(errs, errJSONNotUTF8.Error()) {
+		t.Errorf("exit %d, stdout %q, stderr %q; want 4, no stdout, the ANCHOR line and the refusal on stderr", code, out, errs)
+	}
+}

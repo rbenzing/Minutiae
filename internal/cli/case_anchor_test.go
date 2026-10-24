@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -317,5 +318,53 @@ func TestCaseAnchorFileWriteFailureNamesEntryAndPath(t *testing.T) {
 	}
 	if countAction(auditActions(t, dir), "case.anchor") != 1 {
 		t.Fatal("the audit entry must exist: audit before the act")
+	}
+}
+
+// TestCaseAnchorJSONStdoutIsTerminalSafe: stdout of `case anchor --json` goes through the safe writer
+// (a hand-edited case id can carry a bidi control) while the FILE written by --out stays the plain
+// Marshal bytes; both decode to the same anchor.
+func TestCaseAnchorJSONStdoutIsTerminalSafe(t *testing.T) {
+	dir := cleanVerifyCase(t)
+	meta := filepath.Join(dir, "case.json")
+	b, err := os.ReadFile(meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`"id":\s*"[^"]*"`)
+	if !re.Match(b) {
+		t.Fatalf("no id in case.json: %s", b)
+	}
+	if err := os.WriteFile(meta, re.ReplaceAll(b, []byte(`"id": "C\u202eX"`)), 0o600); err != nil { //nolint:gosec // a test writes into its own temp case
+		t.Fatal(err)
+	}
+	outFile := filepath.Join(t.TempDir(), "anchor.json")
+	code, out := run(t, Deps{}, "case", "anchor", "--case", dir, "--json", "--out", outFile)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, out)
+	}
+	if strings.ContainsRune(out, 0x202e) || !strings.Contains(out, `\u202e`) {
+		t.Errorf("stdout is not escaped: %q", out)
+	}
+	file, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.ContainsRune(string(file), 0x202e) {
+		t.Errorf("the anchor file was escaped; it must be the plain Marshal bytes: %q", file)
+	}
+	a, err := evidence.ParseAnchor(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(a.Marshal(), file) {
+		t.Errorf("file is not the Marshal bytes")
+	}
+	sa, err := evidence.ParseAnchor([]byte(out))
+	if err != nil {
+		t.Fatalf("stdout is not an anchor: %v", err)
+	}
+	if sa.CaseID != a.CaseID || sa.Hash != a.Hash {
+		t.Errorf("stdout anchor %+v differs from file anchor %+v", sa, a)
 	}
 }

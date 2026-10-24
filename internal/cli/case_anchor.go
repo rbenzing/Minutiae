@@ -184,8 +184,9 @@ func newCaseAnchorCmd(d Deps, opts *rootOptions) *cobra.Command {
 				}
 			}
 			if opts.json {
-				_, err := d.Out.Write(an.Marshal())
-				return err
+				// stdout is terminal output: the safe writer (a hand-edited case id can carry a bidi control); the
+				// FILE above stays the plain Marshal bytes, which is what ParseAnchor and the signature cover
+				return writeNDJSON(d.Out, an)
 			}
 			line := fmt.Sprintf("anchor: case %s audit seq %d sha256 %s", escapeText(an.CaseID), an.Seq, an.Hash)
 			if an.Signature != nil {
