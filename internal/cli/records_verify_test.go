@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/records/recordstest"
 )
 
@@ -111,9 +112,9 @@ func TestRecordsVerifyFlagVerifiesFirst(t *testing.T) {
 		if got := countAction(acts, "verify.run"); got != before+1 {
 			t.Fatalf("%v: %d verify.run entries, want %d", args, got, before+1)
 		}
-		// the verify.run is written before the read
-		if acts[len(acts)-1] != "verify.run" && acts[len(acts)-1] != "case.open" {
-			t.Fatalf("%v: last action %q", args, acts[len(acts)-1])
+		// exact tail: this command's case.open, then the verify.run, and nothing after it (the read appends nothing)
+		if n := len(acts); n < 2 || acts[n-2] != "case.open" || acts[n-1] != "verify.run" {
+			t.Fatalf("%v: audit tail %v, want [... case.open verify.run]", args, acts[max(0, len(acts)-3):])
 		}
 	}
 }
@@ -129,16 +130,6 @@ func TestRecordsVerifyFailurePrintsNoListing(t *testing.T) {
 	}
 }
 
-func TestRecordsVerifyCancelledExits1(t *testing.T) {
-	rc := recDataset(t, false)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	code, out, errOut := runSplit(ctx, t, Deps{}, "records", "list", "--verify", "--case", rc.dir)
-	if code != ExitError || out != "" {
-		t.Fatalf("exit %d stdout %q stderr %q", code, out, errOut)
-	}
-}
-
 // withoutNotVerified drops the not-verified notice lines of a stderr capture, so a test about something else
 // still sees only the stderr it is about. Tests of the notice itself read the capture unfiltered.
 func withoutNotVerified(s string) string {
@@ -149,4 +140,24 @@ func withoutNotVerified(s string) string {
 		}
 	}
 	return strings.Join(kept, "")
+}
+
+// The cancel arrives after the case is open, while the verify runs, so the cancel-only branch of
+// recordsPreamble is the one exercised (not a failure to open).
+func TestRecordsVerifyCancelledExits1(t *testing.T) {
+	rc := recDataset(t, false)
+	orig := runVerify
+	t.Cleanup(func() { runVerify = orig })
+	runVerify = func(ctx context.Context, c *evidence.Case, p *evidence.VerifyProgress) (evidence.VerifyReport, error) {
+		cctx, cancel := context.WithCancel(ctx)
+		cancel()
+		return orig(cctx, c, p)
+	}
+	code, out, errOut := runSplit(context.Background(), t, Deps{}, "records", "list", "--verify", "--case", rc.dir)
+	if code != ExitError || out != "" || !strings.Contains(errOut, "verify cancelled") || strings.Contains(errOut, "integrity") {
+		t.Fatalf("exit %d stdout %q stderr %q", code, out, errOut)
+	}
+	if countAction(auditActions(t, rc.dir), "verify.run") != 1 {
+		t.Fatal("the cancelled verify must still be audited once")
+	}
 }
