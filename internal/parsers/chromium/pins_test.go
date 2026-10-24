@@ -6,7 +6,7 @@ package chromium_test
 // changes this file in the same commit, so a silent regeneration shows in review.
 var fixturePins = map[string]string{
 	"current-wal.db":  "7b178c7d6e0f6f02aab71406acba7fbb178d79d2cc8df8b178cf86f445a7009f",
-	"current-wal.wal": "7131067aa7cd31ad4ca1a87eecdefa2fba6b72cff03e6dd0ecfec125f9c540be",
+	"current-wal.wal": "4a5dc62d59156687c5e17dd34401d082fa8cdd178a2da92b825d9cc57fbcf0c1",
 	"current.db":      "2f7ee42a9556472a938d8ec22a97cf841b80b42996d9ffc5bbc0ae3a7e8eeb3a",
 	"mid-upgraded.db": "4f0125ce82f91fbec51a9f6ac1af7ba4a641f2969745e6e1505e4cbda4a43ca1",
 	"minimal.db":      "6bf05bc0fbb96988a60bc595281eedc367e6d508eb93d2b4cf3dde41b373bafc",

@@ -8,6 +8,8 @@ the Constants table of schemas/chromium/CROSSCHECK.md (read at generation time);
 Stored values are read back from the engine on a COPY of the finished files (C.engine_view).
 
 Choices the plan leaves to the oracle (the parser of Task 3/4 follows them):
+  * `summary` is stated only for plain ASCII of at most 80 characters (pick_summary); otherwise it is null and the
+    comparer skips it (the Go unit tests of Tasks 3/4 pin the bidi/ZWJ and over-long cases against common.SummarizeChars);
   * a search or download payload has no profile slot: the profile is `raw.profile` there (a visit has `payload.profile`);
   * a search states `time_source` only when it states a Time; a visit-less `urls` row lists its own unusable cells in
     `raw.unknown_columns`, a visit lists the joined ones in `raw.joined_unknown_columns` as "urls.<col>";
@@ -29,7 +31,6 @@ Not modelled (the scenario never reaches them): a URL over 2 MiB, a chain over 1
 import datetime
 import os
 import re
-import unicodedata
 
 import telephony_common as C
 
@@ -136,40 +137,18 @@ def is_text(v):
     return isinstance(v, bytes) and not isinstance(v, C.Blob)
 
 
-# The runes Go's unicode.IsSpace accepts; Python's str.isspace differs.
-GO_SPACE = "".join(chr(c) for c in [9, 10, 11, 12, 13, 32, 0x85, 0xA0, 0x1680, *range(0x2000, 0x200B), 0x2028, 0x2029, 0x202F, 0x205F, 0x3000])
+def plain(s):
+    """Plain ASCII of at most 80 characters, one line, no repeated or edge spaces: the only text whose summary the
+    oracle states (SummarizeChars leaves it as it is). Any other text gets no stated summary (the comparer skips it)."""
+    return 0 < len(s) <= 80 and s.isascii() and s.isprintable() and "  " not in s and s == s.strip(" ")
 
 
-def summarize(s, limit=80):
-    """common.SummarizeChars restated: whitespace and controls collapse to one space, format characters are shown
-    as <U+XXXX>, more than limit characters end in '...'."""
-    units, cost, cut = [], 0, 0
-    pending, over = False, False
-
-    def add(unit):
-        nonlocal cost, cut
-        units.append(unit)
-        cost += len(unit)
-        if cost <= limit - 3:
-            cut = len(units)
-        return cost > limit
-
-    for ch in s:
-        if ch in GO_SPACE or unicodedata.category(ch) == "Cc":
-            pending = len(units) > 0
-            continue
-        if pending:
-            pending = False
-            if add(" "):
-                over = True
-                break
-        unit = "<U+%04X>" % ord(ch) if unicodedata.category(ch) == "Cf" else ch
-        if add(unit):
-            over = True
-            break
-    if not over:
-        return "".join(units)
-    return "".join(units[:cut]).rstrip(" ") + "..."
+def pick_summary(*candidates):
+    """The summary source is the first non-empty candidate; it is stated only when it is plain."""
+    for c in candidates:
+        if c:
+            return c if plain(c) else None
+    return None
 
 
 def cut_text(s, limit):
@@ -399,7 +378,7 @@ def expect_visit(ctx, v, u, file):
         raw["joined_unknown_columns"] = joined
     body = body_of(raw, url, title)
     p["raw"] = raw
-    return record(ctx, "visits", v["rowid"], file, "web_visit", t, {}, summarize(title) or summarize(url), body, p)
+    return record(ctx, "visits", v["rowid"], file, "web_visit", t, {}, pick_summary(title, url), body, p)
 
 
 def expect_url(ctx, u, file):
@@ -422,7 +401,7 @@ def expect_url(ctx, u, file):
         raw["unknown_columns"] = unknown
     body = body_of(raw, url, title)
     p["raw"] = raw
-    return record(ctx, "urls", u["rowid"], file, "web_visit", t, {}, summarize(title) or summarize(url), body, p)
+    return record(ctx, "urls", u["rowid"], file, "web_visit", t, {}, pick_summary(title, url), body, p)
 
 
 # ---------------------------------------------------------------- searches
@@ -461,7 +440,7 @@ def expect_search(ctx, s, urls, file):
     if unknown:
         raw["unknown_columns"] = unknown
     p["raw"] = raw
-    return record(ctx, "keyword_search_terms", s["rowid"], file, "web_search", t, {}, summarize(term) or summarize(p.get("normalized_term", "")), term, p)
+    return record(ctx, "keyword_search_terms", s["rowid"], file, "web_search", t, {}, pick_summary(term, p.get("normalized_term", "")), term, p)
 
 
 # ---------------------------------------------------------------- downloads
@@ -577,12 +556,7 @@ def expect_download(ctx, d, chains, file):
         raw["body_total_bytes"] = len("\n".join(parts).encode("utf-8"))
     body = "\n".join(capped)
     p["raw"] = raw
-    name = ""
-    for path in (p.get("target_path", ""), p.get("current_path", "")):
-        name = summarize(re.split(r"[/\\]", path)[-1])
-        if name:
-            break
-    return record(ctx, "downloads", d["rowid"], file, "download", t, times, name or summarize(p.get("url", "")), body, p)
+    return record(ctx, "downloads", d["rowid"], file, "download", t, times, pick_summary(*[re.split(r"[/\\]", p.get(k, ""))[-1] for k in ("target_path", "current_path")], p.get("url", "")), body, p)
 
 
 # ---------------------------------------------------------------- the oracle

@@ -51,6 +51,8 @@ func TestOracleStatesBrowserFromThePath(t *testing.T) {
 			got := r.Payload["profile"]
 			if r.Type != "web_visit" {
 				got = raw["profile"]
+			} else if _, dup := raw["profile"]; dup {
+				t.Errorf("%s %s rowid %d: a visit states raw.profile as well as payload.profile", v, r.Table, r.Rowid)
 			}
 			if got != profile[v] {
 				t.Errorf("%s %s rowid %d: profile %v, want %s", v, r.Table, r.Rowid, got, profile[v])
