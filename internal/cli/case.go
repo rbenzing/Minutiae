@@ -22,7 +22,8 @@ func openCase(path string) (*evidence.Case, error) {
 
 func newCaseCmd(d Deps, opts *rootOptions) *cobra.Command {
 	cmd := newGroupCmd("case", "Create, inspect, upgrade and verify cases")
-	cmd.AddCommand(newCaseNewCmd(d, opts), newCaseInfoCmd(d, opts), newCaseVerifyCmd(d, opts), newCaseUpgradeCmd(d, opts))
+	cmd.AddCommand(newCaseNewCmd(d, opts), newCaseInfoCmd(d, opts), newCaseVerifyCmd(d, opts), newCaseUpgradeCmd(d, opts),
+		newCaseAnchorCmd(d, opts), newCaseAnchorKeygenCmd(d, opts))
 	return cmd
 }
 
@@ -146,11 +147,16 @@ func newCaseInfoCmd(d Deps, opts *rootOptions) *cobra.Command {
 
 func newCaseVerifyCmd(d Deps, opts *rootOptions) *cobra.Command {
 	var path string
+	var af anchorFlags
 	cmd := &cobra.Command{
 		Use:   "verify",
 		Short: "Re-hash all artifacts and check the audit chain",
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			vo, err := af.options()
+			if err != nil {
+				return err
+			}
 			c, err := openCase(path)
 			if err != nil {
 				// a case that does not open for an integrity reason (a corrupt audit log) is the integrity failure the
@@ -173,7 +179,7 @@ func newCaseVerifyCmd(d Deps, opts *rootOptions) *cobra.Command {
 				stopDraw := startStatus(d.Err, prog, ticker.C, time.Now, cmd.Context().Done(), consoleUTF8(), statusWidth(d))
 				stopStatus = sync.OnceFunc(func() { stopDraw(); ticker.Stop() })
 			}
-			rep, err := runVerify(cmd.Context(), d, c, prog)
+			rep, err := runVerify(cmd.Context(), d, c, vo.with(prog))
 			stopStatus() // the line is cleared before anything reaches stdout
 			if err != nil {
 				if line, ok := outcomeLine(rep, err); ok && prog != nil {
@@ -192,6 +198,7 @@ func newCaseVerifyCmd(d Deps, opts *rootOptions) *cobra.Command {
 				for _, p := range rep.Problems {
 					fmt.Fprintln(d.Out, "PROBLEM:", escapeText(p))
 				}
+				printAnchorLine(d.Out, rep.Anchor)
 				status := "OK"
 				if !rep.OK() {
 					status = "FAILED"
@@ -213,12 +220,14 @@ func newCaseVerifyCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return nil
 		},
 	}
+	af.register(cmd)
 	cmd.Flags().StringVar(&path, "case", "", "case directory")
 	_ = cmd.MarkFlagRequired("case")
 	return cmd
 }
 
 // runVerify is the verify call of `case verify` (a variable so a test can make it fail).
-var runVerify = func(ctx context.Context, d Deps, c *evidence.Case, p *evidence.VerifyProgress) (evidence.VerifyReport, error) {
-	return c.VerifyObserved(ctx, p, examine.VerifyChecks(examine.Options{Drivers: d.FSDrivers})...)
+var runVerify = func(ctx context.Context, d Deps, c *evidence.Case, o evidence.VerifyOptions) (evidence.VerifyReport, error) {
+	o.Checks = examine.VerifyChecks(examine.Options{Drivers: d.FSDrivers}) // the caller cannot pass fewer
+	return c.VerifyWithOptions(ctx, o)
 }

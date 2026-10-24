@@ -224,34 +224,47 @@ func (c *Case) anchorBatchRule(rep *VerifyReport, rows []storedBatch, audit *rec
 
 // pathInCase reports whether p lies inside the case directory (symlinks resolved where they exist).
 func (c *Case) pathInCase(p string) bool {
-	return pathInside(c.Dir, p)
+	in, err := PathInside(c.Dir, p)
+	return err == nil && in
 }
 
-func pathInside(dir, p string) bool {
-	d, err := filepath.Abs(dir)
+// PathInside reports whether p lies inside dir (or is dir). Both are made absolute and the symlinks of
+// their longest existing prefix are resolved, so a symlinked parent or a not yet existing file cannot hide
+// a path inside the directory. It is the one implementation behind the anchor commands and the verify notice.
+func PathInside(dir, p string) (bool, error) {
+	d, err := resolvedPath(dir)
 	if err != nil {
-		return false
+		return false, err
 	}
-	if r, err := filepath.EvalSymlinks(d); err == nil {
-		d = r
-	}
-	q, err := resolvedAbs(p)
+	q, err := resolvedPath(p)
 	if err != nil {
-		return false
+		return false, err
 	}
 	rel, err := filepath.Rel(d, q)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+	if err != nil {
+		return false, nil //nolint:nilerr // different volumes: not inside
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel), nil
 }
 
-// resolvedAbs is the absolute form of p with the symlinks of its existing parent resolved.
-func resolvedAbs(p string) (string, error) {
+// resolvedPath is the absolute, lexically clean form of p with the symlinks of its longest existing
+// prefix resolved.
+func resolvedPath(p string) (string, error) {
 	abs, err := filepath.Abs(p)
 	if err != nil {
 		return "", err
 	}
-	parent, base := filepath.Split(abs)
-	if r, err := filepath.EvalSymlinks(parent); err == nil {
-		parent = r
+	rest := ""
+	cur := abs
+	for {
+		if r, err := filepath.EvalSymlinks(cur); err == nil {
+			return filepath.Join(r, rest), nil
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return abs, nil
+		}
+		rest = filepath.Join(filepath.Base(cur), rest)
+		cur = parent
 	}
-	return filepath.Join(parent, base), nil
 }

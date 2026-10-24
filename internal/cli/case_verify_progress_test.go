@@ -206,7 +206,7 @@ func TestCaseVerifyOpenErrorHasNoOutcomeLine(t *testing.T) {
 
 func TestCaseVerifyOtherErrorKeepsTodaysOutputAndClearsTheLine(t *testing.T) {
 	old := runVerify
-	runVerify = func(context.Context, Deps, *evidence.Case, *evidence.VerifyProgress) (evidence.VerifyReport, error) {
+	runVerify = func(context.Context, Deps, *evidence.Case, evidence.VerifyOptions) (evidence.VerifyReport, error) {
 		return evidence.VerifyReport{}, errors.New("boom")
 	}
 	t.Cleanup(func() { runVerify = old })
