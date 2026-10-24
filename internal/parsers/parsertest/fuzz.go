@@ -29,21 +29,29 @@ func HostileOK(err error) bool {
 }
 
 // FuzzParse runs p's Probe and Parse over a bundle made of the given bytes (wal and
-// journal are attached when non-empty) under the lenient harness emitter. It fails the
-// test on a record the writer refused or any other broken contract rule
-// (Result.Violations) and on an error that is not a typed hostile-input error; a panic
-// of the parser propagates and fails the fuzz target.
+// journal are attached when non-empty) as Android artifacts, under the lenient harness
+// emitter. It fails the test on a record the writer refused or any other broken contract
+// rule (Result.Violations) and on an error that is not a typed hostile-input error; a
+// panic of the parser propagates and fails the fuzz target.
 func FuzzParse(t *testing.T, p parse.Parser, remotePath string, db, wal, journal []byte) {
 	t.Helper()
+	FuzzParseBundle(t, p, func(h *Harness) Bundle { return fuzzFixture(db, wal, journal).Bundle(h, remotePath) })
+}
+
+// FuzzParseIOS is FuzzParse over iOS artifacts (BundleIOS): the strict platform check refuses
+// a record of an iOS parser whose artifact is an Android one, so an iOS parser is fuzzed
+// through this entry point (4F-R25).
+func FuzzParseIOS(t *testing.T, p parse.Parser, remotePath, logical string, db, wal, journal []byte) {
+	t.Helper()
+	FuzzParseBundle(t, p, func(h *Harness) Bundle { return fuzzFixture(db, wal, journal).BundleIOS(h, remotePath, logical) })
+}
+
+// FuzzParseBundle is the body of FuzzParse with the bundle supplied by build, which is called
+// with the harness of the run.
+func FuzzParseBundle(t *testing.T, p parse.Parser, build func(h *Harness) Bundle) {
+	t.Helper()
 	h := NewHarness(t)
-	fx := Fixture{Name: "fuzz", Files: map[string][]byte{"db": db}}
-	if len(wal) > 0 {
-		fx.Files["wal"] = wal
-	}
-	if len(journal) > 0 {
-		fx.Files["journal"] = journal
-	}
-	b := fx.Bundle(h, remotePath)
+	b := build(h)
 	if _, err := p.Probe(t.Context(), b.Input(h, p, true)); err != nil && !HostileOK(err) {
 		t.Fatalf("Probe returned %v", err)
 	}
@@ -54,4 +62,15 @@ func FuzzParse(t *testing.T, p parse.Parser, remotePath string, db, wal, journal
 	if len(res.Violations) != 0 {
 		t.Fatalf("contract violations: %v", res.Violations)
 	}
+}
+
+func fuzzFixture(db, wal, journal []byte) Fixture {
+	fx := Fixture{Name: "fuzz", Files: map[string][]byte{"db": db}}
+	if len(wal) > 0 {
+		fx.Files["wal"] = wal
+	}
+	if len(journal) > 0 {
+		fx.Files["journal"] = journal
+	}
+	return fx
 }
