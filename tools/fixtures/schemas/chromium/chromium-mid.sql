@@ -2,6 +2,7 @@
 -- source chromium 154.0.8037.100 url_database.cc:751, visit_database.cc:1568, visit_database.cc:1583, url_database.cc:487, download_database.cc:322, download_database.cc:364, meta_table.cc:154
 -- meta.version 48,49
 -- Phase 1 stands for meta.version 48, phase 2 for 49 (the opener_visit migration). Statements are migration-code evidence (see CROSSCHECK.md).
+-- Phase 1 combines the visits_tmp shape with the tag's current downloads text; it matches no real file (see CROSSCHECK.md).
 -- @phase 1
 -- url_database.cc:751
 CREATE TABLE urls(id INTEGER PRIMARY KEY AUTOINCREMENT,url LONGVARCHAR,title LONGVARCHAR,visit_count INTEGER DEFAULT 0 NOT NULL,typed_count INTEGER DEFAULT 0 NOT NULL,last_visit_time INTEGER NOT NULL,hidden INTEGER DEFAULT 0 NOT NULL);

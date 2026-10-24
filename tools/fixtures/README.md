@@ -1480,9 +1480,10 @@ by role, and each header carries `-- verdict`, `-- source chromium <tag> <file>:
   `downloads`, `downloads_url_chains`, `meta` and `visit_source` (never read by the parsers), each equal to one CREATE
   TABLE statement of the sources.
 - `chromium-minimal.sql`: `verified`, version 70: the current `urls`, `visits`, `meta` only.
-- `chromium-mid.sql`: `historical`, `-- @phase 1` = versions 48 (the `visits` table as the migration builds it before
+- `chromium-mid.sql`: `historical`, `-- @phase 1` = the label for version 48 (the `visits` table as the migration builds it before
   adding `opener_visit`), `-- @phase 2` = the ALTER that migration runs (version 49). Statements are source text of
-  migration code under a temporary table name; deviations are in the notes of CROSSCHECK.md.
+  migration code under a temporary table name; phase 1 combines the `visits_tmp` shape with the tag's current downloads
+  text and matches no real file (never a real version 48 database); deviations are in the notes of CROSSCHECK.md.
 - `chromium-old.sql`: `historical`, `-- @phase 1` alone, without the downloads tables (a synthetic omission, stated in
   the notes).
 
@@ -1492,6 +1493,34 @@ migration-code text and describes an older shape. The Constants table of CROSSCH
 and qualifier masks, the history database integers of download state, danger type and interrupt reason (the history
 database stores plain casts of its own enums, which differ from the in-memory danger enum at 18, 24 and 25), the
 history version numbers and the migration that adds `visits.opener_visit` (48 to 49).
+
+## Browser fixtures (plan 4F)
+
+`tools/fixtures/browser_chromium.py` is a family module of `telephony_gen.py` (same driver, same shared helpers, host
+Python `sqlite3` only, no Docker):
+
+```
+py -3 tools/fixtures/telephony_gen.py --family chromium --out internal/parsers/chromium/testdata \
+    --pins-go internal/parsers/chromium/pins_test.go --pins-package chromium_test
+```
+
+The oracle restates the plan's Chromium mapping rules in Python, takes the transition, download state, danger and
+interrupt names from the Constants table of `schemas/chromium/CROSSCHECK.md` at generation time, and reads every stored
+value back from the engine on a copy of the finished files. Databases are byte-reproducible; the `-wal` of
+`current-wal` holds salts that differ on every run. The synthetic scenario rows are literal in the module.
+
+| Variant (`internal/parsers/chromium/testdata/`) | DDL snapshot | Remote path (browser, profile) | Holds |
+|---|---|---|---|
+| `current` | `chromium-current.sql` | `/data/data/com.android.chrome/app_chrome/Default/History` (chrome, Default) | 11 `urls` (visitless, sentinel time, 100 KiB data URL, invalid UTF-8 and NUL, empty and missing titles, bidi and ZWJ, empty url, wrong storage class, `hidden` 2), 22 `visits` (typed with qualifiers, negative server-redirect transition, invalid and sentinel times, unknown core, out-of-range transition, dangling and empty-url visits, synced, durations, TEXT time, opener, external referrer, unknown qualifier bits), 5 `keyword_search_terms`, 8 `downloads` with `downloads_url_chains` (out-of-order, gaps, no chain, no target and no chain, unknown state and danger, obsolete interrupt 32, 5000-byte path) and `meta` |
+| `current-wal` | `chromium-current.sql` | as `current` | the `current` rows, then a killed writer commits 3 visits and 1 download that exist only in the `-wal` and edits the title of URL 1 there |
+| `mid-upgraded` | `chromium-mid.sql` | `/data/data/com.microsoft.emmx/app_chrome/Default/History` (edge, Default) | rows before and after the phase 2 `ALTER` (`opener_visit` absent on the old visits); phase 1 matches no real file and the variant is synthetic data, not a real version 48 or 49 database |
+| `old` | `chromium-old.sql` | `/data/user/10/com.brave.browser/app_chrome/Profile 1/History` (brave, Profile 1) | synthetic: no `downloads` tables |
+| `minimal` | `chromium-minimal.sql` | `/data/data/com.example.reader/app_webview/Default/History` (webview, Default) | `urls`, `visits`, `meta` only |
+
+Facts of the scenario: `downloads_url_chains` has `PRIMARY KEY (id, chain_index)`, so no conforming file holds a repeated
+chain index (the oracle states `duplicate-index` for a hostile file; Go tests build one in memory). The oracle chooses
+(and the parser of Tasks 3 and 4 follows) the raw vocabulary and the schema-note column order listed in the module
+docstring.
 
 ## Telephony fixtures (plan 4D)
 
