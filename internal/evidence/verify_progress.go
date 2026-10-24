@@ -162,3 +162,9 @@ func (c *Case) countedPhase(name string, total int64, unit string) (done func(),
 			p.seq.Add(1)
 		}
 }
+
+// VerifyPhase starts a counted phase "checks/<name>" for a composed check of the verify running now; it
+// only feeds the progress observer and the phase hook (no-ops without them) and cannot change a check.
+func (c *Case) VerifyPhase(name string, total int64, unit string) (done func(), add func(n int64)) {
+	return c.countedPhase("checks/"+name, total, unit)
+}

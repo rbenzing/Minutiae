@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"slices"
 	"sort"
 	"strings"
@@ -33,7 +34,7 @@ func RecoveredCheck() evidence.VerifyCheck { return VerifyRecovered }
 // problems, never aborts; nothing is written to the case. A cancelled ctx stops it at the next chunk.
 func VerifyRecovered(ctx context.Context, c *evidence.Case, recs []evidence.ManifestRecord, rep *evidence.VerifyReport) {
 	rep.MarkReproduceRan()
-	r := &reproducer{ctx: ctx, c: c, rep: rep, ix: evidence.NewManifestIndex(recs), byID: make(map[string]evidence.ManifestRecord, len(recs))}
+	r := &reproducer{ctx: ctx, c: c, rep: rep, ix: evidence.NewManifestIndex(recs), byID: make(map[string]evidence.ManifestRecord, len(recs)), add: func(int64) {}, workers: reproduceWorkers()}
 	type groupKey struct {
 		parent   string
 		artifact bool // a carve of scope "artifact": the parent is read as one raw artifact
@@ -45,6 +46,7 @@ func VerifyRecovered(ctx context.Context, c *evidence.Case, recs []evidence.Mani
 		}
 		r.byID[rec.ID] = rec
 	}
+	var total int64
 	for _, rec := range r.byID {
 		d := rec.Source.Derived
 		if d == nil || (rec.Source.Kind != evidence.KindRecover && rec.Source.Kind != evidence.KindCarve) {
@@ -52,7 +54,11 @@ func VerifyRecovered(ctx context.Context, c *evidence.Case, recs []evidence.Mani
 		}
 		k := groupKey{d.ParentID, rec.Source.Kind == evidence.KindCarve && d.Recovery != nil && d.Recovery.Scope == "artifact"}
 		groups[k] = append(groups[k], rec)
+		total = addProgressTotal(total, rec.Size)
 	}
+	done, add := c.VerifyPhase("reproduce", total, "bytes")
+	defer done()
+	r.add = add
 	keys := make([]groupKey, 0, len(groups))
 	for k := range groups {
 		keys = append(keys, k)
@@ -65,12 +71,17 @@ func VerifyRecovered(ctx context.Context, c *evidence.Case, recs []evidence.Mani
 	})
 	for _, k := range keys {
 		if ctx.Err() != nil {
-			return
+			break
 		}
 		g := groups[k]
-		slices.SortFunc(g, func(a, b evidence.ManifestRecord) int { return strings.Compare(a.Path, b.Path) })
+		slices.SortFunc(g, func(a, b evidence.ManifestRecord) int {
+			if c := strings.Compare(a.Path, b.Path); c != 0 {
+				return c
+			}
+			return strings.Compare(a.ID, b.ID)
+		})
 		if !r.group(k.parent, k.artifact, g) {
-			return
+			break // the findings made so far, and the count beyond the cap, are still reported
 		}
 	}
 	if r.dropped > 0 {
@@ -84,17 +95,26 @@ type reproducer struct {
 	rep     *evidence.VerifyReport
 	ix      *evidence.ManifestIndex // the manifest indexed once (C58)
 	byID    map[string]evidence.ManifestRecord
+	add     func(n int64) // the byte counter of the progress phase
+	workers int
 	listed  int
 	dropped int
 }
 
-func (r *reproducer) problem(rec evidence.ManifestRecord, format string, a ...any) {
+// text is the formatted problem of one artifact.
+func (r *reproducer) text(rec evidence.ManifestRecord, format string, a ...any) string {
+	return fmt.Sprintf("reproduce: %s (artifact %q, %q)", fmt.Sprintf(format, a...), rec.ID, rec.Path)
+}
+
+// problem lists a formatted problem, or counts it beyond the cap. Only the merging goroutine calls it, in the
+// serial order of the artifacts, so the cap falls on the same problems whatever the number of workers.
+func (r *reproducer) problem(text string) {
 	if r.listed >= reproduceMaxProblems {
 		r.dropped++
 		return
 	}
 	r.listed++
-	r.rep.AddProblem("reproduce: %s (artifact %q, %q)", fmt.Sprintf(format, a...), rec.ID, rec.Path)
+	r.rep.AddProblem("%s", text)
 }
 
 // group reproduces the artifacts derived from one parent, opening the parent once. It returns false when
@@ -108,7 +128,7 @@ func (r *reproducer) group(parentID string, asArtifact bool, recs []evidence.Man
 	if asArtifact {
 		f, prec, err := r.c.OpenArtifactIn(r.ix, parentID)
 		if err != nil {
-			r.problem(recs[0], "parent %q cannot be opened: %v (%d artifact(s) not checked)", parentID, err, len(recs))
+			r.problem(r.text(recs[0], "parent %q cannot be opened: %v (%d artifact(s) not checked)", parentID, err, len(recs)))
 			return true
 		}
 		defer func() { _ = f.Close() }()
@@ -116,37 +136,66 @@ func (r *reproducer) group(parentID string, asArtifact bool, recs []evidence.Man
 	} else {
 		s, err := OpenContainer(r.c, parentID, Options{})
 		if err != nil {
-			r.problem(recs[0], "parent %q cannot be opened: %v (%d artifact(s) not checked)", parentID, err, len(recs))
+			r.problem(r.text(recs[0], "parent %q cannot be opened: %v (%d artifact(s) not checked)", parentID, err, len(recs)))
 			return true
 		}
 		defer func() { _ = s.Close() }()
 		rd, size, wantSegs = s.Image, s.Image.Size(), s.ParentSegments()
 	}
-	for _, rec := range recs {
-		if r.ctx.Err() != nil {
-			return false
+	// io.ReaderAt permits parallel ReadAt; each artifact opens its own file and has its own buffers
+	results := reproducePool(r.ctx, r.workers, recs, func(rec evidence.ManifestRecord) reproduceResult {
+		return r.safeOne(rec, rd, size, wantSegs)
+	})
+	// merge in the serial order; every finished result is kept, whatever the context did meanwhile
+	ended := false
+	for _, res := range results {
+		if !res.done {
+			ended = true
+			continue
 		}
-		if !r.one(rec, rd, size, wantSegs) {
-			return false
+		for _, p := range res.problems {
+			r.problem(p)
+		}
+		if res.reproduced {
+			r.rep.RecoveredReproduced++
 		}
 	}
-	return true
+	return !ended
 }
 
-// one reproduces one artifact; false means the context ended.
-func (r *reproducer) one(rec evidence.ManifestRecord, rd io.ReaderAt, size int64, wantSegs []evidence.SegmentRef) bool {
+// safeOne is one with a panic turned into that artifact's problem, naming the artifact.
+func (r *reproducer) safeOne(rec evidence.ManifestRecord, rd io.ReaderAt, size int64, wantSegs []evidence.SegmentRef) (res reproduceResult) {
+	defer func() {
+		if p := recover(); p != nil {
+			res = reproduceResult{problems: []string{r.text(rec, "check panicked: %v", p)}, done: true}
+		}
+	}()
+	return r.one(rec, rd, size, wantSegs)
+}
+
+// one reproduces one artifact. It reads shared state only (the parent reader, the manifest index) and never
+// writes the report; done is false when the context ended.
+func (r *reproducer) one(rec evidence.ManifestRecord, rd io.ReaderAt, size int64, wantSegs []evidence.SegmentRef) reproduceResult {
+	if reproduceOneHook != nil {
+		reproduceOneHook(rec.ID)
+	}
+	var res reproduceResult
+	problem := func(format string, a ...any) reproduceResult {
+		res.problems = append(res.problems, r.text(rec, format, a...))
+		res.done = true
+		return res
+	}
+	finish := func() reproduceResult { res.done = true; return res }
 	d := rec.Source.Derived
 	if !slices.Equal(d.ParentSegments, wantSegs) {
-		r.problem(rec, "parent segments differ: the artifact records %d, the opened parent has %d", len(d.ParentSegments), len(wantSegs))
-		return true
+		return problem("parent segments differ: the artifact records %d, the opened parent has %d", len(d.ParentSegments), len(wantSegs))
 	}
 	runs, err := r.c.DerivedRuns(rec, r.byID)
 	if err != nil {
-		r.problem(rec, "runs unreadable: %v", err)
-		return true
+		return problem("runs unreadable: %v", err)
 	}
 	if len(runs) > evidence.MaxRecoveredRuns {
-		return true // too many runs: reported by the runs check
+		return finish() // too many runs: reported by the runs check
 	}
 	invalid := false
 	outside := false
@@ -156,19 +205,18 @@ func (r *reproducer) one(rec evidence.ManifestRecord, rd io.ReaderAt, size int64
 			invalid = true // holes, empty and negative runs are reported by the runs check
 		case run.Offset > size || run.Length > size-run.Offset:
 			outside = true
-			r.problem(rec, "run %d (%d+%d) lies outside the %d-byte parent image", i, run.Offset, run.Length, size)
+			res.problems = append(res.problems, r.text(rec, "run %d (%d+%d) lies outside the %d-byte parent image", i, run.Offset, run.Length, size))
 		}
 	}
 	if invalid || outside {
-		return true
+		return finish()
 	}
 	if len(runs) == 0 && rec.Size > 0 {
-		return true // "records no runs" is reported by the runs check
+		return finish() // "records no runs" is reported by the runs check
 	}
 	f, arec, err := r.c.OpenArtifactIn(r.ix, rec.ID)
 	if err != nil {
-		r.problem(rec, "the artifact cannot be opened: %v", err)
-		return true
+		return problem("the artifact cannot be opened: %v", err)
 	}
 	defer func() { _ = f.Close() }()
 	remaining := arec.Size
@@ -178,35 +226,31 @@ func (r *reproducer) one(rec evidence.ManifestRecord, rd io.ReaderAt, size int64
 	for _, run := range runs {
 		for off := int64(0); off < run.Length && remaining > 0; {
 			if r.ctx.Err() != nil {
-				return false
+				return reproduceResult{} // done false: the context ended during this artifact
 			}
 			n := int(min(int64(len(ibuf)), run.Length-off, remaining))
 			at := run.Offset + off
 			if got, err := readFull(rd, ibuf[:n], at); err != nil {
-				r.problem(rec, "parent image unreadable at offset %d: %v", at+int64(got), err)
-				return true
+				return problem("parent image unreadable at offset %d: %v", at+int64(got), err)
 			}
 			if got, err := readFull(f, abuf[:n], pos); err != nil {
-				r.problem(rec, "the artifact is unreadable at byte %d: %v", pos+int64(got), err)
-				return true
+				return problem("the artifact is unreadable at byte %d: %v", pos+int64(got), err)
 			}
 			if !bytes.Equal(ibuf[:n], abuf[:n]) {
 				i := 0
 				for ibuf[i] == abuf[i] {
 					i++
 				}
-				r.problem(rec, "byte %d of the artifact differs from image offset %d", pos+int64(i), at+int64(i))
-				return true
+				return problem("byte %d of the artifact differs from image offset %d", pos+int64(i), at+int64(i))
 			}
+			r.add(int64(n))
 			pos += int64(n)
 			off += int64(n)
 			remaining -= int64(n)
 		}
 	}
-	if remaining == 0 {
-		r.rep.RecoveredReproduced++
-	}
-	return true
+	res.reproduced = remaining == 0
+	return finish()
 }
 
 // readFull fills p from rd at off. It returns the bytes read and an error unless p is full (an io.EOF that
@@ -223,4 +267,19 @@ func readFull(rd io.ReaderAt, p []byte, off int64) (int, error) {
 		err = io.ErrUnexpectedEOF
 	}
 	return n, err
+}
+
+// reproduceWorkersOverride and reproduceOneHook are test seams.
+var (
+	reproduceWorkersOverride int
+	reproduceOneHook         func(id string)
+)
+
+// addProgressTotal adds n to a progress total with the rule of evidence's addTotal: a negative term or an
+// overflow makes the total unknown (-1), and it stays so.
+func addProgressTotal(total, n int64) int64 {
+	if total < 0 || n < 0 || total > math.MaxInt64-n {
+		return -1
+	}
+	return total + n
 }

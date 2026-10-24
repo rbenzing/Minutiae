@@ -173,7 +173,7 @@ func newCaseVerifyCmd(d Deps, opts *rootOptions) *cobra.Command {
 				stopDraw := startStatus(d.Err, prog, ticker.C, time.Now, cmd.Context().Done(), consoleUTF8(), statusWidth(d))
 				stopStatus = sync.OnceFunc(func() { stopDraw(); ticker.Stop() })
 			}
-			rep, err := runVerify(cmd.Context(), c, prog)
+			rep, err := runVerify(cmd.Context(), d, c, prog)
 			stopStatus() // the line is cleared before anything reaches stdout
 			if err != nil {
 				if line, ok := outcomeLine(rep, err); ok && prog != nil {
@@ -219,6 +219,6 @@ func newCaseVerifyCmd(d Deps, opts *rootOptions) *cobra.Command {
 }
 
 // runVerify is the verify call of `case verify` (a variable so a test can make it fail).
-var runVerify = func(ctx context.Context, c *evidence.Case, p *evidence.VerifyProgress) (evidence.VerifyReport, error) {
-	return c.VerifyObserved(ctx, p, examine.RecoveredCheck())
+var runVerify = func(ctx context.Context, d Deps, c *evidence.Case, p *evidence.VerifyProgress) (evidence.VerifyReport, error) {
+	return c.VerifyObserved(ctx, p, examine.VerifyChecks(examine.Options{Drivers: d.FSDrivers})...)
 }
