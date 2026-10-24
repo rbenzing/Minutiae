@@ -48,6 +48,9 @@ func TestRecordsSearchScanFindsAnEmoji(t *testing.T) {
 	if !strings.Contains(errOut, "note: --scan read 3 records (stored text, no index)\n") {
 		t.Fatalf("stderr note: %q", errOut)
 	}
+	if strings.Contains(out, "note:") {
+		t.Fatalf("stdout carries the note: %q", out)
+	}
 }
 
 func TestRecordsSearchScanJSON(t *testing.T) {
@@ -75,12 +78,41 @@ func TestRecordsSearchShortSubstringNamesScan(t *testing.T) {
 	if code != ExitUsage || strings.Contains(out, "--scan") {
 		t.Fatalf("short prefix: %d %s", code, out)
 	}
+	// the other M12 refusal: a term with no letter or digit
+	code, out = run(t, Deps{}, "records", "search", "--case", dir, "!!!")
+	if code != ExitUsage || !strings.Contains(out, "--substring --scan") {
+		t.Fatalf("symbol-only term: %d %s", code, out)
+	}
+	// refusals the scan cannot serve either carry no hint
+	code, out = run(t, Deps{}, "records", "search", "--case", dir, strings.Repeat("a", records.MaxTermBytes+1))
+	if code != ExitUsage || strings.Contains(out, "--scan") {
+		t.Fatalf("long term: %d %s", code, out)
+	}
+	code, out = run(t, Deps{}, "records", "search", "--case", dir, strings.TrimSpace(strings.Repeat("ab ", records.MaxQueryBytes/3+1)))
+	if code != ExitUsage || strings.Contains(out, "--scan") {
+		t.Fatalf("long query: %d %s", code, out)
+	}
 }
 
 func TestRecordsSearchScanWithRankIsUsageError(t *testing.T) {
 	dir := scanDataset(t, "a", "b", "c")
-	if code, out := run(t, Deps{}, "records", "search", "--case", dir, "--scan", "--rank", "a"); code != ExitUsage {
+	code, out := run(t, Deps{}, "records", "search", "--case", dir, "--scan", "--rank", "a")
+	if code != ExitUsage || !strings.Contains(out, "--rank cannot be combined with --scan") {
 		t.Fatalf("--scan --rank: %d %s", code, out)
+	}
+	code, out = run(t, Deps{}, "records", "search", "--case", dir, "--substring", "--rank", "abc")
+	if code != ExitUsage || !strings.Contains(out, "--rank cannot be combined with --substring") || strings.Contains(out, "--scan") {
+		t.Fatalf("--substring --rank: %d %s", code, out)
+	}
+}
+
+// TestRecordsSearchScanOverCapBodyExitsFour: a stored body above the ingest cap is an integrity error.
+func TestRecordsSearchScanOverCapBodyExitsFour(t *testing.T) {
+	dir := scanDataset(t, "one", "two", "three")
+	recordstest.SetRecordColumn(t, dir, 2, "body", strings.Repeat("a", 4<<20+1))
+	code, out := run(t, Deps{}, "records", "search", "--case", dir, "--scan", "zzz")
+	if code != ExitIntegrity || !strings.Contains(out, "record 2") {
+		t.Fatalf("over-cap body: %d %s", code, out)
 	}
 }
 
