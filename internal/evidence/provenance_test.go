@@ -54,11 +54,11 @@ func TestMaxDerivedDepthEqualsVerifyDepth(t *testing.T) {
 		t.Fatalf("MaxDerivedDepth = %d", MaxDerivedDepth)
 	}
 	by, root := chain(MaxDerivedDepth)
-	if p := derivedChainProblem(by, root); p != "" {
-		t.Errorf("%d links: %s", MaxDerivedDepth, p)
+	if r := derivedChainWalk(by, root); r.TooDeep || r.Cycle != nil {
+		t.Errorf("%d links: %+v", MaxDerivedDepth, r)
 	}
 	by, root = chain(MaxDerivedDepth + 1)
-	if p := derivedChainProblem(by, root); p == "" {
+	if !derivedChainWalk(by, root).TooDeep {
 		t.Errorf("%d links: no problem", MaxDerivedDepth+1)
 	}
 }

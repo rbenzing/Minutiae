@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strings"
 )
 
 // VerifyReport is the outcome of Case.Verify.
@@ -350,6 +351,7 @@ func (c *Case) checkDerived(rep *VerifyReport, recs []ManifestRecord) {
 		}
 	}
 	chainProblems := 0
+	cycles := map[string]*cycleGroup{}
 	for _, r := range recs {
 		d := r.Source.Derived
 		if d == nil {
@@ -378,12 +380,35 @@ func (c *Case) checkDerived(rep *VerifyReport, recs []ManifestRecord) {
 				rep.problemf("artifact %s (%s): runs artifact %q (of parent %s) is not in the manifest", r.ID, r.Path, d.RunsArtifact, d.ParentID)
 			}
 		}
-		if p := derivedChainProblem(byID, r.ID); p != "" {
+		switch w := derivedChainWalk(byID, r.ID); {
+		case w.TooDeep:
 			chainProblems++
 			if chainProblems <= verifyMaxPerKind {
-				rep.problemf("%s", p)
+				rep.problemf("artifact %q (%q): derived chain is longer than %d hops", r.ID, r.Path, maxDerivedDepth)
+			}
+		case w.Cycle != nil:
+			key := strings.Join(w.Cycle, "\x00")
+			g := cycles[key]
+			if g == nil {
+				g = &cycleGroup{members: w.Cycle}
+				cycles[key] = g
+			}
+			if !slices.Contains(w.Cycle, r.ID) {
+				g.further++
 			}
 		}
+	}
+	groups := make([]*cycleGroup, 0, len(cycles))
+	for _, g := range cycles {
+		groups = append(groups, g)
+	}
+	slices.SortFunc(groups, func(a, b *cycleGroup) int { return strings.Compare(a.members[0], b.members[0]) })
+	for i, g := range groups {
+		if i == verifyMaxPerKind {
+			rep.problemf("%d further cycles are not listed", len(groups)-verifyMaxPerKind)
+			break
+		}
+		rep.problemf("%s", cycleProblem(g))
 	}
 	if chainProblems > verifyMaxPerKind {
 		rep.problemf("%d further derived chain problems are not listed", chainProblems-verifyMaxPerKind)
@@ -394,32 +419,6 @@ func (c *Case) checkDerived(rep *VerifyReport, recs []ManifestRecord) {
 // parent's parent, ...) verify accepts: real chains are one or two hops, so a
 // longer one is a damaged or hostile manifest.
 const maxDerivedDepth = 16
-
-// derivedChainProblem is the multi-hop part of checkDerived: it follows
-// Source.Derived.ParentID from id and reports a cycle or a chain longer than
-// maxDerivedDepth hops ("" when the chain is fine). A hop whose parent is missing
-// from the manifest, or whose recorded parent hash is wrong, ends the walk
-// without a report: checkDerived reports that hop itself, so one broken parent
-// is reported once.
-func derivedChainProblem(byID map[string]ManifestRecord, id string) string {
-	seen := map[string]bool{id: true}
-	cur := id
-	for hops := 1; ; hops++ {
-		r, ok := byID[cur]
-		if !ok || r.Source.Derived == nil {
-			return ""
-		}
-		parent := r.Source.Derived.ParentID
-		if seen[parent] {
-			return fmt.Sprintf("artifact %q (%q): derived chain has a cycle (%q derives from %q, which is already part of the chain)", id, byID[id].Path, cur, parent)
-		}
-		if hops > maxDerivedDepth {
-			return fmt.Sprintf("artifact %q (%q): derived chain is longer than %d hops", id, byID[id].Path, maxDerivedDepth)
-		}
-		seen[parent] = true
-		cur = parent
-	}
-}
 
 // VerifyCheck is a check composed into VerifyWith by a layer above this package. It reports through
 // rep.AddProblem and rep.AddNotice and may set rep.RecoveredReproduced; recs is the manifest.
