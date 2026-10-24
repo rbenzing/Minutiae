@@ -90,3 +90,26 @@ func BenchmarkManifestStrictWalk(b *testing.B) {
 	b.StopTimer()
 	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N)/lines, "ns/line")
 }
+
+// TestManifestLineProblemMissingObject: a whole nested object omitted from the line is tolerated only
+// when the record's value is all zero (K25).
+func TestManifestLineProblemMissingObject(t *testing.T) {
+	zero := ManifestRecord{ID: "z"}
+	line, err := json.Marshal(zero)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(line, &m); err != nil {
+		t.Fatal(err)
+	}
+	delete(m, "source")
+	noSource, _ := json.Marshal(m)
+	if p := manifestLineProblem(noSource, zero); p != "" {
+		t.Errorf("an omitted all-zero source is reported: %s", p)
+	}
+	nonZero := ManifestRecord{ID: "z", Source: Source{Kind: "import", DeviceID: "d"}}
+	if p := manifestLineProblem(noSource, nonZero); p != "source: missing" {
+		t.Errorf("an omitted non-zero source: got %q, want %q", p, "source: missing")
+	}
+}

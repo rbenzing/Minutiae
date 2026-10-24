@@ -289,6 +289,20 @@ func isZeroJSON(v any) bool {
 	case json.Number:
 		f, err := x.Float64()
 		return err == nil && f == 0
+	case map[string]any:
+		for _, e := range x {
+			if !isZeroJSON(e) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		for _, e := range x {
+			if !isZeroJSON(e) {
+				return false
+			}
+		}
+		return true
 	}
 	return false
 }

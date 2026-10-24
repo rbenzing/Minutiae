@@ -174,6 +174,15 @@ func TestVerifyStrictManifestToleratesMissingZeroKey(t *testing.T) {
 	}
 	evidencetest.RequireNoProblem(t, rep, "manifest line")
 
+	// a whole nested object omitted, all zero in the record: tolerated (K25)
+	replaceManifestLine(t, c.Dir, 1, []byte(`{"id":"zz","path":"p","size":0,"sha256":"","md5":"","started":"","finished":""}`))
+	rep, err = c.Verify()
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidencetest.RequireNoProblem(t, rep, "manifest line")
+	replaceManifestLine(t, c.Dir, 1, []byte(lines[0]))
+
 	// a zero-valued nested key (partition 0 of the image-level derivation) is tolerated too
 	replaceManifestLine(t, c.Dir, 1, []byte(lines[0]))
 	if !strings.Contains(lines[1], `"partition_offset":0`) {
