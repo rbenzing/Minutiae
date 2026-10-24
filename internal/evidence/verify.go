@@ -92,9 +92,16 @@ func (c *Case) verifyRun(ctx context.Context, observe verifyChunkObserver, p *Ve
 	rep.AuditEntries = n
 	rep.Problems = append(rep.Problems, auditProblems...)
 
-	recs, err := c.Manifest()
+	recs, strictLines, err := c.manifestStrict()
 	if err != nil {
 		rep.problemf("manifest unreadable: %v", err)
+	}
+	for i, l := range strictLines {
+		if i == verifyMaxPerKind {
+			rep.problemf("%d further manifest decode problems are not listed", len(strictLines)-verifyMaxPerKind)
+			break
+		}
+		rep.Problems = append(rep.Problems, l)
 	}
 	inManifest := map[string]bool{}
 	seenID := map[string]bool{}
