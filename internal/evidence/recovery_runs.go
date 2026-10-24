@@ -346,23 +346,26 @@ type RecoveryTrail struct {
 	Recovery      *Recovery // that artifact's description
 	Hops          int       // 0 = the artifact itself
 	MinConfidence *int      // lowest Confidence on the whole chain; nil when none carries one
+	Cut           bool      // the walk ended on a missing parent, a cycle or the depth bound: lower confidences may lie beyond
 }
 
 // RecoveryTrailOf walks the derivation chain from id (at most maxDerivedDepth
 // hops, each artifact once) and returns the nearest artifact that carries a
 // Recovery together with the lowest confidence found on the whole walk. It
 // returns false when no artifact on the chain carries one. A parent missing
-// from the manifest, a cycle or the depth bound ends the walk without error:
+// from the manifest, a cycle or the depth bound ends the walk without error and
+// sets Cut (lower confidences may lie beyond):
 // verify reports those separately.
 func RecoveryTrailOf(byID map[string]ManifestRecord, id string) (RecoveryTrail, bool) {
 	var tr RecoveryTrail
 	found := false
 	seen := map[string]bool{}
 	cur := id
+	cut := true // cleared when the walk ends on an artifact with no derivation
 	for hops := 0; hops <= maxDerivedDepth; hops++ {
 		r, ok := byID[cur]
 		if !ok || seen[cur] {
-			break
+			break // a missing parent or a cycle: cut
 		}
 		seen[cur] = true
 		d := r.Source.Derived
@@ -376,6 +379,7 @@ func RecoveryTrailOf(byID map[string]ManifestRecord, id string) (RecoveryTrail, 
 			rv = &Recovery{Class: "unknown"}
 		}
 		if d == nil && rv == nil {
+			cut = false
 			break
 		}
 		if rv != nil {
@@ -389,10 +393,12 @@ func RecoveryTrailOf(byID map[string]ManifestRecord, id string) (RecoveryTrail, 
 			}
 		}
 		if d == nil {
+			cut = false
 			break
 		}
 		cur = d.ParentID
 	}
+	tr.Cut = cut
 	return tr, found
 }
 
