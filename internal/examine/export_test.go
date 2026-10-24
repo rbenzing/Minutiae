@@ -54,3 +54,18 @@ func (s *Session) SetScanBudget(b ScanBudget) { s.opts.Scan = b }
 
 // SetImplausibleForTest makes the session treat its image's size claim as implausible.
 func (s *Session) SetImplausibleForTest(v bool) { s.implausible = &v }
+
+// SetReproduceWorkers fixes the number of reproduce workers (0 restores the default) and returns the restore function.
+func SetReproduceWorkers(n int) (restore func()) {
+	old := reproduceWorkersOverride
+	reproduceWorkersOverride = n
+	return func() { reproduceWorkersOverride = old }
+}
+
+// SetReproduceOneHook runs f with the artifact id at the start of each artifact's reproduction and returns the
+// restore function.
+func SetReproduceOneHook(f func(id string)) (restore func()) {
+	old := reproduceOneHook
+	reproduceOneHook = f
+	return func() { reproduceOneHook = old }
+}
