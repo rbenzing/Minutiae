@@ -1455,6 +1455,44 @@ repository) nor in `frameworks/opt/telephony`; the copy in `packages/apps/Messag
 (line 54), CC 0x82 = 130 (line 31) and BCC 0x81 = 129 (line 30). The plan brief had CC and BCC swapped (written from
 memory); the public source wins (ruling T42), and the mapper and the oracle of the owning task follow it.
 
+## DDL provenance (Chromium history, plan 4F)
+
+The four snapshots in `tools/fixtures/schemas/chromium/*.sql` are cross-checked by
+`tools/fixtures/ddl_crosscheck_chromium.py` against the public Chromium sources at release tag
+`154.0.8037.100` (the newest Stable release at least 14 days old on 2026-10-24, picked from the Chromium release
+dashboard; it resolves to chromium/src commit `81ab43db91f352ce9134362efe32529b9761c4eb`). The fetched files (untrusted
+text, kept outside the repository, never executed or imported; the script tokenises them as text) and their SHA-256 are
+listed in `schemas/chromium/CROSSCHECK.md`. To re-run, fetch each listed path with
+`curl -fsS "https://chromium.googlesource.com/chromium/src/+/refs/tags/154.0.8037.100/<path>?format=TEXT" | base64 -d > <basename>`
+into one empty directory, then:
+
+```
+py -3 -I tools/fixtures/ddl_crosscheck_chromium.py <srcdir> tools/fixtures/schemas/chromium \
+  --tag 154.0.8037.100 --commit 81ab43db91f352ce9134362efe32529b9761c4eb --taken 2026-10-24 \
+  --subst name=urls --rename visits_tmp=visits --write-report tools/fixtures/schemas/chromium/CROSSCHECK.md
+```
+
+(`--emit TABLE[:LINE]` prints a table's one-line CREATE from the sources; `--subst` gives the temporary-table name
+parameter of `urls`; the report keeps its hand-written notes from the `<!-- notes -->` marker on.) Snapshots are named
+by role, and each header carries `-- verdict`, `-- source chromium <tag> <file>:<line>, ...` and `-- meta.version`:
+
+- `chromium-current.sql`: `verified`, version 70 (`kCurrentVersionNumber`): `urls`, `visits`, `keyword_search_terms`,
+  `downloads`, `downloads_url_chains`, `meta` and `visit_source` (never read by the parsers), each equal to one CREATE
+  TABLE statement of the sources.
+- `chromium-minimal.sql`: `verified`, version 70: the current `urls`, `visits`, `meta` only.
+- `chromium-mid.sql`: `historical`, `-- @phase 1` = versions 48 (the `visits` table as the migration builds it before
+  adding `opener_visit`), `-- @phase 2` = the ALTER that migration runs (version 49). Statements are source text of
+  migration code under a temporary table name; deviations are in the notes of CROSSCHECK.md.
+- `chromium-old.sql`: `historical`, `-- @phase 1` alone, without the downloads tables (a synthetic omission, stated in
+  the notes).
+
+`verified` means the statement equals the tag's source text after whitespace collapse; `historical` means it equals
+migration-code text and describes an older shape. The Constants table of CROSSCHECK.md (header
+`| enum | int | name | source |`) is written by the script from the enums and macros: the page transition core values
+and qualifier masks, the history database integers of download state, danger type and interrupt reason (the history
+database stores plain casts of its own enums, which differ from the in-memory danger enum at 18, 24 and 25), the
+history version numbers and the migration that adds `visits.opener_visit` (48 to 49).
+
 ## Telephony fixtures (plan 4D)
 
 `tools/fixtures/telephony_gen.py` builds the Android telephony databases with the host Python's bundled `sqlite3`
