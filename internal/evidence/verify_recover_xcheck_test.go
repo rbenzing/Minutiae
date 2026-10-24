@@ -129,17 +129,65 @@ func TestVerifyRecoverCrossCheck(t *testing.T) {
 	}
 }
 
+// A real recovery whose recovering Start is then refused (the same parser and version already
+// covers the artifact, no reingest allowed) leaves a recover entry naming an ingest that never
+// started: the notice, and nothing else.
 func TestVerifyRecoverByUnstartedIngestIsANotice(t *testing.T) {
-	c, id, _ := unfinishedIngest(t)
-	craftRecover(t, c, id, "ghost", []int{})
+	ctx := context.Background()
+	c, _, art := unfinishedIngest(t)
+	// a complete run of parser next 1 (it also recovers the first unfinished ingest), then a second
+	// unfinished ingest of the same parser: the next Start recovers it and is refused (already ingested)
+	w1, err := records.NewWriter(c, records.Parser{Name: "next", Version: "1"}, records.WriterOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w1.Start(ctx, records.StartOptions{Artifacts: []string{art.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w1.End(ctx); err != nil {
+		t.Fatal(err)
+	}
+	w2, err := records.NewWriter(c, records.Parser{Name: "next", Version: "1"}, records.WriterOptions{BatchRows: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w2.Start(ctx, records.StartOptions{Artifacts: []string{art.ID}, AllowReingest: true}); err != nil {
+		t.Fatal(err)
+	}
+	id := w2.IngestID()
+	for _, r := range recordstest.Records(art.ID, 1, 9) {
+		if err := w2.Add(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w2.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	dir := c.Dir
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	c, err = evidence.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	w, err := records.NewWriter(c, records.Parser{Name: "next", Version: "1"}, records.WriterOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Start(ctx, records.StartOptions{Artifacts: []string{art.ID}}); err == nil {
+		t.Fatal("the reingest was not refused")
+	}
 	rep, err := c.Verify()
 	if err != nil {
 		t.Fatal(err)
 	}
-	evidencetest.RequireNotice(t, rep, fmt.Sprintf("ingest %q was recovered by ingest \"ghost\", which has no records.ingest.start (its start failed after it recovered, or this entry was not written by the writer)", id))
-	for _, bad := range []string{"recovering ingest", "by_ingest_id", "names batch"} {
-		evidencetest.RequireNoProblem(t, rep, bad)
+	if len(rep.Problems) != 0 {
+		t.Fatalf("problems: %q", rep.Problems)
 	}
+	evidencetest.RequireNotice(t, rep, fmt.Sprintf("ingest %q was recovered by ingest ", id))
+	evidencetest.RequireNotice(t, rep, ", which has no records.ingest.start (its start failed after it recovered, or this entry was not written by the writer)")
 }
 
 // PASSES ON ARRIVAL: the rules are new but a real recovery satisfies all of them.
@@ -161,5 +209,7 @@ func TestVerifyRealRecoveryIsClean(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	evidencetest.RequireNoProblem(t, rep, "records.ingest.recover")
+	if len(rep.Problems) != 0 {
+		t.Fatalf("problems: %q", rep.Problems)
+	}
 }
