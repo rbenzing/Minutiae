@@ -99,7 +99,7 @@ func showProv(t *testing.T, dir, id string) (provTestJSON, int, string, string) 
 	if err := dec.Decode(&p); err != nil {
 		t.Fatalf("provenance does not decode strictly: %v\n%s", err, top.Provenance)
 	}
-	return p, code, out, errBuf.String()
+	return p, code, out, withoutNotVerified(errBuf.String())
 }
 
 // liveDerivedCase: img <- f (extract, one inline run), record 1 on f with a range.
@@ -285,7 +285,7 @@ func TestRecordsShowNoteOnlyExits0(t *testing.T) {
 	for _, id := range []string{"1", "2"} {
 		var errBuf bytes.Buffer
 		code, out := run(t, Deps{Err: &errBuf}, "records", "show", "--case", dir, id)
-		if code != 0 || errBuf.Len() != 0 || !strings.Contains(out, "    notes:         ") || strings.Contains(out, "problems:") {
+		if code != 0 || withoutNotVerified(errBuf.String()) != "" || !strings.Contains(out, "    notes:         ") || strings.Contains(out, "problems:") {
 			t.Errorf("record %s text: exit %d stderr %q\n%s", id, code, errBuf.String(), out)
 		}
 		p, code, _, _ := showProv(t, dir, id)
@@ -299,7 +299,7 @@ func TestRecordsShowCleanChainExits0(t *testing.T) {
 	dir, _, _ := liveDerivedCase(t)
 	var errBuf bytes.Buffer
 	code, out := run(t, Deps{Err: &errBuf}, "records", "show", "--case", dir, "1")
-	if code != 0 || errBuf.Len() != 0 || strings.Contains(out, "problems:") {
+	if code != 0 || withoutNotVerified(errBuf.String()) != "" || strings.Contains(out, "problems:") {
 		t.Errorf("text: exit %d stderr %q\n%s", code, errBuf.String(), out)
 	}
 	if _, code, _, stderr := showProv(t, dir, "1"); code != 0 || stderr != "" {

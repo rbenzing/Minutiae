@@ -41,6 +41,7 @@ type AuditLog struct {
 	f           *os.File
 	seq         int64
 	last        string
+	byAction    map[string]AuditEntry // the latest entry per action, as read at open plus every Append
 	actor       string
 	toolVersion string
 	now         func() time.Time
@@ -52,7 +53,7 @@ func CreateAuditLog(path, actor, toolVersion string) (*AuditLog, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create audit log: %w", err)
 	}
-	return &AuditLog{f: f, last: GenesisHash, actor: actor, toolVersion: toolVersion, now: time.Now}, nil
+	return &AuditLog{f: f, last: GenesisHash, byAction: map[string]AuditEntry{}, actor: actor, toolVersion: toolVersion, now: time.Now}, nil
 }
 
 // OpenAuditLog opens an existing log and continues its chain. A missing or
@@ -70,7 +71,10 @@ func OpenAuditLog(path, actor, toolVersion string) (*AuditLog, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: audit log unreadable at line %d (edited or torn write): %v", ErrIntegrity, bad, err)
 	}
-	a := &AuditLog{last: GenesisHash, actor: actor, toolVersion: toolVersion, now: time.Now}
+	a := &AuditLog{last: GenesisHash, byAction: map[string]AuditEntry{}, actor: actor, toolVersion: toolVersion, now: time.Now}
+	for _, e := range entries {
+		a.byAction[e.Action] = e
+	}
 	if n := len(entries); n > 0 {
 		a.seq, a.last = entries[n-1].Seq, entries[n-1].Hash
 	}
@@ -115,6 +119,7 @@ func (a *AuditLog) Append(action, deviceID string, details map[string]any) (Audi
 		return AuditEntry{}, fmt.Errorf("audit sync: %w", err)
 	}
 	a.seq, a.last = e.Seq, e.Hash
+	a.byAction[action] = e
 	return e, nil
 }
 
@@ -266,4 +271,19 @@ func verifyAudit(path string) (int, []AuditEntry, []string, error) {
 		prev = e.Hash
 	}
 	return len(lines), entries, problems, nil
+}
+
+// Last returns the latest entry with this action in the log as read at open plus every Append since.
+func (a *AuditLog) Last(action string) (AuditEntry, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	e, ok := a.byAction[action]
+	return e, ok
+}
+
+// Head returns the seq and hash of the last entry (0 and GenesisHash for an empty log).
+func (a *AuditLog) Head() (seq int64, hash string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.seq, a.last
 }

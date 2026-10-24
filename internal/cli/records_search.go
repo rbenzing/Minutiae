@@ -120,6 +120,7 @@ func newRecordsSearchCmd(d Deps, opts *rootOptions) *cobra.Command {
 	cursor := fl.String("cursor", "", "continue after the page that ended with this cursor")
 	noSnippets := fl.Bool("no-snippets", false, "do not show text around the matches")
 	timeout := fl.Duration("timeout", 30*time.Second, "give up after this long (0 = no limit)")
+	verify := recordsVerifyFlag(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		query := args[0]
 		f, err := filter()
@@ -158,6 +159,9 @@ func newRecordsSearchCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		defer func() { _ = c.Close() }()
+		if err := recordsPreamble(cmd.Context(), d, c, *verify); err != nil {
+			return err
+		}
 		ctx := cmd.Context()
 		if *timeout > 0 {
 			var cancel context.CancelFunc

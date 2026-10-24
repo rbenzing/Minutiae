@@ -21,13 +21,17 @@ func run(t *testing.T, d Deps, args ...string) (int, string) {
 	if d.In == nil {
 		d.In = strings.NewReader("")
 	}
-	if d.Err == nil {
+	merged := d.Err == nil
+	if merged {
 		d.Err = &out
 	}
 	if d.Registry == nil {
 		d.Registry = device.NewRegistry()
 	}
 	code := Run(args, d)
+	if merged { // the records not-verified notice is not what these tests are about
+		return code, withoutNotVerified(out.String())
+	}
 	return code, out.String()
 }
 
