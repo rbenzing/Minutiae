@@ -176,8 +176,8 @@ func runOf(ctx context.Context, h evidence.ReadHandle, ingestID string) (*RunInf
 
 // batchAuditSeq finds the audit sequence of the records.batch entry of b: 0
 // when the batch row is missing or the log holds no such entry (verify reports
-// that; Get only shows provenance). A batch entry written with a newer records
-// audit layout is an error (evidence.ErrAuditLayoutNewer, integrity class): this build cannot say which entry is
+// that; Get only shows provenance). A batch entry whose details cannot be decoded (a newer
+// layout included, evidence.ErrAuditLayoutNewer) is an integrity-class error: this build cannot say which entry is
 // the batch's, and "no entry" would be a lie.
 func batchAuditSeq(entries []evidence.AuditEntry, b BatchInfo) (int64, error) {
 	if b.IngestID == "" {
@@ -188,10 +188,10 @@ func batchAuditSeq(entries []evidence.AuditEntry, b BatchInfo) (int64, error) {
 			continue
 		}
 		d, err := evidence.DecodeDetails[evidence.BatchCommit](e.Details)
-		if errors.Is(err, evidence.ErrAuditLayoutNewer) {
+		if err != nil { // an entry this build cannot decode is never "no entry"
 			return 0, fmt.Errorf("%w: audit seq %d: %s: %w", evidence.ErrIntegrity, e.Seq, e.Action, err)
 		}
-		if err == nil && d.IngestID == b.IngestID && d.BatchNo == b.BatchNo {
+		if d.IngestID == b.IngestID && d.BatchNo == b.BatchNo {
 			return e.Seq, nil
 		}
 	}

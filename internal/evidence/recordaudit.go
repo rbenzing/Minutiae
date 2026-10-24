@@ -196,6 +196,16 @@ func (x IngestConclusion) Details() map[string]any { return withLayout(detailsOf
 // Details returns the audit details of the entry.
 func (x IngestRecover) Details() map[string]any { return withLayout(detailsOf(x)) }
 
+// allDigits reports whether s is a non-empty run of ASCII digits.
+func allDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return s != ""
+}
+
 // stripLayout returns d without its "layout" key (the caller's map is not changed) after checking it: absent
 // means layout 1, an integer 1..RecordsAuditLayout is accepted, a larger integer is an *AuditLayoutError, and
 // anything else (0, a negative, a fraction, text, a bool, null, a number beyond int64) is a plain error.
@@ -209,10 +219,16 @@ func stripLayout(d map[string]any) (map[string]any, error) {
 	case json.Number:
 		var err error
 		if n, err = x.Int64(); err != nil {
+			if allDigits(x.String()) { // a whole number above int64: certainly newer, never a plain error that could mask exit 4
+				return nil, &AuditLayoutError{Layout: math.MaxInt64, Known: RecordsAuditLayout}
+			}
 			return nil, fmt.Errorf("audit details: layout %q is not an integer", x.String())
 		}
 	case float64:
-		if x != math.Trunc(x) || x < 1 || x > 1<<53 {
+		if x > 1<<53 && x <= math.MaxFloat64 && x == math.Trunc(x) {
+			return nil, &AuditLayoutError{Layout: math.MaxInt64, Known: RecordsAuditLayout}
+		}
+		if x != math.Trunc(x) || x < 1 {
 			return nil, fmt.Errorf("audit details: layout %v is not a valid layout number", x)
 		}
 		n = int64(x)

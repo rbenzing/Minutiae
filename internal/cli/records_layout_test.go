@@ -33,3 +33,35 @@ func TestNewerRecordsLayoutExitsIntegrity(t *testing.T) {
 		}
 	}
 }
+
+// TestForgedBatchEntryDetailsExitIntegrity: a records.batch entry with a huge layout number, or with details
+// that do not decode at all, makes `records show` and `case verify` exit 4; the entry is never read as absent.
+func TestForgedBatchEntryDetailsExitIntegrity(t *testing.T) {
+	for name, mut := range map[string]func(map[string]any){
+		"huge layout":       func(d map[string]any) { d["layout"] = json.Number("99999999999999999999") },
+		"malformed details": func(d map[string]any) { d["unexpected_field"] = "x" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := recordstest.NewCase(t)
+			art := recordstest.AddArtifact(t, c, "a.db", make([]byte, recordstest.ArtifactSize))
+			recordstest.Ingest(t, c, records.Parser{Name: "p", Version: "1"}, []string{art.ID}, recordstest.Records(art.ID, 2, 1))
+			d := evidence.BatchCommit{IngestID: "ing-forged", BatchNo: 1, FirstID: 1000, Count: 1, Artifacts: map[string]string{}, ArtifactIncomplete: []string{}, Types: map[string]int64{}}.Details()
+			mut(d)
+			if _, err := c.Audit.Append(evidence.ActionBatch, "", d); err != nil {
+				t.Fatal(err)
+			}
+			dir := c.Dir
+			if err := c.Close(); err != nil {
+				t.Fatal(err)
+			}
+			for _, args := range [][]string{
+				{"case", "verify", "--case", dir},
+				{"records", "show", "--case", dir, "1"},
+			} {
+				if code, out := run(t, Deps{}, args...); code != ExitIntegrity {
+					t.Errorf("%v exits %d, want %d:\n%s", args, code, ExitIntegrity, out)
+				}
+			}
+		})
+	}
+}

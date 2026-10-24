@@ -3,6 +3,7 @@ package evidence_test
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -134,12 +135,22 @@ func TestDecodeDetailsNewerLayoutIsTyped(t *testing.T) {
 }
 
 func TestDecodeDetailsBadLayout(t *testing.T) {
-	for _, v := range []any{json.Number("0"), json.Number("-1"), json.Number("1.5"), "1", true, json.Number("9223372036854775808"), float64(1.5), nil} {
+	for _, v := range []any{json.Number("0"), json.Number("-1"), json.Number("1.5"), "1", true, json.Number("-9223372036854775809"), json.Number("1e3"), float64(1.5), nil} {
 		d := evidence.BatchCommit{IngestID: "i", BatchNo: 1}.Details()
 		d["layout"] = v
 		_, err := evidence.DecodeDetails[evidence.BatchCommit](d)
 		if err == nil || errors.Is(err, evidence.ErrAuditLayoutNewer) {
 			t.Errorf("layout %#v: err = %v, want a plain decode error", v, err)
+		}
+	}
+	// a whole number above int64 or 2^53 is certainly newer: typed, never a plain error that could mask exit 4
+	for _, v := range []any{json.Number("9223372036854775808"), json.Number("99999999999999999999"), float64(1<<53) * 4, float64(1e300)} {
+		d := evidence.BatchCommit{IngestID: "i", BatchNo: 1}.Details()
+		d["layout"] = v
+		_, err := evidence.DecodeDetails[evidence.BatchCommit](d)
+		var le *evidence.AuditLayoutError
+		if !errors.Is(err, evidence.ErrAuditLayoutNewer) || !errors.As(err, &le) || le.Layout != math.MaxInt64 {
+			t.Errorf("layout %#v: err = %v, want ErrAuditLayoutNewer", v, err)
 		}
 	}
 	// the integers 1 as a float64 or int (a map not read from the log) still decode
