@@ -100,12 +100,20 @@ func (r *Reader) resolveOffsets(p *Provenance, ix *evidence.ManifestIndex, rng *
 			return
 		}
 		var next []piece
+		var idx *runIndex // built once per hop, at the first piece that is not a hole
 		for _, pc := range pieces {
 			if pc.hole {
 				next = append(next, pc)
 				continue
 			}
-			tr, terr := TranslateRange(runs, art.Size, art.Incomplete, Range{Offset: pc.start, Length: pc.length})
+			var tr Translation
+			var terr error
+			if idx == nil {
+				idx, terr = newRunIndex(runs, art.Size, art.Incomplete)
+			}
+			if terr == nil {
+				tr, terr = idx.translate(Range{Offset: pc.start, Length: pc.length})
+			}
 			if terr != nil {
 				off.Hops = append(off.Hops, oh)
 				kind := ProblemRunsInconsistent

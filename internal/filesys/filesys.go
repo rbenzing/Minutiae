@@ -160,8 +160,14 @@ var (
 	//     the 64 MiB read limit; an invalid rec_len; a record whose name_len does not fit; a tail too short for a record.
 	//   - F2FS: the entry cap; a damaged block map; a dentry block shared with another directory or mapped twice;
 	//     damaged dentry slots; an unreadable block; a size above the 64 MiB read limit; the per-filesystem read budget.
-	// It is returned together with ErrLimit (the caps) or ErrCorrupt (the other causes, the budget included);
-	// readers wrap it. A cause always leaves a warning in Info (TestEveryDirectoryCutCauseLogsItsWarning).
+	//   - FAT: the entry cap; the directory-chain bound; a chain error (a loop, a free, bad or out-of-range cluster)
+	//     or a failed read met before the end-of-directory entry; the read budget spent after the first entry.
+	//   - exFAT: the entry-set cap; the read budget; an unreadable chunk; a damaged or looping chain; the 256 MiB
+	//     directory limit. FAT and exFAT also return it from ReadDir, together with the entries read.
+	// It is returned together with ErrLimit (the caps everywhere, and the read budget in FAT and exFAT) or
+	// ErrCorrupt (the other causes, and the F2FS budget). A FAT or exFAT budget spent before the first entry of a
+	// directory is a plain corruption error without ErrIncomplete: nothing of that directory was read, so the
+	// directory cannot be read at all, which is not a partial scan. Readers wrap it. A cause always leaves a warning in Info (TestEveryDirectoryCutCauseLogsItsWarning).
 	ErrIncomplete = errors.New("directory not read to the end")
 )
 

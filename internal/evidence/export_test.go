@@ -155,3 +155,17 @@ func SetReaderPragmas(p []string) (restore func()) {
 	readerPragmas = p
 	return func() { readerPragmas = old }
 }
+
+// SetFTSNormVersionOverride makes FTSNormVersion return v until the returned function is called, so a test can run
+// a real ingest "as" an earlier pipeline version. Test-only; tests that use it must not run in parallel.
+func SetFTSNormVersionOverride(v string) (restore func()) {
+	normVersionMu.Lock()
+	old := normVersionOverride
+	normVersionOverride = v
+	normVersionMu.Unlock()
+	return func() {
+		normVersionMu.Lock()
+		normVersionOverride = old
+		normVersionMu.Unlock()
+	}
+}

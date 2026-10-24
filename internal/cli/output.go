@@ -1,21 +1,13 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/rbenzing/minutiae/internal/records"
 )
-
-func writeJSON(w io.Writer, v any) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(v)
-}
 
 // escapeText makes s safe to print on a terminal: every rune that is not
 // printable (control characters, escape sequences, bidi and other format

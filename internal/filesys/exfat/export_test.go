@@ -9,8 +9,15 @@ func (f *FS) Warn(format string, a ...any) { f.warn(format, a...) }
 // SetDirRecordCap lowers the per-directory entry-set cap (before any read).
 func (f *FS) SetDirRecordCap(n int) { f.dirRecordCap = n }
 
+// SetDirByteLimit lowers the per-directory byte limit (before any read).
+func (f *FS) SetDirByteLimit(n int64) { f.dirByteLimit = n }
+
 // ClusterCount returns the cluster count the reader uses (after clamping).
 func (f *FS) ClusterCount() uint32 { return f.clusterCount }
+
+// DeclaredClusterCount returns the cluster count the boot sector declares
+// (before the clamp to the image).
+func (f *FS) DeclaredClusterCount() uint32 { return f.declaredClusters }
 
 // UpcaseLoaded reports whether an up-case table is in use for Lookup.
 func (f *FS) UpcaseLoaded() bool { return f.upcase != nil }
@@ -51,3 +58,9 @@ func (f *FS) SetResolveDirs(n int) { f.resolveDirs = n }
 
 // MaxLocateScans is the bound on the directories one directory search scans.
 const MaxLocateScans = maxResolveDirs
+
+// NameHash exposes the NameHash computation.
+var NameHash = nameHash
+
+// ActiveFat returns the FAT index (0 or 1) the reader uses.
+func (f *FS) ActiveFat() int { return f.activeFat }

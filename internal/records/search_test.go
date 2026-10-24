@@ -123,7 +123,7 @@ func TestSearchFindsFoldedAndDiacriticForms(t *testing.T) {
 		{"two words pass and word", "pass word", word, sorted("zerowidth")},
 		{"chinese run is one token", cjkHello, word, sorted("cjk")},
 		{"japanese run is one token", tokyo, word, sorted("cjk")},
-		{"a part of a CJK run is a known silent miss", cp(0x4f60, 0x597d), word, nil},
+		{"a part of a CJK run is found as the phrase of its letters", cp(0x4f60, 0x597d), word, sorted("cjk")},
 		{"both columns", "only", word, sorted("bodyonly", "summaryonly")},
 		{"summary column finds the summary", "summaryneedle", inSummary, sorted("summaryonly")},
 		{"summary column does not find the body", "bodyneedle", inSummary, nil},
@@ -320,7 +320,7 @@ func TestSearchSubstring(t *testing.T) {
 			t.Errorf("Search(substring %q) = %v, want %v", tc.query, got, tc.want)
 		}
 	}
-	for _, short := range []string{"ab", "a", "", "  ab  ", cp(0x597d, 0x4e16)} {
+	for _, short := range []string{"ab", "a", "", "  ab  ", cp(0x597d)} {
 		if _, err := records.CompileQuery(short, sub); !errors.Is(err, records.ErrInvalidQuery) {
 			t.Errorf("substring %q: %v, want ErrInvalidQuery (three characters at least)", short, err)
 		}

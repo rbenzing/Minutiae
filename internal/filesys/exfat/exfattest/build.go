@@ -93,6 +93,17 @@ type Options struct {
 
 	// BadBootChecksum corrupts the checksum sector of the main boot region.
 	BadBootChecksum bool
+
+	// NumberOfFats is the number of FATs and allocation bitmaps (0 means 1; 2
+	// is a TexFAT volume). The second FAT follows the first as a copy; the
+	// second bitmap has its own clusters, a root directory entry with
+	// BitmapFlags 1 and the same content as the first.
+	NumberOfFats int
+	// ActiveFat is bit 0 of VolumeFlags (written as given, also with one FAT).
+	ActiveFat int
+	// SecondBitmapMissing leaves the second bitmap and its root directory
+	// entry out of a two-FAT image.
+	SecondBitmapMissing bool
 }
 
 // EntryLoc locates one file's entry set in the image.
@@ -115,6 +126,8 @@ type Layout struct {
 	RootCluster             uint32
 	BitmapCluster           uint32
 	BitmapClusters          []uint32 // every cluster of the bitmap, in order
+	SecondFatOffset         int64    // byte offset of the second FAT (0 with one FAT)
+	SecondBitmapClusters    []uint32 // every cluster of the second bitmap (nil if none)
 	UpcaseCluster           uint32   // 0 with NoUpcase
 	Entries                 []EntryLoc
 	free                    []uint32
@@ -233,7 +246,10 @@ func (b *builder) geometry() {
 		panic("exfattest: need at least 8 clusters")
 	}
 	b.fatSecs = ((b.cc+2)*4 + b.ss - 1) / b.ss
-	b.heapSecs = (fatStart + b.fatSecs + b.spc - 1) / b.spc * b.spc
+	if nf := b.numFats(); nf != 1 && nf != 2 {
+		panic("exfattest: NumberOfFats must be 1 or 2")
+	}
+	b.heapSecs = (fatStart + b.numFats()*b.fatSecs + b.spc - 1) / b.spc * b.spc
 	b.volSecs = b.heapSecs + b.cc*b.spc
 	if int64(b.volSecs)*int64(b.ss) > maxImageBytes {
 		panic("exfattest: image too large")
@@ -243,9 +259,15 @@ func (b *builder) geometry() {
 	b.fat = make([]uint32, b.cc+2)
 	b.lay = Layout{
 		SectorSize: b.ss, ClusterSize: b.cs,
-		FatOffset:    int64(fatStart * b.ss),
-		FatLength:    int64(b.fatSecs * b.ss),
-		HeapOffset:   int64(b.heapSecs) * int64(b.ss),
+		FatOffset:  int64(fatStart * b.ss),
+		FatLength:  int64(b.fatSecs * b.ss),
+		HeapOffset: int64(b.heapSecs) * int64(b.ss),
+		SecondFatOffset: func() int64 {
+			if b.numFats() == 2 {
+				return int64((fatStart + b.fatSecs) * b.ss)
+			}
+			return 0
+		}(),
 		ClusterCount: uint32(b.cc),
 	}
 }
@@ -303,6 +325,9 @@ func setEntries(n *node) int { return 2 + nameEntries(len(n.name)) }
 // rootExtras is the number of entries before the first file set of the root.
 func (b *builder) rootExtras() int {
 	n := 1 // bitmap
+	if b.hasSecondBitmap() {
+		n++
+	}
 	if !b.o.NoUpcase {
 		n++
 	}
@@ -311,6 +336,10 @@ func (b *builder) rootExtras() int {
 	}
 	return n
 }
+
+func (b *builder) numFats() int { return orDefault(b.o.NumberOfFats, 1) }
+
+func (b *builder) hasSecondBitmap() bool { return b.numFats() == 2 && !b.o.SecondBitmapMissing }
 
 func (b *builder) dirEntryCount(d *node) int {
 	n := 0
@@ -365,6 +394,11 @@ func (b *builder) allocate() {
 	b.chainFAT(bm)
 	b.lay.BitmapCluster = bm[0]
 	b.lay.BitmapClusters = bm
+	if b.hasSecondBitmap() {
+		bm2 := b.alloc(nbm)
+		b.chainFAT(bm2)
+		b.lay.SecondBitmapClusters = bm2
+	}
 	if !b.o.NoUpcase {
 		uc := b.alloc(b.clustersFor(len(b.upcaseTable())))
 		b.chainFAT(uc)
@@ -454,6 +488,9 @@ func (b *builder) write() {
 func (b *builder) writeFAT() {
 	for c, v := range b.fat {
 		le32(b.img, int(b.lay.FatOffset)+4*c, v)
+		if b.numFats() == 2 {
+			le32(b.img, int(b.lay.SecondFatOffset)+4*c, v)
+		}
 	}
 }
 
@@ -465,6 +502,9 @@ func (b *builder) writeBitmap() {
 		}
 	}
 	for i, c := range b.lay.BitmapClusters {
+		copy(b.img[b.clusterOff(c):], bm[i*b.cs:(i+1)*b.cs])
+	}
+	for i, c := range b.lay.SecondBitmapClusters {
 		copy(b.img[b.clusterOff(c):], bm[i*b.cs:(i+1)*b.cs])
 	}
 }
@@ -658,6 +698,14 @@ func (b *builder) writeDir(d *node) {
 		le32(bm, 20, b.lay.BitmapCluster)
 		le64(bm, 24, uint64((b.cc+7)/8))
 		buf = append(buf, bm...)
+		if b.hasSecondBitmap() {
+			bm2 := make([]byte, entrySize)
+			bm2[0] = typeBitmap
+			bm2[1] = 1 // BitmapFlags: the second bitmap
+			le32(bm2, 20, b.lay.SecondBitmapClusters[0])
+			le64(bm2, 24, uint64((b.cc+7)/8))
+			buf = append(buf, bm2...)
+		}
 		if !b.o.NoUpcase {
 			uc := make([]byte, entrySize)
 			uc[0] = typeUpcase
@@ -715,7 +763,8 @@ func (b *builder) writeBoot() {
 	le16(boot, 104, 0x0100)
 	boot[108] = orDefault(b.o.BytesPerSectorShift, 9)
 	boot[109] = b.spcShift
-	boot[110] = 1
+	le16(boot, 106, uint16(b.o.ActiveFat)&1)
+	boot[110] = byte(b.numFats())
 	boot[111] = 0x80
 	boot[510], boot[511] = 0x55, 0xAA
 	for s := 1; s <= 8; s++ { // extended boot sectors end with the 0xAA550000 signature

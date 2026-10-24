@@ -160,3 +160,17 @@ var (
 
 // a comment that mentions UPDATE records SET x = 1 or DELETE FROM records is no write.
 /* INSERT INTO records (id) VALUES (1) */
+
+// L90: a comment marker inside a string literal or quoted identifier hides nothing; a comment outside
+// quotes still does; an unterminated literal or comment keeps the rest of the string visible.
+var (
+	lexLit1     = "SELECT '--'; INSERT INTO records (id) VALUES (1)" // want
+	lexLit2     = "SELECT '/*'; DELETE FROM records; SELECT '*/'" // want
+	lexDQuote   = "SELECT \"--\" FROM t; UPDATE records SET x = 1" // want
+	lexBracket  = "SELECT [--] FROM t; DELETE FROM record_runs" // want
+	lexEscQuote = "SELECT 'it''s -- no comment'; DELETE FROM parsers" // want
+	lexOpenLit  = "SELECT '/* open; DELETE FROM records" // want
+	lexHarm1    = "SELECT '--' AS x FROM t"
+	lexHarm2    = "SELECT 1 -- DELETE FROM records"
+	lexHarm3    = "SELECT 1 /* UPDATE records SET x = 1 */"
+)

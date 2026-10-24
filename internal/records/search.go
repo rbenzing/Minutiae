@@ -41,6 +41,8 @@ type SearchOptions struct {
 type SearchResult struct {
 	Hits       []Hit
 	NextCursor string
+	// Scanned is the number of records a scan search read; 0 for any other search.
+	Scanned int64
 }
 
 // ErrSearchTimeout is returned (wrapping context.DeadlineExceeded) when the deadline of the context
@@ -83,9 +85,12 @@ func (r *Reader) Search(ctx context.Context, f Filter, p Page, so SearchOptions)
 		return SearchResult{}, fmt.Errorf("%w: a snippet width needs snippets", ErrInvalidPage)
 	}
 	var out SearchResult
-	if f.Text.rank {
+	switch {
+	case f.Text.scan:
+		out, err = r.searchScan(ctx, f, p, limit, so)
+	case f.Text.rank:
 		out, err = r.searchRank(ctx, f, p, limit, so)
-	} else {
+	default:
 		out, err = r.searchPage(ctx, f, p, limit, so)
 	}
 	if err != nil {

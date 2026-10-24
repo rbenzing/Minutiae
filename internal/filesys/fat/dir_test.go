@@ -812,8 +812,8 @@ func TestDirHostile(t *testing.T) {
 		setFAT(img, g, 0, chain[1], chain[0])
 		f = openImg(t, img)
 		es, err := f.ReadDir(big)
-		if err != nil {
-			t.Fatalf("ReadDir: %v (the entries before the loop must still be listed)", err)
+		if !errors.Is(err, filesys.ErrIncomplete) || !errors.Is(err, filesys.ErrCorrupt) {
+			t.Fatalf("ReadDir: %v, want an error matching ErrIncomplete and ErrCorrupt (the loop cut the listing; the entries before it are still returned)", err)
 		}
 		if len(es) != 30 {
 			t.Errorf("listed %d entries, want the 30 of the two clusters read once", len(es))
@@ -821,11 +821,19 @@ func TestDirHostile(t *testing.T) {
 		if w := strings.Join(f.Info().Warnings, "\n"); !strings.Contains(w, "loops") {
 			t.Errorf("no warning about the loop: %q", w)
 		}
-		// Walk terminates too.
-		n := 0
-		_ = filesys.Walk(f, f.Root(), "/", func(string, filesys.Entry, error) error { n++; return nil })
-		if n != 31 {
-			t.Errorf("Walk visited %d entries, want 31", n)
+		// Walk terminates too, keeps the 30 entries of the cut directory and
+		// reports the cut once.
+		n, cuts := 0, 0
+		_ = filesys.Walk(f, f.Root(), "/", func(_ string, _ filesys.Entry, err error) error {
+			if err != nil {
+				cuts++
+			} else {
+				n++
+			}
+			return nil
+		})
+		if n != 31 || cuts != 1 {
+			t.Errorf("Walk visited %d entries and reported %d cut directories, want 31 and 1", n, cuts)
 		}
 	})
 
@@ -1064,8 +1072,8 @@ func TestDirHostile(t *testing.T) {
 		}
 		f := openImg(t, img)
 		es, err := f.ReadDir(f.Root())
-		if err != nil {
-			t.Fatal(err)
+		if !errors.Is(err, filesys.ErrIncomplete) || !errors.Is(err, filesys.ErrLimit) {
+			t.Fatalf("ReadDir = %v, want an error matching ErrIncomplete and ErrLimit (the cap cut the listing)", err)
 		}
 		if len(es) != 65536 {
 			t.Errorf("listed %d entries, want the 65536 cap", len(es))
