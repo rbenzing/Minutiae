@@ -82,10 +82,19 @@ func TestMapOrderedHonoursCancellation(t *testing.T) {
 	in := make([]int, 100000)
 	for _, w := range []int{1, 2, 8} {
 		ctx, cancel := context.WithCancel(context.Background())
-		var calls atomic.Int64
+		// mapOrdered tests the context before it takes each item, so once cancel has returned every other
+		// worker runs at most the one item it had already taken. The goroutine that cancels may be descheduled
+		// between counting its item and calling cancel (load), and the others then run on legitimately, so
+		// only the items that start after cancel returned are bounded: at most w-1.
+		var calls, after atomic.Int64
+		var cancelled atomic.Bool
 		out, err := mapOrdered(ctx, w, in, func(int) int {
+			if cancelled.Load() {
+				after.Add(1)
+			}
 			if calls.Add(1) == 10 {
 				cancel()
+				cancelled.Store(true)
 			}
 			return 0
 		})
@@ -96,8 +105,11 @@ func TestMapOrderedHonoursCancellation(t *testing.T) {
 		if out != nil {
 			t.Fatalf("workers %d: a cancelled map returned results", w)
 		}
-		if n := calls.Load(); n > 10+int64(w)+64 {
-			t.Fatalf("workers %d: %d items ran after a cancel at item 10", w, n)
+		if n := after.Load(); n > int64(w-1) {
+			t.Fatalf("workers %d: %d items started after the cancel returned, at most %d may (one already taken per other worker)", w, n, w-1)
+		}
+		if calls.Load() < 10 {
+			t.Fatalf("workers %d: the cancel never fired", w)
 		}
 	}
 	// a context that ended before the call runs nothing
