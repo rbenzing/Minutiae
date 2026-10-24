@@ -423,7 +423,7 @@ func TestVerifyFTSExpectedSideStopsWhenCancelled(t *testing.T) {
 		if table == "records" {
 			cancel() // the first chunk is read; its rows must not be folded
 		}
-	}, nil, nil)
+	}, VerifyOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

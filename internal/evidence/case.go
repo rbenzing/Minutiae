@@ -98,7 +98,9 @@ type Case struct {
 	// test seam, set only by SetVerifyWorkers in tests; the default is min(GOMAXPROCS, 8)).
 	verifyWorkersN int
 	// verifyProgress is the observer of the verify running now (nil when none); set for the run only.
-	verifyProgress    *VerifyProgress
+	verifyProgress *VerifyProgress
+	// verifyAnchor is the anchor check of the verify running now (nil when no anchor was given); set for the run only.
+	verifyAnchor      *anchorRun
 	verifyFTSCacheKiB int
 
 	// verifySerial, set only by SetVerifyConcurrency(false) in tests, makes verify run every phase one after the

@@ -248,7 +248,7 @@ func TestVerifyCancelDuringTheRebuildStreamOfALocalizationRound(t *testing.T) {
 			chunks++
 			cancel()
 		}
-	}, nil, nil)
+	}, VerifyOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func TestVerifyCancelDuringTheIndexPassKeepsTheKnownFailingBuckets(t *testing.T)
 				cancel()
 			}
 		}
-	}, nil, nil)
+	}, VerifyOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

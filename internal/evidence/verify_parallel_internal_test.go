@@ -125,7 +125,7 @@ func TestVerifyParallelCancelKeepsFindings(t *testing.T) {
 					cancel() // the second chunk is read; the third must not be
 				}
 			}
-		}, nil, nil)
+		}, VerifyOptions{})
 		cancel()
 		if err != nil {
 			t.Fatal(err)

@@ -87,10 +87,22 @@ func OpenAuditLog(path, actor, toolVersion string) (*AuditLog, error) {
 
 // Append writes one entry, fsyncs, and returns it.
 func (a *AuditLog) Append(action, deviceID string, details map[string]any) (AuditEntry, error) {
+	return a.appendLocked(nil, action, deviceID, details)
+}
+
+// appendLocked is Append that first runs check (when not nil) on the in-memory head (the last seq and hash) under
+// the same hold of the lock the entry is chained and written under, so a caller that compared the head with what it
+// read from the file cannot be raced between the comparison and the append. A failing check appends nothing.
+func (a *AuditLog) appendLocked(check func(seq int64, last string) error, action, deviceID string, details map[string]any) (AuditEntry, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.f == nil {
 		return AuditEntry{}, errors.New("audit log is closed")
+	}
+	if check != nil {
+		if err := check(a.seq, a.last); err != nil {
+			return AuditEntry{}, err
+		}
 	}
 	e, err := canonicalEntry(AuditEntry{
 		Seq:         a.seq + 1,
@@ -286,4 +298,14 @@ func (a *AuditLog) Head() (seq int64, hash string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.seq, a.last
+}
+
+// AuditEntryHash is the hash an entry must carry: the hash-chain rule, over the entry as verification decodes
+// it from the file. It writes nothing; evidencetest.RechainAudit uses it to rebuild a valid chain.
+func AuditEntryHash(e AuditEntry) (string, error) {
+	c, err := canonicalEntry(e)
+	if err != nil {
+		return "", err
+	}
+	return entryHash(c)
 }

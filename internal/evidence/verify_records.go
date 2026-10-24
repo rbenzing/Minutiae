@@ -275,6 +275,7 @@ func (c *Case) verifyRecords(ctx context.Context, rep *VerifyReport, recs []Mani
 		done()
 	}
 	if dbv < 2 {
+		c.anchorBatchRule(rep, nil, nil)
 		return
 	}
 	// P10 runs on its own goroutine and its own read-only connection beside the record stream and the index pass
@@ -325,6 +326,7 @@ func (c *Case) verifyRecords(ctx context.Context, rep *VerifyReport, recs []Mani
 
 	batches, ok := c.readStoredBatches(ctx, rep, ps)
 	if ok {
+		c.anchorBatchRule(rep, batches, audit)
 		for _, b := range batches {
 			if b.id <= 0 {
 				ps.add("nonpositive-id", "record batch %d of ingest %q: batch id %d is not positive", b.no, b.ingest, b.id)

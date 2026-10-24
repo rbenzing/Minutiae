@@ -300,7 +300,7 @@ func TestVerifyCancelledDuringP11(t *testing.T) {
 			chunks++
 			cancel() // the first chunk of index pages is read; the rest must not be
 		}
-	}, nil, nil)
+	}, VerifyOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

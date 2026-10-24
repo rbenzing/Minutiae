@@ -33,7 +33,7 @@ func TestVerifyIntegrityCheckRunsBesideTheStream(t *testing.T) {
 				close(started)
 			})
 		}
-	}, p, nil); err != nil {
+	}, VerifyOptions{Progress: p}); err != nil {
 		t.Fatal(err)
 	}
 	if timedOut {

@@ -34,6 +34,8 @@ type VerifyReport struct {
 	// Notices are findings that are not integrity problems (for example an
 	// announced upgrade that was never concluded); never silent.
 	Notices []string `json:"notices"`
+	// Anchor is the outcome of the anchor check (null when no anchor was given; always present in the JSON).
+	Anchor *AnchorResult `json:"anchor"`
 
 	reproduceRan    bool // R6 ran in this verify (MarkReproduceRan)
 	cancelCut       bool // a phase was cut short by the end of the verify context
@@ -71,17 +73,23 @@ func (c *Case) Verify() (VerifyReport, error) { return c.VerifyWith(context.Back
 // verify.run audit entry is written last and covers their findings. A context that ends before
 // or during a check makes the report carry "reproduce: verification cancelled" once.
 func (c *Case) VerifyWith(ctx context.Context, checks ...VerifyCheck) (VerifyReport, error) {
-	return c.verifyRun(ctx, nil, nil, checks)
+	return c.verifyRun(ctx, nil, VerifyOptions{Checks: checks})
 }
 
 // verify is the test seam: the built-in checks with a chunk observer.
 func (c *Case) verify(observe verifyChunkObserver) (VerifyReport, error) {
-	return c.verifyRun(context.Background(), observe, nil, nil)
+	return c.verifyRun(context.Background(), observe, VerifyOptions{})
 }
 
-func (c *Case) verifyRun(ctx context.Context, observe verifyChunkObserver, p *VerifyProgress, checks []VerifyCheck) (VerifyReport, error) {
-	c.verifyProgress = p
-	defer func() { c.verifyProgress = nil }()
+func (c *Case) verifyRun(ctx context.Context, observe verifyChunkObserver, o VerifyOptions) (VerifyReport, error) {
+	checks := o.Checks
+	c.verifyProgress = o.Progress
+	var ar *anchorRun
+	if o.Anchor != nil {
+		ar = &anchorRun{a: *o.Anchor, trusted: o.TrustedKey, path: o.AnchorPath}
+	}
+	c.verifyAnchor = ar
+	defer func() { c.verifyProgress, c.verifyAnchor = nil, nil }()
 	rep := VerifyReport{Problems: []string{}, Notices: []string{}}
 	doneAudit := c.phase("audit")
 	n, audited, auditProblems, err := verifyAudit(filepath.Join(c.Dir, auditFile))
@@ -92,6 +100,9 @@ func (c *Case) verifyRun(ctx context.Context, observe verifyChunkObserver, p *Ve
 	auditReadable := err == nil
 	rep.AuditEntries = n
 	rep.Problems = append(rep.Problems, auditProblems...)
+	if ar != nil {
+		c.anchorAudit(&rep, ar, audited, auditReadable)
+	}
 
 	recs, strictLines, err := c.manifestStrict()
 	if err != nil {
@@ -130,14 +141,21 @@ func (c *Case) verifyRun(ctx context.Context, observe verifyChunkObserver, p *Ve
 		rep.problemf("%s", verifyCancelled) // a verify cut short is never a pass, whichever phase it ended in
 	}
 	unreproducedNotices(&rep)
+	if ar != nil {
+		rep.Anchor = ar.result()
+	}
 
-	_, err = c.Audit.Append("verify.run", "", map[string]any{
+	details := map[string]any{
 		"ok": rep.OK(), "artifacts_checked": rep.ArtifactsChecked,
 		"audit_entries": rep.AuditEntries, "problems": len(rep.Problems),
 		"records_checked": rep.RecordsChecked, "record_batches_checked": rep.RecordBatchesChecked,
 		"record_runs_checked": rep.RecordRunsChecked, "fts_docs_checked": rep.FTSDocsChecked,
 		"recovered_artifacts": rep.RecoveredArtifacts, "recovered_reproduced": rep.RecoveredReproduced,
-	})
+	}
+	if rep.Anchor != nil {
+		details["anchor_seq"], details["anchor_hash"], details["anchor_ok"] = rep.Anchor.Seq, rep.Anchor.Hash, rep.Anchor.OK
+	}
+	_, err = c.Audit.Append("verify.run", "", details)
 	return rep, err
 }
 

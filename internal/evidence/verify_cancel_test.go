@@ -94,7 +94,7 @@ func TestVerifyCancelAddsOnlyTheCancelledLine(t *testing.T) {
 		if table == "fts-data" {
 			cancel()
 		}
-	}, nil, nil)
+	}, VerifyOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

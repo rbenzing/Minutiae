@@ -408,7 +408,7 @@ func TestVerifyCancelledDuringTheIndexPass(t *testing.T) {
 			seen++
 			cancel()
 		}
-	}, nil, nil)
+	}, VerifyOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
