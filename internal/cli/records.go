@@ -264,6 +264,7 @@ func newRecordsListCmd(d Deps, opts *rootOptions) *cobra.Command {
 	sort := cmd.Flags().String("sort", "ts", "order: ts (oldest first) or -ts (newest first)")
 	limit := cmd.Flags().Int("limit", records.DefaultLimit, fmt.Sprintf("records per page (1-%d)", records.MaxLimit))
 	cursor := cmd.Flags().String("cursor", "", "continue after the page that ended with this cursor")
+	verify := recordsVerifyFlag(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		f, err := filter()
 		if err != nil {
@@ -280,6 +281,9 @@ func newRecordsListCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		defer func() { _ = c.Close() }()
+		if err := recordsPreamble(cmd.Context(), d, c, *verify); err != nil {
+			return err
+		}
 		res, err := r.List(cmd.Context(), f, records.Page{Limit: *limit, Cursor: *cursor, Desc: *sort == "-ts"})
 		if err != nil {
 			return recordsError(err, *cursor)
@@ -405,6 +409,7 @@ func newRecordsShowCmd(d Deps, opts *rootOptions) *cobra.Command {
 	}
 	casePath := caseFlag(cmd)
 	cmd.Flags().BoolVar(&payload, "payload", false, "also print the payload")
+	verify := recordsVerifyFlag(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		id, err := strconv.ParseInt(args[0], 10, 64)
 		if err != nil || id < 1 {
@@ -415,6 +420,9 @@ func newRecordsShowCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		defer func() { _ = c.Close() }()
+		if err := recordsPreamble(cmd.Context(), d, c, *verify); err != nil {
+			return err
+		}
 		full, err := r.Get(cmd.Context(), id)
 		if err != nil {
 			return err
@@ -702,6 +710,7 @@ func newRecordsStatsCmd(d Deps, opts *rootOptions) *cobra.Command {
 	filter := recordFilterFlags(cmd)
 	by := cmd.Flags().String("by", "type", "group by: "+strings.Join(statsKeys, ", "))
 	maxGroups := cmd.Flags().Int("max-groups", 1000, "show at most N groups (1.."+strconv.Itoa(records.MaxStatGroups)+")")
+	verify := recordsVerifyFlag(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		f, err := filter()
 		if err != nil {
@@ -718,6 +727,9 @@ func newRecordsStatsCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		defer func() { _ = c.Close() }()
+		if err := recordsPreamble(cmd.Context(), d, c, *verify); err != nil {
+			return err
+		}
 		var ov records.Overview
 		var res records.StatsResult
 		if *by == "type" { // one covering pass answers the overview and the groups (same numbers as two statements)
