@@ -1,7 +1,6 @@
 package fat
 
 import (
-	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -129,24 +128,16 @@ type scanCut struct {
 
 func (c scanCut) isCut() bool { return c.reason != "" }
 
-// scanDir calls fn with each 32-byte entry (and its index) of the directory that
-// starts at first, up to the first end-of-directory entry (0x00, not passed) or
-// maxDirEntries entries, until fn returns true. first is 0 for the fixed
-// FAT12/16 root. When the directory chain or a read fails part-way, the entries
-// before the problem have been passed, read says how many, and the error is
-// returned.
-func (f *FS) scanDir(first uint32, fn func(idx int, e []byte) (stop bool)) (read int, err error) {
-	read, _, err = f.scan(first, true, fn)
-	return read, err
-}
-
 // errBudget is the error of a directory that cannot be started because the
 // directory read budget is spent.
 func errBudget(first uint32) error {
 	return corrupt("directory", -1, "directory read budget exhausted before the directory at cluster %d was read", first)
 }
 
-// scan is scanDir with the choice of charging the directory read budget and
+// scan calls fn with each 32-byte entry (and its index) of the directory that
+// starts at first (0 for the fixed FAT12/16 root), up to the first
+// end-of-directory entry (0x00, not passed) or the entry cap, until fn returns
+// true. It takes the choice of charging the directory read budget and returns
 // the cut it reports. The scan is cut when it stopped before an end-of-directory
 // entry without fn asking for it: the entry cap, the directory-chain bound, a
 // chain error or a failed read, the budget spent after the first entry. Damage
@@ -357,6 +348,7 @@ func dosTimestamp(date, tm uint16, tenth byte) filesys.Timestamp {
 type dirItem struct {
 	e       filesys.Entry
 	short   string // the 8.3 name as shown (with its NTRes case flags)
+	aliased bool   // e.Name is the "~raw~" display form (a name that cannot be shown as it is)
 	cluster uint32 // first cluster of the entry
 	idx     int    // index of the short entry in its directory
 }
@@ -376,10 +368,10 @@ func (f *FS) makeItem(e []byte, idx int, dir uint32, deleted bool, units []uint1
 	size := int64(binary.LittleEndian.Uint32(e[28:]))
 	cluster := f.firstCluster(e)
 
-	shown, name, raw := shortName(e[:11], e[12], deleted)
+	shown, name, raw, aliased := shortName(e[:11], e[12], deleted)
 	it := dirItem{short: shown, cluster: cluster, idx: idx}
 	if have {
-		name, raw = longName(units)
+		name, raw, aliased = longName(units)
 	}
 	en := filesys.Entry{Name: name, RawName: raw, Deleted: deleted}
 	switch attr & 0x18 {
@@ -421,7 +413,7 @@ func (f *FS) makeItem(e []byte, idx int, dir uint32, deleted bool, units []uint1
 		Modified: dosTimestamp(binary.LittleEndian.Uint16(e[24:]), binary.LittleEndian.Uint16(e[22:]), 0),
 		Accessed: dosTimestamp(binary.LittleEndian.Uint16(e[18:]), 0, 0),
 	}
-	it.e = en
+	it.e, it.aliased = en, aliased
 	return it, true
 }
 
@@ -729,50 +721,76 @@ func (f *FS) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
 
 var errNoChild = errors.New("no such entry")
 
-// child finds the live entry named comp in the directory at first. Preference
-// over the whole directory: an exact match of the long or the short name, then
-// the "~raw~" display form, then a case-insensitive match (FAT is not case
-// sensitive). When nothing matches and the scan did not read the directory to
-// the end, the answer is the incomplete-lookup error, never "no such entry".
+// child finds the live entry named comp in the directory at first. The whole
+// directory is scanned (at most two case-insensitive candidates are kept) and
+// the answer is decided in one order: (1) an exact match of a real name (the
+// long name when it is not a display form, or the 8.3 name); two exact records,
+// or an exact record and another record whose "~raw~" display form is comp, are
+// ambiguous; (2) the canonical "~raw~" form, standing only for records ReadDir
+// shows in that form; two such records are ambiguous; (3) the scan was cut: the
+// incomplete-lookup error, because the unread part may hold a record that
+// outranks a case-insensitive or alias hit (only an exact match stands on a cut
+// scan); (4) one case-insensitive match (the reader's own convention: Unicode
+// simple case folding of the long or the 8.3 name; the volume records no rule);
+// (5) two or more: ErrAmbiguous; (6) no such entry. "." and ".." never match by
+// folding. Unlike exFAT, a long-name set that was lost leaves no undecided
+// state: the entry is matched by its 8.3 name only.
 func (f *FS) child(first uint32, comp string) (dirItem, error) {
 	items, cut, err := f.listDir(first)
 	if err != nil {
 		return dirItem{}, err
 	}
-	var alt []byte
-	if rest, ok := strings.CutPrefix(comp, rawPrefix); ok {
-		if b, err := base64.RawURLEncoding.DecodeString(rest); err == nil {
-			alt = b
-		}
-	}
-	var exact, viaRaw, fold *dirItem
+	raw, wantAlias := filesys.DecodeRawNameAlias(comp)
+	dots := comp == "." || comp == ".."
+	var exact, alias, fold0, fold1 *dirItem
+	var nExact, nAlias, nFold int
 	for i := range items {
 		it := &items[i]
 		if it.e.Deleted {
 			continue
 		}
 		switch {
-		case it.e.Name == comp || it.short == comp:
-			exact = it
-		case viaRaw == nil && alt != nil && it.e.RawName != nil && slices.Equal(it.e.RawName, alt):
-			viaRaw = it
-		case fold == nil && (strings.EqualFold(it.e.Name, comp) || strings.EqualFold(it.short, comp)):
-			fold = it
-		}
-		if exact != nil {
-			break
+		case !dots && ((!it.aliased && it.e.Name == comp) || it.short == comp):
+			if nExact == 0 {
+				exact = it
+			}
+			nExact++
+		case wantAlias && it.aliased && slices.Equal(it.e.RawName, raw):
+			if nAlias == 0 {
+				alias = it
+			}
+			nAlias++
+		case !dots && ((!it.aliased && strings.EqualFold(it.e.Name, comp)) || strings.EqualFold(it.short, comp)):
+			switch nFold {
+			case 0:
+				fold0 = it
+			case 1:
+				fold1 = it
+			}
+			nFold++
 		}
 	}
-	if exact != nil { // an exact match of a real name stands on a cut scan
+	switch {
+	case nExact > 1:
+		return dirItem{}, fmt.Errorf("%w: %q names %d entries of the directory at cluster %d", filesys.ErrAmbiguous, comp, nExact, first)
+	case nExact == 1 && nAlias > 0:
+		if cut.isCut() {
+			return dirItem{}, incompleteLookup(first, comp, cut)
+		}
+		return dirItem{}, fmt.Errorf("%w: %q is a stored name and also the display form of another entry of the directory at cluster %d", filesys.ErrAmbiguous, comp, first)
+	case nExact == 1:
 		return *exact, nil
-	}
-	if cut.isCut() { // the full-directory preference could pick a record in the unread part
+	case nAlias > 1:
+		return dirItem{}, fmt.Errorf("%w: %q names %d entries of the directory at cluster %d", filesys.ErrAmbiguous, comp, nAlias, first)
+	case cut.isCut(): // the name may be in the part that was not read
 		return dirItem{}, incompleteLookup(first, comp, cut)
-	}
-	for _, it := range []*dirItem{viaRaw, fold} {
-		if it != nil {
-			return *it, nil
-		}
+	case nAlias == 1:
+		return *alias, nil
+	case nFold == 1:
+		return *fold0, nil
+	case nFold > 1:
+		return dirItem{}, fmt.Errorf("%w: %q matches %d names of the directory at cluster %d case-insensitively: %q, %q and %d more",
+			filesys.ErrAmbiguous, comp, nFold, first, fold0.e.Name, fold1.e.Name, nFold-2)
 	}
 	return dirItem{}, errNoChild
 }

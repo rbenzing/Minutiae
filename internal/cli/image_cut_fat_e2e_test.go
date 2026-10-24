@@ -69,7 +69,7 @@ func TestImageCutFATDirectoryExitsNonZeroAndIsAudited(t *testing.T) {
 		return Run(full, dd), stdout.String(), stderr.String()
 	}
 
-	if code, stdout, stderr := do("ls", ref, "/D/alpha.txt"); code != 0 {
+	if code, stdout, stderr := do("ls", ref, "/D/ALPHA.TXT"); code != 0 {
 		t.Fatalf("ls of a readable name: exit %d\nstdout %q\nstderr %q", code, stdout, stderr)
 	}
 	for _, args := range [][]string{

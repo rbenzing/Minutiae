@@ -1,11 +1,12 @@
 package fat
 
 import (
-	"encoding/base64"
 	"encoding/binary"
 	"slices"
 	"strings"
 	"unicode/utf16"
+
+	"github.com/rbenzing/minutiae/internal/filesys"
 )
 
 const (
@@ -20,10 +21,6 @@ const (
 
 	lfnUnitsPerEntry = 13
 	maxLFNEntries    = 20 // a long name has at most 255 UTF-16 units: 20 entries
-
-	// rawPrefix marks the display form of a name that cannot be shown as it is:
-	// "~raw~" + base64url of the on-disk name bytes (UTF-16LE for a long name).
-	rawPrefix = "~raw~"
 )
 
 // isLFN reports whether the 32-byte entry has the long-name attribute pattern.
@@ -193,7 +190,7 @@ func trimUnits(u []uint16) []uint16 {
 // as Entry.RawName. A name that is valid UTF-16 without '/' and that is not "."
 // or ".." is shown as it is (raw is nil); any other is shown losslessly as
 // "~raw~" + base64url(UTF-16LE).
-func longName(u []uint16) (name string, raw []byte) {
+func longName(u []uint16) (name string, raw []byte, aliased bool) {
 	valid := true
 	for i := 0; i < len(u); i++ {
 		switch c := u[i]; {
@@ -210,14 +207,14 @@ func longName(u []uint16) (name string, raw []byte) {
 	if valid {
 		name = string(utf16.Decode(u))
 		if name != "" && name != "." && name != ".." && !strings.Contains(name, "/") {
-			return name, nil
+			return name, nil, false
 		}
 	}
 	raw = make([]byte, 2*len(u))
 	for i, c := range u {
 		binary.LittleEndian.PutUint16(raw[2*i:], c)
 	}
-	return rawPrefix + base64.RawURLEncoding.EncodeToString(raw), raw
+	return filesys.RawNameAlias(raw), raw, true
 }
 
 func asciiLower(s string) string {
@@ -237,7 +234,7 @@ func asciiLower(s string) string {
 // name that cannot be shown as it is (empty, "." or "..", or containing '/') is
 // shown in the "~raw~" form. Bytes from 0x80 up are shown as code page 437 (the
 // volume does not record its code page; raw has the exact bytes).
-func shortName(name11 []byte, ntres byte, deleted bool) (shown, name string, raw []byte) {
+func shortName(name11 []byte, ntres byte, deleted bool) (shown, name string, raw []byte, aliased bool) {
 	var b [11]byte
 	copy(b[:], name11)
 	if deleted {
@@ -263,9 +260,9 @@ func shortName(name11 []byte, ntres byte, deleted bool) (shown, name string, raw
 		}
 	}
 	if shown == "" || shown == "." || shown == ".." || strings.Contains(shown, "/") {
-		return shown, rawPrefix + base64.RawURLEncoding.EncodeToString(name11[:11]), append([]byte(nil), name11[:11]...)
+		return shown, filesys.RawNameAlias(name11[:11]), append([]byte(nil), name11[:11]...), true
 	}
-	return shown, shown, raw
+	return shown, shown, raw, false
 }
 
 // attrString renders the attribute byte as letters (R H S V D A), "-" for none.
