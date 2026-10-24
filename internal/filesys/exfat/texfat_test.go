@@ -250,3 +250,20 @@ func TestExfatTexFATCompareIsBounded(t *testing.T) {
 		check(t, f)
 	})
 }
+
+func TestExfatOneFatBitmapFlag1ReportsNoFreeSpace(t *testing.T) {
+	img, lay := exfattest.BuildLayout(exfattest.Options{}, []exfattest.File{{Path: "/f.bin", Data: texData()}})
+	img[lay.ClusterOffset(lay.RootCluster)+1] = 1 // the only bitmap entry says it is the second bitmap
+	f := texOpen(t, img)
+	runs, err := f.Unallocated()
+	if err != nil || len(runs) != 0 {
+		t.Fatalf("Unallocated = %+v, %v; want no runs and no error", runs, err)
+	}
+	want := "allocation bitmap: the only Allocation Bitmap entry has BitmapFlags 1 (the second bitmap) on a volume with one FAT; no free space is reported"
+	if w := texWarnings(f, "allocation bitmap"); len(w) != 1 || w[0] != want {
+		t.Errorf("warnings = %q, want exactly %q", f.Info().Warnings, want)
+	}
+	if w := texWarnings(f, "TexFAT"); len(w) != 0 {
+		t.Errorf("a one-FAT volume warns about TexFAT: %v", w)
+	}
+}

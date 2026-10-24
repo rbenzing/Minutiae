@@ -178,11 +178,11 @@ func (bt *boot) layout(imageSize int64) (*geometry, error) {
 	// TexFAT. The published exFAT specification (read at
 	// learn.microsoft.com/windows/win32/fileio/exfat-specification, via a
 	// page-fetch summary, not a copy of the document) states:
-	// VolumeFlags ActiveFat (section 3.1.13.1) is 0 for the First FAT
+	// VolumeFlags ActiveFat is 0 for the First FAT
 	// and First Allocation Bitmap, 1 for the Second ones, and 1 is possible
-	// only when NumberOfFats (section 3.1.16) is 2; the inactive FAT and bitmap
+	// only when NumberOfFats is 2; the inactive FAT and bitmap
 	// are stale. The Allocation Bitmap entry's BitmapFlags bit 0 (the
-	// BitmapIdentifier, section 7.1.2.1) says which bitmap it describes; the
+	// BitmapIdentifier) says which bitmap it describes; the
 	// first bitmap goes with the first FAT, the second with the second FAT.
 	firstFat := int64(bt.fatOffset) * g.ss
 	g.numFats = int(bt.numFats)

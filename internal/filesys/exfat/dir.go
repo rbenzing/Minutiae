@@ -109,7 +109,7 @@ func (f *FS) loadRootMeta() {
 		case typeEnd:
 			i = len(buf)
 		case typeBitmap:
-			// BitmapFlags bit 0 (BitmapIdentifier, section 7.1.2.1 of the
+			// BitmapFlags bit 0 (BitmapIdentifier, in the
 			// published specification) says which bitmap the entry describes;
 			// the first one met per value is kept.
 			m := meta{present: true, first: le.Uint32(e[20:]), length: le.Uint64(e[24:]), aux: uint32(e[1])}

@@ -200,10 +200,13 @@ const (
 func (f *FS) Unallocated() ([]filesys.Run, error) {
 	f.compareCopies()
 	if !f.bitmap.present {
-		if f.inactiveBitmap.present {
+		switch {
+		case f.inactiveBitmap.present && f.numFats == 1:
+			f.warn("allocation bitmap: the only Allocation Bitmap entry has BitmapFlags 1 (the second bitmap) on a volume with one FAT; no free space is reported")
+		case f.inactiveBitmap.present:
 			// Never the stale bitmap: its free clusters may be allocated.
 			f.warn("TexFAT: no Allocation Bitmap entry for the active bitmap (BitmapFlags %d); no free space is reported", f.activeFat)
-		} else {
+		default:
 			f.warn("allocation bitmap: the root directory has no Allocation Bitmap entry; no free space is reported")
 		}
 		return nil, nil
@@ -392,7 +395,7 @@ func (f *FS) readExtentsAt(exts []extent, off uint64, dst []byte) error {
 // compareCopies compares, on a two-FAT (TexFAT) volume, the inactive FAT with
 // the active one and the inactive Allocation Bitmap with the active one, and
 // warns on the first difference of each. The inactive copy is stale by
-// definition (published specification, ActiveFat and section 4), so a
+// definition (published specification, ActiveFat and the FAT region text), so a
 // difference is expected after an interrupted transaction and is only reported;
 // the inactive copy is never used. Each copy is read in chunks of at most
 // f.bitmapChunk bytes; nothing is allocated from a declared size.
