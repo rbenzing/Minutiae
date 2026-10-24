@@ -2,6 +2,7 @@ package examine
 
 import (
 	"math"
+	"reflect"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
@@ -126,4 +127,32 @@ func TestGapNoteBounds(t *testing.T) {
 			t.Fatalf("note = %+v", n)
 		}
 	})
+}
+
+// The session's writer rule is gapNoteFor itself: one function, so the verify recompute (R10) and the
+// writers cannot disagree. A session whose image reports no gaps writes no note.
+func TestGapNoteForEqualsTheWriter(t *testing.T) {
+	g := declared(image.AcquisitionGap{Offset: 90, Length: 20}, image.AcquisitionGap{Offset: 300, Length: 5})
+	for _, tc := range []struct {
+		name  string
+		runs  []evidence.Run
+		known bool
+		size  int64
+	}{
+		{"disjoint runs", []evidence.Run{{Offset: 0, Length: 100}, {Offset: 100, Length: 100}}, true, 200},
+		{"clamp", []evidence.Run{{Offset: 0, Length: 400}}, true, 10},
+		{"overlapping runs", []evidence.Run{{Offset: 0, Length: 100}, {Offset: 50, Length: 100}}, true, 400},
+		{"runs not recorded", nil, false, 200},
+		{"empty artifact", []evidence.Run{{Offset: 0, Length: 100}}, true, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := gapSession(g).gapNote(tc.runs, tc.known, tc.size)
+			if want := gapNoteFor(g, tc.runs, tc.known, tc.size); !reflect.DeepEqual(got, want) {
+				t.Fatalf("session note %+v, gapNoteFor %+v", got, want)
+			}
+		})
+	}
+	if n := (&Session{Image: nil}).gapNote([]evidence.Run{{Offset: 0, Length: 10}}, true, 10); n != nil {
+		t.Fatalf("a session without a gap reporter wrote %+v", n)
+	}
 }

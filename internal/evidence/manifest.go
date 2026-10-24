@@ -118,6 +118,11 @@ type Derivation struct {
 	// was captured (Runs/RunsArtifact are), and is not used to reproduce bytes.
 	DeclaredRunsArtifact string `json:"declared_runs_artifact,omitempty"`
 
+	// DeclaredSize is, on an extract, the full size of the source file the acquisition-gap note was computed
+	// with (case verify recomputes the note with it). It differs from the artifact size when the copy was cut
+	// short. Omitted for a 0-byte file (no note exists) and on extracts recorded before gap notes.
+	DeclaredSize int64 `json:"declared_size,omitempty"`
+
 	// Snapshot is set when the bytes were read from a snapshot view of the
 	// filesystem (APFS) and not from the live tree.
 	Snapshot *SnapshotRef `json:"snapshot,omitempty"`

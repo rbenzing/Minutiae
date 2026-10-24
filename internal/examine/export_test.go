@@ -77,3 +77,13 @@ func SetAllocationArtifactHook(f func(id string)) (restore func()) {
 	allocationArtifactHook = f
 	return func() { allocationArtifactHook = old }
 }
+
+// GapNoteFor is the pure acquisition-gap rule shared by the writers and the verify recompute.
+var GapNoteFor = gapNoteFor
+
+// SetMaxGapWork lowers the bound on the (run, gap) pairs of one note and returns the restore function.
+func SetMaxGapWork(n int) (restore func()) {
+	old := maxGapWork
+	maxGapWork = n
+	return func() { maxGapWork = old }
+}

@@ -33,8 +33,12 @@ type VerifyReport struct {
 	// AllocationRechecked counts the deleted-file artifacts all of whose runs the composed allocation check (R9)
 	// found inside the space the filesystem reports unallocated. 0 together with the notices means "not
 	// rechecked", never "checked and clean".
-	AllocationRechecked int      `json:"allocation_rechecked"`
-	Problems            []string `json:"problems"`
+	AllocationRechecked int `json:"allocation_rechecked"`
+	// GapNotesRecomputed counts the extract and unallocated artifacts whose acquisition-gap note the composed
+	// check (R10) recomputed from the container and compared. 0 together with the notices means "not
+	// recomputed", never "checked and clean".
+	GapNotesRecomputed int      `json:"gap_notes_recomputed"`
+	Problems           []string `json:"problems"`
 	// Notices are findings that are not integrity problems (for example an
 	// announced upgrade that was never concluded); never silent.
 	Notices []string `json:"notices"`
@@ -43,6 +47,8 @@ type VerifyReport struct {
 
 	reproduceRan    bool // R6 ran in this verify (MarkReproduceRan)
 	allocationRan   bool // R9 ran in this verify (MarkAllocationRan)
+	gapsRan         bool // R10 ran in this verify (MarkGapsRan)
+	gapArtifacts    int  // extract and unallocated artifacts (set by the built-in check)
 	deletedFiles    int  // recover artifacts of class deleted-file (set by the built-in check)
 	cancelCut       bool // a phase was cut short by the end of the verify context
 	recoveredByKind map[string]int
@@ -158,6 +164,7 @@ func (c *Case) verifyRun(ctx context.Context, observe verifyChunkObserver, o Ver
 		"record_runs_checked": rep.RecordRunsChecked, "fts_docs_checked": rep.FTSDocsChecked,
 		"recovered_artifacts": rep.RecoveredArtifacts, "recovered_reproduced": rep.RecoveredReproduced,
 		"allocation_rechecked": rep.AllocationRechecked,
+		"gap_notes_recomputed": rep.GapNotesRecomputed,
 	}
 	if rep.Anchor != nil {
 		details["anchor_seq"], details["anchor_hash"], details["anchor_ok"] = rep.Anchor.Seq, rep.Anchor.Hash, rep.Anchor.OK
@@ -490,6 +497,10 @@ func (r *VerifyReport) MarkReproduceRan() { r.reproduceRan = true }
 // MarkAllocationRan is called by the composed allocation check (R9) when it ran, so the built-in check
 // stops noticing that deleted-file runs were not rechecked against the filesystem.
 func (r *VerifyReport) MarkAllocationRan() { r.allocationRan = true }
+
+// MarkGapsRan is called by the composed gap-note check (R10) when it ran, so the built-in check stops
+// noticing that acquisition-gap notes were only shape-checked.
+func (r *VerifyReport) MarkGapsRan() { r.gapsRan = true }
 
 // CancelledOnly reports whether the only problem is that the verify was cut short by a cancel: no
 // integrity finding was made, so the caller may treat it as a cancel and not as an integrity failure.

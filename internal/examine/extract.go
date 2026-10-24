@@ -301,6 +301,7 @@ func (x *extractor) fileWork(p string, e filesys.Entry) error {
 		runs = nil
 	}
 	d.AcquisitionGaps = x.s.gapNote(runs, runsErr == nil, size)
+	d.DeclaredSize = size // the size the note was computed with: case verify recomputes the note with it
 	useSidecar := len(runs) > evidence.MaxInlineRuns
 	if !useSidecar {
 		d.Runs = runs

@@ -13,8 +13,13 @@ func TestVerifyCancelAfterEveryPhaseFinishedStaysClean(t *testing.T) {
 	c := ftsCase(t, 300)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	// fts.index is the last serial phase that reads with the context on a clean case, but P10 runs beside the
+	// stream and the index pass and may end after it: the cancel lands only once both have ended (hook calls
+	// are serialised, so the map needs no lock).
+	ended := map[string]bool{}
 	c.SetPhaseHook(func(name string, _ time.Duration) {
-		if name == "fts.index" { // the last phase that reads with the context on a clean case
+		ended[name] = true
+		if ended["fts.index"] && ended["records.integrity_check"] {
 			cancel()
 		}
 	})

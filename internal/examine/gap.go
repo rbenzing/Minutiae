@@ -23,7 +23,12 @@ func (s *Session) gapNote(runs []evidence.Run, runsKnown bool, size int64) *evid
 	if !ok {
 		return nil
 	}
-	g := gr.AcquisitionGaps()
+	return gapNoteFor(gr.AcquisitionGaps(), runs, runsKnown, size)
+}
+
+// gapNoteFor is the one rule of the acquisition-gap note, shared by the writers (Session.gapNote) and the
+// verify recompute (R10), so the two can never disagree about the rule.
+func gapNoteFor(g image.AcquisitionGaps, runs []evidence.Run, runsKnown bool, size int64) *evidence.AcquisitionGapNote {
 	if (g.Ranges == 0 && g.State != image.GapsDamaged) || size <= 0 {
 		return nil
 	}

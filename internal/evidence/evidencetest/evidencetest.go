@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -217,4 +218,50 @@ func RequireNotice(t testing.TB, rep evidence.VerifyReport, substr string) {
 		}
 	}
 	t.Fatalf("no notice contains %q; notices:\n%s", substr, strings.Join(rep.Notices, "\n"))
+}
+
+// DerivedAcq is the analysis (acquisition) id AddDerived writes under.
+const DerivedAcq = "drv1"
+
+// AddDerived writes a derived artifact (an extract, unallocated export or runs sidecar) through Capture with the
+// crafted Source, as a writer with a bug would: manifest, artifacts.db and the audit entry all agree with each
+// other, so only the rules under test can object. An empty Derived.ParentID and ParentSHA256 take the parent's.
+// The artifact lands at derived/<kind>-<n>.bin (AddDerivedAt names the path).
+func AddDerived(t testing.TB, c *evidence.Case, parent evidence.ManifestRecord, data []byte, src evidence.Source) evidence.ManifestRecord {
+	t.Helper()
+	recs, err := c.Manifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return AddDerivedAt(t, c, parent, fmt.Sprintf("derived/%s-%d.bin", src.Kind, len(recs)), data, src, nil)
+}
+
+// AddDerivedAt is AddDerived with the case-relative path and, when fillErr is not nil, a write that fails with it
+// after the data (the artifact is then kept and flagged incomplete).
+func AddDerivedAt(t testing.TB, c *evidence.Case, parent evidence.ManifestRecord, rel string, data []byte, src evidence.Source, fillErr error) evidence.ManifestRecord {
+	t.Helper()
+	if src.DeviceID == "" {
+		src.DeviceID = parent.Source.DeviceID
+	}
+	if src.Derived != nil {
+		d := *src.Derived // the caller's value is not changed
+		if d.ParentID == "" {
+			d.ParentID, d.ParentSHA256 = parent.ID, parent.SHA256
+		}
+		src.Derived = &d
+	}
+	out, err := c.Capture(src.DeviceID, DerivedAcq, rel, src, func(w io.Writer) error {
+		if _, err := w.Write(data); err != nil {
+			return err
+		}
+		return fillErr
+	})
+	if fillErr != nil {
+		if !out.Incomplete {
+			t.Fatalf("evidencetest: record %+v err %v is not incomplete", out, err)
+		}
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
