@@ -553,3 +553,96 @@ var castagnoli = crc32.MakeTable(crc32.Castagnoli)
 // rawCRC32C is the kernel's crc32c_le (no pre- or post-inversion), written out here
 // so the helpers are checked against an oracle that shares no code with them.
 func rawCRC32C(seed uint32, p []byte) uint32 { return ^crc32.Update(^seed, castagnoli, p) }
+
+func TestUnlinkZeroSizeClearsSizeHigh(t *testing.T) {
+	o := ext4test.Options{Extents: true, MetadataCsum: true, UUID: lUUID}
+	img, l := ext4test.BuildLayout(o, []ext4test.File{{Path: "/gone", Data: pattern(lBS, 4), Deleted: true}})
+	loc := l.File("/gone")
+	l.PatchInode(img, loc.Inode, func(raw []byte) { binary.LittleEndian.PutUint32(raw[0x6C:], 0x01020304) })
+	l.Unlink(img, "/gone", ext4test.UnlinkEffects{ZeroSize: true})
+	raw := inodeRaw(img, loc, l.InodeSize)
+	if !bytes.Equal(raw[0x4:0x8], make([]byte, 4)) || !bytes.Equal(raw[0x6C:0x70], make([]byte, 4)) {
+		t.Errorf("i_size_lo % x, i_size_high % x, want both zero", raw[0x4:0x8], raw[0x6C:0x70])
+	}
+}
+
+func TestUnlinkFreeBlocksFreesTreeBlocks(t *testing.T) {
+	var pieces []ext4test.Piece
+	for i := range 3 {
+		pieces = append(pieces, ext4test.Piece{Block: i * 2, Data: pattern(lBS, byte(i))})
+	}
+	for _, tc := range []struct {
+		name  string
+		o     ext4test.Options
+		files []ext4test.File
+	}{
+		{
+			"extent leaf",
+			ext4test.Options{Extents: true, MetadataCsum: true, UUID: lUUID},
+			[]ext4test.File{{Path: "/gone", Pieces: pieces, ExtentLeaves: 1, Scatter: true, Deleted: true}},
+		},
+		{
+			"indirect block",
+			ext4test.Options{UUID: lUUID},
+			[]ext4test.File{{Path: "/gone", Data: pattern(20*lBS, 7), Deleted: true}},
+		},
+	} {
+		img, l := ext4test.BuildLayout(tc.o, tc.files)
+		loc := l.File("/gone")
+		if len(loc.Tree) == 0 {
+			t.Fatalf("%s: no tree blocks", tc.name)
+		}
+		before := freeSet(t, img)
+		for _, b := range loc.Tree {
+			if before[b] {
+				t.Fatalf("%s: tree block %d free before Unlink", tc.name, b)
+			}
+		}
+		l.Unlink(img, "/gone", ext4test.UnlinkEffects{FreeBlocks: true})
+		after := freeSet(t, img)
+		for _, b := range loc.Tree {
+			if !after[b] {
+				t.Errorf("%s: tree block %d not freed", tc.name, b)
+			}
+		}
+	}
+}
+
+func TestPatchesReachBackupCopies(t *testing.T) {
+	// Two groups: group 1 holds the backup superblock (block 1025) and the backup descriptor table (block 1026).
+	const backupSB, backupGDT = 1025 * lBS, 1026 * lBS
+	for _, o := range []ext4test.Options{
+		{Extents: true, MetadataCsum: true, UUID: lUUID, Groups: 2},
+		{Extents: true, GDTCsum: true, UUID: lUUID, Groups: 2},
+	} {
+		img, l := ext4test.BuildLayout(o, []ext4test.File{{Path: "/a", Data: []byte("x")}})
+		l.PatchDescriptor(img, 1, func(d []byte) { binary.LittleEndian.PutUint16(d[0x12:], 0x1) })
+		primary := img[2*lBS+32 : 2*lBS+64]
+		backup := img[backupGDT+32 : backupGDT+64]
+		if binary.LittleEndian.Uint16(backup[0x12:]) != 1 {
+			t.Errorf("%+v: backup descriptor lacks the edit: % x", o, backup[:0x20])
+		}
+		if !bytes.Equal(primary, backup) {
+			t.Errorf("%+v: backup descriptor differs from the primary:\n% x\n% x", o, backup, primary)
+		}
+		if o.MetadataCsum {
+			var num [4]byte
+			binary.LittleEndian.PutUint32(num[:], 1)
+			c := rawCRC32C(rawCRC32C(rawCRC32C(rawCRC32C(rawCRC32C(0xFFFFFFFF, lUUID[:]), num[:]), backup[:0x1E]), []byte{0, 0}), backup[0x20:])
+			if got := binary.LittleEndian.Uint16(backup[0x1E:]); got != uint16(c) {
+				t.Errorf("backup descriptor checksum %#x, want %#x", got, uint16(c))
+			}
+		}
+	}
+
+	o := ext4test.Options{Extents: true, MetadataCsum: true, Journal: true, UUID: lUUID, Groups: 2}
+	img, l := ext4test.BuildLayout(o, []ext4test.File{{Path: "/a", Data: []byte("x")}})
+	l.PatchSuper(img, func(sb []byte) { sb[0x60] |= 0x4 })
+	sb := img[backupSB : backupSB+1024]
+	if sb[0x60]&0x4 == 0 {
+		t.Error("backup superblock lacks the edit")
+	}
+	if got, want := binary.LittleEndian.Uint32(sb[0x3FC:]), rawCRC32C(0xFFFFFFFF, sb[:0x3FC]); got != want {
+		t.Errorf("backup superblock checksum %#x, want %#x", got, want)
+	}
+}

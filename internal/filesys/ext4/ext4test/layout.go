@@ -341,6 +341,8 @@ func (l *Layout) WriteLeaf(img []byte, blk int, ino, gen uint32, exts []Extent, 
 
 // ShareDirBlock makes dirB's first mapped block also dirA's first block
 // (a cross-linked directory block). dirA's old first block stays allocated.
+// With metadata_csum the shared block's checksum is keyed to dirB's inode
+// number and generation, so read as dirA's block it does not verify.
 func (l *Layout) ShareDirBlock(img []byte, dirA, dirB string) {
 	a, b := l.File(dirA), l.File(dirB)
 	if len(b.Data) == 0 || len(a.Data) == 0 {
