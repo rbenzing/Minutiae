@@ -196,8 +196,8 @@ func (a *Alloc) File(o Options, in Inode, d FileData) ([]Node, []DataBlock) {
 	}
 	// build lays out the node of the given level that starts at logical block
 	// base and returns its nid (0 when no block in its span is present).
-	var build func(level int, base int64) uint32
-	build = func(level int, base int64) uint32 {
+	var build func(level int, base int64, ofs uint32) uint32
+	build = func(level int, base int64, ofs uint32) uint32 {
 		if !has(base, base+span(level)) {
 			return 0
 		}
@@ -208,7 +208,7 @@ func (a *Alloc) File(o Options, in Inode, d FileData) ([]Node, []DataBlock) {
 			if level == 1 {
 				words[j] = addrOf(lo, j)
 			} else {
-				words[j] = build(level-1, lo)
+				words[j] = build(level-1, lo, childOfs(level, ofs, j))
 			}
 		}
 		nid := a.NID()
@@ -216,6 +216,9 @@ func (a *Alloc) File(o Options, in Inode, d FileData) ([]Node, []DataBlock) {
 			data[k].sumNID = nid // the dnode that maps these blocks
 		}
 		blk := pointerNode(nid, in.NID, words)
+		if a.nodeSegs {
+			binary.LittleEndian.PutUint32(blk[4080:], ofs<<7) // ofs_of_node (the kernel always records it)
+		}
 		nodes = append(nodes, Node{NID: nid, Addr: a.NodeAddr(), Block: blk})
 		return nid
 	}
@@ -226,10 +229,25 @@ func (a *Alloc) File(o Options, in Inode, d FileData) ([]Node, []DataBlock) {
 	}
 	base := slots
 	for i, level := range []int{1, 1, 2, 2, 3} {
-		in.NIDs[i] = build(level, base)
+		in.NIDs[i] = build(level, base, topOfs[i])
 		base += span(level)
 	}
 	in.Addrs = addrs
 	inode := Node{NID: in.NID, Addr: a.NodeAddr(), Block: InodeBlock(o, in)}
 	return append([]Node{inode}, nodes...), data
+}
+
+// topOfs is ofs_of_node of the node in i_nid[0..4] (from memory of the
+// kernel's node-path numbering, 3D-R26; the 3D probe confirmed it, Q7).
+var topOfs = [5]uint32{1, 2, 3, 3 + 1 + AddrsPerBlock, 3 + 2*(1+AddrsPerBlock)}
+
+// childOfs is ofs_of_node of child j of a node at the given level whose own
+// offset is ofs: direct children follow their indirect parent one by one, the
+// indirect children of a double-indirect node are 1019 apart (each is
+// followed by its 1018 direct children).
+func childOfs(level int, ofs uint32, j int) uint32 {
+	if level == 3 {
+		return ofs + 1 + uint32(j)*(1+AddrsPerBlock)
+	}
+	return ofs + 1 + uint32(j)
 }

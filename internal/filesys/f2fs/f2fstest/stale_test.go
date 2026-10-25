@@ -422,3 +422,31 @@ func TestSSAWithoutNodeSegsLeavesFooterTypeZero(t *testing.T) {
 		t.Errorf("SSA entry nid = %d, want the inode %d", nid, tree.NID["/f"])
 	}
 }
+
+// With NodeSegs the tree nodes record ofs_of_node as the kernel does (the
+// footer flag word holds it above bit 7): 1 and 2 for the direct nodes of
+// i_nid[0..1], 3 for the indirect node of i_nid[2] and 4, 5, ... for its
+// direct children. Without NodeSegs the old images keep a zero flag.
+func TestNodeSegsRecordNodeOffsets(t *testing.T) {
+	files := []f2fstest.File{{Path: "/big", Data: pattern((923+2*1018+1018+5)*bs, 3)}}
+	img, tree := f2fstest.BuildTree(f2fstest.Options{NodeSegs: 2}, files)
+	inode := blk(img, tree.Addr[tree.NID["/big"]])
+	ofs := func(nid uint32) uint32 { _, _, flag, _, _ := footer(blk(img, tree.Addr[nid])); return flag >> 7 }
+	nid := func(b []byte, i int) uint32 { return le.Uint32(b[4052+4*i:]) }
+	for slot, want := range []uint32{1, 2, 3} {
+		if got := ofs(nid(inode, slot)); got != want {
+			t.Errorf("i_nid[%d] has ofs %d, want %d", slot, got, want)
+		}
+	}
+	ind := blk(img, tree.Addr[nid(inode, 2)])
+	for k, want := range []uint32{4, 5} {
+		if got := ofs(le.Uint32(ind[4*k:])); got != want {
+			t.Errorf("child %d of the indirect node has ofs %d, want %d", k, got, want)
+		}
+	}
+	plainImg, plainTree := f2fstest.BuildTree(f2fstest.Options{}, files[:1])
+	n := nid(blk(plainImg, plainTree.Addr[plainTree.NID["/big"]]), 0)
+	if _, _, flag, _, _ := footer(blk(plainImg, plainTree.Addr[n])); flag != 0 {
+		t.Errorf("an image without NodeSegs has footer flag %#x, want 0 (existing images stay byte-identical)", flag)
+	}
+}
