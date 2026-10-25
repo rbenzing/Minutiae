@@ -60,6 +60,9 @@ type Window struct {
 	cacheLen    int
 	outside     int64
 	cacheLoaded bool
+	readErr     error // the first I/O error of the media only (later ones are not kept); a
+	// refusal of the window, a spent budget and a cancelled context are not
+	// I/O errors (the context is checked separately by the scan)
 }
 
 func newWindow(ctx context.Context, r io.ReaderAt, base, length int64, b *budget) *Window {
@@ -85,6 +88,9 @@ func (w *Window) readFull(p []byte, off int64) error {
 	}
 	if err == nil || errors.Is(err, io.EOF) {
 		err = io.ErrUnexpectedEOF
+	}
+	if w.readErr == nil {
+		w.readErr = err
 	}
 	return err
 }
