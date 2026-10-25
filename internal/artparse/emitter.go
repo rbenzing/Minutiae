@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,13 +15,17 @@ import (
 )
 
 const (
-	maxNoteKey       = 64
-	maxNoteValue     = 1 << 10
-	maxReason        = 1 << 10
-	progressInterval = 200 * time.Millisecond
-	maxPayloadDepth  = 65      // the writer allows 64 levels; one more is refused here as well
-	maxPayloadNodes  = 1 << 22 // values copied per record: a shared sub-tree cannot multiply the work
-	relationFromRec  = "from-recovered-artifact"
+	maxNoteKey         = 64
+	maxNoteValue       = 1 << 10
+	maxReason          = 1 << 10
+	progressInterval   = 200 * time.Millisecond
+	maxPayloadDepth    = 65      // the writer allows 64 levels; one more is refused here as well
+	maxPayloadNodes    = 1 << 22 // values copied per record: a shared sub-tree cannot multiply the work
+	relationFromRec    = "from-recovered-artifact"
+	relationFromBundle = "from-recovered-bundle"
+	noteCapUnknown     = "recovery-cap-unknown"
+	noteMixedBundle    = "mixed-bundle"
+	capUnknown         = 25 // the confidence cap of a bundle whose cap cannot be read
 )
 
 var methodRE = regexp.MustCompile(`^[a-z][a-z0-9-]{1,31}$`)
@@ -41,14 +46,18 @@ type artInfo struct {
 // ingestWriter: the ctx argument of Emit and Warn is accepted and ignored (never called: a
 // parser-defined Context whose Err or Done blocks cannot reach the host).
 type emitter struct {
-	w       ingestWriter
-	hostCtx context.Context
-	meta    parse.Meta // Emits and Platforms only; a private copy
-	bundle  []parse.Artifact
-	arts    map[string]artInfo
-	lim     parse.Limits
-	pump    chan<- func()
-	report  func(done, total int64)
+	w  ingestWriter
+	br *bundleRecovery // non-nil when a member of the bundle is recovered
+
+	// noPropagate is a test seam: the host does not stamp recovered-ness, so the writer's own rule is seen.
+	noPropagate bool
+	hostCtx     context.Context
+	meta        parse.Meta // Emits and Platforms only; a private copy
+	bundle      []parse.Artifact
+	arts        map[string]artInfo
+	lim         parse.Limits
+	pump        chan<- func()
+	report      func(done, total int64)
 
 	// afterInflight is a test seam: it runs between the in-flight increment and the seal re-check.
 	afterInflight func()
@@ -95,6 +104,10 @@ func newEmitter(hostCtx context.Context, w ingestWriter, reg Registered, arts ma
 		}
 		e.arts[a.ID] = info
 		e.bundle = append(e.bundle, parse.Artifact{ID: a.ID, Platform: a.Platform})
+	}
+	e.br = newBundleRecovery(e.arts)
+	if e.br != nil && e.br.mixed && e.lim.MaxNotes > 0 {
+		e.noteMap["mixed_bundle"] = strings.Join(e.br.recoveredIDs, ",")
 	}
 	return e, nil
 }
@@ -158,6 +171,11 @@ func (e *emitter) Emit(_ context.Context, r records.Record) error {
 	}
 	defer e.end()
 
+	// C8: the host stamps Recovery and Confidence; a parser's own would be a claim about provenance the
+	// parser cannot make. It is a counted rejection, so the job is incomplete.
+	if r.Recovery != "" || r.Confidence != nil {
+		return e.reject(r, fmt.Errorf("%w: %w", records.ErrInvalidRecord, parse.ErrRecoveryFieldsFromParser))
+	}
 	if err := parse.CheckRecord(e.meta, e.bundle, r); err != nil {
 		return e.reject(r, err)
 	}
@@ -216,27 +234,8 @@ func (e *emitter) prepare(r records.Record) (records.Record, error) {
 	if !ok {
 		return c, nil
 	}
-	if info.recovery != nil {
-		c.Deleted = true
-		c.Recovery = info.recovery.Method
-		c.Confidence = lower(c.Confidence, info.recovery.Confidence)
-		if c.Payload == nil {
-			c.Payload = map[string]any{}
-		}
-		rec, _ := c.Payload["recovery"].(map[string]any)
-		if rec == nil {
-			rec = map[string]any{}
-		}
-		rec["artifact_method"] = info.recovery.Method
-		if info.recovery.Confidence != nil {
-			rec["artifact_confidence"] = *info.recovery.Confidence
-		}
-		if _, own := rec["relation"]; own {
-			rec["artifact_relation"] = relationFromRec
-		} else {
-			rec["relation"] = relationFromRec
-		}
-		c.Payload["recovery"] = rec
+	if e.br != nil && !e.noPropagate {
+		e.br.stamp(&c, info)
 	}
 	if info.snapshot != nil {
 		if c.Payload == nil {

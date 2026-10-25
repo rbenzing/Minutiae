@@ -475,6 +475,7 @@ func (r *run) parseJob(ctx context.Context, j Job, b *bundle, st *jobState) (run
 	if err != nil {
 		return r.abortJob(ctx, w, st, OutcomeRefused, "cannot start the emitter: "+err.Error(), err, nil)
 	}
+	em.noPropagate = h.noPropagate
 	in := b.input(false)
 	sealAll := func() { em.seal(); b.seal() }
 	defer sealAll()

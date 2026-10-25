@@ -60,7 +60,7 @@ func TestDefaultNamersAreDeviceFileThenExtract(t *testing.T) {
 	for _, n := range artparse.DefaultNamers() {
 		names = append(names, n.Name())
 	}
-	if got := strings.Join(names, ","); got != "device-file,extract" {
+	if got := strings.Join(names, ","); got != "device-file,extract,recovered" {
 		t.Errorf("DefaultNamers = %s", got)
 	}
 }
@@ -200,28 +200,69 @@ func TestEligibleAllowlist(t *testing.T) {
 	live := &evidence.Derivation{FSType: "ext4", FSPath: "/a"}
 	snapD := &evidence.Derivation{FSType: "apfs", FSPath: "/a", Snapshot: snap}
 	for _, tc := range []struct {
-		name string
-		m    evidence.ManifestRecord
-		incl bool
-		want bool
+		name    string
+		m       evidence.ManifestRecord
+		incl    bool
+		inclRec bool
+		want    bool
 	}{
-		{"file", rec("file", nil), false, true},
-		{"live extract", rec("extract", live), false, true},
-		{"backup", rec("backup", nil), false, true},
-		{"snapshot extract excluded", rec("extract", snapD), false, false},
-		{"snapshot extract included", rec("extract", snapD), true, true},
-		{"extract without derivation", rec("extract", nil), true, false},
-		{"recover with derivation", rec("recover", live), true, false},
-		{"carve", rec("carve", live), true, false},
-		{"empty kind", rec("", nil), true, false},
-		{"unknown kind", rec("future-kind", nil), true, false},
+		{"file", rec("file", nil), false, false, true},
+		{"live extract", rec("extract", live), false, false, true},
+		{"backup", rec("backup", nil), false, false, true},
+		{"snapshot extract excluded", rec("extract", snapD), false, true, false},
+		{"snapshot extract included", rec("extract", snapD), true, false, true},
+		{"extract without derivation", rec("extract", nil), true, true, false},
+		{"recover without the flag", rec("recover", live), true, false, false},
+		{"carve without the flag", rec("carve", live), true, false, false},
+		{"recover with the flag", rec("recover", live), false, true, true},
+		{"carve with the flag", rec("carve", nil), false, true, true},
+		{"slack with the flag", rec("slack", live), true, true, false},
+		{"journal with the flag", rec("journal", live), true, true, false},
+		{"report with the flag", rec("report", live), true, true, false},
+		{"empty kind", rec("", nil), true, true, false},
+		{"unknown kind", rec("future-kind", nil), true, true, false},
 	} {
-		ok, why := artparse.Eligible(tc.m, tc.incl)
+		ok, why := artparse.Eligible(tc.m, tc.incl, tc.inclRec)
 		if ok != tc.want || (!ok && why == "") {
 			t.Errorf("%s: Eligible = %v %q, want %v (with a reason when refused)", tc.name, ok, why, tc.want)
 		}
 	}
 	if !errors.Is(artparse.ErrNotParserInput, artparse.ErrNotParserInput) {
 		t.Fatal("sentinel")
+	}
+}
+
+func TestRecoveredNamerGivesTheFilesystemPath(t *testing.T) {
+	rec := func(kind, fsType, fsPath string) evidence.ManifestRecord {
+		return evidence.ManifestRecord{ID: "x", Path: "artifacts/d/a/x", Source: evidence.Source{
+			Kind: kind, DeviceID: "d", RemotePath: fsPath,
+			Derived: &evidence.Derivation{FSType: fsType, FSPath: fsPath},
+		}}
+	}
+	for _, tc := range []struct {
+		name, kind, fs, path, want, platform string
+	}{
+		{"recovered android file", "recover", "ext4", "/data/data/a/databases/app.db", "android:/data/data/a/databases/app.db", "android"},
+		{"recovered fat file", "recover", "fat32", "//DCIM//a.jpg", "android:/DCIM/a.jpg", "android"},
+		{"recovered ios file", "recover", "apfs", "/private/var/mobile/Library/SMS/sms.db", "ios:HomeDomain/Library/SMS/sms.db", "ios"},
+		{"no platform mapping", "recover", "ntfs", "/data/a", "", ""},
+		{"traversal", "recover", "ext4", "/data/../a", "", ""},
+		{"a carve has no path to give", "carve", "ext4", "/data/a", "", ""},
+		{"a slack artifact is not named", "slack", "ext4", "/data/a", "", ""},
+	} {
+		l, ok := nameOf(rec(tc.kind, tc.fs, tc.path), artparse.Env{})
+		if tc.want == "" {
+			if ok {
+				t.Errorf("%s: got a logical path %+v, want none", tc.name, l)
+			}
+			continue
+		}
+		if !ok || l.Path != tc.want || l.Platform != tc.platform || l.Namer != "recovered" {
+			t.Errorf("%s: got %+v, %v; want %s (%s, recovered)", tc.name, l, ok, tc.want, tc.platform)
+		}
+	}
+	m := evidence.ManifestRecord{ID: "x", Source: evidence.Source{Kind: "recover"}}
+	if l, ok := nameOf(m, artparse.Env{}); ok {
+		t.Errorf("a recovered artifact without a derivation got %+v", l)
 	}
 }

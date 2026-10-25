@@ -97,3 +97,7 @@ func SetJobContext(f func(parent context.Context, d time.Duration) (context.Cont
 	newJobCtx = f
 	return func() { newJobCtx = old }
 }
+
+// DisablePropagation makes the emitters of a built host skip the propagation of recovered-ness, so a
+// test can see the writer's own rule refuse a live record on a recovered artifact.
+func DisablePropagation(h *Host) { h.noPropagate = true }

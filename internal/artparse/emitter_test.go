@@ -25,6 +25,7 @@ type spy struct {
 	added   []records.Record
 	warns   []string
 	rejects []string
+	reasons []string // the reason of each Reject
 	addHook func(records.Record)
 	addErr  error
 	adds    atomic.Int32
@@ -58,6 +59,7 @@ func (s *spy) Warn(ctx context.Context, path, reason string) error {
 func (s *spy) Reject(ctx context.Context, path, reason string) error {
 	s.mu.Lock()
 	s.rejects = append(s.rejects, path)
+	s.reasons = append(s.reasons, reason)
 	s.mu.Unlock()
 	return s.IngestWriter.Reject(ctx, path, reason)
 }
@@ -484,13 +486,8 @@ func recoveredEnv(t *testing.T) (*env, *artparse.Emitter) {
 
 func TestEmitterPropagatesRecoveredArtifact(t *testing.T) {
 	v, e := recoveredEnv(t)
-	hi, lo := 80, 30
-	for _, c := range []struct {
-		in   *int
-		want int
-	}{{&hi, 60}, {nil, 60}, {&lo, 30}} {
+	for i := 0; i < 2; i++ { // the host's stamp is a function of the artifact alone: repeating it changes nothing
 		r := v.rec()
-		r.Confidence = c.in
 		if err := e.Emit(ctx0(), r); err != nil {
 			t.Fatal(err)
 		}
@@ -498,15 +495,76 @@ func TestEmitterPropagatesRecoveredArtifact(t *testing.T) {
 			t.Fatal("nothing reached the writer")
 		}
 		got := v.spy.added[len(v.spy.added)-1]
-		if !got.Deleted || got.Recovery != "carve-x" || got.Confidence == nil || *got.Confidence != c.want {
-			t.Errorf("record %+v, want deleted, carve-x, confidence %d", got, c.want)
+		if !got.Deleted || got.Recovery != "carve-x" || got.Confidence == nil || *got.Confidence != 60 {
+			t.Errorf("record %+v, want deleted, carve-x, confidence 60", got)
 		}
 		rec, _ := got.Payload["recovery"].(map[string]any)
 		if rec["artifact_method"] != "carve-x" || rec["artifact_confidence"] != 60 || rec["relation"] != "from-recovered-artifact" {
 			t.Errorf("payload.recovery = %v", rec)
 		}
+		if _, ok := rec["notes"]; ok {
+			t.Errorf("a known cap carries no cap note: %v", rec)
+		}
 		if _, ok := r.Payload["recovery"]; ok {
 			t.Error("the caller's payload map was mutated")
+		}
+	}
+}
+
+// An unreadable cap (a cut derivation chain, or a chain with no confidence at all) is never absent and
+// never high: the record is capped at 25 and says so.
+func TestEmitterCapUnknownIs25(t *testing.T) {
+	conf := 60
+	for name, ri := range map[string]*parse.RecoveryInfo{
+		"cut chain with a confidence": {Class: "carved", Method: "carve-x", Confidence: &conf, CapUnknown: true},
+		"no confidence":               {Class: "carved", Method: "carve-x", CapUnknown: true},
+	} {
+		v, e := newEnv(t, func(_ *parse.Limits, a *parse.Artifact) { a.Recovery = ri })
+		if err := e.Emit(ctx0(), v.rec()); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		got := v.spy.added[len(v.spy.added)-1]
+		if got.Confidence == nil || *got.Confidence != 25 || !got.Deleted || got.Recovery != "carve-x" {
+			t.Errorf("%s: record %+v, want deleted carve-x at confidence 25", name, got)
+		}
+		rec, _ := got.Payload["recovery"].(map[string]any)
+		notes, _ := rec["notes"].([]any)
+		if len(notes) != 1 || notes[0] != "recovery-cap-unknown" {
+			t.Errorf("%s: payload.recovery.notes = %v, want [recovery-cap-unknown]", name, rec["notes"])
+		}
+	}
+}
+
+// C8: a live parser cannot set Recovery or Confidence; the host stamps both. The refusal is a counted
+// rejection (the job is then incomplete), never a write.
+func TestLiveEmitterRefusesParserRecoveryFields(t *testing.T) {
+	conf := 50
+	for name, mod := range map[string]func(*records.Record){
+		"recovery":   func(r *records.Record) { r.Recovery = "sqlite-freelist" },
+		"confidence": func(r *records.Record) { r.Confidence = &conf },
+	} {
+		for _, recovered := range []bool{false, true} {
+			var v *env
+			var e *artparse.Emitter
+			if recovered {
+				v, e = recoveredEnv(t)
+			} else {
+				v, e = newEnv(t, nil)
+			}
+			r := v.rec()
+			mod(&r)
+			if err := e.Emit(ctx0(), r); err != nil {
+				t.Fatalf("%s (recovered artifact %v): Emit = %v, want nil (a counted rejection)", name, recovered, err)
+			}
+			if v.spy.adds.Load() != 0 || len(v.spy.rejects) != 1 {
+				t.Errorf("%s (recovered artifact %v): adds %d, rejects %v", name, recovered, v.spy.adds.Load(), v.spy.rejects)
+			}
+			if _, rej, _ := e.Counts(); rej != 1 {
+				t.Errorf("%s (recovered artifact %v): rejected %d, want 1", name, recovered, rej)
+			}
+			if len(v.spy.rejects) == 1 && !strings.Contains(v.spy.reasons[0], parse.ErrRecoveryFieldsFromParser.Error()) {
+				t.Errorf("%s: reject reason %q does not name the rule", name, v.spy.reasons[0])
+			}
 		}
 	}
 }

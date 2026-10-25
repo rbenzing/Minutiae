@@ -683,12 +683,12 @@ func TestParseExitCodes(t *testing.T) {
 		{"unknown parser", one(nil, "--parser", "zzz"), 2, ""},
 		{"parser version not held", one(nil, "--parser", "a@9.9.9"), 2, ""},
 		{"malformed parser", one(nil, "--parser", "a@"), 2, ""},
-		{"recover artifact", func(t *testing.T) (*pfx, regFn, []string) {
+		// a recover artifact is parser input when named with --artifact (plan 4G); kinds that are never input stay refused
+		{"import artifact", func(t *testing.T) (*pfx, regFn, []string) {
 			p := newPfx(t, "a")
 			var id string
 			p.edit(func(c *evidence.Case) {
-				d := &evidence.Derivation{ParentID: "p", ParentSHA256: strings.Repeat("0", 64), FSType: "ext4", FSPath: ppath("a")}
-				id = pcapture(t, c, "files/r", evidence.Source{Kind: "recover", RemotePath: ppath("a"), Derived: d}, "x").ID
+				id = pcapture(t, c, "files/r", evidence.Source{Kind: "import", RemotePath: ppath("a")}, "x").ID
 			})
 			return p, registry(t, "", good("a")), []string{"--artifact", id}
 		}, 2, ""},
