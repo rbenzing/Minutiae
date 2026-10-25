@@ -86,7 +86,7 @@ var allowed = map[string][]string{
 	"internal/parsers/androidcontacts":     {"internal/decode/sqlitedb", "internal/decode/sqlitedb/rowrun", "internal/parse", "internal/records", "internal/recordtypes/common", "internal/recordtypes/contact"},
 	"internal/parsers/chromium":            {"internal/decode/sqlitedb/rowrun", "internal/decode/ts", "internal/parse", "internal/records", "internal/recordtypes/common", "internal/recordtypes/web"},
 	"internal/parsers/safari":              {"internal/decode/sqlitedb", "internal/decode/sqlitedb/rowrun", "internal/decode/ts", "internal/parse", "internal/records", "internal/recordtypes/common", "internal/recordtypes/web", "internal/sqlitefile"},
-	"internal/artparse":                    {"internal/evidence", "internal/version", "internal/records", "internal/parse", "internal/recordtypes/all"},
+	"internal/artparse":                    {"internal/evidence", "internal/version", "internal/records", "internal/parse", "internal/recordtypes/all", "internal/decode/iosbackup", "internal/decode/sqlitedb"},
 	"tools/check":                          {},
 	"tools/fuzzcampaign":                   {},
 	"tools/parserhash":                     {"internal/parse", "internal/parsers"},

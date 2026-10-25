@@ -88,6 +88,7 @@ type AnalysisStart struct {
 	GoVersion       string        `json:"go_version"`
 	Limits          AuditLimits   `json:"limits"`
 	Jobs            AuditJobs     `json:"jobs"`
+	Backups         []AuditBackup `json:"backups"` // always present
 }
 
 // Details returns the audit details of the entry.
@@ -95,12 +96,13 @@ func (x AnalysisStart) Details() map[string]any { return detailsOf(x) }
 
 // BundleMember is one input of a job as audited at parse.job.start.
 type BundleMember struct {
-	ArtifactID  string         `json:"artifact_id"`
-	SHA256      string         `json:"sha256"`
-	LogicalPath string         `json:"logical_path"`
-	Platform    string         `json:"platform"`
-	Namer       string         `json:"namer"`
-	Snapshot    *AuditSnapshot `json:"snapshot,omitempty"`
+	ArtifactID  string            `json:"artifact_id"`
+	SHA256      string            `json:"sha256"`
+	LogicalPath string            `json:"logical_path"`
+	Platform    string            `json:"platform"`
+	Namer       string            `json:"namer"`
+	Snapshot    *AuditSnapshot    `json:"snapshot,omitempty"`
+	NamerSource *AuditArtifactRef `json:"namer_source,omitempty"` // the Manifest.db that named an ios-backup file
 }
 
 // JobStart is the details of parse.job.start, appended before any input of the job is read.
@@ -185,3 +187,25 @@ type HostWarning struct {
 
 // Details returns the audit details of the entry.
 func (x HostWarning) Details() map[string]any { return detailsOf(x) }
+
+// AuditArtifactRef names an artifact in an audit entry.
+type AuditArtifactRef struct {
+	ArtifactID string `json:"artifact_id"`
+	SHA256     string `json:"sha256"`
+}
+
+// AuditBackup is one iOS backup as audited at analysis.start (4E-R5).
+// A manifest_db or manifest_plist reference means "identified", not "verified": an incomplete or too large
+// file is named but not loaded, and reason says so.
+type AuditBackup struct {
+	Acquisition    string            `json:"acquisition"`
+	Dir            string            `json:"dir"`
+	ManifestDB     *AuditArtifactRef `json:"manifest_db"`
+	ManifestPlist  *AuditArtifactRef `json:"manifest_plist"`
+	Encryption     string            `json:"encryption"`
+	Status         string            `json:"status"`
+	Reason         string            `json:"reason"`
+	Mapped         int               `json:"mapped"`
+	Unmapped       int               `json:"unmapped"`
+	FileIDMismatch int               `json:"fileid_mismatch"`
+}

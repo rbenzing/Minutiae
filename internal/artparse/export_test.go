@@ -97,3 +97,10 @@ func SetJobContext(f func(parent context.Context, d time.Duration) (context.Cont
 	newJobCtx = f
 	return func() { newJobCtx = old }
 }
+
+// Backup resolution seams.
+func SetMaxFilesRows(o *Options, n int)                               { o.maxFilesRows = n }
+func WithResolveBudget(o *Options, f func(limit int64) *parse.Budget) { o.resolveBudget = f }
+func WithAfterManifestRead(o *Options, f func())                      { o.afterManifestRead = f }
+func NameCalls(h *Host) int64                                         { return h.nameCalls.Load() }
+func FindScan(b *Bundle, glob string) []parse.Artifact                { return (&lookuper{b: b}).findScan(glob) }

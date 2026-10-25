@@ -39,6 +39,8 @@ type RunSummary struct {
 	// Stopped says why the run ended early: "" | "abandoned" | "cancelled" | "audit-failure" | "abort-failure" |
 	// "run-error" (another run-level failure, such as ErrIngestActive).
 	Stopped string
+	// Backups are the iOS backup resolutions of the run (4E-R5, R38).
+	Backups []BackupResolution
 }
 
 // Class is the exit class of a run: ClassOK (exit 0), ClassPartial (exit 1) or ClassIntegrity (exit 4).
@@ -56,6 +58,14 @@ func (s RunSummary) Class() Class {
 	worst := ClassOK
 	if s.Cancelled || s.Stopped != "" {
 		worst = ClassPartial
+	}
+	for _, b := range s.Backups {
+		switch {
+		case b.Integrity:
+			return ClassIntegrity
+		case b.Status != BackupMapped:
+			worst = ClassPartial
+		}
 	}
 	for _, j := range s.Jobs {
 		switch {

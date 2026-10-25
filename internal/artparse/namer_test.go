@@ -55,12 +55,12 @@ func extractRec(fsType, fsPath string) evidence.ManifestRecord {
 	}}
 }
 
-func TestDefaultNamersAreDeviceFileThenExtract(t *testing.T) {
+func TestDefaultNamersAreDeviceFileThenIOSBackupThenExtract(t *testing.T) {
 	var names []string
 	for _, n := range artparse.DefaultNamers() {
 		names = append(names, n.Name())
 	}
-	if got := strings.Join(names, ","); got != "device-file,extract" {
+	if got := strings.Join(names, ","); got != "device-file,ios-backup,extract" {
 		t.Errorf("DefaultNamers = %s", got)
 	}
 }

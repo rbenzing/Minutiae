@@ -3,6 +3,8 @@ package artparse
 import (
 	"fmt"
 	"reflect"
+	"sort"
+	"sync"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/parse"
@@ -21,6 +23,14 @@ type Snapshot struct {
 	records []evidence.ManifestRecord
 	byID    map[string]int
 	env     Env
+
+	// backup resolution (ResolveBackups): done once per snapshot
+	resolved    bool
+	resolutions []BackupResolution
+
+	// the literal-lookup index, built on the first literal Find (4E-R9)
+	indexOnce sync.Once
+	index     map[string][]*candidate
 }
 
 // TakeSnapshot reads the manifest once and the audit log once. A manifest id or
@@ -67,6 +77,27 @@ func (s *Snapshot) Matches(m evidence.ManifestRecord) bool {
 	w, ok := s.Record(m.ID)
 	return ok && w.Path == m.Path && w.Size == m.Size && w.SHA256 == m.SHA256 &&
 		w.Incomplete == m.Incomplete && reflect.DeepEqual(w.Source, m.Source)
+}
+
+// logicalIndex is the map from a logical path to the named candidates holding it, in artifact id order,
+// over every record the F6 allowlist admits with snapshots (a Lookuper filters further). It is built once,
+// with the namers of the first host that asks.
+func (s *Snapshot) logicalIndex(h *Host) map[string][]*candidate {
+	s.indexOnce.Do(func() {
+		s.index = map[string][]*candidate{}
+		for _, m := range s.records {
+			if ok, _ := Eligible(m, true); !ok {
+				continue
+			}
+			if c := h.name(m, s.env); c.named {
+				s.index[c.logical.Path] = append(s.index[c.logical.Path], c)
+			}
+		}
+		for _, cs := range s.index {
+			sort.Slice(cs, func(i, j int) bool { return cs[i].rec.ID < cs[j].rec.ID })
+		}
+	})
+	return s.index
 }
 
 // buildEnv derives the platform of each device from the case's own evidence: an
