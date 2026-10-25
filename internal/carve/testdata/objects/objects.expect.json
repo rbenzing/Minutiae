@@ -1,0 +1,501 @@
+{
+ "generator": {
+  "packages": [
+   {
+    "package": "ffmpeg",
+    "version": "7:5.1.9-0+deb12u1"
+   },
+   {
+    "package": "gzip",
+    "version": "1.12-1"
+   },
+   {
+    "package": "libheif-examples",
+    "version": "1.15.1-1+deb12u1"
+   },
+   {
+    "package": "python3",
+    "version": "3.11.2-1+b1"
+   },
+   {
+    "package": "python3-pil",
+    "version": "9.4.0-1.1+deb12u1"
+   },
+   {
+    "package": "sqlite3",
+    "version": "3.40.1-2+deb12u2"
+   },
+   {
+    "package": "zip",
+    "version": "3.0-13+deb12u1"
+   }
+  ],
+  "pillow": "9.4.0",
+  "commands": [
+   "heif-enc -q 50 -o <objects>/heic.heic <objects>/png-rgb.png",
+   "heif-info <objects>/heic.heic",
+   "ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc=size=64x48:rate=10:duration=1 -c:v libx264 -pix_fmt yuv420p -threads 1 -x264-params threads=1:sliced-threads=0 -fflags +bitexact -flags:v +bitexact -map_metadata -1 -an -f mp4 <objects>/mp4-h264.mp4",
+   "ffprobe -v error -show_format -show_streams -of json <objects>/mp4-h264.mp4",
+   "ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc=size=64x48:rate=10:duration=1 -c:v libx264 -pix_fmt yuv420p -threads 1 -x264-params threads=1:sliced-threads=0 -fflags +bitexact -flags:v +bitexact -map_metadata -1 -an -f mov <objects>/mov-h264.mov",
+   "ffprobe -v error -show_format -show_streams -of json <objects>/mov-h264.mov",
+   "ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc=size=64x48:rate=10:duration=1 -c:v libx264 -pix_fmt yuv420p -threads 1 -x264-params threads=1:sliced-threads=0 -fflags +bitexact -flags:v +bitexact -map_metadata -1 -an -f 3gp <objects>/3gp.3gp",
+   "ffprobe -v error -show_format -show_streams -of json <objects>/3gp.3gp",
+   "sqlite3 <objects>/sqlite.sqlite",
+   "sqlite3 <objects>/sqlite.sqlite PRAGMA page_size; PRAGMA page_count; PRAGMA integrity_check;",
+   "zip -q -X -nw -0 <objects>/zip-mixed.zip stored.txt",
+   "zip -q -X -nw -6 <objects>/zip-mixed.zip deflated.txt",
+   "zip -q -X -nw -6 <objects>/apk-like.zip AndroidManifest.xml",
+   "zip -q -X -nw -6 <objects>/apk-like.zip classes.dex",
+   "zip -q -X -nw -6 <objects>/apk-like.zip META-INF/MANIFEST.MF",
+   "zip -q -X -nw -6 <objects>/docx-like.zip [Content_Types].xml",
+   "zip -q -X -nw -6 <objects>/docx-like.zip word/document.xml",
+   "gzip -n -9 -c <work>/gzsrc.txt",
+   "ffmpeg -hide_banner -loglevel error -y -f lavfi -i sine=frequency=440:duration=1:sample_rate=8000 -c:a pcm_s16le -ac 1 -fflags +bitexact -flags:a +bitexact -map_metadata -1 -f wav <objects>/wav-pcm.wav",
+   "ffmpeg -hide_banner -loglevel error -y -f lavfi -i sine=frequency=440:duration=1:sample_rate=8000 -c:a libvorbis -ac 1 -fflags +bitexact -flags:a +bitexact -map_metadata -1 -f ogg <objects>/ogg-vorbis.ogg",
+   "ffprobe -v error -show_format -show_streams -of json <objects>/ogg-vorbis.ogg"
+  ]
+ },
+ "objects": [
+  {
+   "file": "jpeg-baseline.jpg",
+   "family": "jpeg",
+   "type": "jpeg",
+   "ext": "jpg",
+   "size": 991,
+   "sha256": "91377b7d9ce503a2e51f1ae1acc388892012d3a293319fbfaf7959e126c35920",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "",
+   "facts": {
+    "format": "JPEG",
+    "mode": "RGB",
+    "size": [
+     64,
+     48
+    ],
+    "progressive": false
+   }
+  },
+  {
+   "file": "jpeg-progressive.jpg",
+   "family": "jpeg",
+   "type": "jpeg",
+   "ext": "jpg",
+   "size": 9603,
+   "sha256": "bf0f6745504896cde775f00e8095d2f997c1927f7ec743b3a3db72c0616d0219",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "",
+   "facts": {
+    "format": "JPEG",
+    "mode": "RGB",
+    "size": [
+     64,
+     48
+    ],
+    "progressive": true
+   }
+  },
+  {
+   "file": "png-rgb.png",
+   "family": "png",
+   "type": "png",
+   "ext": "png",
+   "size": 125,
+   "sha256": "aaf3e79efd96f44e6874ad5968fdbe5d204dda4b89c701c0029610c8162a6dca",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "",
+   "facts": {
+    "format": "PNG",
+    "mode": "RGB",
+    "size": [
+     64,
+     48
+    ]
+   }
+  },
+  {
+   "file": "png-palette.png",
+   "family": "png",
+   "type": "png",
+   "ext": "png",
+   "size": 333,
+   "sha256": "56ada8dedbb86e2a684d4ae93c75e96e5a517ab67ab565855c5e0e1708307442",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "",
+   "facts": {
+    "format": "PNG",
+    "mode": "P",
+    "size": [
+     64,
+     48
+    ]
+   }
+  },
+  {
+   "file": "gif89a.gif",
+   "family": "gif",
+   "type": "gif",
+   "ext": "gif",
+   "size": 5796,
+   "sha256": "305cee1a85bc05432f61e0e670611cb7006cbcf1b87af3bc1108b078b9d644e9",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "",
+   "facts": {
+    "version": "GIF89a",
+    "n_frames": 2
+   }
+  },
+  {
+   "file": "gif87a.gif",
+   "family": "gif",
+   "type": "gif",
+   "ext": "gif",
+   "size": 1293,
+   "sha256": "c8abac2d740c78f848dc58fee2a51113561e3a6ca539e87f0711a5ae901b7493",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "",
+   "facts": {
+    "version": "GIF87a",
+    "n_frames": 1
+   }
+  },
+  {
+   "file": "webp-lossy.webp",
+   "family": "webp",
+   "type": "webp",
+   "ext": "webp",
+   "size": 238,
+   "sha256": "5acee7d76cf3e9805fa5a478ceb678da99bf303274fba94cfd98dfc101ef868b",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "",
+   "facts": {
+    "format": "WEBP",
+    "mode": "RGB",
+    "size": [
+     64,
+     48
+    ],
+    "lossless": false
+   }
+  },
+  {
+   "file": "webp-lossless.webp",
+   "family": "webp",
+   "type": "webp",
+   "ext": "webp",
+   "size": 74,
+   "sha256": "78fe126b37179265e74576a318bf14cd242dd7dd40ea6926f2513e84863d7906",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "",
+   "facts": {
+    "format": "WEBP",
+    "mode": "RGB",
+    "size": [
+     64,
+     48
+    ],
+    "lossless": true
+   }
+  },
+  {
+   "file": "heic.heic",
+   "family": "isobmff",
+   "type": "heic",
+   "ext": "heic",
+   "size": 571,
+   "sha256": "cea22378430105f150dfe2a2271b47d39454a71e168a08bf102f190cdb9b8df8",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "heic",
+   "facts": {
+    "mime": "image/heic",
+    "compatible_brands": "mif1, heic, miaf"
+   }
+  },
+  {
+   "file": "mp4-h264.mp4",
+   "family": "isobmff",
+   "type": "mp4",
+   "ext": "mp4",
+   "size": 2823,
+   "sha256": "a5aba6cdb40d87441e9ca139a2984f7be3b998a4adebea3abbab49edb6b0a754",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "isom",
+   "facts": {
+    "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+    "major_brand": "isom",
+    "compatible_brands": "isomiso2avc1mp41",
+    "codec_name": "h264",
+    "duration": "1.000000",
+    "nb_streams": 1,
+    "nb_frames": "10"
+   }
+  },
+  {
+   "file": "mov-h264.mov",
+   "family": "isobmff",
+   "type": "mov",
+   "ext": "mov",
+   "size": 2774,
+   "sha256": "df9f83805803df9aba78c6db7b204410abb9d86cc16f48fe443f1424475e2986",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "qt  ",
+   "facts": {
+    "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+    "major_brand": "qt  ",
+    "compatible_brands": "qt  ",
+    "codec_name": "h264",
+    "duration": "1.000000",
+    "nb_streams": 1,
+    "nb_frames": "10"
+   }
+  },
+  {
+   "file": "3gp.3gp",
+   "family": "isobmff",
+   "type": "3gp",
+   "ext": "3gp",
+   "size": 2742,
+   "sha256": "961ca70e88cb3e46548889be5740379b1276f6cb0d0d3c237b638385e05338fa",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "3gp6",
+   "facts": {
+    "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+    "major_brand": "3gp6",
+    "compatible_brands": "3gp6isomiso2avc1",
+    "codec_name": "h264",
+    "duration": "1.000000",
+    "nb_streams": 1,
+    "nb_frames": "10"
+   }
+  },
+  {
+   "file": "sqlite.sqlite",
+   "family": "sqlite",
+   "type": "sqlite",
+   "ext": "sqlite",
+   "size": 20480,
+   "sha256": "30cfa0a5768a590fcde1050540eebbf9252aa3813936106ada8de9490eb5971a",
+   "expect": "validated",
+   "width": 0,
+   "height": 0,
+   "brand": "",
+   "facts": {
+    "page_size": 4096,
+    "page_count": 5,
+    "integrity_check": "ok"
+   }
+  },
+  {
+   "file": "bplist.plist",
+   "family": "bplist",
+   "type": "bplist",
+   "ext": "plist",
+   "size": 202,
+   "sha256": "13350e46e22feac740e73c5b410d7c80ff7449107cd9f5e221adb724bdc5df4e",
+   "expect": "validated",
+   "width": 0,
+   "height": 0,
+   "brand": "",
+   "facts": {
+    "roundtrip": true,
+    "keys": [
+     "blob",
+     "count",
+     "flag",
+     "items",
+     "name",
+     "ratio",
+     "when"
+    ]
+   }
+  },
+  {
+   "file": "zip-mixed.zip",
+   "family": "zip",
+   "type": "zip",
+   "ext": "zip",
+   "size": 570,
+   "sha256": "2ae070d8535e1fbdcb375c9f0b03aa5421a94b5e4ea4e9cb8f5ea2f7a6ca74cf",
+   "expect": "validated",
+   "width": 0,
+   "height": 0,
+   "brand": "",
+   "facts": {
+    "namelist": [
+     "stored.txt",
+     "deflated.txt"
+    ],
+    "testzip": null,
+    "compress_type": [
+     0,
+     8
+    ]
+   }
+  },
+  {
+   "file": "apk-like.zip",
+   "family": "zip",
+   "type": "apk",
+   "ext": "apk",
+   "size": 841,
+   "sha256": "ebabd66d25929b45dd3b578fee9496ccb0d28142100a41c440febfd4179509ca",
+   "expect": "validated",
+   "width": 0,
+   "height": 0,
+   "brand": "",
+   "facts": {
+    "namelist": [
+     "AndroidManifest.xml",
+     "classes.dex",
+     "META-INF/MANIFEST.MF"
+    ],
+    "testzip": null,
+    "compress_type": [
+     8,
+     0,
+     0
+    ]
+   }
+  },
+  {
+   "file": "docx-like.zip",
+   "family": "zip",
+   "type": "docx",
+   "ext": "docx",
+   "size": 389,
+   "sha256": "3454bd654416286903bc02b3e105d147595c5ae4969b0f1ab291c30ac2139104",
+   "expect": "validated",
+   "width": 0,
+   "height": 0,
+   "brand": "",
+   "facts": {
+    "namelist": [
+     "[Content_Types].xml",
+     "word/document.xml"
+    ],
+    "testzip": null,
+    "compress_type": [
+     8,
+     8
+    ]
+   }
+  },
+  {
+   "file": "pdf-single.pdf",
+   "family": "pdf",
+   "type": "pdf",
+   "ext": "pdf",
+   "size": 1787,
+   "sha256": "6876bf2017a828854d6a69cf0f3cbaa279562f6f1aadc346bce0c7577b98c7d1",
+   "expect": "footer",
+   "width": 0,
+   "height": 0,
+   "brand": "",
+   "facts": {
+    "startxref": [
+     1572
+    ],
+    "eof_offsets": [
+     1782
+    ],
+    "xref_checked": true
+   }
+  },
+  {
+   "file": "pdf-incremental.pdf",
+   "family": "pdf",
+   "type": "pdf",
+   "ext": "pdf",
+   "size": 1946,
+   "sha256": "6fb70abfbfc3c9f92640a787997af0a49cece08f2742e88d6c95bac9913b348c",
+   "expect": "footer",
+   "width": 0,
+   "height": 0,
+   "brand": "",
+   "facts": {
+    "startxref": [
+     1572,
+     1839
+    ],
+    "eof_offsets": [
+     1782,
+     1940
+    ],
+    "xref_checked": true
+   }
+  },
+  {
+   "file": "gzip.gz",
+   "family": "gzip",
+   "type": "gzip",
+   "ext": "gz",
+   "size": 553,
+   "sha256": "45d8c85251d3ffbc2aad7b24aaa92439f2a56196cea09d8f575611e18e0a50c0",
+   "expect": "bounded",
+   "width": 0,
+   "height": 0,
+   "brand": "",
+   "facts": {
+    "inflates": true,
+    "inflated_size": 8290
+   }
+  },
+  {
+   "file": "wav-pcm.wav",
+   "family": "wav",
+   "type": "wav",
+   "ext": "wav",
+   "size": 16044,
+   "sha256": "543c8653861ea21b08c67485a53d47b62a15b06442b6945ea79fcdf47b49a50e",
+   "expect": "validated",
+   "width": 0,
+   "height": 0,
+   "brand": "",
+   "facts": {
+    "nchannels": 1,
+    "framerate": 8000,
+    "nframes": 8000,
+    "sampwidth": 2
+   }
+  },
+  {
+   "file": "ogg-vorbis.ogg",
+   "family": "ogg",
+   "type": "ogg",
+   "ext": "ogg",
+   "size": 3367,
+   "sha256": "2f983388c47bc77bd1c93ee5a6087360bb64525d1f3a26a14d3538037724d8e5",
+   "expect": "validated",
+   "width": 0,
+   "height": 0,
+   "brand": "",
+   "facts": {
+    "format_name": "ogg",
+    "codec_name": "vorbis"
+   }
+  }
+ ]
+}
