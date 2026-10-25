@@ -134,6 +134,17 @@ func (h *Host) ClaimedTables(ctx context.Context, artifactID string) ([]Claimed,
 	if rerr != nil {
 		return nil, rerr
 	}
+	// A backup file no Manifest.db could name may still be a claimed table: say so (unparsed), never "no claim".
+	if reason := unnamedBackupFileReason(snap, rec); reason != "" {
+		var out []Claimed
+		for _, r := range h.registry {
+			id := r.Identity()
+			for _, c := range r.meta.Claims {
+				out = append(out, Claimed{Table: c.Table, Role: c.Role, Parser: id.Name, Version: id.Version, Hash: id.Hash, Unparsed: true, Reason: reason})
+			}
+		}
+		return out, nil
+	}
 	jobs, _, err := h.Discover(ctx, snap, Selection{Parsers: refs, IncludeSnapshots: true})
 	if err != nil {
 		return nil, err

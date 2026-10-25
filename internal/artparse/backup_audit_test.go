@@ -266,3 +266,53 @@ func TestResolveBackupsIsIdempotentPerSnapshot(t *testing.T) {
 		t.Errorf("second resolution %+v err %v opens %d->%d, want the first answer without opening anything", second, err, n, opens)
 	}
 }
+
+func TestClaimedTablesOfAnUnnamedBackupFileAreUnparsedNeverEmpty(t *testing.T) {
+	claimHostFor := func(bc *bcase) *artparse.Host {
+		return bc.host(nil, regFake(t, smsMapper{}, "ios-sms-claim"))
+	}
+	t.Run("unparsed backup", func(t *testing.T) {
+		bc := newBackupCase(t)
+		r := bc.add(bspec{files: stdFiles(), plist: plistYes, manifest: randomBytes(4096)})
+		got, err := claimHostFor(bc).ClaimedTables(context.Background(), r.file(smsDomain, smsRel).ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 || got[0].Table != "message" || !got[0].Unparsed || !strings.Contains(got[0].Reason, "backup unparsed: "+encryptedReason) {
+			t.Errorf("claims = %+v, want one Unparsed claim of message naming the backup reason", got)
+		}
+	})
+	t.Run("mapped backup, file not listed", func(t *testing.T) {
+		bc := newBackupCase(t)
+		files := stdFiles()
+		files[0].unlisted = true
+		r := bc.add(bspec{files: files})
+		got, err := claimHostFor(bc).ClaimedTables(context.Background(), r.file(smsDomain, smsRel).ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 || !got[0].Unparsed || !strings.Contains(got[0].Reason, "file ID not listed in Manifest.db") {
+			t.Errorf("claims = %+v, want one Unparsed claim with the per-file reason", got)
+		}
+	})
+}
+
+func TestManifestPlistBytesCountTowardMemInputTotal(t *testing.T) {
+	bc := newBackupCase(t)
+	r := bc.add(stdSpec())
+	dbLen, plLen := r.db.Size, r.plist.Size
+	done := false
+	p := bc.plan(bc.host(func(o *artparse.Options) {
+		o.Limits.MemInputMax = dbLen
+		o.Limits.MemInputTotal = dbLen + plLen - 1 // the Manifest.db fits only if the plist bytes were not counted
+		artparse.WithAfterManifestRead(o, func() {
+			if !done {
+				done = true
+				tamper(t, bc.c, r.db)
+			}
+		})
+	}))
+	if b := first(t, p.Backups); b.Status != "refused" {
+		t.Errorf("Backups[0] = %+v, want the Manifest.db streamed (and so re-hashed and refused)", b)
+	}
+}

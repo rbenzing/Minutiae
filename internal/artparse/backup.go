@@ -49,6 +49,9 @@ const (
 type ArtifactRef struct{ ArtifactID, SHA256 string }
 
 // BackupResolution is what the host decided about one iOS backup (one backup directory of one acquisition).
+// ManifestDB and ManifestPlist say which record was IDENTIFIED for the backup, not that it was verified:
+// an incomplete or over-size Manifest.plist (and an incomplete Manifest.db) is named but not loaded, and
+// Reason says so (too large, incomplete).
 type BackupResolution struct {
 	Acquisition, Dir string       // acquisitionKey, the <dir> path element
 	ManifestDB       *ArtifactRef // nil when absent
@@ -499,6 +502,7 @@ func (h *Host) readEncryption(ctx context.Context, snap *Snapshot, p evidence.Ma
 	if err != nil || f != nil {
 		return iosbackup.EncUnknown, "", f, err
 	}
+	lg.memLeft = max(saved-int64(len(s.data)), 0) // the plist bytes count toward MemInputTotal
 	enc, reason := iosbackup.ReadEncryption(s.data, bud)
 	return enc, reason, nil, nil
 }
@@ -689,4 +693,25 @@ func backupOf(m evidence.ManifestRecord) (acq, dir string, ok bool) {
 	}
 	dir, ok = backupDirOf(m.Source.RemotePath)
 	return acq, dir, ok
+}
+
+// unnamedBackupFileReason says why a backup data file has no logical path in a resolved snapshot ("" when
+// it has one or is not a backup data file). ClaimedTables must not read that as "no parser claims it":
+// the file may be a claimed table in a database nobody could name.
+func unnamedBackupFileReason(snap *Snapshot, rec evidence.ManifestRecord) string {
+	acq, dir, fileID, ok := backupPathOf(rec)
+	if !ok {
+		return ""
+	}
+	bm := snap.env.Backups[backupKey(acq, dir)]
+	if bm == nil {
+		return "backup unparsed: " + reasonNoManifest
+	}
+	if bm.Resolution.Status != BackupMapped {
+		return "backup unparsed: " + bm.Resolution.Reason
+	}
+	if _, why, found := bm.Logical(fileID); !found {
+		return why
+	}
+	return ""
 }

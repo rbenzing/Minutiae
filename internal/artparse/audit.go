@@ -195,6 +195,8 @@ type AuditArtifactRef struct {
 }
 
 // AuditBackup is one iOS backup as audited at analysis.start (4E-R5).
+// A manifest_db or manifest_plist reference means "identified", not "verified": an incomplete or too large
+// file is named but not loaded, and reason says so.
 type AuditBackup struct {
 	Acquisition    string            `json:"acquisition"`
 	Dir            string            `json:"dir"`
