@@ -36,10 +36,13 @@ var errBadPayload = fmt.Errorf("%w: payload nests too deeply or holds too many v
 // artInfo is what the emitter keeps of one artifact: copied once at newEmitter, never re-read from
 // the parser's Input.
 type artInfo struct {
-	id       string
-	platform string
-	recovery *parse.RecoveryInfo
-	snapshot *parse.SnapshotInfo
+	id         string
+	role       string // the bundle role (db, wal, journal)
+	platform   string
+	size       int64
+	remotePath string // the manifest's remote path of the artifact
+	recovery   *parse.RecoveryInfo
+	snapshot   *parse.SnapshotInfo
 }
 
 // emitter implements parse.Emitter for one invocation. It uses ONLY the host's context and the
@@ -51,13 +54,15 @@ type emitter struct {
 
 	// noPropagate is a test seam: the host does not stamp recovered-ness, so the writer's own rule is seen.
 	noPropagate bool
-	hostCtx     context.Context
-	meta        parse.Meta // Emits and Platforms only; a private copy
-	bundle      []parse.Artifact
-	arts        map[string]artInfo
-	lim         parse.Limits
-	pump        chan<- func()
-	report      func(done, total int64)
+	// recoveryOnly: this emitter belongs to a recovery job; its plain Emit writes nothing, whoever calls it.
+	recoveryOnly bool
+	hostCtx      context.Context
+	meta         parse.Meta // Emits and Platforms only; a private copy
+	bundle       []parse.Artifact
+	arts         map[string]artInfo
+	lim          parse.Limits
+	pump         chan<- func()
+	report       func(done, total int64)
 
 	// afterInflight is a test seam: it runs between the in-flight increment and the seal re-check.
 	afterInflight func()
@@ -82,8 +87,8 @@ func newEmitter(hostCtx context.Context, w ingestWriter, reg Registered, arts ma
 	}
 	m := reg.Meta()
 	e.meta = parse.Meta{Name: m.Name, Platforms: m.Platforms, Emits: m.Emits}
-	for _, a := range arts {
-		info := artInfo{id: a.ID, platform: a.Platform}
+	for role, a := range arts {
+		info := artInfo{id: a.ID, role: role, platform: a.Platform, size: a.Size, remotePath: a.Source.RemotePath}
 		if a.Recovery != nil {
 			ri := *a.Recovery
 			if !methodRE.MatchString(ri.Method) {
@@ -176,16 +181,31 @@ func (e *emitter) Emit(_ context.Context, r records.Record) error {
 	if r.Recovery != "" || r.Confidence != nil {
 		return e.reject(r, fmt.Errorf("%w: %w", records.ErrInvalidRecord, parse.ErrRecoveryFieldsFromParser))
 	}
+	if e.recoveryOnly {
+		return e.reject(r, fmt.Errorf("%w: %w", records.ErrInvalidRecord, parse.ErrLiveEmitInRecovery))
+	}
 	if err := parse.CheckRecord(e.meta, e.bundle, r); err != nil {
 		return e.reject(r, err)
 	}
+	return e.accept(r, e.prepare)
+}
+
+// errDropped is returned by a prepare function whose record is dropped without being a rejection.
+var errDropped = errors.New("artparse: record dropped")
+
+// accept counts r against the record cap, prepares it and hands it to the writer. A prepare error is a
+// counted rejection, except errDropped (nothing is written or rejected).
+func (e *emitter) accept(r records.Record, prep func(records.Record) (records.Record, error)) error {
 	if e.accepted.Add(1) > e.lim.MaxRecords {
 		e.accepted.Add(-1)
 		return parse.ErrRecordCap
 	}
-	c, err := e.prepare(r)
+	c, err := prep(r)
 	if err != nil {
 		e.accepted.Add(-1)
+		if errors.Is(err, errDropped) {
+			return nil
+		}
 		return e.reject(r, err)
 	}
 	if err := e.w.Add(e.writerCtx(), c); err != nil {
@@ -202,6 +222,36 @@ func (e *emitter) Emit(_ context.Context, r records.Record) error {
 // prepare deep-copies r and applies what the host knows from the manifest: recovered-ness and the
 // snapshot a record came from.
 func (e *emitter) prepare(r records.Record) (records.Record, error) {
+	c, err := e.copyRecord(r)
+	if err != nil {
+		return records.Record{}, err
+	}
+	info, ok := e.arts[r.ArtifactID]
+	if !ok {
+		return c, nil
+	}
+	if e.br != nil && !e.noPropagate {
+		if err := e.br.stamp(&c, info); err != nil {
+			return records.Record{}, err
+		}
+	}
+	stampSnapshot(&c, info)
+	return c, nil
+}
+
+// stampSnapshot records the snapshot an artifact was extracted from, when it was.
+func stampSnapshot(c *records.Record, info artInfo) {
+	if info.snapshot == nil {
+		return
+	}
+	if c.Payload == nil {
+		c.Payload = map[string]any{}
+	}
+	c.Payload["snapshot"] = map[string]any{"name": info.snapshot.Name, "xid": info.snapshot.Xid}
+}
+
+// copyRecord deep-copies r, so nothing the host adds can reach the caller's maps or pointers.
+func (e *emitter) copyRecord(r records.Record) (records.Record, error) {
 	c := r
 	if r.Range != nil {
 		v := *r.Range
@@ -229,19 +279,6 @@ func (e *emitter) prepare(r records.Record) (records.Record, error) {
 			return records.Record{}, err
 		}
 		c.Payload, _ = p.(map[string]any)
-	}
-	info, ok := e.arts[r.ArtifactID]
-	if !ok {
-		return c, nil
-	}
-	if e.br != nil && !e.noPropagate {
-		e.br.stamp(&c, info)
-	}
-	if info.snapshot != nil {
-		if c.Payload == nil {
-			c.Payload = map[string]any{}
-		}
-		c.Payload["snapshot"] = map[string]any{"name": info.snapshot.Name, "xid": info.snapshot.Xid}
 	}
 	return c, nil
 }

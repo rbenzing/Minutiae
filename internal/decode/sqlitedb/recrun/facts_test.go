@@ -86,19 +86,48 @@ func TestFactsOfJournalRow(t *testing.T) {
 	}
 }
 
-// A page the journal hides, or a database page under a WAL, lies in the DATABASE file: the facts
-// name no journal or WAL position for it (they would not validate), and stay valid.
+// A page the journal hides, or a database page under a WAL, lies in the DATABASE file: the role stays
+// db and the facts state the companion's provenance of that origin, and only of that origin (4G-C3).
 func TestFactsOfDatabaseRowWithCompanionProvenance(t *testing.T) {
 	rr := baseRow()
 	rr.Method, rr.Origin, rr.TableBasis, rr.Relation = sqlitefile.MethodJournalRolledBack, sqlitefile.OriginDBRolledBack, sqlitefile.BasisSchema, sqlitefile.RelUncommitted
-	rr.Journal = &sqlitefile.JournalProv{Record: 1, Hot: true, Applied: true}
+	rr.Journal = &sqlitefile.JournalProv{Record: 1, Segment: 2, Hot: true, Applied: true}
 	rr.WAL = &sqlitefile.WALProv{Frame: 1}
 	got := recrun.FactsOf(rr)
-	if got.Role != parse.RoleDB || got.Journal != nil || got.WAL != nil {
-		t.Errorf("facts %+v", got)
+	if got.Role != parse.RoleDB || got.WAL != nil || got.Journal == nil || *got.Journal != (parse.RecoveredJournal{Record: 1, Segment: 2, Hot: true, Applied: true}) {
+		t.Errorf("rolled-back row: facts %+v journal %+v", got, got.Journal)
 	}
 	if err := got.Validate(); err != nil {
 		t.Error(err)
+	}
+
+	rr = baseRow()
+	rr.Method, rr.Origin, rr.TableBasis, rr.Relation = sqlitefile.MethodWALPrior, sqlitefile.OriginDBUnderWAL, sqlitefile.BasisSchema, sqlitefile.RelSupersededVersion
+	rr.WAL = &sqlitefile.WALProv{Frame: 3, Salt1: 5, Salt2: 6, Committed: true}
+	rr.Journal = &sqlitefile.JournalProv{Record: 9}
+	got = recrun.FactsOf(rr)
+	if got.Role != parse.RoleDB || got.Journal != nil || got.WAL == nil || *got.WAL != (parse.RecoveredWAL{Frame: 3, Salt1: 5, Salt2: 6, Committed: true}) {
+		t.Errorf("under-wal row: facts %+v wal %+v", got, got.WAL)
+	}
+	if err := got.Validate(); err != nil {
+		t.Error(err)
+	}
+
+	// any other database-file row states no companion position, whatever the row carries
+	rr = baseRow()
+	rr.WAL, rr.Journal = &sqlitefile.WALProv{Frame: 1}, &sqlitefile.JournalProv{Record: 1}
+	got = recrun.FactsOf(rr)
+	if got.WAL != nil || got.Journal != nil {
+		t.Errorf("freelist row: facts %+v", got)
+	}
+	if err := got.Validate(); err != nil {
+		t.Error(err)
+	}
+	// a rolled-back row without provenance states none (unknown is not invented)
+	rr = baseRow()
+	rr.Method, rr.Origin = sqlitefile.MethodJournalRolledBack, sqlitefile.OriginDBRolledBack
+	if got = recrun.FactsOf(rr); got.Journal != nil || got.WAL != nil {
+		t.Errorf("facts %+v, want no invented provenance", got)
 	}
 }
 

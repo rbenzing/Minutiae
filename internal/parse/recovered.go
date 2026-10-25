@@ -81,8 +81,18 @@ func validRecoveryMethod(s string) bool {
 	return true
 }
 
+// The origins whose database-file rows carry a companion file's provenance (4G-C3): the database
+// page a committed WAL frame overlays states that frame, the database page a rollback hides states the
+// journal record that hides it. Role stays the file the row's cell lies in (the database).
+const (
+	OriginDBUnderWAL   = "db-under-wal"
+	OriginDBRolledBack = "db-rolled-back"
+)
+
 // Validate checks the facts before the host stamps them. It is pure and allocation-free on
-// success. Basis is schema or fit only: a guess or an unlabelled row is never typed (4G-R3).
+// success. Basis is schema or fit only: a guess or an unlabelled row is never typed (4G-R3). WAL
+// facts belong to a row of role wal, or of role db and origin OriginDBUnderWAL; journal facts to a
+// row of role journal, or of role db and origin OriginDBRolledBack; no other combination is valid.
 func (f RecoveredFacts) Validate() error {
 	switch {
 	case !validRecoveryMethod(f.Method):
@@ -97,10 +107,10 @@ func (f RecoveredFacts) Validate() error {
 		return fmt.Errorf("%w: locator of %d bytes", ErrBadRecoveredFacts, len(f.Locator))
 	case f.Relation != "absent-from-live" && f.Relation != "superseded-version" && f.Relation != "uncommitted" && f.Relation != "unknown":
 		return fmt.Errorf("%w: relation %q", ErrBadRecoveredFacts, f.Relation)
-	case f.WAL != nil && f.Role != RoleWAL:
-		return fmt.Errorf("%w: WAL facts on role %q", ErrBadRecoveredFacts, f.Role)
-	case f.Journal != nil && f.Role != RoleJournal:
-		return fmt.Errorf("%w: journal facts on role %q", ErrBadRecoveredFacts, f.Role)
+	case f.WAL != nil && f.Role != RoleWAL && (f.Role != RoleDB || f.Origin != OriginDBUnderWAL):
+		return fmt.Errorf("%w: WAL facts on role %q, origin %q", ErrBadRecoveredFacts, f.Role, f.Origin)
+	case f.Journal != nil && f.Role != RoleJournal && (f.Role != RoleDB || f.Origin != OriginDBRolledBack):
+		return fmt.Errorf("%w: journal facts on role %q, origin %q", ErrBadRecoveredFacts, f.Role, f.Origin)
 	}
 	return nil
 }
