@@ -392,3 +392,45 @@ func readPeak(t *testing.T, db []byte) int64 {
 	t.Fatal("no budget suffices")
 	return 0
 }
+
+func TestReadFilesInvalidUTF8IsNamed(t *testing.T) {
+	db := manifestDB(t, fileRow(1, "Home\xffDomain", "a", 1), fileRow(2, "HomeDomain", "a\xffb", 1))
+	f := read(t, db, wantIDs(fid(1), fid(2)))
+	if _, st, why := f.Lookup(fid(1)); st != iosbackup.BadEntry || why != "domain is not valid UTF-8" {
+		t.Errorf("domain = %v %q", st, why)
+	}
+	if _, st, why := f.Lookup(fid(2)); st != iosbackup.BadEntry || why != "relativePath is not valid UTF-8" {
+		t.Errorf("relativePath = %v %q", st, why)
+	}
+}
+
+func TestReadFilesUppercaseSpellingOfAWantedIDMakesAbsenceUndecided(t *testing.T) {
+	upper := strings.ToUpper(fid(0xabcdef))
+	db := manifestDB(t, frow{id: upper, domain: "HomeDomain", rel: "x", flags: int64(1)})
+	f := read(t, db, wantIDs(fid(0xabcdef)))
+	if _, st, why := f.Lookup(fid(0xabcdef)); st != iosbackup.Undecided || why == "" {
+		t.Errorf("= %v %q, want Undecided, never NotListed", st, why)
+	}
+	// An unrelated uppercase ID does not cost the answer.
+	g := read(t, db, wantIDs(fid(7)))
+	if _, st, _ := g.Lookup(fid(7)); st != iosbackup.NotListed {
+		t.Errorf("unrelated = %v, want NotListed", st)
+	}
+}
+
+func TestReadFilesWantedIDOnADamagedRowIsUndecided(t *testing.T) {
+	b := sqlitetest.New(sqlitetest.Options{})
+	tb := b.CreateTable("Files", filesDDL)
+	tb.Insert(1, fid(2), "HomeDomain", "ok", int64(1), nil)
+	// A well-formed record followed by two stray bytes: the record is longer than its header accounts for.
+	id, dom, rel := fid(1), "HomeDomain", "a"
+	body := append([]byte(id+dom+rel), 1, 'x', 'y')
+	tb.InsertRaw(2, []uint64{uint64(13 + 2*len(id)), uint64(13 + 2*len(dom)), uint64(13 + 2*len(rel)), 1, 0}, body)
+	f := read(t, b.Bytes(), wantIDs(fid(1), fid(2)))
+	if e, st, why := f.Lookup(fid(1)); st != iosbackup.Undecided || why == "" || e != (iosbackup.Entry{}) {
+		t.Errorf("damaged row = %+v %v %q, want Undecided", e, st, why)
+	}
+	if _, st, _ := f.Lookup(fid(2)); st != iosbackup.Mapped {
+		t.Errorf("clean row = %v, want Mapped", st)
+	}
+}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
 )
@@ -141,7 +143,8 @@ func ReadFiles(ctx context.Context, f sqlitedb.Files, b sqlitedb.Budget, want fu
 		if res.rows > maxRows {
 			return fmt.Errorf("%w: more than %d", ErrTooManyRows, maxRows)
 		}
-		if r.Flags()&damage != 0 {
+		damaged := r.Flags()&damage != 0
+		if damaged {
 			res.complete = false
 		}
 		idb, ok := r.Text(cID)
@@ -152,6 +155,10 @@ func ReadFiles(ctx context.Context, f sqlitedb.Files, b sqlitedb.Budget, want fu
 		}
 		id := string(idb)
 		if !want(id) {
+			// A non-canonical spelling of a wanted ID may be that file: absence is then undecidable.
+			if len(id) == 40 && !ValidFileID(id) && want(strings.ToLower(id)) {
+				res.complete = false
+			}
 			return nil
 		}
 		if k := res.kept[id]; k != nil {
@@ -159,6 +166,10 @@ func ReadFiles(ctx context.Context, f sqlitedb.Files, b sqlitedb.Budget, want fu
 			return nil
 		}
 		k := classify(r, cDomain, cRel, cFlags)
+		if damaged {
+			// Partial data never maps a file.
+			k = &kept{state: Undecided, reason: "the Files row is damaged"}
+		}
 		k.seen = 1
 		cost := int64(len(id)+len(k.entry.Domain)+len(k.entry.RelativePath)) + entryCharge
 		if err := b.Alloc(cost); err != nil {
@@ -197,6 +208,14 @@ func classify(r sqlitedb.Row, cDomain, cRel, cFlags int) *kept {
 	rel, st, why := textCell(r, cRel, "relativePath")
 	if st != 0 {
 		k.state, k.reason = st, why
+		return k
+	}
+	if !utf8.ValidString(domain) {
+		k.state, k.reason = BadEntry, "domain is not valid UTF-8"
+		return k
+	}
+	if !utf8.ValidString(rel) {
+		k.state, k.reason = BadEntry, "relativePath is not valid UTF-8"
 		return k
 	}
 	if !ValidDomain(domain) {
