@@ -230,6 +230,9 @@ func TestBuiltinValidatorsAreStubs(t *testing.T) {
 	// Task 2 ships only the registry; each format task replaces its stub.
 	w := newWindow(context.Background(), bytes.NewReader(make([]byte, 64)), 0, 64, unlimitedBudget())
 	for id, v := range builtinValidators() {
+		if id == "jpeg" { // implemented (Task 4)
+			continue
+		}
 		if got := v(w); got.Outcome != Rejected || got.Reason != "no-validator" {
 			t.Errorf("%s: %+v, want rejected no-validator", id, got)
 		}
