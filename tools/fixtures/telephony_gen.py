@@ -25,7 +25,7 @@ FAMILIES = {"mmssms": telephony_mmssms}
 
 
 def load_optional():
-    for name in ("telephony_calllog", "telephony_contacts", "browser_chromium"):
+    for name in ("telephony_calllog", "telephony_contacts", "browser_chromium", "browser_safari"):
         try:
             mod = __import__(name)
         except ImportError:

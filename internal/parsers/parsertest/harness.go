@@ -76,10 +76,15 @@ func FakeHash(name string) string {
 // over: the reader is the same sealed type the host uses, and Logical is
 // "android:" plus the remote path.
 func (h *Harness) Artifact(m evidence.ManifestRecord, data []byte) parse.Artifact {
+	return artifactOf(m, data, parse.PlatformAndroid, "android:"+m.Source.RemotePath)
+}
+
+// artifactOf is the parse.Artifact of a manifest record for the given platform and logical path.
+func artifactOf(m evidence.ManifestRecord, data []byte, platform, logical string) parse.Artifact {
 	return parse.Artifact{
-		ID: m.ID, SHA256: m.SHA256, Platform: parse.PlatformAndroid,
+		ID: m.ID, SHA256: m.SHA256, Platform: platform,
 		Acquisition: acquisitionOf(m.Path),
-		Logical:     "android:" + m.Source.RemotePath, Size: m.Size, Incomplete: m.Incomplete,
+		Logical:     logical, Size: m.Size, Incomplete: m.Incomplete,
 		Source: parse.SourceInfo{
 			Kind: m.Source.Kind, DeviceID: m.Source.DeviceID, RemotePath: m.Source.RemotePath,
 			OriginalPath: m.Source.OriginalPath, Partition: m.Source.Partition,
