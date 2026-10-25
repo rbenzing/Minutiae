@@ -124,7 +124,7 @@ func TestSlackRunMapStrict(t *testing.T) {
 		{"image_offset+length overflow", f, fileLine(0, 10, math.MaxInt64, "/a", "i", 1, false, true), 1},
 		{"invalid UTF-8 fs_path", f, strings.Replace(ok, "/a.txt", "/a\xff.txt", 1), 1},
 		{"NUL in fs_path", f, strings.Replace(ok, "/a.txt", `/a\u0000.txt`, 1), 1},
-		{"fs_path of 32 KiB + 1", f, fileLine(0, 1, 0, "/"+strings.Repeat("a", 32<<10), "i", 1, false, true), 1},
+		{"fs_path of 128 KiB + 1", f, fileLine(0, 1, 0, "/"+strings.Repeat("a", 128<<10), "i", 1, false, true), 1},
 		{"empty fs_id", f, fileLine(0, 1, 0, "/a", "", 1, false, true), 1},
 		{"fs_id of 257 bytes", f, fileLine(0, 1, 0, "/a", strings.Repeat("i", 257), 1, false, true), 1},
 		{"negative file_size", f, fileLine(0, 1, 0, "/a", "i", -1, false, true), 1},
@@ -162,7 +162,7 @@ func TestSlackRunMapStrict(t *testing.T) {
 		"no final newline":                  {f, strings.TrimSuffix(ok, "\n")},
 		"empty map":                         {f, ""},
 		"exported false then true":          {v, volLine(0, 8, 0, true, false) + volLine(0, 8, 8, false, true)},
-		"fs_path of exactly 32 KiB":         {f, fileLine(0, 1, 0, strings.Repeat("a", 32<<10), "i", 1, false, true)},
+		"fs_path of exactly 128 KiB":        {f, fileLine(0, 1, 0, strings.Repeat("a", 128<<10), "i", 1, false, true)},
 		"fs_id of 256 bytes":                {f, fileLine(0, 1, 0, "/a", strings.Repeat("i", 256), 1, false, true)},
 	}
 	for name, a := range accept {
@@ -240,5 +240,40 @@ func TestCheckedRunsReadsSlackMap(t *testing.T) {
 	}
 	if runs, err := c2.CheckedRuns(evidence.NewManifestIndex(recs2), bin2); !errors.Is(err, evidence.ErrIntegrity) {
 		t.Errorf("a slack map under a method that is not slack-*: CheckedRuns = %v, %v; want ErrIntegrity", runs, err)
+	}
+}
+
+// TestSlackRunMapEscapedLabelBound (3F-R28): a 32 KiB walk path of invalid bytes escapes to four bytes each
+// (\xHH), a backslash-heavy one to two; both are written and read back, and one byte more than the bound is
+// refused by writer and reader alike.
+func TestSlackRunMapEscapedLabelBound(t *testing.T) {
+	const bound = 4 * (32 << 10)
+	labels := map[string]string{
+		"32 KiB of 0xFF escaped":           strings.Repeat(`\xFF`, 32<<10),
+		"32 KiB of backslashes escaped":    strings.Repeat(`\`, 32<<10),
+		"exactly the bound of plain bytes": strings.Repeat("a", bound),
+	}
+	for name, label := range labels {
+		t.Run(name, func(t *testing.T) {
+			l := evidence.SlackMapLine{Length: 1, FSPath: label, PathEscaped: true, FSID: "i", FileSize: 1, Exported: true}
+			var buf bytes.Buffer
+			if err := evidence.WriteSlackMapLine(&buf, evidence.MethodSlackFile, l); err != nil {
+				t.Fatal(err)
+			}
+			if buf.Len() > evidence.MaxSlackMapLine+1 {
+				t.Fatalf("line of %d bytes exceeds MaxSlackMapLine", buf.Len())
+			}
+			got, err := readSlack(t, buf.String(), evidence.MethodSlackFile)
+			if err != nil || len(got) != 1 || got[0] != l {
+				t.Fatalf("read back: %v, %d lines", err, len(got))
+			}
+		})
+	}
+	l := evidence.SlackMapLine{Length: 1, FSPath: strings.Repeat("a", bound+1), PathEscaped: true, FSID: "i", Exported: true}
+	if err := evidence.WriteSlackMapLine(&bytes.Buffer{}, evidence.MethodSlackFile, l); !errors.Is(err, evidence.ErrIntegrity) {
+		t.Errorf("writer, bound+1: %v, want ErrIntegrity", err)
+	}
+	if _, err := readSlack(t, fileLine(0, 1, 0, l.FSPath, "i", 0, false, true), evidence.MethodSlackFile); !errors.Is(err, evidence.ErrIntegrity) {
+		t.Errorf("reader, bound+1: %v, want ErrIntegrity", err)
 	}
 }

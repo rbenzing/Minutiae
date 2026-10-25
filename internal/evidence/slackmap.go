@@ -23,8 +23,8 @@ const (
 const MaxSlackMapLine = 1 << 18
 
 const (
-	maxSlackPath = 32 << 10 // bytes of fs_path (the longest walk path, filesys.MaxWalkPath)
-	maxSlackID   = 256      // bytes of fs_id
+	maxSlackPath = 4 * (32 << 10) // bytes of fs_path: 4 x filesys.MaxWalkPath, the longest escaped label (3F-R28: a backslash-x-HH escape per invalid byte)
+	maxSlackID   = 256            // bytes of fs_id
 )
 
 // slackMapLineCap bounds the exported lines of a map, and separately its omitted lines. It is a variable only
@@ -170,7 +170,7 @@ func WriteSlackMapLine(w io.Writer, method string, l SlackMapLine) error {
 // visit, keeping none of them: one JSON object per line with exactly the keys of the method (none unknown,
 // none missing, none repeated or spelled in another case), at most MaxSlackMapLine bytes of valid UTF-8, at
 // most MaxRecoveredRuns exported lines and as many omitted ones, positive lengths, non-negative image
-// offsets, no overflow, an fs_path without NUL of at most 32 KiB and an fs_id of 1 to 256 bytes. Offsets
+// offsets, no overflow, an fs_path without NUL of at most 128 KiB (an escaped 32 KiB walk path) and an fs_id of 1 to 256 bytes. Offsets
 // start at 0 and follow one another over the exported lines without gap or overlap; an omitted line
 // (exported false, uniform true) sits at the current offset and does not advance it. An empty map is zero
 // lines. Every refusal wraps ErrIntegrity; an error of visit or of r is returned as it is.
