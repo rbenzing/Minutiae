@@ -30,7 +30,8 @@
 // entry; raw.url_chain_state is "no-chain-rows", "gaps", "duplicate-index", "unknown-index" (a chain_index that is
 // not an integer) or "unknown-url" (an entry with no URL text), the last two stating no chain at all. At most 1000
 // entries and 2 MiB of URL bytes are kept: raw.url_chain_total, url_chain_truncated, url_chain_bytes_truncated and
-// url_chain_bytes_total say what was cut. state, danger_type and interrupt_reason are the names of the cross-checked
+// url_chain_bytes_total say what was cut. The url is the last entry of the whole chain, so it may be absent from a
+// capped url_chain; raw.url_chain_total and the *_truncated keys say so. state, danger_type and interrupt_reason are the names of the cross-checked
 // integer tables, any other value "unknown" (the integer is raw.<column>); total_bytes 0 is "not recorded" (no
 // total_bytes, raw.total_bytes 0). A search or download keeps its profile in raw.profile. Further raw keys: start_time,
 // end_time, last_access_time (+_status), guid, original_mime_type, tab_referrer_url, site_url, http_method, transient,

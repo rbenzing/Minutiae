@@ -128,3 +128,28 @@ func TestUnusableSearchTermIsAWarningAndWrongClassesAreStated(t *testing.T) {
 		}
 	}
 }
+
+// 4F-R10: a url_id that is not an integer is stated in unknown_columns and joins nothing: no url state, no join
+// marker, no url and no time.
+func TestSearchWithANonIntegerURLIDStatesItAndJoinsNothing(t *testing.T) {
+	b, u, s := searchDB()
+	u.Insert(1, int64(1), "https://example.com/a", "A", int64(1), int64(0), tMem, int64(0))
+	s.Insert(1, int64(2), "one", "term", "term")
+	res := runMem(t, b.Bytes())
+	if res.Err != nil {
+		t.Fatal(res.Err)
+	}
+	r := recFor(t, res, "keyword_search_terms", 1)
+	raw := asMap(r.Payload["raw"])
+	if asMap(raw["unknown_columns"])["url_id"] != "type-mismatch" {
+		t.Errorf("raw %v, want unknown_columns.url_id type-mismatch", raw)
+	}
+	for _, k := range []string{"url_state", "join_undecided", "url_id"} {
+		if _, ok := raw[k]; ok {
+			t.Errorf("raw states %s for a url_id that joins nothing", k)
+		}
+	}
+	if r.Time != nil || r.Payload["url"] != nil {
+		t.Errorf("time %v url %v, want neither", r.Time, r.Payload["url"])
+	}
+}

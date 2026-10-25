@@ -94,13 +94,13 @@ func hashCell(row parse.Row, c rowrun.Cols, raw, unknown map[string]any) {
 // maxBodyPart and the whole at maxBodyTotal (4F-R26); a cut is counted in raw.
 func downloadBody(raw map[string]any, parts []string) string {
 	cut := false
-	capped := make([]string, len(parts))
+	cuts := make([]string, len(parts))
 	for i, p := range parts {
 		var c bool
-		capped[i], c = cutText(p, maxBodyPart)
+		cuts[i], c = cutText(p, maxBodyPart)
 		cut = cut || c
 	}
-	body := strings.Join(capped, "\n")
+	body := strings.Join(cuts, "\n")
 	if len(body) > maxBodyTotal {
 		body, _ = cutText(body, maxBodyTotal)
 		cut = true

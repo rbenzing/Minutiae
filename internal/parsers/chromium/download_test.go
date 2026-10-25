@@ -276,3 +276,74 @@ func TestTargetPathOverTheContractCapIsCutAndFlagged(t *testing.T) {
 		t.Errorf("text_flags %v target_path_total_bytes %v, want target_path flagged and %d", flags, raw["target_path_total_bytes"], len(long))
 	}
 }
+
+// 4F-R11: a chain entry that states no URL text (NULL, empty or a blob) leaves the chain unknown for that download:
+// no chain and no url, the download itself is still recorded from its target path.
+func TestChainEntryWithoutURLTextLeavesTheChainUnknown(t *testing.T) {
+	b, _, _ := memDB(1024)
+	d := b.CreateTable("downloads", dlDDL)
+	c := b.CreateTable("downloads_url_chains", "create table downloads_url_chains(id integer, chain_index integer, url longvarchar)")
+	for i, u := range []any{nil, "", []byte{1, 2}} {
+		id := int64(i + 1)
+		insertDL(d, id, nil)
+		c.Insert(id*10, id, int64(0), "https://ok.example/first")
+		c.Insert(id*10+1, id, int64(1), u)
+	}
+	res := runMem(t, b.Bytes())
+	if res.Err != nil {
+		t.Fatal(res.Err)
+	}
+	for id := int64(1); id <= 3; id++ {
+		_, pl, raw := payloadOf(t, res, id)
+		if raw["url_chain_state"] != "unknown-url" || pl["target_path"] != "/d/f" {
+			t.Errorf("download %d: state %v target_path %v, want unknown-url and the target path", id, raw["url_chain_state"], pl["target_path"])
+		}
+		for _, k := range []string{"url", "url_chain"} {
+			if _, ok := pl[k]; ok {
+				t.Errorf("download %d states %s from a chain with an unreadable entry", id, k)
+			}
+		}
+	}
+}
+
+// Cells of the wrong storage class are stated in unknown_columns and never read as values; a downloads.id that is not
+// an integer leaves the chain join undecided.
+func TestDownloadWrongClassesAreStatedAndANonIntegerIDLeavesTheChainUndecided(t *testing.T) {
+	b, d, c := dlDB(1024)
+	insertDL(d, 1, map[string]any{"referrer": int64(5), "tab_url": []byte{9}, "mime_type": int64(7)})
+	c.Insert(1, int64(1), int64(0), "https://a.example/1")
+	res := runMem(t, b.Bytes())
+	if res.Err != nil {
+		t.Fatal(res.Err)
+	}
+	_, pl, raw := payloadOf(t, res, 1)
+	unk := asMap(raw["unknown_columns"])
+	for _, k := range []string{"referrer", "tab_url", "mime_type"} {
+		if unk[k] != "type-mismatch" {
+			t.Errorf("unknown_columns.%s = %v, want type-mismatch", k, unk[k])
+		}
+	}
+	for _, k := range []string{"referrer", "tab_url", "mime"} {
+		if _, ok := pl[k]; ok {
+			t.Errorf("payload states %s from a cell of the wrong class", k)
+		}
+	}
+
+	b2 := sqlitetest.New(sqlitetest.Options{PageSize: 1024})
+	b2.CreateTable("urls", urlsDDL)
+	b2.CreateTable("visits", visitsDDL)
+	d2 := b2.CreateTable("downloads", strings.Replace(dlDDL, "id integer primary key", "id text", 1))
+	b2.CreateTable("downloads_url_chains", chainDDL)
+	insertDL(d2, 1, map[string]any{"id": "abc"})
+	res = runMem(t, b2.Bytes())
+	if res.Err != nil {
+		t.Fatal(res.Err)
+	}
+	_, pl, raw = payloadOf(t, res, 1)
+	if j, _ := raw["join_undecided"].([]any); len(j) != 1 || j[0] != "downloads_url_chains" || asMap(raw["unknown_columns"])["id"] != "type-mismatch" {
+		t.Errorf("raw %v, want join_undecided [downloads_url_chains] and unknown_columns.id type-mismatch", raw)
+	}
+	if _, ok := raw["url_chain_state"]; ok || pl["url"] != nil {
+		t.Errorf("an undecided chain states %v / url %v", raw["url_chain_state"], pl["url"])
+	}
+}
