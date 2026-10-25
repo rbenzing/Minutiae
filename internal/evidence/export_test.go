@@ -169,3 +169,10 @@ func SetFTSNormVersionOverride(v string) (restore func()) {
 		normVersionMu.Unlock()
 	}
 }
+
+// SetSlackMapLineCap lowers the line cap of ReadSlackRunMap and returns the function that restores it.
+func SetSlackMapLineCap(n int) (restore func()) {
+	old := slackMapLineCap
+	slackMapLineCap = n
+	return func() { slackMapLineCap = old }
+}

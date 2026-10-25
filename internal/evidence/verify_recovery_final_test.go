@@ -63,7 +63,7 @@ func TestVerifyScopeDirectoryIsTiedToTheRecovery(t *testing.T) {
 	slack := func(path string) evidencetest.RecoveredSpec {
 		return evidencetest.RecoveredSpec{
 			Kind: evidence.KindSlack, Class: evidence.ClassSlack, Method: "slack-file", Path: path, Confidence: ip(10),
-			Runs: []evidence.Run{{Offset: 0, Length: 64}},
+			Runs: []evidence.Run{{Offset: 0, Length: 64}}, Alloc: &evidence.AllocSummary{Allocated: 64},
 		}
 	}
 	for _, tc := range []struct {

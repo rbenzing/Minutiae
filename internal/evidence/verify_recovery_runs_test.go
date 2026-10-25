@@ -157,6 +157,7 @@ func TestVerifyRecoveredNoticesForUnreproducedKinds(t *testing.T) {
 	run := []evidence.Run{{Offset: 0, Length: 64}}
 	evidencetest.AddRecovered(t, c, parent, data, evidencetest.RecoveredSpec{
 		Kind: evidence.KindSlack, Class: evidence.ClassSlack, Method: "slack-file", Path: "slack/p1-mtfs/s1.bin", Runs: run, Confidence: ip(10),
+		Alloc: &evidence.AllocSummary{Allocated: 64},
 	})
 	evidencetest.AddRecovered(t, c, parent, data, evidencetest.RecoveredSpec{
 		Kind: evidence.KindJournal, Class: evidence.ClassJournalBlock, Method: "ext4-journal-inode", Path: "journal/p1-mtfs/j1.bin", Runs: run,
@@ -338,16 +339,22 @@ func TestVerifyRecoveredStreamsProblemsCapped(t *testing.T) {
 	}
 }
 
-func TestVerifyRecoveredSlackScopeComesFromTheClass(t *testing.T) {
+func TestVerifyRecoveredSlackHasNoScope(t *testing.T) {
 	c, parent, data := recoverParent(t)
 	evidencetest.AddRecovered(t, c, parent, data, evidencetest.RecoveredSpec{
-		Kind: evidence.KindSlack, Class: evidence.ClassSlack, Method: "slack-file", Path: "slack/s1.bin",
+		Kind: evidence.KindSlack, Class: evidence.ClassSlack, Method: "slack-file", Path: "slack/p1-mtfs/s1.bin",
 		Runs: []evidence.Run{{Offset: 0, Length: 64}}, Confidence: ip(10), Alloc: &evidence.AllocSummary{Free: 32, Allocated: 32},
-		Mutate: func(r *evidence.Recovery) { r.Scope = "" },
+	})
+	evidencetest.AddRecovered(t, c, parent, data, evidencetest.RecoveredSpec{
+		Kind: evidence.KindSlack, Class: evidence.ClassSlack, Method: "slack-file", Path: "slack/p1-mtfs/s2.bin",
+		Runs: []evidence.Run{{Offset: 0, Length: 64}}, Confidence: ip(10), Alloc: &evidence.AllocSummary{Allocated: 64},
+		Mutate: func(r *evidence.Recovery) { r.Scope = "unallocated" },
 	})
 	rep := verifyOf(t, c)
-	evidencetest.RequireProblem(t, rep, `recovery: scope "" does not match "unallocated", which class "slack" requires`)
-	evidencetest.RequireProblem(t, rep, `scope unallocated but 32 allocated and 0 unknown bytes (class "slack")`)
+	evidencetest.RequireProblem(t, rep, `recovery: scope "unallocated" is not allowed for class "slack"`)
+	evidencetest.RequireProblem(t, rep, "32 free bytes in a slack artifact (slack lies in allocated units or outside the filesystem)")
+	evidencetest.RequireNoProblem(t, rep, "does not match")
+	evidencetest.RequireNoProblem(t, rep, "scope unallocated but")
 }
 
 func TestVerifyRecoveredRunBeyondRawParentIsProblem(t *testing.T) {

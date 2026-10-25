@@ -218,19 +218,25 @@ func TestRecoveryCheckTable(t *testing.T) {
 			return r
 		}()),
 
-		// C25: the scope of slack and journal classes comes from the class table
+		// C25: the scope of the journal classes comes from the class table; slack takes none (3F-R1)
 		mk("slack without scope", "slack", func() evidence.Recovery {
 			r := good("slack", "slack-file")
 			r.Confidence = ip(10)
 			r.Scope = ""
 			return r
-		}(), `recovery: scope "" does not match "unallocated", which class "slack" requires`),
+		}()),
 		mk("slack in scope raw", "slack", func() evidence.Recovery {
 			r := good("slack", "slack-file")
 			r.Confidence = ip(10)
 			r.Scope = "raw"
 			return r
-		}(), `recovery: scope "raw" does not match "unallocated", which class "slack" requires`),
+		}(), `recovery: scope "raw" is not allowed for class "slack" (only a carved artifact takes a chosen scope)`),
+		mk("slack in scope unallocated", "slack", func() evidence.Recovery {
+			r := good("slack", "slack-file")
+			r.Confidence = ip(10)
+			r.Scope = "unallocated"
+			return r
+		}(), `recovery: scope "unallocated" is not allowed for class "slack" (only a carved artifact takes a chosen scope)`),
 		mk("journal-block in scope volume", "journal", func() evidence.Recovery {
 			r := good("journal-block", "ext4-journal")
 			r.Journal = &evidence.JournalRef{Seq: 1, Region: "live"}
@@ -509,7 +515,7 @@ func TestClassTableIsConsistent(t *testing.T) {
 		t.Error("ClassInfos exposes its table")
 	}
 	// pinned table values
-	wantScope := map[string]string{"slack": "unallocated", "journal-block": "unallocated", "journal-report": "unallocated"}
+	wantScope := map[string]string{"journal-block": "unallocated", "journal-report": "unallocated"}
 	for _, ci := range again {
 		if ci.Scope != wantScope[ci.Class] {
 			t.Errorf("class %q scope %q want %q", ci.Class, ci.Scope, wantScope[ci.Class])
@@ -681,6 +687,9 @@ func TestCheckRecoveredRuns(t *testing.T) {
 	free := func(n int64) evidence.AllocSummary { return evidence.AllocSummary{Free: n} }
 	del := evidence.ClassDeletedFile
 	r100 := []evidence.Run{{Offset: 4096, Length: 100}}
+	slackFree := func(n int) string {
+		return fmt.Sprintf("%d free bytes in a slack artifact (slack lies in allocated units or outside the filesystem)", n)
+	}
 
 	big := make([]evidence.Run, evidence.MaxRecoveredRuns+1)
 	for i := range big {
@@ -733,16 +742,18 @@ func TestCheckRecoveredRuns(t *testing.T) {
 		{"deleted-file with unknown bytes", mkrec(100, del, "", evidence.AllocSummary{Free: 90, Unknown: 10}), r100, []string{pre + `10 unknown bytes in a deleted-file artifact`}},
 		{"carved unallocated with allocated bytes", mkrec(100, evidence.ClassCarved, "unallocated", evidence.AllocSummary{Free: 60, Allocated: 40}), r100, []string{pre + `scope unallocated but 40 allocated and 0 unknown bytes (class "carved")`}},
 		{"carved raw with allocated bytes", mkrec(100, evidence.ClassCarved, "raw", evidence.AllocSummary{Free: 60, Allocated: 40}), r100, nil},
-		{"slack with allocated bytes and no scope", mkrec(100, evidence.ClassSlack, "", evidence.AllocSummary{Free: 60, Allocated: 40}), r100, []string{pre + `scope unallocated but 40 allocated and 0 unknown bytes (class "slack")`}},
-		{"slack with allocated bytes and a stored scope that lies", mkrec(100, evidence.ClassSlack, "raw", evidence.AllocSummary{Free: 60, Allocated: 40}), r100, []string{pre + `scope unallocated but 40 allocated and 0 unknown bytes (class "slack")`}},
-		{"slack with unknown bytes", mkrec(100, evidence.ClassSlack, "", evidence.AllocSummary{Free: 90, Unknown: 10}), r100, []string{pre + `scope unallocated but 0 allocated and 10 unknown bytes (class "slack")`}},
+		{"slack with free and allocated bytes", mkrec(100, evidence.ClassSlack, "", evidence.AllocSummary{Free: 60, Allocated: 40}), r100, []string{pre + slackFree(60)}},
+		{"slack with free bytes and a stored scope (R5 ignores the scope)", mkrec(100, evidence.ClassSlack, "raw", evidence.AllocSummary{Free: 60, Allocated: 40}), r100, []string{pre + slackFree(60)}},
+		{"slack with free and unknown bytes", mkrec(100, evidence.ClassSlack, "", evidence.AllocSummary{Free: 90, Unknown: 10}), r100, []string{pre + slackFree(90)}},
+		{"slack all allocated is fine", mkrec(100, evidence.ClassSlack, "", evidence.AllocSummary{Allocated: 100}), r100, nil},
+		{"slack all unknown is fine", mkrec(100, evidence.ClassSlack, "", evidence.AllocSummary{Unknown: 100}), r100, nil},
 		{"journal-block with allocated bytes", mkrec(100, evidence.ClassJournalBlock, "", evidence.AllocSummary{Free: 60, Allocated: 40}), r100, []string{pre + `scope unallocated but 40 allocated and 0 unknown bytes (class "journal-block")`}},
 		{"journal-block with unknown bytes", mkrec(100, evidence.ClassJournalBlock, "", evidence.AllocSummary{Free: 90, Unknown: 10}), r100, []string{pre + `scope unallocated but 0 allocated and 10 unknown bytes (class "journal-block")`}},
 		{"journal-report with allocated bytes", mkrec(100, evidence.ClassJournalReport, "", evidence.AllocSummary{Free: 60, Allocated: 40}), r100, []string{pre + `scope unallocated but 40 allocated and 0 unknown bytes (class "journal-report")`}},
 		{"journal-report with unknown bytes", mkrec(100, evidence.ClassJournalReport, "", evidence.AllocSummary{Free: 90, Unknown: 10}), r100, []string{pre + `scope unallocated but 0 allocated and 10 unknown bytes (class "journal-report")`}},
 		{"carved unallocated with unknown bytes", mkrec(100, evidence.ClassCarved, "unallocated", evidence.AllocSummary{Free: 90, Unknown: 10}), r100, []string{pre + `scope unallocated but 0 allocated and 10 unknown bytes (class "carved")`}},
 		{"carved volume with unknown bytes", mkrec(100, evidence.ClassCarved, "volume", evidence.AllocSummary{Free: 90, Unknown: 10}), r100, nil},
-		{"slack all free is fine", mkrec(100, evidence.ClassSlack, "", free(100)), r100, nil},
+		{"slack all free is a problem", mkrec(100, evidence.ClassSlack, "", free(100)), r100, []string{pre + slackFree(100)}},
 		{"negative length cancelled by the sum", mkrec(10, del, "", free(10)), []evidence.Run{{Offset: 0, Length: -5}, {Offset: 0, Length: 15}}, []string{pre + `run 0 is not valid (negative or overflowing)`}},
 		{"lengths overflow the sum", mkrec(1, del, "", free(1)), []evidence.Run{{Offset: 0, Length: math.MaxInt64}, {Offset: 0, Length: 1}}, []string{pre + `run lengths add up to more than 9223372036854775807 bytes`}},
 		{"too many runs", mkrec(int64(len(big)), del, "", free(int64(len(big)))), big, []string{pre + `too many runs (1048577, at most 1048576)`}},
