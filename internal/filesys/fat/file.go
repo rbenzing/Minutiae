@@ -52,6 +52,7 @@ func (f *FS) openData(first uint32, size int64) (*file, error) {
 		return fl, nil
 	}
 	cs := int64(f.clusterSize())
+	fl.unit = cs
 	maxRuns := int(f.count)           // a file cannot have more runs than the volume has clusters
 	need := int((size + cs - 1) / cs) // size < 2^32: fits
 	clusters, _, chainErr := f.chainN(first, need)
@@ -101,6 +102,7 @@ type file struct {
 	starts []int64       // starts[i] is the file offset where runs[i] begins
 	tail   error         // what reading [avail, size) returns; nil when avail == size
 	r      io.ReaderAt   // the volume, uncached
+	unit   int64         // the cluster size; 0 for a file without clusters
 }
 
 // Size is the file size from the directory entry.
