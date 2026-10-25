@@ -1,6 +1,7 @@
 package artparse_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"maps"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/artparse"
+	"github.com/rbenzing/minutiae/internal/dbrecover"
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/records"
@@ -390,7 +392,9 @@ func TestRecoveryEmitterUnmapped(t *testing.T) {
 		t.Error("no analysis.warning names the unmapped row and its reason")
 	}
 	locs, overflow := v.e.UnmappedLocators()
-	if overflow || !slices.Equal(locs, []string{f.Locator, f2.Locator}) {
+	want := [][16]byte{dbrecover.LocatorDigest(f.Locator), dbrecover.LocatorDigest(f2.Locator)}
+	slices.SortFunc(want, func(a, b [16]byte) int { return bytes.Compare(a[:], b[:]) })
+	if overflow || !slices.Equal(locs, want) {
 		t.Errorf("locators %v overflow %v, want the two distinct ones", locs, overflow)
 	}
 	bad := dbFacts()
@@ -404,8 +408,8 @@ func TestRecoveryEmitterUnmapped(t *testing.T) {
 }
 
 func TestRecoveryEmitterUnmappedLocatorsAreBounded(t *testing.T) {
-	defer artparse.SetMaxUnmappedLocators(3)()
 	v := newRenv(t, 0, recMember{role: "db"})
+	v.e.SetMaxLocators(3)
 	for i := 0; i < 5; i++ {
 		f := dbFacts()
 		f.Locator = "sqlite:table=sms;page=" + string(rune('1'+i)) + ";cell=0;file=db"

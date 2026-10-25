@@ -292,7 +292,11 @@ func (r *runner) skip(st *tableState, f parse.RecoveredFacts, cause error) error
 	if r.rep.Skipped > int64(r.maxInvalidWarn) {
 		return nil
 	}
-	return r.out.Warn(r.ctx, f.Locator, "row skipped: "+cause.Error())
+	where := f.Locator
+	if where == "" { // the facts carry none: describe the row by its table and page
+		where = fmt.Sprintf("sqlite:table=%s;page=%d", f.Table, f.Page)
+	}
+	return r.out.Warn(r.ctx, where, "row skipped: "+cause.Error())
 }
 
 func (r *runner) unmapped(tc *TableCounts, f parse.RecoveredFacts, reason string) error {

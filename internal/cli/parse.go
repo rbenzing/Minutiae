@@ -42,15 +42,30 @@ func (d Deps) parserRegistry() ([]artparse.Registered, error) {
 	if d.ParserRegistry != nil {
 		return d.ParserRegistry()
 	}
+	return registerParsers(parsers.All(), parsers.HashOf, parsers.RecoveryHashOf)
+}
+
+// registerParsers registers each parser with its generated source hash and, when it claims tables, its
+// generated recovery hash (the "<name>.recover" identity the typed recovery pass writes under).
+func registerParsers(ps []parse.Parser, hashOf, recoveryHashOf func(parse.Parser) (string, bool)) ([]artparse.Registered, error) {
 	var out []artparse.Registered
-	for _, p := range parsers.All() {
-		hash, ok := parsers.HashOf(p)
+	for _, p := range ps {
+		hash, ok := hashOf(p)
 		if !ok {
 			return nil, errors.New("a compiled-in parser has no generated source hash (run the parser hash generator)")
 		}
 		r, err := artparse.Register(p, hash)
 		if err != nil {
 			return nil, err
+		}
+		if len(r.Meta().Claims) > 0 {
+			rh, ok := recoveryHashOf(p)
+			if !ok {
+				return nil, fmt.Errorf("compiled-in parser %s claims tables but has no generated recovery hash (run the parser hash generator)", r.Meta().Name)
+			}
+			if r, err = r.WithRecoveryHash(rh); err != nil {
+				return nil, err
+			}
 		}
 		out = append(out, r)
 	}

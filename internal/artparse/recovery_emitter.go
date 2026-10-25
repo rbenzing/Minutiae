@@ -1,6 +1,7 @@
 package artparse
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"slices"
@@ -8,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/rbenzing/minutiae/internal/dbrecover"
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/records"
 )
@@ -17,13 +19,13 @@ const (
 	noteRangeOutside  = "range-outside-artifact"
 	maxFactNotes      = 32  // notes one row's facts may carry
 	maxFactNoteBytes  = 128 // bytes of one such note
-	maxLocatorBytes   = 16 << 20
 	unmappedWarnLabel = "recovered row not mapped: "
 )
 
 // maxUnmappedLocators bounds the locators a recovery emitter remembers (4G-R25); past it the overflow
-// flag is set and the job honors no claim.
-var maxUnmappedLocators = 1 << 16
+// flag is set and the job honors no claim. A recovery emitter holds its own copy (maxLoc), so a test
+// that lowers it never touches shared state.
+const maxUnmappedLocators = 1 << 16
 
 // bundleFacts is what the stamp knows about the members of a recovery job's bundle.
 type bundleFacts struct {
@@ -162,10 +164,12 @@ type recoveryEmitter struct {
 	belowMin      atomic.Int64
 	unmapped      atomic.Int64
 
-	locMu    sync.Mutex // a leaf: never held across a call
-	locSet   map[string]struct{}
-	locBytes int
-	locOver  bool
+	// The unmapped rows are remembered as dbrecover.LocatorDigest of their locator (16 bytes each, at
+	// most maxLoc: a fixed 1 MiB bound), the form the composed command hands the generic run (4G-R25).
+	locMu   sync.Mutex // a leaf: never held across a call
+	locSet  map[[16]byte]struct{}
+	locOver bool
+	maxLoc  int
 }
 
 func newRecoveryEmitter(hostCtx context.Context, w ingestWriter, reg Registered, arts map[string]parse.Artifact, lim parse.Limits, pump chan<- func(), progress func(done, total int64), minConfidence int) (*recoveryEmitter, error) {
@@ -174,7 +178,7 @@ func newRecoveryEmitter(hostCtx context.Context, w ingestWriter, reg Registered,
 		return nil, err
 	}
 	e.recoveryOnly = true
-	return &recoveryEmitter{emitter: e, b: newBundleFacts(e.arts, e.br), minConfidence: minConfidence, locSet: map[string]struct{}{}}, nil
+	return &recoveryEmitter{emitter: e, b: newBundleFacts(e.arts, e.br), minConfidence: minConfidence, locSet: map[[16]byte]struct{}{}, maxLoc: maxUnmappedLocators}, nil
 }
 
 // refuseFacts audits and counts a row whose facts the host will not stamp.
@@ -265,29 +269,29 @@ func (r *recoveryEmitter) Unmapped(_ context.Context, f parse.RecoveredFacts, re
 	}
 	r.warnings.Add(1)
 	r.unmapped.Add(1)
+	d := dbrecover.LocatorDigest(f.Locator)
 	r.locMu.Lock()
 	defer r.locMu.Unlock()
-	if _, dup := r.locSet[f.Locator]; dup || r.locOver {
+	if _, dup := r.locSet[d]; dup || r.locOver {
 		return nil
 	}
-	if len(r.locSet) >= maxUnmappedLocators || r.locBytes+len(f.Locator) > maxLocatorBytes {
+	if len(r.locSet) >= r.maxLoc {
 		r.locOver = true
 		return nil
 	}
-	r.locSet[f.Locator] = struct{}{}
-	r.locBytes += len(f.Locator)
+	r.locSet[d] = struct{}{}
 	return nil
 }
 
-// unmappedLocators returns the remembered locators of the unmapped rows, sorted, and whether more
-// rows were unmapped than could be remembered.
-func (r *recoveryEmitter) unmappedLocators() ([]string, bool) {
+// unmappedLocators returns the digests of the remembered locators of the unmapped rows (LocatorDigest),
+// sorted, and whether more rows were unmapped than could be remembered.
+func (r *recoveryEmitter) unmappedLocators() ([][16]byte, bool) {
 	r.locMu.Lock()
 	defer r.locMu.Unlock()
-	out := make([]string, 0, len(r.locSet))
-	for l := range r.locSet {
-		out = append(out, l)
+	out := make([][16]byte, 0, len(r.locSet))
+	for d := range r.locSet {
+		out = append(out, d)
 	}
-	sort.Strings(out)
+	slices.SortFunc(out, func(a, b [16]byte) int { return bytes.Compare(a[:], b[:]) })
 	return out, r.locOver
 }
