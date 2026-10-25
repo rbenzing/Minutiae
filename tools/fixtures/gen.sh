@@ -25,16 +25,19 @@ declare -A fixtures=(
   [casefold]="internal/filesys/utf8fold/testdata"
   # ext4_xattr.sh: runs in the Dockerfile.recover image (pinned e2fsprogs) and writes only ext4-xattr.*
   [ext4-xattr]="internal/filesys/ext4/testdata"
+  # carve_gen.sh: runs in the Dockerfile.carve image; the images go here and the objects to internal/carve/testdata/objects
+  [carve]="internal/examine/testdata/carve"
 )
 order=(volume-gpt volume-mbr ext4 fat exfat f2fs ewf apfs sqlite)
 # Not in "all": each needs its own image (hfsplus: Dockerfile.hfs, minutiae-fixtures-hfs;
 # apfs-populated: Dockerfile.apfs, minutiae-fixtures-apfs; fat-recover, exfat-recover and casefold:
-# Dockerfile.recover, minutiae-recover-fixtures, which holds QEMU and the guest kernel).
-separate=(hfsplus apfs-populated fat-recover exfat-recover casefold ext4-xattr)
+# Dockerfile.recover, minutiae-recover-fixtures, which holds QEMU and the guest kernel; carve: Dockerfile.carve,
+# minutiae-carve-fixtures, which holds the encoders and no QEMU).
+separate=(hfsplus apfs-populated fat-recover exfat-recover casefold ext4-xattr carve)
 
 usage() {
   echo "usage: gen.sh <fixture>|all" >&2
-  echo "fixtures: ${order[*]} (all), ${separate[*]} (not in all: run hfsplus in the minutiae-fixtures-hfs image, apfs-populated in the minutiae-fixtures-apfs image, fat-recover, exfat-recover and ext4-xattr in the minutiae-recover-fixtures image)" >&2
+  echo "fixtures: ${order[*]} (all), ${separate[*]} (not in all: run hfsplus in the minutiae-fixtures-hfs image, apfs-populated in the minutiae-fixtures-apfs image, fat-recover, exfat-recover and ext4-xattr in the minutiae-recover-fixtures image, carve in the minutiae-carve-fixtures image)" >&2
   exit 2
 }
 
@@ -75,6 +78,14 @@ for name in "${targets[@]}"; do
       exit 1
     fi
     ;;
+  carve)
+    if ! command -v heif-enc >/dev/null || ! command -v ffmpeg >/dev/null; then
+      echo "gen.sh carve needs heif-enc (libheif-examples) and ffmpeg, which the minutiae-fixtures image does not have." >&2
+      echo "Build and use the separate image: docker build -f tools/fixtures/Dockerfile.carve -t minutiae-carve-fixtures tools/fixtures" >&2
+      echo "(see tools/fixtures/README.md, \"Carving fixtures (3E)\")." >&2
+      exit 1
+    fi
+    ;;
   esac
 done
 
@@ -91,5 +102,6 @@ for name in "${targets[@]}"; do
   echo "== $name -> ${fixtures[$name]}"
   script=$name
   case $name in fat-recover | exfat-recover | ext4-xattr) script=${name//-/_} ;; esac # fat_recover.sh, exfat_recover.sh, ext4_xattr.sh
+  case $name in carve) script=carve_gen ;; esac # carve_gen.sh
   bash "$here/$script.sh" "$out"
 done
