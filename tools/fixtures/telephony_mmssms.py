@@ -6,6 +6,8 @@ import sqlite3
 import telephony_common as C
 
 FAMILY = "mmssms"
+CLAIMED = ("sms", "pdu")  # Meta.Claims of android.mmssms
+SCENARIOS = {}  # variant -> C.Scenario, filled when the variant is generated (the typed recovery oracle)
 REMOTE = "/data/user_de/0/com.android.providers.telephony/databases/mmssms.db"
 T0 = 1682935200  # 2023-05-01T10:00:00Z
 MS = 1000
@@ -435,13 +437,18 @@ def group(rows, key):
     return out
 
 
-def oracle(files, ddl_name, variant, wal_touched=()):
+def make_env(files):
+    """The LIVE view of the joined tables (a recovered row's joins read it too, spec 12.1)."""
     view = C.engine_view(files, ["sms", "threads", "canonical_addresses", "pdu", "addr", "part"])
-    env = {
+    return view, {
         "has_threads": "threads" in view, "threads": {r["rowid"]: r for r in view.get("threads", [])},
         "canon": {r["rowid"]: r for r in view.get("canonical_addresses", [])},
         "addr": group(view.get("addr", []), "msg_id"), "part": group(view.get("part", []), "mid"),
     }
+
+
+def oracle(files, ddl_name, variant, wal_touched=()):
+    view, env = make_env(files)
     exp = C.expect_header(FAMILY, variant, ddl_name)
     db_only = set(files) == {"db"}
     for r in view.get("sms", []):
@@ -529,6 +536,10 @@ def variant_freelist(work):
     path, con, ph = build_plain(work, "mmssms-aosp-baseline.sql", page_size=512, auto_vacuum=2)
     rows = [sms_row(i, body=("message %d " % i) * 8) for i in range(1, 301)]
     populate(con, ph, rows, dims_baseline(), None)
+    scen = SCENARIOS["av-freelist-512"] = C.Scenario(CLAIMED)
+    scen.write("sms", scen.snap(con, "sms"))
+    # freed leaf pages are never owned by a table: the oracle expects basis fit, attributed to sms
+    scen.want("sms", scen.snap(con, "sms", "_id between 100 and 250"), label="sms")
     con.execute("delete from sms where _id between 100 and 250")
     if con.execute("pragma freelist_count").fetchone()[0] < 10:
         raise SystemExit("the freelist fixture has no freelist pages")
@@ -545,6 +556,10 @@ def schema_conn(ph):
 def variant_wal(work):
     path, con, ph = build_plain(work, "mmssms-aosp-baseline.sql")
     populate(con, ph, [r for r in sms_baseline() if r["_id"] <= 6], dims_baseline(), None)
+    scen = SCENARIOS["wal-uncheckpointed"] = C.Scenario(CLAIMED)
+    before = scen.snap(con, "sms")
+    scen.write("sms", before)  # the versions the WAL then supersedes; the WAL's own rows are live
+    scen.want("sms", [r for r in before if r[0] == 2])  # row 2 as the database file still holds it
     con.execute("pragma journal_mode = wal")
     con.close()
     new = [sms_row(7, body="only in the wal, a"), sms_row(8, type=2, body="only in the wal, b"), sms_row(9, body="only in the wal, c")]
@@ -562,6 +577,13 @@ def variant_journal(work):
     path, con, ph = build_plain(work, "mmssms-aosp-baseline.sql")
     rows = [sms_row(i, body=("original %d " % i) + "x" * 100) for i in range(1, 1501)]
     populate(con, ph, rows, dims_baseline(), None)
+    scen = SCENARIOS["hot-journal"] = C.Scenario(CLAIMED)
+    scen.write("sms", scen.snap(con, "sms"))
+    interrupted = []
+    for rowid, d in scen.snap(con, "sms", "_id % 7 = 0"):
+        interrupted.append((rowid, dict(d, body="interrupted-%d" % rowid + d["body"][19:])))  # substr(body, 20)
+    scen.write("sms", interrupted)  # the originals are live again after the rollback
+    scen.want("sms", [r for r in interrupted if r[0] % 14 == 0])  # half of them: the oracle file stays small; every version is in written
     con.close()
     stmts = ["pragma cache_size = 10", "pragma cache_spill = 10", "BEGIN",
              "update sms set body = 'interrupted-' || _id || substr(body, 20) where _id % 7 = 0"]
@@ -572,7 +594,49 @@ def variant_journal(work):
     return files, exp
 
 
+def variant_pdu_deleted(work):
+    """Deleted MMS and SMS whose pages went to the freelist (secure_delete OFF), plus a dropped decoy table of
+    exactly the sms shape (4G-R23: a strict fit cannot tell it from sms, so its rows are attributed to sms)."""
+    path, con, ph = build_plain(work, "mmssms-aosp-baseline.sql", page_size=512)
+    con.execute("pragma secure_delete = OFF")
+    scen = SCENARIOS["mmssms-pdu-deleted"] = C.Scenario(CLAIMED)
+    sms = [sms_row(i, body=("sms %d " % i) * 6) for i in range(1, 41)]
+    pdu, addr, part = [], [], []
+    for i in range(1, 41):
+        pdu.append({"_id": i, "thread_id": 1, "date": T0 + 10 * i, "msg_box": 1 + i % 2, "m_type": 132, "m_id": "mid-%d" % i, "sub": "mms %d" % i})
+        addr.append({"_id": i, "msg_id": i, "address": "+1555123%04d" % i, "type": 137 if i % 2 else 151})
+        part.append({"_id": i, "mid": i, "seq": 0, "ct": "text/plain", "text": "mms text %d " % i + "x" * 20})
+    populate(con, ph, sms, dims_baseline(), (pdu, addr, part))
+    sms_sql = con.execute("select sql from sqlite_master where name = 'sms'").fetchone()[0]
+    con.execute(sms_sql.replace("CREATE TABLE sms", "CREATE TABLE sms_decoy", 1))
+    with C.batch(con):
+        for i in range(1, 31):
+            C.insert(con, "sms_decoy", sms_row(i, body=("decoy %d " % i) * 6, address="+15550009999"))
+    scen.write("pdu", scen.snap(con, "pdu"))
+    scen.write("sms", scen.snap(con, "sms"))
+    decoy = scen.snap(con, "sms_decoy")
+    scen.write("sms", decoy)
+    scen.want("sms_decoy", decoy, label="sms")
+    con.execute("drop table sms_decoy")
+    scen.want("pdu", scen.snap(con, "pdu", "_id between 11 and 30"), label="pdu")
+    scen.want("sms", scen.snap(con, "sms", "_id between 10 and 30"), label="sms")
+    with C.batch(con):
+        con.execute("delete from pdu where _id between 11 and 30")
+        con.execute("delete from sms where _id between 10 and 30")
+        con.execute("delete from addr where msg_id between 11 and 30")
+        con.execute("delete from part where mid between 11 and 30")
+    return finish_notes(con, path, "mmssms-aosp-baseline.sql", "mmssms-pdu-deleted")
+
+
+def recover_expect(variant, files):
+    """The <variant>.recover.expect.json of a variant that has a scenario (ruling 4G-R14)."""
+    def expect_fn(table, d, env, file):
+        return (expect_pdu if table == "pdu" else expect_sms)(d, env, file, False)
+    return C.recover_oracle(variant, files, SCENARIOS[variant], lambda f: make_env(f)[1], expect_fn)
+
+
 VARIANTS = {
     "aosp-baseline": variant_baseline, "aosp-subid-alter": variant_subid_alter, "oem-extended": variant_oem,
     "utf16": variant_utf16, "av-freelist-512": variant_freelist, "wal-uncheckpointed": variant_wal, "hot-journal": variant_journal,
+    "mmssms-pdu-deleted": variant_pdu_deleted,
 }

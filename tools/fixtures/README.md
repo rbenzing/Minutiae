@@ -1586,6 +1586,26 @@ fixture rows keep the raw type codes.
 | `av-freelist-512` | `mmssms-aosp-baseline.sql` | page size 512, `auto_vacuum=2`, 151 rows deleted | freelist pages |
 | `wal-uncheckpointed` | `mmssms-aosp-baseline.sql` | WAL left by a killed writer (`os._exit`) | rows only in the WAL; an edited row (`file: wal`) |
 | `hot-journal` | `mmssms-aosp-baseline.sql` | rollback journal left by a killed writer | the `journal-hot` reader warning; the oracle shows the rolled-back rows |
+| `mmssms-pdu-deleted` | `mmssms-aosp-baseline.sql` | page size 512, `secure_delete = OFF`: 40 `sms` and 40 `pdu` (with `addr` and `part`) rows, `pdu` 11 to 30 and `sms` 10 to 30 deleted whole-page, a decoy table of exactly the `sms` shape filled with 30 rows and dropped | freelist rows of `pdu` whose addresses are gone from live (`participants_unknown`); the decoy's rows, which a strict fit can only attribute to `sms` (4G-R23); at most 64 KiB gzipped (3.7 KiB) |
+
+### Typed recovery oracle (plan 4G, `--recover-oracle`)
+
+```
+py -3 tools/fixtures/telephony_gen.py --family mmssms --recover-oracle --out internal/parsers/androidmms/testdata
+```
+
+writes `<variant>.recover.expect.json` for every variant that has a scenario (`av-freelist-512`, `wal-uncheckpointed`,
+`hot-journal`, `mmssms-pdu-deleted`): what the typed recovery pass must make of the fixture. It is computed from the
+COMMITTED files of the variant, never from Go output: `sqlite_oracle.build_history` (the independent page walker of the
+SQLite fixtures) finds in the page images the versions the scenario says should be history (`wants`: deleted rows,
+pre-update versions, interrupted versions) and gives method, relation, basis (`fit` with the claimed table as label on
+the freelist, `schema` otherwise), origin, confidence (`min(method base, basis cap)`) and the cell; the scenario oracle
+(`expect_sms`, `expect_pdu`) then states the typed record for those values, with its joins read from the LIVE view
+(4G-R8). `written` lists the versions the scenario stored that occur in some history page image: a typed record may carry
+only such a version. The variant is regenerated in a scratch directory only to obtain the scenario; the committed files
+are never rewritten and their SHA-256 must equal the one in `<variant>.expect.json`. `--check` also builds the oracle of
+the freshly generated files. Sizes: `av-freelist-512` 172 KiB, `hot-journal` 132 KiB (half of the interrupted versions
+are wants), `mmssms-pdu-deleted` 60 KiB, `wal-uncheckpointed` 5 KiB, each at most 200 KiB.
 
 `telephony_calllog.py` holds the call log scenario rows and oracle. Its three variants are lone databases (no WAL, no
 journal), so the oracle states the db path as `source_path` of every row (rulings T48, T51): `in-contacts2` states the

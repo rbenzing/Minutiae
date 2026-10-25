@@ -8,9 +8,10 @@ type identity struct{ Package, Hash string }
 
 // generated maps "name@version" to the identity of the parser.
 var generated = map[string]identity{
-	"android.calllog@1.0.5":  {Package: "github.com/rbenzing/minutiae/internal/parsers/androidcalllog", Hash: "src1:sha256:ee98f8e2ed38453fc442b29108ee41380dca45989c768b8d8c9429267f0ad2e1"},
-	"android.contacts@1.0.4": {Package: "github.com/rbenzing/minutiae/internal/parsers/androidcontacts", Hash: "src1:sha256:aa7b645b85878fa089ab3a6b3873b2fd3cd18e12a10a4afbba02517cfa3d53d0"},
-	"android.mmssms@1.0.4":   {Package: "github.com/rbenzing/minutiae/internal/parsers/androidmms", Hash: "src1:sha256:5d8a922e6d28542f096a337b53ad6b7d9fbbf96511a9dc696d139794b96cc8d2"},
-	"chromium.history@1.0.1": {Package: "github.com/rbenzing/minutiae/internal/parsers/chromium", Hash: "src1:sha256:ffcfa713aab86fc4a6c4bab5de008f6a52bc39821cf38f898d5742141d07817e"},
-	"safari.history@1.0.1":   {Package: "github.com/rbenzing/minutiae/internal/parsers/safari", Hash: "src1:sha256:4dfda1dc2e68da3b0dcff7dbb544211f480fee838cedcd827808fad99d515fac"},
+	"android.calllog@1.0.5":        {Package: "github.com/rbenzing/minutiae/internal/parsers/androidcalllog", Hash: "src1:sha256:ee98f8e2ed38453fc442b29108ee41380dca45989c768b8d8c9429267f0ad2e1"},
+	"android.contacts@1.0.4":       {Package: "github.com/rbenzing/minutiae/internal/parsers/androidcontacts", Hash: "src1:sha256:aa7b645b85878fa089ab3a6b3873b2fd3cd18e12a10a4afbba02517cfa3d53d0"},
+	"android.mmssms.recover@1.0.5": {Package: "github.com/rbenzing/minutiae/internal/parsers/androidmms", Hash: "src1:sha256:02bdbcfc37d1b0f36ab1cd582a7fb6583dce051563cf88f0fa6e7bad63aa99d1"},
+	"android.mmssms@1.0.5":         {Package: "github.com/rbenzing/minutiae/internal/parsers/androidmms", Hash: "src1:sha256:cfe677650ca82d710d29899d91a616f1c1220204a2b4f1b8b88c794daf739b51"},
+	"chromium.history@1.0.1":       {Package: "github.com/rbenzing/minutiae/internal/parsers/chromium", Hash: "src1:sha256:ffcfa713aab86fc4a6c4bab5de008f6a52bc39821cf38f898d5742141d07817e"},
+	"safari.history@1.0.1":         {Package: "github.com/rbenzing/minutiae/internal/parsers/safari", Hash: "src1:sha256:4dfda1dc2e68da3b0dcff7dbb544211f480fee838cedcd827808fad99d515fac"},
 }
