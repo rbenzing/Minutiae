@@ -35,7 +35,12 @@ func markText(raw map[string]any, field string) {
 // text is listed in raw.text_flags, the original bytes in raw.<field>_raw_b64 (or _raw_sha256 and _raw_len), a cut in
 // raw.<field>_total_bytes (and raw.url_truncated for the url).
 func capped(raw map[string]any, field string, b []byte, limit int) string {
-	cl := common.CleanText(b, limit)
+	return noteCleaned(raw, field, common.CleanText(b, limit))
+}
+
+// noteCleaned states in raw what cleaning field did (see capped) and returns the cleaned text. A caller that may
+// drop the text (a chain entry past a cap) cleans first and notes only the entries it keeps.
+func noteCleaned(raw map[string]any, field string, cl common.Cleaned) string {
 	if len(cl.Flags) > 0 {
 		markText(raw, field)
 	}

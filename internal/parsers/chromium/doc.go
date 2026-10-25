@@ -1,5 +1,5 @@
 // Package chromium is the chromium.history parser of sub-project 4 (plan 4F): Chromium-family and embedded WebView
-// History databases, recognised by schema signature (urls, visits and meta here; searches and downloads follow).
+// History databases, recognised by schema signature (urls, visits, keyword_search_terms, downloads and meta).
 //
 // The browser, profile and package come from the logical path alone: the last app_chrome or app_webview segment
 // decides (a webview directory is "webview", an unrecognised package "unknown-chromium"). Times are WebKit
@@ -22,4 +22,17 @@
 // body_total_bytes (the 64 KiB cap per URL or title in the searchable body); row_flags. The meta table gives no
 // record: it notes meta.version and meta.last_compatible_version ("non-numeric" for a value that is not decimal, and
 // "unknown" for a value the decoder cannot vouch for, never "non-numeric").
+//
+// A keyword_search_terms row is a web_search: its time and url come from the urls row named by url_id and are stated
+// as that URL's last visit (time_source "urls.last_visit_time"); a url_id with no urls row is raw.url_state
+// "no-urls-row", an undecidable one raw.join_undecided ["urls"]; the engine is never stated. A downloads row is a
+// download: its url_chain is the downloads_url_chains rows ordered by chain_index (ties by rowid) and its url the last
+// entry; raw.url_chain_state is "no-chain-rows", "gaps", "duplicate-index", "unknown-index" (a chain_index that is
+// not an integer) or "unknown-url" (an entry with no URL text), the last two stating no chain at all. At most 1000
+// entries and 2 MiB of URL bytes are kept: raw.url_chain_total, url_chain_truncated, url_chain_bytes_truncated and
+// url_chain_bytes_total say what was cut. state, danger_type and interrupt_reason are the names of the cross-checked
+// integer tables, any other value "unknown" (the integer is raw.<column>); total_bytes 0 is "not recorded" (no
+// total_bytes, raw.total_bytes 0). A search or download keeps its profile in raw.profile. Further raw keys: start_time,
+// end_time, last_access_time (+_status), guid, original_mime_type, tab_referrer_url, site_url, http_method, transient,
+// hash (hex), body_truncated and body_total_bytes (parts cut at 64 KiB, the whole body at 1 MiB).
 package chromium
