@@ -6,3 +6,4 @@ android.contacts 1.0.0 src1:sha256:c334738547520a27bcd4e0b99f8f9c23cc10b30f7e4cc
 android.contacts 1.0.1 src1:sha256:c57708f80af0a93f7f4229003f5cdfbdadef2f3bcbfa64a98cb40569fae421b5
 android.mmssms 1.0.0 src1:sha256:21e8afef1ee6de11852288c8e61fd538e141794e04f2e6a54ca72606a742bba4
 android.mmssms 1.0.1 src1:sha256:345bcacf16be4a19517f383f6506eb057535f32554157d4b15657eade82e750f
+chromium.history 1.0.0 src1:sha256:49268d917b84ee8ea6983875ba4f6e1191415af4be0a6da92afb9816afdb61c6
