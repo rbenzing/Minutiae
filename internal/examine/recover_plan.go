@@ -449,6 +449,12 @@ func (p *planner) items(targets []target) error {
 				p.entrySkip(&it, "not-found", err.Error())
 			case errors.Is(err, filesys.ErrNotDeleted):
 				p.entrySkip(&it, "not-deleted", err.Error())
+			// The typed answers come before ErrCorrupt: an error that wraps both (the ext4 incomplete-lookup shape,
+			// "corrupt: directory not read to the end") is undecided, never corrupt.
+			case errors.Is(err, filesys.ErrReused):
+				p.entrySkip(&it, "reused", err.Error()) // decided: the object is gone; does not raise the exit code
+			case errors.Is(err, filesys.ErrUndecided), errors.Is(err, filesys.ErrIncomplete), errors.Is(err, filesys.ErrLimit):
+				p.entrySkip(&it, "undecided", err.Error()) // the error text names the cause and the cap; the batch exits 1
 			case errors.Is(err, filesys.ErrCorrupt):
 				p.entrySkip(&it, "corrupt", err.Error())
 			case errors.Is(err, filesys.ErrUnsupported), errors.Is(err, filesys.ErrEncrypted):

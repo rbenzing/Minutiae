@@ -130,3 +130,7 @@ func isDBRecoverUsage(err error) bool {
 // undecidedNote follows the message of a filesys.ErrUndecided error: the answer is neither "found" nor
 // "absent", and nothing was skipped or recorded as missing.
 const undecidedNote = "note: the lookup is neither found nor absent: a casefold directory holds a name of a shape the kernel's comparison was not measured for, so it cannot be shown that the name does not exist. Nothing was skipped; list the directory (image ls) to see the names."
+
+// undecidedBatchNote follows the message of a batch recovery in which some entries could not be decided: those
+// entries were not recovered and are not shown absent, while the decided ones were written.
+const undecidedBatchNote = "note: the entries that could not be decided were skipped (neither recovered nor shown absent); the others were handled and any artifacts written. The skipped lines and the analysis.warning entries in audit.jsonl name each cause."

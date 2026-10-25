@@ -46,6 +46,11 @@ var (
 	ErrNotDeleted = errors.New("entry is not deleted")
 	// ErrNoRecovery means the filesystem has no recovery support.
 	ErrNoRecovery = fmt.Errorf("%w: filesystem does not support recovery", ErrUnsupported)
+	// ErrReused is returned by Recoverable for a deleted entry whose object is decided to be gone: the inode or
+	// record it names is allocated again, holds another object, or is a hard-linked inode still live under
+	// another name. It is a decided answer (not ErrUndecided): examine skips the entry as "reused" and the batch
+	// exit code is not raised. Readers wrap it and name the reason in the text.
+	ErrReused = errors.New("the object a deleted entry names is allocated again or holds another object")
 )
 
 // validMethodToken reports whether m matches [a-z][a-z0-9-]{1,31}. This is a strict subset of the
