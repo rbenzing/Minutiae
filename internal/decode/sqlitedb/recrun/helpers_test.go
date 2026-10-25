@@ -59,10 +59,11 @@ type fxFrame struct {
 }
 
 type fxJournalRec struct {
-	Index   int   `json:"index"`
-	Segment int   `json:"segment"`
-	Offset  int64 `json:"offset"`
-	Applied bool  `json:"applied"`
+	Index   int    `json:"index"`
+	Segment int    `json:"segment"`
+	Page    uint32 `json:"page"`
+	Offset  int64  `json:"offset"`
+	Applied bool   `json:"applied"`
 }
 
 type fxExpect struct {

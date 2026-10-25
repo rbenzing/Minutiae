@@ -27,6 +27,17 @@ func TestRecoveredFactsValidate(t *testing.T) {
 	if err := jr.Validate(); err != nil {
 		t.Fatalf("valid journal facts: %v", err)
 	}
+	// a database-file row may carry the companion's provenance of ITS origin only (4G-C3)
+	under := validFacts()
+	under.Origin, under.WAL = "db-under-wal", &RecoveredWAL{Frame: 1, Salt1: 2, Salt2: 3, Committed: true}
+	if err := under.Validate(); err != nil {
+		t.Fatalf("db-under-wal row with wal facts: %v", err)
+	}
+	back := validFacts()
+	back.Origin, back.Journal = "db-rolled-back", &RecoveredJournal{Record: 1, Hot: true, Applied: true}
+	if err := back.Validate(); err != nil {
+		t.Fatalf("db-rolled-back row with journal facts: %v", err)
+	}
 	for _, rel := range []string{"superseded-version", "uncommitted", "unknown"} {
 		f := validFacts()
 		f.Relation = rel
@@ -63,6 +74,14 @@ func TestRecoveredFactsValidate(t *testing.T) {
 		{"relation empty", func(f *RecoveredFacts) { f.Relation = "" }},
 		{"wal on db role", func(f *RecoveredFacts) { f.WAL = &RecoveredWAL{} }},
 		{"journal on db role", func(f *RecoveredFacts) { f.Journal = &RecoveredJournal{} }},
+		{"wal on db role of another origin", func(f *RecoveredFacts) { f.Origin = "freelist-leaf"; f.WAL = &RecoveredWAL{} }},
+		{"wal on db role of the rolled-back origin", func(f *RecoveredFacts) { f.Origin = "db-rolled-back"; f.WAL = &RecoveredWAL{} }},
+		{"journal on db role of another origin", func(f *RecoveredFacts) { f.Origin = "freelist-leaf"; f.Journal = &RecoveredJournal{} }},
+		{"journal on db role of the under-wal origin", func(f *RecoveredFacts) { f.Origin = "db-under-wal"; f.Journal = &RecoveredJournal{} }},
+		{"both companions on an under-wal row", func(f *RecoveredFacts) {
+			f.Origin, f.WAL, f.Journal = "db-under-wal", &RecoveredWAL{}, &RecoveredJournal{}
+		}},
+		{"wal facts on a journal-role row of the under-wal origin", func(f *RecoveredFacts) { f.Role, f.Origin = RoleJournal, "db-under-wal"; f.WAL = &RecoveredWAL{} }},
 		{"journal on wal role", func(f *RecoveredFacts) { f.Role = RoleWAL; f.Journal = &RecoveredJournal{} }},
 		{"wal on journal role", func(f *RecoveredFacts) { f.Role = RoleJournal; f.WAL = &RecoveredWAL{} }},
 	}

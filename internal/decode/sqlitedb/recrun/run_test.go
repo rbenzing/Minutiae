@@ -14,6 +14,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/rowrun"
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/records"
+	"github.com/rbenzing/minutiae/internal/sqlitefile"
 )
 
 func TestRecoverMapsEveryClaimedRow(t *testing.T) {
@@ -218,9 +219,22 @@ func TestRecoverFactsFromWALAndJournal(t *testing.T) {
 				continue
 			}
 			n++
-			// the rolled-back image lies in the database file: no journal position is claimed for it
-			if e.Facts.Role != parse.RoleDB || e.Facts.Journal != nil || e.Facts.Method != h.Method || e.Facts.Relation != h.Relation || e.Facts.Confidence != h.Confidence {
-				t.Errorf("rowid %d: facts %+v, oracle %+v", *h.Rowid, e.Facts, h)
+			// the rolled-back image lies in the database file (role db) and states the journal record that
+			// hides its page (4G-C3); the oracle's record of that page gives the expected position
+			var want *parse.RecoveredJournal
+			for _, jr := range f.exp.Journal.Records {
+				if jr.Page == h.Cell.Page {
+					want = &parse.RecoveredJournal{Record: jr.Index, Segment: jr.Segment, Hot: f.exp.Journal.Hot, Applied: jr.Applied}
+				}
+			}
+			if want == nil {
+				t.Fatalf("rowid %d: the oracle has no journal record for page %d", *h.Rowid, h.Cell.Page)
+			}
+			if e.Facts.Role != parse.RoleDB || e.Facts.WAL != nil || !reflect.DeepEqual(e.Facts.Journal, want) || e.Facts.Method != h.Method || e.Facts.Relation != h.Relation || e.Facts.Confidence != h.Confidence {
+				t.Errorf("rowid %d: facts %+v journal %+v, want journal %+v, oracle %+v", *h.Rowid, e.Facts, e.Facts.Journal, want, h)
+			}
+			if err := e.Facts.Validate(); err != nil {
+				t.Errorf("rowid %d: %v", *h.Rowid, err)
 			}
 		}
 		if n != 40 {
@@ -463,5 +477,50 @@ func TestRecoverJoinsReadTheLiveView(t *testing.T) {
 		if !slices.Contains(e.Facts.Notes, recrun.NoteJoinsFromLiveView) {
 			t.Errorf("notes %v lack %s", e.Facts.Notes, recrun.NoteJoinsFromLiveView)
 		}
+	}
+}
+
+// A row whose facts the host would refuse is skipped with a capped warning, counted in the report: the
+// run does not abort, the mapping never sees the row, and the row is neither mapped nor unmapped.
+func TestRecoverRowWithInvalidFactsIsSkippedNotFatal(t *testing.T) {
+	f := loadFixture(t, "sqlite3-freelist")
+	factsOf := func(rr sqlitefile.RecoveredRow) parse.RecoveredFacts {
+		facts := recrun.FactsOf(rr)
+		if id := *rr.Rowid; id%2 == 0 {
+			facts.Role = "" // not a file of the bundle
+		}
+		return facts
+	}
+	mapped := 0
+	m := fakeMapping("people", 4)
+	inner := m.Map
+	m.Map = func(mc parse.MapContext, row parse.Row) ([]records.Record, error) {
+		mapped++
+		return inner(mc, row)
+	}
+	em := newEmitter(t)
+	rep, err := recrun.RunWith(t.Context(), f.input(), em, []parse.TableMapping{m}, claim("people"), factsOf, 4)
+	if err != nil {
+		t.Fatalf("Run = %v, want the invalid rows skipped", err)
+	}
+	// rowids 101..112: six even ones have invalid facts
+	tc := tc0(rep)
+	if tc.Delivered != 6 || tc.Mapped != 6 || tc.Unmapped != 0 || tc.Skipped != 6 || rep.Skipped != 6 || mapped != 6 || len(em.recs) != 6 || len(em.unmapped) != 0 {
+		t.Errorf("counts %+v, report skipped %d, mapping called %d times, %d records", tc, rep.Skipped, mapped, len(em.recs))
+	}
+	if len(em.warns) < 4 {
+		t.Fatalf("%d warnings, want 4 about skipped rows", len(em.warns))
+	}
+	n := 0
+	for _, w := range em.warns {
+		if strings.HasPrefix(w.Locator, "sqlite:table=people;") && strings.Contains(w.Reason, "invalid recovered-row facts") {
+			n++
+		}
+	}
+	if n != 4 {
+		t.Errorf("%d warnings about skipped rows, want the cap of 4: %+v", n, em.warns)
+	}
+	if em.notes["invalid_facts.people"] != "6" || em.notes["invalid_facts_warnings_dropped"] != "2" {
+		t.Errorf("notes %v, want invalid_facts.people=6 and invalid_facts_warnings_dropped=2", em.notes)
 	}
 }

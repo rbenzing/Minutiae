@@ -21,6 +21,8 @@ var ErrNoMapping = errors.New("recrun: the claimed table has no mapping")
 type TableCounts struct {
 	Table                                string
 	Delivered, Mapped, Records, Unmapped int64
+	// Skipped: rows whose facts the host would refuse; not Delivered, neither mapped nor unmapped.
+	Skipped int64
 	// Absent: the live schema has no table of that name; the rows delivered for it, if any, are
 	// all Unmapped. (ClaimMatch delivers none: a table the live schema lacks is no-live-fit and
 	// stays with the generic run, counted in Report.History.Skipped.)
@@ -31,12 +33,14 @@ type TableCounts struct {
 type Report struct {
 	Tables   []TableCounts // in claim order
 	Unmapped int64         // all tables
+	Skipped  int64         // all tables: rows with invalid facts
 	History  sqlitedb.HistoryCounts
 }
 
 const (
-	maxRunWarnings = 1000 // the runner's own cap on forwarded library warnings
-	minRotateRows  = 1000 // rows between two rotations of the mapping Context
+	defaultInvalidFactWarnings = 100  // warnings about rows whose facts are invalid
+	maxRunWarnings             = 1000 // the runner's own cap on forwarded library warnings
+	minRotateRows              = 1000 // rows between two rotations of the mapping Context
 )
 
 // tableState is the live state of one claimed table.
@@ -58,6 +62,9 @@ type runner struct {
 	states map[string]*tableState
 	rep    Report
 	since  int
+
+	factsOf        func(sqlitefile.RecoveredRow) parse.RecoveredFacts // a seam for the tests
+	maxInvalidWarn int
 }
 
 // Run opens the bundle's database (roles db, wal, journal) through sqlitedb and drives the
@@ -74,9 +81,17 @@ type runner struct {
 // Context is checked after every row before its records are emitted and is closed and reopened
 // when the joined rows have charged half the budget (at most once per 1000 rows).
 //
+// A row whose FactsOf the host would refuse (Validate fails) is not delivered to the mapping: it is
+// counted in Skipped and warned about (the first 100), and the run continues. A caller
+// that must record every row (the composed command) treats Report.Skipped > 0 as a claim it cannot honor.
+//
 // A claim whose table has no mapping is ErrNoMapping before any row is read; a nil Map is
 // rowrun.ErrNilMap. A mapper that panics is not caught here: the host recovers it.
-func Run(ctx context.Context, in *parse.Input, out parse.RecoveryEmitter, mappings []parse.TableMapping, claims []parse.TableClaim) (rep Report, err error) {
+func Run(ctx context.Context, in *parse.Input, out parse.RecoveryEmitter, mappings []parse.TableMapping, claims []parse.TableClaim) (Report, error) {
+	return run(ctx, in, out, mappings, claims, FactsOf, defaultInvalidFactWarnings)
+}
+
+func run(ctx context.Context, in *parse.Input, out parse.RecoveryEmitter, mappings []parse.TableMapping, claims []parse.TableClaim, factsOf func(sqlitefile.RecoveredRow) parse.RecoveredFacts, maxInvalidWarn int) (rep Report, err error) {
 	if in == nil || out == nil {
 		return rep, rowrun.ErrNilInput
 	}
@@ -84,7 +99,7 @@ func Run(ctx context.Context, in *parse.Input, out parse.RecoveryEmitter, mappin
 	if err != nil {
 		return rep, err
 	}
-	r := &runner{ctx: ctx, in: in, out: out, states: map[string]*tableState{}}
+	r := &runner{ctx: ctx, in: in, out: out, states: map[string]*tableState{}, factsOf: factsOf, maxInvalidWarn: maxInvalidWarn}
 	for _, cl := range claims {
 		k := asciiFold(cl.Table)
 		if r.states[k] != nil {
@@ -219,9 +234,9 @@ func (r *runner) visit(rr sqlitefile.RecoveredRow) error {
 	if st == nil {
 		return fmt.Errorf("recrun: the history delivered a row of table %q, which is not claimed", rr.Table)
 	}
-	facts := FactsOf(rr)
+	facts := r.factsOf(rr)
 	if err := facts.Validate(); err != nil {
-		return fmt.Errorf("recrun: table %s: %w", st.name, err)
+		return r.skip(st, facts, err)
 	}
 	tc := &r.rep.Tables[st.counts]
 	tc.Delivered++
@@ -269,6 +284,17 @@ func (r *runner) visit(rr sqlitefile.RecoveredRow) error {
 	return r.maybeRotate()
 }
 
+// skip counts a row whose facts the host would refuse (4G-C4). It is not delivered to the mapping and is
+// neither mapped nor unmapped; the first 100 are warned about, the rest counted.
+func (r *runner) skip(st *tableState, f parse.RecoveredFacts, cause error) error {
+	r.rep.Tables[st.counts].Skipped++
+	r.rep.Skipped++
+	if r.rep.Skipped > int64(r.maxInvalidWarn) {
+		return nil
+	}
+	return r.out.Warn(r.ctx, f.Locator, "row skipped: "+cause.Error())
+}
+
 func (r *runner) unmapped(tc *TableCounts, f parse.RecoveredFacts, reason string) error {
 	tc.Unmapped++
 	r.rep.Unmapped++
@@ -297,9 +323,15 @@ func (r *runner) notes() {
 		if tc.Unmapped > 0 {
 			r.out.Note("unmapped_recovered."+tc.Table, strconv.FormatInt(tc.Unmapped, 10))
 		}
+		if tc.Skipped > 0 {
+			r.out.Note("invalid_facts."+tc.Table, strconv.FormatInt(tc.Skipped, 10))
+		}
 		if tc.Absent {
 			r.out.Note("table."+tc.Table, "absent")
 		}
+	}
+	if over := r.rep.Skipped - int64(r.maxInvalidWarn); over > 0 {
+		r.out.Note("invalid_facts_warnings_dropped", strconv.FormatInt(over, 10))
 	}
 	verdicts := make([]string, 0, len(r.rep.History.Skipped))
 	for v := range r.rep.History.Skipped {

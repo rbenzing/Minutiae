@@ -1,6 +1,7 @@
 package artparse
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/rbenzing/minutiae/internal/records"
@@ -68,21 +69,33 @@ func (b *bundleRecovery) effective(id string) int {
 // artifact says from-recovered-artifact; a record on a live member of a bundle with a recovered one says
 // from-recovered-bundle and names that member. A relation the parser already set stays in relation and
 // the host's goes to artifact_relation.
-func (b *bundleRecovery) stamp(c *records.Record, info artInfo) {
+//
+// A payload.recovery that is not an object, or notes that are not a list, were set by the parser and
+// cannot be extended without losing what it wrote: the record is refused.
+func (b *bundleRecovery) stamp(c *records.Record, info artInfo) error {
 	src, srcID, relation := info.recovery, info.id, relationFromRec
 	if src == nil {
 		src, srcID, relation = b.members[b.owner].recovery, b.owner, relationFromBundle
 	}
-	c.Deleted = true
-	c.Recovery = src.Method
-	c.Confidence = lower(c.Confidence, b.cap)
 	if c.Payload == nil {
 		c.Payload = map[string]any{}
 	}
-	rec, _ := c.Payload["recovery"].(map[string]any)
-	if rec == nil {
-		rec = map[string]any{}
+	rec := map[string]any{}
+	if v, set := c.Payload["recovery"]; set {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%w: payload.recovery set by the parser is %T, not an object", records.ErrInvalidRecord, v)
+		}
+		if n, set := m["notes"]; set {
+			if _, ok := n.([]any); !ok {
+				return fmt.Errorf("%w: payload.recovery.notes set by the parser is %T, not a list", records.ErrInvalidRecord, n)
+			}
+		}
+		rec = m
 	}
+	c.Deleted = true
+	c.Recovery = src.Method
+	c.Confidence = lower(c.Confidence, b.cap)
 	rec["artifact_method"] = src.Method
 	if src.Confidence != nil {
 		rec["artifact_confidence"] = *src.Confidence
@@ -100,6 +113,7 @@ func (b *bundleRecovery) stamp(c *records.Record, info artInfo) {
 		addNote(rec, noteCapUnknown)
 	}
 	c.Payload["recovery"] = rec
+	return nil
 }
 
 // addNote appends note to payload.recovery.notes once.
