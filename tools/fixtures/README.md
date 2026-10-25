@@ -1522,6 +1522,36 @@ chain index (the oracle states `duplicate-index` for a hostile file; Go tests bu
 (and the parser of Tasks 3 and 4 follows) the raw vocabulary and the schema-note column order listed in the module
 docstring.
 
+## Safari fixtures (plan 4F)
+
+`tools/fixtures/browser_safari.py` is a family module of `telephony_gen.py` (host Python `sqlite3` only, no Docker).
+There is no public source for Safari's `History.db`: `schemas/safari/safari-current.sql` and
+`safari-no-tombstones.sql` are written from memory (`-- verdict no-public-source`, `-- source memory`), and
+`schemas/safari/CROSSCHECK.md` says so per table. The fixtures prove that the parser reads the remembered layout, not
+that a real database has it (`docs/limitations.md`).
+
+```
+py -3 tools/fixtures/telephony_gen.py --family safari --out internal/parsers/safari/testdata \
+    --pins-go internal/parsers/safari/pins_test.go --pins-package safari_test
+```
+
+The oracle states the scenario rules in Python and reads every stored value back from the engine on a copy of the
+finished files. A Safari fixture is bundled as an iOS artifact (`parsertest.BundleIOS`) at
+`/private/var/mobile/Library/Safari/History.db` (logical `ios:HomeDomain/Library/Safari/History.db`). Databases are
+byte-reproducible except the `-wal` of `current-wal`, whose salts differ on every run: a WAL pin never regenerates
+byte-for-byte, so a regeneration rewrites the pins with the files.
+
+| Variant (`internal/parsers/safari/testdata/`) | DDL snapshot | Holds |
+|---|---|---|
+| `current` | `safari-current.sql` | all four tables; 6 items, 17 visits (sentinel and out-of-range times, the year 2100, nanosecond rounding, a dangling visit, wrong storage classes), 5 tombstones, a 100 KiB data URL |
+| `current-wal` | `safari-current.sql` | the `current` rows, then three visits and one tombstone that exist only in the `-wal` |
+| `no-tombstones` | `safari-no-tombstones.sql` | the older shape without `history_tombstones` (the schema note `table.history_tombstones = absent`) |
+
+The unmapped `history_items` columns (`domain_expansion`, `daily_visit_counts`, `weekly_visit_counts`,
+`autocomplete_triggers`, `should_recompute_derived_visit_counts`, `visit_count_score`) are stated as the schema note
+`unmapped_columns.history_items`. Both oracles (Chromium and Safari) state a `summary` only for a plain ASCII text of
+at most 80 characters; the other summaries are pinned against the shared summarizer by a Go unit test.
+
 ## Telephony fixtures (plan 4D)
 
 `tools/fixtures/telephony_gen.py` builds the Android telephony databases with the host Python's bundled `sqlite3`
