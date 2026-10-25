@@ -70,6 +70,7 @@ var allowed = map[string][]string{
 	"internal/decode/ts":                   {},
 	"internal/decode/plist":                {},
 	"internal/decode/typedstream":          {},
+	"internal/decode/iosbackup":            {"internal/decode/sqlitedb", "internal/decode/plist"},
 	"internal/records/recordstest":         {"internal/records", "internal/evidence"},
 	"internal/parse":                       {"internal/records"},
 	"internal/parsers":                     {"internal/parse", "internal/records", "internal/parsers/androidmms", "internal/parsers/androidcalllog", "internal/parsers/androidcontacts", "internal/parsers/chromium", "internal/parsers/safari"},
