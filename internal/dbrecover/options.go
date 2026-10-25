@@ -18,14 +18,28 @@ type Inputs struct {
 	NoSiblings   bool
 }
 
-// ExcludedTable names a table another parser claims, and the claimant.
-type ExcludedTable struct{ Table, Parser, Version string }
+// ExcludedTable names a table another parser claims, and the claimant. A
+// Typed exclusion is a claim of a typed pass that concluded (TypedAnalysisID is
+// its analysis): the table's rows were recorded as typed records, so leaving
+// them out of this run loses nothing and it is not narrowed. An operator's
+// exclusion (Typed false) is narrowing.
+type ExcludedTable struct {
+	Table, Parser, Version string
+	Typed                  bool
+	TypedAnalysisID        string
+}
+
+// MaxKeepClaimed bounds Options.KeepClaimed (4G-R25).
+const MaxKeepClaimed = 1 << 16
 
 // Options bound and narrow a run. The zero value is the default run.
 type Options struct {
-	Methods                       []string
-	MinConfidence                 int
-	ExcludeTables                 []ExcludedTable
+	Methods       []string
+	MinConfidence int
+	ExcludeTables []ExcludedTable
+	// KeepClaimed holds LocatorDigests of claimed rows the typed pass could not map (4G-R21): such a row
+	// is written although its table is claimed. At most MaxKeepClaimed; not narrowing.
+	KeepClaimed                   [][16]byte
 	MaxRecords, MaxBytes          int64
 	MaxPayloadBytes, MaxBodyBytes int64
 	// MaxFitEqualityRows bounds the live rows the fit-only equality (an annotation on rows named by the
@@ -69,6 +83,7 @@ type Counts struct {
 	Narrowed                                                                  []string
 	ConfidenceRange                                                           map[string]ConfRange
 	RangeOutside                                                              int64
+	KeptUnmappedClaimed                                                       int64
 }
 
 // Result is the outcome of Run.
@@ -133,13 +148,23 @@ func (o Options) normalized() (Options, []string, error) {
 	if o.MinConfidence > 0 {
 		narrowed = append(narrowed, "min-confidence")
 	}
+	operatorExclusion := false
 	for _, x := range o.ExcludeTables {
-		if x.Table == "" {
+		switch {
+		case x.Table == "":
 			return o, nil, badOption("an excluded table has no name")
+		case x.Typed && x.TypedAnalysisID == "":
+			return o, nil, badOption("the typed exclusion of table %q names no typed analysis", x.Table)
+		case !x.Typed && x.TypedAnalysisID != "":
+			return o, nil, badOption("the exclusion of table %q names a typed analysis but is not typed", x.Table)
 		}
+		operatorExclusion = operatorExclusion || !x.Typed
 	}
-	if len(o.ExcludeTables) > 0 {
+	if operatorExclusion {
 		narrowed = append(narrowed, "exclude-tables")
+	}
+	if len(o.KeepClaimed) > MaxKeepClaimed {
+		return o, nil, badOption("%d kept claimed locators exceed the limit of %d", len(o.KeepClaimed), MaxKeepClaimed)
 	}
 	switch {
 	case o.MaxRecords < 0 || o.MaxRecords > maxRecordsCeiling:
@@ -178,7 +203,11 @@ type filter struct {
 	minConf int
 	claimed map[string]bool // ASCII-folded names of the tables another parser claims
 	live    *sqlitefile.Schema
+	kept    map[[16]byte]struct{} // digests of claimed rows written anyway (4G-R21)
 }
+
+// reasonKeptClaimed is what keep reports, with true, for a claimed row that is written because its digest is in KeepClaimed.
+const reasonKeptClaimed = "kept-unmapped-claimed"
 
 // newFilter builds the filter of a run; live is the LIVE schema, against which
 // a claimed row must strictly fit (sqlitefile.ClaimMatch).
@@ -194,6 +223,12 @@ func newFilter(o Options, live *sqlitefile.Schema) filter {
 		f.claimed = map[string]bool{}
 		for _, x := range o.ExcludeTables {
 			f.claimed[asciiFold(x.Table)] = true
+		}
+	}
+	if len(o.KeepClaimed) > 0 {
+		f.kept = make(map[[16]byte]struct{}, len(o.KeepClaimed))
+		for _, d := range o.KeepClaimed {
+			f.kept[d] = struct{}{}
 		}
 	}
 	return f
@@ -212,6 +247,9 @@ func (f filter) keep(r sqlitefile.RecoveredRow, conf int) (bool, string) {
 	case conf < f.minConf:
 		return false, "below-min-confidence"
 	case f.claimed != nil && f.live != nil && f.live.ClaimMatch(r, f.isClaimed) == sqlitefile.ClaimYes:
+		if _, ok := f.kept[LocatorDigest(locatorFor(r))]; ok {
+			return true, reasonKeptClaimed
+		}
 		return false, "excluded-by-claim"
 	}
 	return true, ""

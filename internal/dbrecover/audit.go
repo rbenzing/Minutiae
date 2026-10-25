@@ -115,7 +115,7 @@ func optionDetails(o Options, narrowed []string) map[string]any {
 		"min_confidence": int64(o.MinConfidence), "max_records": o.MaxRecords, "max_bytes": o.MaxBytes,
 		"max_payload_bytes": o.MaxPayloadBytes, "max_body_bytes": o.MaxBodyBytes,
 		"allow_reingest": o.AllowReingest, "batch_rows": int64(o.BatchRows),
-		"narrowed": toAny(narrowed),
+		"narrowed": toAny(narrowed), "keep_claimed": int64(len(o.KeepClaimed)),
 	}
 	if len(o.Methods) > 0 {
 		d["methods"] = toAny(o.Methods)
@@ -126,7 +126,11 @@ func optionDetails(o Options, narrowed []string) map[string]any {
 func excludedDetails(x []ExcludedTable) []any {
 	out := []any{}
 	for _, e := range x {
-		out = append(out, map[string]any{"table": e.Table, "parser": e.Parser, "version": e.Version})
+		m := map[string]any{"table": e.Table, "parser": e.Parser, "version": e.Version, "typed": e.Typed}
+		if e.TypedAnalysisID != "" {
+			m["typed_analysis_id"] = e.TypedAnalysisID
+		}
+		out = append(out, m)
 	}
 	return out
 }
@@ -167,8 +171,8 @@ func countsDetails(c Counts) map[string]any {
 		"slack_copies_of_live": c.SlackCopiesOfLive, "slack_unparsed_bytes": c.SlackUnparsedBytes, "slack_dropped_crossed": c.SlackDroppedCrossed,
 		"slack_dropped_overlap": c.SlackDroppedOverlap, "slack_cross_page_equal": c.SlackCrossPageEqual,
 		"slack_work_capped_pages": c.SlackWorkCapped, "slack_row_capped": c.SlackRowCapped, "fit_equality_capped": c.FitEqualityCapped,
-		"recovery_cap_unknown": c.RecoveryCapUnknown,
-		"limits_hit":           sortedStrings(c.LimitsHit), "narrowed": toAny(c.Narrowed), "library_warnings": int64(c.LibraryWarnings),
+		"recovery_cap_unknown": c.RecoveryCapUnknown, "kept_unmapped_claimed": c.KeptUnmappedClaimed,
+		"limits_hit": sortedStrings(c.LimitsHit), "narrowed": toAny(c.Narrowed), "library_warnings": int64(c.LibraryWarnings),
 		"confidence_range": ranges, "range_outside": c.RangeOutside,
 	}
 }

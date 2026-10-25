@@ -69,21 +69,36 @@ func (p *pipeline) release() {
 // resolve reads the manifest, finds the database and its companions and opens
 // (and hashes) every input.
 func (p *pipeline) resolve(ctx context.Context) error {
+	ids, err := p.resolveIDs()
+	if err != nil {
+		return err
+	}
+	set, err := openInputs(ctx, p.c, p.man, p.dbRec.ID, ids.wal, ids.journal)
+	if err != nil {
+		return err
+	}
+	p.set = set
+	return nil
+}
+
+// resolveIDs reads the manifest and decides which artifacts are the database and
+// its companions. It opens nothing; resolve and ResolveSiblings share it.
+func (p *pipeline) resolveIDs() (inputIDs, error) {
 	if p.in.NoSiblings && (p.in.WAL != "" || p.in.Journal != "") {
-		return badOption("the sibling search is turned off, yet a WAL or journal was named: choose one")
+		return inputIDs{}, badOption("the sibling search is turned off, yet a WAL or journal was named: choose one")
 	}
 	man, err := p.c.Manifest()
 	if err != nil {
-		return fmt.Errorf("read the manifest: %w", err)
+		return inputIDs{}, fmt.Errorf("read the manifest: %w", err)
 	}
 	p.man = man
 	rec, err := p.c.FindArtifact(p.in.DB)
 	if err != nil {
-		return fmt.Errorf("database input: %w", err)
+		return inputIDs{}, fmt.Errorf("database input: %w", err)
 	}
 	ix := slices.IndexFunc(man, func(r evidence.ManifestRecord) bool { return r.ID == rec.ID })
 	if ix < 0 {
-		return fmt.Errorf("database input: %w: %q", evidence.ErrUnknownArtifact, p.in.DB)
+		return inputIDs{}, fmt.Errorf("database input: %w: %q", evidence.ErrUnknownArtifact, p.in.DB)
 	}
 	p.dbRec = man[ix]
 	if resolveHook != nil {
@@ -116,7 +131,7 @@ func (p *pipeline) resolve(ctx context.Context) error {
 	p.rep.WAL, walID, werr = pick("wal", p.in.WAL, found.WAL)
 	p.rep.Journal, jrID, jerr = pick("journal", p.in.Journal, found.Journal)
 	if err := errors.Join(werr, jerr); err != nil {
-		return err
+		return inputIDs{}, err
 	}
 	// how each companion came to be used, apart: naming one and finding the other by
 	// name is two different truths (J119)
@@ -130,12 +145,7 @@ func (p *pipeline) resolve(ctx context.Context) error {
 		return "none"
 	}
 	p.pairingWAL, p.pairingJournal = pairingOf(p.in.WAL, walID), pairingOf(p.in.Journal, jrID)
-	set, err := openInputs(ctx, p.c, man, p.dbRec.ID, walID, jrID)
-	if err != nil {
-		return err
-	}
-	p.set = set
-	return nil
+	return inputIDs{wal: walID, journal: jrID}, nil
 }
 
 func dbFacts(i sqlitefile.Info) map[string]any {
@@ -401,10 +411,12 @@ func (p *pipeline) scan(ctx context.Context, add func(records.Record) error, tra
 			return false
 		}
 		conf := *rec.Confidence
-		if keep, why := flt.keep(r, conf); !keep {
+		keep, why := flt.keep(r, conf)
+		if !keep {
 			s.skip(why)
 			return true
 		}
+		keptClaimed := why == reasonKeptClaimed
 		if s.added >= p.o.MaxRecords {
 			s.limit("max-records")
 			return false
@@ -433,6 +445,9 @@ func (p *pipeline) scan(ctx context.Context, add func(records.Record) error, tra
 		s.added++
 		s.bytes += sz
 		c := &s.counts
+		if keptClaimed {
+			c.KeptUnmappedClaimed++
+		}
 		c.ByMethod[r.Method]++
 		if m.capUnknown {
 			c.RecoveryCapUnknown++
