@@ -1580,6 +1580,103 @@ repository) nor in `frameworks/opt/telephony`; the copy in `packages/apps/Messag
 (line 54), CC 0x82 = 130 (line 31) and BCC 0x81 = 129 (line 30). The plan brief had CC and BCC swapped (written from
 memory); the public source wins (ruling T42), and the mapper and the oracle of the owning task follow it.
 
+## DDL provenance (Chromium history, plan 4F)
+
+The four snapshots in `tools/fixtures/schemas/chromium/*.sql` are cross-checked by
+`tools/fixtures/ddl_crosscheck_chromium.py` against the public Chromium sources at release tag
+`154.0.8037.100` (the newest Stable release at least 14 days old on 2026-10-24, picked from the Chromium release
+dashboard; it resolves to chromium/src commit `81ab43db91f352ce9134362efe32529b9761c4eb`). The fetched files (untrusted
+text, kept outside the repository, never executed or imported; the script tokenises them as text) and their SHA-256 are
+listed in `schemas/chromium/CROSSCHECK.md`. To re-run, fetch each listed path with
+`curl -fsS "https://chromium.googlesource.com/chromium/src/+/refs/tags/154.0.8037.100/<path>?format=TEXT" | base64 -d > <basename>`
+into one empty directory, then:
+
+```
+py -3 -I tools/fixtures/ddl_crosscheck_chromium.py <srcdir> tools/fixtures/schemas/chromium \
+  --tag 154.0.8037.100 --commit 81ab43db91f352ce9134362efe32529b9761c4eb --taken 2026-10-24 \
+  --subst name=urls --rename visits_tmp=visits --write-report tools/fixtures/schemas/chromium/CROSSCHECK.md
+```
+
+(`--emit TABLE[:LINE]` prints a table's one-line CREATE from the sources; `--subst` gives the temporary-table name
+parameter of `urls`; the report keeps its hand-written notes from the `<!-- notes -->` marker on.) Snapshots are named
+by role, and each header carries `-- verdict`, `-- source chromium <tag> <file>:<line>, ...` and `-- meta.version`:
+
+- `chromium-current.sql`: `verified`, version 70 (`kCurrentVersionNumber`): `urls`, `visits`, `keyword_search_terms`,
+  `downloads`, `downloads_url_chains`, `meta` and `visit_source` (never read by the parsers), each equal to one CREATE
+  TABLE statement of the sources.
+- `chromium-minimal.sql`: `verified`, version 70: the current `urls`, `visits`, `meta` only.
+- `chromium-mid.sql`: `historical`, `-- @phase 1` = the label for version 48 (the `visits` table as the migration builds it before
+  adding `opener_visit`), `-- @phase 2` = the ALTER that migration runs (version 49). Statements are source text of
+  migration code under a temporary table name; phase 1 combines the `visits_tmp` shape with the tag's current downloads
+  text and matches no real file (never a real version 48 database); deviations are in the notes of CROSSCHECK.md.
+- `chromium-old.sql`: `historical`, `-- @phase 1` alone, without the downloads tables (a synthetic omission, stated in
+  the notes).
+
+`verified` means the statement equals the tag's source text after whitespace collapse; `historical` means it equals
+migration-code text and describes an older shape. The Constants table of CROSSCHECK.md (header
+`| enum | int | name | source |`) is written by the script from the enums and macros: the page transition core values
+and qualifier masks, the history database integers of download state, danger type and interrupt reason (the history
+database stores plain casts of its own enums, which differ from the in-memory danger enum at 18, 24 and 25), the
+history version numbers and the migration that adds `visits.opener_visit` (48 to 49).
+
+## Browser fixtures (plan 4F)
+
+`tools/fixtures/browser_chromium.py` is a family module of `telephony_gen.py` (same driver, same shared helpers, host
+Python `sqlite3` only, no Docker):
+
+```
+py -3 tools/fixtures/telephony_gen.py --family chromium --out internal/parsers/chromium/testdata \
+    --pins-go internal/parsers/chromium/pins_test.go --pins-package chromium_test
+```
+
+The oracle restates the plan's Chromium mapping rules in Python, takes the transition, download state, danger and
+interrupt names from the Constants table of `schemas/chromium/CROSSCHECK.md` at generation time, and reads every stored
+value back from the engine on a copy of the finished files. Databases are byte-reproducible; the `-wal` of
+`current-wal` holds salts that differ on every run. The synthetic scenario rows are literal in the module.
+
+| Variant (`internal/parsers/chromium/testdata/`) | DDL snapshot | Remote path (browser, profile) | Holds |
+|---|---|---|---|
+| `current` | `chromium-current.sql` | `/data/data/com.android.chrome/app_chrome/Default/History` (chrome, Default) | 11 `urls` (visitless, sentinel time, 100 KiB data URL, invalid UTF-8 and NUL, empty and missing titles, bidi and ZWJ, empty url, wrong storage class, `hidden` 2), 22 `visits` (typed with qualifiers, negative server-redirect transition, invalid and sentinel times, unknown core, out-of-range transition, dangling and empty-url visits, synced, durations, TEXT time, opener, external referrer, unknown qualifier bits), 5 `keyword_search_terms`, 8 `downloads` with `downloads_url_chains` (out-of-order, gaps, no chain, no target and no chain, unknown state and danger, obsolete interrupt 32, 5000-byte path) and `meta` |
+| `current-wal` | `chromium-current.sql` | as `current` | the `current` rows, then a killed writer commits 3 visits and 1 download that exist only in the `-wal` and edits the title of URL 1 there |
+| `mid-upgraded` | `chromium-mid.sql` | `/data/data/com.microsoft.emmx/app_chrome/Default/History` (edge, Default) | rows before and after the phase 2 `ALTER` (`opener_visit` absent on the old visits); phase 1 matches no real file and the variant is synthetic data, not a real version 48 or 49 database |
+| `old` | `chromium-old.sql` | `/data/user/10/com.brave.browser/app_chrome/Profile 1/History` (brave, Profile 1) | synthetic: no `downloads` tables |
+| `minimal` | `chromium-minimal.sql` | `/data/data/com.example.reader/app_webview/Default/History` (webview, Default) | `urls`, `visits`, `meta` only |
+
+Facts of the scenario: `downloads_url_chains` has `PRIMARY KEY (id, chain_index)`, so no conforming file holds a repeated
+chain index (the oracle states `duplicate-index` for a hostile file; Go tests build one in memory). The oracle chooses
+(and the parser of Tasks 3 and 4 follows) the raw vocabulary and the schema-note column order listed in the module
+docstring.
+
+## Safari fixtures (plan 4F)
+
+`tools/fixtures/browser_safari.py` is a family module of `telephony_gen.py` (host Python `sqlite3` only, no Docker).
+There is no public source for Safari's `History.db`: `schemas/safari/safari-current.sql` and
+`safari-no-tombstones.sql` are written from memory (`-- verdict no-public-source`, `-- source memory`), and
+`schemas/safari/CROSSCHECK.md` says so per table. The fixtures prove that the parser reads the remembered layout, not
+that a real database has it (`docs/limitations.md`).
+
+```
+py -3 tools/fixtures/telephony_gen.py --family safari --out internal/parsers/safari/testdata \
+    --pins-go internal/parsers/safari/pins_test.go --pins-package safari_test
+```
+
+The oracle states the scenario rules in Python and reads every stored value back from the engine on a copy of the
+finished files. A Safari fixture is bundled as an iOS artifact (`parsertest.BundleIOS`) at
+`/private/var/mobile/Library/Safari/History.db` (logical `ios:HomeDomain/Library/Safari/History.db`). Databases are
+byte-reproducible except the `-wal` of `current-wal`, whose salts differ on every run: a WAL pin never regenerates
+byte-for-byte, so a regeneration rewrites the pins with the files.
+
+| Variant (`internal/parsers/safari/testdata/`) | DDL snapshot | Holds |
+|---|---|---|
+| `current` | `safari-current.sql` | all four tables; 6 items, 17 visits (sentinel and out-of-range times, the year 2100, nanosecond rounding, a dangling visit, wrong storage classes), 5 tombstones, a 100 KiB data URL |
+| `current-wal` | `safari-current.sql` | the `current` rows, then three visits and one tombstone that exist only in the `-wal` |
+| `no-tombstones` | `safari-no-tombstones.sql` | the older shape without `history_tombstones` (the schema note `table.history_tombstones = absent`) |
+
+The unmapped `history_items` columns (`domain_expansion`, `daily_visit_counts`, `weekly_visit_counts`,
+`autocomplete_triggers`, `should_recompute_derived_visit_counts`, `visit_count_score`) are stated as the schema note
+`unmapped_columns.history_items`. Both oracles (Chromium and Safari) state a `summary` only for a plain ASCII text of
+at most 80 characters; the other summaries are pinned against the shared summarizer by a Go unit test.
+
 ## Telephony fixtures (plan 4D)
 
 `tools/fixtures/telephony_gen.py` builds the Android telephony databases with the host Python's bundled `sqlite3`

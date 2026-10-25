@@ -1276,7 +1276,7 @@ var purityRequired = []string{
 	"internal/recordtypes/call", "internal/recordtypes/contact", "internal/recordtypes/web", "internal/recordtypes/all",
 	"internal/decode/sqlitedb",
 	"internal/decode/sqlitedb/rowrun", "internal/parsers/androidmms", "internal/parsers/androidcalllog", "internal/parsers/androidcontacts",
-	"internal/decode/ts", "internal/decode/plist", "internal/decode/typedstream",
+	"internal/parsers/chromium", "internal/parsers/safari", "internal/decode/ts", "internal/decode/plist", "internal/decode/typedstream",
 	"internal/carve",
 }
 
