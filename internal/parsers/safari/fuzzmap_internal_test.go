@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"reflect"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
@@ -37,6 +38,25 @@ type cell struct {
 type fuzzRow struct {
 	table string
 	cells []cell
+	flags sqlitedb.RowFlags
+}
+
+// Flags are the decoder's damage flags of the row (rowrun.DamageFlags reads them).
+func (r fuzzRow) Flags() sqlitedb.RowFlags { return r.flags }
+
+// wantFlags is the row_flags list the flags must give.
+func wantFlags(f sqlitedb.RowFlags) []any {
+	var out []any
+	if f&sqlitedb.FlagLengthMismatch != 0 {
+		out = append(out, "length_mismatch")
+	}
+	if f&sqlitedb.FlagKeyRange != 0 {
+		out = append(out, "key_range")
+	}
+	if f&sqlitedb.FlagExtraValues != 0 {
+		out = append(out, "extra_values")
+	}
+	return out
 }
 
 func (r fuzzRow) Table() string      { return r.table }
@@ -232,6 +252,10 @@ func checkMapped(t testing.TB, row, item fuzzRow, mode int) {
 			t.Fatalf("a recovery fact on a live row: %+v", r)
 		}
 		rawMap, _ := r.Payload["raw"].(map[string]any)
+		if got, _ := rawMap["row_flags"].([]any); !reflect.DeepEqual(got, wantFlags(row.flags)) {
+			t.Errorf("row_flags %v from flags %b", got, row.flags)
+		}
+
 		switch row.table {
 		case "history_items":
 			c := row.cells[colItemURL]
@@ -340,6 +364,41 @@ func cellsFrom(n int, kinds, nums, texts []byte) []cell {
 	return cs
 }
 
+// A damaged row still maps, and says so: raw.row_flags lists each flag the decoder raised, on every mapping.
+func TestDamagedRowsMapAndSayWhatWasDamaged(t *testing.T) {
+	all := sqlitedb.FlagLengthMismatch | sqlitedb.FlagKeyRange | sqlitedb.FlagExtraValues
+	for _, row := range []fuzzRow{goodItem(), goodVisit(), goodTombstone()} {
+		for _, tc := range []struct {
+			f    sqlitedb.RowFlags
+			want []any
+		}{
+			{sqlitedb.FlagLengthMismatch, []any{"length_mismatch"}},
+			{sqlitedb.FlagKeyRange, []any{"key_range"}},
+			{sqlitedb.FlagExtraValues, []any{"extra_values"}},
+			{all, []any{"length_mismatch", "key_range", "extra_values"}},
+		} {
+			row.flags = tc.f
+			recs, err := mapRow(row, goodItem(), joinFound)
+			if err != nil || len(recs) != 1 {
+				t.Fatalf("%s %b: err %v, %d records", row.table, tc.f, err, len(recs))
+			}
+			if got := rawOf(recs[0])["row_flags"]; !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("%s: row_flags %v, want %v", row.table, got, tc.want)
+			}
+		}
+		row.flags = 0
+		recs, _ := mapRow(row, goodItem(), joinFound)
+		if rawOf(recs[0])["row_flags"] != nil {
+			t.Errorf("%s: row_flags on an undamaged row", row.table)
+		}
+	}
+}
+
+func rawOf(r records.Record) map[string]any {
+	m, _ := r.Payload["raw"].(map[string]any)
+	return m
+}
+
 func TestMapRowsGoodRowsMapAndHostileCellsAreContained(t *testing.T) {
 	for _, row := range []fuzzRow{goodItem(), goodVisit(), goodTombstone()} {
 		if recs, err := mapRow(row, goodItem(), joinFound); err != nil || len(recs) != 1 {
@@ -377,12 +436,13 @@ func TestMapRowsGoodRowsMapAndHostileCellsAreContained(t *testing.T) {
 func FuzzMapSafariRows(f *testing.F) {
 	nan := []byte{0, 0, 0, 0, 0, 0, 0xf8, 0x7f}
 	inf := []byte{0, 0, 0, 0, 0, 0, 0xf0, 0x7f}
-	f.Add(byte(0), byte(0), []byte{cInt, cText, cInt, cInt}, []byte{1, 0, 0, 0, 0, 0, 0, 0}, []byte("https://a.example/\x00t"))
-	f.Add(byte(1), byte(0), []byte{cInt, cFloat, cText, cInt, cNull}, nan, []byte("\xff\xfe\x00 12"))
-	f.Add(byte(2), byte(0), []byte{cFloat, cFloat, cText, cInt}, inf, []byte("https://gone.example/"))
-	f.Add(byte(1), byte(2), []byte{cInt, cFloat, cText}, []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f}, []byte("u"))
-	f.Add(byte(0), byte(1), []byte{cBlob, cFloat, cNull}, []byte{}, []byte{})
-	f.Fuzz(func(t *testing.T, which, mode byte, kinds, nums, texts []byte) {
+	f.Add(byte(0), byte(0), byte(0), []byte{cInt, cText, cInt, cInt}, []byte{1, 0, 0, 0, 0, 0, 0, 0}, []byte("https://a.example/\x00t"))
+	f.Add(byte(1), byte(0), byte(9), []byte{cInt, cFloat, cText, cInt, cNull}, nan, []byte("\xff\xfe\x00 12"))
+	f.Add(byte(2), byte(0), byte(9), []byte{cFloat, cFloat, cText, cInt}, inf, []byte("https://gone.example/"))
+	f.Add(byte(1), byte(2), byte(9), []byte{cInt, cFloat, cText}, []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f}, []byte("u"))
+	f.Add(byte(0), byte(1), byte(9), []byte{cBlob, cFloat, cNull}, []byte{}, []byte{})
+	f.Fuzz(func(t *testing.T, which, mode, fl byte, kinds, nums, texts []byte) {
+		flags := sqlitedb.RowFlags(fl) & (sqlitedb.FlagLengthMismatch | sqlitedb.FlagKeyRange | sqlitedb.FlagExtraValues)
 		table := [3]string{"history_items", "history_visits", "history_tombstones"}[which%3]
 		n := len(tombstoneColumns())
 		switch table {
@@ -399,7 +459,7 @@ func FuzzMapSafariRows(f *testing.F) {
 		if mode&0x80 != 0 {
 			item.cells[0] = cell{kind: cInt, i: 1} // the item's id is the key the visit names
 		}
-		row := fuzzRow{table: table, cells: cellsFrom(n, kinds, nums, texts)}
+		row := fuzzRow{table: table, cells: cellsFrom(n, kinds, nums, texts), flags: flags}
 		if table == "history_visits" && mode&0x40 != 0 {
 			row.cells[colVisItem] = cell{kind: cInt, i: 1}
 		}

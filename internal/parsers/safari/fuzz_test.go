@@ -199,3 +199,21 @@ func TestWALHeaderMutationsNeverBreakTheContract(t *testing.T) {
 		}
 	}
 }
+
+// Every seed is a database that parses to records: a seed that gave none would let the fuzz target pass
+// without reaching a mapper.
+func TestEveryFuzzSeedEmitsRecords(t *testing.T) {
+	for _, s := range fuzzSeeds(t) {
+		files := map[string][]byte{"db": s.db}
+		if len(s.wal) > 0 {
+			files["wal"] = s.wal
+		}
+		h := parsertest.NewHarness(t)
+		b := parsertest.Fixture{Name: s.name, Files: files}.BundleIOS(h, remoteSafari, logicalSafari)
+		p := safari.Parser{}
+		res := h.RunLenient(p, b.Input(h, p, false))
+		if res.Err != nil || len(res.Violations) != 0 || len(res.Records) == 0 {
+			t.Errorf("seed %s: err %v, violations %v, %d records", s.name, res.Err, res.Violations, len(res.Records))
+		}
+	}
+}
