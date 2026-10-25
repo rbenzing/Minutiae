@@ -38,7 +38,8 @@ func HashOf(p parse.Parser) (string, bool) { return hashOf(p, generated) }
 // RecoveryRunnerPath is the import path of the typed recovery runner, whose source
 // is hashed into every "<name>.recover" identity. It is derived from this package's
 // own path (the runner lives under internal/decode), so a fork or rename of the module
-// follows.
+// follows. TestRecoveryRunnerPathIsTheRunnerPackage pins it to the real package of
+// recrun.Report, so the string cannot drift from the runner.
 func RecoveryRunnerPath() string {
 	return strings.TrimSuffix(parsersPath, "/parsers") + "/decode/sqlitedb/recrun"
 }
