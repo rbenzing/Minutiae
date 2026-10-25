@@ -60,6 +60,32 @@ func testValidators() map[string]validatorFunc {
 			}
 			return v
 		},
+		// swallows a read error and still validates the length the header declares
+		"test-swallow": func(w *Window) Verdict {
+			var h [12]byte
+			if _, err := w.ReadAt(h[:], 0); err != nil {
+				return Verdict{Outcome: Rejected}
+			}
+			l := int64(binary.BigEndian.Uint32(h[8:]))
+			var mid [4]byte
+			_, _ = w.ReadAt(mid[:], l-300)
+			return Verdict{Outcome: Validated, Length: l}
+		},
+		// reads an unreadable byte, then a byte outside the window, then rejects
+		"test-both": func(w *Window) Verdict {
+			var b [4]byte
+			_, _ = w.ReadAt(b[:], 1000)
+			_, _ = w.ReadAt(b[:], w.Len()+8)
+			return Verdict{Outcome: Rejected}
+		},
+		// validates from the header alone and never reads the body
+		"test-blind": func(w *Window) Verdict {
+			var h [12]byte
+			if _, err := w.ReadAt(h[:], 0); err != nil {
+				return Verdict{Outcome: Rejected}
+			}
+			return Verdict{Outcome: Validated, Length: int64(binary.BigEndian.Uint32(h[8:]))}
+		},
 		"test-panic": func(*Window) Verdict { panic("validator bug") },
 		"test-greedy": func(w *Window) Verdict {
 			buf := make([]byte, 256*kib)
@@ -720,5 +746,151 @@ func TestScanStatsMapsNeverNil(t *testing.T) {
 	}
 	if st.Accepted == nil || st.Rejected == nil {
 		t.Errorf("nil stats maps: %+v", st)
+	}
+}
+
+// badReader fails any read that overlaps a range for which bad(lo, hi) is
+// true, returning no bytes (a reader that cannot say where it failed).
+type badReader struct {
+	data []byte
+	bad  func(lo, hi int64) bool
+}
+
+func (b *badReader) ReadAt(p []byte, off int64) (int, error) {
+	if b.bad(off, off+int64(len(p))) {
+		return 0, errFlaky
+	}
+	return bytes.NewReader(b.data).ReadAt(p, off)
+}
+
+func TestScanSwallowedReadErrorRejectsUnreadable(t *testing.T) {
+	// The header is in the loaded chunk; the bad range lies past it, so the
+	// window is not clipped. The validator swallows the read error and says
+	// validated: the scan still refuses the hit.
+	img := carvetest.Image(2<<20, fillPattern)
+	at := DefaultBufSize - 64
+	carvetest.Place(img, at, toyObj("SWALLOWH", 1024))
+	br := &badReader{data: img, bad: func(lo, hi int64) bool { return hi > DefaultBufSize+512 && lo < DefaultBufSize+1024 }}
+	set := toySet(toyType("swal", "SWALLOWH", "test-swallow"))
+	hits, st, err := runScan(t, br, whole(img), set, Options{Align: 1, OnReadError: func(int64, int64, error) error { return nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 0 || st.Rejected["unreadable"] != 1 {
+		t.Errorf("hits %+v rejected %v, want none and unreadable 1", hits, st.Rejected)
+	}
+	if st.UnreadableBytes != 512 {
+		t.Errorf("UnreadableBytes = %d, want 512 (the later chunk load finds the range)", st.UnreadableBytes)
+	}
+}
+
+func TestScanReadErrorBeatsTruncated(t *testing.T) {
+	// A validator that hits an unreadable byte and then reads outside the
+	// window: the reason is unreadable, not truncated.
+	img := carvetest.Image(2<<20, fillPattern)
+	carvetest.Place(img, DefaultBufSize-64, toyObj(toyHdr, 1024))
+	br := &badReader{data: img, bad: func(lo, hi int64) bool { return hi > DefaultBufSize+900 && lo < DefaultBufSize+1024 }}
+	hits, st, err := runScan(t, br, whole(img), toySet(toyType("both", toyHdr, "test-both")), Options{Align: 1, OnReadError: func(int64, int64, error) error { return nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 0 || st.Rejected["unreadable"] != 1 || st.Rejected["truncated"] != 0 {
+		t.Errorf("hits %+v rejected %v, want unreadable 1 and no truncated", hits, st.Rejected)
+	}
+}
+
+func TestScanBlindValidatorLimitation(t *testing.T) {
+	// 3E-C1 (c): a validator that never reads the body accepts an object
+	// that spans an unreadable range lying past the loaded chunk. The part of
+	// the range past the hit is found and counted when the scan resumes;
+	// the writer (Task 11) sees the rest as a read failure.
+	img := carvetest.Image(2<<20, fillPattern)
+	carvetest.Place(img, DefaultBufSize-64, toyObj("BLINDHDR", 1024))
+	lo := int64(DefaultBufSize + 512)
+	br := &badReader{data: img, bad: func(a, b int64) bool { return b > lo && a < lo+512 }}
+	hits, st, err := runScan(t, br, whole(img), toySet(toyType("blind", "BLINDHDR", "test-blind")), Options{Align: 1, OnReadError: func(int64, int64, error) error { return nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].Length != 1024 {
+		t.Fatalf("hits = %+v, want the one blind hit", hits)
+	}
+	// The hit ends at 1 MiB-64+1024 = 1 MiB+960, inside the bad range
+	// [1 MiB+512, 1 MiB+1024): the scan resumes there and finds 64 bytes.
+	if st.UnreadableBytes != 64 {
+		t.Errorf("UnreadableBytes = %d, want 64", st.UnreadableBytes)
+	}
+}
+
+func TestScanAlternatingBadSectorsBoundsMemory(t *testing.T) {
+	const size = 32 << 20
+	// Every other 512-byte sector is unreadable: 32,768 separate ranges.
+	fr := &altReader{size: size}
+	var n int64
+	_, st, err := runScan(t, fr, []Run{{0, size}}, toySet(), Options{Align: 4096, OnReadError: func(_, c int64, _ error) error {
+		n += c
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := int64(size / 2); st.UnreadableBytes != want || n != want {
+		t.Errorf("UnreadableBytes %d reported %d, want %d", st.UnreadableBytes, n, want)
+	}
+	if st.maxReported == 0 || st.maxReported > 2200 {
+		t.Errorf("peak counted-range list = %d, want 1..2200 (about two chunks of ranges, not %d)", st.maxReported, size/1024)
+	}
+}
+
+// altReader fails every read that overlaps an odd 512-byte sector.
+type altReader struct{ size int64 }
+
+func (a *altReader) ReadAt(p []byte, off int64) (int, error) {
+	for s := off &^ 511; s < off+int64(len(p)); s += 512 {
+		if (s/512)%2 == 1 {
+			return 0, errFlaky
+		}
+	}
+	if off >= a.size {
+		return 0, io.EOF
+	}
+	n := min(int64(len(p)), a.size-off)
+	for i := range n {
+		p[i] = fillPattern[(off+i)%int64(len(fillPattern))]
+	}
+	if n < int64(len(p)) {
+		return int(n), io.EOF
+	}
+	return int(n), nil
+}
+
+func TestScanExhaustedBudgetRejectsFooterlessType(t *testing.T) {
+	greedy := toyType("greedy", "GREEDYHD", "test-greedy")
+	greedy.MaxLen = 8 << 20
+	capt := toyType("capt", "CAPHDR!!", "")
+	capt.MaxLen = 512
+	img := carvetest.Image(2<<20, fillPattern)
+	carvetest.Place(img, 0, []byte("GREEDYHD"))
+	carvetest.Place(img, 4096, []byte("CAPHDR!!"))
+	hits, st, err := runScan(t, bytes.NewReader(img), whole(img), toySet(greedy, capt), Options{Align: 4096, ValidateBudget: 1 << 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 0 || st.Rejected["validate-budget"] != 2 {
+		t.Errorf("hits %+v rejected %v, want none and validate-budget 2 (the footer-less type too)", hits, st.Rejected)
+	}
+}
+
+func TestScanHugeAlignDoesNotOverflow(t *testing.T) {
+	img := carvetest.Image(1<<20, fillPattern)
+	carvetest.Place(img, 1000, toyObj(toyHdr, 64))
+	carvetest.Place(img, 1000+4096, toyObj(toyHdr, 64))
+	run := []Run{{1000, int64(len(img)) - 1000}}
+	hits, st, err := runScan(t, bytes.NewReader(img), run, toySet(), Options{Align: math.MaxInt64})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].Offset != 1000 || st.Scanned != run[0].Length {
+		t.Errorf("hits %+v scanned %d, want only offset 0 and all scanned", hits, st.Scanned)
 	}
 }

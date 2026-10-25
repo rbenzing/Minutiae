@@ -79,6 +79,7 @@ type Stats struct {
 	TypeCapped                                            []string
 	BudgetExhausted                                       bool
 
+	maxReported int // peak length of the counted-unreadable list (a memory bound)
 	budgetLimit int64
 }
 
@@ -263,7 +264,7 @@ func scan(ctx context.Context, r io.ReaderAt, runs []Run, set *Set, o Options, v
 		if ru.Length == 0 {
 			continue
 		}
-		s.runUnreadable, s.runPos = 0, ru.Offset
+		s.runUnreadable, s.runPos, s.reported = 0, ru.Offset, s.reported[:0]
 		p := &pass{s: s, ri: ri, lo: ru.Offset, hi: ru.Offset + ru.Length, base: ru.Offset, unit: 1, outer: -1}
 		if o.Align > 1 {
 			p.unit = o.Align
@@ -306,7 +307,8 @@ func (s *scanner) reportBad(lo, hi int64, cause error) error {
 		merged.lo, merged.hi = min(merged.lo, s.reported[j].lo), max(merged.hi, s.reported[j].hi)
 		j++
 	}
-	s.reported = slices.Concat(s.reported[:i], []rng{merged}, s.reported[j:])
+	s.reported = slices.Replace(s.reported, i, j, merged)
+	s.stats.maxReported = max(s.stats.maxReported, len(s.reported))
 	for _, f := range fresh {
 		n := f.hi - f.lo
 		s.stats.UnreadableBytes += n
@@ -319,6 +321,16 @@ func (s *scanner) reportBad(lo, hi int64, cause error) error {
 		}
 	}
 	return nil
+}
+
+// pruneReported drops the counted ranges that end at or before the top-level
+// chunk start: the top-level scan only moves forward and the nested passes
+// read ahead of it, so no later read can reach them again.
+func (s *scanner) pruneReported(pos int64) {
+	i := sort.Search(len(s.reported), func(i int) bool { return s.reported[i].hi > pos })
+	if i > 0 {
+		s.reported = append(s.reported[:0], s.reported[i:]...)
+	}
 }
 
 // pass scans one span [lo, hi) of one run. Depth 0 is the run itself on the
@@ -352,7 +364,10 @@ func (p *pass) alignUp(pos int64) int64 {
 	}
 	rel := pos - p.base
 	if r := rel % p.unit; r != 0 {
-		return pos + p.unit - r
+		if add := p.unit - r; pos <= math.MaxInt64-add {
+			return pos + add
+		}
+		return p.hi // no further grid position inside the span
 	}
 	return pos
 }
@@ -368,6 +383,9 @@ func (p *pass) step(pos int64) int64 {
 // the overlap their headers can reach.
 func (p *pass) load(pos int64) error {
 	n := int(min(p.hi-pos, int64(DefaultBufSize+p.s.overlap)))
+	if p.depth == 0 {
+		p.s.pruneReported(pos)
+	}
 	p.bufOff, p.bufLen, p.bad = pos, n, p.bad[:0]
 	p.owned = min(pos+DefaultBufSize, p.hi)
 	return p.readInto(p.s.buffer(p.depth)[:n], pos)
@@ -391,12 +409,15 @@ func (p *pass) readInto(buf []byte, off int64) error {
 	if n > 0 {
 		return p.readInto(buf[n:], off+int64(n))
 	}
-	if len(buf) <= sectorSize {
-		return p.markBad(off, off+int64(len(buf)), err)
-	}
+	end := off + int64(len(buf))
+	// Split on an absolute sector boundary, so a piece never mixes a readable
+	// and an unreadable sector; a piece inside one sector is marked whole.
 	mid := (off + int64(len(buf))/2) &^ (sectorSize - 1)
-	if mid <= off || mid >= off+int64(len(buf)) {
-		mid = off + int64(len(buf))/2
+	if mid <= off {
+		mid = (off &^ (sectorSize - 1)) + sectorSize
+	}
+	if mid >= end {
+		return p.markBad(off, end, err)
 	}
 	k := int(mid - off)
 	if e := p.readInto(buf[:k], off); e != nil {
@@ -562,16 +583,20 @@ func (p *pass) candidate(ct *ctype, pos int64) (int64, error) {
 	if err := s.ctx.Err(); err != nil {
 		return 0, err
 	}
-	if v.Outcome != Validated && v.Outcome != Footer && v.Outcome != Bounded {
+	accepted := v.Outcome == Validated || v.Outcome == Footer || v.Outcome == Bounded
+	// A read error of the media rejects the hit whatever the validator says: it
+	// may have swallowed the error. The interior is not skipped, so the next
+	// chunk load finds and reports the unreadable range.
+	if !accepted || w.readErr != nil {
 		reason := v.Reason
 		switch {
 		case s.bud.exhausted:
 			reason = "validate-budget"
+		case w.readErr != nil:
+			reason = "unreadable"
 		case reason != "":
 		case w.outsideReads() > 0:
 			reason = "truncated"
-		case w.readErr != nil:
-			reason = "unreadable"
 		default:
 			reason = "rejected"
 		}
