@@ -473,7 +473,7 @@ func TestStaleMapTreeEnd(t *testing.T) {
 
 type failReader struct{ err error }
 
-func (r failReader) ReadAt(p []byte, off int64) (int, error) { return 0, r.err }
+func (r failReader) ReadAt(_ []byte, _ int64) (int, error) { return 0, r.err }
 
 func TestIndexSourceReadFailureIsNotMissing(t *testing.T) {
 	for _, c := range []struct {
