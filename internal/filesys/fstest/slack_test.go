@@ -1,6 +1,7 @@
 package fstest_test
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -102,5 +103,49 @@ func TestCheckAllocatedRunsContractReportsAliasing(t *testing.T) {
 	fstest.CheckAllocatedRunsContract(&rec, aliasFS{newSlackFake(true, []filesys.Run{{Offset: 4096, Length: 1024}})})
 	if !strings.Contains(strings.Join(rec.msgs, "\n"), "unaliased") {
 		t.Errorf("an aliasing AllocatedRuns gave %v, want an unaliased error", rec.msgs)
+	}
+}
+
+// dirErrFS fails to list its root; emptyFS lists nothing.
+type dirErrFS struct{ *slackFake }
+
+func (dirErrFS) ReadDir(filesys.Entry) ([]filesys.Entry, error) {
+	return nil, errors.New("boom: unreadable directory")
+}
+
+type emptyFS struct{ *slackFake }
+
+func (emptyFS) ReadDir(filesys.Entry) ([]filesys.Entry, error) { return nil, nil }
+
+func TestCheckAllocatedRunsContractReportsUnreadableDirectory(t *testing.T) {
+	var rec slackRecorder
+	fstest.CheckAllocatedRunsContract(&rec, dirErrFS{newSlackFake(true, []filesys.Run{{Offset: 4096, Length: 1024}})})
+	if !strings.Contains(strings.Join(rec.msgs, "\n"), "walk: /: ") {
+		t.Errorf("an unreadable directory gave %v, want a walk error naming it", rec.msgs)
+	}
+}
+
+func TestCheckAllocatedRunsContractReportsNoFiles(t *testing.T) {
+	var rec slackRecorder
+	fstest.CheckAllocatedRunsContract(&rec, emptyFS{newSlackFake(true, nil)})
+	if !strings.Contains(strings.Join(rec.msgs, "\n"), "no-files") {
+		t.Errorf("a tree without regular files gave %v, want a no-files error", rec.msgs)
+	}
+}
+
+func TestCheckAllocatedRunsContractInlineFileHasNoAllocation(t *testing.T) {
+	inline := newSlackFake(true, []filesys.Run{{Offset: 4096, Length: 512}})
+	inline.file.runs = nil
+	var rec slackRecorder
+	fstest.CheckAllocatedRunsContract(&rec, inline)
+	if !strings.Contains(strings.Join(rec.msgs, "\n"), "inline-alloc") {
+		t.Errorf("an inline file with an allocation gave %v, want an inline-alloc error", rec.msgs)
+	}
+	ok := newSlackFake(true, nil)
+	ok.file.runs = nil
+	var rec2 slackRecorder
+	fstest.CheckAllocatedRunsContract(&rec2, ok)
+	if len(rec2.msgs) != 0 {
+		t.Errorf("an inline file without allocation gave %v", rec2.msgs)
 	}
 }
