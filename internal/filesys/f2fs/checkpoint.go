@@ -58,7 +58,8 @@ type checkpoint struct {
 	startSum                             uint32 // pack-relative block of the first data summary
 	sitBitmap, natBitmap                 []byte // version bitmaps (which copy of each SIT/NAT block is current)
 	sitBitmapBytes, natBitmapBytes       uint32
-	pack2Blank                           bool // pack 2 was never written (normal after mkfs)
+	pack2Blank                           bool      // pack 2 was never written (normal after mkfs)
+	curNode, curData                     [3]curseg // current-segment cursors of the node and data logs (hot, warm, cold)
 }
 
 // warnings lists what the checkpoint's flags say about the volume's state.
@@ -169,6 +170,10 @@ func readPack(r io.ReaderAt, sb *superblock, pack int, addr uint32) (*checkpoint
 		nextFreeNid:    u32(cpNextFreeNid),
 		sitBitmapBytes: u32(cpSITBitmapBytes),
 		natBitmapBytes: u32(cpNATBitmapBytes),
+	}
+	for i := range cp.curNode {
+		cp.curNode[i] = curseg{seg: u32(cpCurNodeSegno + 4*i), off: le.Uint16(blk[cpCurNodeBlkoff+2*i:])}
+		cp.curData[i] = curseg{seg: u32(cpCurDataSegno + 4*i), off: le.Uint16(blk[cpCurDataBlkoff+2*i:])}
 	}
 	if cp.packBlocks < 2 || cp.packBlocks > blocksPerSeg {
 		return nil, fmt.Errorf("cp_pack_total_block_count %d outside 2..%d", cp.packBlocks, blocksPerSeg)
@@ -319,4 +324,39 @@ func selectCheckpoint(r io.ReaderAt, sb *superblock) (*checkpoint, []string, err
 		parts = append(parts, fmt.Sprintf("pack %d (block %d): %v", i+1, addrs[i], e))
 	}
 	return nil, nil, corrupt("f2fs checkpoint", int64(sb.cpAddr)*blockSize, "no valid checkpoint pack: %s", strings.Join(parts, "; "))
+}
+
+// curseg is one checkpoint current-segment cursor: the segment number of a
+// persistent log and the next block offset in it.
+//
+// From memory of struct f2fs_checkpoint (the 3D probe, Q4, confirms): cur_node_segno[8]
+// (le32) at 36, cur_node_blkoff[8] (le16) at 68, cur_data_segno[8] at 84,
+// cur_data_blkoff[8] at 116; index 0..2 are the hot, warm and cold logs. The
+// segment numbers are main-area-relative (the SIT numbering). The values are
+// raw: whoever uses one must bound it.
+type curseg struct {
+	seg uint32
+	off uint16
+}
+
+// cpCRCRecoveryFlag is CP_CRC_RECOVERY_FLAG (from memory; the 3D probe, Q5,
+// confirms): the checkpoint was written with roll-forward recovery data.
+const cpCRCRecoveryFlag = 0x40
+
+// Offsets of the current-segment cursors (see curseg).
+const (
+	cpCurNodeSegno  = 36
+	cpCurNodeBlkoff = 68
+	cpCurDataSegno  = 84
+	cpCurDataBlkoff = 116
+)
+
+// verLow returns the low 32 bits of checkpoint_ver, which is what a node
+// footer's cp_ver is compared against. ok is false when the high half is not
+// zero: the comparison is then undecided, never a guess.
+func (cp *checkpoint) verLow() (uint32, bool) {
+	if cp.ver>>32 != 0 {
+		return 0, false
+	}
+	return uint32(cp.ver), true
 }

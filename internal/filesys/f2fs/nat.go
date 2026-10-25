@@ -264,3 +264,38 @@ func (f *FS) natGet(nid uint32) (natEntry, error) {
 	}
 	return ent, nil
 }
+
+// natPrevAddr returns the block address that NAT block copy of nid which the
+// version bitmap does NOT select records for nid: the previous checkpoint's
+// NAT block, which the kernel flips away from at the next flush. 0 means that
+// copy has no address for nid (a free nid there, or never written). The NAT
+// journal is not consulted: it only ever holds the newest entries.
+//
+// nid 0 and a nid beyond the NAT area are a *filesys.CorruptError, as for
+// natGet; the copy is a stale view, so a reserved inode number is not refused.
+func (f *FS) natPrevAddr(nid uint32) (uint32, error) {
+	const st = "f2fs NAT"
+	sb := f.sb
+	switch {
+	case nid == 0:
+		return 0, corrupt(st, -1, "node id 0 is not valid")
+	case uint64(nid) >= sb.natCapacity():
+		return 0, corrupt(st, -1, "node id %d is beyond the NAT capacity of %d", nid, sb.natCapacity())
+	}
+	idx := uint64(nid / natEntriesPerBlock)
+	cur, ok := versionedBlock(sb.natAddr, sb.natPairs(), f.cp.natBitmap, idx)
+	if !ok {
+		return 0, corrupt(st, -1, "NAT block %d for node id %d is outside the NAT area", idx, nid)
+	}
+	// The two copies of a block are blocksPerSeg apart, the first one first.
+	prev := cur + blocksPerSeg
+	if testBit(f.cp.natBitmap, uint32(idx)) {
+		prev = cur - blocksPerSeg
+	}
+	blk, err := readBlock(f.r, prev)
+	if err != nil {
+		return 0, readError(st, int64(prev)*blockSize, err)
+	}
+	off := int(nid%natEntriesPerBlock) * natEntrySize
+	return parseNATEntry(blk[off : off+natEntrySize]).addr, nil
+}
