@@ -98,10 +98,10 @@ func newImageRecoverCmd(d Deps, opts *rootOptions) *cobra.Command {
 				return withFSName(s, pidx, err)
 			}
 			if opts.json {
-				return writeJSON(d.Out, newJSONRecoverList(plan))
+				return joinJSON(undecidedBatchError(nil, plan.SkippedBy["undecided"]), writeJSON(d.Out, newJSONRecoverList(plan)))
 			}
 			printRecoverList(d.Out, plan)
-			return nil
+			return undecidedBatchError(nil, plan.SkippedBy["undecided"])
 		}
 		o.Progress = newProgress(d.Err, "recover")
 		sum, err := s.Recover(cmd.Context(), o)
@@ -109,6 +109,7 @@ func newImageRecoverCmd(d Deps, opts *rootOptions) *cobra.Command {
 		if sum.AnalysisID == "" {
 			return withFSName(s, pidx, err)
 		}
+		err = undecidedBatchError(err, sum.SkippedBy["undecided"])
 		if opts.json {
 			return writeRecoverJSON(d.Out, sum, err)
 		}
@@ -180,6 +181,7 @@ func printRecoverList(w io.Writer, plan *examine.RecoverPlan) {
 		}
 	}
 	fmt.Fprintf(w, "would recover %d (%d bytes), uniform %d, skipped %d, considered %d\n", written, bytes, uniform, skippedTotal(plan.SkippedBy), plan.Considered)
+	printTypedSkips(w, plan.SkippedBy)
 	printLimit(w, plan.LimitReached, plan.NotProcessed)
 	printReaderWarnings(w, plan.ReaderWarnings)
 	printIncompleteIDs(w, plan.IncompleteIDs)
@@ -238,6 +240,7 @@ func printRecoverRun(w io.Writer, sum examine.RecoverSummary) {
 		bytes += a.Size
 	}
 	fmt.Fprintf(w, "recovered %d (%d bytes), partial %d, uniform %d, skipped %d\n", sum.Recovered, bytes, sum.Partial, sum.Uniform, sum.Skipped)
+	printTypedSkips(w, sum.SkippedBy)
 	printSkipReasons(w, sum.Summary)
 	printLimit(w, sum.LimitReached, sum.NotProcessed)
 	printReaderWarnings(w, sum.ReaderWarnings)
@@ -281,3 +284,33 @@ func incompleteTexts(ids []*examine.SearchIncompleteError) []string {
 	}
 	return out
 }
+
+// printTypedSkips counts the skips of the typed reader answers: "reused" is decided (the object is gone) and
+// "undecided" is not (the batch then exits 1, see undecidedBatchError).
+func printTypedSkips(w io.Writer, skippedBy map[string]int) {
+	if n := skippedBy["reused"]; n > 0 {
+		fmt.Fprintf(w, "reused %d (the inode or record is allocated again; decided, nothing recovered)\n", n)
+	}
+	if n := skippedBy["undecided"]; n > 0 {
+		fmt.Fprintf(w, "undecided %d (not recovered and not shown absent; see the skipped lines and analysis.warning entries)\n", n)
+	}
+}
+
+// undecidedBatchError joins the run's own error with the exit-1 error of a batch in which n deleted entries could
+// not be decided (3C-R21): the decided work is written and printed first, an integrity error still wins in
+// ExitCode, and the batch never exits 0 with an undecided entry.
+func undecidedBatchError(err error, n int) error {
+	if n <= 0 {
+		return err
+	}
+	return errors.Join(err, &undecidedBatch{n: n})
+}
+
+// undecidedBatch wraps filesys.ErrUndecided and names the count; Run prints its own note for it.
+type undecidedBatch struct{ n int }
+
+func (u *undecidedBatch) Error() string {
+	return fmt.Sprintf("%s: %d deleted entries could not be decided", filesys.ErrUndecided.Error(), u.n)
+}
+
+func (u *undecidedBatch) Unwrap() error { return filesys.ErrUndecided }
