@@ -798,7 +798,7 @@ in the probe used no fixed id and no faketime.
 Not measured here and not to be assumed (each gets its own probe in the named part,
 and the spec §18 "from memory" items stay marked until then):
 
-- [ ] ext4 `i_block` / extent tree residue after unlink (3C)
+- [x] ext4 `i_block` / extent tree residue after unlink (3C): see "ext4 recovery probe (3C)" (the map and `i_size` are cleared, a depth-1 leaf survives at its home location after a clean unmount)
 - [x] `exfat-fuse` FAT-chain residue after delete (3B): superseded by ruling F3 (the
       fixtures use the KERNEL drivers in the QEMU guest, never exfat-fuse); the kernel
       exfat driver, on delete, clears the InUse bits of the entry set and the allocation-
@@ -971,6 +971,77 @@ T2 100-byte file, truncate -s 4000     VDL a00f000000000000  DataLength a00f0000
 T3 dd seek=6 count=1                   VDL 000e000000000000  DataLength 000e000000000000
 T4 dd seek=8 count=0                   VDL 0010000000000000  DataLength 0010000000000000
 ```
+
+## ext4 recovery probe (3C)
+
+Measured 2026-10-25 with `recover_ext4_probe.sh` (host-side reader `ext4_recover_probe.py`; library
+`recover_guest.sh`, now with an `ext4` arm and an optional guest-clock argument whose default keeps 3B's
+time). No `--privileged`, no loop device, no host mount: the host formats the images under `faketime`, the
+QEMU TCG guest (`-m 512 -smp 1`) loads `virtio_blk virtio_pci crc32c_generic ext4` through its own `/init`, and
+the host READS each finished image with a raw Python reader of its own (own crc32c, checked against
+`debugfs`/`e2fsck`). Two kernels, the same workload, run in the container:
+
+```bash
+docker run --rm -v "$PWD:/work" -w /work minutiae-recover-fixtures     bash tools/fixtures/recover_ext4_probe.sh   # 6.1.0-53
+docker build -f tools/fixtures/Dockerfile.recover510 -t minutiae-recover-fixtures-510 tools/fixtures                  # once
+docker run --rm -v "$PWD:/work" -w /work minutiae-recover-fixtures-510 bash tools/fixtures/recover_ext4_probe.sh   # 5.10.223
+```
+
+`Dockerfile.recover510` (FROM the image above) unpacks Debian bullseye's `linux-image-5.10.0-32-amd64` 5.10.223-1
+(SHA256 pinned) with `dpkg-deb -x`: files only, nothing installed, no module indexed at build time. The guest
+library walks the module dependencies with `modinfo -F depends` when a kernel directory has no `modules.dep`,
+and `GUEST_KVER` (set to 5.10.0-32-amd64 by that image) picks the kernel. The security archive's 5.10.262 is not
+served by the snapshot mirror, hence the main-archive package. The raw output of both runs is kept by the 3C
+ledger (`task-1-probe-output.txt`); the evidence below was derived inside the container runs.
+
+Images: `ext4`: 16 MiB, 1 KiB blocks, `-t ext4 -O metadata_csum,64bit,inline_data,^orphan_file -m 0 -J size=1 -N 4096`
+(two groups, 64-byte descriptors); `ext3`: 8 MiB, `-t ext3 -O ^dir_index -m 0 -J size=1 -N 2048`, mounted `-t ext4`.
+One guest boot per stage with a clock one hour later each time. `e2fsck -fn` exits 0 after every boot. A boot takes
+6-25 s, an image gzips to 150-250 KiB (the `deep` workload is the large part). Stages: s1w writes `e1` (3 blocks),
+`e5`/`e5b` (inline data, 40 and 100 bytes), `e8` (sparse: logical blocks 0-1 and 10-11), a 90-entry directory and
+`deep` (200 blocks written one block at a time alternating with a pad file, so it is fragmented and has a depth-1
+tree); two `dd` passes then fill the volume; s2f is the pre-delete image; s3d unlinks `e1 e5 e5b e8`, `deep`
+and two directory entries (the first record of directory block 1 and a middle one). Branches of s3d: `rs`/`rp` create
+files at the same clock as the delete boot / one hour later; `sb` writes and unlinks a depth-1 file in ONE boot.
+
+### Facts (E1-E12), per kernel
+
+| Id | Fact | 6.1.0-53 | 5.10.223 |
+|---|---|---|---|
+| E1 | extent file, after `rm` + clean unmount | `i_size` 0, `i_blocks` 0, `links_count` 0, `dtime` set, `i_generation` unchanged, inode checksum valid; in-inode header kept (magic, max 4) with entries 0, the 48 entry bytes zero; inode bit clear, data bits clear, data bytes unchanged | identical |
+| E2 | depth-1 file (48-65 extents, one leaf) | in-inode header entries 0, depth 0, but the old index entry (leaf block number) survives in bytes 12-23 of `i_block`; the leaf block is free and **byte-equal to before**, its tail checksum verifies under (inode, `i_generation`), `i_generation` unchanged | identical |
+| E3 | ext3 block-map file (20 blocks, one indirect block) | all 15 `i_block` pointers zero, `i_size` 0; the freed indirect block's bytes and the data are unchanged | identical |
+| E4 | directory record, non-first | merged into the predecessor's `rec_len`; **inode, name_len, file_type and name all zeroed** (wiped) | merged; **inode (55), name_len, name KEPT**, the record's own `rec_len` kept |
+| E4 | directory record, first of block 1 | `inode` 0, `rec_len` kept, name_len, type and name zeroed | `inode` 0, `rec_len` kept, name_len, type and name KEPT |
+| E5 | inline-data file | `i_block` and `system.data` kept, `i_size` kept (links 0, dtime set, inode free) | identical |
+| E6/E11 | inode reuse | the next file takes the lowest freed inode number, with the same clock and one hour later; its `i_generation` differs. A journalled ext4 has no recently-deleted check | identical |
+| E7 | `dd` to ENOSPC with `-m 0` | does NOT reach zero: 327 blocks (2%) stay free (kernel reserve); `df` shows 0 available. After an `rm` the next file takes blocks only from the freed set | identical |
+| E8 | sparse file | two extents (0-1, 10-11), no hole extent | identical |
+| E9 | `e2fsck -fn` | 0 after every boot | identical |
+| E12 | inode-bitmap checksum (formula of 3C-R18, 64-byte descriptors, hi branch) | verifies for every initialised group of every image; `bg_itable_unused`/flags read; an uninitialised group (`INODE_UNINIT`, mke2fs state) stores 0, not a checksum | identical |
+
+### Same-boot delete (`sb`)
+
+A depth-1 file written and unlinked in the same boot: the in-inode root is cleared as in E2 (the stale index entry
+survives), but the leaf blocks at their home location are older versions: two free blocks verify under (inode,
+`i_generation`), hold 101-102 entries whose data equals the payload, and do not cover logical blocks 0-199. The
+fully committed leaves are only in the journal (about 66 allocated blocks verify under the same key). So after a
+same-boot delete the leaf method finds partial or no home leaf, never wrong data.
+
+### Gates (coordinator rulings 3C-C1, 3C-C2)
+
+- `GATE-L: open (demoted: clean-boundary only; same-boot delete leaves no valid home leaf, the method does not fire)`
+  Measured: clean boundary 1/1 leaf intact on both kernels. Same-boot: valid but partial leaves (above); the ruling treats
+  a leaf that does not give a complete chain as not firing.
+- `GATE-K: closed` on both kernels: a kernel `rm` leaves no intact in-inode map (ext4: entries 0 and zeroed entries; ext3: pointers zero).
+- `GATE-S: zeroed` on both kernels: `i_size` is 0 (inline-data inodes keep it, and have no map).
+- `GATE-U: reuse` on both kernels, same clock and +1 h.
+- Dirent route (3C-C1): 6.1 wipes a deleted record; 5.10 keeps inode and name of a merged (non-first) record and the name of a
+  first-in-block record (inode zeroed). Kernel-deleted `dirent:` entries therefore exist only on older kernels.
+
+`UnlinkEffects` (Task 2) that reproduce the kernel: ext4 file with extents: `FreeBlocks, FreeInode, ZeroSize, ZeroBlocksCount,
+ClearExtentRoot` (for a depth-1 file the kernel additionally leaves the old index entry bytes in `i_block`); ext3 file:
+`FreeBlocks, FreeInode, ZeroSize, ZeroBlocksCount, ZeroBlockPointers`.
 
 ## FAT recovery fixtures (3B)
 
