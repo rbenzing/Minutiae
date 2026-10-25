@@ -1629,3 +1629,26 @@ which `Builder.contact` creates a `contacts` row are the named constants `DANGLI
 | `duplicate-keys` | `contacts-aosp-baseline.sql`, with `accounts` and `contacts` re-created with a plain `_id integer` column (T79) | plain plus an empty `-wal`, 3 raw contacts, 3 `accounts` rows (key 1 twice), 4 `contacts` rows (key 1 three times) | a join key naming several rows: `raw.join_undecided = ["accounts","contacts"]` with `raw.join_duplicate = {"accounts":2,"contacts":3}`, no account and no time; a unique key and a dangling one beside it. The empty `-wal` makes the probe (which refuses a table without the rowid alias) defer to Parse |
 
 The DDL snapshots and their public sources: `schemas/android-telephony/CROSSCHECK.md` (see "DDL provenance" above).
+
+## iOS formats provenance (plan 4E)
+
+The nine snapshots in `tools/fixtures/schemas/ios/*.sql` (the iOS backup `Manifest.db`, `sms.db` in three variants,
+`CallHistory.storedata`, the legacy `call_history.db`, `AddressBook.sqlitedb` in two variants and
+`AddressBookImages.sqlitedb`) are written from memory. No public source defines these schemas, so every header says
+`-- Source: memory (...) (verdict no-public-source)` and every table has a `no-public-source` row in
+`schemas/ios/CROSSCHECK.md`. Nothing was compared with a definition, and no real device database was used; the fixtures
+generated from them prove only that a parser reads the remembered layout (real data is plan 4H). Each snapshot is
+listed by name in `docs/limitations.md` ("iOS schemas and backup formats are from memory").
+
+What was checked, and against what (fetched 2026-10-25 into the scratch directory, untrusted text, never built or run):
+
+- `IsEncrypted` of `Manifest.plist`: `verified` against libimobiledevice, tag `1.3.0` (commit
+  `15f8652126664e3a4b980e5d1c039b9053ce8566`), `tools/idevicebackup2.c` (SHA-256
+  `41472f454209082f1c02469b04f25261d70c19f03124710efb6950f7876365cf`): the key is looked up in the top-level
+  dictionary and used only when it is a boolean. That tool reads no `Manifest.db`, so `backup-manifest.sql` stays
+  `no-public-source`. The tool treats an absent or non-boolean value as "not encrypted"; Minutiae reports it as unknown.
+- The typedstream layout of `attributedBody` is plan 4E Task 4b's cross-check.
+
+Command line: `curl -fsS https://raw.githubusercontent.com/libimobiledevice/libimobiledevice/1.3.0/tools/idevicebackup2.c
+> idevicebackup2.c`, then `grep -n IsEncrypted idevicebackup2.c`. The guard is `TestIOSDDLSnapshotsStateTheirProvenance`
+(`internal/archtest/ios_ddl_test.go`).
