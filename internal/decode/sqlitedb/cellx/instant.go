@@ -1,6 +1,8 @@
 package cellx
 
 import (
+	"math"
+	"strconv"
 	"time"
 
 	"github.com/rbenzing/minutiae/internal/decode/ts"
@@ -111,11 +113,18 @@ func UnixSeconds(n Number) Instant {
 	return out
 }
 
-// Record writes raw[col] = the stored value, raw[col+"_status"] = "sentinel" or
+// Record writes raw[col] = the stored value (a non-finite REAL is raw[col+"_ieee"], its IEEE bits in hex, instead), raw[col+"_status"] = "sentinel" or
 // "invalid" when the value is not a time, and raw[col+"_unit"] when CocoaAuto
 // chose a unit.
 func (i Instant) Record(raw map[string]any, col string) {
-	raw[col] = i.Raw.Raw()
+	if !i.Raw.IsInt && (math.IsNaN(i.Raw.F) || math.IsInf(i.Raw.F, 0)) {
+		// a non-finite REAL is stated as its 16 lowercase hex digits of IEEE-754 bits
+		// (ruling P-4-1): lossless for NaN payloads, no raw[col] key
+		bits := strconv.FormatUint(math.Float64bits(i.Raw.F), 16)
+		raw[col+"_ieee"] = bits // a non-finite float always has 16 digits (exponent bits all ones)
+	} else {
+		raw[col] = i.Raw.Raw()
+	}
 	if i.Status != ts.StatusValid {
 		raw[col+"_status"] = i.Status.String()
 	}

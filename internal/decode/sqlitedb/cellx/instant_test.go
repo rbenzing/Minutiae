@@ -44,6 +44,9 @@ func TestCocoaAutoUnits(t *testing.T) {
 		{"1e11 is nanoseconds (100 s)", ival(100_000_000_000), ts.StatusValid, ts.UnitNanoseconds, cocoa.Add(100 * time.Second)},
 		{"real half second", rval(700000000.5), ts.StatusValid, ts.UnitSeconds, cocoa.Add(700000000*time.Second + 500*time.Millisecond)},
 		{"real nanoseconds", rval(7e17), ts.StatusValid, ts.UnitNanoseconds, cocoa.Add(700000000 * time.Second)},
+		{"-99999999999", ival(-99_999_999_999), ts.StatusInvalid, ts.UnitSeconds, time.Time{}},
+		{"real 1e11 is nanoseconds", rval(1e11), ts.StatusValid, ts.UnitNanoseconds, cocoa.Add(100 * time.Second)},
+		{"real 99999999999", rval(99_999_999_999), ts.StatusInvalid, ts.UnitSeconds, time.Time{}},
 		{"real +Inf", rval(math.Inf(1)), ts.StatusInvalid, ts.UnitNone, time.Time{}},
 		{"real NaN", rval(math.NaN()), ts.StatusInvalid, ts.UnitNone, time.Time{}},
 	}
@@ -115,7 +118,7 @@ func TestInstantRecordMarksUnitsAndNonTimes(t *testing.T) {
 
 	raw = map[string]any{}
 	cellx.CocoaSeconds(rval(math.Inf(1))).Record(raw, "d")
-	if raw["d"] != "+Inf" || raw["d_status"] != "invalid" {
+	if _, has := raw["d"]; has || raw["d_ieee"] != "7ff0000000000000" || raw["d_status"] != "invalid" {
 		t.Errorf("+Inf: %v", raw)
 	}
 
@@ -123,5 +126,54 @@ func TestInstantRecordMarksUnitsAndNonTimes(t *testing.T) {
 	cellx.CocoaAuto(ival(99_999_999_999)).Record(raw, "date")
 	if raw["date_unit"] != "seconds" || raw["date_status"] != "invalid" {
 		t.Errorf("an invalid auto value keeps its unit: %v", raw)
+	}
+}
+
+func TestInstantRecordStatesANonFiniteRealAsIEEEBits(t *testing.T) {
+	tests := []struct {
+		name string
+		v    float64
+		hex  string
+	}{
+		{"+Inf", math.Inf(1), "7ff0000000000000"},
+		{"-Inf", math.Inf(-1), "fff0000000000000"},
+		{"NaN payload", math.Float64frombits(0x7ff8000000000001), "7ff8000000000001"},
+		{"NaN with the smallest payload", math.Float64frombits(0x7ff0000000000001), "7ff0000000000001"},
+	}
+	for _, tc := range tests {
+		for name, in := range map[string]cellx.Instant{
+			"CocoaAuto": cellx.CocoaAuto(rval(tc.v)), "CocoaSeconds": cellx.CocoaSeconds(rval(tc.v)), "UnixSeconds": cellx.UnixSeconds(rval(tc.v)),
+		} {
+			raw := map[string]any{}
+			in.Record(raw, "d")
+			if len(raw) != 2 || raw["d_ieee"] != tc.hex || raw["d_status"] != "invalid" {
+				t.Errorf("%s %s: raw = %v, want only d_ieee=%s and d_status=invalid", tc.name, name, raw, tc.hex)
+			}
+		}
+	}
+	// a finite REAL stays a plain number
+	raw := map[string]any{}
+	cellx.CocoaSeconds(rval(2.5)).Record(raw, "d")
+	if raw["d"] != 2.5 || len(raw) != 1 {
+		t.Errorf("finite REAL: %v", raw)
+	}
+}
+
+func TestCocoaAutoBoundaryAgreesForIntegerAndReal(t *testing.T) {
+	for _, v := range []int64{99_999_999_999, 100_000_000_000, -99_999_999_999, -100_000_000_000} {
+		i, r := cellx.CocoaAuto(ival(v)), cellx.CocoaAuto(rval(float64(v)))
+		if i.Unit != r.Unit || i.Status != r.Status || !i.T.Equal(r.T) {
+			t.Errorf("%d: INTEGER %+v, REAL %+v", v, i, r)
+		}
+		_, unit, _ := ts.CocoaAuto(float64(v))
+		if i.Unit != unit {
+			t.Errorf("%d: cellx unit %v, ts unit %v", v, i.Unit, unit)
+		}
+	}
+	if u := cellx.CocoaAuto(ival(99_999_999_999)).Unit; u != ts.UnitSeconds {
+		t.Errorf("99999999999 unit %v, want seconds", u)
+	}
+	if u := cellx.CocoaAuto(rval(1e11)).Unit; u != ts.UnitNanoseconds {
+		t.Errorf("REAL 1e11 unit %v, want nanoseconds", u)
 	}
 }

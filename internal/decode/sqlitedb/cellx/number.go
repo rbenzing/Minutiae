@@ -51,7 +51,7 @@ func (n Number) Float() (float64, bool) {
 	return float64(n.I), true
 }
 
-// Raw is the payload value: int64, a finite float64, or the string "+Inf",
+// Raw is a JSON-safe display value, not the raw record (Instant.Record states a non-finite REAL as IEEE bits): int64, a finite float64, or the string "+Inf",
 // "-Inf" or "NaN" (a value JSON cannot hold).
 func (n Number) Raw() any {
 	switch {
