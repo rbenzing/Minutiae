@@ -22,8 +22,8 @@ package archtest
 //	P7 a parser is a stateless value           checkStatelessParsers
 //
 // Pure roots: internal/parse, internal/recordtypes/..., internal/decode/...,
-// internal/sqlitefile (without sqlitetest) and every directory under
-// internal/parsers except parsertest.
+// internal/sqlitefile (without sqlitetest), internal/carve (without carvetest)
+// and every directory under internal/parsers except parsertest.
 
 import (
 	"fmt"
@@ -51,6 +51,7 @@ const (
 	pcDecode                          // internal/decode/...
 	pcSqlitefile                      // internal/sqlitefile
 	pcParser                          // internal/parsers/<name>
+	pcCarve                           // internal/carve (without carvetest)
 )
 
 func (c pureClass) String() string {
@@ -67,6 +68,8 @@ func (c pureClass) String() string {
 		return "sqlitefile"
 	case pcParser:
 		return "parsers/<name>"
+	case pcCarve:
+		return "carve"
 	}
 	return "unknown"
 }
@@ -84,7 +87,7 @@ func setOf(cs ...pureClass) classSet {
 
 func (s classSet) has(c pureClass) bool { return s&(1<<uint(c)) != 0 }
 
-var allClasses = setOf(pcParse, pcRTCommon, pcRTType, pcDecode, pcSqlitefile, pcParser)
+var allClasses = setOf(pcParse, pcRTCommon, pcRTType, pcDecode, pcSqlitefile, pcParser, pcCarve)
 
 // Directories of the pure roots (module-relative, slash separated).
 const (
@@ -97,10 +100,11 @@ const (
 	dirRTAll      = "internal/recordtypes/all"
 	dirSqlitefile = "internal/sqlitefile"
 	dirParsers    = "internal/parsers"
+	dirCarve      = "internal/carve"
 )
 
 // pureRoots are the directories the scan starts from.
-var pureRoots = []string{dirParse, dirRecordtype, dirDecode, dirSqlitefile, dirParsers}
+var pureRoots = []string{dirParse, dirRecordtype, dirDecode, dirSqlitefile, dirParsers, dirCarve}
 
 // classOf returns the class of the package in the module-relative directory rel,
 // and false when rel is not a pure package (a test helper, the registry package,
@@ -118,6 +122,10 @@ func classOf(rel string) (pureClass, bool) {
 		return pcDecode, true
 	case under(dirSqlitefile + "/sqlitetest"):
 		return 0, false // the test helper of the sqlite file reader
+	case under(dirCarve + "/carvetest"):
+		return 0, false // the test-only encoders of the carving package
+	case under(dirCarve):
+		return pcCarve, true
 	case under(dirSqlitefile):
 		return pcSqlitefile, true
 	case strings.HasPrefix(rel, dirParsers+"/"):
@@ -286,18 +294,18 @@ var stdAllow = map[string]classSet{
 	// Sprintf, Errorf and Sprint for messages only; every printing and scanning function is banned by P2
 	"fmt": allClasses,
 	// binary formats and checksums
-	"encoding/binary": setOf(pcDecode, pcSqlitefile, pcParser), "encoding/hex": setOf(pcDecode, pcSqlitefile, pcParser),
-	"hash/crc32": setOf(pcDecode, pcSqlitefile, pcParser),
+	"encoding/binary": setOf(pcDecode, pcSqlitefile, pcParser, pcCarve), "encoding/hex": setOf(pcDecode, pcSqlitefile, pcParser, pcCarve),
+	"hash/crc32": setOf(pcDecode, pcSqlitefile, pcParser, pcCarve),
 	// token-level reading of XML plists (decode/plist: the negative CF$UID check, after the pre-scan caps)
 	"encoding/xml": setOf(pcDecode),
 	// common.CleanText keeps the original bytes (base64) or their hash
-	"encoding/base64": setOf(pcRTCommon), "crypto/sha256": setOf(pcRTCommon, pcSqlitefile),
+	"encoding/base64": setOf(pcRTCommon), "crypto/sha256": setOf(pcRTCommon, pcSqlitefile, pcCarve),
 	// typed Decode of stored payloads
-	"encoding/json": setOf(pcRTType),
+	"encoding/json": setOf(pcRTType, pcCarve),
 	// name and token patterns (the regexp engine is linear time)
 	"regexp": setOf(pcParse, pcRTCommon, pcRTType),
 	// io.ReaderAt is the only way to read input; context carries cancellation (parse.Tick)
-	"io": setOf(pcParse, pcDecode, pcSqlitefile, pcParser), "context": setOf(pcParse, pcDecode, pcSqlitefile, pcParser),
+	"io": setOf(pcParse, pcDecode, pcSqlitefile, pcParser, pcCarve), "context": setOf(pcParse, pcDecode, pcSqlitefile, pcParser, pcCarve),
 	// Budget and SealedReaderAt; no sync: nothing in a parser needs a lock
 	"sync/atomic": setOf(pcParse, pcSqlitefile),
 	// The sqlitefile class alone (ruling C54): the library is a value-semantic reader
@@ -1269,12 +1277,13 @@ var purityRequired = []string{
 	"internal/decode/sqlitedb",
 	"internal/decode/sqlitedb/rowrun", "internal/parsers/androidmms", "internal/parsers/androidcalllog", "internal/parsers/androidcontacts",
 	"internal/decode/ts", "internal/decode/plist", "internal/decode/typedstream",
+	"internal/carve",
 }
 
 // purePackageRE is a second, independent description of the pure roots: any
 // directory under internal/ that matches it and holds a non-test Go file must
 // have been scanned.
-var purePackageRE = regexp.MustCompile(`^internal/(?:parse|recordtypes|decode|sqlitefile|parsers/[^/]+)(?:/|$)`)
+var purePackageRE = regexp.MustCompile(`^internal/(?:parse|recordtypes|decode|sqlitefile|carve|parsers/[^/]+)(?:/|$)`)
 
 // TestPurityRulesCoverKnownPackages: the scan visited every required package and
 // every directory the independent walk finds, so a root that exists but is not
@@ -1309,7 +1318,7 @@ func TestPurityRulesCoverKnownPackages(t *testing.T) {
 			return nil
 		}
 		// the two helper packages the roots exclude on purpose
-		if strings.HasPrefix(dir, dirSqlitefile+"/sqlitetest") || strings.HasPrefix(dir, dirParsers+"/parsertest") {
+		if strings.HasPrefix(dir, dirSqlitefile+"/sqlitetest") || strings.HasPrefix(dir, dirParsers+"/parsertest") || strings.HasPrefix(dir, dirCarve+"/carvetest") {
 			return nil
 		}
 		if _, ok := scanned[dir]; !ok {
@@ -1496,6 +1505,35 @@ func TestPurityAllowlistSelfTest(t *testing.T) {
 		{pcDecode, dirDecodePlst, "container/list", false},
 		{pcDecode, dirDecodePlst, "crypto/sha256", false},
 		{pcSqlitefile, dirSqlitefile, m + "internal/decode/plist", false},
+		// carve (3E-R17): bounded readers and checksums, never decompression, files, locks or patterns
+		{pcCarve, dirCarve, "encoding/binary", true},
+		{pcCarve, dirCarve, "encoding/hex", true},
+		{pcCarve, dirCarve, "encoding/json", true},
+		{pcCarve, dirCarve, "hash/crc32", true},
+		{pcCarve, dirCarve, "crypto/sha256", true},
+		{pcCarve, dirCarve, "io", true},
+		{pcCarve, dirCarve, "context", true},
+		{pcCarve, dirCarve, "bytes", true},
+		{pcCarve, dirCarve, "fmt", true},
+		{pcCarve, dirCarve, "compress/flate", false},
+		{pcCarve, dirCarve, "compress/gzip", false},
+		{pcCarve, dirCarve, "archive/zip", false},
+		{pcCarve, dirCarve, "archive/tar", false},
+		{pcCarve, dirCarve, "os", false},
+		{pcCarve, dirCarve, "sync", false},
+		{pcCarve, dirCarve, "sync/atomic", false},
+		{pcCarve, dirCarve, "regexp", false},
+		{pcCarve, dirCarve, "embed", false},
+		{pcCarve, dirCarve, "runtime", false},
+		{pcCarve, dirCarve, "math/rand", false},
+		{pcCarve, dirCarve, m + "internal/evidence", false},
+		{pcCarve, dirCarve, m + "internal/records", false},
+		{pcCarve, dirCarve, m + "internal/parse", false},
+		{pcCarve, dirCarve, m + "internal/sqlitefile", false},
+		{pcCarve, dirCarve, m + "internal/carve/carvetest", false},
+		// no other pure class may import encoding/json or crypto/sha256 through the carve entries
+		{pcParser, fixtureParserDir, m + "internal/carve", false},
+		{pcDecode, dirDecodePlst, "encoding/json", false},
 		// parsers
 		{pcParser, fixtureParserDir, m + "internal/recordtypes/message", true},
 		{pcParser, fixtureParserDir, m + "internal/decode/sqlitedb", true},
@@ -1557,7 +1595,7 @@ func TestPurityAstBansSelfTest(t *testing.T) {
 	}
 	// //go:embed is allowed only in the data packages
 	embed := "package x\n\nimport _ \"embed\"\n\n//go:embed data.bin\nvar data []byte\n"
-	for class, want := range map[pureClass]int{pcParse: 1, pcSqlitefile: 1, pcRTCommon: 0, pcRTType: 0, pcDecode: 0, pcParser: 0} {
+	for class, want := range map[pureClass]int{pcParse: 1, pcSqlitefile: 1, pcCarve: 1, pcRTCommon: 0, pcRTType: 0, pcDecode: 0, pcParser: 0} {
 		got := checkAstBans(parsePureSources(t, map[string]string{"x.go": embed}), class, fixtureParserDir)
 		if len(got) != want {
 			t.Errorf("//go:embed in %s: %d violations, want %d (%v)", class, len(got), want, got)
@@ -1658,13 +1696,13 @@ func TestPurityRecordsSelectorsSelfTest(t *testing.T) {
 	// recordtypes/<type> may call SetValidator in init; every other class may not
 	expectLines(t, data, markedLines(data, "// want", "// want:non-rttype"), checkRecordsSelectors(srcs, pcRTType), 10)
 	every := markedLines(data, "// want")
-	for _, class := range []pureClass{pcParse, pcRTCommon, pcDecode, pcSqlitefile, pcParser} {
+	for _, class := range []pureClass{pcParse, pcRTCommon, pcDecode, pcSqlitefile, pcParser, pcCarve} {
 		expectLines(t, data, every, checkRecordsSelectors(srcs, class), 10)
 	}
 
 	// importing the evidence package is refused with its own message, in every class
 	ev := "package x\n\nimport \"" + evidencePkg + "\"\n"
-	for _, class := range []pureClass{pcParse, pcRTCommon, pcRTType, pcDecode, pcSqlitefile, pcParser} {
+	for _, class := range []pureClass{pcParse, pcRTCommon, pcRTType, pcDecode, pcSqlitefile, pcParser, pcCarve} {
 		got := checkRecordsSelectors(parsePureSources(t, map[string]string{"x.go": ev}), class)
 		if len(got) != 1 || !strings.Contains(got[0].Msg, "imports internal/evidence") {
 			t.Errorf("%s importing the evidence package: %v", class, got)
@@ -1771,7 +1809,7 @@ func TestPurityStateSelfTest(t *testing.T) {
 func TestPurityEmbedVarSelfTest(t *testing.T) {
 	const head = "package x\n\nimport \"embed\"\n\nvar _ embed.FS\n\n"
 	dataClasses := []pureClass{pcRTCommon, pcRTType, pcDecode, pcParser}
-	otherClasses := []pureClass{pcParse, pcSqlitefile}
+	otherClasses := []pureClass{pcParse, pcSqlitefile, pcCarve}
 	cases := []struct {
 		name string
 		decl string
@@ -1901,6 +1939,7 @@ func TestPurityClassOf(t *testing.T) {
 		"internal/parsers/androidcalllog":    pcParser,
 		"internal/parsers/androidcontacts":   pcParser,
 		"internal/parsers/ios/sms":           pcParser,
+		"internal/carve":                     pcCarve,
 	} {
 		if got, ok := classOf(rel); !ok || got != want {
 			t.Errorf("classOf(%s) = %v, %v; want %v", rel, got, ok, want)
@@ -1908,7 +1947,7 @@ func TestPurityClassOf(t *testing.T) {
 	}
 	for _, rel := range []string{
 		"internal/parsers", "internal/parsers/parsertest", "internal/parsers/parsertest/x", "internal/sqlitefile/sqlitetest",
-		"internal/cli", "internal/records", "internal/parser", "internal/parsex", "internal/artparse", "internal/evidence", "cmd/minutiae",
+		"internal/carve/carvetest", "internal/carve/carvetest/x", "internal/carvex", "internal/cli", "internal/records", "internal/parser", "internal/parsex", "internal/artparse", "internal/evidence", "cmd/minutiae",
 	} {
 		if got, ok := classOf(rel); ok {
 			t.Errorf("classOf(%s) = %v, want it to be outside the pure roots", rel, got)
@@ -1924,6 +1963,7 @@ func TestPureDirsDiscovery(t *testing.T) {
 	for _, d := range []string{
 		"internal/parse", "internal/parse/testdata", "internal/recordtypes/common", "internal/recordtypes/message",
 		"internal/decode/plist", "internal/decode/plist/testdata/x", "internal/sqlitefile", "internal/sqlitefile/sqlitetest",
+		"internal/carve", "internal/carve/carvetest", "internal/carve/testdata/x",
 		"internal/parsers", "internal/parsers/parsertest", "internal/parsers/androidmms", "internal/parsers/androidmms/testdata",
 		"internal/cli", "internal/records",
 	} {
@@ -1938,7 +1978,7 @@ func TestPureDirsDiscovery(t *testing.T) {
 	want := map[string]pureClass{
 		"internal/parse": pcParse, "internal/recordtypes": pcRTType, "internal/recordtypes/common": pcRTCommon,
 		"internal/recordtypes/message": pcRTType, "internal/decode": pcDecode, "internal/decode/plist": pcDecode,
-		"internal/sqlitefile": pcSqlitefile, "internal/parsers/androidmms": pcParser,
+		"internal/sqlitefile": pcSqlitefile, "internal/parsers/androidmms": pcParser, "internal/carve": pcCarve,
 	}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("pure dirs = %v, want %v", got, want)
@@ -2151,7 +2191,7 @@ func TestPureHookIsTheOnlyAllowedPackageVar(t *testing.T) {
 	if n := count("guard.go", hook, pcSqlitefile); n != 0 {
 		t.Errorf("the allowlisted pureHook: %d violations, want 0", n)
 	}
-	for _, class := range []pureClass{pcParse, pcRTCommon, pcRTType, pcDecode, pcParser} {
+	for _, class := range []pureClass{pcParse, pcRTCommon, pcRTType, pcDecode, pcParser, pcCarve} {
 		if n := count("guard.go", hook, class); n != 1 {
 			t.Errorf("pureHook in %s: %d violations, want 1", class, n)
 		}
