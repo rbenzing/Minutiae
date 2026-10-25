@@ -121,7 +121,7 @@ func (f *FS) openExtent(first uint32, size, valid int64, noFat bool) (filesys.Fi
 	case valid > size:
 		return nil, corrupt(st, -1, "ValidDataLength %d exceeds DataLength %d", valid, size)
 	}
-	fl := &file{size: size, avail: size, r: f.data}
+	fl := &file{size: size, avail: size, r: f.data, unit: f.cs}
 	if size == 0 {
 		fl.runs = []filesys.Run{} // an empty file has no runs, and that is a complete answer
 		return fl, nil
@@ -201,6 +201,7 @@ type file struct {
 	starts []int64       // starts[i] is the file offset where runs[i] begins
 	tail   error         // what reading [avail, size) returns; nil when avail == size
 	r      io.ReaderAt   // the volume, for non-hole runs
+	unit   int64         // the cluster size, the unit AllocatedRuns rounds to
 }
 
 // Size is the content length (DataLength).
