@@ -128,11 +128,6 @@ func (f *FS) sitBlockOf(idx uint64) ([]byte, error) {
 // the rest is cut off).
 func (f *FS) Unallocated() ([]filesys.Run, error) {
 	sb := f.sb
-	journal, err := f.loadSITJournal()
-	if err != nil {
-		f.warn("SIT journal: cannot be read (%v); no free space is reported", err)
-		return nil, nil
-	}
 	limit := min(sb.mainEnd(), uint64(sb.blocks)) // first block that is not reported
 	maxRuns := f.unallocCap
 	if maxRuns <= 0 {
@@ -142,8 +137,6 @@ func (f *FS) Unallocated() ([]filesys.Run, error) {
 	var (
 		runs   []filesys.Run
 		capped bool
-		blk    []byte // SIT block curIdx, nil when unreadable
-		curIdx = ^uint64(0)
 	)
 	// emit appends the free blocks [from, to), merging with the previous run.
 	emit := func(from, to uint64) {
@@ -160,33 +153,15 @@ func (f *FS) Unallocated() ([]filesys.Run, error) {
 		runs = append(runs, filesys.Run{Offset: off, Length: end - off})
 	}
 
-	for seg := uint32(0); seg < sb.segMain && !capped; seg++ {
+	_, err := f.forEachSIT(func(seg uint32, raw []byte) bool {
+		if raw == nil {
+			return true // its SIT block is unreadable (warned): not reported as free
+		}
 		base := uint64(sb.mainAddr) + uint64(seg)<<segShift
-		if base >= limit {
-			break
-		}
-		raw, ok := journal[seg]
-		if !ok {
-			if idx := uint64(seg / sitEntriesPerBlock); idx != curIdx {
-				curIdx = idx
-				b, err := f.sitBlockOf(idx)
-				if err != nil {
-					f.warn("SIT block %d is unreadable (%v); its segments are not reported as free", idx, err)
-					b = nil
-				}
-				blk = b
-			}
-			if blk == nil {
-				continue
-			}
-			off := int(seg%sitEntriesPerBlock) * sitEntrySize
-			raw = blk[off : off+sitEntrySize]
-		}
-
 		vblocks := int(binary.LittleEndian.Uint16(raw) & sitVBlocksMask)
 		if vblocks > blocksPerSeg {
 			f.warn("SIT entry of segment %d claims %d valid blocks but a segment holds %d; the segment is not reported as free", seg, vblocks, blocksPerSeg)
-			continue
+			return true
 		}
 		vmap := raw[sitMapOff : sitMapOff+sitMapSize]
 		set := 0
@@ -198,22 +173,22 @@ func (f *FS) Unallocated() ([]filesys.Run, error) {
 			// the clear bits may stand for live blocks, and which ones is not
 			// known, so no block of the segment is reported free.
 			f.warn("SIT entry of segment %d: valid-block count %d exceeds its valid map (%d bits set); the segment is not reported as free", seg, vblocks, set)
-			continue
+			return true
 		}
 		if set != vblocks {
 			f.warn("SIT entry of segment %d: valid-block count %d is below its valid map (%d bits set); the valid map is used", seg, vblocks, set)
 		}
 		if set == 0 {
 			emit(base, min(base+blocksPerSeg, limit))
-			continue
+			return !capped
 		}
 		if set == blocksPerSeg {
-			continue
+			return true
 		}
 		n := min(uint64(blocksPerSeg), limit-base) // blocks of the segment inside the image
 		start := ^uint64(0)                        // first block of the open free run
 		for i := uint64(0); i < n && !capped; i++ {
-			if vmap[i>>3]&(0x80>>(i&7)) != 0 {
+			if sitValid(vmap, int(i)) {
 				if start != ^uint64(0) {
 					emit(start, base+i)
 					start = ^uint64(0)
@@ -225,8 +200,80 @@ func (f *FS) Unallocated() ([]filesys.Run, error) {
 		if start != ^uint64(0) && !capped {
 			emit(start, base+n)
 		}
+		return !capped
+	})
+	if err != nil {
+		f.warn("SIT journal: cannot be read (%v); no free space is reported", err)
+		return nil, nil
 	}
 	return filesys.MergeRuns(runs), nil
+}
+
+// sitValid reports valid bit i of a segment's SIT valid map. The bits are
+// numbered most significant first within each byte (0x80>>(i&7); the
+// kernel's f2fs_test_bit, from memory of the format and confirmed by the 3D
+// probe, Q4). It is the one helper Unallocated and the recovery index use. A
+// bit beyond the map is reported clear; callers bound i by the segment.
+func sitValid(vmap []byte, i int) bool {
+	if i < 0 || i>>3 >= len(vmap) {
+		return false
+	}
+	return vmap[i>>3]&(0x80>>(i&7)) != 0
+}
+
+// forEachSIT calls visit with the SIT entry of every main-area segment in
+// order: the SIT journal's entry when it has one (it is newer than the last
+// SIT flush), else the one in the SIT block the version bitmap selects. raw is
+// the 74-byte entry (valid within the call only), or nil when the SIT block
+// holding it cannot be read; such a block is warned about once, and its index
+// is listed in unreadable. visit returns false to stop.
+//
+// The walk stops at the first segment whose base block is at or past
+// min(end of the main area, blocks in the image), as Unallocated always did
+// (3D-R21): a segment past a truncated image is not visited. err is returned
+// (and nothing visited) only when the SIT journal cannot be read, because
+// any segment might be overridden by it.
+func (f *FS) forEachSIT(visit func(seg uint32, raw []byte) bool) (unreadable []uint32, err error) {
+	sb := f.sb
+	journal, err := f.loadSITJournal()
+	if err != nil {
+		return nil, err
+	}
+	limit := min(sb.mainEnd(), uint64(sb.blocks))
+	var (
+		blk    []byte // SIT block curIdx, nil when unreadable
+		curIdx = ^uint64(0)
+	)
+	for seg := uint32(0); seg < sb.segMain; seg++ {
+		if uint64(sb.mainAddr)+uint64(seg)<<segShift >= limit {
+			break
+		}
+		raw, ok := journal[seg]
+		if !ok {
+			if idx := uint64(seg / sitEntriesPerBlock); idx != curIdx {
+				curIdx = idx
+				b, err := f.sitBlockOf(idx)
+				if err != nil {
+					f.warn("SIT block %d is unreadable (%v); its segments are not reported as free", idx, err)
+					unreadable = append(unreadable, uint32(idx)) // idx < segMain
+					b = nil
+				}
+				blk = b
+			}
+			if blk == nil {
+				if !visit(seg, nil) {
+					break
+				}
+				continue
+			}
+			off := int(seg%sitEntriesPerBlock) * sitEntrySize
+			raw = blk[off : off+sitEntrySize]
+		}
+		if !visit(seg, raw) {
+			break
+		}
+	}
+	return unreadable, nil
 }
 
 // FS implements the whole filesystem interface (Unallocated completes it).
