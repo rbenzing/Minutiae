@@ -92,7 +92,11 @@ func Run(args []string, d Deps) int {
 			err = usageError{err}
 		}
 		fmt.Fprintln(d.Err, "error:", escapeMultiline(err.Error()))
-		if errors.Is(err, filesys.ErrUndecided) {
+		var batch *undecidedBatch
+		switch {
+		case errors.As(err, &batch):
+			fmt.Fprintln(d.Err, undecidedBatchNote)
+		case errors.Is(err, filesys.ErrUndecided):
 			fmt.Fprintln(d.Err, undecidedNote)
 		}
 	}
