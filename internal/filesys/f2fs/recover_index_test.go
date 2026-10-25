@@ -3,6 +3,7 @@ package f2fs_test
 import (
 	"bytes"
 	"errors"
+	"io"
 	"slices"
 	"testing"
 
@@ -308,8 +309,9 @@ func TestNodeIndexMemoryPerEntry(t *testing.T) {
 	}
 }
 
-// BenchmarkNodeIndexBuild reports the bytes the index keeps per entry (no
-// threshold): the flat entry plus the share of the per-nid record.
+// BenchmarkNodeIndexBuild reports measured B/op and allocs (ReportAllocs); the
+// index-B/entry metric is an ESTIMATE from the struct sizes (flat entry plus
+// the share of the per-nid record), not a measurement. No threshold.
 func BenchmarkNodeIndexBuild(b *testing.B) {
 	e := newIdxEnv(nil)
 	for j := range uint32(f2fstest.BlocksPerSeg) {
@@ -425,5 +427,75 @@ func TestNodeIndexSSAMismatchDropped(t *testing.T) {
 	}
 	if s := f.NodeIndexStats(); s.SSADropped != 1 {
 		t.Errorf("SSADropped = %d, want 1", s.SSADropped)
+	}
+}
+
+// An unreadable SIT block hides the type of every segment it covers, so the
+// index is undecided (the R5 harsh case: one bad block taints every lookup).
+func TestNodeIndexUnreadableSITBlockIsUndecided(t *testing.T) {
+	e := newIdxEnv(nil)
+	e.plant(4, 0, 53, 3)
+	sit := int64(e.l.SITBlock(0, false)) * bs
+	r := &rangeFault{r: bytes.NewReader(e.img), lo: sit, hi: sit + bs, err: io.ErrUnexpectedEOF}
+	f, err := f2fs.Open(r, int64(len(e.img)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.armed = true
+	for _, nid := range []uint32{53, 999} {
+		if _, _, err := f.NodeIndexLookup(nid); !errors.Is(err, filesys.ErrUndecided) || errors.Is(err, filesys.ErrNotFound) {
+			t.Errorf("lookup(%d) = %v, want ErrUndecided", nid, err)
+		}
+	}
+	if !hasWarning(f.Info(), "SIT block is unreadable, so its type is unknown") {
+		t.Errorf("no warning about the unreadable SIT block: %v", f.Info().Warnings)
+	}
+	if s := f.NodeIndexStats(); s.SegmentsSkipped != 6 || s.SegmentsScanned != 0 {
+		t.Errorf("stats = %+v, want all 6 segments of the block skipped and none scanned", s)
+	}
+}
+
+// Post-checkpoint markers share the entry cap (accepted): when they fill it,
+// even a nid with a real copy is ErrLimit, never "not found".
+func TestNodeIndexPostCheckpointMarkersCountTowardTheCap(t *testing.T) {
+	e := newIdxEnv(nil)
+	e.plant(4, 0, 80, 3)
+	for j := range uint32(3) {
+		e.plant(4, 1+j, 81, uint64(idxVer+j))
+	}
+	f := e.open(t)
+	f.SetNodeIndexCap(3)
+	if _, _, err := f.NodeIndexLookup(80); !errors.Is(err, filesys.ErrLimit) {
+		t.Errorf("lookup(80) = %v, want ErrLimit", err)
+	}
+}
+
+// An unreadable summary block loses only the cross-check: the copies of that
+// segment stay, unconfirmed, and the other segments are still checked.
+func TestNodeIndexSSABlockCorruptKeepsCopiesUnconfirmed(t *testing.T) {
+	e := newIdxEnv(nil)
+	a := e.plant(4, 0, 90, 3)
+	f2fstest.SetSSAEntry(e.img, e.o, a, 91) // would be dropped if the summary were read
+	b := e.plant(5, 0, 92, 3)
+	f2fstest.SetSSAEntry(e.img, e.o, b, 93) // segment 5's summary is readable: dropped
+	ssa := int64(e.l.SSA+4) * bs
+	r := &rangeFault{r: bytes.NewReader(e.img), lo: ssa, hi: ssa + bs, err: io.ErrUnexpectedEOF}
+	f, err := f2fs.Open(r, int64(len(e.img)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.armed = true
+	got, _ := idxLookup(t, f, 90)
+	if len(got) != 1 || got[0].Addr != a || got[0].SSA {
+		t.Errorf("lookup(90) = %+v, want the copy kept without an SSA confirmation", got)
+	}
+	if got, _ := idxLookup(t, f, 92); len(got) != 0 {
+		t.Errorf("lookup(92) = %+v, want the mismatching copy of segment 5 dropped", got)
+	}
+	if !hasWarning(f.Info(), "summary block of segment 4") {
+		t.Errorf("no warning about the unreadable summary block: %v", f.Info().Warnings)
+	}
+	if s := f.NodeIndexStats(); s.SSADropped != 1 || s.SegmentsSkipped != 0 {
+		t.Errorf("stats = %+v, want 1 dropped copy and no skipped segment", s)
 	}
 }

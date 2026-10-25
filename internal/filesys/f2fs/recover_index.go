@@ -27,7 +27,8 @@ import (
 //
 // Memory (3D-R22): one flat slice of 24-byte entries, sorted after the pass,
 // and one 8-byte record per distinct nid; no map. At the cap that is at most
-// 48 MiB and 16 MiB, plus the 2 MiB segment buffer.
+// 48 MiB and 16 MiB, plus the 2 MiB segment buffer and slice growth slack
+// (append doubles, so a build can briefly hold up to about twice the entries).
 
 const (
 	maxCopiesPerNID = 8       // spec 14
