@@ -116,6 +116,7 @@ func (b *builder) placeFiles(files []File) {
 	}
 	dir := func(num uint32, f File, parentPath string) {
 		f.Data = b.dirData(num, nums[parentPath], &f, kids[f.Path])
+		b.dirBytes[num] = f.Data
 		b.writeInode(num, b.renderInode(num, &f))
 	}
 	for i := range all {
@@ -160,6 +161,7 @@ func (b *builder) alloc(n int) int {
 // renderInode encodes f as an inode of b.isz bytes, checksum included.
 func (b *builder) renderInode(num uint32, f *File) []byte {
 	raw := make([]byte, b.isz)
+	b.curNum = num
 	mode := f.Mode & 0o7777
 	switch {
 	case f.Dir:
