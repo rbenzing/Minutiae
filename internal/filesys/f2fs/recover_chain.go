@@ -87,6 +87,12 @@ func (f *FS) staleMap(in *inode, src nodeSource) (staleResult, error) {
 }
 
 func (f *FS) staleMapLimit(in *inode, src nodeSource, limit int) (staleResult, error) {
+	return f.staleMapFan(in, src, limit, addrsPerBlock)
+}
+
+// staleMapFan is staleMapLimit with the entries read per node block lowered
+// (a test seam: it makes the end of the node tree reachable).
+func (f *FS) staleMapFan(in *inode, src nodeSource, limit, fan int) (staleResult, error) {
 	if in.size < 0 {
 		return staleResult{}, corrupt("f2fs stale inode", -1, "inode %d has a negative size", in.nid)
 	}
@@ -94,7 +100,7 @@ func (f *FS) staleMapLimit(in *inode, src nodeSource, limit int) (staleResult, e
 		return staleResult{}, nil
 	}
 	w := &staleWalker{
-		f: f, in: in, src: src, limit: limit,
+		f: f, in: in, src: src, limit: limit, fan: fan,
 		end:     min(f.sb.mainEnd(), uint64(f.sb.blocks)),
 		visited: map[uint32]struct{}{in.nid: {}},
 	}
@@ -112,6 +118,12 @@ func (f *FS) staleMapLimit(in *inode, src nodeSource, limit int) (staleResult, e
 			before += r.Length
 		}
 		res.runs = res.runs[:cut]
+		limit := before / blockSize
+		keep := 0
+		for keep < len(w.starts) && w.starts[keep] < limit {
+			keep++
+		}
+		res.nodes = res.nodes[:keep]
 		res.covered = before
 		res.stop = fmt.Sprintf("address-repeated@%d", before/blockSize)
 	}
@@ -123,11 +135,13 @@ type staleWalker struct {
 	in      *inode
 	src     nodeSource
 	limit   int    // runs, and node blocks, at most
+	fan     int    // entries read per node block (addrsPerBlock; lowered by tests)
 	end     uint64 // first block address past the main area (clamped to the image)
 	runs    []filesys.Run
 	covered int64
 	lblk    int64
 	nodes   []uint32
+	starts  []int64 // starts[i] is the logical block where nodes[i] was entered
 	visited map[uint32]struct{}
 	stop    string // reason, "" while walking
 	stopAt  int64  // the number named after the reason (a logical block or a nid)
@@ -214,11 +228,12 @@ func (w *staleWalker) node(nid uint32, level, slot, outer int, ofs uint32) {
 		return
 	}
 	if len(b) != blockSize {
-		w.halt("node-missing", int64(nid))
+		w.err = corrupt("f2fs stale node", -1, "node %d: the source gave %d bytes, want %d", nid, len(b), blockSize)
 		return
 	}
+	w.starts = append(w.starts, w.lblk)
 	w.nodes = append(w.nodes, addr)
-	for i := 0; i < addrsPerBlock && !w.done(); i++ {
+	for i := 0; i < w.fan && !w.done(); i++ {
 		word := binary.LittleEndian.Uint32(b[4*i:])
 		switch {
 		case level == 1:
@@ -237,6 +252,9 @@ func (w *staleWalker) node(nid uint32, level, slot, outer int, ofs uint32) {
 // overlap an earlier run, or -1. "The first k runs are pairwise disjoint"
 // holds for a prefix and then never again, so a binary search on k finds it
 // with O(log n) sorts of at most n runs.
+// The cut is whole-run: when a run overlaps an earlier one only in its tail, the
+// whole run is dropped, so the map drops more than strictly necessary and never
+// less (a repeated block is never kept).
 func repeatedRun(runs []filesys.Run) int {
 	disjoint := func(k int) bool {
 		s := slices.Clone(runs[:k])
@@ -336,7 +354,8 @@ func (s *indexSource) nodeFor(nid, owner, ofs uint32) ([]byte, uint32, string, e
 			if isIOError(err) {
 				return nil, 0, "", fmt.Errorf("f2fs stale node: read of block %d failed: %w", c.addr, err)
 			}
-			return nil, 0, "node-missing", nil // the image ends inside the index's own range
+			// A block the index recorded cannot be read in full: the answer is unknown, never "missing".
+			return nil, 0, "", readError("f2fs stale node", int64(c.addr)*blockSize, err)
 		}
 		if first == nil {
 			first, firstAddr = b, c.addr

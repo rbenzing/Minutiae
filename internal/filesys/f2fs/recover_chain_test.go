@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"io"
 	"slices"
 	"testing"
 
@@ -418,4 +419,110 @@ func TestIndexSourceRules(t *testing.T) {
 			t.Errorf("nodeFor = stop %q, err %v; want ErrLimit", stop, err)
 		}
 	})
+}
+
+func TestNodeOffsetLastChildren(t *testing.T) {
+	last := addrsPerBlock - 1
+	for _, c := range []struct {
+		slot, i, k int
+		want       uint32
+	}{
+		{2, last, -1, 4 + 1017},
+		{3, last, -1, 1023 + 1017},
+		{4, last, -1, 2042 + 1017*1019},
+		{4, last, last, 2043 + 1017*1019 + 1017},
+		{4, 0, last, 2043 + 1017},
+	} {
+		if got := nodeOffset(c.slot, c.i, c.k); got != c.want {
+			t.Errorf("nodeOffset(%d, %d, %d) = %d, want %d", c.slot, c.i, c.k, got, c.want)
+		}
+	}
+	if got := nodeOffset(3, last, -1); got >= nodeOffset(4, -1, -1) {
+		t.Errorf("the last child of i_nid[3] (%d) collides with i_nid[4] (%d)", got, nodeOffset(4, -1, -1))
+	}
+}
+
+func TestStaleMapTreeEnd(t *testing.T) {
+	e := newChainEnv()
+	f := openImg(t, e.img)
+	a := e.data(0)
+	next := a + 1000
+	direct := func(addr uint32) fakeNode {
+		n := fakeNode{b: words(next, next+2), addr: addr}
+		next += 4
+		return n
+	}
+	src := &fakeSource{nodes: map[uint32]fakeNode{
+		11: direct(9011), 12: direct(9012),
+		21: {b: words(22, 23), addr: 9021}, 22: direct(9022), 23: direct(9023),
+		31: {b: words(32, 33), addr: 9031}, 32: direct(9032), 33: direct(9033),
+		41: {b: words(42, 43), addr: 9041},
+		42: {b: words(44, 45), addr: 9042}, 43: {b: words(46, 47), addr: 9043},
+		44: direct(9044), 45: direct(9045), 46: direct(9046), 47: direct(9047),
+	}}
+	size := int64(923+20+3) * blockSize
+	in := mkInode(20, size, seq(a, 923), [5]uint32{11, 12, 21, 31, 41})
+	r, err := f.staleMapFan(in, src, maxFileRuns, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.stop != "tree-end@943" || r.covered != 943*blockSize || len(r.nodes) != 15 {
+		t.Errorf("stop %q covered %d nodes %d, want tree-end@943, %d bytes, 15 nodes", r.stop, r.covered, len(r.nodes), 943*blockSize)
+	}
+}
+
+type failReader struct{ err error }
+
+func (r failReader) ReadAt(p []byte, off int64) (int, error) { return 0, r.err }
+
+func TestIndexSourceReadFailureIsNotMissing(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		err     error
+		corrupt bool
+	}{
+		{"short read", io.EOF, true},
+		{"unexpected eof", io.ErrUnexpectedEOF, true},
+		{"io error", errors.New("disk on fire"), false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newChainEnv()
+			e.plant(8, 0, 30, 20, 1, 5, 1)
+			f, src := e.src(t, chainVer)
+			f.data = failReader{c.err}
+			_, _, stop, err := src.nodeFor(30, 20, 1)
+			if stop != "" || err == nil || errors.Is(err, filesys.ErrCorrupt) != c.corrupt {
+				t.Errorf("nodeFor = stop %q, err %v; want an error (corrupt %v) and no stop", stop, err, c.corrupt)
+			}
+		})
+	}
+}
+
+func TestStaleMapShortNodeBlockIsAnError(t *testing.T) {
+	e := newChainEnv()
+	f := openImg(t, e.img)
+	a := e.data(0)
+	in := mkInode(20, int64(923+10)*blockSize, seq(a, 923), [5]uint32{40})
+	r, err := f.staleMap(in, &fakeSource{nodes: map[uint32]fakeNode{40: {b: make([]byte, 100), addr: 9040}}})
+	if !errors.Is(err, filesys.ErrCorrupt) || len(r.runs) != 0 || r.stop != "" {
+		t.Errorf("staleMap = %+v, %v; want a CorruptError alone", r, err)
+	}
+}
+
+func TestStaleMapRepeatedCutTrimsNodes(t *testing.T) {
+	e := newChainEnv()
+	f := openImg(t, e.img)
+	a := e.data(0)
+	in := mkInode(20, int64(923+addrsPerBlock+10)*blockSize, seq(a, 923), [5]uint32{101, 102})
+	src := &fakeSource{nodes: map[uint32]fakeNode{
+		101: {b: words(seq(a+923, addrsPerBlock)...), addr: 9001},
+		102: {b: words(seq(a, 10)...), addr: 9002}, // repeats the first run
+	}}
+	r, err := f.staleMap(in, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.stop != "address-repeated@1941" || r.covered != 1941*blockSize || !slices.Equal(r.nodes, []uint32{9001}) {
+		t.Errorf("stop %q covered %d nodes %v, want address-repeated@1941 and only node 9001", r.stop, r.covered, r.nodes)
+	}
 }
