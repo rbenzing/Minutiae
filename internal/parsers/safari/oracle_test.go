@@ -29,6 +29,9 @@ func TestTombstoneIsDeletedNeverLiveAndHasNoVisitTime(t *testing.T) {
 		b := fx.BundleIOS(h, remoteSafari, logicalSafari)
 		p := safari.Parser{}
 		res := h.RunLenient(p, b.Input(h, p, false))
+		if len(res.Violations) != 0 || res.Err != nil {
+			t.Errorf("%s: err %v, violations %v", v, res.Err, res.Violations)
+		}
 		n := 0
 		for _, r := range res.Records {
 			if !isTombstone(r.Locator) {

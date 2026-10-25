@@ -49,7 +49,11 @@ func runDB(t *testing.T, data []byte) parsertest.Result {
 	h := parsertest.NewHarness(t)
 	b := parsertest.Fixture{Name: "inline", Files: map[string][]byte{"db": data}}.BundleIOS(h, remoteSafari, logicalSafari)
 	p := safari.Parser{}
-	return h.RunLenient(p, b.Input(h, p, false))
+	res := h.RunLenient(p, b.Input(h, p, false))
+	for _, v := range res.Violations {
+		t.Errorf("contract violation: %v", v)
+	}
+	return res
 }
 
 func rawMap(r records.Record) map[string]any {
@@ -80,8 +84,8 @@ func byLocator(t *testing.T, res parsertest.Result) map[string]records.Record {
 
 func requireClean(t *testing.T, res parsertest.Result) {
 	t.Helper()
-	if res.Err != nil || len(res.Warnings) != 0 {
-		t.Fatalf("err %v, warnings %+v", res.Err, res.Warnings)
+	if res.Err != nil || len(res.Warnings) != 0 || len(res.Violations) != 0 {
+		t.Fatalf("err %v, warnings %+v, violations %v", res.Err, res.Warnings, res.Violations)
 	}
 }
 
