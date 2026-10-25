@@ -1,0 +1,637 @@
+== formatting (host side, faketime 2023-11-14 22:13:20)
+TOOLS p0 fsck-rc=0 tree-rc=0 dump-rc=0,0,0
+== small workload, nodiscard (guest option nodiscard,noatime)
+OP 1 mkdir /mnt/p /mnt/s /mnt/s/x
+OP 2 cp /payload/A /mnt/p/A
+OP 3 cp /payload/B /mnt/p/B
+OP 4 cp /payload/C /mnt/p/C
+OP 5 dd if=/payload/H0 of=/mnt/p/H bs=4096 count=1 2>/dev/null
+OP 6 dd if=/payload/H3 of=/mnt/p/H bs=4096 seek=3 conv=notrunc 2>/dev/null
+OP 7 cp /payload/I /mnt/p/I
+OP 8 cp /payload/R /mnt/p/R
+OP 9 cp /payload/f1 /mnt/s/x/f1
+OP 10 cp /payload/f2 /mnt/s/x/f2
+OP 11 cp /payload/f3 /mnt/s/x/f3
+OP 12 sync
+GUEST-DONE
+STAGE p1 done after 8 s
+TOOLS p1 fsck-rc=0 tree-rc=0 dump-rc=0,0,0
+OP 1 mv /mnt/p/R /mnt/p/R2
+OP 2 sync
+GUEST-DONE
+STAGE p2 done after 17 s
+TOOLS p2 fsck-rc=0 tree-rc=0 dump-rc=0,0,0
+OP 1 rm /mnt/p/A /mnt/p/B /mnt/p/C /mnt/p/H /mnt/p/I /mnt/p/R2 /mnt/s/x/f1
+OP 2 sync
+GUEST-DONE
+STAGE p3 done after 23 s
+TOOLS p3 fsck-rc=0 tree-rc=0 dump-rc=0,0,0
+OP 1 for i in 1 2 3 4 5 6 7 8; do cp /payload/N /mnt/p/N$i; done
+OP 2 sync
+GUEST-DONE
+STAGE p4 done after 29 s
+TOOLS p4 fsck-rc=0 tree-rc=0 dump-rc=0,0,0
+== small workload: fill to ENOSPC (GUEST_TIMEOUT=2400)
+OP 1 dd if=/dev/zero of=/mnt/fill bs=4096 2>/dev/null || true
+OP 2 ls -l /mnt/fill
+OP 3 df /mnt
+OP 4 sync
+OP 5 for f in /sys/fs/f2fs/vda/*; do echo "SYSFS $f $(cat $f 2>/dev/null)"; done
+OP 6 rm /mnt/fill
+OP 7 sync
+GUEST-DONE
+STAGE p5 done after 37 s
+/dev/vda                129024    129024         0 100% /mnt
+SYSFS /sys/fs/f2fs/vda/atgc_age_threshold 604800
+SYSFS /sys/fs/f2fs/vda/atgc_age_weight 60
+SYSFS /sys/fs/f2fs/vda/atgc_candidate_count 10
+SYSFS /sys/fs/f2fs/vda/atgc_candidate_ratio 20
+SYSFS /sys/fs/f2fs/vda/avg_vblocks 0
+SYSFS /sys/fs/f2fs/vda/batched_trim_sections 0
+SYSFS /sys/fs/f2fs/vda/ckpt_thread_ioprio be,3
+SYSFS /sys/fs/f2fs/vda/committed_atomic_block 0
+SYSFS /sys/fs/f2fs/vda/compr_new_inode 0
+SYSFS /sys/fs/f2fs/vda/compr_saved_block 0
+SYSFS /sys/fs/f2fs/vda/compr_written_block 0
+SYSFS /sys/fs/f2fs/vda/cp_background_calls 0
+SYSFS /sys/fs/f2fs/vda/cp_foreground_calls 1
+SYSFS /sys/fs/f2fs/vda/cp_interval 60
+SYSFS /sys/fs/f2fs/vda/current_atomic_write 0
+SYSFS /sys/fs/f2fs/vda/current_reserved_blocks 0
+SYSFS /sys/fs/f2fs/vda/data_io_flag 0
+SYSFS /sys/fs/f2fs/vda/dir_level 0
+SYSFS /sys/fs/f2fs/vda/dirty_nats_ratio 10
+SYSFS /sys/fs/f2fs/vda/dirty_segments 0
+SYSFS /sys/fs/f2fs/vda/discard_granularity 1
+SYSFS /sys/fs/f2fs/vda/discard_idle_interval 5
+SYSFS /sys/fs/f2fs/vda/encoding (none)
+SYSFS /sys/fs/f2fs/vda/extension_list cold file extension:
+SYSFS /sys/fs/f2fs/vda/feature_list 
+SYSFS /sys/fs/f2fs/vda/features extra_attr, inode_checksum, sb_checksum, pin_file
+SYSFS /sys/fs/f2fs/vda/free_segments 20
+SYSFS /sys/fs/f2fs/vda/gc_background_calls 0
+SYSFS /sys/fs/f2fs/vda/gc_foreground_calls 0
+SYSFS /sys/fs/f2fs/vda/gc_idle 0
+SYSFS /sys/fs/f2fs/vda/gc_idle_interval 5
+SYSFS /sys/fs/f2fs/vda/gc_max_sleep_time 60000
+SYSFS /sys/fs/f2fs/vda/gc_min_sleep_time 30000
+SYSFS /sys/fs/f2fs/vda/gc_no_gc_sleep_time 300000
+SYSFS /sys/fs/f2fs/vda/gc_pin_file_thresh 2048
+SYSFS /sys/fs/f2fs/vda/gc_reclaimed_segments 0
+SYSFS /sys/fs/f2fs/vda/gc_segment_mode GC_NORMAL
+SYSFS /sys/fs/f2fs/vda/gc_urgent GC_NORMAL
+SYSFS /sys/fs/f2fs/vda/gc_urgent_high_remaining 0
+SYSFS /sys/fs/f2fs/vda/gc_urgent_sleep_time 500
+SYSFS /sys/fs/f2fs/vda/idle_interval 5
+SYSFS /sys/fs/f2fs/vda/iostat_enable 0
+SYSFS /sys/fs/f2fs/vda/iostat_period_ms 3000
+SYSFS /sys/fs/f2fs/vda/ipu_policy 129
+SYSFS /sys/fs/f2fs/vda/lifetime_write_kbytes 81516
+SYSFS /sys/fs/f2fs/vda/main_blkaddr 4096
+SYSFS /sys/fs/f2fs/vda/max_discard_issue_time 60000
+SYSFS /sys/fs/f2fs/vda/max_discard_request 8
+SYSFS /sys/fs/f2fs/vda/max_fragment_chunk 4
+SYSFS /sys/fs/f2fs/vda/max_fragment_hole 4
+SYSFS /sys/fs/f2fs/vda/max_io_bytes 0
+SYSFS /sys/fs/f2fs/vda/max_roll_forward_node_blocks 0
+SYSFS /sys/fs/f2fs/vda/max_small_discards 28672
+SYSFS /sys/fs/f2fs/vda/max_victim_search 4096
+SYSFS /sys/fs/f2fs/vda/mid_discard_issue_time 500
+SYSFS /sys/fs/f2fs/vda/migration_granularity 1
+SYSFS /sys/fs/f2fs/vda/min_discard_issue_time 50
+SYSFS /sys/fs/f2fs/vda/min_fsync_blocks 8
+SYSFS /sys/fs/f2fs/vda/min_hot_blocks 16
+SYSFS /sys/fs/f2fs/vda/min_ipu_util 70
+SYSFS /sys/fs/f2fs/vda/min_seq_blocks 512
+SYSFS /sys/fs/f2fs/vda/min_ssr_sections 18
+SYSFS /sys/fs/f2fs/vda/mounted_time_sec 2
+SYSFS /sys/fs/f2fs/vda/moved_blocks_background 0
+SYSFS /sys/fs/f2fs/vda/moved_blocks_foreground 0
+SYSFS /sys/fs/f2fs/vda/node_io_flag 0
+SYSFS /sys/fs/f2fs/vda/ovp_segments 25
+SYSFS /sys/fs/f2fs/vda/peak_atomic_write 0
+SYSFS /sys/fs/f2fs/vda/pending_discard 0
+SYSFS /sys/fs/f2fs/vda/ra_nid_pages 0
+SYSFS /sys/fs/f2fs/vda/ram_thresh 1
+SYSFS /sys/fs/f2fs/vda/readdir_ra 1
+SYSFS /sys/fs/f2fs/vda/reclaim_segments 2
+SYSFS /sys/fs/f2fs/vda/reserved_blocks 0
+SYSFS /sys/fs/f2fs/vda/revoked_atomic_block 0
+SYSFS /sys/fs/f2fs/vda/seq_file_ra_mul 2
+SYSFS /sys/fs/f2fs/vda/stat 
+SYSFS /sys/fs/f2fs/vda/umount_discard_timeout 5
+SYSFS /sys/fs/f2fs/vda/unusable 0
+SYSFS /sys/fs/f2fs/vda/unusable_blocks_per_sec 0
+TOOLS p5 fsck-rc=0 tree-rc=0 dump-rc=0,0,0
+== large workload, nodiscard
+OP 1 mkdir /mnt/p /mnt/s /mnt/s/x
+OP 2 mkdir /mnt/g
+OP 3 i=0; while [ $i -lt 300 ]; do : > /mnt/g/a$i; i=$((i+1)); done
+OP 4 cp /payload/A /mnt/p/A
+OP 5 cp /payload/B /mnt/p/B
+OP 6 cp /payload/C /mnt/p/C
+OP 7 dd if=/payload/H0 of=/mnt/p/H bs=4096 count=1 2>/dev/null
+OP 8 dd if=/payload/H3 of=/mnt/p/H bs=4096 seek=3 conv=notrunc 2>/dev/null
+OP 9 cp /payload/I /mnt/p/I
+OP 10 cp /payload/R /mnt/p/R
+OP 11 cp /payload/f1 /mnt/s/x/f1
+OP 12 i=0; while [ $i -lt 900 ]; do : > /mnt/g/b$i; i=$((i+1)); done
+OP 13 cp /payload/f2 /mnt/s/x/f2
+OP 14 cp /payload/f3 /mnt/s/x/f3
+OP 15 sync
+GUEST-DONE
+STAGE l1 done after 44 s
+TOOLS l1 fsck-rc=0 tree-rc=0 dump-rc=0,0,0
+OP 1 mv /mnt/p/R /mnt/p/R2
+OP 2 sync
+GUEST-DONE
+STAGE l2 done after 51 s
+TOOLS l2 fsck-rc=0 tree-rc=0 dump-rc=0,0,0
+OP 1 rm /mnt/p/A /mnt/p/B /mnt/p/C /mnt/p/H /mnt/p/I /mnt/p/R2 /mnt/s/x/f1
+OP 2 rm -r /mnt/g
+OP 3 sync
+GUEST-DONE
+STAGE l3 done after 58 s
+TOOLS l3 fsck-rc=0 tree-rc=0 dump-rc=0,0,0
+== large workload: fill to ENOSPC
+OP 1 dd if=/dev/zero of=/mnt/fill bs=4096 2>/dev/null || true
+OP 2 ls -l /mnt/fill
+OP 3 df /mnt
+OP 4 sync
+OP 5 for f in /sys/fs/f2fs/vda/*; do echo "SYSFS $f $(cat $f 2>/dev/null)"; done
+OP 6 rm /mnt/fill
+OP 7 sync
+GUEST-DONE
+STAGE l5 done after 68 s
+/dev/vda                129024    129024         0 100% /mnt
+SYSFS /sys/fs/f2fs/vda/atgc_age_threshold 604800
+SYSFS /sys/fs/f2fs/vda/atgc_age_weight 60
+SYSFS /sys/fs/f2fs/vda/atgc_candidate_count 10
+SYSFS /sys/fs/f2fs/vda/atgc_candidate_ratio 20
+SYSFS /sys/fs/f2fs/vda/avg_vblocks 0
+SYSFS /sys/fs/f2fs/vda/batched_trim_sections 0
+SYSFS /sys/fs/f2fs/vda/ckpt_thread_ioprio be,3
+SYSFS /sys/fs/f2fs/vda/committed_atomic_block 0
+SYSFS /sys/fs/f2fs/vda/compr_new_inode 0
+SYSFS /sys/fs/f2fs/vda/compr_saved_block 0
+SYSFS /sys/fs/f2fs/vda/compr_written_block 0
+SYSFS /sys/fs/f2fs/vda/cp_background_calls 0
+SYSFS /sys/fs/f2fs/vda/cp_foreground_calls 1
+SYSFS /sys/fs/f2fs/vda/cp_interval 60
+SYSFS /sys/fs/f2fs/vda/current_atomic_write 0
+SYSFS /sys/fs/f2fs/vda/current_reserved_blocks 0
+SYSFS /sys/fs/f2fs/vda/data_io_flag 0
+SYSFS /sys/fs/f2fs/vda/dir_level 0
+SYSFS /sys/fs/f2fs/vda/dirty_nats_ratio 10
+SYSFS /sys/fs/f2fs/vda/dirty_segments 0
+SYSFS /sys/fs/f2fs/vda/discard_granularity 1
+SYSFS /sys/fs/f2fs/vda/discard_idle_interval 5
+SYSFS /sys/fs/f2fs/vda/encoding (none)
+SYSFS /sys/fs/f2fs/vda/extension_list cold file extension:
+SYSFS /sys/fs/f2fs/vda/feature_list 
+SYSFS /sys/fs/f2fs/vda/features extra_attr, inode_checksum, sb_checksum, pin_file
+SYSFS /sys/fs/f2fs/vda/free_segments 20
+SYSFS /sys/fs/f2fs/vda/gc_background_calls 0
+SYSFS /sys/fs/f2fs/vda/gc_foreground_calls 0
+SYSFS /sys/fs/f2fs/vda/gc_idle 0
+SYSFS /sys/fs/f2fs/vda/gc_idle_interval 5
+SYSFS /sys/fs/f2fs/vda/gc_max_sleep_time 60000
+SYSFS /sys/fs/f2fs/vda/gc_min_sleep_time 30000
+SYSFS /sys/fs/f2fs/vda/gc_no_gc_sleep_time 300000
+SYSFS /sys/fs/f2fs/vda/gc_pin_file_thresh 2048
+SYSFS /sys/fs/f2fs/vda/gc_reclaimed_segments 0
+SYSFS /sys/fs/f2fs/vda/gc_segment_mode GC_NORMAL
+SYSFS /sys/fs/f2fs/vda/gc_urgent GC_NORMAL
+SYSFS /sys/fs/f2fs/vda/gc_urgent_high_remaining 0
+SYSFS /sys/fs/f2fs/vda/gc_urgent_sleep_time 500
+SYSFS /sys/fs/f2fs/vda/idle_interval 5
+SYSFS /sys/fs/f2fs/vda/iostat_enable 0
+SYSFS /sys/fs/f2fs/vda/iostat_period_ms 3000
+SYSFS /sys/fs/f2fs/vda/ipu_policy 129
+SYSFS /sys/fs/f2fs/vda/lifetime_write_kbytes 86308
+SYSFS /sys/fs/f2fs/vda/main_blkaddr 4096
+SYSFS /sys/fs/f2fs/vda/max_discard_issue_time 60000
+SYSFS /sys/fs/f2fs/vda/max_discard_request 8
+SYSFS /sys/fs/f2fs/vda/max_fragment_chunk 4
+SYSFS /sys/fs/f2fs/vda/max_fragment_hole 4
+SYSFS /sys/fs/f2fs/vda/max_io_bytes 0
+SYSFS /sys/fs/f2fs/vda/max_roll_forward_node_blocks 0
+SYSFS /sys/fs/f2fs/vda/max_small_discards 28672
+SYSFS /sys/fs/f2fs/vda/max_victim_search 4096
+SYSFS /sys/fs/f2fs/vda/mid_discard_issue_time 500
+SYSFS /sys/fs/f2fs/vda/migration_granularity 1
+SYSFS /sys/fs/f2fs/vda/min_discard_issue_time 50
+SYSFS /sys/fs/f2fs/vda/min_fsync_blocks 8
+SYSFS /sys/fs/f2fs/vda/min_hot_blocks 16
+SYSFS /sys/fs/f2fs/vda/min_ipu_util 70
+SYSFS /sys/fs/f2fs/vda/min_seq_blocks 512
+SYSFS /sys/fs/f2fs/vda/min_ssr_sections 18
+SYSFS /sys/fs/f2fs/vda/mounted_time_sec 2
+SYSFS /sys/fs/f2fs/vda/moved_blocks_background 0
+SYSFS /sys/fs/f2fs/vda/moved_blocks_foreground 0
+SYSFS /sys/fs/f2fs/vda/node_io_flag 0
+SYSFS /sys/fs/f2fs/vda/ovp_segments 25
+SYSFS /sys/fs/f2fs/vda/peak_atomic_write 0
+SYSFS /sys/fs/f2fs/vda/pending_discard 0
+SYSFS /sys/fs/f2fs/vda/ra_nid_pages 0
+SYSFS /sys/fs/f2fs/vda/ram_thresh 1
+SYSFS /sys/fs/f2fs/vda/readdir_ra 1
+SYSFS /sys/fs/f2fs/vda/reclaim_segments 2
+SYSFS /sys/fs/f2fs/vda/reserved_blocks 0
+SYSFS /sys/fs/f2fs/vda/revoked_atomic_block 0
+SYSFS /sys/fs/f2fs/vda/seq_file_ra_mul 2
+SYSFS /sys/fs/f2fs/vda/stat 
+SYSFS /sys/fs/f2fs/vda/umount_discard_timeout 5
+SYSFS /sys/fs/f2fs/vda/unusable 0
+SYSFS /sys/fs/f2fs/vda/unusable_blocks_per_sec 0
+TOOLS l5 fsck-rc=0 tree-rc=0 dump-rc=0,0,0
+== large and small workload, discard (guest option discard,noatime; qemu discard=unmap)
+OP 1 mkdir /mnt/p /mnt/s /mnt/s/x
+OP 2 cp /payload/A /mnt/p/A
+OP 3 cp /payload/B /mnt/p/B
+OP 4 cp /payload/C /mnt/p/C
+OP 5 dd if=/payload/H0 of=/mnt/p/H bs=4096 count=1 2>/dev/null
+OP 6 dd if=/payload/H3 of=/mnt/p/H bs=4096 seek=3 conv=notrunc 2>/dev/null
+OP 7 cp /payload/I /mnt/p/I
+OP 8 cp /payload/R /mnt/p/R
+OP 9 cp /payload/f1 /mnt/s/x/f1
+OP 10 cp /payload/f2 /mnt/s/x/f2
+OP 11 cp /payload/f3 /mnt/s/x/f3
+OP 12 sync
+GUEST-DONE
+STAGE d1 done after 75 s
+TOOLS d1 fsck-rc=0 tree-rc=0 dump-rc=0,0,0
+OP 1 rm /mnt/p/A /mnt/p/B /mnt/p/C /mnt/p/H /mnt/p/I /mnt/p/R /mnt/s/x/f1
+OP 2 sync
+GUEST-DONE
+STAGE d3 done after 84 s
+TOOLS d3 fsck-rc=0 tree-rc=0 dump-rc=0,0,0
+OP 1 mkdir /mnt/p /mnt/s /mnt/s/x
+OP 2 mkdir /mnt/g
+OP 3 i=0; while [ $i -lt 300 ]; do : > /mnt/g/a$i; i=$((i+1)); done
+OP 4 cp /payload/A /mnt/p/A
+OP 5 cp /payload/B /mnt/p/B
+OP 6 cp /payload/C /mnt/p/C
+OP 7 dd if=/payload/H0 of=/mnt/p/H bs=4096 count=1 2>/dev/null
+OP 8 dd if=/payload/H3 of=/mnt/p/H bs=4096 seek=3 conv=notrunc 2>/dev/null
+OP 9 cp /payload/I /mnt/p/I
+OP 10 cp /payload/R /mnt/p/R
+OP 11 cp /payload/f1 /mnt/s/x/f1
+OP 12 i=0; while [ $i -lt 900 ]; do : > /mnt/g/b$i; i=$((i+1)); done
+OP 13 cp /payload/f2 /mnt/s/x/f2
+OP 14 cp /payload/f3 /mnt/s/x/f3
+OP 15 sync
+GUEST-DONE
+STAGE m1 done after 94 s
+TOOLS m1 fsck-rc=0 tree-rc=0 dump-rc=0,0,0
+OP 1 rm /mnt/p/A /mnt/p/B /mnt/p/C /mnt/p/H /mnt/p/I /mnt/p/R /mnt/s/x/f1
+OP 2 rm -r /mnt/g
+OP 3 sync
+GUEST-DONE
+STAGE m3 done after 102 s
+TOOLS m3 fsck-rc=0 tree-rc=0 dump-rc=0,0,0
+RUNTIME guest stages and tools: 103 s
+== decoding (f2fs_recover_oracle.py probe)
+CROSSCHECK p0 ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 1 NAT entries, 56 SIT segments
+CROSSCHECK p1 ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 18 NAT entries, 56 SIT segments
+CROSSCHECK p2 ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 18 NAT entries, 56 SIT segments
+CROSSCHECK p3 ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 6 NAT entries, 56 SIT segments
+CROSSCHECK p4 ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 14 NAT entries, 56 SIT segments
+CROSSCHECK p5 ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 14 NAT entries, 56 SIT segments
+CROSSCHECK d1 ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 18 NAT entries, 56 SIT segments
+CROSSCHECK d3 ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 6 NAT entries, 56 SIT segments
+CROSSCHECK l1 ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 1219 NAT entries, 56 SIT segments
+CROSSCHECK l2 ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 1219 NAT entries, 56 SIT segments
+CROSSCHECK l3 ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 6 NAT entries, 56 SIT segments
+CROSSCHECK l5 ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 6 NAT entries, 56 SIT segments
+CROSSCHECK m1 ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 1219 NAT entries, 56 SIT segments
+CROSSCHECK m3 ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 6 NAT entries, 56 SIT segments
+FACT TOOL p0 fsck.f2fs -f --dry-run exit status 0; checkpoint_ver 1804289383 flags 0x185
+FACT TOOL p1 fsck.f2fs -f --dry-run exit status 0; checkpoint_ver 1804289387 flags 0xc5
+FACT TOOL p2 fsck.f2fs -f --dry-run exit status 0; checkpoint_ver 1804289391 flags 0xc5
+FACT TOOL p3 fsck.f2fs -f --dry-run exit status 0; checkpoint_ver 1804289396 flags 0xc5
+FACT TOOL p4 fsck.f2fs -f --dry-run exit status 0; checkpoint_ver 1804289400 flags 0xc5
+FACT TOOL p5 fsck.f2fs -f --dry-run exit status 0; checkpoint_ver 1804289406 flags 0xc5
+FACT TOOL d1 fsck.f2fs -f --dry-run exit status 0; checkpoint_ver 1804289388 flags 0x1c5
+FACT TOOL d3 fsck.f2fs -f --dry-run exit status 0; checkpoint_ver 1804289393 flags 0xc5
+FACT TOOL l1 fsck.f2fs -f --dry-run exit status 0; checkpoint_ver 1804289387 flags 0xc5
+FACT TOOL l2 fsck.f2fs -f --dry-run exit status 0; checkpoint_ver 1804289391 flags 0xc5
+FACT TOOL l3 fsck.f2fs -f --dry-run exit status 0; checkpoint_ver 1804289396 flags 0xc5
+FACT TOOL l5 fsck.f2fs -f --dry-run exit status 0; checkpoint_ver 1804289402 flags 0xc5
+FACT TOOL m1 fsck.f2fs -f --dry-run exit status 0; checkpoint_ver 1804289388 flags 0x1c5
+FACT TOOL m3 fsck.f2fs -f --dry-run exit status 0; checkpoint_ver 1804289393 flags 0xc5
+FACT[small] TREE p2 paths (decoder == fsck -t): /p=4 /p/A=7 /p/B=8 /p/C=10 /p/H=15 /p/I=16 /p/R2=17 /s=5 /s/x=6 /s/x/f1=18 /s/x/f2=19 /s/x/f3=20
+DELETED nids: A=[7] B=[8, 9] C=[10, 11, 12, 13, 14] H=[15] I=[16] R2=[17] f1=[18]
+FACT[small] Q1 file=A nid=7 kind=inode addr=4608 identical_to_W=True sha=9be5660a35b9906a footer(nid=7 ino=7 ofs=0 exp_ofs=0)
+FACT[small] Q7 file=A inode_nid=7 i_nid=[0, 0, 0, 0, 0] nodes=1 ofs_equals_table=True
+FACT[small] Q1 file=B nid=8 kind=inode addr=4609 identical_to_W=True sha=593b34fee9286bd3 footer(nid=8 ino=8 ofs=0 exp_ofs=0)
+FACT[small] Q1 file=B nid=9 kind=direct addr=4610 identical_to_W=True sha=113ed95dabfbc07a footer(nid=9 ino=8 ofs=1 exp_ofs=1)
+FACT[small] Q7 file=B inode_nid=8 i_nid=[9, 0, 0, 0, 0] nodes=2 ofs_equals_table=True
+FACT[small] Q1 file=C nid=10 kind=inode addr=4611 identical_to_W=True sha=27b9282ecf20be94 footer(nid=10 ino=10 ofs=0 exp_ofs=0)
+FACT[small] Q1 file=C nid=11 kind=direct addr=4612 identical_to_W=True sha=3bbeb03758a71d10 footer(nid=11 ino=10 ofs=1 exp_ofs=1)
+FACT[small] Q1 file=C nid=12 kind=direct addr=4613 identical_to_W=True sha=6f2d75ddf94390b4 footer(nid=12 ino=10 ofs=2 exp_ofs=2)
+FACT[small] Q1 file=C nid=13 kind=indirect addr=5120 identical_to_W=True sha=ee20453c39c2d972 footer(nid=13 ino=10 ofs=3 exp_ofs=3)
+FACT[small] Q1 file=C nid=14 kind=direct addr=4614 identical_to_W=True sha=c5abc678af11cff7 footer(nid=14 ino=10 ofs=4 exp_ofs=4)
+FACT[small] Q7 file=C inode_nid=10 i_nid=[11, 12, 13, 0, 0] nodes=5 ofs_equals_table=True
+FACT[small] Q1 file=H nid=15 kind=inode addr=4615 identical_to_W=True sha=610bf0ab15ed698c footer(nid=15 ino=15 ofs=0 exp_ofs=0)
+FACT[small] Q7 file=H inode_nid=15 i_nid=[0, 0, 0, 0, 0] nodes=1 ofs_equals_table=True
+FACT[small] Q1 file=I nid=16 kind=inode addr=4616 identical_to_W=True sha=1a1e567e5e205608 footer(nid=16 ino=16 ofs=0 exp_ofs=0)
+FACT[small] Q7 file=I inode_nid=16 i_nid=[0, 0, 0, 0, 0] nodes=1 ofs_equals_table=True
+FACT[small] Q1 file=R2 nid=17 kind=inode addr=4621 identical_to_W=True sha=a1af05cacf6d4d04 footer(nid=17 ino=17 ofs=0 exp_ofs=0)
+FACT[small] Q7 file=R2 inode_nid=17 i_nid=[0, 0, 0, 0, 0] nodes=1 ofs_equals_table=True
+FACT[small] Q1 file=f1 nid=18 kind=inode addr=4618 identical_to_W=True sha=666fb5c51490633a footer(nid=18 ino=18 ofs=0 exp_ofs=0)
+FACT[small] Q7 file=f1 inode_nid=18 i_nid=[0, 0, 0, 0, 0] nodes=1 ofs_equals_table=True
+HEX[small] Q1 inode A head(0..96)                       a48100210000000000000000010000000050000000000000060000000000000000f153650000000000f153650000000000f1536500000000ff741903ff741903ff741903b0519dd3000000000000000000000000040000000100000041000000
+HEX[small] Q1 inode A footer                            07000000070000000100000067458b6b0000000001120000
+HEX[small] Q1 inode B head(0..96)                       a48100210000000000000000010000000000500000000000020500000000000000f153650000000000f153650000000000f1536500000000ff8fd003ffaa8704ffaa870439c482ec000000000000000000000000040000000100000042000000
+HEX[small] Q1 inode B footer                            08000000080000000100000067458b6b0000000002120000
+FACT[small] Q1 stage W (p2) blocks equal the p1 blocks at the same addresses, per file: {'A': True, 'B': True, 'C': True, 'H': True, 'I': True, 'R2': False, 'f1': True}
+GATE[small] G1 HOLDS (A=True B=True C=True; informational H=True I=True R2=True f1=True)
+FACT[small] Q2 file=A nid=7 resolved=(1, 7, 0) cur_copy=1 copy0=(0, 7, 4608) copy1=(1, 7, 0) journal=None
+FACT[small] Q2 file=B nid=8 resolved=(1, 8, 0) cur_copy=1 copy0=(0, 8, 4609) copy1=(1, 8, 0) journal=None
+FACT[small] Q2 file=B nid=9 resolved=(1, 8, 0) cur_copy=1 copy0=(0, 8, 4610) copy1=(1, 8, 0) journal=None
+FACT[small] Q2 file=C nid=10 resolved=(1, 10, 0) cur_copy=1 copy0=(0, 10, 4611) copy1=(1, 10, 0) journal=None
+FACT[small] Q2 file=C nid=11 resolved=(1, 10, 0) cur_copy=1 copy0=(0, 10, 4612) copy1=(1, 10, 0) journal=None
+FACT[small] Q2 file=C nid=12 resolved=(1, 10, 0) cur_copy=1 copy0=(0, 10, 4613) copy1=(1, 10, 0) journal=None
+FACT[small] Q2 file=C nid=13 resolved=(1, 10, 0) cur_copy=1 copy0=(0, 10, 5120) copy1=(1, 10, 0) journal=None
+FACT[small] Q2 file=C nid=14 resolved=(1, 10, 0) cur_copy=1 copy0=(0, 10, 4614) copy1=(1, 10, 0) journal=None
+FACT[small] Q2 file=H nid=15 resolved=(1, 15, 0) cur_copy=1 copy0=(0, 15, 4615) copy1=(1, 15, 0) journal=None
+FACT[small] Q2 file=I nid=16 resolved=(1, 16, 0) cur_copy=1 copy0=(0, 16, 4616) copy1=(1, 16, 0) journal=None
+FACT[small] Q2 file=R2 nid=17 resolved=(1, 17, 0) cur_copy=1 copy0=(0, 17, 4621) copy1=(1, 17, 0) journal=None
+FACT[small] Q2 file=f1 nid=18 resolved=(1, 18, 0) cur_copy=1 copy0=(0, 18, 4618) copy1=(1, 18, 0) journal=None
+FACT[small] Q2 every deleted nid resolves to block address 0 in stage D: True; NAT journal holds 0 entries, SIT journal 1
+FACT[small] Q3 nid=7 blk=4608 seg=1 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=True ssa_footer_type=0
+FACT[small] Q4 nid=7 blk=4608 ssa(nid=0 ver=0 ofs=0) footer(nid=7 ofs=0) in_current_segment=True
+FACT[small] Q5 nid=7 blk=4608 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[small] Q3 nid=8 blk=4609 seg=1 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=True ssa_footer_type=0
+FACT[small] Q4 nid=8 blk=4609 ssa(nid=0 ver=0 ofs=0) footer(nid=8 ofs=0) in_current_segment=True
+FACT[small] Q5 nid=8 blk=4609 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[small] Q3 nid=9 blk=4610 seg=1 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=True ssa_footer_type=0
+FACT[small] Q4 nid=9 blk=4610 ssa(nid=0 ver=0 ofs=0) footer(nid=9 ofs=1) in_current_segment=True
+FACT[small] Q5 nid=9 blk=4610 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[small] Q3 nid=10 blk=4611 seg=1 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=True ssa_footer_type=0
+FACT[small] Q4 nid=10 blk=4611 ssa(nid=0 ver=0 ofs=0) footer(nid=10 ofs=0) in_current_segment=True
+FACT[small] Q5 nid=10 blk=4611 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[small] Q3 nid=11 blk=4612 seg=1 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=True ssa_footer_type=0
+FACT[small] Q4 nid=11 blk=4612 ssa(nid=0 ver=0 ofs=0) footer(nid=11 ofs=1) in_current_segment=True
+FACT[small] Q5 nid=11 blk=4612 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[small] Q3 nid=12 blk=4613 seg=1 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=True ssa_footer_type=0
+FACT[small] Q4 nid=12 blk=4613 ssa(nid=0 ver=0 ofs=0) footer(nid=12 ofs=2) in_current_segment=True
+FACT[small] Q5 nid=12 blk=4613 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[small] Q3 nid=13 blk=5120 seg=2 sit_type=5 vblocks=0 valid_bit=0 src=block current_segment=True ssa_footer_type=0
+FACT[small] Q4 nid=13 blk=5120 ssa(nid=0 ver=0 ofs=0) footer(nid=13 ofs=3) in_current_segment=True
+FACT[small] Q5 nid=13 blk=5120 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[small] Q3 nid=14 blk=4614 seg=1 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=True ssa_footer_type=0
+FACT[small] Q4 nid=14 blk=4614 ssa(nid=0 ver=0 ofs=0) footer(nid=14 ofs=4) in_current_segment=True
+FACT[small] Q5 nid=14 blk=4614 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[small] Q3 nid=15 blk=4615 seg=1 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=True ssa_footer_type=0
+FACT[small] Q4 nid=15 blk=4615 ssa(nid=0 ver=0 ofs=0) footer(nid=15 ofs=0) in_current_segment=True
+FACT[small] Q5 nid=15 blk=4615 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[small] Q3 nid=16 blk=4616 seg=1 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=True ssa_footer_type=0
+FACT[small] Q4 nid=16 blk=4616 ssa(nid=0 ver=0 ofs=0) footer(nid=16 ofs=0) in_current_segment=True
+FACT[small] Q5 nid=16 blk=4616 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[small] Q3 nid=17 blk=4617 seg=1 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=True ssa_footer_type=0
+FACT[small] Q4 nid=17 blk=4617 ssa(nid=0 ver=0 ofs=0) footer(nid=17 ofs=0) in_current_segment=True
+FACT[small] Q5 nid=17 blk=4617 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[small] Q3 nid=17 blk=4621 seg=1 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=True ssa_footer_type=0
+FACT[small] Q4 nid=17 blk=4621 ssa(nid=0 ver=0 ofs=0) footer(nid=17 ofs=0) in_current_segment=True
+FACT[small] Q5 nid=17 blk=4621 cp_ver=0xe69e1e816b8b456b low32=1804289387 high32=0xe69e1e81 W_ver=1804289391 D_ver=1804289396
+FACT[small] Q3 nid=18 blk=4618 seg=1 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=True ssa_footer_type=0
+FACT[small] Q4 nid=18 blk=4618 ssa(nid=0 ver=0 ofs=0) footer(nid=18 ofs=0) in_current_segment=True
+FACT[small] Q5 nid=18 blk=4618 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[small] Q3 13 stale copies; 0 in non-current segments, 0 of those in segments left at vblocks 0
+FACT[small] Q3 freed segments (seg: sit_type, ssa_footer_type): []
+GATE[small] G3 STOP no stale node copy lies in a freed, non-current segment (the probe cannot decide)
+GATE[small] G2 STOP no stale node block lies in a non-current segment (the probe cannot decide)
+FACT[small] Q5 checkpoint flags W=0xc5 D=0xc5 CP_CRC_RECOVERY_FLAG(0x40) set: W=True D=True; checkpoint_ver W=1804289391 D=1804289396
+GATE[small] G4 HOLDS (0 copies with low32(cp_ver) >= low32(stage-D checkpoint_ver)=1804289396)
+HEX[small] Q5 footer nid=7 blk=4608                     07000000070000000100000067458b6b0000000001120000
+FACT[small] Q4 stage W cursor node/hot: cur_node_segno=0 blkoff=7 last block 4102 footer(nid=4 ino=4 ofs=0) sit_valid=1 next_valid=0 -> main_relative_and_last_written=True
+FACT[small] Q4 stage W cursor node/warm: cur_node_segno=1 blkoff=14 last block 4621 footer(nid=17 ino=17 ofs=0) sit_valid=1 next_valid=0 -> main_relative_and_last_written=True
+FACT[small] Q4 stage W cursor node/cold: cur_node_segno=2 blkoff=1 last block 5120 footer(nid=13 ino=10 ofs=3) sit_valid=1 next_valid=0 -> main_relative_and_last_written=True
+FACT[small] Q8 nid=7 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT[small] Q8 nid=8 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT[small] Q8 nid=9 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT[small] Q8 nid=10 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT[small] Q8 nid=11 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT[small] Q8 nid=12 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT[small] Q8 nid=13 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT[small] Q8 nid=14 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT[small] Q8 nid=15 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT[small] Q8 nid=16 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT[small] Q8 nid=17 copies=2 versions=[1804289383, 1804289387] highest_shared_by=1 tied_equal=n/a
+FACT[small] Q8 nid=18 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT[small] Q8 nids with a same-version tie: 0 of 12
+FACT[small] Q9 inode 17 copy blk=4617 ver=1804289383 name='R' pino=4
+FACT[small] Q9 inode 17 copy blk=4621 ver=1804289387 name='R2' pino=4
+FACT[small] Q9 p1 inode of R is 17, p2 inode of R2 is 17; names in the newest copies: ['R2']
+GATE[small] G6.renamed REAL (newest copy names ['R2'])
+FACT[small] Q10 freed nids [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]; taken again in p4 (NAT address != 0): [7, 8, 9, 10, 11, 12, 13, 14]; inodes of /p/N1../p/N8: [7, 8, 9, 10, 11, 12, 13, 14]; next_free_nid p3=21 p4=15
+GATE[small] G6.nidreuse REAL
+FACT[small] Q11 file=A data_blocks=5 changed=0 sit_valid_now=0 node_blocks=1 changed=0 stale_inode_intact=True
+FACT[small] Q11 file=B data_blocks=1280 changed=1280 sit_valid_now=0 node_blocks=2 changed=0 stale_inode_intact=True
+FACT[small] Q11 file=C data_blocks=3072 changed=3072 sit_valid_now=0 node_blocks=5 changed=0 stale_inode_intact=True
+FACT[small] Q11 file=H data_blocks=2 changed=0 sit_valid_now=0 node_blocks=1 changed=0 stale_inode_intact=True
+FACT[small] Q11 file=I data_blocks=0 changed=0 sit_valid_now=0 node_blocks=1 changed=0 stale_inode_intact=True
+FACT[small] Q11 file=R2 data_blocks=5 changed=0 sit_valid_now=0 node_blocks=1 changed=0 stale_inode_intact=True
+FACT[small] Q11 file=f1 data_blocks=0 changed=0 sit_valid_now=0 node_blocks=1 changed=0 stale_inode_intact=True
+GATE[small] G6.reuse REAL
+FACT[small] Q11 checkpoint p5: free_segment_count=50 valid_block_count=55 user_block_count=15872 (the SYSFS lines above carry the GC counters)
+FACT[small] Q12 dir /s/x inode 6 at 4106 in stage D inline=0x25; f1 inode was 18
+FACT[small] Q12 slot=0 live=True hash=0x00000000 ino=6 name_len=1 name='.'
+FACT[small] Q12 slot=1 live=True hash=0x00000000 ino=5 name_len=2 name='..'
+FACT[small] Q12 slot=2 live=False hash=0xfef55bb8 ino=18 name_len=2 name='f1'
+FACT[small] Q12 slot=3 live=True hash=0x9b2fb026 ino=19 name_len=2 name='f2'
+FACT[small] Q12 slot=4 live=True hash=0xe8cbb1d5 ino=20 name_len=2 name='f3'
+HEX[small] Q12 dir inode inline area head               000000001b0000000000000000000000000000000000000000000000000000000000000000000000060000000100020000000005000000020002b85bf5fe1200000002000126b02f9b13000000020001d5b1cbe8140000000200010000000000
+FACT[small] Q13 H size=16384 inline=0x21 i_addr[0..5]=['0x1606', '0x0', '0x0', '0x1607', '0x0', '0x0']
+HEX[small] Q13 H i_addr[0..5]                           061600000000000000000000071600000000000000000000
+FACT[small] Q6 file=A data(outside current segs 0 zero 0; in current segs 5 zero 5) nodes(outside 0 zero 0; in current 1 zero 1)
+FACT[small] Q6 file=B data(outside current segs 1280 zero 1280; in current segs 0 zero 0) nodes(outside 0 zero 0; in current 2 zero 2)
+FACT[small] Q6 file=C data(outside current segs 2816 zero 2816; in current segs 256 zero 0) nodes(outside 0 zero 0; in current 5 zero 4)
+FACT[small] Q6 file=H data(outside current segs 0 zero 0; in current segs 2 zero 2) nodes(outside 0 zero 0; in current 1 zero 1)
+FACT[small] Q6 file=I data(outside current segs 0 zero 0; in current segs 0 zero 0) nodes(outside 0 zero 0; in current 1 zero 1)
+FACT[small] Q6 file=R data(outside current segs 0 zero 0; in current segs 5 zero 5) nodes(outside 0 zero 0; in current 1 zero 1)
+FACT[small] Q6 file=f1 data(outside current segs 0 zero 0; in current segs 0 zero 0) nodes(outside 0 zero 0; in current 1 zero 1)
+FACT[small] Q6 outside the current segments: data 4096 zero 4096, nodes 0 zero 0; inside: data 268 zero 12, nodes 12 zero 11
+GATE[small] G5 UNDECIDED (no node or data block outside the current segments) (outside the current segments: data zero 4096/4096, node zero 0/0)
+FACT[small] Q11 stale node copies after the fill, by (SIT type of their segment, block unchanged): [((4, True), 12), ((5, True), 1)]
+FACT[large] TREE p2 paths (decoder == fsck -t): /g=7 /g/a0=8 /g/a1=9 /g/a10=18 /g/a100=108 /g/a101=109 /g/a102=110 /g/a103=111 /g/a104=112 /g/a105=113 /g/a106=114 /g/a107=115 /g/a108=116 /g/a109=117 /g/a11=19 /g/a110=118 /g/a111=119 /g/a112=120 /g/a113=121 /g/a114=122 /g/a115=123 /g/a116=124 /g/a117=125 /g/a118=126 /g/a119=127 /g/a12=20 /g/a120=128 /g/a121=129 /g/a122=130 /g/a123=131 /g/a124=132 /g/a125=133 /g/a126=134 /g/a127=135 /g/a128=136 /g/a129=137 /g/a13=21 /g/a130=138 /g/a131=139 /g/a132=140 /g/a133=141 /g/a134=142 /g/a135=143 /g/a136=144 /g/a137=145 /g/a138=146 /g/a139=147 /g/a14=22 /g/a140=148 /g/a141=149 /g/a142=150 /g/a143=151 /g/a144=152 /g/a145=153 /g/a146=154 /g/a147=155 /g/a148=156 /g/a149=157 /g/a15=23 /g/a150=158 /g/a151=159 /g/a152=160 /g/a153=161 /g/a154=162 /g/a155=163 /g/a156=164 /g/a157=165 /g/a158=166 /g/a159=167 /g/a16=24 /g/a160=168 /g/a161=169 /g/a162=170 /g/a163=171 /g/a164=172 /g/a165=173 /g/a166=174 /g/a167=175 /g/a168=176 /g/a169=177 /g/a17=25 /g/a170=178 /g/a171=179 /g/a172=180 /g/a173=181 /g/a174=182 /g/a175=183 /g/a176=184 /g/a177=185 /g/a178=186 /g/a179=187 /g/a18=26 /g/a180=188 /g/a181=189 /g/a182=190 /g/a183=191 /g/a184=192 /g/a185=193 /g/a186=194 /g/a187=195 /g/a188=196 /g/a189=197 /g/a19=27 /g/a190=198 /g/a191=199 /g/a192=200 /g/a193=201 /g/a194=202 /g/a195=203 /g/a196=204 /g/a197=205 /g/a198=206 /g/a199=207 /g/a2=10 /g/a20=28 /g/a200=208 /g/a201=209 /g/a202=210 /g/a203=211 /g/a204=212 /g/a205=213 /g/a206=214 /g/a207=215 /g/a208=216 /g/a209=217 /g/a21=29 /g/a210=218 /g/a211=219 /g/a212=220 /g/a213=221 /g/a214=222 /g/a215=223 /g/a216=224 /g/a217=225 /g/a218=226 /g/a219=227 /g/a22=30 /g/a220=228 /g/a221=229 /g/a222=230 /g/a223=231 /g/a224=232 /g/a225=233 /g/a226=234 /g/a227=235 /g/a228=236 /g/a229=237 /g/a23=31 /g/a230=238 /g/a231=239 /g/a232=240 /g/a233=241 /g/a234=242 /g/a235=243 /g/a236=244 /g/a237=245 /g/a238=246 /g/a239=247 /g/a24=32 /g/a240=248 /g/a241=249 /g/a242=250 /g/a243=251 /g/a244=252 /g/a245=253 /g/a246=254 /g/a247=255 /g/a248=256 /g/a249=257 /g/a25=33 /g/a250=258 /g/a251=259 /g/a252=260 /g/a253=261 /g/a254=262 /g/a255=263 /g/a256=264 /g/a257=265 /g/a258=266 /g/a259=267 /g/a26=34 /g/a260=268 /g/a261=269 /g/a262=270 /g/a263=271 /g/a264=272 /g/a265=273 /g/a266=274 /g/a267=275 /g/a268=276 /g/a269=277 /g/a27=35 /g/a270=278 /g/a271=279 /g/a272=280 /g/a273=281 /g/a274=282 /g/a275=283 /g/a276=284 /g/a277=285 /g/a278=286 /g/a279=287 /g/a28=36 /g/a280=288 /g/a281=289 /g/a282=290 /g/a283=291 /g/a284=292 /g/a285=293 /g/a286=294 /g/a287=295 /g/a288=296 /g/a289=297 /g/a29=37 /g/a290=298 /g/a291=299 /g/a292=300 /g/a293=301 /g/a294=302 /g/a295=303 /g/a296=304 /g/a297=305 /g/a298=306 /g/a299=307 /g/a3=11 /g/a30=38 /g/a31=39 /g/a32=40 /g/a33=41 /g/a34=42 /g/a35=43 /g/a36=44 /g/a37=45 /g/a38=46 /g/a39=47 /g/a4=12 /g/a40=48 /g/a41=49 /g/a42=50 /g/a43=51 /g/a44=52 /g/a45=53 /g/a46=54 /g/a47=55 /g/a48=56 /g/a49=57 /g/a5=13 /g/a50=58 /g/a51=59 /g/a52=60 /g/a53=61 /g/a54=62 /g/a55=63 /g/a56=64 /g/a57=65 /g/a58=66 /g/a59=67 /g/a6=14 /g/a60=68 /g/a61=69 /g/a62=70 /g/a63=71 /g/a64=72 /g/a65=73 /g/a66=74 /g/a67=75 /g/a68=76 /g/a69=77 /g/a7=15 /g/a70=78 /g/a71=79 /g/a72=80 /g/a73=81 /g/a74=82 /g/a75=83 /g/a76=84 /g/a77=85 /g/a78=86 /g/a79=87 /g/a8=16 /g/a80=88 /g/a81=89 /g/a82=90 /g/a83=91 /g/a84=92 /g/a85=93 /g/a86=94 /g/a87=95 /g/a88=96 /g/a89=97 /g/a9=17 /g/a90=98 /g/a91=99 /g/a92=100 /g/a93=101 /g/a94=102 /g/a95=103 /g/a96=104 /g/a97=105 /g/a98=106 /g/a99=107 /g/b0=320 /g/b1=321 /g/b10=330 /g/b100=420 /g/b101=421 /g/b102=422 /g/b103=423 /g/b104=424 /g/b105=425 /g/b106=426 /g/b107=427 /g/b108=428 /g/b109=429 /g/b11=331 /g/b110=430 /g/b111=431 /g/b112=432 /g/b113=433 /g/b114=434 /g/b115=435 /g/b116=436 /g/b117=437 /g/b118=438 /g/b119=439 /g/b12=332 /g/b120=440 /g/b121=441 /g/b122=442 /g/b123=443 /g/b124=444 /g/b125=445 /g/b126=446 /g/b127=447 /g/b128=448 /g/b129=449 /g/b13=333 /g/b130=450 /g/b131=451 /g/b132=452 /g/b133=453 /g/b134=454 /g/b135=455 /g/b136=456 /g/b137=457 /g/b138=458 /g/b139=459 /g/b14=334 /g/b140=460 /g/b141=461 /g/b142=462 /g/b143=463 /g/b144=464 /g/b145=465 /g/b146=466 /g/b147=467 /g/b148=468 /g/b149=469 /g/b15=335 /g/b150=470 /g/b151=471 /g/b152=472 /g/b153=473 /g/b154=474 /g/b155=475 /g/b156=476 /g/b157=477 /g/b158=478 /g/b159=479 /g/b16=336 /g/b160=480 /g/b161=481 /g/b162=482 /g/b163=483 /g/b164=484 /g/b165=485 /g/b166=486 /g/b167=487 /g/b168=488 /g/b169=489 /g/b17=337 /g/b170=490 /g/b171=491 /g/b172=492 /g/b173=493 /g/b174=494 /g/b175=495 /g/b176=496 /g/b177=497 /g/b178=498 /g/b179=499 /g/b18=338 /g/b180=500 /g/b181=501 /g/b182=502 /g/b183=503 /g/b184=504 /g/b185=505 /g/b186=506 /g/b187=507 /g/b188=508 /g/b189=509 /g/b19=339 /g/b190=510 /g/b191=511 /g/b192=512 /g/b193=513 /g/b194=514 /g/b195=515 /g/b196=516 /g/b197=517 /g/b198=518 /g/b199=519 /g/b2=322 /g/b20=340 /g/b200=520 /g/b201=521 /g/b202=522 /g/b203=523 /g/b204=524 /g/b205=525 /g/b206=526 /g/b207=527 /g/b208=528 /g/b209=529 /g/b21=341 /g/b210=530 /g/b211=531 /g/b212=532 /g/b213=533 /g/b214=534 /g/b215=535 /g/b216=536 /g/b217=537 /g/b218=538 /g/b219=539 /g/b22=342 /g/b220=540 /g/b221=541 /g/b222=542 /g/b223=543 /g/b224=544 /g/b225=545 /g/b226=546 /g/b227=547 /g/b228=548 /g/b229=549 /g/b23=343 /g/b230=550 /g/b231=551 /g/b232=552 /g/b233=553 /g/b234=554 /g/b235=555 /g/b236=556 /g/b237=557 /g/b238=558 /g/b239=559 /g/b24=344 /g/b240=560 /g/b241=561 /g/b242=562 /g/b243=563 /g/b244=564 /g/b245=565 /g/b246=566 /g/b247=567 /g/b248=568 /g/b249=569 /g/b25=345 /g/b250=570 /g/b251=571 /g/b252=572 /g/b253=573 /g/b254=574 /g/b255=575 /g/b256=576 /g/b257=577 /g/b258=578 /g/b259=579 /g/b26=346 /g/b260=580 /g/b261=581 /g/b262=582 /g/b263=583 /g/b264=584 /g/b265=585 /g/b266=586 /g/b267=587 /g/b268=588 /g/b269=589 /g/b27=347 /g/b270=590 /g/b271=591 /g/b272=592 /g/b273=593 /g/b274=594 /g/b275=595 /g/b276=596 /g/b277=597 /g/b278=598 /g/b279=599 /g/b28=348 /g/b280=600 /g/b281=601 /g/b282=602 /g/b283=603 /g/b284=604 /g/b285=605 /g/b286=606 /g/b287=607 /g/b288=608 /g/b289=609 /g/b29=349 /g/b290=610 /g/b291=611 /g/b292=612 /g/b293=613 /g/b294=614 /g/b295=615 /g/b296=616 /g/b297=617 /g/b298=618 /g/b299=619 /g/b3=323 /g/b30=350 /g/b300=620 /g/b301=621 /g/b302=622 /g/b303=623 /g/b304=624 /g/b305=625 /g/b306=626 /g/b307=627 /g/b308=628 /g/b309=629 /g/b31=351 /g/b310=630 /g/b311=631 /g/b312=632 /g/b313=633 /g/b314=634 /g/b315=635 /g/b316=636 /g/b317=637 /g/b318=638 /g/b319=639 /g/b32=352 /g/b320=640 /g/b321=641 /g/b322=642 /g/b323=643 /g/b324=644 /g/b325=645 /g/b326=646 /g/b327=647 /g/b328=648 /g/b329=649 /g/b33=353 /g/b330=650 /g/b331=651 /g/b332=652 /g/b333=653 /g/b334=654 /g/b335=655 /g/b336=656 /g/b337=657 /g/b338=658 /g/b339=659 /g/b34=354 /g/b340=660 /g/b341=661 /g/b342=662 /g/b343=663 /g/b344=664 /g/b345=665 /g/b346=666 /g/b347=667 /g/b348=668 /g/b349=669 /g/b35=355 /g/b350=670 /g/b351=671 /g/b352=672 /g/b353=673 /g/b354=674 /g/b355=675 /g/b356=676 /g/b357=677 /g/b358=678 /g/b359=679 /g/b36=356 /g/b360=680 /g/b361=681 /g/b362=682 /g/b363=683 /g/b364=684 /g/b365=685 /g/b366=686 /g/b367=687 /g/b368=688 /g/b369=689 /g/b37=357 /g/b370=690 /g/b371=691 /g/b372=692 /g/b373=693 /g/b374=694 /g/b375=695 /g/b376=696 /g/b377=697 /g/b378=698 /g/b379=699 /g/b38=358 /g/b380=700 /g/b381=701 /g/b382=702 /g/b383=703 /g/b384=704 /g/b385=705 /g/b386=706 /g/b387=707 /g/b388=708 /g/b389=709 /g/b39=359 /g/b390=710 /g/b391=711 /g/b392=712 /g/b393=713 /g/b394=714 /g/b395=715 /g/b396=716 /g/b397=717 /g/b398=718 /g/b399=719 /g/b4=324 /g/b40=360 /g/b400=720 /g/b401=721 /g/b402=722 /g/b403=723 /g/b404=724 /g/b405=725 /g/b406=726 /g/b407=727 /g/b408=728 /g/b409=729 /g/b41=361 /g/b410=730 /g/b411=731 /g/b412=732 /g/b413=733 /g/b414=734 /g/b415=735 /g/b416=736 /g/b417=737 /g/b418=738 /g/b419=739 /g/b42=362 /g/b420=740 /g/b421=741 /g/b422=742 /g/b423=743 /g/b424=744 /g/b425=745 /g/b426=746 /g/b427=747 /g/b428=748 /g/b429=749 /g/b43=363 /g/b430=750 /g/b431=751 /g/b432=752 /g/b433=753 /g/b434=754 /g/b435=755 /g/b436=756 /g/b437=757 /g/b438=758 /g/b439=759 /g/b44=364 /g/b440=760 /g/b441=761 /g/b442=762 /g/b443=763 /g/b444=764 /g/b445=765 /g/b446=766 /g/b447=767 /g/b448=768 /g/b449=769 /g/b45=365 /g/b450=770 /g/b451=771 /g/b452=772 /g/b453=773 /g/b454=774 /g/b455=775 /g/b456=776 /g/b457=777 /g/b458=778 /g/b459=779 /g/b46=366 /g/b460=780 /g/b461=781 /g/b462=782 /g/b463=783 /g/b464=784 /g/b465=785 /g/b466=786 /g/b467=787 /g/b468=788 /g/b469=789 /g/b47=367 /g/b470=790 /g/b471=791 /g/b472=792 /g/b473=793 /g/b474=794 /g/b475=795 /g/b476=796 /g/b477=797 /g/b478=798 /g/b479=799 /g/b48=368 /g/b480=800 /g/b481=801 /g/b482=802 /g/b483=803 /g/b484=804 /g/b485=805 /g/b486=806 /g/b487=807 /g/b488=808 /g/b489=809 /g/b49=369 /g/b490=810 /g/b491=811 /g/b492=812 /g/b493=813 /g/b494=814 /g/b495=815 /g/b496=816 /g/b497=817 /g/b498=818 /g/b499=819 /g/b5=325 /g/b50=370 /g/b500=820 /g/b501=821 /g/b502=822 /g/b503=823 /g/b504=824 /g/b505=825 /g/b506=826 /g/b507=827 /g/b508=828 /g/b509=829 /g/b51=371 /g/b510=830 /g/b511=831 /g/b512=832 /g/b513=833 /g/b514=834 /g/b515=835 /g/b516=836 /g/b517=837 /g/b518=838 /g/b519=839 /g/b52=372 /g/b520=840 /g/b521=841 /g/b522=842 /g/b523=843 /g/b524=844 /g/b525=845 /g/b526=846 /g/b527=847 /g/b528=848 /g/b529=849 /g/b53=373 /g/b530=850 /g/b531=851 /g/b532=852 /g/b533=853 /g/b534=854 /g/b535=855 /g/b536=856 /g/b537=857 /g/b538=858 /g/b539=859 /g/b54=374 /g/b540=860 /g/b541=861 /g/b542=862 /g/b543=863 /g/b544=864 /g/b545=865 /g/b546=866 /g/b547=867 /g/b548=868 /g/b549=869 /g/b55=375 /g/b550=870 /g/b551=871 /g/b552=872 /g/b553=873 /g/b554=874 /g/b555=875 /g/b556=876 /g/b557=877 /g/b558=878 /g/b559=879 /g/b56=376 /g/b560=880 /g/b561=881 /g/b562=882 /g/b563=883 /g/b564=884 /g/b565=885 /g/b566=886 /g/b567=887 /g/b568=888 /g/b569=889 /g/b57=377 /g/b570=890 /g/b571=891 /g/b572=892 /g/b573=893 /g/b574=894 /g/b575=895 /g/b576=896 /g/b577=897 /g/b578=898 /g/b579=899 /g/b58=378 /g/b580=900 /g/b581=901 /g/b582=902 /g/b583=903 /g/b584=904 /g/b585=905 /g/b586=906 /g/b587=907 /g/b588=908 /g/b589=909 /g/b59=379 /g/b590=910 /g/b591=911 /g/b592=912 /g/b593=913 /g/b594=914 /g/b595=915 /g/b596=916 /g/b597=917 /g/b598=918 /g/b599=919 /g/b6=326 /g/b60=380 /g/b600=920 /g/b601=921 /g/b602=922 /g/b603=923 /g/b604=924 /g/b605=925 /g/b606=926 /g/b607=927 /g/b608=928 /g/b609=929 /g/b61=381 /g/b610=930 /g/b611=931 /g/b612=932 /g/b613=933 /g/b614=934 /g/b615=935 /g/b616=936 /g/b617=937 /g/b618=938 /g/b619=939 /g/b62=382 /g/b620=940 /g/b621=941 /g/b622=942 /g/b623=943 /g/b624=944 /g/b625=945 /g/b626=946 /g/b627=947 /g/b628=948 /g/b629=949 /g/b63=383 /g/b630=950 /g/b631=951 /g/b632=952 /g/b633=953 /g/b634=954 /g/b635=955 /g/b636=956 /g/b637=957 /g/b638=958 /g/b639=959 /g/b64=384 /g/b640=960 /g/b641=961 /g/b642=962 /g/b643=963 /g/b644=964 /g/b645=965 /g/b646=966 /g/b647=967 /g/b648=968 /g/b649=969 /g/b65=385 /g/b650=970 /g/b651=971 /g/b652=972 /g/b653=973 /g/b654=974 /g/b655=975 /g/b656=976 /g/b657=977 /g/b658=978 /g/b659=979 /g/b66=386 /g/b660=980 /g/b661=981 /g/b662=982 /g/b663=983 /g/b664=984 /g/b665=985 /g/b666=986 /g/b667=987 /g/b668=988 /g/b669=989 /g/b67=387 /g/b670=990 /g/b671=991 /g/b672=992 /g/b673=993 /g/b674=994 /g/b675=995 /g/b676=996 /g/b677=997 /g/b678=998 /g/b679=999 /g/b68=388 /g/b680=1000 /g/b681=1001 /g/b682=1002 /g/b683=1003 /g/b684=1004 /g/b685=1005 /g/b686=1006 /g/b687=1007 /g/b688=1008 /g/b689=1009 /g/b69=389 /g/b690=1010 /g/b691=1011 /g/b692=1012 /g/b693=1013 /g/b694=1014 /g/b695=1015 /g/b696=1016 /g/b697=1017 /g/b698=1018 /g/b699=1019 /g/b7=327 /g/b70=390 /g/b700=1020 /g/b701=1021 /g/b702=1022 /g/b703=1023 /g/b704=1024 /g/b705=1025 /g/b706=1026 /g/b707=1027 /g/b708=1028 /g/b709=1029 /g/b71=391 /g/b710=1030 /g/b711=1031 /g/b712=1032 /g/b713=1033 /g/b714=1034 /g/b715=1035 /g/b716=1036 /g/b717=1037 /g/b718=1038 /g/b719=1039 /g/b72=392 /g/b720=1040 /g/b721=1041 /g/b722=1042 /g/b723=1043 /g/b724=1044 /g/b725=1045 /g/b726=1046 /g/b727=1047 /g/b728=1048 /g/b729=1049 /g/b73=393 /g/b730=1050 /g/b731=1051 /g/b732=1052 /g/b733=1053 /g/b734=1054 /g/b735=1055 /g/b736=1056 /g/b737=1057 /g/b738=1058 /g/b739=1059 /g/b74=394 /g/b740=1060 /g/b741=1061 /g/b742=1062 /g/b743=1063 /g/b744=1064 /g/b745=1065 /g/b746=1066 /g/b747=1067 /g/b748=1068 /g/b749=1069 /g/b75=395 /g/b750=1070 /g/b751=1071 /g/b752=1072 /g/b753=1073 /g/b754=1074 /g/b755=1075 /g/b756=1076 /g/b757=1077 /g/b758=1078 /g/b759=1079 /g/b76=396 /g/b760=1080 /g/b761=1081 /g/b762=1082 /g/b763=1083 /g/b764=1084 /g/b765=1085 /g/b766=1086 /g/b767=1087 /g/b768=1088 /g/b769=1089 /g/b77=397 /g/b770=1090 /g/b771=1091 /g/b772=1092 /g/b773=1093 /g/b774=1094 /g/b775=1095 /g/b776=1096 /g/b777=1097 /g/b778=1098 /g/b779=1099 /g/b78=398 /g/b780=1100 /g/b781=1101 /g/b782=1102 /g/b783=1103 /g/b784=1104 /g/b785=1105 /g/b786=1106 /g/b787=1107 /g/b788=1108 /g/b789=1109 /g/b79=399 /g/b790=1110 /g/b791=1111 /g/b792=1112 /g/b793=1113 /g/b794=1114 /g/b795=1115 /g/b796=1116 /g/b797=1117 /g/b798=1118 /g/b799=1119 /g/b8=328 /g/b80=400 /g/b800=1120 /g/b801=1121 /g/b802=1122 /g/b803=1123 /g/b804=1124 /g/b805=1125 /g/b806=1126 /g/b807=1127 /g/b808=1128 /g/b809=1129 /g/b81=401 /g/b810=1130 /g/b811=1131 /g/b812=1132 /g/b813=1133 /g/b814=1134 /g/b815=1135 /g/b816=1136 /g/b817=1137 /g/b818=1138 /g/b819=1139 /g/b82=402 /g/b820=1140 /g/b821=1141 /g/b822=1142 /g/b823=1143 /g/b824=1144 /g/b825=1145 /g/b826=1146 /g/b827=1147 /g/b828=1148 /g/b829=1149 /g/b83=403 /g/b830=1150 /g/b831=1151 /g/b832=1152 /g/b833=1153 /g/b834=1154 /g/b835=1155 /g/b836=1156 /g/b837=1157 /g/b838=1158 /g/b839=1159 /g/b84=404 /g/b840=1160 /g/b841=1161 /g/b842=1162 /g/b843=1163 /g/b844=1164 /g/b845=1165 /g/b846=1166 /g/b847=1167 /g/b848=1168 /g/b849=1169 /g/b85=405 /g/b850=1170 /g/b851=1171 /g/b852=1172 /g/b853=1173 /g/b854=1174 /g/b855=1175 /g/b856=1176 /g/b857=1177 /g/b858=1178 /g/b859=1179 /g/b86=406 /g/b860=1180 /g/b861=1181 /g/b862=1182 /g/b863=1183 /g/b864=1184 /g/b865=1185 /g/b866=1186 /g/b867=1187 /g/b868=1188 /g/b869=1189 /g/b87=407 /g/b870=1190 /g/b871=1191 /g/b872=1192 /g/b873=1193 /g/b874=1194 /g/b875=1195 /g/b876=1196 /g/b877=1197 /g/b878=1198 /g/b879=1199 /g/b88=408 /g/b880=1200 /g/b881=1201 /g/b882=1202 /g/b883=1203 /g/b884=1204 /g/b885=1205 /g/b886=1206 /g/b887=1207 /g/b888=1208 /g/b889=1209 /g/b89=409 /g/b890=1210 /g/b891=1211 /g/b892=1212 /g/b893=1213 /g/b894=1214 /g/b895=1215 /g/b896=1216 /g/b897=1217 /g/b898=1218 /g/b899=1219 /g/b9=329 /g/b90=410 /g/b91=411 /g/b92=412 /g/b93=413 /g/b94=414 /g/b95=415 /g/b96=416 /g/b97=417 /g/b98=418 /g/b99=419 /p=4 /p/A=308 /p/B=309 /p/C=311 /p/H=316 /p/I=317 /p/R2=318 /s=5 /s/x=6 /s/x/f1=319 /s/x/f2=1220 /s/x/f3=1221
+DELETED nids: A=[308] B=[309, 310] C=[311, 312, 313, 314, 315] H=[316] I=[317] R2=[318] f1=[319]
+FACT[large] Q1 file=A nid=308 kind=inode addr=4908 identical_to_W=True sha=89d4da9e66cf53f3 footer(nid=308 ino=308 ofs=0 exp_ofs=0)
+FACT[large] Q7 file=A inode_nid=308 i_nid=[0, 0, 0, 0, 0] nodes=1 ofs_equals_table=True
+FACT[large] Q1 file=B nid=309 kind=inode addr=4909 identical_to_W=True sha=c245abc30f9a979b footer(nid=309 ino=309 ofs=0 exp_ofs=0)
+FACT[large] Q1 file=B nid=310 kind=direct addr=4910 identical_to_W=True sha=171d9e805ad50be3 footer(nid=310 ino=309 ofs=1 exp_ofs=1)
+FACT[large] Q7 file=B inode_nid=309 i_nid=[310, 0, 0, 0, 0] nodes=2 ofs_equals_table=True
+FACT[large] Q1 file=C nid=311 kind=inode addr=4911 identical_to_W=True sha=a4c321970c2f1350 footer(nid=311 ino=311 ofs=0 exp_ofs=0)
+FACT[large] Q1 file=C nid=312 kind=direct addr=4912 identical_to_W=True sha=667f5085b1a51147 footer(nid=312 ino=311 ofs=1 exp_ofs=1)
+FACT[large] Q1 file=C nid=313 kind=direct addr=4913 identical_to_W=True sha=6b598b6c196c9fe5 footer(nid=313 ino=311 ofs=2 exp_ofs=2)
+FACT[large] Q1 file=C nid=314 kind=indirect addr=5120 identical_to_W=True sha=9e3e70b15640558c footer(nid=314 ino=311 ofs=3 exp_ofs=3)
+FACT[large] Q1 file=C nid=315 kind=direct addr=4914 identical_to_W=True sha=24c709ac5e8645ea footer(nid=315 ino=311 ofs=4 exp_ofs=4)
+FACT[large] Q7 file=C inode_nid=311 i_nid=[312, 313, 314, 0, 0] nodes=5 ofs_equals_table=True
+FACT[large] Q1 file=H nid=316 kind=inode addr=4915 identical_to_W=True sha=abbcb07c24f937b7 footer(nid=316 ino=316 ofs=0 exp_ofs=0)
+FACT[large] Q7 file=H inode_nid=316 i_nid=[0, 0, 0, 0, 0] nodes=1 ofs_equals_table=True
+FACT[large] Q1 file=I nid=317 kind=inode addr=4916 identical_to_W=True sha=b6c2cd1767dd29da footer(nid=317 ino=317 ofs=0 exp_ofs=0)
+FACT[large] Q7 file=I inode_nid=317 i_nid=[0, 0, 0, 0, 0] nodes=1 ofs_equals_table=True
+FACT[large] Q1 file=R2 nid=318 kind=inode addr=11453 identical_to_W=True sha=e90a7a809a7ced7a footer(nid=318 ino=318 ofs=0 exp_ofs=0)
+FACT[large] Q7 file=R2 inode_nid=318 i_nid=[0, 0, 0, 0, 0] nodes=1 ofs_equals_table=True
+FACT[large] Q1 file=f1 nid=319 kind=inode addr=4918 identical_to_W=True sha=486dd10be985ba5f footer(nid=319 ino=319 ofs=0 exp_ofs=0)
+FACT[large] Q7 file=f1 inode_nid=319 i_nid=[0, 0, 0, 0, 0] nodes=1 ofs_equals_table=True
+HEX[large] Q1 inode A head(0..96)                       a48100210000000000000000010000000050000000000000060000000000000000f153650000000000f153650000000000f1536500000000fce93206fce93206fce932065cf20668000000000000000000000000040000000100000041000000
+HEX[large] Q1 inode A footer                            34010000340100000100000067458b6b000000002d130000
+HEX[large] Q1 inode B head(0..96)                       a48100210000000000000000010000000000500000000000020500000000000000f153650000000000f153650000000000f1536500000000fbfbac06fb1fa107fb1fa107328689a1000000000000000000000000040000000100000042000000
+HEX[large] Q1 inode B footer                            35010000350100000100000067458b6b000000002e130000
+FACT[large] Q1 stage W (p2) blocks equal the p1 blocks at the same addresses, per file: {'A': True, 'B': True, 'C': True, 'H': True, 'I': True, 'R2': False, 'f1': True}
+GATE[large] G1 HOLDS (A=True B=True C=True; informational H=True I=True R2=True f1=True)
+FACT[large] Q2 file=A nid=308 resolved=(1, 308, 0) cur_copy=0 copy0=(1, 308, 0) copy1=(1, 308, 0) journal=None
+FACT[large] Q2 file=B nid=309 resolved=(1, 309, 0) cur_copy=0 copy0=(1, 309, 0) copy1=(1, 309, 0) journal=None
+FACT[large] Q2 file=B nid=310 resolved=(1, 309, 0) cur_copy=0 copy0=(1, 309, 0) copy1=(1, 309, 0) journal=None
+FACT[large] Q2 file=C nid=311 resolved=(1, 311, 0) cur_copy=0 copy0=(1, 311, 0) copy1=(1, 311, 0) journal=None
+FACT[large] Q2 file=C nid=312 resolved=(1, 311, 0) cur_copy=0 copy0=(1, 311, 0) copy1=(1, 311, 0) journal=None
+FACT[large] Q2 file=C nid=313 resolved=(1, 311, 0) cur_copy=0 copy0=(1, 311, 0) copy1=(1, 311, 0) journal=None
+FACT[large] Q2 file=C nid=314 resolved=(1, 311, 0) cur_copy=0 copy0=(1, 311, 0) copy1=(1, 311, 0) journal=None
+FACT[large] Q2 file=C nid=315 resolved=(1, 311, 0) cur_copy=0 copy0=(1, 311, 0) copy1=(1, 311, 0) journal=None
+FACT[large] Q2 file=H nid=316 resolved=(1, 316, 0) cur_copy=0 copy0=(1, 316, 0) copy1=(1, 316, 0) journal=None
+FACT[large] Q2 file=I nid=317 resolved=(1, 317, 0) cur_copy=0 copy0=(1, 317, 0) copy1=(1, 317, 0) journal=None
+FACT[large] Q2 file=R2 nid=318 resolved=(1, 318, 0) cur_copy=0 copy0=(1, 318, 0) copy1=(1, 318, 0) journal=None
+FACT[large] Q2 file=f1 nid=319 resolved=(1, 319, 0) cur_copy=0 copy0=(1, 319, 0) copy1=(1, 319, 0) journal=None
+FACT[large] Q2 every deleted nid resolves to block address 0 in stage D: True; NAT journal holds 0 entries, SIT journal 1
+FACT[large] Q3 nid=308 blk=4908 seg=1 sit_type=4 vblocks=0 valid_bit=0 src=block current_segment=False ssa_footer_type=1
+FACT[large] Q4 nid=308 blk=4908 ssa(nid=308 ver=0 ofs=0) footer(nid=308 ofs=0) in_current_segment=False
+FACT[large] Q5 nid=308 blk=4908 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[large] Q3 nid=309 blk=4909 seg=1 sit_type=4 vblocks=0 valid_bit=0 src=block current_segment=False ssa_footer_type=1
+FACT[large] Q4 nid=309 blk=4909 ssa(nid=309 ver=0 ofs=0) footer(nid=309 ofs=0) in_current_segment=False
+FACT[large] Q5 nid=309 blk=4909 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[large] Q3 nid=310 blk=4910 seg=1 sit_type=4 vblocks=0 valid_bit=0 src=block current_segment=False ssa_footer_type=1
+FACT[large] Q4 nid=310 blk=4910 ssa(nid=310 ver=0 ofs=0) footer(nid=310 ofs=1) in_current_segment=False
+FACT[large] Q5 nid=310 blk=4910 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[large] Q3 nid=311 blk=4911 seg=1 sit_type=4 vblocks=0 valid_bit=0 src=block current_segment=False ssa_footer_type=1
+FACT[large] Q4 nid=311 blk=4911 ssa(nid=311 ver=0 ofs=0) footer(nid=311 ofs=0) in_current_segment=False
+FACT[large] Q5 nid=311 blk=4911 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[large] Q3 nid=312 blk=4912 seg=1 sit_type=4 vblocks=0 valid_bit=0 src=block current_segment=False ssa_footer_type=1
+FACT[large] Q4 nid=312 blk=4912 ssa(nid=312 ver=0 ofs=0) footer(nid=312 ofs=1) in_current_segment=False
+FACT[large] Q5 nid=312 blk=4912 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[large] Q3 nid=313 blk=4913 seg=1 sit_type=4 vblocks=0 valid_bit=0 src=block current_segment=False ssa_footer_type=1
+FACT[large] Q4 nid=313 blk=4913 ssa(nid=313 ver=0 ofs=0) footer(nid=313 ofs=2) in_current_segment=False
+FACT[large] Q5 nid=313 blk=4913 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[large] Q3 nid=314 blk=5120 seg=2 sit_type=5 vblocks=0 valid_bit=0 src=block current_segment=True ssa_footer_type=0
+FACT[large] Q4 nid=314 blk=5120 ssa(nid=0 ver=0 ofs=0) footer(nid=314 ofs=3) in_current_segment=True
+FACT[large] Q5 nid=314 blk=5120 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[large] Q3 nid=315 blk=4914 seg=1 sit_type=4 vblocks=0 valid_bit=0 src=block current_segment=False ssa_footer_type=1
+FACT[large] Q4 nid=315 blk=4914 ssa(nid=315 ver=0 ofs=0) footer(nid=315 ofs=4) in_current_segment=False
+FACT[large] Q5 nid=315 blk=4914 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[large] Q3 nid=316 blk=4915 seg=1 sit_type=4 vblocks=0 valid_bit=0 src=block current_segment=False ssa_footer_type=1
+FACT[large] Q4 nid=316 blk=4915 ssa(nid=316 ver=0 ofs=0) footer(nid=316 ofs=0) in_current_segment=False
+FACT[large] Q5 nid=316 blk=4915 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[large] Q3 nid=317 blk=4916 seg=1 sit_type=4 vblocks=0 valid_bit=0 src=block current_segment=False ssa_footer_type=1
+FACT[large] Q4 nid=317 blk=4916 ssa(nid=317 ver=0 ofs=0) footer(nid=317 ofs=0) in_current_segment=False
+FACT[large] Q5 nid=317 blk=4916 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[large] Q3 nid=318 blk=4917 seg=1 sit_type=4 vblocks=0 valid_bit=0 src=block current_segment=False ssa_footer_type=1
+FACT[large] Q4 nid=318 blk=4917 ssa(nid=318 ver=0 ofs=0) footer(nid=318 ofs=0) in_current_segment=False
+FACT[large] Q5 nid=318 blk=4917 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[large] Q3 nid=318 blk=11453 seg=14 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=True ssa_footer_type=0
+FACT[large] Q4 nid=318 blk=11453 ssa(nid=0 ver=0 ofs=0) footer(nid=318 ofs=0) in_current_segment=True
+FACT[large] Q5 nid=318 blk=11453 cp_ver=0xaa1d15fb6b8b456b low32=1804289387 high32=0xaa1d15fb W_ver=1804289391 D_ver=1804289396
+FACT[large] Q3 nid=319 blk=4918 seg=1 sit_type=4 vblocks=0 valid_bit=0 src=block current_segment=False ssa_footer_type=1
+FACT[large] Q4 nid=319 blk=4918 ssa(nid=319 ver=0 ofs=0) footer(nid=319 ofs=0) in_current_segment=False
+FACT[large] Q5 nid=319 blk=4918 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT[large] Q3 13 stale copies; 11 in non-current segments, 11 of those in segments left at vblocks 0
+FACT[large] Q3 freed segments (seg: sit_type, ssa_footer_type): [(1, 4, 1)]
+GATE[large] G3 SIT (all 11 copies in freed segments lie in segments whose SIT type is node: [4])
+GATE[large] G2 KEEP (11 stale node blocks in non-current segments, 0 with ssa.nid != footer.nid)
+FACT[large] Q5 checkpoint flags W=0xc5 D=0xc5 CP_CRC_RECOVERY_FLAG(0x40) set: W=True D=True; checkpoint_ver W=1804289391 D=1804289396
+GATE[large] G4 HOLDS (0 copies with low32(cp_ver) >= low32(stage-D checkpoint_ver)=1804289396)
+HEX[large] Q5 footer nid=308 blk=4908                   34010000340100000100000067458b6b000000002d130000
+FACT[large] Q4 stage W cursor node/hot: cur_node_segno=0 blkoff=9 last block 4104 footer(nid=4 ino=4 ofs=0) sit_valid=1 next_valid=0 -> main_relative_and_last_written=True
+FACT[large] Q4 stage W cursor node/warm: cur_node_segno=14 blkoff=190 last block 11453 footer(nid=318 ino=318 ofs=0) sit_valid=1 next_valid=0 -> main_relative_and_last_written=True
+FACT[large] Q4 stage W cursor node/cold: cur_node_segno=2 blkoff=1 last block 5120 footer(nid=314 ino=311 ofs=3) sit_valid=1 next_valid=0 -> main_relative_and_last_written=True
+FACT[large] Q8 nid=308 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT[large] Q8 nid=309 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT[large] Q8 nid=310 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT[large] Q8 nid=311 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT[large] Q8 nid=312 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT[large] Q8 nid=313 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT[large] Q8 nid=314 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT[large] Q8 nid=315 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT[large] Q8 nid=316 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT[large] Q8 nid=317 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT[large] Q8 nid=318 copies=2 versions=[1804289383, 1804289387] highest_shared_by=1 tied_equal=n/a
+FACT[large] Q8 nid=319 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT[large] Q8 nids with a same-version tie: 0 of 12
+FACT[large] Q9 inode 318 copy blk=4917 ver=1804289383 name='R' pino=4
+FACT[large] Q9 inode 318 copy blk=11453 ver=1804289387 name='R2' pino=4
+FACT[large] Q9 p1 inode of R is 318, p2 inode of R2 is 318; names in the newest copies: ['R2']
+GATE[large] G6.renamed REAL (newest copy names ['R2'])
+FACT[large] Q11 file=A data_blocks=5 changed=0 sit_valid_now=0 node_blocks=1 changed=1 stale_inode_intact=False
+FACT[large] Q11 file=B data_blocks=1280 changed=1280 sit_valid_now=0 node_blocks=2 changed=2 stale_inode_intact=False
+FACT[large] Q11 file=C data_blocks=3072 changed=3072 sit_valid_now=0 node_blocks=5 changed=4 stale_inode_intact=False
+FACT[large] Q11 file=H data_blocks=2 changed=0 sit_valid_now=0 node_blocks=1 changed=1 stale_inode_intact=False
+FACT[large] Q11 file=I data_blocks=0 changed=0 sit_valid_now=0 node_blocks=1 changed=1 stale_inode_intact=False
+FACT[large] Q11 file=R2 data_blocks=5 changed=0 sit_valid_now=0 node_blocks=1 changed=0 stale_inode_intact=True
+FACT[large] Q11 file=f1 data_blocks=0 changed=0 sit_valid_now=0 node_blocks=1 changed=1 stale_inode_intact=False
+GATE[large] G6.reuse BUILDER-ONLY
+FACT[large] Q11 checkpoint p5: free_segment_count=50 valid_block_count=7 user_block_count=15872 (the SYSFS lines above carry the GC counters)
+FACT[large] Q12 dir /s/x inode 6 at 4109 in stage D inline=0x25; f1 inode was 319
+FACT[large] Q12 slot=0 live=True hash=0x00000000 ino=6 name_len=1 name='.'
+FACT[large] Q12 slot=1 live=True hash=0x00000000 ino=5 name_len=2 name='..'
+FACT[large] Q12 slot=2 live=False hash=0xfef55bb8 ino=319 name_len=2 name='f1'
+FACT[large] Q12 slot=3 live=True hash=0x9b2fb026 ino=1220 name_len=2 name='f2'
+FACT[large] Q12 slot=4 live=True hash=0xe8cbb1d5 ino=1221 name_len=2 name='f3'
+HEX[large] Q12 dir inode inline area head               000000001b0000000000000000000000000000000000000000000000000000000000000000000000060000000100020000000005000000020002b85bf5fe3f01000002000126b02f9bc4040000020001d5b1cbe8c50400000200010000000000
+FACT[large] Q13 H size=16384 inline=0x21 i_addr[0..5]=['0x1606', '0x0', '0x0', '0x1607', '0x0', '0x0']
+HEX[large] Q13 H i_addr[0..5]                           061600000000000000000000071600000000000000000000
+FACT[large] Q6 file=A data(outside current segs 0 zero 0; in current segs 5 zero 5) nodes(outside 1 zero 1; in current 0 zero 0)
+FACT[large] Q6 file=B data(outside current segs 1280 zero 1280; in current segs 0 zero 0) nodes(outside 2 zero 2; in current 0 zero 0)
+FACT[large] Q6 file=C data(outside current segs 2816 zero 2816; in current segs 256 zero 0) nodes(outside 4 zero 4; in current 1 zero 0)
+FACT[large] Q6 file=H data(outside current segs 0 zero 0; in current segs 2 zero 2) nodes(outside 1 zero 1; in current 0 zero 0)
+FACT[large] Q6 file=I data(outside current segs 0 zero 0; in current segs 0 zero 0) nodes(outside 1 zero 1; in current 0 zero 0)
+FACT[large] Q6 file=R data(outside current segs 0 zero 0; in current segs 5 zero 5) nodes(outside 1 zero 1; in current 0 zero 0)
+FACT[large] Q6 file=f1 data(outside current segs 0 zero 0; in current segs 0 zero 0) nodes(outside 1 zero 1; in current 0 zero 0)
+FACT[large] Q6 outside the current segments: data 4096 zero 4096, nodes 11 zero 11; inside: data 268 zero 12, nodes 1 zero 0
+GATE[large] G5 gone (outside the current segments: data zero 4096/4096, node zero 11/11)
+FACT[large] Q11 stale node copies after the fill, by (SIT type of their segment, block unchanged): [((1, False), 11), ((4, True), 1), ((5, True), 1)]
+GATE-FINAL G1 HOLDS (small=HOLDS large=HOLDS)
+GATE-FINAL G4 HOLDS (small=HOLDS large=HOLDS)
+GATE-FINAL G2 KEEP (decided by the large scenario; small=STOP)
+GATE-FINAL G3 SIT (decided by the large scenario; small=STOP)
+GATE-FINAL G5 gone (decided by the large scenario; small=UNDECIDED)
+GATE-FINAL G6.renamed REAL (small=REAL large=REAL)
+GATE-FINAL G6.nidreuse REAL (small=REAL large=None)
+GATE-FINAL G6.reuse REAL (small=REAL large=BUILDER-ONLY)
+HEX[small] Q1 inode A head(0..96)                       a48100210000000000000000010000000050000000000000060000000000000000f153650000000000f153650000000000f1536500000000ff741903ff741903ff741903b0519dd3000000000000000000000000040000000100000041000000
+HEX[small] Q1 inode A footer                            07000000070000000100000067458b6b0000000001120000
+HEX[small] Q1 inode B head(0..96)                       a48100210000000000000000010000000000500000000000020500000000000000f153650000000000f153650000000000f1536500000000ff8fd003ffaa8704ffaa870439c482ec000000000000000000000000040000000100000042000000
+HEX[small] Q1 inode B footer                            08000000080000000100000067458b6b0000000002120000
+HEX[small] Q2 NAT entry nid=7 copy0 (ver,ino,addr)      000700000000120000
+HEX[small] Q2 NAT entry nid=7 copy1 (current=1)         010700000000000000
+HEX[small] Q5 footer nid=7 blk=4608                     07000000070000000100000067458b6b0000000001120000
+HEX[small] Q9 inode 17 copy blk=4617 i_namelen+i_name   010000005200000000000000
+HEX[small] Q9 inode 17 copy blk=4621 i_namelen+i_name   020000005232000000000000
+HEX[small] Q10 NAT entry nid=7 in p4 (ver,ino,addr)     00070000000e120000
+HEX[small] Q11 B data block 17920 first 16 bytes, stage D 423a3000000000000000000000000000
+HEX[small] Q11 B data block 17920 first 16 bytes, after fill 00000000000000000000000000000000
+HEX[small] Q12 dir inode inline area head               000000001b0000000000000000000000000000000000000000000000000000000000000000000000060000000100020000000005000000020002b85bf5fe1200000002000126b02f9b13000000020001d5b1cbe8140000000200010000000000
+HEX[small] Q13 H i_addr[0..5]                           061600000000000000000000071600000000000000000000
+HEX[small] Q6 B data block 17920 first 16 bytes, before 423a3000000000000000000000000000
+HEX[small] Q6 B data block 17920 first 16 bytes, after  00000000000000000000000000000000
+HEX[small] Q6 A inode block 4608 last 24 bytes, before  07000000070000000100000067458b6b0000000001120000
+HEX[small] Q6 A inode block 4608 last 24 bytes, after   000000000000000000000000000000000000000000000000
+HEX[large] Q1 inode A head(0..96)                       a48100210000000000000000010000000050000000000000060000000000000000f153650000000000f153650000000000f1536500000000fce93206fce93206fce932065cf20668000000000000000000000000040000000100000041000000
+HEX[large] Q1 inode A footer                            34010000340100000100000067458b6b000000002d130000
+HEX[large] Q1 inode B head(0..96)                       a48100210000000000000000010000000000500000000000020500000000000000f153650000000000f153650000000000f1536500000000fbfbac06fb1fa107fb1fa107328689a1000000000000000000000000040000000100000042000000
+HEX[large] Q1 inode B footer                            35010000350100000100000067458b6b000000002e130000
+HEX[large] Q2 NAT entry nid=308 copy0 (ver,ino,addr)    013401000000000000
+HEX[large] Q2 NAT entry nid=308 copy1 (current=0)       013401000000000000
+HEX[large] Q5 footer nid=308 blk=4908                   34010000340100000100000067458b6b000000002d130000
+HEX[large] Q3 SIT entry seg=1 (block), 74 bytes         0010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+HEX[large] Q4 SSA entry of blk=4908 (7 bytes) + footer type byte 3401000000000001
+HEX[large] Q9 inode 318 copy blk=4917 i_namelen+i_name  010000005200000000000000
+HEX[large] Q9 inode 318 copy blk=11453 i_namelen+i_name 020000005232000000000000
+HEX[large] Q11 B data block 17920 first 16 bytes, stage D 423a3000000000000000000000000000
+HEX[large] Q11 B data block 17920 first 16 bytes, after fill 00000000000000000000000000000000
+HEX[large] Q12 dir inode inline area head               000000001b0000000000000000000000000000000000000000000000000000000000000000000000060000000100020000000005000000020002b85bf5fe3f01000002000126b02f9bc4040000020001d5b1cbe8c50400000200010000000000
+HEX[large] Q13 H i_addr[0..5]                           061600000000000000000000071600000000000000000000
+HEX[large] Q6 B data block 17920 first 16 bytes, before 423a3000000000000000000000000000
+HEX[large] Q6 B data block 17920 first 16 bytes, after  00000000000000000000000000000000
+HEX[large] Q6 A inode block 4908 last 24 bytes, before  34010000340100000100000067458b6b000000002d130000
+HEX[large] Q6 A inode block 4908 last 24 bytes, after   000000000000000000000000000000000000000000000000

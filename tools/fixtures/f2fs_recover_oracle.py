@@ -8,7 +8,8 @@ marked "from memory" below; the probe confirms or refutes each of them (README.m
 "F2FS recovery probe (3D)").
 
 usage: f2fs_recover_oracle.py probe --images <dir> --tools <dir>
-  <dir> of images holds p0..p5.img (nodiscard stages) and d1, d3.img (discard);
+  <dir> of images holds p0..p5.img (small workload, nodiscard), d1, d3.img (small, discard),
+  l1, l2, l3, l5.img (large workload, nodiscard) and m1, m3.img (large, discard);
   <dir> of tools holds one folder per image with the captures of
   fsck.f2fs -f --dry-run / -t, dump.f2fs -d 1 -s0~-1 / -n0~-1 / -a0~-1.
   Prints one "FACT Q<n> ..." line per fact (raw bytes as "HEX" lines) and "GATE G<n>"
