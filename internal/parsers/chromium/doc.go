@@ -20,5 +20,6 @@
 // not-boolean); joined_unknown_columns ("urls.<col>" of the joined urls row, plus column-missing); text_flags and
 // <field>_raw_b64 / _raw_sha256 / _raw_len / _total_bytes (cleaned or cut text), url_truncated; body_truncated and
 // body_total_bytes (the 64 KiB cap per URL or title in the searchable body); row_flags. The meta table gives no
-// record: it notes meta.version and meta.last_compatible_version.
+// record: it notes meta.version and meta.last_compatible_version ("non-numeric" for a value that is not decimal, and
+// "unknown" for a value the decoder cannot vouch for, never "non-numeric").
 package chromium

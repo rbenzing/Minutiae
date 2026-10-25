@@ -35,7 +35,9 @@ func runMem(t *testing.T, db []byte) parsertest.Result {
 	h := parsertest.NewHarness(t)
 	b := parsertest.Fixture{Name: "inline", Files: map[string][]byte{"db": db}}.Bundle(h, remoteChrome)
 	p := chromium.Parser{}
-	return h.RunLenient(p, b.Input(h, p, false))
+	res := h.RunLenient(p, b.Input(h, p, false))
+	noViolations(t, res)
+	return res
 }
 
 func recFor(t *testing.T, res parsertest.Result, table string, rowid int64) records.Record {
@@ -208,6 +210,7 @@ func TestLongURLIsCappedInBodyAndKeptInPayload(t *testing.T) {
 	b := fx.Bundle(h, remoteChrome)
 	p := chromium.Parser{}
 	res := h.RunLenient(p, b.Input(h, p, false))
+	noViolations(t, res)
 	r := recFor(t, res, "visits", 3)
 	url, _ := r.Payload["url"].(string)
 	const title = "Big data URL"
@@ -286,6 +289,7 @@ func TestWALVisitPointsIntoTheWALArtifact(t *testing.T) {
 	b := fx.Bundle(h, remoteChrome)
 	p := chromium.Parser{}
 	res := h.RunLenient(p, b.Input(h, p, false))
+	noViolations(t, res)
 	n := 0
 	for _, w := range fx.Expect.Records {
 		if w.File != "wal" || w.Table != "visits" {
@@ -310,6 +314,7 @@ func TestVisitSummaryIsTheSharedSummarizer(t *testing.T) {
 	b := fx.Bundle(h, remoteChrome)
 	p := chromium.Parser{}
 	res := h.RunLenient(p, b.Input(h, p, false))
+	noViolations(t, res)
 	r := recFor(t, res, "visits", 21) // urls 8: a right-to-left override and a zero-width joiner in the title
 	title, _ := r.Payload["title"].(string)
 	if want := "Re\u202etsooB \U0001F469\u200d\U0001F4BB"; title != want {
@@ -376,5 +381,62 @@ func TestMetaNotes(t *testing.T) {
 		if strings.HasPrefix(r.Locator, "sqlite:table=meta;") {
 			t.Errorf("the meta table gave a record: %s", r.Locator)
 		}
+	}
+}
+
+func noViolations(t *testing.T, res parsertest.Result) {
+	t.Helper()
+	for _, v := range res.Violations {
+		t.Errorf("contract violation: %v", v)
+	}
+}
+
+// 4F-C5 (amends 4F-R21): a meta value the decoder cannot vouch for (here its overflow chain is broken) is noted as
+// "unknown", never as "non-numeric".
+func TestUndecodableMetaValueIsUnknownNotNonNumeric(t *testing.T) {
+	b, u, v := memDB(512)
+	u.Insert(1, int64(1), "https://a.example/", "A", int64(1), int64(0), tMem, int64(0))
+	v.Insert(1, int64(1), int64(1), tMem, nil, int64(0), int64(0))
+	m := b.CreateTable("meta", metaDDL)
+	m.Insert(1, "version", strings.Repeat("7", 1500))
+	m.Insert(2, "last_compatible_version", "16")
+	ov := m.Overflow(1)
+	if len(ov) == 0 {
+		t.Fatal("the long meta value has no overflow page")
+	}
+	db := b.Bytes()
+	page := db[int(ov[0]-1)*512:][:512]
+	page[0], page[1], page[2], page[3] = 0x7f, 0xff, 0xff, 0xff // the chain continues at a page that does not exist
+	res := runMem(t, db)
+	if got := res.Notes["meta.version"]; got != "unknown" {
+		t.Errorf("meta.version = %q, want unknown (notes %v, warnings %+v)", got, res.Notes, res.Warnings)
+	}
+	if got := res.Notes["meta.last_compatible_version"]; got != "16" {
+		t.Errorf("the intact row must still be noted: %q", got)
+	}
+}
+
+// A urls table of a variant without title and typed_count: the joined cells are stated as missing, not as absent
+// values, and the count that is there is still stated.
+func TestJoinedColumnsTheVariantLacksAreStatedMissing(t *testing.T) {
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 1024})
+	u := b.CreateTable("urls", "create table urls(id integer primary key, url longvarchar, visit_count integer, last_visit_time integer not null, hidden integer)")
+	v := b.CreateTable("visits", visitsDDL)
+	u.Insert(1, int64(1), "https://a.example/", int64(4), tMem, int64(0))
+	v.Insert(1, int64(1), int64(1), tMem, nil, int64(0), int64(0))
+	res := runMem(t, b.Bytes())
+	if res.Err != nil || len(res.Warnings) != 0 {
+		t.Fatalf("err %v warnings %+v", res.Err, res.Warnings)
+	}
+	r := recFor(t, res, "visits", 1)
+	joined := asMap(asMap(r.Payload["raw"])["joined_unknown_columns"])
+	if joined["urls.title"] != "column-missing" || joined["urls.typed_count"] != "column-missing" || len(joined) != 2 {
+		t.Errorf("joined_unknown_columns = %v, want urls.title and urls.typed_count column-missing", joined)
+	}
+	if r.Payload["url_visit_count"] != int64(4) {
+		t.Errorf("url_visit_count %v, want 4", r.Payload["url_visit_count"])
+	}
+	if _, has := r.Payload["typed_count"]; has {
+		t.Errorf("typed_count stated from a column the variant lacks: %v", r.Payload["typed_count"])
 	}
 }
