@@ -158,13 +158,13 @@ func SetSSAType(img []byte, o Options, segno uint32, typ uint8) {
 // every placed block (stale ones too: the kernel leaves their summaries) the
 // entry {nid of the node, or of the dnode that maps the data block, and the
 // slot in it}. A segment is a node segment (footer SUM_TYPE_NODE) when it lies
-// among the last o.NodeSegs, or, without NodeSegs, when it holds a node block.
+// among the last o.NodeSegs. Without NodeSegs the layout is interleaved and every
+// footer type stays 0.
 func writeSSA(img []byte, o Options, l Layout) {
 	if !o.SSA {
 		return
 	}
 	le := binary.LittleEndian
-	nodeSeg := map[uint32]bool{}
 	put := func(addr, nid uint32, ofs uint16) {
 		if addr < l.Main || addr >= l.BlockCount {
 			return
@@ -183,8 +183,6 @@ func writeSSA(img []byte, o Options, l Layout) {
 			continue
 		}
 		put(addr, n.NID, 0)
-		seg, _ := mainSeg(l, addr)
-		nodeSeg[seg] = true
 	}
 	for _, d := range o.Data {
 		if d.Addr >= l.Main && d.Addr < l.BlockCount && int(d.Addr+1)*BlockSize <= len(img) {
@@ -192,11 +190,7 @@ func writeSSA(img []byte, o Options, l Layout) {
 		}
 	}
 	for seg := range l.MainSegs {
-		isNode := nodeSeg[seg]
-		if o.NodeSegs > 0 {
-			isNode = seg >= l.MainSegs-uint32(o.NodeSegs)
-		}
-		if isNode {
+		if o.NodeSegs > 0 && seg >= l.MainSegs-uint32(o.NodeSegs) {
 			ssaBlock(img, l, seg)[ssaFooterType] = sumTypeNode
 		}
 	}

@@ -405,3 +405,20 @@ func TestSITAndSSAPatchHelpers(t *testing.T) {
 		t.Errorf("SSA footer type = %d, want 1", got)
 	}
 }
+
+func TestSSAWithoutNodeSegsLeavesFooterTypeZero(t *testing.T) {
+	// An interleaved segment holds both kinds of block, so it is not marked as a
+	// node segment; recovery tests set NodeSegs.
+	o := f2fstest.Options{SSA: true}
+	img, tree := f2fstest.BuildTree(o, []f2fstest.File{{Path: "/f", Data: pattern(bs, 3)}})
+	l := f2fstest.Geometry(o)
+	for seg := range l.MainSegs {
+		if got := ssaType(img, l, seg); got != 0 {
+			t.Errorf("segment %d: SSA footer type %d, want 0", seg, got)
+		}
+	}
+	addr := tree.Addr[tree.NID["/f"]]
+	if nid, _ := ssaEntry(img, l, (addr-l.Main)/segBlocks, int((addr-l.Main)%segBlocks)); nid != tree.NID["/f"] {
+		t.Errorf("SSA entry nid = %d, want the inode %d", nid, tree.NID["/f"])
+	}
+}

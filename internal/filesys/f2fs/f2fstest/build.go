@@ -146,8 +146,8 @@ type Options struct {
 	// SSA writes one summary block per main segment (Layout.SSA + segment): node
 	// segments get footer type 1 (SUM_TYPE_NODE) and per node block the entry
 	// {nid}; the other segments type 0 and per data block {dnode nid, ofs in
-	// node}. Without NodeSegs a segment is a node segment when it holds a node
-	// block.
+	// node}. Without NodeSegs the layout is interleaved and every footer type stays 0
+	// (recovery tests set NodeSegs).
 	SSA bool
 	// CurNode are the checkpoint cur_node_segno / cur_node_blkoff of the hot,
 	// warm and cold node logs, written into both packs (default zero).
