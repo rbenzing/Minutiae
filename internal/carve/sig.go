@@ -185,8 +185,8 @@ func (t *Type) check() error {
 		return bad("name must be 1-%d characters of a-z, 0-9 and a dash", maxNameLen)
 	case !okIdent(t.Ext, maxExtLen, false):
 		return bad("extension must be 1-%d characters of a-z and 0-9", maxExtLen)
-	case !printable(t.MIME, maxMIMELen):
-		return bad("MIME type must be printable ASCII of at most %d characters", maxMIMELen)
+	case t.MIME == "" || !printable(t.MIME, maxMIMELen):
+		return bad("MIME type must be printable ASCII of 1 to %d characters", maxMIMELen)
 	case t.MaxLen < 1 || t.MaxLen > MaxTypeLen:
 		return bad("MaxLen %d is outside 1..%d", t.MaxLen, MaxTypeLen)
 	case t.MinLen < 0 || t.MinLen > t.MaxLen:

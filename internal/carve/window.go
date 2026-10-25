@@ -20,18 +20,23 @@ var (
 	ErrValidateBudget = errors.New("carve: validate budget exhausted")
 )
 
-// budget caps the bytes validators may read in one scan. A nil *budget is
-// unlimited.
+// budget caps the bytes validators may read in one scan. There is no unlimited
+// budget: a nil *budget is a zero-limit one and refuses every read (fail closed).
 type budget struct {
 	limit, spent int64
 	exhausted    bool
+}
+
+// newBudget returns a budget of limit bytes, clamped to 0..MaxValidateBudget.
+func newBudget(limit int64) *budget {
+	return &budget{limit: max(0, min(limit, MaxValidateBudget))}
 }
 
 // charge books n bytes before they are read; false (and exhausted) when they
 // do not fit. Nothing is booked for a refused read.
 func (b *budget) charge(n int64) bool {
 	if b == nil {
-		return true
+		return false
 	}
 	if n > b.limit-b.spent {
 		b.exhausted = true

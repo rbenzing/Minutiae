@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"reflect"
 	"slices"
 	"strings"
@@ -134,6 +135,7 @@ func TestSetCheckRefuses(t *testing.T) {
 		"name of 33 chars":    func(ty *Type) { ty.Name = strings.Repeat("a", 33) },
 		"ext with a dot":      func(ty *Type) { ty.Ext = "j.pg" },
 		"empty ext":           func(ty *Type) { ty.Ext = "" },
+		"empty MIME":          func(ty *Type) { ty.MIME = "" },
 		"footer too long":     func(ty *Type) { ty.Footer = bytes.Repeat(bs("F"), MaxPatternLen+1) },
 		"align page":          func(ty *Type) { ty.Align = "page" },
 		"align empty":         func(ty *Type) { ty.Align = "" },
@@ -226,7 +228,7 @@ func TestBuiltinReturnsFreshCopy(t *testing.T) {
 
 func TestBuiltinValidatorsAreStubs(t *testing.T) {
 	// Task 2 ships only the registry; each format task replaces its stub.
-	w := newWindow(context.Background(), bytes.NewReader(make([]byte, 64)), 0, 64, nil)
+	w := newWindow(context.Background(), bytes.NewReader(make([]byte, 64)), 0, 64, unlimitedBudget())
 	for id, v := range builtinValidators() {
 		if got := v(w); got.Outcome != Rejected || got.Reason != "no-validator" {
 			t.Errorf("%s: %+v, want rejected no-validator", id, got)
@@ -235,7 +237,7 @@ func TestBuiltinValidatorsAreStubs(t *testing.T) {
 }
 
 func TestWindowRefusesOutside(t *testing.T) {
-	w := newWindow(context.Background(), bytes.NewReader(make([]byte, 100)), 0, 10, nil)
+	w := newWindow(context.Background(), bytes.NewReader(make([]byte, 100)), 0, 10, unlimitedBudget())
 	if w.Len() != 10 {
 		t.Fatalf("Len() = %d", w.Len())
 	}
@@ -266,7 +268,7 @@ func TestWindowReadsRelativeToTheHit(t *testing.T) {
 	for i := range data {
 		data[i] = byte(i)
 	}
-	w := newWindow(context.Background(), bytes.NewReader(data), 100, 150, nil)
+	w := newWindow(context.Background(), bytes.NewReader(data), 100, 150, unlimitedBudget())
 	p := make([]byte, 3)
 	if n, err := w.ReadAt(p, 5); n != 3 || err != nil || p[0] != 105 || p[2] != 107 {
 		t.Errorf("ReadAt = %d, %v, %v", n, err, p)
@@ -286,7 +288,7 @@ type failingReader struct{}
 func (failingReader) ReadAt([]byte, int64) (int, error) { return 0, errors.New("boom") }
 
 func TestWindowReadError(t *testing.T) {
-	w := newWindow(context.Background(), failingReader{}, 0, 100, nil)
+	w := newWindow(context.Background(), failingReader{}, 0, 100, unlimitedBudget())
 	if _, err := w.Byte(3); err == nil || errors.Is(err, ErrOutsideWindow) {
 		t.Errorf("Byte over a failing reader: %v", err)
 	}
@@ -308,7 +310,7 @@ func (c *countingReader) ReadAt(p []byte, off int64) (int, error) {
 func TestWindowByteCachesAndChecksContext(t *testing.T) {
 	cr := &countingReader{r: bytes.NewReader(make([]byte, 1<<20))}
 	ctx, cancel := context.WithCancel(context.Background())
-	w := newWindow(ctx, cr, 0, 1<<20, nil)
+	w := newWindow(ctx, cr, 0, 1<<20, unlimitedBudget())
 	for i := range int64(windowCacheSize) {
 		if _, err := w.Byte(i); err != nil {
 			t.Fatal(err)
@@ -348,5 +350,33 @@ func TestWindowBudgetCharged(t *testing.T) {
 	}
 	if _, err := w.Byte(500); !errors.Is(err, ErrValidateBudget) {
 		t.Errorf("Byte refill over budget: %v", err)
+	}
+}
+
+// unlimitedBudget is the explicit test-only way to a window with no read cap.
+func unlimitedBudget() *budget { return &budget{limit: math.MaxInt64} }
+
+func TestNilBudgetFailsClosed(t *testing.T) {
+	w := newWindow(context.Background(), bytes.NewReader(make([]byte, 100)), 0, 100, nil)
+	if n, err := w.ReadAt(make([]byte, 4), 0); n != 0 || !errors.Is(err, ErrValidateBudget) {
+		t.Errorf("ReadAt with a nil budget = %d, %v, want 0, ErrValidateBudget", n, err)
+	}
+	if _, err := w.Byte(0); !errors.Is(err, ErrValidateBudget) {
+		t.Errorf("Byte with a nil budget: %v, want ErrValidateBudget", err)
+	}
+}
+
+func TestNewBudgetClamps(t *testing.T) {
+	if b := newBudget(MaxValidateBudget + 1); b.limit != MaxValidateBudget {
+		t.Errorf("limit above the ceiling = %d, want %d", b.limit, MaxValidateBudget)
+	}
+	if b := newBudget(math.MaxInt64); b.limit != MaxValidateBudget {
+		t.Errorf("huge limit = %d, want %d", b.limit, MaxValidateBudget)
+	}
+	if b := newBudget(-5); b.limit != 0 {
+		t.Errorf("negative limit = %d, want 0", b.limit)
+	}
+	if b := newBudget(1000); b.limit != 1000 || b.spent != 0 {
+		t.Errorf("newBudget(1000) = %+v", b)
 	}
 }
