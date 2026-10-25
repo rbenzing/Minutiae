@@ -35,7 +35,7 @@ func writeNodes(img []byte, o Options, l Layout) {
 				copy(img[int(addr)*BlockSize:], n.Block)
 			}
 		}
-		if n.NoNAT {
+		if n.NoNAT || n.Stale {
 			continue
 		}
 		if n.NID >= l.NATCapacity() {

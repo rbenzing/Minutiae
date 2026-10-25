@@ -24,6 +24,13 @@ const AddrsPerBlock = 1018
 type DataBlock struct {
 	Addr uint32
 	Data []byte // at most 4096 bytes, zero-padded
+	// Stale: the block is written, but its SIT bit is clear.
+	Stale bool
+
+	// Summary entry of the block (SSA): the dnode (or inode) that maps it and the
+	// slot in it.
+	sumNID uint32
+	sumOfs uint16
 }
 
 func writeData(img []byte, o Options) {
@@ -67,13 +74,45 @@ type Alloc struct {
 	// (default 1: consecutive blocks are physically adjacent).
 	Stride uint32
 	limit  uint32
+
+	// With Options.NodeSegs, node blocks come from their own cursor (the last
+	// NodeSegs main segments) and data blocks stop at the first node segment.
+	nodeSegs     bool
+	nextNodeAddr uint32
+	nodeEnd      uint32
 }
 
 // NewAlloc starts allocating node ids at firstNID and addresses at the first
-// block of the main area of the image o describes.
+// block of the main area of the image o describes. With o.NodeSegs > 0 node
+// blocks (NodeAddr) are taken from the last o.NodeSegs main segments and data
+// blocks (Addr) from the segments before them.
 func NewAlloc(o Options, firstNID uint32) *Alloc {
 	l := Geometry(o)
-	return &Alloc{NextNID: firstNID, NextAddr: l.Main, limit: l.BlockCount}
+	a := &Alloc{NextNID: firstNID, NextAddr: l.Main, limit: l.BlockCount}
+	if o.NodeSegs > 0 {
+		if o.NodeSegs >= int(l.MainSegs) {
+			panic("f2fstest: NodeSegs must leave at least one data segment")
+		}
+		a.nodeSegs = true
+		a.nextNodeAddr = l.Main + (l.MainSegs-uint32(o.NodeSegs))*BlocksPerSeg
+		a.nodeEnd = l.BlockCount
+		a.limit = a.nextNodeAddr // data stops at the first node segment
+	}
+	return a
+}
+
+// NodeAddr returns a fresh block address for a node block: the data cursor's
+// sequence without NodeSegs, otherwise the next block of the node segments.
+func (a *Alloc) NodeAddr() uint32 {
+	if !a.nodeSegs {
+		return a.Addr()
+	}
+	n := a.nextNodeAddr
+	if n >= a.nodeEnd {
+		panic("f2fstest: node segments exhausted; raise Options.NodeSegs")
+	}
+	a.nextNodeAddr++
+	return n
 }
 
 // NID returns a fresh node id.
@@ -144,10 +183,10 @@ func (a *Alloc) File(o Options, in Inode, d FileData) ([]Node, []DataBlock) {
 
 	var nodes []Node
 	var data []DataBlock
-	addrOf := func(idx int64) uint32 {
+	addrOf := func(idx int64, slot int) uint32 {
 		if c, ok := d.Blocks[idx]; ok {
 			addr := a.Addr()
-			data = append(data, DataBlock{Addr: addr, Data: c})
+			data = append(data, DataBlock{Addr: addr, Data: c, sumNID: in.NID, sumOfs: uint16(slot)})
 			return addr
 		}
 		if isNew[idx] {
@@ -163,23 +202,27 @@ func (a *Alloc) File(o Options, in Inode, d FileData) ([]Node, []DataBlock) {
 			return 0
 		}
 		words := make([]uint32, AddrsPerBlock)
+		firstData := len(data)
 		for j := range words {
 			lo := base + int64(j)*span(level-1)
 			if level == 1 {
-				words[j] = addrOf(lo)
+				words[j] = addrOf(lo, j)
 			} else {
 				words[j] = build(level-1, lo)
 			}
 		}
 		nid := a.NID()
+		for k := firstData; k < len(data); k++ {
+			data[k].sumNID = nid // the dnode that maps these blocks
+		}
 		blk := pointerNode(nid, in.NID, words)
-		nodes = append(nodes, Node{NID: nid, Addr: a.Addr(), Block: blk})
+		nodes = append(nodes, Node{NID: nid, Addr: a.NodeAddr(), Block: blk})
 		return nid
 	}
 
 	addrs := make([]uint32, 0, slots)
 	for i := range slots {
-		addrs = append(addrs, addrOf(i))
+		addrs = append(addrs, addrOf(i, int(i)))
 	}
 	base := slots
 	for i, level := range []int{1, 1, 2, 2, 3} {
@@ -187,6 +230,6 @@ func (a *Alloc) File(o Options, in Inode, d FileData) ([]Node, []DataBlock) {
 		base += span(level)
 	}
 	in.Addrs = addrs
-	inode := Node{NID: in.NID, Addr: a.Addr(), Block: InodeBlock(o, in)}
+	inode := Node{NID: in.NID, Addr: a.NodeAddr(), Block: InodeBlock(o, in)}
 	return append([]Node{inode}, nodes...), data
 }
