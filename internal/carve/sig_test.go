@@ -226,11 +226,15 @@ func TestBuiltinReturnsFreshCopy(t *testing.T) {
 	}
 }
 
+// implementedValidators lists the validator ids whose format task has landed;
+// each format test file registers its own id in an init().
+var implementedValidators = map[string]bool{}
+
 func TestBuiltinValidatorsAreStubs(t *testing.T) {
 	// Task 2 ships only the registry; each format task replaces its stub.
 	w := newWindow(context.Background(), bytes.NewReader(make([]byte, 64)), 0, 64, unlimitedBudget())
 	for id, v := range builtinValidators() {
-		if id == "jpeg" { // implemented (Task 4)
+		if implementedValidators[id] {
 			continue
 		}
 		if got := v(w); got.Outcome != Rejected || got.Reason != "no-validator" {

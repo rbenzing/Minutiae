@@ -87,6 +87,8 @@ func validateJPEG(w *Window) Verdict {
 		if l < 2 {
 			return reject("bad-length")
 		}
+		// Early exit only: a segment running past the window would also be
+		// found truncated by the next read, so this is not a safety bound.
 		if l > winLen-pos {
 			return reject("truncated")
 		}
@@ -115,6 +117,7 @@ func validateJPEG(w *Window) Verdict {
 				progressive = code == 0xC2
 			}
 		}
+		sosAt := pos
 		pos += l
 		if code != 0xDA {
 			continue
@@ -122,7 +125,19 @@ func validateJPEG(w *Window) Verdict {
 		if !haveFrame {
 			return reject("no-frame")
 		}
+		// SOS: L = 6 + 2 x Ns, Ns 1..4 (the scan header was skipped by length).
+		if l < 6 {
+			return reject("bad-scan")
+		}
+		var ns [1]byte
+		if _, err := w.ReadAt(ns[:], sosAt+2); err != nil {
+			return fail(err)
+		}
+		if ns[0] < 1 || ns[0] > 4 || l != 6+2*int64(ns[0]) {
+			return reject("bad-scan")
+		}
 		scans++
+		data := false
 		// Entropy-coded data: FF 00 stuffing, FF D0-D7 restart and FF FF fill
 		// stay inside; FF followed by any other code ends it at that FF.
 		for {
@@ -131,6 +146,7 @@ func validateJPEG(w *Window) Verdict {
 				return fail(err)
 			}
 			if b != 0xFF {
+				data = true
 				pos++
 				continue
 			}
@@ -139,11 +155,17 @@ func validateJPEG(w *Window) Verdict {
 				return fail(err)
 			}
 			switch {
-			case n == 0x00 || (n >= 0xD0 && n <= 0xD7):
+			case n == 0x00:
+				data = true
+				pos += 2
+			case n >= 0xD0 && n <= 0xD7:
 				pos += 2
 			case n == 0xFF:
 				pos++
 			default:
+				if !data {
+					return reject("empty-scan")
+				}
 				goto marker
 			}
 		}

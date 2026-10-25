@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -107,7 +108,7 @@ func TestJPEGWindowBoundsAndBudget(t *testing.T) {
 	b := newBudget(128 << 10)
 	w := newWindow(context.Background(), bytes.NewReader(buf), 0, int64(len(buf)), b)
 	v := validateJPEG(w)
-	if v.Outcome != Rejected || !b.exhausted {
+	if v.Outcome != Rejected || v.Reason != "unreadable" || !b.exhausted {
 		t.Fatalf("verdict = %+v exhausted = %v, want rejected with an exhausted budget", v, b.exhausted)
 	}
 	if b.spent > b.limit {
@@ -117,7 +118,7 @@ func TestJPEGWindowBoundsAndBudget(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	w = newWindow(ctx, bytes.NewReader(buf), 0, int64(len(buf)), newBudget(1<<30))
-	if v := validateJPEG(w); v.Outcome != Rejected {
+	if v := validateJPEG(w); v.Outcome != Rejected || v.Reason != "unreadable" {
 		t.Fatalf("cancelled verdict = %+v", v)
 	}
 }
@@ -162,5 +163,137 @@ func TestJPEGRealEncoderObjects(t *testing.T) {
 	}
 	if n < 2 {
 		t.Fatalf("expected at least 2 jpeg objects, found %d", n)
+	}
+}
+
+func init() { implementedValidators["jpeg"] = true }
+
+// failAt is a ReaderAt that fails with a non-EOF error from byte at on.
+type failAt struct {
+	data []byte
+	at   int64
+}
+
+var errMedia = errors.New("media failure")
+
+func (f failAt) ReadAt(p []byte, off int64) (int, error) {
+	if off+int64(len(p)) > f.at {
+		return 0, errMedia
+	}
+	return copy(p, f.data[off:]), nil
+}
+
+// TestJPEGReadErrorIsUnreadable (ruling 3E-C1): a media read error at the SOI,
+// inside a segment walk and inside entropy data is rejected "unreadable"
+// (never "truncated") and is recorded in the window.
+func TestJPEGReadErrorIsUnreadable(t *testing.T) {
+	seg := carvetest.JPEGSegment
+	app := func() []byte { return seg(0xE1, make([]byte, 30000)) }
+	segWalk := slices.Concat([]byte{0xFF, 0xD8}, app(), app(), app(), app(), carvetest.JPEG(carvetest.JPEGOpts{})[2:])
+	entropy := carvetest.JPEG(carvetest.JPEGOpts{EntropyLen: 200000})
+	for _, c := range []struct {
+		name string
+		obj  []byte
+		at   int64
+	}{
+		{"at SOI", carvetest.JPEG(carvetest.JPEGOpts{}), 0},
+		{"mid segments", segWalk, 65536},
+		{"mid entropy", entropy, 131072},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if int64(len(c.obj)) <= c.at {
+				t.Fatalf("object of %d bytes does not reach the failure at %d", len(c.obj), c.at)
+			}
+			w := newWindow(context.Background(), failAt{c.obj, c.at}, 0, int64(len(c.obj)), newBudget(1<<30))
+			v := validateJPEG(w)
+			if v.Outcome != Rejected || v.Reason != "unreadable" {
+				t.Fatalf("verdict = %+v, want rejected unreadable", v)
+			}
+			if !errors.Is(w.readErr, errMedia) {
+				t.Fatalf("window read error = %v, want the media error", w.readErr)
+			}
+		})
+	}
+}
+
+func TestJPEGScanHeaderAndEntropyIdentity(t *testing.T) {
+	seg := carvetest.JPEGSegment
+	soi := []byte{0xFF, 0xD8}
+	sof := seg(0xC0, []byte{8, 0, 48, 0, 64, 1, 1, 0x11, 0})
+	eoi := []byte{0xFF, 0xD9}
+	run := func(parts ...[]byte) Verdict {
+		o := slices.Concat(parts...)
+		return validateJPEG(newWindow(context.Background(), bytes.NewReader(o), 0, int64(len(o)), newBudget(1<<30)))
+	}
+	data := []byte{1, 2, 3}
+	for name, c := range map[string]struct {
+		sos    []byte
+		reason string
+	}{
+		"Ns 0":              {seg(0xDA, []byte{0, 0, 63, 0}), "bad-scan"},
+		"Ns 5":              {seg(0xDA, []byte{5, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 0, 63, 0}), "bad-scan"},
+		"length vs Ns":      {seg(0xDA, []byte{2, 1, 0, 0, 63, 0}), "bad-scan"},
+		"length too short":  {seg(0xDA, []byte{1}), "bad-scan"},
+		"length too long":   {seg(0xDA, []byte{1, 1, 0, 0, 63, 0, 9}), "bad-scan"},
+		"no entropy at all": {seg(0xDA, []byte{1, 1, 0, 0, 63, 0}), "empty-scan"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			parts := [][]byte{soi, sof, c.sos}
+			if c.reason == "bad-scan" {
+				parts = append(parts, data)
+			}
+			v := run(append(parts, eoi)...)
+			if v.Outcome != Rejected || v.Reason != c.reason {
+				t.Fatalf("verdict = %+v, want rejected %q", v, c.reason)
+			}
+		})
+	}
+	// Only fill and a restart marker is still no entropy-coded data.
+	sos := seg(0xDA, []byte{1, 1, 0, 0, 63, 0})
+	if v := run(soi, sof, sos, []byte{0xFF, 0xFF, 0xFF, 0xD0}, eoi); v.Outcome != Rejected || v.Reason != "empty-scan" {
+		t.Fatalf("fill-only scan verdict = %+v", v)
+	}
+	// Control: one entropy byte validates.
+	if v := run(soi, sof, sos, data, eoi); v.Outcome != Validated {
+		t.Fatalf("control verdict = %+v", v)
+	}
+}
+
+func TestJPEGMarkersInsideAndBetweenScans(t *testing.T) {
+	seg := carvetest.JPEGSegment
+	soi := []byte{0xFF, 0xD8}
+	sof := seg(0xC0, []byte{8, 0, 48, 0, 64, 1, 1, 0x11, 0})
+	sos := seg(0xDA, []byte{1, 1, 0, 0, 63, 0})
+	dht := seg(0xC4, append([]byte{0}, make([]byte, 16)...))
+	eoi := []byte{0xFF, 0xD9}
+	run := func(parts ...[]byte) Verdict {
+		o := slices.Concat(parts...)
+		return validateJPEG(newWindow(context.Background(), bytes.NewReader(o), 0, int64(len(o)), newBudget(1<<30)))
+	}
+	// A mid-entropy FF followed by a non-restart marker ends the scan and the
+	// marker loop resumes: DHT then a second SOS is a valid two-scan file.
+	v := run(soi, sof, sos, []byte{1, 2, 3}, dht, sos, []byte{4, 5}, eoi)
+	if v.Outcome != Validated || !slices.Contains(v.Basis, "scans=2") {
+		t.Fatalf("two-scan verdict = %+v", v)
+	}
+	// FF D8 inside entropy data ends it (no nesting) and is a bad marker.
+	v = run(soi, sof, sos, []byte{1, 2, 0xFF, 0xD8, 3}, eoi)
+	if v.Outcome != Rejected || v.Reason != "bad-marker" {
+		t.Fatalf("SOI-in-entropy verdict = %+v", v)
+	}
+	// Pinned: a second SOF is accepted; the dimensions are the first frame's.
+	sof2 := seg(0xC0, []byte{8, 0, 10, 0, 10, 1, 1, 0x11, 0})
+	v = run(soi, sof, sof2, sos, []byte{1}, eoi)
+	if v.Outcome != Validated || !slices.Contains(v.Basis, "dims=64x48") {
+		t.Fatalf("second-SOF verdict = %+v", v)
+	}
+	// Boundary: a segment ending exactly at the window end is truncated; the
+	// same bytes plus an EOI inside the window validate.
+	head := slices.Concat(soi, sof, sos, []byte{1}, seg(0xFE, []byte("c")))
+	if v := run(head); v.Outcome != Rejected || v.Reason != "truncated" {
+		t.Fatalf("segment-at-window-end verdict = %+v", v)
+	}
+	if v := run(head, eoi); v.Outcome != Validated || v.Length != int64(len(head)+2) {
+		t.Fatalf("segment + EOI verdict = %+v", v)
 	}
 }
