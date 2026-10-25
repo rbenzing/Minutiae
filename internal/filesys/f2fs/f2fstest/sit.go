@@ -13,6 +13,13 @@ import (
 // block of the segment, most significant bit first within each byte) and
 // mtime le64 = 74 bytes; a block holds 4096/74 = 55 of them.
 
+// Segment types kept in the top 6 bits of vblocks (enum CURSEG_*, from the
+// kernel header): the builder uses the warm logs.
+const (
+	segTypeData = 1 // CURSEG_WARM_DATA
+	segTypeNode = 4 // CURSEG_WARM_NODE
+)
+
 const (
 	// SITEntrySize is the size of struct f2fs_sit_entry.
 	SITEntrySize = 74
@@ -83,7 +90,10 @@ func writeSIT(img []byte, o Options, l Layout) {
 	entries := map[uint32]SITEntry{}
 	if !o.NoSIT {
 		valid := map[uint32][]int{}
-		mark := func(addr uint32) {
+		mark := func(addr uint32, stale bool) {
+			if stale {
+				return
+			}
 			if addr >= l.Main && addr < l.BlockCount {
 				seg := (addr - l.Main) / BlocksPerSeg
 				valid[seg] = append(valid[seg], int((addr-l.Main)%BlocksPerSeg))
@@ -95,14 +105,26 @@ func writeSIT(img []byte, o Options, l Layout) {
 				addr = l.Main + uint32(idx)
 			}
 			if n.Block != nil {
-				mark(addr)
+				mark(addr, n.Stale)
 			}
 		}
 		for _, d := range o.Data {
-			mark(d.Addr)
+			mark(d.Addr, d.Stale)
 		}
 		for seg, v := range valid {
 			entries[seg] = SITEntry{Segno: seg, Valid: v}
+		}
+		if o.NodeSegs > 0 {
+			// Every segment has an entry, so a node segment whose blocks are all
+			// invalid keeps its type.
+			for seg := range l.MainSegs {
+				e := entries[seg]
+				e.Segno, e.Type = seg, segTypeData
+				if seg >= l.MainSegs-uint32(o.NodeSegs) {
+					e.Type = segTypeNode
+				}
+				entries[seg] = e
+			}
 		}
 	}
 	for _, e := range o.SIT {
