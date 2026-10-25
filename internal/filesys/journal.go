@@ -44,8 +44,8 @@ type JournalTxn struct {
 var ErrNoJournal = fmt.Errorf("%w: filesystem keeps no journal", ErrUnsupported)
 
 // AllocatedRunner is implemented by a File that knows its whole allocation (filesystem-relative, whole
-// allocation units, file order, holes omitted), which may exceed what the size needs. Interface only: no
-// consumer in 3A.
+// allocation units, file order, holes omitted), which may exceed what the size needs. The contract is
+// CheckAllocatedRuns; the slack export (3F) consumes it.
 type AllocatedRunner interface {
 	File
 	AllocatedRuns() []Run
