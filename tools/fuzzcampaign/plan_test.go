@@ -11,6 +11,7 @@ import (
 )
 
 var sampleTargets = []Target{
+	{"internal/carve", "FuzzCarve"},
 	{"internal/decode/plist", "FuzzPlist"},
 	{"internal/decode/sqlitedb", "FuzzSQLiteDB"},
 	{"internal/decodex", "FuzzNotDecode"},
@@ -43,7 +44,7 @@ func TestBuildPlanProfiles(t *testing.T) {
 	want := map[string][]string{
 		"decoders": {"internal/decode/plist.FuzzPlist", "internal/decode/sqlitedb.FuzzSQLiteDB"},
 		"readers": {
-			"internal/dbrecover.FuzzRun", "internal/filesys.FuzzWalk",
+			"internal/carve.FuzzCarve", "internal/dbrecover.FuzzRun", "internal/filesys.FuzzWalk",
 			"internal/filesys/fat.FuzzFATOpen", "internal/sqlitefile.FuzzOpen",
 		},
 		"parsers": {"internal/parsers/androidmms.FuzzMMS", "internal/recordtypes/call.FuzzCall"},
