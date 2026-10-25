@@ -38,6 +38,8 @@ type Plan struct {
 	ByStatus map[string]int
 	// Stopped is "abandoned" when a Probe ignored its cancellation and was abandoned (a live goroutine is left; a run stops there).
 	Stopped string
+	// Backups is one row per iOS backup of the case (4E-R5), also when Plan returns an error.
+	Backups []BackupResolution
 }
 
 // Plan takes one snapshot, runs discovery, then for each job the shared front half of Run,
@@ -46,12 +48,12 @@ type Plan struct {
 // or a failure that says nothing about the evidence (an I/O error) is returned as the error, with the
 // rows made so far.
 func (h *Host) Plan(ctx context.Context, sel Selection) (Plan, error) {
-	snap, err := h.TakeSnapshot()
+	snap, backups, err := h.snapshotFor(ctx)
 	if err != nil {
-		return Plan{}, err
+		return Plan{Backups: backups}, err
 	}
 	jobs, counts, err := h.Discover(ctx, snap, sel)
-	p := Plan{Counts: counts, ByStatus: map[string]int{}}
+	p := Plan{Counts: counts, ByStatus: map[string]int{}, Backups: backups}
 	if err != nil {
 		return p, err
 	}

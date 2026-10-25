@@ -16,6 +16,10 @@ type Logical struct{ Path, Platform, Namer string }
 // never open artifacts.
 type Env struct {
 	DevicePlatform map[string]string // device id -> "android" | "ios"; absent = unknown or conflicting
+	// Backups holds the resolved iOS backups of the snapshot, keyed backupKey(acquisition, dir). It is
+	// nil for a snapshot that was never passed to ResolveBackups (4E-R40): that is "not resolved",
+	// never "no backup".
+	Backups map[string]*BackupMap
 }
 
 // Namer derives a logical path from a manifest record.
@@ -28,8 +32,8 @@ type Namer interface {
 // not live evidence a parser may read.
 var ErrNotParserInput = errors.New("artifact is not parser input")
 
-// DefaultNamers are the device-file namer and the extract namer, in that order.
-func DefaultNamers() []Namer { return []Namer{deviceFileNamer{}, extractNamer{}} }
+// DefaultNamers are the device-file namer, the iOS backup namer and the extract namer, in that order.
+func DefaultNamers() []Namer { return []Namer{deviceFileNamer{}, iosBackupNamer{}, extractNamer{}} }
 
 const (
 	maxLogicalPath = 4096
@@ -136,7 +140,7 @@ func WhyNoLogical(m evidence.ManifestRecord, env Env) string {
 	case "extract":
 		return "filesystem type or path has no platform mapping"
 	case "backup":
-		return "iOS backup paths are not mapped yet"
+		return whyNoBackupLogical(m, env)
 	}
 	return "no logical path"
 }

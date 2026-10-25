@@ -164,6 +164,7 @@ func (r *run) jobStart(j Job) JobStart {
 		js.Bundle[mb.role] = BundleMember{
 			ArtifactID: mb.m.Artifact.ID, SHA256: mb.m.Artifact.SHA256, LogicalPath: cleanAuditText(mb.m.Logical, maxPathText),
 			Platform: mb.m.Platform, Namer: cleanAuditText(mb.m.Namer, maxNoteKey), Snapshot: snapshotAudit(mb.m.Snapshot),
+			NamerSource: auditRef(mb.m.NamerSource),
 		}
 	}
 	return js
@@ -198,11 +199,12 @@ func (r *run) jobEnd(j Job, st *jobState) JobEnd {
 	return end
 }
 
-func (r *run) analysisStart(parsers []Registered, jobs []Job) AnalysisStart {
+func (r *run) analysisStart(parsers []Registered, jobs []Job, backups []BackupResolution) AnalysisStart {
 	lim := r.h.limits
 	as := AnalysisStart{
 		AnalysisID: r.parseID, Op: "parse", Parsers: []AuditParser{},
 		Filters: AuditFilters{Parsers: []string{}, Artifacts: append([]string{}, r.opt.Artifacts...), IncludeSnapshots: r.opt.IncludeSnapshots},
+		Backups: auditBackups(backups),
 		Reparse: r.opt.Reparse, MinutiaeVersion: version.Version, Commit: version.Commit, GoVersion: runtime.Version(),
 		Limits: AuditLimits{
 			ProbeBytes: lim.ProbeBytes, MemInputMax: lim.MemInputMax, MemInputTotal: lim.MemInputTotal, MemBudget: lim.MemBudget,
@@ -275,21 +277,22 @@ func (h *Host) Run(ctx context.Context, opt RunOptions) (RunSummary, error) {
 	if err := ctx.Err(); err != nil {
 		return RunSummary{}, err
 	}
-	snap, err := h.TakeSnapshot()
+	snap, backups, err := h.snapshotFor(ctx)
 	if err != nil {
-		return RunSummary{}, err
+		// an integrity finding made before the cancel stays in the summary (4E-R38)
+		return RunSummary{Backups: backups}, err
 	}
 	jobs, _, err := h.Discover(ctx, snap, opt.Selection)
 	if err != nil {
-		return RunSummary{}, err
+		return RunSummary{Backups: backups}, err
 	}
 	parsers, err := h.selectParsers(opt.Parsers)
 	if err != nil {
-		return RunSummary{}, err
+		return RunSummary{Backups: backups}, err
 	}
 	r := &run{h: h, opt: opt, snap: snap, parseID: evidence.NewAcquisitionID(time.Now())}
-	r.sum.ParseID = r.parseID
-	if err := r.audit(ActionAnalysisStart, r.analysisStart(parsers, jobs).Details()); err != nil {
+	r.sum.ParseID, r.sum.Backups = r.parseID, backups
+	if err := r.audit(ActionAnalysisStart, r.analysisStart(parsers, jobs, backups).Details()); err != nil {
 		r.sum.Stopped = StoppedAuditFailure
 		return r.sum, err
 	}
@@ -297,7 +300,18 @@ func (h *Host) Run(ctx context.Context, opt RunOptions) (RunSummary, error) {
 
 	var runErr error
 	done := 0
+	// one warning per backup that is not parsed (and per backup whose encryption is unknown), before
+	// the first job: audit before the act
+	for _, w := range backupWarnings(r.parseID, backups) {
+		if runErr = r.audit(evidence.ActionAnalysisWarning, w.Details()); runErr != nil {
+			r.sum.Stopped = StoppedAuditFailure
+			break
+		}
+	}
 	for _, j := range jobs {
+		if runErr != nil {
+			break
+		}
 		if ctx.Err() != nil {
 			r.sum.Cancelled, r.sum.Stopped = true, StoppedCancelled
 			break

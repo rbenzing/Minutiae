@@ -197,7 +197,7 @@ func classify(r sqlitedb.Row, cDomain, cRel, cFlags int) *kept {
 	}
 	k := &kept{entry: Entry{Flags: flags}}
 	if flags != FlagFile {
-		k.state, k.reason = NotAFile, fmt.Sprintf("listed with flags %d (a regular file has flags %d)", flags, FlagFile)
+		k.state, k.reason = NotAFile, fmt.Sprintf("not a regular file (flags %d)", flags)
 		return k
 	}
 	domain, st, why := textCell(r, cDomain, "domain")
@@ -219,7 +219,7 @@ func classify(r sqlitedb.Row, cDomain, cRel, cFlags int) *kept {
 		return k
 	}
 	if !ValidDomain(domain) {
-		k.state, k.reason = BadEntry, "domain is not usable"
+		k.state, k.reason = BadEntry, "unusable domain"
 		return k
 	}
 	if !ValidRelativePath(rel) {

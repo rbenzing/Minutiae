@@ -100,7 +100,8 @@ func (h *Host) ClaimedTables(ctx context.Context, artifactID string) ([]Claimed,
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := snap.Record(artifactID); !ok {
+	rec, ok := snap.Record(artifactID)
+	if !ok {
 		return nil, fmt.Errorf("%w: %q", evidence.ErrUnknownArtifact, artifactID)
 	}
 	if err := checkClaimUniqueness(h.registry); err != nil {
@@ -118,6 +119,20 @@ func (h *Host) ClaimedTables(ctx context.Context, artifactID string) ([]Claimed,
 	}
 	if len(refs) == 0 {
 		return nil, nil
+	}
+	// Backup files are named by the Manifest.db of their backup (4E-R38): resolve before discovery. A
+	// tampered Manifest.db of the artifact's own backup is an integrity failure, not a missing claim, and
+	// a cancel never hides it.
+	rs, rerr := h.ResolveBackups(ctx, snap)
+	if acq, dir, ok := backupOf(rec); ok {
+		for _, r := range rs {
+			if r.Acquisition == acq && r.Dir == dir && r.Integrity {
+				return nil, fmt.Errorf("claims of artifact %s: %w", artifactID, integrityf("%s", strings.TrimPrefix(r.Reason, "integrity: ")))
+			}
+		}
+	}
+	if rerr != nil {
+		return nil, rerr
 	}
 	jobs, _, err := h.Discover(ctx, snap, Selection{Parsers: refs, IncludeSnapshots: true})
 	if err != nil {
