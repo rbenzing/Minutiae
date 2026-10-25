@@ -273,8 +273,8 @@ func TestParseListTextAndJSON(t *testing.T) {
 	}
 	// The compiled-in registry (a nil ParserRegistry) lists the shipped parsers.
 	code, out, _ = runP(t, nil, "parse", "list")
-	if code != 0 || !strings.Contains(out, "android.mmssms") || !strings.Contains(out, "android.calllog") || !strings.Contains(out, "android.contacts") {
-		t.Errorf("compiled-in registry: exit %d, want android.mmssms, android.calllog and android.contacts listed:\n%s", code, out)
+	if code != 0 || !strings.Contains(out, "android.mmssms") || !strings.Contains(out, "android.calllog") || !strings.Contains(out, "android.contacts") || !strings.Contains(out, "safari.history") {
+		t.Errorf("compiled-in registry: exit %d, want android.mmssms, android.calllog, android.contacts and safari.history listed:\n%s", code, out)
 	}
 }
 

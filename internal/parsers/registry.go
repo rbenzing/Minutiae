@@ -8,6 +8,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/parsers/androidcalllog"
 	"github.com/rbenzing/minutiae/internal/parsers/androidcontacts"
 	"github.com/rbenzing/minutiae/internal/parsers/androidmms"
+	"github.com/rbenzing/minutiae/internal/parsers/safari"
 )
 
 // claimsEnabled turns on table claims in Meta (4G flips it): until then a parser
@@ -21,5 +22,6 @@ func All() []parse.Parser {
 		androidmms.Parser{},
 		androidcalllog.Parser{},
 		androidcontacts.Parser{},
+		safari.Parser{},
 	}
 }
