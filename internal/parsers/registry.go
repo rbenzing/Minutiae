@@ -8,6 +8,8 @@ import (
 	"github.com/rbenzing/minutiae/internal/parsers/androidcalllog"
 	"github.com/rbenzing/minutiae/internal/parsers/androidcontacts"
 	"github.com/rbenzing/minutiae/internal/parsers/androidmms"
+	"github.com/rbenzing/minutiae/internal/parsers/chromium"
+	"github.com/rbenzing/minutiae/internal/parsers/safari"
 )
 
 // claimsEnabled allows table claims in Meta (plan 4G). A claiming parser also needs a
@@ -21,5 +23,7 @@ func All() []parse.Parser {
 		androidmms.Parser{},
 		androidcalllog.Parser{},
 		androidcontacts.Parser{},
+		chromium.Parser{},
+		safari.Parser{},
 	}
 }
