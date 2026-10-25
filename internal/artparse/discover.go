@@ -37,19 +37,20 @@ type Options struct {
 
 // Host holds the case, the registry and the options.
 type Host struct {
-	c         *evidence.Case
-	src       caseSource
-	registry  []Registered
-	namers    []Namer
-	limits    parse.Limits
-	newWriter writerFactory
-	onOpen    func(artifactID string)
-	afterSize func(artifactID string)
-	afterSt   func()
-	wrapFile  func(artFile) artFile
-	batchRows int
-	relaxed   bool
-	auditHook func(action string, d map[string]any) error
+	c           *evidence.Case
+	src         caseSource
+	registry    []Registered
+	namers      []Namer
+	limits      parse.Limits
+	newWriter   writerFactory
+	onOpen      func(artifactID string)
+	afterSize   func(artifactID string)
+	afterSt     func()
+	wrapFile    func(artFile) artFile
+	batchRows   int
+	relaxed     bool
+	auditHook   func(action string, d map[string]any) error
+	noPropagate bool // test seam: the emitters skip recovered-ness propagation
 }
 
 // Production minimums that skipLimitMinimums lowers (the same numbers
@@ -118,6 +119,7 @@ type Selection struct {
 	Artifacts        []string    // empty = every eligible artifact
 	Reparse          bool
 	IncludeSnapshots bool
+	IncludeRecovered bool // recovered and carved artifacts (and artifacts with a recovered ancestor) are input
 }
 
 // ErrSelection is an unknown parser or a NAME@VERSION this build does not hold.
@@ -152,11 +154,11 @@ type Job struct {
 
 // Counts tell what discovery saw.
 type Counts struct {
-	Manifest, NotParserInput, SnapshotExcluded int
-	ByKind                                     map[string]int    // every manifest record, by source kind
-	MissingRole                                map[string]int    // discovered jobs dropped for a missing required role, by parser name
-	Unnamed                                    map[string]int    // eligible artifacts with no logical path, by reason
-	UnnamedList                                []UnnamedArtifact // the same artifacts, by artifact id
+	Manifest, NotParserInput, SnapshotExcluded, RecoveredExcluded int
+	ByKind                                                        map[string]int    // every manifest record, by source kind
+	MissingRole                                                   map[string]int    // discovered jobs dropped for a missing required role, by parser name
+	Unnamed                                                       map[string]int    // eligible artifacts with no logical path, by reason
+	UnnamedList                                                   []UnnamedArtifact // the same artifacts, by artifact id
 }
 
 // UnnamedArtifact is an eligible artifact no namer gave a logical path.
@@ -211,13 +213,23 @@ func snapshotKey(s *parse.SnapshotInfo) string {
 // opens an artifact and never re-reads the manifest.
 func (h *Host) Discover(ctx context.Context, snap *Snapshot, sel Selection) ([]Job, Counts, error) {
 	counts := Counts{Manifest: len(snap.records), ByKind: map[string]int{}, MissingRole: map[string]int{}, Unnamed: map[string]int{}}
+	explicit := make(map[string]bool, len(sel.Artifacts)) // named with --artifact: recovered input is admitted for these alone
+	for _, id := range sel.Artifacts {
+		explicit[id] = true
+	}
 	var cands []*candidate
 	for _, m := range snap.records {
 		counts.ByKind[m.Source.Kind]++
-		ok, _, snapExcluded := classify(m, sel.IncludeSnapshots)
+		ancestor := false
+		if m.Source.Kind == "extract" {
+			_, ancestor = snap.recoveryTrail(m.ID)
+		}
+		ok, _, excl := classify(m, sel.IncludeSnapshots, sel.IncludeRecovered || explicit[m.ID], ancestor)
 		switch {
-		case snapExcluded:
+		case excl == exclSnapshot:
 			counts.SnapshotExcluded++
+		case excl == exclRecovered:
+			counts.RecoveredExcluded++
 		case !ok:
 			counts.NotParserInput++
 		default:
@@ -344,7 +356,7 @@ func (h *Host) explicitCandidates(snap *Snapshot, byID map[string]*candidate, se
 		if !ok {
 			return nil, fmt.Errorf("%w: %q", evidence.ErrUnknownArtifact, id)
 		}
-		if ok, why := Eligible(m, sel.IncludeSnapshots); !ok {
+		if ok, why := Eligible(m, sel.IncludeSnapshots, true); !ok {
 			return nil, fmt.Errorf("%w: %s: %s", ErrNotParserInput, id, why)
 		}
 		if !seen[id] {

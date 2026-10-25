@@ -43,17 +43,38 @@ func (extractNamer) Logical(m evidence.ManifestRecord, _ Env) (Logical, bool) {
 	if m.Source.Kind != "extract" || d == nil {
 		return Logical{}, false
 	}
+	return logicalFromFilesystem(d, "extract")
+}
+
+// recoveredNamer names a recovered (undeleted) file by the path the filesystem gave it, with the extract
+// namer's platform inference. A carved artifact has no filesystem path and so no logical path: only
+// --artifact reaches it.
+type recoveredNamer struct{}
+
+func (recoveredNamer) Name() string { return "recovered" }
+
+func (recoveredNamer) Logical(m evidence.ManifestRecord, _ Env) (Logical, bool) {
+	d := m.Source.Derived
+	if m.Source.Kind != "recover" || d == nil {
+		return Logical{}, false
+	}
+	return logicalFromFilesystem(d, "recovered")
+}
+
+// logicalFromFilesystem is the logical path of a file derived from a filesystem: the platform comes
+// from the filesystem type and the path.
+func logicalFromFilesystem(d *evidence.Derivation, namer string) (Logical, bool) {
 	np, ok := NormalizeAndroidPath(d.FSPath)
 	if !ok {
 		return Logical{}, false
 	}
 	switch d.FSType {
 	case "ext2", "ext3", "ext4", "f2fs", "fat12", "fat16", "fat32", "exfat":
-		return Logical{Path: "android:" + np, Platform: parse.PlatformAndroid, Namer: "extract"}, true
+		return Logical{Path: "android:" + np, Platform: parse.PlatformAndroid, Namer: namer}, true
 	case "apfs", "hfsplus", "hfsx":
 		if rest, found := strings.CutPrefix(np, iosMobilePrefix); found {
 			if rel, ok := normalizeIOSRelative(rest); ok {
-				return Logical{Path: "ios:HomeDomain/" + rel, Platform: parse.PlatformIOS, Namer: "extract"}, true
+				return Logical{Path: "ios:HomeDomain/" + rel, Platform: parse.PlatformIOS, Namer: namer}, true
 			}
 		}
 	}

@@ -3,6 +3,7 @@ package artparse
 import (
 	"fmt"
 	"reflect"
+	"sync"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/parse"
@@ -21,6 +22,9 @@ type Snapshot struct {
 	records []evidence.ManifestRecord
 	byID    map[string]int
 	env     Env
+
+	byRecOnce sync.Once
+	byRec     map[string]evidence.ManifestRecord // by id, built on first use for the derivation walks
 }
 
 // TakeSnapshot reads the manifest once and the audit log once. A manifest id or

@@ -29,17 +29,22 @@ func (l *lookuper) sealed() bool {
 
 var _ parse.Lookuper = (*lookuper)(nil)
 
-// lookupEligible: live artifacts only (the F6 allowlist without snapshots),
-// plus the artifacts of the job's own snapshot when the job is snapshot-derived.
+// lookupEligible: live artifacts only (the F6 allowlist without snapshots, and nothing with a recovered
+// ancestor), plus the artifacts of the job's own snapshot when the job is snapshot-derived.
 func (b *bundle) lookupEligible(m evidence.ManifestRecord) bool {
-	if ok, _ := Eligible(m, false); ok {
+	if m.Source.Kind == "extract" {
+		if _, recovered := b.snap.recoveryTrail(m.ID); recovered {
+			return false
+		}
+	}
+	if ok, _ := Eligible(m, false, false); ok {
 		return true
 	}
 	own := b.job.Primary.Snapshot
 	if own == nil {
 		return false
 	}
-	if ok, _ := Eligible(m, true); !ok {
+	if ok, _ := Eligible(m, true, false); !ok {
 		return false
 	}
 	d := m.Source.Derived
