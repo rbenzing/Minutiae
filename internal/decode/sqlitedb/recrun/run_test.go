@@ -524,3 +524,27 @@ func TestRecoverRowWithInvalidFactsIsSkippedNotFatal(t *testing.T) {
 		t.Errorf("notes %v, want invalid_facts.people=6 and invalid_facts_warnings_dropped=2", em.notes)
 	}
 }
+
+// A skipped row whose facts carry no locator is still described: the warning names its table and page
+// (it is never filed under an empty locator).
+func TestRecoverSkippedRowWithoutLocatorIsDescribedByTableAndPage(t *testing.T) {
+	f := loadFixture(t, "sqlite3-freelist")
+	factsOf := func(rr sqlitefile.RecoveredRow) parse.RecoveredFacts {
+		facts := recrun.FactsOf(rr)
+		facts.Locator = "" // invalid: the host refuses it
+		return facts
+	}
+	em := newEmitter(t)
+	rep, err := recrun.RunWith(t.Context(), f.input(), em, []parse.TableMapping{fakeMapping("people", 4)}, claim("people"), factsOf, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Skipped == 0 || len(em.warns) == 0 {
+		t.Fatalf("skipped %d, %d warnings, want skipped rows warned about", rep.Skipped, len(em.warns))
+	}
+	for _, w := range em.warns {
+		if w.Locator == "" || !strings.Contains(w.Locator, "table=people") || !strings.Contains(w.Locator, "page=") {
+			t.Errorf("warning filed under %q, want the row described by table and page", w.Locator)
+		}
+	}
+}

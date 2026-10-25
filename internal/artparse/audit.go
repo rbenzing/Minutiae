@@ -88,6 +88,17 @@ type AnalysisStart struct {
 	GoVersion       string        `json:"go_version"`
 	Limits          AuditLimits   `json:"limits"`
 	Jobs            AuditJobs     `json:"jobs"`
+	*RecoverStart                 // op "parse-recover" only (4G-R20)
+}
+
+// OpParseRecover is the analysis.start op of a typed recovery run.
+const OpParseRecover = "parse-recover"
+
+// RecoverStart holds what analysis.start adds for a typed recovery run.
+type RecoverStart struct {
+	MinConfidence    int               `json:"min_confidence"`
+	OnlyPrimary      string            `json:"only_primary"`
+	ExpectCompanions map[string]string `json:"expect_companions"`
 }
 
 // Details returns the audit details of the entry.
@@ -105,11 +116,19 @@ type BundleMember struct {
 
 // JobStart is the details of parse.job.start, appended before any input of the job is read.
 type JobStart struct {
-	AnalysisID string                  `json:"analysis_id"`
-	Job        int                     `json:"job"`
-	Parser     AuditParser             `json:"parser"`
-	Bundle     map[string]BundleMember `json:"bundle"`
-	Explicit   bool                    `json:"explicit"`
+	AnalysisID       string                  `json:"analysis_id"`
+	Job              int                     `json:"job"`
+	Parser           AuditParser             `json:"parser"`
+	Bundle           map[string]BundleMember `json:"bundle"`
+	Explicit         bool                    `json:"explicit"`
+	*RecoverJobStart                         // a typed recovery job only (4G-R20)
+}
+
+// RecoverJobStart holds what parse.job.start adds for a typed recovery job: the tables it claims and the
+// identity of the live parser it belongs to.
+type RecoverJobStart struct {
+	ClaimedTables []string    `json:"claimed_tables"`
+	LiveParser    AuditParser `json:"live_parser"`
 }
 
 // Details returns the audit details of the entry.
@@ -143,6 +162,16 @@ type JobEnd struct {
 	Streamed           []string          `json:"streamed"` // inputs served from the file: only the re-hash after the job covers them
 	Lookups            []LookupOpen      `json:"lookups"`
 	Snapshot           *AuditSnapshot    `json:"snapshot,omitempty"`
+	*RecoverJobEnd                       // a typed recovery job only (4G-R20)
+}
+
+// RecoverJobEnd holds what parse.job.end adds for a typed recovery job.
+type RecoverJobEnd struct {
+	UnmappedRecovered   int64    `json:"unmapped_recovered"`
+	BelowMinConfidence  int64    `json:"below_min_confidence"`
+	Narrowed            []string `json:"narrowed"`
+	SkippedInvalidFacts int64    `json:"skipped_invalid_facts"` // claimed rows whose facts were invalid: not typed, not unmapped
+	UnmappedOverflow    bool     `json:"unmapped_overflow"`
 }
 
 // Details returns the audit details of the entry.

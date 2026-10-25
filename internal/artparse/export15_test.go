@@ -38,14 +38,10 @@ type RecoveryEmitter = recoveryEmitter
 
 var NewRecoveryEmitter = newRecoveryEmitter
 
-func (r *recoveryEmitter) Base() *emitter                     { return r.emitter }
-func (r *recoveryEmitter) BelowMin() int64                    { return r.belowMin.Load() }
-func (r *recoveryEmitter) UnmappedCount() int64               { return r.unmapped.Load() }
-func (r *recoveryEmitter) UnmappedLocators() ([]string, bool) { return r.unmappedLocators() }
+func (r *recoveryEmitter) Base() *emitter                       { return r.emitter }
+func (r *recoveryEmitter) BelowMin() int64                      { return r.belowMin.Load() }
+func (r *recoveryEmitter) UnmappedCount() int64                 { return r.unmapped.Load() }
+func (r *recoveryEmitter) UnmappedLocators() ([][16]byte, bool) { return r.unmappedLocators() }
 
-// SetMaxUnmappedLocators changes the bound on remembered unmapped locators; call the result to restore it.
-func SetMaxUnmappedLocators(n int) (restore func()) {
-	old := maxUnmappedLocators
-	maxUnmappedLocators = n
-	return func() { maxUnmappedLocators = old }
-}
+// SetMaxLocators changes the bound on the remembered unmapped locators of this emitter only.
+func (r *recoveryEmitter) SetMaxLocators(n int) { r.maxLoc = n }
