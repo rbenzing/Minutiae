@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/parse"
+	"github.com/rbenzing/minutiae/internal/recordtypes/web"
 )
 
 // 4A's registry tests ranged over an empty registry; with the Android telephony parsers in it they are real
@@ -54,5 +55,53 @@ func TestEveryTelephonyParserReadsCompanionRolesAndEmitsOneType(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Errorf("parsers missing from the registry: %v", want)
+	}
+}
+
+// TestBrowserParsersReadCompanionRolesAndEmitTheirTypes pins what 4F promises about the two browser
+// parsers: the roles they read, the exact types and payload versions they emit, and their place in the
+// registry (4F-R19: after the Android telephony parsers, Chromium before Safari). Mutation-checked
+// (4F-R33): it passes on arrival, and breaking an expected list below makes it fail.
+func TestBrowserParsersReadCompanionRolesAndEmitTheirTypes(t *testing.T) {
+	want := []struct {
+		name  string
+		types []string
+	}{
+		{"chromium.history", []string{"web_visit", "web_search", "download"}},
+		{"safari.history", []string{"web_visit"}},
+	}
+	all := All()
+	last := -1
+	for _, w := range want {
+		idx := slices.IndexFunc(all, func(p parse.Parser) bool { return p.Meta().Name == w.name })
+		if idx < 0 {
+			t.Errorf("%s is missing from the registry", w.name)
+			continue
+		}
+		if idx <= last {
+			t.Errorf("%s is at %d, want it after the previous browser parser (registry order)", w.name, idx)
+		}
+		if idx < 3 {
+			t.Errorf("%s is at %d, want it after the three Android telephony parsers", w.name, idx)
+		}
+		last = idx
+		m := all[idx].Meta()
+		roles := []string{}
+		for _, in := range m.Inputs {
+			roles = append(roles, in.Role)
+		}
+		if !slices.Equal(roles, []string{"db", "wal", "journal"}) {
+			t.Errorf("%s: roles %v, want db/wal/journal", w.name, roles)
+		}
+		types := []string{}
+		for _, e := range m.Emits {
+			types = append(types, e.Type)
+			if e.PayloadVersion != web.PayloadVersion {
+				t.Errorf("%s: emits %s at payload version %d, want %d", w.name, e.Type, e.PayloadVersion, web.PayloadVersion)
+			}
+		}
+		if !slices.Equal(types, w.types) {
+			t.Errorf("%s: emits %v, want exactly %v", w.name, types, w.types)
+		}
 	}
 }

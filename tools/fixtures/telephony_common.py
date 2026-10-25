@@ -158,8 +158,8 @@ def phases(sql_text):
     return {k: "\n".join(v) for k, v in out.items()}
 
 
-def load_ddl(name):
-    with open(os.path.join(SCHEMAS, name), encoding="utf-8") as f:
+def load_ddl(name, schemas=SCHEMAS):
+    with open(os.path.join(schemas, name), encoding="utf-8") as f:
         return phases(f.read())
 
 
