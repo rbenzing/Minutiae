@@ -12,5 +12,6 @@ var generated = map[string]identity{
 	"android.contacts@1.0.1": {Package: "github.com/rbenzing/minutiae/internal/parsers/androidcontacts", Hash: "src1:sha256:c57708f80af0a93f7f4229003f5cdfbdadef2f3bcbfa64a98cb40569fae421b5"},
 	"android.mmssms@1.0.1":   {Package: "github.com/rbenzing/minutiae/internal/parsers/androidmms", Hash: "src1:sha256:345bcacf16be4a19517f383f6506eb057535f32554157d4b15657eade82e750f"},
 	"chromium.history@1.0.0": {Package: "github.com/rbenzing/minutiae/internal/parsers/chromium", Hash: "src1:sha256:49268d917b84ee8ea6983875ba4f6e1191415af4be0a6da92afb9816afdb61c6"},
+	"ios.calls@1.0.0":        {Package: "github.com/rbenzing/minutiae/internal/parsers/ioscalls", Hash: "src1:sha256:5ba13c420489d41bd8842f9924ebdd2bf99cd8ca63295a84fe2e230c4f3f5db4"},
 	"safari.history@1.0.0":   {Package: "github.com/rbenzing/minutiae/internal/parsers/safari", Hash: "src1:sha256:c80ac54e6d9f7ac82280a88255a52e60722093cd1e41b9f4b3438d3463b20bfe"},
 }

@@ -37,7 +37,7 @@ func TestTelephonyParsersMakeNoClaimsAndAreRowMappers(t *testing.T) {
 }
 
 func TestEveryTelephonyParserReadsCompanionRolesAndEmitsOneType(t *testing.T) {
-	want := map[string]string{"android.mmssms": "message", "android.calllog": "call", "android.contacts": "contact"}
+	want := map[string]string{"android.mmssms": "message", "android.calllog": "call", "android.contacts": "contact", "ios.calls": "call"}
 	for _, p := range All() {
 		m := p.Meta()
 		typ, ok := want[m.Name]
