@@ -83,6 +83,7 @@ type slackPlan struct {
 	files            int            // live regular files visited
 	skipped          map[string]int // outcome -> files (3F-R2 names, plus "limit"); volume-level counts are included, see volCounted
 	volCounted       int            // how many of skipped's counts belong to the volume part, not to files
+	volSkipped       map[string]int // the volume part's share of skipped, per outcome (sums to volCounted)
 	uniformSegs      int
 	uniformBytes     int64 // file segments counted, not exported
 	volUniformChunks int
@@ -301,6 +302,21 @@ func (pl *slackPlanner) skip(reason string) { pl.p.skipped[reason]++ }
 func (pl *slackPlanner) volSkip(reason string) {
 	pl.p.skipped[reason]++
 	pl.p.volCounted++
+	if pl.p.volSkipped == nil {
+		pl.p.volSkipped = map[string]int{}
+	}
+	pl.p.volSkipped[reason]++
+}
+
+// fileSkipped returns the per-outcome counts of the files alone: skipped without the volume part's share.
+func (p *slackPlan) fileSkipped() map[string]int {
+	out := map[string]int{}
+	for r, n := range p.skipped {
+		if n -= p.volSkipped[r]; n > 0 {
+			out[r] = n
+		}
+	}
+	return out
 }
 
 func walkReasonText(err error) string { return walkReason(err) + ": " + err.Error() }
