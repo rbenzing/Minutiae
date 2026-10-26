@@ -10,7 +10,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/parsers/parsertest"
 )
 
-var variants = []string{"aosp-baseline", "aosp-subid-alter", "av-freelist-512", "hot-journal", "oem-extended", "utf16", "wal-uncheckpointed"}
+var variants = []string{"aosp-baseline", "aosp-subid-alter", "av-freelist-512", "hot-journal", "mmssms-pdu-deleted", "oem-extended", "utf16", "wal-uncheckpointed"}
 
 func TestFixturesArePinnedByHash(t *testing.T) {
 	seen := map[string]bool{}
@@ -33,9 +33,15 @@ func TestFixturesArePinnedByHash(t *testing.T) {
 }
 
 func TestEveryCommittedFixtureIsInTheVariantList(t *testing.T) {
-	m, err := filepath.Glob("testdata/*.expect.json")
+	all, err := filepath.Glob("testdata/*.expect.json")
 	if err != nil {
 		t.Fatal(err)
+	}
+	var m []string
+	for _, p := range all {
+		if !strings.HasSuffix(p, ".recover.expect.json") { // the typed recovery oracles are checked by TestEveryRecoverOracleHasAFixture
+			m = append(m, p)
+		}
 	}
 	if len(m) != len(variants) {
 		t.Errorf("%d fixtures on disk, %d in the variant list", len(m), len(variants))

@@ -79,7 +79,7 @@ var allowed = map[string][]string{
 	"internal/recordtypes/message":         {"internal/records", "internal/recordtypes/common"},
 	"internal/recordtypes/web":             {"internal/records", "internal/recordtypes/common"},
 	"internal/recordtypes/all":             {"internal/recordtypes/message", "internal/recordtypes/call", "internal/recordtypes/contact", "internal/recordtypes/web"},
-	"internal/parsers/parsertest":          {"internal/parse", "internal/records", "internal/evidence", "internal/recordtypes/common", "internal/recordtypes/message", "internal/recordtypes/call", "internal/recordtypes/contact", "internal/recordtypes/web", "internal/decode/sqlitedb", "internal/decode/sqlitedb/rowrun", "internal/sqlitefile"},
+	"internal/parsers/parsertest":          {"internal/parse", "internal/records", "internal/evidence", "internal/recordtypes/common", "internal/recordtypes/message", "internal/recordtypes/call", "internal/recordtypes/contact", "internal/recordtypes/web", "internal/decode/sqlitedb", "internal/decode/sqlitedb/recrun", "internal/decode/sqlitedb/rowrun", "internal/sqlitefile"},
 	"internal/parsers/androidmms":          {"internal/decode/sqlitedb", "internal/decode/sqlitedb/rowrun", "internal/parse", "internal/records", "internal/recordtypes/common", "internal/recordtypes/message"},
 	"internal/parsers/androidcalllog":      {"internal/decode/sqlitedb/rowrun", "internal/decode/ts", "internal/parse", "internal/records", "internal/recordtypes/call", "internal/recordtypes/common"},
 	"internal/parsers/androidcontacts":     {"internal/decode/sqlitedb", "internal/decode/sqlitedb/rowrun", "internal/parse", "internal/records", "internal/recordtypes/common", "internal/recordtypes/contact"},

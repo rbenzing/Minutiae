@@ -15,7 +15,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "android.mmssms"
-	Version = "1.0.4"
+	Version = "1.0.6"
 )
 
 // Parser is the android.mmssms parser. It holds no state.
@@ -23,11 +23,14 @@ type Parser struct{}
 
 var _ parse.RowMapper = Parser{}
 
-// Meta describes the parser. Claims stay empty until plan 4G implements typed recovery.
+// Meta describes the parser. It claims the two tables its mappings map: the rows of sms and pdu that the
+// recovery of a database yields (freelist pages, old WAL frames, the journal) are typed by the same mappings
+// (plan 4G) and are not written again as generic db_row records.
 func (Parser) Meta() parse.Meta {
 	return parse.Meta{
 		Name: Name, Version: Version, Title: "Android SMS and MMS (telephony provider)",
 		Platforms: []string{parse.PlatformAndroid},
+		Claims:    []parse.TableClaim{{Role: "db", Table: "sms"}, {Role: "db", Table: "pdu"}},
 		Emits:     []parse.Emit{{Type: message.Type, PayloadVersion: message.PayloadVersion}},
 		Inputs: []parse.InputSpec{
 			{Role: "db", Globs: []string{"android:**/com.android.providers.telephony/databases/mmssms.db"}, Required: true},

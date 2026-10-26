@@ -10,6 +10,7 @@ var fixturePins = map[string]string{
 	"av-freelist-512.db":     "bbc476275e499aabf18a7dce0abf9dc29e9c495aa42dba219d9404a0c6597a29",
 	"hot-journal.db":         "0e32b99c9ddf931f6973ff4ed9e1f1dc39bdad5a89efa1f8a6671bdd6a715840",
 	"hot-journal.journal":    "be79fb1ad03ad05e98b096890d7b4ced8cdbd2b5410b776de9019b56ba6ff119",
+	"mmssms-pdu-deleted.db":  "e576e3f7cd14d2dc442c349eb0453e9e973b6528d8d35bf01261f89f63b67866",
 	"oem-extended.db":        "00c75c2b9df71cfd0ce1be35a259d796667e5b5e847ed14bed1ebd7ed6760139",
 	"utf16.db":               "e43549ec690334e1cae32a480587b73f707d7746d0811f4782da5cbffd1bcc2b",
 	"wal-uncheckpointed.db":  "85e8a38e28beec0d0731c963e2bc8979b2e037c96d3d66fb798af43e7ed8cd83",
