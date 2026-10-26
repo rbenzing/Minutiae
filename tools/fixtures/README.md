@@ -1652,3 +1652,13 @@ What was checked, and against what (fetched 2026-10-25 into the scratch director
 Command line: `curl -fsS https://raw.githubusercontent.com/libimobiledevice/libimobiledevice/1.3.0/tools/idevicebackup2.c
 > idevicebackup2.c`, then `grep -n IsEncrypted idevicebackup2.c`. The guard is `TestIOSDDLSnapshotsStateTheirProvenance`
 (`internal/archtest/ios_ddl_test.go`).
+
+## iOS fixtures (plan 4E)
+
+`ios_common.py` holds what the iOS generators (`ios_sms.py`, `ios_calls.py`, `ios_addressbook.py`, loaded by
+`telephony_gen.py` when present) share: Cocoa conversions to RFC 3339 (seconds and nanoseconds, 1970..2100, the
+sentinels), the backup file ID and remote path (`sha1(domain + "-" + relativePath)`), the canonical-path rule of
+4E-R42, a typedstream encoder written from the layout in `internal/decode/typedstream/typedstream.go` (not from the Go
+test builder), binary-plist and minimal NSKeyedArchiver writers, and `real_cells` (a non-finite REAL is stated as
+`<col>_ieee` plus `<col>_status` `invalid`). Self-checks: `py -3 -I tools/fixtures/ios_common.py`. The `images` and
+`images_wal` roles write `<name>.images.db.gz` and `<name>.images.db-wal.gz`.

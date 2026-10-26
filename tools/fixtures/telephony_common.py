@@ -257,7 +257,8 @@ def generator_block():
             "sqlite": sqlite3.sqlite_version, "files": {}}
 
 
-SUFFIX = {"db": ".db.gz", "wal": ".db-wal.gz", "journal": ".db-journal.gz"}
+SUFFIX = {"db": ".db.gz", "wal": ".db-wal.gz", "journal": ".db-journal.gz",
+          "images": ".images.db.gz", "images_wal": ".images.db-wal.gz"}
 
 
 def write_outputs(out_dir, name, files, expect):
