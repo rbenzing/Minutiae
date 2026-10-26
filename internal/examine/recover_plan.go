@@ -183,7 +183,7 @@ func (s *Session) PlanRecovery(ctx context.Context, o RecoverOptions) (*RecoverP
 		return nil, err
 	}
 	before := fsys.Info().Warnings
-	plan, err := s.buildPlan(ctx, o, fsys, rec, part, b)
+	plan, err := s.buildPlan(ctx, o, fsys, rec, part, b, false)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +230,7 @@ type planner struct {
 func (p *planner) skipped(reason string) { p.plan.SkippedBy[reason]++ }
 
 // buildPlan is the whole planning pass shared by PlanRecovery and Recover.
-func (s *Session) buildPlan(ctx context.Context, o RecoverOptions, fsys filesys.FileSystem, rec filesys.Recoverer, part volume.Partition, b *budget) (*RecoverPlan, error) {
+func (s *Session) buildPlan(ctx context.Context, o RecoverOptions, fsys filesys.FileSystem, rec filesys.Recoverer, part volume.Partition, b *budget, prepare bool) (*RecoverPlan, error) {
 	runs, note, err := s.unallocatedRunsNote(fsys, part, false)
 	if err != nil {
 		return nil, err
@@ -247,6 +247,13 @@ func (s *Session) buildPlan(ctx context.Context, o RecoverOptions, fsys filesys.
 		return nil, err
 	}
 	p.plan.Considered = len(targets) + over
+	// A reader that needs one pass over the image before it can answer (a free-space scan) is prepared
+	// here: after enumeration, only when something is to be recovered, and never for a list (3C-R25).
+	if prepare && len(targets) > 0 {
+		if err := filesys.PrepareRecovery(ctx, fsys); err != nil {
+			return nil, err
+		}
+	}
 	if over > 0 {
 		p.limit("max-entries", over, fmt.Sprintf("more than %d deleted entries; %d were not processed", recoverEntryCap, over))
 	}
