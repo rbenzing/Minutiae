@@ -3,7 +3,9 @@ package parsertest
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,6 +38,7 @@ type RecoverExpect struct {
 	Claimed   []string            `json:"claimed"`
 	Columns   map[string][]string `json:"columns"` // table -> its columns in record order; Written.Values follow it
 	Records   []RecoverExpectRecord
+	Digests   []RecoverDigest
 	Unmapped  []RecoverExpectUnmapped
 	Written   []RecoverWritten
 }
@@ -56,6 +59,46 @@ type RecoverExpectRecord struct {
 	Offset     int64     `json:"offset"`
 	Length     int64     `json:"length"`
 	Record     ExpRecord `json:"record"` // Deleted, SourcePath, artifact and range are the host's, not compared
+}
+
+// RecoverDigest is the SHA-256 of the canonical typed record (type, times, body, payload) the oracle expects at
+// a cell. Every want has one, whether or not it has a full entry in Records, so the mapping's output is checked
+// for every recovered version, not only for the listed ones.
+type RecoverDigest struct {
+	Table  string `json:"table"`
+	Rowid  int64  `json:"rowid"`
+	File   string `json:"file"`
+	Page   uint32 `json:"page"`
+	Offset int64  `json:"offset"`
+	Length int64  `json:"length"`
+	Digest string `json:"digest"`
+}
+
+// recordDigest is the digest of an emitted record, built like the generator's record_digest: canonical JSON
+// with sorted keys, no spaces and no HTML escaping.
+func recordDigest(r records.Record) string {
+	times := map[string]string{}
+	for _, nt := range r.Times {
+		times[nt.Kind] = nt.Time.T.UTC().Format(time.RFC3339Nano)
+	}
+	ts := func(t *records.Time) any {
+		if t == nil {
+			return nil
+		}
+		return t.T.UTC().Format(time.RFC3339Nano)
+	}
+	obj := map[string]any{
+		"type": r.Type, "time": ts(r.Time), "time_end": ts(r.TimeEnd), "times": times, "body": r.Body,
+		"payload": normalize(r.Payload),
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(obj); err != nil {
+		return "unencodable: " + err.Error()
+	}
+	sum := sha256.Sum256(bytes.TrimSuffix(buf.Bytes(), []byte{10}))
+	return hex.EncodeToString(sum[:])
 }
 
 // RecoverExpectUnmapped is a row that must be reported unmapped with a reason containing Contains.
@@ -289,6 +332,33 @@ func AssertClaimedTablesMapRecoveredRows(t testing.TB, h *Harness, p parse.RowMa
 			}
 		}
 	}
+	// (a2) the digest of every want covers the records the oracle does not list in full
+	dig := map[string][]RecoverDigest{}
+	for _, d := range want.Digests {
+		k := cellKey(d.Table, d.File, d.Page, d.Offset, d.Length)
+		dig[k] = append(dig[k], d)
+	}
+	for _, g := range e.recs {
+		f := g.facts
+		ds := dig[cellKey(f.Table, string(f.Role), f.Page, f.Range.Offset, f.Range.Length)]
+		var cands []RecoverDigest
+		for _, d := range ds {
+			if g.row != nil && g.row.hasRowid && g.row.rowid == d.Rowid {
+				cands = append(cands, d)
+			}
+		}
+		if len(cands) == 0 {
+			continue
+		}
+		got := recordDigest(g.rec)
+		ok := false
+		for _, d := range cands {
+			ok = ok || d.Digest == got
+		}
+		if !ok {
+			t.Errorf("typed record %s: its digest %s is not the oracle's for that cell (type, time, body or payload differ)", f.Locator, got[:16])
+		}
+	}
 	// (b)
 	for _, g := range e.recs {
 		if !isWritten(want, g) {
@@ -390,6 +460,9 @@ func compareRecovered(t testing.TB, b Bundle, g recoverEmitted, w RecoverExpectR
 func isWritten(want RecoverExpect, g recoverEmitted) bool {
 	if g.row == nil || !g.row.hasRowid {
 		return false
+	}
+	if len(g.row.vals) == 0 {
+		return false // a mapping that read no column of the row proves nothing
 	}
 	cols := want.Columns[g.facts.Table]
 	for _, w := range want.Written {

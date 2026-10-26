@@ -190,6 +190,10 @@ func (w wrongMapper) Mappings() []parse.TableMapping {
 				recs = append(recs, recs[0])
 			case "sets-recovery":
 				recs[0].Recovery = "sqlite-freelist"
+			case "corrupts-odd-body":
+				if id, ok := row.Rowid(); ok && id%2 == 1 {
+					recs[0].Body += " (corrupted)"
+				}
 			}
 			return recs, nil
 		}
@@ -204,6 +208,8 @@ type failureRecorder struct {
 
 func (r *failureRecorder) Errorf(f string, a ...any) { r.errs = append(r.errs, fmt.Sprintf(f, a...)) }
 
+// Fatalf only records: unlike testing.T it does not stop the code under test, which therefore must `return`
+// after every Fatalf (the kit does).
 func (r *failureRecorder) Fatalf(f string, a ...any) { r.errs = append(r.errs, fmt.Sprintf(f, a...)) }
 
 func TestAssertClaimedTablesMapRecoveredRowsCatchesAWrongMapper(t *testing.T) {
@@ -222,6 +228,17 @@ func TestAssertClaimedTablesMapRecoveredRowsCatchesAWrongMapper(t *testing.T) {
 			}
 		})
 	}
+	// The full records of hot-journal list only every other version; the digest of every want still catches a
+	// mapper that corrupts the rest (odd _ids are never in the listed subset).
+	t.Run("corrupts-odd-body", func(t *testing.T) {
+		h := parsertest.NewHarness(t)
+		b := parsertest.LoadFixture(t, "testdata", "hot-journal").Bundle(h, remotePath)
+		rec := &failureRecorder{TB: t}
+		parsertest.AssertClaimedTablesMapRecoveredRows(rec, h, wrongMapper{fault: "corrupts-odd-body"}, b, parsertest.LoadRecoverExpect(t, "testdata", "hot-journal"))
+		if !strings.Contains(strings.Join(rec.errs, " "), "digest") {
+			t.Fatalf("the kit did not report a body corrupted for odd _ids: %v", rec.errs)
+		}
+	})
 	// and the unfaulted mapper passes the same oracle through the same double
 	h := parsertest.NewHarness(t)
 	b := parsertest.LoadFixture(t, "testdata", "wal-uncheckpointed").Bundle(h, remotePath)

@@ -577,13 +577,13 @@ def variant_journal(work):
     path, con, ph = build_plain(work, "mmssms-aosp-baseline.sql")
     rows = [sms_row(i, body=("original %d " % i) + "x" * 100) for i in range(1, 1501)]
     populate(con, ph, rows, dims_baseline(), None)
-    scen = SCENARIOS["hot-journal"] = C.Scenario(CLAIMED)
+    scen = SCENARIOS["hot-journal"] = C.Scenario(CLAIMED, full=lambda table, rowid: rowid % 14 == 0)
     scen.write("sms", scen.snap(con, "sms"))
     interrupted = []
     for rowid, d in scen.snap(con, "sms", "_id % 7 = 0"):
         interrupted.append((rowid, dict(d, body="interrupted-%d" % rowid + d["body"][19:])))  # substr(body, 20)
     scen.write("sms", interrupted)  # the originals are live again after the rollback
-    scen.want("sms", [r for r in interrupted if r[0] % 14 == 0])  # half of them: the oracle file stays small; every version is in written
+    scen.want("sms", interrupted)  # every one has a digest; only every 14th _id has a full record (the oracle file stays small)
     con.close()
     stmts = ["pragma cache_size = 10", "pragma cache_spill = 10", "BEGIN",
              "update sms set body = 'interrupted-' || _id || substr(body, 20) where _id % 7 = 0"]

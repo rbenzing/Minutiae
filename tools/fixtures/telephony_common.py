@@ -312,8 +312,10 @@ class Scenario:
     """What a variant's generator wrote and deleted in the claimed tables: every version it stored
     (written) and the versions that should be history (wants), as engine values."""
 
-    def __init__(self, claimed, alias="_id"):
-        self.claimed, self.alias = tuple(claimed), alias
+    def __init__(self, claimed, alias="_id", full=None):
+        # full(table, rowid) -> bool: which wants get a full expected record in "records" (default all); every want
+        # gets a digest of its canonical expected record in "digests" (the kit checks every emitted record with it)
+        self.claimed, self.alias, self.full = tuple(claimed), alias, full
         self.columns, self.written, self.wants = {}, [], []
 
     def snap(self, con, table, where="1"):
@@ -337,6 +339,16 @@ class Scenario:
 
     def vals(self, table, rowid, d):
         return [None if c == self.alias else d.get(c) for c in self.columns[table]]
+
+
+def record_digest(rec):
+    """SHA-256 (hex) of the canonical JSON of the typed fields of an expected record: type, time, time_end, times,
+    body and payload (the summary is derived from them and is not always stated). The Go kit builds the same text
+    from an emitted record: sorted keys, no spaces, no HTML escaping, UTC times in RFC 3339."""
+    obj = {"type": rec["type"], "time": rec["time"], "time_end": rec["time_end"], "times": rec["times"] or {},
+           "body": rec["body"] or "", "payload": rec["payload"]}
+    text = json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def dec(e):
@@ -380,7 +392,7 @@ def recover_oracle(variant, files, scen, make_env, expect_fn):
     hist = O.build_history(variant, files, st, live_raw, scen.wants, 0)
     env = make_env(files)
     out = {"generator": {"tool": "tools/fixtures/telephony_gen.py --recover-oracle", "files": {}}, "variant": variant,
-           "claimed": list(scen.claimed), "columns": scen.columns, "records": [], "unmapped": [], "written": []}
+           "claimed": list(scen.claimed), "columns": scen.columns, "records": [], "digests": [], "unmapped": [], "written": []}
     for role, data in files.items():
         out["generator"]["files"][role] = hashlib.sha256(data).hexdigest()
     for h in hist:
@@ -393,11 +405,14 @@ def recover_oracle(variant, files, scen, make_env, expect_fn):
         d = {k: engine_bytes(v) for k, v in d.items()}
         d["rowid"] = h["rowid"]
         cell = h["cell"]
-        out["records"].append({
-            "table": table, "rowid": h["rowid"], "method": h["method"], "relation": h["relation"], "basis": h["basis"],
-            "origin": h["origin"], "confidence": h["confidence"], "notes": h["notes"], "file": cell["file"],
-            "page": cell["page"], "offset": cell["offset"], "length": cell["length"],
-            "record": expect_fn(table, d, env, cell["file"])})
+        rec = expect_fn(table, d, env, cell["file"])
+        out["digests"].append({"table": table, "rowid": h["rowid"], "file": cell["file"], "page": cell["page"],
+                               "offset": cell["offset"], "length": cell["length"], "digest": record_digest(rec)})
+        if scen.full is None or scen.full(table, h["rowid"]):
+            out["records"].append({
+                "table": table, "rowid": h["rowid"], "method": h["method"], "relation": h["relation"], "basis": h["basis"],
+                "origin": h["origin"], "confidence": h["confidence"], "notes": h["notes"], "file": cell["file"],
+                "page": cell["page"], "offset": cell["offset"], "length": cell["length"], "record": rec})
     # Written: the versions the scenario stored (and the live ones at the end) that occur in some history page image.
     # A typed record may carry only such a version: anything else was invented or misread.
     # A history row of basis schema that equals a live row is dropped as a duplicate of live (relation absent from
