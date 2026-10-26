@@ -450,3 +450,57 @@ func TestNodeSegsRecordNodeOffsets(t *testing.T) {
 		t.Errorf("an image without NodeSegs has footer flag %#x, want 0 (existing images stay byte-identical)", flag)
 	}
 }
+
+// The deep parts of the node tree record their ofs_of_node too (T6 carry-over):
+// a sparse file with one block under i_nid[3] and one under the double
+// indirect node i_nid[4]. i_nid[3] is node 1022, its first direct child 1023;
+// the double indirect node is 2041, its first indirect child 2042 and that
+// one's first direct child 2043 (from memory of the kernel numbering,
+// confirmed by the 3D probe).
+func TestNodeSegsRecordNodeOffsetsDeepInTheTree(t *testing.T) {
+	const a = f2fstest.AddrsPerBlock
+	o := f2fstest.Options{NodeSegs: 2}
+	al := f2fstest.NewAlloc(o, 101)
+	ind2 := int64(923 + 2*a + a*a)   // first logical block under i_nid[3]
+	dind := int64(923 + 2*a + 2*a*a) // first logical block under i_nid[4]
+	nodes, _ := al.File(o, f2fstest.Inode{NID: 100, Mode: 0o100644, Size: uint64(dind+a*a+1) * bs},
+		f2fstest.FileData{Blocks: map[int64][]byte{ind2: pattern(bs, 1), dind: pattern(bs, 2), dind + a*a: pattern(bs, 3)}})
+	byNID := map[uint32][]byte{}
+	for _, n := range nodes {
+		byNID[n.NID] = n.Block
+	}
+	ofs := func(nid uint32) uint32 {
+		b, ok := byNID[nid]
+		if !ok {
+			t.Fatalf("node %d is not among the %d built nodes", nid, len(nodes))
+		}
+		_, _, flag, _, _ := footer(b)
+		return flag >> 7
+	}
+	child := func(b []byte, i int) uint32 { return le.Uint32(b[4*i:]) }
+	inode := byNID[100]
+	n3, n4 := le.Uint32(inode[4052+4*3:]), le.Uint32(inode[4052+4*4:])
+	if got := ofs(n3); got != 1022 {
+		t.Errorf("i_nid[3] has ofs %d, want 1022", got)
+	}
+	if got := ofs(child(byNID[n3], 0)); got != 1023 {
+		t.Errorf("the first child of i_nid[3] has ofs %d, want 1023", got)
+	}
+	if got := ofs(n4); got != 2041 {
+		t.Errorf("i_nid[4] has ofs %d, want 2041", got)
+	}
+	ind := child(byNID[n4], 0)
+	if got := ofs(ind); got != 2042 {
+		t.Errorf("the first child of the double indirect node has ofs %d, want 2042", got)
+	}
+	ind1 := child(byNID[n4], 1)
+	if got := ofs(ind1); got != 3061 {
+		t.Errorf("the second child of the double indirect node has ofs %d, want 3061", got)
+	}
+	if got := ofs(child(byNID[ind1], 0)); got != 3062 {
+		t.Errorf("its first direct child has ofs %d, want 3062", got)
+	}
+	if got := ofs(child(byNID[ind], 0)); got != 2043 {
+		t.Errorf("its first direct child has ofs %d, want 2043", got)
+	}
+}
