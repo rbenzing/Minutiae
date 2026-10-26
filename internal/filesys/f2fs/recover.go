@@ -34,6 +34,12 @@ const MethodNodeScan = "f2fs-node-scan"
 //     hole, foreign or missing node, tie or bad address (a trusted prefix; the
 //     stop token is passed on verbatim as "stale-chain-stop=<reason>@<n>").
 //
+// A free dentry slot that names inode 0 or an inode beyond the NAT, or has an
+// impossible name or type, is damaged, not a deleted record: the listing
+// offers no ID for it, so asking for it is an unlisted slot (ErrNotFound) and
+// never a candidate (the same rule as the listing, which skips such a slot
+// without a warning).
+//
 // No byte is read, filled or guessed here: the result is a map. A scan that
 // cannot decide is ErrUndecided or ErrLimit, never ErrNotFound.
 func (f *FS) Recoverable(e filesys.Entry) ([]filesys.Candidate, error) {
