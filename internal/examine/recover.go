@@ -66,7 +66,7 @@ func (s *Session) Recover(ctx context.Context, o RecoverOptions) (RecoverSummary
 		if err := a.watchFS(fsys); err != nil {
 			return err
 		}
-		plan, err := s.buildPlan(ctx, o, fsys, rec, part, b)
+		plan, err := s.buildPlan(ctx, o, fsys, rec, part, b, true)
 		if err != nil {
 			return err
 		}
