@@ -175,3 +175,66 @@ func (f *FS) ResolveDeleted(id string) (dirInode, recInode uint32, lblk int64, e
 	}
 	return r.dir.num, r.rec.inode, r.lblk, nil
 }
+
+// GroupInodeBitmapCsum reads group g's inode bitmap and returns the checksum the descriptor stores, the one computed
+// over the bitmap (masked to 16 bits when the descriptor has no high half), and whether the descriptor has the high
+// half. It panics on a read failure.
+func (f *FS) GroupInodeBitmapCsum(g int) (stored, computed uint32, hasHi bool) {
+	d := &f.groups[g]
+	nb := (f.sb.inodesPerGroup + 7) / 8
+	bm := make([]byte, nb)
+	if err := readFull(f.r, bm, int64(d.inodeBitmap)*int64(f.sb.blockSize)); err != nil {
+		panic(err)
+	}
+	computed = rawCRC32C(f.sb.csumSeed, bm[:f.sb.inodesPerGroup/8])
+	if !d.inodeBitmapCsumHi {
+		computed &= 0xFFFF
+	}
+	return d.inodeBitmapCsum, computed, d.inodeBitmapCsumHi
+}
+
+// InodeAllocated reports the allocation state of inode n: "used", "free", or "unknown: <reason>".
+func (f *FS) InodeAllocated(n uint32) (state string, err error) {
+	st, reason, err := f.inodeState(n)
+	if err != nil {
+		return "", err
+	}
+	switch st {
+	case allocFree:
+		return "free", nil
+	case allocUsed:
+		return "used", nil
+	}
+	return "unknown: " + reason, nil
+}
+
+// StaleInode resolves the deleted-entry id and applies the stale-inode acceptance rules (3C-R7); it returns the
+// accepted inode's number.
+func (f *FS) StaleInode(id string) (num uint32, err error) {
+	st, err := f.staleOf(id)
+	if err != nil {
+		return 0, err
+	}
+	return st.in.num, nil
+}
+
+// StaleInodeDetail is StaleInode that also returns the accepted inode's flags and the quiet-decode notes.
+func (f *FS) StaleInodeDetail(id string) (num, flags uint32, notes []string, err error) {
+	st, err := f.staleOf(id)
+	if err != nil {
+		return 0, 0, nil, err
+	}
+	return st.in.num, st.in.flags, st.notes, nil
+}
+
+func (f *FS) staleOf(id string) (*staleInode, error) {
+	d, ok := f.parseDeletedID(id)
+	if !ok {
+		return nil, fmt.Errorf("%w: %q is not a canonical deleted-entry id", filesys.ErrNotFound, id)
+	}
+	r, err := f.resolveDeleted(d)
+	if err != nil {
+		return nil, err
+	}
+	return f.staleInodeFor(r)
+}
