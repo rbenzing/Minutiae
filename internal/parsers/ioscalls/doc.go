@@ -10,5 +10,8 @@
 //     value also covers busy, failed and not answered. raw.ZANSWERED, raw.ZDURATION and
 //     raw.ZDISCONNECTED_CAUSE keep what the database holds.
 //
-// This package holds the fixtures and their scenario oracle (Task 11); the parser follows in Task 12.
+// The parser is a RowMapper over rowrun with two optional mappings, ZCALLRECORD and call (ruling 4E-R30):
+// the file is identified by which table set it holds, never by its name or by a guess. Numbers and Apple-epoch
+// instants are read through cellx; a cell of another storage class is named in raw.unknown_columns and gives no
+// value; a non-finite duration is stated by its IEEE bits (raw.ZDURATION_ieee), never as a value.
 package ioscalls
