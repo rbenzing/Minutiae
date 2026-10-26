@@ -1647,7 +1647,7 @@ What was checked, and against what (fetched 2026-10-25 into the scratch director
   `41472f454209082f1c02469b04f25261d70c19f03124710efb6950f7876365cf`): the key is looked up in the top-level
   dictionary and used only when it is a boolean. That tool reads no `Manifest.db`, so `backup-manifest.sql` stays
   `no-public-source`. The tool treats an absent or non-boolean value as "not encrypted"; Minutiae reports it as unknown.
-- The typedstream layout of `attributedBody` is plan 4E Task 4b's cross-check.
+- The typedstream layout of `attributedBody` (plan 4E Task 4b): header, integer tags `0x81` and `0x82`, the class-record length byte and the NSString `+` encoding are `verified` against the MIT-licensed Ruby library uetchy/typedstream (commit `9a7fe5af785cd43c97f99e31da8f6784ba277ef5`, fetched 2026-10-25, never built or run); `0x83` and the NSMutableString and NSAttributedString layouts have `no-public-source`. One public sample, an NSString archive made by Apple's NSArchiver, is `internal/decode/typedstream/testdata/public-sample.typedstream` (`PROVENANCE.md`, MIT, `TestExtractTextOnAPublicSample`).
 
 Command line: `curl -fsS https://raw.githubusercontent.com/libimobiledevice/libimobiledevice/1.3.0/tools/idevicebackup2.c
 > idevicebackup2.c`, then `grep -n IsEncrypted idevicebackup2.c`. The guard is `TestIOSDDLSnapshotsStateTheirProvenance`
