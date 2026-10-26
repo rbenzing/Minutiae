@@ -1662,3 +1662,24 @@ sentinels), the backup file ID and remote path (`sha1(domain + "-" + relativePat
 test builder), binary-plist and minimal NSKeyedArchiver writers, and `real_cells` (a non-finite REAL is stated as
 `<col>_ieee` plus `<col>_status` `invalid`). Self-checks: `py -3 -I tools/fixtures/ios_common.py`. The `images` and
 `images_wal` roles write `<name>.images.db.gz` and `<name>.images.db-wal.gz`.
+
+### ios-calls (plan 4E, Task 11)
+
+`ios_calls.py` is a family module of `telephony_gen.py` (host Python `sqlite3` only, no Docker; the family name is
+`ios_calls`). The layouts of `CallHistory.storedata` and `call_history.db` are written from memory (4E-R13), so the
+fixtures prove that the parser reads the remembered layout and nothing about a real database. The oracle restates
+rulings 4E-R21, R22 and R35 and the "Mapping contract ios.calls" in Python from what the generator wrote; it shares no
+code with the Go parser. The `coredata-wal` WAL carries a random salt, so it differs on every regeneration: regenerate
+the files, the oracle and the pins together.
+
+```
+py -3 tools/fixtures/telephony_gen.py --family ios_calls --out internal/parsers/ioscalls/testdata \
+    --pins-go internal/parsers/ioscalls/pins_test.go --pins-package ioscalls_test
+py -3 tools/fixtures/telephony_gen.py --family ios_calls --check
+```
+
+| Variant (`internal/parsers/ioscalls/testdata/`) | DDL snapshot | Holds |
+|---|---|---|
+| `coredata-current` | `callhistory-coredata.sql` | 20 rows: in answered and missed, out answered, out unanswered (outcome `unknown`), `ZORIGINATED` 2; `ZCALLTYPE` 1, 8, 16, 99; three providers; `ZADDRESS` TEXT, BLOB, BLOB with trailing garbage, NULL, empty; `ZDATE` REAL, integral REAL (stored INTEGER), 0, -1, year 2100; `ZDURATION` 0, 12.5, -3, `+Inf`, 2e9, NULL; `ZREAD` 0/1/NULL |
+| `coredata-wal` | `callhistory-coredata.sql` | 8 rows in the database, 3 calls only in the `-wal` (a killed writer) |
+| `legacy-call-history` | `callhistory-legacy.sql` | 8 rows: Unix-seconds dates, `flags` 4, 5, 8, 1769472 (kept raw, direction unknown), a fractional REAL date, date 0, negative duration, NULL and empty address |
