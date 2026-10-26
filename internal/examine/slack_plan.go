@@ -40,6 +40,9 @@ type SlackSegment struct {
 	FileSize            int64
 	Uniform             bool
 	Fill                byte // the fill byte of a uniform segment (3F-R20)
+	// Assumption is "shared-unit-unchecked" when some file could not be opened for the shared-unit check, so the
+	// overlap check of this segment was incomplete (3F-C2); empty otherwise.
+	Assumption string
 }
 
 // SlackVolumeChunk is the granularity of the uniform test of volume slack.
@@ -86,6 +89,8 @@ type slackPlan struct {
 	volUniformBytes  int64
 	walkErrors       int
 	firstWalkError   string
+	unchecked        int // live files that could not be opened in either pass: their units are unknown (3F-C2)
+	uncheckedIDs     map[string]struct{}
 	limit            string         // "", "max-bytes", "max-segments", "max-path-bytes", "max-scan-bytes"
 	omitted          []SlackSegment // uniform file ranges not exported, kept only when the file part is incomplete (3F-R19)
 	volOmitted       []SlackSegment // the same for the volume part
@@ -97,7 +102,9 @@ type slackPlan struct {
 }
 
 // fileIncomplete reports whether the file part of the plan does not cover every file (a walk error or a limit).
-func (p *slackPlan) fileIncomplete() bool { return p.walkErrors > 0 || p.limit != "" }
+func (p *slackPlan) fileIncomplete() bool {
+	return p.walkErrors > 0 || p.unchecked > 0 || p.limit != ""
+}
 
 // volumeIncomplete reports whether the volume part was not planned to the end.
 func (p *slackPlan) volumeIncomplete() bool { return p.limit != "" || p.volStop != "" }
@@ -193,6 +200,7 @@ type slackPlanner struct {
 	imgSize  int64
 	scanLeft int64
 	free     *freeMap
+	buf      []byte // the one 64 KiB read buffer of the tail and volume scans
 
 	warnN map[string]int
 }
@@ -211,6 +219,7 @@ func (s *Session) planSlack(ctx context.Context, o SlackOptions, fsys filesys.Fi
 		imgSize:  s.Image.Size(),
 		scanLeft: slackScanBudget(s, b.maxBytes),
 		warnN:    map[string]int{},
+		buf:      make([]byte, uniformChunk),
 	}
 	doFiles := o.Files || !o.Volume
 	doVol := o.Volume || !o.Files
@@ -222,6 +231,15 @@ func (s *Session) planSlack(ctx context.Context, o SlackOptions, fsys filesys.Fi
 	if doVol {
 		if err := pl.planVolume(); err != nil {
 			return nil, err
+		}
+	}
+	if n := pl.p.unchecked; n > 0 {
+		pl.warn("unchecked", "", fmt.Sprintf("%d live file(s) could not be opened for the shared-unit check: their allocation units are unknown, so the overlap check is incomplete", n))
+		for i := range pl.p.file {
+			pl.p.file[i].Assumption = slackUncheckedTag
+		}
+		for i := range pl.p.omitted {
+			pl.p.omitted[i].Assumption = slackUncheckedTag
 		}
 	}
 	if !pl.p.fileIncomplete() {
@@ -262,6 +280,18 @@ func (pl *slackPlanner) setLimit(which, detail string) {
 		pl.p.limit = which
 		pl.warn("limit", "", which+": "+detail)
 	}
+}
+
+// slackUncheckedTag is the Assumption of a segment planned while some file could not be opened (3F-C2).
+const slackUncheckedTag = "shared-unit-unchecked"
+
+// markUnchecked counts a live file whose units are unknown, once however many passes failed to open it.
+func (pl *slackPlanner) markUnchecked(id string) {
+	if pl.p.uncheckedIDs == nil {
+		pl.p.uncheckedIDs = map[string]struct{}{}
+	}
+	pl.p.uncheckedIDs[id] = struct{}{}
+	pl.p.unchecked = len(pl.p.uncheckedIDs)
 }
 
 // skip counts one file in an outcome.
@@ -353,6 +383,7 @@ func (pl *slackPlanner) examine(wp string, we filesys.Entry, seen map[string]str
 	seen[we.ID] = struct{}{}
 	f, err := pl.fsys.Open(we)
 	if err != nil {
+		pl.markUnchecked(we.ID)
 		return nil, slackOpenError, err.Error()
 	}
 	if filesys.FileEncrypted(f) {
@@ -386,6 +417,8 @@ func (pl *slackPlanner) examine(wp string, we filesys.Entry, seen map[string]str
 
 // groupUnits marks every candidate whose allocation unit is claimed by two or more IDs (3F-R18). A shared unit
 // is never read.
+// groupUnits is an output-equivalent pre-filter: two tails in one allocation unit always overlap, and the overlap
+// sweep of crossCheck drops both. Doing it first by hash keeps those candidates out of the sort and the second walk.
 func (pl *slackPlanner) groupUnits(cands []*slackCand) {
 	first := make(map[int64]*slackCand, len(cands))
 	for _, c := range cands {
@@ -492,6 +525,7 @@ func (pl *slackPlanner) crossCheck(cands []*slackCand) error {
 		f, err := pl.fsys.Open(we)
 		if err != nil {
 			pl.warn("shared-unit-check", wp, "could not be opened for the shared-unit check: "+err.Error())
+			pl.markUnchecked(we.ID)
 			return nil
 		}
 		runs := f.Runs()
@@ -532,7 +566,7 @@ func (pl *slackPlanner) readTails(cands []*slackCand) error {
 			pl.skip(slackLimit)
 			continue
 		}
-		uniform, fill, err := uniformScan(pl.ctx, pl.rd, []evidence.Run{{Offset: c.off, Length: c.length}})
+		uniform, fill, err := uniformScanBuf(pl.ctx, pl.rd, []evidence.Run{{Offset: c.off, Length: c.length}}, pl.buf)
 		if err != nil {
 			if cerr := pl.ctx.Err(); cerr != nil {
 				return cerr
@@ -630,7 +664,7 @@ func (pl *slackPlanner) planVolume() error {
 	if start >= end {
 		return nil
 	}
-	buf := make([]byte, uniformChunk)
+	buf := pl.buf
 	var cur volRun
 	for off := start; off < end; {
 		if err := pl.ctx.Err(); err != nil {

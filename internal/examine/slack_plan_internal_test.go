@@ -988,3 +988,72 @@ func TestPlanSlackMillionDirentsOnOneClusterIsBounded(t *testing.T) {
 	}
 	runtime.KeepAlive(fsys)
 }
+
+// 3F-C2: a live file that cannot be opened has unknown units; another file's tail may share them.
+func uncheckedSetup(t *testing.T, failFrom int) (*Session, int64) {
+	t.Helper()
+	cs := int64(slackTestCS)
+	f := newSlackFAT([]fattest.File{
+		{Path: "A.BIN", Data: slackFill(100)},
+		{Path: "B.BIN", Data: slackFill(cs - 10)},
+	}, 2)
+	b := f.built.Find("B.BIN", false)
+	bOff := f.g.ClusterOffset(b.Clusters[0])
+	f.patchTail("B.BIN", false, cs-10)
+	opens := 0
+	fake := &slackFakeFS{open: func(e filesys.Entry, in filesys.File) (filesys.File, error) {
+		if e.Name != "A.BIN" {
+			return in, nil
+		}
+		opens++
+		if opens >= failFrom {
+			return nil, fmt.Errorf("injected open failure")
+		}
+		// A's allocation really covers B's unit.
+		runs := []filesys.Run{{Offset: bOff, Length: cs}}
+		return multiRunFile{File: in, runs: runs, alloc: runs}, nil
+	}}
+	return slackSession(t, f.img, fakeOpts(fake)), bOff + cs - 10
+}
+
+func TestPlanSlackUncheckedFileMakesPlanIncomplete(t *testing.T) {
+	for name, failFrom := range map[string]int{"pass 2 only": 2, "both passes": 1} {
+		t.Run(name, func(t *testing.T) {
+			s, bTail := uncheckedSetup(t, failFrom)
+			p := slackPlanOf(t, s, SlackOptions{Partition: -1, Files: true})
+			if p.unchecked != 1 || !p.fileIncomplete() {
+				t.Fatalf("unchecked %d incomplete %v", p.unchecked, p.fileIncomplete())
+			}
+			if len(p.file) != 1 || p.file[0].ImageOffset != bTail || p.file[0].Assumption != slackUncheckedTag {
+				t.Fatalf("B's segment must be exported and tagged: %+v", p.file)
+			}
+			named := false
+			for _, w := range p.warnings {
+				named = named || strings.Contains(w.Reason, "1 live file(s)")
+			}
+			if !named {
+				t.Errorf("no warning names the count: %+v", p.warnings)
+			}
+			if failFrom == 1 && p.skipped["open-error"] != 1 {
+				t.Errorf("skipped %v", p.skipped)
+			}
+		})
+	}
+	// With every file openable the overlap is found and nothing is unchecked.
+	f := newSlackFAT([]fattest.File{{Path: "A.BIN", Data: slackFill(100)}}, 2)
+	q := slackPlanOf(t, slackSession(t, f.img, Options{}), SlackOptions{Partition: -1, Files: true})
+	if q.unchecked != 0 || q.fileIncomplete() {
+		t.Errorf("unchecked %d", q.unchecked)
+	}
+}
+
+// groupUnits is an output-equivalent pre-filter: tails of one unit are dropped by it, and the sweep of
+// crossCheck would drop them as overlapping candidates all the same.
+func TestGroupUnitsMarksOnlyClaimsOfOneUnit(t *testing.T) {
+	pl := &slackPlanner{}
+	c := []*slackCand{{unit: 0}, {unit: 1024}, {unit: 0}, {unit: 2048}}
+	pl.groupUnits(c)
+	if !c[0].dropped || !c[2].dropped || c[1].dropped || c[3].dropped {
+		t.Errorf("dropped = %v %v %v %v", c[0].dropped, c[1].dropped, c[2].dropped, c[3].dropped)
+	}
+}
