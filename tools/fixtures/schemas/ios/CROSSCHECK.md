@@ -84,4 +84,21 @@ Re-fetch: `curl -fsS https://raw.githubusercontent.com/libimobiledevice/libimobi
 | Files.flags value 1, the sha1 fileID rule, domains and relative paths | none consulted | no-public-source | From memory (`docs/limitations.md`). |
 | sms.db reaction ranges and prefixes, attachment domain `MediaDomain` | none consulted | no-public-source | From memory (`docs/limitations.md`). |
 | ZCALLTYPE codes, AddressBook property ids 3, 4, 5 and 22, label syntax, `member_type` 0 | none consulted | no-public-source | From memory (`docs/limitations.md`). |
-| attributedBody typedstream layout | see plan 4E Task 4b | not yet checked | Task 4b records its own rows here. |
+| typedstream header: version byte `0x04`, `0x0B` then `streamtyped`, system version integer | uetchy/typedstream (MIT) commit 9a7fe5af785cd43c97f99e31da8f6784ba277ef5, `lib/typedstream/parser.rb`, `spec/fixtures/NSString` | verified | The parser's header literal starts `\x04\x0B` + `streamtyped` + `\x81\xE8\x03`; every fixture written by Apple's NSArchiver begins `04 0b 73 74 72 65 61 6d 74 79 70 65 64 81 e8 03` (1000 as a `0x81` integer). |
+| integer tag `0x81`: 2-byte little-endian value | same, fixtures `NSNumberWith4digits`, `NSNumberWith5digits` | verified | `81 5c 11` is 0x115c = 4444, the number the fixture is named for; the parser unpacks the bytes after `0x81` as little-endian 16-bit. |
+| integer tag `0x82`: 4-byte little-endian value | same, fixtures `NSNumberWith5digits`, `NSNumberWithMinus5digits` | verified | `82 03 d9 00 00` is 0xd903 = 55555 and `82 fd 26 ff ff` is 0xffff26fd = -55555 (the extractor reads lengths only, so the sign is not used). The Ruby parser itself decodes only `0x81`; the evidence is the fixture bytes. |
+| integer tag `0x83`: 8-byte value | same | no-public-source | No fixture or parser line of this source uses `0x83` (the `NSNumberWithULongLong` bytes `51 97 fd` do not). The layout comment stays from memory. |
+| class-record prefix `0x84`, class name preceded by its length byte | same, `spec/fixtures/NSString` | verified | `84 84 84 08 NSString 01 84 84 08 NSObject 00`: a one-byte length (`08`) then the name; the parser reads `\x84\x84` + length + bytes the same way. The extractor does not require the `0x84`, which is a superset of what the archive has. |
+| NSString encoding `+` (bytes `01 2B`), then an integer length and that many bytes | same, `spec/fixtures/NSString`, `NSStringNil` | verified | `85 84 01 2b 1a` + 26 bytes `abcdefgABCDEFG!?@[]/+*^&-_` + `86`; the parser matches `\x85\x84\x01` then `+` and reads one length byte. An empty string is `2b 00` (`NSStringNil`), which the extractor returns as ok with empty text. |
+| NSMutableString and NSAttributedString layout | none | no-public-source | The source's fixtures hold NSString, not NSMutableString or NSAttributedString (no attribute runs). The bytes the extractor ignores around the string were not compared. |
+
+The typedstream rows were fetched on 2026-10-25 as untrusted text into the project scratch directory, never built or
+executed. The source is the open-source Ruby library uetchy/typedstream (MIT; a general-purpose format library with no
+tags), commit `9a7fe5af785cd43c97f99e31da8f6784ba277ef5`. SHA-256: `lib/typedstream/parser.rb`
+`ca30967083dac915ec461400500f9405762e3a1ad133606a9016e068adfb2c2e`, `spec/fixtures/NSString`
+`0e5ad797a1756349aaeb12b480d23dcfa9702eef6b5ab4afc342d9a5fad2d3fb`, `LICENSE`
+`a1b78f8dba384deda872721d816a0a2de57c3d6378a8f18525eda46f12420717`. Re-fetch:
+`curl -fsS https://raw.githubusercontent.com/uetchy/typedstream/9a7fe5af785cd43c97f99e31da8f6784ba277ef5/<path>`.
+No row `differs`. The one public sample, an NSString (not NSAttributedString) archive made by Apple's NSArchiver, is
+`internal/decode/typedstream/testdata/public-sample.typedstream` (`PROVENANCE.md`, `TestExtractTextOnAPublicSample`).
+Other typedstream libraries found by search are under copyleft licences and were not used.
