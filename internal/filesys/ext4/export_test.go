@@ -147,3 +147,31 @@ func (f *FS) SetEAHashCap(n int64) { f.eaHashCap = n }
 
 // MaxEAHashBytes is the default bound on EA-inode value bytes hashed per filesystem.
 const MaxEAHashBytes = maxEAHashBytes
+
+// SetLocateCaps lowers the directory and run caps of the deleted-ID directory index (before any resolution); a
+// value of 0 or less leaves that cap as it is.
+func (f *FS) SetLocateCaps(dirs, runs int) {
+	if dirs > 0 {
+		f.locateDirsCap = dirs
+	}
+	if runs > 0 {
+		f.locateRunsCap = runs
+	}
+}
+
+// LocateWork reports the work the deleted-ID resolution has done: directory index units plus one per re-read.
+func (f *FS) LocateWork() int64 { return f.locateWork.Load() }
+
+// ResolveDeleted resolves a deleted-entry ID from disk: the directory that holds the record, the inode the record
+// names (0 when unknown), and the logical block of the record's block (-1 for an inline directory).
+func (f *FS) ResolveDeleted(id string) (dirInode, recInode uint32, lblk int64, err error) {
+	d, ok := f.parseDeletedID(id)
+	if !ok {
+		return 0, 0, 0, fmt.Errorf("%w: %q is not a canonical deleted-entry id", filesys.ErrNotFound, id)
+	}
+	r, err := f.resolveDeleted(d)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	return r.dir.num, r.rec.inode, r.lblk, nil
+}
