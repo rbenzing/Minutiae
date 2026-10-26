@@ -1592,10 +1592,12 @@ fixture rows keep the raw type codes.
 
 ```
 py -3 tools/fixtures/telephony_gen.py --family mmssms --recover-oracle --out internal/parsers/androidmms/testdata
+py -3 tools/fixtures/telephony_gen.py --family calllog --recover-oracle --out internal/parsers/androidcalllog/testdata
+py -3 tools/fixtures/telephony_gen.py --family contacts --recover-oracle --out internal/parsers/androidcontacts/testdata
 ```
 
 writes `<variant>.recover.expect.json` for every variant that has a scenario (`av-freelist-512`, `wal-uncheckpointed`,
-`hot-journal`, `mmssms-pdu-deleted`): what the typed recovery pass must make of the fixture. It is computed from the
+`hot-journal`, `mmssms-pdu-deleted`; `calllog-deleted`, `calllog-wal-edit`; `contacts-deleted`, `contacts-wal-edit`): what the typed recovery pass must make of the fixture. It is computed from the
 COMMITTED files of the variant, never from Go output: `sqlite_oracle.build_history` (the independent page walker of the
 SQLite fixtures) finds in the page images the versions the scenario says should be history (`wants`: deleted rows,
 pre-update versions, interrupted versions) and gives method, relation, basis (`fit` with the claimed table as label on
@@ -1605,21 +1607,23 @@ the freelist, `schema` otherwise), origin, confidence (`min(method base, basis c
 only such a version. The variant is regenerated in a scratch directory only to obtain the scenario; the committed files
 are never rewritten and their SHA-256 must equal the one in `<variant>.expect.json`. `--check` also builds the oracle of
 the freshly generated files. Sizes: `av-freelist-512` 194 KiB, `hot-journal` 160 KiB (every interrupted version is a want, checked by digest; every 14th keeps a full record
-), `mmssms-pdu-deleted` 67 KiB, `wal-uncheckpointed` 5 KiB, each at most 200 KiB.
+), `mmssms-pdu-deleted` 67 KiB, `wal-uncheckpointed` 5 KiB, `calllog-deleted` 51 KiB, `calllog-wal-edit` 4 KiB, `contacts-deleted` 26 KiB, `contacts-wal-edit` 5 KiB, each at most 200 KiB. A scenario with a WAL or a journal is a separate variant from one with freelist pages: the page walker reads the freelist only of a lone database (with a companion the free pages are not known to be free), so `calllog-deleted` (100 calls, 21 to 80 deleted, 1024-byte pages) and `calllog-wal-edit` (call 3 edited, call 7 deleted, call 13 added in an uncheckpointed WAL) are two fixtures, and so are `contacts-deleted` and `contacts-wal-edit`. `contacts-deleted` (30 raw contacts on 512-byte pages with their `data` rows, contacts 7 to 30 deleted; contact 12 has no name, no source id and no data) lists the nameless contact under `unmapped` (`identifies nobody`); it also frees 100 tombstones, which are deliberately not wanted: a freed `[rowid, integer]` record fits several live tables, so the library cannot name its table and they stay generic `db_row` records. The typed tombstone case is `contacts-wal-edit` (raw contact 2 renamed, tombstone 1001 re-timed and tombstone 1002 deleted in an uncheckpointed WAL: basis `schema`, 75). Each new fixture is at most 64 KiB gzipped.
 
-`telephony_calllog.py` holds the call log scenario rows and oracle. Its three variants are lone databases (no WAL, no
+`telephony_calllog.py` holds the call log scenario rows and oracle. Its first three variants are lone databases (no WAL, no
 journal), so the oracle states the db path as `source_path` of every row (rulings T48, T51): `in-contacts2` states the
-`contacts2.db` path, the other two the `calllog.db` path.
+`contacts2.db` path, the other two the `calllog.db` path. `calllog-deleted` is a lone database too; `calllog-wal-edit` has a WAL, so the oracle states no path and the comparer derives it from the file role.
 
 | Variant | DDL snapshot | Database state | What it exercises |
 |---|---|---|---|
 | `features-subid` | `calllog-features-subid.sql` | plain, 31 `calls` rows | every `type` 1 to 7 and 99, outgoing calls with duration 0, NULL and negative, hidden numbers (`presentation` 2, 3, 4), sentinel and year-2100 dates, a 4e9 s duration, `features` video, an ICCID-length and a decimal `subscription_id`, invalid UTF-8 in `number` and `name`, a BLOB `subscription_id`, a duration of 2^53+1 (not exactly a float64), and `subscription_id` text that Python `int()` accepts but `ParseInt` refuses (a non-ASCII digit, an underscore, 34 bytes) and a negative one; every refused text is flagged `unknown_columns.subscription_id = "unparseable"` (T66) |
 | `pre-presentation` | `calllog-pre-presentation.sql` | plain, 16 rows | a table without `presentation`, `features`, `is_read`, `countryiso`, `geocoded_location` and `subscription_id` |
 | `in-contacts2` | `calllog-in-contacts2.sql` | plain, 9 rows, path `contacts2.db` | the call log inside the older contacts database |
+| `calllog-deleted` | `calllog-features-subid.sql` | 100 rows, page 1024, `secure_delete = OFF`, calls 21 to 80 deleted (40 live) | whole freed pages: the typed recovery oracle lists the freelist rows (`fit`, 60) |
+| `calllog-wal-edit` | `calllog-features-subid.sql` | 12 rows plus a `-wal` that is never checkpointed (call 3 edited, call 7 deleted, call 13 added) | the database-file versions under the WAL: call 3 `superseded-version`, call 7 `absent-from-live` (75) |
 
 `telephony_contacts.py` holds the contacts provider scenario rows and oracle (`py -3 tools/fixtures/telephony_gen.py --family contacts
 --out internal/parsers/androidcontacts/testdata --pins-go internal/parsers/androidcontacts/pins_test.go --pins-package androidcontacts_test`).
-Its six variants are lone databases (the sixth, `duplicate-keys`, carries an empty `-wal`, so the oracle states no path for its
+Its eight variants are lone databases (the sixth, `duplicate-keys`, carries an empty `-wal`, so the oracle states no path for its
 rows and the comparer derives it from the file role), so the oracle states the `contacts2.db` path as `source_path` of every row
 (rulings T48, T51). The oracle also pins the summary (display name and first phone through the summarizer's rules, a bidi or
 format character shown as `<U+XXXX>`; a name it does not restate is left unpinned, T81). The oracle restates the `contact` mapping of spec 9.3 (one record per `raw_contacts` row, `data` rows typed through
@@ -1646,6 +1650,8 @@ which `Builder.contact` creates a `contacts` row are the named constants `DANGLI
 | `multi-account` | `contacts-aosp-baseline.sql` | plain, 3 raw contacts of one person (one aggregate contact) | three distinct accounts (google, samsung, whatsapp with a `data_set`), one record per raw contact, one aggregate time |
 | `unicode-rtl` | `contacts-aosp-baseline.sql` | plain, 4 contacts | Hebrew, Arabic with a right-to-left override, CJK and emoji names and labels |
 | `huge-contact` | `contacts-aosp-baseline.sql` | plain, 1 contact with 1200 phones, 1100 e-mails and 130 notes | the list cap of 1000 and the note cap of 100 with their `_total` and `_truncated` counters |
+| `contacts-deleted` | `contacts-deleted-contacts.sql` | 512-byte pages, `secure_delete = OFF`, 30 raw contacts with `name` and `phone` data rows and 130 tombstones; raw contacts 7 to 30 (with their data rows) and tombstones 1030 to 1129 deleted | the typed recovery oracle: freelist rows of `raw_contacts` (`fit`, 60), recovered contacts without phones (their data is gone from the live view), the nameless contact 12 unmapped, freed tombstones left generic |
+| `contacts-wal-edit` | `contacts-deleted-contacts.sql` | 4 raw contacts, 3 tombstones, plus a `-wal` never checkpointed (contact 2 renamed, tombstone 1001 re-timed, tombstone 1002 deleted) | the database-file versions under the WAL for both claimed tables (`schema`, 75) |
 | `duplicate-keys` | `contacts-aosp-baseline.sql`, with `accounts` and `contacts` re-created with a plain `_id integer` column (T79) | plain plus an empty `-wal`, 3 raw contacts, 3 `accounts` rows (key 1 twice), 4 `contacts` rows (key 1 three times) | a join key naming several rows: `raw.join_undecided = ["accounts","contacts"]` with `raw.join_duplicate = {"accounts":2,"contacts":3}`, no account and no time; a unique key and a dangling one beside it. The empty `-wal` makes the probe (which refuses a table without the rowid alias) defer to Parse |
 
 The DDL snapshots and their public sources: `schemas/android-telephony/CROSSCHECK.md` (see "DDL provenance" above).

@@ -313,10 +313,14 @@ class Scenario:
     (written) and the versions that should be history (wants), as engine values."""
 
     def __init__(self, claimed, alias="_id", full=None):
+        # alias: the rowid alias column of the claimed tables, or {table: alias} when they differ (a table not listed uses "_id")
         # full(table, rowid) -> bool: which wants get a full expected record in "records" (default all); every want
         # gets a digest of its canonical expected record in "digests" (the kit checks every emitted record with it)
         self.claimed, self.alias, self.full = tuple(claimed), alias, full
         self.columns, self.written, self.wants = {}, [], []
+
+    def alias_of(self, table):
+        return self.alias.get(table, "_id") if isinstance(self.alias, dict) else self.alias
 
     def snap(self, con, table, where="1"):
         """The engine's rows of table as [(rowid, {column: value})]; also remembers the column order."""
@@ -338,7 +342,7 @@ class Scenario:
             self.wants.append(w)
 
     def vals(self, table, rowid, d):
-        return [None if c == self.alias else d.get(c) for c in self.columns[table]]
+        return [None if c == self.alias_of(table) else d.get(c) for c in self.columns[table]]
 
 
 def record_digest(rec):
@@ -361,7 +365,7 @@ def dec(e):
     if t == "text":
         return e["v"]
     if t == "blob":
-        return base64.b64decode(e["v"])
+        return Blob(base64.b64decode(e["v"]))
     raise ValueError(t)
 
 
@@ -377,8 +381,9 @@ def engine_bytes(v):
     return v.encode("utf-8") if isinstance(v, str) else v
 
 
-def recover_oracle(variant, files, scen, make_env, expect_fn):
-    """The <variant>.recover.expect.json content."""
+def recover_oracle(variant, files, scen, make_env, expect_fn, nobody="identifies nobody"):
+    """The <variant>.recover.expect.json content. expect_fn returns None for a row the mapping cannot make a record of
+    (it identifies nobody): the oracle then lists it under unmapped with the reason nobody."""
     st = O.State(files["db"], files.get("wal"), files.get("journal"), True, True)
     roots = {s["name"].lower(): s["root"] for s in O.schema_rows(st) if s["type"] == "table" and s["root"] > 0}
     live_raw = {}
@@ -401,11 +406,14 @@ def recover_oracle(variant, files, scen, make_env, expect_fn):
             continue
         vals = [dec(v) for v in h["values"]]
         cols = scen.columns[table]
-        d = {c: (h["rowid"] if c == scen.alias else (vals[i] if i < len(vals) else None)) for i, c in enumerate(cols)}
+        d = {c: (h["rowid"] if c == scen.alias_of(table) else (vals[i] if i < len(vals) else None)) for i, c in enumerate(cols)}
         d = {k: engine_bytes(v) for k, v in d.items()}
         d["rowid"] = h["rowid"]
         cell = h["cell"]
         rec = expect_fn(table, d, env, cell["file"])
+        if rec is None:
+            out["unmapped"].append({"table": table, "rowid": h["rowid"], "contains": nobody})
+            continue
         out["digests"].append({"table": table, "rowid": h["rowid"], "file": cell["file"], "page": cell["page"],
                                "offset": cell["offset"], "length": cell["length"], "digest": record_digest(rec)})
         if scen.full is None or scen.full(table, h["rowid"]):
@@ -425,7 +433,7 @@ def recover_oracle(variant, files, scen, make_env, expect_fn):
     livevals = {}
     for table, rows in live.items():
         for r in rows:
-            vals = [None if c == scen.alias else (r[c].decode("utf-8") if type(r.get(c)) is bytes else r.get(c)) for c in scen.columns[table]]
+            vals = [None if c == scen.alias_of(table) else (r[c].decode("utf-8") if type(r.get(c)) is bytes else r.get(c)) for c in scen.columns[table]]
             livevals[(table, r["rowid"])] = vals
     if any(w.get("basis") == "fit" for w in scen.wants):
         for key, vals in livevals.items():
@@ -450,7 +458,7 @@ def recover_oracle(variant, files, scen, make_env, expect_fn):
                 for vals in vl:
                     if O.same(c["vals"], vals) and (table, rowid, repr(vals)) not in seen:
                         seen.add((table, rowid, repr(vals)))
-                        full = [rowid if col == scen.alias else v for col, v in zip(scen.columns[table], vals)]
+                        full = [rowid if col == scen.alias_of(table) else v for col, v in zip(scen.columns[table], vals)]
                         out["written"].append({"table": table, "rowid": rowid, "values": [jv(v) for v in full]})
     out["written"].sort(key=lambda w: (w["table"], w["rowid"], json.dumps(w["values"], sort_keys=True)))
     return out

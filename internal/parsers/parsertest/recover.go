@@ -218,8 +218,10 @@ func (e *recoverRecorder) EmitRecovered(_ context.Context, r records.Record, f p
 	if err := f.Validate(); err != nil {
 		e.t.Errorf("parsertest: facts of %s are invalid: %v", f.Locator, err)
 	}
-	if r.Recovery != "" || r.Confidence != nil || r.Deleted {
-		e.t.Errorf("parsertest: the mapping set Recovery/Confidence/Deleted on the record of %s: only the host stamps them", f.Locator)
+	// Deleted is not refused: a mapping may state it of its own accord (an application's tombstone is Deleted live
+	// too) and the host overwrites it for every recovered row, as the host's recovery emitter does.
+	if r.Recovery != "" || r.Confidence != nil {
+		e.t.Errorf("parsertest: the mapping set Recovery/Confidence on the record of %s: only the host stamps them", f.Locator)
 	}
 	s := copyRecord(r) // the stamps the host's recovery emitter applies, for the validator only
 	s.Deleted, s.Recovery, s.Locator = true, f.Method, f.Locator
@@ -270,7 +272,7 @@ func capturingMappings(ms []parse.TableMapping, cols map[string][]string, e *rec
 //	(b) every typed record's values equal one version in want.Written of its table (nothing invented);
 //	(c) every want.Unmapped entry was reported unmapped with a reason containing Contains;
 //	(d) per claimed table Delivered == Mapped + Unmapped, no row was skipped, every record has valid facts;
-//	(e) the writer's rules (records.NewValidator) refuse no record, and no mapping set a recovery field.
+//	(e) the writer's rules (records.NewValidator) refuse no record, and no mapping set Recovery or Confidence.
 func AssertClaimedTablesMapRecoveredRows(t testing.TB, h *Harness, p parse.RowMapper, b Bundle, want RecoverExpect) {
 	t.Helper()
 	in := b.Input(h, p, false)
@@ -643,3 +645,41 @@ func MapRecoveredRow(t testing.TB, h *Harness, p parse.RowMapper, b Bundle, rr s
 type noteSink struct{}
 
 func (noteSink) Note(string, string) {}
+
+// FaultyMapper is a RowMapper whose mappings make the records of the wrapped parser and then let Fault change them
+// (Fault sees the row, so it can corrupt only some of them). It is the wrong mapper of the self-tests of
+// AssertClaimedTablesMapRecoveredRows: a kit that does not go red on it checks nothing.
+type FaultyMapper struct {
+	parse.RowMapper
+	Fault func(row parse.Row, recs []records.Record) []records.Record
+}
+
+// Mappings returns the wrapped parser's mappings with the fault applied to every row that maps to records.
+func (f FaultyMapper) Mappings() []parse.TableMapping {
+	ms := f.RowMapper.Mappings()
+	for i := range ms {
+		inner := ms[i].Map
+		ms[i].Map = func(m parse.MapContext, row parse.Row) ([]records.Record, error) {
+			recs, err := inner(m, row)
+			if err != nil || len(recs) == 0 || f.Fault == nil {
+				return recs, err
+			}
+			return f.Fault(row, recs), nil
+		}
+	}
+	return ms
+}
+
+// FailureRecorder collects the failures a kit reports instead of failing the test, so a self-test can require
+// that a wrong mapper is reported. Fatalf only records: unlike testing.T it does not stop the code under test,
+// which therefore must return after every Fatalf (the kit does).
+type FailureRecorder struct {
+	testing.TB
+	Errs []string
+}
+
+// Errorf records a failure.
+func (r *FailureRecorder) Errorf(f string, a ...any) { r.Errs = append(r.Errs, fmt.Sprintf(f, a...)) }
+
+// Fatalf records a failure.
+func (r *FailureRecorder) Fatalf(f string, a ...any) { r.Errs = append(r.Errs, fmt.Sprintf(f, a...)) }
