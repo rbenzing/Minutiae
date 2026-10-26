@@ -403,7 +403,12 @@ const uniformChunk = 64 << 10
 // value. It stops at the first differing byte. A list with no bytes is not uniform. A run past the end
 // of r, or an invalid run, is an error, never "uniform".
 func uniformScan(ctx context.Context, r io.ReaderAt, runs []evidence.Run) (bool, byte, error) {
-	buf := make([]byte, uniformChunk)
+	return uniformScanBuf(ctx, r, runs, make([]byte, uniformChunk))
+}
+
+// uniformScanBuf is uniformScan with the caller's buffer (len(buf) bytes per read), so a caller that scans many
+// short runs allocates once.
+func uniformScanBuf(ctx context.Context, r io.ReaderAt, runs []evidence.Run, buf []byte) (bool, byte, error) {
 	var fill byte
 	seen := false
 	for _, run := range runs {
