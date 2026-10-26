@@ -363,6 +363,7 @@ func writePlanText(w io.Writer, p artparse.Plan) error {
 		}
 		fmt.Fprintf(w, "  unnamed %s %s: %s\n", printable(u.ArtifactID), printable(u.Path), escapeText(u.Reason))
 	}
+	writeBackupsText(w, p.Backups)
 	return nil
 }
 
@@ -372,7 +373,10 @@ func newParsePlanCmd(d Deps, opts *rootOptions) *cobra.Command {
 		Use:   "plan",
 		Short: "Show which parsers would run on which artifacts, without parsing anything",
 		Long: "Discover the jobs of a selection and show the status each one would get, running every parser's Probe\n" +
-			"in its sandbox. Nothing is parsed or stored and the audit log gains only the case.open entry.",
+			"in its sandbox. Nothing is parsed or stored and the audit log gains only the case.open entry.\n" +
+			"iOS backups of the case are listed after the rows (BACKUP lines, JSON \"backups\"): whether each Manifest.db could name\n" +
+			"its files, its encryption state and how many files got a logical path. An encrypted or unreadable backup is shown as\n" +
+			"unparsed with its reason, never as empty; a Manifest.db that fails its hash check is an integrity failure (exit 4).",
 		Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			regs, err := d.parserRegistry()
@@ -390,7 +394,7 @@ func newParsePlanCmd(d Deps, opts *rootOptions) *cobra.Command {
 			}
 			defer func() { _ = c.Close() }()
 			plan, perr := h.Plan(cmd.Context(), sel)
-			if perr != nil && len(plan.Rows) == 0 {
+			if perr != nil && len(plan.Rows) == 0 && len(plan.Backups) == 0 {
 				return perr
 			}
 			var jerr error
@@ -400,25 +404,14 @@ func newParsePlanCmd(d Deps, opts *rootOptions) *cobra.Command {
 					rows = append(rows, planRowToJSON(r))
 				}
 				jerr = writeJSON(d.Out, struct {
-					Rows   []planRowJSON `json:"rows"`
-					Counts countsJSON    `json:"counts"`
-				}{rows, planCountsJSON(plan.Counts, plan.ByStatus)})
+					Rows    []planRowJSON `json:"rows"`
+					Counts  countsJSON    `json:"counts"`
+					Backups []backupJSON  `json:"backups"`
+				}{rows, planCountsJSON(plan.Counts, plan.ByStatus), backupsToJSON(plan.Backups)})
 			} else {
 				jerr = writePlanText(d.Out, plan)
 			}
-			if perr != nil {
-				return joinJSON(perr, jerr)
-			}
-			var bad []string
-			for _, r := range plan.Rows {
-				if r.Integrity {
-					bad = append(bad, fmt.Sprintf("%s: %s", r.Job.Primary.Artifact.ID, r.Reason))
-				}
-			}
-			if len(bad) > 0 {
-				return joinJSON(integrityRunError(len(bad), bad, nil), jerr)
-			}
-			return jerr
+			return planOutcome(plan, perr, jerr)
 		},
 	}
 	f.register(cmd)
@@ -457,14 +450,22 @@ func parseSize(s string) (int64, error) {
 // partialRunError is a run in which some job did not complete (exit 1).
 type partialRunError struct {
 	n       int
+	backups int // backups not parsed (encrypted, unreadable or refused)
 	stopped string
 }
 
 func (e partialRunError) Error() string {
-	if e.n == 0 {
+	var parts []string
+	if e.n > 0 {
+		parts = append(parts, fmt.Sprintf("%d job(s) incomplete, unparsed or refused", e.n))
+	}
+	if e.backups > 0 {
+		parts = append(parts, fmt.Sprintf("%d backup(s) not parsed (see the BACKUP lines)", e.backups))
+	}
+	if len(parts) == 0 {
 		return "the run stopped early: " + e.stopped
 	}
-	msg := fmt.Sprintf("%d job(s) incomplete, unparsed or refused", e.n)
+	msg := strings.Join(parts, "; ")
 	if e.stopped != "" {
 		msg += "; the run stopped early: " + e.stopped
 	}
@@ -602,6 +603,10 @@ func writeRunSummaryText(w io.Writer, sum artparse.RunSummary, verbose bool) {
 	}
 	if sum.Stopped != "" {
 		fmt.Fprintf(w, "  the run stopped early: %s\n", escapeText(sum.Stopped))
+	}
+	writeBackupsText(w, sum.Backups)
+	if n := notParsedBackups(sum.Backups); n > 0 {
+		fmt.Fprintf(w, "  %d backup(s) not parsed\n", n)
 	}
 	for _, j := range sum.Jobs {
 		if j.Outcome == artparse.OutcomeComplete && j.Panic == nil && (!verbose || len(j.Notes) == 0) {
@@ -762,7 +767,7 @@ func writeRunSummary(d Deps, opts *rootOptions, sum artparse.RunSummary) error {
 		}
 		err := writeNDJSON(d.Out, map[string]any{
 			"event": "summary", "parse_id": sum.ParseID, "class": className(sum.Class()), "stopped": sum.Stopped,
-			"cancelled": sum.Cancelled, "records": sum.Records, "outcomes": outcomes, "jobs": jobs,
+			"cancelled": sum.Cancelled, "records": sum.Records, "outcomes": outcomes, "jobs": jobs, "backups": backupsToJSON(sum.Backups),
 		})
 		if err != nil {
 			fmt.Fprintf(d.Err, "summary line not written: %s\n", escapeText(err.Error()))
@@ -788,6 +793,7 @@ func runOutcome(d Deps, sum artparse.RunSummary, runErr error) error {
 			integrity = append(integrity, fmt.Sprintf("job %d %s: %s", j.Job, j.ArtifactID, j.Reason))
 		}
 	}
+	integrity = append(integrity, backupIntegrity(sum.Backups)...)
 	switch {
 	case len(integrity) > 0:
 		return integrityRunError(len(integrity), integrity, runErr)
@@ -802,5 +808,107 @@ func runOutcome(d Deps, sum artparse.RunSummary, runErr error) error {
 			n++
 		}
 	}
-	return partialRunError{n: n, stopped: sum.Stopped}
+	return partialRunError{n: n, backups: notParsedBackups(sum.Backups), stopped: sum.Stopped}
+}
+
+// planOutcome maps a plan to the error that sets the exit code: an integrity finding (a job or a backup's
+// Manifest.db) is exit 4 and is never masked by a plan error such as a cancel; then the plan's own error.
+func planOutcome(plan artparse.Plan, perr, jerr error) error {
+	var bad []string
+	for _, r := range plan.Rows {
+		if r.Integrity {
+			bad = append(bad, fmt.Sprintf("%s: %s", r.Job.Primary.Artifact.ID, r.Reason))
+		}
+	}
+	bad = append(bad, backupIntegrity(plan.Backups)...)
+	if len(bad) > 0 {
+		return joinJSON(integrityRunError(len(bad), bad, perr), jerr)
+	}
+	return joinJSON(perr, jerr)
+}
+
+// backupIntegrity describes the backups whose Manifest.db failed its hash check.
+func backupIntegrity(bs []artparse.BackupResolution) []string {
+	var out []string
+	for _, b := range bs {
+		if b.Integrity {
+			out = append(out, fmt.Sprintf("backup %s/%s manifest %s: %s", b.Acquisition, b.Dir, backupRefID(b.ManifestDB), b.Reason))
+		}
+	}
+	return out
+}
+
+func backupRefID(r *artparse.ArtifactRef) string {
+	if r == nil {
+		return "none"
+	}
+	return r.ArtifactID
+}
+
+type artifactRefJSON struct {
+	ArtifactID string `json:"artifact_id"`
+	SHA256     string `json:"sha256"`
+}
+
+type backupJSON struct {
+	Acquisition    string           `json:"acquisition"`
+	Dir            string           `json:"dir"`
+	Status         string           `json:"status"`
+	Reason         string           `json:"reason"`
+	Encryption     string           `json:"encryption"`
+	ManifestDB     *artifactRefJSON `json:"manifest_db"`
+	ManifestPlist  *artifactRefJSON `json:"manifest_plist"`
+	Mapped         int              `json:"mapped"`
+	Unmapped       int              `json:"unmapped"`
+	FileIDMismatch int              `json:"fileid_mismatch"`
+	Integrity      bool             `json:"integrity"`
+}
+
+func refJSON(r *artparse.ArtifactRef) *artifactRefJSON {
+	if r == nil {
+		return nil
+	}
+	return &artifactRefJSON{ArtifactID: r.ArtifactID, SHA256: r.SHA256}
+}
+
+// backupsToJSON is always a non-nil slice: no backups is [], never null.
+func backupsToJSON(bs []artparse.BackupResolution) []backupJSON {
+	out := []backupJSON{}
+	for _, b := range bs {
+		out = append(out, backupJSON{
+			Acquisition: b.Acquisition, Dir: b.Dir, Status: b.Status, Reason: b.Reason, Encryption: b.Encryption,
+			ManifestDB: refJSON(b.ManifestDB), ManifestPlist: refJSON(b.ManifestPlist), Mapped: b.Mapped, Unmapped: b.Unmapped,
+			FileIDMismatch: b.FileIDMismatch, Integrity: b.Integrity,
+		})
+	}
+	return out
+}
+
+// writeBackupsText prints one line per backup resolution. A manifest ref means the record was identified,
+// not that it was verified (an incomplete or over-size one is named and its reason says so). A mapped
+// backup with unknown encryption carries its reason as a note (4E-R37).
+func writeBackupsText(w io.Writer, bs []artparse.BackupResolution) {
+	for _, b := range bs {
+		status := b.Status
+		enc := "encryption=" + escapeText(b.Encryption)
+		switch {
+		case b.Status == artparse.BackupMapped && b.Encryption == "unknown":
+			enc += " note=" + escapeText(b.Reason)
+		case b.Reason != "":
+			status += ":" + b.Reason
+		}
+		fmt.Fprintf(w, "BACKUP %s/%s  %s  %s  manifest=%s  mapped=%d  unmapped=%d  fileid_mismatch=%d\n",
+			printable(b.Acquisition), printable(b.Dir), escapeText(status), enc, printable(backupRefID(b.ManifestDB)), b.Mapped, b.Unmapped, b.FileIDMismatch)
+	}
+}
+
+// notParsedBackups counts the backups that are not mapped.
+func notParsedBackups(bs []artparse.BackupResolution) int {
+	n := 0
+	for _, b := range bs {
+		if b.Status != artparse.BackupMapped {
+			n++
+		}
+	}
+	return n
 }
