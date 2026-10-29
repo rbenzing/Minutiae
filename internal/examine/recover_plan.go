@@ -593,7 +593,7 @@ func (p *planner) evaluate(it *RecoverItem, t target, cs []filesys.Candidate) {
 			pc.errText = fmt.Sprintf("the map covers %d of %d declared bytes", pc.Size, c.Size)
 		}
 		pc.Content = "ok"
-		pc.Confidence, _ = confidenceFor(c.Method, pc.cut || pc.prefix, false, slices.Contains(pc.Assumptions, assumptionJournalNotReplayed))
+		pc.Confidence, _ = confidenceFor(c.Method, pc.cut || pc.prefix || slices.Contains(pc.Assumptions, assumptionFileEndUnknown), false, slices.Contains(pc.Assumptions, assumptionJournalNotReplayed))
 		pc.Band = evidence.ConfidenceBand(pc.Confidence)
 		valid = append(valid, pc)
 	}
@@ -645,7 +645,7 @@ func (p *planner) selectAndFilter() {
 					}
 				}
 			}
-			c.Confidence, _ = confidenceFor(c.Method, c.cut || c.prefix, len(partners) > 0, slices.Contains(c.Assumptions, assumptionJournalNotReplayed))
+			c.Confidence, _ = confidenceFor(c.Method, c.cut || c.prefix || slices.Contains(c.Assumptions, assumptionFileEndUnknown), len(partners) > 0, slices.Contains(c.Assumptions, assumptionJournalNotReplayed))
 			c.Band = evidence.ConfidenceBand(c.Confidence)
 			c.Assumptions = fitAssumptions(c.Assumptions)
 			if c.Confidence < p.o.MinConfidence {

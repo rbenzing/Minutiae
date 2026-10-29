@@ -57,8 +57,10 @@ func TestRecoverExt4LeafAfterKernelUnlink(t *testing.T) {
 	sum := recoverAll(t, s)
 	rec := only(t, sum.Artifacts)
 	rv := recoveryOf(rec)
-	if *rv.Confidence != 55 || rv.Method != "ext4-extent-leaf" || rv.Class != evidence.ClassDeletedFile || rec.Incomplete {
-		t.Fatalf("confidence %d method %q class %q incomplete %v, want 55, ext4-extent-leaf, deleted-file, complete", *rv.Confidence, rv.Method, rv.Class, rec.Incomplete)
+	// The kernel zeroed i_size (GATE-S), so the end of the file is unknown even though both leaves survive: the method
+	// base of 55 is capped at 20 (3C-C3).
+	if *rv.Confidence != 20 || rv.Method != "ext4-extent-leaf" || rv.Class != evidence.ClassDeletedFile {
+		t.Fatalf("confidence %d method %q class %q, want 20, ext4-extent-leaf, deleted-file", *rv.Confidence, rv.Method, rv.Class)
 	}
 	if !bytes.Equal(readArtifact(t, s.Case, rec), data) {
 		t.Error("the artifact is not the file")
@@ -157,7 +159,7 @@ func TestRecoverExt4LeafSupersededLeavesWriteNoGuess(t *testing.T) {
 }
 
 // --list does not run the free-space pass (3C-R25): the intact file is planned alike in both modes, the file only the
-// leaves can recover is undecided in the list and recovered by the run.
+// leaves can recover is undecided in the list and recovered by the run (at 20: its end is unknown).
 func TestListDiffersFromRunOnlyByLeafSearch(t *testing.T) {
 	intact := ext4test.File{Path: "/intact.bin", Data: pat(16, 3*leafBS), Deleted: true}
 	leafy, leafyData := leafTwoLeafFile("/leafy.bin", 17)
@@ -215,11 +217,30 @@ func TestListDiffersFromRunOnlyByLeafSearch(t *testing.T) {
 				t.Errorf("the list planned %+v, the run wrote method %s confidence %d size %d runs %v", got, rv.Method, *rv.Confidence, rec.Size, runs)
 			}
 		case "ext4-extent-leaf":
-			foundLeaf = bytes.Equal(readArtifact(t, s.Case, rec), leafyData) && *rv.Confidence == 55
+			foundLeaf = bytes.Equal(readArtifact(t, s.Case, rec), leafyData) && *rv.Confidence == 20
 		}
 	}
 	if !foundLeaf {
-		t.Error("the run did not recover the leaf-only file at 55")
+		t.Error("the run did not recover the leaf-only file at 20")
 	}
+	verifyOK(t, s.Case)
+}
+
+// The same kernel unlink with the last leaf overwritten: a shorter file than the real one is written, never above 20.
+func TestRecoverExt4LeafZeroSizeLostLastLeafCapsAt20(t *testing.T) {
+	file, data := leafTwoLeafFile("/gone.bin", 18)
+	img, l := ext4test.BuildLayout(leafCsum, []ext4test.File{file})
+	l.Unlink(img, "/gone.bin", leafKernel)
+	clear(img[l.File("/gone.bin").Tree[1]*leafBS:][:leafBS])
+	s, disc := imageSession(t, img)
+	rec := only(t, recoverAll(t, s).Artifacts)
+	rv := recoveryOf(rec)
+	if *rv.Confidence != 20 || !hasAssumption(rv, "file-end-unknown") {
+		t.Fatalf("confidence %d assumptions %q, want 20 and file-end-unknown", *rv.Confidence, rv.Assumptions)
+	}
+	if !bytes.Equal(readArtifact(t, s.Case, rec), data[:45*leafBS]) {
+		t.Error("the artifact is not exactly the first leaf's blocks")
+	}
+	assertEqualsRuns(t, s.Case, rec, disc)
 	verifyOK(t, s.Case)
 }

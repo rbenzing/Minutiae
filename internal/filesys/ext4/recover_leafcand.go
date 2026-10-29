@@ -83,7 +83,9 @@ func (f *FS) leafCandidates(st *staleInode) ([]filesys.Candidate, error) {
 	return []filesys.Candidate{f.chainLeaves(st, leaves, len(refs))}, nil
 }
 
-// verifyLeaves re-reads each indexed leaf and checks its full checksum under seed. A leaf that no longer verifies is
+// verifyLeaves re-reads each indexed leaf and checks its full checksum under seed. By the linearity of the CRC the key
+// match already implies that checksum, so the re-read guards against drift of the reader, not against 32-bit
+// collisions (the same condition). A leaf that no longer verifies is
 // dropped. The result is sorted by first logical block, then end, then block.
 func (f *FS) verifyLeaves(refs []leafRef, seed uint32, tail int) ([]boundLeaf, error) {
 	bs := f.sb.blockSize
@@ -125,7 +127,6 @@ func (f *FS) chainLeaves(st *staleInode, leaves []boundLeaf, indexLeaves int) fi
 	bs := int64(f.sb.blockSize)
 	var (
 		segs    []mapSeg
-		byPhys  []mapSeg // the same extents ordered by physical block, for the overlap test
 		chained []uint64
 		cursor  int64 // first logical block not covered
 		stop    string
@@ -164,11 +165,6 @@ chain:
 			if stop != "" {
 				break chain
 			}
-			at := sort.Search(len(byPhys), func(k int) bool { return byPhys[k].phys+byPhys[k].n > x.phys })
-			if at < len(byPhys) && byPhys[at].phys < x.phys+x.n {
-				stopAt(stopMapOverlap, x.lblk)
-				break chain
-			}
 			adjacent := len(segs) > 0 && segs[len(segs)-1].phys+segs[len(segs)-1].n == x.phys
 			if !adjacent {
 				if nruns >= f.mapRunsCap {
@@ -177,12 +173,25 @@ chain:
 				}
 				nruns++
 			}
-			byPhys = slices.Insert(byPhys, at, mapSeg{x.lblk, x.phys, x.n})
 			segs = append(segs, mapSeg{x.lblk, x.phys, x.n})
 			cursor += x.n
 		}
 	}
-	wantBlocks := (in.size + bs - 1) / bs
+	// A data extent over a bound leaf block, or over another extent, is not a map: the chain ends before it (the walker's
+	// firstOverlap rule). It is found once, over the whole chain.
+	leafBlocks := make([]uint64, len(leaves))
+	for i, l := range leaves {
+		leafBlocks[i] = l.ref.blk
+	}
+	if k := firstSegOverlap(segs, leafBlocks); k < len(segs) {
+		cursor = segs[k].lblk
+		stop = fmt.Sprintf(stopTokenTemplate, stopMapOverlap, cursor)
+		segs = segs[:k]
+	}
+	var wantBlocks int64
+	if in.size > 0 {
+		wantBlocks = (in.size-1)/bs + 1 // no overflow for any int64 size
+	}
 	if stop == "" && in.size > 0 && wantBlocks > cursor {
 		stopAt(stopLeafGap, cursor) // the chain ends and no leaf is left, but the inode says the file goes on
 	}
@@ -202,8 +211,10 @@ chain:
 		size = lastEnd * bs
 		assumptions = append(assumptions, "file-end-unknown")
 	default:
+		// i_size is zero (the kernel zeroes it): the chain may have lost its last leaf or be an older, shorter copy, so
+		// its end is not known to be the file's end (3C-C3). examine caps file-end-unknown at 20.
 		size = cursor * bs
-		assumptions = append(assumptions, "size-from-extent-leaf-blocks")
+		assumptions = append(assumptions, "size-from-extent-leaf-blocks", "file-end-unknown")
 	}
 	if rootCleared(in.block[:]) {
 		assumptions = append(assumptions, "in-inode-map-cleared")
@@ -245,4 +256,33 @@ func rootCleared(b []byte) bool {
 	le := binary.LittleEndian
 	return allZero(b) || (le.Uint16(b) == extentMagic && le.Uint16(b[2:]) == 0 && le.Uint16(b[6:]) == 0 &&
 		int(le.Uint16(b[4:])) <= (len(b)-extentHeaderLen)/extentEntryLen)
+}
+
+// segsOverlap reports whether any two of segs, or any of segs and one of the one-block leaf blocks, share a block.
+func segsOverlap(segs []mapSeg, leafBlocks []uint64) bool {
+	all := make([]mapSeg, 0, len(segs)+len(leafBlocks))
+	all = append(all, segs...)
+	for _, b := range leafBlocks {
+		all = append(all, mapSeg{phys: int64(b), n: 1})
+	}
+	slices.SortFunc(all, func(a, b mapSeg) int { return cmp.Compare(a.phys, b.phys) })
+	var end int64
+	for k, s := range all {
+		if k > 0 && s.phys < end {
+			return true
+		}
+		end = max(end, s.phys+s.n)
+	}
+	return false
+}
+
+// firstSegOverlap returns the index of the first extent of segs that overlaps an earlier one or one of leafBlocks
+// (len(segs) when none does). Overlap in a prefix implies overlap in every longer one, so a binary search over the
+// prefix length finds the smallest overlapping prefix. The leaf blocks always count: they are what the extents must
+// not be over.
+func firstSegOverlap(segs []mapSeg, leafBlocks []uint64) int {
+	if !segsOverlap(segs, leafBlocks) {
+		return len(segs)
+	}
+	return sort.Search(len(segs), func(m int) bool { return segsOverlap(segs[:m+1], leafBlocks) })
 }

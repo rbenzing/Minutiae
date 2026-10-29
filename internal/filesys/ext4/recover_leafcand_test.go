@@ -121,8 +121,10 @@ func TestRecoverableLeafAfterKernelUnlink(t *testing.T) {
 	if !hasBasis(c, "index-leaves=2") {
 		t.Errorf("basis %q lacks index-leaves=2", c.Basis)
 	}
-	if hasAssumption(c, "file-end-unknown") {
-		t.Errorf("a complete chain claims the end is unknown: %q", c.Assumptions)
+	// i_size is zero on a real kernel delete (GATE-S), so even a chain that ends cleanly may have lost its last leaf
+	// or be an older, shorter copy: the end is unknown (3C-C3).
+	if !hasAssumption(c, "file-end-unknown") {
+		t.Errorf("a zero-size chain does not say its end is unknown: %q", c.Assumptions)
 	}
 }
 
@@ -421,5 +423,82 @@ func TestRecoverableLeafRunsCapStops(t *testing.T) {
 	c := leafOnly(t, f)
 	if got := stopOf(c); got != "runs-cap@4" || len(c.Runs) != 4 {
 		t.Errorf("stop %q with %d runs, want runs-cap@4 and 4 runs", got, len(c.Runs))
+	}
+}
+
+// With i_size zero the last leaf may be the one that was lost: the chain's end is not the file's end (3C-C3).
+func TestRecoverableLeafZeroSizeLostLastLeafEndIsUnknown(t *testing.T) {
+	file, data := leafTwoLeaves()
+	f, img, _ := leafImg(t, csumExt, []ext4test.File{file}, kernelFlags, true, func(img []byte, l *ext4test.Layout) {
+		clear(img[l.File("/gone.bin").Tree[1]*lbs:][:lbs])
+	})
+	c := leafOnly(t, f)
+	if !hasAssumption(c, "file-end-unknown") || !bytes.Equal(concatRuns(img, c.Runs), data[:45*lbs]) {
+		t.Errorf("assumptions %q, covered %d", c.Assumptions, coveredBytes(c))
+	}
+}
+
+// A data extent that points at a bound leaf block would make leaf metadata file content: the chain stops there.
+func TestRecoverableLeafDataExtentOverLeafBlockStops(t *testing.T) {
+	f, _, _ := leafImg(t, csumExt, bigDeleted(40), kernelFlags, true, func(img []byte, l *ext4test.Layout) {
+		loc := l.File("/gone.bin")
+		d, n := loc.Data, len(loc.Data)
+		l.WriteLeaf(img, d[n-1], loc.Inode, loc.Generation, []ext4test.Extent{{Lblk: 0, Len: 2, Phys: d[0]}, {Lblk: 2, Len: 1, Phys: d[n-2]}}, true)
+		l.WriteLeaf(img, d[n-2], loc.Inode, loc.Generation, []ext4test.Extent{{Lblk: 3, Len: 3, Phys: d[3]}}, true)
+	})
+	c := leafOnly(t, f)
+	if got := stopOf(c); got != "map-overlap@2" || coveredBytes(c) != 2*lbs {
+		t.Errorf("stop %q covered %d, want map-overlap@2 and 2 blocks", got, coveredBytes(c))
+	}
+	if c.Size != 6*lbs || !hasAssumption(c, "file-end-unknown") {
+		t.Errorf("size %d assumptions %q", c.Size, c.Assumptions)
+	}
+}
+
+func TestRecoverableLeafPhysicalBlockZeroIsMapDamaged(t *testing.T) {
+	f, _, _ := leafImg(t, csumExt, bigDeleted(40), kernelFlags, true, func(img []byte, l *ext4test.Layout) {
+		loc := l.File("/gone.bin")
+		d := loc.Data
+		l.WriteLeaf(img, d[len(d)-1], loc.Inode, loc.Generation, []ext4test.Extent{{Lblk: 0, Len: 2, Phys: d[0]}, {Lblk: 2, Len: 1, Phys: 0}}, true)
+	})
+	c := leafOnly(t, f)
+	if got := stopOf(c); got != "map-damaged@2" || coveredBytes(c) != 2*lbs {
+		t.Errorf("stop %q covered %d, want map-damaged@2 and 2 blocks", got, coveredBytes(c))
+	}
+}
+
+// Past 16 leaves the basis states the count instead of naming each.
+func TestRecoverableLeafBasisCapsNamedLeaves(t *testing.T) {
+	f, _, _ := leafImg(t, csumExt, bigDeleted(60), kernelFlags, true, func(img []byte, l *ext4test.Layout) {
+		var leaves [][]ext4test.Extent
+		for k := range 17 {
+			leaves = append(leaves, []ext4test.Extent{{Lblk: k, Len: 1, Phys: k}})
+		}
+		putLeaves(l, img, leaves...)
+	})
+	c := leafOnly(t, f)
+	named := 0
+	for _, b := range c.Basis {
+		if strings.HasPrefix(b, "leaf=") {
+			named++
+		}
+	}
+	if named != 16 || !hasBasis(c, "leaves=17") || !hasBasis(c, "index-leaves=17") {
+		t.Errorf("%d leaves named, basis %q", named, c.Basis)
+	}
+}
+
+// A huge i_size must not overflow the block count.
+func TestRecoverableLeafHugeInodeSize(t *testing.T) {
+	f, _, _ := leafImg(t, csumExt, bigDeleted(40), kernelKeepSize, true, func(img []byte, l *ext4test.Layout) {
+		putLeaves(l, img, []ext4test.Extent{{Lblk: 0, Len: 3, Phys: 0}})
+		l.PatchInode(img, l.File("/gone.bin").Inode, func(raw []byte) {
+			binary.LittleEndian.PutUint32(raw[4:], 0xFFFFFFFF)
+			binary.LittleEndian.PutUint32(raw[0x6C:], 0x7FFFFFFF)
+		})
+	})
+	cs, err := recoverOf(t, f)
+	if err != nil || len(cs) != 1 || stopOf(cs[0]) != "leaf-gap@3" {
+		t.Fatalf("got %+v, %v; want a candidate with leaf-gap@3", cs, err)
 	}
 }
