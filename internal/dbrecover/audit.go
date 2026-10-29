@@ -135,7 +135,26 @@ func excludedDetails(x []ExcludedTable) []any {
 	return out
 }
 
+func notHonoredDetails(x []NotHonoredClaim) []any {
+	out := []any{}
+	for _, e := range x {
+		out = append(out, map[string]any{
+			"parser": e.Parser, "version": e.Version, "tables": toAny(e.Tables),
+			"typed_analysis_id": e.TypedAnalysisID, "reason": e.Reason,
+		})
+	}
+	return out
+}
+
 func startDetails(set *sealedSet, rep SiblingReport, o Options, narrowed []string) map[string]any {
+	d := startDetails0(set, rep, o, narrowed)
+	if len(o.TypedNotHonored) > 0 {
+		d["typed_not_honored"] = notHonoredDetails(o.TypedNotHonored)
+	}
+	return d
+}
+
+func startDetails0(set *sealedSet, rep SiblingReport, o Options, narrowed []string) map[string]any {
 	return map[string]any{
 		"inputs": inputDetails(set), "siblings": siblingDetails(rep),
 		"options": optionDetails(o, narrowed), "excluded_tables": excludedDetails(o.ExcludeTables),

@@ -24,6 +24,9 @@ type Options struct {
 	// RelaxedSync runs every job's record batches with synchronous=NORMAL (records.WriterOptions.RelaxedSync, ruling D89):
 	// explicit and audited, off by default.
 	RelaxedSync bool
+	// UnmappedLocatorCap lowers the number of unmapped-row locators a typed recovery job remembers (0 = the
+	// default, 1<<16); past it the job honors no claim. A value above the default is ignored.
+	UnmappedLocatorCap int
 
 	skipLimitMinimums bool          // accept Timeout, GracePeriod and ProbeTimeout below the production minimums
 	source            caseSource    // replaces the case as the reader of the manifest and audit log
@@ -100,6 +103,9 @@ func New(c *evidence.Case, ps []Registered, opt Options) (*Host, error) {
 	}
 	if err := checkClaimUniqueness(ps); err != nil {
 		return nil, err
+	}
+	if opt.maxUnmapped == 0 && opt.UnmappedLocatorCap > 0 && opt.UnmappedLocatorCap < maxUnmappedLocators {
+		opt.maxUnmapped = opt.UnmappedLocatorCap
 	}
 	h := &Host{
 		c: c, registry: slices.Clone(ps), namers: opt.Namers, limits: opt.Limits,
