@@ -138,9 +138,10 @@ type Selection struct {
 	IncludeSnapshots bool
 	IncludeRecovered bool // recovered and carved artifacts (and artifacts with a recovered ancestor) are input
 
-	// admitRecovered admits this one artifact as recovered input without making its jobs explicit
-	// (RecoverTyped's OnlyPrimary): the jobs stay glob-matched and Probe-checked like any other.
-	admitRecovered string
+	// admitRecovered admits these artifacts as recovered input without making their jobs explicit
+	// (RecoverTyped's OnlyPrimary and the companions it expects): the jobs stay glob-matched and Probe-checked
+	// like any other.
+	admitRecovered map[string]bool
 }
 
 // ErrSelection is an unknown parser or a NAME@VERSION this build does not hold.
@@ -251,7 +252,7 @@ func (h *Host) discoverIn(ctx context.Context, snap *Snapshot, sel Selection, re
 		if m.Source.Kind == "extract" {
 			_, ancestor = snap.recoveryTrail(m.ID)
 		}
-		ok, _, excl := classify(m, sel.IncludeSnapshots, sel.IncludeRecovered || explicit[m.ID] || (sel.admitRecovered != "" && m.ID == sel.admitRecovered), ancestor)
+		ok, _, excl := classify(m, sel.IncludeSnapshots, sel.IncludeRecovered || explicit[m.ID] || sel.admitRecovered[m.ID], ancestor)
 		switch {
 		case excl == exclSnapshot:
 			counts.SnapshotExcluded++

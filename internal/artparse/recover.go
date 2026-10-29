@@ -111,7 +111,15 @@ func (h *Host) RecoverTyped(ctx context.Context, opt RecoverOptions) (RunSummary
 		return RunSummary{}, err
 	}
 	sel := opt.Selection
-	sel.admitRecovered = opt.OnlyPrimary
+	sel.admitRecovered = map[string]bool{}
+	if opt.OnlyPrimary != "" {
+		sel.admitRecovered[opt.OnlyPrimary] = true
+	}
+	for _, id := range opt.ExpectCompanions { // the caller named these as the bundle's own files
+		if id != "" {
+			sel.admitRecovered[id] = true
+		}
+	}
 	jobs, _, err := h.discoverIn(ctx, snap, sel, views)
 	if err != nil {
 		return RunSummary{}, err
