@@ -576,6 +576,18 @@ func (p *pass) candidate(ct *ctype, pos int64) (int64, error) {
 	var v Verdict
 	if ct.validate != nil {
 		v = ct.validate(w)
+		if v.Outcome == Bounded && len(v.Assumptions) == 0 {
+			// A bounded verdict always states why the length stops where it does.
+			// A validator that only bounds the object to its window (gzip) leaves
+			// the label to the scanner, which knows the cap and the run; any other
+			// length has no label that fits and is a validator defect (rejected
+			// below, counted, never silent).
+			if v.Length == winLen {
+				v.Assumptions = []string{p.boundedAssumption(ct, winLen, limit)}
+			} else {
+				v = Verdict{Outcome: Rejected, Reason: "validator-defect"}
+			}
+		}
 	} else {
 		v = p.footerVerdict(ct, w, winLen, limit)
 	}
@@ -630,18 +642,23 @@ func (p *pass) footerVerdict(ct *ctype, w *Window, winLen, limit int64) Verdict 
 			return Verdict{Outcome: Footer, Length: at + int64(len(ct.t.Footer)), Basis: []string{"footer"}}
 		}
 	}
-	var assume string
+	return Verdict{Outcome: Bounded, Length: winLen, Assumptions: []string{p.boundedAssumption(ct, winLen, limit)}}
+}
+
+// boundedAssumption names why a bounded object ends at its window end: the
+// type's maximum length, the end of the run, of the outer object, or of the
+// readable range.
+func (p *pass) boundedAssumption(ct *ctype, winLen, limit int64) string {
 	switch {
 	case winLen == ct.t.MaxLen:
-		assume = "length-capped"
+		return "length-capped"
 	case limit == p.hi && p.depth == 0:
-		assume = "cut-at-run-end"
+		return "cut-at-run-end"
 	case limit == p.hi:
-		assume = "cut-at-outer-object-end"
+		return "cut-at-outer-object-end"
 	default:
-		assume = "cut-at-unreadable-range"
+		return "cut-at-unreadable-range"
 	}
-	return Verdict{Outcome: Bounded, Length: winLen, Assumptions: []string{assume}}
 }
 
 // searchFooter returns the offset of the first footer at or after from inside

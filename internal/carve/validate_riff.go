@@ -5,6 +5,17 @@ import (
 	"strconv"
 )
 
+// readFailReason is the one mapping of a failed window read to a typed rejection
+// reason (ruling 3E-C1): a read that reached past the window is "truncated";
+// every other failure (media error, spent budget, cancelled context) is
+// "unreadable". The scanner rejects any hit whose window saw a media error.
+func readFailReason(err error) string {
+	if errors.Is(err, ErrOutsideWindow) {
+		return "truncated"
+	}
+	return "unreadable"
+}
+
 // riffChunk is one chunk of a RIFF walk: its fourcc and the window offset and
 // size of its payload.
 type riffChunk struct {
@@ -12,9 +23,8 @@ type riffChunk struct {
 	off, size int64
 }
 
-// riffWalk is the RIFF container walker shared by the WebP validator and, from
-// task 7C, the WAV validator. It checks the 12-byte header (RIFF, the form),
-// the declared size against the window, and walks the chunks (printable
+// riffWalk is the RIFF container walker shared by the WebP and WAV validators. It
+// checks the 12-byte header (RIFF, the form), the declared size against the window, and walks the chunks (printable
 // fourcc, little-endian size, even padding) until the cursor lands exactly on
 // 8 + the RIFF size. A chunk size only moves a cursor inside the window; no
 // allocation is made from it and every step advances at least 8 bytes. visit
@@ -23,15 +33,9 @@ type riffChunk struct {
 // rejection reason ("" when the walk completed). A window or media failure is
 // "truncated" past the window and "unreadable" otherwise.
 func riffWalk(w *Window, form string, visit func(i int, c riffChunk) string) (length int64, chunks int, reason string) {
-	fail := func(err error) string {
-		if errors.Is(err, ErrOutsideWindow) {
-			return "truncated"
-		}
-		return "unreadable"
-	}
 	var hdr [12]byte
 	if _, err := w.ReadAt(hdr[:], 0); err != nil {
-		return 0, 0, fail(err)
+		return 0, 0, readFailReason(err)
 	}
 	if string(hdr[:4]) != "RIFF" {
 		return 0, 0, "bad-signature"
@@ -53,7 +57,7 @@ func riffWalk(w *Window, form string, visit func(i int, c riffChunk) string) (le
 			return 0, 0, "bad-length"
 		}
 		if _, err := w.ReadAt(ch[:], pos); err != nil {
-			return 0, 0, fail(err)
+			return 0, 0, readFailReason(err)
 		}
 		for _, c := range ch[:4] {
 			if c < 0x20 || c > 0x7E {
@@ -77,19 +81,13 @@ func riffWalk(w *Window, form string, visit func(i int, c riffChunk) string) (le
 // returns its dimensions; a chunk too short for the header, or with a wrong
 // signature, is rejected, so an empty image chunk never counts as an image.
 func webpImageHeader(w *Window, c riffChunk) (width, height int, reason string) {
-	fail := func(err error) string {
-		if errors.Is(err, ErrOutsideWindow) {
-			return "truncated"
-		}
-		return "unreadable"
-	}
 	if c.typ == "VP8L" {
 		if c.size < 5 {
 			return 0, 0, "bad-vp8l"
 		}
 		var p [5]byte
 		if _, err := w.ReadAt(p[:], c.off); err != nil {
-			return 0, 0, fail(err)
+			return 0, 0, readFailReason(err)
 		}
 		if p[0] != 0x2F {
 			return 0, 0, "bad-vp8l"
@@ -102,7 +100,7 @@ func webpImageHeader(w *Window, c riffChunk) (width, height int, reason string) 
 	}
 	var p [10]byte
 	if _, err := w.ReadAt(p[:], c.off); err != nil {
-		return 0, 0, fail(err)
+		return 0, 0, readFailReason(err)
 	}
 	if p[3] != 0x9D || p[4] != 0x01 || p[5] != 0x2A {
 		return 0, 0, "bad-vp8"
@@ -139,10 +137,7 @@ func validateRIFFWebP(w *Window) Verdict {
 				}
 				var p [10]byte
 				if _, err := w.ReadAt(p[:], c.off); err != nil {
-					if errors.Is(err, ErrOutsideWindow) {
-						return "truncated"
-					}
-					return "unreadable"
+					return readFailReason(err)
 				}
 				cw := 1 + (int(p[4]) | int(p[5])<<8 | int(p[6])<<16)
 				ch := 1 + (int(p[7]) | int(p[8])<<8 | int(p[9])<<16)
@@ -169,10 +164,7 @@ func validateRIFFWebP(w *Window) Verdict {
 			}
 			var sub [8]byte
 			if _, err := w.ReadAt(sub[:], c.off+16); err != nil {
-				if errors.Is(err, ErrOutsideWindow) {
-					return "truncated"
-				}
-				return "unreadable"
+				return readFailReason(err)
 			}
 			typ := string(sub[:4])
 			ssize := int64(sub[4]) | int64(sub[5])<<8 | int64(sub[6])<<16 | int64(sub[7])<<24
@@ -203,5 +195,44 @@ func validateRIFFWebP(w *Window) Verdict {
 	return Verdict{Outcome: Validated, Length: length, Basis: []string{"dims=" + dims, "chunks=" + strconv.Itoa(chunks)}}
 }
 
-// validateRIFFWave is a stub until its task lands (plan 3E, task 7C).
-func validateRIFFWave(*Window) Verdict { return Verdict{Outcome: Rejected, Reason: "no-validator"} }
+// validateRIFFWave accepts a WAV from its RIFF structure: form WAVE, a first
+// chunk "fmt " of at least 16 bytes whose audio format, channel count, sample
+// rate and block align are all non-zero, a "data" chunk somewhere, and a chunk
+// walk that lands exactly on the RIFF size, which bounds the object. A file
+// with no chunk at all has no fmt chunk (bad-fmt). Samples are never read. The
+// layout is from memory (docs/limitations.md).
+func validateRIFFWave(w *Window) Verdict {
+	var channels, rate uint32
+	var data bool
+	length, chunks, reason := riffWalk(w, "WAVE", func(i int, c riffChunk) string {
+		switch {
+		case i == 0:
+			if c.typ != "fmt " || c.size < 16 {
+				return "bad-fmt"
+			}
+			var p [16]byte
+			if _, err := w.ReadAt(p[:], c.off); err != nil {
+				return readFailReason(err)
+			}
+			format := uint32(p[0]) | uint32(p[1])<<8
+			channels = uint32(p[2]) | uint32(p[3])<<8
+			rate = uint32(p[4]) | uint32(p[5])<<8 | uint32(p[6])<<16 | uint32(p[7])<<24
+			align := uint32(p[12]) | uint32(p[13])<<8
+			if format == 0 || channels == 0 || rate == 0 || align == 0 {
+				return "bad-fmt"
+			}
+		case c.typ == "data":
+			data = true
+		}
+		return ""
+	})
+	switch {
+	case reason != "":
+		return Verdict{Outcome: Rejected, Reason: reason}
+	case chunks == 0:
+		return Verdict{Outcome: Rejected, Reason: "bad-fmt"}
+	case !data:
+		return Verdict{Outcome: Rejected, Reason: "no-data"}
+	}
+	return Verdict{Outcome: Validated, Length: length, Basis: []string{"channels=" + strconv.FormatUint(uint64(channels), 10), "rate=" + strconv.FormatUint(uint64(rate), 10)}}
+}
