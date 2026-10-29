@@ -1,6 +1,7 @@
 package ext4
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -8,7 +9,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/filesys"
 )
 
-// Recovery methods (spec 3.3). Task 9 adds the leaf source; 3G adds the journal source.
+// Recovery methods (spec 3.3). 3G adds the journal source.
 const (
 	MethodInodeIntact = "ext-inode-intact"
 	MethodExtentLeaf  = "ext4-extent-leaf"
@@ -21,7 +22,7 @@ var _ filesys.Recoverer = (*FS)(nil)
 
 // Recoverable returns where the content of the deleted entry e may still be. Only e.ID is used. The pipeline is:
 // parse the ID (canonical forms only, no I/O), re-resolve the record from disk (resolveDeleted), accept the stale inode
-// it names (staleInodeFor), then ask each candidate source. With no candidate the answer is nil, nil: nothing the
+// it names (staleInodeFor), then ask each candidate source (intact map, then extent leaves). With no candidate the answer is nil, nil: nothing the
 // reader can claim. Every returned slice is fresh. Typed errors (filesys.ErrNotFound, ErrNotDeleted, ErrReused,
 // ErrUndecided, ErrLimit, ErrIncomplete, ErrUnsupported, *filesys.CorruptError, or an I/O error) pass through as the
 // earlier stages made them.
@@ -49,6 +50,23 @@ func (f *FS) Recoverable(e filesys.Entry) ([]filesys.Candidate, error) {
 		return nil, err
 	} else if ok {
 		out = append(out, c)
+	}
+	leaf, err := f.leafCandidates(st)
+	var unknown *leafUnknownError
+	switch {
+	case errors.As(err, &unknown):
+		// The leaf source cannot say whether it has an answer: that is stated on every other candidate, and an entry
+		// with no other candidate is undecided (3C-R11, 3C-R25).
+		if len(out) == 0 {
+			return nil, err
+		}
+		for i := range out {
+			out[i].Warnings = append(out[i].Warnings, unknown.warning)
+		}
+	case err != nil:
+		return nil, err
+	default:
+		out = append(out, leaf...)
 	}
 	return out, nil
 }

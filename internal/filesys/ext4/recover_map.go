@@ -172,7 +172,7 @@ func (w *mapWalker) extentRoot() error {
 	if depth > maxExtentDepth {
 		return w.stopAt(stopMapDamaged, 0)
 	}
-	if depth == 0 && le.Uint16(b[2:]) == 0 && int(le.Uint16(b[4:])) <= (len(b)-extentHeaderLen)/extentEntryLen {
+	if rootCleared(b) {
 		w.cleared = true // an empty root: what a kernel unlink leaves
 		return nil
 	}

@@ -276,6 +276,7 @@ func TestRecoverableKernelUnlinkedSmallFileHasNoCandidate(t *testing.T) {
 			fsys, _, _ := recImageWith(t, tc.o, []ext4test.File{{Path: "/gone.bin", Data: data, Deleted: true}}, func(img []byte, l *ext4test.Layout) {
 				l.Unlink(img, "/gone.bin", tc.e)
 			})
+			prepare(t, fsys) // no leaf of this inode is in free space: the answer is then nothing, not unknown
 			cs, err := fsys.Recoverable(delEntry(t, fsys, "/gone.bin"))
 			if err != nil || cs != nil {
 				t.Fatalf("Recoverable = %+v, %v; want nil, nil (the map is gone, nothing to claim)", cs, err)
@@ -400,6 +401,7 @@ func TestRecoverableDtimeBeforeCtimeIsFlagged(t *testing.T) {
 	}
 	// The ordinary case carries neither.
 	ok, _, _ := recImageWith(t, csumExt, []ext4test.File{f}, func(img []byte, l *ext4test.Layout) { l.Unlink(img, "/gone.bin", ext4test.DebugfsRm) })
+	prepare(t, ok)
 	if c := oneCandidate(t, ok, "/gone.bin"); slices.Contains(c.Assumptions, "dtime-before-ctime") || len(c.Warnings) != 0 {
 		t.Errorf("a consistent inode is flagged: %+v", c)
 	}

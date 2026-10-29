@@ -2,9 +2,11 @@ package ext4_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -60,6 +62,7 @@ func fuzzRecoverSeeds(t testing.TB) [][]byte {
 		build(xo, gone(pattern(3000, 46)), rm("/gone", kernel)),
 		build(ext4test.Options{}, gone(pattern(3000, 47)), rm("/gone", ext4test.DebugfsRm)),
 		build(xo, []ext4test.File{two}, rm("/gone", ext4test.DebugfsRm)),
+		build(xo, []ext4test.File{two}, rm("/gone", kernel)),                                   // a kernel unlink of a depth-1 tree: only the free leaves remain
 		build(ext4test.Options{}, gone(pattern(16*1024, 48)), rm("/gone", ext4test.DebugfsRm)), // an indirect block
 		build(ext4test.Options{Extents: true, InlineData: true, MetadataCsum: true}, []ext4test.File{
 			{Path: "/idir", Dir: true, Inline: true},
@@ -119,7 +122,7 @@ func FuzzExt4Recoverable(f *testing.F) {
 		if err != nil {
 			return
 		}
-		// Task 8: fsys.PrepareRecovery(context.Background()) goes here.
+		_ = fsys.PrepareRecovery(context.Background()) // an I/O error leaves the index unbuilt: the leaf source is then undecided
 		var deleted []filesys.Entry
 		visited := 0
 		_ = filesys.Walk(fsys, fsys.Root(), "/", func(_ string, e filesys.Entry, err error) error {
@@ -170,16 +173,19 @@ func FuzzExt4Recoverable(f *testing.F) {
 // The seeds must reach the candidate code, or the fuzz target checks nothing.
 func TestFuzzRecoverSeedsEmitCandidates(t *testing.T) {
 	withCands := 0
+	leaf := false
 	for i, s := range fuzzRecoverSeeds(t) {
 		fsys, err := ext4.Open(bytes.NewReader(s), int64(len(s)))
 		if err != nil {
 			t.Fatalf("seed %d: %v", i, err)
 		}
+		_ = fsys.PrepareRecovery(context.Background())
 		got := false
 		_ = filesys.Walk(fsys, fsys.Root(), "/", func(_ string, e filesys.Entry, err error) error {
 			if err == nil && e.Deleted {
 				if cs, _ := fsys.Recoverable(e); len(cs) > 0 {
 					got = true
+					leaf = leaf || slices.ContainsFunc(cs, func(c filesys.Candidate) bool { return c.Method == ext4.MethodExtentLeaf })
 				}
 			}
 			return nil
@@ -187,6 +193,9 @@ func TestFuzzRecoverSeedsEmitCandidates(t *testing.T) {
 		if got {
 			withCands++
 		}
+	}
+	if !leaf {
+		t.Error("no seed yields an ext4-extent-leaf candidate")
 	}
 	if withCands < 5 {
 		t.Errorf("only %d seeds yield a candidate", withCands)

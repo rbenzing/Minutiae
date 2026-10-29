@@ -385,6 +385,10 @@ const (
 	capJournalNotReplayed = 40
 	// assumptionJournalNotReplayed is the reader assumption that selects that cap.
 	assumptionJournalNotReplayed = "journal-not-replayed"
+	// assumptionFileEndUnknown is the reader assumption that the declared size is a lower bound of the file: the
+	// candidate is capped like a prefix (capCut) although its runs cover its declared size (3C-C3). Local to the
+	// callers of confidenceFor, whose signature is unchanged.
+	assumptionFileEndUnknown = "file-end-unknown"
 )
 
 // confidenceFor is the base of the method with the caps applied; false when the build has no rule for
