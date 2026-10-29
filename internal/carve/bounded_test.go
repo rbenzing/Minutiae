@@ -382,3 +382,21 @@ func TestTruncatedObjectsAskForNothingOutside(t *testing.T) {
 		}
 	}
 }
+
+// TestJPEGWindowEndsAfterEntropyFF: the window ends right after an FF byte in
+// the entropy data, so the byte that would say what the FF is lies past it. The
+// validator must find the object cut by its own bound, asking for nothing.
+func TestJPEGWindowEndsAfterEntropyFF(t *testing.T) {
+	obj := carvetest.JPEG(carvetest.JPEGOpts{})
+	sos := bytes.Index(obj, []byte{0xFF, 0xDA})
+	if sos < 0 {
+		t.Fatal("no SOS in the builder object")
+	}
+	start := sos + 2 + int(obj[sos+2])<<8 + int(obj[sos+3])
+	cut := append(slices.Clone(obj[:start]), 0x41, 0xFF)
+	w := newWindow(context.Background(), bytes.NewReader(cut), 0, int64(len(cut)), newBudget(1<<30))
+	v := validateJPEG(w)
+	if v.Outcome != Rejected || v.Reason != "truncated" || w.outsideReads() != 0 {
+		t.Fatalf("verdict = %+v, outside reads = %d, want rejected truncated and none", v, w.outsideReads())
+	}
+}
