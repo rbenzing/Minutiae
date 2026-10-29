@@ -359,3 +359,80 @@ func TestBMFFRealEncoderObjects(t *testing.T) {
 		t.Fatalf("expected at least 4 isobmff objects, found %d", n)
 	}
 }
+
+// TestBMFFHdlrUnderHandlerSize: an hdlr of 12-19 bytes (the short-hdlr guard)
+// has no handler_type, so the picture meta is missing. The trap box after the
+// size-12 hdlr puts the bytes "pict" exactly where a guard-less read of the
+// handler would look.
+func TestBMFFHdlrUnderHandlerSize(t *testing.T) {
+	box, full := carvetest.Box, carvetest.FullBox
+	ftyp := box("ftyp", []byte("heic"), make([]byte, 4))
+	for size := 12; size <= 19; size++ {
+		hdlr := box("hdlr", make([]byte, size-8))
+		trap := box("pict", make([]byte, 8))
+		obj := slices.Concat(ftyp, full("meta", 0, 0, hdlr, trap), box("mdat", make([]byte, 8)))
+		if v := bmffVerdict(obj, 0); v.Outcome != Rejected || v.Reason != "missing-meta" {
+			t.Errorf("hdlr of %d bytes: verdict = %+v, want rejected missing-meta", size, v)
+		}
+	}
+	// Control: the full 20-byte hdlr with the same handler is accepted.
+	hdlr := full("hdlr", 0, 0, make([]byte, 4), []byte("pict"))
+	ok := slices.Concat(ftyp, full("meta", 0, 0, hdlr), box("mdat", make([]byte, 8)))
+	if v := bmffVerdict(ok, 0); v.Outcome != Validated {
+		t.Fatalf("control verdict = %+v", v)
+	}
+}
+
+// TestBMFFCopyrightTypeByte: the type byte 0xA9 (a (c) atom such as
+// (c)xyz) is a valid type character in a moov child, in a udta below the moov
+// and in a top-level udta; a control byte is not.
+func TestBMFFCopyrightTypeByte(t *testing.T) {
+	box, full := carvetest.Box, carvetest.FullBox
+	ftyp := box("ftyp", []byte("isom"), make([]byte, 4))
+	mvhd := full("mvhd", 0, 0, make([]byte, 96))
+	cpr := box("\xa9xyz", make([]byte, 12))
+	for name, moov := range map[string][]byte{
+		"child of moov":      box("moov", mvhd, cpr),
+		"inside udta":        box("moov", mvhd, box("udta", cpr)),
+		"after udta in moov": box("moov", mvhd, box("udta", cpr), cpr),
+	} {
+		obj := slices.Concat(ftyp, moov, box("mdat", make([]byte, 8)))
+		if v := bmffVerdict(obj, 0); v.Outcome != Validated || v.Length != int64(len(obj)) {
+			t.Errorf("%s: verdict = %+v, want validated %d", name, v, len(obj))
+		}
+	}
+	// A top-level udta holding the atom is walked over; the atom itself is not
+	// a top-level type and stops the walk without failing the file.
+	good := slices.Concat(ftyp, box("moov", mvhd), box("udta", cpr))
+	if v := bmffVerdict(slices.Concat(good, cpr), 0); v.Outcome != Validated || v.Length != int64(len(good)) {
+		t.Fatalf("top-level udta verdict = %+v, want validated %d", v, len(good))
+	}
+	bad := slices.Concat(ftyp, box("moov", mvhd, box("\x01xyz", make([]byte, 12))))
+	if v := bmffVerdict(bad, 0); v.Outcome != Rejected || v.Reason != "bad-children" {
+		t.Fatalf("control-byte child = %+v, want rejected bad-children", v)
+	}
+}
+
+// TestBMFFNonHEIFMalformedMetaValidates pins the accepted HEIF-only rule: the
+// layout of a meta box is judged only for a HEIF brand; for any other identity
+// it is walked over by its size.
+func TestBMFFNonHEIFMalformedMetaValidates(t *testing.T) {
+	box, full := carvetest.Box, carvetest.FullBox
+	ftyp := box("ftyp", []byte("isom"), make([]byte, 4))
+	moov := box("moov", full("mvhd", 0, 0, make([]byte, 96)))
+	for name, meta := range map[string][]byte{
+		"payload under 4 bytes": box("meta", []byte{0, 0, 0}),
+		"stray children":        full("meta", 0, 0, []byte{1, 2, 3}),
+	} {
+		obj := slices.Concat(ftyp, moov, meta, box("mdat", make([]byte, 8)))
+		v := bmffVerdict(obj, 0)
+		if v.Outcome != Validated || v.Length != int64(len(obj)) || !slices.Contains(v.Basis, "boxes=moov,meta,mdat") {
+			t.Errorf("%s: verdict = %+v, want validated %d with meta listed", name, v, len(obj))
+		}
+	}
+	// The same meta under a HEIF brand is judged.
+	heic := slices.Concat(box("ftyp", []byte("heic"), make([]byte, 4)), box("meta", []byte{0, 0, 0}))
+	if v := bmffVerdict(heic, 0); v.Outcome != Rejected || v.Reason != "bad-children" {
+		t.Fatalf("heic malformed meta = %+v, want rejected bad-children", v)
+	}
+}

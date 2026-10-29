@@ -149,7 +149,7 @@ func TestCarveNeverInflates(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, imp := range af.Imports {
-			if strings.HasPrefix(strings.Trim(imp.Path.Value, `"`), "compress/") {
+			if p := strings.Trim(imp.Path.Value, `"`); strings.HasPrefix(p, "compress/") || strings.HasPrefix(p, "archive/") {
 				t.Errorf("%s imports %s", f, imp.Path.Value)
 			}
 		}

@@ -161,3 +161,29 @@ func (w *Window) refill(off int64) error {
 	w.cacheOff, w.cacheLen, w.cacheLoaded = start, int(n), true
 	return nil
 }
+
+// fits reports whether [off, off+n) lies inside the window.
+func (w *Window) fits(off, n int64) bool {
+	return off >= 0 && n >= 0 && off <= w.length && n <= w.length-off
+}
+
+// byteChecked is Byte for a validator that tests its position first-hand: an
+// offset past the window is ErrOutsideWindow without a request to the window,
+// so a cut object is found by the validator's own bound and the count of
+// refused reads stays a count of defects.
+func (w *Window) byteChecked(off int64) (byte, error) {
+	if !w.fits(off, 1) {
+		return 0, ErrOutsideWindow
+	}
+	return w.Byte(off)
+}
+
+// readChecked is ReadAt with the same first-hand bound: a range that does not
+// lie wholly inside the window is ErrOutsideWindow and nothing is requested.
+func (w *Window) readChecked(p []byte, off int64) error {
+	if !w.fits(off, int64(len(p))) {
+		return ErrOutsideWindow
+	}
+	_, err := w.ReadAt(p, off)
+	return err
+}

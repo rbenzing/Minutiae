@@ -22,12 +22,12 @@ func validateJPEG(w *Window) Verdict {
 		}
 		return reject("unreadable")
 	}
-	if b, err := w.Byte(0); err != nil {
+	if b, err := w.byteChecked(0); err != nil {
 		return fail(err)
 	} else if b != 0xFF {
 		return reject("bad-marker")
 	}
-	if b, err := w.Byte(1); err != nil {
+	if b, err := w.byteChecked(1); err != nil {
 		return fail(err)
 	} else if b != 0xD8 {
 		return reject("bad-marker")
@@ -46,7 +46,7 @@ func validateJPEG(w *Window) Verdict {
 		}
 	)
 	for {
-		b, err := w.Byte(pos)
+		b, err := w.byteChecked(pos)
 		if err != nil {
 			return fail(err)
 		}
@@ -56,7 +56,7 @@ func validateJPEG(w *Window) Verdict {
 		pos++
 		var code byte
 		for { // fill: further FF before the code
-			if code, err = w.Byte(pos); err != nil {
+			if code, err = w.byteChecked(pos); err != nil {
 				return fail(err)
 			}
 			pos++
@@ -80,7 +80,7 @@ func validateJPEG(w *Window) Verdict {
 			return reject("bad-marker")
 		}
 		var lb [2]byte
-		if _, err := w.ReadAt(lb[:], pos); err != nil {
+		if err := w.readChecked(lb[:], pos); err != nil {
 			return fail(err)
 		}
 		l := int64(lb[0])<<8 | int64(lb[1])
@@ -99,7 +99,7 @@ func validateJPEG(w *Window) Verdict {
 			if l < 8 {
 				return reject("bad-frame")
 			}
-			if _, err := w.ReadAt(hdr[:], pos+2); err != nil {
+			if err := w.readChecked(hdr[:], pos+2); err != nil {
 				return fail(err)
 			}
 			nf := int64(hdr[5])
@@ -130,7 +130,7 @@ func validateJPEG(w *Window) Verdict {
 			return reject("bad-scan")
 		}
 		var ns [1]byte
-		if _, err := w.ReadAt(ns[:], sosAt+2); err != nil {
+		if err := w.readChecked(ns[:], sosAt+2); err != nil {
 			return fail(err)
 		}
 		if ns[0] < 1 || ns[0] > 4 || l != 6+2*int64(ns[0]) {
@@ -141,7 +141,7 @@ func validateJPEG(w *Window) Verdict {
 		// Entropy-coded data: FF 00 stuffing, FF D0-D7 restart and FF FF fill
 		// stay inside; FF followed by any other code ends it at that FF.
 		for {
-			b, err := w.Byte(pos)
+			b, err := w.byteChecked(pos)
 			if err != nil {
 				return fail(err)
 			}
@@ -150,7 +150,7 @@ func validateJPEG(w *Window) Verdict {
 				pos++
 				continue
 			}
-			n, err := w.Byte(pos + 1)
+			n, err := w.byteChecked(pos + 1)
 			if err != nil {
 				return fail(err)
 			}
