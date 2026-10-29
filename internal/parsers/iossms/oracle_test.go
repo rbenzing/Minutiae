@@ -7,12 +7,8 @@ import (
 	"github.com/rbenzing/minutiae/internal/parsers/parsertest"
 )
 
-// oracleVariants are the variants this task maps completely: the others hold attachments, recently deleted
-// messages and plists, which Task 9 adds (and extends this list to every variant).
-var oracleVariants = []string{"ios10-seconds"}
-
 func TestIOSSMSMatchesOracle(t *testing.T) {
-	for _, v := range oracleVariants {
+	for _, v := range variants {
 		t.Run(v, func(t *testing.T) {
 			h := parsertest.NewHarness(t)
 			fx := parsertest.LoadFixture(t, "testdata", v)
