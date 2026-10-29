@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"math/rand/v2"
 	"slices"
@@ -379,5 +380,123 @@ func TestPrepareRecoveryAddsNoFilesystemWarning(t *testing.T) {
 	prepare(t, f)
 	if after := f.Info().Warnings; !slices.Equal(before, after) {
 		t.Errorf("warnings %q became %q", before, after)
+	}
+}
+
+// A leaf whose last extent ends exactly at logical block 2^32 is plausible, and its end does not wrap to 0.
+func TestPlausibleLeafEndAtTheLogicalLimitDoesNotWrap(t *testing.T) {
+	var blk int
+	img := leafImage(t, func(img []byte, l *ext4test.Layout, free []int) {
+		l.WriteLeaf(img, free[0], 12, 7, []ext4test.Extent{{Lblk: 0xFFFFFFF0, Len: 16, Phys: 100}}, true)
+		blk = free[0]
+	})
+	first, end, _, ok := ext4.PlausibleLeaf(img[blk*leafBS:(blk+1)*leafBS], leafBS, uint64(len(img)/leafBS))
+	if !ok || first != 0xFFFFFFF0 || end != 1<<32 {
+		t.Fatalf("first %#x end %#x ok %v, want 0xfffffff0, 1<<32, true", first, end, ok)
+	}
+}
+
+// A cancel seen only after the last chunk was read is still honoured, and nothing half-built is kept.
+func TestPrepareRecoveryHonoursCancelDuringTheLastChunk(t *testing.T) {
+	f, h := openHooked(t, leafImage(t, oneLeaf))
+	_, runs := freeBytes(t, f)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.set(func(_ []byte, off int64) {
+		if off == runs[len(runs)-1].Offset {
+			cancel()
+		}
+	})
+	if err := f.PrepareRecovery(ctx); err != context.Canceled {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if leaves, _, _ := f.LeafIndexStats(); leaves != -1 {
+		t.Errorf("a cancelled pass left an index with %d leaves", leaves)
+	}
+}
+
+type failReader struct {
+	r    io.ReaderAt
+	runs []filesys.Run
+	err  error
+}
+
+func (r *failReader) ReadAt(p []byte, off int64) (int, error) {
+	if inRuns(r.runs, off) {
+		return 0, r.err
+	}
+	return r.r.ReadAt(p, off)
+}
+
+func TestPrepareRecoveryReturnsADataReadErrorAsIs(t *testing.T) {
+	img := leafImage(t, oneLeaf)
+	boom := errors.New("disk on fire")
+	fr := &failReader{r: bytes.NewReader(img), err: boom}
+	f, err := ext4.Open(fr, int64(len(img)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, fr.runs = freeBytes(t, f)
+	if err := f.PrepareRecovery(context.Background()); err != boom {
+		t.Fatalf("err = %v, want the reader's error unchanged", err)
+	}
+	if leaves, _, _ := f.LeafIndexStats(); leaves != -1 {
+		t.Errorf("a failed pass left an index with %d leaves", leaves)
+	}
+}
+
+func TestLeafIndexRejectsEhMaxAboveCapacity(t *testing.T) {
+	img := leafImage(t, func(img []byte, l *ext4test.Layout, free []int) {
+		l.WriteLeaf(img, free[0], 12, 7, []ext4test.Extent{{Lblk: 0, Len: 3, Phys: 100}}, true)
+		binary.LittleEndian.PutUint16(img[free[0]*leafBS+4:], (leafBS-12)/12+1)
+	})
+	f := openImg(t, img)
+	prepare(t, f)
+	if leaves, _, _ := f.LeafIndexStats(); leaves != 0 {
+		t.Errorf("%d leaves indexed, want none for eh_max above the block capacity", leaves)
+	}
+}
+
+// 4 KiB blocks: the tail offset and the keying follow the block size.
+func TestLeafKeyAt4KiBBlocks(t *testing.T) {
+	const bs = 4096
+	o := ext4test.Options{Extents: true, MetadataCsum: true, BlockSize: bs}
+	img, l := ext4test.BuildLayout(o, []ext4test.File{{Path: "/gone.bin", Data: pattern(6*bs, 5), Deleted: true}})
+	l.Unlink(img, "/gone.bin", ext4test.DebugfsRm)
+	free := l.File("/gone.bin").Data
+	l.WriteLeaf(img, free[0], 12, 7, []ext4test.Extent{{Lblk: 0, Len: 3, Phys: free[1]}}, true)
+	f := openImg(t, img)
+	prepare(t, f)
+	if got, want := ext4.LeafTail(bs), 12+12*((bs-12)/12); got != want {
+		t.Fatalf("tail %d, want %d", got, want)
+	}
+	blks, capped := f.LeafLookup(ext4.SeedKey(f.InodeSeed(12, 7), ext4.LeafTail(bs)))
+	if len(blks) != 1 || blks[0] != uint64(free[0]) || capped {
+		t.Errorf("blocks %v capped %v, want [%d]", blks, capped, free[0])
+	}
+	if blks, _ := f.LeafLookup(ext4.SeedKey(f.InodeSeed(12, 8), ext4.LeafTail(bs))); len(blks) != 0 {
+		t.Errorf("generation 8 found %v", blks)
+	}
+}
+
+// A chunk size that is not a block multiple is rounded to whole blocks: nothing is read twice or split.
+func TestPrepareRecoveryChunkNotABlockMultiple(t *testing.T) {
+	f, h := openHooked(t, leafImage(t, oneLeaf))
+	f.SetLeafChunk(2*leafBS + 300)
+	free, runs := freeBytes(t, f)
+	var got []int64
+	h.set(func(p []byte, off int64) {
+		if inRuns(runs, off) {
+			got = append(got, int64(len(p)))
+		}
+	})
+	prepare(t, f)
+	for _, n := range got {
+		if n%leafBS != 0 {
+			t.Errorf("a read of %d bytes is not a whole number of blocks", n)
+		}
+	}
+	if leaves, _, read := f.LeafIndexStats(); leaves != 1 || read != free {
+		t.Errorf("leaves %d read %d, want 1 and %d", leaves, read, free)
 	}
 }

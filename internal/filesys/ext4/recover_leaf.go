@@ -33,9 +33,10 @@ const (
 
 // leafRef is one plausible leaf: its block and the logical range [first, end) its entries cover.
 type leafRef struct {
-	blk        uint64
-	first, end uint32
-	entries    uint16
+	blk     uint64
+	first   uint32
+	end     uint64 // one past the last logical block; 2^32 is possible, so it is wider than first
+	entries uint16
 }
 
 // leafIndex is the free-space leaf index, built once per filesystem by PrepareRecovery.
@@ -112,7 +113,7 @@ func plausibleLeaf(block []byte, bs int, blocks uint64) (leafRef, bool) {
 		}
 		prevEnd = lblk + n
 	}
-	ref.end = uint32(prevEnd)
+	ref.end = prevEnd
 	return ref, true
 }
 
@@ -164,6 +165,9 @@ func (f *FS) PrepareRecovery(ctx context.Context) error {
 			}
 			off += int64(n)
 		}
+	}
+	if err := ctx.Err(); err != nil { // a cancel seen after the last chunk is honoured too
+		return err
 	}
 	f.leafIdx = idx
 	return nil

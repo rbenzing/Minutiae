@@ -302,7 +302,7 @@ func (f *FS) LeafLookup(key uint32) (blks []uint64, capped bool) {
 }
 
 // PlausibleLeaf is plausibleLeaf.
-func PlausibleLeaf(block []byte, bs int, blocks uint64) (first, end uint32, entries uint16, ok bool) {
+func PlausibleLeaf(block []byte, bs int, blocks uint64) (first uint32, end uint64, entries uint16, ok bool) {
 	r, ok := plausibleLeaf(block, bs, blocks)
 	return r.first, r.end, r.entries, ok
 }

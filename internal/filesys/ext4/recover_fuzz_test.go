@@ -2,6 +2,7 @@ package ext4_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -119,7 +120,7 @@ func FuzzExt4Recoverable(f *testing.F) {
 		if err != nil {
 			return
 		}
-		// Task 8: fsys.PrepareRecovery(context.Background()) goes here.
+		_ = fsys.PrepareRecovery(context.Background()) // an I/O error leaves the index unbuilt: the leaf source is then undecided
 		var deleted []filesys.Entry
 		visited := 0
 		_ = filesys.Walk(fsys, fsys.Root(), "/", func(_ string, e filesys.Entry, err error) error {
