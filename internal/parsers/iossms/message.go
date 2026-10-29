@@ -1,6 +1,9 @@
 package iossms
 
 import (
+	"errors"
+
+	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/rowrun"
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/records"
@@ -109,9 +112,9 @@ func status(dir string, v map[string]int64) string {
 
 // kind follows 4E-R17 and 4E-R41: a reaction type in [2000, 3999]; else an item or reaction type that is not a
 // decided integer (NULL, another storage class, unreadable) makes the kind unknown; else item_type != 0 is a
-// system item; else a body was read: text; else unknown. A variant without the column means "not a reaction /
+// system item; else a body was read: text; else an attachment row: media; else unknown. A variant without the column means "not a reaction /
 // not a system item".
-func kind(assoc, item rowrun.CellKind, v map[string]int64, haveBody bool) string {
+func kind(assoc, item rowrun.CellKind, v map[string]int64, haveBody, haveAttachment bool) string {
 	switch {
 	case assoc == rowrun.CellValue && v["associated_message_type"] >= 2000 && v["associated_message_type"] <= 3999:
 		return message.KindReaction
@@ -121,6 +124,8 @@ func kind(assoc, item rowrun.CellKind, v map[string]int64, haveBody bool) string
 		return message.KindSystem
 	case haveBody:
 		return message.KindText
+	case haveAttachment:
+		return message.KindMedia
 	}
 	return message.KindUnknown
 }
@@ -187,11 +192,34 @@ func mapMessage(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 		rec.Body, msg.TextSource = b.cleaned.Text, b.source
 		setBody(&msg, b.cleaned)
 	}
-	msg.Kind = kind(kinds["associated_message_type"], kinds["item_type"], v, b.source != "")
+
+	// attachments (4E-R19), then the kind that depends on them
+	atts, err := attachments(m, id, raw, unknown)
+	if err != nil {
+		return nil, err
+	}
+	msg.Attachments = atts
+	msg.Kind = kind(kinds["associated_message_type"], kinds["item_type"], v, b.source != "", len(atts) > 0)
 
 	// participants and thread (4E-R20)
 	if err := participants(m, &msg, id, v, raw, unknown); err != nil {
 		return nil, err
+	}
+
+	// the plists (4E-R18): facts about their content, or a status and a warning
+	bud := (*parse.BudgetView)(nil)
+	if in := m.Input(); in != nil {
+		bud = in.Budget
+	}
+	if blob, k := blobCell(row, c.At("message_summary_info")); k == rowrun.CellValue {
+		summaryInfo(blob, bud, raw)
+	} else {
+		rowrun.Flag(unknown, row, "message_summary_info", c.At("message_summary_info"), k)
+	}
+	if blob, k := blobCell(row, c.At("payload_data")); k == rowrun.CellValue {
+		payloadData(blob, bud, raw)
+	} else {
+		rowrun.Flag(unknown, row, "payload_data", c.At("payload_data"), k)
 	}
 
 	// times
@@ -199,6 +227,11 @@ func mapMessage(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 		rec.Time = &records.Time{T: t}
 	}
 	rec.Times = secondaryTimes(row, c, raw, unknown)
+
+	// the recently-deleted marker of the app (4E-R18)
+	if err := recentlyDeleted(m, id, &rec, &msg, raw, unknown); err != nil {
+		return nil, err
+	}
 
 	if len(unknown) > 0 {
 		raw["unknown_columns"] = unknown
@@ -277,4 +310,41 @@ func anyStrings(in []string) []any {
 		out[i] = s
 	}
 	return out
+}
+
+// recentlyDeleted reads the app's own Recently Deleted marker (4E-R18): a chat_recoverable_message_join row for
+// the message makes it Deleted with {source: "chat_recoverable_message_join"}, Times.deleted from delete_date (a
+// valid value only; the value and its unit are stated in raw.delete_date*) and raw.recoverable_chat_id. It is
+// not a recovery: no Recovery, no Confidence. A database without the table has no such marker; an undecided
+// join lists the table in raw.join_undecided. With several rows (not expected: the key is chat and message) the
+// first in rowid order is read and raw.recoverable_rows counts them.
+func recentlyDeleted(m parse.MapContext, id int64, rec *records.Record, msg *message.Message, raw, unknown map[string]any) error {
+	rows, undecided, err := rowrun.Match(m, "chat_recoverable_message_join", "message_id", id)
+	switch {
+	case errors.Is(err, sqlitedb.ErrNoSuchTable):
+		return nil
+	case err != nil:
+		return err
+	}
+	if undecided {
+		markUndecided(raw, "chat_recoverable_message_join")
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	row := rows[0]
+	c := rowrun.Resolve(m, "chat_recoverable_message_join", "chat_id", "delete_date")
+	rec.Deleted, msg.Deleted = true, map[string]any{"source": "chat_recoverable_message_join"}
+	if cid, k := rowrun.IntCell(row, c.At("chat_id")); k == rowrun.CellValue {
+		raw["recoverable_chat_id"] = cid
+	} else {
+		rowrun.Flag(unknown, row, "chat_recoverable_message_join.chat_id", c.At("chat_id"), k)
+	}
+	if t, ok := instant(row, c, "delete_date", raw, unknown); ok {
+		rec.Times = append(rec.Times, records.NamedTime{Kind: "deleted", Time: records.Time{T: t}})
+	}
+	if len(rows) > 1 {
+		raw["recoverable_rows"] = int64(len(rows))
+	}
+	return nil
 }

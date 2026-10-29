@@ -73,7 +73,8 @@ func (p Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) e
 	return err
 }
 
-// counting counts the emitted records that carry raw.attributed_body_differs.
+// counting counts the emitted records that carry raw.attributed_body_differs and raises the one warning of a
+// message whose message_summary_info or payload_data could not be decoded (4E-R18), after the record is emitted.
 type counting struct {
 	parse.Emitter
 	differs int64
@@ -89,6 +90,13 @@ func (c *counting) Emit(ctx context.Context, r records.Record) error {
 	}
 	if raw["attributed_body_differs"] == true {
 		c.differs++
+	}
+	for _, col := range []string{"message_summary_info", "payload_data"} {
+		if raw[col+"_status"] == "undecodable" {
+			if err := c.Warn(ctx, r.Locator, col+" is not a decodable property list; the message is kept without it"); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
