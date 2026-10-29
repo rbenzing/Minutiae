@@ -259,7 +259,7 @@ func TestReproduceCarvedArtifacts(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			b[idx[sc]] ^= 0xff // another byte for scope artifact: its parent is a flipped artifact, flipping the same one would cancel out
+			b[idx[sc]] ^= 0xff                                // another byte for scope artifact: its parent is a flipped artifact, flipping the same one would cancel out
 			if err := os.WriteFile(p, b, 0o600); err != nil { //nolint:gosec // a path of the test case directory
 				t.Fatal(err)
 			}
