@@ -152,7 +152,7 @@ func TestBrowserParsersReadCompanionRolesAndEmitTheirTypes(t *testing.T) {
 }
 
 // iosWant is what 4E promises about each iOS parser: its roles, the one type it emits (with that type's payload
-// version) and that it is registered in this order, after the Android and browser parsers.
+// version) and that it is registered in this order, after the Android telephony parsers and before the browser parsers (Android, then iOS, then browsers, 4E-R27).
 var iosWant = []struct {
 	name, typ string
 	version   int

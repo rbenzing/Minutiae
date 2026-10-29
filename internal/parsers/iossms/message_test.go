@@ -477,7 +477,22 @@ func TestUndecidableChatJoinIsUnknownNotEmpty(t *testing.T) {
 }
 
 func TestParserIdentity(t *testing.T) {
-	if iossms.Name != "ios.sms" || iossms.Version != "1.0.0" {
+	if iossms.Name != "ios.sms" || iossms.Version != "1.0.1" {
 		t.Errorf("%s %s", iossms.Name, iossms.Version)
+	}
+}
+
+// An outgoing message whose error cell cannot be read as an integer has an unknown status, never delivered or sent.
+func TestOutgoingStatusIsUnknownWhenErrorCellUndecided(t *testing.T) {
+	d := newSMS(t, "message")
+	d.out(1, map[string]any{"error": nil, "is_delivered": int64(1)})
+	d.out(2, map[string]any{"error": "boom", "is_delivered": int64(1)})
+	d.out(3, map[string]any{"error": 1.5, "is_sent": int64(1)})
+	d.out(4, map[string]any{"error": int64(0), "is_delivered": int64(1)})
+	res := d.run(t)
+	for id, want := range map[int64]string{1: "unknown", 2: "unknown", 3: "unknown", 4: "delivered"} {
+		if got := rec(t, res, id).Payload["status"]; got != want {
+			t.Errorf("row %d: status %v, want %s", id, got, want)
+		}
 	}
 }

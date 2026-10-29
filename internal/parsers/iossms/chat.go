@@ -88,16 +88,14 @@ func chatOf(m parse.MapContext, id int64, raw, unknown map[string]any) (chatInfo
 			undecided = true
 			continue
 		}
-		if !slices.Contains(ids, v) {
-			ids = append(ids, v)
-		}
+		ids = append(ids, v)
 	}
 	if undecided {
 		markUndecided(raw, "chat_message_join")
 		ci.undecidedJ = true
 		return ci, nil
 	}
-	slices.Sort(ids)
+	ids = uniqueSorted(ids)
 	switch len(ids) {
 	case 0:
 		raw["thread_state"] = "no-chat-join"
@@ -201,4 +199,10 @@ func membersOf(m parse.MapContext, cid int64, raw map[string]any) (members []str
 		raw["members_unresolved"] = unresolved
 	}
 	return members, true, unresolved, nil
+}
+
+// uniqueSorted returns ids sorted and without repeats, in O(n log n).
+func uniqueSorted(ids []int64) []int64 {
+	slices.Sort(ids)
+	return slices.Compact(ids)
 }

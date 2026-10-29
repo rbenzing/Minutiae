@@ -76,7 +76,7 @@ func (s RunSummary) Class() Class {
 		switch {
 		case b.Integrity:
 			return ClassIntegrity
-		case b.Status != BackupMapped:
+		case b.Status != BackupMapped || b.Encryption == encEncrypted: // encrypted content is never parsed
 			worst = ClassPartial
 		}
 	}
