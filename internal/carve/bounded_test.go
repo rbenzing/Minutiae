@@ -42,10 +42,13 @@ func builderCorpus() []hostileObj {
 		n string
 		o carvetest.JPEGOpts
 	}{
-		{"baseline", carvetest.JPEGOpts{}}, {"progressive", carvetest.JPEGOpts{Progressive: true}},
-		{"restart", carvetest.JPEGOpts{Restart: true}}, {"fill", carvetest.JPEGOpts{FillBytes: true}},
+		{"baseline", carvetest.JPEGOpts{}},
+		{"progressive", carvetest.JPEGOpts{Progressive: true}},
+		{"restart", carvetest.JPEGOpts{Restart: true}},
+		{"fill", carvetest.JPEGOpts{FillBytes: true}},
 		{"thumbnail", carvetest.JPEGOpts{Thumbnail: bytes.Repeat([]byte{0xFF, 0xD8, 0xFF, 0xD9}, 30)}},
-		{"no-eoi", carvetest.JPEGOpts{OmitEOI: true}}, {"zero-width", carvetest.JPEGOpts{ZeroWidth: true}},
+		{"no-eoi", carvetest.JPEGOpts{OmitEOI: true}},
+		{"zero-width", carvetest.JPEGOpts{ZeroWidth: true}},
 		{"long-entropy", carvetest.JPEGOpts{EntropyLen: 3000}},
 	}
 	for _, j := range jpegs {
@@ -55,11 +58,16 @@ func builderCorpus() []hostileObj {
 		n string
 		o carvetest.PNGOpts
 	}{
-		{"rgb", carvetest.PNGOpts{}}, {"palette", carvetest.PNGOpts{ColorType: 3, BitDepth: 8}},
-		{"multi-idat", carvetest.PNGOpts{IDATs: 3}}, {"ancillary", carvetest.PNGOpts{Ancillary: []string{"gAMA", "tEXt"}}},
-		{"apng", carvetest.PNGOpts{APNG: true}}, {"bad-crc", carvetest.PNGOpts{BadCRC: true}},
-		{"no-idat", carvetest.PNGOpts{NoIDAT: true}}, {"ihdr-late", carvetest.PNGOpts{IHDRNotFirst: true}},
-		{"zero-width", carvetest.PNGOpts{ZeroWidth: true}}, {"no-iend", carvetest.PNGOpts{OmitIEND: true}},
+		{"rgb", carvetest.PNGOpts{}},
+		{"palette", carvetest.PNGOpts{ColorType: 3, BitDepth: 8}},
+		{"multi-idat", carvetest.PNGOpts{IDATs: 3}},
+		{"ancillary", carvetest.PNGOpts{Ancillary: []string{"gAMA", "tEXt"}}},
+		{"apng", carvetest.PNGOpts{APNG: true}},
+		{"bad-crc", carvetest.PNGOpts{BadCRC: true}},
+		{"no-idat", carvetest.PNGOpts{NoIDAT: true}},
+		{"ihdr-late", carvetest.PNGOpts{IHDRNotFirst: true}},
+		{"zero-width", carvetest.PNGOpts{ZeroWidth: true}},
+		{"no-iend", carvetest.PNGOpts{OmitIEND: true}},
 		{"iend-payload", carvetest.PNGOpts{IENDPayload: true}},
 	}
 	for _, p := range pngs {
@@ -69,10 +77,14 @@ func builderCorpus() []hostileObj {
 		n string
 		o carvetest.GIFOpts
 	}{
-		{"89a", carvetest.GIFOpts{}}, {"87a", carvetest.GIFOpts{Version: "GIF87a"}},
-		{"tables", carvetest.GIFOpts{GCT: true, LCT: true}}, {"frames", carvetest.GIFOpts{Frames: 3}},
-		{"no-frames", carvetest.GIFOpts{NoFrames: true}}, {"no-trailer", carvetest.GIFOpts{NoTrailer: true}},
-		{"zero-dims", carvetest.GIFOpts{ZeroDims: true}}, {"big-frame", carvetest.GIFOpts{DataLen: 2000}},
+		{"89a", carvetest.GIFOpts{}},
+		{"87a", carvetest.GIFOpts{Version: "GIF87a"}},
+		{"tables", carvetest.GIFOpts{GCT: true, LCT: true}},
+		{"frames", carvetest.GIFOpts{Frames: 3}},
+		{"no-frames", carvetest.GIFOpts{NoFrames: true}},
+		{"no-trailer", carvetest.GIFOpts{NoTrailer: true}},
+		{"zero-dims", carvetest.GIFOpts{ZeroDims: true}},
+		{"big-frame", carvetest.GIFOpts{DataLen: 2000}},
 	}
 	for _, g := range gifs {
 		add("gif", g.n, carvetest.GIF(g.o))
@@ -81,10 +93,13 @@ func builderCorpus() []hostileObj {
 		n string
 		o carvetest.WebPOpts
 	}{
-		{"lossy", carvetest.WebPOpts{}}, {"lossless", carvetest.WebPOpts{Kind: "VP8L"}},
+		{"lossy", carvetest.WebPOpts{}},
+		{"lossless", carvetest.WebPOpts{Kind: "VP8L"}},
 		{"extended", carvetest.WebPOpts{Kind: "VP8X", Extra: []string{"ICCP", "ALPH", "EXIF", "XMP "}}},
-		{"odd", carvetest.WebPOpts{OddChunk: true}}, {"bad-start", carvetest.WebPOpts{BadStartCode: true}},
-		{"zero-dims", carvetest.WebPOpts{ZeroDims: true}}, {"size+2", carvetest.WebPOpts{SizeDelta: 2}},
+		{"odd", carvetest.WebPOpts{OddChunk: true}},
+		{"bad-start", carvetest.WebPOpts{BadStartCode: true}},
+		{"zero-dims", carvetest.WebPOpts{ZeroDims: true}},
+		{"size+2", carvetest.WebPOpts{SizeDelta: 2}},
 	}
 	for _, w := range webps {
 		add("riff-webp", w.n, carvetest.WebP(w.o))
@@ -93,11 +108,16 @@ func builderCorpus() []hostileObj {
 		n string
 		o carvetest.BMFFOpts
 	}{
-		{"mp4", carvetest.BMFFOpts{}}, {"mdat-first", carvetest.BMFFOpts{MdatFirst: true}},
-		{"large-mdat", carvetest.BMFFOpts{LargeMdat: true}}, {"size-zero", carvetest.BMFFOpts{SizeZeroLast: true}},
-		{"heic", carvetest.BMFFOpts{HEIF: true}}, {"heic-size-zero", carvetest.BMFFOpts{HEIF: true, SizeZeroLast: true}},
-		{"no-moov", carvetest.BMFFOpts{NoMoov: true}}, {"no-meta", carvetest.BMFFOpts{HEIF: true, NoMeta: true}},
-		{"bad-children", carvetest.BMFFOpts{BadChildren: true}}, {"qt", carvetest.BMFFOpts{Brand: "qt  "}},
+		{"mp4", carvetest.BMFFOpts{}},
+		{"mdat-first", carvetest.BMFFOpts{MdatFirst: true}},
+		{"large-mdat", carvetest.BMFFOpts{LargeMdat: true}},
+		{"size-zero", carvetest.BMFFOpts{SizeZeroLast: true}},
+		{"heic", carvetest.BMFFOpts{HEIF: true}},
+		{"heic-size-zero", carvetest.BMFFOpts{HEIF: true, SizeZeroLast: true}},
+		{"no-moov", carvetest.BMFFOpts{NoMoov: true}},
+		{"no-meta", carvetest.BMFFOpts{HEIF: true, NoMeta: true}},
+		{"bad-children", carvetest.BMFFOpts{BadChildren: true}},
+		{"qt", carvetest.BMFFOpts{Brand: "qt  "}},
 		{"trailer", carvetest.BMFFOpts{Trailer: carvetest.Box("free", make([]byte, 30))}},
 	}
 	for _, b := range bmffs {
@@ -122,8 +142,11 @@ func builderCorpus() []hostileObj {
 		top    int
 		os, rs byte
 	}{
-		{"1-byte", bpObjects(), 0, 1, 1}, {"2-byte", bpObjects(), 0, 2, 1}, {"8-byte", bpObjects(), 0, 8, 2},
-		{"scalar", [][]byte{carvetest.BPlistInt1(7)}, 0, 1, 1}, {"bad-top", bpObjects(), 9, 1, 1},
+		{"1-byte", bpObjects(), 0, 1, 1},
+		{"2-byte", bpObjects(), 0, 2, 1},
+		{"8-byte", bpObjects(), 0, 8, 2},
+		{"scalar", [][]byte{carvetest.BPlistInt1(7)}, 0, 1, 1},
+		{"bad-top", bpObjects(), 9, 1, 1},
 	}
 	for _, b := range bps {
 		add("bplist", b.n, carvetest.BPlist(b.objs, b.top, b.os, b.rs))
@@ -139,8 +162,10 @@ func builderCorpus() []hostileObj {
 		n string
 		o carvetest.PDFOpts
 	}{
-		{"single", carvetest.PDFOpts{}}, {"incremental", carvetest.PDFOpts{Increments: 2}},
-		{"bad-startxref", carvetest.PDFOpts{BadStartxref: true}}, {"no-eof", carvetest.PDFOpts{NoEOF: true}},
+		{"single", carvetest.PDFOpts{}},
+		{"incremental", carvetest.PDFOpts{Increments: 2}},
+		{"bad-startxref", carvetest.PDFOpts{BadStartxref: true}},
+		{"no-eof", carvetest.PDFOpts{NoEOF: true}},
 		{"v1.4", carvetest.PDFOpts{Version: "1.4"}},
 	}
 	for _, p := range pdfs {
@@ -154,10 +179,14 @@ func builderCorpus() []hostileObj {
 		n string
 		o carvetest.WAVOpts
 	}{
-		{"pcm16", carvetest.WAVOpts{}}, {"pcm8", carvetest.WAVOpts{Bits: 8, Channels: 2, Rate: 44100}},
-		{"list", carvetest.WAVOpts{ListBefore: true}}, {"odd-chunk", carvetest.WAVOpts{OddChunk: true}},
-		{"bad-fmt", carvetest.WAVOpts{BadFmt: true}}, {"no-data", carvetest.WAVOpts{NoData: true}},
-		{"size+2", carvetest.WAVOpts{SizeDelta: 2}}, {"size-2", carvetest.WAVOpts{SizeDelta: -2}},
+		{"pcm16", carvetest.WAVOpts{}},
+		{"pcm8", carvetest.WAVOpts{Bits: 8, Channels: 2, Rate: 44100}},
+		{"list", carvetest.WAVOpts{ListBefore: true}},
+		{"odd-chunk", carvetest.WAVOpts{OddChunk: true}},
+		{"bad-fmt", carvetest.WAVOpts{BadFmt: true}},
+		{"no-data", carvetest.WAVOpts{NoData: true}},
+		{"size+2", carvetest.WAVOpts{SizeDelta: 2}},
+		{"size-2", carvetest.WAVOpts{SizeDelta: -2}},
 	}
 	for _, w := range wavs {
 		add("riff-wave", w.n, carvetest.WAV(w.o))
@@ -166,7 +195,8 @@ func builderCorpus() []hostileObj {
 		n     string
 		pages []carvetest.OggPage
 	}{
-		{"one-stream", oneStream()}, {"multiplexed", hostileOggPages()},
+		{"one-stream", oneStream()},
+		{"multiplexed", hostileOggPages()},
 		{"bad-crc", []carvetest.OggPage{{Flags: 2, Serial: 1, Segments: seg(30), BadCRC: true}, {Flags: 4, Serial: 1, Seq: 1, Segments: seg(5)}}},
 		{"no-bos", []carvetest.OggPage{{Serial: 1, Segments: seg(30)}, {Flags: 4, Serial: 1, Seq: 1, Segments: seg(5)}}},
 		{"no-eos", []carvetest.OggPage{{Flags: 2, Serial: 1, Segments: seg(30)}, {Serial: 1, Seq: 1, Segments: seg(5)}}},
