@@ -5,6 +5,7 @@ package safari_test
 // fixturePins is the SHA-256 of every decompressed fixture file, by "<variant>.<role>". A changed fixture
 // changes this file in the same commit, so a silent regeneration shows in review.
 var fixturePins = map[string]string{
+	"deleted.db":       "a2feb62d6ce15086e2796ffdef195644e24b026fe2276e0b1bff8f1d4fa461a5",
 	"current-wal.db":   "e78163a7c370e4990e939404850cc8e5c8e6fba9bf315f8627f3a74540615ad7",
 	"current-wal.wal":  "0574c830ef8ac2cabe2ace55280554cc19567fe00d57739f7048f093af45e67d",
 	"current.db":       "c43dcc612af54a6343efd3cf238d45b2e630cfda9efd617cb697365d3892ed17",

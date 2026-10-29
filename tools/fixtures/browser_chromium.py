@@ -35,6 +35,8 @@ import re
 import telephony_common as C
 
 FAMILY = "chromium"
+CLAIMED = ("visits", "keyword_search_terms", "downloads")  # Meta.Claims of chromium.history: ClaimableTables
+SCENARIOS = {}  # variant -> C.Scenario, filled when the variant is generated (the typed recovery oracle)
 SCHEMAS = os.path.join(C.HERE, "schemas", "chromium")
 CROSSCHECK = os.path.join(SCHEMAS, "CROSSCHECK.md")
 
@@ -905,4 +907,62 @@ def variant_minimal(work):
     return files, exp
 
 
-VARIANTS = {"current": variant_current, "current-wal": variant_wal, "mid-upgraded": variant_mid, "old": variant_old, "minimal": variant_minimal}
+def variant_deleted(work):
+    """1024-byte pages, secure_delete OFF. 45 visits (ids 1 to 45, each with its urls row, a long external referrer): visits 31 to
+    40 are deleted together with their urls rows (a recovered visit then has no live URL: unmapped, 4F-R4) and visits 41 to 45 alone
+    (their urls rows stay: typed). 24 search terms, 13 to 24 deleted (13 to 18 point at live urls rows, 19 to 24 at deleted ones),
+    and 18 downloads, 10 to 18 deleted (the chain rows of the odd ids go with them, those of the even ids stay). Whole leaf pages go
+    to the freelist: the oracle expects basis fit, attributed to the claimed table, and lists the rows of the freed pages only (a
+    page that keeps live cells keeps its deleted ones in place: in-page remnants are db_row only). A lone database."""
+    check_compat()
+    path = work + "/History"
+    ph = C.load_ddl("chromium-current.sql", SCHEMAS)
+    con = C.connect(path, page_size=1024)
+    con.executescript(ph[0])
+    t0 = wk(2023, 7, 1, 9, 0, 0)
+    urls = [url_row(i, "https://site%02d.example.com/page/%d" % (i, i), "Page %d" % i, last=t0 + i * 60 * 10**6) for i in range(1, 46)]
+    visits = [visit_row(i, i, visit_time=t0 + i * 60 * 10**6, transition=1 if i % 3 == 0 else 0,
+                        external_referrer_url="https://ref.example.org/%02d/" % i + "r" * 240) for i in range(1, 46)]
+    searches = [{"keyword_id": 2, "url_id": i if i <= 18 else i + 12, "term": "term %02d " % i + "lorem ipsum " * 8,
+                 "normalized_term": "term %02d " % i + "lorem ipsum " * 8} for i in range(1, 25)]
+    downloads = [dl_row(i, DL + "d%02d-" % i + "n" * 220 + ".bin", mime_type="application/octet-stream") for i in range(1, 19)]
+    chains = [{"id": i, "chain_index": 0, "url": "https://example.com/download/%d" % i} for i in range(1, 19)]
+    fill(con, urls, visits, searches, downloads, chains, meta_rows(meta_versions("chromium-current.sql")[0]))
+    scen = SCENARIOS["chromium-deleted"] = C.Scenario(CLAIMED, alias=ALIAS)
+    for t in CLAIMED:
+        scen.write(t, scen.snap(con, t))
+    for t, where in (("visits", "id between 31 and 45"), ("keyword_search_terms", "rowid between 13 and 24"), ("downloads", "id >= 10")):
+        scen.want(t, scen.snap(con, t, where), label=t)  # freed leaf pages are owned by no table: basis fit, attributed to t
+    con.execute("delete from visits where id between 31 and 45")
+    con.execute("delete from urls where id between 31 and 40")
+    con.execute("delete from keyword_search_terms where rowid between 13 and 24")
+    con.execute("delete from downloads where id >= 10")
+    con.execute("delete from downloads_url_chains where id >= 10 and id % 2 = 1")
+    files = {"db": C.read(path)}
+    exp = oracle(files, "chromium-current.sql", "chromium-deleted", REMOTE_CHROME, con)
+    con.close()
+    return files, exp
+
+
+def recover_expect(variant, files):
+    """The <variant>.recover.expect.json of a variant that has a scenario (ruling 4G-R14). A recovered row joins the LIVE urls and
+    chain rows (4G-R8); a visit whose urls row is gone, a term that is empty, a download with neither target nor chain is unmapped."""
+    ctx = Ctx(REMOTE_CHROME, set(files) == {"db"})
+
+    def make_env(f):
+        view = C.engine_view(f, ["urls", "downloads_url_chains"])
+        return {"urls": {r["rowid"]: r for r in view.get("urls", [])}, "chains": view.get("downloads_url_chains", [])}
+
+    def expect_fn(table, d, env, file):
+        if table == "visits":
+            return expect_visit(ctx, d, env["urls"].get(d.get("url")), file)
+        if table == "keyword_search_terms":
+            return expect_search(ctx, d, env["urls"], file)
+        return expect_download(ctx, d, env["chains"], file)
+
+    return C.recover_oracle(variant, files, SCENARIOS[variant], make_env, expect_fn,
+                            nobody={"visits": "urls", "keyword_search_terms": "term", "downloads": "target_path"})
+
+
+VARIANTS = {"current": variant_current, "current-wal": variant_wal, "mid-upgraded": variant_mid, "old": variant_old, "minimal": variant_minimal,
+            "chromium-deleted": variant_deleted}

@@ -1516,6 +1516,7 @@ value back from the engine on a copy of the finished files. Databases are byte-r
 | `mid-upgraded` | `chromium-mid.sql` | `/data/data/com.microsoft.emmx/app_chrome/Default/History` (edge, Default) | rows before and after the phase 2 `ALTER` (`opener_visit` absent on the old visits); phase 1 matches no real file and the variant is synthetic data, not a real version 48 or 49 database |
 | `old` | `chromium-old.sql` | `/data/user/10/com.brave.browser/app_chrome/Profile 1/History` (brave, Profile 1) | synthetic: no `downloads` tables |
 | `minimal` | `chromium-minimal.sql` | `/data/data/com.example.reader/app_webview/Default/History` (webview, Default) | `urls`, `visits`, `meta` only |
+| `chromium-deleted` | `chromium-current.sql` | chrome, Default; 45 visits with `urls` rows (a 240-byte external referrer each), 24 search terms, 18 downloads; page 1024, `secure_delete = OFF`; visits 31 to 45, terms 13 to 24 and downloads 10 to 18 deleted, `urls` 31 to 40 with their visits, the chain rows of the odd deleted downloads | whole freed pages: the typed recovery oracle lists the freelist rows (`fit`, 60): visits 41 to 45 typed, the visits of 31 to 40 whose page was freed under `unmapped` (`urls`: their `urls` rows are gone, 4F-R4), the terms (13 to 18 with a live URL, 19 to 24 without) and the downloads (with the chain of the even ids only); the live join is read from the final `urls` and `downloads_url_chains` rows (4G-R8). 4.4 KiB gzipped, oracle 53 KiB |
 
 Facts of the scenario: `downloads_url_chains` has `PRIMARY KEY (id, chain_index)`, so no conforming file holds a repeated
 chain index (the oracle states `duplicate-index` for a hostile file; Go tests build one in memory). The oracle chooses
@@ -1546,6 +1547,7 @@ byte-for-byte, so a regeneration rewrites the pins with the files.
 | `current` | `safari-current.sql` | all four tables; 6 items, 17 visits (sentinel and out-of-range times, the year 2100, nanosecond rounding, a dangling visit, wrong storage classes), 5 tombstones, a 100 KiB data URL |
 | `current-wal` | `safari-current.sql` | the `current` rows, then three visits and one tombstone that exist only in the `-wal` |
 | `no-tombstones` | `safari-no-tombstones.sql` | the older shape without `history_tombstones` (the schema note `table.history_tombstones = absent`) |
+| `deleted` | `safari-current.sql` | 45 visits on 45 items (a 240-byte title each, fractional visit times so a REAL stays a REAL), page 1024, `secure_delete = OFF`; visits 31 to 45 deleted, items 31 to 40 with them | whole freed pages: the typed recovery oracle lists visits 41 to 45 typed (`fit`, 60) and the visits of 31 to 40 whose page was freed under `unmapped` (`history_item`: their item is gone, 4F-R4). 2.8 KiB gzipped, oracle 12 KiB |
 
 The unmapped `history_items` columns (`domain_expansion`, `daily_visit_counts`, `weekly_visit_counts`,
 `autocomplete_triggers`, `should_recompute_derived_visit_counts`, `visit_count_score`) are stated as the schema note
@@ -1594,10 +1596,12 @@ fixture rows keep the raw type codes.
 py -3 tools/fixtures/telephony_gen.py --family mmssms --recover-oracle --out internal/parsers/androidmms/testdata
 py -3 tools/fixtures/telephony_gen.py --family calllog --recover-oracle --out internal/parsers/androidcalllog/testdata
 py -3 tools/fixtures/telephony_gen.py --family contacts --recover-oracle --out internal/parsers/androidcontacts/testdata
+py -3 tools/fixtures/telephony_gen.py --family chromium --recover-oracle --out internal/parsers/chromium/testdata
+py -3 tools/fixtures/telephony_gen.py --family safari --recover-oracle --out internal/parsers/safari/testdata
 ```
 
 writes `<variant>.recover.expect.json` for every variant that has a scenario (`av-freelist-512`, `wal-uncheckpointed`,
-`hot-journal`, `mmssms-pdu-deleted`; `calllog-deleted`, `calllog-wal-edit`; `contacts-deleted`, `contacts-wal-edit`): what the typed recovery pass must make of the fixture. It is computed from the
+`hot-journal`, `mmssms-pdu-deleted`; `calllog-deleted`, `calllog-wal-edit`; `contacts-deleted`, `contacts-wal-edit`; `chromium-deleted`; Safari `deleted`): what the typed recovery pass must make of the fixture. It is computed from the
 COMMITTED files of the variant, never from Go output: `sqlite_oracle.build_history` (the independent page walker of the
 SQLite fixtures) finds in the page images the versions the scenario says should be history (`wants`: deleted rows,
 pre-update versions, interrupted versions) and gives method, relation, basis (`fit` with the claimed table as label on

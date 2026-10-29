@@ -14,6 +14,8 @@ var generated = map[string]identity{
 	"android.contacts@1.0.5":         {Package: "github.com/rbenzing/minutiae/internal/parsers/androidcontacts", Hash: "src1:sha256:eb2537cd44c7f9503f949dfff534544dffdcf97e0e2f6f0f84755b8c5f07b5f1"},
 	"android.mmssms.recover@1.0.6":   {Package: "github.com/rbenzing/minutiae/internal/parsers/androidmms", Hash: "src1:sha256:a7de7dc4fa517888d1e68e6d4a37effb7f4a93266a00636fda428ca920cdda9a"},
 	"android.mmssms@1.0.6":           {Package: "github.com/rbenzing/minutiae/internal/parsers/androidmms", Hash: "src1:sha256:971159b177eb91b8183dcc49be08bc17326ea7c43f329983965f697b90216ca3"},
-	"chromium.history@1.0.1":         {Package: "github.com/rbenzing/minutiae/internal/parsers/chromium", Hash: "src1:sha256:ffcfa713aab86fc4a6c4bab5de008f6a52bc39821cf38f898d5742141d07817e"},
-	"safari.history@1.0.1":           {Package: "github.com/rbenzing/minutiae/internal/parsers/safari", Hash: "src1:sha256:4dfda1dc2e68da3b0dcff7dbb544211f480fee838cedcd827808fad99d515fac"},
+	"chromium.history.recover@1.0.2": {Package: "github.com/rbenzing/minutiae/internal/parsers/chromium", Hash: "src1:sha256:33ebb431f00416ae99f775514399ae6b0f0ca4b7e6a1c4ad1f25ca633cf4b135"},
+	"chromium.history@1.0.2":         {Package: "github.com/rbenzing/minutiae/internal/parsers/chromium", Hash: "src1:sha256:2c4f79c6e3b06c9d8a5589348116a522391b9fd9419ed147edd5f56f7b2b62e4"},
+	"safari.history.recover@1.0.2":   {Package: "github.com/rbenzing/minutiae/internal/parsers/safari", Hash: "src1:sha256:2718346122b6cbaa587628b1464426b6115a0d3cbbcb43fb3e6c8519fe141da9"},
+	"safari.history@1.0.2":           {Package: "github.com/rbenzing/minutiae/internal/parsers/safari", Hash: "src1:sha256:76d71c43c855d6f74f003e405c4dd10f1efa30fc18d55934f86fa094499c881a"},
 }

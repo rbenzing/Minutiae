@@ -11,7 +11,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "chromium.history"
-	Version = "1.0.1"
+	Version = "1.0.2"
 )
 
 // Parser is the chromium.history parser. It holds no state.
@@ -19,7 +19,9 @@ type Parser struct{}
 
 var _ parse.RowMapper = Parser{}
 
-// Meta describes the parser. Claims stay empty until plan 4G implements typed recovery.
+// Meta describes the parser. Claims are exactly ClaimableTables: a promise that typed recovery (plan 4G) can map the
+// rows of visits, keyword_search_terms and downloads that were deleted or superseded (the mappings are total and
+// source-agnostic, 4F-R3).
 func (Parser) Meta() parse.Meta {
 	return parse.Meta{
 		Name: Name, Version: Version, Title: "Chromium-family browser history (History database)",
@@ -29,6 +31,7 @@ func (Parser) Meta() parse.Meta {
 			{Type: web.SearchType, PayloadVersion: web.PayloadVersion},
 			{Type: web.DownloadType, PayloadVersion: web.PayloadVersion},
 		},
+		Claims: claimsOf(ClaimableTables()),
 		Inputs: []parse.InputSpec{
 			{Role: "db", Globs: []string{
 				"android:**/app_chrome/*/History",
@@ -75,6 +78,14 @@ func names(specs []parse.ColumnSpec) []string {
 	out := make([]string, len(specs))
 	for i, s := range specs {
 		out[i] = s.Name
+	}
+	return out
+}
+
+func claimsOf(tables []string) []parse.TableClaim {
+	out := make([]parse.TableClaim, len(tables))
+	for i, t := range tables {
+		out[i] = parse.TableClaim{Role: "db", Table: t}
 	}
 	return out
 }
