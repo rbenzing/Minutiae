@@ -3,7 +3,6 @@ package examine
 import (
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/rbenzing/minutiae/internal/carve"
 	"github.com/rbenzing/minutiae/internal/evidence"
@@ -184,7 +183,7 @@ func (s *Session) rawScope(o CarveOptions) (*carveScope, error) {
 			}
 		}
 		if len(sc.Runs) == 0 {
-			sc.Notes = append(sc.Notes, fmt.Sprintf("partition %d lies outside the image: nothing to carve", p.Index))
+			sc.Notes = append(sc.Notes, fmt.Sprintf("partition %d: no bytes of its own remain (outside the image or overlapped): nothing to carve", p.Index))
 		}
 	} else {
 		for _, r := range a.regions {
@@ -200,7 +199,7 @@ func (s *Session) rawScope(o CarveOptions) (*carveScope, error) {
 func (s *Session) unallocatedFS(index int) (filesys.FileSystem, volume.Partition, error) {
 	fsys, part, err := s.FS(index)
 	if err != nil {
-		if errors.Is(err, filesys.ErrUnsupported) || strings.Contains(err.Error(), "recognized filesystem") {
+		if errors.Is(err, filesys.ErrUnsupported) || errors.Is(err, ErrNoRecognizedFilesystem) {
 			return nil, part, fmt.Errorf("%w; use --raw to carve a partition without a recognized filesystem", err)
 		}
 		return nil, part, err

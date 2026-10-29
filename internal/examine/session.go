@@ -331,6 +331,9 @@ func (s *Session) partitionByIndex(index int) (volume.Partition, bool) {
 	return volume.Partition{}, false
 }
 
+// ErrNoRecognizedFilesystem is returned by Partition(-1) when no partition holds a recognized filesystem.
+var ErrNoRecognizedFilesystem = errors.New("no partition holds a recognized filesystem")
+
 // Partition returns the partition by index; index -1 means "the only partition
 // holding a recognized filesystem" (an error listing candidates when there are
 // none or several).
@@ -354,7 +357,7 @@ func (s *Session) Partition(index int) (volume.Partition, error) {
 	case 1:
 		return cand[0], nil
 	case 0:
-		return volume.Partition{}, fmt.Errorf("no partition holds a recognized filesystem (partitions: %s)", indexList(s.partitions()))
+		return volume.Partition{}, fmt.Errorf("%w (partitions: %s)", ErrNoRecognizedFilesystem, indexList(s.partitions()))
 	default:
 		return volume.Partition{}, fmt.Errorf("%d partitions hold a recognized filesystem (%s); choose one with --partition", len(cand), indexList(cand))
 	}

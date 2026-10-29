@@ -19,7 +19,11 @@ func OpenArtifactScope(c *evidence.Case, id string, opts Options) (*Session, err
 	if err != nil {
 		return nil, err
 	}
-	if d := rec.Source.Derived; rec.Source.Kind == "unallocated" && d != nil {
+	if rec.Source.Kind == "unallocated" {
+		d := rec.Source.Derived
+		if d == nil {
+			return nil, fmt.Errorf("%w: unallocated export %s records no derivation, so it is not read as raw bytes", evidence.ErrIntegrity, rec.ID)
+		}
 		s, err := Open(c, d.ParentID, opts)
 		if err != nil {
 			return nil, fmt.Errorf("open the parent image %s of unallocated export %s: %w", d.ParentID, rec.ID, err)

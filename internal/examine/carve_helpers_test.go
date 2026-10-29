@@ -33,7 +33,8 @@ type carveHook struct {
 	blockSize  int      // Info().BlockSize when > 0
 	warnOnUnal []string // warnings that appear once Unallocated() has been called
 	warnings   []string
-	dropFree   *filesys.Run // removed from the free runs (image-relative, partition-relative here)
+	dropFree   *filesys.Run  // removed from the free runs (image-relative, partition-relative here)
+	extraRuns  []filesys.Run // appended to the free runs (hostile or empty ones)
 }
 
 func (h *carveHook) Underlying() filesys.FileSystem { return h.FileSystem }
@@ -68,6 +69,7 @@ func (h *carveHook) Unallocated() ([]filesys.Run, error) {
 		}
 		runs = out
 	}
+	runs = append(runs, h.extraRuns...)
 	return runs, err
 }
 
