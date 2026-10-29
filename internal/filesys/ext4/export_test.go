@@ -238,3 +238,14 @@ func (f *FS) staleOf(id string) (*staleInode, error) {
 	}
 	return f.staleInodeFor(r)
 }
+
+// SetMapStaleCaps lowers the cap on the runs one stale map may hold (before any recovery); a value of 0 or less
+// leaves it as it is.
+func (f *FS) SetMapStaleCaps(runs int) {
+	if runs > 0 {
+		f.mapRunsCap = runs
+	}
+}
+
+// MapWork reports the work the stale-map walks have done: entries examined plus map blocks read.
+func (f *FS) MapWork() int64 { return f.mapWork.Load() }

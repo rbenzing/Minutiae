@@ -513,7 +513,7 @@ func (p *planner) evaluate(it *RecoverItem, t target, cs []filesys.Candidate) {
 			reject("invalid-map", err.Error())
 			continue
 		}
-		if _, ok := confidenceFor(c.Method, false, false); !ok {
+		if _, ok := confidenceFor(c.Method, false, false, false); !ok {
 			reject("unknown-method", fmt.Sprintf("method %q has no confidence rule in this build", c.Method))
 			continue
 		}
@@ -593,7 +593,7 @@ func (p *planner) evaluate(it *RecoverItem, t target, cs []filesys.Candidate) {
 			pc.errText = fmt.Sprintf("the map covers %d of %d declared bytes", pc.Size, c.Size)
 		}
 		pc.Content = "ok"
-		pc.Confidence, _ = confidenceFor(c.Method, pc.cut || pc.prefix, false)
+		pc.Confidence, _ = confidenceFor(c.Method, pc.cut || pc.prefix, false, slices.Contains(pc.Assumptions, assumptionJournalNotReplayed))
 		pc.Band = evidence.ConfidenceBand(pc.Confidence)
 		valid = append(valid, pc)
 	}
@@ -645,7 +645,7 @@ func (p *planner) selectAndFilter() {
 					}
 				}
 			}
-			c.Confidence, _ = confidenceFor(c.Method, c.cut || c.prefix, len(partners) > 0)
+			c.Confidence, _ = confidenceFor(c.Method, c.cut || c.prefix, len(partners) > 0, slices.Contains(c.Assumptions, assumptionJournalNotReplayed))
 			c.Band = evidence.ConfidenceBand(c.Confidence)
 			c.Assumptions = fitAssumptions(c.Assumptions)
 			if c.Confidence < p.o.MinConfidence {

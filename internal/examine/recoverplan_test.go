@@ -361,13 +361,13 @@ func TestConfidenceRules(t *testing.T) {
 		t.Fatalf("%d methods, the spec has %d", len(methodBase), len(specTable))
 	}
 	for m, want := range specTable {
-		got, ok := confidenceFor(m, false, false)
+		got, ok := confidenceFor(m, false, false, false)
 		if !ok || got != want {
 			t.Errorf("%s = %d,%v; want %d", m, got, ok, want)
 		}
 	}
 	for _, m := range []string{"", "fat-unknown", "carve-validated", "FAT-CONTIGUOUS"} {
-		if v, ok := confidenceFor(m, false, false); ok || v != 0 {
+		if v, ok := confidenceFor(m, false, false, false); ok || v != 0 {
 			t.Errorf("unknown method %q = %d,%v; want 0,false", m, v, ok)
 		}
 	}
@@ -387,14 +387,14 @@ func TestConfidenceCaps(t *testing.T) {
 				if ov {
 					want = min(want, 30)
 				}
-				got, ok := confidenceFor(m, cut, ov)
+				got, ok := confidenceFor(m, cut, ov, false)
 				if !ok || got != want || got > 80 {
 					t.Errorf("%s cut=%v overlap=%v = %d,%v; want %d", m, cut, ov, got, ok, want)
 				}
 			}
 		}
 	}
-	if v, _ := confidenceFor("ext-inode-intact", true, true); v != 20 {
+	if v, _ := confidenceFor("ext-inode-intact", true, true, false); v != 20 {
 		t.Errorf("both caps = %d, want 20", v)
 	}
 }
@@ -873,5 +873,29 @@ func TestCapExcludedListsAtMost256(t *testing.T) {
 	}
 	if got := capExcluded(mk(257)); len(got) != 256 || got[255].Offset != 2550 {
 		t.Errorf("257 excluded runs: %d listed, want the first 256", len(got))
+	}
+}
+
+// An unclean filesystem never yields an unqualified top-confidence recovery (3C-R24): the lowest cap wins.
+func TestConfidenceJournalNotReplayedCap(t *testing.T) {
+	if capJournalNotReplayed != 40 {
+		t.Fatalf("capJournalNotReplayed = %d, want 40", capJournalNotReplayed)
+	}
+	for m, base := range specTable {
+		for _, cut := range []bool{false, true} {
+			for _, ov := range []bool{false, true} {
+				want := min(base, 40)
+				if cut {
+					want = min(want, 20)
+				}
+				if ov {
+					want = min(want, 30)
+				}
+				got, ok := confidenceFor(m, cut, ov, true)
+				if !ok || got != want {
+					t.Errorf("%s cut=%v overlap=%v unclean = %d,%v; want %d", m, cut, ov, got, ok, want)
+				}
+			}
+		}
 	}
 }

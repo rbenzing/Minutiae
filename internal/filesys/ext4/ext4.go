@@ -64,6 +64,12 @@ type FS struct {
 	locateDirsCap, locateRunsCap int
 	// locateWork counts the index work and the one-block re-reads. Tests bound it; nothing reads it.
 	locateWork atomic.Int64
+	// freeS is the set of blocks the block bitmaps mark free, built once under recMu (recover_free.go).
+	freeS *freeSet
+	// mapRunsCap bounds the runs one stale map may hold (maxFileRuns); mapWork counts the stale-map walk work.
+	// Tests bound it; nothing reads it.
+	mapRunsCap int
+	mapWork    atomic.Int64
 }
 
 // readFull reads exactly len(p) bytes at off; a read that returns all the
@@ -135,6 +141,7 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 
 		locateDirsCap: maxLocateDirs,
 		locateRunsCap: maxLocateRuns,
+		mapRunsCap:    maxFileRuns,
 	}
 	f.metaRanges = metadataRanges(sb, groups)
 	for _, w := range append(warns, gw...) {
