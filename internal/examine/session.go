@@ -63,6 +63,11 @@ type Session struct {
 
 	implausible *bool // test override of the container's size claim
 
+	// carveExport and carveArtifact are set by OpenArtifactScope: the unallocated export a carve is bound to
+	// (the session is then over its parent image), or the artifact read raw as the carve scope.
+	carveExport   *evidence.ManifestRecord
+	carveArtifact *evidence.ManifestRecord
+
 	mu        sync.Mutex
 	fsCache   map[int]*fsEntry
 	closeOnce sync.Once

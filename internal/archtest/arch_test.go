@@ -45,7 +45,7 @@ var allowed = map[string][]string{
 	"internal/filesys/utf8fold":            {},
 	"internal/evidence":                    {"internal/version"},
 	"internal/evidence/evidencetest":       {"internal/evidence"},
-	"internal/examine":                     {"internal/evidence", "internal/version", "internal/device", "internal/image", "internal/volume", "internal/filesys", "internal/filesys/detect"},
+	"internal/examine":                     {"internal/evidence", "internal/version", "internal/device", "internal/image", "internal/volume", "internal/filesys", "internal/filesys/detect", "internal/carve"},
 	"internal/device":                      {"internal/evidence", "internal/version"},
 	"internal/transport/serial":            {"internal/device", "internal/evidence", "internal/version"},
 	"internal/protocol":                    {"internal/device", "internal/evidence", "internal/version"},
