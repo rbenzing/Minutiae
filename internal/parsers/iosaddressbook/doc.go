@@ -13,6 +13,8 @@
 //   - Photo presence comes only from the companion AddressBookImages.sqlitedb and is false only when
 //     both image tables are decided for the person (4E-R25, 4E-R41).
 //
-// This package holds the fixtures and their scenario oracle (Task 13); the parser follows in Tasks 14
-// and 15.
+// Everything a person joins (multi-values, labels, address entries, the store, groups) comes through the
+// MapContext; a join the engine cannot decide is listed in raw.join_undecided, never shown as an empty list.
+// The photo is not read by the mapper: Parse reads the images database first and decorates the emitter, so
+// the mapper stays a pure function of the row and its context.
 package iosaddressbook
