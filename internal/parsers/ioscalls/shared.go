@@ -82,6 +82,16 @@ func textCell(row parse.Row, c rowrun.Cols, col string, unknown map[string]any) 
 	return b, true
 }
 
+// namedField is cleanField for a text that may be empty: an empty value is absent with raw.<field>_state "empty",
+// as an empty address is (raw.address_state), so an empty text is stated and not mistaken for a NULL one.
+func namedField(raw map[string]any, field string, b []byte) string {
+	if len(b) == 0 {
+		raw[field+"_state"] = "empty"
+		return ""
+	}
+	return cleanField(raw, field, b)
+}
+
 // ints reads the integer columns and states each value read in raw under its column name; the others are
 // named in unknown. It returns the values read.
 func ints(row parse.Row, c rowrun.Cols, cols []string, raw, unknown map[string]any) map[string]int64 {

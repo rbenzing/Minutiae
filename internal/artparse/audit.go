@@ -88,7 +88,7 @@ type AnalysisStart struct {
 	GoVersion       string        `json:"go_version"`
 	Limits          AuditLimits   `json:"limits"`
 	Jobs            AuditJobs     `json:"jobs"`
-	Backups         []AuditBackup `json:"backups"` // always present
+	Backups         []AuditBackup `json:"backups"` // always present: an array for a parse run, null (unknown) for a typed recovery run
 	*RecoverStart                 // op "parse-recover" only (4G-R20)
 }
 
@@ -100,6 +100,9 @@ type RecoverStart struct {
 	MinConfidence    int               `json:"min_confidence"`
 	OnlyPrimary      string            `json:"only_primary"`
 	ExpectCompanions map[string]string `json:"expect_companions"`
+	// BackupsResolved is always false: a typed recovery run resolves no backups, so analysis.start states its
+	// backups as unknown (null), never as an empty list that would claim the case has none.
+	BackupsResolved bool `json:"backups_resolved"`
 }
 
 // Details returns the audit details of the entry.

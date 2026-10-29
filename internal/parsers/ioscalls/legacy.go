@@ -45,7 +45,7 @@ func mapLegacy(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 	ints(row, c, []string{"flags", "id", "assisted"}, raw, unknown)
 	cl.Address = address(row, c, "address", raw, unknown)
 	if b, ok := textCell(row, c, "name", unknown); ok {
-		cl.NameCached = cleanField(raw, "name_cached", b)
+		cl.NameCached = namedField(raw, "name_cached", b)
 	}
 	if b, ok := textCell(row, c, "country_code", unknown); ok {
 		cl.CountryISO = cleanField(raw, "country_iso", b)

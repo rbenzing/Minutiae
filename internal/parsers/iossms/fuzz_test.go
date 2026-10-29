@@ -3,7 +3,6 @@ package iossms_test
 import (
 	"encoding/binary"
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/parsers/iossms"
@@ -93,31 +92,6 @@ func TestEveryFuzzSeedEmitsRecords(t *testing.T) {
 	}
 }
 
-// hostileRun is parsertest.FuzzParseBundle with one more rule: a record the writer refused is a failure. The lenient
-// harness turns a refusal into a warning, which the shared helper lets pass; for a parser whose every record
-// must validate, whatever the input, that hides a mapping bug.
-func hostileRun(t *testing.T, build func(h *parsertest.Harness) parsertest.Bundle) {
-	t.Helper()
-	h := parsertest.NewHarness(t)
-	b := build(h)
-	p := iossms.Parser{}
-	if _, err := p.Probe(t.Context(), b.Input(h, p, true)); err != nil && !parsertest.HostileOK(err) {
-		t.Fatalf("Probe returned %v", err)
-	}
-	res := h.RunLenient(p, b.Input(h, p, false))
-	if res.Err != nil && !parsertest.HostileOK(res.Err) {
-		t.Fatalf("Parse returned %v", res.Err)
-	}
-	if len(res.Violations) != 0 {
-		t.Fatalf("contract violations: %v", res.Violations)
-	}
-	for _, w := range res.Warnings {
-		if strings.HasPrefix(w.Reason, "record refused") {
-			t.Fatalf("the writer refused a record: %+v", w)
-		}
-	}
-}
-
 // FuzzParseIOSSMS mutates whole databases (and their WAL and journal) and requires the contract to hold: no
 // panic, no refused record, and only typed hostile-input errors. It runs through the iOS entry point, because
 // the harness refuses an iOS parser's record on an Android artifact. Seeds run under go test; go test -fuzz is
@@ -134,7 +108,7 @@ func FuzzParseIOSSMS(f *testing.F) {
 		if len(journal) > 0 {
 			files["journal"] = journal
 		}
-		hostileRun(t, func(h *parsertest.Harness) parsertest.Bundle {
+		parsertest.FuzzParseBundle(t, iossms.Parser{}, func(h *parsertest.Harness) parsertest.Bundle {
 			return parsertest.Fixture{Name: "fuzz", Files: files}.BundleIOS(h, dbRemote, dbLogical)
 		})
 	})
@@ -198,7 +172,7 @@ func TestPageLevelMutationsNeverBreakTheContract(t *testing.T) {
 			t.Run(fmt.Sprintf("page %d/%s", pg, name), func(t *testing.T) {
 				t.Parallel()
 				files := map[string][]byte{"db": m}
-				hostileRun(t, func(h *parsertest.Harness) parsertest.Bundle {
+				parsertest.FuzzParseBundle(t, iossms.Parser{}, func(h *parsertest.Harness) parsertest.Bundle {
 					return parsertest.Fixture{Name: "mut", Files: files, Expect: fx.Expect}.BundleIOSBackup(h, domain, rel)
 				})
 			})
