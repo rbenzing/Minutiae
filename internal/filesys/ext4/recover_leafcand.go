@@ -126,12 +126,13 @@ func (f *FS) chainLeaves(st *staleInode, leaves []boundLeaf, indexLeaves int) fi
 	in := st.in
 	bs := int64(f.sb.blockSize)
 	var (
-		segs    []mapSeg
-		chained []uint64
-		cursor  int64 // first logical block not covered
-		stop    string
-		nruns   int
-		lastEnd int64
+		segs      []mapSeg
+		chained   []uint64
+		chainedAt []int // len(segs) when each chained leaf began, to drop the leaves an overlap cut removes
+		cursor    int64 // first logical block not covered
+		stop      string
+		nruns     int
+		lastEnd   int64
 	)
 	stopAt := func(reason string, lblk int64) {
 		if stop == "" {
@@ -153,6 +154,7 @@ chain:
 			break chain
 		}
 		chained = append(chained, l.ref.blk)
+		chainedAt = append(chainedAt, len(segs))
 		for _, x := range l.exts {
 			switch {
 			case x.lblk != cursor:
@@ -187,6 +189,8 @@ chain:
 		cursor = segs[k].lblk
 		stop = fmt.Sprintf(stopTokenTemplate, stopMapOverlap, cursor)
 		segs = segs[:k]
+		n := sort.Search(len(chainedAt), func(i int) bool { return chainedAt[i] >= k }) // leaves that begin before the cut
+		chained = chained[:n]
 	}
 	var wantBlocks int64
 	if in.size > 0 {

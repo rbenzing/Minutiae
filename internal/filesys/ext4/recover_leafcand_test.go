@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -500,5 +501,35 @@ func TestRecoverableLeafHugeInodeSize(t *testing.T) {
 	cs, err := recoverOf(t, f)
 	if err != nil || len(cs) != 1 || stopOf(cs[0]) != "leaf-gap@3" {
 		t.Fatalf("got %+v, %v; want a candidate with leaf-gap@3", cs, err)
+	}
+}
+
+// When the overlap cut drops extents, the basis names only the leaves whose extents are still used.
+func TestRecoverableLeafOverlapCutNamesOnlyUsedLeaves(t *testing.T) {
+	var leafA, leafB int
+	f, _, _ := leafImg(t, csumExt, bigDeleted(40), kernelFlags, true, func(img []byte, l *ext4test.Layout) {
+		loc := l.File("/gone.bin")
+		d, n := loc.Data, len(loc.Data)
+		leafA, leafB = d[n-1], d[n-2]
+		l.WriteLeaf(img, leafA, loc.Inode, loc.Generation, []ext4test.Extent{{Lblk: 0, Len: 2, Phys: d[0]}, {Lblk: 2, Len: 1, Phys: leafB}}, true)
+		l.WriteLeaf(img, leafB, loc.Inode, loc.Generation, []ext4test.Extent{{Lblk: 3, Len: 3, Phys: d[3]}}, true)
+	})
+	c := leafOnly(t, f)
+	if stopOf(c) != "map-overlap@2" || !hasBasis(c, "leaf="+strconv.Itoa(leafA)) || hasBasis(c, "leaf="+strconv.Itoa(leafB)) {
+		t.Errorf("stop %q basis %q, want map-overlap@2 naming leaf %d and not leaf %d", stopOf(c), c.Basis, leafA, leafB)
+	}
+}
+
+// A bound leaf that the chain never reached (beyond a gap) is still not file content.
+func TestRecoverableLeafDataExtentOverUnchainedLeafStops(t *testing.T) {
+	f, _, _ := leafImg(t, csumExt, bigDeleted(40), kernelFlags, true, func(img []byte, l *ext4test.Layout) {
+		loc := l.File("/gone.bin")
+		d, n := loc.Data, len(loc.Data)
+		l.WriteLeaf(img, d[n-1], loc.Inode, loc.Generation, []ext4test.Extent{{Lblk: 0, Len: 1, Phys: d[0]}, {Lblk: 1, Len: 1, Phys: d[n-2]}}, true)
+		l.WriteLeaf(img, d[n-2], loc.Inode, loc.Generation, []ext4test.Extent{{Lblk: 10, Len: 3, Phys: d[3]}}, true) // beyond a gap
+	})
+	c := leafOnly(t, f)
+	if got := stopOf(c); got != "map-overlap@1" || coveredBytes(c) != lbs {
+		t.Errorf("stop %q covered %d, want map-overlap@1 and 1 block", got, coveredBytes(c))
 	}
 }

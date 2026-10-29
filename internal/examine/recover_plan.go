@@ -78,6 +78,7 @@ type PlannedCandidate struct {
 
 	skipDetail string
 	prefix     bool   // the map covers less than the declared size (ruling F4/F18)
+	endUnknown bool   // the reader says the file may extend past the map (assumption file-end-unknown)
 	cut        bool   // some runs were not free
 	cutState   string // state of the first non-free byte
 	cutRuns    int    // runs not (fully) captured
@@ -558,6 +559,7 @@ func (p *planner) evaluate(it *RecoverItem, t target, cs []filesys.Candidate) {
 		// A map shorter than its declared size names only a prefix of the file (ruling F4/F18): the
 		// unmapped tail is counted in ExcludedBytes (it has no runs to list), whatever the reader's reason.
 		pc.prefix = covered < c.Size
+		pc.endUnknown = slices.Contains(c.Assumptions, assumptionFileEndUnknown)
 		tail := int64(0)
 		if pc.prefix {
 			tail = c.Size - covered
@@ -591,6 +593,13 @@ func (p *planner) evaluate(it *RecoverItem, t target, cs []filesys.Candidate) {
 			pc.errText = text
 		} else if pc.Size < c.Size && pc.errText == "" {
 			pc.errText = fmt.Sprintf("the map covers %d of %d declared bytes", pc.Size, c.Size)
+		}
+		if pc.endUnknown { // the bytes may stop short of the file: partial work is flagged, never presented as whole (3C-C4)
+			msg := "the file end is unknown (" + assumptionFileEndUnknown + ")"
+			if pc.errText != "" {
+				msg = pc.errText + "; " + msg
+			}
+			pc.errText = msg
 		}
 		pc.Content = "ok"
 		pc.Confidence, _ = confidenceFor(c.Method, pc.cut || pc.prefix || slices.Contains(pc.Assumptions, assumptionFileEndUnknown), false, slices.Contains(pc.Assumptions, assumptionJournalNotReplayed))

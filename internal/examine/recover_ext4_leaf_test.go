@@ -62,6 +62,10 @@ func TestRecoverExt4LeafAfterKernelUnlink(t *testing.T) {
 	if *rv.Confidence != 20 || rv.Method != "ext4-extent-leaf" || rv.Class != evidence.ClassDeletedFile {
 		t.Fatalf("confidence %d method %q class %q, want 20, ext4-extent-leaf, deleted-file", *rv.Confidence, rv.Method, rv.Class)
 	}
+	// Unknown is never absent (3C-C4): bytes that may stop short of the file are flagged incomplete, with the reason.
+	if !rec.Incomplete || rec.Error != "the file end is unknown (file-end-unknown)" {
+		t.Errorf("incomplete %v error %q, want incomplete with the file-end-unknown reason", rec.Incomplete, rec.Error)
+	}
 	if !bytes.Equal(readArtifact(t, s.Case, rec), data) {
 		t.Error("the artifact is not the file")
 	}
@@ -237,6 +241,9 @@ func TestRecoverExt4LeafZeroSizeLostLastLeafCapsAt20(t *testing.T) {
 	rv := recoveryOf(rec)
 	if *rv.Confidence != 20 || !hasAssumption(rv, "file-end-unknown") {
 		t.Fatalf("confidence %d assumptions %q, want 20 and file-end-unknown", *rv.Confidence, rv.Assumptions)
+	}
+	if !rec.Incomplete || !strings.Contains(rec.Error, "the file end is unknown (file-end-unknown)") {
+		t.Errorf("incomplete %v error %q, want incomplete with the file-end-unknown reason", rec.Incomplete, rec.Error)
 	}
 	if !bytes.Equal(readArtifact(t, s.Case, rec), data[:45*leafBS]) {
 		t.Error("the artifact is not exactly the first leaf's blocks")
