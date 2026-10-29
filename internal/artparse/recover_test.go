@@ -334,7 +334,7 @@ func TestRecoverTypedAuditsJobs(t *testing.T) {
 	}
 	// RecoverTyped resolves no backups: the audit states it as unknown (null and backups_resolved false), never as an
 	// empty list, which would claim that the case has no backup (4E carry-over, Task 16).
-	if raw := all[as].Details["backups"]; raw != nil || all[as].Details["backups_resolved"] != false || start.Backups != nil || start.RecoverStart.BackupsResolved {
+	if raw := all[as].Details["backups"]; raw != nil || all[as].Details["backups_resolved"] != false || start.Backups != nil || start.BackupsResolved {
 		t.Errorf("analysis.start backups = %#v resolved %#v, want null and false", raw, all[as].Details["backups_resolved"])
 	}
 	jobStart := decodeEntry[artparse.JobStart](t, all[js])

@@ -119,7 +119,7 @@ func extraFilesOf(t *testing.T, fx parsertest.Fixture, device string) map[iosE2E
 var hashedRemote = regexp.MustCompile(`^UDID[0-9]/[0-9a-f]{2}/[0-9a-f]{40}$`)
 
 type e2eMessage struct {
-	Guid        string `json:"guid"`
+	GUID        string `json:"guid"`
 	Attachments []struct {
 		ArtifactID string `json:"artifact_id"`
 		SHA256     string `json:"artifact_sha256"`
@@ -216,14 +216,14 @@ func TestIOSBackupEndToEnd(t *testing.T) {
 	}
 
 	// every record of the nanos oracle, by guid and source path; the attachments through the host's Lookup
-	byGuid := map[string]records.Full{}
+	byGUID := map[string]records.Full{}
 	walSMS := 0
 	for _, f := range all["ios.sms"] {
 		var p e2eMessage
 		if err := json.Unmarshal(f.Payload, &p); err != nil {
 			t.Fatal(err)
 		}
-		byGuid[f.SourcePath+"|"+p.Guid] = f
+		byGUID[f.SourcePath+"|"+p.GUID] = f
 		if strings.HasPrefix(f.SourcePath, "UDID3/") {
 			walSMS++
 		}
@@ -231,7 +231,7 @@ func TestIOSBackupEndToEnd(t *testing.T) {
 	attached := 0
 	for _, want := range nanos.Expect.Records {
 		g, _ := want.Payload["guid"].(string)
-		f, ok := byGuid[want.SourcePath+"|"+g]
+		f, ok := byGUID[want.SourcePath+"|"+g]
 		if !ok {
 			t.Errorf("oracle record %s (rowid %d, %s) is not in the case", g, want.Rowid, want.SourcePath)
 			continue
