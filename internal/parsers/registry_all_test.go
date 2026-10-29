@@ -11,7 +11,7 @@ import (
 // claimsOf lists, for every registered parser, the tables it must claim (4G-R30): an explicit table, so a
 // claim is never added or dropped by accident and a registered parser missing from the table fails. A parser
 // without claims is listed with nil. Tasks 9 and 10 set the three Android telephony parsers, Task 10b the 4F browsers
-// (the 4E parsers claim nothing yet: ios.calls and ios.addressbook are listed with nil, ios.sms follows with its registration).
+// (the 4E parsers claim nothing yet: ios.sms, ios.calls and ios.addressbook are listed with nil).
 var claimsOf = map[string][]string{
 	"android.mmssms":   {"sms", "pdu"},
 	"android.calllog":  {"calls"},
@@ -20,6 +20,7 @@ var claimsOf = map[string][]string{
 	"safari.history":   {"history_visits"},
 	"ios.calls":        nil,
 	"ios.addressbook":  nil,
+	"ios.sms":          nil,
 }
 
 // 4A's registry tests ranged over an empty registry; with the Android telephony parsers in it they are real
@@ -71,7 +72,7 @@ func TestRegisteredParsersClaimExactly(t *testing.T) {
 }
 
 func TestEveryTelephonyParserReadsCompanionRolesAndEmitsOneType(t *testing.T) {
-	want := map[string]string{"android.mmssms": "message", "android.calllog": "call", "android.contacts": "contact", "ios.calls": "call", "ios.addressbook": "contact"}
+	want := map[string]string{"android.mmssms": "message", "android.calllog": "call", "android.contacts": "contact", "ios.calls": "call", "ios.addressbook": "contact", "ios.sms": "message"}
 	for _, p := range All() {
 		m := p.Meta()
 		typ, ok := want[m.Name]
