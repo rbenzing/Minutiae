@@ -52,6 +52,9 @@ func carveStdNodes(jpg, png []byte) []fstest.Node {
 
 func (e *carveEnv) carve(t *testing.T, o CarveOptions) CarveSummary {
 	t.Helper()
+	if o.MinConfidence == 0 { // the default floor is the caller's: these tests are the caller
+		o.MinConfidence = DefaultCarveMinConfidence
+	}
 	if o.Partition == 0 {
 		o.Partition = -1
 	}
@@ -220,34 +223,40 @@ func TestCarveNeverModifiesSource(t *testing.T) {
 	}
 }
 
-func TestCarveDefaultMinConfidenceIsApplied(t *testing.T) {
-	// A zero MinConfidence selects DefaultCarveMinConfidence (40), not a floor of 0.
-	if got := (CarveOptions{}).withDefaults().MinConfidence; got != 40 {
-		t.Fatalf("default floor %d", got)
-	}
-	if got := (CarveOptions{MinConfidence: 7}).withDefaults().MinConfidence; got != 7 {
-		t.Fatalf("explicit floor %d", got)
-	}
-	e := newCarveEnv(t, carveStdNodes(carveJPEG(), carvePNG())...)
-	for _, o := range []CarveOptions{{Partition: -1}, {Partition: -1, MinConfidence: DefaultCarveMinConfidence}} {
-		pl, err := e.s.PlanCarve(context.Background(), o)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(pl.Hits) != 2 {
-			t.Fatalf("plan lists %d hits", len(pl.Hits))
-		}
-	}
-	// a bounded hit (25) is below the default floor, kept at an explicit lower one
-	sig := sigCafe(t)
-	nodes := []fstest.Node{carveDeleted("/c.bin", append([]byte{0xca, 0xfe, 0xba, 0xbe}, carveFill(9, 600)...))}
-	e2 := newCarveEnv(t, nodes...)
-	pl, err := e2.s.PlanCarve(context.Background(), CarveOptions{Partition: -1, SigFile: sig, Types: []string{"cafe"}})
+// MinConfidence 0 is a floor of 0 (the default of 40 belongs to the caller, as for recover): a hit capped to
+// confidence 0 by its chain is written at 0 and skipped at 1.
+func TestCarveFloorZeroWritesConfidenceZero(t *testing.T) {
+	zero := 0
+	s, c, _ := carveArtifactSession(t, &zero, nil, false)
+	pl, err := s.PlanCarve(context.Background(), CarveOptions{Partition: -1, MinConfidence: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pl.Hits) != 1 || pl.Hits[0].Skip != carveSkipBelowMin || pl.Hits[0].Confidence != 25 {
-		t.Fatalf("hits %+v", pl.Hits)
+	if len(pl.Hits) != 1 || pl.Hits[0].Confidence != 0 || pl.Hits[0].Skip != carveSkipBelowMin {
+		t.Fatalf("floor 1: %+v", pl.Hits)
+	}
+	cs, err := s.Carve(context.Background(), CarveOptions{Partition: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recs := carvedRecords(t, c)
+	if cs.Carved != 1 || len(recs) != 1 || *recs[0].Source.Derived.Recovery.Confidence != 0 || recs[0].Source.Derived.Recovery.Params["min_confidence"] != "0" {
+		t.Fatalf("floor 0: carved %d, %+v", cs.Carved, recs)
+	}
+}
+
+// The default floor is the caller's: a bounded hit (25) is listed but not written at DefaultCarveMinConfidence.
+func TestCarveDefaultMinConfidenceIsTheCallers(t *testing.T) {
+	nodes := []fstest.Node{carveDeleted("/c.bin", append([]byte{0xca, 0xfe, 0xba, 0xbe}, carveFill(9, 600)...))}
+	e := newCarveEnv(t, nodes...)
+	for floor, want := range map[int]string{DefaultCarveMinConfidence: carveSkipBelowMin, 0: ""} {
+		pl, err := e.s.PlanCarve(context.Background(), CarveOptions{Partition: -1, SigFile: sigCafe(t), Types: []string{"cafe"}, MinConfidence: floor})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(pl.Hits) != 1 || pl.Hits[0].Skip != want || pl.Hits[0].Confidence != 25 {
+			t.Fatalf("floor %d: hits %+v", floor, pl.Hits)
+		}
 	}
 }
 
@@ -292,7 +301,7 @@ func TestCarveListMatchesRun(t *testing.T) {
 	nodes := append(carveStdNodes(carveJPEG(), carvePNG()),
 		carveDeleted("/c.bin", append([]byte{0xca, 0xfe, 0xba, 0xbe}, carveFill(9, 600)...)))
 	e := newCarveEnv(t, nodes...)
-	o := CarveOptions{Partition: -1, SigFile: sigCafe(t)}
+	o := CarveOptions{Partition: -1, SigFile: sigCafe(t), MinConfidence: DefaultCarveMinConfidence}
 	before := len(carveAuditEntries(t, e.c, ""))
 	pl, err := e.s.PlanCarve(context.Background(), o)
 	if err != nil {
@@ -540,7 +549,7 @@ func TestCarveAnalysisAudit(t *testing.T) {
 // carveEndKeys are the statistics of analysis.end / analysis.error (3E-R11).
 var carveEndKeys = []string{
 	"scope_runs", "scope_bytes", "scanned_bytes", "not_scanned_bytes", "align", "hits_by_outcome", "rejected_by", "carved",
-	"partial", "skipped_by", "nested_depth_skipped", "types_capped", "unreadable_bytes", "validate_bytes", "limit_reached",
+	"partial", "skipped_by", "nested_depth_skipped", "types_capped", "unreadable_bytes", "uncopied_bytes", "validate_bytes", "limit_reached",
 }
 
 // carveArtifactSession adds a PNG-holding image and a recovered artifact over it to a new case; mutate shapes

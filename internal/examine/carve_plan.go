@@ -81,6 +81,8 @@ type carveJob struct {
 	sigSHA     string
 	setSHA     string
 	notes      []string // scope and set notes (audited as non-skip warnings)
+	limitNote  string   // the scan-limit note (code scan-limit)
+	uncopied   int64    // bytes of accepted hits that failed to copy
 	scanRuns   []carve.Run
 	cutBytes   int64 // scope bytes past Session.ScanLimit
 	byID       map[string]evidence.ManifestRecord
@@ -91,15 +93,6 @@ type carveJob struct {
 	skipped map[string]int
 }
 
-// withDefaults applies the defaults of the zero values: the minimum confidence 0 selects
-// DefaultCarveMinConfidence (a floor of 1 keeps every hit; no hit earns less than 10).
-func (o CarveOptions) withDefaults() CarveOptions {
-	if o.MinConfidence == 0 {
-		o.MinConfidence = DefaultCarveMinConfidence
-	}
-	return o
-}
-
 func sha256Hex(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
@@ -108,7 +101,6 @@ func sha256Hex(b []byte) string {
 // prepareCarve resolves the options, the scope and the signature set. It reads the partition table and the
 // filesystems, never the carved bytes, and writes nothing.
 func (s *Session) prepareCarve(o CarveOptions) (*carveJob, error) {
-	o = o.withDefaults()
 	sc, err := s.buildCarveScope(o)
 	if err != nil {
 		return nil, err
@@ -173,7 +165,7 @@ func (s *Session) prepareCarve(o CarveOptions) (*carveJob, error) {
 		}
 		j.scanRuns = kept
 		if j.cutBytes > 0 {
-			j.notes = append(j.notes, fmt.Sprintf("scan-limit: %d byte(s) of the scope lie past the scan limit of %d bytes (%s) and are not carved", j.cutBytes, limit, why))
+			j.limitNote = fmt.Sprintf("scan-limit: %d byte(s) of the scope lie past the scan limit of %d bytes (%s) and are not carved", j.cutBytes, limit, why)
 		}
 	}
 	if sc.Scope == CarveArtifact {
@@ -408,12 +400,16 @@ func (s *Session) PlanCarve(ctx context.Context, o CarveOptions) (*CarvePlan, er
 		Scope: j.sc.Scope, ScopeRuns: len(j.sc.Runs), ScopeBytes: j.sc.Bytes, Align: j.sc.Align,
 		Sigset: j.set.ID, SigsetSHA256: j.setSHA, SigFileSHA256: j.sigSHA, Notes: slices.Clone(j.notes),
 	}
+	if j.limitNote != "" {
+		p.Notes = append(p.Notes, j.limitNote)
+	}
 	lp := evidence.NewLocalPaths("carved")
 	err = j.scan(ctx, func(h *CarveHit) error {
 		if h.Skip == "" {
 			name, nerr := j.localName(lp, h)
 			if nerr != nil {
 				h.Skip = carveSkipNoName
+				j.b.release(h.Length)
 				j.skipped[h.Skip]++
 			}
 			h.Name = name

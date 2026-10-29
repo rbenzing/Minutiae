@@ -21,6 +21,7 @@ type CarveSummary struct {
 	SkippedBy       map[string]int
 	LimitReached    string
 	NotScannedBytes int64
+	UncopiedBytes   int64 // bytes of accepted hits that failed to copy (not in Stats.UnreadableBytes)
 	Sigset          string
 	SigsetSHA256    string
 	SigFileSHA256   string
@@ -45,11 +46,16 @@ func (s *Session) Carve(ctx context.Context, o CarveOptions) (CarveSummary, erro
 	cs := CarveSummary{Sigset: j.set.ID, SigsetSHA256: j.setSHA, SigFileSHA256: j.sigSHA}
 	sum, err := runAnalysis(s.Case, s.Parent.Source.DeviceID, "carve", j.startDetails(), func(a *analysis) error {
 		defer func() {
-			cs.Stats, cs.SkippedBy, cs.LimitReached, cs.NotScannedBytes = j.stats, j.skipped, j.limit, j.notScanned()
+			cs.Stats, cs.SkippedBy, cs.LimitReached, cs.NotScannedBytes, cs.UncopiedBytes = j.stats, j.skipped, j.limit, j.notScanned(), j.uncopied
 			j.setEnd(a, &cs)
 		}()
 		if fsys := j.watchedFS(); fsys != nil {
 			if err := a.watchFS(fsys); err != nil {
+				return err
+			}
+		}
+		if j.limitNote != "" {
+			if err := a.appendWarning(noteDetails(a, "scan-limit", j.limitNote)); err != nil {
 				return err
 			}
 		}
@@ -145,6 +151,7 @@ func (j *carveJob) setEnd(a *analysis, cs *CarveSummary) {
 	a.setEnd("nested_depth_skipped", st.NestedDepthSkipped)
 	a.setEnd("types_capped", append([]string{}, st.TypeCapped...))
 	a.setEnd("unreadable_bytes", st.UnreadableBytes)
+	a.setEnd("uncopied_bytes", j.uncopied)
 	a.setEnd("validate_bytes", st.ValidateBytes)
 	a.setEnd("limit_reached", j.limit)
 }
@@ -207,7 +214,7 @@ func (w *carveWriter) write(h *CarveHit) error {
 	}
 	dir, err := w.lp.Dir("/" + j.sc.Dir)
 	if err != nil {
-		return a.warn(hitPath(h), "no usable local directory name: "+err.Error())
+		return w.noName(h, "no usable local directory name: "+err.Error())
 	}
 	var (
 		rec     evidence.ManifestRecord
@@ -216,21 +223,21 @@ func (w *carveWriter) write(h *CarveHit) error {
 	for attempt := 0; ; attempt++ {
 		rel, err := w.lp.File(dir, fmt.Sprintf("%016x-%s.%s", h.Offset, h.Type, h.Ext))
 		if err != nil {
-			return a.warn(hitPath(h), "no usable local name: "+err.Error())
+			return w.noName(h, "no usable local name: "+err.Error())
 		}
 		rec, readErr, err = s.capture(a, rel, src, func(out io.Writer) error { return w.copyHit(out, h, d, rv) })
 		var nameErr *localNameError
 		if errors.As(err, &nameErr) {
-			return a.warn(hitPath(h), "not carved: "+nameErr.Error())
+			return w.noName(h, "not carved: "+nameErr.Error())
 		}
 		if !errors.Is(err, evidence.ErrArtifactExists) {
 			if err != nil {
-				return err // the case itself failed: never downgraded to a warning
+				return errors.Join(err, readErr) // the case itself failed: never downgraded, and a read error is not hidden
 			}
 			break
 		}
 		if attempt+1 >= maxNameAttempts {
-			return a.warn(hitPath(h), fmt.Sprintf("no free local name after %d attempts: %v", attempt+1, err))
+			return w.noName(h, fmt.Sprintf("no free local name after %d attempts: %v", attempt+1, err))
 		}
 	}
 	if rec.ID != "" {
@@ -261,6 +268,7 @@ func (w *carveWriter) copyHit(out io.Writer, h *CarveHit, d *evidence.Derivation
 		if n >= h.Length {
 			return
 		}
+		j.uncopied += h.Length - n
 		d.Runs = prefixRuns(d.Runs, n)
 		if alloc, _, err := j.allocOf(h.Offset, n); err == nil {
 			rv.Alloc = alloc
@@ -288,4 +296,12 @@ func (w *carveWriter) copyHit(out io.Writer, h *CarveHit, d *evidence.Derivation
 		return fmt.Errorf("image ended after %d of %d bytes of the hit at %d: %w", m, h.Length, h.Offset, io.ErrUnexpectedEOF)
 	}
 	return nil
+}
+
+// noName gives up on a hit that has no usable local name: it is counted as skipped (no-local-name), the budget
+// it was admitted under is released and one warning names it, as an extraction does.
+func (w *carveWriter) noName(h *CarveHit, reason string) error {
+	w.j.skipped[carveSkipNoName]++
+	w.j.b.release(h.Length)
+	return w.a.warnWith(hitPath(h), reason, map[string]any{"code": carveSkipNoName, "type": h.Type, "length": h.Length})
 }
