@@ -1683,3 +1683,25 @@ py -3 tools/fixtures/telephony_gen.py --family ios_calls --check
 | `coredata-current` | `callhistory-coredata.sql` | 20 rows: in answered and missed, out answered, out unanswered (outcome `unknown`), `ZORIGINATED` 2; `ZCALLTYPE` 1, 8, 16, 99; three providers; `ZADDRESS` TEXT, BLOB, BLOB with trailing garbage, NULL, empty; `ZDATE` REAL, integral REAL (stored INTEGER), 0, -1, year 2100; `ZDURATION` 0, 12.5, -3, `+Inf`, 2e9, NULL; `ZREAD` 0/1/NULL |
 | `coredata-wal` | `callhistory-coredata.sql` | 8 rows in the database, 3 calls only in the `-wal` (a killed writer) |
 | `legacy-call-history` | `callhistory-legacy.sql` | 8 rows: Unix-seconds dates, `flags` 4, 5, 8, 1769472 (kept raw, direction unknown), a fractional REAL date, date 0, negative duration, NULL and empty address |
+
+### ios-addressbook (plan 4E, Task 13)
+
+`ios_addressbook.py` is a family module of `telephony_gen.py` (host Python `sqlite3` only, no Docker; the family name
+is `ios_addressbook`). The layouts of `AddressBook.sqlitedb` and `AddressBookImages.sqlitedb` are written from memory
+(4E-R13), so the fixtures prove that the parser reads the remembered layout and nothing about a real database. The
+oracle restates the "Mapping contract ios.addressbook" and rulings 4E-R23, R24, R25 and R41 in Python from what the
+generator wrote (the engine's read-back of its files; photo presence from the images database it wrote); it shares no
+code with the Go parser. All variants are plain databases, so regeneration is byte-identical.
+
+```
+py -3 tools/fixtures/telephony_gen.py --family ios_addressbook --out internal/parsers/iosaddressbook/testdata \
+    --pins-go internal/parsers/iosaddressbook/pins_test.go --pins-package iosaddressbook_test
+py -3 tools/fixtures/telephony_gen.py --family ios_addressbook --check
+```
+
+| Variant (`internal/parsers/iosaddressbook/testdata/`) | DDL snapshot | Holds |
+|---|---|---|
+| `current` | `addressbook-current.sql` | 13 persons, 12 records and one warning: names with phonetics, a stored and a composed display name, an empty stored one, organization only; phones with `_$!<Mobile>!$_`, `_$!<Home>!$_`, a custom and a dangling label; e-mails, a URL, property 13 (to `raw.other_values`); two structured addresses with `CountryCode` and an unknown key; two stores and a dangling one; three groups and non-person members; Creation/Modification dates REAL, INTEGER, 0, year 2100 and `+Inf`; a birthday kept raw; a Note with NUL; invalid UTF-8; Hebrew/Arabic with U+202E, CJK, emoji; wrong storage classes in `Kind` and `CreationDate`; a person who identifies nobody |
+| `with-images` | `addressbook-current.sql` + `addressbookimages.sql` (role `images`, `with-images.images.db.gz`) | 3 persons: a thumbnail only, a full-size image only, neither (`photo.present` true, true, false) |
+| `older-schema` | `addressbook-older.sql` | 4 persons without `DisplayName`, `StoreID`, `guid`, `ExternalUUID`, `ABStore`: composed names, no accounts |
+| `huge-contact` | `addressbook-current.sql` | one person with 1200 phones and 1100 e-mail addresses: lists cut at 1000 with `_total` and `_truncated` |
