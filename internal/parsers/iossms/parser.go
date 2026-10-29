@@ -93,7 +93,7 @@ func (c *counting) Emit(ctx context.Context, r records.Record) error {
 	}
 	for _, col := range []string{"message_summary_info", "payload_data"} {
 		if raw[col+"_status"] == "undecodable" {
-			if err := c.Emitter.Warn(ctx, r.Locator, col+" is not a decodable property list; the message is kept without it"); err != nil {
+			if err := c.Warn(ctx, r.Locator, col+" is not a decodable property list; the message is kept without it"); err != nil {
 				return err
 			}
 		}
