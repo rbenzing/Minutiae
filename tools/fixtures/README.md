@@ -1683,3 +1683,29 @@ py -3 tools/fixtures/telephony_gen.py --family ios_calls --check
 | `coredata-current` | `callhistory-coredata.sql` | 20 rows: in answered and missed, out answered, out unanswered (outcome `unknown`), `ZORIGINATED` 2; `ZCALLTYPE` 1, 8, 16, 99; three providers; `ZADDRESS` TEXT, BLOB, BLOB with trailing garbage, NULL, empty; `ZDATE` REAL, integral REAL (stored INTEGER), 0, -1, year 2100; `ZDURATION` 0, 12.5, -3, `+Inf`, 2e9, NULL; `ZREAD` 0/1/NULL |
 | `coredata-wal` | `callhistory-coredata.sql` | 8 rows in the database, 3 calls only in the `-wal` (a killed writer) |
 | `legacy-call-history` | `callhistory-legacy.sql` | 8 rows: Unix-seconds dates, `flags` 4, 5, 8, 1769472 (kept raw, direction unknown), a fractional REAL date, date 0, negative duration, NULL and empty address |
+
+### ios-sms (plan 4E, Task 7)
+
+`ios_sms.py` is a family module of `telephony_gen.py` (host Python `sqlite3` only, no Docker; the family name is
+`ios_sms`). The layout of `sms.db` is written from memory (4E-R13), so the fixtures prove that the parser reads the
+remembered layout and nothing about a real database. The oracle restates the "Mapping contract ios.sms" and rulings
+4E-R14 to R20, R31 and R41 in Python from what the generator wrote: the engine's read-back of its own files on a
+copy, and, for each `attributedBody`, `message_summary_info` and `payload_data` blob, the generator's own record of
+what it put in (the typedstream bytes come from the Python encoder of `ios_common.py`, never from the Go test
+builder). It shares no code with the Go parser and takes no value from Go output. Every variant is bundled as a
+backup of `UDID1` (`BundleIOSBackup`), so a record's `source_path` is the hashed backup path of the file holding the
+cell (`UDID1/3d/3d0d7e5f...`, the `-wal` for a row only in the WAL). The `ios17-wal` WAL carries a random salt, so
+it differs on every regeneration: regenerate the files, the oracle and the pins together.
+
+```
+py -3 tools/fixtures/telephony_gen.py --family ios_sms --out internal/parsers/iossms/testdata \
+    --pins-go internal/parsers/iossms/pins_test.go --pins-package iossms_test
+py -3 tools/fixtures/telephony_gen.py --family ios_sms --check
+```
+
+| Variant (`internal/parsers/iossms/testdata/`) | DDL snapshot | Holds |
+|---|---|---|
+| `ios17-nanos` | `sms-ios17.sql` | 45 messages: SMS 1:1, an iMessage to a 3-member titled group, `attributedBody`-only text (emoji, ZWJ, skin tones), equal and differing `text` and `attributedBody`, invalid UTF-8 and a truncated stream, NULL/NULL with and without attachment, reactions 2001 (`p:0/<GUID>`), 3001 (`bp:<GUID>`) and a malformed `x:abc`, a system rename, dates 0 / seconds / nanoseconds (non-zero last digit) / year 2100, read / delivered / played / edited / retracted times, a recently-deleted message, a message in two chats and in none, `handle_id` 0 and dangling, one number under two handles, `is_from_me` 2, `error` 22, services `RCS` and NULL, NUL in text, a 300 KiB text, RTL text, five attachments (present `~/` and `/var/mobile/`, missing, present only in the backup of `UDID2`, `*` in the name), a NULL `item_type` and a TEXT `associated_message_type`, a two-edit `message_summary_info`, an `LPLinkMetadata` `payload_data` and a corrupt one, two identical messages |
+| `ios14-attributed` | `sms-ios14.sql` | 12 messages: six with `attributedBody` only, no edit or recently-deleted columns |
+| `ios10-seconds` | `sms-ios10.sql` | 10 messages: seconds dates only (one fractional REAL), no `attributedBody` column; three short records written before an `ALTER TABLE ADD COLUMN` |
+| `ios17-wal` | `sms-ios17.sql` | 8 messages in the database; three new messages and one edit only in the `-wal` (a killed writer) |
