@@ -6,13 +6,11 @@ import (
 	"io"
 	"math"
 	"regexp"
-	"runtime/debug"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -33,7 +31,7 @@ const discoveryNote = "note: discovery trusts the manifest's source fields; run 
 
 func newParseCmd(d Deps, opts *rootOptions) *cobra.Command {
 	cmd := newGroupCmd("parse", "List, plan and run the artifact parsers")
-	cmd.AddCommand(newParseListCmd(d, opts), newParsePlanCmd(d, opts), newParseRunCmd(d, opts))
+	cmd.AddCommand(newParseListCmd(d, opts), newParsePlanCmd(d, opts), newParseRunCmd(d, opts), newParseRecoverCmd(d, opts))
 	return cmd
 }
 
@@ -170,6 +168,7 @@ type parseSelFlags struct {
 	parsers          []string
 	artifacts        []string
 	includeSnapshots bool
+	includeRecovered bool
 }
 
 func (f *parseSelFlags) register(cmd *cobra.Command) {
@@ -178,11 +177,12 @@ func (f *parseSelFlags) register(cmd *cobra.Command) {
 	fl.StringArrayVar(&f.parsers, "parser", nil, "only this parser, NAME or NAME@VERSION (repeatable)")
 	fl.StringArrayVar(&f.artifacts, "artifact", nil, "only this artifact id as the primary input (repeatable)")
 	fl.BoolVar(&f.includeSnapshots, "include-snapshots", false, "also parse artifacts extracted from filesystem snapshots")
+	fl.BoolVar(&f.includeRecovered, "include-recovered", false, "also parse recovered and carved artifacts (their records are marked recovered, never live, and capped by how the artifact was recovered)")
 }
 
 // selection validates the parser references against the registry (before any case is opened).
 func (f *parseSelFlags) selection(regs []artparse.Registered) (artparse.Selection, error) {
-	sel := artparse.Selection{Artifacts: f.artifacts, IncludeSnapshots: f.includeSnapshots}
+	sel := artparse.Selection{Artifacts: f.artifacts, IncludeSnapshots: f.includeSnapshots, IncludeRecovered: f.includeRecovered}
 	for _, p := range f.parsers {
 		name, version, hasAt := strings.Cut(p, "@")
 		if name == "" || (hasAt && version == "") {
@@ -258,6 +258,15 @@ type planRowJSON struct {
 	Bundle     []bundleJSON  `json:"bundle"`
 	Integrity  bool          `json:"integrity"`
 	Incomplete bool          `json:"incomplete"`
+	// Recovered is non-nil when a member of the bundle is recovered input; its confidence is null when the cap is unknown.
+	Recovered *recoveredInputJSON `json:"recovered"`
+}
+
+type recoveredInputJSON struct {
+	Class      string `json:"class"`
+	Method     string `json:"method"`
+	Confidence *int   `json:"confidence"`
+	CapUnknown bool   `json:"cap_unknown"`
 }
 
 type unnamedJSON struct {
@@ -267,14 +276,15 @@ type unnamedJSON struct {
 }
 
 type countsJSON struct {
-	Manifest         int            `json:"manifest"`
-	NotParserInput   int            `json:"not_parser_input"`
-	SnapshotExcluded int            `json:"snapshot_excluded"`
-	ByKind           map[string]int `json:"by_kind"`
-	MissingRole      map[string]int `json:"missing_role"`
-	Unnamed          map[string]int `json:"unnamed"`
-	UnnamedList      []unnamedJSON  `json:"unnamed_list"`
-	ByStatus         map[string]int `json:"by_status"`
+	Manifest          int            `json:"manifest"`
+	NotParserInput    int            `json:"not_parser_input"`
+	SnapshotExcluded  int            `json:"snapshot_excluded"`
+	ByKind            map[string]int `json:"by_kind"`
+	MissingRole       map[string]int `json:"missing_role"`
+	Unnamed           map[string]int `json:"unnamed"`
+	UnnamedList       []unnamedJSON  `json:"unnamed_list"`
+	RecoveredExcluded int            `json:"recovered_excluded"`
+	ByStatus          map[string]int `json:"by_status"`
 }
 
 func nonNilMap(m map[string]int) map[string]int {
@@ -286,7 +296,7 @@ func nonNilMap(m map[string]int) map[string]int {
 
 func planCountsJSON(c artparse.Counts, byStatus map[string]int) countsJSON {
 	out := countsJSON{
-		Manifest: c.Manifest, NotParserInput: c.NotParserInput, SnapshotExcluded: c.SnapshotExcluded,
+		Manifest: c.Manifest, NotParserInput: c.NotParserInput, SnapshotExcluded: c.SnapshotExcluded, RecoveredExcluded: c.RecoveredExcluded,
 		ByKind: nonNilMap(c.ByKind), MissingRole: nonNilMap(c.MissingRole), Unnamed: nonNilMap(c.Unnamed), ByStatus: nonNilMap(byStatus),
 		UnnamedList: []unnamedJSON{},
 	}
@@ -319,6 +329,12 @@ func planRowToJSON(r artparse.PlanRow) planRowJSON {
 	}
 	if s := r.Job.Primary.Snapshot; s != nil {
 		j.Snapshot = &snapshotJSON{Name: s.Name, Xid: s.Xid}
+	}
+	if ri := r.Recovered; ri != nil {
+		j.Recovered = &recoveredInputJSON{Class: ri.Class, Method: ri.Method, CapUnknown: ri.CapUnknown}
+		if !ri.CapUnknown {
+			j.Recovered.Confidence = ri.Confidence // a cut or unreadable chain has no known bound: null, never a number
+		}
 	}
 	return j
 }
@@ -353,6 +369,13 @@ func writePlanText(w io.Writer, p artparse.Plan) error {
 		if j.Incomplete {
 			logical += " [incomplete]"
 		}
+		if rj := j.Recovered; rj != nil {
+			conf := "unknown"
+			if rj.Confidence != nil {
+				conf = strconv.Itoa(*rj.Confidence)
+			}
+			logical += " [recovered:" + printable(rj.Method) + " conf " + conf + "]"
+		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", escapeText(status), printable(j.Parser+"@"+j.Version), printable(j.ArtifactID), logical, strings.Join(bundle, " "))
 	}
 	if err := tw.Flush(); err != nil {
@@ -364,6 +387,9 @@ func writePlanText(w io.Writer, p artparse.Plan) error {
 		fmt.Fprintf(w, ", %s %d", escapeText(k), c.ByStatus[k])
 	}
 	fmt.Fprintf(w, "; manifest records %d, not parser input %d, snapshot artifacts excluded %d\n", c.Manifest, c.NotParserInput, c.SnapshotExcluded)
+	if c.RecoveredExcluded > 0 {
+		fmt.Fprintf(w, "  %d recovered or carved artifacts are not discovered (use --include-recovered)\n", c.RecoveredExcluded)
+	}
 	for _, k := range sortedKeys(c.MissingRole) {
 		fmt.Fprintf(w, "  missing a required role: %s %d\n", printable(k), c.MissingRole[k])
 	}
@@ -666,23 +692,9 @@ func newParseRunCmd(d Deps, opts *rootOptions) *cobra.Command {
 			"4 when an input did not match the evidence.",
 		Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			lim := defaultParseLimits()
-			if cmd.Flags().Changed("timeout") {
-				dur, err := time.ParseDuration(timeout)
-				if err != nil || dur < time.Second || dur > 24*time.Hour {
-					return usageErrorf("--timeout %s: want a duration from 1s to 24h (for example 30m)", printable(timeout))
-				}
-				lim.Timeout = dur
-			}
-			if cmd.Flags().Changed("mem-budget") {
-				n, err := parseSize(memBudget)
-				if err != nil {
-					return usageErrorf("--mem-budget: %v", err)
-				}
-				if n < 16<<20 || n > 64<<30 {
-					return usageErrorf("--mem-budget %s: want a size from 16MiB to 64GiB", printable(memBudget))
-				}
-				lim.MemBudget = n
+			lim, err := limitsFromFlags(cmd, timeout, memBudget)
+			if err != nil {
+				return err
 			}
 			if cmd.Flags().Changed("max-records") {
 				if maxRecords < 1 || maxRecords > 1_000_000_000 {
@@ -706,41 +718,12 @@ func newParseRunCmd(d Deps, opts *rootOptions) *cobra.Command {
 			}
 			defer func() { _ = c.Close() }()
 
-			// twice the budget, but never above a lower limit the operator set (GOMEMLIMIT)
-			cur := debug.SetMemoryLimit(-1)
-			prev := debug.SetMemoryLimit(min(cur, 2*lim.MemBudget))
-			defer debug.SetMemoryLimit(prev)
+			defer limitMemory(lim)()
 
-			total := 0
-			stream := &jsonStream{w: d.Out, errw: d.Err}
-			onEvent := func(e artparse.Event) {
-				switch e.Kind {
-				case "run.start":
-					total = e.Jobs
-					if opts.json {
-						stream.ndjson(map[string]any{"event": "run.start", "parse_id": e.ParseID, "jobs": e.Jobs})
-					}
-				case "job.start":
-					if opts.json {
-						r := e.Result
-						stream.ndjson(map[string]any{
-							"event": "job.start", "job": e.Job, "parser": r.Parser, "version": r.Version, "artifact_id": r.ArtifactID,
-							"logical_path": r.Logical, "platform": r.Platform,
-						})
-					}
-				case "job.progress":
-					if opts.json {
-						stream.ndjson(map[string]any{"event": "job.progress", "job": e.Job, "done": e.Done, "total": e.Total})
-					}
-				case "job.end":
-					fmt.Fprintln(d.Err, statusLine(*e.Result, total))
-					if opts.json {
-						stream.ndjson(jobToJSON("job.end", *e.Result))
-					}
-				}
-			}
+			ev := &runEvents{d: d, json: opts.json, stream: &jsonStream{w: d.Out, errw: d.Err}}
+			onEvent := ev.onEvent
 			sum, runErr := h.Run(cmd.Context(), artparse.RunOptions{Selection: sel, OnEvent: onEvent})
-			return joinJSON(finishRun(d, opts, sum, runErr), stream.finish())
+			return joinJSON(finishRun(d, opts, sum, runErr), ev.stream.finish())
 		},
 	}
 	f.register(cmd)
@@ -756,33 +739,53 @@ func newParseRunCmd(d Deps, opts *rootOptions) *cobra.Command {
 // finishRun prints the summary and maps the outcome to the error that sets the exit code: integrity
 // (exit 4) beats everything, then a run-level error, then a partial run (exit 1).
 func finishRun(d Deps, opts *rootOptions, sum artparse.RunSummary, runErr error) error {
-	jerr := writeRunSummary(d, opts, sum)
+	return finishRunMode(d, opts, sum, runErr, false)
+}
+
+// finishRunMode is finishRun for a live run (typed false) or a typed recovery run (typed true).
+func finishRunMode(d Deps, opts *rootOptions, sum artparse.RunSummary, runErr error, typed bool) error {
+	jerr := writeRunSummaryMode(d, opts, sum, typed)
 	return joinJSON(runOutcome(d, sum, runErr), jerr)
 }
 
-// writeRunSummary prints the summary of a run. A JSON summary that cannot be written safely is refused
-// (stderr says so) and the refusal is returned, to be joined after the run's own outcome.
-func writeRunSummary(d Deps, opts *rootOptions, sum artparse.RunSummary) error {
+// writeRunSummaryMode prints the summary of a run (typed: a typed recovery run). A JSON summary that cannot be
+// written safely is refused (stderr says so) and the refusal is returned, to be joined after the run's own outcome.
+func writeRunSummaryMode(d Deps, opts *rootOptions, sum artparse.RunSummary, typed bool) error {
 	if sum.ParseID == "" {
 		return nil
 	}
 	if opts.json {
-		jobs := []jobJSON{}
+		var jobs []any
 		for _, j := range sum.Jobs {
-			jobs = append(jobs, jobToJSON("", j))
+			if typed {
+				jobs = append(jobs, recoverJobToJSON("", j))
+			} else {
+				jobs = append(jobs, jobToJSON("", j))
+			}
+		}
+		if jobs == nil {
+			jobs = []any{}
 		}
 		outcomes := map[string]int{}
 		for _, j := range sum.Jobs {
 			outcomes[j.Outcome]++
 		}
-		err := writeNDJSON(d.Out, map[string]any{
+		line := map[string]any{
 			"event": "summary", "parse_id": sum.ParseID, "class": className(sum.Class()), "stopped": sum.Stopped,
 			"cancelled": sum.Cancelled, "records": sum.Records, "outcomes": outcomes, "jobs": jobs,
-		})
+		}
+		if typed {
+			line["recovered_not_live"] = true
+		}
+		err := writeNDJSON(d.Out, line)
 		if err != nil {
 			fmt.Fprintf(d.Err, "summary line not written: %s\n", escapeText(err.Error()))
 		}
 		return err
+	}
+	if typed {
+		writeRecoverSummaryText(d.Out, sum, opts.verbose)
+		return nil
 	}
 	writeRunSummaryText(d.Out, sum, opts.verbose)
 	return nil
