@@ -3,6 +3,8 @@ package cli
 import (
 	"time"
 
+	"github.com/rbenzing/minutiae/internal/carve"
+
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/examine"
 	"github.com/rbenzing/minutiae/internal/filesys"
@@ -404,6 +406,125 @@ func newJSONGaps(g *image.AcquisitionGaps) *jsonGaps {
 	for _, k := range g.Kept {
 		out.Kept = append(out.Kept, jsonRun{Offset: k.Offset, Length: k.Length})
 		out.Bytes += k.Length // merged and clipped to the media, so the sum is at most the media size
+	}
+	return out
+}
+
+// jsonCarve is the JSON of a carve run (strings are the raw ones; artifacts are manifest records).
+type jsonCarve struct {
+	AnalysisID         string                    `json:"analysis_id"`
+	Carved             int                       `json:"carved"`
+	Partial            int                       `json:"partial"`
+	HitsByOutcome      map[string]int            `json:"hits_by_outcome"`
+	RejectedBy         map[string]int            `json:"rejected_by"`
+	SkippedBy          map[string]int            `json:"skipped_by"`
+	LimitReached       string                    `json:"limit_reached"`
+	NotScannedBytes    int64                     `json:"not_scanned_bytes"`
+	ScannedBytes       int64                     `json:"scanned_bytes"`
+	UnreadableBytes    int64                     `json:"unreadable_bytes"`
+	UncopiedBytes      int64                     `json:"uncopied_bytes"`
+	TypesCapped        []string                  `json:"types_capped"`
+	NestedDepthSkipped int                       `json:"nested_depth_skipped"`
+	FSWarnings         int                       `json:"fs_warnings"`
+	Sigset             string                    `json:"sigset"`
+	SigsetSHA256       string                    `json:"sigset_sha256"`
+	SigFileSHA256      string                    `json:"sig_file_sha256"`
+	Artifacts          []evidence.ManifestRecord `json:"artifacts"`
+}
+
+func carveOutcomeCounts(m map[carve.Outcome]int) map[string]int {
+	out := map[string]int{}
+	for k, v := range m {
+		out[string(k)] = v
+	}
+	return out
+}
+
+func carveCounts(m map[string]int) map[string]int {
+	if m == nil {
+		return map[string]int{}
+	}
+	return m
+}
+
+func carveStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
+func newJSONCarve(s examine.CarveSummary) jsonCarve {
+	out := jsonCarve{
+		AnalysisID: s.AnalysisID, Carved: s.Carved, Partial: s.Partial, HitsByOutcome: carveOutcomeCounts(s.Stats.Accepted),
+		RejectedBy: carveCounts(s.Stats.Rejected), SkippedBy: carveCounts(s.SkippedBy), LimitReached: s.LimitReached,
+		NotScannedBytes: s.NotScannedBytes, ScannedBytes: s.Stats.Scanned, UnreadableBytes: s.Stats.UnreadableBytes,
+		UncopiedBytes: s.UncopiedBytes, TypesCapped: carveStrings(s.Stats.TypeCapped), NestedDepthSkipped: s.Stats.NestedDepthSkipped,
+		FSWarnings: s.FSWarnings, Sigset: s.Sigset, SigsetSHA256: s.SigsetSHA256, SigFileSHA256: s.SigFileSHA256, Artifacts: s.Artifacts,
+	}
+	if out.Artifacts == nil {
+		out.Artifacts = []evidence.ManifestRecord{}
+	}
+	return out
+}
+
+type jsonCarveHit struct {
+	Offset      int64                 `json:"offset"`
+	Length      int64                 `json:"length"`
+	Family      string                `json:"family"`
+	Type        string                `json:"type"`
+	Outcome     string                `json:"outcome"`
+	Method      string                `json:"method"`
+	Confidence  int                   `json:"confidence"`
+	Alloc       evidence.AllocSummary `json:"alloc"`
+	NestedIn    *int64                `json:"nested_in"`
+	WouldWrite  bool                  `json:"would_write"`
+	Skip        string                `json:"skip"`
+	Name        string                `json:"name"`
+	Basis       []string              `json:"basis"`
+	Assumptions []string              `json:"assumptions"`
+}
+
+// jsonCarveList is the JSON of image carve --list.
+type jsonCarveList struct {
+	Scope           string         `json:"scope"`
+	ScopeRuns       int            `json:"scope_runs"`
+	ScopeBytes      int64          `json:"scope_bytes"`
+	Align           int64          `json:"align"`
+	Hits            []jsonCarveHit `json:"hits"`
+	HitsNotListed   int            `json:"hits_not_listed"`
+	HitsByOutcome   map[string]int `json:"hits_by_outcome"`
+	RejectedBy      map[string]int `json:"rejected_by"`
+	SkippedBy       map[string]int `json:"skipped_by"`
+	LimitReached    string         `json:"limit_reached"`
+	NotScannedBytes int64          `json:"not_scanned_bytes"`
+	UnreadableBytes int64          `json:"unreadable_bytes"`
+	TypesCapped     []string       `json:"types_capped"`
+	Sigset          string         `json:"sigset"`
+	SigsetSHA256    string         `json:"sigset_sha256"`
+	SigFileSHA256   string         `json:"sig_file_sha256"`
+	Notes           []string       `json:"notes"`
+}
+
+func newJSONCarveList(p *examine.CarvePlan) jsonCarveList {
+	out := jsonCarveList{
+		Scope: p.Scope, ScopeRuns: p.ScopeRuns, ScopeBytes: p.ScopeBytes, Align: p.Align, Hits: []jsonCarveHit{},
+		HitsNotListed: p.HitsNotListed, HitsByOutcome: carveOutcomeCounts(p.Stats.Accepted), RejectedBy: carveCounts(p.Stats.Rejected),
+		SkippedBy: carveCounts(p.SkippedBy), LimitReached: p.LimitReached, NotScannedBytes: p.NotScannedBytes,
+		UnreadableBytes: p.Stats.UnreadableBytes, TypesCapped: carveStrings(p.Stats.TypeCapped), Sigset: p.Sigset,
+		SigsetSHA256: p.SigsetSHA256, SigFileSHA256: p.SigFileSHA256, Notes: carveStrings(p.Notes),
+	}
+	for _, h := range p.Hits {
+		jh := jsonCarveHit{
+			Offset: h.Offset, Length: h.Length, Family: h.Family, Type: h.Type, Outcome: string(h.Outcome), Method: h.Method,
+			Confidence: h.Confidence, Alloc: h.Alloc, WouldWrite: h.Skip == "", Skip: h.Skip, Name: h.Name,
+			Basis: carveStrings(h.Basis), Assumptions: carveStrings(h.Assumptions),
+		}
+		if h.NestedIn >= 0 {
+			n := h.NestedIn
+			jh.NestedIn = &n
+		}
+		out.Hits = append(out.Hits, jh)
 	}
 	return out
 }
