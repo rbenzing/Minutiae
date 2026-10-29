@@ -10,15 +10,15 @@ spec → plan → implementation cycle and its status is updated here when it
 changes. Do not start a sub-project before its dependencies are `Done`
 unless this file is updated to say why.
 
-Status values: `Not started` · `Spec` · `Planned` · `In progress` · `Done`
+Status values: `Not started` · `In progress` · `Done` (the detail is in the status notes under each table)
 
 | # | Sub-project | Scope | Depends on | Status |
 |---|---|---|---|---|
 | 1 | Foundation + Acquisition | Case/evidence core (hash-chained audit log, manifest, `artifacts.db`, verify), device abstraction, USB serial transport + raw console, Android ADB (info, pull/push, logical, rooted partition imaging), iOS (info, AFC pull, logical backup), CLI | — | Done |
 | 2 | Image & filesystem layer | Open raw/dd and E01 images; GPT/MBR; read ext4, F2FS, APFS, HFS+, FAT, exFAT; expose unallocated space | 1 | Done |
-| 3 | Deleted data recovery | SQLite freelist/WAL/journal record recovery; signature-based file carving; slack space; ext4 journal | 2 | In progress (3A foundation, 3I SQLite file library and 3J SQLite record recovery done: `sqlite recover` turns deleted, WAL, journal and slack rows into `db_row` records; 3B FAT/exFAT deleted-file recovery done; 3C-3H, 3K pending) |
-| 4 | Artifact parsers (plugin system) | SMS/MMS, calls, contacts, calendar, browser history, WhatsApp, Telegram, Signal (where decryptable), Instagram and others, as plugins writing to `artifacts.db` | 2, 3I, 5 (4G also 3A, 3J) | In progress (4D done: android.mmssms, android.calllog and android.contacts on the 4B decoder; 4F done: `chromium.history` (Chromium-family and WebView `History` by schema signature: visits, visitless URLs, searches, downloads) and `safari.history` (visits, visitless items, application tombstones) with cross-checked (Chromium) and from-memory (Safari) fixtures; 4G done: `parse recover` and `sqlite recover` type the recovered rows of the tables the five shipped parsers claim (`android.mmssms`: `sms`, `pdu`; `android.calllog`: `calls`; `android.contacts`: `raw_contacts`, `deleted_contacts`; `chromium.history`: `visits`, `keyword_search_terms`, `downloads`; `safari.history`: `history_visits`) under `<name>.recover`, every recovered row covered once as a typed record, a counted unmapped warning or a `db_row`; recovered and carved artifacts are parser input with `--include-recovered`; 4E done: the `ios-backup` namer maps backup files from each backup's hash-checked `Manifest.db`, encrypted backups are reported unparsed (sub-project 10); `ios.sms`, `ios.calls` and `ios.addressbook` on from-memory schemas, no claims yet; 4H pending; 4A started before 3I and 5 are Done: it needs only the finished records writer of 5A, 4B needs 3I, 4G needs 3A and 3J; 3J is done, so 4G can read `db_row` records, applies table claims and the `fit`/`guess` basis rule itself, and owns timestamps) |
-| 5 | Unified artifact database | Indexed store of all parsed records with provenance (artifact, path, offset, deleted flag); full-text keyword search | 1 | Done (5A to 5D: schema v3 store, verified full-text search, checked provenance chain, scale work. Measured at 10,000,000 records on the reference laptop: search word 121 ms and substring 128 ms pass, list p95 19.6 ms passes; recorded misses: `case verify` 3,094 s, 3,232 records/s against the amendment A10 target of 3,700 (87.3%, the gap is SQLite's own `PRAGMA integrity_check`, P10, which cannot be split), stats by type 42.8 s against 3 s, ingest 1,630 records/s against 40,000 and database size 3.90 against 1.6; see `docs/performance.md` and `docs/limitations.md`) |
+| 3 | Deleted data recovery | SQLite freelist/WAL/journal record recovery; signature-based file carving; slack space; ext4 journal | 2 | In progress |
+| 4 | Artifact parsers (plugin system) | SMS/MMS, calls, contacts, calendar, browser history, WhatsApp, Telegram, Signal (where decryptable), Instagram and others, as plugins writing to `artifacts.db` | 2, 3I, 5 (4G also 3A, 3J) | In progress |
+| 5 | Unified artifact database | Indexed store of all parsed records with provenance (artifact, path, offset, deleted flag); full-text keyword search | 1 | Done |
 | 6 | Analytics | Timeline, geolocation/map, communication graph, keyword lists, hash sets (NSRL / known-bad) | 4, 5 | Not started |
 | 7 | Reporting | HTML/PDF/CSV reports with hashes and chain of custody | 5 | Not started |
 | 8 | Protocol drivers | AT commands, Qualcomm EDL/diag, MediaTek BROM, UART console | 1 | Not started |
@@ -26,6 +26,11 @@ Status values: `Not started` · `Spec` · `Planned` · `In progress` · `Done`
 | 10 | Encrypted data / keychain | Backup password handling, app database decryption where keys are available | 4 | Not started |
 | 11 | Artifact classification & categorization | Classifier model automatically assigns categories (e.g. image content classes, document types, conversation topics) to artifacts and records, with confidence scores; filter and navigate the case by category. CLI first, GUI view via 9 | 4, 5 | Not started |
 | 12 | AI artifact search & analysis | Natural-language chat over the artifact collection: searches `artifacts.db`, retrieves specific details and returns numbers, keywords and other structured answers, each citing the artifacts and records it came from. CLI first, GUI panel via 9 | 5 | Not started |
+
+Status notes (sub-projects):
+- 3 Deleted data recovery: 3A foundation, 3I SQLite file library and 3J SQLite record recovery done: `sqlite recover` turns deleted, WAL, journal and slack rows into `db_row` records; 3B FAT/exFAT deleted-file recovery done; 3C-3H, 3K pending
+- 4 Artifact parsers (plugin system): 4D done: android.mmssms, android.calllog and android.contacts on the 4B decoder; 4F done: `chromium.history` (Chromium-family and WebView `History` by schema signature: visits, visitless URLs, searches, downloads) and `safari.history` (visits, visitless items, application tombstones) with cross-checked (Chromium) and from-memory (Safari) fixtures; 4G done: `parse recover` and `sqlite recover` type the recovered rows of the tables the five shipped parsers claim (`android.mmssms`: `sms`, `pdu`; `android.calllog`: `calls`; `android.contacts`: `raw_contacts`, `deleted_contacts`; `chromium.history`: `visits`, `keyword_search_terms`, `downloads`; `safari.history`: `history_visits`) under `<name>.recover`, every recovered row covered once as a typed record, a counted unmapped warning or a `db_row`; recovered and carved artifacts are parser input with `--include-recovered`; 4E done: the `ios-backup` namer maps backup files from each backup's hash-checked `Manifest.db`, encrypted backups are reported unparsed (sub-project 10); `ios.sms`, `ios.calls` and `ios.addressbook` on from-memory schemas, no claims yet; 4H pending; 4A started before 3I and 5 are Done: it needs only the finished records writer of 5A, 4B needs 3I, 4G needs 3A and 3J; 3J is done, so 4G can read `db_row` records, applies table claims and the `fit`/`guess` basis rule itself, and owns timestamps
+- 5 Unified artifact database: 5A to 5D: schema v3 store, verified full-text search, checked provenance chain, scale work. Measured at 10,000,000 records on the reference laptop: search word 121 ms and substring 128 ms pass, list p95 19.6 ms passes; recorded misses: `case verify` 3,094 s, 3,232 records/s against the amendment A10 target of 3,700 (87.3%, the gap is SQLite's own `PRAGMA integrity_check`, P10, which cannot be split), stats by type 42.8 s against 3 s, ingest 1,630 records/s against 40,000 and database size 3.90 against 1.6; see `docs/performance.md` and `docs/limitations.md`
 
 AI-derived results (11, 12) are investigative leads, never evidence:
 - they are stored apart from acquired artifacts and never change them;
@@ -51,11 +56,16 @@ sub-project's scope.
 | LX-2 | APFS and HFS+ gaps, shared decmpfs | 2 | Done |
 | LX-3 | EWF and image commands | 2 | Done |
 | LX-4 | SQLite reader and table decoder | 3 (3I), 4 (4B) | Done |
-| LX-5 | Verify and audit | 1, 5 | Done (L67/L101 audit anchors, L98 allocation recheck, L69 records --verify and the not-verified notice, L76, L77, L97, L100, acquisition-gap recompute, cut recovery trail) |
-| LX-6 | Records, full-text search and JSON output | 5 | Done (L72 terminal-safe JSON, L70 run index, L85 --scan, L86 CJK letters as tokens with pipeline version 4, L90 quote-aware scanner) |
+| LX-5 | Verify and audit | 1, 5 | Done |
+| LX-6 | Records, full-text search and JSON output | 5 | Done |
 | LX-7a | ext4, F2FS and shared filesystem readers | 2 | Done |
 | LX-7b | FAT and exFAT readers | 2 | Done |
-| LX-8 | Parse contract, plist decoder and fuzz tooling | 4 | Done (follow-up: the post-LX-8 fuzz campaigns are pending, see below) |
+| LX-8 | Parse contract, plist decoder and fuzz tooling | 4 | Done |
+
+Status notes (LX plans):
+- LX-5: L67/L101 audit anchors, L98 allocation recheck, L69 records --verify and the not-verified notice, L76, L77, L97, L100, acquisition-gap recompute, cut recovery trail
+- LX-6: L72 terminal-safe JSON, L70 run index, L85 --scan, L86 CJK letters as tokens with pipeline version 4, L90 quote-aware scanner
+- LX-8: follow-up: the post-LX-8 fuzz campaigns are pending, see below
 
 Follow-ups from sub-project 5 (5D, plan `2026-10-08-5d-scale.md` with the verify amendment; none is scheduled):
 - (a) Whether throttling the record-stream and index-pass workers while `PRAGMA integrity_check` (P10) runs reduces contention: P10 took 3,093 s beside the other work against 2,555 s alone, and the verify time at 10,000,000 records is P10 time (3,094 s against the 2,703 s budget of the 3,700 records/s target).
