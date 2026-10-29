@@ -246,6 +246,7 @@ func (r *run) analysisStart(parsers []Registered, jobs []Job, backups []BackupRe
 		as.Op = OpParseRecover
 		as.RecoverStart = &RecoverStart{MinConfidence: r.rec.opt.MinConfidence, OnlyPrimary: r.rec.opt.OnlyPrimary, ExpectCompanions: map[string]string{}}
 		maps.Copy(as.ExpectCompanions, r.rec.opt.ExpectCompanions)
+		as.Backups = nil // not resolved by this run: null, never an empty list
 	}
 	for _, p := range parsers {
 		id := p.Identity()

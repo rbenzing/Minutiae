@@ -1761,3 +1761,11 @@ py -3 tools/fixtures/telephony_gen.py --family ios_sms --check
 | `ios14-attributed` | `sms-ios14.sql` | 12 messages: six with `attributedBody` only, no edit or recently-deleted columns |
 | `ios10-seconds` | `sms-ios10.sql` | 10 messages: seconds dates only (one fractional REAL), no `attributedBody` column; three short records written before an `ALTER TABLE ADD COLUMN` |
 | `ios17-wal` | `sms-ios17.sql` | 8 messages in the database; three new messages and one edit only in the `-wal` (a killed writer) |
+
+### End to end over a backup (plan 4E, Task 16)
+
+`internal/cli/parse_ios_e2e_test.go` (`TestIOSBackupEndToEnd`) combines the committed iOS fixtures into backup acquisitions: `ios17-nanos` (with its
+attachment extra files), `coredata-current` and `with-images` (with its images database) under backup directory `UDID1`, and
+`ios17-wal` (database and `-wal`) under `UDID3`, each named by a `sqlitetest` `Manifest.db` (fileID = the sha1 rule) and an
+unencrypted `Manifest.plist`; a second acquisition is encrypted. No new fixture is generated: the oracles of the three
+families are the expected records.

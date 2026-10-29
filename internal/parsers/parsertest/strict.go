@@ -32,6 +32,9 @@ type Result struct {
 	// single record (an input changed, too many warnings), in strict and lenient
 	// mode alike.
 	Violations []error
+	// Refused counts the records a rule or the writer refused. A strict run fails on the first;
+	// a lenient run collects them as Warnings (reason "record refused: ...") and counts them here.
+	Refused int
 	// LateCalls counts Emit, Warn, Note and Progress calls made after Run
 	// returned (the emitter is sealed by then and refuses them). It is shared
 	// with the emitter, so a call made later shows in a Result already returned.
@@ -262,6 +265,7 @@ func (e *emitter) snapshot() Result {
 	r.Notes = maps.Clone(r.Notes)
 	r.Progress = slices.Clone(r.Progress)
 	r.Violations = slices.Clone(r.Violations)
+	r.Refused = e.refused
 	return r
 }
 

@@ -97,13 +97,13 @@ func mapCore(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 
 	cl.Address = address(row, c, "ZADDRESS", raw, unknown)
 	if b, ok := textCell(row, c, "ZNAME", unknown); ok {
-		cl.NameCached = cleanField(raw, "name_cached", b)
+		cl.NameCached = namedField(raw, "name_cached", b)
 	}
 	if b, ok := textCell(row, c, "ZISO_COUNTRY_CODE", unknown); ok {
 		cl.CountryISO = cleanField(raw, "country_iso", b)
 	}
 	if b, ok := textCell(row, c, "ZLOCATION", unknown); ok {
-		cl.GeoDescription = cleanField(raw, "geo_description", b)
+		cl.GeoDescription = namedField(raw, "geo_description", b)
 	}
 	if b, ok := textCell(row, c, "ZSERVICE_PROVIDER", unknown); ok {
 		cl.Service = cleanField(raw, "service", b)
