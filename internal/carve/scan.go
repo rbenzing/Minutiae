@@ -576,10 +576,17 @@ func (p *pass) candidate(ct *ctype, pos int64) (int64, error) {
 	var v Verdict
 	if ct.validate != nil {
 		v = ct.validate(w)
-		if v.Outcome == Bounded && len(v.Assumptions) == 0 && v.Length == winLen {
-			// A validator that can only bound the object to its window (gzip) leaves
-			// the reason to the scanner, which knows the cap and the run.
-			v.Assumptions = []string{p.boundedAssumption(ct, winLen, limit)}
+		if v.Outcome == Bounded && len(v.Assumptions) == 0 {
+			// A bounded verdict always states why the length stops where it does.
+			// A validator that only bounds the object to its window (gzip) leaves
+			// the label to the scanner, which knows the cap and the run; any other
+			// length has no label that fits and is a validator defect (rejected
+			// below, counted, never silent).
+			if v.Length == winLen {
+				v.Assumptions = []string{p.boundedAssumption(ct, winLen, limit)}
+			} else {
+				v = Verdict{Outcome: Rejected, Reason: "validator-defect"}
+			}
 		}
 	} else {
 		v = p.footerVerdict(ct, w, winLen, limit)
