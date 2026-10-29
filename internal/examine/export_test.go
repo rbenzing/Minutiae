@@ -1,6 +1,10 @@
 package examine
 
 import (
+	"context"
+	"io"
+
+	"github.com/rbenzing/minutiae/internal/carve"
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/filesys"
 )
@@ -86,4 +90,18 @@ func SetMaxGapWork(n int) (restore func()) {
 	old := maxGapWork
 	maxGapWork = n
 	return func() { maxGapWork = old }
+}
+
+// SetCarveScan replaces the scanner a carve calls and returns the restore function.
+func SetCarveScan(f func(ctx context.Context, r io.ReaderAt, runs []carve.Run, set *carve.Set, o carve.Options, emit func(carve.Hit) error) (carve.Stats, error)) (restore func()) {
+	old := carveScanFunc
+	carveScanFunc = f
+	return func() { carveScanFunc = old }
+}
+
+// SetCarveValidateBudget sets the validator read budget of a carve (0 = the default) and returns the restore function.
+func SetCarveValidateBudget(n int64) (restore func()) {
+	old := carveValidateBudget
+	carveValidateBudget = n
+	return func() { carveValidateBudget = old }
 }
