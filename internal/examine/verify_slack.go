@@ -257,6 +257,14 @@ func (p *slackPartition) freeMap() (*freeMap, error) {
 type slackRange struct {
 	off, end int64
 	idx      int
+	omitted  bool // an omitted uniform range, not an exported segment
+}
+
+func (r slackRange) String() string {
+	if r.omitted {
+		return fmt.Sprintf("omitted range %d", r.idx)
+	}
+	return fmt.Sprintf("segment %d", r.idx)
 }
 
 // one checks one artifact. It returns false when the context ended.
@@ -366,6 +374,7 @@ type slackArtifactCheck struct {
 	bin         io.ReaderAt
 
 	n        int // exported lines seen
+	nOmitted int // omitted lines seen
 	diffDone bool
 	ranges   []slackRange
 	free     *freeMap
@@ -386,14 +395,31 @@ func (c *slackArtifactCheck) omitted(l evidence.SlackMapLine) {
 		c.problem("omitted range %d+%d lies outside the %d-byte image", l.ImageOffset, l.Length, img)
 		return
 	}
-	uniform, _, err := uniformScanBuf(c.v.ctx, c.p.s.Image, []evidence.Run{{Offset: l.ImageOffset, Length: l.Length}}, c.v.buf)
-	switch {
-	case err != nil:
-		if c.v.ctx.Err() == nil {
-			c.problem("omitted range %d+%d cannot be read from the image: %v", l.ImageOffset, l.Length, err)
+	// The scan waits for finish: only ranges that are disjoint from each other and from the exported segments
+	// are read, so the bytes scanned never exceed the image size however many lines a forged map repeats.
+	end, _ := filesys.AddOK(l.ImageOffset, l.Length)
+	c.ranges = append(c.ranges, slackRange{off: l.ImageOffset, end: end, idx: c.nOmitted, omitted: true})
+	c.nOmitted++
+}
+
+// scanOmitted reads the omitted ranges (disjoint, see finish) and requires each to be uniform in the image.
+func (c *slackArtifactCheck) scanOmitted() {
+	for _, r := range c.ranges {
+		if !r.omitted {
+			continue
 		}
-	case !uniform:
-		c.problem("omitted range %d+%d is not uniform in the image", l.ImageOffset, l.Length)
+		if c.v.ctx.Err() != nil {
+			return
+		}
+		uniform, _, err := uniformScanBuf(c.v.ctx, c.p.s.Image, []evidence.Run{{Offset: r.off, Length: r.end - r.off}}, c.v.buf)
+		switch {
+		case err != nil:
+			if c.v.ctx.Err() == nil {
+				c.problem("omitted range %d (%d+%d) cannot be read from the image: %v", r.idx, r.off, r.end-r.off, err)
+			}
+		case !uniform:
+			c.problem("omitted range %d (%d+%d) is not uniform in the image", r.idx, r.off, r.end-r.off)
+		}
 	}
 }
 
@@ -407,7 +433,7 @@ func (c *slackArtifactCheck) line(l evidence.SlackMapLine, last bool) {
 		c.problem("segment %d: %d+%d overflows", i, l.ImageOffset, l.Length)
 		return
 	}
-	c.ranges = append(c.ranges, slackRange{l.ImageOffset, end, i})
+	c.ranges = append(c.ranges, slackRange{off: l.ImageOffset, end: end, idx: i})
 
 	// the bytes of the artifact decide the uniform flag
 	if abEnd, ok := filesys.AddOK(l.Offset, l.Length); !ok || abEnd > c.rec.Size {
@@ -493,6 +519,7 @@ func (c *slackArtifactCheck) fileSegment(i int, l evidence.SlackMapLine, last bo
 		c.problem("segment %d (fs_id %q): the file cannot be opened: %v", i, l.FSID, err)
 		return
 	}
+	c.entryType(i, l)
 	if f.Size() != l.FileSize {
 		c.problem("segment %d (fs_id %q): the file is %d bytes now, the segment records %d", i, l.FSID, f.Size(), l.FileSize)
 	}
@@ -545,15 +572,28 @@ func (c *slackArtifactCheck) finish(re *slackReplan) {
 		return c.ranges[a].idx < c.ranges[b].idx
 	})
 	var maxEnd int64 = -1
-	maxIdx := 0
+	var maxR slackRange
+	overlap := false
 	for _, r := range c.ranges {
 		if r.off < maxEnd {
-			c.problem("segments %d and %d overlap in the image", min(maxIdx, r.idx), max(maxIdx, r.idx))
+			overlap = true
+			a, b := maxR, r
+			if a.omitted == b.omitted && a.idx > b.idx {
+				a, b = b, a
+			}
+			if a.omitted || b.omitted {
+				c.problem("%s and %s overlap in the image (omitted ranges are disjoint from each other and from the exported segments)", a, b)
+			} else {
+				c.problem("segments %d and %d overlap in the image", a.idx, b.idx)
+			}
 			break
 		}
 		if r.end > maxEnd {
-			maxEnd, maxIdx = r.end, r.idx
+			maxEnd, maxR = r.end, r
 		}
+	}
+	if !c.complete && !overlap {
+		c.scanOmitted()
 	}
 	if c.complete {
 		if re != nil {
@@ -646,5 +686,23 @@ func (c *slackArtifactCheck) declaredLine() {
 		c.problem("the last captured line (%d+%d) is not the line it was cut from (declared %d+%d)", l.ImageOffset, l.Length, decl.ImageOffset, decl.Length)
 	case l.Length > decl.Length:
 		c.problem("the last captured line is longer (%d bytes) than the declared line it was cut from (%d bytes)", l.Length, decl.Length)
+	}
+}
+
+// entryType requires the recorded path to name, now, the regular file the fs_id names: Open gives no node
+// type, so a fs_id that has become a symlink would otherwise be judged by its runs alone. A path the walk
+// had to escape cannot be looked up (limitations); its fs_id is still opened.
+func (c *slackArtifactCheck) entryType(i int, l evidence.SlackMapLine) {
+	if l.PathEscaped {
+		return
+	}
+	e, err := c.p.fsys.Lookup(l.FSPath)
+	switch {
+	case err != nil:
+		c.problem("segment %d (fs_id %q): the path %q cannot be resolved: %v", i, l.FSID, l.FSPath, err)
+	case e.Type != filesys.TypeFile:
+		c.problem("segment %d (fs_id %q): the path %q names a %v, not a regular file", i, l.FSID, l.FSPath, e.Type)
+	case e.ID != l.FSID:
+		c.problem("segment %d (fs_id %q): the path %q now names %q", i, l.FSID, l.FSPath, e.ID)
 	}
 }

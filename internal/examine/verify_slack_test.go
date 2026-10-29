@@ -553,3 +553,119 @@ func TestVerifySlackReplanMismatch(t *testing.T) {
 		requireNoSlackProblem(t, verifySlackOnly(context.Background(), t, e.c))
 	})
 }
+
+// A forged sidecar that repeats one omitted range over the whole image must not make verify scan the image
+// once per line: omitted ranges and exported segments must be disjoint, and a violation is a problem that
+// also stops the scan.
+func TestVerifySlackOmittedRangesAreDisjoint(t *testing.T) {
+	t.Run("one large range repeated", func(t *testing.T) {
+		e := newForgeEnv(t)
+		var lines []evidence.SlackMapLine
+		for range 2000 {
+			lines = append(lines, evidence.SlackMapLine{ImageOffset: 0, Length: int64(len(e.img)), FSPath: "/A.TXT", FSID: e.fsID["A.TXT"], FileSize: 2, Uniform: true})
+		}
+		e.add(t, lines, nil)
+		rep := verifySlackOnly(context.Background(), t, e.c)
+		requireSlackProblem(t, rep, "omitted range 0 and omitted range 1 overlap in the image")
+		for _, p := range slackProblems(rep) {
+			if strings.Contains(p, "not uniform") {
+				t.Errorf("the overlapping ranges were scanned: %s", p)
+			}
+		}
+	})
+	t.Run("an omitted range over an exported segment", func(t *testing.T) {
+		e := newForgeEnv(t)
+		l := lineOf(e.file[0])
+		om := l
+		om.Exported, om.Uniform = false, true
+		e.add(t, []evidence.SlackMapLine{l, om}, nil)
+		requireSlackProblem(t, verifySlackOnly(context.Background(), t, e.c), "overlap in the image (omitted ranges are disjoint")
+	})
+	t.Run("disjoint ranges still pass", func(t *testing.T) {
+		z, _ := fatCutSlack(t, false)
+		s := slackSession(t, z.img, Options{})
+		mustExportSlack(t, s, SlackOptions{Partition: -1, Files: true})
+		requireNoSlackProblem(t, verifySlackOnly(context.Background(), t, s.Case))
+	})
+}
+
+// A recorded path must name, now, the regular file its fs_id names.
+func TestVerifySlackPathMustNameTheFile(t *testing.T) {
+	for _, tc := range []struct{ name, path, want string }{
+		{"another file", "/B.TXT", `now names`},
+		{"a directory", "/", `names a dir, not a regular file`},
+		{"a missing path", "/NOPE.TXT", `cannot be resolved`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newForgeEnv(t)
+			l := e.fileLines()
+			l[0].FSPath = tc.path
+			e.add(t, l, nil)
+			requireSlackProblem(t, verifySlackOnly(context.Background(), t, e.c), tc.want)
+		})
+	}
+}
+
+// refExport exports one part of the image in a case of its own and returns its lines and counters, as a
+// genuine run records them.
+func refExport(t *testing.T, e *forgeEnv, o SlackOptions, suffix, method string) ([]evidence.SlackMapLine, map[string]string) {
+	t.Helper()
+	ref := slackSession(t, e.img, Options{})
+	sum := mustExportSlack(t, ref, o)
+	bin := slackRecord(t, sum, suffix+".bin")
+	lines := slackLinesOf(t, ref.Case, slackRecord(t, sum, suffix+".runs.jsonl"), method)
+	params := map[string]string{}
+	for k, v := range bin.Source.Derived.Recovery.Params {
+		params[k] = v
+	}
+	return lines, params
+}
+
+func TestVerifySlackCompleteForgedOffsetLengthAndVolume(t *testing.T) {
+	file := func(t *testing.T) (*forgeEnv, []evidence.SlackMapLine, map[string]string) {
+		e := newForgeEnv(t)
+		l, p := refExport(t, e, SlackOptions{Partition: -1, Files: true}, "p0-fat16/slack", evidence.MethodSlackFile)
+		return e, l, p
+	}
+	t.Run("one forged offset", func(t *testing.T) {
+		e, l, p := file(t)
+		l[0].ImageOffset--
+		evidencetest.AddSlack(t, e.c, e.s.Parent, e.img, evidencetest.SlackSpec{Partition0: true, FSType: "fat16", Lines: l, Params: p})
+		requireSlackProblem(t, verifySlackOnly(context.Background(), t, e.c), "segment 0 differs from the re-plan: image_offset is")
+	})
+	t.Run("one forged length", func(t *testing.T) {
+		e, l, p := file(t)
+		l[1].Length--
+		evidencetest.AddSlack(t, e.c, e.s.Parent, e.img, evidencetest.SlackSpec{Partition0: true, FSType: "fat16", Lines: l, Params: p})
+		requireSlackProblem(t, verifySlackOnly(context.Background(), t, e.c), "segment 1 differs from the re-plan: length is")
+	})
+	t.Run("a volume artifact", func(t *testing.T) {
+		e := newForgeEnv(t)
+		l, p := refExport(t, e, SlackOptions{Partition: -1, Volume: true}, "p0-fat16/volume-slack", evidence.MethodSlackVolume)
+		spec := evidencetest.SlackSpec{Partition0: true, FSType: "fat16", Method: evidence.MethodSlackVolume, Lines: l, Params: p}
+		evidencetest.AddSlack(t, e.c, e.s.Parent, e.img, spec)
+		requireNoSlackProblem(t, verifySlackOnly(context.Background(), t, e.c))
+		e2 := newForgeEnv(t)
+		l[0].Length--
+		spec.Lines = l
+		evidencetest.AddSlack(t, e2.c, e2.s.Parent, e2.img, spec)
+		requireSlackProblem(t, verifySlackOnly(context.Background(), t, e2.c), "segment 0 differs from the re-plan: length is")
+	})
+}
+
+// One group holding artifacts of two include_zero settings: each is compared with a re-plan of its own setting.
+func TestVerifySlackTwoIncludeZeroSettingsInOneGroup(t *testing.T) {
+	e := newForgeEnv(t)
+	fl, fp := refExport(t, e, SlackOptions{Partition: -1, Files: true, IncludeZero: true}, "p0-fat16/slack", evidence.MethodSlackFile)
+	vl, vp := refExport(t, e, SlackOptions{Partition: -1, Volume: true}, "p0-fat16/volume-slack", evidence.MethodSlackVolume)
+	if fp["include_zero"] != "true" || vp["include_zero"] != "false" {
+		t.Fatalf("setup: include_zero %q and %q", fp["include_zero"], vp["include_zero"])
+	}
+	evidencetest.AddSlack(t, e.c, e.s.Parent, e.img, evidencetest.SlackSpec{Partition0: true, FSType: "fat16", Lines: fl, Params: fp})
+	evidencetest.AddSlack(t, e.c, e.s.Parent, e.img, evidencetest.SlackSpec{Partition0: true, FSType: "fat16", Method: evidence.MethodSlackVolume, Lines: vl, Params: vp})
+	rep := verifySlackOnly(context.Background(), t, e.c)
+	requireNoSlackProblem(t, rep)
+	if rep.SlackRechecked != 2 {
+		t.Errorf("SlackRechecked = %d, want 2", rep.SlackRechecked)
+	}
+}
