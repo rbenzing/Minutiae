@@ -74,17 +74,41 @@ func TestUndecidableRecoverableJoinIsNamed(t *testing.T) {
 	page := data[int(leaves[1]-1)*ps:][:ps]
 	page[3], page[4] = 0, 0
 	res := runBytes(t, data)
-	named := 0
+	named, found, lost := 0, 0, 0
 	for i := int64(1); i <= 600; i++ {
 		r := rec(t, res, i)
 		if slices.Equal(anyStrs(rawOfRec(r)["join_undecided"]), []string{"chat_recoverable_message_join"}) {
 			named++
-			if r.Deleted && r.Payload["deleted"] == nil {
-				t.Errorf("row %d: Deleted without a deleted source", i)
+			if r.Deleted {
+				found++
+				if r.Payload["deleted"] == nil || timeOf(r, "deleted") == nil {
+					t.Errorf("row %d: a join row that was read gives Deleted without its source or time", i)
+				}
+			} else {
+				lost++
+				if r.Payload["deleted"] != nil || timeOf(r, "deleted") != nil {
+					t.Errorf("row %d: deleted facts without a join row", i)
+				}
 			}
 		}
 	}
 	if named != 600 {
 		t.Errorf("%d of 600 messages name the undecided recoverable join; every answer of a lossy index is flagged", named)
+	}
+	if found == 0 || lost == 0 {
+		t.Errorf("%d messages found their join row, %d did not: the damage must split them", found, lost)
+	}
+}
+
+// Several recoverable rows for one message: the first is read and the count is stated.
+func TestRecoverableRowsAreCounted(t *testing.T) {
+	d := newSMS(t)
+	d.dims()
+	d.msg(1, nil)
+	d.join("chat_recoverable_message_join", map[string]any{"chat_id": int64(1), "message_id": int64(1), "delete_date": int64(700000000)})
+	d.join("chat_recoverable_message_join", map[string]any{"chat_id": int64(2), "message_id": int64(1), "delete_date": int64(700000100)})
+	r := rec(t, d.run(t), 1)
+	if !r.Deleted || !is(rawOfRec(r)["recoverable_rows"], 2) || !is(rawOfRec(r)["recoverable_chat_id"], 1) {
+		t.Errorf("deleted %v raw %v", r.Deleted, rawOfRec(r))
 	}
 }

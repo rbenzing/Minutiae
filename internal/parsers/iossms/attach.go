@@ -138,21 +138,20 @@ func attachments(m parse.MapContext, id int64, raw, unknown map[string]any) ([]m
 	}
 	ac := m.Column("message_attachment_join", "attachment_id")
 	var ids []int64
+	total := 0
 	for _, r := range rows {
 		v, k := rowrun.IntCell(r, ac)
 		if k != rowrun.CellValue {
 			undecided = true
 			continue
 		}
-		ids = append(ids, v)
+		if total++; total <= maxList {
+			ids = append(ids, v)
+		}
 	}
 	if undecided {
 		markUndecided(raw, "message_attachment_join")
 		return nil, nil
-	}
-	total := len(ids)
-	if total > maxList {
-		ids = ids[:maxList]
 	}
 	var out []message.Attachment
 	var resolved, unresolved, ambiguous, otherSource, noRow int64
@@ -175,6 +174,8 @@ func attachments(m parse.MapContext, id int64, raw, unknown map[string]any) ([]m
 		if n, k := rowrun.IntCell(row, cols.At("total_bytes")); k == rowrun.CellValue {
 			if n >= 0 {
 				a.Size = &n
+			} else {
+				unknown["attachments.size"] = "negative"
 			}
 		} else {
 			rowrun.Flag(unknown, row, "attachments.size", cols.At("total_bytes"), k)

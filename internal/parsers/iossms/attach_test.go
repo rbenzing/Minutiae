@@ -319,3 +319,42 @@ func TestAttachmentGapsAreStated(t *testing.T) {
 		t.Errorf("dangling attachment id: payload %v", r.Payload)
 	}
 }
+
+// The 1000-attachment cap: the rest is counted, never collected.
+func TestAttachmentCap(t *testing.T) {
+	d := newSMS(t)
+	d.msg(1, nil)
+	for i := int64(1); i <= 1005; i++ {
+		d.attach(1, i, nil)
+	}
+	r := rec(t, d.run(t), 1)
+	raw := rawOfRec(r)
+	if l, _ := r.Payload["attachments"].([]any); len(l) != 1000 || !is(raw["attachments_total"], 1005) || raw["attachments_truncated"] != true {
+		t.Errorf("%d attachments, raw total %v truncated %v", len(l), raw["attachments_total"], raw["attachments_truncated"])
+	}
+}
+
+// A wrong storage class or a negative size in an attachment row is stated, never dropped or read as empty.
+func TestAttachmentColumnsOfTheWrongKindAreStated(t *testing.T) {
+	d := newSMS(t)
+	d.msg(1, nil)
+	d.msg(2, nil)
+	d.add("attachment", 1, map[string]any{"guid": "A1", "filename": int64(5), "transfer_name": int64(7), "mime_type": 1.5, "total_bytes": "big"})
+	d.join("message_attachment_join", map[string]any{"message_id": int64(1), "attachment_id": int64(1)})
+	d.add("attachment", 2, map[string]any{"guid": "A2", "transfer_name": "neg", "total_bytes": int64(-5)})
+	d.join("message_attachment_join", map[string]any{"message_id": int64(2), "attachment_id": int64(2)})
+	res := d.run(t)
+	unk, _ := rawOfRec(rec(t, res, 1))["unknown_columns"].(map[string]any)
+	for _, k := range []string{"attachments.name", "attachments.mime", "attachments.source_ref", "attachments.size"} {
+		if unk[k] != "type-mismatch" {
+			t.Errorf("unknown_columns[%s] = %v", k, unk[k])
+		}
+	}
+	r := rec(t, res, 2)
+	if unk, _ := rawOfRec(r)["unknown_columns"].(map[string]any); unk["attachments.size"] != "negative" {
+		t.Errorf("negative total_bytes: unknown_columns %v", unk)
+	}
+	if a := attOf(t, r, 0); a["size"] != nil {
+		t.Errorf("negative size reported as %v", a["size"])
+	}
+}
