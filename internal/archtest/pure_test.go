@@ -1269,7 +1269,7 @@ var purityRequired = []string{
 	"internal/recordtypes/call", "internal/recordtypes/contact", "internal/recordtypes/web", "internal/recordtypes/all",
 	"internal/decode/sqlitedb",
 	"internal/decode/sqlitedb/rowrun", "internal/decode/sqlitedb/cellx", "internal/decode/sqlitedb/recrun", "internal/parsers/androidmms", "internal/parsers/androidcalllog", "internal/parsers/androidcontacts",
-	"internal/parsers/ioscalls", "internal/parsers/chromium", "internal/parsers/safari", "internal/decode/ts", "internal/decode/plist", "internal/decode/typedstream", "internal/decode/iosbackup",
+	"internal/parsers/ioscalls", "internal/parsers/iosaddressbook", "internal/parsers/chromium", "internal/parsers/safari", "internal/decode/ts", "internal/decode/plist", "internal/decode/typedstream", "internal/decode/iosbackup",
 }
 
 // purePackageRE is a second, independent description of the pure roots: any
