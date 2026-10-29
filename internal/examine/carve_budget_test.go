@@ -139,7 +139,7 @@ func TestCarveReadFailureKeepsPartial(t *testing.T) {
 		if d.AcquisitionGaps == nil || fmt.Sprintf("%+v", *d.AcquisitionGaps) != fmt.Sprintf("%+v", *want) {
 			t.Errorf("note %+v, want the note over the kept prefix %+v", d.AcquisitionGaps, want)
 		}
-		if !slices.Contains(rv.Assumptions, gapAssumption) || !slices.Contains(rv.Assumptions, fmt.Sprintf("read-failed-after=%d", failAfter)) {
+		if !slices.Contains(rv.Assumptions, carveGapTag) || !slices.Contains(rv.Assumptions, fmt.Sprintf("read-failed-after=%d", failAfter)) {
 			t.Errorf("assumptions %q", rv.Assumptions)
 		}
 	})

@@ -26,8 +26,8 @@ type CarveSummary struct {
 	SigFileSHA256   string
 }
 
-// gapAssumption marks a carve whose bytes overlap a declared acquisition gap of the image (3E-R33).
-const gapAssumption = "overlaps-acquisition-gap"
+// carveGapTag marks a carve whose bytes overlap a declared acquisition gap of the image (3E-R33).
+const carveGapTag = "overlaps-acquisition-gap"
 
 // partialCarveCap is the confidence ceiling of a carve cut by a read failure (3E-R10).
 const partialCarveCap = 20
@@ -186,7 +186,7 @@ func (w *carveWriter) write(h *CarveHit) error {
 	assumptions := slices.Clone(h.Assumptions)
 	if j.sc.Scope != CarveArtifact {
 		if d.AcquisitionGaps = s.gapNote(runs, true, h.Length); d.AcquisitionGaps != nil {
-			assumptions = append(assumptions, gapAssumption)
+			assumptions = append(assumptions, carveGapTag)
 		}
 	}
 	rv := &evidence.Recovery{
@@ -265,10 +265,10 @@ func (w *carveWriter) copyHit(out io.Writer, h *CarveHit, d *evidence.Derivation
 		if alloc, _, err := j.allocOf(h.Offset, n); err == nil {
 			rv.Alloc = alloc
 		}
-		rv.Assumptions = slices.DeleteFunc(rv.Assumptions, func(x string) bool { return x == gapAssumption })
+		rv.Assumptions = slices.DeleteFunc(rv.Assumptions, func(x string) bool { return x == carveGapTag })
 		if j.sc.Scope != CarveArtifact {
 			if d.AcquisitionGaps = s.gapNote(d.Runs, true, n); d.AcquisitionGaps != nil {
-				rv.Assumptions = append(rv.Assumptions, gapAssumption)
+				rv.Assumptions = append(rv.Assumptions, carveGapTag)
 			}
 		}
 		rv.Assumptions = append(rv.Assumptions, fmt.Sprintf("read-failed-after=%d", n))

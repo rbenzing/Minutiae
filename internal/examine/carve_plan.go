@@ -250,7 +250,7 @@ func (j *carveJob) decorate(h carve.Hit) (CarveHit, error) {
 	}
 	basis := []string{"sig=" + h.Family, "validator=" + validator}
 	basis = append(basis, h.Basis...)
-	ch.Hit.Basis = append(basis, "scope-run="+strconv.Itoa(h.Run))
+	ch.Basis = append(basis, "scope-run="+strconv.Itoa(h.Run))
 	assumptions := append([]string{"contiguous-object"}, h.Assumptions...)
 	if j.sc.Scope == CarveArtifact {
 		if recovered, ceiling, unknown := carveTrailCap(j.byID, j.sc.ArtifactID); recovered {
@@ -267,7 +267,7 @@ func (j *carveJob) decorate(h carve.Hit) (CarveHit, error) {
 			}
 		}
 	}
-	ch.Hit.Assumptions = assumptions
+	ch.Assumptions = assumptions
 	switch {
 	case h.Filtered:
 		ch.Skip = carveSkipNotSel
