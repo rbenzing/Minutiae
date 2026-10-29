@@ -75,6 +75,8 @@ func mapVisit(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 	}
 	if id, ok := row.Rowid(); ok {
 		v.VisitID = strconv.FormatInt(id, 10)
+	} else {
+		unknown["id"] = "rowid-lost" // a recovered row can lose its rowid: no id is invented, and the absence is stated
 	}
 	itemFacts(item, ic, &v, raw, joined, "history_items.")
 

@@ -2,6 +2,7 @@ package parsers
 
 import (
 	"reflect"
+	"strings"
 
 	"github.com/rbenzing/minutiae/internal/parse"
 )
@@ -33,6 +34,33 @@ func PackagePath(p parse.Parser) string {
 // p.Meta() and the package defining p: a different package cannot inherit
 // another parser's identity.
 func HashOf(p parse.Parser) (string, bool) { return hashOf(p, generated) }
+
+// RecoveryRunnerPath is the import path of the typed recovery runner, whose source
+// is hashed into every "<name>.recover" identity. It is derived from this package's
+// own path (the runner lives under internal/decode), so a fork or rename of the module
+// follows. TestRecoveryRunnerPathIsTheRunnerPackage pins it to the real package of
+// recrun.Report, so the string cannot drift from the runner.
+func RecoveryRunnerPath() string {
+	return strings.TrimSuffix(parsersPath, "/parsers") + "/decode/sqlitedb/recrun"
+}
+
+// RecoveryHashOf returns the generated source hash of the typed recovery identity of
+// p ("<name>.recover" at p's version, defined by p's package), false when p claims
+// nothing or has none.
+func RecoveryHashOf(p parse.Parser) (string, bool) {
+	if p == nil {
+		return "", false
+	}
+	return recoveryHashOfWith(p, p.Meta(), generated)
+}
+
+func recoveryHashOfWith(p parse.Parser, m parse.Meta, table map[string]identity) (string, bool) {
+	id, ok := table[parse.RecoveryName(m.Name)+"@"+m.Version]
+	if !ok || id.Package == "" || id.Package != PackagePath(p) {
+		return "", false
+	}
+	return id.Hash, true
+}
 
 func hashOf(p parse.Parser, table map[string]identity) (string, bool) {
 	if p == nil {

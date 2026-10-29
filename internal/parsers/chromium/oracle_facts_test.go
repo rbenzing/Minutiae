@@ -32,8 +32,8 @@ func rawOf(t *testing.T, p map[string]any) map[string]any {
 
 // The browser comes from the path, never from the data (facts written from the plan, 4F-R5).
 func TestOracleStatesBrowserFromThePath(t *testing.T) {
-	browser := map[string]string{"current": "chrome", "current-wal": "chrome", "mid-upgraded": "edge", "old": "brave", "minimal": "webview"}
-	profile := map[string]string{"current": "Default", "current-wal": "Default", "mid-upgraded": "Default", "old": "Profile 1", "minimal": "Default"}
+	browser := map[string]string{"current": "chrome", "current-wal": "chrome", "mid-upgraded": "edge", "old": "brave", "minimal": "webview", "chromium-deleted": "chrome"}
+	profile := map[string]string{"current": "Default", "current-wal": "Default", "mid-upgraded": "Default", "old": "Profile 1", "minimal": "Default", "chromium-deleted": "Default"}
 	for _, v := range variants {
 		fx := parsertest.LoadFixture(t, "testdata", v)
 		if len(fx.Expect.Records) == 0 {

@@ -92,6 +92,17 @@ func (r *resolver) inScope(importPath string) bool {
 
 // ResolveScope computes the hash scope of the parser package rootImportPath.
 func ResolveScope(cfg Config, rootImportPath string) (Scope, error) {
+	return ResolveUnion(cfg, []string{rootImportPath})
+}
+
+// ResolveUnion computes the hash scope of several root packages together: the
+// packages reachable from any root, each once, sorted by import path, and the
+// third-party modules of all of them. A root outside the in-scope prefixes, a
+// duplicate root excepted, is an error; no roots is an error.
+func ResolveUnion(cfg Config, roots []string) (Scope, error) {
+	if len(roots) == 0 {
+		return Scope{}, errors.New("parserhash: no root packages")
+	}
 	if cfg.ModuleRoot == "" || cfg.ModulePath == "" {
 		return Scope{}, errors.New("parserhash: module root and module path are required")
 	}
@@ -104,14 +115,16 @@ func ResolveScope(cfg Config, rootImportPath string) (Scope, error) {
 			r.prefixes[i] = p + "/"
 		}
 	}
-	if !r.inScope(rootImportPath) {
-		return Scope{}, fmt.Errorf("parserhash: %s is not under an in-scope prefix %v", rootImportPath, r.prefixes)
+	for _, root := range roots {
+		if !r.inScope(root) {
+			return Scope{}, fmt.Errorf("parserhash: %s is not under an in-scope prefix %v", root, r.prefixes)
+		}
 	}
 	goDir, err := goDirective(filepath.Join(cfg.ModuleRoot, "go.mod"))
 	if err != nil {
 		return Scope{}, err
 	}
-	queue := []string{rootImportPath}
+	queue := append([]string(nil), roots...)
 	for len(queue) > 0 {
 		ip := queue[0]
 		queue = queue[1:]

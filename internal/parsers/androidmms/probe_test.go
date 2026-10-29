@@ -1,6 +1,7 @@
 package androidmms_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/parse"
@@ -8,13 +9,14 @@ import (
 	"github.com/rbenzing/minutiae/internal/parsers/parsertest"
 )
 
-func TestMetaIsValidAndMakesNoClaims(t *testing.T) {
+func TestMetaIsValidAndClaimsTheMappedTables(t *testing.T) {
 	m := androidmms.Parser{}.Meta()
 	if err := parse.ValidateMeta(m); err != nil {
 		t.Fatal(err)
 	}
-	if len(m.Claims) != 0 {
-		t.Errorf("claims %v: a claim is a promise of typed recovery (plan 4G)", m.Claims)
+	// a claim is a promise of typed recovery (plan 4G): the two tables the mappings map, on the database
+	if want := []parse.TableClaim{{Role: "db", Table: "sms"}, {Role: "db", Table: "pdu"}}; !slices.Equal(m.Claims, want) {
+		t.Errorf("claims %v, want %v", m.Claims, want)
 	}
 	if m.Name != androidmms.Name || m.Version != androidmms.Version || len(m.Emits) != 1 || m.Emits[0].Type != "message" {
 		t.Errorf("meta %+v", m)

@@ -32,3 +32,16 @@ func (e *emitter) MarkSealed()               { e.sealed.Store(true) }
 
 // StuckInWriter reports whether seal gave up waiting for a writer call.
 func (e *emitter) StuckInWriter() bool { return e.stuckInWriter() }
+
+// Test seams of the recovery emitter (4G Task 7).
+type RecoveryEmitter = recoveryEmitter
+
+var NewRecoveryEmitter = newRecoveryEmitter
+
+func (r *recoveryEmitter) Base() *emitter                       { return r.emitter }
+func (r *recoveryEmitter) BelowMin() int64                      { return r.belowMin.Load() }
+func (r *recoveryEmitter) UnmappedCount() int64                 { return r.unmapped.Load() }
+func (r *recoveryEmitter) UnmappedLocators() ([][16]byte, bool) { return r.unmappedLocators() }
+
+// SetMaxLocators changes the bound on the remembered unmapped locators of this emitter only.
+func (r *recoveryEmitter) SetMaxLocators(n int) { r.maxLoc = n }

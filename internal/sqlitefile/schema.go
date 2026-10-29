@@ -151,6 +151,9 @@ type Schema struct {
 	// cut at the step cap, so every fit is limit-reached.
 	fitSteps   int64
 	fitLimited bool
+	// claimByName finds the fit item of a table by its folded name (ClaimMatch).
+	claimOnce   sync.Once
+	claimByName map[string]*fitItem
 }
 
 // schemaCache holds the schema a view has read, and the budget it is charged.

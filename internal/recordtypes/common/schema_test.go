@@ -388,10 +388,10 @@ func TestCommonFields(t *testing.T) {
 	ok("empty", obj{})
 	ok("raw", obj{"raw": obj{"type": 1, "date": json.Number("1700000000000"), "nested": obj{"k": []any{"a"}}}})
 	bad("raw not an object", obj{"raw": "x"}, "payload.raw: must be an object")
-	for _, rel := range []string{"absent-from-live", "superseded-version", "uncommitted", "from-recovered-artifact", "unknown"} {
+	for _, rel := range []string{"absent-from-live", "superseded-version", "uncommitted", "from-recovered-artifact", "from-recovered-bundle", "unknown"} {
 		ok("relation "+rel, obj{"recovery": obj{"relation": rel}})
 	}
-	bad("relation", obj{"recovery": obj{"relation": "found"}}, "payload.recovery.relation: not one of absent-from-live,superseded-version,uncommitted,from-recovered-artifact")
+	bad("relation", obj{"recovery": obj{"relation": "found"}}, "payload.recovery.relation: not one of absent-from-live,superseded-version,uncommitted,from-recovered-artifact,from-recovered-bundle")
 	ok("recovery with free keys", obj{"recovery": obj{
 		"relation": "uncommitted", "via": "wal", "table_basis": "x",
 		"wal": obj{"frame": 3, "salt1": json.Number("12"), "committed": false}, "notes": []any{"a", "b"},

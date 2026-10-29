@@ -23,6 +23,13 @@ type Registered struct {
 	p    parse.Parser
 	hash string
 	meta parse.Meta
+	// recoverHash is the source hash of the typed recovery identity "<name>.recover" (WithRecoveryHash);
+	// empty for a parser without claims.
+	recoverHash string
+	// asRecover: this value is the recovery view of a claiming parser (recoverView): its Identity is the
+	// recover identity, so everything keyed by Identity (the writer, the already-parsed lookup, the audit)
+	// belongs to the typed pass and never to the live parse.
+	asRecover bool
 }
 
 // Register reads p.Meta() once, on its own goroutine under recover with a
@@ -69,7 +76,41 @@ func (r Registered) Meta() parse.Meta { return r.meta.Clone() }
 
 // Identity is the parser identity the records writer stores.
 func (r Registered) Identity() records.Parser {
+	if r.asRecover {
+		return records.Parser{Name: parse.RecoveryName(r.meta.Name), Version: r.meta.Version, Hash: r.recoverHash}
+	}
 	return records.Parser{Name: r.meta.Name, Version: r.meta.Version, Hash: r.hash}
+}
+
+// ErrNoRecoveryIdentity is returned by New for a parser that claims tables but has no recovery hash: a
+// claim is honored through the typed pass, which writes under the "<name>.recover" identity.
+var ErrNoRecoveryIdentity = errors.New("a parser that claims tables needs a recovery identity")
+
+// WithRecoveryHash returns r with the source hash of its "<name>.recover" identity. It refuses a
+// parser without claims and a malformed hash.
+func (r Registered) WithRecoveryHash(hash string) (Registered, error) {
+	if len(r.meta.Claims) == 0 {
+		return Registered{}, fmt.Errorf("artparse: parser %s claims no tables, so it has no recovery identity", r.meta.Name)
+	}
+	if !hashRE.MatchString(hash) {
+		return Registered{}, fmt.Errorf("artparse: recovery hash %q is not src1:sha256:<64 hex digits>", hash)
+	}
+	r.recoverHash = hash
+	return r, nil
+}
+
+// RecoveryIdentity is the identity of the typed recovery run of r; false when r has none.
+func (r Registered) RecoveryIdentity() (records.Parser, bool) {
+	if r.recoverHash == "" {
+		return records.Parser{}, false
+	}
+	return records.Parser{Name: parse.RecoveryName(r.meta.Name), Version: r.meta.Version, Hash: r.recoverHash}, true
+}
+
+// recoverView is r seen as its typed recovery run (see asRecover).
+func (r Registered) recoverView() Registered {
+	r.asRecover = true
+	return r
 }
 
 // Parser returns the parser itself.
