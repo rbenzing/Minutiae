@@ -627,3 +627,113 @@ func TestExportSlackEscapesHostileLabels(t *testing.T) {
 	}
 	verifyClean(t, s.Case)
 }
+
+// A read failure inside a segment cuts the last line of the prefix map; that line describes the bytes written
+// (their uniformity), in both directions.
+func TestSlackCutInsideSegmentTakesUniformFromTheWrittenBytes(t *testing.T) {
+	cut := func(t *testing.T, zeroTail bool, o SlackOptions) evidence.SlackMapLine {
+		t.Helper()
+		f := newSlackFAT([]fattest.File{{Path: "A.TXT", Data: slackFill(10)}}, 2)
+		off, n := f.tail("A.TXT", false, 10)
+		if !zeroTail { // 100 equal bytes, then data: non-uniform as a whole, uniform in its first 50 bytes
+			f.img[off+100] = 0x55
+		}
+		_ = n
+		s := slackSession(t, f.img, Options{})
+		old := slackCutAfter
+		slackCutAfter = func(i int) int64 {
+			if i == 0 {
+				return 50
+			}
+			return -1
+		}
+		t.Cleanup(func() { slackCutAfter = old })
+		sum, err := exportSlack(t, s, o)
+		if err == nil {
+			t.Fatal("the cut did not fail the run")
+		}
+		bin := slackRecord(t, sum, "p0-fat16/slack.bin")
+		if !bin.Incomplete || bin.Size != 50 {
+			t.Fatalf("bin = %+v", bin)
+		}
+		pm := findByID(t, sum, bin.Source.Derived.RunsArtifact)
+		lines := slackLinesOf(t, s.Case, pm, evidence.MethodSlackFile)
+		if len(lines) != 1 || lines[0].Length != 50 || !lines[0].Exported {
+			t.Fatalf("prefix map = %+v", lines)
+		}
+		verifyClean(t, s.Case)
+		return lines[0]
+	}
+	if l := cut(t, false, SlackOptions{Partition: -1, Files: true}); !l.Uniform {
+		t.Errorf("a non-uniform segment cut inside its uniform run is recorded non-uniform: %+v", l)
+	}
+	if l := cut(t, true, SlackOptions{Partition: -1, Files: true, IncludeZero: true}); !l.Uniform {
+		t.Errorf("a uniform segment cut is recorded non-uniform: %+v", l)
+	}
+}
+
+// A run that ended in the file part reports no volume figures: planned bytes never read as exported.
+func TestSlackVolumeFiguresAreZeroWhenTheVolumePartWasNotWritten(t *testing.T) {
+	f, _ := threeTails(t)
+	img := slices.Concat(f.img, pat(4096, 3), make([]byte, 4096))
+	c := newSlackCase(t)
+	s := slackSessionOn(t, c, img, Options{})
+	old := slackCopyHook
+	slackCopyHook = func(i int) error {
+		if i == 1 {
+			return errors.New("injected read failure")
+		}
+		return nil
+	}
+	t.Cleanup(func() { slackCopyHook = old })
+	n0 := auditLen(t, c)
+	sum, err := exportSlack(t, s, SlackOptions{Partition: -1})
+	if err == nil {
+		t.Fatal("the run did not fail")
+	}
+	if sum.VolumeSegments != 0 || sum.VolumeBytes != 0 || sum.VolumeUniformChunks != 0 || sum.VolumeUniformBytes != 0 {
+		t.Errorf("volume figures of an unwritten volume part: %+v", sum)
+	}
+	es := auditSince(t, c, n0)
+	end := es[len(es)-1].Details
+	for _, k := range []string{"volume_segments", "volume_bytes", "volume_uniform_chunks", "volume_uniform_bytes"} {
+		if fmt.Sprint(end[k]) != "0" {
+			t.Errorf("analysis.%s = %v, want 0", es[len(es)-1].Action, end)
+			break
+		}
+	}
+}
+
+func TestSlackVolumeReadFailureKeepsPrefix(t *testing.T) {
+	f, _ := threeTails(t)
+	img := slices.Concat(f.img, pat(4096, 3), make([]byte, 4096), pat(4096, 9))
+	c := newSlackCase(t)
+	s := slackSessionOn(t, c, img, Options{})
+	plan := slackPlanOf(t, s, SlackOptions{Partition: -1, Volume: true})
+	if len(plan.vol) != 2 {
+		t.Fatalf("setup: %d volume segments", len(plan.vol))
+	}
+	old := slackCopyHook
+	slackCopyHook = func(i int) error {
+		if i == 1 {
+			return errors.New("injected read failure")
+		}
+		return nil
+	}
+	t.Cleanup(func() { slackCopyHook = old })
+	sum, err := exportSlack(t, s, SlackOptions{Partition: -1, Volume: true})
+	if err == nil {
+		t.Fatal("the run did not fail")
+	}
+	bin := slackRecord(t, sum, "p0-fat16/volume-slack.bin")
+	d := bin.Source.Derived
+	full := slackRecord(t, sum, "p0-fat16/volume-slack.runs.jsonl")
+	if !bin.Incomplete || bin.Size != plan.vol[0].Length || d.Recovery.DeclaredRunsArtifact != full.ID ||
+		d.Recovery.Alloc != (evidence.AllocSummary{Unknown: bin.Size}) || !sum.Incomplete {
+		t.Fatalf("bin %+v declared %q alloc %+v", bin, d.Recovery.DeclaredRunsArtifact, d.Recovery.Alloc)
+	}
+	if lines := slackLinesOf(t, c, findByID(t, sum, d.RunsArtifact), evidence.MethodSlackVolume); len(lines) != 1 {
+		t.Errorf("prefix map = %+v", lines)
+	}
+	verifyClean(t, c)
+}

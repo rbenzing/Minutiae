@@ -126,10 +126,21 @@ func (s *Session) ExportSlack(ctx context.Context, o SlackOptions) (SlackSummary
 		}
 		ss.Partition, ss.FSType, ss.Unit = part.Index, fsType, plan.unit
 		ss.FilesExamined, ss.SkippedBy, ss.WalkErrors, ss.LimitReached = plan.files, plan.fileSkipped(), plan.walkErrors, plan.limit
-		ss.FileSegments, ss.VolumeSegments = len(plan.file), len(plan.vol)
+		ss.FileSegments = len(plan.file)
 		ss.UniformSegments, ss.UniformBytes = plan.uniformSegs, plan.uniformBytes
-		ss.VolumeUniformChunks, ss.VolumeUniformBytes = plan.volUniformChunks, plan.volUniformBytes
 		var arts []slackArt
+		var volBytes int64
+		// The volume figures are exported figures: they are set only once the volume part is reached, so a run
+		// that ended before it never reports planned bytes as written.
+		volSet := false
+		setVol := func() {
+			if volSet {
+				return
+			}
+			volSet = true
+			ss.VolumeSegments, ss.VolumeBytes = len(plan.vol), volBytes
+			ss.VolumeUniformChunks, ss.VolumeUniformBytes = plan.volUniformChunks, plan.volUniformBytes
+		}
 		if doFiles {
 			art := slackArt{file: true, segs: plan.file, incomplete: plan.fileIncomplete()}
 			if art.incomplete {
@@ -145,7 +156,7 @@ func (s *Session) ExportSlack(ctx context.Context, o SlackOptions) (SlackSummary
 			if art.incomplete {
 				art.omitted, art.errText = plan.volOmitted, plan.volumeErrText()
 			}
-			ss.VolumeBytes = art.bytes()
+			volBytes = art.bytes()
 			if len(art.segs) > 0 || art.incomplete {
 				arts = append(arts, art)
 			}
@@ -179,10 +190,14 @@ func (s *Session) ExportSlack(ctx context.Context, o SlackOptions) (SlackSummary
 			unknown: len(fsys.Info().Warnings) > 0,
 		}
 		for _, art := range arts {
+			if !art.file {
+				setVol()
+			}
 			if err := w.write(art); err != nil {
 				return err
 			}
 		}
+		setVol()
 		return nil
 	})
 	ss.Summary = sum
@@ -402,6 +417,7 @@ func (w *slackWriter) write(art slackArt) error {
 func (w *slackWriter) copy(out io.Writer, base string, art slackArt, d *evidence.Derivation, rv *evidence.Recovery) error {
 	tw := &trackWriter{w: out}
 	var n int64
+	var ut *uniWriter // the bytes written of the segment being copied
 	narrow := func() error {
 		if n >= art.bytes() {
 			return nil
@@ -412,7 +428,7 @@ func (w *slackWriter) copy(out io.Writer, base string, art slackArt, d *evidence
 		}
 		rv.Assumptions = append(rv.Assumptions, fmt.Sprintf("read-failed-after=%d", n))
 		declared := d.RunsArtifact
-		id, err := w.writePrefixMap(base, art, d, n)
+		id, err := w.writePrefixMap(base, art, d, n, ut)
 		if err != nil {
 			return err
 		}
@@ -424,6 +440,7 @@ func (w *slackWriter) copy(out io.Writer, base string, art slackArt, d *evidence
 	}
 	buf := make([]byte, copyBufSize)
 	for i, g := range art.segs {
+		ut = &uniWriter{w: tw, uniform: true}
 		if slackCopyHook != nil {
 			if err := slackCopyHook(i); err != nil {
 				if nerr := narrow(); nerr != nil {
@@ -432,7 +449,7 @@ func (w *slackWriter) copy(out io.Writer, base string, art slackArt, d *evidence
 				return err
 			}
 		}
-		m, err := io.CopyBuffer(tw, &ctxReader{ctx: w.ctx, r: io.NewSectionReader(w.s.Image, g.ImageOffset, g.Length), onRead: func(k int) {
+		m, err := io.CopyBuffer(ut, &ctxReader{ctx: w.ctx, r: slackCutReader(i, io.NewSectionReader(w.s.Image, g.ImageOffset, g.Length)), onRead: func(k int) {
 			w.copied += int64(k)
 			if w.o.Progress != nil {
 				w.o.Progress(w.copied, w.total)
@@ -467,8 +484,12 @@ func (w *slackWriter) copy(out io.Writer, base string, art slackArt, d *evidence
 // <base>.bin.incomplete.runs.jsonl, <base>.bin.incomplete~2.runs.jsonl ... and returns its id. A name
 // already taken is no case failure; only a failure of the case is returned. No free name found, it returns
 // an empty id: the artifact then carries no runs, which is incomplete provenance but never wrong provenance.
-func (w *slackWriter) writePrefixMap(base string, art slackArt, d *evidence.Derivation, n int64) (string, error) {
+func (w *slackWriter) writePrefixMap(base string, art slackArt, d *evidence.Derivation, n int64, cut *uniWriter) (string, error) {
 	pre := prefixSegments(art.segs, n)
+	// The cut last line describes the bytes actually written: their uniformity, not the declared segment's.
+	if k := len(pre); k > 0 && cut != nil && cut.n > 0 && pre[k-1].Length < art.segs[k-1].Length {
+		pre[k-1].Uniform, pre[k-1].Fill = cut.uniform, cut.first
+	}
 	for attempt := 0; attempt < maxNameAttempts; attempt++ {
 		name := base + ".bin.incomplete.runs.jsonl"
 		if attempt > 0 {
@@ -492,3 +513,44 @@ func (w *slackWriter) writePrefixMap(base string, art slackArt, d *evidence.Deri
 	}
 	return "", nil
 }
+
+// uniWriter passes writes on and remembers whether every byte written so far is equal, and the first byte.
+type uniWriter struct {
+	w       io.Writer
+	n       int64
+	first   byte
+	uniform bool
+}
+
+func (u *uniWriter) Write(p []byte) (int, error) {
+	n, err := u.w.Write(p)
+	for _, b := range p[:n] {
+		if u.n == 0 {
+			u.first = b
+		} else if b != u.first {
+			u.uniform = false
+		}
+		u.n++
+	}
+	return n, err
+}
+
+// slackCutAfter is a test seam: the number of bytes of segment i delivered before a read failure (negative
+// or nil: none), to cut a segment in the middle.
+var slackCutAfter func(segment int) int64
+
+// slackCutReader applies slackCutAfter to the reader of segment i.
+func slackCutReader(i int, r io.Reader) io.Reader {
+	if slackCutAfter == nil {
+		return r
+	}
+	k := slackCutAfter(i)
+	if k < 0 {
+		return r
+	}
+	return io.MultiReader(io.LimitReader(r, k), errReader{errors.New("injected read failure inside a segment")})
+}
+
+type errReader struct{ err error }
+
+func (e errReader) Read([]byte) (int, error) { return 0, e.err }
