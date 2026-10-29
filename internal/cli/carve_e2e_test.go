@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
+	"testing"
 
 	"github.com/rbenzing/minutiae/internal/examine"
 	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/filesys/detect"
-	"strings"
-	"testing"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/filesys/fstest"
