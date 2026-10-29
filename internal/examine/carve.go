@@ -25,6 +25,18 @@ type CarveSummary struct {
 	Sigset          string
 	SigsetSHA256    string
 	SigFileSHA256   string
+	Notes           []string // the scope and option notes of the run, at most carveNotesCap
+	NotesTotal      int      // how many notes there were (Notes may be shorter)
+}
+
+// carveNotesCap is how many notes a CarveSummary keeps (PlanCarve keeps 100 unreadable notes).
+const carveNotesCap = 100
+
+func (cs *CarveSummary) note(text string) {
+	cs.NotesTotal++
+	if len(cs.Notes) < carveNotesCap {
+		cs.Notes = append(cs.Notes, text)
+	}
 }
 
 // carveGapTag marks a carve whose bytes overlap a declared acquisition gap of the image (3E-R33).
@@ -55,17 +67,20 @@ func (s *Session) Carve(ctx context.Context, o CarveOptions) (CarveSummary, erro
 			}
 		}
 		if j.limitNote != "" {
+			cs.note(j.limitNote)
 			if err := a.appendWarning(noteDetails(a, "scan-limit", j.limitNote)); err != nil {
 				return err
 			}
 		}
 		for _, n := range j.notes { // notes of the scope: audited, not skips
+			cs.note(n)
 			if err := a.appendWarning(noteDetails(a, "note", n)); err != nil {
 				return err
 			}
 		}
 		w := &carveWriter{j: j, ctx: ctx, a: a, cs: &cs, lp: evidence.NewLocalPaths("carved")}
 		err := j.scan(ctx, w.hit, func(off, n int64, cause error) error {
+			cs.note(fmt.Sprintf("unreadable: %d byte(s) at offset %d (%v)", n, off, cause))
 			return a.appendWarning(noteDetails(a, "unreadable", fmt.Sprintf("unreadable: %d byte(s) at offset %d (%v)", n, off, cause)))
 		})
 		if err != nil {

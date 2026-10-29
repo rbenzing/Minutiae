@@ -1,6 +1,13 @@
 package cli
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
+
+	"github.com/rbenzing/minutiae/internal/examine"
+	"github.com/rbenzing/minutiae/internal/filesys"
+	"github.com/rbenzing/minutiae/internal/filesys/detect"
 	"strings"
 	"testing"
 
@@ -109,4 +116,78 @@ func TestRecordsShowResolvesCarvedChain(t *testing.T) {
 		t.Fatalf("image offset %+v, want %d", p.Offset.Image, off+2)
 	}
 	requireOracle(t, p, artifactFile(t, e.c, art), e.media, 2, 4)
+}
+
+// carveCLIDropFS reports the first block of the first free run as allocated, as a reader whose view changed
+// since an unallocated export was taken.
+type carveCLIDropFS struct{ filesys.FileSystem }
+
+func (h carveCLIDropFS) Underlying() filesys.FileSystem { return h.FileSystem }
+
+func (h carveCLIDropFS) Unallocated() ([]filesys.Run, error) {
+	runs, err := h.FileSystem.Unallocated()
+	if len(runs) > 0 && runs[0].Length > recBS {
+		runs[0].Offset += recBS
+		runs[0].Length -= recBS
+	}
+	return runs, err
+}
+
+var carveCLIDropDrivers = []detect.Driver{{Name: "mtfs", Probe: fstest.Probe, Open: func(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
+	fsys, err := fstest.Open(r, size)
+	if err != nil {
+		return nil, err
+	}
+	return carveCLIDropFS{fsys}, nil
+}}}
+
+// Notes of the scope and the options are shown by a run as they are by --list, and are not partial facts.
+func TestImageCarveRunShowsNotes(t *testing.T) {
+	e := newCarveCLIEnv(t)
+	if code, out := e.image(t, "unalloc", e.ref, "-p", "1"); code != 0 {
+		t.Fatalf("unalloc: %d\n%s", code, out)
+	}
+	recs, err := manifest(e.c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var id string
+	for _, r := range recs {
+		if r.Source.Kind == "unallocated" {
+			id = r.ID
+		}
+	}
+	d := Deps{FSDrivers: carveCLIDropDrivers}
+	code, out := run(t, d, "image", "carve", "--case", e.c, "--artifact", id)
+	if code != 0 || !strings.Contains(out, "note: ") || !strings.Contains(out, "no longer unallocated") {
+		t.Fatalf("dropped export bytes are not a visible note (exit %d):\n%s", code, out)
+	}
+	code, out = run(t, d, "image", "carve", "--case", e.c, "--artifact", id, "--json")
+	var j struct {
+		Notes      []string `json:"notes"`
+		NotesTotal int      `json:"notes_total"`
+	}
+	if err := json.Unmarshal(jsonPart(out), &j); code != 0 || err != nil || len(j.Notes) == 0 || j.NotesTotal != len(j.Notes) {
+		t.Fatalf("json notes (exit %d, %v): %+v\n%s", code, err, j, out)
+	}
+
+	e2 := newCarveCLIEnv(t)
+	code, out = e2.carve(t, "--max-file-size", "300")
+	if !strings.Contains(out, "is not carved") {
+		t.Fatalf("max-file-size note missing (exit %d):\n%s", code, out)
+	}
+	code, out = e2.carve(t, "--max-file-size", "300", "--json")
+	if code != 0 || !strings.Contains(out, "is not carved") || !strings.Contains(out, `"sig_file_sha256"`) {
+		t.Fatalf("json: %d\n%s", code, out)
+	}
+}
+
+func TestCarveSessionErrNoRawHintForArtifact(t *testing.T) {
+	err := fmt.Errorf("x: %w", examine.ErrNoRecognizedFilesystem)
+	if got := carveSessionErr(err, "", true); strings.Contains(got.Error(), "--raw") {
+		t.Errorf("artifact scope gets the --raw hint: %v", got)
+	}
+	if got := carveSessionErr(err, "", false); !strings.Contains(got.Error(), "--raw") {
+		t.Errorf("default scope lacks the --raw hint: %v", got)
+	}
 }

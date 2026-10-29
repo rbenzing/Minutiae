@@ -429,6 +429,8 @@ type jsonCarve struct {
 	Sigset             string                    `json:"sigset"`
 	SigsetSHA256       string                    `json:"sigset_sha256"`
 	SigFileSHA256      string                    `json:"sig_file_sha256"`
+	Notes              []string                  `json:"notes"`
+	NotesTotal         int                       `json:"notes_total"`
 	Artifacts          []evidence.ManifestRecord `json:"artifacts"`
 }
 
@@ -460,7 +462,7 @@ func newJSONCarve(s examine.CarveSummary) jsonCarve {
 		RejectedBy: carveCounts(s.Stats.Rejected), SkippedBy: carveCounts(s.SkippedBy), LimitReached: s.LimitReached,
 		NotScannedBytes: s.NotScannedBytes, ScannedBytes: s.Stats.Scanned, UnreadableBytes: s.Stats.UnreadableBytes,
 		UncopiedBytes: s.UncopiedBytes, TypesCapped: carveStrings(s.Stats.TypeCapped), NestedDepthSkipped: s.Stats.NestedDepthSkipped,
-		FSWarnings: s.FSWarnings, Sigset: s.Sigset, SigsetSHA256: s.SigsetSHA256, SigFileSHA256: s.SigFileSHA256, Artifacts: s.Artifacts,
+		FSWarnings: s.FSWarnings, Sigset: s.Sigset, SigsetSHA256: s.SigsetSHA256, SigFileSHA256: s.SigFileSHA256, Notes: carveStrings(s.Notes), NotesTotal: s.NotesTotal, Artifacts: s.Artifacts,
 	}
 	if out.Artifacts == nil {
 		out.Artifacts = []evidence.ManifestRecord{}

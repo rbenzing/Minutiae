@@ -266,7 +266,7 @@ func TestImageCarveJSONTerminalSafe(t *testing.T) {
 	if err := json.Unmarshal(jsonPart(out), &raw); err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"carved", "partial", "hits_by_outcome", "rejected_by", "skipped_by", "limit_reached", "not_scanned_bytes", "sigset", "sigset_sha256", "artifacts"} {
+	for _, k := range []string{"carved", "partial", "hits_by_outcome", "rejected_by", "skipped_by", "limit_reached", "not_scanned_bytes", "sigset", "sigset_sha256", "sig_file_sha256", "notes", "artifacts"} {
 		if _, ok := raw[k]; !ok {
 			t.Errorf("run json lacks key %q", k)
 		}
@@ -294,7 +294,7 @@ func TestImageCarveJSONTerminalSafe(t *testing.T) {
 	if err := json.Unmarshal(jsonPart(out), &rawList); err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"scope", "hits", "hits_not_listed", "hits_by_outcome", "rejected_by", "skipped_by", "limit_reached", "not_scanned_bytes", "sigset", "sigset_sha256"} {
+	for _, k := range []string{"scope", "hits", "hits_not_listed", "hits_by_outcome", "rejected_by", "skipped_by", "limit_reached", "not_scanned_bytes", "sigset", "sigset_sha256", "sig_file_sha256", "notes"} {
 		if _, ok := rawList[k]; !ok {
 			t.Errorf("list json lacks key %q", k)
 		}

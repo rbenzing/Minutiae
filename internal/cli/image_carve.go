@@ -160,7 +160,7 @@ func newImageCarveCmd(d Deps, opts *rootOptions) *cobra.Command {
 		if f.list {
 			plan, err := s.PlanCarve(cmd.Context(), o)
 			if err != nil {
-				return carveSessionErr(err, o.Scope)
+				return carveSessionErr(err, o.Scope, f.artifact != "")
 			}
 			err = carvePartialFacts(plan.Stats.UnreadableBytes, 0, plan.LimitReached, plan.Stats.TypeCapped)
 			if opts.json {
@@ -173,7 +173,7 @@ func newImageCarveCmd(d Deps, opts *rootOptions) *cobra.Command {
 		sum, err := s.Carve(cmd.Context(), o)
 		fmt.Fprintln(d.Err)
 		if sum.AnalysisID == "" {
-			return carveSessionErr(err, o.Scope)
+			return carveSessionErr(err, o.Scope, f.artifact != "")
 		}
 		err = errors.Join(err, carveIncomplete(sum))
 		if opts.json {
@@ -204,8 +204,8 @@ func openCarveSession(d Deps, casePath string, refs []string, artifact string) (
 }
 
 // carveSessionErr adds the hint a failed default scope needs: a partition without a filesystem can still be carved raw.
-func carveSessionErr(err error, scope string) error {
-	if err == nil || scope != "" {
+func carveSessionErr(err error, scope string, artifact bool) error {
+	if err == nil || scope != "" || artifact {
 		return err
 	}
 	if errors.Is(err, examine.ErrNoRecognizedFilesystem) || errors.Is(err, filesys.ErrUnsupported) {
@@ -347,13 +347,13 @@ func printCarveRun(w io.Writer, sum examine.CarveSummary) {
 	fmt.Fprintf(w, "carved %d (%d bytes), partial %d; hits %s; rejected %d; skipped %d\n",
 		sum.Carved, bytes, sum.Partial, outcomeTotals(sum.Stats.Accepted), rejectedTotal(sum.Stats.Rejected), skippedTotal(sum.SkippedBy))
 	printCarveTail(w, sum.Stats, sum.LimitReached, sum.NotScannedBytes, sum.UncopiedBytes)
+	printCarveNotes(w, sum.Notes, sum.NotesTotal)
 	for i, wn := range sum.Warnings {
 		if i == maxSkipReasons {
 			break
 		}
 		if wn.Path == "" {
-			fmt.Fprintf(w, "note: %s\n", escapeText(wn.Reason))
-			continue
+			continue // a note: printed by printCarveNotes
 		}
 		fmt.Fprintf(w, "  skipped %s: %s\n", escapeText(wn.Path), escapeText(wn.Reason))
 	}
@@ -362,4 +362,19 @@ func printCarveRun(w io.Writer, sum examine.CarveSummary) {
 	}
 	printFSWarnings(w, sum.Summary)
 	fmt.Fprintln(w, "recovered data is not live evidence: carved objects are contiguous guesses from signatures, with confidence capped by how they were found")
+}
+
+// maxCarveNotesShown is how many notes a run prints; the rest are in the audit log.
+const maxCarveNotesShown = 20
+
+func printCarveNotes(w io.Writer, notes []string, total int) {
+	for i, n := range notes {
+		if i == maxCarveNotesShown {
+			break
+		}
+		fmt.Fprintf(w, "note: %s\n", escapeText(n))
+	}
+	if more := total - min(len(notes), maxCarveNotesShown); more > 0 {
+		fmt.Fprintf(w, "note: %d more; see the audit log (analysis.warning entries)\n", more)
+	}
 }
