@@ -175,7 +175,7 @@ func TestCaseVerifyJSONNewKeysAreSafeAndRefusalKeepsExit4(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, errs)
 	}
-	for _, want := range []string{`"anchor": null`, `"allocation_rechecked": 0`, `"gap_notes_recomputed": 0`, `note \u202e here`} {
+	for _, want := range []string{`"anchor": null`, `"allocation_rechecked": 0`, `"gap_notes_recomputed": 0`, `"slack_rechecked": 0`, `note \u202e here`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout lacks %q:\n%s", want, out)
 		}

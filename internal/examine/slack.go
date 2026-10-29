@@ -266,22 +266,11 @@ type slackWriter struct {
 	unknown bool // file slack is counted Unknown when the filesystem has warnings (3A A10)
 }
 
-// recovery builds the provenance of an artifact (3F-R14).
-func (w *slackWriter) recovery(art slackArt) *evidence.Recovery {
-	p := w.plan
-	conf := 10
-	rv := &evidence.Recovery{
-		Class: evidence.ClassSlack, Method: art.method(), Confidence: &conf, Content: "ok", Algorithm: AlgorithmSlack,
-		Params: map[string]string{"include_zero": strconv.FormatBool(w.o.IncludeZero)},
-	}
-	par := rv.Params
-	n := art.bytes()
-	if art.file {
-		rv.Basis = []string{"allocated-units-of-live-files"}
-		rv.Alloc = evidence.AllocSummary{Allocated: n}
-		if w.unknown {
-			rv.Alloc = evidence.AllocSummary{Unknown: n}
-		}
+// slackParams is the Params of a slack artifact (3F-R14): the counters of the plan, as strings. case verify
+// recomputes them from a re-plan with this same function, so writer and check cannot drift.
+func slackParams(p *slackPlan, file, includeZero bool) map[string]string {
+	par := map[string]string{"include_zero": strconv.FormatBool(includeZero)}
+	if file {
 		par["unit"] = strconv.FormatInt(p.unit, 10)
 		par["files"] = strconv.Itoa(p.files)
 		par["segments"] = strconv.Itoa(len(p.file))
@@ -294,13 +283,8 @@ func (w *slackWriter) recovery(art slackArt) *evidence.Recovery {
 		if p.omittedLost > 0 {
 			par["omitted_unlisted"] = strconv.Itoa(p.omittedLost)
 		}
-		if p.unchecked > 0 { // the overlap check was incomplete: the segments keep that assumption
-			rv.Assumptions = []string{slackUncheckedTag}
-		}
-		return rv
+		return par
 	}
-	rv.Basis = []string{fmt.Sprintf("filesystem-size=%d", p.fsSize), fmt.Sprintf("partition-length=%d", p.part.Length)}
-	rv.Alloc = evidence.AllocSummary{Unknown: n}
 	par["chunk"] = strconv.Itoa(SlackVolumeChunk)
 	par["fs_size"] = strconv.FormatInt(p.fsSize, 10)
 	par["partition_length"] = strconv.FormatInt(p.part.Length, 10)
@@ -313,6 +297,31 @@ func (w *slackWriter) recovery(art slackArt) *evidence.Recovery {
 	if p.volOmittedLost > 0 {
 		par["omitted_unlisted"] = strconv.Itoa(p.volOmittedLost)
 	}
+	return par
+}
+
+// recovery builds the provenance of an artifact (3F-R14).
+func (w *slackWriter) recovery(art slackArt) *evidence.Recovery {
+	p := w.plan
+	conf := 10
+	rv := &evidence.Recovery{
+		Class: evidence.ClassSlack, Method: art.method(), Confidence: &conf, Content: "ok", Algorithm: AlgorithmSlack,
+		Params: slackParams(p, art.file, w.o.IncludeZero),
+	}
+	n := art.bytes()
+	if art.file {
+		rv.Basis = []string{"allocated-units-of-live-files"}
+		rv.Alloc = evidence.AllocSummary{Allocated: n}
+		if w.unknown {
+			rv.Alloc = evidence.AllocSummary{Unknown: n}
+		}
+		if p.unchecked > 0 { // the overlap check was incomplete: the segments keep that assumption
+			rv.Assumptions = []string{slackUncheckedTag}
+		}
+		return rv
+	}
+	rv.Basis = []string{fmt.Sprintf("filesystem-size=%d", p.fsSize), fmt.Sprintf("partition-length=%d", p.part.Length)}
+	rv.Alloc = evidence.AllocSummary{Unknown: n}
 	return rv
 }
 

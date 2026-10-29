@@ -13,8 +13,12 @@ import (
 // SlackSpec describes a slack artifact for AddSlack. Empty fields take the defaults noted beside them.
 type SlackSpec struct {
 	Method    string // default evidence.MethodSlackFile
-	Partition int    // default 1
-	FSType    string // default "mtfs"
+	Partition int    // default 1 (0 selects the default; set Partition0 for partition 0)
+	// Partition0 selects partition 0 (a table-less image), which Partition cannot say.
+	Partition0 bool
+	// PartitionOffset is the recorded start of the partition in the parent image (default 0).
+	PartitionOffset int64
+	FSType          string // default "mtfs"
 	// Lines are the run map lines: ImageOffset and Length address the parent. Offset is filled in order: the
 	// current .bin offset, which an Exported line advances by its Length and an omitted line leaves alone.
 	Lines []evidence.SlackMapLine
@@ -36,7 +40,7 @@ func AddSlack(t testing.TB, c *evidence.Case, parent evidence.ManifestRecord, pa
 	if s.Method == "" {
 		s.Method = evidence.MethodSlackFile
 	}
-	if s.Partition == 0 {
+	if s.Partition == 0 && !s.Partition0 {
 		s.Partition = 1
 	}
 	if s.FSType == "" {
@@ -81,7 +85,7 @@ func AddSlack(t testing.TB, c *evidence.Case, parent evidence.ManifestRecord, pa
 		s.Mutate(rv)
 	}
 	dev := parent.Source.DeviceID
-	sd := &evidence.Derivation{ParentID: parent.ID, ParentSHA256: parent.SHA256, Partition: s.Partition, FSType: s.FSType}
+	sd := &evidence.Derivation{ParentID: parent.ID, ParentSHA256: parent.SHA256, Partition: s.Partition, PartitionOffset: s.PartitionOffset, FSType: s.FSType}
 	sidecar, err := c.Capture(dev, RecoveredAcq, rel+".runs.jsonl", evidence.Source{Kind: "runs", DeviceID: dev, Derived: sd}, func(w io.Writer) error {
 		_, err := w.Write(side.Bytes())
 		return err
@@ -90,7 +94,7 @@ func AddSlack(t testing.TB, c *evidence.Case, parent evidence.ManifestRecord, pa
 		t.Fatal(err)
 	}
 	d := &evidence.Derivation{
-		ParentID: parent.ID, ParentSHA256: parent.SHA256, Partition: s.Partition, FSType: s.FSType,
+		ParentID: parent.ID, ParentSHA256: parent.SHA256, Partition: s.Partition, PartitionOffset: s.PartitionOffset, FSType: s.FSType,
 		RunsArtifact: sidecar.ID, Recovery: rv,
 	}
 	bin, err = c.Capture(dev, RecoveredAcq, rel+".bin", evidence.Source{Kind: evidence.KindSlack, DeviceID: dev, Derived: d}, func(w io.Writer) error {
