@@ -234,7 +234,7 @@ func TestPackagePath(t *testing.T) {
 }
 
 func TestRegistryHoldsTheAndroidParsersWithGeneratedIdentities(t *testing.T) {
-	want := []string{"android.mmssms", "android.calllog", "android.contacts", "ios.calls", "ios.addressbook", "chromium.history", "safari.history"}
+	want := []string{"android.mmssms", "android.calllog", "android.contacts", "ios.sms", "ios.calls", "ios.addressbook", "chromium.history", "safari.history"}
 	var got []string
 	for _, p := range All() {
 		got = append(got, p.Meta().Name)
