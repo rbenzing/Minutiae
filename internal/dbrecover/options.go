@@ -29,6 +29,16 @@ type ExcludedTable struct {
 	TypedAnalysisID        string
 }
 
+// NotHonoredClaim records a typed job whose claims the generic run did not take into account (4G-R26):
+// the tables are recorded by the generic run, and the audit says why and which typed analysis also wrote
+// (or tried to write) records for them.
+type NotHonoredClaim struct {
+	Parser, Version string
+	Tables          []string
+	TypedAnalysisID string
+	Reason          string
+}
+
 // MaxKeepClaimed bounds Options.KeepClaimed (4G-R25).
 const MaxKeepClaimed = 1 << 16
 
@@ -39,7 +49,9 @@ type Options struct {
 	ExcludeTables []ExcludedTable
 	// KeepClaimed holds LocatorDigests of claimed rows the typed pass could not map (4G-R21): such a row
 	// is written although its table is claimed. At most MaxKeepClaimed; not narrowing.
-	KeepClaimed                   [][16]byte
+	KeepClaimed [][16]byte
+	// TypedNotHonored lists the typed jobs that honored no claim, for the audit (4G-R26); it changes nothing else.
+	TypedNotHonored               []NotHonoredClaim
 	MaxRecords, MaxBytes          int64
 	MaxPayloadBytes, MaxBodyBytes int64
 	// MaxFitEqualityRows bounds the live rows the fit-only equality (an annotation on rows named by the
