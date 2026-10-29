@@ -87,6 +87,7 @@ var allowed = map[string][]string{
 	"internal/parsers/chromium":            {"internal/decode/sqlitedb/rowrun", "internal/decode/ts", "internal/parse", "internal/records", "internal/recordtypes/common", "internal/recordtypes/web"},
 	"internal/parsers/ioscalls":            {"internal/decode/sqlitedb/cellx", "internal/decode/sqlitedb/rowrun", "internal/decode/ts", "internal/parse", "internal/records", "internal/recordtypes/call", "internal/recordtypes/common"},
 	"internal/parsers/iosaddressbook":      {"internal/decode/sqlitedb", "internal/decode/sqlitedb/cellx", "internal/decode/sqlitedb/rowrun", "internal/parse", "internal/records", "internal/recordtypes/common", "internal/recordtypes/contact"},
+	"internal/parsers/iossms":              {"internal/decode/plist", "internal/decode/sqlitedb", "internal/decode/sqlitedb/cellx", "internal/decode/sqlitedb/rowrun", "internal/decode/ts", "internal/decode/typedstream", "internal/parse", "internal/records", "internal/recordtypes/common", "internal/recordtypes/message"},
 	"internal/parsers/safari":              {"internal/decode/sqlitedb", "internal/decode/sqlitedb/rowrun", "internal/decode/ts", "internal/parse", "internal/records", "internal/recordtypes/common", "internal/recordtypes/web", "internal/sqlitefile"},
 	"internal/artparse":                    {"internal/evidence", "internal/version", "internal/records", "internal/parse", "internal/recordtypes/all", "internal/decode/iosbackup", "internal/decode/sqlitedb"},
 	"tools/check":                          {},
