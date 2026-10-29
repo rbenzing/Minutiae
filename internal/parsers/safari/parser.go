@@ -12,7 +12,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "safari.history"
-	Version = "1.0.0"
+	Version = "1.0.2"
 )
 
 // Parser is the safari.history parser. It holds no state.
@@ -20,12 +20,14 @@ type Parser struct{}
 
 var _ parse.RowMapper = Parser{}
 
-// Meta describes the parser. Claims stay empty until plan 4G implements typed recovery.
+// Meta describes the parser. Claims are exactly ClaimableTables: a promise that typed recovery (plan 4G) can map the
+// rows of history_visits that were deleted or superseded (the mapping is total and source-agnostic, 4F-R3).
 func (Parser) Meta() parse.Meta {
 	return parse.Meta{
 		Name: Name, Version: Version, Title: "Safari browsing history (iOS History.db)",
 		Platforms: []string{parse.PlatformIOS},
 		Emits:     []parse.Emit{{Type: web.VisitType, PayloadVersion: web.PayloadVersion}},
+		Claims:    claimsOf(ClaimableTables()),
 		Inputs: []parse.InputSpec{
 			{Role: "db", Globs: []string{"ios:*/Library/Safari/History.db"}, Required: true},
 			{Role: "wal", Companions: []string{"-wal"}},
@@ -69,3 +71,11 @@ func (Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) err
 // ClaimableTables returns the tables whose mapping is total (every row gives one record or a RowError):
 // history_visits (4F-R3). The other tables emit only on a decided condition and must not be claimed.
 func ClaimableTables() []string { return []string{"history_visits"} }
+
+func claimsOf(tables []string) []parse.TableClaim {
+	out := make([]parse.TableClaim, len(tables))
+	for i, t := range tables {
+		out[i] = parse.TableClaim{Role: "db", Table: t}
+	}
+	return out
+}

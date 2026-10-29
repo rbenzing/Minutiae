@@ -18,7 +18,7 @@ func intPtr(v int) *int { return &v }
 func fullArtifact(id string) Artifact {
 	return Artifact{
 		ID: id, Acquisition: "acq-" + id, SHA256: "aa" + id, Platform: "android", Logical: "android:/data/" + id, Size: 123, Incomplete: true,
-		Recovery: &RecoveryInfo{Class: "carved", Method: "sig", Confidence: intPtr(70)},
+		Recovery: &RecoveryInfo{Class: "carved", Method: "sig", Confidence: intPtr(70), CapUnknown: true},
 		Source: SourceInfo{
 			Kind: "extract", DeviceID: "dev", RemotePath: "/r/" + id, OriginalPath: "/o", Partition: "p1", FSType: "ext4", FSPath: "/f",
 			Encrypted: true, ParentIncomplete: true,
@@ -238,7 +238,7 @@ func mutateInput(in *Input) {
 
 func mutateArtifact(a *Artifact) {
 	a.ID, a.SHA256, a.Platform, a.Logical, a.Size, a.Incomplete = "x", "x", "x", "x", -1, false
-	a.Recovery.Class, a.Recovery.Method = "x", "x"
+	a.Recovery.Class, a.Recovery.Method, a.Recovery.CapUnknown = "x", "x", false
 	*a.Recovery.Confidence = 1
 	a.Recovery.Confidence = intPtr(2)
 	a.Source.Kind, a.Source.DeviceID, a.Source.RemotePath, a.Source.OriginalPath = "x", "x", "x", "x"
@@ -304,5 +304,17 @@ func TestCloneGivesTheParserItsOwnBudgetHandle(t *testing.T) {
 	}
 	if c.Budget.Used() != 0 || c.Budget.Limit() != 0 {
 		t.Fatalf("the overwritten handle reports used=%d limit=%d, want 0/0", c.Budget.Used(), c.Budget.Limit())
+	}
+}
+
+func TestCloneCopiesCapUnknown(t *testing.T) {
+	a := fullArtifact("1")
+	c := a.clone()
+	if !c.Recovery.CapUnknown {
+		t.Fatal("clone dropped CapUnknown")
+	}
+	c.Recovery.CapUnknown = false
+	if !a.Recovery.CapUnknown {
+		t.Fatal("clone shares Recovery with the original")
 	}
 }

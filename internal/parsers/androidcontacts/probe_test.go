@@ -1,6 +1,7 @@
 package androidcontacts_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/parse"
@@ -20,11 +21,15 @@ func probeOf(t *testing.T, p parse.Parser, db []byte) parse.Applicability {
 	return got
 }
 
-func TestMetaAndProbe(t *testing.T) {
+func TestMetaIsValidClaimsTheMappedTablesAndProbes(t *testing.T) {
 	p := androidcontacts.Parser{}
 	m := p.Meta()
-	if err := parse.ValidateMeta(m); err != nil || len(m.Claims) != 0 || m.Name != androidcontacts.Name || m.Emits[0].Type != "contact" {
+	if err := parse.ValidateMeta(m); err != nil || m.Name != androidcontacts.Name || m.Emits[0].Type != "contact" {
 		t.Fatalf("meta %+v: %v", m, err)
+	}
+	// a claim is a promise of typed recovery (plan 4G): the two tables the mappings map, on the database
+	if want := []parse.TableClaim{{Role: "db", Table: "raw_contacts"}, {Role: "db", Table: "deleted_contacts"}}; !slices.Equal(m.Claims, want) {
+		t.Errorf("claims %v, want %v", m.Claims, want)
 	}
 	for _, v := range variants {
 		h := parsertest.NewHarness(t)

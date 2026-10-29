@@ -96,15 +96,8 @@ func freshCheck(ctx context.Context, id, want string, held io.Reader, reopen fun
 // opened.
 func openInputs(ctx context.Context, c *evidence.Case, man []evidence.ManifestRecord, db, wal, journal string) (*sealedSet, error) {
 	s := &sealedSet{man: make(map[string]evidence.ManifestRecord, len(man)), openArtifact: c.OpenArtifact}
-	seen := map[string]string{}
-	for _, x := range []struct{ role, id string }{{"db", db}, {"wal", wal}, {"journal", journal}} {
-		if x.id == "" {
-			continue
-		}
-		if prev, dup := seen[x.id]; dup {
-			return nil, &RefusalError{Reason: ReasonBadOption, Detail: fmt.Sprintf("artifact %s is given as both the %s and the %s input", x.id, prev, x.role)}
-		}
-		seen[x.id] = x.role
+	if err := refuseDuplicateRoles(db, wal, journal); err != nil {
+		return nil, err
 	}
 	for _, r := range man {
 		s.man[r.ID] = r
@@ -131,9 +124,15 @@ func openInputs(ctx context.Context, c *evidence.Case, man []evidence.ManifestRe
 	return s, nil
 }
 
+// openHook is a test seam (export_test.go): open calls it for every input artifact it opens.
+var openHook func(role, id string)
+
 func (s *sealedSet) open(ctx context.Context, role, id string) (*sealedInput, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if openHook != nil {
+		openHook(role, id)
 	}
 	rec, ok := s.man[id]
 	if !ok {

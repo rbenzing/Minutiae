@@ -97,6 +97,7 @@ const (
 	dirDecode     = "internal/decode"
 	dirDecodePlst = "internal/decode/plist"
 	dirDecodeSQL  = "internal/decode/sqlitedb"
+	dirDecodeRec  = "internal/decode/sqlitedb/recrun"
 	dirRTAll      = "internal/recordtypes/all"
 	dirSqlitefile = "internal/sqlitefile"
 	dirParsers    = "internal/parsers"
@@ -336,8 +337,8 @@ func moduleImportAllowed(rel string, class pureClass, dirRel string) bool {
 		return class == pcParser || dirRel == dirRTAll && recordTypePackages[rel]
 	case under(dirDecode): // decoders
 		return class == pcDecode || class == pcParser
-	case rel == dirSqlitefile: // the sqlite file reader: its one decoder and the parsers
-		return class == pcParser || dirRel == dirDecodeSQL
+	case rel == dirSqlitefile: // the sqlite file reader: its decoder, the typed recovery runner and the parsers
+		return class == pcParser || dirRel == dirDecodeSQL || dirRel == dirDecodeRec // the recovery runner consumes sqlitefile.RecoveredRow
 	}
 	return false
 }
@@ -1275,7 +1276,7 @@ var purityRequired = []string{
 	"internal/parse", "internal/recordtypes/common", "internal/recordtypes/message",
 	"internal/recordtypes/call", "internal/recordtypes/contact", "internal/recordtypes/web", "internal/recordtypes/all",
 	"internal/decode/sqlitedb",
-	"internal/decode/sqlitedb/rowrun", "internal/parsers/androidmms", "internal/parsers/androidcalllog", "internal/parsers/androidcontacts",
+	"internal/decode/sqlitedb/rowrun", "internal/decode/sqlitedb/recrun", "internal/parsers/androidmms", "internal/parsers/androidcalllog", "internal/parsers/androidcontacts",
 	"internal/parsers/chromium", "internal/parsers/safari", "internal/decode/ts", "internal/decode/plist", "internal/decode/typedstream",
 	"internal/carve",
 }
@@ -1465,6 +1466,8 @@ func TestPurityAllowlistSelfTest(t *testing.T) {
 		{pcDecode, dirDecodePlst, "howett.net/plist", true},
 		{pcDecode, dirDecode + "/other", "howett.net/plist", false},
 		{pcDecode, dirDecodeSQL, m + "internal/sqlitefile", true},
+		{pcDecode, dirDecodeRec, m + "internal/sqlitefile", true},
+		{pcDecode, dirDecodeSQL + "/rowrun", m + "internal/sqlitefile", false},
 		{pcDecode, dirDecodeSQL, m + "internal/parse", true},
 		{pcDecode, dirDecodeSQL, m + "internal/records", true},
 		{pcDecode, dirDecodeSQL, "sync", false},
@@ -1931,6 +1934,7 @@ func TestPurityClassOf(t *testing.T) {
 		"internal/decode/plist":              pcDecode,
 		"internal/decode/sqlitedb":           pcDecode,
 		"internal/decode/sqlitedb/rowrun":    pcDecode,
+		"internal/decode/sqlitedb/recrun":    pcDecode,
 		"internal/decode/ts":                 pcDecode,
 		"internal/decode/typedstream":        pcDecode,
 		"internal/sqlitefile":                pcSqlitefile,

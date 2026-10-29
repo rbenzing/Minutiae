@@ -5,7 +5,10 @@ package androidcalllog_test
 // fixturePins is the SHA-256 of every decompressed fixture file, by "<variant>.<role>". A changed fixture
 // changes this file in the same commit, so a silent regeneration shows in review.
 var fixturePins = map[string]string{
-	"features-subid.db":   "47e2457d106fd6fb2feccceef33c555b9727b6fb875eb1ce433c9cec2badab96",
-	"in-contacts2.db":     "2e6606696ef127db2a57812d66fa576af4e9cebc56f5a29d12925f92e18e8b66",
-	"pre-presentation.db": "95f95216ccb29a6d698677f7bd868bc43e10391e829ea6b41778012796d44d71",
+	"calllog-deleted.db":   "68171b5deb970070af1de368b8d7cc8018485dc080e1378d8c6d8bfa019c15b8",
+	"calllog-wal-edit.db":  "047e62b97ff2b5ac8f59d5b4e7ec086a0a1783a5ac0e556e2646f8f62e36b3ed",
+	"calllog-wal-edit.wal": "a2de8f3fa621ba0543de9298d93cd51041663fe10bf9f694633831c443197843",
+	"features-subid.db":    "47e2457d106fd6fb2feccceef33c555b9727b6fb875eb1ce433c9cec2badab96",
+	"in-contacts2.db":      "2e6606696ef127db2a57812d66fa576af4e9cebc56f5a29d12925f92e18e8b66",
+	"pre-presentation.db":  "95f95216ccb29a6d698677f7bd868bc43e10391e829ea6b41778012796d44d71",
 }

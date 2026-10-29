@@ -13,7 +13,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "android.calllog"
-	Version = "1.0.2"
+	Version = "1.0.6"
 )
 
 // Parser is the android.calllog parser. It holds no state.
@@ -21,12 +21,14 @@ type Parser struct{}
 
 var _ parse.RowMapper = Parser{}
 
-// Meta describes the parser. Claims stay empty until plan 4G implements typed recovery.
+// Meta describes the parser. Claims is the table the mapping maps: a promise that typed recovery (plan 4G) can map
+// the rows of calls that were deleted or superseded (the mapping is source-agnostic).
 func (Parser) Meta() parse.Meta {
 	return parse.Meta{
 		Name: Name, Version: Version, Title: "Android call log (contacts provider)",
 		Platforms: []string{parse.PlatformAndroid},
 		Emits:     []parse.Emit{{Type: call.Type, PayloadVersion: call.PayloadVersion}},
+		Claims:    []parse.TableClaim{{Role: "db", Table: "calls"}},
 		Inputs: []parse.InputSpec{
 			{Role: "db", Globs: []string{
 				"android:**/com.android.providers.contacts/databases/calllog.db",

@@ -20,6 +20,8 @@ import (
 const (
 	dbPath  = "/data/data/com.a/databases/app.db"
 	walPath = dbPath + "-wal"
+	dbPath2 = "/data/data/com.b/databases/app.db"
+	dbPath3 = "/data/data/com.c/databases/app.db"
 )
 
 func TestLimitsMinimumsEnforcedInProduction(t *testing.T) {
@@ -288,48 +290,102 @@ func TestSelectionUnknownParserIsErrSelection(t *testing.T) {
 	}
 }
 
-func TestNonLiveKindsRefusedBeforeWriterRule(t *testing.T) {
+func TestNonParserKindsRefused(t *testing.T) {
 	c := newCase(t)
 	acquireStart(t, c, "D1", "A1", "logical")
 	live := putFile(t, c, "D1", "A1", dbPath, "x")
-	kinds := []string{"partition", "serial", "info", "import", "runs", "unallocated", "recover", "carve", "slack", "journal", "report", "", "future-kind"}
+	never := []string{"partition", "serial", "info", "import", "runs", "unallocated", "slack", "journal", "report", "", "future-kind"}
+	opt := []string{"recover", "carve"}
 	ids := map[string]string{}
-	for _, k := range kinds {
-		ids[k] = put(t, c, "D1", "A1", "k-"+k+"x", evidence.Source{Kind: k, RemotePath: dbPath}, "x").ID
+	for _, k := range append(append([]string(nil), never...), opt...) {
+		src := evidence.Source{Kind: k, RemotePath: dbPath}
+		if k == "recover" {
+			src.Derived = &evidence.Derivation{ParentID: "p", FSType: "ext4", FSPath: dbPath}
+		}
+		ids[k] = put(t, c, "D1", "A1", "k-"+k+"x", src, "x").ID
 	}
 	h := newHost(t, c, register(t, "p", "1.0.0"))
 	jobs, counts := discover(t, h, artparse.Selection{})
 	if len(jobs) != 1 || jobs[0].Primary.Artifact.ID != live.ID {
 		t.Fatalf("jobs %v, want only the live file", jobIDs(jobs))
 	}
-	if counts.NotParserInput != len(kinds) || counts.Manifest != len(kinds)+1 {
-		t.Errorf("counts %+v, want %d not parser input of %d", counts, len(kinds), len(kinds)+1)
+	if counts.NotParserInput != len(never) || counts.RecoveredExcluded != len(opt) || counts.Manifest != len(never)+len(opt)+1 {
+		t.Errorf("counts %+v, want %d not parser input, %d recovered excluded, of %d", counts, len(never), len(opt), len(never)+len(opt)+1)
 	}
-	for _, k := range kinds {
-		_, _, err := h.Discover(context.Background(), snapshotOf(t, h), artparse.Selection{Artifacts: []string{ids[k]}})
-		if !errors.Is(err, artparse.ErrNotParserInput) {
-			t.Errorf("kind %q named with --artifact: %v", k, err)
+	for _, k := range never {
+		for _, sel := range []artparse.Selection{{Artifacts: []string{ids[k]}}, {Artifacts: []string{ids[k]}, IncludeRecovered: true}} {
+			if _, _, err := h.Discover(context.Background(), snapshotOf(t, h), sel); !errors.Is(err, artparse.ErrNotParserInput) {
+				t.Errorf("kind %q named with --artifact (%+v): %v", k, sel, err)
+			}
 		}
+	}
+	for _, k := range opt {
+		jobs, _, err := h.Discover(context.Background(), snapshotOf(t, h), artparse.Selection{Artifacts: []string{ids[k]}})
+		if err != nil || len(jobs) != 1 || jobs[0].Primary.Artifact.ID != ids[k] || !jobs[0].Explicit {
+			t.Errorf("kind %q named with --artifact: jobs %v, %v", k, jobIDs(jobs), err)
+		}
+	}
+	// the flag admits the kinds the namers can name; slack and journal artifacts stay out
+	jobs, counts = discover(t, h, artparse.Selection{IncludeRecovered: true})
+	if got := jobIDs(jobs); len(got) != 2 || !slices.Contains(got, live.ID) || !slices.Contains(got, ids["recover"]) {
+		t.Errorf("with IncludeRecovered: jobs %v, want the live file and the recover artifact (a carve has no logical path)", got)
+	}
+	if counts.RecoveredExcluded != 0 || counts.NotParserInput != len(never) {
+		t.Errorf("with IncludeRecovered: counts %+v", counts)
 	}
 }
 
 func TestRecoveredArtifactsNotDiscoveredByDefault(t *testing.T) {
 	c := newCase(t)
 	acquireStart(t, c, "D1", "A1", "logical")
-	d := &evidence.Derivation{ParentID: "p", FSType: "ext4", FSPath: dbPath}
-	rec := put(t, c, "D1", "A1", "rec", evidence.Source{Kind: "recover", RemotePath: dbPath, Derived: d}, "x")
-	carved := put(t, c, "D1", "A1", "carved", evidence.Source{Kind: "carve", RemotePath: dbPath, Derived: d}, "x")
+	rec := put(t, c, "D1", "A1", "rec", evidence.Source{Kind: "recover", RemotePath: dbPath, Derived: &evidence.Derivation{ParentID: "p", FSType: "ext4", FSPath: dbPath}}, "x")
+	carved := put(t, c, "D1", "A1", "carved", evidence.Source{Kind: "carve", RemotePath: dbPath, Derived: &evidence.Derivation{ParentID: "p"}}, "x")
+	ext := put(t, c, "D1", "A1", "ext", evidence.Source{Kind: "extract", RemotePath: dbPath2, Derived: &evidence.Derivation{ParentID: rec.ID, ParentSHA256: rec.SHA256, FSType: "ext4", FSPath: dbPath2}}, "x")
+	liveExt := putExtract(t, c, "D1", "A1", "liveext", "ext4", dbPath3, nil)
 	h := newHost(t, c, register(t, "p", "1.0.0"))
 	for _, sel := range []artparse.Selection{{}, {IncludeSnapshots: true}} {
 		jobs, counts := discover(t, h, sel)
-		if len(jobs) != 0 || counts.NotParserInput != 2 {
-			t.Errorf("%+v: jobs %v counts %+v", sel, jobIDs(jobs), counts)
+		if got := jobIDs(jobs); len(got) != 1 || got[0] != liveExt.ID {
+			t.Errorf("%+v: jobs %v, want only the live extract", sel, got)
 		}
-		for _, id := range []string{rec.ID, carved.ID} {
-			if _, _, err := h.Discover(context.Background(), snapshotOf(t, h), artparse.Selection{Artifacts: []string{id}}); !errors.Is(err, artparse.ErrNotParserInput) {
-				t.Errorf("%+v: --artifact %s: %v", sel, id, err)
-			}
+		if counts.RecoveredExcluded != 3 || counts.NotParserInput != 0 {
+			t.Errorf("%+v: counts %+v, want 3 recovered excluded (recover, carve, extract of a recovered parent)", sel, counts)
 		}
+	}
+	jobs, counts := discover(t, h, artparse.Selection{IncludeRecovered: true})
+	got := jobIDs(jobs)
+	slices.Sort(got)
+	want := []string{rec.ID, ext.ID, liveExt.ID}
+	slices.Sort(want)
+	if !slices.Equal(got, want) || counts.RecoveredExcluded != 0 {
+		t.Errorf("IncludeRecovered: jobs %v counts %+v, want %v (the carve has no logical path)", got, counts, want)
+	}
+	for _, id := range []string{rec.ID, carved.ID, ext.ID} {
+		jobs, _, err := h.Discover(context.Background(), snapshotOf(t, h), artparse.Selection{Artifacts: []string{id}})
+		if err != nil || len(jobs) != 1 || jobs[0].Primary.Artifact.ID != id {
+			t.Errorf("--artifact %s: jobs %v, %v", id, jobIDs(jobs), err)
+		}
+	}
+}
+
+// A companion that is recovered joins a job only when recovered input is admitted: --artifact names the
+// primary, it does not open the whole acquisition to recovered artifacts.
+func TestExplicitRecoveredPrimaryDoesNotAdmitRecoveredCompanions(t *testing.T) {
+	c := newCase(t)
+	acquireStart(t, c, "D1", "A1", "logical")
+	db := putFile(t, c, "D1", "A1", dbPath, "1")
+	wal := put(t, c, "D1", "A1", "wal", evidence.Source{Kind: "recover", RemotePath: walPath, Derived: &evidence.Derivation{ParentID: "p", FSType: "ext4", FSPath: walPath}}, "2")
+	h := newHost(t, c, register(t, "p", "1.0.0"))
+	jobs, _, err := h.Discover(context.Background(), snapshotOf(t, h), artparse.Selection{Artifacts: []string{db.ID}})
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("jobs %v, %v", jobIDs(jobs), err)
+	}
+	if _, ok := jobs[0].Others["wal"]; ok {
+		t.Errorf("a recovered wal joined the job without the flag: %+v", jobs[0].Others)
+	}
+	jobs, _ = discover(t, h, artparse.Selection{Artifacts: []string{db.ID}, IncludeRecovered: true})
+	if len(jobs) != 1 || jobs[0].Others["wal"].Artifact.ID != wal.ID {
+		t.Errorf("with the flag: %+v", jobs)
 	}
 }
 

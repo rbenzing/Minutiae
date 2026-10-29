@@ -25,7 +25,7 @@ func probeOf(t *testing.T, db []byte) parse.Applicability {
 func TestMetaAndProbe(t *testing.T) {
 	p := safari.Parser{}
 	m := p.Meta()
-	if err := parse.ValidateMeta(m); err != nil || len(m.Claims) != 0 || m.Name != safari.Name || m.Version != safari.Version {
+	if err := parse.ValidateMeta(m); err != nil || m.Name != safari.Name || m.Version != safari.Version {
 		t.Fatalf("meta %+v: %v", m, err)
 	}
 	if len(m.Platforms) != 1 || m.Platforms[0] != parse.PlatformIOS || len(m.Emits) != 1 || m.Emits[0].Type != "web_visit" {

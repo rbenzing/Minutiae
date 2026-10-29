@@ -8,5 +8,6 @@ var fixturePins = map[string]string{
 	"current-wal.db":   "e78163a7c370e4990e939404850cc8e5c8e6fba9bf315f8627f3a74540615ad7",
 	"current-wal.wal":  "0574c830ef8ac2cabe2ace55280554cc19567fe00d57739f7048f093af45e67d",
 	"current.db":       "c43dcc612af54a6343efd3cf238d45b2e630cfda9efd617cb697365d3892ed17",
+	"deleted.db":       "a2feb62d6ce15086e2796ffdef195644e24b026fe2276e0b1bff8f1d4fa461a5",
 	"no-tombstones.db": "d3dc1567200961284f5a7757e14e1b8d265c77c54d599d24b752799859c5eebd",
 }

@@ -28,6 +28,19 @@ type JobResult struct {
 	Panic                         *PanicInfo
 	Abandoned, TimedOut           bool
 	Integrity                     bool
+
+	// Typed recovery jobs only (RecoverTyped).
+	Claims             []string // the tables the parser claims
+	LiveParser         string   // "name version" of the live parser the recover identity belongs to
+	Unmapped           int64    // claimed rows that produced no record (counted warnings)
+	SkippedInvalid     int64    // claimed rows whose facts were invalid: neither typed nor unmapped; the job is incomplete
+	BelowMinConfidence int64
+	Narrowed           []string
+	// UnmappedLocators are LocatorDigests of the unmapped rows' locators, sorted and de-duplicated, at
+	// most 1<<16 (4G-R25). UnmappedOverflow: more rows were unmapped than could be kept, so the job's
+	// claims must not be honored.
+	UnmappedLocators [][16]byte
+	UnmappedOverflow bool
 }
 
 // RunSummary is what a run came to. Jobs includes the jobs never started (Outcome "not-run").

@@ -5,6 +5,8 @@ import unicodedata
 import telephony_common as C
 
 FAMILY = "contacts"
+CLAIMED = ("raw_contacts", "deleted_contacts")  # Meta.Claims of android.contacts
+SCENARIOS = {}  # variant -> C.Scenario, filled when the variant is generated (the typed recovery oracle)
 REMOTE = "/data/user_de/0/com.android.providers.contacts/databases/contacts2.db"
 T0, MS = 1682935200, 1000
 # Contact ids from this value up name an aggregate contact that does not exist (a dangling contact_id): Builder.contact adds no
@@ -475,7 +477,8 @@ def expect_tombstone(dc, remote, file="any"):
             "summary": "deleted contact %d" % cid, "body": None, "payload": p}
 
 
-def oracle(files, ddl_name, variant, rc_cols, dc_cols):
+def make_env(files):
+    """The LIVE view of the joined tables (a recovered row's joins read it too, spec 12.1)."""
     view = C.engine_view(files, ["raw_contacts", "data", "mimetypes", "deleted_contacts", "accounts", "contacts"])
     # the key is the _id the join compares: the rowid alias in the platform schema, so one row per key there; a table
     # whose _id is a plain column can hold a key twice, and expect_contact states that (T77)
@@ -494,6 +497,12 @@ def oracle(files, ddl_name, variant, rc_cols, dc_cols):
     by_rc = {}
     for d in view["data"]:
         by_rc.setdefault(d.get("raw_contact_id"), []).append(d)
+    return view, dict(accounts=accounts, aggregates=aggregates, mimes=mimes, by_rc=by_rc)
+
+
+def oracle(files, ddl_name, variant, rc_cols, dc_cols):
+    view, env = make_env(files)
+    accounts, aggregates, mimes, by_rc = env["accounts"], env["aggregates"], env["mimes"], env["by_rc"]
     exp = C.expect_header(FAMILY, variant, ddl_name)
     # a db-only variant has one file that can hold a cell, so the source path is stated; with a companion the comparer derives it from the role (T48, T51)
     remote = REMOTE if set(files) == {"db"} else ""
@@ -514,7 +523,7 @@ def oracle(files, ddl_name, variant, rc_cols, dc_cols):
 # ---------------------------------------------------------------- variants
 
 
-def build(work, ddl_name, variant, b, extra=None, plain_keys=False, extra_files=None, **conn):
+def build(work, ddl_name, variant, b, extra=None, plain_keys=False, extra_files=None, after=None, killed=None, **conn):
     """plain_keys: accounts and contacts are re-created with a plain `_id integer` column in place of the rowid alias, so a
     key can repeat (T79). That is a deliberate departure from the pinned snapshot for those two tables only; extra_files
     (an empty -wal) makes the host's probe defer to Parse, which is how a database of another shape reaches the mapper."""
@@ -544,6 +553,8 @@ def build(work, ddl_name, variant, b, extra=None, plain_keys=False, extra_files=
             C.insert(con, "data", r)
         for r in (extra or []):
             C.insert(con, "deleted_contacts", r)
+    if after is not None:
+        after(con)  # a scenario that records what it wrote and then deletes (the typed recovery oracle)
     rc_cols = C.columns(con, "raw_contacts")
     try:
         dc_cols = C.columns(con, "deleted_contacts")
@@ -551,6 +562,8 @@ def build(work, ddl_name, variant, b, extra=None, plain_keys=False, extra_files=
         dc_cols = []
     con.close()
     files = {"db": C.read(path)}
+    if killed is not None:
+        files = killed(path)  # a writer killed after a WAL of changes: the files it left
     files.update(extra_files or {})
     return files, oracle(files, ddl_name, variant, rc_cols, dc_cols)
 
@@ -612,5 +625,74 @@ def variant_duplicate_keys(work):
     return build(work, "contacts-aosp-baseline.sql", "duplicate-keys", b, plain_keys=True, extra_files={"wal": b""})
 
 
+def variant_contacts_deleted(work):
+    """Raw contacts 7 to 30 are deleted with secure_delete OFF on 512-byte pages: whole leaf pages go to the freelist. Their
+    data rows are deleted too, so a recovered contact has no phones (its joins read the live view, 4G-R8). Contact 12 has no
+    name, no source id and no data: the typed pass cannot say whom it was. Tombstones 1030 to 1129 are deleted as well but
+    are NOT wanted: a freed [rowid, integer] record fits several live tables (any whose later columns are addable), so the
+    library cannot name its table and the row stays a generic db_row (the Go test asserts that none is typed)."""
+    b = Builder()
+    for i in range(1, 31):
+        if i == 12:
+            b.contact(i, display_name=None)  # no name, no source id, no data rows
+            continue
+        b.contact(i, display_name="Contact %02d %s" % (i, "abcdefghij" * 2), sourceid="g-%d" % i, starred=i % 2)
+        b.d(i, NAME, data1="Contact %02d" % i, data2="Contact", data3="%02d" % i)
+        b.d(i, PHONE, 1, data1="+1555000%04d" % i, data2=2)
+    tombs = [{"contact_id": 1000 + i, "contact_deleted_timestamp": (T0 + i) * MS} for i in range(130)]
+    scen = SCENARIOS["contacts-deleted"] = C.Scenario(CLAIMED, alias={"raw_contacts": "_id", "deleted_contacts": "contact_id"})
+
+    def after(con):
+        scen.write("raw_contacts", scen.snap(con, "raw_contacts"))
+        scen.snap(con, "deleted_contacts")  # the columns only: no tombstone is a want, so none may come back typed
+        # freed leaf pages are never owned by a table: the oracle expects basis fit, attributed to the claimed table
+        scen.want("raw_contacts", scen.snap(con, "raw_contacts", "_id between 7 and 30"), label="raw_contacts")
+        with C.batch(con):
+            con.execute("delete from raw_contacts where _id between 7 and 30")
+            con.execute("delete from data where raw_contact_id between 7 and 30")
+            con.execute("delete from deleted_contacts where contact_id between 1030 and 1129")
+
+    return build(work, "contacts-deleted-contacts.sql", "contacts-deleted", b, tombs, after=after, page_size=512)
+
+
+def variant_contacts_wal_edit(work):
+    """4 raw contacts and 3 tombstones, then, in a WAL that is never checkpointed, raw contact 2 is renamed, tombstone 1001 gets
+    a new time and tombstone 1002 is deleted: the database file holds the previous versions (basis schema, typed)."""
+    b = Builder()
+    for i in range(1, 5):
+        b.contact(i, display_name="Person %d" % i, sourceid="g-%d" % i)
+        b.d(i, NAME, data1="Person %d" % i, data2="Person", data3="%d" % i)
+        b.d(i, PHONE, 1, data1="+1555000%04d" % i, data2=2)
+    tombs = [{"contact_id": 1000 + i, "contact_deleted_timestamp": (T0 + i) * MS} for i in range(3)]
+    scen = SCENARIOS["contacts-wal-edit"] = C.Scenario(CLAIMED, alias={"raw_contacts": "_id", "deleted_contacts": "contact_id"})
+
+    def after(con):
+        scen.write("raw_contacts", scen.snap(con, "raw_contacts"))
+        scen.write("deleted_contacts", scen.snap(con, "deleted_contacts"))
+        scen.want("raw_contacts", scen.snap(con, "raw_contacts", "_id = 2"))  # as the database file still holds them
+        scen.want("deleted_contacts", scen.snap(con, "deleted_contacts", "contact_id in (1001, 1002)"))
+        con.execute("pragma journal_mode = wal")
+
+    stmts = ["pragma wal_autocheckpoint = 0", "update raw_contacts set display_name = 'Renamed in the WAL' where _id = 2",
+             "update deleted_contacts set contact_deleted_timestamp = %d where contact_id = 1001" % ((T0 + 99) * MS),
+             "delete from deleted_contacts where contact_id = 1002"]
+
+    def killed(path):
+        C.kill_child(path, stmts)
+        return {"db": C.read(path), "wal": C.read(path + "-wal")}
+
+    return build(work, "contacts-deleted-contacts.sql", "contacts-wal-edit", b, tombs, after=after, killed=killed)
+
+
+def recover_expect(variant, files):
+    """The <variant>.recover.expect.json of a variant that has a scenario (ruling 4G-R14)."""
+    def expect_fn(table, d, env, file):
+        if table.lower() == "deleted_contacts":
+            return expect_tombstone(d, "", file)
+        return expect_contact(d, env["by_rc"].get(d["rowid"], []), env["mimes"], "", env["accounts"], env["aggregates"], file)
+    return C.recover_oracle(variant, files, SCENARIOS[variant], lambda f: make_env(f)[1], expect_fn)
+
+
 VARIANTS = {"aosp-baseline": variant_baseline, "deleted-contacts": variant_deleted, "multi-account": variant_multi,
-            "unicode-rtl": variant_rtl, "huge-contact": variant_huge, "duplicate-keys": variant_duplicate_keys}
+            "unicode-rtl": variant_rtl, "huge-contact": variant_huge, "duplicate-keys": variant_duplicate_keys, "contacts-deleted": variant_contacts_deleted,
+            "contacts-wal-edit": variant_contacts_wal_edit}
