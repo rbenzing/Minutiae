@@ -23,13 +23,17 @@ func validateGIF(w *Window) Verdict {
 		return reject("unreadable")
 	}
 	var head [13]byte // header (6) and logical screen descriptor (7)
-	if n, err := w.ReadAt(head[:], 0); err != nil {
-		// The signature and version are judged on what was read, so a short
-		// non-GIF is not called truncated.
-		if n >= 3 && string(head[:3]) != "GIF" {
-			return reject("bad-signature")
-		}
+	// The signature is judged on what the window holds, so a short non-GIF is
+	// not called truncated, and nothing past the window is requested.
+	have := int(min(int64(len(head)), w.Len()))
+	if err := w.readChecked(head[:have], 0); err != nil {
 		return fail(err)
+	}
+	if have >= 3 && string(head[:3]) != "GIF" {
+		return reject("bad-signature")
+	}
+	if have < len(head) {
+		return reject("truncated")
 	}
 	if string(head[:3]) != "GIF" {
 		return reject("bad-signature")
@@ -50,7 +54,7 @@ func validateGIF(w *Window) Verdict {
 			return nil
 		}
 		size := int64(3) << ((packed & 7) + 1)
-		if _, err := w.Byte(pos + size - 1); err != nil {
+		if _, err := w.byteChecked(pos + size - 1); err != nil {
 			return err
 		}
 		pos += size
@@ -59,7 +63,7 @@ func validateGIF(w *Window) Verdict {
 	// skipSubBlocks moves past sub-blocks up to and including the zero size.
 	skipSubBlocks := func() error {
 		for {
-			n, err := w.Byte(pos)
+			n, err := w.byteChecked(pos)
 			if err != nil {
 				return err
 			}
@@ -74,7 +78,7 @@ func validateGIF(w *Window) Verdict {
 	}
 	frames := 0
 	for {
-		b, err := w.Byte(pos)
+		b, err := w.byteChecked(pos)
 		if err != nil {
 			return fail(err)
 		}
@@ -88,7 +92,7 @@ func validateGIF(w *Window) Verdict {
 				"dims=" + strconv.Itoa(sw) + "x" + strconv.Itoa(sh), "frames=" + strconv.Itoa(frames),
 			}}
 		case 0x21:
-			if _, err := w.Byte(pos); err != nil { // the label
+			if _, err := w.byteChecked(pos); err != nil { // the label
 				return fail(err)
 			}
 			pos++
@@ -97,7 +101,7 @@ func validateGIF(w *Window) Verdict {
 			}
 		case 0x2C:
 			var d [9]byte
-			if _, err := w.ReadAt(d[:], pos); err != nil {
+			if err := w.readChecked(d[:], pos); err != nil {
 				return fail(err)
 			}
 			if d[4] == 0 && d[5] == 0 || d[6] == 0 && d[7] == 0 {
@@ -107,7 +111,7 @@ func validateGIF(w *Window) Verdict {
 			if err := skipTable(d[8]); err != nil {
 				return fail(err)
 			}
-			lzw, err := w.Byte(pos)
+			lzw, err := w.byteChecked(pos)
 			if err != nil {
 				return fail(err)
 			}

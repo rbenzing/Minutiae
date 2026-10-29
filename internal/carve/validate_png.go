@@ -27,7 +27,7 @@ func validatePNG(w *Window) Verdict {
 		return reject("unreadable")
 	}
 	var sig [8]byte
-	if _, err := w.ReadAt(sig[:], 0); err != nil {
+	if err := w.readChecked(sig[:], 0); err != nil {
 		return fail(err)
 	}
 	if string(sig[:]) != "\x89PNG\r\n\x1a\n" {
@@ -43,7 +43,7 @@ func validatePNG(w *Window) Verdict {
 	)
 	for {
 		var hdr [8]byte
-		if _, err := w.ReadAt(hdr[:], pos); err != nil {
+		if err := w.readChecked(hdr[:], pos); err != nil {
 			return fail(err)
 		}
 		length := int64(hdr[0])<<24 | int64(hdr[1])<<16 | int64(hdr[2])<<8 | int64(hdr[3])
@@ -75,7 +75,7 @@ func validatePNG(w *Window) Verdict {
 		var ihdr [13]byte
 		for done := int64(0); done < length; {
 			n := min(length-done, pngCRCPiece)
-			if _, err := w.ReadAt(buf[:n], pos+8+done); err != nil {
+			if err := w.readChecked(buf[:n], pos+8+done); err != nil {
 				return fail(err)
 			}
 			if chunks == 0 {
@@ -85,7 +85,7 @@ func validatePNG(w *Window) Verdict {
 			done += n
 		}
 		var tail [4]byte
-		if _, err := w.ReadAt(tail[:], pos+8+length); err != nil {
+		if err := w.readChecked(tail[:], pos+8+length); err != nil {
 			return fail(err)
 		}
 		if crc != uint32(tail[0])<<24|uint32(tail[1])<<16|uint32(tail[2])<<8|uint32(tail[3]) {
