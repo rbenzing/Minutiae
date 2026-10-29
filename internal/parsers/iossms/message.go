@@ -92,13 +92,15 @@ func channel(service string, ok bool) string {
 	return "unknown"
 }
 
-// status: incoming is received; outgoing is failed (error != 0), delivered, sent, else unknown.
-func status(dir string, v map[string]int64) string {
+// status: incoming is received; outgoing is unknown when the error cell is undecided, else failed (error != 0), delivered, sent, else unknown.
+func status(dir string, v map[string]int64, errKind rowrun.CellKind) string {
 	switch dir {
 	case message.DirIn:
 		return message.StatusReceived
 	case message.DirOut:
 		switch {
+		case errKind != rowrun.CellValue && errKind != rowrun.CellMissing:
+			return message.StatusUnknown // the error cell cannot be read as an integer: neither sent nor delivered is decided
 		case v["error"] != 0:
 			return message.StatusFailed
 		case v["is_delivered"] == 1:
@@ -162,7 +164,7 @@ func mapMessage(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 	}
 	_, haveFromMe := v["is_from_me"]
 	msg.Direction = direction(v["is_from_me"], haveFromMe)
-	msg.Status = status(msg.Direction, v)
+	msg.Status = status(msg.Direction, v, kinds["error"])
 	if rd, ok := v["is_read"]; ok && msg.Direction == message.DirIn && (rd == 0 || rd == 1) {
 		b := rd == 1
 		msg.Read = &b

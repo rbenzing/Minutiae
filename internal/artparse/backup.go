@@ -640,8 +640,8 @@ func encryptedBackup(j Job, env Env) bool {
 	return false
 }
 
-// backupWarnings are the host warnings of a run, one per backup that is not mapped and one per mapped
-// backup whose encryption is unknown (4E-R5, R37).
+// backupWarnings are the host warnings of a run, one per backup that is not mapped and one per mapped encrypted or
+// encryption-unknown backup (4E-R5, R37).
 func backupWarnings(parseID string, rs []BackupResolution) []HostWarning {
 	var out []HostWarning
 	for _, r := range rs {
@@ -649,6 +649,8 @@ func backupWarnings(parseID string, rs []BackupResolution) []HostWarning {
 		switch {
 		case r.Status != BackupMapped:
 			reason = r.Reason
+		case r.Encryption == encEncrypted:
+			reason = "encrypted backup: Manifest.db is readable but the file contents are encrypted and are not parsed (sub-project 10)"
 		case r.Encryption == encUnknown:
 			reason = "encryption unknown: " + r.Reason + "; each database's Probe decides"
 		default:

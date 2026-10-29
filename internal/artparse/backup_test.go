@@ -805,3 +805,27 @@ func entry0(t testing.TB, es []evidence.AuditEntry) evidence.AuditEntry {
 	}
 	return es[0]
 }
+
+// A backup Manifest.plist calls encrypted whose Manifest.db reads, with no file a parser matches, still
+// produces a host warning and a non-clean run: its encrypted content was never parsed.
+func TestEncryptedMappedBackupWithNoMatchingParserIsNotClean(t *testing.T) {
+	bc := newBackupCase(t)
+	r := bc.add(bspec{files: []bfile{{domain: "HomeDomain", rel: "Library/Other/unclaimed.bin", data: "XX"}}, plist: plistYes})
+	h := bc.host(nil)
+	p := bc.plan(h)
+	if len(p.Rows) != 0 || len(p.Backups) != 1 || first(t, p.Backups).Status != "mapped" || first(t, p.Backups).Encryption != "encrypted" {
+		t.Fatalf("rows %d backups %+v", len(p.Rows), p.Backups)
+	}
+	sum := bc.run(h)
+	if sum.Class() != artparse.ClassPartial {
+		t.Errorf("Class = %v, want ClassPartial", sum.Class())
+	}
+	ws := bc.entries(evidence.ActionAnalysisWarning)
+	if len(ws) != 1 {
+		t.Fatalf("%d warnings, want 1", len(ws))
+	}
+	w := decodeEntry[artparse.HostWarning](t, ws[0])
+	if w.Path != "backup:"+r.key+"/UDID1" || !strings.Contains(w.Reason, "encrypted") || w.Source != "host" {
+		t.Errorf("warning = %+v", w)
+	}
+}
