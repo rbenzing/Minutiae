@@ -10,13 +10,14 @@ import (
 
 // claimsOf lists, for every registered parser, the tables it must claim (4G-R30): an explicit table, so a
 // claim is never added or dropped by accident and a registered parser missing from the table fails. A parser
-// without claims is listed with nil. Tasks 9 and 10 set the three Android telephony parsers, Task 10b the browsers.
+// without claims is listed with nil. Tasks 9 and 10 set the three Android telephony parsers, Task 10b the 4F browsers
+// (the 4E parsers follow in plan 4G Task 14).
 var claimsOf = map[string][]string{
 	"android.mmssms":   {"sms", "pdu"},
 	"android.calllog":  {"calls"},
 	"android.contacts": {"raw_contacts", "deleted_contacts"},
-	"chromium.history": nil,
-	"safari.history":   nil,
+	"chromium.history": {"visits", "keyword_search_terms", "downloads"},
+	"safari.history":   {"history_visits"},
 }
 
 // 4A's registry tests ranged over an empty registry; with the Android telephony parsers in it they are real

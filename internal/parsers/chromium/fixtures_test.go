@@ -19,7 +19,7 @@ const (
 	remoteWebView = "/data/data/com.example.reader/app_webview/Default/History"
 )
 
-var variants = []string{"current", "current-wal", "mid-upgraded", "old", "minimal"}
+var variants = []string{"current", "current-wal", "mid-upgraded", "old", "minimal", "chromium-deleted"}
 
 // remoteFor is where the variant's database sits on the device.
 func remoteFor(variant string) string {
@@ -55,9 +55,15 @@ func TestFixturesArePinnedByHash(t *testing.T) {
 }
 
 func TestEveryCommittedFixtureIsInTheVariantList(t *testing.T) {
-	m, err := filepath.Glob("testdata/*.expect.json")
+	all, err := filepath.Glob("testdata/*.expect.json")
 	if err != nil {
 		t.Fatal(err)
+	}
+	var m []string
+	for _, p := range all {
+		if !strings.HasSuffix(p, ".recover.expect.json") { // the typed recovery oracles are checked by TestEveryRecoverOracleHasAFixture
+			m = append(m, p)
+		}
 	}
 	if len(m) != len(variants) {
 		t.Errorf("%d fixtures on disk, %d in the variant list", len(m), len(variants))

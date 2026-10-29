@@ -16,6 +16,7 @@ import os
 import platform
 import shutil
 import sqlite3
+import struct
 import sys
 import tempfile
 
@@ -364,6 +365,8 @@ def dec(e):
         return int(e["v"])
     if t == "text":
         return e["v"]
+    if t == "float":
+        return struct.unpack(">d", struct.pack(">Q", int(e["v"], 16)))[0]
     if t == "blob":
         return Blob(base64.b64decode(e["v"]))
     raise ValueError(t)
@@ -383,7 +386,8 @@ def engine_bytes(v):
 
 def recover_oracle(variant, files, scen, make_env, expect_fn, nobody="identifies nobody"):
     """The <variant>.recover.expect.json content. expect_fn returns None for a row the mapping cannot make a record of
-    (it identifies nobody): the oracle then lists it under unmapped with the reason nobody."""
+    (it identifies nobody): the oracle then lists it under unmapped with the reason nobody (a string, or a dict
+    {table: string} when the tables give different reasons)."""
     st = O.State(files["db"], files.get("wal"), files.get("journal"), True, True)
     roots = {s["name"].lower(): s["root"] for s in O.schema_rows(st) if s["type"] == "table" and s["root"] > 0}
     live_raw = {}
@@ -412,7 +416,8 @@ def recover_oracle(variant, files, scen, make_env, expect_fn, nobody="identifies
         cell = h["cell"]
         rec = expect_fn(table, d, env, cell["file"])
         if rec is None:
-            out["unmapped"].append({"table": table, "rowid": h["rowid"], "contains": nobody})
+            why = nobody.get(table, nobody.get("")) if isinstance(nobody, dict) else nobody
+            out["unmapped"].append({"table": table, "rowid": h["rowid"], "contains": why})
             continue
         out["digests"].append({"table": table, "rowid": h["rowid"], "file": cell["file"], "page": cell["page"],
                                "offset": cell["offset"], "length": cell["length"], "digest": record_digest(rec)})

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -149,7 +150,7 @@ func LoadRecoverExpect(t testing.TB, dir, variant string) RecoverExpect {
 type recoveredCapture struct {
 	rowid    int64
 	hasRowid bool
-	vals     map[string]any // column -> nil | int64 | string | blobValue | unreadable
+	vals     map[string]any // column -> nil | int64 | float64 | string | blobValue | unreadable
 }
 
 type blobValue string
@@ -170,6 +171,8 @@ func capture(m parse.MapContext, row parse.Row, table string, cols []string) *re
 		default:
 			if n, ok := row.Int(i); ok {
 				c.vals[name] = n
+			} else if f, ok := row.Float(i); ok {
+				c.vals[name] = f
 			} else if b, ok := row.Text(i); ok {
 				c.vals[name] = string(b)
 			} else if b, ok := row.Blob(i); ok {
@@ -494,9 +497,13 @@ func sameValue(got, want any) bool {
 	case nil:
 		return got == nil
 	case json.Number:
-		n, err := w.Int64()
-		g, ok := got.(int64)
-		return err == nil && ok && g == n
+		if n, err := w.Int64(); err == nil { // an integer: the stored value is an integer
+			g, ok := got.(int64)
+			return ok && g == n
+		}
+		f, err := w.Float64() // a REAL (the generator writes it with a fraction or an exponent)
+		g, ok := got.(float64)
+		return err == nil && ok && math.Float64bits(g) == math.Float64bits(f)
 	case string:
 		g, ok := got.(string)
 		return ok && g == w

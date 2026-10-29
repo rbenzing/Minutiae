@@ -28,7 +28,10 @@ import (
 	"github.com/rbenzing/minutiae/internal/records/recordstest"
 )
 
-const contactsLogical = "/data/data/com.android.providers.contacts/databases/contacts2.db"
+const (
+	contactsLogical = "/data/data/com.android.providers.contacts/databases/contacts2.db"
+	chromeLogical   = "/data/data/com.android.chrome/app_chrome/Default/History"
+)
 
 type typedVariant struct{ dir, variant, remote string }
 
@@ -39,6 +42,7 @@ var typedVariants = []typedVariant{
 	{"androidmms", "hot-journal", mmsLogical},
 	{"androidmms", "mmssms-pdu-deleted", mmsLogical},
 	{"androidcontacts", "contacts-deleted", contactsLogical},
+	{"chromium", "chromium-deleted", chromeLogical},
 }
 
 func readGzFixture(t *testing.T, path string) ([]byte, bool) {
@@ -215,6 +219,23 @@ func typedDelivered(t *testing.T, dir string) int64 {
 	return n
 }
 
+// oracleUnmapped is the number of rows the variant's recover oracle lists as unmapped: rows of a claimed table that
+// the mapping cannot make a record of (a visit whose URL row is gone, a nameless raw contact).
+func oracleUnmapped(t *testing.T, v typedVariant) int64 {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "parsers", v.dir, "testdata", v.variant+".recover.expect.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var o struct {
+		Unmapped []json.RawMessage `json:"unmapped"`
+	}
+	if err := json.Unmarshal(raw, &o); err != nil {
+		t.Fatal(err)
+	}
+	return int64(len(o.Unmapped))
+}
+
 // Spec section 14: a claimed table never loses a row. After one sqlite recover every history row is a typed
 // record or a db_row, once.
 func TestClaimedTablesNeverLoseRows(t *testing.T) {
@@ -235,8 +256,9 @@ func TestClaimedTablesNeverLoseRows(t *testing.T) {
 			if delivered == 0 || excluded+rep.Counts.KeptUnmappedClaimed != delivered {
 				t.Errorf("excluded-by-claim %d + kept_unmapped_claimed %d != %d rows the typed pass delivered", excluded, rep.Counts.KeptUnmappedClaimed, delivered)
 			}
-			if v.variant == "contacts-deleted" && rep.Counts.KeptUnmappedClaimed == 0 {
-				t.Error("contacts-deleted has an unmappable row: the generic run must keep it as a db_row (4G-R21)")
+			// the rows the fixture oracle says no record can be made of are kept by the generic run as db_rows (4G-R21)
+			if n := oracleUnmapped(t, v); rep.Counts.KeptUnmappedClaimed != n {
+				t.Errorf("kept_unmapped_claimed %d, the fixture oracle lists %d unmapped rows: the generic run must keep each as a db_row (4G-R21)", rep.Counts.KeptUnmappedClaimed, n)
 			}
 
 			// the same files recovered without any claim: the full set of locators
@@ -313,41 +335,73 @@ func TestTypedLocatorEqualsDBRowLocator(t *testing.T) {
 	}
 }
 
+// oracleDigests counts, per claimed table, the history versions the fixture's recover oracle says must come back
+// typed (one digest per version the independent page walker found).
+func oracleDigests(t *testing.T, v typedVariant) map[string]int {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "parsers", v.dir, "testdata", v.variant+".recover.expect.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var o struct {
+		Digests []struct {
+			Table string `json:"table"`
+		} `json:"digests"`
+	}
+	if err := json.Unmarshal(raw, &o); err != nil {
+		t.Fatal(err)
+	}
+	n := map[string]int{}
+	for _, d := range o.Digests {
+		n[d.Table]++
+	}
+	return n
+}
+
+// Every table of the recovered database is covered exactly once (F3): the claimed tables by typed records, plus
+// db_rows for the page-slack rows no claim takes, and every other recovered row (the deleted addr and part rows
+// and the like, which no live definition names) by an unlabelled db_row. Exact tables and counts, pinned.
 func TestSQLiteRecoverCoversEveryTableOnce(t *testing.T) {
-	e := newTypedEnv(t, typedVariants[3], false)
+	v := typedVariants[3]
+	if v.variant != "mmssms-pdu-deleted" {
+		t.Fatalf("typedVariants[3] is %s", v.variant)
+	}
+	e := newTypedEnv(t, v, false)
 	e.report(t, nil, 0)
 	s := splitCase(t, e.dir)
-	if len(s.typedAll) == 0 {
-		t.Fatal("no typed record")
-	}
+	typed := map[string]int{}
 	for _, r := range s.typedAll {
 		if r.Type != "message" || !r.Deleted || !r.Recovered {
 			t.Errorf("typed record %+v: want a recovered, deleted message", r)
 		}
-		if tbl := locatorTable(r.Locator); tbl != "sms" && tbl != "pdu" {
-			t.Errorf("typed record of table %q", tbl)
+		typed[locatorTable(r.Locator)]++
+	}
+	// every version the oracle's independent page walker found comes back typed; the pass may type more (cells of
+	// in-page deletions that fit the live definition), never fewer
+	for tbl, n := range oracleDigests(t, v) {
+		if typed[tbl] < n {
+			t.Errorf("table %s: %d typed records, the oracle lists %d versions that must come back typed", tbl, typed[tbl], n)
 		}
 	}
-	tables := map[string]int{}
+	if want := map[string]int{"sms": 45, "pdu": 16}; !maps.Equal(typed, want) {
+		t.Errorf("typed records by table %v, want exactly %v", typed, want)
+	}
+	// the db_rows: the claimed tables' only db_rows are rows carved from page slack (4G-R22); the rest carry no table
+	// label at all (the scenario deletes the addr and part rows of 20 pdu: no live definition names them)
+	tables, methods := map[string]int{}, map[string]int{}
 	for loc, r := range s.db {
 		tbl := locatorTable(loc)
 		tables[tbl]++
-		if tbl != "sms" && tbl != "pdu" {
-			continue
-		}
-		// a claimed table's db_row is a row the claim cannot take: carved from page slack (4G-R22)
-		if r.RecoveryMethod != "sqlite-page-slack" {
+		methods[tbl+"|"+r.RecoveryMethod]++
+		if (tbl == "sms" || tbl == "pdu") && r.RecoveryMethod != "sqlite-page-slack" {
 			t.Errorf("db_row %s of claimed table %s (%s) should be a typed record", loc, tbl, r.RecoveryMethod)
 		}
 	}
-	other := 0
-	for tbl, n := range tables {
-		if tbl != "sms" && tbl != "pdu" {
-			other += n
-		}
+	if want := map[string]int{"": 43, "pdu": 11, "sms": 8}; !maps.Equal(tables, want) {
+		t.Errorf("db_rows by table %v, want exactly %v (\"\" is a row no live table definition names)", tables, want)
 	}
-	if other == 0 {
-		t.Errorf("no db_row of an unclaimed or unlabelled table (tables: %v)", tables)
+	if want := map[string]int{"|sqlite-freelist": 14, "|sqlite-page-slack": 29, "pdu|sqlite-page-slack": 11, "sms|sqlite-page-slack": 8}; !maps.Equal(methods, want) {
+		t.Errorf("db_rows by table and method %v, want exactly %v", methods, want)
 	}
 }
 
