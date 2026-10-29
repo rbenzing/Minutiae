@@ -16,7 +16,7 @@ import (
 // gapMaxProblems is how many acquisition-gap problems are listed; the rest is one line.
 const gapMaxProblems = 50
 
-// GapCheck is R10: every extract and unallocated artifact's acquisition-gap note equals the note recomputed from
+// GapCheck is R10: every extract, unallocated and carve artifact's acquisition-gap note equals the note recomputed from
 // its parent container's error2 list and its recorded runs, through the same pure function the writers use
 // (gapNoteFor) with the size input the writer used. No option disables it.
 func GapCheck() evidence.VerifyCheck {
@@ -59,7 +59,7 @@ func verifyGaps(ctx context.Context, c *evidence.Case, recs []evidence.ManifestR
 			continue // a duplicate id is reported once by the manifest checks
 		}
 		g.byID[rec.ID] = rec
-		if k := rec.Source.Kind; (k == "extract" || k == "unallocated") && rec.Source.Derived != nil {
+		if k := rec.Source.Kind; (k == "extract" || k == "unallocated" || (k == "carve" && !carveOnArtifact(rec))) && rec.Source.Derived != nil {
 			p := rec.Source.Derived.ParentID
 			byParent[p] = append(byParent[p], rec)
 			total++
@@ -171,15 +171,15 @@ func (g *gapper) one(rec evidence.ManifestRecord, format string, gaps image.Acqu
 	}
 }
 
-// gapSize is the size input the writer used (K23): an unallocated export's size is the sum of its runs; an
-// extract's is the source file's full size, recorded as declared_size. An incomplete extract cut at an
-// unreadable chunk was computed over its kept bytes (its runs sum to its size). An extract recorded before
+// gapSize is the size input the writer used (K23): an unallocated export's and a carve's size is the sum of its runs
+// (a partial carve's runs are its kept prefix); an extract's is the source file's full size, recorded as declared_size.
+// An incomplete extract cut at an unreadable chunk was computed over its kept bytes (its runs sum to its size). An extract recorded before
 // declared_size is recomputed with the larger of its runs' length and its size.
 func gapSize(rec evidence.ManifestRecord, runs []evidence.Run) int64 {
 	sum := runLengths(runs)
 	d := rec.Source.Derived
 	switch {
-	case rec.Source.Kind == "unallocated":
+	case rec.Source.Kind == "unallocated" || rec.Source.Kind == "carve":
 		return sum
 	case rec.Incomplete && sum == rec.Size:
 		return rec.Size
@@ -209,4 +209,11 @@ func renderGapNote(n *evidence.AcquisitionGapNote) string {
 		return "none"
 	}
 	return fmt.Sprintf("bytes=%d ranges=%d unknown=%t first=%v", n.Bytes, n.Ranges, n.Unknown, n.First)
+}
+
+// carveOnArtifact reports whether rec is a carve of scope artifact: its parent is a case artifact, not a
+// container, so it carries no acquisition-gap note and R10 has nothing to recompute (the shape rule refuses one).
+func carveOnArtifact(rec evidence.ManifestRecord) bool {
+	d := rec.Source.Derived
+	return d != nil && d.Recovery != nil && d.Recovery.Scope == CarveArtifact
 }

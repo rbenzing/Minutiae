@@ -44,10 +44,10 @@ func recoveredKindNamespace(kind string) string {
 // composed reproduce check (R6) has run in this verify.
 func unreproducedNotices(rep *VerifyReport) {
 	if rep.deletedFiles > 0 && !rep.allocationRan {
-		rep.noticef("%d deleted-file artifact(s): allocation not rechecked against the filesystem (this verify did not compose check R9)", rep.deletedFiles)
+		rep.noticef("%d deleted-file or carved artifact(s): allocation not rechecked against the filesystem (this verify did not compose check R9)", rep.deletedFiles)
 	}
 	if rep.gapArtifacts > 0 && !rep.gapsRan {
-		rep.noticef("%d extract or unallocated artifact(s): acquisition-gap notes shape-checked only, not recomputed (this verify did not compose check R10)", rep.gapArtifacts)
+		rep.noticef("%d extract, unallocated or carve artifact(s): acquisition-gap notes shape-checked only, not recomputed (this verify did not compose check R10)", rep.gapArtifacts)
 	}
 	for _, k := range []string{KindRecover, KindCarve, KindSlack, KindJournal, KindReport} {
 		if (k == KindRecover || k == KindCarve) && rep.reproduceRan {
@@ -122,7 +122,7 @@ func (c *Case) verifyRecovered(rep *VerifyReport, recs []ManifestRecord) {
 			ps.add(rKindShape, "%scarries a recovery description (only kinds recover, carve, slack, journal and report may)", pre)
 		}
 		checkAcquisitionGaps(ps, r, pre)
-		if kind == "extract" || kind == "unallocated" {
+		if kind == "extract" || kind == "unallocated" || (kind == KindCarve && !carveOfArtifact(d)) {
 			rep.gapArtifacts++
 		}
 		c.checkExtractDeclared(ps, r, pre, byID, declared)
@@ -137,7 +137,7 @@ func (c *Case) verifyRecovered(rep *VerifyReport, recs []ManifestRecord) {
 					cls = "unknown"
 				}
 				byClass[cls]++
-				if kind == KindRecover && cls == ClassDeletedFile {
+				if (kind == KindRecover && cls == ClassDeletedFile) || (kind == KindCarve && !carveOfArtifact(d)) {
 					rep.deletedFiles++
 				}
 				if cf := d.Recovery.Confidence; cf != nil && (lowest == nil || *cf < *lowest) {
@@ -355,4 +355,10 @@ func runsBeyondParent(pre string, runs []Run, parentSize int64) []string {
 		}
 	}
 	return out
+}
+
+// carveOfArtifact reports whether d describes a carve of scope artifact: its parent is a case artifact, not
+// a container, so it has no allocation state (R9) and no acquisition gaps (R10).
+func carveOfArtifact(d *Derivation) bool {
+	return d != nil && d.Recovery != nil && d.Recovery.Scope == "artifact"
 }
