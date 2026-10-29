@@ -227,7 +227,9 @@ func participants(m parse.MapContext, msg *message.Message, id int64, v map[stri
 	msg.Thread = ci.thread
 
 	var handle string
-	if hid, ok := v["handle_id"]; ok && hid > 0 {
+	if hid, ok := v["handle_id"]; ok && hid < 0 {
+		raw["handle_state"] = "invalid-id"
+	} else if ok && hid > 0 {
 		a, err := handleAddress(m, hid)
 		if err != nil {
 			return err
@@ -250,7 +252,7 @@ func participants(m parse.MapContext, msg *message.Message, id int64, v map[stri
 		}
 	case message.DirOut:
 		switch {
-		case ci.undecidedJ || (ci.one && !ci.membersOK):
+		case ci.undecidedJ || (ci.one && (!ci.membersOK || (ci.unresolved > 0 && len(ci.members) == 0))):
 			// the recipients cannot be told
 		case ci.one && len(ci.members) > 0:
 			for _, a := range ci.members {
@@ -264,7 +266,8 @@ func participants(m parse.MapContext, msg *message.Message, id int64, v map[stri
 			msg.Participants = []message.Participant{participantOf(message.RoleMember, handle)}
 		}
 	}
-	msg.ParticipantsUnknown = len(msg.Participants) == 0
+	// a group with members that could not be resolved lists the resolved ones but is incomplete: unknown, not absent
+	msg.ParticipantsUnknown = len(msg.Participants) == 0 || (msg.Direction == message.DirOut && ci.one && ci.unresolved > 0)
 	return nil
 }
 

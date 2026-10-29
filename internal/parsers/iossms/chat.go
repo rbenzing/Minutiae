@@ -54,6 +54,7 @@ type chatInfo struct {
 	members    []string // the members of the only chat (handle ROWID order), when membersOK
 	one        bool     // the message is in exactly one chat
 	membersOK  bool     // the member list is the stored answer
+	unresolved int64    // members whose handle has no usable address
 	undecidedJ bool     // the chat_message_join answer cannot be trusted
 }
 
@@ -118,7 +119,7 @@ func chatOf(m parse.MapContext, id int64, raw, unknown map[string]any) (chatInfo
 	}
 	ci.one = true
 	cid := ids[0]
-	ci.members, ci.membersOK, err = membersOf(m, cid, raw)
+	ci.members, ci.membersOK, ci.unresolved, err = membersOf(m, cid, raw)
 	if err != nil {
 		return ci, err
 	}
@@ -153,14 +154,14 @@ func chatOf(m parse.MapContext, id int64, raw, unknown map[string]any) (chatInfo
 // when the list is not the stored answer: the table is missing (raw.members_state "no-join-table") or its answer
 // is not decided (raw.join_undecided). A member whose handle has no usable address is counted in
 // raw.members_unresolved, never dropped silently.
-func membersOf(m parse.MapContext, cid int64, raw map[string]any) (members []string, ok bool, err error) {
+func membersOf(m parse.MapContext, cid int64, raw map[string]any) (members []string, ok bool, unresolved int64, err error) {
 	rows, undecided, err := rowrun.Match(m, "chat_handle_join", "chat_id", cid)
 	switch {
 	case errors.Is(err, sqlitedb.ErrNoSuchTable):
 		raw["members_state"] = "no-join-table"
-		return nil, false, nil
+		return nil, false, 0, nil
 	case err != nil:
-		return nil, false, err
+		return nil, false, 0, err
 	}
 	hc := m.Column("chat_handle_join", "handle_id")
 	var hids []int64
@@ -174,18 +175,18 @@ func membersOf(m parse.MapContext, cid int64, raw map[string]any) (members []str
 	}
 	if undecided {
 		markUndecided(raw, "chat_handle_join")
-		return nil, false, nil
+		return nil, false, 0, nil
 	}
 	slices.Sort(hids)
 	if len(hids) > maxList {
 		raw["members_total"], raw["members_truncated"] = int64(len(hids)), true
 		hids = hids[:maxList]
 	}
-	var unresolved int64
+
 	for _, h := range hids {
 		a, err := handleAddress(m, h)
 		if err != nil {
-			return nil, false, err
+			return nil, false, 0, err
 		}
 		if a.addr == "" {
 			unresolved++
@@ -199,5 +200,5 @@ func membersOf(m parse.MapContext, cid int64, raw map[string]any) (members []str
 	if unresolved > 0 {
 		raw["members_unresolved"] = unresolved
 	}
-	return members, true, nil
+	return members, true, unresolved, nil
 }

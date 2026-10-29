@@ -2,6 +2,7 @@ package iossms
 
 import (
 	"context"
+	"errors"
 	"strconv"
 
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/rowrun"
@@ -79,8 +80,15 @@ type counting struct {
 }
 
 func (c *counting) Emit(ctx context.Context, r records.Record) error {
-	if raw, ok := r.Payload["raw"].(map[string]any); ok && raw["attributed_body_differs"] == true {
+	raw, ok := r.Payload["raw"].(map[string]any)
+	if !ok {
+		return errors.New("iossms: a message payload without a raw object cannot be counted")
+	}
+	if err := c.Emitter.Emit(ctx, r); err != nil {
+		return err
+	}
+	if raw["attributed_body_differs"] == true {
 		c.differs++
 	}
-	return c.Emitter.Emit(ctx, r)
+	return nil
 }

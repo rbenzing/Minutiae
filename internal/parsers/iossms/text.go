@@ -1,6 +1,7 @@
 package iossms
 
 import (
+	"errors"
 	"slices"
 	"strings"
 
@@ -109,19 +110,14 @@ func readBody(m parse.MapContext, row parse.Row, c rowrun.Cols, raw, unknown map
 	var decoded string
 	decodedOK := false
 	if bk == rowrun.CellValue {
-		var in *parse.Input
-		if m != nil {
-			in = m.Input()
-		}
 		var bud *parse.BudgetView
-		if in != nil {
-			bud = in.Budget
+		if m != nil && m.Input() != nil {
+			bud = m.Input().Budget
 		}
-		s, ok, err := typedstream.ExtractText(blob, bud)
-		switch {
-		case err != nil || !ok:
-			raw["attributed_body_status"] = "undecodable"
-		default:
+		s, status := decodeBody(blob, bud)
+		if status != "" {
+			raw["attributed_body_status"] = status
+		} else {
 			decoded, decodedOK = s, true
 		}
 		defer func() { bud.Free(int64(len(decoded))) }()
@@ -177,4 +173,20 @@ func isGUID(s string) bool {
 		}
 	}
 	return true
+}
+
+// decodeBody extracts the text of an attributedBody. status is "" on success; otherwise "undecodable" (the
+// bytes are not a readable typedstream), "no-string" (a well-formed stream with no string object) or "budget"
+// (the host memory budget refused the extraction: a fact about this run, not about the data).
+func decodeBody(blob []byte, bud *parse.BudgetView) (text, status string) {
+	s, ok, err := typedstream.ExtractText(blob, bud)
+	switch {
+	case errors.Is(err, typedstream.ErrNoBudget):
+		return "", "budget"
+	case err != nil:
+		return "", "undecodable"
+	case !ok:
+		return "", "no-string"
+	}
+	return s, ""
 }
