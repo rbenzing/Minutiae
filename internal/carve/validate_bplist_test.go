@@ -77,6 +77,7 @@ func TestBPlistRejects(t *testing.T) {
 		{"offset size 0", patch(func(b []byte) { b[trailer+6] = 0 }), "no-trailer"},
 		{"offset size 9", patch(func(b []byte) { b[trailer+6] = 9 }), "no-trailer"},
 		{"ref size 0", patch(func(b []byte) { b[trailer+7] = 0 }), "no-trailer"},
+		{"ref size 9", patch(func(b []byte) { b[trailer+7] = 9 }), "no-trailer"},
 		{"table offset 8", patch(func(b []byte) { b[trailer+31] = 8 }), "no-trailer"},
 		{"count 0", patch(func(b []byte) { b[trailer+15] = 0 }), "no-trailer"},
 		{"huge count", patch(func(b []byte) { b[trailer+8] = 0xFF }), "no-trailer"},
@@ -197,5 +198,21 @@ func TestBPlistRealEncoderObjects(t *testing.T) {
 	}
 	if n < 1 {
 		t.Fatal("no bplist object in the expectations")
+	}
+}
+
+// TestBPlistCheckGuardsOffsetSize: bplistCheck refuses an offset size outside
+// 1..8 itself, whatever its caller filtered (defence in depth).
+func TestBPlistCheckGuardsOffsetSize(t *testing.T) {
+	good := carvetest.BPlist(bpObjects(), 0, 1, 1)
+	trailer := int64(len(good) - 32)
+	w := bplistWindow(good, newBudget(1<<30))
+	if _, ok, err := bplistCheck(w, good[trailer:], 1, trailer); !ok || err != nil {
+		t.Fatalf("control: ok = %v err = %v", ok, err)
+	}
+	for _, os := range []int64{-1, 0, 9, 1 << 40} {
+		if _, ok, err := bplistCheck(w, good[trailer:], os, trailer); ok || err != nil {
+			t.Errorf("offset size %d: ok = %v err = %v, want refused", os, ok, err)
+		}
 	}
 }

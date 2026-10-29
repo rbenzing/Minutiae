@@ -71,6 +71,9 @@ func bplistCheck(w *Window, t []byte, offSize, start int64) (objects uint64, ok 
 		}
 		return v
 	}
+	if offSize < 1 || offSize > 8 {
+		return 0, false, nil
+	}
 	n, top, tab := be64(8), be64(16), be64(24)
 	if n < 1 || top >= n || tab < 9 || tab > uint64(start) {
 		return 0, false, nil
@@ -93,11 +96,11 @@ func bplistCheck(w *Window, t []byte, offSize, start int64) (objects uint64, ok 
 			if off < 8 || off >= tab {
 				return 0, false, nil
 			}
-			var m [1]byte
-			if _, err := w.ReadAt(m[:], int64(off)); err != nil {
+			m, err := w.Byte(int64(off))
+			if err != nil {
 				return 0, false, err
 			}
-			switch m[0] >> 4 {
+			switch m >> 4 {
 			case 0, 1, 2, 3, 4, 5, 6, 8, 0xA, 0xC, 0xD:
 			default:
 				return 0, false, nil
