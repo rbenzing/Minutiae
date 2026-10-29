@@ -11,7 +11,7 @@ import (
 // claimsOf lists, for every registered parser, the tables it must claim (4G-R30): an explicit table, so a
 // claim is never added or dropped by accident and a registered parser missing from the table fails. A parser
 // without claims is listed with nil. Tasks 9 and 10 set the three Android telephony parsers, Task 10b the 4F browsers
-// (the 4E parsers claim nothing yet: ios.calls is listed with nil, the others follow with their registration).
+// (the 4E parsers claim nothing yet: ios.calls and ios.addressbook are listed with nil, ios.sms follows with its registration).
 var claimsOf = map[string][]string{
 	"android.mmssms":   {"sms", "pdu"},
 	"android.calllog":  {"calls"},
@@ -19,6 +19,7 @@ var claimsOf = map[string][]string{
 	"chromium.history": {"visits", "keyword_search_terms", "downloads"},
 	"safari.history":   {"history_visits"},
 	"ios.calls":        nil,
+	"ios.addressbook":  nil,
 }
 
 // 4A's registry tests ranged over an empty registry; with the Android telephony parsers in it they are real
@@ -70,7 +71,7 @@ func TestRegisteredParsersClaimExactly(t *testing.T) {
 }
 
 func TestEveryTelephonyParserReadsCompanionRolesAndEmitsOneType(t *testing.T) {
-	want := map[string]string{"android.mmssms": "message", "android.calllog": "call", "android.contacts": "contact", "ios.calls": "call"}
+	want := map[string]string{"android.mmssms": "message", "android.calllog": "call", "android.contacts": "contact", "ios.calls": "call", "ios.addressbook": "contact"}
 	for _, p := range All() {
 		m := p.Meta()
 		typ, ok := want[m.Name]
@@ -81,8 +82,12 @@ func TestEveryTelephonyParserReadsCompanionRolesAndEmitsOneType(t *testing.T) {
 		for _, in := range m.Inputs {
 			roles = append(roles, in.Role)
 		}
-		if !slices.Equal(roles, []string{"db", "wal", "journal"}) || len(m.Emits) != 1 || m.Emits[0].Type != typ {
-			t.Errorf("%s: roles %v emits %v, want db/wal/journal and %s", m.Name, roles, m.Emits, typ)
+		wantRoles := []string{"db", "wal", "journal"}
+		if m.Name == "ios.addressbook" {
+			wantRoles = append(wantRoles, "images", "images_wal") // the photo-presence database and its WAL (4E-R25)
+		}
+		if !slices.Equal(roles, wantRoles) || len(m.Emits) != 1 || m.Emits[0].Type != typ {
+			t.Errorf("%s: roles %v emits %v, want %v and %s", m.Name, roles, m.Emits, wantRoles, typ)
 		}
 		delete(want, m.Name)
 	}

@@ -74,7 +74,7 @@ var allowed = map[string][]string{
 	"internal/decode/iosbackup":            {"internal/decode/sqlitedb", "internal/decode/plist"},
 	"internal/records/recordstest":         {"internal/records", "internal/evidence"},
 	"internal/parse":                       {"internal/records"},
-	"internal/parsers":                     {"internal/parse", "internal/records", "internal/parsers/androidmms", "internal/parsers/androidcalllog", "internal/parsers/androidcontacts", "internal/parsers/ioscalls", "internal/parsers/chromium", "internal/parsers/safari"},
+	"internal/parsers":                     {"internal/parse", "internal/records", "internal/parsers/androidmms", "internal/parsers/androidcalllog", "internal/parsers/androidcontacts", "internal/parsers/ioscalls", "internal/parsers/iosaddressbook", "internal/parsers/chromium", "internal/parsers/safari"},
 	"internal/recordtypes/common":          {},
 	"internal/recordtypes/call":            {"internal/records", "internal/recordtypes/common"},
 	"internal/recordtypes/contact":         {"internal/records", "internal/recordtypes/common"},
