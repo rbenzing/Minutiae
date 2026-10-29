@@ -27,7 +27,7 @@ var reproduceReadObserver func(n int)
 // option: a recovered artifact is believed only when the bytes of the image at its recorded runs equal it.
 func RecoveredCheck() evidence.VerifyCheck { return VerifyRecovered }
 
-// VerifyRecovered reproduces every recover and carve artifact from its parent: the parent is opened as a
+// VerifyRecovered reproduces every recover, carve and slack artifact from its parent: the parent is opened as a
 // container only (never its partition table, so a damaged table cannot hide a forgery) or, for a carve of
 // scope artifact, read as one raw run of the parent artifact; every run must lie inside the parent; and
 // the first Size bytes of the runs, read in chunks of at most 1 MiB, must equal the artifact. Failures are
@@ -49,7 +49,7 @@ func VerifyRecovered(ctx context.Context, c *evidence.Case, recs []evidence.Mani
 	var total int64
 	for _, rec := range r.byID {
 		d := rec.Source.Derived
-		if d == nil || (rec.Source.Kind != evidence.KindRecover && rec.Source.Kind != evidence.KindCarve) {
+		if d == nil || (rec.Source.Kind != evidence.KindRecover && rec.Source.Kind != evidence.KindCarve && rec.Source.Kind != evidence.KindSlack) {
 			continue
 		}
 		k := groupKey{d.ParentID, rec.Source.Kind == evidence.KindCarve && d.Recovery != nil && d.Recovery.Scope == "artifact"}
