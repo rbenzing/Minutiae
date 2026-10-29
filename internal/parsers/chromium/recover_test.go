@@ -76,22 +76,23 @@ func TestRecoverOracleShape(t *testing.T) {
 		}
 	}
 	// the visits whose urls rows are gone have no URL to state: unmapped, never typed
-	unmapped := 0
+	unmappedIDs := []int64{}
 	for _, u := range x.Unmapped {
 		if u.Table != "visits" || u.Rowid == nil || *u.Rowid < 31 || *u.Rowid > 40 || u.Contains != "urls" {
 			t.Errorf("unmapped %+v: want a visit of 31 to 40 whose urls row is gone", u)
 			continue
 		}
-		unmapped++
+		unmappedIDs = append(unmappedIDs, *u.Rowid)
 		if typed["visits"][*u.Rowid] {
 			t.Errorf("visit %d is both typed and unmapped", *u.Rowid)
 		}
 	}
-	if unmapped < 5 {
-		t.Errorf("%d visits listed unmapped, want at least 5 of the 10 deleted with their urls rows", unmapped)
+	slices.Sort(unmappedIDs)
+	if want := []int64{31, 32, 33, 37, 38, 39, 40}; !slices.Equal(unmappedIDs, want) {
+		t.Errorf("unmapped visits %v, want exactly %v", unmappedIDs, want)
 	}
-	if len(typed["keyword_search_terms"]) < 6 || len(typed["downloads"]) < 5 {
-		t.Errorf("typed terms %d and downloads %d, want at least 6 and 5", len(typed["keyword_search_terms"]), len(typed["downloads"]))
+	if len(typed["keyword_search_terms"]) != 12 || len(typed["downloads"]) != 9 {
+		t.Errorf("typed terms %d and downloads %d, want exactly 12 and 9", len(typed["keyword_search_terms"]), len(typed["downloads"]))
 	}
 	if len(x.Digests) != len(x.Records) {
 		t.Errorf("%d digests for %d records: every want has a digest", len(x.Digests), len(x.Records))
