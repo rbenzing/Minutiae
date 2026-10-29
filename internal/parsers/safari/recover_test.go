@@ -74,19 +74,23 @@ func TestRecoverOracleShape(t *testing.T) {
 		}
 	}
 	// the visits whose items are gone have no URL to state: unmapped, never typed
-	unmapped := 0
+	unmappedIDs := []int64{}
 	for _, u := range x.Unmapped {
 		if u.Table != "history_visits" || u.Rowid == nil || *u.Rowid < 31 || *u.Rowid > 40 || u.Contains != "history_item" {
 			t.Errorf("unmapped %+v: want a visit of 31 to 40 whose item is gone", u)
 			continue
 		}
-		unmapped++
+		unmappedIDs = append(unmappedIDs, *u.Rowid)
 		if typed[*u.Rowid] {
 			t.Errorf("visit %d is both typed and unmapped", *u.Rowid)
 		}
 	}
-	if unmapped < 5 {
-		t.Errorf("%d visits listed unmapped, want at least 5 of the 10 deleted with their items", unmapped)
+	slices.Sort(unmappedIDs)
+	if want := []int64{31, 32, 33, 37, 38, 39, 40}; !slices.Equal(unmappedIDs, want) {
+		t.Errorf("unmapped visits %v, want exactly %v", unmappedIDs, want)
+	}
+	if len(typed) != 5 {
+		t.Errorf("%d typed visits, want exactly 5 (41 to 45)", len(typed))
 	}
 	if len(x.Digests) != len(x.Records) {
 		t.Errorf("%d digests for %d records: every want has a digest", len(x.Digests), len(x.Records))

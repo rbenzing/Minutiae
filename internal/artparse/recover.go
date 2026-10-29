@@ -115,9 +115,11 @@ func (h *Host) RecoverTyped(ctx context.Context, opt RecoverOptions) (RunSummary
 	if opt.OnlyPrimary != "" {
 		sel.admitRecovered[opt.OnlyPrimary] = true
 	}
-	for _, id := range opt.ExpectCompanions { // the caller named these as the bundle's own files
-		if id != "" {
-			sel.admitRecovered[id] = true
+	if opt.OnlyPrimary != "" { // the caller named these as the bundle's own files; without a named primary nothing is admitted
+		for _, id := range opt.ExpectCompanions {
+			if id != "" {
+				sel.admitRecovered[id] = true
+			}
 		}
 	}
 	jobs, _, err := h.discoverIn(ctx, snap, sel, views)

@@ -625,3 +625,49 @@ func TestClaimedTablesNameTheRecoverIdentity(t *testing.T) {
 		t.Errorf("claim %+v, want the identity %+v", got[0], rid)
 	}
 }
+
+// recoveredPut stores data as a recovered artifact whose logical path is path.
+func recoveredPut(t *testing.T, c *evidence.Case, rel, path string, data []byte) evidence.ManifestRecord {
+	t.Helper()
+	c55 := 55
+	d := &evidence.Derivation{
+		ParentID: "missing", FSType: "ext4", FSPath: path,
+		Recovery: &evidence.Recovery{Class: evidence.ClassDeletedFile, Method: "fat-contiguous", Confidence: &c55},
+	}
+	return put(t, c, "D1", "A1", rel, evidence.Source{Kind: "recover", RemotePath: path, Derived: d}, string(data))
+}
+
+// admitRecovered: a recovered database and a recovered WAL are admitted as input only for the bundle the
+// caller names (OnlyPrimary and ExpectCompanions); the expected WAL gives exactly one typed job and a
+// different recovered WAL id is bundle-differs.
+func TestAdmitRecoveredBundle(t *testing.T) {
+	c := newCase(t)
+	acquireStart(t, c, "D1", "A1", "logical")
+	db := recoveredPut(t, c, "rec-db", dbPathA, fixtureFile(t, "builder-wal-generations.db"))
+	wal := recoveredPut(t, c, "rec-wal", dbPathA+"-wal", fixtureFile(t, "builder-wal-generations.db-wal"))
+	other := recoveredPut(t, c, "rec-wal2", dbPathB+"-wal", fixtureFile(t, "builder-wal-generations.db-wal"))
+	rc := &recCase{t: t, c: c}
+	h := rc.host(nil, regRec(t, newRecParser("rm", "notes")))
+
+	sum := recoverOK(t, h, artparse.RecoverOptions{OnlyPrimary: db.ID, ExpectCompanions: map[string]string{"wal": wal.ID}})
+	if len(sum.Jobs) != 1 || sum.Jobs[0].Outcome != artparse.OutcomeComplete || sum.Jobs[0].Records == 0 {
+		t.Fatalf("jobs %+v, want exactly one complete typed job", sum.Jobs)
+	}
+
+	sum = recoverOK(t, h, artparse.RecoverOptions{OnlyPrimary: db.ID, ExpectCompanions: map[string]string{"wal": other.ID}})
+	if len(sum.Jobs) != 1 || sum.Jobs[0].Outcome != artparse.OutcomeSkipped || !strings.HasPrefix(sum.Jobs[0].Reason, "bundle-differs: wal ") || !strings.HasSuffix(sum.Jobs[0].Reason, " vs "+other.ID) {
+		t.Fatalf("jobs %+v, want one skipped bundle-differs", sum.Jobs)
+	}
+}
+
+// Companion ids are admitted as recovered input only together with OnlyPrimary: without it a recovered
+// WAL named in ExpectCompanions does not join a live database's bundle.
+func TestAdmitRecoveredCompanionNeedsOnlyPrimary(t *testing.T) {
+	rc := newRecCase(t, "builder-wal-generations", false)
+	wal := recoveredPut(t, rc.c, "rec-wal", dbPathA+"-wal", fixtureFile(t, "builder-wal-generations.db-wal"))
+	h := rc.host(nil, regRec(t, newRecParser("rm", "notes")))
+	sum := recoverOK(t, h, artparse.RecoverOptions{ExpectCompanions: map[string]string{"wal": wal.ID}})
+	if len(sum.Jobs) != 1 || sum.Jobs[0].Outcome != artparse.OutcomeSkipped || !strings.HasPrefix(sum.Jobs[0].Reason, "bundle-differs: wal (none) vs "+wal.ID) {
+		t.Fatalf("jobs %+v, want skipped bundle-differs: the recovered WAL was not admitted", sum.Jobs)
+	}
+}
