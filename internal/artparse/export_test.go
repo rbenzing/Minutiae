@@ -2,8 +2,10 @@ package artparse
 
 import (
 	"context"
+	"strings"
 	"time"
 
+	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/recrun"
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/records"
@@ -62,6 +64,9 @@ func (h *Host) Case() *evidence.Case { return h.c }
 // WithClaims returns r with its declared table claims replaced (no validation).
 func WithClaims(r Registered, c []parse.TableClaim) Registered {
 	r.meta.Claims = c
+	if len(c) > 0 && r.recoverHash == "" { // New wants a recovery identity for any claim
+		r.recoverHash = "src1:sha256:" + strings.Repeat("c", 64)
+	}
 	return r
 }
 
@@ -96,4 +101,16 @@ func SetJobContext(f func(parent context.Context, d time.Duration) (context.Cont
 	old := newJobCtx
 	newJobCtx = f
 	return func() { newJobCtx = old }
+}
+
+// DisablePropagation makes the emitters of a built host skip the propagation of recovered-ness, so a
+// test can see the writer's own rule refuse a live record on a recovered artifact.
+func DisablePropagation(h *Host) { h.noPropagate = true }
+
+// WithMaxUnmapped lowers the unmapped-locator bound of every recovery job of the host.
+func WithMaxUnmapped(o *Options, n int) { o.maxUnmapped = n }
+
+// WithTypedRunner replaces the typed recovery runner (recrun.Run) of the host.
+func WithTypedRunner(o *Options, f func(context.Context, *parse.Input, parse.RecoveryEmitter, []parse.TableMapping, []parse.TableClaim) (recrun.Report, error)) {
+	o.typedRun = f
 }

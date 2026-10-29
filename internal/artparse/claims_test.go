@@ -61,7 +61,11 @@ func TestClaimedTablesRequireApplicableProbe(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := r.Identity()
-	want := []artparse.Claimed{{Table: "sms", Role: "db", Parser: id.Name, Version: id.Version, Hash: id.Hash}, {Table: "SMS_Backup", Role: "db", Parser: id.Name, Version: id.Version, Hash: id.Hash}}
+	rid, _ := r.RecoveryIdentity()
+	want := []artparse.Claimed{
+		{Table: "sms", Role: "db", Parser: id.Name, Version: id.Version, Hash: id.Hash, RecoverParser: rid.Name, RecoverHash: rid.Hash},
+		{Table: "SMS_Backup", Role: "db", Parser: id.Name, Version: id.Version, Hash: id.Hash, RecoverParser: rid.Name, RecoverHash: rid.Hash},
+	}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("claims %+v, want %+v", got, want)
 	}
@@ -139,5 +143,31 @@ func TestClaimedTablesRefuseALyingParser(t *testing.T) {
 	r := regFake(t, &claimMapper{claimParser{name: "liar", status: parse.Applicable, claims: []string{"sms", "calls"}}, []string{"sms"}}, "liar")
 	if _, err := hostWith(t, c, nil, r).ClaimedTables(context.Background(), rec.ID); err == nil || !strings.Contains(err.Error(), "calls") {
 		t.Fatalf("ClaimedTables with a claim outside the mappings: %v", err)
+	}
+}
+
+// A parser that claims tables is recorded by the typed pass under "<name>.recover": a registration
+// without that identity is refused when the host is built.
+func TestNewRefusesClaimsWithoutRecoveryIdentity(t *testing.T) {
+	p := &claimMapper{claimParser{name: "cp", status: parse.Applicable, claims: []string{"sms"}}, []string{"sms"}}
+	bare, err := artparse.Register(p, hashFor("cp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := artparse.New(newCase(t), []artparse.Registered{bare}, artparse.Options{Limits: parse.DefaultLimits()}); !errors.Is(err, artparse.ErrNoRecoveryIdentity) {
+		t.Errorf("New = %v, want ErrNoRecoveryIdentity", err)
+	}
+	if _, err := bare.WithRecoveryHash("src1:sha256:zz"); err == nil {
+		t.Error("a malformed recovery hash was accepted")
+	}
+	noClaims := register(t, "plain", "1.0.0")
+	if _, err := noClaims.WithRecoveryHash(hashFor("plain.recover")); err == nil {
+		t.Error("a parser without claims accepted a recovery hash")
+	}
+	if _, ok := noClaims.RecoveryIdentity(); ok {
+		t.Error("a parser without claims has a recovery identity")
+	}
+	if _, err := artparse.New(newCase(t), []artparse.Registered{regFake(t, p, "cp")}, artparse.Options{Limits: parse.DefaultLimits()}); err != nil {
+		t.Errorf("New with the recovery identity: %v", err)
 	}
 }

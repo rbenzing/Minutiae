@@ -28,7 +28,7 @@ func probeBytes(t *testing.T, db []byte) parse.Applicability {
 func TestMetaAndProbe(t *testing.T) {
 	p := chromium.Parser{}
 	m := p.Meta()
-	if err := parse.ValidateMeta(m); err != nil || len(m.Claims) != 0 || m.Name != "chromium.history" {
+	if err := parse.ValidateMeta(m); err != nil || m.Name != "chromium.history" {
 		t.Fatalf("meta %+v: %v", m, err)
 	}
 	if chromium.Name != "chromium.history" || m.Version != chromium.Version {

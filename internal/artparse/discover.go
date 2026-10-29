@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/recrun"
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/records"
@@ -23,6 +24,9 @@ type Options struct {
 	// RelaxedSync runs every job's record batches with synchronous=NORMAL (records.WriterOptions.RelaxedSync, ruling D89):
 	// explicit and audited, off by default.
 	RelaxedSync bool
+	// UnmappedLocatorCap lowers the number of unmapped-row locators a typed recovery job remembers (0 = the
+	// default, 1<<16); past it the job honors no claim. A value above the default is ignored.
+	UnmappedLocatorCap int
 
 	skipLimitMinimums bool          // accept Timeout, GracePeriod and ProbeTimeout below the production minimums
 	source            caseSource    // replaces the case as the reader of the manifest and audit log
@@ -33,23 +37,28 @@ type Options struct {
 	wrapFile          func(artFile) artFile                       // wraps the opened artifact file (test seam: fault injection)
 	batchRows         int                                         // records.WriterOptions.BatchRows of every job (0 = the writer default)
 	auditHook         func(action string, d map[string]any) error // called before each host audit append; an error refuses the append
+	maxUnmapped       int                                         // lowers the unmapped-locator bound of every recovery job (0 = the default)
+	typedRun          typedRunner                                 // replaces recrun.Run (test seam)
 }
 
 // Host holds the case, the registry and the options.
 type Host struct {
-	c         *evidence.Case
-	src       caseSource
-	registry  []Registered
-	namers    []Namer
-	limits    parse.Limits
-	newWriter writerFactory
-	onOpen    func(artifactID string)
-	afterSize func(artifactID string)
-	afterSt   func()
-	wrapFile  func(artFile) artFile
-	batchRows int
-	relaxed   bool
-	auditHook func(action string, d map[string]any) error
+	c           *evidence.Case
+	src         caseSource
+	registry    []Registered
+	namers      []Namer
+	limits      parse.Limits
+	newWriter   writerFactory
+	onOpen      func(artifactID string)
+	afterSize   func(artifactID string)
+	afterSt     func()
+	wrapFile    func(artFile) artFile
+	batchRows   int
+	relaxed     bool
+	auditHook   func(action string, d map[string]any) error
+	noPropagate bool // test seam: the emitters skip recovered-ness propagation
+	maxUnmapped int  // test seam: the unmapped-locator bound of a recovery job (0 = the default)
+	typedRun    typedRunner
 }
 
 // Production minimums that skipLimitMinimums lowers (the same numbers
@@ -88,14 +97,20 @@ func New(c *evidence.Case, ps []Registered, opt Options) (*Host, error) {
 		if err := r.Check(); err != nil {
 			return nil, err
 		}
+		if len(r.meta.Claims) > 0 && r.recoverHash == "" {
+			return nil, fmt.Errorf("artparse: parser %s: %w", r.meta.Name, ErrNoRecoveryIdentity)
+		}
 	}
 	if err := checkClaimUniqueness(ps); err != nil {
 		return nil, err
 	}
+	if opt.maxUnmapped == 0 && opt.UnmappedLocatorCap > 0 && opt.UnmappedLocatorCap < maxUnmappedLocators {
+		opt.maxUnmapped = opt.UnmappedLocatorCap
+	}
 	h := &Host{
 		c: c, registry: slices.Clone(ps), namers: opt.Namers, limits: opt.Limits,
 		src: opt.source, newWriter: opt.newWriter, onOpen: opt.onOpen, afterSize: opt.afterSize, afterSt: opt.afterStart, wrapFile: opt.wrapFile,
-		batchRows: opt.batchRows, auditHook: opt.auditHook, relaxed: opt.RelaxedSync,
+		batchRows: opt.batchRows, auditHook: opt.auditHook, relaxed: opt.RelaxedSync, maxUnmapped: opt.maxUnmapped, typedRun: opt.typedRun,
 	}
 	if h.src == nil {
 		h.src = c
@@ -105,6 +120,9 @@ func New(c *evidence.Case, ps []Registered, opt Options) (*Host, error) {
 	}
 	if h.newWriter == nil {
 		h.newWriter = newRecordsWriter
+	}
+	if h.typedRun == nil {
+		h.typedRun = recrun.Run
 	}
 	return h, nil
 }
@@ -118,6 +136,12 @@ type Selection struct {
 	Artifacts        []string    // empty = every eligible artifact
 	Reparse          bool
 	IncludeSnapshots bool
+	IncludeRecovered bool // recovered and carved artifacts (and artifacts with a recovered ancestor) are input
+
+	// admitRecovered admits these artifacts as recovered input without making their jobs explicit
+	// (RecoverTyped's OnlyPrimary and the companions it expects): the jobs stay glob-matched and Probe-checked
+	// like any other.
+	admitRecovered map[string]bool
 }
 
 // ErrSelection is an unknown parser or a NAME@VERSION this build does not hold.
@@ -152,11 +176,11 @@ type Job struct {
 
 // Counts tell what discovery saw.
 type Counts struct {
-	Manifest, NotParserInput, SnapshotExcluded int
-	ByKind                                     map[string]int    // every manifest record, by source kind
-	MissingRole                                map[string]int    // discovered jobs dropped for a missing required role, by parser name
-	Unnamed                                    map[string]int    // eligible artifacts with no logical path, by reason
-	UnnamedList                                []UnnamedArtifact // the same artifacts, by artifact id
+	Manifest, NotParserInput, SnapshotExcluded, RecoveredExcluded int
+	ByKind                                                        map[string]int    // every manifest record, by source kind
+	MissingRole                                                   map[string]int    // discovered jobs dropped for a missing required role, by parser name
+	Unnamed                                                       map[string]int    // eligible artifacts with no logical path, by reason
+	UnnamedList                                                   []UnnamedArtifact // the same artifacts, by artifact id
 }
 
 // UnnamedArtifact is an eligible artifact no namer gave a logical path.
@@ -210,14 +234,30 @@ func snapshotKey(s *parse.SnapshotInfo) string {
 // Discover builds the jobs of a selection from the snapshot alone: it never
 // opens an artifact and never re-reads the manifest.
 func (h *Host) Discover(ctx context.Context, snap *Snapshot, sel Selection) ([]Job, Counts, error) {
+	return h.discoverIn(ctx, snap, sel, h.registry)
+}
+
+// discoverIn is Discover over the given registry (the host's, or the recovery views of its claiming
+// parsers).
+func (h *Host) discoverIn(ctx context.Context, snap *Snapshot, sel Selection, registry []Registered) ([]Job, Counts, error) {
 	counts := Counts{Manifest: len(snap.records), ByKind: map[string]int{}, MissingRole: map[string]int{}, Unnamed: map[string]int{}}
+	explicit := make(map[string]bool, len(sel.Artifacts)) // named with --artifact: recovered input is admitted for these alone
+	for _, id := range sel.Artifacts {
+		explicit[id] = true
+	}
 	var cands []*candidate
 	for _, m := range snap.records {
 		counts.ByKind[m.Source.Kind]++
-		ok, _, snapExcluded := classify(m, sel.IncludeSnapshots)
+		ancestor := false
+		if m.Source.Kind == "extract" {
+			_, ancestor = snap.recoveryTrail(m.ID)
+		}
+		ok, _, excl := classify(m, sel.IncludeSnapshots, sel.IncludeRecovered || explicit[m.ID] || sel.admitRecovered[m.ID], ancestor)
 		switch {
-		case snapExcluded:
+		case excl == exclSnapshot:
 			counts.SnapshotExcluded++
+		case excl == exclRecovered:
+			counts.RecoveredExcluded++
 		case !ok:
 			counts.NotParserInput++
 		default:
@@ -239,7 +279,7 @@ func (h *Host) Discover(ctx context.Context, snap *Snapshot, sel Selection) ([]J
 		groups[c.group] = append(groups[c.group], c)
 	}
 
-	parsers, err := h.selectParsers(sel.Parsers)
+	parsers, err := selectParsersFrom(registry, sel.Parsers)
 	if err != nil {
 		return nil, counts, err
 	}
@@ -306,13 +346,17 @@ func (h *Host) name(m evidence.ManifestRecord, env Env) *candidate {
 }
 
 func (h *Host) selectParsers(refs []ParserRef) ([]Registered, error) {
+	return selectParsersFrom(h.registry, refs)
+}
+
+func selectParsersFrom(registry []Registered, refs []ParserRef) ([]Registered, error) {
 	if len(refs) == 0 {
-		return h.registry, nil
+		return registry, nil
 	}
 	want := map[string]bool{}
 	for _, ref := range refs {
 		var found bool
-		for _, r := range h.registry {
+		for _, r := range registry {
 			if r.meta.Name == ref.Name && (ref.Version == "" || r.meta.Version == ref.Version) {
 				found = true
 				want[r.meta.Name] = true
@@ -326,7 +370,7 @@ func (h *Host) selectParsers(refs []ParserRef) ([]Registered, error) {
 		}
 	}
 	var out []Registered
-	for _, r := range h.registry {
+	for _, r := range registry {
 		if want[r.meta.Name] {
 			out = append(out, r)
 		}
@@ -344,7 +388,7 @@ func (h *Host) explicitCandidates(snap *Snapshot, byID map[string]*candidate, se
 		if !ok {
 			return nil, fmt.Errorf("%w: %q", evidence.ErrUnknownArtifact, id)
 		}
-		if ok, why := Eligible(m, sel.IncludeSnapshots); !ok {
+		if ok, why := Eligible(m, sel.IncludeSnapshots, true); !ok {
 			return nil, fmt.Errorf("%w: %s: %s", ErrNotParserInput, id, why)
 		}
 		if !seen[id] {

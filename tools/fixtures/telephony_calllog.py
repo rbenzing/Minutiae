@@ -4,6 +4,8 @@ import re
 import telephony_common as C
 
 FAMILY = "calllog"
+CLAIMED = ("calls",)  # Meta.Claims of android.calllog
+SCENARIOS = {}  # variant -> C.Scenario, filled when the variant is generated (the typed recovery oracle)
 REMOTE_CALLLOG = "/data/user_de/0/com.android.providers.contacts/databases/calllog.db"
 REMOTE_CONTACTS = "/data/user_de/0/com.android.providers.contacts/databases/contacts2.db"
 T0, MS = 1682935200, 1000
@@ -195,4 +197,68 @@ def variant_c2(work):
     return build(work, "calllog-in-contacts2.sql", "in-contacts2", [r for r in calls_all() if r["_id"] in keep], REMOTE_CONTACTS)
 
 
-VARIANTS = {"pre-presentation": variant_pre, "features-subid": variant_features, "in-contacts2": variant_c2}
+def numbered(i):
+    return call_row(i, type=(1, 2, 3)[i % 3], duration=10 + i, name="Caller number %d" % i, countryiso="US",
+                    geocoded_location="Somewhere %d, State" % i)
+
+
+def variant_deleted(work):
+    """100 calls on 1024-byte pages, secure_delete OFF: calls 21 to 80 are deleted and whole leaf pages go to the freelist.
+    A lone database: a freelist is read as history only when no WAL or journal could have changed the free pages."""
+    path = work + "/c.db"
+    ph = C.load_ddl("calllog-features-subid.sql")
+    con = C.connect(path, page_size=1024)
+    con.executescript(ph[0])
+    with C.batch(con):
+        for i in range(1, 101):
+            C.insert(con, "calls", numbered(i))
+    scen = SCENARIOS["calllog-deleted"] = C.Scenario(CLAIMED)
+    scen.write("calls", scen.snap(con, "calls"))
+    # freed leaf pages are never owned by a table: the oracle expects basis fit, attributed to calls
+    scen.want("calls", scen.snap(con, "calls", "_id between 21 and 80"), label="calls")
+    con.execute("delete from calls where _id between 21 and 80")
+    cols = C.columns(con, "calls")
+    con.close()
+    files = {"db": C.read(path)}
+    view = C.engine_view(files, ["calls"])
+    exp = C.expect_header(FAMILY, "calllog-deleted", "calllog-features-subid.sql")
+    exp["records"] = [expect_call(r, REMOTE_CALLLOG) for r in view["calls"]]
+    C.note_columns(cols, CALL_MAPPED, "calls", exp["notes"])
+    return files, exp
+
+
+def variant_wal_edit(work):
+    """12 calls, then, in a WAL that is never checkpointed, call 3 is edited, call 7 deleted and call 13 added: the
+    database file still holds the versions of calls 3 and 7 (history), the WAL holds the live ones."""
+    path = work + "/c.db"
+    ph = C.load_ddl("calllog-features-subid.sql")
+    con = C.connect(path, page_size=1024)
+    con.executescript(ph[0])
+    with C.batch(con):
+        for i in range(1, 13):
+            C.insert(con, "calls", numbered(i))
+    scen = SCENARIOS["calllog-wal-edit"] = C.Scenario(CLAIMED)
+    scen.write("calls", scen.snap(con, "calls"))
+    scen.want("calls", scen.snap(con, "calls", "_id in (3, 7)"))  # as the database file still holds them
+    cols = C.columns(con, "calls")
+    con.execute("pragma journal_mode = wal")
+    con.close()
+    new = numbered(13)
+    stmts = ["pragma wal_autocheckpoint = 0", "update calls set duration = 999, type = 2 where _id = 3", "delete from calls where _id = 7",
+             "insert into calls(%s) values (%s)" % (",".join(new), ",".join(C.lit(v) for v in new.values()))]
+    C.kill_child(path, stmts)
+    files = {"db": C.read(path), "wal": C.read(path + "-wal")}
+    view = C.engine_view(files, ["calls"])
+    exp = C.expect_header(FAMILY, "calllog-wal-edit", "calllog-features-subid.sql")
+    exp["records"] = [expect_call(r, "") for r in view["calls"]]  # a WAL companion: the source path follows the role of the cell
+    C.note_columns(cols, CALL_MAPPED, "calls", exp["notes"])
+    return files, exp
+
+
+def recover_expect(variant, files):
+    """The <variant>.recover.expect.json of a variant that has a scenario (ruling 4G-R14)."""
+    return C.recover_oracle(variant, files, SCENARIOS[variant], lambda f: None, lambda table, d, env, file: expect_call(d, "", file))
+
+
+VARIANTS = {"pre-presentation": variant_pre, "features-subid": variant_features, "in-contacts2": variant_c2,
+            "calllog-deleted": variant_deleted, "calllog-wal-edit": variant_wal_edit}

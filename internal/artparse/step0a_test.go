@@ -60,19 +60,18 @@ func TestGuardFlagsFromFnAnsweringTheEndOfItsContext(t *testing.T) {
 func TestEmitterCopiesEveryPointerFieldBeforeAdd(t *testing.T) {
 	v, e := newEnv(t, nil)
 	now := time.Date(2024, 5, 6, 7, 8, 9, 0, time.UTC)
-	conf := 50
+	// Confidence is not a pointer a live parser may hand over (C8 refuses it); the recovery emitter's copy of it is
+	// pinned with that emitter.
 	r := v.rec()
 	r.Range = &records.Range{Offset: 1, Length: 2}
 	r.Time = &records.Time{T: now}
 	r.TimeEnd = &records.Time{T: now.Add(time.Hour)}
 	r.Times = []records.NamedTime{{Kind: "created", Time: records.Time{T: now}}}
-	r.Deleted, r.Recovery, r.Confidence = true, "carve", &conf
 	v.spy.addHook = func(records.Record) { // the parser goroutine edits what it still holds
 		r.Range.Offset, r.Range.Length = 9, 9
 		r.Time.T = now.Add(24 * time.Hour)
 		r.TimeEnd.T = now.Add(48 * time.Hour)
 		r.Times[0].Kind = "mutated"
-		conf = 1
 	}
 	if err := e.Emit(ctx0(), r); err != nil {
 		t.Fatal(err)
@@ -89,9 +88,6 @@ func TestEmitterCopiesEveryPointerFieldBeforeAdd(t *testing.T) {
 	}
 	if got.Times[0].Kind != "created" {
 		t.Errorf("Times[0] = %+v", got.Times[0])
-	}
-	if got.Confidence == nil || *got.Confidence != 50 {
-		t.Errorf("Confidence = %v", got.Confidence)
 	}
 }
 

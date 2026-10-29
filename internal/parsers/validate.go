@@ -13,9 +13,13 @@ import (
 // <module>/internal/parsers/<dir> (one directory that is an identifier, not
 // parsertest); every emitted type is registered at its current payload version and
 // has a validator; no claims while claimsEnabled is false, and when the parser is a
-// parse.RowMapper every claim names a mapped table; a source hash is generated.
+// parse.RowMapper every claim names a mapped table; a source hash is generated, and
+// for a claiming parser a recovery hash too.
 func Validate(all []parse.Parser) []error {
-	return rules{base: parsersPath, pkgPath: PackagePath, hashOf: hashOfMeta, claimsEnabled: claimsEnabled}.validate(all)
+	return rules{
+		base: parsersPath, pkgPath: PackagePath, hashOf: hashOfMeta, claimsEnabled: claimsEnabled,
+		recoveryHashOf: func(p parse.Parser, m parse.Meta) (string, bool) { return recoveryHashOfWith(p, m, generated) },
+	}.validate(all)
 }
 
 // rules is Validate with its environment injected, so the tests can exercise
@@ -25,6 +29,9 @@ type rules struct {
 	pkgPath       func(parse.Parser) string
 	hashOf        func(parse.Parser, parse.Meta) (string, bool)
 	claimsEnabled bool
+	// recoveryHashOf finds the generated hash of the "<name>.recover" identity a
+	// claiming parser needs.
+	recoveryHashOf func(parse.Parser, parse.Meta) (string, bool)
 }
 
 func (r rules) validate(all []parse.Parser) []error {
@@ -69,6 +76,11 @@ func (r rules) validate(all []parse.Parser) []error {
 				for _, c := range parse.ClaimsOutsideMappings(m, rm.Mappings()) {
 					errs = append(errs, fmt.Errorf("%s: claims table %q that no mapping handles", who, c.Table))
 				}
+			}
+			if r.recoveryHashOf == nil {
+				errs = append(errs, fmt.Errorf("%s: has no generated recovery hash", who))
+			} else if _, ok := r.recoveryHashOf(p, m); !ok {
+				errs = append(errs, fmt.Errorf("%s: has no generated recovery hash (run go run ./tools/parserhash -write)", who))
 			}
 		}
 		if _, ok := r.hashOf(p, m); !ok {
