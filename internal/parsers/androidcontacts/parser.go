@@ -23,7 +23,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "android.contacts"
-	Version = "1.0.1"
+	Version = "1.0.5"
 )
 
 // Parser is the android.contacts parser. It holds no state.
@@ -31,12 +31,14 @@ type Parser struct{}
 
 var _ parse.RowMapper = Parser{}
 
-// Meta describes the parser. Claims stay empty until plan 4G implements typed recovery.
+// Meta describes the parser. Claims are the tables the mappings map: a promise that typed recovery (plan 4G) can
+// map the rows of raw_contacts and deleted_contacts that were deleted or superseded (the mappings are source-agnostic).
 func (Parser) Meta() parse.Meta {
 	return parse.Meta{
 		Name: Name, Version: Version, Title: "Android contacts (contacts provider)",
 		Platforms: []string{parse.PlatformAndroid},
 		Emits:     []parse.Emit{{Type: contact.Type, PayloadVersion: contact.PayloadVersion}},
+		Claims:    []parse.TableClaim{{Role: "db", Table: "raw_contacts"}, {Role: "db", Table: "deleted_contacts"}},
 		Inputs: []parse.InputSpec{
 			{Role: "db", Globs: []string{"android:**/com.android.providers.contacts/databases/contacts2.db"}, Required: true},
 			{Role: "wal", Companions: []string{"-wal"}},

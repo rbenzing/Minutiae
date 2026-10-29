@@ -11,7 +11,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/parsers/parsertest"
 )
 
-var variants = []string{"aosp-baseline", "deleted-contacts", "duplicate-keys", "huge-contact", "multi-account", "unicode-rtl"}
+var variants = []string{"aosp-baseline", "contacts-deleted", "contacts-wal-edit", "deleted-contacts", "duplicate-keys", "huge-contact", "multi-account", "unicode-rtl"}
 
 // fixtureRemote is where every variant's database sits on the device; each is a lone database,
 // so the oracle states this path for every row (rulings T48, T51).
@@ -38,9 +38,15 @@ func TestFixturesArePinnedByHash(t *testing.T) {
 }
 
 func TestEveryCommittedFixtureIsInTheVariantList(t *testing.T) {
-	m, err := filepath.Glob("testdata/*.expect.json")
+	all, err := filepath.Glob("testdata/*.expect.json")
 	if err != nil {
 		t.Fatal(err)
+	}
+	var m []string
+	for _, p := range all {
+		if !strings.HasSuffix(p, ".recover.expect.json") { // the typed recovery oracles are checked by TestEveryRecoverOracleHasAFixture
+			m = append(m, p)
+		}
 	}
 	if len(m) != len(variants) {
 		t.Errorf("%d fixtures on disk, %d in the variant list", len(m), len(variants))

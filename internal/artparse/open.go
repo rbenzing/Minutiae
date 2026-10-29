@@ -14,9 +14,10 @@ import (
 
 // member is one input of a bundle with the facts the parser sees.
 type member struct {
-	role string
-	m    Member
-	src  *source
+	role     string
+	m        Member
+	src      *source
+	recovery *parse.RecoveryInfo // non-nil when the artifact or an ancestor is recovered: what the parser sees in Artifact.Recovery
 }
 
 // bundle is the verified, sealed inputs of one job. Every artifact was hashed
@@ -74,18 +75,29 @@ func (h *Host) openBundle(ctx context.Context, snap *Snapshot, j Job, parseID st
 			b.memUsed += s.rec.Size
 		}
 		mb.src = s
+		mb.recovery = snap.recoveredInput(mb.m.Artifact.ID)
 	}
 	return b, nil
 }
 
-// artifact is the parse.Artifact for a member, R left for the caller.
+// artifact is the parse.Artifact for a member, R left for the caller. Recovery is a copy: the member's
+// own description is never shared with a parser.
 func (mb *member) artifact() parse.Artifact {
 	rec := mb.src.rec
-	return parse.Artifact{
+	a := parse.Artifact{
 		ID: rec.ID, SHA256: rec.SHA256, Platform: mb.m.Platform, Logical: mb.m.Logical,
 		Acquisition: acquisitionOf(rec),
 		Size:        rec.Size, Incomplete: rec.Incomplete, Source: SourceInfo(rec),
 	}
+	if mb.recovery != nil {
+		ri := *mb.recovery
+		if ri.Confidence != nil {
+			c := *ri.Confidence
+			ri.Confidence = &c
+		}
+		a.Recovery = &ri
+	}
+	return a
 }
 
 // input returns a fresh Input for one invocation: every value is a copy (it is

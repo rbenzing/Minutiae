@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/rbenzing/minutiae/internal/artparse"
 	"github.com/rbenzing/minutiae/internal/dbrecover"
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/sqlitefile"
@@ -133,14 +134,28 @@ func newSQLiteRecoverCmd(d Deps, opts *rootOptions) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return printSQLiteAssessment(d.Out, c, as, opts.json)
+				claims, err := listClaims(ctx, d, c, in)
+				if err != nil {
+					return err
+				}
+				return printSQLiteAssessment(d.Out, c, as, opts.json, claims)
 			}
+			// the typed pass first (4G-R5); it honors a claim only for a job that concluded
+			tr, typedExcl, typedErr := composeTyped(ctx, d, c, in, f.allowReingest)
+			if tr.Stop {
+				return errors.Join(typedErr, printTypedOnly(d.Out, tr, opts.json))
+			}
+			o.ExcludeTables = append(typedExcl, o.ExcludeTables...)
+			o.KeepClaimed, o.TypedNotHonored = tr.Keep, tr.Link
 			res, err := dbrecover.Run(ctx, c, in, o)
+			// the typed pass's exit contribution is joined, never replaces the generic run's (integrity wins in ExitCode)
+			err = errors.Join(typedErr, err)
 			if len(res.Inputs) > 0 {
 				// the summary of a run that stopped is printed too: what was written stays in the case
-				return finishSQLiteRun(d.Out, c, res, err, opts.json)
+				return finishSQLiteRunTyped(d.Out, c, res, err, opts.json, tr)
 			}
-			return err
+			// the generic run did not start (a refusal): the typed pass's report is still printed
+			return errors.Join(err, printTypedOnly(d.Out, tr, opts.json))
 		},
 	}
 	f.register(cmd)
@@ -181,19 +196,20 @@ type sqliteMethodJSON struct {
 }
 
 type sqliteCountsJSON struct {
-	Written            int64              `json:"written"`
-	Methods            []sqliteMethodJSON `json:"methods"`
-	RelationUnknown    int64              `json:"relation_unknown"`
-	FitOnly            int64              `json:"fit_only"`
-	DuplicateOfLive    int64              `json:"duplicate_of_live"`
-	SkippedByReason    map[string]int64   `json:"skipped_by_reason"`
-	Narrowed           []string           `json:"narrowed"`
-	LimitsHit          []string           `json:"limits_hit"`
-	FreelistPages      int64              `json:"freelist_pages"`
-	FreelistPagesZero  int64              `json:"freelist_pages_zeroed"`
-	SlackUnparsedBytes int64              `json:"slack_unparsed_bytes"`
-	LibraryWarnings    int                `json:"library_warnings"`
-	RangeOutside       int64              `json:"range_outside"`
+	Written             int64              `json:"written"`
+	Methods             []sqliteMethodJSON `json:"methods"`
+	RelationUnknown     int64              `json:"relation_unknown"`
+	FitOnly             int64              `json:"fit_only"`
+	DuplicateOfLive     int64              `json:"duplicate_of_live"`
+	SkippedByReason     map[string]int64   `json:"skipped_by_reason"`
+	Narrowed            []string           `json:"narrowed"`
+	LimitsHit           []string           `json:"limits_hit"`
+	FreelistPages       int64              `json:"freelist_pages"`
+	FreelistPagesZero   int64              `json:"freelist_pages_zeroed"`
+	SlackUnparsedBytes  int64              `json:"slack_unparsed_bytes"`
+	LibraryWarnings     int                `json:"library_warnings"`
+	RangeOutside        int64              `json:"range_outside"`
+	KeptUnmappedClaimed int64              `json:"kept_unmapped_claimed"`
 }
 
 type sqliteIngestJSON struct {
@@ -213,6 +229,8 @@ type sqliteReportJSON struct {
 	Siblings   map[string]sqliteSiblingJSON `json:"siblings"`
 	Counts     sqliteCountsJSON             `json:"counts"`
 	Ingest     *sqliteIngestJSON            `json:"ingest,omitempty"`
+	Claims     []claimedJSON                `json:"claims,omitempty"`
+	Typed      *typedJSON                   `json:"typed"`
 	Incomplete bool                         `json:"incomplete,omitempty"`
 	Stopped    string                       `json:"stopped,omitempty"`
 	NotStarted string                       `json:"not_started,omitempty"`
@@ -259,7 +277,7 @@ func countsJSON2(c dbrecover.Counts) sqliteCountsJSON {
 		DuplicateOfLive: c.DuplicateOfLive, SkippedByReason: nonNilCounts(c.SkippedByReason),
 		Narrowed: nonNilStrings(c.Narrowed), LimitsHit: nonNilStrings(c.LimitsHit),
 		FreelistPages: c.FreePages, FreelistPagesZero: c.FreePagesZeroed, SlackUnparsedBytes: c.SlackUnparsedBytes,
-		LibraryWarnings: c.LibraryWarnings, RangeOutside: c.RangeOutside,
+		LibraryWarnings: c.LibraryWarnings, RangeOutside: c.RangeOutside, KeptUnmappedClaimed: c.KeptUnmappedClaimed,
 	}
 }
 
@@ -311,7 +329,7 @@ func inputsJSON(inputs []dbrecover.InputInfo, trails map[string]string) []sqlite
 	return out
 }
 
-func printSQLiteAssessment(w io.Writer, c *evidence.Case, as dbrecover.Assessment, asJSON bool) error {
+func printSQLiteAssessment(w io.Writer, c *evidence.Case, as dbrecover.Assessment, asJSON bool, claims []artparse.Claimed) error {
 	trails, err := recoveredTrails(c, as.Inputs)
 	if err != nil {
 		return err
@@ -320,10 +338,11 @@ func printSQLiteAssessment(w io.Writer, c *evidence.Case, as dbrecover.Assessmen
 		return writeJSON(w, sqliteReportJSON{
 			Assessment: true, Note: as.Note, RulesHash: as.RulesHash, Inputs: inputsJSON(as.Inputs, trails),
 			Siblings: map[string]sqliteSiblingJSON{"wal": siblingJSON("wal", as.Siblings.WAL), "journal": siblingJSON("journal", as.Siblings.Journal)},
-			Counts:   countsJSON2(as.Counts),
+			Counts:   countsJSON2(as.Counts), Claims: claimsJSON(claims),
 		})
 	}
 	fmt.Fprintln(w, escapeText(as.Note))
+	printClaims(w, claims)
 	printSQLiteBody(w, as.Inputs, trails, as.Siblings, as.Counts)
 	return nil
 }
@@ -331,13 +350,18 @@ func printSQLiteAssessment(w io.Writer, c *evidence.Case, as dbrecover.Assessmen
 // finishSQLiteRun prints the summary of a run that resolved its inputs, then returns the run's error joined
 // with any print error: an integrity failure found while printing is never masked by the run's own error (J96).
 func finishSQLiteRun(w io.Writer, c *evidence.Case, res dbrecover.Result, runErr error, asJSON bool) error {
-	return errors.Join(runErr, printSQLiteResult(w, c, res, runErr, asJSON))
+	return finishSQLiteRunTyped(w, c, res, runErr, asJSON, typedResult{})
+}
+
+// finishSQLiteRunTyped is finishSQLiteRun for a run composed with a typed pass.
+func finishSQLiteRunTyped(w io.Writer, c *evidence.Case, res dbrecover.Result, runErr error, asJSON bool, tr typedResult) error {
+	return errors.Join(runErr, printSQLiteResult(w, c, res, runErr, asJSON, tr))
 }
 
 // printSQLiteResult prints the summary of a run. A run that failed says so on stdout (J95): "not started: <reason>"
 // when the writer never began, "stopped: <reason>" and "incomplete" when it did, so a reader of stdout alone cannot
 // take the summary for a complete run.
-func printSQLiteResult(w io.Writer, c *evidence.Case, res dbrecover.Result, runErr error, asJSON bool) error {
+func printSQLiteResult(w io.Writer, c *evidence.Case, res dbrecover.Result, runErr error, asJSON bool, tr typedResult) error {
 	trails, err := recoveredTrails(c, res.Inputs)
 	if err != nil {
 		return err
@@ -350,6 +374,7 @@ func printSQLiteResult(w io.Writer, c *evidence.Case, res dbrecover.Result, runE
 			Siblings:   map[string]sqliteSiblingJSON{"wal": siblingJSON("wal", res.Siblings.WAL), "journal": siblingJSON("journal", res.Siblings.Journal)},
 			Counts:     countsJSON2(res.Counts),
 			Incomplete: stopped || res.Ingest.Outcome == "incomplete",
+			Typed:      tr.json(),
 		}
 		if notStarted {
 			rep.NotStarted = runErr.Error()
@@ -364,6 +389,7 @@ func printSQLiteResult(w io.Writer, c *evidence.Case, res dbrecover.Result, runE
 		}
 		return writeJSON(w, rep)
 	}
+	printTypedText(w, tr)
 	switch {
 	case notStarted:
 		fmt.Fprintf(w, "not started: %s\n", escapeText(runErr.Error()))
@@ -423,6 +449,9 @@ func printSQLiteBody(w io.Writer, inputs []dbrecover.InputInfo, trails map[strin
 	}
 	fmt.Fprintf(w, "rows written: %d\n", c.Written)
 	fmt.Fprintf(w, "relation unknown: %d, fit-only table identity: %d\n", c.RelationUnknown, c.FitOnly)
+	if c.KeptUnmappedClaimed > 0 {
+		fmt.Fprintf(w, "claimed rows the typed pass could not map, kept as db_row: %d\n", c.KeptUnmappedClaimed)
+	}
 	if len(c.SkippedByReason) > 0 {
 		fmt.Fprintln(w, "skipped by reason:")
 		for _, r := range slices.Sorted(maps.Keys(c.SkippedByReason)) {

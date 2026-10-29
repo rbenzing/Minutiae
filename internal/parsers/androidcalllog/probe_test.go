@@ -1,6 +1,7 @@
 package androidcalllog_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/parse"
@@ -9,11 +10,15 @@ import (
 	"github.com/rbenzing/minutiae/internal/sqlitefile/sqlitetest"
 )
 
-func TestMetaAndProbe(t *testing.T) {
+func TestMetaIsValidClaimsTheMappedTableAndProbes(t *testing.T) {
 	p := androidcalllog.Parser{}
 	m := p.Meta()
-	if err := parse.ValidateMeta(m); err != nil || len(m.Claims) != 0 || m.Name != androidcalllog.Name || m.Emits[0].Type != "call" {
+	if err := parse.ValidateMeta(m); err != nil || m.Name != androidcalllog.Name || m.Emits[0].Type != "call" {
 		t.Fatalf("meta %+v: %v", m, err)
+	}
+	// a claim is a promise of typed recovery (plan 4G): the one table the mapping maps, on the database
+	if want := []parse.TableClaim{{Role: "db", Table: "calls"}}; !slices.Equal(m.Claims, want) {
+		t.Errorf("claims %v, want %v", m.Claims, want)
 	}
 	if len(m.Inputs[0].Globs) != 2 {
 		t.Errorf("primary globs %v: want calllog.db and contacts2.db", m.Inputs[0].Globs)

@@ -15,7 +15,7 @@ const (
 	remoteContacts = "/data/user_de/0/com.android.providers.contacts/databases/contacts2.db"
 )
 
-var variants = []string{"features-subid", "in-contacts2", "pre-presentation"}
+var variants = []string{"calllog-deleted", "calllog-wal-edit", "features-subid", "in-contacts2", "pre-presentation"}
 
 // remoteFor is where the variant's database sits on the device.
 func remoteFor(variant string) string {
@@ -46,9 +46,15 @@ func TestFixturesArePinnedByHash(t *testing.T) {
 }
 
 func TestEveryCommittedFixtureIsInTheVariantList(t *testing.T) {
-	m, err := filepath.Glob("testdata/*.expect.json")
+	all, err := filepath.Glob("testdata/*.expect.json")
 	if err != nil {
 		t.Fatal(err)
+	}
+	var m []string
+	for _, p := range all {
+		if !strings.HasSuffix(p, ".recover.expect.json") { // the typed recovery oracles are checked by TestEveryRecoverOracleHasAFixture
+			m = append(m, p)
+		}
 	}
 	if len(m) != len(variants) {
 		t.Errorf("%d fixtures on disk, %d in the variant list", len(m), len(variants))

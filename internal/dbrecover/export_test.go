@@ -67,3 +67,10 @@ func SetSchemaReadHookForTest(f func() error) func() {
 	schemaReadHook = f
 	return func() { schemaReadHook = old }
 }
+
+// SetOpenHookForTest sets a function called each time an input artifact is opened for a run, and returns the restore function.
+func SetOpenHookForTest(f func(role, id string)) func() {
+	old := openHook
+	openHook = f
+	return func() { openHook = old }
+}

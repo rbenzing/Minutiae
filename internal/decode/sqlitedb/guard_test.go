@@ -87,7 +87,13 @@ func TestSqlitedbNeverUsesAsFoundOrHistory(t *testing.T) {
 		}
 	})
 	for name, f := range nonTestSources(t) {
-		if got := selectorsNamed(f, banned...); len(got) != 0 {
+		names := banned
+		if filepath.Base(name) == "history.go" {
+			// ClaimedHistory is the one door to the recovery pass (plan 4G): it hands recovered rows
+			// to a caller's visitor and never to the live scan; the raw view stays banned there too.
+			names = []string{"AsFound"}
+		}
+		if got := selectorsNamed(f, names...); len(got) != 0 {
 			t.Errorf("%s uses %v: history and the raw view must never reach the live decoder", name, got)
 		}
 	}

@@ -18,14 +18,40 @@ type Inputs struct {
 	NoSiblings   bool
 }
 
-// ExcludedTable names a table another parser claims, and the claimant.
-type ExcludedTable struct{ Table, Parser, Version string }
+// ExcludedTable names a table another parser claims, and the claimant. A
+// Typed exclusion is a claim of a typed pass that concluded (TypedAnalysisID is
+// its analysis): the table's rows were recorded as typed records, so leaving
+// them out of this run loses nothing and it is not narrowed. An operator's
+// exclusion (Typed false) is narrowing.
+type ExcludedTable struct {
+	Table, Parser, Version string
+	Typed                  bool
+	TypedAnalysisID        string
+}
+
+// NotHonoredClaim records a typed job whose claims the generic run did not take into account (4G-R26):
+// the tables are recorded by the generic run, and the audit says why and which typed analysis also wrote
+// (or tried to write) records for them.
+type NotHonoredClaim struct {
+	Parser, Version string
+	Tables          []string
+	TypedAnalysisID string
+	Reason          string
+}
+
+// MaxKeepClaimed bounds Options.KeepClaimed (4G-R25).
+const MaxKeepClaimed = 1 << 16
 
 // Options bound and narrow a run. The zero value is the default run.
 type Options struct {
-	Methods                       []string
-	MinConfidence                 int
-	ExcludeTables                 []ExcludedTable
+	Methods       []string
+	MinConfidence int
+	ExcludeTables []ExcludedTable
+	// KeepClaimed holds LocatorDigests of claimed rows the typed pass could not map (4G-R21): such a row
+	// is written although its table is claimed. At most MaxKeepClaimed; not narrowing.
+	KeepClaimed [][16]byte
+	// TypedNotHonored lists the typed jobs that honored no claim, for the audit (4G-R26); it changes nothing else.
+	TypedNotHonored               []NotHonoredClaim
 	MaxRecords, MaxBytes          int64
 	MaxPayloadBytes, MaxBodyBytes int64
 	// MaxFitEqualityRows bounds the live rows the fit-only equality (an annotation on rows named by the
@@ -69,6 +95,7 @@ type Counts struct {
 	Narrowed                                                                  []string
 	ConfidenceRange                                                           map[string]ConfRange
 	RangeOutside                                                              int64
+	KeptUnmappedClaimed                                                       int64
 }
 
 // Result is the outcome of Run.
@@ -133,13 +160,23 @@ func (o Options) normalized() (Options, []string, error) {
 	if o.MinConfidence > 0 {
 		narrowed = append(narrowed, "min-confidence")
 	}
+	operatorExclusion := false
 	for _, x := range o.ExcludeTables {
-		if x.Table == "" {
+		switch {
+		case x.Table == "":
 			return o, nil, badOption("an excluded table has no name")
+		case x.Typed && x.TypedAnalysisID == "":
+			return o, nil, badOption("the typed exclusion of table %q names no typed analysis", x.Table)
+		case !x.Typed && x.TypedAnalysisID != "":
+			return o, nil, badOption("the exclusion of table %q names a typed analysis but is not typed", x.Table)
 		}
+		operatorExclusion = operatorExclusion || !x.Typed
 	}
-	if len(o.ExcludeTables) > 0 {
+	if operatorExclusion {
 		narrowed = append(narrowed, "exclude-tables")
+	}
+	if len(o.KeepClaimed) > MaxKeepClaimed {
+		return o, nil, badOption("%d kept claimed locators exceed the limit of %d", len(o.KeepClaimed), MaxKeepClaimed)
 	}
 	switch {
 	case o.MaxRecords < 0 || o.MaxRecords > maxRecordsCeiling:
@@ -177,10 +214,17 @@ type filter struct {
 	methods map[string]bool // nil: every method
 	minConf int
 	claimed map[string]bool // ASCII-folded names of the tables another parser claims
+	live    *sqlitefile.Schema
+	kept    map[[16]byte]struct{} // digests of claimed rows written anyway (4G-R21)
 }
 
-func newFilter(o Options) filter {
-	f := filter{minConf: o.MinConfidence}
+// reasonKeptClaimed is what keep reports, with true, for a claimed row that is written because its digest is in KeepClaimed.
+const reasonKeptClaimed = "kept-unmapped-claimed"
+
+// newFilter builds the filter of a run; live is the LIVE schema, against which
+// a claimed row must strictly fit (sqlitefile.ClaimMatch).
+func newFilter(o Options, live *sqlitefile.Schema) filter {
+	f := filter{minConf: o.MinConfidence, live: live}
 	if len(o.Methods) > 0 {
 		f.methods = map[string]bool{}
 		for _, m := range o.Methods {
@@ -193,25 +237,38 @@ func newFilter(o Options) filter {
 			f.claimed[asciiFold(x.Table)] = true
 		}
 	}
+	if len(o.KeepClaimed) > 0 {
+		f.kept = make(map[[16]byte]struct{}, len(o.KeepClaimed))
+		for _, d := range o.KeepClaimed {
+			f.kept[d] = struct{}{}
+		}
+	}
 	return f
 }
 
 // keep reports whether the row is written and, when not, the reason it is
-// counted under. conf is the confidence after the input cap. Only a table row
-// whose table the schema names is excluded as claimed: a row placed by fit or
-// guess may belong to another table, and an index entry is not a table row, so
-// both are kept (D7).
+// counted under. conf is the confidence after the input cap. A row is excluded
+// as claimed only when sqlitefile.ClaimMatch says so: a table row of basis
+// schema or fit whose values strictly fit the live definition of its table. A
+// guess, a row of no table, an index entry and a row carved from page slack are
+// kept (D7, 4G-R3, 4G-R22).
 func (f filter) keep(r sqlitefile.RecoveredRow, conf int) (bool, string) {
 	switch {
 	case f.methods != nil && !f.methods[r.Method]:
 		return false, "method-filtered"
 	case conf < f.minConf:
 		return false, "below-min-confidence"
-	case f.claimed != nil && r.Index == "" && r.TableBasis == sqlitefile.BasisSchema && f.claimed[asciiFold(r.Table)]:
+	case f.claimed != nil && f.live != nil && f.live.ClaimMatch(r, f.isClaimed) == sqlitefile.ClaimYes:
+		if _, ok := f.kept[LocatorDigest(locatorFor(r))]; ok {
+			return true, reasonKeptClaimed
+		}
 		return false, "excluded-by-claim"
 	}
 	return true, ""
 }
+
+// isClaimed reports whether the table is one a parser claims (ASCII fold).
+func (f filter) isClaimed(table string) bool { return f.claimed[asciiFold(table)] }
 
 // asciiFold lowercases the ASCII letters only, as SQLite compares names.
 func asciiFold(s string) string {

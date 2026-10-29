@@ -11,6 +11,7 @@ import (
 	"github.com/rbenzing/minutiae/internal/records"
 	"github.com/rbenzing/minutiae/internal/records/recordstest"
 	"github.com/rbenzing/minutiae/internal/sqlitefile"
+	"github.com/rbenzing/minutiae/internal/sqlitefile/sqlitetest"
 )
 
 // libraryOracle runs the library alone over the scenario and returns the rows it
@@ -158,12 +159,45 @@ func TestMinConfidenceBoundsAreRefused(t *testing.T) {
 	}
 }
 
-func TestExcludeTablesSkipsOnlySchemaBasisTableRows(t *testing.T) {
-	// the rule on rows built by hand: only a table row whose table the schema names is skipped
-	flt := newFilter(Options{ExcludeTables: []ExcludedTable{{Table: "Messages", Parser: "p", Version: "1"}}})
-	row := func(table, index string, basis sqlitefile.TableBasis) sqlitefile.RecoveredRow {
-		return sqlitefile.RecoveredRow{Method: sqlitefile.MethodFreelist, Table: table, Index: index, TableBasis: basis}
+// claimSchema is a live schema with the given two-column tables, a and b untyped.
+func claimSchema(t *testing.T, names ...string) *sqlitefile.Schema {
+	t.Helper()
+	b := sqlitetest.New(sqlitetest.Options{PageSize: testPageSize})
+	for _, n := range names {
+		b.CreateTable(n, `create table "`+n+`"(a, b)`)
 	}
+	raw := b.Bytes()
+	db, err := sqlitefile.Open(bytesAt{raw}, int64(len(raw)), sqlitefile.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sch, err := db.Live().Schema(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sch
+}
+
+func TestExcludeTablesSkipsOnlyClaimedFittingTableRows(t *testing.T) {
+	// the rule on rows built by hand: only a table row of basis schema or fit,
+	// whose table is claimed and whose values fit the live table, is skipped
+	upper, lower := string(rune(0xC9)), string(rune(0xE9))
+	sch := claimSchema(t, "Messages", "Other", upper+"t"+lower)
+	flt := newFilter(Options{ExcludeTables: []ExcludedTable{{Table: "Messages", Parser: "p", Version: "1"}}}, sch)
+	vals := func(n int) []sqlitefile.Value {
+		v := make([]sqlitefile.Value, n)
+		for i := range v {
+			v[i] = sqlitefile.Value{Kind: sqlitefile.KindInt, Int: int64(i)}
+		}
+		return v
+	}
+	row := func(table, index string, basis sqlitefile.TableBasis) sqlitefile.RecoveredRow {
+		return sqlitefile.RecoveredRow{Method: sqlitefile.MethodFreelist, Table: table, Index: index, TableBasis: basis, Values: vals(2)}
+	}
+	slack := row("Messages", "", sqlitefile.BasisSchema)
+	slack.Method = sqlitefile.MethodPageSlack
+	wide := row("Messages", "", sqlitefile.BasisSchema)
+	wide.Values = vals(3) // three values do not fit the two live columns
 	for _, tc := range []struct {
 		name string
 		r    sqlitefile.RecoveredRow
@@ -171,11 +205,13 @@ func TestExcludeTablesSkipsOnlySchemaBasisTableRows(t *testing.T) {
 	}{
 		{"schema row, same case", row("Messages", "", sqlitefile.BasisSchema), false},
 		{"schema row, ASCII fold", row("mESSAGES", "", sqlitefile.BasisSchema), false},
-		{"fit row", row("Messages", "", sqlitefile.BasisFit), true},
+		{"fit row that fits", row("Messages", "", sqlitefile.BasisFit), false},
+		{"schema row not fitting the live table", wide, true},
 		{"guess row", row("Messages", "", sqlitefile.BasisGuess), true},
 		{"no-table row", row("", "", sqlitefile.BasisNone), true},
 		{"index entry of the table", row("Messages", "idx_m", sqlitefile.BasisSchema), true},
 		{"other table", row("Other", "", sqlitefile.BasisSchema), true},
+		{"slack row", slack, true},
 	} {
 		keep, why := flt.keep(tc.r, 80)
 		if keep != tc.keep || (!keep && why != "excluded-by-claim") {
@@ -183,8 +219,7 @@ func TestExcludeTablesSkipsOnlySchemaBasisTableRows(t *testing.T) {
 		}
 	}
 	// the fold is ASCII only: a non-ASCII letter does not fold
-	upper, lower := string(rune(0xC9)), string(rune(0xE9))
-	uf := newFilter(Options{ExcludeTables: []ExcludedTable{{Table: upper + "t" + lower, Parser: "p", Version: "1"}}})
+	uf := newFilter(Options{ExcludeTables: []ExcludedTable{{Table: upper + "t" + lower, Parser: "p", Version: "1"}}}, sch)
 	if keep, _ := uf.keep(row(lower+"t"+upper, "", sqlitefile.BasisSchema), 80); !keep {
 		t.Error("a non-ASCII case difference was folded")
 	}
@@ -192,17 +227,21 @@ func TestExcludeTablesSkipsOnlySchemaBasisTableRows(t *testing.T) {
 		t.Error("the ASCII letters of a non-ASCII name were not folded")
 	}
 
-	// and through a run: the schema rows of table t are skipped, the rest is written
+	// and through a run: every table row of t at basis schema or fit is skipped; every row
+	// of the scenario has the two values of t(a, b), so each fits the live table strictly
 	e := newRunEnv(t)
 	all, _ := libraryOracle(t, e.f)
-	var claimed int64
+	var claimed, fitRows int64
 	for _, r := range all {
-		if r.Table == "t" && r.Index == "" && r.TableBasis == sqlitefile.BasisSchema {
+		if r.Table == "t" && r.Index == "" && (r.TableBasis == sqlitefile.BasisSchema || r.TableBasis == sqlitefile.BasisFit) && len(r.Values) == 2 {
 			claimed++
+			if r.TableBasis == sqlitefile.BasisFit {
+				fitRows++
+			}
 		}
 	}
-	if claimed == 0 {
-		t.Fatal("the scenario has no schema-basis row of table t")
+	if claimed == 0 || fitRows == 0 {
+		t.Fatalf("the scenario has %d claimable rows of table t, %d of them at basis fit", claimed, fitRows)
 	}
 	res := mustRun(t, e.c, e.in(), Options{ExcludeTables: []ExcludedTable{{Table: "T", Parser: "p", Version: "1"}}})
 	if got := res.Counts.SkippedByReason["excluded-by-claim"]; got != claimed {
@@ -237,6 +276,17 @@ func TestExcludedTablesAreAudited(t *testing.T) {
 }
 
 func TestSkippedRowsAreCountedNeverSilent(t *testing.T) {
+	// Every row of the scenario belongs to table t, so a claim on t would exclude them all and
+	// leave no row for the writer to reject: in the exclude case the rows of the WAL and the
+	// journal are named by guess (never claimed) before they are mapped.
+	hooks := map[string]func(sqlitefile.RecoveredRow) sqlitefile.RecoveredRow{
+		"exclude": func(r sqlitefile.RecoveredRow) sqlitefile.RecoveredRow {
+			if r.Loc.File != sqlitefile.FileDB {
+				r.TableBasis = sqlitefile.BasisGuess
+			}
+			return r
+		},
+	}
 	for name, opts := range map[string]Options{
 		"none":    {},
 		"methods": {Methods: []string{sqlitefile.MethodFreelist}},
@@ -247,6 +297,9 @@ func TestSkippedRowsAreCountedNeverSilent(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			e := newRunEnv(t)
 			all, dup := libraryOracle(t, e.f)
+			if h := hooks[name]; h != nil {
+				defer SetRowHookForTest(h)()
+			}
 			n := 0
 			restore := SetCheckForTest(func(p map[string]any) error {
 				if n++; n == 2 {

@@ -14,6 +14,9 @@ import os
 import telephony_common as C
 
 FAMILY = "safari"
+CLAIMED = ("history_visits",)  # Meta.Claims of safari.history: ClaimableTables
+ALIAS = {"history_visits": "id"}
+SCENARIOS = {}  # variant -> C.Scenario, filled when the variant is generated (the typed recovery oracle)
 SCHEMAS = os.path.join(C.HERE, "schemas", "safari")
 REMOTE = "/private/var/mobile/Library/Safari/History.db"
 MAX_URL = 2 << 20
@@ -421,4 +424,40 @@ def variant_no_tombstones(work):
     return files, exp
 
 
-VARIANTS = {"current": variant_current, "current-wal": variant_wal, "no-tombstones": variant_no_tombstones}
+def variant_deleted(work):
+    """1024-byte pages, secure_delete OFF. 45 visits (ids 1 to 45, each on its history_items row, a long title): visits 31 to 45
+    are deleted, and the items 31 to 40 with them (a recovered visit then has no live item: unmapped, 4F-R4) while the items 41 to
+    45 stay (their visits are typed). Whole leaf pages go to the freelist: the oracle expects basis fit, attributed to
+    history_visits (the rows of freed pages only: a page that keeps live cells keeps its deleted ones in place). Visit times are
+    fractional seconds, so a REAL is stored as a REAL. A lone database."""
+    path = work + "/h.db"
+    con = C.connect(path, page_size=1024)
+    con.executescript(C.load_ddl("safari-current.sql", SCHEMAS)[0])
+    items = [item_row(i, "https://site%02d.example.com/page/%d" % (i, i), 1, 200) for i in range(1, 46)]
+    visits = [visit_row(i, i, T_VISIT + i * 60 + 0.25, "Page %02d " % i + "title " * 40) for i in range(1, 46)]
+    with C.batch(con):
+        for t, rows in (("history_items", items), ("history_visits", visits)):
+            for r in rows:
+                C.insert(con, t, r)
+    scen = SCENARIOS["deleted"] = C.Scenario(CLAIMED, alias=ALIAS)
+    scen.write("history_visits", scen.snap(con, "history_visits"))
+    scen.want("history_visits", scen.snap(con, "history_visits", "id between 31 and 45"), label="history_visits")
+    con.execute("delete from history_visits where id between 31 and 45")
+    con.execute("delete from history_items where id between 31 and 40")
+    files = {"db": C.read(path)}
+    exp = oracle(files, con, "safari-current.sql", "deleted")
+    con.close()
+    return files, exp
+
+
+def recover_expect(variant, files):
+    """The <variant>.recover.expect.json of a variant that has a scenario (ruling 4G-R14). A recovered visit joins the LIVE
+    history_items rows (4G-R8); one whose item is gone is unmapped (4F-R4)."""
+    def make_env(f):
+        return {"items": {r["rowid"]: r for r in C.engine_view(f, ["history_items"]).get("history_items", [])}}
+
+    return C.recover_oracle(variant, files, SCENARIOS[variant], make_env,
+                            lambda table, d, env, file: expect_visit(d, env["items"], "", file)[0], nobody="history_item")
+
+
+VARIANTS = {"current": variant_current, "current-wal": variant_wal, "no-tombstones": variant_no_tombstones, "deleted": variant_deleted}
