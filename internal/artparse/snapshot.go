@@ -31,6 +31,9 @@ type Snapshot struct {
 	// the literal-lookup index, built on the first literal Find (4E-R9)
 	indexOnce sync.Once
 	index     map[string][]*candidate
+
+	byRecOnce sync.Once
+	byRec     map[string]evidence.ManifestRecord // by id, built on first use for the derivation walks
 }
 
 // TakeSnapshot reads the manifest once and the audit log once. A manifest id or
@@ -86,7 +89,7 @@ func (s *Snapshot) logicalIndex(h *Host) map[string][]*candidate {
 	s.indexOnce.Do(func() {
 		s.index = map[string][]*candidate{}
 		for _, m := range s.records {
-			if ok, _ := Eligible(m, true); !ok {
+			if ok, _ := Eligible(m, true, false); !ok {
 				continue
 			}
 			if c := h.name(m, s.env); c.named {

@@ -12,7 +12,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "ios.calls"
-	Version = "1.0.0"
+	Version = "1.0.1"
 )
 
 // Parser is the ios.calls parser. It holds no state.

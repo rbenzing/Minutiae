@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"runtime"
 	"sort"
 	"time"
@@ -80,6 +81,8 @@ type run struct {
 	rejected, warnings int
 	// conclusions detached from abandoned jobs that Run must join before it returns
 	pending []<-chan concludedIngest
+	// rec is set for a typed recovery run (RecoverTyped); nil for Run.
+	rec *recoverMode
 }
 
 func (r *run) emit(e Event) {
@@ -127,10 +130,25 @@ func (st *jobState) capture(b *bundle) {
 
 func newResult(j Job) JobResult {
 	id := j.Parser.Identity()
-	return JobResult{
+	res := JobResult{
 		Job: j.N, Parser: id.Name, Version: id.Version, Hash: id.Hash,
 		ArtifactID: j.Primary.Artifact.ID, Logical: cleanAuditText(j.Primary.Logical, maxPathText), Platform: j.Primary.Platform,
 	}
+	if j.Parser.asRecover {
+		res.Claims = claimTables(j.Parser)
+		res.LiveParser = j.Parser.meta.Name + " " + j.Parser.meta.Version
+		res.Narrowed = []string{}
+	}
+	return res
+}
+
+// claimTables lists the tables a parser claims, in claim order.
+func claimTables(r Registered) []string {
+	out := make([]string, 0, len(r.meta.Claims))
+	for _, c := range r.meta.Claims {
+		out = append(out, c.Table)
+	}
+	return out
 }
 
 func snapshotAudit(s *parse.SnapshotInfo) *AuditSnapshot {
@@ -160,6 +178,12 @@ func (r *run) jobStart(j Job) JobStart {
 		AnalysisID: r.parseID, Job: j.N, Parser: AuditParser{Name: id.Name, Version: id.Version, Hash: id.Hash},
 		Bundle: map[string]BundleMember{}, Explicit: j.Explicit,
 	}
+	if j.Parser.asRecover {
+		js.RecoverJobStart = &RecoverJobStart{
+			ClaimedTables: claimTables(j.Parser),
+			LiveParser:    AuditParser{Name: j.Parser.meta.Name, Version: j.Parser.meta.Version, Hash: j.Parser.hash},
+		}
+	}
 	for _, mb := range j.members() {
 		js.Bundle[mb.role] = BundleMember{
 			ArtifactID: mb.m.Artifact.ID, SHA256: mb.m.Artifact.SHA256, LogicalPath: cleanAuditText(mb.m.Logical, maxPathText),
@@ -187,6 +211,12 @@ func (r *run) jobEnd(j Job, st *jobState) JobEnd {
 	if end.Lookups == nil {
 		end.Lookups = []LookupOpen{}
 	}
+	if j.Parser.asRecover {
+		end.RecoverJobEnd = &RecoverJobEnd{
+			UnmappedRecovered: res.Unmapped, BelowMinConfidence: res.BelowMinConfidence, Narrowed: append([]string{}, res.Narrowed...),
+			SkippedInvalidFacts: res.SkippedInvalid, UnmappedOverflow: res.UnmappedOverflow,
+		}
+	}
 	if res.Panic != nil {
 		end.Panic = &AuditPanic{Value: res.Panic.Value, Stack: res.Panic.Stack}
 	}
@@ -211,6 +241,11 @@ func (r *run) analysisStart(parsers []Registered, jobs []Job, backups []BackupRe
 			MaxRecords: lim.MaxRecords, MaxRejected: lim.MaxRejected, MaxNotes: lim.MaxNotes, MaxLookupOpens: lim.MaxLookupOpens,
 			ProbeTimeoutMS: lim.ProbeTimeout.Milliseconds(), TimeoutMS: lim.Timeout.Milliseconds(), GraceMS: lim.GracePeriod.Milliseconds(),
 		},
+	}
+	if r.rec != nil {
+		as.Op = OpParseRecover
+		as.RecoverStart = &RecoverStart{MinConfidence: r.rec.opt.MinConfidence, OnlyPrimary: r.rec.opt.OnlyPrimary, ExpectCompanions: map[string]string{}}
+		maps.Copy(as.ExpectCompanions, r.rec.opt.ExpectCompanions)
 	}
 	for _, p := range parsers {
 		id := p.Identity()
@@ -291,7 +326,15 @@ func (h *Host) Run(ctx context.Context, opt RunOptions) (RunSummary, error) {
 		return RunSummary{Backups: backups}, err
 	}
 	r := &run{h: h, opt: opt, snap: snap, parseID: evidence.NewAcquisitionID(time.Now())}
-	r.sum.ParseID, r.sum.Backups = r.parseID, backups
+	r.sum.Backups = backups
+	return h.runJobs(ctx, r, parsers, jobs, backups)
+}
+
+// runJobs audits and runs the jobs of r (Run's and RecoverTyped's shared loop). backups are the
+// resolved iOS backups of the run (nil for a typed recovery run, which resolves none).
+func (h *Host) runJobs(ctx context.Context, r *run, parsers []Registered, jobs []Job, backups []BackupResolution) (RunSummary, error) {
+	snap := r.snap
+	r.sum.ParseID = r.parseID
 	if err := r.audit(ActionAnalysisStart, r.analysisStart(parsers, jobs, backups).Details()); err != nil {
 		r.sum.Stopped = StoppedAuditFailure
 		return r.sum, err
@@ -399,6 +442,11 @@ type earlyOutcome struct{ outcome, reason string }
 // skipWithoutOpening decides the jobs that are not parsed in this run before any artifact is opened:
 // an already-parsed job (skipped) and a stale bundle (unparsed, A14) unless --reparse asks for them.
 func (r *run) skipWithoutOpening(j Job) (earlyOutcome, bool) {
+	if r.rec != nil {
+		if why := r.rec.bundleDiffers(j); why != "" {
+			return earlyOutcome{OutcomeSkipped, why}, true
+		}
+	}
 	if r.opt.Reparse {
 		return earlyOutcome{}, false
 	}
@@ -485,15 +533,32 @@ func (r *run) parseJob(ctx context.Context, j Job, b *bundle, st *jobState) (run
 	for _, mb := range b.members {
 		arts[mb.role] = mb.artifact()
 	}
-	em, err := newEmitter(ctx, w, j.Parser, arts, h.limits, pump, report)
+	var em *emitter
+	var rem *recoveryEmitter // non-nil in a typed recovery job: the only emitter it hands the parser's mappings
+	if r.rec != nil {
+		rem, err = newRecoveryEmitter(ctx, w, j.Parser, arts, h.limits, pump, report, r.rec.opt.MinConfidence)
+		if rem != nil {
+			em = rem.emitter
+			if h.maxUnmapped > 0 {
+				rem.maxLoc = h.maxUnmapped
+			}
+		}
+	} else {
+		em, err = newEmitter(ctx, w, j.Parser, arts, h.limits, pump, report)
+	}
 	if err != nil {
 		return r.abortJob(ctx, w, st, OutcomeRefused, "cannot start the emitter: "+err.Error(), err, nil)
 	}
+	em.noPropagate = h.noPropagate
 	in := b.input(false)
 	sealAll := func() { em.seal(); b.seal() }
 	defer sealAll()
+	var rep recoveryReport
 	g := guard(ctx, h.limits.Timeout, h.limits.GracePeriod, sealAll, pump, func(pctx context.Context) error {
-		return j.Parser.p.Parse(pctx, in, em)
+		if rem == nil {
+			return j.Parser.p.Parse(pctx, in, em)
+		}
+		return runTyped(pctx, h.typedRun, j.Parser, in, rem, &rep)
 	})
 	sealAll() // every way out of Parse: success, error, panic, timeout, cancel (abandonment sealed in guard too)
 
@@ -501,6 +566,9 @@ func (r *run) parseJob(ctx context.Context, j Job, b *bundle, st *jobState) (run
 	st.res.Abandoned = g.Abandoned || em.stuckInWriter()
 	st.res.Notes = em.notes()
 	reason, cause := r.parseFailure(g, em)
+	if rem != nil {
+		reason, cause = r.settleRecovery(st, rem, rep.get(), reason, cause)
+	}
 
 	hctx, hcancel := context.WithTimeout(context.WithoutCancel(ctx), recheckTimeout)
 	rerr := b.recheck(hctx)

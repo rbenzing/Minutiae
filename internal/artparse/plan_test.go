@@ -32,6 +32,11 @@ func regFake(t testing.TB, p parse.Parser, name string) artparse.Registered {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(r.Meta().Claims) > 0 { // a claiming parser needs its recover identity (ErrNoRecoveryIdentity)
+		if r, err = r.WithRecoveryHash(hashFor(name + ".recover")); err != nil {
+			t.Fatal(err)
+		}
+	}
 	return r
 }
 
@@ -297,13 +302,19 @@ func TestPlanAndRunShareOneFrontHalf(t *testing.T) {
 			t.Errorf("prepareJob does not call %s", name)
 		}
 	}
-	for _, fn := range []string{"Plan", "Run"} {
+	// runJobs is the job loop of Run and RecoverTyped
+	for _, fn := range []string{"Plan", "runJobs"} {
 		set, ok := calls[fn]
 		if !ok {
-			t.Fatalf("%s not found: Plan and Run must both exist and reach the artifacts through prepareJob", fn)
+			t.Fatalf("%s not found: Plan and the run loop must both exist and reach the artifacts through prepareJob", fn)
 		}
 		if !set["prepareJob"] {
 			t.Errorf("%s does not call prepareJob", fn)
+		}
+	}
+	for _, fn := range []string{"Run", "RecoverTyped"} {
+		if !calls[fn]["runJobs"] {
+			t.Errorf("%s does not run its jobs through runJobs", fn)
 		}
 	}
 }

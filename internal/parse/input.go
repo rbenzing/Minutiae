@@ -20,6 +20,9 @@ type SourceInfo struct {
 type RecoveryInfo struct {
 	Class, Method string
 	Confidence    *int
+	// CapUnknown: the confidence cap of the derivation chain cannot be read (a cut chain or an
+	// unknown link); Confidence is then nil or not a bound.
+	CapUnknown bool
 }
 
 // Artifact is one verified input. R is read-only, bounded and sealed when the

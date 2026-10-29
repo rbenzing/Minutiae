@@ -261,6 +261,12 @@ func validateInputs(m Meta, platforms map[string]bool) error {
 }
 
 func validateClaims(m Meta) error {
+	if strings.HasSuffix(m.Name, RecoverySuffix) {
+		return fmt.Errorf("parse: meta %s: name must not end in %q", m.Name, RecoverySuffix)
+	}
+	if len(m.Claims) > 0 && len(m.Name) > maxClaimingName {
+		return fmt.Errorf("parse: meta %s: a parser with claims has a name of at most %d bytes", m.Name, maxClaimingName)
+	}
 	for i, c := range m.Claims {
 		if c.Role != "db" || m.Inputs[0].Role != c.Role {
 			return fmt.Errorf("parse: meta %s: claim %d: role %q must be \"db\" and the primary role (%q)", m.Name, i, c.Role, m.Inputs[0].Role)

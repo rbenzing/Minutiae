@@ -13,9 +13,9 @@ import (
 	"github.com/rbenzing/minutiae/internal/parsers/safari"
 )
 
-// claimsEnabled turns on table claims in Meta (4G flips it): until then a parser
-// declaring claims is refused.
-const claimsEnabled = false
+// claimsEnabled allows table claims in Meta (plan 4G). A claiming parser also needs a
+// generated recovery hash (the "<name>.recover" identity).
+const claimsEnabled = true
 
 // All returns every compiled-in parser in a fixed order: 4D adds the Android telephony
 // parsers, 4E and 4F append to it.

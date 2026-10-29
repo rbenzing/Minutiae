@@ -25,8 +25,9 @@ type PlanRow struct {
 	Job        Job
 	Status     string
 	Reason     string
-	Integrity  bool // the artifact (or the manifest) did not match the evidence: exit 4 in the CLI
-	Incomplete bool // a member of the bundle is an incomplete artifact (still planned; its records are flagged later)
+	Integrity  bool                // the artifact (or the manifest) did not match the evidence: exit 4 in the CLI
+	Incomplete bool                // a member of the bundle is an incomplete artifact (still planned; its records are flagged later)
+	Recovered  *parse.RecoveryInfo // non-nil when a member of the bundle is recovered input
 }
 
 // Plan lists every job of a selection with its status. Nothing is dropped: a job discovery could not
@@ -65,7 +66,7 @@ func (h *Host) Plan(ctx context.Context, sel Selection) (Plan, error) {
 		if pr.bundle != nil {
 			pr.bundle.close()
 		}
-		p.Rows = append(p.Rows, PlanRow{Job: j, Status: pr.status, Reason: pr.reason, Integrity: pr.integrity, Incomplete: jobIncomplete(j)})
+		p.Rows = append(p.Rows, PlanRow{Job: j, Status: pr.status, Reason: pr.reason, Integrity: pr.integrity, Incomplete: jobIncomplete(j), Recovered: jobRecovery(snap, j)})
 		p.ByStatus[pr.status]++
 		if pr.abandoned {
 			p.Stopped = StoppedAbandoned // planning goes on: it writes nothing

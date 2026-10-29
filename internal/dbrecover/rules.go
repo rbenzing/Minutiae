@@ -31,7 +31,7 @@ const (
 	DefaultMaxBodyBytes    = 256 << 10
 	MaxBodyBytesCeiling    = 1 << 20
 	SummaryBytes           = 512
-	LocatorNameBytes       = 200
+	LocatorNameBytes       = sqlitefile.LocatorNameBytes
 )
 
 var methods = []string{

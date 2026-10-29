@@ -16,6 +16,9 @@ type Claimed struct {
 	Table, Role, Parser, Version, Hash string
 	Unparsed                           bool   // the artifact is not parseable now (Reason says why); the claim is the parser's all the same
 	Reason                             string // why, for an unparsed claim
+	// RecoverParser and RecoverHash are the identity the typed recovery pass records this claim's rows
+	// under ("<Parser>.recover", same version).
+	RecoverParser, RecoverHash string
 }
 
 // CheckClaims requires a parser that claims tables to be a parse.RowMapper whose mappings handle every
@@ -175,9 +178,13 @@ func (h *Host) ClaimedTables(ctx context.Context, artifactID string) ([]Claimed,
 			}
 		}
 		id := j.Parser.Identity()
+		rid, _ := j.Parser.RecoveryIdentity()
 		for _, c := range j.Parser.meta.Claims {
 			if slices.Contains(roles, c.Role) {
-				out = append(out, Claimed{Table: c.Table, Role: c.Role, Parser: id.Name, Version: id.Version, Hash: id.Hash, Unparsed: unparsed, Reason: reason})
+				out = append(out, Claimed{
+					Table: c.Table, Role: c.Role, Parser: id.Name, Version: id.Version, Hash: id.Hash, Unparsed: unparsed, Reason: reason,
+					RecoverParser: rid.Name, RecoverHash: rid.Hash,
+				})
 			}
 		}
 	}

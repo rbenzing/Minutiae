@@ -555,7 +555,7 @@ func CommonFields() []Field { //nolint:revive // the name is part of the plan's 
 	return []Field{
 		{Name: "raw", Kind: KRaw},
 		{Name: "recovery", Kind: KObject, Obj: &Schema{
-			Fields: []Field{{Name: "relation", Kind: KEnum, Enum: []string{"absent-from-live", "superseded-version", "uncommitted", "from-recovered-artifact"}}},
+			Fields: []Field{{Name: "relation", Kind: KEnum, Enum: []string{"absent-from-live", "superseded-version", "uncommitted", "from-recovered-artifact", "from-recovered-bundle"}}},
 			Cross: func(m map[string]any) error {
 				c := &checker{}
 				for _, k := range slices.Sorted(maps.Keys(m)) {

@@ -8,14 +8,30 @@ import (
 	"github.com/rbenzing/minutiae/internal/recordtypes/web"
 )
 
+// claimsOf lists, for every registered parser, the tables it must claim (4G-R30): an explicit table, so a
+// claim is never added or dropped by accident and a registered parser missing from the table fails. A parser
+// without claims is listed with nil. Tasks 9 and 10 set the three Android telephony parsers, Task 10b the 4F browsers
+// (the 4E parsers claim nothing yet: ios.calls is listed with nil, the others follow with their registration).
+var claimsOf = map[string][]string{
+	"android.mmssms":   {"sms", "pdu"},
+	"android.calllog":  {"calls"},
+	"android.contacts": {"raw_contacts", "deleted_contacts"},
+	"chromium.history": {"visits", "keyword_search_terms", "downloads"},
+	"safari.history":   {"history_visits"},
+	"ios.calls":        nil,
+}
+
 // 4A's registry tests ranged over an empty registry; with the Android telephony parsers in it they are real
-// checks. This pins what 4D promises about every one of them.
-func TestTelephonyParsersMakeNoClaimsAndAreRowMappers(t *testing.T) {
+// checks. This pins what 4D and 4G promise about every one of them: each is a valid RowMapper, and each
+// declares exactly the claims listed above, all of them tables it maps.
+func TestRegisteredParsersClaimExactly(t *testing.T) {
 	if len(All()) == 0 {
 		t.Fatal("the registry is empty, so this test would check nothing")
 	}
+	seen := map[string]bool{}
 	for _, p := range All() {
 		m := p.Meta()
+		seen[m.Name] = true
 		if err := parse.ValidateMeta(m); err != nil {
 			t.Errorf("%s: %v", m.Name, err)
 		}
@@ -24,14 +40,31 @@ func TestTelephonyParsersMakeNoClaimsAndAreRowMappers(t *testing.T) {
 			t.Errorf("%s is not a RowMapper: the typed recovery pass (4G) needs the mappings", m.Name)
 			continue
 		}
-		if len(m.Claims) != 0 {
-			t.Errorf("%s declares claims %v before its typed recovery exists", m.Name, m.Claims)
+		want, listed := claimsOf[m.Name]
+		if !listed {
+			t.Errorf("%s is registered but missing from the claims table of this test: list it with its claims (nil for none)", m.Name)
+			continue
+		}
+		var got []string
+		for _, c := range m.Claims {
+			if c.Role != "db" {
+				t.Errorf("%s: claim %+v is not on the db role", m.Name, c)
+			}
+			got = append(got, c.Table)
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s declares claims %v, want exactly %v", m.Name, got, want)
 		}
 		if len(rm.Mappings()) == 0 {
 			t.Errorf("%s has no mappings", m.Name)
 		}
 		if bad := parse.ClaimsOutsideMappings(m, rm.Mappings()); len(bad) != 0 {
 			t.Errorf("%s: claims outside the mappings %v", m.Name, bad)
+		}
+	}
+	for name := range claimsOf {
+		if !seen[name] {
+			t.Errorf("%s is in the claims table but not registered", name)
 		}
 	}
 }

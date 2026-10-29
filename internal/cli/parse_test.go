@@ -448,10 +448,203 @@ func TestParseRunReparseFlag(t *testing.T) {
 	}
 }
 
-func TestParseRunNoRecoveredFlag(t *testing.T) {
+// recoveredPfx is a case with the live artifact "a" and two recovered artifacts: "r55" whose derivation
+// chain is complete (parent present, confidence 55) and "rcut" whose parent is missing (cap unknown).
+func recoveredPfx(t *testing.T) *pfx {
+	t.Helper()
 	p := newPfx(t, "a")
-	if code, _, _ := runP(t, registry(t, "", good("a")), "parse", "run", "--case", p.dir, "--include-recovered"); code != ExitUsage {
-		t.Errorf("exit %d, want 2", code)
+	p.edit(func(c *evidence.Case) {
+		parent := pcapture(t, c, "files/parent.bin", evidence.Source{Kind: "file", RemotePath: "/data/x/parent.bin"}, "parent")
+		c55 := 55
+		for name, d := range map[string]evidence.Derivation{
+			"r55":  {ParentID: parent.ID, ParentSHA256: parent.SHA256, FSType: "ext4", Recovery: &evidence.Recovery{Class: evidence.ClassDeletedFile, Method: "fat-contiguous", Confidence: &c55}},
+			"rcut": {ParentID: "missing", FSType: "ext4", Recovery: &evidence.Recovery{Class: evidence.ClassDeletedFile, Method: "fat-contiguous", Confidence: &c55}},
+		} {
+			d.FSPath = ppath(name)
+			p.recs[name] = pcapture(t, c, "files/"+name+".dat", evidence.Source{Kind: "recover", RemotePath: ppath(name), Derived: &d}, pData+name)
+		}
+	})
+	return p
+}
+
+func recoveredRowsWith(t *testing.T, reg regFn, dir string, extra ...string) []rowJSON {
+	t.Helper()
+	args := append([]string{"records", "list", "--case", dir, "--json", "--limit", "1000"}, extra...)
+	code, out, _ := runP(t, reg, args...)
+	if code != 0 {
+		t.Fatalf("records list: %d\n%s", code, out)
+	}
+	var l struct {
+		Records []rowJSON `json:"records"`
+	}
+	if err := json.Unmarshal(jsonPart(out), &l); err != nil {
+		t.Fatal(err)
+	}
+	return l.Records
+}
+
+func TestParseRunIncludeRecovered(t *testing.T) {
+	p := recoveredPfx(t)
+	reg := registry(t, "", good("a"), good("r55"), good("rcut"))
+	jobCount := func(out string) int {
+		var sum struct {
+			Jobs []struct {
+				ArtifactID string `json:"artifact_id"`
+			} `json:"jobs"`
+		}
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		if err := json.Unmarshal([]byte(lines[len(lines)-1]), &sum); err != nil {
+			t.Fatalf("summary: %v\n%s", err, out)
+		}
+		return len(sum.Jobs)
+	}
+	code, out, e := runP(t, reg, "parse", "run", "--case", p.dir, "--json")
+	if code != 0 || jobCount(out) != 1 {
+		t.Fatalf("without the flag: exit %d, %d jobs, want 1\n%s\n%s", code, jobCount(out), out, e)
+	}
+	code, out, e = runP(t, reg, "parse", "run", "--case", p.dir, "--json", "--include-recovered")
+	if code != 0 || jobCount(out) != 3 {
+		t.Fatalf("with the flag: exit %d, %d jobs, want 3\n%s\n%s", code, jobCount(out), out, e)
+	}
+	_, list, _ := runP(t, reg, "records", "list", "--case", p.dir, "--limit", "100")
+	if strings.Count(list, "[recovered:fat-contiguous]") == 0 {
+		t.Errorf("no record of a recovered artifact is marked recovered:\n%s", list)
+	}
+	r55 := recoveredRowsWith(t, reg, p.dir, "--artifact", p.recs["r55"].ID)
+	if len(r55) == 0 {
+		t.Error("the recovered artifact produced no record")
+	}
+	for _, r := range r55 {
+		if !r.Recovered || !r.Deleted || r.Confidence == nil || *r.Confidence > 55 {
+			t.Errorf("record %+v of the recovered artifact is not recovered, deleted and capped at 55", r)
+		}
+	}
+	cut := recoveredRowsWith(t, reg, p.dir, "--artifact", p.recs["rcut"].ID)
+	if len(cut) == 0 {
+		t.Error("the cut-trail artifact produced no record")
+	}
+	for _, r := range cut {
+		if !r.Recovered || r.Confidence == nil || *r.Confidence > 25 {
+			t.Errorf("record %+v of the cut-trail artifact is not recovered and capped at 25 (cap unknown)", r)
+		}
+	}
+	for _, r := range recoveredRowsWith(t, reg, p.dir, "--artifact", p.recs["a"].ID) {
+		if r.Recovered {
+			t.Errorf("the live artifact's record %+v is recovered", r)
+		}
+	}
+}
+
+func TestParseRunArtifactAloneRunsARecoveredArtifact(t *testing.T) {
+	p := recoveredPfx(t)
+	reg := registry(t, "", good("r55"))
+	code, out, e := runP(t, reg, "parse", "run", "--case", p.dir, "--artifact", p.recs["r55"].ID)
+	if code != 0 || !strings.Contains(out, "1 job(s)") {
+		t.Fatalf("exit %d\n%s\n%s", code, out, e)
+	}
+	rows := recoveredRowsWith(t, reg, p.dir)
+	if len(rows) == 0 {
+		t.Fatal("no records")
+	}
+	for _, r := range rows {
+		if !r.Recovered {
+			t.Errorf("record %+v of a recovered artifact is live", r)
+		}
+	}
+}
+
+func TestParsePlanRecoveredMarker(t *testing.T) {
+	p := recoveredPfx(t)
+	reg := registry(t, "", good("a"), good("r55"), good("rcut"))
+	code, out, e := runP(t, reg, "parse", "plan", "--case", p.dir)
+	if code != 0 {
+		t.Fatalf("exit %d\n%s\n%s", code, out, e)
+	}
+	if !strings.Contains(out, "2 recovered or carved artifacts are not discovered (use --include-recovered)") {
+		t.Errorf("no count line:\n%s", out)
+	}
+	if strings.Contains(out, "[recovered:") || strings.Contains(out, ppath("r55")) {
+		t.Errorf("a recovered job is listed without the flag:\n%s", out)
+	}
+	code, out, e = runP(t, reg, "parse", "plan", "--case", p.dir, "--include-recovered")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s\n%s", code, out, e)
+	}
+	if !strings.Contains(out, "[recovered:fat-contiguous conf 55]") {
+		t.Errorf("no complete-trail marker:\n%s", out)
+	}
+	if !strings.Contains(out, "[recovered:fat-contiguous conf unknown]") {
+		t.Errorf("no cut-trail marker:\n%s", out)
+	}
+	if strings.Contains(out, "not discovered") {
+		t.Errorf("a count line with the flag:\n%s", out)
+	}
+	liveRow := false
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, ppath("a")) {
+			liveRow = true
+			if strings.Contains(line, "[recovered:") {
+				t.Errorf("the live job is marked recovered: %s", line)
+			}
+		}
+	}
+	if !liveRow {
+		t.Errorf("the live job is missing:\n%s", out)
+	}
+
+	// JSON: unknown is never absent
+	type planJSON struct {
+		Rows []struct {
+			ArtifactID string `json:"artifact_id"`
+			Recovered  *struct {
+				Class      string `json:"class"`
+				Method     string `json:"method"`
+				Confidence *int   `json:"confidence"`
+				CapUnknown bool   `json:"cap_unknown"`
+			} `json:"recovered"`
+		} `json:"rows"`
+		Counts struct {
+			RecoveredExcluded *int `json:"recovered_excluded"`
+		} `json:"counts"`
+	}
+	var pl planJSON
+	code, out, e = runP(t, reg, "parse", "plan", "--case", p.dir, "--include-recovered", "--json")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s\n%s", code, out, e)
+	}
+	if err := json.Unmarshal([]byte(out), &pl); err != nil {
+		t.Fatal(err, out)
+	}
+	if pl.Counts.RecoveredExcluded == nil || *pl.Counts.RecoveredExcluded != 0 {
+		t.Errorf("counts.recovered_excluded = %v, want 0 with the flag", pl.Counts.RecoveredExcluded)
+	}
+	seen := 0
+	for _, r := range pl.Rows {
+		switch r.ArtifactID {
+		case p.recs["r55"].ID:
+			seen++
+			if r.Recovered == nil || r.Recovered.Method != "fat-contiguous" || r.Recovered.Confidence == nil || *r.Recovered.Confidence != 55 || r.Recovered.CapUnknown {
+				t.Errorf("r55: %+v", r.Recovered)
+			}
+		case p.recs["rcut"].ID:
+			seen++
+			if r.Recovered == nil || !r.Recovered.CapUnknown {
+				t.Errorf("rcut: %+v", r.Recovered)
+			}
+		case p.recs["a"].ID:
+			seen++
+			if r.Recovered != nil {
+				t.Errorf("live row marked recovered: %+v", r.Recovered)
+			}
+		}
+	}
+	if seen != 3 {
+		t.Errorf("%d of 3 rows found", seen)
+	}
+	_, out, _ = runP(t, reg, "parse", "plan", "--case", p.dir, "--json")
+	pl = planJSON{}
+	if err := json.Unmarshal([]byte(out), &pl); err != nil || pl.Counts.RecoveredExcluded == nil || *pl.Counts.RecoveredExcluded != 2 {
+		t.Errorf("counts.recovered_excluded without the flag: %v (%v)", pl.Counts.RecoveredExcluded, err)
 	}
 }
 
@@ -683,12 +876,12 @@ func TestParseExitCodes(t *testing.T) {
 		{"unknown parser", one(nil, "--parser", "zzz"), 2, ""},
 		{"parser version not held", one(nil, "--parser", "a@9.9.9"), 2, ""},
 		{"malformed parser", one(nil, "--parser", "a@"), 2, ""},
-		{"recover artifact", func(t *testing.T) (*pfx, regFn, []string) {
+		// a recover artifact is parser input when named with --artifact (plan 4G); kinds that are never input stay refused
+		{"import artifact", func(t *testing.T) (*pfx, regFn, []string) {
 			p := newPfx(t, "a")
 			var id string
 			p.edit(func(c *evidence.Case) {
-				d := &evidence.Derivation{ParentID: "p", ParentSHA256: strings.Repeat("0", 64), FSType: "ext4", FSPath: ppath("a")}
-				id = pcapture(t, c, "files/r", evidence.Source{Kind: "recover", RemotePath: ppath("a"), Derived: d}, "x").ID
+				id = pcapture(t, c, "files/r", evidence.Source{Kind: "import", RemotePath: ppath("a")}, "x").ID
 			})
 			return p, registry(t, "", good("a")), []string{"--artifact", id}
 		}, 2, ""},
