@@ -14,7 +14,7 @@ import (
 
 // slackFATImage is a FAT16 image whose three files leave non-uniform residue in their last cluster, plus a
 // non-uniform volume tail past the end of the filesystem.
-func slackFATImage() []byte {
+func verifySlackFATImage() []byte {
 	files := []fattest.File{
 		{Path: "A.TXT", Data: bytes.Repeat([]byte{'a'}, 10)},
 		{Path: "B.TXT", Data: bytes.Repeat([]byte{'b'}, 1000)},
@@ -41,7 +41,7 @@ func slackFATImage() []byte {
 func TestCaseVerifySlackTamperExits4(t *testing.T) {
 	d := Deps{}
 	dir := newCLICase(t)
-	code, out := run(t, d, "image", "import", "--case", dir, "--json", imgFile(t, slackFATImage()))
+	code, out := run(t, d, "image", "import", "--case", dir, "--json", imgFile(t, verifySlackFATImage()))
 	if code != 0 {
 		t.Fatalf("image import: %d %s", code, out)
 	}
