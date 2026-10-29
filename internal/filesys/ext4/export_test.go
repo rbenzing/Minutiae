@@ -249,3 +249,63 @@ func (f *FS) SetMapStaleCaps(runs int) {
 
 // MapWork reports the work the stale-map walks have done: entries examined plus map blocks read.
 func (f *FS) MapWork() int64 { return f.mapWork.Load() }
+
+// SetLeafCaps lowers the leaf index caps (before PrepareRecovery); a value of 0 or less leaves that cap as it is.
+func (f *FS) SetLeafCaps(total, perKey int) {
+	if total > 0 {
+		f.leafTotalCap = total
+	}
+	if perKey > 0 {
+		f.leafKeyCap = perKey
+	}
+}
+
+// SetLeafChunk sets the size of the chunks the free-space pass reads (before PrepareRecovery).
+func (f *FS) SetLeafChunk(n int) { f.leafChunk = n }
+
+// LeafIndexStats reports the number of leaves the index holds (-1 when it is not built), whether a cap was reached
+// (a leaf was dropped), and the bytes the free-space pass has read.
+func (f *FS) LeafIndexStats() (leaves int, full bool, bytesRead int64) {
+	f.leafMu.Lock()
+	defer f.leafMu.Unlock()
+	if f.leafIdx == nil {
+		return -1, false, f.leafBytes.Load()
+	}
+	return f.leafIdx.n, f.leafIdx.full || f.leafIdx.dropped > 0, f.leafBytes.Load()
+}
+
+// LeafKey is leafKey.
+var LeafKey = leafKey
+
+// SeedKey is seedKey.
+var SeedKey = seedKey
+
+// LeafTail is the tail offset of a full-capacity leaf of block size bs.
+var LeafTail = leafTail
+
+// InodeSeed is the checksum seed of the blocks of inode num with generation gen.
+func (f *FS) InodeSeed(num, gen uint32) uint32 { return f.inodeSeed(&inode{num: num, generation: gen}) }
+
+// LeafLookup returns the blocks the index holds under key (nil when none), and whether the key or the whole index
+// dropped leaves.
+func (f *FS) LeafLookup(key uint32) (blks []uint64, capped bool) {
+	f.leafMu.Lock()
+	defer f.leafMu.Unlock()
+	if f.leafIdx == nil {
+		return nil, false
+	}
+	for _, r := range f.leafIdx.byKey[key] {
+		blks = append(blks, r.blk)
+	}
+	_, kf := f.leafIdx.keyFull[key]
+	return blks, kf || f.leafIdx.full
+}
+
+// PlausibleLeaf is plausibleLeaf.
+func PlausibleLeaf(block []byte, bs int, blocks uint64) (first, end uint32, entries uint16, ok bool) {
+	r, ok := plausibleLeaf(block, bs, blocks)
+	return r.first, r.end, r.entries, ok
+}
+
+// IBlock returns a copy of the inode i_block area.
+func (in *inode) IBlock() []byte { return append([]byte(nil), in.block[:]...) }

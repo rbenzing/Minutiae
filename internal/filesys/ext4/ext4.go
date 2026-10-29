@@ -70,6 +70,8 @@ type FS struct {
 	// Tests bound it; nothing reads it.
 	mapRunsCap int
 	mapWork    atomic.Int64
+	// leafState is the free-space leaf index (recover_leaf.go).
+	leafState
 }
 
 // readFull reads exactly len(p) bytes at off; a read that returns all the
