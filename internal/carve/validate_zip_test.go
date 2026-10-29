@@ -128,6 +128,8 @@ func TestZIPRejects(t *testing.T) {
 		{"zip64 cd offset", patch(func(b []byte) { put32(b, eocd+16, 0xFFFFFFFF) }), "zip64"},
 		{"zip64 locator before the EOCD", slices.Concat(good[:eocd], zip64Locator, good[eocd:]), "zip64"},
 		{"disk number 1", patch(func(b []byte) { put16(b, eocd+4, 1) }), "multi-disk"},
+		{"disk number 1 on a stray candidate (size off)", patch(func(b []byte) { put16(b, eocd+4, 1); put32(b, eocd+12, 1) }), "no-eocd"},
+		{"disk number 1 on a stray candidate (count differs)", patch(func(b []byte) { put16(b, eocd+4, 1); put16(b, eocd+8, 2) }), "no-eocd"},
 		{"cd disk 1", patch(func(b []byte) { put16(b, eocd+6, 1) }), "multi-disk"},
 		{"entries on this disk differ", patch(func(b []byte) { put16(b, eocd+8, 2) }), "no-eocd"},
 		{"count too high (walk overshoots)", patch(func(b []byte) { put16(b, eocd+8, 4); put16(b, eocd+10, 4) }), "no-eocd"},

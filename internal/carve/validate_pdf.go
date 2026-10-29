@@ -133,7 +133,7 @@ func pdfRevision(w *Window, off int64) (int64, error) {
 	}
 	pos += n
 	var x int64
-	digits := 0
+	digits, sig := 0, 0
 	for ; pos < w.Len(); pos++ {
 		b, err := w.Byte(pos)
 		if err != nil {
@@ -142,8 +142,11 @@ func pdfRevision(w *Window, off int64) (int64, error) {
 		if b < '0' || b > '9' {
 			break
 		}
-		if digits++; digits > 15 {
-			return 0, nil
+		digits++
+		if sig > 0 || b != '0' {
+			if sig++; sig > 15 {
+				return 0, nil
+			}
 		}
 		x = x*10 + int64(b-'0')
 	}

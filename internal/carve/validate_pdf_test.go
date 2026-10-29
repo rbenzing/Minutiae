@@ -218,3 +218,12 @@ func TestPDFRealEncoderObjects(t *testing.T) {
 		t.Fatalf("%d pdf objects in the expectations, want 2", n)
 	}
 }
+
+// TestPDFZeroPaddedStartxref: leading zeros do not count toward the 15-digit
+// cap of the startxref offset.
+func TestPDFZeroPaddedStartxref(t *testing.T) {
+	obj := []byte("%PDF-1.7\nxref\nstartxref\n0000000000000000009\n%%EOF\n")
+	if v := validatePDF(pdfWindow(obj, newBudget(1<<30))); v.Outcome != Footer || v.Length != int64(len(obj)) {
+		t.Fatalf("verdict = %+v, want footer length %d", v, len(obj))
+	}
+}

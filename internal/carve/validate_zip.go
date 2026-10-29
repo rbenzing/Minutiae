@@ -91,10 +91,15 @@ func zipCandidate(w *Window, p int64) (Verdict, zipState, error) {
 	}
 	le16 := func(b []byte, o int) int64 { return int64(b[o]) | int64(b[o+1])<<8 }
 	le32 := func(b []byte, o int) int64 { return le16(b, o) | le16(b, o+2)<<16 }
-	if le16(e[:], 4) != 0 || le16(e[:], 6) != 0 {
-		return Verdict{}, zipMultiDisk, nil
-	}
 	n, total, size, off := le16(e[:], 8), le16(e[:], 10), le32(e[:], 12), le32(e[:], 16)
+	if le16(e[:], 4) != 0 || le16(e[:], 6) != 0 {
+		// Counted as a split archive only when the other fields are plausible;
+		// a stray signature in random data stays "no-eocd".
+		if n == total && total >= 1 && off >= 30 && off+size == p {
+			return Verdict{}, zipMultiDisk, nil
+		}
+		return Verdict{}, zipSkipped, nil
+	}
 	if n == 0xFFFF || total == 0xFFFF || size == 0xFFFFFFFF || off == 0xFFFFFFFF {
 		return Verdict{Outcome: Rejected, Reason: "zip64"}, zipRejects, nil
 	}
