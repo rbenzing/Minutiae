@@ -11,7 +11,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "ios.addressbook"
-	Version = "1.0.0"
+	Version = "1.0.1"
 )
 
 // Parser is the ios.addressbook parser. The zero value is the parser; it holds no state.
@@ -21,11 +21,13 @@ type Parser struct {
 
 var _ parse.RowMapper = Parser{}
 
-// Meta describes the parser. Claims stay empty until plan 4G implements typed recovery.
+// Meta describes the parser. Claims are exactly ClaimableTables: a promise that typed recovery (plan 4G) can map
+// the claimed table's recovered rows, each to one person or a counted unmapped reason (4h-R6).
 func (Parser) Meta() parse.Meta {
 	return parse.Meta{
 		Name: Name, Version: Version, Title: "iOS address book",
 		Platforms: []string{parse.PlatformIOS},
+		Claims:    claimsOf(ClaimableTables()),
 		Emits:     []parse.Emit{{Type: contact.Type, PayloadVersion: contact.PayloadVersion}},
 		Inputs: []parse.InputSpec{
 			{Role: "db", Globs: []string{"ios:*/Library/AddressBook/AddressBook.sqlitedb"}, Required: true},
@@ -84,4 +86,16 @@ func (p Parser) photos(ctx context.Context, in *parse.Input) (photoSet, string, 
 		return photoIndexLimit(ctx, in, p.photoCap)
 	}
 	return photoIndex(ctx, in)
+}
+
+// ClaimableTables returns the tables whose mapping is total (every row gives one record or an Unmappable counted
+// warning): ABPerson (4h-R6). A person that identifies nobody, or one without a rowid, is unmapped, never invented.
+func ClaimableTables() []string { return []string{"ABPerson"} }
+
+func claimsOf(tables []string) []parse.TableClaim {
+	out := make([]parse.TableClaim, len(tables))
+	for i, t := range tables {
+		out[i] = parse.TableClaim{Role: "db", Table: t}
+	}
+	return out
 }

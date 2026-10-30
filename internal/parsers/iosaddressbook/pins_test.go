@@ -6,6 +6,7 @@ package iosaddressbook_test
 // changes this file in the same commit, so a silent regeneration shows in review.
 var fixturePins = map[string]string{
 	"current.db":         "8cb8cd6854fabe8185b74ed334dfe32d564a9d2b022d070b494696a99a902476",
+	"deleted.db":         "afb11178e6eddf596cfabe9676d4b887334d610560292a85a3ba41c12fe0da73",
 	"huge-contact.db":    "74f848181d7157addba7e1ca77ce56a5d82ee17afe6a6716b1dc92f6fab325c9",
 	"older-schema.db":    "dbf9ad995347faf3b644fc349abd5bd762d59099e1051a2a956db0418bbeaeb2",
 	"with-images.db":     "e8e508e26b26127e02452ecdb8d0c8bbef520d6be92f0d91f0c8ec5d3612b616",
