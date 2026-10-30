@@ -1737,10 +1737,11 @@ py -3 tools/fixtures/telephony_gen.py --family calllog --recover-oracle --out in
 py -3 tools/fixtures/telephony_gen.py --family contacts --recover-oracle --out internal/parsers/androidcontacts/testdata
 py -3 tools/fixtures/telephony_gen.py --family chromium --recover-oracle --out internal/parsers/chromium/testdata
 py -3 tools/fixtures/telephony_gen.py --family safari --recover-oracle --out internal/parsers/safari/testdata
+py -3 tools/fixtures/telephony_gen.py --family ios_calls --recover-oracle --out internal/parsers/ioscalls/testdata
 ```
 
 writes `<variant>.recover.expect.json` for every variant that has a scenario (`av-freelist-512`, `wal-uncheckpointed`,
-`hot-journal`, `mmssms-pdu-deleted`; `calllog-deleted`, `calllog-wal-edit`; `contacts-deleted`, `contacts-wal-edit`; `chromium-deleted`; Safari `deleted`): what the typed recovery pass must make of the fixture. It is computed from the
+`hot-journal`, `mmssms-pdu-deleted`; `calllog-deleted`, `calllog-wal-edit`; `contacts-deleted`, `contacts-wal-edit`; `chromium-deleted`; Safari `deleted`; `ios_calls` `coredata-deleted`, `legacy-deleted`): what the typed recovery pass must make of the fixture. It is computed from the
 COMMITTED files of the variant, never from Go output: `sqlite_oracle.build_history` (the independent page walker of the
 SQLite fixtures) finds in the page images the versions the scenario says should be history (`wants`: deleted rows,
 pre-update versions, interrupted versions) and gives method, relation, basis (`fit` with the claimed table as label on
@@ -1852,6 +1853,10 @@ py -3 tools/fixtures/telephony_gen.py --family ios_calls --check
 | `coredata-current` | `callhistory-coredata.sql` | 20 rows: in answered and missed, out answered, out unanswered (outcome `unknown`), `ZORIGINATED` 2; `ZCALLTYPE` 1, 8, 16, 99; three providers; `ZADDRESS` TEXT, BLOB, BLOB with trailing garbage, NULL, empty; `ZDATE` REAL, integral REAL (stored INTEGER), 0, -1, year 2100; `ZDURATION` 0, 12.5, -3, `+Inf`, 2e9, NULL; `ZREAD` 0/1/NULL |
 | `coredata-wal` | `callhistory-coredata.sql` | 8 rows in the database, 3 calls only in the `-wal` (a killed writer) |
 | `legacy-call-history` | `callhistory-legacy.sql` | 8 rows: Unix-seconds dates, `flags` 4, 5, 8, 1769472 (kept raw, direction unknown), a fractional REAL date, date 0, negative duration, NULL and empty address |
+| `coredata-deleted` | `callhistory-coredata.sql` | page size 1024, `secure_delete = OFF`: 60 `ZCALLRECORD` rows (a 130-byte caller name, fractional `ZDURATION` so a REAL stays a REAL), rows 21 to 50 deleted; the typed recovery oracle lists the 22 typed calls (Z_PK 29 to 50) of the freed whole leaf pages (`fit`, 60), none unmapped. 1.8 KiB gzipped |
+| `legacy-deleted` | `callhistory-legacy.sql` | the same on `call`: 60 rows, rows 21 to 50 deleted; the oracle lists the 20 typed calls (ROWID 31 to 50) of the freed pages. 1.5 KiB gzipped |
+
+The `*-deleted` variants were generated with `--variant coredata-deleted legacy-deleted` on a host whose SQLite (3.53.4) differs from the one that wrote the three older variants (3.49.1); regenerating all five there changes the older files, so only the new ones were written and pinned by hand. The oracle lists fewer than the 30 deleted rows because the rebalance after the delete rewrites the page that keeps live cells, which loses the stale cells of the first deleted rows.
 
 ### ios-addressbook (plan 4E, Task 13)
 

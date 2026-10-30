@@ -6,7 +6,9 @@ package ioscalls_test
 // changes this file in the same commit, so a silent regeneration shows in review.
 var fixturePins = map[string]string{
 	"coredata-current.db":    "24d4690bd0475f3ba8a9250eadd34fd6e742511fed2a0deda338992dc27b38b7",
+	"coredata-deleted.db":    "849d75c958dd70e74038d12d3255549983984acdccf1f6f4e7bc259a72de52fa",
 	"coredata-wal.db":        "bbb06bdd2bb3239dba01687d025189ac8c77a756571f9ea76329e707522bc443",
 	"coredata-wal.wal":       "eccd6384cdc52450c3a6898d269afc791701779e5546d262dc8aca0164023215",
 	"legacy-call-history.db": "506014153b71508ae5e90b590a3a400aadaa89de9b4898fe1e5f8f45ce863e48",
+	"legacy-deleted.db":      "8058e999c972ffa60a1f1d13822b51751b96c1c499d332f1491700a49436d47b",
 }
