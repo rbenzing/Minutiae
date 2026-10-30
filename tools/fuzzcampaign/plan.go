@@ -17,7 +17,7 @@ type Profile struct {
 // Profiles are the selectable campaigns. The prefix "" matches every package.
 var Profiles = []Profile{
 	{"decoders", []string{"internal/decode"}},
-	{"readers", []string{"internal/sqlitefile", "internal/dbrecover", "internal/filesys", "internal/image", "internal/volume"}},
+	{"readers", []string{"internal/sqlitefile", "internal/dbrecover", "internal/filesys", "internal/image", "internal/volume", "internal/carve"}},
 	{"parsers", []string{"internal/parsers", "internal/recordtypes"}},
 	{"all", []string{""}},
 }

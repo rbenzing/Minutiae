@@ -54,10 +54,16 @@ func TestVerifyInlineRunsAndSidecarTogetherIsAProblem(t *testing.T) {
 // FA-m3: the path scope of a carved artifact is tied to Recovery.Scope, and a slack or journal artifact
 // lives under the directory of its own partition (spec 5.1).
 func TestVerifyScopeDirectoryIsTiedToTheRecovery(t *testing.T) {
+	allocFor := func(scope string) *evidence.AllocSummary { // an artifact has no allocation state (R5)
+		if scope == "artifact" {
+			return &evidence.AllocSummary{Unknown: 64}
+		}
+		return &evidence.AllocSummary{Free: 64}
+	}
 	carved := func(scope, path string) evidencetest.RecoveredSpec {
 		return evidencetest.RecoveredSpec{
 			Kind: evidence.KindCarve, Class: evidence.ClassCarved, Method: "carve-jpeg", Scope: scope, Path: path,
-			Runs: []evidence.Run{{Offset: 0, Length: 64}},
+			Runs: []evidence.Run{{Offset: 0, Length: 64}}, Alloc: allocFor(scope),
 		}
 	}
 	slack := func(path string) evidencetest.RecoveredSpec {

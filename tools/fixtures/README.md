@@ -45,6 +45,7 @@ Scripts must keep LF line endings (`.gitattributes` enforces this).
 | `f2fs.sh` + `f2fs_tree.sh` + `f2fs_oracle.py` + `f2fs_normalize.py` | `f2fs-extra-attr`, `f2fs-default` (`.img.gz` + `.expect.json`, in `internal/filesys/f2fs/testdata/`) | the source tree handed to `sload.f2fs` (`f2fs_oracle.py tree`: type, size, sha256, mode, mtime, symlink targets), and the reports of `fsck.f2fs -l/-f/-t/-M`, `dump.f2fs -s/-n` and `blkid` on the finished image (`f2fs_oracle.py layout`: superblock and checkpoint fields, features, uuid, label, the NAT block address of every inode, the data-block extents of every file, the free main-area blocks from the SIT bitmaps). The oracle cross-checks the tools against each other (fsck vs dump on every shared field, SIT popcount vs `valid_block_count`, fsck's tree vs the source tree, the file map vs file sizes) and the generator fails on any mismatch, on an unclean `fsck.f2fs`, or when no file is fragmented |
 | `fat_recover.sh` + `fat_recover_oracle.py` (image `minutiae-recover-fixtures`, `Dockerfile.recover`; `gen.sh fat-recover`) | `fat12-recover`, `fat16-recover`, `fat32-recover` (`.img.gz` + `.expect.json`, in `internal/filesys/fat/testdata/recover/`) | volumes written and deleted by the kernel `vfat` driver in the QEMU guest; an independent Python reader of the finished image checked against `mshowfat`, `fsck.fat -v` and the source tree (see "FAT recovery fixtures (3B)") |
 | `exfat_recover.sh` + `exfat_recover_oracle.py` (image `minutiae-recover-fixtures`; `gen.sh exfat-recover`) | `exfat-recover` (`.img.gz` + `.expect.json`, in `internal/filesys/exfat/testdata/recover/`) | a volume written and deleted by the kernel `exfat` driver in the QEMU guest; an independent Python parse of the finished image checked against the allocation bitmap, `dump.exfat` and the source tree (see "exFAT recovery fixture (3B)") |
+| `carve_gen.sh` + `carve_objects.py` + `carve_place.py` (image `minutiae-carve-fixtures`, `Dockerfile.carve`; `gen.sh carve`, NOT part of `all`) | `internal/carve/testdata/objects/` (22 real-encoder objects + `objects.expect.json`) and `carve-fat12`, `carve-ext4`, `carve-raw` (`.img.gz` + `carve.expect.json`, in `internal/examine/testdata/carve/`) | objects from Pillow, ffmpeg (libx264), `heif-enc`, `sqlite3`, `zip`, `gzip`, `plistlib`; placement read back from `mshowfat`, `fsck.fat -v`, `debugfs blocks` and `dumpe2fs` (see "Carving fixtures (3E)") |
 
 ## Determinism
 
@@ -1469,6 +1470,144 @@ No new image: `minutiae-recover-fixtures` (`Dockerfile.recover`: Debian bookworm
 (`UnicodeData.txt`, `CaseFolding.txt`, `DerivedCoreProperties.txt`) are committed gzipped in
 `internal/filesys/utf8fold/testdata/ucd-12.1.0/` with the Unicode licence (`LICENSE-unicode.txt`) and
 `SOURCES` (URLs and SHA-256 of each file).
+
+## Carving fixtures (3E)
+
+Signature carving (plan 3E) needs whole contiguous objects of the twelve spec 7.2 families, produced by real
+encoders, sitting in free space that a filesystem tool reports as free. `carve_gen.sh` builds them in the
+`minutiae-carve-fixtures` image (`Dockerfile.carve`); `gen.sh carve` runs it. No QEMU and no guest kernel: carving
+reads free bytes and never consults deleted metadata, so how a deletion happened does not matter, and `mdel` and
+`debugfs rm` free clusters and blocks without erasing them. Nothing is privileged and no volume is attached to the
+host (the archtest fixture-script guard covers `Dockerfile.carve` and both Python files).
+
+```bash
+docker build -f tools/fixtures/Dockerfile.carve -t minutiae-carve-fixtures tools/fixtures
+docker run --rm --memory 768m --network none -v "$PWD:/work" -w /work minutiae-carve-fixtures bash tools/fixtures/gen.sh carve
+```
+
+`gen.sh` stops, naming the image to build, when `heif-enc` or `ffmpeg` is missing. The build itself needs the network
+(the pinned snapshot); the generation run does not. The Docker VM is assumed to have 1 GiB; the run needs far less.
+
+### Toolchain probe (2026-10-24)
+
+`Dockerfile.carve` is `debian:bookworm-slim` (the digest `Dockerfile.recover` pins) with apt reading
+`snapshot.debian.org` at `20261003T000000Z`; every package is pinned to the version the snapshot resolves (found with
+`apt-cache policy` in a throwaway container): `python3 3.11.2-1+b1`, `python3-pil 9.4.0-1.1+deb12u1`,
+`ffmpeg 7:5.1.9-0+deb12u1`, `libheif-examples 1.15.1-1+deb12u1`, `e2fsprogs 1.47.0-2+b2`, `dosfstools 4.2-1`,
+`mtools 4.0.33-1+really4.0.32-1`, `fdisk 2.38.1-5+deb12u3`, `faketime 0.9.10-2.1`, `sqlite3 3.40.1-2+deb12u2`,
+`zip 3.0-13+deb12u1`, `gzip 1.12-1`, `tar 1.34+dfsg-1.2+deb12u1`, `jq 1.6-2.1+deb12u2`. Probed inside that image
+with the first snapshot (no fallback of ruling 3E-R27 was needed):
+
+| Capability | Result |
+|---|---|
+| Pillow WebP | `PIL.features.check('webp')` is `True` (Pillow 9.4.0) |
+| HEIC | `heif-enc` encodes a 64x48 PNG to HEIC (exit 0); `heif-info` reports `main brand: heic`, `compatible brands: mif1, heic, miaf`; `carve_objects.py` fails unless the brand is `heic` |
+| MP4, MOV, 3GP | `ffmpeg -c:v libx264`: `major_brand` `isom`, `qt  `, `3gp6` (`ffprobe`) |
+| WAV | `ffmpeg -c:a pcm_s16le` |
+| Ogg | `ffmpeg -c:a libvorbis` |
+
+`heif-enc` (x265) prints `set_mempolicy: Operation not permitted` under Docker's default seccomp profile; it is
+harmless and the output is unaffected.
+
+### Objects (`carve_objects.py`, `internal/carve/testdata/objects/`)
+
+22 files, 73,542 bytes in all (plus `objects.expect.json`, 11.5 KiB), each from a real encoder, 64x48 where it is an
+image: `jpeg-baseline.jpg`, `jpeg-progressive.jpg` (a seeded noise layer, 4:4:4, quality 100, so that it spans three
+4 KiB clusters and can be fragmented), `png-rgb.png`, `png-palette.png`, `gif89a.gif` (two frames), `gif87a.gif`,
+`webp-lossy.webp`, `webp-lossless.webp`, `heic.heic`, `mp4-h264.mp4`, `mov-h264.mov`, `3gp.3gp` (1 s of `testsrc`,
+`-threads 1`, `-fflags +bitexact`, no metadata), `sqlite.sqlite` (two tables, 5 pages of 4096 bytes), `bplist.plist`,
+`zip-mixed.zip` (one stored, one deflated entry), `apk-like.zip` (refined type `apk`), `docx-like.zip` (refined type
+`docx`), `pdf-single.pdf` (Pillow), `pdf-incremental.pdf` (that file plus an appended update: a new object, a new xref
+section and a trailer with `/Prev`, written by `carve_objects.py`), `gzip.gz` (`gzip -n`), `wav-pcm.wav`,
+`ogg-vorbis.ogg`. The whole script runs under a frozen clock (`faketime`), because Pillow stamps the PDF.
+
+`objects.expect.json`: `{"generator":{packages, pillow, commands},"objects":[{file, family, type, ext, size, sha256,
+expect, width, height, brand, facts}]}`. `type` and `ext` are the refined names of spec 7.2 (`apk`, `docx`, `mp4`,
+`heic`, ...). `expect` is the outcome the 3E rulings give a built-in object: `validated`, `footer` for every PDF and
+`bounded` for the gzip (no end can be found without inflating). `facts` are what a separate tool reports about the
+finished bytes: Pillow (format, mode, size, `progressive`, GIF version and frames, WebP `lossless`), `ffprobe`
+(`format_name`, `major_brand`, `compatible_brands`, codec, duration, frame count), `heif-info` (brand, MIME type,
+compatible brands), the `sqlite3` PRAGMAs (`page_size`, `page_count`, `integrity_check` is `ok`; the generator also
+asserts size = page size x page count), `zipfile` (`namelist()`, `testzip()` is `None`, the compression types),
+`plistlib` (round trip), the PDF `startxref` values and `%%EOF` offsets (a pure-Python check that every `startxref`
+points at `xref`), Python `gzip.decompress` (inflates), Python `wave` (channels, rate, frames) and `ffprobe` for the
+Ogg. Minutiae computes none of it.
+
+### Images (`carve_place.py`, `internal/examine/testdata/carve/`)
+
+Each image is pre-filled with the ASCII pattern `MINUTIAE-CARVE-FILL-` repeated; the generator asserts that no header
+of the twelve families occurs in it and, afterwards, that every free cluster or block nothing wrote still holds it
+(`carve-ext4`: or zeros, because `mke2fs` zeroes the last blocks of the device). Every object is also asserted from the
+tools: one contiguous run of ceil(size / cluster) clusters or blocks (`mshowfat`, `debugfs blocks`), every one free after
+deletion (`fsck.fat -v` used-cluster count against the live chain, `dumpe2fs` free ranges through `ext4_freeblocks.py`),
+and the bytes at `image_offset` hash to the object. The generator exits 1 on any failure or missing family.
+
+| Image | Size | Layout | Objects |
+|---|---|---|---|
+| `carve-fat12` | 4 MiB, 83,618 bytes gzipped | MBR (`sfdisk`, id `0x4d494e55`), one FAT12 partition at 1 MiB (3 MiB), `mkfs.fat -F 12 -s 8` (4 KiB clusters; the data area starts at byte 19,968 of the partition, so cluster starts are 512-aligned and not 4096-aligned in the image) under `faketime` | all 22 objects, `deleted` with `mdel`; `live.jpg` (a copy of `jpeg-baseline.jpg`, `live`); `archive.tar` and `true.elf` (a copy of `/usr/bin/true`, both `not-in-set`); `nested-outer.mp4` and `nested-inner.gif` (below); `unaligned-png-palette.png` |
+| `carve-ext4` | 8 MiB, 51,432 bytes gzipped | no table, `mke2fs -t ext4 -b 4096 -O ^has_journal`, fixed UUID and hash seed, `E2FSPROGS_FAKE_TIME` | `jpeg-baseline.jpg`, `png-rgb.png`, `heic.heic`, `mp4-h264.mp4`, `webp-lossy.webp`, `sqlite.sqlite`, `apk-like.zip`, `pdf-single.pdf`, `ogg-vorbis.ogg`, written with `debugfs -w write`, removed with `debugfs -w rm` |
+| `carve-raw` | 2 MiB, 54,127 bytes gzipped | no table, no filesystem | all 22 objects at 512-aligned offsets (`placed`), plus `unaligned-png-palette.png` and three controls |
+
+`carve.expect.json`: `{"generator":{packages, fill_pattern, objects_expect_sha256, commands},"images":[{name,
+image_sha256, size, table, partition_start, fs, block_size, objects, controls}]}` (`carve-fat12` also has
+`fragmented_chain`, the `mshowfat` chain of `fragmented.jpg`). `table` is `mbr` or `none`; `fs` is `fat`, `ext4` or
+`none`; `block_size` is the cluster or block size, `0` where there is no filesystem. An `objects` row is `{name, family,
+type, image_offset, length, sha256, state, expect, nested_in}`: `state` `deleted` (freed by the tool), `live`
+(allocated) or `placed` (written with no filesystem entry); `expect` is `validated`, `footer`, `bounded`, `nested`,
+`unaligned` or `not-in-set` (a type the carver does not know: tar, ELF); `nested_in` is the image offset of the outer
+object for `nested`. `live.jpg` is `validated` but allocated, so a scan of free space must not find it and a raw-scope
+scan finds it with allocation `allocated`. `expect` is the outcome of the object at its position under the default
+alignment; `--unaligned` and `--nested` also find headers that sit inside objects (a ZIP's later local headers, the
+Ogg pages, the JPEG stream inside a PDF), which are not objects and are not listed. A `controls` row is `{kind, name,
+image_offset, length, first_fragment_length, sha256}`:
+
+- `random`: 16 KiB of seeded random data; the generator re-seeds until no built-in header sits at a 512-aligned
+  position (a scan at every byte finds none either).
+- `text`: 8 KiB of prose that quotes `GIF89a`, the PNG signature, `RIFF....WEBP`, `....ftypisom` (at offsets 0, 512,
+  1024 and 1536 of its first cluster) and `FF D8 FF` (at the start of its second cluster).
+- `truncated`: the first 60% of `png-rgb.png`, at a cluster start, followed by fill.
+- `fragmented`: `fragmented.jpg`, a copy of `jpeg-progressive.jpg` written into a hole (a and b are written, a is
+  deleted, the file then takes a's cluster and continues after b), so its chain is two pieces; `first_fragment_length` is
+  the length of the first. A carver that reads on past the first piece reads fill. The generator asserts the chain is
+  NOT contiguous.
+
+Two more rows are objects, not controls: `unaligned-png-palette.png` is `png-palette.png` at a cluster start plus 7 bytes
+(`unaligned`, found only with `--unaligned`), and `nested-outer.mp4` is `mp4-h264.mp4` followed by a top-level `free` box
+whose payload holds 13 bytes of padding and then `gif89a.gif` (so the GIF starts 21 bytes into the box). The outer MP4
+is `validated` with the free box included; `nested-inner.gif` is `nested` with `nested_in` = the outer offset.
+
+Controls are placed in clusters or blocks that no object ever occupied, with one unused cluster between them, from the
+end of the volume downward.
+
+### Licence note and open items
+
+`true.elf` in `carve-fat12` is a byte copy of `/usr/bin/true` from the `coreutils 9.1` package of Debian bookworm (GPL).
+It is a negative control for the carver (an ELF is not in the signature set),
+and is kept as the only real ELF binary in the fixtures. Anyone redistributing the images owes the coreutils source
+offer for that file; if that is unwanted, replace it with a seeded random ELF-looking header (regenerate image and
+oracle together).
+
+Open generator items, not done because they change the committed images' oracle and need Docker to regenerate and
+verify: `carve_place.py` should record `data_start` (partition-relative) and `cluster_size` of the FAT12 image in
+`carve.expect.json` (the tests derive the data area start from `partition_start` meanwhile), `build_ext4` should allow
+zero blocks only among the trailing blocks (about 16) instead of anywhere, and `nested-outer.mp4` could be checked with
+`ffprobe` like the other MP4 files.
+
+### Determinism
+
+Two generation runs, each in a fresh container, give byte-identical objects, images and oracles (compared with
+`diff -r` on the whole output on 2026-10-24); the recorded commands name `<objects>` and `<work>`, not the real
+directories. The tests still check `image_sha256` first. How: the clock is frozen (`faketime` absolute date), x264 runs
+with one thread and `bitexact` flags, the Ogg muxer's serial number is fixed by `bitexact`, `tar --sort=name` and
+`gzip -n` carry no names or times. Sizes: each `.img.gz` is at most 250 KiB (83,618, 51,432 and 54,127 bytes), the
+objects directory is 85 KiB with its oracle.
+
+### Self-checks
+
+`TestObjectsFixtureIntact` and `TestCarveFixturesIntact` (internal/examine): every object file's size and SHA-256 equal
+`objects.expect.json`, nothing else is in the objects directory, each decompressed image hashes to `image_sha256`, and
+the bytes at `image_offset` hash to the row's `sha256` for every object of every image. The 250 KiB budgets are
+tested too.
 
 ## Adding a fixture
 

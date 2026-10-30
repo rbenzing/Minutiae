@@ -14,8 +14,11 @@ func checkAcquisitionGaps(ps *problemSet, r ManifestRecord, pre string) {
 	}
 	g := d.AcquisitionGaps
 	switch {
-	case r.Source.Kind != "extract" && r.Source.Kind != "unallocated":
-		ps.add(rKindShape, "%sacquisition gap note on kind %q (only extract and unallocated artifacts take one)", pre, r.Source.Kind)
+	case r.Source.Kind == "carve" && d.Recovery != nil && d.Recovery.Scope == "artifact":
+		ps.add(rKindShape, "%sacquisition gap note on a carve of scope artifact (its parent is not a container)", pre)
+		return
+	case r.Source.Kind != "extract" && r.Source.Kind != "unallocated" && r.Source.Kind != "carve":
+		ps.add(rKindShape, "%sacquisition gap note on kind %q (only extract, unallocated and carve artifacts take one)", pre, r.Source.Kind)
 		return
 	case g.Bytes < 0 || g.Ranges < 0:
 		ps.add(rKindShape, "%sacquisition gap note has a negative count", pre)
