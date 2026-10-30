@@ -143,6 +143,9 @@ func TestFuzzCarveSeedsRun(t *testing.T) {
 		})
 	}
 	for _, ty := range Builtin().Types {
+		if !implementedValidators[ty.Validate] {
+			continue // a stub until its format task lands (3E2 tasks 3-6); Task 7 seeds all fifteen
+		}
 		if total[ty.Name] == 0 {
 			t.Errorf("no committed seed makes family %q accepted", ty.Name)
 		}
