@@ -41,6 +41,9 @@ type typedVariant struct{ dir, variant, remote, shape, logical string }
 const (
 	safariRelative = "Library/Safari/History.db"
 	safariLogical  = "ios:MediaDomain/" + safariRelative
+
+	callsCoreRelative   = "Library/CallHistoryDB/CallHistory.storedata"
+	callsLegacyRelative = "Library/CallHistory/call_history.db"
 )
 
 // name is the subtest name: the variant, and its shape when it is not the default.
@@ -61,6 +64,8 @@ var typedVariants = []typedVariant{
 	{"chromium", "chromium-deleted", chromeLogical, "", ""},
 	{"safari", "deleted", safariRelative, shapeIOSFile, safariLogical},
 	{"safari", "deleted", "HomeDomain/" + safariRelative, shapeIOSBackup, "ios:HomeDomain/" + safariRelative},
+	{"ioscalls", "coredata-deleted", callsCoreRelative, shapeIOSFile, "ios:MediaDomain/" + callsCoreRelative},
+	{"ioscalls", "legacy-deleted", callsLegacyRelative, shapeIOSFile, "ios:MediaDomain/" + callsLegacyRelative},
 }
 
 func readGzFixture(t *testing.T, path string) ([]byte, bool) {
