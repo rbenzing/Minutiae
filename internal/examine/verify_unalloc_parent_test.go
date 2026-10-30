@@ -37,7 +37,7 @@ func TestVerifyCleanWhenRecoveredArtifactHasUnallocatedExportParent(t *testing.T
 	}
 	evidencetest.AddRecovered(t, e.c, bin, data, evidencetest.RecoveredSpec{
 		Kind: evidence.KindCarve, Class: evidence.ClassCarved, Method: "carve-signature", Scope: "artifact",
-		Path: "carved/raw/c1.bin", Runs: []evidence.Run{{Offset: 0, Length: 1024}},
+		Path: "carved/raw/c1.bin", Runs: []evidence.Run{{Offset: 0, Length: 1024}}, Alloc: &evidence.AllocSummary{Unknown: 1024},
 	})
 	evidencetest.AddRecovered(t, e.c, bin, data, evidencetest.RecoveredSpec{
 		Path: "recovered/p1-mtfs/000001-a.bin", Runs: []evidence.Run{{Offset: 0, Length: 1024}},

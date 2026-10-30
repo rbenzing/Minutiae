@@ -336,6 +336,12 @@ func CheckRecoveredRuns(rec ManifestRecord, runs []Run) []string {
 		if scope == "unallocated" && (a.Allocated > 0 || a.Unknown > 0) {
 			add("scope unallocated but %d allocated and %d unknown bytes (class %q)", a.Allocated, a.Unknown, rv.Class)
 		}
+		if scope == "volume" && (a.Allocated > 0 || a.Unknown > 0) {
+			add("scope volume but %d allocated and %d unknown bytes (class %q)", a.Allocated, a.Unknown, rv.Class)
+		}
+		if scope == "artifact" && (a.Free > 0 || a.Allocated > 0) {
+			add("scope artifact but %d free and %d allocated bytes (an artifact has no allocation state)", a.Free, a.Allocated)
+		}
 	}
 	return out
 }

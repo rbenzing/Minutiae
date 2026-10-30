@@ -462,7 +462,7 @@ func TestGapNoticeWhenNotComposed(t *testing.T) {
 		t.Fatal(err)
 	}
 	noGapProblem(t, rep)
-	if !noticeContaining(rep, "1 extract or unallocated artifact(s): acquisition-gap notes shape-checked only, not recomputed (this verify did not compose check R10)") {
+	if !noticeContaining(rep, "1 extract, unallocated or carve artifact(s): acquisition-gap notes shape-checked only, not recomputed (this verify did not compose check R10)") {
 		t.Errorf("no not-composed notice in %q", rep.Notices)
 	}
 	if rep.GapNotesRecomputed != 0 {

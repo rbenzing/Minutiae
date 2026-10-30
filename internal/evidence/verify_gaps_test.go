@@ -27,7 +27,7 @@ func TestVerifyAcquisitionGapNoteShape(t *testing.T) {
 		{"too many first runs", "extract", &evidence.AcquisitionGapNote{Bytes: 9, Ranges: 9, First: make([]evidence.Run, 9)}, "more than 8"},
 		{"bad first run", "extract", &evidence.AcquisitionGapNote{Bytes: 1, Ranges: 1, First: []evidence.Run{{Offset: -1, Length: 1}}}, "invalid first run"},
 		{"more than the artifact holds", "extract", &evidence.AcquisitionGapNote{Bytes: 1 << 20, Ranges: 1}, "more gap bytes than the artifact"},
-		{"wrong kind", "runs", &evidence.AcquisitionGapNote{Bytes: 512, Ranges: 1}, "only extract and unallocated"},
+		{"wrong kind", "runs", &evidence.AcquisitionGapNote{Bytes: 512, Ranges: 1}, "only extract, unallocated and carve"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := evidencetest.NewCase(t)

@@ -48,8 +48,8 @@ type VerifyReport struct {
 	reproduceRan    bool // R6 ran in this verify (MarkReproduceRan)
 	allocationRan   bool // R9 ran in this verify (MarkAllocationRan)
 	gapsRan         bool // R10 ran in this verify (MarkGapsRan)
-	gapArtifacts    int  // extract and unallocated artifacts (set by the built-in check)
-	deletedFiles    int  // recover artifacts of class deleted-file (set by the built-in check)
+	gapArtifacts    int  // artifacts whose gap note R10 recomputes: extract, unallocated and carve (not scope artifact); set by the built-in check
+	deletedFiles    int  // artifacts R9 rechecks: deleted-file recoveries and carves (not scope artifact); set by the built-in check
 	cancelCut       bool // a phase was cut short by the end of the verify context
 	recoveredByKind map[string]int
 }
