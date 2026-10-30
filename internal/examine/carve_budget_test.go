@@ -91,7 +91,7 @@ func TestCarveReadFailureKeepsPartial(t *testing.T) {
 	})
 
 	t.Run("e01", func(t *testing.T) {
-		jpg := carvetest.JPEG(carvetest.JPEGOpts{EntropyLen: 3000})
+		jpg := carvetest.JPEG(carvetest.JPEGOpts{EntropyLen: 3000, ZeroSafe: true})
 		nodes := []fstest.Node{carveDeleted("/del.jpg", jpg)}
 		off := carveImageOff(t, "/del.jpg", nodes...)
 		const failAfter = 2000
@@ -227,7 +227,7 @@ func TestCarveEndStatsOnCancelAndLimits(t *testing.T) {
 }
 
 func TestCarveValidateBudgetIsAudited(t *testing.T) {
-	greedy := carvetest.JPEG(carvetest.JPEGOpts{OmitEOI: true, EntropyLen: 3000})
+	greedy := carvetest.JPEG(carvetest.JPEGOpts{OmitEOI: true, EntropyLen: 3000, ZeroSafe: true})
 	var nodes []fstest.Node
 	for i := range 6 {
 		nodes = append(nodes,

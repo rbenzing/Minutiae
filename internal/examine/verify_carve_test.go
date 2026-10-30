@@ -156,7 +156,7 @@ func TestAllocationRecheckCarvedVolume(t *testing.T) {
 
 func verifyCarveE01(t *testing.T, ranges []int64) (*carveEnv, int64, *failingImage) {
 	t.Helper()
-	return carveE01Env(t, carvetest.JPEG(carvetest.JPEGOpts{EntropyLen: 3000}), ranges)
+	return carveE01Env(t, carvetest.JPEG(carvetest.JPEGOpts{EntropyLen: 3000, ZeroSafe: true}), ranges)
 }
 
 func TestGapRecomputeCoversCarve(t *testing.T) {
@@ -203,7 +203,7 @@ func TestGapRecomputeCleanOnPartialCarve(t *testing.T) {
 	if rep.GapNotesRecomputed != 1 {
 		t.Errorf("GapNotesRecomputed = %d", rep.GapNotesRecomputed)
 	}
-	full := int64(len(carvetest.JPEG(carvetest.JPEGOpts{EntropyLen: 3000})))
+	full := int64(len(carvetest.JPEG(carvetest.JPEGOpts{EntropyLen: 3000, ZeroSafe: true})))
 	planned := gapNoteFor(f.AcquisitionGaps(), []evidence.Run{{Offset: off, Length: full}}, true, full)
 	if planned == nil || planned.Ranges != 2 {
 		t.Fatalf("test setup: planned note %+v", planned)
@@ -308,7 +308,7 @@ func TestAllocationRecheckRawRunsBoundedBySize(t *testing.T) {
 // A raw carve of an image whose partition table cannot be read (its backup GPT chunk is corrupt) is legitimate,
 // every byte being unknown: verify recomputes it with the unknown classifier and reports nothing about it.
 func TestAllocationRecheckCarvedRawUnreadableTable(t *testing.T) {
-	nodes := []fstest.Node{carveDeleted("/del.jpg", carvetest.JPEG(carvetest.JPEGOpts{EntropyLen: 3000}))}
+	nodes := []fstest.Node{carveDeleted("/del.jpg", carvetest.JPEG(carvetest.JPEGOpts{EntropyLen: 3000, ZeroSafe: true}))}
 	data := carveDisk(carveFS(nodes...))
 	last := (len(data) - 1) / 4096
 	bad := bytes.Repeat([]byte{0x55}, 4096+4) // the right length, a wrong Adler-32

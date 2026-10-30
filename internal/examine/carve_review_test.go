@@ -194,7 +194,7 @@ func carveE01Env(t *testing.T, jpg []byte, rangesAt []int64) (*carveEnv, int64, 
 }
 
 func TestCarveWholeHitCarriesGapNote(t *testing.T) {
-	jpg := carvetest.JPEG(carvetest.JPEGOpts{EntropyLen: 3000})
+	jpg := carvetest.JPEG(carvetest.JPEGOpts{EntropyLen: 3000, ZeroSafe: true})
 	e, off, f := carveE01Env(t, jpg, []int64{1024})
 	cs := e.carve(t, CarveOptions{})
 	recs := carvedRecords(t, e.c)
@@ -214,7 +214,7 @@ func TestCarveWholeHitCarriesGapNote(t *testing.T) {
 // A copy that fails exactly at the first byte of a declared gap keeps nothing of it (no note, no assumption);
 // one that fails exactly after the gap's last byte keeps all of it.
 func TestCarveE01FailureOnGapSectorBoundary(t *testing.T) {
-	jpg := carvetest.JPEG(carvetest.JPEGOpts{EntropyLen: 3000})
+	jpg := carvetest.JPEG(carvetest.JPEGOpts{EntropyLen: 3000, ZeroSafe: true})
 	for _, tc := range []struct {
 		failAfter int64
 		bytes     int64
