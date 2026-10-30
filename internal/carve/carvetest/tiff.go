@@ -36,8 +36,9 @@ type TIFFIFD struct {
 // TIFFOpts shapes a TIFF built by an encoder independent of the validator.
 type TIFFOpts struct {
 	BigEndian, Big bool
-	Magic          string // "" = by form; "IIRO", "IIRS", "MMOR", "IIU\x00" replace bytes 0-3
-	CR2            bool   // "CR\x02\x00" at 8 and IFD0 at 16 (the IFDs are then written first)
+	Magic          string   // "" = by form; "IIRO", "IIRS", "MMOR", "IIU\x00" replace bytes 0-3
+	CR2            bool     // "CR\x02\x00" at 8 and IFD0 at 16 (the IFDs are then written first)
+	CR2Raw         *TIFFIFD // with CR2: an IFD on no next-IFD chain, its offset in header bytes 12..15
 	Pages          []TIFFIFD
 	IFDsFirst      bool // IFDs before the data (else after, the libtiff layout)
 	// LateValueOf writes the first out-of-line value of the Entries of page N
@@ -411,6 +412,11 @@ func TIFF(o TIFFOpts) []byte {
 		}
 		e.ifd(p, kindMain, refs[i], next, i, i == len(refs)-1)
 	}
+	var rawRef *tiffRef
+	if o.CR2 && o.CR2Raw != nil {
+		rawRef = e.newRef()
+		e.ifd(*o.CR2Raw, kindMain, rawRef, nil, -1, false)
+	}
 
 	// assemble
 	hdr := make([]byte, e.hdrLen)
@@ -440,6 +446,9 @@ func TIFF(o TIFFOpts) []byte {
 		ifd0Pos, ifd0W = 8, 8
 	}
 	e.patches = append(e.patches, tiffPatch{hdr: true, pos: ifd0Pos, width: ifd0W, ref: refs[0]})
+	if rawRef != nil {
+		e.patches = append(e.patches, tiffPatch{hdr: true, pos: 12, width: 4, ref: rawRef})
+	}
 
 	var base [3]int
 	if o.IFDsFirst {
