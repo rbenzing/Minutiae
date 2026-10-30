@@ -153,3 +153,33 @@ func TestSearchWithANonIntegerURLIDStatesItAndJoinsNothing(t *testing.T) {
 		t.Errorf("time %v url %v, want neither", r.Time, r.Payload["url"])
 	}
 }
+
+// A REAL in the joined urls.last_visit_time of a search is flagged under the bare column name: a search record has no
+// "urls." prefix scheme (only a visit does), so its keys are unknown_columns.last_visit_time and
+// raw.last_visit_time_ieee, and it states no time.
+func TestSearchWithARealURLLastVisitTimeStatesItsBitsUnprefixed(t *testing.T) {
+	b, u, s := searchDB()
+	u.Insert(1, int64(1), "https://example.com/a", "A", int64(1), int64(0), 1.25, int64(0))
+	s.Insert(1, int64(2), int64(1), "real time", "real time")
+	res := runMem(t, b.Bytes())
+	if res.Err != nil {
+		t.Fatal(res.Err)
+	}
+	r := recFor(t, res, "keyword_search_terms", 1)
+	raw := asMap(r.Payload["raw"])
+	if got := asMap(raw["unknown_columns"])["last_visit_time"]; got != "type-mismatch" {
+		t.Errorf("unknown_columns.last_visit_time = %v, want type-mismatch", got)
+	}
+	if got := raw["last_visit_time_ieee"]; got != "3ff4000000000000" {
+		t.Errorf("raw.last_visit_time_ieee = %v, want 3ff4000000000000", got)
+	}
+	if _, has := raw["urls.last_visit_time_ieee"]; has {
+		t.Error("a search states a urls.-prefixed key")
+	}
+	if r.Time != nil {
+		t.Errorf("a REAL last_visit_time gave the search the time %v", r.Time)
+	}
+	if _, has := r.Payload["time_source"]; has {
+		t.Errorf("time_source %v stated without a time", r.Payload["time_source"])
+	}
+}

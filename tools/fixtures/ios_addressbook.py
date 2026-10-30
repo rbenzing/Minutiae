@@ -43,6 +43,9 @@ import ios_common as I
 import telephony_common as C
 
 FAMILY = "ios_addressbook"
+CLAIMED = ("ABPerson",)  # Meta.Claims of ios.addressbook: ClaimableTables
+ALIAS = {"ABPerson": "ROWID"}
+SCENARIOS = {}  # variant -> C.Scenario, filled when the variant is generated (the typed recovery oracle)
 SCHEMAS = os.path.join(C.HERE, "schemas", "ios")
 MAX_TEXT = 256 << 10
 MAX_NOTE = 64 << 10
@@ -608,8 +611,61 @@ def variant_huge(work):
     return variant(work, "huge-contact", "addressbook-current.sql", huge_book())
 
 
+def deleted_book():
+    """35 persons (ROWID 1 to 35), each with a first and last name, a padded Note (so five rows fill a 1024-byte leaf) and
+    one phone and one e-mail; person 20 has no name, no organization and no multi-value (it identifies nobody). No live person
+    follows the deleted ones: a live page to their right would be merged into the first freed page by the balance and overwrite it."""
+    b = Book()
+    b.labels("_$!<Mobile>!$_", "_$!<Home>!$_")
+    pad = "x" * 120
+    for i in range(1, 36):
+        if i == 20:
+            b.person(i, Note=pad, CreationDate=700000000 + i * 100)
+            continue
+        b.person(i, First="First%02d" % i, Last="Last%02d" % i, Note=pad, CreationDate=700000000 + i * 100)
+        b.mv(i, 3, 1, "+1 555 %04d" % (2000 + i))
+        b.mv(i, 4, 2, "p%02d@example.test" % i)
+    return b
+
+
+def variant_deleted(work):
+    """1024-byte pages, secure_delete OFF. Persons 11 to 35 are deleted with their ABMultiValue rows: whole leaf pages go to the
+    freelist, so the oracle expects basis fit attributed to ABPerson. A recovered person joins the LIVE multi-values (4G-R8):
+    a deleted person has none; person 20 identifies nobody and is unmapped. No images database (the photo is not the mapper's
+    to read, 4h-R6). A lone database."""
+    path = work + "/a.db"
+    con = C.connect(path, page_size=1024)
+    con.executescript(C.load_ddl("addressbook-current.sql", SCHEMAS)[0])
+    book = deleted_book()
+    with C.batch(con):
+        for table in TABLES:
+            for r in book.t[table]:
+                C.insert(con, table, r)
+    scen = SCENARIOS["deleted"] = C.Scenario(CLAIMED, alias=ALIAS)
+    scen.write("ABPerson", scen.snap(con, "ABPerson"))
+    scen.want("ABPerson", scen.snap(con, "ABPerson", "ROWID between 11 and 35"), label="ABPerson")
+    # the multi-values go first: the first page SQLite frees becomes the freelist trunk and is overwritten, so it must not
+    # be a page of the claimed table
+    con.execute("delete from ABMultiValue where record_id between 11 and 35")
+    con.execute("delete from ABPerson where ROWID between 11 and 35")
+    cols = C.columns(con, "ABPerson")
+    con.close()
+    files = {"db": C.read(path)}
+    return files, oracle(files, "addressbook-current.sql", "deleted", cols)
+
+
+def recover_expect(variant, files):
+    """The <variant>.recover.expect.json of a variant that has a scenario (ruling 4G-R14). A recovered person joins the LIVE
+    multi-value tables (4G-R8), so a deleted person has no phones or e-mails; no images database is read."""
+    def make_env(f):
+        return {"J": Joins(C.engine_view(f, TABLES))}
+
+    return C.recover_oracle(variant, files, SCENARIOS[variant], make_env,
+                            lambda table, d, env, file: expect_person(d, env["J"], None))
+
+
 VARIANTS = {"current": variant_current, "with-images": variant_images, "older-schema": variant_older,
-            "huge-contact": variant_huge}
+            "huge-contact": variant_huge, "deleted": variant_deleted}
 
 
 def _selfcheck():

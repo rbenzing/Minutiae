@@ -110,23 +110,23 @@ func (u urlRow) usableURL(raw map[string]any) (string, bool) {
 
 // flagCell records a cell that holds no usable value. A joined cell is qualified by its table, and a column the
 // variant lacks is stated as such (the joined row is not the mapped one).
-func flagCell(unknown map[string]any, prefix, name string, row parse.Row, col int, k rowrun.CellKind) {
+func flagCell(raw, unknown map[string]any, prefix, name string, row parse.Row, col int, k rowrun.CellKind) {
 	if prefix == "" {
-		rowrun.Flag(unknown, row, name, col, k)
+		flagInt(raw, unknown, row, name, col, k)
 		return
 	}
 	if k == rowrun.CellMissing {
 		unknown[prefix+name] = "column-missing"
 		return
 	}
-	rowrun.Flag(unknown, row, prefix+name, col, k)
+	flagInt(raw, unknown, row, prefix+name, col, k)
 }
 
 func (u urlRow) title(raw, unknown map[string]any, prefix string) string {
 	b, k := rowrun.TextCell(u.row, u.cols.At("title"))
 	if k != rowrun.CellValue {
 		if k != rowrun.CellNull {
-			flagCell(unknown, prefix, "title", u.row, u.cols.At("title"), k)
+			flagCell(nil, unknown, prefix, "title", u.row, u.cols.At("title"), k)
 		}
 		return ""
 	}
@@ -134,7 +134,7 @@ func (u urlRow) title(raw, unknown map[string]any, prefix string) string {
 }
 
 // count reads a count that must not be negative.
-func (u urlRow) count(unknown map[string]any, prefix, name string) *int64 {
+func (u urlRow) count(raw, unknown map[string]any, prefix, name string) *int64 {
 	v, k := rowrun.IntCell(u.row, u.cols.At(name))
 	switch {
 	case k == rowrun.CellValue && v < 0:
@@ -142,15 +142,15 @@ func (u urlRow) count(unknown map[string]any, prefix, name string) *int64 {
 	case k == rowrun.CellValue:
 		return &v
 	case k != rowrun.CellNull:
-		flagCell(unknown, prefix, name, u.row, u.cols.At(name), k)
+		flagCell(raw, unknown, prefix, name, u.row, u.cols.At(name), k)
 	}
 	return nil
 }
 
 // facts puts the counts and the hidden flag of the urls row into v.
-func (u urlRow) facts(v *web.Visit, unknown map[string]any, prefix string) {
-	v.URLVisitCount = u.count(unknown, prefix, "visit_count")
-	v.TypedCount = u.count(unknown, prefix, "typed_count")
+func (u urlRow) facts(v *web.Visit, raw, unknown map[string]any, prefix string) {
+	v.URLVisitCount = u.count(raw, unknown, prefix, "visit_count")
+	v.TypedCount = u.count(raw, unknown, prefix, "typed_count")
 	h, k := rowrun.IntCell(u.row, u.cols.At("hidden"))
 	switch {
 	case k == rowrun.CellValue && (h == 0 || h == 1):
@@ -159,7 +159,7 @@ func (u urlRow) facts(v *web.Visit, unknown map[string]any, prefix string) {
 	case k == rowrun.CellValue:
 		unknown[prefix+"hidden"] = "not-boolean"
 	case k != rowrun.CellNull:
-		flagCell(unknown, prefix, "hidden", u.row, u.cols.At("hidden"), k)
+		flagCell(raw, unknown, prefix, "hidden", u.row, u.cols.At("hidden"), k)
 	}
 }
 
@@ -199,7 +199,7 @@ func optInt(row parse.Row, c rowrun.Cols, name string, raw, unknown map[string]a
 		raw[name] = v
 		return
 	}
-	rowrun.Flag(unknown, row, name, c.At(name), k)
+	flagInt(raw, unknown, row, name, c.At(name), k)
 }
 
 func mapVisit(m parse.MapContext, row parse.Row) ([]records.Record, error) {
@@ -231,7 +231,7 @@ func mapVisit(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 	browser, profile, pkg := labelOf(m.Input().Primary.Logical)
 	v := web.Visit{URL: url, Browser: browser, Profile: profile, Raw: raw}
 	v.Title = ur.title(raw, joined, "urls.")
-	ur.facts(&v, joined, "urls.")
+	ur.facts(&v, raw, joined, "urls.")
 	if id, ok := row.Rowid(); ok {
 		v.VisitID = strconv.FormatInt(id, 10)
 	} else {
@@ -249,7 +249,7 @@ func mapVisit(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 			unknown["transition"] = "out-of-range"
 		}
 	} else {
-		rowrun.Flag(unknown, row, "transition", c.At("transition"), tk)
+		flagInt(raw, unknown, row, "transition", c.At("transition"), tk)
 	}
 	if fv, fk := rowrun.IntCell(row, c.At("from_visit")); fk == rowrun.CellValue {
 		raw["from_visit"] = fv
@@ -257,7 +257,7 @@ func mapVisit(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 			v.Referrer = &web.Referrer{VisitID: strconv.FormatInt(fv, 10)}
 		}
 	} else {
-		rowrun.Flag(unknown, row, "from_visit", c.At("from_visit"), fk)
+		flagInt(raw, unknown, row, "from_visit", c.At("from_visit"), fk)
 	}
 	if dv, dk := rowrun.IntCell(row, c.At("visit_duration")); dk == rowrun.CellValue {
 		raw["visit_duration"] = dv
@@ -271,7 +271,7 @@ func mapVisit(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 			unknown["visit_duration"] = "negative"
 		}
 	} else {
-		rowrun.Flag(unknown, row, "visit_duration", c.At("visit_duration"), dk)
+		flagInt(raw, unknown, row, "visit_duration", c.At("visit_duration"), dk)
 	}
 
 	rec := records.Record{Type: web.VisitType, ArtifactID: place.ArtifactID, SourcePath: place.SourcePath, Locator: place.Locator, Range: &place.Range}
@@ -282,7 +282,7 @@ func mapVisit(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 			rec.Time = &records.Time{T: in.T}
 		}
 	} else {
-		rowrun.Flag(unknown, row, "visit_time", c.At("visit_time"), tk)
+		flagInt(raw, unknown, row, "visit_time", c.At("visit_time"), tk)
 	}
 	raw["url_id"] = uid
 	optInt(row, c, "opener_visit", raw, unknown)
@@ -349,7 +349,7 @@ func mapURL(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 	browser, profile, pkg := labelOf(m.Input().Primary.Logical)
 	v := web.Visit{URL: url, Browser: browser, Profile: profile, Raw: raw}
 	v.Title = ur.title(raw, unknown, "")
-	ur.facts(&v, unknown, "")
+	ur.facts(&v, raw, unknown, "")
 	rec := records.Record{Type: web.VisitType, ArtifactID: place.ArtifactID, SourcePath: place.SourcePath, Locator: place.Locator, Range: &place.Range}
 	c := ur.cols
 	if lv, lk := rowrun.IntCell(row, c.At("last_visit_time")); lk == rowrun.CellValue {
@@ -359,7 +359,7 @@ func mapURL(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 			rec.Time = &records.Time{T: in.T}
 		}
 	} else {
-		rowrun.Flag(unknown, row, "last_visit_time", c.At("last_visit_time"), lk)
+		flagInt(raw, unknown, row, "last_visit_time", c.At("last_visit_time"), lk)
 	}
 	if undecided {
 		raw["join_undecided"] = []any{"visits"}

@@ -14,7 +14,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "ios.sms"
-	Version = "1.0.1"
+	Version = "1.0.2"
 )
 
 // Parser is the ios.sms parser. It holds no state.
@@ -22,12 +22,14 @@ type Parser struct{}
 
 var _ parse.RowMapper = Parser{}
 
-// Meta describes the parser. Claims stay empty until plan 4G implements typed recovery.
+// Meta describes the parser. Claims are exactly ClaimableTables: a promise that typed recovery (plan 4G) can map the
+// recovered rows of message (4h-R6).
 func (Parser) Meta() parse.Meta {
 	return parse.Meta{
 		Name: Name, Version: Version, Title: "iOS Messages (sms.db)",
 		Platforms: []string{parse.PlatformIOS},
 		Emits:     []parse.Emit{{Type: message.Type, PayloadVersion: message.PayloadVersion}},
+		Claims:    claimsOf(ClaimableTables()),
 		Inputs: []parse.InputSpec{
 			{Role: "db", Globs: []string{"ios:*/Library/SMS/sms.db"}, Required: true},
 			{Role: "wal", Companions: []string{"-wal"}},
@@ -99,4 +101,16 @@ func (c *counting) Emit(ctx context.Context, r records.Record) error {
 		}
 	}
 	return nil
+}
+
+// ClaimableTables returns the tables whose mapping is total (every row gives one record or a RowError): message
+// (4h-R6). The other tables are joins read through the LIVE database and emit nothing of their own.
+func ClaimableTables() []string { return []string{tableMessage} }
+
+func claimsOf(tables []string) []parse.TableClaim {
+	out := make([]parse.TableClaim, len(tables))
+	for i, t := range tables {
+		out[i] = parse.TableClaim{Role: "db", Table: t}
+	}
+	return out
 }

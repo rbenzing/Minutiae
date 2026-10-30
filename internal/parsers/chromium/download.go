@@ -58,7 +58,7 @@ func optPayloadText(row parse.Row, c rowrun.Cols, col, field string, limit int, 
 func enumCell(row parse.Row, c rowrun.Cols, col string, name func(int64) string, raw, unknown map[string]any) string {
 	v, k := rowrun.IntCell(row, c.At(col))
 	if k != rowrun.CellValue {
-		rowrun.Flag(unknown, row, col, c.At(col), k)
+		flagInt(raw, unknown, row, col, c.At(col), k)
 		return ""
 	}
 	raw[col] = v
@@ -133,7 +133,7 @@ func mapDownload(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 			return nil, err
 		}
 	} else {
-		rowrun.Flag(unknown, row, "id", c.At("id"), k)
+		flagInt(raw, unknown, row, "id", c.At("id"), k)
 		ch.undecided = true
 	}
 	if ch.undecided {
@@ -162,7 +162,7 @@ func mapDownload(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 			unknown["total_bytes"] = "negative"
 		}
 	} else {
-		rowrun.Flag(unknown, row, "total_bytes", c.At("total_bytes"), k)
+		flagInt(raw, unknown, row, "total_bytes", c.At("total_bytes"), k)
 	}
 	if rv, k := rowrun.IntCell(row, c.At("received_bytes")); k == rowrun.CellValue {
 		if rv < 0 {
@@ -171,7 +171,7 @@ func mapDownload(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 			d.ReceivedBytes = &rv
 		}
 	} else {
-		rowrun.Flag(unknown, row, "received_bytes", c.At("received_bytes"), k)
+		flagInt(raw, unknown, row, "received_bytes", c.At("received_bytes"), k)
 	}
 	d.State = enumCell(row, c, "state", stateName, raw, unknown)
 	d.DangerType = enumCell(row, c, "danger_type", dangerName, raw, unknown)
@@ -182,7 +182,7 @@ func mapDownload(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 	} else if k == rowrun.CellValue {
 		unknown["opened"] = "not-boolean"
 	} else {
-		rowrun.Flag(unknown, row, "opened", c.At("opened"), k)
+		flagInt(raw, unknown, row, "opened", c.At("opened"), k)
 	}
 
 	rec := records.Record{Type: web.DownloadType, ArtifactID: place.ArtifactID, SourcePath: place.SourcePath, Locator: place.Locator, Range: &place.Range}
@@ -193,7 +193,7 @@ func mapDownload(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 			rec.Time = &records.Time{T: in.T}
 		}
 	} else {
-		rowrun.Flag(unknown, row, "start_time", c.At("start_time"), k)
+		flagInt(raw, unknown, row, "start_time", c.At("start_time"), k)
 	}
 	for _, t := range []struct{ col, kind string }{{"end_time", "ended"}, {"last_access_time", "accessed"}} {
 		if v, k := rowrun.IntCell(row, c.At(t.col)); k == rowrun.CellValue {
@@ -203,7 +203,7 @@ func mapDownload(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 				rec.Times = append(rec.Times, records.NamedTime{Kind: t.kind, Time: records.Time{T: in.T}})
 			}
 		} else {
-			rowrun.Flag(unknown, row, t.col, c.At(t.col), k)
+			flagInt(raw, unknown, row, t.col, c.At(t.col), k)
 		}
 	}
 	for _, col := range []string{"guid", "original_mime_type", "tab_referrer_url", "site_url", "http_method"} {

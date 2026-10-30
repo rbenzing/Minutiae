@@ -5,6 +5,11 @@ import (
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/parse"
+	"github.com/rbenzing/minutiae/internal/parsers/chromium"
+	"github.com/rbenzing/minutiae/internal/parsers/iosaddressbook"
+	"github.com/rbenzing/minutiae/internal/parsers/ioscalls"
+	"github.com/rbenzing/minutiae/internal/parsers/iossms"
+	"github.com/rbenzing/minutiae/internal/parsers/safari"
 	"github.com/rbenzing/minutiae/internal/recordtypes/call"
 	"github.com/rbenzing/minutiae/internal/recordtypes/contact"
 	"github.com/rbenzing/minutiae/internal/recordtypes/message"
@@ -13,17 +18,16 @@ import (
 
 // claimsOf lists, for every registered parser, the tables it must claim (4G-R30): an explicit table, so a
 // claim is never added or dropped by accident and a registered parser missing from the table fails. A parser
-// without claims is listed with nil. Tasks 9 and 10 set the three Android telephony parsers, Task 10b the 4F browsers
-// (the 4E parsers claim nothing yet: ios.sms, ios.calls and ios.addressbook are listed with nil).
+// without claims is a failure (4H-R7): every first-set parser claims its claimable tables.
 var claimsOf = map[string][]string{
 	"android.mmssms":   {"sms", "pdu"},
 	"android.calllog":  {"calls"},
 	"android.contacts": {"raw_contacts", "deleted_contacts"},
 	"chromium.history": {"visits", "keyword_search_terms", "downloads"},
 	"safari.history":   {"history_visits"},
-	"ios.calls":        nil,
-	"ios.addressbook":  nil,
-	"ios.sms":          nil,
+	"ios.calls":        {"ZCALLRECORD", "call"},
+	"ios.addressbook":  {"ABPerson"},
+	"ios.sms":          {"message"},
 }
 
 // 4A's registry tests ranged over an empty registry; with the Android telephony parsers in it they are real
@@ -47,8 +51,11 @@ func TestRegisteredParsersClaimExactly(t *testing.T) {
 		}
 		want, listed := claimsOf[m.Name]
 		if !listed {
-			t.Errorf("%s is registered but missing from the claims table of this test: list it with its claims (nil for none)", m.Name)
+			t.Errorf("%s is registered but missing from the claims table of this test: list it with its claims (every first-set parser claims at least one table; an empty list fails below)", m.Name)
 			continue
+		}
+		if len(want) == 0 {
+			t.Errorf("%s claims nothing: every first-set SQLite parser claims its claimable tables (plan 4H)", m.Name)
 		}
 		var got []string
 		for _, c := range m.Claims {
@@ -70,6 +77,45 @@ func TestRegisteredParsersClaimExactly(t *testing.T) {
 	for name := range claimsOf {
 		if !seen[name] {
 			t.Errorf("%s is in the claims table but not registered", name)
+		}
+	}
+}
+
+// TestEveryFirstSetParserClaimsItsClaimableTables (PASSES ON ARRIVAL; mutation-checked, 4H-R7): for the five
+// parsers that export ClaimableTables, Meta().Claims equals it in order, on the db role. The three Android
+// parsers are held by claimsOf alone.
+func TestEveryFirstSetParserClaimsItsClaimableTables(t *testing.T) {
+	claimable := map[string]func() []string{
+		"chromium.history": chromium.ClaimableTables,
+		"safari.history":   safari.ClaimableTables,
+		"ios.calls":        ioscalls.ClaimableTables,
+		"ios.addressbook":  iosaddressbook.ClaimableTables,
+		"ios.sms":          iossms.ClaimableTables,
+	}
+	for name, fn := range claimable {
+		var found parse.Parser
+		for _, p := range All() {
+			if p.Meta().Name == name {
+				found = p
+			}
+		}
+		if found == nil {
+			t.Errorf("%s is not registered", name)
+			continue
+		}
+		want := fn()
+		if len(want) == 0 {
+			t.Errorf("%s: ClaimableTables is empty", name)
+		}
+		var got []string
+		for _, c := range found.Meta().Claims {
+			if c.Role != "db" {
+				t.Errorf("%s: claim %+v is not on the db role", name, c)
+			}
+			got = append(got, c.Table)
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s declares claims %v, want ClaimableTables %v", name, got, want)
 		}
 	}
 }
@@ -163,9 +209,9 @@ var iosWant = []struct {
 	{"ios.addressbook", contact.Type, contact.PayloadVersion, []string{"db", "wal", "journal", "images", "images_wal"}},
 }
 
-// TestIOSParsersMakeNoClaimsAndAreRowMappers (PASSES ON ARRIVAL; mutation-checked, 4E-R44): the three iOS parsers
-// are valid RowMappers with mappings, declare no claims yet (4G claims for them are a follow-up) and run on iOS only.
-func TestIOSParsersMakeNoClaimsAndAreRowMappers(t *testing.T) {
+// TestIOSParsersClaimTheirTablesAndAreRowMappers (mutation-checked, 4E-R44): the three iOS parsers
+// are valid RowMappers with mappings, declare exactly the claims of the claimsOf table and run on iOS only.
+func TestIOSParsersClaimTheirTablesAndAreRowMappers(t *testing.T) {
 	seen := 0
 	for _, w := range iosWant {
 		var p parse.Parser
@@ -180,8 +226,12 @@ func TestIOSParsersMakeNoClaimsAndAreRowMappers(t *testing.T) {
 		}
 		seen++
 		m := p.Meta()
-		if len(m.Claims) != 0 {
-			t.Errorf("%s declares claims %+v; the iOS parsers claim nothing yet", w.name, m.Claims)
+		var got []string
+		for _, c := range m.Claims {
+			got = append(got, c.Table)
+		}
+		if !slices.Equal(got, claimsOf[w.name]) {
+			t.Errorf("%s declares claims %v, want exactly %v (claimsOf)", w.name, got, claimsOf[w.name])
 		}
 		if !slices.Equal(m.Platforms, []string{parse.PlatformIOS}) {
 			t.Errorf("%s: platforms %v, want ios only", w.name, m.Platforms)
