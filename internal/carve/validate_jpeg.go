@@ -190,6 +190,9 @@ func validateJPEG(w *Window) Verdict {
 				return reject("bad-scan")
 			}
 			scans++
+			if scans > jpegMaxScans && unwalked == "" {
+				unwalked = "scan-cap"
+			}
 			if unwalked != "" {
 				var err error
 				if pos, err = skipJPEGEntropy(w, pos); err != nil {
@@ -204,8 +207,16 @@ func validateJPEG(w *Window) Verdict {
 			if why != "" {
 				return reject(why)
 			}
+			start := pos
 			var err error
-			if pos, err = frame.walkScan(w, &tabs, sc, ri, pos); err != nil {
+			if pos, err = frame.walkScan(w, &tabs, sc, ri, pos); errors.Is(err, errJPEGWork) {
+				// The walk would cost more than the object's size justifies: not validated, still bounded by
+				// the markers (a footer hit), and the later scans are not walked.
+				unwalked = "work-cap"
+				if pos, err = skipJPEGEntropy(w, start); err != nil {
+					return fail(err)
+				}
+			} else if err != nil {
 				return fail(err)
 			}
 		}

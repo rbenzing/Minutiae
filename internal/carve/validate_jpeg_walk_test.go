@@ -3,6 +3,7 @@ package carve
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -258,5 +259,114 @@ func TestJPEGWalkUnsupportedFramesAreFooters(t *testing.T) {
 		if v.Outcome != Footer || !slices.Contains(v.Assumptions, "entropy-not-walked=frame-type") {
 			t.Fatalf("%s verdict = %+v, want a footer", name, v)
 		}
+	}
+}
+
+func jpegAllocBytes(f func()) uint64 {
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	f()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
+// TestJPEGWalkWorkIsBoundedByBytes: a few bytes declaring millions of blocks, alone or repeated over many scans,
+// are a work-cap footer; the walk stops at the first scan that overspends and allocates next to nothing.
+func TestJPEGWalkWorkIsBoundedByBytes(t *testing.T) {
+	p := newJPEGPieces(true, 11000, 11000) // 1375 x 1375 = 1.89M blocks, under the state cap
+	tables := slices.Concat(
+		carvetest.JPEGDHT(0, 0, [16]byte{1}, []byte{0}),
+		carvetest.JPEGDHT(1, 0, [16]byte{1}, []byte{0xE0}))
+	var run carvetest.JPEGBits
+	run.Put(0, 1) // RS 0xE0: an EOB run of 2^14 + 14 bits
+	run.Put(32767-16384, 14)
+	one := run.Bytes()
+	tiny := slices.Concat(p.soi, p.sof, tables, jpegSOS(1, 63, 0), one, jpegEOI)
+	var many []byte
+	many = slices.Concat(p.soi, p.sof, tables, jpegSOS(1, 63, 0x01))
+	many = append(many, one...)
+	for range 20 {
+		many = slices.Concat(many, jpegSOS(1, 63, 0x10), one)
+	}
+	many = append(many, jpegEOI...)
+	for name, obj := range map[string][]byte{"one short scan": tiny, "21 scans": many} {
+		var v Verdict
+		alloc := jpegAllocBytes(func() { v = jpegWalk(obj) })
+		if v.Outcome != Footer || v.Length != int64(len(obj)) || !slices.Contains(v.Assumptions, "entropy-not-walked=work-cap") {
+			t.Errorf("%s (%d bytes): verdict = %+v, want a work-cap footer", name, len(obj), v)
+		}
+		if alloc > 1<<20 {
+			t.Errorf("%s: allocated %d bytes", name, alloc)
+		}
+	}
+	// The counted work: walking the scans one by one stops at the first that overspends, and the units
+	// spent never exceed the bound by more than the one run that crossed it.
+	w := newWindow(context.Background(), bytes.NewReader(many), 0, int64(len(many)), newBudget(1<<30))
+	f := &jpegFrame{progressive: true, nf: 1}
+	f.comps[0] = jpegComp{id: 1, h: 1, v: 1}
+	f.setGeometry(11000, 11000)
+	var tabs [2][4]jpegHuff
+	if !tabs[0][0].load(&[16]byte{1}, []byte{0}) || !tabs[1][0].load(&[16]byte{1}, []byte{0xE0}) {
+		t.Fatal("tables")
+	}
+	sc, why := f.parseScan([]byte{1, 1, 0, 1, 63, 0}, &tabs)
+	if why != "" {
+		t.Fatal(why)
+	}
+	start := int64(len(p.soi) + len(p.sof) + len(tables) + len(jpegSOS(1, 63, 0)))
+	_, err := f.walkScan(w, &tabs, sc, 0, start)
+	if !errors.Is(err, errJPEGWork) {
+		t.Fatalf("walkScan error = %v, want the work bound", err)
+	}
+	if limit := jpegWorkBase + jpegWorkPerByte*(start+int64(len(one))); f.work > limit+32767 || f.work <= limit {
+		t.Fatalf("work %d, want just over the bound %d", f.work, limit)
+	}
+}
+
+func TestJPEGWalkScanCap(t *testing.T) {
+	p := newJPEGPieces(true, 8, 8)
+	dcScans := func(n int) []byte {
+		o := slices.Concat(p.soi, p.sof, p.tables)
+		for range n {
+			o = slices.Concat(o, jpegSOS(0, 0, 0), []byte{0x7F})
+		}
+		return append(o, jpegEOI...)
+	}
+	if v := jpegWalk(dcScans(jpegMaxScans)); v.Outcome != Validated {
+		t.Fatalf("%d scans verdict = %+v, want validated", jpegMaxScans, v)
+	}
+	if v := jpegWalk(dcScans(jpegMaxScans + 1)); v.Outcome != Footer || !slices.Contains(v.Assumptions, "entropy-not-walked=scan-cap") {
+		t.Fatalf("%d scans verdict = %+v, want a scan-cap footer", jpegMaxScans+1, v)
+	}
+}
+
+// TestJPEGWalkFillInsideEntropyAndBeforeRestart: FF FF fill is skipped inside the entropy data and before an RSTn,
+// and a Huffman table that uses the all-ones code is accepted.
+func TestJPEGWalkFillInsideEntropyAndBeforeRestart(t *testing.T) {
+	seg := carvetest.JPEGSegment
+	// Codes: 0 = a size-1 symbol, 1 = category 0 / end of block, so a block of two 1 bits is "11" and the
+	// byte 0xFF (sent as FF 00) holds four blocks.
+	tables := slices.Concat(
+		carvetest.JPEGDHT(0, 0, [16]byte{2}, []byte{0x01, 0x00}),
+		carvetest.JPEGDHT(1, 0, [16]byte{2}, []byte{0x01, 0x00}))
+	soi := []byte{0xFF, 0xD8}
+	sof := func(w int) []byte { return seg(0xC0, []byte{8, 0, 8, byte(w >> 8), byte(w), 1, 1, 0x11, 0}) }
+	sos := jpegSOS(0, 63, 0)
+	// 32x8: four blocks, one data byte preceded by fill.
+	v := jpegWalk(slices.Concat(soi, sof(32), tables, sos, []byte{0xFF, 0xFF, 0xFF, 0x00}, jpegEOI))
+	if v.Outcome != Validated {
+		t.Fatalf("fill inside entropy verdict = %+v", v)
+	}
+	// 64x8 with a restart interval of 4: two data bytes with fill before the RST0.
+	dri := seg(0xDD, []byte{0, 4})
+	v = jpegWalk(slices.Concat(soi, sof(64), tables, dri, sos, []byte{0xFF, 0x00, 0xFF, 0xFF, 0xFF, 0xD0, 0xFF, 0x00}, jpegEOI))
+	if v.Outcome != Validated || len(v.Assumptions) != 0 {
+		t.Fatalf("fill before restart verdict = %+v", v)
+	}
+	// The same without the restart marker is rejected.
+	v = jpegWalk(slices.Concat(soi, sof(64), tables, dri, sos, []byte{0xFF, 0x00, 0xFF, 0xFF, 0xFF, 0x00}, jpegEOI))
+	if v.Outcome != Rejected || v.Reason != "restart-order" {
+		t.Fatalf("missing restart verdict = %+v", v)
 	}
 }

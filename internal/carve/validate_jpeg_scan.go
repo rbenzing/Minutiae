@@ -12,8 +12,22 @@ import (
 // refinement scans need, one uint64 per block of a component, capped by jpegRefineCap and checked against the
 // declared dimensions before it is allocated. The layout of the scans is from memory (docs/limitations.md).
 
-// jpegRefineCap is the largest refinement state, in bytes, a walk allocates (8 bytes per block).
+// jpegRefineCap is the largest refinement state, in bytes, a frame may declare (8 bytes per block). The state is
+// grown lazily as the walk reaches blocks, so what is allocated is bounded by the work below, not by the declared
+// size.
 const jpegRefineCap = 16 << 20
+
+// The work bound of a walk: every block the walk visits or skips (an EOB run counts all the blocks it covers) is
+// one unit, and an object may use jpegWorkBase units plus jpegWorkPerByte for every byte of it read so far. A real
+// progressive photograph stays well inside (a blank 12-megapixel one is about 2 units per block per scan against
+// thousands of bytes), a few bytes declaring millions of blocks do not: the hit is a footer, never a long walk.
+const (
+	jpegWorkBase    = 1 << 14
+	jpegWorkPerByte = 128
+	jpegMaxScans    = 128 // scans walked per frame; more are not walked (footer)
+)
+
+var errJPEGWork = errors.New("carve: jpeg: work bound")
 
 // jpegReject is a rejection reason found by the walk (a window error is returned as itself).
 type jpegReject string
@@ -29,7 +43,9 @@ type jpegHuff struct {
 	vals    [256]byte
 }
 
-// load builds the table from the 16 counts and the symbols; false when the counts overflow the code space.
+// load builds the table from the 16 counts and the symbols; false only when more codes of some length are
+// counted than the code space holds. It does not reject an incomplete table or the all-ones code (real decoders
+// accept both): a code the data uses that the table does not define is a bad-code rejection of the scan.
 func (h *jpegHuff) load(counts *[16]byte, syms []byte) bool {
 	code, k := int32(0), int32(0)
 	for l := 1; l <= 16; l++ {
@@ -65,7 +81,8 @@ type jpegFrame struct {
 	comps        [4]jpegComp
 	mcusX, mcusY int64
 	stateBlocks  int64
-	state        []uint64
+	state        []uint64 // grown to the highest block index touched
+	work         int64
 	// nonstdPadding: some scan ended a byte-aligned unit with padding that is not all 1 bits.
 	nonstdPadding bool
 }
@@ -87,6 +104,27 @@ func (f *jpegFrame) setGeometry(w, h int64) {
 		c.stateStart = f.stateBlocks
 		f.stateBlocks += c.bw * c.bh
 	}
+}
+
+// word returns the nonzero mask of block idx (0 beyond what the walk has touched).
+func (f *jpegFrame) word(idx int64) uint64 {
+	if idx < int64(len(f.state)) {
+		return f.state[idx]
+	}
+	return 0
+}
+
+// putWord stores the mask of block idx, growing the state to hold it (never past the declared blocks, and the
+// work bound keeps idx proportional to the bytes read).
+func (f *jpegFrame) putWord(idx int64, w uint64) {
+	if idx >= int64(len(f.state)) {
+		if w == 0 {
+			return
+		}
+		n := min(max(idx+1, 2*int64(len(f.state))), f.stateBlocks)
+		f.state = append(f.state, make([]uint64, n-int64(len(f.state)))...)
+	}
+	f.state[idx] = w
 }
 
 // jpegScan is one parsed scan header.
@@ -256,9 +294,6 @@ func (f *jpegFrame) walkScan(w *Window, tabs *[2][4]jpegHuff, sc *jpegScan, ri, 
 		total = c.bw * c.bh
 	}
 	acScan := f.progressive && sc.ss > 0
-	if acScan && f.state == nil {
-		f.state = make([]uint64, f.stateBlocks)
-	}
 	var band uint64
 	if acScan {
 		band = (^uint64(0) >> uint(63-sc.se)) & (^uint64(0) << uint(sc.ss))
@@ -284,10 +319,13 @@ func (f *jpegFrame) walkScan(w *Window, tabs *[2][4]jpegHuff, sc *jpegScan, ri, 
 			if eobrun > interval {
 				return 0, jpegReject("eobrun-overrun")
 			}
+			if f.work += eobrun; f.work > jpegWorkBase+jpegWorkPerByte*br.pos {
+				return 0, errJPEGWork
+			}
 			if sc.ah != 0 {
 				c := &f.comps[sc.comps[0]]
 				for i := range eobrun {
-					if err := br.skip(bits.OnesCount64(f.state[c.stateStart+m+i] & band)); err != nil {
+					if err := br.skip(bits.OnesCount64(f.word(c.stateStart+m+i) & band)); err != nil {
 						return 0, err
 					}
 				}
@@ -298,10 +336,15 @@ func (f *jpegFrame) walkScan(w *Window, tabs *[2][4]jpegHuff, sc *jpegScan, ri, 
 		}
 		var err error
 		switch {
-		case acScan && sc.ah == 0:
-			eobrun, err = f.acFirst(br, tabs, sc, m)
 		case acScan:
-			eobrun, err = f.acRefine(br, tabs, sc, m, band)
+			idx := f.comps[sc.comps[0]].stateStart + m
+			word := f.word(idx)
+			if sc.ah == 0 {
+				eobrun, err = f.acFirst(br, tabs, sc, &word)
+			} else {
+				eobrun, err = f.acRefine(br, tabs, sc, &word, band)
+			}
+			f.putWord(idx, word)
 		default:
 			err = f.dcOrSequential(br, tabs, sc)
 		}
@@ -309,6 +352,9 @@ func (f *jpegFrame) walkScan(w *Window, tabs *[2][4]jpegHuff, sc *jpegScan, ri, 
 			return 0, err
 		}
 		m++
+		if f.work++; f.work > jpegWorkBase+jpegWorkPerByte*br.pos {
+			return 0, errJPEGWork
+		}
 	}
 	if eobrun != 0 {
 		return 0, jpegReject("eobrun-overrun")
@@ -392,9 +438,7 @@ func (f *jpegFrame) sequentialAC(br *jpegBits, ac *jpegHuff) error {
 }
 
 // acFirst walks one block of a progressive AC first scan and returns the blocks an EOB run still covers.
-func (f *jpegFrame) acFirst(br *jpegBits, tabs *[2][4]jpegHuff, sc *jpegScan, m int64) (int64, error) {
-	c := &f.comps[sc.comps[0]]
-	st := f.state[c.stateStart+m:]
+func (f *jpegFrame) acFirst(br *jpegBits, tabs *[2][4]jpegHuff, sc *jpegScan, st *uint64) (int64, error) {
 	ac := &tabs[1][sc.ac[0]]
 	for k := sc.ss; k <= sc.se; {
 		rs, err := br.decode(ac)
@@ -427,16 +471,14 @@ func (f *jpegFrame) acFirst(br *jpegBits, tabs *[2][4]jpegHuff, sc *jpegScan, m 
 		if err := br.skip(s); err != nil {
 			return 0, err
 		}
-		st[0] |= 1 << uint(k)
+		*st |= 1 << uint(k)
 		k++
 	}
 	return 0, nil
 }
 
 // acRefine walks one block of a progressive AC refinement scan and returns the blocks an EOB run still covers.
-func (f *jpegFrame) acRefine(br *jpegBits, tabs *[2][4]jpegHuff, sc *jpegScan, m int64, band uint64) (int64, error) {
-	c := &f.comps[sc.comps[0]]
-	st := f.state[c.stateStart+m:]
+func (f *jpegFrame) acRefine(br *jpegBits, tabs *[2][4]jpegHuff, sc *jpegScan, st *uint64, band uint64) (int64, error) {
 	ac := &tabs[1][sc.ac[0]]
 	k := sc.ss
 	var run int64 = -1 // -1: no EOB run begun in this block
@@ -466,7 +508,7 @@ func (f *jpegFrame) acRefine(br *jpegBits, tabs *[2][4]jpegHuff, sc *jpegScan, m
 		}
 		// Skip r zero coefficients (16 for a ZRL), reading a correction bit for every nonzero one passed.
 		for ; k <= sc.se; k++ {
-			if st[0]>>uint(k)&1 != 0 {
+			if *st>>uint(k)&1 != 0 {
 				if err := br.skip(1); err != nil {
 					return 0, err
 				}
@@ -480,7 +522,7 @@ func (f *jpegFrame) acRefine(br *jpegBits, tabs *[2][4]jpegHuff, sc *jpegScan, m
 			return 0, jpegReject("run-past-end")
 		}
 		if s != 0 {
-			st[0] |= 1 << uint(k)
+			*st |= 1 << uint(k)
 		}
 		k++
 	}
@@ -488,7 +530,7 @@ func (f *jpegFrame) acRefine(br *jpegBits, tabs *[2][4]jpegHuff, sc *jpegScan, m
 		return 0, nil
 	}
 	// The EOB run ends this block: the rest of its band gets correction bits.
-	if err := br.skip(bits.OnesCount64(st[0] & band & (^uint64(0) << uint(k)))); err != nil {
+	if err := br.skip(bits.OnesCount64(*st & band & (^uint64(0) << uint(k)))); err != nil {
 		return 0, err
 	}
 	return run - 1, nil
