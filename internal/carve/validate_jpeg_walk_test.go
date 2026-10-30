@@ -63,15 +63,26 @@ func TestJPEGWalkProgressiveRefinement(t *testing.T) {
 	if v.Outcome != Validated || v.Length != int64(len(obj)) || !slices.Contains(v.Basis, "scans=3") || !slices.Contains(v.Basis, "entropy-walked") {
 		t.Fatalf("verdict = %+v, want validated, 3 scans, walked", v)
 	}
+	if len(v.Assumptions) != 0 {
+		t.Fatalf("all-1 padding carries assumptions %q, want none", v.Assumptions)
+	}
+	// Zero padding bits (some encoders) leave the block count proven: still validated, with a note.
+	for name, o := range map[string][]byte{
+		"zero padding in the last scan": build(dc, first, []byte{0x34}),
+		"zero padding in the DC scan":   build([]byte{0x00}, first, refine),
+	} {
+		v := jpegWalk(o)
+		if v.Outcome != Validated || !slices.Equal(v.Assumptions, []string{"jpeg-padding=nonstandard"}) {
+			t.Errorf("%s: verdict = %+v, want validated with jpeg-padding=nonstandard", name, v)
+		}
+	}
 	for name, c := range map[string]struct {
 		dc, first, refine []byte
 		reason            string
 	}{
-		"zero padding":                 {dc, first, []byte{0x34}, "bad-padding"},
 		"extra data after the block":   {dc, first, []byte{0x37, 0x00}, "scan-overrun"},
 		"missing EOB after refinement": {dc, first, []byte{0x3F}, "scan-short"},
 		"unknown code":                 {dc, []byte{0xFF, 0x00, 0xFF, 0x00}, refine, "bad-code"},
-		"DC with extra block bits":     {[]byte{0x00}, first, refine, "bad-padding"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			v := jpegWalk(build(c.dc, c.first, c.refine))

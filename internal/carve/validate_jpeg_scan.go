@@ -66,6 +66,8 @@ type jpegFrame struct {
 	mcusX, mcusY int64
 	stateBlocks  int64
 	state        []uint64
+	// nonstdPadding: some scan ended a byte-aligned unit with padding that is not all 1 bits.
+	nonstdPadding bool
 }
 
 // setGeometry derives the block grids from the dimensions and sampling factors (all validated by the caller).
@@ -100,6 +102,9 @@ type jpegBits struct {
 	pos int64
 	acc uint32
 	n   uint
+	// nonstd: a unit ended with padding bits that are not all 1 (some encoders pad with 0). The block count is
+	// already proven, so the scan stays valid and the verdict says so.
+	nonstd bool
 }
 
 // next loads the next data byte. A marker (FF followed by anything but 00 or FF) is data that ended too soon;
@@ -181,13 +186,12 @@ func (b *jpegBits) decode(h *jpegHuff) (byte, error) {
 	return 0, jpegReject("bad-code")
 }
 
-// align ends a byte-aligned unit: the rest of the current byte must be 1 bits.
-func (b *jpegBits) align() error {
+// align ends a byte-aligned unit; padding that is not all 1 bits is noted, not rejected.
+func (b *jpegBits) align() {
 	if b.n > 0 && b.acc&(1<<b.n-1) != 1<<b.n-1 {
-		return jpegReject("bad-padding")
+		b.nonstd = true
 	}
 	b.n = 0
-	return nil
 }
 
 // restart consumes the RSTn marker numbered want (FF fill may precede it).
@@ -268,9 +272,7 @@ func (f *jpegFrame) walkScan(w *Window, tabs *[2][4]jpegHuff, sc *jpegScan, ri, 
 				if eobrun != 0 {
 					return 0, jpegReject("eobrun-overrun")
 				}
-				if err := br.align(); err != nil {
-					return 0, err
-				}
+				br.align()
 				if err := br.restart(rst); err != nil {
 					return 0, err
 				}
@@ -311,12 +313,11 @@ func (f *jpegFrame) walkScan(w *Window, tabs *[2][4]jpegHuff, sc *jpegScan, ri, 
 	if eobrun != 0 {
 		return 0, jpegReject("eobrun-overrun")
 	}
-	if err := br.align(); err != nil {
-		return 0, err
-	}
+	br.align()
 	if err := br.end(); err != nil {
 		return 0, err
 	}
+	f.nonstdPadding = f.nonstdPadding || br.nonstd
 	return br.pos, nil
 }
 

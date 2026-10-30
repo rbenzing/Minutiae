@@ -84,7 +84,11 @@ func validateJPEG(w *Window) Verdict {
 					Assumptions: []string{"entropy-not-walked=" + unwalked},
 				}
 			}
-			return Verdict{Outcome: Validated, Length: pos, Basis: append(basis, "entropy-walked")}
+			v := Verdict{Outcome: Validated, Length: pos, Basis: append(basis, "entropy-walked")}
+			if frame.nonstdPadding {
+				v.Assumptions = []string{"jpeg-padding=nonstandard"}
+			}
+			return v
 		case code == 0x01:
 			continue
 		case code == 0x00 || code == 0xD8 || (code >= 0xD0 && code <= 0xD7):
