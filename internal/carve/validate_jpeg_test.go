@@ -22,6 +22,12 @@ func jpegVerdict(t *testing.T, obj []byte, trail int) Verdict {
 	return validateJPEG(newWindow(context.Background(), bytes.NewReader(buf), 0, int64(len(buf)), newBudget(1<<30)))
 }
 
+// jpegTinyTables defines the smallest walkable Huffman tables: DC category 0 and AC end-of-block, both code 0,
+// so a block is two 0 bits and a 64x48 frame (48 blocks) is 12 zero bytes.
+func jpegTinyTables() []byte {
+	return slices.Concat(carvetest.JPEGDHT(0, 0, [16]byte{1}, []byte{0}), carvetest.JPEGDHT(1, 0, [16]byte{1}, []byte{0}))
+}
+
 func TestJPEGValidatesBuilderVariants(t *testing.T) {
 	thumb := carvetest.JPEG(carvetest.JPEGOpts{W: 8, H: 8})
 	for name, o := range map[string]carvetest.JPEGOpts{
@@ -62,6 +68,7 @@ func TestJPEGRejects(t *testing.T) {
 	sof := seg(0xC0, []byte{8, 0, 48, 0, 64, 1, 1, 0x11, 0})
 	sos := seg(0xDA, []byte{1, 1, 0, 0, 63, 0})
 	soi := []byte{0xFF, 0xD8}
+	tab := jpegTinyTables()
 	cat := func(parts ...[]byte) []byte { return slices.Concat(parts...) }
 	for _, c := range []struct {
 		name   string
@@ -81,8 +88,8 @@ func TestJPEGRejects(t *testing.T) {
 		{"frame without components", cat(soi, seg(0xC0, []byte{8, 0, 48, 0, 64, 0})), "bad-frame"},
 		{"frame length mismatch", cat(soi, seg(0xC0, []byte{8, 0, 48, 0, 64, 1, 1, 0x11})), "bad-frame"},
 		{"zero height", cat(soi, seg(0xC0, []byte{8, 0, 0, 0, 64, 1, 1, 0x11, 0})), "zero-dimensions"},
-		{"window ends in entropy", cat(soi, sof, sos, []byte{1, 2, 3, 4}), "truncated"},
-		{"window ends after FF in entropy", cat(soi, sof, sos, []byte{1, 2, 3, 0xFF}), "truncated"},
+		{"window ends in entropy", cat(soi, sof, tab, sos, []byte{0, 0, 0, 0}), "truncated"},
+		{"window ends after FF in entropy", cat(soi, sof, tab, sos, []byte{0, 0, 0, 0xFF}), "truncated"},
 		{"only SOI", soi, "truncated"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -102,9 +109,10 @@ func TestJPEGRejects(t *testing.T) {
 // bytes is stopped by the budget (a typed rejection, never a loop or an
 // allocation from a declared size).
 func TestJPEGWindowBoundsAndBudget(t *testing.T) {
-	head := slices.Concat([]byte{0xFF, 0xD8}, carvetest.JPEGSegment(0xC0, []byte{8, 0, 48, 0, 64, 1, 1, 0x11, 0}),
-		carvetest.JPEGSegment(0xDA, []byte{1, 1, 0, 0, 63, 0}))
-	buf := slices.Concat(head, bytes.Repeat([]byte{0x41}, 1<<20))
+	// 65535 x 65535 declares far more blocks than the megabyte holds, so the walk keeps reading.
+	head := slices.Concat([]byte{0xFF, 0xD8}, carvetest.JPEGSegment(0xC0, []byte{8, 0xFF, 0xFF, 0xFF, 0xFF, 1, 1, 0x11, 0}),
+		jpegTinyTables(), carvetest.JPEGSegment(0xDA, []byte{1, 1, 0, 0, 63, 0}))
+	buf := slices.Concat(head, make([]byte, 1<<20))
 	b := newBudget(128 << 10)
 	w := newWindow(context.Background(), bytes.NewReader(buf), 0, int64(len(buf)), b)
 	v := validateJPEG(w)
@@ -221,6 +229,8 @@ func TestJPEGScanHeaderAndEntropyIdentity(t *testing.T) {
 	soi := []byte{0xFF, 0xD8}
 	sof := seg(0xC0, []byte{8, 0, 48, 0, 64, 1, 1, 0x11, 0})
 	eoi := []byte{0xFF, 0xD9}
+	tab := jpegTinyTables()
+	ent := make([]byte, 12)
 	run := func(parts ...[]byte) Verdict {
 		o := slices.Concat(parts...)
 		return validateJPEG(newWindow(context.Background(), bytes.NewReader(o), 0, int64(len(o)), newBudget(1<<30)))
@@ -235,10 +245,10 @@ func TestJPEGScanHeaderAndEntropyIdentity(t *testing.T) {
 		"length vs Ns":      {seg(0xDA, []byte{2, 1, 0, 0, 63, 0}), "bad-scan"},
 		"length too short":  {seg(0xDA, []byte{1}), "bad-scan"},
 		"length too long":   {seg(0xDA, []byte{1, 1, 0, 0, 63, 0, 9}), "bad-scan"},
-		"no entropy at all": {seg(0xDA, []byte{1, 1, 0, 0, 63, 0}), "empty-scan"},
+		"no entropy at all": {seg(0xDA, []byte{1, 1, 0, 0, 63, 0}), "scan-short"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			parts := [][]byte{soi, sof, c.sos}
+			parts := [][]byte{soi, sof, tab, c.sos}
 			if c.reason == "bad-scan" {
 				parts = append(parts, data)
 			}
@@ -250,11 +260,16 @@ func TestJPEGScanHeaderAndEntropyIdentity(t *testing.T) {
 	}
 	// Only fill and a restart marker is still no entropy-coded data.
 	sos := seg(0xDA, []byte{1, 1, 0, 0, 63, 0})
-	if v := run(soi, sof, sos, []byte{0xFF, 0xFF, 0xFF, 0xD0}, eoi); v.Outcome != Rejected || v.Reason != "empty-scan" {
+	if v := run(soi, sof, tab, sos, []byte{0xFF, 0xFF, 0xFF, 0xD0}, eoi); v.Outcome != Rejected || v.Reason != "scan-short" {
 		t.Fatalf("fill-only scan verdict = %+v", v)
 	}
-	// Control: one entropy byte validates.
-	if v := run(soi, sof, sos, data, eoi); v.Outcome != Validated {
+	// A frame the walk does not cover (lossless, SOF3) keeps the marker-only scan and its empty-scan rule.
+	sof3 := seg(0xC3, []byte{8, 0, 48, 0, 64, 1, 1, 0x11, 0})
+	if v := run(soi, sof3, sos, eoi); v.Outcome != Rejected || v.Reason != "empty-scan" {
+		t.Fatalf("unwalked empty scan verdict = %+v", v)
+	}
+	// Control: the 48 blocks validate.
+	if v := run(soi, sof, tab, sos, ent, eoi); v.Outcome != Validated {
 		t.Fatalf("control verdict = %+v", v)
 	}
 }
@@ -264,7 +279,8 @@ func TestJPEGMarkersInsideAndBetweenScans(t *testing.T) {
 	soi := []byte{0xFF, 0xD8}
 	sof := seg(0xC0, []byte{8, 0, 48, 0, 64, 1, 1, 0x11, 0})
 	sos := seg(0xDA, []byte{1, 1, 0, 0, 63, 0})
-	dht := seg(0xC4, append([]byte{0}, make([]byte, 16)...))
+	dht := jpegTinyTables()
+	ent := make([]byte, 12)
 	eoi := []byte{0xFF, 0xD9}
 	run := func(parts ...[]byte) Verdict {
 		o := slices.Concat(parts...)
@@ -272,24 +288,25 @@ func TestJPEGMarkersInsideAndBetweenScans(t *testing.T) {
 	}
 	// A mid-entropy FF followed by a non-restart marker ends the scan and the
 	// marker loop resumes: DHT then a second SOS is a valid two-scan file.
-	v := run(soi, sof, sos, []byte{1, 2, 3}, dht, sos, []byte{4, 5}, eoi)
+	v := run(soi, sof, dht, sos, ent, dht, sos, ent, eoi)
 	if v.Outcome != Validated || !slices.Contains(v.Basis, "scans=2") {
 		t.Fatalf("two-scan verdict = %+v", v)
 	}
-	// FF D8 inside entropy data ends it (no nesting) and is a bad marker.
-	v = run(soi, sof, sos, []byte{1, 2, 0xFF, 0xD8, 3}, eoi)
-	if v.Outcome != Rejected || v.Reason != "bad-marker" {
+	// FF D8 inside entropy data ends it before the blocks are done (no nesting).
+	v = run(soi, sof, dht, sos, []byte{0, 0, 0xFF, 0xD8, 0}, eoi)
+	if v.Outcome != Rejected || v.Reason != "scan-short" {
 		t.Fatalf("SOI-in-entropy verdict = %+v", v)
 	}
-	// Pinned: a second SOF is accepted; the dimensions are the first frame's.
+	// Pinned: a second SOF is accepted but the walk stops covering the file (a footer hit); the dimensions
+	// are the first frame's.
 	sof2 := seg(0xC0, []byte{8, 0, 10, 0, 10, 1, 1, 0x11, 0})
-	v = run(soi, sof, sof2, sos, []byte{1}, eoi)
-	if v.Outcome != Validated || !slices.Contains(v.Basis, "dims=64x48") {
+	v = run(soi, sof, sof2, dht, sos, []byte{1}, eoi)
+	if v.Outcome != Footer || !slices.Contains(v.Basis, "dims=64x48") || !slices.Contains(v.Assumptions, "entropy-not-walked=multiple-frames") {
 		t.Fatalf("second-SOF verdict = %+v", v)
 	}
 	// Boundary: a segment ending exactly at the window end is truncated; the
 	// same bytes plus an EOI inside the window validate.
-	head := slices.Concat(soi, sof, sos, []byte{1}, seg(0xFE, []byte("c")))
+	head := slices.Concat(soi, sof, dht, sos, ent, seg(0xFE, []byte("c")))
 	if v := run(head); v.Outcome != Rejected || v.Reason != "truncated" {
 		t.Fatalf("segment-at-window-end verdict = %+v", v)
 	}
