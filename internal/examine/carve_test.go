@@ -548,7 +548,7 @@ func TestCarveAnalysisAudit(t *testing.T) {
 
 // carveEndKeys are the statistics of analysis.end / analysis.error (3E-R11).
 var carveEndKeys = []string{
-	"scope_runs", "scope_bytes", "scanned_bytes", "not_scanned_bytes", "align", "hits_by_outcome", "rejected_by", "carved",
+	"scope_runs", "scope_bytes", "scanned_bytes", "not_scanned_bytes", "align", "hits_by_outcome", "rejected_by", "bounded_by", "carved",
 	"partial", "skipped_by", "nested_depth_skipped", "types_capped", "unreadable_bytes", "uncopied_bytes", "validate_bytes", "limit_reached",
 }
 

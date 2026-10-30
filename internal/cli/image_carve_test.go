@@ -151,7 +151,7 @@ func TestImageCarveUsage(t *testing.T) {
 	}
 	// the unknown-type message lists the valid names
 	_, out := run(t, e.d, "image", "carve", "--case", e.c, e.ref, "--types", "nosuch")
-	for _, want := range []string{"jpeg", "png", "mp4", "docx"} {
+	for _, want := range []string{"jpeg", "png", "mp4", "docx", "bmp", "tiff", "dng", "avif", "jxl", "cur"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("unknown-type message lacks valid name %q:\n%s", want, out)
 		}

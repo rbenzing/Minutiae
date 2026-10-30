@@ -333,6 +333,9 @@ func TestCarveValidatorsBounded(t *testing.T) {
 		}
 	}
 	for id := range validators {
+		if !implementedValidators[id] {
+			continue // a stub until its format task lands (3E2 tasks 3-6); Task 7 requires the corpus of all fifteen
+		}
 		if !seen[id] {
 			t.Errorf("validator %q has no corpus object", id)
 		}

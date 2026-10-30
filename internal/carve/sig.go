@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -38,7 +39,7 @@ type Set struct {
 // Limits of a signature and the built-in set's id. A change to the built-in
 // table MUST change BuiltinID: audit records name the set by id and digest.
 const (
-	BuiltinID               = "minutiae-sigset/1"
+	BuiltinID               = "minutiae-sigset/2"
 	MaxPatternLen           = 32
 	MaxPatternOffset        = 512
 	MaxHeaders              = 4
@@ -66,8 +67,15 @@ func builtinType(name, ext, mime, validate string, minLen, maxLen int64, headers
 	return Type{Name: name, Ext: ext, MIME: mime, Headers: headers, MinLen: minLen, MaxLen: maxLen, Validate: validate, Align: alignBlock}
 }
 
-// Builtin returns a fresh deep copy of the built-in set (the twelve spec 7.2
-// families). Nothing is shared between calls.
+// tiffRow is one row of the tiff family; the rows differ only in their header.
+func tiffRow(h Pattern) Type {
+	return builtinType("tiff", "tif", "image/tiff", "tiff", 32, 1<<30, h)
+}
+
+// Builtin returns a fresh deep copy of the built-in set: the twelve
+// spec 7.2 families of 3E, then the 3E2 rows (bmp, eight tiff rows, the JPEG XL
+// row of isobmff, ico, cur): 24 rows in 16 families. Rows that share a name are
+// one family and differ only in their headers. Nothing is shared between calls.
 func Builtin() *Set {
 	const mib, gib = 1 << 20, 1 << 30
 	return &Set{ID: BuiltinID, Types: []Type{
@@ -84,6 +92,19 @@ func Builtin() *Set {
 		builtinType("gzip", "gz", "application/gzip", "gzip", 18, 64*mib, pat(0, 0x1F, 0x8B, 0x08)),
 		builtinType("wav", "wav", "audio/wav", "riff-wave", 44, gib, pat(0, 'R', 'I', 'F', 'F'), pat(8, 'W', 'A', 'V', 'E')),
 		builtinType("ogg", "ogg", "audio/ogg", "ogg", 28, 256*mib, pat(0, 'O', 'g', 'g', 'S', 0x00)),
+		builtinType("bmp", "bmp", "image/bmp", "bmp", 30, gib, pat(0, 'B', 'M')),
+		tiffRow(pat(0, 0x49, 0x49, 0x2A, 0x00)),
+		tiffRow(pat(0, 0x4D, 0x4D, 0x00, 0x2A)),
+		tiffRow(pat(0, 0x49, 0x49, 0x2B, 0x00)),
+		tiffRow(pat(0, 0x4D, 0x4D, 0x00, 0x2B)),
+		tiffRow(pat(0, 'I', 'I', 'R', 'O')),
+		tiffRow(pat(0, 'I', 'I', 'R', 'S')),
+		tiffRow(pat(0, 'M', 'M', 'O', 'R')),
+		tiffRow(pat(0, 0x49, 0x49, 0x55, 0x00)),
+		// the second row of the isobmff family: the JPEG XL signature box
+		builtinType("isobmff", "bmff", "video/mp4", "isobmff", 24, 4*gib, pat(0, 0x00, 0x00, 0x00, 0x0C, 0x4A, 0x58, 0x4C, 0x20, 0x0D, 0x0A, 0x87, 0x0A)),
+		builtinType("ico", "ico", "image/vnd.microsoft.icon", "ico", 34, 16*mib, pat(0, 0x00, 0x00, 0x01, 0x00)),
+		builtinType("cur", "cur", "image/vnd.microsoft.icon", "ico", 34, 16*mib, pat(0, 0x00, 0x00, 0x02, 0x00)),
 	}}
 }
 
@@ -91,7 +112,8 @@ func Builtin() *Set {
 // assign (identity from structure, never from a guess). A fresh map each call.
 func RefinedTypes() map[string][]string {
 	return map[string][]string{
-		"isobmff": {"mp4", "mov", "3gp", "heic", "heif", "isobmff"},
+		"isobmff": {"mp4", "mov", "3gp", "heic", "heif", "isobmff", "avif", "cr3", "jxl"},
+		"tiff":    {"tiff", "dng", "cr2", "orf", "rw2"},
 		"zip":     {"zip", "apk", "jar", "docx", "xlsx", "pptx"},
 	}
 }
@@ -119,8 +141,18 @@ type canonSet struct {
 	Types []canonType `json:"types"`
 }
 
-// Canonical is the canonical JSON form of the set: types sorted by name, a
-// fixed field order, bytes as lowercase hex. Equal sets give equal bytes.
+// canonHeaders is the canonical header text of one row: the key that orders
+// the rows of a family (a row with equal headers cannot share a set).
+func canonHeaders(h []canonPattern) string {
+	out, err := json.Marshal(h)
+	if err != nil {
+		return "" // unreachable: strings and integers only
+	}
+	return string(out)
+}
+
+// Canonical is the canonical JSON form of the set: types sorted by name, then
+// by their header text (the rows of a family), a fixed field order, bytes as lowercase hex. Equal sets give equal bytes.
 func (s *Set) Canonical() []byte {
 	c := canonSet{ID: s.ID, Types: make([]canonType, 0, len(s.Types))}
 	for _, t := range s.Types {
@@ -134,7 +166,12 @@ func (s *Set) Canonical() []byte {
 		}
 		c.Types = append(c.Types, ct)
 	}
-	slices.SortStableFunc(c.Types, func(a, b canonType) int { return strings.Compare(a.Name, b.Name) })
+	slices.SortStableFunc(c.Types, func(a, b canonType) int {
+		if d := strings.Compare(a.Name, b.Name); d != 0 {
+			return d
+		}
+		return strings.Compare(canonHeaders(a.Headers), canonHeaders(b.Headers))
+	})
 	out, err := json.Marshal(c)
 	if err != nil {
 		return nil // unreachable: the structure holds strings and integers only
@@ -221,17 +258,64 @@ func (s *Set) Check() error {
 	if !printable(s.ID, maxSetIDLen) || s.ID == "" {
 		return fmt.Errorf("%w: set id must be 1-%d printable ASCII characters", ErrBadSignature, maxSetIDLen)
 	}
-	seen := map[string]bool{}
+	first := map[string]int{}    // family name -> index of its first row
+	headers := map[string]bool{} // family name and header key of every row so far
 	for i := range s.Types {
-		if err := s.Types[i].check(); err != nil {
+		t := &s.Types[i]
+		if err := t.check(); err != nil {
 			return err
 		}
-		if seen[s.Types[i].Name] {
-			return fmt.Errorf("%w: duplicate type name %q", ErrBadSignature, s.Types[i].Name)
+		// A family is the rows that share a name: they differ only in their headers.
+		if j, ok := first[t.Name]; ok {
+			if err := sameFamily(&s.Types[j], t); err != nil {
+				return err
+			}
+		} else {
+			first[t.Name] = i
 		}
-		seen[s.Types[i].Name] = true
+		key := headerKey(t.Name, t.Headers)
+		if headers[key] {
+			return fmt.Errorf("%w: type %q: two rows with equal headers", ErrBadSignature, t.Name)
+		}
+		headers[key] = true
 	}
 	return nil
+}
+
+// sameFamily refuses a second row of a family that differs from the first in
+// any field but its headers.
+func sameFamily(a, b *Type) error {
+	var field string
+	switch {
+	case a.Ext != b.Ext:
+		field = "Ext"
+	case a.MIME != b.MIME:
+		field = "MIME"
+	case !bytes.Equal(a.Footer, b.Footer):
+		field = "Footer"
+	case a.MinLen != b.MinLen:
+		field = "MinLen"
+	case a.MaxLen != b.MaxLen:
+		field = "MaxLen"
+	case a.Validate != b.Validate:
+		field = "Validate"
+	case a.Align != b.Align:
+		field = "Align"
+	default:
+		return nil
+	}
+	return fmt.Errorf("%w: type %q: rows of one family differ in %s", ErrBadSignature, a.Name, field)
+}
+
+// headerKey identifies the headers of a row inside its family (a nil mask and
+// an empty one are the same: no mask).
+func headerKey(name string, h []Pattern) string {
+	var b strings.Builder
+	b.WriteString(name)
+	for _, p := range h {
+		b.WriteString("|" + strconv.Itoa(p.Offset) + ":" + hex.EncodeToString(p.Bytes) + ":" + hex.EncodeToString(p.Mask))
+	}
+	return b.String()
 }
 
 func (t Type) clone() Type {
@@ -290,8 +374,8 @@ func (s *Set) Select(names []string) (*Set, map[string][]string, error) {
 			continue
 		}
 		out.Types = append(out.Types, t.clone())
-		if whole[t.Name] {
-			continue
+		if whole[t.Name] || filter[t.Name] != nil {
+			continue // a family of several rows lists its refined names once
 		}
 		for _, r := range refined[t.Name] { // the table's order, so the filter is deterministic
 			if part[t.Name][r] {
