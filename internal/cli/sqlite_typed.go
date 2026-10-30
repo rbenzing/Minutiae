@@ -393,6 +393,12 @@ type backupSiblingsJSON struct {
 	Journal    string          `json:"journal"`
 	ManifestDB *backupManifest `json:"manifest_db"`
 	Reason     string          `json:"reason"`
+	// What the Manifest.db lists or leaves unnamed that the pairing could not use (unknown is never absent).
+	WALListedNotHeld     bool     `json:"wal_listed_not_held"`
+	JournalListedNotHeld bool     `json:"journal_listed_not_held"`
+	UnmappedHeldFiles    int      `json:"unmapped_held_files"`
+	ListedUnchecked      int64    `json:"listed_unchecked"`
+	Warnings             []string `json:"warnings"`
 }
 
 type backupManifest struct {
@@ -409,8 +415,12 @@ func (b *backupSiblingsJSON) text() string {
 }
 
 func printBackupSiblings(w io.Writer, b *backupSiblingsJSON) {
-	if b != nil {
-		fmt.Fprintln(w, b.text())
+	if b == nil {
+		return
+	}
+	fmt.Fprintln(w, b.text())
+	for _, x := range b.Warnings {
+		fmt.Fprintf(w, "backup siblings warning: %s\n", escapeText(x))
 	}
 }
 
@@ -449,7 +459,11 @@ func pairBackupSiblings(ctx context.Context, d Deps, c *evidence.Case, in dbreco
 	if err != nil {
 		return in, nil, err
 	}
-	out := &backupSiblingsJSON{Named: bs.Named, WAL: bs.WAL, Journal: bs.Journal, Reason: bs.Reason}
+	out := &backupSiblingsJSON{
+		Named: bs.Named, WAL: bs.WAL, Journal: bs.Journal, Reason: bs.Reason,
+		WALListedNotHeld: bs.WalListedNotHeld, JournalListedNotHeld: bs.JournalListedNotHeld, UnmappedHeldFiles: bs.UnmappedHeld,
+		ListedUnchecked: bs.ListedUnchecked, Warnings: append([]string{}, bs.Warnings()...),
+	}
 	if bs.ManifestDB != nil {
 		out.ManifestDB = &backupManifest{ArtifactID: bs.ManifestDB.ArtifactID, SHA256: bs.ManifestDB.SHA256}
 	}

@@ -23,6 +23,11 @@ type walBackup struct {
 }
 
 func newWALBackup(t *testing.T, plist string) *walBackup {
+	return newWALBackupWith(t, plist, nil, backupExtras{})
+}
+
+// newWALBackupWith is newWALBackup with more files in the backup and a bent Manifest.db.
+func newWALBackupWith(t *testing.T, plist string, more []iosBackupFile, x backupExtras) *walBackup {
 	t.Helper()
 	base := filepath.Join("..", "parsers", "safari", "testdata", "current-wal")
 	db, ok := readGzFixture(t, base+".db.gz")
@@ -37,11 +42,11 @@ func newWALBackup(t *testing.T, plist string) *walBackup {
 	if _, err := c.Audit.Append("acquire.start", "D1", map[string]any{"acquisition_id": "A1", "type": "ios.backup"}); err != nil {
 		t.Fatal(err)
 	}
-	recs, manifest := addIOSBackupPlist(t, c, "A1", "UDID1", []iosBackupFile{
+	recs, manifest := addIOSBackupFull(t, c, "A1", "UDID1", append([]iosBackupFile{
 		{"HomeDomain", safariRelative, db},
 		{"HomeDomain", safariRelative + "-wal", wal},
 		{"HomeDomain", "Library/Other/unrelated.db-wal", wal},
-	}, plist)
+	}, more...), plist, x)
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +69,11 @@ type backupSiblingsReport struct {
 			ArtifactID string `json:"artifact_id"`
 			SHA256     string `json:"sha256"`
 		} `json:"manifest_db"`
-		Reason string `json:"reason"`
+		Reason               string   `json:"reason"`
+		WalListedNotHeld     bool     `json:"wal_listed_not_held"`
+		JournalListedNotHeld bool     `json:"journal_listed_not_held"`
+		UnmappedHeld         int      `json:"unmapped_held_files"`
+		Warnings             []string `json:"warnings"`
 	} `json:"backup_siblings"`
 	Typed *typedJSON `json:"typed"`
 }
@@ -224,4 +233,63 @@ func TestSQLiteRecoverNonBackupDatabaseHasNullBackupSiblings(t *testing.T) {
 	if v, ok := raw["backup_siblings"]; !ok || string(v) != "null" {
 		t.Errorf("backup_siblings = %s (present %v), want null", v, ok)
 	}
+}
+
+// A companion the Manifest.db lists but the case does not hold is reported, never silently absent; what is
+// named still pairs.
+func TestSQLiteRecoverReportsAListedCompanionTheCaseDoesNotHold(t *testing.T) {
+	w := newWALBackupWith(t, backupPlistNo, nil, backupExtras{listedOnly: []iosBackupFile{{"HomeDomain", safariRelative + "-journal", nil}}})
+	rep, _ := w.report(t, 0)
+	bs := rep.BackupSiblings
+	if bs == nil || !bs.Named || bs.WAL != w.wal.ID || bs.Journal != "" || !bs.JournalListedNotHeld || bs.WalListedNotHeld {
+		t.Fatalf("backup_siblings = %+v, want the wal paired and journal_listed_not_held", bs)
+	}
+	if len(bs.Warnings) != 1 || !strings.Contains(bs.Warnings[0], "-journal") || !strings.Contains(bs.Warnings[0], "case holds no such file") {
+		t.Errorf("warnings %q", bs.Warnings)
+	}
+	_, text, _ := runP(t, nil, "sqlite", "recover", "--case", w.dir, "--list", w.db.ID)
+	if !strings.Contains(text, "backup siblings warning: ") || !strings.Contains(text, "case holds no such file") {
+		t.Errorf("text lacks the warning:\n%s", text)
+	}
+}
+
+func TestSQLiteRecoverReportsHeldFilesWithNoLogicalPath(t *testing.T) {
+	w := newWALBackupWith(t, backupPlistNo, []iosBackupFile{{"HomeDomain", "Library/Safari/History.db-unlisted", []byte("X")}}, backupExtras{asRel: map[string]string{"HomeDomain/Library/Safari/History.db-unlisted": "\x00bad"}})
+	rep, _ := w.report(t, 0)
+	bs := rep.BackupSiblings
+	if bs == nil || !bs.Named || bs.WAL != w.wal.ID || bs.UnmappedHeld != 1 || len(bs.Warnings) != 1 || !strings.Contains(bs.Warnings[0], "1 backup files of this backup have no logical path; a companion may be among them") {
+		t.Fatalf("backup_siblings = %+v", bs)
+	}
+}
+
+// Two held files listed under one companion path: nothing is paired, and the command says why. A unique -wal next
+// to an ambiguous -journal is not paired either.
+func TestSQLiteRecoverAmbiguousBackupSiblingPairsNothing(t *testing.T) {
+	t.Run("wal", func(t *testing.T) {
+		w := newWALBackupWith(t, backupPlistNo, []iosBackupFile{{"HomeDomain", safariRelative + "-wal2", []byte("W2")}},
+			backupExtras{asRel: map[string]string{"HomeDomain/" + safariRelative + "-wal2": safariRelative + "-wal"}})
+		rep, _ := w.report(t, 1)
+		bs := rep.BackupSiblings
+		if bs == nil || bs.Named || bs.WAL != "" || !strings.Contains(bs.Reason, "ambiguous") {
+			t.Fatalf("backup_siblings = %+v, want not named, ambiguous", bs)
+		}
+		_, text, _ := runP(t, nil, "sqlite", "recover", "--case", w.dir, "--list", w.db.ID)
+		if !strings.Contains(text, "backup siblings not named: ambiguous") {
+			t.Errorf("text:\n%s", text)
+		}
+	})
+	t.Run("journal with a unique wal", func(t *testing.T) {
+		w := newWALBackupWith(t, backupPlistNo, []iosBackupFile{
+			{"HomeDomain", safariRelative + "-journal", []byte("J1")},
+			{"HomeDomain", safariRelative + "-journal2", []byte("J2")},
+		}, backupExtras{asRel: map[string]string{"HomeDomain/" + safariRelative + "-journal2": safariRelative + "-journal"}})
+		rep, _ := w.report(t, 0)
+		bs := rep.BackupSiblings
+		if bs == nil || bs.Named || bs.WAL != "" || bs.Journal != "" || !strings.Contains(bs.Reason, "ambiguous") || !strings.Contains(bs.Reason, "-journal") {
+			t.Fatalf("backup_siblings = %+v, want nothing paired, reason naming the -journal", bs)
+		}
+		if got := rep.Siblings["wal"].ArtifactID; got != "" {
+			t.Errorf("the unique wal %q was paired next to an ambiguous journal", got)
+		}
+	})
 }

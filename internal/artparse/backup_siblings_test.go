@@ -9,6 +9,7 @@ import (
 
 	"github.com/rbenzing/minutiae/internal/artparse"
 	"github.com/rbenzing/minutiae/internal/evidence"
+	"github.com/rbenzing/minutiae/internal/parsers/parsertest"
 )
 
 func siblingsOf(t *testing.T, bc *bcase, id string) (artparse.BackupSiblings, error) {
@@ -55,18 +56,84 @@ func TestBackupSiblingsNamesTheManifestCompanions(t *testing.T) {
 			t.Errorf("got %+v, want Named with the wal and no journal", got)
 		}
 	})
-	t.Run("a file the manifest does not list is no sibling", func(t *testing.T) {
+	t.Run("a held file the manifest does not list is reported, the rest still pairs", func(t *testing.T) {
 		bc := newBackupCase(t)
 		a := bc.add(bspec{files: []bfile{
 			{domain: recBackupDomain, rel: recBackupRel, data: "DB"},
 			{domain: recBackupDomain, rel: recBackupRel + "-wal", data: "WAL", unlisted: true},
+			{domain: recBackupDomain, rel: recBackupRel + "-journal", data: "JRN"},
 		}})
 		got, err := siblingsOf(t, bc, a.file(recBackupDomain, recBackupRel).ID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !got.Named || got.WAL != "" {
-			t.Errorf("got %+v, want Named with no wal: the Manifest.db does not name that file", got)
+		if !got.Named || got.WAL != "" || got.Journal != a.file(recBackupDomain, recBackupRel+"-journal").ID {
+			t.Errorf("got %+v, want Named, no wal (unnamed), the journal paired", got)
+		}
+		if got.UnmappedHeld != 1 {
+			t.Errorf("UnmappedHeld = %d, want 1", got.UnmappedHeld)
+		}
+		if w := strings.Join(got.Warnings(), "\n"); !strings.Contains(w, "1 backup files of this backup have no logical path; a companion may be among them") {
+			t.Errorf("warnings %q lack the unmapped-files warning", w)
+		}
+	})
+	t.Run("a companion listed but not held is reported", func(t *testing.T) {
+		bc := newBackupCase(t)
+		a := bc.add(bspec{
+			files: []bfile{{domain: recBackupDomain, rel: recBackupRel, data: "DB"}},
+			rows: []frow{
+				{id: parsertest.BackupFileID(recBackupDomain, recBackupRel+"-wal"), domain: recBackupDomain, rel: recBackupRel + "-wal", flags: 1},
+				{id: parsertest.BackupFileID(recBackupDomain, recBackupRel+"-journal"), domain: recBackupDomain, rel: recBackupRel + "-journal", flags: 1},
+			},
+		})
+		got, err := siblingsOf(t, bc, a.file(recBackupDomain, recBackupRel).ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.Named || got.WAL != "" || got.Journal != "" || !got.WalListedNotHeld || !got.JournalListedNotHeld {
+			t.Errorf("got %+v, want Named, nothing paired, both listed-not-held", got)
+		}
+		w := strings.Join(got.Warnings(), "\n")
+		if !strings.Contains(w, recBackupLogic+"-wal") || !strings.Contains(w, recBackupLogic+"-journal") || !strings.Contains(w, "case holds no such file") {
+			t.Errorf("warnings %q do not name the listed-but-not-held companions", w)
+		}
+		// a database whose companions are not listed has no such warning
+		bc2 := newBackupCase(t)
+		a2 := bc2.add(bspec{files: []bfile{{domain: recBackupDomain, rel: recBackupRel, data: "DB"}}})
+		got2, err := siblingsOf(t, bc2, a2.file(recBackupDomain, recBackupRel).ID)
+		if err != nil || got2.WalListedNotHeld || got2.JournalListedNotHeld || len(got2.Warnings()) != 0 {
+			t.Errorf("got %+v err %v, want a clean answer", got2, err)
+		}
+	})
+	t.Run("two files listed under the same companion path are ambiguous", func(t *testing.T) {
+		bc := newBackupCase(t)
+		a := bc.add(bspec{files: []bfile{
+			{domain: recBackupDomain, rel: recBackupRel, data: "DB"},
+			{domain: recBackupDomain, rel: recBackupRel + "-wal", data: "WAL1"},
+			{domain: recBackupDomain, rel: recBackupRel + "-wal2", data: "WAL2", asRel: recBackupRel + "-wal"},
+		}})
+		got, err := siblingsOf(t, bc, a.file(recBackupDomain, recBackupRel).ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Named || got.WAL != "" || !strings.Contains(got.Reason, "ambiguous") || !strings.Contains(got.Reason, "-wal") {
+			t.Errorf("got %+v, want not Named, reason ambiguous naming the -wal", got)
+		}
+	})
+	t.Run("an ambiguous journal pairs neither side", func(t *testing.T) {
+		bc := newBackupCase(t)
+		a := bc.add(bspec{files: []bfile{
+			{domain: recBackupDomain, rel: recBackupRel, data: "DB"},
+			{domain: recBackupDomain, rel: recBackupRel + "-wal", data: "WAL"},
+			{domain: recBackupDomain, rel: recBackupRel + "-journal", data: "J1"},
+			{domain: recBackupDomain, rel: recBackupRel + "-journal2", data: "J2", asRel: recBackupRel + "-journal"},
+		}})
+		got, err := siblingsOf(t, bc, a.file(recBackupDomain, recBackupRel).ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Named || got.WAL != "" || got.Journal != "" || !strings.Contains(got.Reason, "ambiguous") || !strings.Contains(got.Reason, "-journal") {
+			t.Errorf("got %+v, want not Named, nothing paired (not even the unique -wal), reason naming the -journal", got)
 		}
 	})
 	t.Run("a file kind database", func(t *testing.T) {
