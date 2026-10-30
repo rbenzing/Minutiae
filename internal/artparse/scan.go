@@ -21,7 +21,8 @@ const (
 type ScanCounts struct {
 	Considered, Probed, Candidates, NotApplicable, TooLarge, Companions, NotProbed, FindingsDropped int
 	Stopped                                                                                         string // "", StoppedAbandoned or StoppedCancelled (4h-R31); NotApplicable counts (artifact, parser) pairs
-	// PairsNotProbed counts the artifact x parser probes of the candidate on which a Probe was abandoned that never ran; the candidates after it are NotProbed whole.
+	// PairsNotProbed counts the artifact x parser probes that never ran of the one candidate on which the scan stopped
+	// (a Probe was abandoned, or a non-context I/O error came after its source was loaded); the candidates after it are NotProbed whole.
 	PairsNotProbed int
 }
 
@@ -181,12 +182,14 @@ func (s *scanner) candidate(ctx context.Context, c *candidate) (probed, abandone
 		}
 		pr, perr := h.prepareJob(ctx, s.snap, job, "plan")
 		if perr != nil {
+			s.sc.PairsNotProbed += len(s.parsers) - k // this parser's probe did not run, nor did the ones after it
 			return true, false, perr
 		}
 		switch {
 		case pr.bundle != nil: // applicable
 			pr.bundle.close()
 			if err := h.statusFromRuns(ctx, &job); err != nil {
+				s.sc.PairsNotProbed += len(s.parsers) - k - 1 // this parser's probe ran; the ones after it did not
 				return true, false, err
 			}
 			status := job.Status

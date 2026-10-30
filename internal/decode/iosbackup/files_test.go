@@ -434,3 +434,27 @@ func TestReadFilesWantedIDOnADamagedRowIsUndecided(t *testing.T) {
 		t.Errorf("clean row = %v, want Mapped", st)
 	}
 }
+
+// A Manifest.db that lists the same -wal path again and again (distinct fileIDs, one domain and path) keeps it once:
+// repeated rows must not spend the MaxCompanionRows cap and push a different companion out.
+func TestReadFilesCompanionsAreDeduplicated(t *testing.T) {
+	var rows []frow
+	for i := 1; i <= iosbackup.MaxCompanionRows+4; i++ {
+		rows = append(rows, fileRow(i, "HomeDomain", "Library/SMS/sms.db-wal", 1))
+	}
+	rows = append(rows, fileRow(9000, "HomeDomain", "Library/SMS/sms.db-journal", 1))
+	f := read(t, manifestDB(t, rows...), nil)
+	got, dropped := f.Companions()
+	if dropped != 0 || len(got) != 2 {
+		t.Fatalf("Companions = %d entries, %d dropped; want the -wal once and the -journal, none dropped", len(got), dropped)
+	}
+	want := []iosbackup.Entry{
+		{Domain: "HomeDomain", RelativePath: "Library/SMS/sms.db-wal", Flags: 1},
+		{Domain: "HomeDomain", RelativePath: "Library/SMS/sms.db-journal", Flags: 1},
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("Companions[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}

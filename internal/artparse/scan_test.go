@@ -474,3 +474,41 @@ func TestScanCandidatesCountsOnlyNewRows(t *testing.T) {
 		t.Errorf("rows %d by status %v counts %+v", len(scanRows(pl)), pl.ByStatus, pl.Scan)
 	}
 }
+
+// walSniff is a sniffer that also takes a "-wal" companion, so each parser's bundle loads the candidate's WAL.
+type walSniff struct{ sniff }
+
+func walSniffer(name string) walSniff { return walSniff{sniffer(name, magic)} }
+
+func (p walSniff) Meta() parse.Meta {
+	m := p.sniff.Meta()
+	m.Inputs = append(m.Inputs, parse.InputSpec{Role: "wal", Companions: []string{"-wal"}})
+	return m
+}
+
+// A non-context I/O error partway through a candidate's parsers (here: the second parser's companion read fails)
+// ends the scan like any failed read, and the pairs of that candidate that never ran are counted, not dropped.
+func TestScanIOErrorCountsTheCandidatesRemainingProbes(t *testing.T) {
+	f := newRx(t)
+	putFile(t, f.c, "D1", "A1", "/sdcard/1.db", magic)
+	putFile(t, f.c, "D1", "A1", "/sdcard/1.db-wal", "WALDATA")
+	boom := errors.New("disk on fire")
+	var opens atomic.Int32
+	h := f.host(func(o *artparse.Options) {
+		artparse.WithWrapFile(o, func(rf artparse.ReadFile) artparse.ReadFile {
+			if opens.Add(1) == 3 {
+				return errTail{rf, boom}
+			}
+			return rf
+		})
+	}, walSniffer("a"), walSniffer("b"), walSniffer("c"), walSniffer("d"))
+	p, err := h.Plan(context.Background(), artparse.Selection{Scan: true})
+	if !errors.Is(err, boom) {
+		t.Fatalf("Plan = %v, want the I/O error", err)
+	}
+	s := sc(t, p)
+	// parser a probed; parser b's companion read failed (its probe never ran); c and d never ran
+	if s.Stopped != artparse.StoppedFailed || s.Probed != 1 || s.PairsNotProbed != 3 {
+		t.Errorf("%+v, want stopped failed, 1 probed, 3 pairs not probed", s)
+	}
+}
