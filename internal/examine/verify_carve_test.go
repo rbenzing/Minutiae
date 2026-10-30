@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/rbenzing/minutiae/internal/carve/carvetest"
 	"github.com/rbenzing/minutiae/internal/evidence"
@@ -287,7 +286,8 @@ func TestVerifyNoticesNameCarved(t *testing.T) {
 }
 
 // A forged sidecar of a million runs on a one-byte artifact is stopped at the first run that passes the
-// artifact's size, not walked.
+// artifact's size, not walked. The bound is pinned by the count of runs left unrecomputed, not by a wall-clock
+// limit: under -race, decoding the forged sidecar alone once took 33 s (2026-10-30).
 func TestAllocationRecheckRawRunsBoundedBySize(t *testing.T) {
 	e := newCarveEnv(t, carveDeleted("/del.png", carvePNG()))
 	runs := make([]evidence.Run, 1_000_000)
@@ -297,12 +297,8 @@ func TestAllocationRecheckRawRunsBoundedBySize(t *testing.T) {
 	verifyCarveForge(t, e, CarveRaw, "raw", runs, evidence.AllocSummary{Unknown: 1}, func(s *evidencetest.RecoveredSpec) {
 		s.Sidecar, s.Data = true, []byte{0}
 	})
-	start := time.Now()
 	rep := carveVerify(t, e)
-	if d := time.Since(start); d > 30*time.Second {
-		t.Errorf("verify took %v", d)
-	}
-	evidencetest.RequireProblem(t, rep, "runs total more than the artifact's size 1 from run")
+	evidencetest.RequireProblem(t, rep, "runs total more than the artifact's size 1 from run 1 on (999999 runs not recomputed)")
 }
 
 // A raw carve of an image whose partition table cannot be read (its backup GPT chunk is corrupt) is legitimate,
