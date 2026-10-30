@@ -205,6 +205,7 @@ func builderCorpus() []hostileObj {
 	for _, o := range oggs {
 		add("ogg", o.n, carvetest.Ogg(o.pages))
 	}
+	c = append(c, tiffCorpus()...)
 	return c
 }
 
