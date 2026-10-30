@@ -33,16 +33,34 @@ const (
 	chromeLogical   = "/data/data/com.android.chrome/app_chrome/Default/History"
 )
 
-type typedVariant struct{ dir, variant, remote string }
+// typedVariant is one fixture of the no-loss tests. remote is the file's RemotePath (shape android-file and
+// ios-file) or "<domain>/<relativePath>" (ios-backup); logical is the logical path the typed job must carry
+// ("" for the default shape, which is not asserted). shape is one of the shape constants ("" is android-file).
+type typedVariant struct{ dir, variant, remote, shape, logical string }
+
+const (
+	safariRelative = "Library/Safari/History.db"
+	safariLogical  = "ios:MediaDomain/" + safariRelative
+)
+
+// name is the subtest name: the variant, and its shape when it is not the default.
+func (v typedVariant) name() string {
+	if v.shape == "" || v.shape == shapeAndroidFile {
+		return v.variant
+	}
+	return v.variant + "-" + v.shape
+}
 
 // the fixtures whose claimed tables hold history (the recover oracles of Tasks 9 and 10 exist for them)
 var typedVariants = []typedVariant{
-	{"androidmms", "av-freelist-512", mmsLogical},
-	{"androidmms", "wal-uncheckpointed", mmsLogical},
-	{"androidmms", "hot-journal", mmsLogical},
-	{"androidmms", "mmssms-pdu-deleted", mmsLogical},
-	{"androidcontacts", "contacts-deleted", contactsLogical},
-	{"chromium", "chromium-deleted", chromeLogical},
+	{"androidmms", "av-freelist-512", mmsLogical, "", ""},
+	{"androidmms", "wal-uncheckpointed", mmsLogical, "", ""},
+	{"androidmms", "hot-journal", mmsLogical, "", ""},
+	{"androidmms", "mmssms-pdu-deleted", mmsLogical, "", ""},
+	{"androidcontacts", "contacts-deleted", contactsLogical, "", ""},
+	{"chromium", "chromium-deleted", chromeLogical, "", ""},
+	{"safari", "deleted", safariRelative, shapeIOSFile, safariLogical},
+	{"safari", "deleted", "HomeDomain/" + safariRelative, shapeIOSBackup, "ios:HomeDomain/" + safariRelative},
 }
 
 func readGzFixture(t *testing.T, path string) ([]byte, bool) {
@@ -82,18 +100,37 @@ func newTypedEnv(t *testing.T, v typedVariant, withOther bool) *typedEnv {
 		t.Fatalf("fixture %s has no database", v.variant)
 	}
 	c := recordstest.NewCase(t)
-	if _, err := c.Audit.Append("acquire.start", "D1", map[string]any{"acquisition_id": "A1", "type": "logical"}); err != nil {
+	acqType := "logical"
+	if v.shape == shapeIOSFile || v.shape == shapeIOSBackup {
+		acqType = "ios.backup" // device D1 is an iOS device: its file artifacts have platform ios
+	}
+	if _, err := c.Audit.Append("acquire.start", "D1", map[string]any{"acquisition_id": "A1", "type": acqType}); err != nil {
 		t.Fatal(err)
 	}
 	e := &typedEnv{dir: c.Dir}
-	e.db = pcapture(t, c, "files/main.db", evidence.Source{Kind: "file", RemotePath: v.remote}, string(db))
-	var walBytes []byte
-	if b, ok := readGzFixture(t, base+".db-wal.gz"); ok {
-		walBytes = b
-		e.wal = pcapture(t, c, "files/main.db-wal", evidence.Source{Kind: "file", RemotePath: v.remote + "-wal"}, string(b)).ID
-	}
-	if b, ok := readGzFixture(t, base+".db-journal.gz"); ok {
-		e.journal = pcapture(t, c, "files/main.db-journal", evidence.Source{Kind: "file", RemotePath: v.remote + "-journal"}, string(b)).ID
+	wal, _ := readGzFixture(t, base+".db-wal.gz")
+	journal, _ := readGzFixture(t, base+".db-journal.gz")
+	walBytes := wal
+	if v.shape == shapeIOSBackup {
+		domain, rel, _ := strings.Cut(v.remote, "/")
+		files := []iosBackupFile{{domain, rel, db}}
+		if wal != nil {
+			files = append(files, iosBackupFile{domain, rel + "-wal", wal})
+		}
+		if journal != nil {
+			files = append(files, iosBackupFile{domain, rel + "-journal", journal})
+		}
+		recs, _ := addIOSBackup(t, c, "A1", "UDID1", files)
+		e.db = recs[domain+"/"+rel]
+		e.wal, e.journal = recs[domain+"/"+rel+"-wal"].ID, recs[domain+"/"+rel+"-journal"].ID
+	} else {
+		e.db = pcapture(t, c, "files/main.db", evidence.Source{Kind: "file", RemotePath: v.remote}, string(db))
+		if wal != nil {
+			e.wal = pcapture(t, c, "files/main.db-wal", evidence.Source{Kind: "file", RemotePath: v.remote + "-wal"}, string(wal)).ID
+		}
+		if journal != nil {
+			e.journal = pcapture(t, c, "files/main.db-journal", evidence.Source{Kind: "file", RemotePath: v.remote + "-journal"}, string(journal)).ID
+		}
 	}
 	if withOther {
 		if walBytes == nil {
@@ -240,7 +277,7 @@ func oracleUnmapped(t *testing.T, v typedVariant) int64 {
 // record or a db_row, once.
 func TestClaimedTablesNeverLoseRows(t *testing.T) {
 	for _, v := range typedVariants {
-		t.Run(v.variant, func(t *testing.T) {
+		t.Run(v.name(), func(t *testing.T) {
 			composed := newTypedEnv(t, v, false)
 			rep := composed.report(t, nil, 0)
 			if rep.Typed == nil || len(rep.Typed.Honored) == 0 {
@@ -249,6 +286,27 @@ func TestClaimedTablesNeverLoseRows(t *testing.T) {
 			for _, j := range rep.Typed.Jobs { // a claiming parser that does not apply to the database is skipped
 				if j.Outcome != artparse.OutcomeComplete && j.Outcome != artparse.OutcomeSkipped {
 					t.Errorf("typed job %+v is neither complete nor skipped", j)
+				}
+			}
+			if v.logical != "" { // the typed job read the file under the logical path of its shape, not a guessed one
+				var seen bool
+				for _, e := range auditOf(t, composed.dir) {
+					if e.Action != artparse.ActionParseJobStart {
+						continue
+					}
+					js, err := evidence.DecodeDetails[artparse.JobStart](e.Details)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if js.RecoverJobStart != nil {
+						seen = true
+						if got := js.Bundle["db"].LogicalPath; got != v.logical {
+							t.Errorf("typed job logical path %q, want %q", got, v.logical)
+						}
+					}
+				}
+				if !seen {
+					t.Error("no typed recovery parse.job.start in the audit")
 				}
 			}
 			delivered := typedDelivered(t, composed.dir)
@@ -308,7 +366,7 @@ func TestClaimedTablesNeverLoseRows(t *testing.T) {
 // A typed record points at the row exactly where the db_row of an uncomposed run does.
 func TestTypedLocatorEqualsDBRowLocator(t *testing.T) {
 	for _, v := range typedVariants {
-		t.Run(v.variant, func(t *testing.T) {
+		t.Run(v.name(), func(t *testing.T) {
 			composed := newTypedEnv(t, v, false)
 			composed.report(t, nil, 0)
 			plain := newTypedEnv(t, v, false)

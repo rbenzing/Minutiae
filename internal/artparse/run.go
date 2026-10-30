@@ -244,9 +244,8 @@ func (r *run) analysisStart(parsers []Registered, jobs []Job, backups []BackupRe
 	}
 	if r.rec != nil {
 		as.Op = OpParseRecover
-		as.RecoverStart = &RecoverStart{MinConfidence: r.rec.opt.MinConfidence, OnlyPrimary: r.rec.opt.OnlyPrimary, ExpectCompanions: map[string]string{}}
+		as.RecoverStart = &RecoverStart{MinConfidence: r.rec.opt.MinConfidence, OnlyPrimary: r.rec.opt.OnlyPrimary, ExpectCompanions: map[string]string{}, BackupsResolved: true}
 		maps.Copy(as.ExpectCompanions, r.rec.opt.ExpectCompanions)
-		as.Backups = nil // not resolved by this run: null, never an empty list
 	}
 	for _, p := range parsers {
 		id := p.Identity()
@@ -332,7 +331,7 @@ func (h *Host) Run(ctx context.Context, opt RunOptions) (RunSummary, error) {
 }
 
 // runJobs audits and runs the jobs of r (Run's and RecoverTyped's shared loop). backups are the
-// resolved iOS backups of the run (nil for a typed recovery run, which resolves none).
+// resolved iOS backups of the run (Run's and RecoverTyped's alike).
 func (h *Host) runJobs(ctx context.Context, r *run, parsers []Registered, jobs []Job, backups []BackupResolution) (RunSummary, error) {
 	snap := r.snap
 	r.sum.ParseID = r.parseID
