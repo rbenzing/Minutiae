@@ -48,12 +48,23 @@ const (
 	addressbookLogical  = "ios:MediaDomain/" + addressbookRelative // what the file namer gives a bare relative path, as for safariLogical
 )
 
-// name is the subtest name: the variant, and its shape when it is not the default.
+// name is the subtest name: the parser directory, the variant, and the shape when it is not the default. It is
+// unique per row (TestTypedVariantNamesAreUnique), so no subtest is ever auto-suffixed with #01.
 func (v typedVariant) name() string {
 	if v.shape == "" || v.shape == shapeAndroidFile {
-		return v.variant
+		return v.dir + "/" + v.variant
 	}
-	return v.variant + "-" + v.shape
+	return v.dir + "/" + v.variant + "-" + v.shape
+}
+
+func TestTypedVariantNamesAreUnique(t *testing.T) {
+	seen := map[string]bool{}
+	for _, v := range typedVariants {
+		if seen[v.name()] {
+			t.Errorf("typedVariants name %q is used twice", v.name())
+		}
+		seen[v.name()] = true
+	}
 }
 
 // the fixtures whose claimed tables hold history (the recover oracles of Tasks 9 and 10 exist for them)
