@@ -197,7 +197,7 @@ func TestAllocationNoticeWhenNotComposed(t *testing.T) {
 		t.Fatal(err)
 	}
 	noAllocationProblem(t, rep)
-	evidencetest.RequireNotice(t, rep, fmt.Sprintf("%d deleted-file artifact(s): allocation not rechecked against the filesystem", deletedFiles(e.sum.Artifacts)))
+	evidencetest.RequireNotice(t, rep, fmt.Sprintf("%d deleted-file or carved artifact(s): allocation not rechecked against the filesystem", deletedFiles(e.sum.Artifacts)))
 	if rep.AllocationRechecked != 0 {
 		t.Errorf("AllocationRechecked = %d without the check", rep.AllocationRechecked)
 	}

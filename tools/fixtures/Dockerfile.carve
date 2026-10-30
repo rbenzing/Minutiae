@@ -1,0 +1,51 @@
+# Pinned toolchain for the carving fixtures of sub-project 3E (see README.md,
+# "Carving fixtures (3E)"). Real encoders only: Pillow, ffmpeg, libheif's
+# heif-enc, sqlite3, zip, gzip, tar, with mtools/dosfstools/e2fsprogs to place
+# the objects. No QEMU and no guest kernel: carving reads free bytes and never
+# consults deleted metadata, so the user-space tools are enough (ruling 3E-R18).
+# Separate from the other fixture images so their pinned layers (and every
+# existing fixture) stay byte-identical.
+#
+# Base: debian:bookworm-slim, pinned by the index digest Dockerfile.recover pins.
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
+
+# apt reads the archive as it was on SNAPSHOT (snapshot.debian.org) and every
+# package is pinned to the exact version, so a rebuild installs the same bytes
+# or fails loudly. Snapshot Release files expire, hence Check-Valid-Until=false.
+# Only SNAPSHOT may change (ruling 3E-R27: the HEIC fallback bumps it).
+ARG SNAPSHOT=20261003T000000Z
+RUN printf '%s\n' \
+      'Types: deb' \
+      "URIs: http://snapshot.debian.org/archive/debian/${SNAPSHOT}/" \
+      'Suites: bookworm bookworm-updates' \
+      'Components: main' \
+      'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
+      '' \
+      'Types: deb' \
+      "URIs: http://snapshot.debian.org/archive/debian-security/${SNAPSHOT}/" \
+      'Suites: bookworm-security' \
+      'Components: main' \
+      'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
+      > /etc/apt/sources.list.d/debian.sources \
+ && printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\n' > /etc/apt/apt.conf.d/99snapshot \
+ && apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      python3=3.11.2-1+b1 \
+      python3-pil=9.4.0-1.1+deb12u1 \
+      ffmpeg=7:5.1.9-0+deb12u1 \
+      libheif-examples=1.15.1-1+deb12u1 \
+      e2fsprogs=1.47.0-2+b2 \
+      dosfstools=4.2-1 \
+      mtools=4.0.33-1+really4.0.32-1 \
+      fdisk=2.38.1-5+deb12u3 \
+      faketime=0.9.10-2.1 \
+      sqlite3=3.40.1-2+deb12u2 \
+      zip=3.0-13+deb12u1 \
+      gzip=1.12-1 \
+      tar=1.34+dfsg-1.2+deb12u1 \
+      jq=1.6-2.1+deb12u2 \
+ && rm -rf /var/lib/apt/lists/*
+
+ENV SOURCE_DATE_EPOCH=1700000000 \
+    TZ=UTC \
+    LC_ALL=C

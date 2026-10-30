@@ -3,6 +3,21 @@
 *.bin binary
 *.img binary
 *.gz binary
+*.jpg binary
+*.gif binary
+*.webp binary
+*.heic binary
+*.mp4 binary
+*.mov binary
+*.3gp binary
+*.sqlite binary
+*.plist binary
+*.zip binary
+*.pdf binary
+*.wav binary
+*.ogg binary
+*.tar binary
+*.elf binary
 internal/parsers/** -text
 internal/parsers/**/*.go text eol=lf
 internal/records/recordstest/testdata/** -text

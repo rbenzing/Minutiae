@@ -1,0 +1,946 @@
+{
+ "generator": {
+  "packages": [
+   {
+    "package": "dosfstools",
+    "version": "4.2-1"
+   },
+   {
+    "package": "e2fsprogs",
+    "version": "1.47.0-2+b2"
+   },
+   {
+    "package": "faketime",
+    "version": "0.9.10-2.1"
+   },
+   {
+    "package": "fdisk",
+    "version": "2.38.1-5+deb12u3"
+   },
+   {
+    "package": "gzip",
+    "version": "1.12-1"
+   },
+   {
+    "package": "mtools",
+    "version": "4.0.33-1+really4.0.32-1"
+   },
+   {
+    "package": "python3",
+    "version": "3.11.2-1+b1"
+   },
+   {
+    "package": "tar",
+    "version": "1.34+dfsg-1.2+deb12u1"
+   }
+  ],
+  "fill_pattern": "MINUTIAE-CARVE-FILL-",
+  "objects_expect_sha256": "47207139a1734cde4835acfeabe2df099773934baa51448c817aae0994f57aa7",
+  "commands": [
+   "faketime -f 2023-11-14 22:13:20 mkfs.fat -F 12 -s 8 -f 2 -n CARVEFAT --invariant <work>/carve-fat12.fs",
+   "fsck.fat -n -v <work>/carve-fat12.fs",
+   "tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@1700000000 -cf <work>/archive.tar -C <work>/tarsrc more.txt notes.txt",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/hole-a.bin ::/hole-a.bin",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/hole-b.bin ::/hole-b.bin",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/hole-a.bin",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/fragmented.jpg ::/fragmented.jpg",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/jpeg-baseline.jpg ::/jpeg-baseline.jpg",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/jpeg-progressive.jpg ::/jpeg-progressive.jpg",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/png-rgb.png ::/png-rgb.png",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/png-palette.png ::/png-palette.png",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/gif89a.gif ::/gif89a.gif",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/gif87a.gif ::/gif87a.gif",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/webp-lossy.webp ::/webp-lossy.webp",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/webp-lossless.webp ::/webp-lossless.webp",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/heic.heic ::/heic.heic",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/mp4-h264.mp4 ::/mp4-h264.mp4",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/mov-h264.mov ::/mov-h264.mov",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/3gp.3gp ::/3gp.3gp",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/sqlite.sqlite ::/sqlite.sqlite",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/bplist.plist ::/bplist.plist",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/zip-mixed.zip ::/zip-mixed.zip",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/apk-like.zip ::/apk-like.zip",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/docx-like.zip ::/docx-like.zip",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/pdf-single.pdf ::/pdf-single.pdf",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/pdf-incremental.pdf ::/pdf-incremental.pdf",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/gzip.gz ::/gzip.gz",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/wav-pcm.wav ::/wav-pcm.wav",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/ogg-vorbis.ogg ::/ogg-vorbis.ogg",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/nested-outer.mp4 ::/nested-outer.mp4",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/live.jpg ::/live.jpg",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/archive.tar ::/archive.tar",
+   "faketime -f 2023-11-14 22:13:20 mcopy -i <work>/carve-fat12.fs -m <work>/fatsrc/true.elf ::/true.elf",
+   "mshowfat -i <work>/carve-fat12.fs ::/hole-b.bin",
+   "mshowfat -i <work>/carve-fat12.fs ::/fragmented.jpg",
+   "mshowfat -i <work>/carve-fat12.fs ::/jpeg-baseline.jpg",
+   "mshowfat -i <work>/carve-fat12.fs ::/jpeg-progressive.jpg",
+   "mshowfat -i <work>/carve-fat12.fs ::/png-rgb.png",
+   "mshowfat -i <work>/carve-fat12.fs ::/png-palette.png",
+   "mshowfat -i <work>/carve-fat12.fs ::/gif89a.gif",
+   "mshowfat -i <work>/carve-fat12.fs ::/gif87a.gif",
+   "mshowfat -i <work>/carve-fat12.fs ::/webp-lossy.webp",
+   "mshowfat -i <work>/carve-fat12.fs ::/webp-lossless.webp",
+   "mshowfat -i <work>/carve-fat12.fs ::/heic.heic",
+   "mshowfat -i <work>/carve-fat12.fs ::/mp4-h264.mp4",
+   "mshowfat -i <work>/carve-fat12.fs ::/mov-h264.mov",
+   "mshowfat -i <work>/carve-fat12.fs ::/3gp.3gp",
+   "mshowfat -i <work>/carve-fat12.fs ::/sqlite.sqlite",
+   "mshowfat -i <work>/carve-fat12.fs ::/bplist.plist",
+   "mshowfat -i <work>/carve-fat12.fs ::/zip-mixed.zip",
+   "mshowfat -i <work>/carve-fat12.fs ::/apk-like.zip",
+   "mshowfat -i <work>/carve-fat12.fs ::/docx-like.zip",
+   "mshowfat -i <work>/carve-fat12.fs ::/pdf-single.pdf",
+   "mshowfat -i <work>/carve-fat12.fs ::/pdf-incremental.pdf",
+   "mshowfat -i <work>/carve-fat12.fs ::/gzip.gz",
+   "mshowfat -i <work>/carve-fat12.fs ::/wav-pcm.wav",
+   "mshowfat -i <work>/carve-fat12.fs ::/ogg-vorbis.ogg",
+   "mshowfat -i <work>/carve-fat12.fs ::/nested-outer.mp4",
+   "mshowfat -i <work>/carve-fat12.fs ::/live.jpg",
+   "mshowfat -i <work>/carve-fat12.fs ::/archive.tar",
+   "mshowfat -i <work>/carve-fat12.fs ::/true.elf",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/hole-b.bin",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/fragmented.jpg",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/jpeg-baseline.jpg",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/jpeg-progressive.jpg",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/png-rgb.png",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/png-palette.png",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/gif89a.gif",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/gif87a.gif",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/webp-lossy.webp",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/webp-lossless.webp",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/heic.heic",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/mp4-h264.mp4",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/mov-h264.mov",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/3gp.3gp",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/sqlite.sqlite",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/bplist.plist",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/zip-mixed.zip",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/apk-like.zip",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/docx-like.zip",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/pdf-single.pdf",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/pdf-incremental.pdf",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/gzip.gz",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/wav-pcm.wav",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/ogg-vorbis.ogg",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/nested-outer.mp4",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/archive.tar",
+   "faketime -f 2023-11-14 22:13:20 mdel -i <work>/carve-fat12.fs ::/true.elf",
+   "fsck.fat -n -v <work>/carve-fat12.fs",
+   "fsck.fat -n <work>/carve-fat12.fs",
+   "sfdisk --no-reread --no-tell-kernel <work>/mbr.img",
+   "faketime -f 2023-11-14 22:13:20 mke2fs -q -F -t ext4 -b 4096 -O ^has_journal -m 0 -L carveext4 -U 3c4a5e6d-1b2a-4c3d-8e9f-0a1b2c3d4e5f -E nodiscard,lazy_itable_init=0,root_owner=0:0,hash_seed=21222324-2526-4728-a92a-2b2c2d2e2f30 <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -w -R write <objects>/jpeg-baseline.jpg /jpeg-baseline.jpg <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -w -R write <objects>/png-rgb.png /png-rgb.png <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -w -R write <objects>/heic.heic /heic.heic <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -w -R write <objects>/mp4-h264.mp4 /mp4-h264.mp4 <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -w -R write <objects>/webp-lossy.webp /webp-lossy.webp <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -w -R write <objects>/sqlite.sqlite /sqlite.sqlite <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -w -R write <objects>/apk-like.zip /apk-like.zip <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -w -R write <objects>/pdf-single.pdf /pdf-single.pdf <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -w -R write <objects>/ogg-vorbis.ogg /ogg-vorbis.ogg <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -R blocks /jpeg-baseline.jpg <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -R blocks /png-rgb.png <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -R blocks /heic.heic <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -R blocks /mp4-h264.mp4 <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -R blocks /webp-lossy.webp <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -R blocks /sqlite.sqlite <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -R blocks /apk-like.zip <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -R blocks /pdf-single.pdf <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -R blocks /ogg-vorbis.ogg <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -w -R rm /jpeg-baseline.jpg <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -w -R rm /png-rgb.png <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -w -R rm /heic.heic <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -w -R rm /mp4-h264.mp4 <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -w -R rm /webp-lossy.webp <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -w -R rm /sqlite.sqlite <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -w -R rm /apk-like.zip <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -w -R rm /pdf-single.pdf <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 debugfs -w -R rm /ogg-vorbis.ogg <work>/carve-ext4.img",
+   "faketime -f 2023-11-14 22:13:20 dumpe2fs <work>/carve-ext4.img",
+   "e2fsck -fn <work>/carve-ext4.img"
+  ]
+ },
+ "images": [
+  {
+   "name": "carve-fat12",
+   "image_sha256": "de0851fc5628fc13f2854f9c5bd1b1daf666eda64ec65d584c693ac9f30ce633",
+   "size": 4194304,
+   "table": "mbr",
+   "partition_start": 1048576,
+   "fs": "fat",
+   "block_size": 4096,
+   "objects": [
+    {
+     "name": "jpeg-baseline.jpg",
+     "family": "jpeg",
+     "type": "jpeg",
+     "image_offset": 1084928,
+     "length": 991,
+     "sha256": "91377b7d9ce503a2e51f1ae1acc388892012d3a293319fbfaf7959e126c35920",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "jpeg-progressive.jpg",
+     "family": "jpeg",
+     "type": "jpeg",
+     "image_offset": 1089024,
+     "length": 9603,
+     "sha256": "bf0f6745504896cde775f00e8095d2f997c1927f7ec743b3a3db72c0616d0219",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "png-rgb.png",
+     "family": "png",
+     "type": "png",
+     "image_offset": 1101312,
+     "length": 125,
+     "sha256": "aaf3e79efd96f44e6874ad5968fdbe5d204dda4b89c701c0029610c8162a6dca",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "png-palette.png",
+     "family": "png",
+     "type": "png",
+     "image_offset": 1105408,
+     "length": 333,
+     "sha256": "56ada8dedbb86e2a684d4ae93c75e96e5a517ab67ab565855c5e0e1708307442",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "gif89a.gif",
+     "family": "gif",
+     "type": "gif",
+     "image_offset": 1109504,
+     "length": 5796,
+     "sha256": "305cee1a85bc05432f61e0e670611cb7006cbcf1b87af3bc1108b078b9d644e9",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "gif87a.gif",
+     "family": "gif",
+     "type": "gif",
+     "image_offset": 1117696,
+     "length": 1293,
+     "sha256": "c8abac2d740c78f848dc58fee2a51113561e3a6ca539e87f0711a5ae901b7493",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "webp-lossy.webp",
+     "family": "webp",
+     "type": "webp",
+     "image_offset": 1121792,
+     "length": 238,
+     "sha256": "5acee7d76cf3e9805fa5a478ceb678da99bf303274fba94cfd98dfc101ef868b",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "webp-lossless.webp",
+     "family": "webp",
+     "type": "webp",
+     "image_offset": 1125888,
+     "length": 74,
+     "sha256": "78fe126b37179265e74576a318bf14cd242dd7dd40ea6926f2513e84863d7906",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "heic.heic",
+     "family": "isobmff",
+     "type": "heic",
+     "image_offset": 1129984,
+     "length": 571,
+     "sha256": "cea22378430105f150dfe2a2271b47d39454a71e168a08bf102f190cdb9b8df8",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "mp4-h264.mp4",
+     "family": "isobmff",
+     "type": "mp4",
+     "image_offset": 1134080,
+     "length": 2823,
+     "sha256": "a5aba6cdb40d87441e9ca139a2984f7be3b998a4adebea3abbab49edb6b0a754",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "mov-h264.mov",
+     "family": "isobmff",
+     "type": "mov",
+     "image_offset": 1138176,
+     "length": 2774,
+     "sha256": "df9f83805803df9aba78c6db7b204410abb9d86cc16f48fe443f1424475e2986",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "3gp.3gp",
+     "family": "isobmff",
+     "type": "3gp",
+     "image_offset": 1142272,
+     "length": 2742,
+     "sha256": "961ca70e88cb3e46548889be5740379b1276f6cb0d0d3c237b638385e05338fa",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "sqlite.sqlite",
+     "family": "sqlite",
+     "type": "sqlite",
+     "image_offset": 1146368,
+     "length": 20480,
+     "sha256": "30cfa0a5768a590fcde1050540eebbf9252aa3813936106ada8de9490eb5971a",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "bplist.plist",
+     "family": "bplist",
+     "type": "bplist",
+     "image_offset": 1166848,
+     "length": 202,
+     "sha256": "13350e46e22feac740e73c5b410d7c80ff7449107cd9f5e221adb724bdc5df4e",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "zip-mixed.zip",
+     "family": "zip",
+     "type": "zip",
+     "image_offset": 1170944,
+     "length": 570,
+     "sha256": "2ae070d8535e1fbdcb375c9f0b03aa5421a94b5e4ea4e9cb8f5ea2f7a6ca74cf",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "apk-like.zip",
+     "family": "zip",
+     "type": "apk",
+     "image_offset": 1175040,
+     "length": 841,
+     "sha256": "ebabd66d25929b45dd3b578fee9496ccb0d28142100a41c440febfd4179509ca",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "docx-like.zip",
+     "family": "zip",
+     "type": "docx",
+     "image_offset": 1179136,
+     "length": 389,
+     "sha256": "3454bd654416286903bc02b3e105d147595c5ae4969b0f1ab291c30ac2139104",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "pdf-single.pdf",
+     "family": "pdf",
+     "type": "pdf",
+     "image_offset": 1183232,
+     "length": 1787,
+     "sha256": "6876bf2017a828854d6a69cf0f3cbaa279562f6f1aadc346bce0c7577b98c7d1",
+     "state": "deleted",
+     "expect": "footer",
+     "nested_in": null
+    },
+    {
+     "name": "pdf-incremental.pdf",
+     "family": "pdf",
+     "type": "pdf",
+     "image_offset": 1187328,
+     "length": 1946,
+     "sha256": "6fb70abfbfc3c9f92640a787997af0a49cece08f2742e88d6c95bac9913b348c",
+     "state": "deleted",
+     "expect": "footer",
+     "nested_in": null
+    },
+    {
+     "name": "gzip.gz",
+     "family": "gzip",
+     "type": "gzip",
+     "image_offset": 1191424,
+     "length": 553,
+     "sha256": "45d8c85251d3ffbc2aad7b24aaa92439f2a56196cea09d8f575611e18e0a50c0",
+     "state": "deleted",
+     "expect": "bounded",
+     "nested_in": null
+    },
+    {
+     "name": "wav-pcm.wav",
+     "family": "wav",
+     "type": "wav",
+     "image_offset": 1195520,
+     "length": 16044,
+     "sha256": "543c8653861ea21b08c67485a53d47b62a15b06442b6945ea79fcdf47b49a50e",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "ogg-vorbis.ogg",
+     "family": "ogg",
+     "type": "ogg",
+     "image_offset": 1211904,
+     "length": 3367,
+     "sha256": "2f983388c47bc77bd1c93ee5a6087360bb64525d1f3a26a14d3538037724d8e5",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "nested-outer.mp4",
+     "family": "isobmff",
+     "type": "mp4",
+     "image_offset": 1216000,
+     "length": 8645,
+     "sha256": "1188c3082917fbfa6307929dd1ac2249d98cc9e73f75a6f40405e5d1e805b13e",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "live.jpg",
+     "family": "jpeg",
+     "type": "jpeg",
+     "image_offset": 1228288,
+     "length": 991,
+     "sha256": "91377b7d9ce503a2e51f1ae1acc388892012d3a293319fbfaf7959e126c35920",
+     "state": "live",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "archive.tar",
+     "family": "tar",
+     "type": "tar",
+     "image_offset": 1232384,
+     "length": 10240,
+     "sha256": "132bf8bd144dba49e8ec728bc6ef6c2fb0b85ebf6cb411b3635e0220e263e9df",
+     "state": "deleted",
+     "expect": "not-in-set",
+     "nested_in": null
+    },
+    {
+     "name": "true.elf",
+     "family": "elf",
+     "type": "elf",
+     "image_offset": 1244672,
+     "length": 35664,
+     "sha256": "c79bf44242829108e323378531f4ac839513ca1fba45efd6583643526e1e9fd2",
+     "state": "deleted",
+     "expect": "not-in-set",
+     "nested_in": null
+    },
+    {
+     "name": "nested-inner.gif",
+     "family": "gif",
+     "type": "gif",
+     "image_offset": 1218844,
+     "length": 5796,
+     "sha256": "305cee1a85bc05432f61e0e670611cb7006cbcf1b87af3bc1108b078b9d644e9",
+     "state": "deleted",
+     "expect": "nested",
+     "nested_in": 1216000
+    },
+    {
+     "name": "unaligned-png-palette.png",
+     "family": "png",
+     "type": "png",
+     "image_offset": 4148743,
+     "length": 333,
+     "sha256": "56ada8dedbb86e2a684d4ae93c75e96e5a517ab67ab565855c5e0e1708307442",
+     "state": "placed",
+     "expect": "unaligned",
+     "nested_in": null
+    }
+   ],
+   "controls": [
+    {
+     "kind": "random",
+     "name": "random-16k.bin",
+     "image_offset": 4177408,
+     "length": 16384,
+     "first_fragment_length": 16384,
+     "sha256": "535775b2fa44facccfe50c5ef23bd9862a2926469350bd109b98ed7c5dabee73"
+    },
+    {
+     "kind": "text",
+     "name": "quoted-signatures.txt",
+     "image_offset": 4165120,
+     "length": 8192,
+     "first_fragment_length": 8192,
+     "sha256": "2d3c91bf97193094d9e0ab71fb43d1e7230656e0257a61a9f36b376e420de40d"
+    },
+    {
+     "kind": "truncated",
+     "name": "png-rgb-truncated.png",
+     "image_offset": 4156928,
+     "length": 75,
+     "first_fragment_length": 75,
+     "sha256": "17f1425aa28a4c43267e0f40f180f34da7250d64eb94989269e3696593a996b0"
+    },
+    {
+     "kind": "fragmented",
+     "name": "fragmented.jpg",
+     "image_offset": 1068544,
+     "length": 9603,
+     "first_fragment_length": 4096,
+     "sha256": "bf0f6745504896cde775f00e8095d2f997c1927f7ec743b3a3db72c0616d0219"
+    }
+   ],
+   "fragmented_chain": [
+    [
+     2,
+     2
+    ],
+    [
+     4,
+     5
+    ]
+   ]
+  },
+  {
+   "name": "carve-ext4",
+   "image_sha256": "6dae4988926ac1e2cf0c8df04cffc80d4d1bb76d01260ebf7b6f35ac90e527b9",
+   "size": 8388608,
+   "table": "none",
+   "partition_start": 0,
+   "fs": "ext4",
+   "block_size": 4096,
+   "objects": [
+    {
+     "name": "jpeg-baseline.jpg",
+     "family": "jpeg",
+     "type": "jpeg",
+     "image_offset": 32768,
+     "length": 991,
+     "sha256": "91377b7d9ce503a2e51f1ae1acc388892012d3a293319fbfaf7959e126c35920",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "png-rgb.png",
+     "family": "png",
+     "type": "png",
+     "image_offset": 36864,
+     "length": 125,
+     "sha256": "aaf3e79efd96f44e6874ad5968fdbe5d204dda4b89c701c0029610c8162a6dca",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "heic.heic",
+     "family": "isobmff",
+     "type": "heic",
+     "image_offset": 40960,
+     "length": 571,
+     "sha256": "cea22378430105f150dfe2a2271b47d39454a71e168a08bf102f190cdb9b8df8",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "mp4-h264.mp4",
+     "family": "isobmff",
+     "type": "mp4",
+     "image_offset": 45056,
+     "length": 2823,
+     "sha256": "a5aba6cdb40d87441e9ca139a2984f7be3b998a4adebea3abbab49edb6b0a754",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "webp-lossy.webp",
+     "family": "webp",
+     "type": "webp",
+     "image_offset": 49152,
+     "length": 238,
+     "sha256": "5acee7d76cf3e9805fa5a478ceb678da99bf303274fba94cfd98dfc101ef868b",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "sqlite.sqlite",
+     "family": "sqlite",
+     "type": "sqlite",
+     "image_offset": 53248,
+     "length": 20480,
+     "sha256": "30cfa0a5768a590fcde1050540eebbf9252aa3813936106ada8de9490eb5971a",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "apk-like.zip",
+     "family": "zip",
+     "type": "apk",
+     "image_offset": 77824,
+     "length": 841,
+     "sha256": "ebabd66d25929b45dd3b578fee9496ccb0d28142100a41c440febfd4179509ca",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "pdf-single.pdf",
+     "family": "pdf",
+     "type": "pdf",
+     "image_offset": 81920,
+     "length": 1787,
+     "sha256": "6876bf2017a828854d6a69cf0f3cbaa279562f6f1aadc346bce0c7577b98c7d1",
+     "state": "deleted",
+     "expect": "footer",
+     "nested_in": null
+    },
+    {
+     "name": "ogg-vorbis.ogg",
+     "family": "ogg",
+     "type": "ogg",
+     "image_offset": 86016,
+     "length": 3367,
+     "sha256": "2f983388c47bc77bd1c93ee5a6087360bb64525d1f3a26a14d3538037724d8e5",
+     "state": "deleted",
+     "expect": "validated",
+     "nested_in": null
+    }
+   ],
+   "controls": [
+    {
+     "kind": "random",
+     "name": "random-16k.bin",
+     "image_offset": 8372224,
+     "length": 16384,
+     "first_fragment_length": 16384,
+     "sha256": "535775b2fa44facccfe50c5ef23bd9862a2926469350bd109b98ed7c5dabee73"
+    },
+    {
+     "kind": "truncated",
+     "name": "png-rgb-truncated.png",
+     "image_offset": 8364032,
+     "length": 75,
+     "first_fragment_length": 75,
+     "sha256": "17f1425aa28a4c43267e0f40f180f34da7250d64eb94989269e3696593a996b0"
+    }
+   ]
+  },
+  {
+   "name": "carve-raw",
+   "image_sha256": "42021a107c4776bdca8d658d6aa55ef2abc2e3bf278ec9de82804b1f7fedd05f",
+   "size": 2097152,
+   "table": "none",
+   "partition_start": 0,
+   "fs": "none",
+   "block_size": 0,
+   "objects": [
+    {
+     "name": "jpeg-baseline.jpg",
+     "family": "jpeg",
+     "type": "jpeg",
+     "image_offset": 4096,
+     "length": 991,
+     "sha256": "91377b7d9ce503a2e51f1ae1acc388892012d3a293319fbfaf7959e126c35920",
+     "state": "placed",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "jpeg-progressive.jpg",
+     "family": "jpeg",
+     "type": "jpeg",
+     "image_offset": 5632,
+     "length": 9603,
+     "sha256": "bf0f6745504896cde775f00e8095d2f997c1927f7ec743b3a3db72c0616d0219",
+     "state": "placed",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "png-rgb.png",
+     "family": "png",
+     "type": "png",
+     "image_offset": 16384,
+     "length": 125,
+     "sha256": "aaf3e79efd96f44e6874ad5968fdbe5d204dda4b89c701c0029610c8162a6dca",
+     "state": "placed",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "png-palette.png",
+     "family": "png",
+     "type": "png",
+     "image_offset": 18432,
+     "length": 333,
+     "sha256": "56ada8dedbb86e2a684d4ae93c75e96e5a517ab67ab565855c5e0e1708307442",
+     "state": "placed",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "gif89a.gif",
+     "family": "gif",
+     "type": "gif",
+     "image_offset": 20992,
+     "length": 5796,
+     "sha256": "305cee1a85bc05432f61e0e670611cb7006cbcf1b87af3bc1108b078b9d644e9",
+     "state": "placed",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "gif87a.gif",
+     "family": "gif",
+     "type": "gif",
+     "image_offset": 27648,
+     "length": 1293,
+     "sha256": "c8abac2d740c78f848dc58fee2a51113561e3a6ca539e87f0711a5ae901b7493",
+     "state": "placed",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "webp-lossy.webp",
+     "family": "webp",
+     "type": "webp",
+     "image_offset": 30208,
+     "length": 238,
+     "sha256": "5acee7d76cf3e9805fa5a478ceb678da99bf303274fba94cfd98dfc101ef868b",
+     "state": "placed",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "webp-lossless.webp",
+     "family": "webp",
+     "type": "webp",
+     "image_offset": 32256,
+     "length": 74,
+     "sha256": "78fe126b37179265e74576a318bf14cd242dd7dd40ea6926f2513e84863d7906",
+     "state": "placed",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "heic.heic",
+     "family": "isobmff",
+     "type": "heic",
+     "image_offset": 34816,
+     "length": 571,
+     "sha256": "cea22378430105f150dfe2a2271b47d39454a71e168a08bf102f190cdb9b8df8",
+     "state": "placed",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "mp4-h264.mp4",
+     "family": "isobmff",
+     "type": "mp4",
+     "image_offset": 36352,
+     "length": 2823,
+     "sha256": "a5aba6cdb40d87441e9ca139a2984f7be3b998a4adebea3abbab49edb6b0a754",
+     "state": "placed",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "mov-h264.mov",
+     "family": "isobmff",
+     "type": "mov",
+     "image_offset": 40448,
+     "length": 2774,
+     "sha256": "df9f83805803df9aba78c6db7b204410abb9d86cc16f48fe443f1424475e2986",
+     "state": "placed",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "3gp.3gp",
+     "family": "isobmff",
+     "type": "3gp",
+     "image_offset": 45056,
+     "length": 2742,
+     "sha256": "961ca70e88cb3e46548889be5740379b1276f6cb0d0d3c237b638385e05338fa",
+     "state": "placed",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "sqlite.sqlite",
+     "family": "sqlite",
+     "type": "sqlite",
+     "image_offset": 50176,
+     "length": 20480,
+     "sha256": "30cfa0a5768a590fcde1050540eebbf9252aa3813936106ada8de9490eb5971a",
+     "state": "placed",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "bplist.plist",
+     "family": "bplist",
+     "type": "bplist",
+     "image_offset": 71168,
+     "length": 202,
+     "sha256": "13350e46e22feac740e73c5b410d7c80ff7449107cd9f5e221adb724bdc5df4e",
+     "state": "placed",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "zip-mixed.zip",
+     "family": "zip",
+     "type": "zip",
+     "image_offset": 72704,
+     "length": 570,
+     "sha256": "2ae070d8535e1fbdcb375c9f0b03aa5421a94b5e4ea4e9cb8f5ea2f7a6ca74cf",
+     "state": "placed",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "apk-like.zip",
+     "family": "zip",
+     "type": "apk",
+     "image_offset": 75264,
+     "length": 841,
+     "sha256": "ebabd66d25929b45dd3b578fee9496ccb0d28142100a41c440febfd4179509ca",
+     "state": "placed",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "docx-like.zip",
+     "family": "zip",
+     "type": "docx",
+     "image_offset": 78336,
+     "length": 389,
+     "sha256": "3454bd654416286903bc02b3e105d147595c5ae4969b0f1ab291c30ac2139104",
+     "state": "placed",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "pdf-single.pdf",
+     "family": "pdf",
+     "type": "pdf",
+     "image_offset": 79360,
+     "length": 1787,
+     "sha256": "6876bf2017a828854d6a69cf0f3cbaa279562f6f1aadc346bce0c7577b98c7d1",
+     "state": "placed",
+     "expect": "footer",
+     "nested_in": null
+    },
+    {
+     "name": "pdf-incremental.pdf",
+     "family": "pdf",
+     "type": "pdf",
+     "image_offset": 82432,
+     "length": 1946,
+     "sha256": "6fb70abfbfc3c9f92640a787997af0a49cece08f2742e88d6c95bac9913b348c",
+     "state": "placed",
+     "expect": "footer",
+     "nested_in": null
+    },
+    {
+     "name": "gzip.gz",
+     "family": "gzip",
+     "type": "gzip",
+     "image_offset": 86016,
+     "length": 553,
+     "sha256": "45d8c85251d3ffbc2aad7b24aaa92439f2a56196cea09d8f575611e18e0a50c0",
+     "state": "placed",
+     "expect": "bounded",
+     "nested_in": null
+    },
+    {
+     "name": "wav-pcm.wav",
+     "family": "wav",
+     "type": "wav",
+     "image_offset": 89088,
+     "length": 16044,
+     "sha256": "543c8653861ea21b08c67485a53d47b62a15b06442b6945ea79fcdf47b49a50e",
+     "state": "placed",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "ogg-vorbis.ogg",
+     "family": "ogg",
+     "type": "ogg",
+     "image_offset": 105984,
+     "length": 3367,
+     "sha256": "2f983388c47bc77bd1c93ee5a6087360bb64525d1f3a26a14d3538037724d8e5",
+     "state": "placed",
+     "expect": "validated",
+     "nested_in": null
+    },
+    {
+     "name": "unaligned-png-palette.png",
+     "family": "png",
+     "type": "png",
+     "image_offset": 110599,
+     "length": 333,
+     "sha256": "56ada8dedbb86e2a684d4ae93c75e96e5a517ab67ab565855c5e0e1708307442",
+     "state": "placed",
+     "expect": "unaligned",
+     "nested_in": null
+    }
+   ],
+   "controls": [
+    {
+     "kind": "random",
+     "name": "random-16k.bin",
+     "image_offset": 112128,
+     "length": 16384,
+     "first_fragment_length": 16384,
+     "sha256": "535775b2fa44facccfe50c5ef23bd9862a2926469350bd109b98ed7c5dabee73"
+    },
+    {
+     "kind": "text",
+     "name": "quoted-signatures.txt",
+     "image_offset": 130048,
+     "length": 8192,
+     "first_fragment_length": 8192,
+     "sha256": "2d3c91bf97193094d9e0ab71fb43d1e7230656e0257a61a9f36b376e420de40d"
+    },
+    {
+     "kind": "truncated",
+     "name": "png-rgb-truncated.png",
+     "image_offset": 139776,
+     "length": 75,
+     "first_fragment_length": 75,
+     "sha256": "17f1425aa28a4c43267e0f40f180f34da7250d64eb94989269e3696593a996b0"
+    }
+   ]
+  }
+ ]
+}

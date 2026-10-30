@@ -38,7 +38,7 @@ func (b block) contains(dir string) bool {
 // (TestEveryPackageIsInExactlyOneBlock).
 var blocks = []block{
 	{"acquisition", []string{"internal/android/...", "internal/ios/...", "internal/device/...", "internal/transport/...", "internal/protocol/..."}},
-	{"image", []string{"internal/image/...", "internal/volume/..."}},
+	{"image", []string{"internal/image/...", "internal/volume/...", "internal/carve/..."}},
 	{"filesys", []string{"internal/filesys/..."}},
 	{"sqlite", []string{"internal/sqlitefile/...", "internal/dbrecover/..."}},
 	{"parsers", []string{"internal/parse/...", "internal/parsers/...", "internal/decode/...", "internal/artparse/...", "internal/recordtypes/..."}},
