@@ -43,6 +43,11 @@ const (
 	safariLogical  = "ios:MediaDomain/" + safariRelative
 )
 
+const (
+	addressbookRelative = "Library/AddressBook/AddressBook.sqlitedb"
+	addressbookLogical  = "ios:MediaDomain/" + addressbookRelative // what the file namer gives a bare relative path, as for safariLogical
+)
+
 // name is the subtest name: the variant, and its shape when it is not the default.
 func (v typedVariant) name() string {
 	if v.shape == "" || v.shape == shapeAndroidFile {
@@ -61,6 +66,7 @@ var typedVariants = []typedVariant{
 	{"chromium", "chromium-deleted", chromeLogical, "", ""},
 	{"safari", "deleted", safariRelative, shapeIOSFile, safariLogical},
 	{"safari", "deleted", "HomeDomain/" + safariRelative, shapeIOSBackup, "ios:HomeDomain/" + safariRelative},
+	{"iosaddressbook", "deleted", addressbookRelative, shapeIOSFile, addressbookLogical},
 }
 
 func readGzFixture(t *testing.T, path string) ([]byte, bool) {

@@ -22,7 +22,7 @@ var claimsOf = map[string][]string{
 	"chromium.history": {"visits", "keyword_search_terms", "downloads"},
 	"safari.history":   {"history_visits"},
 	"ios.calls":        nil,
-	"ios.addressbook":  nil,
+	"ios.addressbook":  {"ABPerson"},
 	"ios.sms":          nil,
 }
 
@@ -163,9 +163,9 @@ var iosWant = []struct {
 	{"ios.addressbook", contact.Type, contact.PayloadVersion, []string{"db", "wal", "journal", "images", "images_wal"}},
 }
 
-// TestIOSParsersMakeNoClaimsAndAreRowMappers (PASSES ON ARRIVAL; mutation-checked, 4E-R44): the three iOS parsers
-// are valid RowMappers with mappings, declare no claims yet (4G claims for them are a follow-up) and run on iOS only.
-func TestIOSParsersMakeNoClaimsAndAreRowMappers(t *testing.T) {
+// TestIOSParsersClaimTheirTablesAndAreRowMappers (mutation-checked, 4E-R44): the three iOS parsers
+// are valid RowMappers with mappings, declare exactly the claims of the claimsOf table and run on iOS only.
+func TestIOSParsersClaimTheirTablesAndAreRowMappers(t *testing.T) {
 	seen := 0
 	for _, w := range iosWant {
 		var p parse.Parser
@@ -180,8 +180,12 @@ func TestIOSParsersMakeNoClaimsAndAreRowMappers(t *testing.T) {
 		}
 		seen++
 		m := p.Meta()
-		if len(m.Claims) != 0 {
-			t.Errorf("%s declares claims %+v; the iOS parsers claim nothing yet", w.name, m.Claims)
+		var got []string
+		for _, c := range m.Claims {
+			got = append(got, c.Table)
+		}
+		if !slices.Equal(got, claimsOf[w.name]) {
+			t.Errorf("%s declares claims %v, want exactly %v (claimsOf)", w.name, got, claimsOf[w.name])
 		}
 		if !slices.Equal(m.Platforms, []string{parse.PlatformIOS}) {
 			t.Errorf("%s: platforms %v, want ios only", w.name, m.Platforms)

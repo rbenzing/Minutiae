@@ -29,7 +29,7 @@ func probeOf(t *testing.T, tables map[string]string) parse.Applicability {
 func TestMetaAndProbe(t *testing.T) {
 	p := iosaddressbook.Parser{}
 	m := p.Meta()
-	if err := parse.ValidateMeta(m); err != nil || len(m.Claims) != 0 || m.Name != "ios.addressbook" ||
+	if err := parse.ValidateMeta(m); err != nil || len(m.Claims) != len(iosaddressbook.ClaimableTables()) || m.Name != "ios.addressbook" ||
 		m.Version != iosaddressbook.Version || len(m.Emits) != 1 || m.Emits[0].Type != "contact" {
 		t.Fatalf("meta %+v: %v", m, err)
 	}

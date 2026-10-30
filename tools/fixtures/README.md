@@ -1866,7 +1866,12 @@ code with the Go parser. All variants are plain databases, so regeneration is by
 py -3 tools/fixtures/telephony_gen.py --family ios_addressbook --out internal/parsers/iosaddressbook/testdata \
     --pins-go internal/parsers/iosaddressbook/pins_test.go --pins-package iosaddressbook_test
 py -3 tools/fixtures/telephony_gen.py --family ios_addressbook --check
+py -3 tools/fixtures/telephony_gen.py --family ios_addressbook --recover-oracle --variant deleted --out internal/parsers/iosaddressbook/testdata
 ```
+
+`--recover-oracle` (plan 4H) writes `deleted.recover.expect.json` from the committed `deleted.db.gz`; regenerating the
+one variant is `--variant deleted --out internal/parsers/iosaddressbook/testdata` (no `--pins-go`: it needs every
+variant, and the host SQLite would rewrite the other fixtures).
 
 | Variant (`internal/parsers/iosaddressbook/testdata/`) | DDL snapshot | Holds |
 |---|---|---|
@@ -1874,6 +1879,7 @@ py -3 tools/fixtures/telephony_gen.py --family ios_addressbook --check
 | `with-images` | `addressbook-current.sql` + `addressbookimages.sql` (role `images`, `with-images.images.db.gz`) | 3 persons: a thumbnail only, a full-size image only, neither (`photo.present` true, true, false) |
 | `older-schema` | `addressbook-older.sql` | 4 persons without `DisplayName`, `StoreID`, `guid`, `ExternalUUID`, `ABStore`: composed names, no accounts |
 | `huge-contact` | `addressbook-current.sql` | one person with 1200 phones and 1100 e-mail addresses: lists cut at 1000 with `_total` and `_truncated` |
+| `deleted` (plan 4H Task 3) | `addressbook-current.sql` | 35 persons (a first and last name, a 120-byte note, one phone and one e-mail each; person 20 has none of name, organization or multi-value), 1024-byte pages, `secure_delete = OFF`; persons 11 to 35 deleted with their multi-values (the multi-values first, so the freelist trunk is not a person page; no live person follows, or the balance would overwrite the first freed page): the typed recovery oracle lists 24 typed `ABPerson` records (`fit`, 60; no phones or e-mails, the live multi-values are gone) and person 20 `unmapped` (`identifies nobody`). 2.5 KiB gzipped, oracle 31 KiB. Its `.db.gz` was written by the host SQLite of 2026-10-30; the older variants were not regenerated (a new SQLite version changes their header bytes) |
 
 ### ios-sms (plan 4E, Task 7)
 
