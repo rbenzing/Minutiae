@@ -570,12 +570,56 @@ func TestParseJobsCheckOtherErrorTextLeavesAnUnendedJobAProblem(t *testing.T) {
 	pjProblemsWith(t, pjRun(c), "job 2", "no parse.job.end")
 }
 
-func TestParseJobsCheckFlagsAJobEndWithoutIngestOverAMatchedIngest(t *testing.T) {
-	f := pjTwoJobs(t)
+// pjNoIngestEnd forges the log of a job whose Writer.Start failed after records.ingest.start: the job end names no
+// ingest and carries the outcome. keepIngestEnd keeps the ingest's records.ingest.end; recoverIt appends a later
+// records.ingest.recover for the ingest.
+func pjNoIngestEnd(t *testing.T, outcome string, keepIngestEnd, recoverIt bool) (*evidence.Case, string) {
+	t.Helper()
+	f := pjOneJob(t)
+	ingest := decodeEntry[evidence.IngestStart](t, f.entries(evidence.ActionIngestStart)[0])
 	c := forgeLog(t, f.c, func(es []evidence.AuditEntry) []evidence.AuditEntry {
-		pjEdit(t, es, pjMustIndex(t, es, artparse.ActionParseJobEnd, 0), func(je *artparse.JobEnd) { je.IngestID = "" })
+		pjEdit(t, es, pjMustIndex(t, es, artparse.ActionParseJobEnd, 0), func(je *artparse.JobEnd) {
+			je.IngestID, je.Outcome = "", outcome
+		})
+		if !keepIngestEnd {
+			es = pjDrop(es, pjMustIndex(t, es, evidence.ActionIngestEnd, 0))
+		}
+		if recoverIt {
+			r := es[pjMustIndex(t, es, evidence.ActionIngestStart, 0)]
+			r.Action = evidence.ActionIngestRecover
+			r.Details = evidence.IngestRecover{IngestConclusion: evidence.IngestConclusion{IngestID: ingest.IngestID, Outcome: "incomplete"}, ByIngestID: "ing-later"}.Details()
+			es = append(es, r)
+		}
 		return es
 	})
+	return c, ingest.IngestID
+}
+
+func TestParseJobsCheckJobEndWithoutIngestAfterAFailedStartIsANotice(t *testing.T) {
+	// Writer.Start audits records.ingest.start before its first store write; a failure there ends the job with no
+	// ingest id, and the next run's Start concludes the orphan with records.ingest.recover
+	c, id := pjNoIngestEnd(t, artparse.OutcomeIncomplete, false, true)
+	rep := pjRun(c)
+	if len(rep.Problems) != 0 || len(rep.Notices) != 1 || !strings.Contains(rep.Notices[0], "job 1") ||
+		!strings.Contains(rep.Notices[0], fmt.Sprintf("%q", id)) || !strings.Contains(rep.Notices[0], "recovered by") {
+		t.Errorf("problems %q notices %q, want one notice naming job 1 and the recovered ingest", rep.Problems, rep.Notices)
+	}
+	// the process died before the recovery: the lifecycle check owns the unconcluded ingest
+	c, id = pjNoIngestEnd(t, artparse.OutcomeIncomplete, false, false)
+	rep = pjRun(c)
+	if len(rep.Problems) != 0 || len(rep.Notices) != 1 || !strings.Contains(rep.Notices[0], fmt.Sprintf("%q", id)) || !strings.Contains(rep.Notices[0], "not yet recovered") {
+		t.Errorf("unconcluded: problems %q notices %q, want one notice naming the ingest", rep.Problems, rep.Notices)
+	}
+}
+
+func TestParseJobsCheckFlagsAJobEndWithoutIngestOverAMatchedIngest(t *testing.T) {
+	// the ingest was concluded by records.ingest.end: the job lied about having no ingest, whatever its outcome
+	c, _ := pjNoIngestEnd(t, artparse.OutcomeIncomplete, true, false)
+	pjProblemsWith(t, pjRun(c), "job 1", "names no ingest")
+	// a job end that says complete without an ingest is a problem even when the ingest was recovered or unconcluded
+	c, _ = pjNoIngestEnd(t, artparse.OutcomeComplete, false, true)
+	pjProblemsWith(t, pjRun(c), "job 1", "names no ingest")
+	c, _ = pjNoIngestEnd(t, artparse.OutcomeComplete, false, false)
 	pjProblemsWith(t, pjRun(c), "job 1", "names no ingest")
 }
 

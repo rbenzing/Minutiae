@@ -101,6 +101,15 @@ type jobsJob struct {
 	// superseded: a later job started in the same run while this one had no end (reported once, at that start)
 	superseded bool
 	ingest     *jobsIngest // the ingest matched to the job (PJ1)
+	// noIngestEnd: the parse.job.end named no ingest although one was started by the job; settled by unconcluded,
+	// because only the ingest's later conclusion tells a failed Writer.Start from a lie
+	noIngestEnd *jobsNoIngestEnd
+}
+
+// jobsNoIngestEnd is a parse.job.end that names no ingest.
+type jobsNoIngestEnd struct {
+	seq     int64
+	outcome string
 }
 
 type jobsIngest struct {
@@ -221,7 +230,9 @@ func (pj *jobsCheck) jobEnd(e evidence.AuditEntry) {
 	j.ended = true
 	if je.IngestID == "" {
 		if j.ingest != nil {
-			pj.f.problem("run %q: the parse.job.end of job %d (audit seq %d) names no ingest, but ingest %q was started by this job", a.id, je.Job, e.Seq, j.ingest.id)
+			// a failed Writer.Start leaves its records.ingest.start behind and ends the job with no ingest id; the
+			// ingest's conclusion is read at the end of the log, so this is settled in unconcluded
+			j.noIngestEnd = &jobsNoIngestEnd{seq: e.Seq, outcome: je.Outcome}
 		}
 		return // refused, unparsed or skipped before Writer.Start: no ingest to compare (4h-R25)
 	}
@@ -307,6 +318,11 @@ func (pj *jobsCheck) unconcluded(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		for _, j := range a.jobs {
+			if j.noIngestEnd != nil {
+				pj.noIngestJobEnd(a, j)
+			}
+		}
 		for idx, j := range a.jobs {
 			if j.ended || j.superseded {
 				continue
@@ -328,6 +344,23 @@ func (pj *jobsCheck) unconcluded(ctx context.Context) {
 			}
 			// an ingest that nothing concluded and nothing recovered is the lifecycle check's problem (exit 4)
 		}
+	}
+}
+
+// noIngestJobEnd settles a parse.job.end that names no ingest over a job whose ingest started. A job end that says
+// complete, or an ingest that was concluded by its own writer (records.ingest.end or records.ingest.error), is a
+// problem: the job then lied about having no ingest. Otherwise the job ended because Writer.Start failed after
+// auditing records.ingest.start: a notice when records.ingest.recover concluded the orphan, and a notice when
+// nothing has yet (the lifecycle check owns an unconcluded ingest).
+func (pj *jobsCheck) noIngestJobEnd(a *jobsAnalysis, j *jobsJob) {
+	in, ne := j.ingest, j.noIngestEnd
+	switch {
+	case ne.outcome == OutcomeComplete || in.concludedBy != "":
+		pj.f.problem("run %q: the parse.job.end of job %d (audit seq %d) names no ingest, but ingest %q was started by this job", a.id, j.n, ne.seq, in.id)
+	case in.recoveredBy != "":
+		pj.f.notice("run %q: job %d ended (audit seq %d) without an ingest after ingest %q started (its start failed; recovered by %q)", a.id, j.n, ne.seq, in.id, in.recoveredBy)
+	default:
+		pj.f.notice("run %q: job %d ended (audit seq %d) without an ingest after ingest %q started (its start failed; not yet recovered, the lifecycle check owns the ingest)", a.id, j.n, ne.seq, in.id)
 	}
 }
 
