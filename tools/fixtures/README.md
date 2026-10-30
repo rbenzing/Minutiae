@@ -1779,3 +1779,113 @@ which `Builder.contact` creates a `contacts` row are the named constants `DANGLI
 | `duplicate-keys` | `contacts-aosp-baseline.sql`, with `accounts` and `contacts` re-created with a plain `_id integer` column (T79) | plain plus an empty `-wal`, 3 raw contacts, 3 `accounts` rows (key 1 twice), 4 `contacts` rows (key 1 three times) | a join key naming several rows: `raw.join_undecided = ["accounts","contacts"]` with `raw.join_duplicate = {"accounts":2,"contacts":3}`, no account and no time; a unique key and a dangling one beside it. The empty `-wal` makes the probe (which refuses a table without the rowid alias) defer to Parse |
 
 The DDL snapshots and their public sources: `schemas/android-telephony/CROSSCHECK.md` (see "DDL provenance" above).
+
+## iOS formats provenance (plan 4E)
+
+The nine snapshots in `tools/fixtures/schemas/ios/*.sql` (the iOS backup `Manifest.db`, `sms.db` in three variants,
+`CallHistory.storedata`, the legacy `call_history.db`, `AddressBook.sqlitedb` in two variants and
+`AddressBookImages.sqlitedb`) are written from memory. No public source defines these schemas, so every header says
+`-- Source: memory (...) (verdict no-public-source)` and every table has a `no-public-source` row in
+`schemas/ios/CROSSCHECK.md`. Nothing was compared with a definition, and no real device database was used; the fixtures
+generated from them prove only that a parser reads the remembered layout (real data is plan 4H). Each snapshot is
+listed by name in `docs/limitations.md` ("iOS schemas and backup formats are from memory").
+
+What was checked, and against what (fetched 2026-10-25 into the scratch directory, untrusted text, never built or run):
+
+- `IsEncrypted` of `Manifest.plist`: `verified` against libimobiledevice, tag `1.3.0` (commit
+  `15f8652126664e3a4b980e5d1c039b9053ce8566`), `tools/idevicebackup2.c` (SHA-256
+  `41472f454209082f1c02469b04f25261d70c19f03124710efb6950f7876365cf`): the key is looked up in the top-level
+  dictionary and used only when it is a boolean. That tool reads no `Manifest.db`, so `backup-manifest.sql` stays
+  `no-public-source`. The tool treats an absent or non-boolean value as "not encrypted"; Minutiae reports it as unknown.
+- The typedstream layout of `attributedBody` (plan 4E Task 4b): header, integer tags `0x81` and `0x82`, the class-record length byte and the NSString `+` encoding are `verified` against the MIT-licensed Ruby library uetchy/typedstream (commit `9a7fe5af785cd43c97f99e31da8f6784ba277ef5`, fetched 2026-10-25, never built or run); `0x83` and the NSMutableString and NSAttributedString layouts have `no-public-source`. One public sample, an NSString archive made by Apple's NSArchiver, is `internal/decode/typedstream/testdata/public-sample.typedstream` (`PROVENANCE.md`, MIT, `TestExtractTextOnAPublicSample`).
+
+Command line: `curl -fsS https://raw.githubusercontent.com/libimobiledevice/libimobiledevice/1.3.0/tools/idevicebackup2.c
+> idevicebackup2.c`, then `grep -n IsEncrypted idevicebackup2.c`. The guard is `TestIOSDDLSnapshotsStateTheirProvenance`
+(`internal/archtest/ios_ddl_test.go`).
+
+## iOS fixtures (plan 4E)
+
+`ios_common.py` holds what the iOS generators (`ios_sms.py`, `ios_calls.py`, `ios_addressbook.py`, loaded by
+`telephony_gen.py` when present) share: Cocoa conversions to RFC 3339 (seconds and nanoseconds, 1970..2100, the
+sentinels), the backup file ID and remote path (`sha1(domain + "-" + relativePath)`), the canonical-path rule of
+4E-R42, a typedstream encoder written from the layout in `internal/decode/typedstream/typedstream.go` (not from the Go
+test builder), binary-plist and minimal NSKeyedArchiver writers, and `real_cells` (a non-finite REAL is stated as
+`<col>_ieee` plus `<col>_status` `invalid`). Self-checks: `py -3 -I tools/fixtures/ios_common.py`. The `images` and
+`images_wal` roles write `<name>.images.db.gz` and `<name>.images.db-wal.gz`.
+
+### ios-calls (plan 4E, Task 11)
+
+`ios_calls.py` is a family module of `telephony_gen.py` (host Python `sqlite3` only, no Docker; the family name is
+`ios_calls`). The layouts of `CallHistory.storedata` and `call_history.db` are written from memory (4E-R13), so the
+fixtures prove that the parser reads the remembered layout and nothing about a real database. The oracle restates
+rulings 4E-R21, R22 and R35 and the "Mapping contract ios.calls" in Python from what the generator wrote; it shares no
+code with the Go parser. The `coredata-wal` WAL carries a random salt, so it differs on every regeneration: regenerate
+the files, the oracle and the pins together.
+
+```
+py -3 tools/fixtures/telephony_gen.py --family ios_calls --out internal/parsers/ioscalls/testdata \
+    --pins-go internal/parsers/ioscalls/pins_test.go --pins-package ioscalls_test
+py -3 tools/fixtures/telephony_gen.py --family ios_calls --check
+```
+
+| Variant (`internal/parsers/ioscalls/testdata/`) | DDL snapshot | Holds |
+|---|---|---|
+| `coredata-current` | `callhistory-coredata.sql` | 20 rows: in answered and missed, out answered, out unanswered (outcome `unknown`), `ZORIGINATED` 2; `ZCALLTYPE` 1, 8, 16, 99; three providers; `ZADDRESS` TEXT, BLOB, BLOB with trailing garbage, NULL, empty; `ZDATE` REAL, integral REAL (stored INTEGER), 0, -1, year 2100; `ZDURATION` 0, 12.5, -3, `+Inf`, 2e9, NULL; `ZREAD` 0/1/NULL |
+| `coredata-wal` | `callhistory-coredata.sql` | 8 rows in the database, 3 calls only in the `-wal` (a killed writer) |
+| `legacy-call-history` | `callhistory-legacy.sql` | 8 rows: Unix-seconds dates, `flags` 4, 5, 8, 1769472 (kept raw, direction unknown), a fractional REAL date, date 0, negative duration, NULL and empty address |
+
+### ios-addressbook (plan 4E, Task 13)
+
+`ios_addressbook.py` is a family module of `telephony_gen.py` (host Python `sqlite3` only, no Docker; the family name
+is `ios_addressbook`). The layouts of `AddressBook.sqlitedb` and `AddressBookImages.sqlitedb` are written from memory
+(4E-R13), so the fixtures prove that the parser reads the remembered layout and nothing about a real database. The
+oracle restates the "Mapping contract ios.addressbook" and rulings 4E-R23, R24, R25 and R41 in Python from what the
+generator wrote (the engine's read-back of its files; photo presence from the images database it wrote); it shares no
+code with the Go parser. All variants are plain databases, so regeneration is byte-identical.
+
+```
+py -3 tools/fixtures/telephony_gen.py --family ios_addressbook --out internal/parsers/iosaddressbook/testdata \
+    --pins-go internal/parsers/iosaddressbook/pins_test.go --pins-package iosaddressbook_test
+py -3 tools/fixtures/telephony_gen.py --family ios_addressbook --check
+```
+
+| Variant (`internal/parsers/iosaddressbook/testdata/`) | DDL snapshot | Holds |
+|---|---|---|
+| `current` | `addressbook-current.sql` | 13 persons, 12 records and one warning: names with phonetics, a stored and a composed display name, an empty stored one, organization only; phones with `_$!<Mobile>!$_`, `_$!<Home>!$_`, a custom and a dangling label; e-mails, a URL, property 13 (to `raw.other_values`); two structured addresses with `CountryCode` and an unknown key; two stores and a dangling one; three groups and non-person members; Creation/Modification dates REAL, INTEGER, 0, year 2100 and `+Inf`; a birthday kept raw; a Note with NUL; invalid UTF-8; Hebrew/Arabic with U+202E, CJK, emoji; wrong storage classes in `Kind` and `CreationDate`; a person who identifies nobody |
+| `with-images` | `addressbook-current.sql` + `addressbookimages.sql` (role `images`, `with-images.images.db.gz`) | 3 persons: a thumbnail only, a full-size image only, neither (`photo.present` true, true, false) |
+| `older-schema` | `addressbook-older.sql` | 4 persons without `DisplayName`, `StoreID`, `guid`, `ExternalUUID`, `ABStore`: composed names, no accounts |
+| `huge-contact` | `addressbook-current.sql` | one person with 1200 phones and 1100 e-mail addresses: lists cut at 1000 with `_total` and `_truncated` |
+
+### ios-sms (plan 4E, Task 7)
+
+`ios_sms.py` is a family module of `telephony_gen.py` (host Python `sqlite3` only, no Docker; the family name is
+`ios_sms`). The layout of `sms.db` is written from memory (4E-R13), so the fixtures prove that the parser reads the
+remembered layout and nothing about a real database. The oracle restates the "Mapping contract ios.sms" and rulings
+4E-R14 to R20, R31 and R41 in Python from what the generator wrote: the engine's read-back of its own files on a
+copy, and, for each `attributedBody`, `message_summary_info` and `payload_data` blob, the generator's own record of
+what it put in (the typedstream bytes come from the Python encoder of `ios_common.py`, never from the Go test
+builder). It shares no code with the Go parser and takes no value from Go output. Every variant is bundled as a
+backup of `UDID1` (`BundleIOSBackup`), so a record's `source_path` is the hashed backup path of the file holding the
+cell (`UDID1/3d/3d0d7e5f...`, the `-wal` for a row only in the WAL). The `ios17-wal` WAL carries a random salt, so
+it differs on every regeneration: regenerate the files, the oracle and the pins together.
+
+```
+py -3 tools/fixtures/telephony_gen.py --family ios_sms --out internal/parsers/iossms/testdata \
+    --pins-go internal/parsers/iossms/pins_test.go --pins-package iossms_test
+py -3 tools/fixtures/telephony_gen.py --family ios_sms --check
+```
+
+| Variant (`internal/parsers/iossms/testdata/`) | DDL snapshot | Holds |
+|---|---|---|
+| `ios17-nanos` | `sms-ios17.sql` | 45 messages: SMS 1:1, an iMessage to a 3-member titled group, `attributedBody`-only text (emoji, ZWJ, skin tones), equal and differing `text` and `attributedBody`, invalid UTF-8 and a truncated stream, NULL/NULL with and without attachment, reactions 2001 (`p:0/<GUID>`), 3001 (`bp:<GUID>`) and a malformed `x:abc`, a system rename, dates 0 / seconds / nanoseconds (non-zero last digit) / year 2100, read / delivered / played / edited / retracted times, a recently-deleted message, a message in two chats and in none, `handle_id` 0 and dangling, one number under two handles, `is_from_me` 2, `error` 22, services `RCS` and NULL, NUL in text, a 300 KiB text, RTL text, five attachments (present `~/` and `/var/mobile/`, missing, present only in the backup of `UDID2`, `*` in the name), a NULL `item_type` and a TEXT `associated_message_type`, a two-edit `message_summary_info`, an `LPLinkMetadata` `payload_data` and a corrupt one, two identical messages |
+| `ios14-attributed` | `sms-ios14.sql` | 12 messages: six with `attributedBody` only, no edit or recently-deleted columns |
+| `ios10-seconds` | `sms-ios10.sql` | 10 messages: seconds dates only (one fractional REAL), no `attributedBody` column; three short records written before an `ALTER TABLE ADD COLUMN` |
+| `ios17-wal` | `sms-ios17.sql` | 8 messages in the database; three new messages and one edit only in the `-wal` (a killed writer) |
+
+### End to end over a backup (plan 4E, Task 16)
+
+`internal/cli/parse_ios_e2e_test.go` (`TestIOSBackupEndToEnd`) combines the committed iOS fixtures into backup acquisitions: `ios17-nanos` (with its
+attachment extra files), `coredata-current` and `with-images` (with its images database) under backup directory `UDID1`, and
+`ios17-wal` (database and `-wal`) under `UDID3`, each named by a `sqlitetest` `Manifest.db` (fileID = the sha1 rule) and an
+unencrypted `Manifest.plist`; a second acquisition is encrypted. No new fixture is generated: the oracles of the three
+families are the expected records.
