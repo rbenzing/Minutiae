@@ -174,6 +174,12 @@ type Member struct {
 	NamerSource              *ArtifactRef // the Manifest.db that named it (the ios-backup namer only)
 }
 
+// Reasons decided from the manifest alone, which hold for every parser (a scan lists them once per artifact).
+const (
+	reasonOutsideLayout    = "manifest path outside the acquisition layout"
+	reasonEncryptedContent = "encrypted content (sub-project 10)"
+)
+
 // Job statuses Discover produces.
 const (
 	StatusNew           = "new"
@@ -475,7 +481,7 @@ func (h *Host) bundle(r Registered, p *candidate, groups map[string][]*candidate
 	job := Job{Parser: r, Primary: p.member(r.meta.Inputs[0].Role, env), Others: map[string]Member{}, Explicit: explicit}
 	if !p.layoutOK {
 		job.Status = StatusUnparsed
-		job.Reason = "manifest path outside the acquisition layout"
+		job.Reason = reasonOutsideLayout
 		return job, true
 	}
 	var missing []string
@@ -500,7 +506,7 @@ func (h *Host) bundle(r Registered, p *candidate, groups map[string][]*candidate
 	}
 	if encryptedContent(job) {
 		job.Status = StatusUnparsed
-		job.Reason = appendReason(job.Reason, "encrypted content (sub-project 10)")
+		job.Reason = appendReason(job.Reason, reasonEncryptedContent)
 	}
 	if encryptedBackup(job, env) {
 		job.Status = StatusUnparsed

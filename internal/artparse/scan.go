@@ -21,6 +21,8 @@ const (
 type ScanCounts struct {
 	Considered, Probed, Candidates, NotApplicable, TooLarge, Companions, NotProbed, FindingsDropped int
 	Stopped                                                                                         string // "", StoppedAbandoned or StoppedCancelled (4h-R31); NotApplicable counts (artifact, parser) pairs
+	// PairsNotProbed counts the artifact x parser probes of the candidate on which a Probe was abandoned that never ran; the candidates after it are NotProbed whole.
+	PairsNotProbed int
 }
 
 // ScanFinding is a probe outcome that is neither applicable nor not-applicable: unsupported-schema, encrypted,
@@ -127,9 +129,11 @@ func (h *Host) scan(ctx context.Context, snap *Snapshot, sel Selection, d *disco
 		}
 		switch {
 		case err != nil:
+			stopped := StoppedFailed // an I/O failure ends the scan like a cancel: the rest is counted, the error returns
 			if ctx.Err() != nil {
-				s.sc.Stopped, s.sc.NotProbed = StoppedCancelled, s.sc.NotProbed+rest
+				stopped = StoppedCancelled
 			}
+			s.sc.Stopped, s.sc.NotProbed = stopped, s.sc.NotProbed+rest
 			return err
 		case abandoned:
 			s.sc.Stopped, s.sc.NotProbed = StoppedAbandoned, s.sc.NotProbed+rest
@@ -152,21 +156,22 @@ func (s *scanner) candidate(ctx context.Context, c *candidate) (probed, abandone
 	if err != nil {
 		if errors.Is(err, evidence.ErrIntegrity) { // an integrity finding is never dropped for a cancel at the same moment
 			job, _ := h.bundle(s.parsers[0], c, s.d.groups, s.snap.env, true)
+			s.sc.Probed++ // the file was read and hashed
 			s.addRow(job, PlanRow{Status: StatusRefused, Reason: "integrity: " + cleanAuditText(h.caseRelative(err.Error()), maxReason), Integrity: true})
-			return false, false, nil
+			return true, false, nil
 		}
 		return false, false, err
 	}
 	defer src.close()
 	s.sc.Probed++
 	applicable := false
-	for _, r := range s.parsers {
+	for k, r := range s.parsers {
 		job, _ := h.bundle(r, c, s.d.groups, s.snap.env, true) // explicit: the job always exists, Probe decides
 		job.N = s.next
 		job.borrowed = src
 		if job.Status == StatusUnparsed {
 			// decided from the manifest alone, before any Probe: unknown is listed, never dropped
-			all := job.Reason == reasonEncrypted || job.Reason == "encrypted content (sub-project 10)" || job.Reason == "manifest path outside the acquisition layout"
+			all := allParserReason(job.Reason)
 			if all {
 				s.addFinding(c, allParsers, StatusUnparsed, job.Reason)
 				break
@@ -189,7 +194,7 @@ func (s *scanner) candidate(ctx context.Context, c *candidate) (probed, abandone
 				status = StatusCandidate
 			}
 			s.addRow(job, PlanRow{Status: status, Reason: job.Reason})
-			applicable = true
+			applicable = applicable || status == StatusCandidate
 		case pr.integrity:
 			s.addRow(job, PlanRow{Status: pr.status, Reason: pr.reason, Integrity: true})
 		case pr.status == StatusSkipped: // not-applicable
@@ -198,6 +203,7 @@ func (s *scanner) candidate(ctx context.Context, c *candidate) (probed, abandone
 			status, reason := findingOf(pr)
 			s.addFinding(c, r.meta.Name, status, reason)
 			if pr.abandoned {
+				s.sc.PairsNotProbed += len(s.parsers) - k - 1
 				return true, true, nil
 			}
 		}
@@ -244,4 +250,18 @@ func findingOf(pr prepared) (status, reason string) {
 		}
 	}
 	return pr.status, pr.reason
+}
+
+// StoppedFailed is ScanCounts.Stopped when a read failed for a reason that says nothing about the evidence (an I/O error).
+const StoppedFailed = "failed"
+
+// allParserReason reports whether a reason decided from the manifest alone holds for every parser: any part of a joined
+// reason (appendReason joins with "; ") that is parser-independent makes the whole finding one for all parsers.
+func allParserReason(reason string) bool {
+	for _, part := range strings.Split(reason, "; ") {
+		if part == reasonEncrypted || part == reasonEncryptedContent || part == reasonOutsideLayout {
+			return true
+		}
+	}
+	return false
 }

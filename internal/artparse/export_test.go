@@ -127,3 +127,6 @@ func WithScanMaxSize(o *Options, n int64) { o.scanMaxSize = n }
 
 // WithMaxScanFindings lowers the number of scan findings a plan keeps.
 func WithMaxScanFindings(o *Options, n int) { o.maxScanFindings = n }
+
+// AllParserReason is the classifier of pre-probe reasons that hold for every parser.
+var AllParserReason = allParserReason

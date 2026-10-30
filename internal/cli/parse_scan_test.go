@@ -84,12 +84,12 @@ func TestParsePlanScanJSONShape(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &s); code != 0 || err != nil {
 		t.Fatalf("exit %d err %v: %s %s", code, err, out, errOut)
 	}
-	for _, k := range []string{"considered", "probed", "candidates", "not_applicable", "too_large", "companions", "not_probed", "findings_dropped", "stopped"} {
+	for _, k := range []string{"considered", "probed", "candidates", "not_applicable", "too_large", "companions", "not_probed", "pairs_not_probed", "findings_dropped", "stopped"} {
 		if _, ok := s.Counts.Scan[k]; !ok {
 			t.Errorf("counts.scan lacks %q: %v", k, s.Counts.Scan)
 		}
 	}
-	if len(s.Counts.Scan) != 9 || s.Counts.Scan["stopped"] != "" || s.Counts.Scan["considered"] != float64(1) || s.Counts.Scan["candidates"] != float64(1) {
+	if len(s.Counts.Scan) != 10 || s.Counts.Scan["stopped"] != "" || s.Counts.Scan["considered"] != float64(1) || s.Counts.Scan["candidates"] != float64(1) {
 		t.Errorf("counts.scan %v", s.Counts.Scan)
 	}
 	if len(s.Rows) != 2 || s.Rows[0].Scan || !s.Rows[1].Scan {

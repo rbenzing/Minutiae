@@ -297,6 +297,7 @@ type scanCountsJSON struct {
 	TooLarge        int    `json:"too_large"`
 	Companions      int    `json:"companions"`
 	NotProbed       int    `json:"not_probed"`
+	PairsNotProbed  int    `json:"pairs_not_probed"`
 	FindingsDropped int    `json:"findings_dropped"`
 	Stopped         string `json:"stopped"`
 }
@@ -315,7 +316,7 @@ func scanCountsToJSON(s *artparse.ScanCounts) *scanCountsJSON {
 	}
 	return &scanCountsJSON{
 		Considered: s.Considered, Probed: s.Probed, Candidates: s.Candidates, NotApplicable: s.NotApplicable, TooLarge: s.TooLarge,
-		Companions: s.Companions, NotProbed: s.NotProbed, FindingsDropped: s.FindingsDropped, Stopped: s.Stopped,
+		Companions: s.Companions, NotProbed: s.NotProbed, PairsNotProbed: s.PairsNotProbed, FindingsDropped: s.FindingsDropped, Stopped: s.Stopped,
 	}
 }
 
@@ -475,6 +476,9 @@ func writeScanText(w io.Writer, p artparse.Plan) {
 	}
 	fmt.Fprintf(w, "scan: %d considered, %d probed, %d candidates, %d artifact x parser probes not applicable, %d over 1 GiB, %d companions, %d not probed",
 		s.Considered, s.Probed, s.Candidates, s.NotApplicable, s.TooLarge, s.Companions, s.NotProbed)
+	if s.PairsNotProbed > 0 {
+		fmt.Fprintf(w, ", %d artifact x parser probes of the abandoned candidate not run", s.PairsNotProbed)
+	}
 	if s.Stopped != "" {
 		fmt.Fprintf(w, ", stopped: %s", escapeText(s.Stopped))
 	}

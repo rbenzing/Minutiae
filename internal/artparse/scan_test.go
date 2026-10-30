@@ -15,6 +15,9 @@ import (
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/parsers/chromium"
 	"github.com/rbenzing/minutiae/internal/parsers/parsertest"
+	"github.com/rbenzing/minutiae/internal/records"
+	"github.com/rbenzing/minutiae/internal/records/recordstest"
+	"github.com/rbenzing/minutiae/internal/recordtypes/message"
 )
 
 // sniff is a parser whose Probe says applicable exactly when the primary starts with magic (identity from
@@ -349,4 +352,125 @@ func sc(t testing.TB, p artparse.Plan) artparse.ScanCounts {
 		t.Fatalf("the plan holds no scan counts: %+v", p.Rows)
 	}
 	return *p.Scan
+}
+
+// balanced requires every considered candidate to be in exactly one bucket.
+func balanced(t testing.TB, p artparse.Plan) {
+	t.Helper()
+	s := sc(t, p)
+	if got := s.Probed + s.TooLarge + s.Companions + s.NotProbed; got != s.Considered {
+		t.Errorf("Considered %d != Probed+TooLarge+Companions+NotProbed %d: %+v", s.Considered, got, s)
+	}
+}
+
+func TestScanCountsBalance(t *testing.T) {
+	t.Run("integrity", func(t *testing.T) {
+		f := newRx(t)
+		bad := putFile(t, f.c, "D1", "A1", "/sdcard/1.db", magic+"original")
+		putFile(t, f.c, "D1", "A1", "/sdcard/2.db", magic)
+		putFile(t, f.c, "D1", "A1", "/sdcard/3.db-wal", magic)
+		if err := os.WriteFile(filepath.Join(f.c.Dir, filepath.FromSlash(bad.Path)), []byte(magic+"tampered"), 0o600); err != nil { //nolint:gosec // inside a temporary test case
+			t.Fatal(err)
+		}
+		p := scanPlan(t, f.host(nil, sniffer("a", magic)), artparse.Selection{})
+		balanced(t, p)
+		if s := sc(t, p); s.Probed != 2 || s.Companions != 1 {
+			t.Errorf("%+v", s)
+		}
+	})
+	t.Run("cancel", func(t *testing.T) {
+		f := newRx(t)
+		for _, n := range []string{"/sdcard/1.db", "/sdcard/2.db", "/sdcard/3.db"} {
+			putFile(t, f.c, "D1", "A1", n, magic)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		opens := 0
+		h := f.host(func(o *artparse.Options) {
+			artparse.WithOnOpen(o, func(string) {
+				if opens++; opens == 2 {
+					cancel()
+				}
+			})
+		}, sniffer("a", magic))
+		p, _ := h.Plan(ctx, artparse.Selection{Scan: true})
+		balanced(t, p)
+	})
+	t.Run("abandon", func(t *testing.T) {
+		f := newRx(t)
+		for _, n := range []string{"/sdcard/1.db", "/sdcard/2.db"} {
+			putFile(t, f.c, "D1", "A1", n, magic)
+		}
+		release := make(chan struct{})
+		t.Cleanup(func() { close(release) })
+		h := hostWith(t, f.c, fastLimits, regFake(t, &hangProbe{name: "hangs", release: release}, "hangs"))
+		balanced(t, scanPlan(t, h, artparse.Selection{}))
+	})
+	t.Run("io-error", func(t *testing.T) {
+		f := newRx(t)
+		for _, n := range []string{"/sdcard/1.db", "/sdcard/2.db", "/sdcard/3.db", "/sdcard/4.db"} {
+			putFile(t, f.c, "D1", "A1", n, magic)
+		}
+		boom := errors.New("disk on fire")
+		var opens atomic.Int32
+		h := f.host(func(o *artparse.Options) {
+			artparse.WithWrapFile(o, func(rf artparse.ReadFile) artparse.ReadFile {
+				if opens.Add(1) == 2 {
+					return errTail{rf, boom}
+				}
+				return rf
+			})
+		}, sniffer("a", magic))
+		p, err := h.Plan(context.Background(), artparse.Selection{Scan: true})
+		if !errors.Is(err, boom) {
+			t.Fatalf("Plan = %v, want the I/O error", err)
+		}
+		balanced(t, p)
+		if s := sc(t, p); s.Stopped != artparse.StoppedFailed || s.Probed != 1 || s.NotProbed != 3 {
+			t.Errorf("%+v", s)
+		}
+	})
+}
+
+func TestScanAbandonedCountsTheProbesItSkipped(t *testing.T) {
+	f := newRx(t)
+	putFile(t, f.c, "D1", "A1", "/sdcard/1.db", magic)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	var n atomic.Int32
+	h := hostWith(t, f.c, fastLimits,
+		regFake(t, &hangProbe{name: "hangs", release: release}, "hangs"),
+		regFake(t, &countingProbe{name: "b", n: &n}, "b"), regFake(t, &countingProbe{name: "c", n: &n}, "c"))
+	if s := sc(t, scanPlan(t, h, artparse.Selection{})); s.PairsNotProbed != 2 {
+		t.Errorf("PairsNotProbed = %d, want 2", s.PairsNotProbed)
+	}
+}
+
+func TestScanJoinedReasonStillHoldsForEveryParser(t *testing.T) {
+	for _, r := range []string{
+		"encrypted backup (sub-project 10)", "manifest path outside the acquisition layout",
+		"ambiguous companion for role wal: a, b; encrypted content (sub-project 10)",
+	} {
+		if !artparse.AllParserReason(r) {
+			t.Errorf("%q must hold for every parser", r)
+		}
+	}
+	if artparse.AllParserReason("ambiguous companion for role wal: a, b") || artparse.AllParserReason("required role not found: wal") {
+		t.Error("a companion reason is parser-specific")
+	}
+}
+
+func TestScanCandidatesCountsOnlyNewRows(t *testing.T) {
+	f := newRx(t)
+	done := putFile(t, f.c, "D1", "A1", "/sdcard/done.db", magic)
+	putFile(t, f.c, "D1", "A1", "/sdcard/fresh.db", magic)
+	p := sniffer("a", magic)
+	h := f.host(nil, p)
+	reg := rxReg(t, p)
+	recordstest.Ingest(t, f.c, reg.Identity(), []string{done.ID},
+		[]records.Record{{Type: message.Type, ArtifactID: done.ID, Summary: "s", Payload: recordstest.ValidPayload(message.Type)}})
+	pl := scanPlan(t, h, artparse.Selection{})
+	if len(scanRows(pl)) != 2 || pl.ByStatus[artparse.StatusAlreadyParsed] != 1 || sc(t, pl).Candidates != 1 {
+		t.Errorf("rows %d by status %v counts %+v", len(scanRows(pl)), pl.ByStatus, pl.Scan)
+	}
 }
