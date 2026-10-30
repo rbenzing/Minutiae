@@ -147,3 +147,59 @@ func TestJXLContainerNegativeControls(t *testing.T) {
 		t.Fatalf("first 60%% = %+v, want rejected truncated", v)
 	}
 }
+
+// TestJXLCodestreamNeedsItsMagic (T5-m1): the first two bytes of the codestream
+// (FF 0A) are checked wherever the codestream starts: an empty jxlc, a jxlp
+// holding only its index word, a one-byte payload and a wrong magic are all
+// bad-codestream, for a sized box and for a size-0 box.
+func TestJXLCodestreamNeedsItsMagic(t *testing.T) {
+	head := slices.Concat(jxlSigBox(), jxlFtypBox())
+	last := uint32(1 << 31)
+	for _, c := range []struct {
+		name string
+		box  []byte
+	}{
+		{"empty jxlc", carvetest.Box("jxlc")},
+		{"one byte jxlc", carvetest.Box("jxlc", []byte{0xFF})},
+		{"wrong magic jxlc", carvetest.Box("jxlc", []byte{0x0A, 0xFF, 1, 2})},
+		{"jxlp index word only", jxlpBox(last, nil)},
+		{"jxlp one data byte", jxlpBox(last, []byte{0xFF})},
+		{"jxlp wrong magic", jxlpBox(last, []byte{0xFF, 0x0B, 1})},
+		{"size 0 jxlc empty", []byte{0, 0, 0, 0, 'j', 'x', 'l', 'c'}},
+		{"size 0 jxlc wrong magic", []byte{0, 0, 0, 0, 'j', 'x', 'l', 'c', 0xFF, 0x0B, 1}},
+		{"size 0 jxlp index word only", []byte{0, 0, 0, 0, 'j', 'x', 'l', 'p', 0x80, 0, 0, 0}},
+		{"size 0 jxlp wrong magic", []byte{0, 0, 0, 0, 'j', 'x', 'l', 'p', 0x80, 0, 0, 0, 1, 2, 3}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if v := bmffVerdict(slices.Concat(head, c.box), 0); v.Outcome != Rejected || v.Reason != "bad-codestream" {
+				t.Fatalf("verdict = %+v, want rejected bad-codestream", v)
+			}
+		})
+	}
+	// Only the FIRST part carries the magic; later parts are raw codestream bytes.
+	ok := slices.Concat(head, jxlpBox(0, []byte{0xFF, 0x0A, 1}), jxlpBox(1|last, []byte{7, 7}))
+	if v := bmffVerdict(ok, 0); v.Outcome != Validated {
+		t.Fatalf("magic in the first part only = %+v, want validated", v)
+	}
+	okZero := slices.Concat(head, []byte{0, 0, 0, 0, 'j', 'x', 'l', 'c', 0xFF, 0x0A})
+	if v := bmffVerdict(okZero, 0); v.Outcome != Bounded {
+		t.Fatalf("size 0 jxlc holding FF 0A = %+v, want bounded", v)
+	}
+}
+
+// TestJXLWalkRows (T5-m2): a 64-bit largesize jxlc box walks and validates, and
+// a size-0 last-flagged jxlp with a wrong index is bad-codestream.
+func TestJXLWalkRows(t *testing.T) {
+	head := slices.Concat(jxlSigBox(), jxlFtypBox())
+	payload := []byte{0xFF, 0x0A, 1, 2, 3, 4}
+	large := binary.BigEndian.AppendUint64([]byte{0, 0, 0, 1, 'j', 'x', 'l', 'c'}, uint64(16+len(payload)))
+	large = append(large, payload...)
+	obj := slices.Concat(head, large)
+	if v := bmffVerdict(obj, 0); v.Outcome != Validated || v.Length != int64(len(obj)) {
+		t.Fatalf("largesize jxlc = %+v, want validated length %d", v, len(obj))
+	}
+	wrong := slices.Concat(head, []byte{0, 0, 0, 0, 'j', 'x', 'l', 'p', 0x80, 0, 0, 5}, payload)
+	if v := bmffVerdict(wrong, 0); v.Outcome != Rejected || v.Reason != "bad-codestream" {
+		t.Fatalf("size 0 last jxlp with index 5 = %+v, want rejected bad-codestream", v)
+	}
+}

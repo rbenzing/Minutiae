@@ -686,6 +686,15 @@ func tiffCorpus() []hostileObj {
 	add("late-value", with(func(o *carvetest.TIFFOpts) { o.LateValueOf = 0 }, tiffPage(false), tiffPage(false)))
 	add("dng", with(nil, dng))
 	add("cr2", with(func(o *carvetest.TIFFOpts) { o.CR2 = true }, tiffPage(false)))
+	raw := tiffPage(false)
+	raw.Strips = [][]byte{bytes.Repeat([]byte{0x5A}, 200)}
+	add("cr2-raw-ifd", with(func(o *carvetest.TIFFOpts) { o.CR2, o.CR2Raw = true, &raw }, tiffPage(false)))
+	manySubs := dng
+	manySubs.SubIFDs = make([]carvetest.TIFFIFD, 65)
+	for i := range manySubs.SubIFDs {
+		manySubs.SubIFDs[i] = tiffPage(false)
+	}
+	add("subifd-cap", with(nil, manySubs))
 	add("orf", with(func(o *carvetest.TIFFOpts) { o.Magic = "IIRO" }, tiffPage(false)))
 	add("rw2", with(func(o *carvetest.TIFFOpts) { o.Magic = "IIU\x00" }, tiffPage(false)))
 	add("next-loop", with(hostile(carvetest.TIFFHostile{NextLoop: true}), tiffPage(false)))
@@ -696,4 +705,74 @@ func tiffCorpus() []hostileObj {
 	add("bad-entry-type", with(hostile(carvetest.TIFFHostile{BadEntryType: 14}), tiffPage(false)))
 	add("entry-count", with(hostile(carvetest.TIFFHostile{EntryCount: 2000}), tiffPage(false)))
 	return c
+}
+
+// TestTIFFCR2RawIFDPointer (T4-m1): the u32 at header byte 12 of a CR2 is a
+// main IFD queued like every other pointer, so the strips of a raw IFD on no
+// next-IFD chain count toward the length. 0 is absent, a pointer to an IFD
+// already queued is the same IFD, and a bad one is the usual typed reject.
+func TestTIFFCR2RawIFDPointer(t *testing.T) {
+	raw := tiffPage(false)
+	raw.Strips = [][]byte{bytes.Repeat([]byte{0x5A}, 500)}
+	o := tiffOpts(tiffPage(false))
+	o.CR2, o.CR2Raw = true, &raw
+	obj := carvetest.TIFF(o)
+	chained := carvetest.TIFF(func() carvetest.TIFFOpts { c := o; c.CR2Raw = nil; return c }())
+	v := tiffVerdict(obj, 40)
+	if v.Outcome != Validated || v.Type != "cr2" || v.Length != int64(len(obj)) {
+		t.Fatalf("CR2 with an unchained raw IFD = %+v, want validated cr2 length %d", v, len(obj))
+	}
+	if v := tiffVerdict(chained, 40); v.Length >= int64(len(obj)) || v.Length != int64(len(chained)) {
+		t.Fatalf("CR2 without a raw IFD = %+v, want length %d", v, len(chained))
+	}
+	if !slices.Contains(v.Basis, "ifds=2") {
+		t.Errorf("basis = %v, want ifds=2", v.Basis)
+	}
+	patch := func(off uint32) []byte {
+		b := slices.Clone(obj)
+		binary.LittleEndian.PutUint32(b[12:], off)
+		return b
+	}
+	if v := tiffVerdict(patch(16), 0); v.Outcome != Validated {
+		t.Errorf("raw pointer to IFD0 = %+v, want validated (the same IFD, not a cycle)", v)
+	}
+	for _, c := range []struct {
+		name   string
+		off    uint32
+		reason string
+	}{
+		{"inside the header", 8, "bad-offset"},
+		{"past the window", uint32(len(obj)) + 100, "truncated"},
+	} {
+		if v := tiffVerdict(patch(c.off), 0); v.Outcome != Rejected || v.Reason != c.reason {
+			t.Errorf("raw pointer %s = %+v, want rejected %s", c.name, v, c.reason)
+		}
+	}
+	// The raw IFD is capped like any other: with 64 IFDs queued it is the 65th.
+	many := make([]carvetest.TIFFIFD, 64)
+	for i := range many {
+		many[i] = tiffPage(false)
+	}
+	mo := tiffOpts(many...)
+	mo.CR2, mo.CR2Raw = true, &raw
+	if v := tiffVerdict(carvetest.TIFF(mo), 0); v.Outcome != Bounded || v.Reason != "tiff-walk-capped=ifds" {
+		t.Errorf("64 chained IFDs plus a raw IFD = %+v, want bounded ifds", v)
+	}
+}
+
+// TestTIFFCapInIFD0TypesTiffNotDNG (T4-m2, PASSES ON ARRIVAL: it pins the
+// existing order of the walk): a cap hit inside IFD0 before tag 50706 (more
+// than 64 SubIFD offsets in tag 330) is bounded and keeps the identity shown so
+// far, so it is typed tiff although DNGVersion follows it in the same IFD.
+func TestTIFFCapInIFD0TypesTiffNotDNG(t *testing.T) {
+	page := tiffPage(false)
+	page.DNGVersion = true
+	page.SubIFDs = make([]carvetest.TIFFIFD, 65)
+	for i := range page.SubIFDs {
+		page.SubIFDs[i] = tiffPage(false)
+	}
+	v := tiffVerdict(carvetest.TIFF(tiffOpts(page)), 0)
+	if v.Outcome != Bounded || v.Reason != "tiff-walk-capped=ifds" || v.Type != "tiff" || v.Ext != "tif" {
+		t.Fatalf("verdict = %+v, want bounded tiff-walk-capped=ifds typed tiff/tif", v)
+	}
 }

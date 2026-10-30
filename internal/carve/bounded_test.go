@@ -32,7 +32,7 @@ func hostileOggPages() []carvetest.OggPage {
 	}
 }
 
-// builderCorpus is every builder variant of the twelve validators, valid and
+// builderCorpus is every builder variant of the fifteen validators, valid and
 // hostile (a bad variant is a seed for the corrupt path). Map iteration is
 // avoided: the order of the corpus is fixed.
 func builderCorpus() []hostileObj {
@@ -151,9 +151,34 @@ func builderCorpus() []hostileObj {
 		{"bad-children", carvetest.BMFFOpts{BadChildren: true}},
 		{"qt", carvetest.BMFFOpts{Brand: "qt  "}},
 		{"trailer", carvetest.BMFFOpts{Trailer: carvetest.Box("free", make([]byte, 30))}},
+		{"avif", carvetest.BMFFOpts{Brand: "avif", HEIF: true, Compat: []string{"mif1"}}},
+		{"avis", carvetest.BMFFOpts{Brand: "avis"}},
+		{"cr3", carvetest.BMFFOpts{Brand: "crx "}},
+		{"jxl-brand-first", carvetest.BMFFOpts{Brand: "jxl "}},
 	}
 	for _, b := range bmffs {
 		add("isobmff", b.n, carvetest.MP4(b.o))
+	}
+	jxlCS := bytes.Repeat([]byte{0xFF, 0x0A, 0x55}, 40)
+	jxls := []struct {
+		n string
+		o carvetest.JXLOpts
+	}{
+		{"jxlc", carvetest.JXLOpts{}},
+		{"jxlp", carvetest.JXLOpts{Codestream: jxlCS, Parts: 3}},
+		{"extra-boxes", carvetest.JXLOpts{Extra: []string{"Exif", "xml ", "jumb", "jxll", "brob"}}},
+		{"size-zero", carvetest.JXLOpts{SizeZeroLast: true}},
+		{"size-zero-jxlp", carvetest.JXLOpts{SizeZeroLast: true, Parts: 2}},
+		{"trailer", carvetest.JXLOpts{Trailer: carvetest.Box("free", make([]byte, 30))}},
+		{"bad-index", carvetest.JXLOpts{BadIndex: true}},
+		{"two-last", carvetest.JXLOpts{TwoLast: true}},
+		{"both", carvetest.JXLOpts{Both: true}},
+		{"no-codestream", carvetest.JXLOpts{NoCodestream: true}},
+		{"no-magic", carvetest.JXLOpts{Codestream: []byte{1, 2, 3, 4, 5, 6}}},
+		{"empty-codestream", carvetest.JXLOpts{Codestream: []byte{}}},
+	}
+	for _, j := range jxls {
+		add("isobmff", "jxl-"+j.n, carvetest.JXLContainer(j.o))
 	}
 	sqls := []struct {
 		n string
@@ -450,5 +475,38 @@ func TestReadCheckedEmptyIsNotAnOutsideRead(t *testing.T) {
 	}
 	if err := w.readChecked(make([]byte, 1), 0); !errors.Is(err, ErrOutsideWindow) {
 		t.Fatalf("readChecked(1 byte, empty window) = %v, want ErrOutsideWindow", err)
+	}
+}
+
+// TestBuilderCorpusCoversEveryValidator: the builder corpus holds at least one
+// object for each of the fifteen validators (the keys of builtinValidators),
+// names no other validator, and holds a JPEG XL container, the second shape the
+// isobmff validator judges. The fuzz seeds and the bounded test are built from
+// this corpus, so a validator without an object here is unexercised by both.
+func TestBuilderCorpusCoversEveryValidator(t *testing.T) {
+	validators := builtinValidators()
+	if len(validators) != 15 {
+		t.Fatalf("%d built-in validators, want 15", len(validators))
+	}
+	seen := map[string]int{}
+	jxl := 0
+	for _, obj := range builderCorpus() {
+		seen[obj.id]++
+		if obj.id == "isobmff" && bytes.HasPrefix(obj.data, []byte(jxlSignatureHead)) {
+			jxl++
+		}
+	}
+	for id := range validators {
+		if seen[id] == 0 {
+			t.Errorf("validator %q has no builder corpus object", id)
+		}
+	}
+	for id := range seen {
+		if _, ok := validators[id]; !ok {
+			t.Errorf("corpus names %q, which is no built-in validator", id)
+		}
+	}
+	if jxl == 0 {
+		t.Error("the builder corpus holds no JPEG XL container")
 	}
 }

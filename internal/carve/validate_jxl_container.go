@@ -26,8 +26,9 @@ func jxlTopLevel(t string) bool {
 // exactly one jxlc, or jxlp parts whose indices count up from 0 with the high
 // bit on the last one only, never both. Size 0 on the jxlc (or on the last
 // jxlp) extends to the window end and is bounded; size 0 on any other box is
-// unbounded-box. A brob box is walked and never decompressed, and no codestream
-// byte is read.
+// unbounded-box. A brob box is walked and never decompressed. The only
+// codestream bytes read are its first two, which must be FF 0A (in the jxlc
+// payload, or in the first jxlp after its index word), else bad-codestream.
 func validateJXLContainer(w *Window) Verdict {
 	reject := func(reason string) Verdict { return Verdict{Outcome: Rejected, Reason: reason} }
 	fail := func(err error) Verdict {
@@ -68,6 +69,19 @@ func validateJXLContainer(w *Window) Verdict {
 		v := binary.BigEndian.Uint32(word[:])
 		return v &^ (1 << 31), v>>31 == 1, nil
 	}
+	// hasMagic reports whether the codestream starting at at, with avail bytes
+	// available to its box, begins FF 0A. Two bytes are the only codestream
+	// bytes read.
+	hasMagic := func(at, avail int64) (bool, error) {
+		if avail < 2 {
+			return false, nil
+		}
+		var m [2]byte
+		if _, err := w.ReadAt(m[:], at); err != nil {
+			return false, err
+		}
+		return m[0] == 0xFF && m[1] == 0x0A, nil
+	}
 	visit := func(b bmffBox) (string, error) {
 		switch b.Type {
 		case "jxlc":
@@ -75,6 +89,13 @@ func validateJXLContainer(w *Window) Verdict {
 				return "bad-codestream", nil
 			}
 			sawC = true
+			ok, err := hasMagic(b.Pos+b.HdrLen, b.Size-b.HdrLen)
+			if err != nil {
+				return "", err
+			}
+			if !ok {
+				return "bad-codestream", nil
+			}
 		case "jxlp":
 			if sawC || final || b.Size-b.HdrLen < 4 {
 				return "bad-codestream", nil
@@ -85,6 +106,15 @@ func validateJXLContainer(w *Window) Verdict {
 			}
 			if index != parts {
 				return "bad-codestream", nil
+			}
+			if parts == 0 {
+				ok, err := hasMagic(b.Pos+b.HdrLen+4, b.Size-b.HdrLen-4)
+				if err != nil {
+					return "", err
+				}
+				if !ok {
+					return "bad-codestream", nil
+				}
 			}
 			parts++
 			final = last
@@ -109,6 +139,13 @@ func validateJXLContainer(w *Window) Verdict {
 			if sawC || parts > 0 {
 				return reject("bad-codestream")
 			}
+			ok, err := hasMagic(zero.Pos+8, w.Len()-zero.Pos-8)
+			if err != nil {
+				return fail(err)
+			}
+			if !ok {
+				return reject("bad-codestream")
+			}
 		case "jxlp":
 			if sawC || final {
 				return reject("bad-codestream")
@@ -125,6 +162,15 @@ func validateJXLContainer(w *Window) Verdict {
 			}
 			if index != parts {
 				return reject("bad-codestream")
+			}
+			if parts == 0 {
+				ok, err := hasMagic(zero.Pos+12, w.Len()-zero.Pos-12)
+				if err != nil {
+					return fail(err)
+				}
+				if !ok {
+					return reject("bad-codestream")
+				}
 			}
 		default:
 			return reject("unbounded-box")

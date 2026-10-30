@@ -3,6 +3,7 @@ package carve
 import (
 	"encoding/binary"
 	"math"
+	"slices"
 	"strconv"
 )
 
@@ -403,9 +404,31 @@ func validateTIFF(w *Window) Verdict {
 	}
 	t.maxEnd = t.hdr
 
+	// A CR2 names its raw IFD in header bytes 12..15 (0 = none). It is queued
+	// as a main IFD after the chain is walked, so one the chain already holds
+	// is the same IFD, not a cycle; any other pointer is checked like every
+	// other (bad-offset, truncated, the IFD cap).
+	var cr2Raw uint64
+	isCR2 := little && magic == 42 && have >= 16 && head[8] == 'C' && head[9] == 'R' && head[10] == 2
+	if isCR2 {
+		cr2Raw = uint64(t.bo.Uint32(head[12:]))
+	}
 	err := t.add(ifd0, tiffKindMain)
-	for i := 0; err == nil && i < t.n; i++ {
-		err = t.ifd(i)
+	next := 0
+	walk := func() {
+		for err == nil && next < t.n {
+			err = t.ifd(next)
+			next++
+		}
+	}
+	walk()
+	if err == nil && cr2Raw != 0 && !slices.Contains(t.ifds[:t.n], int64(cr2Raw)) {
+		if cr2Raw < 16 { // inside the 16-byte CR2 header
+			err = tiffReject("bad-offset")
+		} else {
+			err = t.add(cr2Raw, tiffKindMain)
+			walk()
+		}
 	}
 	if err == nil && t.refs == 0 {
 		err = tiffReject("no-image-data")
@@ -418,7 +441,7 @@ func validateTIFF(w *Window) Verdict {
 		typ, ext = "orf", "orf"
 	case little && magic == tiffMagicRW2:
 		typ, ext = "rw2", "rw2"
-	case little && magic == 42 && have >= 11 && head[8] == 'C' && head[9] == 'R' && head[10] == 2:
+	case isCR2:
 		typ, ext = "cr2", "cr2"
 	case t.dng:
 		typ, ext = "dng", "dng"
