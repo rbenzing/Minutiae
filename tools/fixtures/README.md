@@ -1508,6 +1508,20 @@ is `validated` with the free box included; `nested-inner.gif` is `nested` with `
 Controls are placed in clusters or blocks that no object ever occupied, with one unused cluster between them, from the
 end of the volume downward.
 
+### Licence note and open items
+
+`true.elf` in `carve-fat12` is a byte copy of `/usr/bin/true` from the `coreutils 9.1` package of Debian bookworm (GPL).
+It is a negative control for the carver (an ELF is not in the signature set),
+and is kept as the only real ELF binary in the fixtures. Anyone redistributing the images owes the coreutils source
+offer for that file; if that is unwanted, replace it with a seeded random ELF-looking header (regenerate image and
+oracle together).
+
+Open generator items, not done because they change the committed images' oracle and need Docker to regenerate and
+verify: `carve_place.py` should record `data_start` (partition-relative) and `cluster_size` of the FAT12 image in
+`carve.expect.json` (the tests derive the data area start from `partition_start` meanwhile), `build_ext4` should allow
+zero blocks only among the trailing blocks (about 16) instead of anywhere, and `nested-outer.mp4` could be checked with
+`ffprobe` like the other MP4 files.
+
 ### Determinism
 
 Two generation runs, each in a fresh container, give byte-identical objects, images and oracles (compared with

@@ -179,8 +179,12 @@ func (w *Window) byteChecked(off int64) (byte, error) {
 }
 
 // readChecked is ReadAt with the same first-hand bound: a range that does not
-// lie wholly inside the window is ErrOutsideWindow and nothing is requested.
+// lie wholly inside the window is ErrOutsideWindow and nothing is requested. An empty
+// read asks for nothing and is not an outside read, even in a zero-length window.
 func (w *Window) readChecked(p []byte, off int64) error {
+	if len(p) == 0 {
+		return nil // nothing requested, nothing outside
+	}
 	if !w.fits(off, int64(len(p))) {
 		return ErrOutsideWindow
 	}
