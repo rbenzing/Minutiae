@@ -717,3 +717,75 @@ func unnamedBackupFileReason(snap *Snapshot, rec evidence.ManifestRecord) string
 	}
 	return ""
 }
+
+// BackupSiblings is what an iOS backup's Manifest.db says about the companions of one backup database file.
+type BackupSiblings struct {
+	Named        bool         // the backup was resolved and the artifact has a logical path in it
+	WAL, Journal string       // artifact ids of <logical>-wal and <logical>-journal in the same backup; "" when the manifest names none
+	ManifestDB   *ArtifactRef // the hash-checked Manifest.db that named them; nil when not Named
+	Reason       string       // why not Named (encrypted backup, no Manifest.db, not a backup file, ...)
+}
+
+// BackupSiblings resolves the case's backups (snapshotFor) and returns the siblings of artifactID. A Manifest.db
+// that fails its hash check is an error matching evidence.ErrIntegrity.
+func (h *Host) BackupSiblings(ctx context.Context, artifactID string) (BackupSiblings, error) {
+	snap, rs, err := h.snapshotFor(ctx)
+	if err != nil {
+		return BackupSiblings{}, err
+	}
+	// every backup of the case is resolved, as a recovery does: a Manifest.db that fails its hash check names
+	// nothing, and it is never read as "no siblings"
+	for _, r := range rs {
+		if r.Integrity {
+			return BackupSiblings{}, fmt.Errorf("%w: backup %s/%s: %s", evidence.ErrIntegrity, cleanAuditText(r.Acquisition, maxPathText), cleanAuditText(r.Dir, maxPathText), cleanAuditText(r.Reason, maxReason))
+		}
+	}
+	rec, ok := snap.Record(artifactID)
+	if !ok {
+		return BackupSiblings{}, fmt.Errorf("%w: %q", evidence.ErrUnknownArtifact, artifactID)
+	}
+	acq, dir, fileID, ok := backupPathOf(rec)
+	if !ok {
+		return BackupSiblings{Reason: whyNoBackupLogical(rec, snap.env)}, nil
+	}
+	bm := snap.env.Backups[backupKey(acq, dir)]
+	switch {
+	case bm == nil:
+		return BackupSiblings{Reason: reasonNoManifest}, nil
+	case bm.Resolution.Encryption == encEncrypted:
+		return BackupSiblings{Reason: reasonEncrypted}, nil
+	case bm.Resolution.Status != BackupMapped:
+		return BackupSiblings{Reason: bm.Resolution.Reason}, nil
+	}
+	logical, why, ok := bm.Logical(fileID)
+	if !ok {
+		if why == "" {
+			why = "no logical path"
+		}
+		return BackupSiblings{Reason: why}, nil
+	}
+	out := BackupSiblings{Named: true, ManifestDB: bm.Resolution.ManifestDB}
+	for _, c := range []struct {
+		suffix string
+		into   *string
+	}{{"-wal", &out.WAL}, {"-journal", &out.Journal}} {
+		var found []string
+		for _, m := range snap.records {
+			a2, d2, f2, ok := backupPathOf(m)
+			if !ok || a2 != acq || d2 != dir {
+				continue
+			}
+			if l2, _, named := bm.Logical(f2); named && l2 == logical+c.suffix {
+				found = append(found, m.ID)
+			}
+		}
+		switch len(found) {
+		case 0:
+		case 1:
+			*c.into = found[0]
+		default:
+			return BackupSiblings{Reason: fmt.Sprintf("ambiguous: %d files of the backup are listed as %s%s", len(found), cleanAuditText(logical, maxPathText), c.suffix)}, nil
+		}
+	}
+	return out, nil
+}
