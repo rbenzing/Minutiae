@@ -1,0 +1,4 @@
+go test fuzz v1
+[]byte("MINUTIAE-CARVERIFF\x14\x00\x00\x00WEBPVP8L\b\x00\x00\x00/?\xc0\v\x00\x01\x02\x03")
+uint16(0)
+bool(false)

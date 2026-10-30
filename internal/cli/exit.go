@@ -98,7 +98,8 @@ func ExitCode(err error) int {
 	case errors.Is(err, evidence.ErrNeedsUpgrade), errors.Is(err, records.ErrBadCursor),
 		errors.Is(err, records.ErrInvalidFilter), errors.Is(err, records.ErrInvalidPage),
 		errors.Is(err, artparse.ErrSelection), errors.Is(err, artparse.ErrNotParserInput),
-		errors.Is(err, records.ErrInvalidQuery), errors.Is(err, records.ErrIndexNotCurrent), errors.Is(err, examine.ErrInvalidLimit):
+		errors.Is(err, records.ErrInvalidQuery), errors.Is(err, records.ErrIndexNotCurrent), errors.Is(err, examine.ErrInvalidLimit),
+		errors.Is(err, examine.ErrInvalidCarveOption):
 		return ExitUsage
 	case isDBRecoverUsage(err):
 		return ExitUsage
