@@ -90,6 +90,21 @@ func builderCorpus() []hostileObj {
 	for _, g := range gifs {
 		add("gif", g.n, carvetest.GIF(g.o))
 	}
+	bmps := []struct {
+		n string
+		o carvetest.BMPOpts
+	}{
+		{"24bpp", carvetest.BMPOpts{DIBSize: 40, W: 64, H: 48, BPP: 24, Planes: 1}},
+		{"8bpp", carvetest.BMPOpts{DIBSize: 40, W: 64, H: 48, BPP: 8, Planes: 1}},
+		{"top-down", carvetest.BMPOpts{DIBSize: 40, W: 64, H: -48, BPP: 24, Planes: 1}},
+		{"core", carvetest.BMPOpts{DIBSize: 12, W: 64, H: 48, BPP: 24, Planes: 1}},
+		{"v5", carvetest.BMPOpts{DIBSize: 124, W: 64, H: 48, BPP: 32, Planes: 1, Compression: 3}},
+		{"rle8", carvetest.BMPOpts{DIBSize: 40, W: 64, H: 48, BPP: 8, Planes: 1, Compression: 1, SizeImage: 500}},
+		{"bad-offset", carvetest.BMPOpts{DIBSize: 40, W: 64, H: 48, BPP: 24, Planes: 1, OffBitsDelta: -30}},
+	}
+	for _, b := range bmps {
+		add("bmp", b.n, carvetest.BMP(b.o))
+	}
 	webps := []struct {
 		n string
 		o carvetest.WebPOpts
