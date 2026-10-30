@@ -307,6 +307,9 @@ func (r *run) conclude(notRun int) error {
 // anything started); what happened to each job is in the summary. The summary is returned with the
 // error too.
 func (h *Host) Run(ctx context.Context, opt RunOptions) (RunSummary, error) {
+	if opt.Scan {
+		return RunSummary{}, errScanIsPlanOnly
+	}
 	if err := h.c.RequireSchema(evidence.CurrentSchema); err != nil {
 		return RunSummary{}, err
 	}

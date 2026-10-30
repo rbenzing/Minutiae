@@ -121,3 +121,9 @@ func WithMaxUnmapped(o *Options, n int) { o.maxUnmapped = n }
 func WithTypedRunner(o *Options, f func(context.Context, *parse.Input, parse.RecoveryEmitter, []parse.TableMapping, []parse.TableClaim) (recrun.Report, error)) {
 	o.typedRun = f
 }
+
+// WithScanMaxSize lowers the size above which --scan counts an artifact instead of probing it.
+func WithScanMaxSize(o *Options, n int64) { o.scanMaxSize = n }
+
+// WithMaxScanFindings lowers the number of scan findings a plan keeps.
+func WithMaxScanFindings(o *Options, n int) { o.maxScanFindings = n }

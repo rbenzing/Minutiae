@@ -258,6 +258,7 @@ type planRowJSON struct {
 	Bundle     []bundleJSON  `json:"bundle"`
 	Integrity  bool          `json:"integrity"`
 	Incomplete bool          `json:"incomplete"`
+	Scan       bool          `json:"scan"` // the row comes from --scan: an artifact no glob matched
 	// Recovered is non-nil when a member of the bundle is recovered input; its confidence is null when the cap is unknown.
 	Recovered *recoveredInputJSON `json:"recovered"`
 }
@@ -276,15 +277,58 @@ type unnamedJSON struct {
 }
 
 type countsJSON struct {
-	Manifest          int            `json:"manifest"`
-	NotParserInput    int            `json:"not_parser_input"`
-	SnapshotExcluded  int            `json:"snapshot_excluded"`
-	ByKind            map[string]int `json:"by_kind"`
-	MissingRole       map[string]int `json:"missing_role"`
-	Unnamed           map[string]int `json:"unnamed"`
-	UnnamedList       []unnamedJSON  `json:"unnamed_list"`
-	RecoveredExcluded int            `json:"recovered_excluded"`
-	ByStatus          map[string]int `json:"by_status"`
+	Manifest          int             `json:"manifest"`
+	NotParserInput    int             `json:"not_parser_input"`
+	SnapshotExcluded  int             `json:"snapshot_excluded"`
+	ByKind            map[string]int  `json:"by_kind"`
+	MissingRole       map[string]int  `json:"missing_role"`
+	Unnamed           map[string]int  `json:"unnamed"`
+	UnnamedList       []unnamedJSON   `json:"unnamed_list"`
+	RecoveredExcluded int             `json:"recovered_excluded"`
+	ByStatus          map[string]int  `json:"by_status"`
+	Scan              *scanCountsJSON `json:"scan"` // null without --scan
+}
+
+type scanCountsJSON struct {
+	Considered      int    `json:"considered"`
+	Probed          int    `json:"probed"`
+	Candidates      int    `json:"candidates"`
+	NotApplicable   int    `json:"not_applicable"`
+	TooLarge        int    `json:"too_large"`
+	Companions      int    `json:"companions"`
+	NotProbed       int    `json:"not_probed"`
+	FindingsDropped int    `json:"findings_dropped"`
+	Stopped         string `json:"stopped"`
+}
+
+type scanFindingJSON struct {
+	ArtifactID string `json:"artifact_id"`
+	Path       string `json:"path"`
+	Parser     string `json:"parser"`
+	Status     string `json:"status"`
+	Reason     string `json:"reason"`
+}
+
+func scanCountsToJSON(s *artparse.ScanCounts) *scanCountsJSON {
+	if s == nil {
+		return nil
+	}
+	return &scanCountsJSON{
+		Considered: s.Considered, Probed: s.Probed, Candidates: s.Candidates, NotApplicable: s.NotApplicable, TooLarge: s.TooLarge,
+		Companions: s.Companions, NotProbed: s.NotProbed, FindingsDropped: s.FindingsDropped, Stopped: s.Stopped,
+	}
+}
+
+// scanFindingsToJSON is null without --scan and an array (possibly empty) with it.
+func scanFindingsToJSON(p artparse.Plan) []scanFindingJSON {
+	if p.Scan == nil {
+		return nil
+	}
+	out := []scanFindingJSON{}
+	for _, f := range p.ScanFindings {
+		out = append(out, scanFindingJSON{ArtifactID: f.ArtifactID, Path: f.Path, Parser: f.Parser, Status: f.Status, Reason: f.Reason})
+	}
+	return out
 }
 
 func nonNilMap(m map[string]int) map[string]int {
@@ -325,7 +369,7 @@ func planRowToJSON(r artparse.PlanRow) planRowJSON {
 	j := planRowJSON{
 		Status: r.Status, Reason: r.Reason, Parser: id.Name, Version: id.Version, ArtifactID: r.Job.Primary.Artifact.ID,
 		Logical: r.Job.Primary.Logical, Platform: r.Job.Primary.Platform, Namer: r.Job.Primary.Namer, Bundle: memberRoles(r.Job),
-		Integrity: r.Integrity, Incomplete: r.Incomplete,
+		Integrity: r.Integrity, Incomplete: r.Incomplete, Scan: r.Scan,
 	}
 	if s := r.Job.Primary.Snapshot; s != nil {
 		j.Snapshot = &snapshotJSON{Name: s.Name, Xid: s.Xid}
@@ -369,6 +413,9 @@ func writePlanText(w io.Writer, p artparse.Plan) error {
 		if j.Incomplete {
 			logical += " [incomplete]"
 		}
+		if j.Scan {
+			logical += " [scan]"
+		}
 		if rj := j.Recovered; rj != nil {
 			conf := "unknown"
 			if rj.Confidence != nil {
@@ -404,12 +451,39 @@ func writePlanText(w io.Writer, p artparse.Plan) error {
 		}
 		fmt.Fprintf(w, "  unnamed %s %s: %s\n", printable(u.ArtifactID), printable(u.Path), escapeText(u.Reason))
 	}
+	writeScanText(w, p)
 	writeBackupsText(w, p.Backups)
 	return nil
 }
 
+// writeScanText prints the findings of a scan (the first 20) and its summary line.
+func writeScanText(w io.Writer, p artparse.Plan) {
+	s := p.Scan
+	if s == nil {
+		return
+	}
+	const maxListed = 20
+	for i, f := range p.ScanFindings {
+		if i == maxListed {
+			fmt.Fprintf(w, "  ... %d more scan findings\n", len(p.ScanFindings)-maxListed)
+			break
+		}
+		fmt.Fprintf(w, "  scan: %s %s %s: %s: %s\n", printable(f.ArtifactID), printable(f.Path), printable(f.Parser), escapeText(f.Status), escapeText(f.Reason))
+	}
+	if s.FindingsDropped > 0 {
+		fmt.Fprintf(w, "  ... %d more scan findings were not kept\n", s.FindingsDropped)
+	}
+	fmt.Fprintf(w, "scan: %d considered, %d probed, %d candidates, %d artifact x parser probes not applicable, %d over 1 GiB, %d companions, %d not probed",
+		s.Considered, s.Probed, s.Candidates, s.NotApplicable, s.TooLarge, s.Companions, s.NotProbed)
+	if s.Stopped != "" {
+		fmt.Fprintf(w, ", stopped: %s", escapeText(s.Stopped))
+	}
+	fmt.Fprintln(w)
+}
+
 func newParsePlanCmd(d Deps, opts *rootOptions) *cobra.Command {
 	var f parseSelFlags
+	var scan bool
 	cmd := &cobra.Command{
 		Use:   "plan",
 		Short: "Show which parsers would run on which artifacts, without parsing anything",
@@ -417,7 +491,10 @@ func newParsePlanCmd(d Deps, opts *rootOptions) *cobra.Command {
 			"in its sandbox. Nothing is parsed or stored and the audit log gains only the case.open entry.\n" +
 			"iOS backups of the case are listed after the rows (BACKUP lines, JSON \"backups\"): whether each Manifest.db could name\n" +
 			"its files, its encryption state and how many files got a logical path. An encrypted or unreadable backup is shown as\n" +
-			"unparsed with its reason, never as empty; a Manifest.db that fails its hash check is an integrity failure (exit 4).",
+			"unparsed with its reason, never as empty; a Manifest.db that fails its hash check is an integrity failure (exit 4).\n" +
+			"--scan also probes every selected parser on the eligible artifacts no glob matched (up to 1 GiB each, one read per artifact):\n" +
+			"a database kept under another name or path is listed as a candidate (marked [scan]), never run without --artifact ID;\n" +
+			"unsupported-schema, encrypted and failed probes are listed as scan findings, a file no parser recognises is only counted.",
 		Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			regs, err := d.parserRegistry()
@@ -428,6 +505,10 @@ func newParsePlanCmd(d Deps, opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if scan && len(f.artifacts) > 0 {
+				return usageErrorf("--scan cannot be combined with --artifact: a scan lists what no glob matched, --artifact names one artifact")
+			}
+			sel.Scan = scan
 			fmt.Fprintln(d.Err, discoveryNote)
 			c, h, err := openHost(f.casePath, regs, defaultParseLimits(), false)
 			if err != nil {
@@ -435,7 +516,7 @@ func newParsePlanCmd(d Deps, opts *rootOptions) *cobra.Command {
 			}
 			defer func() { _ = c.Close() }()
 			plan, perr := h.Plan(cmd.Context(), sel)
-			if perr != nil && len(plan.Rows) == 0 && len(plan.Backups) == 0 {
+			if perr != nil && len(plan.Rows) == 0 && len(plan.Backups) == 0 && plan.Scan == nil {
 				return perr
 			}
 			var jerr error
@@ -444,11 +525,14 @@ func newParsePlanCmd(d Deps, opts *rootOptions) *cobra.Command {
 				for _, r := range plan.Rows {
 					rows = append(rows, planRowToJSON(r))
 				}
+				counts := planCountsJSON(plan.Counts, plan.ByStatus)
+				counts.Scan = scanCountsToJSON(plan.Scan)
 				jerr = writeJSON(d.Out, struct {
-					Rows    []planRowJSON `json:"rows"`
-					Counts  countsJSON    `json:"counts"`
-					Backups []backupJSON  `json:"backups"`
-				}{rows, planCountsJSON(plan.Counts, plan.ByStatus), backupsToJSON(plan.Backups)})
+					Rows     []planRowJSON     `json:"rows"`
+					Counts   countsJSON        `json:"counts"`
+					Backups  []backupJSON      `json:"backups"`
+					Findings []scanFindingJSON `json:"scan_findings"`
+				}{rows, counts, backupsToJSON(plan.Backups), scanFindingsToJSON(plan)})
 			} else {
 				jerr = writePlanText(d.Out, plan)
 			}
@@ -456,6 +540,7 @@ func newParsePlanCmd(d Deps, opts *rootOptions) *cobra.Command {
 		},
 	}
 	f.register(cmd)
+	cmd.Flags().BoolVar(&scan, "scan", false, "also probe every parser on eligible artifacts no glob matched, up to 1 GiB; candidates are listed, never run without --artifact")
 	return cmd
 }
 
