@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -398,5 +399,21 @@ func TestJPEGWindowEndsAfterEntropyFF(t *testing.T) {
 	v := validateJPEG(w)
 	if v.Outcome != Rejected || v.Reason != "truncated" || w.outsideReads() != 0 {
 		t.Fatalf("verdict = %+v, outside reads = %d, want rejected truncated and none", v, w.outsideReads())
+	}
+}
+
+// TestReadCheckedEmptyIsNotAnOutsideRead pins the zero-length window of a
+// first-hand reader: asking for no bytes asks for nothing, so it is not
+// counted as a read outside the window.
+func TestReadCheckedEmptyIsNotAnOutsideRead(t *testing.T) {
+	w := newWindow(context.Background(), bytes.NewReader(nil), 0, 0, newBudget(1<<20))
+	if err := w.readChecked(nil, 0); err != nil {
+		t.Fatalf("readChecked(empty): %v", err)
+	}
+	if n := w.outsideReads(); n != 0 {
+		t.Fatalf("outside reads = %d, want 0", n)
+	}
+	if err := w.readChecked(make([]byte, 1), 0); !errors.Is(err, ErrOutsideWindow) {
+		t.Fatalf("readChecked(1 byte, empty window) = %v, want ErrOutsideWindow", err)
 	}
 }
