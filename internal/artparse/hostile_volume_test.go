@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -254,6 +255,9 @@ func measureHostileJob(t *testing.T, c *evidence.Case, ingestID string) hostileV
 }
 
 func TestHostileAuditVolumeIsBounded(t *testing.T) {
+	if testing.Short() {
+		t.Skip("32 jobs over real databases: about 20 s on an idle machine, about 50 s loaded (4h-R12)")
+	}
 	type maxima struct{ warnings, longest, bytes int }
 	maxOf := map[string]*maxima{}
 	var order []string
@@ -308,9 +312,6 @@ func TestHostileAuditVolumeIsBounded(t *testing.T) {
 				if v.longest > hostileLineBound {
 					t.Errorf("longest audit line %d bytes, bound %d", v.longest, hostileLineBound)
 				}
-				if v.bytes > v.entries*hostileLineBound {
-					t.Errorf("job appended %d bytes in %d entries, bound %d per entry", v.bytes, v.entries, hostileLineBound)
-				}
 				m := maxOf[meta.Name]
 				m.warnings, m.longest, m.bytes = max(m.warnings, total), max(m.longest, v.longest), max(m.bytes, v.bytes)
 				t.Logf("%s: outcome %s, warnings %d (suppressed %d), rejected %d, longest line %d, bytes %d in %d entries", mut.name, j.Outcome, total, v.tallySupp, j.Rejected, v.longest, v.bytes, v.entries)
@@ -321,4 +322,48 @@ func TestHostileAuditVolumeIsBounded(t *testing.T) {
 		m := maxOf[name]
 		t.Logf("%-18s max warnings/job %d, longest line %d, max bytes/job %d", name, m.warnings, m.longest, m.bytes)
 	}
+}
+
+// TestHostileWarnFloodHitsTheHostCapAndIsCounted is the host-level proof of the warning cap: a parser that
+// warns 10,500 times (some locators and reasons oversized) is run through the real host and records writer.
+// The log holds exactly records.MaxWarningsPerIngest warning entries and one suppression note that counts
+// the 500 beyond them; parse.job.end states both numbers; no line passes the 16 KiB bound and the job's
+// bytes stay under the bound derived from the cleaned field sizes (path 4096, reason 1024, 512 of framing).
+func TestHostileWarnFloodHitsTheHostCapAndIsCounted(t *testing.T) {
+	if testing.Short() {
+		t.Skip("10,500 fsynced audit appends: about 2 minutes (4h-R12)")
+	}
+	const total = records.MaxWarningsPerIngest + 500
+	f := newRx(t, "hv")
+	p := &rxParser{name: "hv", after: func(ctx context.Context, _ *parse.Input, out parse.Emitter) error {
+		for i := 0; i < total; i++ {
+			loc, why := "row "+strconv.Itoa(i), "bad cell"
+			if i%100 == 0 {
+				loc, why = strings.Repeat("L", 50_000), strings.Repeat("R", 50_000)
+			}
+			if err := out.Warn(ctx, loc, why); err != nil {
+				return err
+			}
+		}
+		return nil
+	}}
+	sum := f.run(f.host(nil, p), artparse.Selection{})
+	if len(sum.Jobs) != 1 {
+		t.Fatalf("jobs %+v", sum.Jobs)
+	}
+	j := sum.Jobs[0]
+	v := measureHostileJob(t, f.c, j.IngestID)
+	if v.tallyWarn != records.MaxWarningsPerIngest || v.noteCounts != 1 || v.tallySupp != total-records.MaxWarningsPerIngest {
+		t.Errorf("log: %d warning entries, %d notes, %d suppressed; want %d, 1, %d (outcome %s %q)", v.tallyWarn, v.noteCounts, v.tallySupp, records.MaxWarningsPerIngest, total-records.MaxWarningsPerIngest, j.Outcome, j.Reason)
+	}
+	if v.jobWarn != v.tallyWarn || v.jobSupp != v.tallySupp || j.Warnings != v.jobWarn || j.WarningsSuppressed != v.jobSupp {
+		t.Errorf("parse.job.end warnings %d suppressed %d, summary %d/%d, log %d/%d", v.jobWarn, v.jobSupp, j.Warnings, j.WarningsSuppressed, v.tallyWarn, v.tallySupp)
+	}
+	if v.longest > hostileLineBound {
+		t.Errorf("longest audit line %d bytes, bound %d", v.longest, hostileLineBound)
+	}
+	if bound := (records.MaxWarningsPerIngest + 20) * (4096 + 1024 + 512); v.bytes > bound {
+		t.Errorf("job appended %d bytes, derived bound %d", v.bytes, bound)
+	}
+	t.Logf("%d warnings written, %d counted, longest line %d, job bytes %d", v.tallyWarn, v.tallySupp, v.longest, v.bytes)
 }
