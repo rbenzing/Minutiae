@@ -44,6 +44,8 @@ const (
 
 	callsCoreRelative   = "Library/CallHistoryDB/CallHistory.storedata"
 	callsLegacyRelative = "Library/CallHistory/call_history.db"
+	smsRelative         = "Library/SMS/sms.db"
+	smsLogical          = "ios:MediaDomain/" + smsRelative
 )
 
 // name is the subtest name: the variant, and its shape when it is not the default.
@@ -66,6 +68,7 @@ var typedVariants = []typedVariant{
 	{"safari", "deleted", "HomeDomain/" + safariRelative, shapeIOSBackup, "ios:HomeDomain/" + safariRelative},
 	{"ioscalls", "coredata-deleted", callsCoreRelative, shapeIOSFile, "ios:MediaDomain/" + callsCoreRelative},
 	{"ioscalls", "legacy-deleted", callsLegacyRelative, shapeIOSFile, "ios:MediaDomain/" + callsLegacyRelative},
+	{"iossms", "ios17-deleted", smsRelative, shapeIOSFile, smsLogical},
 }
 
 func readGzFixture(t *testing.T, path string) ([]byte, bool) {

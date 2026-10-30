@@ -14,7 +14,7 @@ import (
 // claimsOf lists, for every registered parser, the tables it must claim (4G-R30): an explicit table, so a
 // claim is never added or dropped by accident and a registered parser missing from the table fails. A parser
 // without claims is listed with nil. Tasks 9 and 10 set the three Android telephony parsers, Task 10b the 4F browsers
-// (the 4E parsers claim nothing yet: ios.sms, ios.calls and ios.addressbook are listed with nil).
+// (ios.calls and ios.sms claim their tables, ios.addressbook is listed with nil; plan 4H).
 var claimsOf = map[string][]string{
 	"android.mmssms":   {"sms", "pdu"},
 	"android.calllog":  {"calls"},
@@ -23,7 +23,7 @@ var claimsOf = map[string][]string{
 	"safari.history":   {"history_visits"},
 	"ios.calls":        {"ZCALLRECORD", "call"},
 	"ios.addressbook":  nil,
-	"ios.sms":          nil,
+	"ios.sms":          {"message"},
 }
 
 // 4A's registry tests ranged over an empty registry; with the Android telephony parsers in it they are real

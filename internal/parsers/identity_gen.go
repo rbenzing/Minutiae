@@ -19,7 +19,8 @@ var generated = map[string]identity{
 	"ios.addressbook@1.0.0":          {Package: "github.com/rbenzing/minutiae/internal/parsers/iosaddressbook", Hash: "src1:sha256:ae0fba04866f48db397622b043033ef035933e9d475ca1c1df99f050e6e51c92"},
 	"ios.calls.recover@1.0.3":        {Package: "github.com/rbenzing/minutiae/internal/parsers/ioscalls", Hash: "src1:sha256:e10a601feaaad195130c978374dec8ce7a44d42f769c65c55922bf1d7277f298"},
 	"ios.calls@1.0.3":                {Package: "github.com/rbenzing/minutiae/internal/parsers/ioscalls", Hash: "src1:sha256:e565b4d2f3f21aaf2a2901885296d5319bddde3778c7b854a257db036000d18d"},
-	"ios.sms@1.0.1":                  {Package: "github.com/rbenzing/minutiae/internal/parsers/iossms", Hash: "src1:sha256:3558f4df0e18e02f72d6c44a74ea93d22c5d54255c7b7a26cf2de50db4c63b89"},
+	"ios.sms.recover@1.0.2":          {Package: "github.com/rbenzing/minutiae/internal/parsers/iossms", Hash: "src1:sha256:bb9e160a6243670c8ce67388651c21492c8401d4c6173c3a5c29e97b8d5664aa"},
+	"ios.sms@1.0.2":                  {Package: "github.com/rbenzing/minutiae/internal/parsers/iossms", Hash: "src1:sha256:57ca101b1d972d4795a901d23e162e00c8fdebede2d531a5f05fb0ea2ee4739e"},
 	"safari.history.recover@1.0.2":   {Package: "github.com/rbenzing/minutiae/internal/parsers/safari", Hash: "src1:sha256:2718346122b6cbaa587628b1464426b6115a0d3cbbcb43fb3e6c8519fe141da9"},
 	"safari.history@1.0.2":           {Package: "github.com/rbenzing/minutiae/internal/parsers/safari", Hash: "src1:sha256:76d71c43c855d6f74f003e405c4dd10f1efa30fc18d55934f86fa094499c881a"},
 }
