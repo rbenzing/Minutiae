@@ -1,6 +1,7 @@
 package iosbackup
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -87,6 +88,12 @@ type Files struct {
 	rows     int64
 	b        sqlitedb.Budget
 	charged  int64
+
+	// companions are the mapped file rows whose relative path ends in -wal or -journal, whatever their file ID: the
+	// Manifest.db's own statement of which companions the backup lists (bounded; the rest are counted).
+	companions        []Entry
+	companionSeen     map[Entry]struct{}
+	companionsDropped int64
 }
 
 // Options can only tighten the bounds: MaxRows 0 means MaxFilesRows; a value above MaxFilesRows or
@@ -147,6 +154,7 @@ func ReadFiles(ctx context.Context, f sqlitedb.Files, b sqlitedb.Budget, want fu
 		if damaged {
 			res.complete = false
 		}
+		res.noteCompanion(r, cDomain, cRel, cFlags, damaged)
 		idb, ok := r.Text(cID)
 		if !ok {
 			// A fileID that is not text (or not readable) could be any wanted ID.
@@ -276,3 +284,42 @@ func (f *Files) Release() {
 		f.charged = 0
 	}
 }
+
+// MaxCompanionRows bounds the companion paths Files keeps; the rest are only counted.
+const MaxCompanionRows = 4096
+
+// noteCompanion keeps the domain and path of a row that lists a -wal or -journal file (any file ID).
+func (f *Files) noteCompanion(r sqlitedb.Row, cDomain, cRel, cFlags int, damaged bool) {
+	if damaged {
+		return // skipped: res.complete is already false, so the resolution of this Manifest.db is incomplete anyway
+	}
+	rel, ok := r.Text(cRel)
+	if !ok || (!bytes.HasSuffix(rel, []byte("-wal")) && !bytes.HasSuffix(rel, []byte("-journal"))) {
+		return
+	}
+	k := classify(r, cDomain, cRel, cFlags)
+	if k.state != Mapped {
+		return
+	}
+	if _, dup := f.companionSeen[k.entry]; dup {
+		return // the same domain and path listed again: kept once, and it never spends the cap
+	}
+	if len(f.companions) >= MaxCompanionRows {
+		f.companionsDropped++
+		return
+	}
+	cost := int64(len(k.entry.Domain)+len(k.entry.RelativePath)) + entryCharge
+	if err := f.b.Alloc(cost); err != nil {
+		f.companionsDropped++
+		return
+	}
+	f.charged += cost
+	if f.companionSeen == nil {
+		f.companionSeen = map[Entry]struct{}{}
+	}
+	f.companionSeen[k.entry] = struct{}{} // holds only kept entries, so at most MaxCompanionRows
+	f.companions = append(f.companions, k.entry)
+}
+
+// Companions are the listed -wal and -journal paths (Domain and RelativePath) and how many more were not kept.
+func (f *Files) Companions() ([]Entry, int64) { return f.companions, f.companionsDropped }

@@ -73,6 +73,8 @@ type typedResult struct {
 	Undecided  bool
 	// Stop: the generic run must not start (integrity failure, a cancelled or failed run, undecided claims).
 	Stop bool
+	// backup is the decision about the companions of a backup database (nil for any other database).
+	backup *backupSiblingsJSON
 }
 
 // errClaimsUndecided is the exit-1 error of a database whose claiming parser could not parse it.
@@ -256,6 +258,7 @@ func honorable(j artparse.JobResult) (string, bool) {
 // printTypedText writes the typed block of the text report: one line per typed job, the claimed tables, and
 // what was not honored.
 func printTypedText(w io.Writer, tr typedResult) {
+	printBackupSiblings(w, tr.backup)
 	if !tr.Matched {
 		return
 	}
@@ -369,15 +372,103 @@ func listClaims(ctx context.Context, d Deps, c *evidence.Case, in dbrecover.Inpu
 // printTypedOnly reports the typed pass when the generic run did not produce a report of its own (it was not
 // started, or was refused): text lines, or a JSON report that holds the typed object.
 func printTypedOnly(w io.Writer, tr typedResult, asJSON bool) error {
-	if !tr.Matched {
+	if !tr.Matched && tr.backup == nil {
 		return nil
 	}
 	if asJSON {
 		return writeJSON(w, sqliteReportJSON{
 			Inputs: []sqliteInputJSON{}, Siblings: map[string]sqliteSiblingJSON{}, Counts: countsJSON2(dbrecover.Counts{}),
-			NotStarted: "the generic recovery was not run", Typed: tr.json(),
+			NotStarted: "the generic recovery was not run", Typed: tr.json(), BackupSiblings: tr.backup,
 		})
 	}
 	printTypedText(w, tr)
 	return nil
+}
+
+// backupSiblingsJSON is the "backup_siblings" key of the sqlite recover report: null for a database that is not a
+// file of an iOS backup (and whenever the examiner named the companions or turned the search off).
+type backupSiblingsJSON struct {
+	Named      bool            `json:"named"`
+	WAL        string          `json:"wal"`
+	Journal    string          `json:"journal"`
+	ManifestDB *backupManifest `json:"manifest_db"`
+	Reason     string          `json:"reason"`
+	// What the Manifest.db lists or leaves unnamed that the pairing could not use (unknown is never absent).
+	WALListedNotHeld     bool     `json:"wal_listed_not_held"`
+	JournalListedNotHeld bool     `json:"journal_listed_not_held"`
+	UnmappedHeldFiles    int      `json:"unmapped_held_files"`
+	ListedUnchecked      int64    `json:"listed_unchecked"`
+	Warnings             []string `json:"warnings"`
+}
+
+type backupManifest struct {
+	ArtifactID string `json:"artifact_id"`
+	SHA256     string `json:"sha256"`
+}
+
+// text is the one line the text report prints for the backup sibling decision.
+func (b *backupSiblingsJSON) text() string {
+	if b.Named && b.ManifestDB != nil {
+		return fmt.Sprintf("siblings named by backup Manifest.db %s (sha256 %s)", escapeText(b.ManifestDB.ArtifactID), escapeText(b.ManifestDB.SHA256))
+	}
+	return fmt.Sprintf("backup siblings not named: %s", escapeText(b.Reason))
+}
+
+func printBackupSiblings(w io.Writer, b *backupSiblingsJSON) {
+	if b == nil {
+		return
+	}
+	fmt.Fprintln(w, b.text())
+	for _, x := range b.Warnings {
+		fmt.Fprintf(w, "backup siblings warning: %s\n", escapeText(x))
+	}
+}
+
+// pairBackupSiblings asks the backup's hash-checked Manifest.db for the -wal and -journal of a database that is a
+// file of an iOS backup, and returns the inputs with those artifacts named as explicit companions (identity from
+// the Manifest.db's structure, never a guess; dbrecover's own search finds nothing for a backup file). It does
+// nothing when the examiner named a companion or turned the search off, and for any other database. A
+// Manifest.db that fails its hash check is an integrity error: nothing runs.
+func pairBackupSiblings(ctx context.Context, d Deps, c *evidence.Case, in dbrecover.Inputs) (dbrecover.Inputs, *backupSiblingsJSON, error) {
+	if in.WAL != "" || in.Journal != "" || in.NoSiblings {
+		return in, nil, nil
+	}
+	res, err := dbrecover.ResolveSiblings(c, dbrecover.Inputs{DB: in.DB, NoSiblings: true})
+	if err != nil {
+		return in, nil, err
+	}
+	man, err := c.Manifest()
+	if err != nil {
+		return in, nil, err
+	}
+	ix := slices.IndexFunc(man, func(r evidence.ManifestRecord) bool { return r.ID == res.DB })
+	if ix < 0 || man[ix].Source.Kind != "backup" {
+		return in, nil, nil
+	}
+	regs, err := d.parserRegistry()
+	if err != nil {
+		return in, nil, err
+	}
+	lim := defaultParseLimits()
+	defer limitMemory(lim)()
+	h, err := artparse.New(c, regs, artparse.Options{Limits: lim})
+	if err != nil {
+		return in, nil, err
+	}
+	bs, err := h.BackupSiblings(ctx, res.DB)
+	if err != nil {
+		return in, nil, err
+	}
+	out := &backupSiblingsJSON{
+		Named: bs.Named, WAL: bs.WAL, Journal: bs.Journal, Reason: bs.Reason,
+		WALListedNotHeld: bs.WalListedNotHeld, JournalListedNotHeld: bs.JournalListedNotHeld, UnmappedHeldFiles: bs.UnmappedHeld,
+		ListedUnchecked: bs.ListedUnchecked, Warnings: append([]string{}, bs.Warnings()...),
+	}
+	if bs.ManifestDB != nil {
+		out.ManifestDB = &backupManifest{ArtifactID: bs.ManifestDB.ArtifactID, SHA256: bs.ManifestDB.SHA256}
+	}
+	if bs.Named { // an empty id leaves that side to dbrecover's own search
+		in.WAL, in.Journal = bs.WAL, bs.Journal
+	}
+	return in, out, nil
 }

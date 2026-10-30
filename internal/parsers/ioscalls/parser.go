@@ -12,7 +12,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "ios.calls"
-	Version = "1.0.2"
+	Version = "1.0.3"
 )
 
 // Parser is the ios.calls parser. It holds no state.
@@ -20,12 +20,14 @@ type Parser struct{}
 
 var _ parse.RowMapper = Parser{}
 
-// Meta describes the parser. Claims stay empty until plan 4G implements typed recovery.
+// Meta describes the parser. Claims are exactly ClaimableTables: a promise that typed recovery (plan 4G) can map the
+// rows of ZCALLRECORD and call that were deleted or superseded (both mappings give one record per row, 4h-R6).
 func (Parser) Meta() parse.Meta {
 	return parse.Meta{
 		Name: Name, Version: Version, Title: "iOS call history",
 		Platforms: []string{parse.PlatformIOS},
 		Emits:     []parse.Emit{{Type: call.Type, PayloadVersion: call.PayloadVersion}},
+		Claims:    claimsOf(ClaimableTables()),
 		Inputs: []parse.InputSpec{
 			{Role: "db", Globs: []string{
 				"ios:*/Library/CallHistoryDB/CallHistory.storedata",
@@ -104,4 +106,16 @@ func (p Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) e
 		}
 	}
 	return nil
+}
+
+// ClaimableTables returns the tables whose mapping is total (every row gives one record or a RowError): ZCALLRECORD
+// and call, one record per row each (4h-R6). A call joins nothing live, so a recovered row needs no other table.
+func ClaimableTables() []string { return []string{tableCore, tableLegacy} }
+
+func claimsOf(tables []string) []parse.TableClaim {
+	out := make([]parse.TableClaim, len(tables))
+	for i, t := range tables {
+		out[i] = parse.TableClaim{Role: "db", Table: t}
+	}
+	return out
 }
