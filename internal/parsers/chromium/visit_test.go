@@ -440,3 +440,41 @@ func TestJoinedColumnsTheVariantLacksAreStatedMissing(t *testing.T) {
 		t.Errorf("typed_count stated from a column the variant lacks: %v", r.Payload["typed_count"])
 	}
 }
+
+// 4h-R5: a REAL in an integer column of the joined urls row keeps its bits under the joined key.
+func TestJoinedRealInAnIntegerColumnKeepsItsBits(t *testing.T) {
+	b, u, v := memDB(1024)
+	u.Insert(1, int64(1), "https://a.example/", "T", 1.25, int64(0), tMem, int64(0))
+	v.Insert(1, int64(1), int64(1), tMem, nil, int64(0), int64(0))
+	res := runMem(t, b.Bytes())
+	if res.Err != nil {
+		t.Fatal(res.Err)
+	}
+	raw := asMap(recFor(t, res, "visits", 1).Payload["raw"])
+	if got := asMap(raw["joined_unknown_columns"])["urls.visit_count"]; got != "type-mismatch" {
+		t.Errorf("joined_unknown_columns.urls.visit_count = %v, want type-mismatch", got)
+	}
+	if got := raw["urls.visit_count_ieee"]; got != "3ff4000000000000" {
+		t.Errorf("raw[urls.visit_count_ieee] = %v, want 3ff4000000000000", got)
+	}
+	if _, has := raw["urls.visit_count"]; has {
+		t.Error("raw states a urls.visit_count number beside its bits")
+	}
+}
+
+// 4h-R5: a visitless urls row is the mapped row itself, so its key carries no table prefix.
+func TestVisitlessURLRealInAnIntegerColumnKeepsItsBits(t *testing.T) {
+	b, u, _ := memDB(1024)
+	u.Insert(1, int64(1), "https://a.example/", "T", int64(0), int64(0), 1.25, int64(0))
+	res := runMem(t, b.Bytes())
+	if res.Err != nil {
+		t.Fatal(res.Err)
+	}
+	raw := asMap(recFor(t, res, "urls", 1).Payload["raw"])
+	if got := asMap(raw["unknown_columns"])["last_visit_time"]; got != "type-mismatch" {
+		t.Errorf("unknown_columns.last_visit_time = %v, want type-mismatch", got)
+	}
+	if got := raw["last_visit_time_ieee"]; got != "3ff4000000000000" {
+		t.Errorf("raw.last_visit_time_ieee = %v, want 3ff4000000000000", got)
+	}
+}

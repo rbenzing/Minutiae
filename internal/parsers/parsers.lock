@@ -26,7 +26,9 @@ android.mmssms.recover 1.0.6 src1:sha256:a7de7dc4fa517888d1e68e6d4a37effb7f4a932
 chromium.history 1.0.0 src1:sha256:49268d917b84ee8ea6983875ba4f6e1191415af4be0a6da92afb9816afdb61c6
 chromium.history 1.0.1 src1:sha256:ffcfa713aab86fc4a6c4bab5de008f6a52bc39821cf38f898d5742141d07817e
 chromium.history 1.0.2 src1:sha256:2c4f79c6e3b06c9d8a5589348116a522391b9fd9419ed147edd5f56f7b2b62e4
+chromium.history 1.0.3 src1:sha256:22157bf925dc60c36ce8cd5b2b6e1295ee26c684ebca7229ce176beb4ab75c24
 chromium.history.recover 1.0.2 src1:sha256:33ebb431f00416ae99f775514399ae6b0f0ca4b7e6a1c4ad1f25ca633cf4b135
+chromium.history.recover 1.0.3 src1:sha256:c2c9b26bff3e56a8a3bea8789eea72a044beef4f2a8582b33d7aa18b1f938b65
 ios.addressbook 1.0.0 src1:sha256:ae0fba04866f48db397622b043033ef035933e9d475ca1c1df99f050e6e51c92
 ios.calls 1.0.0 src1:sha256:5ba13c420489d41bd8842f9924ebdd2bf99cd8ca63295a84fe2e230c4f3f5db4
 ios.calls 1.0.1 src1:sha256:70ce8372ecbe40e315b84f431ca80fdc3d15764c4ea2252bf62af64739fb35c9
