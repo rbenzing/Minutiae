@@ -246,7 +246,8 @@ func TestBuiltinReturnsFreshCopy(t *testing.T) {
 var implementedValidators = map[string]bool{}
 
 func TestBuiltinValidatorsAreStubs(t *testing.T) {
-	// Task 2 ships only the registry; each format task replaces its stub.
+	// A validator id not yet in implementedValidators must still be its stub; each format task
+	// registers its id from its own test file and replaces its stub.
 	w := newWindow(context.Background(), bytes.NewReader(make([]byte, 64)), 0, 64, unlimitedBudget())
 	for id, v := range builtinValidators() {
 		if implementedValidators[id] {
