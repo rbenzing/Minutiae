@@ -105,6 +105,22 @@ func builderCorpus() []hostileObj {
 	for _, b := range bmps {
 		add("bmp", b.n, carvetest.BMP(b.o))
 	}
+	icoPNG, icoDIB := carvetest.PNG(carvetest.PNGOpts{}), carvetest.DIB(carvetest.BMPOpts{DIBSize: 40, W: 16, H: 32, BPP: 32, Planes: 1})
+	icos := []struct {
+		n string
+		o carvetest.ICOOpts
+	}{
+		{"png", carvetest.ICOOpts{Images: [][]byte{icoPNG}}},
+		{"dib", carvetest.ICOOpts{Images: [][]byte{icoDIB}}},
+		{"mixed", carvetest.ICOOpts{Images: [][]byte{icoPNG, icoDIB, icoPNG}}},
+		{"reversed", carvetest.ICOOpts{Images: [][]byte{icoPNG, icoDIB}, Order: []int{1, 0}}},
+		{"cursor", carvetest.ICOOpts{Cursor: true, Images: [][]byte{icoDIB}}},
+		{"bad-count", carvetest.ICOOpts{Images: [][]byte{icoPNG}, Count: 257}},
+		{"bad-image", carvetest.ICOOpts{Images: [][]byte{bytes.Repeat([]byte{0xA5}, 64)}}},
+	}
+	for _, i := range icos {
+		add("ico", i.n, carvetest.ICO(i.o))
+	}
 	webps := []struct {
 		n string
 		o carvetest.WebPOpts

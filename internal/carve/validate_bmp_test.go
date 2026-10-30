@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"math"
 	"math/rand/v2"
 	"slices"
@@ -194,5 +195,18 @@ func TestBMPReadErrorIsUnreadable(t *testing.T) {
 	w := newWindow(context.Background(), failAt{obj, 30}, 0, int64(len(obj)), newBudget(1<<30))
 	if v := validateBMP(w); v.Outcome != Rejected || v.Reason != "unreadable" {
 		t.Fatalf("verdict = %+v, want rejected unreadable", v)
+	}
+}
+
+// TestDIBCheckMediaFailure: a failing medium is an error, never a reason: the
+// caller maps it to "unreadable" and the scanner re-labels it.
+func TestDIBCheckMediaFailure(t *testing.T) {
+	dib := carvetest.DIB(bmpBase())
+	for _, at := range []int64{0, 20} { // the size field, the rest of the header
+		w := newWindow(context.Background(), failAt{dib, at}, 0, int64(len(dib)), newBudget(1<<30))
+		d, reason, err := dibCheck(w, 0, int64(len(dib)))
+		if !errors.Is(err, errMedia) || reason != "" || d != (dibInfo{}) {
+			t.Errorf("fail at %d: dibCheck = %+v, %q, %v, want errMedia and no reason", at, d, reason, err)
+		}
 	}
 }

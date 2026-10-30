@@ -39,7 +39,9 @@ func bmpDIBSize(n int64) bool {
 // (spec D3). The reason is "" for a plausible header. A window refusal (the
 // header does not fit avail or the window) is the reason "truncated"; err is
 // only a read failure of the media, a spent budget or a cancel, which the
-// caller maps to "unreadable". Nothing past the header is read.
+// caller maps to "unreadable". Nothing past the header is read. A caller
+// whose avail is a size the file declared (an ICO entry) maps "truncated" for
+// a header larger than avail itself: there it is a bad image, not a cut object.
 func dibCheck(w *Window, off, avail int64) (dibInfo, string, error) {
 	var d dibInfo
 	fail := func(err error) (dibInfo, string, error) {
@@ -139,8 +141,9 @@ func bmpCompression(headerSize int64, c, bpp uint32) (compressed, ok bool) {
 }
 
 // bmpPixelBytes is the uncompressed array size. W and H are at most 65536 and
-// bpp at most 32, so the product stays far inside int64; the bounds are
-// checked by the caller before this is reached.
+// bpp at most 32, so the product stays far inside int64: dibCheck bounds the
+// 40-byte-and-longer headers against bmpMaxDim before it calls this, and on
+// the core-header path the values are bounded by their u16 field width.
 func bmpPixelBytes(w, h int64, bpp uint32) int64 {
 	row := (int64(bpp)*w + 31) / 32 * 4
 	return row * h
