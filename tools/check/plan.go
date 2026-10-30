@@ -113,6 +113,7 @@ func globalSteps() []step {
 		{args: []string{"go", "run", "./tools/parserhash", "-check"}},
 		{args: []string{"go", "build", "./..."}},
 		scaleVet(),
+		realdataVet(),
 		{args: []string{"go", "build", "-o", binPath(), "./cmd/minutiae"}},
 		pureBuild(),
 		crossBuild("linux", "amd64"),
@@ -494,4 +495,10 @@ func isTestdata(f string) bool {
 // default build never sees it and a scale run is too expensive to find a break (docs/testing.md).
 func scaleVet() step {
 	return step{args: []string{"go", "vet", "-tags", "scale", "./internal/records/...", "./internal/evidence/..."}}
+}
+
+// realdataVet keeps the -tags realdata harness (internal/parsers and internal/cli, realdata_test.go) compiling and vetted
+// (4H-R13): the default build never sees it and a real-data run is an operator step (docs/testing.md).
+func realdataVet() step {
+	return step{args: []string{"go", "vet", "-tags", "realdata", "./internal/parsers/...", "./internal/cli/..."}}
 }
