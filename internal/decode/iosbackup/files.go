@@ -1,6 +1,7 @@
 package iosbackup
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -87,6 +88,11 @@ type Files struct {
 	rows     int64
 	b        sqlitedb.Budget
 	charged  int64
+
+	// companions are the mapped file rows whose relative path ends in -wal or -journal, whatever their file ID: the
+	// Manifest.db's own statement of which companions the backup lists (bounded; the rest are counted).
+	companions        []Entry
+	companionsDropped int64
 }
 
 // Options can only tighten the bounds: MaxRows 0 means MaxFilesRows; a value above MaxFilesRows or
@@ -147,6 +153,7 @@ func ReadFiles(ctx context.Context, f sqlitedb.Files, b sqlitedb.Budget, want fu
 		if damaged {
 			res.complete = false
 		}
+		res.noteCompanion(r, cDomain, cRel, cFlags, damaged)
 		idb, ok := r.Text(cID)
 		if !ok {
 			// A fileID that is not text (or not readable) could be any wanted ID.
@@ -276,3 +283,35 @@ func (f *Files) Release() {
 		f.charged = 0
 	}
 }
+
+// MaxCompanionRows bounds the companion paths Files keeps; the rest are only counted.
+const MaxCompanionRows = 4096
+
+// noteCompanion keeps the domain and path of a row that lists a -wal or -journal file (any file ID).
+func (f *Files) noteCompanion(r sqlitedb.Row, cDomain, cRel, cFlags int, damaged bool) {
+	if damaged {
+		return
+	}
+	rel, ok := r.Text(cRel)
+	if !ok || (!bytes.HasSuffix(rel, []byte("-wal")) && !bytes.HasSuffix(rel, []byte("-journal"))) {
+		return
+	}
+	k := classify(r, cDomain, cRel, cFlags)
+	if k.state != Mapped {
+		return
+	}
+	if len(f.companions) >= MaxCompanionRows {
+		f.companionsDropped++
+		return
+	}
+	cost := int64(len(k.entry.Domain)+len(k.entry.RelativePath)) + entryCharge
+	if err := f.b.Alloc(cost); err != nil {
+		f.companionsDropped++
+		return
+	}
+	f.charged += cost
+	f.companions = append(f.companions, k.entry)
+}
+
+// Companions are the listed -wal and -journal paths (Domain and RelativePath) and how many more were not kept.
+func (f *Files) Companions() ([]Entry, int64) { return f.companions, f.companionsDropped }
