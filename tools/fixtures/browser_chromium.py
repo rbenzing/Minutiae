@@ -914,7 +914,7 @@ def variant_minimal(work):
     con = C.connect(path)
     con.executescript(ph[0])
     t = wk(2024, 1, 15, 7, 30, 0)
-    fill(con, urls=[url_row(1, "https://reader.example.com/article", "Article", last=t), url_row(2, "https://reader.example.com/unvisited", "Unvisited", last=t + 10**6)],
+    fill(con, urls=[url_row(1, "https://reader.example.com/article", "Article", vc=1.25, last=t), url_row(2, "https://reader.example.com/unvisited", "Unvisited", vc=2.5, last=t + 10**6)],
          visits=[visit_row(1, 1, visit_time=t, transition=1), visit_row(2, 1, visit_time=t + 60 * 10**6), visit_row(3, 1, visit_time=t + 120 * 10**6, transition=8)],
          meta=[{"key": "version", "value": str(meta_versions(ddl)[0])}])
     files = {"db": C.read(path)}

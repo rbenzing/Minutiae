@@ -477,7 +477,7 @@ func writeScanText(w io.Writer, p artparse.Plan) {
 	fmt.Fprintf(w, "scan: %d considered, %d probed, %d candidates, %d artifact x parser probes not applicable, %d over 1 GiB, %d companions, %d not probed",
 		s.Considered, s.Probed, s.Candidates, s.NotApplicable, s.TooLarge, s.Companions, s.NotProbed)
 	if s.PairsNotProbed > 0 {
-		fmt.Fprintf(w, ", %d artifact x parser probes of the abandoned candidate not run", s.PairsNotProbed)
+		fmt.Fprintf(w, ", %d artifact x parser probes of the candidate the scan stopped on not run", s.PairsNotProbed)
 	}
 	if s.Stopped != "" {
 		fmt.Fprintf(w, ", stopped: %s", escapeText(s.Stopped))

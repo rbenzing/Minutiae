@@ -51,7 +51,7 @@ func TestRegisteredParsersClaimExactly(t *testing.T) {
 		}
 		want, listed := claimsOf[m.Name]
 		if !listed {
-			t.Errorf("%s is registered but missing from the claims table of this test: list it with its claims (nil for none)", m.Name)
+			t.Errorf("%s is registered but missing from the claims table of this test: list it with its claims (every first-set parser claims at least one table; an empty list fails below)", m.Name)
 			continue
 		}
 		if len(want) == 0 {

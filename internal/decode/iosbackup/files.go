@@ -92,6 +92,7 @@ type Files struct {
 	// companions are the mapped file rows whose relative path ends in -wal or -journal, whatever their file ID: the
 	// Manifest.db's own statement of which companions the backup lists (bounded; the rest are counted).
 	companions        []Entry
+	companionSeen     map[Entry]struct{}
 	companionsDropped int64
 }
 
@@ -290,7 +291,7 @@ const MaxCompanionRows = 4096
 // noteCompanion keeps the domain and path of a row that lists a -wal or -journal file (any file ID).
 func (f *Files) noteCompanion(r sqlitedb.Row, cDomain, cRel, cFlags int, damaged bool) {
 	if damaged {
-		return
+		return // skipped: res.complete is already false, so the resolution of this Manifest.db is incomplete anyway
 	}
 	rel, ok := r.Text(cRel)
 	if !ok || (!bytes.HasSuffix(rel, []byte("-wal")) && !bytes.HasSuffix(rel, []byte("-journal"))) {
@@ -299,6 +300,9 @@ func (f *Files) noteCompanion(r sqlitedb.Row, cDomain, cRel, cFlags int, damaged
 	k := classify(r, cDomain, cRel, cFlags)
 	if k.state != Mapped {
 		return
+	}
+	if _, dup := f.companionSeen[k.entry]; dup {
+		return // the same domain and path listed again: kept once, and it never spends the cap
 	}
 	if len(f.companions) >= MaxCompanionRows {
 		f.companionsDropped++
@@ -310,6 +314,10 @@ func (f *Files) noteCompanion(r sqlitedb.Row, cDomain, cRel, cFlags int, damaged
 		return
 	}
 	f.charged += cost
+	if f.companionSeen == nil {
+		f.companionSeen = map[Entry]struct{}{}
+	}
+	f.companionSeen[k.entry] = struct{}{} // holds only kept entries, so at most MaxCompanionRows
 	f.companions = append(f.companions, k.entry)
 }
 
