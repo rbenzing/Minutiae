@@ -40,6 +40,8 @@ type Options struct {
 	auditHook         func(action string, d map[string]any) error // called before each host audit append; an error refuses the append
 	maxUnmapped       int                                         // lowers the unmapped-locator bound of every recovery job (0 = the default)
 	typedRun          typedRunner                                 // replaces recrun.Run (test seam)
+	scanMaxSize       int64                                       // lowers ScanMaxSize (0 = the default)
+	maxScanFindings   int                                         // lowers MaxScanFindings (0 = the default)
 
 	maxFilesRows      int                             // iosbackup.Options.MaxRows of a Manifest.db read (0 = the default cap)
 	resolveBudget     func(limit int64) *parse.Budget // replaces parse.NewBudget for backup resolution
@@ -48,22 +50,24 @@ type Options struct {
 
 // Host holds the case, the registry and the options.
 type Host struct {
-	c           *evidence.Case
-	src         caseSource
-	registry    []Registered
-	namers      []Namer
-	limits      parse.Limits
-	newWriter   writerFactory
-	onOpen      func(artifactID string)
-	afterSize   func(artifactID string)
-	afterSt     func()
-	wrapFile    func(artFile) artFile
-	batchRows   int
-	relaxed     bool
-	auditHook   func(action string, d map[string]any) error
-	noPropagate bool // test seam: the emitters skip recovered-ness propagation
-	maxUnmapped int  // test seam: the unmapped-locator bound of a recovery job (0 = the default)
-	typedRun    typedRunner
+	c               *evidence.Case
+	src             caseSource
+	registry        []Registered
+	namers          []Namer
+	limits          parse.Limits
+	newWriter       writerFactory
+	onOpen          func(artifactID string)
+	afterSize       func(artifactID string)
+	afterSt         func()
+	wrapFile        func(artFile) artFile
+	batchRows       int
+	relaxed         bool
+	auditHook       func(action string, d map[string]any) error
+	noPropagate     bool // test seam: the emitters skip recovered-ness propagation
+	maxUnmapped     int  // test seam: the unmapped-locator bound of a recovery job (0 = the default)
+	typedRun        typedRunner
+	scanMaxSize     int64 // test seam: the size above which --scan counts an artifact (0 = ScanMaxSize)
+	maxScanFindings int   // test seam: the findings a scan keeps (0 = MaxScanFindings)
 
 	maxFilesRows      int
 	resolveBudget     func(limit int64) *parse.Budget
@@ -120,7 +124,7 @@ func New(c *evidence.Case, ps []Registered, opt Options) (*Host, error) {
 	h := &Host{
 		c: c, registry: slices.Clone(ps), namers: opt.Namers, limits: opt.Limits,
 		src: opt.source, newWriter: opt.newWriter, onOpen: opt.onOpen, afterSize: opt.afterSize, afterSt: opt.afterStart, wrapFile: opt.wrapFile,
-		batchRows: opt.batchRows, auditHook: opt.auditHook, relaxed: opt.RelaxedSync, maxUnmapped: opt.maxUnmapped, typedRun: opt.typedRun,
+		batchRows: opt.batchRows, auditHook: opt.auditHook, relaxed: opt.RelaxedSync, maxUnmapped: opt.maxUnmapped, typedRun: opt.typedRun, scanMaxSize: opt.scanMaxSize, maxScanFindings: opt.maxScanFindings,
 		maxFilesRows: opt.maxFilesRows, resolveBudget: opt.resolveBudget, afterManifestRead: opt.afterManifestRead,
 	}
 	if h.src == nil {
@@ -148,6 +152,9 @@ type Selection struct {
 	Reparse          bool
 	IncludeSnapshots bool
 	IncludeRecovered bool // recovered and carved artifacts (and artifacts with a recovered ancestor) are input
+	// Scan is a Plan option (4h-R9): Plan also probes every selected parser on the eligible artifacts no glob matched.
+	// Run and RecoverTyped refuse it (ErrSelection); it excludes Artifacts.
+	Scan bool
 
 	// admitRecovered admits these artifacts as recovered input without making their jobs explicit
 	// (RecoverTyped's OnlyPrimary and the companions it expects): the jobs stay glob-matched and Probe-checked
@@ -167,6 +174,12 @@ type Member struct {
 	NamerSource              *ArtifactRef // the Manifest.db that named it (the ios-backup namer only)
 }
 
+// Reasons decided from the manifest alone, which hold for every parser (a scan lists them once per artifact).
+const (
+	reasonOutsideLayout    = "manifest path outside the acquisition layout"
+	reasonEncryptedContent = "encrypted content (sub-project 10)"
+)
+
 // Job statuses Discover produces.
 const (
 	StatusNew           = "new"
@@ -184,6 +197,8 @@ type Job struct {
 	Explicit bool   // the primary was named with --artifact (no glob match, Probe decides)
 	Status   string // new | already-parsed | stale-bundle | unparsed | skipped | refused
 	Reason   string
+
+	borrowed *source // a scan job: the primary source the scan already loaded (the bundle uses it and never closes it)
 }
 
 // Counts tell what discovery saw.
@@ -257,6 +272,18 @@ func (h *Host) Discover(ctx context.Context, snap *Snapshot, sel Selection) ([]J
 // discoverIn is Discover over the given registry (the host's, or the recovery views of its claiming
 // parsers).
 func (h *Host) discoverIn(ctx context.Context, snap *Snapshot, sel Selection, registry []Registered) ([]Job, Counts, error) {
+	jobs, counts, _, err := h.discoverFull(ctx, snap, sel, registry)
+	return jobs, counts, err
+}
+
+// discovered is the candidate set discovery built, kept for the scan (it sees what no glob matched).
+type discovered struct {
+	cands  []*candidate
+	groups map[string][]*candidate
+}
+
+// discoverFull is discoverIn that also returns the candidates and their groups.
+func (h *Host) discoverFull(ctx context.Context, snap *Snapshot, sel Selection, registry []Registered) ([]Job, Counts, *discovered, error) {
 	counts := Counts{Manifest: len(snap.records), ByKind: map[string]int{}, MissingRole: map[string]int{}, Unnamed: map[string]int{}}
 	explicit := make(map[string]bool, len(sel.Artifacts)) // named with --artifact: recovered input is admitted for these alone
 	for _, id := range sel.Artifacts {
@@ -298,13 +325,13 @@ func (h *Host) discoverIn(ctx context.Context, snap *Snapshot, sel Selection, re
 
 	parsers, err := selectParsersFrom(registry, sel.Parsers)
 	if err != nil {
-		return nil, counts, err
+		return nil, counts, nil, err
 	}
 	var jobs []Job
 	if len(sel.Artifacts) > 0 {
 		explicit, err := h.explicitCandidates(snap, byID, sel)
 		if err != nil {
-			return nil, counts, err
+			return nil, counts, nil, err
 		}
 		for _, r := range parsers {
 			for _, c := range explicit {
@@ -317,7 +344,7 @@ func (h *Host) discoverIn(ctx context.Context, snap *Snapshot, sel Selection, re
 		for _, r := range parsers {
 			globs, err := compilePrimary(r)
 			if err != nil {
-				return nil, counts, err
+				return nil, counts, nil, err
 			}
 			for _, c := range cands {
 				if c.named && matchesAny(globs, c.logical.Path) {
@@ -334,11 +361,11 @@ func (h *Host) discoverIn(ctx context.Context, snap *Snapshot, sel Selection, re
 		jobs[i].N = i + 1
 		if jobs[i].Status == "" {
 			if err := h.statusFromRuns(ctx, &jobs[i]); err != nil {
-				return nil, counts, err
+				return nil, counts, nil, err
 			}
 		}
 	}
-	return jobs, counts, nil
+	return jobs, counts, &discovered{cands: cands, groups: groups}, nil
 }
 
 // name gives a record its logical path: the first namer that answers.
@@ -454,7 +481,7 @@ func (h *Host) bundle(r Registered, p *candidate, groups map[string][]*candidate
 	job := Job{Parser: r, Primary: p.member(r.meta.Inputs[0].Role, env), Others: map[string]Member{}, Explicit: explicit}
 	if !p.layoutOK {
 		job.Status = StatusUnparsed
-		job.Reason = "manifest path outside the acquisition layout"
+		job.Reason = reasonOutsideLayout
 		return job, true
 	}
 	var missing []string
@@ -479,7 +506,7 @@ func (h *Host) bundle(r Registered, p *candidate, groups map[string][]*candidate
 	}
 	if encryptedContent(job) {
 		job.Status = StatusUnparsed
-		job.Reason = appendReason(job.Reason, "encrypted content (sub-project 10)")
+		job.Reason = appendReason(job.Reason, reasonEncryptedContent)
 	}
 	if encryptedBackup(job, env) {
 		job.Status = StatusUnparsed

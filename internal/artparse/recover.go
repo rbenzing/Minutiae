@@ -70,6 +70,9 @@ func (m *recoverMode) bundleDiffers(j Job) string {
 // writes a live record and never supersedes the live parse's records (a separate identity). The summary
 // and the error follow Run's rules.
 func (h *Host) RecoverTyped(ctx context.Context, opt RecoverOptions) (RunSummary, error) {
+	if opt.Scan {
+		return RunSummary{}, errScanIsPlanOnly
+	}
 	if err := h.c.RequireSchema(evidence.CurrentSchema); err != nil {
 		return RunSummary{}, err
 	}
