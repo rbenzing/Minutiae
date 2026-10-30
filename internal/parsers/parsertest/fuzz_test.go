@@ -3,6 +3,8 @@ package parsertest
 import (
 	"errors"
 	"fmt"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
@@ -57,4 +59,77 @@ func TestFuzzParseBundleUsesTheBundleItIsGiven(t *testing.T) {
 	if !called {
 		t.Error("the build function was not called")
 	}
+}
+
+// failRecorder is a testing.TB whose Fatalf stops the goroutine and records the failure instead of failing the
+// real test, so a test can require that a shared helper fails.
+type failRecorder struct {
+	testing.TB
+	failed bool
+	msg    string
+}
+
+func (f *failRecorder) Fatalf(format string, args ...any) {
+	f.failed, f.msg = true, fmt.Sprintf(format, args...)
+	runtime.Goexit()
+}
+
+func (f *failRecorder) Errorf(format string, args ...any) {
+	f.failed, f.msg = true, fmt.Sprintf(format, args...)
+}
+
+func (f *failRecorder) Fatal(args ...any) { f.Fatalf("%s", fmt.Sprint(args...)) }
+
+// runFuzzHelper runs fn in its own goroutine (Fatalf ends it) and reports whether the recorder saw a failure.
+func runFuzzHelper(t *testing.T, fn func(tb testing.TB)) *failRecorder {
+	t.Helper()
+	rec := &failRecorder{TB: t}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fn(rec)
+	}()
+	<-done
+	return rec
+}
+
+// The shared fuzz helpers run the lenient emitter, which turns a record the writer refused into a warning. A
+// refused record is a mapping bug, so the helpers must fail on it (4E carry-over, Task 16).
+func TestFuzzHelpersFailOnARefusedRecord(t *testing.T) {
+	bad := Invalid{Name: "fz", Version: "1.0.0", Mode: InvalidNulInSummary, N: 1}
+	good := WellBehaved{Name: "fz", Version: "1.0.0"}
+	data := []byte("a\nb\n")
+	cases := map[string]func(tb testing.TB, p parse.Parser){
+		"FuzzParse": func(tb testing.TB, p parse.Parser) { FuzzParse(tb, p, "/data/parsertest/fz.dat", data, nil, nil) },
+		"FuzzParseBundle": func(tb testing.TB, p parse.Parser) {
+			FuzzParseBundle(tb, p, func(h *Harness) Bundle {
+				return Fixture{Name: "fuzz", Files: map[string][]byte{"db": data}}.Bundle(h, "/data/parsertest/fz.dat")
+			})
+		},
+	}
+	for name, run := range cases {
+		t.Run(name, func(t *testing.T) {
+			if rec := runFuzzHelper(t, func(tb testing.TB) { run(tb, bad) }); !rec.failed || !strings.Contains(rec.msg, "refused") {
+				t.Errorf("a refused record did not fail the helper (failed %v: %q)", rec.failed, rec.msg)
+			}
+			if rec := runFuzzHelper(t, func(tb testing.TB) { run(tb, good) }); rec.failed {
+				t.Errorf("a well-behaved parser failed the helper: %s", rec.msg)
+			}
+		})
+	}
+	t.Run("FuzzParseIOS", func(t *testing.T) {
+		p := iosWellBehaved{WellBehaved{Name: "fz", Version: "1.0.0"}}
+		// An Android-platform parser over iOS artifacts: every record is refused on the platform rule.
+		rec := runFuzzHelper(t, func(tb testing.TB) {
+			FuzzParseIOS(tb, bad, "/private/var/parsertest/fz.dat", "ios:HomeDomain/parsertest/fz.dat", data, nil, nil)
+		})
+		if !rec.failed || !strings.Contains(rec.msg, "refused") {
+			t.Errorf("a refused record did not fail FuzzParseIOS (failed %v: %q)", rec.failed, rec.msg)
+		}
+		if rec := runFuzzHelper(t, func(tb testing.TB) {
+			FuzzParseIOS(tb, p, "/private/var/parsertest/fz.dat", "ios:HomeDomain/parsertest/fz.dat", data, nil, nil)
+		}); rec.failed {
+			t.Errorf("a well-behaved iOS parser failed FuzzParseIOS: %s", rec.msg)
+		}
+	})
 }

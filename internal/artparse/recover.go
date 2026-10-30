@@ -144,7 +144,7 @@ func (h *Host) RecoverTyped(ctx context.Context, opt RecoverOptions) (RunSummary
 		h: h, opt: RunOptions{Selection: opt.Selection, OnEvent: opt.OnEvent}, snap: snap,
 		parseID: evidence.NewAcquisitionID(time.Now()), rec: &recoverMode{opt: opt},
 	}
-	return h.runJobs(ctx, r, parsers, jobs)
+	return h.runJobs(ctx, r, parsers, jobs, nil)
 }
 
 // recoveryReport carries the runner's report from the guarded goroutine to the host, safely even when

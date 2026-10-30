@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/recrun"
@@ -39,6 +40,10 @@ type Options struct {
 	auditHook         func(action string, d map[string]any) error // called before each host audit append; an error refuses the append
 	maxUnmapped       int                                         // lowers the unmapped-locator bound of every recovery job (0 = the default)
 	typedRun          typedRunner                                 // replaces recrun.Run (test seam)
+
+	maxFilesRows      int                             // iosbackup.Options.MaxRows of a Manifest.db read (0 = the default cap)
+	resolveBudget     func(limit int64) *parse.Budget // replaces parse.NewBudget for backup resolution
+	afterManifestRead func()                          // called after a Manifest.db was read, before it is used
 }
 
 // Host holds the case, the registry and the options.
@@ -59,6 +64,11 @@ type Host struct {
 	noPropagate bool // test seam: the emitters skip recovered-ness propagation
 	maxUnmapped int  // test seam: the unmapped-locator bound of a recovery job (0 = the default)
 	typedRun    typedRunner
+
+	maxFilesRows      int
+	resolveBudget     func(limit int64) *parse.Budget
+	afterManifestRead func()
+	nameCalls         atomic.Int64 // Host.name calls (test seam: the lookup index builds once)
 }
 
 // Production minimums that skipLimitMinimums lowers (the same numbers
@@ -111,6 +121,7 @@ func New(c *evidence.Case, ps []Registered, opt Options) (*Host, error) {
 		c: c, registry: slices.Clone(ps), namers: opt.Namers, limits: opt.Limits,
 		src: opt.source, newWriter: opt.newWriter, onOpen: opt.onOpen, afterSize: opt.afterSize, afterSt: opt.afterStart, wrapFile: opt.wrapFile,
 		batchRows: opt.batchRows, auditHook: opt.auditHook, relaxed: opt.RelaxedSync, maxUnmapped: opt.maxUnmapped, typedRun: opt.typedRun,
+		maxFilesRows: opt.maxFilesRows, resolveBudget: opt.resolveBudget, afterManifestRead: opt.afterManifestRead,
 	}
 	if h.src == nil {
 		h.src = c
@@ -153,6 +164,7 @@ type Member struct {
 	Artifact                 evidence.ManifestRecord
 	Logical, Platform, Namer string
 	Snapshot                 *parse.SnapshotInfo
+	NamerSource              *ArtifactRef // the Manifest.db that named it (the ios-backup namer only)
 }
 
 // Job statuses Discover produces.
@@ -194,10 +206,15 @@ type candidate struct {
 	snapshot *parse.SnapshotInfo
 	group    string // acquisition and snapshot: a bundle never crosses it
 	layoutOK bool   // the manifest path has the artifacts/<device>/<acquisition>/<rest> form
+	backup   string // backupKey of the backup that named it (ios-backup namer only)
 }
 
 func (c *candidate) member(role string, env Env) Member {
 	m := Member{Role: role, Artifact: c.rec, Logical: c.logical.Path, Platform: c.logical.Platform, Namer: c.logical.Namer, Snapshot: c.snapshot}
+	if bm := env.Backups[c.backup]; c.backup != "" && bm != nil && bm.Resolution.ManifestDB != nil {
+		src := *bm.Resolution.ManifestDB
+		m.NamerSource = &src
+	}
 	if !c.named {
 		switch c.rec.Source.Kind {
 		case "backup":
@@ -326,6 +343,7 @@ func (h *Host) discoverIn(ctx context.Context, snap *Snapshot, sel Selection, re
 
 // name gives a record its logical path: the first namer that answers.
 func (h *Host) name(m evidence.ManifestRecord, env Env) *candidate {
+	h.nameCalls.Add(1)
 	c := &candidate{rec: m}
 	if d := m.Source.Derived; d != nil && d.Snapshot != nil {
 		c.snapshot = &parse.SnapshotInfo{Name: d.Snapshot.Name, Xid: d.Snapshot.Xid}
@@ -339,6 +357,13 @@ func (h *Host) name(m evidence.ManifestRecord, env Env) *candidate {
 	for _, n := range h.namers {
 		if l, ok := n.Logical(m, env); ok {
 			c.logical, c.named = l, true
+			if l.Namer == "ios-backup" {
+				// a bundle never crosses a backup directory (4E-R33)
+				if acq, dir, _, ok := backupPathOf(m); ok {
+					c.backup = backupKey(acq, dir)
+					c.group += "\x03" + dir
+				}
+			}
 			break
 		}
 	}
@@ -455,6 +480,10 @@ func (h *Host) bundle(r Registered, p *candidate, groups map[string][]*candidate
 	if encryptedContent(job) {
 		job.Status = StatusUnparsed
 		job.Reason = appendReason(job.Reason, "encrypted content (sub-project 10)")
+	}
+	if encryptedBackup(job, env) {
+		job.Status = StatusUnparsed
+		job.Reason = appendReason(job.Reason, reasonEncrypted)
 	}
 	if len(missing) > 0 {
 		if !explicit {
