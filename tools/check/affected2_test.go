@@ -330,7 +330,7 @@ func TestDocConsistencyPackagesAreListed(t *testing.T) {
 
 // scaleVetLine is the step that keeps the -tags scale harness compiling (docs/testing.md, ruling D65).
 // It was lost once in a merge; every plan must carry it.
-const scaleVetLine = "go vet -tags scale ./internal/records/... ./internal/evidence/..."
+const scaleVetLine = "go vet -tags scale ./internal/records/... ./internal/evidence/... ./internal/artparse/..."
 
 func TestEveryPlanVetsTheScaleTag(t *testing.T) {
 	if !slices.Contains(formatSteps(fullSteps(false)), scaleVetLine) {

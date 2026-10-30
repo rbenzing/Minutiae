@@ -491,10 +491,10 @@ func isTestdata(f string) bool {
 	return strings.HasPrefix(f, "testdata/") || strings.Contains(f, "/testdata/")
 }
 
-// scaleVet keeps the -tags scale harness (internal/records/scale_test.go) compiling and vetted: the
+// scaleVet keeps the -tags scale harnesses (internal/records/scale_test.go, internal/artparse/scale_test.go) compiling and vetted: the
 // default build never sees it and a scale run is too expensive to find a break (docs/testing.md).
 func scaleVet() step {
-	return step{args: []string{"go", "vet", "-tags", "scale", "./internal/records/...", "./internal/evidence/..."}}
+	return step{args: []string{"go", "vet", "-tags", "scale", "./internal/records/...", "./internal/evidence/...", "./internal/artparse/..."}}
 }
 
 // realdataVet keeps the -tags realdata harness (internal/parsers and internal/cli, realdata_test.go) compiling and vetted
