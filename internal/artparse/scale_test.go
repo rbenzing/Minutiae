@@ -11,6 +11,11 @@ package artparse_test
 // Phases, in order: gen, decode-200m, decode-1g, ingest-200m, jobs-500. Environment:
 // MINUTIAE_SCALE_DIR (the work directory; about 4 GiB), MINUTIAE_SCALE_LABEL, MINUTIAE_SCALE_MACHINE,
 // MINUTIAE_SCALE_PHASE, and for gen only MINUTIAE_SCALE_GEN (a comma list of 200m, 1g; both by default).
+//
+// Peak resident memory is the high-water mark of the whole process, so it includes the setup of the phase
+// (capturing the input into a case, generating the small bundles of jobs-500): it is an upper bound of the
+// parse. The scale directory holds generated inputs and cases of several GiB and must be deleted after a
+// run.
 
 import (
 	"cmp"
@@ -452,6 +457,7 @@ func runHost(t *testing.T, c *evidence.Case, budget int64, counting bool, ps ...
 	if err != nil {
 		t.Fatal(err)
 	}
+	debug.FreeOSMemory() // hand back the garbage of the setup (generation, capture) before the measured run
 	prev := debug.SetMemoryLimit(min(debug.SetMemoryLimit(-1), 2*lim.MemBudget))
 	defer debug.SetMemoryLimit(prev)
 	start := time.Now()
@@ -518,15 +524,33 @@ func fillResult(r *phaseResult, sum artparse.RunSummary, wall time.Duration, rss
 
 // checkRSS asserts the peak resident set against limit (0 = recorded only). Where the platform cannot
 // read it the phase is skipped with the reason, never passed silently.
+type rssOutcome int
+
+const (
+	rssPass rssOutcome = iota
+	rssOver
+	rssNotMeasured
+)
+
+// rssVerdict judges the peak resident set of a phase against its limit (0 = recorded only).
+func rssVerdict(r phaseResult) rssOutcome {
+	switch {
+	case r.PeakRSSLimit == 0:
+		return rssPass
+	case !r.PeakRSSMeasured:
+		return rssNotMeasured
+	case r.PeakRSSBytes > r.PeakRSSLimit:
+		return rssOver
+	}
+	return rssPass
+}
+
 func checkRSS(t *testing.T, r phaseResult) {
 	t.Helper()
-	if r.PeakRSSLimit == 0 {
-		return
-	}
-	if !r.PeakRSSMeasured {
+	switch rssVerdict(r) {
+	case rssNotMeasured:
 		t.Skip("peak RSS not measured on this platform")
-	}
-	if r.PeakRSSBytes > r.PeakRSSLimit {
+	case rssOver:
 		t.Errorf("peak RSS %d MiB is above the limit of %d MiB", r.PeakRSSBytes/scaleMiB, r.PeakRSSLimit/scaleMiB)
 	}
 }
