@@ -3,6 +3,7 @@ package artparse_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -142,6 +143,42 @@ func TestRecoverTypedPropagatesAnUnrelatedBackupIntegrityFailure(t *testing.T) {
 			t.Fatalf("RecoverTyped: %v", err)
 		}
 		check(t, sum, a)
+		// the untampered backup's job still ran to the end and the run was concluded
+		if len(sum.Jobs) != 1 || sum.Jobs[0].Outcome != artparse.OutcomeComplete || sum.Jobs[0].IngestID == "" {
+			t.Fatalf("jobs %+v, want one complete job with an ingest over the untampered backup", sum.Jobs)
+		}
+		all := bc.actions()
+		idx := func(action string) int { return slices.Index(all, action) }
+		if idx(artparse.ActionAnalysisEnd) < 0 {
+			t.Errorf("no analysis.end in %v: the run was not concluded", all)
+		}
+		start := bc.entries(artparse.ActionAnalysisStart)
+		if len(start) != 1 || idx(artparse.ActionParseJobStart) < idx(artparse.ActionAnalysisStart) || idx(artparse.ActionAnalysisStart) < 0 {
+			t.Fatalf("audit order %v: analysis.start must precede the first parse.job.start", all)
+		}
+		as := decodeEntry[artparse.AnalysisStart](t, start[0])
+		refused := false
+		for _, r := range as.Backups {
+			refused = refused || (r.Status == "refused" && strings.HasPrefix(r.Reason, "integrity") && r.ManifestDB != nil && r.ManifestDB.ArtifactID == a.db.ID)
+		}
+		if !refused {
+			t.Errorf("the analysis.start before the first job does not carry the refused backup: %+v", as.Backups)
+		}
+	})
+	t.Run("cancel during the job loop", func(t *testing.T) {
+		bc, a, b := setup(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		target := b.file(recBackupDomain, recBackupRel).ID
+		h := bc.host(func(o *artparse.Options) {
+			artparse.WithOnOpen(o, func(id string) {
+				if id == target { // the job's own open, after every manifest was resolved and the refusal found
+					cancel()
+				}
+			})
+		}, regIOSRec(t))
+		sum, _ := h.RecoverTyped(ctx, artparse.RecoverOptions{OnlyPrimary: target})
+		check(t, sum, a) // integrity wins over the cancel
 	})
 	t.Run("cancel after the finding", func(t *testing.T) {
 		bc, a, b := setup(t)
