@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -177,6 +178,9 @@ func TestRealDataEndToEnd(t *testing.T) {
 	}
 	for _, s := range sets {
 		t.Run(s.parser+"/"+s.name, func(t *testing.T) {
+			for _, f := range s.files {
+				t.Logf("captured %s: logical path of the layout %s, remote path %s (an iOS file is named ios:MediaDomain/<remote path> by the device-file namer)", filepath.Base(f.src), f.logical, realCLIRemote(f.logical))
+			}
 			c := recordstest.NewCase(t)
 			acq := "logical"
 			if s.platform == "ios" {
@@ -226,6 +230,7 @@ func TestRealDataEndToEnd(t *testing.T) {
 			if rec.code == 1 {
 				t.Logf("sqlite recover exit 1: %s", strings.TrimSpace(rec.errOut))
 			}
+			assertTypedRecordsAreRecovered(t, dir)
 			if v := realCLI(t, "case", "verify", "--case", dir); v.code != 0 {
 				t.Errorf("case verify: exit %d\n%s\n%s", v.code, v.out, v.errOut)
 			}
@@ -319,5 +324,38 @@ func TestRealDataIOSBackup(t *testing.T) {
 				t.Errorf("case verify: exit %d\n%s\n%s", v.code, v.out, v.errOut)
 			}
 		})
+	}
+}
+
+// assertTypedRecordsAreRecovered reads back every typed record the case holds after `sqlite recover` (splitCase) and
+// requires of each: deleted, recovered, a recovery method, a confidence within 0..100 (the method's own cap is not
+// reachable from this package), and no appearance in the live view (--recovered none). Recovered data must never be
+// presented as live; the host, not the mapper, stamps these facts.
+func assertTypedRecordsAreRecovered(t *testing.T, dir string) {
+	t.Helper()
+	s := splitCase(t, dir)
+	names := map[string]bool{}
+	for _, r := range s.typedAll {
+		names[r.Parser.Name] = true
+		if !r.Deleted || !r.Recovered || r.RecoveryMethod == "" || r.Confidence == nil || *r.Confidence < 0 || *r.Confidence > 100 {
+			conf := "none"
+			if r.Confidence != nil {
+				conf = strconv.Itoa(*r.Confidence)
+			}
+			t.Errorf("typed record %s (%s) is not a stamped recovered record: deleted %v, recovered %v, method %q, confidence %s",
+				r.Locator, r.Type, r.Deleted, r.Recovered, r.RecoveryMethod, conf)
+		}
+	}
+	t.Logf("%d typed recovered records, %d generic db_rows", len(s.typedAll), len(s.db))
+	for name := range names {
+		code, out, _ := runP(t, nil, "records", "list", "--case", dir, "--json", "--limit", "1", "--recovered", "none", "--parser", name)
+		var l struct {
+			Records []rowJSON `json:"records"`
+		}
+		if code != 0 || json.Unmarshal(jsonPart(out), &l) != nil {
+			t.Errorf("records list --recovered none --parser %s: exit %d\n%s", name, code, out)
+		} else if len(l.Records) != 0 {
+			t.Errorf("the live view holds a record of the recovery parser %s (%s)", name, l.Records[0].Locator)
+		}
 	}
 }
