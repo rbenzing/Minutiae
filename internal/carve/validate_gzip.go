@@ -1,6 +1,10 @@
 package carve
 
-import "strconv"
+import (
+	"strconv"
+	"strings"
+	"unicode/utf8"
+)
 
 // gzipSearchMax is how far a NUL-terminated header string (FNAME, FCOMMENT)
 // is searched for its terminator.
@@ -93,9 +97,25 @@ func gzipString(w *Window, pos int64, keep bool) (s []byte, end int64, reason st
 	return nil, 0, "bad-header"
 }
 
+// gzipEscapedMax bounds the escaped name text of a basis entry: the raw name is
+// at most gzipNameMax bytes but one byte can escape to four.
+const gzipEscapedMax = 128
+
 // escapeBasis renders bytes printably for a basis entry: ASCII text as is,
-// everything else as an escape.
+// everything else as an escape. The escaped text is bounded (not the raw
+// bytes): past gzipEscapedMax it ends in "..." at a character boundary.
 func escapeBasis(b []byte) string {
-	q := strconv.QuoteToASCII(string(b))
-	return q[1 : len(q)-1]
+	var sb strings.Builder
+	for i := 0; i < len(b); {
+		_, size := utf8.DecodeRune(b[i:])
+		q := strconv.QuoteToASCII(string(b[i : i+size]))
+		q = q[1 : len(q)-1]
+		if sb.Len()+len(q) > gzipEscapedMax {
+			sb.WriteString("...")
+			break
+		}
+		sb.WriteString(q)
+		i += size
+	}
+	return sb.String()
 }
