@@ -87,6 +87,15 @@ func testValidators() map[string]validatorFunc {
 			return Verdict{Outcome: Validated, Length: int64(binary.BigEndian.Uint32(h[8:]))}
 		},
 		"test-panic": func(*Window) Verdict { panic("validator bug") },
+		"test-onebyte": func(w *Window) Verdict {
+			if c, err := w.Byte(8); err != nil || c != 'K' {
+				return Verdict{Outcome: Rejected, Reason: "bad-byte"}
+			}
+			return Verdict{Outcome: Validated, Length: 16}
+		},
+		"test-long": func(*Window) Verdict {
+			return Verdict{Outcome: Validated, Length: 16, Basis: []string{strings.Repeat("b", 400), "short"}, Assumptions: []string{strings.Repeat("a", 300)}}
+		},
 		"test-greedy": func(w *Window) Verdict {
 			buf := make([]byte, 256*kib)
 			for off := int64(0); ; off += int64(len(buf)) {

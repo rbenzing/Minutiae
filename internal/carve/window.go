@@ -128,7 +128,10 @@ func (w *Window) ReadAt(p []byte, off int64) (int, error) {
 }
 
 // Byte returns the byte at off, relative to the hit, through a fixed 64 KiB
-// cache. Each refill checks the context and is charged to the budget.
+// cache that starts at the first look (rounded down to windowChunk) and is
+// filled forward in chunks that double, so only the bytes a validator reaches
+// are read and charged: a header that fails on its first byte costs one chunk,
+// a sequential walk costs its length. Each fill checks the context.
 func (w *Window) Byte(off int64) (byte, error) {
 	if off < 0 || off >= w.length {
 		w.outside++
@@ -142,12 +145,21 @@ func (w *Window) Byte(off int64) (byte, error) {
 	return w.cache[off-w.cacheOff], nil
 }
 
+// windowChunk is the smallest piece the cache is filled by.
+const windowChunk = 512
+
 func (w *Window) refill(off int64) error {
 	if err := w.ctx.Err(); err != nil {
 		return err
 	}
-	start := off - off%windowCacheSize
-	n := min(int64(windowCacheSize), w.length-start)
+	if !w.cacheLoaded || off < w.cacheOff || off >= w.cacheOff+windowCacheSize {
+		w.cacheOff, w.cacheLen, w.cacheLoaded = off-off%windowChunk, 0, false
+	}
+	// extend the filled prefix [cacheOff, cacheOff+cacheLen) to cover off: at
+	// least one chunk, at least the prefix again, never past the cache or the window
+	filled := int64(w.cacheLen)
+	want := max(windowChunk, filled, (off-w.cacheOff)/windowChunk*windowChunk+windowChunk-filled)
+	n := min(want, windowCacheSize-filled, w.length-w.cacheOff-filled)
 	if !w.bud.charge(n) {
 		return ErrValidateBudget
 	}
@@ -155,10 +167,10 @@ func (w *Window) refill(off int64) error {
 		w.cache = make([]byte, windowCacheSize)
 	}
 	w.cacheLoaded = false
-	if err := w.readFull(w.cache[:n], w.base+start); err != nil {
+	if err := w.readFull(w.cache[filled:filled+n], w.base+w.cacheOff+filled); err != nil {
 		return err
 	}
-	w.cacheOff, w.cacheLen, w.cacheLoaded = start, int(n), true
+	w.cacheLen, w.cacheLoaded = int(filled+n), true
 	return nil
 }
 

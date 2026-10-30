@@ -702,7 +702,7 @@ func (p *pass) accept(ct *ctype, pos int64, v Verdict) (int64, error) {
 		Family: ct.t.Name, Type: ct.t.Name, Ext: ct.t.Ext, MIME: ct.t.MIME,
 		Offset: pos, Length: v.Length, Run: p.ri, Outcome: v.Outcome,
 		Method: MethodOf(v.Outcome), Confidence: Confidence(v.Outcome),
-		Basis: slices.Clone(v.Basis), Assumptions: slices.Clone(v.Assumptions), NestedIn: -1,
+		Basis: clampEntries(v.Basis), Assumptions: clampEntries(v.Assumptions), NestedIn: -1,
 	}
 	if v.Type != "" {
 		h.Type = v.Type

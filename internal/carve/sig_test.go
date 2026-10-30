@@ -323,9 +323,10 @@ func TestWindowByteCachesAndChecksContext(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if cr.reads != 1 {
-		t.Errorf("%d reads for %d sequential bytes, want 1 (a fixed %d-byte cache)", cr.reads, windowCacheSize, windowCacheSize)
+	if cr.reads > 8 {
+		t.Errorf("%d reads for %d sequential bytes, want at most 8 (doubling chunks in a fixed %d-byte cache)", cr.reads, windowCacheSize, windowCacheSize)
 	}
+	before := cr.reads
 	cancel()
 	// a cached byte needs no refill; the next refill must notice the cancel
 	if _, err := w.Byte(0); err != nil {
@@ -334,7 +335,7 @@ func TestWindowByteCachesAndChecksContext(t *testing.T) {
 	if _, err := w.Byte(windowCacheSize); !errors.Is(err, context.Canceled) {
 		t.Errorf("refill after cancel: %v, want context.Canceled", err)
 	}
-	if cr.reads != 1 {
+	if cr.reads != before {
 		t.Errorf("a cancelled refill still read: %d reads", cr.reads)
 	}
 }

@@ -202,7 +202,7 @@ func (c *Case) checkRecoveredPath(ps *problemSet, r ManifestRecord, pre string, 
 	if !inNS || ns != want {
 		ps.add(rKindNamespace, "%sis outside the namespace %q of kind %q", pre, want, kind)
 	} else {
-		c.checkScopeDirectory(ps, r, pre, kind)
+		c.checkScopeDirectory(ps, r, pre, kind, byID)
 	}
 	if d := r.Source.Derived; d != nil && d.RunsArtifact != "" {
 		// a sidecar missing from the manifest is reported by the derived checks and the runs check
@@ -215,8 +215,8 @@ func (c *Case) checkRecoveredPath(ps *problemSet, r ManifestRecord, pre string, 
 // checkScopeDirectory is the part of R3 that ties the directory below the namespace (spec 5.1) to the
 // derivation: recover, slack and journal artifacts sit under p<N>-<fstype> of their own partition, and a
 // carved artifact under the scope directory its Recovery.Scope names (raw, volume, or the partition for
-// unallocated space; a carve of an artifact takes any of the three forms of the layout).
-func (c *Case) checkScopeDirectory(ps *problemSet, r ManifestRecord, pre, kind string) {
+// unallocated space; a carve of an artifact sits under raw and its parent is no unallocated export).
+func (c *Case) checkScopeDirectory(ps *problemSet, r ManifestRecord, pre, kind string, byID map[string]ManifestRecord) {
 	parts := strings.Split(r.Path, "/")
 	d := r.Source.Derived
 	partDir := ""
@@ -255,10 +255,15 @@ func (c *Case) checkScopeDirectory(ps *problemSet, r ManifestRecord, pre, kind s
 			return
 		}
 		scope := d.Recovery.Scope
-		ok := scope == "artifact" || (scope == "raw" && dir == "raw") || (scope == "volume" && dir == "volume") ||
+		ok := (scope == "artifact" && dir == "raw") || (scope == "raw" && dir == "raw") || (scope == "volume" && dir == "volume") ||
 			(scope == "unallocated" && isPart && dir == partDir)
 		if scope != "" && !ok {
 			ps.add(rKindNamespace, "%sscope directory %q does not match the recovery scope %q", pre, dir, scope)
+		}
+		if scope == "artifact" {
+			if p, found := byID[d.ParentID]; found && isUnallocatedExport(p) {
+				ps.add(rKindNamespace, "%sscope \"artifact\" but the parent %q is an unallocated export, which is carved through its image read as raw bytes", pre, d.ParentID)
+			}
 		}
 	}
 }
@@ -361,4 +366,10 @@ func runsBeyondParent(pre string, runs []Run, parentSize int64) []string {
 // a container, so it has no allocation state (R9) and no acquisition gaps (R10).
 func carveOfArtifact(d *Derivation) bool {
 	return d != nil && d.Recovery != nil && d.Recovery.Scope == "artifact"
+}
+
+// isUnallocatedExport reports whether r is an unallocated export. A carve of one opens its parent image, so its scope
+// is never artifact. (An imported image is a legitimate parent of scope artifact: a carve of an artifact reads it raw.)
+func isUnallocatedExport(r ManifestRecord) bool {
+	return r.Source.Kind == "unallocated"
 }
