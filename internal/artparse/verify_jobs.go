@@ -86,6 +86,9 @@ func (f *jobsFindings) flush(rep *evidence.VerifyReport) {
 type jobsAnalysis struct {
 	id        string
 	concluded bool // analysis.end or analysis.error seen
+	errored   bool // the conclusion was analysis.error
+	errText   string
+	cur       int // index of the first job that is neither matched, ended nor superseded
 	jobs      []*jobsJob
 	byN       map[int]*jobsJob
 }
@@ -95,7 +98,9 @@ type jobsJob struct {
 	start   JobStart
 	startAt int64
 	ended   bool
-	ingest  *jobsIngest // the ingest matched to the job (PJ1)
+	// superseded: a later job started in the same run while this one had no end (reported once, at that start)
+	superseded bool
+	ingest     *jobsIngest // the ingest matched to the job (PJ1)
 }
 
 type jobsIngest struct {
@@ -131,6 +136,9 @@ func (pj *jobsCheck) entry(e evidence.AuditEntry) {
 	case ActionAnalysisEnd, ActionAnalysisError:
 		if a := pj.analyses[str(e.Details, "analysis_id")]; a != nil {
 			a.concluded = true
+			if e.Action == ActionAnalysisError {
+				a.errored, a.errText = true, str(e.Details, "error")
+			}
 		}
 	case ActionParseJobStart:
 		pj.jobStart(e)
@@ -176,6 +184,11 @@ func (pj *jobsCheck) jobStart(e evidence.AuditEntry) {
 		pj.f.problem("run %q: job %d is started more than once (audit seq %d and %d)", a.id, js.Job, prev.startAt, e.Seq)
 		return
 	}
+	if n := len(a.jobs); n > 0 && !a.jobs[n-1].ended {
+		prev := a.jobs[n-1]
+		prev.superseded = true
+		pj.f.problem("run %q: job %d started (audit seq %d) before job %d concluded; a run starts a job only after the previous one ended", a.id, js.Job, e.Seq, prev.n)
+	}
 	j := &jobsJob{n: js.Job, start: js, startAt: e.Seq}
 	if pj.orphanEnd[jobKey(a.id, js.Job)] {
 		j.ended = true // its end came first: already a problem
@@ -207,6 +220,9 @@ func (pj *jobsCheck) jobEnd(e evidence.AuditEntry) {
 	}
 	j.ended = true
 	if je.IngestID == "" {
+		if j.ingest != nil {
+			pj.f.problem("run %q: the parse.job.end of job %d (audit seq %d) names no ingest, but ingest %q was started by this job", a.id, je.Job, e.Seq, j.ingest.id)
+		}
 		return // refused, unparsed or skipped before Writer.Start: no ingest to compare (4h-R25)
 	}
 	in := pj.ingests[je.IngestID]
@@ -236,11 +252,13 @@ func (pj *jobsCheck) ingestStart(e evidence.AuditEntry) {
 	in := &jobsIngest{id: is.IngestID, seq: e.Seq, start: is}
 	pj.ingests[is.IngestID] = in
 	want := normalizedIDs(is.Artifacts)
-	var near *jobsJob // a started, unmatched job that differs: named in the problem
-	for _, j := range a.jobs {
-		if j.ingest != nil || j.ended {
-			continue
-		}
+	// the ingest belongs to the first job that is neither matched nor ended (a run is sequential)
+	for a.cur < len(a.jobs) && (a.jobs[a.cur].ingest != nil || a.jobs[a.cur].ended || a.jobs[a.cur].superseded) {
+		a.cur++
+	}
+	var near *jobsJob // the job the ingest should belong to: named in the problem when it differs
+	if a.cur < len(a.jobs) {
+		j := a.jobs[a.cur]
 		near = j
 		if j.start.Parser.Name == is.Parser && j.start.Parser.Version == is.ParserVersion && j.start.Parser.Hash == is.ParserHash &&
 			slices.Equal(bundleIDs(j.start), want) {
@@ -280,27 +298,35 @@ func (pj *jobsCheck) ingestRecover(e evidence.AuditEntry) {
 	}
 }
 
+// auditFailureText is the analysis.error text of a run that stopped because an audit append failed.
+const auditFailureText = "the run stopped: " + StoppedAuditFailure
+
 // unconcluded settles the jobs that have no parse.job.end (PJ4), analysis by analysis.
 func (pj *jobsCheck) unconcluded(ctx context.Context) {
 	for _, a := range pj.order {
 		if ctx.Err() != nil {
 			return
 		}
-		for _, j := range a.jobs {
-			if j.ended {
+		for idx, j := range a.jobs {
+			if j.ended || j.superseded {
 				continue
 			}
 			in := j.ingest
 			switch {
+			case a.concluded && a.errored && a.errText == auditFailureText && idx == len(a.jobs)-1:
+				// the append of this job's parse.job.end failed and the run stopped on it; any other unended job of a
+				// concluded run cannot come from a real run
+				pj.f.notice("run %q stopped on an audit failure before job %d concluded (its parse.job.end could not be audited)", a.id, j.n)
 			case a.concluded:
 				pj.f.problem("run %q concluded (analysis.end or analysis.error), but job %d has no parse.job.end", a.id, j.n)
 			case in == nil:
 				pj.f.notice("run %q ended before job %d concluded (interrupted; no ingest started)", a.id, j.n)
 			case in.concludedBy == "" && in.recoveredBy != "":
 				pj.f.notice("run %q ended before job %d concluded (interrupted; ingest %q recovered by %q)", a.id, j.n, in.id, in.recoveredBy)
+			case in.concludedBy != "":
+				pj.f.notice("run %q ended before job %d concluded (interrupted; ingest %q concluded %s but the job end was never audited)", a.id, j.n, in.id, in.concludedBy)
 			}
-			// an ingest that nothing concluded is the lifecycle check's problem (exit 4), and one that ended normally
-			// belongs to a run that was cut between the ingest and its job end: neither is repeated here
+			// an ingest that nothing concluded and nothing recovered is the lifecycle check's problem (exit 4)
 		}
 	}
 }

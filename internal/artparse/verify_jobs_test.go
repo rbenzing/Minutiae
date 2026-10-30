@@ -300,6 +300,20 @@ func TestParseJobsCheckInterruptedRunIsANotice(t *testing.T) {
 		}
 	})
 
+	t.Run("died after the ingest concluded and before the job end was audited", func(t *testing.T) {
+		f := pjOneJob(t)
+		ingest := decodeEntry[evidence.IngestStart](t, f.entries(evidence.ActionIngestStart)[0])
+		c := forgeLog(t, f.c, func(es []evidence.AuditEntry) []evidence.AuditEntry {
+			return es[:pjMustIndex(t, es, evidence.ActionIngestEnd, 0)+1]
+		})
+		rep := pjRun(c)
+		if len(rep.Problems) != 0 || len(rep.Notices) != 1 || !strings.HasPrefix(rep.Notices[0], pjPrefix) ||
+			!strings.Contains(rep.Notices[0], "job 1") || !strings.Contains(rep.Notices[0], fmt.Sprintf("%q", ingest.IngestID)) ||
+			!strings.Contains(rep.Notices[0], "never audited") {
+			t.Errorf("problems %q notices %q, want one notice naming job 1, the ingest and \"never audited\"", rep.Problems, rep.Notices)
+		}
+	})
+
 	t.Run("a run that concluded while a job was unconcluded is a problem", func(t *testing.T) {
 		f := pjOneJob(t)
 		c := forgeLog(t, f.c, func(es []evidence.AuditEntry) []evidence.AuditEntry {
@@ -505,4 +519,70 @@ func TestParseJobsCheckUnreadableAuditIsAProblem(t *testing.T) {
 	if len(rep.Problems) != 1 || !strings.HasPrefix(rep.Problems[0], pjPrefix+"audit log unreadable") {
 		t.Errorf("problems %q, want the unreadable audit log named", rep.Problems)
 	}
+}
+
+// pjAuditFailsAtJobEnd runs three jobs on a host whose audit refuses the nth parse.job.end: the run stops on an
+// audit failure, then writes analysis.error (the refusal is not a closed log).
+func pjAuditFailsAtJobEnd(t *testing.T, nth int) *rx {
+	t.Helper()
+	f := newRx(t, "one", "two", "three")
+	ends := 0
+	h := f.host(func(o *artparse.Options) {
+		artparse.WithAuditHook(o, func(action string, _ map[string]any) error {
+			if action == artparse.ActionParseJobEnd {
+				ends++
+				if ends == nth {
+					return errors.New("audit refused")
+				}
+			}
+			return nil
+		})
+	}, wbp("one"), wbp("two"), wbp("three"))
+	if sum, err := h.Run(context.Background(), artparse.RunOptions{}); err == nil || sum.Stopped != "audit-failure" {
+		t.Fatalf("Run = %v, stopped %q, want an audit failure", err, sum.Stopped)
+	}
+	if f.count("analysis.error") != 1 || f.count(artparse.ActionParseJobEnd) != nth-1 {
+		t.Fatalf("analysis.error %d, job ends %d", f.count("analysis.error"), f.count(artparse.ActionParseJobEnd))
+	}
+	return f
+}
+
+func TestParseJobsCheckAuditFailureAtTheLastJobEndIsANotice(t *testing.T) {
+	f := pjAuditFailsAtJobEnd(t, 2)
+	rep := pjRun(f.c)
+	if len(rep.Problems) != 0 || len(rep.Notices) != 1 || !strings.HasPrefix(rep.Notices[0], pjPrefix) ||
+		!strings.Contains(rep.Notices[0], "job 2") || !strings.Contains(rep.Notices[0], "audit failure") {
+		t.Errorf("problems %q notices %q, want one notice naming job 2 and the audit failure", rep.Problems, rep.Notices)
+	}
+	// the same log with the end of an earlier job removed: not the last started job, a problem
+	c := forgeLog(t, f.c, func(es []evidence.AuditEntry) []evidence.AuditEntry {
+		return pjDrop(es, pjMustIndex(t, es, artparse.ActionParseJobEnd, 0))
+	})
+	pjProblemsWith(t, pjRun(c), "job 1", "concluded")
+}
+
+func TestParseJobsCheckOtherErrorTextLeavesAnUnendedJobAProblem(t *testing.T) {
+	f := pjAuditFailsAtJobEnd(t, 2)
+	c := forgeLog(t, f.c, func(es []evidence.AuditEntry) []evidence.AuditEntry {
+		pjEdit(t, es, pjMustIndex(t, es, artparse.ActionAnalysisError, 0), func(ae *artparse.AnalysisError) { ae.Error = "the run stopped: cancelled" })
+		return es
+	})
+	pjProblemsWith(t, pjRun(c), "job 2", "no parse.job.end")
+}
+
+func TestParseJobsCheckFlagsAJobEndWithoutIngestOverAMatchedIngest(t *testing.T) {
+	f := pjTwoJobs(t)
+	c := forgeLog(t, f.c, func(es []evidence.AuditEntry) []evidence.AuditEntry {
+		pjEdit(t, es, pjMustIndex(t, es, artparse.ActionParseJobEnd, 0), func(je *artparse.JobEnd) { je.IngestID = "" })
+		return es
+	})
+	pjProblemsWith(t, pjRun(c), "job 1", "names no ingest")
+}
+
+func TestParseJobsCheckFlagsAJobStartedBeforeThePreviousEnded(t *testing.T) {
+	f := pjTwoJobs(t)
+	c := forgeLog(t, f.c, func(es []evidence.AuditEntry) []evidence.AuditEntry {
+		return pjDrop(es, pjMustIndex(t, es, artparse.ActionParseJobEnd, 0))
+	})
+	pjProblemsWith(t, pjRun(c), "job 2", "before job 1 concluded")
 }
