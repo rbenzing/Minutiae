@@ -17,7 +17,9 @@
 // from_visit, opener_visit, originator_visit_id, visit_duration (stored integers; <col>_status when an instant is a
 // sentinel or invalid); originator_cache_guid, external_referrer_url (stored text); visitless; join_undecided;
 // unknown_columns (cells of the mapped row: type-mismatch, a decoder state name, precision, negative, out-of-range,
-// not-boolean); joined_unknown_columns ("urls.<col>" of the joined urls row, plus column-missing); text_flags and
+// not-boolean); <key>_ieee (the 16 lowercase hex digits of the stored IEEE bits of a REAL in an integer column, where
+// <key> is the cell's unknown_columns or joined_unknown_columns key; the unknown entry stays type-mismatch);
+// joined_unknown_columns ("urls.<col>" of the joined urls row, plus column-missing); text_flags and
 // <field>_raw_b64 / _raw_sha256 / _raw_len / _total_bytes (cleaned or cut text), url_truncated; body_truncated and
 // body_total_bytes (the 64 KiB cap per URL or title in the searchable body); row_flags. The meta table gives no
 // record: it notes meta.version and meta.last_compatible_version ("non-numeric" for a value that is not decimal, and

@@ -18,6 +18,7 @@ type member struct {
 	m        Member
 	src      *source
 	recovery *parse.RecoveryInfo // non-nil when the artifact or an ancestor is recovered: what the parser sees in Artifact.Recovery
+	borrowed bool                // src belongs to a scan: bundle.close leaves it open
 }
 
 // bundle is the verified, sealed inputs of one job. Every artifact was hashed
@@ -65,6 +66,14 @@ func (h *Host) openBundle(ctx context.Context, snap *Snapshot, j Job, parseID st
 		if err := ctx.Err(); err != nil {
 			b.close()
 			return nil, err
+		}
+		if mb == b.members[0] && j.borrowed != nil {
+			if j.borrowed.data != nil {
+				b.memUsed += j.borrowed.rec.Size
+			}
+			mb.src, mb.borrowed = j.borrowed, true
+			mb.recovery = snap.recoveredInput(mb.m.Artifact.ID)
+			continue
 		}
 		s, err := h.loadSource(ctx, snap, mb.m.Artifact.ID, h.limits.MemInputMax, h.limits.MemInputTotal-b.memUsed)
 		if err != nil {
@@ -242,7 +251,7 @@ func (b *bundle) close() {
 	}
 	b.closed = true
 	for _, mb := range b.members {
-		if mb.src != nil {
+		if mb.src != nil && !mb.borrowed {
 			mb.src.close()
 		}
 	}

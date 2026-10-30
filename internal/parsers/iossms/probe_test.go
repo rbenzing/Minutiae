@@ -38,7 +38,7 @@ func probeTables(t *testing.T, tables map[string]string, wal bool) parse.Applica
 func TestMetaAndProbe(t *testing.T) {
 	p := iossms.Parser{}
 	m := p.Meta()
-	if err := parse.ValidateMeta(m); err != nil || len(m.Claims) != 0 || m.Name != "ios.sms" || m.Version != iossms.Version {
+	if err := parse.ValidateMeta(m); err != nil || len(m.Claims) != 1 || m.Claims[0].Table != "message" || m.Name != "ios.sms" || m.Version != iossms.Version {
 		t.Fatalf("meta %+v: %v", m, err)
 	}
 	if len(m.Emits) != 1 || m.Emits[0].Type != "message" || m.Emits[0].PayloadVersion != 1 {

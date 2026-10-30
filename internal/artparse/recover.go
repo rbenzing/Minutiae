@@ -70,6 +70,9 @@ func (m *recoverMode) bundleDiffers(j Job) string {
 // writes a live record and never supersedes the live parse's records (a separate identity). The summary
 // and the error follow Run's rules.
 func (h *Host) RecoverTyped(ctx context.Context, opt RecoverOptions) (RunSummary, error) {
+	if opt.Scan {
+		return RunSummary{}, errScanIsPlanOnly
+	}
 	if err := h.c.RequireSchema(evidence.CurrentSchema); err != nil {
 		return RunSummary{}, err
 	}
@@ -106,9 +109,11 @@ func (h *Host) RecoverTyped(ctx context.Context, opt RecoverOptions) (RunSummary
 			}
 		}
 	}
-	snap, err := h.TakeSnapshot()
+	// every backup of the case is resolved (4h-R30), as Run does: the files of a backup are named through its
+	// hash-checked Manifest.db, and a finding made before an error or a cancel stays in the summary (4E-R38)
+	snap, backups, err := h.snapshotFor(ctx)
 	if err != nil {
-		return RunSummary{}, err
+		return RunSummary{Backups: backups}, err
 	}
 	sel := opt.Selection
 	sel.admitRecovered = map[string]bool{}
@@ -124,7 +129,7 @@ func (h *Host) RecoverTyped(ctx context.Context, opt RecoverOptions) (RunSummary
 	}
 	jobs, _, err := h.discoverIn(ctx, snap, sel, views)
 	if err != nil {
-		return RunSummary{}, err
+		return RunSummary{Backups: backups}, err
 	}
 	if opt.OnlyPrimary != "" {
 		kept := jobs[:0]
@@ -138,13 +143,14 @@ func (h *Host) RecoverTyped(ctx context.Context, opt RecoverOptions) (RunSummary
 	}
 	parsers, err := selectParsersFrom(views, opt.Parsers)
 	if err != nil {
-		return RunSummary{}, err
+		return RunSummary{Backups: backups}, err
 	}
 	r := &run{
 		h: h, opt: RunOptions{Selection: opt.Selection, OnEvent: opt.OnEvent}, snap: snap,
 		parseID: evidence.NewAcquisitionID(time.Now()), rec: &recoverMode{opt: opt},
 	}
-	return h.runJobs(ctx, r, parsers, jobs, nil)
+	r.sum.Backups = backups
+	return h.runJobs(ctx, r, parsers, jobs, backups)
 }
 
 // recoveryReport carries the runner's report from the guarded goroutine to the host, safely even when

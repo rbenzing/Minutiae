@@ -21,7 +21,7 @@ const (
 	backupPath = "UDID1/3d/3d0d7e5fb2ce288813306e4d4636395e047a3d28"
 )
 
-var variants = []string{"ios10-seconds", "ios14-attributed", "ios17-nanos", "ios17-wal"}
+var variants = []string{"ios10-seconds", "ios14-attributed", "ios17-nanos", "ios17-wal", "ios17-deleted"}
 
 func TestFixturesArePinnedByHash(t *testing.T) {
 	seen := map[string]bool{}
@@ -44,9 +44,15 @@ func TestFixturesArePinnedByHash(t *testing.T) {
 }
 
 func TestEveryCommittedFixtureIsInTheVariantList(t *testing.T) {
-	m, err := filepath.Glob("testdata/*.expect.json")
+	all, err := filepath.Glob("testdata/*.expect.json")
 	if err != nil {
 		t.Fatal(err)
+	}
+	var m []string
+	for _, p := range all {
+		if !strings.HasSuffix(p, ".recover.expect.json") { // the typed recovery oracles are checked by TestEveryRecoverOracleHasAFixture
+			m = append(m, p)
+		}
 	}
 	if len(m) != len(variants) {
 		t.Errorf("%d fixtures on disk, %d in the variant list", len(m), len(variants))
@@ -61,7 +67,7 @@ func TestEveryCommittedFixtureIsInTheVariantList(t *testing.T) {
 
 // Every fixture was generated from one of the three DDL snapshots of Task 4.
 func TestFixturesNameAnExistingDDLSnapshot(t *testing.T) {
-	want := map[string]string{"ios10-seconds": "sms-ios10.sql", "ios14-attributed": "sms-ios14.sql", "ios17-nanos": "sms-ios17.sql", "ios17-wal": "sms-ios17.sql"}
+	want := map[string]string{"ios10-seconds": "sms-ios10.sql", "ios14-attributed": "sms-ios14.sql", "ios17-nanos": "sms-ios17.sql", "ios17-wal": "sms-ios17.sql", "ios17-deleted": "sms-ios17.sql"}
 	for _, v := range variants {
 		ddl := parsertest.LoadFixture(t, "testdata", v).Expect.DDL
 		if ddl != want[v] {
