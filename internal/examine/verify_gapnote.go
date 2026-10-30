@@ -171,10 +171,10 @@ func (g *gapper) one(rec evidence.ManifestRecord, format string, gaps image.Acqu
 	}
 }
 
-// gapSize is the size input the writer used (K23): an unallocated export's and a carve's size is the sum of its runs
-// (a partial carve's runs are its kept prefix); an extract's is the source file's full size, recorded as declared_size.
-// An incomplete extract cut at an unreadable chunk was computed over its kept bytes (its runs sum to its size). An extract recorded before
-// declared_size is recomputed with the larger of its runs' length and its size.
+// gapSize is the size input the writer used (K23): an unallocated export's and a carve's size is the sum of its
+// runs (a partial carve's runs are its kept prefix); an extract's is the source file's full size, recorded as
+// declared_size. An incomplete extract cut at an unreadable chunk was computed over its kept bytes (its runs sum to
+// its size). An extract recorded before declared_size is recomputed with the larger of its runs' length and its size.
 func gapSize(rec evidence.ManifestRecord, runs []evidence.Run) int64 {
 	sum := runLengths(runs)
 	d := rec.Source.Derived

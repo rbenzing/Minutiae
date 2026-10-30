@@ -1,18 +1,22 @@
 package examine
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rbenzing/minutiae/internal/carve/carvetest"
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/evidence/evidencetest"
 	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/filesys/fstest"
+	"github.com/rbenzing/minutiae/internal/image/ewf/ewftest"
 )
 
 // Tests of case verify over carved artifacts (R5, R9, R10, R6). Helpers carry the verifyCarve prefix.
@@ -280,4 +284,71 @@ func TestVerifyNoticesNameCarved(t *testing.T) {
 	}
 	evidencetest.RequireNotice(t, rep, "1 deleted-file or carved artifact(s): allocation not rechecked against the filesystem (this verify did not compose check R9)")
 	evidencetest.RequireNotice(t, rep, "1 extract, unallocated or carve artifact(s): acquisition-gap notes shape-checked only, not recomputed (this verify did not compose check R10)")
+}
+
+// A forged sidecar of a million runs on a one-byte artifact is stopped at the first run that passes the
+// artifact's size, not walked.
+func TestAllocationRecheckRawRunsBoundedBySize(t *testing.T) {
+	e := newCarveEnv(t, carveDeleted("/del.png", carvePNG()))
+	runs := make([]evidence.Run, 1_000_000)
+	for i := range runs {
+		runs[i] = evidence.Run{Offset: int64(carveFirstLBA) * 512, Length: 1}
+	}
+	verifyCarveForge(t, e, CarveRaw, "raw", runs, evidence.AllocSummary{Unknown: 1}, func(s *evidencetest.RecoveredSpec) {
+		s.Sidecar, s.Data = true, []byte{0}
+	})
+	start := time.Now()
+	rep := carveVerify(t, e)
+	if d := time.Since(start); d > 30*time.Second {
+		t.Errorf("verify took %v", d)
+	}
+	evidencetest.RequireProblem(t, rep, "runs total more than the artifact's size 1 from run")
+}
+
+// A raw carve of an image whose partition table cannot be read (its backup GPT chunk is corrupt) is legitimate,
+// every byte being unknown: verify recomputes it with the unknown classifier and reports nothing about it.
+func TestAllocationRecheckCarvedRawUnreadableTable(t *testing.T) {
+	nodes := []fstest.Node{carveDeleted("/del.jpg", carvetest.JPEG(carvetest.JPEGOpts{EntropyLen: 3000}))}
+	data := carveDisk(carveFS(nodes...))
+	last := (len(data) - 1) / 4096
+	bad := bytes.Repeat([]byte{0x55}, 4096+4) // the right length, a wrong Adler-32
+	segs := ewftest.Build(ewftest.Options{
+		SectorsPerChunk: 8, ChunksPerSegment: last + 2, Compress: ewftest.CompressNone,
+		Override: map[int]ewftest.RawChunk{last: {Data: bad}},
+	}, data)
+	dir := t.TempDir()
+	paths := make([]string, len(segs))
+	for i, sg := range segs {
+		paths[i] = filepath.Join(dir, fmt.Sprintf("disk.E0%d", i+1))
+		if err := os.WriteFile(paths[i], sg, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := carveNewCase(t)
+	recs, err := Import(context.Background(), c, "img", paths, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts, _ := carveOpts(nil)
+	s, err := OpenContainer(c, recs[0].ID, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	if err := s.ReadPartitions(); err == nil {
+		t.Fatal("test setup: the partition table is readable")
+	}
+	e := &carveEnv{c: c, s: s, img: data, rec: recs[0]}
+	if cs := e.carve(t, CarveOptions{Scope: CarveRaw}); cs.Carved == 0 {
+		t.Fatalf("carved %d", cs.Carved)
+	}
+	rep := carveVerify(t, e)
+	for _, p := range rep.Problems {
+		if strings.Contains(p, "allocation") || strings.Contains(p, "cannot be opened") {
+			t.Errorf("problem on a legitimate unknown-allocation carve: %s", p)
+		}
+	}
+	if rep.AllocationRechecked == 0 {
+		t.Error("the carve was not rechecked")
+	}
 }

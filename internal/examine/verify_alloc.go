@@ -2,11 +2,13 @@ package examine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
+	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/filesys/detect"
 	"github.com/rbenzing/minutiae/internal/volume"
 )
@@ -163,10 +165,21 @@ func verifyAllocation(ctx context.Context, c *evidence.Case, recs []evidence.Man
 		})
 		if sessID != k.parent || (sess == nil && sessEr == nil) {
 			closeSess()
-			sess, sessEr = Open(c, k.parent, Options{Drivers: drivers})
+			// the container alone: a carve of scope raw is legitimate on media whose partition table cannot be read
+			sess, sessEr = OpenContainer(c, k.parent, Options{Drivers: drivers})
+			if sessEr == nil {
+				if perr := sess.ReadPartitions(); errors.Is(perr, evidence.ErrIntegrity) {
+					sessEr = perr // an integrity failure is never read as an unreadable table
+					closeSess()
+				}
+			}
 			sessID = k.parent
 		}
-		if !a.group(ctx, sess, sessEr, k, g) {
+		openErr := sessEr
+		if openErr == nil && k.rule != allocRaw && sess.Table == nil {
+			openErr = sess.tableErr // the rules that need the table cannot run without it
+		}
+		if !a.group(ctx, sess, openErr, k, g) {
 			break
 		}
 	}
@@ -201,6 +214,9 @@ func (a *allocator) group(ctx context.Context, s *Session, openErr error, k allo
 		if openErr != nil {
 			return skip("parent %q cannot be opened: %v", k.parent, openErr)
 		}
+		if s.Table == nil {
+			return skip("the partition table of parent %q is not available", k.parent)
+		}
 		// the gaps are listed exactly as the volume scope lists them
 		runs, _, err := s.unallocatedRunsNote(nil, volume.Partition{}, true)
 		if err != nil {
@@ -212,7 +228,7 @@ func (a *allocator) group(ctx context.Context, s *Session, openErr error, k allo
 		if openErr != nil {
 			return skip("parent %q cannot be opened: %v", k.parent, openErr)
 		}
-		cls := newUnknownClassifier(s.Image.Size()) // a table that cannot be read leaves every byte unknown
+		cls := newUnknownClassifier(s.Image.Size()) // a table that cannot be read leaves every byte unknown, as the writer has it
 		if s.Table != nil {
 			var err error
 			if cls, err = s.newAllocClassifier(); err != nil {
@@ -280,10 +296,17 @@ func (a *allocator) oneRaw(rec evidence.ManifestRecord, cls *allocClassifier) {
 	}
 	var sum evidence.AllocSummary
 	var first allocRegion
+	var total int64 // the running sum of the run lengths: it bounds the work by the artifact's size
 	for i, r := range runs {
 		if r.Offset < 0 || r.Length <= 0 {
 			return // holes, empty and negative runs are reported by the runs check
 		}
+		t, ok := filesys.AddOK(total, r.Length)
+		if !ok || t > rec.Size {
+			a.problem(rec, "runs total more than the artifact's size %d from run %d on (%d runs not recomputed)", rec.Size, i, len(runs)-i)
+			return
+		}
+		total = t
 		got, reg, ok := cls.classify(r)
 		if !ok {
 			a.problem(rec, "run %d (%d+%d) lies outside the image or crosses a region of its allocation", i, r.Offset, r.Length)
