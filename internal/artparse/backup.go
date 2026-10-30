@@ -70,6 +70,10 @@ type BackupResolution struct {
 type BackupMap struct {
 	Resolution BackupResolution
 	names      map[string]backupName // by file ID
+	// listed are the logical paths of the -wal/-journal rows the Manifest.db lists, held by the case or not (bounded by
+	// iosbackup.MaxCompanionRows; listedDropped counts the rest)
+	listed        map[string]struct{}
+	listedDropped int64
 }
 
 type backupName struct{ logical, reason string }
@@ -578,6 +582,13 @@ func (h *Host) nameBackup(g *backupGroup, res BackupResolution, files *iosbackup
 			res.Mapped++
 		}
 	}
+	if files != nil {
+		cs, dropped := files.Companions()
+		bm.listed, bm.listedDropped = make(map[string]struct{}, len(cs)), dropped
+		for _, e := range cs {
+			bm.listed["ios:"+e.Domain+"/"+e.RelativePath] = struct{}{}
+		}
+	}
 	res.Unmapped += len(g.other)
 	bm.Resolution = res
 	return bm
@@ -716,4 +727,110 @@ func unnamedBackupFileReason(snap *Snapshot, rec evidence.ManifestRecord) string
 		return why
 	}
 	return ""
+}
+
+// BackupSiblings is what an iOS backup's Manifest.db says about the companions of one backup database file.
+type BackupSiblings struct {
+	Named        bool         // the backup was resolved and the artifact has a logical path in it
+	WAL, Journal string       // artifact ids of <logical>-wal and <logical>-journal in the same backup; "" when the manifest names none
+	ManifestDB   *ArtifactRef // the hash-checked Manifest.db that named them; nil when not Named
+	Reason       string       // why not Named (encrypted backup, no Manifest.db, not a backup file, ...)
+	Logical      string       // the database's logical path in the backup (when Named)
+
+	// Unknown is never absent (4h-R8): what the Manifest.db says that the case cannot confirm.
+	WalListedNotHeld, JournalListedNotHeld bool  // the Manifest.db lists <logical>-wal / -journal, the case holds no such file
+	UnmappedHeld                           int   // held files of this backup with no logical path (a companion may be among them)
+	ListedUnchecked                        int64 // listed companion paths beyond the bound, not checked
+}
+
+// BackupSiblings resolves the case's backups (snapshotFor) and returns the siblings of artifactID. A Manifest.db
+// that fails its hash check is an error matching evidence.ErrIntegrity.
+func (h *Host) BackupSiblings(ctx context.Context, artifactID string) (BackupSiblings, error) {
+	snap, rs, err := h.snapshotFor(ctx)
+	if err != nil {
+		return BackupSiblings{}, err
+	}
+	// every backup of the case is resolved, as a recovery does: a Manifest.db that fails its hash check names
+	// nothing, and it is never read as "no siblings"
+	for _, r := range rs {
+		if r.Integrity {
+			return BackupSiblings{}, fmt.Errorf("%w: backup %s/%s: %s", evidence.ErrIntegrity, cleanAuditText(r.Acquisition, maxPathText), cleanAuditText(r.Dir, maxPathText), cleanAuditText(r.Reason, maxReason))
+		}
+	}
+	rec, ok := snap.Record(artifactID)
+	if !ok {
+		return BackupSiblings{}, fmt.Errorf("%w: %q", evidence.ErrUnknownArtifact, artifactID)
+	}
+	acq, dir, fileID, ok := backupPathOf(rec)
+	if !ok {
+		return BackupSiblings{Reason: whyNoBackupLogical(rec, snap.env)}, nil
+	}
+	bm := snap.env.Backups[backupKey(acq, dir)]
+	switch {
+	case bm == nil:
+		return BackupSiblings{Reason: reasonNoManifest}, nil
+	case bm.Resolution.Encryption == encEncrypted:
+		return BackupSiblings{Reason: reasonEncrypted}, nil
+	case bm.Resolution.Status != BackupMapped:
+		return BackupSiblings{Reason: bm.Resolution.Reason}, nil
+	}
+	logical, why, ok := bm.Logical(fileID)
+	if !ok {
+		if why == "" {
+			why = "no logical path"
+		}
+		return BackupSiblings{Reason: why}, nil
+	}
+	out := BackupSiblings{Named: true, ManifestDB: bm.Resolution.ManifestDB, Logical: logical}
+	out.ListedUnchecked = bm.listedDropped
+	for _, m := range snap.records { // held files of this backup that the Manifest.db gave no logical path
+		if a2, d2, f2, ok := backupPathOf(m); ok && a2 == acq && d2 == dir {
+			if _, _, named := bm.Logical(f2); !named {
+				out.UnmappedHeld++
+			}
+		}
+	}
+	for _, c := range []struct {
+		suffix  string
+		into    *string
+		notHeld *bool
+	}{{"-wal", &out.WAL, &out.WalListedNotHeld}, {"-journal", &out.Journal, &out.JournalListedNotHeld}} {
+		var found []string
+		for _, m := range snap.records {
+			a2, d2, f2, ok := backupPathOf(m)
+			if !ok || a2 != acq || d2 != dir {
+				continue
+			}
+			if l2, _, named := bm.Logical(f2); named && l2 == logical+c.suffix {
+				found = append(found, m.ID)
+			}
+		}
+		switch len(found) {
+		case 0:
+			_, *c.notHeld = bm.listed[logical+c.suffix]
+		case 1:
+			*c.into = found[0]
+		default:
+			return BackupSiblings{Reason: fmt.Sprintf("ambiguous: %d files of the backup are listed as %s%s", len(found), cleanAuditText(logical, maxPathText), c.suffix)}, nil
+		}
+	}
+	return out, nil
+}
+
+// Warnings says, one line each, what the Manifest.db listed or left unnamed that the pairing could not use.
+func (b BackupSiblings) Warnings() []string {
+	var out []string
+	if b.WalListedNotHeld {
+		out = append(out, fmt.Sprintf("the Manifest.db lists %s-wal but the case holds no such file", b.Logical))
+	}
+	if b.JournalListedNotHeld {
+		out = append(out, fmt.Sprintf("the Manifest.db lists %s-journal but the case holds no such file", b.Logical))
+	}
+	if b.UnmappedHeld > 0 {
+		out = append(out, fmt.Sprintf("%d backup files of this backup have no logical path; a companion may be among them", b.UnmappedHeld))
+	}
+	if b.ListedUnchecked > 0 {
+		out = append(out, fmt.Sprintf("%d listed -wal/-journal paths beyond the bound were not checked; a companion may be among them", b.ListedUnchecked))
+	}
+	return out
 }

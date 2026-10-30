@@ -31,7 +31,7 @@ func probeOf(t *testing.T, tables map[string]string) parse.Applicability {
 func TestMetaAndProbe(t *testing.T) {
 	p := ioscalls.Parser{}
 	m := p.Meta()
-	if err := parse.ValidateMeta(m); err != nil || len(m.Claims) != 0 || m.Name != "ios.calls" ||
+	if err := parse.ValidateMeta(m); err != nil || len(m.Claims) != 2 || m.Name != "ios.calls" ||
 		m.Version != ioscalls.Version || m.Emits[0].Type != "call" {
 		t.Fatalf("meta %+v: %v", m, err)
 	}

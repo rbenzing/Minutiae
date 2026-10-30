@@ -7,6 +7,7 @@ package iossms_test
 var fixturePins = map[string]string{
 	"ios10-seconds.db":    "c160b52cb77b429166009045671a8e2b9f2fdbade330840dc528d413d3f15d49",
 	"ios14-attributed.db": "4257d1f699b706c14b0124f94143e341f52b553e3f393da899bf6797e3f58845",
+	"ios17-deleted.db":    "97b61f2bf1ed9b8f558119aeaa5847670c76bc74fcfb02d3703bb31aed57313c",
 	"ios17-nanos.db":      "e488ae5b03c9b6700ae1580f3adb99b2b22b67d532a13c4ae37f41d9df83cfac",
 	"ios17-wal.db":        "6b79aaca59bd6134ee656264d5719b9104a58852699a0b4fa9890fa5e60f1b80",
 	"ios17-wal.wal":       "f02a08a895651e008716d9370ac1838a3381775508d651c17ecd9431bcf02396",

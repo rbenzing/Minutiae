@@ -19,11 +19,11 @@ const (
 	logicalLegacy = "ios:HomeDomain/Library/CallHistory/call_history.db"
 )
 
-var variants = []string{"coredata-current", "coredata-wal", "legacy-call-history"}
+var variants = []string{"coredata-current", "coredata-wal", "legacy-call-history", "coredata-deleted", "legacy-deleted"}
 
 // remotesFor is where the variant's database sits on the device and its logical path.
 func remotesFor(variant string) (remote, logical string) {
-	if variant == "legacy-call-history" {
+	if variant == "legacy-call-history" || variant == "legacy-deleted" {
 		return remoteLegacy, logicalLegacy
 	}
 	return remoteCore, logicalCore
@@ -50,9 +50,15 @@ func TestFixturesArePinnedByHash(t *testing.T) {
 }
 
 func TestEveryCommittedFixtureIsInTheVariantList(t *testing.T) {
-	m, err := filepath.Glob("testdata/*.expect.json")
+	all, err := filepath.Glob("testdata/*.expect.json")
 	if err != nil {
 		t.Fatal(err)
+	}
+	var m []string
+	for _, p := range all {
+		if !strings.HasSuffix(p, ".recover.expect.json") { // the typed recovery oracles are checked by TestEveryRecoverOracleHasAFixture
+			m = append(m, p)
+		}
 	}
 	if len(m) != len(variants) {
 		t.Errorf("%d fixtures on disk, %d in the variant list", len(m), len(variants))
@@ -70,7 +76,7 @@ func TestFixturesNameAnExistingDDLSnapshot(t *testing.T) {
 	for _, v := range variants {
 		ddl := parsertest.LoadFixture(t, "testdata", v).Expect.DDL
 		want := "callhistory-coredata.sql"
-		if v == "legacy-call-history" {
+		if v == "legacy-call-history" || v == "legacy-deleted" {
 			want = "callhistory-legacy.sql"
 		}
 		if ddl != want {

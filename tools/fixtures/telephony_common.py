@@ -407,7 +407,7 @@ def recover_oracle(variant, files, scen, make_env, expect_fn, nobody="identifies
         out["generator"]["files"][role] = hashlib.sha256(data).hexdigest()
     for h in hist:
         table = h["table"]
-        if table.lower() not in scen.claimed:
+        if table.lower() not in [c.lower() for c in scen.claimed]:
             continue
         vals = [dec(v) for v in h["values"]]
         cols = scen.columns[table]

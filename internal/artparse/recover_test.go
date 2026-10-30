@@ -332,10 +332,10 @@ func TestRecoverTypedAuditsJobs(t *testing.T) {
 	if start.Op != "parse-recover" || start.RecoverStart == nil || start.OnlyPrimary != rc.dbs[0].ID || start.MinConfidence != 0 || start.ExpectCompanions["wal"] != "" || len(start.Parsers) != 1 || start.Parsers[0].Name != "rm.recover" {
 		t.Errorf("analysis.start = %+v", start)
 	}
-	// RecoverTyped resolves no backups: the audit states it as unknown (null and backups_resolved false), never as an
-	// empty list, which would claim that the case has no backup (4E carry-over, Task 16).
-	if raw := all[as].Details["backups"]; raw != nil || all[as].Details["backups_resolved"] != false || start.Backups != nil || start.BackupsResolved {
-		t.Errorf("analysis.start backups = %#v resolved %#v, want null and false", raw, all[as].Details["backups_resolved"])
+	// RecoverTyped resolves every backup of the case (4h-R30): the audit states them as an array (empty here, and an
+	// empty list is then a fact: the case has none) and backups_resolved true.
+	if raw, ok := all[as].Details["backups"].([]any); !ok || len(raw) != 0 || all[as].Details["backups_resolved"] != true || start.Backups == nil || len(start.Backups) != 0 || !start.BackupsResolved {
+		t.Errorf("analysis.start backups = %#v resolved %#v, want an empty array and true", all[as].Details["backups"], all[as].Details["backups_resolved"])
 	}
 	jobStart := decodeEntry[artparse.JobStart](t, all[js])
 	if jobStart.RecoverJobStart == nil || !slices.Equal(jobStart.ClaimedTables, []string{"people"}) || jobStart.LiveParser.Name != "rm" || jobStart.Parser.Name != "rm.recover" {

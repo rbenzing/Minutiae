@@ -62,6 +62,9 @@ TIME_KINDS = [("read", "date_read"), ("delivered", "date_delivered"), ("played",
               ("edited", "date_edited"), ("retracted", "date_retracted")]
 GUID_RE = re.compile(r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}")
 PREFIXES = ("~/", "/var/mobile/", "/private/var/mobile/")
+CLAIMED = ("message",)  # Meta.Claims of ios.sms: ClaimableTables
+ALIAS = {"message": "ROWID"}
+SCENARIOS = {}  # variant -> C.Scenario, filled when the variant is generated (the typed recovery oracle)
 
 # What the generator wrote into each blob it makes, keyed by the blob's bytes: the oracle states the facts from
 # this record, never from decoding the blob again.
@@ -708,6 +711,10 @@ def variant_wal(work):
     with C.batch(con):
         populate_dims(con, handles, chats)
         populate_messages(con, base, chat_of)
+    scen = SCENARIOS["ios17-wal"] = C.Scenario(CLAIMED, alias=ALIAS)
+    before = scen.snap(con, "message")
+    scen.write("message", before)  # the versions the WAL then supersedes; the WAL's own rows are live
+    scen.want("message", [r for r in before if r[0] == 5])  # message 5 as the database file still holds it, before the edit
     con.execute("pragma journal_mode = wal")
     con.close()
     new = [msg(9, text="only in the wal, a"), out(10, text="only in the wal, b"), msg(11, handle_id=2, service="SMS", text="only in the wal, c")]
@@ -791,7 +798,51 @@ def variant_ios10(work):
     return files, oracle(files, "sms-ios10.sql", "ios10-seconds", ())
 
 
-VARIANTS = {"ios10-seconds": variant_ios10, "ios14-attributed": variant_ios14, "ios17-nanos": variant_nanos, "ios17-wal": variant_wal}
+def variant_deleted(work):
+    """1024-byte pages, secure_delete OFF. 50 messages (ROWID 1 to 50, a long text each) with their chat_message_join rows;
+    messages 46 to 50 are deleted first (a whole leaf page: the freelist trunk page loses its cells, so it must not hold a claimed
+    row), then messages 21 to 45, with their join rows, and handle 3 is deleted: messages 41 to 45 were from handle 3 (so a
+    recovered message of 41 to 45 has no live handle: participants_unknown, 4G-R8), those of 21 to 40 come from handles 1
+    and 2. Whole leaf pages go to the freelist: the oracle expects basis fit, attributed to message (the rows of freed pages
+    only: a page that keeps live cells keeps its deleted ones in place). A recovered message joins the LIVE tables, so it has
+    no chat join (the joins were deleted). A lone database."""
+    path = work + "/s.db"
+    con = C.connect(path, page_size=1024)
+    con.executescript(C.load_ddl("sms-ios17.sql", SCHEMAS)[0])
+    rows, chat_of = [], {}
+    for i in range(1, 51):
+        hid = 3 if 41 <= i <= 45 else (1 if i % 2 else 2)
+        svc = "SMS" if hid == 2 else "iMessage"
+        text = "message %02d %s" % (i, "body " * 18)
+        rows.append((out if i % 5 == 0 and hid != 3 else msg)(i, handle_id=hid, service=svc, text=text))
+        chat_of[i] = [2 if hid == 2 else 1]
+    with C.batch(con):
+        populate_dims(con, HANDLES[:3], CHATS[:2])
+        populate_messages(con, rows, chat_of)
+    scen = SCENARIOS["ios17-deleted"] = C.Scenario(CLAIMED, alias=ALIAS)
+    scen.write("message", scen.snap(con, "message"))
+    scen.want("message", scen.snap(con, "message", "ROWID between 21 and 45"), label="message")
+    con.execute("delete from message where ROWID between 46 and 50")  # the first freed page is the freelist trunk: its cells are lost
+    con.execute("delete from message where ROWID between 21 and 45")
+    con.execute("delete from chat_message_join where message_id between 21 and 50")
+    con.execute("delete from handle where ROWID = 3")
+    con.close()
+    files = {"db": C.read(path)}
+    return files, oracle(files, "sms-ios17.sql", "ios17-deleted", ())
+
+
+def recover_expect(variant, files):
+    """The <variant>.recover.expect.json of a variant that has a scenario (ruling 4G-R14). A recovered message joins the LIVE
+    handle, chat and attachment rows (4G-R8); one whose handle is gone states participants_unknown."""
+    def make(f):
+        return make_env(C.engine_view(f, TABLES), [])
+
+    return C.recover_oracle(variant, files, SCENARIOS[variant], make,
+                            lambda table, d, env, file: expect_message(d, env, file, ""))
+
+
+VARIANTS = {"ios10-seconds": variant_ios10, "ios14-attributed": variant_ios14, "ios17-nanos": variant_nanos, "ios17-wal": variant_wal,
+            "ios17-deleted": variant_deleted}
 
 
 def _selfcheck():

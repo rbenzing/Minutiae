@@ -1774,7 +1774,7 @@ value back from the engine on a copy of the finished files. Databases are byte-r
 | `current-wal` | `chromium-current.sql` | as `current` | the `current` rows, then a killed writer commits 3 visits and 1 download that exist only in the `-wal` and edits the title of URL 1 there |
 | `mid-upgraded` | `chromium-mid.sql` | `/data/data/com.microsoft.emmx/app_chrome/Default/History` (edge, Default) | rows before and after the phase 2 `ALTER` (`opener_visit` absent on the old visits); phase 1 matches no real file and the variant is synthetic data, not a real version 48 or 49 database |
 | `old` | `chromium-old.sql` | `/data/user/10/com.brave.browser/app_chrome/Profile 1/History` (brave, Profile 1) | synthetic: no `downloads` tables |
-| `minimal` | `chromium-minimal.sql` | `/data/data/com.example.reader/app_webview/Default/History` (webview, Default) | `urls`, `visits`, `meta` only |
+| `minimal` | `chromium-minimal.sql` | `/data/data/com.example.reader/app_webview/Default/History` (webview, Default) | `urls`, `visits`, `meta` only; the REAL `visit_count` cells 1.25 (URL 1, joined by its visits) and 2.5 (visitless URL 2) give the Chromium `_ieee` path an independent oracle (4H; only this variant was regenerated, with the 3.53.4 host SQLite, the others keep their committed bytes) |
 | `chromium-deleted` | `chromium-current.sql` | chrome, Default; 45 visits with `urls` rows (a 240-byte external referrer each), 24 search terms, 18 downloads; page 1024, `secure_delete = OFF`; visits 31 to 45, terms 13 to 24 and downloads 10 to 18 deleted, `urls` 31 to 40 with their visits, the chain rows of the odd deleted downloads | whole freed pages: the typed recovery oracle lists the freelist rows (`fit`, 60): visits 41 to 45 typed, the visits of 31 to 40 whose page was freed under `unmapped` (`urls`: their `urls` rows are gone, 4F-R4), the terms (13 to 18 with a live URL, 19 to 24 without) and the downloads (with the chain of the even ids only); the live join is read from the final `urls` and `downloads_url_chains` rows (4G-R8). 4.4 KiB gzipped, oracle 53 KiB |
 
 Facts of the scenario: `downloads_url_chains` has `PRIMARY KEY (id, chain_index)`, so no conforming file holds a repeated
@@ -1857,10 +1857,12 @@ py -3 tools/fixtures/telephony_gen.py --family calllog --recover-oracle --out in
 py -3 tools/fixtures/telephony_gen.py --family contacts --recover-oracle --out internal/parsers/androidcontacts/testdata
 py -3 tools/fixtures/telephony_gen.py --family chromium --recover-oracle --out internal/parsers/chromium/testdata
 py -3 tools/fixtures/telephony_gen.py --family safari --recover-oracle --out internal/parsers/safari/testdata
+py -3 tools/fixtures/telephony_gen.py --family ios_calls --recover-oracle --out internal/parsers/ioscalls/testdata
+py -3 tools/fixtures/telephony_gen.py --family ios_sms --recover-oracle --out internal/parsers/iossms/testdata
 ```
 
 writes `<variant>.recover.expect.json` for every variant that has a scenario (`av-freelist-512`, `wal-uncheckpointed`,
-`hot-journal`, `mmssms-pdu-deleted`; `calllog-deleted`, `calllog-wal-edit`; `contacts-deleted`, `contacts-wal-edit`; `chromium-deleted`; Safari `deleted`): what the typed recovery pass must make of the fixture. It is computed from the
+`hot-journal`, `mmssms-pdu-deleted`; `calllog-deleted`, `calllog-wal-edit`; `contacts-deleted`, `contacts-wal-edit`; `chromium-deleted`; Safari `deleted`; `ios_calls` `coredata-deleted`, `legacy-deleted`; `ios_sms` `ios17-deleted`, `ios17-wal`; `ios_addressbook` `deleted`, see its section below): what the typed recovery pass must make of the fixture. It is computed from the
 COMMITTED files of the variant, never from Go output: `sqlite_oracle.build_history` (the independent page walker of the
 SQLite fixtures) finds in the page images the versions the scenario says should be history (`wants`: deleted rows,
 pre-update versions, interrupted versions) and gives method, relation, basis (`fit` with the claimed table as label on
@@ -1972,6 +1974,10 @@ py -3 tools/fixtures/telephony_gen.py --family ios_calls --check
 | `coredata-current` | `callhistory-coredata.sql` | 20 rows: in answered and missed, out answered, out unanswered (outcome `unknown`), `ZORIGINATED` 2; `ZCALLTYPE` 1, 8, 16, 99; three providers; `ZADDRESS` TEXT, BLOB, BLOB with trailing garbage, NULL, empty; `ZDATE` REAL, integral REAL (stored INTEGER), 0, -1, year 2100; `ZDURATION` 0, 12.5, -3, `+Inf`, 2e9, NULL; `ZREAD` 0/1/NULL |
 | `coredata-wal` | `callhistory-coredata.sql` | 8 rows in the database, 3 calls only in the `-wal` (a killed writer) |
 | `legacy-call-history` | `callhistory-legacy.sql` | 8 rows: Unix-seconds dates, `flags` 4, 5, 8, 1769472 (kept raw, direction unknown), a fractional REAL date, date 0, negative duration, NULL and empty address |
+| `coredata-deleted` | `callhistory-coredata.sql` | page size 1024, `secure_delete = OFF`: 60 `ZCALLRECORD` rows (a 130-byte caller name, fractional `ZDURATION` so a REAL stays a REAL), rows 21 to 50 deleted; the typed recovery oracle lists the 22 typed calls (Z_PK 29 to 50) of the freed whole leaf pages (`fit`, 60), none unmapped. 1.8 KiB gzipped |
+| `legacy-deleted` | `callhistory-legacy.sql` | the same on `call`: 60 rows, rows 21 to 50 deleted; the oracle lists the 20 typed calls (ROWID 31 to 50) of the freed pages. 1.5 KiB gzipped |
+
+The `*-deleted` variants were generated with `--variant coredata-deleted legacy-deleted` on a host whose SQLite (3.53.4) differs from the one that wrote the three older variants (3.49.1); regenerating all five there changes the older files, so only the new ones were written and pinned by hand. The oracle lists fewer than the 30 deleted rows because the rebalance after the delete rewrites the page that keeps live cells, which loses the stale cells of the first deleted rows.
 
 ### ios-addressbook (plan 4E, Task 13)
 
@@ -1986,7 +1992,12 @@ code with the Go parser. All variants are plain databases, so regeneration is by
 py -3 tools/fixtures/telephony_gen.py --family ios_addressbook --out internal/parsers/iosaddressbook/testdata \
     --pins-go internal/parsers/iosaddressbook/pins_test.go --pins-package iosaddressbook_test
 py -3 tools/fixtures/telephony_gen.py --family ios_addressbook --check
+py -3 tools/fixtures/telephony_gen.py --family ios_addressbook --recover-oracle --variant deleted --out internal/parsers/iosaddressbook/testdata
 ```
+
+`--recover-oracle` (plan 4H) writes `deleted.recover.expect.json` from the committed `deleted.db.gz`; regenerating the
+one variant is `--variant deleted --out internal/parsers/iosaddressbook/testdata` (no `--pins-go`: it needs every
+variant, and the host SQLite would rewrite the other fixtures).
 
 | Variant (`internal/parsers/iosaddressbook/testdata/`) | DDL snapshot | Holds |
 |---|---|---|
@@ -1994,6 +2005,7 @@ py -3 tools/fixtures/telephony_gen.py --family ios_addressbook --check
 | `with-images` | `addressbook-current.sql` + `addressbookimages.sql` (role `images`, `with-images.images.db.gz`) | 3 persons: a thumbnail only, a full-size image only, neither (`photo.present` true, true, false) |
 | `older-schema` | `addressbook-older.sql` | 4 persons without `DisplayName`, `StoreID`, `guid`, `ExternalUUID`, `ABStore`: composed names, no accounts |
 | `huge-contact` | `addressbook-current.sql` | one person with 1200 phones and 1100 e-mail addresses: lists cut at 1000 with `_total` and `_truncated` |
+| `deleted` (plan 4H Task 3) | `addressbook-current.sql` | 35 persons (a first and last name, a 120-byte note, one phone and one e-mail each; person 20 has none of name, organization or multi-value), 1024-byte pages, `secure_delete = OFF`; persons 11 to 35 deleted with their multi-values (the multi-values first, so the freelist trunk is not a person page; no live person follows, or the balance would overwrite the first freed page): the typed recovery oracle lists 24 typed `ABPerson` records (`fit`, 60; no phones or e-mails, the live multi-values are gone) and person 20 `unmapped` (`identifies nobody`). 2.5 KiB gzipped, oracle 31 KiB. Its `.db.gz` was written by the host SQLite of 2026-10-30; the older variants were not regenerated (a new SQLite version changes their header bytes) |
 
 ### ios-sms (plan 4E, Task 7)
 
@@ -2012,6 +2024,7 @@ it differs on every regeneration: regenerate the files, the oracle and the pins 
 py -3 tools/fixtures/telephony_gen.py --family ios_sms --out internal/parsers/iossms/testdata \
     --pins-go internal/parsers/iossms/pins_test.go --pins-package iossms_test
 py -3 tools/fixtures/telephony_gen.py --family ios_sms --check
+py -3 tools/fixtures/telephony_gen.py --family ios_sms --out internal/parsers/iossms/testdata --variant ios17-deleted   # one variant, then --recover-oracle
 ```
 
 | Variant (`internal/parsers/iossms/testdata/`) | DDL snapshot | Holds |
@@ -2019,7 +2032,8 @@ py -3 tools/fixtures/telephony_gen.py --family ios_sms --check
 | `ios17-nanos` | `sms-ios17.sql` | 45 messages: SMS 1:1, an iMessage to a 3-member titled group, `attributedBody`-only text (emoji, ZWJ, skin tones), equal and differing `text` and `attributedBody`, invalid UTF-8 and a truncated stream, NULL/NULL with and without attachment, reactions 2001 (`p:0/<GUID>`), 3001 (`bp:<GUID>`) and a malformed `x:abc`, a system rename, dates 0 / seconds / nanoseconds (non-zero last digit) / year 2100, read / delivered / played / edited / retracted times, a recently-deleted message, a message in two chats and in none, `handle_id` 0 and dangling, one number under two handles, `is_from_me` 2, `error` 22, services `RCS` and NULL, NUL in text, a 300 KiB text, RTL text, five attachments (present `~/` and `/var/mobile/`, missing, present only in the backup of `UDID2`, `*` in the name), a NULL `item_type` and a TEXT `associated_message_type`, a two-edit `message_summary_info`, an `LPLinkMetadata` `payload_data` and a corrupt one, two identical messages |
 | `ios14-attributed` | `sms-ios14.sql` | 12 messages: six with `attributedBody` only, no edit or recently-deleted columns |
 | `ios10-seconds` | `sms-ios10.sql` | 10 messages: seconds dates only (one fractional REAL), no `attributedBody` column; three short records written before an `ALTER TABLE ADD COLUMN` |
-| `ios17-wal` | `sms-ios17.sql` | 8 messages in the database; three new messages and one edit only in the `-wal` (a killed writer) |
+| `ios17-wal` | `sms-ios17.sql` | 8 messages in the database; three new messages and one edit only in the `-wal` (a killed writer). Its recover oracle (`ios17-wal.recover.expect.json`) lists the four stored versions of message 5 as `superseded-version` records (the original in the database file and in three earlier WAL frames) |
+| `ios17-deleted` | `sms-ios17.sql` | page 1024, `secure_delete = OFF`: 50 messages (a 100-byte text each) with chat joins, from handles 1 and 2; messages 46 to 50 deleted first (their whole leaf page becomes the freelist trunk page, whose cells are lost, so it must not hold a claimed row), then 21 to 45 with their joins, and handle 3 deleted (messages 41 to 45 were from it). The recover oracle lists the 25 messages 21 to 45 as typed `message` records (`fit`, `sqlite-freelist`, 60): 41 to 45 are `participants_unknown` (`handle_state` `no-handle-row`), all have `thread_state` `no-chat-join`. 4.4 KiB gzipped, oracle 39 KiB. Generated alone: the other pins are of the SQLite build that wrote them (`--variant ios17-deleted`) |
 
 ### End to end over a backup (plan 4E, Task 16)
 

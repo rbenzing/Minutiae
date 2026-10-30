@@ -1,4 +1,4 @@
-# Records performance (sub-project 5, plan 5D)
+# Records and parser performance (sub-projects 5 and 4, plans 5D and 4H)
 
 Numbers recorded by `BenchmarkIngest`, `BenchmarkOpenArtifact`, `BenchmarkReadRunLines` and the manual
 scale test (`go test -tags scale -run TestScale ./internal/records/`, see `docs/testing.md`). The JSON
@@ -890,3 +890,25 @@ The ascii and latin paths are unchanged within noise: the segmentation step retu
 `BenchmarkIngest/batch1000` (records/s, three runs): BASE 3,794 / 3,688 / 3,552; LX-6 3,577 / 3,604 / 4,227. No difference beyond run-to-run noise; the ingest corpus is ASCII.
 
 The deterministic guard is `TestNormalizeTextASCIICostGuard` (at most 500 microseconds per 200 ascii bytes, about 40 times the measured cost) together with `TestSegmentUnigramsIsAFreeNoOpWithoutCJK` (0 allocations when there is nothing to segment).
+
+## Parser performance (sub-project 4, plan 4H)
+
+Risk R8 of the sub-project 4 spec asked three questions: is an input below 256 MiB served from memory, is a larger one streamed, and is memory held to a stated line. `TestScaleParse` (`go test -tags scale ./internal/artparse/`, one phase per process chosen by `MINUTIAE_SCALE_PHASE`, run through `heavy.sh`; `docs/testing.md`) measures them. The spec sets no time threshold, so none is asserted: throughput and per-job time are recorded only.
+
+Machine: Intel i7-1265U (10 cores, 12 threads), 15.4 GB RAM, NVMe, Windows 11, go1.26.8, run on 2026-10-30 at commit fe0d7ab plus the uncommitted test fixes of the same plan (`debug.FreeOSMemory` before the run, `rssVerdict`), beside the other builders of the plan (the machine is shared; each run holds the machine-wide lock but a builder's editor, Docker Desktop and the user's applications run beside it). Disk used by the five phases: 5.0 GB in the scale directory (inputs 1.5 GB, cases 3.5 GB), deleted after the run. Inputs: `mmssms-200m.db` 209,940,480 bytes, 855,000 `sms` rows; `mmssms-1g.db` 1,342,775,296 bytes (1.25 GiB), 5,460,000 rows; both written through the SQL engine from `tools/fixtures/schemas/android-telephony/mmssms-aosp-baseline.sql`, bodies 40 to 160 bytes and every 50th row 2 to 4 KiB (overflow pages). `decode-*` run `android.mmssms` through `Host.Run` with a counting writer (the parse without the records writer); `ingest-200m` and `jobs-500` use the real records writer. `jobs-500` is 500 `android.calllog` bundles of 20 to 36 rows under `/data/user/<n>/`.
+
+| Phase | MemBudget | Input bytes | Records | Seconds | Records/s | MiB/s | Peak RSS | RSS line | Streamed | Outcome |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `decode-200m` | 1 GiB | 209,940,480 | 855,000 | 13.0 | 65,799 | 15.4 | 545 MiB | input + 2 GiB = 2,248 MiB (pass) | no | complete |
+| `decode-1g` | 256 MiB | 1,342,775,296 | 5,460,000 | 96.0 | 56,892 | 13.3 | 136 MiB | 512 MiB (pass) | yes | complete |
+| `ingest-200m` | 1 GiB | 209,940,480 | 855,000 | 224.7 | 3,805 | 0.89 | 698 MiB | input + 2 GiB = 2,248 MiB (pass) | no | complete |
+| `jobs-500` | 256 MiB | 6,144,000 (500 files) | 13,965 | 74.5 | 187 | 0.08 | 94 MiB | 512 MiB (pass) | no | 500 of 500 complete |
+
+`jobs-500` per-job time (the `Duration` of each job, parse and ingest of one bundle): mean 147.3 ms, p95 276.4 ms; the whole run, 74.5 s, is 149 ms per job including the host's per-job audit entries and re-hash.
+
+What R8 asked, answered:
+- Below 256 MiB in memory: shown. The 200 MiB input has no `streamed` entry in `parse.job.end` (both `decode-200m` and `ingest-200m`).
+- Above it streamed: shown. The 1.25 GiB input is listed as streamed.
+- Memory held to the lines: shown on this platform. In memory, the peak (545 MiB decode, 698 MiB ingest) is far below `input size + 2 x MemBudget`; streamed, 1.25 GiB costs 136 MiB (it does not cost its size) and 500 jobs at a 256 MiB budget cost 94 MiB, both below `2 x MemBudget` = 512 MiB. A platform that cannot read the peak (`peakrss_other_test.go`) skips the phase with "peak RSS not measured on this platform": it is "not measured" there, never a pass.
+
+Caveats. The peak is the high-water mark of the whole test process (Windows peak working set), so it includes the phase's setup (capturing the input into a case, and for `jobs-500` generating the bundles in process): it is an upper bound of the parse. The ingest rate (3,805 records/s) is the records writer's (FTS maintenance and fsync, see the ingest bullets above), not the parsers': the same 855,000 rows decode at 65,799 records/s. Times on a shared machine vary: the first `decode-200m` run of this plan (118.4 s, 7,221 records/s, peak RSS 581 MiB, same code) ran while another builder's check was using the machine; the table is the later run. One run per phase, so there is no spread. The Linux `VmHWM` path and the unmeasured path were not run (Windows only).

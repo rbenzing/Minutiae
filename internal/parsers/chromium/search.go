@@ -55,7 +55,7 @@ func mapSearch(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 	if kv, kk := rowrun.IntCell(row, c.At("keyword_id")); kk == rowrun.CellValue {
 		s.EngineID = strconv.FormatInt(kv, 10)
 	} else {
-		rowrun.Flag(unknown, row, "keyword_id", c.At("keyword_id"), kk)
+		flagInt(raw, unknown, row, "keyword_id", c.At("keyword_id"), kk)
 	}
 
 	rec := records.Record{Type: web.SearchType, ArtifactID: place.ArtifactID, SourcePath: place.SourcePath, Locator: place.Locator, Range: &place.Range}
@@ -83,11 +83,11 @@ func mapSearch(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 					s.TimeSource = "urls.last_visit_time"
 				}
 			} else {
-				rowrun.Flag(unknown, ur.row, "last_visit_time", ur.cols.At("last_visit_time"), lk)
+				flagInt(raw, unknown, ur.row, "last_visit_time", ur.cols.At("last_visit_time"), lk)
 			}
 		}
 	} else {
-		rowrun.Flag(unknown, row, "url_id", c.At("url_id"), uk)
+		flagInt(raw, unknown, row, "url_id", c.At("url_id"), uk)
 	}
 	stampLabel(raw, profile, pkg)
 	if len(unknown) > 0 {

@@ -101,7 +101,8 @@ func newSQLiteRecoverCmd(d Deps, opts *rootOptions) *cobra.Command {
 		Short: "Recover deleted rows from a SQLite database artifact",
 		Long: "Recover the deleted rows of a SQLite database artifact, and of its WAL and rollback journal, and store them\n" +
 			"as db_row records (recovered, never live) with their confidence. The WAL and the journal are found by the\n" +
-			"manifest identity of the database, or named with --wal and --journal. With --list nothing is written: the\n" +
+			"manifest identity of the database (for a file of an iOS backup, from that backup's Manifest.db), or named\n" +
+			"with --wal and --journal. With --list nothing is written: the\n" +
 			"command prints what a run would do. Exit 0 on success (a narrowed run included, its narrowing is printed),\n" +
 			"1 on an error, 2 for a usage error or a case that needs case upgrade or records reindex, 4 when an input no\n" +
 			"longer matches the evidence.",
@@ -128,7 +129,12 @@ func newSQLiteRecoverCmd(d Deps, opts *rootOptions) *cobra.Command {
 				ctx, cancel = context.WithTimeout(ctx, f.timeout)
 				defer cancel()
 			}
-			in := f.inputs(args[0])
+			// a database that is a file of an iOS backup gets the companions its Manifest.db names (4h-R8); the generic
+			// and the typed run read the same bundle
+			in, bsib, err := pairBackupSiblings(ctx, d, c, f.inputs(args[0]))
+			if err != nil {
+				return err
+			}
 			if f.list {
 				as, err := dbrecover.Plan(ctx, c, in, o)
 				if err != nil {
@@ -138,10 +144,11 @@ func newSQLiteRecoverCmd(d Deps, opts *rootOptions) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return printSQLiteAssessment(d.Out, c, as, opts.json, claims)
+				return printSQLiteAssessment(d.Out, c, as, opts.json, claims, bsib)
 			}
 			// the typed pass first (4G-R5); it honors a claim only for a job that concluded
 			tr, typedExcl, typedErr := composeTyped(ctx, d, c, in, f.allowReingest)
+			tr.backup = bsib
 			if tr.Stop {
 				return errors.Join(typedErr, printTypedOnly(d.Out, tr, opts.json))
 			}
@@ -231,9 +238,11 @@ type sqliteReportJSON struct {
 	Ingest     *sqliteIngestJSON            `json:"ingest,omitempty"`
 	Claims     []claimedJSON                `json:"claims,omitempty"`
 	Typed      *typedJSON                   `json:"typed"`
-	Incomplete bool                         `json:"incomplete,omitempty"`
-	Stopped    string                       `json:"stopped,omitempty"`
-	NotStarted string                       `json:"not_started,omitempty"`
+	// BackupSiblings: null unless the database is a file of an iOS backup whose Manifest.db was asked for its companions.
+	BackupSiblings *backupSiblingsJSON `json:"backup_siblings"`
+	Incomplete     bool                `json:"incomplete,omitempty"`
+	Stopped        string              `json:"stopped,omitempty"`
+	NotStarted     string              `json:"not_started,omitempty"`
 }
 
 func siblingJSON(role string, r dbrecover.SiblingResult) sqliteSiblingJSON {
@@ -329,7 +338,7 @@ func inputsJSON(inputs []dbrecover.InputInfo, trails map[string]string) []sqlite
 	return out
 }
 
-func printSQLiteAssessment(w io.Writer, c *evidence.Case, as dbrecover.Assessment, asJSON bool, claims []artparse.Claimed) error {
+func printSQLiteAssessment(w io.Writer, c *evidence.Case, as dbrecover.Assessment, asJSON bool, claims []artparse.Claimed, bsib *backupSiblingsJSON) error {
 	trails, err := recoveredTrails(c, as.Inputs)
 	if err != nil {
 		return err
@@ -338,10 +347,11 @@ func printSQLiteAssessment(w io.Writer, c *evidence.Case, as dbrecover.Assessmen
 		return writeJSON(w, sqliteReportJSON{
 			Assessment: true, Note: as.Note, RulesHash: as.RulesHash, Inputs: inputsJSON(as.Inputs, trails),
 			Siblings: map[string]sqliteSiblingJSON{"wal": siblingJSON("wal", as.Siblings.WAL), "journal": siblingJSON("journal", as.Siblings.Journal)},
-			Counts:   countsJSON2(as.Counts), Claims: claimsJSON(claims),
+			Counts:   countsJSON2(as.Counts), Claims: claimsJSON(claims), BackupSiblings: bsib,
 		})
 	}
 	fmt.Fprintln(w, escapeText(as.Note))
+	printBackupSiblings(w, bsib)
 	printClaims(w, claims)
 	printSQLiteBody(w, as.Inputs, trails, as.Siblings, as.Counts)
 	return nil
@@ -374,7 +384,7 @@ func printSQLiteResult(w io.Writer, c *evidence.Case, res dbrecover.Result, runE
 			Siblings:   map[string]sqliteSiblingJSON{"wal": siblingJSON("wal", res.Siblings.WAL), "journal": siblingJSON("journal", res.Siblings.Journal)},
 			Counts:     countsJSON2(res.Counts),
 			Incomplete: stopped || res.Ingest.Outcome == "incomplete",
-			Typed:      tr.json(),
+			Typed:      tr.json(), BackupSiblings: tr.backup,
 		}
 		if notStarted {
 			rep.NotStarted = runErr.Error()

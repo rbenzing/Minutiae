@@ -185,6 +185,7 @@ func fullSteps(race bool) []step {
 		{args: []string{"go", "mod", "tidy", "-diff"}},
 		{args: []string{"go", "vet", "./..."}},
 		scaleVet(),
+		realdataVet(),
 		{args: []string{"go", "run", "./tools/parserhash", "-check"}},
 		{args: []string{"go", "tool", "golangci-lint", "run", "./..."}},
 		{args: []string{"go", "build", "-o", binPath(), "./cmd/minutiae"}},

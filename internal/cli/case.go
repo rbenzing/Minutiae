@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/rbenzing/minutiae/internal/artparse"
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/examine"
 )
@@ -221,7 +222,7 @@ func newCaseVerifyCmd(d Deps, opts *rootOptions) *cobra.Command {
 
 // runVerify is the verify call of `case verify` (a variable so a test can make it fail).
 var runVerify = func(ctx context.Context, d Deps, c *evidence.Case, o evidence.VerifyOptions) (evidence.VerifyReport, error) {
-	o.Checks = examine.VerifyChecks(examine.Options{Drivers: d.FSDrivers}) // the caller cannot pass fewer
+	o.Checks = append(examine.VerifyChecks(examine.Options{Drivers: d.FSDrivers}), artparse.ParseJobsCheck()) // the caller cannot pass fewer
 	return c.VerifyWithOptions(ctx, o)
 }
 

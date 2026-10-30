@@ -28,6 +28,7 @@ type PlanRow struct {
 	Integrity  bool                // the artifact (or the manifest) did not match the evidence: exit 4 in the CLI
 	Incomplete bool                // a member of the bundle is an incomplete artifact (still planned; its records are flagged later)
 	Recovered  *parse.RecoveryInfo // non-nil when a member of the bundle is recovered input
+	Scan       bool                // the row comes from --scan: an artifact no glob matched, probed as an explicit job
 }
 
 // Plan lists every job of a selection with its status. Nothing is dropped: a job discovery could not
@@ -41,6 +42,9 @@ type Plan struct {
 	Stopped string
 	// Backups is one row per iOS backup of the case (4E-R5), also when Plan returns an error.
 	Backups []BackupResolution
+	// Scan is non-nil when the selection asked for a scan; ScanFindings are the probe outcomes it could not turn into a row.
+	Scan         *ScanCounts
+	ScanFindings []ScanFinding
 }
 
 // Plan takes one snapshot, runs discovery, then for each job the shared front half of Run,
@@ -49,11 +53,14 @@ type Plan struct {
 // or a failure that says nothing about the evidence (an I/O error) is returned as the error, with the
 // rows made so far.
 func (h *Host) Plan(ctx context.Context, sel Selection) (Plan, error) {
+	if sel.Scan && len(sel.Artifacts) > 0 {
+		return Plan{}, fmt.Errorf("%w: --scan and --artifact exclude each other (a scan lists what no glob matched; --artifact names one)", ErrSelection)
+	}
 	snap, backups, err := h.snapshotFor(ctx)
 	if err != nil {
 		return Plan{Backups: backups}, err
 	}
-	jobs, counts, err := h.Discover(ctx, snap, sel)
+	jobs, counts, disc, err := h.discoverFull(ctx, snap, sel, h.registry)
 	p := Plan{Counts: counts, ByStatus: map[string]int{}, Backups: backups}
 	if err != nil {
 		return p, err
@@ -71,6 +78,9 @@ func (h *Host) Plan(ctx context.Context, sel Selection) (Plan, error) {
 		if pr.abandoned {
 			p.Stopped = StoppedAbandoned // planning goes on: it writes nothing
 		}
+	}
+	if sel.Scan {
+		return p, h.scan(ctx, snap, sel, disc, jobs, &p)
 	}
 	return p, nil
 }

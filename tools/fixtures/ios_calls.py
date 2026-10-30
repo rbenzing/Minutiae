@@ -45,6 +45,9 @@ CORE_RAW_INT = ["ZORIGINATED", "ZANSWERED", "ZCALLTYPE", "ZDISCONNECTED_CAUSE", 
                 "ZFACE_TIME_DATA", "ZJUNKCONFIDENCE"]
 LEGACY_RAW_INT = ["flags", "id", "assisted"]
 KIND = {1: "voice", 8: "facetime_video", 16: "facetime_audio"}
+CLAIMED = ("ZCALLRECORD", "call")  # Meta.Claims of ios.calls: ClaimableTables (4h-R6)
+ALIAS = {"ZCALLRECORD": "Z_PK", "call": "ROWID"}
+SCENARIOS = {}  # variant -> C.Scenario, filled when the variant is generated (the typed recovery oracle)
 
 
 def is_int(v):
@@ -408,7 +411,53 @@ def variant_legacy(work):
     return files, exp
 
 
-VARIANTS = {"coredata-current": variant_current, "coredata-wal": variant_wal, "legacy-call-history": variant_legacy}
+def deleted_rows(table, n):
+    """n rows of a deleted variant: the scenario rows with addresses, durations and a long name."""
+    if table == "ZCALLRECORD":
+        return [core_row(i, ZDURATION=float(10 + i) + 0.5, ZDATE=T0C + 3600 * i, ZNAME="Caller %02d " % i + "name " * 24) for i in range(1, n + 1)]
+    return [legacy_row(i, duration=10 + i, date=T0U + 3600 * i, name="Caller %02d " % i + "name " * 24) for i in range(1, n + 1)]
+
+
+def deleted_variant(work, variant, ddl_name, table, extra=None):
+    """1024-byte pages, secure_delete OFF. 60 rows (ids 1 to 60) of which 21 to 50 are deleted: whole leaf pages go to the
+    freelist, so the oracle expects basis fit, attributed to the claimed table (the rows of freed pages only: a page that
+    keeps live cells keeps its deleted ones in place). A call joins nothing live. A lone database."""
+    path = work + "/c.db"
+    con = C.connect(path, page_size=1024)
+    con.executescript(C.load_ddl(ddl_name, SCHEMAS)[0])
+    with C.batch(con):
+        for r in deleted_rows(table, 60):
+            C.insert(con, table, r)
+        for t, r in (extra or []):
+            C.insert(con, t, r)
+    key = ALIAS[table]
+    scen = SCENARIOS[variant] = C.Scenario(CLAIMED, alias=ALIAS)
+    scen.write(table, scen.snap(con, table))
+    scen.want(table, scen.snap(con, table, "%s between 21 and 50" % key), label=table)
+    con.execute("delete from %s where %s between 21 and 50" % (table, key))
+    files = {"db": C.read(path)}
+    exp = oracle(files, con, ddl_name, variant, table)
+    con.close()
+    return files, exp
+
+
+def variant_coredata_deleted(work):
+    return deleted_variant(work, "coredata-deleted", "callhistory-coredata.sql", "ZCALLRECORD", core_extra(60))
+
+
+def variant_legacy_deleted(work):
+    return deleted_variant(work, "legacy-deleted", "callhistory-legacy.sql", "call")
+
+
+def recover_expect(variant, files):
+    """The <variant>.recover.expect.json of a variant that has a scenario (ruling 4G-R14). A recovered call joins nothing
+    live, so every recovered row of the claimed tables is a typed record."""
+    fn = expect_core if variant.startswith("coredata") else expect_legacy
+    return C.recover_oracle(variant, files, SCENARIOS[variant], lambda f: None, lambda t, d, env, file: fn(d, "", file))
+
+
+VARIANTS = {"coredata-current": variant_current, "coredata-wal": variant_wal, "legacy-call-history": variant_legacy,
+            "coredata-deleted": variant_coredata_deleted, "legacy-deleted": variant_legacy_deleted}
 
 
 def _selfcheck():
