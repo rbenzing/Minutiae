@@ -1737,10 +1737,11 @@ py -3 tools/fixtures/telephony_gen.py --family calllog --recover-oracle --out in
 py -3 tools/fixtures/telephony_gen.py --family contacts --recover-oracle --out internal/parsers/androidcontacts/testdata
 py -3 tools/fixtures/telephony_gen.py --family chromium --recover-oracle --out internal/parsers/chromium/testdata
 py -3 tools/fixtures/telephony_gen.py --family safari --recover-oracle --out internal/parsers/safari/testdata
+py -3 tools/fixtures/telephony_gen.py --family ios_sms --recover-oracle --out internal/parsers/iossms/testdata
 ```
 
 writes `<variant>.recover.expect.json` for every variant that has a scenario (`av-freelist-512`, `wal-uncheckpointed`,
-`hot-journal`, `mmssms-pdu-deleted`; `calllog-deleted`, `calllog-wal-edit`; `contacts-deleted`, `contacts-wal-edit`; `chromium-deleted`; Safari `deleted`): what the typed recovery pass must make of the fixture. It is computed from the
+`hot-journal`, `mmssms-pdu-deleted`; `calllog-deleted`, `calllog-wal-edit`; `contacts-deleted`, `contacts-wal-edit`; `chromium-deleted`; Safari `deleted`; `ios.sms` `ios17-deleted` and `ios17-wal`): what the typed recovery pass must make of the fixture. It is computed from the
 COMMITTED files of the variant, never from Go output: `sqlite_oracle.build_history` (the independent page walker of the
 SQLite fixtures) finds in the page images the versions the scenario says should be history (`wants`: deleted rows,
 pre-update versions, interrupted versions) and gives method, relation, basis (`fit` with the claimed table as label on
@@ -1892,6 +1893,7 @@ it differs on every regeneration: regenerate the files, the oracle and the pins 
 py -3 tools/fixtures/telephony_gen.py --family ios_sms --out internal/parsers/iossms/testdata \
     --pins-go internal/parsers/iossms/pins_test.go --pins-package iossms_test
 py -3 tools/fixtures/telephony_gen.py --family ios_sms --check
+py -3 tools/fixtures/telephony_gen.py --family ios_sms --out internal/parsers/iossms/testdata --variant ios17-deleted   # one variant, then --recover-oracle
 ```
 
 | Variant (`internal/parsers/iossms/testdata/`) | DDL snapshot | Holds |
@@ -1899,7 +1901,8 @@ py -3 tools/fixtures/telephony_gen.py --family ios_sms --check
 | `ios17-nanos` | `sms-ios17.sql` | 45 messages: SMS 1:1, an iMessage to a 3-member titled group, `attributedBody`-only text (emoji, ZWJ, skin tones), equal and differing `text` and `attributedBody`, invalid UTF-8 and a truncated stream, NULL/NULL with and without attachment, reactions 2001 (`p:0/<GUID>`), 3001 (`bp:<GUID>`) and a malformed `x:abc`, a system rename, dates 0 / seconds / nanoseconds (non-zero last digit) / year 2100, read / delivered / played / edited / retracted times, a recently-deleted message, a message in two chats and in none, `handle_id` 0 and dangling, one number under two handles, `is_from_me` 2, `error` 22, services `RCS` and NULL, NUL in text, a 300 KiB text, RTL text, five attachments (present `~/` and `/var/mobile/`, missing, present only in the backup of `UDID2`, `*` in the name), a NULL `item_type` and a TEXT `associated_message_type`, a two-edit `message_summary_info`, an `LPLinkMetadata` `payload_data` and a corrupt one, two identical messages |
 | `ios14-attributed` | `sms-ios14.sql` | 12 messages: six with `attributedBody` only, no edit or recently-deleted columns |
 | `ios10-seconds` | `sms-ios10.sql` | 10 messages: seconds dates only (one fractional REAL), no `attributedBody` column; three short records written before an `ALTER TABLE ADD COLUMN` |
-| `ios17-wal` | `sms-ios17.sql` | 8 messages in the database; three new messages and one edit only in the `-wal` (a killed writer) |
+| `ios17-wal` | `sms-ios17.sql` | 8 messages in the database; three new messages and one edit only in the `-wal` (a killed writer). Its recover oracle (`ios17-wal.recover.expect.json`) lists the four stored versions of message 5 as `superseded-version` records (the original in the database file and in three earlier WAL frames) |
+| `ios17-deleted` | `sms-ios17.sql` | page 1024, `secure_delete = OFF`: 50 messages (a 100-byte text each) with chat joins, from handles 1 and 2; messages 46 to 50 deleted first (their whole leaf page becomes the freelist trunk page, whose cells are lost, so it must not hold a claimed row), then 21 to 45 with their joins, and handle 3 deleted (messages 41 to 45 were from it). The recover oracle lists the 25 messages 21 to 45 as typed `message` records (`fit`, `sqlite-freelist`, 60): 41 to 45 are `participants_unknown` (`handle_state` `no-handle-row`), all have `thread_state` `no-chat-join`. 4.4 KiB gzipped, oracle 39 KiB. Generated alone: the other pins are of the SQLite build that wrote them (`--variant ios17-deleted`) |
 
 ### End to end over a backup (plan 4E, Task 16)
 

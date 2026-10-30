@@ -477,7 +477,7 @@ func TestUndecidableChatJoinIsUnknownNotEmpty(t *testing.T) {
 }
 
 func TestParserIdentity(t *testing.T) {
-	if iossms.Name != "ios.sms" || iossms.Version != "1.0.1" {
+	if iossms.Name != "ios.sms" || iossms.Version != "1.0.2" {
 		t.Errorf("%s %s", iossms.Name, iossms.Version)
 	}
 }
