@@ -1,0 +1,900 @@
+{
+  "generator": {
+    "image_sha256": "6e15d974a55d54a699d1c733f34404137e777c6fec86102fe00f05edb312e2f2",
+    "packages": [
+      {
+        "package": "busybox-static",
+        "version": "1:1.35.0-4+deb12u1+b1"
+      },
+      {
+        "package": "coreutils",
+        "version": "9.1-1"
+      },
+      {
+        "package": "cpio",
+        "version": "2.13+dfsg-7.1"
+      },
+      {
+        "package": "f2fs-tools",
+        "version": "1.15.0-1"
+      },
+      {
+        "package": "faketime",
+        "version": "0.9.10-2.1"
+      },
+      {
+        "package": "gzip",
+        "version": "1.12-1"
+      },
+      {
+        "package": "jq",
+        "version": "1.6-2.1+deb12u2"
+      },
+      {
+        "package": "kmod",
+        "version": "30+20221128-1"
+      },
+      {
+        "package": "linux-image-6.1.0-53-amd64",
+        "version": "6.1.187-1"
+      },
+      {
+        "package": "python3",
+        "version": "3.11.2-1+b1"
+      },
+      {
+        "package": "qemu-system-x86",
+        "version": "1:7.2+dfsg-7+deb12u18+b3"
+      },
+      {
+        "package": "util-linux",
+        "version": "2.38.1-5+deb12u3"
+      }
+    ],
+    "commands": [
+      "# expected tree: mk_sources of tools/fixtures/f2fs_recover.sh (patterns and stamps from lib.sh); guest: f2fs -o nodiscard,noatime",
+      "truncate -s 128M <img>",
+      "faketime -f '2023-11-14 22:13:20' mkfs.f2fs -q -f -r -l f2fsrec -U 3d3d3d3d-0000-4000-8000-000000000002 -O extra_attr,inode_checksum,sb_checksum <img>",
+      "python3 tools/fixtures/f2fs_normalize.py <img>",
+      "guest stage w: mkdir /mnt/sac",
+      "guest stage w: mkdir /mnt/contig /mnt/twofrag /mnt/holes /mnt/direct /mnt/indirect /mnt/inline /mnt/empty /mnt/gone /mnt/gone/gonedir /mnt/live /mnt/live/small",
+      "guest stage w: mkdir /mnt/reuse /mnt/renamed /mnt/nidreuse /mnt/nidreuse-w",
+      "guest stage w: i=0; while [ $i -lt 64 ]; do : > /mnt/sac/s$i; i=$((i+1)); done",
+      "guest stage w: cp /payload/contig/target.bin /mnt/contig/target.bin",
+      "guest stage w: for k in 0 1 2 3 4; do dd if=/payload/twofrag/a.bin of=/mnt/twofrag/a.bin bs=8192 skip=$k seek=$k count=1 conv=notrunc 2>/dev/null; sync; dd if=/payload/twofrag/target.bin of=/mnt/twofrag/target.bin bs=8192 skip=$k seek=$k count=1 conv=notrunc 2>/dev/null; sync; done",
+      "guest stage w: cp /payload/reuse/target.bin /mnt/reuse/target.bin",
+      "guest stage w: dd if=/payload/holes/b0 of=/mnt/holes/target.bin bs=4096 count=1 conv=notrunc 2>/dev/null",
+      "guest stage w: dd if=/payload/holes/b3 of=/mnt/holes/target.bin bs=4096 seek=3 count=1 conv=notrunc 2>/dev/null",
+      "guest stage w: cp /payload/direct/target.bin /mnt/direct/target.bin",
+      "guest stage w: cp /payload/indirect/target.bin /mnt/indirect/target.bin",
+      "guest stage w: cp /payload/inline/target.bin /mnt/inline/target.bin",
+      "guest stage w: : > /mnt/empty/target.bin",
+      "guest stage w: cp /payload/gone/gonedir/inner.bin /mnt/gone/gonedir/inner.bin",
+      "guest stage w: cp /payload/renamed/a /mnt/renamed/a",
+      "guest stage w: cp /payload/nidreuse/target.bin /mnt/nidreuse/target.bin",
+      "guest stage w: cp /payload/live/indirect.bin /mnt/live/indirect.bin",
+      "guest stage w: dd if=/payload/live/lb0 of=/mnt/live/holes.bin bs=4096 count=1 conv=notrunc 2>/dev/null",
+      "guest stage w: dd if=/payload/live/lb3 of=/mnt/live/holes.bin bs=4096 seek=3 count=1 conv=notrunc 2>/dev/null",
+      "guest stage w: cp /payload/live/inline.txt /mnt/live/inline.txt",
+      "guest stage w: cp /payload/live/small/s1 /mnt/live/small/s1",
+      "guest stage w: cp /payload/live/small/s2 /mnt/live/small/s2",
+      "guest stage w: cp /payload/live/small/s3 /mnt/live/small/s3",
+      "guest stage w: sync",
+      "python3 tools/fixtures/f2fs_recover_oracle.py snap --stage w   # decoder == fsck.f2fs -t, -M, dump.f2fs -n; content against the expected tree",
+      "guest stage m: mv /mnt/renamed/a /mnt/renamed/b",
+      "guest stage m: rm /mnt/nidreuse/target.bin",
+      "guest stage m: sync",
+      "python3 tools/fixtures/f2fs_recover_oracle.py snap --stage m",
+      "guest stage n: cp /payload/nidreuse-w/new1.bin /mnt/nidreuse-w/new1.bin",
+      "guest stage n: cp /payload/nidreuse-w/new2.bin /mnt/nidreuse-w/new2.bin",
+      "guest stage n: sync",
+      "guest stage f: : > /mnt/fill",
+      "guest stage f: rm -r /mnt/sac",
+      "guest stage f: rm /mnt/reuse/target.bin",
+      "guest stage f: sync",
+      "guest stage f: dd if=/dev/zero of=/mnt/fill bs=4096 2>/dev/null || true",
+      "guest stage f: ls -l /mnt/fill",
+      "guest stage f: df /mnt",
+      "guest stage f: sync",
+      "guest stage d: rm /mnt/contig/target.bin /mnt/twofrag/target.bin /mnt/direct/target.bin /mnt/indirect/target.bin /mnt/holes/target.bin /mnt/inline/target.bin /mnt/empty/target.bin",
+      "guest stage d: rm -r /mnt/gone/gonedir",
+      "guest stage d: rm /mnt/renamed/b",
+      "guest stage d: sync",
+      "python3 tools/fixtures/f2fs_recover_oracle.py final --variant nodiscard   # free blocks, live files, deleted dentries and their expectations"
+    ],
+    "variant": "nodiscard",
+    "stages": [
+      "w",
+      "m",
+      "n",
+      "f",
+      "d"
+    ],
+    "fsck_exit": {
+      "w": 0,
+      "m": 0,
+      "n": 0,
+      "f": 0,
+      "d": 0
+    }
+  },
+  "checkpoint_version": 1804289416,
+  "block_size": 4096,
+  "free_blocks": [
+    [
+      4096,
+      4121
+    ],
+    [
+      4124,
+      4127
+    ],
+    [
+      4131,
+      4131
+    ],
+    [
+      4133,
+      4139
+    ],
+    [
+      4141,
+      4141
+    ],
+    [
+      4150,
+      4680
+    ],
+    [
+      4682,
+      4696
+    ],
+    [
+      4706,
+      4706
+    ],
+    [
+      4709,
+      4709
+    ],
+    [
+      4719,
+      5120
+    ],
+    [
+      5123,
+      5637
+    ],
+    [
+      5640,
+      5642
+    ],
+    [
+      5645,
+      5646
+    ],
+    [
+      5649,
+      5650
+    ],
+    [
+      5653,
+      5654
+    ],
+    [
+      5657,
+      5672
+    ],
+    [
+      5679,
+      6143
+    ],
+    [
+      7168,
+      10495
+    ],
+    [
+      10752,
+      11263
+    ],
+    [
+      13056,
+      14079
+    ],
+    [
+      22435,
+      32767
+    ]
+  ],
+  "live": [
+    {
+      "path": "/fill",
+      "size": 34222080,
+      "sha256": "128d408fbd5a4f03a597a251b73b81b559a1662ac71df22ebf323bc83dcd1fe6",
+      "blocks": [
+        [
+          15104,
+          15359
+        ],
+        [
+          6144,
+          7167
+        ],
+        [
+          15360,
+          22434
+        ]
+      ],
+      "holes": [],
+      "indirect": true,
+      "inline": false
+    },
+    {
+      "path": "/live/holes.bin",
+      "size": 16384,
+      "sha256": "7472c04d29379c69bd298f99b47bcd1ed76df5f5e8ab03b302ef7d018906fb2b",
+      "blocks": [
+        [
+          5673,
+          5673
+        ],
+        [
+          5674,
+          5674
+        ]
+      ],
+      "holes": [
+        [
+          1,
+          2
+        ]
+      ],
+      "indirect": false,
+      "inline": false
+    },
+    {
+      "path": "/live/indirect.bin",
+      "size": 12582912,
+      "sha256": "250b0832718bb4943941d659e242d5c65424c2d44813b39bdc7994766b156518",
+      "blocks": [
+        [
+          10496,
+          10751
+        ],
+        [
+          11264,
+          13055
+        ],
+        [
+          14080,
+          15103
+        ]
+      ],
+      "holes": [],
+      "indirect": true,
+      "inline": false
+    },
+    {
+      "path": "/live/inline.txt",
+      "size": 100,
+      "sha256": "cd76e503b5e6bc39ef2105ee048abe968f554b48771352d863e3eec3664ca94c",
+      "blocks": [],
+      "holes": [],
+      "indirect": false,
+      "inline": true
+    },
+    {
+      "path": "/live/small/s1",
+      "size": 1000,
+      "sha256": "6feec2c479e2a09a2954511065a2993dbd2f4adbc6eae22ce7d133cfe66b571e",
+      "blocks": [],
+      "holes": [],
+      "indirect": false,
+      "inline": true
+    },
+    {
+      "path": "/live/small/s2",
+      "size": 1000,
+      "sha256": "e0b47ceebd762bbaa342a0370147d60fc89c563044a4d1154e146e88323dc607",
+      "blocks": [],
+      "holes": [],
+      "indirect": false,
+      "inline": true
+    },
+    {
+      "path": "/live/small/s3",
+      "size": 1000,
+      "sha256": "6eb66f16a773fb2cff85f331f1f75b45dd9d01c584526f89e0588f9959975f27",
+      "blocks": [],
+      "holes": [],
+      "indirect": false,
+      "inline": true
+    },
+    {
+      "path": "/nidreuse-w/new1.bin",
+      "size": 8192,
+      "sha256": "bbf9d328a1d3b7e3b7a5c99b2e962c2505e7aa83d581daa55ae1b9faeb58b9bd",
+      "blocks": [
+        [
+          5675,
+          5676
+        ]
+      ],
+      "holes": [],
+      "indirect": false,
+      "inline": false
+    },
+    {
+      "path": "/nidreuse-w/new2.bin",
+      "size": 4096,
+      "sha256": "a5f9d85a332f72b726f42a516ae2c52db0da9ae5b322a4e57b30f68e61e8050b",
+      "blocks": [
+        [
+          5677,
+          5677
+        ]
+      ],
+      "holes": [],
+      "indirect": false,
+      "inline": false
+    },
+    {
+      "path": "/twofrag/a.bin",
+      "size": 40960,
+      "sha256": "d60b17f7280edaefd216865b496d84c4370b5ddb5f26595e7b4dbdf18d523bf4",
+      "blocks": [
+        [
+          5638,
+          5639
+        ],
+        [
+          5643,
+          5644
+        ],
+        [
+          5647,
+          5648
+        ],
+        [
+          5651,
+          5652
+        ],
+        [
+          5655,
+          5656
+        ]
+      ],
+      "holes": [],
+      "indirect": false,
+      "inline": false
+    }
+  ],
+  "deleted_entry_count": 13,
+  "deleted": [
+    {
+      "path": "/contig/target.bin",
+      "family": "contig",
+      "listed": true,
+      "dir_nid": 5,
+      "ino": 84,
+      "size": 20480,
+      "sha256": "fdd4fb08434654722a92d5b4e4cb32b79311270ceb183f4131d2ccc760946a74",
+      "true_blocks": [
+        [
+          5633,
+          5637
+        ]
+      ],
+      "stale": {
+        "addr": 4672,
+        "cp_ver_low": 1804289383,
+        "intact": true
+      },
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "f2fs-node-scan",
+        "captured": [
+          [
+            5633,
+            5637
+          ]
+        ],
+        "cut": false,
+        "prefix": false,
+        "stop": "",
+        "equal_source": true,
+        "uniform": false,
+        "confidence": 75
+      }
+    },
+    {
+      "path": "/direct/target.bin",
+      "family": "direct",
+      "listed": true,
+      "dir_nid": 8,
+      "ino": 90,
+      "size": 5242880,
+      "sha256": "ac086185da5f8cc358eee0a54b3ee54dbc2822f4ce5c9cdee99c2aa4f6e4cf6b",
+      "true_blocks": [
+        [
+          7168,
+          8447
+        ]
+      ],
+      "stale": {
+        "addr": 4686,
+        "cp_ver_low": 1804289393,
+        "intact": true
+      },
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "f2fs-node-scan",
+        "captured": [
+          [
+            7168,
+            8447
+          ]
+        ],
+        "cut": false,
+        "prefix": false,
+        "stop": "",
+        "equal_source": true,
+        "uniform": false,
+        "confidence": 75
+      }
+    },
+    {
+      "path": "/empty/target.bin",
+      "family": "empty",
+      "listed": true,
+      "dir_nid": 11,
+      "ino": 98,
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "true_blocks": [],
+      "stale": {
+        "addr": 4693,
+        "cp_ver_low": 1804289393,
+        "intact": true
+      },
+      "expect": {
+        "outcome": "skip",
+        "skip": "unsupported",
+        "method": "",
+        "captured": [],
+        "cut": false,
+        "prefix": false,
+        "stop": "",
+        "equal_source": false,
+        "uniform": false,
+        "confidence": 0
+      }
+    },
+    {
+      "path": "/gone/gonedir",
+      "family": "gone",
+      "listed": true,
+      "dir_nid": 12,
+      "ino": 13,
+      "size": 3452,
+      "sha256": "",
+      "true_blocks": [],
+      "stale": {
+        "addr": 4121,
+        "cp_ver_low": 1804289393,
+        "intact": true
+      },
+      "expect": {
+        "outcome": "skip",
+        "skip": "not-a-file",
+        "method": "",
+        "captured": [],
+        "cut": false,
+        "prefix": false,
+        "stop": "",
+        "equal_source": false,
+        "uniform": false,
+        "confidence": 0
+      }
+    },
+    {
+      "path": "/holes/target.bin",
+      "family": "holes",
+      "listed": true,
+      "dir_nid": 7,
+      "ino": 89,
+      "size": 16384,
+      "sha256": "626e857bb43f56d989e1629694e9cc24abcb9429bf68545064e319fc3b4d8c88",
+      "true_blocks": [
+        [
+          5659,
+          5659
+        ],
+        [
+          5660,
+          5660
+        ]
+      ],
+      "stale": {
+        "addr": 4685,
+        "cp_ver_low": 1804289393,
+        "intact": true
+      },
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "f2fs-node-scan",
+        "captured": [
+          [
+            5659,
+            5659
+          ]
+        ],
+        "cut": false,
+        "prefix": true,
+        "stop": "hole@1",
+        "equal_source": false,
+        "uniform": false,
+        "confidence": 20
+      }
+    },
+    {
+      "path": "/indirect/target.bin",
+      "family": "indirect",
+      "listed": true,
+      "dir_nid": 9,
+      "ino": 92,
+      "size": 12582912,
+      "sha256": "cd66cfeef26d3d4dad10fc2fced454e854f2d4197b745c21f608dd290aae360f",
+      "true_blocks": [
+        [
+          8448,
+          10495
+        ],
+        [
+          13056,
+          14079
+        ]
+      ],
+      "stale": {
+        "addr": 4688,
+        "cp_ver_low": 1804289393,
+        "intact": true
+      },
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "f2fs-node-scan",
+        "captured": [
+          [
+            8448,
+            10495
+          ],
+          [
+            13056,
+            14079
+          ]
+        ],
+        "cut": false,
+        "prefix": false,
+        "stop": "",
+        "equal_source": true,
+        "uniform": false,
+        "confidence": 75
+      }
+    },
+    {
+      "path": "/inline/target.bin",
+      "family": "inline",
+      "listed": true,
+      "dir_nid": 10,
+      "ino": 97,
+      "size": 100,
+      "sha256": "2e035f6c40433c23b0c88003dfb44e205dff37cec0065236a132c65061fe424f",
+      "true_blocks": [],
+      "stale": {
+        "addr": 4692,
+        "cp_ver_low": 1804289393,
+        "intact": true
+      },
+      "expect": {
+        "outcome": "skip",
+        "skip": "unsupported",
+        "method": "",
+        "captured": [],
+        "cut": false,
+        "prefix": false,
+        "stop": "",
+        "equal_source": false,
+        "uniform": false,
+        "confidence": 0
+      }
+    },
+    {
+      "path": "/nidreuse/target.bin",
+      "family": "nidreuse",
+      "listed": true,
+      "dir_nid": 18,
+      "ino": 101,
+      "size": 20480,
+      "sha256": "2004ccf0e1fb99f5bd652536105dcbd20c6dc6403933fe75441e6b7c13a7fb90",
+      "true_blocks": [
+        [
+          5668,
+          5672
+        ]
+      ],
+      "stale": {
+        "addr": 4696,
+        "cp_ver_low": 1804289393,
+        "intact": true
+      },
+      "expect": {
+        "outcome": "skip",
+        "skip": "reused",
+        "method": "",
+        "captured": [],
+        "cut": false,
+        "prefix": false,
+        "stop": "",
+        "equal_source": false,
+        "uniform": false,
+        "confidence": 0
+      }
+    },
+    {
+      "path": "/renamed/a",
+      "family": "renamed",
+      "listed": true,
+      "dir_nid": 17,
+      "ino": 100,
+      "size": 20480,
+      "sha256": "8fdcdf0569c5dc7409b18db725379ec03cd36ab1d6b0b4a22b3f46a68ba6dfba",
+      "true_blocks": [
+        [
+          5663,
+          5667
+        ]
+      ],
+      "stale": {
+        "addr": 4695,
+        "cp_ver_low": 1804289393,
+        "intact": true
+      },
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "f2fs-node-scan",
+        "captured": [
+          [
+            5663,
+            5667
+          ]
+        ],
+        "cut": false,
+        "prefix": false,
+        "stop": "",
+        "equal_source": true,
+        "uniform": false,
+        "confidence": 30
+      }
+    },
+    {
+      "path": "/renamed/b",
+      "family": "renamed",
+      "listed": true,
+      "dir_nid": 17,
+      "ino": 100,
+      "size": 20480,
+      "sha256": "8fdcdf0569c5dc7409b18db725379ec03cd36ab1d6b0b4a22b3f46a68ba6dfba",
+      "true_blocks": [
+        [
+          5663,
+          5667
+        ]
+      ],
+      "stale": {
+        "addr": 4706,
+        "cp_ver_low": 1804289397,
+        "intact": true
+      },
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "f2fs-node-scan",
+        "captured": [
+          [
+            5663,
+            5667
+          ]
+        ],
+        "cut": false,
+        "prefix": false,
+        "stop": "",
+        "equal_source": true,
+        "uniform": false,
+        "confidence": 30
+      }
+    },
+    {
+      "path": "/reuse/target.bin",
+      "family": "reuse",
+      "listed": true,
+      "dir_nid": 16,
+      "ino": 87,
+      "size": 6291456,
+      "sha256": "18c156f6c1ebe0dd9cff88ab3c1c85c42c31b376ef8d9eaadbce2ec40074e495",
+      "true_blocks": [
+        [
+          17920,
+          18431
+        ],
+        [
+          6144,
+          7167
+        ]
+      ],
+      "stale": {
+        "addr": 4683,
+        "cp_ver_low": 1804289393,
+        "intact": true
+      },
+      "expect": {
+        "outcome": "skip",
+        "skip": "no-free-bytes",
+        "method": "",
+        "captured": [],
+        "cut": false,
+        "prefix": false,
+        "stop": "",
+        "equal_source": false,
+        "uniform": false,
+        "confidence": 0
+      }
+    },
+    {
+      "path": "/sac",
+      "family": "sac",
+      "listed": true,
+      "dir_nid": 3,
+      "ino": 4,
+      "size": 3452,
+      "sha256": "",
+      "true_blocks": [],
+      "stale": {
+        "addr": 4098,
+        "cp_ver_low": 1804289383,
+        "intact": true
+      },
+      "expect": {
+        "outcome": "skip",
+        "skip": "not-a-file",
+        "method": "",
+        "captured": [],
+        "cut": false,
+        "prefix": false,
+        "stop": "",
+        "equal_source": false,
+        "uniform": false,
+        "confidence": 0
+      }
+    },
+    {
+      "path": "/twofrag/target.bin",
+      "family": "twofrag",
+      "listed": true,
+      "dir_nid": 6,
+      "ino": 86,
+      "size": 40960,
+      "sha256": "8f9e0785cd0fa45b275de781a3a428dceae9bb84985a30244b7af52192251a4c",
+      "true_blocks": [
+        [
+          5641,
+          5642
+        ],
+        [
+          5645,
+          5646
+        ],
+        [
+          5649,
+          5650
+        ],
+        [
+          5653,
+          5654
+        ],
+        [
+          5657,
+          5658
+        ]
+      ],
+      "stale": {
+        "addr": 4682,
+        "cp_ver_low": 1804289392,
+        "intact": true
+      },
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "method": "f2fs-node-scan",
+        "captured": [
+          [
+            5641,
+            5642
+          ],
+          [
+            5645,
+            5646
+          ],
+          [
+            5649,
+            5650
+          ],
+          [
+            5653,
+            5654
+          ],
+          [
+            5657,
+            5658
+          ]
+        ],
+        "cut": false,
+        "prefix": false,
+        "stop": "",
+        "equal_source": true,
+        "uniform": false,
+        "confidence": 75
+      }
+    },
+    {
+      "path": "/gone/gonedir/inner.bin",
+      "family": "gone",
+      "listed": false,
+      "dir_nid": 13,
+      "ino": 99,
+      "size": 8192,
+      "sha256": "8add0eaaeba613879302c917de26a871c45ca3443ea768270ef34d7c088e20e1",
+      "true_blocks": [
+        [
+          5661,
+          5662
+        ]
+      ],
+      "stale": {
+        "addr": 4694,
+        "cp_ver_low": 1804289393,
+        "intact": true
+      },
+      "expect": {
+        "outcome": "skip",
+        "skip": "not-listed",
+        "method": "",
+        "captured": [],
+        "cut": false,
+        "prefix": false,
+        "stop": "",
+        "equal_source": false,
+        "uniform": false,
+        "confidence": 0
+      }
+    }
+  ],
+  "families": {
+    "contig": 1,
+    "direct": 1,
+    "empty": 1,
+    "gone": 2,
+    "holes": 1,
+    "indirect": 1,
+    "inline": 1,
+    "nidreuse": 1,
+    "renamed": 2,
+    "reuse": 1,
+    "sac": 1,
+    "twofrag": 1
+  }
+}
