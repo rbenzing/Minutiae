@@ -265,7 +265,9 @@ func TestNonGoChangeRunsCachedWholeModuleTests(t *testing.T) {
 					t.Errorf("the test cache is disabled: %s", l)
 				}
 			}
-			if hasVet := slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, "go vet ") && l != scaleVetLine }); hasVet != c.scoped {
+			if hasVet := slices.ContainsFunc(lines, func(l string) bool {
+				return strings.HasPrefix(l, "go vet ") && l != scaleVetLine && l != realdataVetLine
+			}); hasVet != c.scoped {
 				t.Errorf("vet step present = %v, want %v", hasVet, c.scoped)
 			}
 			if !strings.Contains(p.testForm, "non-Go") {
@@ -351,5 +353,33 @@ func TestEveryPlanVetsTheScaleTag(t *testing.T) {
 	}
 	if !slices.Contains(formatSteps(pb.steps), scaleVetLine) {
 		t.Errorf("the -block plan has no %q", scaleVetLine)
+	}
+}
+
+// realdataVetLine keeps the -tags realdata harness (internal/parsers and internal/cli) compiling (4H-R13): the
+// default build never sees it and a real-data run is an operator step, so a break would otherwise go unnoticed.
+const realdataVetLine = "go vet -tags realdata ./internal/parsers/... ./internal/cli/..."
+
+func TestEveryPlanVetsTheRealDataTag(t *testing.T) {
+	if !slices.Contains(formatSteps(fullSteps(false)), realdataVetLine) {
+		t.Errorf("the full plan has no %q", realdataVetLine)
+	}
+	e, _ := fakeEnv(t, []string{"b/x.go"}, nil)
+	p, err := buildPlan(options{affected: true, base: "abc"}, e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.full {
+		t.Fatalf("a Go-only change escalated: %s", p.reason)
+	}
+	if !slices.Contains(formatSteps(p.steps), realdataVetLine) {
+		t.Errorf("the -affected plan has no %q:\n%s", realdataVetLine, strings.Join(formatSteps(p.steps), "\n"))
+	}
+	pb, err := buildPlan(options{blocks: []string{"case"}}, e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(formatSteps(pb.steps), realdataVetLine) {
+		t.Errorf("the -block plan has no %q", realdataVetLine)
 	}
 }
