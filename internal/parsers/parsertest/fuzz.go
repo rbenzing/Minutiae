@@ -33,7 +33,7 @@ func HostileOK(err error) bool {
 // emitter. It fails the test on a record the writer refused or any other broken contract
 // rule (Result.Violations) and on an error that is not a typed hostile-input error; a
 // panic of the parser propagates and fails the fuzz target.
-func FuzzParse(t *testing.T, p parse.Parser, remotePath string, db, wal, journal []byte) {
+func FuzzParse(t testing.TB, p parse.Parser, remotePath string, db, wal, journal []byte) {
 	t.Helper()
 	FuzzParseBundle(t, p, func(h *Harness) Bundle { return fuzzFixture(db, wal, journal).Bundle(h, remotePath) })
 }
@@ -42,26 +42,26 @@ func FuzzParse(t *testing.T, p parse.Parser, remotePath string, db, wal, journal
 // iOS parser whose artifact is an Android one (under the lenient emitter that is a refused record
 // and a warning, not a failure), so an iOS parser is fuzzed through this entry point to have
 // its records reach the writer at all (4F-R25).
-func FuzzParseIOS(t *testing.T, p parse.Parser, remotePath, logical string, db, wal, journal []byte) {
+func FuzzParseIOS(t testing.TB, p parse.Parser, remotePath, logical string, db, wal, journal []byte) {
 	t.Helper()
 	fuzzIOS(t, p, remotePath, logical, db, wal, journal)
 }
 
 // fuzzIOS is FuzzParseIOS returning the lenient Result.
-func fuzzIOS(t *testing.T, p parse.Parser, remotePath, logical string, db, wal, journal []byte) Result {
+func fuzzIOS(t testing.TB, p parse.Parser, remotePath, logical string, db, wal, journal []byte) Result {
 	t.Helper()
 	return fuzzRun(t, p, func(h *Harness) Bundle { return fuzzFixture(db, wal, journal).BundleIOS(h, remotePath, logical) })
 }
 
 // FuzzParseBundle is the body of FuzzParse with the bundle supplied by build, which is called
 // with the harness of the run.
-func FuzzParseBundle(t *testing.T, p parse.Parser, build func(h *Harness) Bundle) {
+func FuzzParseBundle(t testing.TB, p parse.Parser, build func(h *Harness) Bundle) {
 	t.Helper()
 	fuzzRun(t, p, build)
 }
 
 // fuzzRun does the work of FuzzParseBundle and returns the lenient Result.
-func fuzzRun(t *testing.T, p parse.Parser, build func(h *Harness) Bundle) Result {
+func fuzzRun(t testing.TB, p parse.Parser, build func(h *Harness) Bundle) Result {
 	t.Helper()
 	h := NewHarness(t)
 	b := build(h)
@@ -74,6 +74,9 @@ func fuzzRun(t *testing.T, p parse.Parser, build func(h *Harness) Bundle) Result
 	}
 	if len(res.Violations) != 0 {
 		t.Fatalf("contract violations: %v", res.Violations)
+	}
+	if res.Refused != 0 {
+		t.Fatalf("the writer refused %d record(s), which a parser must never emit whatever the input: %v", res.Refused, res.Warnings)
 	}
 	return res
 }
