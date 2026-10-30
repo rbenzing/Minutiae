@@ -2,6 +2,7 @@ package chromium_test
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -345,5 +346,61 @@ func TestDownloadWrongClassesAreStatedAndANonIntegerIDLeavesTheChainUndecided(t 
 	}
 	if _, ok := raw["url_chain_state"]; ok || pl["url"] != nil {
 		t.Errorf("an undecided chain states %v / url %v", raw["url_chain_state"], pl["url"])
+	}
+}
+
+// 4h-R5: a REAL in an integer column is type-mismatch with the stored bits; a TEXT in the column has none.
+func TestRealInAnIntegerColumnKeepsItsBits(t *testing.T) {
+	b, d, _ := dlDB(1024)
+	insertDL(d, 1, map[string]any{"received_bytes": 3.5})
+	insertDL(d, 2, map[string]any{"received_bytes": math.Inf(1)})
+	insertDL(d, 3, map[string]any{"received_bytes": math.Float64frombits(0x7ff8000000000001)}) // the decoder reads a stored NaN as NULL, as the engine does
+	insertDL(d, 4, map[string]any{"received_bytes": "many"})
+	res := runMem(t, b.Bytes())
+	if res.Err != nil {
+		t.Fatal(res.Err)
+	}
+	for id, want := range map[int64]string{1: "400c000000000000", 2: "7ff0000000000000"} {
+		_, pl, raw := payloadOf(t, res, id)
+		if got := asMap(raw["unknown_columns"])["received_bytes"]; got != "type-mismatch" {
+			t.Errorf("row %d unknown_columns.received_bytes = %v, want type-mismatch", id, got)
+		}
+		if got := raw["received_bytes_ieee"]; got != want {
+			t.Errorf("row %d raw.received_bytes_ieee = %v, want %s", id, got, want)
+		}
+		if _, has := raw["received_bytes"]; has {
+			t.Errorf("row %d states raw.received_bytes beside its bits", id)
+		}
+		if _, has := raw["received_bytes_status"]; has {
+			t.Errorf("row %d states received_bytes_status", id)
+		}
+		if _, has := pl["received_bytes"]; has {
+			t.Errorf("row %d states a typed received_bytes from a REAL", id)
+		}
+	}
+	_, _, raw := payloadOf(t, res, 4)
+	if got := asMap(raw["unknown_columns"])["received_bytes"]; got != "type-mismatch" {
+		t.Errorf("TEXT: unknown_columns.received_bytes = %v, want type-mismatch", got)
+	}
+	if _, has := raw["received_bytes_ieee"]; has {
+		t.Errorf("a TEXT cell states bits: %v", raw["received_bytes_ieee"])
+	}
+}
+
+// A stored NaN reads as NULL (the engine's rule, pinned by the decoder): there is no cell to state bits for, so the
+// download states neither a type-mismatch nor bits (4h-R5 asked for the NaN bits; see the task report).
+func TestStoredNaNInAnIntegerColumnReadsAsNull(t *testing.T) {
+	b, d, _ := dlDB(1024)
+	insertDL(d, 1, map[string]any{"received_bytes": math.Float64frombits(0x7ff8000000000001)})
+	res := runMem(t, b.Bytes())
+	if res.Err != nil {
+		t.Fatal(res.Err)
+	}
+	_, _, raw := payloadOf(t, res, 1)
+	if _, has := asMap(raw["unknown_columns"])["received_bytes"]; has {
+		t.Errorf("a NULL cell is flagged: %v", raw["unknown_columns"])
+	}
+	if _, has := raw["received_bytes_ieee"]; has {
+		t.Errorf("a NULL cell states bits: %v", raw["received_bytes_ieee"])
 	}
 }

@@ -14,7 +14,8 @@ Choices the plan leaves to the oracle (the parser of Task 3/4 follows them):
   * a search states `time_source` only when it states a Time; a visit-less `urls` row lists its own unusable cells in
     `raw.unknown_columns`, a visit lists the joined ones in `raw.joined_unknown_columns` as "urls.<col>";
   * raw values: an integer cell is kept as stored (`raw.<col>`, with `raw.<col>_status` when its instant is not
-    valid), a NULL cell is absent, a cell of another storage class is `unknown_columns.<col> = "type-mismatch"`;
+    valid), a NULL cell is absent, a cell of another storage class is `unknown_columns.<col> = "type-mismatch"` (a REAL in an integer column also
+    states `raw.<col>_ieee`, the 16 hex digits of its bits);
   * row warnings are matched by a fragment of the reason: "urls" (a visit without a usable urls row), "term" (an empty
     search term), "target_path" (a download with neither a target path nor a chain URL);
   * the schema notes assume this column order of the Go mappings (required first as listed, then the optional ones):
@@ -31,6 +32,7 @@ Not modelled (the scenario never reaches them): a URL over 2 MiB, a chain over 1
 import datetime
 import os
 import re
+import struct
 
 import telephony_common as C
 
@@ -135,6 +137,14 @@ def is_int(v):
     return isinstance(v, int) and not isinstance(v, bool)
 
 
+def mismatch(raw, unknown, key, v):
+    """A cell of an integer column that is not an integer: type-mismatch, plus raw.<key>_ieee (the 16 hex digits of the
+    stored bits) when it is a REAL (4h-R5)."""
+    unknown[key] = "type-mismatch"
+    if isinstance(v, float):
+        raw[key + "_ieee"] = struct.pack(">d", v).hex()
+
+
 def is_text(v):
     return isinstance(v, bytes) and not isinstance(v, C.Blob)
 
@@ -195,7 +205,7 @@ def instant(raw, unknown, col, v):
     if v is None:
         return None
     if not is_int(v):
-        unknown[col] = "type-mismatch"
+        mismatch(raw, unknown, col, v)
         return None
     raw[col] = v
     st = wk_status(v)
@@ -205,12 +215,12 @@ def instant(raw, unknown, col, v):
     return wk_iso(v)
 
 
-def count(unknown, key, v):
+def count(raw, unknown, key, v):
     """A count: the stored integer when it is one and not negative."""
     if v is None:
         return None
     if not is_int(v):
-        unknown[key] = "type-mismatch"
+        mismatch(raw, unknown, key, v)
         return None
     if v < 0:
         unknown[key] = "negative"
@@ -254,7 +264,7 @@ def transition(tv, p, raw, unknown):
     if tv is None:
         return
     if not is_int(tv):
-        unknown["transition"] = "type-mismatch"
+        mismatch(raw, unknown, "transition", tv)
         return
     raw["transition"] = tv
     if not -(2**31) <= tv <= 2**32 - 1:
@@ -274,17 +284,20 @@ def transition(tv, p, raw, unknown):
 # ---------------------------------------------------------------- urls and visits
 
 
-def urls_facts(u, p, unknown, prefix):
+def urls_facts(u, p, raw, unknown, prefix):
     """visit_count, typed_count and hidden of a urls row into the payload; unusable cells into unknown (prefixed)."""
     for col, key in (("visit_count", "url_visit_count"), ("typed_count", "typed_count")):
-        n = count(unknown, prefix + col, u.get(col))
+        n = count(raw, unknown, prefix + col, u.get(col))
         if n is not None:
             p[key] = n
     h = u.get("hidden")
     if is_int(h) and h in (0, 1):
         p["hidden"] = h == 1
     elif h is not None:
-        unknown[prefix + "hidden"] = "type-mismatch" if not is_int(h) else "not-boolean"
+        if is_int(h):
+            unknown[prefix + "hidden"] = "not-boolean"
+        else:
+            mismatch(raw, unknown, prefix + "hidden", h)
 
 
 def body_of(raw, url, title):
@@ -339,7 +352,7 @@ def expect_visit(ctx, v, u, file):
         p["title"] = title
     if ctx.profile:
         p["profile"] = ctx.profile
-    urls_facts(u, p, joined, "urls.")
+    urls_facts(u, p, raw, joined, "urls.")
     transition(v.get("transition"), p, raw, unknown)
     fv = v.get("from_visit")
     if is_int(fv):
@@ -347,7 +360,7 @@ def expect_visit(ctx, v, u, file):
         if fv > 0:
             p["referrer"] = {"visit_id": str(fv)}
     elif fv is not None:
-        unknown["from_visit"] = "type-mismatch"
+        mismatch(raw, unknown, "from_visit", fv)
     vd = v.get("visit_duration")
     if is_int(vd):
         raw["visit_duration"] = vd
@@ -359,7 +372,7 @@ def expect_visit(ctx, v, u, file):
         elif vd < 0:
             unknown["visit_duration"] = "negative"
     elif vd is not None:
-        unknown["visit_duration"] = "type-mismatch"
+        mismatch(raw, unknown, "visit_duration", vd)
     t = instant(raw, unknown, "visit_time", v.get("visit_time"))
     if is_int(v.get("url")):
         raw["url_id"] = v["url"]
@@ -368,7 +381,7 @@ def expect_visit(ctx, v, u, file):
         if is_int(x):
             raw[col] = x
         elif x is not None:
-            unknown[col] = "type-mismatch"
+            mismatch(raw, unknown, col, x)
     for col in ("originator_cache_guid", "external_referrer_url"):
         bad = text_raw(raw, col, v.get(col), MAX_URL if col == "external_referrer_url" else MAX_TEXT)
         if bad:
@@ -395,7 +408,7 @@ def expect_url(ctx, u, file):
         p["title"] = title
     if ctx.profile:
         p["profile"] = ctx.profile
-    urls_facts(u, p, unknown, "")
+    urls_facts(u, p, raw, unknown, "")
     t = instant(raw, unknown, "last_visit_time", u.get("last_visit_time"))
     raw["visitless"] = True
     stamp(ctx, raw, False)
@@ -452,7 +465,7 @@ def enum_name(enum, v, raw, unknown, col):
     if v is None:
         return None
     if not is_int(v):
-        unknown[col] = "type-mismatch"
+        mismatch(raw, unknown, col, v)
         return None
     raw[col] = v
     return constants()[enum].get(v, "unknown")
@@ -510,8 +523,8 @@ def expect_download(ctx, d, chains, file):
         elif tb < 0:
             unknown["total_bytes"] = "negative"
     elif tb is not None:
-        unknown["total_bytes"] = "type-mismatch"
-    rb = count(unknown, "received_bytes", d.get("received_bytes"))
+        mismatch(raw, unknown, "total_bytes", tb)
+    rb = count(raw, unknown, "received_bytes", d.get("received_bytes"))
     if rb is not None:
         p["received_bytes"] = rb
     for col, key, enum in (("state", "state", "download_state"), ("danger_type", "danger_type", "download_danger"),
@@ -523,7 +536,10 @@ def expect_download(ctx, d, chains, file):
     if is_int(op) and op in (0, 1):
         p["opened"] = op == 1
     elif op is not None:
-        unknown["opened"] = "type-mismatch" if not is_int(op) else "not-boolean"
+        if is_int(op):
+            unknown["opened"] = "not-boolean"
+        else:
+            mismatch(raw, unknown, "opened", op)
     t = instant(raw, unknown, "start_time", d.get("start_time"))
     times = {}
     for col, kind in (("end_time", "ended"), ("last_access_time", "accessed")):
@@ -538,7 +554,7 @@ def expect_download(ctx, d, chains, file):
     if is_int(tr):
         raw["transient"] = tr
     elif tr is not None:
-        unknown["transient"] = "type-mismatch"
+        mismatch(raw, unknown, "transient", tr)
     h = d.get("hash")
     if isinstance(h, C.Blob) and h:
         raw["hash"] = bytes(h).hex()
