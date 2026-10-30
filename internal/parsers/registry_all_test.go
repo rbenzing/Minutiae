@@ -5,6 +5,11 @@ import (
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/parse"
+	"github.com/rbenzing/minutiae/internal/parsers/chromium"
+	"github.com/rbenzing/minutiae/internal/parsers/iosaddressbook"
+	"github.com/rbenzing/minutiae/internal/parsers/ioscalls"
+	"github.com/rbenzing/minutiae/internal/parsers/iossms"
+	"github.com/rbenzing/minutiae/internal/parsers/safari"
 	"github.com/rbenzing/minutiae/internal/recordtypes/call"
 	"github.com/rbenzing/minutiae/internal/recordtypes/contact"
 	"github.com/rbenzing/minutiae/internal/recordtypes/message"
@@ -13,8 +18,7 @@ import (
 
 // claimsOf lists, for every registered parser, the tables it must claim (4G-R30): an explicit table, so a
 // claim is never added or dropped by accident and a registered parser missing from the table fails. A parser
-// without claims is listed with nil. Tasks 9 and 10 set the three Android telephony parsers, Task 10b the 4F browsers
-// (4H: ios.calls, ios.sms and ios.addressbook all claim their tables).
+// without claims is a failure (4H-R7): every first-set parser claims its claimable tables.
 var claimsOf = map[string][]string{
 	"android.mmssms":   {"sms", "pdu"},
 	"android.calllog":  {"calls"},
@@ -50,6 +54,9 @@ func TestRegisteredParsersClaimExactly(t *testing.T) {
 			t.Errorf("%s is registered but missing from the claims table of this test: list it with its claims (nil for none)", m.Name)
 			continue
 		}
+		if len(want) == 0 {
+			t.Errorf("%s claims nothing: every first-set SQLite parser claims its claimable tables (plan 4H)", m.Name)
+		}
 		var got []string
 		for _, c := range m.Claims {
 			if c.Role != "db" {
@@ -70,6 +77,45 @@ func TestRegisteredParsersClaimExactly(t *testing.T) {
 	for name := range claimsOf {
 		if !seen[name] {
 			t.Errorf("%s is in the claims table but not registered", name)
+		}
+	}
+}
+
+// TestEveryFirstSetParserClaimsItsClaimableTables (PASSES ON ARRIVAL; mutation-checked, 4H-R7): for the five
+// parsers that export ClaimableTables, Meta().Claims equals it in order, on the db role. The three Android
+// parsers are held by claimsOf alone.
+func TestEveryFirstSetParserClaimsItsClaimableTables(t *testing.T) {
+	claimable := map[string]func() []string{
+		"chromium.history": chromium.ClaimableTables,
+		"safari.history":   safari.ClaimableTables,
+		"ios.calls":        ioscalls.ClaimableTables,
+		"ios.addressbook":  iosaddressbook.ClaimableTables,
+		"ios.sms":          iossms.ClaimableTables,
+	}
+	for name, fn := range claimable {
+		var found parse.Parser
+		for _, p := range All() {
+			if p.Meta().Name == name {
+				found = p
+			}
+		}
+		if found == nil {
+			t.Errorf("%s is not registered", name)
+			continue
+		}
+		want := fn()
+		if len(want) == 0 {
+			t.Errorf("%s: ClaimableTables is empty", name)
+		}
+		var got []string
+		for _, c := range found.Meta().Claims {
+			if c.Role != "db" {
+				t.Errorf("%s: claim %+v is not on the db role", name, c)
+			}
+			got = append(got, c.Table)
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s declares claims %v, want ClaimableTables %v", name, got, want)
 		}
 	}
 }
