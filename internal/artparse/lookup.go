@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/parse"
@@ -52,12 +53,60 @@ func (b *bundle) lookupEligible(m evidence.ManifestRecord) bool {
 }
 
 // Find returns the eligible artifacts whose logical path matches the glob,
-// sorted by artifact id, R nil.
+// sorted by artifact id, R nil. A glob without "*" answers from the snapshot's
+// logical-path index, built once (4E-R9); the others scan the snapshot.
 func (l *lookuper) Find(glob string) []parse.Artifact {
 	g, err := parse.CompileGlob(glob)
 	if err != nil {
 		return nil
 	}
+	key, literal := literalKey(glob, g)
+	if !literal {
+		return l.scan(g)
+	}
+	b := l.b
+	var out []parse.Artifact
+	for _, c := range b.snap.logicalIndex(b.h)[key] {
+		if b.lookupEligible(c.rec) && g.Match(c.logical.Path) {
+			out = append(out, l.artifactOf(c))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// literalKey is the logical path a glob without "*" can match, in the form logical paths have (an
+// Android glob allows one optional "/" after the scheme). A relative glob matches nothing here.
+func literalKey(glob string, g *parse.Glob) (string, bool) {
+	if g.Relative() || strings.Contains(glob, "*") {
+		return "", false
+	}
+	if rest, ok := strings.CutPrefix(glob, "android:"); ok {
+		return "android:/" + strings.TrimPrefix(rest, "/"), true
+	}
+	return glob, true
+}
+
+func (l *lookuper) artifactOf(c *candidate) parse.Artifact {
+	rec := c.rec
+	mb := c.member("", l.b.snap.env)
+	return parse.Artifact{
+		ID: rec.ID, SHA256: rec.SHA256, Platform: mb.Platform, Logical: mb.Logical,
+		Acquisition: acquisitionOf(rec),
+		Size:        rec.Size, Incomplete: rec.Incomplete, Source: SourceInfo(rec),
+	}
+}
+
+// findScan is Find by a linear scan of the snapshot (the reference the index must agree with).
+func (l *lookuper) findScan(glob string) []parse.Artifact {
+	g, err := parse.CompileGlob(glob)
+	if err != nil {
+		return nil
+	}
+	return l.scan(g)
+}
+
+func (l *lookuper) scan(g *parse.Glob) []parse.Artifact {
 	b := l.b
 	var out []parse.Artifact
 	for _, rec := range b.snap.records {
@@ -68,12 +117,7 @@ func (l *lookuper) Find(glob string) []parse.Artifact {
 		if !c.named || !g.Match(c.logical.Path) {
 			continue
 		}
-		mb := c.member("", b.snap.env)
-		out = append(out, parse.Artifact{
-			ID: rec.ID, SHA256: rec.SHA256, Platform: mb.Platform, Logical: mb.Logical,
-			Acquisition: acquisitionOf(rec),
-			Size:        rec.Size, Incomplete: rec.Incomplete, Source: SourceInfo(rec),
-		})
+		out = append(out, l.artifactOf(c))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out

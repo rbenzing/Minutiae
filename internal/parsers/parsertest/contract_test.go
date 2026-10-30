@@ -303,12 +303,17 @@ func TestStrictEnforcesTheContractRules(t *testing.T) {
 	})
 }
 
+// cancelBound is how long a parser that honours a cancelled context may take to return. It is generous on
+// purpose: the race gate runs many packages at once under -race, and a cooperative parser once took 6 s there
+// (2026-10-29). The deaf-parser case keeps its own short bound, so the check is not weakened.
+const cancelBound = 30 * time.Second
+
 func TestAssertHonoursCancel(t *testing.T) {
 	t.Run("a cooperative parser", func(t *testing.T) {
 		rec := &recorder{TB: t}
 		h, art, _ := bundle(t, rec, "coop", "x\n")
 		p := Slow{Name: "coop", Version: "1.0.0", Cooperative: true}
-		res := h.AssertHonoursCancel(p, h.Input(p, art, nil, false), 5*time.Second)
+		res := h.AssertHonoursCancel(p, h.Input(p, art, nil, false), cancelBound)
 		if rec.Failed() || !errors.Is(res.Err, context.Canceled) {
 			t.Errorf("failures %v, err %v", rec.errs, res.Err)
 		}
@@ -328,7 +333,7 @@ func TestAssertHonoursCancel(t *testing.T) {
 		rec := &recorder{TB: t}
 		h, art, _ := bundle(t, rec, "other", "x\n")
 		p := newFn("other", func(context.Context, *parse.Input, parse.Emitter) error { return errors.New("not the context") })
-		h.AssertHonoursCancel(p, h.Input(p, art, nil, false), 5*time.Second)
+		h.AssertHonoursCancel(p, h.Input(p, art, nil, false), cancelBound)
 		if !rec.Failed() || !strings.Contains(joined(rec), "not the context") {
 			t.Errorf("failures %v", rec.errs)
 		}
@@ -337,7 +342,7 @@ func TestAssertHonoursCancel(t *testing.T) {
 		rec := &recorder{TB: t}
 		h, art, _ := bundle(t, rec, "quick", "x\n")
 		p := WellBehaved{Name: "quick", Version: "1.0.0"}
-		h.AssertHonoursCancel(p, h.Input(p, art, nil, false), 5*time.Second)
+		h.AssertHonoursCancel(p, h.Input(p, art, nil, false), cancelBound)
 		if rec.Failed() {
 			t.Errorf("a parser that completes is not a failure: %v", rec.errs)
 		}

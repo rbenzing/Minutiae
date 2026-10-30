@@ -5,19 +5,25 @@ import (
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/parse"
+	"github.com/rbenzing/minutiae/internal/recordtypes/call"
+	"github.com/rbenzing/minutiae/internal/recordtypes/contact"
+	"github.com/rbenzing/minutiae/internal/recordtypes/message"
 	"github.com/rbenzing/minutiae/internal/recordtypes/web"
 )
 
 // claimsOf lists, for every registered parser, the tables it must claim (4G-R30): an explicit table, so a
 // claim is never added or dropped by accident and a registered parser missing from the table fails. A parser
 // without claims is listed with nil. Tasks 9 and 10 set the three Android telephony parsers, Task 10b the 4F browsers
-// (the 4E parsers follow in plan 4G Task 14).
+// (the 4E parsers claim nothing yet: ios.sms, ios.calls and ios.addressbook are listed with nil).
 var claimsOf = map[string][]string{
 	"android.mmssms":   {"sms", "pdu"},
 	"android.calllog":  {"calls"},
 	"android.contacts": {"raw_contacts", "deleted_contacts"},
 	"chromium.history": {"visits", "keyword_search_terms", "downloads"},
 	"safari.history":   {"history_visits"},
+	"ios.calls":        nil,
+	"ios.addressbook":  nil,
+	"ios.sms":          nil,
 }
 
 // 4A's registry tests ranged over an empty registry; with the Android telephony parsers in it they are real
@@ -69,7 +75,7 @@ func TestRegisteredParsersClaimExactly(t *testing.T) {
 }
 
 func TestEveryTelephonyParserReadsCompanionRolesAndEmitsOneType(t *testing.T) {
-	want := map[string]string{"android.mmssms": "message", "android.calllog": "call", "android.contacts": "contact"}
+	want := map[string]string{"android.mmssms": "message", "android.calllog": "call", "android.contacts": "contact", "ios.calls": "call", "ios.addressbook": "contact", "ios.sms": "message"}
 	for _, p := range All() {
 		m := p.Meta()
 		typ, ok := want[m.Name]
@@ -80,8 +86,12 @@ func TestEveryTelephonyParserReadsCompanionRolesAndEmitsOneType(t *testing.T) {
 		for _, in := range m.Inputs {
 			roles = append(roles, in.Role)
 		}
-		if !slices.Equal(roles, []string{"db", "wal", "journal"}) || len(m.Emits) != 1 || m.Emits[0].Type != typ {
-			t.Errorf("%s: roles %v emits %v, want db/wal/journal and %s", m.Name, roles, m.Emits, typ)
+		wantRoles := []string{"db", "wal", "journal"}
+		if m.Name == "ios.addressbook" {
+			wantRoles = append(wantRoles, "images", "images_wal") // the photo-presence database and its WAL (4E-R25)
+		}
+		if !slices.Equal(roles, wantRoles) || len(m.Emits) != 1 || m.Emits[0].Type != typ {
+			t.Errorf("%s: roles %v emits %v, want %v and %s", m.Name, roles, m.Emits, wantRoles, typ)
 		}
 		delete(want, m.Name)
 	}
@@ -110,6 +120,9 @@ func TestBrowserParsersReadCompanionRolesAndEmitTheirTypes(t *testing.T) {
 			t.Errorf("%s is missing from the registry", w.name)
 			continue
 		}
+		if idx < 3 {
+			t.Errorf("%s is at %d, want it after the three Android telephony parsers", w.name, idx)
+		}
 		if idx <= last {
 			t.Errorf("%s is at %d, want it after the previous browser parser (registry order)", w.name, idx)
 		}
@@ -134,6 +147,82 @@ func TestBrowserParsersReadCompanionRolesAndEmitTheirTypes(t *testing.T) {
 		}
 		if !slices.Equal(types, w.types) {
 			t.Errorf("%s: emits %v, want exactly %v", w.name, types, w.types)
+		}
+	}
+}
+
+// iosWant is what 4E promises about each iOS parser: its roles, the one type it emits (with that type's payload
+// version) and that it is registered in this order, after the Android telephony parsers and before the browser parsers (Android, then iOS, then browsers, 4E-R27).
+var iosWant = []struct {
+	name, typ string
+	version   int
+	roles     []string
+}{
+	{"ios.sms", message.Type, message.PayloadVersion, []string{"db", "wal", "journal"}},
+	{"ios.calls", call.Type, call.PayloadVersion, []string{"db", "wal", "journal"}},
+	{"ios.addressbook", contact.Type, contact.PayloadVersion, []string{"db", "wal", "journal", "images", "images_wal"}},
+}
+
+// TestIOSParsersMakeNoClaimsAndAreRowMappers (PASSES ON ARRIVAL; mutation-checked, 4E-R44): the three iOS parsers
+// are valid RowMappers with mappings, declare no claims yet (4G claims for them are a follow-up) and run on iOS only.
+func TestIOSParsersMakeNoClaimsAndAreRowMappers(t *testing.T) {
+	seen := 0
+	for _, w := range iosWant {
+		var p parse.Parser
+		for _, q := range All() {
+			if q.Meta().Name == w.name {
+				p = q
+			}
+		}
+		if p == nil {
+			t.Errorf("%s is not registered", w.name)
+			continue
+		}
+		seen++
+		m := p.Meta()
+		if len(m.Claims) != 0 {
+			t.Errorf("%s declares claims %+v; the iOS parsers claim nothing yet", w.name, m.Claims)
+		}
+		if !slices.Equal(m.Platforms, []string{parse.PlatformIOS}) {
+			t.Errorf("%s: platforms %v, want ios only", w.name, m.Platforms)
+		}
+		rm, ok := p.(parse.RowMapper)
+		if !ok || len(rm.Mappings()) == 0 {
+			t.Errorf("%s is not a RowMapper with mappings", w.name)
+		}
+	}
+	if seen != len(iosWant) {
+		t.Errorf("found %d of %d iOS parsers", seen, len(iosWant))
+	}
+}
+
+// TestEveryIOSParserReadsCompanionRolesAndEmitsOneType (PASSES ON ARRIVAL; mutation-checked, 4E-R44) is the
+// registry-wide check of 4D for the three iOS parsers: exact roles (the write-ahead log and rollback journal
+// companions are read), exactly one emitted type at the current payload version, and the registry order
+// ios.sms, ios.calls, ios.addressbook after the Android telephony parsers.
+func TestEveryIOSParserReadsCompanionRolesAndEmitsOneType(t *testing.T) {
+	all := All()
+	last := -1
+	for _, w := range iosWant {
+		idx := slices.IndexFunc(all, func(p parse.Parser) bool { return p.Meta().Name == w.name })
+		if idx < 0 {
+			t.Errorf("%s is missing from the registry", w.name)
+			continue
+		}
+		if idx <= last {
+			t.Errorf("%s is at %d, want it after the previous iOS parser (registry order)", w.name, idx)
+		}
+		last = idx
+		m := all[idx].Meta()
+		roles := []string{}
+		for _, in := range m.Inputs {
+			roles = append(roles, in.Role)
+		}
+		if !slices.Equal(roles, w.roles) {
+			t.Errorf("%s: roles %v, want %v", w.name, roles, w.roles)
+		}
+		if len(m.Emits) != 1 || m.Emits[0].Type != w.typ || m.Emits[0].PayloadVersion != w.version {
+			t.Errorf("%s emits %+v, want exactly %s at payload version %d", w.name, m.Emits, w.typ, w.version)
 		}
 	}
 }

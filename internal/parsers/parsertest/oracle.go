@@ -35,9 +35,12 @@ type Generator struct {
 // ExtraFile is a file the scenario puts next to the database in the case (an
 // attachment the parser can find through Lookup).
 type ExtraFile struct {
-	RemotePath string `json:"remote_path"`
-	ContentB64 string `json:"content_b64"`
-	Device     string `json:"device"` // the device it was acquired from; "" and "SER1" are the database's own device
+	RemotePath   string `json:"remote_path"`
+	ContentB64   string `json:"content_b64"`
+	Device       string `json:"device"`        // the device it was acquired from; "" and "SER1" are the database's own device
+	Domain       string `json:"domain"`        // iOS backup extra: the backup domain (BundleIOSBackup)
+	RelativePath string `json:"relative_path"` // iOS backup extra: the path within the domain
+	Role         string `json:"role"`          // "": a plain extra (Others["extraN"]); else the bundle role it fills, for example "images"
 }
 
 // ExpRecord is one expected record, stated literally by the generator. File is
@@ -87,7 +90,7 @@ type Fixture struct {
 
 const maxFixtureFile = 64 << 20
 
-var fixtureRoles = []struct{ role, suffix string }{{"db", ".db.gz"}, {"wal", ".db-wal.gz"}, {"journal", ".db-journal.gz"}}
+var fixtureRoles = []struct{ role, suffix string }{{"db", ".db.gz"}, {"wal", ".db-wal.gz"}, {"journal", ".db-journal.gz"}, {"images", ".images.db.gz"}, {"images_wal", ".images.db-wal.gz"}}
 
 // LoadFixture reads <dir>/<name>.expect.json and the compressed files it lists.
 // The SHA-256 of every decompressed file must equal generator.files[role] before
@@ -113,7 +116,7 @@ func LoadFixture(t testing.TB, dir, name string) Fixture {
 			known = known || fr.role == role
 		}
 		if !known {
-			t.Fatalf("%s: generator.files lists the unknown role %q (known: db, wal, journal): its file would never be hashed", name, role)
+			t.Fatalf("%s: generator.files lists the unknown role %q (known: db, wal, journal, images, images_wal): its file would never be hashed", name, role)
 			return Fixture{}
 		}
 	}
@@ -170,7 +173,7 @@ type Bundle struct {
 	Primary parse.Artifact
 	Others  map[string]parse.Artifact // for Harness.Input: wal, journal and extraN
 	ByRole  map[string]parse.Artifact // db, wal, journal
-	ByPath  map[string]parse.Artifact // remote path -> artifact, for the extra files
+	ByPath  map[string]parse.Artifact // remote path (iOS backup: logical path ios:<domain>/<relative_path>) -> artifact, for the extra files
 }
 
 // ErrEmptyRemotePath is returned by BuildBundle when the database path or an extra file's path is empty: an artifact
@@ -223,7 +226,14 @@ func (f Fixture) BuildBundle(h *Harness, remotePath string) (Bundle, error) {
 		} else {
 			a = h.Artifact(addAndroidFileFor(h.T, h.Case, x.Device, "acq-"+x.Device, x.RemotePath, data), data)
 		}
-		b.Others["extra"+strconv.Itoa(i)] = a
+		if x.Role != "" {
+			if _, taken := b.ByRole[x.Role]; taken {
+				return b, fmt.Errorf("extra file %s: the role %q is already filled", x.RemotePath, x.Role)
+			}
+			b.Others[x.Role], b.ByRole[x.Role] = a, a
+		} else {
+			b.Others["extra"+strconv.Itoa(i)] = a
+		}
 		b.ByPath[x.RemotePath] = a
 	}
 	return b, nil
