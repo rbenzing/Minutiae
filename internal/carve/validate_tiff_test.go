@@ -776,3 +776,42 @@ func TestTIFFCapInIFD0TypesTiffNotDNG(t *testing.T) {
 		t.Fatalf("verdict = %+v, want bounded tiff-walk-capped=ifds typed tiff/tif", v)
 	}
 }
+
+// TestTIFFCR2RawPointerOnlyExemptsMainIFDs (review fix): the raw pointer may
+// name an IFD the chain already holds only if that is a main IFD; at a queued
+// Exif IFD it is ifd-cycle, and a new raw IFD whose next pointer loops back to
+// IFD0 is ifd-cycle too.
+func TestTIFFCR2RawPointerOnlyExemptsMainIFDs(t *testing.T) {
+	page := tiffPage(false)
+	page.Exif = &carvetest.TIFFIFD{Entries: []carvetest.TIFFEntry{{Tag: 33434, Type: 5, Value: carvetest.TIFFValue(false, 5, 1, 100)}}}
+	o := tiffOpts(page)
+	o.CR2 = true
+	obj := carvetest.TIFF(o)
+	count := int(binary.LittleEndian.Uint16(obj[16:]))
+	var exifOff uint32
+	for i := range count {
+		e := obj[18+12*i:]
+		if binary.LittleEndian.Uint16(e) == 34665 {
+			exifOff = binary.LittleEndian.Uint32(e[8:])
+		}
+	}
+	if exifOff == 0 {
+		t.Fatal("no Exif pointer in the builder object")
+	}
+	patched := slices.Clone(obj)
+	binary.LittleEndian.PutUint32(patched[12:], exifOff)
+	if v := tiffVerdict(patched, 0); v.Outcome != Rejected || v.Reason != "ifd-cycle" {
+		t.Errorf("raw pointer at the Exif IFD = %+v, want rejected ifd-cycle", v)
+	}
+
+	raw := tiffPage(false)
+	ro := tiffOpts(tiffPage(false))
+	ro.CR2, ro.CR2Raw = true, &raw
+	robj := carvetest.TIFF(ro)
+	rawOff := int(binary.LittleEndian.Uint32(robj[12:]))
+	n := int(binary.LittleEndian.Uint16(robj[rawOff:]))
+	binary.LittleEndian.PutUint32(robj[rawOff+2+12*n:], 16)
+	if v := tiffVerdict(robj, 0); v.Outcome != Rejected || v.Reason != "ifd-cycle" {
+		t.Errorf("raw IFD looping back to IFD0 = %+v, want rejected ifd-cycle", v)
+	}
+}

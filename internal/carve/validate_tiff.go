@@ -3,7 +3,6 @@ package carve
 import (
 	"encoding/binary"
 	"math"
-	"slices"
 	"strconv"
 )
 
@@ -422,7 +421,11 @@ func validateTIFF(w *Window) Verdict {
 		}
 	}
 	walk()
-	if err == nil && cr2Raw != 0 && !slices.Contains(t.ifds[:t.n], int64(cr2Raw)) {
+	sameMain := false // the raw IFD is a main IFD the chain already holds
+	for i := range t.n {
+		sameMain = sameMain || t.ifds[i] == int64(cr2Raw) && t.kinds[i] == tiffKindMain
+	}
+	if err == nil && cr2Raw != 0 && !sameMain {
 		if cr2Raw < 16 { // inside the 16-byte CR2 header
 			err = tiffReject("bad-offset")
 		} else {
