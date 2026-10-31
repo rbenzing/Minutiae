@@ -88,6 +88,13 @@ type FS struct {
 	// returned as the I/O error it is, not as a corrupt map (so the journal never caches it). The live reader leaves it
 	// false and is unchanged (3C-R23).
 	ioRaw bool
+
+	// jrecMu guards jrec, the journal-recovery state PrepareJournalRecovery builds (recover_journal.go). It is nil until
+	// prepared, and then Recoverable never consults the journal (3G-R11). jrecCopyCap bounds the copies one entry
+	// examines (0 = maxJournalCopiesPerEntry); tests lower it.
+	jrecMu      sync.Mutex
+	jrec        *jrecState
+	jrecCopyCap int
 }
 
 // readFull reads exactly len(p) bytes at off; a read that returns all the
