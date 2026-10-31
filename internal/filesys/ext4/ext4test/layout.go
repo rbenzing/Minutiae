@@ -26,6 +26,8 @@ type Layout struct {
 	BlockSize, BlocksPerGroup, InodesPerGroup, InodeSize, FirstDataBlock int
 	BlockBitmap, InodeBitmap, InodeTable                                 []int // per group
 	Files                                                                []FileLoc
+	JournalInode                                                         uint32 // 8 when Options.JournalBlocks > 0, else 0
+	JournalStart                                                         int    // fs block of journal block 0; 0 without a journal
 
 	b *builder // options, seed, descriptor size and group geometry
 }
@@ -47,6 +49,9 @@ func BuildLayout(o Options, files []File) ([]byte, *Layout) {
 		l.BlockBitmap = append(l.BlockBitmap, g.bitmapBB)
 		l.InodeBitmap = append(l.InodeBitmap, g.bitmapIB)
 		l.InodeTable = append(l.InodeTable, g.itable)
+	}
+	if p := b.rec[journalInode]; p != nil && len(p.data) > 0 {
+		l.JournalInode, l.JournalStart = journalInode, p.data[0]
 	}
 	all := withParents(files)
 	for i := range all {
