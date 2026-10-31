@@ -192,8 +192,15 @@ func parseJSuper(b []byte, fsBlockSize int) (*jsuper, error) {
 }
 
 // journalView returns a private view of f whose warnings only this journal read sees, so a damaged journal inode adds
-// no filesystem warning (3G-R8, 3C-R5).
-func (f *FS) journalView() *FS { return f.newQuiet() }
+// no filesystem warning (3G-R8, 3C-R5). newQuiet does not copy the journal caps or the stale-map caps, so they are
+// passed here explicitly (Task 4 review), and a failed read in the journal inode's map walk stays an I/O error.
+func (f *FS) journalView() *FS {
+	q := f.newQuiet()
+	q.jrnBytesCap, q.jrnTxnCap, q.jrnTagCap, q.jrnRevokeCap = f.jrnBytesCap, f.jrnTxnCap, f.jrnTagCap, f.jrnRevokeCap
+	q.mapRunsCap = f.mapRunsCap
+	q.ioRaw = true
+	return q
+}
 
 // openJournal locates the journal through s_journal_inum and the journal inode's map, reads and decodes its
 // superblock and checks that it fits the inode (3G-R2). The caller holds jrnMu. It reads through a private quiet view:

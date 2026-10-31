@@ -97,8 +97,11 @@ type Options struct {
 	// JournalBlocks > 0 creates inode 8 as a regular file over that many contiguous blocks (an extent map with
 	// Extents, a block map without), sets s_journal_inum (0xE0) to 8 and has_journal. WriteJournal fills it.
 	JournalBlocks int
-	GDTCsum       bool // uninit_bg group descriptor crc16 (ignored with MetadataCsum)
-	Groups        int  // >= 1; default 1
+	// JournalExtentLeaves > 0 moves the journal inode's extent map out of i_block into that many leaf blocks under an
+	// index root (a depth-1 tree), so a test can fail the read of a map block.
+	JournalExtentLeaves int
+	GDTCsum             bool // uninit_bg group descriptor crc16 (ignored with MetadataCsum)
+	Groups              int  // >= 1; default 1
 
 	BlocksPerGroup int // default 1024; a multiple of 8, at most 8*BlockSize
 	InodesPerGroup int // default 128; a multiple of 8, at least 16, at most 8*BlockSize

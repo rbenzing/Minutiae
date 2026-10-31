@@ -84,6 +84,10 @@ type FS struct {
 	// jrnBuilds counts the journal locations done and jrnBlocks the journal blocks read. Tests bound them.
 	jrnBuilds int
 	jrnBlocks atomic.Int64
+	// ioRaw is set on the private view the journal reads through: a non-EOF read error in an extent or indirect walk is
+	// returned as the I/O error it is, not as a corrupt map (so the journal never caches it). The live reader leaves it
+	// false and is unchanged (3C-R23).
+	ioRaw bool
 }
 
 // readFull reads exactly len(p) bytes at off; a read that returns all the

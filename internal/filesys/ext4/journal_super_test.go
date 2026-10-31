@@ -499,3 +499,53 @@ func TestJournalIOErrorIsNotCached(t *testing.T) {
 		t.Fatalf("after the read works again: %+v, %v; the failure must not have been cached", info, err)
 	}
 }
+
+// jtOnceFailReader fails the first read that touches [from, to) once armed, then reads normally.
+type jtOnceFailReader struct {
+	*bytes.Reader
+	from, to int64
+	armed    bool
+	failed   int
+}
+
+func (r *jtOnceFailReader) ReadAt(p []byte, off int64) (int, error) {
+	if r.armed && off < r.to && off+int64(len(p)) > r.from {
+		r.armed = false
+		r.failed++
+		return 0, errors.New("injected read failure")
+	}
+	return r.Reader.ReadAt(p, off)
+}
+
+// TestJournalExtentWalkIOErrorIsNotCached: a failed read of an extent-tree node of the journal inode is an I/O error,
+// not a corrupt journal, and is not cached (Task 4 review follow-up).
+func TestJournalExtentWalkIOErrorIsNotCached(t *testing.T) {
+	o := jtOpts(64)
+	o.JournalExtentLeaves = 1
+	img, l := jtImage(t, o, ext4test.JBD2{Sequence: 1})
+	// The root's only index entry names the leaf block (ei_leaf_lo at i_block+12+4).
+	var leaf int64
+	l.PatchInode(img, l.JournalInode, func(raw []byte) {
+		if d := binary.LittleEndian.Uint16(raw[0x28+6:]); d != 1 {
+			t.Fatalf("journal inode extent depth = %d; want 1", d)
+		}
+		leaf = int64(binary.LittleEndian.Uint32(raw[0x28+12+4:]))
+	})
+	r := &jtOnceFailReader{Reader: bytes.NewReader(img), from: leaf * jtBS, to: (leaf + 1) * jtBS}
+	f, err := ext4.Open(r, int64(len(img)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.armed = true
+	_, err = f.Journal()
+	if r.failed != 1 {
+		t.Fatalf("the injected failure fired %d times; want 1 (the leaf was not read)", r.failed)
+	}
+	if err == nil || errors.Is(err, filesys.ErrCorrupt) || errors.Is(err, filesys.ErrUnsupported) || errors.Is(err, filesys.ErrLimit) {
+		t.Fatalf("a failed extent-node read = %v; want the I/O error, not a corrupt/unsupported/limit verdict", err)
+	}
+	info, err := f.Journal()
+	if err != nil || info.Version != 2 {
+		t.Fatalf("after the read works again: %+v, %v; the failure must not have been cached", info, err)
+	}
+}
