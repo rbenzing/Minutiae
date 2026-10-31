@@ -410,6 +410,19 @@ func TestRecoverableLeafPhysicalOverlapStops(t *testing.T) {
 	}
 }
 
+// An overlap inside an extent cuts at the exact block: the non-overlapping prefix of that extent is kept. The second
+// extent maps blocks 1..4, and block 4 is the first that the first extent (blocks 4..6) already names, so the cut is at
+// logical block 6, three blocks into the second extent.
+func TestRecoverableLeafOverlapInsideExtentCutsAtExactBlock(t *testing.T) {
+	f, _, _ := leafImg(t, csumExt, bigDeleted(40), kernelFlags, true, func(img []byte, l *ext4test.Layout) {
+		putLeaves(l, img, []ext4test.Extent{{Lblk: 0, Len: 3, Phys: 4}, {Lblk: 3, Len: 4, Phys: 1}})
+	})
+	c := leafOnly(t, f)
+	if got := stopOf(c); got != "map-overlap@6" || coveredBytes(c) != 6*lbs {
+		t.Errorf("stop %q covered %d, want map-overlap@6 and 6 blocks", got, coveredBytes(c))
+	}
+}
+
 // More runs than the cap stop the chain: the cap is a stop, never a silent cut.
 func TestRecoverableLeafRunsCapStops(t *testing.T) {
 	f, _, _ := leafImg(t, csumExt, bigDeleted(40), kernelFlags, false, func(img []byte, l *ext4test.Layout) {

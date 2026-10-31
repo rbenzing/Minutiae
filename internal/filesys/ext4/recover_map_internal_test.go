@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"runtime"
+	"slices"
 	"testing"
 )
 
@@ -103,9 +104,17 @@ func TestCutAtOverlapMatchesPerBlockDefinition(t *testing.T) {
 		var lblk int64
 		for range 1 + rng.IntN(6) {
 			n := int64(1 + rng.IntN(6))
-			segs = append(segs, mapSeg{lblk, int64(rng.IntN(30)), n})
+			// pushSeg merges a run that continues the last one on disk, so merged segments are covered too; half the
+			// time the run is made to continue the last one
+			phys := int64(rng.IntN(30))
+			if len(segs) > 0 && rng.IntN(2) == 0 {
+				last := segs[len(segs)-1]
+				phys = last.phys + last.n
+			}
+			segs = pushSeg(segs, lblk, phys, n)
 			lblk += n
 		}
+		orig := slices.Clone(segs)
 		var tree []uint64
 		for range rng.IntN(3) {
 			tree = append(tree, uint64(rng.IntN(36)))
@@ -140,6 +149,17 @@ func TestCutAtOverlapMatchesPerBlockDefinition(t *testing.T) {
 			}
 			if kept != want {
 				t.Fatalf("segs %v tree %v: kept %d blocks, want %d", segs, tree, kept, want)
+			}
+			// shape: every segment but the last is unchanged, and the last is a prefix of the original segment at the
+			// same index, ending exactly at the cut block (the whole segment when the cut is on its boundary)
+			if idx := len(cut) - 1; idx >= 0 {
+				if !slices.Equal(cut[:idx], orig[:idx]) {
+					t.Fatalf("segs %v tree %v: cut %v changed the leading segments", orig, tree, cut)
+				}
+				last, o := cut[idx], orig[idx]
+				if last.lblk != o.lblk || last.phys != o.phys || last.n < 1 || last.n > o.n || last.lblk+last.n != want {
+					t.Fatalf("segs %v tree %v: last segment of cut %v, want a prefix of %v ending at lblk %d", orig, tree, cut, o, want)
+				}
 			}
 		}
 	}
