@@ -1,0 +1,3309 @@
+{
+  "generator": {
+    "image_sha256": "d2a9d5e3c35b8dc1594d4fa6e3f12e20961bff5941b31cf7ba7f319f70f92825",
+    "packages": [
+      {
+        "package": "busybox-static",
+        "version": "1:1.35.0-4+deb12u1+b1"
+      },
+      {
+        "package": "cpio",
+        "version": "2.13+dfsg-7.1"
+      },
+      {
+        "package": "e2fsprogs",
+        "version": "1.47.0-2+b2"
+      },
+      {
+        "package": "faketime",
+        "version": "0.9.10-2.1"
+      },
+      {
+        "package": "gzip",
+        "version": "1.12-1"
+      },
+      {
+        "package": "jq",
+        "version": "1.6-2.1+deb12u2"
+      },
+      {
+        "package": "kmod",
+        "version": "30+20221128-1"
+      },
+      {
+        "package": "linux-image-6.1.0-53-amd64",
+        "version": "6.1.187-1"
+      },
+      {
+        "package": "python3",
+        "version": "3.11.2-1+b1"
+      },
+      {
+        "package": "qemu-system-x86",
+        "version": "1:7.2+dfsg-7+deb12u18+b3"
+      },
+      {
+        "package": "linux-image-5.10.0-32-amd64",
+        "version": "5.10.223-1"
+      }
+    ],
+    "commands": [
+      "# sources: pattern bytes (tools/fixtures/lib.sh); sp.src and pad.tar are built by ext4_recover.sh itself; guest kernel 5.10.0-32-amd64",
+      "faketime -f '2023-11-14 22:13:20' mke2fs -q -F -t ext4 -b 1024 -O metadata_csum,64bit,inline_data,^orphan_file -m 0 -J size=1 -N 16384 -U 33333333-4444-5555-6666-777777777777 -E hash_seed=33333333-4444-5555-6666-777777777777 <img>",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): echo 0 > /sys/fs/ext4/vda/reserved_clusters",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): mkdir /mnt/t /mnt/t/ir /mnt/t/sk /mnt/t/zs /mnt/t/in /mnt/t/hl /mnt/t/sp /mnt/t/dk /mnt/t/dt /mnt/t/dh /mnt/t/lr /mnt/t/ds /mnt/t/dd /mnt/t/w /mnt/t/dn /mnt/t/ir/sub",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): for d in ir sk zs in hl sp dk dt dh lr ds dd w dn; do : > /mnt/t/$d/keeper_kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk; done",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): cp /payload/ir_f.bin /mnt/t/ir/f.bin",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): : > /mnt/t/dn/l1; : > /mnt/t/dn/l2; : > /mnt/t/dn/l3",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): cp /payload/sk_s.bin /mnt/t/sk/s.bin; : > /mnt/t/zs/z.dat; cp /payload/in_i.dat /mnt/t/in/i.dat",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): cp /payload/hl_h.bin /mnt/t/hl/h1; ln /mnt/t/hl/h1 /mnt/t/hl/h2; sync; rm /mnt/t/hl/h1",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): cp /payload/ds_s.bin /mnt/t/ds/s.bin; sync",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): dd if=/dev/zero of=/mnt/bigfill bs=1024 count=8958 2>/dev/null || true",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): sync",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): tar -x -C /mnt -f /payload/pad.tar || true",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): sync",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): dd if=/dev/zero of=/mnt/tailfill bs=1024 2>/dev/null || true",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): sync",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): rm -r /mnt/pad/b",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): sync",
+      "guest boot b2-deep (2023-11-14 23:13:20, kernel 5.10.0-32-amd64): echo 0 > /sys/fs/ext4/vda/reserved_clusters",
+      "guest boot b2-deep (2023-11-14 23:13:20, kernel 5.10.0-32-amd64): i=0; while [ $i -lt 16 ]; do dd if=/payload/lr.src of=/mnt/t/lr/deep.bin bs=1024 skip=$i seek=$i count=1 conv=notrunc 2>/dev/null;  i=$((i+1)); done",
+      "guest boot b2-deep (2023-11-14 23:13:20, kernel 5.10.0-32-amd64): sync",
+      "guest boot b2-deep (2023-11-14 23:13:20, kernel 5.10.0-32-amd64): i=0; while [ $i -lt 16 ]; do dd if=/payload/dh.src of=/mnt/t/dh/deep.bin bs=1024 skip=$i seek=$i count=1 conv=notrunc 2>/dev/null;  i=$((i+1)); done",
+      "guest boot b2-deep (2023-11-14 23:13:20, kernel 5.10.0-32-amd64): sync",
+      "guest boot b2-deep (2023-11-14 23:13:20, kernel 5.10.0-32-amd64): i=8; while [ $i -lt 16 ]; do dd if=/payload/dt.src of=/mnt/t/dt/deep.bin bs=1024 skip=$i seek=$i count=1 conv=notrunc 2>/dev/null; sync; i=$((i+1)); done",
+      "guest boot b2-deep (2023-11-14 23:13:20, kernel 5.10.0-32-amd64): sync",
+      "guest boot b2-deep (2023-11-14 23:13:20, kernel 5.10.0-32-amd64): i=0; while [ $i -lt 8 ]; do dd if=/payload/dt.src of=/mnt/t/dt/deep.bin bs=1024 skip=$i seek=$i count=1 conv=notrunc 2>/dev/null; sync; i=$((i+1)); done",
+      "guest boot b2-deep (2023-11-14 23:13:20, kernel 5.10.0-32-amd64): sync",
+      "guest boot b2-deep (2023-11-14 23:13:20, kernel 5.10.0-32-amd64): i=0; while [ $i -lt 96 ]; do dd if=/payload/dk.src of=/mnt/t/dk/deep.bin bs=1024 skip=$i seek=$i count=1 conv=notrunc 2>/dev/null;  i=$((i+1)); done",
+      "guest boot b2-deep (2023-11-14 23:13:20, kernel 5.10.0-32-amd64): sync",
+      "guest boot b2-deep (2023-11-14 23:13:20, kernel 5.10.0-32-amd64): i=0; while [ $i -lt 12 ]; do dd if=/payload/dd.src of=/mnt/t/dd/deep.bin bs=1024 skip=$i seek=$i count=1 conv=notrunc 2>/dev/null;  i=$((i+1)); done",
+      "guest boot b2-deep (2023-11-14 23:13:20, kernel 5.10.0-32-amd64): sync",
+      "guest boot b2-deep (2023-11-14 23:13:20, kernel 5.10.0-32-amd64): for i in 0 2 4 6 8 10 12 14 16; do dd if=/payload/sp.src of=/mnt/t/sp/sp.bin bs=1024 skip=$i seek=$i count=1 conv=notrunc 2>/dev/null; done; sync",
+      "guest boot b3-fill (2023-11-15 00:13:20, kernel 5.10.0-32-amd64): echo 0 > /sys/fs/ext4/vda/reserved_clusters",
+      "guest boot b3-fill (2023-11-15 00:13:20, kernel 5.10.0-32-amd64): dd if=/dev/zero of=/mnt/fill1 bs=1024 2>/dev/null || true",
+      "guest boot b3-fill (2023-11-15 00:13:20, kernel 5.10.0-32-amd64): sync",
+      "guest boot b4-reuse-tail (2023-11-15 01:13:20, kernel 5.10.0-32-amd64): echo 0 > /sys/fs/ext4/vda/reserved_clusters",
+      "guest boot b4-reuse-tail (2023-11-15 01:13:20, kernel 5.10.0-32-amd64): rm /mnt/t/dn/l1; rm /mnt/t/dt/deep.bin; sync",
+      "guest boot b4-reuse-tail (2023-11-15 01:13:20, kernel 5.10.0-32-amd64): cp /payload/u_dt /mnt/t/w/u_dt; sync",
+      "guest boot b5-reuse-head (2023-11-15 02:13:20, kernel 5.10.0-32-amd64): echo 0 > /sys/fs/ext4/vda/reserved_clusters",
+      "guest boot b5-reuse-head (2023-11-15 02:13:20, kernel 5.10.0-32-amd64): rm /mnt/t/dn/l2; rm /mnt/t/dh/deep.bin; sync",
+      "guest boot b5-reuse-head (2023-11-15 02:13:20, kernel 5.10.0-32-amd64): cp /payload/u_dh /mnt/t/w/u_dh; sync",
+      "guest boot b6-reuse-leaf (2023-11-15 03:13:20, kernel 5.10.0-32-amd64): echo 0 > /sys/fs/ext4/vda/reserved_clusters",
+      "guest boot b6-reuse-leaf (2023-11-15 03:13:20, kernel 5.10.0-32-amd64): rm /mnt/t/dn/l3; rm /mnt/t/lr/deep.bin; sync",
+      "guest boot b6-reuse-leaf (2023-11-15 03:13:20, kernel 5.10.0-32-amd64): cp /payload/u_lr /mnt/t/w/u_lr; sync",
+      "guest boot b7-reuse-inode (2023-11-15 04:13:20, kernel 5.10.0-32-amd64): echo 0 > /sys/fs/ext4/vda/reserved_clusters",
+      "guest boot b7-reuse-inode (2023-11-15 04:13:20, kernel 5.10.0-32-amd64): rm /mnt/t/ir/f.bin; sync",
+      "guest boot b7-reuse-inode (2023-11-15 04:13:20, kernel 5.10.0-32-amd64): : > /mnt/t/ir/sub/newer; sync",
+      "guest boot b8-last (2023-11-15 05:13:20, kernel 5.10.0-32-amd64): rm /mnt/t/sk/s.bin /mnt/t/zs/z.dat /mnt/t/in/i.dat /mnt/t/sp/sp.bin /mnt/t/dk/deep.bin /mnt/t/w/u_dh; sync",
+      "debugfs -w -R 'rm /t/ds/s.bin' <img>",
+      "debugfs -w -R 'rm /t/dd/deep.bin' <img>",
+      "e2fsck -fn <img>   # must exit 0",
+      "python3 tools/fixtures/ext4_recover_oracle.py <final> <payload> <manifest>   # debugfs/dumpe2fs cross-checks, own raw reader, the stage images"
+    ],
+    "kernel": "5.10.0-32-amd64",
+    "fsck_exit": 0,
+    "gates": {
+      "L": "open",
+      "K": "closed",
+      "S": "zeroed",
+      "U": "reuse"
+    }
+  },
+  "block_size": 1024,
+  "deleted": [
+    {
+      "candidates": [],
+      "expect": {
+        "assumptions": [],
+        "candidate_methods": [],
+        "captured_blocks": [],
+        "confidence": 0,
+        "cut": false,
+        "equal_source": "no",
+        "incomplete": false,
+        "method": "",
+        "outcome": "skip",
+        "overlaps": [],
+        "size": 0,
+        "skip": "not-a-file"
+      },
+      "family": "pad-aux",
+      "generation": 4185097971,
+      "inode": 8203,
+      "kernel_state": {
+        "i_size": 60,
+        "inode_free": true,
+        "leaf_intact": false,
+        "root_entries": 0
+      },
+      "name": "b",
+      "path": "/pad/b",
+      "reader_blocks": [],
+      "reader_stop": "",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_size": 0,
+      "tree_blocks": [],
+      "true_basis": "",
+      "true_blocks": []
+    },
+    {
+      "candidates": [
+        {
+          "assumptions": [
+            "inode-not-reused-since-entry-deleted",
+            "size-from-inode"
+          ],
+          "blocks": [
+            [
+              9655,
+              1
+            ],
+            [
+              9657,
+              1
+            ],
+            [
+              9659,
+              1
+            ],
+            [
+              9661,
+              1
+            ],
+            [
+              9663,
+              1
+            ],
+            [
+              9667,
+              1
+            ],
+            [
+              9669,
+              1
+            ],
+            [
+              9671,
+              1
+            ],
+            [
+              9673,
+              1
+            ],
+            [
+              9675,
+              1
+            ],
+            [
+              9677,
+              1
+            ],
+            [
+              9679,
+              1
+            ]
+          ],
+          "method": "ext-inode-intact",
+          "size": 12271,
+          "stop": ""
+        },
+        {
+          "assumptions": [
+            "inode-not-reused-since-entry-deleted",
+            "owner-by-crc32c-seed",
+            "leaf-may-be-superseded",
+            "size-from-inode"
+          ],
+          "blocks": [
+            [
+              9655,
+              1
+            ],
+            [
+              9657,
+              1
+            ],
+            [
+              9659,
+              1
+            ],
+            [
+              9661,
+              1
+            ],
+            [
+              9663,
+              1
+            ],
+            [
+              9667,
+              1
+            ],
+            [
+              9669,
+              1
+            ],
+            [
+              9671,
+              1
+            ],
+            [
+              9673,
+              1
+            ],
+            [
+              9675,
+              1
+            ],
+            [
+              9677,
+              1
+            ],
+            [
+              9679,
+              1
+            ]
+          ],
+          "method": "ext4-extent-leaf",
+          "size": 12271,
+          "stop": ""
+        }
+      ],
+      "expect": {
+        "assumptions": [
+          "inode-not-reused-since-entry-deleted",
+          "size-from-inode"
+        ],
+        "candidate_methods": [
+          "ext-inode-intact",
+          "ext4-extent-leaf"
+        ],
+        "captured_blocks": [
+          [
+            9655,
+            1
+          ],
+          [
+            9657,
+            1
+          ],
+          [
+            9659,
+            1
+          ],
+          [
+            9661,
+            1
+          ],
+          [
+            9663,
+            1
+          ],
+          [
+            9667,
+            1
+          ],
+          [
+            9669,
+            1
+          ],
+          [
+            9671,
+            1
+          ],
+          [
+            9673,
+            1
+          ],
+          [
+            9675,
+            1
+          ],
+          [
+            9677,
+            1
+          ],
+          [
+            9679,
+            1
+          ]
+        ],
+        "confidence": 80,
+        "cut": false,
+        "equal_source": "full",
+        "incomplete": false,
+        "method": "ext-inode-intact",
+        "outcome": "recover",
+        "overlaps": [],
+        "size": 12271,
+        "skip": ""
+      },
+      "family": "intact-debugfs-deep",
+      "generation": 155262814,
+      "inode": 53,
+      "kernel_state": {
+        "i_size": 12271,
+        "inode_free": true,
+        "leaf_intact": true,
+        "root_entries": 1
+      },
+      "name": "deep.bin",
+      "path": "/t/dd/deep.bin",
+      "reader_blocks": [
+        [
+          9655,
+          1
+        ],
+        [
+          9657,
+          1
+        ],
+        [
+          9659,
+          1
+        ],
+        [
+          9661,
+          1
+        ],
+        [
+          9663,
+          1
+        ],
+        [
+          9667,
+          1
+        ],
+        [
+          9669,
+          1
+        ],
+        [
+          9671,
+          1
+        ],
+        [
+          9673,
+          1
+        ],
+        [
+          9675,
+          1
+        ],
+        [
+          9677,
+          1
+        ],
+        [
+          9679,
+          1
+        ]
+      ],
+      "reader_stop": "",
+      "source_sha256": "b2dd5d9f3e954bad7d30bc7580908d7bb0db3013dbdd5f14b85b498ff2c0a3dd",
+      "source_size": 12271,
+      "tree_blocks": [
+        9665
+      ],
+      "true_basis": "stage-image",
+      "true_blocks": [
+        [
+          9655,
+          1
+        ],
+        [
+          9657,
+          1
+        ],
+        [
+          9659,
+          1
+        ],
+        [
+          9661,
+          1
+        ],
+        [
+          9663,
+          1
+        ],
+        [
+          9667,
+          1
+        ],
+        [
+          9669,
+          1
+        ],
+        [
+          9671,
+          1
+        ],
+        [
+          9673,
+          1
+        ],
+        [
+          9675,
+          1
+        ],
+        [
+          9677,
+          1
+        ],
+        [
+          9679,
+          1
+        ]
+      ]
+    },
+    {
+      "candidates": [
+        {
+          "assumptions": [
+            "inode-not-reused-since-entry-deleted",
+            "owner-by-crc32c-seed",
+            "leaf-may-be-superseded",
+            "size-from-extent-leaf-blocks",
+            "file-end-unknown",
+            "in-inode-map-cleared"
+          ],
+          "blocks": [
+            [
+              9391,
+              1
+            ],
+            [
+              9393,
+              1
+            ],
+            [
+              9395,
+              1
+            ],
+            [
+              9397,
+              1
+            ],
+            [
+              9399,
+              1
+            ],
+            [
+              9403,
+              1
+            ],
+            [
+              9405,
+              1
+            ],
+            [
+              9407,
+              1
+            ],
+            [
+              9409,
+              1
+            ],
+            [
+              9411,
+              1
+            ],
+            [
+              9413,
+              1
+            ],
+            [
+              9415,
+              1
+            ],
+            [
+              9417,
+              1
+            ],
+            [
+              9419,
+              1
+            ],
+            [
+              9421,
+              1
+            ],
+            [
+              9423,
+              1
+            ]
+          ],
+          "method": "ext4-extent-leaf",
+          "size": 16384,
+          "stop": ""
+        }
+      ],
+      "expect": {
+        "assumptions": [
+          "inode-not-reused-since-entry-deleted",
+          "owner-by-crc32c-seed",
+          "leaf-may-be-superseded",
+          "size-from-extent-leaf-blocks",
+          "file-end-unknown",
+          "in-inode-map-cleared"
+        ],
+        "candidate_methods": [
+          "ext4-extent-leaf"
+        ],
+        "captured_blocks": [
+          [
+            9391,
+            1
+          ],
+          [
+            9393,
+            1
+          ],
+          [
+            9395,
+            1
+          ],
+          [
+            9397,
+            1
+          ],
+          [
+            9399,
+            1
+          ],
+          [
+            9403,
+            1
+          ],
+          [
+            9405,
+            1
+          ],
+          [
+            9407,
+            1
+          ],
+          [
+            9409,
+            1
+          ],
+          [
+            9411,
+            1
+          ],
+          [
+            9413,
+            1
+          ],
+          [
+            9415,
+            1
+          ],
+          [
+            9417,
+            1
+          ],
+          [
+            9419,
+            1
+          ],
+          [
+            9421,
+            1
+          ],
+          [
+            9423,
+            1
+          ]
+        ],
+        "confidence": 20,
+        "cut": false,
+        "equal_source": "no",
+        "incomplete": true,
+        "method": "ext4-extent-leaf",
+        "outcome": "recover",
+        "overlaps": [],
+        "size": 16384,
+        "skip": ""
+      },
+      "family": "deep-reuse-head",
+      "generation": 1555659402,
+      "inode": 47,
+      "kernel_state": {
+        "i_size": 0,
+        "inode_free": true,
+        "leaf_intact": true,
+        "root_entries": 0
+      },
+      "name": "deep.bin",
+      "path": "/t/dh/deep.bin",
+      "reader_blocks": [
+        [
+          9391,
+          1
+        ],
+        [
+          9393,
+          1
+        ],
+        [
+          9395,
+          1
+        ],
+        [
+          9397,
+          1
+        ],
+        [
+          9399,
+          1
+        ],
+        [
+          9403,
+          1
+        ],
+        [
+          9405,
+          1
+        ],
+        [
+          9407,
+          1
+        ],
+        [
+          9409,
+          1
+        ],
+        [
+          9411,
+          1
+        ],
+        [
+          9413,
+          1
+        ],
+        [
+          9415,
+          1
+        ],
+        [
+          9417,
+          1
+        ],
+        [
+          9419,
+          1
+        ],
+        [
+          9421,
+          1
+        ],
+        [
+          9423,
+          1
+        ]
+      ],
+      "reader_stop": "",
+      "source_sha256": "12979ef799df0cc2e38af1326d888c70e227914b77313cc16818db5094bdc635",
+      "source_size": 16373,
+      "tree_blocks": [
+        9401
+      ],
+      "true_basis": "stage-image",
+      "true_blocks": [
+        [
+          9391,
+          1
+        ],
+        [
+          9393,
+          1
+        ],
+        [
+          9395,
+          1
+        ],
+        [
+          9397,
+          1
+        ],
+        [
+          9399,
+          1
+        ],
+        [
+          9403,
+          1
+        ],
+        [
+          9405,
+          1
+        ],
+        [
+          9407,
+          1
+        ],
+        [
+          9409,
+          1
+        ],
+        [
+          9411,
+          1
+        ],
+        [
+          9413,
+          1
+        ],
+        [
+          9415,
+          1
+        ],
+        [
+          9417,
+          1
+        ],
+        [
+          9419,
+          1
+        ],
+        [
+          9421,
+          1
+        ],
+        [
+          9423,
+          1
+        ]
+      ]
+    },
+    {
+      "candidates": [
+        {
+          "assumptions": [
+            "inode-not-reused-since-entry-deleted",
+            "owner-by-crc32c-seed",
+            "leaf-may-be-superseded",
+            "size-from-extent-leaf-blocks",
+            "file-end-unknown",
+            "in-inode-map-cleared"
+          ],
+          "blocks": [
+            [
+              9459,
+              1
+            ],
+            [
+              9461,
+              1
+            ],
+            [
+              9463,
+              1
+            ],
+            [
+              9465,
+              1
+            ],
+            [
+              9467,
+              1
+            ],
+            [
+              9471,
+              1
+            ],
+            [
+              9473,
+              1
+            ],
+            [
+              9475,
+              1
+            ],
+            [
+              9477,
+              1
+            ],
+            [
+              9479,
+              1
+            ],
+            [
+              9481,
+              1
+            ],
+            [
+              9483,
+              1
+            ],
+            [
+              9485,
+              1
+            ],
+            [
+              9487,
+              1
+            ],
+            [
+              9489,
+              1
+            ],
+            [
+              9491,
+              1
+            ],
+            [
+              9493,
+              1
+            ],
+            [
+              9495,
+              1
+            ],
+            [
+              9497,
+              1
+            ],
+            [
+              9499,
+              1
+            ],
+            [
+              9501,
+              1
+            ],
+            [
+              9503,
+              1
+            ],
+            [
+              9505,
+              1
+            ],
+            [
+              9507,
+              1
+            ],
+            [
+              9509,
+              1
+            ],
+            [
+              9511,
+              1
+            ],
+            [
+              9513,
+              1
+            ],
+            [
+              9515,
+              1
+            ],
+            [
+              9517,
+              1
+            ],
+            [
+              9519,
+              1
+            ],
+            [
+              9521,
+              1
+            ],
+            [
+              9523,
+              1
+            ],
+            [
+              9525,
+              1
+            ],
+            [
+              9527,
+              1
+            ],
+            [
+              9529,
+              1
+            ],
+            [
+              9531,
+              1
+            ],
+            [
+              9533,
+              1
+            ],
+            [
+              9535,
+              1
+            ],
+            [
+              9537,
+              1
+            ],
+            [
+              9539,
+              1
+            ],
+            [
+              9541,
+              1
+            ],
+            [
+              9543,
+              1
+            ],
+            [
+              9545,
+              1
+            ],
+            [
+              9547,
+              1
+            ],
+            [
+              9549,
+              1
+            ],
+            [
+              9551,
+              1
+            ],
+            [
+              9553,
+              1
+            ],
+            [
+              9555,
+              1
+            ],
+            [
+              9557,
+              1
+            ],
+            [
+              9559,
+              1
+            ],
+            [
+              9561,
+              1
+            ],
+            [
+              9563,
+              1
+            ],
+            [
+              9565,
+              1
+            ],
+            [
+              9567,
+              1
+            ],
+            [
+              9569,
+              1
+            ],
+            [
+              9571,
+              1
+            ],
+            [
+              9573,
+              1
+            ],
+            [
+              9575,
+              1
+            ],
+            [
+              9577,
+              1
+            ],
+            [
+              9579,
+              1
+            ],
+            [
+              9581,
+              1
+            ],
+            [
+              9583,
+              1
+            ],
+            [
+              9585,
+              1
+            ],
+            [
+              9587,
+              1
+            ],
+            [
+              9589,
+              1
+            ],
+            [
+              9591,
+              1
+            ],
+            [
+              9593,
+              1
+            ],
+            [
+              9595,
+              1
+            ],
+            [
+              9597,
+              1
+            ],
+            [
+              9599,
+              1
+            ],
+            [
+              9601,
+              1
+            ],
+            [
+              9603,
+              1
+            ],
+            [
+              9605,
+              1
+            ],
+            [
+              9607,
+              1
+            ],
+            [
+              9609,
+              1
+            ],
+            [
+              9611,
+              1
+            ],
+            [
+              9613,
+              1
+            ],
+            [
+              9615,
+              1
+            ],
+            [
+              9617,
+              1
+            ],
+            [
+              9619,
+              1
+            ],
+            [
+              9621,
+              1
+            ],
+            [
+              9623,
+              1
+            ],
+            [
+              9625,
+              1
+            ],
+            [
+              9627,
+              1
+            ],
+            [
+              9629,
+              1
+            ],
+            [
+              9633,
+              1
+            ],
+            [
+              9635,
+              1
+            ],
+            [
+              9637,
+              1
+            ],
+            [
+              9639,
+              1
+            ],
+            [
+              9641,
+              1
+            ],
+            [
+              9643,
+              1
+            ],
+            [
+              9645,
+              1
+            ],
+            [
+              9647,
+              1
+            ],
+            [
+              9649,
+              1
+            ],
+            [
+              9651,
+              1
+            ],
+            [
+              9653,
+              1
+            ]
+          ],
+          "method": "ext4-extent-leaf",
+          "size": 98304,
+          "stop": ""
+        }
+      ],
+      "expect": {
+        "assumptions": [
+          "inode-not-reused-since-entry-deleted",
+          "owner-by-crc32c-seed",
+          "leaf-may-be-superseded",
+          "size-from-extent-leaf-blocks",
+          "file-end-unknown",
+          "in-inode-map-cleared"
+        ],
+        "candidate_methods": [
+          "ext4-extent-leaf"
+        ],
+        "captured_blocks": [
+          [
+            9459,
+            1
+          ],
+          [
+            9461,
+            1
+          ],
+          [
+            9463,
+            1
+          ],
+          [
+            9465,
+            1
+          ],
+          [
+            9467,
+            1
+          ],
+          [
+            9471,
+            1
+          ],
+          [
+            9473,
+            1
+          ],
+          [
+            9475,
+            1
+          ],
+          [
+            9477,
+            1
+          ],
+          [
+            9479,
+            1
+          ],
+          [
+            9481,
+            1
+          ],
+          [
+            9483,
+            1
+          ],
+          [
+            9485,
+            1
+          ],
+          [
+            9487,
+            1
+          ],
+          [
+            9489,
+            1
+          ],
+          [
+            9491,
+            1
+          ],
+          [
+            9493,
+            1
+          ],
+          [
+            9495,
+            1
+          ],
+          [
+            9497,
+            1
+          ],
+          [
+            9499,
+            1
+          ],
+          [
+            9501,
+            1
+          ],
+          [
+            9503,
+            1
+          ],
+          [
+            9505,
+            1
+          ],
+          [
+            9507,
+            1
+          ],
+          [
+            9509,
+            1
+          ],
+          [
+            9511,
+            1
+          ],
+          [
+            9513,
+            1
+          ],
+          [
+            9515,
+            1
+          ],
+          [
+            9517,
+            1
+          ],
+          [
+            9519,
+            1
+          ],
+          [
+            9521,
+            1
+          ],
+          [
+            9523,
+            1
+          ],
+          [
+            9525,
+            1
+          ],
+          [
+            9527,
+            1
+          ],
+          [
+            9529,
+            1
+          ],
+          [
+            9531,
+            1
+          ],
+          [
+            9533,
+            1
+          ],
+          [
+            9535,
+            1
+          ],
+          [
+            9537,
+            1
+          ],
+          [
+            9539,
+            1
+          ],
+          [
+            9541,
+            1
+          ],
+          [
+            9543,
+            1
+          ],
+          [
+            9545,
+            1
+          ],
+          [
+            9547,
+            1
+          ],
+          [
+            9549,
+            1
+          ],
+          [
+            9551,
+            1
+          ],
+          [
+            9553,
+            1
+          ],
+          [
+            9555,
+            1
+          ],
+          [
+            9557,
+            1
+          ],
+          [
+            9559,
+            1
+          ],
+          [
+            9561,
+            1
+          ],
+          [
+            9563,
+            1
+          ],
+          [
+            9565,
+            1
+          ],
+          [
+            9567,
+            1
+          ],
+          [
+            9569,
+            1
+          ],
+          [
+            9571,
+            1
+          ],
+          [
+            9573,
+            1
+          ],
+          [
+            9575,
+            1
+          ],
+          [
+            9577,
+            1
+          ],
+          [
+            9579,
+            1
+          ],
+          [
+            9581,
+            1
+          ],
+          [
+            9583,
+            1
+          ],
+          [
+            9585,
+            1
+          ],
+          [
+            9587,
+            1
+          ],
+          [
+            9589,
+            1
+          ],
+          [
+            9591,
+            1
+          ],
+          [
+            9593,
+            1
+          ],
+          [
+            9595,
+            1
+          ],
+          [
+            9597,
+            1
+          ],
+          [
+            9599,
+            1
+          ],
+          [
+            9601,
+            1
+          ],
+          [
+            9603,
+            1
+          ],
+          [
+            9605,
+            1
+          ],
+          [
+            9607,
+            1
+          ],
+          [
+            9609,
+            1
+          ],
+          [
+            9611,
+            1
+          ],
+          [
+            9613,
+            1
+          ],
+          [
+            9615,
+            1
+          ],
+          [
+            9617,
+            1
+          ],
+          [
+            9619,
+            1
+          ],
+          [
+            9621,
+            1
+          ],
+          [
+            9623,
+            1
+          ],
+          [
+            9625,
+            1
+          ],
+          [
+            9627,
+            1
+          ],
+          [
+            9629,
+            1
+          ],
+          [
+            9633,
+            1
+          ],
+          [
+            9635,
+            1
+          ],
+          [
+            9637,
+            1
+          ],
+          [
+            9639,
+            1
+          ],
+          [
+            9641,
+            1
+          ],
+          [
+            9643,
+            1
+          ],
+          [
+            9645,
+            1
+          ],
+          [
+            9647,
+            1
+          ],
+          [
+            9649,
+            1
+          ],
+          [
+            9651,
+            1
+          ],
+          [
+            9653,
+            1
+          ]
+        ],
+        "confidence": 20,
+        "cut": false,
+        "equal_source": "prefix-of-artifact",
+        "incomplete": true,
+        "method": "ext4-extent-leaf",
+        "outcome": "recover",
+        "overlaps": [],
+        "size": 98304,
+        "skip": ""
+      },
+      "family": "deep-kernel",
+      "generation": 730389339,
+      "inode": 51,
+      "kernel_state": {
+        "i_size": 0,
+        "inode_free": true,
+        "leaf_intact": true,
+        "root_entries": 0
+      },
+      "name": "deep.bin",
+      "path": "/t/dk/deep.bin",
+      "reader_blocks": [
+        [
+          9459,
+          1
+        ],
+        [
+          9461,
+          1
+        ],
+        [
+          9463,
+          1
+        ],
+        [
+          9465,
+          1
+        ],
+        [
+          9467,
+          1
+        ],
+        [
+          9471,
+          1
+        ],
+        [
+          9473,
+          1
+        ],
+        [
+          9475,
+          1
+        ],
+        [
+          9477,
+          1
+        ],
+        [
+          9479,
+          1
+        ],
+        [
+          9481,
+          1
+        ],
+        [
+          9483,
+          1
+        ],
+        [
+          9485,
+          1
+        ],
+        [
+          9487,
+          1
+        ],
+        [
+          9489,
+          1
+        ],
+        [
+          9491,
+          1
+        ],
+        [
+          9493,
+          1
+        ],
+        [
+          9495,
+          1
+        ],
+        [
+          9497,
+          1
+        ],
+        [
+          9499,
+          1
+        ],
+        [
+          9501,
+          1
+        ],
+        [
+          9503,
+          1
+        ],
+        [
+          9505,
+          1
+        ],
+        [
+          9507,
+          1
+        ],
+        [
+          9509,
+          1
+        ],
+        [
+          9511,
+          1
+        ],
+        [
+          9513,
+          1
+        ],
+        [
+          9515,
+          1
+        ],
+        [
+          9517,
+          1
+        ],
+        [
+          9519,
+          1
+        ],
+        [
+          9521,
+          1
+        ],
+        [
+          9523,
+          1
+        ],
+        [
+          9525,
+          1
+        ],
+        [
+          9527,
+          1
+        ],
+        [
+          9529,
+          1
+        ],
+        [
+          9531,
+          1
+        ],
+        [
+          9533,
+          1
+        ],
+        [
+          9535,
+          1
+        ],
+        [
+          9537,
+          1
+        ],
+        [
+          9539,
+          1
+        ],
+        [
+          9541,
+          1
+        ],
+        [
+          9543,
+          1
+        ],
+        [
+          9545,
+          1
+        ],
+        [
+          9547,
+          1
+        ],
+        [
+          9549,
+          1
+        ],
+        [
+          9551,
+          1
+        ],
+        [
+          9553,
+          1
+        ],
+        [
+          9555,
+          1
+        ],
+        [
+          9557,
+          1
+        ],
+        [
+          9559,
+          1
+        ],
+        [
+          9561,
+          1
+        ],
+        [
+          9563,
+          1
+        ],
+        [
+          9565,
+          1
+        ],
+        [
+          9567,
+          1
+        ],
+        [
+          9569,
+          1
+        ],
+        [
+          9571,
+          1
+        ],
+        [
+          9573,
+          1
+        ],
+        [
+          9575,
+          1
+        ],
+        [
+          9577,
+          1
+        ],
+        [
+          9579,
+          1
+        ],
+        [
+          9581,
+          1
+        ],
+        [
+          9583,
+          1
+        ],
+        [
+          9585,
+          1
+        ],
+        [
+          9587,
+          1
+        ],
+        [
+          9589,
+          1
+        ],
+        [
+          9591,
+          1
+        ],
+        [
+          9593,
+          1
+        ],
+        [
+          9595,
+          1
+        ],
+        [
+          9597,
+          1
+        ],
+        [
+          9599,
+          1
+        ],
+        [
+          9601,
+          1
+        ],
+        [
+          9603,
+          1
+        ],
+        [
+          9605,
+          1
+        ],
+        [
+          9607,
+          1
+        ],
+        [
+          9609,
+          1
+        ],
+        [
+          9611,
+          1
+        ],
+        [
+          9613,
+          1
+        ],
+        [
+          9615,
+          1
+        ],
+        [
+          9617,
+          1
+        ],
+        [
+          9619,
+          1
+        ],
+        [
+          9621,
+          1
+        ],
+        [
+          9623,
+          1
+        ],
+        [
+          9625,
+          1
+        ],
+        [
+          9627,
+          1
+        ],
+        [
+          9629,
+          1
+        ],
+        [
+          9633,
+          1
+        ],
+        [
+          9635,
+          1
+        ],
+        [
+          9637,
+          1
+        ],
+        [
+          9639,
+          1
+        ],
+        [
+          9641,
+          1
+        ],
+        [
+          9643,
+          1
+        ],
+        [
+          9645,
+          1
+        ],
+        [
+          9647,
+          1
+        ],
+        [
+          9649,
+          1
+        ],
+        [
+          9651,
+          1
+        ],
+        [
+          9653,
+          1
+        ]
+      ],
+      "reader_stop": "",
+      "source_sha256": "9eb3235d12008be035a5a68960d35005db2fc0d7fb8cfa68c6c4990f398300bd",
+      "source_size": 98291,
+      "tree_blocks": [
+        9469,
+        9631
+      ],
+      "true_basis": "stage-image",
+      "true_blocks": [
+        [
+          9459,
+          1
+        ],
+        [
+          9461,
+          1
+        ],
+        [
+          9463,
+          1
+        ],
+        [
+          9465,
+          1
+        ],
+        [
+          9467,
+          1
+        ],
+        [
+          9471,
+          1
+        ],
+        [
+          9473,
+          1
+        ],
+        [
+          9475,
+          1
+        ],
+        [
+          9477,
+          1
+        ],
+        [
+          9479,
+          1
+        ],
+        [
+          9481,
+          1
+        ],
+        [
+          9483,
+          1
+        ],
+        [
+          9485,
+          1
+        ],
+        [
+          9487,
+          1
+        ],
+        [
+          9489,
+          1
+        ],
+        [
+          9491,
+          1
+        ],
+        [
+          9493,
+          1
+        ],
+        [
+          9495,
+          1
+        ],
+        [
+          9497,
+          1
+        ],
+        [
+          9499,
+          1
+        ],
+        [
+          9501,
+          1
+        ],
+        [
+          9503,
+          1
+        ],
+        [
+          9505,
+          1
+        ],
+        [
+          9507,
+          1
+        ],
+        [
+          9509,
+          1
+        ],
+        [
+          9511,
+          1
+        ],
+        [
+          9513,
+          1
+        ],
+        [
+          9515,
+          1
+        ],
+        [
+          9517,
+          1
+        ],
+        [
+          9519,
+          1
+        ],
+        [
+          9521,
+          1
+        ],
+        [
+          9523,
+          1
+        ],
+        [
+          9525,
+          1
+        ],
+        [
+          9527,
+          1
+        ],
+        [
+          9529,
+          1
+        ],
+        [
+          9531,
+          1
+        ],
+        [
+          9533,
+          1
+        ],
+        [
+          9535,
+          1
+        ],
+        [
+          9537,
+          1
+        ],
+        [
+          9539,
+          1
+        ],
+        [
+          9541,
+          1
+        ],
+        [
+          9543,
+          1
+        ],
+        [
+          9545,
+          1
+        ],
+        [
+          9547,
+          1
+        ],
+        [
+          9549,
+          1
+        ],
+        [
+          9551,
+          1
+        ],
+        [
+          9553,
+          1
+        ],
+        [
+          9555,
+          1
+        ],
+        [
+          9557,
+          1
+        ],
+        [
+          9559,
+          1
+        ],
+        [
+          9561,
+          1
+        ],
+        [
+          9563,
+          1
+        ],
+        [
+          9565,
+          1
+        ],
+        [
+          9567,
+          1
+        ],
+        [
+          9569,
+          1
+        ],
+        [
+          9571,
+          1
+        ],
+        [
+          9573,
+          1
+        ],
+        [
+          9575,
+          1
+        ],
+        [
+          9577,
+          1
+        ],
+        [
+          9579,
+          1
+        ],
+        [
+          9581,
+          1
+        ],
+        [
+          9583,
+          1
+        ],
+        [
+          9585,
+          1
+        ],
+        [
+          9587,
+          1
+        ],
+        [
+          9589,
+          1
+        ],
+        [
+          9591,
+          1
+        ],
+        [
+          9593,
+          1
+        ],
+        [
+          9595,
+          1
+        ],
+        [
+          9597,
+          1
+        ],
+        [
+          9599,
+          1
+        ],
+        [
+          9601,
+          1
+        ],
+        [
+          9603,
+          1
+        ],
+        [
+          9605,
+          1
+        ],
+        [
+          9607,
+          1
+        ],
+        [
+          9609,
+          1
+        ],
+        [
+          9611,
+          1
+        ],
+        [
+          9613,
+          1
+        ],
+        [
+          9615,
+          1
+        ],
+        [
+          9617,
+          1
+        ],
+        [
+          9619,
+          1
+        ],
+        [
+          9621,
+          1
+        ],
+        [
+          9623,
+          1
+        ],
+        [
+          9625,
+          1
+        ],
+        [
+          9627,
+          1
+        ],
+        [
+          9629,
+          1
+        ],
+        [
+          9633,
+          1
+        ],
+        [
+          9635,
+          1
+        ],
+        [
+          9637,
+          1
+        ],
+        [
+          9639,
+          1
+        ],
+        [
+          9641,
+          1
+        ],
+        [
+          9643,
+          1
+        ],
+        [
+          9645,
+          1
+        ],
+        [
+          9647,
+          1
+        ],
+        [
+          9649,
+          1
+        ],
+        [
+          9651,
+          1
+        ],
+        [
+          9653,
+          1
+        ]
+      ]
+    },
+    {
+      "candidates": [],
+      "expect": {
+        "assumptions": [],
+        "candidate_methods": [],
+        "captured_blocks": [],
+        "confidence": 0,
+        "cut": false,
+        "equal_source": "no",
+        "incomplete": false,
+        "method": "",
+        "outcome": "skip",
+        "overlaps": [],
+        "size": 0,
+        "skip": "reused"
+      },
+      "family": "inode-donor-aux",
+      "generation": 2530286921,
+      "inode": 35,
+      "kernel_state": {
+        "i_size": 3072,
+        "inode_free": false,
+        "leaf_intact": false,
+        "root_entries": 3
+      },
+      "name": "l1",
+      "path": "/t/dn/l1",
+      "reader_blocks": [],
+      "reader_stop": "",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_size": 0,
+      "tree_blocks": [],
+      "true_basis": "stage-image",
+      "true_blocks": []
+    },
+    {
+      "candidates": [],
+      "expect": {
+        "assumptions": [],
+        "candidate_methods": [],
+        "captured_blocks": [],
+        "confidence": 0,
+        "cut": false,
+        "equal_source": "no",
+        "incomplete": false,
+        "method": "",
+        "outcome": "skip",
+        "overlaps": [],
+        "size": 0,
+        "skip": "no-map"
+      },
+      "family": "inode-donor-aux",
+      "generation": 147572481,
+      "inode": 36,
+      "kernel_state": {
+        "i_size": 0,
+        "inode_free": true,
+        "leaf_intact": false,
+        "root_entries": 0
+      },
+      "name": "l2",
+      "path": "/t/dn/l2",
+      "reader_blocks": [],
+      "reader_stop": "",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_size": 0,
+      "tree_blocks": [],
+      "true_basis": "stage-image",
+      "true_blocks": []
+    },
+    {
+      "candidates": [],
+      "expect": {
+        "assumptions": [],
+        "candidate_methods": [],
+        "captured_blocks": [],
+        "confidence": 0,
+        "cut": false,
+        "equal_source": "no",
+        "incomplete": false,
+        "method": "",
+        "outcome": "skip",
+        "overlaps": [],
+        "size": 0,
+        "skip": "reused"
+      },
+      "family": "inode-donor-aux",
+      "generation": 1812451218,
+      "inode": 37,
+      "kernel_state": {
+        "i_size": 9216,
+        "inode_free": false,
+        "leaf_intact": false,
+        "root_entries": 1
+      },
+      "name": "l3",
+      "path": "/t/dn/l3",
+      "reader_blocks": [],
+      "reader_stop": "",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_size": 0,
+      "tree_blocks": [],
+      "true_basis": "stage-image",
+      "true_blocks": []
+    },
+    {
+      "candidates": [
+        {
+          "assumptions": [
+            "inode-not-reused-since-entry-deleted",
+            "size-from-inode"
+          ],
+          "blocks": [
+            [
+              9349,
+              3
+            ]
+          ],
+          "method": "ext-inode-intact",
+          "size": 2500,
+          "stop": ""
+        }
+      ],
+      "expect": {
+        "assumptions": [
+          "inode-not-reused-since-entry-deleted",
+          "size-from-inode"
+        ],
+        "candidate_methods": [
+          "ext-inode-intact"
+        ],
+        "captured_blocks": [
+          [
+            9349,
+            3
+          ]
+        ],
+        "confidence": 80,
+        "cut": false,
+        "equal_source": "full",
+        "incomplete": false,
+        "method": "ext-inode-intact",
+        "outcome": "recover",
+        "overlaps": [],
+        "size": 2500,
+        "skip": ""
+      },
+      "family": "intact-debugfs-small",
+      "generation": 90552561,
+      "inode": 42,
+      "kernel_state": {
+        "i_size": 2500,
+        "inode_free": true,
+        "leaf_intact": false,
+        "root_entries": 1
+      },
+      "name": "s.bin",
+      "path": "/t/ds/s.bin",
+      "reader_blocks": [
+        [
+          9349,
+          3
+        ]
+      ],
+      "reader_stop": "",
+      "source_sha256": "8b1efd9664502a8a1af366cda66188eeb07accf1decd6684ce8e08f6e55efe19",
+      "source_size": 2500,
+      "tree_blocks": [],
+      "true_basis": "stage-image",
+      "true_blocks": [
+        [
+          9349,
+          3
+        ]
+      ]
+    },
+    {
+      "candidates": [
+        {
+          "assumptions": [
+            "inode-not-reused-since-entry-deleted",
+            "owner-by-crc32c-seed",
+            "leaf-may-be-superseded",
+            "size-from-extent-leaf-blocks",
+            "file-end-unknown",
+            "in-inode-map-cleared"
+          ],
+          "blocks": [
+            [
+              9443,
+              1
+            ],
+            [
+              9445,
+              1
+            ],
+            [
+              9447,
+              1
+            ],
+            [
+              9449,
+              1
+            ],
+            [
+              9451,
+              1
+            ],
+            [
+              9453,
+              1
+            ],
+            [
+              9455,
+              1
+            ],
+            [
+              9457,
+              1
+            ],
+            [
+              9425,
+              1
+            ],
+            [
+              9427,
+              1
+            ],
+            [
+              9429,
+              1
+            ],
+            [
+              9431,
+              1
+            ],
+            [
+              9433,
+              1
+            ],
+            [
+              9437,
+              1
+            ],
+            [
+              9439,
+              1
+            ],
+            [
+              9441,
+              1
+            ]
+          ],
+          "method": "ext4-extent-leaf",
+          "size": 16384,
+          "stop": ""
+        }
+      ],
+      "expect": {
+        "assumptions": [
+          "inode-not-reused-since-entry-deleted",
+          "owner-by-crc32c-seed",
+          "leaf-may-be-superseded",
+          "size-from-extent-leaf-blocks",
+          "file-end-unknown",
+          "in-inode-map-cleared"
+        ],
+        "candidate_methods": [
+          "ext4-extent-leaf"
+        ],
+        "captured_blocks": [
+          [
+            9443,
+            1
+          ],
+          [
+            9445,
+            1
+          ],
+          [
+            9447,
+            1
+          ],
+          [
+            9449,
+            1
+          ],
+          [
+            9451,
+            1
+          ],
+          [
+            9453,
+            1
+          ],
+          [
+            9455,
+            1
+          ],
+          [
+            9457,
+            1
+          ]
+        ],
+        "confidence": 20,
+        "cut": true,
+        "equal_source": "artifact-is-prefix",
+        "incomplete": true,
+        "method": "ext4-extent-leaf",
+        "outcome": "recover",
+        "overlaps": [],
+        "size": 8192,
+        "skip": ""
+      },
+      "family": "deep-reuse-tail",
+      "generation": 1736508374,
+      "inode": 49,
+      "kernel_state": {
+        "i_size": 0,
+        "inode_free": true,
+        "leaf_intact": true,
+        "root_entries": 0
+      },
+      "name": "deep.bin",
+      "path": "/t/dt/deep.bin",
+      "reader_blocks": [
+        [
+          9443,
+          1
+        ],
+        [
+          9445,
+          1
+        ],
+        [
+          9447,
+          1
+        ],
+        [
+          9449,
+          1
+        ],
+        [
+          9451,
+          1
+        ],
+        [
+          9453,
+          1
+        ],
+        [
+          9455,
+          1
+        ],
+        [
+          9457,
+          1
+        ],
+        [
+          9425,
+          1
+        ],
+        [
+          9427,
+          1
+        ],
+        [
+          9429,
+          1
+        ],
+        [
+          9431,
+          1
+        ],
+        [
+          9433,
+          1
+        ],
+        [
+          9437,
+          1
+        ],
+        [
+          9439,
+          1
+        ],
+        [
+          9441,
+          1
+        ]
+      ],
+      "reader_stop": "",
+      "source_sha256": "dd1e0fb989dbfec1d178d54ad252c335a5a7f5f91e1d4c4f2bfc6148a08ddbd5",
+      "source_size": 16375,
+      "tree_blocks": [
+        9435
+      ],
+      "true_basis": "stage-image",
+      "true_blocks": [
+        [
+          9443,
+          1
+        ],
+        [
+          9445,
+          1
+        ],
+        [
+          9447,
+          1
+        ],
+        [
+          9449,
+          1
+        ],
+        [
+          9451,
+          1
+        ],
+        [
+          9453,
+          1
+        ],
+        [
+          9455,
+          1
+        ],
+        [
+          9457,
+          1
+        ],
+        [
+          9425,
+          1
+        ],
+        [
+          9427,
+          1
+        ],
+        [
+          9429,
+          1
+        ],
+        [
+          9431,
+          1
+        ],
+        [
+          9433,
+          1
+        ],
+        [
+          9437,
+          1
+        ],
+        [
+          9439,
+          1
+        ],
+        [
+          9441,
+          1
+        ]
+      ]
+    },
+    {
+      "candidates": [],
+      "expect": {
+        "assumptions": [],
+        "candidate_methods": [],
+        "captured_blocks": [],
+        "confidence": 0,
+        "cut": false,
+        "equal_source": "no",
+        "incomplete": false,
+        "method": "",
+        "outcome": "skip",
+        "overlaps": [],
+        "size": 0,
+        "skip": "reused"
+      },
+      "family": "hardlink",
+      "generation": 763579939,
+      "inode": 41,
+      "kernel_state": {
+        "i_size": 2000,
+        "inode_free": false,
+        "leaf_intact": false,
+        "root_entries": 1
+      },
+      "name": "h1",
+      "path": "/t/hl/h1",
+      "reader_blocks": [],
+      "reader_stop": "",
+      "source_sha256": "76bed5c4fd718b310b2eaac40be37b6b472b8bbacd571fd36b67b1da030e5433",
+      "source_size": 2000,
+      "tree_blocks": [],
+      "true_basis": "stage-image",
+      "true_blocks": [
+        [
+          16381,
+          2
+        ]
+      ]
+    },
+    {
+      "candidates": [],
+      "expect": {
+        "assumptions": [],
+        "candidate_methods": [],
+        "captured_blocks": [],
+        "confidence": 0,
+        "cut": false,
+        "equal_source": "no",
+        "incomplete": false,
+        "method": "",
+        "outcome": "skip",
+        "overlaps": [],
+        "size": 0,
+        "skip": "unsupported"
+      },
+      "family": "inline",
+      "generation": 2374966824,
+      "inode": 40,
+      "kernel_state": {
+        "i_size": 40,
+        "inode_free": true,
+        "leaf_intact": false,
+        "root_entries": 0
+      },
+      "name": "i.dat",
+      "path": "/t/in/i.dat",
+      "reader_blocks": [],
+      "reader_stop": "",
+      "source_sha256": "652d07447b620b9c3af362c9a8561d9d16693cc7e4e26e04894e391ae4ecaf4b",
+      "source_size": 40,
+      "tree_blocks": [],
+      "true_basis": "stage-image",
+      "true_blocks": []
+    },
+    {
+      "candidates": [],
+      "expect": {
+        "assumptions": [],
+        "candidate_methods": [],
+        "captured_blocks": [],
+        "confidence": 0,
+        "cut": false,
+        "equal_source": "no",
+        "incomplete": false,
+        "method": "",
+        "outcome": "skip",
+        "overlaps": [],
+        "size": 0,
+        "skip": "reused"
+      },
+      "family": "inode-reused",
+      "generation": 387030746,
+      "inode": 34,
+      "kernel_state": {
+        "i_size": 0,
+        "inode_free": false,
+        "leaf_intact": false,
+        "root_entries": 0
+      },
+      "name": "f.bin",
+      "path": "/t/ir/f.bin",
+      "reader_blocks": [],
+      "reader_stop": "",
+      "source_sha256": "2187e9b4cc45a2b28221118856c096d18bc3fd188a079558796e108557cc66cd",
+      "source_size": 60,
+      "tree_blocks": [],
+      "true_basis": "stage-image",
+      "true_blocks": []
+    },
+    {
+      "candidates": [],
+      "expect": {
+        "assumptions": [],
+        "candidate_methods": [],
+        "captured_blocks": [],
+        "confidence": 0,
+        "cut": false,
+        "equal_source": "no",
+        "incomplete": false,
+        "method": "",
+        "outcome": "skip",
+        "overlaps": [],
+        "size": 0,
+        "skip": "no-map"
+      },
+      "family": "leaf-reused",
+      "generation": 3234698308,
+      "inode": 45,
+      "kernel_state": {
+        "i_size": 0,
+        "inode_free": true,
+        "leaf_intact": false,
+        "root_entries": 0
+      },
+      "name": "deep.bin",
+      "path": "/t/lr/deep.bin",
+      "reader_blocks": [],
+      "reader_stop": "",
+      "source_sha256": "2a943080ac8bbb47d286f829aebe92ed1fc27d207c91a465d27f021d787e70df",
+      "source_size": 16381,
+      "tree_blocks": [
+        9367
+      ],
+      "true_basis": "stage-image",
+      "true_blocks": [
+        [
+          9357,
+          1
+        ],
+        [
+          9359,
+          1
+        ],
+        [
+          9361,
+          1
+        ],
+        [
+          9363,
+          1
+        ],
+        [
+          9365,
+          1
+        ],
+        [
+          9369,
+          1
+        ],
+        [
+          9371,
+          1
+        ],
+        [
+          9373,
+          1
+        ],
+        [
+          9375,
+          1
+        ],
+        [
+          9377,
+          1
+        ],
+        [
+          9379,
+          1
+        ],
+        [
+          9381,
+          1
+        ],
+        [
+          9383,
+          1
+        ],
+        [
+          9385,
+          1
+        ],
+        [
+          9387,
+          1
+        ],
+        [
+          9389,
+          1
+        ]
+      ]
+    },
+    {
+      "candidates": [],
+      "expect": {
+        "assumptions": [],
+        "candidate_methods": [],
+        "captured_blocks": [],
+        "confidence": 0,
+        "cut": false,
+        "equal_source": "no",
+        "incomplete": false,
+        "method": "",
+        "outcome": "skip",
+        "overlaps": [],
+        "size": 0,
+        "skip": "no-map"
+      },
+      "family": "small-kernel",
+      "generation": 3301824313,
+      "inode": 38,
+      "kernel_state": {
+        "i_size": 0,
+        "inode_free": true,
+        "leaf_intact": false,
+        "root_entries": 0
+      },
+      "name": "s.bin",
+      "path": "/t/sk/s.bin",
+      "reader_blocks": [],
+      "reader_stop": "",
+      "source_sha256": "db294645ffb6f873caad4c2db5b533fc6b6f45c656bf23f44d5bdfc5113ca971",
+      "source_size": 3067,
+      "tree_blocks": [],
+      "true_basis": "stage-image",
+      "true_blocks": [
+        [
+          9346,
+          3
+        ]
+      ]
+    },
+    {
+      "candidates": [
+        {
+          "assumptions": [
+            "inode-not-reused-since-entry-deleted",
+            "owner-by-crc32c-seed",
+            "leaf-may-be-superseded",
+            "file-end-unknown",
+            "in-inode-map-cleared",
+            "stale-chain-stop=hole@1"
+          ],
+          "blocks": [
+            [
+              9681,
+              1
+            ]
+          ],
+          "method": "ext4-extent-leaf",
+          "size": 17408,
+          "stop": "hole@1"
+        }
+      ],
+      "expect": {
+        "assumptions": [
+          "inode-not-reused-since-entry-deleted",
+          "owner-by-crc32c-seed",
+          "leaf-may-be-superseded",
+          "file-end-unknown",
+          "in-inode-map-cleared",
+          "stale-chain-stop=hole@1"
+        ],
+        "candidate_methods": [
+          "ext4-extent-leaf"
+        ],
+        "captured_blocks": [
+          [
+            9681,
+            1
+          ]
+        ],
+        "confidence": 20,
+        "cut": false,
+        "equal_source": "artifact-is-prefix",
+        "incomplete": true,
+        "method": "ext4-extent-leaf",
+        "outcome": "recover",
+        "overlaps": [],
+        "size": 1024,
+        "skip": ""
+      },
+      "family": "sparse-kernel",
+      "generation": 3152960720,
+      "inode": 55,
+      "kernel_state": {
+        "i_size": 0,
+        "inode_free": true,
+        "leaf_intact": true,
+        "root_entries": 0
+      },
+      "name": "sp.bin",
+      "path": "/t/sp/sp.bin",
+      "reader_blocks": [
+        [
+          9681,
+          1
+        ]
+      ],
+      "reader_stop": "hole@1",
+      "source_sha256": "1f4a2ef976614f8ffd9e00adc69e415b284f9d2159e5e89521021c90beead6b3",
+      "source_size": 17084,
+      "tree_blocks": [
+        9691
+      ],
+      "true_basis": "stage-image",
+      "true_blocks": [
+        [
+          9681,
+          1
+        ],
+        [
+          9683,
+          1
+        ],
+        [
+          9685,
+          1
+        ],
+        [
+          9687,
+          1
+        ],
+        [
+          9689,
+          1
+        ],
+        [
+          9693,
+          1
+        ],
+        [
+          9695,
+          1
+        ],
+        [
+          9697,
+          1
+        ],
+        [
+          9699,
+          1
+        ]
+      ]
+    },
+    {
+      "candidates": [],
+      "expect": {
+        "assumptions": [],
+        "candidate_methods": [],
+        "captured_blocks": [],
+        "confidence": 0,
+        "cut": false,
+        "equal_source": "no",
+        "incomplete": false,
+        "method": "",
+        "outcome": "skip",
+        "overlaps": [],
+        "size": 0,
+        "skip": "no-map"
+      },
+      "family": "deep-reuse-head-aux",
+      "generation": 147572481,
+      "inode": 36,
+      "kernel_state": {
+        "i_size": 0,
+        "inode_free": true,
+        "leaf_intact": false,
+        "root_entries": 0
+      },
+      "name": "u_dh",
+      "path": "/t/w/u_dh",
+      "reader_blocks": [],
+      "reader_stop": "",
+      "source_sha256": "96aa1f245463bf701c9ead035a85d9457aa03b9118ed5c0026e9755c7beec001",
+      "source_size": 2048,
+      "tree_blocks": [],
+      "true_basis": "stage-image",
+      "true_blocks": [
+        [
+          9391,
+          1
+        ],
+        [
+          9393,
+          1
+        ]
+      ]
+    },
+    {
+      "candidates": [],
+      "expect": {
+        "assumptions": [],
+        "candidate_methods": [],
+        "captured_blocks": [],
+        "confidence": 0,
+        "cut": false,
+        "equal_source": "no",
+        "incomplete": false,
+        "method": "",
+        "outcome": "skip",
+        "overlaps": [],
+        "size": 0,
+        "skip": "no-map"
+      },
+      "family": "zero-size",
+      "generation": 626239481,
+      "inode": 39,
+      "kernel_state": {
+        "i_size": 0,
+        "inode_free": true,
+        "leaf_intact": false,
+        "root_entries": 0
+      },
+      "name": "z.dat",
+      "path": "/t/zs/z.dat",
+      "reader_blocks": [],
+      "reader_stop": "",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_size": 0,
+      "tree_blocks": [],
+      "true_basis": "stage-image",
+      "true_blocks": []
+    }
+  ],
+  "deleted_entry_count": 17,
+  "fs_type": "ext4",
+  "totals": {
+    "recovered": 6,
+    "skipped_by": {
+      "no-map": 5,
+      "not-a-file": 1,
+      "not-selected": 1,
+      "reused": 4,
+      "unsupported": 1
+    },
+    "undecided": 0
+  },
+  "unlisted_count": 0,
+  "wiped": []
+}

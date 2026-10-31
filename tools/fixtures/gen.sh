@@ -19,6 +19,9 @@ declare -A fixtures=(
   [apfs-populated]="internal/filesys/apfs/testdata"
   [fat-recover]="internal/filesys/fat/testdata/recover"
   [exfat-recover]="internal/filesys/exfat/testdata/recover"
+  # ext4_recover.sh: runs in the Dockerfile.recover510 image (the 5.10 guest kernel next to the 6.1 one) and writes
+  # ext4-recover, ext3-recover, ext4-recover-sameboot and ext4-recover-wiped
+  [ext4-recover]="internal/filesys/ext4/testdata/recover"
   [hfsplus]="internal/filesys/hfsplus/testdata"
   [sqlite]="internal/sqlitefile/testdata"
   # casefold.sh derives the ext4 and F2FS testdata directories from $root: it writes all three outputs
@@ -33,11 +36,11 @@ order=(volume-gpt volume-mbr ext4 fat exfat f2fs ewf apfs sqlite)
 # apfs-populated: Dockerfile.apfs, minutiae-fixtures-apfs; fat-recover, exfat-recover and casefold:
 # Dockerfile.recover, minutiae-recover-fixtures, which holds QEMU and the guest kernel; carve: Dockerfile.carve,
 # minutiae-carve-fixtures, which holds the encoders and no QEMU).
-separate=(hfsplus apfs-populated fat-recover exfat-recover casefold ext4-xattr carve)
+separate=(hfsplus apfs-populated fat-recover exfat-recover ext4-recover casefold ext4-xattr carve)
 
 usage() {
   echo "usage: gen.sh <fixture>|all" >&2
-  echo "fixtures: ${order[*]} (all), ${separate[*]} (not in all: run hfsplus in the minutiae-fixtures-hfs image, apfs-populated in the minutiae-fixtures-apfs image, fat-recover, exfat-recover and ext4-xattr in the minutiae-recover-fixtures image, carve in the minutiae-carve-fixtures image)" >&2
+  echo "fixtures: ${order[*]} (all), ${separate[*]} (not in all: run hfsplus in the minutiae-fixtures-hfs image, apfs-populated in the minutiae-fixtures-apfs image, fat-recover, exfat-recover and ext4-xattr in the minutiae-recover-fixtures image, ext4-recover in the minutiae-recover-fixtures-510 image, carve in the minutiae-carve-fixtures image)" >&2
   exit 2
 }
 
@@ -78,6 +81,16 @@ for name in "${targets[@]}"; do
       exit 1
     fi
     ;;
+  ext4-recover)
+    if ! command -v qemu-system-x86_64 >/dev/null || ! compgen -G "/boot/vmlinuz-5.10*" >/dev/null || ! compgen -G "/boot/vmlinuz-6.1*" >/dev/null; then
+      echo "gen.sh ext4-recover needs QEMU and BOTH guest kernels (5.10 for the positive images, 6.1 for the wiped-record image)," >&2
+      echo "which the minutiae-fixtures image does not have." >&2
+      echo "Build and use the separate image: docker build -f tools/fixtures/Dockerfile.recover -t minutiae-recover-fixtures tools/fixtures &&" >&2
+      echo "  docker build -f tools/fixtures/Dockerfile.recover510 -t minutiae-recover-fixtures-510 tools/fixtures" >&2
+      echo "(see tools/fixtures/README.md, \"ext4 recovery fixtures (3C)\")." >&2
+      exit 1
+    fi
+    ;;
   carve)
     if ! command -v heif-enc >/dev/null || ! command -v ffmpeg >/dev/null; then
       echo "gen.sh carve needs heif-enc (libheif-examples) and ffmpeg, which the minutiae-fixtures image does not have." >&2
@@ -101,7 +114,7 @@ for name in "${targets[@]}"; do
   mkdir -p "$out"
   echo "== $name -> ${fixtures[$name]}"
   script=$name
-  case $name in fat-recover | exfat-recover | ext4-xattr) script=${name//-/_} ;; esac # fat_recover.sh, exfat_recover.sh, ext4_xattr.sh
+  case $name in fat-recover | exfat-recover | ext4-xattr | ext4-recover) script=${name//-/_} ;; esac # fat_recover.sh, exfat_recover.sh, ext4_xattr.sh, ext4_recover.sh
   case $name in carve) script=carve_gen ;; esac # carve_gen.sh
   bash "$here/$script.sh" "$out"
 done
