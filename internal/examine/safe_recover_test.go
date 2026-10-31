@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/examine"
@@ -423,5 +424,166 @@ func TestSupportsRecoveryRecoversAPanic(t *testing.T) {
 	}
 	if s.SupportsRecovery() {
 		t.Error("SupportsRecovery() = true for a filesystem whose wrapper chain panics; want false")
+	}
+}
+
+type supportsRF interface{ SupportsRollForward() bool }
+
+// rfFS is a filesystem with a roll-forward chain; panicIn names where it panics ("", "chain", "files", "visit").
+// Its answers share their slices with the reader, as a careless reader could.
+type rfFS struct {
+	filesys.FileSystem
+	panicIn string
+	chain   filesys.RollForwardChain
+	nodes   []filesys.RollForwardNode
+	files   []filesys.PostCheckpointFile
+}
+
+func newRFFS(fsys filesys.FileSystem) *rfFS {
+	return &rfFS{
+		FileSystem: fsys,
+		chain: filesys.RollForwardChain{
+			CheckpointVersion: 9, Nodes: 2, Stop: "version@40", Complete: true, Warnings: []string{"cw"},
+			Files: []filesys.RollForwardFile{{Ino: 5, Kind: "post-checkpoint", ID: "rollforward:5", Name: "a"}},
+		},
+		nodes: []filesys.RollForwardNode{
+			{Index: 0, Block: 10, Kind: "inode", Addrs: []uint32{1, 2}, NIDs: []uint32{3}, Inode: &filesys.RollForwardInode{Name: "a", RawName: []byte("a")}},
+			{Index: 1, Block: 11, Kind: "direct", Addrs: []uint32{7}},
+		},
+		files: []filesys.PostCheckpointFile{{
+			ID: "rollforward:5", Ino: 5, Name: "a",
+			Candidates: []filesys.Candidate{{Method: "f2fs-rollforward", Size: 4, Runs: []filesys.Run{{Offset: 1, Length: 4}}, Basis: []string{"b"}}},
+		}},
+	}
+}
+
+func (r *rfFS) RollForward(visit func(filesys.RollForwardNode) bool) (filesys.RollForwardChain, error) {
+	if r.panicIn == "chain" {
+		panic("rf-chain")
+	}
+	for _, n := range r.nodes {
+		if r.panicIn == "visit" {
+			panic("rf-visit")
+		}
+		if !visit(n) {
+			break
+		}
+	}
+	return r.chain, nil
+}
+
+func (r *rfFS) PostCheckpointFiles() ([]filesys.PostCheckpointFile, error) {
+	if r.panicIn == "files" {
+		panic("rf-files")
+	}
+	return r.files, nil
+}
+
+func TestSafeFSForwardsRollForwarder(t *testing.T) {
+	fsys, _ := recImage(t)
+	inner := newRFFS(fsys)
+	w := wrap(t, inner)
+	rf := mustAs[filesys.RollForwarder](t, w)
+	var got []filesys.RollForwardNode
+	chain, err := rf.RollForward(func(n filesys.RollForwardNode) bool { got = append(got, n); return true })
+	if err != nil || !reflect.DeepEqual(chain, inner.chain) || !reflect.DeepEqual(got, inner.nodes) {
+		t.Fatalf("RollForward = %+v, %v, nodes %+v; want %+v and %+v", chain, err, got, inner.chain, inner.nodes)
+	}
+	var first []int
+	if _, err := rf.RollForward(func(n filesys.RollForwardNode) bool { first = append(first, n.Index); return false }); err != nil || !reflect.DeepEqual(first, []int{0}) {
+		t.Errorf("early stop visited %v, %v", first, err)
+	}
+	files, err := rf.PostCheckpointFiles()
+	if err != nil || !reflect.DeepEqual(files, inner.files) {
+		t.Errorf("PostCheckpointFiles = %+v, %v; want %+v", files, err, inner.files)
+	}
+	if s, ok := w.(supportsRF); !ok || !s.SupportsRollForward() {
+		t.Error("SupportsRollForward() is not true for a wrapped RollForwarder")
+	}
+}
+
+func TestSafeFSNoRollForwarderIsUnsupported(t *testing.T) {
+	fsys, _ := recImage(t)
+	w := wrap(t, fsys)
+	rf := mustAs[filesys.RollForwarder](t, w)
+	called := false
+	chain, err := rf.RollForward(func(filesys.RollForwardNode) bool { called = true; return true })
+	if !errors.Is(err, filesys.ErrUnsupported) || called || !reflect.DeepEqual(chain, filesys.RollForwardChain{}) {
+		t.Errorf("RollForward without support = %+v, %v", chain, err)
+	}
+	files, err := rf.PostCheckpointFiles()
+	if !errors.Is(err, filesys.ErrUnsupported) || files != nil {
+		t.Errorf("PostCheckpointFiles without support = %v, %v", files, err)
+	}
+	if s, ok := w.(supportsRF); !ok || s.SupportsRollForward() {
+		t.Error("SupportsRollForward() must be false without a RollForwarder")
+	}
+}
+
+func TestSafeFSRecoversRollForwardPanic(t *testing.T) {
+	fsys, _ := recImage(t)
+	for _, where := range []string{"chain", "visit", "files"} {
+		t.Run(where, func(t *testing.T) {
+			inner := newRFFS(fsys)
+			inner.panicIn = where
+			rf := mustAs[filesys.RollForwarder](t, wrap(t, inner))
+			var err error
+			if where == "files" {
+				_, err = rf.PostCheckpointFiles()
+			} else {
+				_, err = rf.RollForward(func(filesys.RollForwardNode) bool { return true })
+			}
+			var ce *filesys.CorruptError
+			if !errors.As(err, &ce) || !errors.Is(err, filesys.ErrCorrupt) {
+				t.Fatalf("a panic in %s = %v; want a *CorruptError", where, err)
+			}
+			if want := "rf-" + where; !strings.Contains(err.Error(), "parser panic") || !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not carry the panicError text for %q", err, want)
+			}
+		})
+	}
+}
+
+func TestSafeFSCopiesRollForwardAnswers(t *testing.T) {
+	fsys, _ := recImage(t)
+	inner := newRFFS(fsys)
+	rf := mustAs[filesys.RollForwarder](t, wrap(t, inner))
+	pristine := newRFFS(fsys)
+	chain, err := rf.RollForward(func(n filesys.RollForwardNode) bool {
+		if n.Addrs != nil {
+			n.Addrs[0] = 999
+		}
+		if n.NIDs != nil {
+			n.NIDs[0] = 999
+		}
+		if n.Inode != nil {
+			n.Inode.RawName[0] = 'X'
+		}
+		return true
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chain.Files) != 1 || len(chain.Warnings) != 1 {
+		t.Fatalf("the chain lost its files or warnings: %+v", chain)
+	}
+	chain.Files[0].Name = "scribble"
+	chain.Warnings[0] = "scribble"
+	files, err := rf.PostCheckpointFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || len(files[0].Candidates) != 1 {
+		t.Fatalf("PostCheckpointFiles lost its answer: %+v", files)
+	}
+	files[0].Candidates[0].Runs[0] = filesys.Run{Offset: 99, Length: 99}
+	files[0].Candidates[0].Basis[0] = "scribble"
+	files[0].Candidates[0].Method = "scribble"
+	if !reflect.DeepEqual(inner.nodes, pristine.nodes) || !reflect.DeepEqual(inner.chain, pristine.chain) || !reflect.DeepEqual(inner.files, pristine.files) {
+		t.Errorf("the reader's own data was changed through the wrapper: %+v %+v %+v", inner.nodes, inner.chain, inner.files)
+	}
+	second, _ := rf.PostCheckpointFiles()
+	if !reflect.DeepEqual(second, pristine.files) {
+		t.Errorf("a second answer carries the caller's edits: %+v", second)
 	}
 }
