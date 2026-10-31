@@ -16,6 +16,10 @@ const (
 	gdAfterChecksum = 0x20
 	// gdBitmapCsumHiEnd is the descriptor size that holds bg_block_bitmap_csum_hi.
 	gdBitmapCsumHiEnd = 0x3A
+	// gdItableUnusedHiEnd and gdInodeBitmapCsumHiEnd are the descriptor sizes that hold bg_itable_unused_hi and
+	// bg_inode_bitmap_csum_hi.
+	gdItableUnusedHiEnd    = 0x34
+	gdInodeBitmapCsumHiEnd = 0x3C
 )
 
 // groupDesc is one decoded block group descriptor.
@@ -26,6 +30,11 @@ type groupDesc struct {
 	// bitmapCsumHi is set: descriptors of 0x3A bytes or more).
 	bitmapCsum   uint32
 	bitmapCsumHi bool
+	// inodeBitmapCsum is bg_inode_bitmap_csum (lo at 0x1A, hi at 0x3A with descriptors of 0x3C bytes or more).
+	inodeBitmapCsum   uint32
+	inodeBitmapCsumHi bool
+	// itableUnused is bg_itable_unused (lo at 0x1C, hi at 0x32 with descriptors of 0x34 bytes or more).
+	itableUnused uint32
 	// csumBad is set when the descriptor checksum does not verify: its flags
 	// cannot be trusted.
 	csumBad bool
@@ -141,11 +150,13 @@ func loadGroups(r io.ReaderAt, sb *superblock) ([]groupDesc, []string, error) {
 			g := i*perBlock + k
 			gd := chunk[k*int64(sb.descSize) : (k+1)*int64(sb.descSize)]
 			d := groupDesc{
-				blockBitmap: uint64(le.Uint32(gd[0x0:])),
-				inodeBitmap: uint64(le.Uint32(gd[0x4:])),
-				inodeTable:  uint64(le.Uint32(gd[0x8:])),
-				flags:       le.Uint16(gd[0x12:]),
-				bitmapCsum:  uint32(le.Uint16(gd[0x18:])),
+				blockBitmap:     uint64(le.Uint32(gd[0x0:])),
+				inodeBitmap:     uint64(le.Uint32(gd[0x4:])),
+				inodeTable:      uint64(le.Uint32(gd[0x8:])),
+				flags:           le.Uint16(gd[0x12:]),
+				bitmapCsum:      uint32(le.Uint16(gd[0x18:])),
+				inodeBitmapCsum: uint32(le.Uint16(gd[0x1A:])),
+				itableUnused:    uint32(le.Uint16(gd[0x1C:])),
 			}
 			if sb.descSize >= gdSize64 {
 				d.blockBitmap |= uint64(le.Uint32(gd[0x20:])) << 32
@@ -154,6 +165,13 @@ func loadGroups(r io.ReaderAt, sb *superblock) ([]groupDesc, []string, error) {
 				if sb.descSize >= gdBitmapCsumHiEnd {
 					d.bitmapCsum |= uint32(le.Uint16(gd[0x38:])) << 16
 					d.bitmapCsumHi = true
+				}
+				if sb.descSize >= gdItableUnusedHiEnd {
+					d.itableUnused |= uint32(le.Uint16(gd[0x32:])) << 16
+				}
+				if sb.descSize >= gdInodeBitmapCsumHiEnd {
+					d.inodeBitmapCsum |= uint32(le.Uint16(gd[0x3A:])) << 16
+					d.inodeBitmapCsumHi = true
 				}
 			}
 			if want, ok := sb.descChecksum(gd, uint32(g)); ok && want != le.Uint16(gd[gdChecksum:]) {

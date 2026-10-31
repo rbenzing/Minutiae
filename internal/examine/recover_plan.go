@@ -78,6 +78,7 @@ type PlannedCandidate struct {
 
 	skipDetail string
 	prefix     bool   // the map covers less than the declared size (ruling F4/F18)
+	endUnknown bool   // the reader says the file may extend past the map (assumption file-end-unknown)
 	cut        bool   // some runs were not free
 	cutState   string // state of the first non-free byte
 	cutRuns    int    // runs not (fully) captured
@@ -183,7 +184,7 @@ func (s *Session) PlanRecovery(ctx context.Context, o RecoverOptions) (*RecoverP
 		return nil, err
 	}
 	before := fsys.Info().Warnings
-	plan, err := s.buildPlan(ctx, o, fsys, rec, part, b)
+	plan, err := s.buildPlan(ctx, o, fsys, rec, part, b, false)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +231,7 @@ type planner struct {
 func (p *planner) skipped(reason string) { p.plan.SkippedBy[reason]++ }
 
 // buildPlan is the whole planning pass shared by PlanRecovery and Recover.
-func (s *Session) buildPlan(ctx context.Context, o RecoverOptions, fsys filesys.FileSystem, rec filesys.Recoverer, part volume.Partition, b *budget) (*RecoverPlan, error) {
+func (s *Session) buildPlan(ctx context.Context, o RecoverOptions, fsys filesys.FileSystem, rec filesys.Recoverer, part volume.Partition, b *budget, prepare bool) (*RecoverPlan, error) {
 	runs, note, err := s.unallocatedRunsNote(fsys, part, false)
 	if err != nil {
 		return nil, err
@@ -247,6 +248,13 @@ func (s *Session) buildPlan(ctx context.Context, o RecoverOptions, fsys filesys.
 		return nil, err
 	}
 	p.plan.Considered = len(targets) + over
+	// A reader that needs one pass over the image before it can answer (a free-space scan) is prepared
+	// here: after enumeration, only when something is to be recovered, and never for a list (3C-R25).
+	if prepare && len(targets) > 0 {
+		if err := filesys.PrepareRecovery(ctx, fsys); err != nil {
+			return nil, err
+		}
+	}
 	if over > 0 {
 		p.limit("max-entries", over, fmt.Sprintf("more than %d deleted entries; %d were not processed", recoverEntryCap, over))
 	}
@@ -506,7 +514,7 @@ func (p *planner) evaluate(it *RecoverItem, t target, cs []filesys.Candidate) {
 			reject("invalid-map", err.Error())
 			continue
 		}
-		if _, ok := confidenceFor(c.Method, false, false); !ok {
+		if _, ok := confidenceFor(c.Method, false, false, false); !ok {
 			reject("unknown-method", fmt.Sprintf("method %q has no confidence rule in this build", c.Method))
 			continue
 		}
@@ -551,6 +559,7 @@ func (p *planner) evaluate(it *RecoverItem, t target, cs []filesys.Candidate) {
 		// A map shorter than its declared size names only a prefix of the file (ruling F4/F18): the
 		// unmapped tail is counted in ExcludedBytes (it has no runs to list), whatever the reader's reason.
 		pc.prefix = covered < c.Size
+		pc.endUnknown = slices.Contains(c.Assumptions, assumptionFileEndUnknown)
 		tail := int64(0)
 		if pc.prefix {
 			tail = c.Size - covered
@@ -585,8 +594,15 @@ func (p *planner) evaluate(it *RecoverItem, t target, cs []filesys.Candidate) {
 		} else if pc.Size < c.Size && pc.errText == "" {
 			pc.errText = fmt.Sprintf("the map covers %d of %d declared bytes", pc.Size, c.Size)
 		}
+		if pc.endUnknown { // the bytes may stop short of the file: partial work is flagged, never presented as whole (3C-C4)
+			msg := "the file end is unknown (" + assumptionFileEndUnknown + ")"
+			if pc.errText != "" {
+				msg = pc.errText + "; " + msg
+			}
+			pc.errText = msg
+		}
 		pc.Content = "ok"
-		pc.Confidence, _ = confidenceFor(c.Method, pc.cut || pc.prefix, false)
+		pc.Confidence, _ = confidenceFor(c.Method, pc.cut || pc.prefix || slices.Contains(pc.Assumptions, assumptionFileEndUnknown), false, slices.Contains(pc.Assumptions, assumptionJournalNotReplayed))
 		pc.Band = evidence.ConfidenceBand(pc.Confidence)
 		valid = append(valid, pc)
 	}
@@ -638,7 +654,7 @@ func (p *planner) selectAndFilter() {
 					}
 				}
 			}
-			c.Confidence, _ = confidenceFor(c.Method, c.cut || c.prefix, len(partners) > 0)
+			c.Confidence, _ = confidenceFor(c.Method, c.cut || c.prefix || slices.Contains(c.Assumptions, assumptionFileEndUnknown), len(partners) > 0, slices.Contains(c.Assumptions, assumptionJournalNotReplayed))
 			c.Band = evidence.ConfidenceBand(c.Confidence)
 			c.Assumptions = fitAssumptions(c.Assumptions)
 			if c.Confidence < p.o.MinConfidence {

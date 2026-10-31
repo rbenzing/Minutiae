@@ -66,7 +66,7 @@ func (s *Session) Recover(ctx context.Context, o RecoverOptions) (RecoverSummary
 		if err := a.watchFS(fsys); err != nil {
 			return err
 		}
-		plan, err := s.buildPlan(ctx, o, fsys, rec, part, b)
+		plan, err := s.buildPlan(ctx, o, fsys, rec, part, b, true)
 		if err != nil {
 			return err
 		}
@@ -204,7 +204,7 @@ func (w *recoverWriter) write(it *RecoverItem, c *PlannedCandidate) error {
 	if !useSidecar {
 		d.Runs = runs
 	}
-	partial := c.Size < c.DeclaredSize
+	partial := c.Size < c.DeclaredSize || c.endUnknown
 	src := evidence.Source{Kind: evidence.KindRecover, DeviceID: s.Parent.Source.DeviceID, Derived: d}
 
 	// Nothing that case verify would reject is ever written: a failure here is a defect of this build.

@@ -105,6 +105,7 @@ type fsHook struct {
 	rewriteKids func(kids []filesys.Entry) []filesys.Entry
 	recoverable func(inner filesys.Recoverer, e filesys.Entry) ([]filesys.Candidate, error)
 	unalloc     func(inner []filesys.Run) []filesys.Run
+	prepare     func(ctx context.Context) error
 	warnOnUnal  []string
 	warnings    []string
 }
@@ -131,6 +132,14 @@ func (h *fsHook) ReadDir(dir filesys.Entry) ([]filesys.Entry, error) {
 		h.onReadDir(dir, kids)
 	}
 	return kids, err
+}
+
+// PrepareRecovery runs the prepare hook, else forwards to the wrapped filesystem's preparer (if any).
+func (h *fsHook) PrepareRecovery(ctx context.Context) error {
+	if h.prepare != nil {
+		return h.prepare(ctx)
+	}
+	return filesys.PrepareRecovery(ctx, h.FileSystem)
 }
 
 func (h *fsHook) Unallocated() ([]filesys.Run, error) {

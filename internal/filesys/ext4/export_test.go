@@ -147,3 +147,165 @@ func (f *FS) SetEAHashCap(n int64) { f.eaHashCap = n }
 
 // MaxEAHashBytes is the default bound on EA-inode value bytes hashed per filesystem.
 const MaxEAHashBytes = maxEAHashBytes
+
+// SetLocateCaps lowers the directory and run caps of the deleted-ID directory index (before any resolution); a
+// value of 0 or less leaves that cap as it is.
+func (f *FS) SetLocateCaps(dirs, runs int) {
+	if dirs > 0 {
+		f.locateDirsCap = dirs
+	}
+	if runs > 0 {
+		f.locateRunsCap = runs
+	}
+}
+
+// LocateWork reports the work the deleted-ID resolution has done: directory index units plus one per re-read.
+func (f *FS) LocateWork() int64 { return f.locateWork.Load() }
+
+// ResolveDeleted resolves a deleted-entry ID from disk: the directory that holds the record, the inode the record
+// names (0 when unknown), and the logical block of the record's block (-1 for an inline directory).
+func (f *FS) ResolveDeleted(id string) (dirInode, recInode uint32, lblk int64, err error) {
+	d, ok := f.parseDeletedID(id)
+	if !ok {
+		return 0, 0, 0, fmt.Errorf("%w: %q is not a canonical deleted-entry id", filesys.ErrNotFound, id)
+	}
+	r, err := f.resolveDeleted(d)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	return r.dir.num, r.rec.inode, r.lblk, nil
+}
+
+// GroupInodeBitmapCsum reads group g's inode bitmap and returns the checksum the descriptor stores, the one computed
+// over the bitmap (masked to 16 bits when the descriptor has no high half), and whether the descriptor has the high
+// half. It panics on a read failure.
+func (f *FS) GroupInodeBitmapCsum(g int) (stored, computed uint32, hasHi bool) {
+	d := &f.groups[g]
+	nb := (f.sb.inodesPerGroup + 7) / 8
+	bm := make([]byte, nb)
+	if err := readFull(f.r, bm, int64(d.inodeBitmap)*int64(f.sb.blockSize)); err != nil {
+		panic(err)
+	}
+	computed = rawCRC32C(f.sb.csumSeed, bm[:f.sb.inodesPerGroup/8])
+	if !d.inodeBitmapCsumHi {
+		computed &= 0xFFFF
+	}
+	return d.inodeBitmapCsum, computed, d.inodeBitmapCsumHi
+}
+
+// InodeAllocated reports the allocation state of inode n: "used", "free", or "unknown: <reason>".
+func (f *FS) InodeAllocated(n uint32) (state string, err error) {
+	st, reason, err := f.inodeState(n)
+	if err != nil {
+		return "", err
+	}
+	switch st {
+	case allocFree:
+		return "free", nil
+	case allocUsed:
+		return "used", nil
+	}
+	return "unknown: " + reason, nil
+}
+
+// StaleInode resolves the deleted-entry id and applies the stale-inode acceptance rules (3C-R7); it returns the
+// accepted inode's number.
+func (f *FS) StaleInode(id string) (num uint32, err error) {
+	st, err := f.staleOf(id)
+	if err != nil {
+		return 0, err
+	}
+	return st.in.num, nil
+}
+
+// StaleInodeDetail is StaleInode that also returns the accepted inode's flags and the quiet-decode notes.
+func (f *FS) StaleInodeDetail(id string) (num, flags uint32, notes []string, err error) {
+	st, err := f.staleOf(id)
+	if err != nil {
+		return 0, 0, nil, err
+	}
+	return st.in.num, st.in.flags, st.notes, nil
+}
+
+func (f *FS) staleOf(id string) (*staleInode, error) {
+	d, ok := f.parseDeletedID(id)
+	if !ok {
+		return nil, fmt.Errorf("%w: %q is not a canonical deleted-entry id", filesys.ErrNotFound, id)
+	}
+	r, err := f.resolveDeleted(d)
+	if err != nil {
+		return nil, err
+	}
+	return f.staleInodeFor(r)
+}
+
+// SetMapStaleCaps lowers the cap on the runs one stale map may hold (before any recovery); a value of 0 or less
+// leaves it as it is.
+func (f *FS) SetMapStaleCaps(runs int) {
+	if runs > 0 {
+		f.mapRunsCap = runs
+	}
+}
+
+// MapWork reports the work the stale-map walks have done: entries examined plus map blocks read.
+func (f *FS) MapWork() int64 { return f.mapWork.Load() }
+
+// SetLeafCaps lowers the leaf index caps (before PrepareRecovery); a value of 0 or less leaves that cap as it is.
+func (f *FS) SetLeafCaps(total, perKey int) {
+	if total > 0 {
+		f.leafTotalCap = total
+	}
+	if perKey > 0 {
+		f.leafKeyCap = perKey
+	}
+}
+
+// SetLeafChunk sets the size of the chunks the free-space pass reads (before PrepareRecovery).
+func (f *FS) SetLeafChunk(n int) { f.leafChunk = n }
+
+// LeafIndexStats reports the number of leaves the index holds (-1 when it is not built), whether a cap was reached
+// (a leaf was dropped), and the bytes the free-space pass has read.
+func (f *FS) LeafIndexStats() (leaves int, full bool, bytesRead int64) {
+	f.leafMu.Lock()
+	defer f.leafMu.Unlock()
+	if f.leafIdx == nil {
+		return -1, false, f.leafBytes.Load()
+	}
+	return f.leafIdx.n, f.leafIdx.full || f.leafIdx.dropped > 0, f.leafBytes.Load()
+}
+
+// LeafKey is leafKey.
+var LeafKey = leafKey
+
+// SeedKey is seedKey.
+var SeedKey = seedKey
+
+// LeafTail is the tail offset of a full-capacity leaf of block size bs.
+var LeafTail = leafTail
+
+// InodeSeed is the checksum seed of the blocks of inode num with generation gen.
+func (f *FS) InodeSeed(num, gen uint32) uint32 { return f.inodeSeed(&inode{num: num, generation: gen}) }
+
+// LeafLookup returns the blocks the index holds under key (nil when none), and whether the key or the whole index
+// dropped leaves.
+func (f *FS) LeafLookup(key uint32) (blks []uint64, capped bool) {
+	f.leafMu.Lock()
+	defer f.leafMu.Unlock()
+	if f.leafIdx == nil {
+		return nil, false
+	}
+	for _, r := range f.leafIdx.byKey[key] {
+		blks = append(blks, r.blk)
+	}
+	_, kf := f.leafIdx.keyFull[key]
+	return blks, kf || f.leafIdx.full
+}
+
+// PlausibleLeaf is plausibleLeaf.
+func PlausibleLeaf(block []byte, bs int, blocks uint64) (first uint32, end uint64, entries uint16, ok bool) {
+	r, ok := plausibleLeaf(block, bs, blocks)
+	return r.first, r.end, r.entries, ok
+}
+
+// IBlock returns a copy of the inode i_block area.
+func (in *inode) IBlock() []byte { return append([]byte(nil), in.block[:]...) }

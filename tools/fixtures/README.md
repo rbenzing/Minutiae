@@ -802,7 +802,7 @@ in the probe used no fixed id and no faketime.
 Not measured here and not to be assumed (each gets its own probe in the named part,
 and the spec §18 "from memory" items stay marked until then):
 
-- [ ] ext4 `i_block` / extent tree residue after unlink (3C)
+- [x] ext4 `i_block` / extent tree residue after unlink (3C): see "ext4 recovery probe (3C)" (the map and `i_size` are cleared, a depth-1 leaf survives at its home location after a clean unmount)
 - [x] `exfat-fuse` FAT-chain residue after delete (3B): superseded by ruling F3 (the
       fixtures use the KERNEL drivers in the QEMU guest, never exfat-fuse); the kernel
       exfat driver, on delete, clears the InUse bits of the entry set and the allocation-
@@ -977,6 +977,77 @@ T3 dd seek=6 count=1                   VDL 000e000000000000  DataLength 000e0000
 T4 dd seek=8 count=0                   VDL 0010000000000000  DataLength 0010000000000000
 ```
 
+## ext4 recovery probe (3C)
+
+Measured 2026-10-25 with `recover_ext4_probe.sh` (host-side reader `ext4_recover_probe.py`; library
+`recover_guest.sh`, now with an `ext4` arm and an optional guest-clock argument whose default keeps 3B's
+time). No `--privileged`, no loop device, no host mount: the host formats the images under `faketime`, the
+QEMU TCG guest (`-m 512 -smp 1`) loads `virtio_blk virtio_pci crc32c_generic ext4` through its own `/init`, and
+the host READS each finished image with a raw Python reader of its own (own crc32c, checked against
+`debugfs`/`e2fsck`). Two kernels, the same workload, run in the container:
+
+```bash
+docker run --rm -v "$PWD:/work" -w /work minutiae-recover-fixtures     bash tools/fixtures/recover_ext4_probe.sh   # 6.1.0-53
+docker build -f tools/fixtures/Dockerfile.recover510 -t minutiae-recover-fixtures-510 tools/fixtures                  # once
+docker run --rm -v "$PWD:/work" -w /work minutiae-recover-fixtures-510 bash tools/fixtures/recover_ext4_probe.sh   # 5.10.223
+```
+
+`Dockerfile.recover510` (FROM the image above) unpacks Debian bullseye's `linux-image-5.10.0-32-amd64` 5.10.223-1
+(SHA256 pinned) with `dpkg-deb -x`: files only, nothing installed, no module indexed at build time. The guest
+library walks the module dependencies with `modinfo -F depends` when a kernel directory has no `modules.dep`,
+and `GUEST_KVER` (set to 5.10.0-32-amd64 by that image) picks the kernel. The security archive's 5.10.262 is not
+served by the snapshot mirror, hence the main-archive package. The raw output of both runs is kept by the 3C
+ledger (`task-1-probe-output.txt`); the evidence below was derived inside the container runs.
+
+Images: `ext4`: 16 MiB, 1 KiB blocks, `-t ext4 -O metadata_csum,64bit,inline_data,^orphan_file -m 0 -J size=1 -N 4096`
+(two groups, 64-byte descriptors); `ext3`: 8 MiB, `-t ext3 -O ^dir_index -m 0 -J size=1 -N 2048`, mounted `-t ext4`.
+One guest boot per stage with a clock one hour later each time. `e2fsck -fn` exits 0 after every boot. A boot takes
+6-25 s, an image gzips to 150-250 KiB (the `deep` workload is the large part). Stages: s1w writes `e1` (3 blocks),
+`e5`/`e5b` (inline data, 40 and 100 bytes), `e8` (sparse: logical blocks 0-1 and 10-11), a 90-entry directory and
+`deep` (200 blocks written one block at a time alternating with a pad file, so it is fragmented and has a depth-1
+tree); two `dd` passes then fill the volume; s2f is the pre-delete image; s3d unlinks `e1 e5 e5b e8`, `deep`
+and two directory entries (the first record of directory block 1 and a middle one). Branches of s3d: `rs`/`rp` create
+files at the same clock as the delete boot / one hour later; `sb` writes and unlinks a depth-1 file in ONE boot.
+
+### Facts (E1-E12), per kernel
+
+| Id | Fact | 6.1.0-53 | 5.10.223 |
+|---|---|---|---|
+| E1 | extent file, after `rm` + clean unmount | `i_size` 0, `i_blocks` 0, `links_count` 0, `dtime` set, `i_generation` unchanged, inode checksum valid; in-inode header kept (magic, max 4) with entries 0, the 48 entry bytes zero; inode bit clear, data bits clear, data bytes unchanged | identical |
+| E2 | depth-1 file (48-65 extents, one leaf) | in-inode header entries 0, depth 0, but the old index entry (leaf block number) survives in bytes 12-23 of `i_block`; the leaf block is free and **byte-equal to before**, its tail checksum verifies under (inode, `i_generation`), `i_generation` unchanged | identical |
+| E3 | ext3 block-map file (20 blocks, one indirect block) | all 15 `i_block` pointers zero, `i_size` 0; the freed indirect block's bytes and the data are unchanged | identical |
+| E4 | directory record, non-first | merged into the predecessor's `rec_len`; **inode, name_len, file_type and name all zeroed** (wiped) | merged; **inode (55), name_len, name KEPT**, the record's own `rec_len` kept |
+| E4 | directory record, first of block 1 | `inode` 0, `rec_len` kept, name_len, type and name zeroed | `inode` 0, `rec_len` kept, name_len, type and name KEPT |
+| E5 | inline-data file | `i_block` and `system.data` kept, `i_size` kept (links 0, dtime set, inode free) | identical |
+| E6/E11 | inode reuse | the next file takes the lowest freed inode number, with the same clock and one hour later; its `i_generation` differs. A journalled ext4 has no recently-deleted check | identical |
+| E7 | `dd` to ENOSPC with `-m 0` | does NOT reach zero: 327 blocks (2%) stay free (kernel reserve); `df` shows 0 available. After an `rm` the next file takes blocks only from the freed set | identical |
+| E8 | sparse file | two extents (0-1, 10-11), no hole extent | identical |
+| E9 | `e2fsck -fn` | 0 after every boot | identical |
+| E12 | inode-bitmap checksum (formula of 3C-R18, 64-byte descriptors, hi branch) | verifies for every initialised group of every image; `bg_itable_unused`/flags read; an uninitialised group (`INODE_UNINIT`, mke2fs state) stores 0, not a checksum | identical |
+
+### Same-boot delete (`sb`)
+
+A depth-1 file written and unlinked in the same boot: the in-inode root is cleared as in E2 (the stale index entry
+survives), but the leaf blocks at their home location are older versions: two free blocks verify under (inode,
+`i_generation`), hold 101-102 entries whose data equals the payload, and do not cover logical blocks 0-199. The
+fully committed leaves are only in the journal (about 66 allocated blocks verify under the same key). So after a
+same-boot delete the leaf method finds partial or no home leaf, never wrong data.
+
+### Gates (coordinator rulings 3C-C1, 3C-C2)
+
+- `GATE-L: open (demoted: clean-boundary only; same-boot delete leaves no valid home leaf, the method does not fire)`
+  Measured: clean boundary 1/1 leaf intact on both kernels. Same-boot: valid but partial leaves (above); the ruling treats
+  a leaf that does not give a complete chain as not firing.
+- `GATE-K: closed` on both kernels: a kernel `rm` leaves no intact in-inode map (ext4: entries 0 and zeroed entries; ext3: pointers zero).
+- `GATE-S: zeroed` on both kernels: `i_size` is 0 (inline-data inodes keep it, and have no map).
+- `GATE-U: reuse` on both kernels, same clock and +1 h.
+- Dirent route (3C-C1): 6.1 wipes a deleted record; 5.10 keeps inode and name of a merged (non-first) record and the name of a
+  first-in-block record (inode zeroed). Kernel-deleted `dirent:` entries therefore exist only on older kernels.
+
+`UnlinkEffects` (Task 2) that reproduce the kernel: ext4 file with extents: `FreeBlocks, FreeInode, ZeroSize, ZeroBlocksCount,
+ClearExtentRoot` (for a depth-1 file the kernel additionally leaves the old index entry bytes in `i_block`); ext3 file:
+`FreeBlocks, FreeInode, ZeroSize, ZeroBlocksCount, ZeroBlockPointers`.
+
 ## FAT recovery fixtures (3B)
 
 `fat_recover.sh` (+ `fat_recover_oracle.py`, library `recover_guest.sh`) builds three FAT volumes that the KERNEL
@@ -1108,6 +1179,129 @@ is `exfat-nofatchain` (75) when `no_fat_chain`, `exfat-fatchain` (65) when the c
 with the caps 20 (cut) and 30 (overlap). The generator exits 1 naming a missing family (`nofatchain-equal`, `empty`,
 `chained`, `skip-no-free-bytes`, `cut-prefix`, `not-equal-complete`), and exits 1 with "re-rule F1" if the chained file's
 FAT chain is not kept. The FAT-fixture-only fields `name_state` do not apply (exFAT names are always whole entries).
+
+## ext4 recovery fixtures (3C)
+
+`ext4_recover.sh` (+ `ext4_recover_oracle.py`; libraries `recover_guest.sh`, `lib.sh` and the raw reader `ext4_recover_probe.py`)
+builds four ext images that the KERNEL ext4 driver writes and deletes inside the QEMU TCG guest (no `--privileged`, no loop
+device, no host mount, no kernel module on the host: the host formats under `faketime`, runs `debugfs -w rm` for the
+`intact-debugfs-*` targets and READS finished images). Output, in a subdirectory so the globs and the schema of
+`TestExt4MatchesOracle` never see them: `internal/filesys/ext4/testdata/recover/{ext4-recover,ext3-recover,ext4-recover-sameboot,ext4-recover-wiped}.img.gz`
+and `.expect.json`. QEMU images are not byte-reproducible: image and oracle are regenerated together and every test checks
+`generator.image_sha256` first. The positive images need BOTH guest kernels, which is the `minutiae-recover-fixtures-510` image
+(the 5.10.223 kernel that Task 1 added next to the 6.1 one, see "ext4 recovery probe (3C)"); `gen.sh` stops, naming the images
+to build, when QEMU or either kernel is missing:
+
+```bash
+docker build -f tools/fixtures/Dockerfile.recover -t minutiae-recover-fixtures tools/fixtures
+docker build -f tools/fixtures/Dockerfile.recover510 -t minutiae-recover-fixtures-510 tools/fixtures
+docker run --rm -v "$PWD:/work" -w /work minutiae-recover-fixtures-510 bash tools/fixtures/gen.sh ext4-recover
+```
+
+Both Docker images, `minutiae-recover-fixtures` and `minutiae-recover-fixtures-510`, are kept after the plan is done, for
+regeneration (the kernels and QEMU in them are pinned by snapshot and sha256); do not remove them. A regeneration may need
+re-tuning of the scenario ops and fails closed when a family does not occur. See `docs/limitations.md` ("ext4 recovery
+fixtures") for what the real images do not cover. A run takes about 6 minutes (a boot is 7-60 s) and needs about 300 MB in the container's own `/tmp`. `FIXTURE_KEEP_DIR=<dir>` (a
+debugging aid, never set by `gen.sh`) copies the stage images and the guest logs there. `ext4-recover` is in the not-in-`all`
+list of `gen.sh`. Self-checks: `TestExt4RecoverFixturesHoldWhatTheyClaim` and `TestExt4RecoverWipedImageListsNothing`
+(internal/filesys/ext4).
+
+| Image | Kernel | Format (`faketime`, fixed UUID and hash seed) | Raw | Gzipped | SHA-256 of the raw image |
+|---|---|---|---|---|---|
+| `ext4-recover` | 5.10.223 | `-t ext4 -b 1024 -O metadata_csum,64bit,inline_data,^orphan_file -m 0 -J size=1 -N 16384` | 16 MiB | 257855 | `d2a9d5e3c35b8dc1594d4fa6e3f12e20961bff5941b31cf7ba7f319f70f92825` |
+| `ext3-recover` | 5.10.223 | `-t ext3 -b 1024 -O ^dir_index,^orphan_file -m 0 -J size=1 -N 8192`, mounted by the ext4 driver | 8 MiB | 123184 | `f21950efcef4f5e77057e9b7f5347683c82ea2fff7fea6a8ef32b103efeb635c` |
+| `ext4-recover-sameboot` | 5.10.223 | as `ext4-recover` with `-N 256` | 4 MiB | 245007 | `ae8d8c4cdbf456ac278f9c3523006451bed53af0d162d602c2d590e54411e030` |
+| `ext4-recover-wiped` | 6.1.0-53 | as `ext4-recover` with `-N 256` | 4 MiB | 11148 | `0ce519d021db1c08229f6d2e017aab05e1dde10c2d852415a8d2116e948de6b0` |
+
+(The values above are those of the committed images; a regeneration changes them, and then also the oracle.) Each image is at
+most 400 KiB gzipped; the payload (pseudo-random `pattern` bytes) is about 190 KiB in `ext4-recover` and 200 KiB in
+`ext4-recover-sameboot`; every fill and pad block is zero.
+
+### Kernels (ruling 3C-C1)
+
+The 6.1 driver WIPES a deleted directory record (inode, name, type), the 5.10 driver keeps the inode number and the name of a
+merged record (and the name of a first-in-block record, whose inode it zeroes). Positive fixtures therefore come from 5.10;
+`ext4-recover-wiped` is the negative control: the files `wa.bin` and `wb.bin` are removed by 6.1, their names are nowhere in
+their directory, and the reader lists nothing (`deleted_entry_count` 0, `wiped` lists the two files with `name_in_directory:
+false` and `inode_free: true`). Probe gates (all measured, `generator.gates`): `L` open (a freed leaf of a depth-1 file keeps its
+extents at the clean boundary), `K` closed (a kernel `rm` clears the in-inode map), `S` zeroed (`i_size` is 0), `U` reuse (the
+next file takes the lowest freed inode number).
+
+### How the scenarios are made (placement is never trusted: rulings 3C-R13, F19, F22)
+
+- **Checkerboard (3C-R30).** One zero file takes most of the volume, then 15 pairs of directories `pad/a/gNN/dNNN` (kept) and
+  `pad/b/gNN/dNNN` (removed) with 20 one-block zero files each are created alternately (`tar`, in one boot), a second zero file
+  takes every remaining free block, and `pad/b` is removed: every free block is then a hole of one block, and a file written
+  afterwards is fragmented with one extent per block (a depth-1 tree; 96 blocks give two leaves). The ordinary allocator
+  prefers the longest free run, then the lowest block, which the rest relies on. In `ext3-recover` an 8-block spacer file is
+  removed with `pad/b`: the four tail blocks of the reuse target are written in one request and take four of its blocks, so
+  they are the longest free run when the reuser comes.
+- **No reserve.** The kernel keeps 2% of a volume out of reach of ordinary writes. Every boot that fills or reuses space first
+  writes 0 to `/sys/fs/ext4/vda/reserved_clusters`, so a full volume has NO free block (the generator checks it with
+  `dumpe2fs`), and after an `rm` the free set is exactly the removed file's blocks.
+- **Donors.** A reuser would take the lowest freed inode number, which is the target's own. A "donor" (an empty file created
+  earlier, so with a lower number) is removed first and the reuser takes the donor's number. The `inode-reused` step instead
+  lets an empty file take the freed number of the target on purpose. Directories get a 200-character first entry so that none
+  is an inline directory (an inline directory zeroes the inode of its first record).
+- **Phases.** `ext4-recover`: 1 layout and checkerboard, 2 the deep files, 3 fill to ENOSPC, 4-7 one reuse step each (tail,
+  head, leaf, inode), 8 the kernel `rm` of the remaining targets, then the host `debugfs rm` of the `intact-debugfs-*` targets.
+  `ext3-recover`: layout and checkerboard, the reuse target (logical blocks 12-15 first, so its indirect block and tail get the
+  lowest blocks), fill, host `debugfs rm` of the reuse target (on the full volume), the reuse boot, the kernel `rm`, then host
+  `debugfs rm`. Every guest boot passes a clock of the base time (2023-11-14 22:13:20) plus N hours; `e2fsck -fn` exits 0 after
+  every boot and the finished image is read after each.
+
+| Family (image) | Steps | Outcome the oracle derives |
+|---|---|---|
+| `small-kernel` (ext4) | 3-block file, kernel `rm` | skip `no-map` (the kernel cleared the map; no leaf at depth 0) |
+| `zero-size` (ext4) | empty file, kernel `rm` | skip `no-map` |
+| `inline` (ext4) | 40-byte inline-data file, kernel `rm` | skip `unsupported` |
+| `hardlink` (ext4) | `ln`, then `rm` of the first name | skip `reused` (the inode is still allocated) |
+| `inode-reused` (ext4) | a 60-byte inline file, `rm`, then an empty file takes its inode number | skip `reused` |
+| `deep-kernel` (ext4) | 96 one-block extents (2 leaves), written in an earlier boot than the kernel `rm` | `ext4-extent-leaf`, 20 (file end unknown), `kernel_state.leaf_intact` true, equal_source `prefix-of-artifact` |
+| `sparse-kernel` (ext4) | 9 data blocks at even logical blocks | `ext4-extent-leaf` stopped at `hole@1`, 20, `artifact-is-prefix` |
+| `deep-reuse-tail` (ext4) | 16 blocks, tail half written first; `rm`, a 3-block reuser takes the lowest holes | leaf, cut after 8 blocks, 20, `artifact-is-prefix` |
+| `deep-reuse-head` (ext4) | 16 blocks; `rm`, a 2-block reuser takes the head, and is itself removed by the kernel afterwards | leaf, complete but not equal to the source (`no`), 20 |
+| `leaf-reused` (ext4) | 16 blocks; `rm`, a 9-block reuser takes the leaf block | skip `no-map` (the only leaf is gone) |
+| `intact-debugfs-small` / `intact-debugfs-deep` (ext4) | `debugfs rm` (map, size and tree intact; 12 extents, one leaf) | `ext-inode-intact`, 80, `full` |
+| `deep-same-boot` (`ext4-recover-sameboot`) | 200 blocks interleaved with a pad file, written and removed in ONE boot | `ext4-extent-leaf`, 20, a correct prefix (see below) |
+| `blockmap-kernel-direct` / `-indirect` (ext3) | 5-block and 20-block files, kernel `rm` | skip `no-map` (all 15 pointers zeroed) |
+| `intact-debugfs-indirect` (ext3) | 20-block file with an indirect block, `debugfs rm` | `ext-inode-intact`, 80, `full` |
+| `intact-debugfs-reused` (ext3) | 16-block file, `debugfs rm` on the full volume, a 1-block reuser takes the longest free run (its four tail blocks) | `ext-inode-intact`, cut after 12 blocks, 20, `artifact-is-prefix` |
+| `first-record` (ext3) | first record of block 1 of a 90-entry directory, kernel `rm` | skip `undecided` (the kernel zeroed the inode number; `inode=unknown`), the batch exits 1 |
+
+Helper entries are deleted entries too and carry the family `<name>-aux`: `deep-reuse-head-aux` (the removed reuser),
+`inode-donor-aux` (the donors: `reused` when a reuser took the number, else `no-map`) and `pad-aux` (the removed `pad/b`
+directory: `not-a-file`, or `reused` when a later file took its inode number). The same-boot file is the case of ruling 3C-C2
+(amended): the journal revokes the last version of a freed leaf, so after a delete in the same boot the home block may hold an
+older version. In the committed image the home leaves are the complete chain (200 blocks), so the result is a correct prefix
+capped at 20 (`file-end-unknown`); the probe's 16 MiB run kept only partial older versions. The self-check accepts either, and
+refuses a mis-assembled map. The generator exits 1 with "family ... did not realise its scenario; re-rule, do not edit the ops"
+when a required family does not occur or does not end as in the table, and when a `equal_source` kind occurs in no image.
+
+### The oracle (`ext4_recover_oracle.py`, never Minutiae)
+
+An independent Python reader of the finished image (superblock, group descriptors, bitmaps with a CRC32C of its own,
+inodes, extent trees, block maps, directory blocks) cross-checked with `debugfs stat` (the true maps) and `dumpe2fs` (the free
+blocks), the stage image of every boot, and the source files the guest was fed. It scans every live directory for deleted
+records by the slack-scan rule, derives for each the stale inode (inode bitmap, link count, dtime, file type), the stale map
+(with the free-map-block and hole rules) and the extent leaves of the free blocks bound to the inode by the metadata
+checksum, and from the facts the planner's cut, confidence and overlap caps. The rules are re-implemented from the spec in
+another language, not read from Minutiae. The TRUE map of a file is read from the last stage image in which it was live (by
+path or alias); the same-boot file has none, so its true blocks are found by the content of its source blocks
+(`true_basis: content-scan`). Fields beyond the plan's schema: `incomplete` (the artifact is flagged incomplete; it differs
+from `cut` for a file whose end is unknown or whose map ends early), `candidates` (every candidate the reader offers, with
+`blocks`, `size`, `stop` and `assumptions`), `candidate_methods`, `totals` (`recovered`, `skipped_by` as the recover command counts it,
+`undecided`), `unlisted_count` (deleted entries the generator did not delete; 0), `true_basis`, and `wiped`. Block runs are
+`[first block, count]`; `reader_blocks` and `reader_stop` are those of the first candidate, before the free-space cut.
+`deleted_entry_count` counts every deleted record the reader walks (17 in `ext4-recover`, 7 in `ext3-recover`, 1 in
+`ext4-recover-sameboot`, 0 in `ext4-recover-wiped`).
+
+Regeneration depends on the kernel's block allocator placement and may need re-tuning of the ops; the generator fails closed
+(exit 1) when a required family does not occur, so a regenerated image can never silently lose a scenario.
+
+NOT produced by a real kernel (builder tests only): an unclean image (`needs_recovery`), a damaged or hostile stale map,
+cross-linked or out-of-range map blocks, a leaf index that overflows, two deleted names of one inode other than the hard link,
+a block-map file with a double-indirect block, encrypted inodes, and an inline directory.
 
 ## F2FS recovery probe (3D)
 

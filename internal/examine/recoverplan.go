@@ -379,17 +379,30 @@ var methodBase = map[string]int{
 const (
 	capOverlap = 30 // all runs free but another candidate of the same analysis claims some of them
 	capCut     = 20 // some runs were not free and were cut (prefix only)
+	// capJournalNotReplayed caps a candidate whose reader says the on-disk structures may predate committed journal
+	// transactions (assumption journal-not-replayed, 3C-R24): an unclean filesystem never yields an unqualified
+	// top-confidence recovery. A generic token: any reader with a journal it did not replay may use it.
+	capJournalNotReplayed = 40
+	// assumptionJournalNotReplayed is the reader assumption that selects that cap.
+	assumptionJournalNotReplayed = "journal-not-replayed"
+	// assumptionFileEndUnknown is the reader assumption that the declared size is a lower bound of the file: the
+	// candidate is capped like a prefix (capCut) although its runs cover its declared size (3C-C3). Local to the
+	// callers of confidenceFor, whose signature is unchanged.
+	assumptionFileEndUnknown = "file-end-unknown"
 )
 
 // confidenceFor is the base of the method with the caps applied; false when the build has no rule for
 // the method.
-func confidenceFor(method string, cut, overlap bool) (int, bool) {
+func confidenceFor(method string, cut, overlap, notReplayed bool) (int, bool) {
 	base, ok := methodBase[method]
 	if !ok {
 		return 0, false
 	}
 	if overlap {
 		base = min(base, capOverlap)
+	}
+	if notReplayed {
+		base = min(base, capJournalNotReplayed)
 	}
 	if cut {
 		base = min(base, capCut)
