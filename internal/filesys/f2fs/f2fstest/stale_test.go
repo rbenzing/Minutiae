@@ -271,10 +271,10 @@ func TestSetFooterAndReseal(t *testing.T) {
 		t.Fatal("builder's own checksum disagrees with the in-test recomputation")
 	}
 
-	want := f2fstest.Footer{NID: 77, Ino: 78, Flag: 3 << 7, CPVer: 0x1122334455667788, NextBlk: 0xAABBCCDD}
+	want := f2fstest.Footer{NID: 77, Ino: 78, Flag: 3 << 3, CPVer: 0x1122334455667788, NextBlk: 0xAABBCCDD}
 	f2fstest.SetFooter(img, addr, want)
 	nid, ino, flag, ver, next := footer(blk(img, addr))
-	if nid != 77 || ino != 78 || flag != 3<<7 || ver != 0x1122334455667788 || next != 0xAABBCCDD {
+	if nid != 77 || ino != 78 || flag != 3<<3 || ver != 0x1122334455667788 || next != 0xAABBCCDD {
 		t.Fatalf("footer = %d %d %#x %#x %#x", nid, ino, flag, ver, next)
 	}
 	if le.Uint32(blk(img, addr)[368:]) == recompute() {
@@ -424,14 +424,14 @@ func TestSSAWithoutNodeSegsLeavesFooterTypeZero(t *testing.T) {
 }
 
 // With NodeSegs the tree nodes record ofs_of_node as the kernel does (the
-// footer flag word holds it above bit 7): 1 and 2 for the direct nodes of
+// footer flag word holds it from bit 3): 1 and 2 for the direct nodes of
 // i_nid[0..1], 3 for the indirect node of i_nid[2] and 4, 5, ... for its
 // direct children. Without NodeSegs the old images keep a zero flag.
 func TestNodeSegsRecordNodeOffsets(t *testing.T) {
 	files := []f2fstest.File{{Path: "/big", Data: pattern((923+2*1018+1018+5)*bs, 3)}}
 	img, tree := f2fstest.BuildTree(f2fstest.Options{NodeSegs: 2}, files)
 	inode := blk(img, tree.Addr[tree.NID["/big"]])
-	ofs := func(nid uint32) uint32 { _, _, flag, _, _ := footer(blk(img, tree.Addr[nid])); return flag >> 7 }
+	ofs := func(nid uint32) uint32 { _, _, flag, _, _ := footer(blk(img, tree.Addr[nid])); return flag >> 3 }
 	nid := func(b []byte, i int) uint32 { return le.Uint32(b[4052+4*i:]) }
 	for slot, want := range []uint32{1, 2, 3} {
 		if got := ofs(nid(inode, slot)); got != want {
@@ -475,7 +475,7 @@ func TestNodeSegsRecordNodeOffsetsDeepInTheTree(t *testing.T) {
 			t.Fatalf("node %d is not among the %d built nodes", nid, len(nodes))
 		}
 		_, _, flag, _, _ := footer(b)
-		return flag >> 7
+		return flag >> 3
 	}
 	child := func(b []byte, i int) uint32 { return le.Uint32(b[4*i:]) }
 	inode := byNID[100]

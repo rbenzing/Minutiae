@@ -217,7 +217,7 @@ func (a *Alloc) File(o Options, in Inode, d FileData) ([]Node, []DataBlock) {
 		}
 		blk := pointerNode(nid, in.NID, words)
 		if a.nodeSegs {
-			binary.LittleEndian.PutUint32(blk[4080:], ofs<<7) // ofs_of_node (the kernel always records it)
+			binary.LittleEndian.PutUint32(blk[4080:], ofs<<3) // ofs_of_node (the kernel always records it)
 		}
 		nodes = append(nodes, Node{NID: nid, Addr: a.NodeAddr(), Block: blk})
 		return nid
