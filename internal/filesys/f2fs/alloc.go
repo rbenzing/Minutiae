@@ -254,7 +254,7 @@ func (f *FS) forEachSIT(visit func(seg uint32, raw []byte) bool) (unreadable []u
 				curIdx = idx
 				b, err := f.sitBlockOf(idx)
 				if err != nil {
-					f.warn("SIT block %d is unreadable (%v); its segments are not reported as free", idx, err)
+					f.warn("SIT block %d is unreadable (%v); the state of its segments is unknown", idx, err)
 					unreadable = append(unreadable, uint32(idx)) // idx < segMain
 					b = nil
 				}

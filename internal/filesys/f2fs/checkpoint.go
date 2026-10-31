@@ -339,10 +339,6 @@ type curseg struct {
 	off uint16
 }
 
-// cpCRCRecoveryFlag is CP_CRC_RECOVERY_FLAG (from memory; the 3D probe, Q5,
-// confirms): the checkpoint was written with roll-forward recovery data.
-const cpCRCRecoveryFlag = 0x40
-
 // Offsets of the current-segment cursors (see curseg).
 const (
 	cpCurNodeSegno  = 36

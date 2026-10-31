@@ -112,7 +112,7 @@ func (f *FS) staleMapFan(in *inode, src nodeSource, limit, fan int) (staleResult
 		w.stop = fmt.Sprintf("%s@%d", w.stop, w.stopAt)
 	}
 	res := staleResult{runs: w.runs, covered: w.covered, stop: w.stop, nodes: w.nodes}
-	if cut := repeatedRun(res.runs); cut >= 0 {
+	if cut := repeatedRun(res.runs, w.nodes); cut >= 0 {
 		var before int64
 		for _, r := range res.runs[:cut] {
 			before += r.Length
@@ -254,8 +254,34 @@ func (w *staleWalker) node(nid uint32, level, slot, outer int, ofs uint32) {
 // with O(log n) sorts of at most n runs.
 // The cut is whole-run: when a run overlaps an earlier one only in its tail, the
 // whole run is dropped, so the map drops more than strictly necessary and never
-// less (a repeated block is never kept).
-func repeatedRun(runs []filesys.Run) int {
+// less (a repeated block is never kept). A run that holds the address of one of
+// the walk's own node blocks (nodes) is a repeat too: a block cannot be both.
+func repeatedRun(runs []filesys.Run, nodes []uint32) int {
+	cut := repeatedOverlap(runs)
+	if at := runOnNode(runs, nodes); at >= 0 && (cut < 0 || at < cut) {
+		cut = at
+	}
+	return cut
+}
+
+// runOnNode returns the index of the first run that holds a node block address, or -1.
+func runOnNode(runs []filesys.Run, nodes []uint32) int {
+	if len(nodes) == 0 {
+		return -1
+	}
+	sorted := slices.Clone(nodes)
+	slices.Sort(sorted)
+	for i, r := range runs {
+		// The first node block at or after the run's first block.
+		k, _ := slices.BinarySearch(sorted, uint32(r.Offset/blockSize)) // runs are inside the main area, so below 2^32 blocks
+		if k < len(sorted) && int64(sorted[k])*blockSize < r.Offset+r.Length {
+			return i
+		}
+	}
+	return -1
+}
+
+func repeatedOverlap(runs []filesys.Run) int {
 	disjoint := func(k int) bool {
 		s := slices.Clone(runs[:k])
 		slices.SortFunc(s, func(a, b filesys.Run) int { return int(sign(a.Offset - b.Offset)) })

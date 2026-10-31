@@ -15,6 +15,12 @@ const (
 	ssaEntrySize = 7
 )
 
+// Why a stale node has no SSA confirmation (staleNode.why).
+const (
+	whySSACurrent    = iota // the segment is a current one: its summary is not on disk (probe, G2)
+	whySSAUnreadable        // the summary block was unreadable or is not a node summary
+)
+
 // ssaBlock reads the summary block of main-area segment seg (the SIT
 // numbering). A segment outside the main area is a *filesys.CorruptError.
 func (f *FS) ssaBlock(seg uint32) ([]byte, error) {
