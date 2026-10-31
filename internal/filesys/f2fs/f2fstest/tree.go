@@ -139,6 +139,9 @@ func emitPost(o Options, a *Alloc, n *tnode, t *Tree) ([]Node, []DataBlock, []Ch
 	if n.isDir() || f.Deleted || f.NoInode {
 		panic("f2fstest: PostCheckpoint is for a plain file")
 	}
+	if f.CPVer != 0 {
+		panic("f2fstest: PostCheckpoint and CPVer are exclusive (the chain footers carry the kernel's version)")
+	}
 	saved := a.nextNodeAddr
 	ns, ds := emitBlocks(o, a, n, t)
 	a.nextNodeAddr = saved

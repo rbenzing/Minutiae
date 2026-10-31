@@ -73,6 +73,8 @@ type File struct {
 	// the chain (no NAT entry, SIT clear) and, as the kernel writes none before a checkpoint,
 	// are omitted unless StaleIndirect writes a stale copy outside the chain. Data blocks are
 	// written with a clear SIT bit; no NAT entry and no dentry in the parent. Needs NodeSegs.
+	// Setting CPVer as well panics: the chain footers carry the version the kernel writes
+	// (override it per element with ChainNode.CPVer).
 	PostCheckpoint bool
 	StaleIndirect  bool
 }

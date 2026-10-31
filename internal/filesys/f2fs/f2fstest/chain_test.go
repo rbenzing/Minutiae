@@ -261,3 +261,120 @@ func TestExistingImagesUnchangedByChainFields(t *testing.T) {
 		t.Errorf("sha256 of the image = %s, want %s", got, want)
 	}
 }
+
+func TestIsIndirectOfs(t *testing.T) {
+	// direct nodes 1, 2; indirect 3 with direct 4..1021; indirect 1022 with direct 1023..2040;
+	// double-indirect 2041; its indirect children 2042, 3061, ... each followed by 1018 direct nodes.
+	for ofs, want := range map[uint32]bool{
+		0: false, 1: false, 2: false, 3: true, 4: false, 1021: false, 1022: true, 1023: false, 2040: false,
+		2041: true, 2042: true, 2043: false, 3060: false, 3061: true, 3062: false, 4080: true, 4081: false,
+	} {
+		if got := f2fstest.IsIndirectOfs(ofs); got != want {
+			t.Errorf("isIndirectOfs(%d) = %v, want %v", ofs, got, want)
+		}
+	}
+}
+
+func TestPostCheckpointDirectNodesHaveNoNATAndClearSIT(t *testing.T) {
+	img, tree := f2fstest.BuildTree(chainOpts(), []f2fstest.File{{Path: "/big", Data: chainData(1000), PostCheckpoint: true}})
+	l := f2fstest.Geometry(chainOpts())
+	if len(tree.Nodes["/big"]) != 2 || len(tree.ChainOf["/big"]) != 2 {
+		t.Fatalf("Nodes = %v, ChainOf = %v, want an inode and one direct node", tree.Nodes["/big"], tree.ChainOf["/big"])
+	}
+	for i, nid := range tree.Nodes["/big"] {
+		for _, second := range []bool{false, true} {
+			if e := natEntry(img, l, nid, second); !bytes.Equal(e, make([]byte, 9)) {
+				t.Errorf("node %d (nid %d) has NAT entry %x (copy2=%v), want none", i, nid, e, second)
+			}
+		}
+		if validBit(img, l, tree.ChainOf["/big"][i]) {
+			t.Errorf("SIT bit of chain node %d is set", i)
+		}
+	}
+}
+
+func TestChainWarmCursorInBothPacks(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		o    f2fstest.Options
+		want func(l f2fstest.Layout) uint32
+	}{
+		{"default cursor", chainOpts(), nil},
+		{"explicit cursor", func() f2fstest.Options {
+			o := chainOpts()
+			o.CurNode[1] = f2fstest.CurSeg{Seg: 5, Off: 3}
+			return o
+		}(), func(l f2fstest.Layout) uint32 { return l.Main + 5*segBlocks + 3 }},
+	} {
+		img, tree := f2fstest.BuildTree(tc.o, []f2fstest.File{{Path: "/a", Data: chainData(1), PostCheckpoint: true}})
+		l := f2fstest.Geometry(tc.o)
+		want := tree.ChainAddrs[0]
+		if tc.want != nil {
+			if want = tc.want(l); tree.ChainAddrs[0] != want {
+				t.Fatalf("%s: chain starts at %d, want the cursor %d", tc.name, tree.ChainAddrs[0], want)
+			}
+		}
+		base := le.Uint32(img[1024+76:])
+		for pack := range 2 {
+			hdr := blk(img, base+uint32(pack)*segBlocks)
+			got := l.Main + le.Uint32(hdr[36+4:])*segBlocks + uint32(le.Uint16(hdr[68+2:]))
+			if got != want {
+				t.Errorf("%s: pack %d warm cursor = block %d, want %d", tc.name, pack, got, want)
+			}
+		}
+	}
+}
+
+func mustPanic(t *testing.T, what string, f func()) {
+	t.Helper()
+	defer func() {
+		if recover() == nil {
+			t.Errorf("%s did not panic", what)
+		}
+	}()
+	f()
+}
+
+func TestPostCheckpointWithCPVerPanics(t *testing.T) {
+	mustPanic(t, "PostCheckpoint with CPVer", func() {
+		f2fstest.BuildTree(chainOpts(), []f2fstest.File{{Path: "/a", Data: chainData(1), PostCheckpoint: true, CPVer: 5}})
+	})
+}
+
+func TestChainAddrCollisionPanics(t *testing.T) {
+	o := f2fstest.Options{NodeSegs: 2, CPFlags: f2fstest.CPCRCRecovery}
+	l := f2fstest.Geometry(o)
+	start := l.Main + (l.MainSegs-2)*segBlocks
+	node := func(nid uint32) []byte {
+		return f2fstest.InodeBlock(o, f2fstest.Inode{NID: nid, Mode: 0o100644, Links: 1})
+	}
+	existing := f2fstest.Node{NID: 20, Addr: start + 9, Block: node(20)}
+	mustPanic(t, "a chain Addr on an existing node", func() {
+		c := o
+		c.Nodes = []f2fstest.Node{existing}
+		c.Chain = []f2fstest.ChainNode{{Block: node(10)}, {Block: node(11), Addr: existing.Addr}}
+		f2fstest.Build(c, nil)
+	})
+	mustPanic(t, "a chain Addr on a stale node", func() {
+		c := o
+		c.StaleNodes = []f2fstest.Node{existing}
+		c.Chain = []f2fstest.ChainNode{{Block: node(10), Addr: existing.Addr}}
+		f2fstest.Build(c, nil)
+	})
+	mustPanic(t, "a chain Addr on a data block", func() {
+		c := o
+		c.Data = []f2fstest.DataBlock{{Addr: start + 20, Data: []byte("x")}}
+		c.Chain = []f2fstest.ChainNode{{Block: node(10), Addr: start + 20}}
+		f2fstest.Build(c, nil)
+	})
+	mustPanic(t, "two chain elements at one address", func() {
+		c := o
+		c.Chain = []f2fstest.ChainNode{{Block: node(10)}, {Block: node(11), Addr: start}}
+		f2fstest.Build(c, nil)
+	})
+	// distinct addresses are fine
+	c := o
+	c.Nodes = []f2fstest.Node{existing}
+	c.Chain = []f2fstest.ChainNode{{Block: node(10), Addr: start + 30}, {Block: node(11), Addr: start + 31}}
+	f2fstest.Build(c, nil)
+}
