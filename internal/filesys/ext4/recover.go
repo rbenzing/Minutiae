@@ -9,10 +9,12 @@ import (
 	"github.com/rbenzing/minutiae/internal/filesys"
 )
 
-// Recovery methods (spec 3.3). 3G adds the journal source.
+// Recovery methods (spec 3.3). The journal source is 3G's (recover_journal.go).
 const (
 	MethodInodeIntact = "ext-inode-intact"
 	MethodExtentLeaf  = "ext4-extent-leaf"
+	// MethodJournalInode is an inode copy taken from the journal (3G-R11).
+	MethodJournalInode = "ext4-journal-inode"
 )
 
 // maxBasisTreeBlocks bounds the map blocks a Basis names one by one; past it the count is stated.
@@ -22,7 +24,8 @@ var _ filesys.Recoverer = (*FS)(nil)
 
 // Recoverable returns where the content of the deleted entry e may still be. Only e.ID is used. The pipeline is:
 // parse the ID (canonical forms only, no I/O), re-resolve the record from disk (resolveDeleted), accept the stale inode
-// it names (staleInodeFor), then ask each candidate source (intact map, then extent leaves). With no candidate the answer is nil, nil: nothing the
+// it names (staleInodeFor), then ask each candidate source (intact map, extent leaves, then the journal copies once
+// PrepareJournalRecovery ran: 3G-R11). With no candidate the answer is nil, nil: nothing the
 // reader can claim. Every returned slice is fresh. Typed errors (filesys.ErrNotFound, ErrNotDeleted, ErrReused,
 // ErrUndecided, ErrLimit, ErrIncomplete, ErrUnsupported, *filesys.CorruptError, or an I/O error) pass through as the
 // earlier stages made them.
@@ -46,6 +49,7 @@ func (f *FS) Recoverable(e filesys.Entry) ([]filesys.Candidate, error) {
 		return nil, err
 	}
 	var out []filesys.Candidate
+	var unknowns []*leafUnknownError // sources that cannot say whether they have an answer
 	if c, ok, err := f.intactCandidate(st); err != nil {
 		return nil, err
 	} else if ok {
@@ -57,16 +61,33 @@ func (f *FS) Recoverable(e filesys.Entry) ([]filesys.Candidate, error) {
 	case errors.As(err, &unknown):
 		// The leaf source cannot say whether it has an answer: that is stated on every other candidate, and an entry
 		// with no other candidate is undecided (3C-R11, 3C-R25).
-		if len(out) == 0 {
-			return nil, err
-		}
-		for i := range out {
-			out[i].Warnings = append(out[i].Warnings, unknown.warning)
-		}
+		unknowns = append(unknowns, unknown)
 	case err != nil:
 		return nil, err
 	default:
 		out = append(out, leaf...)
+	}
+	// The journal source comes last (3G-R11). Without PrepareJournalRecovery it answers nothing, so the result is 3C's.
+	jc, notes, err := f.journalCandidates(st)
+	switch {
+	case errors.As(err, &unknown):
+		unknowns = append(unknowns, unknown)
+	case err != nil:
+		return nil, err
+	default:
+		out = append(out, jc...)
+	}
+	if len(out) == 0 {
+		if len(unknowns) > 0 {
+			return nil, unknowns[0]
+		}
+		return nil, nil
+	}
+	for i := range out {
+		for _, u := range unknowns {
+			out[i].Warnings = append(out[i].Warnings, u.warning)
+		}
+		out[i].Warnings = append(out[i].Warnings, notes...)
 	}
 	return out, nil
 }

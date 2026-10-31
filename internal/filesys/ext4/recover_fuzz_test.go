@@ -48,6 +48,28 @@ func fuzzRecoverSeeds(t testing.TB) [][]byte {
 	gone := func(data []byte) []ext4test.File {
 		return []ext4test.File{{Path: "/keep", Data: []byte("k")}, {Path: "/gone", Data: data, Deleted: true}}
 	}
+	// A journal with the live inode-table block of /gone, logged before a kernel-style unlink: in the live region, or
+	// (live false) as a stale fragment of a clean journal (3G).
+	journalled := func(live bool) func([]byte, *ext4test.Layout) {
+		return func(img []byte, l *ext4test.Layout) {
+			loc := l.File("/gone")
+			cp := l.InodeCopy(img, loc.Inode, func(raw []byte) {
+				putLE16(raw, 0x1A, 1)
+				putLE32(raw, 0x14, 0)
+			})
+			blk, _ := l.InodeTableBlock(loc.Inode)
+			l.Unlink(img, "/gone", kernel)
+			j := ext4test.JBD2{
+				Bit64: true, CsumV3: true, Sequence: 11, UUID: jtUUID,
+				Txns: []ext4test.JTxn{{Seq: 10, At: -1, Tags: []ext4test.JTag{{FSBlock: uint64(blk), Data: cp}}}},
+			}
+			if live {
+				j.Start, j.Sequence = 1, 10
+			}
+			l.WriteJournal(img, j)
+		}
+	}
+	jo := ext4test.Options{Extents: true, MetadataCsum: true, Bit64: true, JournalBlocks: 16}
 	two := ext4test.File{
 		Path: "/gone", Deleted: true, ExtentLeaves: 2, Scatter: true,
 		Pieces: []ext4test.Piece{{Block: 0, Data: pattern(2048, 41)}, {Block: 2, Data: pattern(2048, 42)}},
@@ -79,6 +101,8 @@ func fuzzRecoverSeeds(t testing.TB) [][]byte {
 			l.Unlink(img, "/b/bgone", ext4test.DebugfsRm)
 			l.ShareDirBlock(img, "/a", "/b")
 		}),
+		build(jo, gone(pattern(3000, 50)), journalled(true)),  // a live-region inode copy
+		build(jo, gone(pattern(3000, 51)), journalled(false)), // the same copy in a stale fragment of a clean journal
 		build(xo, []ext4test.File{overlap}, func(img []byte, l *ext4test.Layout) {
 			l.Unlink(img, "/gone", ext4test.DebugfsRm)
 			l.PatchInode(img, l.File("/gone").Inode, func(raw []byte) {
@@ -122,7 +146,8 @@ func FuzzExt4Recoverable(f *testing.F) {
 		if err != nil {
 			return
 		}
-		_ = fsys.PrepareRecovery(context.Background()) // an I/O error leaves the index unbuilt: the leaf source is then undecided
+		_ = fsys.PrepareRecovery(context.Background())                                 // an I/O error leaves the index unbuilt: the leaf source is then undecided
+		_ = fsys.PrepareJournalRecovery(context.Background(), filesys.JournalUseStale) // an unusable journal leaves the journal source undecided
 		var deleted []filesys.Entry
 		visited := 0
 		_ = filesys.Walk(fsys, fsys.Root(), "/", func(_ string, e filesys.Entry, err error) error {
@@ -173,19 +198,23 @@ func FuzzExt4Recoverable(f *testing.F) {
 // The seeds must reach the candidate code, or the fuzz target checks nothing.
 func TestFuzzRecoverSeedsEmitCandidates(t *testing.T) {
 	withCands := 0
-	leaf := false
+	leaf, journal := false, 0
 	for i, s := range fuzzRecoverSeeds(t) {
 		fsys, err := ext4.Open(bytes.NewReader(s), int64(len(s)))
 		if err != nil {
 			t.Fatalf("seed %d: %v", i, err)
 		}
 		_ = fsys.PrepareRecovery(context.Background())
+		_ = fsys.PrepareJournalRecovery(context.Background(), filesys.JournalUseStale)
 		got := false
 		_ = filesys.Walk(fsys, fsys.Root(), "/", func(_ string, e filesys.Entry, err error) error {
 			if err == nil && e.Deleted {
 				if cs, _ := fsys.Recoverable(e); len(cs) > 0 {
 					got = true
 					leaf = leaf || slices.ContainsFunc(cs, func(c filesys.Candidate) bool { return c.Method == ext4.MethodExtentLeaf })
+					if slices.ContainsFunc(cs, func(c filesys.Candidate) bool { return c.Method == ext4.MethodJournalInode }) {
+						journal++
+					}
 				}
 			}
 			return nil
@@ -196,6 +225,9 @@ func TestFuzzRecoverSeedsEmitCandidates(t *testing.T) {
 	}
 	if !leaf {
 		t.Error("no seed yields an ext4-extent-leaf candidate")
+	}
+	if journal != 2 {
+		t.Errorf("%d seeds yield an ext4-journal-inode candidate; want both journal seeds", journal)
 	}
 	if withCands < 5 {
 		t.Errorf("only %d seeds yield a candidate", withCands)

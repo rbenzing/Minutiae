@@ -22,17 +22,22 @@ const (
 	stopMapOverlap   = "map-overlap"        // a block named twice, or a data extent over a map block or another extent
 	stopRunsCap      = "runs-cap"           // more runs than the cap
 
+	// stopMapBlockNewer: a journal map block has no copy at or before the inode copy, but a later copy exists, so the home
+	// block may hold a later state (3G-R12).
+	stopMapBlockNewer = "map-block-newer-than-copy"
+
 	stopTokenTemplate = "%s@%d"
 )
 
 // staleMap is what a deleted inode's own map still yields.
 type staleMap struct {
-	runs    []filesys.Run // fs-relative, file order, physically adjacent runs merged, no holes
-	covered int64         // bytes the runs cover
-	stop    string        // "" or "<reason>@<lblk>"
-	tree    []uint64      // map blocks read, in order
-	notes   []string
-	cleared bool // the map holds nothing at all (a kernel unlink clears it): no claim, and no stop to report
+	runs     []filesys.Run // fs-relative, file order, physically adjacent runs merged, no holes
+	covered  int64         // bytes the runs cover
+	stop     string        // "" or "<reason>@<lblk>"
+	tree     []uint64      // map blocks read, in order
+	treeFrom []string      // where each map block came from, parallel to tree: "home" or "journal:<seq>[:revoked]"
+	notes    []string
+	cleared  bool // the map holds nothing at all (a kernel unlink clears it): no claim, and no stop to report
 }
 
 // errMapStop unwinds a walk at its stop; it is never returned to a caller.
@@ -41,21 +46,23 @@ var errMapStop = errors.New("stale map stopped")
 type mapSeg struct{ lblk, phys, n int64 }
 
 type mapWalker struct {
-	f       *FS
-	in      *inode
-	free    *freeSet
-	bs      int64
-	limit   int64 // bytes to cover
-	nb      int64 // blocks to cover
-	next    int64 // first logical block not covered yet
-	segs    []mapSeg
-	nruns   int
-	tree    []uint64
-	seen    map[uint64]struct{}
-	stop    string
-	seed    uint32
-	csum    bool
-	cleared bool
+	f        *FS
+	in       *inode
+	free     *freeSet
+	bs       int64
+	limit    int64 // bytes to cover
+	nb       int64 // blocks to cover
+	next     int64 // first logical block not covered yet
+	segs     []mapSeg
+	nruns    int
+	tree     []uint64
+	treeFrom []string
+	src      treeSource
+	seen     map[uint64]struct{}
+	stop     string
+	seed     uint32
+	csum     bool
+	cleared  bool
 }
 
 func (w *mapWalker) work(n int64) { w.f.mapWork.Add(n) }
@@ -128,13 +135,35 @@ func allZero(b []byte) bool {
 // stop. Every bound is explicit: the walk covers at most limit bytes, reads each map block once, reads only blocks
 // that are free now, and holds at most f.mapRunsCap runs.
 func (f *FS) mapStale(in *inode, limit int64) (staleMap, error) {
+	return f.mapStaleWith(in, limit, homeSource{})
+}
+
+// treeSource says where a map block's bytes come from. The 3C walk reads them from the block's home location, under
+// the free-space rule (homeSource); the journal source reads the copy that describes the same point in time as the
+// inode copy (journalTreeSource, 3G-R12).
+type treeSource interface {
+	// mapBlock returns the bytes of map block blk, where they came from ("home" or "journal:<seq>"), whether the home
+	// free-space rule applies (then b is nil and the walker reads and checks the home block itself), or a stop reason
+	// (the text before "@<lblk>"). The error is an I/O failure only.
+	mapBlock(f *FS, blk uint64) (b []byte, from string, home bool, stop string, err error)
+}
+
+// homeSource reads every map block from its home location: 3C's behaviour.
+type homeSource struct{}
+
+func (homeSource) mapBlock(*FS, uint64) ([]byte, string, bool, string, error) {
+	return nil, "home", true, "", nil
+}
+
+// mapStaleWith is mapStale with the map blocks taken from src (3G-R12). With homeSource it is mapStale.
+func (f *FS) mapStaleWith(in *inode, limit int64, src treeSource) (staleMap, error) {
 	limit = min(limit, f.size)
 	if limit <= 0 {
 		return staleMap{cleared: true}, nil
 	}
 	bs := int64(f.sb.blockSize)
 	w := &mapWalker{
-		f: f, in: in, bs: bs, limit: limit, nb: (limit + bs - 1) / bs, seen: map[uint64]struct{}{},
+		f: f, in: in, bs: bs, limit: limit, nb: (limit + bs - 1) / bs, seen: map[uint64]struct{}{}, src: src,
 		seed: f.inodeSeed(in), csum: f.sb.metadataCsum() && f.sb.checksumType == csumTypeCRC32C,
 	}
 	var err error
@@ -150,7 +179,7 @@ func (f *FS) mapStale(in *inode, limit int64) (staleMap, error) {
 }
 
 // readMapBlock reads one map block after the checks every map block passes: it lies in the image, no earlier pointer
-// named it, and it is free now. A refusal is a stop at lblk; the error is an I/O failure only.
+// named it, and, for a home block, it is free now. A refusal is a stop at lblk; the error is an I/O failure only.
 func (w *mapWalker) readMapBlock(blk uint64, lblk int64) ([]byte, error) {
 	if blk == 0 || blk >= uint64(w.f.sb.blocksCount) {
 		return nil, w.stopAt(stopMapDamaged, lblk)
@@ -158,20 +187,32 @@ func (w *mapWalker) readMapBlock(blk uint64, lblk int64) ([]byte, error) {
 	if _, dup := w.seen[blk]; dup {
 		return nil, w.stopAt(stopMapOverlap, lblk)
 	}
-	free, err := w.freeSet()
+	buf, from, home, stop, err := w.src.mapBlock(w.f, blk)
 	if err != nil {
 		return nil, err
 	}
-	if !free.blockFree(blk, w.bs) {
-		return nil, w.stopAt(stopMapBlockFree, lblk)
+	if stop != "" {
+		return nil, w.stopAt(stop, lblk)
 	}
-	w.work(1)
-	buf := make([]byte, w.bs) // one block: bounded by the block size
-	if err := readFull(w.f.r, buf, int64(blk)*w.bs); err != nil {
-		return nil, fmt.Errorf("ext4 stale map block %d of inode %d: %w", blk, w.in.num, err)
+	if home {
+		free, err := w.freeSet()
+		if err != nil {
+			return nil, err
+		}
+		if !free.blockFree(blk, w.bs) {
+			return nil, w.stopAt(stopMapBlockFree, lblk)
+		}
+		w.work(1)
+		buf = make([]byte, w.bs) // one block: bounded by the block size
+		if err := readFull(w.f.r, buf, int64(blk)*w.bs); err != nil {
+			return nil, fmt.Errorf("ext4 stale map block %d of inode %d: %w", blk, w.in.num, err)
+		}
+	} else {
+		w.work(1)
 	}
 	w.seen[blk] = struct{}{}
 	w.tree = append(w.tree, blk)
+	w.treeFrom = append(w.treeFrom, from)
 	return buf, nil
 }
 
@@ -325,7 +366,7 @@ func (w *mapWalker) ptr(p uint32, level int) error {
 // finish turns the walk into runs. A map that ends before the bytes it must cover stops there as a hole. Data extents
 // that overlap each other or one of the map's own blocks end the map at the first of them.
 func (w *mapWalker) finish() staleMap {
-	m := staleMap{cleared: w.cleared, tree: w.tree}
+	m := staleMap{cleared: w.cleared, tree: w.tree, treeFrom: w.treeFrom}
 	if !w.cleared && w.stop == "" && w.next < w.nb {
 		w.stop = fmt.Sprintf(stopTokenTemplate, stopHole, w.next)
 	}
