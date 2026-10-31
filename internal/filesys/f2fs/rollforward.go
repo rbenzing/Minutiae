@@ -51,6 +51,8 @@ type rfChain struct {
 	live       map[uint32]bool          // ino -> the current NAT maps it
 	created    map[uint32]bool          // ino -> not live and an fsync inode node carries the dentry mark
 	lastFsync  map[uint32]int           // ino -> index of its last fsync-marked dnode
+	ixOnce     sync.Once                // guards ix
+	ix         *rfIndex                 // built on first use (rollforward_files.go)
 }
 
 // chainState caches the chain of one FS: a corrupt or unsupported result is cached, an
