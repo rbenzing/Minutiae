@@ -112,8 +112,9 @@ func LookupClass(class string) (ClassInfo, bool) {
 // classTable is version-neutral: it lists method PREFIXES, so a new method of
 // a known family needs no change here. Confidence is required for every class
 // that claims a file or bytes of a file system; the journal classes describe
-// transactions, for which a confidence may not apply. post-checkpoint-file
-// requires one until plan 3H rules otherwise.
+// transactions, for which a confidence may not apply. post-checkpoint-file keeps a required confidence, with a
+// ceiling of 60 (3H-R8, spec amendment): the replay never ran and the content blocks are free in the checkpoint
+// view, so a later un-fsynced write may have reused one; such data is never high band.
 var classTable = []ClassInfo{
 	{
 		Class: ClassDeletedFile, Kind: KindRecover, Namespace: nsRecovered,
@@ -122,8 +123,8 @@ var classTable = []ClassInfo{
 	},
 	{
 		Class: ClassPostCheckpointFile, Kind: KindRecover, Namespace: nsRecovered,
-		MethodPrefixes: []string{"f2fs-rollforward"},
-		MaxConfidence:  80, ConfidenceRequired: true,
+		MethodPrefixes: []string{RollForwardMethod},
+		MaxConfidence:  60, ConfidenceRequired: true,
 	},
 	{
 		Class: ClassCarved, Kind: KindCarve, Namespace: "carved",
@@ -137,17 +138,21 @@ var classTable = []ClassInfo{
 	},
 	{
 		Class: ClassJournalBlock, Kind: KindJournal, Namespace: "journal",
-		MethodPrefixes: []string{"ext4-journal", "f2fs-rollforward"},
+		MethodPrefixes: []string{"ext4-journal", RollForwardMethod},
 		MaxConfidence:  100, JournalRequired: true, Scope: "unallocated",
 	},
 	{
 		Class: ClassJournalReport, Kind: KindReport, Namespace: "reports",
-		MethodPrefixes: []string{"ext4-journal", "f2fs-rollforward"},
+		MethodPrefixes: []string{"ext4-journal", RollForwardMethod},
 		MaxConfidence:  100, Scope: "unallocated",
 	},
 }
 
 const nsRecovered = "recovered"
+
+// RollForwardMethod is the method prefix of the F2FS roll-forward artifacts: post-checkpoint files, block copies and
+// the report (3H). The composed checks R9 and R12 select on it.
+const RollForwardMethod = "f2fs-rollforward"
 
 // ConfidenceBand names the band of a confidence: high >= 70, medium 40-69,
 // low 0-39, and "" outside 0..100.

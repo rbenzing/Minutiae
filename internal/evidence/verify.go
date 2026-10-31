@@ -30,7 +30,7 @@ type VerifyReport struct {
 	// check); RecoveredReproduced those a composed check reproduced byte for byte from the image.
 	RecoveredArtifacts  int `json:"recovered_artifacts"`
 	RecoveredReproduced int `json:"recovered_reproduced"`
-	// AllocationRechecked counts the deleted-file artifacts all of whose runs the composed allocation check (R9)
+	// AllocationRechecked counts the deleted-file and post-checkpoint-file artifacts (and f2fs-rollforward block copies) all of whose runs the composed allocation check (R9)
 	// found inside the space the filesystem reports unallocated. 0 together with the notices means "not
 	// rechecked", never "checked and clean".
 	AllocationRechecked int `json:"allocation_rechecked"`
@@ -45,13 +45,14 @@ type VerifyReport struct {
 	// Anchor is the outcome of the anchor check (null when no anchor was given; always present in the JSON).
 	Anchor *AnchorResult `json:"anchor"`
 
-	reproduceRan    bool // R6 ran in this verify (MarkReproduceRan)
-	allocationRan   bool // R9 ran in this verify (MarkAllocationRan)
-	gapsRan         bool // R10 ran in this verify (MarkGapsRan)
-	gapArtifacts    int  // artifacts whose gap note R10 recomputes: extract, unallocated and carve (not scope artifact); set by the built-in check
-	deletedFiles    int  // artifacts R9 rechecks: deleted-file recoveries and carves (not scope artifact); set by the built-in check
-	cancelCut       bool // a phase was cut short by the end of the verify context
-	recoveredByKind map[string]int
+	reproduceRan       bool // R6 ran in this verify (MarkReproduceRan)
+	allocationRan      bool // R9 ran in this verify (MarkAllocationRan)
+	gapsRan            bool // R10 ran in this verify (MarkGapsRan)
+	rollForwardReports int  // report artifacts R12 recomputed (MarkRollForwardRan)
+	gapArtifacts       int  // artifacts whose gap note R10 recomputes: extract, unallocated and carve (not scope artifact); set by the built-in check
+	deletedFiles       int  // artifacts R9 rechecks: deleted-file recoveries and carves (not scope artifact); set by the built-in check
+	cancelCut          bool // a phase was cut short by the end of the verify context
+	recoveredByKind    map[string]int
 }
 
 // OK reports whether no integrity problems were found.
@@ -536,5 +537,14 @@ func (c *Case) hashArtifacts(ctx context.Context, rep *VerifyReport, recs []Mani
 			rep.problemf("artifact %s (%s): hash mismatch: manifest sha256=%s size=%d, file sha256=%s size=%d",
 				r.ID, r.Path, r.SHA256, r.Size, d.SHA256, d.Size)
 		}
+	}
+}
+
+// MarkRollForwardRan is called by the composed roll-forward check (R12) with the number of
+// f2fs-rollforward report artifacts it recomputed, so the built-in check stops noticing that those
+// reports are not reproduced by this build.
+func (r *VerifyReport) MarkRollForwardRan(reports int) {
+	if reports > 0 {
+		r.rollForwardReports += reports
 	}
 }

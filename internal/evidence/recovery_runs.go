@@ -318,12 +318,12 @@ func CheckRecoveredRuns(rec ManifestRecord, runs []Run) []string {
 	if total := a.Free + a.Allocated + a.Unknown; total != sum {
 		add("alloc: free+allocated+unknown (%d bytes) does not equal the %d bytes of the recorded runs", total, sum)
 	}
-	if rv.Class == ClassDeletedFile {
+	if rv.Class == ClassDeletedFile || rv.Class == ClassPostCheckpointFile { // 3H-R13 a
 		if a.Allocated > 0 {
-			add("%d allocated bytes in a deleted-file artifact", a.Allocated)
+			add("%d allocated bytes in a %s artifact", a.Allocated, rv.Class)
 		}
 		if a.Unknown > 0 {
-			add("%d unknown bytes in a deleted-file artifact", a.Unknown)
+			add("%d unknown bytes in a %s artifact", a.Unknown, rv.Class)
 		}
 	}
 	// the scope of slack and journal classes comes from the class table, not from the stored field

@@ -163,7 +163,7 @@ func TestVerifyRecoveredNoticesForUnreproducedKinds(t *testing.T) {
 		Mutate: func(r *evidence.Recovery) { r.Journal = &evidence.JournalRef{Seq: 1, Region: "live"} },
 	})
 	evidencetest.AddRecovered(t, c, parent, data, evidencetest.RecoveredSpec{
-		Kind: evidence.KindReport, Class: evidence.ClassJournalReport, Method: "ext4-journal-inode", Path: "reports/r1.json", Runs: run,
+		Kind: evidence.KindReport, Class: evidence.ClassJournalReport, Method: "ext4-journal-inode", Path: "reports/p1-mtfs/r1.json", Runs: run,
 	})
 	rep := verifyOf(t, c)
 	evidencetest.RequireClean(t, rep)
