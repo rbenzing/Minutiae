@@ -471,3 +471,17 @@ func pcFirst(t *testing.T, f *f2fs.FS) filesys.PostCheckpointFile {
 
 // pcRoot gives a chain-only image its root directory, the live parent of hand-made inodes.
 var pcRoot = []f2fstest.File{{Path: "/", Dir: true}}
+
+// A refusal that comes after the inode parsed (the size is beyond the volume) keeps the real
+// parsed size, name and parent: nothing is invented and nothing is blanked.
+func TestPostCheckpointPostParseRefusalKeepsParsedValues(t *testing.T) {
+	o := pcOpts()
+	f, _, _ := pcChain(t, pcInode(o, f2fstest.Inode{NID: 91, Size: 1 << 40, Name: "huge.bin", PIno: f2fstest.RootIno, Addrs: []uint32{mainAt(40)}}, true, true))
+	pf := pcFirst(t, f)
+	if !errors.Is(pf.Err, filesys.ErrCorrupt) || len(pf.Candidates) != 0 {
+		t.Fatalf("file = %+v, want a corrupt refusal and no candidate", pf)
+	}
+	if pf.Size != 1<<40 || pf.Name != "huge.bin" || pf.Pino != f2fstest.RootIno || pf.Type != filesys.TypeFile || pf.Ino != 91 || pf.ID != "rollforward:91" {
+		t.Errorf("file = %+v, want the parsed size 1<<40, name huge.bin, parent root, type file", pf)
+	}
+}
