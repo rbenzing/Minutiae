@@ -37,6 +37,9 @@ type RollForwardFile struct {
 	InodeBlock     uint64 // 0 when absent
 	LastFsyncBlock uint64 // 0 when absent
 	Size           int64  // meaningful only with HasInode
+	// Caveat is "" unless something about this entry is unknown or unusable (a bad inode checksum,
+	// an unreadable name); it says what, in words. Additive: the zero value means no caveat.
+	Caveat string
 }
 
 // RollForwardNode is one node block of the chain. Block numbers are filesystem-relative.

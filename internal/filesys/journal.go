@@ -19,7 +19,7 @@ type JournalInfo struct {
 	BlockSize     int
 	Blocks        int64  // journal length in blocks
 	Sequence      uint32 // first expected transaction
-	Start         uint32 // 0 = clean (empty live region)
+	Start         uint32 // 0 = clean (empty live region); F2FS reports the chain start block, even for an empty chain: the 0 = clean convention does not apply there
 	Features      []string
 	NeedsRecovery bool
 	Warnings      []string

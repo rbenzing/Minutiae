@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
@@ -209,4 +210,95 @@ func TestRollForwardNoRecordedChecksum(t *testing.T) {
 	if len(nodes) != 1 || nodes[0].Inode == nil || nodes[0].Inode.Checksum != "not-recorded" {
 		t.Errorf("nodes = %+v, want one inode with checksum not-recorded", nodes)
 	}
+}
+
+// rfInodeChain builds an image whose chain is the given inode nodes (nothing else).
+func rfInodeChain(t *testing.T, nodes ...f2fstest.ChainNode) (*f2fs.FS, []byte, *f2fstest.Tree) {
+	t.Helper()
+	o := f2fstest.Options{NodeSegs: 2, Unclean: true, CPFlags: f2fstest.CPCRCRecovery, ExtraAttr: true, InodeChksum: true}
+	o.Chain = nodes
+	img, tree := f2fstest.BuildTree(o, nil)
+	f, err := f2fs.Open(bytes.NewReader(img), int64(len(img)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f, img, tree
+}
+
+func rfIno(in f2fstest.Inode, fsync, dent bool) f2fstest.ChainNode {
+	o := f2fstest.Options{ExtraAttr: true, InodeChksum: true}
+	in.Mode, in.Links, in.Extra = 0o100644, 1, true
+	return f2fstest.ChainNode{Block: f2fstest.InodeBlock(o, in), Fsync: fsync, Dentry: dent}
+}
+
+func TestRollForwardOversizedExtraIsizeWarns(t *testing.T) {
+	f, _, tree := rfInodeChain(t, rfIno(f2fstest.Inode{NID: 91, Size: 5, PIno: f2fstest.RootIno, Name: "x", ExtraIsize: 40}, true, true))
+	before := f.Info().Warnings
+	for _, stop := range []bool{true, false} { // an early stop still reports the whole chain
+		c, err := f.RollForward(func(filesys.RollForwardNode) bool { return stop })
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, w := range c.Warnings {
+			if strings.Contains(w, "i_extra_isize") && strings.Contains(w, fmt.Sprintf("block %d", tree.ChainAddrs[0])) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("stop=%v: warnings %v lack the i_extra_isize warning naming the block", stop, c.Warnings)
+		}
+	}
+	if after := f.Info().Warnings; !slices.Equal(before, after) {
+		t.Errorf("RollForward changed the filesystem warnings: %v -> %v", before, after)
+	}
+}
+
+func TestRollForwardFilesUseLastGoodInode(t *testing.T) {
+	v1 := rfIno(f2fstest.Inode{NID: 91, Size: 100, PIno: f2fstest.RootIno, Name: "old"}, true, true)
+	v2 := rfIno(f2fstest.Inode{NID: 91, Size: 200, PIno: f2fstest.RootIno, Name: "new"}, true, false)
+	v3 := rfIno(f2fstest.Inode{NID: 91, Size: 300, PIno: f2fstest.RootIno, Name: "bad"}, true, false)
+	_, img, tree := rfInodeChain(t, v1, v2, v3)
+	f := rfCorrupt(t, img, tree.ChainAddrs[2])
+	c, _ := rfWalk(t, f)
+	if len(c.Files) != 1 {
+		t.Fatalf("files = %+v", c.Files)
+	}
+	fl := c.Files[0]
+	// Size from the last good inode node; name from the last good dentry-marked one (3H-R5).
+	if !fl.HasInode || fl.Size != 200 || fl.Name != "old" || fl.InodeBlock != uint64(tree.ChainAddrs[1]) {
+		t.Errorf("file = %+v, want size 200 from block %d and name old", fl, tree.ChainAddrs[1])
+	}
+}
+
+func TestRollForwardFilesBadChecksumOnlyIsNoInode(t *testing.T) {
+	_, img, tree := rfInodeChain(t, rfIno(f2fstest.Inode{NID: 91, Size: 300, PIno: f2fstest.RootIno, Name: "bad"}, true, true))
+	f := rfCorrupt(t, img, tree.ChainAddrs[0])
+	c, _ := rfWalk(t, f)
+	fl := c.Files[0]
+	if fl.HasInode || fl.Name != "" || fl.Size != 0 || fl.Pino != 0 || fl.InodeBlock != uint64(tree.ChainAddrs[0]) || fl.Caveat == "" {
+		t.Errorf("file = %+v, want no usable inode, the block kept and a caveat", fl)
+	}
+}
+
+func TestRollForwardFilesUnknownNameHasCaveat(t *testing.T) {
+	in := f2fstest.Inode{NID: 91, Size: 7, PIno: f2fstest.RootIno, Name: "n", RawOverrides: map[int][]byte{88: {0x2c, 0x01, 0, 0}}}
+	f, _, _ := rfInodeChain(t, rfIno(in, true, true))
+	c, _ := rfWalk(t, f)
+	fl := c.Files[0]
+	if !fl.HasInode || fl.Size != 7 || fl.Name != "" || !strings.Contains(fl.Caveat, "name") {
+		t.Errorf("file = %+v, want the size, no name and a name caveat", fl)
+	}
+}
+
+// rfCorrupt flips a byte covered by the inode checksum of the chain inode at addr (no
+// reseal) and reopens the image.
+func rfCorrupt(t *testing.T, img []byte, addr uint32) *f2fs.FS {
+	t.Helper()
+	img[int(addr)*bs+4] ^= 0xff
+	f, err := f2fs.Open(bytes.NewReader(img), int64(len(img)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f
 }

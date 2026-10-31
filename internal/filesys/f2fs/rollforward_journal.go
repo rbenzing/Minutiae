@@ -11,13 +11,31 @@ import (
 // scans" and never that the data is live. Blocks are filesystem-relative (examine adds the
 // partition start).
 
-// txn is the one transaction of the chain, built from the index (20 bytes per node plus a
-// 16-byte tag: bounded by maxChainNodes).
+// incompleteWarning is the warning of a chain whose end is unknown: later nodes may exist,
+// so the need for recovery cannot be ruled out.
+func (c *rfChain) incompleteWarning() string {
+	return "roll-forward chain is incomplete (stop=" + c.sum.Stop + "): later nodes are unknown, so recovery need cannot be ruled out"
+}
+
+// replays reports whether the kernel would replay any node of the chain.
+func (c *rfChain) replays() bool {
+	for i := range c.entries {
+		if c.wouldReplay(i) {
+			return true
+		}
+	}
+	return false
+}
+
+// txn is the one transaction of the chain, built from the index (a 16-byte tag per node:
+// bounded by maxChainNodes).
 func (c *rfChain) txn() filesys.JournalTxn {
-	tx := filesys.JournalTxn{Seq: uint32(c.sum.CheckpointVersion), Region: "live", Blocks: make([]filesys.JournalTag, len(c.entries))}
+	tx := filesys.JournalTxn{Seq: uint32(c.sum.CheckpointVersion), Region: "live", Committed: c.replays(), Blocks: make([]filesys.JournalTag, len(c.entries))}
 	for i, e := range c.entries {
 		tx.Blocks[i] = filesys.JournalTag{FSBlock: uint64(e.block), Flags: e.flag}
-		tx.Committed = tx.Committed || c.wouldReplay(i)
+	}
+	if !c.sum.Complete {
+		tx.Warnings = []string{c.incompleteWarning()}
 	}
 	return tx
 }
@@ -31,7 +49,10 @@ func (f *FS) Journal() (filesys.JournalInfo, error) {
 	j := filesys.JournalInfo{
 		Type: "f2fs-rollforward", BlockSize: blockSize, Blocks: int64(len(c.entries)),
 		Sequence: uint32(c.sum.CheckpointVersion), Start: uint32(c.sum.Start),
-		Features: []string{}, NeedsRecovery: c.txn().Committed, Warnings: slices.Clone(c.sum.Warnings),
+		Features: []string{}, NeedsRecovery: c.replays() || !c.sum.Complete, Warnings: slices.Clone(c.sum.Warnings),
+	}
+	if !c.sum.Complete {
+		j.Warnings = append(j.Warnings, c.incompleteWarning())
 	}
 	switch {
 	case c.sum.NoCRCRecovery:

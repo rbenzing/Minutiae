@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -168,4 +169,56 @@ func TestJournalBlockReresolves(t *testing.T) {
 	if after := cr.n.Load(); after != before {
 		t.Errorf("forged requests read the image %d times", after-before)
 	}
+}
+
+// ghostChain is a chain of two inodes that nothing replays (fsync without the dentry mark).
+func ghostChain(t *testing.T) (*f2fs.FS, []byte, *f2fstest.Tree) {
+	return rfInodeChain(t,
+		rfIno(f2fstest.Inode{NID: 91, Size: 1, PIno: f2fstest.RootIno, Name: "g1"}, true, false),
+		rfIno(f2fstest.Inode{NID: 92, Size: 1, PIno: f2fstest.RootIno, Name: "g2"}, true, false))
+}
+
+func TestJournalIncompleteChainNeedsRecovery(t *testing.T) {
+	has := func(ws []string) bool {
+		return slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(w, "incomplete") && strings.Contains(w, "stop=") })
+	}
+	check := func(t *testing.T, f *f2fs.FS, wantTxn bool) {
+		t.Helper()
+		j, err := f.Journal()
+		if err != nil || !j.NeedsRecovery || !has(j.Warnings) {
+			t.Errorf("Journal = %+v, %v; want NeedsRecovery and the incomplete warning", j, err)
+		}
+		var txns []filesys.JournalTxn
+		if err := f.JournalTransactions(func(tx filesys.JournalTxn) bool { txns = append(txns, tx); return true }); err != nil {
+			t.Fatal(err)
+		}
+		if wantTxn != (len(txns) == 1) || (wantTxn && !has(txns[0].Warnings)) {
+			t.Errorf("transactions = %+v, want %v with the incomplete warning", txns, wantTxn)
+		}
+	}
+	t.Run("footer stop at the start", func(t *testing.T) {
+		f, _, _ := rfInodeChain(t, f2fstest.ChainNode{Block: f2fstest.DirectNodeBlock(0, 20, nil)})
+		check(t, f, false)
+	})
+	t.Run("image end", func(t *testing.T) {
+		_, img, tree := ghostChain(t)
+		img = img[:(int(tree.ChainAddrs[0])+1)*bs]
+		f, err := f2fs.Open(bytes.NewReader(img), int64(len(img)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		check(t, f, true)
+	})
+	t.Run("cap", func(t *testing.T) {
+		f, _, _ := ghostChain(t)
+		f.SetChainCap(1)
+		check(t, f, true)
+	})
+	t.Run("complete chain has no warning", func(t *testing.T) {
+		f, _, _ := ghostChain(t)
+		j, err := f.Journal()
+		if err != nil || j.NeedsRecovery || len(j.Warnings) != 0 {
+			t.Errorf("Journal = %+v, %v", j, err)
+		}
+	})
 }

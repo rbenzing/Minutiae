@@ -203,8 +203,8 @@ func (f *FS) buildChain() (*rfChain, error) {
 		Unmount: cp.flags&cpUmountFlag != 0, Start: start,
 	}}
 	// The visited set (the cycle check) is a Go map: about 40 bytes per node, so about 40 MB
-	// at the 1M-node bound (3H-R14), on top of the 20 MB of chain entries. Both are freed
-	// or kept only as the index; a bitset over the main blocks would cost one bit per main
+	// at the 1M-node bound (3H-R14), on top of the 20 MB of chain entries. The set lives only
+	// during the walk (the entries stay as the index); a bitset over the main blocks costs one bit per main
 	// block (512 MB for a 2^32-block volume) and is worse for a short chain on a large one.
 	visited := map[uint32]struct{}{}
 	blk := start

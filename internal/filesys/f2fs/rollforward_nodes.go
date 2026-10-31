@@ -25,15 +25,19 @@ func (f *FS) rfBlock(blk uint32) ([]byte, error) {
 	return b, nil
 }
 
-// quietParser returns an FS that shares the superblock only, for parsing a chain inode:
-// the parser's own warnings go to the FS it is called on, so they are dropped and a
-// roll-forward report never adds a filesystem warning. The finding is in the node's
-// Inode.Err or Checksum instead.
-func (f *FS) quietParser() *FS { return &FS{sb: f.sb} }
+// parseChainInode parses a chain inode node on a throwaway FS that shares the superblock
+// only: the parser's warnings go to the FS it is called on, so they are returned here
+// instead of reaching the real FS (a roll-forward report adds no filesystem warning).
+func (f *FS) parseChainInode(raw []byte, ino uint32) (*inode, []string, error) {
+	q := &FS{sb: f.sb}
+	in, err := q.parseInodeBlock(raw, ino)
+	return in, q.warnings.Snapshot(), err
+}
 
 // RollForward visits every chain node in order (3H-R4) with fresh slices. The summary
-// describes the whole chain whether or not visit stops early. It never replays and never
-// changes what the reader serves.
+// describes the whole chain whether or not visit stops early: after a stop the remaining
+// blocks are still read, for the parser warnings of their inodes. It never replays and
+// never changes what the reader serves.
 func (f *FS) RollForward(visit func(filesys.RollForwardNode) bool) (filesys.RollForwardChain, error) {
 	c, err := f.chain()
 	if err != nil {
@@ -45,22 +49,28 @@ func (f *FS) RollForward(visit func(filesys.RollForwardNode) bool) (filesys.Roll
 	}
 	sum := c.sum
 	sum.Files = files
-	sum.Warnings = slices.Clone(c.sum.Warnings)
-	p := f.quietParser()
+	var inodeWarns filesys.Warnings
+	stopped := false
 	for i, e := range c.entries {
 		raw, err := f.rfBlock(e.block)
 		if err != nil {
 			return filesys.RollForwardChain{}, err
 		}
-		if !visit(c.node(p, i, raw)) {
-			break
+		n, ws := c.node(f, i, raw)
+		for _, w := range ws {
+			inodeWarns.Add("chain inode at block %d (nid %d): %s", e.block, e.nid, w)
+		}
+		if !stopped && !visit(n) {
+			stopped = true
 		}
 	}
+	sum.Warnings = append(slices.Clone(c.sum.Warnings), inodeWarns.Snapshot()...)
 	return sum, nil
 }
 
-// node builds the report of chain entry i from its block.
-func (c *rfChain) node(p *FS, i int, raw []byte) filesys.RollForwardNode {
+// node builds the report of chain entry i from its block, with the parser warnings of an
+// inode node.
+func (c *rfChain) node(f *FS, i int, raw []byte) (filesys.RollForwardNode, []string) {
 	e := c.entries[i]
 	ofs := e.flag >> offsetBitShift
 	n := filesys.RollForwardNode{
@@ -70,15 +80,16 @@ func (c *rfChain) node(p *FS, i int, raw []byte) filesys.RollForwardNode {
 		Fsync: e.flag&footFsyncBit != 0, Dentry: e.flag&footDentBit != 0, Cold: e.flag&footColdBit != 0,
 		LiveIno: c.live[e.ino], WouldReplay: c.wouldReplay(i),
 	}
+	var ws []string
 	switch n.Kind {
 	case "inode":
-		n.Inode, n.Addrs, n.NIDs = p.chainInode(raw, e)
+		n.Inode, n.Addrs, n.NIDs, ws = f.chainInode(raw, e)
 	case "direct":
 		n.Addrs = leWords(raw, 0, addrsPerBlock)
 	case "indirect", "double-indirect":
 		n.NIDs = leWords(raw, 0, addrsPerBlock)
 	}
-	return n
+	return n, ws
 }
 
 // leWords copies n little-endian 32-bit words from raw at off into a fresh slice.
@@ -93,13 +104,13 @@ func leWords(raw []byte, off, n int) []uint32 {
 // chainInode decodes the inode a chain inode node carries. A parse failure fills Err and
 // leaves the rest zero; a bad checksum is reported (Checksum "bad") and the fields stay: it
 // is a report, and no map is ever taken from such a copy (3H-R3).
-func (f *FS) chainInode(raw []byte, e chainEntry) (*filesys.RollForwardInode, []uint32, []uint32) {
+func (f *FS) chainInode(raw []byte, e chainEntry) (*filesys.RollForwardInode, []uint32, []uint32, []string) {
 	if e.nid != e.ino {
-		return &filesys.RollForwardInode{Err: fmt.Sprintf("footer nid %d differs from ino %d at offset 0", e.nid, e.ino)}, nil, nil
+		return &filesys.RollForwardInode{Err: fmt.Sprintf("footer nid %d differs from ino %d at offset 0", e.nid, e.ino)}, nil, nil, nil
 	}
-	in, err := f.parseInodeBlock(raw, e.ino)
+	in, ws, err := f.parseChainInode(raw, e.ino)
 	if err != nil {
-		return &filesys.RollForwardInode{Err: err.Error()}, nil, nil
+		return &filesys.RollForwardInode{Err: err.Error()}, nil, nil, ws
 	}
 	r := &filesys.RollForwardInode{
 		Mode: uint32(in.mode), UID: in.uid, GID: in.gid, Links: in.links, Pino: in.pino, Flags: in.flags,
@@ -118,17 +129,22 @@ func (f *FS) chainInode(raw []byte, e chainEntry) (*filesys.RollForwardInode, []
 			r.Checksum = "ok"
 		}
 	}
-	return r, leWords(raw, in.addrStart, in.addrSlots), slices.Clone(in.nids[:])
+	return r, leWords(raw, in.addrStart, in.addrSlots), slices.Clone(in.nids[:]), ws
 }
 
+// goodInode reports whether a parsed chain inode may feed the file summary: a copy whose
+// recorded checksum is wrong never does (3H-R3).
+func goodInode(in *inode) bool { return !in.csumChecked || in.csumOK }
+
 // files summarises the chain per inode number, in order of first appearance (3H-R5).
-// The inode block of a file is its last inode node at or before its last fsync node
-// (the copy the kernel's replay ends with), else its last inode node.
+// Size and the rest come from the last good inode node at or before the file's last fsync
+// node; name and parent from the last good dentry-marked inode node at or before it (what
+// the kernel's recover_dentry links), else from the first. A file with no good inode copy
+// has HasInode false and a Caveat; InodeBlock then names the last copy considered.
 func (c *rfChain) files(f *FS) ([]filesys.RollForwardFile, error) {
 	idx := make(map[uint32]int)
 	var out []filesys.RollForwardFile
-	pick := make(map[uint32]int)
-	fallback := make(map[uint32]int)
+	inodes := make(map[uint32][]int) // ino -> entry indexes of its inode nodes, in order
 	for i, e := range c.entries {
 		if _, ok := idx[e.ino]; !ok {
 			idx[e.ino] = len(out)
@@ -142,37 +158,68 @@ func (c *rfChain) files(f *FS) ([]filesys.RollForwardFile, error) {
 			out = append(out, fl)
 		}
 		if e.nid == e.ino && e.flag>>offsetBitShift == 0 {
-			fallback[e.ino] = i
-			if last, ok := c.lastFsync[e.ino]; !ok || i <= last {
-				pick[e.ino] = i
-			}
+			inodes[e.ino] = append(inodes[e.ino], i)
 		}
 	}
-	p := f.quietParser()
 	for k := range out {
 		fl := &out[k]
-		i, ok := pick[fl.Ino]
-		if !ok {
-			if i, ok = fallback[fl.Ino]; !ok {
-				continue
-			}
+		cands := inodes[fl.Ino]
+		if last, ok := c.lastFsync[fl.Ino]; ok {
+			cands = cands[:sortedPrefix(cands, last)]
 		}
-		e := c.entries[i]
-		fl.InodeBlock = uint64(e.block)
-		raw, err := f.rfBlock(e.block)
-		if err != nil {
-			return nil, err
+		if len(cands) == 0 {
+			cands = inodes[fl.Ino] // no inode node at or before the last fsync: report the last one
 		}
-		// HasInode means a usable inode: an inode node that does not parse leaves it false
-		// (InodeBlock still says where it is, and the node's Inode.Err says why).
-		in, err := p.parseInodeBlock(raw, fl.Ino)
-		if err != nil {
+		if len(cands) == 0 {
 			continue
 		}
-		fl.HasInode, fl.Pino, fl.Size = true, in.pino, in.size
-		if !in.nameBad {
-			fl.Name, _ = displayName(in.name, in.encrypted)
+		var main, named *inode
+		var mainAt int
+		for j := len(cands) - 1; j >= 0 && (main == nil || named == nil); j-- {
+			e := c.entries[cands[j]]
+			if j == len(cands)-1 {
+				fl.InodeBlock = uint64(e.block)
+			}
+			raw, err := f.rfBlock(e.block)
+			if err != nil {
+				return nil, err
+			}
+			in, _, perr := f.parseChainInode(raw, fl.Ino)
+			if perr != nil || !goodInode(in) {
+				continue
+			}
+			if main == nil {
+				main, mainAt = in, cands[j]
+			}
+			if named == nil && e.flag&footDentBit != 0 {
+				named = in
+			}
+		}
+		if main == nil {
+			fl.Caveat = "no inode copy with a valid checksum before the last fsync: size, name and parent are unknown"
+			continue
+		}
+		fl.InodeBlock = uint64(c.entries[mainAt].block)
+		if named == nil {
+			named = main
+		}
+		fl.HasInode, fl.Size, fl.Pino = true, main.size, named.pino
+		if named.nameBad {
+			fl.Caveat = "i_namelen is out of range: the name is unknown"
+		} else {
+			fl.Name, _ = displayName(named.name, named.encrypted)
 		}
 	}
 	return out, nil
+}
+
+// sortedPrefix returns how many of the ascending indexes are <= limit.
+func sortedPrefix(idx []int, limit int) int {
+	n, _ := slices.BinarySearchFunc(idx, limit, func(a, b int) int {
+		if a <= b {
+			return -1
+		}
+		return 1
+	})
+	return n
 }
