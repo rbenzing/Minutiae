@@ -125,10 +125,14 @@ func (s *Session) prepareCarve(o CarveOptions) (*carveJob, error) {
 	}
 	if o.MaxFileSize > 0 { // lowers each type's MaxLen, never raises it
 		kept := sel.Types[:0]
+		noted := map[string]bool{} // the rows of a family share MinLen: one note per family
 		for _, t := range sel.Types {
 			t.MaxLen = min(t.MaxLen, o.MaxFileSize)
 			if t.MaxLen < t.MinLen {
-				j.notes = append(j.notes, fmt.Sprintf("type %s is not carved: --max-file-size %d is below its minimum length %d", t.Name, o.MaxFileSize, t.MinLen))
+				if !noted[t.Name] {
+					noted[t.Name] = true
+					j.notes = append(j.notes, fmt.Sprintf("type %s is not carved: --max-file-size %d is below its minimum length %d", t.Name, o.MaxFileSize, t.MinLen))
+				}
 				continue
 			}
 			kept = append(kept, t)

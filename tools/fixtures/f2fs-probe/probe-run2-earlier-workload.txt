@@ -1,0 +1,255 @@
+== formatting (host side, faketime 2023-11-14 22:13:20)
+TOOLS p0 fsck-rc=0 tree-rc=0 dump-rc=0,0,0
+== nodiscard stages (guest option nodiscard,noatime): p1 write, p2 rename, p3 unlink, p4 create
+OP 1 mkdir /mnt/p /mnt/s /mnt/s/x /mnt/g
+OP 2 i=0; while [ $i -lt 300 ]; do : > /mnt/g/a$i; i=$((i+1)); done
+OP 3 cp /payload/A /mnt/p/A
+OP 4 cp /payload/B /mnt/p/B
+OP 5 cp /payload/C /mnt/p/C
+OP 6 dd if=/payload/H0 of=/mnt/p/H bs=4096 count=1 2>/dev/null
+OP 7 dd if=/payload/H3 of=/mnt/p/H bs=4096 seek=3 conv=notrunc 2>/dev/null
+OP 8 cp /payload/I /mnt/p/I
+OP 9 cp /payload/R /mnt/p/R
+OP 10 cp /payload/f1 /mnt/s/x/f1
+OP 11 cp /payload/f2 /mnt/s/x/f2
+OP 12 cp /payload/f3 /mnt/s/x/f3
+OP 13 i=0; while [ $i -lt 900 ]; do : > /mnt/g/b$i; i=$((i+1)); done
+OP 14 sync
+GUEST-DONE
+STAGE p1 done after 7 s
+TOOLS p1 fsck-rc=0 tree-rc=0 dump-rc=0,0,0
+OP 1 mv /mnt/p/R /mnt/p/R2
+OP 2 sync
+GUEST-DONE
+STAGE p2 done after 14 s
+TOOLS p2 fsck-rc=0 tree-rc=0 dump-rc=0,0,0
+OP 1 rm /mnt/p/A /mnt/p/B /mnt/p/C /mnt/p/H /mnt/p/I /mnt/p/R2 /mnt/s/x/f1
+OP 2 rm -r /mnt/g
+OP 3 sync
+GUEST-DONE
+STAGE p3 done after 20 s
+TOOLS p3 fsck-rc=0 tree-rc=0 dump-rc=0,0,0
+OP 1 for i in 1 2 3 4 5 6 7 8; do cp /payload/N /mnt/p/N$i; done
+OP 2 sync
+GUEST-DONE
+STAGE p4 done after 27 s
+TOOLS p4 fsck-rc=0 tree-rc=0 dump-rc=0,0,0
+== fill to ENOSPC (GUEST_TIMEOUT=2400): p5
+OP 1 dd if=/dev/zero of=/mnt/fill bs=4096 2>/dev/null || true
+OP 2 ls -l /mnt/fill
+OP 3 df /mnt
+OP 4 sync
+OP 5 for f in /sys/fs/f2fs/vda/*; do echo "SYSFS $f $(cat $f 2>/dev/null)"; done
+OP 6 rm /mnt/fill
+OP 7 sync
+GUEST-DONE
+STAGE p5 done after 36 s
+/dev/vda                129024    129024         0 100% /mnt
+SYSFS /sys/fs/f2fs/vda/atgc_age_threshold 604800
+SYSFS /sys/fs/f2fs/vda/atgc_age_weight 60
+SYSFS /sys/fs/f2fs/vda/atgc_candidate_count 10
+SYSFS /sys/fs/f2fs/vda/atgc_candidate_ratio 20
+SYSFS /sys/fs/f2fs/vda/cp_background_calls 0
+SYSFS /sys/fs/f2fs/vda/cp_foreground_calls 1
+SYSFS /sys/fs/f2fs/vda/cp_interval 60
+SYSFS /sys/fs/f2fs/vda/discard_granularity 1
+SYSFS /sys/fs/f2fs/vda/discard_idle_interval 5
+SYSFS /sys/fs/f2fs/vda/gc_background_calls 0
+SYSFS /sys/fs/f2fs/vda/gc_foreground_calls 0
+SYSFS /sys/fs/f2fs/vda/gc_idle 0
+SYSFS /sys/fs/f2fs/vda/gc_idle_interval 5
+SYSFS /sys/fs/f2fs/vda/gc_max_sleep_time 60000
+SYSFS /sys/fs/f2fs/vda/gc_min_sleep_time 30000
+SYSFS /sys/fs/f2fs/vda/gc_no_gc_sleep_time 300000
+SYSFS /sys/fs/f2fs/vda/gc_pin_file_thresh 2048
+SYSFS /sys/fs/f2fs/vda/gc_reclaimed_segments 0
+SYSFS /sys/fs/f2fs/vda/gc_segment_mode GC_NORMAL
+SYSFS /sys/fs/f2fs/vda/gc_urgent GC_NORMAL
+SYSFS /sys/fs/f2fs/vda/gc_urgent_high_remaining 0
+SYSFS /sys/fs/f2fs/vda/gc_urgent_sleep_time 500
+SYSFS /sys/fs/f2fs/vda/max_discard_issue_time 60000
+SYSFS /sys/fs/f2fs/vda/max_discard_request 8
+SYSFS /sys/fs/f2fs/vda/max_small_discards 28672
+SYSFS /sys/fs/f2fs/vda/mid_discard_issue_time 500
+SYSFS /sys/fs/f2fs/vda/min_discard_issue_time 50
+SYSFS /sys/fs/f2fs/vda/pending_discard 0
+SYSFS /sys/fs/f2fs/vda/umount_discard_timeout 5
+TOOLS p5 fsck-rc=0 tree-rc=0 dump-rc=0,0,0
+== discard stages (guest option discard,noatime; qemu discard=unmap): d1 write, d3 unlink
+OP 1 mkdir /mnt/p /mnt/s /mnt/s/x /mnt/g
+OP 2 i=0; while [ $i -lt 300 ]; do : > /mnt/g/a$i; i=$((i+1)); done
+OP 3 cp /payload/A /mnt/p/A
+OP 4 cp /payload/B /mnt/p/B
+OP 5 cp /payload/C /mnt/p/C
+OP 6 dd if=/payload/H0 of=/mnt/p/H bs=4096 count=1 2>/dev/null
+OP 7 dd if=/payload/H3 of=/mnt/p/H bs=4096 seek=3 conv=notrunc 2>/dev/null
+OP 8 cp /payload/I /mnt/p/I
+OP 9 cp /payload/R /mnt/p/R
+OP 10 cp /payload/f1 /mnt/s/x/f1
+OP 11 cp /payload/f2 /mnt/s/x/f2
+OP 12 cp /payload/f3 /mnt/s/x/f3
+OP 13 i=0; while [ $i -lt 900 ]; do : > /mnt/g/b$i; i=$((i+1)); done
+OP 14 sync
+GUEST-DONE
+STAGE d1 done after 51 s
+TOOLS d1 fsck-rc=0 tree-rc=0 dump-rc=0,0,0
+OP 1 rm /mnt/p/A /mnt/p/B /mnt/p/C /mnt/p/H /mnt/p/I /mnt/p/R /mnt/s/x/f1
+OP 2 rm -r /mnt/g
+OP 3 sync
+GUEST-DONE
+STAGE d3 done after 63 s
+TOOLS d3 fsck-rc=0 tree-rc=0 dump-rc=0,0,0
+RUNTIME guest stages and tools: 64 s
+== decoding (f2fs_recover_oracle.py probe)
+CROSSCHECK p0 ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 1 NAT entries, 56 SIT segments
+CROSSCHECK p1 ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 1219 NAT entries, 56 SIT segments
+CROSSCHECK p2 ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 1219 NAT entries, 56 SIT segments
+CROSSCHECK p3 ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 6 NAT entries, 56 SIT segments
+CROSSCHECK p4 ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 14 NAT entries, 56 SIT segments
+CROSSCHECK p5 ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 14 NAT entries, 56 SIT segments
+CROSSCHECK d1 ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 1219 NAT entries, 56 SIT segments
+CROSSCHECK d3 ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 6 NAT entries, 56 SIT segments
+FACT TOOL p0 fsck.f2fs -f --dry-run exit status 0; checkpoint_ver 1804289383 flags 0x185
+FACT TOOL p1 fsck.f2fs -f --dry-run exit status 0; checkpoint_ver 1804289387 flags 0xc5
+FACT TOOL p2 fsck.f2fs -f --dry-run exit status 0; checkpoint_ver 1804289391 flags 0xc5
+FACT TOOL p3 fsck.f2fs -f --dry-run exit status 0; checkpoint_ver 1804289396 flags 0xc5
+FACT TOOL p4 fsck.f2fs -f --dry-run exit status 0; checkpoint_ver 1804289400 flags 0xc5
+FACT TOOL p5 fsck.f2fs -f --dry-run exit status 0; checkpoint_ver 1804289406 flags 0xc5
+FACT TOOL d1 fsck.f2fs -f --dry-run exit status 0; checkpoint_ver 1804289388 flags 0x1c5
+FACT TOOL d3 fsck.f2fs -f --dry-run exit status 0; checkpoint_ver 1804289393 flags 0xc5
+FACT TREE p2 paths (decoder == fsck -t): /g=7 /g/a0=8 /g/a1=9 /g/a10=18 /g/a100=108 /g/a101=109 /g/a102=110 /g/a103=111 /g/a104=112 /g/a105=113 /g/a106=114 /g/a107=115 /g/a108=116 /g/a109=117 /g/a11=19 /g/a110=118 /g/a111=119 /g/a112=120 /g/a113=121 /g/a114=122 /g/a115=123 /g/a116=124 /g/a117=125 /g/a118=126 /g/a119=127 /g/a12=20 /g/a120=128 /g/a121=129 /g/a122=130 /g/a123=131 /g/a124=132 /g/a125=133 /g/a126=134 /g/a127=135 /g/a128=136 /g/a129=137 /g/a13=21 /g/a130=138 /g/a131=139 /g/a132=140 /g/a133=141 /g/a134=142 /g/a135=143 /g/a136=144 /g/a137=145 /g/a138=146 /g/a139=147 /g/a14=22 /g/a140=148 /g/a141=149 /g/a142=150 /g/a143=151 /g/a144=152 /g/a145=153 /g/a146=154 /g/a147=155 /g/a148=156 /g/a149=157 /g/a15=23 /g/a150=158 /g/a151=159 /g/a152=160 /g/a153=161 /g/a154=162 /g/a155=163 /g/a156=164 /g/a157=165 /g/a158=166 /g/a159=167 /g/a16=24 /g/a160=168 /g/a161=169 /g/a162=170 /g/a163=171 /g/a164=172 /g/a165=173 /g/a166=174 /g/a167=175 /g/a168=176 /g/a169=177 /g/a17=25 /g/a170=178 /g/a171=179 /g/a172=180 /g/a173=181 /g/a174=182 /g/a175=183 /g/a176=184 /g/a177=185 /g/a178=186 /g/a179=187 /g/a18=26 /g/a180=188 /g/a181=189 /g/a182=190 /g/a183=191 /g/a184=192 /g/a185=193 /g/a186=194 /g/a187=195 /g/a188=196 /g/a189=197 /g/a19=27 /g/a190=198 /g/a191=199 /g/a192=200 /g/a193=201 /g/a194=202 /g/a195=203 /g/a196=204 /g/a197=205 /g/a198=206 /g/a199=207 /g/a2=10 /g/a20=28 /g/a200=208 /g/a201=209 /g/a202=210 /g/a203=211 /g/a204=212 /g/a205=213 /g/a206=214 /g/a207=215 /g/a208=216 /g/a209=217 /g/a21=29 /g/a210=218 /g/a211=219 /g/a212=220 /g/a213=221 /g/a214=222 /g/a215=223 /g/a216=224 /g/a217=225 /g/a218=226 /g/a219=227 /g/a22=30 /g/a220=228 /g/a221=229 /g/a222=230 /g/a223=231 /g/a224=232 /g/a225=233 /g/a226=234 /g/a227=235 /g/a228=236 /g/a229=237 /g/a23=31 /g/a230=238 /g/a231=239 /g/a232=240 /g/a233=241 /g/a234=242 /g/a235=243 /g/a236=244 /g/a237=245 /g/a238=246 /g/a239=247 /g/a24=32 /g/a240=248 /g/a241=249 /g/a242=250 /g/a243=251 /g/a244=252 /g/a245=253 /g/a246=254 /g/a247=255 /g/a248=256 /g/a249=257 /g/a25=33 /g/a250=258 /g/a251=259 /g/a252=260 /g/a253=261 /g/a254=262 /g/a255=263 /g/a256=264 /g/a257=265 /g/a258=266 /g/a259=267 /g/a26=34 /g/a260=268 /g/a261=269 /g/a262=270 /g/a263=271 /g/a264=272 /g/a265=273 /g/a266=274 /g/a267=275 /g/a268=276 /g/a269=277 /g/a27=35 /g/a270=278 /g/a271=279 /g/a272=280 /g/a273=281 /g/a274=282 /g/a275=283 /g/a276=284 /g/a277=285 /g/a278=286 /g/a279=287 /g/a28=36 /g/a280=288 /g/a281=289 /g/a282=290 /g/a283=291 /g/a284=292 /g/a285=293 /g/a286=294 /g/a287=295 /g/a288=296 /g/a289=297 /g/a29=37 /g/a290=298 /g/a291=299 /g/a292=300 /g/a293=301 /g/a294=302 /g/a295=303 /g/a296=304 /g/a297=305 /g/a298=306 /g/a299=307 /g/a3=11 /g/a30=38 /g/a31=39 /g/a32=40 /g/a33=41 /g/a34=42 /g/a35=43 /g/a36=44 /g/a37=45 /g/a38=46 /g/a39=47 /g/a4=12 /g/a40=48 /g/a41=49 /g/a42=50 /g/a43=51 /g/a44=52 /g/a45=53 /g/a46=54 /g/a47=55 /g/a48=56 /g/a49=57 /g/a5=13 /g/a50=58 /g/a51=59 /g/a52=60 /g/a53=61 /g/a54=62 /g/a55=63 /g/a56=64 /g/a57=65 /g/a58=66 /g/a59=67 /g/a6=14 /g/a60=68 /g/a61=69 /g/a62=70 /g/a63=71 /g/a64=72 /g/a65=73 /g/a66=74 /g/a67=75 /g/a68=76 /g/a69=77 /g/a7=15 /g/a70=78 /g/a71=79 /g/a72=80 /g/a73=81 /g/a74=82 /g/a75=83 /g/a76=84 /g/a77=85 /g/a78=86 /g/a79=87 /g/a8=16 /g/a80=88 /g/a81=89 /g/a82=90 /g/a83=91 /g/a84=92 /g/a85=93 /g/a86=94 /g/a87=95 /g/a88=96 /g/a89=97 /g/a9=17 /g/a90=98 /g/a91=99 /g/a92=100 /g/a93=101 /g/a94=102 /g/a95=103 /g/a96=104 /g/a97=105 /g/a98=106 /g/a99=107 /g/b0=322 /g/b1=323 /g/b10=332 /g/b100=422 /g/b101=423 /g/b102=424 /g/b103=425 /g/b104=426 /g/b105=427 /g/b106=428 /g/b107=429 /g/b108=430 /g/b109=431 /g/b11=333 /g/b110=432 /g/b111=433 /g/b112=434 /g/b113=435 /g/b114=436 /g/b115=437 /g/b116=438 /g/b117=439 /g/b118=440 /g/b119=441 /g/b12=334 /g/b120=442 /g/b121=443 /g/b122=444 /g/b123=445 /g/b124=446 /g/b125=447 /g/b126=448 /g/b127=449 /g/b128=450 /g/b129=451 /g/b13=335 /g/b130=452 /g/b131=453 /g/b132=454 /g/b133=455 /g/b134=456 /g/b135=457 /g/b136=458 /g/b137=459 /g/b138=460 /g/b139=461 /g/b14=336 /g/b140=462 /g/b141=463 /g/b142=464 /g/b143=465 /g/b144=466 /g/b145=467 /g/b146=468 /g/b147=469 /g/b148=470 /g/b149=471 /g/b15=337 /g/b150=472 /g/b151=473 /g/b152=474 /g/b153=475 /g/b154=476 /g/b155=477 /g/b156=478 /g/b157=479 /g/b158=480 /g/b159=481 /g/b16=338 /g/b160=482 /g/b161=483 /g/b162=484 /g/b163=485 /g/b164=486 /g/b165=487 /g/b166=488 /g/b167=489 /g/b168=490 /g/b169=491 /g/b17=339 /g/b170=492 /g/b171=493 /g/b172=494 /g/b173=495 /g/b174=496 /g/b175=497 /g/b176=498 /g/b177=499 /g/b178=500 /g/b179=501 /g/b18=340 /g/b180=502 /g/b181=503 /g/b182=504 /g/b183=505 /g/b184=506 /g/b185=507 /g/b186=508 /g/b187=509 /g/b188=510 /g/b189=511 /g/b19=341 /g/b190=512 /g/b191=513 /g/b192=514 /g/b193=515 /g/b194=516 /g/b195=517 /g/b196=518 /g/b197=519 /g/b198=520 /g/b199=521 /g/b2=324 /g/b20=342 /g/b200=522 /g/b201=523 /g/b202=524 /g/b203=525 /g/b204=526 /g/b205=527 /g/b206=528 /g/b207=529 /g/b208=530 /g/b209=531 /g/b21=343 /g/b210=532 /g/b211=533 /g/b212=534 /g/b213=535 /g/b214=536 /g/b215=537 /g/b216=538 /g/b217=539 /g/b218=540 /g/b219=541 /g/b22=344 /g/b220=542 /g/b221=543 /g/b222=544 /g/b223=545 /g/b224=546 /g/b225=547 /g/b226=548 /g/b227=549 /g/b228=550 /g/b229=551 /g/b23=345 /g/b230=552 /g/b231=553 /g/b232=554 /g/b233=555 /g/b234=556 /g/b235=557 /g/b236=558 /g/b237=559 /g/b238=560 /g/b239=561 /g/b24=346 /g/b240=562 /g/b241=563 /g/b242=564 /g/b243=565 /g/b244=566 /g/b245=567 /g/b246=568 /g/b247=569 /g/b248=570 /g/b249=571 /g/b25=347 /g/b250=572 /g/b251=573 /g/b252=574 /g/b253=575 /g/b254=576 /g/b255=577 /g/b256=578 /g/b257=579 /g/b258=580 /g/b259=581 /g/b26=348 /g/b260=582 /g/b261=583 /g/b262=584 /g/b263=585 /g/b264=586 /g/b265=587 /g/b266=588 /g/b267=589 /g/b268=590 /g/b269=591 /g/b27=349 /g/b270=592 /g/b271=593 /g/b272=594 /g/b273=595 /g/b274=596 /g/b275=597 /g/b276=598 /g/b277=599 /g/b278=600 /g/b279=601 /g/b28=350 /g/b280=602 /g/b281=603 /g/b282=604 /g/b283=605 /g/b284=606 /g/b285=607 /g/b286=608 /g/b287=609 /g/b288=610 /g/b289=611 /g/b29=351 /g/b290=612 /g/b291=613 /g/b292=614 /g/b293=615 /g/b294=616 /g/b295=617 /g/b296=618 /g/b297=619 /g/b298=620 /g/b299=621 /g/b3=325 /g/b30=352 /g/b300=622 /g/b301=623 /g/b302=624 /g/b303=625 /g/b304=626 /g/b305=627 /g/b306=628 /g/b307=629 /g/b308=630 /g/b309=631 /g/b31=353 /g/b310=632 /g/b311=633 /g/b312=634 /g/b313=635 /g/b314=636 /g/b315=637 /g/b316=638 /g/b317=639 /g/b318=640 /g/b319=641 /g/b32=354 /g/b320=642 /g/b321=643 /g/b322=644 /g/b323=645 /g/b324=646 /g/b325=647 /g/b326=648 /g/b327=649 /g/b328=650 /g/b329=651 /g/b33=355 /g/b330=652 /g/b331=653 /g/b332=654 /g/b333=655 /g/b334=656 /g/b335=657 /g/b336=658 /g/b337=659 /g/b338=660 /g/b339=661 /g/b34=356 /g/b340=662 /g/b341=663 /g/b342=664 /g/b343=665 /g/b344=666 /g/b345=667 /g/b346=668 /g/b347=669 /g/b348=670 /g/b349=671 /g/b35=357 /g/b350=672 /g/b351=673 /g/b352=674 /g/b353=675 /g/b354=676 /g/b355=677 /g/b356=678 /g/b357=679 /g/b358=680 /g/b359=681 /g/b36=358 /g/b360=682 /g/b361=683 /g/b362=684 /g/b363=685 /g/b364=686 /g/b365=687 /g/b366=688 /g/b367=689 /g/b368=690 /g/b369=691 /g/b37=359 /g/b370=692 /g/b371=693 /g/b372=694 /g/b373=695 /g/b374=696 /g/b375=697 /g/b376=698 /g/b377=699 /g/b378=700 /g/b379=701 /g/b38=360 /g/b380=702 /g/b381=703 /g/b382=704 /g/b383=705 /g/b384=706 /g/b385=707 /g/b386=708 /g/b387=709 /g/b388=710 /g/b389=711 /g/b39=361 /g/b390=712 /g/b391=713 /g/b392=714 /g/b393=715 /g/b394=716 /g/b395=717 /g/b396=718 /g/b397=719 /g/b398=720 /g/b399=721 /g/b4=326 /g/b40=362 /g/b400=722 /g/b401=723 /g/b402=724 /g/b403=725 /g/b404=726 /g/b405=727 /g/b406=728 /g/b407=729 /g/b408=730 /g/b409=731 /g/b41=363 /g/b410=732 /g/b411=733 /g/b412=734 /g/b413=735 /g/b414=736 /g/b415=737 /g/b416=738 /g/b417=739 /g/b418=740 /g/b419=741 /g/b42=364 /g/b420=742 /g/b421=743 /g/b422=744 /g/b423=745 /g/b424=746 /g/b425=747 /g/b426=748 /g/b427=749 /g/b428=750 /g/b429=751 /g/b43=365 /g/b430=752 /g/b431=753 /g/b432=754 /g/b433=755 /g/b434=756 /g/b435=757 /g/b436=758 /g/b437=759 /g/b438=760 /g/b439=761 /g/b44=366 /g/b440=762 /g/b441=763 /g/b442=764 /g/b443=765 /g/b444=766 /g/b445=767 /g/b446=768 /g/b447=769 /g/b448=770 /g/b449=771 /g/b45=367 /g/b450=772 /g/b451=773 /g/b452=774 /g/b453=775 /g/b454=776 /g/b455=777 /g/b456=778 /g/b457=779 /g/b458=780 /g/b459=781 /g/b46=368 /g/b460=782 /g/b461=783 /g/b462=784 /g/b463=785 /g/b464=786 /g/b465=787 /g/b466=788 /g/b467=789 /g/b468=790 /g/b469=791 /g/b47=369 /g/b470=792 /g/b471=793 /g/b472=794 /g/b473=795 /g/b474=796 /g/b475=797 /g/b476=798 /g/b477=799 /g/b478=800 /g/b479=801 /g/b48=370 /g/b480=802 /g/b481=803 /g/b482=804 /g/b483=805 /g/b484=806 /g/b485=807 /g/b486=808 /g/b487=809 /g/b488=810 /g/b489=811 /g/b49=371 /g/b490=812 /g/b491=813 /g/b492=814 /g/b493=815 /g/b494=816 /g/b495=817 /g/b496=818 /g/b497=819 /g/b498=820 /g/b499=821 /g/b5=327 /g/b50=372 /g/b500=822 /g/b501=823 /g/b502=824 /g/b503=825 /g/b504=826 /g/b505=827 /g/b506=828 /g/b507=829 /g/b508=830 /g/b509=831 /g/b51=373 /g/b510=832 /g/b511=833 /g/b512=834 /g/b513=835 /g/b514=836 /g/b515=837 /g/b516=838 /g/b517=839 /g/b518=840 /g/b519=841 /g/b52=374 /g/b520=842 /g/b521=843 /g/b522=844 /g/b523=845 /g/b524=846 /g/b525=847 /g/b526=848 /g/b527=849 /g/b528=850 /g/b529=851 /g/b53=375 /g/b530=852 /g/b531=853 /g/b532=854 /g/b533=855 /g/b534=856 /g/b535=857 /g/b536=858 /g/b537=859 /g/b538=860 /g/b539=861 /g/b54=376 /g/b540=862 /g/b541=863 /g/b542=864 /g/b543=865 /g/b544=866 /g/b545=867 /g/b546=868 /g/b547=869 /g/b548=870 /g/b549=871 /g/b55=377 /g/b550=872 /g/b551=873 /g/b552=874 /g/b553=875 /g/b554=876 /g/b555=877 /g/b556=878 /g/b557=879 /g/b558=880 /g/b559=881 /g/b56=378 /g/b560=882 /g/b561=883 /g/b562=884 /g/b563=885 /g/b564=886 /g/b565=887 /g/b566=888 /g/b567=889 /g/b568=890 /g/b569=891 /g/b57=379 /g/b570=892 /g/b571=893 /g/b572=894 /g/b573=895 /g/b574=896 /g/b575=897 /g/b576=898 /g/b577=899 /g/b578=900 /g/b579=901 /g/b58=380 /g/b580=902 /g/b581=903 /g/b582=904 /g/b583=905 /g/b584=906 /g/b585=907 /g/b586=908 /g/b587=909 /g/b588=910 /g/b589=911 /g/b59=381 /g/b590=912 /g/b591=913 /g/b592=914 /g/b593=915 /g/b594=916 /g/b595=917 /g/b596=918 /g/b597=919 /g/b598=920 /g/b599=921 /g/b6=328 /g/b60=382 /g/b600=922 /g/b601=923 /g/b602=924 /g/b603=925 /g/b604=926 /g/b605=927 /g/b606=928 /g/b607=929 /g/b608=930 /g/b609=931 /g/b61=383 /g/b610=932 /g/b611=933 /g/b612=934 /g/b613=935 /g/b614=936 /g/b615=937 /g/b616=938 /g/b617=939 /g/b618=940 /g/b619=941 /g/b62=384 /g/b620=942 /g/b621=943 /g/b622=944 /g/b623=945 /g/b624=946 /g/b625=947 /g/b626=948 /g/b627=949 /g/b628=950 /g/b629=951 /g/b63=385 /g/b630=952 /g/b631=953 /g/b632=954 /g/b633=955 /g/b634=956 /g/b635=957 /g/b636=958 /g/b637=959 /g/b638=960 /g/b639=961 /g/b64=386 /g/b640=962 /g/b641=963 /g/b642=964 /g/b643=965 /g/b644=966 /g/b645=967 /g/b646=968 /g/b647=969 /g/b648=970 /g/b649=971 /g/b65=387 /g/b650=972 /g/b651=973 /g/b652=974 /g/b653=975 /g/b654=976 /g/b655=977 /g/b656=978 /g/b657=979 /g/b658=980 /g/b659=981 /g/b66=388 /g/b660=982 /g/b661=983 /g/b662=984 /g/b663=985 /g/b664=986 /g/b665=987 /g/b666=988 /g/b667=989 /g/b668=990 /g/b669=991 /g/b67=389 /g/b670=992 /g/b671=993 /g/b672=994 /g/b673=995 /g/b674=996 /g/b675=997 /g/b676=998 /g/b677=999 /g/b678=1000 /g/b679=1001 /g/b68=390 /g/b680=1002 /g/b681=1003 /g/b682=1004 /g/b683=1005 /g/b684=1006 /g/b685=1007 /g/b686=1008 /g/b687=1009 /g/b688=1010 /g/b689=1011 /g/b69=391 /g/b690=1012 /g/b691=1013 /g/b692=1014 /g/b693=1015 /g/b694=1016 /g/b695=1017 /g/b696=1018 /g/b697=1019 /g/b698=1020 /g/b699=1021 /g/b7=329 /g/b70=392 /g/b700=1022 /g/b701=1023 /g/b702=1024 /g/b703=1025 /g/b704=1026 /g/b705=1027 /g/b706=1028 /g/b707=1029 /g/b708=1030 /g/b709=1031 /g/b71=393 /g/b710=1032 /g/b711=1033 /g/b712=1034 /g/b713=1035 /g/b714=1036 /g/b715=1037 /g/b716=1038 /g/b717=1039 /g/b718=1040 /g/b719=1041 /g/b72=394 /g/b720=1042 /g/b721=1043 /g/b722=1044 /g/b723=1045 /g/b724=1046 /g/b725=1047 /g/b726=1048 /g/b727=1049 /g/b728=1050 /g/b729=1051 /g/b73=395 /g/b730=1052 /g/b731=1053 /g/b732=1054 /g/b733=1055 /g/b734=1056 /g/b735=1057 /g/b736=1058 /g/b737=1059 /g/b738=1060 /g/b739=1061 /g/b74=396 /g/b740=1062 /g/b741=1063 /g/b742=1064 /g/b743=1065 /g/b744=1066 /g/b745=1067 /g/b746=1068 /g/b747=1069 /g/b748=1070 /g/b749=1071 /g/b75=397 /g/b750=1072 /g/b751=1073 /g/b752=1074 /g/b753=1075 /g/b754=1076 /g/b755=1077 /g/b756=1078 /g/b757=1079 /g/b758=1080 /g/b759=1081 /g/b76=398 /g/b760=1082 /g/b761=1083 /g/b762=1084 /g/b763=1085 /g/b764=1086 /g/b765=1087 /g/b766=1088 /g/b767=1089 /g/b768=1090 /g/b769=1091 /g/b77=399 /g/b770=1092 /g/b771=1093 /g/b772=1094 /g/b773=1095 /g/b774=1096 /g/b775=1097 /g/b776=1098 /g/b777=1099 /g/b778=1100 /g/b779=1101 /g/b78=400 /g/b780=1102 /g/b781=1103 /g/b782=1104 /g/b783=1105 /g/b784=1106 /g/b785=1107 /g/b786=1108 /g/b787=1109 /g/b788=1110 /g/b789=1111 /g/b79=401 /g/b790=1112 /g/b791=1113 /g/b792=1114 /g/b793=1115 /g/b794=1116 /g/b795=1117 /g/b796=1118 /g/b797=1119 /g/b798=1120 /g/b799=1121 /g/b8=330 /g/b80=402 /g/b800=1122 /g/b801=1123 /g/b802=1124 /g/b803=1125 /g/b804=1126 /g/b805=1127 /g/b806=1128 /g/b807=1129 /g/b808=1130 /g/b809=1131 /g/b81=403 /g/b810=1132 /g/b811=1133 /g/b812=1134 /g/b813=1135 /g/b814=1136 /g/b815=1137 /g/b816=1138 /g/b817=1139 /g/b818=1140 /g/b819=1141 /g/b82=404 /g/b820=1142 /g/b821=1143 /g/b822=1144 /g/b823=1145 /g/b824=1146 /g/b825=1147 /g/b826=1148 /g/b827=1149 /g/b828=1150 /g/b829=1151 /g/b83=405 /g/b830=1152 /g/b831=1153 /g/b832=1154 /g/b833=1155 /g/b834=1156 /g/b835=1157 /g/b836=1158 /g/b837=1159 /g/b838=1160 /g/b839=1161 /g/b84=406 /g/b840=1162 /g/b841=1163 /g/b842=1164 /g/b843=1165 /g/b844=1166 /g/b845=1167 /g/b846=1168 /g/b847=1169 /g/b848=1170 /g/b849=1171 /g/b85=407 /g/b850=1172 /g/b851=1173 /g/b852=1174 /g/b853=1175 /g/b854=1176 /g/b855=1177 /g/b856=1178 /g/b857=1179 /g/b858=1180 /g/b859=1181 /g/b86=408 /g/b860=1182 /g/b861=1183 /g/b862=1184 /g/b863=1185 /g/b864=1186 /g/b865=1187 /g/b866=1188 /g/b867=1189 /g/b868=1190 /g/b869=1191 /g/b87=409 /g/b870=1192 /g/b871=1193 /g/b872=1194 /g/b873=1195 /g/b874=1196 /g/b875=1197 /g/b876=1198 /g/b877=1199 /g/b878=1200 /g/b879=1201 /g/b88=410 /g/b880=1202 /g/b881=1203 /g/b882=1204 /g/b883=1205 /g/b884=1206 /g/b885=1207 /g/b886=1208 /g/b887=1209 /g/b888=1210 /g/b889=1211 /g/b89=411 /g/b890=1212 /g/b891=1213 /g/b892=1214 /g/b893=1215 /g/b894=1216 /g/b895=1217 /g/b896=1218 /g/b897=1219 /g/b898=1220 /g/b899=1221 /g/b9=331 /g/b90=412 /g/b91=413 /g/b92=414 /g/b93=415 /g/b94=416 /g/b95=417 /g/b96=418 /g/b97=419 /g/b98=420 /g/b99=421 /p=4 /p/A=308 /p/B=309 /p/C=311 /p/H=316 /p/I=317 /p/R2=318 /s=5 /s/x=6 /s/x/f1=319 /s/x/f2=320 /s/x/f3=321
+DELETED nids: A=[308] B=[309, 310] C=[311, 312, 313, 314, 315] H=[316] I=[317] R2=[318] f1=[319]
+FACT Q1 file=A nid=308 kind=inode addr=4908 identical_to_W=True sha=dc7612c19014f2b6 footer(nid=308 ino=308 ofs=0 exp_ofs=0)
+FACT Q7 file=A inode_nid=308 i_nid=[0, 0, 0, 0, 0] nodes=1 ofs_equals_table=True
+FACT Q1 file=B nid=309 kind=inode addr=4909 identical_to_W=True sha=52f6386a2dd1ce2c footer(nid=309 ino=309 ofs=0 exp_ofs=0)
+FACT Q1 file=B nid=310 kind=direct addr=4910 identical_to_W=True sha=171d9e805ad50be3 footer(nid=310 ino=309 ofs=1 exp_ofs=1)
+FACT Q7 file=B inode_nid=309 i_nid=[310, 0, 0, 0, 0] nodes=2 ofs_equals_table=True
+FACT Q1 file=C nid=311 kind=inode addr=4911 identical_to_W=True sha=fdb3d1a9a2fcc416 footer(nid=311 ino=311 ofs=0 exp_ofs=0)
+FACT Q1 file=C nid=312 kind=direct addr=4912 identical_to_W=True sha=667f5085b1a51147 footer(nid=312 ino=311 ofs=1 exp_ofs=1)
+FACT Q1 file=C nid=313 kind=direct addr=4913 identical_to_W=True sha=6b598b6c196c9fe5 footer(nid=313 ino=311 ofs=2 exp_ofs=2)
+FACT Q1 file=C nid=314 kind=indirect addr=5120 identical_to_W=True sha=9e3e70b15640558c footer(nid=314 ino=311 ofs=3 exp_ofs=3)
+FACT Q1 file=C nid=315 kind=direct addr=4914 identical_to_W=True sha=24c709ac5e8645ea footer(nid=315 ino=311 ofs=4 exp_ofs=4)
+FACT Q7 file=C inode_nid=311 i_nid=[312, 313, 314, 0, 0] nodes=5 ofs_equals_table=True
+FACT Q1 file=H nid=316 kind=inode addr=4915 identical_to_W=True sha=5afcdc971d734e32 footer(nid=316 ino=316 ofs=0 exp_ofs=0)
+FACT Q7 file=H inode_nid=316 i_nid=[0, 0, 0, 0, 0] nodes=1 ofs_equals_table=True
+FACT Q1 file=I nid=317 kind=inode addr=4916 identical_to_W=True sha=960f5ab6539a05f7 footer(nid=317 ino=317 ofs=0 exp_ofs=0)
+FACT Q7 file=I inode_nid=317 i_nid=[0, 0, 0, 0, 0] nodes=1 ofs_equals_table=True
+FACT Q1 file=R2 nid=318 kind=inode addr=11453 identical_to_W=True sha=da82e642ac11abc2 footer(nid=318 ino=318 ofs=0 exp_ofs=0)
+FACT Q7 file=R2 inode_nid=318 i_nid=[0, 0, 0, 0, 0] nodes=1 ofs_equals_table=True
+FACT Q1 file=f1 nid=319 kind=inode addr=4918 identical_to_W=True sha=dc57b51e3571372b footer(nid=319 ino=319 ofs=0 exp_ofs=0)
+FACT Q7 file=f1 inode_nid=319 i_nid=[0, 0, 0, 0, 0] nodes=1 ofs_equals_table=True
+HEX Q1 inode A head(0..96)                       a48100210000000000000000010000000050000000000000060000000000000000f153650000000000f153650000000000f153650000000003fcac0603fcac0603fcac0605d8a25d000000000000000000000000040000000100000041000000
+HEX Q1 inode A footer                            34010000340100000100000067458b6b000000002d130000
+HEX Q1 inode B head(0..96)                       a48100210000000000000000010000000000500000000000020500000000000000f153650000000000f153650000000000f1536500000000030e27070429de070429de07dbeb8443000000000000000000000000040000000100000042000000
+HEX Q1 inode B footer                            35010000350100000100000067458b6b000000002e130000
+FACT Q1 stage W (p2) blocks equal the p1 blocks at the same addresses, per file: {'A': True, 'B': True, 'C': True, 'H': True, 'I': True, 'R2': False, 'f1': True}
+GATE G1 HOLDS (A=True B=True C=True; informational H=True I=True R2=True f1=True)
+FACT Q2 file=A nid=308 resolved=(1, 308, 0) cur_copy=0 copy0=(1, 308, 0) copy1=(1, 308, 0) journal=None
+FACT Q2 file=B nid=309 resolved=(1, 309, 0) cur_copy=0 copy0=(1, 309, 0) copy1=(1, 309, 0) journal=None
+FACT Q2 file=B nid=310 resolved=(1, 309, 0) cur_copy=0 copy0=(1, 309, 0) copy1=(1, 309, 0) journal=None
+FACT Q2 file=C nid=311 resolved=(1, 311, 0) cur_copy=0 copy0=(1, 311, 0) copy1=(1, 311, 0) journal=None
+FACT Q2 file=C nid=312 resolved=(1, 311, 0) cur_copy=0 copy0=(1, 311, 0) copy1=(1, 311, 0) journal=None
+FACT Q2 file=C nid=313 resolved=(1, 311, 0) cur_copy=0 copy0=(1, 311, 0) copy1=(1, 311, 0) journal=None
+FACT Q2 file=C nid=314 resolved=(1, 311, 0) cur_copy=0 copy0=(1, 311, 0) copy1=(1, 311, 0) journal=None
+FACT Q2 file=C nid=315 resolved=(1, 311, 0) cur_copy=0 copy0=(1, 311, 0) copy1=(1, 311, 0) journal=None
+FACT Q2 file=H nid=316 resolved=(1, 316, 0) cur_copy=0 copy0=(1, 316, 0) copy1=(1, 316, 0) journal=None
+FACT Q2 file=I nid=317 resolved=(1, 317, 0) cur_copy=0 copy0=(1, 317, 0) copy1=(1, 317, 0) journal=None
+FACT Q2 file=R2 nid=318 resolved=(1, 318, 0) cur_copy=0 copy0=(1, 318, 0) copy1=(1, 318, 0) journal=None
+FACT Q2 file=f1 nid=319 resolved=(1, 319, 0) cur_copy=0 copy0=(1, 319, 0) copy1=(1, 319, 0) journal=None
+FACT Q2 every deleted nid resolves to block address 0 in stage D: True; NAT journal holds 0 entries, SIT journal 1
+FACT Q3 nid=308 blk=4908 seg=1 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=False ssa_footer_type=1
+FACT Q4 nid=308 blk=4908 ssa(nid=308 ver=0 ofs=0) footer(nid=308 ofs=0) in_current_segment=False
+FACT Q5 nid=308 blk=4908 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT Q3 nid=309 blk=4909 seg=1 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=False ssa_footer_type=1
+FACT Q4 nid=309 blk=4909 ssa(nid=309 ver=0 ofs=0) footer(nid=309 ofs=0) in_current_segment=False
+FACT Q5 nid=309 blk=4909 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT Q3 nid=310 blk=4910 seg=1 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=False ssa_footer_type=1
+FACT Q4 nid=310 blk=4910 ssa(nid=310 ver=0 ofs=0) footer(nid=310 ofs=1) in_current_segment=False
+FACT Q5 nid=310 blk=4910 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT Q3 nid=311 blk=4911 seg=1 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=False ssa_footer_type=1
+FACT Q4 nid=311 blk=4911 ssa(nid=311 ver=0 ofs=0) footer(nid=311 ofs=0) in_current_segment=False
+FACT Q5 nid=311 blk=4911 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT Q3 nid=312 blk=4912 seg=1 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=False ssa_footer_type=1
+FACT Q4 nid=312 blk=4912 ssa(nid=312 ver=0 ofs=0) footer(nid=312 ofs=1) in_current_segment=False
+FACT Q5 nid=312 blk=4912 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT Q3 nid=313 blk=4913 seg=1 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=False ssa_footer_type=1
+FACT Q4 nid=313 blk=4913 ssa(nid=313 ver=0 ofs=0) footer(nid=313 ofs=2) in_current_segment=False
+FACT Q5 nid=313 blk=4913 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT Q3 nid=314 blk=5120 seg=2 sit_type=5 vblocks=0 valid_bit=0 src=block current_segment=True ssa_footer_type=0
+FACT Q4 nid=314 blk=5120 ssa(nid=0 ver=0 ofs=0) footer(nid=314 ofs=3) in_current_segment=True
+FACT Q5 nid=314 blk=5120 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT Q3 nid=315 blk=4914 seg=1 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=False ssa_footer_type=1
+FACT Q4 nid=315 blk=4914 ssa(nid=315 ver=0 ofs=0) footer(nid=315 ofs=4) in_current_segment=False
+FACT Q5 nid=315 blk=4914 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT Q3 nid=316 blk=4915 seg=1 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=False ssa_footer_type=1
+FACT Q4 nid=316 blk=4915 ssa(nid=316 ver=0 ofs=0) footer(nid=316 ofs=0) in_current_segment=False
+FACT Q5 nid=316 blk=4915 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT Q3 nid=317 blk=4916 seg=1 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=False ssa_footer_type=1
+FACT Q4 nid=317 blk=4916 ssa(nid=317 ver=0 ofs=0) footer(nid=317 ofs=0) in_current_segment=False
+FACT Q5 nid=317 blk=4916 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT Q3 nid=318 blk=4917 seg=1 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=False ssa_footer_type=1
+FACT Q4 nid=318 blk=4917 ssa(nid=318 ver=0 ofs=0) footer(nid=318 ofs=0) in_current_segment=False
+FACT Q5 nid=318 blk=4917 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT Q3 nid=318 blk=11453 seg=14 sit_type=4 vblocks=0 valid_bit=0 src=block current_segment=True ssa_footer_type=0
+FACT Q4 nid=318 blk=11453 ssa(nid=0 ver=0 ofs=0) footer(nid=318 ofs=0) in_current_segment=True
+FACT Q5 nid=318 blk=11453 cp_ver=0xaa1d15fb6b8b456b low32=1804289387 high32=0xaa1d15fb W_ver=1804289391 D_ver=1804289396
+FACT Q3 nid=319 blk=4918 seg=1 sit_type=4 vblocks=2 valid_bit=0 src=block current_segment=False ssa_footer_type=1
+FACT Q4 nid=319 blk=4918 ssa(nid=319 ver=0 ofs=0) footer(nid=319 ofs=0) in_current_segment=False
+FACT Q5 nid=319 blk=4918 cp_ver=0x000000006b8b4567 low32=1804289383 high32=0x00000000 W_ver=1804289391 D_ver=1804289396
+FACT Q3 13 stale copies; 11 in non-current segments, 0 of those in segments left at vblocks 0
+FACT Q3 freed segments (seg: sit_type, ssa_footer_type): []
+GATE G3 STOP no stale node copy lies in a freed, non-current segment (the probe cannot decide)
+GATE G2 KEEP (11 stale node blocks in non-current segments, 0 with ssa.nid != footer.nid)
+FACT Q5 checkpoint flags W=0xc5 D=0xc5 CP_CRC_RECOVERY_FLAG(0x40) set: W=True D=True; checkpoint_ver W=1804289391 D=1804289396
+GATE G4 HOLDS (0 copies with low32(cp_ver) >= low32(stage-D checkpoint_ver)=1804289396)
+HEX Q5 footer nid=308 blk=4908                   34010000340100000100000067458b6b000000002d130000
+FACT Q4 stage W cursor node/hot: cur_node_segno=0 blkoff=9 last block 4104 footer(nid=4 ino=4 ofs=0) sit_valid=1 next_valid=0 -> main_relative_and_last_written=True
+FACT Q4 stage W cursor node/warm: cur_node_segno=14 blkoff=190 last block 11453 footer(nid=318 ino=318 ofs=0) sit_valid=1 next_valid=0 -> main_relative_and_last_written=True
+FACT Q4 stage W cursor node/cold: cur_node_segno=2 blkoff=1 last block 5120 footer(nid=314 ino=311 ofs=3) sit_valid=1 next_valid=0 -> main_relative_and_last_written=True
+FACT Q8 nid=308 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT Q8 nid=309 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT Q8 nid=310 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT Q8 nid=311 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT Q8 nid=312 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT Q8 nid=313 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT Q8 nid=314 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT Q8 nid=315 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT Q8 nid=316 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT Q8 nid=317 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT Q8 nid=318 copies=2 versions=[1804289383, 1804289387] highest_shared_by=1 tied_equal=n/a
+FACT Q8 nid=319 copies=1 versions=[1804289383] highest_shared_by=1 tied_equal=n/a
+FACT Q8 nids with a same-version tie: 0 of 12
+FACT Q9 inode 318 copy blk=4917 ver=1804289383 name='R' pino=4
+FACT Q9 inode 318 copy blk=11453 ver=1804289387 name='R2' pino=4
+FACT Q9 p1 inode of R is 318, p2 inode of R2 is 318; names in the newest copies: ['R2']
+GATE G6.renamed REAL (newest copy names ['R2'])
+FACT Q10 freed nids [308, 309, 310, 311, 312, 313, 314, 315, 316, 317, 318, 319]; taken again in p4 (NAT address != 0): []; inodes of /p/N1../p/N8: [455, 456, 457, 458, 459, 460, 461, 462]; next_free_nid p3=1222 p4=463
+GATE G6.nidreuse BUILDER-ONLY
+FACT Q11 file=A data_blocks=5 changed=0 sit_valid_now=0 node_blocks=1 changed=0 stale_inode_intact=True
+FACT Q11 file=B data_blocks=1280 changed=1280 sit_valid_now=0 node_blocks=2 changed=0 stale_inode_intact=True
+FACT Q11 file=C data_blocks=3072 changed=3072 sit_valid_now=0 node_blocks=5 changed=0 stale_inode_intact=True
+FACT Q11 file=H data_blocks=2 changed=0 sit_valid_now=0 node_blocks=1 changed=0 stale_inode_intact=True
+FACT Q11 file=I data_blocks=0 changed=0 sit_valid_now=0 node_blocks=1 changed=0 stale_inode_intact=True
+FACT Q11 file=R2 data_blocks=5 changed=0 sit_valid_now=0 node_blocks=1 changed=0 stale_inode_intact=True
+FACT Q11 file=f1 data_blocks=0 changed=0 sit_valid_now=0 node_blocks=1 changed=0 stale_inode_intact=True
+GATE G6.reuse REAL
+FACT Q11 checkpoint p5: free_segment_count=49 valid_block_count=55 user_block_count=15872 (the SYSFS lines above carry the GC counters)
+FACT Q12 dir /s/x inode 6 at 4109 in stage D inline=0x25; f1 inode was 319
+FACT Q12 slot=0 live=True hash=0x00000000 ino=6 name_len=1 name='.'
+FACT Q12 slot=1 live=True hash=0x00000000 ino=5 name_len=2 name='..'
+FACT Q12 slot=2 live=False hash=0xfef55bb8 ino=319 name_len=2 name='f1'
+FACT Q12 slot=3 live=True hash=0x9b2fb026 ino=320 name_len=2 name='f2'
+FACT Q12 slot=4 live=True hash=0xe8cbb1d5 ino=321 name_len=2 name='f3'
+HEX Q12 dir inode inline area head               000000001b0000000000000000000000000000000000000000000000000000000000000000000000060000000100020000000005000000020002b85bf5fe3f01000002000126b02f9b40010000020001d5b1cbe8410100000200010000000000
+FACT Q13 H size=16384 inline=0x21 i_addr[0..5]=['0x1606', '0x0', '0x0', '0x1607', '0x0', '0x0']
+HEX Q13 H i_addr[0..5]                           061600000000000000000000071600000000000000000000
+FACT Q6 file=A data(outside current segs 0 zero 0; in current segs 5 zero 5) nodes(outside 1 zero 1; in current 0 zero 0)
+FACT Q6 file=B data(outside current segs 1280 zero 1280; in current segs 0 zero 0) nodes(outside 2 zero 2; in current 0 zero 0)
+FACT Q6 file=C data(outside current segs 2816 zero 2816; in current segs 256 zero 0) nodes(outside 4 zero 4; in current 1 zero 0)
+FACT Q6 file=H data(outside current segs 0 zero 0; in current segs 2 zero 2) nodes(outside 1 zero 1; in current 0 zero 0)
+FACT Q6 file=I data(outside current segs 0 zero 0; in current segs 0 zero 0) nodes(outside 1 zero 1; in current 0 zero 0)
+FACT Q6 file=R data(outside current segs 0 zero 0; in current segs 5 zero 5) nodes(outside 1 zero 1; in current 0 zero 0)
+FACT Q6 file=f1 data(outside current segs 0 zero 0; in current segs 0 zero 0) nodes(outside 1 zero 1; in current 0 zero 0)
+FACT Q6 outside the current segments: data 4096 zero 4096, nodes 11 zero 11; inside: data 268 zero 12, nodes 1 zero 0
+GATE G5 gone (outside the current segments: data zero 4096/4096, node zero 11/11)
+FACT Q11 stale node copies after the fill, by (SIT type of their segment, block unchanged): [((4, True), 12), ((5, True), 1)]

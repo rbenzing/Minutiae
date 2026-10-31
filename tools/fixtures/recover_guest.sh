@@ -5,8 +5,12 @@
 # guest (TCG, no KVM); the guest's own /init loads its modules. The host side
 # only lists module files and boots the guest. Modelled on recover_probe.sh.
 #
-#   guest_initrd <rd dir> <fstype: vfat|exfat|ext4> <mount opts> <payload dir> <ops file> [guest clock]
+#   guest_initrd <rd dir> <fstype: vfat|exfat|ext4|f2fs> <mount opts> <payload dir> <ops file> [guest clock]
 #   guest_run <img> <rd dir> <log>
+#
+# guest_run reads two optional variables: GUEST_DRIVE_OPTS is appended to the -drive
+# value (empty by default; for example ",discard=unmap") and GUEST_TIMEOUT is the
+# time limit in seconds (default 900; the F2FS fill-to-ENOSPC stage sets 2400).
 #
 # The ops file holds one shell command per line, run in order inside the guest
 # with the volume mounted on /mnt and the payload files in /payload. The guest
@@ -51,6 +55,7 @@ guest_initrd() {
     vfat) set -- virtio_blk virtio_pci fat vfat nls_cp437 nls_ascii nls_utf8 ;;
     exfat) set -- virtio_blk virtio_pci exfat ;;
     ext4) set -- virtio_blk virtio_pci crc32c_generic ext4 ;;
+    f2fs) set -- virtio_blk virtio_pci f2fs ;;
     *) echo "guest_initrd: unknown fstype $fstype" >&2; return 1 ;;
   esac
   : >"$rd/modules.list"
@@ -99,10 +104,10 @@ EOT
 guest_run() {
   local img=$1 rd=$2 log=$3
   (cd "$rd" && find . | LC_ALL=C sort | cpio -o -H newc --quiet | gzip -n -9) >"$rd.cpio.gz"
-  timeout 900 qemu-system-x86_64 -accel tcg -m 512 -smp 1 -nographic -no-reboot \
+  timeout "${GUEST_TIMEOUT:-900}" qemu-system-x86_64 -accel tcg -m 512 -smp 1 -nographic -no-reboot \
     -kernel "/boot/vmlinuz-$kver" -initrd "$rd.cpio.gz" \
     -append "console=ttyS0 panic=-1 loglevel=4" \
-    -drive "file=$img,format=raw,if=virtio" >"$log" 2>&1 || echo "qemu exit status $?" >&2
+    -drive "file=$img,format=raw,if=virtio${GUEST_DRIVE_OPTS:-}" >"$log" 2>&1 || echo "qemu exit status $?" >&2
   grep -a -e 'OP [0-9]' -e 'OP-FAIL' -e 'GUEST-' "$log" || true
   grep -aq 'GUEST-DONE' "$log" || { echo "guest did not finish: $log" >&2; tail -n 20 "$log" >&2; return 1; }
   if grep -aq 'OP-FAIL' "$log"; then echo "guest op failed: $log" >&2; return 1; fi

@@ -46,6 +46,11 @@ type FS struct {
 	// directory maps is skipped. Bounded by dirBudgetTotal/blockSize entries.
 	dirClaims map[int64]uint32
 
+	// idx is the footer index of the stale blocks of the node segments (recover_index.go);
+	// indexCap lowers its entry cap (0 = maxNodeIndex).
+	idx      indexState
+	indexCap int
+
 	warnings filesys.Warnings
 }
 

@@ -329,3 +329,32 @@ func TestCarveNameFailureIsCountedAndReleased(t *testing.T) {
 		t.Errorf("carved %d limit %q skipped %v", cs.Carved, cs.LimitReached, cs.SkippedBy)
 	}
 }
+
+// TestCarveMaxFileSizeNoteIsOncePerFamily: a family of several rows (the eight
+// tiff rows) that --max-file-size puts below its minimum length is named once,
+// not once per row.
+func TestCarveMaxFileSizeNoteIsOncePerFamily(t *testing.T) {
+	e := newCarveEnv(t, carveStdNodes(carveJPEG(), carvePNG())...)
+	j, err := e.s.prepareCarve(CarveOptions{Partition: -1, MaxFileSize: 31}) // tiff needs 32 bytes at least
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]int{}
+	for _, n := range j.notes {
+		if strings.HasPrefix(n, "type ") && strings.Contains(n, " is not carved") {
+			seen[n]++
+		}
+	}
+	tiff := "type tiff is not carved: --max-file-size 31 is below its minimum length 32"
+	if seen[tiff] != 1 {
+		t.Errorf("notes %q, want %q exactly once", j.notes, tiff)
+	}
+	for n, c := range seen {
+		if c != 1 {
+			t.Errorf("note %q appears %d times", n, c)
+		}
+	}
+	if slices.ContainsFunc(j.set.Types, func(ty carve.Type) bool { return ty.Name == "tiff" }) {
+		t.Error("a tiff row is still in the set")
+	}
+}

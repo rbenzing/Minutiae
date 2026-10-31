@@ -15,8 +15,6 @@ import (
 	"github.com/rbenzing/minutiae/internal/carve/carvetest"
 )
 
-func init() { implementedValidators["isobmff"] = true }
-
 func bmffWindow(buf []byte, b *budget) *Window {
 	return newWindow(context.Background(), bytes.NewReader(buf), 0, int64(len(buf)), b)
 }
@@ -48,6 +46,9 @@ func TestBMFFIdentityFromStructure(t *testing.T) {
 		{"msf1", "heif", "heif", true},
 		{"XYZW", "isobmff", "bmff", false},
 		{"iso1", "isobmff", "bmff", false},
+		{"avif", "avif", "avif", true},
+		{"avis", "avif", "avif", false},
+		{"crx ", "cr3", "cr3", false},
 	} {
 		t.Run(c.brand, func(t *testing.T) {
 			obj := carvetest.MP4(carvetest.BMFFOpts{Brand: c.brand, HEIF: c.heif, Compat: []string{"isom", "mp42"}})
@@ -64,6 +65,20 @@ func TestBMFFIdentityFromStructure(t *testing.T) {
 	// not a picture, and a non-printable brand is shown escaped, not raw.
 	if v := bmffVerdict(carvetest.MP4(carvetest.BMFFOpts{Brand: "heic"}), 0); v.Outcome != Rejected || v.Reason != "missing-meta" {
 		t.Fatalf("heic brand over moov = %+v, want rejected missing-meta", v)
+	}
+	for _, c := range []struct {
+		name   string
+		o      carvetest.BMFFOpts
+		reason string
+	}{
+		{"avif without meta", carvetest.BMFFOpts{Brand: "avif", HEIF: true, NoMeta: true}, "missing-meta"},
+		{"avis without moov", carvetest.BMFFOpts{Brand: "avis", NoMoov: true}, "missing-moov"},
+		{"crx without moov", carvetest.BMFFOpts{Brand: "crx ", NoMoov: true}, "missing-moov"},
+		{"avif over moov", carvetest.BMFFOpts{Brand: "avif"}, "missing-meta"},
+	} {
+		if v := bmffVerdict(carvetest.MP4(c.o), 0); v.Outcome != Rejected || v.Reason != c.reason {
+			t.Errorf("%s = %+v, want rejected %s", c.name, v, c.reason)
+		}
 	}
 	v := bmffVerdict(carvetest.MP4(carvetest.BMFFOpts{Brand: "A\x00\xffB"}), 0)
 	if v.Outcome != Validated || !slices.Contains(v.Basis, `brand=A\x00\xffB`) {

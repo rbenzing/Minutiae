@@ -16,6 +16,12 @@
 *.pdf binary
 *.wav binary
 *.ogg binary
+*.bmp binary
+*.tif binary
+*.ico binary
+*.cur binary
+*.avif binary
+*.jxl binary
 *.tar binary
 *.elf binary
 internal/parsers/** -text

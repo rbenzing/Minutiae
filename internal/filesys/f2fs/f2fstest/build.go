@@ -59,6 +59,15 @@ type File struct {
 	// volume with the flexible inline xattr feature and extra attributes: the
 	// words reserved at the end of its address area.
 	InlineXattrSize uint16
+
+	// Unlinked (with Deleted) leaves what the kernel leaves after an unlink and
+	// a checkpoint: the inode, its node blocks and its data blocks stay written,
+	// but the inode has no NAT entry and every one of those blocks has a clear
+	// SIT bit. Without it a Deleted file keeps its NAT entry and valid blocks.
+	Unlinked bool
+	// CPVer is the footer cp_ver of every node block of the file (default 0,
+	// which is below every checkpoint version).
+	CPVer uint64
 }
 
 // Options configure the image. The zero value is a valid, minimal volume.
@@ -128,6 +137,24 @@ type Options struct {
 	SITJournal []SITEntry
 	NoSIT      bool
 	SITDecoy   bool
+
+	// NodeSegs > 0 puts node blocks in the last NodeSegs main segments (SIT type
+	// 4, warm node) and data blocks in the others (SIT type 1, warm data); 0
+	// keeps the interleaved layout. With NodeSegs every main segment gets a SIT
+	// entry, so a node segment whose blocks are all invalid keeps its type.
+	NodeSegs int
+	// SSA writes one summary block per main segment (Layout.SSA + segment): node
+	// segments get footer type 1 (SUM_TYPE_NODE) and per node block the entry
+	// {nid}; the other segments type 0 and per data block {dnode nid, ofs in
+	// node}. Without NodeSegs the layout is interleaved and every footer type stays 0
+	// (recovery tests set NodeSegs).
+	SSA bool
+	// CurNode are the checkpoint cur_node_segno / cur_node_blkoff of the hot,
+	// warm and cold node logs, written into both packs (default zero).
+	CurNode [3]CurSeg
+	// StaleNodes are extra node blocks at their (non-zero) Addr: written, no NAT
+	// entry, SIT bit clear (older copies of a node).
+	StaleNodes []Node
 }
 
 // NATEntry is a struct f2fs_nat_entry (with its nid when journalled).
@@ -153,6 +180,9 @@ type Node struct {
 	// NoNAT writes the block but no NAT block entry (the entry then comes from
 	// the NAT journal, or is absent).
 	NoNAT bool
+	// Stale: the block is written, but there is no NAT entry and its SIT bit is
+	// clear (what an unlink leaves).
+	Stale bool
 }
 
 // Layout is the block geometry Build derives from Options (all in blocks).
@@ -253,6 +283,7 @@ func Build(o Options, files []File) []byte {
 func build(o Options) []byte {
 	l := Geometry(o)
 	img := make([]byte, int(l.BlockCount)*BlockSize)
+	o.Nodes = withStaleNodes(o)
 
 	sb := superblock(o, l)
 	copy(img[sbOffset:], sb)
@@ -269,6 +300,7 @@ func build(o Options) []byte {
 	writeNodes(img, o, l)
 	writeData(img, o)
 	writeSIT(img, o, l)
+	writeSSA(img, o, l)
 	return img
 }
 
@@ -375,6 +407,10 @@ func writePack(img []byte, o Options, l Layout, base uint32, ver uint64) {
 	put32(132, flags)
 	put32(136, l.PackBlocks)
 	put32(140, l.StartSum)
+	for i, c := range o.CurNode {
+		put32(36+4*i, c.Seg)                 // cur_node_segno[i]
+		le.PutUint16(region[68+2*i:], c.Off) // cur_node_blkoff[i]
+	}
 	put32(152, RootIno+1) // next_free_nid
 	put32(156, uint32(sitBytes))
 	put32(160, uint32(natBytes))
