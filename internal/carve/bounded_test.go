@@ -265,11 +265,18 @@ func builderCorpus() []hostileObj {
 	return c
 }
 
-// realCorpus is the real encoder objects of testdata/objects.
+// realCorpus is the real encoder objects of testdata/objects: those of
+// objects.expect.json (3E) and of images.expect.json (3E2).
 func realCorpus(t testing.TB) []hostileObj {
 	t.Helper()
+	return slices.Concat(realObjectsOf(t, "objects.expect.json"), realObjectsOf(t, "images.expect.json"))
+}
+
+// realObjectsOf is the objects one oracle file of testdata/objects lists.
+func realObjectsOf(t testing.TB, oracle string) []hostileObj {
+	t.Helper()
 	dir := filepath.Join("testdata", "objects")
-	raw, err := os.ReadFile(filepath.Join(dir, "objects.expect.json"))
+	raw, err := os.ReadFile(filepath.Join(dir, oracle))
 	if err != nil {
 		t.Fatal(err)
 	}
