@@ -14,8 +14,6 @@ import (
 	"github.com/rbenzing/minutiae/internal/carve/carvetest"
 )
 
-func init() { implementedValidators["bmp"] = true }
-
 // bmpBase is a valid 64x48 24-bit BMP with a 40-byte DIB header.
 func bmpBase() carvetest.BMPOpts {
 	return carvetest.BMPOpts{DIBSize: 40, W: 64, H: 48, BPP: 24, Planes: 1}
