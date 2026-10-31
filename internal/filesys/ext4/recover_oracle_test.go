@@ -25,7 +25,7 @@ func oracleKey(name string, inode uint32) string {
 	return name + "/" + strconv.FormatUint(uint64(inode), 10)
 }
 
-// mergeByteRuns turns [first block, count] runs into byte runs, merging runs that touch.
+// mergeBlockRuns turns [first block, count] runs into byte runs, merging runs that touch.
 func mergeBlockRuns(runs recoverRuns, bs int64) []filesys.Run {
 	var out []filesys.Run
 	for _, r := range runs {
@@ -112,7 +112,9 @@ func TestExt4RecoverableMatchesOracle(t *testing.T) {
 				matched++
 				checkReaderRecord(t, f, e, d, bs)
 			}
-			if unlisted := len(deleted) - matched; unlisted != o.UnlistedCount {
+			// One defect, one message: this count is derived from the walk count and the matches, so it is checked only
+			// when both already agree with the oracle.
+			if unlisted := len(deleted) - matched; matched == len(o.Deleted) && len(deleted) == o.DeletedEntryCount && unlisted != o.UnlistedCount {
 				t.Errorf("%d walked entries have no oracle record, the oracle says %d", unlisted, o.UnlistedCount)
 			}
 		})

@@ -77,22 +77,37 @@ func (w *mapWalker) freeSet() (*freeSet, error) {
 	return w.free, nil
 }
 
-// addSeg maps n blocks from physical block phys at the next logical block, bounded by the blocks still needed.
+// addSeg maps n blocks from physical block phys at the next logical block, bounded by the blocks still needed. Blocks
+// that continue the previous segment on disk extend it, so the list is bounded by the run cap, not by the block count.
 func (w *mapWalker) addSeg(phys, n int64) error {
 	n = min(n, w.nb-w.next)
 	if n <= 0 {
 		return nil
 	}
-	adjacent := len(w.segs) > 0 && w.segs[len(w.segs)-1].phys+w.segs[len(w.segs)-1].n == phys
-	if !adjacent {
-		if w.nruns >= w.f.mapRunsCap {
-			return w.stopAt(stopRunsCap, w.next)
-		}
-		w.nruns++
+	if last := len(w.segs) - 1; last >= 0 && w.segs[last].phys+w.segs[last].n == phys {
+		w.segs[last].n += n // logically contiguous too: every segment ends at w.next
+		w.next += n
+		return nil
 	}
+	if w.nruns >= w.f.mapRunsCap {
+		return w.stopAt(stopRunsCap, w.next)
+	}
+	w.nruns++
 	w.segs = append(w.segs, mapSeg{w.next, phys, n})
 	w.next += n
 	return nil
+}
+
+// splitSegs turns every segment into one segment per block. It runs only when an overlap was found, so that the cut
+// falls on the exact block that overlaps (the work is bounded by the blocks the walk covers).
+func (w *mapWalker) splitSegs() {
+	out := make([]mapSeg, 0, int(w.next))
+	for _, s := range w.segs {
+		for i := range s.n {
+			out = append(out, mapSeg{s.lblk + i, s.phys + i, 1})
+		}
+	}
+	w.segs = out
 }
 
 func allZero(b []byte) bool {
@@ -311,7 +326,9 @@ func (w *mapWalker) finish() staleMap {
 	if !w.cleared && w.stop == "" && w.next < w.nb {
 		w.stop = fmt.Sprintf(stopTokenTemplate, stopHole, w.next)
 	}
-	if k := w.firstOverlap(); k < len(w.segs) {
+	if w.firstOverlap() < len(w.segs) {
+		w.splitSegs()
+		k := w.firstOverlap()
 		w.stop = fmt.Sprintf(stopTokenTemplate, stopMapOverlap, w.segs[k].lblk)
 		w.segs = w.segs[:k]
 	}
