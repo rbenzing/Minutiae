@@ -689,6 +689,12 @@ func TestLiveScanImageEndIsAnIncompleteStop(t *testing.T) {
 			if !info.Incomplete || info.Stop != tc.stop || !hasSub(info.Warnings, tc.stop) {
 				t.Errorf("Incomplete %v Stop %q warnings %q; want incomplete at %s with a warning", info.Incomplete, info.Stop, info.Warnings, tc.stop)
 			}
+			if tc.cutAt == 6 {
+				lt := onlyLive(txnsOf(t, f))
+				if len(lt) != 2 || !hasSub(lt[1].Warnings, "dropped") {
+					t.Errorf("live txns %+v; want a warning on the cut transaction that its tags were dropped", lt)
+				}
+			}
 			if txns, _, _ := f.IndexTxns(); len(onlyLive(txns)) != tc.wantTxns {
 				t.Errorf("%d live txns; want %d", len(onlyLive(txns)), tc.wantTxns)
 			}

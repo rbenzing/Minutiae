@@ -401,3 +401,55 @@ func TestStaleImageEndIsIncomplete(t *testing.T) {
 		t.Errorf("txns %+v; want one uncommitted fragment with an unverified and a missing tag", txns)
 	}
 }
+
+// A stale descriptor whose checksum fails still has its tags read, bounded by the block, but none is trusted: every copy
+// is unverified, never verified, and the fragment says so. Zero tags would read as "logged nothing" (review of Task 6).
+func TestStaleBadDescriptorKeepsUntrustedTags(t *testing.T) {
+	bad := liveTxn(7, 100, 101)
+	bad.BadDescCsum = true
+	img, _ := liveImage(t, 64, ext4test.JBD2{Bit64: true, CsumV3: true, Sequence: 30, Start: 0, Txns: []ext4test.JTxn{bad}})
+	txns := allTxns(t, img)
+	if len(txns) != 1 {
+		t.Fatalf("%d fragments; want 1: %+v", len(txns), txns)
+	}
+	x := txns[0]
+	if !x.Stale || x.Csum != "bad" || !x.Committed || x.Commit != 4 {
+		t.Errorf("fragment = %+v; want stale, checksum bad, walked on to its commit at 4", x)
+	}
+	if got := fsBlocksOf(x.Tags); !reflect.DeepEqual(got, []uint64{100, 101}) {
+		t.Errorf("tags %v; want 100 and 101 (read, not dropped)", got)
+	}
+	if got := copies(x.Tags); !reflect.DeepEqual(got, []string{"unverified", "unverified"}) {
+		t.Errorf("copy states %v; want unverified (the descriptor is untrusted, so nothing verifies)", got)
+	}
+	if !hasSub(x.Warnings, "the descriptor is damaged; its tags were not trusted") {
+		t.Errorf("warnings %q; want the damaged-descriptor warning", x.Warnings)
+	}
+}
+
+func TestStalePassSkippedAfterLiveCapIsWarned(t *testing.T) {
+	img, _ := liveImage(t, 64, ext4test.JBD2{Bit64: true, CsumV3: true, Sequence: 1, Start: 1, Txns: []ext4test.JTxn{liveTxn(1, 100), liveTxn(2, 101)}})
+	f := mustOpen(t, img)
+	f.SetJournalCaps(1, 1<<20, 1<<20)
+	info, err := f.Journal()
+	if err != nil || !hasSub(info.Warnings, "stale pass skipped: the live scan hit a cap") {
+		t.Errorf("Journal() = %+v, %v; want the skipped-stale-pass warning", info, err)
+	}
+}
+
+// After the first read past the end of the image, later reads at or beyond that offset are not attempted.
+func TestImageEndStopsLaterReads(t *testing.T) {
+	img, l := liveImage(t, 16, ext4test.JBD2{Sequence: 30, Start: 0, Txns: []ext4test.JTxn{liveTxn(7, 100, 101)}})
+	cut := l.JournalFSBlock(3) * jtBS
+	f, err := ext4.Open(bytes.NewReader(img[:cut]), int64(len(img)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Journal(); err != nil {
+		t.Fatal(err)
+	}
+	// The superblock, blocks 1 and 2, and the one failing read of block 3; blocks 4..15 are not read.
+	if _, blocks := f.JournalStats(); blocks != 4 {
+		t.Errorf("%d journal reads; want 4 (no read after the first one past the end)", blocks)
+	}
+}

@@ -13,7 +13,8 @@ import (
 // block, and each block is read once.
 func (x *jindex) scanStale(f *FS) error {
 	if x.capped {
-		return nil // a cap already made the index incomplete; more fragments would hit it again
+		x.warn("stale pass skipped: the live scan hit a cap") // more fragments would hit the cap again
+		return nil
 	}
 	for p := x.sb.first; p < x.last; p++ {
 		if x.isConsumed(p) {

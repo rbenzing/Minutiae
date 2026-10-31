@@ -26,6 +26,7 @@ type jindex struct {
 	byStart  []uint32 // transaction indexes ordered by start block
 
 	// peek is the last block the scans read (see readBlock); imageEnds counts the reads past the end of the image.
+	endOff    int64 // the first offset a read ran past the end of the image at; -1 = none
 	peek      []byte
 	peekJ     uint32
 	peekOK    bool
@@ -71,7 +72,7 @@ func (f *FS) journalIndex() (*jindex, error) {
 // buildIndex scans the live region (3G-R3). The caller holds jrnMu.
 func (f *FS) buildIndex(sb *jsuper, jm *journalMap) (*jindex, error) {
 	x := &jindex{
-		sb: sb, jm: jm,
+		sb: sb, jm: jm, endOff: -1,
 		consumed: make([]uint64, (uint64(sb.maxLen)+63)/64), // maxLen is bounded by the inode's mapped blocks and the byte cap
 		last:     sb.maxLen - sb.fcBlocks(),
 	}

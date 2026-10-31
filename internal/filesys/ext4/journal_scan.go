@@ -221,8 +221,19 @@ func (x *jindex) readBlock(f *FS, j uint32) ([]byte, error) {
 	if x.keepOK && x.keepJ == j {
 		return x.keep, nil
 	}
+	if x.endOff >= 0 {
+		// A read at or beyond the first offset that failed to read ends in the same way: do not try.
+		if off, ok := x.jm.fsBlock(j, int64(x.sb.blockSize)); ok && int64(off)*int64(x.sb.blockSize) >= x.endOff {
+			return nil, errImageEnd
+		}
+	}
 	buf, err := x.readRaw(f, j)
 	if err != nil {
+		if errors.Is(err, errImageEnd) {
+			if off, ok := x.jm.fsBlock(j, int64(x.sb.blockSize)); ok && (x.endOff < 0 || int64(off)*int64(x.sb.blockSize) < x.endOff) {
+				x.endOff = int64(off) * int64(x.sb.blockSize)
+			}
+		}
 		return nil, err
 	}
 	x.peekJ, x.peek, x.peekOK = j, buf, true
@@ -367,19 +378,33 @@ func (x *jindex) scanTxn(f *FS, start uint32, expected uint32, stale bool) (next
 
 		switch typ {
 		case jbd2Descriptor:
+			untrusted := false // stale only: the descriptor fails its checksum, so its tags are read but none is trusted
 			if sb.csum() && !x.tailOK(blk) {
 				t.csum = "bad"
 				s := fmt.Sprintf("descriptor-checksum@%d", b)
-				damage(s, fmt.Sprintf("the descriptor block at journal block %d fails its checksum", b), false)
-				return finish(s)
+				if !stale {
+					damage(s, fmt.Sprintf("the descriptor block at journal block %d fails its checksum", b), false)
+					return finish(s)
+				}
+				// A fragment with zero tags would read as "logged nothing"; the tags are unknown, not absent.
+				untrusted = true
+				t.warnings = append(t.warnings, fmt.Sprintf("the descriptor block at journal block %d fails its checksum", b))
 			}
 			rts, err := parseTags(blk, sb)
 			if err != nil {
-				return 0, "", err
+				if !untrusted {
+					return 0, "", err
+				}
+				t.warnings = append(t.warnings, "the descriptor is damaged; its tags were not read")
+				b = x.adv(b)
+				return finish(fmt.Sprintf("fragment-end@%d", b))
+			}
+			if untrusted {
+				t.warnings = append(t.warnings, "the descriptor is damaged; its tags were not trusted")
 			}
 			slot := x.adv(b)
 			missingAt := -1 // stale only: the first data slot without a usable copy; it and the later ones are missing
-			for _, rt := range rts {
+			for ri, rt := range rts {
 				if len(x.tags) >= f.jrnTagCap {
 					s := fmt.Sprintf("cap-tags@%d", slot)
 					x.capHit(s)
@@ -403,6 +428,7 @@ func (x *jindex) scanTxn(f *FS, start uint32, expected uint32, stale bool) (next
 						case errors.Is(err, errImageEnd):
 							s := x.imageEnd(slot)
 							if !stale {
+								t.warnings = append(t.warnings, fmt.Sprintf("the tags from journal block %d on (%d of the descriptor) lie beyond the end of the image and were dropped", slot, len(rts)-ri))
 								return finish(s)
 							}
 							why = "lies beyond the end of the image"
@@ -429,6 +455,8 @@ func (x *jindex) scanTxn(f *FS, start uint32, expected uint32, stale bool) (next
 					// does not make the transaction's checksum "bad".
 					g.copy = copyOutside
 					t.warnings = append(t.warnings, fmt.Sprintf("a tag names block %d, outside the %d-block filesystem; it is never a source", rt.fsblk, f.sb.declaredBlocks))
+				case untrusted:
+					g.copy = copyUnverified // never verified: the descriptor that vouches for the tag failed its own checksum
 				case sb.csum():
 					var sq [4]byte
 					be.PutUint32(sq[:], expected)
