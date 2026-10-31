@@ -5,13 +5,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/examine"
 	"github.com/rbenzing/minutiae/internal/filesys"
+	"github.com/rbenzing/minutiae/internal/filesys/detect"
 	"github.com/rbenzing/minutiae/internal/filesys/f2fs/f2fstest"
 )
 
@@ -243,6 +246,9 @@ func TestRecoverRollForwardParentPathUnknown(t *testing.T) {
 	rec := only(t, rwRecords(sum))
 	rv := recoveryOf(rec)
 	if rec.Source.Derived.FSPath != "(post-checkpoint)/a.bin" || rec.Source.Derived.FSID != rwID(tr, "/orphan/a.bin") || !hasAssumption(rv, "parent-path-unknown") {
+		if hasAssumption(rv, "parent-path-search-incomplete") {
+			t.Error("a complete search carries parent-path-search-incomplete")
+		}
 		t.Errorf("FSPath %q FSID %q assumptions %v", rec.Source.Derived.FSPath, rec.Source.Derived.FSID, rv.Assumptions)
 	}
 	if !bytes.Equal(readArtifact(t, s.Case, rec), data) {
@@ -391,5 +397,105 @@ func TestRecoverRollForwardAuditDetails(t *testing.T) {
 	recoverAll(t, s)
 	if _, ok := auditByAction(t, s.Case, "analysis.start")[1].Details["rollforward"]; ok {
 		t.Error("a normal run's analysis.start carries rollforward")
+	}
+}
+
+// A reference the chain does not hold is "not found" only when the chain was read to its end.
+func TestRecoverRollForwardMissingRefOnCutChainIsIncomplete(t *testing.T) {
+	s, _, _ := f2Session(t, rwOpts(), []f2fstest.File{rwRF, {Path: "/rf/a.bin", Data: f2Stamp(2*bs, "a"), PostCheckpoint: true}},
+		func(img []byte, tr *f2fstest.Tree) {
+			f2fstest.SetFooter(img, tr.ChainAddrs[len(tr.ChainAddrs)-1]+1, f2fstest.Footer{NID: 20, Ino: 0, CPVer: f2fstest.ChainFooterVersion(img)})
+		})
+	n := len(auditEntries(t, s.Case))
+	_, err := s.Recover(context.Background(), examine.RecoverOptions{Partition: -1, RollForward: true, Refs: []string{"id:rollforward:999999"}})
+	if !errors.Is(err, filesys.ErrIncomplete) || errors.Is(err, filesys.ErrNotFound) ||
+		!strings.Contains(err.Error(), "the chain stopped at footer@") || !strings.Contains(err.Error(), "later nodes unknown") {
+		t.Fatalf("err = %v, want ErrIncomplete naming the stop", err)
+	}
+	if len(auditEntries(t, s.Case)) != n || len(auditByAction(t, s.Case, "analysis.start")) != 0 {
+		t.Error("a refused reference wrote audit entries")
+	}
+}
+
+func TestRecoverRollForwardLiveUpdateRefIsSpecific(t *testing.T) {
+	o := rwOpts()
+	files := []f2fstest.File{rwRF, {Path: "/live.bin", Data: f2Stamp(2*bs, "L")}}
+	_, probe := f2fstest.BuildTree(f2Opts(o), files)
+	live := probe.NID["/live.bin"]
+	oo := o
+	oo.Chain = []f2fstest.ChainNode{{Block: f2fstest.InodeBlock(o, f2fstest.Inode{NID: live, Mode: 0o100644, Links: 1, Size: 9000, PIno: f2fstest.RootIno, Name: "live.bin", Extra: true}), Fsync: true}}
+	s, _, _ := f2Session(t, oo, files)
+	_, err := s.Recover(context.Background(), examine.RecoverOptions{Partition: -1, RollForward: true, Refs: []string{fmt.Sprintf("id:rollforward:%d", live)}})
+	if err == nil || !strings.Contains(err.Error(), "live-update") || !strings.Contains(err.Error(), "not extracted") {
+		t.Fatalf("err = %v, want the live-update message", err)
+	}
+	if len(auditByAction(t, s.Case, "analysis.start")) != 0 {
+		t.Error("analysis.start written")
+	}
+}
+
+// A file with no name is shown by its id, never by an invented name; the local label is a separate fallback.
+func TestRecoverRollForwardNamelessFileLabel(t *testing.T) {
+	o := rwOpts()
+	a := f2fstest.Geometry(f2Opts(o)).Main + 40
+	oo := o
+	oo.Chain = []f2fstest.ChainNode{{Block: f2fstest.InodeBlock(o, f2fstest.Inode{NID: 91, Mode: 0o100644, Links: 1, Size: bs, PIno: f2fstest.RootIno, Name: "n", Extra: true, Addrs: []uint32{a}}), Fsync: true, Dentry: true}}
+	// A bad inode checksum leaves the file without a trustworthy name.
+	s, _, _ := f2Session(t, oo, []f2fstest.File{{Path: "/", Dir: true}}, func(img []byte, tr *f2fstest.Tree) {
+		img[int(tr.ChainAddrs[0])*bs+4] ^= 0xff
+	})
+	plan := rwPlan(t, s, examine.RecoverOptions{All: true, KeepUniform: true})
+	it := only(t, plan.Items)
+	if it.Path != "(post-checkpoint)/rollforward:91" || it.Name != "rollforward-91" || it.ID != "rollforward:91" {
+		t.Errorf("path %q name %q id %q", it.Path, it.Name, it.ID)
+	}
+}
+
+// failDirFS makes one directory unreadable.
+type failDirFS struct {
+	filesys.FileSystem
+	name string
+}
+
+func (f failDirFS) Underlying() filesys.FileSystem { return f.FileSystem }
+
+func (f failDirFS) ReadDir(d filesys.Entry) ([]filesys.Entry, error) {
+	if d.Name == f.name {
+		return nil, fmt.Errorf("directory %s: %w", f.name, filesys.ErrCorrupt)
+	}
+	return f.FileSystem.ReadDir(d)
+}
+
+func TestRecoverRollForwardParentSearchIncomplete(t *testing.T) {
+	files := []f2fstest.File{
+		{Path: "/bad", Dir: true},
+		{Path: "/orphan", Dir: true, Deleted: true},
+		{Path: "/orphan/a.bin", Data: f2Stamp(2*bs, "p"), PostCheckpoint: true},
+	}
+	img, _ := f2Build(rwOpts(), files)
+	c := newCase(t)
+	recs := importImage(t, c, disk(img), 1)
+	drivers := slices.Clone(detect.Drivers)
+	for i := range drivers {
+		if drivers[i].Name == "f2fs" {
+			open := drivers[i].Open
+			drivers[i].Open = func(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
+				fsys, err := open(r, size)
+				if err != nil {
+					return nil, err
+				}
+				return failDirFS{FileSystem: fsys, name: "bad"}, nil
+			}
+		}
+	}
+	s, err := examine.Open(c, recs[0].ID, examine.Options{Drivers: drivers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	rec := only(t, rwRecords(rwAll(t, s)))
+	rv := recoveryOf(rec)
+	if !hasAssumption(rv, "parent-path-unknown") || !hasAssumption(rv, "parent-path-search-incomplete") {
+		t.Errorf("assumptions %v", rv.Assumptions)
 	}
 }

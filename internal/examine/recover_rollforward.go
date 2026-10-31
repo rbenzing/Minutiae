@@ -115,7 +115,7 @@ func (p *planner) enumerateRollForward() ([]target, error) {
 	}
 	for _, r := range p.o.Refs { // sorted by the caller's order: the first unknown reference is named
 		if id := strings.TrimPrefix(r, "id:"); !known[id] {
-			return nil, fmt.Errorf("%s: %w", r, filesys.ErrNotFound)
+			return nil, missingRef(r, id, chain)
 		}
 	}
 	var picked []filesys.PostCheckpointFile
@@ -128,7 +128,7 @@ func (p *planner) enumerateRollForward() ([]target, error) {
 			picked = append(picked, f)
 		}
 	}
-	dirs, err := p.liveDirPaths(picked)
+	dirs, searchIncomplete, err := p.liveDirPaths(picked)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +148,7 @@ func (p *planner) enumerateRollForward() ([]target, error) {
 			t.path = strings.TrimSuffix(dir, "/") + "/" + f.Name
 		} else {
 			t.path = pcPathPrefix + "/" + label
-			t.parentUnknown = true
+			t.parentUnknown, t.searchIncomplete = true, searchIncomplete
 		}
 		targets = append(targets, t)
 	}
@@ -157,7 +157,7 @@ func (p *planner) enumerateRollForward() ([]target, error) {
 
 // liveDirPaths finds, with one bounded walk of the live tree, the path of every live directory that is the
 // parent of one of files. A directory that is deleted, or that no listing reaches, is simply absent.
-func (p *planner) liveDirPaths(files []filesys.PostCheckpointFile) (map[uint32]string, error) {
+func (p *planner) liveDirPaths(files []filesys.PostCheckpointFile) (map[uint32]string, bool, error) {
 	want := map[string]uint32{} // entry id -> inode number
 	for _, f := range files {
 		if f.Pino != 0 {
@@ -165,8 +165,9 @@ func (p *planner) liveDirPaths(files []filesys.PostCheckpointFile) (map[uint32]s
 		}
 	}
 	out := map[uint32]string{}
+	incomplete := false
 	if len(want) == 0 {
-		return out, nil
+		return out, false, nil
 	}
 	root := p.fsys.Root()
 	if ino, ok := want[root.ID]; ok {
@@ -177,6 +178,7 @@ func (p *planner) liveDirPaths(files []filesys.PostCheckpointFile) (map[uint32]s
 			return err
 		}
 		if werr != nil {
+			incomplete = true
 			return nil // an unreadable directory leaves its children's paths unknown
 		}
 		if filesys.IsSnapshotsDir(we) {
@@ -193,9 +195,9 @@ func (p *planner) liveDirPaths(files []filesys.PostCheckpointFile) (map[uint32]s
 		return nil
 	})
 	if err != nil && !errors.Is(err, errStopWalk) {
-		return nil, err
+		return nil, false, err
 	}
-	return out, nil
+	return out, incomplete, nil
 }
 
 // candidatesFor is the Recoverer's answer for a deleted entry, or the precomputed post-checkpoint file.
@@ -211,6 +213,9 @@ func (p *planner) candidatesFor(t target) ([]filesys.Candidate, error) {
 	if t.parentUnknown {
 		for i := range cs {
 			cs[i].Assumptions = append(slices.Clone(cs[i].Assumptions), "parent-path-unknown")
+			if t.searchIncomplete {
+				cs[i].Assumptions = append(cs[i].Assumptions, "parent-path-search-incomplete")
+			}
 		}
 	}
 	return cs, nil
@@ -229,4 +234,18 @@ func (s *Session) planSource(ctx context.Context, o RecoverOptions, fsys filesys
 	}
 	rfr, err := s.resolveRollForward(ctx, o, fsys, rf)
 	return nil, rfr, err
+}
+
+// missingRef explains an id:rollforward:<ino> that is not a post-checkpoint file. Absence is claimed
+// (ErrNotFound) only for a complete chain; a chain that stopped with later nodes unknown cannot decide it.
+func missingRef(ref, id string, chain filesys.RollForwardChain) error {
+	for _, f := range chain.Files {
+		if "rollforward:"+strconv.FormatUint(uint64(f.Ino), 10) == id && f.Kind != "post-checkpoint" {
+			return fmt.Errorf("%s: inode %d is a %s in the chain (report only, not extracted): %w", ref, f.Ino, f.Kind, filesys.ErrNotFound)
+		}
+	}
+	if !chain.Complete {
+		return fmt.Errorf("%s: not among the nodes read; the chain stopped at %s with later nodes unknown: %w", ref, chain.Stop, filesys.ErrIncomplete)
+	}
+	return fmt.Errorf("%s: %w", ref, filesys.ErrNotFound)
 }

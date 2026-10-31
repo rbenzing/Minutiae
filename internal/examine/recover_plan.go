@@ -232,8 +232,9 @@ type target struct {
 	path string
 	e    filesys.Entry
 
-	pcf           *filesys.PostCheckpointFile // a post-checkpoint file (roll-forward run); nil for a deleted entry
-	parentUnknown bool                        // its parent has no live path (3H-R7)
+	pcf              *filesys.PostCheckpointFile // a post-checkpoint file (roll-forward run); nil for a deleted entry
+	searchIncomplete bool                        // some directory could not be read while looking for the parent path
+	parentUnknown    bool                        // its parent has no live path (3H-R7)
 }
 
 type planner struct {
