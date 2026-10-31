@@ -1,0 +1,162 @@
+FSYNC-ROUTE dd conv=fsync (busybox has no fsync applet)
+CHECKPOINT-BLOCKS 512 1024
+== formatting (host side, faketime 2023-11-14 22:13:20)
+== base boot: /rf, /upd/append.bin, sync, clean unmount
+OP 1 mkdir /mnt/rf /mnt/upd
+OP 2 cp /payload/append.bin /mnt/upd/append.bin
+OP 3 sync
+GUEST-DONE
+STAGE base done after 9 s
+TOOLS base fsck-rc=0 dump-rc=0,0
+== crash boot: fsynced writes, then the host quits QEMU (GUEST_CRASH=1)
+monitor: sent quit
+qemu still running after quit (or the marker never came); killing
+OP 1 echo 3600 > /sys/fs/f2fs/vda/cp_interval
+OP 2 echo "CPINT $(cat /sys/fs/f2fs/vda/cp_interval)"
+OP 3 sync
+OP 4 echo 3 > /proc/sys/vm/drop_caches
+OP 5 for b in 512 1024; do echo "CPVER A $b $(dd if=/dev/vda bs=4096 skip=$b count=1 2>/dev/null | od -An -tx1 -N8 | tr -d ' \n')"; done
+OP 6 dd if=/payload/small.bin of=/mnt/rf/small.bin bs=4096 conv=fsync 2>/dev/null
+OP 7 dd if=/payload/direct.bin of=/mnt/rf/direct.bin bs=4096 conv=fsync 2>/dev/null
+OP 8 dd if=/payload/indirect.bin of=/mnt/rf/indirect.bin bs=4096 conv=fsync 2>/dev/null
+OP 9 dd if=/payload/add.bin of=/mnt/upd/append.bin bs=4096 seek=5 conv=notrunc,fsync 2>/dev/null
+OP 10 echo 3 > /proc/sys/vm/drop_caches
+OP 11 for b in 512 1024; do echo "CPVER B $b $(dd if=/dev/vda bs=4096 skip=$b count=1 2>/dev/null | od -An -tx1 -N8 | tr -d ' \n')"; done
+OP 12 echo WRITES-DONE
+GUEST-CRASH-READY
+STAGE crash done after 38 s
+CPINT 3600
+CPVER A 512 6b458b6b00000000
+CPVER A 1024 6a458b6b00000000
+CPVER B 512 6b458b6b00000000
+CPVER B 1024 6a458b6b00000000
+WRITES-DONE
+QEMU gone after the quit: yes
+TOOLS crash fsck-rc=0 dump-rc=0,0
+== replay boot: the guest opens a COPY of the crash image normally (the kernel's own recovery)
+OP 1 dmesg | grep -ai f2fs || true
+OP 2 ls -lR /mnt || true
+OP 3 for f in /mnt/rf/* /mnt/upd/*; do echo "RF $f $(wc -c < $f | tr -d ' ') $(sha256sum $f | cut -d' ' -f1)"; done
+GUEST-DONE
+STAGE replayed done after 47 s
+OP 1 dmesg | grep -ai f2fs || true
+[    2.730164] F2FS-fs (vda): Found nat_bits in checkpoint
+[    2.752800] F2FS-fs (vda): recover_inode: ino = 7, name = small.bin, inline = 21
+[    2.756727] F2FS-fs (vda): recover_dentry: ino = 7, name = small.bin, dir = 4, err = 0
+[    2.761840] F2FS-fs (vda): recover_data: ino = 7 (i_size: recover) recovered = 5, err = 0
+[    2.761965] F2FS-fs (vda): recover_inode: ino = 8, name = direct.bin, inline = 21
+[    2.762015] F2FS-fs (vda): recover_dentry: ino = 8, name = direct.bin, dir = 4, err = 0
+[    2.765917] F2FS-fs (vda): recover_data: ino = 8 (i_size: recover) recovered = 864, err = 0
+[    2.768838] F2FS-fs (vda): recover_data: ino = 8 (i_size: recover) recovered = 416, err = 0
+[    2.768914] F2FS-fs (vda): recover_inode: ino = a, name = indirect.bin, inline = 21
+[    2.768950] F2FS-fs (vda): recover_dentry: ino = a, name = indirect.bin, dir = 4, err = 0
+[    2.773742] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 864, err = 0
+[    2.778262] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 1018, err = 0
+[    2.782185] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 1018, err = 0
+[    2.782773] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 172, err = 0
+[    2.782806] F2FS-fs (vda): recover_inode: ino = 6, name = append.bin, inline = 21
+[    2.782935] F2FS-fs (vda): recover_data: ino = 6 (i_size: recover) recovered = 2, err = 0
+[    2.856098] F2FS-fs (vda): checkpoint: version = 6b8b456c
+[    2.856712] F2FS-fs (vda): Mounted with checkpoint version = 6b8b456c
+RF /mnt/rf/direct.bin 5242880 08db90b2816702cefe30d6c7b031c8b9ccbd974400f947476edfc02b7bae47a3
+RF /mnt/rf/indirect.bin 12582912 6fa5e97d9811a76546a37ed514d89e704f4c82ca32dd277ccb8affd57ae6e052
+RF /mnt/rf/small.bin 20480 04dbba49973685e9cad3df57eb17d769632c4c4c8269540ed76cf729a6b4362c
+RF /mnt/upd/append.bin 28672 e0d95b84f3b6be05f8c07170450a42b2ef0ba299de34579417cddca2394d9b3f
+TOOLS replayed fsck-rc=0 dump-rc=0,0
+RUNTIME guest stages and tools: 47 s
+== decoding (f2fs_recover_oracle.py rfprobe)
+CROSSCHECK base ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 4 NAT entries, 56 SIT segments
+CROSSCHECK crash ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 4 NAT entries, 56 SIT segments
+CROSSCHECK replayed ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 12 NAT entries, 56 SIT segments
+FACT PATHS inode numbers (replayed image == chain inode nodes; the append file from the base image): /rf/small.bin=7, /rf/direct.bin=8, /rf/indirect.bin=10, /upd/append.bin=6
+FACT H1 checkpoint: pack at block 512 version 1804289387 flags 0xc5 (CRC_RECOVERY 0x40 set, NOCRC_RECOVERY 0x20 clear), checksum_offset 4092, stored crc 0x683ec3e9
+FACT H1 cursors (main-relative seg, blkoff) hot/warm/cold node: [(0, 5), (1, 1), (2, 0)]; chain start = main 4096 + 1*512 + 1 = block 4609
+FACT H1 expected footer version (crc rule): 0x683ec3e96b8b456b
+FACT H1 chain[0] blk 4609 nid 7 ino 7 (/rf/small.bin) ofs 0 kind inode flag 0x7 (COLD FSYNC DENT) cp_ver 0x683ec3e96b8b456b next 4610
+HEX[] H1 chain[0] footer (24 bytes)                0700000007000000070000006b458b6be9c33e6802120000
+FACT H1 chain[1] blk 4610 nid 8 ino 8 (/rf/direct.bin) ofs 0 kind inode flag 0x7 (COLD FSYNC DENT) cp_ver 0x683ec3e96b8b456b next 4611
+HEX[] H1 chain[1] footer (24 bytes)                0800000008000000070000006b458b6be9c33e6803120000
+FACT H1 chain[2] blk 4611 nid 9 ino 8 (/rf/direct.bin) ofs 1 kind direct flag 0xb (COLD FSYNC ) cp_ver 0x683ec3e96b8b456b next 4612
+HEX[] H1 chain[2] footer (24 bytes)                09000000080000000b0000006b458b6be9c33e6804120000
+FACT H1 chain[3] blk 4612 nid 10 ino 10 (/rf/indirect.bin) ofs 0 kind inode flag 0x7 (COLD FSYNC DENT) cp_ver 0x683ec3e96b8b456b next 4613
+HEX[] H1 chain[3] footer (24 bytes)                0a0000000a000000070000006b458b6be9c33e6805120000
+FACT H1 chain[4] blk 4613 nid 11 ino 10 (/rf/indirect.bin) ofs 1 kind direct flag 0xb (COLD FSYNC ) cp_ver 0x683ec3e96b8b456b next 4614
+HEX[] H1 chain[4] footer (24 bytes)                0b0000000a0000000b0000006b458b6be9c33e6806120000
+FACT H1 chain[5] blk 4614 nid 12 ino 10 (/rf/indirect.bin) ofs 2 kind direct flag 0x13 (COLD FSYNC ) cp_ver 0x683ec3e96b8b456b next 4615
+HEX[] H1 chain[5] footer (24 bytes)                0c0000000a000000130000006b458b6be9c33e6807120000
+FACT H1 chain[6] blk 4615 nid 14 ino 10 (/rf/indirect.bin) ofs 4 kind direct flag 0x23 (COLD FSYNC ) cp_ver 0x683ec3e96b8b456b next 4616
+HEX[] H1 chain[6] footer (24 bytes)                0e0000000a000000230000006b458b6be9c33e6808120000
+FACT H1 chain[7] blk 4616 nid 6 ino 6 (/upd/append.bin) ofs 0 kind inode flag 0x3 (COLD FSYNC ) cp_ver 0x683ec3e96b8b456b next 4617
+HEX[] H1 chain[7] footer (24 bytes)                0600000006000000030000006b458b6be9c33e6809120000
+FACT H1 the walk ends with a version mismatch at block 4617; the footer version there is 0x0
+HEX[] H1 stop block footer (24 bytes)              000000000000000000000000000000000000000000000000
+FACT H1 blocks outside the chain whose footer has the expected version: 0
+GATE H1 PASS (flags 0xc5; stop version; nodes per file {'/rf/small.bin': 1, '/rf/direct.bin': 2, '/rf/indirect.bin': 4, '/upd/append.bin': 1}; every chain node carries the expected version)
+FACT H2 /rf/small.bin inode ofs 0 flag 0x7 = COLD FSYNC DENT
+FACT H2 /rf/direct.bin inode ofs 0 flag 0x7 = COLD FSYNC DENT
+FACT H2 /rf/direct.bin direct ofs 1 flag 0xb = COLD FSYNC 
+FACT H2 /rf/indirect.bin inode ofs 0 flag 0x7 = COLD FSYNC DENT
+FACT H2 /rf/indirect.bin direct ofs 1 flag 0xb = COLD FSYNC 
+FACT H2 /rf/indirect.bin direct ofs 2 flag 0x13 = COLD FSYNC 
+FACT H2 /rf/indirect.bin direct ofs 4 flag 0x23 = COLD FSYNC 
+FACT H2 /upd/append.bin inode ofs 0 flag 0x3 = COLD FSYNC 
+GATE H2 PASS (every node of the four files has FSYNC; the new files' inodes have DENT and their direct nodes do not; the appended file has none)
+FACT H3 fsck.f2fs -d 3 -f --dry-run on a copy of the crash image: exit 0, 135 output lines, 2 mention fsync/roll/recover/warm/dnode/chain, 0 of those name a chain block; image unchanged: yes
+FACT H3 line: alloc_type[CURSEG_WARM_NODE]  		[0x       0 : 0]
+FACT H3 line: alloc_type[CURSEG_WARM_DATA]  		[0x       0 : 0]
+BRANCH H3 no
+FACT H4 fsync route: dd conv=fsync (busybox has no fsync applet)
+BRANCH H4 no
+FACT H5 checkpoint_ver: base image (after the clean unmount) 1804289387; guest after the base sync 1804289387 (packs [1804289387, 1804289386]); guest at the end of the ops 1804289387 (packs [1804289387, 1804289386]); crash image 1804289387
+FACT H5 NAT entries (version, ino, address) in the crash image: {'/rf/small.bin': (0, 0, 0), '/rf/direct.bin': (0, 0, 0), '/rf/indirect.bin': (0, 0, 0), '/upd/append.bin': (0, 6, 4608)}
+FACT H5 NAT journal entries in the crash image: 0
+GATE H5 PASS (version after the base sync 1804289387 == at the end 1804289387 == crash image 1804289387; the three new files have no NAT address: True)
+FACT H6 /rf/small.bin: after the replay 20480 bytes sha256 04dbba49973685e9cad3df57eb17d769632c4c4c8269540ed76cf729a6b4362c; expected (bytes written up to the fsync) 20480 bytes sha256 04dbba49973685e9cad3df57eb17d769632c4c4c8269540ed76cf729a6b4362c; EQUAL
+FACT H6 /rf/direct.bin: after the replay 5242880 bytes sha256 08db90b2816702cefe30d6c7b031c8b9ccbd974400f947476edfc02b7bae47a3; expected (bytes written up to the fsync) 5242880 bytes sha256 08db90b2816702cefe30d6c7b031c8b9ccbd974400f947476edfc02b7bae47a3; EQUAL
+FACT H6 /rf/indirect.bin: after the replay 12582912 bytes sha256 6fa5e97d9811a76546a37ed514d89e704f4c82ca32dd277ccb8affd57ae6e052; expected (bytes written up to the fsync) 12582912 bytes sha256 6fa5e97d9811a76546a37ed514d89e704f4c82ca32dd277ccb8affd57ae6e052; EQUAL
+FACT H6 /upd/append.bin: after the replay 28672 bytes sha256 e0d95b84f3b6be05f8c07170450a42b2ef0ba299de34579417cddca2394d9b3f; expected (bytes written up to the fsync) 28672 bytes sha256 e0d95b84f3b6be05f8c07170450a42b2ef0ba299de34579417cddca2394d9b3f; EQUAL
+FACT H6 guest line: [    2.730164] F2FS-fs (vda): Found nat_bits in checkpoint
+FACT H6 guest line: [    2.752800] F2FS-fs (vda): recover_inode: ino = 7, name = small.bin, inline = 21
+FACT H6 guest line: [    2.756727] F2FS-fs (vda): recover_dentry: ino = 7, name = small.bin, dir = 4, err = 0
+FACT H6 guest line: [    2.761840] F2FS-fs (vda): recover_data: ino = 7 (i_size: recover) recovered = 5, err = 0
+FACT H6 guest line: [    2.761965] F2FS-fs (vda): recover_inode: ino = 8, name = direct.bin, inline = 21
+FACT H6 guest line: [    2.762015] F2FS-fs (vda): recover_dentry: ino = 8, name = direct.bin, dir = 4, err = 0
+FACT H6 guest line: [    2.765917] F2FS-fs (vda): recover_data: ino = 8 (i_size: recover) recovered = 864, err = 0
+FACT H6 guest line: [    2.768838] F2FS-fs (vda): recover_data: ino = 8 (i_size: recover) recovered = 416, err = 0
+FACT H6 guest line: [    2.768914] F2FS-fs (vda): recover_inode: ino = a, name = indirect.bin, inline = 21
+FACT H6 guest line: [    2.768950] F2FS-fs (vda): recover_dentry: ino = a, name = indirect.bin, dir = 4, err = 0
+FACT H6 guest line: [    2.773742] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 864, err = 0
+FACT H6 guest line: [    2.778262] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 1018, err = 0
+FACT H6 guest line: [    2.782185] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 1018, err = 0
+FACT H6 guest line: [    2.782773] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 172, err = 0
+FACT H6 guest line: [    2.782806] F2FS-fs (vda): recover_inode: ino = 6, name = append.bin, inline = 21
+FACT H6 guest line: [    2.782935] F2FS-fs (vda): recover_data: ino = 6 (i_size: recover) recovered = 2, err = 0
+FACT H6 guest line: [    2.856098] F2FS-fs (vda): checkpoint: version = 6b8b456c
+FACT H6 guest line: [    2.856712] F2FS-fs (vda): Mounted with checkpoint version = 6b8b456c
+FACT H6 replayed image: checkpoint_ver 1804289391 flags 0xc5
+BRANCH H6 yes (mount ok: True, all four files equal: True)
+FACT H7 indirect.bin: last inode node in the chain at blk 4612, i_nid[0..4] = [11, 12, 13, 0, 0]
+FACT H7 nid 13: no block of the main area carries it (the indirect node was never written before the crash)
+FACT H7 NAT entry of nid 13 in the crash image: (0, 0, 0)
+FACT H7 chain nodes of indirect.bin (kind, ofs): [('direct', 1), ('direct', 2), ('direct', 4), ('inode', 0)]
+BRANCH H7 yes
+FACT H8 /upd/append.bin ino 6: live NAT entry in the crash image (0, 6, 4608); chain nodes (blk, kind, ofs, flag): [(4616, 'inode', 0, '0x3')]
+FACT H8 chain inode copy: i_size 28672
+HEX[] H8 append.bin chain inode head (96 bytes)    a48100210000000000000000010000000070000000000000080000000000000000f153650000000000f153650000000000f153650000000000321b08fdc76c20fdc76c209cd97052000000000000000000000000050000000a00000061707065
+FACT H8 after the replay: i_size 28672 (guest listing: (28672, 'e0d95b84f3b6be05f8c07170450a42b2ef0ba299de34579417cddca2394d9b3f'))
+FACT H9 /rf/small.bin: 5 distinct data addresses in the chain nodes, 0 with the SIT bit set, 0 outside the main area
+HEX[] H9 /rf/small.bin first data block head (32 bytes) 41208e228a3f037754ec83807866842af2eaa26cdca480382bab4e985d98adba
+FACT H9 /rf/direct.bin: 1280 distinct data addresses in the chain nodes, 0 with the SIT bit set, 0 outside the main area
+HEX[] H9 /rf/direct.bin first data block head (32 bytes) 443a353132000000000000000000000000000000000000000000000000000000
+FACT H9 /rf/indirect.bin: 3072 distinct data addresses in the chain nodes, 0 with the SIT bit set, 0 outside the main area
+HEX[] H9 /rf/indirect.bin first data block head (32 bytes) 493a300000000000000000000000000000000000000000000000000000000000
+FACT H9 /upd/append.bin: 7 distinct data addresses in the chain nodes, 5 with the SIT bit set, 0 outside the main area
+HEX[] H9 /upd/append.bin first data block head (32 bytes) 5aae014941cc7cdd874314d8a6554067f35d821ea5074b9c24f910b781e45686
+FACT H9 new files' data blocks with a set SIT bit: 0 (expected 0)
+FACT H10 fsck.f2fs -f --dry-run exit status on a copy of the crash image: 0; on the base image: 0
+FACT H11 segment of the chain start 1 (block 4609); nodes 8; next_blkaddr into another segment: none
+FACT H12 inode checksums of the chain inodes (blk, nid, valid): [(4609, 7, True), (4610, 8, True), (4612, 10, True), (4616, 6, True)]
+GATE-FINAL H1 PASS
+GATE-FINAL H2 PASS
+GATE-FINAL H5 PASS
+PROBE COMPLETE
