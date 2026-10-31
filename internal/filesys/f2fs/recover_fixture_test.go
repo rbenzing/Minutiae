@@ -159,15 +159,24 @@ func inRanges(rs [][2]int64, blk int64) bool {
 	return slices.ContainsFunc(rs, func(r [2]int64) bool { return blk >= r[0] && blk <= r[1] })
 }
 
-// footerOf reads the node footer (nid, ino, flag, cp_ver) of the block at addr.
-func footerOf(img []byte, addr uint32) (nid, ino, flag uint32, cpVer uint64) {
+// footerOf reads the node footer (nid, ino, flag, cp_ver) of the block at addr. An address outside the image is
+// a failure of the test (a corrupt oracle), never a panic.
+func footerOf(t testing.TB, img []byte, addr uint32) (nid, ino, flag uint32, cpVer uint64) {
+	t.Helper()
+	if (int64(addr)+1)*4096 > int64(len(img)) {
+		t.Fatalf("stale address %d is outside the %d-byte image", addr, len(img))
+	}
 	b := img[int64(addr)*4096 : int64(addr)*4096+4096]
 	return binary.LittleEndian.Uint32(b[4072:]), binary.LittleEndian.Uint32(b[4076:]),
 		binary.LittleEndian.Uint32(b[4080:]), binary.LittleEndian.Uint64(b[4084:])
 }
 
-// iNID returns i_nid[j] of the inode block at addr (offset 4052 of the block).
-func iNID(img []byte, addr uint32, j int) uint32 {
+// iNID returns i_nid[j] of the inode block at addr (offset 4052 of the block); same bounds rule as footerOf.
+func iNID(t testing.TB, img []byte, addr uint32, j int) uint32 {
+	t.Helper()
+	if (int64(addr)+1)*4096 > int64(len(img)) || j < 0 || j > 4 {
+		t.Fatalf("stale address %d (i_nid[%d]) is outside the %d-byte image", addr, j, len(img))
+	}
 	return binary.LittleEndian.Uint32(img[int64(addr)*4096+4052+int64(4*j):])
 }
 
@@ -370,7 +379,7 @@ func TestF2FSRecoverFixturesHoldWhatTheyClaim(t *testing.T) {
 					}
 				}
 				if d.Stale.Intact {
-					nid, ino, flag, ver := footerOf(img, d.Stale.Addr)
+					nid, ino, flag, ver := footerOf(t, img, d.Stale.Addr)
 					if nid != d.Ino || ino != d.Ino || flag>>3 != 0 || uint32(ver) != d.Stale.CPVerLow {
 						t.Errorf("%s: stale.intact but the block at %d has footer nid %d ino %d ofs %d cp_ver %#x", d.Path, d.Stale.Addr, nid, ino, flag>>3, ver)
 					}
@@ -400,12 +409,12 @@ func TestF2FSRecoverFixturesHoldWhatTheyClaim(t *testing.T) {
 				}
 			}
 			for _, d := range byFam["direct"] {
-				if d.Stale.Intact && (iNID(img, d.Stale.Addr, 0) == 0 || iNID(img, d.Stale.Addr, 2) != 0) {
-					t.Errorf("direct: i_nid = %d %d %d, want i_nid[0] only", iNID(img, d.Stale.Addr, 0), iNID(img, d.Stale.Addr, 1), iNID(img, d.Stale.Addr, 2))
+				if d.Stale.Intact && (iNID(t, img, d.Stale.Addr, 0) == 0 || iNID(t, img, d.Stale.Addr, 2) != 0) {
+					t.Errorf("direct: i_nid = %d %d %d, want i_nid[0] only", iNID(t, img, d.Stale.Addr, 0), iNID(t, img, d.Stale.Addr, 1), iNID(t, img, d.Stale.Addr, 2))
 				}
 			}
 			for _, d := range byFam["indirect"] {
-				if d.Stale.Intact && iNID(img, d.Stale.Addr, 2) == 0 {
+				if d.Stale.Intact && iNID(t, img, d.Stale.Addr, 2) == 0 {
 					t.Errorf("indirect: i_nid[2] is 0, want an indirect node")
 				}
 			}
@@ -607,7 +616,7 @@ func checkLiveFile(t *testing.T, fsys *f2fs.FS, e filesys.Entry, l recLive) {
 		if r.Offset >= 0 {
 			data = append(data, r)
 		} else {
-			holeRanges = append(holeRanges, [2]int64{pos / 4096, (pos+r.Length-1)/4096 - 0})
+			holeRanges = append(holeRanges, [2]int64{pos / 4096, (pos + r.Length - 1) / 4096})
 		}
 		pos += r.Length
 	}
