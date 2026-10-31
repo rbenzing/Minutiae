@@ -9,12 +9,6 @@ import (
 	"github.com/rbenzing/minutiae/internal/filesys"
 )
 
-// errRFNotImplemented is what a roll-forward entry point that is not built yet returns:
-// unknown must never read as absent while the branch is in progress.
-func errRFNotImplemented() error {
-	return fmt.Errorf("f2fs roll-forward: not implemented: %w", filesys.ErrUnsupported)
-}
-
 // rfBlock reads chain block blk for a report. The index said the block was readable, so a
 // failure is a short read (a *CorruptError) or the I/O error, never "absent".
 func (f *FS) rfBlock(blk uint32) ([]byte, error) {
