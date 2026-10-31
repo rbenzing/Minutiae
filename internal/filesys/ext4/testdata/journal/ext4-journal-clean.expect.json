@@ -1,0 +1,1915 @@
+{
+ "block_size": 1024,
+ "deleted": [
+  {
+   "expect": {
+    "committed": {
+     "assumptions": [
+      "inode-not-reused-since-entry-deleted",
+      "owner-by-crc32c-seed",
+      "leaf-may-be-superseded",
+      "size-from-extent-leaf-blocks",
+      "file-end-unknown",
+      "in-inode-map-cleared"
+     ],
+     "candidate_methods": [
+      "ext4-extent-leaf"
+     ],
+     "captured_blocks": [
+      [
+       3850,
+       1
+      ],
+      [
+       3852,
+       1
+      ],
+      [
+       3854,
+       1
+      ],
+      [
+       3856,
+       1
+      ],
+      [
+       3858,
+       1
+      ],
+      [
+       3862,
+       1
+      ],
+      [
+       3864,
+       1
+      ],
+      [
+       3866,
+       1
+      ],
+      [
+       3868,
+       1
+      ],
+      [
+       3870,
+       1
+      ],
+      [
+       3872,
+       1
+      ],
+      [
+       3874,
+       1
+      ],
+      [
+       3876,
+       1
+      ],
+      [
+       3878,
+       1
+      ],
+      [
+       3880,
+       1
+      ],
+      [
+       3882,
+       1
+      ],
+      [
+       3884,
+       1
+      ],
+      [
+       3886,
+       1
+      ],
+      [
+       3888,
+       1
+      ],
+      [
+       3890,
+       1
+      ],
+      [
+       3892,
+       1
+      ],
+      [
+       3894,
+       1
+      ],
+      [
+       3896,
+       1
+      ],
+      [
+       3898,
+       1
+      ]
+     ],
+     "confidence": 20,
+     "cut": false,
+     "equal_source": "prefix-of-artifact",
+     "incomplete": true,
+     "method": "ext4-extent-leaf",
+     "outcome": "recover",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 24576,
+     "skip": "",
+     "stop": "",
+     "tree_sources": []
+    },
+    "none": {
+     "assumptions": [
+      "inode-not-reused-since-entry-deleted",
+      "owner-by-crc32c-seed",
+      "leaf-may-be-superseded",
+      "size-from-extent-leaf-blocks",
+      "file-end-unknown",
+      "in-inode-map-cleared"
+     ],
+     "candidate_methods": [
+      "ext4-extent-leaf"
+     ],
+     "captured_blocks": [
+      [
+       3850,
+       1
+      ],
+      [
+       3852,
+       1
+      ],
+      [
+       3854,
+       1
+      ],
+      [
+       3856,
+       1
+      ],
+      [
+       3858,
+       1
+      ],
+      [
+       3862,
+       1
+      ],
+      [
+       3864,
+       1
+      ],
+      [
+       3866,
+       1
+      ],
+      [
+       3868,
+       1
+      ],
+      [
+       3870,
+       1
+      ],
+      [
+       3872,
+       1
+      ],
+      [
+       3874,
+       1
+      ],
+      [
+       3876,
+       1
+      ],
+      [
+       3878,
+       1
+      ],
+      [
+       3880,
+       1
+      ],
+      [
+       3882,
+       1
+      ],
+      [
+       3884,
+       1
+      ],
+      [
+       3886,
+       1
+      ],
+      [
+       3888,
+       1
+      ],
+      [
+       3890,
+       1
+      ],
+      [
+       3892,
+       1
+      ],
+      [
+       3894,
+       1
+      ],
+      [
+       3896,
+       1
+      ],
+      [
+       3898,
+       1
+      ]
+     ],
+     "confidence": 20,
+     "cut": false,
+     "equal_source": "prefix-of-artifact",
+     "incomplete": true,
+     "method": "ext4-extent-leaf",
+     "outcome": "recover",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 24576,
+     "skip": "",
+     "stop": "",
+     "tree_sources": []
+    },
+    "stale": {
+     "assumptions": [
+      "inode-copy-from-journal",
+      "journal-copy-may-predate-last-change",
+      "size-from-journal-copy",
+      "inode-not-reused-since-entry-deleted",
+      "journal-stale-region"
+     ],
+     "candidate_methods": [
+      "ext4-extent-leaf",
+      "ext4-journal-inode"
+     ],
+     "captured_blocks": [
+      [
+       3850,
+       1
+      ],
+      [
+       3852,
+       1
+      ],
+      [
+       3854,
+       1
+      ],
+      [
+       3856,
+       1
+      ],
+      [
+       3858,
+       1
+      ],
+      [
+       3862,
+       1
+      ],
+      [
+       3864,
+       1
+      ],
+      [
+       3866,
+       1
+      ],
+      [
+       3868,
+       1
+      ],
+      [
+       3870,
+       1
+      ],
+      [
+       3872,
+       1
+      ],
+      [
+       3874,
+       1
+      ],
+      [
+       3876,
+       1
+      ],
+      [
+       3878,
+       1
+      ],
+      [
+       3880,
+       1
+      ],
+      [
+       3882,
+       1
+      ],
+      [
+       3884,
+       1
+      ],
+      [
+       3886,
+       1
+      ],
+      [
+       3888,
+       1
+      ],
+      [
+       3890,
+       1
+      ],
+      [
+       3892,
+       1
+      ],
+      [
+       3894,
+       1
+      ],
+      [
+       3896,
+       1
+      ],
+      [
+       3898,
+       1
+      ]
+     ],
+     "confidence": 40,
+     "cut": false,
+     "equal_source": "full",
+     "incomplete": false,
+     "method": "ext4-journal-inode",
+     "outcome": "recover",
+     "overlaps": [],
+     "region": "stale",
+     "seq": 325,
+     "size": 24567,
+     "skip": "",
+     "stop": "",
+     "tree_sources": [
+      "journal:268"
+     ]
+    }
+   },
+   "family": "jdeep",
+   "generation": 2057406703,
+   "inode": 59,
+   "journal_copies": {
+    "copies": 29,
+    "deleted_state": 1,
+    "live_state": 28,
+    "newest_live_state_seq": 325,
+    "newest_live_state_size": 24567,
+    "other_generation": 0,
+    "revoked": 0
+   },
+   "kernel_state": {
+    "i_size": 0,
+    "inode_free": true,
+    "leaf_intact": true,
+    "root_entries": 0
+   },
+   "name": "jdeep",
+   "path": "/t/deep/jdeep",
+   "source_sha256": "6149bdb5253f53af577782654a13ae99266cbfda26c22518064a272a3ac07414",
+   "source_size": 24567,
+   "tree_blocks": [
+    3859
+   ],
+   "true_basis": "stage-image",
+   "true_blocks": [
+    [
+     3850,
+     1
+    ],
+    [
+     3852,
+     1
+    ],
+    [
+     3854,
+     1
+    ],
+    [
+     3856,
+     1
+    ],
+    [
+     3858,
+     1
+    ],
+    [
+     3862,
+     1
+    ],
+    [
+     3864,
+     1
+    ],
+    [
+     3866,
+     1
+    ],
+    [
+     3868,
+     1
+    ],
+    [
+     3870,
+     1
+    ],
+    [
+     3872,
+     1
+    ],
+    [
+     3874,
+     1
+    ],
+    [
+     3876,
+     1
+    ],
+    [
+     3878,
+     1
+    ],
+    [
+     3880,
+     1
+    ],
+    [
+     3882,
+     1
+    ],
+    [
+     3884,
+     1
+    ],
+    [
+     3886,
+     1
+    ],
+    [
+     3888,
+     1
+    ],
+    [
+     3890,
+     1
+    ],
+    [
+     3892,
+     1
+    ],
+    [
+     3894,
+     1
+    ],
+    [
+     3896,
+     1
+    ],
+    [
+     3898,
+     1
+    ]
+   ]
+  },
+  {
+   "expect": {
+    "committed": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "reused",
+     "stop": "",
+     "tree_sources": []
+    },
+    "none": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "reused",
+     "stop": "",
+     "tree_sources": []
+    },
+    "stale": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "reused",
+     "stop": "",
+     "tree_sources": []
+    }
+   },
+   "family": "aux-donor",
+   "generation": 2902939269,
+   "inode": 30,
+   "journal_copies": {},
+   "kernel_state": {
+    "i_size": 1024,
+    "inode_free": false,
+    "leaf_intact": false,
+    "root_entries": 1
+   },
+   "name": "jdn",
+   "path": "/t/dn/jdn",
+   "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "source_size": 0,
+   "tree_blocks": [],
+   "true_basis": "stage-image",
+   "true_blocks": []
+  },
+  {
+   "expect": {
+    "committed": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "no-map",
+     "stop": "",
+     "tree_sources": []
+    },
+    "none": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "no-map",
+     "stop": "",
+     "tree_sources": []
+    },
+    "stale": {
+     "assumptions": [
+      "inode-copy-from-journal",
+      "journal-copy-may-predate-last-change",
+      "size-from-journal-copy",
+      "inode-not-reused-since-entry-deleted",
+      "journal-stale-region",
+      "overlap=/t/swap/jswap",
+      "overlap=/t/wb/jswapb"
+     ],
+     "candidate_methods": [
+      "ext4-journal-inode"
+     ],
+     "captured_blocks": [
+      [
+       3908,
+       3
+      ]
+     ],
+     "confidence": 30,
+     "cut": false,
+     "equal_source": "prefix-of-artifact",
+     "incomplete": false,
+     "method": "ext4-journal-inode",
+     "outcome": "recover",
+     "overlaps": [
+      "/t/swap/jswap",
+      "/t/wb/jswapb"
+     ],
+     "region": "stale",
+     "seq": 323,
+     "size": 3069,
+     "skip": "",
+     "stop": "",
+     "tree_sources": []
+    }
+   },
+   "family": "aux-donor",
+   "generation": 1143391296,
+   "inode": 31,
+   "journal_copies": {
+    "copies": 5,
+    "deleted_state": 3,
+    "live_state": 1,
+    "newest_live_state_seq": 323,
+    "newest_live_state_size": 3069,
+    "other_generation": 1,
+    "revoked": 0
+   },
+   "kernel_state": {
+    "i_size": 0,
+    "inode_free": true,
+    "leaf_intact": false,
+    "root_entries": 0
+   },
+   "name": "jdn2",
+   "path": "/t/dn/jdn2",
+   "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "source_size": 0,
+   "tree_blocks": [],
+   "true_basis": "stage-image",
+   "true_blocks": []
+  },
+  {
+   "expect": {
+    "committed": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "no-map",
+     "stop": "",
+     "tree_sources": []
+    },
+    "none": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "no-map",
+     "stop": "",
+     "tree_sources": []
+    },
+    "stale": {
+     "assumptions": [],
+     "candidate_methods": [
+      "ext4-journal-inode"
+     ],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "no-free-bytes",
+     "stop": "",
+     "tree_sources": []
+    }
+   },
+   "family": "aux-donor",
+   "generation": 3563109611,
+   "inode": 57,
+   "journal_copies": {
+    "copies": 29,
+    "deleted_state": 3,
+    "live_state": 26,
+    "newest_live_state_seq": 268,
+    "newest_live_state_size": 6144,
+    "other_generation": 0,
+    "revoked": 0
+   },
+   "kernel_state": {
+    "i_size": 0,
+    "inode_free": true,
+    "leaf_intact": false,
+    "root_entries": 0
+   },
+   "name": "jdonor",
+   "path": "/t/dn/jdonor",
+   "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "source_size": 0,
+   "tree_blocks": [],
+   "true_basis": "stage-image",
+   "true_blocks": [
+    [
+     3841,
+     6
+    ]
+   ]
+  },
+  {
+   "expect": {
+    "committed": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "no-map",
+     "stop": "",
+     "tree_sources": []
+    },
+    "none": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "no-map",
+     "stop": "",
+     "tree_sources": []
+    },
+    "stale": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "no-map",
+     "stop": "",
+     "tree_sources": []
+    }
+   },
+   "family": "jgone",
+   "generation": 2988592714,
+   "inode": 32,
+   "journal_copies": {
+    "copies": 5,
+    "deleted_state": 5,
+    "live_state": 0,
+    "newest_live_state_seq": -1,
+    "newest_live_state_size": -1,
+    "other_generation": 0,
+    "revoked": 0
+   },
+   "kernel_state": {
+    "i_size": 0,
+    "inode_free": true,
+    "leaf_intact": false,
+    "root_entries": 0
+   },
+   "name": "jgone",
+   "path": "/t/gone/jgone",
+   "source_sha256": "bd72db3d6459a8515a159c1bc68980a51b58f3c5324ef73f16a518c1dcae8eec",
+   "source_size": 3000,
+   "tree_blocks": [],
+   "true_basis": "stage-image",
+   "true_blocks": [
+    [
+     9346,
+     3
+    ]
+   ]
+  },
+  {
+   "expect": {
+    "committed": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "reused",
+     "stop": "",
+     "tree_sources": []
+    },
+    "none": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "reused",
+     "stop": "",
+     "tree_sources": []
+    },
+    "stale": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "reused",
+     "stop": "",
+     "tree_sources": []
+    }
+   },
+   "family": "jhardlink",
+   "generation": 3717937641,
+   "inode": 63,
+   "journal_copies": {},
+   "kernel_state": {
+    "i_size": 2000,
+    "inode_free": false,
+    "leaf_intact": false,
+    "root_entries": 1
+   },
+   "name": "jh1",
+   "path": "/t/hl/jh1",
+   "source_sha256": "76c2aa62c72285761416dc8a8424574304ec6a08c4a49b276351320fda650c1e",
+   "source_size": 2000,
+   "tree_blocks": [],
+   "true_basis": "stage-image",
+   "true_blocks": [
+    [
+     3906,
+     2
+    ]
+   ]
+  },
+  {
+   "expect": {
+    "committed": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "unsupported",
+     "stop": "",
+     "tree_sources": []
+    },
+    "none": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "unsupported",
+     "stop": "",
+     "tree_sources": []
+    },
+    "stale": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "unsupported",
+     "stop": "",
+     "tree_sources": []
+    }
+   },
+   "family": "jinline",
+   "generation": 546529574,
+   "inode": 65,
+   "journal_copies": {},
+   "kernel_state": {
+    "i_size": 40,
+    "inode_free": true,
+    "leaf_intact": false,
+    "root_entries": 0
+   },
+   "name": "jin",
+   "path": "/t/in/jin",
+   "source_sha256": "42075f02ba4a213481b715ee9ad94b007d1f1c147b9caea74e131713dfd148de",
+   "source_size": 40,
+   "tree_blocks": [],
+   "true_basis": "stage-image",
+   "true_blocks": []
+  },
+  {
+   "expect": {
+    "committed": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "no-map",
+     "stop": "",
+     "tree_sources": []
+    },
+    "none": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "no-map",
+     "stop": "",
+     "tree_sources": []
+    },
+    "stale": {
+     "assumptions": [
+      "inode-copy-from-journal",
+      "journal-copy-may-predate-last-change",
+      "size-from-journal-copy",
+      "inode-not-reused-since-entry-deleted",
+      "journal-stale-region"
+     ],
+     "candidate_methods": [
+      "ext4-journal-inode"
+     ],
+     "captured_blocks": [
+      [
+       3847,
+       3
+      ]
+     ],
+     "confidence": 20,
+     "cut": true,
+     "equal_source": "artifact-is-prefix",
+     "incomplete": true,
+     "method": "ext4-journal-inode",
+     "outcome": "recover",
+     "overlaps": [],
+     "region": "stale",
+     "seq": 317,
+     "size": 3072,
+     "skip": "",
+     "stop": "",
+     "tree_sources": []
+    }
+   },
+   "family": "jreuse",
+   "generation": 4058479773,
+   "inode": 58,
+   "journal_copies": {
+    "copies": 29,
+    "deleted_state": 2,
+    "live_state": 27,
+    "newest_live_state_seq": 317,
+    "newest_live_state_size": 7157,
+    "other_generation": 0,
+    "revoked": 0
+   },
+   "kernel_state": {
+    "i_size": 0,
+    "inode_free": true,
+    "leaf_intact": false,
+    "root_entries": 0
+   },
+   "name": "jreuse",
+   "path": "/t/reuse/jreuse",
+   "source_sha256": "a176f4863e566d6c98cce82a076a8efe2fd6172d66dd7a174c84e90cbb871d81",
+   "source_size": 7157,
+   "tree_blocks": [],
+   "true_basis": "stage-image",
+   "true_blocks": [
+    [
+     3847,
+     3
+    ],
+    [
+     3841,
+     4
+    ]
+   ]
+  },
+  {
+   "expect": {
+    "committed": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "no-map",
+     "stop": "",
+     "tree_sources": []
+    },
+    "none": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "no-map",
+     "stop": "",
+     "tree_sources": []
+    },
+    "stale": {
+     "assumptions": [
+      "inode-copy-from-journal",
+      "journal-copy-may-predate-last-change",
+      "size-from-journal-copy",
+      "inode-not-reused-since-entry-deleted",
+      "journal-stale-region"
+     ],
+     "candidate_methods": [
+      "ext4-journal-inode"
+     ],
+     "captured_blocks": [
+      [
+       3903,
+       3
+      ]
+     ],
+     "confidence": 40,
+     "cut": false,
+     "equal_source": "full",
+     "incomplete": false,
+     "method": "ext4-journal-inode",
+     "outcome": "recover",
+     "overlaps": [],
+     "region": "stale",
+     "seq": 322,
+     "size": 3067,
+     "skip": "",
+     "stop": "",
+     "tree_sources": []
+    }
+   },
+   "family": "jsmall",
+   "generation": 3674246129,
+   "inode": 62,
+   "journal_copies": {
+    "copies": 7,
+    "deleted_state": 1,
+    "live_state": 6,
+    "newest_live_state_seq": 322,
+    "newest_live_state_size": 3067,
+    "other_generation": 0,
+    "revoked": 0
+   },
+   "kernel_state": {
+    "i_size": 0,
+    "inode_free": true,
+    "leaf_intact": false,
+    "root_entries": 0
+   },
+   "name": "jsmall",
+   "path": "/t/small/jsmall",
+   "source_sha256": "db1a27ee0be5e55088ee985e6f2ce59361187c693bd9192ba3b124386fd198f4",
+   "source_size": 3067,
+   "tree_blocks": [],
+   "true_basis": "stage-image",
+   "true_blocks": [
+    [
+     3903,
+     3
+    ]
+   ]
+  },
+  {
+   "expect": {
+    "committed": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "no-map",
+     "stop": "",
+     "tree_sources": []
+    },
+    "none": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "no-map",
+     "stop": "",
+     "tree_sources": []
+    },
+    "stale": {
+     "assumptions": [
+      "inode-copy-from-journal",
+      "journal-copy-may-predate-last-change",
+      "size-from-journal-copy",
+      "inode-not-reused-since-entry-deleted",
+      "journal-stale-region",
+      "overlap=/t/dn/jdn2",
+      "overlap=/t/wb/jswapb"
+     ],
+     "candidate_methods": [
+      "ext4-journal-inode"
+     ],
+     "captured_blocks": [
+      [
+       3908,
+       3
+      ]
+     ],
+     "confidence": 30,
+     "cut": false,
+     "equal_source": "no",
+     "incomplete": false,
+     "method": "ext4-journal-inode",
+     "outcome": "recover",
+     "overlaps": [
+      "/t/dn/jdn2",
+      "/t/wb/jswapb"
+     ],
+     "region": "stale",
+     "seq": 318,
+     "size": 3067,
+     "skip": "",
+     "stop": "",
+     "tree_sources": []
+    }
+   },
+   "family": "jswap",
+   "generation": 39430850,
+   "inode": 64,
+   "journal_copies": {
+    "copies": 7,
+    "deleted_state": 2,
+    "live_state": 5,
+    "newest_live_state_seq": 318,
+    "newest_live_state_size": 3067,
+    "other_generation": 0,
+    "revoked": 0
+   },
+   "kernel_state": {
+    "i_size": 0,
+    "inode_free": true,
+    "leaf_intact": false,
+    "root_entries": 0
+   },
+   "name": "jswap",
+   "path": "/t/swap/jswap",
+   "source_sha256": "772b5ac84e4f8bd1e767073b11a3185c198970775c666c68be09aba1aa1ef3f0",
+   "source_size": 3067,
+   "tree_blocks": [],
+   "true_basis": "stage-image",
+   "true_blocks": [
+    [
+     3908,
+     3
+    ]
+   ]
+  },
+  {
+   "expect": {
+    "committed": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "no-map",
+     "stop": "",
+     "tree_sources": []
+    },
+    "none": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "no-map",
+     "stop": "",
+     "tree_sources": []
+    },
+    "stale": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "no-map",
+     "stop": "",
+     "tree_sources": []
+    }
+   },
+   "family": "jtrunc",
+   "generation": 2362010103,
+   "inode": 61,
+   "journal_copies": {
+    "copies": 7,
+    "deleted_state": 1,
+    "live_state": 6,
+    "newest_live_state_seq": 322,
+    "newest_live_state_size": 0,
+    "other_generation": 0,
+    "revoked": 0
+   },
+   "kernel_state": {
+    "i_size": 0,
+    "inode_free": true,
+    "leaf_intact": false,
+    "root_entries": 0
+   },
+   "name": "jtrunc",
+   "path": "/t/trunc/jtrunc",
+   "source_sha256": "e18479ecc48f7717dfafea1fd3a3b948de3ac6b22037eba28204f1c8f098fcaf",
+   "source_size": 2500,
+   "tree_blocks": [],
+   "true_basis": "stage-image",
+   "true_blocks": []
+  },
+  {
+   "expect": {
+    "committed": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "no-map",
+     "stop": "",
+     "tree_sources": []
+    },
+    "none": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "no-map",
+     "stop": "",
+     "tree_sources": []
+    },
+    "stale": {
+     "assumptions": [
+      "inode-copy-from-journal",
+      "journal-copy-may-predate-last-change",
+      "size-from-journal-copy",
+      "inode-not-reused-since-entry-deleted",
+      "journal-stale-region",
+      "overlap=/t/dn/jdn2",
+      "overlap=/t/swap/jswap"
+     ],
+     "candidate_methods": [
+      "ext4-journal-inode"
+     ],
+     "captured_blocks": [
+      [
+       3908,
+       3
+      ]
+     ],
+     "confidence": 30,
+     "cut": false,
+     "equal_source": "prefix-of-artifact",
+     "incomplete": false,
+     "method": "ext4-journal-inode",
+     "outcome": "recover",
+     "overlaps": [
+      "/t/dn/jdn2",
+      "/t/swap/jswap"
+     ],
+     "region": "stale",
+     "seq": 323,
+     "size": 3069,
+     "skip": "",
+     "stop": "",
+     "tree_sources": []
+    }
+   },
+   "family": "unlisted",
+   "generation": 1143391296,
+   "inode": 31,
+   "journal_copies": {
+    "copies": 5,
+    "deleted_state": 3,
+    "live_state": 1,
+    "newest_live_state_seq": 323,
+    "newest_live_state_size": 3069,
+    "other_generation": 1,
+    "revoked": 0
+   },
+   "kernel_state": {
+    "i_size": 0,
+    "inode_free": true,
+    "leaf_intact": false,
+    "root_entries": 0
+   },
+   "name": "jswapb",
+   "path": "/t/wb/jswapb",
+   "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "source_size": 0,
+   "tree_blocks": [],
+   "true_basis": "",
+   "true_blocks": []
+  }
+ ],
+ "deleted_entry_count": 12,
+ "families": {
+  "jdeep": {
+   "count": 1,
+   "kind": "deleted"
+  },
+  "jgone": {
+   "count": 1,
+   "kind": "deleted"
+  },
+  "jhardlink": {
+   "count": 1,
+   "kind": "deleted"
+  },
+  "jinline": {
+   "count": 1,
+   "kind": "deleted"
+  },
+  "jreuse": {
+   "count": 1,
+   "kind": "deleted"
+  },
+  "jsmall": {
+   "count": 1,
+   "kind": "deleted"
+  },
+  "jswap": {
+   "count": 1,
+   "kind": "deleted"
+  },
+  "jtrunc": {
+   "count": 1,
+   "kind": "deleted"
+  },
+  "live-file": {
+   "count": 3,
+   "kind": "live"
+  }
+ },
+ "fs_type": "ext4",
+ "generator": {
+  "commands": [
+   "# sources: pattern bytes (tools/fixtures/lib.sh); guest kernel 5.10.0-32-amd64; every boot ends with a clean unmount",
+   "faketime -f '2023-11-14 22:13:20' mke2fs -q -F -t ext4 -b 1024 -O metadata_csum,64bit,inline_data,^orphan_file -m 0 -J size=1 -N 4096 -U 44444444-5555-6666-7777-888888888888 -E hash_seed=44444444-5555-6666-7777-888888888888 <img>",
+   "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64, halt clean): mkdir /mnt/t /mnt/t/gone /mnt/t/ch /mnt/t/small /mnt/t/deep /mnt/t/trunc /mnt/t/hl /mnt/t/in /mnt/t/reuse /mnt/t/swap /mnt/t/dn /mnt/t/w /mnt/t/wb",
+   "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64, halt clean): for d in gone ch small deep trunc hl in reuse swap dn w wb; do : > /mnt/t/$d/keeper_kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk; done",
+   "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64, halt clean): : > /mnt/t/dn/jdn; : > /mnt/t/dn/jdn2",
+   "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64, halt clean): cp /payload/jgone /mnt/t/gone/jgone; sync",
+   "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64, halt clean): i=0; while [ $i -lt 24 ]; do : > /mnt/t/ch/c$i; i=$((i+1)); done",
+   "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64, halt clean): : > /mnt/t/dn/jdonor; : > /mnt/t/reuse/jreuse; : > /mnt/t/deep/jdeep; : > /mnt/t/deep/pad; : > /mnt/t/trunc/jtrunc",
+   "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64, halt clean): : > /mnt/t/small/jsmall; : > /mnt/t/hl/jh1; : > /mnt/t/swap/jswap",
+   "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64, halt clean): cp /payload/jin /mnt/t/in/jin; : > /mnt/fill1; : > /mnt/fill2; : > /mnt/fill3",
+   "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64, halt clean): sync",
+   "guest boot b2-rm (2023-11-14 23:13:20, kernel 5.10.0-32-amd64, halt clean): rm /mnt/t/gone/jgone; sync",
+   "guest boot b3-churn (2023-11-15 00:13:20, kernel 5.10.0-32-amd64, halt clean): echo 0 > /sys/fs/ext4/vda/reserved_clusters",
+   "guest boot b3-churn (2023-11-15 00:13:20, kernel 5.10.0-32-amd64, halt clean): n=0; while [ $n -lt 130 ]; do m=60$((n % 2)); i=0; while [ $i -lt 24 ]; do chmod $m /mnt/t/ch/c$i; i=$((i+1)); done; sync; n=$((n+1)); done",
+   "guest boot b3-churn (2023-11-15 00:13:20, kernel 5.10.0-32-amd64, halt clean): dd if=/dev/zero of=/mnt/fill1 bs=1024 2>/dev/null || true",
+   "guest boot b3-churn (2023-11-15 00:13:20, kernel 5.10.0-32-amd64, halt clean): sync",
+   "guest boot b3-churn (2023-11-15 00:13:20, kernel 5.10.0-32-amd64, halt clean): sz=$(wc -c < /mnt/fill1); truncate -s $((sz - 256 * 1024)) /mnt/fill1",
+   "guest boot b3-churn (2023-11-15 00:13:20, kernel 5.10.0-32-amd64, halt clean): sync",
+   "guest boot b4-write (2023-11-15 01:13:20, kernel 5.10.0-32-amd64, halt clean): echo 0 > /sys/fs/ext4/vda/reserved_clusters",
+   "guest boot b4-write (2023-11-15 01:13:20, kernel 5.10.0-32-amd64, halt clean): n=0; while [ $n -lt 100 ]; do chmod 60$((n % 2)) /mnt/t/ch/c0 /mnt/t/ch/c1; sync; n=$((n+1)); done",
+   "guest boot b4-write (2023-11-15 01:13:20, kernel 5.10.0-32-amd64, halt clean): dd if=/dev/zero of=/mnt/t/dn/jdonor bs=1024 count=6 2>/dev/null; sync",
+   "guest boot b4-write (2023-11-15 01:13:20, kernel 5.10.0-32-amd64, halt clean): dd if=/payload/jreuse of=/mnt/t/reuse/jreuse bs=1024 count=3 2>/dev/null; sync",
+   "guest boot b4-write (2023-11-15 01:13:20, kernel 5.10.0-32-amd64, halt clean): i=0; while [ $i -lt 24 ]; do dd if=/payload/jdeep of=/mnt/t/deep/jdeep bs=1024 skip=$i seek=$i count=1 conv=notrunc 2>/dev/null; dd if=/payload/pad of=/mnt/t/deep/pad bs=1024 skip=$i seek=$i count=1 conv=notrunc 2>/dev/null; sync; i=$((i+1)); done",
+   "guest boot b4-write (2023-11-15 01:13:20, kernel 5.10.0-32-amd64, halt clean): cp /payload/jtrunc /mnt/t/trunc/jtrunc; sync",
+   "guest boot b4-write (2023-11-15 01:13:20, kernel 5.10.0-32-amd64, halt clean): cp /payload/jsmall /mnt/t/small/jsmall; sync",
+   "guest boot b4-write (2023-11-15 01:13:20, kernel 5.10.0-32-amd64, halt clean): cp /payload/jh /mnt/t/hl/jh1; ln /mnt/t/hl/jh1 /mnt/t/hl/jh2; sync",
+   "guest boot b4-write (2023-11-15 01:13:20, kernel 5.10.0-32-amd64, halt clean): cp /payload/jswap /mnt/t/swap/jswap; sync",
+   "guest boot b4-write (2023-11-15 01:13:20, kernel 5.10.0-32-amd64, halt clean): dd if=/dev/zero of=/mnt/fill2 bs=1024 2>/dev/null || true",
+   "guest boot b4-write (2023-11-15 01:13:20, kernel 5.10.0-32-amd64, halt clean): sync",
+   "guest boot b5-reuse (2023-11-15 02:13:20, kernel 5.10.0-32-amd64, halt clean): echo 0 > /sys/fs/ext4/vda/reserved_clusters",
+   "guest boot b5-reuse (2023-11-15 02:13:20, kernel 5.10.0-32-amd64, halt clean): rm /mnt/t/dn/jdonor; sync",
+   "guest boot b5-reuse (2023-11-15 02:13:20, kernel 5.10.0-32-amd64, halt clean): n=0; while [ $n -lt 40 ]; do chmod 60$((n % 2)) /mnt/t/ch/c0 /mnt/t/ch/c1; sync; n=$((n+1)); done",
+   "guest boot b5-reuse (2023-11-15 02:13:20, kernel 5.10.0-32-amd64, halt clean): dd if=/payload/jreuse of=/mnt/t/reuse/jreuse bs=1024 skip=3 seek=3 count=4 conv=notrunc 2>/dev/null; sync",
+   "guest boot b5-reuse (2023-11-15 02:13:20, kernel 5.10.0-32-amd64, halt clean): : > /mnt/t/trunc/jtrunc; sync",
+   "guest boot b5-reuse (2023-11-15 02:13:20, kernel 5.10.0-32-amd64, halt clean): dd if=/dev/zero of=/mnt/fill3 bs=1024 2>/dev/null || true",
+   "guest boot b5-reuse (2023-11-15 02:13:20, kernel 5.10.0-32-amd64, halt clean): sync",
+   "guest boot b6-delete (2023-11-15 03:13:20, kernel 5.10.0-32-amd64, halt clean): echo 0 > /sys/fs/ext4/vda/reserved_clusters",
+   "guest boot b6-delete (2023-11-15 03:13:20, kernel 5.10.0-32-amd64, halt clean): rm /mnt/t/dn/jdn2 /mnt/t/swap/jswap; sync",
+   "guest boot b6-delete (2023-11-15 03:13:20, kernel 5.10.0-32-amd64, halt clean): cp /payload/jswapb /mnt/t/wb/jswapb; sync",
+   "guest boot b6-delete (2023-11-15 03:13:20, kernel 5.10.0-32-amd64, halt clean): rm /mnt/t/wb/jswapb; sync",
+   "guest boot b6-delete (2023-11-15 03:13:20, kernel 5.10.0-32-amd64, halt clean): rm /mnt/t/dn/jdn /mnt/t/reuse/jreuse; sync",
+   "guest boot b6-delete (2023-11-15 03:13:20, kernel 5.10.0-32-amd64, halt clean): cp /payload/reuser /mnt/t/w/reuser; sync",
+   "guest boot b6-delete (2023-11-15 03:13:20, kernel 5.10.0-32-amd64, halt clean): rm /mnt/t/small/jsmall /mnt/t/deep/jdeep /mnt/t/hl/jh1 /mnt/t/in/jin /mnt/t/trunc/jtrunc; sync",
+   "python3 tools/fixtures/ext4_journal_oracle.py oracle <final> <payload> <manifest>   # the decoder, logdump, dumpe2fs, debugfs, the 3C oracle, the kernel's replay"
+  ],
+  "fsck_exit": 0,
+  "gates": {
+   "J1": "holds",
+   "J2": "holds",
+   "J4": "holds",
+   "J9": "-J size=1"
+  },
+  "image_sha256": "576662d1789ea28d4f0a7a2e9fe0e56bc59f4ed850c003df7ee4215c4de84b05",
+  "kernel": "5.10.0-32-amd64",
+  "logdump_old": true,
+  "packages": [
+   {
+    "package": "busybox-static",
+    "version": "1:1.35.0-4+deb12u1+b1"
+   },
+   {
+    "package": "cpio",
+    "version": "2.13+dfsg-7.1"
+   },
+   {
+    "package": "e2fsprogs",
+    "version": "1.47.0-2+b2"
+   },
+   {
+    "package": "faketime",
+    "version": "0.9.10-2.1"
+   },
+   {
+    "package": "gzip",
+    "version": "1.12-1"
+   },
+   {
+    "package": "jq",
+    "version": "1.6-2.1+deb12u2"
+   },
+   {
+    "package": "kmod",
+    "version": "30+20221128-1"
+   },
+   {
+    "package": "python3",
+    "version": "3.11.2-1+b1"
+   },
+   {
+    "package": "qemu-system-x86",
+    "version": "1:7.2+dfsg-7+deb12u18+b3"
+   },
+   {
+    "package": "linux-image-5.10.0-32-amd64",
+    "version": "5.10.223-1"
+   }
+  ],
+  "replay_oracle": false
+ },
+ "journal": {
+  "block_size": 1024,
+  "blocks": 1024,
+  "csum_type": 4,
+  "feature_compat": 0,
+  "feature_incompat": 19,
+  "features": [
+   "revoke",
+   "64bit",
+   "csum_v3"
+  ],
+  "first": 1,
+  "inode": 8,
+  "live_stop": "empty",
+  "needs_recovery": false,
+  "sequence": 329,
+  "start": 0,
+  "tag_size": 16,
+  "version": 2
+ },
+ "journal_only": [],
+ "live": [
+  {
+   "family": "live-file",
+   "inode": 60,
+   "path": "/t/deep/pad",
+   "sha256": "41d32b5e1769426b87061d2e487fe69449d7f2d1756ee74123ab9761368ea86f",
+   "size": 24567,
+   "source_sha256": "41d32b5e1769426b87061d2e487fe69449d7f2d1756ee74123ab9761368ea86f",
+   "source_size": 24567
+  },
+  {
+   "family": "live-file",
+   "inode": 63,
+   "path": "/t/hl/jh2",
+   "sha256": "76c2aa62c72285761416dc8a8424574304ec6a08c4a49b276351320fda650c1e",
+   "size": 2000,
+   "source_sha256": "76c2aa62c72285761416dc8a8424574304ec6a08c4a49b276351320fda650c1e",
+   "source_size": 2000
+  },
+  {
+   "family": "live-file",
+   "inode": 30,
+   "path": "/t/w/reuser",
+   "sha256": "476a465536593827fca545bb144c7b7645637990a2df098724d58deaabaa1ad5",
+   "size": 1024,
+   "source_sha256": "476a465536593827fca545bb144c7b7645637990a2df098724d58deaabaa1ad5",
+   "source_size": 1024
+  }
+ ],
+ "totals": {
+  "committed": {
+   "recovered": 1,
+   "skipped_by": {
+    "no-map": 8,
+    "reused": 2,
+    "unsupported": 1
+   },
+   "undecided": 0
+  },
+  "none": {
+   "recovered": 1,
+   "skipped_by": {
+    "no-map": 8,
+    "reused": 2,
+    "unsupported": 1
+   },
+   "undecided": 0
+  },
+  "stale": {
+   "recovered": 6,
+   "skipped_by": {
+    "no-free-bytes": 1,
+    "no-map": 2,
+    "not-selected": 1,
+    "reused": 2,
+    "unsupported": 1
+   },
+   "undecided": 0
+  }
+ },
+ "txns": [
+  {"checksum": "ok", "commit_jblk": 11, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 322, "start_jblk": 1, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 1181, "jblk": 2, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 137, "jblk": 3, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 1, "jblk": 4, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 141, "jblk": 5, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 6, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 132, "jblk": 7, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 1180, "jblk": 8, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 149, "jblk": 9, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 130, "jblk": 10, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 20, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 323, "start_jblk": 12, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 132, "jblk": 13, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 14, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 141, "jblk": 15, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 138, "jblk": 16, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 1183, "jblk": 17, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 1, "jblk": 18, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 130, "jblk": 19, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 29, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 324, "start_jblk": 21, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 1183, "jblk": 22, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 138, "jblk": 23, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 1, "jblk": 24, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 141, "jblk": 25, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 26, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 27, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 132, "jblk": 28, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 40, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 325, "start_jblk": 30, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 1181, "jblk": 31, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 137, "jblk": 32, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 1, "jblk": 33, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 141, "jblk": 34, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 35, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 132, "jblk": 36, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 1179, "jblk": 37, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 148, "jblk": 38, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 130, "jblk": 39, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 48, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 326, "start_jblk": 41, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 132, "jblk": 42, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 43, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 141, "jblk": 44, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 137, "jblk": 45, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 1182, "jblk": 46, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 130, "jblk": 47, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 65, "committed": true, "logdump": true, "region": "stale", "revoked": [3859], "seq": 327, "start_jblk": 49, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 1174, "jblk": 51, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 646, "jblk": 52, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 1, "jblk": 53, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 149, "jblk": 54, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 55, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 56, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 132, "jblk": 57, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 1175, "jblk": 58, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 148, "jblk": 59, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 1177, "jblk": 60, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 647, "jblk": 61, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 1178, "jblk": 62, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 150, "jblk": 63, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 1176, "jblk": 64, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 66, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 295, "start_jblk": 66, "tags": []},
+  {"checksum": "ok", "commit_jblk": 69, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 296, "start_jblk": 67, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 68, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 72, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 297, "start_jblk": 70, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 71, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 75, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 298, "start_jblk": 73, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 74, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 78, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 299, "start_jblk": 76, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 77, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 81, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 300, "start_jblk": 79, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 80, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 84, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 301, "start_jblk": 82, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 83, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 87, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 302, "start_jblk": 85, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 86, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 90, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 303, "start_jblk": 88, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 89, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 93, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 304, "start_jblk": 91, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 92, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 96, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 305, "start_jblk": 94, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 95, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 99, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 306, "start_jblk": 97, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 98, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 102, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 307, "start_jblk": 100, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 101, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 105, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 308, "start_jblk": 103, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 104, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 108, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 309, "start_jblk": 106, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 107, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 111, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 310, "start_jblk": 109, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 110, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 114, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 311, "start_jblk": 112, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 113, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 117, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 312, "start_jblk": 115, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 116, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 120, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 313, "start_jblk": 118, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 119, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 123, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 314, "start_jblk": 121, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 122, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 126, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 315, "start_jblk": 124, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 125, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 129, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 316, "start_jblk": 127, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 128, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 135, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 317, "start_jblk": 130, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 1, "jblk": 131, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 148, "jblk": 132, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 133, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 2, "jblk": 134, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 141, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 318, "start_jblk": 136, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 1, "jblk": 137, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 149, "jblk": 138, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 139, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 2, "jblk": 140, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 147, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 319, "start_jblk": 142, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 1, "jblk": 143, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 150, "jblk": 144, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 145, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 2, "jblk": 146, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 150, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 192, "start_jblk": 148, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 149, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 153, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 193, "start_jblk": 151, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 152, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 156, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 194, "start_jblk": 154, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 155, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 159, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 195, "start_jblk": 157, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 158, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 162, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 196, "start_jblk": 160, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 161, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 165, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 197, "start_jblk": 163, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 164, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 168, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 198, "start_jblk": 166, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 167, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 171, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 199, "start_jblk": 169, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 170, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 174, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 200, "start_jblk": 172, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 173, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 177, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 201, "start_jblk": 175, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 176, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 180, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 202, "start_jblk": 178, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 179, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 183, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 203, "start_jblk": 181, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 182, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 186, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 204, "start_jblk": 184, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 185, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 189, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 205, "start_jblk": 187, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 188, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 192, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 206, "start_jblk": 190, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 191, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 195, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 207, "start_jblk": 193, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 194, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 198, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 208, "start_jblk": 196, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 197, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 201, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 209, "start_jblk": 199, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 200, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 204, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 210, "start_jblk": 202, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 203, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 207, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 211, "start_jblk": 205, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 206, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 210, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 212, "start_jblk": 208, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 209, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 213, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 213, "start_jblk": 211, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 212, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 216, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 214, "start_jblk": 214, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 215, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 219, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 215, "start_jblk": 217, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 218, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 222, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 216, "start_jblk": 220, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 221, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 225, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 217, "start_jblk": 223, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 224, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 228, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 218, "start_jblk": 226, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 227, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 231, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 219, "start_jblk": 229, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 230, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 234, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 220, "start_jblk": 232, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 233, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 237, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 221, "start_jblk": 235, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 236, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 240, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 222, "start_jblk": 238, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 239, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 243, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 223, "start_jblk": 241, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 242, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 246, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 224, "start_jblk": 244, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 245, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 249, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 225, "start_jblk": 247, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 248, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 252, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 226, "start_jblk": 250, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 251, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 255, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 227, "start_jblk": 253, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 254, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 258, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 228, "start_jblk": 256, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 257, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 261, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 229, "start_jblk": 259, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 260, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 264, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 230, "start_jblk": 262, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 263, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 267, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 231, "start_jblk": 265, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 266, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 270, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 232, "start_jblk": 268, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 269, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 273, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 233, "start_jblk": 271, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 272, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 276, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 234, "start_jblk": 274, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 275, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 279, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 235, "start_jblk": 277, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 278, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 282, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 236, "start_jblk": 280, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 281, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 285, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 237, "start_jblk": 283, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 284, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 288, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 238, "start_jblk": 286, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 287, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 291, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 239, "start_jblk": 289, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 290, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 294, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 240, "start_jblk": 292, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 293, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 297, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 241, "start_jblk": 295, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 296, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 300, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 242, "start_jblk": 298, "tags": [{"copy": "verified", "escaped": false, "flags": 8, "fsblock": 142, "jblk": 299, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 306, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 243, "start_jblk": 301, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 1, "jblk": 302, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 148, "jblk": 303, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 304, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 2, "jblk": 305, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 312, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 244, "start_jblk": 307, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 1, "jblk": 308, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 148, "jblk": 309, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 310, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 2, "jblk": 311, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 317, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 245, "start_jblk": 313, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 314, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 315, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 2, "jblk": 316, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 322, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 246, "start_jblk": 318, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 319, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 320, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 2, "jblk": 321, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 327, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 247, "start_jblk": 323, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 324, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 325, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 2, "jblk": 326, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 332, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 248, "start_jblk": 328, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 329, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 330, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 2, "jblk": 331, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 339, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 249, "start_jblk": 333, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 334, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 335, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 336, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 3859, "jblk": 337, "revoked": true}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 3861, "jblk": 338, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 346, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 250, "start_jblk": 340, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 341, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 342, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 343, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 3859, "jblk": 344, "revoked": true}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 3861, "jblk": 345, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 353, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 251, "start_jblk": 347, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 348, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 349, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 350, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 3859, "jblk": 351, "revoked": true}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 3861, "jblk": 352, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 360, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 252, "start_jblk": 354, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 355, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 356, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 357, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 3859, "jblk": 358, "revoked": true}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 3861, "jblk": 359, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 367, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 253, "start_jblk": 361, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 362, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 363, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 364, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 3859, "jblk": 365, "revoked": true}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 3861, "jblk": 366, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 374, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 254, "start_jblk": 368, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 369, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 370, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 371, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 3859, "jblk": 372, "revoked": true}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 3861, "jblk": 373, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 381, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 255, "start_jblk": 375, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 376, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 377, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 378, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 3859, "jblk": 379, "revoked": true}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 3861, "jblk": 380, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 388, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 256, "start_jblk": 382, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 383, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 384, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 385, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 3859, "jblk": 386, "revoked": true}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 3861, "jblk": 387, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 395, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 257, "start_jblk": 389, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 390, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 391, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 392, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 3859, "jblk": 393, "revoked": true}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 3861, "jblk": 394, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 402, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 258, "start_jblk": 396, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 397, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 398, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 399, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 3859, "jblk": 400, "revoked": true}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 3861, "jblk": 401, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 409, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 259, "start_jblk": 403, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 404, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 405, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 406, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 3859, "jblk": 407, "revoked": true}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 3861, "jblk": 408, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 416, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 260, "start_jblk": 410, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 411, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 412, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 413, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 3859, "jblk": 414, "revoked": true}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 3861, "jblk": 415, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 423, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 261, "start_jblk": 417, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 418, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 419, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 420, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 3859, "jblk": 421, "revoked": true}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 3861, "jblk": 422, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 430, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 262, "start_jblk": 424, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 425, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 426, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 427, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 3859, "jblk": 428, "revoked": true}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 3861, "jblk": 429, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 437, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 263, "start_jblk": 431, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 432, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 433, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 434, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 3859, "jblk": 435, "revoked": true}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 3861, "jblk": 436, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 444, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 264, "start_jblk": 438, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 439, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 440, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 441, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 3859, "jblk": 442, "revoked": true}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 3861, "jblk": 443, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 451, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 265, "start_jblk": 445, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 446, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 447, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 448, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 3859, "jblk": 449, "revoked": true}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 3861, "jblk": 450, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 458, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 266, "start_jblk": 452, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 453, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 454, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 455, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 3859, "jblk": 456, "revoked": true}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 3861, "jblk": 457, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 465, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 267, "start_jblk": 459, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 460, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 461, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 462, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 3859, "jblk": 463, "revoked": true}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 3861, "jblk": 464, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 472, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 268, "start_jblk": 466, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 148, "jblk": 467, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 468, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 469, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 3859, "jblk": 470, "revoked": true}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 3861, "jblk": 471, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 478, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 269, "start_jblk": 473, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 1, "jblk": 474, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 149, "jblk": 475, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 476, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 2, "jblk": 477, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 484, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 270, "start_jblk": 479, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 1, "jblk": 480, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 149, "jblk": 481, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 482, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 2, "jblk": 483, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 492, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 271, "start_jblk": 485, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 1, "jblk": 486, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 149, "jblk": 487, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 488, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 489, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 647, "jblk": 490, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 1177, "jblk": 491, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 498, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 272, "start_jblk": 493, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 1, "jblk": 494, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 149, "jblk": 495, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 496, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 2, "jblk": 497, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 504, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 273, "start_jblk": 499, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 1, "jblk": 500, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 150, "jblk": 501, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 130, "jblk": 502, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 2, "jblk": 503, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 512, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 72, "start_jblk": 505, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 506, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 507, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 508, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 509, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 510, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 511, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 520, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 73, "start_jblk": 513, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 514, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 515, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 516, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 517, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 518, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 519, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 528, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 74, "start_jblk": 521, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 522, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 523, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 524, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 525, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 526, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 527, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 536, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 75, "start_jblk": 529, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 530, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 531, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 532, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 533, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 534, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 535, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 544, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 76, "start_jblk": 537, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 538, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 539, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 540, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 541, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 542, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 543, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 552, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 77, "start_jblk": 545, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 546, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 547, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 548, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 549, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 550, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 551, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 560, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 78, "start_jblk": 553, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 554, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 555, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 556, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 557, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 558, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 559, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 568, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 79, "start_jblk": 561, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 562, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 563, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 564, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 565, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 566, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 567, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 576, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 80, "start_jblk": 569, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 570, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 571, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 572, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 573, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 574, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 575, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 584, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 81, "start_jblk": 577, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 578, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 579, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 580, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 581, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 582, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 583, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 592, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 82, "start_jblk": 585, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 586, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 587, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 588, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 589, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 590, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 591, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 600, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 83, "start_jblk": 593, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 594, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 595, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 596, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 597, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 598, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 599, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 608, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 84, "start_jblk": 601, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 602, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 603, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 604, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 605, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 606, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 607, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 616, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 85, "start_jblk": 609, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 610, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 611, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 612, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 613, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 614, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 615, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 624, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 86, "start_jblk": 617, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 618, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 619, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 620, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 621, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 622, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 623, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 632, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 87, "start_jblk": 625, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 626, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 627, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 628, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 629, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 630, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 631, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 640, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 88, "start_jblk": 633, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 634, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 635, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 636, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 637, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 638, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 639, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 648, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 89, "start_jblk": 641, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 642, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 643, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 644, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 645, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 646, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 647, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 656, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 90, "start_jblk": 649, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 650, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 651, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 652, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 653, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 654, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 655, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 664, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 91, "start_jblk": 657, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 658, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 659, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 660, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 661, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 662, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 663, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 672, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 92, "start_jblk": 665, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 666, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 667, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 668, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 669, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 670, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 671, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 680, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 93, "start_jblk": 673, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 674, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 675, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 676, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 677, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 678, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 679, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 688, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 94, "start_jblk": 681, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 682, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 683, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 684, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 685, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 686, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 687, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 696, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 95, "start_jblk": 689, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 690, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 691, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 692, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 693, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 694, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 695, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 704, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 96, "start_jblk": 697, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 698, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 699, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 700, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 701, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 702, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 703, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 712, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 97, "start_jblk": 705, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 706, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 707, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 708, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 709, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 710, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 711, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 720, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 98, "start_jblk": 713, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 714, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 715, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 716, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 717, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 718, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 719, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 728, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 99, "start_jblk": 721, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 722, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 723, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 724, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 725, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 726, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 727, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 736, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 100, "start_jblk": 729, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 730, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 731, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 732, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 733, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 734, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 735, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 744, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 101, "start_jblk": 737, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 738, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 739, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 740, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 741, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 742, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 743, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 752, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 102, "start_jblk": 745, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 746, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 747, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 748, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 749, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 750, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 751, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 760, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 103, "start_jblk": 753, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 754, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 755, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 756, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 757, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 758, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 759, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 768, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 104, "start_jblk": 761, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 762, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 763, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 764, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 765, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 766, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 767, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 776, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 105, "start_jblk": 769, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 770, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 771, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 772, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 773, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 774, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 775, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 784, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 106, "start_jblk": 777, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 778, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 779, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 780, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 781, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 782, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 783, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 792, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 107, "start_jblk": 785, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 786, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 787, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 788, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 789, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 790, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 791, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 800, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 108, "start_jblk": 793, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 794, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 795, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 796, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 797, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 798, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 799, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 808, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 109, "start_jblk": 801, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 802, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 803, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 804, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 805, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 806, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 807, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 816, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 110, "start_jblk": 809, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 810, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 811, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 812, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 813, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 814, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 815, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 824, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 111, "start_jblk": 817, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 818, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 819, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 820, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 821, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 822, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 823, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 832, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 112, "start_jblk": 825, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 826, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 827, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 828, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 829, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 830, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 831, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 840, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 113, "start_jblk": 833, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 834, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 835, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 836, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 837, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 838, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 839, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 848, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 114, "start_jblk": 841, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 842, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 843, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 844, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 845, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 846, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 847, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 856, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 115, "start_jblk": 849, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 850, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 851, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 852, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 853, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 854, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 855, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 864, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 116, "start_jblk": 857, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 858, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 859, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 860, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 861, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 862, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 863, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 872, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 117, "start_jblk": 865, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 866, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 867, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 868, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 869, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 870, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 871, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 880, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 118, "start_jblk": 873, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 874, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 875, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 876, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 877, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 878, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 879, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 888, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 119, "start_jblk": 881, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 882, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 883, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 884, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 885, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 886, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 887, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 896, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 120, "start_jblk": 889, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 890, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 891, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 892, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 893, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 894, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 895, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 904, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 121, "start_jblk": 897, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 898, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 899, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 900, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 901, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 902, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 903, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 912, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 122, "start_jblk": 905, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 906, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 907, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 908, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 909, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 910, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 911, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 920, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 123, "start_jblk": 913, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 914, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 915, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 916, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 917, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 918, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 919, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 928, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 124, "start_jblk": 921, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 922, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 923, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 924, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 925, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 926, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 927, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 936, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 125, "start_jblk": 929, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 930, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 931, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 932, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 933, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 934, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 935, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 944, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 126, "start_jblk": 937, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 938, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 939, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 940, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 941, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 942, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 943, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 952, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 127, "start_jblk": 945, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 946, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 947, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 948, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 949, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 950, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 951, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 960, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 128, "start_jblk": 953, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 954, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 955, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 956, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 957, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 958, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 959, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 968, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 129, "start_jblk": 961, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 962, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 963, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 964, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 965, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 966, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 967, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 976, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 130, "start_jblk": 969, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 970, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 971, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 972, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 973, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 974, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 975, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 984, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 131, "start_jblk": 977, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 978, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 979, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 980, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 981, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 982, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 983, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 992, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 132, "start_jblk": 985, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 986, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 987, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 988, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 989, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 990, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 991, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 1000, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 133, "start_jblk": 993, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 994, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 995, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 996, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 997, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 998, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 999, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 1008, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 134, "start_jblk": 1001, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 1002, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 1003, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 1004, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 1005, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 1006, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 1007, "revoked": false}]},
+  {"checksum": "ok", "commit_jblk": 1016, "committed": true, "logdump": true, "region": "stale", "revoked": [], "seq": 135, "start_jblk": 1009, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 1010, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 1011, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 1012, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 1013, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 1014, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 1015, "revoked": false}]},
+  {"checksum": "not-recorded", "commit_jblk": -1, "committed": false, "logdump": true, "region": "stale", "revoked": [], "seq": 136, "start_jblk": 1017, "tags": [{"copy": "verified", "escaped": false, "flags": 0, "fsblock": 142, "jblk": 1018, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 143, "jblk": 1019, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 144, "jblk": 1020, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 145, "jblk": 1021, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 2, "fsblock": 146, "jblk": 1022, "revoked": false}, {"copy": "verified", "escaped": false, "flags": 10, "fsblock": 147, "jblk": 1023, "revoked": false}]}
+ ],
+ "unlisted_count": 1
+}

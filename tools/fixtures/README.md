@@ -1368,6 +1368,151 @@ block in one transaction, the PASS_SCAN rule at a bad checksum, the revoke rule 
 bytes in the kernel header, which 3G-R4 does not mention), the wrap of the log, the fast-commit area and async commit. The crash route
 (`GUEST_HALT=crash`) is independent of 3H's monitor-quit mode.
 
+## ext4 journal fixtures (3G)
+
+`ext4_journal.sh` (+ `ext4_journal_oracle.py oracle`; libraries `recover_guest.sh`, `lib.sh`, `ext4_lib.sh` and the 3C oracle
+`ext4_recover_oracle.py` with its raw reader `ext4_recover_probe.py`) builds three images whose jbd2 journal was written by the
+KERNEL ext4 driver (Debian `5.10.0-32-amd64` = 5.10.223) inside the QEMU TCG guest: no `--privileged`, no loop device, no host
+mount, no kernel module on the host (the guest's own `/init` loads `ext4.ko` and `jbd2.ko`; the host formats under `faketime` and
+READS finished images with `debugfs`, `dumpe2fs`, `e2fsck` and the oracle). Output, in a subdirectory so the globs of
+`TestExt4MatchesOracle` never see them: `internal/filesys/ext4/testdata/journal/{ext4-journal-clean,ext4-journal-crash,ext3-journal-clean}.img.gz`
+and `.expect.json`. QEMU images are not byte-reproducible: image and oracle are regenerated together and every test checks
+`generator.image_sha256` first. Run it in the existing `minutiae-recover-fixtures-510` image (no image was built for this task;
+the 5.10 kernel is the only one the script needs); `ext4-journal` is in the not-in-`all` list of `gen.sh`, which stops, naming the
+images to build, when QEMU or a guest kernel is missing (the script itself needs the 5.10 one):
+
+```bash
+docker run --rm -v "$PWD:/work" -w /work minutiae-recover-fixtures-510 bash tools/fixtures/gen.sh ext4-journal
+```
+
+A run takes about 7 minutes (a boot is 6-17 s; the oracle needs about 100 MB) and `FIXTURE_KEEP_DIR=<dir>` (a debugging aid,
+never set by `gen.sh`) copies the stage images, the guest logs, the manifests and the payload there. A regeneration may need
+re-tuning of the ops and FAILS CLOSED: the generator exits 1 with `family <name> did not realise its scenario; re-rule, do not edit
+the ops` when a family is missing or misshaped (for example `jsmall` with no stale copy, or `crash-live-copy` with `s_start` moved).
+Self-checks (`internal/filesys/ext4/journal_fixture_test.go`, no journal reader involved): `TestExt4JournalFixturesHoldWhatTheyClaim`
+(the image sha256, the 400 KiB budget, the journal superblock, every transaction's header, tags, revokes, commit block and every
+checksum recomputed from the bytes with a crc32c of its own, the captured bytes of every recovery the oracle derives, every family,
+every `equal_source` kind) and `TestExt4JournalFixturesLiveFilesMatchSource` (the live reader opens the as-found files with their
+source hashes). Task 14 holds the journal reader to the oracle.
+
+| Image | Format (`faketime`, fixed UUID and hash seed) | Raw | Gzipped | SHA-256 of the raw image |
+|---|---|---|---|---|
+| `ext4-journal-clean` | `-t ext4 -b 1024 -O metadata_csum,64bit,inline_data,^orphan_file -m 0 -J size=1 -N 4096`; clean unmount after every boot | 16 MiB | 130099 | `576662d1789ea28d4f0a7a2e9fe0e56bc59f4ed850c003df7ee4215c4de84b05` |
+| `ext4-journal-crash` | the same; the last boot ends with `GUEST_HALT=crash` | 16 MiB | 46008 | `e63d036cf81b087ac7fed31f7b968a4e607833fdfffc968013c2ffbf61482438` |
+| `ext3-journal-clean` | `-t ext3 -b 1024 -O ^dir_index,^orphan_file -m 0 -J size=1 -N 2048`, mounted by the ext4 driver | 8 MiB | 40856 | `561b1062899ac9e9e11117ab0de05bb9f524f9618a28f740545db29e2e1c969c` |
+
+(The values above are those of the committed images; a regeneration changes them, and then also the oracle.) `inline_data` is
+added to the format of plan 3G-R21 because family `jinline` needs it. The journal is 1024 blocks (`-J size=1`, gate J9). Journal of
+the committed images (from the oracle): `ext4-journal-clean` 178 transactions, all stale, journal sequence 329, `s_start` 0, all 178
+confirmed by `logdump -O`; `ext4-journal-crash` 59 transactions (5 live, sequence 66 to 70, `needs_recovery`, `s_start` 1, all 5
+confirmed by `logdump -a`; 54 stale ones from the boot before); `ext3-journal-clean` 6 transactions, no checksums, 8-byte tags, 1
+confirmed by `logdump -O`.
+
+### The boots
+
+- **`ext4-journal-clean`** (one guest boot each, the guest clock one hour later than the previous one):
+  1. layout: the directories (each target has its own directory, whose first entry is a 200-character name, so the directory is a
+     block directory and a later insertion never overwrites the deleted record of a removed name), two donors, `jgone`, `jin`,
+     and empty placeholders for every file a later boot writes;
+  2. `rm jgone`;
+  3. churn: 130 rounds of `chmod` + `sync` over 24 files (about 1200 log blocks: the 1024-block log wraps once), then a zero file
+     to ENOSPC cut back to a hole of 256 blocks;
+  4. write: 100 more rounds (so that the targets land at high log positions, beyond the reach of the shorter boots after), then
+     `jreuse` (3 blocks), `jdeep` and `pad` (24 interleaved blocks each: a depth-1 tree), `jtrunc`, `jsmall`, `jh1` + `jh2`, `jswap`
+     (all inside the hole), a zero file to ENOSPC: the volume is full;
+  5. reuse: `rm` of the block donor, 40 rounds, `jreuse` grows by a 4-block tail written in one request into the donor's blocks,
+     `jtrunc` is truncated to 0, a zero file refills the volume;
+  6. delete: `jswap` and its donor are removed, `jswapb` is written over its blocks and removed, `jreuse` and its donor are removed
+     and a 1-block reuser is written, then `jsmall`, `jdeep`, `jh1`, `jin`, `jtrunc` are removed.
+- **`ext4-journal-crash`**: boot 1 writes `live` (700 bytes), 60 rounds of `chmod`+`sync` (the stale fragments) and a 9000-block
+  zero file (it takes the volume into its second group, so that no group is `BLOCK_UNINIT`). Boot 2: an empty donor, `cgap` (16
+  blocks) and `x` (1500 bytes) created with a `sync` each, the three removed with a `sync`, `jc` written with `fsync` (it takes the
+  donor's inode number; its two blocks land away from `x`'s and `cgap`'s, so `x` stays recoverable in full), 300 bytes appended to `live` with `fsync` (inside
+  its only block), an unsynced `z`; then `GUEST_HALT=crash`: the guest `/init` prints `GUEST-CRASH` and writes `b` to
+  `/proc/sysrq-trigger` (an immediate reboot with no sync and no unmount; QEMU runs `-no-reboot` and exits).
+- **`ext3-journal-clean`**: boot 1 writes three fillers, then `bm_small` (5 blocks, direct) and `bm_ind` (20 blocks, one indirect
+  block), with a `sync` after each; boot 2 removes both.
+
+### Placement is never trusted
+
+The kernel's allocator and journal decide where things land, so the oracle reads every outcome from the finished image. What the
+ops do to make the scenarios happen: `reserved_clusters` is set to 0 before every boot that fills, so a full volume has NO free block
+(the generator checks it with `dumpe2fs`) and, after an `rm`, the free set is the removed files' blocks; the ordinary allocator takes
+the longest free run, then the lowest block, so the reuser lands in the donor's tail (the 4-block run is longer than the 3-block head);
+a freed inode number is taken by the next file created in the same group, lowest first, so every inode that is needed after the first
+`rm` is created BEFORE it, and a donor with a lower number is removed together with each target that a reuser follows; a mount restarts
+logging at `s_first`, so a shorter later boot overwrites only the head of the log, and the targets are written late in a long boot.
+The probe's `O_DIRECT` reads of the disk (README, "ext4 journal probe (3G)") forced the kernel to write the buffers of the blocks they
+read; the fixture boots read nothing that way, so the crash image is as the kernel left it: `e2fsck -fn` exits 0 on it (the probe's
+exit 4 was caused by that read), and `generator.fsck_exit` records the exit of every image.
+
+### Families
+
+The oracle derives, for every deleted directory record, what a recovery must yield in each journal mode: `none` (3C alone), `committed`
+(journal copies from committed transactions of the live region) and `stale` (live and stale regions). `none` is 3C's own answer
+(`ext4_recover_oracle.py`); the two computations must agree or the oracle exits 1. On a clean image the live region is empty, so
+`committed` adds nothing to `none`: the `committed` column of the plan's table is the `none` one (for `jdeep` it is the 3C leaf outcome,
+not `no-map`).
+
+| Image | Family | Steps | `none` / `committed` / `stale` |
+|---|---|---|---|
+| clean | `jsmall` | 3-block file written in boot 4, `rm` in boot 6 | `no-map` / `no-map` / journal inode, 40, `full` |
+| clean | `jdeep` | depth-1 file (24 extents, one leaf kept free) | 3C leaf, 20, `prefix-of-artifact` / the same / journal inode, 40, `full`, the tree block read from a journal copy |
+| clean | `jtrunc` | written, truncated to 0 in a later boot, then `rm` | `no-map` in every mode (the newest live-state copy has size 0) |
+| clean | `jgone` | written, `rm`, then a churn that wraps the log | `no-map` in every mode (no live-state copy survives) |
+| clean | `jreuse` | `rm` after a full fill, a 1-block reuser takes the first block of the tail | `no-map` / `no-map` / journal inode, cut, 20, `artifact-is-prefix` |
+| clean | `jhardlink` | `ln`, `rm` of one name | `reused` in every mode |
+| clean | `jinline` | 40-byte inline file, `rm` | `unsupported` in every mode |
+| clean | `jswap` (added) | `rm`, a second file written over its blocks and removed | `no-map` / `no-map` / journal inode, 30 (overlap), equal_source `no` |
+| crash | `crash-live-copy` (J5) | `x` created, `sync`, `rm`, `sync`, later `fsync`s, crash | `no-map` / journal inode, 40, `journal-not-replayed`, live region / the same, `full` |
+| crash | `crash-created` | `jc` created and `fsync`ed in the crash boot | not in the as-found tree; a `journal_only` row (inode-table copies, the replayed content) |
+| crash | `crash-update` | `live` appended and `fsync`ed | as-found size 700 and content the old; the replay lists 1000 bytes (a `journal_only` row) |
+| ext3 | `bm-small`, `bm-indirect` | 5- and 20-block block-map files, `rm` in a later boot | `no-map` / `no-map` / journal inode, 40, `journal-copy-unverified`, `full` |
+
+`jsameboot` (a depth-1 file written and removed in one boot) is NOT produced: on the 5.10 kernel it stayed at depth 0 in the probe
+(gate J7), so it stays builder-only. `jswap` is the one family beyond the plan's table: it is the only way a real kernel makes an
+artifact that differs from its source although its blocks are free (`equal_source` `no`); without it that kind occurs in no image.
+Helper entries carry the family `aux-donor` or `aux-gap` (or `unlisted`): the donors, `cgap`, and the removed `jswapb`. A donor whose
+number a later file took names that file's inode, so its `stale` answer is that file's data (`inode-not-reused-since-entry-deleted`
+is an assumption, not a fact).
+
+### The oracle (`ext4_journal_oracle.py oracle`, never Minutiae)
+
+Its decoder is the one of the probe: its own crc32c, journal superblock, live scan by the kernel's PASS_SCAN rule, stale fragments,
+tag copy states, revokes and inode-table copies (3G-R2 to R6, from the kernel header layout: independent code, not an independent
+specification). Cross-checks, each exiting 1 on a difference: the live transactions and tags against `debugfs logdump -a` event by
+event (crash image); the stale view against `logdump -O -a` (clean images; on a log that wrapped every block of the ring parses and
+`logdump -O` goes round forever, so its output is read up to 8 MiB and compared with the decoder's walk, which stops at the first
+repeated block: one lap); every transaction's tags and revokes against the same output (`logdump: true` in `txns`); the journal
+superblock against `dumpe2fs -h`; the journal inode map against `debugfs stat <8>`; each deleted file's true blocks against `debugfs
+stat` of the last stage image that shows it live; the free blocks against `dumpe2fs`; and the crash image against the kernel's own
+replay of a COPY of it (an extra guest boot, never committed; the sha256 of the crash image is checked before and after): the files the
+replay lists must be `jc` (its source) and `live` (old content plus the appended bytes), and must not list `x` or `z`. It derives
+`expect` by restating 3G-R11 to R13 in Python (the eligible copies, the newest live-state copy of the same generation, the map blocks of
+the same point in time, the free-prefix cut, the caps 65 / 40 / 30 / 20), reusing the 3C oracle's map walker with the map blocks read
+from journal copies.
+
+`expect.json` (the schema Task 14 reads; block runs are `[first block, count]`; `txns` has one transaction per line):
+
+- `generator`: `image_sha256`, `kernel`, `packages`, `commands` (every guest op), `fsck_exit`, `gates`, `logdump_old`, `replay_oracle`;
+- `fs_type`, `block_size`, `deleted_entry_count`, `unlisted_count`, `totals` (per mode: `recovered`, `skipped_by`, `undecided`);
+- `journal`: `inode`, `version`, `block_size`, `blocks`, `first`, `sequence`, `start`, `features` (short names in bit order, compat
+  first), `feature_compat`, `feature_incompat`, `needs_recovery`, `live_stop`, `csum_type`, `tag_size`;
+- `txns`: `seq`, `region` (`live`/`stale`), `start_jblk`, `commit_jblk` (-1 none), `committed`, `checksum` (`ok`/`bad`/`not-recorded`),
+  `revoked`, `logdump`, `tags` (`fsblock`, `jblk`, `flags`, `copy`, `revoked`, `escaped`);
+- `deleted`: the 3C fields (`path`, `name`, `family`, `inode`, `generation`, `source_sha256`, `source_size`, `true_basis`, `true_blocks`,
+  `tree_blocks`, `kernel_state`) plus `expect` per mode (`outcome`, `skip`, `method`, `seq`, `region`, `size`, `captured_blocks`, `cut`,
+  `incomplete`, `confidence`, `assumptions`, `equal_source`, `stop`, `candidate_methods`, `overlaps`, `tree_sources`) and
+  `journal_copies` (counts of the eligible copies of the inode by state);
+- `journal_only` (crash): `path`, `family`, `inode`, `replayed_size`, `replayed_sha256`, `as_found_present`, `as_found_size`,
+  `as_found_sha256`, `inode_table_copies` (`[fs block, journal block]`), `copy_seqs`; `live`: the as-found live files with their source
+  hashes; `families`; `replay` (crash): the listing of the kernel's replay and its dmesg lines.
+
+NOT produced by a real kernel (builder tests only): bad checksums, overwritten slots with checksums, escaped blocks, revokes of
+inode-table blocks, `async_commit`, `fast_commit`, v1 superblocks, external journals, the caps (65 is reachable only on a builder
+image; on a real image the method never exceeds 40), a live region without `needs_recovery`, multi-descriptor transactions, a
+checksum failure that ends the live scan, and a same-boot depth-1 map (`jsameboot`).
+
 ## F2FS recovery probe (3D)
 
 What does the KERNEL f2fs driver (Debian `6.1.0-53-amd64`, QEMU TCG guest) leave behind after
