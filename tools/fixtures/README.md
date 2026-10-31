@@ -1289,6 +1289,9 @@ from `cut` for a file whose end is unknown or whose map ends early), `candidates
 `deleted_entry_count` counts every deleted record the reader walks (17 in `ext4-recover`, 7 in `ext3-recover`, 1 in
 `ext4-recover-sameboot`, 0 in `ext4-recover-wiped`).
 
+Regeneration depends on the kernel's block allocator placement and may need re-tuning of the ops; the generator fails closed
+(exit 1) when a required family does not occur, so a regenerated image can never silently lose a scenario.
+
 NOT produced by a real kernel (builder tests only): an unclean image (`needs_recovery`), a damaged or hostile stale map,
 cross-linked or out-of-range map blocks, a leaf index that overflows, two deleted names of one inode other than the hard link,
 a block-map file with a double-indirect block, encrypted inodes, and an inline directory.
