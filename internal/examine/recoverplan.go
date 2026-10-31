@@ -389,6 +389,10 @@ const (
 	// candidate is capped like a prefix (capCut) although its runs cover its declared size (3C-C3). Local to the
 	// callers of confidenceFor, whose signature is unchanged.
 	assumptionFileEndUnknown = "file-end-unknown"
+	// capJournalStale caps a candidate taken from a journal transaction outside the live region (spec ruling 9, "a lower
+	// cap"); assumptionJournalStale selects it (3G-R13).
+	capJournalStale        = 40
+	assumptionJournalStale = "journal-stale-region"
 )
 
 // confidenceFor is the base of the method with the caps applied; false when the build has no rule for
@@ -509,4 +513,21 @@ func overlapCounts(items []ownedRuns) map[string]int {
 		}
 	}
 	return out
+}
+
+// ErrNoJournalRecovery means the filesystem cannot recover from its journal in this build (3G-R14). Callers get it
+// wrapped with the filesystem type, before any audit entry.
+var ErrNoJournalRecovery = fmt.Errorf("%w: journal recovery is not available for this filesystem in this build", filesys.ErrUnsupported)
+
+// capJournalSource applies the caps that depend on where a journal copy came from (3G-R13): a stale-region copy and
+// a copy the reader says may predate committed transactions never exceed 40. It is applied after confidenceFor at
+// both of its call sites and leaves a candidate of any other source unchanged.
+func capJournalSource(conf int, assumptions []string) int {
+	if slices.Contains(assumptions, assumptionJournalStale) {
+		conf = min(conf, capJournalStale)
+	}
+	if slices.Contains(assumptions, assumptionJournalNotReplayed) {
+		conf = min(conf, capJournalNotReplayed)
+	}
+	return conf
 }

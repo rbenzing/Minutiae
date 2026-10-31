@@ -238,3 +238,40 @@ func TestJournalMapRevokedTreeCopyIsUsed(t *testing.T) {
 		t.Errorf("stop %q from %v; want the revoked copy used and named revoked", m.stop, m.treeFrom)
 	}
 }
+
+// A committed copy of a map block at or before T whose state is mismatch makes the block's state at T unknown (3G C11):
+// the map stops, and neither an older copy nor the home block is used.
+func TestJournalMapIneligibleCopyAtOrBeforeTStopsTheMap(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		older bool
+		post  rjmPost
+	}{
+		{"home free", false, nil},
+		{"home reused", false, rjmReuse},
+		{"older good copy", true, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			at := uint32(11)
+			if tc.older {
+				at = 12
+			}
+			r := rjmBuild(t, rjmOpts(), rjmLeafFile(), ext4test.DebugfsRm,
+				func(img []byte, l *ext4test.Layout, loc ext4test.FileLoc) []ext4test.JTxn {
+					good := rjmTxn(10, loc.Tree[0], l.BlockCopy(img, loc.Tree[0]))
+					bad := rjmTxn(11, loc.Tree[0], l.BlockCopy(img, loc.Tree[0]))
+					bad.Tags[0].BadCsum = true
+					other := rjmTxn(12, 3, make([]byte, 1024))
+					if tc.older {
+						return []ext4test.JTxn{good, bad, other}
+					}
+					bad.Seq, other.Seq = 10, 11
+					return []ext4test.JTxn{bad, other}
+				}, tc.post)
+			m := r.mapOf(t, r.prepare(t, filesys.JournalUseCommitted), at)
+			if m.stop != "map-block-newer-than-copy@0" || len(m.runs) != 0 {
+				t.Errorf("stop %q, %d runs, from %v; want map-block-newer-than-copy@0 and no run", m.stop, len(m.runs), m.treeFrom)
+			}
+		})
+	}
+}

@@ -23,7 +23,8 @@ const (
 	stopRunsCap      = "runs-cap"           // more runs than the cap
 
 	// stopMapBlockNewer: a journal map block has no copy at or before the inode copy, but a later copy exists, so the home
-	// block may hold a later state (3G-R12).
+	// block may hold a later state (3G-R12), or a committed copy at or before the inode copy is mismatch or
+	// missing, so the block's state then is unknown and neither an older copy nor the home block may stand in (3G C11).
 	stopMapBlockNewer = "map-block-newer-than-copy"
 
 	stopTokenTemplate = "%s@%d"
