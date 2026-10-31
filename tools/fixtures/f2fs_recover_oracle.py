@@ -1638,9 +1638,11 @@ def check_shapes(D, entries, snaps, free_set, nodiscard):
 
 # ---------------------------------------------------------------- roll-forward probe (3H)
 
-CP_NOCRC_RECOVERY_FLAG = 0x20  # from memory: CP_NOCRC_RECOVERY_FLAG
+CP_NOCRC_RECOVERY_FLAG = 0x200  # from memory (the probe never saw it set); 0x20 is CP_FASTBOOT_FLAG
 FOOT_COLD, FOOT_FSYNC, FOOT_DENT = 0x1, 0x2, 0x4  # from memory: COLD/FSYNC/DENT_BIT_SHIFT 0, 1, 2
 RF_FILES = ("/rf/small.bin", "/rf/direct.bin", "/rf/indirect.bin", "/upd/append.bin")
+# nodes expected per file in the chain: inode (+ one direct node per 1018 blocks beyond the inode slots); the appended file only its inode
+EXPECT_COUNTS = {"/rf/small.bin": 1, "/rf/direct.bin": 2, "/rf/indirect.bin": 4, "/upd/append.bin": 1}
 
 
 def checkpoint_crc(img):
@@ -1654,7 +1656,7 @@ def footer_version(img):
     cp = img.cp
     fl, ver = cp["ckpt_flags"], cp["checkpoint_ver"]
     if fl & CP_NOCRC_RECOVERY_FLAG:
-        return ver & 0xFFFFFFFF, 0xFFFFFFFF, "nocrc"
+        return ver, 0xFFFFFFFFFFFFFFFF, "nocrc"  # from memory: the full 64-bit version is compared
     if fl & CP_CRC_RECOVERY_FLAG:
         return ver | (checkpoint_crc(img) << 32), 0xFFFFFFFFFFFFFFFF, "crc"
     return ver, 0xFFFFFFFFFFFFFFFF, "plain"
@@ -1753,9 +1755,9 @@ def cmd_rfprobe(a):
 
     # ---- H1
     fl = crash.cp["ckpt_flags"]
-    print("FACT H1 checkpoint: pack at block %d version %d flags %s (CRC_RECOVERY 0x40 %s, NOCRC_RECOVERY 0x20 %s), checksum_offset %d, stored crc 0x%08x" % (
+    print("FACT H1 checkpoint: pack at block %d version %d flags %s (CRC_RECOVERY 0x40 %s, 0x20 (FASTBOOT) %s, 0x200 (NOCRC) %s), checksum_offset %d, stored crc 0x%08x" % (
         crash.cp["blk"], crash.cp["checkpoint_ver"], hexn(fl),
-        "set" if fl & 0x40 else "clear", "set" if fl & 0x20 else "clear", crash.cp["checksum_offset"], checkpoint_crc(crash)))
+        "set" if fl & 0x40 else "clear", "set" if fl & 0x20 else "clear", "set" if fl & CP_NOCRC_RECOVERY_FLAG else "clear", crash.cp["checksum_offset"], checkpoint_crc(crash)))
     print("FACT H1 cursors (main-relative seg, blkoff) hot/warm/cold node: %s; chain start = main %d + %d*512 + %d = block %d" % (
         ch["cursors"], crash.sb["main_blkaddr"], ch["cursors"][1][0], ch["cursors"][1][1], ch["start"]))
     print("FACT H1 expected footer version (%s rule): 0x%x" % (ch["mode"], ch["expected"]))
@@ -1783,8 +1785,9 @@ def cmd_rfprobe(a):
     print("FACT H1 blocks outside the chain whose footer has the expected version: %d%s" % (
         len(outside), "".join(" [blk %d nid %d ino %d ofs %d]" % (n["blk"], n["nid"], n["ino"], n["ofs"]) for n in outside[:12])))
     present = {p: [n for n in nodes if n["ino"] == inos[p]] for p in RF_FILES}
-    ok = (bool(fl & 0x40) and not fl & 0x20 and ch["stop"] == "version" and bool(nodes) and nodes[0]["blk"] == ch["start"]
-          and all(present[p] for p in RF_FILES) and all(n["cp_ver"] == ch["expected"] for n in nodes))
+    ok = (bool(fl & 0x40) and not fl & CP_NOCRC_RECOVERY_FLAG and ch["stop"] == "version" and bool(nodes) and nodes[0]["blk"] == ch["start"]
+          and {p: len(present[p]) for p in RF_FILES} == EXPECT_COUNTS
+          and all(n["cp_ver"] == ch["expected"] for n in nodes))
     verdict("H1", ok, "(flags %s; stop %s; nodes per file %s; every chain node carries the expected version)" % (
         hexn(fl), ch["stop"], {p: len(v) for p, v in present.items()}))
 

@@ -15,8 +15,8 @@
 # Crash mode (plan 3H): GUEST_CRASH=1 makes the guest print GUEST-CRASH-READY after the last op
 # and sleep, with no sync and no unmount; guest_run then starts QEMU with a monitor socket,
 # waits for the marker (at most GUEST_TIMEOUT seconds), sends "quit" through the socket (the
-# recover_probe.sh recipe: the guest dies with its dirty state), waits up to 20 s, kills QEMU if
-# it is still there and fails when the marker never came or QEMU is not gone. GUEST_CRASH must
+# recover_probe.sh recipe: the guest dies with its dirty state), waits up to 5 s (best effort), then TERM and KILL if
+# it is still there (also a valid crash) and fails when the marker never came or QEMU is not gone. GUEST_CRASH must
 # have the same value for guest_initrd and guest_run.
 #
 # The ops file holds one shell command per line, run in order inside the guest
@@ -103,13 +103,28 @@ guest_run() {
       python3 - "$sock" <<'PY'
 import socket, sys, time
 s = socket.socket(socket.AF_UNIX); s.settimeout(10); s.connect(sys.argv[1])
-time.sleep(0.5); s.recv(4096); s.sendall(b"quit\n"); print("monitor: sent quit")
+buf = b""
+try:
+    while b"(qemu)" not in buf:
+        d = s.recv(4096)
+        if not d:
+            break
+        buf += d
+except socket.timeout:
+    pass
+s.sendall(b"quit\n"); time.sleep(1); print("monitor: sent quit")
 PY
     fi
     i=0
-    while [ $i -lt 20 ] && kill -0 "$qpid" 2>/dev/null; do sleep 1; i=$((i + 1)); done
-    if kill -0 "$qpid" 2>/dev/null; then echo "qemu still running after quit (or the marker never came); killing" >&2; kill -9 "$qpid"; fi
+    while [ $i -lt 5 ] && kill -0 "$qpid" 2>/dev/null; do sleep 1; i=$((i + 1)); done
+    if kill -0 "$qpid" 2>/dev/null; then
+      echo "qemu still running 5 s after quit (or the marker never came); TERM then KILL (a valid crash)" >&2
+      kill -TERM "$qpid" 2>/dev/null
+      i=0; while [ $i -lt 3 ] && kill -0 "$qpid" 2>/dev/null; do sleep 1; i=$((i + 1)); done
+      kill -0 "$qpid" 2>/dev/null && kill -9 "$qpid"
+    fi
     wait "$qpid" 2>/dev/null || true
+    rm -f "$sock"
     if kill -0 "$qpid" 2>/dev/null; then echo "qemu process $qpid is still alive" >&2; return 1; fi
     grep -a -e 'OP [0-9]' -e 'OP-FAIL' -e 'GUEST-' "$log" || true
     grep -aq 'GUEST-CRASH-READY' "$log" || { echo "guest never reached the crash marker: $log" >&2; tail -n 20 "$log" >&2; return 1; }

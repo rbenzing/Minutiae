@@ -1,4 +1,5 @@
 FSYNC-ROUTE dd conv=fsync (busybox has no fsync applet)
+BUSYBOX BusyBox v1.35.0 (Debian 1:1.35.0-4+deb12u1+b1) multi-call binary.
 CHECKPOINT-BLOCKS 512 1024
 == formatting (host side, faketime 2023-11-14 22:13:20)
 == base boot: /rf, /upd/append.bin, sync, clean unmount
@@ -6,11 +7,10 @@ OP 1 mkdir /mnt/rf /mnt/upd
 OP 2 cp /payload/append.bin /mnt/upd/append.bin
 OP 3 sync
 GUEST-DONE
-STAGE base done after 9 s
+STAGE base done after 8 s
 TOOLS base fsck-rc=0 dump-rc=0,0
 == crash boot: fsynced writes, then the host quits QEMU (GUEST_CRASH=1)
 monitor: sent quit
-qemu still running after quit (or the marker never came); killing
 OP 1 echo 3600 > /sys/fs/f2fs/vda/cp_interval
 OP 2 echo "CPINT $(cat /sys/fs/f2fs/vda/cp_interval)"
 OP 3 sync
@@ -24,7 +24,7 @@ OP 10 echo 3 > /proc/sys/vm/drop_caches
 OP 11 for b in 512 1024; do echo "CPVER B $b $(dd if=/dev/vda bs=4096 skip=$b count=1 2>/dev/null | od -An -tx1 -N8 | tr -d ' \n')"; done
 OP 12 echo WRITES-DONE
 GUEST-CRASH-READY
-STAGE crash done after 38 s
+STAGE crash done after 16 s
 CPINT 3600
 CPVER A 512 6b458b6b00000000
 CPVER A 1024 6a458b6b00000000
@@ -38,38 +38,38 @@ OP 1 dmesg | grep -ai f2fs || true
 OP 2 ls -lR /mnt || true
 OP 3 for f in /mnt/rf/* /mnt/upd/*; do echo "RF $f $(wc -c < $f | tr -d ' ') $(sha256sum $f | cut -d' ' -f1)"; done
 GUEST-DONE
-STAGE replayed done after 47 s
+STAGE replayed done after 24 s
 OP 1 dmesg | grep -ai f2fs || true
-[    2.730164] F2FS-fs (vda): Found nat_bits in checkpoint
-[    2.752800] F2FS-fs (vda): recover_inode: ino = 7, name = small.bin, inline = 21
-[    2.756727] F2FS-fs (vda): recover_dentry: ino = 7, name = small.bin, dir = 4, err = 0
-[    2.761840] F2FS-fs (vda): recover_data: ino = 7 (i_size: recover) recovered = 5, err = 0
-[    2.761965] F2FS-fs (vda): recover_inode: ino = 8, name = direct.bin, inline = 21
-[    2.762015] F2FS-fs (vda): recover_dentry: ino = 8, name = direct.bin, dir = 4, err = 0
-[    2.765917] F2FS-fs (vda): recover_data: ino = 8 (i_size: recover) recovered = 864, err = 0
-[    2.768838] F2FS-fs (vda): recover_data: ino = 8 (i_size: recover) recovered = 416, err = 0
-[    2.768914] F2FS-fs (vda): recover_inode: ino = a, name = indirect.bin, inline = 21
-[    2.768950] F2FS-fs (vda): recover_dentry: ino = a, name = indirect.bin, dir = 4, err = 0
-[    2.773742] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 864, err = 0
-[    2.778262] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 1018, err = 0
-[    2.782185] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 1018, err = 0
-[    2.782773] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 172, err = 0
-[    2.782806] F2FS-fs (vda): recover_inode: ino = 6, name = append.bin, inline = 21
-[    2.782935] F2FS-fs (vda): recover_data: ino = 6 (i_size: recover) recovered = 2, err = 0
-[    2.856098] F2FS-fs (vda): checkpoint: version = 6b8b456c
-[    2.856712] F2FS-fs (vda): Mounted with checkpoint version = 6b8b456c
+[    2.516184] F2FS-fs (vda): Found nat_bits in checkpoint
+[    2.543588] F2FS-fs (vda): recover_inode: ino = 7, name = small.bin, inline = 21
+[    2.548362] F2FS-fs (vda): recover_dentry: ino = 7, name = small.bin, dir = 4, err = 0
+[    2.552872] F2FS-fs (vda): recover_data: ino = 7 (i_size: recover) recovered = 5, err = 0
+[    2.553005] F2FS-fs (vda): recover_inode: ino = 8, name = direct.bin, inline = 21
+[    2.553076] F2FS-fs (vda): recover_dentry: ino = 8, name = direct.bin, dir = 4, err = 0
+[    2.558133] F2FS-fs (vda): recover_data: ino = 8 (i_size: recover) recovered = 864, err = 0
+[    2.563667] F2FS-fs (vda): recover_data: ino = 8 (i_size: recover) recovered = 416, err = 0
+[    2.563747] F2FS-fs (vda): recover_inode: ino = a, name = indirect.bin, inline = 21
+[    2.563787] F2FS-fs (vda): recover_dentry: ino = a, name = indirect.bin, dir = 4, err = 0
+[    2.568100] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 864, err = 0
+[    2.572593] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 1018, err = 0
+[    2.579222] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 1018, err = 0
+[    2.579771] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 172, err = 0
+[    2.579802] F2FS-fs (vda): recover_inode: ino = 6, name = append.bin, inline = 21
+[    2.579937] F2FS-fs (vda): recover_data: ino = 6 (i_size: recover) recovered = 2, err = 0
+[    2.643989] F2FS-fs (vda): checkpoint: version = 6b8b456c
+[    2.647960] F2FS-fs (vda): Mounted with checkpoint version = 6b8b456c
 RF /mnt/rf/direct.bin 5242880 08db90b2816702cefe30d6c7b031c8b9ccbd974400f947476edfc02b7bae47a3
 RF /mnt/rf/indirect.bin 12582912 6fa5e97d9811a76546a37ed514d89e704f4c82ca32dd277ccb8affd57ae6e052
 RF /mnt/rf/small.bin 20480 04dbba49973685e9cad3df57eb17d769632c4c4c8269540ed76cf729a6b4362c
 RF /mnt/upd/append.bin 28672 e0d95b84f3b6be05f8c07170450a42b2ef0ba299de34579417cddca2394d9b3f
 TOOLS replayed fsck-rc=0 dump-rc=0,0
-RUNTIME guest stages and tools: 47 s
+RUNTIME guest stages and tools: 24 s
 == decoding (f2fs_recover_oracle.py rfprobe)
 CROSSCHECK base ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 4 NAT entries, 56 SIT segments
 CROSSCHECK crash ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 4 NAT entries, 56 SIT segments
 CROSSCHECK replayed ok: 41 superblock/checkpoint fields (block_count,checkpoint_ver,checksum_offset,ckpt_flags,cp_blkaddr,cp_pack_start_sum...), 12 NAT entries, 56 SIT segments
 FACT PATHS inode numbers (replayed image == chain inode nodes; the append file from the base image): /rf/small.bin=7, /rf/direct.bin=8, /rf/indirect.bin=10, /upd/append.bin=6
-FACT H1 checkpoint: pack at block 512 version 1804289387 flags 0xc5 (CRC_RECOVERY 0x40 set, NOCRC_RECOVERY 0x20 clear), checksum_offset 4092, stored crc 0x683ec3e9
+FACT H1 checkpoint: pack at block 512 version 1804289387 flags 0xc5 (CRC_RECOVERY 0x40 set, 0x20 (FASTBOOT) clear, 0x200 (NOCRC) clear), checksum_offset 4092, stored crc 0x683ec3e9
 FACT H1 cursors (main-relative seg, blkoff) hot/warm/cold node: [(0, 5), (1, 1), (2, 0)]; chain start = main 4096 + 1*512 + 1 = block 4609
 FACT H1 expected footer version (crc rule): 0x683ec3e96b8b456b
 FACT H1 chain[0] blk 4609 nid 7 ino 7 (/rf/small.bin) ofs 0 kind inode flag 0x7 (COLD FSYNC DENT) cp_ver 0x683ec3e96b8b456b next 4610
@@ -115,24 +115,24 @@ FACT H6 /rf/small.bin: after the replay 20480 bytes sha256 04dbba49973685e9cad3d
 FACT H6 /rf/direct.bin: after the replay 5242880 bytes sha256 08db90b2816702cefe30d6c7b031c8b9ccbd974400f947476edfc02b7bae47a3; expected (bytes written up to the fsync) 5242880 bytes sha256 08db90b2816702cefe30d6c7b031c8b9ccbd974400f947476edfc02b7bae47a3; EQUAL
 FACT H6 /rf/indirect.bin: after the replay 12582912 bytes sha256 6fa5e97d9811a76546a37ed514d89e704f4c82ca32dd277ccb8affd57ae6e052; expected (bytes written up to the fsync) 12582912 bytes sha256 6fa5e97d9811a76546a37ed514d89e704f4c82ca32dd277ccb8affd57ae6e052; EQUAL
 FACT H6 /upd/append.bin: after the replay 28672 bytes sha256 e0d95b84f3b6be05f8c07170450a42b2ef0ba299de34579417cddca2394d9b3f; expected (bytes written up to the fsync) 28672 bytes sha256 e0d95b84f3b6be05f8c07170450a42b2ef0ba299de34579417cddca2394d9b3f; EQUAL
-FACT H6 guest line: [    2.730164] F2FS-fs (vda): Found nat_bits in checkpoint
-FACT H6 guest line: [    2.752800] F2FS-fs (vda): recover_inode: ino = 7, name = small.bin, inline = 21
-FACT H6 guest line: [    2.756727] F2FS-fs (vda): recover_dentry: ino = 7, name = small.bin, dir = 4, err = 0
-FACT H6 guest line: [    2.761840] F2FS-fs (vda): recover_data: ino = 7 (i_size: recover) recovered = 5, err = 0
-FACT H6 guest line: [    2.761965] F2FS-fs (vda): recover_inode: ino = 8, name = direct.bin, inline = 21
-FACT H6 guest line: [    2.762015] F2FS-fs (vda): recover_dentry: ino = 8, name = direct.bin, dir = 4, err = 0
-FACT H6 guest line: [    2.765917] F2FS-fs (vda): recover_data: ino = 8 (i_size: recover) recovered = 864, err = 0
-FACT H6 guest line: [    2.768838] F2FS-fs (vda): recover_data: ino = 8 (i_size: recover) recovered = 416, err = 0
-FACT H6 guest line: [    2.768914] F2FS-fs (vda): recover_inode: ino = a, name = indirect.bin, inline = 21
-FACT H6 guest line: [    2.768950] F2FS-fs (vda): recover_dentry: ino = a, name = indirect.bin, dir = 4, err = 0
-FACT H6 guest line: [    2.773742] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 864, err = 0
-FACT H6 guest line: [    2.778262] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 1018, err = 0
-FACT H6 guest line: [    2.782185] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 1018, err = 0
-FACT H6 guest line: [    2.782773] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 172, err = 0
-FACT H6 guest line: [    2.782806] F2FS-fs (vda): recover_inode: ino = 6, name = append.bin, inline = 21
-FACT H6 guest line: [    2.782935] F2FS-fs (vda): recover_data: ino = 6 (i_size: recover) recovered = 2, err = 0
-FACT H6 guest line: [    2.856098] F2FS-fs (vda): checkpoint: version = 6b8b456c
-FACT H6 guest line: [    2.856712] F2FS-fs (vda): Mounted with checkpoint version = 6b8b456c
+FACT H6 guest line: [    2.516184] F2FS-fs (vda): Found nat_bits in checkpoint
+FACT H6 guest line: [    2.543588] F2FS-fs (vda): recover_inode: ino = 7, name = small.bin, inline = 21
+FACT H6 guest line: [    2.548362] F2FS-fs (vda): recover_dentry: ino = 7, name = small.bin, dir = 4, err = 0
+FACT H6 guest line: [    2.552872] F2FS-fs (vda): recover_data: ino = 7 (i_size: recover) recovered = 5, err = 0
+FACT H6 guest line: [    2.553005] F2FS-fs (vda): recover_inode: ino = 8, name = direct.bin, inline = 21
+FACT H6 guest line: [    2.553076] F2FS-fs (vda): recover_dentry: ino = 8, name = direct.bin, dir = 4, err = 0
+FACT H6 guest line: [    2.558133] F2FS-fs (vda): recover_data: ino = 8 (i_size: recover) recovered = 864, err = 0
+FACT H6 guest line: [    2.563667] F2FS-fs (vda): recover_data: ino = 8 (i_size: recover) recovered = 416, err = 0
+FACT H6 guest line: [    2.563747] F2FS-fs (vda): recover_inode: ino = a, name = indirect.bin, inline = 21
+FACT H6 guest line: [    2.563787] F2FS-fs (vda): recover_dentry: ino = a, name = indirect.bin, dir = 4, err = 0
+FACT H6 guest line: [    2.568100] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 864, err = 0
+FACT H6 guest line: [    2.572593] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 1018, err = 0
+FACT H6 guest line: [    2.579222] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 1018, err = 0
+FACT H6 guest line: [    2.579771] F2FS-fs (vda): recover_data: ino = a (i_size: recover) recovered = 172, err = 0
+FACT H6 guest line: [    2.579802] F2FS-fs (vda): recover_inode: ino = 6, name = append.bin, inline = 21
+FACT H6 guest line: [    2.579937] F2FS-fs (vda): recover_data: ino = 6 (i_size: recover) recovered = 2, err = 0
+FACT H6 guest line: [    2.643989] F2FS-fs (vda): checkpoint: version = 6b8b456c
+FACT H6 guest line: [    2.647960] F2FS-fs (vda): Mounted with checkpoint version = 6b8b456c
 FACT H6 replayed image: checkpoint_ver 1804289391 flags 0xc5
 BRANCH H6 yes (mount ok: True, all four files equal: True)
 FACT H7 indirect.bin: last inode node in the chain at blk 4612, i_nid[0..4] = [11, 12, 13, 0, 0]
@@ -142,7 +142,7 @@ FACT H7 chain nodes of indirect.bin (kind, ofs): [('direct', 1), ('direct', 2), 
 BRANCH H7 yes
 FACT H8 /upd/append.bin ino 6: live NAT entry in the crash image (0, 6, 4608); chain nodes (blk, kind, ofs, flag): [(4616, 'inode', 0, '0x3')]
 FACT H8 chain inode copy: i_size 28672
-HEX[] H8 append.bin chain inode head (96 bytes)    a48100210000000000000000010000000070000000000000080000000000000000f153650000000000f153650000000000f153650000000000321b08fdc76c20fdc76c209cd97052000000000000000000000000050000000a00000061707065
+HEX[] H8 append.bin chain inode head (96 bytes)    a48100210000000000000000010000000070000000000000080000000000000000f153650000000000f153650000000000f153650000000003f36f06fef30614fef30614c8296a1d000000000000000000000000050000000a00000061707065
 FACT H8 after the replay: i_size 28672 (guest listing: (28672, 'e0d95b84f3b6be05f8c07170450a42b2ef0ba299de34579417cddca2394d9b3f'))
 FACT H9 /rf/small.bin: 5 distinct data addresses in the chain nodes, 0 with the SIT bit set, 0 outside the main area
 HEX[] H9 /rf/small.bin first data block head (32 bytes) 41208e228a3f037754ec83807866842af2eaa26cdca480382bab4e985d98adba

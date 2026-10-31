@@ -54,6 +54,7 @@ else
   route="dd conv=fsync (busybox has no fsync applet)"
 fi
 echo "FSYNC-ROUTE $route"
+echo "BUSYBOX $(busybox 2>&1 | head -1)"
 
 # format: a fresh 128 MiB volume (host side, frozen clock, fixed uuid)
 truncate -s 128M "$imgs/fmt.img"

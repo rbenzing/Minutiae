@@ -1246,16 +1246,12 @@ No `--privileged`; the module is loaded only by the guest's own `/init`. The ima
 `minutiae-recover-fixtures` (no new image). The host formats (128 MiB, `faketime`, `mkfs.f2fs -O
 extra_attr,inode_checksum,sb_checksum`, `f2fs_normalize.py`) and reads the finished images. Work files
 live under `/tmp` inside the container. Run of 2026-10-31: the three guest boots plus the tool captures took
-47 s of wall time (decode: seconds).
+24 s of wall time in the second run (the first run: 47 s; decode: seconds).
 
 **Crash mode of `recover_guest.sh`.** `GUEST_CRASH=1` (same value for `guest_initrd` and `guest_run`): the
 guest `/init` prints `GUEST-CRASH-READY` after the last op and sleeps (no `sync`, no unmount); `guest_run`
 starts QEMU with `-monitor unix:<rd>.mon,server,nowait` in the background, waits for the marker (at most
-`GUEST_TIMEOUT`), sends `quit` through the socket, waits 20 s, `kill -9`s QEMU if it is still there, checks
-that the process is gone and fails when the marker never came. Observed: after `quit` QEMU was still running
-at 20 s and was killed (`qemu still running after quit ... killing`); either way the host file holds exactly
-what the guest had submitted (the checkpoint and node blocks decode, `fsck.f2fs` exit 0). Non-crash behaviour
-is unchanged.
+`GUEST_TIMEOUT`), reads the `(qemu)` prompt, sends `quit` through the socket, waits about 5 s (best effort), then `kill -TERM` and, after 3 s, `kill -9`, removes the socket, checks that the process is gone and fails when the marker never came. A QEMU that survives `quit` is not an error: the killed state is a valid crash, but only content the guest had fsynced is reproducible (unfsynced state depends on timing). Observed in the second run: `quit` ended QEMU within 5 s (in the first run, which did not read the prompt first, QEMU was still running at 20 s and was killed). Non-crash behaviour is unchanged, but not byte-for-byte: the initrd `/init` text gains one line (the crash check) for every caller.
 
 ### What ran
 
@@ -1276,7 +1272,7 @@ is unchanged.
 
 | Gate | Kind | Verdict | Value |
 |---|---|---|---|
-| H1 | STOP | PASS | the chain rule of 3H-R2 holds: 8 fsynced nodes lie in the chain from the warm cursor, all with `cp_ver == ver \| crc<<32`, `ckpt_flags` 0xc5 (0x40 set, 0x20 clear), the walk ends at a block whose footer version is 0 (stop `version@4617`); no block outside the chain carries the expected version |
+| H1 | STOP | PASS | the chain rule of 3H-R2 holds: 8 fsynced nodes lie in the chain from the warm cursor, all with `cp_ver == ver \| crc<<32`, `ckpt_flags` 0xc5 (0x40 set, 0x20 (FASTBOOT) clear, 0x200 (NOCRC) clear), the walk ends at a block whose footer version is 0 (stop `version@4617`); no block outside the chain carries the expected version; the per-file node counts (small 1, direct 2, indirect 4 = inode + dnodes of ofs 1, 2, 4, append 1) are asserted |
 | H2 | STOP | PASS | new inode `0x7` (cold, fsync, dent); direct nodes `0xb`, `0x13`, `0x23` = `ofs<<3 \| 0x3` (cold, fsync, no dent); the appended file's inode `0x3` |
 | H5 | STOP | PASS | `checkpoint_ver` after the base sync 1804289387 == at the end of the ops == crash image; the three new inode numbers have no NAT entry (address 0) |
 | H3 | branch | no | `fsck.f2fs -d 3 -f --dry-run` prints no chain listing (135 lines, none names a chain block): Task 12 does not cross-check against it; the decoder, the operation log and the kernel replay are the oracle |
@@ -1293,13 +1289,17 @@ is unchanged.
 | H3 | exit 0, 135 lines, 2 lines match `fsync/roll/recover/warm/dnode/chain` (both `alloc_type[CURSEG_...]`), image unchanged after the run | `fsck.f2fs -d 3 -f --dry-run` on a copy |
 | H4 | no `fsync` applet in busybox 1.35.0 (Debian 1:1.35.0-4+deb12u1); `dd` supports `conv=fsync`, `conv=notrunc`, `seek` | `busybox --list` |
 | H5 | versions: base image 1804289387; guest after the base sync 1804289387 (packs 1804289387 and 1804289386); at the end 1804289387; crash image 1804289387; NAT journal 0 entries; NAT of inodes 7, 8, 10: `(0,0,0)`; of 6: `(0,6,4608)` | `CPVER` guest lines, `FACT H5` |
-| H6 | after the replay (guest): `/rf/small.bin` 20480, `/rf/direct.bin` 5242880, `/rf/indirect.bin` 12582912, `/upd/append.bin` 28672 bytes, all four sha256 equal to the written bytes (the append file: original 20 KiB + 8 KiB); kernel messages: `recover_inode`, `recover_dentry`, `recover_data ... recovered = 5 / 864, 416 / 864, 1018, 1018, 172 / 2`, then a new checkpoint (replayed image version 1804289391) | `sha256sum` in the replayed boot, `dmesg` |
+| H6 | after the replay (guest): `/rf/small.bin` 20480, `/rf/direct.bin` 5242880, `/rf/indirect.bin` 12582912, `/upd/append.bin` 28672 bytes, all four sha256 equal to the written bytes (the append file: original 20 KiB + 8 KiB); kernel messages: `recover_inode`, `recover_dentry`, `recover_data ... recovered = 5 / 864, 416 / 864, 1018, 1018, 172 / 2`, then the mount's own checkpoint (the kernel prints version 6b8b456c = 1804289388); the replayed image after the guest's clean unmount has version 1804289391 | `sha256sum` in the replayed boot, `dmesg` |
 | H7 | `indirect.bin` last chain inode: `i_nid = [11, 12, 13, 0, 0]`; nid 13 (the indirect node) has no block anywhere in the main area and no NAT entry; chain holds dnodes of ofs 1, 2, 4 (the dnode under the indirect node is in the chain) | `FACT H7` |
 | H8 | `/upd/append.bin` (ino 6): live NAT entry `(0,6,4608)`; ONE chain node, its inode (`0x3`, size 28672), no direct node (blocks 5 and 6 fit the 923 inline address slots); 7 data addresses, 5 with the SIT bit set (old) and 2 clear (new); after the replay `i_size` 28672 | `FACT H8` |
 | H9 | data blocks of the three new files: 5 + 1280 + 3072 addresses, 0 with a set SIT bit | `FACT H9` |
 | H10 | `fsck.f2fs -f --dry-run` exit status 0 on the crash image (and 0 on the base image) | `FACT H10` |
 | H11 | the chain starts in segment 1 and does not cross a segment boundary (8 nodes) | `FACT H11` |
 | H12 | inode checksums of the 4 chain inodes: all valid | `FACT H12` |
+
+### Single-run observations
+
+The probe ran twice with identical results for the facts below; each is still one configuration (dd fsync, `cp_interval` 3600, no memory pressure, one kernel). "The indirect node is never written before the crash" (H7) and "`fsck.f2fs -d 3` prints no chain" (H3) were each observed in these runs only; a different writeback pattern or tool version could differ. The reader never depends on either: a chain-served indirect node is refused by rule, and the oracle does not use `fsck.f2fs`.
 
 ### Differences from the plan's wording
 
@@ -1309,7 +1309,7 @@ is unchanged.
   a checkpointed image (3D probe Q3) and not of a crash image.
 - H8: an append that fits the inode's own address slots writes only the inode node (flag `0x3`, no direct node).
 - H4: no `fsync` applet; the dd route is the fixture route.
-- Crash mode: QEMU did not exit within 20 s of `quit` and was killed.
+- Crash mode: in the first run QEMU did not exit within 20 s of `quit` and was killed; after the fix (read the monitor prompt first) it exited within 5 s.
 
 ### Raw evidence (`HEX` lines)
 
@@ -1327,7 +1327,7 @@ checkpoint's stored crc), next_blkaddr.
 
 ### From-memory facts this probe confirmed (kernel 6.1 only)
 
-`CP_CRC_RECOVERY_FLAG` 0x40 set and `CP_NOCRC_RECOVERY_FLAG` 0x20 clear; the footer version rule (`cp_ver` =
+`CP_CRC_RECOVERY_FLAG` 0x40 set and `CP_NOCRC_RECOVERY_FLAG` (0x200; 0x20 is `CP_FASTBOOT_FLAG`) clear (both flags read clear, the no-CRC value itself is from memory); the footer version rule (`cp_ver` =
 version | stored checkpoint checksum << 32); the warm-node cursor (index 1, main-relative) as the chain start and
 `next_blkaddr` as the link; footer FSYNC bit 0x2 and DENT bit 0x4 (cold bit 0x1); the inode of a new file carries
 FSYNC and DENT, its direct nodes FSYNC only; the replay creates a file at an fsynced inode node with the dentry
