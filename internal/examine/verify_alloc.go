@@ -50,7 +50,13 @@ func allocRuleOf(rec evidence.ManifestRecord) allocRule {
 	}
 	switch rec.Source.Kind {
 	case evidence.KindRecover:
-		if d.Recovery.Class == evidence.ClassDeletedFile {
+		if d.Recovery.Class == evidence.ClassDeletedFile || d.Recovery.Class == evidence.ClassPostCheckpointFile {
+			return allocFS
+		}
+	case evidence.KindJournal:
+		// only the roll-forward block copies lie in free space; ext4 journal blocks lie in the allocated journal
+		// inode and are left to plan 3G (3H-R13 d)
+		if d.Recovery.Class == evidence.ClassJournalBlock && strings.HasPrefix(d.Recovery.Method, evidence.RollForwardMethod) {
 			return allocFS
 		}
 	case evidence.KindCarve:

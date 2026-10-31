@@ -32,7 +32,7 @@ func TestVerifyRecoveredKindsWithoutRunsAreProblems(t *testing.T) {
 		}, true},
 		"recover": {evidencetest.RecoveredSpec{Data: ten, Alloc: &evidence.AllocSummary{Free: 10}}, true},
 		"journal-report is exempt": {evidencetest.RecoveredSpec{
-			Kind: evidence.KindReport, Class: evidence.ClassJournalReport, Method: "ext4-journal", Path: "reports/r1.json",
+			Kind: evidence.KindReport, Class: evidence.ClassJournalReport, Method: "ext4-journal", Path: "reports/p1-mtfs/r1.json",
 			Data: ten, Alloc: &evidence.AllocSummary{},
 		}, false},
 		"empty slack": {evidencetest.RecoveredSpec{
