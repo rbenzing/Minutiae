@@ -72,6 +72,18 @@ type FS struct {
 	mapWork    atomic.Int64
 	// leafState is the free-space leaf index (recover_leaf.go).
 	leafState
+
+	// jrnMu guards jrn and jrnErr, the jbd2 journal located and decoded once per FS (journal_view.go). A corrupt, unsupported or
+	// over-limit journal is cached in jrnErr; an I/O error is never cached.
+	jrnMu  sync.Mutex
+	jrn    *jindex
+	jrnErr error
+	// jrnBytesCap bounds the journal (maxJournalBytes); the three caps below bound the scan (Task 5). Tests lower them.
+	jrnBytesCap                        int64
+	jrnTxnCap, jrnTagCap, jrnRevokeCap int
+	// jrnBuilds counts the journal locations done and jrnBlocks the journal blocks read. Tests bound them.
+	jrnBuilds int
+	jrnBlocks atomic.Int64
 }
 
 // readFull reads exactly len(p) bytes at off; a read that returns all the
@@ -144,6 +156,11 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		locateDirsCap: maxLocateDirs,
 		locateRunsCap: maxLocateRuns,
 		mapRunsCap:    maxFileRuns,
+
+		jrnBytesCap:  maxJournalBytes,
+		jrnTxnCap:    maxJournalTxns,
+		jrnTagCap:    maxJournalTags,
+		jrnRevokeCap: maxJournalRevokes,
 	}
 	f.metaRanges = metadataRanges(sb, groups)
 	for _, w := range append(warns, gw...) {

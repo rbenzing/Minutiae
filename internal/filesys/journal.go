@@ -50,8 +50,10 @@ type JournalTxn struct {
 	Warnings  []string
 
 	// 3G fields. Zero means "not applicable" (the F2FS readers leave them zero).
-	StartBlock  int64     // journal-relative block of the first block of the transaction; -1 none
-	CommitBlock int64     // journal-relative block of the commit; -1 none
+	// StartBlock and CommitBlock are journal-relative; consumers must treat BOTH 0 and -1 as "none". Block 0 is the
+	// journal superblock, so it is never a transaction block, and readers that leave the field unset (F2FS) give 0.
+	StartBlock  int64     // block of the first block of the transaction
+	CommitBlock int64     // block of the commit
 	CommitTime  Timestamp // from the commit block; zero when unknown
 	Checksum    string    // ok | bad | not-recorded | not-verified
 }

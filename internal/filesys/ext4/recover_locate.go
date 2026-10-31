@@ -118,13 +118,18 @@ type dirIndex struct {
 // warning: stale and cross-linked structures are not damage of the live filesystem. Callers hold recMu.
 func (f *FS) quietView() *FS {
 	if f.quiet == nil {
-		f.quiet = &FS{
-			sb: f.sb, groups: f.groups, r: f.r, data: f.data, size: f.size, metaRanges: f.metaRanges,
-			dirRecordCap: f.dirRecordCap, slackScanCap: f.slackScanCap, xattrCap: f.xattrCap, eaHashCap: f.eaHashCap,
-			locateDirsCap: f.locateDirsCap, locateRunsCap: f.locateRunsCap,
-		}
+		f.quiet = f.newQuiet()
 	}
 	return f.quiet
+}
+
+// newQuiet returns a fresh view of f with its own warning collector.
+func (f *FS) newQuiet() *FS {
+	return &FS{
+		sb: f.sb, groups: f.groups, r: f.r, data: f.data, size: f.size, metaRanges: f.metaRanges,
+		dirRecordCap: f.dirRecordCap, slackScanCap: f.slackScanCap, xattrCap: f.xattrCap, eaHashCap: f.eaHashCap,
+		locateDirsCap: f.locateDirsCap, locateRunsCap: f.locateRunsCap,
+	}
 }
 
 // locator returns the quiet view and the directory index, building the index on first use.

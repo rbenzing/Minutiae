@@ -309,3 +309,18 @@ func PlausibleLeaf(block []byte, bs int, blocks uint64) (first uint32, end uint6
 
 // IBlock returns a copy of the inode i_block area.
 func (in *inode) IBlock() []byte { return append([]byte(nil), in.block[:]...) }
+
+// SetJournalCaps lowers the journal scan caps (transactions, tags, revoke records).
+func (f *FS) SetJournalCaps(txns, tags, revokes int) {
+	f.jrnTxnCap, f.jrnTagCap, f.jrnRevokeCap = txns, tags, revokes
+}
+
+// SetMaxJournalBytes lowers the journal size cap (maxJournalBytes), so a small journal can reach it.
+func (f *FS) SetMaxJournalBytes(n int64) { f.jrnBytesCap = n }
+
+// JournalStats reports how many times the journal was located and how many journal blocks were read.
+func (f *FS) JournalStats() (builds int, blocksRead int64) {
+	f.jrnMu.Lock()
+	defer f.jrnMu.Unlock()
+	return f.jrnBuilds, f.jrnBlocks.Load()
+}
