@@ -172,6 +172,9 @@ func (f *FS) readNode(st string, blk uint64) ([]byte, error) {
 	}
 	buf := make([]byte, f.sb.blockSize) // one block: bounded by the block size
 	if err := readFull(f.r, buf, off); err != nil {
+		if f.ioRaw && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+			return nil, err // a journal read: a failed read says nothing about the image and must not be cached as corrupt
+		}
 		return nil, corrupt(st, off, "read of block %d failed: %v", blk, err)
 	}
 	return buf, nil

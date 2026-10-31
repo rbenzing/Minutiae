@@ -98,7 +98,7 @@ func (b *builder) placeJournal() {
 	if n <= 0 {
 		return
 	}
-	f := File{Mode: 0o600, Pieces: []Piece{{Data: make([]byte, n*b.bs)}}}
+	f := File{Mode: 0o600, Pieces: []Piece{{Data: make([]byte, n*b.bs)}}, ExtentLeaves: b.o.JournalExtentLeaves}
 	b.writeInode(journalInode, b.renderInode(journalInode, &f))
 }
 

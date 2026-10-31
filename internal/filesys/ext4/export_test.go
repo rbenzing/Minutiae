@@ -324,3 +324,60 @@ func (f *FS) JournalStats() (builds int, blocksRead int64) {
 	defer f.jrnMu.Unlock()
 	return f.jrnBuilds, f.jrnBlocks.Load()
 }
+
+// IndexTag is a tag of the journal index, exposed for tests.
+type IndexTag struct {
+	FSBlock  uint64
+	JBlock   uint32
+	Flags    uint32
+	Copy     string
+	Escaped  bool
+	Revoked  bool
+	TxnIndex int
+}
+
+// IndexTxn is a transaction of the journal index, exposed for tests.
+type IndexTxn struct {
+	Seq              uint32
+	Stale, Committed bool
+	Start, Commit    int64
+	CommitTime       filesys.Timestamp
+	Csum             string
+	Tags             []IndexTag
+	Revokes          []uint64
+	Warnings         []string
+}
+
+// IndexTxns returns the transactions of the journal index (live ones first) and the reason the live scan ended.
+func (f *FS) IndexTxns() ([]IndexTxn, string, error) {
+	x, err := f.journalIndex()
+	if err != nil {
+		return nil, "", err
+	}
+	var out []IndexTxn
+	for i := range x.txns {
+		t := &x.txns[i]
+		it := IndexTxn{
+			Seq: t.seq, Stale: t.stale, Committed: t.committed, Start: t.start, Commit: t.commit,
+			CommitTime: t.commitTime, Csum: t.csum, Warnings: append([]string(nil), t.warnings...),
+		}
+		for _, g := range x.tags[t.tags[0]:t.tags[1]] {
+			it.Tags = append(it.Tags, IndexTag{
+				FSBlock: g.fsblk, JBlock: g.jblk, Flags: g.flags, Copy: g.copy.String(),
+				Escaped: g.flags&tagEscape != 0, Revoked: g.revoked, TxnIndex: int(g.txn),
+			})
+		}
+		it.Revokes = append(it.Revokes, x.revokes[t.revokes[0]:t.revokes[1]]...)
+		out = append(out, it)
+	}
+	return out, x.liveStop, nil
+}
+
+// IndexConsumed reports whether the live scan consumed journal block j.
+func (f *FS) IndexConsumed(j uint32) (bool, error) {
+	x, err := f.journalIndex()
+	if err != nil {
+		return false, err
+	}
+	return x.isConsumed(j), nil
+}
