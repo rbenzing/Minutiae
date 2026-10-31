@@ -356,9 +356,17 @@ var specTable = map[string]int{
 	"exfat-fatchain":     65,
 }
 
+// rollForwardTable is the base of the methods of class post-checkpoint-file (plan 3H-R8; the class ceiling is the same 60).
+var rollForwardTable = map[string]int{"f2fs-rollforward": 60}
+
 func TestConfidenceRules(t *testing.T) {
-	if len(methodBase) != len(specTable) {
-		t.Fatalf("%d methods, the spec has %d", len(methodBase), len(specTable))
+	if len(methodBase) != len(specTable)+len(rollForwardTable) {
+		t.Fatalf("%d methods, the spec has %d and 3H has %d", len(methodBase), len(specTable), len(rollForwardTable))
+	}
+	for m, want := range rollForwardTable {
+		if got, ok := confidenceFor(m, false, false); !ok || got != want {
+			t.Errorf("%s = %d,%v; want %d", m, got, ok, want)
+		}
 	}
 	for m, want := range specTable {
 		got, ok := confidenceFor(m, false, false)
@@ -371,8 +379,8 @@ func TestConfidenceRules(t *testing.T) {
 			t.Errorf("unknown method %q = %d,%v; want 0,false", m, v, ok)
 		}
 	}
-	if capOverlap != 30 || capCut != 20 {
-		t.Errorf("caps %d and %d, want 30 and 20", capOverlap, capCut)
+	if capOverlap != 30 || capCut != 20 || capChainCut != 20 {
+		t.Errorf("caps %d, %d and %d, want 30, 20 and 20", capOverlap, capCut, capChainCut)
 	}
 }
 
@@ -400,10 +408,6 @@ func TestConfidenceCaps(t *testing.T) {
 }
 
 func TestMethodsAreAllowedByClassTable(t *testing.T) {
-	ci, ok := evidence.LookupClass("deleted-file")
-	if !ok {
-		t.Fatal("no deleted-file class")
-	}
 	if len(methodBase) == 0 {
 		t.Fatal("methodBase is empty")
 	}
@@ -412,7 +416,16 @@ func TestMethodsAreAllowedByClassTable(t *testing.T) {
 			t.Errorf("methodBase[%q] = %d, %v; the spec table says %d", m, got, ok, want)
 		}
 	}
+	for m, want := range rollForwardTable {
+		if got, ok := methodBase[m]; !ok || got != want || recoveryClass(m) != "post-checkpoint-file" {
+			t.Errorf("methodBase[%q] = %d, %v, class %q; want %d in post-checkpoint-file", m, got, ok, recoveryClass(m), want)
+		}
+	}
 	for m := range methodBase {
+		ci, ok := evidence.LookupClass(recoveryClass(m))
+		if !ok {
+			t.Fatalf("no class %q for method %q", recoveryClass(m), m)
+		}
 		okPrefix := false
 		for _, p := range ci.MethodPrefixes {
 			if strings.HasPrefix(m, p) {

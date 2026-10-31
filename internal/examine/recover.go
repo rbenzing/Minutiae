@@ -39,7 +39,7 @@ func (s *Session) Recover(ctx context.Context, o RecoverOptions) (RecoverSummary
 	if err != nil {
 		return RecoverSummary{}, err
 	}
-	rec, err := s.recovererOf(fsys)
+	rec, rfr, err := s.planSource(ctx, o, fsys)
 	if err != nil {
 		return RecoverSummary{}, err
 	}
@@ -48,6 +48,9 @@ func (s *Session) Recover(ctx context.Context, o RecoverOptions) (RecoverSummary
 		"parent_id": s.Parent.ID, "partition": part.Index, "fs_type": fsType, "format": evidence.AlgorithmRecover,
 		"refs": append([]string(nil), o.Refs...), "all": o.All, "min_confidence": o.MinConfidence,
 		"all_candidates": o.AllCandidates, "keep_uniform": o.KeepUniform, "max_files": b.maxFiles, "max_bytes": b.maxBytes,
+	}
+	if o.RollForward {
+		details["rollforward"] = true
 	}
 	var rs RecoverSummary
 	sum, err := runAnalysis(s.Case, s.Parent.Source.DeviceID, "recover", details, func(a *analysis) error {
@@ -62,16 +65,22 @@ func (s *Session) Recover(ctx context.Context, o RecoverOptions) (RecoverSummary
 			a.setEnd("skipped_by", rs.SkippedBy)
 			a.setEnd("limit_reached", rs.LimitReached)
 			a.setEnd("not_processed", rs.NotProcessed)
+			if rfr != nil {
+				a.setEnd("chain_nodes", rfr.chain.Nodes)
+				a.setEnd("chain_stop", rfr.chain.Stop)
+				a.setEnd("chain_complete", rfr.chain.Complete)
+			}
 		}()
 		if err := a.watchFS(fsys); err != nil {
 			return err
 		}
-		plan, err := s.buildPlan(ctx, o, fsys, rec, part, b)
+		plan, err := s.buildPlan(ctx, o, fsys, rec, rfr, part, b)
 		if err != nil {
 			return err
 		}
 		rs.Considered, rs.Candidates, rs.Uniform, rs.Overlap = plan.Considered, plan.candidates, plan.uniform, plan.overlap
 		rs.ReaderWarnings = plan.ReaderWarnings
+		rs.Chain = plan.Chain
 		a.sum.IncompleteIDs = plan.IncompleteIDs
 		rs.SkippedBy, rs.LimitReached, rs.NotProcessed = plan.SkippedBy, plan.LimitReached, plan.NotProcessed
 		if err := a.syncFS(); err != nil { // what planning made the filesystem notice
@@ -189,7 +198,7 @@ func (w *recoverWriter) write(it *RecoverItem, c *PlannedCandidate) error {
 	d.Times = timesMap(c.Times)
 	d.Encrypted = c.Encrypted
 	rv := &evidence.Recovery{
-		Class: evidence.ClassDeletedFile, Method: c.Method, Confidence: &conf,
+		Class: recoveryClass(c.Method), Method: c.Method, Confidence: &conf,
 		Basis: c.Basis, Assumptions: c.Assumptions, Alloc: c.Alloc, Excluded: c.Excluded,
 		Content: c.Content, Algorithm: evidence.AlgorithmRecover,
 		Params: map[string]string{
