@@ -33,6 +33,7 @@ type gtImage struct {
 
 type gtControl struct {
 	Kind        string `json:"kind"`
+	Name        string `json:"name"`
 	ImageOffset int64  `json:"image_offset"`
 	Length      int64  `json:"length"`
 	SHA256      string `json:"sha256"`
@@ -41,7 +42,11 @@ type gtControl struct {
 // gtLoad returns the oracle row and the bytes of an image, the image hash checked first.
 func gtLoad(t *testing.T, name string) (gtImage, []byte) {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(carveImagesDir, "carve.expect.json"))
+	oracle := "carve.expect.json"
+	if name == "carve-images" {
+		oracle = "carve-images.expect.json" // 3E2: its own oracle
+	}
+	raw, err := os.ReadFile(filepath.Join(carveImagesDir, oracle))
 	if err != nil {
 		t.Fatalf("the image oracle is missing: %v", err)
 	}
