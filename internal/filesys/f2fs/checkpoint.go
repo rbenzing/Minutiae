@@ -42,6 +42,12 @@ const (
 	cpFsckFlag        = 0x10   // CP_FSCK_FLAG
 	cpLargeNATBitmapF = 0x400  // CP_LARGE_NAT_BITMAP_FLAG
 	cpDisabledFlag    = 0x1000 // CP_DISABLED_FLAG
+
+	// cpCRCRecoveryFlag and cpNoCRCRecoveryFlag are CP_CRC_RECOVERY_FLAG and
+	// CP_NOCRC_RECOVERY_FLAG, from memory of f2fs_fs.h (0x20 is cpFastbootFlag);
+	// the 3H probe confirmed 0x40 set and 0x200 clear on kernel-written images.
+	cpCRCRecoveryFlag   = 0x40
+	cpNoCRCRecoveryFlag = 0x200
 )
 
 // checkpoint is one validated checkpoint pack.
@@ -60,6 +66,7 @@ type checkpoint struct {
 	sitBitmapBytes, natBitmapBytes       uint32
 	pack2Blank                           bool      // pack 2 was never written (normal after mkfs)
 	curNode, curData                     [3]curseg // current-segment cursors of the node and data logs (hot, warm, cold)
+	crc                                  uint32    // the checksum stored at checksum_offset of the header block (the chain footer's high half)
 }
 
 // warnings lists what the checkpoint's flags say about the volume's state.
@@ -156,6 +163,7 @@ func readPack(r io.ReaderAt, sb *superblock, pack int, addr uint32) (*checkpoint
 	u32 := func(off int) uint32 { return le.Uint32(blk[off:]) }
 	cp := &checkpoint{
 		pack: pack, addr: addr,
+		crc:            le.Uint32(blk[le.Uint32(blk[cpChecksumOffset:]):]),
 		ver:            le.Uint64(blk[cpVersion:]),
 		userBlocks:     le.Uint64(blk[cpUserBlocks:]),
 		validBlocks:    le.Uint64(blk[cpValidBlocks:]),
