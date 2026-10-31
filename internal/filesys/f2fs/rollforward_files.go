@@ -319,6 +319,8 @@ func parseWarningAssumptions(ws []string) []string {
 	seen := map[string]struct{}{}
 	extra := 0
 	for _, w := range ws {
+		// The dedup is by exact text; which copy a warning came from is in the chain:inode-blk and
+		// chain:dentry-blk basis entries.
 		if _, dup := seen[w]; dup {
 			continue
 		}
@@ -335,14 +337,23 @@ func parseWarningAssumptions(ws []string) []string {
 	return out
 }
 
-// clipString cuts s to at most n bytes on a rune boundary, marking the cut with "...".
+// clipString cuts s to at most n bytes, marking the cut with "...". Only a rune the cut itself split
+// is dropped; invalid UTF-8 earlier in the string is the parser's text and stays.
 func clipString(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
+	if n < 3 {
+		return "..."[:max(n, 0)]
+	}
 	s = s[:n-3]
-	for !utf8.ValidString(s) && len(s) > 0 {
-		s = s[:len(s)-1]
+	for i := len(s) - 1; i >= 0 && i > len(s)-utf8.UTFMax; i-- {
+		if utf8.RuneStart(s[i]) {
+			if !utf8.FullRuneInString(s[i:]) {
+				s = s[:i]
+			}
+			break
+		}
 	}
 	return s + "..."
 }

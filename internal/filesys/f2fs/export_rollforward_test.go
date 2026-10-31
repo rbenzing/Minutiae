@@ -53,3 +53,6 @@ type RFChainSummary struct {
 	Warnings            []string
 	CRC, NoCRC, Unmount bool
 }
+
+// MaxChainNodes is the bound on the chain (3H-R14).
+const MaxChainNodes = maxChainNodes
