@@ -118,6 +118,12 @@ func TestJournalInodeMapsContiguousBlocks(t *testing.T) {
 		}
 		fsblk, o := l.InodeTableBlock(8)
 		raw := img[fsblk*lBS+o : fsblk*lBS+o+256]
+		if !bytes.Equal(img[1024+0x10C:1024+0x10C+60], raw[0x28:0x28+60]) {
+			t.Errorf("extents=%v: s_jnl_blocks backup % x, want i_block % x", extents, img[1024+0x10C:1024+0x10C+60], raw[0x28:0x28+60])
+		}
+		if img[1024+0xFD] != 1 {
+			t.Errorf("extents=%v: s_jnl_backup_type %d, want 1", extents, img[1024+0xFD])
+		}
 		if mode := binary.LittleEndian.Uint16(raw); mode&0xF000 != 0x8000 {
 			t.Errorf("extents=%v: inode 8 mode %#o, want a regular file", extents, mode)
 		}
@@ -539,5 +545,50 @@ func TestInodeCopyEditsOneSlot(t *testing.T) {
 	bc := l.BlockCopy(img, fsblk)
 	if !bytes.Equal(bc, src) || &bc[0] == &src[0] {
 		t.Error("BlockCopy is not an independent copy of the block")
+	}
+}
+
+func TestWriteJournalV1NoFeatures(t *testing.T) {
+	img, l := jlayout(t, true, 64)
+	l.WriteJournal(img, ext4test.JBD2{
+		Version: 1, Sequence: 5, Start: 1,
+		Txns: []ext4test.JTxn{{Seq: 5, At: -1, Tags: []ext4test.JTag{{FSBlock: 40, Data: pattern(lBS, 3)}}}},
+	})
+	sb := jblk(img, l, 0)
+	if be32(sb, 0) != ext4test.JBD2Magic || be32(sb, 4) != 3 || be32(sb, 0xC) != lBS || be32(sb, 0x10) != 64 || be32(sb, 0x18) != 5 || be32(sb, 0x1C) != 1 {
+		t.Fatalf("v1 superblock % x", sb[:0x20])
+	}
+	if !allZero(sb[0x20:]) {
+		t.Errorf("a v1 superblock has bytes past s_start: % x", sb[0x20:0x60])
+	}
+	// no features: 8-byte tags, no descriptor tail, no checksums
+	desc := jblk(img, l, 1)
+	if be32(desc, 4) != 1 || be32(desc, 12) != 40 || be16(desc, 18) != ext4test.JTagLast {
+		t.Errorf("descriptor % x", desc[:32])
+	}
+}
+
+func TestWriteJournalHostileInputPanics(t *testing.T) {
+	for name, j := range map[string]ext4test.JBD2{
+		"v1 with features": {Version: 1, CsumV3: true},
+		"At below s_first": {First: 8, Txns: []ext4test.JTxn{{Seq: 1, At: 3}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			img, l := jlayout(t, true, 64)
+			defer func() {
+				if recover() == nil {
+					t.Error("WriteJournal did not panic")
+				}
+			}()
+			l.WriteJournal(img, j)
+		})
+	}
+}
+
+func TestWriteJournalV2NrUsers(t *testing.T) {
+	img, l := jlayout(t, true, 64)
+	l.WriteJournal(img, ext4test.JBD2{UUID: jUUID, Sequence: 1})
+	if got := be32(jblk(img, l, 0), 0x40); got != 1 {
+		t.Errorf("s_nr_users %d, want 1", got)
 	}
 }

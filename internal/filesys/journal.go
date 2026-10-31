@@ -21,6 +21,10 @@ type JournalInfo struct {
 	Features      []string
 	NeedsRecovery bool
 	Warnings      []string
+
+	// 3G fields. Zero means "not applicable".
+	Incomplete bool   // the scan could not see everything
+	Stop       string // why, as "<reason>[@<block>]"; "" when complete
 }
 
 // JournalTag is one block a transaction describes.
@@ -28,9 +32,15 @@ type JournalTag struct {
 	FSBlock uint64
 	Flags   uint32
 	Revoked bool
+
+	// 3G fields. Zero means "not applicable".
+	JournalBlock uint64 // journal-relative block holding the logged copy
+	Copy         string // verified | unverified | mismatch | missing | outside
+	Escaped      bool   // the logged copy had its magic zeroed (JBD2 escape)
 }
 
-// JournalTxn is one transaction found in the journal.
+// JournalTxn is one transaction found in the journal. Region "live" is the log region a recovery scans,
+// never live data; "stale" is physically present outside it.
 type JournalTxn struct {
 	Seq       uint32
 	Committed bool
@@ -38,6 +48,12 @@ type JournalTxn struct {
 	Blocks    []JournalTag
 	Revoked   []uint64
 	Warnings  []string
+
+	// 3G fields. Zero means "not applicable" (the F2FS readers leave them zero).
+	StartBlock  int64     // journal-relative block of the first block of the transaction; -1 none
+	CommitBlock int64     // journal-relative block of the commit; -1 none
+	CommitTime  Timestamp // from the commit block; zero when unknown
+	Checksum    string    // ok | bad | not-recorded | not-verified
 }
 
 // ErrNoJournal means the filesystem keeps no journal.

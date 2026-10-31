@@ -209,6 +209,34 @@ func (s *safeFS) PrepareRecovery(ctx context.Context) (err error) {
 	return filesys.PrepareRecovery(ctx, s.fs)
 }
 
+// SupportsJournalRecovery reports whether the wrapped filesystem (or one it wraps) implements
+// filesys.JournalRecoverer. PrepareJournalRecovery is always present on this wrapper, so callers ask
+// this first.
+func (s *safeFS) SupportsJournalRecovery() (ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	_, ok = filesys.As[filesys.JournalRecoverer](s.fs)
+	return ok
+}
+
+// PrepareJournalRecovery implements filesys.JournalRecoverer by forwarding (filesys.ErrNoJournalRecovery
+// when the wrapped filesystem has none); a panic becomes a *filesys.CorruptError.
+func (s *safeFS) PrepareJournalRecovery(ctx context.Context, use filesys.JournalUse) (err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = panicError(s.name, "PrepareJournalRecovery", p)
+		}
+	}()
+	r, ok := filesys.As[filesys.JournalRecoverer](s.fs)
+	if !ok {
+		return filesys.ErrNoJournalRecovery
+	}
+	return r.PrepareJournalRecovery(ctx, use)
+}
+
 func copyCandidates(in []filesys.Candidate) []filesys.Candidate {
 	if in == nil {
 		return nil
@@ -220,6 +248,10 @@ func copyCandidates(in []filesys.Candidate) []filesys.Candidate {
 		out[i].Basis = slices.Clone(c.Basis)
 		out[i].Assumptions = slices.Clone(c.Assumptions)
 		out[i].Warnings = slices.Clone(c.Warnings)
+		if c.Journal != nil {
+			j := *c.Journal
+			out[i].Journal = &j
+		}
 	}
 	return out
 }
