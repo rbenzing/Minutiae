@@ -1194,7 +1194,10 @@ docker build -f tools/fixtures/Dockerfile.recover510 -t minutiae-recover-fixture
 docker run --rm -v "$PWD:/work" -w /work minutiae-recover-fixtures-510 bash tools/fixtures/gen.sh ext4-recover
 ```
 
-A run takes about 6 minutes (a boot is 7-60 s) and needs about 300 MB in the container's own `/tmp`. `FIXTURE_KEEP_DIR=<dir>` (a
+Both Docker images, `minutiae-recover-fixtures` and `minutiae-recover-fixtures-510`, are kept after the plan is done, for
+regeneration (the kernels and QEMU in them are pinned by snapshot and sha256); do not remove them. A regeneration may need
+re-tuning of the scenario ops and fails closed when a family does not occur. See `docs/limitations.md` ("ext4 recovery
+fixtures") for what the real images do not cover. A run takes about 6 minutes (a boot is 7-60 s) and needs about 300 MB in the container's own `/tmp`. `FIXTURE_KEEP_DIR=<dir>` (a
 debugging aid, never set by `gen.sh`) copies the stage images and the guest logs there. `ext4-recover` is in the not-in-`all`
 list of `gen.sh`. Self-checks: `TestExt4RecoverFixturesHoldWhatTheyClaim` and `TestExt4RecoverWipedImageListsNothing`
 (internal/filesys/ext4).
