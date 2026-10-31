@@ -8,9 +8,11 @@
 #   guest_initrd <rd dir> <fstype: vfat|exfat|ext4|f2fs> <mount opts> <payload dir> <ops file> [guest clock]
 #   guest_run <img> <rd dir> <log>
 #
-# guest_run reads two optional variables: GUEST_DRIVE_OPTS is appended to the -drive
-# value (empty by default; for example ",discard=unmap") and GUEST_TIMEOUT is the
-# time limit in seconds (default 900; the F2FS fill-to-ENOSPC stage sets 2400).
+# guest_run reads three optional variables: GUEST_DRIVE_OPTS is appended to the -drive
+# value (empty by default; for example ",discard=unmap"), GUEST_TIMEOUT is the
+# time limit in seconds (default 900; the F2FS fill-to-ENOSPC stage sets 2400) and GUEST_HALT=crash
+# (read by guest_initrd and guest_run; unset by default, which leaves the init unchanged) ends the boot after the last op with
+# GUEST-CRASH and an immediate sysrq reboot, no sync and no umount, and guest_run then takes GUEST-CRASH in place of GUEST-DONE.
 #
 # The ops file holds one shell command per line, run in order inside the guest
 # with the volume mounted on /mnt and the payload files in /payload. The guest
@@ -98,17 +100,29 @@ umount /mnt || echo "OP-FAIL umount"
 echo GUEST-DONE
 poweroff -f
 EOT
+  # GUEST_HALT=crash (plan 3G): the init ends after the last op with GUEST-CRASH and an immediate sysrq reboot, with no
+  # sync and no umount, so the journal is left as the kernel had it at that instant (QEMU runs -no-reboot and exits).
+  # Every other value (unset by default) leaves the init above byte-identical.
+  if [ "${GUEST_HALT:-}" = crash ]; then
+    sed -i '/^sync$/,$d' "$rd/init"
+    cat >>"$rd/init" <<'EOT'
+echo GUEST-CRASH
+echo b > /proc/sysrq-trigger
+sleep 60
+EOT
+  fi
   chmod +x "$rd/init"
 }
 
 guest_run() {
-  local img=$1 rd=$2 log=$3
+  local img=$1 rd=$2 log=$3 done_tag
   (cd "$rd" && find . | LC_ALL=C sort | cpio -o -H newc --quiet | gzip -n -9) >"$rd.cpio.gz"
   timeout "${GUEST_TIMEOUT:-900}" qemu-system-x86_64 -accel tcg -m 512 -smp 1 -nographic -no-reboot \
     -kernel "/boot/vmlinuz-$kver" -initrd "$rd.cpio.gz" \
     -append "console=ttyS0 panic=-1 loglevel=4" \
     -drive "file=$img,format=raw,if=virtio${GUEST_DRIVE_OPTS:-}" >"$log" 2>&1 || echo "qemu exit status $?" >&2
   grep -a -e 'OP [0-9]' -e 'OP-FAIL' -e 'GUEST-' "$log" || true
-  grep -aq 'GUEST-DONE' "$log" || { echo "guest did not finish: $log" >&2; tail -n 20 "$log" >&2; return 1; }
+  if [ "${GUEST_HALT:-}" = crash ]; then done_tag=GUEST-CRASH; else done_tag=GUEST-DONE; fi
+  grep -aq "$done_tag" "$log" || { echo "guest did not finish: $log" >&2; tail -n 20 "$log" >&2; return 1; }
   if grep -aq 'OP-FAIL' "$log"; then echo "guest op failed: $log" >&2; return 1; fi
 }
