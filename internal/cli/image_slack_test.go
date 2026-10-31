@@ -16,6 +16,9 @@ import (
 
 	"github.com/rbenzing/minutiae/internal/device"
 	"github.com/rbenzing/minutiae/internal/evidence"
+	"github.com/rbenzing/minutiae/internal/filesys"
+	"github.com/rbenzing/minutiae/internal/filesys/detect"
+	"github.com/rbenzing/minutiae/internal/filesys/fat"
 	"github.com/rbenzing/minutiae/internal/filesys/fat/fattest"
 )
 
@@ -271,5 +274,58 @@ func TestImageSlackPrintsIncomplete(t *testing.T) {
 	var j jsonSlack
 	if err := json.Unmarshal([]byte(jout), &j); err != nil || !j.Incomplete || j.WalkErrors != 1 {
 		t.Errorf("json = %+v, %v", j, err)
+	}
+}
+
+// unknownSizeFS is a FAT reader that cannot say how large the filesystem is.
+type unknownSizeFS struct{ filesys.FileSystem }
+
+func (f unknownSizeFS) Underlying() filesys.FileSystem { return f.FileSystem }
+func (f unknownSizeFS) Info() filesys.Info {
+	in := f.FileSystem.Info()
+	in.Size = 0
+	return in
+}
+
+func unknownSizeDrivers() []detect.Driver {
+	return []detect.Driver{{
+		Name:  "unknownsize",
+		Probe: fat.Probe,
+		Open: func(r io.ReaderAt, size int64) (filesys.FileSystem, error) {
+			f, err := fat.Open(r, size)
+			if err != nil {
+				return nil, err
+			}
+			return unknownSizeFS{f}, nil
+		},
+	}}
+}
+
+// TestImageSlackShowsVolumeSkip pins that a volume part skipped for an unknown filesystem size is told with
+// its reason, in text and JSON, and not reported as a plain "0 segments" (unknown is never none).
+func TestImageSlackShowsVolumeSkip(t *testing.T) {
+	e := newSlackEnv(t, slackFATImage(t))
+	run := func(args ...string) (int, string) {
+		var o, er bytes.Buffer
+		d := Deps{Out: &o, Err: &er, In: strings.NewReader(""), Registry: device.NewRegistry(), FSDrivers: unknownSizeDrivers()}
+		code := Run(append([]string{"image", "slack", e.ref, "--case", e.c, "--volume"}, args...), d)
+		return code, o.String()
+	}
+	code, out := run()
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	for _, want := range []string{"volume skipped: size-unknown 1", "warning: size-unknown: the filesystem size is unknown"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, out)
+		}
+	}
+	_, jout := run("--json")
+	var j jsonSlack
+	if err := json.Unmarshal([]byte(jout), &j); err != nil {
+		t.Fatal(err)
+	}
+	if j.VolumeSkippedBy["size-unknown"] != 1 || len(j.Warnings) == 0 || !strings.HasPrefix(j.Warnings[0].Reason, "size-unknown") {
+		t.Errorf("json volume_skipped_by/warnings = %+v / %+v", j.VolumeSkippedBy, j.Warnings)
 	}
 }

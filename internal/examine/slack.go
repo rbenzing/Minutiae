@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"strconv"
 	"strings"
 
@@ -31,6 +32,8 @@ type SlackSummary struct {
 	VolumeUniformChunks          int
 	VolumeUniformBytes           int64
 	SkippedBy                    map[string]int // the files by outcome; the volume part's outcomes are in the volume artifact's Params
+	VolumeSkippedBy              map[string]int // the volume part's outcomes: why it was not, or not fully, planned
+	VolumeClipped                int64          // bytes of the partition past the end of the image, not part of the volume slack
 	WalkErrors                   int
 	LimitReached                 string
 	Incomplete                   bool // an artifact was written incomplete (walk errors, a limit, a failed copy)
@@ -127,6 +130,7 @@ func (s *Session) ExportSlack(ctx context.Context, o SlackOptions) (SlackSummary
 		ss.Partition, ss.FSType, ss.Unit = part.Index, fsType, plan.unit
 		ss.FilesExamined, ss.SkippedBy, ss.WalkErrors, ss.LimitReached = plan.files, plan.fileSkipped(), plan.walkErrors, plan.limit
 		ss.FileSegments = len(plan.file)
+		ss.VolumeSkippedBy, ss.VolumeClipped = maps.Clone(plan.volSkipped), plan.volClipped
 		ss.UniformSegments, ss.UniformBytes = plan.uniformSegs, plan.uniformBytes
 		var arts []slackArt
 		var volBytes int64

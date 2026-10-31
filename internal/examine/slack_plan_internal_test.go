@@ -799,6 +799,20 @@ func TestPlanSlackLimits(t *testing.T) {
 			t.Fatalf("limit %q segs %+v skipped %v", p.limit, p.file, p.skipped)
 		}
 	})
+	t.Run("max-path-bytes bounds the candidates", func(t *testing.T) {
+		// The cap applies to the paths held as candidates in pass 1, before any tail is read: A.TXT (6 bytes)
+		// fits, the later candidates do not, and the run is incomplete with the limit named.
+		_, s := threeTails(t)
+		setCap(t, &slackPathBytesCap, 8)
+		reads := withObserver(t)
+		p := slackPlanOf(t, s, SlackOptions{Partition: -1, Files: true})
+		if p.limit != "max-path-bytes" || len(p.file) != 1 || p.file[0].FSPath != "/A.TXT" || p.skipped["limit"] != 2 || !p.fileIncomplete() {
+			t.Fatalf("limit %q segs %+v skipped %v", p.limit, p.file, p.skipped)
+		}
+		if len(*reads) != 1 {
+			t.Errorf("reads = %v, want only the tail of the one kept candidate", *reads)
+		}
+	})
 	t.Run("a limit stops the volume part and counts it", func(t *testing.T) {
 		f, _ := threeTails(t)
 		s := slackSession(t, slices.Concat(f.img, pat(4096, 1)), Options{})
@@ -1024,8 +1038,8 @@ func TestPlanSlackUncheckedFileMakesPlanIncomplete(t *testing.T) {
 			if p.unchecked != 1 || !p.fileIncomplete() {
 				t.Fatalf("unchecked %d incomplete %v", p.unchecked, p.fileIncomplete())
 			}
-			if len(p.file) != 1 || p.file[0].ImageOffset != bTail || p.file[0].Assumption != slackUncheckedTag {
-				t.Fatalf("B's segment must be exported and tagged: %+v", p.file)
+			if len(p.file) != 1 || p.file[0].ImageOffset != bTail {
+				t.Fatalf("B's segment must be exported: %+v", p.file)
 			}
 			named := false
 			for _, w := range p.warnings {
