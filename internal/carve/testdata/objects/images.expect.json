@@ -1,0 +1,530 @@
+{
+ "generator": {
+  "packages": [
+   {
+    "package": "icoutils",
+    "version": "0.32.3-4"
+   },
+   {
+    "package": "imagemagick",
+    "version": "8:6.9.11.60+dfsg-1.6+deb12u13"
+   },
+   {
+    "package": "libavif-bin",
+    "version": "0.11.1-1+deb12u1"
+   },
+   {
+    "package": "libjxl-tools",
+    "version": "0.7.0-10+deb12u1"
+   },
+   {
+    "package": "libtiff-tools",
+    "version": "4.5.0-6+deb12u4"
+   },
+   {
+    "package": "python3",
+    "version": "3.11.2-1+b1"
+   },
+   {
+    "package": "python3-pil",
+    "version": "9.4.0-1.1+deb12u1"
+   }
+  ],
+  "pillow": "9.4.0",
+  "commands": [
+   "convert <work>/grad.png BMP2:<objects>/bmp-core24.bmp",
+   "convert <work>/grad.png -compress None BMP3:<objects>/bmp-v3-24.bmp",
+   "convert <work>/grad.png -type palette -colors 256 -compress None BMP3:<objects>/bmp-v3-8pal.bmp",
+   "convert <work>/grad.png -monochrome -compress None BMP3:<objects>/bmp-v3-1bit.bmp",
+   "convert <work>/grad-alpha.png BMP:<objects>/bmp-v5-32.bmp",
+   "convert <work>/grad.png -type palette -colors 256 -compress RLE BMP3:<objects>/bmp-rle8.bmp",
+   "identify -format %m %w %h %z <objects>/bmp-core24.bmp",
+   "identify -format %m %w %h %z <objects>/bmp-v3-24.bmp",
+   "identify -format %m %w %h %z <objects>/bmp-v3-8pal.bmp",
+   "identify -format %m %w %h %z <objects>/bmp-v3-1bit.bmp",
+   "identify -format %m %w %h %z <objects>/bmp-v5-32.bmp",
+   "identify -format %m %w %h %z <objects>/bmp-rle8.bmp",
+   "tiffcp -B <objects>/tiff-le.tif <objects>/tiff-be.tif",
+   "tiffcp -8 <objects>/tiff-le.tif <objects>/bigtiff.tif",
+   "tiffcp -t -w 32 -l 32 <objects>/tiff-le.tif <objects>/tiff-tiled.tif",
+   "tiffdump <objects>/tiff-le.tif",
+   "tiffinfo <objects>/tiff-le.tif",
+   "tiffinfo -D <objects>/tiff-le.tif",
+   "tiffdump <objects>/tiff-le-pages.tif",
+   "tiffinfo <objects>/tiff-le-pages.tif",
+   "tiffinfo -D <objects>/tiff-le-pages.tif",
+   "tiffdump <objects>/tiff-be.tif",
+   "tiffinfo <objects>/tiff-be.tif",
+   "tiffinfo -D <objects>/tiff-be.tif",
+   "tiffdump <objects>/bigtiff.tif",
+   "tiffinfo <objects>/bigtiff.tif",
+   "tiffinfo -D <objects>/bigtiff.tif",
+   "tiffdump <objects>/tiff-tiled.tif",
+   "tiffinfo <objects>/tiff-tiled.tif",
+   "tiffinfo -D <objects>/tiff-tiled.tif",
+   "tiffdump <objects>/tiff-exif.tif",
+   "tiffinfo <objects>/tiff-exif.tif",
+   "tiffinfo -D <objects>/tiff-exif.tif",
+   "convert <work>/grad.png -resize 16x16 <work>/i16.png",
+   "convert <work>/grad.png -resize 32x32 <work>/i32.png",
+   "icotool -c -o <objects>/ico-dib.ico <work>/i16.png <work>/i32.png",
+   "icotool -c --cursor -o <objects>/cur.cur <work>/i16.png <work>/i32.png",
+   "icotool -l <objects>/ico-png.ico",
+   "icotool -l <objects>/ico-dib.ico",
+   "icotool -l <objects>/cur.cur",
+   "avifenc -s 10 -j 1 <work>/grad.png <objects>/avif.avif",
+   "avifenc -s 10 -j 1 --fps 2 <work>/grad.png <work>/grad-flip.png <objects>/avis.avif",
+   "cjxl --num_threads=0 <objects>/jpeg-baseline.jpg <objects>/jxl-container.jxl",
+   "avifdec --info <objects>/avif.avif",
+   "avifdec --info <objects>/avis.avif",
+   "jxlinfo <objects>/jxl-container.jxl"
+  ]
+ },
+ "objects": [
+  {
+   "file": "bmp-core24.bmp",
+   "family": "bmp",
+   "type": "bmp",
+   "ext": "bmp",
+   "size": 9242,
+   "sha256": "7f725e8f2e11c67c21e42491f3720854d9acb51311c8d655d88945b65c922353",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "",
+   "facts": {
+    "bf_size": 9242,
+    "dib_header_size": 12,
+    "bits_per_pixel": 24,
+    "compression": 0,
+    "identify_format": "BMP2",
+    "pillow_format": "BMP",
+    "pillow_mode": "RGB"
+   }
+  },
+  {
+   "file": "bmp-v3-24.bmp",
+   "family": "bmp",
+   "type": "bmp",
+   "ext": "bmp",
+   "size": 9270,
+   "sha256": "d6fedb5bf4a8a4318c21bd77fb20a059351ced753f7ba9ff6cc05301afb1df83",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "",
+   "facts": {
+    "bf_size": 9270,
+    "dib_header_size": 40,
+    "bits_per_pixel": 24,
+    "compression": 0,
+    "identify_format": "BMP3",
+    "pillow_format": "BMP",
+    "pillow_mode": "RGB"
+   }
+  },
+  {
+   "file": "bmp-v3-8pal.bmp",
+   "family": "bmp",
+   "type": "bmp",
+   "ext": "bmp",
+   "size": 4150,
+   "sha256": "67c6312843daf90360c289e52c82d0050a82682d7dbaa9257fd681a19b61b132",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "",
+   "facts": {
+    "bf_size": 4150,
+    "dib_header_size": 40,
+    "bits_per_pixel": 8,
+    "compression": 0,
+    "identify_format": "BMP3",
+    "pillow_format": "BMP",
+    "pillow_mode": "P"
+   }
+  },
+  {
+   "file": "bmp-v3-1bit.bmp",
+   "family": "bmp",
+   "type": "bmp",
+   "ext": "bmp",
+   "size": 446,
+   "sha256": "99c675d672afa7929c89362eb20bf89df138d6ca83e122e978b3c8f667df5a69",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "",
+   "facts": {
+    "bf_size": 446,
+    "dib_header_size": 40,
+    "bits_per_pixel": 1,
+    "compression": 0,
+    "identify_format": "BMP3",
+    "pillow_format": "BMP",
+    "pillow_mode": "1"
+   }
+  },
+  {
+   "file": "bmp-v5-32.bmp",
+   "family": "bmp",
+   "type": "bmp",
+   "ext": "bmp",
+   "size": 12426,
+   "sha256": "49e60a18baee95eba67dfa2b7e56f4eba7b291584438e98c21fdd0d4e7b11a33",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "",
+   "facts": {
+    "bf_size": 12426,
+    "dib_header_size": 124,
+    "bits_per_pixel": 32,
+    "compression": 3,
+    "identify_format": "BMP",
+    "pillow_format": "BMP",
+    "pillow_mode": "RGBA"
+   }
+  },
+  {
+   "file": "bmp-rle8.bmp",
+   "family": "bmp",
+   "type": "bmp",
+   "ext": "bmp",
+   "size": 4480,
+   "sha256": "1c0714b1901b89bec6df02ac1531728bf9b5bdb1fef9f9b5445945d216c63e7c",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "",
+   "facts": {
+    "bf_size": 4480,
+    "dib_header_size": 40,
+    "bits_per_pixel": 8,
+    "compression": 1,
+    "identify_format": "BMP3",
+    "pillow_format": "BMP",
+    "pillow_mode": "P"
+   }
+  },
+  {
+   "file": "tiff-le.tif",
+   "family": "tiff",
+   "type": "tiff",
+   "ext": "tif",
+   "size": 9356,
+   "sha256": "0efa3ab5c8924db76b8ea3815a22323d39e33f703f043639d6e2f1ee891b6d04",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "",
+   "facts": {
+    "byte_order": "little",
+    "magic": "0x4949",
+    "version": 42,
+    "bigtiff": false,
+    "directories": 1,
+    "tiled": false,
+    "sub_directories": []
+   }
+  },
+  {
+   "file": "tiff-le-pages.tif",
+   "family": "tiff",
+   "type": "tiff",
+   "ext": "tif",
+   "size": 28080,
+   "sha256": "c64a873ff0dd80aea7124a4fe894b21eee3567f0d60f9577cc660a88fd6c5b9b",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "",
+   "facts": {
+    "byte_order": "little",
+    "magic": "0x4949",
+    "version": 42,
+    "bigtiff": false,
+    "directories": 3,
+    "tiled": false,
+    "sub_directories": []
+   }
+  },
+  {
+   "file": "tiff-be.tif",
+   "family": "tiff",
+   "type": "tiff",
+   "ext": "tif",
+   "size": 9376,
+   "sha256": "b17904c361a04d931cec45f39b102227c8add03eb4cbae90ea21ac652dfd13ce",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "",
+   "facts": {
+    "byte_order": "big",
+    "magic": "0x4d4d",
+    "version": 42,
+    "bigtiff": false,
+    "directories": 1,
+    "tiled": false,
+    "sub_directories": []
+   }
+  },
+  {
+   "file": "bigtiff.tif",
+   "family": "tiff",
+   "type": "tiff",
+   "ext": "tif",
+   "size": 9484,
+   "sha256": "e53df213655611740020ef193ac9ece608c66b39e0c37e6c49bdf8b706ab4807",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "",
+   "facts": {
+    "byte_order": "little",
+    "magic": "0x4949",
+    "version": 43,
+    "bigtiff": true,
+    "directories": 1,
+    "tiled": false,
+    "sub_directories": []
+   }
+  },
+  {
+   "file": "tiff-tiled.tif",
+   "family": "tiff",
+   "type": "tiff",
+   "ext": "tif",
+   "size": 12476,
+   "sha256": "2049cda7970d783e45f99d766a329a73b593fa3a71bdff0299aba6218f5a2d75",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "",
+   "facts": {
+    "byte_order": "little",
+    "magic": "0x4949",
+    "version": 42,
+    "bigtiff": false,
+    "directories": 1,
+    "tiled": true,
+    "sub_directories": []
+   }
+  },
+  {
+   "file": "tiff-exif.tif",
+   "family": "tiff",
+   "type": "tiff",
+   "ext": "tif",
+   "size": 9474,
+   "sha256": "5165e07108c7bdc65d74854dc5271c3129cc642b97c84060b00a510a13678ee9",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "",
+   "facts": {
+    "byte_order": "little",
+    "magic": "0x4949",
+    "version": 42,
+    "bigtiff": false,
+    "directories": 1,
+    "tiled": false,
+    "sub_directories": [
+     "EXIF",
+     "GPS"
+    ]
+   }
+  },
+  {
+   "file": "ico-png.ico",
+   "family": "ico",
+   "type": "ico",
+   "ext": "ico",
+   "size": 247,
+   "sha256": "1885d3bb502b2309428609570500c5da54f2a0e0283c275271bfd17c46b0ea66",
+   "expect": "validated",
+   "width": 32,
+   "height": 24,
+   "brand": "",
+   "facts": {
+    "entries": [
+     {
+      "kind": "icon",
+      "width": 16,
+      "height": 12,
+      "bit_depth": 24,
+      "palette_size": 0
+     },
+     {
+      "kind": "icon",
+      "width": 32,
+      "height": 24,
+      "bit_depth": 24,
+      "palette_size": 0
+     }
+    ],
+    "entry_count": 2,
+    "payloads": [
+     "png",
+     "png"
+    ]
+   }
+  },
+  {
+   "file": "ico-dib.ico",
+   "family": "ico",
+   "type": "ico",
+   "ext": "ico",
+   "size": 3782,
+   "sha256": "b18634decc05d1968aa97a3dc4928933ae36ad97cbad9baba361bfd2e3f21e6d",
+   "expect": "validated",
+   "width": 32,
+   "height": 24,
+   "brand": "",
+   "facts": {
+    "entries": [
+     {
+      "kind": "icon",
+      "width": 16,
+      "height": 12,
+      "bit_depth": 8,
+      "palette_size": 256
+     },
+     {
+      "kind": "icon",
+      "width": 32,
+      "height": 24,
+      "bit_depth": 24,
+      "palette_size": 0
+     }
+    ],
+    "entry_count": 2,
+    "payloads": [
+     "dib",
+     "dib"
+    ]
+   }
+  },
+  {
+   "file": "cur.cur",
+   "family": "cur",
+   "type": "cur",
+   "ext": "cur",
+   "size": 3782,
+   "sha256": "2a45c290b51f210862fdf361c4a727104d0cccae39d9746eaf5a69eb5399aae2",
+   "expect": "validated",
+   "width": 32,
+   "height": 24,
+   "brand": "",
+   "facts": {
+    "entries": [
+     {
+      "kind": "cursor",
+      "width": 16,
+      "height": 12,
+      "bit_depth": 8,
+      "palette_size": 256
+     },
+     {
+      "kind": "cursor",
+      "width": 32,
+      "height": 24,
+      "bit_depth": 24,
+      "palette_size": 0
+     }
+    ],
+    "entry_count": 2,
+    "payloads": [
+     "dib",
+     "dib"
+    ]
+   }
+  },
+  {
+   "file": "avif.avif",
+   "family": "isobmff",
+   "type": "avif",
+   "ext": "avif",
+   "size": 456,
+   "sha256": "a564da09f8657f2808dfc3eee0da022c4e81fab795525c55c23eb83ff465397f",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "avif",
+   "facts": {
+    "boxes": [
+     "ftyp",
+     "meta",
+     "mdat"
+    ],
+    "compatible_brands": [
+     "avif",
+     "mif1",
+     "miaf",
+     "MA1A"
+    ],
+    "avifdec_resolution": [
+     64,
+     48
+    ]
+   }
+  },
+  {
+   "file": "avis.avif",
+   "family": "isobmff",
+   "type": "avif",
+   "ext": "avif",
+   "size": 2221,
+   "sha256": "a240d3fa75784df20cefca1ffb270339524e74f2495ff6425f7d8d440304ed87",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "avis",
+   "facts": {
+    "boxes": [
+     "ftyp",
+     "meta",
+     "moov",
+     "mdat"
+    ],
+    "compatible_brands": [
+     "avif",
+     "avis",
+     "msf1",
+     "iso8",
+     "mif1",
+     "miaf",
+     "MA1A"
+    ],
+    "avifdec_resolution": [
+     64,
+     48
+    ]
+   }
+  },
+  {
+   "file": "jxl-container.jxl",
+   "family": "isobmff",
+   "type": "jxl",
+   "ext": "jxl",
+   "size": 926,
+   "sha256": "a1389a7140fa81bca3ab7f8cee58dae68ca738c3d900aa3b33ef533182a42431",
+   "expect": "validated",
+   "width": 64,
+   "height": 48,
+   "brand": "jxl ",
+   "facts": {
+    "boxes": [
+     "JXL ",
+     "ftyp",
+     "jxlp",
+     "jbrd",
+     "jxlp"
+    ],
+    "jxlinfo_container": true,
+    "jpeg_reconstruction": true
+   }
+  }
+ ]
+}
