@@ -93,9 +93,12 @@ type Options struct {
 	InlineData   bool
 	Encrypt      bool // set ENCRYPT feature; files under "/enc" get the ENCRYPT flag and names stored raw as given (test supplies "cipher" bytes)
 	Bit64        bool
-	Journal      bool // set the has_journal feature bit (no journal inode is created)
-	GDTCsum      bool // uninit_bg group descriptor crc16 (ignored with MetadataCsum)
-	Groups       int  // >= 1; default 1
+	Journal      bool // set the has_journal feature bit (no journal inode is created unless JournalBlocks > 0)
+	// JournalBlocks > 0 creates inode 8 as a regular file over that many contiguous blocks (an extent map with
+	// Extents, a block map without), sets s_journal_inum (0xE0) to 8 and has_journal. WriteJournal fills it.
+	JournalBlocks int
+	GDTCsum       bool // uninit_bg group descriptor crc16 (ignored with MetadataCsum)
+	Groups        int  // >= 1; default 1
 
 	BlocksPerGroup int // default 1024; a multiple of 8, at most 8*BlockSize
 	InodesPerGroup int // default 128; a multiple of 8, at least 16, at most 8*BlockSize
@@ -420,7 +423,7 @@ func (b *builder) superblock(g, freeBlocks, freeInodes int) []byte {
 	le16(sb, 0x5A, uint16(g))
 
 	compat := uint32(compatExtAttr)
-	if o.Journal {
+	if o.Journal || o.JournalBlocks > 0 {
 		compat |= compatHasJournal
 	}
 	incompat := uint32(incompatFiletype)
@@ -452,6 +455,7 @@ func (b *builder) superblock(g, freeBlocks, freeInodes int) []byte {
 	}
 	le16(sb, 0x27C, o.Encoding)
 	le16(sb, 0x27E, o.EncodingFlags)
+	b.putJournalSuper(sb)
 	le32(sb, 0x5C, compat)
 	le32(sb, 0x60, incompat)
 	le32(sb, 0x64, ro)

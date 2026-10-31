@@ -75,6 +75,7 @@ func InodeNumber(i int) uint32 { return uint32(firstUserInode + i) }
 // its layout whatever the directory tree looks like; the directory blocks come
 // after, then the root's.
 func (b *builder) placeFiles(files []File) {
+	b.placeJournal()
 	all := withParents(files)
 	eas := b.eaInodes(all)
 	nums := map[string]uint32{"": rootInode}
