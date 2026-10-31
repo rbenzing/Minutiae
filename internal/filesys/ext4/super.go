@@ -147,11 +147,14 @@ type superblock struct {
 	backupBGs      [2]uint32
 	reservedGDT    uint16 // s_reserved_gdt_blocks: descriptor blocks reserved for online resize
 	checksumType   uint8
-	encoding       uint16 // s_encoding (0x27C): the casefold encoding id, 1 is utf8-12.1.0
-	encFlags       uint16 // s_encoding_flags (0x27E): bit 0 is strict mode (read, not applied)
-	csumSeed       uint32 // metadata_csum seed: s_checksum_seed with CSUM_SEED, else crc32c(~0, uuid)
-	groups         int64  // block groups described by the declared block count
-	itableBlocks   int64  // blocks in one group's inode table
+	encoding       uint16   // s_encoding (0x27C): the casefold encoding id, 1 is utf8-12.1.0
+	encFlags       uint16   // s_encoding_flags (0x27E): bit 0 is strict mode (read, not applied)
+	csumSeed       uint32   // metadata_csum seed: s_checksum_seed with CSUM_SEED, else crc32c(~0, uuid)
+	groups         int64    // block groups described by the declared block count
+	itableBlocks   int64    // blocks in one group's inode table
+	journalInum    uint32   // s_journal_inum (0xE0): the journal inode, 0 for an external journal
+	journalDev     uint32   // s_journal_dev (0xE4)
+	journalUUID    [16]byte // s_journal_uuid (0xD0)
 }
 
 // logicalSuperBlock is the block that holds the primary superblock: 1 for 1 KiB
@@ -328,6 +331,9 @@ func parseSuper(b []byte, imgSize int64) (*superblock, []string, error) {
 	copy(sb.uuid[:], b[0x68:0x78])
 	sb.label = cString(b[0x78:0x88])
 	sb.reservedGDT = le.Uint16(b[0xCE:])
+	sb.journalInum = le.Uint32(b[0xE0:])
+	sb.journalDev = le.Uint32(b[0xE4:])
+	copy(sb.journalUUID[:], b[0xD0:0xE0])
 	sb.firstMetaBG = le.Uint32(b[0x104:])
 	sb.backupBGs = [2]uint32{le.Uint32(b[0x24C:]), le.Uint32(b[0x250:])}
 	sb.checksumType = b[0x175]

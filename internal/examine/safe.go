@@ -230,11 +230,18 @@ func (s *safeFS) PrepareJournalRecovery(ctx context.Context, use filesys.Journal
 			err = panicError(s.name, "PrepareJournalRecovery", p)
 		}
 	}()
+	u, perr := filesys.ParseJournalUse(string(use))
+	if perr != nil {
+		return perr
+	}
+	if u == filesys.JournalUseNone {
+		return nil
+	}
 	r, ok := filesys.As[filesys.JournalRecoverer](s.fs)
 	if !ok {
 		return filesys.ErrNoJournalRecovery
 	}
-	return r.PrepareJournalRecovery(ctx, use)
+	return r.PrepareJournalRecovery(ctx, u)
 }
 
 func copyCandidates(in []filesys.Candidate) []filesys.Candidate {

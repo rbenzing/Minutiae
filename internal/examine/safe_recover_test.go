@@ -565,3 +565,30 @@ func TestSafeFSCopiesNewJournalFields(t *testing.T) {
 		t.Errorf("the reader's own transaction was changed through the wrapper: %+v", sj.txn)
 	}
 }
+
+// The wrapper's own method is a gate like the package helper: it validates use and answers none without
+// asking the wrapped reader.
+func TestSafeFSPrepareJournalRecoveryValidatesUse(t *testing.T) {
+	fsys, _ := recImage(t)
+	inner := &jrecInner{FileSystem: fsys}
+	r, ok := wrap(t, inner).(filesys.JournalRecoverer)
+	if !ok {
+		t.Fatal("the wrapper does not implement JournalRecoverer")
+	}
+	for _, bad := range []filesys.JournalUse{"all", "Stale", "bogus"} {
+		if err := r.PrepareJournalRecovery(context.Background(), bad); err == nil {
+			t.Errorf("use %q: nil error; want the parse error", bad)
+		}
+	}
+	for _, none := range []filesys.JournalUse{"", filesys.JournalUseNone} {
+		if err := r.PrepareJournalRecovery(context.Background(), none); err != nil {
+			t.Errorf("use %q: %v; want nil", none, err)
+		}
+	}
+	if inner.calls != 0 {
+		t.Errorf("the wrapped reader was asked %d times for an invalid or none use; want 0", inner.calls)
+	}
+	if err := r.PrepareJournalRecovery(context.Background(), filesys.JournalUseCommitted); err != nil || inner.calls != 1 || inner.use != filesys.JournalUseCommitted {
+		t.Errorf("committed: err %v, calls %d, use %q; want one forwarded call", err, inner.calls, inner.use)
+	}
+}
