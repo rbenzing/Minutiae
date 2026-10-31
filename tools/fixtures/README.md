@@ -1400,6 +1400,179 @@ No new image: `minutiae-recover-fixtures` (`Dockerfile.recover`: Debian bookworm
 `internal/filesys/utf8fold/testdata/ucd-12.1.0/` with the Unicode licence (`LICENSE-unicode.txt`) and
 `SOURCES` (URLs and SHA-256 of each file).
 
+## Slack probe (3F)
+
+`slack_probe.sh` measures what each route leaves in the TAIL of a file's last allocation unit (the
+bytes after the logical end, inside the unit) before slack fixtures are built (plan 3F, Task 1; rulings
+3F-R15, 3F-R16, 3F-R26). Plan 3F's Task 12 reuses `slack_guest.sh`, the guest library written here.
+
+Files: `slack_probe.sh` (host driver and the measuring helper, embedded), `slack_guest.sh` (self-contained
+guest library: `slack_initrd <rd> <payload> <ops>` and `slack_run <rd> <log> <img1..img4>`; modules
+`virtio_blk virtio_pci fat vfat nls_cp437 nls_ascii nls_utf8 exfat ext4 f2fs` resolved on the host with
+`modprobe --show-depends` and loaded by the guest's own `/init`; drives `vda`..`vdd` mounted on
+`/mnt/fat`, `/mnt/exfat`, `/mnt/ext4`, `/mnt/f2fs`; the ops file is one shell command per line;
+`GUEST-DONE` / `OP-FAIL` as in `recover_guest.sh`).
+
+```bash
+docker build -f tools/fixtures/Dockerfile.recover -t minutiae-recover-fixtures tools/fixtures   # if the image is missing
+MSYS_NO_PATHCONV=1 docker run --rm -e SLACK_PROBE_WORK=/work/<scratch>/work -v "C:/GIT/Minutiae:/work" -w /work \
+  minutiae-recover-fixtures bash tools/fixtures/slack_probe.sh
+```
+
+No `--privileged`, no FUSE, no loop device, no host mount; the tripwire in `internal/archtest` reads both
+scripts. Pins: image `minutiae-recover-fixtures` (`Dockerfile.recover`: Debian bookworm snapshot
+20261003, kernel `6.1.0-53-amd64` package 6.1.187-1, `qemu-system-x86` 7.2, e2fsprogs 1.47.0, f2fs-tools
+1.15.0, exfatprogs 1.2.0, dosfstools 4.2, mtools 4.0.33). The guest is QEMU TCG with `-m 512`, one CPU and
+four virtio drives. The whole probe (3 guest boots, 4 formats per variant, the host routes) took 3 min
+16 s on an otherwise idle Docker Desktop VM (943 MB, 2 CPUs).
+
+Method: four raw files are filled with the 64-byte sentinel
+`SLACK-SENTINEL-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLM` at phase `offset % 64` (FAT16 16 MiB,
+exFAT 16 MiB, ext4 8 MiB, F2FS 64 MiB), formatted under faketime `2023-11-14 22:13:20` with discard off.
+Variant A: FAT16 `-s 4` (2048-byte clusters), exFAT `-c 32768`, ext4 `-b 1024`, F2FS. Variant B: FAT16
+`-s 1` (512), exFAT `-c 4096`, ext4 `-b 4096`, F2FS again. The guest writes (with `head -c N` and
+`truncate`, from one pattern file that is neither zero nor the sentinel) files of 1, 600, unit-1, unit,
+unit+1, 3*unit+5 and 5000 bytes (`s1 s600 sum1 su sup1 s3u5 s5000`), `sgrow` (1000 bytes, `sync`, 1500
+appended), `ssparse` (700 bytes, then `truncate -s 5000`) and `sgone` (1500 bytes; 5000 where the unit is
+4096 or more), runs `sync` and unmounts. The host then locates each file's units with the filesystem's
+own tools (`mshowfat`, the exFAT root entry sets read by the helper, `debugfs stat` extents,
+`fsck.f2fs -d 1 -M`), reads the image raw and prints one `TAIL` line per file. Variant A has a second boot
+that removes `sgone`; the same byte range is read again (`RETAIL`). `fsck.fat -n`, `fsck.exfat -n`,
+`e2fsck -fn` and `fsck.f2fs -f --dry-run` (on a copy) accepted every finished image (exit 0, 12 runs).
+
+`TAIL <fs> <variant> <path> <size> units=<n> unit_off=<last unit> tail_off=<EOF> tail=<bytes to the unit
+end> zero=<0x00 bytes> lead0=<zero run right after EOF> sentinel=<bytes equal to the sentinel at that
+phase> other=<rest> uniform=<1 if every tail byte equals the first> first=<first byte>`. `tail=0` is an
+exact fit; a file whose last logical unit is not allocated is `HOLE-AT-LAST-UNIT`; one with no unit
+listed (empty, F2FS inline) is `NO-UNITS`.
+
+### Measured facts
+
+| # | Fact | Measured |
+|---|---|---|
+| S1 | Sentinel cells (64-byte, aligned) of the data area still holding the sentinel after mkfs | FAT16 -s 4: 261344 of 261344. FAT16 -s 1: 259848 of 259848. exFAT 32 KiB: 227840 of 229376 (the missing 1536 cells are the bitmap, up-case table and root, 3 clusters). exFAT 4 KiB: 229120 of 229376. ext4 1 KiB: 104160 of 121312 (journal and directories zeroed). ext4 4 KiB: 55680 of 120704. F2FS: 786240 of 786432 (main area, both variants). The sentinel survives mkfs on all four |
+| S2a | FAT16 `-s 4` tails (vfat) | 8 of 10 files have a non-uniform tail: `s1 s600 sup1 s3u5 s5000 sgrow ssparse sgone`. The driver zeroes the rest of the 512-byte sector that holds EOF and leaves the following sectors of the cluster as they were: e.g. `s1` tail 2047 = 511 zero + 1536 sentinel. `sum1` (EOF in the last sector) is a 1-byte uniform zero tail; `su` is an exact fit |
+| S2b | FAT16 `-s 1` tails | every tail is uniform zero (one sector per cluster, so nothing is left over): 0 non-uniform tails. The 512-byte cluster size is NOT a residue route |
+| S2c | exFAT tails (32 KiB and 4 KiB clusters) | 8 of 10 files have a non-uniform tail in both: `s1 s600 sup1 s3u5 s5000 sgrow ssparse sgone`; the driver zeroes the rest of the sector holding EOF, the remaining sectors of the cluster keep the sentinel (e.g. 32 KiB `s1`: 511 zero + 32256 sentinel). Every file is a single contiguous run (`nofatchain=1`). `ssparse` after `truncate -s 5000`: `ValidDataLength` = `DataLength` = 5000 (the kernel zero-fills, it leaves no `VDL < DL` range) |
+| S2d | ext4 tails (1 KiB and 4 KiB blocks) | every tail is uniform zero (`sentinel=0 other=0`); `ssparse` ends in a hole (`HOLE-AT-LAST-UNIT`: logical block 4 of 1 KiB blocks, block 1 of 4 KiB blocks). The expectation "the tail is zero" holds |
+| S2e | F2FS tails | every tail is uniform zero. Files up to at least 2500 bytes are INLINE (no data block: `s1 s600 sgrow` and a 1500-byte `sgone` are `NO-UNITS`); `ssparse` ends in a hole. `sgone` at 5000 bytes has two blocks and a 3192-byte zero tail |
+| S2f | Deleted file | the tail range of the removed `sgone` is byte-identical after `rm` on FAT16 (36 zero + 512 sentinel), exFAT (120 zero + 27648 sentinel), ext4 and F2FS (zero): a delete does not touch the last unit (F2FS mounts with `discard` by default; the virtio drive ignores it) |
+| S2g | Repeatability | a first full run (with a 1500-byte `sgone` everywhere) and the second gave identical `TAIL` lines for FAT, ext4 and F2FS wherever the file set was the same |
+| S3 | Host-tool routes (fresh sentinel images, same file set) | `mcopy` on FAT16 `-s 4`: every tail is entirely sentinel (`zero=0`: 8 of 10 non-uniform); `mke2fs -d` (ext4 1 KiB): every tail zero; `sload.f2fs`: every tail sentinel (`zero=0`, nothing is zeroed) and its files are not sparse. All three exit 0 |
+| S4 | `mkfs` with a size smaller than the device (16 MiB device, 8 MiB filesystem; F2FS 96 MiB device, 64 MiB filesystem) | `mkfs.fat -F 16 -s 1 <img> 8192`: rc 0, size 8388608, the 8 MiB past it stay 131072 of 131072 sentinel cells. `mke2fs <img> 8192`: rc 0, same. `mkfs.f2fs <img> 131072` (sectors): rc 0, same (524288 of 524288 cells). `mkfs.exfat` has no size argument (rc 1, usage only). 3F-R15 appends the volume tail to the finished image instead |
+
+Other observations: the image's `dump.exfat` (exfatprogs 1.2.0) accepts only `-V` and `-h` (no `-c -d`
+chain listing, which `exfat.sh`'s older toolchain has): the helper reads the root directory's entry sets
+(0x85 / 0xC0 / 0xC1) itself, as `exfat_recover_oracle.py` does. `fsck.f2fs -d 1 -M` prints a trailing `0`
+token after the last block of `su` (4096 bytes) and `ssparse` but not of `sum1` or `sup1`; its meaning was
+not resolved (hole marker or terminator), so a block list of F2FS files should come from a source whose
+logical positions are explicit. Loading `crc32c-intel` and `crc32-pclmul` fails in the guest (rc 19, no such
+device); the generic modules load and every mount succeeds.
+
+### Decision for Task 12 (3F-R16, 3F-R26)
+
+- FAT (vfat): the 2048-byte cluster scenario (`-s 4`) leaves 8 non-uniform tails, 7 of them in files that are not deleted (at least 3 needed): go. A 512-byte cluster leaves none: do not use it.
+- exFAT: 8 non-uniform tails with 32 KiB clusters (4 KiB gives the same count): go.
+- ext4 and F2FS: tails are zero (uniform) as expected; they carry no residue, so their fixtures test the uniform path, exact-fit, `trailing-hole` (ext4, F2FS) and `no-runs` (F2FS inline). The F2FS deleted file must be at least 4 KiB (a 1500-byte `gone.txt` is inline and has no unit). A non-uniform ext4 or F2FS tail would need a different route and is not part of this plan.
+- `TestSlackExcludesDeletedFiles` has non-uniform residue to exclude only on FAT and exFAT.
+
+### Raw TAIL lines
+
+```text
+GEOM TAIL fat A data_start=51200 fs_size=16777216 unit=2048
+TAIL fat A /s1 1 units=1 unit_off=53248 tail_off=53249 tail=2047 zero=511 lead0=511 sentinel=1536 other=0 uniform=0 first=0x00
+TAIL fat A /s600 600 units=1 unit_off=55296 tail_off=55896 tail=1448 zero=424 lead0=424 sentinel=1024 other=0 uniform=0 first=0x00
+TAIL fat A /sum1 2047 units=1 unit_off=57344 tail_off=59391 tail=1 zero=1 lead0=1 sentinel=0 other=0 uniform=1 first=0x00
+TAIL fat A /su 2048 units=1 unit_off=59392 tail_off=61440 tail=0 zero=0 lead0=0 sentinel=0 other=0 uniform=0 first=-
+TAIL fat A /sup1 2049 units=2 unit_off=63488 tail_off=63489 tail=2047 zero=511 lead0=511 sentinel=1536 other=0 uniform=0 first=0x00
+TAIL fat A /s3u5 6149 units=4 unit_off=71680 tail_off=71685 tail=2043 zero=507 lead0=507 sentinel=1536 other=0 uniform=0 first=0x00
+TAIL fat A /s5000 5000 units=3 unit_off=77824 tail_off=78728 tail=1144 zero=120 lead0=120 sentinel=1024 other=0 uniform=0 first=0x00
+TAIL fat A /sgrow 2500 units=2 unit_off=81920 tail_off=82372 tail=1596 zero=60 lead0=60 sentinel=1536 other=0 uniform=0 first=0x00
+TAIL fat A /ssparse 5000 units=3 unit_off=88064 tail_off=88968 tail=1144 zero=120 lead0=120 sentinel=1024 other=0 uniform=0 first=0x00
+TAIL fat A /sgone 1500 units=1 unit_off=90112 tail_off=91612 tail=548 zero=36 lead0=36 sentinel=512 other=0 uniform=0 first=0x00
+GEOM TAIL exfat A data_start=2097152 fs_size=16777216 unit=32768
+TAIL exfat A /s1 1 units=1 unit_off=2195456 tail_off=2195457 tail=32767 zero=511 lead0=511 sentinel=32256 other=0 uniform=0 first=0x00 datalen=1 vdl=1 nofatchain=1
+TAIL exfat A /s600 600 units=1 unit_off=2228224 tail_off=2228824 tail=32168 zero=424 lead0=424 sentinel=31744 other=0 uniform=0 first=0x00 datalen=600 vdl=600 nofatchain=1
+TAIL exfat A /sum1 32767 units=1 unit_off=2260992 tail_off=2293759 tail=1 zero=1 lead0=1 sentinel=0 other=0 uniform=1 first=0x00 datalen=32767 vdl=32767 nofatchain=1
+TAIL exfat A /su 32768 units=1 unit_off=2293760 tail_off=2326528 tail=0 zero=0 lead0=0 sentinel=0 other=0 uniform=0 first=- datalen=32768 vdl=32768 nofatchain=1
+TAIL exfat A /sup1 32769 units=2 unit_off=2359296 tail_off=2359297 tail=32767 zero=511 lead0=511 sentinel=32256 other=0 uniform=0 first=0x00 datalen=32769 vdl=32769 nofatchain=1
+TAIL exfat A /s3u5 98309 units=4 unit_off=2490368 tail_off=2490373 tail=32763 zero=507 lead0=507 sentinel=32256 other=0 uniform=0 first=0x00 datalen=98309 vdl=98309 nofatchain=1
+TAIL exfat A /s5000 5000 units=1 unit_off=2523136 tail_off=2528136 tail=27768 zero=120 lead0=120 sentinel=27648 other=0 uniform=0 first=0x00 datalen=5000 vdl=5000 nofatchain=1
+TAIL exfat A /sgrow 2500 units=1 unit_off=2555904 tail_off=2558404 tail=30268 zero=60 lead0=60 sentinel=30208 other=0 uniform=0 first=0x00 datalen=2500 vdl=2500 nofatchain=1
+TAIL exfat A /ssparse 5000 units=1 unit_off=2588672 tail_off=2593672 tail=27768 zero=120 lead0=120 sentinel=27648 other=0 uniform=0 first=0x00 datalen=5000 vdl=5000 nofatchain=1
+TAIL exfat A /sgone 5000 units=1 unit_off=2621440 tail_off=2626440 tail=27768 zero=120 lead0=120 sentinel=27648 other=0 uniform=0 first=0x00 datalen=5000 vdl=5000 nofatchain=1
+GEOM TAIL ext4 A data_start=624640 fs_size=8388608 unit=1024
+TAIL ext4 A /s1 1 units=1 unit_off=7341056 tail_off=7341057 tail=1023 zero=1023 lead0=1023 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 A /s600 600 units=1 unit_off=7342080 tail_off=7342680 tail=424 zero=424 lead0=424 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 A /sum1 1023 units=1 unit_off=7343104 tail_off=7344127 tail=1 zero=1 lead0=1 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 A /su 1024 units=1 unit_off=7344128 tail_off=7345152 tail=0 zero=0 lead0=0 sentinel=0 other=0 uniform=0 first=-
+TAIL ext4 A /sup1 1025 units=2 unit_off=7346176 tail_off=7346177 tail=1023 zero=1023 lead0=1023 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 A /s3u5 3077 units=4 unit_off=7350272 tail_off=7350277 tail=1019 zero=1019 lead0=1019 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 A /s5000 5000 units=5 unit_off=7355392 tail_off=7356296 tail=120 zero=120 lead0=120 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 A /sgrow 2500 units=3 unit_off=7358464 tail_off=7358916 tail=572 zero=572 lead0=572 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 A /ssparse 5000 units=1 HOLE-AT-LAST-UNIT (index 4)
+TAIL ext4 A /sgone 1500 units=2 unit_off=7361536 tail_off=7362012 tail=548 zero=548 lead0=548 sentinel=0 other=0 uniform=1 first=0x00
+GEOM TAIL f2fs A data_start=16777216 fs_size=67108864 unit=4096
+TAIL f2fs A /s1 1 NO-UNITS (inline, empty or not listed)
+TAIL f2fs A /s600 600 NO-UNITS (inline, empty or not listed)
+TAIL f2fs A /sum1 4095 units=1 unit_off=23072768 tail_off=23076863 tail=1 zero=1 lead0=1 sentinel=0 other=0 uniform=1 first=0x00
+TAIL f2fs A /su 4096 units=1 unit_off=23076864 tail_off=23080960 tail=0 zero=0 lead0=0 sentinel=0 other=0 uniform=0 first=-
+TAIL f2fs A /sup1 4097 units=2 unit_off=23085056 tail_off=23085057 tail=4095 zero=4095 lead0=4095 sentinel=0 other=0 uniform=1 first=0x00
+TAIL f2fs A /s3u5 12293 units=4 unit_off=23101440 tail_off=23101445 tail=4091 zero=4091 lead0=4091 sentinel=0 other=0 uniform=1 first=0x00
+TAIL f2fs A /s5000 5000 units=2 unit_off=23109632 tail_off=23110536 tail=3192 zero=3192 lead0=3192 sentinel=0 other=0 uniform=1 first=0x00
+TAIL f2fs A /sgrow 2500 NO-UNITS (inline, empty or not listed)
+TAIL f2fs A /ssparse 5000 units=1 HOLE-AT-LAST-UNIT (index 1)
+TAIL f2fs A /sgone 5000 units=2 unit_off=23126016 tail_off=23126920 tail=3192 zero=3192 lead0=3192 sentinel=0 other=0 uniform=1 first=0x00
+RETAIL fat A /sgone tail_off=91612 tail=548 zero=36 lead0=36 sentinel=512 other=0 uniform=0 first=0x00
+RETAIL exfat A /sgone tail_off=2626440 tail=27768 zero=120 lead0=120 sentinel=27648 other=0 uniform=0 first=0x00
+RETAIL ext4 A /sgone tail_off=7362012 tail=548 zero=548 lead0=548 sentinel=0 other=0 uniform=1 first=0x00
+RETAIL f2fs A /sgone tail_off=23126920 tail=3192 zero=3192 lead0=3192 sentinel=0 other=0 uniform=1 first=0x00
+GEOM TAIL fat B data_start=146944 fs_size=16777216 unit=512
+TAIL fat B /s1 1 units=1 unit_off=147456 tail_off=147457 tail=511 zero=511 lead0=511 sentinel=0 other=0 uniform=1 first=0x00
+TAIL fat B /s600 600 units=2 unit_off=148480 tail_off=148568 tail=424 zero=424 lead0=424 sentinel=0 other=0 uniform=1 first=0x00
+TAIL fat B /sum1 511 units=1 unit_off=148992 tail_off=149503 tail=1 zero=1 lead0=1 sentinel=0 other=0 uniform=1 first=0x00
+TAIL fat B /su 512 units=1 unit_off=149504 tail_off=150016 tail=0 zero=0 lead0=0 sentinel=0 other=0 uniform=0 first=-
+TAIL fat B /sup1 513 units=2 unit_off=150528 tail_off=150529 tail=511 zero=511 lead0=511 sentinel=0 other=0 uniform=1 first=0x00
+TAIL fat B /s3u5 1541 units=4 unit_off=152576 tail_off=152581 tail=507 zero=507 lead0=507 sentinel=0 other=0 uniform=1 first=0x00
+TAIL fat B /s5000 5000 units=10 unit_off=157696 tail_off=158088 tail=120 zero=120 lead0=120 sentinel=0 other=0 uniform=1 first=0x00
+TAIL fat B /sgrow 2500 units=5 unit_off=160256 tail_off=160708 tail=60 zero=60 lead0=60 sentinel=0 other=0 uniform=1 first=0x00
+TAIL fat B /ssparse 5000 units=10 unit_off=165376 tail_off=165768 tail=120 zero=120 lead0=120 sentinel=0 other=0 uniform=1 first=0x00
+TAIL fat B /sgone 1500 units=3 unit_off=166912 tail_off=167388 tail=36 zero=36 lead0=36 sentinel=0 other=0 uniform=1 first=0x00
+GEOM TAIL exfat B data_start=2097152 fs_size=16777216 unit=4096
+TAIL exfat B /s1 1 units=1 unit_off=2113536 tail_off=2113537 tail=4095 zero=511 lead0=511 sentinel=3584 other=0 uniform=0 first=0x00 datalen=1 vdl=1 nofatchain=1
+TAIL exfat B /s600 600 units=1 unit_off=2117632 tail_off=2118232 tail=3496 zero=424 lead0=424 sentinel=3072 other=0 uniform=0 first=0x00 datalen=600 vdl=600 nofatchain=1
+TAIL exfat B /sum1 4095 units=1 unit_off=2121728 tail_off=2125823 tail=1 zero=1 lead0=1 sentinel=0 other=0 uniform=1 first=0x00 datalen=4095 vdl=4095 nofatchain=1
+TAIL exfat B /su 4096 units=1 unit_off=2125824 tail_off=2129920 tail=0 zero=0 lead0=0 sentinel=0 other=0 uniform=0 first=- datalen=4096 vdl=4096 nofatchain=1
+TAIL exfat B /sup1 4097 units=2 unit_off=2134016 tail_off=2134017 tail=4095 zero=511 lead0=511 sentinel=3584 other=0 uniform=0 first=0x00 datalen=4097 vdl=4097 nofatchain=1
+TAIL exfat B /s3u5 12293 units=4 unit_off=2150400 tail_off=2150405 tail=4091 zero=507 lead0=507 sentinel=3584 other=0 uniform=0 first=0x00 datalen=12293 vdl=12293 nofatchain=1
+TAIL exfat B /s5000 5000 units=2 unit_off=2158592 tail_off=2159496 tail=3192 zero=120 lead0=120 sentinel=3072 other=0 uniform=0 first=0x00 datalen=5000 vdl=5000 nofatchain=1
+TAIL exfat B /sgrow 2500 units=1 unit_off=2162688 tail_off=2165188 tail=1596 zero=60 lead0=60 sentinel=1536 other=0 uniform=0 first=0x00 datalen=2500 vdl=2500 nofatchain=1
+TAIL exfat B /ssparse 5000 units=2 unit_off=2170880 tail_off=2171784 tail=3192 zero=120 lead0=120 sentinel=3072 other=0 uniform=0 first=0x00 datalen=5000 vdl=5000 nofatchain=1
+TAIL exfat B /sgone 5000 units=2 unit_off=2179072 tail_off=2179976 tail=3192 zero=120 lead0=120 sentinel=3072 other=0 uniform=0 first=0x00 datalen=5000 vdl=5000 nofatchain=1
+GEOM TAIL ext4 B data_start=663552 fs_size=8388608 unit=4096
+TAIL ext4 B /s1 1 units=1 unit_off=4759552 tail_off=4759553 tail=4095 zero=4095 lead0=4095 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 B /s600 600 units=1 unit_off=4763648 tail_off=4764248 tail=3496 zero=3496 lead0=3496 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 B /sum1 4095 units=1 unit_off=4767744 tail_off=4771839 tail=1 zero=1 lead0=1 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 B /su 4096 units=1 unit_off=4771840 tail_off=4775936 tail=0 zero=0 lead0=0 sentinel=0 other=0 uniform=0 first=-
+TAIL ext4 B /sup1 4097 units=2 unit_off=4780032 tail_off=4780033 tail=4095 zero=4095 lead0=4095 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 B /s3u5 12293 units=4 unit_off=4796416 tail_off=4796421 tail=4091 zero=4091 lead0=4091 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 B /s5000 5000 units=2 unit_off=4804608 tail_off=4805512 tail=3192 zero=3192 lead0=3192 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 B /sgrow 2500 units=1 unit_off=4808704 tail_off=4811204 tail=1596 zero=1596 lead0=1596 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 B /ssparse 5000 units=1 HOLE-AT-LAST-UNIT (index 1)
+TAIL ext4 B /sgone 5000 units=2 unit_off=4820992 tail_off=4821896 tail=3192 zero=3192 lead0=3192 sentinel=0 other=0 uniform=1 first=0x00
+GEOM TAIL f2fs B data_start=16777216 fs_size=67108864 unit=4096
+TAIL f2fs B /s1 1 NO-UNITS (inline, empty or not listed)
+TAIL f2fs B /s600 600 NO-UNITS (inline, empty or not listed)
+TAIL f2fs B /sum1 4095 units=1 unit_off=23072768 tail_off=23076863 tail=1 zero=1 lead0=1 sentinel=0 other=0 uniform=1 first=0x00
+TAIL f2fs B /su 4096 units=1 unit_off=23076864 tail_off=23080960 tail=0 zero=0 lead0=0 sentinel=0 other=0 uniform=0 first=-
+TAIL f2fs B /sup1 4097 units=2 unit_off=23085056 tail_off=23085057 tail=4095 zero=4095 lead0=4095 sentinel=0 other=0 uniform=1 first=0x00
+TAIL f2fs B /s3u5 12293 units=4 unit_off=23101440 tail_off=23101445 tail=4091 zero=4091 lead0=4091 sentinel=0 other=0 uniform=1 first=0x00
+TAIL f2fs B /s5000 5000 units=2 unit_off=23109632 tail_off=23110536 tail=3192 zero=3192 lead0=3192 sentinel=0 other=0 uniform=1 first=0x00
+TAIL f2fs B /sgrow 2500 NO-UNITS (inline, empty or not listed)
+TAIL f2fs B /ssparse 5000 units=1 HOLE-AT-LAST-UNIT (index 1)
+TAIL f2fs B /sgone 5000 units=2 unit_off=23126016 tail_off=23126920 tail=3192 zero=3192 lead0=3192 sentinel=0 other=0 uniform=1 first=0x00
+```
+
 ## Carving fixtures (3E)
 
 Signature carving (plan 3E) needs whole contiguous objects of the twelve spec 7.2 families, produced by real
