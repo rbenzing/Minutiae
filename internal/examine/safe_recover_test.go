@@ -9,6 +9,8 @@ import (
 
 	"github.com/rbenzing/minutiae/internal/examine"
 	"github.com/rbenzing/minutiae/internal/filesys"
+	"github.com/rbenzing/minutiae/internal/filesys/detect"
+	"github.com/rbenzing/minutiae/internal/filesys/f2fs/f2fstest"
 	"github.com/rbenzing/minutiae/internal/filesys/fstest"
 )
 
@@ -585,5 +587,26 @@ func TestSafeFSCopiesRollForwardAnswers(t *testing.T) {
 	second, _ := rf.PostCheckpointFiles()
 	if !reflect.DeepEqual(second, pristine.files) {
 		t.Errorf("a second answer carries the caller's edits: %+v", second)
+	}
+}
+
+func TestSafeFSFindsF2FSJournaler(t *testing.T) {
+	o := f2fstest.Options{NodeSegs: 2, Unclean: true, CPFlags: f2fstest.CPCRCRecovery}
+	img, _ := f2fstest.BuildTree(o, []f2fstest.File{{Path: "/p.bin", Data: pattern(blk, 3), PostCheckpoint: true}})
+	opened, err := detect.Open(bytes.NewReader(img), int64(len(img)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, fsys := range map[string]filesys.FileSystem{"detect": opened, "safe": wrap(t, opened)} {
+		j := mustAs[filesys.Journaler](t, fsys)
+		info, err := j.Journal()
+		if err != nil || info.Type != "f2fs-rollforward" || info.Blocks != 1 || !info.NeedsRecovery {
+			t.Errorf("%s: Journal = %+v, %v", name, info, err)
+		}
+		rf := mustAs[filesys.RollForwarder](t, fsys)
+		chain, err := rf.RollForward(func(filesys.RollForwardNode) bool { return true })
+		if err != nil || chain.Nodes != 1 {
+			t.Errorf("%s: RollForward = %+v, %v", name, chain, err)
+		}
 	}
 }

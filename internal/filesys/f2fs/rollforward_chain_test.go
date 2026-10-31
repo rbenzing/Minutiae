@@ -180,6 +180,7 @@ func TestChainStops(t *testing.T) {
 		name     string
 		chain    []f2fstest.ChainNode
 		cut      int // keep the image up to start+cut blocks (0 = no cut)
+		capN     int // SetChainCap (0 = the default)
 		stop     string
 		complete bool
 		nodes    int
@@ -206,6 +207,35 @@ func TestChainStops(t *testing.T) {
 			stop: fmt.Sprintf("footer@%d", start+1), complete: false, nodes: 1,
 		},
 		{
+			name: "footer ino is the node inode", chain: []f2fstest.ChainNode{rfInodeNode(o, 20, true, true), rfDirectNode(21, f2fstest.NodeIno, 1, true)},
+			stop: fmt.Sprintf("footer@%d", start+1), complete: false, nodes: 1,
+		},
+		{
+			name: "footer ino is the meta inode", chain: []f2fstest.ChainNode{rfInodeNode(o, 20, true, true), rfDirectNode(21, f2fstest.MetaIno, 1, true)},
+			stop: fmt.Sprintf("footer@%d", start+1), complete: false, nodes: 1,
+		},
+		{
+			name: "footer nid is the node inode", chain: []f2fstest.ChainNode{rfInodeNode(o, 20, true, true), rfDirectNode(f2fstest.NodeIno, 20, 1, true)},
+			stop: fmt.Sprintf("footer@%d", start+1), complete: false, nodes: 1,
+		},
+		{
+			name: "footer nid is the meta inode", chain: []f2fstest.ChainNode{rfInodeNode(o, 20, true, true), rfDirectNode(f2fstest.MetaIno, 20, 1, true)},
+			stop: fmt.Sprintf("footer@%d", start+1), complete: false, nodes: 1,
+		},
+		{
+			name: "footer nid at the NAT capacity", chain: []f2fstest.ChainNode{rfInodeNode(o, 20, true, true), rfDirectNode(natCap, 20, 1, true)},
+			stop: fmt.Sprintf("footer@%d", start+1), complete: false, nodes: 1,
+		},
+		{
+			name: "footer ino zero", chain: []f2fstest.ChainNode{rfInodeNode(o, 20, true, true), rfDirectNode(21, 0, 1, true)},
+			stop: fmt.Sprintf("footer@%d", start+1), complete: false, nodes: 1,
+		},
+		{
+			// The block at exactly the cap is not a chain block: the version check ends the walk before the cap does.
+			name: "non-chain block at exactly the cap", chain: []f2fstest.ChainNode{rfInodeNode(o, 20, true, true), rfDirectNode(21, 20, 1, true)},
+			capN: 2, stop: fmt.Sprintf("version@%d", start+2), complete: true, nodes: 2,
+		},
+		{
 			name: "image cut", chain: []f2fstest.ChainNode{rfInodeNode(o, 20, true, true), rfDirectNode(21, 20, 1, true), rfDirectNode(22, 20, 2, true)},
 			cut: 2, stop: fmt.Sprintf("image-end@%d", start+2), complete: false, nodes: 2,
 		},
@@ -220,6 +250,7 @@ func TestChainStops(t *testing.T) {
 				img = img[:int(start+uint32(tc.cut))*blockSize]
 			}
 			f := openImg(t, img)
+			f.SetChainCap(tc.capN)
 			st, err := f.ChainStats()
 			if err != nil {
 				t.Fatal(err)
