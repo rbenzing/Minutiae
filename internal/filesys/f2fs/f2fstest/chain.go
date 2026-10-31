@@ -113,6 +113,7 @@ func chainAddrs(o Options) []uint32 {
 // checkChainCollisions panics when a chain block address is also the address of
 // a node (live or stale), of a data block or of another chain element: the later
 // write would silently replace the earlier block.
+// It ignores nodes with Addr 0: they are unplaced and get auto-allocated later.
 func checkChainCollisions(o Options, addrs []uint32) {
 	taken := make(map[uint32]string)
 	for _, ns := range [][]Node{o.Nodes, o.StaleNodes} {
