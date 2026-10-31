@@ -27,17 +27,20 @@ declare -A fixtures=(
   [ext4-xattr]="internal/filesys/ext4/testdata"
   # carve_gen.sh: runs in the Dockerfile.carve image; the images go here and the objects to internal/carve/testdata/objects
   [carve]="internal/examine/testdata/carve"
+  # slack.sh: runs in the Dockerfile.recover image and writes four directories: the FAT one here, the exFAT, ext4 and F2FS ones
+  # derived from $root, all named testdata/slack
+  [slack]="internal/filesys/fat/testdata/slack"
 )
 order=(volume-gpt volume-mbr ext4 fat exfat f2fs ewf apfs sqlite)
 # Not in "all": each needs its own image (hfsplus: Dockerfile.hfs, minutiae-fixtures-hfs;
 # apfs-populated: Dockerfile.apfs, minutiae-fixtures-apfs; fat-recover, exfat-recover and casefold:
 # Dockerfile.recover, minutiae-recover-fixtures, which holds QEMU and the guest kernel; carve: Dockerfile.carve,
 # minutiae-carve-fixtures, which holds the encoders and no QEMU).
-separate=(hfsplus apfs-populated fat-recover exfat-recover casefold ext4-xattr carve)
+separate=(hfsplus apfs-populated fat-recover exfat-recover casefold ext4-xattr carve slack)
 
 usage() {
   echo "usage: gen.sh <fixture>|all" >&2
-  echo "fixtures: ${order[*]} (all), ${separate[*]} (not in all: run hfsplus in the minutiae-fixtures-hfs image, apfs-populated in the minutiae-fixtures-apfs image, fat-recover, exfat-recover and ext4-xattr in the minutiae-recover-fixtures image, carve in the minutiae-carve-fixtures image)" >&2
+  echo "fixtures: ${order[*]} (all), ${separate[*]} (not in all: run hfsplus in the minutiae-fixtures-hfs image, apfs-populated in the minutiae-fixtures-apfs image, fat-recover, exfat-recover, ext4-xattr and slack in the minutiae-recover-fixtures image, carve in the minutiae-carve-fixtures image)" >&2
   exit 2
 }
 
@@ -70,11 +73,11 @@ for name in "${targets[@]}"; do
       exit 1
     fi
     ;;
-  fat-recover | exfat-recover | ext4-xattr)
+  fat-recover | exfat-recover | ext4-xattr | slack)
     if ! command -v qemu-system-x86_64 >/dev/null || ! compgen -G "/boot/vmlinuz-*" >/dev/null; then
       echo "gen.sh $name needs QEMU and the guest kernel, which the minutiae-fixtures image does not have." >&2
       echo "Build and use the separate image: docker build -f tools/fixtures/Dockerfile.recover -t minutiae-recover-fixtures tools/fixtures" >&2
-      echo "(see tools/fixtures/README.md, \"FAT recovery fixtures (3B)\")." >&2
+      echo "(see tools/fixtures/README.md, \"FAT recovery fixtures (3B)\" and \"Slack fixtures (3F)\")." >&2
       exit 1
     fi
     ;;

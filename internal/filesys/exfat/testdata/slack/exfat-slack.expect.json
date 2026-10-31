@@ -1,0 +1,531 @@
+{
+ "generator": {
+  "image_sha256": "a5a5a9a2e810b6c90a4af2d84b79c2e0cbece010639a076d464ae953c8b35962",
+  "packages": [
+   {
+    "package": "busybox-static",
+    "version": "1:1.35.0-4+deb12u1+b1"
+   },
+   {
+    "package": "coreutils",
+    "version": "9.1-1"
+   },
+   {
+    "package": "cpio",
+    "version": "2.13+dfsg-7.1"
+   },
+   {
+    "package": "dosfstools",
+    "version": "4.2-1"
+   },
+   {
+    "package": "e2fsprogs",
+    "version": "1.47.0-2+b2"
+   },
+   {
+    "package": "exfatprogs",
+    "version": "1.2.0-1+deb12u1"
+   },
+   {
+    "package": "f2fs-tools",
+    "version": "1.15.0-1"
+   },
+   {
+    "package": "faketime",
+    "version": "0.9.10-2.1"
+   },
+   {
+    "package": "gzip",
+    "version": "1.12-1"
+   },
+   {
+    "package": "jq",
+    "version": "1.6-2.1+deb12u2"
+   },
+   {
+    "package": "kmod",
+    "version": "30+20221128-1"
+   },
+   {
+    "package": "linux-image-6.1.0-53-amd64",
+    "version": "6.1.187-1"
+   },
+   {
+    "package": "mtools",
+    "version": "4.0.33-1+really4.0.32-1"
+   },
+   {
+    "package": "python3",
+    "version": "3.11.2-1+b1"
+   },
+   {
+    "package": "qemu-system-x86",
+    "version": "1:7.2+dfsg-7+deb12u18+b3"
+   }
+  ],
+  "commands": [
+   "# scenario: tools/fixtures/slack_oracle.py (scenario, ops); payload: 201 copies of 'pattern 997 slack-fixture' (lib.sh), neither zero nor the sentinel",
+   "# every image is first filled with the 64-byte sentinel SLACK-SENTINEL-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLM at phase offset % 64",
+   "faketime -f '2023-11-14 22:13:20' mkfs.fat -F 16 -s 4 -i 1234ABCD -n SLACK <fat img, 16 MiB>",
+   "faketime -f '2023-11-14 22:13:20' mkfs.exfat -c 32768 -L SLACK <exfat img, 16 MiB>",
+   "faketime -f '2023-11-14 22:13:20' mke2fs -q -t ext4 -b 1024 -U 0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d -E nodiscard,hash_seed=11112222-3333-4444-5555-666677778888 -L slack <ext4 img, 8 MiB>",
+   "faketime -f '2023-11-14 22:13:20' mkfs.f2fs -t 0 -U 0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d -l slack <f2fs img, 64 MiB>",
+   "guest boot 1 (fat): head -c 1 /payload/pat >/mnt/fat/s1",
+   "guest boot 1 (fat): head -c 600 /payload/pat >/mnt/fat/s600",
+   "guest boot 1 (fat): head -c 2047 /payload/pat >/mnt/fat/sum1",
+   "guest boot 1 (fat): head -c 2048 /payload/pat >/mnt/fat/su",
+   "guest boot 1 (fat): head -c 2049 /payload/pat >/mnt/fat/sup1",
+   "guest boot 1 (fat): head -c 6149 /payload/pat >/mnt/fat/s3u5",
+   "guest boot 1 (fat): head -c 5000 /payload/pat >/mnt/fat/s5000",
+   "guest boot 1 (fat): head -c 100 /payload/pat >/mnt/fat/inline100",
+   "guest boot 1 (fat): : >/mnt/fat/empty",
+   "guest boot 1 (fat): mkdir /mnt/fat/dir1",
+   "guest boot 1 (fat): head -c 777 /payload/pat >/mnt/fat/dir1/a-rather-long-file-name-for-lfn-entries.dat",
+   "guest boot 1 (fat): head -c 2048 /payload/pat >/mnt/fat/frag",
+   "guest boot 1 (fat): sync",
+   "guest boot 1 (fat): head -c 2048 /payload/pat >/mnt/fat/fragsep",
+   "guest boot 1 (fat): sync",
+   "guest boot 1 (fat): head -c 2348 /payload/pat >>/mnt/fat/frag",
+   "guest boot 1 (fat): sync",
+   "guest boot 1 (fat): head -c 1500 /payload/pat >/mnt/fat/gone.txt",
+   "guest boot 1 (fat): sync",
+   "guest boot 2 (fat): rm /mnt/fat/gone.txt",
+   "guest boot 2 (fat): sync",
+   "guest boot 1 (exfat): head -c 1 /payload/pat >/mnt/exfat/s1",
+   "guest boot 1 (exfat): head -c 600 /payload/pat >/mnt/exfat/s600",
+   "guest boot 1 (exfat): head -c 32767 /payload/pat >/mnt/exfat/sum1",
+   "guest boot 1 (exfat): head -c 32768 /payload/pat >/mnt/exfat/su",
+   "guest boot 1 (exfat): head -c 32769 /payload/pat >/mnt/exfat/sup1",
+   "guest boot 1 (exfat): head -c 98309 /payload/pat >/mnt/exfat/s3u5",
+   "guest boot 1 (exfat): head -c 5000 /payload/pat >/mnt/exfat/s5000",
+   "guest boot 1 (exfat): head -c 100 /payload/pat >/mnt/exfat/inline100",
+   "guest boot 1 (exfat): : >/mnt/exfat/empty",
+   "guest boot 1 (exfat): mkdir /mnt/exfat/dir1",
+   "guest boot 1 (exfat): head -c 777 /payload/pat >/mnt/exfat/dir1/a-rather-long-file-name-for-lfn-entries.dat",
+   "guest boot 1 (exfat): head -c 32768 /payload/pat >/mnt/exfat/frag",
+   "guest boot 1 (exfat): sync",
+   "guest boot 1 (exfat): head -c 32768 /payload/pat >/mnt/exfat/fragsep",
+   "guest boot 1 (exfat): sync",
+   "guest boot 1 (exfat): head -c 33068 /payload/pat >>/mnt/exfat/frag",
+   "guest boot 1 (exfat): sync",
+   "guest boot 1 (exfat): head -c 1500 /payload/pat >/mnt/exfat/gone.txt",
+   "guest boot 1 (exfat): sync",
+   "guest boot 2 (exfat): rm /mnt/exfat/gone.txt",
+   "guest boot 2 (exfat): sync",
+   "guest boot 1 (ext4): head -c 1 /payload/pat >/mnt/ext4/s1",
+   "guest boot 1 (ext4): head -c 600 /payload/pat >/mnt/ext4/s600",
+   "guest boot 1 (ext4): head -c 1023 /payload/pat >/mnt/ext4/sum1",
+   "guest boot 1 (ext4): head -c 1024 /payload/pat >/mnt/ext4/su",
+   "guest boot 1 (ext4): head -c 1025 /payload/pat >/mnt/ext4/sup1",
+   "guest boot 1 (ext4): head -c 3077 /payload/pat >/mnt/ext4/s3u5",
+   "guest boot 1 (ext4): head -c 5000 /payload/pat >/mnt/ext4/s5000",
+   "guest boot 1 (ext4): head -c 100 /payload/pat >/mnt/ext4/inline100",
+   "guest boot 1 (ext4): : >/mnt/ext4/empty",
+   "guest boot 1 (ext4): mkdir /mnt/ext4/dir1",
+   "guest boot 1 (ext4): head -c 777 /payload/pat >/mnt/ext4/dir1/a-rather-long-file-name-for-lfn-entries.dat",
+   "guest boot 1 (ext4): head -c 1024 /payload/pat >/mnt/ext4/frag",
+   "guest boot 1 (ext4): sync",
+   "guest boot 1 (ext4): head -c 1024 /payload/pat >/mnt/ext4/fragsep",
+   "guest boot 1 (ext4): sync",
+   "guest boot 1 (ext4): head -c 1324 /payload/pat >>/mnt/ext4/frag",
+   "guest boot 1 (ext4): sync",
+   "guest boot 1 (ext4): head -c 700 /payload/pat >/mnt/ext4/sparse",
+   "guest boot 1 (ext4): truncate -s 5000 /mnt/ext4/sparse",
+   "guest boot 1 (ext4): head -c 300 /payload/pat >/mnt/ext4/sparsemid",
+   "guest boot 1 (ext4): dd if=/payload/pat of=/mnt/ext4/sparsemid bs=1 count=500 seek=3072 conv=notrunc 2>/dev/null",
+   "guest boot 1 (ext4): head -c 1500 /payload/pat >/mnt/ext4/gone.txt",
+   "guest boot 1 (ext4): sync",
+   "guest boot 2 (ext4): rm /mnt/ext4/gone.txt",
+   "guest boot 2 (ext4): sync",
+   "guest boot 1 (f2fs): head -c 1 /payload/pat >/mnt/f2fs/s1",
+   "guest boot 1 (f2fs): head -c 600 /payload/pat >/mnt/f2fs/s600",
+   "guest boot 1 (f2fs): head -c 4095 /payload/pat >/mnt/f2fs/sum1",
+   "guest boot 1 (f2fs): head -c 4096 /payload/pat >/mnt/f2fs/su",
+   "guest boot 1 (f2fs): head -c 4097 /payload/pat >/mnt/f2fs/sup1",
+   "guest boot 1 (f2fs): head -c 12293 /payload/pat >/mnt/f2fs/s3u5",
+   "guest boot 1 (f2fs): head -c 5000 /payload/pat >/mnt/f2fs/s5000",
+   "guest boot 1 (f2fs): head -c 100 /payload/pat >/mnt/f2fs/inline100",
+   "guest boot 1 (f2fs): : >/mnt/f2fs/empty",
+   "guest boot 1 (f2fs): mkdir /mnt/f2fs/dir1",
+   "guest boot 1 (f2fs): head -c 777 /payload/pat >/mnt/f2fs/dir1/a-rather-long-file-name-for-lfn-entries.dat",
+   "guest boot 1 (f2fs): head -c 4096 /payload/pat >/mnt/f2fs/frag",
+   "guest boot 1 (f2fs): sync",
+   "guest boot 1 (f2fs): head -c 4096 /payload/pat >/mnt/f2fs/fragsep",
+   "guest boot 1 (f2fs): sync",
+   "guest boot 1 (f2fs): head -c 4396 /payload/pat >>/mnt/f2fs/frag",
+   "guest boot 1 (f2fs): sync",
+   "guest boot 1 (f2fs): head -c 700 /payload/pat >/mnt/f2fs/sparse",
+   "guest boot 1 (f2fs): truncate -s 5000 /mnt/f2fs/sparse",
+   "guest boot 1 (f2fs): head -c 300 /payload/pat >/mnt/f2fs/sparsemid",
+   "guest boot 1 (f2fs): dd if=/payload/pat of=/mnt/f2fs/sparsemid bs=1 count=500 seek=12288 conv=notrunc 2>/dev/null",
+   "guest boot 1 (f2fs): head -c 5000 /payload/pat >/mnt/f2fs/gone.txt",
+   "guest boot 1 (f2fs): sync",
+   "guest boot 2 (f2fs): rm /mnt/f2fs/gone.txt",
+   "guest boot 2 (f2fs): sync",
+   "mshowfat -i <fat img> ::<path>   # FAT chains",
+   "dump.exfat <exfat img>; the root directory's entry sets, FAT and boot sector parsed by slack_oracle.py (dump.exfat of exfatprogs 1.2.0 has no chain listing)",
+   "debugfs -R 'stat <path>' <ext4 img>   # extents with logical positions",
+   "fsck.f2fs -t --dry-run <f2fs img>; dump.f2fs -i <ino> <f2fs img>   # i_addr[] with logical positions (fsck.f2fs -M is not used: its trailing 0 token is unresolved)",
+   "fsck.fat -n <fat img>; fsck.exfat -n <exfat img>; e2fsck -fn <ext4 img>; fsck.f2fs -f --dry-run <copy of the f2fs img>   # all must accept the images (before the tail is appended)",
+   "slack_oracle.py tail <img> <filesystem size>   # appends 512 KiB of sentinel, 512 KiB of zeros, 4196 bytes of sentinel (the filesystem never addresses them)",
+   "slack_oracle.py expect <fs> <img> <units> <generator>   # reads the image bytes at every range it states"
+  ]
+ },
+ "type": "exfat",
+ "unit": 32768,
+ "fs_size": 16777216,
+ "image_size": 17829988,
+ "data_start": 2097152,
+ "sentinel": "SLACK-SENTINEL-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLM",
+ "files": [
+  {
+   "path": "/dir1/a-rather-long-file-name-for-lfn-entries.dat",
+   "size": 777,
+   "units": [
+    [
+     18,
+     18
+    ]
+   ],
+   "extents": [
+    [
+     0,
+     18,
+     1
+    ]
+   ],
+   "slack": {
+    "fs_offset": 2622217,
+    "image_offset": 2622217,
+    "length": 31991,
+    "sha256": "2a3447db94a4ccf80812c3367cb480b7d4b7886963d73d3fcb32d0c486f7bae4",
+    "uniform": false
+   },
+   "outcome": "slack"
+  },
+  {
+   "path": "/empty",
+   "size": 0,
+   "units": [],
+   "extents": [],
+   "slack": null,
+   "outcome": "no-runs"
+  },
+  {
+   "path": "/frag",
+   "size": 65836,
+   "units": [
+    [
+     19,
+     19
+    ],
+    [
+     21,
+     22
+    ]
+   ],
+   "extents": [
+    [
+     0,
+     19,
+     1
+    ],
+    [
+     1,
+     21,
+     1
+    ],
+    [
+     2,
+     22,
+     1
+    ]
+   ],
+   "slack": {
+    "fs_offset": 2752812,
+    "image_offset": 2752812,
+    "length": 32468,
+    "sha256": "13c3ec429db62de5ce149ba48d02a6d5c0bba2c7134fe97de2f14985cd033054",
+    "uniform": false
+   },
+   "outcome": "slack"
+  },
+  {
+   "path": "/fragsep",
+   "size": 32768,
+   "units": [
+    [
+     20,
+     20
+    ]
+   ],
+   "extents": [
+    [
+     0,
+     20,
+     1
+    ]
+   ],
+   "slack": null,
+   "outcome": "exact-fit"
+  },
+  {
+   "path": "/inline100",
+   "size": 100,
+   "units": [
+    [
+     16,
+     16
+    ]
+   ],
+   "extents": [
+    [
+     0,
+     16,
+     1
+    ]
+   ],
+   "slack": {
+    "fs_offset": 2556004,
+    "image_offset": 2556004,
+    "length": 32668,
+    "sha256": "523cf968df4ee442cb9684abcc46aae2c53ded4998de76fbca7272c38e0df6ba",
+    "uniform": false
+   },
+   "outcome": "slack"
+  },
+  {
+   "path": "/s1",
+   "size": 1,
+   "units": [
+    [
+     5,
+     5
+    ]
+   ],
+   "extents": [
+    [
+     0,
+     5,
+     1
+    ]
+   ],
+   "slack": {
+    "fs_offset": 2195457,
+    "image_offset": 2195457,
+    "length": 32767,
+    "sha256": "7bbbb743c81246e1fd7a2ade445be02cfec226ff4a3353368fdc63db20a05e87",
+    "uniform": false
+   },
+   "outcome": "slack"
+  },
+  {
+   "path": "/s3u5",
+   "size": 98309,
+   "units": [
+    [
+     11,
+     14
+    ]
+   ],
+   "extents": [
+    [
+     0,
+     11,
+     1
+    ],
+    [
+     1,
+     12,
+     1
+    ],
+    [
+     2,
+     13,
+     1
+    ],
+    [
+     3,
+     14,
+     1
+    ]
+   ],
+   "slack": {
+    "fs_offset": 2490373,
+    "image_offset": 2490373,
+    "length": 32763,
+    "sha256": "411bcf894590c6f01cc4da810f859fbaa3d7d526bfa72e4b9a5ff91406ff33c0",
+    "uniform": false
+   },
+   "outcome": "slack"
+  },
+  {
+   "path": "/s5000",
+   "size": 5000,
+   "units": [
+    [
+     15,
+     15
+    ]
+   ],
+   "extents": [
+    [
+     0,
+     15,
+     1
+    ]
+   ],
+   "slack": {
+    "fs_offset": 2528136,
+    "image_offset": 2528136,
+    "length": 27768,
+    "sha256": "d498713d319119237c44a9fe711cfd013beaa846c01e15dc9649878f671c8f61",
+    "uniform": false
+   },
+   "outcome": "slack"
+  },
+  {
+   "path": "/s600",
+   "size": 600,
+   "units": [
+    [
+     6,
+     6
+    ]
+   ],
+   "extents": [
+    [
+     0,
+     6,
+     1
+    ]
+   ],
+   "slack": {
+    "fs_offset": 2228824,
+    "image_offset": 2228824,
+    "length": 32168,
+    "sha256": "96263cc5a0301412bba00a8835e7dc7d3c4ee55a10655bc23aef33c008526d2f",
+    "uniform": false
+   },
+   "outcome": "slack"
+  },
+  {
+   "path": "/su",
+   "size": 32768,
+   "units": [
+    [
+     8,
+     8
+    ]
+   ],
+   "extents": [
+    [
+     0,
+     8,
+     1
+    ]
+   ],
+   "slack": null,
+   "outcome": "exact-fit"
+  },
+  {
+   "path": "/sum1",
+   "size": 32767,
+   "units": [
+    [
+     7,
+     7
+    ]
+   ],
+   "extents": [
+    [
+     0,
+     7,
+     1
+    ]
+   ],
+   "slack": {
+    "fs_offset": 2293759,
+    "image_offset": 2293759,
+    "length": 1,
+    "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+    "uniform": true
+   },
+   "outcome": "slack"
+  },
+  {
+   "path": "/sup1",
+   "size": 32769,
+   "units": [
+    [
+     9,
+     10
+    ]
+   ],
+   "extents": [
+    [
+     0,
+     9,
+     1
+    ],
+    [
+     1,
+     10,
+     1
+    ]
+   ],
+   "slack": {
+    "fs_offset": 2359297,
+    "image_offset": 2359297,
+    "length": 32767,
+    "sha256": "7bbbb743c81246e1fd7a2ade445be02cfec226ff4a3353368fdc63db20a05e87",
+    "uniform": false
+   },
+   "outcome": "slack"
+  }
+ ],
+ "deleted": [
+  {
+   "path": "/gone.txt",
+   "size": 1500,
+   "last_unit_image_offset": 2785280,
+   "unit": 32768
+  }
+ ],
+ "volume": {
+  "image_offset": 16777216,
+  "length": 1052772,
+  "chunk": 4096,
+  "segments": [
+   {
+    "image_offset": 16777216,
+    "length": 524288,
+    "sha256": "2d861f65ae3a006a23c36afaf550873a41a565116794bd150b13939e22d88d18",
+    "uniform": false
+   },
+   {
+    "image_offset": 17301504,
+    "length": 524288,
+    "sha256": "07854d2fef297a06ba81685e660c332de36d5d18d546927d30daad6d7fda1541",
+    "uniform": true,
+    "fill": 0
+   },
+   {
+    "image_offset": 17825792,
+    "length": 4196,
+    "sha256": "d7820fa82a82ae778968bb7cc73c34abf736e3606a39b17d7254f326ad679c17",
+    "uniform": false
+   }
+  ],
+  "uniform_chunks": 128,
+  "uniform_bytes": 524288
+ },
+ "counts": {
+  "slack": 9,
+  "uniform_slack": 1,
+  "nonuniform_slack": 8,
+  "exact-fit": 2,
+  "no-runs": 1,
+  "trailing-hole": 0
+ }
+}
