@@ -35,7 +35,7 @@ func writeNodes(img []byte, o Options, l Layout) {
 				copy(img[int(addr)*BlockSize:], n.Block)
 			}
 		}
-		if n.NoNAT {
+		if n.NoNAT || n.Stale {
 			continue
 		}
 		if n.NID >= l.NATCapacity() {
@@ -103,7 +103,7 @@ type Inode struct {
 	BadChecksum, SkipChecksum bool
 	// FooterIno / FooterNID override the footer (0 = NID).
 	FooterIno, FooterNID uint32
-	// FooterFlag is the node footer's flag word (offset in the node tree << 7).
+	// FooterFlag is the node footer's flag word (offset in the node tree << 3).
 	FooterFlag uint32
 	// RawOverrides are applied last (byte offset -> bytes), before the checksum.
 	RawOverrides map[int][]byte

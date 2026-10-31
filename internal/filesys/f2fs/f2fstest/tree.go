@@ -1,6 +1,7 @@
 package f2fstest
 
 import (
+	"encoding/binary"
 	"slices"
 	"strings"
 )
@@ -11,6 +12,8 @@ type Tree struct {
 	NID       map[string]uint32   // path -> inode number ("/" is RootIno)
 	Addr      map[uint32]uint32   // node id -> block address of its node block
 	DirBlocks map[string][]uint32 // directory path -> addresses of its dentry blocks (none for inline directories)
+	Nodes     map[string][]uint32 // path -> node ids, inode first, in emit order
+	Data      map[string][]uint32 // path -> data block address per logical block (0 = hole)
 }
 
 // Inode flag bits of i_flags used by the tree builder.
@@ -40,7 +43,7 @@ func (n *tnode) isDir() bool { return n.f.Dir || n.f.Mode&0o170000 == 0o040000 }
 // need (an entry never spans two blocks); a directory with Inline is stored in
 // its inode, which panics when its entries do not fit.
 func BuildTree(o Options, files []File) ([]byte, *Tree) {
-	t := &Tree{NID: map[string]uint32{"/": RootIno}, Addr: map[uint32]uint32{}, DirBlocks: map[string][]uint32{}}
+	t := &Tree{NID: map[string]uint32{"/": RootIno}, Addr: map[uint32]uint32{}, DirBlocks: map[string][]uint32{}, Nodes: map[string][]uint32{}, Data: map[string][]uint32{}}
 	if len(files) == 0 {
 		return build(o), t
 	}
@@ -170,8 +173,33 @@ func blocksOf(content []byte) map[int64][]byte {
 }
 
 // emit lays out one inode with its data and returns the node blocks (inode
-// first) and data blocks.
+// first) and data blocks. It applies the File's CPVer and Unlinked and records
+// where the blocks went in t.
 func emit(o Options, a *Alloc, n *tnode, t *Tree) ([]Node, []DataBlock) {
+	f := n.f
+	if f.Unlinked && !f.Deleted {
+		panic("f2fstest: Unlinked needs Deleted")
+	}
+	ns, ds := emitBlocks(o, a, n, t)
+	for i := range ns {
+		if f.CPVer != 0 {
+			binary.LittleEndian.PutUint64(ns[i].Block[4084:], f.CPVer)
+		}
+		t.Nodes[n.path] = append(t.Nodes[n.path], ns[i].NID)
+		ns[i].Stale = f.Unlinked
+	}
+	if f.CPVer != 0 {
+		// The inode checksum covers the footer.
+		resealBlock(o, ns[0].Block)
+	}
+	for i := range ds {
+		t.Data[n.path] = append(t.Data[n.path], ds[i].Addr)
+		ds[i].Stale = f.Unlinked
+	}
+	return ns, ds
+}
+
+func emitBlocks(o Options, a *Alloc, n *tnode, t *Tree) ([]Node, []DataBlock) {
 	f := n.f
 	pino := RootIno
 	if n.parent != nil {
@@ -219,7 +247,7 @@ func emit(o Options, a *Alloc, n *tnode, t *Tree) ([]Node, []DataBlock) {
 				in.InlineXattrSize = f.InlineXattrSize
 			}
 			in.Size = uint64(max(923-extra/4-xw-1, 0) * 4)
-			return []Node{{NID: n.nid, Addr: a.Addr(), Block: InodeBlock(o, in)}}, nil
+			return []Node{{NID: n.nid, Addr: a.NodeAddr(), Block: InodeBlock(o, in)}}, nil
 		}
 		blocks := DentryBlocks(true, n.nid, parent, ds)
 		fd := FileData{Blocks: map[int64][]byte{}}
@@ -244,10 +272,10 @@ func emit(o Options, a *Alloc, n *tnode, t *Tree) ([]Node, []DataBlock) {
 	in.Size = uint64(len(content))
 	if f.Inline && len(content) <= (923-extra/4-1)*4 {
 		in.InlineData = content
-		return []Node{{NID: n.nid, Addr: a.Addr(), Block: InodeBlock(o, in)}}, nil
+		return []Node{{NID: n.nid, Addr: a.NodeAddr(), Block: InodeBlock(o, in)}}, nil
 	}
 	if len(content) == 0 {
-		return []Node{{NID: n.nid, Addr: a.Addr(), Block: InodeBlock(o, in)}}, nil
+		return []Node{{NID: n.nid, Addr: a.NodeAddr(), Block: InodeBlock(o, in)}}, nil
 	}
 	return a.File(o, in, FileData{Blocks: blocksOf(content)})
 }

@@ -43,6 +43,7 @@ Scripts must keep LF line endings (`.gitattributes` enforces this).
 | `hfsplus.sh` + `hfsplus_oracle.py` + `hfsplus_normalize.py` (image `minutiae-fixtures-hfs`) | `hfsplus-empty`, `hfsx-empty`, `hfsplus-journal`, `hfsplus-1k`, `hfsplus-wrapped`, `hfsplus-populated` (`.img.gz` + `.expect.json`, in `internal/filesys/hfsplus/testdata/`; also `hfsplus_populate.sh` + `hfsplus_tree.py`) | an independent Python parse of the volume header, B-trees (extents-overflow records included), allocation bitmap and journal files, cross-checked against `fsck.hfsplus` and `blkid`; for the populated image also the source tree the Linux driver was fed (see "HFS+ fixtures") |
 | `ewf.sh` + `ewf_inspect.py` + `ewf_normalize.py` | `ewf-disk.img.gz` (the raw source disk), `ewf-<variant>.E0N.gz` (one `.gz` per segment file of `single-none`, `single-best`, `multi-none`, `seed-small`) and `ewf-fixtures.expect.json`, in `internal/image/ewf/testdata/` | the raw disk (its sha256/md5/sha1/size, built from the committed ext4 and fat12 fixtures), an independent Python decoder (`ewf_inspect.py`: every section and Adler-32, every chunk, the rebuilt media equals the raw disk byte for byte), `ewfverify`, `ewfinfo` (whitelisted geometry and hash fields) and `ewfexport -f raw` (sha256 equals the raw disk) |
 | `f2fs.sh` + `f2fs_tree.sh` + `f2fs_oracle.py` + `f2fs_normalize.py` | `f2fs-extra-attr`, `f2fs-default` (`.img.gz` + `.expect.json`, in `internal/filesys/f2fs/testdata/`) | the source tree handed to `sload.f2fs` (`f2fs_oracle.py tree`: type, size, sha256, mode, mtime, symlink targets), and the reports of `fsck.f2fs -l/-f/-t/-M`, `dump.f2fs -s/-n` and `blkid` on the finished image (`f2fs_oracle.py layout`: superblock and checkpoint fields, features, uuid, label, the NAT block address of every inode, the data-block extents of every file, the free main-area blocks from the SIT bitmaps). The oracle cross-checks the tools against each other (fsck vs dump on every shared field, SIT popcount vs `valid_block_count`, fsck's tree vs the source tree, the file map vs file sizes) and the generator fails on any mismatch, on an unclean `fsck.f2fs`, or when no file is fragmented |
+| `f2fs_recover.sh` + `f2fs_recover_oracle.py` (image `minutiae-recover-fixtures`; `gen.sh f2fs-recover`) | `f2fs-recover-nodiscard`, `f2fs-recover-discard` (`.img.gz` + `.expect.json`, in `internal/filesys/f2fs/testdata/recover/`) | volumes written and deleted by the kernel f2fs driver in the QEMU guest; an independent Python decoder of the finished image checked against `fsck.f2fs -t/-M/-f`, `dump.f2fs -n/-s` and the bytes the guest was told to write (see "F2FS recovery fixtures (3D)") |
 | `fat_recover.sh` + `fat_recover_oracle.py` (image `minutiae-recover-fixtures`, `Dockerfile.recover`; `gen.sh fat-recover`) | `fat12-recover`, `fat16-recover`, `fat32-recover` (`.img.gz` + `.expect.json`, in `internal/filesys/fat/testdata/recover/`) | volumes written and deleted by the kernel `vfat` driver in the QEMU guest; an independent Python reader of the finished image checked against `mshowfat`, `fsck.fat -v` and the source tree (see "FAT recovery fixtures (3B)") |
 | `exfat_recover.sh` + `exfat_recover_oracle.py` (image `minutiae-recover-fixtures`; `gen.sh exfat-recover`) | `exfat-recover` (`.img.gz` + `.expect.json`, in `internal/filesys/exfat/testdata/recover/`) | a volume written and deleted by the kernel `exfat` driver in the QEMU guest; an independent Python parse of the finished image checked against the allocation bitmap, `dump.exfat` and the source tree (see "exFAT recovery fixture (3B)") |
 | `carve_gen.sh` + `carve_objects.py` + `carve_place.py` (image `minutiae-carve-fixtures`, `Dockerfile.carve`; `gen.sh carve`, NOT part of `all`) | `internal/carve/testdata/objects/` (22 real-encoder objects + `objects.expect.json`) and `carve-fat12`, `carve-ext4`, `carve-raw` (`.img.gz` + `carve.expect.json`, in `internal/examine/testdata/carve/`) | objects from Pillow, ffmpeg (libx264), `heif-enc`, `sqlite3`, `zip`, `gzip`, `plistlib`; placement read back from `mshowfat`, `fsck.fat -v`, `debugfs blocks` and `dumpe2fs` (see "Carving fixtures (3E)") |
@@ -495,7 +496,7 @@ guest mounts f2fs, see "Recovery fixtures: toolchain probe"). The committed fixt
 always built without the mount path (the Docker Desktop kernel has no f2fs module), so
 they have `"deleted": []` and a `generator.note` saying so; the three removable files are
 ordinary live files in the oracle, and deleted-entry coverage is left to the `f2fstest`
-builder tests. Removing the mount path changes no committed fixture or oracle.
+builder tests. Removing the mount path changes no committed fixture or oracle. Plan 3D adds the kernel-written deleted-entry images: see "F2FS recovery fixtures (3D)".
 
 ## HFS+ fixtures
 
@@ -805,7 +806,8 @@ and the spec §18 "from memory" items stay marked until then):
       fixtures use the KERNEL drivers in the QEMU guest, never exfat-fuse); the kernel
       exfat driver, on delete, clears the InUse bits of the entry set and the allocation-
       bitmap bits and KEEPS the FAT entries of a chained file (see "FAT/exFAT recovery probe (3B)", P3)
-- [ ] F2FS node-block survival after unlink, and `nodiscard` mount behaviour (3D)
+- [x] F2FS node-block survival after unlink, and `nodiscard` mount behaviour (3D): measured, see
+      "F2FS recovery probe (3D)"
 - [ ] jbd2 stale journal region contents (3G)
 - [ ] F2FS roll-forward node chain after an fsync'd write and an unclean quit (3H)
 - [ ] `sqlite3` WAL / rollback-journal leftovers (3J)
@@ -1105,6 +1107,212 @@ is `exfat-nofatchain` (75) when `no_fat_chain`, `exfat-fatchain` (65) when the c
 with the caps 20 (cut) and 30 (overlap). The generator exits 1 naming a missing family (`nofatchain-equal`, `empty`,
 `chained`, `skip-no-free-bytes`, `cut-prefix`, `not-equal-complete`), and exits 1 with "re-rule F1" if the chained file's
 FAT chain is not kept. The FAT-fixture-only fields `name_state` do not apply (exFAT names are always whole entries).
+
+## F2FS recovery probe (3D)
+
+What does the KERNEL f2fs driver (Debian `6.1.0-53-amd64`, QEMU TCG guest) leave behind after
+unlink, rename and a fill-to-ENOSPC, with and without discard? Plan 3D's index, SSA check,
+version rule and fixture families branch on the answers. Files: `f2fs_recover_probe.sh` (stages),
+`f2fs_recover_oracle.py` (independent decoder, subcommand `probe`; Task 9 adds `snap` and `final`),
+`recover_guest.sh` (new `f2fs` arm; `GUEST_DRIVE_OPTS` is appended to the `-drive` value and
+`GUEST_TIMEOUT` sets the time limit, default 900 s), `lib.sh` (`stamp <bytes> <seed>`: every 4 KiB
+block is the 32-byte record `<seed>:<block>`, NUL-padded and repeated, so any block found anywhere
+is traceable and the payload compresses).
+
+```bash
+MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD:/work" -w /work minutiae-recover-fixtures \
+  bash tools/fixtures/f2fs_recover_probe.sh > probe.txt 2>&1
+```
+
+No `--privileged`; every write runs in the guest, the host formats (128 MiB, `faketime`,
+`mkfs.f2fs -O extra_attr,inode_checksum,sb_checksum`, `f2fs_normalize.py`) and reads the finished
+images. Work files live under `/tmp` inside the container (removed on exit). Guest stages plus the
+read-only tool captures took 103 s of wall time (run of 2026-10-25); the decode takes seconds.
+Development aid: `PROBE_KEEP=<dir>` copies the stage images and captures out so the decoder can be
+re-run without the guest.
+
+### What ran
+
+Two workloads, each on a fresh volume (the large one is an ADDITION to the plan's p1-p5, made because the small one cannot decide G2, G3 and G5, see below). **small** (the plan's): p1 writes `/p/A` (20 KiB), `/p/B`
+(5 MiB), `/p/C` (12 MiB), `/p/H` (blocks 0 and 3 only), `/p/I` (100 bytes, inline), `/p/R`, and
+`/s/x/f1..f3` (a small, inline directory); p2 `mv /p/R /p/R2`; p3 removes A B C H I R2 and f1;
+p4 creates `/p/N1..N8`; p5 `dd if=/dev/zero` to ENOSPC (`df` showed 100 %), `sync`, `rm`.
+Mounted `nodiscard,noatime`, one boot per stage, every stage image kept. **large**: the same files
+between 300 and 900 empty files in `/g`, created `f2/f3` after the second batch, and `rm -r /g` with
+the unlinks (stages l1, l2, l3, fill l5). The large workload exists because in the small one every
+stale node block still lies in a CURRENT segment (no SSA block is written for those, nothing is
+freed), so G2 and G3 cannot be decided there. Discard images: d1/d3 (small) and m1/m3 (large) with
+`-o discard,noatime` and QEMU `discard=unmap`. After each boot `fsck.f2fs -f --dry-run` ran on a
+copy (exit status 0 for all 14 captured images), plus `fsck.f2fs -t`, `dump.f2fs -d 1 -s0~-1`, `-n0~-1` and
+`-a0~-1`. The decoder's superblock and checkpoint fields, every NAT entry and every SIT segment
+(type, valid count, valid map) agree with `dump.f2fs` on all 14 compared images, `fsck.f2fs -t`
+agrees with the decoded paths and inode numbers, and the inode checksum of every decoded inode
+verifies (`CROSSCHECK` lines).
+
+### Facts (small = the plan's workload, large = with `/g`; both agree unless stated)
+
+| Q | Fact | Value | Evidence (`HEX` lines of the probe output, below) |
+|---|---|---|---|
+| Q1 | stale inode, dnode and indirect blocks at the pre-delete NAT address | byte-identical to stage W for A, B, C and also H, I, R2, f1, in both workloads (12 node blocks in each) | `Q1 inode A head/footer`, `Q6 A inode ... before/after` |
+| Q2 | NAT after the delete | every deleted nid resolves to address 0 (version 1, ino kept); the other copy still holds the old address; the NAT journal holds 0 entries, the SIT journal 1 | `Q2 NAT entry` |
+| Q3 | SIT of the stale node segments | the deletes leave the segment with `vblocks` 0 and its node type (warm node, type 4; the cold-node segment of C's indirect node is type 5); the type survives the free | `Q3 SIT entry` (`0x1000` = type 4, count 0) |
+| Q4 | SSA of a stale node block in a closed segment | `nid` equals the footer nid, version 0, ofs 0, footer type byte 1 (node); in a current segment the SSA block is not written (nid 0, type 0). `cur_node_segno` is main-relative and the block at main + seg*512 + blkoff - 1 is the last written node with its SIT bit set (checked on all three node cursors of stage W). The SSA part rests on 11 blocks from one segment (large) | `Q4 SSA entry` |
+| Q5 | footer `cp_ver` of stale copies | low 32 bits = the checkpoint version in force when the block was written (in the small and large workloads: 1804289383 = mkfs's; 1804289387 for the renamed inode's second copy), all below stage D's 1804289396; the high 32 bits are 0 for mkfs's version and a CRC afterwards (`0xe69e1e81`, `0xaa1d15fb` in two runs); `CP_CRC_RECOVERY_FLAG` (0x40) is set in every checkpoint (`ckpt_flags` 0xc5, compact summaries) | `Q5 footer` |
+| Q6 | discard (`discard,noatime` + `discard=unmap`) | large: data blocks outside the current segments 4096 of 4096 zero; stale node blocks outside the current segments 11 of 11 zero (small: no block lies outside the current segments, undecidable). Inside the current segments (large): 12 of 268 data blocks and 0 of 1 node blocks (C's indirect node, cold node cursor) are zero. The zeroing inside current segments is unexplained (observed, not a rule); "gone" is measured outside them, on kernel 6.1 with QEMU `discard=unmap` only | `Q6 B data`, `Q6 A inode` |
+| Q7 | node numbering | B uses `i_nid[0]`; C uses `i_nid[0]`, `i_nid[1]` and `i_nid[2]` (indirect, one direct child); every dnode and indirect node has footer ino == owner and `ofs` equal to the 3D-R26 table (1, 1, 2, 3, 4) | `Q7` lines |
+| Q8 | copies per deleted nid | 1 copy each, 2 for the renamed inode (versions 1804289383 and 1804289387); no same-version tie among the 12 nids | `Q8` lines |
+| Q9 | rename | the newest copy of the inode (version 1804289387) has `i_name` `R2`; the older copy (1804289383) has `R`; both survive the delete | `Q9 inode ... i_name` |
+| Q10 | nid reuse | small: `/p/N1..N8` took the freed nids 7-14 (lowest first). With the `/g` churn (an EARLIER run of this probe with a different workload: `/g` files, and f2/f3 created before the second batch; raw output `f2fs-probe/probe-run2-earlier-workload.txt`, the only churned-volume measurement) they took 455-462, new nids, and no freed nid | `Q10 NAT entry` |
+| Q11 | fill to ENOSPC (`foreground GC` 0, `background GC` 0) | small: B's and C's data blocks (1280 and 3072) are overwritten while their stale inodes stay intact; A, H, R2 data blocks are untouched. large: the freed node segment is reused as a DATA segment (SIT type 1): 11 of the 13 stale node copies are overwritten, the cold-node copy and the copy in the current warm segment stay | `Q11 B data` |
+| Q12 | inline directory `/s/x` after `rm f1` | the dentry bitmap bit is cleared and the record keeps hash, ino (18) and name `f1`; the other slots are `.`, `..`, `f2`, `f3` | `Q12 dir inode inline area` |
+| Q13 | `dd seek=3 conv=notrunc` | the hole blocks 1 and 2 are `NULL_ADDR` (0), the written blocks 0 and 3 have addresses | `Q13 H i_addr` |
+
+### Gates
+
+| Gate | Verdict | Basis |
+|---|---|---|
+| G1 | HOLDS | A, B, C (and H, I, R2, f1) stale node blocks byte-identical to stage W in both workloads; every `ofs` equals `nodeOffset` |
+| G2 | KEEP | large: 11 stale node blocks in non-current segments (all from one segment), 0 with `ssa.nid != footer.nid` (small: undecidable, all in current segments) |
+| G3 | SIT | large: all 11 stale copies lie in segment 1, left at `vblocks` 0 and still typed warm node (type 4); SSA footer type is node as well |
+| G4 | HOLDS | every copy of every deleted nid has `low32(cp_ver)` below stage D's checkpoint version, in both workloads |
+| G5 | gone | stale node blocks outside the current segments are zero after a discard mount, and so are the data blocks (large: 11/11 and 4096/4096); inside current segments the zeroing is unexplained and not a rule; kernel 6.1 with QEMU `discard=unmap` only |
+| G6 renamed | real | Q9, in both workloads |
+| G6 nidreuse | real, SMALL workload only | Q10: ran only in the small workload (not run in the large one); the earlier churned run took new nids |
+| G6 reuse | real, SMALL workload only | Q11: freed data blocks overwritten while the stale inode is intact: true for B and C, false for A, H and R2; large workload: builder-only (the fill overwrites the stale inodes too) |
+
+Ruling 3D-C1: R20's "a mixed result is a stop" binds the reader-rule gates G1, G2, G3 and G4. G6 is a
+fixture-family constructibility gate: a family is kernel-made if the probe shows it at least once in a
+stated workload; mixed per-file results are recorded, not a stop. For Task 9: build the `nidreuse` and
+`reuse` fixtures from the small workload, and take the G2, G3 and G5 expectations from the large one.
+
+### From-memory facts this probe confirmed (kernel 6.1 only)
+
+Footer `cp_ver` (low half = checkpoint version, high half = CRC), `CP_CRC_RECOVERY_FLAG` 0x40,
+`CP_COMPACT_SUM_FLAG` 0x4, the checkpoint cursor offsets 36/68/84/116 and main-relative segment
+numbers, SSA entry layout (7 bytes) and footer type byte 4091 (`SUM_TYPE_NODE` 1), SIT segment types 4 and 5
+(warm and cold node) and the 74-byte entry with MSB-first valid bits, the NAT/SIT version
+bitmaps and the NAT/SIT journals in the compact summary, the inode layout (`i_nid` at 4052, footer at 4072, `ofs` = flag >> 3, inode checksum), and the
+inline dentry layout. Other kernels and vendor forks are unmeasured.
+
+### Raw evidence (`HEX` lines)
+
+```
+HEX[small] Q1 inode A head(0..96)                       a48100210000000000000000010000000050000000000000060000000000000000f153650000000000f153650000000000f1536500000000ff741903ff741903ff741903b0519dd300000000000000000000
+HEX[small] Q1 inode A footer                            07000000070000000100000067458b6b0000000001120000
+HEX[small] Q2 NAT entry nid=7 copy0 (ver,ino,addr)      000700000000120000
+HEX[small] Q2 NAT entry nid=7 copy1 (current=1)         010700000000000000
+HEX[large] Q3 SIT entry seg=1 (block), 74 bytes         0010000000000000...
+HEX[large] Q4 SSA entry of blk=4908 (7 bytes) + footer type byte 3401000000000001
+HEX[small] Q5 footer nid=7 blk=4608                     07000000070000000100000067458b6b0000000001120000
+HEX[small] Q6 A inode block 4608 last 24 bytes, before  07000000070000000100000067458b6b0000000001120000
+HEX[small] Q6 A inode block 4608 last 24 bytes, after   000000000000000000000000000000000000000000000000
+HEX[small] Q6 B data block 17920 first 16 bytes, before 423a3000000000000000000000000000
+HEX[small] Q6 B data block 17920 first 16 bytes, after  00000000000000000000000000000000
+HEX[small] Q9 inode 17 copy blk=4617 i_namelen+i_name   010000005200000000000000
+HEX[small] Q9 inode 17 copy blk=4621 i_namelen+i_name   020000005232000000000000
+HEX[small] Q10 NAT entry nid=7 in p4 (ver,ino,addr)     00070000000e120000
+HEX[small] Q11 B data block 17920 first 16 bytes, stage D 423a3000000000000000000000000000
+HEX[small] Q11 B data block 17920 first 16 bytes, after fill 00000000000000000000000000000000
+HEX[small] Q12 dir inode inline area head               000000001b0000000000000000000000000000000000000000000000000000000000000000000000060000000100020000000005000000020002b85bf5fe1200000002000126b02f9b13000000020001d5b1
+HEX[small] Q13 H i_addr[0..5]                           061600000000000000000000071600000000000000000000
+```
+
+The `Q6 A inode` pair is the discard image (d1, d3): the node block is all zero after the delete;
+`Q11 B data` is the nodiscard fill. The whole run's output (guest logs, the `FACT[...]` and `GATE[...]`
+lines) is committed as `f2fs-probe/probe-run3.txt`. Provenance: the `HEX` lines for Q2, Q3, Q4, Q6, Q9,
+Q10 and Q11 were added to the decoder AFTER the container run and were produced host-side (Python 3.13)
+from the retained images of that run, so the committed oracle differs from the one that ran in the
+container by those lines; the non-HEX output of the host-side run was diffed identical to the
+container's. The `HEX` lines are appended at the end of `probe-run3.txt`. `f2fs-probe/` also holds the
+earlier run (`probe-run2-earlier-workload.txt` and `.note`), a different workload (f2/f3 created before
+the second batch), cited only for the churned-volume figures of Q10.
+
+## F2FS recovery fixtures (3D)
+
+Two 128 MiB volumes written and deleted by the KERNEL f2fs driver (Debian `6.1.0-53-amd64`) inside the QEMU TCG
+guest of `recover_guest.sh`, with an independent oracle. No kernel module on the host, no `--privileged`; the
+host formats (`mkfs.f2fs -r -O extra_attr,inode_checksum,sb_checksum` under `faketime`, `f2fs_normalize.py`) and
+only READS the finished images.
+
+```bash
+MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD:/work" -w /work minutiae-recover-fixtures bash tools/fixtures/gen.sh f2fs-recover
+```
+
+Not part of `all`; not byte-reproducible (QEMU images carry timestamps and checkpoint CRCs), so image and
+`expect.json` are regenerated TOGETHER and the tests check `generator.image_sha256` first. A run takes about 3
+minutes (the fill stage 1 minute). Output: `internal/filesys/f2fs/testdata/recover/f2fs-recover-nodiscard` (mount
+`nodiscard,noatime`, 449,266 bytes gzipped) and `f2fs-recover-discard` (mount `discard,noatime`, QEMU
+`discard=unmap`, 236,104 bytes); each at most 1 MiB gzipped (the script enforces it). `F2FS_RECOVER_KEEP=<dir>`
+(development) keeps every stage image and its tool captures so the oracle can be run again without the guest.
+
+Reproducibility of the `expect.json` files. They are the output of `f2fs_recover_oracle.py` over the STAGE images
+(`w`, `m`, `n`, `f`, `d`; each 128 MiB raw), the per-stage tool captures (`fsck.f2fs`, `dump.f2fs`) and the expected
+content tree the generator wrote. None of those inputs is committed: the stage snaps and captures are as large as the
+volumes and are not byte-reproducible, and only the finished stage-`d` image is kept (gzipped, as `*.img.gz`). So an
+`expect.json` can be re-derived only by regenerating image and oracle together with the command above (or by running
+with `F2FS_RECOVER_KEEP=<dir>` and keeping that directory). What the committed files do support without Docker is the
+check that the oracle's claims hold on the committed image: `TestF2FSRecoverFixturesHoldWhatTheyClaim` re-reads the
+finished image and checks every stale-inode, extent, hole and footer claim, and `generator.image_sha256` ties the
+oracle to its image. (In the 3D review the oracle's decoder was also run again over both committed images and
+reproduced every deleted entry and live file.)
+
+The Docker image `minutiae-recover-fixtures` is KEPT after a run (do not `docker rmi` it): it is the pinned
+toolchain for every recovery fixture generator (FAT, exFAT, F2FS and the carving and ext4 plans), and regenerating
+any of them needs it. Rebuild it from `Dockerfile.recover` only to change the pinned toolchain.
+
+Stages, one guest boot each (the list is the seam 3H extends with a crash stage): `w` writes every family; `m`
+(nodiscard only) `mv renamed/a renamed/b`, `rm nidreuse/target.bin`; `n` creates `nidreuse-w/new1.bin` and `new2.bin`
+in a fresh boot; `f` creates `/fill`, removes `sac/` and `reuse/target.bin`, syncs and fills the volume to ENOSPC
+(`GUEST_TIMEOUT=2400`); `d` only `rm` (`rm -r gone/gonedir`). Big files carry the per-block stamp
+(`lib.sh stamp`: every 4 KiB block repeats the record `<seed>:<block>`), so any block found anywhere is traceable.
+`sac/` holds 64 empty decoy files created BEFORE every other file: the fill's dnodes take the lowest free node
+ids, and without the decoys they would take the inode number of `reuse/target.bin`.
+
+| Family | Steps | Result (nodiscard image, oracle) |
+|---|---|---|
+| `contig` | 20 KiB | recover, equal to the source, 75 |
+| `twofrag` | `a.bin` and `target.bin` appended alternately in 8 KiB steps with `sync` between | recover, equal (several runs), 75 |
+| `direct` | 5 MiB, `i_nid[0]` | recover, equal, 75 |
+| `indirect` | 12 MiB, `i_nid[2]` | recover, equal, 75 |
+| `holes` | blocks 0 and 3 written | recover, prefix, `stale-chain-stop=hole@1`, 20 |
+| `inline` | 100 B | skip `unsupported` |
+| `empty` | 0 B | skip `unsupported`: the kernel stores a 0-byte file with the inline-data flag, so the `empty` skip is builder-only |
+| `gone` | `gone/gonedir/inner.bin`, `rm -r gone/gonedir` | `gonedir` skip `not-a-file`; `inner.bin` is in the oracle with `listed: false` |
+| `renamed` (G6) | `mv a b` in `m`, `rm b` in `d` | BOTH dentries recover (each name has a stale copy) and share their blocks: 30 |
+| `nidreuse` (G6) | `rm target` in `m`, new files in the next boot | skip `reused` (the inode number is live: 3D-R34, which supersedes the plan table's `not-found`) |
+| `reuse` (G6) | `rm target` then fill | skip `no-free-bytes`: every block of the file was written again, the stale inode is intact |
+| live | `live/indirect.bin` 12 MiB, `live/holes.bin`, `live/inline.txt`, `live/small/` (inline dentries), `twofrag/a.bin`, `nidreuse-w/*`, `/fill` | read by the live reader (`TestF2FSRecoverFixtureLiveFilesMatchOracle`) |
+
+The discard image runs `w` and `d` without the G6 families. Gate G5 comes out as `gone` on it: the kernel zeroed the
+stale inode blocks as well as the data blocks, so every file family is skip `not-found` and the `uniform` skip is
+builder-only (no real image holds a zeroed-but-found file). The `cut` branch (a free prefix, then taken blocks) is
+not produced either: `reuse` overwrote the whole file.
+
+### The oracle (`f2fs_recover_oracle.py`, never Minutiae)
+
+`snap` after `w` and `m`: for every path the inode number (decoder == `fsck.f2fs -t`), the NAT address (decoder ==
+`dump.f2fs -n`), the data extents in file order (decoder walk of `i_addr`/`i_nid` through the NAT == `fsck.f2fs -d 1
+-M`), holes, node blocks and the bytes of the inode block; the content of every file against the expected tree the
+generator wrote (`mk_sources`). `final` after `d`: free blocks (`dump.f2fs -s` == decoder, SIT popcount ==
+`valid_block_count`), live files, every deleted dentry decoded from the dentry areas (the live ones == `fsck.f2fs
+-t`), its stale inode (`intact` = the stage-D block at the stage-W NAT address equals the stage-W bytes) and the
+expectation of the spec rules computed from the finished image: copies from the free node-segment blocks, identity
+by structure (footer, offset, checksum, parent, name, type, version below the checkpoint), the NAT deciding
+liveness, the map to the first hole, `captured` = the leading part free in the stage-D SIT, confidence 75, 20 for a
+cut or prefix, at most 30 where captured ranges meet another listed entry's. The generator exits 1 with `family
+<name> missing: ...; re-rule, do not edit the ops` for a missing or mis-shaped family, and on any non-zero
+`fsck.f2fs -f --dry-run` exit after any stage (recorded per stage in `generator.fsck_exit`).
+
+`expect.json`: `generator{image_sha256, variant, packages, commands, stages, fsck_exit}`, `checkpoint_version`,
+`block_size`, `free_blocks`, `live[]{path, size, sha256, blocks, holes, indirect, inline}` (`blocks` are inclusive
+absolute block ranges in file order, a hole always ends a range; `holes` are inclusive LOGICAL block ranges),
+`deleted_entry_count`, `deleted[]{path, family, listed, dir_nid, ino, size, sha256, true_blocks, stale{addr,
+cp_ver_low, intact}, expect{outcome, skip, method, captured, cut, prefix, stop, equal_source, uniform,
+confidence}}`, `families`.
+
+NOT produced by the kernel, builder tests only: encrypted inodes, compressed inodes, tied copies, foreign dnode
+owners, SSA mismatches, forged node blocks, an index over its cap, a zero-size file that is not inline, the
+`uniform` and `cut` outcomes, double-indirect nodes.
 
 ## SQLite fixtures
 

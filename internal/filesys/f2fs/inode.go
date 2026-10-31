@@ -216,12 +216,34 @@ func (in *inode) noDataExist() bool {
 
 // inode reads and parses inode ino.
 func (f *FS) inode(ino uint32) (*inode, error) {
-	const st = "f2fs inode"
 	raw, err := f.node(ino)
 	if err != nil {
 		return nil, err
 	}
+	return f.parseInode(raw, ino, func() {
+		if ent, err := f.natGet(ino); err == nil && ent.ino != ino {
+			f.warn("inode %d: its NAT entry records owner ino %d", ino, ent.ino)
+		}
+	})
+}
+
+// parseInodeBlock parses the node block raw as inode ino, as inode does after
+// it has read the block through the NAT, but without the NAT-owner check: the
+// recovery scan parses stale blocks that no NAT entry names. A block whose
+// footer is not that of inode ino (ino, offset) is a *notInodeError.
+func (f *FS) parseInodeBlock(raw []byte, ino uint32) (*inode, error) {
+	return f.parseInode(raw, ino, nil)
+}
+
+// parseInode is the shared body of inode and parseInodeBlock. afterFooter, when
+// set, runs once the footer has been accepted and before the rest is parsed,
+// where inode keeps its NAT-owner warning (so warning order is unchanged).
+func (f *FS) parseInode(raw []byte, ino uint32, afterFooter func()) (*inode, error) {
+	const st = "f2fs inode"
 	le := binary.LittleEndian
+	if len(raw) != blockSize {
+		return nil, corrupt(st, -1, "node block of inode %d is %d bytes, want %d", ino, len(raw), blockSize)
+	}
 	if fi := le.Uint32(raw[footIno:]); fi != ino {
 		// An inode's footer ino equals its nid (the kernel's RAW_IS_INODE).
 		return nil, &notInodeError{corrupt(st, -1, "node %d is not an inode (footer ino is %d)", ino, fi)}
@@ -231,8 +253,8 @@ func (f *FS) inode(ino uint32) (*inode, error) {
 	if ofs := le.Uint32(raw[footFlag:]) >> offsetBitShift; ofs != 0 {
 		return nil, &notInodeError{corrupt(st, -1, "node %d is not an inode node (its footer records offset %d in a node tree)", ino, ofs)}
 	}
-	if ent, err := f.natGet(ino); err == nil && ent.ino != ino {
-		f.warn("inode %d: its NAT entry records owner ino %d", ino, ent.ino)
+	if afterFooter != nil {
+		afterFooter()
 	}
 	in := &inode{
 		nid:        ino,
