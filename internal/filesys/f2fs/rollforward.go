@@ -202,6 +202,10 @@ func (f *FS) buildChain() (*rfChain, error) {
 		CRCRecovery: cp.flags&cpCRCRecoveryFlag != 0, NoCRCRecovery: cp.flags&cpNoCRCRecoveryFlag != 0,
 		Unmount: cp.flags&cpUmountFlag != 0, Start: start,
 	}}
+	// The visited set (the cycle check) is a Go map: about 40 bytes per node, so about 40 MB
+	// at the 1M-node bound (3H-R14), on top of the 20 MB of chain entries. Both are freed
+	// or kept only as the index; a bitset over the main blocks would cost one bit per main
+	// block (512 MB for a 2^32-block volume) and is worse for a short chain on a large one.
 	visited := map[uint32]struct{}{}
 	blk := start
 	stop := func(reason string, at uint64, complete bool) {
