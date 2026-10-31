@@ -1,0 +1,881 @@
+FACT PROBE jsize_mib=1 host_date="2026-10-31 13:00:12" mke2fs="mke2fs 1.47.0 (5-Feb-2023)" qemu="QEMU emulator version 7.2.22 (Debian 1:7.2+dfsg-7+deb12u18+b3)"
+== kernel 5.10.0-32-amd64
+FACT KERNEL guest_kernel=5.10.0-32-amd64
+== formatting (host side, faketime 2023-11-14 22:13:20, -J size=1)
+-- dumpe2fs -h ext4-p0
+Filesystem features:      has_journal ext_attr resize_inode dir_index filetype extent 64bit flex_bg sparse_super large_file huge_file dir_nlink extra_isize metadata_csum
+Default mount options:    user_xattr acl
+Inode count:              4096
+Block size:               1024
+Inode size:	          256
+Journal inode:            8
+Journal backup:           inode blocks
+Journal features:         (none)
+Journal sequence:         0x00000001
+Journal start:            0
+/tmp/jprobe.YjD7AK/k5.10.0-32-amd64/ext4-p0.img: 11/4096 files (0.0% non-contiguous), 2325/16384 blocks
+-- dumpe2fs -h ext3-p0
+Filesystem features:      has_journal ext_attr resize_inode filetype sparse_super large_file
+Default mount options:    user_xattr acl
+Inode count:              2048
+Block size:               1024
+Inode size:	          256
+Journal inode:            8
+Journal backup:           inode blocks
+Journal features:         (none)
+Journal sequence:         0x00000001
+Journal start:            0
+/tmp/jprobe.YjD7AK/k5.10.0-32-amd64/ext3-p0.img: 11/2048 files (0.0% non-contiguous), 1591/8192 blocks
+FACT J5.env kernel=5.10.0-32-amd64 jsb_fs_block=8322 inode_table_group0=134
+== ext4 p1: live, deep+pad interleaved block by block (a depth-1 tree), small, three fillers; clean unmount
+Probing EDD (edd=off to disable)... oc[?7l[2JOP 1 cp /payload/live /mnt/live; sync
+OP 2 i=0; while [ $i -lt 24 ]; do dd if=/payload/deep of=/mnt/deep bs=1024 skip=$i seek=$i count=1 conv=notrunc 2>/dev/null; dd if=/payload/pad of=/mnt/pad bs=1024 skip=$i seek=$i count=1 conv=notrunc 2>/dev/null; sync; i=$((i+1)); done
+OP 3 cp /payload/small /mnt/small; sync
+OP 4 i=1; while [ $i -le 3 ]; do echo filler$i > /mnt/f$i; sync; i=$((i+1)); done
+OP 5 for f in live deep pad small f1 f2 f3; do set -- $(ls -i /mnt/$f); echo "PROBE-INO $f $1"; done
+GUEST-DONE
+FACT BOOT kernel=5.10.0-32-amd64 image=ext4-p1 seconds=8 clock="2023-11-14 22:13:20" halt=clean bytes=16777216
+FACT E2FSCK kernel=5.10.0-32-amd64 image=ext4-p1 exit=0 summary="/tmp/jprobe.YjD7AK/k5.10.0-32-amd64/ext4-p1.img: 18/4096 files (11.1% non-contiguous), 2382/16384 blocks"
+== ext4 p2: rm small and deep; clean unmount
+Probing EDD (edd=off to disable)... oc[?7l[2JOP 1 rm /mnt/small; rm /mnt/deep; sync
+GUEST-DONE
+FACT BOOT kernel=5.10.0-32-amd64 image=ext4-p2 seconds=6 clock="2023-11-14 23:13:20" halt=clean bytes=16777216
+FACT E2FSCK kernel=5.10.0-32-amd64 image=ext4-p2 exit=0 summary="/tmp/jprobe.YjD7AK/k5.10.0-32-amd64/ext4-p2.img: 16/4096 files (6.3% non-contiguous), 2354/16384 blocks"
+== ext4 p3: a depth-1 file written and removed inside ONE boot; clean unmount
+Probing EDD (edd=off to disable)... oc[?7l[2JOP 1 i=0; while [ $i -lt 24 ]; do dd if=/payload/same of=/mnt/same bs=1024 skip=$i seek=$i count=1 conv=notrunc 2>/dev/null; dd if=/payload/spad of=/mnt/spad bs=1024 skip=$i seek=$i count=1 conv=notrunc 2>/dev/null; sync; i=$((i+1)); done
+OP 2 for f in same spad; do set -- $(ls -i /mnt/$f); echo "PROBE-INO $f $1"; done
+OP 3 rm /mnt/same; sync
+GUEST-DONE
+FACT BOOT kernel=5.10.0-32-amd64 image=ext4-p3 seconds=7 clock="2023-11-15 00:13:20" halt=clean bytes=16777216
+FACT E2FSCK kernel=5.10.0-32-amd64 image=ext4-p3 exit=0 summary="/tmp/jprobe.YjD7AK/k5.10.0-32-amd64/ext4-p3.img: 17/4096 files (11.8% non-contiguous), 2379/16384 blocks"
+== ext4 p4: the crash image (x created and removed with a sync each, y created with fsync, live appended with fsync, z unsynced)
+Probing EDD (edd=off to disable)... oc[?7l[2JOP 1 jsb=$(dd if=/dev/vda bs=1024 skip=8322 count=1 iflag=direct 2>/dev/null | dd bs=1 skip=24 count=8 2>/dev/null | xxd -p | tr -d '\n'); slot=-; if [ -s /tmp/xino ]; then n=$(cat /tmp/xino); off=$(( (n-1)*256 )); blk=$(( 134 + off/1024 )); o=$(( off%1024 )); slot=$(dd if=/dev/vda bs=1024 skip=$blk count=1 iflag=direct 2>/dev/null | dd bs=1 skip=$o count=256 2>/dev/null | xxd -p | tr -d '\n'); fi; echo "PROBE-J5 j0 jsb=$jsb xslot=$slot"
+OP 2 cp /payload/x /mnt/x; set -- $(ls -i /mnt/x); echo $1 > /tmp/xino; echo "PROBE-INO x $1"; sync
+OP 3 jsb=$(dd if=/dev/vda bs=1024 skip=8322 count=1 iflag=direct 2>/dev/null | dd bs=1 skip=24 count=8 2>/dev/null | xxd -p | tr -d '\n'); slot=-; if [ -s /tmp/xino ]; then n=$(cat /tmp/xino); off=$(( (n-1)*256 )); blk=$(( 134 + off/1024 )); o=$(( off%1024 )); slot=$(dd if=/dev/vda bs=1024 skip=$blk count=1 iflag=direct 2>/dev/null | dd bs=1 skip=$o count=256 2>/dev/null | xxd -p | tr -d '\n'); fi; echo "PROBE-J5 j1 jsb=$jsb xslot=$slot"
+OP 4 rm /mnt/x; sync
+OP 5 jsb=$(dd if=/dev/vda bs=1024 skip=8322 count=1 iflag=direct 2>/dev/null | dd bs=1 skip=24 count=8 2>/dev/null | xxd -p | tr -d '\n'); slot=-; if [ -s /tmp/xino ]; then n=$(cat /tmp/xino); off=$(( (n-1)*256 )); blk=$(( 134 + off/1024 )); o=$(( off%1024 )); slot=$(dd if=/dev/vda bs=1024 skip=$blk count=1 iflag=direct 2>/dev/null | dd bs=1 skip=$o count=256 2>/dev/null | xxd -p | tr -d '\n'); fi; echo "PROBE-J5 j2 jsb=$jsb xslot=$slot"
+OP 6 dd if=/payload/y of=/mnt/y bs=1024 conv=fsync 2>/dev/null
+OP 7 for f in y live; do set -- $(ls -i /mnt/$f); echo "PROBE-INO $f $1"; done
+OP 8 jsb=$(dd if=/dev/vda bs=1024 skip=8322 count=1 iflag=direct 2>/dev/null | dd bs=1 skip=24 count=8 2>/dev/null | xxd -p | tr -d '\n'); slot=-; if [ -s /tmp/xino ]; then n=$(cat /tmp/xino); off=$(( (n-1)*256 )); blk=$(( 134 + off/1024 )); o=$(( off%1024 )); slot=$(dd if=/dev/vda bs=1024 skip=$blk count=1 iflag=direct 2>/dev/null | dd bs=1 skip=$o count=256 2>/dev/null | xxd -p | tr -d '\n'); fi; echo "PROBE-J5 j3 jsb=$jsb xslot=$slot"
+OP 9 dd if=/payload/app of=/mnt/live bs=1024 oflag=append conv=notrunc,fsync 2>/dev/null
+OP 10 jsb=$(dd if=/dev/vda bs=1024 skip=8322 count=1 iflag=direct 2>/dev/null | dd bs=1 skip=24 count=8 2>/dev/null | xxd -p | tr -d '\n'); slot=-; if [ -s /tmp/xino ]; then n=$(cat /tmp/xino); off=$(( (n-1)*256 )); blk=$(( 134 + off/1024 )); o=$(( off%1024 )); slot=$(dd if=/dev/vda bs=1024 skip=$blk count=1 iflag=direct 2>/dev/null | dd bs=1 skip=$o count=256 2>/dev/null | xxd -p | tr -d '\n'); fi; echo "PROBE-J5 j4 jsb=$jsb xslot=$slot"
+OP 11 echo unsynced > /mnt/z
+GUEST-CRASH
+FACT BOOT kernel=5.10.0-32-amd64 image=ext4-p4 seconds=7 clock="2023-11-15 01:13:20" halt=crash bytes=16777216
+FACT E2FSCK kernel=5.10.0-32-amd64 image=ext4-p4 exit=4 summary="/tmp/jprobe.YjD7AK/k5.10.0-32-amd64/ext4-p4.img: 17/4096 files (17.6% non-contiguous), 2379/16384 blocks"
+== ext4 p5: the kernel's own replay of a COPY of the crash image (p4 itself is never booted again)
+Probing EDD (edd=off to disable)... oc[?7l[2JOP 1 dmesg | grep -i -E 'EXT4-fs|JBD2|recover' | head -n 12 | while read -r l; do echo "PROBE-DMESG $l"; done
+OP 2 find /mnt -type f | while read -r f; do echo "RF $f $(wc -c < $f) $(sha256sum $f | cut -d' ' -f1)"; done
+GUEST-DONE
+FACT BOOT kernel=5.10.0-32-amd64 image=ext4-p5 seconds=6 clock="2023-11-15 02:13:20" halt=clean bytes=16777216
+FACT E2FSCK kernel=5.10.0-32-amd64 image=ext4-p5 exit=0 summary="/tmp/jprobe.YjD7AK/k5.10.0-32-amd64/ext4-p5.img: 18/4096 files (16.7% non-contiguous), 2382/16384 blocks"
+FACT P4.sha256 kernel=5.10.0-32-amd64 before_replay=f1c3668583f299b23a01e3e3fd54f0e2034908b3223736905747fa773123062c after_replay=f1c3668583f299b23a01e3e3fd54f0e2034908b3223736905747fa773123062c
+== ext3 p1 and p2 (block map, handled by the ext4 driver)
+c[?7l[2JOP 1 cp /payload/live /mnt/live; sync
+OP 2 cp /payload/bm /mnt/bm; sync
+OP 3 i=1; while [ $i -le 3 ]; do echo filler$i > /mnt/f$i; sync; i=$((i+1)); done
+OP 4 for f in live bm f1 f2 f3; do set -- $(ls -i /mnt/$f); echo "PROBE-INO $f $1"; done
+GUEST-DONE
+FACT BOOT kernel=5.10.0-32-amd64 image=ext3-p1 seconds=7 clock="2023-11-14 22:13:20" halt=clean bytes=8388608
+FACT E2FSCK kernel=5.10.0-32-amd64 image=ext3-p1 exit=0 summary="/tmp/jprobe.YjD7AK/k5.10.0-32-amd64/ext3-p1.img: 16/2048 files (6.3% non-contiguous), 1616/8192 blocks"
+Probing EDD (edd=off to disable)... oc[?7l[2JOP 1 rm /mnt/bm; sync
+GUEST-DONE
+FACT BOOT kernel=5.10.0-32-amd64 image=ext3-p2 seconds=7 clock="2023-11-14 23:13:20" halt=clean bytes=8388608
+FACT E2FSCK kernel=5.10.0-32-amd64 image=ext3-p2 exit=0 summary="/tmp/jprobe.YjD7AK/k5.10.0-32-amd64/ext3-p2.img: 15/2048 files (0.0% non-contiguous), 1595/8192 blocks"
+== guest PROBE lines
+PROBE-INO live 12
+PROBE-INO bm 13
+PROBE-INO f1 14
+PROBE-INO f2 15
+PROBE-INO f3 16
+PROBE-INO live 12
+PROBE-INO deep 13
+PROBE-INO pad 14
+PROBE-INO small 15
+PROBE-INO f1 16
+PROBE-INO f2 17
+PROBE-INO f3 18
+PROBE-INO same 13
+PROBE-INO spad 15
+PROBE-J5 j0 jsb=0000003e00000000 xslot=-
+PROBE-INO x 13
+PROBE-J5 j1 jsb=0000003f00000001 xslot=a4810000dc050000301b5465301b5465301b546500000000000001000400000000000800010000000af3010004000000000000000000000002000000b4240000000000000000000000000000000000000000000000000000000000000000000000000000262d429a0000000000000000000000000000000000000000d4ee00002000e20704389c1c04389c1c04f0b31a301b546504f0b31a0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+PROBE-J5 j2 jsb=0000003f00000001 xslot=a481000000000000301b5465301b5465301b5465301b5465000000000000000000000800010000000af300000400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000262d429a0000000000000000000000000000000000000000344f0000200052a00c2ca3300c2ca33004f0b31a301b546504f0b31a0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+PROBE-INO y 13
+PROBE-INO live 12
+PROBE-J5 j3 jsb=0000003f00000001 xslot=a481000000080000301b5465301b5465301b546500000000000001000400000000000800010000000af301000400000000000000000000000200000001260000000000000000000000000000000000000000000000000000000000000000000000000000e794f9120000000000000000000000000000000000000000b894000020000eea1048f13e1048f13e1048f13e301b54651048f13e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+PROBE-J5 j4 jsb=0000003f00000001 xslot=a481000000080000301b5465301b5465301b546500000000000001000400000000000800010000000af301000400000000000000000000000200000001260000000000000000000000000000000000000000000000000000000000000000000000000000e794f9120000000000000000000000000000000000000000b894000020000eea1048f13e1048f13e1048f13e301b54651048f13e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+PROBE-DMESG [    2.356555] EXT4-fs (vda): recovery complete
+PROBE-DMESG [    2.364475] EXT4-fs (vda): mounted filesystem with ordered data mode. Opts: (null)
+== independent tool cross-checks on the stage images
+debugfs 1.47.0 (5-Feb-2023)
+Inode: 13   Type: regular    Mode:  0644   Flags: 0x80000
+Generation: 3728829501    Version: 0x00000000:00000001
+User:     0   Group:     0   Project:     0   Size: 24567
+File ACL: 0
+Links: 1   Blockcount: 50
+Fragment:  Address: 0    Number: 0    Size: 0
+ ctime: 0x6553f100:df99ebf4 -- Tue Nov 14 22:13:20 2023
+ atime: 0x6553f100:22c61414 -- Tue Nov 14 22:13:20 2023
+ mtime: 0x6553f100:df99ebf4 -- Tue Nov 14 22:13:20 2023
+crtime: 0x6553f100:22c61414 -- Tue Nov 14 22:13:20 2023
+Size of extra inode fields: 32
+Inode checksum: 0xfef09aff
+EXTENTS:
+(ETB0):9355, (0):9346, (1):9348, (2):9350, (3):9352, (4):9354, (5):9358, (6):9360, (7):9362, (8):9364, (9):9366, (10):9368, (11):9370, (12):9372, (13):9374, (14):9376, (15):9378, (16):9380, (17):9382, (18):9384, (19):9386, (20):9388, (21):9390, (22):9392, (23):9394
+-- debugfs stat <8> (journal inode) of ext4-p1 and ext3-p1
+debugfs 1.47.0 (5-Feb-2023)
+Inode: 8   Type: regular    Mode:  0600   Flags: 0x80000
+Generation: 0    Version: 0x00000000:00000000
+User:     0   Group:     0   Project:     0   Size: 1048576
+File ACL: 0
+Links: 1   Blockcount: 2048
+Fragment:  Address: 0    Number: 0    Size: 0
+ ctime: 0x6553f100:00000000 -- Tue Nov 14 22:13:20 2023
+ atime: 0x6553f100:00000000 -- Tue Nov 14 22:13:20 2023
+ mtime: 0x6553f100:00000000 -- Tue Nov 14 22:13:20 2023
+crtime: 0x6553f100:00000000 -- Tue Nov 14 22:13:20 2023
+Size of extra inode fields: 32
+debugfs 1.47.0 (5-Feb-2023)
+Inode: 8   Type: regular    Mode:  0600   Flags: 0x0
+Generation: 0    Version: 0x00000000:00000000
+User:     0   Group:     0   Project:     0   Size: 1048576
+File ACL: 0
+Links: 1   Blockcount: 2058
+Fragment:  Address: 0    Number: 0    Size: 0
+ ctime: 0x6553f100:00000000 -- Tue Nov 14 22:13:20 2023
+ atime: 0x6553f100:00000000 -- Tue Nov 14 22:13:20 2023
+ mtime: 0x6553f100:00000000 -- Tue Nov 14 22:13:20 2023
+crtime: 0x6553f100:00000000 -- Tue Nov 14 22:13:20 2023
+Size of extra inode fields: 32
+BLOCKS:
+(0-11):562-573, (IND):574, (12-267):575-830, (DIND):831, (IND):832, (268-523):833-1088, (IND):1089, (524-779):1090-1345, (IND):1346, (780-1023):1347-1590
+-- debugfs logdump -a of the crash image (head)
+debugfs 1.47.0 (5-Feb-2023)
+Journal starts at block 1, transaction 63
+Found expected sequence 63, type 1 (descriptor block) at block 1
+Dumping descriptor block, sequence 63, at block 1:
+  FS block 132 logged at journal block 2 (flags 0x0)
+  FS block 2 logged at journal block 3 (flags 0x2)
+  FS block 137 logged at journal block 4 (flags 0x2)
+  FS block 134 logged at journal block 5 (flags 0x2)
+  FS block 1158 logged at journal block 6 (flags 0x2)
+  FS block 1 logged at journal block 7 (flags 0x2)
+  FS block 131 logged at journal block 8 (flags 0xa)
+Found expected sequence 63, type 2 (commit block) at block 9
+Found expected sequence 64, type 1 (descriptor block) at block 10
+Dumping descriptor block, sequence 64, at block 10:
+  FS block 1158 logged at journal block 11 (flags 0x0)
+  FS block 134 logged at journal block 12 (flags 0x2)
+  FS block 1 logged at journal block 13 (flags 0x2)
+  FS block 137 logged at journal block 14 (flags 0x2)
+  FS block 131 logged at journal block 15 (flags 0x2)
+  FS block 2 logged at journal block 16 (flags 0x2)
+  FS block 132 logged at journal block 17 (flags 0xa)
+Found expected sequence 64, type 2 (commit block) at block 18
+Found expected sequence 65, type 1 (descriptor block) at block 19
+Dumping descriptor block, sequence 65, at block 19:
+  FS block 132 logged at journal block 20 (flags 0x0)
+  FS block 2 logged at journal block 21 (flags 0x2)
+  FS block 137 logged at journal block 22 (flags 0x2)
+  FS block 134 logged at journal block 23 (flags 0x2)
+  FS block 1158 logged at journal block 24 (flags 0x2)
+  FS block 131 logged at journal block 25 (flags 0xa)
+Found expected sequence 65, type 2 (commit block) at block 26
+Found expected sequence 66, type 1 (descriptor block) at block 27
+Dumping descriptor block, sequence 66, at block 27:
+  FS block 136 logged at journal block 28 (flags 0x0)
+  FS block 131 logged at journal block 29 (flags 0x2)
+  FS block 2 logged at journal block 30 (flags 0xa)
+Found expected sequence 66, type 2 (commit block) at block 31
+No magic number at block 32: end of journal.
+-- dumpe2fs -h of the crash image
+Last mounted on:          /mnt
+Filesystem features:      has_journal ext_attr resize_inode dir_index filetype needs_recovery extent 64bit flex_bg sparse_super large_file huge_file dir_nlink extra_isize metadata_csum
+Filesystem state:         clean
+Last mount time:          Wed Nov 15 01:13:20 2023
+Last write time:          Wed Nov 15 01:13:20 2023
+Journal inode:            8
+Journal backup:           inode blocks
+Journal features:         journal_incompat_revoke journal_64bit journal_checksum_v3
+Journal sequence:         0x0000003f
+Journal start:            1
+Journal checksum type:    crc32c
+Journal checksum:         0xbe9cd6ea
+-- image sizes
+FACT IMAGE name=ext3-p0.img bytes=8388608 gz_bytes=10563
+FACT IMAGE name=ext3-p1.img bytes=8388608 gz_bytes=33989
+FACT IMAGE name=ext3-p2.img bytes=8388608 gz_bytes=33981
+FACT IMAGE name=ext4-p0.img bytes=16777216 gz_bytes=17804
+FACT IMAGE name=ext4-p1.img bytes=16777216 gz_bytes=80136
+FACT IMAGE name=ext4-p2.img bytes=16777216 gz_bytes=80264
+FACT IMAGE name=ext4-p3.img bytes=16777216 gz_bytes=106507
+FACT IMAGE name=ext4-p4.img bytes=16777216 gz_bytes=108287
+FACT IMAGE name=ext4-p5.img bytes=16777216 gz_bytes=108528
+== kernel 6.1.0-53-amd64
+FACT KERNEL guest_kernel=6.1.0-53-amd64
+== formatting (host side, faketime 2023-11-14 22:13:20, -J size=1)
+-- dumpe2fs -h ext4-p0
+Filesystem features:      has_journal ext_attr resize_inode dir_index filetype extent 64bit flex_bg sparse_super large_file huge_file dir_nlink extra_isize metadata_csum
+Default mount options:    user_xattr acl
+Inode count:              4096
+Block size:               1024
+Inode size:	          256
+Journal inode:            8
+Journal backup:           inode blocks
+Journal features:         (none)
+Journal sequence:         0x00000001
+Journal start:            0
+/tmp/jprobe.YjD7AK/k6.1.0-53-amd64/ext4-p0.img: 11/4096 files (0.0% non-contiguous), 2325/16384 blocks
+-- dumpe2fs -h ext3-p0
+Filesystem features:      has_journal ext_attr resize_inode filetype sparse_super large_file
+Default mount options:    user_xattr acl
+Inode count:              2048
+Block size:               1024
+Inode size:	          256
+Journal inode:            8
+Journal backup:           inode blocks
+Journal features:         (none)
+Journal sequence:         0x00000001
+Journal start:            0
+/tmp/jprobe.YjD7AK/k6.1.0-53-amd64/ext3-p0.img: 11/2048 files (0.0% non-contiguous), 1591/8192 blocks
+FACT J5.env kernel=6.1.0-53-amd64 jsb_fs_block=8322 inode_table_group0=134
+== ext4 p1: live, deep+pad interleaved block by block (a depth-1 tree), small, three fillers; clean unmount
+OP 1 cp /payload/live /mnt/live; sync
+OP 2 i=0; while [ $i -lt 24 ]; do dd if=/payload/deep of=/mnt/deep bs=1024 skip=$i seek=$i count=1 conv=notrunc 2>/dev/null; dd if=/payload/pad of=/mnt/pad bs=1024 skip=$i seek=$i count=1 conv=notrunc 2>/dev/null; sync; i=$((i+1)); done
+OP 3 cp /payload/small /mnt/small; sync
+OP 4 i=1; while [ $i -le 3 ]; do echo filler$i > /mnt/f$i; sync; i=$((i+1)); done
+OP 5 for f in live deep pad small f1 f2 f3; do set -- $(ls -i /mnt/$f); echo "PROBE-INO $f $1"; done
+GUEST-DONE
+FACT BOOT kernel=6.1.0-53-amd64 image=ext4-p1 seconds=9 clock="2023-11-14 22:13:20" halt=clean bytes=16777216
+FACT E2FSCK kernel=6.1.0-53-amd64 image=ext4-p1 exit=0 summary="/tmp/jprobe.YjD7AK/k6.1.0-53-amd64/ext4-p1.img: 18/4096 files (11.1% non-contiguous), 2382/16384 blocks"
+== ext4 p2: rm small and deep; clean unmount
+OP 1 rm /mnt/small; rm /mnt/deep; sync
+GUEST-DONE
+FACT BOOT kernel=6.1.0-53-amd64 image=ext4-p2 seconds=8 clock="2023-11-14 23:13:20" halt=clean bytes=16777216
+FACT E2FSCK kernel=6.1.0-53-amd64 image=ext4-p2 exit=0 summary="/tmp/jprobe.YjD7AK/k6.1.0-53-amd64/ext4-p2.img: 16/4096 files (6.3% non-contiguous), 2354/16384 blocks"
+== ext4 p3: a depth-1 file written and removed inside ONE boot; clean unmount
+OP 1 i=0; while [ $i -lt 24 ]; do dd if=/payload/same of=/mnt/same bs=1024 skip=$i seek=$i count=1 conv=notrunc 2>/dev/null; dd if=/payload/spad of=/mnt/spad bs=1024 skip=$i seek=$i count=1 conv=notrunc 2>/dev/null; sync; i=$((i+1)); done
+OP 2 for f in same spad; do set -- $(ls -i /mnt/$f); echo "PROBE-INO $f $1"; done
+OP 3 rm /mnt/same; sync
+GUEST-DONE
+FACT BOOT kernel=6.1.0-53-amd64 image=ext4-p3 seconds=8 clock="2023-11-15 00:13:20" halt=clean bytes=16777216
+FACT E2FSCK kernel=6.1.0-53-amd64 image=ext4-p3 exit=0 summary="/tmp/jprobe.YjD7AK/k6.1.0-53-amd64/ext4-p3.img: 17/4096 files (11.8% non-contiguous), 2379/16384 blocks"
+== ext4 p4: the crash image (x created and removed with a sync each, y created with fsync, live appended with fsync, z unsynced)
+OP 1 jsb=$(dd if=/dev/vda bs=1024 skip=8322 count=1 iflag=direct 2>/dev/null | dd bs=1 skip=24 count=8 2>/dev/null | xxd -p | tr -d '\n'); slot=-; if [ -s /tmp/xino ]; then n=$(cat /tmp/xino); off=$(( (n-1)*256 )); blk=$(( 134 + off/1024 )); o=$(( off%1024 )); slot=$(dd if=/dev/vda bs=1024 skip=$blk count=1 iflag=direct 2>/dev/null | dd bs=1 skip=$o count=256 2>/dev/null | xxd -p | tr -d '\n'); fi; echo "PROBE-J5 j0 jsb=$jsb xslot=$slot"
+OP 2 cp /payload/x /mnt/x; set -- $(ls -i /mnt/x); echo $1 > /tmp/xino; echo "PROBE-INO x $1"; sync
+OP 3 jsb=$(dd if=/dev/vda bs=1024 skip=8322 count=1 iflag=direct 2>/dev/null | dd bs=1 skip=24 count=8 2>/dev/null | xxd -p | tr -d '\n'); slot=-; if [ -s /tmp/xino ]; then n=$(cat /tmp/xino); off=$(( (n-1)*256 )); blk=$(( 134 + off/1024 )); o=$(( off%1024 )); slot=$(dd if=/dev/vda bs=1024 skip=$blk count=1 iflag=direct 2>/dev/null | dd bs=1 skip=$o count=256 2>/dev/null | xxd -p | tr -d '\n'); fi; echo "PROBE-J5 j1 jsb=$jsb xslot=$slot"
+OP 4 rm /mnt/x; sync
+OP 5 jsb=$(dd if=/dev/vda bs=1024 skip=8322 count=1 iflag=direct 2>/dev/null | dd bs=1 skip=24 count=8 2>/dev/null | xxd -p | tr -d '\n'); slot=-; if [ -s /tmp/xino ]; then n=$(cat /tmp/xino); off=$(( (n-1)*256 )); blk=$(( 134 + off/1024 )); o=$(( off%1024 )); slot=$(dd if=/dev/vda bs=1024 skip=$blk count=1 iflag=direct 2>/dev/null | dd bs=1 skip=$o count=256 2>/dev/null | xxd -p | tr -d '\n'); fi; echo "PROBE-J5 j2 jsb=$jsb xslot=$slot"
+OP 6 dd if=/payload/y of=/mnt/y bs=1024 conv=fsync 2>/dev/null
+OP 7 for f in y live; do set -- $(ls -i /mnt/$f); echo "PROBE-INO $f $1"; done
+OP 8 jsb=$(dd if=/dev/vda bs=1024 skip=8322 count=1 iflag=direct 2>/dev/null | dd bs=1 skip=24 count=8 2>/dev/null | xxd -p | tr -d '\n'); slot=-; if [ -s /tmp/xino ]; then n=$(cat /tmp/xino); off=$(( (n-1)*256 )); blk=$(( 134 + off/1024 )); o=$(( off%1024 )); slot=$(dd if=/dev/vda bs=1024 skip=$blk count=1 iflag=direct 2>/dev/null | dd bs=1 skip=$o count=256 2>/dev/null | xxd -p | tr -d '\n'); fi; echo "PROBE-J5 j3 jsb=$jsb xslot=$slot"
+OP 9 dd if=/payload/app of=/mnt/live bs=1024 oflag=append conv=notrunc,fsync 2>/dev/null
+OP 10 jsb=$(dd if=/dev/vda bs=1024 skip=8322 count=1 iflag=direct 2>/dev/null | dd bs=1 skip=24 count=8 2>/dev/null | xxd -p | tr -d '\n'); slot=-; if [ -s /tmp/xino ]; then n=$(cat /tmp/xino); off=$(( (n-1)*256 )); blk=$(( 134 + off/1024 )); o=$(( off%1024 )); slot=$(dd if=/dev/vda bs=1024 skip=$blk count=1 iflag=direct 2>/dev/null | dd bs=1 skip=$o count=256 2>/dev/null | xxd -p | tr -d '\n'); fi; echo "PROBE-J5 j4 jsb=$jsb xslot=$slot"
+OP 11 echo unsynced > /mnt/z
+GUEST-CRASH
+FACT BOOT kernel=6.1.0-53-amd64 image=ext4-p4 seconds=7 clock="2023-11-15 01:13:20" halt=crash bytes=16777216
+FACT E2FSCK kernel=6.1.0-53-amd64 image=ext4-p4 exit=4 summary="/tmp/jprobe.YjD7AK/k6.1.0-53-amd64/ext4-p4.img: 17/4096 files (17.6% non-contiguous), 2379/16384 blocks"
+== ext4 p5: the kernel's own replay of a COPY of the crash image (p4 itself is never booted again)
+OP 1 dmesg | grep -i -E 'EXT4-fs|JBD2|recover' | head -n 12 | while read -r l; do echo "PROBE-DMESG $l"; done
+OP 2 find /mnt -type f | while read -r f; do echo "RF $f $(wc -c < $f) $(sha256sum $f | cut -d' ' -f1)"; done
+GUEST-DONE
+FACT BOOT kernel=6.1.0-53-amd64 image=ext4-p5 seconds=7 clock="2023-11-15 02:13:20" halt=clean bytes=16777216
+FACT E2FSCK kernel=6.1.0-53-amd64 image=ext4-p5 exit=0 summary="/tmp/jprobe.YjD7AK/k6.1.0-53-amd64/ext4-p5.img: 18/4096 files (16.7% non-contiguous), 2382/16384 blocks"
+FACT P4.sha256 kernel=6.1.0-53-amd64 before_replay=daa921c633d3f2a2066ba1494bd0b07819ab7452dc6781518b8579d29c0801b9 after_replay=daa921c633d3f2a2066ba1494bd0b07819ab7452dc6781518b8579d29c0801b9
+== ext3 p1 and p2 (block map, handled by the ext4 driver)
+OP 1 cp /payload/live /mnt/live; sync
+OP 2 cp /payload/bm /mnt/bm; sync
+OP 3 i=1; while [ $i -le 3 ]; do echo filler$i > /mnt/f$i; sync; i=$((i+1)); done
+OP 4 for f in live bm f1 f2 f3; do set -- $(ls -i /mnt/$f); echo "PROBE-INO $f $1"; done
+GUEST-DONE
+FACT BOOT kernel=6.1.0-53-amd64 image=ext3-p1 seconds=7 clock="2023-11-14 22:13:20" halt=clean bytes=8388608
+FACT E2FSCK kernel=6.1.0-53-amd64 image=ext3-p1 exit=0 summary="/tmp/jprobe.YjD7AK/k6.1.0-53-amd64/ext3-p1.img: 16/2048 files (6.3% non-contiguous), 1616/8192 blocks"
+OP 1 rm /mnt/bm; sync
+GUEST-DONE
+FACT BOOT kernel=6.1.0-53-amd64 image=ext3-p2 seconds=7 clock="2023-11-14 23:13:20" halt=clean bytes=8388608
+FACT E2FSCK kernel=6.1.0-53-amd64 image=ext3-p2 exit=0 summary="/tmp/jprobe.YjD7AK/k6.1.0-53-amd64/ext3-p2.img: 15/2048 files (0.0% non-contiguous), 1595/8192 blocks"
+== guest PROBE lines
+PROBE-INO live 12
+PROBE-INO bm 13
+PROBE-INO f1 14
+PROBE-INO f2 15
+PROBE-INO f3 16
+PROBE-INO live 12
+PROBE-INO deep 13
+PROBE-INO pad 14
+PROBE-INO small 15
+PROBE-INO f1 16
+PROBE-INO f2 17
+PROBE-INO f3 18
+PROBE-INO same 13
+PROBE-INO spad 15
+PROBE-J5 j0 jsb=0000003e00000000 xslot=-
+PROBE-INO x 13
+PROBE-J5 j1 jsb=0000003f00000001 xslot=a4810000dc050000301b5465301b5465301b546500000000000001000400000000000800010000000af301000400000000000000000000000200000094240000000000000000000000000000000000000000000000000000000000000000000000000000804a158f0000000000000000000000000000000000000000ae310000200016680c5c901d0c5c901d08389c1c301b546508389c1c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+PROBE-J5 j2 jsb=0000003f00000001 xslot=a481000000000000301b5465301b5465301b5465301b5465000000000000000000000800010000000af300000400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000804a158f0000000000000000000000000000000000000000b36f00002000edf514942c3a14942c3a08389c1c301b546508389c1c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+PROBE-INO y 13
+PROBE-INO live 12
+PROBE-J5 j3 jsb=0000003f00000001 xslot=a481000000080000301b5465301b5465301b546500000000000001000400000000000800010000000af301000400000000000000000000000200000096240000000000000000000000000000000000000000000000000000000000000000000000000000ff991df70000000000000000000000000000000000000000c74700002000ad972438a5592438a5592438a559301b54652438a5590000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+PROBE-J5 j4 jsb=0000003f00000001 xslot=a481000000080000301b5465301b5465301b546500000000000001000400000000000800010000000af301000400000000000000000000000200000096240000000000000000000000000000000000000000000000000000000000000000000000000000ff991df70000000000000000000000000000000000000000c74700002000ad972438a5592438a5592438a559301b54652438a5590000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+PROBE-DMESG [    3.178716] EXT4-fs (vda): recovery complete
+PROBE-DMESG [    3.187376] EXT4-fs (vda): mounted filesystem with ordered data mode. Quota mode: none.
+== independent tool cross-checks on the stage images
+debugfs 1.47.0 (5-Feb-2023)
+Inode: 13   Type: regular    Mode:  0644   Flags: 0x80000
+Generation: 724630903    Version: 0x00000000:00000001
+User:     0   Group:     0   Project:     0   Size: 24567
+File ACL: 0
+Links: 1   Blockcount: 50
+Fragment:  Address: 0    Number: 0    Size: 0
+ ctime: 0x6553f101:459e4468 -- Tue Nov 14 22:13:21 2023
+ atime: 0x6553f100:2ebae410 -- Tue Nov 14 22:13:20 2023
+ mtime: 0x6553f101:459e4468 -- Tue Nov 14 22:13:21 2023
+crtime: 0x6553f100:2ebae410 -- Tue Nov 14 22:13:20 2023
+Size of extra inode fields: 32
+Inode checksum: 0x98782305
+EXTENTS:
+(ETB0):9346, (0):15362, (1):15364, (2):15366, (3):15368, (4):15370, (5):15372, (6):15374, (7):15376, (8):15378, (9):15380, (10):15382, (11):15384, (12):15386, (13):15388, (14):15390, (15):15392, (16):9348, (17):9350, (18):9352, (19):9354, (20):9356, (21):9358, (22):9360, (23):9362
+-- debugfs stat <8> (journal inode) of ext4-p1 and ext3-p1
+debugfs 1.47.0 (5-Feb-2023)
+Inode: 8   Type: regular    Mode:  0600   Flags: 0x80000
+Generation: 0    Version: 0x00000000:00000000
+User:     0   Group:     0   Project:     0   Size: 1048576
+File ACL: 0
+Links: 1   Blockcount: 2048
+Fragment:  Address: 0    Number: 0    Size: 0
+ ctime: 0x6553f100:00000000 -- Tue Nov 14 22:13:20 2023
+ atime: 0x6553f100:00000000 -- Tue Nov 14 22:13:20 2023
+ mtime: 0x6553f100:00000000 -- Tue Nov 14 22:13:20 2023
+crtime: 0x6553f100:00000000 -- Tue Nov 14 22:13:20 2023
+Size of extra inode fields: 32
+debugfs 1.47.0 (5-Feb-2023)
+Inode: 8   Type: regular    Mode:  0600   Flags: 0x0
+Generation: 0    Version: 0x00000000:00000000
+User:     0   Group:     0   Project:     0   Size: 1048576
+File ACL: 0
+Links: 1   Blockcount: 2058
+Fragment:  Address: 0    Number: 0    Size: 0
+ ctime: 0x6553f100:00000000 -- Tue Nov 14 22:13:20 2023
+ atime: 0x6553f100:00000000 -- Tue Nov 14 22:13:20 2023
+ mtime: 0x6553f100:00000000 -- Tue Nov 14 22:13:20 2023
+crtime: 0x6553f100:00000000 -- Tue Nov 14 22:13:20 2023
+Size of extra inode fields: 32
+BLOCKS:
+(0-11):562-573, (IND):574, (12-267):575-830, (DIND):831, (IND):832, (268-523):833-1088, (IND):1089, (524-779):1090-1345, (IND):1346, (780-1023):1347-1590
+-- debugfs logdump -a of the crash image (head)
+debugfs 1.47.0 (5-Feb-2023)
+Journal starts at block 1, transaction 63
+Found expected sequence 63, type 1 (descriptor block) at block 1
+Dumping descriptor block, sequence 63, at block 1:
+  FS block 132 logged at journal block 2 (flags 0x0)
+  FS block 2 logged at journal block 3 (flags 0x2)
+  FS block 137 logged at journal block 4 (flags 0x2)
+  FS block 134 logged at journal block 5 (flags 0x2)
+  FS block 1158 logged at journal block 6 (flags 0x2)
+  FS block 1 logged at journal block 7 (flags 0x2)
+  FS block 131 logged at journal block 8 (flags 0xa)
+Found expected sequence 63, type 2 (commit block) at block 9
+Found expected sequence 64, type 1 (descriptor block) at block 10
+Dumping descriptor block, sequence 64, at block 10:
+  FS block 1158 logged at journal block 11 (flags 0x0)
+  FS block 134 logged at journal block 12 (flags 0x2)
+  FS block 1 logged at journal block 13 (flags 0x2)
+  FS block 137 logged at journal block 14 (flags 0x2)
+  FS block 131 logged at journal block 15 (flags 0x2)
+  FS block 2 logged at journal block 16 (flags 0x2)
+  FS block 132 logged at journal block 17 (flags 0xa)
+Found expected sequence 64, type 2 (commit block) at block 18
+Found expected sequence 65, type 1 (descriptor block) at block 19
+Dumping descriptor block, sequence 65, at block 19:
+  FS block 132 logged at journal block 20 (flags 0x0)
+  FS block 2 logged at journal block 21 (flags 0x2)
+  FS block 137 logged at journal block 22 (flags 0x2)
+  FS block 134 logged at journal block 23 (flags 0x2)
+  FS block 1158 logged at journal block 24 (flags 0x2)
+  FS block 131 logged at journal block 25 (flags 0xa)
+Found expected sequence 65, type 2 (commit block) at block 26
+Found expected sequence 66, type 1 (descriptor block) at block 27
+Dumping descriptor block, sequence 66, at block 27:
+  FS block 136 logged at journal block 28 (flags 0x0)
+  FS block 131 logged at journal block 29 (flags 0x2)
+  FS block 2 logged at journal block 30 (flags 0xa)
+Found expected sequence 66, type 2 (commit block) at block 31
+Found sequence 40 (not 67) at block 32: end of journal.
+-- dumpe2fs -h of the crash image
+Last mounted on:          /mnt
+Filesystem features:      has_journal ext_attr resize_inode dir_index filetype needs_recovery extent 64bit flex_bg sparse_super large_file huge_file dir_nlink extra_isize metadata_csum
+Filesystem state:         clean
+Last mount time:          Wed Nov 15 01:13:20 2023
+Last write time:          Wed Nov 15 01:13:20 2023
+Journal inode:            8
+Journal backup:           inode blocks
+Journal features:         journal_incompat_revoke journal_64bit journal_checksum_v3
+Journal sequence:         0x0000003f
+Journal start:            1
+Journal checksum type:    crc32c
+Journal checksum:         0xbe9cd6ea
+-- image sizes
+FACT IMAGE name=ext3-p0.img bytes=8388608 gz_bytes=10563
+FACT IMAGE name=ext3-p1.img bytes=8388608 gz_bytes=34018
+FACT IMAGE name=ext3-p2.img bytes=8388608 gz_bytes=34008
+FACT IMAGE name=ext4-p0.img bytes=16777216 gz_bytes=17804
+FACT IMAGE name=ext4-p1.img bytes=16777216 gz_bytes=81665
+FACT IMAGE name=ext4-p2.img bytes=16777216 gz_bytes=81731
+FACT IMAGE name=ext4-p3.img bytes=16777216 gz_bytes=131485
+FACT IMAGE name=ext4-p4.img bytes=16777216 gz_bytes=135793
+FACT IMAGE name=ext4-p5.img bytes=16777216 gz_bytes=137782
+== host-side decode and cross-checks (ext4_journal_oracle.py probe)
+== kernel 5.10: images in /tmp/jprobe.YjD7AK/k5.10.0-32-amd64
+FACT J1.jsuper kernel=5.10 image=ext3-p0 version=2 blocksize=1024 maxlen=1024 first=1 sequence=1 start=0 compat=0x0 incompat=0x0 features=(none) tag_size=8 checksum_type=0 num_fc_blks=0 sb_checksum_ok=None needs_recovery=False fs_fast_commit=False holes=0 inode_size=1048576 inode_blocks_mapped=1024
+HEX J1 jsb 5.10 ext3-p0 block 0 first 128 bytes                  c03b399800000004000000000000040000000400000000010000000100000000000000000000000000000000000000001111111122223333444455555555555500000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+CROSSCHECK ok 5.10 ext3-p0 journal inode fits s_maxlen value=True
+CROSSCHECK ok 5.10 ext3-p0 dumpe2fs journal features value=(0, 0)
+CROSSCHECK ok 5.10 ext3-p0 dumpe2fs journal blocks value=1024
+CROSSCHECK ok 5.10 ext3-p0 dumpe2fs journal sequence value=1
+CROSSCHECK ok 5.10 ext3-p0 dumpe2fs journal start value=0
+CROSSCHECK ok 5.10 ext3-p0 dumpe2fs fast commit length value=0
+CROSSCHECK ok 5.10 ext3-p0 debugfs stat <8> size value=1048576
+CROSSCHECK ok 5.10 ext3-p0 debugfs stat <8> journal block map value={0: 562, 1: 563, 2: 564, 3: 565, 4: 566, 5: 567, 6: 568, 7: 569, 8: 570, 9: 571, 10: 572, 11: 573, 12: 575, 13: 576, 14: 577, 15: 578, 16: 579, 17: 580, 18: 581, 19: 582, 20: 583, 21: 584, 22: 585, 23
+CROSSCHECK ok 5.10 ext3-p0 s_journal_inum value=8
+FACT J1.jsuper kernel=5.10 image=ext3-p1 version=2 blocksize=1024 maxlen=1024 first=1 sequence=8 start=0 compat=0x0 incompat=0x0 features=(none) tag_size=8 checksum_type=0 num_fc_blks=0 sb_checksum_ok=None needs_recovery=False fs_fast_commit=False holes=0 inode_size=1048576 inode_blocks_mapped=1024
+HEX J1 jsb 5.10 ext3-p1 block 0 first 128 bytes                  c03b399800000004000000000000040000000400000000010000000800000000000000000000000000000000000000001111111122223333444455555555555500000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+CROSSCHECK ok 5.10 ext3-p1 journal inode fits s_maxlen value=True
+CROSSCHECK ok 5.10 ext3-p1 dumpe2fs journal features value=(0, 0)
+CROSSCHECK ok 5.10 ext3-p1 dumpe2fs journal blocks value=1024
+CROSSCHECK ok 5.10 ext3-p1 dumpe2fs journal sequence value=8
+CROSSCHECK ok 5.10 ext3-p1 dumpe2fs journal start value=0
+CROSSCHECK ok 5.10 ext3-p1 dumpe2fs fast commit length value=0
+CROSSCHECK ok 5.10 ext3-p1 debugfs stat <8> size value=1048576
+CROSSCHECK ok 5.10 ext3-p1 debugfs stat <8> journal block map value={0: 562, 1: 563, 2: 564, 3: 565, 4: 566, 5: 567, 6: 568, 7: 569, 8: 570, 9: 571, 10: 572, 11: 573, 12: 575, 13: 576, 14: 577, 15: 578, 16: 579, 17: 580, 18: 581, 19: 582, 20: 583, 21: 584, 22: 585, 23
+CROSSCHECK ok 5.10 ext3-p1 s_journal_inum value=8
+FACT J1.jsuper kernel=5.10 image=ext3-p2 version=2 blocksize=1024 maxlen=1024 first=1 sequence=11 start=0 compat=0x0 incompat=0x1 features=journal_incompat_revoke tag_size=8 checksum_type=0 num_fc_blks=0 sb_checksum_ok=None needs_recovery=False fs_fast_commit=False holes=0 inode_size=1048576 inode_blocks_mapped=1024
+CROSSCHECK ok 5.10 ext3-p2 journal inode fits s_maxlen value=True
+CROSSCHECK ok 5.10 ext3-p2 dumpe2fs journal features value=(0, 1)
+CROSSCHECK ok 5.10 ext3-p2 dumpe2fs journal blocks value=1024
+CROSSCHECK ok 5.10 ext3-p2 dumpe2fs journal sequence value=11
+CROSSCHECK ok 5.10 ext3-p2 dumpe2fs journal start value=0
+CROSSCHECK ok 5.10 ext3-p2 dumpe2fs fast commit length value=0
+CROSSCHECK ok 5.10 ext3-p2 debugfs stat <8> size value=1048576
+CROSSCHECK ok 5.10 ext3-p2 debugfs stat <8> journal block map value={0: 562, 1: 563, 2: 564, 3: 565, 4: 566, 5: 567, 6: 568, 7: 569, 8: 570, 9: 571, 10: 572, 11: 573, 12: 575, 13: 576, 14: 577, 15: 578, 16: 579, 17: 580, 18: 581, 19: 582, 20: 583, 21: 584, 22: 585, 23
+CROSSCHECK ok 5.10 ext3-p2 s_journal_inum value=8
+FACT J1.jsuper kernel=5.10 image=ext4-p0 version=2 blocksize=1024 maxlen=1024 first=1 sequence=1 start=0 compat=0x0 incompat=0x0 features=(none) tag_size=8 checksum_type=0 num_fc_blks=0 sb_checksum_ok=None needs_recovery=False fs_fast_commit=False holes=0 inode_size=1048576 inode_blocks_mapped=1024
+HEX J1 jsb 5.10 ext4-p0 block 0 first 128 bytes                  c03b399800000004000000000000040000000400000000010000000100000000000000000000000000000000000000001111111122223333444455555555555500000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+CROSSCHECK ok 5.10 ext4-p0 journal inode fits s_maxlen value=True
+CROSSCHECK ok 5.10 ext4-p0 dumpe2fs journal features value=(0, 0)
+CROSSCHECK ok 5.10 ext4-p0 dumpe2fs journal blocks value=1024
+CROSSCHECK ok 5.10 ext4-p0 dumpe2fs journal sequence value=1
+CROSSCHECK ok 5.10 ext4-p0 dumpe2fs journal start value=0
+CROSSCHECK ok 5.10 ext4-p0 dumpe2fs fast commit length value=0
+CROSSCHECK ok 5.10 ext4-p0 debugfs stat <8> size value=1048576
+CROSSCHECK ok 5.10 ext4-p0 debugfs stat <8> journal block map value={0: 8322, 1: 8323, 2: 8324, 3: 8325, 4: 8326, 5: 8327, 6: 8328, 7: 8329, 8: 8330, 9: 8331, 10: 8332, 11: 8333, 12: 8334, 13: 8335, 14: 8336, 15: 8337, 16: 8338, 17: 8339, 18: 8340, 19: 8341, 20: 8342,
+CROSSCHECK ok 5.10 ext4-p0 s_journal_inum value=8
+FACT J1.jsuper kernel=5.10 image=ext4-p1 version=2 blocksize=1024 maxlen=1024 first=1 sequence=32 start=0 compat=0x0 incompat=0x12 features=journal_64bit+journal_checksum_v3 tag_size=16 checksum_type=4 num_fc_blks=0 sb_checksum_ok=True needs_recovery=False fs_fast_commit=False holes=0 inode_size=1048576 inode_blocks_mapped=1024
+HEX J1 jsb 5.10 ext4-p1 block 0 first 128 bytes                  c03b399800000004000000000000040000000400000000010000002000000000000000000000000000000012000000001111111122223333444455555555555500000001000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+CROSSCHECK ok 5.10 ext4-p1 journal inode fits s_maxlen value=True
+CROSSCHECK ok 5.10 ext4-p1 dumpe2fs journal features value=(0, 18)
+CROSSCHECK ok 5.10 ext4-p1 dumpe2fs journal blocks value=1024
+CROSSCHECK ok 5.10 ext4-p1 dumpe2fs journal sequence value=32
+CROSSCHECK ok 5.10 ext4-p1 dumpe2fs journal start value=0
+CROSSCHECK ok 5.10 ext4-p1 dumpe2fs fast commit length value=0
+CROSSCHECK ok 5.10 ext4-p1 dumpe2fs journal checksum value=1305611506
+CROSSCHECK ok 5.10 ext4-p1 dumpe2fs journal checksum type value=crc32c
+CROSSCHECK ok 5.10 ext4-p1 debugfs stat <8> size value=1048576
+CROSSCHECK ok 5.10 ext4-p1 debugfs stat <8> journal block map value={0: 8322, 1: 8323, 2: 8324, 3: 8325, 4: 8326, 5: 8327, 6: 8328, 7: 8329, 8: 8330, 9: 8331, 10: 8332, 11: 8333, 12: 8334, 13: 8335, 14: 8336, 15: 8337, 16: 8338, 17: 8339, 18: 8340, 19: 8341, 20: 8342,
+CROSSCHECK ok 5.10 ext4-p1 s_journal_inum value=8
+FACT J1.jsuper kernel=5.10 image=ext4-p2 version=2 blocksize=1024 maxlen=1024 first=1 sequence=35 start=0 compat=0x0 incompat=0x13 features=journal_incompat_revoke+journal_64bit+journal_checksum_v3 tag_size=16 checksum_type=4 num_fc_blks=0 sb_checksum_ok=True needs_recovery=False fs_fast_commit=False holes=0 inode_size=1048576 inode_blocks_mapped=1024
+CROSSCHECK ok 5.10 ext4-p2 journal inode fits s_maxlen value=True
+CROSSCHECK ok 5.10 ext4-p2 dumpe2fs journal features value=(0, 19)
+CROSSCHECK ok 5.10 ext4-p2 dumpe2fs journal blocks value=1024
+CROSSCHECK ok 5.10 ext4-p2 dumpe2fs journal sequence value=35
+CROSSCHECK ok 5.10 ext4-p2 dumpe2fs journal start value=0
+CROSSCHECK ok 5.10 ext4-p2 dumpe2fs fast commit length value=0
+CROSSCHECK ok 5.10 ext4-p2 dumpe2fs journal checksum value=466086073
+CROSSCHECK ok 5.10 ext4-p2 dumpe2fs journal checksum type value=crc32c
+CROSSCHECK ok 5.10 ext4-p2 debugfs stat <8> size value=1048576
+CROSSCHECK ok 5.10 ext4-p2 debugfs stat <8> journal block map value={0: 8322, 1: 8323, 2: 8324, 3: 8325, 4: 8326, 5: 8327, 6: 8328, 7: 8329, 8: 8330, 9: 8331, 10: 8332, 11: 8333, 12: 8334, 13: 8335, 14: 8336, 15: 8337, 16: 8338, 17: 8339, 18: 8340, 19: 8341, 20: 8342,
+CROSSCHECK ok 5.10 ext4-p2 s_journal_inum value=8
+FACT J1.jsuper kernel=5.10 image=ext4-p3 version=2 blocksize=1024 maxlen=1024 first=1 sequence=62 start=0 compat=0x0 incompat=0x13 features=journal_incompat_revoke+journal_64bit+journal_checksum_v3 tag_size=16 checksum_type=4 num_fc_blks=0 sb_checksum_ok=True needs_recovery=False fs_fast_commit=False holes=0 inode_size=1048576 inode_blocks_mapped=1024
+CROSSCHECK ok 5.10 ext4-p3 journal inode fits s_maxlen value=True
+CROSSCHECK ok 5.10 ext4-p3 dumpe2fs journal features value=(0, 19)
+CROSSCHECK ok 5.10 ext4-p3 dumpe2fs journal blocks value=1024
+CROSSCHECK ok 5.10 ext4-p3 dumpe2fs journal sequence value=62
+CROSSCHECK ok 5.10 ext4-p3 dumpe2fs journal start value=0
+CROSSCHECK ok 5.10 ext4-p3 dumpe2fs fast commit length value=0
+CROSSCHECK ok 5.10 ext4-p3 dumpe2fs journal checksum value=463013261
+CROSSCHECK ok 5.10 ext4-p3 dumpe2fs journal checksum type value=crc32c
+CROSSCHECK ok 5.10 ext4-p3 debugfs stat <8> size value=1048576
+CROSSCHECK ok 5.10 ext4-p3 debugfs stat <8> journal block map value={0: 8322, 1: 8323, 2: 8324, 3: 8325, 4: 8326, 5: 8327, 6: 8328, 7: 8329, 8: 8330, 9: 8331, 10: 8332, 11: 8333, 12: 8334, 13: 8335, 14: 8336, 15: 8337, 16: 8338, 17: 8339, 18: 8340, 19: 8341, 20: 8342,
+CROSSCHECK ok 5.10 ext4-p3 s_journal_inum value=8
+FACT J1.jsuper kernel=5.10 image=ext4-p4 version=2 blocksize=1024 maxlen=1024 first=1 sequence=63 start=1 compat=0x0 incompat=0x13 features=journal_incompat_revoke+journal_64bit+journal_checksum_v3 tag_size=16 checksum_type=4 num_fc_blks=0 sb_checksum_ok=True needs_recovery=True fs_fast_commit=False holes=0 inode_size=1048576 inode_blocks_mapped=1024
+CROSSCHECK ok 5.10 ext4-p4 journal inode fits s_maxlen value=True
+CROSSCHECK ok 5.10 ext4-p4 dumpe2fs journal features value=(0, 19)
+CROSSCHECK ok 5.10 ext4-p4 dumpe2fs journal blocks value=1024
+CROSSCHECK ok 5.10 ext4-p4 dumpe2fs journal sequence value=63
+CROSSCHECK ok 5.10 ext4-p4 dumpe2fs journal start value=1
+CROSSCHECK ok 5.10 ext4-p4 dumpe2fs fast commit length value=0
+CROSSCHECK ok 5.10 ext4-p4 dumpe2fs journal checksum value=3197949674
+CROSSCHECK ok 5.10 ext4-p4 dumpe2fs journal checksum type value=crc32c
+CROSSCHECK ok 5.10 ext4-p4 debugfs stat <8> size value=1048576
+CROSSCHECK ok 5.10 ext4-p4 debugfs stat <8> journal block map value={0: 8322, 1: 8323, 2: 8324, 3: 8325, 4: 8326, 5: 8327, 6: 8328, 7: 8329, 8: 8330, 9: 8331, 10: 8332, 11: 8333, 12: 8334, 13: 8335, 14: 8336, 15: 8337, 16: 8338, 17: 8339, 18: 8340, 19: 8341, 20: 8342,
+CROSSCHECK ok 5.10 ext4-p4 s_journal_inum value=8
+FACT J1.jsuper kernel=5.10 image=ext4-p5 version=2 blocksize=1024 maxlen=1024 first=1 sequence=70 start=0 compat=0x0 incompat=0x13 features=journal_incompat_revoke+journal_64bit+journal_checksum_v3 tag_size=16 checksum_type=4 num_fc_blks=0 sb_checksum_ok=True needs_recovery=False fs_fast_commit=False holes=0 inode_size=1048576 inode_blocks_mapped=1024
+CROSSCHECK ok 5.10 ext4-p5 journal inode fits s_maxlen value=True
+CROSSCHECK ok 5.10 ext4-p5 dumpe2fs journal features value=(0, 19)
+CROSSCHECK ok 5.10 ext4-p5 dumpe2fs journal blocks value=1024
+CROSSCHECK ok 5.10 ext4-p5 dumpe2fs journal sequence value=70
+CROSSCHECK ok 5.10 ext4-p5 dumpe2fs journal start value=0
+CROSSCHECK ok 5.10 ext4-p5 dumpe2fs fast commit length value=0
+CROSSCHECK ok 5.10 ext4-p5 dumpe2fs journal checksum value=873621034
+CROSSCHECK ok 5.10 ext4-p5 dumpe2fs journal checksum type value=crc32c
+CROSSCHECK ok 5.10 ext4-p5 debugfs stat <8> size value=1048576
+CROSSCHECK ok 5.10 ext4-p5 debugfs stat <8> journal block map value={0: 8322, 1: 8323, 2: 8324, 3: 8325, 4: 8326, 5: 8327, 6: 8328, 7: 8329, 8: 8330, 9: 8331, 10: 8332, 11: 8333, 12: 8334, 13: 8335, 14: 8336, 15: 8337, 16: 8338, 17: 8339, 18: 8340, 19: 8341, 20: 8342,
+CROSSCHECK ok 5.10 ext4-p5 s_journal_inum value=8
+FACT J9.scan kernel=5.10 image=ext3-p0 live_txns=0 live_committed=0 live_stop=empty stale_txns=0 stale_committed=0 tags_live=0 tags_stale=0 revoke_records=0 seq_min=None seq_max=None log_blocks_used=0 journal_sequence=1 start=0
+FACT J9.scan kernel=5.10 image=ext3-p1 live_txns=0 live_committed=0 live_stop=empty stale_txns=5 stale_committed=5 tags_live=0 tags_stale=32 revoke_records=0 seq_min=2 seq_max=6 log_blocks_used=42 journal_sequence=8 start=0
+FACT J9.scan kernel=5.10 image=ext3-p2 live_txns=0 live_committed=0 live_stop=empty stale_txns=5 stale_committed=5 tags_live=0 tags_stale=25 revoke_records=1 seq_min=3 seq_max=9 log_blocks_used=35 journal_sequence=11 start=0
+FACT J9.scan kernel=5.10 image=ext4-p0 live_txns=0 live_committed=0 live_stop=empty stale_txns=0 stale_committed=0 tags_live=0 tags_stale=0 revoke_records=0 seq_min=None seq_max=None log_blocks_used=0 journal_sequence=1 start=0
+FACT J9.scan kernel=5.10 image=ext4-p1 live_txns=0 live_committed=0 live_stop=empty stale_txns=29 stale_committed=29 tags_live=0 tags_stale=146 revoke_records=0 seq_min=2 seq_max=30 log_blocks_used=204 journal_sequence=32 start=0
+FACT J9.scan kernel=5.10 image=ext4-p2 live_txns=0 live_committed=0 live_stop=empty stale_txns=29 stale_committed=29 tags_live=0 tags_stale=140 revoke_records=1 seq_min=3 seq_max=33 log_blocks_used=198 journal_sequence=35 start=0
+FACT J9.scan kernel=5.10 image=ext4-p3 live_txns=0 live_committed=0 live_stop=empty stale_txns=29 stale_committed=29 tags_live=0 tags_stale=145 revoke_records=0 seq_min=27 seq_max=60 log_blocks_used=202 journal_sequence=62 start=0
+FACT J9.scan kernel=5.10 image=ext4-p4 live_txns=4 live_committed=4 live_stop=end-of-log@32 stale_txns=25 stale_committed=25 tags_live=23 tags_stale=120 revoke_records=0 seq_min=27 seq_max=66 log_blocks_used=199 journal_sequence=63 start=1
+FACT J9.scan kernel=5.10 image=ext4-p5 live_txns=0 live_committed=0 live_stop=empty stale_txns=30 stale_committed=30 tags_live=0 tags_stale=141 revoke_records=0 seq_min=27 seq_max=68 log_blocks_used=198 journal_sequence=70 start=0
+FACT J1.checksums kernel=5.10 desc=148 desc_ok=148 commit=156 commit_ok=156 revoke=0 revoke_ok=0 tag=715 tag_ok=715
+CROSSCHECK ok 5.10 ext4-p4 logdump Journal starts at block value=1
+CROSSCHECK ok 5.10 ext4-p4 logdump transaction value=63
+CROSSCHECK ok 5.10 ext4-p4 live scan vs logdump -a (headers, tags, revokes) events=31
+CROSSCHECK ok 5.10 ext4-p4 live scan end block vs logdump value=[32]
+FACT J1.live kernel=5.10 image=ext4-p4 txns=4 committed=4 tags=23 events=31 stop=end-of-log@32 logdump_events=31 logdump_end=[32]
+HEX J1 live descriptor 5.10 ext4-p4 jblk 1 head 64 + tail 16     c03b3998000000010000003f0000008400000000000000000bfeeaa400000000000000000000000000000000000000020000000200000000915a0edd000000892e2e2e000000000000000000000000e1e50db3
+HEX J1 live commit 5.10 ext4-p4 jblk 9 head 64                   c03b3998000000020000003f0000000059715176000000000000000000000000000000000000000000000000000000000000000065541b3008d24d0200000000
+FACT J1.live-checksums kernel=5.10 desc_tail_ok=True commit_ok=True tags_verified=23 tags_unverified=0
+FACT J1.live-txns kernel=5.10 seqs=63C,64C,65C,66C
+CROSSCHECK ok 5.10 ext4-p1 stale view vs logdump -O -a events=262
+CROSSCHECK ok 5.10 ext4-p1 logdump -O end block value=[205]
+FACT J3.logdump-O kernel=5.10 image=ext4-p1 rc=0 events=263 headers=58 tags=146 revokes=0 seq_mismatch=58 info={'start': 0, 'seq': 32} other=[]
+CROSSCHECK ok 5.10 ext4-p2 stale view vs logdump -O -a events=14
+CROSSCHECK ok 5.10 ext4-p2 logdump -O end block value=[11]
+FACT J3.logdump-O kernel=5.10 image=ext4-p2 rc=0 events=15 headers=3 tags=7 revokes=1 seq_mismatch=3 info={'start': 0, 'seq': 35} other=[]
+CROSSCHECK ok 5.10 ext4-p3 stale view vs logdump -O -a events=227
+CROSSCHECK ok 5.10 ext4-p3 logdump -O end block value=[178]
+FACT J3.logdump-O kernel=5.10 image=ext4-p3 rc=0 events=228 headers=50 tags=127 revokes=0 seq_mismatch=50 info={'start': 0, 'seq': 62} other=[]
+CROSSCHECK ok 5.10 ext3-p1 stale view vs logdump -O -a events=52
+CROSSCHECK ok 5.10 ext3-p1 logdump -O end block value=[43]
+FACT J3.logdump-O kernel=5.10 image=ext3-p1 rc=0 events=53 headers=10 tags=32 revokes=0 seq_mismatch=10 info={'start': 0, 'seq': 8} other=[]
+CROSSCHECK ok 5.10 ext3-p2 stale view vs logdump -O -a events=14
+CROSSCHECK ok 5.10 ext3-p2 logdump -O end block value=[11]
+FACT J3.logdump-O kernel=5.10 image=ext3-p2 rc=0 events=15 headers=3 tags=7 revokes=1 seq_mismatch=3 info={'start': 0, 'seq': 11} other=[]
+CROSSCHECK ok 5.10 ext4-p1 (before the delete) inode 15 size value=3000
+CROSSCHECK ok 5.10 ext4-p1 (before the delete) inode 15 links value=1
+CROSSCHECK ok 5.10 ext4-p1 (before the delete) inode 15 gen value=1819091739
+CROSSCHECK ok 5.10 ext4-p1 (before the delete) inode 15 flags value=524288
+CROSSCHECK ok 5.10 ext4-p1 (before the delete) inode 15 map value=[(0, 9396), (1, 9397), (2, 9398)]
+CROSSCHECK ok 5.10 ext4-p1 (before the delete) inode 15 tree/indirect blocks value=[]
+CROSSCHECK ok 5.10 ext4-p2 (after the delete) inode 15 size value=0
+CROSSCHECK ok 5.10 ext4-p2 (after the delete) inode 15 links value=0
+CROSSCHECK ok 5.10 ext4-p2 (after the delete) inode 15 gen value=1819091739
+CROSSCHECK ok 5.10 ext4-p2 (after the delete) inode 15 flags value=524288
+CROSSCHECK ok 5.10 ext4-p2 (after the delete) inode 15 dtime value=1700003600
+FACT J2.on-disk kernel=5.10 fs=ext4 file=small ino=15 pre_links=1 pre_size=3000 pre_gen=1819091739 pre_extents_flag=True pre_depth=0 pre_blocks=3 pre_meta=[] post_links=0 post_dtime=1700003600 post_size=0 post_gen=1819091739 post_ib_zero=False post_flags=0x80000 post_csum_ok=True
+HEX J2 5.10 ext4 small ino 15 i_block before delete (p1)         0af3010004000000000000000000000003000000b4240000000000000000000000000000000000000000000000000000000000000000000000000000
+HEX J2 5.10 ext4 small ino 15 i_block after delete (p2)          0af300000400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+FACT J2.copies kernel=5.10 image=ext4-p2 file=small ino=15 n=26 copies=seq33/stale/jblk6/links0/dtime1700003600/size0/gen1819091739/verified;seq28/stale/jblk184/links1/dtime0/size3000/gen1819091739/verified;seq27/stale/jblk176/links1/dtime0/size3000/gen1819091739/verified;seq26/stale/jblk167/links0/dtime0/size0/gen0/verified;seq25/stale/jblk160/links0/dtime0/size0/gen0/verified;seq24/stale/jblk153/links0/dtime0/size0/gen0/verified;seq23/stale/jblk146/links0/dtime0/size0/gen0/verified;seq22/stale/jblk139/links0/dtime0/size0/gen0/verified;seq21/stale/jblk132/links0/dtime0/size0/gen0/verified;seq20/stale/jblk125/links0/dtime0/size0/gen0/verified;seq19/stale/jblk118/links0/dtime0/size0/gen0/verified;seq18/stale/jblk111/links0/dtime0/size0/gen0/verified;seq17/stale/jblk104/links0/dtime0/size0/gen0/verified;seq16/stale/jblk97/links0/dtime0/size0/gen0/verified;seq15/stale/jblk90/links0/dtime0/size0/gen0/verified;seq14/stale/jblk83/links0/dtime0/size0/gen0/verified;seq13/stale/jblk76/links0/dtime0/size0/gen0/verified;seq12/stale/jblk69/links0/dtime0/size0/gen0/verified;seq11/stale/jblk62/links0/dtime0/size0/gen0/verified;seq10/stale/jblk55/links0/dtime0/size0/gen0/verified;seq9/stale/jblk48/links0/dtime0/size0/gen0/verified;seq8/stale/jblk41/links0/dtime0/size0/gen0/verified;seq7/stale/jblk34/links0/dtime0/size0/gen0/verified;seq6/stale/jblk29/links0/dtime0/size0/gen0/verified;seq5/stale/jblk24/links0/dtime0/size0/gen0/verified;seq4/stale/jblk19/links0/dtime0/size0/gen0/verified
+HEX J2 5.10 ext4 small stale copy slot (seq 28 jblk 184)         a4810000b80b000000f1536500f1536500f1536500000000000001000600000000000800010000000af3010004000000000000000000000003000000b42400000000000000000000000000000000000000000000000000000000000000000000000000001b236d6c00000000000000000000000000000000000000008a390000
+FACT J2.result kernel=5.10 fs=ext4 file=small found=True live_state_copies=2 stale_committed_live_copies=2 same_generation=2 where=seq28/stale/jblk184/verified map_equal=True size_equal=True gen_equal=True
+CROSSCHECK ok 5.10 ext4-p1 (before the delete) inode 13 size value=24567
+CROSSCHECK ok 5.10 ext4-p1 (before the delete) inode 13 links value=1
+CROSSCHECK ok 5.10 ext4-p1 (before the delete) inode 13 gen value=3728829501
+CROSSCHECK ok 5.10 ext4-p1 (before the delete) inode 13 flags value=524288
+CROSSCHECK ok 5.10 ext4-p1 (before the delete) inode 13 map value=[(0, 9346), (1, 9348), (2, 9350), (3, 9352), (4, 9354), (5, 9358), (6, 9360), (7, 9362), (8, 9364), (9, 9366), (10, 9368), (11, 9370), (12, 9372), (13, 9374), (14, 9376), (15, 9378), (16, 9380), (17, 
+CROSSCHECK ok 5.10 ext4-p1 (before the delete) inode 13 tree/indirect blocks value=[9355]
+CROSSCHECK ok 5.10 ext4-p2 (after the delete) inode 13 size value=0
+CROSSCHECK ok 5.10 ext4-p2 (after the delete) inode 13 links value=0
+CROSSCHECK ok 5.10 ext4-p2 (after the delete) inode 13 gen value=3728829501
+CROSSCHECK ok 5.10 ext4-p2 (after the delete) inode 13 flags value=524288
+CROSSCHECK ok 5.10 ext4-p2 (after the delete) inode 13 dtime value=1700003600
+FACT J2.on-disk kernel=5.10 fs=ext4 file=deep ino=13 pre_links=1 pre_size=24567 pre_gen=3728829501 pre_extents_flag=True pre_depth=1 pre_blocks=24 pre_meta=[9355] post_links=0 post_dtime=1700003600 post_size=0 post_gen=3728829501 post_ib_zero=False post_flags=0x80000 post_csum_ok=True
+HEX J2 5.10 ext4 deep ino 13 i_block before delete (p1)          0af301000400010000000000000000008b24000000000000010000000100000084240000020000000100000086240000030000000100000088240000
+HEX J2 5.10 ext4 deep ino 13 i_block after delete (p2)           0af300000400000000000000000000008b24000000000000010000000100000084240000020000000100000086240000030000000100000088240000
+FACT J2.copies kernel=5.10 image=ext4-p2 file=deep ino=13 n=26 copies=seq33/stale/jblk6/links0/dtime1700003600/size0/gen3728829501/verified;seq28/stale/jblk184/links1/dtime0/size24567/gen3728829501/verified;seq27/stale/jblk176/links1/dtime0/size24567/gen3728829501/verified;seq26/stale/jblk167/links1/dtime0/size24567/gen3728829501/verified;seq25/stale/jblk160/links1/dtime0/size23552/gen3728829501/verified;seq24/stale/jblk153/links1/dtime0/size22528/gen3728829501/verified;seq23/stale/jblk146/links1/dtime0/size21504/gen3728829501/verified;seq22/stale/jblk139/links1/dtime0/size20480/gen3728829501/verified;seq21/stale/jblk132/links1/dtime0/size19456/gen3728829501/verified;seq20/stale/jblk125/links1/dtime0/size18432/gen3728829501/verified;seq19/stale/jblk118/links1/dtime0/size17408/gen3728829501/verified;seq18/stale/jblk111/links1/dtime0/size16384/gen3728829501/verified;seq17/stale/jblk104/links1/dtime0/size15360/gen3728829501/verified;seq16/stale/jblk97/links1/dtime0/size14336/gen3728829501/verified;seq15/stale/jblk90/links1/dtime0/size13312/gen3728829501/verified;seq14/stale/jblk83/links1/dtime0/size12288/gen3728829501/verified;seq13/stale/jblk76/links1/dtime0/size11264/gen3728829501/verified;seq12/stale/jblk69/links1/dtime0/size10240/gen3728829501/verified;seq11/stale/jblk62/links1/dtime0/size9216/gen3728829501/verified;seq10/stale/jblk55/links1/dtime0/size8192/gen3728829501/verified;seq9/stale/jblk48/links1/dtime0/size7168/gen3728829501/verified;seq8/stale/jblk41/links1/dtime0/size6144/gen3728829501/verified;seq7/stale/jblk34/links1/dtime0/size5120/gen3728829501/verified;seq6/stale/jblk29/links1/dtime0/size4096/gen3728829501/verified;seq5/stale/jblk24/links1/dtime0/size3072/gen3728829501/verified;seq4/stale/jblk19/links1/dtime0/size2048/gen3728829501/verified
+HEX J2 5.10 ext4 deep stale copy slot (seq 28 jblk 184)          a4810000f75f000000f1536500f1536500f1536500000000000001003200000000000800010000000af301000400010000000000000000008b240000000000000100000001000000842400000200000001000000862400000300000001000000882400003d6c41de0000000000000000000000000000000000000000ff9a0000
+FACT J2.result kernel=5.10 fs=ext4 file=deep found=True live_state_copies=25 stale_committed_live_copies=25 same_generation=25 where=seq28/stale/jblk184/verified map_equal=True size_equal=True gen_equal=True
+CROSSCHECK ok 5.10 ext3-p1 (before the delete) inode 13 size value=20469
+CROSSCHECK ok 5.10 ext3-p1 (before the delete) inode 13 links value=1
+CROSSCHECK ok 5.10 ext3-p1 (before the delete) inode 13 gen value=770361678
+CROSSCHECK ok 5.10 ext3-p1 (before the delete) inode 13 flags value=0
+CROSSCHECK ok 5.10 ext3-p1 (before the delete) inode 13 map value=[(0, 8129), (1, 8130), (2, 8131), (3, 8132), (4, 8133), (5, 8134), (6, 8135), (7, 8136), (8, 8137), (9, 8138), (10, 8139), (11, 8140), (12, 8141), (13, 8142), (14, 8143), (15, 8144), (16, 8145), (17, 
+CROSSCHECK ok 5.10 ext3-p1 (before the delete) inode 13 tree/indirect blocks value=[1592]
+CROSSCHECK ok 5.10 ext3-p2 (after the delete) inode 13 size value=0
+CROSSCHECK ok 5.10 ext3-p2 (after the delete) inode 13 links value=0
+CROSSCHECK ok 5.10 ext3-p2 (after the delete) inode 13 gen value=770361678
+CROSSCHECK ok 5.10 ext3-p2 (after the delete) inode 13 flags value=0
+CROSSCHECK ok 5.10 ext3-p2 (after the delete) inode 13 dtime value=1700003600
+FACT J2.on-disk kernel=5.10 fs=ext3 file=bm ino=13 pre_links=1 pre_size=20469 pre_gen=770361678 pre_extents_flag=False pre_depth=blockmap pre_blocks=20 pre_meta=[1592] post_links=0 post_dtime=1700003600 post_size=0 post_gen=770361678 post_ib_zero=True post_flags=0x0 post_csum_ok=None
+HEX J2 5.10 ext3 bm ino 13 i_block before delete (p1)            c11f0000c21f0000c31f0000c41f0000c51f0000c61f0000c71f0000c81f0000c91f0000ca1f0000cb1f0000cc1f0000380600000000000000000000
+HEX J2 5.10 ext3 bm ino 13 i_block after delete (p2)             000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+FACT J2.copies kernel=5.10 image=ext3-p2 file=bm ino=13 n=4 copies=seq9/stale/jblk6/links0/dtime1700003600/size0/gen770361678/unverified;seq6/stale/jblk38/links1/dtime0/size20469/gen770361678/unverified;seq5/stale/jblk30/links1/dtime0/size20469/gen770361678/unverified;seq4/stale/jblk22/links1/dtime0/size20469/gen770361678/unverified
+HEX J2 5.10 ext3 bm stale copy slot (seq 6 jblk 38)              a4810000f54f000000f1536500f1536500f1536500000000000001002a0000000000000001000000c11f0000c21f0000c31f0000c41f0000c51f0000c61f0000c71f0000c81f0000c91f0000ca1f0000cb1f0000cc1f00003806000000000000000000004ec9ea2d000000000000000000000000000000000000000000000000
+FACT J2.result kernel=5.10 fs=ext3 file=bm found=True live_state_copies=3 stale_committed_live_copies=3 same_generation=3 where=seq6/stale/jblk38/unverified map_equal=True size_equal=True gen_equal=True
+FACT J4.state kernel=5.10 needs_recovery=True s_start=1 s_sequence=63 live_txns=4 committed=4 stop=end-of-log@32
+FACT J4.copies kernel=5.10 file=y ino=13 committed_live_copies=seq65/links1/dtime0/size2048;seq64/links0/dtime1700010800/size0;seq63/links1/dtime0/size1500
+FACT J4.copies kernel=5.10 file=live ino=12 committed_live_copies=seq66/links1/dtime0/size1600
+FACT J4.copies kernel=5.10 file=x ino=13 committed_live_copies=seq65/links1/dtime0/size2048;seq64/links0/dtime1700010800/size0;seq63/links1/dtime0/size1500
+FACT J4.as-found kernel=5.10 y_in_home_inode=1 y_home_size=2048 root_listing='      2   40755 (2)      0      0    1024 15-Nov-2023 01:13 . |       2   40755 (2)      0      0    1024 15-Nov-2023 01:13 .. |      11   40700 (2)      0      0   12288 14-Nov-2023 22:13 lost+found |      12  100644 (1)      0      0    1600 15-Nov-2023 01:13 live |      14  100644 (1)      0     '
+FACT J4.replay-listing kernel=5.10 files=/mnt/f1:8:0d41ebe4ebe2;/mnt/f2:8:86cb4821fb78;/mnt/f3:8:b53e4ca33448;/mnt/live:1600:22e20599f917;/mnt/pad:24567:c56748c9952e;/mnt/spad:24569:d3dbcc7449cc;/mnt/y:2048:bc1c3559513a
+FACT J4.replay kernel=5.10 y_listed=True live_appended_listed=True x_absent=True z_absent=True p4_sha_before_replay=f1c3668583f299b23a01e3e3fd54f0e2034908b3223736905747fa773123062c p4_sha_after_replay=f1c3668583f299b23a01e3e3fd54f0e2034908b3223736905747fa773123062c p4_unchanged=True
+FACT J4.dmesg kernel=5.10 lines=['PROBE-DMESG [    2.356555] EXT4-fs (vda): recovery complete', 'PROBE-DMESG [    2.364475] EXT4-fs (vda): mounted filesystem with ordered data mode. Opts: (null)']
+FACT J5.row kernel=5.10 label=j0 disk_s_sequence=62 disk_s_start=0 x_home_slot_links_dtime_size=None
+FACT J5.row kernel=5.10 label=j1 disk_s_sequence=63 disk_s_start=1 x_home_slot_links_dtime_size=(1, 0, 1500)
+FACT J5.row kernel=5.10 label=j2 disk_s_sequence=63 disk_s_start=1 x_home_slot_links_dtime_size=(0, 1700010800, 0)
+FACT J5.row kernel=5.10 label=j3 disk_s_sequence=63 disk_s_start=1 x_home_slot_links_dtime_size=(1, 0, 2048)
+FACT J5.row kernel=5.10 label=j4 disk_s_sequence=63 disk_s_start=1 x_home_slot_links_dtime_size=(1, 0, 2048)
+HEX J5 5.10 home slot of x after the second sync (O_DIRECT read of the disk) a481000000000000301b5465301b5465301b5465301b5465000000000000000000000800010000000af300000400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000262d429a0000000000000000000000000000000000000000344f0000
+FACT J5.result kernel=5.10 s_start_moved_by_second_sync=False home_deleted_after_sync=True home_created_after_first_sync=True
+FACT J6.revokes kernel=5.10 deep_ino=13 deep_depth=1 deep_leaf_blocks=[9355] new_txns_in_p2=1 revoke_records_in_new_txns=[9355] leaves_revoked=[9355] leaves_not_revoked=[]
+HEX J6 revoke block 5.10 ext4-p2 seq 33 jblk 1 head 48           c03b3998000000050000002100000018000000000000248b000000000000000000000000000000000000000000000000
+FACT J6.ext3 kernel=5.10 bm_ino=13 indirect_blocks=[1592] revoked=[1592] revoke_records=[1592]
+FACT J7.copies kernel=5.10 same_ino=13 live_state_committed_copies=seq59/stale/depth0/size24569;seq58/stale/depth0/size23552;seq57/stale/depth0/size22528;seq56/stale/depth0/size21504;seq55/stale/depth0/size20480;seq54/stale/depth0/size19456;seq53/stale/depth0/size18432;seq52/stale/depth0/size17408;seq51/stale/depth0/size16384;seq50/stale/depth0/size15360;seq49/stale/depth0/size14336;seq48/stale/depth0/size13312 content_truth_blocks=24 expected_blocks=24
+FACT J7.result kernel=5.10 journal_map_blocks=0 truth_blocks=24 equal=False problems=['newest live-state copy has depth 0'] leaves_from= depth=0
+FACT J9.stage kernel=5.10 image=ext4-p1 new_txns=29 new_tags=146 new_revoke_records=0 new_log_blocks=204 new_first_jblk=1 new_last_jblk=204 journal_blocks=1024 surviving_older_txns=0 max_seq=30
+FACT J9.stage kernel=5.10 image=ext4-p2 new_txns=1 new_tags=7 new_revoke_records=1 new_log_blocks=10 new_first_jblk=1 new_last_jblk=10 journal_blocks=1024 surviving_older_txns=28 max_seq=33
+FACT J9.stage kernel=5.10 image=ext4-p3 new_txns=25 new_tags=127 new_revoke_records=0 new_log_blocks=177 new_first_jblk=1 new_last_jblk=177 journal_blocks=1024 surviving_older_txns=4 max_seq=60
+FACT J9.stage kernel=5.10 image=ext4-p4 new_txns=4 new_tags=23 new_revoke_records=0 new_log_blocks=31 new_first_jblk=1 new_last_jblk=31 journal_blocks=1024 surviving_older_txns=25 max_seq=66
+FACT J9.stage kernel=5.10 image=ext3-p1 new_txns=5 new_tags=32 new_revoke_records=0 new_log_blocks=42 new_first_jblk=1 new_last_jblk=42 journal_blocks=1024 surviving_older_txns=0 max_seq=6
+FACT J9.stage kernel=5.10 image=ext3-p2 new_txns=1 new_tags=7 new_revoke_records=1 new_log_blocks=10 new_first_jblk=1 new_last_jblk=10 journal_blocks=1024 surviving_older_txns=4 max_seq=9
+FACT J9.survival kernel=5.10 fs=ext4 file=small image=ext4-p2 live_state_p1_copies=2 jblks=184,176 seqs=28,27
+FACT J9.survival kernel=5.10 fs=ext4 file=small image=ext4-p3 live_state_p1_copies=1 jblks=184 seqs=28
+FACT J9.survival kernel=5.10 fs=ext3 file=bm image=ext3-p2 live_state_p1_copies=3 jblks=38,30,22 seqs=6,5,4
+== kernel 6.1: images in /tmp/jprobe.YjD7AK/k6.1.0-53-amd64
+FACT J1.jsuper kernel=6.1 image=ext3-p0 version=2 blocksize=1024 maxlen=1024 first=1 sequence=1 start=0 compat=0x0 incompat=0x0 features=(none) tag_size=8 checksum_type=0 num_fc_blks=0 sb_checksum_ok=None needs_recovery=False fs_fast_commit=False holes=0 inode_size=1048576 inode_blocks_mapped=1024
+HEX J1 jsb 6.1 ext3-p0 block 0 first 128 bytes                   c03b399800000004000000000000040000000400000000010000000100000000000000000000000000000000000000001111111122223333444455555555555500000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+CROSSCHECK ok 6.1 ext3-p0 journal inode fits s_maxlen value=True
+CROSSCHECK ok 6.1 ext3-p0 dumpe2fs journal features value=(0, 0)
+CROSSCHECK ok 6.1 ext3-p0 dumpe2fs journal blocks value=1024
+CROSSCHECK ok 6.1 ext3-p0 dumpe2fs journal sequence value=1
+CROSSCHECK ok 6.1 ext3-p0 dumpe2fs journal start value=0
+CROSSCHECK ok 6.1 ext3-p0 dumpe2fs fast commit length value=0
+CROSSCHECK ok 6.1 ext3-p0 debugfs stat <8> size value=1048576
+CROSSCHECK ok 6.1 ext3-p0 debugfs stat <8> journal block map value={0: 562, 1: 563, 2: 564, 3: 565, 4: 566, 5: 567, 6: 568, 7: 569, 8: 570, 9: 571, 10: 572, 11: 573, 12: 575, 13: 576, 14: 577, 15: 578, 16: 579, 17: 580, 18: 581, 19: 582, 20: 583, 21: 584, 22: 585, 23
+CROSSCHECK ok 6.1 ext3-p0 s_journal_inum value=8
+FACT J1.jsuper kernel=6.1 image=ext3-p1 version=2 blocksize=1024 maxlen=1024 first=1 sequence=8 start=0 compat=0x0 incompat=0x0 features=(none) tag_size=8 checksum_type=0 num_fc_blks=0 sb_checksum_ok=None needs_recovery=False fs_fast_commit=False holes=0 inode_size=1048576 inode_blocks_mapped=1024
+HEX J1 jsb 6.1 ext3-p1 block 0 first 128 bytes                   c03b399800000004000000000000040000000400000000010000000800000000000000000000000000000000000000001111111122223333444455555555555500000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+CROSSCHECK ok 6.1 ext3-p1 journal inode fits s_maxlen value=True
+CROSSCHECK ok 6.1 ext3-p1 dumpe2fs journal features value=(0, 0)
+CROSSCHECK ok 6.1 ext3-p1 dumpe2fs journal blocks value=1024
+CROSSCHECK ok 6.1 ext3-p1 dumpe2fs journal sequence value=8
+CROSSCHECK ok 6.1 ext3-p1 dumpe2fs journal start value=0
+CROSSCHECK ok 6.1 ext3-p1 dumpe2fs fast commit length value=0
+CROSSCHECK ok 6.1 ext3-p1 debugfs stat <8> size value=1048576
+CROSSCHECK ok 6.1 ext3-p1 debugfs stat <8> journal block map value={0: 562, 1: 563, 2: 564, 3: 565, 4: 566, 5: 567, 6: 568, 7: 569, 8: 570, 9: 571, 10: 572, 11: 573, 12: 575, 13: 576, 14: 577, 15: 578, 16: 579, 17: 580, 18: 581, 19: 582, 20: 583, 21: 584, 22: 585, 23
+CROSSCHECK ok 6.1 ext3-p1 s_journal_inum value=8
+FACT J1.jsuper kernel=6.1 image=ext3-p2 version=2 blocksize=1024 maxlen=1024 first=1 sequence=11 start=0 compat=0x0 incompat=0x1 features=journal_incompat_revoke tag_size=8 checksum_type=0 num_fc_blks=0 sb_checksum_ok=None needs_recovery=False fs_fast_commit=False holes=0 inode_size=1048576 inode_blocks_mapped=1024
+CROSSCHECK ok 6.1 ext3-p2 journal inode fits s_maxlen value=True
+CROSSCHECK ok 6.1 ext3-p2 dumpe2fs journal features value=(0, 1)
+CROSSCHECK ok 6.1 ext3-p2 dumpe2fs journal blocks value=1024
+CROSSCHECK ok 6.1 ext3-p2 dumpe2fs journal sequence value=11
+CROSSCHECK ok 6.1 ext3-p2 dumpe2fs journal start value=0
+CROSSCHECK ok 6.1 ext3-p2 dumpe2fs fast commit length value=0
+CROSSCHECK ok 6.1 ext3-p2 debugfs stat <8> size value=1048576
+CROSSCHECK ok 6.1 ext3-p2 debugfs stat <8> journal block map value={0: 562, 1: 563, 2: 564, 3: 565, 4: 566, 5: 567, 6: 568, 7: 569, 8: 570, 9: 571, 10: 572, 11: 573, 12: 575, 13: 576, 14: 577, 15: 578, 16: 579, 17: 580, 18: 581, 19: 582, 20: 583, 21: 584, 22: 585, 23
+CROSSCHECK ok 6.1 ext3-p2 s_journal_inum value=8
+FACT J1.jsuper kernel=6.1 image=ext4-p0 version=2 blocksize=1024 maxlen=1024 first=1 sequence=1 start=0 compat=0x0 incompat=0x0 features=(none) tag_size=8 checksum_type=0 num_fc_blks=0 sb_checksum_ok=None needs_recovery=False fs_fast_commit=False holes=0 inode_size=1048576 inode_blocks_mapped=1024
+HEX J1 jsb 6.1 ext4-p0 block 0 first 128 bytes                   c03b399800000004000000000000040000000400000000010000000100000000000000000000000000000000000000001111111122223333444455555555555500000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+CROSSCHECK ok 6.1 ext4-p0 journal inode fits s_maxlen value=True
+CROSSCHECK ok 6.1 ext4-p0 dumpe2fs journal features value=(0, 0)
+CROSSCHECK ok 6.1 ext4-p0 dumpe2fs journal blocks value=1024
+CROSSCHECK ok 6.1 ext4-p0 dumpe2fs journal sequence value=1
+CROSSCHECK ok 6.1 ext4-p0 dumpe2fs journal start value=0
+CROSSCHECK ok 6.1 ext4-p0 dumpe2fs fast commit length value=0
+CROSSCHECK ok 6.1 ext4-p0 debugfs stat <8> size value=1048576
+CROSSCHECK ok 6.1 ext4-p0 debugfs stat <8> journal block map value={0: 8322, 1: 8323, 2: 8324, 3: 8325, 4: 8326, 5: 8327, 6: 8328, 7: 8329, 8: 8330, 9: 8331, 10: 8332, 11: 8333, 12: 8334, 13: 8335, 14: 8336, 15: 8337, 16: 8338, 17: 8339, 18: 8340, 19: 8341, 20: 8342,
+CROSSCHECK ok 6.1 ext4-p0 s_journal_inum value=8
+FACT J1.jsuper kernel=6.1 image=ext4-p1 version=2 blocksize=1024 maxlen=1024 first=1 sequence=32 start=0 compat=0x0 incompat=0x12 features=journal_64bit+journal_checksum_v3 tag_size=16 checksum_type=4 num_fc_blks=0 sb_checksum_ok=True needs_recovery=False fs_fast_commit=False holes=0 inode_size=1048576 inode_blocks_mapped=1024
+HEX J1 jsb 6.1 ext4-p1 block 0 first 128 bytes                   c03b399800000004000000000000040000000400000000010000002000000000000000000000000000000012000000001111111122223333444455555555555500000001000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+CROSSCHECK ok 6.1 ext4-p1 journal inode fits s_maxlen value=True
+CROSSCHECK ok 6.1 ext4-p1 dumpe2fs journal features value=(0, 18)
+CROSSCHECK ok 6.1 ext4-p1 dumpe2fs journal blocks value=1024
+CROSSCHECK ok 6.1 ext4-p1 dumpe2fs journal sequence value=32
+CROSSCHECK ok 6.1 ext4-p1 dumpe2fs journal start value=0
+CROSSCHECK ok 6.1 ext4-p1 dumpe2fs fast commit length value=0
+CROSSCHECK ok 6.1 ext4-p1 dumpe2fs journal checksum value=1305611506
+CROSSCHECK ok 6.1 ext4-p1 dumpe2fs journal checksum type value=crc32c
+CROSSCHECK ok 6.1 ext4-p1 debugfs stat <8> size value=1048576
+CROSSCHECK ok 6.1 ext4-p1 debugfs stat <8> journal block map value={0: 8322, 1: 8323, 2: 8324, 3: 8325, 4: 8326, 5: 8327, 6: 8328, 7: 8329, 8: 8330, 9: 8331, 10: 8332, 11: 8333, 12: 8334, 13: 8335, 14: 8336, 15: 8337, 16: 8338, 17: 8339, 18: 8340, 19: 8341, 20: 8342,
+CROSSCHECK ok 6.1 ext4-p1 s_journal_inum value=8
+FACT J1.jsuper kernel=6.1 image=ext4-p2 version=2 blocksize=1024 maxlen=1024 first=1 sequence=35 start=0 compat=0x0 incompat=0x13 features=journal_incompat_revoke+journal_64bit+journal_checksum_v3 tag_size=16 checksum_type=4 num_fc_blks=0 sb_checksum_ok=True needs_recovery=False fs_fast_commit=False holes=0 inode_size=1048576 inode_blocks_mapped=1024
+CROSSCHECK ok 6.1 ext4-p2 journal inode fits s_maxlen value=True
+CROSSCHECK ok 6.1 ext4-p2 dumpe2fs journal features value=(0, 19)
+CROSSCHECK ok 6.1 ext4-p2 dumpe2fs journal blocks value=1024
+CROSSCHECK ok 6.1 ext4-p2 dumpe2fs journal sequence value=35
+CROSSCHECK ok 6.1 ext4-p2 dumpe2fs journal start value=0
+CROSSCHECK ok 6.1 ext4-p2 dumpe2fs fast commit length value=0
+CROSSCHECK ok 6.1 ext4-p2 dumpe2fs journal checksum value=466086073
+CROSSCHECK ok 6.1 ext4-p2 dumpe2fs journal checksum type value=crc32c
+CROSSCHECK ok 6.1 ext4-p2 debugfs stat <8> size value=1048576
+CROSSCHECK ok 6.1 ext4-p2 debugfs stat <8> journal block map value={0: 8322, 1: 8323, 2: 8324, 3: 8325, 4: 8326, 5: 8327, 6: 8328, 7: 8329, 8: 8330, 9: 8331, 10: 8332, 11: 8333, 12: 8334, 13: 8335, 14: 8336, 15: 8337, 16: 8338, 17: 8339, 18: 8340, 19: 8341, 20: 8342,
+CROSSCHECK ok 6.1 ext4-p2 s_journal_inum value=8
+FACT J1.jsuper kernel=6.1 image=ext4-p3 version=2 blocksize=1024 maxlen=1024 first=1 sequence=62 start=0 compat=0x0 incompat=0x13 features=journal_incompat_revoke+journal_64bit+journal_checksum_v3 tag_size=16 checksum_type=4 num_fc_blks=0 sb_checksum_ok=True needs_recovery=False fs_fast_commit=False holes=0 inode_size=1048576 inode_blocks_mapped=1024
+CROSSCHECK ok 6.1 ext4-p3 journal inode fits s_maxlen value=True
+CROSSCHECK ok 6.1 ext4-p3 dumpe2fs journal features value=(0, 19)
+CROSSCHECK ok 6.1 ext4-p3 dumpe2fs journal blocks value=1024
+CROSSCHECK ok 6.1 ext4-p3 dumpe2fs journal sequence value=62
+CROSSCHECK ok 6.1 ext4-p3 dumpe2fs journal start value=0
+CROSSCHECK ok 6.1 ext4-p3 dumpe2fs fast commit length value=0
+CROSSCHECK ok 6.1 ext4-p3 dumpe2fs journal checksum value=463013261
+CROSSCHECK ok 6.1 ext4-p3 dumpe2fs journal checksum type value=crc32c
+CROSSCHECK ok 6.1 ext4-p3 debugfs stat <8> size value=1048576
+CROSSCHECK ok 6.1 ext4-p3 debugfs stat <8> journal block map value={0: 8322, 1: 8323, 2: 8324, 3: 8325, 4: 8326, 5: 8327, 6: 8328, 7: 8329, 8: 8330, 9: 8331, 10: 8332, 11: 8333, 12: 8334, 13: 8335, 14: 8336, 15: 8337, 16: 8338, 17: 8339, 18: 8340, 19: 8341, 20: 8342,
+CROSSCHECK ok 6.1 ext4-p3 s_journal_inum value=8
+FACT J1.jsuper kernel=6.1 image=ext4-p4 version=2 blocksize=1024 maxlen=1024 first=1 sequence=63 start=1 compat=0x0 incompat=0x13 features=journal_incompat_revoke+journal_64bit+journal_checksum_v3 tag_size=16 checksum_type=4 num_fc_blks=0 sb_checksum_ok=True needs_recovery=True fs_fast_commit=False holes=0 inode_size=1048576 inode_blocks_mapped=1024
+CROSSCHECK ok 6.1 ext4-p4 journal inode fits s_maxlen value=True
+CROSSCHECK ok 6.1 ext4-p4 dumpe2fs journal features value=(0, 19)
+CROSSCHECK ok 6.1 ext4-p4 dumpe2fs journal blocks value=1024
+CROSSCHECK ok 6.1 ext4-p4 dumpe2fs journal sequence value=63
+CROSSCHECK ok 6.1 ext4-p4 dumpe2fs journal start value=1
+CROSSCHECK ok 6.1 ext4-p4 dumpe2fs fast commit length value=0
+CROSSCHECK ok 6.1 ext4-p4 dumpe2fs journal checksum value=3197949674
+CROSSCHECK ok 6.1 ext4-p4 dumpe2fs journal checksum type value=crc32c
+CROSSCHECK ok 6.1 ext4-p4 debugfs stat <8> size value=1048576
+CROSSCHECK ok 6.1 ext4-p4 debugfs stat <8> journal block map value={0: 8322, 1: 8323, 2: 8324, 3: 8325, 4: 8326, 5: 8327, 6: 8328, 7: 8329, 8: 8330, 9: 8331, 10: 8332, 11: 8333, 12: 8334, 13: 8335, 14: 8336, 15: 8337, 16: 8338, 17: 8339, 18: 8340, 19: 8341, 20: 8342,
+CROSSCHECK ok 6.1 ext4-p4 s_journal_inum value=8
+FACT J1.jsuper kernel=6.1 image=ext4-p5 version=2 blocksize=1024 maxlen=1024 first=1 sequence=70 start=0 compat=0x0 incompat=0x13 features=journal_incompat_revoke+journal_64bit+journal_checksum_v3 tag_size=16 checksum_type=4 num_fc_blks=0 sb_checksum_ok=True needs_recovery=False fs_fast_commit=False holes=0 inode_size=1048576 inode_blocks_mapped=1024
+CROSSCHECK ok 6.1 ext4-p5 journal inode fits s_maxlen value=True
+CROSSCHECK ok 6.1 ext4-p5 dumpe2fs journal features value=(0, 19)
+CROSSCHECK ok 6.1 ext4-p5 dumpe2fs journal blocks value=1024
+CROSSCHECK ok 6.1 ext4-p5 dumpe2fs journal sequence value=70
+CROSSCHECK ok 6.1 ext4-p5 dumpe2fs journal start value=0
+CROSSCHECK ok 6.1 ext4-p5 dumpe2fs fast commit length value=0
+CROSSCHECK ok 6.1 ext4-p5 dumpe2fs journal checksum value=873621034
+CROSSCHECK ok 6.1 ext4-p5 dumpe2fs journal checksum type value=crc32c
+CROSSCHECK ok 6.1 ext4-p5 debugfs stat <8> size value=1048576
+CROSSCHECK ok 6.1 ext4-p5 debugfs stat <8> journal block map value={0: 8322, 1: 8323, 2: 8324, 3: 8325, 4: 8326, 5: 8327, 6: 8328, 7: 8329, 8: 8330, 9: 8331, 10: 8332, 11: 8333, 12: 8334, 13: 8335, 14: 8336, 15: 8337, 16: 8338, 17: 8339, 18: 8340, 19: 8341, 20: 8342,
+CROSSCHECK ok 6.1 ext4-p5 s_journal_inum value=8
+FACT J9.scan kernel=6.1 image=ext3-p0 live_txns=0 live_committed=0 live_stop=empty stale_txns=0 stale_committed=0 tags_live=0 tags_stale=0 revoke_records=0 seq_min=None seq_max=None log_blocks_used=0 journal_sequence=1 start=0
+FACT J9.scan kernel=6.1 image=ext3-p1 live_txns=0 live_committed=0 live_stop=empty stale_txns=5 stale_committed=5 tags_live=0 tags_stale=32 revoke_records=0 seq_min=2 seq_max=6 log_blocks_used=42 journal_sequence=8 start=0
+FACT J9.scan kernel=6.1 image=ext3-p2 live_txns=0 live_committed=0 live_stop=empty stale_txns=5 stale_committed=5 tags_live=0 tags_stale=25 revoke_records=1 seq_min=3 seq_max=9 log_blocks_used=35 journal_sequence=11 start=0
+FACT J9.scan kernel=6.1 image=ext4-p0 live_txns=0 live_committed=0 live_stop=empty stale_txns=0 stale_committed=0 tags_live=0 tags_stale=0 revoke_records=0 seq_min=None seq_max=None log_blocks_used=0 journal_sequence=1 start=0
+FACT J9.scan kernel=6.1 image=ext4-p1 live_txns=0 live_committed=0 live_stop=empty stale_txns=29 stale_committed=29 tags_live=0 tags_stale=146 revoke_records=0 seq_min=2 seq_max=30 log_blocks_used=204 journal_sequence=32 start=0
+FACT J9.scan kernel=6.1 image=ext4-p2 live_txns=0 live_committed=0 live_stop=empty stale_txns=29 stale_committed=29 tags_live=0 tags_stale=140 revoke_records=1 seq_min=3 seq_max=33 log_blocks_used=198 journal_sequence=35 start=0
+FACT J9.scan kernel=6.1 image=ext4-p3 live_txns=0 live_committed=0 live_stop=empty stale_txns=29 stale_committed=29 tags_live=0 tags_stale=143 revoke_records=1 seq_min=27 seq_max=60 log_blocks_used=201 journal_sequence=62 start=0
+FACT J9.scan kernel=6.1 image=ext4-p4 live_txns=4 live_committed=4 live_stop=end-of-log@32 stale_txns=25 stale_committed=25 tags_live=23 tags_stale=121 revoke_records=1 seq_min=27 seq_max=66 log_blocks_used=201 journal_sequence=63 start=1
+FACT J9.scan kernel=6.1 image=ext4-p5 live_txns=0 live_committed=0 live_stop=empty stale_txns=30 stale_committed=30 tags_live=0 tags_stale=142 revoke_records=1 seq_min=27 seq_max=68 log_blocks_used=200 journal_sequence=70 start=0
+FACT J1.checksums kernel=6.1 desc=148 desc_ok=148 commit=156 commit_ok=156 revoke=0 revoke_ok=0 tag=715 tag_ok=715
+CROSSCHECK ok 6.1 ext4-p4 logdump Journal starts at block value=1
+CROSSCHECK ok 6.1 ext4-p4 logdump transaction value=63
+CROSSCHECK ok 6.1 ext4-p4 live scan vs logdump -a (headers, tags, revokes) events=31
+CROSSCHECK ok 6.1 ext4-p4 live scan end block vs logdump value=[32]
+FACT J1.live kernel=6.1 image=ext4-p4 txns=4 committed=4 tags=23 events=31 stop=end-of-log@32 logdump_events=31 logdump_end=[32]
+HEX J1 live descriptor 6.1 ext4-p4 jblk 1 head 64 + tail 16      c03b3998000000010000003f0000008400000000000000000bfeeaa400000000000000000000000000000000000000020000000200000000e47207bd000000892e2e2e0000000000000000000000001e7f843c
+HEX J1 live commit 6.1 ext4-p4 jblk 9 head 64                    c03b3998000000020000003f0000000056346a41000000000000000000000000000000000000000000000000000000000000000065541b30094c5f0300000000
+FACT J1.live-checksums kernel=6.1 desc_tail_ok=True commit_ok=True tags_verified=23 tags_unverified=0
+FACT J1.live-txns kernel=6.1 seqs=63C,64C,65C,66C
+CROSSCHECK ok 6.1 ext4-p1 stale view vs logdump -O -a events=262
+CROSSCHECK ok 6.1 ext4-p1 logdump -O end block value=[205]
+FACT J3.logdump-O kernel=6.1 image=ext4-p1 rc=0 events=263 headers=58 tags=146 revokes=0 seq_mismatch=58 info={'start': 0, 'seq': 32} other=[]
+CROSSCHECK ok 6.1 ext4-p2 stale view vs logdump -O -a events=14
+CROSSCHECK ok 6.1 ext4-p2 logdump -O end block value=[11]
+FACT J3.logdump-O kernel=6.1 image=ext4-p2 rc=0 events=15 headers=3 tags=7 revokes=1 seq_mismatch=3 info={'start': 0, 'seq': 35} other=[]
+CROSSCHECK ok 6.1 ext4-p3 stale view vs logdump -O -a events=228
+CROSSCHECK ok 6.1 ext4-p3 logdump -O end block value=[177]
+FACT J3.logdump-O kernel=6.1 image=ext4-p3 rc=0 events=229 headers=51 tags=125 revokes=1 seq_mismatch=51 info={'start': 0, 'seq': 62} other=[]
+CROSSCHECK ok 6.1 ext3-p1 stale view vs logdump -O -a events=52
+CROSSCHECK ok 6.1 ext3-p1 logdump -O end block value=[43]
+FACT J3.logdump-O kernel=6.1 image=ext3-p1 rc=0 events=53 headers=10 tags=32 revokes=0 seq_mismatch=10 info={'start': 0, 'seq': 8} other=[]
+CROSSCHECK ok 6.1 ext3-p2 stale view vs logdump -O -a events=14
+CROSSCHECK ok 6.1 ext3-p2 logdump -O end block value=[11]
+FACT J3.logdump-O kernel=6.1 image=ext3-p2 rc=0 events=15 headers=3 tags=7 revokes=1 seq_mismatch=3 info={'start': 0, 'seq': 11} other=[]
+CROSSCHECK ok 6.1 ext4-p1 (before the delete) inode 15 size value=3000
+CROSSCHECK ok 6.1 ext4-p1 (before the delete) inode 15 links value=1
+CROSSCHECK ok 6.1 ext4-p1 (before the delete) inode 15 gen value=545040768
+CROSSCHECK ok 6.1 ext4-p1 (before the delete) inode 15 flags value=524288
+CROSSCHECK ok 6.1 ext4-p1 (before the delete) inode 15 map value=[(0, 15394), (1, 15395), (2, 15396)]
+CROSSCHECK ok 6.1 ext4-p1 (before the delete) inode 15 tree/indirect blocks value=[]
+CROSSCHECK ok 6.1 ext4-p2 (after the delete) inode 15 size value=0
+CROSSCHECK ok 6.1 ext4-p2 (after the delete) inode 15 links value=0
+CROSSCHECK ok 6.1 ext4-p2 (after the delete) inode 15 gen value=545040768
+CROSSCHECK ok 6.1 ext4-p2 (after the delete) inode 15 flags value=524288
+CROSSCHECK ok 6.1 ext4-p2 (after the delete) inode 15 dtime value=1700003600
+FACT J2.on-disk kernel=6.1 fs=ext4 file=small ino=15 pre_links=1 pre_size=3000 pre_gen=545040768 pre_extents_flag=True pre_depth=0 pre_blocks=3 pre_meta=[] post_links=0 post_dtime=1700003600 post_size=0 post_gen=545040768 post_ib_zero=False post_flags=0x80000 post_csum_ok=True
+HEX J2 6.1 ext4 small ino 15 i_block before delete (p1)          0af3010004000000000000000000000003000000223c0000000000000000000000000000000000000000000000000000000000000000000000000000
+HEX J2 6.1 ext4 small ino 15 i_block after delete (p2)           0af300000400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+FACT J2.copies kernel=6.1 image=ext4-p2 file=small ino=15 n=26 copies=seq33/stale/jblk6/links0/dtime1700003600/size0/gen545040768/verified;seq28/stale/jblk184/links1/dtime0/size3000/gen545040768/verified;seq27/stale/jblk176/links1/dtime0/size3000/gen545040768/verified;seq26/stale/jblk167/links0/dtime0/size0/gen0/verified;seq25/stale/jblk160/links0/dtime0/size0/gen0/verified;seq24/stale/jblk153/links0/dtime0/size0/gen0/verified;seq23/stale/jblk146/links0/dtime0/size0/gen0/verified;seq22/stale/jblk139/links0/dtime0/size0/gen0/verified;seq21/stale/jblk132/links0/dtime0/size0/gen0/verified;seq20/stale/jblk125/links0/dtime0/size0/gen0/verified;seq19/stale/jblk118/links0/dtime0/size0/gen0/verified;seq18/stale/jblk111/links0/dtime0/size0/gen0/verified;seq17/stale/jblk104/links0/dtime0/size0/gen0/verified;seq16/stale/jblk97/links0/dtime0/size0/gen0/verified;seq15/stale/jblk90/links0/dtime0/size0/gen0/verified;seq14/stale/jblk83/links0/dtime0/size0/gen0/verified;seq13/stale/jblk76/links0/dtime0/size0/gen0/verified;seq12/stale/jblk69/links0/dtime0/size0/gen0/verified;seq11/stale/jblk62/links0/dtime0/size0/gen0/verified;seq10/stale/jblk55/links0/dtime0/size0/gen0/verified;seq9/stale/jblk48/links0/dtime0/size0/gen0/verified;seq8/stale/jblk41/links0/dtime0/size0/gen0/verified;seq7/stale/jblk34/links0/dtime0/size0/gen0/verified;seq6/stale/jblk29/links0/dtime0/size0/gen0/verified;seq5/stale/jblk24/links0/dtime0/size0/gen0/verified;seq4/stale/jblk19/links0/dtime0/size0/gen0/verified
+HEX J2 6.1 ext4 small stale copy slot (seq 28 jblk 184)          a4810000b80b000001f1536501f1536501f1536500000000000001000600000000000800010000000af3010004000000000000000000000003000000223c000000000000000000000000000000000000000000000000000000000000000000000000000080a97c2000000000000000000000000000000000000000004e860000
+FACT J2.result kernel=6.1 fs=ext4 file=small found=True live_state_copies=2 stale_committed_live_copies=2 same_generation=2 where=seq28/stale/jblk184/verified map_equal=True size_equal=True gen_equal=True
+CROSSCHECK ok 6.1 ext4-p1 (before the delete) inode 13 size value=24567
+CROSSCHECK ok 6.1 ext4-p1 (before the delete) inode 13 links value=1
+CROSSCHECK ok 6.1 ext4-p1 (before the delete) inode 13 gen value=724630903
+CROSSCHECK ok 6.1 ext4-p1 (before the delete) inode 13 flags value=524288
+CROSSCHECK ok 6.1 ext4-p1 (before the delete) inode 13 map value=[(0, 15362), (1, 15364), (2, 15366), (3, 15368), (4, 15370), (5, 15372), (6, 15374), (7, 15376), (8, 15378), (9, 15380), (10, 15382), (11, 15384), (12, 15386), (13, 15388), (14, 15390), (15, 15392), (
+CROSSCHECK ok 6.1 ext4-p1 (before the delete) inode 13 tree/indirect blocks value=[9346]
+CROSSCHECK ok 6.1 ext4-p2 (after the delete) inode 13 size value=0
+CROSSCHECK ok 6.1 ext4-p2 (after the delete) inode 13 links value=0
+CROSSCHECK ok 6.1 ext4-p2 (after the delete) inode 13 gen value=724630903
+CROSSCHECK ok 6.1 ext4-p2 (after the delete) inode 13 flags value=524288
+CROSSCHECK ok 6.1 ext4-p2 (after the delete) inode 13 dtime value=1700003600
+FACT J2.on-disk kernel=6.1 fs=ext4 file=deep ino=13 pre_links=1 pre_size=24567 pre_gen=724630903 pre_extents_flag=True pre_depth=1 pre_blocks=24 pre_meta=[9346] post_links=0 post_dtime=1700003600 post_size=0 post_gen=724630903 post_ib_zero=False post_flags=0x80000 post_csum_ok=True
+HEX J2 6.1 ext4 deep ino 13 i_block before delete (p1)           0af3010004000100000000000000000082240000000000000100000001000000043c00000200000001000000063c00000300000001000000083c0000
+HEX J2 6.1 ext4 deep ino 13 i_block after delete (p2)            0af3000004000000000000000000000082240000000000000100000001000000043c00000200000001000000063c00000300000001000000083c0000
+FACT J2.copies kernel=6.1 image=ext4-p2 file=deep ino=13 n=26 copies=seq33/stale/jblk6/links0/dtime1700003600/size0/gen724630903/verified;seq28/stale/jblk184/links1/dtime0/size24567/gen724630903/verified;seq27/stale/jblk176/links1/dtime0/size24567/gen724630903/verified;seq26/stale/jblk167/links1/dtime0/size24567/gen724630903/verified;seq25/stale/jblk160/links1/dtime0/size23552/gen724630903/verified;seq24/stale/jblk153/links1/dtime0/size22528/gen724630903/verified;seq23/stale/jblk146/links1/dtime0/size21504/gen724630903/verified;seq22/stale/jblk139/links1/dtime0/size20480/gen724630903/verified;seq21/stale/jblk132/links1/dtime0/size19456/gen724630903/verified;seq20/stale/jblk125/links1/dtime0/size18432/gen724630903/verified;seq19/stale/jblk118/links1/dtime0/size17408/gen724630903/verified;seq18/stale/jblk111/links1/dtime0/size16384/gen724630903/verified;seq17/stale/jblk104/links1/dtime0/size15360/gen724630903/verified;seq16/stale/jblk97/links1/dtime0/size14336/gen724630903/verified;seq15/stale/jblk90/links1/dtime0/size13312/gen724630903/verified;seq14/stale/jblk83/links1/dtime0/size12288/gen724630903/verified;seq13/stale/jblk76/links1/dtime0/size11264/gen724630903/verified;seq12/stale/jblk69/links1/dtime0/size10240/gen724630903/verified;seq11/stale/jblk62/links1/dtime0/size9216/gen724630903/verified;seq10/stale/jblk55/links1/dtime0/size8192/gen724630903/verified;seq9/stale/jblk48/links1/dtime0/size7168/gen724630903/verified;seq8/stale/jblk41/links1/dtime0/size6144/gen724630903/verified;seq7/stale/jblk34/links1/dtime0/size5120/gen724630903/verified;seq6/stale/jblk29/links1/dtime0/size4096/gen724630903/verified;seq5/stale/jblk24/links1/dtime0/size3072/gen724630903/verified;seq4/stale/jblk19/links1/dtime0/size2048/gen724630903/verified
+HEX J2 6.1 ext4 deep stale copy slot (seq 28 jblk 184)           a4810000f75f000000f1536501f1536501f1536500000000000001003200000000000800010000000af3010004000100000000000000000082240000000000000100000001000000043c00000200000001000000063c00000300000001000000083c000077fd302b000000000000000000000000000000000000000005230000
+FACT J2.result kernel=6.1 fs=ext4 file=deep found=True live_state_copies=25 stale_committed_live_copies=25 same_generation=25 where=seq28/stale/jblk184/verified map_equal=True size_equal=True gen_equal=True
+CROSSCHECK ok 6.1 ext3-p1 (before the delete) inode 13 size value=20469
+CROSSCHECK ok 6.1 ext3-p1 (before the delete) inode 13 links value=1
+CROSSCHECK ok 6.1 ext3-p1 (before the delete) inode 13 gen value=3747370906
+CROSSCHECK ok 6.1 ext3-p1 (before the delete) inode 13 flags value=0
+CROSSCHECK ok 6.1 ext3-p1 (before the delete) inode 13 map value=[(0, 8129), (1, 8130), (2, 8131), (3, 8132), (4, 8133), (5, 8134), (6, 8135), (7, 8136), (8, 8137), (9, 8138), (10, 8139), (11, 8140), (12, 8141), (13, 8142), (14, 8143), (15, 8144), (16, 8145), (17, 
+CROSSCHECK ok 6.1 ext3-p1 (before the delete) inode 13 tree/indirect blocks value=[1591]
+CROSSCHECK ok 6.1 ext3-p2 (after the delete) inode 13 size value=0
+CROSSCHECK ok 6.1 ext3-p2 (after the delete) inode 13 links value=0
+CROSSCHECK ok 6.1 ext3-p2 (after the delete) inode 13 gen value=3747370906
+CROSSCHECK ok 6.1 ext3-p2 (after the delete) inode 13 flags value=0
+CROSSCHECK ok 6.1 ext3-p2 (after the delete) inode 13 dtime value=1700003600
+FACT J2.on-disk kernel=6.1 fs=ext3 file=bm ino=13 pre_links=1 pre_size=20469 pre_gen=3747370906 pre_extents_flag=False pre_depth=blockmap pre_blocks=20 pre_meta=[1591] post_links=0 post_dtime=1700003600 post_size=0 post_gen=3747370906 post_ib_zero=True post_flags=0x0 post_csum_ok=None
+HEX J2 6.1 ext3 bm ino 13 i_block before delete (p1)             c11f0000c21f0000c31f0000c41f0000c51f0000c61f0000c71f0000c81f0000c91f0000ca1f0000cb1f0000cc1f0000370600000000000000000000
+HEX J2 6.1 ext3 bm ino 13 i_block after delete (p2)              000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+FACT J2.copies kernel=6.1 image=ext3-p2 file=bm ino=13 n=4 copies=seq9/stale/jblk6/links0/dtime1700003600/size0/gen3747370906/unverified;seq6/stale/jblk38/links1/dtime0/size20469/gen3747370906/unverified;seq5/stale/jblk30/links1/dtime0/size20469/gen3747370906/unverified;seq4/stale/jblk22/links1/dtime0/size20469/gen3747370906/unverified
+HEX J2 6.1 ext3 bm stale copy slot (seq 6 jblk 38)               a4810000f54f000000f1536500f1536500f1536500000000000001002a0000000000000001000000c11f0000c21f0000c31f0000c41f0000c51f0000c61f0000c71f0000c81f0000c91f0000ca1f0000cb1f0000cc1f00003706000000000000000000009a575cdf000000000000000000000000000000000000000000000000
+FACT J2.result kernel=6.1 fs=ext3 file=bm found=True live_state_copies=3 stale_committed_live_copies=3 same_generation=3 where=seq6/stale/jblk38/unverified map_equal=True size_equal=True gen_equal=True
+FACT J4.state kernel=6.1 needs_recovery=True s_start=1 s_sequence=63 live_txns=4 committed=4 stop=end-of-log@32
+FACT J4.copies kernel=6.1 file=y ino=13 committed_live_copies=seq65/links1/dtime0/size2048;seq64/links0/dtime1700010800/size0;seq63/links1/dtime0/size1500
+FACT J4.copies kernel=6.1 file=live ino=12 committed_live_copies=seq66/links1/dtime0/size1600
+FACT J4.copies kernel=6.1 file=x ino=13 committed_live_copies=seq65/links1/dtime0/size2048;seq64/links0/dtime1700010800/size0;seq63/links1/dtime0/size1500
+FACT J4.as-found kernel=6.1 y_in_home_inode=1 y_home_size=2048 root_listing='      2   40755 (2)      0      0    1024 15-Nov-2023 01:13 . |       2   40755 (2)      0      0    1024 15-Nov-2023 01:13 .. |      11   40700 (2)      0      0   12288 14-Nov-2023 22:13 lost+found |      12  100644 (1)      0      0    1600 15-Nov-2023 01:13 live |      14  100644 (1)      0     '
+FACT J4.replay-listing kernel=6.1 files=/mnt/f1:8:0d41ebe4ebe2;/mnt/f2:8:86cb4821fb78;/mnt/f3:8:b53e4ca33448;/mnt/live:1600:22e20599f917;/mnt/pad:24567:c56748c9952e;/mnt/spad:24569:d3dbcc7449cc;/mnt/y:2048:bc1c3559513a
+FACT J4.replay kernel=6.1 y_listed=True live_appended_listed=True x_absent=True z_absent=True p4_sha_before_replay=daa921c633d3f2a2066ba1494bd0b07819ab7452dc6781518b8579d29c0801b9 p4_sha_after_replay=daa921c633d3f2a2066ba1494bd0b07819ab7452dc6781518b8579d29c0801b9 p4_unchanged=True
+FACT J4.dmesg kernel=6.1 lines=['PROBE-DMESG [    3.178716] EXT4-fs (vda): recovery complete', 'PROBE-DMESG [    3.187376] EXT4-fs (vda): mounted filesystem with ordered data mode. Quota mode: none.']
+FACT J5.row kernel=6.1 label=j0 disk_s_sequence=62 disk_s_start=0 x_home_slot_links_dtime_size=None
+FACT J5.row kernel=6.1 label=j1 disk_s_sequence=63 disk_s_start=1 x_home_slot_links_dtime_size=(1, 0, 1500)
+FACT J5.row kernel=6.1 label=j2 disk_s_sequence=63 disk_s_start=1 x_home_slot_links_dtime_size=(0, 1700010800, 0)
+FACT J5.row kernel=6.1 label=j3 disk_s_sequence=63 disk_s_start=1 x_home_slot_links_dtime_size=(1, 0, 2048)
+FACT J5.row kernel=6.1 label=j4 disk_s_sequence=63 disk_s_start=1 x_home_slot_links_dtime_size=(1, 0, 2048)
+HEX J5 6.1 home slot of x after the second sync (O_DIRECT read of the disk) a481000000000000301b5465301b5465301b5465301b5465000000000000000000000800010000000af300000400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000804a158f0000000000000000000000000000000000000000b36f0000
+FACT J5.result kernel=6.1 s_start_moved_by_second_sync=False home_deleted_after_sync=True home_created_after_first_sync=True
+FACT J6.revokes kernel=6.1 deep_ino=13 deep_depth=1 deep_leaf_blocks=[9346] new_txns_in_p2=1 revoke_records_in_new_txns=[9346] leaves_revoked=[9346] leaves_not_revoked=[]
+HEX J6 revoke block 6.1 ext4-p2 seq 33 jblk 1 head 48            c03b39980000000500000021000000180000000000002482000000000000000000000000000000000000000000000000
+FACT J6.ext3 kernel=6.1 bm_ino=13 indirect_blocks=[1591] revoked=[1591] revoke_records=[1591]
+FACT J7.copies kernel=6.1 same_ino=13 live_state_committed_copies=seq59/stale/depth1/size24569;seq58/stale/depth1/size23552;seq57/stale/depth1/size22528;seq56/stale/depth1/size21504;seq55/stale/depth1/size20480;seq54/stale/depth1/size19456;seq53/stale/depth1/size18432;seq52/stale/depth1/size17408;seq51/stale/depth1/size16384;seq50/stale/depth1/size15360;seq49/stale/depth1/size14336;seq48/stale/depth1/size13312 content_truth_blocks=24 expected_blocks=24
+HEX J7 6.1 ext4-p3 inode copy root of same (seq 59)              a4810000f95f0000200d5465210d5465210d546500000000000001003200000000000800010000000af30100040001000000000000000000822400000000000001000000010000009604000002000000010000009804000003000000010000009a040000da37fad40000000000000000000000000000000000000000613f0000
+FACT J7.result kernel=6.1 journal_map_blocks=24 truth_blocks=24 equal=True problems=[] leaves_from=leaf9346@seq59/jblk163/revokedTrue depth=1
+FACT J9.stage kernel=6.1 image=ext4-p1 new_txns=29 new_tags=146 new_revoke_records=0 new_log_blocks=204 new_first_jblk=1 new_last_jblk=204 journal_blocks=1024 surviving_older_txns=0 max_seq=30
+FACT J9.stage kernel=6.1 image=ext4-p2 new_txns=1 new_tags=7 new_revoke_records=1 new_log_blocks=10 new_first_jblk=1 new_last_jblk=10 journal_blocks=1024 surviving_older_txns=28 max_seq=33
+FACT J9.stage kernel=6.1 image=ext4-p3 new_txns=25 new_tags=125 new_revoke_records=1 new_log_blocks=176 new_first_jblk=1 new_last_jblk=176 journal_blocks=1024 surviving_older_txns=4 max_seq=60
+FACT J9.stage kernel=6.1 image=ext4-p4 new_txns=4 new_tags=23 new_revoke_records=0 new_log_blocks=31 new_first_jblk=1 new_last_jblk=31 journal_blocks=1024 surviving_older_txns=25 max_seq=66
+FACT J9.stage kernel=6.1 image=ext3-p1 new_txns=5 new_tags=32 new_revoke_records=0 new_log_blocks=42 new_first_jblk=1 new_last_jblk=42 journal_blocks=1024 surviving_older_txns=0 max_seq=6
+FACT J9.stage kernel=6.1 image=ext3-p2 new_txns=1 new_tags=7 new_revoke_records=1 new_log_blocks=10 new_first_jblk=1 new_last_jblk=10 journal_blocks=1024 surviving_older_txns=4 max_seq=9
+FACT J9.survival kernel=6.1 fs=ext4 file=small image=ext4-p2 live_state_p1_copies=2 jblks=184,176 seqs=28,27
+FACT J9.survival kernel=6.1 fs=ext4 file=small image=ext4-p3 live_state_p1_copies=1 jblks=184 seqs=28
+FACT J9.survival kernel=6.1 fs=ext3 file=bm image=ext3-p2 live_state_p1_copies=3 jblks=38,30,22 seqs=6,5,4
+== gates
+GATE-J1: holds per-kernel={'5.10': True, '6.1': True} features={'5.10': ['journal_incompat_revoke', 'journal_64bit', 'journal_checksum_v3'], '6.1': ['journal_incompat_revoke', 'journal_64bit', 'journal_checksum_v3']} tag_size={'5.10': 16, '6.1': 16}
+GATE-J2: holds per-kernel={'5.10': True, '6.1': True} files={'5.10': {'ext4/small': True, 'ext4/deep': True, 'ext3/bm': True}, '6.1': {'ext4/small': True, 'ext4/deep': True, 'ext3/bm': True}}
+GATE-J3: yes per-image={'5.10': {'ext4-p1': True, 'ext4-p2': True, 'ext4-p3': True, 'ext3-p1': True, 'ext3-p2': True}, '6.1': {'ext4-p1': True, 'ext4-p2': True, 'ext4-p3': True, 'ext3-p1': True, 'ext3-p2': True}}
+GATE-J4: holds per-kernel={'5.10': True, '6.1': True} detail={'5.10': {'ok': True, 'needs_recovery': True, 'start': 1, 'y_in': True, 'live_in': True, 'x_del': True, 'want_y': True, 'want_live': True, 'no_x': True, 'no_z': True, 'unchanged': True}, '6.1': {'ok': True, 'needs_recovery': True, 'start': 1, 'y_in': True, 'live_in': True, 'x_del': True, 'want_y': True, 'want_live': True, 'no_x': True, 'no_z': True, 'unchanged': True}}
+GATE-J5: yes detail={'5.10': {'s_start_moved_by_second_sync': False, 'home_deleted_after_sync': True, 'home_created_after_first_sync': True}, '6.1': {'s_start_moved_by_second_sync': False, 'home_deleted_after_sync': True, 'home_created_after_first_sync': True}}
+GATE-J6: yes detail={'5.10': (True, {'leaves': 1, 'revoked': 1}), '6.1': (True, {'leaves': 1, 'revoked': 1})}
+GATE-J7: no detail={'5.10': False, '6.1': True}
+GATE-J8: yes detail={'5.10': {'ok': True, 'tag_size': [8], 'features': ['(none)', 'journal_incompat_revoke']}, '6.1': {'ok': True, 'tag_size': [8], 'features': ['(none)', 'journal_incompat_revoke']}}
+GATE-J9: keeps journal_blocks={'5.10': [1024], '6.1': [1024]} survival={'5.10': {'ext4/p2': 2, 'ext4/p3': 1, 'ext3/p2': 3}, '6.1': {'ext4/p2': 2, 'ext4/p3': 1, 'ext3/p2': 3}}
+GATE-J10: identical kernels=['5.10', '6.1'] differences=[]
+GATE-J11: clean detail={'5.10': {'fast_commit': False, 'async_commit': False, 'features': ['(none)', 'journal_64bit+journal_checksum_v3', 'journal_incompat_revoke', 'journal_incompat_revoke+journal_64bit+journal_checksum_v3']}, '6.1': {'fast_commit': False, 'async_commit': False, 'features': ['(none)', 'journal_64bit+journal_checksum_v3', 'journal_incompat_revoke', 'journal_incompat_revoke+journal_64bit+journal_checksum_v3']}}
+CROSSCHECK-SUMMARY differences=0 []
+PROBE COMPLETE exit=0

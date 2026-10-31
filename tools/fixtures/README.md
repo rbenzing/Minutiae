@@ -808,7 +808,7 @@ and the spec §18 "from memory" items stay marked until then):
       bitmap bits and KEEPS the FAT entries of a chained file (see "FAT/exFAT recovery probe (3B)", P3)
 - [x] F2FS node-block survival after unlink, and `nodiscard` mount behaviour (3D): measured, see
       "F2FS recovery probe (3D)"
-- [ ] jbd2 stale journal region contents (3G)
+- [x] jbd2 stale journal region contents (3G): measured, see "ext4 journal probe (3G)"
 - [ ] F2FS roll-forward node chain after an fsync'd write and an unclean quit (3H)
 - [ ] `sqlite3` WAL / rollback-journal leftovers (3J)
 - [ ] whether the guest clock holds a fixed time without the rewind loop for a longer run
@@ -1301,6 +1301,72 @@ Regeneration depends on the kernel's block allocator placement and may need re-t
 NOT produced by a real kernel (builder tests only): an unclean image (`needs_recovery`), a damaged or hostile stale map,
 cross-linked or out-of-range map blocks, a leaf index that overflows, two deleted names of one inode other than the hard link,
 a block-map file with a double-indirect block, encrypted inodes, and an inline directory.
+
+## ext4 journal probe (3G)
+
+`recover_ext4_journal_probe.sh` (run in `minutiae-recover-fixtures-510`; no image was built for it) boots the QEMU guest on both
+kernels (Debian `5.10.0-32-amd64` = 5.10.223 and `6.1.0-53-amd64`; `ext4.ko` and `jbd2.ko` are loaded only by the guest's own
+`/init`) and decodes the finished images on the host with `ext4_journal_oracle.py probe`, an independent jbd2 decoder with its own
+crc32c (independent code, not an independent specification: the layout is the kernel header's, from memory). Wherever the decoder and
+a tool report the same field they are compared, and a difference exits 1: 276 comparisons, 0 differences (live scan against
+`debugfs logdump -a` event by event; the stale view against `logdump -O -a`; the journal superblock against `dumpe2fs -h`; the journal
+inode and every file inode, with its map and tree/indirect blocks, against `debugfs stat`). Raw output:
+`ext4-journal-probe/probe.txt` (run 2026-10-31, `JSIZE=1`, e2fsprogs 1.47.0, QEMU 7.2.22). It is not byte-reproducible: the kernels
+stamp times and the placement depends on the allocator.
+
+Stages per kernel, one guest boot each, the guest clock one hour later each time:
+
+- `ext4-p1`: `live`, 24 interleaved blocks of `deep` and `pad` (so `deep` has a depth-1 tree), `small`, three fillers; clean unmount.
+- `ext4-p2`: rm `small` and `deep`; clean unmount.
+- `ext4-p3`: 24 interleaved blocks of `same` and `spad`, then rm `same` in the same boot; clean unmount.
+- `ext4-p4`: write `x`, sync, rm `x`, sync, write `y` with fsync, append to `live` with fsync, an unsynced `z`; then
+  `GUEST_HALT=crash` (`GUEST-CRASH`, `echo b > /proc/sysrq-trigger`; QEMU exits under `-no-reboot`).
+- `ext4-p5`: a normal mount of a COPY of `ext4-p4`, which makes the kernel replay. `ext4-p4` is not changed (sha256 equal before and after).
+- `ext3-p1`, `ext3-p2`: a block-mapped file `bm`, mounted by the ext4 driver.
+
+Format: ext4 16 MiB `-t ext4 -b 1024 -O metadata_csum,64bit,^orphan_file -m 0 -J size=1 -N 4096`; ext3 8 MiB
+`-t ext3 -b 1024 -O ^dir_index,^orphan_file -m 0 -J size=1 -N 2048`. Both under `faketime`, with a fixed UUID and hash seed.
+
+### Gates (2026-10-31)
+
+| Gate | Result | Branch it picks |
+|---|---|---|
+| J1 (STOP) | HOLDS on both kernels. The decoder's live scan of `ext4-p4` equals `logdump -a` (31 events: 4 committed transactions, seq 63-66, 23 tags, end block 32). The journal superblock verifies (type 4, `s_blocksize` 1024, `s_maxlen` 1024, `s_first` 1, checksum type 4). Tag size 16. All 148 descriptor tails, 156 commit blocks and 715 tag checksums over all images verify | the 3G-R2 to R4 layout stands |
+| J2 (STOP) | HOLDS on both kernels. After p1 and p2, a committed live-state copy in a STALE fragment of `ext4-p2` has the deleted inode's `i_generation`, the pre-delete `i_block` bytes (so the map) and the pre-delete size: `small` (2 copies, newest seq 28, journal block 184, tag checksum verified), `deep` (25 copies, depth-1 root) and, on ext3, `bm` (3 copies, newest seq 6, journal block 38, `unverified`: no checksums) | the journal-inode source has copies to find |
+| J3 | yes. `logdump -O` exists in 1.47.0, exits 0 and lists stale transactions (it prints `Found sequence S (not E) at block B: end of journal` and goes on). The decoder's view from journal block 1 equals it on 5 images per kernel | a stale cross-check goes in Task 14 |
+| J4 (STOP) | HOLDS on both kernels. After the no-sync reboot `needs_recovery` is set, `s_start` is 1, `s_sequence` 63, and 4 committed transactions are live. The fsynced `y` (2048 bytes) and the appended `live` (1600 bytes) are in committed live transactions. The replay of the copy lists `y` and `live` with the payload sha256, and neither `x` nor `z`; dmesg says `recovery complete`. `e2fsck -fn` on `ext4-p4` exits 4 | the crash route works as 3G-R20 says |
+| J5 | yes on both kernels. Read straight from the disk (`O_DIRECT`) in the guest, `s_start` is 1 after the first sync and unchanged after the second, while the home inode-table slot of `x` is created after the first sync and deleted (links 0, dtime set) after the second | family `crash-live-copy` is possible |
+| J6 | yes on both kernels. The delete transaction of depth-1 `deep` holds a revoke record for its one leaf block (5.10: 9355, 6.1: 9346), and on ext3 for the single-indirect block of `bm` (1592, 1591) | a revoked map-block copy is the state before the delete |
+| J7 | NO on the fixture kernel. On 6.1 the same-boot `same` file has a depth-1 tree and the journal copies give its full map (24 blocks, equal to the blocks found by content; the newest copy of its leaf is itself revoked). On 5.10 the same workload leaves `same` at depth 0 (extents in the inode), so there is no leaf to find | builder-only (no `jsameboot` family on 5.10, the kernel of the positive fixtures) |
+| J8 | yes on both kernels. The ext3 journal has features `(none)` (`journal_incompat_revoke` once a revoke was written), no 64-bit, no checksums, 8-byte tags; the decoder with 8-byte tags equals `logdump -O` | ext3: 8-byte tags, no checksums |
+| J9 | `-J size=1` (1024 blocks, the mke2fs minimum) keeps the copies. p1 writes 29 transactions in 204 log blocks, p2 1 in 10, p3 25 in 177, p4 4 in 31. The log restarts at `s_first` (journal block 1) at every mount, so each boot overwrites the head of the previous one and the older tail survives. The p1 live-state copies of `small` survive p2 (2) and p3 (1); those of `bm` survive ext3 p2 (3) | `-J size=1` |
+| J10 | identical: the same features, tag size, checksum type, flag values and block types over all stages; only the data differs (a kernel's images hold more or fewer revoke blocks) | one decoder for both kernels |
+| J11 | clean: no `fast_commit` (neither the file system feature nor the journal's) and no `async_commit` | no fast-commit path in the fixtures |
+
+### Facts (both kernels agree unless one is named)
+
+| Fact | Value | Command (inside `recover_ext4_journal_probe.sh`) | Date |
+|---|---|---|---|
+| Journal of a fresh `mke2fs` | features `(none)`, sequence 1, start 0, 1024 blocks, journal inode 8 with a backup in the superblock | `dumpe2fs -h` of the formatted image | 2026-10-31 |
+| Journal features after the first mount of the ext4 image | incompat `0x12` (`journal_64bit` + `journal_checksum_v3`); `journal_incompat_revoke` (0x1) is added only when the first revoke record is written (`ext4-p2`: `0x13`) | `FACT J1.jsuper`, checked with `dumpe2fs -h` | 2026-10-31 |
+| Journal features of the ext3 image | `(none)`, then `journal_incompat_revoke` after the first revoke; never 64-bit or checksum | the same | 2026-10-31 |
+| Header block layout | big-endian; magic `0xC03B3998`; type 1 descriptor, 2 commit, 4 superblock v2, 5 revoke | decoder against `logdump -a` | 2026-10-31 |
+| Tag layout | 16 bytes with checksum v3 (`blocknr`, `flags` (low 16 bits at offset 6), `blocknr_high`, `checksum`); 8 bytes on ext3. The decoder walks `SAME_UUID`, `LAST_TAG` and the 16-byte UUID rule and matches `logdump` on every tag | the same | 2026-10-31 |
+| Checksums | the seed is crc32c(`~0`, journal UUID). The superblock, the descriptor tail, the revoke tail, the commit block (`h_chksum[0]` at offset 0x10) and the tag (`crc32c(crc32c(seed, be32(seq)), block as logged)`, all 32 bits with v3) all verify | the decoder: 148 + 156 + 715 checks | 2026-10-31 |
+| Where a mount starts logging | at `s_first` (journal block 1), every time, also after a clean unmount | `FACT J9.stage` (`new_first_jblk=1`) | 2026-10-31 |
+| Clean unmount | `s_start` 0, `s_sequence` the next transaction id; everything still in the log is a stale fragment | `FACT J1.jsuper` | 2026-10-31 |
+| Crash image `ext4-p4` | `needs_recovery`, `s_start` 1, `s_sequence` 63, 4 committed live transactions, then `end-of-log@32` | `FACT J4.state` | 2026-10-31 |
+| Inode reuse in one boot | `y` took the inode number freed by `x` (13); the live region holds both incarnations, told apart by the sequence | `FACT J4.copies` | 2026-10-31 |
+| As-found view of the crash image | `debugfs` already sees `y` in the home inode table | `FACT J4.as-found` | 2026-10-31 |
+| Replay of a copy | `EXT4-fs (vda): recovery complete`; `ext4-p4` unchanged | `FACT J4.dmesg`, `FACT P4.sha256` | 2026-10-31 |
+| `e2fsck -fn` | exit 0 on every clean image on both kernels; exit 4 on the crash image | `FACT E2FSCK` | 2026-10-31 |
+| Deleted inode on disk | links 0, dtime set, size 0, `i_generation` kept; `i_block` is all zero on ext3 and NOT all zero on ext4 (not decoded further here) | `FACT J2.on-disk` | 2026-10-31 |
+| Inode-table copy | the 256-byte slot at `((ino-1) mod ipg) * 256` of the logged block; the inode checksum verifies | `FACT J2.result` | 2026-10-31 |
+
+Not exercised by this probe, so still "from memory" and builder-tested only: the `ESCAPE` flag (it never occurred), a second descriptor
+block in one transaction, the PASS_SCAN rule at a bad checksum, the revoke rule across fragments, `csum_v2` (its tag size has 2 padding
+bytes in the kernel header, which 3G-R4 does not mention), the wrap of the log, the fast-commit area and async commit. The crash route
+(`GUEST_HALT=crash`) is independent of 3H's monitor-quit mode.
 
 ## F2FS recovery probe (3D)
 

@@ -98,6 +98,17 @@ umount /mnt || echo "OP-FAIL umount"
 echo GUEST-DONE
 poweroff -f
 EOT
+  # GUEST_HALT=crash (plan 3G): the init ends after the last op with GUEST-CRASH and an immediate sysrq reboot, with no
+  # sync and no umount, so the journal is left as the kernel had it at that instant (QEMU runs -no-reboot and exits).
+  # Every other value (unset by default) leaves the init above byte-identical.
+  if [ "${GUEST_HALT:-}" = crash ]; then
+    sed -i '/^sync$/,$d' "$rd/init"
+    cat >>"$rd/init" <<'EOT'
+echo GUEST-CRASH
+echo b > /proc/sysrq-trigger
+sleep 60
+EOT
+  fi
   chmod +x "$rd/init"
 }
 
@@ -109,6 +120,7 @@ guest_run() {
     -append "console=ttyS0 panic=-1 loglevel=4" \
     -drive "file=$img,format=raw,if=virtio${GUEST_DRIVE_OPTS:-}" >"$log" 2>&1 || echo "qemu exit status $?" >&2
   grep -a -e 'OP [0-9]' -e 'OP-FAIL' -e 'GUEST-' "$log" || true
-  grep -aq 'GUEST-DONE' "$log" || { echo "guest did not finish: $log" >&2; tail -n 20 "$log" >&2; return 1; }
+  if [ "${GUEST_HALT:-}" = crash ]; then done_tag=GUEST-CRASH; else done_tag=GUEST-DONE; fi
+  grep -aq "$done_tag" "$log" || { echo "guest did not finish: $log" >&2; tail -n 20 "$log" >&2; return 1; }
   if grep -aq 'OP-FAIL' "$log"; then echo "guest op failed: $log" >&2; return 1; fi
 }
