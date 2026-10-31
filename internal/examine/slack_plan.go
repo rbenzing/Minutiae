@@ -40,9 +40,6 @@ type SlackSegment struct {
 	FileSize            int64
 	Uniform             bool
 	Fill                byte // the fill byte of a uniform segment (3F-R20)
-	// Assumption is "shared-unit-unchecked" when some file could not be opened for the shared-unit check, so the
-	// overlap check of this segment was incomplete (3F-C2); empty otherwise.
-	Assumption string
 }
 
 // SlackVolumeChunk is the granularity of the uniform test of volume slack.
@@ -83,6 +80,7 @@ type slackPlan struct {
 	files            int            // live regular files visited
 	skipped          map[string]int // outcome -> files (3F-R2 names, plus "limit"); volume-level counts are included, see volCounted
 	volCounted       int            // how many of skipped's counts belong to the volume part, not to files
+	volClipped       int64          // bytes of the partition past the end of the image (beyond-image)
 	volSkipped       map[string]int // the volume part's share of skipped, per outcome (sums to volCounted)
 	uniformSegs      int
 	uniformBytes     int64 // file segments counted, not exported
@@ -236,12 +234,6 @@ func (s *Session) planSlack(ctx context.Context, o SlackOptions, fsys filesys.Fi
 	}
 	if n := pl.p.unchecked; n > 0 {
 		pl.warn("unchecked", "", fmt.Sprintf("%d live file(s) could not be opened for the shared-unit check: their allocation units are unknown, so the overlap check is incomplete", n))
-		for i := range pl.p.file {
-			pl.p.file[i].Assumption = slackUncheckedTag
-		}
-		for i := range pl.p.omitted {
-			pl.p.omitted[i].Assumption = slackUncheckedTag
-		}
 	}
 	if !pl.p.fileIncomplete() {
 		pl.p.omitted, pl.p.omittedLost = nil, 0
@@ -283,7 +275,7 @@ func (pl *slackPlanner) setLimit(which, detail string) {
 	}
 }
 
-// slackUncheckedTag is the Assumption of a segment planned while some file could not be opened (3F-C2).
+// slackUncheckedTag is the Assumption of an artifact whose segments were planned while some file could not be opened (3F-C2).
 const slackUncheckedTag = "shared-unit-unchecked"
 
 // markUnchecked counts a live file whose units are unknown, once however many passes failed to open it.
@@ -345,6 +337,7 @@ func (pl *slackPlanner) planFiles() error {
 // candidates (no content read).
 func (pl *slackPlanner) collect() ([]*slackCand, error) {
 	var cands []*slackCand
+	candPathBytes := 0 // the path text the candidates hold: bounded by slackPathBytesCap like the exported labels
 	seen := map[string]struct{}{}
 	err := filesys.Walk(pl.fsys, pl.fsys.Root(), "/", func(wp string, we filesys.Entry, werr error) error {
 		if err := pl.ctx.Err(); err != nil {
@@ -382,6 +375,12 @@ func (pl *slackPlanner) collect() ([]*slackCand, error) {
 			pl.skip(slackLimit)
 			return nil
 		}
+		if candPathBytes+len(wp) > slackPathBytesCap {
+			pl.setLimit("max-path-bytes", fmt.Sprintf("more than %d bytes of path text in files with slack", slackPathBytesCap))
+			pl.skip(slackLimit)
+			return nil
+		}
+		candPathBytes += len(wp)
 		cands = append(cands, c)
 		return nil
 	})
@@ -675,6 +674,7 @@ func (pl *slackPlanner) planVolume() error {
 	if end > pl.imgSize {
 		pl.volSkip(slackBeyondImage)
 		pl.warn(slackBeyondImage, "", fmt.Sprintf("the partition ends %d bytes past the end of the image: the volume slack is clipped", end-pl.imgSize))
+		pl.p.volClipped = end - pl.imgSize
 		end = pl.imgSize
 	}
 	if start >= end {

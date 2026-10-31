@@ -30,11 +30,21 @@ type jsonSlack struct {
 	VolumeUniformChunks int                       `json:"volume_uniform_chunks"`
 	VolumeUniformBytes  int64                     `json:"volume_uniform_bytes"`
 	SkippedBy           map[string]int            `json:"skipped_by"`
+	VolumeSkippedBy     map[string]int            `json:"volume_skipped_by"`
+	VolumeClippedBytes  int64                     `json:"volume_clipped_bytes"`
+	Skipped             int                       `json:"skipped"`
+	Warnings            []jsonSlackWarning        `json:"warnings"`
 	WalkErrors          int                       `json:"walk_errors"`
 	LimitReached        string                    `json:"limit_reached,omitempty"`
 	Incomplete          bool                      `json:"incomplete"`
 	FSWarnings          int                       `json:"fs_warnings"`
 	Artifacts           []evidence.ManifestRecord `json:"artifacts"`
+}
+
+// jsonSlackWarning is one plan warning: Path is "" for a warning about the run (the volume part), raw as in the audit log.
+type jsonSlackWarning struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
 }
 
 func newJSONSlack(s examine.SlackSummary) jsonSlack {
@@ -44,9 +54,16 @@ func newJSONSlack(s examine.SlackSummary) jsonSlack {
 		VolumeSegments: s.VolumeSegments, VolumeBytes: s.VolumeBytes, VolumeUniformChunks: s.VolumeUniformChunks,
 		VolumeUniformBytes: s.VolumeUniformBytes, SkippedBy: s.SkippedBy, WalkErrors: s.WalkErrors, LimitReached: s.LimitReached,
 		Incomplete: s.Incomplete, FSWarnings: s.FSWarnings, Artifacts: s.Artifacts,
+		VolumeSkippedBy: s.VolumeSkippedBy, VolumeClippedBytes: s.VolumeClipped, Skipped: s.Skipped, Warnings: []jsonSlackWarning{},
 	}
 	if j.SkippedBy == nil {
 		j.SkippedBy = map[string]int{}
+	}
+	if j.VolumeSkippedBy == nil {
+		j.VolumeSkippedBy = map[string]int{}
+	}
+	for _, w := range s.Warnings {
+		j.Warnings = append(j.Warnings, jsonSlackWarning{Path: w.Path, Reason: w.Reason})
 	}
 	if j.Artifacts == nil {
 		j.Artifacts = []evidence.ManifestRecord{}
@@ -124,6 +141,20 @@ func printSlackRun(w io.Writer, sum examine.SlackSummary, doFiles, doVol bool) {
 		fmt.Fprintf(w, "volume slack: %d segment(s) exported (%s); %d uniform chunk(s) counted, not exported (%s)\n",
 			sum.VolumeSegments, humanBytes(sum.VolumeBytes), sum.VolumeUniformChunks, humanBytes(sum.VolumeUniformBytes))
 	}
+	if doVol {
+		var vparts []string
+		for _, r := range slices.Sorted(maps.Keys(sum.VolumeSkippedBy)) {
+			if n := sum.VolumeSkippedBy[r]; n > 0 {
+				vparts = append(vparts, fmt.Sprintf("%s %d", escapeText(r), n))
+			}
+		}
+		if len(vparts) > 0 {
+			fmt.Fprintf(w, "volume skipped: %s\n", strings.Join(vparts, ", "))
+		}
+		if sum.VolumeClipped > 0 {
+			fmt.Fprintf(w, "volume slack clipped: %s of the partition lie past the end of the image\n", humanBytes(sum.VolumeClipped))
+		}
+	}
 	firstIncomplete := ""
 	for _, a := range sum.Artifacts {
 		d := a.Source.Derived
@@ -156,6 +187,19 @@ func printSlackRun(w io.Writer, sum examine.SlackSummary, doFiles, doVol bool) {
 	}
 	if sum.LimitReached != "" {
 		fmt.Fprintf(w, "limit reached: %s\n", escapeText(sum.LimitReached))
+	}
+	for i, wn := range sum.Warnings {
+		if i == maxSkipReasons {
+			break
+		}
+		if wn.Path == "" {
+			fmt.Fprintf(w, "  warning: %s\n", escapeText(wn.Reason))
+			continue
+		}
+		fmt.Fprintf(w, "  warning %s: %s\n", escapeText(wn.Path), escapeText(wn.Reason))
+	}
+	if sum.Skipped > maxSkipReasons {
+		fmt.Fprintln(w, "  ... see analysis.warning entries in audit.jsonl")
 	}
 	printFSWarnings(w, sum.Summary)
 }
