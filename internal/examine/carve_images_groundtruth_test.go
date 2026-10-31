@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/carve"
+	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/examine"
 )
 
@@ -93,6 +94,14 @@ func TestCarveImagesMatchesGroundTruth(t *testing.T) {
 		if got := carveSum(e.img[a.Offset : a.Offset+a.Length]); got != a.Rec.SHA256 {
 			t.Errorf("%s: image bytes at %d hash %s, the artifact %s", a.Rec.Path, a.Offset, got, a.Rec.SHA256)
 		}
+		// Carved data is never live and its confidence is capped by provenance (70).
+		rv := a.Rec.Source.Derived.Recovery
+		if a.Rec.Source.Kind != evidence.KindCarve || rv.Class != evidence.ClassCarved {
+			t.Errorf("%s: kind %q class %q, want kind %q class %q", a.Rec.Path, a.Rec.Source.Kind, rv.Class, evidence.KindCarve, evidence.ClassCarved)
+		}
+		if rv.Confidence == nil || *rv.Confidence > 70 {
+			t.Errorf("%s: confidence missing or above the carve cap of 70 (%+v)", a.Rec.Path, rv)
+		}
 		// The raw scope is one run covering the whole image.
 		if a.Offset < 0 || a.Offset+a.Length > int64(len(e.img)) {
 			t.Errorf("%s: run [%d,+%d) leaves the image", a.Rec.Path, a.Offset, a.Length)
@@ -142,6 +151,8 @@ func TestCarveImagesNegativeControls(t *testing.T) {
 	if len(over) != len(overreach) {
 		t.Errorf("%d over-reach controls found, want %d", len(over), len(overreach))
 	}
+	// Exemption loop: the declared-length over-reach controls (and the controls the
+	// over-reaching carve covers) are carved by design; every other control must stay uncarved.
 	kinds := map[string]int{}
 	for _, c := range e.im.Controls {
 		kinds[c.Kind]++
