@@ -381,3 +381,11 @@ func (f *FS) IndexConsumed(j uint32) (bool, error) {
 	}
 	return x.isConsumed(j), nil
 }
+
+// The journal scan caps (3G-R9), so the hostile tests and the fuzz target use the constants the reader uses.
+const (
+	MaxJournalBytes   = maxJournalBytes
+	MaxJournalTxns    = maxJournalTxns
+	MaxJournalTags    = maxJournalTags
+	MaxJournalRevokes = maxJournalRevokes
+)
