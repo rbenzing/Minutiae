@@ -25,13 +25,13 @@ func TestParseSigFileMerges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(set.Types) != 13 || set.ID != BuiltinID+MergedIDSuffix {
+	if len(set.Types) != len(base.Types)+1 || set.ID != BuiltinID+MergedIDSuffix {
 		t.Fatalf("%d types, id %q", len(set.Types), set.ID)
 	}
-	if set.Types[12].Name != "cafe" || set.Types[12].Ext != "cfe" || !bytes.Equal(set.Types[12].Headers[0].Bytes, []byte{0xca, 0xfe, 0xba, 0xbe}) {
-		t.Errorf("cafe = %+v", set.Types[12])
+	if set.Types[len(base.Types)].Name != "cafe" || set.Types[len(base.Types)].Ext != "cfe" || !bytes.Equal(set.Types[len(base.Types)].Headers[0].Bytes, []byte{0xca, 0xfe, 0xba, 0xbe}) {
+		t.Errorf("cafe = %+v", set.Types[len(base.Types)])
 	}
-	if len(base.Types) != 12 || base.ID != BuiltinID {
+	if len(base.Types) != len(Builtin().Types) || base.ID != BuiltinID {
 		t.Errorf("base mutated: %d types, id %q", len(base.Types), base.ID)
 	}
 	if set.Digest() == Builtin().Digest() {
@@ -54,49 +54,58 @@ func TestParseSigFileRefuses(t *testing.T) {
 		atCap[i] = typ(`"cafe"`, fmt.Sprintf(`"t%d"`, i))
 	}
 	cases := map[string][]byte{
-		"too big":           append(sigFile(cafeType), bytes.Repeat([]byte(" "), 65<<10)...),
-		"wrong format":      []byte(`{"format":"x/1","types":[` + cafeType + `]}`),
-		"no format":         []byte(`{"types":[` + cafeType + `]}`),
-		"unknown key":       sigFile(typ(`"align":"block"`, `"align":"block","extra":1`)),
-		"unknown top key":   []byte(`{"format":"` + SigFileFormat + `","types":[` + cafeType + `],"x":1}`),
-		"dup name":          sigFile(typ(`"name":"cafe"`, `"name":"cafe","name":"cafe"`)),
-		"dup top key":       []byte(`{"format":"` + SigFileFormat + `","format":"` + SigFileFormat + `","types":[` + cafeType + `]}`),
-		"dup nested key":    sigFile(typ(`"offset":0`, `"offset":0,"offset":1`)),
-		"trailing object":   append(sigFile(cafeType), []byte("{}")...),
-		"trailing garbage":  append(sigFile(cafeType), []byte(" x")...),
-		"not json":          []byte("hello"),
-		"empty":             nil,
-		"null":              []byte("null"),
-		"deep":              []byte(strings.Repeat("[", 5000)),
-		"no types":          sigFile(),
-		"33 types":          sigFile(many...),
-		"same name twice":   sigFile(cafeType, cafeType),
-		"name jpeg":         sigFile(typ(`"cafe"`, `"jpeg"`)),
-		"name mp4":          sigFile(typ(`"cafe"`, `"mp4"`)),
-		"name heic":         sigFile(typ(`"cafe"`, `"heic"`)),
-		"name apk":          sigFile(typ(`"cafe"`, `"apk"`)),
-		"name docx":         sigFile(typ(`"cafe"`, `"docx"`)),
-		"validator tar":     sigFile(typ(`"validate":""`, `"validate":"tar"`)),
-		"max_len 0":         sigFile(typ(`"max_len":512`, `"max_len":0`)),
-		"max_len 4GiB+1":    sigFile(typ(`"max_len":512`, `"max_len":4294967297`)),
-		"max_len huge":      sigFile(typ(`"max_len":512`, `"max_len":1e30`)),
-		"max_len fraction":  sigFile(typ(`"max_len":512`, `"max_len":5.5`)),
-		"max_len string":    sigFile(typ(`"max_len":512`, `"max_len":"512"`)),
-		"bad hex":           sigFile(typ(`"cafebabe"`, `"cafebabz"`)),
-		"odd hex":           sigFile(typ(`"cafebabe"`, `"cafebab"`)),
-		"bad footer hex":    sigFile(typ(`"footer":""`, `"footer":"zz"`)),
-		"mask length":       sigFile(typ(`"mask":""`, `"mask":"ff"`)),
-		"empty hex":         sigFile(typ(`"cafebabe"`, `""`)),
-		"no headers":        sigFile(typ(`[{"offset":0,"hex":"cafebabe","mask":""}]`, `[]`)),
-		"headers null":      sigFile(typ(`[{"offset":0,"hex":"cafebabe","mask":""}]`, `null`)),
-		"offset huge":       sigFile(typ(`"offset":0`, `"offset":99999999999999999999`)),
-		"offset past cap":   sigFile(typ(`"offset":0`, `"offset":513`)),
-		"min over max":      sigFile(typ(`"min_len":8`, `"min_len":600`)),
-		"bad align":         sigFile(typ(`"align":"block"`, `"align":"odd"`)),
-		"type not object":   sigFile(`7`),
-		"types not array":   []byte(`{"format":"` + SigFileFormat + `","types":{}}`),
-		"case-folded key":   sigFile(typ(`"name"`, `"Name"`)),
-		"case-fold dup key": sigFile(typ(`"name":"cafe"`, `"name":"cafe","NAME":"x"`)),
+		"too big":               append(sigFile(cafeType), bytes.Repeat([]byte(" "), 65<<10)...),
+		"wrong format":          []byte(`{"format":"x/1","types":[` + cafeType + `]}`),
+		"no format":             []byte(`{"types":[` + cafeType + `]}`),
+		"unknown key":           sigFile(typ(`"align":"block"`, `"align":"block","extra":1`)),
+		"unknown top key":       []byte(`{"format":"` + SigFileFormat + `","types":[` + cafeType + `],"x":1}`),
+		"dup name":              sigFile(typ(`"name":"cafe"`, `"name":"cafe","name":"cafe"`)),
+		"dup top key":           []byte(`{"format":"` + SigFileFormat + `","format":"` + SigFileFormat + `","types":[` + cafeType + `]}`),
+		"dup nested key":        sigFile(typ(`"offset":0`, `"offset":0,"offset":1`)),
+		"trailing object":       append(sigFile(cafeType), []byte("{}")...),
+		"trailing garbage":      append(sigFile(cafeType), []byte(" x")...),
+		"not json":              []byte("hello"),
+		"empty":                 nil,
+		"null":                  []byte("null"),
+		"deep":                  []byte(strings.Repeat("[", 5000)),
+		"no types":              sigFile(),
+		"33 types":              sigFile(many...),
+		"same name twice":       sigFile(cafeType, cafeType),
+		"name jpeg":             sigFile(typ(`"cafe"`, `"jpeg"`)),
+		"name mp4":              sigFile(typ(`"cafe"`, `"mp4"`)),
+		"name heic":             sigFile(typ(`"cafe"`, `"heic"`)),
+		"name apk":              sigFile(typ(`"cafe"`, `"apk"`)),
+		"name docx":             sigFile(typ(`"cafe"`, `"docx"`)),
+		"name bmp":              sigFile(typ(`"cafe"`, `"bmp"`)),
+		"name tiff":             sigFile(typ(`"cafe"`, `"tiff"`)),
+		"name dng":              sigFile(typ(`"cafe"`, `"dng"`)),
+		"name cr3":              sigFile(typ(`"cafe"`, `"cr3"`)),
+		"name avif":             sigFile(typ(`"cafe"`, `"avif"`)),
+		"name jxl":              sigFile(typ(`"cafe"`, `"jxl"`)),
+		"name ico":              sigFile(typ(`"cafe"`, `"ico"`)),
+		"name cur":              sigFile(typ(`"cafe"`, `"cur"`)),
+		"same name new headers": sigFile(cafeType, typ(`"cafebabe"`, `"cafebabf"`)),
+		"validator tar":         sigFile(typ(`"validate":""`, `"validate":"tar"`)),
+		"max_len 0":             sigFile(typ(`"max_len":512`, `"max_len":0`)),
+		"max_len 4GiB+1":        sigFile(typ(`"max_len":512`, `"max_len":4294967297`)),
+		"max_len huge":          sigFile(typ(`"max_len":512`, `"max_len":1e30`)),
+		"max_len fraction":      sigFile(typ(`"max_len":512`, `"max_len":5.5`)),
+		"max_len string":        sigFile(typ(`"max_len":512`, `"max_len":"512"`)),
+		"bad hex":               sigFile(typ(`"cafebabe"`, `"cafebabz"`)),
+		"odd hex":               sigFile(typ(`"cafebabe"`, `"cafebab"`)),
+		"bad footer hex":        sigFile(typ(`"footer":""`, `"footer":"zz"`)),
+		"mask length":           sigFile(typ(`"mask":""`, `"mask":"ff"`)),
+		"empty hex":             sigFile(typ(`"cafebabe"`, `""`)),
+		"no headers":            sigFile(typ(`[{"offset":0,"hex":"cafebabe","mask":""}]`, `[]`)),
+		"headers null":          sigFile(typ(`[{"offset":0,"hex":"cafebabe","mask":""}]`, `null`)),
+		"offset huge":           sigFile(typ(`"offset":0`, `"offset":99999999999999999999`)),
+		"offset past cap":       sigFile(typ(`"offset":0`, `"offset":513`)),
+		"min over max":          sigFile(typ(`"min_len":8`, `"min_len":600`)),
+		"bad align":             sigFile(typ(`"align":"block"`, `"align":"odd"`)),
+		"type not object":       sigFile(`7`),
+		"types not array":       []byte(`{"format":"` + SigFileFormat + `","types":{}}`),
+		"case-folded key":       sigFile(typ(`"name"`, `"Name"`)),
+		"case-fold dup key":     sigFile(typ(`"name":"cafe"`, `"name":"cafe","NAME":"x"`)),
 	}
 	for name, data := range cases {
 		base := Builtin()
@@ -107,7 +116,7 @@ func TestParseSigFileRefuses(t *testing.T) {
 		if set != nil {
 			t.Errorf("%s: a refused file yielded a set", name)
 		}
-		if len(base.Types) != 12 || base.ID != BuiltinID {
+		if len(base.Types) != len(Builtin().Types) || base.ID != BuiltinID {
 			t.Errorf("%s: base changed", name)
 		}
 	}

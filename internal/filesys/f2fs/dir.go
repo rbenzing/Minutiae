@@ -378,7 +378,7 @@ func (w *dirScan) scan() error {
 				f.warn("directory inode %d: block %d is unreadable (%v); the rest is not listed", dir.nid, idx, err)
 				return nil
 			}
-			w.scanArea(area{b: buf, bitmap: 0, ents: dentriesOff, names: filenamesOff, max: nrDentryInBlock}, idx, idx == 0)
+			w.scanArea(blockArea(buf), idx, idx == 0)
 		}
 		if w.stop {
 			break
@@ -417,21 +417,11 @@ func (f *FS) claimDentryBlock(addr int64, nid uint32) {
 
 // inline scans the dentries stored in the inode.
 func (w *dirScan) inline() error {
-	in := w.dir
-	maxData := (in.addrSlots - inlineReserve) * 4
-	if maxData <= 0 {
-		return corrupt("f2fs inline dentry", -1, "inode %d has no room for inline dentries (%d data slots)", in.nid, in.addrSlots)
+	a, _, err := w.f.areaAt(w.dir, 0)
+	if err != nil {
+		return err
 	}
-	nr := maxData * 8 / ((dentrySize+slotLen)*8 + 1)
-	bm := (nr + 7) / 8
-	reserved := maxData - ((dentrySize+slotLen)*nr + bm)
-	if nr < 1 || reserved < 0 {
-		return corrupt("f2fs inline dentry", -1, "inode %d: %d bytes of inline data hold no dentries", in.nid, maxData)
-	}
-	start := in.addrStart + inlineReserve*4
-	b := in.raw[start : start+maxData]
-	ents := bm + reserved
-	w.scanArea(area{b: b, bitmap: 0, ents: ents, names: ents + dentrySize*nr, max: nr, inlined: true}, 0, true)
+	w.scanArea(a, 0, true)
 	return nil
 }
 
@@ -766,4 +756,82 @@ func incompleteLookup(dirNID uint32, comp string, cut scanCut) error {
 		return fmt.Errorf("f2fs: %w: %w: directory inode %d: lookup of %q cannot be decided: %s", filesys.ErrLimit, filesys.ErrIncomplete, dirNID, comp, cut.reason)
 	}
 	return fmt.Errorf("%w: %w", corrupt("f2fs directory", -1, "directory inode %d: lookup of %q cannot be decided: %s", dirNID, comp, cut.reason), filesys.ErrIncomplete)
+}
+
+// blockArea is the dentry area of a dentry block read into b.
+func blockArea(b []byte) area {
+	return area{b: b, bitmap: 0, ents: dentriesOff, names: filenamesOff, max: nrDentryInBlock}
+}
+
+// areaAt returns the dentry area of directory dir at logical block blk: the
+// inline area (blk must be 0) of an inline directory, else dentry block blk.
+// first is set for the area that starts the directory, where "." and ".."
+// live. A block past the directory's size, a negative blk or a hole wraps
+// filesys.ErrNotFound; a block beyond the 64 MiB directory read limit wraps
+// filesys.ErrLimit; a damaged block map or block is a *filesys.CorruptError
+// (and an I/O error is returned as such). Unlike a directory scan it does not
+// claim the block or charge the read budget: it reads one block on request.
+func (f *FS) areaAt(dir *inode, blk int64) (a area, first bool, err error) {
+	if dir.inline&inlineDentry != 0 {
+		if blk != 0 {
+			return area{}, false, fmt.Errorf("%w: inline directory %d has no block %d", filesys.ErrNotFound, dir.nid, blk)
+		}
+		a, err := f.inlineArea(dir)
+		return a, true, err
+	}
+	nb := int64(0)
+	if dir.size > 0 {
+		nb = (dir.size-1)/blockSize + 1
+	}
+	if blk < 0 || blk >= nb {
+		return area{}, false, fmt.Errorf("%w: directory %d has no block %d (%d blocks)", filesys.ErrNotFound, dir.nid, blk, nb)
+	}
+	if blk >= maxDirBlocks {
+		return area{}, false, fmt.Errorf("%w: block %d of directory %d is beyond the 64 MiB directory read limit", filesys.ErrLimit, blk, dir.nid)
+	}
+	capped := *dir
+	capped.size = (blk + 1) * blockSize
+	runs, rerr := f.runs(&capped)
+	if rerr != nil && !errors.Is(rerr, filesys.ErrCorrupt) {
+		return area{}, false, rerr
+	}
+	var at int64 // logical block at the start of the run
+	for _, r := range runs {
+		n := r.Length / blockSize
+		if blk >= at+n {
+			at += n
+			continue
+		}
+		if r.Offset < 0 {
+			return area{}, false, fmt.Errorf("%w: block %d of directory %d is a hole", filesys.ErrNotFound, blk, dir.nid)
+		}
+		addr := r.Offset + (blk-at)*blockSize
+		buf := make([]byte, blockSize)
+		if err := readFull(f.data, buf, addr); err != nil {
+			return area{}, false, readError("f2fs directory", addr, err)
+		}
+		return blockArea(buf), blk == 0, nil
+	}
+	if rerr != nil {
+		return area{}, false, rerr // the map is damaged before this block
+	}
+	return area{}, false, fmt.Errorf("%w: block %d of directory %d is not mapped", filesys.ErrNotFound, blk, dir.nid)
+}
+
+// inlineArea is the dentry area stored in the inode of an inline directory.
+func (f *FS) inlineArea(in *inode) (area, error) {
+	maxData := (in.addrSlots - inlineReserve) * 4
+	if maxData <= 0 {
+		return area{}, corrupt("f2fs inline dentry", -1, "inode %d has no room for inline dentries (%d data slots)", in.nid, in.addrSlots)
+	}
+	nr := maxData * 8 / ((dentrySize+slotLen)*8 + 1)
+	bm := (nr + 7) / 8
+	reserved := maxData - ((dentrySize+slotLen)*nr + bm)
+	if nr < 1 || reserved < 0 {
+		return area{}, corrupt("f2fs inline dentry", -1, "inode %d: %d bytes of inline data hold no dentries", in.nid, maxData)
+	}
+	start := in.addrStart + inlineReserve*4
+	b := in.raw[start : start+maxData]
+	ents := bm + reserved
+	return area{b: b, bitmap: 0, ents: ents, names: ents + dentrySize*nr, max: nr, inlined: true}, nil
 }

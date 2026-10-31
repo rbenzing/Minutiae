@@ -1,0 +1,1 @@
+task-1-probe-run2.txt is the raw output of an EARLIER run of the 3D probe (2026-10-25 01:16) whose single workload had the /g files and f2/f3 created before the second batch; superseded by task-1-probe-output.txt. Kept because its Q10 line (nid reuse on a churned volume) is cited in tools/fixtures/README.md. Measured, not reconstructed.
