@@ -1,6 +1,11 @@
 package ext4
 
-import "testing"
+import (
+	"fmt"
+	"math/rand/v2"
+	"runtime"
+	"testing"
+)
 
 // Blocks that continue the previous segment on disk extend it: the segment list is bounded by the run cap, not by the
 // number of blocks the map names (3C Task 6 review carry-over).
@@ -38,5 +43,104 @@ func TestMapWalkerOverlapInsideMergedSegmentCutsAtTheBlock(t *testing.T) {
 	}
 	if m.stop != "map-overlap@4" {
 		t.Fatalf("stop %q, want map-overlap@4", m.stop)
+	}
+}
+
+// totalAlloc runs fn and returns the bytes it allocated.
+func totalAlloc(fn func()) uint64 {
+	var a, b runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&a)
+	fn()
+	runtime.ReadMemStats(&b)
+	return b.TotalAlloc - a.TotalAlloc
+}
+
+// A hostile map that names millions of blocks in a few segments and overlaps near its end is cut at the exact block
+// without allocating per block: the cost is bounded by the segments and the map blocks, never by the blocks named.
+func TestMapWalkerOverlapCostIsBoundedBySegmentsNotBlocks(t *testing.T) {
+	const nb = int64(1) << 22
+	const ceiling = 64 << 20
+	build := func() *mapWalker {
+		w := &mapWalker{f: &FS{mapRunsCap: 8}, nb: nb, next: nb, bs: 1, limit: nb, seen: map[uint64]struct{}{}}
+		w.segs = []mapSeg{{0, 1000, nb / 2}, {nb / 2, 10_000_000, nb / 2}}
+		return w
+	}
+	t.Run("tree block", func(t *testing.T) {
+		w := build()
+		w.tree = []uint64{10_000_000 + uint64(nb/2) - 3}
+		var m staleMap
+		got := totalAlloc(func() { m = w.finish() })
+		t.Logf("allocated %d bytes", got)
+		if got > ceiling {
+			t.Fatalf("allocated %d bytes, ceiling %d", got, ceiling)
+		}
+		if want := nb - 3; m.covered != want || m.stop != fmt.Sprintf("map-overlap@%d", want) {
+			t.Fatalf("covered %d stop %q, want %d and map-overlap@%d", m.covered, m.stop, want, want)
+		}
+	})
+	t.Run("earlier extent", func(t *testing.T) {
+		w := build()
+		w.segs = append(w.segs[:1:1], mapSeg{nb / 2, 1000 + nb/2 - 5, nb / 2}) // its first 5 blocks lie over the end of the first
+		var m staleMap
+		got := totalAlloc(func() { m = w.finish() })
+		t.Logf("allocated %d bytes", got)
+		if got > ceiling {
+			t.Fatalf("allocated %d bytes, ceiling %d", got, ceiling)
+		}
+		if want := nb / 2; m.covered != want || m.stop != fmt.Sprintf("map-overlap@%d", want) {
+			t.Fatalf("covered %d stop %q, want %d and map-overlap@%d", m.covered, m.stop, want, want)
+		}
+	})
+}
+
+// cutAtOverlap agrees with the definition it replaces: the cut is at the first block, in logical order, that an earlier
+// block or a map block also names.
+func TestCutAtOverlapMatchesPerBlockDefinition(t *testing.T) {
+	rng := rand.New(rand.NewPCG(1, 2)) //nolint:gosec // a fixed-seed generator for a reproducible test, not security
+	for range 3000 {
+		var segs []mapSeg
+		var lblk int64
+		for range 1 + rng.IntN(6) {
+			n := int64(1 + rng.IntN(6))
+			segs = append(segs, mapSeg{lblk, int64(rng.IntN(30)), n})
+			lblk += n
+		}
+		var tree []uint64
+		for range rng.IntN(3) {
+			tree = append(tree, uint64(rng.IntN(36)))
+		}
+		seen := map[int64]bool{}
+		for _, b := range tree {
+			seen[int64(b)] = true
+		}
+		want, found := int64(0), false
+	scan:
+		for _, s := range segs {
+			for i := range s.n {
+				if seen[s.phys+i] {
+					want, found = s.lblk+i, true
+					break scan
+				}
+			}
+			for i := range s.n {
+				seen[s.phys+i] = true
+			}
+		}
+		// the definition marks a block as seen only after the whole segment is checked, which a self-overlapping
+		// segment cannot trigger (blocks of one segment are distinct)
+		cut, got, ok := cutAtOverlap(segs, tree, nil)
+		if ok != found || (ok && got != want) {
+			t.Fatalf("segs %v tree %v: cut %d found %v, want %d %v", segs, tree, got, ok, want, found)
+		}
+		if ok {
+			var kept int64
+			for _, s := range cut {
+				kept += s.n
+			}
+			if kept != want {
+				t.Fatalf("segs %v tree %v: kept %d blocks, want %d", segs, tree, kept, want)
+			}
+		}
 	}
 }

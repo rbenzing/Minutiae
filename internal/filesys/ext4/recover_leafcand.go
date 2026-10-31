@@ -128,8 +128,8 @@ func (f *FS) chainLeaves(st *staleInode, leaves []boundLeaf, indexLeaves int) fi
 	var (
 		segs      []mapSeg
 		chained   []uint64
-		chainedAt []int // len(segs) when each chained leaf began, to drop the leaves an overlap cut removes
-		cursor    int64 // first logical block not covered
+		chainedAt []int64 // the logical block each chained leaf began at, to drop the leaves an overlap cut removes
+		cursor    int64   // first logical block not covered
 		stop      string
 		nruns     int
 		lastEnd   int64
@@ -154,7 +154,7 @@ chain:
 			break chain
 		}
 		chained = append(chained, l.ref.blk)
-		chainedAt = append(chainedAt, len(segs))
+		chainedAt = append(chainedAt, cursor)
 		for _, x := range l.exts {
 			switch {
 			case x.lblk != cursor:
@@ -167,29 +167,28 @@ chain:
 			if stop != "" {
 				break chain
 			}
-			adjacent := len(segs) > 0 && segs[len(segs)-1].phys+segs[len(segs)-1].n == x.phys
-			if !adjacent {
+			if !extendsLast(segs, x.phys) {
 				if nruns >= f.mapRunsCap {
 					stopAt(stopRunsCap, x.lblk)
 					break chain
 				}
 				nruns++
 			}
-			segs = append(segs, mapSeg{x.lblk, x.phys, x.n})
+			segs = pushSeg(segs, x.lblk, x.phys, x.n)
 			cursor += x.n
 		}
 	}
 	// A data extent over a bound leaf block, or over another extent, is not a map: the chain ends before it (the walker's
-	// firstOverlap rule). It is found once, over the whole chain.
+	// cutAtOverlap rule). It is found once, over the whole chain.
 	leafBlocks := make([]uint64, len(leaves))
 	for i, l := range leaves {
 		leafBlocks[i] = l.ref.blk
 	}
-	if k := firstSegOverlap(segs, leafBlocks); k < len(segs) {
-		cursor = segs[k].lblk
+	if cut, lblk, found := cutAtOverlap(segs, leafBlocks, nil); found {
+		cursor = lblk
 		stop = fmt.Sprintf(stopTokenTemplate, stopMapOverlap, cursor)
-		segs = segs[:k]
-		n := sort.Search(len(chainedAt), func(i int) bool { return chainedAt[i] >= k }) // leaves that begin before the cut
+		segs = cut
+		n := sort.Search(len(chainedAt), func(i int) bool { return chainedAt[i] >= lblk }) // leaves that begin before the cut
 		chained = chained[:n]
 	}
 	var wantBlocks int64
@@ -260,33 +259,4 @@ func rootCleared(b []byte) bool {
 	le := binary.LittleEndian
 	return allZero(b) || (le.Uint16(b) == extentMagic && le.Uint16(b[2:]) == 0 && le.Uint16(b[6:]) == 0 &&
 		int(le.Uint16(b[4:])) <= (len(b)-extentHeaderLen)/extentEntryLen)
-}
-
-// segsOverlap reports whether any two of segs, or any of segs and one of the one-block leaf blocks, share a block.
-func segsOverlap(segs []mapSeg, leafBlocks []uint64) bool {
-	all := make([]mapSeg, 0, len(segs)+len(leafBlocks))
-	all = append(all, segs...)
-	for _, b := range leafBlocks {
-		all = append(all, mapSeg{phys: int64(b), n: 1})
-	}
-	slices.SortFunc(all, func(a, b mapSeg) int { return cmp.Compare(a.phys, b.phys) })
-	var end int64
-	for k, s := range all {
-		if k > 0 && s.phys < end {
-			return true
-		}
-		end = max(end, s.phys+s.n)
-	}
-	return false
-}
-
-// firstSegOverlap returns the index of the first extent of segs that overlaps an earlier one or one of leafBlocks
-// (len(segs) when none does). Overlap in a prefix implies overlap in every longer one, so a binary search over the
-// prefix length finds the smallest overlapping prefix. The leaf blocks always count: they are what the extents must
-// not be over.
-func firstSegOverlap(segs []mapSeg, leafBlocks []uint64) int {
-	if !segsOverlap(segs, leafBlocks) {
-		return len(segs)
-	}
-	return sort.Search(len(segs), func(m int) bool { return segsOverlap(segs[:m+1], leafBlocks) })
 }

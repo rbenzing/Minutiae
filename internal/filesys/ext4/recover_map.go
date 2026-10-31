@@ -1,6 +1,7 @@
 package ext4
 
 import (
+	"cmp"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -77,6 +78,23 @@ func (w *mapWalker) freeSet() (*freeSet, error) {
 	return w.free, nil
 }
 
+// extendsLast reports whether a segment at physical block phys continues the last of segs on disk (and so, as every
+// segment ends at the next logical block, logically too).
+func extendsLast(segs []mapSeg, phys int64) bool {
+	last := len(segs) - 1
+	return last >= 0 && segs[last].phys+segs[last].n == phys
+}
+
+// pushSeg appends n blocks at logical block lblk and physical block phys, or extends the last segment when they
+// continue it. Both stale-map sources build their lists through it, so the lists have the same shape.
+func pushSeg(segs []mapSeg, lblk, phys, n int64) []mapSeg {
+	if extendsLast(segs, phys) {
+		segs[len(segs)-1].n += n
+		return segs
+	}
+	return append(segs, mapSeg{lblk, phys, n})
+}
+
 // addSeg maps n blocks from physical block phys at the next logical block, bounded by the blocks still needed. Blocks
 // that continue the previous segment on disk extend it, so the list is bounded by the run cap, not by the block count.
 func (w *mapWalker) addSeg(phys, n int64) error {
@@ -84,30 +102,15 @@ func (w *mapWalker) addSeg(phys, n int64) error {
 	if n <= 0 {
 		return nil
 	}
-	if last := len(w.segs) - 1; last >= 0 && w.segs[last].phys+w.segs[last].n == phys {
-		w.segs[last].n += n // logically contiguous too: every segment ends at w.next
-		w.next += n
-		return nil
+	if !extendsLast(w.segs, phys) {
+		if w.nruns >= w.f.mapRunsCap {
+			return w.stopAt(stopRunsCap, w.next)
+		}
+		w.nruns++
 	}
-	if w.nruns >= w.f.mapRunsCap {
-		return w.stopAt(stopRunsCap, w.next)
-	}
-	w.nruns++
-	w.segs = append(w.segs, mapSeg{w.next, phys, n})
+	w.segs = pushSeg(w.segs, w.next, phys, n)
 	w.next += n
 	return nil
-}
-
-// splitSegs turns every segment into one segment per block. It runs only when an overlap was found, so that the cut
-// falls on the exact block that overlaps (the work is bounded by the blocks the walk covers).
-func (w *mapWalker) splitSegs() {
-	out := make([]mapSeg, 0, int(w.next))
-	for _, s := range w.segs {
-		for i := range s.n {
-			out = append(out, mapSeg{s.lblk + i, s.phys + i, 1})
-		}
-	}
-	w.segs = out
 }
 
 func allZero(b []byte) bool {
@@ -326,11 +329,9 @@ func (w *mapWalker) finish() staleMap {
 	if !w.cleared && w.stop == "" && w.next < w.nb {
 		w.stop = fmt.Sprintf(stopTokenTemplate, stopHole, w.next)
 	}
-	if w.firstOverlap() < len(w.segs) {
-		w.splitSegs()
-		k := w.firstOverlap()
-		w.stop = fmt.Sprintf(stopTokenTemplate, stopMapOverlap, w.segs[k].lblk)
-		w.segs = w.segs[:k]
+	if segs, lblk, found := cutAtOverlap(w.segs, w.tree, w.work); found {
+		w.stop = fmt.Sprintf(stopTokenTemplate, stopMapOverlap, lblk)
+		w.segs = segs
 	}
 	var covered int64
 	for _, s := range w.segs {
@@ -353,22 +354,16 @@ func (w *mapWalker) finish() staleMap {
 	return m
 }
 
-// overlaps reports whether any two of segs share a block. The work is counted.
-func (w *mapWalker) overlaps(segs []mapSeg) bool {
-	w.work(int64(len(segs)))
+// segsOverlap reports whether any two of segs share a block. work (may be nil) counts the work.
+func segsOverlap(segs []mapSeg, work func(int64)) bool {
+	if work != nil {
+		work(int64(len(segs)))
+	}
 	idx := make([]int, len(segs))
 	for i := range idx {
 		idx[i] = i
 	}
-	slices.SortFunc(idx, func(a, b int) int {
-		switch {
-		case segs[a].phys < segs[b].phys:
-			return -1
-		case segs[a].phys > segs[b].phys:
-			return 1
-		}
-		return 0
-	})
+	slices.SortFunc(idx, func(a, b int) int { return cmp.Compare(segs[a].phys, segs[b].phys) })
 	var end int64
 	for k, i := range idx {
 		if k > 0 && segs[i].phys < end {
@@ -379,27 +374,56 @@ func (w *mapWalker) overlaps(segs []mapSeg) bool {
 	return false
 }
 
-// firstOverlap returns the index of the first data extent that overlaps an earlier one or one of the map's own blocks
-// (len(segs) when none does).
-func (w *mapWalker) firstOverlap() int {
-	m := len(w.segs)
-	first := m
-	if len(w.tree) > 0 {
-		tree := slices.Clone(w.tree)
-		slices.Sort(tree)
-		w.work(int64(m))
-		for k, s := range w.segs {
-			i := sort.Search(len(tree), func(i int) bool { return int64(tree[i]) >= s.phys })
-			if i < len(tree) && int64(tree[i]) < s.phys+s.n {
-				first = k
+// cutAtOverlap cuts segs at the first block that is also named by an earlier block or is one of the map's own tree
+// blocks. It returns the segments before the cut (the segment holding the block is kept, shortened) and the logical
+// block of the cut; found is false when nothing overlaps. Both stale-map sources use it, so both cut at the same
+// block. The cost is O(segments log segments + tree blocks) in time and memory, never O(blocks): the exact block is
+// found arithmetically inside the first offending segment, not by splitting segments into blocks.
+func cutAtOverlap(segs []mapSeg, tree []uint64, work func(int64)) ([]mapSeg, int64, bool) {
+	m := len(segs)
+	// the first segment tk holding a tree block, and the least offset of such a block in it
+	tk, toff := m, int64(0)
+	if len(tree) > 0 {
+		sorted := slices.Clone(tree)
+		slices.Sort(sorted)
+		if work != nil {
+			work(int64(m))
+		}
+		for k, s := range segs {
+			i := sort.Search(len(sorted), func(i int) bool { return int64(sorted[i]) >= s.phys })
+			if i < len(sorted) && int64(sorted[i]) < s.phys+s.n {
+				tk, toff = k, int64(sorted[i])-s.phys
 				break
 			}
 		}
 	}
-	if m < 2 || !w.overlaps(w.segs) {
-		return first
+	// the first segment pk that shares a block with an earlier one: overlap in a prefix implies overlap in every longer
+	// one, so the smallest overlapping prefix ends at it
+	pk, poff := m, int64(0)
+	if m >= 2 && segsOverlap(segs, work) {
+		pk = 1 + sort.Search(m-1, func(i int) bool { return segsOverlap(segs[:i+2], work) })
+		s := segs[pk]
+		poff = s.n
+		for _, e := range segs[:pk] {
+			if lo, hi := max(e.phys, s.phys), min(e.phys+e.n, s.phys+s.n); lo < hi {
+				poff = min(poff, lo-s.phys)
+			}
+		}
 	}
-	// the smallest prefix that overlaps: overlap in a prefix implies overlap in every longer one
-	p := 2 + sort.Search(m-2, func(i int) bool { return w.overlaps(w.segs[:i+2]) })
-	return min(first, p-1)
+	k, off := tk, toff
+	switch {
+	case pk < tk:
+		k, off = pk, poff
+	case pk == tk:
+		off = min(toff, poff)
+	}
+	if k >= m {
+		return segs, 0, false
+	}
+	cut := segs[:k:k]
+	lblk := segs[k].lblk + off
+	if off > 0 {
+		cut = append(cut, mapSeg{segs[k].lblk, segs[k].phys, off})
+	}
+	return cut, lblk, true
 }
