@@ -200,15 +200,22 @@ func (f *FS) journalCandidates(st *staleInode) ([]filesys.Candidate, []string, e
 	limit := cmp.Or(f.jrecCopyCap, maxJournalCopiesPerEntry)
 
 	var (
-		notes    []string
-		otherGen int
-		examined int
-		found    *jcopy
+		notes      []string
+		otherGen   int
+		examined   int
+		found      *jcopy
+		unreadable bool
 	)
 	for _, ti := range s.inodeCopies[blk] {
 		g := &x.tags[ti]
 		t := &x.txns[g.txn]
-		if !s.allowed(t) || !eligibleCopy(g) || g.revoked {
+		if !s.allowed(t) || g.revoked {
+			continue
+		}
+		if !eligibleCopy(g) {
+			// A committed copy whose bytes cannot be read back (mismatch or missing): the state it logged is unknown, and
+			// an older copy would be a guess about a newer state (3G C14).
+			unreadable = true
 			continue
 		}
 		if examined++; examined > limit {
@@ -243,6 +250,12 @@ func (f *FS) journalCandidates(st *staleInode) ([]filesys.Candidate, []string, e
 		}
 		found = &jcopy{tag: ti, raw: raw, escaped: g.flags&tagEscape != 0}
 		break // the newest live-state copy of this generation
+	}
+
+	if unreadable {
+		return nil, notes, unknownJournal(
+			fmt.Errorf("%w: a journal copy of the inode table block of inode %d cannot be read back", filesys.ErrUndecided, in.num),
+			fmt.Sprintf("journal copy of the inode table block of inode %d cannot be read back (checksum mismatch or missing)", in.num))
 	}
 
 	if found != nil {

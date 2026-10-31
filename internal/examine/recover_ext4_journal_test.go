@@ -266,6 +266,7 @@ func TestRecoverJournalBadValueRejected(t *testing.T) {
 	}
 }
 
+// TODO(3H merge): implement once RecoverOptions.RollForward exists
 func TestRecoverJournalWithRollForwardRejected(t *testing.T) {
 	t.Skip("needs 3H RollForward") // Task 12 removes the skip once RecoverOptions.RollForward exists
 }
@@ -339,7 +340,8 @@ func TestRecoverExt4JournalNeverModifiesSource(t *testing.T) {
 	verifyOK(t, s.Case)
 }
 
-// A filesystem with no journal gets one plan-level answer, not one undecided answer per entry (3G C13).
+// A filesystem with no journal gets one plan-level answer, not one undecided answer per entry (3G C13). The refusal comes inside buildPlan,
+// after analysis.start, on purpose: preparing the journal is a read-only act.
 func TestRecoverJournalOnExt4WithoutJournalIsOneRefusal(t *testing.T) {
 	j := buildJrn(t, jrnSpec{opts: func(o *ext4test.Options) { o.JournalBlocks = 0 }})
 	s, _ := imageSession(t, j.img)

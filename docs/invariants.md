@@ -345,3 +345,5 @@ Serial modem lines: on Linux/macOS the kernel may still pulse DTR/RTS during
 `open()` and drops them on close (HUPCL); userspace can only de-assert them
 right after open. Treat a serial open as able to reset DTR/RTS-wired targets.
 
+
+`--use-journal` on a filesystem that keeps no journal (3G C13) is refused once inside `buildPlan`, after `analysis.start` has been audited. This is deliberate: preparing the journal is a read-only act, so nothing is written before the refusal and the audit shows the failed analysis. `TestRecoverJournalOnExt4WithoutJournalIsOneRefusal`.

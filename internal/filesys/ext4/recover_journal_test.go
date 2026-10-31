@@ -431,7 +431,15 @@ func TestJournalCandidateMismatchCopyIsNoSource(t *testing.T) {
 		}})
 	}
 	build(false).one(t, filesys.JournalUseCommitted)
-	build(true).none(t, filesys.JournalUseCommitted)
+	build(true).undecided(t, filesys.JournalUseCommitted, "cannot be read back")
+
+	// A newer copy that cannot be read back makes the newer state unknown: the older good copy is not used (3G C14).
+	r := rjBuild(t, rjSpec{jbd: func(c *rjCtx) ext4test.JBD2 {
+		bad := c.tag(c.live(nil))
+		bad.BadCsum = true
+		return rjLive(rjTxn(10, c.tag(c.live(nil))), rjTxn(11, bad))
+	}})
+	r.undecided(t, filesys.JournalUseCommitted, "cannot be read back")
 }
 
 func TestJournalCandidateUncommittedIsNoSource(t *testing.T) {
