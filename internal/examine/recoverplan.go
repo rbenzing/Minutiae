@@ -373,6 +373,7 @@ var methodBase = map[string]int{
 	"fat-contiguous":     55,
 	"exfat-contiguous":   55,
 	"exfat-fatchain":     65,
+	"f2fs-rollforward":   60, // 3H-R8: identity and version as strong as f2fs-node-scan, but the replay never ran and the blocks are free
 }
 
 // Caps (spec 3.3): the lowest applicable cap wins.
