@@ -1601,6 +1601,13 @@ Each `.expect.json` is 13 to 14 KiB; every `.img.gz` is under the 200 KiB budget
 it; F2FS is close to it). FAT needs 2048-byte clusters: 512-byte clusters leave no residue (probe fact S2b).
 FAT32 is builder-only (a 4 KiB-cluster FAT32 needs 256 MiB raw).
 
+### Docker images (3F)
+
+Plan 3F built no image of its own. It uses `minutiae-recover-fixtures` (`Dockerfile.recover`) for `slack_probe.sh` and
+`gen.sh slack`, and that image is KEPT: the regeneration command above needs it, a rebuild needs the network and the
+pinned snapshot, and the fixtures are regenerated only with its kernel and tools (the images are not byte-reproducible). Do not
+remove it after a slack run.
+
 ### How the volumes are made
 
 1. Four raw files are filled with the 64-byte sentinel (`SLACK-SENTINEL-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLM`
