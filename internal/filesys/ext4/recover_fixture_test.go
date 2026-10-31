@@ -2,12 +2,15 @@ package ext4_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/rbenzing/minutiae/internal/filesys/ext4"
 )
 
 // The recovery fixtures (testdata/recover/) are ext4 and ext3 images written and deleted by the KERNEL ext4 driver in
@@ -222,8 +225,10 @@ func TestExt4RecoverFixturesHoldWhatTheyClaim(t *testing.T) {
 				if d.TrueBasis != "content-scan" || len(d.TrueBlocks) < 20 {
 					t.Errorf("%s: %s: true map by %q with %d fragments: want a content scan and at least 20 fragments", name, d.Path, d.TrueBasis, len(d.TrueBlocks))
 				}
-				if e.Outcome == "recover" && (e.Method != "ext4-extent-leaf" || e.Confidence > 20 || e.EqualSource == "no") {
-					t.Errorf("%s: %s: recovers %+v: a same-boot leaf chain must be a correct prefix at 20 or less", name, d.Path, e)
+				// "nothing recovered" stays allowed; a recovery must be a correct prefix, in either direction, capped at 20
+				if e.Outcome == "recover" && (e.Method != "ext4-extent-leaf" || e.Confidence > 20 ||
+					(e.EqualSource != "artifact-is-prefix" && e.EqualSource != "prefix-of-artifact")) {
+					t.Errorf("%s: %s: recovers %+v: a same-boot leaf chain must be a correct prefix (artifact-is-prefix or prefix-of-artifact) at 20 or less", name, d.Path, e)
 				}
 			case "intact-debugfs-small", "intact-debugfs-deep", "intact-debugfs-indirect":
 				// the map and the blocks of a debugfs rm are untouched: the true blocks hold the source
@@ -249,7 +254,18 @@ func TestExt4RecoverFixturesHoldWhatTheyClaim(t *testing.T) {
 // removed names are nowhere in their directory (the journal may still hold older copies of its block), and their inodes
 // are free. The image is a negative control: a reader that listed a deleted entry here would be inventing it.
 func TestExt4RecoverWipedImageListsNothing(t *testing.T) {
-	_, o := loadRecoverFixture(t, "ext4-recover-wiped")
+	img, o := loadRecoverFixture(t, "ext4-recover-wiped")
+	// against the image itself, not only the oracle: the reader walks no deleted entry, so recover has nothing to ask about
+	f, err := ext4.Open(bytes.NewReader(img), int64(len(img)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.PrepareRecovery(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if deleted := walkDeleted(t, f); len(deleted) != 0 {
+		t.Errorf("the readers walk %d deleted entries of the wiped image, want 0: %v", len(deleted), deleted)
+	}
 	if o.DeletedEntryCount != 0 || len(o.Deleted) != 0 || o.Totals.Recovered != 0 || len(o.Totals.SkippedBy) != 0 {
 		t.Errorf("a wiped image must list nothing, got %d records and totals %+v", o.DeletedEntryCount, o.Totals)
 	}
