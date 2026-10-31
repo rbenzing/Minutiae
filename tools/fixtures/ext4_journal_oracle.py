@@ -821,7 +821,8 @@ def analyse_kernel(k, d, pay):
         if s.img.jdev:
             print("FACT J1.jdev kernel=%s image=%s s_journal_dev=%#x" % (k, name, s.img.jdev))
     # per-image scan summaries and checksum counters
-    csum_total = dict(desc=0, desc_ok=0, commit=0, commit_ok=0, revoke=0, revoke_ok=0, tag=0, tag_ok=0)
+    csum_total = dict(desc=0, desc_ok=0, desc_unchecked=0, commit=0, commit_ok=0, commit_unchecked=0, revoke=0, revoke_ok=0,
+                      revoke_unchecked=0, tag=0, tag_ok=0, tag_unchecked=0)
     for name, s in st.items():
         j = s.j
         nl, ns = len(s.live), len(s.stale)
@@ -836,12 +837,20 @@ def analyse_kernel(k, d, pay):
                 if tg["copy"] in ("verified", "mismatch"):
                     csum_total["tag"] += 1
                     csum_total["tag_ok"] += tg["copy"] == "verified"
+                else:
+                    csum_total["tag_unchecked"] += 1
+            for b in t.desc:
+                r = j.desc_csum_ok(j.read(b))
+                csum_total["desc" if r is not None else "desc_unchecked"] += 1
+                csum_total["desc_ok"] += r is True
+            for b in t.rev_blocks:
+                r = j.desc_csum_ok(j.read(b))
+                csum_total["revoke" if r is not None else "revoke_unchecked"] += 1
+                csum_total["revoke_ok"] += r is True
             if t.commit >= 0:
-                csum_total["commit"] += 1
-                csum_total["commit_ok"] += t.csum != "bad"
-            if t.desc:
-                csum_total["desc"] += len(t.desc)
-                csum_total["desc_ok"] += len(t.desc) if t.csum != "bad" else len(t.desc) - 1
+                r = j.commit_csum_ok(j.read(t.commit))
+                csum_total["commit" if r is not None else "commit_unchecked"] += 1
+                csum_total["commit_ok"] += r is True
     fact("J1.checksums", kernel=k, **csum_total)
     res["csum_total"] = csum_total
 
@@ -867,7 +876,10 @@ def analyse_kernel(k, d, pay):
              tags=tag_count(crash.live), events=len(dec_all), stop=crash.live_stop, logdump_events=len(lbody), logdump_end=lend)
         csum_bad = [("tag", t.seq, tg["slot"]) for t in crash.live for tg in t.tags if tg["copy"] == "mismatch"] + \
                    [("txn", t.seq, t.commit) for t in crash.live if t.csum == "bad"]
-        sbok = j.sb_csum_ok in (True, None)
+        sbok = (j.sb_csum_ok is True) if j.csum23 else (j.sb_csum_ok is None)
+        if j.csum23:  # on a checksummed journal "not-recorded" or "not computed" must not pass
+            csum_bad += [("txn-not-ok", t.seq, t.commit) for t in crash.live if t.committed and t.csum != "ok"]
+            csum_bad += [("descriptor", t.seq, b) for t in crash.live for b in t.desc if j.desc_csum_ok(j.read(b)) is not True]
         res["j1"] = dict(equal=ok_body and ok_end, csum_bad=csum_bad, sb_ok=sbok, tag_size=j.tag_size, live_txns=len(crash.live),
                          features=j.feature_names())
         # raw evidence: the first descriptor, the first commit, the first revoke block of the live region
@@ -990,14 +1002,14 @@ def analyse_j4_j5_j6_j7(k, d, r, pay):
                 found[label] = None
                 continue
             cs = [cc for cc in c.copies(ino) if cc["txn"].region == "live" and cc["txn"].committed]
-            found[label] = [(cc["txn"].seq, cc["links"], cc["dtime"], cc["size"]) for cc in cs]
-            fact("J4.copies", kernel=k, file=label, ino=ino, committed_live_copies=";".join("seq%d/links%d/dtime%d/size%d" % x for x in found[label]))
+            found[label] = [(cc["txn"].seq, cc["links"], cc["dtime"], cc["size"], cc["gen"]) for cc in cs]
+            fact("J4.copies", kernel=k, file=label, ino=ino, committed_live_copies=";".join("seq%d/links%d/dtime%d/size%d/gen%d" % x for x in found[label]))
         ys = read_payload(pay, "y")
         live0 = read_payload(pay, "live")
         app = read_payload(pay, "app")
-        y_in = found["y"] is not None and any(links > 0 and dt == 0 and size == len(ys) for (_, links, dt, size) in found["y"])
-        live_in = found["live"] is not None and any(links > 0 and dt == 0 and size == len(live0) + len(app) for (_, links, dt, size) in found["live"])
-        x_del = found["x"] is not None and any(dt != 0 or links == 0 for (_, links, dt, size) in found["x"])
+        y_in = found["y"] is not None and any(links > 0 and dt == 0 and size == len(ys) for (_, links, dt, size, _g) in found["y"])
+        live_in = found["live"] is not None and any(links > 0 and dt == 0 and size == len(live0) + len(app) for (_, links, dt, size, _g) in found["live"])
+        x_del = found["x"] is not None and any(dt != 0 or links == 0 for (_, links, dt, size, _g) in found["x"])
         # as-found view versus the kernel's replay of a COPY (p5)
         asfound = run("debugfs", "-R", "ls -l /", c.path)[1]
         ydeb = parse_debugfs_stat(dbg(c.path, "stat <%d>" % yino)) if yino else {}
@@ -1019,7 +1031,8 @@ def analyse_j4_j5_j6_j7(k, d, r, pay):
              p4_sha_before_replay=sha.get("p4-before"), p4_sha_after_replay=sha.get("p4-after"), p4_unchanged=(sha.get("p4-before") == sha.get("p4-after") and sha.get("p4-before") is not None))
         dm = [line for fn, line in guest_lines(d, "PROBE-DMESG ")]
         fact("J4.dmesg", kernel=k, lines=repr(dm[:6]))
-        j4 = dict(ok=bool(c.img.needs_recovery and j.start != 0 and y_in and live_in and want_y and want_live),
+        j4 = dict(ok=bool(c.img.needs_recovery and j.start != 0 and y_in and live_in and want_y and want_live
+                           and no_x and no_z and (sha.get("p4-before") == sha.get("p4-after") and sha.get("p4-before") is not None)),
                   needs_recovery=c.img.needs_recovery, start=j.start, y_in=y_in, live_in=live_in, x_del=x_del, want_y=want_y,
                   want_live=want_live, no_x=no_x, no_z=no_z, unchanged=(sha.get("p4-before") == sha.get("p4-after") and sha.get("p4-before") is not None))
         # J5: s_start and the home inode-table slot of x around the syncs

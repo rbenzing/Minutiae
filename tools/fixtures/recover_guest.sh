@@ -8,9 +8,11 @@
 #   guest_initrd <rd dir> <fstype: vfat|exfat|ext4|f2fs> <mount opts> <payload dir> <ops file> [guest clock]
 #   guest_run <img> <rd dir> <log>
 #
-# guest_run reads two optional variables: GUEST_DRIVE_OPTS is appended to the -drive
-# value (empty by default; for example ",discard=unmap") and GUEST_TIMEOUT is the
-# time limit in seconds (default 900; the F2FS fill-to-ENOSPC stage sets 2400).
+# guest_run reads three optional variables: GUEST_DRIVE_OPTS is appended to the -drive
+# value (empty by default; for example ",discard=unmap"), GUEST_TIMEOUT is the
+# time limit in seconds (default 900; the F2FS fill-to-ENOSPC stage sets 2400) and GUEST_HALT=crash
+# (read by guest_initrd and guest_run; unset by default, which leaves the init unchanged) ends the boot after the last op with
+# GUEST-CRASH and an immediate sysrq reboot, no sync and no umount, and guest_run then takes GUEST-CRASH in place of GUEST-DONE.
 #
 # The ops file holds one shell command per line, run in order inside the guest
 # with the volume mounted on /mnt and the payload files in /payload. The guest
@@ -113,7 +115,7 @@ EOT
 }
 
 guest_run() {
-  local img=$1 rd=$2 log=$3
+  local img=$1 rd=$2 log=$3 done_tag
   (cd "$rd" && find . | LC_ALL=C sort | cpio -o -H newc --quiet | gzip -n -9) >"$rd.cpio.gz"
   timeout "${GUEST_TIMEOUT:-900}" qemu-system-x86_64 -accel tcg -m 512 -smp 1 -nographic -no-reboot \
     -kernel "/boot/vmlinuz-$kver" -initrd "$rd.cpio.gz" \
