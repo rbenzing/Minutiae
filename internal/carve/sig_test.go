@@ -241,24 +241,6 @@ func TestBuiltinReturnsFreshCopy(t *testing.T) {
 	}
 }
 
-// implementedValidators lists the validator ids whose format task has landed;
-// each format test file registers its own id in an init().
-var implementedValidators = map[string]bool{}
-
-func TestBuiltinValidatorsAreStubs(t *testing.T) {
-	// A validator id not yet in implementedValidators must still be its stub; each format task
-	// registers its id from its own test file and replaces its stub.
-	w := newWindow(context.Background(), bytes.NewReader(make([]byte, 64)), 0, 64, unlimitedBudget())
-	for id, v := range builtinValidators() {
-		if implementedValidators[id] {
-			continue
-		}
-		if got := v(w); got.Outcome != Rejected || got.Reason != "no-validator" {
-			t.Errorf("%s: %+v, want rejected no-validator", id, got)
-		}
-	}
-}
-
 func TestWindowRefusesOutside(t *testing.T) {
 	w := newWindow(context.Background(), bytes.NewReader(make([]byte, 100)), 0, 10, unlimitedBudget())
 	if w.Len() != 10 {

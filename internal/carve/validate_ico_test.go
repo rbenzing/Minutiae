@@ -12,8 +12,6 @@ import (
 	"github.com/rbenzing/minutiae/internal/carve/carvetest"
 )
 
-func init() { implementedValidators["ico"] = true }
-
 func icoPNG() []byte { return carvetest.PNG(carvetest.PNGOpts{}) }
 
 // icoDIB is a 16x16 32-bit DIB with the doubled height of the AND mask.

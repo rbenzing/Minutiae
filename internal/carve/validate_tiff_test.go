@@ -13,8 +13,6 @@ import (
 	"github.com/rbenzing/minutiae/internal/carve/carvetest"
 )
 
-func init() { implementedValidators["tiff"] = true }
-
 var tiffDescription = []byte("a long description\x00") // 19 bytes: an out-of-line ASCII value
 
 // tiffPage is one page with a 64-byte strip and an out-of-line description.

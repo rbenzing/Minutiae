@@ -15,8 +15,6 @@ import (
 	"github.com/rbenzing/minutiae/internal/carve/carvetest"
 )
 
-func init() { implementedValidators["isobmff"] = true }
-
 func bmffWindow(buf []byte, b *budget) *Window {
 	return newWindow(context.Background(), bytes.NewReader(buf), 0, int64(len(buf)), b)
 }
