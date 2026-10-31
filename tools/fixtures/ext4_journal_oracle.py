@@ -14,6 +14,17 @@ wherever both report a field the two are compared, and any difference exits 1.
 
 Output grammar: "FACT J<n>.<tag> kernel=<k> key=value ...", "HEX <label> <hex>", "CROSSCHECK <ok|DIFF> <what> ...",
 "GATE-J<n>: <value> <basis>".
+
+  ext4_journal_oracle.py oracle <final image> <payload dir> <manifest.json> [--replay <guest log>] [--old-logdump]
+                                [--generator <json>] [--out <file>]
+      the oracle of the 3G journal fixtures (Task 13, ext4_journal.sh). It decodes the finished image with the decoder below,
+      cross-checks it with `debugfs logdump -a` (live region), `logdump -O` (stale region, with --old-logdump), `dumpe2fs -h` and
+      `debugfs stat <8>` (any difference exits 1), takes the as-found tree, the true maps and the 3C outcome from the 3C oracle
+      (ext4_recover_oracle.py, itself an independent reader), restates 3G-R11 to R13 in Python to derive what a recovery must
+      yield under each journal mode (none, committed, stale), and, with --replay, checks the files the KERNEL's replay of a copy of
+      the crash image lists. The JSON goes to stdout or --out; every other line goes to stderr.
+  ext4_journal_oracle.py families <expect.json>...
+      exits 1, naming it, when a family did not realise its scenario (the generator never improvises a missing family).
 """
 import binascii
 import os
@@ -97,6 +108,23 @@ def check(what, a, b, **kv):
 def run(*cmd):
     r = subprocess.run(list(cmd), capture_output=True, text=True, errors="replace")
     return r.returncode, r.stdout, r.stderr
+
+
+def run_capped(cmd, cap):
+    """The first `cap` bytes of a command's stdout, decoded; the command is killed once the cap is reached (a tool that never ends)."""
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    buf = bytearray()
+    try:
+        while len(buf) < cap:
+            chunk = p.stdout.read(65536)
+            if not chunk:
+                break
+            buf += chunk
+    finally:
+        p.kill()
+        p.wait()
+        p.stdout.close()
+    return bytes(buf).decode("utf-8", "replace")
 
 
 def dbg(img, cmd):
@@ -1245,7 +1273,602 @@ def sha_text(path):
     return hashlib.sha256(open(path, "rb").read()).hexdigest()
 
 
+# ================================================================================================
+# the fixture oracle (plan 3G Task 13): `oracle` and `families`
+# ================================================================================================
+JOURNAL_METHOD = "ext4-journal-inode"
+JOURNAL_BASE, CAP_JOURNAL_STALE = 65, 40
+MODES = ("none", "committed", "stale")
+SHORT_FEATURES = [(0x1, "compat", "checksum"), (0x1, "incompat", "revoke"), (0x2, "incompat", "64bit"), (0x4, "incompat", "async_commit"),
+                  (0x8, "incompat", "csum_v2"), (0x10, "incompat", "csum_v3"), (0x20, "incompat", "fast_commit")]
+
+
+def fail(msg):
+    print("oracle: " + msg, file=sys.stderr)
+    sys.exit(1)
+
+
+def short_features(j):
+    """The journal feature names of the plan (3G-R2), compat first, then incompat, each in bit order."""
+    out = []
+    for bit, kind, name in SHORT_FEATURES:
+        if (j.fcompat if kind == "compat" else j.fincompat) & bit:
+            out.append(name)
+    return out
+
+
+def unescaped(tag, data):
+    """The slot bytes with the magic restored when the tag says the block was escaped (3G-R7); only in-memory decoders use it."""
+    if tag["escaped"]:
+        return b"\xc0\x3b\x39\x98" + bytes(data[4:])
+    return bytes(data)
+
+
+def copies_of(st, fsblk, regions):
+    """The eligible copies of a file-system block (3G-R11): tags of committed transactions of the allowed regions whose copy is verified or
+    unverified, newest first (by sequence, live before stale on a tie, then the later start block). Revoked ones are included: the
+    caller decides. The fixtures never wrap the 32-bit sequence, so a plain integer order stands for seqNewer."""
+    out = []
+    for t in st.txns:
+        if not t.committed or t.region not in regions:
+            continue
+        for tag in t.tags:
+            if tag["fs"] == fsblk and tag["copy"] in ("verified", "unverified"):
+                out.append((t, tag))
+    out.sort(key=lambda p: (p[0].seq, p[0].region == "live", p[0].start), reverse=True)
+    return out
+
+
+def make_walker(O):
+    """O.MapWalker with the map blocks read by 3G-R12: the newest eligible copy not newer than the inode copy's transaction."""
+
+    class JMapWalker(O.MapWalker):
+        def __init__(self, fs, ino, free, limit, st, regions, txn):
+            super().__init__(fs, ino, free, limit)
+            self.st, self.regions, self.txn = st, regions, txn
+            self.sources = []
+
+        def read_map_block(self, blk, lblk):
+            if blk == 0 or blk >= self.fs.blocks:
+                self.stop_at("map-damaged", lblk)
+            if blk in self.seen:
+                self.stop_at("map-overlap", lblk)
+            cps = copies_of(self.st, blk, self.regions)
+            older = [c for c in cps if seq_ge(self.txn.seq, c[0].seq)]
+            if older:
+                t, tag = older[0]
+                data = unescaped(tag, self.st.j.read(tag["slot"]))
+                self.seen.add(blk)
+                self.tree.append(blk)
+                self.sources.append("journal:%d" % t.seq)
+                return data
+            if cps:
+                self.stop_at("map-block-newer-than-copy", lblk)
+            if blk not in self.free:
+                self.stop_at("map-block-not-free", lblk)
+            self.seen.add(blk)
+            self.tree.append(blk)
+            self.sources.append("home")
+            return self.fs.block(blk)
+
+    return JMapWalker
+
+
+def journal_candidate(O, Walker, fsr, free, st, rec, ino, mode):
+    """3G-R11 to R13 restated: (candidate dict or None, diagnostics). `ino` is the on-disk stale inode (its generation names the file)."""
+    regions = ("live",) if mode == "committed" else ("live", "stale")
+    n = rec["ino"]
+    blk, off = st.img.loc(n)
+    diag = dict(copies=0, revoked=0, other_generation=0, deleted_state=0, live_state=0, newest_live_state_size=-1, newest_live_state_seq=-1)
+    chosen = None
+    for t, tag in copies_of(st, blk, regions):
+        diag["copies"] += 1
+        if revoked_in(st.txns, t.seq, blk):
+            diag["revoked"] += 1
+            continue
+        raw = unescaped(tag, st.j.read(tag["slot"]))[off:off + st.img.isz]
+        c = st.img.decode_inode(raw, n)
+        if c["gen"] != ino["gen"]:
+            diag["other_generation"] += 1
+            continue
+        if c["links"] == 0 or c["dtime"] != 0:
+            diag["deleted_state"] += 1
+            continue
+        diag["live_state"] += 1
+        if chosen is None:
+            chosen = (t, tag, c)
+            diag["newest_live_state_size"], diag["newest_live_state_seq"] = c["size"], t.seq
+    if chosen is None:
+        return None, diag
+    t, tag, L = chosen
+    if st.img.csum and L["csum_ok"] is False:
+        return None, diag
+    if fsr.incompat & O.INCOMPAT_FILETYPE and rec["ft"] != 0 and O.mode_filetype(L["mode"]) != rec["ft"]:
+        return None, diag
+    if L["flags"] & (O.FL_INLINE | O.FL_EA_INODE) or L["mode"] & 0xF000 not in (0x8000, 0xA000) or L["size"] <= 0:
+        return None, diag
+    w = Walker(fsr, dict(ino=n, gen=L["gen"], flags=L["flags"], ib=L["ib"]), free, min(L["size"], fsr.blocks * fsr.bs), st, regions, t)
+    m = w.run()
+    if m["cleared"] or (not m["blocks"] and not m["stop"]):
+        return None, diag
+    ass = ["inode-copy-from-journal", "journal-copy-may-predate-last-change", "size-from-journal-copy", "inode-not-reused-since-entry-deleted"]
+    if t.region == "stale":
+        ass.append("journal-stale-region")
+    if tag["copy"] == "unverified":
+        ass.append("journal-copy-unverified")
+    if tag["escaped"]:
+        ass.append("jbd2-unescaped")
+    if m["stop"]:
+        ass.append("stale-chain-stop=" + m["stop"])
+    if fsr.incompat & O.INCOMPAT_RECOVER:
+        ass.append("journal-not-replayed")
+    if ino["dtime"] < L["ctime"]:
+        ass.append("dtime-before-ctime")
+    cand = dict(method=JOURNAL_METHOD, size=L["size"], blocks=m["blocks"], covered=m["covered"], stop=m["stop"], assumptions=ass, tree=m["tree"],
+                journal=dict(seq=t.seq, region=t.region, committed=True, jblk=tag["slot"], fsblk=blk), tree_sources=list(w.sources))
+    return cand, diag
+
+
+def confidence3g(O, p, overlap):
+    """The caps of 3G-R13 on top of 3C's: base 65 for a journal candidate, 40 for the stale region and for an unreplayed journal."""
+    base = JOURNAL_BASE if p["method"] == JOURNAL_METHOD else O.BASE[p["method"]]
+    if "journal-stale-region" in p["cand"]["assumptions"]:
+        base = min(base, CAP_JOURNAL_STALE)
+    if overlap:
+        base = min(base, O.CAP_OVERLAP)
+    if p["not_replayed"]:
+        base = min(base, O.CAP_NOT_REPLAYED)
+    if p["cut"] or p["prefix"] or p["end_unknown"]:
+        base = min(base, O.CAP_CUT)
+    return base
+
+
+def parse_ld_groups(events):
+    """Group logdump events into transactions: [[seq, first block, tags [(fs, jblk, flags)], revokes [fs], committed]]. A transaction is the
+    run of header blocks of one sequence up to its commit block."""
+    out, cur = [], None
+    for e in events:
+        if e[0] == "hdr":
+            _, bt, seq, b = e
+            if cur is None or cur[0] != seq:
+                cur = [seq, b, [], [], False]
+                out.append(cur)
+            if bt == T_COMMIT:
+                cur[4] = True
+                cur = None
+        elif e[0] == "tag" and cur is not None:
+            cur[2].append((e[1], e[2], e[3]))
+        elif e[0] == "rev" and cur is not None:
+            cur[3].append(e[1])
+    return out
+
+
+def txn_json(t, st, logdump):
+    return dict(seq=t.seq, region=t.region, start_jblk=t.start, commit_jblk=t.commit, committed=t.committed, checksum=t.csum,
+                revoked=list(t.revokes), logdump=logdump,
+                tags=[dict(fsblock=g["fs"], jblk=g["slot"], flags=g["flags"], copy=g["copy"],
+                           revoked=bool(g["copy"] in ("verified", "unverified") and revoked_in(st.txns, t.seq, g["fs"])),
+                           escaped=bool(g["escaped"])) for g in t.tags])
+
+
+def sha(b):
+    import hashlib
+    return hashlib.sha256(b).hexdigest()
+
+
+def parse_replay(path):
+    """The guest lines of the kernel's replay of a COPY of the crash image: RF <path> <size> <sha256>, PROBE-INO <path> <inode>."""
+    rf, inos, dm = {}, {}, []
+    for line in open(path, "rb").read().decode("latin-1").replace("\r", "").splitlines():
+        p = line.split()
+        if line.startswith("RF ") and len(p) == 4:
+            rf[p[1]] = (int(p[2]), p[3])
+        elif line.startswith("PROBE-INO ") and len(p) == 3:
+            inos[p[1]] = int(p[2])
+        elif line.startswith("PROBE-DMESG "):
+            dm.append(line[len("PROBE-DMESG "):])
+    return rf, inos, dm
+
+
+def parse_opts(args):
+    """(options, positionals): --replay/--generator/--out take a value, --old-logdump is a switch."""
+    opts, pos, i = {}, [], 0
+    while i < len(args):
+        a = args[i]
+        if a in ("--replay", "--generator", "--out"):
+            opts[a[2:]] = args[i + 1]
+            i += 2
+        elif a == "--old-logdump":
+            opts["old-logdump"] = True
+            i += 1
+        else:
+            pos.append(a)
+            i += 1
+    return opts, pos
+
+
+def read_file_bytes(img, fsr, ino):
+    lm = fsr.lblk_map(ino)
+    return b"".join(fsr.block(lm[q]) for q in range((ino["size"] + img.bs - 1) // img.bs))[:ino["size"]]
+
+
+def cmd_oracle(args):
+    import contextlib
+    import io
+    import json
+    sys.dont_write_bytecode = True
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import ext4_recover_oracle as O  # noqa: E402  the 3C oracle: its own raw reader, map walker and planner (never Minutiae)
+
+    opts, pos = parse_opts(args)
+    if len(pos) != 3:
+        fail("usage: oracle <final image> <payload dir> <manifest.json> [--replay <guest log>] [--old-logdump] [--generator <json>] [--out <file>]")
+    final, pay, manifest = pos
+    man = json.load(open(manifest))
+    with contextlib.redirect_stdout(sys.stderr):  # the cross-check lines go to stderr; stdout (or --out) is the oracle JSON only
+        st = Stage(final)
+        img, j = st.img, st.j
+        k = os.path.basename(final)
+        # ---- cross-checks of the decoder against the tools ----
+        crosscheck_journal_header(k, st, "final")
+        ji = parse_debugfs_stat(dbg(final, "stat <8>"))
+        check("%s debugfs stat <8> size" % k, j.inode["size"], ji.get("size"))
+        check("%s debugfs stat <8> journal block map" % k, {n: x for n, x in enumerate(j.map) if x is not None}, ji.get("map"))
+        ld_ok = {}
+        if st.live:
+            out = run("debugfs", "-R", "logdump -a", final)[1]
+            lev, info, other = parse_logdump(out)
+            check("%s logdump Journal starts at block" % k, j.start, info.get("start"))
+            check("%s logdump transaction" % k, j.sequence, info.get("seq"))
+            body = [e for e in lev if e[0] not in ("nomagic", "seqmismatch")]
+            endev = [e for e in lev if e[0] in ("nomagic", "seqmismatch")]
+            compare_events("%s live scan vs logdump -a" % k, norm_live_events(st.live_ev), body)
+            check("%s live scan end block vs logdump" % k, [e[1] for e in st.live_ev if e[0] == "end"], [e[-1] for e in endev])
+            for t in st.live:
+                ld_ok[(t.seq, t.start)] = True
+        if "old-logdump" in opts:
+            # `logdump -O` ends only at a block without the magic number: on a log that wrapped, every block of the ring can parse and
+            # it goes round forever. Its output is read up to a cap, and compared with the decoder's walk, which stops when it comes
+            # back to a block it has seen (one lap); a log that ends at a non-magic block must agree to the last event.
+            out = run_capped(["timeout", "120", "debugfs", "-R", "logdump -O -a", final], 8 << 20)
+            lev, info, other = parse_logdump(out)
+            decall = j.walk_old(1)
+            dec = [e for e in decall if e[0] not in ("nomagic",)]
+            body = [e for e in lev if e[0] not in ("nomagic",)]
+            lap = not any(e[0] in ("nomagic", "unexpected") for e in decall)
+            if lap:  # the decoder stopped at a repeated block: logdump must have gone on, and the first lap must agree
+                if len(body) < len(dec):
+                    fail("logdump -O ended after %d events, before the decoder's first lap of %d" % (len(body), len(dec)))
+                body = body[:len(dec)]
+                keep, n = [], 0
+                for e in lev:
+                    if e[0] != "nomagic":
+                        if n == len(dec):
+                            break
+                        n += 1
+                    keep.append(e)
+                lev = keep
+            compare_events("%s stale view vs logdump -O -a%s" % (k, " (first lap)" if lap else ""), dec, body)
+            by = {(g[0], g[1]): g for g in parse_ld_groups(lev)}
+            for t in st.txns:
+                g = by.get((t.seq, t.start))
+                if g is None:
+                    continue
+                dec_tags = [(x["fs"], x["slot"], x["flags"]) for x in t.tags]
+                if check("%s logdump -O txn seq %d @%d tags" % (k, t.seq, t.start), dec_tags, g[2]) and \
+                        check("%s logdump -O txn seq %d @%d revokes" % (k, t.seq, t.start), list(t.revokes), g[3]):
+                    ld_ok[(t.seq, t.start)] = True
+        if DIFFS:
+            fail("cross-check differences: %s" % DIFFS[:10])
+
+        # ---- the 3C view of the final image (the as-found tree, the true maps, the 3C outcome) ----
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            O.main(final, pay, manifest)
+        base = json.loads(buf.getvalue())
+        fsr = O.P.Fs(final)
+        free = O.free_blocks(fsr, final)
+        dirs, found = O.walk(fsr)
+        recmap = {}
+        for r in found:
+            recmap[r["dir"].rstrip("/") + "/" + r["name"].decode("latin-1")] = r
+        files = {f["path"]: f for f in man["files"]}
+        Walker = make_walker(O)
+        items = []
+        for d in base["deleted"]:
+            r = recmap[d["path"]]
+            entry = files.get(d["path"])
+            src = open(os.path.join(pay, entry["src"]), "rb").read() if entry and entry["src"] != "-" else b""
+            is_file = (fsr.inode(r["ino"])["mode"] & 0xF000 in (0x8000, 0xA000)) if r["ino"] else r["ft"] in (1, 7)
+            it = dict(d=d, r=r, source=src, is_file=is_file)
+            it["st3"] = O.stale_candidates(fsr, free, r) if is_file else None
+            items.append(it)
+
+        totals, diags = {}, {}
+        for mode in MODES:
+            sel = []
+            for it in items:
+                it["err"], it["planned"], it["rejects"], cms = None, [], [], []
+                if not it["is_file"]:
+                    it["err"] = ("not-a-file", "")
+                elif it["st3"][0] == "err":
+                    it["err"] = (it["st3"][1], it["st3"][2])
+                else:
+                    _, ino, cands = it["st3"]
+                    cands = list(cands)
+                    if mode != "none":
+                        jc, dg = journal_candidate(O, Walker, fsr, free, st, it["r"], ino, mode)
+                        diags.setdefault(it["d"]["path"], {})[mode] = dg
+                        if jc:
+                            cands.append(jc)
+                    cms = [c["method"] for c in cands]
+                    if not cands:
+                        it["err"] = ("no-map", "no candidate")
+                    for c in cands:
+                        kind, p = O.plan_candidate(fsr, free, c)
+                        if kind == "skip":
+                            it["rejects"].append(p)
+                            continue
+                        data = b"".join(fsr.block(b) for b in p["captured"])[:p["size"]]
+                        if len(data) > 0 and data == bytes([data[0]]) * len(data):
+                            it["rejects"].append("uniform")
+                            continue
+                        p["artifact"] = data
+                        it["planned"].append(p)
+                it["cms"] = cms
+                if it["planned"]:
+                    it["planned"].sort(key=lambda p: -confidence3g(O, p, False))
+                    sel.append((it, it["planned"][0]))
+            for it, p in sel:
+                p["overlaps"] = sorted(o["d"]["path"] for o, q in sel if o is not it and set(p["captured"]) & set(q["captured"]))
+            tot = dict(recovered=0, skipped_by={}, undecided=0)
+
+            def skipped(reason, tot=tot):
+                tot["skipped_by"][reason] = tot["skipped_by"].get(reason, 0) + 1
+                if reason == "undecided":
+                    tot["undecided"] += 1
+
+            for it in items:
+                ex = dict(outcome="skip", skip="", method="", seq=0, region="", size=0, captured_blocks=[], cut=False, incomplete=False,
+                          confidence=0, assumptions=[], equal_source="", stop="", candidate_methods=it["cms"], overlaps=[], tree_sources=[])
+                if it["planned"]:
+                    p = it["planned"][0]
+                    ov = p.get("overlaps", [])
+                    jr = p["cand"].get("journal")
+                    ex.update(outcome="recover", method=p["method"], seq=jr["seq"] if jr else 0, region=jr["region"] if jr else "", size=p["size"],
+                              captured_blocks=O.runs_of(p["captured"]), cut=p["cut"], incomplete=p["cut"] or p["prefix"] or p["end_unknown"],
+                              confidence=confidence3g(O, p, bool(ov)), assumptions=list(p["cand"]["assumptions"]) + ["overlap=" + o for o in ov],
+                              equal_source=O.relation(p["artifact"], it["source"]), stop=p["cand"]["stop"], overlaps=ov,
+                              tree_sources=list(p["cand"].get("tree_sources", [])))
+                    tot["recovered"] += 1
+                    for _q in it["planned"][1:]:
+                        skipped("not-selected")
+                    for reason in it["rejects"]:
+                        skipped(reason)
+                else:
+                    reason = it["err"][0] if it["err"] else (it["rejects"][0] if it["rejects"] else "no-map")
+                    ex["skip"] = reason
+                    skipped(reason)
+                    for extra in it["rejects"][1:]:
+                        skipped(extra)
+                it.setdefault("ex", {})[mode] = ex
+            totals[mode] = tot
+        # the mode `none` is 3C's answer: the two computations must agree
+        for it in items:
+            a, b = it["ex"]["none"], it["d"]["expect"]
+            for f in ("outcome", "method", "size", "captured_blocks", "cut", "confidence", "overlaps"):
+                if a[f] != b[f] and not (f == "method" and a["outcome"] == "skip"):
+                    fail("%s: mode none disagrees with the 3C oracle on %s: %r against %r" % (it["d"]["path"], f, a[f], b[f]))
+            if a["outcome"] == "skip" and a["skip"] != b["skip"]:
+                fail("%s: mode none skip %r, the 3C oracle says %r" % (it["d"]["path"], a["skip"], b["skip"]))
+        if totals["none"] != base["totals"]:
+            fail("mode none totals %r differ from the 3C oracle's %r" % (totals["none"], base["totals"]))
+
+        deleted = []
+        for it in items:
+            d = dict(it["d"])
+            for gone in ("expect", "candidates", "reader_blocks", "reader_stop"):
+                d.pop(gone, None)
+            d["expect"] = it["ex"]
+            d["journal_copies"] = diags.get(d["path"], {}).get("stale", {})
+            deleted.append(d)
+
+        # ---- the as-found live files (their source hashes), the journal-only rows and the replay ----
+        live = []
+        for lf in man.get("live", []):
+            n = O.lookup(fsr, lf["path"])
+            if n is None:
+                fail("live file %s is not in the as-found tree" % lf["path"])
+            ino = fsr.inode(n)
+            data = read_file_bytes(img, fsr, ino)
+            srcb = open(os.path.join(pay, lf["src"]), "rb").read()
+            if data != srcb[:ino["size"]] or (not lf.get("prefix") and data != srcb):
+                fail("live file %s does not hold its source bytes" % lf["path"])
+            live.append(dict(path=lf["path"], family=lf["family"], inode=n, size=ino["size"], sha256=sha(data), source_sha256=sha(srcb),
+                             source_size=len(srcb)))
+        jonly, replay = [], None
+        if "replay" in opts:
+            rf, rinos, dm = parse_replay(opts["replay"])
+            replay = dict(files={p: dict(size=s, sha256=h) for p, (s, h) in sorted(rf.items())}, dmesg=dm)
+            for p in man.get("replay_absent", []):
+                if "/mnt" + p in rf:
+                    fail("the kernel's replay lists %s, which must be absent" % p)
+            for jo in man.get("journal_only", []):
+                key = "/mnt" + jo["path"]
+                if key not in rf:
+                    fail("the kernel's replay does not list %s" % jo["path"])
+                srcb = b"".join(open(os.path.join(pay, s), "rb").read() for s in jo["src"])
+                if rf[key] != (len(srcb), sha(srcb)):
+                    fail("the replayed %s is not its source (size %d)" % (jo["path"], rf[key][0]))
+                n = rinos.get(jo["path"])
+                if n is None:
+                    fail("no inode number for %s in the replay log" % jo["path"])
+                blk, _ = img.loc(n)
+                copies = [[t.seq, g["fs"], g["slot"]] for t, g in copies_of(st, blk, ("live",))]
+                inl = O.lookup(fsr, jo["path"])
+                row = dict(path=jo["path"], family=jo["family"], inode=n, replayed_size=len(srcb), replayed_sha256=sha(srcb),
+                           as_found_present=inl is not None, inode_table_copies=[[c[1], c[2]] for c in copies], copy_seqs=[c[0] for c in copies],
+                           as_found_size=0, as_found_sha256="")
+                if inl is not None:
+                    ino = fsr.inode(inl)
+                    row.update(as_found_size=ino["size"], as_found_sha256=sha(read_file_bytes(img, fsr, ino)))
+                jonly.append(row)
+
+        fams = {}
+        for d in deleted:
+            if not d["family"].startswith("aux") and d["family"] != "unlisted":
+                fams.setdefault(d["family"], dict(kind="deleted", count=0))["count"] += 1
+        for r in jonly:
+            fams[r["family"]] = dict(kind="journal_only", count=1)
+        for lf in live:
+            fams.setdefault(lf["family"], dict(kind="live", count=0))["count"] += 1
+
+        out = dict(fs_type=man["fs_type"], block_size=img.bs, deleted_entry_count=base["deleted_entry_count"], unlisted_count=base["unlisted_count"],
+                   totals=totals, journal=dict(inode=img.jinum, version=2 if j.btype == T_SB2 else 1, block_size=j.blocksize, blocks=j.maxlen,
+                                               first=j.first, sequence=j.sequence, start=j.start, features=short_features(j),
+                                               feature_compat=j.fcompat, feature_incompat=j.fincompat, needs_recovery=img.needs_recovery,
+                                               live_stop=st.live_stop or "", csum_type=j.csum_type, tag_size=j.tag_size),
+                   txns=[txn_json(t, st, ld_ok.get((t.seq, t.start), False)) for t in st.txns], deleted=deleted, journal_only=jonly,
+                   live=live, families=fams)
+        if replay is not None:
+            out["replay"] = replay
+        if "generator" in opts:
+            out["generator"] = json.load(open(opts["generator"]))
+    text = dump_json(out)
+    if "out" in opts:
+        open(opts["out"], "w").write(text)
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
+def dump_json(obj):
+    """Stable text: sorted keys, the transactions one per line (a wrapped journal holds hundreds)."""
+    import json
+    parts = []
+    for key in sorted(obj):
+        if key == "txns":
+            body = ",\n".join("  " + json.dumps(t, sort_keys=True) for t in obj[key])
+            parts.append(' "txns": [\n%s\n ]' % body)
+        else:
+            parts.append(" %s: %s" % (json.dumps(key), json.dumps(obj[key], indent=1, sort_keys=True).replace("\n", "\n ")))
+    return "{\n" + ",\n".join(parts) + "\n}\n"
+
+
+# ---- the families: the scenario of each is checked on the finished oracle; a missing or misshaped one exits 1 ----
+def is_skip(e, reason):
+    return e["outcome"] == "skip" and e["skip"] == reason
+
+
+def is_journal(e, region, conf, rel="full"):
+    return e["outcome"] == "recover" and e["method"] == JOURNAL_METHOD and e["region"] == region and e["confidence"] == conf and \
+        (rel is None or e["equal_source"] == rel)
+
+
+def no_map_everywhere(r):
+    return all(is_skip(r["expect"][m], "no-map") for m in MODES)
+
+
+def fam_clean():
+    """ext4-journal-clean: a clean journal has no live region, so the `committed` mode adds nothing to `none`."""
+    ok = {}
+    ok["jsmall"] = lambda r: is_skip(r["expect"]["none"], "no-map") and is_skip(r["expect"]["committed"], "no-map") and \
+        is_journal(r["expect"]["stale"], "stale", 40) and r["expect"]["stale"]["stop"] == ""
+    ok["jdeep"] = lambda r: r["expect"]["none"]["outcome"] == "recover" and r["expect"]["none"]["method"] == "ext4-extent-leaf" and \
+        r["expect"]["committed"] == r["expect"]["none"] and is_journal(r["expect"]["stale"], "stale", 40) and \
+        len(r["tree_blocks"]) >= 1 and len(r["true_blocks"]) >= 20 and \
+        any(s.startswith("journal:") for s in r["expect"]["stale"]["tree_sources"])
+    ok["jtrunc"] = lambda r: no_map_everywhere(r) and r["journal_copies"].get("newest_live_state_size") == 0
+    ok["jgone"] = lambda r: no_map_everywhere(r) and r["journal_copies"].get("live_state") == 0
+    ok["jreuse"] = lambda r: is_skip(r["expect"]["none"], "no-map") and is_skip(r["expect"]["committed"], "no-map") and \
+        is_journal(r["expect"]["stale"], "stale", 20, "artifact-is-prefix") and r["expect"]["stale"]["cut"]
+    ok["jhardlink"] = lambda r: all(is_skip(r["expect"][m], "reused") for m in MODES)
+    ok["jinline"] = lambda r: all(is_skip(r["expect"][m], "unsupported") for m in MODES)
+    ok["jswap"] = lambda r: is_skip(r["expect"]["none"], "no-map") and is_skip(r["expect"]["committed"], "no-map") and \
+        r["expect"]["stale"]["outcome"] == "recover" and r["expect"]["stale"]["method"] == JOURNAL_METHOD and \
+        r["expect"]["stale"]["equal_source"] == "no"
+    return ok
+
+
+def fam_crash():
+    ok = {}
+    ok["crash-live-copy"] = lambda r: is_skip(r["expect"]["none"], "no-map") and is_journal(r["expect"]["committed"], "live", 40) and \
+        is_journal(r["expect"]["stale"], "live", 40) and "journal-not-replayed" in r["expect"]["committed"]["assumptions"]
+    return ok
+
+
+def fam_ext3():
+    ok = {}
+    ok["bm-small"] = lambda r: is_skip(r["expect"]["none"], "no-map") and is_skip(r["expect"]["committed"], "no-map") and \
+        is_journal(r["expect"]["stale"], "stale", 40) and "journal-copy-unverified" in r["expect"]["stale"]["assumptions"]
+    ok["bm-indirect"] = lambda r: ok["bm-small"](r) and len(r["tree_blocks"]) >= 1 and len(r["expect"]["stale"]["tree_sources"]) >= 1
+    return ok
+
+
+def shape_errors(name, d):
+    """Image-level claims that the families rest on."""
+    bad = []
+    j = d["journal"]
+    if name == "ext4-journal-crash":
+        if not j["needs_recovery"] or j["start"] == 0:
+            bad.append("the crash image must have needs_recovery and s_start != 0 (start %d)" % j["start"])
+        if not any(t["region"] == "live" and t["committed"] for t in d["txns"]):
+            bad.append("the crash image has no committed live transaction")
+        if not all(t["logdump"] for t in d["txns"] if t["region"] == "live"):
+            bad.append("a live transaction was not confirmed by logdump -a")
+        kinds = {r["family"]: r for r in d["journal_only"]}
+        c, u = kinds.get("crash-created"), kinds.get("crash-update")
+        if not c or c["as_found_present"] or not c["inode_table_copies"]:
+            bad.append("crash-created: the file must be absent from the as-found view and have inode-table copies in the live region")
+        if not u or not u["as_found_present"] or u["as_found_sha256"] == u["replayed_sha256"] or u["as_found_size"] >= u["replayed_size"] or \
+                not u["inode_table_copies"]:
+            bad.append("crash-update: the as-found content must be the old one, the replayed one the new one")
+    else:
+        if j["needs_recovery"] or j["start"] != 0:
+            bad.append("a clean image must have no needs_recovery and s_start 0 (start %d)" % j["start"])
+        if not any(t["region"] == "stale" and t["committed"] and t["tags"] for t in d["txns"]):
+            bad.append("no committed stale transaction with tags")
+        if not any(t["logdump"] for t in d["txns"]):
+            bad.append("no stale transaction was confirmed by logdump -O")
+    return bad
+
+
+def cmd_families(paths):
+    import json
+    bad, kinds = [], set()
+    for p in paths:
+        d = json.load(open(p))
+        name = os.path.basename(p).replace(".expect.json", "")
+        table = {"ext4-journal-clean": fam_clean, "ext4-journal-crash": fam_crash, "ext3-journal-clean": fam_ext3}[name]()
+        for fam, ok in table.items():
+            hits = [r for r in d["deleted"] if r["family"] == fam]
+            if not hits:
+                bad.append("%s: family %s is missing" % (name, fam))
+            elif not all(ok(r) for r in hits):
+                bad.append("%s: family %s did not realise its scenario: %s" % (name, fam, json.dumps(hits[0]["expect"], sort_keys=True)[:700]))
+        bad += ["%s: %s" % (name, e) for e in shape_errors(name, d)]
+        for r in d["deleted"]:
+            if r["family"].startswith("aux") or r["family"] == "unlisted":
+                continue
+            kinds.update(r["expect"][m]["equal_source"] for m in MODES if r["expect"][m]["outcome"] == "recover")
+        if d["unlisted_count"]:
+            print("%s: %d deleted entries the generator did not delete (logged, counted in deleted_entry_count)" % (name, d["unlisted_count"]))
+    for k in ("full", "prefix-of-artifact", "artifact-is-prefix", "no"):
+        if k not in kinds:
+            bad.append("equal_source kind %s occurs in no image" % k)
+    if bad:
+        for b in bad:
+            print("family check: " + b + "; re-rule, do not edit the ops", file=sys.stderr)
+        return 1
+    print("families: every required family and equal_source kind occurs")
+    return 0
+
+
 def main(argv):
+    if len(argv) >= 3 and argv[1] == "oracle":
+        return cmd_oracle(argv[2:])
+    if len(argv) >= 3 and argv[1] == "families":
+        return cmd_families(argv[2:])
     if len(argv) < 3 or argv[1] != "probe":
         print(__doc__)
         return 2

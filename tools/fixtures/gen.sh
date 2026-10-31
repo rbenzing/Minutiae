@@ -22,6 +22,9 @@ declare -A fixtures=(
   # ext4_recover.sh: runs in the Dockerfile.recover510 image (the 5.10 guest kernel next to the 6.1 one) and writes
   # ext4-recover, ext3-recover, ext4-recover-sameboot and ext4-recover-wiped
   [ext4-recover]="internal/filesys/ext4/testdata/recover"
+  # ext4_journal.sh: runs in the Dockerfile.recover510 image (the 5.10 guest kernel) and writes ext4-journal-clean,
+  # ext4-journal-crash and ext3-journal-clean (plan 3G Task 13)
+  [ext4-journal]="internal/filesys/ext4/testdata/journal"
   [f2fs-recover]="internal/filesys/f2fs/testdata/recover"
   [hfsplus]="internal/filesys/hfsplus/testdata"
   [sqlite]="internal/sqlitefile/testdata"
@@ -39,7 +42,7 @@ order=(volume-gpt volume-mbr ext4 fat exfat f2fs ewf apfs sqlite)
 # apfs-populated: Dockerfile.apfs, minutiae-fixtures-apfs; fat-recover, exfat-recover, f2fs-recover and casefold:
 # Dockerfile.recover, minutiae-recover-fixtures, which holds QEMU and the guest kernel; carve: Dockerfile.carve,
 # minutiae-carve-fixtures, which holds the encoders and no QEMU).
-separate=(hfsplus apfs-populated fat-recover exfat-recover f2fs-recover ext4-recover casefold ext4-xattr carve carve-images)
+separate=(hfsplus apfs-populated fat-recover exfat-recover f2fs-recover ext4-recover ext4-journal casefold ext4-xattr carve carve-images)
 
 usage() {
   echo "usage: gen.sh <fixture>|all" >&2
@@ -76,7 +79,7 @@ for name in "${targets[@]}"; do
       exit 1
     fi
     ;;
-  fat-recover | exfat-recover | f2fs-recover | ext4-xattr)
+  fat-recover | exfat-recover | f2fs-recover | ext4-xattr | ext4-journal)
     if ! command -v qemu-system-x86_64 >/dev/null || ! compgen -G "/boot/vmlinuz-*" >/dev/null; then
       echo "gen.sh $name needs QEMU and the guest kernel, which the minutiae-fixtures image does not have." >&2
       echo "Build and use the separate image: docker build -f tools/fixtures/Dockerfile.recover -t minutiae-recover-fixtures tools/fixtures" >&2
@@ -117,7 +120,7 @@ for name in "${targets[@]}"; do
   mkdir -p "$out"
   echo "== $name -> ${fixtures[$name]}"
   script=$name
-  case $name in fat-recover | exfat-recover | f2fs-recover | ext4-xattr | ext4-recover) script=${name//-/_} ;; esac # fat_recover.sh, exfat_recover.sh, f2fs_recover.sh, ext4_xattr.sh, ext4_recover.sh
+  case $name in fat-recover | exfat-recover | f2fs-recover | ext4-xattr | ext4-recover | ext4-journal) script=${name//-/_} ;; esac # fat_recover.sh, exfat_recover.sh, f2fs_recover.sh, ext4_xattr.sh, ext4_recover.sh
   case $name in carve) script=carve_gen ;; esac # carve_gen.sh
   case $name in carve-images) script=carve_images_gen ;; esac # carve_images_gen.sh
   bash "$here/$script.sh" "$out"

@@ -1,0 +1,340 @@
+{
+ "block_size": 1024,
+ "deleted": [
+  {
+   "expect": {
+    "committed": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "no-map",
+     "stop": "",
+     "tree_sources": []
+    },
+    "none": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "no-map",
+     "stop": "",
+     "tree_sources": []
+    },
+    "stale": {
+     "assumptions": [
+      "inode-copy-from-journal",
+      "journal-copy-may-predate-last-change",
+      "size-from-journal-copy",
+      "inode-not-reused-since-entry-deleted",
+      "journal-stale-region",
+      "journal-copy-unverified"
+     ],
+     "candidate_methods": [
+      "ext4-journal-inode"
+     ],
+     "captured_blocks": [
+      [
+       1601,
+       20
+      ]
+     ],
+     "confidence": 40,
+     "cut": false,
+     "equal_source": "full",
+     "incomplete": false,
+     "method": "ext4-journal-inode",
+     "outcome": "recover",
+     "overlaps": [],
+     "region": "stale",
+     "seq": 6,
+     "size": 20469,
+     "skip": "",
+     "stop": "",
+     "tree_sources": [
+      "journal:6"
+     ]
+    }
+   },
+   "family": "bm-indirect",
+   "generation": 168744446,
+   "inode": 19,
+   "journal_copies": {
+    "copies": 4,
+    "deleted_state": 1,
+    "live_state": 1,
+    "newest_live_state_seq": 6,
+    "newest_live_state_size": 20469,
+    "other_generation": 2,
+    "revoked": 0
+   },
+   "kernel_state": {
+    "i_size": 0,
+    "inode_free": true,
+    "leaf_intact": false,
+    "root_entries": 0
+   },
+   "name": "bm_ind",
+   "path": "/t/i/bm_ind",
+   "source_sha256": "c8b20bc92359a9a4ca5b914e33c339a62a95ca6b9c7287624685fef4e98d3808",
+   "source_size": 20469,
+   "tree_blocks": [
+    1597
+   ],
+   "true_basis": "stage-image",
+   "true_blocks": [
+    [
+     1601,
+     20
+    ]
+   ]
+  },
+  {
+   "expect": {
+    "committed": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "no-map",
+     "stop": "",
+     "tree_sources": []
+    },
+    "none": {
+     "assumptions": [],
+     "candidate_methods": [],
+     "captured_blocks": [],
+     "confidence": 0,
+     "cut": false,
+     "equal_source": "",
+     "incomplete": false,
+     "method": "",
+     "outcome": "skip",
+     "overlaps": [],
+     "region": "",
+     "seq": 0,
+     "size": 0,
+     "skip": "no-map",
+     "stop": "",
+     "tree_sources": []
+    },
+    "stale": {
+     "assumptions": [
+      "inode-copy-from-journal",
+      "journal-copy-may-predate-last-change",
+      "size-from-journal-copy",
+      "inode-not-reused-since-entry-deleted",
+      "journal-stale-region",
+      "journal-copy-unverified"
+     ],
+     "candidate_methods": [
+      "ext4-journal-inode"
+     ],
+     "captured_blocks": [
+      [
+       8129,
+       5
+      ]
+     ],
+     "confidence": 40,
+     "cut": false,
+     "equal_source": "full",
+     "incomplete": false,
+     "method": "ext4-journal-inode",
+     "outcome": "recover",
+     "overlaps": [],
+     "region": "stale",
+     "seq": 6,
+     "size": 5109,
+     "skip": "",
+     "stop": "",
+     "tree_sources": []
+    }
+   },
+   "family": "bm-small",
+   "generation": 3751775445,
+   "inode": 18,
+   "journal_copies": {
+    "copies": 4,
+    "deleted_state": 1,
+    "live_state": 2,
+    "newest_live_state_seq": 6,
+    "newest_live_state_size": 5109,
+    "other_generation": 1,
+    "revoked": 0
+   },
+   "kernel_state": {
+    "i_size": 0,
+    "inode_free": true,
+    "leaf_intact": false,
+    "root_entries": 0
+   },
+   "name": "bm_small",
+   "path": "/t/s/bm_small",
+   "source_sha256": "8c9fb7a694df39e79f021b8de26f8c9abfacea3c696b5532f9ef05ddb2b2e6b8",
+   "source_size": 5109,
+   "tree_blocks": [],
+   "true_basis": "stage-image",
+   "true_blocks": [
+    [
+     8129,
+     5
+    ]
+   ]
+  }
+ ],
+ "deleted_entry_count": 2,
+ "families": {
+  "bm-indirect": {
+   "count": 1,
+   "kind": "deleted"
+  },
+  "bm-small": {
+   "count": 1,
+   "kind": "deleted"
+  }
+ },
+ "fs_type": "ext3",
+ "generator": {
+  "commands": [
+   "# sources: pattern bytes (tools/fixtures/lib.sh); guest kernel 5.10.0-32-amd64, the ext3 image mounted by the ext4 driver",
+   "faketime -f '2023-11-14 22:13:20' mke2fs -q -F -t ext3 -b 1024 -O ^dir_index,^orphan_file -m 0 -J size=1 -N 2048 -U 44444444-5555-6666-7777-aaaaaaaaaaaa -E hash_seed=44444444-5555-6666-7777-aaaaaaaaaaaa <img>",
+   "guest boot b1-write (2023-11-14 22:13:20, kernel 5.10.0-32-amd64, halt clean): mkdir /mnt/t /mnt/t/s /mnt/t/i",
+   "guest boot b1-write (2023-11-14 22:13:20, kernel 5.10.0-32-amd64, halt clean): i=1; while [ $i -le 3 ]; do echo filler$i > /mnt/f$i; sync; i=$((i+1)); done",
+   "guest boot b1-write (2023-11-14 22:13:20, kernel 5.10.0-32-amd64, halt clean): cp /payload/bm_small /mnt/t/s/bm_small; sync",
+   "guest boot b1-write (2023-11-14 22:13:20, kernel 5.10.0-32-amd64, halt clean): cp /payload/bm_ind /mnt/t/i/bm_ind; sync",
+   "guest boot b2-rm (2023-11-14 23:13:20, kernel 5.10.0-32-amd64, halt clean): rm /mnt/t/s/bm_small /mnt/t/i/bm_ind; sync",
+   "python3 tools/fixtures/ext4_journal_oracle.py oracle <final> <payload> <manifest>   # the decoder, logdump, dumpe2fs, debugfs, the 3C oracle, the kernel's replay"
+  ],
+  "fsck_exit": 0,
+  "gates": {
+   "J1": "holds",
+   "J2": "holds",
+   "J4": "holds",
+   "J9": "-J size=1"
+  },
+  "image_sha256": "561b1062899ac9e9e11117ab0de05bb9f524f9618a28f740545db29e2e1c969c",
+  "kernel": "5.10.0-32-amd64",
+  "logdump_old": true,
+  "packages": [
+   {
+    "package": "busybox-static",
+    "version": "1:1.35.0-4+deb12u1+b1"
+   },
+   {
+    "package": "cpio",
+    "version": "2.13+dfsg-7.1"
+   },
+   {
+    "package": "e2fsprogs",
+    "version": "1.47.0-2+b2"
+   },
+   {
+    "package": "faketime",
+    "version": "0.9.10-2.1"
+   },
+   {
+    "package": "gzip",
+    "version": "1.12-1"
+   },
+   {
+    "package": "jq",
+    "version": "1.6-2.1+deb12u2"
+   },
+   {
+    "package": "kmod",
+    "version": "30+20221128-1"
+   },
+   {
+    "package": "python3",
+    "version": "3.11.2-1+b1"
+   },
+   {
+    "package": "qemu-system-x86",
+    "version": "1:7.2+dfsg-7+deb12u18+b3"
+   },
+   {
+    "package": "linux-image-5.10.0-32-amd64",
+    "version": "5.10.223-1"
+   }
+  ],
+  "replay_oracle": false
+ },
+ "journal": {
+  "block_size": 1024,
+  "blocks": 1024,
+  "csum_type": 0,
+  "feature_compat": 0,
+  "feature_incompat": 1,
+  "features": [
+   "revoke"
+  ],
+  "first": 1,
+  "inode": 8,
+  "live_stop": "empty",
+  "needs_recovery": false,
+  "sequence": 11,
+  "start": 0,
+  "tag_size": 8,
+  "version": 2
+ },
+ "journal_only": [],
+ "live": [],
+ "totals": {
+  "committed": {
+   "recovered": 0,
+   "skipped_by": {
+    "no-map": 2
+   },
+   "undecided": 0
+  },
+  "none": {
+   "recovered": 0,
+   "skipped_by": {
+    "no-map": 2
+   },
+   "undecided": 0
+  },
+  "stale": {
+   "recovered": 2,
+   "skipped_by": {},
+   "undecided": 0
+  }
+ },
+ "txns": [
+  {"checksum": "not-recorded", "commit_jblk": 11, "committed": true, "logdump": true, "region": "stale", "revoked": [1597], "seq": 9, "start_jblk": 1, "tags": [{"copy": "unverified", "escaped": false, "flags": 0, "fsblock": 1592, "jblk": 3, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 2, "fsblock": 39, "jblk": 4, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 2, "fsblock": 1, "jblk": 5, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 2, "fsblock": 40, "jblk": 6, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 2, "fsblock": 34, "jblk": 7, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 8, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 2, "fsblock": 35, "jblk": 9, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 10, "fsblock": 1593, "jblk": 10, "revoked": false}]},
+  {"checksum": "not-recorded", "commit_jblk": 13, "committed": true, "logdump": false, "region": "stale", "revoked": [], "seq": 2, "start_jblk": 13, "tags": []},
+  {"checksum": "not-recorded", "commit_jblk": 21, "committed": true, "logdump": false, "region": "stale", "revoked": [], "seq": 3, "start_jblk": 14, "tags": [{"copy": "unverified", "escaped": false, "flags": 0, "fsblock": 35, "jblk": 15, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 16, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 2, "fsblock": 39, "jblk": 17, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 2, "fsblock": 36, "jblk": 18, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 2, "fsblock": 548, "jblk": 19, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 10, "fsblock": 34, "jblk": 20, "revoked": false}]},
+  {"checksum": "not-recorded", "commit_jblk": 29, "committed": true, "logdump": false, "region": "stale", "revoked": [], "seq": 4, "start_jblk": 22, "tags": [{"copy": "unverified", "escaped": false, "flags": 0, "fsblock": 35, "jblk": 23, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 24, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 2, "fsblock": 40, "jblk": 25, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 2, "fsblock": 36, "jblk": 26, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 2, "fsblock": 548, "jblk": 27, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 10, "fsblock": 34, "jblk": 28, "revoked": false}]},
+  {"checksum": "not-recorded", "commit_jblk": 37, "committed": true, "logdump": false, "region": "stale", "revoked": [], "seq": 5, "start_jblk": 30, "tags": [{"copy": "unverified", "escaped": false, "flags": 0, "fsblock": 35, "jblk": 31, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 32, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 2, "fsblock": 40, "jblk": 33, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 2, "fsblock": 39, "jblk": 34, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 2, "fsblock": 1592, "jblk": 35, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 10, "fsblock": 34, "jblk": 36, "revoked": false}]},
+  {"checksum": "not-recorded", "commit_jblk": 46, "committed": true, "logdump": false, "region": "stale", "revoked": [], "seq": 6, "start_jblk": 38, "tags": [{"copy": "unverified", "escaped": false, "flags": 0, "fsblock": 35, "jblk": 39, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 2, "fsblock": 2, "jblk": 40, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 2, "fsblock": 40, "jblk": 41, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 2, "fsblock": 39, "jblk": 42, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 2, "fsblock": 1593, "jblk": 43, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 2, "fsblock": 34, "jblk": 44, "revoked": false}, {"copy": "unverified", "escaped": false, "flags": 10, "fsblock": 1597, "jblk": 45, "revoked": true}]}
+ ],
+ "unlisted_count": 0
+}
