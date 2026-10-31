@@ -1047,6 +1047,19 @@ func TestPlanSlackUncheckedFileMakesPlanIncomplete(t *testing.T) {
 	}
 }
 
+// 3F-C2 at the artifact: the unchecked reason reaches the file-slack artifact's Error through fileErrText.
+func TestExportSlackUncheckedFileNamesReasonInArtifactError(t *testing.T) {
+	s, _ := uncheckedSetup(t, 1)
+	sum := mustExportSlack(t, s, SlackOptions{Partition: -1, Files: true})
+	rec := slackRecord(t, sum, "/slack.bin")
+	if !rec.Incomplete || !sum.Incomplete {
+		t.Fatalf("file-slack artifact incomplete %v, summary %v", rec.Incomplete, sum.Incomplete)
+	}
+	if !strings.Contains(rec.Error, "could not be opened") {
+		t.Errorf("artifact Error = %q, want the unchecked reason", rec.Error)
+	}
+}
+
 // groupUnits is an output-equivalent pre-filter: tails of one unit are dropped by it, and the sweep of
 // crossCheck would drop them as overlapping candidates all the same.
 func TestGroupUnitsMarksOnlyClaimsOfOneUnit(t *testing.T) {
