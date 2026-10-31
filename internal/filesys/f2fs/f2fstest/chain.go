@@ -2,6 +2,7 @@ package f2fstest
 
 import (
 	"encoding/binary"
+	"fmt"
 	"slices"
 )
 
@@ -105,7 +106,31 @@ func chainAddrs(o Options) []uint32 {
 			addrs[i] = c.Addr
 		}
 	}
+	checkChainCollisions(o, addrs)
 	return addrs
+}
+
+// checkChainCollisions panics when a chain block address is also the address of
+// a node (live or stale), of a data block or of another chain element: the later
+// write would silently replace the earlier block.
+func checkChainCollisions(o Options, addrs []uint32) {
+	taken := make(map[uint32]string)
+	for _, ns := range [][]Node{o.Nodes, o.StaleNodes} {
+		for _, n := range ns {
+			if n.Block != nil && n.Addr != 0 {
+				taken[n.Addr] = "a node"
+			}
+		}
+	}
+	for _, d := range o.Data {
+		taken[d.Addr] = "a data block"
+	}
+	for i, a := range addrs {
+		if what, ok := taken[a]; ok {
+			panic(fmt.Sprintf("f2fstest: chain element %d at block %d collides with %s", i, a, what))
+		}
+		taken[a] = "another chain element"
+	}
 }
 
 // writeChain writes the chain after both checkpoint packs are sealed (the footer
