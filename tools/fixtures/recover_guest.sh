@@ -12,6 +12,13 @@
 # value (empty by default; for example ",discard=unmap") and GUEST_TIMEOUT is the
 # time limit in seconds (default 900; the F2FS fill-to-ENOSPC stage sets 2400).
 #
+# Crash mode (plan 3H): GUEST_CRASH=1 makes the guest print GUEST-CRASH-READY after the last op
+# and sleep, with no sync and no unmount; guest_run then starts QEMU with a monitor socket,
+# waits for the marker (at most GUEST_TIMEOUT seconds), sends "quit" through the socket (the
+# recover_probe.sh recipe: the guest dies with its dirty state), waits up to 5 s (best effort), then TERM and KILL if
+# it is still there (also a valid crash) and fails when the marker never came or QEMU is not gone. GUEST_CRASH must
+# have the same value for guest_initrd and guest_run.
+#
 # The ops file holds one shell command per line, run in order inside the guest
 # with the volume mounted on /mnt and the payload files in /payload.
 
@@ -46,6 +53,7 @@ guest_initrd() {
   sed -i -E 's/\.(xz|zst)$//' "$rd/modules.list"
   echo "$fstype" >"$rd/fstype"
   echo "$opts" >"$rd/mntopts"
+  if [ "${GUEST_CRASH:-}" = 1 ]; then echo 1 >"$rd/crash"; fi
   cp "$ops" "$rd/ops"
   [ -d "$payload" ] && cp -r "$payload"/. "$rd/payload/"
   cat >"$rd/init" <<'EOT'
@@ -64,6 +72,7 @@ while IFS= read -r cmd; do
   n=$((n+1)); echo "OP $n $cmd"
   sh -c "$cmd" </dev/null || { echo "OP-FAIL $n"; poweroff -f; }
 done </ops
+if [ -e /crash ]; then echo GUEST-CRASH-READY; sleep 600; poweroff -f; fi
 sync
 umount /mnt || echo "OP-FAIL umount"
 echo GUEST-DONE
@@ -73,8 +82,55 @@ EOT
 }
 
 guest_run() {
-  local img=$1 rd=$2 log=$3
+  local img=$1 rd=$2 log=$3 sock qpid i
   (cd "$rd" && find . | LC_ALL=C sort | cpio -o -H newc --quiet | gzip -n -9) >"$rd.cpio.gz"
+  if [ "${GUEST_CRASH:-}" = 1 ]; then
+    sock=$rd.mon
+    rm -f "$sock"
+    qemu-system-x86_64 -accel tcg -m 512 -smp 1 -nographic -no-reboot \
+      -kernel "/boot/vmlinuz-$kver" -initrd "$rd.cpio.gz" \
+      -append "console=ttyS0 panic=-1 loglevel=4" \
+      -drive "file=$img,format=raw,if=virtio${GUEST_DRIVE_OPTS:-}" \
+      -monitor "unix:$sock,server,nowait" >"$log" 2>&1 &
+    qpid=$!
+    i=0
+    while [ $i -lt "${GUEST_TIMEOUT:-900}" ]; do
+      grep -aq 'GUEST-CRASH-READY' "$log" 2>/dev/null && break
+      kill -0 "$qpid" 2>/dev/null || break
+      sleep 1; i=$((i + 1))
+    done
+    if grep -aq 'GUEST-CRASH-READY' "$log"; then
+      python3 - "$sock" <<'PY'
+import socket, sys, time
+s = socket.socket(socket.AF_UNIX); s.settimeout(10); s.connect(sys.argv[1])
+buf = b""
+try:
+    while b"(qemu)" not in buf:
+        d = s.recv(4096)
+        if not d:
+            break
+        buf += d
+except socket.timeout:
+    pass
+s.sendall(b"quit\n"); time.sleep(1); print("monitor: sent quit")
+PY
+    fi
+    i=0
+    while [ $i -lt 5 ] && kill -0 "$qpid" 2>/dev/null; do sleep 1; i=$((i + 1)); done
+    if kill -0 "$qpid" 2>/dev/null; then
+      echo "qemu still running 5 s after quit (or the marker never came); TERM then KILL (a valid crash)" >&2
+      kill -TERM "$qpid" 2>/dev/null
+      i=0; while [ $i -lt 3 ] && kill -0 "$qpid" 2>/dev/null; do sleep 1; i=$((i + 1)); done
+      kill -0 "$qpid" 2>/dev/null && kill -9 "$qpid"
+    fi
+    wait "$qpid" 2>/dev/null || true
+    rm -f "$sock"
+    if kill -0 "$qpid" 2>/dev/null; then echo "qemu process $qpid is still alive" >&2; return 1; fi
+    grep -a -e 'OP [0-9]' -e 'OP-FAIL' -e 'GUEST-' "$log" || true
+    grep -aq 'GUEST-CRASH-READY' "$log" || { echo "guest never reached the crash marker: $log" >&2; tail -n 20 "$log" >&2; return 1; }
+    if grep -aq 'OP-FAIL' "$log"; then echo "guest op failed: $log" >&2; return 1; fi
+    return 0
+  fi
   timeout "${GUEST_TIMEOUT:-900}" qemu-system-x86_64 -accel tcg -m 512 -smp 1 -nographic -no-reboot \
     -kernel "/boot/vmlinuz-$kver" -initrd "$rd.cpio.gz" \
     -append "console=ttyS0 panic=-1 loglevel=4" \
