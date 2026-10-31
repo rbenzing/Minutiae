@@ -698,8 +698,8 @@ func TestVolumeSlackClipsToImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.skipped["beyond-image"] != 1 || len(p.vol) != 1 || p.vol[0].ImageOffset != fsEnd || p.vol[0].Length != 4096 {
-		t.Fatalf("skipped %v vol %+v", p.skipped, p.vol)
+	if p.skipped["beyond-image"] != 1 || len(p.vol) != 1 || p.vol[0].ImageOffset != fsEnd || p.vol[0].Length != 4096 || p.volClipped != 1<<20 {
+		t.Fatalf("skipped %v vol %+v clipped %d", p.skipped, p.vol, p.volClipped)
 	}
 	checkAddsUp(t, p)
 
