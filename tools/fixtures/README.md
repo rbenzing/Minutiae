@@ -46,6 +46,7 @@ Scripts must keep LF line endings (`.gitattributes` enforces this).
 | `fat_recover.sh` + `fat_recover_oracle.py` (image `minutiae-recover-fixtures`, `Dockerfile.recover`; `gen.sh fat-recover`) | `fat12-recover`, `fat16-recover`, `fat32-recover` (`.img.gz` + `.expect.json`, in `internal/filesys/fat/testdata/recover/`) | volumes written and deleted by the kernel `vfat` driver in the QEMU guest; an independent Python reader of the finished image checked against `mshowfat`, `fsck.fat -v` and the source tree (see "FAT recovery fixtures (3B)") |
 | `exfat_recover.sh` + `exfat_recover_oracle.py` (image `minutiae-recover-fixtures`; `gen.sh exfat-recover`) | `exfat-recover` (`.img.gz` + `.expect.json`, in `internal/filesys/exfat/testdata/recover/`) | a volume written and deleted by the kernel `exfat` driver in the QEMU guest; an independent Python parse of the finished image checked against the allocation bitmap, `dump.exfat` and the source tree (see "exFAT recovery fixture (3B)") |
 | `carve_gen.sh` + `carve_objects.py` + `carve_place.py` (image `minutiae-carve-fixtures`, `Dockerfile.carve`; `gen.sh carve`, NOT part of `all`) | `internal/carve/testdata/objects/` (22 real-encoder objects + `objects.expect.json`) and `carve-fat12`, `carve-ext4`, `carve-raw` (`.img.gz` + `carve.expect.json`, in `internal/examine/testdata/carve/`) | objects from Pillow, ffmpeg (libx264), `heif-enc`, `sqlite3`, `zip`, `gzip`, `plistlib`; placement read back from `mshowfat`, `fsck.fat -v`, `debugfs blocks` and `dumpe2fs` (see "Carving fixtures (3E)") |
+| `carve_images_gen.sh` + `carve_images_objects.py` + `carve_images_place.py` (the same image `minutiae-carve-fixtures`; `gen.sh carve-images`, NOT part of `all`) | `internal/carve/testdata/objects/` (18 real-encoder image-format objects + `images.expect.json`) and `carve-images` (`.img.gz` + `carve-images.expect.json`, in `internal/examine/testdata/carve/`) | objects from ImageMagick, Pillow, `libtiff-tools`, `icoutils`, `avifenc`, `cjxl`; facts from `identify`, `tiffinfo`, `tiffdump`, `icotool`, `avifdec`, `jxlinfo` and a Python box lister (see "Carving fixtures, image formats (3E2)") |
 
 ## Determinism
 
@@ -1537,6 +1538,80 @@ objects directory is 85 KiB with its oracle.
 `objects.expect.json`, nothing else is in the objects directory, each decompressed image hashes to `image_sha256`, and
 the bytes at `image_offset` hash to the row's `sha256` for every object of every image. The 250 KiB budgets are
 tested too.
+
+## Carving fixtures, image formats (3E2)
+
+Plan 3E2 adds BMP, TIFF/BigTIFF, ICO/CUR, AVIF and the JPEG XL container to the carving set. Their real-encoder
+objects and one ground-truth image are built in the SAME image as the 3E fixtures (`minutiae-carve-fixtures`), whose
+`Dockerfile.carve` gained `imagemagick 8:6.9.11.60+dfsg-1.6+deb12u13`, `libtiff-tools 4.5.0-6+deb12u4`,
+`icoutils 0.32.3-4`, `libavif-bin 0.11.1-1+deb12u1` and `libjxl-tools 0.7.0-10+deb12u1` at the unchanged `SNAPSHOT`
+(versions found with `apt-cache policy` in a throwaway container; every existing pin is unchanged). The 3E and 3E2
+fixtures are regenerated together only when the image changes; `gen.sh carve-images` (NOT part of `all`) writes none
+of the 3E files and `gen.sh carve` writes none of the 3E2 files.
+
+```bash
+docker build -f tools/fixtures/Dockerfile.carve -t minutiae-carve-fixtures tools/fixtures
+docker run --rm --memory 600m --network none -v "$PWD:/work" -w /work minutiae-carve-fixtures bash tools/fixtures/gen.sh carve-images
+```
+
+### Probe (2026-10-30)
+
+| Capability | Result |
+|---|---|
+| ImageMagick `BMP2:` / `BMP3:` / `BMP:` | DIB header 12 / 40 / 124 bytes. A 256-colour `BMP3:` is RLE8 unless `-compress None`; `-compress RLE` gives compression 1. A `BMP:` of an image with alpha is 32 bits per pixel |
+| ImageMagick `-endian MSB` for TIFF | ignored: the file starts `II*\0`. The big-endian file therefore comes from `tiffcp -B` |
+| `tiffcp -B`, `-8`, `-t -w 32 -l 32` | big-endian (`MM\0*`), BigTIFF (`II+\0`), tiled (`tiffinfo` lists Tile Width) |
+| Pillow 9.4 TIFF | `save_all` writes three directories; `tiffinfo=` an `ImageFileDirectory_v2` with tags 0x8769 and 0x8825 set to dicts writes an Exif IFD and a GPS IFD (`tiffinfo -D` lists both). `exif=` fails on 9.4 (`'Exif' object has no attribute 'fp'`) |
+| Pillow ICO | PNG entries (`icotool -l` reports the entries; Pillow keeps the aspect, so 16x12 and 32x24) |
+| `icotool -c` / `icotool -c --cursor` | DIB entries, ICO (type 1) and CUR (type 2) |
+| `avifenc` (libavif 0.11.1, aom/rav1e/svt) | still: major brand `avif`; two inputs with `--fps 2`: major brand `avis` |
+| `cjxl` 0.7.0 | a JPEG input is transcoded into a container with `jbrd`; a PNG with `--container=1` also yields a container but is not shipped (the plan lists only the transcode) |
+
+No variant failed, so nothing falls under ruling 3E-R27. DNG, CR2, ORF, RW2 and CR3 are not attempted: they are
+builder-only (ruling Q3), with a limitation clause.
+
+### Objects (`carve_images_objects.py`, `internal/carve/testdata/objects/`)
+
+18 files, 129,674 bytes in all (plus `images.expect.json`, 11.9 KiB), 64x48 where an image, under the frozen clock of
+`carve_images_gen.sh`: `bmp-core24.bmp` (12-byte DIB), `bmp-v3-24.bmp`, `bmp-v3-8pal.bmp`, `bmp-v3-1bit.bmp`,
+`bmp-v5-32.bmp` (124-byte DIB, 32 bits), `bmp-rle8.bmp`; `tiff-le.tif`, `tiff-le-pages.tif` (three pages), `tiff-be.tif`,
+`bigtiff.tif`, `tiff-tiled.tif`, `tiff-exif.tif` (Exif and GPS IFDs); `ico-png.ico`, `ico-dib.ico`, `cur.cur`;
+`avif.avif`, `avis.avif`, `jxl-container.jxl` (from `jpeg-baseline.jpg`, read from the 3E objects, with a `jbrd` box).
+
+`images.expect.json` has the schema of `objects.expect.json`; every row has `expect` `validated`; `family`/`type` are
+`bmp`/`bmp`, `tiff`/`tiff`, `ico`/`ico`, `cur`/`cur`, `isobmff`/`avif` and `isobmff`/`jxl`. The facts are what a separate
+tool reports about the finished bytes, never Minutiae: `identify` and Pillow (BMP format, size, mode) plus the header
+fields read here (`bfSize`, DIB size, bits per pixel, compression); `tiffdump` (magic, byte order, classic or BigTIFF),
+`tiffinfo` (directory count, tiled, size) and `tiffinfo -D` (Exif and GPS directories); `icotool -l` (entry kind, size,
+bit depth) with the payload kind of each entry (`png` or `dib`); `avifdec --info` (resolution) with a pure-Python
+top-level box lister written in the generator (it asserts the boxes tile the file exactly) and the major brand;
+`jxlinfo` (container, JPEG reconstruction data) and the box lister for the JPEG XL container. `width`/`height` are those
+of the tools (an icon: its largest entry). The generator exits 1 on any mismatch.
+
+### Image (`carve_images_place.py`, `internal/examine/testdata/carve/carve-images.*`)
+
+`carve-images`: 1 MiB raw (no partition table, no filesystem), pre-filled with `MINUTIAE-CARVE-FILL-`, 71,763 bytes
+gzipped. The 18 objects sit at 512-aligned offsets (state `placed`); the generator asserts the fill carries none of the
+3E and 3E2 magics, the bytes at every `image_offset` hash to the object, every expected family is present, and no header
+of the extended set sits at any other 512-aligned offset than an object start, a control start or a quote. Controls
+(`carve-images.expect.json`, same schema as `carve.expect.json` with one image):
+
+- `text`: `quoted-signatures.txt`, 12 blocks of prose that quote `BM`, the eight TIFF magics, `00 00 01 00`, `00 00 02 00`
+  and the 12-byte JPEG XL signature at 512-aligned starts, each followed by prose;
+- `truncated`: the first 60% of `bmp-v3-24.bmp`, `tiff-le.tif`, `ico-dib.ico` and `jxl-container.jxl`;
+- `random`: 4 KiB of seeded random data starting with `BM` and another starting with `00 00 01 00`; the generator
+  re-seeds until no other header of the extended set (its `HEADERS` table holds the 3E and 3E2 magics) sits at a
+  512-aligned position inside them.
+
+### Reproducibility
+
+`gen.sh carve-images` run twice gave byte-identical objects, image and oracles (every file compared with `cmp`), so the
+class is "regenerate together" only for the image-and-oracle pair. `gen.sh carve` in the extended image writes the same
+objects and the same `carve-fat12` and `carve-raw` as committed, but `carve-ext4` differs from the committed file (the
+oracle's `image_sha256` too): blocks 34 and 35 (35 bytes) of the 8 MiB image. The same happens in the unextended
+3E image rebuilt from the committed `Dockerfile.carve`, and two runs of the extended image agree with each other, so the
+3E ext4 image is not reproducible across hosts or Docker runs (a pre-existing property, probably the lazily
+initialised inode table; see the open 3E carry-over m3). The committed 3E files were therefore left as they are.
 
 ## Adding a fixture
 
