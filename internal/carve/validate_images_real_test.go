@@ -119,7 +119,7 @@ func TestNewFormatsRealEncoderObjects(t *testing.T) {
 			t.Errorf("no %s object in images.expect.json", fam)
 		}
 	}
-	if !slices.Contains([]int{18}, len(exp.Objects)) {
+	if len(exp.Objects) != 18 {
 		t.Errorf("%d objects, want 18", len(exp.Objects))
 	}
 }
