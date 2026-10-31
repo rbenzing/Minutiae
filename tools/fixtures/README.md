@@ -46,6 +46,7 @@ Scripts must keep LF line endings (`.gitattributes` enforces this).
 | `fat_recover.sh` + `fat_recover_oracle.py` (image `minutiae-recover-fixtures`, `Dockerfile.recover`; `gen.sh fat-recover`) | `fat12-recover`, `fat16-recover`, `fat32-recover` (`.img.gz` + `.expect.json`, in `internal/filesys/fat/testdata/recover/`) | volumes written and deleted by the kernel `vfat` driver in the QEMU guest; an independent Python reader of the finished image checked against `mshowfat`, `fsck.fat -v` and the source tree (see "FAT recovery fixtures (3B)") |
 | `exfat_recover.sh` + `exfat_recover_oracle.py` (image `minutiae-recover-fixtures`; `gen.sh exfat-recover`) | `exfat-recover` (`.img.gz` + `.expect.json`, in `internal/filesys/exfat/testdata/recover/`) | a volume written and deleted by the kernel `exfat` driver in the QEMU guest; an independent Python parse of the finished image checked against the allocation bitmap, `dump.exfat` and the source tree (see "exFAT recovery fixture (3B)") |
 | `carve_gen.sh` + `carve_objects.py` + `carve_place.py` (image `minutiae-carve-fixtures`, `Dockerfile.carve`; `gen.sh carve`, NOT part of `all`) | `internal/carve/testdata/objects/` (22 real-encoder objects + `objects.expect.json`) and `carve-fat12`, `carve-ext4`, `carve-raw` (`.img.gz` + `carve.expect.json`, in `internal/examine/testdata/carve/`) | objects from Pillow, ffmpeg (libx264), `heif-enc`, `sqlite3`, `zip`, `gzip`, `plistlib`; placement read back from `mshowfat`, `fsck.fat -v`, `debugfs blocks` and `dumpe2fs` (see "Carving fixtures (3E)") |
+| `slack.sh` + `slack_oracle.py` + `slack_guest.sh` (image `minutiae-recover-fixtures`; `gen.sh slack`, NOT part of `all`) | `fat16-slack`, `exfat-slack`, `ext4-slack`, `f2fs-slack` (`.img.gz` + `.expect.json`, in `internal/filesys/{fat,exfat,ext4,f2fs}/testdata/slack/`) | volumes written and deleted by the kernel drivers in the QEMU guest on sentinel-filled images, plus a volume tail; the filesystems' tools (`mshowfat`, `debugfs stat`, `dump.f2fs -i`) and the oracle's own raw reads (see "Slack fixtures (3F)") |
 
 ## Determinism
 
@@ -1572,6 +1573,112 @@ TAIL f2fs B /sgrow 2500 NO-UNITS (inline, empty or not listed)
 TAIL f2fs B /ssparse 5000 units=1 HOLE-AT-LAST-UNIT (index 1)
 TAIL f2fs B /sgone 5000 units=2 unit_off=23126016 tail_off=23126920 tail=3192 zero=3192 lead0=3192 sentinel=0 other=0 uniform=1 first=0x00
 ```
+
+## Slack fixtures (3F)
+
+Four kernel-written volumes with sentinel-filled free space, for the slack export of plan 3F (Task 12;
+rulings 3F-R15, 3F-R16, 3F-R26): the bytes after a file's end inside its last allocation unit are what the
+driver left there, and an independent oracle states them. Files: `slack.sh` (driver; `gen.sh slack`),
+`slack_oracle.py` (scenario, tool readers, expectation), `slack_guest.sh` (the guest library of the probe).
+
+```bash
+MSYS_NO_PATHCONV=1 docker run --rm -v "C:/GIT/Minutiae:/work" -w /work minutiae-recover-fixtures \
+  bash tools/fixtures/gen.sh slack
+```
+
+Image `minutiae-recover-fixtures` (pins in "Slack probe (3F)"), no `--privileged`, no loop device, no FUSE, no
+host mount; the kernel drivers run only in the QEMU TCG guest (`-m 512`, one CPU, four virtio drives). The run
+takes about 2 minutes (two guest boots). `SLACK_WORK=<dir>` (and `SLACK_KEEP=1`) keeps the working images.
+
+| Fixture (in `internal/filesys/<fs>/testdata/slack/`) | Volume | Unit | Image (raw) | `.img.gz` |
+|---|---|---|---|---|
+| `fat16-slack` | FAT16, `mkfs.fat -F 16 -s 4`, 16 MiB | 2048 | 17,829,988 | 53,076 bytes |
+| `exfat-slack` | exFAT, `mkfs.exfat -c 32768`, 16 MiB | 32768 | 17,829,988 | 61,871 bytes |
+| `ext4-slack` | ext4, `mke2fs -t ext4 -b 1024`, 8 MiB | 1024 | 9,441,380 | 28,896 bytes |
+| `f2fs-slack` | F2FS, `mkfs.f2fs -t 0`, 64 MiB | 4096 | 68,161,636 | 197,416 bytes |
+
+Each `.expect.json` is 13 to 14 KiB; every `.img.gz` is under the 200 KiB budget (the generator fails above
+it; F2FS is close to it). FAT needs 2048-byte clusters: 512-byte clusters leave no residue (probe fact S2b).
+FAT32 is builder-only (a 4 KiB-cluster FAT32 needs 256 MiB raw).
+
+### How the volumes are made
+
+1. Four raw files are filled with the 64-byte sentinel (`SLACK-SENTINEL-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLM`
+   at phase `offset % 64`) and formatted under faketime with discard off.
+2. Guest boot 1 writes the scenario on all four (`slack_oracle.py ops`): files of 1, 600, unit-1, unit, unit+1,
+   3*unit+5 and 5000 bytes, an empty file, a 100-byte file (inline on F2FS), a 777-byte file with a 43-character
+   name in `/dir1`, a fragmented file (`frag`: unit bytes, then `fragsep`, then unit+300 bytes appended, with
+   `sync` between), on ext4 and F2FS a sparse tail (`sparse`: 700 bytes, `truncate -s 5000`) and a hole in the
+   middle (`sparsemid`: 300 bytes, then 500 bytes at 3*unit), and `/gone.txt` (1500 bytes; 5000 on F2FS).
+   All content is a prefix of one payload: 201 copies of a 997-byte pseudo-random block (never zero, never the
+   sentinel; repeating it keeps the committed images small).
+3. The host reads every file's units with the filesystems' tools (below), checks them against the bytes (each
+   mapped logical unit holds the payload bytes that were written, each unmapped one is a hole of zeros, no unit
+   belongs to two files) and states `/gone.txt`'s last unit.
+4. Guest boot 2 removes `/gone.txt`. `fsck.fat -n`, `fsck.exfat -n`, `e2fsck -fn` and `fsck.f2fs -f --dry-run`
+   (on a copy) must accept the images; the units are read again and must equal those of boot 1 for every live
+   file.
+5. The volume tail of 3F-R15 is appended on the host: 512 KiB of sentinel, 512 KiB of zeros, then 4196 bytes of
+   sentinel (one whole 4096-byte chunk and a 100-byte partial chunk). The filesystem never addresses these
+   bytes (`image_size` = `fs_size` + 1,052,772).
+6. `slack_oracle.py expect` writes the expectation (schema below). It reads the image bytes at every range it
+   states, and exits 1 unless the scenario produced what the fixture needs: FAT and exFAT at least 3
+   non-uniform slack tails, every filesystem at least one `exact-fit` and one uniform tail, ext4 and F2FS at
+   least one `trailing-hole`, F2FS at least one `no-runs`, no non-uniform tail on ext4 and F2FS, the volume
+   tail's 128 uniform chunks.
+
+### The oracle (`slack_oracle.py`, never Minutiae)
+
+| Filesystem | Where the units come from | Geometry |
+|---|---|---|
+| FAT16 | `mshowfat` chains (cluster numbers, 2-based) | `fsck.fat -v`: data start, sectors |
+| exFAT | the oracle's own parse of the boot sector, FAT and the directory entry sets (0x85 / 0xC0 / 0xC1, sub-directories included): `dump.exfat` of exfatprogs 1.2.0 has only `-V`/`-h`, no `-c -d` | `dump.exfat`: heap offset, volume length |
+| ext4 | `debugfs -R "stat <path>"` extents (`(lo-hi):phys-phys`), with their logical positions; `debugfs blocks` gives none for sparse files | `dumpe2fs` |
+| F2FS | `fsck.f2fs -t` (inode numbers) and `dump.f2fs -i <ino>`: `i_addr[idx]` is the block of logical block `idx`, `i_size` and `i_inline` (bit 2: inline data, whose `i_addr` area holds bytes, not addresses). The `fsck.f2fs -M` map is not used: it prints a trailing `0` token after the last block of a 4096-byte and of the sparse file whose meaning is unresolved (probe) | `fsck.f2fs -l` |
+
+`outcome` is decided from the logical map: no unit at all -> `no-runs` (empty, F2FS inline); the last logical
+unit unmapped -> `trailing-hole`; `size % unit == 0` -> `exact-fit`; otherwise `slack`, with
+`fs_offset = image_offset = unit offset + bytes used` (the volume starts at offset 0 of the image) and
+`length = unit - used`, its sha256 and whether every byte is equal (`uniform`). `volume.segments` come from
+the 4096-byte chunks of the volume tail merged by 3F-R8/3F-R20 (adjacent non-uniform chunks merge; uniform
+chunks merge only with the same fill byte): sentinel 524288 bytes (not uniform), zeros 524288 bytes (uniform,
+`fill` 0), sentinel 4196 bytes (not uniform); `uniform_chunks` 128, `uniform_bytes` 524288. Image offsets in
+`volume.segments` are absolute. Schema (beyond the plan's): each file also carries `extents`
+(`[logical unit, first unit, count]`), the top level `counts` and, for uniform volume segments, `fill`.
+
+Measured expectations (this generation):
+
+| | slack (non-uniform / uniform) | exact-fit | no-runs | trailing-hole |
+|---|---|---|---|---|
+| FAT16 | 9 (8 / 1) | 2 (`su`, `fragsep`) | 1 (`empty`) | 0 |
+| exFAT | 9 (8 / 1) | 2 | 1 | 0 |
+| ext4 | 10 (0 / 10) | 2 | 1 | 1 (`sparse`) |
+| F2FS | 6 (0 / 6) | 2 | 5 (`empty`, `s1`, `s600`, `inline100`, the 777-byte file) | 1 (`sparse`) |
+
+`/gone.txt` is recorded under `deleted` with the image offset of its last unit. Non-uniform residue to exclude
+exists only on FAT and exFAT (probe fact S2f: a delete leaves the unit untouched); ext4 and F2FS tails are zero.
+
+### Deviations from the plan text (the probe's facts bind)
+
+1. `dump.exfat -c -d` does not exist in exfatprogs 1.2.0: the oracle parses the exFAT root and sub-directory
+   entry sets itself, independent of the Go exfat reader.
+2. `gone.txt` is 1500 bytes on FAT, exFAT and ext4 but 5000 bytes on F2FS: 1500 bytes are inline there and have
+   no unit.
+3. ext4 units come from `debugfs stat` extents, not `debugfs blocks` (no logical positions for sparse files).
+4. F2FS units come from `dump.f2fs -i` (explicit logical positions), not from the `fsck.f2fs -M` map (trailing `0`).
+5. The exFAT driver never writes `ValidDataLength < DataLength` (it zero-fills on a truncate-extend), so the
+   exFAT trailing-hole path (3F-R2) has no kernel-written fixture: it stays builder-only (the exfat package's
+   builder tests) and `docs/limitations.md` says so. On FAT and exFAT the "sparse" file would be fully
+   allocated and zero-filled, so the scenario has no sparse file there; only ext4 and F2FS give a real hole.
+6. FAT uses 2048-byte clusters (`-s 4`), as the probe required.
+
+### Determinism
+
+The images are not byte-reproducible (QEMU guest clock and allocation, as for the other kernel-written
+fixtures): image and oracle are regenerated together and every test checks `generator.image_sha256` first.
+A second run (checked at the time of writing) gave different image hashes, the same paths, sizes, outcomes,
+counts and even the same unit numbers for every file, and `.img.gz` sizes within a few bytes (exFAT 61,873 /
+61,871, ext4 28,895 / 28,896, F2FS 197,432 / 197,416, FAT16 53,076 both). The committed set is the second run.
 
 ## Carving fixtures (3E)
 
