@@ -343,6 +343,9 @@ func clipString(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
+	if n < 3 {
+		return "..."[:max(n, 0)]
+	}
 	s = s[:n-3]
 	for i := len(s) - 1; i >= 0 && i > len(s)-utf8.UTFMax; i-- {
 		if utf8.RuneStart(s[i]) {

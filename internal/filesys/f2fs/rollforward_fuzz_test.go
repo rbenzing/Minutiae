@@ -12,9 +12,6 @@ import (
 	"github.com/rbenzing/minutiae/internal/filesys/f2fs/f2fstest"
 )
 
-// rfFuzzMaxNodes is maxChainNodes (3H-R14), which is internal to the package.
-const rfFuzzMaxNodes = 1 << 20
-
 // rfFuzzOpts is the volume FuzzRollForward edits.
 func rfFuzzOpts() f2fstest.Options {
 	return f2fstest.Options{
@@ -115,7 +112,7 @@ func FuzzRollForward(f *testing.F) {
 			if !rfTypedError(err) {
 				t.Fatalf("RollForward: untyped error %v", err)
 			}
-		} else if chain.Nodes > rfFuzzMaxNodes || visited != chain.Nodes || replayedNonDnode {
+		} else if chain.Nodes > f2fs.MaxChainNodes || visited != chain.Nodes || replayedNonDnode {
 			t.Fatalf("chain nodes %d, visited %d, replayed a non-dnode %v", chain.Nodes, visited, replayedNonDnode)
 		}
 

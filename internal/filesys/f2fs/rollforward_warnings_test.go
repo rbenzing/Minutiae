@@ -78,3 +78,11 @@ func TestClipStringTrimsOnlyTheTrailingPartialRune(t *testing.T) {
 		t.Errorf("clipString = %q, want the string unchanged", got)
 	}
 }
+
+func TestClipStringTinyLimit(t *testing.T) {
+	for n, want := range map[int]string{-1: "", 0: "", 1: ".", 2: "..", 3: "..."} {
+		if got := clipString("abcdefgh", n); got != want {
+			t.Errorf("clipString(_, %d) = %q, want %q", n, got, want)
+		}
+	}
+}

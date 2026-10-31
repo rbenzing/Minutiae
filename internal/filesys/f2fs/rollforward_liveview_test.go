@@ -120,6 +120,21 @@ func TestRollForwardNeverAppliedToLiveView(t *testing.T) {
 	if d := liveDiff(after, fresh); len(d) > 0 {
 		t.Errorf("the used FS differs from a fresh one: %v differ", d)
 	}
+	// Entry by entry: names, IDs, sizes and attributes of the walk, and every lookup.
+	if len(before.Walk) != len(after.Walk) {
+		t.Fatalf("the walk lists %d entries after the calls, %d before", len(after.Walk), len(before.Walk))
+	}
+	for i, e := range before.Walk {
+		g := after.Walk[i]
+		if e.Name != g.Name || e.ID != g.ID || e.Size != g.Size || !reflect.DeepEqual(e.Attrs, g.Attrs) {
+			t.Errorf("walk entry %d changed: %+v -> %+v", i, e, g)
+		}
+	}
+	for p, id := range before.Lookups {
+		if after.Lookups[p] != id {
+			t.Errorf("Lookup(%s) changed: %q -> %q", p, id, after.Lookups[p])
+		}
+	}
 	// The live-updated file reads as its checkpoint version, not the chain's 9000-byte inode.
 	if !bytes.Equal(after.Content["/live.bin"], rfStamp(2)) || after.Sizes["/live.bin"] != 2*bs {
 		t.Errorf("/live.bin: size %d, %d bytes read; want the checkpoint version of 2 blocks", after.Sizes["/live.bin"], len(after.Content["/live.bin"]))
@@ -155,4 +170,24 @@ func liveDiff(a, b liveSnap) []string {
 		}
 	}
 	return out
+}
+
+// liveDiff must see a change to the walk or to a lookup, or the live-view test above proves nothing.
+func TestLiveDiffSeesWalkAndLookupChanges(t *testing.T) {
+	base := liveSnapshot(t, newRFFix(t).open(t), "/rf/a.bin")
+	mut := base
+	mut.Walk = append([]filesys.Entry(nil), base.Walk...)
+	mut.Walk[0].Size++
+	if d := liveDiff(base, mut); !reflect.DeepEqual(d, []string{"Walk"}) {
+		t.Errorf("a changed walk entry: diff %v, want [Walk]", d)
+	}
+	mut = base
+	mut.Lookups = map[string]string{}
+	for p, id := range base.Lookups {
+		mut.Lookups[p] = id
+	}
+	mut.Lookups["/rf/a.bin"] = "nid:99"
+	if d := liveDiff(base, mut); !reflect.DeepEqual(d, []string{"Lookups"}) {
+		t.Errorf("a changed lookup: diff %v, want [Lookups]", d)
+	}
 }

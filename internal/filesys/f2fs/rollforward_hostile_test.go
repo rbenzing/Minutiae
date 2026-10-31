@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -167,6 +168,55 @@ func TestRollForwardHostile(t *testing.T) {
 			t.Errorf("stop %q, covered %d; want node-missing@95 and the inode slots plus two direct nodes", got, covered(c))
 		}
 	})
+	t.Run("huge footer after a valid inode", func(t *testing.T) {
+		bad := f2fstest.ChainNode{Block: f2fstest.DirectNodeBlock(0xFFFFFFF0, 0xFFFFFFF0, nil), Fsync: true}
+		img, tr, f := buildT(hostFile(o, f2fstest.Inode{Size: bs, Addrs: []uint32{a}}), bad)
+		st := stats(t, f)
+		if st.Stop != fmt.Sprintf("footer@%d", tr.ChainAddrs[1]) || st.Complete || st.Nodes != 1 {
+			t.Errorf("stats = %+v, want footer@%d, incomplete, one node", st, tr.ChainAddrs[1])
+		}
+		files := hostCheck(t, f, img)
+		if len(files) != 1 || len(files[0].Candidates) != 1 || covered(files[0].Candidates[0]) != bs {
+			t.Fatalf("files = %+v, want the valid inode's one-block candidate", files)
+		}
+		if _, ok := hasAssumption(files[0].Candidates[0], "rollforward-chain-cut=footer@"); !ok {
+			t.Errorf("assumptions = %v, want the chain cut named", files[0].Candidates[0].Assumptions)
+		}
+	})
+	t.Run("warm cursor out of range", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			off  int
+			val  []byte
+		}{
+			{"segment", 40, []byte{0xff, 0xff, 0, 0}},
+			{"block offset", 70, []byte{0x58, 0x02}}, // 600 >= 512 blocks per segment
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				oo := o
+				oo.Chain = []f2fstest.ChainNode{hostFile(o, f2fstest.Inode{Size: bs, Addrs: []uint32{a}})}
+				img, _ := f2fstest.BuildTree(oo, pcRoot)
+				for _, pack := range []int{1, 2} {
+					hdr := img[(int(l.CP)+(pack-1)*f2fstest.BlocksPerSeg)*bs:]
+					if binary.LittleEndian.Uint64(hdr) == 0 {
+						continue // an unwritten pack
+					}
+					copy(hdr[tc.off:], tc.val)
+					f2fstest.SealCheckpoint(img, pack)
+				}
+				f := pcOpen(t, img)
+				if _, err := f.ChainStats(); !errors.Is(err, filesys.ErrCorrupt) || !strings.Contains(err.Error(), "warm node cursor") {
+					t.Errorf("chain error = %v, want a corrupt error naming the warm node cursor", err)
+				}
+				if files, err := f.PostCheckpointFiles(); !errors.Is(err, filesys.ErrCorrupt) || files != nil {
+					t.Errorf("PostCheckpointFiles = %v, %v, want nil and ErrCorrupt", files, err)
+				}
+				if _, err := f.RollForward(func(filesys.RollForwardNode) bool { return true }); !errors.Is(err, filesys.ErrCorrupt) {
+					t.Errorf("RollForward error = %v, want ErrCorrupt", err)
+				}
+			})
+		}
+	})
 	t.Run("double-indirect footer offset", func(t *testing.T) {
 		dind := f2fstest.ChainNode{Block: hostNode(f2fstest.IndirectNodeBlock(95, 91, []uint32{96}), 2041), Fsync: true}
 		img, f := build(hostFile(o, f2fstest.Inode{Size: 3 * bs, Addrs: []uint32{a, a + 1, a + 2}, NIDs: [5]uint32{0, 0, 0, 0, 95}}), dind)
@@ -234,20 +284,31 @@ func TestRollForwardHostileDeclaredCountsAllocateNothing(t *testing.T) {
 		b, _ := f2fstest.BuildTree(oo, pcRoot)
 		return b
 	}
-	allocs := func(b []byte) float64 {
-		return testing.AllocsPerRun(5, func() {
+	measure := func(b []byte) (allocs float64, bytesPer uint64) {
+		run := func() {
 			f, err := f2fs.Open(bytes.NewReader(b), int64(len(b)))
 			if err != nil {
 				t.Fatal(err)
 			}
 			_, _ = f.PostCheckpointFiles()
-		})
+		}
+		allocs = testing.AllocsPerRun(5, run)
+		run() // warm
+		var m0, m1 runtime.MemStats
+		runtime.ReadMemStats(&m0)
+		run()
+		runtime.ReadMemStats(&m1)
+		return allocs, m1.TotalAlloc - m0.TotalAlloc
 	}
-	benign := allocs(img(bs, 92))
-	small := allocs(img(1<<41, 0xFFFFFFF0))
-	huge := allocs(img(1<<62, 0xFFFFFFFF))
-	t.Logf("allocations: benign %v, 1<<41 %v, 1<<62 %v", benign, small, huge)
-	if small > benign+50 || huge > benign+50 || huge > small+10 {
-		t.Errorf("allocations: benign %v, i_size 1<<41 %v, i_size 1<<62 %v; declared counts must not drive them", benign, small, huge)
+	benign, benignB := measure(img(bs, 92))
+	small, smallB := measure(img(1<<41, 0xFFFFFFF0))
+	huge, hugeB := measure(img(1<<62, 0xFFFFFFFF))
+	t.Logf("allocations: benign %v, 1<<41 %v, 1<<62 %v; bytes: %d, %d, %d", benign, small, huge, benignB, smallB, hugeB)
+	const slackBytes = 64 << 10
+	if small > benign || huge > benign || huge > small+5 {
+		t.Errorf("allocation counts: benign %v, i_size 1<<41 %v, i_size 1<<62 %v; declared counts must not drive them", benign, small, huge)
+	}
+	if smallB > benignB+slackBytes || hugeB > benignB+slackBytes {
+		t.Errorf("allocated bytes: benign %d, i_size 1<<41 %d, i_size 1<<62 %d; declared counts must not drive them", benignB, smallB, hugeB)
 	}
 }
