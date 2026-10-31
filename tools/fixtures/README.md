@@ -1244,6 +1244,21 @@ minutes (the fill stage 1 minute). Output: `internal/filesys/f2fs/testdata/recov
 `discard=unmap`, 236,104 bytes); each at most 1 MiB gzipped (the script enforces it). `F2FS_RECOVER_KEEP=<dir>`
 (development) keeps every stage image and its tool captures so the oracle can be run again without the guest.
 
+Reproducibility of the `expect.json` files. They are the output of `f2fs_recover_oracle.py` over the STAGE images
+(`w`, `m`, `n`, `f`, `d`; each 128 MiB raw), the per-stage tool captures (`fsck.f2fs`, `dump.f2fs`) and the expected
+content tree the generator wrote. None of those inputs is committed: the stage snaps and captures are as large as the
+volumes and are not byte-reproducible, and only the finished stage-`d` image is kept (gzipped, as `*.img.gz`). So an
+`expect.json` can be re-derived only by regenerating image and oracle together with the command above (or by running
+with `F2FS_RECOVER_KEEP=<dir>` and keeping that directory). What the committed files do support without Docker is the
+check that the oracle's claims hold on the committed image: `TestF2FSRecoverFixturesHoldWhatTheyClaim` re-reads the
+finished image and checks every stale-inode, extent, hole and footer claim, and `generator.image_sha256` ties the
+oracle to its image. (In the 3D review the oracle's decoder was also run again over both committed images and
+reproduced every deleted entry and live file.)
+
+The Docker image `minutiae-recover-fixtures` is KEPT after a run (do not `docker rmi` it): it is the pinned
+toolchain for every recovery fixture generator (FAT, exFAT, F2FS and the carving and ext4 plans), and regenerating
+any of them needs it. Rebuild it from `Dockerfile.recover` only to change the pinned toolchain.
+
 Stages, one guest boot each (the list is the seam 3H extends with a crash stage): `w` writes every family; `m`
 (nodiscard only) `mv renamed/a renamed/b`, `rm nidreuse/target.bin`; `n` creates `nidreuse-w/new1.bin` and `new2.bin`
 in a fresh boot; `f` creates `/fill`, removes `sac/` and `reuse/target.bin`, syncs and fills the volume to ENOSPC
