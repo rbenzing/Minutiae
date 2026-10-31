@@ -88,29 +88,77 @@ func TestVerifyReportPathNeedsPartitionDir(t *testing.T) {
 	}
 }
 
-// 3H-R13 e: the kind-"report" notice counts only the reports the roll-forward check did not recheck.
-func TestVerifyReportNoticeCountsUncheckedReports(t *testing.T) {
-	c, parent, data := recoverParent(t)
-	for i := 1; i <= 2; i++ {
-		evidencetest.AddRecovered(t, c, parent, data, evidencetest.RecoveredSpec{
-			Kind: evidence.KindReport, Class: evidence.ClassJournalReport, Method: "f2fs-rollforward",
-			Path: fmt.Sprintf("reports/p1-mtfs/rollforward%d.jsonl", i), Runs: []evidence.Run{{Offset: 0, Length: 64}},
-		})
-	}
-	// without the check: both are unreproduced
-	rep := verifyOf(t, c)
-	evidencetest.RequireNotice(t, rep, `kind "report": 2 artifact(s) are not reproduced byte for byte`)
-	// with it having rechecked one of the two
-	mark := func(n int) evidence.VerifyCheck {
-		return func(_ context.Context, _ *evidence.Case, _ []evidence.ManifestRecord, r *evidence.VerifyReport) {
-			r.MarkRollForwardRan(n)
+// markIDs is a check that marks ids as rechecked by R12, once per call.
+func markIDs(calls ...[]string) evidence.VerifyCheck {
+	return func(_ context.Context, _ *evidence.Case, _ []evidence.ManifestRecord, r *evidence.VerifyReport) {
+		for _, ids := range calls {
+			r.MarkRollForwardRan(ids)
 		}
 	}
-	rep = verifyOf(t, c, mark(1))
-	evidencetest.RequireNotice(t, rep, `kind "report": 1 artifact(s) are not reproduced byte for byte`)
-	// all rechecked: no notice
-	rep = verifyOf(t, c, mark(2))
-	requireNoNotice(t, rep, `kind "report"`)
+}
+
+// 3H-R13 e, ruling C7: MarkRollForwardRan takes ids, and only a real f2fs-rollforward report that was marked
+// is subtracted from the kind-"report" notice, once, however often it is marked.
+func TestVerifyReportNoticeCountsUncheckedReports(t *testing.T) {
+	c, parent, data := recoverParent(t)
+	add := func(method, name string) string {
+		return evidencetest.AddRecovered(t, c, parent, data, evidencetest.RecoveredSpec{
+			Kind: evidence.KindReport, Class: evidence.ClassJournalReport, Method: method,
+			Path: "reports/p1-mtfs/" + name, Runs: []evidence.Run{{Offset: 0, Length: 64}},
+		}).ID
+	}
+	rf1, rf2 := add("f2fs-rollforward", "rollforward1.jsonl"), add("f2fs-rollforward", "rollforward2.jsonl")
+	ext4 := add("ext4-journal", "journal.jsonl")
+	const pre = `kind "report": `
+	const post = ` artifact(s) are not reproduced byte for byte`
+	for _, tc := range []struct {
+		name  string
+		check evidence.VerifyCheck
+		want  int // -1 = no notice
+	}{
+		{"nothing marked", nil, 3},
+		{"nil ids", markIDs(nil), 3},
+		{"empty ids", markIDs([]string{}), 3},
+		{"one f2fs report marked leaves the ext4 one", markIDs([]string{rf1}), 2},
+		{"both f2fs reports marked, the ext4 one still counts", markIDs([]string{rf1, rf2}), 1},
+		{"repeated calls and duplicate ids count once", markIDs([]string{rf1, rf1}, []string{rf1}, []string{rf1}), 2},
+		{"a bogus id and the ext4 id reduce nothing", markIDs([]string{"nosuchid", ext4}), 3},
+		{"over-marking next to a real one", markIDs([]string{rf1, "nosuchid", ext4, parent.ID}), 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var checks []evidence.VerifyCheck
+			if tc.check != nil {
+				checks = append(checks, tc.check)
+			}
+			rep := verifyOf(t, c, checks...)
+			evidencetest.RequireNotice(t, rep, fmt.Sprintf("%s%d%s", pre, tc.want, post))
+		})
+	}
+	t.Run("all real f2fs reports of a case without ext4", func(t *testing.T) {
+		c2, parent2, data2 := recoverParent(t)
+		r := evidencetest.AddRecovered(t, c2, parent2, data2, evidencetest.RecoveredSpec{
+			Kind: evidence.KindReport, Class: evidence.ClassJournalReport, Method: "f2fs-rollforward",
+			Path: "reports/p1-mtfs/rollforward.jsonl", Runs: []evidence.Run{{Offset: 0, Length: 64}},
+		})
+		requireNoNotice(t, verifyOf(t, c2, markIDs([]string{r.ID})), `kind "report"`)
+	})
+}
+
+// The R9 notice counts post-checkpoint files and f2fs-rollforward block copies when R9 is not composed.
+func TestVerifyAllocationNoticeCountsRollForwardArtifacts(t *testing.T) {
+	c, parent, data := recoverParent(t)
+	evidencetest.AddRecovered(t, c, parent, data, rfFile(60, nil))
+	evidencetest.AddRecovered(t, c, parent, data, evidencetest.RecoveredSpec{
+		Kind: evidence.KindJournal, Class: evidence.ClassJournalBlock, Method: "f2fs-rollforward", Path: "journal/p1-mtfs/j1.bin",
+		Runs:   []evidence.Run{{Offset: 0, Length: 64}},
+		Mutate: func(r *evidence.Recovery) { r.Journal = &evidence.JournalRef{Seq: 1, Region: "live"} },
+	})
+	evidencetest.AddRecovered(t, c, parent, data, evidencetest.RecoveredSpec{
+		Kind: evidence.KindJournal, Class: evidence.ClassJournalBlock, Method: "ext4-journal", Path: "journal/p1-mtfs/j2.bin",
+		Runs:   []evidence.Run{{Offset: 0, Length: 64}},
+		Mutate: func(r *evidence.Recovery) { r.Journal = &evidence.JournalRef{Seq: 2, Region: "live"} },
+	})
+	evidencetest.RequireNotice(t, verifyOf(t, c), "2 deleted-file or carved artifact(s): allocation not rechecked against the filesystem")
 }
 
 // 3H-R13 c: once the reproduce check ran, the block copies of kind journal are reproduced too.
