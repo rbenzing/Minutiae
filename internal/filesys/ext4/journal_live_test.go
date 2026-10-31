@@ -33,7 +33,18 @@ func liveTxns(t *testing.T, img []byte) ([]ext4.IndexTxn, string) {
 	if err != nil {
 		t.Fatalf("IndexTxns: %v", err)
 	}
-	return txns, stop
+	return onlyLive(txns), stop
+}
+
+// onlyLive drops the stale fragments the stale pass (Task 6) adds after the live transactions.
+func onlyLive(txns []ext4.IndexTxn) []ext4.IndexTxn {
+	var out []ext4.IndexTxn
+	for _, x := range txns {
+		if !x.Stale {
+			out = append(out, x)
+		}
+	}
+	return out
 }
 
 func liveData(n byte) []byte { return bytes.Repeat([]byte{n}, jtBS) }
@@ -88,8 +99,9 @@ func TestLiveScanFollowsSequence(t *testing.T) {
 			t.Errorf("journal block %d consumed = %v, %v; want true", j, c, err)
 		}
 	}
-	if c, _ := f.IndexConsumed(13); c {
-		t.Error("journal block 13 (the first block the scan did not accept) is marked consumed")
+	// Block 13 holds a header of sequence 20: not part of the live region, so a stale fragment starts there.
+	if all, _, _ := f.IndexTxns(); len(all) != 4 || !all[3].Stale || all[3].Seq != 20 || all[3].Start != 13 {
+		t.Errorf("transactions %+v; want the foreign-sequence transaction at 13 as a fourth, stale fragment", all)
 	}
 	info := jtWant(t, img)
 	if info.Incomplete || info.Stop != "" || len(info.Warnings) != 0 || info.Start != 1 || !info.NeedsRecovery {
@@ -103,12 +115,14 @@ func TestLiveScanCleanJournalIsEmpty(t *testing.T) {
 		Txns: []ext4test.JTxn{liveTxn(10, 100), liveTxn(11, 101)},
 	})
 	f := mustOpen(t, img)
-	txns, stop, err := f.IndexTxns()
+	all, stop, err := f.IndexTxns()
+	txns := onlyLive(all)
 	if err != nil || len(txns) != 0 || stop != "" {
 		t.Fatalf("a clean journal (s_start 0) indexes %d txns, stop %q, err %v; want none", len(txns), stop, err)
 	}
-	if c, _ := f.IndexConsumed(1); c {
-		t.Error("a clean journal consumed block 1")
+	// What survives a clean unmount is stale (spec 9.1), never live.
+	if len(all) != 2 || !all[0].Stale || !all[1].Stale {
+		t.Errorf("a clean journal holding two transactions indexes %+v; want two stale fragments", all)
 	}
 }
 
@@ -179,8 +193,8 @@ func TestLiveScanBadDescriptorChecksumStops(t *testing.T) {
 		t.Fatalf("%d txns; want 2 (the region ends at the bad descriptor)", len(txns))
 	}
 	tb := txns[1]
-	if tb.Committed || tb.Csum != "bad" || tb.Commit != -1 || len(tb.Tags) != 0 || !hasSub(tb.Warnings, "recovery would stop") {
-		t.Errorf("bad-descriptor txn = %+v; want uncommitted, csum bad, no tags, a warning that the kernel's recovery would stop", tb)
+	if tb.Committed || tb.Csum != "bad" || tb.Commit != -1 || len(tb.Tags) != 0 || !hasSub(tb.Warnings, "recovery may stop") {
+		t.Errorf("bad-descriptor txn = %+v; want uncommitted, csum bad, no tags, a warning that the kernel's recovery may stop", tb)
 	}
 	if stop != "descriptor-checksum@4" {
 		t.Errorf("stop %q; want descriptor-checksum@4", stop)
@@ -202,7 +216,7 @@ func TestLiveScanBadCommitChecksumStops(t *testing.T) {
 		t.Fatalf("%d txns; want 2", len(txns))
 	}
 	tb := txns[1]
-	if tb.Committed || tb.Csum != "bad" || len(tb.Tags) != 1 || !hasSub(tb.Warnings, "recovery would stop") {
+	if tb.Committed || tb.Csum != "bad" || len(tb.Tags) != 1 || !hasSub(tb.Warnings, "recovery may stop") {
 		t.Errorf("bad-commit txn = %+v; want uncommitted, csum bad, its tag kept, a warning", tb)
 	}
 	if stop != "commit-checksum@6" {
@@ -565,5 +579,129 @@ func TestJournalCapsReachTheScan(t *testing.T) {
 	}
 	if info, _ := f.Journal(); !info.Incomplete || !strings.HasPrefix(info.Stop, "cap-txns@") {
 		t.Errorf("Journal() = Incomplete %v Stop %q; want incomplete at cap-txns", info.Incomplete, info.Stop)
+	}
+}
+
+// A damage stop (3G-R3, ruling C8) ends the live region as the oracle does, and also marks the result incomplete: a
+// region that went unexamined must be visible in Info.Incomplete and Info.Stop, not only in a warning.
+func TestLiveScanDamageStopsAreIncomplete(t *testing.T) {
+	desc := liveTxn(2, 101)
+	desc.BadDescCsum = true
+	commit := liveTxn(2, 101)
+	commit.BadCommitCsum = true
+	for _, tc := range []struct {
+		name string
+		j    ext4test.JBD2
+		patc func(img []byte, l *ext4test.Layout)
+		stop string
+		soft bool // the kernel only flags the condition from memory: the wording must not claim it stops
+	}{
+		{"descriptor checksum", ext4test.JBD2{Bit64: true, CsumV3: true, Txns: []ext4test.JTxn{liveTxn(1, 100), desc}}, nil, "descriptor-checksum@4", true},
+		{"commit checksum", ext4test.JBD2{Bit64: true, CsumV3: true, Txns: []ext4test.JTxn{liveTxn(1, 100), commit}}, nil, "commit-checksum@6", true},
+		{"revoke checksum", ext4test.JBD2{CsumV3: true, Txns: []ext4test.JTxn{{Seq: 1, At: -1, Revokes: []uint64{5}, BadRevokeCsum: true}}}, nil, "revoke-checksum@1", true},
+		{
+			"revoke r_count below the header",
+			ext4test.JBD2{Txns: []ext4test.JTxn{{Seq: 1, At: -1, Revokes: []uint64{5}}}},
+			func(img []byte, l *ext4test.Layout) { jtBE32(img[l.JournalFSBlock(1)*jtBS:], 0xC, 8) }, "revoke-damaged@1", true,
+		},
+		{
+			"revoke r_count beyond the block",
+			ext4test.JBD2{Txns: []ext4test.JTxn{{Seq: 1, At: -1, Revokes: []uint64{5}}}},
+			func(img []byte, l *ext4test.Layout) { jtBE32(img[l.JournalFSBlock(1)*jtBS:], 0xC, jtBS+4) }, "revoke-damaged@1", false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			j := tc.j
+			j.Sequence, j.Start = 1, 1
+			img, l := liveImage(t, 64, j)
+			if tc.patc != nil {
+				tc.patc(img, l)
+			}
+			txns, stop := liveTxns(t, img)
+			if stop != tc.stop {
+				t.Fatalf("stop %q; want %q (a damage stop stays a stop, as in the oracle)", stop, tc.stop)
+			}
+			info := jtWant(t, img)
+			if !info.Incomplete || info.Stop != tc.stop {
+				t.Errorf("Journal() Incomplete %v Stop %q; want incomplete with %s", info.Incomplete, info.Stop, tc.stop)
+			}
+			if !hasSub(info.Warnings, tc.stop) {
+				t.Errorf("warnings %q do not name %s", info.Warnings, tc.stop)
+			}
+			all := append(append([]string(nil), info.Warnings...), txns[len(txns)-1].Warnings...)
+			if got := hasSub(all, "recovery would stop"); got == tc.soft {
+				t.Errorf("warnings %q: firm \"recovery would stop\" wording present = %v; want %v", all, got, !tc.soft)
+			}
+			if tc.soft && !hasSub(all, "recovery may") {
+				t.Errorf("warnings %q do not say the kernel's recovery may stop or fail", all)
+			}
+		})
+	}
+	// A clean end of the log is not damage.
+	img, _ := liveImage(t, 64, ext4test.JBD2{Sequence: 1, Start: 1, Txns: []ext4test.JTxn{liveTxn(1, 100)}})
+	if info := jtWant(t, img); info.Incomplete || info.Stop != "" {
+		t.Errorf("a clean end of log is %+v; want complete", info)
+	}
+}
+
+// A full lap of the log that ends cleanly at a block holding a header of an older sequence is the end of the log, not a
+// cycle: the magic and sequence test comes before the consumed test (Task 5 review M2).
+func TestLiveScanCleanWrapIsEndOfLogNotCycle(t *testing.T) {
+	// Blocks 1..4 are all used: two transactions of a revoke block and a commit block each.
+	img, _ := liveImage(t, 5, ext4test.JBD2{Sequence: 1, Start: 1, Txns: []ext4test.JTxn{
+		{Seq: 1, At: -1, Revokes: []uint64{5}}, {Seq: 2, At: -1, Revokes: []uint64{6}},
+	}})
+	txns, stop := liveTxns(t, img)
+	if len(txns) != 2 || !txns[0].Committed || !txns[1].Committed || stop != "end-of-log@1" {
+		t.Fatalf("txns %+v stop %q; want two committed transactions and end-of-log@1", txns, stop)
+	}
+	info := jtWant(t, img)
+	if info.Incomplete || info.Stop != "" || hasSub(info.Warnings, "cycle") {
+		t.Errorf("Journal() = %+v; want a complete journal with no cycle warning", info)
+	}
+}
+
+// A read past the end of a cut image is an incomplete stop image-end@<block>, not a cached corrupt verdict (ruling C9).
+func TestLiveScanImageEndIsAnIncompleteStop(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		cutAt    int // the first journal block that lies beyond the cut
+		stop     string
+		wantTxns int
+	}{
+		{"cut at a descriptor", 5, "image-end@5", 1},
+		{"cut at a data slot", 6, "image-end@6", 2}, // the second transaction keeps its descriptor, without the tag
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Transaction 1: blocks 1-4 (descriptor, two slots, commit); transaction 2: blocks 5-7.
+			img, l := liveImage(t, 16, ext4test.JBD2{Sequence: 1, Start: 1, Txns: []ext4test.JTxn{liveTxn(1, 100, 101), liveTxn(2, 102)}})
+			cut := l.JournalFSBlock(tc.cutAt) * jtBS
+			// The reader ends at the cut while the size given to Open does not: the extent map is accepted, and the
+			// journal block read hits the end of the data.
+			f, err := ext4.Open(bytes.NewReader(img[:cut]), int64(len(img)))
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			info, err := f.Journal()
+			if err != nil {
+				t.Fatalf("Journal on a cut image = %v; want an incomplete result, not an error", err)
+			}
+			if !info.Incomplete || info.Stop != tc.stop || !hasSub(info.Warnings, tc.stop) {
+				t.Errorf("Incomplete %v Stop %q warnings %q; want incomplete at %s with a warning", info.Incomplete, info.Stop, info.Warnings, tc.stop)
+			}
+			if tc.cutAt == 6 {
+				lt := onlyLive(txnsOf(t, f))
+				if len(lt) != 2 || !hasSub(lt[1].Warnings, "dropped") {
+					t.Errorf("live txns %+v; want a warning on the cut transaction that its tags were dropped", lt)
+				}
+			}
+			if txns, _, _ := f.IndexTxns(); len(onlyLive(txns)) != tc.wantTxns {
+				t.Errorf("%d live txns; want %d", len(onlyLive(txns)), tc.wantTxns)
+			}
+			// The verdict is the same on a second call (it is built once, not an error to retry).
+			if again, err := f.Journal(); err != nil || again.Stop != tc.stop {
+				t.Errorf("second Journal() = %+v, %v", again, err)
+			}
+		})
 	}
 }
