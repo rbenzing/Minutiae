@@ -35,7 +35,7 @@ type CurSeg struct {
 }
 
 // Footer is a node footer (struct node_footer). Flag carries the offset in the
-// node tree in its bits from 7 up.
+// node tree in its bits from 3 up (bits 0-2 are COLD, FSYNC and DENT).
 type Footer struct {
 	NID, Ino, Flag uint32
 	CPVer          uint64

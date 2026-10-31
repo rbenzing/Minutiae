@@ -513,7 +513,7 @@ func TestInodeFooterFlagAndNATOwner(t *testing.T) {
 	// A node whose footer flag records a position in a node tree (offset > 0)
 	// is a direct/indirect/xattr node, never an inode.
 	for _, ofs := range []uint32{1, 2, 5, 0xFFFFFF} {
-		f, _ := buildOne(t, smallOpts(), f2fstest.Inode{Mode: 0o100644, FooterFlag: ofs << 7})
+		f, _ := buildOne(t, smallOpts(), f2fstest.Inode{Mode: 0o100644, FooterFlag: ofs << 3})
 		_, _, err := f.Inode(5)
 		ce := asCorrupt(t, err)
 		if !strings.Contains(ce.Reason, "not an inode node") {
@@ -525,7 +525,7 @@ func TestInodeFooterFlagAndNATOwner(t *testing.T) {
 		}
 	}
 	// Low flag bits (cold, fsync, dentry marks) are fine.
-	f, _ := buildOne(t, smallOpts(), f2fstest.Inode{Mode: 0o100644, FooterFlag: 0x7F})
+	f, _ := buildOne(t, smallOpts(), f2fstest.Inode{Mode: 0o100644, FooterFlag: 0x07})
 	if _, _, err := f.Inode(5); err != nil {
 		t.Errorf("low flag bits: %v", err)
 	}

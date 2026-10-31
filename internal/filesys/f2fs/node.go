@@ -12,9 +12,10 @@ const (
 	footFlag      = nodeFooterOff + 8
 
 	// offsetBitShift is OFFSET_BIT_SHIFT: the footer flag keeps the node's
-	// offset in the file's node tree above bit 7 (ofs_of_node); it is 0 for an
+	// offset in the file's node tree from bit 3 up (bits 0-2 are COLD, FSYNC and DENT;
+	// confirmed on nodes the kernel wrote, 3D Task 10); ofs_of_node is 0 for an
 	// inode.
-	offsetBitShift = 7
+	offsetBitShift = 3
 )
 
 // node reads the node block of nid: its NAT address must lie in the main

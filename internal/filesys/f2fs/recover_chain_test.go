@@ -40,7 +40,7 @@ func (e *chainEnv) nodeAddr(seg, j uint32) uint32 {
 func (e *chainEnv) plant(seg, j, nid, ino, ofs uint32, ver uint64, words ...uint32) uint32 {
 	a := e.nodeAddr(seg, j)
 	copy(blockAt(e.img, a), f2fstest.DirectNodeBlock(nid, ino, words))
-	f2fstest.SetFooter(e.img, a, f2fstest.Footer{NID: nid, Ino: ino, Flag: ofs << 7, CPVer: ver})
+	f2fstest.SetFooter(e.img, a, f2fstest.Footer{NID: nid, Ino: ino, Flag: ofs << 3, CPVer: ver})
 	f2fstest.SetSSAEntry(e.img, e.o, a, nid)
 	return a
 }

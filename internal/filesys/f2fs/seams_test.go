@@ -35,7 +35,7 @@ func TestParseFooterFields(t *testing.T) {
 	o := f2fstest.Options{Segments: 2}
 	l := f2fstest.Geometry(o)
 	img := f2fstest.Build(o, nil)
-	want := f2fstest.Footer{NID: 0x01020304, Ino: 0x0a0b0c0d, Flag: 5<<7 | 3, CPVer: 1<<40 | 77, NextBlk: 0x55667788}
+	want := f2fstest.Footer{NID: 0x01020304, Ino: 0x0a0b0c0d, Flag: 5<<3 | 3, CPVer: 1<<40 | 77, NextBlk: 0x55667788}
 	f2fstest.SetFooter(img, l.Main, want)
 	got := parseFooter(blockAt(img, l.Main))
 	if got.nid != want.NID || got.ino != want.Ino || got.flag != want.Flag || got.cpVer != want.CPVer || got.nextBlk != want.NextBlk {

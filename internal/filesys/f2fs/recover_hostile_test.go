@@ -65,7 +65,7 @@ func TestRecoverableHostileCopies(t *testing.T) {
 		{
 			name: "footer offset not 0", size: bs, err: filesys.ErrNotFound,
 			patch: func(img []byte, tr *f2fstest.Tree) {
-				f2fstest.SetFooter(img, tr.Addr[tr.NID["/d/gone.bin"]], f2fstest.Footer{NID: tr.NID["/d/gone.bin"], Ino: tr.NID["/d/gone.bin"], Flag: 1 << 7})
+				f2fstest.SetFooter(img, tr.Addr[tr.NID["/d/gone.bin"]], f2fstest.Footer{NID: tr.NID["/d/gone.bin"], Ino: tr.NID["/d/gone.bin"], Flag: 1 << 3})
 			},
 		},
 		{
@@ -77,7 +77,7 @@ func TestRecoverableHostileCopies(t *testing.T) {
 			name: "dnode of another owner", size: 1000 * bs, stop: "node-owner@", block: 923,
 			patch: func(img []byte, tr *f2fstest.Tree) {
 				a := tr.Addr[nodeOf(tr, 1)]
-				f2fstest.SetFooter(img, a, f2fstest.Footer{NID: nodeOf(tr, 1), Ino: 4000, Flag: 1 << 7})
+				f2fstest.SetFooter(img, a, f2fstest.Footer{NID: nodeOf(tr, 1), Ino: 4000, Flag: 1 << 3})
 			},
 		},
 		{
@@ -173,7 +173,7 @@ func TestRecoverableIndirectStops(t *testing.T) {
 		{"child of another owner", func(img []byte, tr *f2fstest.Tree) {
 			n := indirectNID(img, tr)
 			child := binary.LittleEndian.Uint32(blk(img, tr.Addr[n]))
-			f2fstest.SetFooter(img, tr.Addr[child], f2fstest.Footer{NID: child, Ino: 4000, Flag: 4 << 7})
+			f2fstest.SetFooter(img, tr.Addr[child], f2fstest.Footer{NID: child, Ino: 4000, Flag: 4 << 3})
 		}, func(img []byte, tr *f2fstest.Tree) string {
 			n := indirectNID(img, tr)
 			return fmt.Sprintf("node-owner@%d", binary.LittleEndian.Uint32(blk(img, tr.Addr[n])))

@@ -76,7 +76,7 @@ func TestNodeIndexFindsStaleCopies(t *testing.T) {
 	a7 := e.plant(4, 1, 10, 7)
 	a5 := e.plant(5, 2, 10, 5)
 	a4 := e.plant(5, 0, 11, 4)
-	f2fstest.SetFooter(e.img, a4, f2fstest.Footer{NID: 11, Ino: 9, Flag: 3 << 7, CPVer: 4})
+	f2fstest.SetFooter(e.img, a4, f2fstest.Footer{NID: 11, Ino: 9, Flag: 3 << 3, CPVer: 4})
 	f := e.open(t)
 
 	got, _ := idxLookup(t, f, 10)
