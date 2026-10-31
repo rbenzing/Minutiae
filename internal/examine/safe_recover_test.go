@@ -2,9 +2,11 @@ package examine_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/rbenzing/minutiae/internal/examine"
 	"github.com/rbenzing/minutiae/internal/filesys"
@@ -423,5 +425,143 @@ func TestSupportsRecoveryRecoversAPanic(t *testing.T) {
 	}
 	if s.SupportsRecovery() {
 		t.Error("SupportsRecovery() = true for a filesystem whose wrapper chain panics; want false")
+	}
+}
+
+// jrecInner records PrepareJournalRecovery calls.
+type jrecInner struct {
+	filesys.FileSystem
+	calls int
+	use   filesys.JournalUse
+	err   error
+	panic bool
+}
+
+func (j *jrecInner) PrepareJournalRecovery(_ context.Context, use filesys.JournalUse) error {
+	if j.panic {
+		panic("kaboom")
+	}
+	j.calls++
+	j.use = use
+	return j.err
+}
+
+type supportsJournal interface{ SupportsJournalRecovery() bool }
+
+func TestSafeFSForwardsPrepareJournalRecovery(t *testing.T) {
+	fsys, _ := recImage(t)
+	inner := &jrecInner{FileSystem: fsys}
+	w := wrap(t, inner)
+	if s, ok := w.(supportsJournal); !ok || !s.SupportsJournalRecovery() {
+		t.Error("SupportsJournalRecovery() is not true for a wrapped reader with a JournalRecoverer")
+	}
+	if !filesys.SupportsJournalRecovery(w) {
+		t.Error("filesys.SupportsJournalRecovery does not see through the wrapper")
+	}
+	if err := filesys.PrepareJournalRecovery(context.Background(), w, filesys.JournalUseStale); err != nil {
+		t.Fatal(err)
+	}
+	if inner.calls != 1 || inner.use != filesys.JournalUseStale {
+		t.Errorf("inner called %d times with %q, want once with stale", inner.calls, inner.use)
+	}
+	want := errors.New("boom")
+	inner.err = want
+	if err := filesys.PrepareJournalRecovery(context.Background(), w, filesys.JournalUseCommitted); !errors.Is(err, want) {
+		t.Errorf("inner error: %v", err)
+	}
+	// a reader without one: not supported, and the call says so
+	plain := wrap(t, struct{ filesys.FileSystem }{fsys})
+	if s, ok := plain.(supportsJournal); !ok || s.SupportsJournalRecovery() {
+		t.Error("SupportsJournalRecovery() is true for a reader without a JournalRecoverer")
+	}
+	if err := filesys.PrepareJournalRecovery(context.Background(), plain, filesys.JournalUseStale); !errors.Is(err, filesys.ErrNoJournalRecovery) {
+		t.Errorf("absent: %v, want ErrNoJournalRecovery", err)
+	}
+}
+
+func TestSafeFSJournalRecoveryPanicIsCorrupt(t *testing.T) {
+	fsys, _ := recImage(t)
+	w := wrap(t, &jrecInner{FileSystem: fsys, panic: true})
+	err := filesys.PrepareJournalRecovery(context.Background(), w, filesys.JournalUseStale)
+	var ce *filesys.CorruptError
+	if !errors.As(err, &ce) || !errors.Is(err, filesys.ErrCorrupt) {
+		t.Fatalf("PrepareJournalRecovery that panics = %v; want a *CorruptError", err)
+	}
+	if !filesys.SupportsJournalRecovery(w) {
+		t.Error("a panicking JournalRecoverer still supports journal recovery (it is the call that failed)")
+	}
+	// the support question survives a wrapper chain that panics
+	pw := wrap(t, panicWrapFS{struct{ filesys.FileSystem }{fsys}})
+	if filesys.SupportsJournalRecovery(pw) {
+		t.Error("SupportsJournalRecovery() = true for a filesystem whose wrapper chain panics")
+	}
+}
+
+func TestSafeFSCopiesCandidateJournal(t *testing.T) {
+	fsys, old := recImage(t)
+	mk := func() []filesys.Candidate {
+		return []filesys.Candidate{{
+			Method: "ext4-journal-inode", Size: 4, Runs: []filesys.Run{{Offset: 1, Length: 4}},
+			Journal: &filesys.CandidateJournal{Seq: 9, Committed: true, Region: "live"},
+		}}
+	}
+	a := &aliasRecFS{FileSystem: fsys, cands: mk()}
+	rec := mustAs[filesys.Recoverer](t, wrap(t, a))
+	first, err := rec.Recoverable(old)
+	if err != nil || first[0].Journal == nil || *first[0].Journal != *mk()[0].Journal {
+		t.Fatalf("Journal not forwarded: %+v, %v", first, err)
+	}
+	first[0].Journal.Seq = 77
+	first[0].Journal.Region = "stale"
+	first[0].Journal.Revoked = true
+	second, _ := rec.Recoverable(old)
+	if !reflect.DeepEqual(second, mk()) {
+		t.Errorf("after the caller changed Journal the next answer is %+v, want %+v", second[0].Journal, mk()[0].Journal)
+	}
+	if !reflect.DeepEqual(a.cands, mk()) {
+		t.Errorf("the reader's own CandidateJournal was changed through the wrapper: %+v", a.cands[0].Journal)
+	}
+	// a nil Journal stays nil
+	b := &aliasRecFS{FileSystem: fsys, cands: []filesys.Candidate{{Method: "m-one"}}}
+	got, _ := mustAs[filesys.Recoverer](t, wrap(t, b)).Recoverable(old)
+	if got[0].Journal != nil {
+		t.Errorf("nil Journal became %+v", got[0].Journal)
+	}
+}
+
+func TestSafeFSCopiesNewJournalFields(t *testing.T) {
+	fsys, _ := recImage(t)
+	when := filesys.Timestamp{T: time.Date(2026, 10, 31, 1, 2, 3, 0, time.UTC), ZoneKnown: true}
+	mkInfo := func() filesys.JournalInfo {
+		return filesys.JournalInfo{Type: "jbd2", Features: []string{"f1"}, Incomplete: true, Stop: "cap-tags@12"}
+	}
+	mkTxn := func() filesys.JournalTxn {
+		return filesys.JournalTxn{
+			Seq: 3, Committed: true, Region: "live", StartBlock: 5, CommitBlock: 9, CommitTime: when, Checksum: "ok",
+			Blocks: []filesys.JournalTag{{FSBlock: 5, JournalBlock: 6, Copy: "verified", Escaped: true}},
+		}
+	}
+	sj := newSharedJournalFS(fsys)
+	sj.info, sj.txn = mkInfo(), mkTxn()
+	j := mustAs[filesys.Journaler](t, wrap(t, sj))
+	info, err := j.Journal()
+	if err != nil || !reflect.DeepEqual(info, mkInfo()) {
+		t.Fatalf("Journal = %+v, %v; want the 3G fields intact %+v", info, err, mkInfo())
+	}
+	var seen filesys.JournalTxn
+	if err := j.JournalTransactions(func(tx filesys.JournalTxn) bool {
+		seen = tx
+		tx.Blocks[0].JournalBlock = 999
+		tx.Blocks[0].Copy = "scribble"
+		tx.Blocks[0].Escaped = false
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if seen.StartBlock != 5 || seen.CommitBlock != 9 || seen.CommitTime != when || seen.Checksum != "ok" {
+		t.Errorf("visited transaction lost 3G fields: %+v", seen)
+	}
+	if !reflect.DeepEqual(sj.txn, mkTxn()) {
+		t.Errorf("the reader's own transaction was changed through the wrapper: %+v", sj.txn)
 	}
 }

@@ -33,6 +33,9 @@ type Candidate struct {
 	Mode        uint32   // idem
 	Encrypted   bool     // reader-asserted: the content is stored encrypted
 	Warnings    []string
+	// Journal is set only when the map came from a journal transaction (3G); nil otherwise. It is a
+	// pointer so that an answer without a journal copy compares equal to the 3C answer.
+	Journal *CandidateJournal
 }
 
 // Limits of a recovery map.
@@ -90,6 +93,9 @@ func CheckCandidate(c Candidate, fsSize int64) (covered int64, err error) {
 	}
 	if !validMethodToken(c.Method) {
 		return 0, mapErr("method %q is not a token [a-z][a-z0-9-]{1,31}", c.Method)
+	}
+	if c.Journal != nil && c.Journal.Region != "live" && c.Journal.Region != "stale" {
+		return 0, mapErr("journal region %q is neither live nor stale", c.Journal.Region)
 	}
 	if err := checkStrings("basis", c.Basis); err != nil {
 		return 0, err
@@ -151,4 +157,13 @@ func checkStrings(what string, ss []string) error {
 
 func mapErr(format string, a ...any) error {
 	return &CorruptError{Structure: "recovery map", Offset: -1, Reason: fmt.Sprintf(format, a...)}
+}
+
+// CandidateJournal names the journal transaction a journal-sourced map came from. Region "live" means the
+// log region a recovery would scan, never live data; "stale" means physically present outside it.
+type CandidateJournal struct {
+	Seq       uint32
+	Committed bool
+	Region    string // live | stale
+	Revoked   bool
 }

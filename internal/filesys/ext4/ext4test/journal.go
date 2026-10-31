@@ -245,6 +245,9 @@ func (l *Layout) WriteJournal(img []byte, j JBD2) {
 		if t.At >= 0 {
 			pos = t.At
 		}
+		if t.At >= 0 && t.At < first {
+			panic(fmt.Sprintf("ext4test: transaction %d starts at journal block %d, below s_first %d", t.Seq, t.At, first))
+		}
 		if pos < 0 || pos >= n {
 			panic(fmt.Sprintf("ext4test: transaction %d starts at journal block %d of %d", t.Seq, pos, n))
 		}
@@ -429,6 +432,7 @@ func (l *Layout) WriteJournal(img []byte, j JBD2) {
 		}
 		be32put(sb, 0x28, inc)
 		copy(sb[0x30:0x40], j.UUID[:])
+		be32put(sb, 0x40, 1) // s_nr_users
 		if csum {
 			sb[0x50] = jCsumCRC32C
 		}
