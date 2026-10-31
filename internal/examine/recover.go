@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
+	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/volume"
 )
 
@@ -43,13 +44,20 @@ func (s *Session) Recover(ctx context.Context, o RecoverOptions) (RecoverSummary
 	if err != nil {
 		return RecoverSummary{}, err
 	}
+	if err := journalGate(o, fsys); err != nil {
+		return RecoverSummary{}, err
+	}
 	fsType := fsys.Info().Type
 	details := map[string]any{
 		"parent_id": s.Parent.ID, "partition": part.Index, "fs_type": fsType, "format": evidence.AlgorithmRecover,
 		"refs": append([]string(nil), o.Refs...), "all": o.All, "min_confidence": o.MinConfidence,
 		"all_candidates": o.AllCandidates, "keep_uniform": o.KeepUniform, "max_files": b.maxFiles, "max_bytes": b.maxBytes,
 	}
+	if use := o.journalUse(); use != filesys.JournalUseNone {
+		details["use_journal"] = string(use) // only when set, so a 3C run keeps identical details
+	}
 	var rs RecoverSummary
+	var journalCandidates int
 	sum, err := runAnalysis(s.Case, s.Parent.Source.DeviceID, "recover", details, func(a *analysis) error {
 		defer func() {
 			a.setEnd("considered", rs.Considered)
@@ -62,6 +70,9 @@ func (s *Session) Recover(ctx context.Context, o RecoverOptions) (RecoverSummary
 			a.setEnd("skipped_by", rs.SkippedBy)
 			a.setEnd("limit_reached", rs.LimitReached)
 			a.setEnd("not_processed", rs.NotProcessed)
+			if o.journalUse() != filesys.JournalUseNone {
+				a.setEnd("journal_candidates", journalCandidates)
+			}
 		}()
 		if err := a.watchFS(fsys); err != nil {
 			return err
@@ -72,6 +83,7 @@ func (s *Session) Recover(ctx context.Context, o RecoverOptions) (RecoverSummary
 		}
 		rs.Considered, rs.Candidates, rs.Uniform, rs.Overlap = plan.Considered, plan.candidates, plan.uniform, plan.overlap
 		rs.ReaderWarnings = plan.ReaderWarnings
+		journalCandidates = plan.journalCandidates
 		a.sum.IncompleteIDs = plan.IncompleteIDs
 		rs.SkippedBy, rs.LimitReached, rs.NotProcessed = plan.SkippedBy, plan.LimitReached, plan.NotProcessed
 		if err := a.syncFS(); err != nil { // what planning made the filesystem notice
@@ -197,6 +209,13 @@ func (w *recoverWriter) write(it *RecoverItem, c *PlannedCandidate) error {
 			"all_candidates": strconv.FormatBool(w.o.AllCandidates),
 			"keep_uniform":   strconv.FormatBool(w.o.KeepUniform),
 		},
+	}
+	if use := w.o.journalUse(); use != filesys.JournalUseNone {
+		rv.Params["use_journal"] = string(use)
+	}
+	if c.Journal != nil {
+		j := *c.Journal
+		rv.Journal = &j
 	}
 	d.Recovery = rv
 	runs := c.Runs

@@ -180,6 +180,17 @@ func (r rjImg) none(t *testing.T, use filesys.JournalUse) {
 	}
 }
 
+// undecided prepares with use and requires ErrUndecided naming the rejection (3G C12): the only journal copy was
+// found and rejected, which is unknown, never "not found".
+func (r rjImg) undecided(t *testing.T, use filesys.JournalUse, reason string) {
+	t.Helper()
+	r.prep(t, use)
+	cs, err := r.recover(t)
+	if len(cs) != 0 || !errors.Is(err, filesys.ErrUndecided) || !strings.Contains(err.Error(), reason) {
+		t.Fatalf("Recoverable = %+v, %v; want ErrUndecided naming %q and no candidate", cs, err, reason)
+	}
+}
+
 func rjHas(ss []string, want string) bool { return slices.Contains(ss, want) }
 
 func rjHasPrefix(ss []string, prefix string) bool {
@@ -458,7 +469,7 @@ func TestJournalCandidateCopyChecksumBad(t *testing.T) {
 		b[off+0x7C] ^= 0xFF
 		return b
 	}
-	rjBuild(t, rjSpec{jbd: func(c *rjCtx) ext4test.JBD2 { return rjLive(rjTxn(10, c.tag(bad(c)))) }}).none(t, filesys.JournalUseCommitted)
+	rjBuild(t, rjSpec{jbd: func(c *rjCtx) ext4test.JBD2 { return rjLive(rjTxn(10, c.tag(bad(c)))) }}).undecided(t, filesys.JournalUseCommitted, "checksum")
 
 	// With an intact candidate, the reason is a warning on it.
 	r := rjBuild(t, rjSpec{unlink: ext4test.DebugfsRm, jbd: func(c *rjCtx) ext4test.JBD2 { return rjLive(rjTxn(10, c.tag(bad(c)))) }})
@@ -476,7 +487,7 @@ func TestJournalCandidateTypeMismatch(t *testing.T) {
 	symlink := func(raw []byte) { binary.LittleEndian.PutUint16(raw[0:], 0xA1FF) } // the entry recorded a regular file
 	rjBuild(t, rjSpec{jbd: func(c *rjCtx) ext4test.JBD2 {
 		return rjLive(rjTxn(10, c.tag(c.live(symlink))))
-	}}).none(t, filesys.JournalUseCommitted)
+	}}).undecided(t, filesys.JournalUseCommitted, "file type")
 	r := rjBuild(t, rjSpec{unlink: ext4test.DebugfsRm, jbd: func(c *rjCtx) ext4test.JBD2 {
 		return rjLive(rjTxn(10, c.tag(c.live(symlink))))
 	}})
@@ -701,4 +712,16 @@ func TestJournalCandidateCopyCapIsUnknown(t *testing.T) {
 	if len(cs) != 0 || !errors.Is(err, filesys.ErrLimit) {
 		t.Errorf("%+v, %v; want ErrLimit and no candidate", cs, err)
 	}
+}
+
+// The only journal copy was rejected (3G C12): the answer is undecided with the reason, not nil, nil.
+func TestJournalCandidateOnlyCopyRejectedIsUndecided(t *testing.T) {
+	notRegular := func(raw []byte) { binary.LittleEndian.PutUint16(raw[0:], 0x41ED) } // a directory
+	r := rjBuild(t, rjSpec{jbd: func(c *rjCtx) ext4test.JBD2 { return rjLive(rjTxn(10, c.tag(c.live(notRegular)))) }})
+	r.undecided(t, filesys.JournalUseCommitted, "journal copy of inode")
+	// An older intact copy is not reached around the rejected newest one: the newest live-state copy decides.
+	r = rjBuild(t, rjSpec{jbd: func(c *rjCtx) ext4test.JBD2 {
+		return rjLive(rjTxn(10, c.tag(c.live(nil))), rjTxn(11, c.tag(c.live(notRegular))))
+	}})
+	r.undecided(t, filesys.JournalUseCommitted, "sequence 11")
 }

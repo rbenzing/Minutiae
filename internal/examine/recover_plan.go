@@ -57,6 +57,8 @@ type RecoverOptions struct {
 	MaxBytes      int64 // 0 = DefaultMaxBytes
 	MaxPlanRuns   int   // 0 = the default cap (1<<19 runs, about 260 MiB of planning memory); more runs cost memory
 	Progress      func(done, total int64)
+
+	UseJournal filesys.JournalUse // "" or none: the journal is not consulted (3G-R14)
 }
 
 // PlannedCandidate is one recovery map after validation against the free space.
@@ -75,6 +77,8 @@ type PlannedCandidate struct {
 	Times              filesys.Times
 	Skip               string   // "" = will be written; else a reason token
 	Warnings           []string // the reader's own warnings, cleaned, at most readerWarningCap
+
+	Journal *evidence.JournalRef // the journal transaction the map came from (3G-R14); nil for every other method
 
 	skipDetail string
 	prefix     bool   // the map covers less than the declared size (ruling F4/F18)
@@ -124,6 +128,8 @@ type RecoverPlan struct {
 	part        volume.Partition
 	fsType      string
 	admitted    int64 // bytes of the candidates to write
+
+	journalCandidates int // planned candidates that came from the journal (3G-R14)
 }
 
 // RecoverSummary is the outcome of a recovery run.
@@ -163,6 +169,9 @@ func (o RecoverOptions) validate() error {
 	if !o.All && len(o.Refs) == 0 {
 		return errors.New("nothing to recover: give entries or directories, or ask for all")
 	}
+	if _, err := filesys.ParseJournalUse(string(o.UseJournal)); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -181,6 +190,9 @@ func (s *Session) PlanRecovery(ctx context.Context, o RecoverOptions) (*RecoverP
 	}
 	rec, err := s.recovererOf(fsys)
 	if err != nil {
+		return nil, err
+	}
+	if err := journalGate(o, fsys); err != nil {
 		return nil, err
 	}
 	before := fsys.Info().Warnings
@@ -252,6 +264,14 @@ func (s *Session) buildPlan(ctx context.Context, o RecoverOptions, fsys filesys.
 	// here: after enumeration, only when something is to be recovered, and never for a list (3C-R25).
 	if prepare && len(targets) > 0 {
 		if err := filesys.PrepareRecovery(ctx, fsys); err != nil {
+			return nil, err
+		}
+	}
+	// The journal is prepared whenever the examiner asked for it, a list included: it is bounded and was asked for
+	// (3G-R14). A filesystem that keeps no journal gets one answer here, not one undecided answer per entry (3G C13);
+	// the per-entry answer of the reader stays as a safety net.
+	if use := o.journalUse(); use != filesys.JournalUseNone && len(targets) > 0 {
+		if err := p.prepareJournal(use); err != nil {
 			return nil, err
 		}
 	}
@@ -566,6 +586,10 @@ func (p *planner) evaluate(it *RecoverItem, t target, cs []filesys.Candidate) {
 		}
 		pc.Alloc = evidence.AllocSummary{Free: cut.CapturedBytes, ExcludedRuns: len(cut.Excluded), ExcludedBytes: satAdd(cut.ExcludedBytes, tail)}
 		pc.cut, pc.cutState, pc.cutRuns = cut.State != "", cut.State, len(cut.Excluded)
+		if c.Journal != nil {
+			pc.Journal = &evidence.JournalRef{Seq: c.Journal.Seq, Committed: c.Journal.Committed, Region: c.Journal.Region, Revoked: c.Journal.Revoked}
+			p.plan.journalCandidates++
+		}
 		pc.Basis = cleanList(c.Basis)
 		pc.Assumptions = cleanList(c.Assumptions)
 		if pc.Size < c.Size {
@@ -603,6 +627,7 @@ func (p *planner) evaluate(it *RecoverItem, t target, cs []filesys.Candidate) {
 		}
 		pc.Content = "ok"
 		pc.Confidence, _ = confidenceFor(c.Method, pc.cut || pc.prefix || slices.Contains(pc.Assumptions, assumptionFileEndUnknown), false, slices.Contains(pc.Assumptions, assumptionJournalNotReplayed))
+		pc.Confidence = capJournalSource(pc.Confidence, pc.Assumptions)
 		pc.Band = evidence.ConfidenceBand(pc.Confidence)
 		valid = append(valid, pc)
 	}
@@ -655,6 +680,7 @@ func (p *planner) selectAndFilter() {
 				}
 			}
 			c.Confidence, _ = confidenceFor(c.Method, c.cut || c.prefix || slices.Contains(c.Assumptions, assumptionFileEndUnknown), len(partners) > 0, slices.Contains(c.Assumptions, assumptionJournalNotReplayed))
+			c.Confidence = capJournalSource(c.Confidence, c.Assumptions)
 			c.Band = evidence.ConfidenceBand(c.Confidence)
 			c.Assumptions = fitAssumptions(c.Assumptions)
 			if c.Confidence < p.o.MinConfidence {
@@ -948,4 +974,38 @@ func readerStop(assumptions []string) string {
 		}
 	}
 	return ""
+}
+
+// journalUse is the requested use of the journal, "" being none. validate has already refused any other value.
+func (o RecoverOptions) journalUse() filesys.JournalUse {
+	if u, err := filesys.ParseJournalUse(string(o.UseJournal)); err == nil {
+		return u
+	}
+	return filesys.JournalUseNone
+}
+
+// journalGate refuses, before any audit entry, a request for the journal on a filesystem that cannot recover from
+// one (3G-R14).
+func journalGate(o RecoverOptions, fsys filesys.FileSystem) error {
+	if o.journalUse() == filesys.JournalUseNone || filesys.SupportsJournalRecovery(fsys) {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", fsys.Info().Type, ErrNoJournalRecovery)
+}
+
+// prepareJournal asks the filesystem to build its journal index. A filesystem that keeps no journal is refused once
+// with filesys.ErrNoJournal; any other unusable journal stays the reader's per-entry answer (undecided).
+func (p *planner) prepareJournal(use filesys.JournalUse) error {
+	if err := filesys.PrepareJournalRecovery(p.ctx, p.fsys, use); err != nil {
+		if errors.Is(err, filesys.ErrNoJournalRecovery) {
+			return fmt.Errorf("%s: %w", p.plan.fsType, ErrNoJournalRecovery)
+		}
+		return err
+	}
+	if j, ok := filesys.As[filesys.Journaler](p.fsys); ok {
+		if _, err := j.Journal(); errors.Is(err, filesys.ErrNoJournal) {
+			return fmt.Errorf("%s: %w", p.plan.fsType, err)
+		}
+	}
+	return nil
 }

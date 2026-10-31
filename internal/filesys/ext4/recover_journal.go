@@ -246,7 +246,7 @@ func (f *FS) journalCandidates(st *staleInode) ([]filesys.Candidate, []string, e
 	}
 
 	if found != nil {
-		c, why, err := f.journalCandidateFrom(s, st, found, blk, otherGen)
+		c, why, untrusted, err := f.journalCandidateFrom(s, st, found, blk, otherGen)
 		if err != nil {
 			return nil, notes, err
 		}
@@ -258,6 +258,11 @@ func (f *FS) journalCandidates(st *staleInode) ([]filesys.Candidate, []string, e
 		}
 		t := &x.txns[x.tags[found.tag].txn]
 		notes = append(notes, fmt.Sprintf("journal copy of inode %d (sequence %d) not used: %s", in.num, t.seq, why))
+		if untrusted && !x.info.Incomplete {
+			// The only journal copy was found and rejected: that is unknown, never "not found" (3G C12). The reason is the
+			// warning on any other candidate and the cause of the undecided answer when there is none.
+			return nil, nil, unknownJournal(fmt.Errorf("%w: %s", filesys.ErrUndecided, notes[0]), notes[0])
+		}
 	}
 	if x.info.Incomplete {
 		return nil, notes, unknownJournal(
@@ -275,39 +280,41 @@ type jcopy struct {
 }
 
 // journalCandidateFrom checks the selected copy L and builds the candidate. A copy that cannot be a source gives a
-// reason and no candidate; the error is an I/O failure only.
-func (f *FS) journalCandidateFrom(s *jrecState, st *staleInode, c *jcopy, itableBlk uint64, otherGen int) (filesys.Candidate, string, error) {
+// reason and no candidate; untrusted says the copy cannot be believed (it does not decode, fails its checksum or
+// disagrees with the directory entry), which makes the entry undecided rather than not found (3G C12). The error is an
+// I/O failure only.
+func (f *FS) journalCandidateFrom(s *jrecState, st *staleInode, c *jcopy, itableBlk uint64, otherGen int) (cand filesys.Candidate, why string, untrusted bool, err error) {
 	x := s.idx
 	g := &x.tags[c.tag]
 	t := &x.txns[g.txn]
 	lin, lnotes, err := f.decodeInodeQuiet(st.in.num, c.raw)
 	if err != nil {
-		return filesys.Candidate{}, "the inode does not decode", nil
+		return filesys.Candidate{}, "the inode does not decode", true, nil
 	}
 	switch {
 	case !lin.csumOK:
-		return filesys.Candidate{}, "its inode checksum does not match", nil
+		return filesys.Candidate{}, "its inode checksum does not match", true, nil
 	case f.sb.hasIncompat(incompatFiletype) && st.rec.rec.ftype != 0 && modeFiletype(lin.mode) != st.rec.rec.ftype:
-		return filesys.Candidate{}, fmt.Sprintf("its file type (%#x) differs from the directory entry's (%d)", lin.mode&modeTypeMask, st.rec.rec.ftype), nil
+		return filesys.Candidate{}, fmt.Sprintf("its file type (%#x) differs from the directory entry's (%d)", lin.mode&modeTypeMask, st.rec.rec.ftype), true, nil
 	case lin.flags&inodeFlagEAInode != 0:
-		return filesys.Candidate{}, "it is an EA inode", nil
+		return filesys.Candidate{}, "it is an EA inode", false, nil
 	case lin.flags&inodeFlagInlineData != 0:
-		return filesys.Candidate{}, "it holds inline data, which is in the inode table", nil
+		return filesys.Candidate{}, "it holds inline data, which is in the inode table", false, nil
 	case lin.mode&modeTypeMask != modeReg && lin.mode&modeTypeMask != modeSymlink:
-		return filesys.Candidate{}, "it is neither a regular file nor a symlink", nil
+		return filesys.Candidate{}, "it is neither a regular file nor a symlink", false, nil
 	case lin.mode&modeTypeMask == modeSymlink && lin.flags&inodeFlagExtents == 0 && lin.size < fastSymlinkMax:
-		return filesys.Candidate{}, "it is a fast symlink, whose target is in the inode table", nil
+		return filesys.Candidate{}, "it is a fast symlink, whose target is in the inode table", false, nil
 	case lin.size <= 0:
-		return filesys.Candidate{}, "its size is zero", nil
+		return filesys.Candidate{}, "its size is zero", false, nil
 	}
 	lin.offset = st.in.offset
 	lin.times.Deleted = st.in.times.Deleted // the copy predates the delete: the deletion time is the on-disk inode's
 	m, err := f.mapStaleWith(lin, min(lin.size, f.size), s.source(g.txn))
 	if err != nil {
-		return filesys.Candidate{}, "", err
+		return filesys.Candidate{}, "", false, err
 	}
 	if m.cleared || (len(m.runs) == 0 && m.stop == "") {
-		return filesys.Candidate{}, "its map holds nothing", nil
+		return filesys.Candidate{}, "its map holds nothing", false, nil
 	}
 
 	kind := "blockmap"
@@ -344,9 +351,9 @@ func (f *FS) journalCandidateFrom(s *jrecState, st *staleInode, c *jcopy, itable
 	if c.escaped {
 		assumptions = append(assumptions, "jbd2-unescaped")
 	}
-	cand := f.candidateFrom(&staleInode{in: lin, raw: c.raw, rec: st.rec, notes: lnotes}, MethodJournalInode, m, lin.size, basis, assumptions)
+	cand = f.candidateFrom(&staleInode{in: lin, raw: c.raw, rec: st.rec, notes: lnotes}, MethodJournalInode, m, lin.size, basis, assumptions)
 	cand.Journal = &filesys.CandidateJournal{Seq: t.seq, Committed: true, Region: regionName(t.stale), Revoked: false}
-	return cand, "", nil
+	return cand, "", false, nil
 }
 
 // source returns the tree source for an inode copy taken from transaction t.
@@ -379,8 +386,12 @@ func (s *journalTreeSource) mapBlock(f *FS, blk uint64) ([]byte, string, bool, s
 		case seqNewer(t.seq, at):
 			newer = true
 			continue
-		case !journalAllowed(s.use, t) || !eligibleCopy(g):
+		case !journalAllowed(s.use, t):
 			continue
+		case !eligibleCopy(g):
+			// A committed copy at or before T whose bytes are mismatch or missing: B's state at T is unknown (3G C11).
+			// An older copy or the home block would be a guess, so the map stops here with the same token as a later copy.
+			return nil, "", false, stopMapBlockNewer, nil
 		}
 		buf, err := x.readRaw(f, g.jblk)
 		if errors.Is(err, errImageEnd) {
