@@ -18,6 +18,8 @@ import (
 // the free node segments (spec 6.5; 3D).
 const MethodNodeScan = "f2fs-node-scan"
 
+var _ filesys.Recoverer = (*FS)(nil)
+
 // Recoverable returns where the content of the deleted entry e may still be.
 // Only e.ID is used, and everything is re-resolved from the volume.
 //
@@ -383,10 +385,13 @@ func (f *FS) candidate(id string, dir *inode, d *dentry, copies []staleCopy, bel
 	} else {
 		basis = append(basis, "inode-checksum=not-recorded")
 	}
-	if c0.node.ssa {
+	switch {
+	case c0.node.ssa:
 		basis = append(basis, "ssa=match")
-	} else {
-		basis = append(basis, "ssa=not-on-disk")
+	case c0.node.why == whySSACurrent:
+		basis = append(basis, "ssa=current-segment")
+	default:
+		basis = append(basis, "ssa=unreadable")
 	}
 	if prevMatch {
 		basis = append(basis, "nat-prev-copy=match")

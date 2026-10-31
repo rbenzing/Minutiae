@@ -526,3 +526,42 @@ func TestStaleMapRepeatedCutTrimsNodes(t *testing.T) {
 		t.Errorf("stop %q covered %d nodes %v, want address-repeated@1941 and only node 9001", r.stop, r.covered, r.nodes)
 	}
 }
+
+// A data address equal to the address of one of the walk's own node blocks is a
+// repeated block like any other: the run that holds it is cut.
+func TestStaleMapDataAddressEqualToNodeBlockIsRepeated(t *testing.T) {
+	e := newChainEnv()
+	f := openImg(t, e.img)
+	a := e.data(0)
+	nodeAt := a + 5000
+	in := mkInode(20, int64(923+10)*blockSize, seq(a, 923), [5]uint32{40})
+	words10 := append(seq(a+923, 3), append([]uint32{nodeAt}, seq(a+2000, 6)...)...)
+	src := &fakeSource{nodes: map[uint32]fakeNode{40: {b: words(words10...), addr: nodeAt}}}
+	r, err := f.staleMap(in, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []filesys.Run{{Offset: int64(a) * blockSize, Length: 926 * blockSize}}
+	if r.stop != "address-repeated@926" || !slices.Equal(r.runs, want) || r.covered != 926*blockSize {
+		t.Errorf("stop %q runs %v covered %d, want address-repeated@926 and the first 926 blocks", r.stop, r.runs, r.covered)
+	}
+}
+
+// The ssa basis names why a copy has no confirmation, and only says
+// "not-on-disk" where that is literally true (it is no longer said at all).
+func TestCandidateSSABasisNamesTheReason(t *testing.T) {
+	f := openImg(t, newChainEnv().img)
+	for _, c := range []struct {
+		node staleNode
+		want string
+	}{
+		{staleNode{ssa: true}, "ssa=match"},
+		{staleNode{why: whySSACurrent}, "ssa=current-segment"},
+		{staleNode{why: whySSAUnreadable}, "ssa=unreadable"},
+	} {
+		got := f.candidate("m", &inode{}, &dentry{ino: 5}, []staleCopy{{node: c.node, in: &inode{}}}, 2)
+		if !slices.Contains(got.Basis, c.want) || slices.Contains(got.Basis, "ssa=not-on-disk") {
+			t.Errorf("basis %v, want %q", got.Basis, c.want)
+		}
+	}
+}

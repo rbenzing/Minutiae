@@ -50,6 +50,7 @@ const (
 type staleNode struct {
 	nid, addr, ino, ver, ofs uint32 // ver = uint32(footer.cp_ver), always < verLow(checkpoint) once indexed (3D-R19)
 	ssa                      bool   // the SSA entry names the nid
+	why                      uint8  // when !ssa: whySSACurrent or whySSAUnreadable
 	post                     bool   // build only: ver >= the checkpoint's; counted and removed by the compaction
 }
 
@@ -63,8 +64,8 @@ type nidMeta struct {
 
 // indexStats counts what the index pass did (exported for tests as NodeIndexStats).
 type indexStats struct {
-	Builds, SegmentsScanned, SegmentsSkipped, Entries, Evicted, SSADropped, PostCheckpoint int
-	BlocksRead                                                                             int64
+	Builds, SegmentsScanned, SegmentsSkipped, Entries, Evicted, SSADropped, SSAWrongType, PostCheckpoint int
+	BlocksRead                                                                                           int64
 }
 
 type skippedSeg struct {
@@ -209,9 +210,14 @@ func (f *FS) buildNodeIndex() (*nodeIndex, error) {
 
 		// The summary of a current segment is not on disk (probe, G2).
 		var ssa []byte
+		why := uint8(whySSACurrent)
 		if !cur {
+			why = whySSAUnreadable
 			b, err := f.ssaBlock(seg)
 			switch {
+			case err == nil && ssaType(b) != sumTypeNode:
+				x.stats.SSAWrongType++
+				f.warn("node index: the summary block of segment %d is not a node summary (type %d); its copies are not cross-checked", seg, ssaType(b))
 			case err == nil:
 				ssa = b
 			case errors.Is(err, filesys.ErrCorrupt):
@@ -246,7 +252,7 @@ func (f *FS) buildNodeIndex() (*nodeIndex, error) {
 			ver := uint32(ft.cpVer) // low 32 bits only: the kernel ORs a CRC into the high half (probe Q5)
 			x.nodes = append(x.nodes, staleNode{
 				nid: ft.nid, addr: uint32(base) + uint32(i), ino: ft.ino, ver: ver, ofs: ft.ofs(),
-				ssa: ssaOK, post: ver >= verLow,
+				ssa: ssaOK, why: why, post: ver >= verLow,
 			})
 		}
 		return true
@@ -262,6 +268,9 @@ func (f *FS) buildNodeIndex() (*nodeIndex, error) {
 		f.warn("node index: %s; a lookup of stale nodes cannot be decided", x.incomplete)
 	}
 	x.stats.Builds = 1
+	if x.stats.SSADropped > 0 {
+		f.warn("node index: %d stale copies were dropped because their summary entry names another node", x.stats.SSADropped)
+	}
 	if x.capped {
 		x.nodes = nil // unsorted and incomplete: never served
 		return x, nil

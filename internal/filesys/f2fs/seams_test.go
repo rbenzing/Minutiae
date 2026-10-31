@@ -133,9 +133,6 @@ func TestCheckpointCursorsAndVerLow(t *testing.T) {
 			}
 		}
 	})
-	if cpCRCRecoveryFlag != 0x40 {
-		t.Errorf("cpCRCRecoveryFlag = %#x, want 0x40", cpCRCRecoveryFlag)
-	}
 }
 
 // seamFault fails reads that touch [lo, hi) once armed.

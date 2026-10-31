@@ -428,6 +428,28 @@ func TestNodeIndexSSAMismatchDropped(t *testing.T) {
 	if s := f.NodeIndexStats(); s.SSADropped != 1 {
 		t.Errorf("SSADropped = %d, want 1", s.SSADropped)
 	}
+	if !hasWarning(f.Info(), "1 stale copies were dropped because their summary entry names another node") {
+		t.Errorf("the dropped copy is not surfaced: %v", f.Info().Warnings)
+	}
+}
+
+// A summary block that is not a node summary is not trusted: the segment's copies
+// are kept without a confirmation, with a counted warning.
+func TestNodeIndexSSAWrongTypeIsNotTrusted(t *testing.T) {
+	e := newIdxEnv(nil)
+	a := e.plant(4, 0, 70, 3)
+	f2fstest.SetSSAType(e.img, e.o, 4, 0)
+	f := e.open(t)
+	got, _ := idxLookup(t, f, 70)
+	if len(got) != 1 || got[0].Addr != a || got[0].SSA {
+		t.Errorf("lookup(70) = %+v, want the copy kept without an SSA confirmation", got)
+	}
+	if s := f.NodeIndexStats(); s.SSAWrongType != 1 {
+		t.Errorf("SSAWrongType = %d, want 1", s.SSAWrongType)
+	}
+	if !hasWarning(f.Info(), "summary block of segment 4 is not a node summary") {
+		t.Errorf("no warning: %v", f.Info().Warnings)
+	}
 }
 
 // An unreadable SIT block hides the type of every segment it covers, so the
