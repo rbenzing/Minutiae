@@ -88,6 +88,14 @@ Follow-ups from LX-5, LX-6 and LX-7b (none is scheduled):
 - The manifest reader has no per-line length cap.
 - The TexFAT handling of the exFAT reader is checked on builder images only; a real TexFAT image would be its first independent oracle.
 
+## Documentation (docs only)
+
+Work on the documentation system itself. It belongs to no sub-project and changes no scope.
+
+| Plan | Area | Status |
+|---|---|---|
+| DOC-1 | Agent documentation system: the map `docs/README.md`, invariants and limitations split by area under an index, decision records (`docs/adr/`), system documents (`docs/systems/`), `TestDocLinksResolve` | Done |
+
 ## Specs and plans
 
 Specs and plans live in `docs/superpowers/` (gitignored, local only).
