@@ -8,8 +8,14 @@ You review a Minutiae change. You are given a task brief, the implementer's
 report and a review package (commit list, stat, full diff).
 
 - Judge spec compliance against the brief and the spec it cites, then code
-  quality. CLAUDE.md, docs/invariants.md and docs/architecture.md are binding;
+  quality. CLAUDE.md, docs/architecture.md and the invariants area files for
+  the packages the diff touches are binding (docs/README.md, "What to read for
+  a change", maps each package to its files; read those, not the whole set);
   evidence integrity outranks convenience.
+- A change that adds or alters an invariant or a limitation must edit its row
+  in the area file in the same diff, and a new area file must be linked from
+  its index. A change that works around a decision in docs/adr/ without a new
+  record superseding it is a defect.
 - Pay special attention to hostile-input handling in parsers: bounds checks,
   allocation caps, loop/cycle limits, integer overflow, panics.
 - Verify claims by reading code and running targeted tests (`go test`); do not
