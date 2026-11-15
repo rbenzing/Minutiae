@@ -1,0 +1,798 @@
+{
+  "generator": {
+    "image_sha256": "dfd63368496d90ecfe0289308688531341c2ae3b9660c26df199e01c2ba5d72d",
+    "packages": [
+      {
+        "package": "busybox-static",
+        "version": "1:1.35.0-4+deb12u1+b1"
+      },
+      {
+        "package": "coreutils",
+        "version": "9.1-1"
+      },
+      {
+        "package": "cpio",
+        "version": "2.13+dfsg-7.1"
+      },
+      {
+        "package": "f2fs-tools",
+        "version": "1.15.0-1"
+      },
+      {
+        "package": "faketime",
+        "version": "0.9.10-2.1"
+      },
+      {
+        "package": "gzip",
+        "version": "1.12-1"
+      },
+      {
+        "package": "jq",
+        "version": "1.6-2.1+deb12u2"
+      },
+      {
+        "package": "kmod",
+        "version": "30+20221128-1"
+      },
+      {
+        "package": "linux-image-6.1.0-53-amd64",
+        "version": "6.1.187-1"
+      },
+      {
+        "package": "python3",
+        "version": "3.11.2-1+b1"
+      },
+      {
+        "package": "qemu-system-x86",
+        "version": "1:7.2+dfsg-7+deb12u18+b3"
+      },
+      {
+        "package": "util-linux",
+        "version": "2.38.1-5+deb12u3"
+      }
+    ],
+    "commands": [
+      "# bytes: build_rollforward of tools/fixtures/f2fs_recover.sh (patterns and stamps from lib.sh); guest: f2fs -o nodiscard,noatime,background_gc=off",
+      "truncate -s 128M <img>",
+      "faketime -f '2023-11-14 22:13:20' mkfs.f2fs -q -f -r -l f2fsrf -U 3d3d3d3d-0000-4000-8000-000000000002 -O extra_attr,inode_checksum,sb_checksum <img>",
+      "python3 tools/fixtures/f2fs_normalize.py <img>",
+      "guest stage w: mkdir /mnt/rf /mnt/upd /mnt/live /mnt/live/small /mnt/rf/small /mnt/rf/direct /mnt/rf/indirect /mnt/rf/holes /mnt/rf/inline /mnt/rf/twice /mnt/rf/late /mnt/rf/nofsync /mnt/upd/append /mnt/upd/appendpast",
+      "guest stage w: cp /payload/live/indirect.bin /mnt/live/indirect.bin",
+      "guest stage w: dd if=/payload/live/lb0 of=/mnt/live/holes.bin bs=4096 count=1 conv=notrunc 2>/dev/null",
+      "guest stage w: dd if=/payload/live/lb3 of=/mnt/live/holes.bin bs=4096 seek=3 count=1 conv=notrunc 2>/dev/null",
+      "guest stage w: cp /payload/live/inline.txt /mnt/live/inline.txt",
+      "guest stage w: cp /payload/live/small/s1 /mnt/live/small/s1",
+      "guest stage w: cp /payload/live/small/s2 /mnt/live/small/s2",
+      "guest stage w: cp /payload/live/small/s3 /mnt/live/small/s3",
+      "guest stage w: cp /payload/ap20.bin /mnt/upd/append/target.bin",
+      "guest stage w: cp /payload/ap4m.bin /mnt/upd/appendpast/target.bin",
+      "guest stage w: sync",
+      "guest stage c: echo 3600 > /sys/fs/f2fs/vda/cp_interval",
+      "guest stage c: echo \"CPINT $(cat /sys/fs/f2fs/vda/cp_interval)\"",
+      "guest stage c: sync",
+      "guest stage c: echo 3 > /proc/sys/vm/drop_caches",
+      "guest stage c: for b in 512 1024; do echo \"CPVER A $b $(dd if=/dev/vda bs=4096 skip=$b count=1 2>/dev/null | od -An -tx1 -N8 | tr -d ' \\n')\"; done",
+      "guest stage c: dd if=/payload/small.bin of=/mnt/rf/small/target.bin bs=4096 conv=fsync 2>/dev/null",
+      "guest stage c: dd if=/payload/direct.bin of=/mnt/rf/direct/target.bin bs=4096 conv=fsync 2>/dev/null",
+      "guest stage c: dd if=/payload/indirect.bin of=/mnt/rf/indirect/target.bin bs=4096 conv=fsync 2>/dev/null",
+      "guest stage c: dd if=/payload/h0 of=/mnt/rf/holes/target.bin bs=4096 count=1 conv=fsync 2>/dev/null",
+      "guest stage c: dd if=/payload/h3 of=/mnt/rf/holes/target.bin bs=4096 seek=3 count=1 conv=notrunc,fsync 2>/dev/null",
+      "guest stage c: dd if=/payload/inline.txt of=/mnt/rf/inline/target.txt bs=4096 conv=fsync 2>/dev/null",
+      "guest stage c: dd if=/payload/t1 of=/mnt/rf/twice/target.bin bs=4096 conv=fsync 2>/dev/null",
+      "guest stage c: dd if=/payload/t2 of=/mnt/rf/twice/target.bin bs=4096 seek=2 conv=notrunc,fsync 2>/dev/null",
+      "guest stage c: dd if=/payload/add.bin of=/mnt/upd/append/target.bin bs=4096 seek=5 conv=notrunc,fsync 2>/dev/null",
+      "guest stage c: dd if=/payload/apadd.bin of=/mnt/upd/appendpast/target.bin bs=4096 seek=1024 conv=notrunc,fsync 2>/dev/null",
+      "guest stage c: dd if=/payload/l1 of=/mnt/rf/late/target.bin bs=4096 conv=fsync 2>/dev/null",
+      "guest stage c: dd if=/payload/l2 of=/mnt/rf/late/target.bin bs=4096 seek=2 conv=notrunc 2>/dev/null",
+      "guest stage c: dd if=/payload/nofsync.bin of=/mnt/rf/nofsync/target.bin bs=4096 2>/dev/null",
+      "guest stage c: echo 3 > /proc/sys/vm/drop_caches",
+      "guest stage c: for b in 512 1024; do echo \"CPVER B $b $(dd if=/dev/vda bs=4096 skip=$b count=1 2>/dev/null | od -An -tx1 -N8 | tr -d ' \\n')\"; done",
+      "guest stage c: echo WRITES-DONE",
+      "guest stage r: dmesg | grep -ai f2fs || true",
+      "guest stage r: for f in /mnt/rf/small/target.bin /mnt/rf/direct/target.bin /mnt/rf/indirect/target.bin /mnt/rf/holes/target.bin /mnt/rf/inline/target.txt /mnt/rf/twice/target.bin /mnt/rf/late/target.bin /mnt/rf/nofsync/target.bin /mnt/upd/append/target.bin /mnt/upd/appendpast/target.bin; do if [ -e $f ]; then echo \"RF $f $(wc -c < $f | tr -d ' ') $(sha256sum $f | cut -d' ' -f1)\"; else echo \"RFABSENT $f\"; fi; done",
+      "python3 tools/fixtures/f2fs_recover_oracle.py rollforward   # chain walk, replay rules, maps, the kernel's replay of the copy, live files"
+    ],
+    "variant": "rollforward",
+    "stages": [
+      "w",
+      "c"
+    ],
+    "fsck_exit": {
+      "w": 0,
+      "c": 0,
+      "r": 0
+    },
+    "replay_oracle": true,
+    "fsck_chain_crosscheck": false
+  },
+  "checkpoint_version": 1804289387,
+  "base_checkpoint_version": 1804289387,
+  "checkpoint_pack": 1,
+  "checkpoint_flags": 197,
+  "checkpoint_crc": 2977893238,
+  "crc_recovery": true,
+  "nocrc_recovery": false,
+  "footer_version": "0xb17f0b766b8b456b",
+  "block_size": 4096,
+  "chain": {
+    "start": 4620,
+    "stop": "version@4636",
+    "complete": true,
+    "nodes": [
+      {
+        "block": 4620,
+        "nid": 31,
+        "ino": 31,
+        "ofs": 0,
+        "kind": "inode",
+        "flag": 7,
+        "fsync": true,
+        "dentry": true,
+        "next": 4621,
+        "live_ino": false,
+        "would_replay": true
+      },
+      {
+        "block": 4621,
+        "nid": 32,
+        "ino": 32,
+        "ofs": 0,
+        "kind": "inode",
+        "flag": 7,
+        "fsync": true,
+        "dentry": true,
+        "next": 4622,
+        "live_ino": false,
+        "would_replay": true
+      },
+      {
+        "block": 4622,
+        "nid": 33,
+        "ino": 32,
+        "ofs": 1,
+        "kind": "direct",
+        "flag": 11,
+        "fsync": true,
+        "dentry": false,
+        "next": 4623,
+        "live_ino": false,
+        "would_replay": true
+      },
+      {
+        "block": 4623,
+        "nid": 34,
+        "ino": 34,
+        "ofs": 0,
+        "kind": "inode",
+        "flag": 7,
+        "fsync": true,
+        "dentry": true,
+        "next": 4624,
+        "live_ino": false,
+        "would_replay": true
+      },
+      {
+        "block": 4624,
+        "nid": 35,
+        "ino": 34,
+        "ofs": 1,
+        "kind": "direct",
+        "flag": 11,
+        "fsync": true,
+        "dentry": false,
+        "next": 4625,
+        "live_ino": false,
+        "would_replay": true
+      },
+      {
+        "block": 4625,
+        "nid": 36,
+        "ino": 34,
+        "ofs": 2,
+        "kind": "direct",
+        "flag": 19,
+        "fsync": true,
+        "dentry": false,
+        "next": 4626,
+        "live_ino": false,
+        "would_replay": true
+      },
+      {
+        "block": 4626,
+        "nid": 38,
+        "ino": 34,
+        "ofs": 4,
+        "kind": "direct",
+        "flag": 35,
+        "fsync": true,
+        "dentry": false,
+        "next": 4627,
+        "live_ino": false,
+        "would_replay": true
+      },
+      {
+        "block": 4627,
+        "nid": 39,
+        "ino": 39,
+        "ofs": 0,
+        "kind": "inode",
+        "flag": 7,
+        "fsync": true,
+        "dentry": true,
+        "next": 4628,
+        "live_ino": false,
+        "would_replay": true
+      },
+      {
+        "block": 4628,
+        "nid": 39,
+        "ino": 39,
+        "ofs": 0,
+        "kind": "inode",
+        "flag": 3,
+        "fsync": true,
+        "dentry": false,
+        "next": 4629,
+        "live_ino": false,
+        "would_replay": true
+      },
+      {
+        "block": 4629,
+        "nid": 40,
+        "ino": 40,
+        "ofs": 0,
+        "kind": "inode",
+        "flag": 7,
+        "fsync": true,
+        "dentry": true,
+        "next": 4630,
+        "live_ino": false,
+        "would_replay": true
+      },
+      {
+        "block": 4630,
+        "nid": 41,
+        "ino": 41,
+        "ofs": 0,
+        "kind": "inode",
+        "flag": 7,
+        "fsync": true,
+        "dentry": true,
+        "next": 4631,
+        "live_ino": false,
+        "would_replay": true
+      },
+      {
+        "block": 4631,
+        "nid": 41,
+        "ino": 41,
+        "ofs": 0,
+        "kind": "inode",
+        "flag": 3,
+        "fsync": true,
+        "dentry": false,
+        "next": 4632,
+        "live_ino": false,
+        "would_replay": true
+      },
+      {
+        "block": 4632,
+        "nid": 28,
+        "ino": 28,
+        "ofs": 0,
+        "kind": "inode",
+        "flag": 3,
+        "fsync": true,
+        "dentry": false,
+        "next": 4633,
+        "live_ino": true,
+        "would_replay": true
+      },
+      {
+        "block": 4633,
+        "nid": 29,
+        "ino": 29,
+        "ofs": 0,
+        "kind": "inode",
+        "flag": 3,
+        "fsync": true,
+        "dentry": false,
+        "next": 4634,
+        "live_ino": true,
+        "would_replay": true
+      },
+      {
+        "block": 4634,
+        "nid": 30,
+        "ino": 29,
+        "ofs": 1,
+        "kind": "direct",
+        "flag": 11,
+        "fsync": true,
+        "dentry": false,
+        "next": 4635,
+        "live_ino": true,
+        "would_replay": true
+      },
+      {
+        "block": 4635,
+        "nid": 42,
+        "ino": 42,
+        "ofs": 0,
+        "kind": "inode",
+        "flag": 7,
+        "fsync": true,
+        "dentry": true,
+        "next": 4636,
+        "live_ino": false,
+        "would_replay": true
+      }
+    ]
+  },
+  "free_blocks": [
+    [
+      4096,
+      4097
+    ],
+    [
+      4113,
+      4607
+    ],
+    [
+      4620,
+      5119
+    ],
+    [
+      5121,
+      5632
+    ],
+    [
+      5641,
+      6143
+    ],
+    [
+      9728,
+      17919
+    ],
+    [
+      18432,
+      32767
+    ]
+  ],
+  "live": [
+    {
+      "path": "/live/holes.bin",
+      "size": 16384,
+      "sha256": "7472c04d29379c69bd298f99b47bcd1ed76df5f5e8ab03b302ef7d018906fb2b",
+      "blocks": [
+        [
+          5633,
+          5633
+        ],
+        [
+          5634,
+          5634
+        ]
+      ],
+      "holes": [
+        [
+          1,
+          2
+        ]
+      ],
+      "indirect": false,
+      "inline": false
+    },
+    {
+      "path": "/live/indirect.bin",
+      "size": 12582912,
+      "sha256": "250b0832718bb4943941d659e242d5c65424c2d44813b39bdc7994766b156518",
+      "blocks": [
+        [
+          17920,
+          18431
+        ],
+        [
+          6144,
+          7679
+        ],
+        [
+          8704,
+          9727
+        ]
+      ],
+      "holes": [],
+      "indirect": true,
+      "inline": false
+    },
+    {
+      "path": "/live/inline.txt",
+      "size": 100,
+      "sha256": "cd76e503b5e6bc39ef2105ee048abe968f554b48771352d863e3eec3664ca94c",
+      "blocks": [],
+      "holes": [],
+      "indirect": false,
+      "inline": true
+    },
+    {
+      "path": "/live/small/s1",
+      "size": 1000,
+      "sha256": "6feec2c479e2a09a2954511065a2993dbd2f4adbc6eae22ce7d133cfe66b571e",
+      "blocks": [],
+      "holes": [],
+      "indirect": false,
+      "inline": true
+    },
+    {
+      "path": "/live/small/s2",
+      "size": 1000,
+      "sha256": "e0b47ceebd762bbaa342a0370147d60fc89c563044a4d1154e146e88323dc607",
+      "blocks": [],
+      "holes": [],
+      "indirect": false,
+      "inline": true
+    },
+    {
+      "path": "/live/small/s3",
+      "size": 1000,
+      "sha256": "6eb66f16a773fb2cff85f331f1f75b45dd9d01c584526f89e0588f9959975f27",
+      "blocks": [],
+      "holes": [],
+      "indirect": false,
+      "inline": true
+    },
+    {
+      "path": "/upd/append/target.bin",
+      "size": 20480,
+      "sha256": "5767484a48acde38d535198cfb17d8e9b6ffc9b3a9cade723818ab9314c1f809",
+      "blocks": [
+        [
+          5635,
+          5639
+        ]
+      ],
+      "holes": [],
+      "indirect": false,
+      "inline": false
+    },
+    {
+      "path": "/upd/appendpast/target.bin",
+      "size": 4194304,
+      "sha256": "76366d5fa34a20824befd5fd0898b628e2c320a0104a25e2191f5be2c17f84c7",
+      "blocks": [
+        [
+          7680,
+          8703
+        ]
+      ],
+      "holes": [],
+      "indirect": false,
+      "inline": false
+    }
+  ],
+  "files": [
+    {
+      "path": "/rf/small/target.bin",
+      "family": "small",
+      "ino": 31,
+      "pino": 8,
+      "kind": "post-checkpoint",
+      "size": 20480,
+      "replayed_sha256": "04dbba49973685e9cad3df57eb17d769632c4c4c8269540ed76cf729a6b4362c",
+      "written_sha256": "04dbba49973685e9cad3df57eb17d769632c4c4c8269540ed76cf729a6b4362c",
+      "map_blocks": [
+        [
+          5641,
+          5645
+        ]
+      ],
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "captured": [
+          [
+            5641,
+            5645
+          ]
+        ],
+        "captured_sha256": "04dbba49973685e9cad3df57eb17d769632c4c4c8269540ed76cf729a6b4362c",
+        "prefix": false,
+        "cut": false,
+        "stop": "",
+        "equal_source": true,
+        "confidence": 60
+      }
+    },
+    {
+      "path": "/rf/direct/target.bin",
+      "family": "direct",
+      "ino": 32,
+      "pino": 9,
+      "kind": "post-checkpoint",
+      "size": 5242880,
+      "replayed_sha256": "ac086185da5f8cc358eee0a54b3ee54dbc2822f4ce5c9cdee99c2aa4f6e4cf6b",
+      "written_sha256": "ac086185da5f8cc358eee0a54b3ee54dbc2822f4ce5c9cdee99c2aa4f6e4cf6b",
+      "map_blocks": [
+        [
+          9728,
+          10751
+        ],
+        [
+          11264,
+          11519
+        ]
+      ],
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "captured": [
+          [
+            9728,
+            10751
+          ],
+          [
+            11264,
+            11519
+          ]
+        ],
+        "captured_sha256": "ac086185da5f8cc358eee0a54b3ee54dbc2822f4ce5c9cdee99c2aa4f6e4cf6b",
+        "prefix": false,
+        "cut": false,
+        "stop": "",
+        "equal_source": true,
+        "confidence": 60
+      }
+    },
+    {
+      "path": "/rf/indirect/target.bin",
+      "family": "indirect",
+      "ino": 34,
+      "pino": 10,
+      "kind": "post-checkpoint",
+      "size": 12582912,
+      "replayed_sha256": "cd66cfeef26d3d4dad10fc2fced454e854f2d4197b745c21f608dd290aae360f",
+      "written_sha256": "cd66cfeef26d3d4dad10fc2fced454e854f2d4197b745c21f608dd290aae360f",
+      "map_blocks": [
+        [
+          11520,
+          14419
+        ]
+      ],
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "captured": [
+          [
+            11520,
+            14419
+          ]
+        ],
+        "captured_sha256": "f49206aea632f9c17888b19d3d2604853c8db063302322dd92b6163081a30adf",
+        "prefix": true,
+        "cut": false,
+        "stop": "node-missing@37",
+        "equal_source": false,
+        "confidence": 20
+      }
+    },
+    {
+      "path": "/rf/holes/target.bin",
+      "family": "holes",
+      "ino": 39,
+      "pino": 11,
+      "kind": "post-checkpoint",
+      "size": 16384,
+      "replayed_sha256": "626e857bb43f56d989e1629694e9cc24abcb9429bf68545064e319fc3b4d8c88",
+      "written_sha256": "626e857bb43f56d989e1629694e9cc24abcb9429bf68545064e319fc3b4d8c88",
+      "map_blocks": [
+        [
+          5646,
+          5646
+        ],
+        [
+          5647,
+          5647
+        ]
+      ],
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "captured": [
+          [
+            5646,
+            5646
+          ]
+        ],
+        "captured_sha256": "a0fd3959a9fd3fd3252e3a426e3aea63ef6bf9c965fdd4eb38fba2f31be00f02",
+        "prefix": true,
+        "cut": false,
+        "stop": "hole@1",
+        "equal_source": false,
+        "confidence": 20
+      }
+    },
+    {
+      "path": "/rf/inline/target.txt",
+      "family": "inline",
+      "ino": 40,
+      "pino": 12,
+      "kind": "post-checkpoint",
+      "size": 100,
+      "replayed_sha256": "2e035f6c40433c23b0c88003dfb44e205dff37cec0065236a132c65061fe424f",
+      "written_sha256": "2e035f6c40433c23b0c88003dfb44e205dff37cec0065236a132c65061fe424f",
+      "map_blocks": [],
+      "expect": {
+        "outcome": "skip",
+        "skip": "unsupported",
+        "captured": [],
+        "captured_sha256": "",
+        "prefix": false,
+        "cut": false,
+        "stop": "",
+        "equal_source": false,
+        "confidence": 0
+      }
+    },
+    {
+      "path": "/rf/twice/target.bin",
+      "family": "twice",
+      "ino": 41,
+      "pino": 13,
+      "kind": "post-checkpoint",
+      "size": 16384,
+      "replayed_sha256": "9da99a4f403255de80cd1893ce7dc24c4c1406ed9f9a0889d6a2b34e58b8e571",
+      "written_sha256": "9da99a4f403255de80cd1893ce7dc24c4c1406ed9f9a0889d6a2b34e58b8e571",
+      "map_blocks": [
+        [
+          5648,
+          5651
+        ]
+      ],
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "captured": [
+          [
+            5648,
+            5651
+          ]
+        ],
+        "captured_sha256": "9da99a4f403255de80cd1893ce7dc24c4c1406ed9f9a0889d6a2b34e58b8e571",
+        "prefix": false,
+        "cut": false,
+        "stop": "",
+        "equal_source": true,
+        "confidence": 60
+      }
+    },
+    {
+      "path": "/rf/late/target.bin",
+      "family": "late",
+      "ino": 42,
+      "pino": 14,
+      "kind": "post-checkpoint",
+      "size": 8192,
+      "replayed_sha256": "6c8ed5b552ff2b65cbf0920ad26d07ecdb19298a5bc0a72b8bbf699e96c4cb80",
+      "written_sha256": "6c8ed5b552ff2b65cbf0920ad26d07ecdb19298a5bc0a72b8bbf699e96c4cb80",
+      "map_blocks": [
+        [
+          5656,
+          5657
+        ]
+      ],
+      "expect": {
+        "outcome": "recover",
+        "skip": "",
+        "captured": [
+          [
+            5656,
+            5657
+          ]
+        ],
+        "captured_sha256": "6c8ed5b552ff2b65cbf0920ad26d07ecdb19298a5bc0a72b8bbf699e96c4cb80",
+        "prefix": false,
+        "cut": false,
+        "stop": "",
+        "equal_source": true,
+        "confidence": 60
+      }
+    },
+    {
+      "path": "/rf/nofsync/target.bin",
+      "family": "nofsync",
+      "ino": 0,
+      "pino": 0,
+      "kind": "absent",
+      "size": 0,
+      "replayed_sha256": "",
+      "written_sha256": "",
+      "map_blocks": [],
+      "expect": {
+        "outcome": "report-only",
+        "skip": "",
+        "captured": [],
+        "captured_sha256": "",
+        "prefix": false,
+        "cut": false,
+        "stop": "",
+        "equal_source": false,
+        "confidence": 0
+      }
+    },
+    {
+      "path": "/upd/append/target.bin",
+      "family": "append",
+      "ino": 28,
+      "pino": 16,
+      "kind": "live-update",
+      "size": 28672,
+      "replayed_sha256": "e0d95b84f3b6be05f8c07170450a42b2ef0ba299de34579417cddca2394d9b3f",
+      "written_sha256": "e0d95b84f3b6be05f8c07170450a42b2ef0ba299de34579417cddca2394d9b3f",
+      "map_blocks": [
+        [
+          5635,
+          5639
+        ],
+        [
+          5652,
+          5653
+        ]
+      ],
+      "expect": {
+        "outcome": "report-only",
+        "skip": "",
+        "captured": [],
+        "captured_sha256": "",
+        "prefix": false,
+        "cut": false,
+        "stop": "",
+        "equal_source": false,
+        "confidence": 0
+      }
+    },
+    {
+      "path": "/upd/appendpast/target.bin",
+      "family": "appendpast",
+      "ino": 29,
+      "pino": 17,
+      "kind": "live-update",
+      "size": 4202496,
+      "replayed_sha256": "75c20b16e217502ea773981ff9a4a99ca3b743cb17fd98c619ffb22fd659a617",
+      "written_sha256": "75c20b16e217502ea773981ff9a4a99ca3b743cb17fd98c619ffb22fd659a617",
+      "map_blocks": [
+        [
+          7680,
+          8703
+        ],
+        [
+          5654,
+          5655
+        ]
+      ],
+      "expect": {
+        "outcome": "report-only",
+        "skip": "",
+        "captured": [],
+        "captured_sha256": "",
+        "prefix": false,
+        "cut": false,
+        "stop": "",
+        "equal_source": false,
+        "confidence": 0
+      }
+    }
+  ],
+  "families": {
+    "small": 1,
+    "direct": 1,
+    "indirect": 1,
+    "holes": 1,
+    "inline": 1,
+    "twice": 1,
+    "late": 1,
+    "nofsync": 1,
+    "append": 1,
+    "appendpast": 1
+  },
+  "unmeasured": []
+}
