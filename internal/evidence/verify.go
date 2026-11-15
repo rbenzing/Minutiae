@@ -37,8 +37,13 @@ type VerifyReport struct {
 	// GapNotesRecomputed counts the extract and unallocated artifacts whose acquisition-gap note the composed
 	// check (R10) recomputed from the container and compared. 0 together with the notices means "not
 	// recomputed", never "checked and clean".
-	GapNotesRecomputed int      `json:"gap_notes_recomputed"`
-	Problems           []string `json:"problems"`
+	GapNotesRecomputed int `json:"gap_notes_recomputed"`
+	// RollForwardRechecked counts the F2FS roll-forward artifacts (report, block copies, post-checkpoint files)
+	// that the composed check R12 recomputed from the image and found equal. It is in the verify.run audit entry
+	// ("rollforward_rechecked"), not in the report JSON (whose key set is fixed); 0 together with the notices
+	// means "not recomputed", never "checked and clean".
+	RollForwardRechecked int      `json:"-"`
+	Problems             []string `json:"problems"`
 	// Notices are findings that are not integrity problems (for example an
 	// announced upgrade that was never concluded); never silent.
 	Notices []string `json:"notices"`
@@ -165,8 +170,9 @@ func (c *Case) verifyRun(ctx context.Context, observe verifyChunkObserver, o Ver
 		"records_checked": rep.RecordsChecked, "record_batches_checked": rep.RecordBatchesChecked,
 		"record_runs_checked": rep.RecordRunsChecked, "fts_docs_checked": rep.FTSDocsChecked,
 		"recovered_artifacts": rep.RecoveredArtifacts, "recovered_reproduced": rep.RecoveredReproduced,
-		"allocation_rechecked": rep.AllocationRechecked,
-		"gap_notes_recomputed": rep.GapNotesRecomputed,
+		"allocation_rechecked":  rep.AllocationRechecked,
+		"gap_notes_recomputed":  rep.GapNotesRecomputed,
+		"rollforward_rechecked": rep.RollForwardRechecked,
 	}
 	if rep.Anchor != nil {
 		details["anchor_seq"], details["anchor_hash"], details["anchor_ok"] = rep.Anchor.Seq, rep.Anchor.Hash, rep.Anchor.OK
