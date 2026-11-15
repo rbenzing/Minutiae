@@ -44,6 +44,7 @@ Scripts must keep LF line endings (`.gitattributes` enforces this).
 | `ewf.sh` + `ewf_inspect.py` + `ewf_normalize.py` | `ewf-disk.img.gz` (the raw source disk), `ewf-<variant>.E0N.gz` (one `.gz` per segment file of `single-none`, `single-best`, `multi-none`, `seed-small`) and `ewf-fixtures.expect.json`, in `internal/image/ewf/testdata/` | the raw disk (its sha256/md5/sha1/size, built from the committed ext4 and fat12 fixtures), an independent Python decoder (`ewf_inspect.py`: every section and Adler-32, every chunk, the rebuilt media equals the raw disk byte for byte), `ewfverify`, `ewfinfo` (whitelisted geometry and hash fields) and `ewfexport -f raw` (sha256 equals the raw disk) |
 | `f2fs.sh` + `f2fs_tree.sh` + `f2fs_oracle.py` + `f2fs_normalize.py` | `f2fs-extra-attr`, `f2fs-default` (`.img.gz` + `.expect.json`, in `internal/filesys/f2fs/testdata/`) | the source tree handed to `sload.f2fs` (`f2fs_oracle.py tree`: type, size, sha256, mode, mtime, symlink targets), and the reports of `fsck.f2fs -l/-f/-t/-M`, `dump.f2fs -s/-n` and `blkid` on the finished image (`f2fs_oracle.py layout`: superblock and checkpoint fields, features, uuid, label, the NAT block address of every inode, the data-block extents of every file, the free main-area blocks from the SIT bitmaps). The oracle cross-checks the tools against each other (fsck vs dump on every shared field, SIT popcount vs `valid_block_count`, fsck's tree vs the source tree, the file map vs file sizes) and the generator fails on any mismatch, on an unclean `fsck.f2fs`, or when no file is fragmented |
 | `f2fs_recover.sh` + `f2fs_recover_oracle.py` (image `minutiae-recover-fixtures`; `gen.sh f2fs-recover`) | `f2fs-recover-nodiscard`, `f2fs-recover-discard` (`.img.gz` + `.expect.json`, in `internal/filesys/f2fs/testdata/recover/`) | volumes written and deleted by the kernel f2fs driver in the QEMU guest; an independent Python decoder of the finished image checked against `fsck.f2fs -t/-M/-f`, `dump.f2fs -n/-s` and the bytes the guest was told to write (see "F2FS recovery fixtures (3D)") |
+| `f2fs_recover.sh rollforward` + `f2fs_recover_oracle.py rollforward` (image `minutiae-recover-fixtures`; `gen.sh f2fs-rollforward`) | `f2fs-rollforward` (`.img.gz` + `.expect.json`, in `internal/filesys/f2fs/testdata/rollforward/`) | a crash image written by the kernel f2fs driver in the QEMU guest (fsynced files after the last checkpoint, no unmount) with its roll-forward chain, an independent decoder oracle and the kernel's own replay of a copy (see "F2FS roll-forward fixture (3H)") |
 | `fat_recover.sh` + `fat_recover_oracle.py` (image `minutiae-recover-fixtures`, `Dockerfile.recover`; `gen.sh fat-recover`) | `fat12-recover`, `fat16-recover`, `fat32-recover` (`.img.gz` + `.expect.json`, in `internal/filesys/fat/testdata/recover/`) | volumes written and deleted by the kernel `vfat` driver in the QEMU guest; an independent Python reader of the finished image checked against `mshowfat`, `fsck.fat -v` and the source tree (see "FAT recovery fixtures (3B)") |
 | `exfat_recover.sh` + `exfat_recover_oracle.py` (image `minutiae-recover-fixtures`; `gen.sh exfat-recover`) | `exfat-recover` (`.img.gz` + `.expect.json`, in `internal/filesys/exfat/testdata/recover/`) | a volume written and deleted by the kernel `exfat` driver in the QEMU guest; an independent Python parse of the finished image checked against the allocation bitmap, `dump.exfat` and the source tree (see "exFAT recovery fixture (3B)") |
 | `carve_gen.sh` + `carve_objects.py` + `carve_place.py` (image `minutiae-carve-fixtures`, `Dockerfile.carve`; `gen.sh carve`, NOT part of `all`) | `internal/carve/testdata/objects/` (22 real-encoder objects + `objects.expect.json`) and `carve-fat12`, `carve-ext4`, `carve-raw` (`.img.gz` + `carve.expect.json`, in `internal/examine/testdata/carve/`) | objects from Pillow, ffmpeg (libx264), `heif-enc`, `sqlite3`, `zip`, `gzip`, `plistlib`; placement read back from `mshowfat`, `fsck.fat -v`, `debugfs blocks` and `dumpe2fs` (see "Carving fixtures (3E)") |
@@ -1530,6 +1531,88 @@ FSYNC and DENT, its direct nodes FSYNC only; the replay creates a file at an fsy
 mark and applies the nodes up to the last fsynced one. Not confirmed by a direct measurement: `XATTR_NODE_OFFSET`
 (no xattr node occurred), the replay of a LIVE inode whose chain inode has no direct node beyond the inode (only the
 size was seen), the no-CRC rule (the flag was never set).
+
+## F2FS roll-forward fixture (3H)
+
+`f2fs-rollforward.img.gz` and `.expect.json` (in `internal/filesys/f2fs/testdata/rollforward/`): a 128 MiB F2FS volume
+(329,947 bytes gzipped, 134,217,728 bytes raw) that the KERNEL f2fs driver (Debian `6.1.0-53-amd64`, QEMU TCG guest)
+left in a crash state: files written and fsynced after the last checkpoint, then QEMU quit with no checkpoint and no
+unmount. The warm-node log therefore holds a chain of 16 node blocks (stop `version@4636`, complete) that the kernel's
+recovery would replay on the next mount. The image is `minutiae-recover-fixtures` (existing; no new image).
+
+```bash
+MSYS_NO_PATHCONV=1 HEAVY_TIMEOUT=90m bash .superpowers/sdd/heavy.sh docker run --rm -v "$PWD:/work" -w /work \
+  minutiae-recover-fixtures bash tools/fixtures/gen.sh f2fs-rollforward
+```
+
+`gen.sh f2fs-rollforward` runs `f2fs_recover.sh <outdir> rollforward`; with no variant argument the script still builds
+`nodiscard` and `discard` as before (the 3D images are not regenerated by the new target). Generation took 45 s of
+wall time after the container started. No `--privileged`; the module is loaded only by the guest's own `/init`.
+
+### Stages (three guest boots; mount `nodiscard,noatime,background_gc=off`)
+
+- **w**: `mkdir` of every family directory, the live files, and the stage-w content of the two updated files; `sync`, clean unmount. Every directory node is checkpointed, so a later fsync of a file in it needs no checkpoint.
+- **c** (`GUEST_CRASH=1`, `recover_guest.sh`): `echo 3600 > /sys/fs/f2fs/vda/cp_interval`, `sync` (the base sync), the checkpoint-pack versions printed from `/dev/vda` (tag A), the family writes (`dd conv=fsync`; the guest's busybox has no `fsync` applet), the versions again (tag B), then the host sends `quit` through the QEMU monitor. `fsck.f2fs -f --dry-run` may exit non-zero on this stage only; its exit status is recorded in `generator.fsck_exit.c`, never masked.
+- **r** (a COPY of the crash image, never committed): a normal mount (the kernel's own recovery), `dmesg`, and `size sha256` of every family path. It feeds the oracle only.
+
+`cp_interval=3600` and `background_gc=off` are there so that no checkpoint (timer) and no cleaning (background GC) run
+during the writes; the generator checks that it worked: the checkpoint version after the base sync, at the end of the
+ops and in the crash image must be equal (H5), and no new inode may have a NAT entry. These are the measured result of
+one setting; whether another setting would also have held was not isolated.
+
+The crash image's checkpoint is the stage-w UNMOUNT checkpoint (`ckpt_flags` 0xc5, `CP_UMOUNT_FLAG` set): the base sync
+wrote none, because nothing was dirty (observed: the version did not change; the cause, that the kernel skips a
+checkpoint when nothing is dirty, was not isolated). So the live reader sees no unclean-checkpoint warning on this
+image, and the roll-forward chain is "an unmount checkpoint followed by a chain" (see `rollforward.go`).
+
+### Families (all measured on this kernel; each has its own directory)
+
+| Family | Path | Writes | Oracle expectation (the outcome, not only presence) |
+|---|---|---|---|
+| `small` | `/rf/small/target.bin` | 20 KiB, fsync | post-checkpoint, recover, equal to the written bytes, 60 |
+| `direct` | `/rf/direct/target.bin` | 5 MiB (`stamp`), fsync; `i_nid[0]` | recover, equal, 60 |
+| `indirect` | `/rf/indirect/target.bin` | 12 MiB, fsync; `i_nid[2]` | recover as a prefix, stop `node-missing@37`, 20; the captured bytes are the prefix of the replayed file |
+| `holes` | `/rf/holes/target.bin` | blocks 0 and 3, each fsynced | prefix, stop `hole@1`, 20 |
+| `inline` | `/rf/inline/target.txt` | 100 B, fsync | skip `unsupported` |
+| `twice` | `/rf/twice/target.bin` | 8 KiB fsync, then 8 KiB appended and fsynced | recover 16 KiB, equal, 60 (two inode nodes in the chain) |
+| `late` | `/rf/late/target.bin` | 8 KiB fsync, then 8 KiB appended with no fsync | recover the 8 KiB of the fsync, equal, 60 |
+| `nofsync` | `/rf/nofsync/target.bin` | 20 KiB, no fsync | `absent` (no chain node names it), never a candidate |
+| `append` | `/upd/append/target.bin` | 20 KiB in w; 8 KiB appended and fsynced in c | `live-update`, report-only; the live reader reads the 20 KiB of stage w |
+| `appendpast` | `/upd/appendpast/target.bin` | 4 MiB in w; 8 KiB appended and fsynced in c (beyond the inode's address slots) | `live-update`, report-only; realised (the chain holds the inode and a direct node) |
+
+Live files that stay live: `/live/indirect.bin` (12 MiB), `/live/holes.bin`, `/live/inline.txt`, `/live/small/` (inline
+dentries). The oracle derives every block from the finished image and the replayed copy: placement is never assumed.
+A family the kernel does not produce makes the generator exit 1 (`family <name> missing: ...; re-rule, do not edit the
+ops`); `appendpast` alone would instead be listed under `unmeasured`. Bounds: the chain at most 64 nodes and a map at
+most 4096 blocks; a count mismatch fails the generator, nothing is skipped.
+
+### Oracle sources and what checks what
+
+`f2fs_recover_oracle.py rollforward` (never Minutiae) is an independent Python decoder. It checks its superblock,
+checkpoint, NAT and SIT against `dump.f2fs` on all three images (`CROSSCHECK` lines) and the live tree against
+`fsck.f2fs -t/-M`. It walks the warm-node log with the kernel's rule, restates the replay rules (independent code, not an
+independent specification) and derives each file's map; content comes from the guest's operation log (the bytes written
+up to each file's last fsync) cross-checked against the kernel's replay of the copy (stage r).
+
+- Checked by the oracle's raw decoder ONLY (no tool prints it): the chain itself (`fsck.f2fs -d 3` lists no chain, gate H3 of the probe, so `fsck_chain_crosscheck` is false); the node kinds, marks and `would_replay`; each file's map and `captured`; the kernel replay's hashes (`replayed_sha256`); that the indirect family's captured bytes are the prefix of the replayed file.
+- Checked by the Go self-check with its own raw byte code, never the Minutiae roll-forward reader (`rollforward_fixture_test.go`): the image sha256 (first), strict JSON schema, the checkpoint fields, the chain walk node by node, `free_blocks` against `Unallocated()`, every family's outcome, the live files.
+
+The 3D images were not touched: `git status` shows no change under `testdata/recover/`. As a check of the script's
+default path, `f2fs_recover.sh <outdir> discard` was run again with the new
+script: it completed and its oracle passed, but the regenerated image differs byte for byte from the committed one
+(different `image_sha256`), as the 3D section below says (QEMU images are not byte-reproducible); so no
+byte-identity claim is made.
+
+`expect.json` schema notes: `footer_version` is a hex STRING (`"0x<16 digits>"`, `version | crc << 32`), because the
+generator's `jq` merge rounds integers above 2^53; `unmeasured` lists a family the kernel did not produce (empty here, so
+`appendpast` was realised); `base_checkpoint_version`, `checkpoint_flags` and `captured_sha256`/`cut` are additions to the
+plan's sketch. The Go self-check decodes with `DisallowUnknownFields`.
+
+### NOT produced by the kernel (builder tests only)
+
+Bad chain checksums, cycles, forged footers, cut chains, `CP_NOCRC_RECOVERY_FLAG`, a parent that is not a live
+directory, compressed inodes, encrypted inodes, two files sharing a block. The unfsynced content (`late`, `nofsync`) is
+timing-dependent: only fsynced content is reproducible, and the oracle states what the image holds, not what ran.
 
 ## F2FS recovery fixtures (3D)
 

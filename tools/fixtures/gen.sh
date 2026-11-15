@@ -23,6 +23,8 @@ declare -A fixtures=(
   # ext4-recover, ext3-recover, ext4-recover-sameboot and ext4-recover-wiped
   [ext4-recover]="internal/filesys/ext4/testdata/recover"
   [f2fs-recover]="internal/filesys/f2fs/testdata/recover"
+  # f2fs_recover.sh rollforward (3H): the kernel-written crash image with a roll-forward chain (Dockerfile.recover image)
+  [f2fs-rollforward]="internal/filesys/f2fs/testdata/rollforward"
   [hfsplus]="internal/filesys/hfsplus/testdata"
   [sqlite]="internal/sqlitefile/testdata"
   # casefold.sh derives the ext4 and F2FS testdata directories from $root: it writes all three outputs
@@ -42,11 +44,11 @@ order=(volume-gpt volume-mbr ext4 fat exfat f2fs ewf apfs sqlite)
 # apfs-populated: Dockerfile.apfs, minutiae-fixtures-apfs; fat-recover, exfat-recover, f2fs-recover and casefold:
 # Dockerfile.recover, minutiae-recover-fixtures, which holds QEMU and the guest kernel; carve: Dockerfile.carve,
 # minutiae-carve-fixtures, which holds the encoders and no QEMU).
-separate=(hfsplus apfs-populated fat-recover exfat-recover f2fs-recover ext4-recover casefold ext4-xattr carve carve-images slack)
+separate=(hfsplus apfs-populated fat-recover exfat-recover f2fs-recover f2fs-rollforward ext4-recover casefold ext4-xattr carve carve-images slack)
 
 usage() {
   echo "usage: gen.sh <fixture>|all" >&2
-  echo "fixtures: ${order[*]} (all), ${separate[*]} (not in all: run hfsplus in the minutiae-fixtures-hfs image, apfs-populated in the minutiae-fixtures-apfs image, fat-recover, exfat-recover, f2fs-recover, ext4-xattr and slack in the minutiae-recover-fixtures image, ext4-recover in the minutiae-recover-fixtures-510 image, carve in the minutiae-carve-fixtures image)" >&2
+  echo "fixtures: ${order[*]} (all), ${separate[*]} (not in all: run hfsplus in the minutiae-fixtures-hfs image, apfs-populated in the minutiae-fixtures-apfs image, fat-recover, exfat-recover, f2fs-recover, f2fs-rollforward, ext4-xattr and slack in the minutiae-recover-fixtures image, ext4-recover in the minutiae-recover-fixtures-510 image, carve in the minutiae-carve-fixtures image)" >&2
   exit 2
 }
 
@@ -79,7 +81,7 @@ for name in "${targets[@]}"; do
       exit 1
     fi
     ;;
-  fat-recover | exfat-recover | f2fs-recover | ext4-xattr | slack)
+  fat-recover | exfat-recover | f2fs-recover | f2fs-rollforward | ext4-xattr | slack)
     if ! command -v qemu-system-x86_64 >/dev/null || ! compgen -G "/boot/vmlinuz-*" >/dev/null; then
       echo "gen.sh $name needs QEMU and the guest kernel, which the minutiae-fixtures image does not have." >&2
       echo "Build and use the separate image: docker build -f tools/fixtures/Dockerfile.recover -t minutiae-recover-fixtures tools/fixtures" >&2
@@ -123,5 +125,7 @@ for name in "${targets[@]}"; do
   case $name in fat-recover | exfat-recover | f2fs-recover | ext4-xattr | ext4-recover) script=${name//-/_} ;; esac # fat_recover.sh, exfat_recover.sh, f2fs_recover.sh, ext4_xattr.sh, ext4_recover.sh
   case $name in carve) script=carve_gen ;; esac # carve_gen.sh
   case $name in carve-images) script=carve_images_gen ;; esac # carve_images_gen.sh
-  bash "$here/$script.sh" "$out"
+  args=("$out")
+  case $name in f2fs-rollforward) script=f2fs_recover; args+=(rollforward) ;; esac # f2fs_recover.sh <outdir> rollforward
+  bash "$here/$script.sh" "${args[@]}"
 done
