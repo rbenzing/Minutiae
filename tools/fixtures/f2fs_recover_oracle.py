@@ -2032,6 +2032,8 @@ def rf_map(C, nodes, ino, last):
     if ind is None:
         fail("inode %d has no inode node at or before its last fsync node" % ino)
     need = (ind["size"] + BLK - 1) // BLK
+    if need > RF_MAX_BLOCKS:
+        fail("inode %d: %d blocks exceed the bound %d" % (ino, need, RF_MAX_BLOCKS))
     addrs, stop = logical_blocks(ind, rf_nodefor(nodes, last), need)
     blocks, st = [], ""
     for lb, ad in enumerate(addrs):
@@ -2282,6 +2284,7 @@ def cmd_rollforward(a):
     if past is not None and (past["kind"] != "live-update" or not any(rf_kind(n) == "direct" for n in chain_of(past["ino"]))):
         # the kernel did not write a dnode beside the inode: the family is not realised (3H-R18: unmeasured, not a failure)
         unmeasured.append("appendpast")
+        files[:] = [e for e in files if e["family"] != "appendpast"]  # no entry for an unmeasured family
         fams["appendpast"] = 0
         print("NOTE family appendpast is UNMEASURED: the chain holds only %s for inode %s" % (
             [rf_kind(n) for n in chain_of(past["ino"])], past["ino"]))
