@@ -64,6 +64,9 @@ func (s *Session) JournalBlocks(ctx context.Context, o JournalBlocksOptions) (Jo
 		return JournalBlocksSummary{}, errNoSuchSeq(chain, o.Seq)
 	}
 	if len(sel) == 0 {
+		if !chain.Complete {
+			return JournalBlocksSummary{}, fmt.Errorf("filesystem block %d: not among the nodes read; the chain stopped at %s with later nodes unknown: %w", *o.FSBlock, chain.Stop, filesys.ErrIncomplete)
+		}
 		return JournalBlocksSummary{}, fmt.Errorf("filesystem block %d is not a node of the roll-forward log: %w", *o.FSBlock, filesys.ErrNotFound)
 	}
 	fsType := fsys.Info().Type

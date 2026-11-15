@@ -406,3 +406,35 @@ func TestImageRecoverRollForwardUndecidedExitsOne(t *testing.T) {
 		t.Fatalf("decided skip: exit %d\nstdout %s\nstderr %s", code, out, errOut)
 	}
 }
+
+// A chain cut at its first block holds no node that was read, yet later nodes are unknown: ls must not claim
+// the log is empty, and must still say a replay may be needed.
+func TestImageJournalLsEmptyCutChainIsNotEmpty(t *testing.T) {
+	opts := f2fstest.Options{NodeSegs: 2, SSA: true, CPFlags: f2fstest.CPCRCRecovery}
+	files := []f2fstest.File{{Path: "/live.bin", Data: f2Stamp(f2bs, "L")}}
+	probe := f2Env(t, f2fstest.Build(opts, files))
+	_, js, _ := probe.journal("ls", probe.ref, "--json")
+	var st struct {
+		Start uint64 `json:"start_block"`
+	}
+	if err := json.Unmarshal(jsonPart(js), &st); err != nil || st.Start == 0 {
+		t.Fatalf("start block: %v %s", err, js)
+	}
+	img := f2fstest.Build(opts, files)
+	f2fstest.SetFooter(img, uint32(st.Start), f2fstest.Footer{NID: 20, Ino: 0, CPVer: f2fstest.ChainFooterVersion(img)})
+	e := f2Env(t, img)
+	code, text, errOut := e.journal("ls", e.ref)
+	if code != 0 || strings.Contains(text, "(empty") || !strings.Contains(text, "INCOMPLETE:") ||
+		!strings.Contains(text, "no node was read before the chain was cut") || !strings.Contains(text, "needs recovery:") {
+		t.Fatalf("exit %d\n%s%s", code, text, errOut)
+	}
+}
+
+func TestImageJournalBlocksFSBlockOfCutChain(t *testing.T) {
+	e := rfEnv(t, cutChain)
+	seq := rfSeq(t, e)
+	code, out, errOut := e.journal("blocks", e.ref, seq, "--fsblock", "3")
+	if code != 1 || out != "" || !strings.Contains(errOut, "later nodes unknown") || strings.Contains(errOut, "is not a node") {
+		t.Errorf("exit %d stdout %q stderr %q", code, out, errOut)
+	}
+}

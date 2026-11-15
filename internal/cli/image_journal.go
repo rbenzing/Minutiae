@@ -192,13 +192,17 @@ func printJournalLs(w io.Writer, l examine.JournalListing, j jsonJournalLs) {
 	fmt.Fprintf(w, "%s roll-forward log of partition %d (checkpoint %d, pack %d, %s): start block %d, %d nodes, stop %s\n",
 		escapeText(l.FSType), j.Partition, j.Checkpoint, j.Pack, j.Mode, j.Start, j.Nodes, escapeText(j.Stop))
 	if len(j.Transactions) == 0 {
-		fmt.Fprintln(w, "(empty: the checkpoint's log holds no node written after it)")
+		if j.Complete {
+			fmt.Fprintln(w, "(empty: the checkpoint's log holds no node written after it)")
+		} else {
+			fmt.Fprintf(w, "(no node was read before the chain was cut at %s; later nodes are unknown, so the log is not shown empty)\n", escapeText(j.Stop))
+		}
 	}
 	for _, t := range j.Transactions {
 		fmt.Fprintf(w, "transaction %d: %d blocks, %d would be replayed; files: %d post-checkpoint, %d live update(s), %d not replayed\n",
 			t.Seq, t.Blocks, t.Replay, j.Files.PostCheckpoint, j.Files.LiveUpdates, j.Files.NotReplayed)
 	}
-	if j.Nodes > 0 {
+	if j.Nodes > 0 || !j.Complete || j.NeedsRecovery {
 		fmt.Fprintf(w, "needs recovery: %s (the kernel's recovery would find a node to apply)\n", map[bool]string{true: "yes", false: "no"}[j.NeedsRecovery])
 	}
 	printIncompleteChain(w, *l.Chain)
