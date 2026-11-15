@@ -77,6 +77,7 @@ type Stats struct {
 	Rejected                                              map[string]int
 	NestedDepthSkipped                                    int
 	TypeCapped                                            []string
+	BoundedBy                                             map[string]int
 	BudgetExhausted                                       bool
 
 	maxReported int // peak length of the counted-unreadable list (a memory bound)
@@ -131,17 +132,22 @@ func resolveBudget(requested, scopeBytes int64) int64 {
 // allocated from a declared size. A panic comes back as *PanicError.
 func Scan(ctx context.Context, r io.ReaderAt, runs []Run, set *Set, o Options, emit func(Hit) error) (Stats, error) {
 	if err := set.Check(); err != nil {
-		return Stats{Accepted: map[Outcome]int{}, Rejected: map[string]int{}}, err
+		return Stats{Accepted: map[Outcome]int{}, Rejected: map[string]int{}, BoundedBy: map[string]int{}}, err
 	}
 	return scan(ctx, r, runs, set, o, builtinValidators(), emit)
+}
+
+// famState is the accepted-hit counter of one family, shared by its rows.
+type famState struct {
+	count  int
+	capped bool
 }
 
 type ctype struct {
 	t        Type
 	validate validatorFunc
 	any      bool
-	count    int
-	capped   bool
+	family   *famState // shared by the rows of one family
 }
 
 // anchorGroup dispatches on the byte at one offset: table[b] lists the types
@@ -166,6 +172,7 @@ type scanner struct {
 	overlap int
 	hasAny  bool
 	maxHits int
+	fams    map[string]*famState
 	bud     *budget
 	stats   Stats
 
@@ -191,16 +198,21 @@ func newScanner(ctx context.Context, r io.ReaderAt, runs []Run, set *Set, o Opti
 			scope += ru.Length
 		}
 	}
-	s := &scanner{ctx: ctx, r: r, runs: runs, o: o, emit: emit, maxHits: o.MaxHitsPerType}
+	s := &scanner{ctx: ctx, r: r, runs: runs, o: o, emit: emit, maxHits: o.MaxHitsPerType, fams: map[string]*famState{}}
 	if s.maxHits <= 0 {
 		s.maxHits = DefaultMaxHitsPerType
 	}
 	s.bud = newBudget(resolveBudget(o.ValidateBudget, scope))
-	s.stats = Stats{Accepted: map[Outcome]int{}, Rejected: map[string]int{}, budgetLimit: s.bud.limit}
+	s.stats = Stats{Accepted: map[Outcome]int{}, Rejected: map[string]int{}, BoundedBy: map[string]int{}, budgetLimit: s.bud.limit}
 	byOff := map[int]*anchorGroup{}
 	for i := range set.Types {
 		t := set.Types[i].clone()
-		ct := ctype{t: t, any: t.Align == alignAny}
+		fam := s.fams[t.Name]
+		if fam == nil {
+			fam = &famState{}
+			s.fams[t.Name] = fam
+		}
+		ct := ctype{t: t, any: t.Align == alignAny, family: fam}
 		if t.Validate != "" {
 			fn, ok := v[t.Validate]
 			if !ok {
@@ -250,7 +262,7 @@ func patternAccepts(p Pattern, i int, b byte) bool {
 func scan(ctx context.Context, r io.ReaderAt, runs []Run, set *Set, o Options, v map[string]validatorFunc, emit func(Hit) error) (st Stats, err error) {
 	s, err := newScanner(ctx, r, runs, set, o, v, emit)
 	if err != nil {
-		return Stats{Accepted: map[Outcome]int{}, Rejected: map[string]int{}}, err
+		return Stats{Accepted: map[Outcome]int{}, Rejected: map[string]int{}, BoundedBy: map[string]int{}}, err
 	}
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -532,7 +544,7 @@ func (p *pass) try(pos int64) (int64, error) {
 		}
 		for _, ti := range g.table[s.bufs[p.depth][at]] {
 			ct := &s.types[ti]
-			if ct.capped || (!aligned && !ct.any) || !p.headersMatch(ct, pos) {
+			if ct.family.capped || (!aligned && !ct.any) || !p.headersMatch(ct, pos) {
 				continue
 			}
 			end, err := p.candidate(ct, pos)
@@ -557,9 +569,9 @@ func (p *pass) reject(reason string) {
 // when the object is validated (the scan resumes there), else 0.
 func (p *pass) candidate(ct *ctype, pos int64) (int64, error) {
 	s := p.s
-	if p.depth < maxDepth && ct.count >= s.maxHits {
-		ct.capped = true
-		s.stats.TypeCapped = append(s.stats.TypeCapped, ct.t.Name)
+	if p.depth < maxDepth && ct.family.count >= s.maxHits {
+		ct.family.capped = true
+		s.stats.TypeCapped = append(s.stats.TypeCapped, ct.t.Name) // once: a capped family is skipped from now on
 		return 0, nil
 	}
 	limit := p.limitAfter(pos)
@@ -576,7 +588,17 @@ func (p *pass) candidate(ct *ctype, pos int64) (int64, error) {
 	var v Verdict
 	if ct.validate != nil {
 		v = ct.validate(w)
-		if v.Outcome == Bounded && len(v.Assumptions) == 0 {
+		if v.Outcome == Bounded && v.Reason != "" {
+			// A bounded verdict that names its reason (a cap or an unresolved
+			// reference the validator met) must bound the object to its window;
+			// the scanner adds the label for where the window ends. Any other
+			// length is a validator defect. The reason is counted at acceptance.
+			if v.Length == winLen {
+				v.Assumptions = append(slices.Clone(v.Assumptions), v.Reason, p.boundedAssumption(ct, winLen, limit))
+			} else {
+				v = Verdict{Outcome: Rejected, Reason: "validator-defect"}
+			}
+		} else if v.Outcome == Bounded && len(v.Assumptions) == 0 {
 			// A bounded verdict always states why the length stops where it does.
 			// A validator that only bounds the object to its window (gzip) leaves
 			// the label to the scanner, which knows the cap and the run; any other
@@ -696,8 +718,11 @@ func (p *pass) accept(ct *ctype, pos int64, v Verdict) (int64, error) {
 		}
 		return 0, nil
 	}
-	ct.count++
+	ct.family.count++
 	s.stats.Accepted[v.Outcome]++
+	if v.Outcome == Bounded && v.Reason != "" {
+		s.stats.BoundedBy[v.Reason]++
+	}
 	h := Hit{
 		Family: ct.t.Name, Type: ct.t.Name, Ext: ct.t.Ext, MIME: ct.t.MIME,
 		Offset: pos, Length: v.Length, Run: p.ri, Outcome: v.Outcome,

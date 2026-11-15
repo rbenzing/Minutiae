@@ -236,10 +236,15 @@ func ParseSigFile(data []byte, base *Set) (*Set, error) {
 	for _, t := range base.Types {
 		out.Types = append(out.Types, t.clone())
 	}
+	inFile := map[string]bool{}
 	for _, st := range doc.Types {
 		if reserved[st.Name] {
 			return nil, badSig("type name %q is a built-in or refined type name", st.Name)
 		}
+		if inFile[st.Name] { // a family of several rows is built-in only
+			return nil, badSig("duplicate type name %q", st.Name)
+		}
+		inFile[st.Name] = true
 		t, err := st.toType()
 		if err != nil {
 			return nil, err

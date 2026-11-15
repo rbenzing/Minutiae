@@ -52,6 +52,26 @@ type FS struct {
 	// bounded per filesystem, however many EA inodes the entries name.
 	eaHashed  atomic.Int64
 	eaHashCap int64
+
+	// recMu guards locIdx and quiet, the state of deleted-ID re-resolution (recover_locate.go).
+	recMu sync.Mutex
+	// locIdx is the directory index of the blocks live directories map, built once under recMu.
+	locIdx *dirIndex
+	// quiet is a view of the filesystem with a private warning collector, so that recovery reads add no
+	// filesystem warning (3C-R5).
+	quiet *FS
+	// locateDirsCap and locateRunsCap bound the directory index (maxLocateDirs, maxLocateRuns).
+	locateDirsCap, locateRunsCap int
+	// locateWork counts the index work and the one-block re-reads. Tests bound it; nothing reads it.
+	locateWork atomic.Int64
+	// freeS is the set of blocks the block bitmaps mark free, built once under recMu (recover_free.go).
+	freeS *freeSet
+	// mapRunsCap bounds the runs one stale map may hold (maxFileRuns); mapWork counts the stale-map walk work.
+	// Tests bound it; nothing reads it.
+	mapRunsCap int
+	mapWork    atomic.Int64
+	// leafState is the free-space leaf index (recover_leaf.go).
+	leafState
 }
 
 // readFull reads exactly len(p) bytes at off; a read that returns all the
@@ -120,6 +140,10 @@ func Open(r io.ReaderAt, size int64) (*FS, error) {
 		slackScanCap: maxSlackScan,
 		xattrCap:     maxXattrsPerEntry,
 		eaHashCap:    maxEAHashBytes,
+
+		locateDirsCap: maxLocateDirs,
+		locateRunsCap: maxLocateRuns,
+		mapRunsCap:    maxFileRuns,
 	}
 	f.metaRanges = metadataRanges(sb, groups)
 	for _, w := range append(warns, gw...) {

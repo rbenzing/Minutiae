@@ -15,8 +15,6 @@ import (
 	"github.com/rbenzing/minutiae/internal/carve/carvetest"
 )
 
-func init() { implementedValidators["riff-wave"] = true }
-
 func waveVerdict(obj []byte, trail int) Verdict {
 	buf := append(slices.Clone(obj), bytes.Repeat(fillPattern, trail/len(fillPattern)+1)[:trail]...)
 	return validateRIFFWave(riffWindow(buf, newBudget(1<<30)))

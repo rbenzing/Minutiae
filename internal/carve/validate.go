@@ -15,8 +15,10 @@ const (
 
 // Verdict is a validator's answer for one header hit. Length is the exact
 // object length for validated; Type and Ext refine the family (empty keeps
-// the signature's own); Reason says why a hit is rejected; Basis and
-// Assumptions carry the provenance of the length.
+// the signature's own); Reason says why a hit is rejected, or, on a bounded
+// verdict, why the object is only bounded (the scanner then requires Length to
+// be the window, labels the cut and counts the reason in Stats.BoundedBy);
+// Basis and Assumptions carry the provenance of the length.
 type Verdict struct {
 	Outcome            Outcome
 	Length             int64
@@ -43,5 +45,8 @@ func builtinValidators() map[string]validatorFunc {
 		"gzip":      validateGzip,
 		"riff-wave": validateRIFFWave,
 		"ogg":       validateOgg,
+		"bmp":       validateBMP,
+		"tiff":      validateTIFF,
+		"ico":       validateICO,
 	}
 }

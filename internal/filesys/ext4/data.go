@@ -542,7 +542,7 @@ func (f *FS) openInode(in *inode) (filesys.File, error) {
 	// runsPartial, not runs: a map cut by the end of the image keeps the runs before the cut (L32); every other error
 	// fails the open
 	runs, err := f.runsPartial(in)
-	fl := &file{size: in.size, runs: runs, r: f.data}
+	fl := &file{size: in.size, runs: runs, r: f.data, unit: int64(f.sb.blockSize)}
 	if err != nil {
 		cut := asImageCut(err)
 		if cut == nil {
@@ -588,6 +588,7 @@ type file struct {
 	runs   []filesys.Run // covers [0, size)
 	starts []int64       // starts[i] is the file offset where runs[i] begins
 	r      io.ReaderAt   // the filesystem, for non-hole runs
+	unit   int64         // the block size, the unit AllocatedRuns rounds to; 0 for inline content and fast symlinks
 }
 
 // Size is the content length.

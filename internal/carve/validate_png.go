@@ -1,6 +1,8 @@
 package carve
 
 import (
+	"bytes"
+	"encoding/binary"
 	"errors"
 	"hash/crc32"
 	"strconv"
@@ -92,8 +94,7 @@ func validatePNG(w *Window) Verdict {
 			return reject("crc")
 		}
 		if chunks == 0 {
-			width := uint32(ihdr[0])<<24 | uint32(ihdr[1])<<16 | uint32(ihdr[2])<<8 | uint32(ihdr[3])
-			height := uint32(ihdr[4])<<24 | uint32(ihdr[5])<<16 | uint32(ihdr[6])<<8 | uint32(ihdr[7])
+			width, height := pngDims(ihdr[:])
 			if width == 0 || height == 0 {
 				return reject("zero-dimensions")
 			}
@@ -128,4 +129,52 @@ func pngColourDepthOK(colour, depth byte) bool {
 		return depth == 1 || depth == 2 || depth == 4 || depth == 8
 	}
 	return false
+}
+
+// pngDims decodes the big-endian width and height of an IHDR payload.
+func pngDims(ihdr []byte) (width, height uint32) {
+	return binary.BigEndian.Uint32(ihdr), binary.BigEndian.Uint32(ihdr[4:])
+}
+
+// pngHead checks the PNG at off with avail bytes available to it, as far as
+// its IHDR: the 8-byte signature, then a first chunk IHDR of length 13 with
+// non-zero dimensions (spec D10). The chunk CRC, the other IHDR fields and
+// everything after are not read. The reason is "" for a plausible head; a
+// head that does not fit avail or the window is "truncated"; err is only a
+// media failure, a spent budget or a cancel.
+func pngHead(w *Window, off, avail int64) (width, height uint32, reason string, err error) {
+	var head [8 + 8 + 13]byte
+	fail := func(err error) (uint32, uint32, string, error) {
+		if errors.Is(err, ErrOutsideWindow) {
+			return 0, 0, "truncated", nil
+		}
+		return 0, 0, "", err
+	}
+	if avail < int64(len(head)) {
+		// Judge what is there first: a wrong signature is not a cut object.
+		have := int(min(avail, 8))
+		if have > 0 {
+			if err := w.readChecked(head[:have], off); err != nil {
+				return fail(err)
+			}
+			if !bytes.HasPrefix([]byte("\x89PNG\r\n\x1a\n"), head[:have]) {
+				return 0, 0, "bad-signature", nil
+			}
+		}
+		return 0, 0, "truncated", nil
+	}
+	if err := w.readChecked(head[:], off); err != nil {
+		return fail(err)
+	}
+	if string(head[:8]) != "\x89PNG\r\n\x1a\n" {
+		return 0, 0, "bad-signature", nil
+	}
+	if binary.BigEndian.Uint32(head[8:]) != 13 || string(head[12:16]) != "IHDR" {
+		return 0, 0, "no-ihdr", nil
+	}
+	width, height = pngDims(head[16:])
+	if width == 0 || height == 0 {
+		return 0, 0, "zero-dimensions", nil
+	}
+	return width, height, "", nil
 }

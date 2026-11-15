@@ -174,8 +174,6 @@ func TestJPEGRealEncoderObjects(t *testing.T) {
 	}
 }
 
-func init() { implementedValidators["jpeg"] = true }
-
 // failAt is a ReaderAt that fails with a non-EOF error from byte at on.
 type failAt struct {
 	data []byte

@@ -171,6 +171,25 @@ type builder struct {
 	used         []bool // per absolute block
 	usedInodes   []int  // per group, inodes in use
 	img          []byte
+
+	// Placement records for BuildLayout: the blocks each inode's data and tree
+	// took, and the rendered content of each directory.
+	rec      map[uint32]*placement
+	curNum   uint32
+	dirBytes map[uint32][]byte
+}
+
+// placement is the physical blocks one inode took: data blocks in file order,
+// tree blocks (extent leaves, indirect blocks) in allocation order.
+type placement struct{ data, tree []int }
+
+func (b *builder) placed() *placement {
+	p := b.rec[b.curNum]
+	if p == nil {
+		p = &placement{}
+		b.rec[b.curNum] = p
+	}
+	return p
 }
 
 // Build returns an ext2/3/4 image for the options. It panics on invalid
@@ -230,6 +249,8 @@ func newBuilder(o Options) *builder {
 	b.used = make([]bool, b.totalBlocks)
 	b.usedInodes = make([]int, n)
 	b.img = make([]byte, b.totalBlocks*b.bs)
+	b.rec = map[uint32]*placement{}
+	b.dirBytes = map[uint32][]byte{}
 	return b
 }
 

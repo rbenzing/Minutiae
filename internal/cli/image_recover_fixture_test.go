@@ -23,14 +23,21 @@ type recoverFixtureOracle struct {
 	Generator struct {
 		ImageSHA256 string `json:"image_sha256"`
 	} `json:"generator"`
+	// Totals, Incomplete and CandidateMethods are the ext4 schema (the FAT and exFAT oracles have none of them).
+	Totals struct {
+		SkippedBy map[string]int `json:"skipped_by"`
+		Undecided int            `json:"undecided"`
+	} `json:"totals"`
 	Deleted []struct {
 		Path   string `json:"path"`
 		Listed bool   `json:"listed"`
 		Expect struct {
-			Outcome  string   `json:"outcome"`
-			Skip     string   `json:"skip"`
-			Cut      bool     `json:"cut"`
-			Overlaps []string `json:"overlaps"`
+			Outcome          string   `json:"outcome"`
+			Skip             string   `json:"skip"`
+			Cut              bool     `json:"cut"`
+			Incomplete       bool     `json:"incomplete"`
+			CandidateMethods []string `json:"candidate_methods"`
+			Overlaps         []string `json:"overlaps"`
 		} `json:"expect"`
 	} `json:"deleted"`
 }
@@ -81,26 +88,50 @@ func TestImageRecoverFixturesVerifyClean(t *testing.T) {
 		t.Skip("imports and recovers real-image fixtures")
 	}
 	for _, tc := range []struct{ dir, name string }{
-		{"fat", "fat12-recover"}, {"fat", "fat16-recover"}, {"fat", "fat32-recover"}, {"exfat", "exfat-recover"},
+		{"fat", "fat12-recover"},
+		{"fat", "fat16-recover"},
+		{"fat", "fat32-recover"},
+		{"exfat", "exfat-recover"},
+		{"ext4", "ext4-recover"},
+		{"ext4", "ext3-recover"},
+		{"ext4", "ext4-recover-sameboot"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			img, o := loadRecoverFixtureImage(t, tc.dir, tc.name)
-			var recovered, partial, overlap int
+			isExt4 := tc.dir == "ext4"
+			var recovered, partial, overlap, leafOnly int
 			skipped := map[string]int{}
 			for _, d := range o.Deleted {
 				switch {
-				case !d.Listed:
+				case !d.Listed && !isExt4:
 				case d.Expect.Outcome == "skip":
 					skipped[d.Expect.Skip]++
 				default:
 					recovered++
-					if d.Expect.Cut {
+					// ext4: Partial counts the artifacts flagged incomplete, which the oracle states in its own field
+					// (a cut, a file end the reader cannot know, a short map), not only the cuts
+					if d.Expect.Cut && !isExt4 || d.Expect.Incomplete {
 						partial++
+					}
+					if slices.Equal(d.Expect.CandidateMethods, []string{"ext4-extent-leaf"}) {
+						leafOnly++
 					}
 					if len(d.Expect.Overlaps) > 0 {
 						overlap++
 					}
 				}
+			}
+			if isExt4 {
+				skipped = o.Totals.SkippedBy // the oracle's totals also count the candidates a better one displaced (not-selected)
+			}
+			// 3C-R21: an undecided entry makes the batch exit 1 (--all keeps and writes its decided work); 3C-R25: --list
+			// does not search for leaves, so an entry whose only source is a leaf is undecided there as well
+			wantAll, wantList := 0, 0
+			if o.Totals.Undecided > 0 {
+				wantAll, wantList = 1, 1
+			}
+			if leafOnly > 0 {
+				wantList = 1
 			}
 			c := newCLICase(t)
 			d := Deps{} // the real driver registry
@@ -108,8 +139,8 @@ func TestImageRecoverFixturesVerifyClean(t *testing.T) {
 
 			before := auditActions(t, c)
 			code, out := run(t, d, "image", "recover", "--case", c, ref, "--list")
-			if code != 0 {
-				t.Fatalf("--list: %d %s", code, out)
+			if code != wantList {
+				t.Fatalf("--list: exit %d, want %d (undecided %d, leaf-only %d):\n%s", code, wantList, o.Totals.Undecided, leafOnly, out)
 			}
 			if acts := auditActions(t, c)[len(before):]; !slices.Equal(acts, []string{"case.open"}) {
 				t.Errorf("--list appended %v, want only case.open", acts)
@@ -119,11 +150,15 @@ func TestImageRecoverFixturesVerifyClean(t *testing.T) {
 			}
 
 			code, out = run(t, d, "image", "recover", "--case", c, ref, "--all", "--json")
-			if code != 0 {
-				t.Fatalf("--all: %d %s", code, out)
+			if code != wantAll {
+				t.Fatalf("--all: exit %d, want %d (undecided %d):\n%s", code, wantAll, o.Totals.Undecided, out)
+			}
+			if wantAll != 0 && !strings.Contains(out, strconv.Itoa(o.Totals.Undecided)+" deleted entries could not be decided") {
+				t.Errorf("--all: the exit-1 note does not name the count %d:\n%s", o.Totals.Undecided, out)
 			}
 			var js jsonRecover
-			if err := json.Unmarshal(jsonPart(out), &js); err != nil {
+			// an exit-1 batch prints its error and note after the JSON document: decode the first value only
+			if err := json.NewDecoder(bytes.NewReader(jsonPart(out))).Decode(&js); err != nil {
 				t.Fatalf("json %q: %v", out, err)
 			}
 			if js.Recovered != recovered || js.Partial != partial || js.Overlap != overlap {

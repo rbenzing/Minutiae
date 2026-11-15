@@ -68,6 +68,9 @@ func (b *builder) place(f *File, ps []Piece) []extent {
 		if f.Scatter {
 			b.alloc(1) // an unused block, so the next piece is not adjacent
 		}
+		for k := range nblk {
+			b.placed().data = append(b.placed().data, phys+k)
+		}
 		out = append(out, extent{p.Block, nblk, phys, p.Uninit})
 	}
 	return out
@@ -107,6 +110,7 @@ func (b *builder) putExtents(iblock []byte, num uint32, f *File, ps []Piece) {
 	for i := range n {
 		chunk := exts[i*len(exts)/n : (i+1)*len(exts)/n]
 		leaf := b.alloc(1)
+		b.placed().tree = append(b.placed().tree, leaf)
 		b.putLeaf(b.img[leaf*b.bs:(leaf+1)*b.bs], num, f.Generation, chunk)
 		idx := iblock[extentHeaderLen+i*extentEntryLen:]
 		le32(idx, 0, uint32(chunk[0].lblk))
@@ -191,6 +195,7 @@ func (b *builder) chain(iblock []byte, slot int, path []int, phys int) {
 		blk := int(binary.LittleEndian.Uint32(buf[off:]))
 		if blk == 0 {
 			blk = b.alloc(1)
+			b.placed().tree = append(b.placed().tree, blk)
 			le32(buf, off, uint32(blk))
 		}
 		buf, off = b.img[blk*b.bs:(blk+1)*b.bs], idx*4

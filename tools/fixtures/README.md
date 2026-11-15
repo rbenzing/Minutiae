@@ -47,6 +47,8 @@ Scripts must keep LF line endings (`.gitattributes` enforces this).
 | `fat_recover.sh` + `fat_recover_oracle.py` (image `minutiae-recover-fixtures`, `Dockerfile.recover`; `gen.sh fat-recover`) | `fat12-recover`, `fat16-recover`, `fat32-recover` (`.img.gz` + `.expect.json`, in `internal/filesys/fat/testdata/recover/`) | volumes written and deleted by the kernel `vfat` driver in the QEMU guest; an independent Python reader of the finished image checked against `mshowfat`, `fsck.fat -v` and the source tree (see "FAT recovery fixtures (3B)") |
 | `exfat_recover.sh` + `exfat_recover_oracle.py` (image `minutiae-recover-fixtures`; `gen.sh exfat-recover`) | `exfat-recover` (`.img.gz` + `.expect.json`, in `internal/filesys/exfat/testdata/recover/`) | a volume written and deleted by the kernel `exfat` driver in the QEMU guest; an independent Python parse of the finished image checked against the allocation bitmap, `dump.exfat` and the source tree (see "exFAT recovery fixture (3B)") |
 | `carve_gen.sh` + `carve_objects.py` + `carve_place.py` (image `minutiae-carve-fixtures`, `Dockerfile.carve`; `gen.sh carve`, NOT part of `all`) | `internal/carve/testdata/objects/` (22 real-encoder objects + `objects.expect.json`) and `carve-fat12`, `carve-ext4`, `carve-raw` (`.img.gz` + `carve.expect.json`, in `internal/examine/testdata/carve/`) | objects from Pillow, ffmpeg (libx264), `heif-enc`, `sqlite3`, `zip`, `gzip`, `plistlib`; placement read back from `mshowfat`, `fsck.fat -v`, `debugfs blocks` and `dumpe2fs` (see "Carving fixtures (3E)") |
+| `slack.sh` + `slack_oracle.py` + `slack_guest.sh` (image `minutiae-recover-fixtures`; `gen.sh slack`, NOT part of `all`) | `fat16-slack`, `exfat-slack`, `ext4-slack`, `f2fs-slack` (`.img.gz` + `.expect.json`, in `internal/filesys/{fat,exfat,ext4,f2fs}/testdata/slack/`) | volumes written and deleted by the kernel drivers in the QEMU guest on sentinel-filled images, plus a volume tail; the filesystems' tools (`mshowfat`, `debugfs stat`, `dump.f2fs -i`) and the oracle's own raw reads (see "Slack fixtures (3F)") |
+| `carve_images_gen.sh` + `carve_images_objects.py` + `carve_images_place.py` (the same image `minutiae-carve-fixtures`; `gen.sh carve-images`, NOT part of `all`) | `internal/carve/testdata/objects/` (18 real-encoder image-format objects + `images.expect.json`) and `carve-images` (`.img.gz` + `carve-images.expect.json`, in `internal/examine/testdata/carve/`) | objects from ImageMagick, Pillow, `libtiff-tools`, `icoutils`, `avifenc`, `cjxl`; facts from `identify`, `tiffinfo`, `tiffdump`, `icotool`, `avifdec`, `jxlinfo` and a Python box lister (see "Carving fixtures, image formats (3E2)") |
 
 ## Determinism
 
@@ -800,7 +802,7 @@ in the probe used no fixed id and no faketime.
 Not measured here and not to be assumed (each gets its own probe in the named part,
 and the spec §18 "from memory" items stay marked until then):
 
-- [ ] ext4 `i_block` / extent tree residue after unlink (3C)
+- [x] ext4 `i_block` / extent tree residue after unlink (3C): see "ext4 recovery probe (3C)" (the map and `i_size` are cleared, a depth-1 leaf survives at its home location after a clean unmount)
 - [x] `exfat-fuse` FAT-chain residue after delete (3B): superseded by ruling F3 (the
       fixtures use the KERNEL drivers in the QEMU guest, never exfat-fuse); the kernel
       exfat driver, on delete, clears the InUse bits of the entry set and the allocation-
@@ -976,6 +978,77 @@ T3 dd seek=6 count=1                   VDL 000e000000000000  DataLength 000e0000
 T4 dd seek=8 count=0                   VDL 0010000000000000  DataLength 0010000000000000
 ```
 
+## ext4 recovery probe (3C)
+
+Measured 2026-10-25 with `recover_ext4_probe.sh` (host-side reader `ext4_recover_probe.py`; library
+`recover_guest.sh`, now with an `ext4` arm and an optional guest-clock argument whose default keeps 3B's
+time). No `--privileged`, no loop device, no host mount: the host formats the images under `faketime`, the
+QEMU TCG guest (`-m 512 -smp 1`) loads `virtio_blk virtio_pci crc32c_generic ext4` through its own `/init`, and
+the host READS each finished image with a raw Python reader of its own (own crc32c, checked against
+`debugfs`/`e2fsck`). Two kernels, the same workload, run in the container:
+
+```bash
+docker run --rm -v "$PWD:/work" -w /work minutiae-recover-fixtures     bash tools/fixtures/recover_ext4_probe.sh   # 6.1.0-53
+docker build -f tools/fixtures/Dockerfile.recover510 -t minutiae-recover-fixtures-510 tools/fixtures                  # once
+docker run --rm -v "$PWD:/work" -w /work minutiae-recover-fixtures-510 bash tools/fixtures/recover_ext4_probe.sh   # 5.10.223
+```
+
+`Dockerfile.recover510` (FROM the image above) unpacks Debian bullseye's `linux-image-5.10.0-32-amd64` 5.10.223-1
+(SHA256 pinned) with `dpkg-deb -x`: files only, nothing installed, no module indexed at build time. The guest
+library walks the module dependencies with `modinfo -F depends` when a kernel directory has no `modules.dep`,
+and `GUEST_KVER` (set to 5.10.0-32-amd64 by that image) picks the kernel. The security archive's 5.10.262 is not
+served by the snapshot mirror, hence the main-archive package. The raw output of both runs is kept by the 3C
+ledger (`task-1-probe-output.txt`); the evidence below was derived inside the container runs.
+
+Images: `ext4`: 16 MiB, 1 KiB blocks, `-t ext4 -O metadata_csum,64bit,inline_data,^orphan_file -m 0 -J size=1 -N 4096`
+(two groups, 64-byte descriptors); `ext3`: 8 MiB, `-t ext3 -O ^dir_index -m 0 -J size=1 -N 2048`, mounted `-t ext4`.
+One guest boot per stage with a clock one hour later each time. `e2fsck -fn` exits 0 after every boot. A boot takes
+6-25 s, an image gzips to 150-250 KiB (the `deep` workload is the large part). Stages: s1w writes `e1` (3 blocks),
+`e5`/`e5b` (inline data, 40 and 100 bytes), `e8` (sparse: logical blocks 0-1 and 10-11), a 90-entry directory and
+`deep` (200 blocks written one block at a time alternating with a pad file, so it is fragmented and has a depth-1
+tree); two `dd` passes then fill the volume; s2f is the pre-delete image; s3d unlinks `e1 e5 e5b e8`, `deep`
+and two directory entries (the first record of directory block 1 and a middle one). Branches of s3d: `rs`/`rp` create
+files at the same clock as the delete boot / one hour later; `sb` writes and unlinks a depth-1 file in ONE boot.
+
+### Facts (E1-E12), per kernel
+
+| Id | Fact | 6.1.0-53 | 5.10.223 |
+|---|---|---|---|
+| E1 | extent file, after `rm` + clean unmount | `i_size` 0, `i_blocks` 0, `links_count` 0, `dtime` set, `i_generation` unchanged, inode checksum valid; in-inode header kept (magic, max 4) with entries 0, the 48 entry bytes zero; inode bit clear, data bits clear, data bytes unchanged | identical |
+| E2 | depth-1 file (48-65 extents, one leaf) | in-inode header entries 0, depth 0, but the old index entry (leaf block number) survives in bytes 12-23 of `i_block`; the leaf block is free and **byte-equal to before**, its tail checksum verifies under (inode, `i_generation`), `i_generation` unchanged | identical |
+| E3 | ext3 block-map file (20 blocks, one indirect block) | all 15 `i_block` pointers zero, `i_size` 0; the freed indirect block's bytes and the data are unchanged | identical |
+| E4 | directory record, non-first | merged into the predecessor's `rec_len`; **inode, name_len, file_type and name all zeroed** (wiped) | merged; **inode (55), name_len, name KEPT**, the record's own `rec_len` kept |
+| E4 | directory record, first of block 1 | `inode` 0, `rec_len` kept, name_len, type and name zeroed | `inode` 0, `rec_len` kept, name_len, type and name KEPT |
+| E5 | inline-data file | `i_block` and `system.data` kept, `i_size` kept (links 0, dtime set, inode free) | identical |
+| E6/E11 | inode reuse | the next file takes the lowest freed inode number, with the same clock and one hour later; its `i_generation` differs. A journalled ext4 has no recently-deleted check | identical |
+| E7 | `dd` to ENOSPC with `-m 0` | does NOT reach zero: 327 blocks (2%) stay free (kernel reserve); `df` shows 0 available. After an `rm` the next file takes blocks only from the freed set | identical |
+| E8 | sparse file | two extents (0-1, 10-11), no hole extent | identical |
+| E9 | `e2fsck -fn` | 0 after every boot | identical |
+| E12 | inode-bitmap checksum (formula of 3C-R18, 64-byte descriptors, hi branch) | verifies for every initialised group of every image; `bg_itable_unused`/flags read; an uninitialised group (`INODE_UNINIT`, mke2fs state) stores 0, not a checksum | identical |
+
+### Same-boot delete (`sb`)
+
+A depth-1 file written and unlinked in the same boot: the in-inode root is cleared as in E2 (the stale index entry
+survives), but the leaf blocks at their home location are older versions: two free blocks verify under (inode,
+`i_generation`), hold 101-102 entries whose data equals the payload, and do not cover logical blocks 0-199. The
+fully committed leaves are only in the journal (about 66 allocated blocks verify under the same key). So after a
+same-boot delete the leaf method finds partial or no home leaf, never wrong data.
+
+### Gates (coordinator rulings 3C-C1, 3C-C2)
+
+- `GATE-L: open (demoted: clean-boundary only; same-boot delete leaves no valid home leaf, the method does not fire)`
+  Measured: clean boundary 1/1 leaf intact on both kernels. Same-boot: valid but partial leaves (above); the ruling treats
+  a leaf that does not give a complete chain as not firing.
+- `GATE-K: closed` on both kernels: a kernel `rm` leaves no intact in-inode map (ext4: entries 0 and zeroed entries; ext3: pointers zero).
+- `GATE-S: zeroed` on both kernels: `i_size` is 0 (inline-data inodes keep it, and have no map).
+- `GATE-U: reuse` on both kernels, same clock and +1 h.
+- Dirent route (3C-C1): 6.1 wipes a deleted record; 5.10 keeps inode and name of a merged (non-first) record and the name of a
+  first-in-block record (inode zeroed). Kernel-deleted `dirent:` entries therefore exist only on older kernels.
+
+`UnlinkEffects` (Task 2) that reproduce the kernel: ext4 file with extents: `FreeBlocks, FreeInode, ZeroSize, ZeroBlocksCount,
+ClearExtentRoot` (for a depth-1 file the kernel additionally leaves the old index entry bytes in `i_block`); ext3 file:
+`FreeBlocks, FreeInode, ZeroSize, ZeroBlocksCount, ZeroBlockPointers`.
+
 ## FAT recovery fixtures (3B)
 
 `fat_recover.sh` (+ `fat_recover_oracle.py`, library `recover_guest.sh`) builds three FAT volumes that the KERNEL
@@ -1107,6 +1180,129 @@ is `exfat-nofatchain` (75) when `no_fat_chain`, `exfat-fatchain` (65) when the c
 with the caps 20 (cut) and 30 (overlap). The generator exits 1 naming a missing family (`nofatchain-equal`, `empty`,
 `chained`, `skip-no-free-bytes`, `cut-prefix`, `not-equal-complete`), and exits 1 with "re-rule F1" if the chained file's
 FAT chain is not kept. The FAT-fixture-only fields `name_state` do not apply (exFAT names are always whole entries).
+
+## ext4 recovery fixtures (3C)
+
+`ext4_recover.sh` (+ `ext4_recover_oracle.py`; libraries `recover_guest.sh`, `lib.sh` and the raw reader `ext4_recover_probe.py`)
+builds four ext images that the KERNEL ext4 driver writes and deletes inside the QEMU TCG guest (no `--privileged`, no loop
+device, no host mount, no kernel module on the host: the host formats under `faketime`, runs `debugfs -w rm` for the
+`intact-debugfs-*` targets and READS finished images). Output, in a subdirectory so the globs and the schema of
+`TestExt4MatchesOracle` never see them: `internal/filesys/ext4/testdata/recover/{ext4-recover,ext3-recover,ext4-recover-sameboot,ext4-recover-wiped}.img.gz`
+and `.expect.json`. QEMU images are not byte-reproducible: image and oracle are regenerated together and every test checks
+`generator.image_sha256` first. The positive images need BOTH guest kernels, which is the `minutiae-recover-fixtures-510` image
+(the 5.10.223 kernel that Task 1 added next to the 6.1 one, see "ext4 recovery probe (3C)"); `gen.sh` stops, naming the images
+to build, when QEMU or either kernel is missing:
+
+```bash
+docker build -f tools/fixtures/Dockerfile.recover -t minutiae-recover-fixtures tools/fixtures
+docker build -f tools/fixtures/Dockerfile.recover510 -t minutiae-recover-fixtures-510 tools/fixtures
+docker run --rm -v "$PWD:/work" -w /work minutiae-recover-fixtures-510 bash tools/fixtures/gen.sh ext4-recover
+```
+
+Both Docker images, `minutiae-recover-fixtures` and `minutiae-recover-fixtures-510`, are kept after the plan is done, for
+regeneration (the kernels and QEMU in them are pinned by snapshot and sha256); do not remove them. A regeneration may need
+re-tuning of the scenario ops and fails closed when a family does not occur. See `docs/limitations.md` ("ext4 recovery
+fixtures") for what the real images do not cover. A run takes about 6 minutes (a boot is 7-60 s) and needs about 300 MB in the container's own `/tmp`. `FIXTURE_KEEP_DIR=<dir>` (a
+debugging aid, never set by `gen.sh`) copies the stage images and the guest logs there. `ext4-recover` is in the not-in-`all`
+list of `gen.sh`. Self-checks: `TestExt4RecoverFixturesHoldWhatTheyClaim` and `TestExt4RecoverWipedImageListsNothing`
+(internal/filesys/ext4).
+
+| Image | Kernel | Format (`faketime`, fixed UUID and hash seed) | Raw | Gzipped | SHA-256 of the raw image |
+|---|---|---|---|---|---|
+| `ext4-recover` | 5.10.223 | `-t ext4 -b 1024 -O metadata_csum,64bit,inline_data,^orphan_file -m 0 -J size=1 -N 16384` | 16 MiB | 257855 | `d2a9d5e3c35b8dc1594d4fa6e3f12e20961bff5941b31cf7ba7f319f70f92825` |
+| `ext3-recover` | 5.10.223 | `-t ext3 -b 1024 -O ^dir_index,^orphan_file -m 0 -J size=1 -N 8192`, mounted by the ext4 driver | 8 MiB | 123184 | `f21950efcef4f5e77057e9b7f5347683c82ea2fff7fea6a8ef32b103efeb635c` |
+| `ext4-recover-sameboot` | 5.10.223 | as `ext4-recover` with `-N 256` | 4 MiB | 245007 | `ae8d8c4cdbf456ac278f9c3523006451bed53af0d162d602c2d590e54411e030` |
+| `ext4-recover-wiped` | 6.1.0-53 | as `ext4-recover` with `-N 256` | 4 MiB | 11148 | `0ce519d021db1c08229f6d2e017aab05e1dde10c2d852415a8d2116e948de6b0` |
+
+(The values above are those of the committed images; a regeneration changes them, and then also the oracle.) Each image is at
+most 400 KiB gzipped; the payload (pseudo-random `pattern` bytes) is about 190 KiB in `ext4-recover` and 200 KiB in
+`ext4-recover-sameboot`; every fill and pad block is zero.
+
+### Kernels (ruling 3C-C1)
+
+The 6.1 driver WIPES a deleted directory record (inode, name, type), the 5.10 driver keeps the inode number and the name of a
+merged record (and the name of a first-in-block record, whose inode it zeroes). Positive fixtures therefore come from 5.10;
+`ext4-recover-wiped` is the negative control: the files `wa.bin` and `wb.bin` are removed by 6.1, their names are nowhere in
+their directory, and the reader lists nothing (`deleted_entry_count` 0, `wiped` lists the two files with `name_in_directory:
+false` and `inode_free: true`). Probe gates (all measured, `generator.gates`): `L` open (a freed leaf of a depth-1 file keeps its
+extents at the clean boundary), `K` closed (a kernel `rm` clears the in-inode map), `S` zeroed (`i_size` is 0), `U` reuse (the
+next file takes the lowest freed inode number).
+
+### How the scenarios are made (placement is never trusted: rulings 3C-R13, F19, F22)
+
+- **Checkerboard (3C-R30).** One zero file takes most of the volume, then 15 pairs of directories `pad/a/gNN/dNNN` (kept) and
+  `pad/b/gNN/dNNN` (removed) with 20 one-block zero files each are created alternately (`tar`, in one boot), a second zero file
+  takes every remaining free block, and `pad/b` is removed: every free block is then a hole of one block, and a file written
+  afterwards is fragmented with one extent per block (a depth-1 tree; 96 blocks give two leaves). The ordinary allocator
+  prefers the longest free run, then the lowest block, which the rest relies on. In `ext3-recover` an 8-block spacer file is
+  removed with `pad/b`: the four tail blocks of the reuse target are written in one request and take four of its blocks, so
+  they are the longest free run when the reuser comes.
+- **No reserve.** The kernel keeps 2% of a volume out of reach of ordinary writes. Every boot that fills or reuses space first
+  writes 0 to `/sys/fs/ext4/vda/reserved_clusters`, so a full volume has NO free block (the generator checks it with
+  `dumpe2fs`), and after an `rm` the free set is exactly the removed file's blocks.
+- **Donors.** A reuser would take the lowest freed inode number, which is the target's own. A "donor" (an empty file created
+  earlier, so with a lower number) is removed first and the reuser takes the donor's number. The `inode-reused` step instead
+  lets an empty file take the freed number of the target on purpose. Directories get a 200-character first entry so that none
+  is an inline directory (an inline directory zeroes the inode of its first record).
+- **Phases.** `ext4-recover`: 1 layout and checkerboard, 2 the deep files, 3 fill to ENOSPC, 4-7 one reuse step each (tail,
+  head, leaf, inode), 8 the kernel `rm` of the remaining targets, then the host `debugfs rm` of the `intact-debugfs-*` targets.
+  `ext3-recover`: layout and checkerboard, the reuse target (logical blocks 12-15 first, so its indirect block and tail get the
+  lowest blocks), fill, host `debugfs rm` of the reuse target (on the full volume), the reuse boot, the kernel `rm`, then host
+  `debugfs rm`. Every guest boot passes a clock of the base time (2023-11-14 22:13:20) plus N hours; `e2fsck -fn` exits 0 after
+  every boot and the finished image is read after each.
+
+| Family (image) | Steps | Outcome the oracle derives |
+|---|---|---|
+| `small-kernel` (ext4) | 3-block file, kernel `rm` | skip `no-map` (the kernel cleared the map; no leaf at depth 0) |
+| `zero-size` (ext4) | empty file, kernel `rm` | skip `no-map` |
+| `inline` (ext4) | 40-byte inline-data file, kernel `rm` | skip `unsupported` |
+| `hardlink` (ext4) | `ln`, then `rm` of the first name | skip `reused` (the inode is still allocated) |
+| `inode-reused` (ext4) | a 60-byte inline file, `rm`, then an empty file takes its inode number | skip `reused` |
+| `deep-kernel` (ext4) | 96 one-block extents (2 leaves), written in an earlier boot than the kernel `rm` | `ext4-extent-leaf`, 20 (file end unknown), `kernel_state.leaf_intact` true, equal_source `prefix-of-artifact` |
+| `sparse-kernel` (ext4) | 9 data blocks at even logical blocks | `ext4-extent-leaf` stopped at `hole@1`, 20, `artifact-is-prefix` |
+| `deep-reuse-tail` (ext4) | 16 blocks, tail half written first; `rm`, a 3-block reuser takes the lowest holes | leaf, cut after 8 blocks, 20, `artifact-is-prefix` |
+| `deep-reuse-head` (ext4) | 16 blocks; `rm`, a 2-block reuser takes the head, and is itself removed by the kernel afterwards | leaf, complete but not equal to the source (`no`), 20 |
+| `leaf-reused` (ext4) | 16 blocks; `rm`, a 9-block reuser takes the leaf block | skip `no-map` (the only leaf is gone) |
+| `intact-debugfs-small` / `intact-debugfs-deep` (ext4) | `debugfs rm` (map, size and tree intact; 12 extents, one leaf) | `ext-inode-intact`, 80, `full` |
+| `deep-same-boot` (`ext4-recover-sameboot`) | 200 blocks interleaved with a pad file, written and removed in ONE boot | `ext4-extent-leaf`, 20, a correct prefix (see below) |
+| `blockmap-kernel-direct` / `-indirect` (ext3) | 5-block and 20-block files, kernel `rm` | skip `no-map` (all 15 pointers zeroed) |
+| `intact-debugfs-indirect` (ext3) | 20-block file with an indirect block, `debugfs rm` | `ext-inode-intact`, 80, `full` |
+| `intact-debugfs-reused` (ext3) | 16-block file, `debugfs rm` on the full volume, a 1-block reuser takes the longest free run (its four tail blocks) | `ext-inode-intact`, cut after 12 blocks, 20, `artifact-is-prefix` |
+| `first-record` (ext3) | first record of block 1 of a 90-entry directory, kernel `rm` | skip `undecided` (the kernel zeroed the inode number; `inode=unknown`), the batch exits 1 |
+
+Helper entries are deleted entries too and carry the family `<name>-aux`: `deep-reuse-head-aux` (the removed reuser),
+`inode-donor-aux` (the donors: `reused` when a reuser took the number, else `no-map`) and `pad-aux` (the removed `pad/b`
+directory: `not-a-file`, or `reused` when a later file took its inode number). The same-boot file is the case of ruling 3C-C2
+(amended): the journal revokes the last version of a freed leaf, so after a delete in the same boot the home block may hold an
+older version. In the committed image the home leaves are the complete chain (200 blocks), so the result is a correct prefix
+capped at 20 (`file-end-unknown`); the probe's 16 MiB run kept only partial older versions. The self-check accepts either, and
+refuses a mis-assembled map. The generator exits 1 with "family ... did not realise its scenario; re-rule, do not edit the ops"
+when a required family does not occur or does not end as in the table, and when a `equal_source` kind occurs in no image.
+
+### The oracle (`ext4_recover_oracle.py`, never Minutiae)
+
+An independent Python reader of the finished image (superblock, group descriptors, bitmaps with a CRC32C of its own,
+inodes, extent trees, block maps, directory blocks) cross-checked with `debugfs stat` (the true maps) and `dumpe2fs` (the free
+blocks), the stage image of every boot, and the source files the guest was fed. It scans every live directory for deleted
+records by the slack-scan rule, derives for each the stale inode (inode bitmap, link count, dtime, file type), the stale map
+(with the free-map-block and hole rules) and the extent leaves of the free blocks bound to the inode by the metadata
+checksum, and from the facts the planner's cut, confidence and overlap caps. The rules are re-implemented from the spec in
+another language, not read from Minutiae. The TRUE map of a file is read from the last stage image in which it was live (by
+path or alias); the same-boot file has none, so its true blocks are found by the content of its source blocks
+(`true_basis: content-scan`). Fields beyond the plan's schema: `incomplete` (the artifact is flagged incomplete; it differs
+from `cut` for a file whose end is unknown or whose map ends early), `candidates` (every candidate the reader offers, with
+`blocks`, `size`, `stop` and `assumptions`), `candidate_methods`, `totals` (`recovered`, `skipped_by` as the recover command counts it,
+`undecided`), `unlisted_count` (deleted entries the generator did not delete; 0), `true_basis`, and `wiped`. Block runs are
+`[first block, count]`; `reader_blocks` and `reader_stop` are those of the first candidate, before the free-space cut.
+`deleted_entry_count` counts every deleted record the reader walks (17 in `ext4-recover`, 7 in `ext3-recover`, 1 in
+`ext4-recover-sameboot`, 0 in `ext4-recover-wiped`).
+
+Regeneration depends on the kernel's block allocator placement and may need re-tuning of the ops; the generator fails closed
+(exit 1) when a required family does not occur, so a regenerated image can never silently lose a scenario.
+
+NOT produced by a real kernel (builder tests only): an unclean image (`needs_recovery`), a damaged or hostile stale map,
+cross-linked or out-of-range map blocks, a leaf index that overflows, two deleted names of one inode other than the hard link,
+a block-map file with a double-indirect block, encrypted inodes, and an inline directory.
 
 ## F2FS recovery probe (3D)
 
@@ -1717,6 +1913,292 @@ No new image: `minutiae-recover-fixtures` (`Dockerfile.recover`: Debian bookworm
 `internal/filesys/utf8fold/testdata/ucd-12.1.0/` with the Unicode licence (`LICENSE-unicode.txt`) and
 `SOURCES` (URLs and SHA-256 of each file).
 
+## Slack probe (3F)
+
+`slack_probe.sh` measures what each route leaves in the TAIL of a file's last allocation unit (the
+bytes after the logical end, inside the unit) before slack fixtures are built (plan 3F, Task 1; rulings
+3F-R15, 3F-R16, 3F-R26). Plan 3F's Task 12 reuses `slack_guest.sh`, the guest library written here.
+
+Files: `slack_probe.sh` (host driver and the measuring helper, embedded), `slack_guest.sh` (self-contained
+guest library: `slack_initrd <rd> <payload> <ops>` and `slack_run <rd> <log> <img1..img4>`; modules
+`virtio_blk virtio_pci fat vfat nls_cp437 nls_ascii nls_utf8 exfat ext4 f2fs` resolved on the host with
+`modprobe --show-depends` and loaded by the guest's own `/init`; drives `vda`..`vdd` mounted on
+`/mnt/fat`, `/mnt/exfat`, `/mnt/ext4`, `/mnt/f2fs`; the ops file is one shell command per line;
+`GUEST-DONE` / `OP-FAIL` as in `recover_guest.sh`).
+
+```bash
+docker build -f tools/fixtures/Dockerfile.recover -t minutiae-recover-fixtures tools/fixtures   # if the image is missing
+MSYS_NO_PATHCONV=1 docker run --rm -e SLACK_PROBE_WORK=/work/<scratch>/work -v "C:/GIT/Minutiae:/work" -w /work \
+  minutiae-recover-fixtures bash tools/fixtures/slack_probe.sh
+```
+
+No `--privileged`, no FUSE, no loop device, no host mount; the tripwire in `internal/archtest` reads both
+scripts. Pins: image `minutiae-recover-fixtures` (`Dockerfile.recover`: Debian bookworm snapshot
+20261003, kernel `6.1.0-53-amd64` package 6.1.187-1, `qemu-system-x86` 7.2, e2fsprogs 1.47.0, f2fs-tools
+1.15.0, exfatprogs 1.2.0, dosfstools 4.2, mtools 4.0.33). The guest is QEMU TCG with `-m 512`, one CPU and
+four virtio drives. The whole probe (3 guest boots, 4 formats per variant, the host routes) took 3 min
+16 s on an otherwise idle Docker Desktop VM (943 MB, 2 CPUs).
+
+Method: four raw files are filled with the 64-byte sentinel
+`SLACK-SENTINEL-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLM` at phase `offset % 64` (FAT16 16 MiB,
+exFAT 16 MiB, ext4 8 MiB, F2FS 64 MiB), formatted under faketime `2023-11-14 22:13:20` with discard off.
+Variant A: FAT16 `-s 4` (2048-byte clusters), exFAT `-c 32768`, ext4 `-b 1024`, F2FS. Variant B: FAT16
+`-s 1` (512), exFAT `-c 4096`, ext4 `-b 4096`, F2FS again. The guest writes (with `head -c N` and
+`truncate`, from one pattern file that is neither zero nor the sentinel) files of 1, 600, unit-1, unit,
+unit+1, 3*unit+5 and 5000 bytes (`s1 s600 sum1 su sup1 s3u5 s5000`), `sgrow` (1000 bytes, `sync`, 1500
+appended), `ssparse` (700 bytes, then `truncate -s 5000`) and `sgone` (1500 bytes; 5000 where the unit is
+4096 or more), runs `sync` and unmounts. The host then locates each file's units with the filesystem's
+own tools (`mshowfat`, the exFAT root entry sets read by the helper, `debugfs stat` extents,
+`fsck.f2fs -d 1 -M`), reads the image raw and prints one `TAIL` line per file. Variant A has a second boot
+that removes `sgone`; the same byte range is read again (`RETAIL`). `fsck.fat -n`, `fsck.exfat -n`,
+`e2fsck -fn` and `fsck.f2fs -f --dry-run` (on a copy) accepted every finished image (exit 0, 12 runs).
+
+`TAIL <fs> <variant> <path> <size> units=<n> unit_off=<last unit> tail_off=<EOF> tail=<bytes to the unit
+end> zero=<0x00 bytes> lead0=<zero run right after EOF> sentinel=<bytes equal to the sentinel at that
+phase> other=<rest> uniform=<1 if every tail byte equals the first> first=<first byte>`. `tail=0` is an
+exact fit; a file whose last logical unit is not allocated is `HOLE-AT-LAST-UNIT`; one with no unit
+listed (empty, F2FS inline) is `NO-UNITS`.
+
+### Measured facts
+
+| # | Fact | Measured |
+|---|---|---|
+| S1 | Sentinel cells (64-byte, aligned) of the data area still holding the sentinel after mkfs | FAT16 -s 4: 261344 of 261344. FAT16 -s 1: 259848 of 259848. exFAT 32 KiB: 227840 of 229376 (the missing 1536 cells are the bitmap, up-case table and root, 3 clusters). exFAT 4 KiB: 229120 of 229376. ext4 1 KiB: 104160 of 121312 (journal and directories zeroed). ext4 4 KiB: 55680 of 120704. F2FS: 786240 of 786432 (main area, both variants). The sentinel survives mkfs on all four |
+| S2a | FAT16 `-s 4` tails (vfat) | 8 of 10 files have a non-uniform tail: `s1 s600 sup1 s3u5 s5000 sgrow ssparse sgone`. The driver zeroes the rest of the 512-byte sector that holds EOF and leaves the following sectors of the cluster as they were: e.g. `s1` tail 2047 = 511 zero + 1536 sentinel. `sum1` (EOF in the last sector) is a 1-byte uniform zero tail; `su` is an exact fit |
+| S2b | FAT16 `-s 1` tails | every tail is uniform zero (one sector per cluster, so nothing is left over): 0 non-uniform tails. The 512-byte cluster size is NOT a residue route |
+| S2c | exFAT tails (32 KiB and 4 KiB clusters) | 8 of 10 files have a non-uniform tail in both: `s1 s600 sup1 s3u5 s5000 sgrow ssparse sgone`; the driver zeroes the rest of the sector holding EOF, the remaining sectors of the cluster keep the sentinel (e.g. 32 KiB `s1`: 511 zero + 32256 sentinel). Every file is a single contiguous run (`nofatchain=1`). `ssparse` after `truncate -s 5000`: `ValidDataLength` = `DataLength` = 5000 (the kernel zero-fills, it leaves no `VDL < DL` range) |
+| S2d | ext4 tails (1 KiB and 4 KiB blocks) | every tail is uniform zero (`sentinel=0 other=0`); `ssparse` ends in a hole (`HOLE-AT-LAST-UNIT`: logical block 4 of 1 KiB blocks, block 1 of 4 KiB blocks). The expectation "the tail is zero" holds |
+| S2e | F2FS tails | every tail is uniform zero. Files up to at least 2500 bytes are INLINE (no data block: `s1 s600 sgrow` and a 1500-byte `sgone` are `NO-UNITS`); `ssparse` ends in a hole. `sgone` at 5000 bytes has two blocks and a 3192-byte zero tail |
+| S2f | Deleted file | the tail range of the removed `sgone` is byte-identical after `rm` on FAT16 (36 zero + 512 sentinel), exFAT (120 zero + 27648 sentinel), ext4 and F2FS (zero): a delete does not touch the last unit (F2FS mounts with `discard` by default; the virtio drive ignores it) |
+| S2g | Repeatability | a first full run (with a 1500-byte `sgone` everywhere) and the second gave identical `TAIL` lines for FAT, ext4 and F2FS wherever the file set was the same |
+| S3 | Host-tool routes (fresh sentinel images, same file set) | `mcopy` on FAT16 `-s 4`: every tail is entirely sentinel (`zero=0`: 8 of 10 non-uniform); `mke2fs -d` (ext4 1 KiB): every tail zero; `sload.f2fs`: every tail sentinel (`zero=0`, nothing is zeroed) and its files are not sparse. All three exit 0 |
+| S4 | `mkfs` with a size smaller than the device (16 MiB device, 8 MiB filesystem; F2FS 96 MiB device, 64 MiB filesystem) | `mkfs.fat -F 16 -s 1 <img> 8192`: rc 0, size 8388608, the 8 MiB past it stay 131072 of 131072 sentinel cells. `mke2fs <img> 8192`: rc 0, same. `mkfs.f2fs <img> 131072` (sectors): rc 0, same (524288 of 524288 cells). `mkfs.exfat` has no size argument (rc 1, usage only). 3F-R15 appends the volume tail to the finished image instead |
+
+Other observations: the image's `dump.exfat` (exfatprogs 1.2.0) accepts only `-V` and `-h` (no `-c -d`
+chain listing, which `exfat.sh`'s older toolchain has): the helper reads the root directory's entry sets
+(0x85 / 0xC0 / 0xC1) itself, as `exfat_recover_oracle.py` does. `fsck.f2fs -d 1 -M` prints a trailing `0`
+token after the last block of `su` (4096 bytes) and `ssparse` but not of `sum1` or `sup1`; its meaning was
+not resolved (hole marker or terminator), so a block list of F2FS files should come from a source whose
+logical positions are explicit. Loading `crc32c-intel` and `crc32-pclmul` fails in the guest (rc 19, no such
+device); the generic modules load and every mount succeeds.
+
+### Decision for Task 12 (3F-R16, 3F-R26)
+
+- FAT (vfat): the 2048-byte cluster scenario (`-s 4`) leaves 8 non-uniform tails, 7 of them in files that are not deleted (at least 3 needed): go. A 512-byte cluster leaves none: do not use it.
+- exFAT: 8 non-uniform tails with 32 KiB clusters (4 KiB gives the same count): go.
+- ext4 and F2FS: tails are zero (uniform) as expected; they carry no residue, so their fixtures test the uniform path, exact-fit, `trailing-hole` (ext4, F2FS) and `no-runs` (F2FS inline). The F2FS deleted file must be at least 4 KiB (a 1500-byte `gone.txt` is inline and has no unit). A non-uniform ext4 or F2FS tail would need a different route and is not part of this plan.
+- `TestSlackExcludesDeletedFiles` has non-uniform residue to exclude only on FAT and exFAT.
+
+### Raw TAIL lines
+
+```text
+GEOM TAIL fat A data_start=51200 fs_size=16777216 unit=2048
+TAIL fat A /s1 1 units=1 unit_off=53248 tail_off=53249 tail=2047 zero=511 lead0=511 sentinel=1536 other=0 uniform=0 first=0x00
+TAIL fat A /s600 600 units=1 unit_off=55296 tail_off=55896 tail=1448 zero=424 lead0=424 sentinel=1024 other=0 uniform=0 first=0x00
+TAIL fat A /sum1 2047 units=1 unit_off=57344 tail_off=59391 tail=1 zero=1 lead0=1 sentinel=0 other=0 uniform=1 first=0x00
+TAIL fat A /su 2048 units=1 unit_off=59392 tail_off=61440 tail=0 zero=0 lead0=0 sentinel=0 other=0 uniform=0 first=-
+TAIL fat A /sup1 2049 units=2 unit_off=63488 tail_off=63489 tail=2047 zero=511 lead0=511 sentinel=1536 other=0 uniform=0 first=0x00
+TAIL fat A /s3u5 6149 units=4 unit_off=71680 tail_off=71685 tail=2043 zero=507 lead0=507 sentinel=1536 other=0 uniform=0 first=0x00
+TAIL fat A /s5000 5000 units=3 unit_off=77824 tail_off=78728 tail=1144 zero=120 lead0=120 sentinel=1024 other=0 uniform=0 first=0x00
+TAIL fat A /sgrow 2500 units=2 unit_off=81920 tail_off=82372 tail=1596 zero=60 lead0=60 sentinel=1536 other=0 uniform=0 first=0x00
+TAIL fat A /ssparse 5000 units=3 unit_off=88064 tail_off=88968 tail=1144 zero=120 lead0=120 sentinel=1024 other=0 uniform=0 first=0x00
+TAIL fat A /sgone 1500 units=1 unit_off=90112 tail_off=91612 tail=548 zero=36 lead0=36 sentinel=512 other=0 uniform=0 first=0x00
+GEOM TAIL exfat A data_start=2097152 fs_size=16777216 unit=32768
+TAIL exfat A /s1 1 units=1 unit_off=2195456 tail_off=2195457 tail=32767 zero=511 lead0=511 sentinel=32256 other=0 uniform=0 first=0x00 datalen=1 vdl=1 nofatchain=1
+TAIL exfat A /s600 600 units=1 unit_off=2228224 tail_off=2228824 tail=32168 zero=424 lead0=424 sentinel=31744 other=0 uniform=0 first=0x00 datalen=600 vdl=600 nofatchain=1
+TAIL exfat A /sum1 32767 units=1 unit_off=2260992 tail_off=2293759 tail=1 zero=1 lead0=1 sentinel=0 other=0 uniform=1 first=0x00 datalen=32767 vdl=32767 nofatchain=1
+TAIL exfat A /su 32768 units=1 unit_off=2293760 tail_off=2326528 tail=0 zero=0 lead0=0 sentinel=0 other=0 uniform=0 first=- datalen=32768 vdl=32768 nofatchain=1
+TAIL exfat A /sup1 32769 units=2 unit_off=2359296 tail_off=2359297 tail=32767 zero=511 lead0=511 sentinel=32256 other=0 uniform=0 first=0x00 datalen=32769 vdl=32769 nofatchain=1
+TAIL exfat A /s3u5 98309 units=4 unit_off=2490368 tail_off=2490373 tail=32763 zero=507 lead0=507 sentinel=32256 other=0 uniform=0 first=0x00 datalen=98309 vdl=98309 nofatchain=1
+TAIL exfat A /s5000 5000 units=1 unit_off=2523136 tail_off=2528136 tail=27768 zero=120 lead0=120 sentinel=27648 other=0 uniform=0 first=0x00 datalen=5000 vdl=5000 nofatchain=1
+TAIL exfat A /sgrow 2500 units=1 unit_off=2555904 tail_off=2558404 tail=30268 zero=60 lead0=60 sentinel=30208 other=0 uniform=0 first=0x00 datalen=2500 vdl=2500 nofatchain=1
+TAIL exfat A /ssparse 5000 units=1 unit_off=2588672 tail_off=2593672 tail=27768 zero=120 lead0=120 sentinel=27648 other=0 uniform=0 first=0x00 datalen=5000 vdl=5000 nofatchain=1
+TAIL exfat A /sgone 5000 units=1 unit_off=2621440 tail_off=2626440 tail=27768 zero=120 lead0=120 sentinel=27648 other=0 uniform=0 first=0x00 datalen=5000 vdl=5000 nofatchain=1
+GEOM TAIL ext4 A data_start=624640 fs_size=8388608 unit=1024
+TAIL ext4 A /s1 1 units=1 unit_off=7341056 tail_off=7341057 tail=1023 zero=1023 lead0=1023 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 A /s600 600 units=1 unit_off=7342080 tail_off=7342680 tail=424 zero=424 lead0=424 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 A /sum1 1023 units=1 unit_off=7343104 tail_off=7344127 tail=1 zero=1 lead0=1 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 A /su 1024 units=1 unit_off=7344128 tail_off=7345152 tail=0 zero=0 lead0=0 sentinel=0 other=0 uniform=0 first=-
+TAIL ext4 A /sup1 1025 units=2 unit_off=7346176 tail_off=7346177 tail=1023 zero=1023 lead0=1023 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 A /s3u5 3077 units=4 unit_off=7350272 tail_off=7350277 tail=1019 zero=1019 lead0=1019 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 A /s5000 5000 units=5 unit_off=7355392 tail_off=7356296 tail=120 zero=120 lead0=120 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 A /sgrow 2500 units=3 unit_off=7358464 tail_off=7358916 tail=572 zero=572 lead0=572 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 A /ssparse 5000 units=1 HOLE-AT-LAST-UNIT (index 4)
+TAIL ext4 A /sgone 1500 units=2 unit_off=7361536 tail_off=7362012 tail=548 zero=548 lead0=548 sentinel=0 other=0 uniform=1 first=0x00
+GEOM TAIL f2fs A data_start=16777216 fs_size=67108864 unit=4096
+TAIL f2fs A /s1 1 NO-UNITS (inline, empty or not listed)
+TAIL f2fs A /s600 600 NO-UNITS (inline, empty or not listed)
+TAIL f2fs A /sum1 4095 units=1 unit_off=23072768 tail_off=23076863 tail=1 zero=1 lead0=1 sentinel=0 other=0 uniform=1 first=0x00
+TAIL f2fs A /su 4096 units=1 unit_off=23076864 tail_off=23080960 tail=0 zero=0 lead0=0 sentinel=0 other=0 uniform=0 first=-
+TAIL f2fs A /sup1 4097 units=2 unit_off=23085056 tail_off=23085057 tail=4095 zero=4095 lead0=4095 sentinel=0 other=0 uniform=1 first=0x00
+TAIL f2fs A /s3u5 12293 units=4 unit_off=23101440 tail_off=23101445 tail=4091 zero=4091 lead0=4091 sentinel=0 other=0 uniform=1 first=0x00
+TAIL f2fs A /s5000 5000 units=2 unit_off=23109632 tail_off=23110536 tail=3192 zero=3192 lead0=3192 sentinel=0 other=0 uniform=1 first=0x00
+TAIL f2fs A /sgrow 2500 NO-UNITS (inline, empty or not listed)
+TAIL f2fs A /ssparse 5000 units=1 HOLE-AT-LAST-UNIT (index 1)
+TAIL f2fs A /sgone 5000 units=2 unit_off=23126016 tail_off=23126920 tail=3192 zero=3192 lead0=3192 sentinel=0 other=0 uniform=1 first=0x00
+RETAIL fat A /sgone tail_off=91612 tail=548 zero=36 lead0=36 sentinel=512 other=0 uniform=0 first=0x00
+RETAIL exfat A /sgone tail_off=2626440 tail=27768 zero=120 lead0=120 sentinel=27648 other=0 uniform=0 first=0x00
+RETAIL ext4 A /sgone tail_off=7362012 tail=548 zero=548 lead0=548 sentinel=0 other=0 uniform=1 first=0x00
+RETAIL f2fs A /sgone tail_off=23126920 tail=3192 zero=3192 lead0=3192 sentinel=0 other=0 uniform=1 first=0x00
+GEOM TAIL fat B data_start=146944 fs_size=16777216 unit=512
+TAIL fat B /s1 1 units=1 unit_off=147456 tail_off=147457 tail=511 zero=511 lead0=511 sentinel=0 other=0 uniform=1 first=0x00
+TAIL fat B /s600 600 units=2 unit_off=148480 tail_off=148568 tail=424 zero=424 lead0=424 sentinel=0 other=0 uniform=1 first=0x00
+TAIL fat B /sum1 511 units=1 unit_off=148992 tail_off=149503 tail=1 zero=1 lead0=1 sentinel=0 other=0 uniform=1 first=0x00
+TAIL fat B /su 512 units=1 unit_off=149504 tail_off=150016 tail=0 zero=0 lead0=0 sentinel=0 other=0 uniform=0 first=-
+TAIL fat B /sup1 513 units=2 unit_off=150528 tail_off=150529 tail=511 zero=511 lead0=511 sentinel=0 other=0 uniform=1 first=0x00
+TAIL fat B /s3u5 1541 units=4 unit_off=152576 tail_off=152581 tail=507 zero=507 lead0=507 sentinel=0 other=0 uniform=1 first=0x00
+TAIL fat B /s5000 5000 units=10 unit_off=157696 tail_off=158088 tail=120 zero=120 lead0=120 sentinel=0 other=0 uniform=1 first=0x00
+TAIL fat B /sgrow 2500 units=5 unit_off=160256 tail_off=160708 tail=60 zero=60 lead0=60 sentinel=0 other=0 uniform=1 first=0x00
+TAIL fat B /ssparse 5000 units=10 unit_off=165376 tail_off=165768 tail=120 zero=120 lead0=120 sentinel=0 other=0 uniform=1 first=0x00
+TAIL fat B /sgone 1500 units=3 unit_off=166912 tail_off=167388 tail=36 zero=36 lead0=36 sentinel=0 other=0 uniform=1 first=0x00
+GEOM TAIL exfat B data_start=2097152 fs_size=16777216 unit=4096
+TAIL exfat B /s1 1 units=1 unit_off=2113536 tail_off=2113537 tail=4095 zero=511 lead0=511 sentinel=3584 other=0 uniform=0 first=0x00 datalen=1 vdl=1 nofatchain=1
+TAIL exfat B /s600 600 units=1 unit_off=2117632 tail_off=2118232 tail=3496 zero=424 lead0=424 sentinel=3072 other=0 uniform=0 first=0x00 datalen=600 vdl=600 nofatchain=1
+TAIL exfat B /sum1 4095 units=1 unit_off=2121728 tail_off=2125823 tail=1 zero=1 lead0=1 sentinel=0 other=0 uniform=1 first=0x00 datalen=4095 vdl=4095 nofatchain=1
+TAIL exfat B /su 4096 units=1 unit_off=2125824 tail_off=2129920 tail=0 zero=0 lead0=0 sentinel=0 other=0 uniform=0 first=- datalen=4096 vdl=4096 nofatchain=1
+TAIL exfat B /sup1 4097 units=2 unit_off=2134016 tail_off=2134017 tail=4095 zero=511 lead0=511 sentinel=3584 other=0 uniform=0 first=0x00 datalen=4097 vdl=4097 nofatchain=1
+TAIL exfat B /s3u5 12293 units=4 unit_off=2150400 tail_off=2150405 tail=4091 zero=507 lead0=507 sentinel=3584 other=0 uniform=0 first=0x00 datalen=12293 vdl=12293 nofatchain=1
+TAIL exfat B /s5000 5000 units=2 unit_off=2158592 tail_off=2159496 tail=3192 zero=120 lead0=120 sentinel=3072 other=0 uniform=0 first=0x00 datalen=5000 vdl=5000 nofatchain=1
+TAIL exfat B /sgrow 2500 units=1 unit_off=2162688 tail_off=2165188 tail=1596 zero=60 lead0=60 sentinel=1536 other=0 uniform=0 first=0x00 datalen=2500 vdl=2500 nofatchain=1
+TAIL exfat B /ssparse 5000 units=2 unit_off=2170880 tail_off=2171784 tail=3192 zero=120 lead0=120 sentinel=3072 other=0 uniform=0 first=0x00 datalen=5000 vdl=5000 nofatchain=1
+TAIL exfat B /sgone 5000 units=2 unit_off=2179072 tail_off=2179976 tail=3192 zero=120 lead0=120 sentinel=3072 other=0 uniform=0 first=0x00 datalen=5000 vdl=5000 nofatchain=1
+GEOM TAIL ext4 B data_start=663552 fs_size=8388608 unit=4096
+TAIL ext4 B /s1 1 units=1 unit_off=4759552 tail_off=4759553 tail=4095 zero=4095 lead0=4095 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 B /s600 600 units=1 unit_off=4763648 tail_off=4764248 tail=3496 zero=3496 lead0=3496 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 B /sum1 4095 units=1 unit_off=4767744 tail_off=4771839 tail=1 zero=1 lead0=1 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 B /su 4096 units=1 unit_off=4771840 tail_off=4775936 tail=0 zero=0 lead0=0 sentinel=0 other=0 uniform=0 first=-
+TAIL ext4 B /sup1 4097 units=2 unit_off=4780032 tail_off=4780033 tail=4095 zero=4095 lead0=4095 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 B /s3u5 12293 units=4 unit_off=4796416 tail_off=4796421 tail=4091 zero=4091 lead0=4091 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 B /s5000 5000 units=2 unit_off=4804608 tail_off=4805512 tail=3192 zero=3192 lead0=3192 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 B /sgrow 2500 units=1 unit_off=4808704 tail_off=4811204 tail=1596 zero=1596 lead0=1596 sentinel=0 other=0 uniform=1 first=0x00
+TAIL ext4 B /ssparse 5000 units=1 HOLE-AT-LAST-UNIT (index 1)
+TAIL ext4 B /sgone 5000 units=2 unit_off=4820992 tail_off=4821896 tail=3192 zero=3192 lead0=3192 sentinel=0 other=0 uniform=1 first=0x00
+GEOM TAIL f2fs B data_start=16777216 fs_size=67108864 unit=4096
+TAIL f2fs B /s1 1 NO-UNITS (inline, empty or not listed)
+TAIL f2fs B /s600 600 NO-UNITS (inline, empty or not listed)
+TAIL f2fs B /sum1 4095 units=1 unit_off=23072768 tail_off=23076863 tail=1 zero=1 lead0=1 sentinel=0 other=0 uniform=1 first=0x00
+TAIL f2fs B /su 4096 units=1 unit_off=23076864 tail_off=23080960 tail=0 zero=0 lead0=0 sentinel=0 other=0 uniform=0 first=-
+TAIL f2fs B /sup1 4097 units=2 unit_off=23085056 tail_off=23085057 tail=4095 zero=4095 lead0=4095 sentinel=0 other=0 uniform=1 first=0x00
+TAIL f2fs B /s3u5 12293 units=4 unit_off=23101440 tail_off=23101445 tail=4091 zero=4091 lead0=4091 sentinel=0 other=0 uniform=1 first=0x00
+TAIL f2fs B /s5000 5000 units=2 unit_off=23109632 tail_off=23110536 tail=3192 zero=3192 lead0=3192 sentinel=0 other=0 uniform=1 first=0x00
+TAIL f2fs B /sgrow 2500 NO-UNITS (inline, empty or not listed)
+TAIL f2fs B /ssparse 5000 units=1 HOLE-AT-LAST-UNIT (index 1)
+TAIL f2fs B /sgone 5000 units=2 unit_off=23126016 tail_off=23126920 tail=3192 zero=3192 lead0=3192 sentinel=0 other=0 uniform=1 first=0x00
+```
+
+## Slack fixtures (3F)
+
+Four kernel-written volumes with sentinel-filled free space, for the slack export of plan 3F (Task 12;
+rulings 3F-R15, 3F-R16, 3F-R26): the bytes after a file's end inside its last allocation unit are what the
+driver left there, and an independent oracle states them. Files: `slack.sh` (driver; `gen.sh slack`),
+`slack_oracle.py` (scenario, tool readers, expectation), `slack_guest.sh` (the guest library of the probe).
+
+```bash
+MSYS_NO_PATHCONV=1 docker run --rm -v "C:/GIT/Minutiae:/work" -w /work minutiae-recover-fixtures \
+  bash tools/fixtures/gen.sh slack
+```
+
+Image `minutiae-recover-fixtures` (pins in "Slack probe (3F)"), no `--privileged`, no loop device, no FUSE, no
+host mount; the kernel drivers run only in the QEMU TCG guest (`-m 512`, one CPU, four virtio drives). The run
+takes about 2 minutes (two guest boots). `SLACK_WORK=<dir>` (and `SLACK_KEEP=1`) keeps the working images.
+
+| Fixture (in `internal/filesys/<fs>/testdata/slack/`) | Volume | Unit | Image (raw) | `.img.gz` |
+|---|---|---|---|---|
+| `fat16-slack` | FAT16, `mkfs.fat -F 16 -s 4`, 16 MiB | 2048 | 17,829,988 | 53,076 bytes |
+| `exfat-slack` | exFAT, `mkfs.exfat -c 32768`, 16 MiB | 32768 | 17,829,988 | 61,871 bytes |
+| `ext4-slack` | ext4, `mke2fs -t ext4 -b 1024`, 8 MiB | 1024 | 9,441,380 | 28,896 bytes |
+| `f2fs-slack` | F2FS, `mkfs.f2fs -t 0`, 64 MiB | 4096 | 68,161,636 | 197,416 bytes |
+
+Each `.expect.json` is 13 to 14 KiB; every `.img.gz` is under the 200 KiB budget (the generator fails above
+it; F2FS is close to it). FAT needs 2048-byte clusters: 512-byte clusters leave no residue (probe fact S2b).
+FAT32 is builder-only (a 4 KiB-cluster FAT32 needs 256 MiB raw).
+
+### Docker images (3F)
+
+Plan 3F built no image of its own. It uses `minutiae-recover-fixtures` (`Dockerfile.recover`) for `slack_probe.sh` and
+`gen.sh slack`, and that image is KEPT: the regeneration command above needs it, a rebuild needs the network and the
+pinned snapshot, and the fixtures are regenerated only with its kernel and tools (the images are not byte-reproducible). Do not
+remove it after a slack run.
+
+### How the volumes are made
+
+1. Four raw files are filled with the 64-byte sentinel (`SLACK-SENTINEL-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLM`
+   at phase `offset % 64`) and formatted under faketime with discard off.
+2. Guest boot 1 writes the scenario on all four (`slack_oracle.py ops`): files of 1, 600, unit-1, unit, unit+1,
+   3*unit+5 and 5000 bytes, an empty file, a 100-byte file (inline on F2FS), a 777-byte file with a 43-character
+   name in `/dir1`, a fragmented file (`frag`: unit bytes, then `fragsep`, then unit+300 bytes appended, with
+   `sync` between), on ext4 and F2FS a sparse tail (`sparse`: 700 bytes, `truncate -s 5000`) and a hole in the
+   middle (`sparsemid`: 300 bytes, then 500 bytes at 3*unit), and `/gone.txt` (1500 bytes; 5000 on F2FS).
+   All content is a prefix of one payload: 201 copies of a 997-byte pseudo-random block (never zero, never the
+   sentinel; repeating it keeps the committed images small).
+3. The host reads every file's units with the filesystems' tools (below), checks them against the bytes (each
+   mapped logical unit holds the payload bytes that were written, each unmapped one is a hole of zeros, no unit
+   belongs to two files) and states `/gone.txt`'s last unit.
+4. Guest boot 2 removes `/gone.txt`. `fsck.fat -n`, `fsck.exfat -n`, `e2fsck -fn` and `fsck.f2fs -f --dry-run`
+   (on a copy) must accept the images; the units are read again and must equal those of boot 1 for every live
+   file.
+5. The volume tail of 3F-R15 is appended on the host: 512 KiB of sentinel, 512 KiB of zeros, then 4196 bytes of
+   sentinel (one whole 4096-byte chunk and a 100-byte partial chunk). The filesystem never addresses these
+   bytes (`image_size` = `fs_size` + 1,052,772).
+6. `slack_oracle.py expect` writes the expectation (schema below). It reads the image bytes at every range it
+   states, and exits 1 unless the scenario produced what the fixture needs: FAT and exFAT at least 3
+   non-uniform slack tails, every filesystem at least one `exact-fit` and one uniform tail, ext4 and F2FS at
+   least one `trailing-hole`, F2FS at least one `no-runs`, no non-uniform tail on ext4 and F2FS, the volume
+   tail's 128 uniform chunks.
+
+### The oracle (`slack_oracle.py`, never Minutiae)
+
+| Filesystem | Where the units come from | Geometry |
+|---|---|---|
+| FAT16 | `mshowfat` chains (cluster numbers, 2-based) | `fsck.fat -v`: data start, sectors |
+| exFAT | the oracle's own parse of the boot sector, FAT and the directory entry sets (0x85 / 0xC0 / 0xC1, sub-directories included): `dump.exfat` of exfatprogs 1.2.0 has only `-V`/`-h`, no `-c -d` | `dump.exfat`: heap offset, volume length |
+| ext4 | `debugfs -R "stat <path>"` extents (`(lo-hi):phys-phys`), with their logical positions; `debugfs blocks` gives none for sparse files | `dumpe2fs` |
+| F2FS | `fsck.f2fs -t` (inode numbers) and `dump.f2fs -i <ino>`: `i_addr[idx]` is the block of logical block `idx`, `i_size` and `i_inline` (bit 2: inline data, whose `i_addr` area holds bytes, not addresses). The `fsck.f2fs -M` map is not used: it prints a trailing `0` token after the last block of a 4096-byte and of the sparse file whose meaning is unresolved (probe) | `fsck.f2fs -l` |
+
+`outcome` is decided from the logical map: no unit at all -> `no-runs` (empty, F2FS inline); the last logical
+unit unmapped -> `trailing-hole`; `size % unit == 0` -> `exact-fit`; otherwise `slack`, with
+`fs_offset = image_offset = unit offset + bytes used` (the volume starts at offset 0 of the image) and
+`length = unit - used`, its sha256 and whether every byte is equal (`uniform`). `volume.segments` come from
+the 4096-byte chunks of the volume tail merged by 3F-R8/3F-R20 (adjacent non-uniform chunks merge; uniform
+chunks merge only with the same fill byte): sentinel 524288 bytes (not uniform), zeros 524288 bytes (uniform,
+`fill` 0), sentinel 4196 bytes (not uniform); `uniform_chunks` 128, `uniform_bytes` 524288. Image offsets in
+`volume.segments` are absolute. Schema (beyond the plan's): each file also carries `extents`
+(`[logical unit, first unit, count]`), the top level `counts` and, for uniform volume segments, `fill`.
+
+Measured expectations (this generation):
+
+| | slack (non-uniform / uniform) | exact-fit | no-runs | trailing-hole |
+|---|---|---|---|---|
+| FAT16 | 9 (8 / 1) | 2 (`su`, `fragsep`) | 1 (`empty`) | 0 |
+| exFAT | 9 (8 / 1) | 2 | 1 | 0 |
+| ext4 | 10 (0 / 10) | 2 | 1 | 1 (`sparse`) |
+| F2FS | 6 (0 / 6) | 2 | 5 (`empty`, `s1`, `s600`, `inline100`, the 777-byte file) | 1 (`sparse`) |
+
+`/gone.txt` is recorded under `deleted` with the image offset of its last unit. Non-uniform residue to exclude
+exists only on FAT and exFAT (probe fact S2f: a delete leaves the unit untouched); ext4 and F2FS tails are zero.
+
+### Deviations from the plan text (the probe's facts bind)
+
+1. `dump.exfat -c -d` does not exist in exfatprogs 1.2.0: the oracle parses the exFAT root and sub-directory
+   entry sets itself, independent of the Go exfat reader.
+2. `gone.txt` is 1500 bytes on FAT, exFAT and ext4 but 5000 bytes on F2FS: 1500 bytes are inline there and have
+   no unit.
+3. ext4 units come from `debugfs stat` extents, not `debugfs blocks` (no logical positions for sparse files).
+4. F2FS units come from `dump.f2fs -i` (explicit logical positions), not from the `fsck.f2fs -M` map (trailing `0`).
+5. The exFAT driver never writes `ValidDataLength < DataLength` (it zero-fills on a truncate-extend), so the
+   exFAT trailing-hole path (3F-R2) has no kernel-written fixture: it stays builder-only (the exfat package's
+   builder tests) and `docs/limitations.md` says so. On FAT and exFAT the "sparse" file would be fully
+   allocated and zero-filled, so the scenario has no sparse file there; only ext4 and F2FS give a real hole.
+6. FAT uses 2048-byte clusters (`-s 4`), as the probe required.
+
+### Determinism
+
+The images are not byte-reproducible (QEMU guest clock and allocation, as for the other kernel-written
+fixtures): image and oracle are regenerated together and every test checks `generator.image_sha256` first.
+A second run (checked at the time of writing) gave different image hashes, the same paths, sizes, outcomes,
+counts and even the same unit numbers for every file, and `.img.gz` sizes within a few bytes (exFAT 61,873 /
+61,871, ext4 28,895 / 28,896, F2FS 197,432 / 197,416, FAT16 53,076 both). The committed set is the second run.
+
 ## Carving fixtures (3E)
 
 Signature carving (plan 3E) needs whole contiguous objects of the twelve spec 7.2 families, produced by real
@@ -1854,6 +2336,80 @@ objects directory is 85 KiB with its oracle.
 `objects.expect.json`, nothing else is in the objects directory, each decompressed image hashes to `image_sha256`, and
 the bytes at `image_offset` hash to the row's `sha256` for every object of every image. The 250 KiB budgets are
 tested too.
+
+## Carving fixtures, image formats (3E2)
+
+Plan 3E2 adds BMP, TIFF/BigTIFF, ICO/CUR, AVIF and the JPEG XL container to the carving set. Their real-encoder
+objects and one ground-truth image are built in the SAME image as the 3E fixtures (`minutiae-carve-fixtures`), whose
+`Dockerfile.carve` gained `imagemagick 8:6.9.11.60+dfsg-1.6+deb12u13`, `libtiff-tools 4.5.0-6+deb12u4`,
+`icoutils 0.32.3-4`, `libavif-bin 0.11.1-1+deb12u1` and `libjxl-tools 0.7.0-10+deb12u1` at the unchanged `SNAPSHOT`
+(versions found with `apt-cache policy` in a throwaway container; every existing pin is unchanged). The 3E and 3E2
+fixtures are regenerated together only when the image changes; `gen.sh carve-images` (NOT part of `all`) writes none
+of the 3E files and `gen.sh carve` writes none of the 3E2 files.
+
+```bash
+docker build -f tools/fixtures/Dockerfile.carve -t minutiae-carve-fixtures tools/fixtures
+docker run --rm --memory 600m --network none -v "$PWD:/work" -w /work minutiae-carve-fixtures bash tools/fixtures/gen.sh carve-images
+```
+
+### Probe (2026-10-30)
+
+| Capability | Result |
+|---|---|
+| ImageMagick `BMP2:` / `BMP3:` / `BMP:` | DIB header 12 / 40 / 124 bytes. A 256-colour `BMP3:` is RLE8 unless `-compress None`; `-compress RLE` gives compression 1. A `BMP:` of an image with alpha is 32 bits per pixel |
+| ImageMagick `-endian MSB` for TIFF | ignored: the file starts `II*\0`. The big-endian file therefore comes from `tiffcp -B` |
+| `tiffcp -B`, `-8`, `-t -w 32 -l 32` | big-endian (`MM\0*`), BigTIFF (`II+\0`), tiled (`tiffinfo` lists Tile Width) |
+| Pillow 9.4 TIFF | `save_all` writes three directories; `tiffinfo=` an `ImageFileDirectory_v2` with tags 0x8769 and 0x8825 set to dicts writes an Exif IFD and a GPS IFD (`tiffinfo -D` lists both). `exif=` fails on 9.4 (`'Exif' object has no attribute 'fp'`) |
+| Pillow ICO | PNG entries (`icotool -l` reports the entries; Pillow keeps the aspect, so 16x12 and 32x24) |
+| `icotool -c` / `icotool -c --cursor` | DIB entries, ICO (type 1) and CUR (type 2) |
+| `avifenc` (libavif 0.11.1, aom/rav1e/svt) | still: major brand `avif`; two inputs with `--fps 2`: major brand `avis` |
+| `cjxl` 0.7.0 | a JPEG input is transcoded into a container with `jbrd`; a PNG with `--container=1` also yields a container but is not shipped (the plan lists only the transcode) |
+
+No variant failed, so nothing falls under ruling 3E-R27. DNG, CR2, ORF, RW2 and CR3 are not attempted: they are
+builder-only (ruling Q3), with a limitation clause.
+
+### Objects (`carve_images_objects.py`, `internal/carve/testdata/objects/`)
+
+18 files, 129,674 bytes in all (plus `images.expect.json`, 11.9 KiB), 64x48 where an image, under the frozen clock of
+`carve_images_gen.sh`: `bmp-core24.bmp` (12-byte DIB), `bmp-v3-24.bmp`, `bmp-v3-8pal.bmp`, `bmp-v3-1bit.bmp`,
+`bmp-v5-32.bmp` (124-byte DIB, 32 bits), `bmp-rle8.bmp`; `tiff-le.tif`, `tiff-le-pages.tif` (three pages), `tiff-be.tif`,
+`bigtiff.tif`, `tiff-tiled.tif`, `tiff-exif.tif` (Exif and GPS IFDs); `ico-png.ico`, `ico-dib.ico`, `cur.cur`;
+`avif.avif`, `avis.avif`, `jxl-container.jxl` (from `jpeg-baseline.jpg`, read from the 3E objects, with a `jbrd` box).
+
+`images.expect.json` has the schema of `objects.expect.json`; every row has `expect` `validated`; `family`/`type` are
+`bmp`/`bmp`, `tiff`/`tiff`, `ico`/`ico`, `cur`/`cur`, `isobmff`/`avif` and `isobmff`/`jxl`. The facts are what a separate
+tool reports about the finished bytes, never Minutiae: `identify` and Pillow (BMP format, size, mode) plus the header
+fields read here (`bfSize`, DIB size, bits per pixel, compression); `tiffdump` (magic, byte order, classic or BigTIFF),
+`tiffinfo` (directory count, tiled, size) and `tiffinfo -D` (Exif and GPS directories); `icotool -l` (entry kind, size,
+bit depth) with the payload kind of each entry (`png` or `dib`); `avifdec --info` (resolution) with a pure-Python
+top-level box lister written in the generator (it asserts the boxes tile the file exactly) and the major brand;
+`jxlinfo` (container, JPEG reconstruction data) and the box lister for the JPEG XL container. `width`/`height` are those
+of the tools (an icon: its largest entry). The generator exits 1 on any mismatch.
+
+### Image (`carve_images_place.py`, `internal/examine/testdata/carve/carve-images.*`)
+
+`carve-images`: 1 MiB raw (no partition table, no filesystem), pre-filled with `MINUTIAE-CARVE-FILL-`, 71,763 bytes
+gzipped. The 18 objects sit at 512-aligned offsets (state `placed`); the generator asserts the fill carries none of the
+3E and 3E2 magics, the bytes at every `image_offset` hash to the object, every expected family is present, and no header
+of the extended set sits at any other 512-aligned offset than an object start, a control start or a quote. Controls
+(`carve-images.expect.json`, same schema as `carve.expect.json` with one image):
+
+- `text`: `quoted-signatures.txt`, 12 blocks of prose that quote `BM`, the eight TIFF magics, `00 00 01 00`, `00 00 02 00`
+  and the 12-byte JPEG XL signature at 512-aligned starts, each followed by prose;
+- `truncated`: the first 60% of `bmp-v3-24.bmp`, `tiff-le.tif`, `ico-dib.ico` and `jxl-container.jxl`;
+- `random`: 4 KiB of seeded random data starting with `BM` and another starting with `00 00 01 00`; the generator
+  re-seeds until no other header of the extended set (its `HEADERS` table holds the 3E and 3E2 magics) sits at a
+  512-aligned position inside them.
+
+### Reproducibility
+
+`gen.sh carve-images` run twice gave byte-identical objects, image and oracles (every file compared with `cmp`), so the
+class is "regenerate together" only for the image-and-oracle pair. `gen.sh carve` in the extended image writes the same
+objects and the same `carve-fat12` and `carve-raw` as committed, but `carve-ext4` differs from the committed file (the
+oracle's `image_sha256` too): blocks 34 and 35 (35 bytes) of the 8 MiB image. The same happens in the unextended
+3E image rebuilt from the committed `Dockerfile.carve`, and two runs of the extended image agree with each other, so the
+3E ext4 image is not reproducible across hosts or Docker runs (a pre-existing property, probably the lazily
+initialised inode table; see the open 3E carry-over m3). The committed 3E files were therefore left as they are.
 
 ## Adding a fixture
 

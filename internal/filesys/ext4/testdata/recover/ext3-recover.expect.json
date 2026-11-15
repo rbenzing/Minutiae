@@ -1,0 +1,599 @@
+{
+  "generator": {
+    "image_sha256": "f21950efcef4f5e77057e9b7f5347683c82ea2fff7fea6a8ef32b103efeb635c",
+    "packages": [
+      {
+        "package": "busybox-static",
+        "version": "1:1.35.0-4+deb12u1+b1"
+      },
+      {
+        "package": "cpio",
+        "version": "2.13+dfsg-7.1"
+      },
+      {
+        "package": "e2fsprogs",
+        "version": "1.47.0-2+b2"
+      },
+      {
+        "package": "faketime",
+        "version": "0.9.10-2.1"
+      },
+      {
+        "package": "gzip",
+        "version": "1.12-1"
+      },
+      {
+        "package": "jq",
+        "version": "1.6-2.1+deb12u2"
+      },
+      {
+        "package": "kmod",
+        "version": "30+20221128-1"
+      },
+      {
+        "package": "linux-image-6.1.0-53-amd64",
+        "version": "6.1.187-1"
+      },
+      {
+        "package": "python3",
+        "version": "3.11.2-1+b1"
+      },
+      {
+        "package": "qemu-system-x86",
+        "version": "1:7.2+dfsg-7+deb12u18+b3"
+      },
+      {
+        "package": "linux-image-5.10.0-32-amd64",
+        "version": "5.10.223-1"
+      }
+    ],
+    "commands": [
+      "# sources: pattern bytes (tools/fixtures/lib.sh); pad.tar is built by ext4_recover.sh itself; guest kernel 5.10.0-32-amd64, the ext3 image mounted by the ext4 driver",
+      "faketime -f '2023-11-14 22:13:20' mke2fs -q -F -t ext3 -b 1024 -O ^dir_index,^orphan_file -m 0 -J size=1 -N 8192 -U 33333333-4444-5555-6666-888888888888 -E hash_seed=33333333-4444-5555-6666-888888888888 <img>",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): echo 0 > /sys/fs/ext4/vda/reserved_clusters",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): mkdir /mnt/t /mnt/t/bk /mnt/t/bi /mnt/t/di /mnt/t/dr /mnt/t/fr /mnt/t/w /mnt/t/dn",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): : > /mnt/t/dn/l1",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): dd if=/dev/zero of=/mnt/spacer bs=1024 count=8 2>/dev/null",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): cp /payload/bk_d.bin /mnt/t/bk/d.bin; cp /payload/bi_i.bin /mnt/t/bi/i.bin; cp /payload/di_x.bin /mnt/t/di/x.bin; sync",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): i=100; while [ $i -lt 190 ]; do : > /mnt/t/fr/file_name_number_$i; i=$((i+1)); done; sync",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): dd if=/dev/zero of=/mnt/bigfill bs=1024 count=3035 2>/dev/null || true",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): sync",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): tar -x -C /mnt -f /payload/pad.tar || true",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): sync",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): dd if=/dev/zero of=/mnt/tailfill bs=1024 2>/dev/null || true",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): sync",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): rm -r /mnt/pad/b",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): rm /mnt/spacer",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 5.10.0-32-amd64): sync",
+      "guest boot b2-deep (2023-11-14 23:13:20, kernel 5.10.0-32-amd64): echo 0 > /sys/fs/ext4/vda/reserved_clusters",
+      "guest boot b2-deep (2023-11-14 23:13:20, kernel 5.10.0-32-amd64): dd if=/payload/dr_r.bin of=/mnt/t/dr/r.bin bs=1024 skip=12 seek=12 count=4 conv=notrunc 2>/dev/null; sync",
+      "guest boot b2-deep (2023-11-14 23:13:20, kernel 5.10.0-32-amd64): i=0; while [ $i -lt 12 ]; do dd if=/payload/dr_r.bin of=/mnt/t/dr/r.bin bs=1024 skip=$i seek=$i count=1 conv=notrunc 2>/dev/null; sync; i=$((i+1)); done",
+      "guest boot b2-deep (2023-11-14 23:13:20, kernel 5.10.0-32-amd64): sync",
+      "guest boot b3-fill (2023-11-15 00:13:20, kernel 5.10.0-32-amd64): echo 0 > /sys/fs/ext4/vda/reserved_clusters",
+      "guest boot b3-fill (2023-11-15 00:13:20, kernel 5.10.0-32-amd64): dd if=/dev/zero of=/mnt/fill1 bs=1024 2>/dev/null || true",
+      "guest boot b3-fill (2023-11-15 00:13:20, kernel 5.10.0-32-amd64): sync",
+      "debugfs -w -R 'rm /t/dr/r.bin' <img>",
+      "guest boot b4-reuse (2023-11-15 01:13:20, kernel 5.10.0-32-amd64): echo 0 > /sys/fs/ext4/vda/reserved_clusters",
+      "guest boot b4-reuse (2023-11-15 01:13:20, kernel 5.10.0-32-amd64): rm /mnt/t/dn/l1; sync",
+      "guest boot b4-reuse (2023-11-15 01:13:20, kernel 5.10.0-32-amd64): cp /payload/u_dr /mnt/t/w/u_dr; sync",
+      "guest boot b5-last (2023-11-15 02:13:20, kernel 5.10.0-32-amd64): rm /mnt/t/bk/d.bin /mnt/t/bi/i.bin; sync",
+      "guest boot b5-last (2023-11-15 02:13:20, kernel 5.10.0-32-amd64): rm /mnt/t/fr/file_name_number_135; sync",
+      "debugfs -w -R 'rm /t/di/x.bin' <img>",
+      "e2fsck -fn <img>   # must exit 0",
+      "python3 tools/fixtures/ext4_recover_oracle.py <final> <payload> <manifest>   # debugfs/dumpe2fs cross-checks, own raw reader, the stage images"
+    ],
+    "kernel": "5.10.0-32-amd64",
+    "fsck_exit": 0,
+    "gates": {
+      "L": "open",
+      "K": "closed",
+      "S": "zeroed",
+      "U": "reuse"
+    }
+  },
+  "block_size": 1024,
+  "deleted": [
+    {
+      "candidates": [],
+      "expect": {
+        "assumptions": [],
+        "candidate_methods": [],
+        "captured_blocks": [],
+        "confidence": 0,
+        "cut": false,
+        "equal_source": "no",
+        "incomplete": false,
+        "method": "",
+        "outcome": "skip",
+        "overlaps": [],
+        "size": 0,
+        "skip": "reused"
+      },
+      "family": "pad-aux",
+      "generation": 3277348413,
+      "inode": 118,
+      "kernel_state": {
+        "i_size": 312320,
+        "inode_free": false,
+        "leaf_intact": false,
+        "root_entries": 14
+      },
+      "name": "b",
+      "path": "/pad/b",
+      "reader_blocks": [],
+      "reader_stop": "",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_size": 0,
+      "tree_blocks": [],
+      "true_basis": "",
+      "true_blocks": []
+    },
+    {
+      "candidates": [],
+      "expect": {
+        "assumptions": [],
+        "candidate_methods": [],
+        "captured_blocks": [],
+        "confidence": 0,
+        "cut": false,
+        "equal_source": "no",
+        "incomplete": false,
+        "method": "",
+        "outcome": "skip",
+        "overlaps": [],
+        "size": 0,
+        "skip": "no-map"
+      },
+      "family": "blockmap-kernel-indirect",
+      "generation": 954384774,
+      "inode": 23,
+      "kernel_state": {
+        "i_size": 0,
+        "inode_free": true,
+        "leaf_intact": false,
+        "root_entries": 0
+      },
+      "name": "i.bin",
+      "path": "/t/bi/i.bin",
+      "reader_blocks": [],
+      "reader_stop": "",
+      "source_sha256": "c8b20bc92359a9a4ca5b914e33c339a62a95ca6b9c7287624685fef4e98d3808",
+      "source_size": 20469,
+      "tree_blocks": [
+        3135
+      ],
+      "true_basis": "stage-image",
+      "true_blocks": [
+        [
+          3137,
+          20
+        ]
+      ]
+    },
+    {
+      "candidates": [],
+      "expect": {
+        "assumptions": [],
+        "candidate_methods": [],
+        "captured_blocks": [],
+        "confidence": 0,
+        "cut": false,
+        "equal_source": "no",
+        "incomplete": false,
+        "method": "",
+        "outcome": "skip",
+        "overlaps": [],
+        "size": 0,
+        "skip": "no-map"
+      },
+      "family": "blockmap-kernel-direct",
+      "generation": 2370625501,
+      "inode": 22,
+      "kernel_state": {
+        "i_size": 0,
+        "inode_free": true,
+        "leaf_intact": false,
+        "root_entries": 0
+      },
+      "name": "d.bin",
+      "path": "/t/bk/d.bin",
+      "reader_blocks": [],
+      "reader_stop": "",
+      "source_sha256": "f07f3c2a198b66759932d427b9e1b6420dc22b0ff3279cf68f76063c04ea4643",
+      "source_size": 5000,
+      "tree_blocks": [],
+      "true_basis": "stage-image",
+      "true_blocks": [
+        [
+          8129,
+          5
+        ]
+      ]
+    },
+    {
+      "candidates": [
+        {
+          "assumptions": [
+            "inode-not-reused-since-entry-deleted",
+            "size-from-inode"
+          ],
+          "blocks": [
+            [
+              3169,
+              20
+            ]
+          ],
+          "method": "ext-inode-intact",
+          "size": 20475,
+          "stop": ""
+        }
+      ],
+      "expect": {
+        "assumptions": [
+          "inode-not-reused-since-entry-deleted",
+          "size-from-inode"
+        ],
+        "candidate_methods": [
+          "ext-inode-intact"
+        ],
+        "captured_blocks": [
+          [
+            3169,
+            20
+          ]
+        ],
+        "confidence": 80,
+        "cut": false,
+        "equal_source": "full",
+        "incomplete": false,
+        "method": "ext-inode-intact",
+        "outcome": "recover",
+        "overlaps": [],
+        "size": 20475,
+        "skip": ""
+      },
+      "family": "intact-debugfs-indirect",
+      "generation": 2621234218,
+      "inode": 24,
+      "kernel_state": {
+        "i_size": 20475,
+        "inode_free": true,
+        "leaf_intact": false,
+        "root_entries": 13
+      },
+      "name": "x.bin",
+      "path": "/t/di/x.bin",
+      "reader_blocks": [
+        [
+          3169,
+          20
+        ]
+      ],
+      "reader_stop": "",
+      "source_sha256": "362c8b802149373d9a085935100c21e1c60cfc0844ef6c5a8f5fba464232f772",
+      "source_size": 20475,
+      "tree_blocks": [
+        3136
+      ],
+      "true_basis": "stage-image",
+      "true_blocks": [
+        [
+          3169,
+          20
+        ]
+      ]
+    },
+    {
+      "candidates": [],
+      "expect": {
+        "assumptions": [],
+        "candidate_methods": [],
+        "captured_blocks": [],
+        "confidence": 0,
+        "cut": false,
+        "equal_source": "no",
+        "incomplete": false,
+        "method": "",
+        "outcome": "skip",
+        "overlaps": [],
+        "size": 0,
+        "skip": "reused"
+      },
+      "family": "inode-donor-aux",
+      "generation": 3143193530,
+      "inode": 20,
+      "kernel_state": {
+        "i_size": 1024,
+        "inode_free": false,
+        "leaf_intact": false,
+        "root_entries": 1
+      },
+      "name": "l1",
+      "path": "/t/dn/l1",
+      "reader_blocks": [],
+      "reader_stop": "",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_size": 0,
+      "tree_blocks": [],
+      "true_basis": "stage-image",
+      "true_blocks": []
+    },
+    {
+      "candidates": [
+        {
+          "assumptions": [
+            "inode-not-reused-since-entry-deleted",
+            "size-from-inode"
+          ],
+          "blocks": [
+            [
+              3200,
+              2
+            ],
+            [
+              7136,
+              2
+            ],
+            [
+              3164,
+              1
+            ],
+            [
+              3166,
+              1
+            ],
+            [
+              3168,
+              1
+            ],
+            [
+              3194,
+              1
+            ],
+            [
+              3196,
+              1
+            ],
+            [
+              3198,
+              1
+            ],
+            [
+              3203,
+              1
+            ],
+            [
+              3205,
+              1
+            ],
+            [
+              8177,
+              4
+            ]
+          ],
+          "method": "ext-inode-intact",
+          "size": 16377,
+          "stop": ""
+        }
+      ],
+      "expect": {
+        "assumptions": [
+          "inode-not-reused-since-entry-deleted",
+          "size-from-inode"
+        ],
+        "candidate_methods": [
+          "ext-inode-intact"
+        ],
+        "captured_blocks": [
+          [
+            3200,
+            2
+          ],
+          [
+            7136,
+            2
+          ],
+          [
+            3164,
+            1
+          ],
+          [
+            3166,
+            1
+          ],
+          [
+            3168,
+            1
+          ],
+          [
+            3194,
+            1
+          ],
+          [
+            3196,
+            1
+          ],
+          [
+            3198,
+            1
+          ],
+          [
+            3203,
+            1
+          ],
+          [
+            3205,
+            1
+          ]
+        ],
+        "confidence": 20,
+        "cut": true,
+        "equal_source": "artifact-is-prefix",
+        "incomplete": true,
+        "method": "ext-inode-intact",
+        "outcome": "recover",
+        "overlaps": [],
+        "size": 12288,
+        "skip": ""
+      },
+      "family": "intact-debugfs-reused",
+      "generation": 106274831,
+      "inode": 21,
+      "kernel_state": {
+        "i_size": 16377,
+        "inode_free": true,
+        "leaf_intact": false,
+        "root_entries": 13
+      },
+      "name": "r.bin",
+      "path": "/t/dr/r.bin",
+      "reader_blocks": [
+        [
+          3200,
+          2
+        ],
+        [
+          7136,
+          2
+        ],
+        [
+          3164,
+          1
+        ],
+        [
+          3166,
+          1
+        ],
+        [
+          3168,
+          1
+        ],
+        [
+          3194,
+          1
+        ],
+        [
+          3196,
+          1
+        ],
+        [
+          3198,
+          1
+        ],
+        [
+          3203,
+          1
+        ],
+        [
+          3205,
+          1
+        ],
+        [
+          8177,
+          4
+        ]
+      ],
+      "reader_stop": "",
+      "source_sha256": "7829e2c7e937b35be6da486a59ba9030173dbf50309365c8a23b2def92255a87",
+      "source_size": 16377,
+      "tree_blocks": [
+        3162
+      ],
+      "true_basis": "stage-image",
+      "true_blocks": [
+        [
+          3200,
+          2
+        ],
+        [
+          7136,
+          2
+        ],
+        [
+          3164,
+          1
+        ],
+        [
+          3166,
+          1
+        ],
+        [
+          3168,
+          1
+        ],
+        [
+          3194,
+          1
+        ],
+        [
+          3196,
+          1
+        ],
+        [
+          3198,
+          1
+        ],
+        [
+          3203,
+          1
+        ],
+        [
+          3205,
+          1
+        ],
+        [
+          8177,
+          4
+        ]
+      ]
+    },
+    {
+      "candidates": [],
+      "expect": {
+        "assumptions": [],
+        "candidate_methods": [],
+        "captured_blocks": [],
+        "confidence": 0,
+        "cut": false,
+        "equal_source": "no",
+        "incomplete": false,
+        "method": "",
+        "outcome": "skip",
+        "overlaps": [],
+        "size": 0,
+        "skip": "undecided"
+      },
+      "family": "first-record",
+      "generation": 0,
+      "inode": 0,
+      "kernel_state": {
+        "i_size": 0,
+        "inode_free": false,
+        "leaf_intact": false,
+        "root_entries": 0
+      },
+      "name": "file_name_number_135",
+      "path": "/t/fr/file_name_number_135",
+      "reader_blocks": [],
+      "reader_stop": "",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_size": 0,
+      "tree_blocks": [],
+      "true_basis": "stage-image",
+      "true_blocks": []
+    }
+  ],
+  "deleted_entry_count": 7,
+  "fs_type": "ext3",
+  "totals": {
+    "recovered": 2,
+    "skipped_by": {
+      "no-map": 2,
+      "reused": 2,
+      "undecided": 1
+    },
+    "undecided": 1
+  },
+  "unlisted_count": 0,
+  "wiped": []
+}

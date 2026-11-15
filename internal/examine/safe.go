@@ -1,6 +1,7 @@
 package examine
 
 import (
+	"context"
 	"fmt"
 	"slices"
 
@@ -195,6 +196,17 @@ func (s *safeFS) Recoverable(e filesys.Entry) (cs []filesys.Candidate, err error
 	}
 	got, err := r.Recoverable(e)
 	return copyCandidates(got), err
+}
+
+// PrepareRecovery implements filesys.RecoverPreparer: it forwards to the wrapped filesystem's preparer (none
+// is nil) and turns a panic into a *filesys.CorruptError.
+func (s *safeFS) PrepareRecovery(ctx context.Context) (err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = panicError(s.name, "PrepareRecovery", p)
+		}
+	}()
+	return filesys.PrepareRecovery(ctx, s.fs)
 }
 
 func copyCandidates(in []filesys.Candidate) []filesys.Candidate {

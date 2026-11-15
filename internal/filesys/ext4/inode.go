@@ -2,6 +2,7 @@ package ext4
 
 import (
 	"encoding/binary"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -114,37 +115,13 @@ func (f *FS) inode(n uint32) (*inode, error) {
 // descriptor is unusable, and a size beyond int64 are *filesys.CorruptError; a
 // checksum mismatch is not an error (csumOK=false).
 func (f *FS) rawInode(n uint32) (*inode, error) {
-	const st = "ext4 inode"
-	sb := f.sb
-	if n < 1 || n > sb.inodesCount {
-		return nil, corrupt(st, -1, "inode %d is outside 1..%d", n, sb.inodesCount)
+	off, err := f.inodeOffset(n)
+	if err != nil {
+		return nil, err
 	}
-	g := uint64(n-1) / uint64(sb.inodesPerGroup)
-	idx := uint64(n-1) % uint64(sb.inodesPerGroup)
-	// s_inodes_count is only warned about at Open, so bound the group by the
-	// descriptor table too.
-	if g >= uint64(len(f.groups)) {
-		return nil, corrupt(st, -1, "inode %d is in group %d, but only %d groups have descriptors", n, g, len(f.groups))
-	}
-	gd := &f.groups[g]
-	if gd.bad {
-		return nil, corrupt(st, -1, "inode %d is in group %d, whose descriptor is unreadable or whose inode table lies outside the filesystem", n, g)
-	}
-	// gd.bad is false, so the whole table (itableBlocks blocks) is inside the
-	// filesystem; idx < inodes_per_group keeps the inode inside the table.
-	off, ok := filesys.MulOK(int64(gd.inodeTable), int64(sb.blockSize))
-	if ok {
-		var rel int64
-		if rel, ok = filesys.MulOK(int64(idx), int64(sb.inodeSize)); ok {
-			off, ok = filesys.AddOK(off, rel)
-		}
-	}
-	if !ok || off+int64(sb.inodeSize) > f.size {
-		return nil, corrupt(st, off, "inode %d lies outside the filesystem", n)
-	}
-	raw := make([]byte, sb.inodeSize)
+	raw := make([]byte, f.sb.inodeSize)
 	if err := readFull(f.r, raw, off); err != nil {
-		return nil, corrupt(st, off, "inode %d: read failed: %v", n, err)
+		return nil, corrupt("ext4 inode", off, "inode %d: read failed: %v", n, err)
 	}
 	in, err := f.decodeInode(n, raw)
 	if err != nil {
@@ -157,6 +134,40 @@ func (f *FS) rawInode(n uint32) (*inode, error) {
 	return in, nil
 }
 
+// inodeOffset returns the byte offset of inode n in the image. Out-of-range numbers, a group whose descriptor is
+// unusable and an inode that lies outside the filesystem are *filesys.CorruptError.
+func (f *FS) inodeOffset(n uint32) (int64, error) {
+	const st = "ext4 inode"
+	sb := f.sb
+	if n < 1 || n > sb.inodesCount {
+		return 0, corrupt(st, -1, "inode %d is outside 1..%d", n, sb.inodesCount)
+	}
+	g := uint64(n-1) / uint64(sb.inodesPerGroup)
+	idx := uint64(n-1) % uint64(sb.inodesPerGroup)
+	// s_inodes_count is only warned about at Open, so bound the group by the
+	// descriptor table too.
+	if g >= uint64(len(f.groups)) {
+		return 0, corrupt(st, -1, "inode %d is in group %d, but only %d groups have descriptors", n, g, len(f.groups))
+	}
+	gd := &f.groups[g]
+	if gd.bad {
+		return 0, corrupt(st, -1, "inode %d is in group %d, whose descriptor is unreadable or whose inode table lies outside the filesystem", n, g)
+	}
+	// gd.bad is false, so the whole table (itableBlocks blocks) is inside the
+	// filesystem; idx < inodes_per_group keeps the inode inside the table.
+	off, ok := filesys.MulOK(int64(gd.inodeTable), int64(sb.blockSize))
+	if ok {
+		var rel int64
+		if rel, ok = filesys.MulOK(int64(idx), int64(sb.inodeSize)); ok {
+			off, ok = filesys.AddOK(off, rel)
+		}
+	}
+	if !ok || off+int64(sb.inodeSize) > f.size {
+		return 0, corrupt(st, off, "inode %d lies outside the filesystem", n)
+	}
+	return off, nil
+}
+
 func xattrNames(xs []xattr) []string {
 	var names []string
 	for _, x := range xs {
@@ -165,8 +176,19 @@ func xattrNames(xs []xattr) []string {
 	return names
 }
 
-// decodeInode decodes raw (one whole inode).
+// decodeInode decodes raw (one whole inode) and warns about the notes decodeInodeQuiet returns.
 func (f *FS) decodeInode(n uint32, raw []byte) (*inode, error) {
+	in, notes, err := f.decodeInodeQuiet(n, raw)
+	for _, note := range notes {
+		f.warn("%s", note)
+	}
+	return in, err
+}
+
+// decodeInodeQuiet decodes raw (one whole inode) without touching the filesystem's warnings: the notes decodeInode
+// warns about (a flag with no feature bit behind it) are returned instead, for a caller that attaches them elsewhere.
+func (f *FS) decodeInodeQuiet(n uint32, raw []byte) (*inode, []string, error) {
+	var notes []string
 	le := binary.LittleEndian
 	sb := f.sb
 	in := &inode{
@@ -184,10 +206,10 @@ func (f *FS) decodeInode(n uint32, raw []byte) (*inode, error) {
 	// a flag the filesystem has no feature bit for is not what a kernel would
 	// have written.
 	if in.flags&inodeFlagExtents != 0 && !sb.hasIncompat(incompatExtents) {
-		f.warn("inode %d has the extents flag but the filesystem has no extent feature; the flag is honoured", n)
+		notes = append(notes, fmt.Sprintf("inode %d has the extents flag but the filesystem has no extent feature; the flag is honoured", n))
 	}
 	if in.flags&inodeFlagInlineData != 0 && !sb.hasIncompat(incompatInlineData) {
-		f.warn("inode %d has the inline data flag but the filesystem has no inline_data feature; the flag is honoured", n)
+		notes = append(notes, fmt.Sprintf("inode %d has the inline data flag but the filesystem has no inline_data feature; the flag is honoured", n))
 	}
 	copy(in.block[:], raw[iBlock:iBlock+inodeBlockLen])
 	if sb.hasIncompat(incompat64Bit) {
@@ -204,7 +226,7 @@ func (f *FS) decodeInode(n uint32, raw []byte) (*inode, error) {
 		in.sizeHighIgnored = le.Uint32(raw[iSizeHigh:])
 	}
 	if size > math.MaxInt64 {
-		return nil, corrupt("ext4 inode", -1, "inode %d size %d exceeds the addressable range", n, size)
+		return nil, notes, corrupt("ext4 inode", -1, "inode %d size %d exceeds the addressable range", n, size)
 	}
 	in.size = int64(size)
 
@@ -247,7 +269,7 @@ func (f *FS) decodeInode(n uint32, raw []byte) (*inode, error) {
 	}
 
 	in.csumOK = f.inodeChecksumOK(n, raw, in.extraIsize)
-	return in, nil
+	return in, notes, nil
 }
 
 // decodeTime combines a 32-bit seconds field with its optional extra field,

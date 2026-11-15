@@ -1,0 +1,28 @@
+# The pre-5.x-wipe kernel for the 3C ext4 probe (see README.md, "ext4 recovery probe (3C)").
+# Adds Debian bullseye's 5.10 kernel to the minutiae-recover-fixtures image, as FILES only:
+# the .deb is unpacked with dpkg-deb -x, nothing is installed or configured, and no module is
+# loaded or indexed at build time (the guest lib resolves module dependencies itself, and
+# the guest's own /init loads them). The tag below must be the image built from
+# Dockerfile.recover. Build: docker build -f tools/fixtures/Dockerfile.recover510 -t minutiae-recover-fixtures-510 tools/fixtures
+FROM minutiae-recover-fixtures:latest
+
+# bullseye (main archive) as of the same snapshot as Dockerfile.recover; the package is pinned by version
+# and its SHA256 is checked, so a rebuild unpacks the same bytes or fails loudly.
+ARG SNAPSHOT=20261003T000000Z
+ARG KPKG=linux-image-5.10.0-32-amd64
+ARG KVER=5.10.223-1
+ARG KSHA=86a6792f3a03ab15a643f385830cdaa921f15e3e9c8bf63aa55a9243c62fc797
+RUN mkdir -p /k510/etc /k510/state /k510/cache /k510/dl \
+ && printf 'deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian/%s/ bullseye main\n' "${SNAPSHOT}" > /k510/etc/sources.list \
+ && apt-get -o Dir::Etc::sourcelist=/k510/etc/sources.list -o Dir::Etc::sourceparts=/dev/null -o Dir::State=/k510/state -o Dir::Cache=/k510/cache \
+      -o Acquire::Check-Valid-Until=false -o Acquire::Retries=5 update \
+ && cd /k510/dl \
+ && apt-get -o Dir::Etc::sourcelist=/k510/etc/sources.list -o Dir::Etc::sourceparts=/dev/null -o Dir::State=/k510/state -o Dir::Cache=/k510/cache \
+      -o Acquire::Check-Valid-Until=false -o Acquire::Retries=5 download "${KPKG}=${KVER}" \
+ && echo "${KSHA}  ${KPKG}_${KVER}_amd64.deb" | sha256sum -c - \
+ && dpkg-deb -x "${KPKG}_${KVER}_amd64.deb" /k510/root \
+ && cp -a /k510/root/boot/vmlinuz-* /boot/ \
+ && cp -a /k510/root/lib/modules/* /lib/modules/ \
+ && rm -rf /k510 /var/lib/apt/lists/*
+
+ENV GUEST_KVER=5.10.0-32-amd64

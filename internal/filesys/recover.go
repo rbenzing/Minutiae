@@ -14,7 +14,10 @@ type Recoverer interface {
 	// alone: every other field is ignored; the ID is re-resolved from the disk. A live object is
 	// ErrNotDeleted, an unknown or forged ID is ErrNotFound at once (no directory search, no read budget
 	// spent), an ID held by more than one object is a *CorruptError. It returns maps, never bytes, and
-	// never validates them against free space (the caller does).
+	// never validates the DATA runs of a map against free space (the caller does). One narrow exception: a
+	// reader may check its OWN stale map blocks (indirect blocks, extent index and leaf blocks) against
+	// its own free space before it believes the pointers they hold, because a map block that is allocated
+	// again holds another object's pointers; it then ends the map at that block and says so in an assumption.
 	Recoverable(e Entry) ([]Candidate, error)
 }
 

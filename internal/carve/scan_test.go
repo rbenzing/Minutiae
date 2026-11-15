@@ -86,6 +86,13 @@ func testValidators() map[string]validatorFunc {
 			}
 			return Verdict{Outcome: Validated, Length: int64(binary.BigEndian.Uint32(h[8:]))}
 		},
+		// a bounded verdict that names why (a cap the validator met)
+		"test-bounded-reason": func(w *Window) Verdict {
+			return Verdict{Outcome: Bounded, Length: w.Len(), Reason: "toy-capped"}
+		},
+		"test-bounded-reason-short": func(w *Window) Verdict {
+			return Verdict{Outcome: Bounded, Length: w.Len() - 1, Reason: "toy-capped"}
+		},
 		"test-panic": func(*Window) Verdict { panic("validator bug") },
 		"test-onebyte": func(w *Window) Verdict {
 			if c, err := w.Byte(8); err != nil || c != 'K' {
@@ -902,4 +909,76 @@ func TestScanHugeAlignDoesNotOverflow(t *testing.T) {
 	if len(hits) != 1 || hits[0].Offset != 1000 || st.Scanned != run[0].Length {
 		t.Errorf("hits %+v scanned %d, want only offset 0 and all scanned", hits, st.Scanned)
 	}
+}
+
+func TestScanHitCapCountsPerFamily(t *testing.T) {
+	img := carvetest.Image(64*kib, fillPattern)
+	const hdr2 = "TOYOBJ\x00\x02"
+	for i := range 6 { // three objects of each row, alternating
+		hdr := toyHdr
+		if i%2 == 1 {
+			hdr = hdr2
+		}
+		carvetest.Place(img, i*4096, toyObj(hdr, 64))
+	}
+	set := toySet(toyType("toy", toyHdr, "test"), toyType("toy", hdr2, "test"))
+	hits, st, err := runScan(t, bytes.NewReader(img), whole(img), set, Options{Align: 4096, MaxHitsPerType: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 3 || !slices.Equal(st.TypeCapped, []string{"toy"}) {
+		t.Fatalf("%d hits, TypeCapped %v, want 3 shared across both rows and [toy] once", len(hits), st.TypeCapped)
+	}
+	// Below the family cap both rows still match.
+	hits, st, err = runScan(t, bytes.NewReader(img), whole(img), set, Options{Align: 4096, MaxHitsPerType: 6})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 6 || len(st.TypeCapped) != 0 {
+		t.Errorf("%d hits, TypeCapped %v, want 6 and none", len(hits), st.TypeCapped)
+	}
+}
+
+func TestScanBoundedReasonIsCountedAndLabelled(t *testing.T) {
+	set := func(validate string, maxLen int64) *Set {
+		ty := toyType("toy", toyHdr, validate)
+		ty.MaxLen = maxLen
+		return toySet(ty)
+	}
+	img := carvetest.Image(4*kib, fillPattern)
+	carvetest.Place(img, 1024, []byte(toyHdr))
+	t.Run("cut-at-run-end", func(t *testing.T) {
+		hits, st, err := runScan(t, bytes.NewReader(img), []Run{{0, 1324}}, set("test-bounded-reason", 4096), Options{Align: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(hits) != 1 || hits[0].Confidence != 25 || hits[0].Method != "carve-bounded" || hits[0].Length != 300 ||
+			!slices.Equal(hits[0].Assumptions, []string{"toy-capped", "cut-at-run-end"}) || st.BoundedBy["toy-capped"] != 1 || len(st.BoundedBy) != 1 {
+			t.Fatalf("hits = %+v BoundedBy = %v", hits, st.BoundedBy)
+		}
+	})
+	t.Run("length-capped", func(t *testing.T) {
+		hits, st, err := runScan(t, bytes.NewReader(img), whole(img), set("test-bounded-reason", 512), Options{Align: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(hits) != 1 || hits[0].Length != 512 || !slices.Equal(hits[0].Assumptions, []string{"toy-capped", "length-capped"}) || st.BoundedBy["toy-capped"] != 1 {
+			t.Fatalf("hits = %+v BoundedBy = %v", hits, st.BoundedBy)
+		}
+	})
+	t.Run("short of the window is a defect", func(t *testing.T) {
+		hits, st, err := runScan(t, bytes.NewReader(img), whole(img), set("test-bounded-reason-short", 512), Options{Align: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(hits) != 0 || st.Rejected["validator-defect"] != 1 || len(st.BoundedBy) != 0 {
+			t.Fatalf("hits = %+v rejected = %v BoundedBy = %v, want one validator-defect and no count", hits, st.Rejected, st.BoundedBy)
+		}
+	})
+	t.Run("maps are never nil", func(t *testing.T) {
+		_, st, err := runScan(t, bytes.NewReader(nil), nil, toySet(), Options{})
+		if err != nil || st.BoundedBy == nil {
+			t.Errorf("BoundedBy = %v, err %v", st.BoundedBy, err)
+		}
+	})
 }

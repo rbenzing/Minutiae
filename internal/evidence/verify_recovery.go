@@ -40,7 +40,7 @@ func recoveredKindNamespace(kind string) string {
 }
 
 // unreproducedNotices adds, after the composed checks, a notice for every recovered kind this build
-// does not reproduce byte for byte: slack and report always (a report less the ones R12 recomputed); recover, carve and journal until the
+// does not reproduce byte for byte: report always (less the ones R12 recomputed); recover, carve, slack and journal until the
 // composed reproduce check (R6) has run in this verify.
 func unreproducedNotices(rep *VerifyReport) {
 	if rep.deletedFiles > 0 && !rep.allocationRan {
@@ -50,7 +50,7 @@ func unreproducedNotices(rep *VerifyReport) {
 		rep.noticef("%d extract, unallocated or carve artifact(s): acquisition-gap notes shape-checked only, not recomputed (this verify did not compose check R10)", rep.gapArtifacts)
 	}
 	for _, k := range []string{KindRecover, KindCarve, KindSlack, KindJournal, KindReport} {
-		if (k == KindRecover || k == KindCarve || k == KindJournal) && rep.reproduceRan {
+		if (k == KindRecover || k == KindCarve || k == KindSlack || k == KindJournal) && rep.reproduceRan {
 			continue // R6 reproduces the block copies of kind journal too (3H-R13 c)
 		}
 		n := rep.recoveredByKind[k]
@@ -60,6 +60,9 @@ func unreproducedNotices(rep *VerifyReport) {
 		if n > 0 {
 			rep.noticef("kind %q: %d artifact(s) are not reproduced byte for byte by this build (no rule for the kind yet)", k, n)
 		}
+	}
+	if n := rep.recoveredByKind[KindSlack]; n > 0 && !rep.slackRan {
+		rep.noticef("%d slack artifact(s): segments not re-derived from the filesystem (this verify did not compose check R11)", n)
 	}
 }
 

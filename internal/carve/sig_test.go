@@ -14,7 +14,7 @@ import (
 
 // wantBuiltinDigest pins the built-in signature table. A change to the table
 // MUST change BuiltinID too: audit records name the set by its id and digest.
-const wantBuiltinDigest = "82aaea02765ca014555438e04e3fb74ba136739449e3eb361417827a33021ab1"
+const wantBuiltinDigest = "355b3e33d6adfba5d26d6cbee172b09c30822aba3c1f652a29e1c8f645fd514b"
 
 type wantType struct {
 	name, ext, mime, validate string
@@ -37,6 +37,18 @@ var wantTable = []wantType{
 	{"gzip", "gz", "application/gzip", "gzip", []Pattern{{0, []byte{0x1F, 0x8B, 0x08}, nil}}, 18, 64 << 20},
 	{"wav", "wav", "audio/wav", "riff-wave", []Pattern{{0, bs("RIFF"), nil}, {8, bs("WAVE"), nil}}, 44, 1 << 30},
 	{"ogg", "ogg", "audio/ogg", "ogg", []Pattern{{0, bs("OggS\x00"), nil}}, 28, 256 << 20},
+	{"bmp", "bmp", "image/bmp", "bmp", []Pattern{{0, bs("BM"), nil}}, 30, 1 << 30},
+	{"tiff", "tif", "image/tiff", "tiff", []Pattern{{0, []byte{0x49, 0x49, 0x2A, 0x00}, nil}}, 32, 1 << 30},
+	{"tiff", "tif", "image/tiff", "tiff", []Pattern{{0, []byte{0x4D, 0x4D, 0x00, 0x2A}, nil}}, 32, 1 << 30},
+	{"tiff", "tif", "image/tiff", "tiff", []Pattern{{0, []byte{0x49, 0x49, 0x2B, 0x00}, nil}}, 32, 1 << 30},
+	{"tiff", "tif", "image/tiff", "tiff", []Pattern{{0, []byte{0x4D, 0x4D, 0x00, 0x2B}, nil}}, 32, 1 << 30},
+	{"tiff", "tif", "image/tiff", "tiff", []Pattern{{0, bs("IIRO"), nil}}, 32, 1 << 30},
+	{"tiff", "tif", "image/tiff", "tiff", []Pattern{{0, bs("IIRS"), nil}}, 32, 1 << 30},
+	{"tiff", "tif", "image/tiff", "tiff", []Pattern{{0, bs("MMOR"), nil}}, 32, 1 << 30},
+	{"tiff", "tif", "image/tiff", "tiff", []Pattern{{0, []byte{0x49, 0x49, 0x55, 0x00}, nil}}, 32, 1 << 30},
+	{"isobmff", "bmff", "video/mp4", "isobmff", []Pattern{{0, []byte{0x00, 0x00, 0x00, 0x0C, 0x4A, 0x58, 0x4C, 0x20, 0x0D, 0x0A, 0x87, 0x0A}, nil}}, 24, 4 << 30},
+	{"ico", "ico", "image/vnd.microsoft.icon", "ico", []Pattern{{0, []byte{0x00, 0x00, 0x01, 0x00}, nil}}, 34, 16 << 20},
+	{"cur", "cur", "image/vnd.microsoft.icon", "ico", []Pattern{{0, []byte{0x00, 0x00, 0x02, 0x00}, nil}}, 34, 16 << 20},
 }
 
 func TestBuiltinSetShape(t *testing.T) {
@@ -67,8 +79,8 @@ func TestBuiltinSetShape(t *testing.T) {
 			t.Errorf("%s names validator %q that the registry lacks", ty.Name, ty.Validate)
 		}
 	}
-	if len(builtinValidators()) != 12 {
-		t.Errorf("registry has %d validators, want 12", len(builtinValidators()))
+	if len(builtinValidators()) != 15 {
+		t.Errorf("registry has %d validators, want 15", len(builtinValidators()))
 	}
 }
 
@@ -88,7 +100,7 @@ func TestBuiltinSigsetDigestPinned(t *testing.T) {
 func TestCanonicalIsOrderIndependent(t *testing.T) {
 	s := Builtin()
 	sh := Builtin()
-	slices.Reverse(sh.Types)
+	slices.Reverse(sh.Types) // reverses the eight tiff rows and both isobmff rows among themselves
 	if !bytes.Equal(s.Canonical(), sh.Canonical()) || s.Digest() != sh.Digest() {
 		t.Error("canonical form or digest depends on the order of the types")
 	}
@@ -162,7 +174,9 @@ func TestSelectTypes(t *testing.T) {
 	names := func(s *Set) []string {
 		var out []string
 		for _, ty := range s.Types {
-			out = append(out, ty.Name)
+			if !slices.Contains(out, ty.Name) { // a family of several rows is listed once
+				out = append(out, ty.Name)
+			}
 		}
 		return out
 	}
@@ -204,8 +218,9 @@ func TestSelectTypes(t *testing.T) {
 
 func TestRefinedTypes(t *testing.T) {
 	want := map[string][]string{
-		"isobmff": {"mp4", "mov", "3gp", "heic", "heif", "isobmff"},
+		"isobmff": {"mp4", "mov", "3gp", "heic", "heif", "isobmff", "avif", "cr3", "jxl"},
 		"zip":     {"zip", "apk", "jar", "docx", "xlsx", "pptx"},
+		"tiff":    {"tiff", "dng", "cr2", "orf", "rw2"},
 	}
 	if got := RefinedTypes(); !reflect.DeepEqual(got, want) {
 		t.Errorf("RefinedTypes() = %v, want %v", got, want)
@@ -223,23 +238,6 @@ func TestBuiltinReturnsFreshCopy(t *testing.T) {
 	c := Builtin()
 	if c.Types[0].Headers[0].Bytes[0] != 0xFF || c.Types[0].Name != "jpeg" {
 		t.Error("Builtin() shares state between calls")
-	}
-}
-
-// implementedValidators lists the validator ids whose format task has landed;
-// each format test file registers its own id in an init().
-var implementedValidators = map[string]bool{}
-
-func TestBuiltinValidatorsAreStubs(t *testing.T) {
-	// Task 2 ships only the registry; each format task replaces its stub.
-	w := newWindow(context.Background(), bytes.NewReader(make([]byte, 64)), 0, 64, unlimitedBudget())
-	for id, v := range builtinValidators() {
-		if implementedValidators[id] {
-			continue
-		}
-		if got := v(w); got.Outcome != Rejected || got.Reason != "no-validator" {
-			t.Errorf("%s: %+v, want rejected no-validator", id, got)
-		}
 	}
 }
 
@@ -386,5 +384,75 @@ func TestNewBudgetClamps(t *testing.T) {
 	}
 	if b := newBudget(1000); b.limit != 1000 || b.spent != 0 {
 		t.Errorf("newBudget(1000) = %+v", b)
+	}
+}
+
+func TestSetCheckRefusesFamilyRowMismatch(t *testing.T) {
+	row := func(hdr string) Type {
+		return Type{Name: "toy", Ext: "toy", MIME: "x/toy", Headers: []Pattern{{0, bs(hdr), nil}}, MinLen: 1, MaxLen: 100, Validate: "jpeg", Align: "block"}
+	}
+	check := func(a, b Type) error { return (&Set{ID: "x", Types: []Type{a, b}}).Check() }
+	diff := map[string]func(*Type){
+		"Ext":      func(ty *Type) { ty.Ext = "toz" },
+		"MIME":     func(ty *Type) { ty.MIME = "x/toz" },
+		"Footer":   func(ty *Type) { ty.Footer = bs("F") },
+		"MinLen":   func(ty *Type) { ty.MinLen = 2 },
+		"MaxLen":   func(ty *Type) { ty.MaxLen = 101 },
+		"Validate": func(ty *Type) { ty.Validate = "png" },
+		"Align":    func(ty *Type) { ty.Align = "any" },
+	}
+	for name, mut := range diff {
+		b := row("TOZ")
+		mut(&b)
+		if err := check(row("TOY"), b); !errors.Is(err, ErrBadSignature) {
+			t.Errorf("rows differing in %s: Check() = %v, want ErrBadSignature", name, err)
+		}
+	}
+	if err := check(row("TOY"), row("TOY")); !errors.Is(err, ErrBadSignature) {
+		t.Errorf("equal headers: Check() = %v, want ErrBadSignature", err)
+	}
+	if err := check(row("TOY"), row("TOZ")); err != nil {
+		t.Errorf("rows differing only in headers: Check() = %v, want nil", err)
+	}
+	// the mask is part of the headers: the same bytes under another mask are a different header
+	masked := row("TOY")
+	masked.Headers[0].Mask = []byte{0xFF, 0xFF, 0xFF}
+	if err := check(row("TOY"), masked); err != nil {
+		t.Errorf("same bytes under another mask: Check() = %v, want nil", err)
+	}
+}
+
+func TestSelectMultiRowFamilies(t *testing.T) {
+	s := Builtin()
+	rowsOf := func(set *Set) map[string]int {
+		n := map[string]int{}
+		for _, ty := range set.Types {
+			n[ty.Name]++
+		}
+		return n
+	}
+	cases := []struct {
+		names  []string
+		rows   map[string]int
+		filter map[string][]string
+	}{
+		{[]string{"tiff"}, map[string]int{"tiff": 8}, map[string][]string{}},
+		{[]string{"dng"}, map[string]int{"tiff": 8}, map[string][]string{"tiff": {"dng"}}},
+		{[]string{"avif"}, map[string]int{"isobmff": 2}, map[string][]string{"isobmff": {"avif"}}},
+		{[]string{"jxl"}, map[string]int{"isobmff": 2}, map[string][]string{"isobmff": {"jxl"}}},
+		{[]string{"cur", "bmp"}, map[string]int{"cur": 1, "bmp": 1}, map[string][]string{}},
+	}
+	for _, c := range cases {
+		got, filter, err := s.Select(c.names)
+		if err != nil {
+			t.Errorf("Select(%v): %v", c.names, err)
+			continue
+		}
+		if !reflect.DeepEqual(rowsOf(got), c.rows) || !reflect.DeepEqual(filter, c.filter) {
+			t.Errorf("Select(%v) = rows %v, filter %v, want %v, %v", c.names, rowsOf(got), filter, c.rows, c.filter)
+		}
+	}
+	if _, _, err := s.Select([]string{"jxl-codestream"}); !errors.Is(err, ErrUnknownType) {
+		t.Errorf("Select(jxl-codestream) err = %v, want ErrUnknownType", err)
 	}
 }

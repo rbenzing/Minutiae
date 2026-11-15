@@ -160,6 +160,7 @@ func (j *carveJob) setEnd(a *analysis, cs *CarveSummary) {
 	a.setEnd("align", j.sc.Align)
 	a.setEnd("hits_by_outcome", outcomeCounts(st.Accepted))
 	a.setEnd("rejected_by", cloneCounts(st.Rejected))
+	a.setEnd("bounded_by", cloneCounts(st.BoundedBy))
 	a.setEnd("carved", cs.Carved)
 	a.setEnd("partial", cs.Partial)
 	a.setEnd("skipped_by", cloneCounts(j.skipped))

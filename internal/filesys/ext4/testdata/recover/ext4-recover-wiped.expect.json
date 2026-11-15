@@ -1,0 +1,94 @@
+{
+  "generator": {
+    "image_sha256": "0ce519d021db1c08229f6d2e017aab05e1dde10c2d852415a8d2116e948de6b0",
+    "packages": [
+      {
+        "package": "busybox-static",
+        "version": "1:1.35.0-4+deb12u1+b1"
+      },
+      {
+        "package": "cpio",
+        "version": "2.13+dfsg-7.1"
+      },
+      {
+        "package": "e2fsprogs",
+        "version": "1.47.0-2+b2"
+      },
+      {
+        "package": "faketime",
+        "version": "0.9.10-2.1"
+      },
+      {
+        "package": "gzip",
+        "version": "1.12-1"
+      },
+      {
+        "package": "jq",
+        "version": "1.6-2.1+deb12u2"
+      },
+      {
+        "package": "kmod",
+        "version": "30+20221128-1"
+      },
+      {
+        "package": "linux-image-6.1.0-53-amd64",
+        "version": "6.1.187-1"
+      },
+      {
+        "package": "python3",
+        "version": "3.11.2-1+b1"
+      },
+      {
+        "package": "qemu-system-x86",
+        "version": "1:7.2+dfsg-7+deb12u18+b3"
+      },
+      {
+        "package": "linux-image-5.10.0-32-amd64",
+        "version": "5.10.223-1"
+      }
+    ],
+    "commands": [
+      "# sources: pattern bytes (tools/fixtures/lib.sh); guest kernel 6.1.0-53-amd64 (it wipes a deleted directory record)",
+      "faketime -f '2023-11-14 22:13:20' mke2fs -q -F -t ext4 -b 1024 -O metadata_csum,64bit,inline_data,^orphan_file -m 0 -J size=1 -N 256 -U 33333333-4444-5555-6666-999999999999 -E hash_seed=33333333-4444-5555-6666-999999999999 <img>",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 6.1.0-53-amd64): mkdir /mnt/t; : > /mnt/t/keeper_kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+      "guest boot b1-layout (2023-11-14 22:13:20, kernel 6.1.0-53-amd64): cp /payload/wa.bin /mnt/t/wa.bin; cp /payload/wb.bin /mnt/t/wb.bin; sync",
+      "guest boot b2-last (2023-11-14 23:13:20, kernel 6.1.0-53-amd64): rm /mnt/t/wa.bin /mnt/t/wb.bin; sync",
+      "e2fsck -fn <img>   # must exit 0",
+      "python3 tools/fixtures/ext4_recover_oracle.py <final> <payload> <manifest>   # debugfs/dumpe2fs cross-checks, own raw reader, the stage images"
+    ],
+    "kernel": "6.1.0-53-amd64",
+    "fsck_exit": 0,
+    "gates": {
+      "L": "open",
+      "K": "closed",
+      "S": "zeroed",
+      "U": "reuse"
+    }
+  },
+  "block_size": 1024,
+  "deleted": [],
+  "deleted_entry_count": 0,
+  "fs_type": "ext4",
+  "totals": {
+    "recovered": 0,
+    "skipped_by": {},
+    "undecided": 0
+  },
+  "unlisted_count": 0,
+  "wiped": [
+    {
+      "inode": 14,
+      "inode_free": true,
+      "name": "wa.bin",
+      "name_in_directory": false,
+      "path": "/t/wa.bin"
+    },
+    {
+      "inode": 15,
+      "inode_free": true,
+      "name": "wb.bin",
+      "name_in_directory": false,
+      "path": "/t/wb.bin"
+    }
+  ]
+}
