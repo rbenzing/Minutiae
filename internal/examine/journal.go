@@ -77,7 +77,12 @@ func chainHasSeq(chain filesys.RollForwardChain, seq uint32) bool {
 	return chain.Nodes > 0 && seq == uint32(chain.CheckpointVersion)
 }
 
-func errNoSuchSeq(seq uint32) error {
+// errNoSuchSeq is the error for a seq the chain does not hold: ErrNotFound when the chain was read to its end,
+// else ErrIncomplete naming the stop, because the nodes after it are unknown (never "absent").
+func errNoSuchSeq(chain filesys.RollForwardChain, seq uint32) error {
+	if !chain.Complete {
+		return fmt.Errorf("transaction %d: not among the nodes read; the chain stopped at %s with later nodes unknown: %w", seq, chain.Stop, filesys.ErrIncomplete)
+	}
 	return fmt.Errorf("transaction %d is not a transaction of the roll-forward log: %w", seq, filesys.ErrNotFound)
 }
 
@@ -93,7 +98,7 @@ func (s *Session) JournalShow(o JournalOptions, seq uint32, visit func(filesys.R
 		return chain, err
 	}
 	if !chainHasSeq(chain, seq) {
-		return filesys.RollForwardChain{}, errNoSuchSeq(seq)
+		return filesys.RollForwardChain{}, errNoSuchSeq(chain, seq)
 	}
 	return rf.RollForward(visit)
 }

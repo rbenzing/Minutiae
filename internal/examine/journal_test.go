@@ -110,3 +110,36 @@ func TestJournalShowWrongSeqIsNotFound(t *testing.T) {
 		t.Errorf("wrong seq: err %v, visited %v", err, called)
 	}
 }
+
+// An incomplete chain cannot say a sequence is absent: the nodes after its stop are unknown.
+func TestJournalSeqOnIncompleteChainIsIncomplete(t *testing.T) {
+	cut := func(img []byte, tr *f2fstest.Tree) {
+		f2fstest.SetFooter(img, tr.ChainAddrs[len(tr.ChainAddrs)-1]+1, f2fstest.Footer{NID: 20, Ino: 0, CPVer: f2fstest.ChainFooterVersion(img)})
+	}
+	cutFirst := func(img []byte, tr *f2fstest.Tree) {
+		f2fstest.SetFooter(img, tr.ChainAddrs[0], f2fstest.Footer{NID: 20, Ino: 0, CPVer: f2fstest.ChainFooterVersion(img)})
+	}
+	for name, patch := range map[string]func([]byte, *f2fstest.Tree){"past the end": cut, "empty chain": cutFirst} {
+		t.Run(name, func(t *testing.T) {
+			s, _, _ := jrnSession(t, patch)
+			chain, _ := jrnChain(t, s)
+			if chain.Complete {
+				t.Fatalf("chain %+v is complete", chain)
+			}
+			seq := uint32(chain.CheckpointVersion) + 1
+			called := false
+			_, err := s.JournalShow(jo, seq, func(filesys.RollForwardNode) bool { called = true; return true })
+			if !errors.Is(err, filesys.ErrIncomplete) || errors.Is(err, filesys.ErrNotFound) || called || !strings.Contains(err.Error(), chain.Stop) {
+				t.Errorf("JournalShow: err %v, visited %v; want ErrIncomplete naming %q", err, called, chain.Stop)
+			}
+			n := len(auditEntries(t, s.Case))
+			_, err = s.JournalBlocks(context.Background(), examine.JournalBlocksOptions{JournalOptions: jo, Seq: seq})
+			if !errors.Is(err, filesys.ErrIncomplete) || errors.Is(err, filesys.ErrNotFound) || !strings.Contains(err.Error(), chain.Stop) {
+				t.Errorf("JournalBlocks: err %v; want ErrIncomplete naming %q", err, chain.Stop)
+			}
+			if len(auditEntries(t, s.Case)) != n {
+				t.Errorf("a refused run was audited")
+			}
+		})
+	}
+}

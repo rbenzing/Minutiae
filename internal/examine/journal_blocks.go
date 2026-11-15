@@ -61,7 +61,7 @@ func (s *Session) JournalBlocks(ctx context.Context, o JournalBlocksOptions) (Jo
 		return JournalBlocksSummary{}, err
 	}
 	if !chainHasSeq(chain, o.Seq) {
-		return JournalBlocksSummary{}, errNoSuchSeq(o.Seq)
+		return JournalBlocksSummary{}, errNoSuchSeq(chain, o.Seq)
 	}
 	if len(sel) == 0 {
 		return JournalBlocksSummary{}, fmt.Errorf("filesystem block %d is not a node of the roll-forward log: %w", *o.FSBlock, filesys.ErrNotFound)

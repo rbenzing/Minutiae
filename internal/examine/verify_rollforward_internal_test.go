@@ -1,9 +1,11 @@
 package examine
 
 import (
+	"math"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/evidence"
+	"github.com/rbenzing/minutiae/internal/filesys"
 )
 
 func TestRunsArePrefix(t *testing.T) {
@@ -29,5 +31,17 @@ func TestRunsArePrefix(t *testing.T) {
 		if got := runsArePrefix(tc.rec, f); got != tc.want {
 			t.Errorf("%s: runsArePrefix = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestFreshRunsOverflowIsRefused(t *testing.T) {
+	if got, ok := freshRuns(100, []filesys.Run{{Offset: 5, Length: 1}, {Offset: -1, Length: 2}}); !ok || got[0].Offset != 105 || got[1].Offset != -1 {
+		t.Errorf("ordinary runs: %v %v", got, ok)
+	}
+	if _, ok := freshRuns(100, []filesys.Run{{Offset: math.MaxInt64 - 50, Length: 1}}); ok {
+		t.Error("an overflowing run was accepted")
+	}
+	if runsArePrefix([]evidence.Run{{Offset: 0, Length: 1}}, []evidence.Run{{Offset: math.MaxInt64, Length: 1}}) {
+		t.Error("a run at MaxInt64 matched")
 	}
 }

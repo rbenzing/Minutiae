@@ -381,18 +381,33 @@ func (ch *rfChain) file(rec evidence.ManifestRecord) bool {
 		k.problem(rec, "runs unreadable: %v", err)
 		return false
 	}
-	fresh := make([]evidence.Run, len(f.Candidates[0].Runs))
-	for i, r := range f.Candidates[0].Runs {
-		fresh[i] = evidence.Run{Offset: r.Offset, Length: r.Length}
-		if r.Offset >= 0 {
-			fresh[i].Offset = ch.part.Start + r.Offset
-		}
+	fresh, ok := freshRuns(ch.part.Start, f.Candidates[0].Runs)
+	if !ok {
+		k.problem(rec, "the map the chain gives now for %q has a run whose image offset overflows", d.FSID)
+		return false
 	}
 	if !runsArePrefix(recorded, fresh) {
 		k.problem(rec, "recorded runs are not a prefix of the map the chain gives now for %q", d.FSID)
 		return false
 	}
 	return true
+}
+
+// freshRuns is the filesystem-relative runs as image-relative ones; a hole stays a hole, and ok is false when
+// an offset does not fit.
+func freshRuns(partStart int64, runs []filesys.Run) ([]evidence.Run, bool) {
+	fresh := make([]evidence.Run, len(runs))
+	for i, r := range runs {
+		fresh[i] = evidence.Run{Offset: r.Offset, Length: r.Length}
+		if r.Offset >= 0 {
+			off, ok := filesys.AddOK(partStart, r.Offset)
+			if !ok {
+				return nil, false
+			}
+			fresh[i].Offset = off
+		}
+	}
+	return fresh, true
 }
 
 // runsArePrefix reports whether rec, read as bytes, is the first bytes of fresh: every run starts where the
@@ -405,7 +420,8 @@ func runsArePrefix(rec, fresh []evidence.Run) bool {
 			return false
 		}
 		f := fresh[j]
-		if f.Offset < 0 || r.Offset != f.Offset+used || r.Length > f.Length-used {
+		start, ok := filesys.AddOK(f.Offset, used)
+		if !ok || r.Offset != start || r.Length > f.Length-used {
 			return false
 		}
 		used += r.Length
