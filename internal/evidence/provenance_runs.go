@@ -64,15 +64,7 @@ func (c *Case) CheckedRuns(ix *ManifestIndex, rec ManifestRecord) ([]Run, error)
 	defer func() { _ = f.Close() }()
 	h := sha256.New()
 	tee := io.TeeReader(f, h)
-	var runs []Run
-	if rec.Source.Kind == "unallocated" {
-		var m []UnallocRun
-		if m, err = ReadUnallocRunMap(tee); err == nil {
-			runs = UnallocRunsAsRuns(m)
-		}
-	} else {
-		runs, err = readRunLines(tee)
-	}
+	runs, err := sidecarRuns(rec, tee)
 	if err != nil {
 		return nil, sidecarReadError(sc.ID, err)
 	}

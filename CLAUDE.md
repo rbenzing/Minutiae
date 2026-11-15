@@ -8,14 +8,19 @@ product: a convenient change that weakens it is a bug.
    If it fits none, stop and ask — do not start unplanned subsystems.
 2. Read that sub-project's spec and plan in `docs/superpowers/` (local only,
    gitignored). If they do not exist yet, brainstorm → spec → plan first.
-3. Read the reference docs your change touches (they are binding, not background):
+3. Open the map, `docs/README.md`, and read the reference docs its "What to read for a
+   change" table lists for the code you touch. They are binding, not background. Read the
+   area files for your code, not the whole set: no task needs all of them.
+4. When the code and a doc disagree, stop and flag it. Never silently pick one.
 
 | Doc | Holds | Edit it when |
 |---|---|---|
-| `docs/invariants.md` | every forensic invariant and the named tests that enforce it | you add or change an invariant (same commit) |
+| `docs/invariants/<area>.md` (index `docs/invariants.md`) | every forensic invariant and the named tests that enforce it | you add or change an invariant (same commit) |
 | `docs/architecture.md` | the package dependency rule, purity and single-writer rules, the cgo policy | you add a package or an import edge |
 | `docs/testing.md` | check forms (fast/race), test rules, fixtures, release build | you change how something is tested or built |
-| `docs/limitations.md` | known limitations, residuals, from-memory formats | you close or add a limitation |
+| `docs/limitations/<area>.md` (index `docs/limitations.md`) | known limitations and residuals; the index lists every from-memory format | you close or add a limitation (a from-memory format also goes in the index) |
+| `docs/adr/` | why each costly-to-reverse decision was taken, and its alternatives | you take or change such a decision: a new record, never a rewrite of an accepted one |
+| `docs/systems/` | how one subsystem works inside | you change a system that has one (same commit) |
 
 ## Setup (idempotent)
 ```bash

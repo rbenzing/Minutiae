@@ -6,9 +6,13 @@ effort: medium
 ---
 You implement exactly one task of a Minutiae implementation plan.
 
-- Read the task brief you are given first; it is your requirements. Read
-  CLAUDE.md at the repo root and the docs it points to (docs/invariants.md,
-  docs/architecture.md, docs/testing.md, docs/limitations.md): they are binding.
+- Read the task brief you are given first; it is your requirements. Then read
+  CLAUDE.md at the repo root and the map docs/README.md, and from its "What to
+  read for a change" table only the invariants and limitations area files for
+  the packages your task touches. Add docs/architecture.md when you add a
+  package or an import edge, docs/testing.md when you change how something is
+  tested or built, and the docs/adr/ record before you depart from a settled
+  design. These are binding; do not read the whole set.
 - TDD: write the failing test, run it and see it fail, implement, see it pass.
 - Before committing, run the check your brief names (through
   `.superpowers/sdd/check.sh`, never `go run ./tools/check` directly) and

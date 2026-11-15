@@ -72,16 +72,8 @@ func (c *Case) DerivedRuns(rec ManifestRecord, byID map[string]ManifestRecord) (
 		return nil, fmt.Errorf("runs artifact %q: %w", sc.ID, err)
 	}
 	defer func() { _ = f.Close() }()
-	var runs []Run
-	if rec.Source.Kind == "unallocated" {
-		// the sidecar of an unallocated export is its own run map, not a list of Run
-		var m []UnallocRun
-		if m, err = ReadUnallocRunMap(f); err == nil {
-			runs = UnallocRunsAsRuns(m)
-		}
-	} else {
-		runs, err = readRunLines(f)
-	}
+	// the sidecar of an unallocated export or a slack artifact is its own run map, not a list of Run
+	runs, err := sidecarRuns(rec, f)
 	if err != nil {
 		return nil, fmt.Errorf("runs artifact %q: %w", sc.ID, err)
 	}
@@ -326,13 +318,13 @@ func CheckRecoveredRuns(rec ManifestRecord, runs []Run) []string {
 			add("%d unknown bytes in a deleted-file artifact", a.Unknown)
 		}
 	}
-	// the scope of slack and journal classes comes from the class table, not from the stored field
+	// the scope of the journal classes comes from the class table, not from the stored field
 	scope := rv.Scope
 	if ci, ok := LookupClass(rv.Class); ok && ci.Scope != "" {
 		scope = ci.Scope
 	}
 	switch rv.Class {
-	case ClassCarved, ClassSlack, ClassJournalBlock, ClassJournalReport:
+	case ClassCarved, ClassJournalBlock, ClassJournalReport:
 		if scope == "unallocated" && (a.Allocated > 0 || a.Unknown > 0) {
 			add("scope unallocated but %d allocated and %d unknown bytes (class %q)", a.Allocated, a.Unknown, rv.Class)
 		}
@@ -341,6 +333,10 @@ func CheckRecoveredRuns(rec ManifestRecord, runs []Run) []string {
 		}
 		if scope == "artifact" && (a.Free > 0 || a.Allocated > 0) {
 			add("scope artifact but %d free and %d allocated bytes (an artifact has no allocation state)", a.Free, a.Allocated)
+		}
+	case ClassSlack: // slack takes no scope; its rule is the allocation rule of 3F-R1
+		for _, p := range slackAllocProblems(rv.Method, a) {
+			add("%s", p)
 		}
 	}
 	return out

@@ -133,7 +133,7 @@ var classTable = []ClassInfo{
 	{
 		Class: ClassSlack, Kind: KindSlack, Namespace: "slack",
 		MethodPrefixes: []string{"slack-"},
-		MaxConfidence:  10, ConfidenceRequired: true, Scope: "unallocated",
+		MaxConfidence:  10, ConfidenceRequired: true,
 	},
 	{
 		Class: ClassJournalBlock, Kind: KindJournal, Namespace: "journal",
