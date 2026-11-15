@@ -291,12 +291,28 @@ type jsonRecover struct {
 	IncompleteIDs  []string                  `json:"incomplete_ids"`
 	FSWarnings     int                       `json:"fs_warnings"`
 	Artifacts      []evidence.ManifestRecord `json:"artifacts"`
+	Chain          *jsonChainInfo            `json:"chain,omitempty"`
+}
+
+// jsonChainInfo is the roll-forward chain a --rollforward run read; Incomplete says later nodes are unknown.
+type jsonChainInfo struct {
+	Nodes      int    `json:"nodes"`
+	Stop       string `json:"stop"`
+	Complete   bool   `json:"complete"`
+	Incomplete bool   `json:"incomplete"`
+}
+
+func newJSONChain(c *examine.ChainInfo) *jsonChainInfo {
+	if c == nil {
+		return nil
+	}
+	return &jsonChainInfo{Nodes: c.Nodes, Stop: c.Stop, Complete: c.Complete, Incomplete: !c.Complete}
 }
 
 func newJSONRecover(s examine.RecoverSummary) jsonRecover {
 	out := jsonRecover{
 		AnalysisID: s.AnalysisID, Considered: s.Considered, Candidates: s.Candidates, Recovered: s.Recovered, Partial: s.Partial,
-		Uniform: s.Uniform, Overlap: s.Overlap, SkippedBy: s.SkippedBy, LimitReached: s.LimitReached, NotProcessed: s.NotProcessed, ReaderWarnings: s.ReaderWarnings, IncompleteIDs: incompleteTexts(s.IncompleteIDs), FSWarnings: s.FSWarnings, Artifacts: s.Artifacts,
+		Uniform: s.Uniform, Overlap: s.Overlap, SkippedBy: s.SkippedBy, LimitReached: s.LimitReached, NotProcessed: s.NotProcessed, ReaderWarnings: s.ReaderWarnings, IncompleteIDs: incompleteTexts(s.IncompleteIDs), FSWarnings: s.FSWarnings, Artifacts: s.Artifacts, Chain: newJSONChain(s.Chain),
 	}
 	if out.SkippedBy == nil {
 		out.SkippedBy = map[string]int{}
@@ -353,7 +369,8 @@ type jsonRecoverList struct {
 	IncompleteIDs  []string          `json:"incomplete_ids"`
 	FSWarnings     int               `json:"fs_warnings"`
 	// FSWarningsSuppressed is how many warnings the filesystem dropped while planning (0 and omitted when none).
-	FSWarningsSuppressed uint64 `json:"fs_warnings_suppressed,omitempty"`
+	FSWarningsSuppressed uint64         `json:"fs_warnings_suppressed,omitempty"`
+	Chain                *jsonChainInfo `json:"chain,omitempty"`
 }
 
 func jsonRuns(rs []evidence.Run) []jsonRun {
@@ -365,7 +382,7 @@ func jsonRuns(rs []evidence.Run) []jsonRun {
 }
 
 func newJSONRecoverList(p *examine.RecoverPlan) jsonRecoverList {
-	out := jsonRecoverList{Considered: p.Considered, Items: []jsonRecoverItem{}, SkippedBy: p.SkippedBy, LimitReached: p.LimitReached, NotProcessed: p.NotProcessed, ReaderWarnings: p.ReaderWarnings, IncompleteIDs: incompleteTexts(p.IncompleteIDs), FSWarnings: len(p.FSWarnings), FSWarningsSuppressed: p.FSWarningsSuppressed}
+	out := jsonRecoverList{Considered: p.Considered, Items: []jsonRecoverItem{}, SkippedBy: p.SkippedBy, LimitReached: p.LimitReached, NotProcessed: p.NotProcessed, ReaderWarnings: p.ReaderWarnings, IncompleteIDs: incompleteTexts(p.IncompleteIDs), FSWarnings: len(p.FSWarnings), FSWarningsSuppressed: p.FSWarningsSuppressed, Chain: newJSONChain(p.Chain)}
 	if out.SkippedBy == nil {
 		out.SkippedBy = map[string]int{}
 	}

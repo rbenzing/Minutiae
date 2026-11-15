@@ -17,6 +17,7 @@ import (
 // recoverFlags are the options shared by --list and a run.
 type recoverFlags struct {
 	list, all, allCandidates, keepUniform bool
+	rollForward                           bool
 	minConfidence                         int
 	maxFiles, maxPlanRuns                 int
 	maxBytes                              int64
@@ -42,6 +43,12 @@ func (f recoverFlags) validate(refs []string) error {
 		return usageErrorf("choose what to recover: --all, or one or more id:<FSID> / directory paths (--list shows what a run would write)")
 	}
 	for _, r := range refs {
+		if f.rollForward {
+			if id, ok := strings.CutPrefix(r, "id:rollforward:"); !ok || id == "" || strings.Trim(id, "0123456789") != "" {
+				return usageErrorf("--rollforward takes --all or id:rollforward:<inode number> references, got %q (post-checkpoint files are not in the tree, so a path names none)", r)
+			}
+			continue
+		}
 		if r == "id:" || r == "" {
 			return usageErrorf("malformed entry reference %q: expected id:<FSID> or a directory path", r)
 		}
@@ -67,7 +74,8 @@ func newImageRecoverCmd(d Deps, opts *rootOptions) *cobra.Command {
 	casePath := caseFlag(cmd)
 	partition := partitionFlag(cmd, "partition index (default: the only partition with a recognized filesystem)")
 	cmd.Flags().BoolVar(&f.list, "list", false, "show what a run would write; writes nothing but the usual case.open audit entry")
-	cmd.Flags().BoolVar(&f.all, "all", false, "recover every deleted entry")
+	cmd.Flags().BoolVar(&f.all, "all", false, "recover every deleted entry (with --rollforward: every post-checkpoint file)")
+	cmd.Flags().BoolVar(&f.rollForward, "rollforward", false, "recover files that exist only in the roll-forward log (F2FS: written after the last checkpoint) instead of deleted entries; takes --all or id:rollforward:<ino>")
 	cmd.Flags().IntVar(&f.minConfidence, "min-confidence", 0, "skip candidates below this confidence (0..100)")
 	cmd.Flags().BoolVar(&f.allCandidates, "all-candidates", false, "write every candidate of an entry, not only the best")
 	cmd.Flags().BoolVar(&f.keepUniform, "keep-uniform", false, "write candidates whose bytes are all the same value")
@@ -91,6 +99,11 @@ func newImageRecoverCmd(d Deps, opts *rootOptions) *cobra.Command {
 		o := examine.RecoverOptions{
 			Partition: pidx, Refs: refs, All: f.all || (f.list && len(refs) == 0), MinConfidence: f.minConfidence,
 			AllCandidates: f.allCandidates, KeepUniform: f.keepUniform, MaxFiles: f.maxFiles, MaxBytes: f.maxBytes, MaxPlanRuns: f.maxPlanRuns,
+			RollForward: f.rollForward,
+		}
+		noun := "deleted entries"
+		if f.rollForward {
+			noun = "post-checkpoint files"
 		}
 		if f.list {
 			plan, err := s.PlanRecovery(cmd.Context(), o)
@@ -98,10 +111,10 @@ func newImageRecoverCmd(d Deps, opts *rootOptions) *cobra.Command {
 				return withFSName(s, pidx, err)
 			}
 			if opts.json {
-				return joinJSON(undecidedBatchError(nil, plan.SkippedBy["undecided"]), writeJSON(d.Out, newJSONRecoverList(plan)))
+				return joinJSON(undecidedBatchErrorFor(nil, plan.SkippedBy["undecided"], noun), writeJSON(d.Out, newJSONRecoverList(plan)))
 			}
 			printRecoverList(d.Out, plan)
-			return undecidedBatchError(nil, plan.SkippedBy["undecided"])
+			return undecidedBatchErrorFor(nil, plan.SkippedBy["undecided"], noun)
 		}
 		o.Progress = newProgress(d.Err, "recover")
 		sum, err := s.Recover(cmd.Context(), o)
@@ -109,7 +122,7 @@ func newImageRecoverCmd(d Deps, opts *rootOptions) *cobra.Command {
 		if sum.AnalysisID == "" {
 			return withFSName(s, pidx, err)
 		}
-		err = undecidedBatchError(err, sum.SkippedBy["undecided"])
+		err = undecidedBatchErrorFor(err, sum.SkippedBy["undecided"], noun)
 		if opts.json {
 			return writeRecoverJSON(d.Out, sum, err)
 		}
@@ -121,7 +134,7 @@ func newImageRecoverCmd(d Deps, opts *rootOptions) *cobra.Command {
 
 // withFSName names the filesystem in an unsupported-recovery error.
 func withFSName(s *examine.Session, pidx int, err error) error {
-	if err == nil || !errors.Is(err, filesys.ErrNoRecovery) {
+	if err == nil || (!errors.Is(err, filesys.ErrNoRecovery) && !errors.Is(err, examine.ErrNoRollForward)) {
 		return err
 	}
 	if fsys, _, ferr := s.FS(pidx); ferr == nil {
@@ -146,9 +159,15 @@ func hasOverlap(assumptions []string) bool {
 func printRecoverList(w io.Writer, plan *examine.RecoverPlan) {
 	written, bytes := 0, int64(0)
 	_, uniform, _ := plan.Counters()
+	if plan.Chain != nil {
+		fmt.Fprintln(w, postCheckpointHeader)
+	}
 	for _, it := range plan.Items {
 		for _, c := range it.Candidates {
 			line := candidateLine(c.Method, c.Confidence, c.Band, c.Size, it.Path, it.ID)
+			if plan.Chain != nil {
+				line = markPostCheckpoint(line)
+			}
 			if why := c.PartialWhy(); why != "" {
 				line += " [incomplete: " + escapeText(why) + "]"
 			}
@@ -185,6 +204,7 @@ func printRecoverList(w io.Writer, plan *examine.RecoverPlan) {
 	printLimit(w, plan.LimitReached, plan.NotProcessed)
 	printReaderWarnings(w, plan.ReaderWarnings)
 	printIncompleteIDs(w, plan.IncompleteIDs)
+	printChainFooter(w, plan.Chain)
 	if n := len(plan.FSWarnings); n > 0 {
 		fmt.Fprintf(w, "filesystem warnings: %d\n", n)
 	}
@@ -216,6 +236,9 @@ func printLimit(w io.Writer, which string, notProcessed int) {
 
 func printRecoverRun(w io.Writer, sum examine.RecoverSummary) {
 	var bytes int64
+	if sum.Chain != nil {
+		fmt.Fprintln(w, postCheckpointHeader)
+	}
 	for _, a := range sum.Artifacts {
 		d := a.Source.Derived
 		if a.Source.Kind != evidence.KindRecover || d == nil || d.Recovery == nil {
@@ -227,6 +250,9 @@ func printRecoverRun(w io.Writer, sum examine.RecoverSummary) {
 			conf = *r.Confidence
 		}
 		line := candidateLine(r.Method, conf, evidence.ConfidenceBand(conf), a.Size, d.FSPath, d.FSID)
+		if r.Class == evidence.ClassPostCheckpointFile {
+			line = markPostCheckpoint(line)
+		}
 		if a.Incomplete {
 			line += " [incomplete: " + escapeText(a.Error) + "]"
 		}
@@ -245,7 +271,32 @@ func printRecoverRun(w io.Writer, sum examine.RecoverSummary) {
 	printLimit(w, sum.LimitReached, sum.NotProcessed)
 	printReaderWarnings(w, sum.ReaderWarnings)
 	printIncompleteIDs(w, sum.IncompleteIDs)
+	printChainFooter(w, sum.Chain)
 	printFSWarnings(w, sum.Summary)
+}
+
+// postCheckpointHeader precedes the files of a roll-forward run: they are neither deleted nor live.
+const postCheckpointHeader = "post-checkpoint files (written after the last checkpoint: not deleted, not in the checkpoint view, never live):"
+
+// markPostCheckpoint puts the [post-checkpoint] marker after the leading [recovered:...] marker of line.
+func markPostCheckpoint(line string) string {
+	i := strings.Index(line, "]")
+	if i < 0 {
+		return line + " [post-checkpoint]"
+	}
+	return line[:i+1] + " [post-checkpoint]" + line[i+1:]
+}
+
+// printChainFooter says, for a roll-forward run, that the chain may be cut (its later nodes unknown) and that its
+// files were never replayed. It prints nothing for a deleted-entry run.
+func printChainFooter(w io.Writer, c *examine.ChainInfo) {
+	if c == nil {
+		return
+	}
+	if !c.Complete {
+		fmt.Fprintf(w, "INCOMPLETE: the chain is cut at %s; later nodes are unknown\n", escapeText(c.Stop))
+	}
+	fmt.Fprintln(w, rollForwardCaution)
 }
 
 // writeRecoverJSON writes the JSON of a run and returns the run's own error; a failed or refused JSON write is joined
@@ -300,17 +351,26 @@ func printTypedSkips(w io.Writer, skippedBy map[string]int) {
 // not be decided (3C-R21): the decided work is written and printed first, an integrity error still wins in
 // ExitCode, and the batch never exits 0 with an undecided entry.
 func undecidedBatchError(err error, n int) error {
+	return undecidedBatchErrorFor(err, n, "deleted entries")
+}
+
+// undecidedBatchErrorFor is undecidedBatchError naming what the batch handled ("post-checkpoint files" for
+// a roll-forward run).
+func undecidedBatchErrorFor(err error, n int, noun string) error {
 	if n <= 0 {
 		return err
 	}
-	return errors.Join(err, &undecidedBatch{n: n})
+	return errors.Join(err, &undecidedBatch{n: n, noun: noun})
 }
 
 // undecidedBatch wraps filesys.ErrUndecided and names the count; Run prints its own note for it.
-type undecidedBatch struct{ n int }
+type undecidedBatch struct {
+	n    int
+	noun string
+}
 
 func (u *undecidedBatch) Error() string {
-	return fmt.Sprintf("%s: %d deleted entries could not be decided", filesys.ErrUndecided.Error(), u.n)
+	return fmt.Sprintf("%s: %d %s could not be decided", filesys.ErrUndecided.Error(), u.n, u.noun)
 }
 
 func (u *undecidedBatch) Unwrap() error { return filesys.ErrUndecided }

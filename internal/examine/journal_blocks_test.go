@@ -169,3 +169,19 @@ func TestJournalNeverChangesLiveView(t *testing.T) {
 		t.Errorf("the live view changed:\n%s\n%s\nunallocated %s -> %s", t1, t2, u1, u2)
 	}
 }
+
+// An --fsblock that is not among the nodes read of a cut chain is unknown, never "not a node".
+func TestJournalBlocksFSBlockOfCutChainIsIncomplete(t *testing.T) {
+	s, _, _ := jrnSession(t, func(img []byte, tr *f2fstest.Tree) {
+		stop := tr.ChainAddrs[len(tr.ChainAddrs)-1] + 1
+		f2fstest.SetFooter(img, stop, f2fstest.Footer{NID: 20, Ino: 0, CPVer: f2fstest.ChainFooterVersion(img)})
+	})
+	blk := uint64(3)
+	_, err := s.JournalBlocks(context.Background(), examine.JournalBlocksOptions{JournalOptions: jo, Seq: jrnSeq(t, s), FSBlock: &blk})
+	if !errors.Is(err, filesys.ErrIncomplete) || errors.Is(err, filesys.ErrNotFound) || !strings.Contains(err.Error(), "footer@") {
+		t.Errorf("err = %v, want ErrIncomplete naming the stop", err)
+	}
+	if got := len(auditByAction(t, s.Case, "analysis.start")); got != 0 {
+		t.Errorf("%d analysis.start entries", got)
+	}
+}
