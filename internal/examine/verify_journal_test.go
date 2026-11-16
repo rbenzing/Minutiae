@@ -429,3 +429,127 @@ func TestVerifyJournalProblemListIsBounded(t *testing.T) {
 		t.Fatalf("%d journal problems, last %q", len(got), got[len(got)-1])
 	}
 }
+
+// cutCopy writes a block copy of rec as a writer that read only n bytes of the slot would have: the first n bytes, a
+// run of n (none for 0), the marker read-failed-after=mark, Allocated n; incomplete says whether the artifact is
+// flagged. mut may forge more.
+func (jc *jvCase) cutCopy(t *testing.T, rec evidence.ManifestRecord, path string, n int, mark string, incomplete bool, mut func(d *evidence.Derivation)) evidence.ManifestRecord {
+	t.Helper()
+	d := *rec.Source.Derived
+	rv := *d.Recovery
+	rv.Assumptions = append(slices.Clone(rv.Assumptions), "read-failed-after="+mark)
+	rv.Alloc.Allocated = int64(n)
+	d.Recovery = &rv
+	d.Runs = nil
+	if n > 0 {
+		d.Runs = []evidence.Run{{Offset: rec.Source.Derived.Runs[0].Offset, Length: int64(n)}}
+	}
+	if mut != nil {
+		mut(&d)
+	}
+	data := readArtifact(t, jc.s.Case, rec)[:n]
+	p := jc.s.Parent
+	out, _ := jc.s.Case.Capture(p.Source.DeviceID, "forged1", path, evidence.Source{Kind: rec.Source.Kind, DeviceID: p.Source.DeviceID, Derived: &d},
+		func(w io.Writer) error {
+			if _, err := w.Write(data); err != nil {
+				return err
+			}
+			if incomplete {
+				return io.ErrUnexpectedEOF
+			}
+			return nil
+		})
+	return out
+}
+
+// A copy that claims a failed read is held to it: the slot is read again, and the marker, size, run, flag and
+// allocation must agree.
+func TestVerifyJournalBlockPartialCopy(t *testing.T) {
+	const p = "journal/p1-ext4/seq10-fsblk1-cut.bin"
+	for name, tc := range map[string]struct {
+		n          int
+		mark       string
+		incomplete bool
+		mut        func(d *evidence.Derivation)
+		want       string
+	}{
+		"readable slot, forged marker and short run": {512, "512", true, nil, "readable"},
+		"incomplete flag cleared":                    {512, "512", false, nil, "incomplete"},
+		"marker disagrees with the run":              {512, "256", true, nil, "read-failed-after"},
+		"marker not canonical":                       {512, "0512", true, nil, "read-failed-after"},
+		"zero run, forged size":                      {0, "0", false, nil, "read-failed-after"},
+		"marker as long as the slot":                 {1024, "1024", true, nil, "read-failed-after"},
+		"allocation disagrees":                       {512, "512", true, func(d *evidence.Derivation) { d.Recovery.Alloc.Allocated = 1024 }, "allocated"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			jc := newJVCase(t, jrnSpec{})
+			if name == "zero run, forged size" { // the artifact holds the whole slot but records no run
+				jc.clone(t, jc.blocks[0], p, func(d *evidence.Derivation) {
+					d.Runs = nil
+					d.Recovery.Assumptions = append(d.Recovery.Assumptions, "read-failed-after=0")
+					d.Recovery.Alloc.Allocated = 0
+				})
+			} else {
+				jc.cutCopy(t, jc.blocks[0], p, tc.n, tc.mark, tc.incomplete, tc.mut)
+			}
+			got := jvProblems(rfVerify(t, jc.s.Case))
+			if len(got) == 0 || !strings.Contains(strings.Join(got, "\n"), tc.want) {
+				t.Fatalf("journal problems %q, want one naming %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// Without the marker a copy is the whole slot, complete.
+func TestVerifyJournalBlockWholeCopyIsComplete(t *testing.T) {
+	jc := newJVCase(t, jrnSpec{})
+	rec := jc.blocks[0]
+	d := *rec.Source.Derived
+	rv := *d.Recovery
+	rv.Basis = slices.Clone(rv.Basis)
+	d.Recovery = &rv
+	data := readArtifact(t, jc.s.Case, rec)
+	p := jc.s.Parent
+	_, _ = jc.s.Case.Capture(p.Source.DeviceID, "forged1", "journal/p1-ext4/seq10-fsblk1-inc.bin", evidence.Source{Kind: rec.Source.Kind, DeviceID: p.Source.DeviceID, Derived: &d},
+		func(w io.Writer) error { _, _ = w.Write(data); return io.ErrUnexpectedEOF })
+	got := jvProblems(rfVerify(t, jc.s.Case))
+	if len(got) != 1 || !strings.Contains(got[0], "incomplete") {
+		t.Fatalf("journal problems %q", got)
+	}
+}
+
+// A genuine partial copy, whose slot cannot be read to the end, stays clean.
+func TestVerifyJournalBlockGenuinePartialCopyIsClean(t *testing.T) {
+	for _, n := range []int{512, 0} {
+		t.Run(fmt.Sprint(n), func(t *testing.T) {
+			jc := newJVCase(t, jrnSpec{})
+			jc.cutCopy(t, jc.blocks[0], "journal/p1-ext4/seq10-fsblk1-cut.bin", n, fmt.Sprint(n), true, nil)
+			defer examine.SetJournalSlotReader(func(_ io.ReaderAt, _, _ int64) (int64, error) {
+				return int64(n), io.ErrUnexpectedEOF
+			})()
+			rep := rfVerify(t, jc.s.Case)
+			if got := jvProblems(rep); len(got) != 0 {
+				t.Fatalf("journal problems %q", got)
+			}
+			if want := 1 + len(jc.blocks) + 1 + 1; rep.JournalRechecked != want {
+				t.Errorf("JournalRechecked = %d, want %d", rep.JournalRechecked, want)
+			}
+		})
+	}
+}
+
+// A journal method on a kind R13 does not recompute is a problem, not silence.
+func TestVerifyJournalMethodOnOtherKindIsAProblem(t *testing.T) {
+	jc := newJVCase(t, jrnSpec{})
+	rec := jc.blocks[0]
+	d := *rec.Source.Derived
+	p := jc.s.Parent
+	if _, err := jc.s.Case.Capture(p.Source.DeviceID, "forged1", "carved/x.bin", evidence.Source{Kind: evidence.KindCarve, DeviceID: p.Source.DeviceID, Derived: &d},
+		func(w io.Writer) error { _, err := w.Write(readArtifact(t, jc.s.Case, rec)); return err }); err != nil {
+		t.Fatal(err)
+	}
+	got := jvProblems(rfVerify(t, jc.s.Case))
+	if !slices.ContainsFunc(got, func(s string) bool { return strings.Contains(s, "not an ext4 journal artifact") }) {
+		t.Fatalf("journal problems %q", got)
+	}
+}

@@ -105,3 +105,11 @@ func SetCarveValidateBudget(n int64) (restore func()) {
 	carveValidateBudget = n
 	return func() { carveValidateBudget = old }
 }
+
+// SetJournalSlotReader replaces how R13 reads a journal log slot again (to simulate a read that fails part way) and
+// returns the restore function.
+func SetJournalSlotReader(f func(r io.ReaderAt, off, n int64) (int64, error)) (restore func()) {
+	old := jrReadSlot
+	jrReadSlot = f
+	return func() { jrReadSlot = old }
+}

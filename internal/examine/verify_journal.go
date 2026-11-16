@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -68,10 +69,8 @@ func jrRoleOf(rec evidence.ManifestRecord) jrRole {
 		return jrBlock
 	case kind == evidence.KindRecover && rv.Class == evidence.ClassDeletedFile && rv.Method == methodJournalInode:
 		return jrFile
-	case kind == evidence.KindReport || kind == evidence.KindJournal || kind == evidence.KindRecover:
-		return jrCrafted
 	}
-	return jrNone
+	return jrCrafted // the ext4-journal method on any other kind or class is never written by this build
 }
 
 type jrChecker struct {
@@ -398,12 +397,8 @@ func (ch *jrPart) block(rec evidence.ManifestRecord) bool {
 		k.problem(rec, "runs unreadable: %v", err)
 		return false
 	}
-	partial := rvHasPrefix(rv.Assumptions, "read-failed-after=")
-	if len(runs) != 1 || runs[0].Offset != off || runs[0].Length <= 0 || runs[0].Length > run.Length || (runs[0].Length != run.Length && !partial) {
-		if len(runs) == 0 && partial {
-			return good // a copy that read nothing has no run to compare
-		}
-		k.problem(rec, "block copy's runs %v differ from the fresh log slot (image offset %d, %d bytes)", runs, off, run.Length)
+	if bad := ch.sliceProblem(rec, runs, off, run.Length); bad != "" {
+		k.problem(rec, "%s", bad)
 		return false
 	}
 	free, unknown, err := ch.views()
@@ -423,10 +418,6 @@ func (ch *jrPart) block(rec evidence.ManifestRecord) bool {
 		good = false
 	}
 	return good
-}
-
-func rvHasPrefix(list []string, prefix string) bool {
-	return slices.ContainsFunc(list, func(s string) bool { return strings.HasPrefix(s, prefix) })
 }
 
 // file checks one file recovered from an inode copy in the journal against a fresh run of the recoverer.
@@ -517,6 +508,60 @@ func (ch *jrPart) fileFits(rec evidence.ManifestRecord, recorded []evidence.Run,
 	}
 	if !runsArePrefix(recorded, fresh) {
 		return fmt.Sprintf("recorded runs are not a prefix of the map the journal gives now for %q", d.FSID)
+	}
+	return ""
+}
+
+// jrReadSlot reads n bytes at off and reports how many were read; a seam for tests.
+var jrReadSlot = func(r io.ReaderAt, off, n int64) (int64, error) {
+	got, err := io.ReadFull(io.NewSectionReader(r, off, n), make([]byte, n))
+	return int64(got), err
+}
+
+// sliceProblem says why the recorded runs, size, incomplete flag and allocation of a block copy are not those of the
+// fresh log slot [off, off+slot); "" when they are. Without the read-failed-after marker the copy is the whole slot,
+// complete. With it the copy claims that the read of the slot failed after N bytes: N must be the canonical count
+// below the slot length, equal to the run (none when 0), the size and the allocation, the artifact must be flagged
+// incomplete, and reading the slot again must fail at the same point (a slot that reads to the end cannot have been
+// cut, so a shortened copy of it is never passed as a clean one).
+func (ch *jrPart) sliceProblem(rec evidence.ManifestRecord, runs []evidence.Run, off, slot int64) string {
+	rv := rec.Source.Derived.Recovery
+	var marks []string
+	for _, a := range rv.Assumptions {
+		if v, ok := strings.CutPrefix(a, "read-failed-after="); ok {
+			marks = append(marks, v)
+		}
+	}
+	allocated := rv.Alloc.Allocated
+	if len(marks) == 0 {
+		switch {
+		case len(runs) != 1 || runs[0].Offset != off || runs[0].Length != slot:
+			return fmt.Sprintf("block copy's runs %v differ from the fresh log slot (image offset %d, %d bytes)", runs, off, slot)
+		case rec.Size != slot || allocated != slot:
+			return fmt.Sprintf("block copy records size %d and allocated %d bytes, the fresh log slot is %d bytes", rec.Size, allocated, slot)
+		case rec.Incomplete:
+			return "block copy is flagged incomplete but records no read-failed-after marker"
+		}
+		return ""
+	}
+	n, err := strconv.ParseInt(marks[0], 10, 64)
+	if len(marks) != 1 || err != nil || strconv.FormatInt(n, 10) != marks[0] || n < 0 || n >= slot {
+		return fmt.Sprintf("block copy's read-failed-after markers %q are not one count below the %d bytes of the fresh log slot", marks, slot)
+	}
+	switch {
+	case n == 0 && len(runs) != 0, n > 0 && (len(runs) != 1 || runs[0].Offset != off || runs[0].Length != n):
+		return fmt.Sprintf("block copy's runs %v are not the first %d bytes of the fresh log slot (image offset %d) its read-failed-after marker records", runs, n, off)
+	case rec.Size != n || allocated != n:
+		return fmt.Sprintf("block copy records size %d and allocated %d bytes, its read-failed-after marker records %d", rec.Size, allocated, n)
+	case !rec.Incomplete:
+		return "block copy records read-failed-after but is not flagged incomplete"
+	}
+	got, rerr := jrReadSlot(ch.s.Image, off, slot)
+	switch {
+	case rerr == nil:
+		return fmt.Sprintf("block copy claims a failed read after %d bytes but the log slot at image offset %d is readable now", n, off)
+	case got != n:
+		return fmt.Sprintf("block copy records read-failed-after=%d but reading the log slot now fails after %d bytes: %v", n, got, rerr)
 	}
 	return ""
 }
