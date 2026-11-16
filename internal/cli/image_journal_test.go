@@ -15,8 +15,8 @@ import (
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/filesys"
 	"github.com/rbenzing/minutiae/internal/filesys/detect"
-	"github.com/rbenzing/minutiae/internal/filesys/ext4/ext4test"
 	"github.com/rbenzing/minutiae/internal/filesys/f2fs/f2fstest"
+	"github.com/rbenzing/minutiae/internal/filesys/hfsplus/hfsplustest"
 )
 
 // `image journal` and `image recover --rollforward` (3H Task 11) through the real F2FS reader on builder images
@@ -198,17 +198,19 @@ func TestImageJournalShowUnknownSeqOfCutChain(t *testing.T) {
 	}
 }
 
-func TestImageJournalOnExt4SaysNotAvailable(t *testing.T) {
-	img := ext4test.Build(ext4test.Options{Extents: true, MetadataCsum: true, Label: "root"}, []ext4test.File{{Path: "/hello.txt", Data: []byte("hello")}})
+// The ext4 reader analyses its journal (3G), so the filesystem whose journal this build does not analyse is HFS+
+// (3G-R26; renamed from TestImageJournalOnExt4SaysNotAvailable).
+func TestImageJournalOnHFSPlusSaysNotAvailable(t *testing.T) {
+	img := hfsplustest.Build(hfsplustest.Options{Label: "ROOT"}, []hfsplustest.File{{Path: "/hello.txt", Data: []byte("hello")}})
 	e := f2Env(t, img)
 	for _, sub := range []string{"ls", "report"} {
 		code, out, errOut := e.journal(sub, e.ref)
-		if code != 1 || !strings.Contains(errOut, "not available for ext4") || strings.Contains(errOut+out, "no journal") {
+		if code != 1 || !strings.Contains(errOut, "not available for hfsplus") || strings.Contains(errOut+out, "no journal") {
 			t.Errorf("%s: exit %d stdout %q stderr %q", sub, code, out, errOut)
 		}
 	}
 	code, _, errOut := e.journal("show", e.ref, "1")
-	if code != 1 || !strings.Contains(errOut, "not available for ext4") {
+	if code != 1 || !strings.Contains(errOut, "not available for hfsplus") {
 		t.Errorf("show: exit %d stderr %q", code, errOut)
 	}
 }

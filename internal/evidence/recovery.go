@@ -85,7 +85,9 @@ type ClassInfo struct {
 	ConfidenceRequired     bool
 	ScopeRequired          bool
 	// Scope is the one scope the class is bound to (empty: the artifact chooses, see ScopeRequired).
-	Scope           string
+	Scope string
+	// Scopes is the set of scopes a class may carry (3G-R15); Scope is then the default a stored empty scope reads as.
+	Scopes          []string
 	JournalRequired bool
 }
 
@@ -94,6 +96,7 @@ func ClassInfos() []ClassInfo {
 	out := make([]ClassInfo, len(classTable))
 	for i, ci := range classTable {
 		ci.MethodPrefixes = slices.Clone(ci.MethodPrefixes)
+		ci.Scopes = slices.Clone(ci.Scopes)
 		out[i] = ci
 	}
 	return out
@@ -115,6 +118,11 @@ func LookupClass(class string) (ClassInfo, bool) {
 // transactions, for which a confidence may not apply. post-checkpoint-file keeps a required confidence, with a
 // ceiling of 60 (3H-R8, spec amendment): the replay never ran and the content blocks are free in the checkpoint
 // view, so a later un-fsynced write may have reused one; such data is never high band.
+// journalScopes is what the two journal classes may carry (3G-R15): "unallocated" for bytes in free space (F2FS
+// roll-forward copies), "journal" for bytes inside the filesystem's own allocated journal (ext4). A stored empty
+// scope reads as the first, the binding every artifact written before the second existed has.
+var journalScopes = []string{"unallocated", "journal"}
+
 var classTable = []ClassInfo{
 	{
 		Class: ClassDeletedFile, Kind: KindRecover, Namespace: nsRecovered,
@@ -139,12 +147,12 @@ var classTable = []ClassInfo{
 	{
 		Class: ClassJournalBlock, Kind: KindJournal, Namespace: "journal",
 		MethodPrefixes: []string{"ext4-journal", RollForwardMethod},
-		MaxConfidence:  100, JournalRequired: true, Scope: "unallocated",
+		MaxConfidence:  100, JournalRequired: true, Scope: "unallocated", Scopes: journalScopes,
 	},
 	{
 		Class: ClassJournalReport, Kind: KindReport, Namespace: "reports",
 		MethodPrefixes: []string{"ext4-journal", RollForwardMethod},
-		MaxConfidence:  100, Scope: "unallocated",
+		MaxConfidence:  100, Scope: "unallocated", Scopes: journalScopes,
 	},
 }
 

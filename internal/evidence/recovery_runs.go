@@ -318,15 +318,20 @@ func CheckRecoveredRuns(rec ManifestRecord, runs []Run) []string {
 			add("%d unknown bytes in a %s artifact", a.Unknown, rv.Class)
 		}
 	}
-	// the scope of the journal classes comes from the class table, not from the stored field
+	// the scope of a class bound to one comes from the class table; the journal classes take their stored one
 	scope := rv.Scope
 	if ci, ok := LookupClass(rv.Class); ok && ci.Scope != "" {
-		scope = ci.Scope
+		if len(ci.Scopes) == 0 || scope == "" {
+			scope = ci.Scope // a stored empty scope of a journal class reads as the old binding
+		}
 	}
 	switch rv.Class {
 	case ClassCarved, ClassJournalBlock, ClassJournalReport:
 		if scope == "unallocated" && (a.Allocated > 0 || a.Unknown > 0) {
 			add("scope unallocated but %d allocated and %d unknown bytes (class %q)", a.Allocated, a.Unknown, rv.Class)
+		}
+		if scope == "journal" && (a.Free > 0 || a.Unknown > 0) {
+			add("scope journal but %d free and %d unknown bytes (class %q; the bytes lie in the allocated journal)", a.Free, a.Unknown, rv.Class)
 		}
 		if scope == "volume" && (a.Allocated > 0 || a.Unknown > 0) {
 			add("scope volume but %d allocated and %d unknown bytes (class %q)", a.Allocated, a.Unknown, rv.Class)

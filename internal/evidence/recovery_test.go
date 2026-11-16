@@ -242,8 +242,8 @@ func TestRecoveryCheckTable(t *testing.T) {
 			r.Journal = &evidence.JournalRef{Seq: 1, Region: "live"}
 			r.Scope = "volume"
 			return r
-		}(), `recovery: scope "volume" does not match "unallocated", which class "journal-block" requires`),
-		mk("journal-report without scope", "report", func() evidence.Recovery { r := good("journal-report", "ext4-journal"); r.Scope = ""; return r }(), `recovery: scope "" does not match "unallocated", which class "journal-report" requires`),
+		}(), `recovery: scope "volume" is not one of unallocated, journal, which class "journal-block" allows`),
+		mk("journal-report without scope", "report", func() evidence.Recovery { r := good("journal-report", "ext4-journal"); r.Scope = ""; return r }(), `recovery: scope "" is not one of unallocated, journal, which class "journal-report" allows`),
 		mk("post-checkpoint-file refuses a journal reference", "recover", func() evidence.Recovery {
 			r := good("post-checkpoint-file", "f2fs-rollforward")
 			r.Journal = &evidence.JournalRef{Seq: 1, Region: "live"}

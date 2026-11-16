@@ -19,6 +19,7 @@ type JournalBlocksOptions struct {
 	JournalOptions
 	Seq      uint32  // the transaction: the chain's sequence (the checkpoint version's low 32 bits)
 	FSBlock  *uint64 // nil = every chain block; else only the node at this filesystem block
+	Region   string  // ext4: "live", "stale" or "" for either; names one of several transactions of a seq
 	MaxFiles int     // 0 = DefaultMaxFiles
 	MaxBytes int64   // 0 = DefaultMaxBytes
 }
@@ -27,6 +28,8 @@ type JournalBlocksOptions struct {
 type JournalBlocksSummary struct {
 	Summary
 	Copied, NotFree int
+	// ext4: the tags that were not copied, by reason (3G-R17)
+	CopyMismatch, Missing, NotAllocated int
 }
 
 // rfBlockSel is one chain node selected for a block copy.
@@ -37,8 +40,9 @@ type rfBlockSel struct {
 	wouldReplay bool
 }
 
-// JournalBlocks copies the node blocks of the roll-forward chain (journal-block artifacts, method
-// f2fs-rollforward). A block is copied only when its whole image range is free in the checkpoint view: one that
+// JournalBlocks copies the blocks of a journal (journal-block artifacts): the node blocks of the roll-forward
+// chain (method f2fs-rollforward) or, for ext4, the logged copies of one transaction (jbd2Blocks, method
+// ext4-journal). F2FS: a block is copied only when its whole image range is free in the checkpoint view: one that
 // is not is skipped as "not-free" (warned and counted), never copied. A seq that is not the chain's, or an
 // FSBlock that is not a chain node, is ErrNotFound before anything is audited.
 func (s *Session) JournalBlocks(ctx context.Context, o JournalBlocksOptions) (JournalBlocksSummary, error) {
@@ -46,9 +50,13 @@ func (s *Session) JournalBlocks(ctx context.Context, o JournalBlocksOptions) (Jo
 	if err != nil {
 		return JournalBlocksSummary{}, err
 	}
-	fsys, part, rf, err := s.rollForwarderForJournal(o.JournalOptions)
+	fsys, part, err := s.FS(o.Partition)
 	if err != nil {
 		return JournalBlocksSummary{}, err
+	}
+	rf, rerr := s.rollForwarderOf(fsys)
+	if rerr != nil {
+		return s.jbd2Blocks(ctx, o, b, fsys, part)
 	}
 	var sel []rfBlockSel
 	chain, err := rf.RollForward(func(n filesys.RollForwardNode) bool {

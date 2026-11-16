@@ -14,7 +14,10 @@ import (
 var ErrJournalNotAvailable = fmt.Errorf("%w: journal analysis is not available for this filesystem in this build", filesys.ErrUnsupported)
 
 // JournalOptions selects the partition (-1 = the only one, as Session.Partition).
-type JournalOptions struct{ Partition int }
+type JournalOptions struct {
+	Partition int
+	NoStale   bool // leave the stale transactions out of a listing and a report (filesystems with no stale region ignore it)
+}
 
 // JournalListing is what a filesystem reports of its journal. It is read-only: no audit entry, no write.
 type JournalListing struct {
@@ -22,10 +25,35 @@ type JournalListing struct {
 	Info   filesys.JournalInfo
 	Txns   []filesys.JournalTxn
 	Chain  *filesys.RollForwardChain // nil when the filesystem is no RollForwarder
+	// StaleOmitted counts the stale transactions JournalOptions.NoStale left out of Txns, so a caller can say so.
+	StaleOmitted int
 }
 
 func notAvailable(fsys filesys.FileSystem) error {
 	return fmt.Errorf("%w (filesystem type %q)", ErrJournalNotAvailable, fsys.Info().Type)
+}
+
+// journalerOf is the Journaler of fsys, or ErrJournalNotAvailable naming the type when the filesystem has no journal
+// analysis in this build. A wrapper that always has the methods says so through SupportsJournal.
+func journalerOf(fsys filesys.FileSystem) (filesys.Journaler, error) {
+	if sup, ok := fsys.(interface{ SupportsJournal() bool }); ok && !sup.SupportsJournal() {
+		return nil, notAvailable(fsys)
+	}
+	j, ok := filesys.As[filesys.Journaler](fsys)
+	if !ok {
+		return nil, notAvailable(fsys)
+	}
+	return j, nil
+}
+
+// journalInfoErr names the filesystem in the error of Journal. A filesystem whose reader says it keeps no journal
+// stays filesys.ErrNoJournal: that is the reader's own, truthful answer (a build with no analysis is
+// ErrJournalNotAvailable and never says it).
+func journalInfoErr(fsys filesys.FileSystem, err error) error {
+	if errors.Is(err, filesys.ErrNoJournal) {
+		return fmt.Errorf("%s: %w", fsys.Info().Type, err)
+	}
+	return err
 }
 
 // JournalList lists the journal of the partition's filesystem: its description, its transactions and, for a
@@ -35,18 +63,22 @@ func (s *Session) JournalList(o JournalOptions) (JournalListing, error) {
 	if err != nil {
 		return JournalListing{}, err
 	}
-	j, ok := filesys.As[filesys.Journaler](fsys)
-	if !ok {
-		return JournalListing{}, notAvailable(fsys)
+	j, err := journalerOf(fsys)
+	if err != nil {
+		return JournalListing{}, err
 	}
 	l := JournalListing{FSType: fsys.Info().Type}
 	if l.Info, err = j.Journal(); err != nil {
-		if errors.Is(err, filesys.ErrNoJournal) {
-			return JournalListing{}, notAvailable(fsys)
-		}
-		return JournalListing{}, err
+		return JournalListing{}, journalInfoErr(fsys, err)
 	}
-	if err = j.JournalTransactions(func(t filesys.JournalTxn) bool { l.Txns = append(l.Txns, t); return true }); err != nil {
+	if err = j.JournalTransactions(func(t filesys.JournalTxn) bool {
+		if o.NoStale && t.Region == "stale" {
+			l.StaleOmitted++
+			return true
+		}
+		l.Txns = append(l.Txns, t)
+		return true
+	}); err != nil {
 		return JournalListing{}, err
 	}
 	if rf, err := s.rollForwarderOf(fsys); err == nil {

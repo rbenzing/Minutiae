@@ -381,3 +381,16 @@ func copyRFNode(n filesys.RollForwardNode) filesys.RollForwardNode {
 	}
 	return n
 }
+
+// SupportsJournal reports whether the wrapped filesystem (or one it wraps) implements filesys.Journaler. The methods
+// are always present on this wrapper (they answer filesys.ErrNoJournal for a filesystem that has none), so callers
+// ask this first: it tells a filesystem whose reader says it keeps no journal from one this build cannot analyse.
+func (s *safeFS) SupportsJournal() (ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	_, ok = filesys.As[filesys.Journaler](s.fs)
+	return ok
+}

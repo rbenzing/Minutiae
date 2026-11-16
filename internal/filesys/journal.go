@@ -19,6 +19,7 @@ type JournalInfo struct {
 	BlockSize     int
 	Blocks        int64  // journal length in blocks
 	Sequence      uint32 // first expected transaction
+	First         uint32 // the first block the log uses (s_first; ext4: logging restarts here after the last block); 0 = not applicable
 	Start         uint32 // 0 = clean (empty live region); F2FS reports the chain start block, even for an empty chain: the 0 = clean convention does not apply there
 	Features      []string
 	NeedsRecovery bool

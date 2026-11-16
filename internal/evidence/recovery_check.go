@@ -62,6 +62,11 @@ func (r *Recovery) Check(kind string) []string {
 		add("algorithm is empty")
 	}
 	switch {
+	case known && len(ci.Scopes) > 0:
+		// the journal classes take one of a set; the artifact says which, and an empty scope is refused
+		if !slices.Contains(ci.Scopes, r.Scope) {
+			add("scope %q is not one of %s, which class %q allows", r.Scope, strings.Join(ci.Scopes, ", "), r.Class)
+		}
 	case known && ci.Scope != "":
 		// the scope of these classes comes from the class table, never from the stored field
 		if r.Scope != ci.Scope {

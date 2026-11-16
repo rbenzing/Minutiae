@@ -85,7 +85,7 @@ func TestJournalInfoOfBuilderJournal(t *testing.T) {
 	})
 	info := jtWant(t, img)
 	want := filesys.JournalInfo{
-		Type: "jbd2", Version: 2, BlockSize: jtBS, Blocks: 64, Sequence: 7, Start: 0,
+		Type: "jbd2", Version: 2, BlockSize: jtBS, Blocks: 64, First: 1, Sequence: 7, Start: 0,
 		Features: []string{"revoke", "64bit", "csum_v3"},
 	}
 	if !reflect.DeepEqual(info, want) {
@@ -95,7 +95,7 @@ func TestJournalInfoOfBuilderJournal(t *testing.T) {
 	// A fresh mke2fs journal (3G-R2): v2 with no features, no checksum and no warning.
 	img, _ = jtImage(t, jtOpts(64), ext4test.JBD2{Sequence: 1})
 	info = jtWant(t, img)
-	want = filesys.JournalInfo{Type: "jbd2", Version: 2, BlockSize: jtBS, Blocks: 64, Sequence: 1}
+	want = filesys.JournalInfo{Type: "jbd2", Version: 2, BlockSize: jtBS, Blocks: 64, First: 1, Sequence: 1}
 	if !reflect.DeepEqual(info, want) {
 		t.Errorf("fresh Journal() = %+v\nwant %+v", info, want)
 	}
@@ -128,7 +128,7 @@ func TestJournalNeedsRecoveryAndStart(t *testing.T) {
 func TestJournalV1Superblock(t *testing.T) {
 	img, _ := jtImage(t, jtOpts(64), ext4test.JBD2{Version: 1, Sequence: 3})
 	info := jtWant(t, img)
-	want := filesys.JournalInfo{Type: "jbd2", Version: 1, BlockSize: jtBS, Blocks: 64, Sequence: 3}
+	want := filesys.JournalInfo{Type: "jbd2", Version: 1, BlockSize: jtBS, Blocks: 64, First: 1, Sequence: 3}
 	if !reflect.DeepEqual(info, want) {
 		t.Errorf("v1 Journal() = %+v\nwant %+v", info, want)
 	}

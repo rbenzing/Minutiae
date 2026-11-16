@@ -81,6 +81,7 @@ func (f *FS) buildIndex(sb *jsuper, jm *journalMap) (*jindex, error) {
 		Version:       sb.version,
 		BlockSize:     int(sb.blockSize),
 		Blocks:        int64(sb.maxLen),
+		First:         sb.first,
 		Sequence:      sb.sequence,
 		Start:         sb.start,
 		Features:      sb.featureNames(),

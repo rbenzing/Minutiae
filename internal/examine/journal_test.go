@@ -8,9 +8,9 @@ import (
 
 	"github.com/rbenzing/minutiae/internal/examine"
 	"github.com/rbenzing/minutiae/internal/filesys"
-	"github.com/rbenzing/minutiae/internal/filesys/ext4/ext4test"
 	"github.com/rbenzing/minutiae/internal/filesys/f2fs/f2fstest"
 	"github.com/rbenzing/minutiae/internal/filesys/fat/fattest"
+	"github.com/rbenzing/minutiae/internal/filesys/hfsplus/hfsplustest"
 )
 
 // Journal listing, report, block copies and the R12 check (3H Task 10) through the real F2FS reader, on
@@ -64,16 +64,15 @@ func TestJournalListOfChain(t *testing.T) {
 	}
 }
 
-// 3G re-rules the journal rows for ext4: when the ext4 reader keeps a journal listing, drop the ext4 case here.
+// The ext4 reader analyses its journal (3G), so the filesystem whose journal this build does not analyse is HFS+ (3G-R26).
 func TestJournalNotAvailableNeverSaysNoJournal(t *testing.T) {
-	ext4Img := ext4test.Build(ext4test.Options{Extents: true, MetadataCsum: true, Label: "root"},
-		[]ext4test.File{{Path: "/hello.txt", Data: []byte("hello")}})
+	hfsImg := hfsplustest.Build(hfsplustest.Options{Label: "ROOT"}, []hfsplustest.File{{Path: "/hello.txt", Data: []byte("hello")}})
 	fatImg := fattest.Build(fattest.Options{Type: 16}, []fattest.File{{Path: "A.TXT", Data: []byte("hi")}})
 	for _, tc := range []struct {
 		name string
 		img  []byte
 		want string
-	}{{"ext4", ext4Img, "ext4"}, {"fat", fatImg, "fat"}} {
+	}{{"hfsplus", hfsImg, "hfsplus"}, {"fat", fatImg, "fat"}} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _ := imageSession(t, tc.img)
 			_, err := s.JournalList(jo)

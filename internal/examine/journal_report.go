@@ -15,6 +15,7 @@ import (
 
 	"github.com/rbenzing/minutiae/internal/evidence"
 	"github.com/rbenzing/minutiae/internal/filesys"
+	"github.com/rbenzing/minutiae/internal/volume"
 )
 
 // RollForwardReportFormat names the line format of the roll-forward report (3H-R12).
@@ -25,9 +26,12 @@ const RollForwardReportFormat = "minutiae-f2fs-rollforward/1"
 type JournalReportSummary struct {
 	Summary
 	Nodes, Files, PostCheckpoint, LiveUpdates, NotReplayed, WouldReplay int
-	Complete                                                            bool
-	Stop                                                                string
-	Path                                                                string
+	// ext4 journal: transactions listed in the report and what they hold (Complete and Stop describe the journal)
+	Txns, LiveTxns, StaleTxns, Tags, Committed, RevokeRecords int
+	Cut                                                       bool // the report ends with a cut line
+	Complete                                                  bool
+	Stop                                                      string
+	Path                                                      string
 }
 
 // reportCutReserve is room kept for the closing "cut" line, so a report never exceeds its limit.
@@ -44,8 +48,9 @@ func reportRel(part int, fsType string) string {
 	return fmt.Sprintf("reports/p%d-%s/rollforward.jsonl", part, fsType)
 }
 
-// JournalReport writes the roll-forward chain of the partition as one deterministic JSONL report artifact
-// (kind report, class journal-report): the chain line, one line per node, one per file and an end line. A
+// JournalReport writes the journal of the partition as one deterministic JSONL report artifact (kind report, class
+// journal-report): the roll-forward chain of F2FS (rollForwardReport) or the jbd2 transactions of ext4
+// (jbd2Report). A roll-forward report holds the chain line, one line per node, one per file and an end line. A
 // chain that stops with later nodes unknown, or a report cut by maxBytes (0 = DefaultMaxBytes), is flagged
 // incomplete. The report is a pure function of the image (3H-R12): case verify renders it again.
 func (s *Session) JournalReport(ctx context.Context, o JournalOptions, maxBytes int64) (JournalReportSummary, error) {
@@ -53,10 +58,18 @@ func (s *Session) JournalReport(ctx context.Context, o JournalOptions, maxBytes 
 	if err != nil {
 		return JournalReportSummary{}, err
 	}
-	fsys, part, rf, err := s.rollForwarderForJournal(o)
+	fsys, part, err := s.FS(o.Partition)
 	if err != nil {
 		return JournalReportSummary{}, err
 	}
+	if rf, rerr := s.rollForwarderOf(fsys); rerr == nil {
+		return s.rollForwardReport(ctx, b, fsys, part, rf)
+	}
+	return s.jbd2Report(ctx, o, b, fsys, part)
+}
+
+// rollForwardReport is the report of a roll-forward chain (F2FS).
+func (s *Session) rollForwardReport(ctx context.Context, b *budget, fsys filesys.FileSystem, part volume.Partition, rf filesys.RollForwarder) (JournalReportSummary, error) {
 	if _, err := rf.RollForward(func(filesys.RollForwardNode) bool { return false }); err != nil { // a pure read: a refusal audits nothing
 		return JournalReportSummary{}, err
 	}
