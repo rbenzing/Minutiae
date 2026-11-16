@@ -341,6 +341,8 @@ type jsonRecoverCandidate struct {
 	Skip         string                `json:"skip,omitempty"`
 	SkipDetail   string                `json:"skip_detail,omitempty"`
 	Warnings     []string              `json:"warnings"`
+	// Journal is the journal transaction the map came from (--use-journal); omitted for every other method.
+	Journal *evidence.JournalRef `json:"journal,omitempty"`
 }
 
 type jsonRecoverSkip struct {
@@ -392,7 +394,7 @@ func newJSONRecoverList(p *examine.RecoverPlan) jsonRecoverList {
 			ji.Candidates = append(ji.Candidates, jsonRecoverCandidate{
 				Method: c.Method, Confidence: c.Confidence, Band: c.Band, Size: c.Size, DeclaredSize: c.DeclaredSize,
 				Runs: jsonRuns(c.Runs), Excluded: jsonRuns(c.Excluded), Alloc: c.Alloc, Basis: nonNil(c.Basis), Assumptions: nonNil(c.Assumptions),
-				Content: c.Content, Encrypted: c.Encrypted, Incomplete: c.PartialWhy(), WouldWrite: c.Skip == "", Skip: c.Skip, SkipDetail: c.SkipDetail(), Warnings: nonNil(c.Warnings),
+				Content: c.Content, Encrypted: c.Encrypted, Incomplete: c.PartialWhy(), WouldWrite: c.Skip == "", Skip: c.Skip, SkipDetail: c.SkipDetail(), Warnings: nonNil(c.Warnings), Journal: c.Journal,
 			})
 		}
 		for _, sk := range it.Skips {

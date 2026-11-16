@@ -18,6 +18,7 @@ import (
 type recoverFlags struct {
 	list, all, allCandidates, keepUniform bool
 	rollForward                           bool
+	useJournal                            string
 	minConfidence                         int
 	maxFiles, maxPlanRuns                 int
 	maxBytes                              int64
@@ -35,6 +36,13 @@ func (f recoverFlags) validate(refs []string) error {
 	}
 	if f.maxBytes < 0 {
 		return usageErrorf("--max-bytes must not be negative, got %d", f.maxBytes)
+	}
+	use, err := filesys.ParseJournalUse(f.useJournal)
+	if err != nil {
+		return usageErrorf("--use-journal: %s", escapeText(err.Error()))
+	}
+	if f.rollForward && use != filesys.JournalUseNone {
+		return usageErrorf("--rollforward and --use-journal are different sources and cannot be combined: choose one")
 	}
 	if f.all && len(refs) > 0 {
 		return usageErrorf("--all and explicit entries or directories are mutually exclusive")
@@ -76,6 +84,7 @@ func newImageRecoverCmd(d Deps, opts *rootOptions) *cobra.Command {
 	cmd.Flags().BoolVar(&f.list, "list", false, "show what a run would write; writes nothing but the usual case.open audit entry")
 	cmd.Flags().BoolVar(&f.all, "all", false, "recover every deleted entry (with --rollforward: every post-checkpoint file)")
 	cmd.Flags().BoolVar(&f.rollForward, "rollforward", false, "recover files that exist only in the roll-forward log (F2FS: written after the last checkpoint) instead of deleted entries; takes --all or id:rollforward:<ino>")
+	cmd.Flags().StringVar(&f.useJournal, "use-journal", "", "also use the filesystem's journal as a source (ext4): none, committed (committed transactions of the live region) or stale (plus committed copies outside it); journal data is history, never the live view; not combinable with --rollforward")
 	cmd.Flags().IntVar(&f.minConfidence, "min-confidence", 0, "skip candidates below this confidence (0..100)")
 	cmd.Flags().BoolVar(&f.allCandidates, "all-candidates", false, "write every candidate of an entry, not only the best")
 	cmd.Flags().BoolVar(&f.keepUniform, "keep-uniform", false, "write candidates whose bytes are all the same value")
@@ -99,8 +108,9 @@ func newImageRecoverCmd(d Deps, opts *rootOptions) *cobra.Command {
 		o := examine.RecoverOptions{
 			Partition: pidx, Refs: refs, All: f.all || (f.list && len(refs) == 0), MinConfidence: f.minConfidence,
 			AllCandidates: f.allCandidates, KeepUniform: f.keepUniform, MaxFiles: f.maxFiles, MaxBytes: f.maxBytes, MaxPlanRuns: f.maxPlanRuns,
-			RollForward: f.rollForward,
+			RollForward: f.rollForward, UseJournal: filesys.JournalUse(f.useJournal),
 		}
+		usesJournal := f.useJournal != "" && f.useJournal != string(filesys.JournalUseNone)
 		noun := "deleted entries"
 		if f.rollForward {
 			noun = "post-checkpoint files"
@@ -114,6 +124,9 @@ func newImageRecoverCmd(d Deps, opts *rootOptions) *cobra.Command {
 				return joinJSON(undecidedBatchErrorFor(nil, plan.SkippedBy["undecided"], noun), writeJSON(d.Out, newJSONRecoverList(plan)))
 			}
 			printRecoverList(d.Out, plan)
+			if usesJournal {
+				fmt.Fprintln(d.Out, journalCaution)
+			}
 			return undecidedBatchErrorFor(nil, plan.SkippedBy["undecided"], noun)
 		}
 		o.Progress = newProgress(d.Err, "recover")
@@ -127,6 +140,9 @@ func newImageRecoverCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return writeRecoverJSON(d.Out, sum, err)
 		}
 		printRecoverRun(d.Out, sum)
+		if usesJournal {
+			fmt.Fprintln(d.Out, journalCaution)
+		}
 		return err
 	}
 	return cmd
@@ -168,6 +184,7 @@ func printRecoverList(w io.Writer, plan *examine.RecoverPlan) {
 			if plan.Chain != nil {
 				line = markPostCheckpoint(line)
 			}
+			line = markJournal(line, c.Journal)
 			if why := c.PartialWhy(); why != "" {
 				line += " [incomplete: " + escapeText(why) + "]"
 			}
@@ -253,6 +270,7 @@ func printRecoverRun(w io.Writer, sum examine.RecoverSummary) {
 		if r.Class == evidence.ClassPostCheckpointFile {
 			line = markPostCheckpoint(line)
 		}
+		line = markJournal(line, r.Journal)
 		if a.Incomplete {
 			line += " [incomplete: " + escapeText(a.Error) + "]"
 		}
@@ -285,6 +303,23 @@ func markPostCheckpoint(line string) string {
 		return line + " [post-checkpoint]"
 	}
 	return line[:i+1] + " [post-checkpoint]" + line[i+1:]
+}
+
+// markJournal puts the [journal seq <s> <region>] marker after the leading [recovered:...] marker of line, for a
+// candidate whose map came from a journal transaction (history, never live); a revoked copy says so.
+func markJournal(line string, j *evidence.JournalRef) string {
+	if j == nil {
+		return line
+	}
+	mark := fmt.Sprintf(" [journal seq %d %s]", j.Seq, escapeText(j.Region))
+	if j.Revoked {
+		mark += " [revoked]"
+	}
+	i := strings.Index(line, "]")
+	if i < 0 {
+		return line + mark
+	}
+	return line[:i+1] + mark + line[i+1:]
 }
 
 // printChainFooter says, for a roll-forward run, that the chain may be cut (its later nodes unknown) and that its
