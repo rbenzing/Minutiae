@@ -112,11 +112,11 @@ func newJSONJBD2Journal(info filesys.JournalInfo) jsonJBD2Journal {
 }
 
 // listJBD2 prints (or writes as JSON) the ext4 journal listing.
-func listJBD2(w io.Writer, asJSON bool, part int, l examine.JournalListing) error {
+func listJBD2(w io.Writer, asJSON bool, part int, l examine.JournalListing, noStale bool) error {
 	if asJSON {
 		out := jsonJBD2Ls{
 			Partition: part, FSType: l.FSType, Type: l.Info.Type, Journal: newJSONJBD2Journal(l.Info),
-			NoStale: l.StaleOmitted > 0, StaleOmitted: l.StaleOmitted, Transactions: []jsonJBD2Txn{},
+			NoStale: noStale, StaleOmitted: l.StaleOmitted, Transactions: []jsonJBD2Txn{},
 		}
 		for _, t := range l.Txns {
 			out.Transactions = append(out.Transactions, newJSONJBD2Txn(t))
@@ -184,6 +184,7 @@ func showJBD2(w io.Writer, asJSON bool, s *examine.Session, jo examine.JournalOp
 			for _, t := range txns {
 				printJBD2Txn(w, t)
 			}
+			fmt.Fprintln(w, journalCaution)
 		}
 		return err
 	}

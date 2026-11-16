@@ -52,9 +52,18 @@ func parseRegion(r string) error {
 	return nil
 }
 
-// noStaleFlag adds --no-stale: the stale transactions of an ext4 journal are left out (F2FS ignores it).
-func noStaleFlag(cmd *cobra.Command) *bool {
-	return cmd.Flags().Bool("no-stale", false, "leave the stale transactions of an ext4 journal out (they are listed by default)")
+// staleFlags adds --stale and --no-stale: the stale transactions of an ext4 journal are listed by default; --stale
+// says so explicitly and --no-stale leaves them out (F2FS ignores both). The returned func gives whether they are left
+// out; naming both flags is a usage error.
+func staleFlags(cmd *cobra.Command) func() (bool, error) {
+	stale := cmd.Flags().Bool("stale", false, "list the stale transactions of an ext4 journal (the default; the flag only says so)")
+	noStale := cmd.Flags().Bool("no-stale", false, "leave the stale transactions of an ext4 journal out (they are listed by default)")
+	return func() (bool, error) {
+		if *stale && *noStale {
+			return false, usageErrorf("--stale and --no-stale exclude each other")
+		}
+		return *noStale, nil
+	}
 }
 
 // regionFlag adds --region, which names one of several ext4 transactions that share a sequence number.
@@ -148,9 +157,13 @@ func newJournalLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 	}
 	casePath := caseFlag(cmd)
 	partition := partitionFlag(cmd, "partition index (default: the only partition with a recognized filesystem)")
-	noStale := noStaleFlag(cmd)
+	staleOpt := staleFlags(cmd)
 	cmd.RunE = func(_ *cobra.Command, args []string) error {
 		pidx, err := partition()
+		if err != nil {
+			return err
+		}
+		noStale, err := staleOpt()
 		if err != nil {
 			return err
 		}
@@ -159,14 +172,14 @@ func newJournalLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		defer closeAll()
-		jo := examine.JournalOptions{Partition: pidx, NoStale: *noStale}
+		jo := examine.JournalOptions{Partition: pidx, NoStale: noStale}
 		l, err := s.JournalList(jo)
 		if err != nil {
 			return journalErr(s, pidx, err)
 		}
 		_, part, _ := s.FS(pidx)
 		if isJBD2(l) {
-			return listJBD2(d.Out, opts.json, part.Index, l)
+			return listJBD2(d.Out, opts.json, part.Index, l, noStale)
 		}
 		out := jsonJournalLs{
 			Partition: part.Index, FSType: l.FSType, Type: l.Info.Type, NeedsRecovery: l.Info.NeedsRecovery,
@@ -281,10 +294,14 @@ func newJournalShowCmd(d Deps, opts *rootOptions) *cobra.Command {
 	}
 	casePath := caseFlag(cmd)
 	partition := partitionFlag(cmd, "partition index (default: the only partition with a recognized filesystem)")
-	noStale := noStaleFlag(cmd)
+	staleOpt := staleFlags(cmd)
 	region := regionFlag(cmd)
 	cmd.RunE = func(_ *cobra.Command, args []string) error {
 		pidx, err := partition()
+		if err != nil {
+			return err
+		}
+		noStale, err := staleOpt()
 		if err != nil {
 			return err
 		}
@@ -302,7 +319,7 @@ func newJournalShowCmd(d Deps, opts *rootOptions) *cobra.Command {
 		defer closeAll()
 		res := jsonJournalShow{Seq: seq, Nodes: []jsonJournalNode{}}
 		var lines strings.Builder
-		jo := examine.JournalOptions{Partition: pidx, NoStale: *noStale}
+		jo := examine.JournalOptions{Partition: pidx, NoStale: noStale}
 		chain, err := s.JournalShow(jo, seq, func(n filesys.RollForwardNode) bool {
 			jn := jsonJournalNode{
 				Index: n.Index, Block: n.Block, NID: n.NID, Ino: n.Ino, Kind: n.Kind, Ofs: n.Ofs, Fsync: n.Fsync, Dentry: n.Dentry,
@@ -375,9 +392,13 @@ func newJournalReportCmd(d Deps, opts *rootOptions) *cobra.Command {
 	casePath := caseFlag(cmd)
 	partition := partitionFlag(cmd, "partition index (default: the only partition with a recognized filesystem)")
 	cmd.Flags().Int64Var(&maxBytes, "max-bytes", 0, fmt.Sprintf("cut the report at this many bytes (default %d; 0 uses the default)", examine.DefaultMaxBytes))
-	noStale := noStaleFlag(cmd)
+	staleOpt := staleFlags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		pidx, err := partition()
+		if err != nil {
+			return err
+		}
+		noStale, err := staleOpt()
 		if err != nil {
 			return err
 		}
@@ -389,7 +410,7 @@ func newJournalReportCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		defer closeAll()
-		sum, err := s.JournalReport(cmd.Context(), examine.JournalOptions{Partition: pidx, NoStale: *noStale}, maxBytes)
+		sum, err := s.JournalReport(cmd.Context(), examine.JournalOptions{Partition: pidx, NoStale: noStale}, maxBytes)
 		if sum.AnalysisID == "" || len(sum.Artifacts) == 0 {
 			if err == nil {
 				err = errors.New("internal error: the roll-forward report wrote no artifact")
@@ -398,7 +419,7 @@ func newJournalReportCmd(d Deps, opts *rootOptions) *cobra.Command {
 		}
 		rec := sum.Artifacts[0]
 		if isJBD2Artifact(rec) {
-			return reportJBD2(d.Out, opts.json, sum, rec, *noStale, err)
+			return reportJBD2(d.Out, opts.json, sum, rec, noStale, err)
 		}
 		j := jsonJournalReport{
 			AnalysisID: sum.AnalysisID, Artifact: rec.ID, Path: rec.Path, Nodes: sum.Nodes, Files: sum.Files,
@@ -469,10 +490,14 @@ func newJournalBlocksCmd(d Deps, opts *rootOptions) *cobra.Command {
 	cmd.Flags().Uint64Var(&fsblock, "fsblock", 0, "copy only the node at this filesystem block")
 	cmd.Flags().IntVar(&maxFiles, "max-files", 0, fmt.Sprintf("stop after this many artifacts (default %d; 0 uses the default)", examine.DefaultMaxFiles))
 	cmd.Flags().Int64Var(&maxBytes, "max-bytes", 0, fmt.Sprintf("stop after this many bytes (default %d; 0 uses the default)", examine.DefaultMaxBytes))
-	noStale := noStaleFlag(cmd)
+	staleOpt := staleFlags(cmd)
 	region := regionFlag(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		pidx, err := partition()
+		if err != nil {
+			return err
+		}
+		noStale, err := staleOpt()
 		if err != nil {
 			return err
 		}
@@ -491,7 +516,7 @@ func newJournalBlocksCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		defer closeAll()
-		o := examine.JournalBlocksOptions{JournalOptions: examine.JournalOptions{Partition: pidx, NoStale: *noStale}, Seq: seq, Region: *region, MaxFiles: maxFiles, MaxBytes: maxBytes}
+		o := examine.JournalBlocksOptions{JournalOptions: examine.JournalOptions{Partition: pidx, NoStale: noStale}, Seq: seq, Region: *region, MaxFiles: maxFiles, MaxBytes: maxBytes}
 		if cmd.Flags().Changed("fsblock") {
 			o.FSBlock = &fsblock
 		}

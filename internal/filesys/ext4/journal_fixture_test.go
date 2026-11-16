@@ -532,7 +532,7 @@ func TestExt4JournalFixturesHoldWhatTheyClaim(t *testing.T) {
 		}
 
 		// every transaction: its header blocks, tags, revokes and commit block as the oracle lists them, parsed from the bytes
-		live, stale, logdumped := 0, 0, 0
+		live, stale, logdumped, shortened := 0, 0, 0, 0
 		for _, tx := range o.Txns {
 			switch tx.Region {
 			case "live":
@@ -561,17 +561,21 @@ func TestExt4JournalFixturesHoldWhatTheyClaim(t *testing.T) {
 			if tx.Committed && !v.csumV3 && tx.Checksum != "not-recorded" {
 				t.Errorf("%s: seq %d: a journal without checksums reports %q", name, tx.Seq, tx.Checksum)
 			}
+			cmpTags := len(tx.Tags)
 			if len(tags) != len(tx.Tags) {
-				// a stale fragment can end where a later boot overwrote a data slot; the oracle then lists fewer tags
+				// a stale fragment can end where a later boot overwrote a data slot; the oracle then lists fewer tags than
+				// the bytes still parse. Counted and bounded (M2 of the Task 13 review), and the common prefix is still compared.
 				if tx.Region == "live" || len(tags) < len(tx.Tags) {
 					t.Errorf("%s: seq %d: %d tags in the oracle, %d in the bytes", name, tx.Seq, len(tx.Tags), len(tags))
+					continue
 				}
-				continue
+				shortened++
+				cmpTags = len(tx.Tags)
 			}
-			if !slices.Equal(revokes, tx.Revoked) && (tx.Region == "live" || !tx.Committed) {
+			if !slices.Equal(revokes, tx.Revoked) && (tx.Region == "live" || !tx.Committed) && cmpTags == len(tags) {
 				t.Errorf("%s: seq %d: revoked %v, the bytes say %v", name, tx.Seq, tx.Revoked, revokes)
 			}
-			for i, tg := range tx.Tags {
+			for i, tg := range tx.Tags[:cmpTags] {
 				rt := tags[i]
 				if rt.fs != tg.FSBlock || rt.slot != tg.JBlk || rt.flags != tg.Flags {
 					t.Errorf("%s: seq %d tag %d: oracle (fs %d, slot %d, flags %#x), bytes (fs %d, slot %d, flags %#x)", name, tx.Seq, i,
@@ -600,6 +604,10 @@ func TestExt4JournalFixturesHoldWhatTheyClaim(t *testing.T) {
 		}
 		if logdumped == 0 {
 			t.Errorf("%s: no transaction confirmed by logdump", name)
+		}
+		// none of the committed images has such a fragment (measured: 0); a regeneration that makes one must say so here
+		if shortened != 0 {
+			t.Errorf("%s: %d stale fragments are shorter in the oracle than in the bytes (measured 0: re-rule the bound)", name, shortened)
 		}
 
 		// the recoveries the oracle derives: the captured bytes hold what equal_source says, in every mode

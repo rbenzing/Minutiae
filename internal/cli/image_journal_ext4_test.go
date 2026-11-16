@@ -514,3 +514,50 @@ func TestImageLsUnchangedByJournal(t *testing.T) {
 		t.Errorf("image ls changed:\n--- before\n%s\n--- after\n%s", before, after)
 	}
 }
+
+// The ambiguous-seq show prints the transaction lines it found, so it ends with the caution like every journal output.
+func TestImageJournalShowAmbiguousSeqPrintsCaution(t *testing.T) {
+	e := jcEnv(t)
+	code, out, _ := e.journal("show", e.ref, "11")
+	if code != 1 || !strings.Contains(out, "transaction 11 [live]") || !strings.HasSuffix(out, journalCaution+"\n") {
+		t.Errorf("exit %d, stdout:\n%s", code, out)
+	}
+}
+
+// no_stale reports the flag, not what happened to be omitted: with no stale transaction to leave out, --no-stale still
+// says the stale ones were not asked for.
+func TestImageJournalLsExt4NoStaleJSONIsTheFlag(t *testing.T) {
+	liveOnly := func(j *ext4test.JBD2) { j.Txns = []ext4test.JTxn{j.Txns[1], j.Txns[2]} }
+	e := jcEnv(t, liveOnly)
+	var j struct {
+		NoStale      bool `json:"no_stale"`
+		StaleOmitted int  `json:"stale_omitted"`
+	}
+	code, out, errOut := e.journal("ls", e.ref, "--no-stale", "--json")
+	if err := json.Unmarshal(jsonPart(out), &j); code != 0 || err != nil || !j.NoStale || j.StaleOmitted != 0 {
+		t.Fatalf("exit %d json %+v %v\n%s%s", code, j, err, out, errOut)
+	}
+	code, out, _ = e.journal("ls", e.ref, "--json")
+	if err := json.Unmarshal(jsonPart(out), &j); code != 0 || err != nil || j.NoStale {
+		t.Errorf("without the flag: exit %d json %+v %v", code, j, err)
+	}
+}
+
+// --stale is the default spelled out (spec 12: [--stale|--no-stale]); giving both is a usage error.
+func TestImageJournalStaleFlag(t *testing.T) {
+	e := jcEnv(t)
+	for _, c := range [][]string{{"ls", e.ref}, {"show", e.ref, "10"}, {"report", e.ref}, {"blocks", e.ref, "10"}} {
+		code, out, errOut := e.journal(c[0], append(c[1:], "--stale")...)
+		if code != 0 || !strings.Contains(out, journalCaution) {
+			t.Errorf("%s --stale: exit %d\n%s%s", c[0], code, out, errOut)
+		}
+		code, out, errOut = e.journal(c[0], append(c[1:], "--stale", "--no-stale")...)
+		if code != 2 || out != "" || !strings.Contains(errOut, "--stale") || !strings.Contains(errOut, "--no-stale") {
+			t.Errorf("%s --stale --no-stale: exit %d stdout %q stderr %q, want 2", c[0], code, out, errOut)
+		}
+	}
+	code, out, _ := e.journal("ls", e.ref, "--stale")
+	if code != 0 || !strings.Contains(out, "[stale]") {
+		t.Errorf("--stale lists the stale transactions: exit %d\n%s", code, out)
+	}
+}

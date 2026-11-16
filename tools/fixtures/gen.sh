@@ -51,7 +51,7 @@ separate=(hfsplus apfs-populated fat-recover exfat-recover f2fs-recover f2fs-rol
 
 usage() {
   echo "usage: gen.sh <fixture>|all" >&2
-  echo "fixtures: ${order[*]} (all), ${separate[*]} (not in all: run hfsplus in the minutiae-fixtures-hfs image, apfs-populated in the minutiae-fixtures-apfs image, fat-recover, exfat-recover, f2fs-recover, f2fs-rollforward, ext4-xattr and slack in the minutiae-recover-fixtures image, ext4-recover in the minutiae-recover-fixtures-510 image, carve in the minutiae-carve-fixtures image)" >&2
+  echo "fixtures: ${order[*]} (all), ${separate[*]} (not in all: run hfsplus in the minutiae-fixtures-hfs image, apfs-populated in the minutiae-fixtures-apfs image, fat-recover, exfat-recover, f2fs-recover, f2fs-rollforward, ext4-xattr and slack in the minutiae-recover-fixtures image, ext4-recover and ext4-journal in the minutiae-recover-fixtures-510 image, carve in the minutiae-carve-fixtures image)" >&2
   exit 2
 }
 

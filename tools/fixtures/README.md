@@ -1408,7 +1408,7 @@ source hashes). Task 14 holds the journal reader to the oracle.
 added to the format of plan 3G-R21 because family `jinline` needs it. The journal is 1024 blocks (`-J size=1`, gate J9). Journal of
 the committed images (from the oracle): `ext4-journal-clean` 178 transactions, all stale, journal sequence 329, `s_start` 0, all 178
 confirmed by `logdump -O`; `ext4-journal-crash` 59 transactions (5 live, sequence 66 to 70, `needs_recovery`, `s_start` 1, all 5
-confirmed by `logdump -a`; 54 stale ones from the boot before); `ext3-journal-clean` 6 transactions, no checksums, 8-byte tags, 1
+confirmed by `logdump -a`; 54 stale ones from the boot before, which the raw decoder of the self-check and the oracle's own decoder read but `logdump` does not: no external tool confirms them); `ext3-journal-clean` 6 transactions, no checksums, 8-byte tags, 1
 confirmed by `logdump -O`.
 
 ### The boots
@@ -1447,7 +1447,7 @@ a freed inode number is taken by the next file created in the same group, lowest
 logging at `s_first`, so a shorter later boot overwrites only the head of the log, and the targets are written late in a long boot.
 The probe's `O_DIRECT` reads of the disk (README, "ext4 journal probe (3G)") forced the kernel to write the buffers of the blocks they
 read; the fixture boots read nothing that way, so the crash image is as the kernel left it: `e2fsck -fn` exits 0 on it (the probe's
-exit 4 was caused by that read), and `generator.fsck_exit` records the exit of every image.
+exit 4 was most likely caused by that read), and `generator.fsck_exit` records the exit of every image.
 
 ### Families
 

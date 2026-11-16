@@ -325,6 +325,11 @@ func (x *jindex) scanTxn(f *FS, start uint32, expected uint32, stale bool) (next
 			if stale && !t.committed && stop != "" {
 				t.warnings = append(t.warnings, fmt.Sprintf("the fragment has no commit block (%s)", stop))
 			}
+			if !t.committed && t.csum == "ok" {
+				// the transaction checksum is the commit block's: with no commit block none was recorded (the descriptor and tag
+				// checksums that did verify are the tags' copy states), so "ok" would claim a check that never ran
+				t.csum = "not-recorded"
+			}
 			t.tags[1], t.revokes[1] = uint32(len(x.tags)), uint32(len(x.revokes))
 			x.txns = append(x.txns, t)
 		}
