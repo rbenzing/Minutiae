@@ -39,9 +39,27 @@ func journalErr(s *examine.Session, pidx int, err error) error {
 }
 
 func newImageJournalCmd(d Deps, opts *rootOptions) *cobra.Command {
-	cmd := newGroupCmd("journal", "List and export the journal of a partition's filesystem (F2FS roll-forward log)")
+	cmd := newGroupCmd("journal", "List and export the journal of a partition's filesystem (ext4 jbd2 journal, F2FS roll-forward log)")
 	cmd.AddCommand(newJournalLsCmd(d, opts), newJournalShowCmd(d, opts), newJournalReportCmd(d, opts), newJournalBlocksCmd(d, opts))
 	return cmd
+}
+
+// parseRegion validates a --region value: "", live or stale. Anything else is a usage error.
+func parseRegion(r string) error {
+	if r != "" && r != "live" && r != "stale" {
+		return usageErrorf("invalid --region %q: expected live or stale", r)
+	}
+	return nil
+}
+
+// noStaleFlag adds --no-stale: the stale transactions of an ext4 journal are left out (F2FS ignores it).
+func noStaleFlag(cmd *cobra.Command) *bool {
+	return cmd.Flags().Bool("no-stale", false, "leave the stale transactions of an ext4 journal out (they are listed by default)")
+}
+
+// regionFlag adds --region, which names one of several ext4 transactions that share a sequence number.
+func regionFlag(cmd *cobra.Command) *string {
+	return cmd.Flags().String("region", "", "ext4: live or stale, to name one of several transactions with the same sequence")
 }
 
 // parseSeq parses a transaction sequence number.
@@ -121,13 +139,16 @@ func newJournalLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ls <ref> [-p N]",
 		Short: "List the journal of a partition's filesystem (read-only)",
-		Long: "Ls describes the journal of the filesystem and its transactions. For F2FS it lists the roll-forward log: the\n" +
+		Long: "Ls describes the journal of the filesystem and its transactions. For ext4 it lists the jbd2 journal: the live\n" +
+			"region a recovery would scan and the stale transactions still physically present (--no-stale leaves those out);\n" +
+			"none of them was replayed. For F2FS it lists the roll-forward log: the\n" +
 			"nodes written after the last checkpoint. Nothing is written to the case but the usual case.open audit entry.\n" +
 			"A checkpoint written at a clean unmount does not mean the log is empty: read the node count, not the checkpoint.",
 		Args: exactArgs(1),
 	}
 	casePath := caseFlag(cmd)
 	partition := partitionFlag(cmd, "partition index (default: the only partition with a recognized filesystem)")
+	noStale := noStaleFlag(cmd)
 	cmd.RunE = func(_ *cobra.Command, args []string) error {
 		pidx, err := partition()
 		if err != nil {
@@ -138,12 +159,15 @@ func newJournalLsCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		defer closeAll()
-		jo := examine.JournalOptions{Partition: pidx}
+		jo := examine.JournalOptions{Partition: pidx, NoStale: *noStale}
 		l, err := s.JournalList(jo)
 		if err != nil {
 			return journalErr(s, pidx, err)
 		}
 		_, part, _ := s.FS(pidx)
+		if isJBD2(l) {
+			return listJBD2(d.Out, opts.json, part.Index, l)
+		}
 		out := jsonJournalLs{
 			Partition: part.Index, FSType: l.FSType, Type: l.Info.Type, NeedsRecovery: l.Info.NeedsRecovery,
 			Transactions: []jsonJournalTxn{}, Warnings: append([]string{}, l.Info.Warnings...), Complete: true,
@@ -248,13 +272,17 @@ func newJournalShowCmd(d Deps, opts *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "show <ref> <seq> [-p N]",
 		Short: "Show the nodes of one transaction of the journal (read-only)",
-		Long: "Show prints one line per node of the roll-forward log (the transaction named by the sequence that ls prints):\n" +
+		Long: "Show prints one transaction of the journal. For ext4 it prints the transaction line and one line per logged\n" +
+			"block (a sequence that names a live and a stale transaction needs --region). For F2FS it prints one line per node of\n" +
+			"the roll-forward log (the transaction named by the sequence that ls prints):\n" +
 			"its block, ids, kind, marks, whether a replay would apply it and whether its inode number is live. Nothing is\n" +
 			"written to the case but the usual case.open audit entry.",
 		Args: exactArgs(2),
 	}
 	casePath := caseFlag(cmd)
 	partition := partitionFlag(cmd, "partition index (default: the only partition with a recognized filesystem)")
+	noStale := noStaleFlag(cmd)
+	region := regionFlag(cmd)
 	cmd.RunE = func(_ *cobra.Command, args []string) error {
 		pidx, err := partition()
 		if err != nil {
@@ -264,6 +292,9 @@ func newJournalShowCmd(d Deps, opts *rootOptions) *cobra.Command {
 		if err != nil {
 			return err
 		}
+		if err := parseRegion(*region); err != nil {
+			return err
+		}
 		s, closeAll, err := openImageSession(d, *casePath, args[0])
 		if err != nil {
 			return err
@@ -271,7 +302,8 @@ func newJournalShowCmd(d Deps, opts *rootOptions) *cobra.Command {
 		defer closeAll()
 		res := jsonJournalShow{Seq: seq, Nodes: []jsonJournalNode{}}
 		var lines strings.Builder
-		chain, err := s.JournalShow(examine.JournalOptions{Partition: pidx}, seq, func(n filesys.RollForwardNode) bool {
+		jo := examine.JournalOptions{Partition: pidx, NoStale: *noStale}
+		chain, err := s.JournalShow(jo, seq, func(n filesys.RollForwardNode) bool {
 			jn := jsonJournalNode{
 				Index: n.Index, Block: n.Block, NID: n.NID, Ino: n.Ino, Kind: n.Kind, Ofs: n.Ofs, Fsync: n.Fsync, Dentry: n.Dentry,
 				WouldReplay: n.WouldReplay, LiveIno: n.LiveIno, Next: n.Next,
@@ -294,6 +326,9 @@ func newJournalShowCmd(d Deps, opts *rootOptions) *cobra.Command {
 			res.Nodes = append(res.Nodes, jn)
 			return true
 		})
+		if errors.Is(err, examine.ErrJournalNotAvailable) { // not a roll-forward filesystem: the ext4 journal, or none
+			return showJBD2(d.Out, opts.json, s, jo, seq, *region, func(err error) error { return journalErr(s, pidx, err) })
+		}
 		if err != nil {
 			return journalErr(s, pidx, err)
 		}
@@ -330,7 +365,9 @@ func newJournalReportCmd(d Deps, opts *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "report <ref> [-p N] [--max-bytes N]",
 		Short: "Write the roll-forward log of a partition into the case as a report artifact",
-		Long: "Report writes reports/p<N>-f2fs/rollforward.jsonl: one line per chain node and per file, as a derived artifact\n" +
+		Long: "Report writes a derived artifact that case verify renders again from the image. For ext4 it is\n" +
+			"reports/p<N>-ext4/journal.jsonl: one line per transaction and per logged block (--no-stale leaves the stale\n" +
+			"transactions out). For F2FS it is reports/p<N>-f2fs/rollforward.jsonl: one line per chain node and per file, as a derived artifact\n" +
 			"that case verify renders again from the image. A chain cut with later nodes unknown, or a report cut by\n" +
 			"--max-bytes, is kept and flagged INCOMPLETE; the command still exits 0.",
 		Args: exactArgs(1),
@@ -338,6 +375,7 @@ func newJournalReportCmd(d Deps, opts *rootOptions) *cobra.Command {
 	casePath := caseFlag(cmd)
 	partition := partitionFlag(cmd, "partition index (default: the only partition with a recognized filesystem)")
 	cmd.Flags().Int64Var(&maxBytes, "max-bytes", 0, fmt.Sprintf("cut the report at this many bytes (default %d; 0 uses the default)", examine.DefaultMaxBytes))
+	noStale := noStaleFlag(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		pidx, err := partition()
 		if err != nil {
@@ -351,7 +389,7 @@ func newJournalReportCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		defer closeAll()
-		sum, err := s.JournalReport(cmd.Context(), examine.JournalOptions{Partition: pidx}, maxBytes)
+		sum, err := s.JournalReport(cmd.Context(), examine.JournalOptions{Partition: pidx, NoStale: *noStale}, maxBytes)
 		if sum.AnalysisID == "" || len(sum.Artifacts) == 0 {
 			if err == nil {
 				err = errors.New("internal error: the roll-forward report wrote no artifact")
@@ -359,6 +397,9 @@ func newJournalReportCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return journalErr(s, pidx, err)
 		}
 		rec := sum.Artifacts[0]
+		if isJBD2Artifact(rec) {
+			return reportJBD2(d.Out, opts.json, sum, rec, *noStale, err)
+		}
 		j := jsonJournalReport{
 			AnalysisID: sum.AnalysisID, Artifact: rec.ID, Path: rec.Path, Nodes: sum.Nodes, Files: sum.Files,
 			PostCheckpoint: sum.PostCheckpoint, LiveUpdates: sum.LiveUpdates, NotReplayed: sum.NotReplayed, WouldReplay: sum.WouldReplay,
@@ -415,7 +456,10 @@ func newJournalBlocksCmd(d Deps, opts *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "blocks <ref> <seq> [-p N] [--fsblock N] [--max-files N] [--max-bytes N]",
 		Short: "Copy the node blocks of the roll-forward log into the case",
-		Long: "Blocks writes one journal-block artifact per node of the roll-forward log (or only the node at --fsblock), under\n" +
+		Long: "Blocks writes one journal-block artifact per logged block of an ext4 transaction (or only the block at --fsblock),\n" +
+			"under journal/p<N>-ext4/: the exact bytes of its log slot. A block whose copy fails its checksum, has no readable\n" +
+			"copy or lies in space the bitmap calls free is counted and never copied.\n" +
+			"For F2FS it writes one journal-block artifact per node of the roll-forward log (or only the node at --fsblock), under\n" +
 			"journal/p<N>-f2fs/. A block is copied only when the checkpoint view reports it free; one that is not is counted\n" +
 			"as skipped not-free and never copied.",
 		Args: exactArgs(2),
@@ -425,6 +469,8 @@ func newJournalBlocksCmd(d Deps, opts *rootOptions) *cobra.Command {
 	cmd.Flags().Uint64Var(&fsblock, "fsblock", 0, "copy only the node at this filesystem block")
 	cmd.Flags().IntVar(&maxFiles, "max-files", 0, fmt.Sprintf("stop after this many artifacts (default %d; 0 uses the default)", examine.DefaultMaxFiles))
 	cmd.Flags().Int64Var(&maxBytes, "max-bytes", 0, fmt.Sprintf("stop after this many bytes (default %d; 0 uses the default)", examine.DefaultMaxBytes))
+	noStale := noStaleFlag(cmd)
+	region := regionFlag(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		pidx, err := partition()
 		if err != nil {
@@ -432,6 +478,9 @@ func newJournalBlocksCmd(d Deps, opts *rootOptions) *cobra.Command {
 		}
 		seq, err := parseSeq(args[1])
 		if err != nil {
+			return err
+		}
+		if err := parseRegion(*region); err != nil {
 			return err
 		}
 		if maxFiles < 0 || maxBytes < 0 {
@@ -442,13 +491,16 @@ func newJournalBlocksCmd(d Deps, opts *rootOptions) *cobra.Command {
 			return err
 		}
 		defer closeAll()
-		o := examine.JournalBlocksOptions{JournalOptions: examine.JournalOptions{Partition: pidx}, Seq: seq, MaxFiles: maxFiles, MaxBytes: maxBytes}
+		o := examine.JournalBlocksOptions{JournalOptions: examine.JournalOptions{Partition: pidx, NoStale: *noStale}, Seq: seq, Region: *region, MaxFiles: maxFiles, MaxBytes: maxBytes}
 		if cmd.Flags().Changed("fsblock") {
 			o.FSBlock = &fsblock
 		}
 		sum, err := s.JournalBlocks(cmd.Context(), o)
 		if sum.AnalysisID == "" {
 			return journalErr(s, pidx, err)
+		}
+		if l, lerr := s.JournalList(o.JournalOptions); lerr == nil && isJBD2(l) {
+			return blocksJBD2(d.Out, opts.json, seq, l, sum, err)
 		}
 		res := jsonJournalBlocks{AnalysisID: sum.AnalysisID, Seq: seq, Copied: sum.Copied, NotFree: sum.NotFree, Complete: true, Blocks: []jsonJournalBlock{}}
 		if l, lerr := s.JournalList(o.JournalOptions); lerr == nil && l.Chain != nil { // the copies cover the nodes read, not an unknown tail
