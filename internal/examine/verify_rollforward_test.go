@@ -159,6 +159,7 @@ func TestVerifyRollForwardRunsNotAPrefix(t *testing.T) {
 		d.FSPath, d.FSID = good.FSPath, good.FSID
 		d.Runs = []evidence.Run{shifted}
 		rv := *good.Recovery
+		rv.Assumptions = append(append([]string(nil), rv.Assumptions...), fmt.Sprintf("size-declared=%d", good.Runs[0].Length))
 		rv.Alloc = evidence.AllocSummary{Free: bs}
 		d.Recovery = &rv
 	})
@@ -197,5 +198,69 @@ func TestVerifyChecksIncludeRollForward(t *testing.T) {
 	}
 	if got := runs[len(runs)-1].Details["rollforward_rechecked"]; fmt.Sprint(got) != "5" {
 		t.Errorf("verify.run rollforward_rechecked = %v, want 5", got)
+	}
+}
+
+// truncated forges a post-checkpoint artifact of good's file, cut to its first bs bytes with runs, size and
+// allocation summary rewritten consistently; mut adjusts the recovery record.
+func (rc *rfCase) truncated(t *testing.T, path string, mut func(r *evidence.Recovery)) evidence.ManifestRecord {
+	t.Helper()
+	good := rc.files[0].Source.Derived
+	cut := evidence.Run{Offset: good.Runs[0].Offset, Length: bs}
+	return rc.craft(t, evidence.KindRecover, path, rc.disk[cut.Offset:cut.Offset+bs], func(d *evidence.Derivation) {
+		d.FSPath, d.FSID = good.FSPath, good.FSID
+		d.Runs = []evidence.Run{cut}
+		rv := *good.Recovery
+		rv.Assumptions = append([]string(nil), good.Recovery.Assumptions...)
+		rv.Alloc = evidence.AllocSummary{Free: bs}
+		mut(&rv)
+		d.Recovery = &rv
+	})
+}
+
+// 3H-R13 e: the artifact's size must be the fresh candidate's, or smaller with the size-declared assumption.
+func TestVerifyRollForwardTruncatedWithoutAssumption(t *testing.T) {
+	rc := newRFCase(t)
+	rc.truncated(t, "recovered/p1-f2fs/000097-t.bin", func(*evidence.Recovery) {})
+	got := rfProblems(rfVerify(t, rc.s.Case))
+	if len(got) != 1 || !strings.Contains(got[0], "size") {
+		t.Fatalf("rollforward problems %q", got)
+	}
+}
+
+func TestVerifyRollForwardTruncatedWithSizeDeclared(t *testing.T) {
+	rc := newRFCase(t)
+	size := rc.files[0].Source.Derived.Runs[0].Length
+	rc.truncated(t, "recovered/p1-f2fs/000096-t.bin", func(r *evidence.Recovery) {
+		r.Assumptions = append(r.Assumptions, fmt.Sprintf("size-declared=%d", size), "prefix-only")
+	})
+	if got := rfProblems(rfVerify(t, rc.s.Case)); len(got) != 0 {
+		t.Fatalf("a declared cut verified with problems %q", got)
+	}
+}
+
+func TestVerifyRollForwardTruncatedWrongSizeDeclared(t *testing.T) {
+	rc := newRFCase(t)
+	rc.truncated(t, "recovered/p1-f2fs/000095-t.bin", func(r *evidence.Recovery) {
+		r.Assumptions = append(r.Assumptions, "size-declared=1")
+	})
+	if got := rfProblems(rfVerify(t, rc.s.Case)); len(got) != 1 {
+		t.Fatalf("rollforward problems %q", got)
+	}
+}
+
+func TestVerifyRollForwardMethodMismatch(t *testing.T) {
+	rc := newRFCase(t)
+	good := rc.files[0].Source.Derived
+	rc.craft(t, evidence.KindRecover, "recovered/p1-f2fs/000094-m.bin", rc.disk[good.Runs[0].Offset:good.Runs[0].Offset+good.Runs[0].Length], func(d *evidence.Derivation) {
+		d.FSPath, d.FSID = good.FSPath, good.FSID
+		d.Runs = append([]evidence.Run(nil), good.Runs...)
+		rv := *good.Recovery
+		rv.Method = "f2fs-rollforward-other"
+		d.Recovery = &rv
+	})
+	got := rfProblems(rfVerify(t, rc.s.Case))
+	if len(got) != 1 || !strings.Contains(got[0], "method") {
+		t.Fatalf("rollforward problems %q", got)
 	}
 }

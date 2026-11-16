@@ -381,7 +381,24 @@ func (ch *rfChain) file(rec evidence.ManifestRecord) bool {
 		k.problem(rec, "runs unreadable: %v", err)
 		return false
 	}
-	fresh, ok := freshRuns(ch.part.Start, f.Candidates[0].Runs)
+	cand := f.Candidates[0]
+	if d.Recovery == nil || d.Recovery.Method != cand.Method {
+		got := ""
+		if d.Recovery != nil {
+			got = d.Recovery.Method
+		}
+		k.problem(rec, "recorded method %q differs from the method %q the chain gives now for %q", got, cand.Method, d.FSID)
+		return false
+	}
+	switch {
+	case rec.Size > cand.Size:
+		k.problem(rec, "recorded size %d exceeds the %d bytes the chain gives now for %q", rec.Size, cand.Size, d.FSID)
+		return false
+	case rec.Size < cand.Size && !slices.Contains(d.Recovery.Assumptions, fmt.Sprintf("size-declared=%d", cand.Size)):
+		k.problem(rec, "recorded size %d is short of the %d bytes the chain gives now for %q and does not declare it (size-declared=%d)", rec.Size, cand.Size, d.FSID, cand.Size)
+		return false
+	}
+	fresh, ok := freshRuns(ch.part.Start, cand.Runs)
 	if !ok {
 		k.problem(rec, "the map the chain gives now for %q has a run whose image offset overflows", d.FSID)
 		return false
