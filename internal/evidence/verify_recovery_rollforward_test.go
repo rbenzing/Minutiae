@@ -184,3 +184,54 @@ func requireNoNotice(t *testing.T, rep evidence.VerifyReport, substr string) {
 		}
 	}
 }
+
+// 3G-R18: the kind-report notice counts the reports that neither R12 nor R13 recomputed; a mark of one family never
+// silences the other's.
+func TestVerifyReportNoticeCountsBothMarks(t *testing.T) {
+	report := func(method, path string) evidencetest.RecoveredSpec {
+		return evidencetest.RecoveredSpec{
+			Kind: evidence.KindReport, Class: evidence.ClassJournalReport, Method: method, Path: path,
+			Runs: []evidence.Run{{Offset: 0, Length: 64}},
+		}
+	}
+	none := func(_, _ string) []string { return nil }
+	onlyF := func(f, _ string) []string { return []string{f} }
+	onlyE := func(_, e string) []string { return []string{e} }
+	both := func(f, e string) []string { return []string{f, e} }
+	for _, tc := range []struct {
+		name       string
+		r12, r13   func(f, e string) []string
+		wantNotice string // "" = no kind-report notice
+	}{
+		{"neither", none, none, `kind "report": 2 artifact(s)`},
+		{"only R12", onlyF, none, `kind "report": 1 artifact(s)`},
+		{"only R13", none, onlyE, `kind "report": 1 artifact(s)`},
+		{"both", onlyF, onlyE, ""},
+		{"R12 names the ext4 report", onlyE, none, `kind "report": 2 artifact(s)`},
+		{"R13 names the F2FS report", none, onlyF, `kind "report": 2 artifact(s)`},
+		{"both name both", both, both, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, parent, data := recoverParent(t)
+			rf := evidencetest.AddRecovered(t, c, parent, data, report("f2fs-rollforward", "reports/p1-mtfs/rollforward.jsonl"))
+			ex := evidencetest.AddRecovered(t, c, parent, data, report("ext4-journal", "reports/p1-mtfs/journal.jsonl"))
+			mark := func(_ context.Context, _ *evidence.Case, _ []evidence.ManifestRecord, rep *evidence.VerifyReport) {
+				rep.MarkRollForwardRan(tc.r12(rf.ID, ex.ID))
+				rep.MarkJournalReportsChecked(tc.r13(rf.ID, ex.ID))
+			}
+			rep, err := c.VerifyWith(context.Background(), mark)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantNotice == "" {
+				for _, n := range rep.Notices {
+					if strings.Contains(n, `kind "report"`) {
+						t.Errorf("notice remains: %s", n)
+					}
+				}
+				return
+			}
+			evidencetest.RequireNotice(t, rep, tc.wantNotice)
+		})
+	}
+}

@@ -55,7 +55,8 @@ func unreproducedNotices(rep *VerifyReport) {
 		}
 		n := rep.recoveredByKind[k]
 		if k == KindReport {
-			n -= rep.rollForwardRechecked() // R12 recomputed those byte for byte (3H-R13 e)
+			n -= rep.rollForwardRechecked()    // R12 recomputed those byte for byte (3H-R13 e)
+			n -= rep.journalReportsRechecked() // R13 rendered the ext4 ones again (3G-R18)
 		}
 		if n > 0 {
 			rep.noticef("kind %q: %d artifact(s) are not reproduced byte for byte by this build (no rule for the kind yet)", k, n)
@@ -143,6 +144,12 @@ func (c *Case) verifyRecovered(rep *VerifyReport, recs []ManifestRecord) {
 					rep.rfReports = map[string]bool{}
 				}
 				rep.rfReports[r.ID] = true
+			}
+			if kind == KindReport && d != nil && d.Recovery != nil && strings.HasPrefix(d.Recovery.Method, Ext4JournalMethod) {
+				if rep.jrReports == nil {
+					rep.jrReports = map[string]bool{}
+				}
+				rep.jrReports[r.ID] = true
 			}
 			if d != nil && d.Recovery != nil {
 				cls := d.Recovery.Class

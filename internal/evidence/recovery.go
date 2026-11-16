@@ -162,6 +162,11 @@ const nsRecovered = "recovered"
 // the report (3H). The composed checks R9 and R12 select on it.
 const RollForwardMethod = "f2fs-rollforward"
 
+// Ext4JournalMethod is the method prefix of the ext4 journal artifacts (3G): the jbd2 report and the block copies
+// ("ext4-journal") and the files recovered from an inode copy in the journal ("ext4-journal-inode"). The composed
+// check R13 selects on it.
+const Ext4JournalMethod = "ext4-journal"
+
 // ConfidenceBand names the band of a confidence: high >= 70, medium 40-69,
 // low 0-39, and "" outside 0..100.
 func ConfidenceBand(c int) string {

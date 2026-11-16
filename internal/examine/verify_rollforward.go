@@ -113,21 +113,7 @@ func verifyRollForward(ctx context.Context, c *evidence.Case, recs []evidence.Ma
 	for g := range groups {
 		keys = append(keys, g)
 	}
-	slices.SortFunc(keys, func(x, y rfGroup) int {
-		if r := strings.Compare(x.parent, y.parent); r != 0 {
-			return r
-		}
-		if x.partition != y.partition {
-			return x.partition - y.partition
-		}
-		if x.offset != y.offset {
-			if x.offset < y.offset {
-				return -1
-			}
-			return 1
-		}
-		return strings.Compare(x.fsType, y.fsType)
-	})
+	slices.SortFunc(keys, cmpRFGroup)
 	var (
 		sess   *Session
 		sessID string
@@ -450,4 +436,21 @@ func runsArePrefix(rec, fresh []evidence.Run) bool {
 		}
 	}
 	return true
+}
+
+// cmpRFGroup orders the partitions a check visits: by parent, partition, offset and filesystem type.
+func cmpRFGroup(x, y rfGroup) int {
+	if r := strings.Compare(x.parent, y.parent); r != 0 {
+		return r
+	}
+	if x.partition != y.partition {
+		return x.partition - y.partition
+	}
+	if x.offset != y.offset {
+		if x.offset < y.offset {
+			return -1
+		}
+		return 1
+	}
+	return strings.Compare(x.fsType, y.fsType)
 }

@@ -46,8 +46,12 @@ type VerifyReport struct {
 	// that the composed check R12 recomputed from the image and found equal. It is in the verify.run audit entry
 	// ("rollforward_rechecked"), not in the report JSON (whose key set is fixed); 0 together with the notices
 	// means "not recomputed", never "checked and clean".
-	RollForwardRechecked int      `json:"-"`
-	Problems             []string `json:"problems"`
+	RollForwardRechecked int `json:"-"`
+	// JournalRechecked counts the ext4 journal artifacts (report, block copies, journal-recovered files) that the
+	// composed check R13 recomputed from the image and found equal. Audit-only like RollForwardRechecked
+	// ("journal_rechecked"); 0 together with the notices means "not recomputed", never "checked and clean".
+	JournalRechecked int      `json:"-"`
+	Problems         []string `json:"problems"`
 	// Notices are findings that are not integrity problems (for example an
 	// announced upgrade that was never concluded); never silent.
 	Notices []string `json:"notices"`
@@ -60,6 +64,8 @@ type VerifyReport struct {
 	gapsRan         bool            // R10 ran in this verify (MarkGapsRan)
 	rfMarked        map[string]bool // artifact ids R12 says it recomputed (MarkRollForwardRan)
 	rfReports       map[string]bool // report artifacts of method f2fs-rollforward in the manifest (set by the built-in check)
+	jrMarked        map[string]bool // artifact ids R13 says it rendered again (MarkJournalReportsChecked)
+	jrReports       map[string]bool // report artifacts of an ext4-journal method in the manifest (set by the built-in check)
 	gapArtifacts    int             // artifacts whose gap note R10 recomputes: extract, unallocated and carve (not scope artifact); set by the built-in check
 	deletedFiles    int             // artifacts R9 rechecks: deleted-file recoveries and carves (not scope artifact); set by the built-in check
 	cancelCut       bool            // a phase was cut short by the end of the verify context
@@ -179,6 +185,7 @@ func (c *Case) verifyRun(ctx context.Context, observe verifyChunkObserver, o Ver
 		"gap_notes_recomputed":  rep.GapNotesRecomputed,
 		"slack_rechecked":       rep.SlackRechecked,
 		"rollforward_rechecked": rep.RollForwardRechecked,
+		"journal_rechecked":     rep.JournalRechecked,
 	}
 	if rep.Anchor != nil {
 		details["anchor_seq"], details["anchor_hash"], details["anchor_ok"] = rep.Anchor.Seq, rep.Anchor.Hash, rep.Anchor.OK
@@ -572,6 +579,31 @@ func (r *VerifyReport) rollForwardRechecked() int {
 	n := 0
 	for id := range r.rfMarked {
 		if r.rfReports[id] {
+			n++
+		}
+	}
+	return n
+}
+
+// MarkJournalReportsChecked is called by the composed ext4 journal check (R13) with the ids of the ext4 journal report
+// artifacts it rendered again, so the built-in check stops noticing that those reports are not reproduced by this
+// build. As for MarkRollForwardRan, an id counts only if it names a report artifact of an ext4-journal method in the
+// manifest; unknown ids, other methods (an F2FS report included) and repeats are ignored, so a caller cannot silence
+// the notice for a report it did not recheck.
+func (r *VerifyReport) MarkJournalReportsChecked(ids []string) {
+	for _, id := range ids {
+		if r.jrMarked == nil {
+			r.jrMarked = map[string]bool{}
+		}
+		r.jrMarked[id] = true
+	}
+}
+
+// journalReportsRechecked is the number of distinct ext4 journal reports that were marked.
+func (r *VerifyReport) journalReportsRechecked() int {
+	n := 0
+	for id := range r.jrMarked {
+		if r.jrReports[id] {
 			n++
 		}
 	}
