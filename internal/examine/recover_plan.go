@@ -182,6 +182,9 @@ func (o RecoverOptions) validate() error {
 	if _, err := filesys.ParseJournalUse(string(o.UseJournal)); err != nil {
 		return err
 	}
+	if o.RollForward && o.journalUse() != filesys.JournalUseNone {
+		return errors.New("roll-forward and the journal are different sources and cannot be combined: choose one of --rollforward and --use-journal")
+	}
 	if o.RollForward {
 		for _, r := range o.Refs {
 			if id, ok := strings.CutPrefix(r, rfRefPrefix); !ok || id == "" {

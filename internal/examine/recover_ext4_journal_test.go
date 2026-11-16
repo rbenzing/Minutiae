@@ -266,9 +266,21 @@ func TestRecoverJournalBadValueRejected(t *testing.T) {
 	}
 }
 
-// TODO(3H merge): implement once RecoverOptions.RollForward exists
 func TestRecoverJournalWithRollForwardRejected(t *testing.T) {
-	t.Skip("needs 3H RollForward") // Task 12 removes the skip once RecoverOptions.RollForward exists
+	j := buildJrn(t, jrnSpec{clean: true})
+	s, _ := imageSession(t, j.img)
+	before := len(auditEntries(t, s.Case))
+	o := examine.RecoverOptions{Partition: -1, All: true, RollForward: true, UseJournal: filesys.JournalUseStale}
+	_, err := s.Recover(context.Background(), o)
+	if err == nil || !strings.Contains(err.Error(), "roll-forward") || !strings.Contains(err.Error(), "journal") {
+		t.Errorf("Recover = %v; want a refusal naming roll-forward and the journal", err)
+	}
+	if _, err := s.PlanRecovery(context.Background(), o); err == nil {
+		t.Error("PlanRecovery accepted roll-forward together with use_journal")
+	}
+	if after := auditEntries(t, s.Case); len(after) != before {
+		t.Errorf("%d audit entries were written; want none", len(after)-before)
+	}
 }
 
 func TestRecoverJournalListPrepares(t *testing.T) {
