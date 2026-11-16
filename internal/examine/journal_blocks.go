@@ -30,6 +30,7 @@ type JournalBlocksSummary struct {
 	Copied, NotFree int
 	// ext4: the tags that were not copied, by reason (3G-R17)
 	CopyMismatch, Missing, NotAllocated int
+	AllocUnknown                        int // copies whose bitmap view was unknown (marked bitmap-unconfirmed)
 }
 
 // rfBlockSel is one chain node selected for a block copy.

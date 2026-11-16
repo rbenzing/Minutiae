@@ -419,6 +419,7 @@ func jbCopyChecks(t *testing.T, s *examine.Session, rec evidence.ManifestRecord,
 	wantBasis := []string{
 		fmt.Sprintf("jbd2:seq=%d", x.Seq), "region=" + x.Region, fmt.Sprintf("txn-start=%d", x.StartBlock),
 		fmt.Sprintf("tag=%d", tag), fmt.Sprintf("fsblk=%d", tg.FSBlock), fmt.Sprintf("jblk=%d", tg.JournalBlock),
+		"alloc-basis=journal-inode", // the main image is unclean: its bitmap view is unknown (ruling C17)
 	}
 	if !slices.Equal(rv.Basis, wantBasis) {
 		t.Errorf("basis %v, want %v", rv.Basis, wantBasis)
@@ -631,5 +632,62 @@ func TestJournalOnExt2AndFAT(t *testing.T) {
 	s2, _ := imageSession(t, fat)
 	if _, err := s2.JournalList(jo); !errors.Is(err, examine.ErrJournalNotAvailable) || errors.Is(err, filesys.ErrNoJournal) {
 		t.Errorf("fat: err = %v, want ErrJournalNotAvailable", err)
+	}
+}
+
+// On a filesystem that carries a warning (the unclean image) the bitmap view of a log slot is unknown: the copy still
+// records Allocated (the journal inode owns the slot) but says so, and the run counts it (ruling C17).
+func TestJournalBlocksUnknownBitmapIsMarked(t *testing.T) {
+	s, _, _, _ := jbMain(t)
+	sum, err := s.JournalBlocks(context.Background(), examine.JournalBlocksOptions{JournalOptions: jo, Seq: 11, Region: "live"})
+	if err != nil || len(sum.Artifacts) != 2 {
+		t.Fatalf("%+v, %v", sum, err)
+	}
+	if sum.AllocUnknown != 2 {
+		t.Errorf("AllocUnknown = %d, want 2", sum.AllocUnknown)
+	}
+	for _, rec := range sum.Artifacts {
+		rv := recoveryOf(rec)
+		if !slices.Contains(rv.Basis, "alloc-basis=journal-inode") || !slices.Contains(rv.Assumptions, "bitmap-unconfirmed") || rv.Alloc.Allocated != jbBS {
+			t.Errorf("basis %v assumptions %v alloc %+v", rv.Basis, rv.Assumptions, rv.Alloc)
+		}
+	}
+	verifyOK(t, s.Case)
+
+	// a clean filesystem (no warning): none of it
+	j := jbMainJournal()
+	j.Start = 0
+	j.Sequence = 13
+	s2, _, _ := jbSession(t, jbBuild(t, j, nil))
+	sum2, err := s2.JournalBlocks(context.Background(), examine.JournalBlocksOptions{JournalOptions: jo, Seq: 10})
+	if err != nil || len(sum2.Artifacts) == 0 {
+		t.Fatalf("%+v, %v", sum2, err)
+	}
+	if sum2.AllocUnknown != 0 {
+		t.Errorf("clean: AllocUnknown = %d", sum2.AllocUnknown)
+	}
+	for _, rec := range sum2.Artifacts {
+		rv := recoveryOf(rec)
+		if slices.Contains(rv.Basis, "alloc-basis=journal-inode") || slices.Contains(rv.Assumptions, "bitmap-unconfirmed") {
+			t.Errorf("clean: basis %v assumptions %v", rv.Basis, rv.Assumptions)
+		}
+	}
+}
+
+// A seq that --no-stale excluded is never "not a transaction": it exists, in the stale region.
+func TestJournalTxnsNoStaleSaysStaleOnly(t *testing.T) {
+	s, _, _, _ := jbMain(t)
+	o := examine.JournalOptions{Partition: -1, NoStale: true}
+	_, err := s.JournalTxns(o, 10, "")
+	if !errors.Is(err, examine.ErrStaleExcluded) || errors.Is(err, filesys.ErrNotFound) || !strings.Contains(err.Error(), "only in the stale region") {
+		t.Errorf("JournalTxns: %v", err)
+	}
+	n := len(auditEntries(t, s.Case))
+	_, err = s.JournalBlocks(context.Background(), examine.JournalBlocksOptions{JournalOptions: o, Seq: 10})
+	if !errors.Is(err, examine.ErrStaleExcluded) || errors.Is(err, filesys.ErrNotFound) || len(auditEntries(t, s.Case)) != n {
+		t.Errorf("JournalBlocks: %v", err)
+	}
+	if _, err := s.JournalTxns(o, 999, ""); !errors.Is(err, filesys.ErrNotFound) {
+		t.Errorf("a seq in no region: %v, want ErrNotFound", err)
 	}
 }

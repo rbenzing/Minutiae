@@ -68,9 +68,14 @@ func (s *Session) JournalTxns(o JournalOptions, seq uint32, region string) ([]fi
 		return nil, err
 	}
 	var out []filesys.JournalTxn
+	excluded := 0 // stale matches that NoStale left out
 	if err := j.JournalTransactions(func(t filesys.JournalTxn) bool {
-		if t.Seq == seq && (region == "" || t.Region == region) && (!o.NoStale || t.Region != "stale") {
-			out = append(out, t)
+		if t.Seq == seq && (region == "" || t.Region == region) {
+			if o.NoStale && t.Region == "stale" {
+				excluded++
+			} else {
+				out = append(out, t)
+			}
 		}
 		return true
 	}); err != nil {
@@ -82,6 +87,9 @@ func (s *Session) JournalTxns(o JournalOptions, seq uint32, region string) ([]fi
 	}
 	switch len(out) {
 	case 0:
+		if excluded > 0 {
+			return nil, fmt.Errorf("%s: %w", what, ErrStaleExcluded)
+		}
 		if info.Incomplete {
 			return nil, fmt.Errorf("%s: not among the transactions read; the journal scan stopped at %s with later transactions unknown: %w", what, info.Stop, filesys.ErrIncomplete)
 		}
@@ -444,6 +452,7 @@ func (s *Session) jbd2Blocks(ctx context.Context, o JournalBlocksOptions, b *bud
 			a.setEnd("copy_mismatch", js.CopyMismatch)
 			a.setEnd("missing", js.Missing)
 			a.setEnd("not_allocated", js.NotAllocated)
+			a.setEnd("alloc_unknown", js.AllocUnknown)
 		}()
 		if err := a.watchFS(fsys); err != nil {
 			return err
@@ -457,6 +466,8 @@ func (s *Session) jbd2Blocks(ctx context.Context, o JournalBlocksOptions, b *bud
 		// recovery checks is not used here: a crash image always carries the needs-recovery warning, and it would skip
 		// every block of the one journal worth copying.
 		free := newFreeMap(runs, false)
+		// the view every other recovery check uses: with a filesystem warning a non-free byte is unknown (ruling C17)
+		unknownView := newFreeMap(runs, len(fsys.Info().Warnings) > 0)
 		if err := a.syncFS(); err != nil {
 			return err
 		}
@@ -506,7 +517,7 @@ func (s *Session) jbd2Blocks(ctx context.Context, o JournalBlocksOptions, b *bud
 				a.sum.OutputLimit = reason
 				return a.warn(label, "not copied: output limit "+reason+" reached")
 			}
-			if err := s.copyJBD2Block(ctx, a, part, fsType, x, g, off, size, names, &js); err != nil {
+			if err := s.copyJBD2Block(ctx, a, part, fsType, x, g, off, size, unknownView.nonFree == "unknown", names, &js); err != nil {
 				return err
 			}
 			if err := a.syncFS(); err != nil {
@@ -521,7 +532,7 @@ func (s *Session) jbd2Blocks(ctx context.Context, o JournalBlocksOptions, b *bud
 
 // copyJBD2Block writes one logged block as a journal-block artifact. A read failure keeps the prefix copied and flags
 // the artifact incomplete; a failure of the case itself is returned.
-func (s *Session) copyJBD2Block(ctx context.Context, a *analysis, part volume.Partition, fsType string, x filesys.JournalTxn, g jbd2Sel, off, size int64, names map[string]int, js *JournalBlocksSummary) error {
+func (s *Session) copyJBD2Block(ctx context.Context, a *analysis, part volume.Partition, fsType string, x filesys.JournalTxn, g jbd2Sel, off, size int64, unknownAlloc bool, names map[string]int, js *JournalBlocksSummary) error {
 	run := evidence.Run{Offset: off, Length: size}
 	d := s.baseDerivation(part, fsType)
 	d.Runs = []evidence.Run{run}
@@ -542,6 +553,10 @@ func (s *Session) copyJBD2Block(ctx context.Context, a *analysis, part volume.Pa
 		Assumptions: assumptions,
 		Journal:     &evidence.JournalRef{Seq: x.Seq, Committed: x.Committed, Region: x.Region, Revoked: g.tag.Revoked},
 		Algorithm:   evidence.AlgorithmRecover,
+	}
+	if unknownAlloc { // Allocated rests on the journal inode's map (structure); the bitmap view is unknown
+		rv.Basis = append(rv.Basis, "alloc-basis=journal-inode")
+		rv.Assumptions = append(rv.Assumptions, "bitmap-unconfirmed")
 	}
 	d.Recovery = rv
 	src := evidence.Source{Kind: evidence.KindJournal, DeviceID: s.Parent.Source.DeviceID, Derived: d}
@@ -577,6 +592,9 @@ func (s *Session) copyJBD2Block(ctx context.Context, a *analysis, part volume.Pa
 	}
 	if fillErr == nil {
 		js.Copied++
+		if unknownAlloc {
+			js.AllocUnknown++
+		}
 		a.sum.Files++
 		a.sum.Bytes += rec.Size
 		return nil
@@ -586,3 +604,7 @@ func (s *Session) copyJBD2Block(ctx context.Context, a *analysis, part volume.Pa
 	}
 	return a.warn(fmt.Sprintf("journal block seq %d tag %d", x.Seq, g.index), fmt.Sprintf("read failed after %d of %d bytes (partial artifact kept, flagged incomplete): %v", copied, run.Length, fillErr))
 }
+
+// ErrStaleExcluded is returned when the transaction asked for exists only in the stale region and --no-stale left
+// that region out. It is not ErrNotFound: the transaction exists.
+var ErrStaleExcluded = errors.New("the transaction exists only in the stale region, which --no-stale left out")
