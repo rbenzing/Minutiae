@@ -40,7 +40,7 @@ func recoveredKindNamespace(kind string) string {
 }
 
 // unreproducedNotices adds, after the composed checks, a notice for every recovered kind this build
-// does not reproduce byte for byte: journal and report always; recover, carve and slack until the
+// does not reproduce byte for byte: report always (less the ones R12 recomputed); recover, carve, slack and journal until the
 // composed reproduce check (R6) has run in this verify.
 func unreproducedNotices(rep *VerifyReport) {
 	if rep.deletedFiles > 0 && !rep.allocationRan {
@@ -50,10 +50,14 @@ func unreproducedNotices(rep *VerifyReport) {
 		rep.noticef("%d extract, unallocated or carve artifact(s): acquisition-gap notes shape-checked only, not recomputed (this verify did not compose check R10)", rep.gapArtifacts)
 	}
 	for _, k := range []string{KindRecover, KindCarve, KindSlack, KindJournal, KindReport} {
-		if (k == KindRecover || k == KindCarve || k == KindSlack) && rep.reproduceRan {
-			continue
+		if (k == KindRecover || k == KindCarve || k == KindSlack || k == KindJournal) && rep.reproduceRan {
+			continue // R6 reproduces the block copies of kind journal too (3H-R13 c)
 		}
-		if n := rep.recoveredByKind[k]; n > 0 {
+		n := rep.recoveredByKind[k]
+		if k == KindReport {
+			n -= rep.rollForwardRechecked() // R12 recomputed those byte for byte (3H-R13 e)
+		}
+		if n > 0 {
 			rep.noticef("kind %q: %d artifact(s) are not reproduced byte for byte by this build (no rule for the kind yet)", k, n)
 		}
 	}
@@ -134,13 +138,19 @@ func (c *Case) verifyRecovered(rep *VerifyReport, recs []ManifestRecord) {
 		if recovered {
 			rep.RecoveredArtifacts++
 			byKind[kind]++
+			if kind == KindReport && d != nil && d.Recovery != nil && strings.HasPrefix(d.Recovery.Method, RollForwardMethod) {
+				if rep.rfReports == nil {
+					rep.rfReports = map[string]bool{}
+				}
+				rep.rfReports[r.ID] = true
+			}
 			if d != nil && d.Recovery != nil {
 				cls := d.Recovery.Class
 				if cls == "" {
 					cls = "unknown"
 				}
 				byClass[cls]++
-				if (kind == KindRecover && cls == ClassDeletedFile) || (kind == KindCarve && !carveOfArtifact(d)) {
+				if (kind == KindRecover && (cls == ClassDeletedFile || cls == ClassPostCheckpointFile)) || (kind == KindJournal && cls == ClassJournalBlock && strings.HasPrefix(d.Recovery.Method, RollForwardMethod)) || (kind == KindCarve && !carveOfArtifact(d)) {
 					rep.deletedFiles++
 				}
 				if cf := d.Recovery.Confidence; cf != nil && (lowest == nil || *cf < *lowest) {
@@ -236,7 +246,7 @@ func (c *Case) checkScopeDirectory(ps *problemSet, r ManifestRecord, pre, kind s
 		if len(parts) < 6 || !ordinalPrefix.MatchString(parts[5]) {
 			ps.add(rKindNamespace, "%sfile name does not start with an ordinal (six to nine digits and a dash)", pre)
 		}
-	case KindSlack, KindJournal:
+	case KindSlack, KindJournal, KindReport:
 		switch {
 		case len(parts) < 6:
 			ps.add(rKindNamespace, "%shas no partition directory below the namespace", pre)

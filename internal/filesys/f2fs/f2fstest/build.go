@@ -68,6 +68,15 @@ type File struct {
 	// CPVer is the footer cp_ver of every node block of the file (default 0,
 	// which is below every checkpoint version).
 	CPVer uint64
+	// PostCheckpoint: created and fsynced after the checkpoint. Its inode (FSYNC|DENT) and
+	// direct nodes (FSYNC) are appended to the chain in that order; indirect nodes are NOT in
+	// the chain (no NAT entry, SIT clear) and, as the kernel writes none before a checkpoint,
+	// are omitted unless StaleIndirect writes a stale copy outside the chain. Data blocks are
+	// written with a clear SIT bit; no NAT entry and no dentry in the parent. Needs NodeSegs.
+	// Setting CPVer as well panics: the chain footers carry the version the kernel writes
+	// (override it per element with ChainNode.CPVer).
+	PostCheckpoint bool
+	StaleIndirect  bool
 }
 
 // Options configure the image. The zero value is a valid, minimal volume.
@@ -155,6 +164,11 @@ type Options struct {
 	// StaleNodes are extra node blocks at their (non-zero) Addr: written, no NAT
 	// entry, SIT bit clear (older copies of a node).
 	StaleNodes []Node
+	// CPFlags are ORed into ckpt_flags of both packs before they are sealed.
+	CPFlags uint32
+	// Chain are the node blocks of the warm-node log written after the
+	// checkpoint (see ChainNode); it needs NodeSegs > 0.
+	Chain []ChainNode
 }
 
 // NATEntry is a struct f2fs_nat_entry (with its nid when journalled).
@@ -281,6 +295,7 @@ func Build(o Options, files []File) []byte {
 
 // build lays out o as it stands.
 func build(o Options) []byte {
+	o = chainCursor(o)
 	l := Geometry(o)
 	img := make([]byte, int(l.BlockCount)*BlockSize)
 	o.Nodes = withStaleNodes(o)
@@ -301,6 +316,7 @@ func build(o Options) []byte {
 	writeData(img, o)
 	writeSIT(img, o, l)
 	writeSSA(img, o, l)
+	writeChain(img, o, l)
 	return img
 }
 
@@ -404,6 +420,7 @@ func writePack(img []byte, o Options, l Layout, base uint32, ver uint64) {
 	if o.CompactSum {
 		flags |= cpCompactSumFlag
 	}
+	flags |= o.CPFlags
 	put32(132, flags)
 	put32(136, l.PackBlocks)
 	put32(140, l.StartSum)

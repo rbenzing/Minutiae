@@ -316,3 +316,68 @@ func copyTxn(t filesys.JournalTxn) filesys.JournalTxn {
 	t.Warnings = slices.Clone(t.Warnings)
 	return t
 }
+
+// SupportsRollForward reports whether the wrapped filesystem (or one it wraps) implements
+// filesys.RollForwarder. The methods are always present on this wrapper, so callers ask this first.
+func (s *safeFS) SupportsRollForward() (ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	_, ok = filesys.As[filesys.RollForwarder](s.fs)
+	return ok
+}
+
+// RollForward implements filesys.RollForwarder by forwarding (filesys.ErrUnsupported when the wrapped
+// filesystem has none; a panic, in the reader or in the code it calls, is a *filesys.CorruptError).
+// Every node handed to visit and the returned chain are copies.
+func (s *safeFS) RollForward(visit func(filesys.RollForwardNode) bool) (chain filesys.RollForwardChain, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			chain, err = filesys.RollForwardChain{}, panicError(s.name, "RollForward", p)
+		}
+	}()
+	r, ok := filesys.As[filesys.RollForwarder](s.fs)
+	if !ok {
+		return filesys.RollForwardChain{}, fmt.Errorf("%w: filesystem has no roll-forward chain", filesys.ErrUnsupported)
+	}
+	chain, err = r.RollForward(func(n filesys.RollForwardNode) bool { return visit(copyRFNode(n)) })
+	chain.Files = slices.Clone(chain.Files)
+	chain.Warnings = slices.Clone(chain.Warnings)
+	return chain, err
+}
+
+// PostCheckpointFiles implements filesys.RollForwarder; the answer is a deep copy.
+func (s *safeFS) PostCheckpointFiles() (files []filesys.PostCheckpointFile, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			files, err = nil, panicError(s.name, "PostCheckpointFiles", p)
+		}
+	}()
+	r, ok := filesys.As[filesys.RollForwarder](s.fs)
+	if !ok {
+		return nil, fmt.Errorf("%w: filesystem has no roll-forward chain", filesys.ErrUnsupported)
+	}
+	got, err := r.PostCheckpointFiles()
+	if got == nil {
+		return nil, err
+	}
+	out := make([]filesys.PostCheckpointFile, len(got))
+	for i, f := range got {
+		out[i] = f
+		out[i].Candidates = copyCandidates(f.Candidates)
+	}
+	return out, err
+}
+
+func copyRFNode(n filesys.RollForwardNode) filesys.RollForwardNode {
+	n.Addrs = slices.Clone(n.Addrs)
+	n.NIDs = slices.Clone(n.NIDs)
+	if n.Inode != nil {
+		in := *n.Inode
+		in.RawName = slices.Clone(in.RawName)
+		n.Inode = &in
+	}
+	return n
+}

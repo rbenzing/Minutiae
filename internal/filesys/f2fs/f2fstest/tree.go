@@ -9,11 +9,13 @@ import (
 // Tree reports where BuildTree put things, so a test can patch the image or
 // compare what a reader returns.
 type Tree struct {
-	NID       map[string]uint32   // path -> inode number ("/" is RootIno)
-	Addr      map[uint32]uint32   // node id -> block address of its node block
-	DirBlocks map[string][]uint32 // directory path -> addresses of its dentry blocks (none for inline directories)
-	Nodes     map[string][]uint32 // path -> node ids, inode first, in emit order
-	Data      map[string][]uint32 // path -> data block address per logical block (0 = hole)
+	NID        map[string]uint32   // path -> inode number ("/" is RootIno)
+	Addr       map[uint32]uint32   // node id -> block address of its node block
+	DirBlocks  map[string][]uint32 // directory path -> addresses of its dentry blocks (none for inline directories)
+	Nodes      map[string][]uint32 // path -> node ids, inode first, in emit order
+	Data       map[string][]uint32 // path -> data block address per logical block (0 = hole)
+	ChainAddrs []uint32            // chain block addresses in order
+	ChainOf    map[string][]uint32 // path -> its chain block addresses (PostCheckpoint files)
 }
 
 // Inode flag bits of i_flags used by the tree builder.
@@ -43,9 +45,9 @@ func (n *tnode) isDir() bool { return n.f.Dir || n.f.Mode&0o170000 == 0o040000 }
 // need (an entry never spans two blocks); a directory with Inline is stored in
 // its inode, which panics when its entries do not fit.
 func BuildTree(o Options, files []File) ([]byte, *Tree) {
-	t := &Tree{NID: map[string]uint32{"/": RootIno}, Addr: map[uint32]uint32{}, DirBlocks: map[string][]uint32{}, Nodes: map[string][]uint32{}, Data: map[string][]uint32{}}
+	t := &Tree{ChainOf: map[string][]uint32{}, NID: map[string]uint32{"/": RootIno}, Addr: map[uint32]uint32{}, DirBlocks: map[string][]uint32{}, Nodes: map[string][]uint32{}, Data: map[string][]uint32{}}
 	if len(files) == 0 {
-		return build(o), t
+		return finishTree(o, t, nil)
 	}
 	next := uint32(RootIno + 1)
 	root := &tnode{f: File{Path: "/", Dir: true}, nid: RootIno, path: "/"}
@@ -77,11 +79,23 @@ func BuildTree(o Options, files []File) ([]byte, *Tree) {
 	a := NewAlloc(o, next)
 	var nodes []Node
 	var data []DataBlock
+	var chain []ChainNode
+	var chainPaths []string
 	for _, n := range order {
 		t.NID[n.path] = n.nid
 		if n.f.NoInode {
 			if len(n.kids) != 0 {
 				panic("f2fstest: NoInode with children")
+			}
+			continue
+		}
+		if n.f.PostCheckpoint {
+			ns, ds, cs := emitPost(o, a, n, t)
+			nodes = append(nodes, ns...)
+			data = append(data, ds...)
+			for _, c := range cs {
+				chain = append(chain, c)
+				chainPaths = append(chainPaths, n.path)
 			}
 			continue
 		}
@@ -94,7 +108,90 @@ func BuildTree(o Options, files []File) ([]byte, *Tree) {
 	}
 	o.Nodes = append(slices.Clone(o.Nodes), nodes...)
 	o.Data = append(slices.Clone(o.Data), data...)
+	o.Chain = append(slices.Clone(o.Chain), chain...)
+	return finishTree(o, t, chainPaths)
+}
+
+// finishTree builds the image and records where the chain landed. paths names
+// the owner of each chain element appended by PostCheckpoint files (the
+// elements of Options.Chain come first and have no owner).
+func finishTree(o Options, t *Tree, paths []string) ([]byte, *Tree) {
+	addrs := chainAddrs(o)
+	t.ChainAddrs = addrs
+	own := len(addrs) - len(paths)
+	for i, p := range paths {
+		a := addrs[own+i]
+		t.ChainOf[p] = append(t.ChainOf[p], a)
+		t.Addr[binary.LittleEndian.Uint32(o.Chain[own+i].Block[footerOff:])] = a
+	}
 	return build(o), t
+}
+
+// emitPost lays out a PostCheckpoint file: the chain elements (inode first,
+// then the direct nodes in node id order), the stale indirect nodes when asked
+// for, and its data blocks (SIT bit clear). The node segment cursor is not
+// advanced by the chain nodes: the chain lies after the last node placed.
+func emitPost(o Options, a *Alloc, n *tnode, t *Tree) ([]Node, []DataBlock, []ChainNode) {
+	f := n.f
+	if o.NodeSegs <= 0 {
+		panic("f2fstest: PostCheckpoint needs Options.NodeSegs > 0")
+	}
+	if n.isDir() || f.Deleted || f.NoInode {
+		panic("f2fstest: PostCheckpoint is for a plain file")
+	}
+	if f.CPVer != 0 {
+		panic("f2fstest: PostCheckpoint and CPVer are exclusive (the chain footers carry the kernel's version)")
+	}
+	saved := a.nextNodeAddr
+	ns, ds := emitBlocks(o, a, n, t)
+	a.nextNodeAddr = saved
+	var (
+		keep   []Node
+		inode  ChainNode
+		direct []ChainNode
+		dnids  []uint32
+	)
+	for i, nd := range ns {
+		t.Nodes[n.path] = append(t.Nodes[n.path], nd.NID)
+		ofs := binary.LittleEndian.Uint32(nd.Block[footerOff+8:]) >> 3
+		switch {
+		case i == 0: // the inode
+			binary.LittleEndian.PutUint32(nd.Block[footerOff+8:], FlagCold)
+			inode = ChainNode{Block: nd.Block, Fsync: true, Dentry: true}
+		case isIndirectOfs(ofs):
+			if f.StaleIndirect {
+				keep = append(keep, Node{NID: nd.NID, Addr: a.NodeAddr(), Block: nd.Block, Stale: true})
+			}
+		default:
+			binary.LittleEndian.PutUint32(nd.Block[footerOff+8:], ofs<<3|FlagCold)
+			direct = append(direct, ChainNode{Block: nd.Block, Fsync: true})
+			dnids = append(dnids, nd.NID)
+		}
+	}
+	idx := make([]int, len(direct))
+	for i := range idx {
+		idx[i] = i
+	}
+	slices.SortFunc(idx, func(x, y int) int { return int(dnids[x]) - int(dnids[y]) })
+	chain := []ChainNode{inode}
+	for _, i := range idx {
+		chain = append(chain, direct[i])
+	}
+	for i := range ds {
+		t.Data[n.path] = append(t.Data[n.path], ds[i].Addr)
+		ds[i].Stale = true
+	}
+	return keep, ds, chain
+}
+
+// isIndirectOfs reports whether the node at ofs_of_node ofs is an indirect or
+// a double-indirect node (from memory of the kernel's node-path numbering, as
+// topOfs): 3, 3+1+1018 and 3+2*(1+1018) are indirect, the double-indirect
+// node's children follow at 1019 intervals.
+func isIndirectOfs(ofs uint32) bool {
+	const dbl = 3 + 2*(1+AddrsPerBlock)
+	return ofs == 3 || ofs == 3+1+AddrsPerBlock || ofs == dbl ||
+		(ofs > dbl && (ofs-dbl-1)%(1+AddrsPerBlock) == 0)
 }
 
 func cleanPath(p string) string {
@@ -117,7 +214,9 @@ func add(p string, f File, byPath map[string]*tnode, order *[]*tnode, next *uint
 	}
 	byPath[p] = n
 	*order = append(*order, n)
-	parent.kids = append(parent.kids, n)
+	if !f.PostCheckpoint {
+		parent.kids = append(parent.kids, n)
+	}
 	return n
 }
 

@@ -334,8 +334,8 @@ func TestVerifySlackNotComposedNotice(t *testing.T) {
 
 func TestVerifyChecksListsSlack(t *testing.T) {
 	checks := VerifyChecks(Options{})
-	if len(checks) != 4 {
-		t.Fatalf("VerifyChecks has %d checks, want 4 (R6, R9, R10, R11)", len(checks))
+	if len(checks) != 5 {
+		t.Fatalf("VerifyChecks has %d checks, want 5 (R6, R9, R10, R11, R12)", len(checks))
 	}
 	e := newForgeEnv(t)
 	l := e.fileLines()

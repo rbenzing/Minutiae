@@ -40,7 +40,7 @@ func (s *Session) Recover(ctx context.Context, o RecoverOptions) (RecoverSummary
 	if err != nil {
 		return RecoverSummary{}, err
 	}
-	rec, err := s.recovererOf(fsys)
+	rec, rfr, err := s.planSource(ctx, o, fsys)
 	if err != nil {
 		return RecoverSummary{}, err
 	}
@@ -55,6 +55,9 @@ func (s *Session) Recover(ctx context.Context, o RecoverOptions) (RecoverSummary
 	}
 	if use := o.journalUse(); use != filesys.JournalUseNone {
 		details["use_journal"] = string(use) // only when set, so a 3C run keeps identical details
+	}
+	if o.RollForward {
+		details["rollforward"] = true
 	}
 	var rs RecoverSummary
 	var journalCandidates int
@@ -73,17 +76,23 @@ func (s *Session) Recover(ctx context.Context, o RecoverOptions) (RecoverSummary
 			if o.journalUse() != filesys.JournalUseNone {
 				a.setEnd("journal_candidates", journalCandidates)
 			}
+			if rfr != nil {
+				a.setEnd("chain_nodes", rfr.chain.Nodes)
+				a.setEnd("chain_stop", rfr.chain.Stop)
+				a.setEnd("chain_complete", rfr.chain.Complete)
+			}
 		}()
 		if err := a.watchFS(fsys); err != nil {
 			return err
 		}
-		plan, err := s.buildPlan(ctx, o, fsys, rec, part, b, true)
+		plan, err := s.buildPlan(ctx, o, fsys, rec, rfr, part, b, true)
 		if err != nil {
 			return err
 		}
 		rs.Considered, rs.Candidates, rs.Uniform, rs.Overlap = plan.Considered, plan.candidates, plan.uniform, plan.overlap
 		rs.ReaderWarnings = plan.ReaderWarnings
 		journalCandidates = plan.journalCandidates
+		rs.Chain = plan.Chain
 		a.sum.IncompleteIDs = plan.IncompleteIDs
 		rs.SkippedBy, rs.LimitReached, rs.NotProcessed = plan.SkippedBy, plan.LimitReached, plan.NotProcessed
 		if err := a.syncFS(); err != nil { // what planning made the filesystem notice
@@ -201,7 +210,7 @@ func (w *recoverWriter) write(it *RecoverItem, c *PlannedCandidate) error {
 	d.Times = timesMap(c.Times)
 	d.Encrypted = c.Encrypted
 	rv := &evidence.Recovery{
-		Class: evidence.ClassDeletedFile, Method: c.Method, Confidence: &conf,
+		Class: recoveryClass(c.Method), Method: c.Method, Confidence: &conf,
 		Basis: c.Basis, Assumptions: c.Assumptions, Alloc: c.Alloc, Excluded: c.Excluded,
 		Content: c.Content, Algorithm: evidence.AlgorithmRecover,
 		Params: map[string]string{

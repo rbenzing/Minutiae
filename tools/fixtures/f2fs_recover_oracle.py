@@ -15,6 +15,24 @@ usage: f2fs_recover_oracle.py probe --images <dir> --tools <dir>
   Prints one "FACT Q<n> ..." line per fact (raw bytes as "HEX" lines) and "GATE G<n>"
   verdicts (Task 1). Its decoder functions (superblock, checkpoint, nat_entry, sit_entry, ssa_entry, node) are reused below.
 
+usage: f2fs_recover_oracle.py rfprobe --base <img> --crash <img> --replayed <img> --tools <dir> --crash-log <f>
+         --replay-log <f> --payload1 <dir> --payload2 <dir> --fsync-route <text>
+  Plan 3H probe (README.md, "F2FS roll-forward probe (3H)"): decodes the crash image (checkpoint CRC, the
+  expected footer version, the warm-node chain walk of 3H-R2, the footer marks, the NAT, SIT and indirect-node
+  facts) against the base image and the kernel's replay of a copy, and prints "FACT H<n>" lines, "HEX" lines,
+  "BRANCH" verdicts and "GATE H<n>" verdicts. Task 12 adds the "rollforward" subcommand. Functions:
+  checkpoint_crc, footer_version, chain (the 3H-R2 walk), node_kind (now with xattr).
+
+usage: f2fs_recover_oracle.py rollforward --w-image <img> --crash-image <img> --replay-image <img> --tools <dir>
+         --expected-w <dir> --fsynced <dir> --written <dir> --crash-log <f> --replay-log <f> --out <json>
+  Plan 3H Task 12 (README.md, "F2FS roll-forward fixture (3H)"): the oracle JSON of the crash image. The chain is the
+  3H-R2 walk of the warm-node log; kinds, marks and would_replay restate the 3H-R4 rules; each file's map is the last
+  inode node at or before its last fsync plus the chain's direct nodes (an indirect node is never served);
+  captured is the leading part of the map that is free in the crash image's SIT; the content comes from the guest's
+  operation log (the --fsynced tree) and is cross-checked against the kernel's replay of the copy (stage r). Exits 1
+  with "family <name> missing: ...; re-rule, do not edit the ops" when a family is absent or has the wrong shape; a
+  family the kernel does not produce (appendpast) is listed under "unmeasured" instead.
+
 usage: f2fs_recover_oracle.py snap --image <img> --tools <dir> --stage <name> --expected <dir> --out <json>
   After a write stage: for every path the inode number (decoder == fsck.f2fs -t), the NAT address
   (== dump.f2fs -n), the data extents in file order (decoder walk of i_addr/i_nid through the NAT ==
@@ -59,6 +77,7 @@ CP_COMPACT_SUM_FLAG = 0x4  # from memory
 CP_LARGE_NAT_BITMAP_FLAG = 0x400  # from memory
 SUM_TYPE_NODE = 1  # from memory (SUM_TYPE_DATA is 0)
 NODE_SEG_TYPES = (3, 4, 5)  # from memory: HOT_NODE, WARM_NODE, COLD_NODE
+XATTR_NODE_OFS = 0xFFFFFFFF >> 3  # from memory: XATTR_NODE_OFFSET (3H)
 
 
 def fail(msg):
@@ -354,7 +373,10 @@ def node(img, blk):
 
 
 def node_kind(ofs):
-    """From the footer ofs (3D-R26 numbering): 'inode', 'direct' or 'indirect' (double-indirect is 2041)."""
+    """From the footer ofs (3D-R26 numbering): 'inode', 'direct' or 'indirect' (double-indirect is 2041);
+    'xattr' for XATTR_NODE_OFFSET (3H, from memory: 0xFFFFFFFF >> OFFSET_BIT_SHIFT)."""
+    if ofs == XATTR_NODE_OFS:
+        return "xattr"
     if ofs == 0:
         return "inode"
     if ofs in (1, 2):
@@ -1160,13 +1182,16 @@ def parse_map(text):
     return out
 
 
-def stage_checks(img, tdir, stage):
-    """Cross-check the decoder against the tools on one stage image. Returns (tree, fmap, table, pw_files)."""
+def stage_checks(img, tdir, stage, require_fsck=True):
+    """Cross-check the decoder against the tools on one stage image. Returns (tree, fmap, table, pw_files).
+    require_fsck=False (the 3H crash stage only, 3H-R20) records a non-zero fsck.f2fs exit instead of failing on it."""
     crosscheck(stage, img, tdir)
     fsck = read_text(os.path.join(tdir, stage, "fsck-f.txt"))
     rc = read_text(os.path.join(tdir, stage, "fsck-f.rc")).strip()
-    if rc != "0" or "[Fail" in fsck:
+    if require_fsck and (rc != "0" or "[Fail" in fsck):
         fail("%s: fsck.f2fs -f --dry-run exit status %s" % (stage, rc))
+    if rc != "0":
+        print("NOTE %s: fsck.f2fs -f --dry-run exit status %s (accepted on the crash stage only)" % (stage, rc))
     valid = 0
     for seg in range(img.sb["segment_count_main"]):
         e = sit_entry(img, seg)
@@ -1624,12 +1649,702 @@ def check_shapes(D, entries, snaps, free_set, nodiscard):
                     taken, e["stale"]["intact"], nat_addr(D, e["ino"]) != NULL_ADDR))
 
 
+# ---------------------------------------------------------------- roll-forward probe (3H)
+
+CP_NOCRC_RECOVERY_FLAG = 0x200  # from memory (the probe never saw it set); 0x20 is CP_FASTBOOT_FLAG
+FOOT_COLD, FOOT_FSYNC, FOOT_DENT = 0x1, 0x2, 0x4  # from memory: COLD/FSYNC/DENT_BIT_SHIFT 0, 1, 2
+RF_FILES = ("/rf/small.bin", "/rf/direct.bin", "/rf/indirect.bin", "/upd/append.bin")
+# nodes expected per file in the chain: inode (+ one direct node per 1018 blocks beyond the inode slots); the appended file only its inode
+EXPECT_COUNTS = {"/rf/small.bin": 1, "/rf/direct.bin": 2, "/rf/indirect.bin": 4, "/upd/append.bin": 1}
+
+
+def checkpoint_crc(img):
+    """The checksum the kernel stores at checksum_offset of the chosen checkpoint's header block (from memory:
+    it is also the high half of the node footer version when CP_CRC_RECOVERY_FLAG is set)."""
+    return u32(img.blk(img.cp["blk"]), img.cp["checksum_offset"])
+
+
+def footer_version(img):
+    """(expected footer cp_ver, mask, mode): the compare the kernel's recovery makes (from memory)."""
+    cp = img.cp
+    fl, ver = cp["ckpt_flags"], cp["checkpoint_ver"]
+    if fl & CP_NOCRC_RECOVERY_FLAG:
+        return ver, 0xFFFFFFFFFFFFFFFF, "nocrc"  # from memory: the full 64-bit version is compared
+    if fl & CP_CRC_RECOVERY_FLAG:
+        return ver | (checkpoint_crc(img) << 32), 0xFFFFFFFFFFFFFFFF, "crc"
+    return ver, 0xFFFFFFFFFFFFFFFF, "plain"
+
+
+def chain(img, limit=1 << 16):
+    """The 3H-R2 walk: from the warm-node cursor of the chosen checkpoint, following next_blkaddr while the footer
+    version equals the expected one. Returns dict(start, cursors, expected, mode, nodes, stop, stop_blk, stop_ver)."""
+    sb, cp = img.sb, img.cp
+    main = sb["main_blkaddr"]
+    end = min(img.nblocks, main + sb["segment_count_main"] * BPS)
+    cur = cp["curseg"]
+    start = main + cur["node_segno"][1] * BPS + cur["node_blkoff"][1]
+    expected, mask, mode = footer_version(img)
+    out = {"start": start, "expected": expected, "mask": mask, "mode": mode, "nodes": [], "stop": None,
+           "stop_blk": None, "stop_ver": None,
+           "cursors": [(cur["node_segno"][i], cur["node_blkoff"][i]) for i in range(3)]}
+    seen = set()
+    blk = start
+    while True:
+        if not (main <= blk < end):
+            out["stop"], out["stop_blk"] = "outside-main", blk
+            break
+        if blk in seen:
+            out["stop"], out["stop_blk"] = "cycle", blk
+            break
+        f = footer(img.blk(blk))
+        if f["cp_ver"] & mask != expected:
+            out["stop"], out["stop_blk"], out["stop_ver"] = "version", blk, f["cp_ver"]
+            break
+        if f["nid"] == 0 or f["ino"] == 0:
+            out["stop"], out["stop_blk"] = "footer", blk
+            break
+        seen.add(blk)
+        out["nodes"].append(node(img, blk))
+        if len(out["nodes"]) >= limit:
+            out["stop"], out["stop_blk"] = "cap", f["next"]
+            break
+        blk = f["next"]
+    return out
+
+
+def flag_text(flag):
+    return ("COLD " if flag & FOOT_COLD else "") + ("FSYNC " if flag & FOOT_FSYNC else "") + ("DENT" if flag & FOOT_DENT else "") or "-"
+
+
+def rf_kind(n):
+    return "xattr" if n["ofs"] == XATTR_NODE_OFS else ("inode" if n["is_inode"] else node_kind(n["ofs"]))
+
+
+def hexn(n):
+    return "0x%x" % n
+
+
+def cpver_lines(path):
+    """The guest's 'CPVER <tag> <block> <16 hex digits>' lines: {tag: [versions of the two packs]}."""
+    out = {}
+    for line in read_text(path).splitlines():
+        m = re.match(r"^CPVER (\S+) (\d+) ([0-9a-f]{16})\s*$", line.strip())
+        if m:
+            out.setdefault(m.group(1), []).append(u64(bytes.fromhex(m.group(3)), 0))
+    return out
+
+
+def cmd_rfprobe(a):
+    base, crash, rep = Image(a.base), Image(a.crash), Image(a.replayed)
+    for name, im in (("base", base), ("crash", crash), ("replayed", rep)):
+        crosscheck(name, im, a.tools)
+    gates = {}
+
+    def verdict(g, ok, text):
+        gates[g] = "PASS" if ok else "FAIL"
+        print("GATE %s %s %s" % (g, gates[g], text))
+
+    # ---- identities: the paths of the replayed image and of the base image
+    rep_paths = paths(inode_table(rep), rep.sb["root_ino"])
+    base_paths = paths(inode_table(base), base.sb["root_ino"])
+    ch = chain(crash)
+    nodes = ch["nodes"]
+    inos = {}
+    for p in RF_FILES:
+        want = rep_paths.get(p)
+        if want is None:
+            fail("%s: not present in the replayed image (the replay did not create it?)" % p)
+        if p == "/upd/append.bin":
+            inos[p] = base_paths.get(p)
+            if inos[p] != want:
+                fail("%s: ino in the base image %r, in the replayed image %r" % (p, inos[p], want))
+        else:
+            if not any(n["is_inode"] and n["nid"] == want and p.endswith("/" + n["name"]) for n in nodes):
+                fail("%s: the replayed image has ino %d and the chain holds no inode node with that number and name" % (p, want))
+            inos[p] = want
+    print("FACT PATHS inode numbers (replayed image == chain inode nodes; the append file from the base image): %s" % (
+        ", ".join("%s=%d" % (p, inos[p]) for p in RF_FILES)))
+    ino_path = {v: k for k, v in inos.items()}
+
+    # ---- H1
+    fl = crash.cp["ckpt_flags"]
+    print("FACT H1 checkpoint: pack at block %d version %d flags %s (CRC_RECOVERY 0x40 %s, 0x20 (FASTBOOT) %s, 0x200 (NOCRC) %s), checksum_offset %d, stored crc 0x%08x" % (
+        crash.cp["blk"], crash.cp["checkpoint_ver"], hexn(fl),
+        "set" if fl & 0x40 else "clear", "set" if fl & 0x20 else "clear", "set" if fl & CP_NOCRC_RECOVERY_FLAG else "clear", crash.cp["checksum_offset"], checkpoint_crc(crash)))
+    print("FACT H1 cursors (main-relative seg, blkoff) hot/warm/cold node: %s; chain start = main %d + %d*512 + %d = block %d" % (
+        ch["cursors"], crash.sb["main_blkaddr"], ch["cursors"][1][0], ch["cursors"][1][1], ch["start"]))
+    print("FACT H1 expected footer version (%s rule): 0x%x" % (ch["mode"], ch["expected"]))
+    for i, n in enumerate(nodes):
+        print("FACT H1 chain[%d] blk %d nid %d ino %d (%s) ofs %d kind %s flag %s (%s) cp_ver 0x%x next %d%s" % (
+            i, n["blk"], n["nid"], n["ino"], ino_path.get(n["ino"], "?"), n["ofs"], rf_kind(n), hexn(n["flag"]), flag_text(n["flag"]),
+            n["cp_ver"], n["next"], "" if n["next"] == n["blk"] + 1 else " (NOT the following block)"))
+        hexline("H1 chain[%d] footer (24 bytes)" % i, n["raw"][4072:4096])
+    print("FACT H1 the walk ends with a %s mismatch at block %d; the footer version there is %s" % (
+        ch["stop"], ch["stop_blk"] if ch["stop_blk"] is not None else -1,
+        "0x%x" % ch["stop_ver"] if ch["stop_ver"] is not None else "n/a"))
+    if ch["stop_blk"] is not None and crash.sb["main_blkaddr"] <= ch["stop_blk"] < crash.nblocks:
+        hexline("H1 stop block footer (24 bytes)", crash.blk(ch["stop_blk"])[4072:4096])
+    # every node anywhere in the main area with the expected version that the chain does not hold
+    main = crash.sb["main_blkaddr"]
+    mend = min(crash.nblocks, main + crash.sb["segment_count_main"] * BPS)
+    in_chain = {n["blk"] for n in nodes}
+    outside = []
+    for blk in range(main, mend):
+        o = blk * BLK + 4072
+        nid, ino = struct.unpack_from("<II", crash.m, o)
+        ver = struct.unpack_from("<Q", crash.m, o + 12)[0]
+        if blk not in in_chain and ver & ch["mask"] == ch["expected"] and nid != 0 and ino != 0:
+            outside.append(node(crash, blk))
+    print("FACT H1 blocks outside the chain whose footer has the expected version: %d%s" % (
+        len(outside), "".join(" [blk %d nid %d ino %d ofs %d]" % (n["blk"], n["nid"], n["ino"], n["ofs"]) for n in outside[:12])))
+    present = {p: [n for n in nodes if n["ino"] == inos[p]] for p in RF_FILES}
+    ok = (bool(fl & 0x40) and not fl & CP_NOCRC_RECOVERY_FLAG and ch["stop"] == "version" and bool(nodes) and nodes[0]["blk"] == ch["start"]
+          and {p: len(present[p]) for p in RF_FILES} == EXPECT_COUNTS
+          and all(n["cp_ver"] == ch["expected"] for n in nodes))
+    verdict("H1", ok, "(flags %s; stop %s; nodes per file %s; every chain node carries the expected version)" % (
+        hexn(fl), ch["stop"], {p: len(v) for p, v in present.items()}))
+
+    # ---- H2
+    def last_inode(p):
+        c = [n for n in present[p] if n["is_inode"]]
+        return c[-1] if c else None
+    h2 = True
+    for p in RF_FILES:
+        for n in present[p]:
+            print("FACT H2 %s %s ofs %d flag %s = %s" % (p, rf_kind(n), n["ofs"], hexn(n["flag"]), flag_text(n["flag"])))
+    for p in RF_FILES:
+        li = last_inode(p)
+        if any(not n["flag"] & FOOT_FSYNC for n in present[p]):
+            h2 = False
+        if p == "/upd/append.bin":
+            if any(n["flag"] & FOOT_DENT for n in present[p]):
+                h2 = False
+        else:
+            if li is None or not li["flag"] & FOOT_DENT:
+                h2 = False
+            if any(n["flag"] & FOOT_DENT for n in present[p] if not n["is_inode"]):
+                h2 = False
+    verdict("H2", h2, "(every node of the four files has FSYNC; the new files' inodes have DENT and their direct nodes do not; the appended file has none)")
+
+    # ---- H3
+    d3 = os.path.join(a.tools, "crash")
+    txt = read_text(os.path.join(d3, "fsck-d3.txt"))
+    rc3 = read_text(os.path.join(d3, "fsck-d3.rc")).strip()
+    lines = txt.splitlines()
+    hits = [l for l in lines if re.search(r"fsync|roll|recover|warm|dnode|chain", l, re.I)]
+    node_hits = [l for l in hits if any(re.search(r"\b%d\b|0x%x\b" % (b, b), l) for b in in_chain)]
+    print("FACT H3 fsck.f2fs -d 3 -f --dry-run on a copy of the crash image: exit %s, %d output lines, %d mention fsync/roll/recover/warm/dnode/chain, %d of those name a chain block; image unchanged: %s" % (
+        rc3, len(lines), len(hits), len(node_hits), read_text(os.path.join(d3, "fsck-d3.same")).strip()))
+    for l in hits[:25]:
+        print("FACT H3 line: %s" % l[:200])
+    for l in node_hits[:10]:
+        print("FACT H3 chain line: %s" % l[:200])
+    print("BRANCH H3 %s" % ("yes" if len(node_hits) >= len(nodes) else "no"))
+
+    # ---- H4
+    print("FACT H4 fsync route: %s" % a.fsync_route)
+    print("BRANCH H4 %s" % ("yes" if a.fsync_route.startswith("busybox fsync") else "no"))
+
+    # ---- H5
+    cv = cpver_lines(a.crash_log)
+    base_ver = base.cp["checkpoint_ver"]
+    A, B = max(cv.get("A", [0])), max(cv.get("B", [0]))
+    print("FACT H5 checkpoint_ver: base image (after the clean unmount) %d; guest after the base sync %d (packs %s); guest at the end of the ops %d (packs %s); crash image %d" % (
+        base_ver, A, cv.get("A"), B, cv.get("B"), crash.cp["checkpoint_ver"]))
+    natv = {p: nat_entry(crash, inos[p])["resolved"] for p in RF_FILES}
+    print("FACT H5 NAT entries (version, ino, address) in the crash image: %s" % natv)
+    print("FACT H5 NAT journal entries in the crash image: %d" % len(journals(crash)[0]))
+    new_unmapped = all(natv[p][2] == NULL_ADDR for p in RF_FILES if p != "/upd/append.bin")
+    verdict("H5", A != 0 and A == B == crash.cp["checkpoint_ver"] and new_unmapped,
+            "(version after the base sync %d == at the end %d == crash image %d; the three new files have no NAT address: %s)" % (
+                A, B, crash.cp["checkpoint_ver"], new_unmapped))
+
+    # ---- H6
+    rf = {}
+    for line in read_text(a.replay_log).splitlines():
+        m = re.match(r"^RF (\S+) (\d+) ([0-9a-f]{64})\s*$", line.strip())
+        if m:
+            rf[m.group(1)] = (int(m.group(2)), m.group(3))
+    exp = {}
+    for p, name in (("/rf/small.bin", "small.bin"), ("/rf/direct.bin", "direct.bin"), ("/rf/indirect.bin", "indirect.bin")):
+        with open(os.path.join(a.payload2, name), "rb") as fh:
+            b = fh.read()
+        exp[p] = (len(b), hashlib.sha256(b).hexdigest())
+    with open(os.path.join(a.payload1, "append.bin"), "rb") as fh:
+        b = fh.read()
+    with open(os.path.join(a.payload2, "add.bin"), "rb") as fh:
+        b += fh.read()
+    exp["/upd/append.bin"] = (len(b), hashlib.sha256(b).hexdigest())
+    mounted = "GUEST-MOUNT-FAIL" not in read_text(a.replay_log)
+    allmatch = True
+    for p in RF_FILES:
+        got = rf.get("/mnt" + p)
+        same = got == exp[p]
+        allmatch = allmatch and same
+        print("FACT H6 %s: after the replay %s; expected (bytes written up to the fsync) %s; %s" % (
+            p, "absent" if got is None else "%d bytes sha256 %s" % got, "%d bytes sha256 %s" % exp[p], "EQUAL" if same else "DIFFERENT"))
+    for l in read_text(a.replay_log).splitlines():
+        if re.search(r"f2fs|recover", l, re.I) and not l.startswith("RF ") and not l.startswith("OP "):
+            print("FACT H6 guest line: %s" % l.strip()[:200])
+    print("FACT H6 replayed image: checkpoint_ver %d flags %s" % (rep.cp["checkpoint_ver"], hexn(rep.cp["ckpt_flags"])))
+    print("BRANCH H6 %s (mount ok: %s, all four files equal: %s)" % ("yes" if mounted and allmatch else "no", mounted, allmatch))
+
+    # ---- H7
+    li = last_inode("/rf/indirect.bin")
+    nid2 = li["nids"][2] if li else 0
+    print("FACT H7 indirect.bin: last inode node in the chain at blk %d, i_nid[0..4] = %s" % (li["blk"] if li else -1, li["nids"] if li else None))
+    copies = []
+    if nid2:
+        for blk in range(main, mend):
+            o = blk * BLK + 4072
+            if struct.unpack_from("<I", crash.m, o)[0] == nid2 and struct.unpack_from("<I", crash.m, o + 4)[0] == inos["/rf/indirect.bin"]:
+                copies.append(blk)
+    for blk in copies:
+        f = footer(crash.blk(blk))
+        seg = seg_of(crash, blk)
+        print("FACT H7 nid %d copy at blk %d (segment %d, SIT type %d): footer ofs %d flag %s cp_ver 0x%x; in the chain: %s" % (
+            nid2, blk, seg, sit_entry(crash, seg)["type"], f["ofs"], hexn(f["flag"]), f["cp_ver"], blk in in_chain))
+        hexline("H7 indirect node footer (24 bytes)", crash.blk(blk)[4072:4096])
+    if not copies:
+        print("FACT H7 nid %d: no block of the main area carries it (the indirect node was never written before the crash)" % nid2)
+    print("FACT H7 NAT entry of nid %d in the crash image: %s" % (nid2, nat_entry(crash, nid2)["resolved"] if nid2 else None))
+    print("FACT H7 chain nodes of indirect.bin (kind, ofs): %s" % sorted({(rf_kind(n), n["ofs"]) for n in present["/rf/indirect.bin"]}))
+    print("BRANCH H7 %s" % ("yes" if nid2 and not any(c in in_chain for c in copies) else "no"))
+
+    # ---- H8
+    print("FACT H8 /upd/append.bin ino %d: live NAT entry in the crash image %s; chain nodes (blk, kind, ofs, flag): %s" % (
+        inos["/upd/append.bin"], nat_entry(crash, inos["/upd/append.bin"])["resolved"],
+        [(n["blk"], rf_kind(n), n["ofs"], hexn(n["flag"])) for n in present["/upd/append.bin"]]))
+    ai = last_inode("/upd/append.bin")
+    if ai:
+        print("FACT H8 chain inode copy: i_size %d" % ai["size"])
+        hexline("H8 append.bin chain inode head (96 bytes)", ai["raw"][:96])
+    rn = node(rep, nat_addr(rep, inos["/upd/append.bin"]))
+    print("FACT H8 after the replay: i_size %d (guest listing: %s)" % (rn["size"], rf.get("/mnt/upd/append.bin")))
+
+    # ---- H9
+    bad = 0
+    for p in RF_FILES:
+        datas = []
+        for n in present[p]:
+            if n["is_inode"]:
+                if n["inline"] & 0x06:
+                    continue
+                datas += [x for x in n["addrs"] if x not in (NULL_ADDR, NEW_ADDR)]
+            elif n["ofs"] != XATTR_NODE_OFS and node_kind(n["ofs"]) == "direct":
+                datas += [x for x in n["items"] if x not in (NULL_ADDR, NEW_ADDR)]
+        datas = sorted(set(datas))
+        setbits = [x for x in datas if valid_main(crash, x) and valid_bit(crash, x)]
+        outmain = [x for x in datas if not valid_main(crash, x)]
+        print("FACT H9 %s: %d distinct data addresses in the chain nodes, %d with the SIT bit set, %d outside the main area" % (
+            p, len(datas), len(setbits), len(outmain)))
+        if p != "/upd/append.bin":
+            bad += len(setbits)
+        if datas and valid_main(crash, datas[0]):
+            hexline("H9 %s first data block head (32 bytes)" % p, crash.blk(datas[0])[:32])
+    print("FACT H9 new files' data blocks with a set SIT bit: %d (expected 0)" % bad)
+
+    # ---- H10
+    print("FACT H10 fsck.f2fs -f --dry-run exit status on a copy of the crash image: %s; on the base image: %s" % (
+        read_text(os.path.join(a.tools, "crash", "fsck-f.rc")).strip(), read_text(os.path.join(a.tools, "base", "fsck-f.rc")).strip()))
+
+    # ---- H11
+    cross = [(n["blk"], n["next"]) for n in nodes if n["next"] // BPS != n["blk"] // BPS]
+    print("FACT H11 segment of the chain start %d (block %d); nodes %d; next_blkaddr into another segment: %s" % (
+        seg_of(crash, ch["start"]), ch["start"], len(nodes), cross or "none"))
+
+    # ---- H12
+    print("FACT H12 inode checksums of the chain inodes (blk, nid, valid): %s" % [(n["blk"], n["nid"], n["csum_ok"]) for n in nodes if n["is_inode"]])
+
+    for g in ("H1", "H2", "H5"):
+        print("GATE-FINAL %s %s" % (g, gates[g]))
+    for im in (base, crash, rep):
+        im.close()
+    sys.exit(0 if all(v == "PASS" for v in gates.values()) else 1)
+
+
+# ---------------------------------------------------------------- roll-forward fixture (3H Task 12)
+
+# family -> the path the guest writes; every family has its own directory (created in stage w, checkpointed)
+RF_FAMILIES = [
+    ("small", "/rf/small/target.bin"), ("direct", "/rf/direct/target.bin"), ("indirect", "/rf/indirect/target.bin"),
+    ("holes", "/rf/holes/target.bin"), ("inline", "/rf/inline/target.txt"), ("twice", "/rf/twice/target.bin"),
+    ("late", "/rf/late/target.bin"), ("nofsync", "/rf/nofsync/target.bin"), ("append", "/upd/append/target.bin"),
+    ("appendpast", "/upd/appendpast/target.bin"),
+]
+CP_UMOUNT_FLAG = 0x1  # from memory
+RF_METHOD = "f2fs-rollforward"
+RF_MAX_BLOCKS = 4096  # no family file is larger than 16 MiB: a map beyond this is a generator error, never a skip
+RF_MAX_NODES = 64  # the chain of this fixture holds a few dozen nodes; more means the ops changed
+
+
+def rf_is_inode(n):
+    return n["ofs"] == 0 and n["nid"] == n["ino"]
+
+
+def rf_is_dnode(n):
+    return rf_is_inode(n) or rf_kind(n) in ("direct", "xattr")
+
+
+def rf_live(img, ino):
+    """live(X): the CURRENT NAT of the image maps inode number X."""
+    return valid_main(img, nat_addr(img, ino))
+
+
+def rf_replay_rules(img, nodes):
+    """The 3H-R4 rules, restated: (created, last_fsync, would_replay). created(X): not live and some fsync-marked inode
+    node of X carries the dentry mark; last_fsync(X): the index of the last fsync-marked dnode of X; a node replays
+    iff it is a dnode, X is live or created, and its index is at most last_fsync(X)."""
+    created, last = {}, {}
+    for i, n in enumerate(nodes):
+        x = n["ino"]
+        if rf_is_inode(n) and n["flag"] & FOOT_FSYNC and n["flag"] & FOOT_DENT and not rf_live(img, x):
+            created[x] = True
+        if rf_is_dnode(n) and n["flag"] & FOOT_FSYNC:
+            last[x] = i
+    would = []
+    for i, n in enumerate(nodes):
+        x = n["ino"]
+        would.append(bool(rf_is_dnode(n) and (rf_live(img, x) or created.get(x)) and x in last and i <= last[x]))
+    return created, last, would
+
+
+def rf_nodefor(nodes, last):
+    """The chain as a node source for slot_stream (3H-R6): the last DIRECT node of the right nid, owner and ofs at an
+    index <= last; indirect nodes are never served (an indirect node is never in the warm chain)."""
+    def nodefor(nid, owner, ofs):
+        src = None
+        for i, n in enumerate(nodes):
+            if i <= last and n["nid"] == nid and n["ino"] == owner and n["ofs"] == ofs and rf_kind(n) == "direct":
+                src = n
+        return src
+    return nodefor
+
+
+def rf_map(C, nodes, ino, last):
+    """(inode node, addrs, blocks, stop): the used inode is the last inode node of ino at or before `last`; addrs are
+    the first ceil(size/4096) logical block addresses the chain reaches; blocks the leading data blocks (to the first
+    hole or unservable node); stop 'hole@<lblk>', 'node-missing@<nid>' or ''."""
+    ind = None
+    for i, n in enumerate(nodes):
+        if i <= last and n["ino"] == ino and rf_is_inode(n):
+            ind = n
+    if ind is None:
+        fail("inode %d has no inode node at or before its last fsync node" % ino)
+    need = (ind["size"] + BLK - 1) // BLK
+    if need > RF_MAX_BLOCKS:
+        fail("inode %d: %d blocks exceed the bound %d" % (ino, need, RF_MAX_BLOCKS))
+    addrs, stop = logical_blocks(ind, rf_nodefor(nodes, last), need)
+    blocks, st = [], ""
+    for lb, ad in enumerate(addrs):
+        if is_hole(ad):
+            st = "hole@%d" % lb
+            break
+        if not valid_main(C, ad) or ad in blocks:
+            st = ("address-outside-main@%d" if not valid_main(C, ad) else "address-repeated@%d") % lb
+            break
+        blocks.append(ad)
+    if not st and stop:
+        st = stop
+    if len(addrs) > need or need > RF_MAX_BLOCKS:
+        fail("inode %d: the map holds %d addresses for %d blocks (bound %d)" % (ino, len(addrs), need, RF_MAX_BLOCKS))
+    if not st and len(addrs) != need:
+        fail("inode %d: the map holds %d of %d blocks with no stop (count mismatch: not skipped, the generator stops)" % (ino, len(addrs), need))
+    return ind, addrs, blocks, st
+
+
+def rf_guest_listing(path):
+    out = {}
+    for line in read_text(path).splitlines():
+        m = re.match(r"^RF (\S+) (\d+) ([0-9a-f]{64})\s*$", line.strip())
+        if m:
+            out[m.group(1)] = (int(m.group(2)), m.group(3))
+    return out
+
+
+def rf_need(fam, why):
+    fail("family %s missing: %s; re-rule, do not edit the ops" % (fam, why))
+
+
+def cmd_rollforward(a):
+    W, C, R = Image(a.w_image), Image(a.crash_image), Image(a.replay_image)
+    exp_w = expected_tree(a.expected_w)
+    fsynced = expected_tree(a.fsynced)
+    written = expected_tree(a.written)
+
+    # ---- the three images against the tools. Stage w and the replayed copy are clean (fsck exit 0); the crash stage
+    # may exit non-zero (3H-R20): its exit status is recorded by the generator, never masked.
+    _t, fmap_w, table_w, paths_w = stage_checks(W, a.tools, "w")
+    walk_files(W, table_w, paths_w, fmap_w, exp_w, "w")
+    _t, fmap_c, table_c, paths_c = stage_checks(C, a.tools, "c", require_fsck=False)
+    files_c = walk_files(C, table_c, paths_c, fmap_c, exp_w, "c")
+    _t, _fmap_r, table_r, paths_r = stage_checks(R, a.tools, "r")
+    if paths_c != paths_w:
+        fail("the crash image's live tree differs from the stage-w image: only crash %r, only w %r" % (
+            sorted(set(paths_c) - set(paths_w))[:5], sorted(set(paths_w) - set(paths_c))[:5]))
+    cp = C.cp
+    flags = cp["ckpt_flags"]
+    # the checkpoint the crash image ends on is the stage-w UNMOUNT checkpoint (the base sync wrote none: H5, and the
+    # probe saw flags 0xc5 too); the crash is the log of fsynced nodes after it, not an unclean checkpoint flag
+    if cp["checkpoint_ver"] != W.cp["checkpoint_ver"]:
+        fail("the crash image's checkpoint (version %d) is not the stage-w checkpoint (version %d)" % (cp["checkpoint_ver"], W.cp["checkpoint_ver"]))
+    if not flags & CP_CRC_RECOVERY_FLAG or flags & CP_NOCRC_RECOVERY_FLAG:
+        fail("the crash image's checkpoint flags 0x%x are not a CRC-recovery checkpoint (re-rule 3H-R2)" % flags)
+
+    # ---- H5: no checkpoint between the base sync and the quit
+    cv = cpver_lines(a.crash_log)
+    ver_a, ver_b = max(cv.get("A", [0])), max(cv.get("B", [0]))
+    if ver_a == 0 or not ver_a == ver_b == cp["checkpoint_ver"]:
+        fail("a checkpoint was written after the base sync: version after the sync %d, at the end of the ops %d, crash image %d (H5)" % (
+            ver_a, ver_b, cp["checkpoint_ver"]))
+
+    # ---- the chain (3H-R2 walk) and the replay rules (3H-R4)
+    ch = chain(C)
+    nodes = ch["nodes"]
+    stop = "%s@%d" % (ch["stop"], ch["stop_blk"])
+    complete = ch["stop"] in ("version", "outside-main", "cycle")
+    if len(nodes) > RF_MAX_NODES:
+        fail("the chain holds %d nodes (bound %d): the ops changed, re-rule" % (len(nodes), RF_MAX_NODES))
+    if not nodes or ch["stop"] != "version" or nodes[0]["blk"] != ch["start"]:
+        fail("the crash image's chain: %d nodes, stop %s (want a non-empty chain that ends with a version mismatch)" % (len(nodes), stop))
+    main = C.sb["main_blkaddr"]
+    mend = min(C.nblocks, main + C.sb["segment_count_main"] * BPS)
+    in_chain = {n["blk"] for n in nodes}
+    for blk in range(main, mend):
+        o = blk * BLK + 4072
+        nid, ino = struct.unpack_from("<II", C.m, o)
+        if blk not in in_chain and nid != 0 and ino != 0 and struct.unpack_from("<Q", C.m, o + 12)[0] & ch["mask"] == ch["expected"]:
+            fail("block %d carries the chain's footer version but is not in the chain (the walk is not the whole log)" % blk)
+    created, last_fsync, would = rf_replay_rules(C, nodes)
+    node_out = []
+    for i, n in enumerate(nodes):
+        node_out.append({"block": n["blk"], "nid": n["nid"], "ino": n["ino"], "ofs": n["ofs"], "kind": rf_kind(n),
+                         "flag": n["flag"], "fsync": bool(n["flag"] & FOOT_FSYNC), "dentry": bool(n["flag"] & FOOT_DENT),
+                         "next": n["next"], "live_ino": rf_live(C, n["ino"]), "would_replay": would[i]})
+
+    # ---- the replay (stage r): the kernel's own recovery of a copy of the crash image
+    guest = rf_guest_listing(a.replay_log)
+    if "GUEST-MOUNT-FAIL" in read_text(a.replay_log):
+        fail("the kernel could not mount the copy of the crash image")
+    dirs_w = {p: i for p, i in paths_w.items() if table_w[i]["mode"] & 0xF000 == 0x4000}
+    dirs_w["/"] = W.sb["root_ino"]
+    live_dir = {i: p for p, i in dirs_w.items()}
+
+    files, fams, unmeasured, explained = [], {}, [], set()
+    for fam, p in RF_FAMILIES:
+        dpath, base = p.rsplit("/", 1)
+        dpath = dpath or "/"
+        if dpath not in dirs_w:
+            rf_need(fam, "the directory %s is not a live directory of the crash image" % dpath)
+        parent = dirs_w[dpath]
+        if p in paths_w:
+            x = paths_w[p]
+            kind = "live-update"
+            if not any(n["ino"] == x for n in nodes):
+                if fam == "appendpast":  # 3H-R18: a family the kernel does not produce is unmeasured, not a failure
+                    unmeasured.append(fam)
+                    fams[fam] = 0
+                    print("NOTE family appendpast is UNMEASURED: the chain holds no node of %s" % p)
+                    continue
+                rf_need(fam, "the live file %s has no node in the chain" % p)
+        else:
+            cands = {n["ino"] for n in nodes if rf_is_inode(n) and n["pino"] == parent and n["name"] == base}
+            if len(cands) > 1:
+                fail("family %s: %d inode numbers in the chain carry %s" % (fam, len(cands), p))
+            x = cands.pop() if cands else 0
+            kind = "absent" if not x else ("post-checkpoint" if created.get(x) else "not-replayed")
+        entry = {"path": p, "family": fam, "ino": x, "pino": parent if x else 0, "kind": kind, "size": 0,
+                 "replayed_sha256": "", "written_sha256": fsynced.get(p, ""), "map_blocks": [],
+                 "expect": {"outcome": "report-only", "skip": "", "captured": [], "captured_sha256": "", "prefix": False,
+                            "cut": False, "stop": "", "equal_source": False, "confidence": 0}}
+        # the replay of the copy: the file exists exactly when the kernel's rules create or update it
+        rep_ino = paths_r.get(p)
+        if kind in ("post-checkpoint", "live-update"):
+            if rep_ino != x:
+                fail("family %s: %s is inode %s in the replayed image, %d in the chain/live tree" % (fam, p, rep_ino, x))
+            rep = decode_file(R, x)
+            entry["replayed_sha256"] = hashlib.sha256(rep["content"]).hexdigest()
+            g = guest.get("/mnt" + p)
+            if g != (len(rep["content"]), entry["replayed_sha256"]):
+                fail("family %s: the guest's listing of the replayed file %r differs from the decoder's (%d bytes, %s)" % (
+                    fam, g, len(rep["content"]), entry["replayed_sha256"]))
+            if entry["replayed_sha256"] != entry["written_sha256"]:
+                fail("family %s: the kernel's replay of %s (%d bytes, sha256 %s) differs from the bytes the guest wrote up to the last fsync (sha256 %s)" % (
+                    fam, p, len(rep["content"]), entry["replayed_sha256"], entry["written_sha256"]))
+        elif rep_ino is not None:
+            fail("family %s: %s is %s in the chain but exists after the kernel's replay" % (fam, p, kind))
+        if kind == "absent":
+            if x or p in fsynced:
+                fail("family %s: %s is absent from the chain but the guest fsynced it" % (fam, p))
+            files.append(entry)
+            fams[fam] = fams.get(fam, 0) + 1
+            continue
+        explained.add(x)
+        last = last_fsync.get(x)
+        if kind == "not-replayed":
+            if last is not None and fam != "nofsync":
+                fail("family %s: not replayed although the chain holds an fsync dnode" % fam)
+            fams[fam] = fams.get(fam, 0) + 1
+            files.append(entry)
+            continue
+        if last is None:
+            rf_need(fam, "no fsync dnode of inode %d in the chain" % x)
+        ind, addrs, blocks, st = rf_map(C, nodes, x, last)
+        entry["size"] = ind["size"]
+        entry["map_blocks"] = extents(addrs)
+        if kind == "live-update":
+            if created.get(x):
+                fail("family %s: a live inode is both live and created" % fam)
+            fams[fam] = fams.get(fam, 0) + 1
+            files.append(entry)
+            continue
+        # a post-checkpoint file: the spec rules (skip, map to the first hole, captured, confidence) from the image
+        ex = entry["expect"]
+        pnode = table_w.get(ind["pino"])
+        if pnode is None or pnode["mode"] & 0xF000 != 0x4000:
+            ex.update({"outcome": "skip", "skip": "unsupported"})
+        elif ind["mode"] & 0xF000 != 0x8000 or ind["inline"] & INLINE_DATA:
+            ex.update({"outcome": "skip", "skip": "unsupported"})
+        elif ind["size"] == 0:
+            ex.update({"outcome": "skip", "skip": "empty"})
+        else:
+            cap = []
+            for b in blocks:
+                if valid_bit(C, b):
+                    break
+                cap.append(b)
+            if not cap:
+                ex.update({"outcome": "skip", "skip": "no-free-bytes"})
+            else:
+                body = b"".join(C.blk(b) for b in cap)[:ind["size"]]
+                cut = len(cap) < len(blocks)
+                ex.update({"outcome": "recover", "captured": rangeify(cap), "captured_sha256": hashlib.sha256(body).hexdigest(),
+                           "prefix": bool(st), "cut": cut, "stop": st,
+                           "equal_source": not st and not cut and hashlib.sha256(body).hexdigest() == entry["written_sha256"],
+                           "confidence": 20 if (st or cut or not complete) else 60})
+                # the captured bytes are the leading part of what the guest wrote and of what the kernel replayed
+                with open(os.path.join(a.fsynced, p.lstrip("/")), "rb") as fh:
+                    wbytes = fh.read()
+                rbytes = decode_file(R, x)["content"]
+                if body != wbytes[:len(body)] or body != rbytes[:len(body)]:
+                    fail("family %s: the captured bytes are not the leading part of the written / replayed file" % fam)
+        fams[fam] = fams.get(fam, 0) + 1
+        files.append(entry)
+
+    # ---- confidence 30 where captured ranges of two recoverable files intersect
+    for i, e in enumerate(files):
+        x = e["expect"]
+        if x["outcome"] != "recover":
+            continue
+        mine = set(expand(x["captured"]))
+        if any(j != i and o["expect"]["outcome"] == "recover" and mine & set(expand(o["expect"]["captured"])) for j, o in enumerate(files)):
+            x["confidence"] = min(x["confidence"], 30)
+
+    # ---- every chain inode belongs to a family (nothing the generator did not write)
+    stray = sorted({n["ino"] for n in nodes} - explained)
+    if stray:
+        fail("chain inodes %r belong to no family: the crash image holds files the generator did not write" % stray)
+
+    # ---- shapes: the families exist and have the shape their names promise (3H-R18)
+    by = {e["family"]: e for e in files}
+    chain_of = lambda x: [n for n in nodes if n["ino"] == x]  # noqa: E731
+    for fam, _p in RF_FAMILIES:
+        if fam not in by and fam not in unmeasured:
+            rf_need(fam, "no entry")
+    last_ind = {}
+    for fam in ("small", "direct", "indirect", "holes", "inline", "twice", "late"):
+        e = by[fam]
+        if e["kind"] != "post-checkpoint":
+            rf_need(fam, "the file is %s in the chain" % e["kind"])
+        last_ind[fam] = rf_map(C, nodes, e["ino"], last_fsync[e["ino"]])
+    nids = lambda fam: last_ind[fam][0]["nids"]  # noqa: E731
+    if nids("small")[0] != 0 or len(chain_of(by["small"]["ino"])) != 1:
+        rf_need("small", "more than the inode in the chain")
+    if nids("direct")[0] == 0 or nids("direct")[2] != 0:
+        rf_need("direct", "i_nid %r has no i_nid[0] or has i_nid[2]" % (nids("direct"),))
+    if nids("indirect")[2] == 0 or not by["indirect"]["expect"]["stop"].startswith("node-missing@"):
+        rf_need("indirect", "i_nid %r has no i_nid[2], or the map does not stop at the indirect node (%r)" % (nids("indirect"), by["indirect"]["expect"]["stop"]))
+    if by["holes"]["expect"]["stop"] != "hole@1":
+        rf_need("holes", "the map stops with %r, want hole@1" % by["holes"]["expect"]["stop"])
+    if not last_ind["inline"][0]["inline"] & INLINE_DATA or by["inline"]["expect"]["skip"] != "unsupported":
+        rf_need("inline", "the file is not stored inline")
+    if sum(1 for n in chain_of(by["twice"]["ino"]) if rf_is_inode(n)) < 2:
+        rf_need("twice", "fewer than two inode nodes in the chain")
+    with open(os.path.join(a.written, "rf/late/target.bin"), "rb") as fh:
+        late_all = len(fh.read())
+    if by["late"]["size"] >= late_all:
+        rf_need("late", "the chain holds the whole write (the unfsynced append is in the log)")
+    if by["nofsync"]["kind"] == "post-checkpoint":
+        rf_need("nofsync", "the unfsynced file is a post-checkpoint file")
+    if by["append"]["kind"] != "live-update":
+        rf_need("append", "the file is %s" % by["append"]["kind"])
+    if sum(1 for n in chain_of(by["append"]["ino"])) < 1:
+        rf_need("append", "no chain node")
+    past = by.get("appendpast")
+    if past is not None and (past["kind"] != "live-update" or not any(rf_kind(n) == "direct" for n in chain_of(past["ino"]))):
+        # the kernel did not write a dnode beside the inode: the family is not realised (3H-R18: unmeasured, not a failure)
+        unmeasured.append("appendpast")
+        files[:] = [e for e in files if e["family"] != "appendpast"]  # no entry for an unmeasured family
+        fams["appendpast"] = 0
+        print("NOTE family appendpast is UNMEASURED: the chain holds only %s for inode %s" % (
+            [rf_kind(n) for n in chain_of(past["ino"])], past["ino"]))
+
+    # ---- free blocks and the live files of the crash image
+    free_list = []
+    for seg in range(C.sb["segment_count_main"]):
+        e = sit_entry(C, seg)
+        base_blk = main + seg * BPS
+        free_list += [base_blk + off for off in range(BPS) if not bit_msb(e["map"], off)]
+    live = []
+    for p, r in sorted(files_c.items(), key=lambda kv: kv[0].encode()):
+        d = r["dec"]
+        live.append({"path": p, "size": d["size"], "sha256": r["sha256"], "blocks": d["blocks"], "holes": d["holes"],
+                     "indirect": d["indirect"], "inline": d["inline"]})
+    out = {"checkpoint_version": cp["checkpoint_ver"], "base_checkpoint_version": ver_a,
+           "checkpoint_pack": 1 if cp["blk"] == C.sb["cp_blkaddr"] else 2, "checkpoint_flags": flags,
+           "checkpoint_crc": checkpoint_crc(C), "crc_recovery": True, "nocrc_recovery": False,
+           "footer_version": "0x%016x" % ch["expected"], "block_size": BLK,
+           "chain": {"start": ch["start"], "stop": stop, "complete": complete, "nodes": node_out},
+           "free_blocks": rangeify(free_list), "live": live, "files": files, "families": fams, "unmeasured": unmeasured}
+    with open(a.out, "w", encoding="utf-8") as f:
+        json.dump(out, f)
+    print("ROLLFORWARD: checkpoint %d flags 0x%x, chain %d nodes (%s, complete %s), %d live files, families %r, unmeasured %r" % (
+        cp["checkpoint_ver"], flags, len(nodes), stop, complete, len(live), fams, unmeasured))
+    for e in files:
+        x = e["expect"]
+        print("FILE %-28s ino %-4d %-15s size %-9d %-11s skip=%-11s stop=%-16s prefix=%d cut=%d equal=%d conf=%d" % (
+            e["path"], e["ino"], e["kind"], e["size"], x["outcome"], x["skip"], x["stop"], x["prefix"], x["cut"], x["equal_source"], x["confidence"]))
+    for im in (W, C, R):
+        im.close()
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("probe")
     p.add_argument("--images", required=True)
     p.add_argument("--tools", required=True)
+    p = sub.add_parser("rfprobe")
+    p.add_argument("--base", required=True, help="image after the base tree and a clean unmount")
+    p.add_argument("--crash", required=True, help="image the host quit QEMU on, after fsynced writes")
+    p.add_argument("--replayed", required=True, help="a copy of the crash image after the kernel's mount (replay)")
+    p.add_argument("--tools", required=True, help="folders base/, crash/, replayed/ with the tool captures")
+    p.add_argument("--crash-log", required=True)
+    p.add_argument("--replay-log", required=True)
+    p.add_argument("--payload1", required=True)
+    p.add_argument("--payload2", required=True)
+    p.add_argument("--fsync-route", required=True)
+    p = sub.add_parser("rollforward")
+    p.add_argument("--w-image", required=True, help="image after stage w (clean unmount)")
+    p.add_argument("--crash-image", required=True, help="image the host quit QEMU on (stage c)")
+    p.add_argument("--replay-image", required=True, help="a copy of the crash image after the kernel's mount (stage r)")
+    p.add_argument("--tools", required=True, help="folders w/, c/, r/ with the tool captures")
+    p.add_argument("--expected-w", required=True, help="tree of the files as of stage w")
+    p.add_argument("--fsynced", required=True, help="tree of the files as of the guest's last fsync of each")
+    p.add_argument("--written", required=True, help="tree of everything the guest wrote, fsynced or not")
+    p.add_argument("--crash-log", required=True)
+    p.add_argument("--replay-log", required=True)
+    p.add_argument("--out", required=True)
     for name in ("snap", "final"):
         p = sub.add_parser(name)
         p.add_argument("--image", required=True)
@@ -1644,6 +2359,10 @@ def main():
     a = ap.parse_args()
     if a.cmd == "probe":
         probe(a.images, a.tools)
+    elif a.cmd == "rfprobe":
+        cmd_rfprobe(a)
+    elif a.cmd == "rollforward":
+        cmd_rollforward(a)
     elif a.cmd == "snap":
         cmd_snap(a)
     else:

@@ -51,6 +51,11 @@ type FS struct {
 	idx      indexState
 	indexCap int
 
+	// rf is the roll-forward chain (rollforward.go), built on first use; chainCap lowers
+	// its node cap (0 = maxChainNodes).
+	rf       chainState
+	chainCap int
+
 	warnings filesys.Warnings
 }
 

@@ -521,7 +521,7 @@ func TestClassTableIsConsistent(t *testing.T) {
 			t.Errorf("class %q scope %q want %q", ci.Class, ci.Scope, wantScope[ci.Class])
 		}
 	}
-	wantCeil := map[string]int{"deleted-file": 80, "post-checkpoint-file": 80, "carved": 70, "slack": 10, "journal-block": 100, "journal-report": 100}
+	wantCeil := map[string]int{"deleted-file": 80, "post-checkpoint-file": 60, "carved": 70, "slack": 10, "journal-block": 100, "journal-report": 100}
 	for _, ci := range again {
 		if ci.MaxConfidence != wantCeil[ci.Class] {
 			t.Errorf("class %q ceiling %d want %d", ci.Class, ci.MaxConfidence, wantCeil[ci.Class])

@@ -58,8 +58,14 @@ type RecoverOptions struct {
 	MaxPlanRuns   int   // 0 = the default cap (1<<19 runs, about 260 MiB of planning memory); more runs cost memory
 	Progress      func(done, total int64)
 
-	UseJournal filesys.JournalUse // "" or none: the journal is not consulted (3G-R14)
+	// RollForward recovers post-checkpoint files (class post-checkpoint-file) instead of deleted entries (3H-R11).
+	RollForward bool
+	UseJournal  filesys.JournalUse // "" or none: the journal is not consulted (3G-R14)
 }
+
+// ErrNoRollForward is returned, before any audit entry, when RollForward is asked of a filesystem that has no
+// roll-forward log analysis.
+var ErrNoRollForward = fmt.Errorf("%w: the filesystem has no roll-forward log analysis", filesys.ErrUnsupported)
 
 // PlannedCandidate is one recovery map after validation against the free space.
 type PlannedCandidate struct {
@@ -120,6 +126,9 @@ type RecoverPlan struct {
 	// suppression note); the note itself is one entry of FSWarnings however large the growth is.
 	FSWarningsSuppressed uint64
 
+	// Chain is the roll-forward chain a roll-forward plan read; nil for a deleted-entry plan.
+	Chain *ChainInfo
+
 	candidates  int
 	uniform     int
 	overlap     int
@@ -141,7 +150,8 @@ type RecoverSummary struct {
 	SkippedBy              map[string]int
 	LimitReached           string // see RecoverPlan.LimitReached
 	NotProcessed           int
-	ReaderWarnings         int // reader warnings (Candidate.Warnings) audited; not skips
+	ReaderWarnings         int        // reader warnings (Candidate.Warnings) audited; not skips
+	Chain                  *ChainInfo // the chain a roll-forward run read; nil otherwise
 }
 
 // recovererOf returns the Recoverer of fsys, or filesys.ErrNoRecovery. Recover calls it before any audit
@@ -172,6 +182,13 @@ func (o RecoverOptions) validate() error {
 	if _, err := filesys.ParseJournalUse(string(o.UseJournal)); err != nil {
 		return err
 	}
+	if o.RollForward {
+		for _, r := range o.Refs {
+			if id, ok := strings.CutPrefix(r, rfRefPrefix); !ok || id == "" {
+				return fmt.Errorf("with roll-forward only \"%s<ino>\" references are accepted, not %q", rfRefPrefix, r)
+			}
+		}
+	}
 	return nil
 }
 
@@ -188,15 +205,15 @@ func (s *Session) PlanRecovery(ctx context.Context, o RecoverOptions) (*RecoverP
 	if err != nil {
 		return nil, err
 	}
-	rec, err := s.recovererOf(fsys)
+	before := fsys.Info().Warnings
+	rec, rfr, err := s.planSource(ctx, o, fsys)
 	if err != nil {
 		return nil, err
 	}
 	if err := journalGate(o, fsys); err != nil {
 		return nil, err
 	}
-	before := fsys.Info().Warnings
-	plan, err := s.buildPlan(ctx, o, fsys, rec, part, b, false)
+	plan, err := s.buildPlan(ctx, o, fsys, rec, rfr, part, b, false)
 	if err != nil {
 		return nil, err
 	}
@@ -226,6 +243,10 @@ func (s *Session) PlanRecovery(ctx context.Context, o RecoverOptions) (*RecoverP
 type target struct {
 	path string
 	e    filesys.Entry
+
+	pcf              *filesys.PostCheckpointFile // a post-checkpoint file (roll-forward run); nil for a deleted entry
+	searchIncomplete bool                        // some directory could not be read while looking for the parent path
+	parentUnknown    bool                        // its parent has no live path (3H-R7)
 }
 
 type planner struct {
@@ -238,12 +259,16 @@ type planner struct {
 	free   *freeMap
 	plan   *RecoverPlan
 	budget *budget
+
+	rf      filesys.RollForwarder // set on a roll-forward run
+	rfOver  int                   // post-checkpoint files beyond the entry cap
+	rfChain ChainInfo
 }
 
 func (p *planner) skipped(reason string) { p.plan.SkippedBy[reason]++ }
 
 // buildPlan is the whole planning pass shared by PlanRecovery and Recover.
-func (s *Session) buildPlan(ctx context.Context, o RecoverOptions, fsys filesys.FileSystem, rec filesys.Recoverer, part volume.Partition, b *budget, prepare bool) (*RecoverPlan, error) {
+func (s *Session) buildPlan(ctx context.Context, o RecoverOptions, fsys filesys.FileSystem, rec filesys.Recoverer, rfr *rfResolved, part volume.Partition, b *budget, prepare bool) (*RecoverPlan, error) {
 	runs, note, err := s.unallocatedRunsNote(fsys, part, false)
 	if err != nil {
 		return nil, err
@@ -255,8 +280,16 @@ func (s *Session) buildPlan(ctx context.Context, o RecoverOptions, fsys filesys.
 		s: s, ctx: ctx, o: o, fsys: fsys, rec: rec, part: part, free: newFreeMap(runs, unknown), budget: b,
 		plan: &RecoverPlan{SkippedBy: map[string]int{}, unallocNote: note, part: part, fsType: fsys.Info().Type},
 	}
-	targets, over, err := p.enumerate()
-	if err != nil {
+	var (
+		targets []target
+		over    int
+		noun    = "deleted entries"
+	)
+	if rfr != nil {
+		targets, over, noun = rfr.targets, rfr.over, "post-checkpoint files"
+		chain := rfr.chain
+		p.plan.Chain = &chain
+	} else if targets, over, err = p.enumerate(); err != nil {
 		return nil, err
 	}
 	p.plan.Considered = len(targets) + over
@@ -276,7 +309,7 @@ func (s *Session) buildPlan(ctx context.Context, o RecoverOptions, fsys filesys.
 		}
 	}
 	if over > 0 {
-		p.limit("max-entries", over, fmt.Sprintf("more than %d deleted entries; %d were not processed", recoverEntryCap, over))
+		p.limit("max-entries", over, fmt.Sprintf("more than %d %s; %d were not processed", recoverEntryCap, noun, over))
 	}
 	if err := p.items(targets); err != nil {
 		return nil, err
@@ -337,7 +370,7 @@ func (p *planner) enumerate() (targets []target, over int, err error) {
 				return filesys.SkipDir
 			}
 			if we.Deleted {
-				add(target{wp, we})
+				add(target{path: wp, e: we})
 			}
 			return nil
 		})
@@ -369,7 +402,7 @@ func (p *planner) enumerate() (targets []target, over int, err error) {
 				return nil
 			}
 			if we.Deleted {
-				deletedByID[we.ID] = append(deletedByID[we.ID], target{wp, we})
+				deletedByID[we.ID] = append(deletedByID[we.ID], target{path: wp, e: we})
 			} else {
 				liveID[we.ID] = true
 			}
@@ -418,7 +451,7 @@ func (p *planner) enumerate() (targets []target, over int, err error) {
 		}
 		switch {
 		case e.Deleted:
-			add(target{ep, e})
+			add(target{path: ep, e: e})
 		case e.Type == filesys.TypeDir:
 			if err := collect(e, ep); err != nil {
 				return nil, 0, err
@@ -467,10 +500,10 @@ func (p *planner) items(targets []target) error {
 		switch {
 		case len(byID[t.e.ID]) > 1:
 			p.entrySkip(&it, "duplicate-id", fmt.Sprintf("the id %q is held by %d deleted entries: %s", t.e.ID, len(byID[t.e.ID]), strings.Join(byID[t.e.ID], ", ")))
-		case t.e.Type != filesys.TypeFile && t.e.Type != filesys.TypeSymlink:
+		case t.pcf == nil && t.e.Type != filesys.TypeFile && t.e.Type != filesys.TypeSymlink:
 			p.entrySkip(&it, "not-a-file", "a deleted "+t.e.Type.String()+" is not recovered")
 		default:
-			cs, err := p.rec.Recoverable(t.e)
+			cs, err := p.candidatesFor(t)
 			switch {
 			case err == nil:
 			case errors.Is(err, filesys.ErrNotFound):
@@ -627,6 +660,7 @@ func (p *planner) evaluate(it *RecoverItem, t target, cs []filesys.Candidate) {
 		}
 		pc.Content = "ok"
 		pc.Confidence, _ = confidenceFor(c.Method, pc.cut || pc.prefix || slices.Contains(pc.Assumptions, assumptionFileEndUnknown), false, slices.Contains(pc.Assumptions, assumptionJournalNotReplayed))
+		pc.Confidence = capRollForward(pc.Confidence, pc.Assumptions)
 		pc.Confidence = capJournalSource(pc.Confidence, pc.Assumptions)
 		pc.Band = evidence.ConfidenceBand(pc.Confidence)
 		valid = append(valid, pc)
@@ -680,6 +714,7 @@ func (p *planner) selectAndFilter() {
 				}
 			}
 			c.Confidence, _ = confidenceFor(c.Method, c.cut || c.prefix || slices.Contains(c.Assumptions, assumptionFileEndUnknown), len(partners) > 0, slices.Contains(c.Assumptions, assumptionJournalNotReplayed))
+			c.Confidence = capRollForward(c.Confidence, c.Assumptions)
 			c.Confidence = capJournalSource(c.Confidence, c.Assumptions)
 			c.Band = evidence.ConfidenceBand(c.Confidence)
 			c.Assumptions = fitAssumptions(c.Assumptions)

@@ -2,8 +2,10 @@ package filesys
 
 import "fmt"
 
-// Journaler is implemented by a filesystem that keeps a journal. Callers find it with As. Interface
-// only in 3A: the readers implement it in later plans.
+// Journaler is implemented by a filesystem that keeps a journal. Callers find it with As. F2FS (3H) and ext4 (3G)
+// implement it: F2FS over its roll-forward chain (see RollForwarder), ext4 over the jbd2 journal; other readers follow in later plans.
+// The Run that JournalBlock returns is filesystem-relative (offset from the start of the filesystem,
+// not of the image); the caller adds the partition start.
 type Journaler interface {
 	Journal() (JournalInfo, error)
 	JournalTransactions(visit func(JournalTxn) bool) error
@@ -17,7 +19,7 @@ type JournalInfo struct {
 	BlockSize     int
 	Blocks        int64  // journal length in blocks
 	Sequence      uint32 // first expected transaction
-	Start         uint32 // 0 = clean (empty live region)
+	Start         uint32 // 0 = clean (empty live region); F2FS reports the chain start block, even for an empty chain: the 0 = clean convention does not apply there
 	Features      []string
 	NeedsRecovery bool
 	Warnings      []string
@@ -44,7 +46,7 @@ type JournalTag struct {
 type JournalTxn struct {
 	Seq       uint32
 	Committed bool
-	Region    string // "live" or "stale"
+	Region    string // "live" or "stale"; "live" means the log region a recovery scans, never live data
 	Blocks    []JournalTag
 	Revoked   []uint64
 	Warnings  []string

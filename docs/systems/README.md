@@ -25,7 +25,9 @@ If you find yourself restating an invariant or a limitation, link to it.
 
 ## The documents
 
-None yet. Candidates, in the order changes reach them most: the case and its verify
+- [F2FS roll-forward](f2fs-rollforward.md): the post-checkpoint node chain, its report, block copies and recovered files.
+
+Further candidates, in the order changes reach them most: the case and its verify
 (`internal/evidence`), the records writer and full-text index (`internal/records`), the SQLite
 file library (`internal/sqlitefile`), the parse host (`internal/artparse`) and each filesystem
 reader.
