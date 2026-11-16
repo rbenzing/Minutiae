@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
 )
@@ -169,6 +170,7 @@ func (c *rfChain) files(f *FS) ([]filesys.RollForwardFile, error) {
 		}
 		var main, named *inode
 		var mainAt int
+		newer := "" // why a newer copy than main was passed over
 		for j := len(cands) - 1; j >= 0 && (main == nil || named == nil); j-- {
 			e := c.entries[cands[j]]
 			if j == len(cands)-1 {
@@ -180,6 +182,13 @@ func (c *rfChain) files(f *FS) ([]filesys.RollForwardFile, error) {
 			}
 			in, _, perr := f.parseChainInode(raw, fl.Ino)
 			if perr != nil || !goodInode(in) {
+				if main == nil && newer == "" {
+					if perr != nil {
+						newer = fmt.Sprintf("a newer inode copy (block %d) cannot be parsed, so this line shows an older copy", e.block)
+					} else {
+						newer = fmt.Sprintf("a newer inode copy (block %d) has a bad checksum, so this line shows an older copy", e.block)
+					}
+				}
 				continue
 			}
 			if main == nil {
@@ -198,8 +207,9 @@ func (c *rfChain) files(f *FS) ([]filesys.RollForwardFile, error) {
 			named = main
 		}
 		fl.HasInode, fl.Size, fl.Pino = true, main.size, named.pino
+		fl.Caveat = newer
 		if named.nameBad {
-			fl.Caveat = "i_namelen is out of range: the name is unknown"
+			fl.Caveat = strings.TrimPrefix(newer+"; i_namelen is out of range: the name is unknown", "; ")
 		} else {
 			fl.Name, _ = displayName(named.name, named.encrypted)
 		}

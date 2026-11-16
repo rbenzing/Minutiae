@@ -302,3 +302,25 @@ func rfCorrupt(t *testing.T, img []byte, addr uint32) *f2fs.FS {
 	}
 	return f
 }
+
+// A newer inode copy with a bad checksum makes the line show an older copy: the caveat says so, with the
+// block of the bad copy, and a line whose last copy is good has none.
+func TestRollForwardFilesNewerBadCopyHasCaveat(t *testing.T) {
+	v1 := rfIno(f2fstest.Inode{NID: 91, Size: 100, PIno: f2fstest.RootIno, Name: "old"}, true, true)
+	v2 := rfIno(f2fstest.Inode{NID: 91, Size: 200, PIno: f2fstest.RootIno, Name: "newer"}, true, false)
+	_, img, tree := rfInodeChain(t, v1, v2)
+	f := rfCorrupt(t, img, tree.ChainAddrs[1])
+	c, _ := rfWalk(t, f)
+	fl := c.Files[0]
+	if !fl.HasInode || fl.Size != 100 || fl.Name != "old" || fl.InodeBlock != uint64(tree.ChainAddrs[0]) {
+		t.Fatalf("file = %+v, want the older copy's size 100 and name old from block %d", fl, tree.ChainAddrs[0])
+	}
+	want := fmt.Sprintf("a newer inode copy (block %d) has a bad checksum", tree.ChainAddrs[1])
+	if !strings.Contains(fl.Caveat, want) {
+		t.Errorf("caveat %q lacks %q", fl.Caveat, want)
+	}
+	good, _, _ := rfInodeChain(t, v1, v2)
+	if cg, _ := rfWalk(t, good); cg.Files[0].Caveat != "" {
+		t.Errorf("clean chain caveat = %q, want none", cg.Files[0].Caveat)
+	}
+}
