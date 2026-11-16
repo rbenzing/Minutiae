@@ -48,7 +48,7 @@ func TestPrepareJournalRecoveryFindsWrapped(t *testing.T) {
 	if core.calls != 1 || core.use != filesys.JournalUseStale {
 		t.Fatalf("inner called %d times with %q through two wrappers, want once with stale", core.calls, core.use)
 	}
-	// none (and "") calls nothing, even on a filesystem without the implementation
+	// none (and "") is forwarded as none, so a reader drops its preparation; a filesystem without the implementation says nil
 	for _, use := range []filesys.JournalUse{filesys.JournalUseNone, ""} {
 		if err := filesys.PrepareJournalRecovery(ctx, chain, use); err != nil {
 			t.Fatalf("use %q: %v", use, err)
@@ -57,8 +57,8 @@ func TestPrepareJournalRecoveryFindsWrapped(t *testing.T) {
 			t.Fatalf("use %q, no implementation: %v", use, err)
 		}
 	}
-	if core.calls != 1 {
-		t.Fatalf("none reached the filesystem: %d calls", core.calls)
+	if core.calls != 3 || core.use != filesys.JournalUseNone {
+		t.Fatalf("none was forwarded %d times (last use %q); want twice, as none", core.calls-1, core.use)
 	}
 	// absent implementation
 	err := filesys.PrepareJournalRecovery(ctx, &wrapFS{inner: &recFS{}}, filesys.JournalUseStale)

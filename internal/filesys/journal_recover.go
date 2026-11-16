@@ -38,18 +38,18 @@ type JournalRecoverer interface {
 // ErrNoJournalRecovery means the filesystem cannot recover from its journal.
 var ErrNoJournalRecovery = fmt.Errorf("%w: filesystem has no journal recovery", ErrUnsupported)
 
-// PrepareJournalRecovery runs the JournalRecoverer of fsys (found with As). With use none nothing is
-// asked of the filesystem and the answer is nil; otherwise a filesystem without one is
+// PrepareJournalRecovery runs the JournalRecoverer of fsys (found with As). With use none the filesystem is told to drop any preparation (so a later plan is 3C whatever an
+// earlier one asked) and one without a recoverer answers nil; otherwise a filesystem without one is
 // ErrNoJournalRecovery.
 func PrepareJournalRecovery(ctx context.Context, fsys FileSystem, use JournalUse) error {
 	u, err := ParseJournalUse(string(use))
 	if err != nil {
 		return err
 	}
-	if u == JournalUseNone {
+	r, ok := As[JournalRecoverer](fsys)
+	if !ok && u == JournalUseNone {
 		return nil
 	}
-	r, ok := As[JournalRecoverer](fsys)
 	if !ok {
 		return ErrNoJournalRecovery
 	}

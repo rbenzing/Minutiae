@@ -372,3 +372,28 @@ func TestRecoverJournalOnExt4WithoutJournalIsOneRefusal(t *testing.T) {
 	}
 	verifyOK(t, s.Case)
 }
+
+// Use none is 3C whatever an earlier plan of the same session asked for: the journal preparation of a stale plan
+// must not leak into the next plan (3G whole-branch review).
+func TestRecoverExt4JournalNoneAfterStaleSameSession(t *testing.T) {
+	img := buildJrn(t, jrnSpec{}).img
+	plan := func(s *examine.Session, use filesys.JournalUse) *examine.RecoverPlan {
+		p, err := s.PlanRecovery(context.Background(), examine.RecoverOptions{Partition: -1, All: true, UseJournal: use})
+		if err != nil {
+			t.Fatalf("PlanRecovery(%q): %v", use, err)
+		}
+		return p
+	}
+	s, _ := imageSession(t, img)
+	withJournal := plan(s, filesys.JournalUseStale)
+	if !slices.ContainsFunc(withJournal.Items, func(it examine.RecoverItem) bool {
+		return slices.ContainsFunc(it.Candidates, func(c examine.PlannedCandidate) bool { return c.Method == "ext4-journal-inode" })
+	}) {
+		t.Fatalf("the stale plan has no journal candidate, so the test proves nothing: %+v", withJournal)
+	}
+	after := plan(s, filesys.JournalUseNone)
+	fresh, _ := imageSession(t, img)
+	if want := plan(fresh, filesys.JournalUseNone); !reflect.DeepEqual(after, want) {
+		t.Errorf("a none plan after a stale plan differs from a fresh none plan:\n%+v\n%+v", after, want)
+	}
+}

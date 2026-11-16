@@ -553,3 +553,32 @@ func TestVerifyJournalMethodOnOtherKindIsAProblem(t *testing.T) {
 		t.Fatalf("journal problems %q", got)
 	}
 }
+
+// R13 compares the scope of a journal report and a block copy with the one the writer stores, and the committed flag
+// of a journal-derived file with the fresh candidate (3G whole-branch review).
+func TestVerifyJournalScopeAndCommittedFlagsDiffer(t *testing.T) {
+	t.Run("report scope", func(t *testing.T) {
+		jc := newJVCase(t, jrnSpec{})
+		evidencetest.RewriteManifest(t, jc.s.Case.Dir, jc.report.ID, func(r *evidence.ManifestRecord) { r.Source.Derived.Recovery.Scope = "unallocated" })
+		got := jvProblems(rfVerify(t, jc.s.Case))
+		if len(got) != 1 || !strings.Contains(got[0], "scope") {
+			t.Fatalf("journal problems %q", got)
+		}
+	})
+	t.Run("block scope", func(t *testing.T) {
+		jc := newJVCase(t, jrnSpec{})
+		jc.clone(t, jc.blocks[0], "journal/p1-ext4/seq10-fsblk1-scope.bin", func(d *evidence.Derivation) { d.Recovery.Scope = "unallocated" })
+		got := jvProblems(rfVerify(t, jc.s.Case))
+		if len(got) != 1 || !strings.Contains(got[0], "scope") {
+			t.Fatalf("journal problems %q", got)
+		}
+	})
+	t.Run("file committed", func(t *testing.T) {
+		jc := newJVCase(t, jrnSpec{})
+		jc.clone(t, jc.file, "recovered/p1-ext4/000097-gone.bin", func(d *evidence.Derivation) { d.Recovery.Journal.Committed = false })
+		got := jvProblems(rfVerify(t, jc.s.Case))
+		if len(got) != 1 || !strings.Contains(got[0], "committed") {
+			t.Fatalf("journal problems %q", got)
+		}
+	})
+}

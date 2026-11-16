@@ -234,10 +234,10 @@ func (s *safeFS) PrepareJournalRecovery(ctx context.Context, use filesys.Journal
 	if perr != nil {
 		return perr
 	}
-	if u == filesys.JournalUseNone {
+	r, ok := filesys.As[filesys.JournalRecoverer](s.fs)
+	if !ok && u == filesys.JournalUseNone {
 		return nil
 	}
-	r, ok := filesys.As[filesys.JournalRecoverer](s.fs)
 	if !ok {
 		return filesys.ErrNoJournalRecovery
 	}

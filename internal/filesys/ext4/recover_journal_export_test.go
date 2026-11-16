@@ -7,3 +7,10 @@ func (f *FS) SetJournalCopyCap(n int) {
 		f.jrecCopyCap = n
 	}
 }
+
+// SetJournalStepCap lowers the work budget of one journal preparation (before PrepareJournalRecovery).
+func (f *FS) SetJournalStepCap(n int64) {
+	if n > 0 {
+		f.jrecStepCap = n
+	}
+}

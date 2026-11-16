@@ -733,3 +733,32 @@ func TestJournalCandidateOnlyCopyRejectedIsUndecided(t *testing.T) {
 	}})
 	r.undecided(t, filesys.JournalUseCommitted, "sequence 11")
 }
+
+// The work of all lookups of one preparation is budgeted: past the budget an entry is undecided with a typed
+// limit, in the inode-table copy walk and in the map-block walk alike.
+func TestJournalWorkBudgetIsUnknown(t *testing.T) {
+	copies := rjBuild(t, rjSpec{jbd: func(c *rjCtx) ext4test.JBD2 {
+		other := func(g uint32) []byte { return c.live(rjGen(g)) }
+		return rjLive(rjTxn(10, c.tag(c.live(nil))), rjTxn(11, c.tag(other(8))), rjTxn(12, c.tag(other(9))))
+	}})
+	copies.f.SetJournalStepCap(2)
+	copies.prep(t, filesys.JournalUseCommitted)
+	cs, err := copies.recover(t)
+	if len(cs) != 0 || !errors.Is(err, filesys.ErrLimit) {
+		t.Errorf("inode walk: %+v, %v; want a budget ErrLimit and no candidate", cs, err)
+	}
+	maps := rjBuild(t, rjSpec{
+		files: []ext4test.File{{Path: rjPath, Data: pattern(5*1024+300, 9), Deleted: true, Generation: 7, ExtentLeaves: 1}},
+		jbd: func(c *rjCtx) ext4test.JBD2 {
+			leaf := ext4test.JTag{FSBlock: uint64(c.loc.Tree[0]), Data: c.l.BlockCopy(c.img, c.loc.Tree[0])}
+			return rjLive(rjTxn(10, c.tag(c.live(nil))), rjTxn(11, leaf))
+		},
+	})
+	maps.f.SetJournalStepCap(1)
+	maps.prep(t, filesys.JournalUseCommitted)
+	cs, err = maps.recover(t)
+	warned := len(cs) > 0 && slices.ContainsFunc(cs[0].Warnings, func(w string) bool { return strings.Contains(w, "budget") })
+	if len(rjJournalOf(cs)) != 0 || !warned && !errors.Is(err, filesys.ErrLimit) {
+		t.Errorf("map walk: %+v, %v; want ErrLimit and no candidate", cs, err)
+	}
+}

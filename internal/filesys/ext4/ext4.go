@@ -95,6 +95,7 @@ type FS struct {
 	jrecMu      sync.Mutex
 	jrec        *jrecState
 	jrecCopyCap int
+	jrecStepCap int64 // 0 = maxJournalSteps; tests lower it
 }
 
 // readFull reads exactly len(p) bytes at off; a read that returns all the

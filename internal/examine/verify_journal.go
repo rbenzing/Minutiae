@@ -45,6 +45,9 @@ func JournalCheck(drivers []detect.Driver) evidence.VerifyCheck {
 	}
 }
 
+// jrScope is the scope the writer stores on every ext4 journal report and block copy (journal_jbd2.go).
+const jrScope = "journal"
+
 // jrRole is what R13 recomputes an artifact as.
 type jrRole int
 
@@ -254,6 +257,10 @@ type jrPart struct {
 func (ch *jrPart) report(rec evidence.ManifestRecord) bool {
 	k := ch.k
 	p := rec.Source.Derived.Recovery.Params
+	if sc := rec.Source.Derived.Recovery.Scope; sc != jrScope {
+		k.problem(rec, "report records the scope %q, this build writes %q, so it is not a report it renders again", sc, jrScope)
+		return false
+	}
 	limit, err := strconv.ParseInt(p["max_bytes"], 10, 64)
 	if err != nil || limit <= 0 {
 		k.problem(rec, "report records no valid max_bytes parameter (%q), so it cannot be rendered again", p["max_bytes"])
@@ -374,6 +381,10 @@ func (ch *jrPart) block(rec evidence.ManifestRecord) bool {
 	}
 	g := t.Blocks[tag]
 	good := true
+	if rv.Scope != jrScope {
+		k.problem(rec, "block copy records the scope %q, this build writes %q", rv.Scope, jrScope)
+		good = false
+	}
 	if r := rv.Journal; r == nil || r.Seq != t.Seq || r.Committed != t.Committed || r.Region != t.Region || r.Revoked != g.Revoked {
 		k.problem(rec, "block copy's journal reference %+v differs from the fresh tag (sequence %d, %s region, committed %v, revoked %v)", r, t.Seq, t.Region, t.Committed, g.Revoked)
 		good = false
@@ -474,6 +485,12 @@ func (ch *jrPart) file(rec evidence.ManifestRecord) bool {
 			continue
 		}
 		matched = true
+		if cand.Journal.Committed != rv.Journal.Committed {
+			if reason == "" {
+				reason = fmt.Sprintf("recorded journal reference says committed %v, the journal candidate %q gives now says %v", rv.Journal.Committed, d.FSID, cand.Journal.Committed)
+			}
+			continue
+		}
 		if why := ch.fileFits(rec, recorded, cand); why != "" {
 			if reason == "" {
 				reason = why

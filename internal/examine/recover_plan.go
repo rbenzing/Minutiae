@@ -310,6 +310,11 @@ func (s *Session) buildPlan(ctx context.Context, o RecoverOptions, fsys filesys.
 		if err := p.prepareJournal(use); err != nil {
 			return nil, err
 		}
+	} else if use == filesys.JournalUseNone {
+		// A reader keeps its preparation for the session: use none drops it, so the plan is 3C.
+		if err := filesys.PrepareJournalRecovery(ctx, fsys, use); err != nil {
+			return nil, err
+		}
 	}
 	if over > 0 {
 		p.limit("max-entries", over, fmt.Sprintf("more than %d %s; %d were not processed", recoverEntryCap, noun, over))

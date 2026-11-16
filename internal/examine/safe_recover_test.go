@@ -569,8 +569,8 @@ func TestSafeFSCopiesNewJournalFields(t *testing.T) {
 	}
 }
 
-// The wrapper's own method is a gate like the package helper: it validates use and answers none without
-// asking the wrapped reader.
+// The wrapper's own method is a gate like the package helper: it validates use and forwards none (which
+// drops the reader's preparation).
 func TestSafeFSPrepareJournalRecoveryValidatesUse(t *testing.T) {
 	fsys, _ := recImage(t)
 	inner := &jrecInner{FileSystem: fsys}
@@ -588,11 +588,11 @@ func TestSafeFSPrepareJournalRecoveryValidatesUse(t *testing.T) {
 			t.Errorf("use %q: %v; want nil", none, err)
 		}
 	}
-	if inner.calls != 0 {
-		t.Errorf("the wrapped reader was asked %d times for an invalid or none use; want 0", inner.calls)
+	if inner.calls != 2 || inner.use != filesys.JournalUseNone {
+		t.Errorf("the wrapped reader was asked %d times (use %q); want the two none calls forwarded as none and no invalid one", inner.calls, inner.use)
 	}
-	if err := r.PrepareJournalRecovery(context.Background(), filesys.JournalUseCommitted); err != nil || inner.calls != 1 || inner.use != filesys.JournalUseCommitted {
-		t.Errorf("committed: err %v, calls %d, use %q; want one forwarded call", err, inner.calls, inner.use)
+	if err := r.PrepareJournalRecovery(context.Background(), filesys.JournalUseCommitted); err != nil || inner.calls != 3 || inner.use != filesys.JournalUseCommitted {
+		t.Errorf("committed: err %v, calls %d, use %q; want a forwarded call", err, inner.calls, inner.use)
 	}
 }
 

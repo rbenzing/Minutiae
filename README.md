@@ -190,7 +190,8 @@ history, never live. A journal that is cut (a fast-commit area, a cap, an image 
 flagged `INCOMPLETE`; `case verify` recomputes the reports, block copies and files.
 
 One `import` call imports exactly one image; run it once per image. Deleted
-entries are listed and flagged but not recovered, and encrypted files are
+entries are listed and flagged, and extraction skips them (only `image recover` recovers them, with
+capped confidence), and encrypted files are
 extracted as ciphertext. ext2, ext3 and ext4 are read as found (the journal is
 not replayed), FAT12/16/32 and exFAT likewise (a FAT file whose cluster chain
 ends early is extracted as an `incomplete` partial artifact), and F2FS is read as

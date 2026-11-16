@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
 )
@@ -24,6 +25,12 @@ const (
 	// maxJournalCopiesPerEntry bounds the copies of an inode-table block one entry examines. Reaching it makes the
 	// journal source unknown for the entry (filesys.ErrLimit), never "no candidate".
 	maxJournalCopiesPerEntry = 1 << 16
+
+	// maxJournalSteps is the work one preparation of the journal source may spend over all entries: one step per
+	// journal copy examined, for an inode-table block or a map block. At most this many journal blocks are read
+	// (4 GiB at 4 KiB blocks); the fixtures use a few dozen. Past it every lookup is unknown (filesys.ErrLimit),
+	// never "no candidate".
+	maxJournalSteps = 1 << 20
 )
 
 var _ filesys.JournalRecoverer = (*FS)(nil)
@@ -35,6 +42,8 @@ type jrecState struct {
 	unusable    error               // the reason the journal source answers unknown
 	inodeCopies map[uint64][]uint32 // inode-table fs block -> tag indexes, newest first
 	byBlock     []uint32            // every tag index ordered by fs block, then newest first
+	steps       *atomic.Int64       // steps spent over every lookup of this preparation (maxJournalSteps)
+	stepCap     int64
 }
 
 // journalUnknownError is leafUnknownError for the journal source: it cannot say whether it has an answer.
@@ -100,7 +109,7 @@ func (f *FS) PrepareJournalRecovery(ctx context.Context, use filesys.JournalUse)
 		}
 		return nil
 	}
-	s := &jrecState{use: u}
+	s := &jrecState{use: u, steps: new(atomic.Int64), stepCap: cmp.Or(f.jrecStepCap, maxJournalSteps)}
 	x, err := f.journalIndex()
 	switch {
 	case err == nil:
@@ -217,6 +226,9 @@ func (f *FS) journalCandidates(st *staleInode) ([]filesys.Candidate, []string, e
 			// an older copy would be a guess about a newer state (3G C14).
 			unreadable = true
 			continue
+		}
+		if !s.spend() {
+			return nil, notes, s.budgetUnknown()
 		}
 		if examined++; examined > limit {
 			return nil, notes, unknownJournal(
@@ -371,7 +383,7 @@ func (f *FS) journalCandidateFrom(s *jrecState, st *staleInode, c *jcopy, itable
 
 // source returns the tree source for an inode copy taken from transaction t.
 func (s *jrecState) source(t uint32) *journalTreeSource {
-	return &journalTreeSource{x: s.idx, t: t, use: s.use, byBlock: s.byBlock}
+	return &journalTreeSource{x: s.idx, t: t, use: s.use, byBlock: s.byBlock, s: s}
 }
 
 // journalTreeSource reads the map blocks of an inode copy from the journal (3G-R12): block B from the newest eligible
@@ -382,6 +394,7 @@ type journalTreeSource struct {
 	t       uint32 // the transaction of the inode copy
 	use     filesys.JournalUse
 	byBlock []uint32
+	s       *jrecState // the work budget
 }
 
 func (s *journalTreeSource) mapBlock(f *FS, blk uint64) ([]byte, string, bool, string, error) {
@@ -391,6 +404,9 @@ func (s *journalTreeSource) mapBlock(f *FS, blk uint64) ([]byte, string, bool, s
 	newer := false
 	for i := lo; i < len(s.byBlock) && x.tags[s.byBlock[i]].fsblk == blk; i++ {
 		f.mapWork.Add(1)
+		if !s.s.spend() {
+			return nil, "", false, "", s.s.budgetUnknown()
+		}
 		g := &x.tags[s.byBlock[i]]
 		t := &x.txns[g.txn]
 		switch {
@@ -429,4 +445,15 @@ func (s *journalTreeSource) mapBlock(f *FS, blk uint64) ([]byte, string, bool, s
 		return nil, "", false, stopMapBlockNewer, nil
 	}
 	return nil, "home", true, "", nil
+}
+
+// spend charges one journal copy examined and reports whether it is within the budget of the preparation. The counter
+// is the only mutable part of the state and is atomic.
+func (s *jrecState) spend() bool { return s.steps.Add(1) <= s.stepCap }
+
+// budgetUnknown is the answer of every lookup once the budget is spent: unknown, never "no candidate".
+func (s *jrecState) budgetUnknown() *journalUnknownError {
+	return unknownJournal(
+		fmt.Errorf("%w: the journal lookups of this run exceeded their budget of %d steps", filesys.ErrLimit, s.stepCap),
+		"journal search stopped: the work budget of the run is spent")
 }
