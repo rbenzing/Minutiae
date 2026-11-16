@@ -164,6 +164,13 @@ minutiae image journal show   --case ./cases/CASE01 <ref> <seq> -p 1    # its no
 minutiae image journal report --case ./cases/CASE01 <ref> -p 1          # reports/p1-f2fs/rollforward.jsonl
 minutiae image journal blocks --case ./cases/CASE01 <ref> <seq> -p 1    # node blocks as journal-block artifacts
 minutiae image recover --case ./cases/CASE01 <ref> -p 1 --rollforward --all
+
+# ext4 journal (jbd2): the transactions still in the log, read-only (never replayed, never shown by image ls)
+minutiae image journal ls     --case ./cases/CASE01 <ref> -p 1 [--no-stale]    # live and stale transactions
+minutiae image journal show   --case ./cases/CASE01 <ref> <seq> -p 1 [--region live|stale]
+minutiae image journal report --case ./cases/CASE01 <ref> -p 1 [--no-stale]    # reports/p1-ext4/journal.jsonl
+minutiae image journal blocks --case ./cases/CASE01 <ref> <seq> -p 1 [--region live|stale]   # log slots as journal-block artifacts
+minutiae image recover --case ./cases/CASE01 <ref> -p 1 --use-journal none|committed|stale --all
 ```
 
 The roll-forward chain is reported, never applied: `image ls` never shows it. `image recover
@@ -171,6 +178,16 @@ The roll-forward chain is reported, never applied: `image ls` never shows it. `i
 (not deleted, never live, confidence at most 60; a file that needs an indirect node is a
 prefix) and takes only `--all` or `id:rollforward:<ino>`. A chain that is cut is flagged
 `INCOMPLETE`; `case verify` recomputes the reports, block copies and files.
+
+On ext2, ext3 and ext4, `image journal` reads the jbd2 journal and never applies it. A transaction
+is `live` (the kernel would replay it at mount) or `stale` (left in the log by earlier use);
+`--stale` spells out the default and `--no-stale` leaves the stale ones out, and a sequence that
+names both needs `--region`. Every transaction states its commit and checksum state, and that
+it is unknown whether it was applied. `image recover --use-journal committed` adds the inode copies
+of committed live transactions as a source (method `ext4-journal-inode`), and `stale` also the
+committed stale ones; the confidence is at most 40 on a real image, and a journal-sourced file is
+history, never live. A journal that is cut (a fast-commit area, a cap, an image that ends) is
+flagged `INCOMPLETE`; `case verify` recomputes the reports, block copies and files.
 
 One `import` call imports exactly one image; run it once per image. Deleted
 entries are listed and flagged but not recovered, and encrypted files are

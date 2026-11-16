@@ -1396,7 +1396,7 @@ Self-checks (`internal/filesys/ext4/journal_fixture_test.go`, no journal reader 
 (the image sha256, the 400 KiB budget, the journal superblock, every transaction's header, tags, revokes, commit block and every
 checksum recomputed from the bytes with a crc32c of its own, the captured bytes of every recovery the oracle derives, every family,
 every `equal_source` kind) and `TestExt4JournalFixturesLiveFilesMatchSource` (the live reader opens the as-found files with their
-source hashes). Task 14 holds the journal reader to the oracle.
+source hashes). The reader, examine and command tests that hold the journal reader to the oracle are listed in [../../docs/testing.md](../../docs/testing.md); how the system works is in [../../docs/systems/ext4-journal.md](../../docs/systems/ext4-journal.md).
 
 | Image | Format (`faketime`, fixed UUID and hash seed) | Raw | Gzipped | SHA-256 of the raw image |
 |---|---|---|---|---|

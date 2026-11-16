@@ -26,6 +26,7 @@ If you find yourself restating an invariant or a limitation, link to it.
 ## The documents
 
 - [F2FS roll-forward](f2fs-rollforward.md): the post-checkpoint node chain, its report, block copies and recovered files.
+- [ext4 journal](ext4-journal.md): the jbd2 transactions, their report, block copies and the `ext4-journal-inode` recovery source.
 
 Further candidates, in the order changes reach them most: the case and its verify
 (`internal/evidence`), the records writer and full-text index (`internal/records`), the SQLite

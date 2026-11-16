@@ -42,6 +42,7 @@ named here; what is from memory, and how far it is checked, is in the item the l
 | Carving layouts: JPEG, PNG, GIF, RIFF/WebP, WAV, Ogg, gzip, BMP, ICO and CUR, TIFF and camera raw, ISO-BMFF, the JPEG XL container, SQLite, binary plist, ZIP and PDF | `internal/carve/validate_*.go` | [recovery](limitations/recovery.md): the "Carving, …" items |
 | F2FS deleted-file recovery (the node scan) | `internal/filesys/f2fs/recover*.go` | [recovery](limitations/recovery.md): "F2FS deleted-file recovery" |
 | F2FS roll-forward (the warm-node chain and the replay rules) | `internal/filesys/f2fs/rollforward*.go` | [recovery](limitations/recovery.md): "F2FS roll-forward" |
+| The ext4 jbd2 journal (superblock, block types, tag formats, checksums, the scan and revoke rules) | `internal/filesys/ext4/journal*.go`, `recover_journal.go` | [recovery](limitations/recovery.md): "ext4 journal (plan 3G)" |
 | The Android sync v2 wire | `internal/android/adb` | [acquisition](limitations/acquisition.md): "Android sync" |
 | The AFC wire, the mobilebackup2 end marker, the `Manifest.db` layout read during a backup | `internal/ios/afc`, `internal/ios/mb2`, `internal/ios/manifestdb` | [acquisition](limitations/acquisition.md): "iOS AFC", "iOS backup transfer" |
 | The HFS+ journal header, the ignorable code units, the directory-link markers | `internal/filesys/hfsplus` | [hfsplus](limitations/hfsplus.md) |
