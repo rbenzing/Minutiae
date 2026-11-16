@@ -157,7 +157,20 @@ minutiae image extract --case ./cases/CASE01 <ref> -p 1 -r --snapshot name:snap1
 # Export unallocated space: a filesystem's free space, or the gaps outside every partition
 minutiae image unalloc --case ./cases/CASE01 <ref> -p 1
 minutiae image unalloc --case ./cases/CASE01 <ref> --volume
+
+# F2FS roll-forward: data fsync'd after the last checkpoint (the kernel would replay it at mount)
+minutiae image journal ls     --case ./cases/CASE01 <ref> -p 1          # the chain, read-only
+minutiae image journal show   --case ./cases/CASE01 <ref> <seq> -p 1    # its nodes
+minutiae image journal report --case ./cases/CASE01 <ref> -p 1          # reports/p1-f2fs/rollforward.jsonl
+minutiae image journal blocks --case ./cases/CASE01 <ref> <seq> -p 1    # node blocks as journal-block artifacts
+minutiae image recover --case ./cases/CASE01 <ref> -p 1 --rollforward --all
 ```
+
+The roll-forward chain is reported, never applied: `image ls` never shows it. `image recover
+--rollforward` recovers the files the replay would create as class `post-checkpoint-file`
+(not deleted, never live, confidence at most 60; a file that needs an indirect node is a
+prefix) and takes only `--all` or `id:rollforward:<ino>`. A chain that is cut is flagged
+`INCOMPLETE`; `case verify` recomputes the reports, block copies and files.
 
 One `import` call imports exactly one image; run it once per image. Deleted
 entries are listed and flagged but not recovered, and encrypted files are
