@@ -145,6 +145,46 @@ The execution counts are the engine's own last progress line of each log; with m
 
 Re-run after LX-8 (2026-10-21, commit `26bb649`): NOT obtained. The three campaigns (`-profile decoders -pkg internal/decode/plist` at 120 s, `-profile readers -pkg internal/dbrecover -pkg internal/sqlitefile` at 80 s, which are 15 targets and did not fit 30 minutes at 120 s, and `-profile parsers` at 60 s) each ended with `docker could not run the container (exit 125)` after the engine died (`error waiting for container: unexpected EOF`). The Docker VM was at 899 MB and 2 processors (the user's `.wslconfig`: `memory=1073741824`, `processors=2`; the host had under 2 GB free), while the container is allowed 4 GiB; memory exhaustion of the VM is the probable cause, not measured (the plist run died too). No target finished, so there is no result and no finding, and none is claimed. The stall table rows for `FuzzRun` (Windows default and `-fuzzminimizetime 0s`, Linux default and `-fuzzminimizetime 0s`) were already measured in the first table above, so no new stall measurement was taken. `plan -list -profile all` was checked against a search for `^func Fuzz` over the `_test.go` files of `internal` and `tools`: both name the same 68 targets (the other 7 matches are text inside a Go string in `discover_test.go`, a fixture for `Discover`'s own tests). To run them: give the Docker VM at least 4 GiB, then run the three campaigns listed above (`run -profile decoders -pkg internal/decode/plist -fuzztime 120s`, `run -profile readers -pkg internal/dbrecover -pkg internal/sqlitefile -fuzztime 80s`, `run -profile parsers -fuzztime 60s`), each after its own `prepare` and with its own `-out`.
 
+
+### Recovery fuzz runs (3K, 2026-11-16 to 2026-11-17)
+Route: the Windows host, plain `go test -fuzz` per target through `heavy.sh` (one target at a time, holding the machine lock), `-fuzzminimizetime 0s -parallel 4 -timeout 30m`, `CGO_ENABLED=0`, `go version go1.26.8 windows/amd64`, 12 logical CPUs, 15 GiB RAM. Why the host and not `tools/fuzzcampaign` in Docker (plan 3K, ruling R7): the Docker VM could not hold a campaign (see the failed re-run above), and with minimisation off the Windows exec counter does advance, as every row below shows; `tools/fuzzcampaign` itself still refuses host mode on Windows. Branch `feat/3k-recovery-closeout`, from `d77e115` to `d6700e8`: the commits made during the runs changed only test files (`internal/cli` tests, and the test files and corpora of the three targets that failed), and each re-run ran after its own fix commit. Execs and New interesting are the engine's own last progress line of each log; Execs/s is Execs divided by the elapsed time of that line (the line's own rate is instantaneous and reads 0 at the stop). Nothing is estimated.
+
+| Target | Package | Fuzz time | Execs (elapsed) | Execs/s | New interesting | Outcome | Crasher |
+|---|---|---|---|---|---|---|---|
+| `FuzzFATRecoverable` | `internal/filesys/fat` | 10m | 12225169 (10m0s) | 20375 | 473 | ok | none |
+| `FuzzExfatRecoverable` | `internal/filesys/exfat` | 10m | 16665643 (10m0s) | 27776 | 474 | ok | none |
+| `FuzzExt4Recoverable` | `internal/filesys/ext4` | 10m | 12334655 (10m0s) | 20558 | 1219 | ok | none |
+| `FuzzF2FSRecoverable` | `internal/filesys/f2fs` | 10m | 172593 (10m0s) | 288 | 248 | ok | none |
+| `FuzzJBD2` | `internal/filesys/ext4` | 10m | 2903121 (10m0s) | 4839 | 293 | ok | none |
+| `FuzzRollForward` | `internal/filesys/f2fs` | 10m | 6346 (22s) | 288 | 36 | failed | `internal/filesys/f2fs/testdata/fuzz/FuzzRollForward/09b8bab655289ed0` |
+| `FuzzRollForward` (re-run after the fix) | `internal/filesys/f2fs` | 10m | 187102 (10m0s) | 312 | 109 | ok | none |
+| `FuzzCarve` | `internal/carve` | 10m | 4126150 (10m0s) | 6877 | 796 | ok | none |
+| `FuzzOpen` | `internal/sqlitefile` | 10m | 234837 (1m25s) | 2763 | 952 | failed | `internal/sqlitefile/testdata/fuzz/FuzzOpen/dd27cca705dbd215` |
+| `FuzzOpen` (re-run after the fix) | `internal/sqlitefile` | 10m | 1446523 (10m2s) | 2403 | 690 | ok | none |
+| `FuzzWAL` | `internal/sqlitefile` | 10m | 11412417 (10m0s) | 19021 | 66 | ok | none |
+| `FuzzJournal` | `internal/sqlitefile` | 10m | 7790280 (10m0s) | 12984 | 142 | ok | none |
+| `FuzzRecord` | `internal/sqlitefile` | 10m | 7648678 (10m0s) | 12748 | 364 | ok | none |
+| `FuzzCreateParse` | `internal/sqlitefile` | 10m | 11651416 (10m0s) | 19419 | 1485 | ok | none |
+| `FuzzFATAllocatedRuns` | `internal/filesys/fat` | 5m | 5461010 (5m0s) | 18203 | 376 | ok | none |
+| `FuzzExfatAllocatedRuns` | `internal/filesys/exfat` | 5m | 8562758 (5m0s) | 28543 | 405 | ok | none |
+| `FuzzExt4AllocatedRuns` | `internal/filesys/ext4` | 5m | 16045 (4s) | 4011 | 29 | failed | `internal/filesys/ext4/testdata/fuzz/FuzzExt4AllocatedRuns/6857c28b3de14768` |
+| `FuzzExt4AllocatedRuns` (re-run after the fix) | `internal/filesys/ext4` | 5m | 9707100 (5m1s) | 32250 | 642 | ok | none |
+| `FuzzF2FSAllocatedRuns` | `internal/filesys/f2fs` | 5m | 1283349 (5m27s) | 3925 | 6 | ok | none |
+| `FuzzTailSlack` | `internal/filesys` | 5m | 30513402 (5m0s) | 101711 | 38 | ok | none |
+| `FuzzCutAtFirstNonFree` | `internal/examine` | 5m | 4194582 (5m0s) | 13982 | 71 | ok | none |
+| `FuzzRun` | `internal/dbrecover` | 5m | 2749 (5m0s) | 9 | 862 | ok | none |
+| `FuzzCarveSpans` | `internal/dbrecover` | 5m | 2619085 (5m0s) | 8730 | 721 | ok | none |
+| `FuzzLocatorFor` | `internal/dbrecover` | 5m | 4851758 (5m0s) | 16173 | 42 | ok | none |
+| `FuzzValidateDBRow` | `internal/dbrecover` | 5m | 4704470 (5m0s) | 15682 | 218 | ok | none |
+| `FuzzValidateDBRowJSON` | `internal/dbrecover` | 5m | 4796257 (5m0s) | 15988 | 481 | ok | none |
+
+The three failures, each fixed with its input committed as a regression seed (plan 3K Task 6):
+- `FuzzRollForward`: the test's image builder (`f2fstest.SealCheckpoint`) sliced at a checkpoint address taken from the fuzzed superblock; it now leaves such an image unsealed. The parser rejects the same image with a typed error; no parser change.
+- `FuzzOpen`: the oracle rejected Page 0 outright, but a WAL frame stating page 0 is kept as stated and flagged `invalid-page-number` (never repaired); the oracle now accepts Page 0 only on a row carrying that note, and still requires the bytes to lie inside the page image. No parser change.
+- `FuzzExt4AllocatedRuns`: a hostile extent tree may map one block twice in one file; the reader reports the tree as it is, `CheckAllocatedRuns` returns a typed corrupt error and `TailSlack` derives no slack. The oracle now requires exactly that (see docs/limitations/ext4.md). No reader change.
+
+`FuzzRun` (`internal/dbrecover`) is slow, not stalled: 2749 execs in 5 minutes (9/s) while 862 new inputs were still being found; see the stall findings above. These runs do not replace the campaigns still owed after LX-8 (the other profiles, and Linux).
+
 ## Release build
 ```bash
 # Default release: pure Go, static, no C dependency, any OS.
