@@ -504,12 +504,15 @@ func SealCheckpoint(img []byte, pack int) {
 	if pack == 2 {
 		base += BlocksPerSeg
 	}
+	if base < 0 || (base+1)*BlockSize > len(img) {
+		return // a superblock edited to point outside the image: left unsealed for the parser to judge
+	}
 	blk := img[base*BlockSize : (base+1)*BlockSize]
 	if off := le.Uint32(blk[164:]); off < 192 || off > BlockSize-4 {
 		return
 	}
 	sealHeader(blk)
-	if n := int(le.Uint32(blk[136:])); n >= 2 && n <= BlocksPerSeg {
+	if n := int(le.Uint32(blk[136:])); n >= 2 && n <= BlocksPerSeg && (base+n)*BlockSize <= len(img) {
 		copy(img[(base+n-1)*BlockSize:], blk)
 	}
 }
