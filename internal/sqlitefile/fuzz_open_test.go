@@ -104,7 +104,11 @@ func (f fuzzFiles) file(k sqlitefile.FileKind) []byte {
 	return nil
 }
 
-func checkLoc(t testing.TB, what string, l sqlitefile.Loc, f fuzzFiles, pageSize int) {
+// checkLoc checks a location lies inside one page image. A WAL frame or journal record states its own page number; one that cannot be a
+// page (0) is kept as stated and flagged, never repaired. statedZero is true only
+// for a history row carrying sqlitefile.NoteInvalidPageNumber: Page 0 is then the
+// frame's own claim, and the bytes must still lie inside the page image.
+func checkLoc(t testing.TB, what string, l sqlitefile.Loc, f fuzzFiles, pageSize int, statedZero bool) {
 	t.Helper()
 	b := f.file(l.File)
 	if b == nil && l.File != sqlitefile.FileDB {
@@ -113,7 +117,7 @@ func checkLoc(t testing.TB, what string, l sqlitefile.Loc, f fuzzFiles, pageSize
 	if l.Length <= 0 || l.Offset < 0 || l.Offset+l.Length > int64(len(b)) {
 		t.Fatalf("%s: location %+v lies outside the %d bytes of %s", what, l, len(b), l.File)
 	}
-	if l.PageOffset < 0 || l.Offset < l.PageOffset || l.Offset+l.Length > l.PageOffset+int64(pageSize) || l.Page == 0 {
+	if l.PageOffset < 0 || l.Offset < l.PageOffset || l.Offset+l.Length > l.PageOffset+int64(pageSize) || (l.Page == 0 && !statedZero) {
 		t.Fatalf("%s: location %+v is not inside one page image of %d bytes", what, l, pageSize)
 	}
 }
@@ -202,7 +206,7 @@ func fuzzOpenBody(t testing.TB, f fuzzFiles) (digest [32]byte, codes []string) {
 				err = tb.Rows(ctx, func(r sqlitefile.Row) bool {
 					n++
 					what := fmt.Sprintf("%s table %s row %d", nv.name, o.Name, n)
-					checkLoc(t, what, r.Loc, f, ps)
+					checkLoc(t, what, r.Loc, f, ps, false)
 					if r.Loc.Page > v.Addressable() {
 						t.Fatalf("%s: page %d beyond Addressable %d", what, r.Loc.Page, v.Addressable())
 					}
@@ -241,7 +245,7 @@ func fuzzOpenBody(t testing.TB, f fuzzFiles) (digest [32]byte, codes []string) {
 						if !r.HasRowid || r.Rowid != id {
 							t.Fatalf("Get(%d) returned rowid %d (HasRowid %v)", id, r.Rowid, r.HasRowid)
 						}
-						checkLoc(t, fmt.Sprintf("Get(%d)", id), r.Loc, f, ps)
+						checkLoc(t, fmt.Sprintf("Get(%d)", id), r.Loc, f, ps, false)
 						for _, val := range r.Values {
 							checkValue(t, fmt.Sprintf("Get(%d)", id), val, true)
 						}
@@ -272,7 +276,7 @@ func fuzzOpenBody(t testing.TB, f fuzzFiles) (digest [32]byte, codes []string) {
 		func(r sqlitefile.RecoveredRow) bool {
 			nr++
 			what := fmt.Sprintf("history row %d", nr)
-			checkLoc(t, what, r.Loc, f, ps)
+			checkLoc(t, what, r.Loc, f, ps, slices.Contains(r.Notes, sqlitefile.NoteInvalidPageNumber))
 			if dbDerived(r.Origin) && r.Loc.Page > histAddr {
 				t.Fatalf("%s: page %d beyond Addressable %d", what, r.Loc.Page, histAddr)
 			}
