@@ -323,6 +323,14 @@ var stdAllow = map[string]classSet{
 
 // moduleImportAllowed reports whether a package of class (in directory dirRel)
 // may import the module-relative package rel.
+// stdDirAllow lists the standard packages that one directory alone may import beyond what its class gets from
+// stdAllow. android.whatsapp.msgstore records the SHA-256 of a view's SQL in a note (plan 4I-R4 h), so that the
+// examiner can recognise the app's own view text without the parser ever reading it as code. No other parser
+// needs a digest, so the parser class as a whole stays without crypto/sha256.
+var stdDirAllow = map[string]map[string]bool{
+	"crypto/sha256": {"internal/parsers/androidwhatsapp": true},
+}
+
 func moduleImportAllowed(rel string, class pureClass, dirRel string) bool {
 	under := func(root string) bool { return rel == root || strings.HasPrefix(rel, root+"/") }
 	switch {
@@ -371,7 +379,7 @@ func checkImports(srcs []pureSrc, class pureClass, dirRel string) []pureViolatio
 			case strings.HasPrefix(p, module):
 				ok = moduleImportAllowed(strings.TrimPrefix(p, module), class, dirRel)
 			case isStdlib(p):
-				ok = stdAllow[p].has(class)
+				ok = stdAllow[p].has(class) || stdDirAllow[p][dirRel]
 			default:
 				ok = thirdPartyAllowed(p, dirRel)
 			}
