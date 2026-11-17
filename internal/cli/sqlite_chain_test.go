@@ -16,7 +16,7 @@ import (
 )
 
 // The end-to-end chain of spec 15.3 on the MTFS stand-in: a deleted database and its deleted WAL, recovered
-// as files (3A), the rows recovered from them (3J), then case verify. The ext4/FAT chain waits for 3K.
+// as files (3A), the rows recovered from them (3J), then case verify. The FAT chain is `TestSQLiteRecoverChainFromFATImage`.
 
 const (
 	chainMarker = "oldmarkerzq"
