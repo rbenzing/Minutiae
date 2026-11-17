@@ -42,9 +42,7 @@ func FuzzExt4AllocatedRuns(f *testing.F) {
 				t.Fatalf("%s: no AllocatedRunner", p)
 			}
 			if filesys.CheckRuns(file.Runs(), file.Size(), info.Size) == nil && len(file.Runs()) > 0 {
-				if err := filesys.CheckAllocatedRuns(file.Runs(), alloc, int64(info.BlockSize), info.Size); err != nil {
-					t.Fatalf("%s: runs %v alloc %v: %v", p, file.Runs(), alloc, err)
-				}
+				checkSlackOutcome(t, p, file, alloc, info)
 			}
 			return nil
 		})
