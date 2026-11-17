@@ -266,7 +266,7 @@ func TestNonGoChangeRunsCachedWholeModuleTests(t *testing.T) {
 				}
 			}
 			if hasVet := slices.ContainsFunc(lines, func(l string) bool {
-				return strings.HasPrefix(l, "go vet ") && l != scaleVetLine && l != realdataVetLine
+				return strings.HasPrefix(l, "go vet ") && l != scaleVetLine && l != realdataVetLine && l != realimagesVetLine
 			}); hasVet != c.scoped {
 				t.Errorf("vet step present = %v, want %v", hasVet, c.scoped)
 			}
@@ -381,5 +381,33 @@ func TestEveryPlanVetsTheRealDataTag(t *testing.T) {
 	}
 	if !slices.Contains(formatSteps(pb.steps), realdataVetLine) {
 		t.Errorf("the -block plan has no %q", realdataVetLine)
+	}
+}
+
+// realimagesVetLine keeps the -tags realimages harnesses (3K-R5: the image, APFS, HFS+ and recovery ones) compiling:
+// the default build never sees them and a real-sample run is an operator step, so a break would otherwise go unnoticed.
+const realimagesVetLine = "go vet -tags realimages ./internal/image/ewf/... ./internal/filesys/apfs/... ./internal/filesys/hfsplus/... ./internal/cli/..."
+
+func TestEveryPlanVetsTheRealImagesTag(t *testing.T) {
+	if !slices.Contains(formatSteps(fullSteps(false)), realimagesVetLine) {
+		t.Errorf("the full plan has no %q", realimagesVetLine)
+	}
+	e, _ := fakeEnv(t, []string{"b/x.go"}, nil)
+	p, err := buildPlan(options{affected: true, base: "abc"}, e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.full {
+		t.Fatalf("a Go-only change escalated: %s", p.reason)
+	}
+	if !slices.Contains(formatSteps(p.steps), realimagesVetLine) {
+		t.Errorf("the -affected plan has no %q:\n%s", realimagesVetLine, strings.Join(formatSteps(p.steps), "\n"))
+	}
+	pb, err := buildPlan(options{blocks: []string{"case"}}, e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(formatSteps(pb.steps), realimagesVetLine) {
+		t.Errorf("the -block plan has no %q", realimagesVetLine)
 	}
 }

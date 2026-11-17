@@ -114,6 +114,7 @@ func globalSteps() []step {
 		{args: []string{"go", "build", "./..."}},
 		scaleVet(),
 		realdataVet(),
+		realimagesVet(),
 		{args: []string{"go", "build", "-o", binPath(), "./cmd/minutiae"}},
 		pureBuild(),
 		crossBuild("linux", "amd64"),
@@ -501,4 +502,11 @@ func scaleVet() step {
 // (4H-R13): the default build never sees it and a real-data run is an operator step (docs/testing.md).
 func realdataVet() step {
 	return step{args: []string{"go", "vet", "-tags", "realdata", "./internal/parsers/...", "./internal/cli/..."}}
+}
+
+// realimagesVet keeps the -tags realimages harnesses compiling and vetted (3K-R5): the manual runs over real images
+// in internal/image/ewf, internal/filesys/{apfs,hfsplus} and the recovery harness in internal/cli. The default build
+// never compiles them and a real-sample run is an operator step (docs/testing.md), so a break would go unnoticed.
+func realimagesVet() step {
+	return step{args: []string{"go", "vet", "-tags", "realimages", "./internal/image/ewf/...", "./internal/filesys/apfs/...", "./internal/filesys/hfsplus/...", "./internal/cli/..."}}
 }

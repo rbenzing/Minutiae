@@ -332,6 +332,88 @@ host kernel**. (The one `insmod -f` attempt tainted that kernel until Docker Des
 restarted; `/proc/filesystems` never had `apfs`.) The route below runs the module in a
 guest kernel of its own, inside QEMU, and needs no privileges at all.
 
+### Supplying real device samples for recovery (manual `realimages` test)
+
+The kernel-written recovery fixtures show the best case: no discard, a fresh mount. How the recovery
+commands behave on a real Android or iOS device (file-based encryption, discard or TRIM, years of
+churn, `secure_delete` databases) is unvalidated until an examiner runs the build-tagged harness
+`internal/cli/realimages_recovery_test.go` over their own samples:
+
+```bash
+MINUTIAE_TEST_IMAGES=/path go test -tags realimages ./internal/cli -run TestRealImagesRecovery -v
+```
+
+The samples live OUTSIDE the repository (the test fails at once when the root resolves inside it) and are
+never committed. They may be personal data, so the logs carry exit codes, counts, methods, classes and
+types only, never a path or a file name. Without the variable every test SKIPs. The layout, which the
+default tests check (`internal/cli/realimages_layout_test.go`), is:
+
+```
+$MINUTIAE_TEST_IMAGES/recovery/<name>.img | <name>.img.gz | <name>.E01 (+ .E02 ...)
+$MINUTIAE_TEST_IMAGES/recovery/<name>.expect.json
+$MINUTIAE_TEST_IMAGES/recovery-db/<set>/expect.json
+$MINUTIAE_TEST_IMAGES/recovery-db/<set>/<database> [<database>-wal] [<database>-journal]
+```
+
+Every expect file is decoded strictly: an unknown key, an image without its expect file (or the reverse),
+a database the set does not hold, an empty `steps` or a stray file is an error naming the file, never a
+skipped check. The SHA-256 of the sample is compared first (for `.img.gz` the decompressed bytes, for
+`.E01` the first segment file); a mismatch fails before any command runs.
+
+A device image (`recovery/<name>.expect.json`); each `{min, max}` pair bounds the artifacts that step
+added, and an omitted side is not checked:
+
+```json
+{
+  "image_sha256": "<64 hex digits of the image bytes>",
+  "platform": "android",
+  "partition": 3,
+  "fstype": "ext4",
+  "steps": {
+    "recover":     {"min": 1, "methods": ["ext4-extent-leaf", "ext-inode-intact"], "sha256": ["<content that must appear>"]},
+    "use_journal": {"mode": "stale", "min": 0},
+    "rollforward": {"max": 0},
+    "journal":     {"min": 1},
+    "carve":       {"min": 1, "types_min": {"sqlite": 1}},
+    "slack":       {"min": 0}
+  }
+}
+```
+
+`partition` is optional (omitted: no `-p`); `fstype` is the `fs_type` that `image info --json` reports for
+the partition; `platform` is `android`, `ios` or `other`. `recover` runs `image recover --all`
+(`methods` is the allowed set), `use_journal` runs `--use-journal <mode>` and counts method
+`ext4-journal-inode`, `rollforward` runs `--rollforward --all` and counts class `post-checkpoint-file`,
+`journal` runs `image journal report`, `carve` runs `image carve` (`types_min` counts the `sig=<type>`
+basis of the carved artifacts) and `slack` runs `image slack`. At least one step is required.
+
+A database set (`recovery-db/<set>/expect.json`), for Android and iOS databases including
+`secure_delete` ones:
+
+```json
+{
+  "db": "mmssms.db",
+  "db_sha256": "<64 hex digits>",
+  "platform": "android",
+  "secure_delete": false,
+  "written": {"min": 1},
+  "methods": {"freelist": {"min": 0}},
+  "freelist_pages_zeroed": {"max": 0}
+}
+```
+
+`secure_delete` is documentary (logged). `methods` is checked against the per-method row counts of
+`sqlite recover --json`, and a method the report does not list counts 0.
+
+How to derive the bounds: run the commands by hand first (`image recover --list`, `image carve --list`,
+`sqlite recover --list`), record what a competent reading of the device says should be there, and write
+the bounds from that, not from the tool's output. A device that discards or erases (`discard` or TRIM
+mounts, a `secure_delete` database) states `max: 0` for the steps it is expected to find nothing in. An
+image of an FBE `userdata` partition is expected to yield ciphertext only: bound the recovered content
+accordingly and never expect a readable database from it. Record a run in `docs/limitations/recovery.md`
+by hand ("Real-device outcomes"); a finding becomes a synthetic variant, and the sample stays out of
+the repository.
+
 ### APFS populated fixture
 
 `apfs-populated` is written by the real `linux-apfs-rw` kernel driver, so file data,
