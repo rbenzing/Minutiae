@@ -131,6 +131,55 @@ func TestCensusAbsentTableIsNotPresent(t *testing.T) {
 	}
 }
 
+// A damaged schema table that loses the row of the target is not "table absent": presence is unknown.
+func TestCensusDamagedSchemaIsUnknownPresenceNotAbsent(t *testing.T) {
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 512})
+	m := b.CreateTable("messages", msgDDL)
+	m.Insert(1, nil, "a")
+	data := b.Bytes()
+	if data[100] != 0x0d {
+		t.Fatalf("page 1 is not a table leaf (%#x)", data[100])
+	}
+	data[108], data[109] = 0xff, 0xff // the first schema cell pointer points outside the page
+	rep, err := census.Take(t.Context(), files(data, nil), newBudget(), []census.CountSpec{{Table: "messages"}})
+	if err != nil {
+		t.Fatalf("Take: %v", err)
+	}
+	if rep.SchemaSkipped == 0 {
+		t.Fatal("the schema read skipped nothing; the fixture is wrong")
+	}
+	if c := rep.Counts[0]; c.Present || c.Unreadable == "" {
+		t.Fatalf("count = %+v, want an Unreadable note stating unknown presence", c)
+	}
+}
+
+// A match cell whose bytes cannot be read (a broken overflow chain) is not a non-match: it is stated.
+func TestCensusUnreadMatchCellIsStated(t *testing.T) {
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 512})
+	m := b.CreateTable("messages", msgDDL)
+	m.Insert(1, nil, "-1")
+	m.Insert(2, nil, strings.Repeat("y", 3000))
+	ov := m.Overflow(2)
+	if len(ov) == 0 {
+		t.Fatal("no overflow chain")
+	}
+	pg := b.PageBytes(m.Root())
+	var want [4]byte
+	binary.BigEndian.PutUint32(want[:], ov[0])
+	i := bytes.Index(pg, want[:])
+	if i < 0 {
+		t.Fatal("overflow pointer not found")
+	}
+	binary.BigEndian.PutUint32(pg[i:], 0x7fffffff) // the chain leads outside the file
+	rep, err := census.Take(t.Context(), files(b.Bytes(), nil), newBudget(), []census.CountSpec{{Table: "messages", Column: "key_remote_jid", Equals: "-1"}})
+	if err != nil {
+		t.Fatalf("Take: %v", err)
+	}
+	if c := rep.Counts[0]; c.Rows != 2 || c.Matched != 1 || c.Unreadable == "" {
+		t.Fatalf("count = %+v, want 2 rows, 1 match and an Unreadable note", c)
+	}
+}
+
 func TestCensusSQLIsCappedAndFlagged(t *testing.T) {
 	b := sqlitetest.New(sqlitetest.Options{PageSize: 512})
 	b.CreateTable("messages", msgDDL)

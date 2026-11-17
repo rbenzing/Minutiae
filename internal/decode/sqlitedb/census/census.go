@@ -21,6 +21,10 @@ const MaxSpecs = 8
 // ErrTooManySpecs is returned when more than MaxSpecs count specs are given.
 var ErrTooManySpecs = errors.New("census: too many count specs")
 
+// SchemaDamagedNote is the Unreadable text of a table that is not listed while the schema read
+// lost entries: Present is false but only because the listing is incomplete, so presence is unknown.
+const SchemaDamagedNote = "schema damaged, presence unknown"
+
 // Object is one row of the schema table. Type is table, index, view or trigger.
 type Object struct {
 	Type, Name, TblName, SQL string
@@ -183,6 +187,10 @@ func count(ctx context.Context, view *sqlitefile.View, schema *sqlitefile.Schema
 		}
 	}
 	if !c.Present {
+		if schema.Skipped > 0 {
+			// The schema read lost entries: the table may be among them. Unknown is never absent.
+			c.Unreadable = SchemaDamagedNote
+		}
 		return c, nil
 	}
 	t, err := view.Table(ctx, sp.Table)
@@ -207,14 +215,17 @@ func count(ctx context.Context, view *sqlitefile.View, schema *sqlitefile.Schema
 		}
 	}
 	var ctxErr error
+	var unknownCells int64 // match cells that are stored but could not be read whole
 	loss, err := t.RowsLoss(ctx, func(r sqlitefile.Row) bool {
 		if ctxErr = parse.Tick(ctx, int(c.Rows)); ctxErr != nil {
 			return false
 		}
 		c.Rows++
 		if col >= 0 {
-			if v := t.Resolve(r); col < len(v) && !v[col].Unread && !v[col].Clipped {
-				if s, ok := v[col].Text(); ok && s == sp.Equals {
+			if v := t.Resolve(r); col < len(v) {
+				if x := v[col]; x.Unread || x.Clipped || x.Omitted {
+					unknownCells++
+				} else if s, ok := x.Text(); ok && s == sp.Equals {
 					c.Matched++
 				}
 			}
@@ -231,6 +242,9 @@ func count(ctx context.Context, view *sqlitefile.View, schema *sqlitefile.Schema
 		c.Unreadable = err.Error()
 	case loss.Pages > 0 || loss.Cells > 0:
 		c.Unreadable = fmt.Sprintf("the scan lost %d pages and %d cells", loss.Pages, loss.Cells)
+	}
+	if unknownCells > 0 && c.Unreadable == "" {
+		c.Unreadable = fmt.Sprintf("%d match cells could not be read whole, so Matched is a lower bound", unknownCells)
 	}
 	return c, nil
 }

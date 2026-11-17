@@ -119,3 +119,26 @@ func TestWAJIDServerClassesCiteTwoSources(t *testing.T) {
 		}
 	}
 }
+
+// TestServerClassesAgreeWithParse ties the documented table to Parse's switch: every entry
+// round-trips to its Class. The status entry is a whole JID, whose class Parse derives from the
+// user part "status" of the broadcast server.
+func TestServerClassesAgreeWithParse(t *testing.T) {
+	for _, sc := range ServerClasses() {
+		in := "x@" + sc.Server
+		if user, server, ok := strings.Cut(sc.Server, "@"); ok {
+			in = sc.Server
+			j, err := Parse(in)
+			if err != nil || j.User != user || j.Server != server {
+				t.Errorf("%s: Parse = %+v, %v", sc.Server, j, err)
+			}
+		}
+		j, err := Parse(in)
+		if err != nil || j.Class != sc.Class {
+			t.Errorf("%s: Parse(%q) = %+v, %v; want class %s", sc.Server, in, j, err, sc.Class)
+		}
+		if len(sc.Sources) == 0 {
+			t.Errorf("%s: no research sources", sc.Server)
+		}
+	}
+}
