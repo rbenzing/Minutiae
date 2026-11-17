@@ -95,6 +95,7 @@ var allowed = map[string][]string{
 	"internal/artparse":                    {"internal/dbrecover", "internal/decode/iosbackup", "internal/decode/sqlitedb", "internal/decode/sqlitedb/recrun", "internal/evidence", "internal/version", "internal/records", "internal/parse", "internal/recordtypes/all"},
 	"tools/check":                          {},
 	"tools/fuzzcampaign":                   {},
+	"tools/recoveryaccept":                 {},
 	"tools/parserhash":                     {"internal/parse", "internal/parsers"},
 }
 

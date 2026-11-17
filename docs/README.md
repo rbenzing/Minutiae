@@ -37,7 +37,7 @@ change:
 | `internal/parse`, `internal/artparse`, `internal/recordtypes`, `internal/decode/{ts,plist,typedstream,iosbackup}`, `internal/parsers/...` | [invariants/parsers](invariants/parsers.md), [limitations/parsers](limitations/parsers.md); add [sqlite](invariants/sqlite.md) when a parser maps tables |
 | `internal/cli` | The area of the command you change |
 | A new package or a new import edge | [architecture.md](architecture.md) |
-| `tools/check`, `tools/fuzzcampaign`, `tools/parserhash`, how tests or fixtures run | [testing.md](testing.md) |
+| `tools/check`, `tools/fuzzcampaign`, `tools/parserhash`, `tools/recoveryaccept`, how tests or fixtures run | [testing.md](testing.md) |
 
 ## Kinds of document
 
