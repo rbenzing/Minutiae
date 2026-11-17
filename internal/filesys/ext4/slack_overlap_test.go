@@ -2,8 +2,8 @@ package ext4_test
 
 import (
 	"errors"
-	"strings"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/filesys"
