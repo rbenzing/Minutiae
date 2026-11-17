@@ -3173,3 +3173,48 @@ attachment extra files), `coredata-current` and `with-images` (with its images d
 `ios17-wal` (database and `-wal`) under `UDID3`, each named by a `sqlitetest` `Manifest.db` (fileID = the sha1 rule) and an
 unencrypted `Manifest.plist`; a second acquisition is encrypted. No new fixture is generated: the oracles of the three
 families are the expected records.
+
+## WhatsApp Android fixtures (plan 4I)
+
+`tools/fixtures/whatsapp_gen.py` is a family module of `telephony_gen.py` (`--family whatsapp-android`). It needs Python 3
+with its bundled `sqlite3` only (no Docker) and is not part of `gen.sh all`. The databases are written by the engine; the WAL
+variants by a child process that dies without closing (`telephony_common.kill_child`). The oracle restates the spec's mapping
+rules (spec 6.4, 7) over the stored values read back from the engine on a copy of the finished files, and shares no code with
+the Go parser. The module also holds the helpers `jid`, `ms` and `vcard` that the `wa.db` generator imports (plan 4I task 12).
+
+```
+py -3 tools/fixtures/telephony_gen.py --family whatsapp-android --out internal/parsers/androidwhatsapp/testdata \
+    --pins-go internal/parsers/androidwhatsapp/pins_test.go --pins-package androidwhatsapp_test
+py -3 tools/fixtures/telephony_gen.py --family whatsapp-android --check
+```
+
+The DDL snapshots are in `schemas/whatsapp-android/` with a `CROSSCHECK.md` of one verdict row per table (`quoted`,
+`retyped` or `from-memory`; `TestWhatsAppDDLSnapshotsCiteTheirSource`). `transition-2021.sql` is quoted from a source under the
+MIT licence; the other msgstore snapshots are retyped from published column lists because their sources carry no licence, and
+the `wa.db` snapshots are constructed from reported column lists (from memory).
+
+The core scenario is one set of messages encoded in each generation's own columns: ids 2 to 17 (text, media of every mapped
+type, a contact card, a location, group, channel, status and system rows, an unknown type, a seconds value in a millisecond
+column and a zero time) and, in modern stores only, ids 18 (a channel) and 19 (a chat whose `jid.raw_string` is NULL).
+`android-legacy-2.11` also holds ids 21 to 25, hostile `media_wa_type` values.
+
+| Variant (`internal/parsers/androidwhatsapp/testdata/`) | DDL snapshot | Bundled at | Holds |
+|---|---|---|---|
+| `android-legacy-2.11` | `legacy-2.11.sql` | `/data/data/com.whatsapp/databases/msgstore.db` | the sentinel row and the core in `messages`, plus rows 21 to 25 |
+| `android-transition-legacydata` | `transition-2021.sql` | same | the core in `messages`; `message` empty |
+| `android-transition-moderndata` | `transition-2021.sql` | same | `messages` holds only the sentinel; the core in `message` |
+| `android-transition-both` | `transition-2021.sql` | same | the core in both tables, dual-written rows sharing `_id` and `key_id` |
+| `android-transition-walonly` | `transition-2021.sql` | same, with `-wal` | the core in `messages`; the first `message` row only in a committed WAL frame; one more row in frames written without a commit |
+| `android-transition-empty` | `transition-2021.sql` | same | the sentinel only |
+| `android-modern-2021` | `transition-2021.sql` minus the legacy tables | same | the modern core; `message_revoked` without `admin_jid_row_id` and `revoke_timestamp`; no `jid_map` |
+| `android-modern-2026` | `modern-2026.sql` | `/data/user/10/com.whatsapp/databases/msgstore.db`, with `-wal` | the modern core; rows 16 to 19 only in a committed WAL transaction |
+| `android-modern-business` | `modern-2026.sql` | `/data/data/com.whatsapp.w4b/databases/msgstore.db` | the modern core |
+| `android-neither` | none | the live path | one table `foo(x)` |
+| `android-crypt14`, `android-crypt15` | none | `/sdcard/WhatsApp/Databases/msgstore.db.crypt14`; `/storage/emulated/0/Android/media/com.whatsapp/WhatsApp/Databases/msgstore-2026-11-01.1.db.crypt15` | 64 KiB of a SHA-256 counter stream (synthetic: no header of a real format is claimed) |
+| `android-backup-notsqlite` | none | `/sdcard/WhatsApp Business/Databases/msgstore.db.crypt14` | 4 KiB of repeated ASCII text |
+| `android-backup-plain` | `modern-2026.sql` | `/sdcard/WhatsApp/Databases/msgstore.db` | a plain database at a backup path (never parsed as live) |
+| `android-other-location` | `modern-2026.sql` | `/storage/emulated/0/Android/data/com.whatsapp/databases/msgstore.db` | a plain database outside the app's live `databases/` directory |
+
+Message records of a variant with a WAL state no source path (the harness derives it from the role of the cell). The
+oracle's `raw` of a message is the part later tasks of plan 4I extend with their features; at this task it states the
+columns the mapping reads, the labels and the app.

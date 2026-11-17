@@ -1,0 +1,1 @@
+{"ddl":"","extra_files":[],"family":"whatsapp-android","generator":{"files":{"db":"980c5d401ce99fdae74ba4516b82f059ee5737bef9bd0fbd81c5d704a1b21578"},"python":"3.15.2","sqlite":"3.53.4","tool":"tools/fixtures/telephony_gen.py"},"notes":{},"records":[],"variant":"android-crypt14","warnings":[]}

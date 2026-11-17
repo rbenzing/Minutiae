@@ -1,0 +1,1 @@
+{"ddl":"modern-2026.sql","extra_files":[],"family":"whatsapp-android","generator":{"files":{"db":"f4413f0cdc476a1092c9fc3a5e5fbdf42ebc05eef63cb340ef40513ecbc21723"},"python":"3.15.2","sqlite":"3.53.4","tool":"tools/fixtures/telephony_gen.py"},"notes":{},"records":[],"variant":"android-other-location","warnings":[]}

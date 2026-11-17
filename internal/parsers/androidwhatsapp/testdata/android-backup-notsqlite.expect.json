@@ -1,0 +1,1 @@
+{"ddl":"","extra_files":[],"family":"whatsapp-android","generator":{"files":{"db":"e6e5a8dfc572ec17d4815ce482fad94ad2708ed21a93a6255fc0944af250dd50"},"python":"3.15.2","sqlite":"3.53.4","tool":"tools/fixtures/telephony_gen.py"},"notes":{},"records":[],"variant":"android-backup-notsqlite","warnings":[]}

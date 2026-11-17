@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
@@ -133,6 +134,43 @@ func TestSQLiteDBMatchesEngine(t *testing.T) {
 	}
 	if fixtures < 10 || tables < 25 {
 		t.Errorf("compared %d fixtures and %d tables with the engine, want at least 10 and 25", fixtures, tables)
+	}
+	// plan 4I (4I-R19): the committed WhatsApp fixtures, each with its WAL when it has one. The test reads the
+	// directories through os, so the Go test cache tracks them. The files that are not SQLite are named here.
+	notSQLite := map[string]bool{"android-crypt14": true, "android-crypt15": true, "android-backup-notsqlite": true}
+	waFixtures, waTables := 0, 0
+	for _, dir := range []string{"../../parsers/androidwhatsapp/testdata", "../../parsers/androidwacontacts/testdata"} {
+		dbs, err := filepath.Glob(filepath.Join(dir, "*.db.gz"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range dbs {
+			name := strings.TrimSuffix(filepath.Base(p), ".db.gz")
+			if strings.HasSuffix(name, ".images") || notSQLite[name] {
+				continue
+			}
+			t.Run(filepath.Base(filepath.Dir(dir))+"/"+name, func(t *testing.T) {
+				db, ok, err := gunzipFixtureFile(p)
+				if err != nil || !ok {
+					t.Fatalf("%s: %v", p, err)
+				}
+				wal, _, err := gunzipFixtureFile(filepath.Join(dir, name+".db-wal.gz"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				d := openBytes(t, db, wal, nil, bigBudget())
+				eng, _ := engineOnCopy(t, db, wal, nil)
+				n, refused := compareWithEngine(t, eng, d)
+				if refused != nil {
+					t.Fatalf("the engine refuses %s: %v", name, refused)
+				}
+				waFixtures++
+				waTables += n
+			})
+		}
+	}
+	if waFixtures < 8 || waTables < 100 {
+		t.Errorf("compared %d WhatsApp fixtures and %d tables with the engine, want at least 8 and 100", waFixtures, waTables)
 	}
 }
 

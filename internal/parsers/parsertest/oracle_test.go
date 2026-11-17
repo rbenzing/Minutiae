@@ -333,3 +333,23 @@ func TestBundleRefusesAnEmptyRemotePath(t *testing.T) {
 		t.Errorf("a fixture with paths was refused: %v", err)
 	}
 }
+
+// plan 4I: an extra file may name its acquisition (the database's own acquisition is acq1; another device's
+// default is acq-<device>), so a scenario can put two files of one device in different acquisitions.
+func TestBuildBundleHonoursTheAcquisitionOfAnExtraFile(t *testing.T) {
+	fx := Fixture{Name: "x", Files: map[string][]byte{"db": []byte("db bytes")}, Expect: Expect{ExtraFiles: []ExtraFile{
+		{RemotePath: "/data/a.bin", ContentB64: "YQ=="},
+		{RemotePath: "/data/b.bin", ContentB64: "Yg==", Acquisition: "acq-other"},
+		{RemotePath: "/data/c.bin", ContentB64: "Yw==", Device: "SER2"},
+		{RemotePath: "/data/d.bin", ContentB64: "ZA==", Device: "SER2", Acquisition: "acq-two"},
+	}}}
+	b := fx.Bundle(NewHarness(t), "/data/x.db")
+	for path, want := range map[string]string{"/data/a.bin": "artifacts/SER1/acq1", "/data/b.bin": "artifacts/SER1/acq-other", "/data/c.bin": "artifacts/SER2/acq-SER2", "/data/d.bin": "artifacts/SER2/acq-two"} {
+		if got := b.ByPath[path].Acquisition; got != want {
+			t.Errorf("%s: acquisition %q, want %q", path, got, want)
+		}
+	}
+	if got := b.Primary.Acquisition; got != "artifacts/SER1/acq1" {
+		t.Errorf("the database: acquisition %q, want artifacts/SER1/acq1", got)
+	}
+}

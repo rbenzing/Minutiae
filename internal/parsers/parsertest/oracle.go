@@ -41,6 +41,7 @@ type ExtraFile struct {
 	Domain       string `json:"domain"`        // iOS backup extra: the backup domain (BundleIOSBackup)
 	RelativePath string `json:"relative_path"` // iOS backup extra: the path within the domain
 	Role         string `json:"role"`          // "": a plain extra (Others["extraN"]); else the bundle role it fills, for example "images"
+	Acquisition  string `json:"acquisition"`   // the acquisition it belongs to; "": "acq1", or "acq-<device>" for another device
 }
 
 // ExpRecord is one expected record, stated literally by the generator. File is
@@ -221,10 +222,17 @@ func (f Fixture) BuildBundle(h *Harness, remotePath string) (Bundle, error) {
 			return b, fmt.Errorf("extra file %s: %w", x.RemotePath, err)
 		}
 		var a parse.Artifact
-		if x.Device == "" || x.Device == "SER1" {
+		switch {
+		case (x.Device == "" || x.Device == "SER1") && x.Acquisition == "":
 			a = add(x.RemotePath, data)
-		} else {
-			a = h.Artifact(addAndroidFileFor(h.T, h.Case, x.Device, "acq-"+x.Device, x.RemotePath, data), data)
+		case x.Device == "" || x.Device == "SER1":
+			a = h.Artifact(AddAndroidFile(h.T, h.Case, x.Acquisition, x.RemotePath, data), data)
+		default:
+			acq := x.Acquisition
+			if acq == "" {
+				acq = "acq-" + x.Device
+			}
+			a = h.Artifact(addAndroidFileFor(h.T, h.Case, x.Device, acq, x.RemotePath, data), data)
 		}
 		if x.Role != "" {
 			if _, taken := b.ByRole[x.Role]; taken {

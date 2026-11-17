@@ -90,6 +90,7 @@ var allowed = map[string][]string{
 	"internal/parsers/androidcalllog":      {"internal/decode/sqlitedb/rowrun", "internal/decode/ts", "internal/parse", "internal/records", "internal/recordtypes/call", "internal/recordtypes/common"},
 	"internal/parsers/androidcontacts":     {"internal/decode/sqlitedb", "internal/decode/sqlitedb/rowrun", "internal/parse", "internal/records", "internal/recordtypes/common", "internal/recordtypes/contact"},
 	"internal/parsers/chromium":            {"internal/decode/sqlitedb/rowrun", "internal/decode/ts", "internal/parse", "internal/records", "internal/recordtypes/common", "internal/recordtypes/web"},
+	"internal/parsers/androidwhatsapp":     {},
 	"internal/parsers/ioscalls":            {"internal/decode/sqlitedb/cellx", "internal/decode/sqlitedb/rowrun", "internal/decode/ts", "internal/parse", "internal/records", "internal/recordtypes/call", "internal/recordtypes/common"},
 	"internal/parsers/iosaddressbook":      {"internal/decode/sqlitedb", "internal/decode/sqlitedb/cellx", "internal/decode/sqlitedb/rowrun", "internal/parse", "internal/records", "internal/recordtypes/common", "internal/recordtypes/contact"},
 	"internal/parsers/iossms":              {"internal/decode/plist", "internal/decode/sqlitedb", "internal/decode/sqlitedb/cellx", "internal/decode/sqlitedb/rowrun", "internal/decode/ts", "internal/decode/typedstream", "internal/parse", "internal/records", "internal/recordtypes/common", "internal/recordtypes/message"},

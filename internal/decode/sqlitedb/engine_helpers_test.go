@@ -338,9 +338,10 @@ func oracleRows(lt fxLiveTable) ([][]ev, error) {
 	return out, nil
 }
 
-// engineTables lists the engine's ordinary tables (no sqlite_ internals).
+// engineTables lists the engine's ordinary tables (no sqlite_ internals except sqlite_sequence, which AUTOINCREMENT
+// tables create and the layer lists as a table).
 func engineTables(db *sql.DB) (map[string]bool, error) {
-	rs, err := db.Query("select name from sqlite_master where type = 'table' and substr(name, 1, 7) <> 'sqlite_' and sql not like 'create virtual%'")
+	rs, err := db.Query("select name from sqlite_master where type = 'table' and (substr(name, 1, 7) <> 'sqlite_' or name = 'sqlite_sequence') and sql not like 'create virtual%'")
 	if err != nil {
 		return nil, err
 	}
