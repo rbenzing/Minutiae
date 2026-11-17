@@ -67,6 +67,7 @@ var allowed = map[string][]string{
 	"internal/dbrecover":                   {"internal/evidence", "internal/records", "internal/sqlitefile"},
 	"internal/decode/sqlitedb":             {"internal/sqlitefile", "internal/parse", "internal/records"},
 	"internal/decode/sqlitedb/rowrun":      {"internal/decode/sqlitedb", "internal/decode/ts", "internal/parse", "internal/records"},
+	"internal/decode/sqlitedb/census":      {"internal/decode/sqlitedb", "internal/parse", "internal/sqlitefile"},
 	"internal/decode/sqlitedb/cellx":       {"internal/decode/sqlitedb", "internal/decode/sqlitedb/rowrun", "internal/decode/ts", "internal/parse"},
 	"internal/decode/sqlitedb/recrun":      {"internal/decode/sqlitedb", "internal/decode/sqlitedb/rowrun", "internal/parse", "internal/records", "internal/sqlitefile"},
 	"internal/records":                     {"internal/evidence", "internal/version"},
