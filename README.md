@@ -433,7 +433,7 @@ minutiae case verify     --case ./cases/HW1
 - **Fail closed** — a missing, empty, corrupt or torn audit log or database makes every command refuse the case (exit `4`); they are never silently recreated
 - **Exclusive case lock** — two processes can't interleave writes into one case's audit chain
 - **Hostile-device hardening** — device-supplied lengths are capped, binary plists are validated against expansion bombs and integer overflow before decoding, device paths are confined to the staging directory, and shell commands only ever contain validated values
-- **Known limitations** are documented in [`CLAUDE.md` §9](docs/limitations.md) (e.g. ADB sync v1 32-bit sizes, encrypted iOS backups captured as-is)
+- **Known limitations** are documented in [`docs/limitations.md`](docs/limitations.md) (e.g. ADB sync v1 32-bit sizes, encrypted iOS backups captured as-is)
 
 ---
 

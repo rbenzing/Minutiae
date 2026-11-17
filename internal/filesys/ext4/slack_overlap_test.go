@@ -2,6 +2,7 @@ package ext4_test
 
 import (
 	"errors"
+	"strings"
 	"sort"
 	"testing"
 
@@ -32,7 +33,7 @@ func checkSlackOutcome(t *testing.T, path string, file filesys.File, alloc []fil
 		return
 	}
 	var ce *filesys.CorruptError
-	if !errors.As(err, &ce) || !sharesBlocks(file.Runs(), int64(info.BlockSize)) {
+	if !errors.As(err, &ce) || !strings.Contains(ce.Reason, "overlap") || !sharesBlocks(file.Runs(), int64(info.BlockSize)) || !sharesBlocks(alloc, int64(info.BlockSize)) {
 		t.Fatalf("%s: runs %v alloc %v: %v", path, file.Runs(), alloc, err)
 	}
 	if _, outcome, _ := filesys.TailSlack(file.Size(), file.Runs(), alloc, int64(info.BlockSize), info.Size); outcome == filesys.SlackFound || outcome == filesys.SlackExactFit {
