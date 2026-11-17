@@ -142,7 +142,7 @@ func rxStepRun(t *testing.T, name string, args ...string) {
 	switch {
 	case code == 0:
 		t.Logf("step %s: exit 0", name)
-	case code == 1 && (strings.Contains(out, "undecided") || strings.Contains(out, "does not support recovery")):
+	case rxExit1Accepted(code, out):
 		t.Logf("step %s: exit 1 (an undecided count or an unsupported filesystem)", name)
 	default:
 		t.Fatalf("step %s: exit %d (the output is not logged: it may hold personal data)", name, code)

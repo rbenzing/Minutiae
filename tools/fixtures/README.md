@@ -358,8 +358,8 @@ $MINUTIAE_TEST_IMAGES/recovery-db/<set>/<database> [<database>-wal] [<database>-
 ```
 
 Every expect file is decoded strictly: an unknown key, an image without its expect file (or the reverse),
-a database the set does not hold, an empty `steps` or a stray file is an error naming the file, never a
-skipped check. The SHA-256 of the sample is compared first (for `.img.gz` the decompressed bytes, for
+a database the set does not hold, an empty `steps`, a step with no `min`, `max` or constraint, or a stray file
+is an error naming the entry by its position and kind (never its file name), never a skipped check. The SHA-256 of the sample is compared first (for `.img.gz` the decompressed bytes, for
 `.E01` the first segment file); a mismatch fails before any command runs.
 
 A device image (`recovery/<name>.expect.json`); each `{min, max}` pair bounds the artifacts that step
