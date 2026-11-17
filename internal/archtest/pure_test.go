@@ -1277,7 +1277,7 @@ var purityRequired = []string{
 	"internal/recordtypes/call", "internal/recordtypes/contact", "internal/recordtypes/web", "internal/recordtypes/all",
 	"internal/decode/sqlitedb",
 	"internal/decode/sqlitedb/rowrun", "internal/decode/sqlitedb/cellx", "internal/decode/sqlitedb/recrun", "internal/parsers/androidmms", "internal/parsers/androidcalllog", "internal/parsers/androidcontacts",
-	"internal/parsers/iossms", "internal/parsers/ioscalls", "internal/parsers/iosaddressbook", "internal/parsers/chromium", "internal/parsers/safari", "internal/decode/ts", "internal/decode/plist", "internal/decode/typedstream", "internal/decode/iosbackup",
+	"internal/parsers/iossms", "internal/parsers/ioscalls", "internal/parsers/iosaddressbook", "internal/parsers/chromium", "internal/parsers/safari", "internal/decode/ts", "internal/decode/wajid", "internal/decode/plist", "internal/decode/typedstream", "internal/decode/iosbackup",
 	"internal/carve",
 }
 
@@ -1938,6 +1938,7 @@ func TestPurityClassOf(t *testing.T) {
 		"internal/decode/sqlitedb/recrun":    pcDecode,
 		"internal/decode/iosbackup":          pcDecode,
 		"internal/decode/ts":                 pcDecode,
+		"internal/decode/wajid":              pcDecode,
 		"internal/decode/typedstream":        pcDecode,
 		"internal/sqlitefile":                pcSqlitefile,
 		"internal/parsers/androidmms":        pcParser,
