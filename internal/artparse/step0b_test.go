@@ -494,3 +494,20 @@ func TestClaimedTablesOfOneArtifactNeverShareATable(t *testing.T) {
 		t.Fatalf("err %v, want an error naming both parsers", err)
 	}
 }
+
+// 4I-R23: the claims listed for a backup data file that no Manifest.db could name are those of its own platform. A backup
+// is an iOS acquisition, so an Android parser's claims are no claims on it; listing them would report a parser that can
+// never have parsed the file.
+func TestClaimedTablesOfAnUnnamedBackupFileAreOfItsPlatformOnly(t *testing.T) {
+	bc := newBackupCase(t)
+	r := bc.add(bspec{files: stdFiles(), plist: plistYes, manifest: randomBytes(4096)})
+	droid := artparse.WithPlatforms(regFake(t, &claimMapper{claimParser{name: "droid-claim", status: parse.Applicable, claims: []string{"wa_rows"}}, []string{"wa_rows"}}, "droid-claim"), parse.PlatformAndroid)
+	h := bc.host(nil, regFake(t, smsMapper{}, "ios-sms-claim"), droid)
+	got, err := h.ClaimedTables(context.Background(), r.file(smsDomain, smsRel).ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Parser != "ios-sms-claim" || got[0].Table != "message" || !got[0].Unparsed {
+		t.Errorf("claims = %+v, want the one Unparsed iOS claim of message and none of the Android parser", got)
+	}
+}

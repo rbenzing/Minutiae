@@ -159,7 +159,11 @@ func (h *Host) ClaimedTables(ctx context.Context, artifactID string) ([]Claimed,
 	// A backup file no Manifest.db could name may still be a claimed table: say so (unparsed), never "no claim".
 	if reason := unnamedBackupFileReason(snap, rec); reason != "" {
 		var out []Claimed
+		// A backup is an iOS acquisition: only the claims of parsers of that platform are its claims (4I-R23).
 		for _, r := range h.registry {
+			if !slices.Contains(r.meta.Platforms, parse.PlatformIOS) {
+				continue
+			}
 			id := r.Identity()
 			for _, c := range r.meta.Claims {
 				out = append(out, Claimed{Table: c.Table, Role: c.Role, Parser: id.Name, Version: id.Version, Hash: id.Hash, Unparsed: true, Reason: reason})
