@@ -164,7 +164,7 @@ func reqsFor(legacy, modern bool) []rowrun.Req {
 		)
 		for _, t := range []string{
 			"message_media", "message_location", "message_quoted", "message_revoked", "message_system", "message_system_value_change",
-			"message_edit_info", "message_ephemeral", "message_view_once_media", "message_forwarded", "message_call_log",
+			"message_edit_info", "message_ephemeral", "message_view_once_media", "message_forwarded", "message_call_log", "message_system_number_change",
 		} {
 			reqs = append(reqs, rowrun.Req{Table: t, Need: []string{"message_row_id"}, Alias: "message_row_id", Optional: true})
 		}
@@ -193,6 +193,9 @@ func reqsFor(legacy, modern bool) []rowrun.Req {
 // mapping (so the host's note cap keeps them), and runs the mappings. A database that is not in the app's live
 // databases directory is ErrNotLiveDatabase and emits nothing (4I-R3).
 func (p Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) error {
+	if in == nil || in.Primary.R == nil {
+		return rowrun.ErrNilInput
+	}
 	dp := classifyDB(in.Primary.Logical)
 	if dp.Place != placeLive {
 		return ErrNotLiveDatabase
@@ -205,7 +208,11 @@ func (p Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) e
 	if err := d.warn(ctx, out); err != nil {
 		return err
 	}
-	_, err = rowrun.Run(ctx, in, out, d.steps())
+	g, err := checkJoinSchema(ctx, in, d, out)
+	if err != nil {
+		return fmt.Errorf("android.whatsapp.msgstore: %w", err)
+	}
+	_, err = rowrun.Run(ctx, in, out, d.steps(g))
 	if err != nil {
 		return fmt.Errorf("android.whatsapp.msgstore: %w", err)
 	}

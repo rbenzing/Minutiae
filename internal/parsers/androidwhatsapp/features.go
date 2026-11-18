@@ -22,6 +22,10 @@ const (
 // sideRow returns the row of a message_row_id table for the message, nil when the variant lacks the table or the
 // message has no row. A join that cannot be decided is stated.
 func sideRow(m parse.MapContext, f *msgFacts, table string) (parse.Row, error) {
+	if badTable(m, table) {
+		undecidedJoin(f.Raw, table) // the join table cannot be trusted at parse time: undecided, never absent
+		return nil, nil
+	}
 	if m.Column(table, "message_row_id") < 0 {
 		return nil, nil
 	}

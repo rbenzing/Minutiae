@@ -204,10 +204,20 @@ func readVCards(m parse.MapContext, f *msgFacts) error {
 	}
 	vc := rowrun.Resolve(m, "message_vcard", "vcard")
 	var cards [][]byte
-	var total int
+	var total, unreadable int
 	for _, row := range rows {
 		b, k := rowrun.TextCell(row, vc.At("vcard"))
 		if k != rowrun.CellValue {
+			// a card row whose cell is not readable text: counted and stated, never skipped as if there were no row
+			unreadable++
+			switch k {
+			case rowrun.CellNull:
+				f.Unknown["message_vcard.vcard"] = "null"
+			case rowrun.CellMissing:
+				f.Unknown["message_vcard.vcard"] = "missing"
+			default:
+				rowrun.Flag(f.Unknown, row, "message_vcard.vcard", vc.At("vcard"), k)
+			}
 			continue
 		}
 		total++
@@ -215,7 +225,11 @@ func readVCards(m parse.MapContext, f *msgFacts) error {
 			cards = append(cards, b)
 		}
 	}
-	if total == 0 {
+	switch {
+	case total == 0 && unreadable > 0:
+		f.Raw["vcard_state"] = "unreadable"
+		return nil
+	case total == 0:
 		f.Raw["vcard_state"] = "no-message_vcard-row"
 		return nil
 	}

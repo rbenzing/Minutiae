@@ -15,14 +15,24 @@ const sourceJIDMap = "jid_map"
 // whose target gives no phone JID is raw.lid_unresolved. A variant without the table states nothing per record (the
 // note jid_map=absent says so). The participant keeps the LID as stored; the phone JID is never put in participants.
 func lidMappings(m parse.MapContext, f *msgFacts, ps []message.Participant) error {
-	if m.Column("jid_map", "jid_row_id") < 0 {
-		return nil
-	}
 	cands := []addr{f.Chat}
 	for _, p := range ps {
 		if p.Address == f.Sender.Str {
 			cands = append(cands, f.Sender)
 		}
+	}
+	if badTable(m, "jid_map") {
+		// the table is there but cannot be joined (no usable key or column): every LID is undecided, not unmapped
+		for _, a := range cands {
+			if a.JID != nil && a.JID.Class == wajid.ClassLID {
+				undecidedJoin(f.Raw, "jid_map")
+				break
+			}
+		}
+		return nil
+	}
+	if m.Column("jid_map", "jid_row_id") < 0 {
+		return nil
 	}
 	var mapped []any
 	var unmapped, unresolved []any
@@ -123,7 +133,7 @@ func lookupLID(m parse.MapContext, f *msgFacts, a addr) (pn string, st lidState,
 		return "", lidUndecided, nil
 	}
 	ta := addrFromJID(m, trow, f.Raw, f.Unknown, "lid_map.pn")
-	if ta.Str == "" {
+	if ta.Str == "" || ta.JID == nil || ta.JID.Class != wajid.ClassUser { // only a phone (user) address is a phone JID
 		return "", lidUnresolved, nil
 	}
 	return ta.Str, lidMapped, nil
