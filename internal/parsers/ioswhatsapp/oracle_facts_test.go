@@ -284,9 +284,11 @@ func TestIOSWhatsAppChatsOracleStatesTheAbsentOptionalTables(t *testing.T) {
 	for _, w := range fx.Expect.Warnings {
 		got = append(got, w.Locator+" "+w.Contains)
 	}
-	wantW := []string{"sqlite:table=ZWAGROUPMEMBER whatsapp-ios-join-undecided: ZWAGROUPMEMBER: 1 records",
+	wantW := []string{
+		"sqlite:table=ZWAGROUPMEMBER whatsapp-ios-join-undecided: ZWAGROUPMEMBER: 1 records",
 		"sqlite:table=ZWAMEDIAITEM whatsapp-ios-join-undecided: ZWAMEDIAITEM: 1 records",
-		"sqlite:table=ZWAMESSAGEINFO whatsapp-ios-join-undecided: ZWAMESSAGEINFO: 1 records"}
+		"sqlite:table=ZWAMESSAGEINFO whatsapp-ios-join-undecided: ZWAMESSAGEINFO: 1 records",
+	}
 	if !reflect.DeepEqual(got, wantW) {
 		t.Errorf("warnings %v, want %v", got, wantW)
 	}
@@ -344,5 +346,54 @@ func TestIOSWhatsAppChatsDeletedOracleStatesTheHistory(t *testing.T) {
 	}
 	if !files["db"] || !files["wal"] {
 		t.Errorf("history in %v, want both the main file and the WAL", files)
+	}
+}
+
+// TestIOSWhatsAppChatsDeletedFreelistOracleStatesTheHistory (plan 4I2 PF2, Task 6 file list): a store with no WAL, whose
+// deleted rows lie on freelist pages. Messages 1-3 stay live. The history is read from the free leaf pages (method
+// sqlite-freelist, identity by fit), and includes a deleted image (150) and a deleted revoke (151) whose media rows are live,
+// so the recovered mapping meets its side-table join.
+func TestIOSWhatsAppChatsDeletedFreelistOracleStatesTheHistory(t *testing.T) {
+	c, fx := recsOf(t, "ios-chatstorage-deleted-freelist")
+	if len(c.by) != 3 || len(fx.Files) != 1 {
+		t.Errorf("%d live records and files %v, want 3 and the database alone", len(c.by), fx.Files)
+	}
+	raw, err := os.ReadFile("testdata/ios-chatstorage-deleted-freelist.recover.expect.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exp struct {
+		Records []struct {
+			Table, Method, Basis string
+			Rowid                int64
+			Record               struct {
+				Deleted bool
+				Payload map[string]any
+			}
+		} `json:"records"`
+	}
+	if err := json.Unmarshal(raw, &exp); err != nil {
+		t.Fatal(err)
+	}
+	rows := map[int64]bool{}
+	for _, r := range exp.Records {
+		rows[r.Rowid] = true
+		if r.Table != "ZWAMESSAGE" || r.Method != "sqlite-freelist" || r.Basis != "fit" || r.Rowid < 100 || r.Rowid > 159 {
+			t.Errorf("row %d: %+v", r.Rowid, r)
+		}
+		rawp, _ := r.Record.Payload["raw"].(map[string]any)
+		switch r.Rowid {
+		case 150:
+			if fmt.Sprint(rawp["attachments_unresolved"]) != "1" || r.Record.Payload["attachments"] == nil {
+				t.Errorf("recovered image 150 meets its media row: %v", rawp)
+			}
+		case 151:
+			if !r.Record.Deleted || rawp["ZVCARDNAME"] != "gone1" || rawp["revoked_row_text"] != "gone" {
+				t.Errorf("recovered revoke 151 meets its media row: %v deleted %v", rawp, r.Record.Deleted)
+			}
+		}
+	}
+	if !rows[150] || !rows[151] || len(rows) < 40 {
+		t.Errorf("history holds %d rows, 150 and 151 present: %v %v", len(rows), rows[150], rows[151])
 	}
 }

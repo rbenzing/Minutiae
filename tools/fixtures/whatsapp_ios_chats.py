@@ -24,6 +24,7 @@ Variants (the placement of each is in internal/parsers/ioswhatsapp/fixtures_test
   ios-chatstorage-otherapp     a same-named database of another app: one table ZMESSAGE(Z_PK, ZTEXT)
   ios-chatstorage-nooptional   no ZWAGROUPMEMBER, ZWAMESSAGEINFO or ZWAMEDIAITEM table (plan 4I2 PF3: the absence is stated)
   ios-chatstorage-deleted      deleted ZWAMESSAGE rows and an old WAL frame (plan 4I2 PF2): the typed recovery scenario
+  ios-chatstorage-deleted-freelist  no WAL: deleted ZWAMESSAGE rows on freelist pages, with a deleted image and a deleted revoke
 
 Python 3 with its bundled sqlite3 only; no Docker. Not part of gen.sh all.
 """
@@ -209,6 +210,9 @@ def media_items():
         (8, 31, dict(ZMEDIALOCALPATH="../escape.jpg", **jpg)),
         (9, 32, dict(ZMEDIALOCALPATH=None, **jpg)),
         (10, 43, dict(ZMEDIALOCALPATH=STK43, ZVCARDSTRING="image/webp", ZFILESIZE=777)),
+        # the media rows of the messages the freelist variant deletes: the rows stay, so a recovered message meets its join
+        (11, 150, dict(ZMEDIALOCALPATH="Media/15550000001@s.whatsapp.net/a/b/IMG-0150.jpg", ZVCARDSTRING="image/jpeg", ZFILESIZE=555)),
+        (12, 151, dict(ZVCARDNAME="gone1")),
     ]
 
 
@@ -889,6 +893,24 @@ def v_deleted(work):
     return files, exp
 
 
+def v_deleted_freelist(work):
+    """A store with no WAL (a checkpointed backup copy): 1024-byte pages; messages 1-3 live and messages 100-159 (an image 150
+    whose media row stays, a revoke 151 whose media row stays, and text rows) deleted with secure_delete off, so whole leaf
+    pages land on the freelist and the history oracle reads them (basis fit, attributed to ZWAMESSAGE, 4G)."""
+    msgs = small_messages() + bulk(100, 50) + [msg(150, 1, 0, 1, ZMESSAGEDATE=D + 150), msg(151, 1, 0, 14, ZTEXT="gone", ZMESSAGEDATE=D + 151)] + bulk(152, 8)
+    path = build_db(work, MODEL, tables_of(MODEL, msgs, sessions(4)[:1], with_items=True), page_size=1024)
+    con = C.connect(path)
+    scen = new_scenario("ios-chatstorage-deleted-freelist", con)
+    scen.write("ZWAMESSAGE", scen.snap(con, "ZWAMESSAGE"))
+    scen.want("ZWAMESSAGE", scen.snap(con, "ZWAMESSAGE", "Z_PK between 100 and 159"), label="ZWAMESSAGE")
+    X.delete_rows(con, "ZWAMESSAGE", range(100, 160))
+    con.close()
+    files = finish(path)
+    assert "wal" not in files
+    exp = oracle(files, "ios-chatstorage-deleted-freelist", "backup", DOMAIN_WA)
+    return files, exp
+
+
 def recover_env(files):
     """The live view of the finished files; the place is the consumer backup domain (PF5: a recovered row at a domain
     place states its domain label)."""
@@ -915,4 +937,5 @@ VARIANTS = {
     "ios-chatstorage-otherapp": v_otherapp,
     "ios-chatstorage-nooptional": v_nooptional,
     "ios-chatstorage-deleted": v_deleted,
+    "ios-chatstorage-deleted-freelist": v_deleted_freelist,
 }

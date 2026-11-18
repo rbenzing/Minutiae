@@ -5,15 +5,16 @@ package ioswhatsapp_test
 // fixturePins is the SHA-256 of every decompressed fixture file, by "<variant>.<role>". A changed fixture
 // changes this file in the same commit, so a silent regeneration shows in review.
 var fixturePins = map[string]string{
-	"ios-chatstorage-business.db":   "f58de6fb5ae04c076b51cb68f3b56b69a40a9634aa7d119fff3c507957d2baed",
-	"ios-chatstorage-deleted.db":    "ebcb54a9d9c3b7a2ef7cb88fee4c1d0b05e202c9d5a905d83a1121970d3a7773",
-	"ios-chatstorage-deleted.wal":   "93ef7124540ee01951f6214d90ecaee7178bfc85518043ad025acc06db924231",
-	"ios-chatstorage-extract.db":    "f58de6fb5ae04c076b51cb68f3b56b69a40a9634aa7d119fff3c507957d2baed",
-	"ios-chatstorage-nomodel.db":    "6a0812a1ef06ba61b391af8d0b24da3c93dafe2f61c4eab5be15e2a110fe3917",
-	"ios-chatstorage-nooptional.db": "ac9354a6a039c7a5bf8cb4712a4d325a06d64c25bf7af0f85dbd7eb0acf60241",
-	"ios-chatstorage-otherapp.db":   "83be7af517af6c637eef8b90517e3f6e7b9c95321884e8ae6ac6312777a5bab1",
-	"ios-chatstorage-othermodel.db": "760e34b21f0422fe1d670161be296caaa4ddd4bd540fcd36c115ec81b6a69a0c",
-	"ios-chatstorage-renumbered.db": "a019b633e770aefa0549549468da6ffa4e387bdc46a71ffa658b39cfe9e03c23",
-	"ios-chatstorage.db":            "12b9d1224d53709afbfc86697f67a873ce56a0149226a22968be09e92c74b227",
-	"ios-chatstorage.wal":           "ac23149bd5e21ba13aaf5152a8b1c34bb57c556487a0d94662290803d13a4131",
+	"ios-chatstorage-business.db":         "f58de6fb5ae04c076b51cb68f3b56b69a40a9634aa7d119fff3c507957d2baed",
+	"ios-chatstorage-deleted-freelist.db": "b2803c542d6d85289fe05da3e42716c821fd8ecbbc34b2dbb3b6f1da271fc6de",
+	"ios-chatstorage-deleted.db":          "ebcb54a9d9c3b7a2ef7cb88fee4c1d0b05e202c9d5a905d83a1121970d3a7773",
+	"ios-chatstorage-deleted.wal":         "93ef7124540ee01951f6214d90ecaee7178bfc85518043ad025acc06db924231",
+	"ios-chatstorage-extract.db":          "f58de6fb5ae04c076b51cb68f3b56b69a40a9634aa7d119fff3c507957d2baed",
+	"ios-chatstorage-nomodel.db":          "6a0812a1ef06ba61b391af8d0b24da3c93dafe2f61c4eab5be15e2a110fe3917",
+	"ios-chatstorage-nooptional.db":       "ac9354a6a039c7a5bf8cb4712a4d325a06d64c25bf7af0f85dbd7eb0acf60241",
+	"ios-chatstorage-otherapp.db":         "83be7af517af6c637eef8b90517e3f6e7b9c95321884e8ae6ac6312777a5bab1",
+	"ios-chatstorage-othermodel.db":       "760e34b21f0422fe1d670161be296caaa4ddd4bd540fcd36c115ec81b6a69a0c",
+	"ios-chatstorage-renumbered.db":       "a019b633e770aefa0549549468da6ffa4e387bdc46a71ffa658b39cfe9e03c23",
+	"ios-chatstorage.db":                  "12b9d1224d53709afbfc86697f67a873ce56a0149226a22968be09e92c74b227",
+	"ios-chatstorage.wal":                 "ac23149bd5e21ba13aaf5152a8b1c34bb57c556487a0d94662290803d13a4131",
 }
