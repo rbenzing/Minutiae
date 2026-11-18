@@ -153,13 +153,13 @@ func parseWith(ctx context.Context, in *parse.Input, out parse.Emitter, maxKeys 
 	}
 	l.note(out, p)
 	pf, err := preflight(ctx, in, out, p, maxKeys)
-	if err != nil {
-		return err
-	}
 	var as *aggSet
 	if pf != nil {
 		as = pf.as
-		defer in.Budget.Free(as.charged)
+		defer func() { in.Budget.Free(as.charged) }() // also when a refused warning ends the preflight
+	}
+	if err != nil {
+		return err
 	}
 	ce := &countingEmitter{Emitter: out, counts: map[string]int64{}, seen: map[string]bool{}}
 	e := &env{Place: p, Label: l, Aggs: as}
@@ -168,16 +168,22 @@ func parseWith(ctx context.Context, in *parse.Input, out parse.Emitter, maxKeys 
 		g = pf.g
 	}
 	step := rowrun.Step{Mapping: withGuard(callMappingWith(e), g), Identifying: p.Place == placeAppGroup}
-	_, err = rowrun.Run(ctx, in, ce, []rowrun.Step{step})
+	rep, err := rowrun.Run(ctx, in, ce, []rowrun.Step{step})
+	dropped := ce.runDropped
 	if pf != nil {
-		if werr := ce.forward(ctx, pf.pending); err == nil {
+		d, werr := ce.forward(ctx, pf.pending, pf.stated)
+		if err == nil {
 			err = werr
 		}
+		dropped += d + pf.dropped
+	}
+	if dropped > 0 {
+		out.Note("warnings_dropped", strconv.Itoa(dropped)) // one total for the shared cap of reader warnings
 	}
 	if werr := ce.warn(ctx); err == nil {
 		err = werr
 	}
-	if as != nil && !as.Complete {
+	if as != nil && !as.Complete && rep.NotApplicable == "" { // another app's database (a deferred Probe) is benign: no set to report
 		if werr := out.Warn(ctx, "sqlite:table="+tableCall, fmt.Sprintf("whatsapp-ios-aggregate-set-incomplete: %d rows, %d read (%s)", as.Total, as.Read, as.Why)); err == nil && werr != nil {
 			err = werr
 		}
@@ -201,6 +207,8 @@ type preResult struct {
 	g       *joinGuard
 	as      *aggSet
 	pending []readerWarning
+	stated  int // the reader warnings preflight stated
+	dropped int // the reader warnings it dropped over the cap
 }
 
 // preflight opens the database once, decides whether ZWACDCALLEVENT is present and, when it is, notes the unmapped tables,
@@ -236,7 +244,7 @@ func preflight(ctx context.Context, in *parse.Input, out parse.Emitter, p dbPlac
 				}
 			}
 		}
-		dropped := 0
+		dropped, stated := 0, 0
 		for i, w := range forward {
 			if i >= maxPreflightWarnings {
 				dropped++
@@ -244,10 +252,16 @@ func preflight(ctx context.Context, in *parse.Input, out parse.Emitter, p dbPlac
 			}
 			loc := fmt.Sprintf("sqlite:file=%s;page=%d;offset=%d", w.File, w.Page, w.Offset)
 			if werr := out.Warn(ctx, loc, w.Code+": "+w.Msg); werr != nil {
+				if err == nil {
+					err = werr // a refused warning is the job's failure, never swallowed
+				}
 				return
 			}
+			stated++
 		}
-		if dropped > 0 {
+		if res != nil && err == nil {
+			res.stated, res.dropped = stated, dropped // the total note is written once, after Run (the cap is shared)
+		} else if dropped > 0 {
 			out.Note("warnings_dropped", strconv.Itoa(dropped))
 		}
 	}()

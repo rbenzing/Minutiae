@@ -56,10 +56,10 @@ type aggSet struct {
 func loadAggregates(ctx context.Context, db *sqlitedb.DB, b *parse.BudgetView, maxKeys int) (*aggSet, error) {
 	as := &aggSet{ByAgg: map[int64]aggEntry{}, Complete: true}
 	lossy := func(why string) {
-		as.Complete, as.Lossy = false, true
-		if as.Why == "" {
+		if !as.Lossy { // the first damage is the reason, also over a cap reason set before it
 			as.Why = why
 		}
+		as.Complete, as.Lossy = false, true
 	}
 	t, err := db.Table(ctx, tableCall, nil, nil)
 	switch {
@@ -137,6 +137,9 @@ func loadAggregates(ctx context.Context, db *sqlitedb.DB, b *parse.BudgetView, m
 	}
 	if budgetHit {
 		lossy("the memory limit was reached")
+		// the budget is short: give the keys back now, a lossy set decides nothing from them
+		b.Free(as.charged)
+		as.charged, as.ByAgg, as.Read = 0, map[int64]aggEntry{}, 0
 	}
 	if len(db.Warnings()) > warned {
 		lossy("the reader skipped damaged pages")

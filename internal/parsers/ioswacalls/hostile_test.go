@@ -123,16 +123,14 @@ func TestIOSWhatsAppCallsDamagedCallPageDecidesNoDirection(t *testing.T) {
 	b, _ := callBuilder(4096, func(tb callTables) {
 		for i := int64(1); i <= rows; i++ {
 			tb["ZWAAGGREGATECALLEVENT"].put(i, aggRow(int64(1), nil))
-			tb["ZWACDCALLEVENT"].put(i, callRow(map[string]any{"Z1CALLEVENTS": i, "ZCALLIDSTRING": fmt.Sprintf("c%d %s", i, strings.Repeat("x", 60))}))
+			tb["ZWACDCALLEVENT"].put(i, callRow(map[string]any{"Z1CALLEVENTS": key(i), "ZCALLIDSTRING": fmt.Sprintf("c%d %s", i, strings.Repeat("x", 60))}))
 		}
 	})
 	good := b.Bytes()
-	if r := hostileRun(t, good, nil, nil, 0); r.Err != nil || len(r.Records) != rows || r.Records[0].Payload["direction"] != "in" {
+	if r := hostileRun(t, good, nil, nil, 0); r.Err != nil || len(r.Records) != rows {
 		t.Fatalf("control: err %v, %d records", r.Err, len(r.Records))
 	}
-	data := slices.Clone(good) // damage the leaf that holds the last call (its page type byte)
-	off := strings.LastIndex(string(data), fmt.Sprintf("c%d x", rows))
-	data[off/4096*4096] = 0 // an invalid page type
+	data := damageLastLeaf(good, rows)
 	res := hostileRun(t, data, nil, nil, 0)
 	typedOutcome(t, "damaged leaf", res.Err)
 	if len(res.Violations) != 0 || res.Refused != 0 {
@@ -142,8 +140,20 @@ func TestIOSWhatsAppCallsDamagedCallPageDecidesNoDirection(t *testing.T) {
 		t.Fatalf("%d records of %d: the damage should lose some and keep others", len(res.Records), rows)
 	}
 	for _, r := range res.Records {
-		if d := r.Payload["direction"]; d != "unknown" || rawOf(r)["direction_state"] != "undecided" {
-			t.Fatalf("call %d: direction %v state %v after a damaged scan", rowidOf(r.Locator), d, rawOf(r)["direction_state"])
+		id := rowidOf(r.Locator)
+		wantState := "undecided"
+		if id == 1 || id == 2 { // calls 1 and 2 name aggregate 1: two calls were counted, a lower bound that is still true
+			wantState = "multi-call-aggregate"
+		}
+		if d := r.Payload["direction"]; d != "unknown" || rawOf(r)["direction_state"] != wantState {
+			t.Fatalf("call %d: direction %v state %v after a damaged scan, want %s", id, d, rawOf(r)["direction_state"], wantState)
+		}
+		if rawOf(r)["aggregate_calls"] != nil {
+			t.Errorf("call %d states a count from a lossy scan: %v", id, rawOf(r)["aggregate_calls"])
+		}
+		// amendment 4I2-A4: the aggregate row is stated whatever the set says; only the direction is limited
+		if agg, _ := rawOf(r)["aggregate"].(map[string]any); agg == nil || agg["ZINCOMING"] != int64(1) {
+			t.Errorf("call %d: raw.aggregate %v after a damaged scan", id, rawOf(r)["aggregate"])
 		}
 	}
 	if !errors.Is(res.Err, ioswacalls.ErrAggregatesIncomplete) {
@@ -570,6 +580,10 @@ func TestIOSWhatsAppCallsAggregateFloodIsIncomplete(t *testing.T) {
 		if i > capKeys && (recs[i].Payload["direction"] != "unknown" || raw["direction_state"] != "undecided") {
 			t.Errorf("call %d (its aggregate was not read): %v", i, recs[i].Payload)
 		}
+		// amendment 4I2-A4: the aggregate row is stated also for a key the set did not read; only the direction is limited
+		if agg, _ := raw["aggregate"].(map[string]any); agg == nil || agg["ZINCOMING"] != int64(1) || agg["Z_PK"] != i {
+			t.Errorf("call %d: raw.aggregate %v", i, raw["aggregate"])
+		}
 	}
 	var warned []string
 	for _, w := range res.Warnings {
@@ -599,4 +613,34 @@ type cappedParser struct {
 
 func (c cappedParser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) error {
 	return ioswacalls.ParseWith(ctx, in, out, c.max)
+}
+
+// key is the aggregate call i names in the damaged-page store: call 2 shares aggregate 1 with call 1.
+func key(i int64) int64 {
+	if i == 2 {
+		return 1
+	}
+	return i
+}
+
+// damageLastLeaf clones a store of rows calls (ids "c<n> x...") and gives the leaf page that holds the last one an invalid page
+// type.
+func damageLastLeaf(good []byte, rows int) []byte {
+	data := slices.Clone(good)
+	off := strings.LastIndex(string(data), fmt.Sprintf("c%d x", rows))
+	data[off/4096*4096] = 0
+	return data
+}
+
+// damagedCallStore is the store of the damaged-page test with its last leaf damaged.
+func damagedCallStore(t *testing.T) []byte {
+	t.Helper()
+	const rows = 300
+	b, _ := callBuilder(4096, func(tb callTables) {
+		for i := int64(1); i <= rows; i++ {
+			tb["ZWAAGGREGATECALLEVENT"].put(i, aggRow(int64(1), nil))
+			tb["ZWACDCALLEVENT"].put(i, callRow(map[string]any{"Z1CALLEVENTS": key(i), "ZCALLIDSTRING": fmt.Sprintf("c%d %s", i, strings.Repeat("x", 60))}))
+		}
+	})
+	return damageLastLeaf(b.Bytes(), rows)
 }

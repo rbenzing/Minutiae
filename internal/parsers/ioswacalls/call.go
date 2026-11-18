@@ -171,13 +171,7 @@ func directionOf(m parse.MapContext, r cellReader, e *env, pk int64, hasPK bool)
 		return state(stateUndec)
 	}
 	as := e.Aggs
-	if as == nil || as.Lossy || !hasPK {
-		return state(stateUndec) // a lossy scan or an unknown rowid is never a decided reason
-	}
-	ent, ok := as.ByAgg[z1.Value]
-	if !ok || ent.Count < 1 || (ent.Count == 1 && ent.Only != pk) {
-		return state(stateUndec) // a key the set did not read, or a set that disagrees with the row it was read from
-	}
+	// the aggregate row is read for every live call with a key, whatever the set says: only the direction is limited (4I2-A4)
 	arow, st, err := getRow(m, tableAgg, z1.Value)
 	if err != nil {
 		return "", err
@@ -189,18 +183,28 @@ func directionOf(m parse.MapContext, r cellReader, e *env, pk int64, hasPK bool)
 	case jFound:
 		stated := map[string]any{"Z_PK": z1.Value}
 		for _, n := range aggregateColumns() {
-			if v, ok := ar.int(n); ok {
-				stated[n] = v
+			ar.int(n) // flags a cell that is not an INTEGER
+			if v := ar.stored(n); v != nil {
+				stated[n] = v // as stored, whatever its class
 			}
 		}
 		raw["aggregate"] = stated
 	}
-	if ent.Count >= 2 { // the calls that name the aggregate are the call table's own fact, whatever the aggregate table says
-		raw["aggregate_calls"] = int64(min(ent.Count, 1000))
-		if ent.Count > 1000 {
-			raw["aggregate_calls_truncated"] = true
+	if as == nil || !hasPK {
+		return state(stateUndec) // an unknown rowid is never a decided reason
+	}
+	ent, ok := as.ByAgg[z1.Value]
+	if ok && ent.Count >= 2 { // the calls that name the aggregate are the call table's own fact; on a lossy set a lower bound
+		if !as.Lossy {
+			raw["aggregate_calls"] = int64(min(ent.Count, 1000))
+			if ent.Count > 1000 {
+				raw["aggregate_calls_truncated"] = true
+			}
 		}
 		return state("multi-call-aggregate")
+	}
+	if as.Lossy || !ok || ent.Count < 1 || ent.Only != pk {
+		return state(stateUndec) // a lossy scan, a key the set did not read, or a set that disagrees with the row it was read from
 	}
 	switch st {
 	case jUndecided:

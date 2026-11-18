@@ -241,7 +241,7 @@ func TestIOSWhatsAppCallsStateVocabularyIsPinned(t *testing.T) {
 		want{"unknown_columns", map[string]any{"ZWACDCALLEVENT.Z1CALLEVENTS": "type-mismatch"}})
 	check("key blob", want{"direction_state", "undecided"}, want{"Z1CALLEVENTS", map[string]any{"blob_b64": "AQ=="}}, want{"aggregate", nil},
 		want{"unknown_columns", map[string]any{"ZWACDCALLEVENT.Z1CALLEVENTS": "type-mismatch"}})
-	check("incoming text", want{"direction_state", "incoming-unknown"}, want{"aggregate", map[string]any{"Z_PK": int64(7)}},
+	check("incoming text", want{"direction_state", "incoming-unknown"}, want{"aggregate", map[string]any{"Z_PK": int64(7), "ZINCOMING": "1"}},
 		want{"unknown_columns", map[string]any{"ZWAAGGREGATECALLEVENT.ZINCOMING": "type-mismatch"}})
 	for _, n := range []string{"agg NULL", "agg 0", "incoming NULL", "incoming 7", "no aggregate row", "multi a", "multi b", "key text", "key blob", "incoming text"} {
 		dir(n, "unknown")

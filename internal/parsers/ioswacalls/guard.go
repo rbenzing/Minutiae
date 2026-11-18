@@ -196,25 +196,49 @@ type countingEmitter struct {
 	parse.Emitter
 	counts map[string]int64
 	seen   map[string]bool // the warnings stated so far, by locator and reason
+	// readerStated counts the reader warnings (locator sqlite:file=) stated through the emitter and runDropped is the count of
+	// rowrun.Run's own note warnings_dropped, held back so that Parse writes one total for the shared cap of 1000
+	readerStated int
+	runDropped   int
 }
 
 // Warn records the warning, so that a warning held back by preflight is not stated twice.
 func (c *countingEmitter) Warn(ctx context.Context, locator, reason string) error {
-	c.seen[locator+"\x00"+reason] = true
+	c.seen[locator+"|"+reason] = true
+	if strings.HasPrefix(locator, "sqlite:file=") {
+		c.readerStated++
+	}
 	return c.Emitter.Warn(ctx, locator, reason)
 }
 
-// forward states the held-back reader warnings that rowrun.Run did not state itself.
-func (c *countingEmitter) forward(ctx context.Context, pending []readerWarning) error {
+// Note holds back warnings_dropped of rowrun.Run: Parse states the total.
+func (c *countingEmitter) Note(key, value string) {
+	if key == "warnings_dropped" {
+		if n, err := strconv.Atoi(value); err == nil {
+			c.runDropped += n
+			return
+		}
+	}
+	c.Emitter.Note(key, value)
+}
+
+// forward states the held-back reader warnings that rowrun.Run did not state itself, up to what is left of the cap of
+// maxPreflightWarnings reader warnings (preflight's and Run's count against it), and returns how many it dropped.
+func (c *countingEmitter) forward(ctx context.Context, pending []readerWarning, used int) (int, error) {
+	dropped := 0
 	for _, w := range pending {
-		if c.seen[w.Locator+"\x00"+w.Reason] {
+		if c.seen[w.Locator+"|"+w.Reason] {
+			continue
+		}
+		if used+c.readerStated >= maxPreflightWarnings {
+			dropped++
 			continue
 		}
 		if err := c.Warn(ctx, w.Locator, w.Reason); err != nil {
-			return err
+			return dropped, err
 		}
 	}
-	return nil
+	return dropped, nil
 }
 
 func (c *countingEmitter) Emit(ctx context.Context, r records.Record) error {

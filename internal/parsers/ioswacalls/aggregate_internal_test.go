@@ -3,10 +3,13 @@ package ioswacalls
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
 	"github.com/rbenzing/minutiae/internal/parse"
+	"github.com/rbenzing/minutiae/internal/records"
 	"github.com/rbenzing/minutiae/internal/sqlitefile/sqlitetest"
 )
 
@@ -84,6 +87,9 @@ func TestLoadAggregatesStatesWhatItCouldNotDo(t *testing.T) {
 	if err != nil || as.Complete || !as.Lossy || as.Why == "" {
 		t.Errorf("budget: %+v, %v", as, err)
 	}
+	if as.charged != 0 || len(as.ByAgg) != 0 {
+		t.Errorf("a refused charge left %d bytes and %d keys held", as.charged, len(as.ByAgg))
+	}
 	tiny.Free(as.charged)
 	if tiny.Used() != 0 {
 		t.Errorf("budget holds %d after the free", tiny.Used())
@@ -93,5 +99,54 @@ func TestLoadAggregatesStatesWhatItCouldNotDo(t *testing.T) {
 	cancel()
 	if _, err := loadAggregates(ctx, callDB(t, callDDL1, int64(1)), parse.NewBudget(1<<20).View(), maxAggregates); err == nil {
 		t.Error("a cancelled context gave no error")
+	}
+}
+
+// Fix round 1, M2: damage found after the cap is hit is the reason of the set, not the cap (the cap reason is set first).
+func TestLoadAggregatesDamageOverridesTheCapReason(t *testing.T) {
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 4096})
+	c := b.CreateTable(tableCall, "CREATE TABLE ZWACDCALLEVENT (Z_PK INTEGER PRIMARY KEY, Z1CALLEVENTS INTEGER, ZPAD VARCHAR)")
+	const rows = 300
+	for i := int64(1); i <= rows; i++ {
+		c.Insert(i, nil, i, fmt.Sprintf("p%d %s", i, strings.Repeat("x", 60)))
+	}
+	data := b.Bytes()
+	off := bytes.LastIndex(data, []byte(fmt.Sprintf("p%d x", rows)))
+	data[off/4096*4096] = 0 // the leaf of the last rows gets an invalid page type
+	db, err := sqlitedb.Open(context.Background(), sqlitedb.Files{DB: bytes.NewReader(data), DBSize: int64(len(data))}, parse.NewBudget(256<<20).View())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Release()
+	as, err := loadAggregates(context.Background(), db, parse.NewBudget(1<<20).View(), 3)
+	if err != nil || !as.Lossy || as.Complete || strings.Contains(as.Why, "more than") || as.Why == "" {
+		t.Errorf("cap then damage: %+v, %v", as, err)
+	}
+}
+
+// recordingEmitter is an emitter that remembers the warnings.
+type recordingEmitter struct{ warned []string }
+
+func (*recordingEmitter) Emit(context.Context, records.Record) error { return nil }
+func (r *recordingEmitter) Warn(_ context.Context, locator, reason string) error {
+	r.warned = append(r.warned, locator+" "+reason)
+	return nil
+}
+func (*recordingEmitter) Note(string, string)   {}
+func (*recordingEmitter) Progress(int64, int64) {}
+
+// Fix round 1, M1: the held-back scan warnings count against the cap of reader warnings that preflight and Run already used.
+func TestForwardKeepsToTheSharedWarningCap(t *testing.T) {
+	rec := &recordingEmitter{}
+	ce := &countingEmitter{Emitter: rec, counts: map[string]int64{}, seen: map[string]bool{}}
+	ce.readerStated = 3 // Run stated three
+	var pending []readerWarning
+	for i := 0; i < 6; i++ {
+		pending = append(pending, readerWarning{Locator: fmt.Sprintf("sqlite:file=db;page=%d;offset=0", i), Reason: "x"})
+	}
+	ce.seen["sqlite:file=db;page=0;offset=0|x"] = true                                  // Run stated this one itself: neither repeated nor counted as dropped
+	dropped, err := ce.forward(context.Background(), pending, maxPreflightWarnings-3-2) // preflight stated all but 2 of the room left
+	if err != nil || len(rec.warned) != 2 || dropped != 3 {
+		t.Errorf("stated %d dropped %d err %v, want 2 and 3", len(rec.warned), dropped, err)
 	}
 }
