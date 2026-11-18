@@ -1,0 +1,1 @@
+{"ddl":"","extra_files":[],"family":"whatsapp-ios-contacts","generator":{"files":{"db":"2058309ccbf1fb46e6d133a471e52bb02a5416dc2f9a88bb903a5564e05ab350"},"python":"3.15.2","sqlite":"3.53.4","tool":"tools/fixtures/telephony_gen.py"},"notes":{},"records":[],"variant":"ios-contactsv2-otherapp","warnings":[]}

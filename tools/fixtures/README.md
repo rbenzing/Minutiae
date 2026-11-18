@@ -3317,3 +3317,26 @@ py -3 -I tools/fixtures/telephony_gen.py --family whatsapp-ios-calls --check
 
 Notes of the oracle: `container`, `app`, `app_basis` or `app_state`, `unmapped_tables` (`ZWACDCALLEVENTPARTICIPANT`) and `aggregates`
 (the number of distinct non-zero INTEGER `Z1CALLEVENTS` keys; a TEXT, REAL or BLOB cell is no key that was read as one and is not counted). The one warning of `ios-callhistory` is the reader's `wal-frames-not-applied`.
+
+### WhatsApp iOS contacts fixtures (plan 4I2 task 9)
+
+`tools/fixtures/whatsapp_ios_contacts.py` is the family `whatsapp-ios-contacts` of `telephony_gen.py`, built like the chats and calls
+families over `whatsapp_ios_common.py` with the DDL snapshot `schemas/whatsapp-ios/contactsv2.sql` (from memory). The same honesty
+applies: the oracle is a second reading of the spec by the author of the Go design, checked against the text by the literal facts of
+`internal/parsers/ioswacontacts/oracle_facts_test.go`.
+
+```
+py -3 -I tools/fixtures/telephony_gen.py --family whatsapp-ios-contacts --out internal/parsers/ioswacontacts/testdata \
+    --pins-go internal/parsers/ioswacontacts/pins_test.go --pins-package ioswacontacts_test
+py -3 -I tools/fixtures/telephony_gen.py --family whatsapp-ios-contacts --check
+```
+
+| Variant (`internal/parsers/ioswacontacts/testdata/`) | Bundled at | `Z_PRIMARYKEY` | Holds |
+|---|---|---|---|
+| `ios-contactsv2` | backup domain `AppDomainGroup-group.net.whatsapp.WhatsApp.shared`, with `-wal` | WAAddressBookContact 1 | rows 1 to 13 and 15 in the file, row 14 in a committed WAL frame. 10 records and 5 counted warnings. Row 1 every column (the `_$!<Mobile>!$_` label decoded, the row's own `ZLID` in `raw.lid_map`); 2 a phone with a plain label; 3 a name and a JID; 4 a JID only (warning); 5 a group JID (warning); 6 a given name only (warning); 7 no JID (`whatsapp_id_state` `absent`); 8 a JID with a NUL (`altered`); 9 a `@lid` JID that is its own `ZLID` (`lid_state` `jid-not-a-phone`, no `lid_map`); 10 a 300 KiB about text (cut in the Body); 11 the JID of row 1 on another name (two records, never merged); 12 JID `-1` (warning, unparseable); 13 a BLOB name (warning, damaged); 14 an over-long JID (`too-long`); 15 a JID cell that is a BLOB (`not-text`) |
+| `ios-contactsv2-nolid` | backup domain, no `-wal` | as above | rows 1 to 3 in a table with no `ZLID` column (S7 saw it absent on some images): no `lid_map`, no `lid_state` |
+| `ios-contactsv2-extract` | an app group of an extraction (`BundleIOS`, no extras) | as above | rows 1 to 3 |
+| `ios-contactsv2-otherapp` | an app group of an extraction | none | one table `ZCONTACT(Z_PK)` (another app's database of the same name) |
+
+Notes of the oracle: `container`, `app` and `app_basis` or `app_state`. The warnings are the row warnings in rowid order; no variant
+holds an uncommitted WAL frame, so no reader warning is stated (the calls family covers it).
