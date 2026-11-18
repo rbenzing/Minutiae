@@ -47,8 +47,8 @@ func participants(r parsertest.ExpRecord) []any {
 
 func TestCoreOracleStatesTheSpecRules(t *testing.T) {
 	modern, _ := factsOf(t, "android-modern-2026")
-	if len(modern) != 33 { // the 18 rows of the core and rows 30 to 44 of plan 4I task 7
-		t.Fatalf("android-modern-2026 has %d records, want 33", len(modern))
+	if len(modern) != 38 { // the 18 rows of the core, rows 30 to 44 of plan 4I task 7 and the five reactions of task 8
+		t.Fatalf("android-modern-2026 has %d records, want 38", len(modern))
 	}
 	get := func(set map[string]parsertest.ExpRecord, key string) parsertest.ExpRecord {
 		r, ok := set[key]
@@ -114,7 +114,7 @@ func TestCoreOracleStatesTheSpecRules(t *testing.T) {
 	}
 	// every record names the app by the path (D9).
 	for k, r := range modern {
-		if raw := rawOf(t, r); raw["app"] != "whatsapp" || raw["app_basis"] != "path" || raw["source_table"] != "message" {
+		if raw := rawOf(t, r); raw["app"] != "whatsapp" || raw["app_basis"] != "path" || (raw["source_table"] != "message" && r.Payload["kind"] != "reaction") {
 			t.Errorf("%s: app %v basis %v table %v", k, raw["app"], raw["app_basis"], raw["source_table"])
 		}
 	}

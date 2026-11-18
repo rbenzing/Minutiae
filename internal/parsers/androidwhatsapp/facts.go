@@ -183,7 +183,8 @@ type msgFacts struct {
 	Received   *rowrun.Instant
 	Delivered  *rowrun.Instant
 
-	Revoke *revokeFacts // a "deleted for everyone" tombstone (spec 6.5), nil for a live message
+	Revoke   *revokeFacts   // a "deleted for everyone" tombstone (spec 6.5), nil for a live message
+	Reaction *reactionFacts // a message_add_on reaction (4I-R20), nil for a message
 
 	Raw, Unknown map[string]any
 }

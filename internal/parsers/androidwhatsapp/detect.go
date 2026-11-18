@@ -224,6 +224,9 @@ func (d detection) steps(g *joinGuard) []rowrun.Step {
 	if d.hasMessage {
 		steps = append(steps, rowrun.Step{Mapping: withGuard(messageMapping(), g), Optional: true})
 	}
+	if hasTable(d.Census.Objects, tblAddOn) {
+		steps = append(steps, rowrun.Step{Mapping: withGuard(addOnMapping(), g), Optional: true})
+	}
 	return steps
 }
 

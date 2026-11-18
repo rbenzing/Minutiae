@@ -18,6 +18,7 @@ const (
 	colFromMe      = "from_me"
 	colKeyFromMe   = "key_from_me"
 	colActionType  = "action_type"
+	colAddOnType   = "add_on_type" // message_add_on.message_add_on_type
 )
 
 // The codes the parser's own rules name (each is in enumTable or in a research conflict row, see the tests).
@@ -62,6 +63,7 @@ var enumTable = []enumEntry{
 	{colMessageType, 24, "group_invite", "S6,S3"},
 	{colMessageType, 64, "revoked", "S5,S6"},
 	{colActionType, 18, "security_code_changed", "S1,S6"},
+	{colAddOnType, 56, "reaction", "S11,S5"},
 	{colMediaWAType, 0, "text", "S9,S10"},
 	{colMediaWAType, 1, "image", "S9,S10"},
 	{colMediaWAType, 2, "audio", "S9,S10"},

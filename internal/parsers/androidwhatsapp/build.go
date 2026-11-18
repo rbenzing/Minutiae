@@ -40,6 +40,9 @@ func build(m parse.MapContext, f msgFacts) ([]records.Record, error) {
 		msg.Direction = l
 	}
 	msg.Kind = kindOf(&f)
+	if f.Reaction != nil {
+		msg.Kind = message.KindReaction
+	}
 	if l, ok := f.Type.label(); ok && !f.LegacySys {
 		raw["label_"+f.Type.Column] = l
 	}
@@ -62,8 +65,17 @@ func build(m parse.MapContext, f msgFacts) ([]records.Record, error) {
 		msg.Thread = th
 	}
 
+	if f.Reaction != nil {
+		msg.TargetGUID = f.Reaction.Target
+	}
+
 	// participants, and the statements the database makes about the LIDs among them (D6)
-	msg.Participants, msg.ParticipantsUnknown = participantsOf(&f, msg.Direction, raw)
+	if f.Reaction != nil {
+		// 4I-R20: no source of two establishes a reaction sender or direction: no participant, never a guess
+		msg.Participants, msg.ParticipantsUnknown = nil, true
+	} else {
+		msg.Participants, msg.ParticipantsUnknown = participantsOf(&f, msg.Direction, raw)
+	}
 	if err := lidMappings(m, &f, msg.Participants); err != nil {
 		return nil, err
 	}

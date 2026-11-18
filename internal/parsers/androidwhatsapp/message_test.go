@@ -142,7 +142,7 @@ func TestWhatsAppUnmappedCodesStayUnknownWithRaw(t *testing.T) {
 			if r.Payload["status"] != "unknown" {
 				t.Errorf("%s %s: status %v, want unknown (R4)", v, k, r.Payload["status"])
 			}
-			if _, has := rawMap(t, r)["status"]; !has {
+			if _, has := rawMap(t, r)["status"]; !has && r.Payload["kind"] != "reaction" { // an add-on has no delivery status
 				t.Errorf("%s %s: the stored status is not in raw", v, k)
 			}
 		}

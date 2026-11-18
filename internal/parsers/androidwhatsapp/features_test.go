@@ -75,7 +75,7 @@ func TestWhatsAppQuotedCopyIsNeverAMessage(t *testing.T) {
 			if strings.Contains(r.Locator, "message_quoted") || strings.Contains(r.Locator, "messages_quotes") {
 				t.Errorf("%s %s: a record from the quote table", v, k)
 			}
-			if r.Payload["target_guid"] != nil {
+			if r.Payload["target_guid"] != nil && r.Payload["kind"] != "reaction" {
 				t.Errorf("%s %s: target_guid %v (that field is for reactions)", v, k, r.Payload["target_guid"])
 			}
 		}

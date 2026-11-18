@@ -11,8 +11,8 @@ var fixturePins = map[string]string{
 	"android-crypt15.db":               "980c5d401ce99fdae74ba4516b82f059ee5737bef9bd0fbd81c5d704a1b21578",
 	"android-legacy-2.11.db":           "2d0494595efcfc986acda905621c9d9e5024b9888fd212fdfea8e9f643c1b7e5",
 	"android-modern-2021.db":           "b3f13d70b44342d74b73c47312be2eca9e12a695bbf96232d703c15f54911f99",
-	"android-modern-2026.db":           "3649b981b9dd8514bbb56a2ce2245f118ef4929999d3c60610b1afda57ac9cd4",
-	"android-modern-2026.wal":          "6f1ee6723600a329915a7e0cc6e17ab966ce2c98b957cec39d8b0bb5ee6b7c40",
+	"android-modern-2026.db":           "444bcaa0938836d0adce302077baee072d90df4402be12bc2049ea404e86660f",
+	"android-modern-2026.wal":          "eb78015622d49f65249746fa2a0503fbab29156e047f92f48fb3af8887f61606",
 	"android-modern-business.db":       "f4413f0cdc476a1092c9fc3a5e5fbdf42ebc05eef63cb340ef40513ecbc21723",
 	"android-neither.db":               "0cff6ae039292e394dc9b5d316e2e5b724b067e5742e0b02db988194cf437ce6",
 	"android-other-location.db":        "f4413f0cdc476a1092c9fc3a5e5fbdf42ebc05eef63cb340ef40513ecbc21723",
@@ -21,5 +21,5 @@ var fixturePins = map[string]string{
 	"android-transition-legacydata.db": "a9aa1df1651a51ca1a172a56fc90b482e83f898d7b82429b35080ea43c459885",
 	"android-transition-moderndata.db": "005eeb20c7b6eb254a06d7c1cd3c7176089c5d64098f9ed7acd5805937ba965c",
 	"android-transition-walonly.db":    "2eb049f2d5722c6399b12bac8b95d3138b07426bfb0455d72c8f44898ee8f596",
-	"android-transition-walonly.wal":   "9aed47af8ed278cc07c58d3923a96feabbc2ec33abe5ad92bd1f0b5d536e05f4",
+	"android-transition-walonly.wal":   "4e6c325fd9fd0c72c89cd8ce48dd9642bc2ca12819b8eff15f4569c1254a294a",
 }

@@ -154,6 +154,26 @@ def modern_extras():
     ]
 
 
+def modern_addons():
+    """message_add_on rows 1 to 8 of android-modern-2026 (plan 4I task 8, 4I-R20). reaction is the message_add_on_reaction
+    row's text (None: no such row), rts its sender_timestamp."""
+    def add(i, parent, typ, **kw):
+        base = dict(id=i, chat=C1, me=0, key="A%02d" % i, sender=-1, parent=parent, ts=T0 + 300000 + i * 1000, type=typ,
+                    reaction=None, rts=None)
+        base.update(kw)
+        return base
+    return [
+        add(1, 2, 56, me=1, ts=T0 + 300000, reaction="\U0001F44D", rts=1600000299000),
+        add(2, 3, 56, reaction=""),
+        add(3, 999, 56, reaction="ok"),
+        add(4, 2, 74),
+        add(5, 2, 68),
+        add(6, 2, 9999),
+        add(7, 10, 56, chat=GRP, sender=JidRef(LID2), reaction="\u2764"),
+        add(8, 2, 56),
+    ]
+
+
 def legacy_extras():
     """Rows 45 and 46 of android-transition-legacydata: a quote through messages_quotes, edit_version 7 with status 5
     (raw only), and a revoke through message_revoked keyed to messages._id."""
@@ -704,6 +724,142 @@ def lid_raw(ctx, raw, unknown, chat, sender, participants):
         raw["lid_unresolved"] = unresolved
 
 
+def modern_chat(ctx, raw, unknown, cid):
+    """(chat address, title, chat_state) of a modern chat_row_id (spec 6.4.1): raw.chat_row_id is the key as stored."""
+    chat, title, state = ABSENT, None, None
+    if cid is None:
+        return chat, title, state
+    raw["chat_row_id"] = cid
+    crow = ctx["chat"].get(cid)
+    if crow is None:
+        return chat, title, "no-chat-row"
+    cc = Cells(crow, raw, unknown, "chat.")
+    sub = cc.text("subject")
+    if sub:
+        title = cleaned(raw, "thread.title", sub)
+    jid_id = cc.int("jid_row_id")
+    jrow = ctx["jid"].get(jid_id) if jid_id is not None else None
+    if jrow is None:
+        return chat, title, "no-jid-row"
+    chat = addr_of_jid(jrow, raw, unknown, "chat_jid")
+    if chat["parts"] is not None:
+        raw["chat_jid_parts"] = chat["parts"]
+    return chat, title, state
+
+
+def modern_sender(ctx, raw, unknown, sid):
+    """The author address of a modern sender_jid_row_id: above 0 names a jid row, 0, -1 and NULL name none."""
+    sender = ABSENT
+    if sid is not None:
+        raw["sender_jid_row_id"] = sid
+    if sid is not None and sid > 0:
+        jrow = ctx["jid"].get(sid)
+        if jrow is None:
+            sender = {"str": None, "parts": None, "state": "no-jid-row"}
+        else:
+            sender = addr_of_jid(jrow, raw, unknown, "sender_jid")
+            if sender["parts"] is not None:
+                raw["sender_jid_parts"] = sender["parts"]
+    if sender["str"]:
+        raw["sender_jid"] = sender["str"]
+    return sender
+
+
+def expect_reaction(r, ctx, remote):
+    """A message_add_on row of type 56 (spec 6.5 as amended by 4I-R20): a reaction record, or None for another type.
+    The direction and the sender are unknown (each rests on one source): from_me and sender_jid_row_id stay in raw."""
+    raw = {"source_table": "message_add_on", "app": app_of(remote), "app_basis": "path"}
+    unknown = {}
+    c = Cells(r, raw, unknown)
+    raw["message_add_on_type"] = r["message_add_on_type"] if is_int(r.get("message_add_on_type")) else None
+    if raw["message_add_on_type"] != 56:
+        return None
+    raw["label_message_add_on_type"] = "reaction"
+    s = stored(raw, "from_me", r.get("from_me"))
+    if s is not None:
+        raw["from_me"] = s
+    guid = c.text("key_id")
+    guid = cleaned(raw, "guid", guid) if guid else None
+    time_t = read_instant(c, "timestamp")
+    own = c.int("chat_row_id")
+    if own is not None:
+        raw["add_on_chat_row_id"] = own
+    sender = modern_sender(ctx, raw, unknown, c.int("sender_jid_row_id"))
+
+    # the parent message: its key is the target, its chat is the thread (the add-on's own chat when there is no parent)
+    target, chat_key = None, own
+    pid = c.int("parent_message_row_id")
+    if pid is None:
+        raw["parent_state"] = "no-parent-key"
+    else:
+        prow = ctx["messages"].get(pid)
+        if prow is None:
+            raw["parent_state"] = "no-message-row"
+        else:
+            pc = Cells(prow, raw, unknown, "message.")
+            k = pc.text("key_id")
+            target = cleaned(raw, "target_guid", k) if k else None
+            chat_key = pc.int("chat_row_id")
+    chat, title, chat_state = modern_chat(ctx, raw, unknown, chat_key)
+
+    # the reaction text
+    body = None
+    if not ctx["has_reaction"]:
+        raw["reaction_state"] = "no-reaction-table"
+    else:
+        rrow = ctx["reactions"].get(r["rowid"])
+        if rrow is None:
+            raw["reaction_state"] = "no-reaction-row"
+        else:
+            rc = Cells(rrow, raw, unknown, "message_add_on_reaction.")
+            txt = rc.text("reaction")
+            v = rc.int("sender_timestamp")
+            if v is not None:
+                raw["sender_timestamp"], raw["sender_timestamp_unit"] = v, "unestablished"
+            if txt is None and rrow.get("reaction") is not None:
+                raw["reaction_state"] = "unreadable"
+            elif not txt:
+                raw["reaction_empty"] = True
+            else:
+                cl = text_of(txt)
+                if cl.text:
+                    body = cl.text
+                    if cl.flags:
+                        C.mark(raw, "body")
+    if chat["str"]:
+        raw["chat_jid"] = chat["str"]
+    if is_status(chat):
+        raw["chat_class"] = "status"
+    if chat_state:
+        raw["chat_state"] = chat_state
+    elif chat["state"] == "too-long":
+        raw["chat_state"] = "too-long"
+    group = group_of(chat)
+    lid_raw(ctx, raw, unknown, chat, ABSENT, [])
+    if unknown:
+        raw["unknown_columns"] = unknown
+    payload = {"channel": "whatsapp", "direction": "unknown", "kind": "reaction", "participants": [],
+               "participants_unknown": True, "status": "unknown", "raw": raw}
+    thread = {}
+    if chat["str"]:
+        thread["id"] = chat["str"]
+    if title:
+        thread["title"] = title
+    if group is not None:
+        thread["group"] = group
+    if thread:
+        payload["thread"] = thread
+    if guid:
+        payload["guid"] = guid
+    if target:
+        payload["target_guid"] = target
+    if body is not None:
+        payload["text_source"] = "text"
+    return {"table": "message_add_on", "rowid": r["rowid"], "file": "any", "type": "message", "source_path": remote,
+            "time": time_t, "time_end": None, "times": {}, "deleted": False,
+            "summary": summary_of("unknown", chat["str"] or "unknown", body), "body": body, "payload": payload}
+
+
 def expect_message(table, r, ctx, remote):
     """The expectation of one messages or message row as the engine reads it back (spec 6.4, 7.1, 7.3, 7.6)."""
     modern = table == "message"
@@ -754,38 +910,8 @@ def expect_message(table, r, ctx, remote):
     # chat, title and sender
     chat, title, chat_state, sender = ABSENT, None, None, ABSENT
     if modern:
-        cid = c.int("chat_row_id")
-        if cid is not None:
-            raw["chat_row_id"] = cid
-            crow = ctx["chat"].get(cid)
-            if crow is None:
-                chat_state = "no-chat-row"
-            else:
-                cc = Cells(crow, raw, unknown, "chat.")
-                sub = cc.text("subject")
-                if sub:
-                    title = cleaned(raw, "thread.title", sub)
-                jid = cc.int("jid_row_id")
-                jrow = ctx["jid"].get(jid) if jid is not None else None
-                if jrow is None:
-                    chat_state = "no-jid-row"
-                else:
-                    chat = addr_of_jid(jrow, raw, unknown, "chat_jid")
-                    if chat["parts"] is not None:
-                        raw["chat_jid_parts"] = chat["parts"]
-        sid = c.int("sender_jid_row_id")
-        if sid is not None:
-            raw["sender_jid_row_id"] = sid
-        if sid is not None and sid > 0:
-            jrow = ctx["jid"].get(sid)
-            if jrow is None:
-                sender = {"str": None, "parts": None, "state": "no-jid-row"}
-            else:
-                sender = addr_of_jid(jrow, raw, unknown, "sender_jid")
-                if sender["parts"] is not None:
-                    raw["sender_jid_parts"] = sender["parts"]
-        if sender["str"]:
-            raw["sender_jid"] = sender["str"]
+        chat, title, chat_state = modern_chat(ctx, raw, unknown, c.int("chat_row_id"))
+        sender = modern_sender(ctx, raw, unknown, c.int("sender_jid_row_id"))
     else:
         kb = c.text("key_remote_jid")
         if kb is not None:
@@ -912,7 +1038,10 @@ def expect_message(table, r, ctx, remote):
 def context(view):
     """Lookup tables of the stored rows, by key."""
     ctx = {"chat": {}, "jid": {}, "vcards": {}, "chat_list": {}, "has_vcard": "message_vcard" in view,
-           "has_chat_list": "chat_list" in view, "jid_by_raw": {}, "rows": {}}
+           "has_chat_list": "chat_list" in view, "jid_by_raw": {}, "rows": {},
+           "messages": {r["rowid"]: r for r in view.get("message", [])},
+           "has_reaction": "message_add_on_reaction" in view,
+           "reactions": {r["rowid"]: r for r in view.get("message_add_on_reaction", [])}}
     for t in SIDE_TABLES:
         if t in view:
             ctx["rows"][t] = {r["rowid"]: r for r in view[t]}
@@ -934,7 +1063,8 @@ def context(view):
 SIDE_TABLES = ["message_revoked", "message_quoted", "messages_quotes", "message_edit_info", "message_system",
                "message_system_value_change", "message_system_number_change", "message_call_log", "message_location",
                "message_view_once_media", "message_ephemeral", "message_forwarded", "jid_map"]
-TABLES = ["messages", "message", "jid", "chat", "chat_list", "message_vcard", "messages_vcards", "deleted_chat_job"] + SIDE_TABLES
+TABLES = ["messages", "message", "jid", "chat", "chat_list", "message_vcard", "messages_vcards", "deleted_chat_job",
+          "message_add_on", "message_add_on_reaction"] + SIDE_TABLES
 
 
 def master_rows(files):
@@ -977,6 +1107,13 @@ def oracle(files, remote, variant, ddl, generation):
     for r in view.get("message", []):
         n_message += 1
         exp["records"].append(expect_message("message", r, ctx, remote))
+    for r in view.get("message_add_on", []):
+        if not is_int(r.get("message_add_on_type")):
+            exp["warnings"].append({"table": "message_add_on", "rowid": r["rowid"], "contains": "message_add_on_type"})
+            continue
+        rec = expect_reaction(r, ctx, remote)
+        if rec:
+            exp["records"].append(rec)
     notes = exp["notes"]
     notes["generation"] = generation
     if "messages" in view:
@@ -1049,8 +1186,12 @@ def fill_legacy(rows):
     return f
 
 
-def alloc(js, facts):
+def alloc(js, facts, addons=()):
     """Allocates the jid and chat rows the facts name, in first-use order (the order the inserts use)."""
+    for a in addons:
+        js.chat_id(a["chat"])
+        if isinstance(a["sender"], JidRef):
+            js.jid_id(str(a["sender"]))
     for m in facts:
         js.chat_id(m["chat"])
         if m.get("sender"):
@@ -1065,7 +1206,7 @@ def resolve(js, row):
     return {k: (js.jid_id(str(v)) if isinstance(v, JidRef) else v) for k, v in row.items()}
 
 
-def populate_modern(con, facts, js, vcards=True):
+def populate_modern(con, facts, js, vcards=True, addons=()):
     for m in facts:
         row = modern_row(m, js)
         C.insert(con, "message", row)
@@ -1084,14 +1225,22 @@ def populate_modern(con, facts, js, vcards=True):
             C.insert(con, "message_vcard", {"message_row_id": m["id"], "vcard": m["vcard"]})
         if vcards and m["type"] == 5 and "lat" in m and not any(t == "message_location" for t, _ in sides):
             C.insert(con, "message_location", {"message_row_id": m["id"], "latitude": m["lat"], "longitude": m["lon"]})
+    for a in addons:
+        sender = js.jid_id(str(a["sender"])) if isinstance(a["sender"], JidRef) else a["sender"]
+        C.insert(con, "message_add_on", {"_id": a["id"], "chat_row_id": js.chat_id(a["chat"]), "from_me": a["me"],
+                                         "key_id": a["key"], "sender_jid_row_id": sender, "parent_message_row_id": a["parent"],
+                                         "timestamp": a["ts"], "message_add_on_type": a["type"]})
+        if a["reaction"] is not None:
+            C.insert(con, "message_add_on_reaction", {"message_add_on_row_id": a["id"], "reaction": a["reaction"],
+                                                      "sender_timestamp": a["rts"]})
 
 
-def modern_fill(facts, with_vcards=True):
+def modern_fill(facts, with_vcards=True, addons=()):
     def f(con):
         # the jid and chat rows first need their ids: allocate by walking the facts in id order
         js = Jids()
-        alloc(js, facts)
-        populate_modern(con, facts, js, with_vcards)
+        alloc(js, facts, addons)
+        populate_modern(con, facts, js, with_vcards, addons)
     return f
 
 
@@ -1210,16 +1359,16 @@ def v_modern_2021(work):
     return finish(path, REMOTE, "android-modern-2021", "transition-2021.sql", "modern")
 
 
-def modern_variant(work, remote, variant, wal=False, extras=()):
+def modern_variant(work, remote, variant, wal=False, extras=(), addons=()):
     facts = core(True)
     if extras:
         facts[1]["srv"] = T0 + 2500  # row 3 carries a receipt_server_timestamp (modern: the unit is not established)
     early, late = (facts[:-4], facts[-4:]) if wal else (facts, [])
     early = early + list(extras)
-    path = build_db(work, "modern-2026.sql", modern_fill(early), journal_wal=wal)
+    path = build_db(work, "modern-2026.sql", modern_fill(early, addons=addons), journal_wal=wal)
     if wal:
         js = Jids()
-        alloc(js, early)
+        alloc(js, early, addons)
         nj, nc = len(js.jids), len(js.chats)
         stmts = ["pragma wal_autocheckpoint = 0"]
         rows = [modern_row(m, js) for m in late]
@@ -1237,7 +1386,7 @@ def modern_variant(work, remote, variant, wal=False, extras=()):
 
 
 def v_modern_2026(work):
-    return modern_variant(work, REMOTE_USER10, "android-modern-2026", wal=True, extras=modern_extras())
+    return modern_variant(work, REMOTE_USER10, "android-modern-2026", wal=True, extras=modern_extras(), addons=modern_addons())
 
 
 def v_modern_business(work):
