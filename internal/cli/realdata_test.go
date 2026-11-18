@@ -24,27 +24,9 @@ import (
 // The real-data command line tests (4H-R10). They run only with -tags realdata and $MINUTIAE_TEST_DATA; without
 // data every test SKIPs with the reason. Running them is an OPERATOR step, never a gate (docs/testing.md "Real
 // data"). The layout is the one internal/parsers/realdata_inputs_test.go reads (parsers/<parser>/<set>/ and
-// ios-backup/<set>/); the table below repeats its logical paths and file names because a test of another package
+// ios-backup/<set>/); realCLIInputs (realdata_inputs_test.go) repeats its logical paths and file names because a test of another package
 // cannot import them, and every set is checked against the parser's primary glob before it is used. Nothing here
 // prints personal data: the logs name parsers, outcomes, counts and reasons.
-
-// realCLIInput is the device name of a parser's database: its logical path and the extra roles found by file name.
-type realCLIInput struct {
-	logical, file string
-	extra         map[string]string
-}
-
-var realCLIInputs = map[string]realCLIInput{
-	"android.mmssms":   {logical: "android:/data/data/com.android.providers.telephony/databases/mmssms.db", file: "mmssms.db"},
-	"android.calllog":  {logical: "android:/data/data/com.android.providers.contacts/databases/calllog.db", file: "calllog.db"},
-	"android.contacts": {logical: "android:/data/data/com.android.providers.contacts/databases/contacts2.db", file: "contacts2.db"},
-	"ios.sms":          {logical: "ios:HomeDomain/Library/SMS/sms.db", file: "sms.db"},
-	"ios.calls":        {logical: "ios:HomeDomain/Library/CallHistoryDB/CallHistory.storedata", file: "CallHistory.storedata"},
-	"ios.addressbook": {logical: "ios:HomeDomain/Library/AddressBook/AddressBook.sqlitedb", file: "AddressBook.sqlitedb",
-		extra: map[string]string{"images": "AddressBookImages.sqlitedb", "images_wal": "AddressBookImages.sqlitedb-wal"}},
-	"chromium.history": {logical: "android:/data/data/com.android.chrome/app_chrome/Default/History", file: "History"},
-	"safari.history":   {logical: "ios:HomeDomain/Library/Safari/History.db", file: "History.db"},
-}
 
 // realCLIFile is one file of a set: its name and the logical path it has on the device.
 type realCLIFile struct{ src, logical string }
