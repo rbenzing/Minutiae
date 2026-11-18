@@ -768,7 +768,7 @@ func runGenWhatsApp(t *testing.T, e scaleEnv) {
 
 // whatsAppDecode is the whatsapp-decode-1m phase: the 1,000,000-message store parsed with MemBudget 1 GiB, counting what the
 // parser emits. The parser is registered under a synthetic source hash: the measurement does not depend on the identity, and
-// the registration with the generated hash is plan 4I task 16.
+// the phase registers the one parser directly rather than through the release registry (which holds the generated hash).
 func whatsAppDecode(t *testing.T, e scaleEnv) {
 	t.Helper()
 	var gi genInfo

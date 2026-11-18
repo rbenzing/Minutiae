@@ -924,7 +924,7 @@ Machine: Intel i7-1265U (10 cores, 12 threads), 15.4 GB RAM, NVMe, Windows 11, g
 | `whatsapp-gen` | | 215,130,112 | (1,000,000 messages written) | 17 | | | | | generated |
 | `whatsapp-decode-1m` | 1 GiB | 215,130,112 | 1,000,000 | 47.1 | 21,217 | 4.4 | 1,421 MiB | no | complete |
 
-The input is below `MemInputMax` (256 MiB), so it is served from memory; the peak resident set (1,421 MiB) is the high-water mark of the whole test process, which includes the capture of the input into a case, and is far below `input size + 2 x MemBudget` (2,263 MiB). The scale phase registers the parser under a synthetic source hash: the generated one comes with the registration of plan 4I task 16, and the measurement does not depend on the identity.
+The input is below `MemInputMax` (256 MiB), so it is served from memory; the peak resident set (1,421 MiB) is the high-water mark of the whole test process, which includes the capture of the input into a case, and is far below `input size + 2 x MemBudget` (2,263 MiB). The scale phase registers the parser under a synthetic source hash: the phase registers the one parser directly, not through the release registry (whose registration holds the generated hash), and the measurement does not depend on the identity.
 
 What the parse costs, counted over the same store by `TestScaleLookupCost` (the four mappings run through `rowrun.Run` with a counting mapping context and a counting `Lookuper`; 42.7 s with that instrumentation and the harness's sealed readers):
 
