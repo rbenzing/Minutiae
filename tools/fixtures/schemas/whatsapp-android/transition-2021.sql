@@ -1,5 +1,5 @@
 -- WhatsApp Android msgstore.db, transition era (both messages and message), plan 4I.
--- source S2 https://github.com/andreas-mausch/whatsapp-viewer/blob/2aa6388beefdccb8600038dd3b4fffcf9e20ab87/data/msgstore.db.schema.sql 2aa6388beefdccb8600038dd3b4fffcf9e20ab87 2021-08-24
+-- source S2 (cited by ID only) commit 2aa6388beefdccb8600038dd3b4fffcf9e20ab87 2021-08-24, file data/msgstore.db.schema.sql
 -- Copyright (c) 2014-2018 Andreas Mausch, MIT License. The statements below are quoted verbatim from the
 -- file named above, at the commit named above, as a subset: only the tables, indexes, views and triggers
 -- that the msgstore parser reads or names in a note (the full dump is not copied).

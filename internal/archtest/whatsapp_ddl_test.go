@@ -21,7 +21,7 @@ var whatsappVerdicts = map[string]string{"quoted": "quoted", "retyped (no licenc
 
 // TestWhatsAppDDLSnapshotsCiteTheirSource pins ruling 4I-R6: every WhatsApp DDL snapshot names its
 // source by ID, states one verdict, and has one CROSSCHECK.md row per table with that verdict; a
-// quoted snapshot carries its licence notice and a full commit; the sources of S4 to S7 and S10 to
+// quoted snapshot carries its licence notice and a full commit; the sources of S2, S4 to S7 and S10 to
 // S13 are never given by anything but their ID; the retyped modern snapshot copies no view or trigger.
 func TestWhatsAppDDLSnapshotsCiteTheirSource(t *testing.T) {
 	dir := whatsappSchemaDir(t)
