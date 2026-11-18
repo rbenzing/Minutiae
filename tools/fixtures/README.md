@@ -3221,3 +3221,31 @@ raw columns as stored, the labels, the app, the join states (`chat_state`, `send
 `vcard_state`), the address parts of a jid row with no `raw_string`, the notes the detector writes (generation, row counts,
 the view source, the absent tables, the unmapped tables, the view digests) and the warnings in the order the parser raises
 them (the `sqlite:schema` warnings, then the rows', then the reader's). Later tasks of plan 4I add their features.
+
+### WhatsApp wa.db fixtures (plan 4I task 12)
+
+`tools/fixtures/whatsapp_wadb.py` is the family `whatsapp-wadb` (it imports `whatsapp_gen` for `jid`, `app_of`, `stored` and the
+cell readers). The DDL snapshots `wa-2.11.sql` and `wa-current.sql` are from memory: no source holds the DDL of `wa.db`, so
+the oracle states what the parser does with the reported column set.
+
+```
+py -3 tools/fixtures/telephony_gen.py --family whatsapp-wadb --out internal/parsers/androidwacontacts/testdata \
+    --pins-go internal/parsers/androidwacontacts/pins_test.go --pins-package androidwacontacts_test
+py -3 tools/fixtures/telephony_gen.py --family whatsapp-wadb --out internal/parsers/androidwacontacts/testdata --recover-oracle
+py -3 tools/fixtures/telephony_gen.py --family whatsapp-wadb --check
+```
+
+| Variant (`internal/parsers/androidwacontacts/testdata/`) | DDL snapshot | Bundled at | Holds |
+|---|---|---|---|
+| `wa-2.11` | `wa-2.11.sql` | `/data/data/com.whatsapp/databases/wa.db` | rows 1, 2, 3, 4, 6, 11 and 13 of the scenario |
+| `wa-current` | `wa-current.sql` | `/data/user/0/com.whatsapp/databases/wa.db`, with `-wal` | rows 1 to 14 (users, a LID, a group, broadcast, status, newsletter, `other` and unparseable JIDs, a JID-only user, a user with only `given_name`/`family_name`/`company`/`title`, a 300 KiB status); row 15 and the first status of row 13 are in the database file only: the WAL edits row 13 and deletes row 15 |
+| `wa-business` | `wa-current.sql` | `/data/data/com.whatsapp.w4b/databases/wa.db` | rows 1, 2, 3, 5 and 13 |
+| `wa-no-table` | none | the live path | one table `foo(x)` |
+| `wa-backup-plain` | `wa-current.sql` | `/sdcard/WhatsApp/Databases/wa.db` | a plain database at a backup path (never parsed) |
+| `wa-crypt15` | none | `/sdcard/WhatsApp/Databases/wa.db.crypt15` | 64 KiB of a SHA-256 counter stream (synthetic) |
+| `wa-other-location` | `wa-current.sql` | `/storage/emulated/0/Android/data/com.whatsapp/databases/wa.db` | a plain database outside the live `databases/` directory |
+| `wa-deleted` | `wa-current.sql` | the `wa-current` path | 100 contacts on 1024-byte pages, 21 to 80 deleted, whole leaf pages on the freelist (the typed recovery scenario of a lone database) |
+
+A WAL companion disables the freelist read, so the freelist scenario is its own lone variant; `wa-current` holds the
+superseded-version scenario (`wa-current.recover.expect.json`, `wa-deleted.recover.expect.json`). The oracle states one
+record per person row (spec 6.6) and one warning per JID-only, nameless or non-person row (R2).

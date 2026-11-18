@@ -1,0 +1,1 @@
+{"ddl":"","extra_files":[],"family":"whatsapp-wadb","generator":{"files":{"db":"0cff6ae039292e394dc9b5d316e2e5b724b067e5742e0b02db988194cf437ce6"},"python":"3.15.2","sqlite":"3.53.4","tool":"tools/fixtures/telephony_gen.py"},"notes":{},"records":[],"variant":"wa-no-table","warnings":[]}
