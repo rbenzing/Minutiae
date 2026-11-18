@@ -50,25 +50,24 @@ func hostileMutations() []hostileMutation {
 			return b
 		}},
 		{"cell-pointer-past-page", func(b []byte, ps int) []byte {
-			// the first b-tree page after page 1 that holds a cell: its first cell pointer points at the page size,
-			// past the last byte of the page
+			// the table leaf after page 1 that holds the most cells (the first of equals): it is the page of the fixture's
+			// main table, which a parser reads, where the first page that holds a cell can be a bookkeeping table such as
+			// sqlite_sequence that no parser reads. Its first cell pointer points at the page size, past the last byte of
+			// the page.
+			best, bestCells := 0, 0
 			for p := 1; p < len(b)/ps; p++ {
-				h := p * ps
-				hdr := 8
-				switch b[h] {
-				case 0x0d:
-				case 0x05:
-					hdr = 12
-				default:
+				if b[p*ps] != 0x0d {
 					continue
 				}
-				if binary.BigEndian.Uint16(b[h+3:]) == 0 {
-					continue
+				if n := int(binary.BigEndian.Uint16(b[p*ps+3:])); n > bestCells {
+					best, bestCells = p, n
 				}
-				binary.BigEndian.PutUint16(b[h+hdr:], uint16(min(ps, 0xFFFF)))
+			}
+			if bestCells > 0 {
+				binary.BigEndian.PutUint16(b[best*ps+8:], uint16(min(ps, 0xFFFF)))
 				return b
 			}
-			binary.BigEndian.PutUint16(b[100+8:], uint16(min(ps, 0xFFFF))) // no other page holds a cell: page 1
+			binary.BigEndian.PutUint16(b[100+8:], uint16(min(ps, 0xFFFF))) // no table leaf holds a cell: page 1
 			return b
 		}},
 		{"truncate-60-percent", func(b []byte, _ int) []byte { return b[:len(b)*6/10] }},
@@ -267,7 +266,8 @@ func measureHostileJob(t *testing.T, c *evidence.Case, ingestID string) hostileV
 
 func TestHostileAuditVolumeIsBounded(t *testing.T) {
 	if testing.Short() {
-		t.Skip("32 jobs over real databases: about 20 s on an idle machine, about 50 s loaded (4h-R12)")
+		t.Skipf("%d jobs over real databases (%d parsers, %d mutations): about 20 s on an idle machine, about 50 s loaded (4h-R12)",
+			len(hostileRegistry(t))*len(hostileMutations()), len(hostileRegistry(t)), len(hostileMutations()))
 	}
 	type maxima struct{ warnings, longest, bytes int }
 	maxOf := map[string]*maxima{}
