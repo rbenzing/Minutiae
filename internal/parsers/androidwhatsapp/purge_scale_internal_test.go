@@ -3,6 +3,7 @@ package androidwhatsapp
 import (
 	"math/rand"
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -91,8 +92,18 @@ func TestEvalAggregatesGiveTheVerdictsOfTheFullWalk(t *testing.T) {
 			want := oldEval(js, k)
 			got := js.eval(k)
 			if got.Verdict == purgeCleared && got.Total > 0 {
-				if len(got.Jobs) != maxPurgeJobs || got.Total != len(want.Jobs) || !reflect.DeepEqual(got.Jobs, want.Jobs[:maxPurgeJobs]) {
-					t.Fatalf("round %d %+v: capped list %d total %d, want the first %d of %d", round, k, len(got.Jobs), got.Total, maxPurgeJobs, len(want.Jobs))
+				// 4I-R24: past the cap the list is maxPurgeJobs of the covering jobs, in id order, the total is the full count
+				cover := map[int64]bool{}
+				for _, id := range want.Jobs {
+					cover[id] = true
+				}
+				if len(got.Jobs) != maxPurgeJobs || got.Total != len(want.Jobs) || !slices.IsSorted(got.Jobs) {
+					t.Fatalf("round %d %+v: capped list %d total %d sorted %v, want %d of %d", round, k, len(got.Jobs), got.Total, slices.IsSorted(got.Jobs), maxPurgeJobs, len(want.Jobs))
+				}
+				for _, id := range got.Jobs {
+					if !cover[id] {
+						t.Fatalf("round %d %+v: listed job %d does not cover the row", round, k, id)
+					}
 				}
 				got = asOld(got, want.Jobs)
 			} else if got.Total != 0 {
@@ -142,5 +153,50 @@ func TestEvalWorkIsBoundedByTheListingCapNotTheJobCount(t *testing.T) {
 	js.eval(key(1, 999_999, 0))
 	if d := js.work - before; d != 0 {
 		t.Fatalf("an uncovered row visited %d jobs, want 0", d)
+	}
+}
+
+// 4I-R24: when more than maxPurgeJobs jobs cover a row, the listed ids are the maxPurgeJobs covering jobs with the nearest
+// bounds (ties by id), in id order, and a row costs at most maxPurgeJobs job visits however the jobs lie in rowid order.
+func TestEvalTruncatedListingTakesTheNearestBoundsWithBoundedWork(t *testing.T) {
+	const low, high = 5000, maxPurgeJobs + 1
+	js := &jobSet{Complete: true, Read: low + high, minID: 1, ByChat: map[int64][]jobBound{}}
+	for i := int64(1); i <= low; i++ {
+		js.ByChat[1] = append(js.ByChat[1], jobBound{ID: i, Msg: ptr(10), BoundOK: true})
+	}
+	for i := int64(1); i <= high; i++ {
+		js.ByChat[1] = append(js.ByChat[1], jobBound{ID: low + i, Msg: ptr(1000 + i), BoundOK: true})
+	}
+	js.agg(1) // built once, not charged to a row
+	ids := func(from, n int64) []int64 {
+		var out []int64
+		for i := from; i < from+n; i++ {
+			out = append(out, i)
+		}
+		return out
+	}
+	for _, c := range []struct {
+		name  string
+		order int64
+		total int
+		want  []int64
+	}{
+		{"only the high jobs cover it", 500, high, ids(low+1, maxPurgeJobs)},
+		{"every job covers it: the nearest bounds are the low jobs", 5, low + high, ids(1, maxPurgeJobs)},
+		{"part of the high jobs (bounds 1500 and up: 502 jobs, listed whole)", 1500, 502, ids(low+500, 502)},
+	} {
+		before := js.work
+		r := js.eval(key(1, c.order, 0))
+		if d := js.work - before; d > maxPurgeJobs {
+			t.Errorf("%s: %d job visits, want at most %d", c.name, d, maxPurgeJobs)
+		}
+		want := c.want
+		wantTotal := c.total
+		if c.total <= maxPurgeJobs {
+			wantTotal = 0
+		}
+		if r.Verdict != purgeCleared || r.Total != wantTotal || !reflect.DeepEqual(r.Jobs, want) || r.Job != c.want[0] {
+			t.Errorf("%s: verdict %v total %d jobs %d (first %v) job %d, want total %d and %d ids from %d", c.name, r.Verdict, r.Total, len(r.Jobs), r.Jobs[:min(3, len(r.Jobs))], r.Job, wantTotal, len(want), want[0])
+		}
 	}
 }

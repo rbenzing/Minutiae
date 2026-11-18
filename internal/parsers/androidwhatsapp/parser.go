@@ -17,7 +17,7 @@ import (
 // Identity of the parser.
 const (
 	Name    = "android.whatsapp.msgstore"
-	Version = "1.0.1"
+	Version = "1.0.2"
 )
 
 // Parser is the android.whatsapp.msgstore parser. It holds no state.

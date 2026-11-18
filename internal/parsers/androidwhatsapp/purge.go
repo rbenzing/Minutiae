@@ -117,8 +117,8 @@ const (
 	purgeUndecided
 )
 
-// purgeResult is the outcome for one row: Cleared lists the jobs that cover it in rowid order, at most maxPurgeJobs of
-// them (Total is then the full count, else 0), Undecided names the smallest job involved (0 for none) and why.
+// purgeResult is the outcome for one row: Cleared lists the jobs that cover it in id order, at most maxPurgeJobs of
+// them (past that, the ones with the nearest bounds, 4I-R24; Total is then the full count, else 0), Undecided names the smallest job involved (0 for none) and why.
 type purgeResult struct {
 	Verdict purgeVerdict
 	Jobs    []int64
@@ -164,8 +164,8 @@ func (js *jobSet) eval(k rowKey) purgeResult {
 	}
 	a := js.agg(k.Chat)
 	if k.StarredOK && k.OrderOK {
-		if ids, total := js.clearing(a, k); total > 0 {
-			r := purgeResult{Verdict: purgeCleared, Jobs: ids, Job: ids[0]}
+		if ids, smallest, total := js.clearing(a, k); total > 0 {
+			r := purgeResult{Verdict: purgeCleared, Jobs: ids, Job: smallest}
 			if total > len(ids) {
 				r.Total = total
 			}
@@ -196,12 +196,23 @@ type bounded struct{ v, id int64 }
 // whose bound is unusable, the first job, and the usable bounds sorted ascending (one array per bound kind), so that the
 // jobs covering a row are counted by a binary search and read from the end of the array.
 type chatAgg struct {
-	jobs           []jobBound
-	n              int
-	firstID        int64
-	lists, bad     bool
-	listsID, badID int64
-	msg, star      []bounded
+	n               int
+	firstID         int64
+	lists, bad      bool
+	listsID, badID  int64
+	msg, star       []bounded
+	msgMin, starMin []int64 // msgMin[i] is the smallest job id of msg[i:]: the smallest covering job in O(1)
+}
+
+func suffixMin(bs []bounded) []int64 {
+	out := make([]int64, len(bs))
+	for i := len(bs) - 1; i >= 0; i-- {
+		out[i] = bs[i].id
+		if i+1 < len(bs) && out[i+1] < out[i] {
+			out[i] = out[i+1]
+		}
+	}
+	return out
 }
 
 func (js *jobSet) agg(chat int64) *chatAgg {
@@ -209,7 +220,7 @@ func (js *jobSet) agg(chat int64) *chatAgg {
 		return a
 	}
 	jobs := js.ByChat[chat]
-	a := &chatAgg{jobs: jobs, n: len(jobs)}
+	a := &chatAgg{n: len(jobs)}
 	for i, j := range jobs {
 		if i == 0 {
 			a.firstID = j.ID
@@ -229,8 +240,9 @@ func (js *jobSet) agg(chat int64) *chatAgg {
 	}
 	js.work += int64(len(jobs))
 	for _, s := range [][]bounded{a.msg, a.star} {
-		sort.Slice(s, func(i, j int) bool { return s[i].v < s[j].v })
+		sort.Slice(s, func(i, j int) bool { return s[i].v < s[j].v || (s[i].v == s[j].v && s[i].id < s[j].id) })
 	}
+	a.msgMin, a.starMin = suffixMin(a.msg), suffixMin(a.star)
 	if js.aggs == nil {
 		js.aggs = map[int64]*chatAgg{}
 	}
@@ -238,35 +250,25 @@ func (js *jobSet) agg(chat int64) *chatAgg {
 	return a
 }
 
-// clearing lists the jobs of the chat that cover the row, in rowid order and at most maxPurgeJobs of them, and counts all
-// of them. A row that no job covers visits no job.
-func (js *jobSet) clearing(a *chatAgg, k rowKey) (ids []int64, total int) {
-	bs := a.msg
+// clearing lists the jobs of the chat that cover the row and counts all of them. Up to maxPurgeJobs it lists every one; past
+// that (4I-R24) it lists the maxPurgeJobs covering jobs with the nearest bounds (the smallest bounds that still reach the
+// row, ties by id), always in id order; smallest is the smallest id of all the covering jobs, which past the cap may not be listed. A row visits at most maxPurgeJobs jobs and a row no job covers visits none.
+func (js *jobSet) clearing(a *chatAgg, k rowKey) (ids []int64, smallest int64, total int) {
+	bs, mins := a.msg, a.msgMin
 	if k.Starred == 1 {
-		bs = a.star
+		bs, mins = a.star, a.starMin
 	}
 	from := sort.Search(len(bs), func(i int) bool { return bs[i].v >= k.Order })
 	total = len(bs) - from
-	switch {
-	case total == 0:
-		return nil, 0
-	case total <= maxPurgeJobs: // few: read them from the sorted array, then put them in rowid order
-		for _, b := range bs[from:] {
-			ids = append(ids, b.id)
-		}
-		js.work += int64(total)
-		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-		return ids, total
+	if total == 0 {
+		return nil, 0, 0
 	}
-	for _, j := range a.jobs { // many: the first maxPurgeJobs in rowid order
-		js.work++
-		if j.covers(k) {
-			if ids = append(ids, j.ID); len(ids) == maxPurgeJobs {
-				break
-			}
-		}
+	for _, b := range bs[from:min(len(bs), from+maxPurgeJobs)] {
+		ids = append(ids, b.id)
 	}
-	return ids, total
+	js.work += int64(len(ids))
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids, mins[from], total
 }
 
 // dataDamage says an error is the database's damage, which makes the job set incomplete, not the job fail.
