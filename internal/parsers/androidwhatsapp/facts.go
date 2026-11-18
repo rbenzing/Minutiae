@@ -83,6 +83,7 @@ type addr struct {
 	JID   *wajid.JID
 	Parts map[string]any
 	State string // "": resolved; else why the address is absent
+	RowID *int64 // the jid row the address was read from, nil for an address read from stored text
 }
 
 // States of an address that is absent.
@@ -116,11 +117,17 @@ func addrFromText(raw map[string]any, field string, b []byte) addr {
 // addrFromJID reads the address of a jid row: its raw_string, or when that is absent the parts as stored.
 func addrFromJID(m parse.MapContext, row parse.Row, raw, unknown map[string]any, field string) addr {
 	c := rowrun.Resolve(m, "jid", "raw_string", "user", "server", "agent", "device")
+	var rowid *int64
+	if id, ok := row.Rowid(); ok {
+		rowid = &id
+	}
 	if b, k := rowrun.TextCell(row, c.At("raw_string")); k == rowrun.CellValue && len(b) > 0 {
-		return addrFromText(raw, field, b)
+		a := addrFromText(raw, field, b)
+		a.RowID = rowid
+		return a
 	}
 	r := cellReader{row: row, cols: c, raw: raw, unknown: unknown, prefix: "jid."}
-	a := addr{State: stateNoRawString, Parts: map[string]any{}}
+	a := addr{State: stateNoRawString, Parts: map[string]any{}, RowID: rowid}
 	for _, n := range []string{"user", "server"} {
 		if b, ok := r.text(n); ok {
 			a.Parts[n] = cleanField(raw, field+"_"+n, b)
@@ -175,6 +182,8 @@ type msgFacts struct {
 	Time       *rowrun.Instant
 	Received   *rowrun.Instant
 	Delivered  *rowrun.Instant
+
+	Revoke *revokeFacts // a "deleted for everyone" tombstone (spec 6.5), nil for a live message
 
 	Raw, Unknown map[string]any
 }

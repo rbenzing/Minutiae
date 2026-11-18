@@ -87,6 +87,9 @@ func readModern(m parse.MapContext, row parse.Row) (msgFacts, error) {
 			return msgFacts{}, err
 		}
 	}
+	if err := readModernFeatures(m, &f); err != nil {
+		return msgFacts{}, err
+	}
 	return f, nil
 }
 

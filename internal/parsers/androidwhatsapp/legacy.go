@@ -27,6 +27,9 @@ func legacySpecs() []parse.ColumnSpec {
 		{Name: "receipt_server_timestamp", Affinity: "integer"},
 		{Name: "media_caption", Affinity: "text"},
 		{Name: "media_size", Affinity: "integer"},
+		{Name: "latitude", Affinity: "real"},
+		{Name: "longitude", Affinity: "real"},
+		{Name: "quoted_row_id", Affinity: "integer"},
 	}
 	for _, n := range legacyRawInts() {
 		specs = append(specs, parse.ColumnSpec{Name: n, Affinity: "integer"})
@@ -105,6 +108,9 @@ func readLegacy(m parse.MapContext, row parse.Row) (msgFacts, error) {
 		if l, ok := f.Type.label(); ok && l == labelContactCard && !f.LegacySys {
 			f.TextSource = textSourcePart
 		}
+	}
+	if err := readLegacyFeatures(m, r, &f); err != nil {
+		return msgFacts{}, err
 	}
 	return f, nil
 }

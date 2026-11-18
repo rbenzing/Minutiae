@@ -100,10 +100,20 @@ func TestWhatsAppEnumTablesCiteTwoSources(t *testing.T) {
 			t.Errorf("the status column has an entry: %+v", e)
 		}
 	}
-	for _, c := range []string{"message_type", "media_wa_type", "from_me", "key_from_me"} {
+	for _, c := range []string{"message_type", "media_wa_type", "from_me", "key_from_me", "action_type"} {
 		if !have[c] {
 			t.Errorf("no entry for column %s", c)
 		}
+	}
+	// message_system.action_type: exactly 18 (4I-R18: 11 is unknown, its second source cannot be re-checked)
+	var actions []int64
+	for _, e := range enumTable {
+		if e.Column == "action_type" {
+			actions = append(actions, e.Value)
+		}
+	}
+	if !slices.Equal(actions, []int64{18}) {
+		t.Errorf("action_type entries %v, want exactly [18]", actions)
 	}
 	for _, e := range enumTable {
 		if l, ok := lookupEnum(e.Column, e.Value); !ok || l != e.Label {

@@ -17,13 +17,15 @@ const (
 	colMediaWAType = "media_wa_type"
 	colFromMe      = "from_me"
 	colKeyFromMe   = "key_from_me"
+	colActionType  = "action_type"
 )
 
 // The codes the parser's own rules name (each is in enumTable or in a research conflict row, see the tests).
 const (
 	typeText           = 0
 	typeContactCard    = 4
-	statusLegacySystem = 6 // legacy status 6: with type 0 a system row (spec 7.1); status itself is never interpreted (R4)
+	typeCallNotice     = 10 // a call notice row: unmapped (R4), its call_log row is raw
+	statusLegacySystem = 6  // legacy status 6: with type 0 a system row (spec 7.1); status itself is never interpreted (R4)
 )
 
 // Where the body text came from (message.TextSource*), and the label of a contact card.
@@ -59,6 +61,7 @@ var enumTable = []enumEntry{
 	{colMessageType, 20, "sticker", "S1,S6,S3"},
 	{colMessageType, 24, "group_invite", "S6,S3"},
 	{colMessageType, 64, "revoked", "S5,S6"},
+	{colActionType, 18, "security_code_changed", "S1,S6"},
 	{colMediaWAType, 0, "text", "S9,S10"},
 	{colMediaWAType, 1, "image", "S9,S10"},
 	{colMediaWAType, 2, "audio", "S9,S10"},

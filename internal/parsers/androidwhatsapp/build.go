@@ -62,10 +62,27 @@ func build(m parse.MapContext, f msgFacts) ([]records.Record, error) {
 		msg.Thread = th
 	}
 
-	// participants
+	// participants, and the statements the database makes about the LIDs among them (D6)
 	msg.Participants, msg.ParticipantsUnknown = participantsOf(&f, msg.Direction, raw)
+	if err := lidMappings(m, &f, msg.Participants); err != nil {
+		return nil, err
+	}
 
 	rec := records.Record{Type: message.Type, ArtifactID: f.Place.ArtifactID, SourcePath: f.Place.SourcePath, Locator: f.Place.Locator, Range: &f.Place.Range}
+
+	// a revoke is a tombstone: no body, no attachments, deleted by the app's own structure (spec 6.5). The text a revoked
+	// row still holds (hostile or unexplained) is raw, cleaned, never the body.
+	summaryText := ""
+	if f.Revoke != nil {
+		msg.Kind = message.KindUnknown
+		msg.Deleted = map[string]any{"source": f.Revoke.Source}
+		rec.Deleted = true
+		if len(f.Text) > 0 {
+			raw["revoked_row_text"] = cleanField(raw, "revoked_row_text", f.Text)
+		}
+		f.Text = nil
+		summaryText = "[revoked, no content]"
+	}
 
 	// body
 	if len(f.Text) > 0 {
@@ -97,7 +114,10 @@ func build(m parse.MapContext, f msgFacts) ([]records.Record, error) {
 	case f.Chat.Str != "":
 		counterparty = f.Chat.Str
 	}
-	rec.Summary = message.Summary(channelWhatsApp, msg.Direction, counterparty, rec.Body)
+	if summaryText == "" {
+		summaryText = rec.Body
+	}
+	rec.Summary = message.Summary(channelWhatsApp, msg.Direction, counterparty, summaryText)
 	rec.Payload = msg.Payload()
 	return []records.Record{rec}, nil
 }

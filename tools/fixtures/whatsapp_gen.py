@@ -42,6 +42,10 @@ CHAN = "120363000000000099@newsletter"
 P2 = "15550000002@s.whatsapp.net"
 P3 = "15550000003@s.whatsapp.net"
 P9 = ("15550000009", "s.whatsapp.net")  # the chat whose jid row has a NULL raw_string
+P4 = "15550000004@s.whatsapp.net"  # the admin of a revoke (plan 4I task 7)
+P5 = "15550000005@s.whatsapp.net"  # the phone JID jid_map gives for LID1
+LID1 = "100000000000001@lid"  # a 1:1 chat addressed by a LID that jid_map maps
+LID2 = "100000000000002@lid"  # a group sender addressed by a LID with no jid_map row
 
 MODERN_TYPE = {0: "text", 1: "image", 2: "audio", 3: "video", 4: "contact_card", 5: "location", 9: "document",
                16: "live_location", 7: "system", 13: "gif", 20: "sticker", 24: "group_invite"}
@@ -49,6 +53,11 @@ REVOKED_TYPES = (15, 64)
 LEGACY_TYPE = {0: "text", 1: "image", 2: "audio", 3: "video", 4: "contact_card", 5: "location"}
 VCARD = "BEGIN:VCARD\r\nFN:Ann\r\nEND:VCARD\r\n"
 DECIMAL = re.compile(r"(0|-?[1-9][0-9]{0,17})", re.ASCII)  # the strict decimal of a legacy media_wa_type (plan 4I task 6)
+
+
+class JidRef(str):
+    """A jid row a side-table value names by its address: resolved to the jid row id when the row is inserted (the
+    jid table is built in first-use order)."""
 
 
 def jid(user, server):
@@ -106,6 +115,60 @@ def core(modern_only):
     return m
 
 
+def modern_extras():
+    """Rows 30 to 44 of android-modern-2026: revokes, a quote, an edit, system rows, a call notice, locations, LIDs and
+    the single-source extras. side is [(table, row)] of the tables keyed to the message."""
+    def row(i, **kw):
+        base = dict(id=i, chat=C1, me=0, ts=T0 + i * 1000, recv=T0 + i * 1000 + 100, status=0, type=0, key="K%02d" % i)
+        base.update(kw)
+        return base
+    return [
+        row(30, type=15, side=[("message_revoked", {"revoked_key_id": "K30R", "admin_jid_row_id": JidRef(P4),
+                                                   "revoke_timestamp": T0 + 100000})]),
+        row(31, type=64),
+        row(32, side=[("message_revoked", {"revoked_key_id": "K32R"})]),
+        row(33, type=15, text="secret"),
+        row(34, text="reply", side=[("message_quoted", {"key_id": "K02", "from_me": 0, "text_data": "hello", "message_type": 0,
+                                                       "timestamp": T0})]),
+        row(35, text="edited", side=[("message_edit_info", {"original_key_id": "K35O", "edited_timestamp": T0 + 200000,
+                                                           "sender_timestamp": T0 + 199000, "display_type": 1})]),
+        row(36, chat=GRP, type=7, text="New name", side=[("message_system", {"action_type": 11}),
+                                                         ("message_system_value_change", {"old_data": "Old"})]),
+        row(37, chat=GRP, type=7, side=[("message_system", {"action_type": 18})]),
+        row(38, chat=GRP, type=7, side=[("message_system", {"action_type": 4}),
+                                        ("message_system_number_change", {"old_jid_row_id": JidRef(P4),
+                                                                           "new_jid_row_id": JidRef(P5)})]),
+        row(39, type=10, side=[("message_call_log", {"call_log_row_id": 1})]),
+        row(40, type=5, side=[("message_location", {"latitude": 48.85, "longitude": 2.35, "place_name": "Spot",
+                                                    "map_download_status": 2})]),
+        row(41, type=16, side=[("message_location", {"latitude": 1.5, "longitude": -2.5, "live_location_share_duration": 900,
+                                                    "live_location_sequence_number": 3,
+                                                    "live_location_final_latitude": 1.75,
+                                                    "live_location_final_longitude": -2.75,
+                                                    "live_location_final_timestamp": T0 + 41500})]),
+        row(42, chat=LID1, text="lid chat", side=[("jid_map", {"lid_row_id": JidRef(LID1), "jid_row_id": JidRef(P5)})]),
+        row(43, chat=GRP, text="lid sender", sender=LID2),
+        row(44, text="extras", starred=1, side=[("message_view_once_media", {"state": 1}),
+                                                ("message_ephemeral", {"duration": 86400, "expire_timestamp": 1600086400}),
+                                                ("message_forwarded", {"forward_score": 2})]),
+    ]
+
+
+def legacy_extras():
+    """Rows 45 and 46 of android-transition-legacydata: a quote through messages_quotes, edit_version 7 with status 5
+    (raw only), and a revoke through message_revoked keyed to messages._id."""
+    return [
+        dict(id=45, chat=C1, me=0, text="quoting", ts=T0 + 45000, recv=T0 + 45100, status=5, type=0, key="K45", quoted=1,
+             edit_version=7),
+        dict(id=46, chat=C1, me=0, ts=T0 + 46000, recv=T0 + 46100, status=0, type=0, key="K46",
+             side=[("message_revoked", {"revoked_key_id": "K46R", "revoke_timestamp": T0 + 101000})]),
+    ]
+
+
+LEGACY_QUOTE = {"_id": 1, "key_remote_jid": C1, "key_from_me": 0, "key_id": "K02", "status": 0, "data": "hello",
+                "timestamp": T0, "media_wa_type": "0"}
+
+
 def legacy_hostile():
     """Rows 21 to 25 of android-legacy-2.11: hostile media_wa_type values."""
     vals = ["1", " 1", "1.0", "x", b"\x01"]
@@ -135,6 +198,10 @@ def legacy_row(m):
         r["remote_resource"] = m["sender"]
     if is_int(m["type"]) and m["type"] == 999:
         r["media_wa_type"] = "999"
+    if m.get("quoted"):
+        r["quoted_row_id"] = m["quoted"]
+    if m.get("edit_version") is not None:
+        r["edit_version"] = m["edit_version"]
     return r
 
 
@@ -176,7 +243,7 @@ def modern_row(m, js):
     r = {"_id": m["id"], "chat_row_id": chat_id, "from_me": m["me"], "key_id": m["key"],
          "sender_jid_row_id": js.jid_id(sender) if sender else 0, "status": m["status"], "timestamp": m["ts"],
          "received_timestamp": m.get("recv", 0), "message_type": m["type"], "text_data": m.get("text"), "sort_id": m["id"],
-         "starred": 0}
+         "starred": m.get("starred", 0), "receipt_server_timestamp": m.get("srv")}
     if m.get("system"):
         r["message_type"] = 7
     return r
@@ -329,7 +396,9 @@ def addr_of_jid(row, raw, unknown, field):
     """The address of a jid row: its raw_string, or when absent the parts as stored (state no-raw-string)."""
     rs = row.get("raw_string")
     if is_text(rs) and len(rs) > 0:
-        return addr_of_text(rs, raw, field)
+        a = addr_of_text(rs, raw, field)
+        a["rowid"] = row["rowid"]
+        return a
     c = Cells(row, raw, unknown, "jid.")
     parts = {}
     for n in ("user", "server"):
@@ -340,7 +409,7 @@ def addr_of_jid(row, raw, unknown, field):
         v = c.int(n)
         if v is not None:
             parts[n] = v
-    return {"str": None, "parts": parts, "state": "no-raw-string"}
+    return {"str": None, "parts": parts, "state": "no-raw-string", "rowid": row["rowid"]}
 
 
 def group_of(a):
@@ -376,6 +445,263 @@ def summary_of(direction, counterparty, text):
 def join_text(parts):
     """The vCards of one message joined with a newline, as the Go parser keeps them (at most 2 * MAX_TEXT bytes)."""
     return b"\n".join(parts)
+
+
+def side(ctx, table, rowid):
+    """The row of a message_row_id table for the message, None when the variant lacks the table or has no row."""
+    return ctx["rows"].get(table, {}).get(rowid)
+
+
+def num(c, name):
+    """A REAL (or INTEGER) cell as the parser keeps it in raw."""
+    v = c.row.get(name)
+    if v is None:
+        return None
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return v
+    c.unknown[c.prefix + name] = "type-mismatch"
+    return None
+
+
+def jid_state(ctx, raw, unknown, jid_id, field):
+    """(address, state) of a jid row named by a feature column (> 0)."""
+    row = ctx["jid"].get(jid_id)
+    if row is None:
+        return None, "no-jid-row"
+    a = addr_of_jid(row, raw, unknown, field)
+    return a, a["state"]
+
+
+def features(ctx, r, c, raw, unknown, modern, t, legacy_sys):
+    """The side tables of a message (spec 6.5): fills raw and returns the revoke source, or None for a live message."""
+    rid = r["rowid"]
+    revoke = None
+    label = None
+    if modern:
+        label = "revoked" if t in REVOKED_TYPES else MODERN_TYPE.get(t)
+    elif t in LEGACY_TYPE and not legacy_sys:
+        label = LEGACY_TYPE[t]
+
+    def cells(table, row):
+        return Cells(row, raw, unknown, table + ".")
+
+    rrow = side(ctx, "message_revoked", rid)
+    if rrow is not None:
+        revoke = "message_revoked"
+        rc, rv = cells("message_revoked", rrow), {}
+        k = rc.text("revoked_key_id")
+        if k is not None:
+            rv["revoked_key_id"] = cleaned(raw, "revoke.revoked_key_id", k)
+        adm = rc.int("admin_jid_row_id")
+        if adm is not None and adm > 0:
+            a, st = jid_state(ctx, raw, unknown, adm, "revoke.admin_jid")
+            if a is not None and a["str"]:
+                rv["admin_jid"] = a["str"]
+            elif st:
+                rv["admin_jid_state"] = st
+                if a is not None and a["parts"] is not None:
+                    rv["admin_jid_parts"] = a["parts"]
+        ts_ = rc.int("revoke_timestamp")
+        if ts_ is not None:
+            rv["revoke_timestamp"], rv["revoke_timestamp_unit"] = ts_, "unestablished"
+        raw["revoke"] = rv
+    elif modern and label == "revoked":
+        revoke = "message_type"
+
+    if modern:
+        qrow = side(ctx, "message_quoted", rid)
+        if qrow is not None:
+            qc, q = cells("message_quoted", qrow), {"copy": True}
+            k = qc.text("key_id")
+            if k is not None:
+                q["key_id"] = cleaned(raw, "quoted.key_id", k)
+            for n in ("from_me", "message_type", "timestamp"):
+                v = qc.int(n)
+                if v is not None:
+                    q[n] = v
+            sid = qc.int("sender_jid_row_id")
+            if sid is not None and sid > 0:
+                a, st = jid_state(ctx, raw, unknown, sid, "quoted.sender_jid")
+                if a is not None and a["str"]:
+                    q["sender_jid"] = a["str"]
+                elif st:
+                    q["sender_jid_state"] = st
+            b = qc.text("text_data")
+            if b:
+                q["text"] = cleaned(raw, "quoted.text", b)
+            raw["quoted"] = q
+        erow = side(ctx, "message_edit_info", rid)
+        if erow is not None:
+            ec, e = cells("message_edit_info", erow), {}
+            k = ec.text("original_key_id")
+            if k is not None:
+                e["original_key_id"] = cleaned(raw, "edit.original_key_id", k)
+            for n in ("edited_timestamp", "sender_timestamp"):
+                v = ec.int(n)
+                if v is not None:
+                    e[n], e[n + "_unit"] = v, "unestablished"
+            v = ec.int("display_type")
+            if v is not None:
+                e["display_type"] = v
+            raw["edit"] = e
+        if t == 10:
+            crow = side(ctx, "message_call_log", rid)
+            if crow is not None:
+                v = cells("message_call_log", crow).int("call_log_row_id")
+                if v is not None:
+                    raw["call_log_row_id"] = v
+        if label in ("location", "live_location"):
+            lrow = side(ctx, "message_location", rid)
+            if lrow is not None:
+                lc, loc = cells("message_location", lrow), {}
+                for n in ("latitude", "longitude", "live_location_final_latitude", "live_location_final_longitude"):
+                    v = num(lc, n)
+                    if v is not None:
+                        loc[n] = v
+                for n in ("place_name", "place_address", "url"):
+                    b = lc.text(n)
+                    if b is not None:
+                        loc[n] = cleaned(raw, "location." + n, b)
+                for n in ("live_location_share_duration", "live_location_sequence_number", "live_location_final_timestamp",
+                          "map_download_status"):
+                    v = lc.int(n)
+                    if v is not None:
+                        loc[n] = v
+                if loc:
+                    raw["location"] = loc
+    else:
+        qid = c.int("quoted_row_id")
+        if qid is not None:
+            raw["quoted_row_id"] = qid
+            if qid > 0:
+                if "messages_quotes" not in ctx["rows"]:
+                    raw["join_undecided"] = sorted(set(raw.get("join_undecided", [])) | {"messages_quotes"})
+                else:
+                    qrow = ctx["rows"]["messages_quotes"].get(qid)
+                    if qrow is None:
+                        raw["quoted_state"] = "no-messages_quotes-row"
+                    else:
+                        qc, q = cells("messages_quotes", qrow), {"copy": True}
+                        k = qc.text("key_id")
+                        if k is not None:
+                            q["key_id"] = cleaned(raw, "quoted.key_id", k)
+                        v = qc.int("key_from_me")
+                        if v is not None:
+                            q["from_me"] = v
+                        v = qc.int("timestamp")
+                        if v is not None:
+                            q["timestamp"] = v
+                        st = stored(raw, "media_wa_type", qrow.get("media_wa_type"))
+                        if st is not None:
+                            q["message_type"] = st
+                        b = qc.text("remote_resource")
+                        if b:
+                            q["sender_jid"] = cleaned(raw, "quoted.sender_jid", b)
+                        b = qc.text("data")
+                        if b:
+                            q["text"] = cleaned(raw, "quoted.text", b)
+                        raw["quoted"] = q
+        if label == "location":
+            loc = {}
+            for n in ("latitude", "longitude"):
+                v = num(c, n)
+                if v is not None:
+                    loc[n] = v
+            if loc:
+                raw["location"] = loc
+
+    if (modern and label == "system") or legacy_sys:
+        srow = side(ctx, "message_system", rid)
+        if srow is not None:
+            v = cells("message_system", srow).int("action_type")
+            if v is not None:
+                raw["action_type"] = v
+                if v == 18:
+                    raw["label_action_type"] = "security_code_changed"
+        vrow = side(ctx, "message_system_value_change", rid)
+        if vrow is not None:
+            b = cells("message_system_value_change", vrow).text("old_data")
+            if b is not None:
+                raw["old_data"] = cleaned(raw, "old_data", b)
+        nrow = side(ctx, "message_system_number_change", rid)
+        if nrow is not None:
+            nc, n_ = cells("message_system_number_change", nrow), {}
+            for n in ("old_jid_row_id", "new_jid_row_id"):
+                v = nc.int(n)
+                if v is not None:
+                    n_[n] = v
+            raw["number_change"] = n_
+
+    vrow = side(ctx, "message_view_once_media", rid)
+    if vrow is not None:
+        v = cells("message_view_once_media", vrow).int("state")
+        if v is not None:
+            raw["view_once_state"] = v
+    erow = side(ctx, "message_ephemeral", rid)
+    if erow is not None:
+        ec, e = cells("message_ephemeral", erow), {}
+        v = ec.int("duration")
+        if v is not None:
+            e["duration"] = v
+        v = ec.int("expire_timestamp")
+        if v is not None:
+            e["expire_timestamp"], e["expire_timestamp_unit"] = v, "unestablished"
+        raw["ephemeral"] = e
+    frow = side(ctx, "message_forwarded", rid)
+    if frow is not None:
+        fc, fw = cells("message_forwarded", frow), {}
+        for n in ("forward_score", "forward_origin"):
+            v = fc.int(n)
+            if v is not None:
+                fw[n] = v
+        raw["forwarded"] = fw
+    return revoke
+
+
+def lid_raw(ctx, raw, unknown, chat, sender, participants):
+    """What jid_map says about the LIDs among the addresses of the record (D6, spec 6.4.4): only the database maps a LID."""
+    if "jid_map" not in ctx["rows"]:
+        return
+    cands = [chat]
+    if sender["str"] and any(p["address"] == sender["str"] for p in participants):
+        cands.append(sender)
+    seen, mapped, unmapped, unresolved = set(), [], [], []
+    for a in cands:
+        s = a["str"]
+        if not s or s in seen:
+            continue
+        p = parse_jid(s)
+        if not p or p[1] != "lid":
+            continue
+        seen.add(s)
+        if a.get("rowid") is not None:
+            jid_id = a["rowid"]
+        else:
+            rows = ctx["jid_by_raw"].get(s.encode("utf-8"), [])
+            if len(rows) == 0:
+                unmapped.append(s)
+                continue
+            if len(rows) > 1:
+                raw["join_undecided"] = sorted(set(raw.get("join_undecided", [])) | {"jid"})
+                continue
+            jid_id = rows[0]["rowid"]
+        mrow = ctx["rows"]["jid_map"].get(jid_id)
+        if mrow is None:
+            unmapped.append(s)
+            continue
+        target = Cells(mrow, raw, unknown, "jid_map.").int("jid_row_id")
+        trow = ctx["jid"].get(target) if target is not None else None
+        pn = addr_of_jid(trow, raw, unknown, "lid_map.pn") if trow is not None else None
+        if pn is None or not pn["str"]:
+            unresolved.append(s)
+            continue
+        mapped.append({"lid": s, "pn": pn["str"], "source": "jid_map"})
+    if mapped:
+        raw["lid_map"] = mapped
+    if unmapped:
+        raw["lid_unmapped"] = unmapped
+    if unresolved:
+        raw["lid_unresolved"] = unresolved
 
 
 def expect_message(table, r, ctx, remote):
@@ -546,6 +872,14 @@ def expect_message(table, r, ctx, remote):
             body = cl.text
             if cl.flags:
                 C.mark(raw, "body")
+    revoke = features(ctx, r, c, raw, unknown, modern, t, legacy_sys)
+    if revoke:
+        kind = "unknown"
+        if txt:
+            raw["revoked_row_text"] = cleaned(raw, "revoked_row_text", txt)
+        txt, text_source = None, None
+        body = None
+    lid_raw(ctx, raw, unknown, chat, sender, participants)
     if unknown:
         raw["unknown_columns"] = unknown
 
@@ -567,19 +901,27 @@ def expect_message(table, r, ctx, remote):
     if body is not None:
         payload["text_source"] = text_source
     counter = participants[0]["address"] if participants else (chat["str"] or "unknown")
+    if revoke:
+        payload["deleted"] = {"source": revoke}
     return {"table": table, "rowid": r["rowid"], "file": "any", "type": "message", "source_path": remote, "time": time_t,
-            "time_end": None, "times": times, "deleted": False,
-            "summary": summary_of(direction, counter, body), "body": body, "payload": payload}
+            "time_end": None, "times": times, "deleted": bool(revoke),
+            "summary": summary_of(direction, counter, "[revoked, no content]" if revoke else body), "body": body,
+            "payload": payload}
 
 
 def context(view):
     """Lookup tables of the stored rows, by key."""
     ctx = {"chat": {}, "jid": {}, "vcards": {}, "chat_list": {}, "has_vcard": "message_vcard" in view,
-           "has_chat_list": "chat_list" in view}
+           "has_chat_list": "chat_list" in view, "jid_by_raw": {}, "rows": {}}
+    for t in SIDE_TABLES:
+        if t in view:
+            ctx["rows"][t] = {r["rowid"]: r for r in view[t]}
     for r in view.get("chat", []):
         ctx["chat"][r["rowid"]] = r
     for r in view.get("jid", []):
         ctx["jid"][r["rowid"]] = r
+        if is_text(r.get("raw_string")):
+            ctx["jid_by_raw"].setdefault(bytes(r["raw_string"]), []).append(r)
     for r in view.get("message_vcard", []):
         if is_text(r.get("vcard")) and is_int(r.get("message_row_id")):
             ctx["vcards"].setdefault(r["message_row_id"], []).append(r["vcard"])
@@ -589,7 +931,10 @@ def context(view):
     return ctx
 
 
-TABLES = ["messages", "message", "jid", "chat", "chat_list", "message_vcard", "messages_vcards", "deleted_chat_job"]
+SIDE_TABLES = ["message_revoked", "message_quoted", "messages_quotes", "message_edit_info", "message_system",
+               "message_system_value_change", "message_system_number_change", "message_call_log", "message_location",
+               "message_view_once_media", "message_ephemeral", "message_forwarded", "jid_map"]
+TABLES = ["messages", "message", "jid", "chat", "chat_list", "message_vcard", "messages_vcards", "deleted_chat_job"] + SIDE_TABLES
 
 
 def master_rows(files):
@@ -704,6 +1049,22 @@ def fill_legacy(rows):
     return f
 
 
+def alloc(js, facts):
+    """Allocates the jid and chat rows the facts name, in first-use order (the order the inserts use)."""
+    for m in facts:
+        js.chat_id(m["chat"])
+        if m.get("sender"):
+            js.jid_id(m["sender"])
+        for _, row in m.get("side", []):
+            for v in row.values():
+                if isinstance(v, JidRef):
+                    js.jid_id(str(v))
+
+
+def resolve(js, row):
+    return {k: (js.jid_id(str(v)) if isinstance(v, JidRef) else v) for k, v in row.items()}
+
+
 def populate_modern(con, facts, js, vcards=True):
     for m in facts:
         row = modern_row(m, js)
@@ -712,22 +1073,24 @@ def populate_modern(con, facts, js, vcards=True):
         C.insert(con, "jid", j)
     for c in js.chats:
         C.insert(con, "chat", c)
-    if vcards:
-        for m in facts:
-            if m["type"] == 4:
-                C.insert(con, "message_vcard", {"message_row_id": m["id"], "vcard": m["vcard"]})
-            if m["type"] == 5:
-                C.insert(con, "message_location", {"message_row_id": m["id"], "latitude": m["lat"], "longitude": m["lon"]})
+    for m in facts:
+        sides = m.get("side", [])
+        for table, row in sides:
+            row = resolve(js, row)
+            if table != "jid_map":
+                row = dict(row, message_row_id=m["id"])
+            C.insert(con, table, row)
+        if vcards and m["type"] == 4:
+            C.insert(con, "message_vcard", {"message_row_id": m["id"], "vcard": m["vcard"]})
+        if vcards and m["type"] == 5 and "lat" in m and not any(t == "message_location" for t, _ in sides):
+            C.insert(con, "message_location", {"message_row_id": m["id"], "latitude": m["lat"], "longitude": m["lon"]})
 
 
 def modern_fill(facts, with_vcards=True):
     def f(con):
         # the jid and chat rows first need their ids: allocate by walking the facts in id order
         js = Jids()
-        for m in facts:
-            js.chat_id(m["chat"])
-            if m.get("sender"):
-                js.jid_id(m["sender"])
+        alloc(js, facts)
         populate_modern(con, facts, js, with_vcards)
     return f
 
@@ -766,6 +1129,10 @@ def transition_fill(legacy_facts, modern_facts, sentinel=True):
         for m in legacy_facts:
             if m["type"] == 4:
                 C.insert(con, "messages_vcards", {"message_row_id": m["id"], "vcard": m["vcard"]})
+            if m.get("quoted"):
+                C.insert(con, "messages_quotes", LEGACY_QUOTE)
+            for table, row in m.get("side", []):
+                C.insert(con, table, dict(row, message_row_id=m["id"]))
         for m in modern_facts:
             if m["type"] == 4:
                 C.insert(con, "message_vcard", {"message_row_id": m["id"], "vcard": m["vcard"]})
@@ -773,7 +1140,7 @@ def transition_fill(legacy_facts, modern_facts, sentinel=True):
 
 
 def v_trans_legacy(work):
-    path = build_db(work, "transition-2021.sql", transition_fill(core(False), []))
+    path = build_db(work, "transition-2021.sql", transition_fill(core(False) + legacy_extras(), []))
     return finish(path, REMOTE, "android-transition-legacydata", "transition-2021.sql", "transition")
 
 
@@ -843,16 +1210,16 @@ def v_modern_2021(work):
     return finish(path, REMOTE, "android-modern-2021", "transition-2021.sql", "modern")
 
 
-def modern_variant(work, remote, variant, wal=False):
+def modern_variant(work, remote, variant, wal=False, extras=()):
     facts = core(True)
+    if extras:
+        facts[1]["srv"] = T0 + 2500  # row 3 carries a receipt_server_timestamp (modern: the unit is not established)
     early, late = (facts[:-4], facts[-4:]) if wal else (facts, [])
+    early = early + list(extras)
     path = build_db(work, "modern-2026.sql", modern_fill(early), journal_wal=wal)
     if wal:
         js = Jids()
-        for m in early:
-            js.chat_id(m["chat"])
-            if m.get("sender"):
-                js.jid_id(m["sender"])
+        alloc(js, early)
         nj, nc = len(js.jids), len(js.chats)
         stmts = ["pragma wal_autocheckpoint = 0"]
         rows = [modern_row(m, js) for m in late]
@@ -870,7 +1237,7 @@ def modern_variant(work, remote, variant, wal=False):
 
 
 def v_modern_2026(work):
-    return modern_variant(work, REMOTE_USER10, "android-modern-2026", wal=True)
+    return modern_variant(work, REMOTE_USER10, "android-modern-2026", wal=True, extras=modern_extras())
 
 
 def v_modern_business(work):

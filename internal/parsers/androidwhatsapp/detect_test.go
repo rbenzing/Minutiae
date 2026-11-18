@@ -57,11 +57,11 @@ func TestWhatsAppGenerationDetection(t *testing.T) {
 		absent  []string
 	}{
 		{"android-legacy-2.11", map[string]string{"generation": "legacy", "sentinel_rows": "1", "rows.messages": "21", "app": "whatsapp", "database_user": "0"}, []string{"rows.message", "message_view_source"}},
-		{"android-transition-legacydata", map[string]string{"generation": "transition", "rows.messages": "16", "rows.message": "0", "message_view_source": "messages", "sentinel_rows": "1", "jid_map": "absent"}, nil},
+		{"android-transition-legacydata", map[string]string{"generation": "transition", "rows.messages": "18", "rows.message": "0", "message_view_source": "messages", "sentinel_rows": "1", "jid_map": "absent"}, nil},
 		{"android-transition-moderndata", map[string]string{"generation": "transition", "rows.messages": "0", "rows.message": "16", "message_view_source": "messages", "sentinel_rows": "1"}, nil},
 		{"android-transition-empty", map[string]string{"generation": "transition", "rows.messages": "0", "rows.message": "0", "sentinel_rows": "1"}, nil},
 		{"android-modern-2021", map[string]string{"generation": "modern", "rows.message": "18", "jid_map": "absent", "app": "whatsapp"}, []string{"rows.messages", "sentinel_rows", "message_view_source"}},
-		{"android-modern-2026", map[string]string{"generation": "modern", "app": "whatsapp", "database_user": "10", "rows.message": "18"}, []string{"jid_map"}},
+		{"android-modern-2026", map[string]string{"generation": "modern", "app": "whatsapp", "database_user": "10", "rows.message": "33"}, []string{"jid_map"}},
 		{"android-modern-business", map[string]string{"generation": "modern", "app": "whatsapp_business", "database_user": "0"}, nil},
 	}
 	for _, c := range cases {

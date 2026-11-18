@@ -19,8 +19,10 @@ func factsOf(t *testing.T, variant string) (byRow map[string]parsertest.ExpRecor
 	byRow = map[string]parsertest.ExpRecord{}
 	for _, r := range fx.Expect.Records {
 		byRow[r.Table+"/"+strconv.FormatInt(r.Rowid, 10)] = r
-		if r.Type != "message" || r.Deleted {
-			t.Errorf("%s %s/%d: type %q deleted %v", variant, r.Table, r.Rowid, r.Type, r.Deleted)
+		// only a revoke tombstone is deleted, and it names the app's own structure that says so (spec 6.5, plan 4I task 7)
+		del, _ := r.Payload["deleted"].(map[string]any)
+		if r.Type != "message" || r.Deleted != (del != nil) || (r.Deleted && del["source"] != "message_revoked" && del["source"] != "message_type") {
+			t.Errorf("%s %s/%d: type %q deleted %v %v", variant, r.Table, r.Rowid, r.Type, r.Deleted, del)
 		}
 		if r.Payload["status"] != "unknown" { // R4: no delivery status is mapped
 			t.Errorf("%s %s/%d: status %v, want unknown", variant, r.Table, r.Rowid, r.Payload["status"])
@@ -45,8 +47,8 @@ func participants(r parsertest.ExpRecord) []any {
 
 func TestCoreOracleStatesTheSpecRules(t *testing.T) {
 	modern, _ := factsOf(t, "android-modern-2026")
-	if len(modern) != 18 {
-		t.Fatalf("android-modern-2026 has %d records, want 18", len(modern))
+	if len(modern) != 33 { // the 18 rows of the core and rows 30 to 44 of plan 4I task 7
+		t.Fatalf("android-modern-2026 has %d records, want 33", len(modern))
 	}
 	get := func(set map[string]parsertest.ExpRecord, key string) parsertest.ExpRecord {
 		r, ok := set[key]
@@ -199,7 +201,7 @@ func TestStructuralVariantsHaveTheirShape(t *testing.T) {
 		records int
 		gen     string
 	}{
-		"android-transition-legacydata": {16, "transition"}, "android-transition-moderndata": {16, "transition"},
+		"android-transition-legacydata": {18, "transition"}, "android-transition-moderndata": {16, "transition"},
 		"android-transition-walonly": {17, "transition"}, "android-transition-empty": {0, "transition"},
 		"android-modern-2021": {18, "modern"}, "android-neither": {0, ""}, "android-crypt14": {0, ""},
 		"android-crypt15": {0, ""}, "android-backup-notsqlite": {0, ""}, "android-backup-plain": {0, ""},

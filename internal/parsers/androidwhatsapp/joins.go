@@ -228,3 +228,8 @@ func base64(b []byte) string {
 	}
 	return string(out)
 }
+
+// resolveCols is rowrun.Resolve.
+func resolveCols(m parse.MapContext, table string, names ...string) rowrun.Cols {
+	return rowrun.Resolve(m, table, names...)
+}

@@ -3201,13 +3201,13 @@ column and a zero time) and, in modern stores only, ids 18 (a channel) and 19 (a
 | Variant (`internal/parsers/androidwhatsapp/testdata/`) | DDL snapshot | Bundled at | Holds |
 |---|---|---|---|
 | `android-legacy-2.11` | `legacy-2.11.sql` | `/data/data/com.whatsapp/databases/msgstore.db` | the sentinel row and the core in `messages`, plus rows 21 to 25 |
-| `android-transition-legacydata` | `transition-2021.sql` | same | the core in `messages`; `message` empty |
+| `android-transition-legacydata` | `transition-2021.sql` | same | the core and rows 45 and 46 (a quote, `edit_version` 7, a revoke) in `messages`; `message` empty |
 | `android-transition-moderndata` | `transition-2021.sql` | same | `messages` holds only the sentinel; the core in `message` |
 | `android-transition-both` | `transition-2021.sql` | same | the core in both tables, dual-written rows sharing `_id` and `key_id` |
 | `android-transition-walonly` | `transition-2021.sql` | same, with `-wal` | the core in `messages`; the first `message` row only in a committed WAL frame; one more row in frames written without a commit |
 | `android-transition-empty` | `transition-2021.sql` | same | the sentinel only |
 | `android-modern-2021` | `transition-2021.sql` minus the legacy tables | same | the modern core; `message_revoked` without `admin_jid_row_id` and `revoke_timestamp`; no `jid_map` |
-| `android-modern-2026` | `modern-2026.sql` | `/data/user/10/com.whatsapp/databases/msgstore.db`, with `-wal` | the modern core; rows 16 to 19 only in a committed WAL transaction |
+| `android-modern-2026` | `modern-2026.sql` | `/data/user/10/com.whatsapp/databases/msgstore.db`, with `-wal` | the modern core and rows 30 to 44 (revokes, a quote, an edit, system rows, a call notice, locations, LIDs, extras); rows 16 to 19 only in a committed WAL transaction |
 | `android-modern-business` | `modern-2026.sql` | `/data/data/com.whatsapp.w4b/databases/msgstore.db` | the modern core |
 | `android-neither` | none | the live path | one table `foo(x)` |
 | `android-crypt14`, `android-crypt15` | none | `/sdcard/WhatsApp/Databases/msgstore.db.crypt14`; `/storage/emulated/0/Android/media/com.whatsapp/WhatsApp/Databases/msgstore-2026-11-01.1.db.crypt15` | 64 KiB of a SHA-256 counter stream (synthetic: no header of a real format is claimed) |
