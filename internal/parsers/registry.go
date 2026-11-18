@@ -8,6 +8,8 @@ import (
 	"github.com/rbenzing/minutiae/internal/parsers/androidcalllog"
 	"github.com/rbenzing/minutiae/internal/parsers/androidcontacts"
 	"github.com/rbenzing/minutiae/internal/parsers/androidmms"
+	"github.com/rbenzing/minutiae/internal/parsers/androidwacontacts"
+	"github.com/rbenzing/minutiae/internal/parsers/androidwhatsapp"
 	"github.com/rbenzing/minutiae/internal/parsers/chromium"
 	"github.com/rbenzing/minutiae/internal/parsers/iosaddressbook"
 	"github.com/rbenzing/minutiae/internal/parsers/ioscalls"
@@ -31,5 +33,7 @@ func All() []parse.Parser {
 		iosaddressbook.Parser{},
 		chromium.Parser{},
 		safari.Parser{},
+		androidwhatsapp.Parser{},
+		androidwacontacts.Parser{},
 	}
 }

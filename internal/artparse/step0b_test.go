@@ -456,3 +456,41 @@ func TestHostUsesTheSharedContractChecks(t *testing.T) {
 		}
 	}
 }
+
+// 4I-R23: claim uniqueness is per platform. One artifact has one path scheme, so two parsers of different platforms can
+// never claim on the same artifact: the same table name on two platforms is accepted, the same platform still refused.
+func TestClaimUniquenessIsPerPlatform(t *testing.T) {
+	c := newCase(t)
+	mk := func(name, table string, platforms ...string) artparse.Registered {
+		return artparse.WithPlatforms(regFake(t, &claimMapper{claimParser{name: name, status: parse.Applicable, claims: []string{table}}, []string{table}}, name), platforms...)
+	}
+	opts := artparse.Options{Limits: parse.DefaultLimits()}
+	if _, err := artparse.New(c, []artparse.Registered{mk("droid", "message", parse.PlatformAndroid), mk("apple", "message", parse.PlatformIOS)}, opts); err != nil {
+		t.Fatalf("one table on two platforms refused: %v", err)
+	}
+	_, err := artparse.New(c, []artparse.Registered{mk("droid", "message", parse.PlatformAndroid), mk("droid2", "MESSAGE", parse.PlatformAndroid)}, opts)
+	if err == nil {
+		t.Fatal("the same platform, the same table (case-folded): accepted")
+	}
+	for _, want := range []string{"droid", "droid2", "message", parse.PlatformAndroid} {
+		if !strings.Contains(strings.ToLower(err.Error()), want) {
+			t.Errorf("error %q does not name %q", err, want)
+		}
+	}
+	// a parser on both platforms counts on both
+	if _, err := artparse.New(c, []artparse.Registered{mk("both", "message", parse.PlatformAndroid, parse.PlatformIOS), mk("apple", "message", parse.PlatformIOS)}, opts); err == nil {
+		t.Fatal("a two-platform parser and an iOS parser on one table: accepted")
+	}
+}
+
+// Defence in depth: two parsers' claims on one folded table for one artifact are an error, never a pick or a drop.
+func TestClaimedTablesOfOneArtifactNeverShareATable(t *testing.T) {
+	ok := []artparse.Claimed{{Table: "message", Parser: "a"}, {Table: "calls", Parser: "b"}, {Table: "message", Parser: "a"}}
+	if err := artparse.CheckArtifactClaims(ok); err != nil {
+		t.Fatalf("one parser, one table twice: %v", err)
+	}
+	err := artparse.CheckArtifactClaims([]artparse.Claimed{{Table: "message", Parser: "ios.sms"}, {Table: "MESSAGE", Parser: "android.whatsapp.msgstore"}})
+	if err == nil || !strings.Contains(err.Error(), "ios.sms") || !strings.Contains(err.Error(), "android.whatsapp.msgstore") {
+		t.Fatalf("err %v, want an error naming both parsers", err)
+	}
+}

@@ -130,3 +130,12 @@ func WithMaxScanFindings(o *Options, n int) { o.maxScanFindings = n }
 
 // AllParserReason is the classifier of pre-probe reasons that hold for every parser.
 var AllParserReason = allParserReason
+
+// WithPlatforms returns r with its declared platforms replaced (no validation).
+func WithPlatforms(r Registered, p ...string) Registered {
+	r.meta.Platforms = p
+	return r
+}
+
+// CheckArtifactClaims is the per-artifact duplicate check of ClaimedTables.
+func CheckArtifactClaims(out []Claimed) error { return checkArtifactClaims("A1", out) }

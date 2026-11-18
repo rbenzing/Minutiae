@@ -37,8 +37,10 @@ var realDataInputs = map[string]realDataInput{
 		Platform: "ios", Logical: "ios:HomeDomain/Library/AddressBook/AddressBook.sqlitedb", File: "AddressBook.sqlitedb",
 		Extra: map[string]string{"images": "AddressBookImages.sqlitedb", "images_wal": "AddressBookImages.sqlitedb-wal"},
 	},
-	"chromium.history": {Platform: "android", Logical: "android:/data/data/com.android.chrome/app_chrome/Default/History", File: "History"},
-	"safari.history":   {Platform: "ios", Logical: "ios:HomeDomain/Library/Safari/History.db", File: "History.db"},
+	"chromium.history":          {Platform: "android", Logical: "android:/data/data/com.android.chrome/app_chrome/Default/History", File: "History"},
+	"safari.history":            {Platform: "ios", Logical: "ios:HomeDomain/Library/Safari/History.db", File: "History.db"},
+	"android.whatsapp.msgstore": {Platform: "android", Logical: "android:/data/data/com.whatsapp/databases/msgstore.db", File: "msgstore.db"},
+	"android.whatsapp.contacts": {Platform: "android", Logical: "android:/data/data/com.whatsapp/databases/wa.db", File: "wa.db"},
 }
 
 // realDataSet is one set of the layout: the parser (or "ios-backup") and the files of the set, by role.

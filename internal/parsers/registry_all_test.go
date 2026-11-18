@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/rbenzing/minutiae/internal/parse"
+	"github.com/rbenzing/minutiae/internal/parsers/androidwacontacts"
+	"github.com/rbenzing/minutiae/internal/parsers/androidwhatsapp"
 	"github.com/rbenzing/minutiae/internal/parsers/chromium"
 	"github.com/rbenzing/minutiae/internal/parsers/iosaddressbook"
 	"github.com/rbenzing/minutiae/internal/parsers/ioscalls"
@@ -20,14 +22,16 @@ import (
 // claim is never added or dropped by accident and a registered parser missing from the table fails. A parser
 // without claims is a failure (4H-R7): every first-set parser claims its claimable tables.
 var claimsOf = map[string][]string{
-	"android.mmssms":   {"sms", "pdu"},
-	"android.calllog":  {"calls"},
-	"android.contacts": {"raw_contacts", "deleted_contacts"},
-	"chromium.history": {"visits", "keyword_search_terms", "downloads"},
-	"safari.history":   {"history_visits"},
-	"ios.calls":        {"ZCALLRECORD", "call"},
-	"ios.addressbook":  {"ABPerson"},
-	"ios.sms":          {"message"},
+	"android.mmssms":            {"sms", "pdu"},
+	"android.calllog":           {"calls"},
+	"android.contacts":          {"raw_contacts", "deleted_contacts"},
+	"chromium.history":          {"visits", "keyword_search_terms", "downloads"},
+	"safari.history":            {"history_visits"},
+	"android.whatsapp.msgstore": {"message", "messages", "call_log"},
+	"android.whatsapp.contacts": {"wa_contacts"},
+	"ios.calls":                 {"ZCALLRECORD", "call"},
+	"ios.addressbook":           {"ABPerson"},
+	"ios.sms":                   {"message"},
 }
 
 // 4A's registry tests ranged over an empty registry; with the Android telephony parsers in it they are real
@@ -81,16 +85,18 @@ func TestRegisteredParsersClaimExactly(t *testing.T) {
 	}
 }
 
-// TestEveryFirstSetParserClaimsItsClaimableTables (PASSES ON ARRIVAL; mutation-checked, 4H-R7): for the five
+// TestEveryFirstSetParserClaimsItsClaimableTables (PASSES ON ARRIVAL; mutation-checked, 4H-R7): for the seven
 // parsers that export ClaimableTables, Meta().Claims equals it in order, on the db role. The three Android
 // parsers are held by claimsOf alone.
 func TestEveryFirstSetParserClaimsItsClaimableTables(t *testing.T) {
 	claimable := map[string]func() []string{
-		"chromium.history": chromium.ClaimableTables,
-		"safari.history":   safari.ClaimableTables,
-		"ios.calls":        ioscalls.ClaimableTables,
-		"ios.addressbook":  iosaddressbook.ClaimableTables,
-		"ios.sms":          iossms.ClaimableTables,
+		"chromium.history":          chromium.ClaimableTables,
+		"safari.history":            safari.ClaimableTables,
+		"ios.calls":                 ioscalls.ClaimableTables,
+		"ios.addressbook":           iosaddressbook.ClaimableTables,
+		"ios.sms":                   iossms.ClaimableTables,
+		"android.whatsapp.msgstore": androidwhatsapp.ClaimableTables,
+		"android.whatsapp.contacts": androidwacontacts.ClaimableTables,
 	}
 	for name, fn := range claimable {
 		var found parse.Parser
@@ -273,6 +279,43 @@ func TestEveryIOSParserReadsCompanionRolesAndEmitsOneType(t *testing.T) {
 		}
 		if len(m.Emits) != 1 || m.Emits[0].Type != w.typ || m.Emits[0].PayloadVersion != w.version {
 			t.Errorf("%s emits %+v, want exactly %s at payload version %d", w.name, m.Emits, w.typ, w.version)
+		}
+	}
+}
+
+// TestWhatsAppParsersReadCompanionRolesAndEmitTheirTypes pins what plan 4I promises about the two WhatsApp parsers: the
+// roles they read, the types they emit and their place in the registry (appended after the browser parsers, msgstore first).
+func TestWhatsAppParsersReadCompanionRolesAndEmitTheirTypes(t *testing.T) {
+	want := []struct {
+		name  string
+		types []string
+	}{
+		{"android.whatsapp.msgstore", []string{"message", "call"}},
+		{"android.whatsapp.contacts", []string{"contact"}},
+	}
+	all := All()
+	if n := len(all); n < 2 || all[n-2].Meta().Name != want[0].name || all[n-1].Meta().Name != want[1].name {
+		t.Fatalf("the registry must end with %s then %s", want[0].name, want[1].name)
+	}
+	for _, w := range want {
+		idx := slices.IndexFunc(all, func(p parse.Parser) bool { return p.Meta().Name == w.name })
+		if idx < 0 {
+			t.Errorf("%s is missing from the registry", w.name)
+			continue
+		}
+		m := all[idx].Meta()
+		var roles, types []string
+		for _, in := range m.Inputs {
+			roles = append(roles, in.Role)
+		}
+		for _, e := range m.Emits {
+			types = append(types, e.Type)
+		}
+		if !slices.Equal(roles, []string{"db", "wal", "journal"}) {
+			t.Errorf("%s: roles %v, want db/wal/journal", w.name, roles)
+		}
+		if !slices.Equal(types, w.types) {
+			t.Errorf("%s: emits %v, want exactly %v", w.name, types, w.types)
 		}
 	}
 }

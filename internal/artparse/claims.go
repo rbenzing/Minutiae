@@ -58,19 +58,38 @@ func foldTable(s string) string {
 	return string(b)
 }
 
-// checkClaimUniqueness requires every table to be claimed once across the registry, compared
-// case-insensitively (sms and SMS are one table): two claims on one table would make the owner of its
-// rows ambiguous.
+// checkClaimUniqueness requires every table to be claimed once per platform across the registry, compared
+// case-insensitively (sms and SMS are one table): two claims on one table of one platform would make the owner of its
+// rows ambiguous. The rule is per platform (4I-R23): an artifact's logical path has one scheme, ClaimedTables considers
+// only the jobs whose primary glob matched it, and a primary glob lies inside Meta.Platforms, so parsers of different
+// platforms never claim on one artifact. A parser declaring both platforms counts on both.
 func checkClaimUniqueness(regs []Registered) error {
-	owner := map[string]string{}
+	type key struct{ platform, table string }
+	owner := map[key]string{}
 	for _, r := range regs {
 		for _, c := range r.meta.Claims {
-			k := foldTable(c.Table)
-			if other, dup := owner[k]; dup {
-				return fmt.Errorf("artparse: parsers %q and %q both claim table %q", other, r.meta.Name, c.Table)
+			for _, platform := range r.meta.Platforms {
+				k := key{platform, foldTable(c.Table)}
+				if other, dup := owner[k]; dup {
+					return fmt.Errorf("artparse: parsers %q and %q both claim table %q on platform %q", other, r.meta.Name, c.Table, platform)
+				}
+				owner[k] = r.meta.Name
 			}
-			owner[k] = r.meta.Name
 		}
+	}
+	return nil
+}
+
+// checkArtifactClaims is the defence in depth of ClaimedTables: whatever the registry check let through, two parsers'
+// claims on one folded table of one artifact are an error. Never one picked, never one dropped.
+func checkArtifactClaims(artifactID string, out []Claimed) error {
+	owner := map[string]string{}
+	for _, c := range out {
+		k := foldTable(c.Table)
+		if other, dup := owner[k]; dup && other != c.Parser {
+			return fmt.Errorf("artparse: artifact %s: parsers %q and %q both claim table %q", artifactID, other, c.Parser, c.Table)
+		}
+		owner[k] = c.Parser
 	}
 	return nil
 }
@@ -187,6 +206,9 @@ func (h *Host) ClaimedTables(ctx context.Context, artifactID string) ([]Claimed,
 				})
 			}
 		}
+	}
+	if err := checkArtifactClaims(artifactID, out); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
