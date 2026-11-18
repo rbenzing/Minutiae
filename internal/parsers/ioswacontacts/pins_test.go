@@ -5,6 +5,8 @@ package ioswacontacts_test
 // fixturePins is the SHA-256 of every decompressed fixture file, by "<variant>.<role>". A changed fixture
 // changes this file in the same commit, so a silent regeneration shows in review.
 var fixturePins = map[string]string{
+	"ios-contactsv2-deleted.db":  "d00618f24f23bdd754e5064d8eede8504dfb02c8281e4546152c54ca96399757",
+	"ios-contactsv2-deleted.wal": "ce8196460a9bfb59847210b6f5f91577dcd90884a9c8f21f5956e3e6eb609ea1",
 	"ios-contactsv2-extract.db":  "52116667c37648baf0e4b0a068bd1778a70645b02ca06409a66dc2c9e8e3eeb9",
 	"ios-contactsv2-nolid.db":    "552928bb7880ad7bba8642bf46eed3b7751dbb42b01e26c6d865c80a3f0fabda",
 	"ios-contactsv2-otherapp.db": "2058309ccbf1fb46e6d133a471e52bb02a5416dc2f9a88bb903a5564e05ab350",

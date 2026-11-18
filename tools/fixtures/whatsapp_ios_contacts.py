@@ -32,10 +32,15 @@ Variants (the placement of each is in internal/parsers/ioswacontacts/fixtures_te
   ios-contactsv2-nolid     consumer domain, no ZLID column (S7 saw it absent on some images), rows 1-3
   ios-contactsv2-extract   an app group of a full-file-system extraction, rows 1-3
   ios-contactsv2-otherapp  a same-named database of another app: one table ZCONTACT(Z_PK)
+  ios-contactsv2-deleted   deleted contacts (every other one of a run, so no page is freed) through the WAL, among them a
+                           non-person row (plan 4I2 PF2)
 
 Python 3 with its bundled sqlite3 only; no Docker. Not part of gen.sh all.
 """
 import os
+import shutil
+import sqlite3
+import tempfile
 
 import telephony_common as C
 import whatsapp_gen as W
@@ -374,9 +379,101 @@ def v_otherapp(work):
     return {"db": C.read(path)}, unparsed("ios-contactsv2-otherapp")
 
 
+# ----------------------------------------------------------------------------------------- typed recovery (plan 4I2 PF2)
+
+def bulk(first, n):
+    """n plain contacts with ids first.. (the rows the deleted variant writes and deletes). The 120-byte ZABOUTTEXT sets the row
+    size: with it the deleting transaction frees no page (v_deleted asserts that); another size may make SQLite merge two
+    half-empty leaves (140 bytes did, 100 and 120 do not: the assertion guards it)."""
+    return [row(i, ZFULLNAME="Bulk %d" % i, ZPHONENUMBER="+1555100%04d" % i, ZWHATSAPPID=U(1000 + i),
+                ZABOUTTEXT=("bulk contact %d " % i).ljust(120, "."), ZIDENTIFIER="B%04d" % i) for i in range(first, first + n)]
+
+
+def new_scenario(variant, con):
+    scen = SCENARIOS[variant] = C.Scenario(CLAIMED, alias=ALIAS)
+    scen.snap(con, TABLE, "0")
+    return scen
+
+
+def freelist_count(files):
+    """The freelist page count of the finished files as the engine sees them (a WAL is applied to a COPY)."""
+    work = tempfile.mkdtemp(prefix="telephony-free-")
+    try:
+        path = work + "/f.db"
+        for role, suffix in (("db", ""), ("wal", "-wal")):
+            if role in files:
+                with open(path + suffix, "wb") as f:
+                    f.write(files[role])
+        con = sqlite3.connect(path)
+        n = con.execute("pragma freelist_count").fetchone()[0]
+        con.close()
+        return n
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def v_deleted(work):
+    """Contacts 1 and 2 live; 60 bulk contacts (ids 100-159) and contacts 90-91 in the main file; one committed WAL transaction
+    inserts contacts 92-93 and the next deletes 90-93 and the even ids of 100-159. The odd ids stay live, so every leaf keeps
+    half its cells and no page is freed: a page that later belongs to the freelist makes the engine state relation unknown
+    with owner-changed (internal/sqlitefile/rowsident.go, ruling C44), which the oracle walker does not model. The main file
+    still holds the deleted rows (versions that are history under the WAL) and the first WAL frame holds 92-93 (the old frame).
+    The deleted contacts: 90 a full person (name, wrapped label, JID, LID, about text, identifier), 91 a name with no JID,
+    92 a highlighted name with a phone and no label, 93 a group row (not a person: reported unmapped, never typed). Deleted rows
+    are found only through the WAL here: the history oracle (sqlite_oracle.build_history) reads freelist leaves only of a store
+    with no WAL or journal."""
+    c = contacts()
+    deleted = [row(90, ZFULLNAME="Gil Gone", ZGIVENNAME="Gil", ZPHONENUMBER="+15550000090", ZPHONENUMBERLABEL="_$!<Home>!$_",
+                   ZWHATSAPPID=U(90), ZABOUTTEXT="gone", ZABOUTTIMESTAMP=600000090, ZIDENTIFIER="G90",
+                   ZLID=X.jid("100000000000090", "lid")),
+               row(91, ZFULLNAME="Hana Gone")]
+    old = [row(92, ZPHONENUMBER="+15550000092", ZHIGHLIGHTEDNAME="Ivo H", ZWHATSAPPID=U(92)),
+           row(93, ZFULLNAME="Old Group", ZWHATSAPPID=X.jid("120363000000000093", "g.us"))]
+    rows = pick(c, {1, 2}) + deleted + bulk(100, 60)
+    path = build_db(work, rows, wal=True)
+    con = C.connect(path)
+    scen = new_scenario("ios-contactsv2-deleted", con)
+    scen.write(TABLE, scen.snap(con, TABLE))
+    scen.want(TABLE, scen.snap(con, TABLE, "(Z_PK between 100 and 159 and Z_PK % 2 = 0) or Z_PK in (90, 91)"))
+    con.close()
+    # the rows the first WAL transaction inserts, as the engine would store them
+    shadow = work + "/shadow.db"
+    sc = C.connect(shadow)
+    sc.executescript(X.load_ios_ddl("contactsv2.sql")[0])
+    for m in old:
+        C.insert(sc, TABLE, m)
+    old_rows = scen.snap(sc, TABLE)
+    sc.close()
+    scen.write(TABLE, old_rows)
+    scen.want(TABLE, old_rows)
+    X.leave_old_frame(path, ["pragma wal_autocheckpoint = 0"] + [X.insert_stmt(TABLE, m) for m in old] +
+                      ["delete from %s where Z_PK in (90, 91, 92, 93) or (Z_PK between 100 and 159 and Z_PK %% 2 = 0)" % TABLE])
+    files = finish(path)
+    assert "wal" in files and freelist_count(files) == 0, "a page was freed: the oracle walker does not model that"
+    return files, oracle(files, "ios-contactsv2-deleted", "backup", DOMAIN_WA)
+
+
+def recover_env(files):
+    """The consumer backup domain (PF5: a recovered row at a domain place states its domain label)."""
+    app, basis, state = app_label("backup", DOMAIN_WA)
+    return {"app": app, "app_basis": basis, "app_state": state}
+
+
+def recover_expect(variant, files):
+    """The <variant>.recover.expect.json of a variant that has a scenario (ruling 4G-R14)."""
+    def one(table, d, env, file):
+        rec = expect_contact(d, env, file)
+        if rec is not None:
+            rec["source_path"] = ""  # a recovered record: the source path follows the role of the file
+        return rec
+
+    return C.recover_oracle(variant, files, SCENARIOS[variant], recover_env, one, nobody="ZWAADDRESSBOOKCONTACT row")
+
+
 VARIANTS = {
     "ios-contactsv2": v_contactsv2,
     "ios-contactsv2-nolid": v_nolid,
     "ios-contactsv2-extract": v_extract,
     "ios-contactsv2-otherapp": v_otherapp,
+    "ios-contactsv2-deleted": v_deleted,
 }

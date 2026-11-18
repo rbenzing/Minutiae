@@ -1,7 +1,9 @@
 package ioswacontacts_test
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -222,5 +224,72 @@ func TestIOSWhatsAppContactsOracleStatesTheVariants(t *testing.T) {
 	c, fx = recsOf(t, "ios-contactsv2-otherapp")
 	if len(c.by) != 0 || len(fx.Expect.Notes) != 0 {
 		t.Errorf("otherapp states %d records and notes %v; the parser refuses it", len(c.by), fx.Expect.Notes)
+	}
+}
+
+// TestIOSWhatsAppContactsDeletedOracleStatesTheHistory (plan 4I2 PF2): deleted contacts are found through the WAL (the file holds
+// 90 and 91, a first WAL frame 92 and 93, one committed WAL transaction deletes them with the even ones of 100 to 159). Row 93 is a
+// group row: it is reported unmapped, never typed (4I2-R10 holds for recovered rows too).
+func TestIOSWhatsAppContactsDeletedOracleStatesTheHistory(t *testing.T) {
+	c, fx := recsOf(t, "ios-contactsv2-deleted")
+	if len(c.by) != 32 || len(fx.Expect.Warnings) != 0 {
+		t.Errorf("%d live records, warnings %v, want 32 (contacts 1, 2 and the 30 odd ones of 100-159) and none", len(c.by), fx.Expect.Warnings)
+	}
+	raw, err := os.ReadFile("testdata/ios-contactsv2-deleted.recover.expect.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exp struct {
+		Claimed  []string `json:"claimed"`
+		Unmapped []struct {
+			Table, Contains string
+			Rowid           int64
+		} `json:"unmapped"`
+		Records []struct {
+			Table, Method, Relation, File string
+			Rowid                         int64
+			Record                        struct {
+				Deleted bool
+				Body    *string
+				Payload map[string]any
+			}
+		} `json:"records"`
+	}
+	if err := json.Unmarshal(raw, &exp); err != nil {
+		t.Fatal(err)
+	}
+	if len(exp.Claimed) != 1 || exp.Claimed[0] != "ZWAADDRESSBOOKCONTACT" {
+		t.Errorf("claimed %v", exp.Claimed)
+	}
+	rows := map[int64]bool{}
+	files := map[string]bool{}
+	for _, r := range exp.Records {
+		rows[r.Rowid] = true
+		files[r.File] = true
+		if r.Table != "ZWAADDRESSBOOKCONTACT" || r.Method != "sqlite-wal-prior" || r.Relation != "absent-from-live" || r.Record.Deleted {
+			t.Errorf("row %d: %+v", r.Rowid, r)
+		}
+		rawp, _ := r.Record.Payload["raw"].(map[string]any)
+		if rawp["app"] != "whatsapp" || rawp["app_basis"] != "backup_domain" {
+			t.Errorf("recovered contact %d at a domain place states its domain label: %v", r.Rowid, rawp)
+		}
+		if r.Rowid == 90 {
+			lm, _ := rawp["lid_map"].([]any)
+			if len(lm) != 1 || r.Record.Payload["display_name"] != "Gil Gone" || rawp["phone_label_stored"] != "_$!<Home>!$_" {
+				t.Errorf("recovered contact 90: %v", r.Record.Payload)
+			}
+		}
+	}
+	for n := int64(1); n <= 200; n++ {
+		want := n == 90 || n == 91 || n == 92 || (n >= 100 && n <= 159 && n%2 == 0)
+		if rows[n] != want {
+			t.Errorf("row %d recovered = %v, want %v", n, rows[n], want)
+		}
+	}
+	if len(exp.Unmapped) != 1 || exp.Unmapped[0].Rowid != 93 || !strings.Contains(exp.Unmapped[0].Contains, "ZWAADDRESSBOOKCONTACT row") {
+		t.Errorf("unmapped %+v, want the group row 93", exp.Unmapped)
+	}
+	if !files["db"] || !files["wal"] {
+		t.Errorf("history in %v, want both the main file and the WAL", files)
 	}
 }

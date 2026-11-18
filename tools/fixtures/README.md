@@ -3337,6 +3337,7 @@ py -3 -I tools/fixtures/telephony_gen.py --family whatsapp-ios-contacts --check
 | `ios-contactsv2-nolid` | backup domain, no `-wal` | as above | rows 1 to 3 in a table with no `ZLID` column (S7 saw it absent on some images): no `lid_map`, no `lid_state` |
 | `ios-contactsv2-extract` | an app group of an extraction (`BundleIOS`, no extras) | as above | rows 1 to 3 |
 | `ios-contactsv2-otherapp` | an app group of an extraction | none | one table `ZCONTACT(Z_PK)` (another app's database of the same name) |
+| `ios-contactsv2-deleted` | consumer domain, with `-wal` | as above | contacts 1 and 2 and the odd 100 to 159 live; deleted through the WAL (no page is freed, asserted): 90 a full person (wrapped label, `ZLID`), 91 a name, 92 a phone and a highlighted name, 93 a group row (reported unmapped, never typed) and the even 100 to 159. `--recover-oracle` writes the `.recover.expect.json`, a lower bound (plan 4I2 PF2) |
 
 Notes of the oracle: `container`, `app` and `app_basis` or `app_state`. The warnings are the row warnings in rowid order; no variant
 holds an uncommitted WAL frame, so no reader warning is stated (the calls family covers it).

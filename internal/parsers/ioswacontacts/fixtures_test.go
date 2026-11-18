@@ -21,7 +21,7 @@ const (
 )
 
 var variants = []string{
-	"ios-contactsv2", "ios-contactsv2-nolid", "ios-contactsv2-extract", "ios-contactsv2-otherapp",
+	"ios-contactsv2", "ios-contactsv2-nolid", "ios-contactsv2-extract", "ios-contactsv2-otherapp", "ios-contactsv2-deleted",
 }
 
 // placeOf is where a variant sits: a backup variant is bundled with BundleIOSBackup(h, domain, rel) and has an empty
