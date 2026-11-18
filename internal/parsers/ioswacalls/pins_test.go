@@ -5,6 +5,8 @@ package ioswacalls_test
 // fixturePins is the SHA-256 of every decompressed fixture file, by "<variant>.<role>". A changed fixture
 // changes this file in the same commit, so a silent regeneration shows in review.
 var fixturePins = map[string]string{
+	"ios-callhistory-deleted.db":  "2cc568114135f88d854037ecc029160c9d9e5565caf52c4ffc73d199931bdf12",
+	"ios-callhistory-deleted.wal": "2804d7101599261219d8cfbb21b7d4af27362503ea76cd48b0fc5129f048c658",
 	"ios-callhistory-extract.db":  "a802271a4b0997530ecf538854b0e4bf09c25e07b0769e27ee55e4cc6d540511",
 	"ios-callhistory-otherapp.db": "753d88d626bf90f552f3c889faf59cc6ff0ff77aac7b9c38d3d75b04985cfa29",
 	"ios-callhistory.db":          "e70be2100a79bba552c7322591f5cfba76e492da52f5d9bad9e3d438db14d60a",

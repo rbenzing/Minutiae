@@ -21,7 +21,7 @@ const (
 )
 
 var variants = []string{
-	"ios-callhistory", "ios-callhistory-extract", "ios-callhistory-otherapp",
+	"ios-callhistory", "ios-callhistory-extract", "ios-callhistory-otherapp", "ios-callhistory-deleted",
 }
 
 // placeOf is where a variant sits: a backup variant is bundled with BundleIOSBackup(h, domain, rel) and has an empty
@@ -105,7 +105,7 @@ func TestFixturesAreBundledWhereTheyAreWritten(t *testing.T) {
 			t.Errorf("%s: the database is at %q, want %q", v, b.Primary.Logical, want)
 		}
 		_, hasWAL := b.ByRole["wal"]
-		if wantWAL := v == "ios-callhistory"; hasWAL != wantWAL {
+		if wantWAL := v == "ios-callhistory" || v == "ios-callhistory-deleted"; hasWAL != wantWAL {
 			t.Errorf("%s: -wal companion in the bundle = %v, want %v", v, hasWAL, wantWAL)
 		}
 	}

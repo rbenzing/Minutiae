@@ -3,6 +3,7 @@
     py -3 -I tools/fixtures/telephony_gen.py --family whatsapp-ios-calls --out internal/parsers/ioswacalls/testdata \
         --pins-go internal/parsers/ioswacalls/pins_test.go --pins-package ioswacalls_test
     py -3 -I tools/fixtures/telephony_gen.py --family whatsapp-ios-calls --check
+    py -3 -I tools/fixtures/telephony_gen.py --family whatsapp-ios-calls --recover-oracle --out internal/parsers/ioswacalls/testdata
 
 The databases are written by the engine (Python's sqlite3), the WAL variants by a child process that dies without closing
 (C.kill_child). The DDL is constructed from memory (schemas/whatsapp-ios/CROSSCHECK.md), so a fixture proves what the parser
@@ -26,11 +27,16 @@ Variants (the placement of each is in internal/parsers/ioswacalls/fixtures_test.
                              WAL frame, call 16 in an uncommitted one
   ios-callhistory-extract    an app group of a full-file-system extraction, calls 1 and 2
   ios-callhistory-otherapp   a same-named database of another app: one table ZCALL(Z_PK)
+  ios-callhistory-deleted    deleted calls (every other one of a run, so no page is freed) through the WAL, among them a call on
+                             aggregate A1 whose one live call is another row (plan 4I2 PF2, Review Focus 4)
 
 Python 3 with its bundled sqlite3 only; no Docker. Not part of gen.sh all.
 """
 import math
 import os
+import shutil
+import sqlite3
+import tempfile
 
 import ios_common as I
 import telephony_common as C
@@ -38,7 +44,9 @@ import whatsapp_gen as W
 import whatsapp_ios_common as X
 
 FAMILY = "whatsapp-ios-calls"
+SCENARIOS = {}  # variant -> C.Scenario, filled when the variant is generated (the typed recovery oracle, PF2)
 CLAIMED = ("ZWACDCALLEVENT",)
+ALIAS = "Z_PK"
 
 UDID = "UDID1"
 DOMAIN_WA = "AppDomainGroup-" + X.GROUP_WA
@@ -161,12 +169,12 @@ def duration_of(c, raw, p):
 
 def direction_of(c, raw, unknown, ctx):
     """The direction of a call and its raw.direction_state (4I2-R7), under the single-call aggregate rule (4I2-R4, PF4)."""
+    key = c.int("Z1CALLEVENTS")
+    if key is not None:
+        raw["Z1CALLEVENTS"] = key  # as stored, whatever the direction
     if ctx["aggs"] is None:  # a recovered row: the live aggregate says nothing about it (Review Focus 4, P8)
         raw["direction_state"] = "recovered-row"
         return "unknown"
-    key = c.int("Z1CALLEVENTS")
-    if key is not None:
-        raw["Z1CALLEVENTS"] = key
     if key is None or key == 0:
         raw["direction_state"] = "no-aggregate"
         return "unknown"
@@ -350,8 +358,95 @@ def v_otherapp(work):
     return {"db": C.read(path)}, unparsed("ios-callhistory-otherapp")
 
 
+# ----------------------------------------------------------------------------------------- typed recovery (plan 4I2 PF2)
+
+def bulk(first, n):
+    """n plain calls with ids first.. (the rows the deleted variant writes and deletes): no aggregate, so that no live
+    aggregate count changes. The 140-byte call id sets the row size: with it the deleting transaction frees no page (v_deleted
+    asserts that); another size may make SQLite merge two half-empty leaves."""
+    return [call(i, None, i % 2, 0, ZDATE=D + 5000 + i, ZDURATION=i % 7 + 0.5,
+                 ZCALLIDSTRING=("bulk call %d " % i).ljust(140, ".")) for i in range(first, first + n)]
+
+
+def new_scenario(variant, con):
+    scen = SCENARIOS[variant] = C.Scenario(CLAIMED, alias=ALIAS)
+    scen.snap(con, "ZWACDCALLEVENT", "0")
+    return scen
+
+
+def freelist_count(files):
+    """The freelist page count of the finished files as the engine sees them (a WAL is applied to a COPY)."""
+    work = tempfile.mkdtemp(prefix="telephony-free-")
+    try:
+        path = work + "/f.db"
+        for role, suffix in (("db", ""), ("wal", "-wal")):
+            if role in files:
+                with open(path + suffix, "wb") as f:
+                    f.write(files[role])
+        con = sqlite3.connect(path)
+        n = con.execute("pragma freelist_count").fetchone()[0]
+        con.close()
+        return n
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def v_deleted(work):
+    """Calls 1 and 2 live (on the aggregates A1 and A2); 60 bulk calls (ids 100-159) and calls 90-91 in the main file; one
+    committed WAL transaction inserts calls 92-93 and the next deletes 90-93 and the even ids of 100-159. The odd ids stay live,
+    so every leaf keeps half its cells and no page is freed: a page that later belongs to the freelist makes the engine state
+    relation unknown with owner-changed (internal/sqlitefile/rowsident.go, ruling C44), which the oracle walker does not model.
+    The main file still holds the deleted rows (versions that are history under the WAL) and the first WAL frame holds 92-93
+    (the old frame). The deleted calls: 90 is on aggregate A1, whose one live call is call 1 (Review Focus 4: a recovered row
+    never borrows that direction); 91 names no aggregate; 92 names A1 as well and has no date; 93 names an aggregate with no
+    row. Deleted rows are found only through the WAL here: the history oracle (sqlite_oracle.build_history) reads freelist
+    leaves only of a store with no WAL or journal. Every deleted row has a fractional ZDURATION: a whole-number REAL is stored
+    as an integer in the record, which the page walker reads back as an integer, not as the float the engine returns."""
+    deleted = [call(90, 1, 0, 0, ZDURATION=30.5), call(91, None, 1, 0, ZDURATION=12.25)]
+    old = [call(92, 1, 1, 0, ZDATE=None, ZDURATION=7.75), call(93, 99, 0, 1, ZDURATION=2.5)]
+    rows = calls(False)[:2] + deleted + bulk(100, 60)
+    path = build_db(work, {"ZWAAGGREGATECALLEVENT": aggregates(False)[:2], "ZWACDCALLEVENT": rows}, wal=True)
+    con = C.connect(path)
+    scen = new_scenario("ios-callhistory-deleted", con)
+    scen.write("ZWACDCALLEVENT", scen.snap(con, "ZWACDCALLEVENT"))
+    scen.want("ZWACDCALLEVENT", scen.snap(con, "ZWACDCALLEVENT", "(Z_PK between 100 and 159 and Z_PK % 2 = 0) or Z_PK in (90, 91)"))
+    con.close()
+    # the rows the first WAL transaction inserts, as the engine would store them
+    shadow = work + "/shadow.db"
+    sc = C.connect(shadow)
+    sc.executescript(X.load_ios_ddl("callhistory.sql")[0])
+    for m in old:
+        C.insert(sc, "ZWACDCALLEVENT", m)
+    old_rows = scen.snap(sc, "ZWACDCALLEVENT")
+    sc.close()
+    scen.write("ZWACDCALLEVENT", old_rows)
+    scen.want("ZWACDCALLEVENT", old_rows)
+    X.leave_old_frame(path, ["pragma wal_autocheckpoint = 0"] + [X.insert_stmt("ZWACDCALLEVENT", m) for m in old] +
+                      ["delete from ZWACDCALLEVENT where Z_PK in (90, 91, 92, 93) or (Z_PK between 100 and 159 and Z_PK % 2 = 0)"])
+    files = finish(path)
+    assert "wal" in files and freelist_count(files) == 0, "a page was freed: the oracle walker does not model that"
+    return files, oracle(files, "ios-callhistory-deleted", "backup", DOMAIN_WA)
+
+
+def recover_env(files):
+    """The live view of the finished files with no aggregate counts (a recovered row borrows nothing); the place is the
+    consumer backup domain (PF5: a recovered row at a domain place states its domain label)."""
+    return context(C.engine_view(files, TABLES), "backup", DOMAIN_WA, recovered=True)
+
+
+def recover_expect(variant, files):
+    """The <variant>.recover.expect.json of a variant that has a scenario (ruling 4G-R14)."""
+    def one(table, d, env, file):
+        rec = expect_call(d, env)
+        rec["source_path"], rec["file"] = "", file  # a recovered record: the source path follows the role of the file
+        return rec
+
+    return C.recover_oracle(variant, files, SCENARIOS[variant], recover_env, one)
+
+
 VARIANTS = {
     "ios-callhistory": v_callhistory,
     "ios-callhistory-extract": v_extract,
     "ios-callhistory-otherapp": v_otherapp,
+    "ios-callhistory-deleted": v_deleted,
 }

@@ -3,6 +3,7 @@ package ioswacalls_test
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -163,5 +164,65 @@ func TestIOSWhatsAppCallsOracleStatesTheApp(t *testing.T) {
 	c, fx = recsOf(t, "ios-callhistory-otherapp")
 	if len(c.by) != 0 || len(fx.Expect.Notes) != 0 {
 		t.Errorf("otherapp states %d records and notes %v; the parser refuses it", len(c.by), fx.Expect.Notes)
+	}
+}
+
+// TestIOSWhatsAppCallsDeletedOracleStatesTheHistory (plan 4I2 PF2, Review Focus 4): deleted calls are found through the WAL
+// (the file holds 90 and 91, a first WAL frame 92 and 93, one committed WAL transaction deletes them with the even ones of
+// 100 to 159); call 90 is on aggregate A1, whose one live call is call 1, and no recovered call borrows a direction from it.
+func TestIOSWhatsAppCallsDeletedOracleStatesTheHistory(t *testing.T) {
+	c, fx := recsOf(t, "ios-callhistory-deleted")
+	if len(c.by) != 32 || fx.Expect.Notes["aggregates"] != "2" {
+		t.Errorf("%d live records, notes %v, want 32 (calls 1, 2 and the 30 odd ones of 100-159) and two aggregate keys", len(c.by), fx.Expect.Notes)
+	}
+	if c.rec(1).direction() != "in" || c.rec(2).direction() != "out" {
+		t.Errorf("live calls 1 and 2: %v %v", c.rec(1).Payload, c.rec(2).Payload)
+	}
+	raw, err := os.ReadFile("testdata/ios-callhistory-deleted.recover.expect.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exp struct {
+		Claimed []string `json:"claimed"`
+		Records []struct {
+			Table, Method, Relation, File string
+			Rowid                         int64
+			Record                        struct {
+				Deleted bool
+				Payload map[string]any
+			}
+		} `json:"records"`
+	}
+	if err := json.Unmarshal(raw, &exp); err != nil {
+		t.Fatal(err)
+	}
+	if len(exp.Claimed) != 1 || exp.Claimed[0] != "ZWACDCALLEVENT" {
+		t.Errorf("claimed %v", exp.Claimed)
+	}
+	rows := map[int64]bool{}
+	files := map[string]bool{}
+	for _, r := range exp.Records {
+		rows[r.Rowid] = true
+		files[r.File] = true
+		if r.Table != "ZWACDCALLEVENT" || r.Method != "sqlite-wal-prior" || r.Relation != "absent-from-live" {
+			t.Errorf("row %d: %+v", r.Rowid, r)
+		}
+		// a recovered call states no direction, whatever its aggregate says (Review Focus 4), and no counterparty
+		rawp, _ := r.Record.Payload["raw"].(map[string]any)
+		if r.Record.Payload["direction"] != "unknown" || rawp["direction_state"] != "recovered-row" || rawp["aggregate"] != nil || r.Record.Payload["address"] != nil || r.Record.Deleted {
+			t.Errorf("recovered call %d: %v deleted %v", r.Rowid, r.Record.Payload, r.Record.Deleted)
+		}
+		if r.Rowid == 90 && (fmt.Sprint(rawp["Z1CALLEVENTS"]) != "1" || r.Record.Payload["outcome"] != "answered") {
+			t.Errorf("recovered call 90 is on aggregate A1 and answered: %v", r.Record.Payload)
+		}
+	}
+	for n := int64(1); n <= 200; n++ {
+		want := n == 90 || n == 91 || n == 92 || n == 93 || (n >= 100 && n <= 159 && n%2 == 0)
+		if rows[n] != want {
+			t.Errorf("row %d recovered = %v, want %v", n, rows[n], want)
+		}
+	}
+	if !files["db"] || !files["wal"] {
+		t.Errorf("history in %v, want both the main file and the WAL", files)
 	}
 }
