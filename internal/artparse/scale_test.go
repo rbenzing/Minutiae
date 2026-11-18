@@ -8,7 +8,8 @@ package artparse_test
 // high-water mark that a second phase would inherit. Run it through bash .superpowers/sdd/heavy.sh
 // (docs/testing.md, docs/performance.md).
 //
-// Phases, in order: gen, decode-200m, decode-1g, ingest-200m, jobs-500. Environment:
+// Phases, in order: gen, decode-200m, decode-1g, ingest-200m, jobs-500, and for plan 4I whatsapp-gen and whatsapp-decode-1m
+// (a 1,000,000-message msgstore.db written by the engine, then parsed with MemBudget 1 GiB). Environment:
 // MINUTIAE_SCALE_DIR (the work directory; about 4 GiB), MINUTIAE_SCALE_LABEL, MINUTIAE_SCALE_MACHINE,
 // MINUTIAE_SCALE_PHASE, and for gen only MINUTIAE_SCALE_GEN (a comma list of 200m, 1g; both by default).
 //
@@ -42,6 +43,8 @@ import (
 	"github.com/rbenzing/minutiae/internal/parsers"
 	"github.com/rbenzing/minutiae/internal/parsers/androidcalllog"
 	"github.com/rbenzing/minutiae/internal/parsers/androidmms"
+	"github.com/rbenzing/minutiae/internal/parsers/androidwhatsapp"
+	"github.com/rbenzing/minutiae/internal/parsers/parsertest"
 	"github.com/rbenzing/minutiae/internal/records"
 )
 
@@ -66,7 +69,7 @@ func scaleEnvOf(t *testing.T) scaleEnv {
 	t.Helper()
 	e := scaleEnv{phase: os.Getenv("MINUTIAE_SCALE_PHASE")}
 	if e.phase == "" {
-		t.Skip("set MINUTIAE_SCALE_PHASE (gen, decode-200m, decode-1g, ingest-200m, jobs-500) to run the parse scale test; it is manual (see docs/testing.md)")
+		t.Skip("set MINUTIAE_SCALE_PHASE (gen, decode-200m, decode-1g, ingest-200m, jobs-500, whatsapp-gen, whatsapp-decode-1m) to run the parse scale test; it is manual (see docs/testing.md)")
 	}
 	if e.label = os.Getenv("MINUTIAE_SCALE_LABEL"); e.label == "" {
 		t.Fatal("set MINUTIAE_SCALE_LABEL (a name for this run, such as 4h)")
@@ -646,8 +649,178 @@ func TestScaleParse(t *testing.T) {
 		parsePhase(t, e, e.phase, genPath(e, "mmssms-1g.db"), gi, scaleBudget, true, true, scaleRSSCap)
 	case "jobs-500":
 		manyJobsPhase(t, e, e.phase, manyJobs, scaleBudget, scaleRSSCap)
+	case "whatsapp-gen":
+		runGenWhatsApp(t, e)
+	case "whatsapp-decode-1m":
+		whatsAppDecode(t, e)
 	default:
-		t.Fatalf("unknown MINUTIAE_SCALE_PHASE %q (gen, decode-200m, decode-1g, ingest-200m, jobs-500)", e.phase)
+		t.Fatalf("unknown MINUTIAE_SCALE_PHASE %q (gen, decode-200m, decode-1g, ingest-200m, jobs-500, whatsapp-gen, whatsapp-decode-1m)", e.phase)
+	}
+}
+
+// ---- WhatsApp (plan 4I task 15) ----
+
+const (
+	waRemotePath = "/data/data/com.whatsapp/databases/msgstore.db"
+	waDDL        = "../../tools/fixtures/schemas/whatsapp-android/modern-2026.sql"
+	waMessages   = 1_000_000
+	waChats      = 1000
+	waJobs       = 200
+	waBudget     = 1024 * scaleMiB // MemBudget of whatsapp-decode-1m (plan 4I task 15)
+)
+
+// genWhatsApp writes a modern msgstore.db through the engine from the committed DDL snapshot: n messages over waChats chats,
+// 10% of them image messages with a message_media row, and waJobs deleted_chat_job rows. It returns the message rows.
+func genWhatsApp(path string, n int64) (genInfo, error) {
+	db, err := openGen(path)
+	if err != nil {
+		return genInfo{}, err
+	}
+	fail := func(err error) (genInfo, error) { _ = db.Close(); return genInfo{}, err }
+	if err := execScript(db, waDDL); err != nil {
+		return fail(err)
+	}
+	r, pool := rand.New(rand.NewPCG(3, 4)), bodyPool()
+	tx, err := db.Begin()
+	if err != nil {
+		return fail(err)
+	}
+	for c := int64(1); c <= waChats; c++ {
+		if _, err := tx.Exec("INSERT INTO jid (_id, user, server, raw_string) VALUES (?,?,?,?)", c, fmt.Sprintf("1555%07d", c), "s.whatsapp.net", fmt.Sprintf("1555%07d@s.whatsapp.net", c)); err != nil {
+			return fail(err)
+		}
+		if _, err := tx.Exec("INSERT INTO chat (_id, jid_row_id) VALUES (?,?)", c, c); err != nil {
+			return fail(err)
+		}
+	}
+	for j := int64(1); j <= waJobs; j++ {
+		if _, err := tx.Exec("INSERT INTO deleted_chat_job (_id, chat_row_id, deleted_message_row_id) VALUES (?,?,?)", j, j, int64(r.IntN(int(n)))); err != nil {
+			return fail(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fail(err)
+	}
+	const batch = 20000
+	for start := int64(1); start <= n; start += batch {
+		tx, err := db.Begin()
+		if err != nil {
+			return fail(err)
+		}
+		msg, err := tx.Prepare("INSERT INTO message (_id, chat_row_id, from_me, key_id, sender_jid_row_id, status, timestamp, received_timestamp, message_type, text_data, sort_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+		if err != nil {
+			return fail(err)
+		}
+		media, err := tx.Prepare("INSERT INTO message_media (message_row_id, file_path, file_size, mime_type, media_name) VALUES (?,?,?,?,?)")
+		if err != nil {
+			return fail(err)
+		}
+		for id := start; id < start+batch && id <= n; id++ {
+			typ := int64(0)
+			if id%10 == 0 {
+				typ = 1
+			}
+			off := r.IntN(len(pool) - 160)
+			ts := int64(1_577_836_800_000) + id*1000
+			if _, err := msg.Exec(id, id%waChats+1, id%2, fmt.Sprintf("K%09d", id), 0, 0, ts, ts+100, typ, string(pool[off:off+40+r.IntN(120)]), id); err != nil {
+				return fail(err)
+			}
+			if typ == 1 {
+				if _, err := media.Exec(id, fmt.Sprintf("Media/WhatsApp Images/IMG-%09d.jpg", id), 12345, "image/jpeg", fmt.Sprintf("IMG-%09d.jpg", id)); err != nil {
+					return fail(err)
+				}
+			}
+		}
+		_ = msg.Close()
+		_ = media.Close()
+		if err := tx.Commit(); err != nil {
+			return fail(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		return genInfo{}, err
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return genInfo{}, err
+	}
+	return genInfo{Bytes: st.Size(), Rows: n}, nil
+}
+
+// runGenWhatsApp is the whatsapp-gen phase: the 1,000,000-message store under MINUTIAE_SCALE_DIR/input.
+func runGenWhatsApp(t *testing.T, e scaleEnv) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(e.dir, "input"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	gi, err := genWhatsApp(genPath(e, "msgstore-1m.db"), waMessages)
+	if err != nil {
+		t.Fatalf("gen msgstore-1m.db: %v", err)
+	}
+	t.Logf("gen msgstore-1m.db: %d bytes, %d messages in %s", gi.Bytes, gi.Rows, time.Since(start).Round(time.Second))
+	b, _ := json.MarshalIndent(map[string]genInfo{"msgstore-1m.db": gi}, "", "  ")
+	if err := os.WriteFile(genPath(e, "whatsapp-gen.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeResult(t, e, phaseResult{Phase: "whatsapp-gen", Outcome: "generated", InputBytes: gi.Bytes, Rows: gi.Rows})
+}
+
+// whatsAppDecode is the whatsapp-decode-1m phase: the 1,000,000-message store parsed with MemBudget 1 GiB, counting what the
+// parser emits. The parser is registered under a synthetic source hash: the measurement does not depend on the identity, and
+// the registration with the generated hash is plan 4I task 16.
+func whatsAppDecode(t *testing.T, e scaleEnv) {
+	t.Helper()
+	var gi genInfo
+	b, err := os.ReadFile(genPath(e, "whatsapp-gen.json")) //nolint:gosec // the operator's work directory
+	if err != nil {
+		t.Fatalf("run the whatsapp-gen phase first: %v", err)
+	}
+	m := map[string]genInfo{}
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	gi = m["msgstore-1m.db"]
+	c := newScaleCase(t, filepath.Join(e.dir, "cases"), "WHATSAPPDECODE1M")
+	captureFile(t, c, waRemotePath, genPath(e, "msgstore-1m.db"))
+	p := androidwhatsapp.Parser{}
+	reg, err := artparse.Register(p, parsertest.FakeHash(androidwhatsapp.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reg, err = reg.WithRecoveryHash(parsertest.FakeHash(androidwhatsapp.Name + ".recover")); err != nil {
+		t.Fatal(err)
+	}
+	lim := parse.DefaultLimits()
+	lim.MemBudget = waBudget
+	opt := artparse.Options{Limits: lim}
+	artparse.WithNewWriter(&opt, func(*evidence.Case, records.Parser, records.WriterOptions) (artparse.IngestWriter, error) {
+		return &countWriter{}, nil
+	})
+	h, err := artparse.New(c, []artparse.Registered{reg}, opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	debug.FreeOSMemory()
+	start := time.Now()
+	sum, err := h.Run(context.Background(), artparse.RunOptions{})
+	wall := time.Since(start)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	rss, ok := peakRSS()
+	res := phaseResult{Phase: "whatsapp-decode-1m", MemBudget: waBudget, InputBytes: gi.Bytes, Rows: gi.Rows}
+	fillResult(&res, sum, wall, rss, ok)
+	res.Streamed = streamedOf(t, c)
+	writeResult(t, e, res)
+	if len(sum.Jobs) != 1 {
+		t.Fatalf("%d jobs, want 1", len(sum.Jobs))
+	}
+	if res.Outcome != artparse.OutcomeComplete {
+		t.Errorf("outcome %s (%s), want complete", res.Outcome, res.Reason)
+	}
+	if res.Records < gi.Rows {
+		t.Errorf("records = %d, want at least the %d messages written", res.Records, gi.Rows)
 	}
 }
 

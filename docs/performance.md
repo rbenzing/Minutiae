@@ -912,3 +912,26 @@ What R8 asked, answered:
 - Memory held to the lines: shown on this platform. In memory, the peak (545 MiB decode, 698 MiB ingest) is far below `input size + 2 x MemBudget`; streamed, 1.25 GiB costs 136 MiB (it does not cost its size) and 500 jobs at a 256 MiB budget cost 94 MiB, both below `2 x MemBudget` = 512 MiB. A platform that cannot read the peak (`peakrss_other_test.go`) skips the phase with "peak RSS not measured on this platform": it is "not measured" there, never a pass.
 
 Caveats. The peak is the high-water mark of the whole test process (Windows peak working set), so it includes the phase's setup (capturing the input into a case, and for `jobs-500` generating the bundles in process): it is an upper bound of the parse. The ingest rate (3,805 records/s) is the records writer's (FTS maintenance and fsync, see the ingest bullets above), not the parsers': the same 855,000 rows decode at 65,799 records/s. Times on a shared machine vary: the first `decode-200m` run of this plan (118.4 s, 7,221 records/s, peak RSS 581 MiB, same code) ran while another builder's check was using the machine; the table is the later run. One run per phase, so there is no spread. The Linux `VmHWM` path and the unmeasured path were not run (Windows only).
+
+## WhatsApp msgstore at 1,000,000 messages (plan 4I)
+
+Spec section 14 of plan 4I asked for a parse of a synthetic msgstore.db of at least 1,000,000 messages. The phases `whatsapp-gen` and `whatsapp-decode-1m` of `TestScaleParse` (`go test -tags scale -run TestScaleParse ./internal/artparse/`, one phase per process, in the background) write and parse it; `TestScaleLookupCost` (`internal/parsers/androidwhatsapp`, `-tags scale`, `MINUTIAE_SCALE_WA_DB`) counts what the parse costs in lookups. The store is a modern schema (`modern-2026.sql`) written by the engine: 1,000,000 `message` rows over 1,000 chats, 10% of them image messages with a `message_media` row (100,000 attachments), 200 `deleted_chat_job` rows and no side rows for the other message features.
+
+Machine: Intel i7-1265U (10 cores, 12 threads), 15.4 GB RAM, NVMe, Windows 11, go1.26.8, run on 2026-11-17 at commit 4b4d494 plus the uncommitted files of plan 4I task 15 (the tests and the scale phases), beside other projects on the same machine.
+
+| Phase | MemBudget | Input bytes | Records | Seconds | Records/s | MiB/s | Peak RSS | Streamed | Outcome |
+|---|---|---|---|---|---|---|---|---|---|
+| `whatsapp-gen` | | 215,130,112 | (1,000,000 messages written) | 17 | | | | | generated |
+| `whatsapp-decode-1m` | 1 GiB | 215,130,112 | 1,000,000 | 47.1 | 21,217 | 4.4 | 1,421 MiB | no | complete |
+
+The input is below `MemInputMax` (256 MiB), so it is served from memory; the peak resident set (1,421 MiB) is the high-water mark of the whole test process, which includes the capture of the input into a case, and is far below `input size + 2 x MemBudget` (2,263 MiB). The scale phase registers the parser under a synthetic source hash: the generated one comes with the registration of plan 4I task 16, and the measurement does not depend on the identity.
+
+What the parse costs, counted over the same store by `TestScaleLookupCost` (the four mappings run through `rowrun.Run` with a counting mapping context and a counting `Lookuper`; 42.7 s with that instrumentation and the harness's sealed readers):
+
+| Cost | Measured | What the plan expected |
+|---|---|---|
+| Side-table lookups per message row | 8.10: one `Get` each of `chat`, `jid`, `message_edit_info`, `message_ephemeral`, `message_forwarded`, `message_quoted`, `message_revoked` and `message_view_once_media`, and 0.10 of `message_media`; no `Match` | about 12 (met: fewer, because this store holds no system, location, vCard, LID or call rows, each of which adds lookups) |
+| Case searches per attachment (`Lookuper.Find`) | 1.00 (100,000 for 100,000 attachments) | once per attachment (met) |
+| The census, the second open and one extra scan of each counted table (4I-R2) | 1.8 s of 41.9 s (4.4% of the parse), and 1.7 s in the first run | a measured cost (limitation 15) |
+
+Two bounds of the hostile tests, which the plan stated, are not met and are recorded rather than hidden (`docs/limitations/parsers.md`, item 15): a 64 MiB blob in an unread column is charged twice to the budget by the decoder, so MemBudget 128 MiB is the typed `ErrBudget` and 256 MiB parses; and the join index of a million `message_vcard` rows is charged about 260 MiB, so 256 MiB is the typed `ErrBudget` and the default 1 GiB parses.
