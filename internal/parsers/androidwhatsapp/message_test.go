@@ -139,6 +139,9 @@ func TestWhatsAppUnmappedCodesStayUnknownWithRaw(t *testing.T) {
 	for _, v := range parsedVariants {
 		recs, _ := recordsOf(t, v)
 		for k, r := range recs {
+			if r.Type == "call" {
+				continue // a call has no message delivery status
+			}
 			if r.Payload["status"] != "unknown" {
 				t.Errorf("%s %s: status %v, want unknown (R4)", v, k, r.Payload["status"])
 			}

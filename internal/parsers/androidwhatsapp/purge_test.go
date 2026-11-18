@@ -174,6 +174,9 @@ func TestWhatsAppDeletedChatJobCapIsIncomplete(t *testing.T) {
 			case "message/60", "message/61", "message/62", "message/65", "message/66", "message_add_on/9":
 				continue // cleared by jobs 1 and 3, which were read
 			}
+			if r.Type == "call" {
+				continue // a call is not in a chat
+			}
 			if raw["parent_state"] != nil {
 				continue // a reaction with no parent has no chat to judge
 			}

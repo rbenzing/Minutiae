@@ -53,7 +53,7 @@ func (Parser) Meta() parse.Meta {
 
 // Mappings are the per-table mappings, in the order Parse runs them: the legacy table first, then the modern one (R1).
 func (Parser) Mappings() []parse.TableMapping {
-	return []parse.TableMapping{messagesMapping(), messageMapping(), addOnMapping()}
+	return []parse.TableMapping{messagesMapping(), messageMapping(), addOnMapping(), callLogMapping()}
 }
 
 // The reasons of Probe.

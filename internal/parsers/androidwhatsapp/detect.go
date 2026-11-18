@@ -227,6 +227,9 @@ func (d detection) steps(g *joinGuard, js *jobSet) []rowrun.Step {
 	if hasTable(d.Census.Objects, tblAddOn) {
 		steps = append(steps, rowrun.Step{Mapping: withGuard(addOnMappingWith(js), g), Optional: true})
 	}
+	if hasTable(d.Census.Objects, tblCallLog) {
+		steps = append(steps, rowrun.Step{Mapping: withGuard(callLogMapping(), g), Optional: true})
+	}
 	return steps
 }
 

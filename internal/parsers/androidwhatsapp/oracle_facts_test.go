@@ -21,6 +21,12 @@ func factsOf(t *testing.T, variant string) (byRow map[string]parsertest.ExpRecor
 		byRow[r.Table+"/"+strconv.FormatInt(r.Rowid, 10)] = r
 		// only a revoke tombstone is deleted, and it names the app's own structure that says so (spec 6.5, plan 4I task 7)
 		del, _ := r.Payload["deleted"].(map[string]any)
+		if r.Type == "call" {
+			if r.Deleted || del != nil {
+				t.Errorf("%s %s/%d: a deleted call", variant, r.Table, r.Rowid)
+			}
+			continue
+		}
 		if r.Type != "message" || r.Deleted != (del != nil) || (r.Deleted && del["source"] != "message_revoked" && del["source"] != "message_type" && del["source"] != "deleted_chat_job") {
 			t.Errorf("%s %s/%d: type %q deleted %v %v", variant, r.Table, r.Rowid, r.Type, r.Deleted, del)
 		}
@@ -47,8 +53,8 @@ func participants(r parsertest.ExpRecord) []any {
 
 func TestCoreOracleStatesTheSpecRules(t *testing.T) {
 	modern, _ := factsOf(t, "android-modern-2026")
-	if len(modern) != 51 { // the 18 rows of the core, rows 30 to 44 of plan 4I task 7 the five reactions of task 8, and rows 60 to 71 and the reaction 9 of task 9
-		t.Fatalf("android-modern-2026 has %d records, want 51", len(modern))
+	if len(modern) != 59 { // the 18 rows of the core, rows 30 to 44 of plan 4I task 7 the five reactions of task 8, and rows 60 to 71 the reaction 9 of task 9 and the eight calls of task 10
+		t.Fatalf("android-modern-2026 has %d records, want 59", len(modern))
 	}
 	get := func(set map[string]parsertest.ExpRecord, key string) parsertest.ExpRecord {
 		r, ok := set[key]
@@ -114,7 +120,7 @@ func TestCoreOracleStatesTheSpecRules(t *testing.T) {
 	}
 	// every record names the app by the path (D9).
 	for k, r := range modern {
-		if raw := rawOf(t, r); raw["app"] != "whatsapp" || raw["app_basis"] != "path" || (raw["source_table"] != "message" && r.Payload["kind"] != "reaction") {
+		if raw := rawOf(t, r); raw["app"] != "whatsapp" || raw["app_basis"] != "path" || (raw["source_table"] != "message" && r.Payload["kind"] != "reaction" && r.Type != "call") {
 			t.Errorf("%s: app %v basis %v table %v", k, raw["app"], raw["app_basis"], raw["source_table"])
 		}
 	}
@@ -201,7 +207,7 @@ func TestStructuralVariantsHaveTheirShape(t *testing.T) {
 		records int
 		gen     string
 	}{
-		"android-transition-legacydata": {18, "transition"}, "android-transition-moderndata": {16, "transition"},
+		"android-transition-legacydata": {25, "transition"}, "android-transition-moderndata": {16, "transition"},
 		"android-transition-walonly": {17, "transition"}, "android-transition-empty": {0, "transition"},
 		"android-modern-2021": {18, "modern"}, "android-neither": {0, ""}, "android-crypt14": {0, ""},
 		"android-crypt15": {0, ""}, "android-backup-notsqlite": {0, ""}, "android-backup-plain": {0, ""},

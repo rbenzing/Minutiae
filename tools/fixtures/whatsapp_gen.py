@@ -167,6 +167,38 @@ def modern_extras():
     ]
 
 
+def modern_calls(ids=None):
+    """call_log rows 1 to 8 (plan 4I task 10). parts are the call_log_participant_v2 rows as (address, call_result);
+    row 7 holds seconds in the millisecond column (R10: kept as stored, no floor)."""
+    def call(i, **kw):
+        base = dict(id=i, jid=C1, me=0, key="C%02d" % i, ts=T0 + 400000 + i * 1000, video=0, dur=0, result=5, bytes=None,
+                    group=0, parts=[])
+        base.update(kw)
+        return base
+    rows = [
+        call(1, dur=60, bytes=1000),
+        call(2, result=2),
+        call(3, me=1, result=2),
+        call(4, result=3),
+        call(5, result=4),
+        call(6, video=1, dur=30, group=GRP, parts=[(P2, 5), (P3, 2)]),
+        call(7, ts=1600000000, dur=10),
+        call(8, jid=LID1),
+    ]
+    return [r for r in rows if ids is None or r["id"] in ids]
+
+
+def insert_calls(con, js, calls):
+    have = [c[1] for c in con.execute("pragma table_info(call_log)")]
+    for c in calls:
+        row = {"_id": c["id"], "jid_row_id": js.jid_id(c["jid"]), "from_me": c["me"], "call_id": c["key"],
+               "timestamp": c["ts"], "video_call": c["video"], "duration": c["dur"], "call_result": c["result"],
+               "bytes_transferred": c["bytes"], "group_jid_row_id": js.jid_id(c["group"]) if c["group"] else 0}
+        C.insert(con, "call_log", {k: v for k, v in row.items() if k in have})
+        for addr, res in c["parts"]:
+            C.insert(con, "call_log_participant_v2", {"call_log_row_id": c["id"], "jid_row_id": js.jid_id(addr), "call_result": res})
+
+
 def modern_jobs():
     """deleted_chat_job rows 1 to 8 of android-modern-2026 (plan 4I task 9). msg and starred are the bounds as stored;
     cats and singular the lists; a bound of 'x' is a TEXT in an INTEGER column."""
@@ -888,6 +920,110 @@ def apply_purge(raw, payload, verdict, via=None):
     return False
 
 
+CALL_RESULT = {5: "answered", 2: "not_answered", 3: "unavailable"}
+CALL_MAX_DURATION = 10**9
+EXACT = 1 << 53
+
+
+def expect_call(r, ctx, remote):
+    """A call_log row (spec 6.6, 7.4, R10): one call. The time is a millisecond value with no plausibility floor."""
+    raw = {"source_table": "call_log", "app": app_of(remote), "app_basis": "path"}
+    unknown = {}
+    c = Cells(r, raw, unknown)
+    me = read_code(c, "from_me")
+    direction = {0: "in", 1: "out"}.get(me, "unknown") if me is not None else "unknown"
+    vc = read_code(c, "video_call")
+    res = read_code(c, "call_result")
+    outcome = "unknown"
+    if res == 5:
+        outcome = "answered"
+    elif res == 2 and direction == "in":
+        outcome = "missed"
+    if outcome == "unknown" and res in CALL_RESULT:
+        raw["label_call_result"] = CALL_RESULT[res]  # the value is known but no outcome fits (7.4)
+    payload = {}
+    payload.update({"direction": direction, "outcome": outcome, "service": "whatsapp"})
+    if vc in (0, 1):
+        payload["kind"] = "video" if vc == 1 else "voice"
+    # the time: milliseconds, no floor (R10)
+    t, t_end, dur = None, None, c.int("duration")
+    ts = c.int("timestamp")
+    if ts is not None:
+        raw["timestamp"] = ts
+        st = C.classify(ts, "ms")
+        if st != "valid":
+            raw["timestamp_status"] = st
+        else:
+            t = C.iso(ts, "ms")
+            if dur is not None and 0 < dur <= CALL_MAX_DURATION and ts + dur * 1000 < C.MAX_SECONDS * 1000:
+                t_end = C.iso(ts + dur * 1000, "ms")
+                raw["time_end_basis"] = "start+duration"
+    if dur is not None:
+        raw["duration"] = dur
+        if abs(dur) > EXACT:
+            unknown["duration"] = "precision"
+        elif dur >= 0:
+            payload["duration_s"] = dur
+    # the counterparty
+    addr = ABSENT
+    jid_id = c.int("jid_row_id")
+    if jid_id is not None and jid_id > 0:
+        jrow = ctx["jid"].get(jid_id)
+        if jrow is None:
+            addr = {"str": None, "parts": None, "state": "no-jid-row"}
+        else:
+            addr = addr_of_jid(jrow, raw, unknown, "address")
+    if addr["str"]:
+        payload["address"] = addr["str"]
+    else:
+        raw["address_state"] = addr["state"]
+        if addr["parts"] is not None:
+            raw["address_parts"] = addr["parts"]
+    gid = c.int("group_jid_row_id")
+    if gid is not None and gid != 0:
+        grow = ctx["jid"].get(gid) if gid > 0 else None
+        ga = addr_of_jid(grow, raw, unknown, "group_jid") if grow is not None else None
+        if ga is not None and ga["str"]:
+            raw["group_jid"] = ga["str"]
+        else:
+            raw["group_jid_state"] = ga["state"] if ga is not None else ("absent" if gid < 0 else "no-jid-row")
+    cid = c.text("call_id")
+    if cid is not None:
+        raw["call_id"] = cleaned(raw, "call_id", cid)
+    for n in ("bytes_transferred", "call_type", "call_link_row_id", "is_dnd_mode_on"):
+        v = c.int(n)
+        if v is not None:
+            raw[n] = v
+    parts = []
+    for prow in ctx["participants"].get(r["rowid"], []):
+        pc = Cells(prow, raw, unknown, "call_log_participant_v2.")
+        e = {}
+        pj = pc.int("jid_row_id")
+        pr = ctx["jid"].get(pj) if pj is not None and pj > 0 else None
+        pa = addr_of_jid(pr, raw, unknown, "participant_jid") if pr is not None else None
+        if pa is not None and pa["str"]:
+            e["jid"] = pa["str"]
+        else:
+            e["jid_state"] = pa["state"] if pa is not None else ("no-jid-row" if pj is not None and pj > 0 else "absent")
+        v = pc.int("call_result")
+        if v is not None:
+            e["call_result"] = v
+        parts.append(e)
+    if parts:
+        raw["participants"] = parts[:1000]
+        if len(parts) > 1000:
+            raw["participants_total"], raw["participants_truncated"] = len(parts), True
+    lid_raw(ctx, raw, unknown, addr, ABSENT, [])
+    if unknown:
+        raw["unknown_columns"] = unknown
+    payload["raw"] = raw
+    a = payload.get("address")
+    plain = a is None or (a.isascii() and len(a.encode()) <= 64)
+    summ = ("call %s %s" % (direction, outcome) + (" " + a if a else "")) if plain else None
+    return {"table": "call_log", "rowid": r["rowid"], "file": "any", "type": "call", "source_path": remote, "time": t,
+            "time_end": t_end, "times": {}, "deleted": False, "summary": summ, "body": None, "payload": payload}
+
+
 def modern_chat(ctx, raw, unknown, cid):
     """(chat address, title, chat_state) of a modern chat_row_id (spec 6.4.1): raw.chat_row_id is the key as stored."""
     chat, title, state = ABSENT, None, None
@@ -1212,7 +1348,7 @@ def context(view):
     ctx = {"chat": {}, "jid": {}, "vcards": {}, "chat_list": {}, "has_vcard": "message_vcard" in view,
            "has_chat_list": "chat_list" in view, "jid_by_raw": {}, "rows": {},
            "messages": {r["rowid"]: r for r in view.get("message", [])},
-           "has_reaction": "message_add_on_reaction" in view,
+           "has_reaction": "message_add_on_reaction" in view, "participants": {},
            "reactions": {r["rowid"]: r for r in view.get("message_add_on_reaction", [])}}
     ctx["jobs"] = None
     for t in SIDE_TABLES:
@@ -1221,6 +1357,9 @@ def context(view):
     for r in view.get("chat", []):
         ctx["chat"][r["rowid"]] = r
     ctx["jobs"] = job_set(view, ctx)
+    for r in view.get("call_log_participant_v2", []):
+        if is_int(r.get("call_log_row_id")):
+            ctx["participants"].setdefault(r["call_log_row_id"], []).append(r)
     for r in view.get("jid", []):
         ctx["jid"][r["rowid"]] = r
         if is_text(r.get("raw_string")):
@@ -1238,7 +1377,8 @@ SIDE_TABLES = ["message_revoked", "message_quoted", "messages_quotes", "message_
                "message_system_value_change", "message_system_number_change", "message_call_log", "message_location",
                "message_view_once_media", "message_ephemeral", "message_forwarded", "jid_map"]
 TABLES = ["messages", "message", "jid", "chat", "chat_list", "message_vcard", "messages_vcards", "deleted_chat_job",
-          "message_add_on", "message_add_on_reaction"] + SIDE_TABLES
+          "message_add_on", "message_add_on_reaction", "call_log",
+          "call_log_participant_v2"] + SIDE_TABLES
 
 
 def master_rows(files):
@@ -1288,6 +1428,8 @@ def oracle(files, remote, variant, ddl, generation):
         rec = expect_reaction(r, ctx, remote)
         if rec:
             exp["records"].append(rec)
+    for r in view.get("call_log", []):
+        exp["records"].append(expect_call(r, ctx, remote))
     notes = exp["notes"]
     notes["generation"] = generation
     if "messages" in view:
@@ -1366,8 +1508,18 @@ def fill_legacy(rows):
     return f
 
 
-def alloc(js, facts, addons=()):
+def alloc_calls(js, calls):
+    for c in calls:
+        js.jid_id(c["jid"])
+        if c["group"]:
+            js.jid_id(c["group"])
+        for addr, _ in c["parts"]:
+            js.jid_id(addr)
+
+
+def alloc(js, facts, addons=(), calls=()):
     """Allocates the jid and chat rows the facts name, in first-use order (the order the inserts use)."""
+    alloc_calls(js, calls)
     for a in addons:
         js.chat_id(a["chat"])
         if isinstance(a["sender"], JidRef):
@@ -1396,7 +1548,7 @@ def insert_jobs(con, js, jobs):
         C.insert(con, "deleted_chat_job", row)
 
 
-def populate_modern(con, facts, js, vcards=True, addons=(), jobs=()):
+def populate_modern(con, facts, js, vcards=True, addons=(), jobs=(), calls=()):
     for m in facts:
         row = modern_row(m, js)
         C.insert(con, "message", row)
@@ -1416,6 +1568,7 @@ def populate_modern(con, facts, js, vcards=True, addons=(), jobs=()):
         if vcards and m["type"] == 5 and "lat" in m and not any(t == "message_location" for t, _ in sides):
             C.insert(con, "message_location", {"message_row_id": m["id"], "latitude": m["lat"], "longitude": m["lon"]})
     insert_jobs(con, js, jobs)
+    insert_calls(con, js, calls)
     for a in addons:
         sender = js.jid_id(str(a["sender"])) if isinstance(a["sender"], JidRef) else a["sender"]
         C.insert(con, "message_add_on", {"_id": a["id"], "chat_row_id": js.chat_id(a["chat"]), "from_me": a["me"],
@@ -1426,12 +1579,12 @@ def populate_modern(con, facts, js, vcards=True, addons=(), jobs=()):
                                                       "sender_timestamp": a["rts"]})
 
 
-def modern_fill(facts, with_vcards=True, addons=(), jobs=()):
+def modern_fill(facts, with_vcards=True, addons=(), jobs=(), calls=()):
     def f(con):
         # the jid and chat rows first need their ids: allocate by walking the facts in id order
         js = Jids()
-        alloc(js, facts, addons)
-        populate_modern(con, facts, js, with_vcards, addons, jobs)
+        alloc(js, facts, addons, calls)
+        populate_modern(con, facts, js, with_vcards, addons, jobs, calls)
     return f
 
 
@@ -1449,13 +1602,14 @@ def v_legacy(work):
     return finish(path, REMOTE, "android-legacy-2.11", "legacy-2.11.sql", "legacy")
 
 
-def transition_fill(legacy_facts, modern_facts, sentinel=True, jobs=()):
+def transition_fill(legacy_facts, modern_facts, sentinel=True, jobs=(), calls=()):
     def f(con):
         if sentinel:
             C.insert(con, "messages", sentinel_row())
         for m in legacy_facts:
             C.insert(con, "messages", legacy_row(m))
         js = Jids()
+        alloc_calls(js, calls)
         for m in legacy_facts + modern_facts:
             js.chat_id(m["chat"])
             if m.get("sender"):
@@ -1477,12 +1631,14 @@ def transition_fill(legacy_facts, modern_facts, sentinel=True, jobs=()):
             if m["type"] == 4:
                 C.insert(con, "message_vcard", {"message_row_id": m["id"], "vcard": m["vcard"]})
         insert_jobs(con, js, jobs)
+        insert_calls(con, js, calls)
     return f
 
 
 def v_trans_legacy(work):
     path = build_db(work, "transition-2021.sql", transition_fill(core(False) + legacy_extras(), [],
-                                                                        jobs=[dict(id=1, chat=GRP, msg=9, starred=None, cats=None, singular=None)]))
+                                                                        jobs=[dict(id=1, chat=GRP, msg=9, starred=None, cats=None, singular=None)],
+                                                                        calls=modern_calls([1, 2, 3, 4, 5, 6, 7])))
     return finish(path, REMOTE, "android-transition-legacydata", "transition-2021.sql", "transition")
 
 
@@ -1552,16 +1708,16 @@ def v_modern_2021(work):
     return finish(path, REMOTE, "android-modern-2021", "transition-2021.sql", "modern")
 
 
-def modern_variant(work, remote, variant, wal=False, extras=(), addons=(), jobs=()):
+def modern_variant(work, remote, variant, wal=False, extras=(), addons=(), jobs=(), calls=()):
     facts = core(True)
     if extras:
         facts[1]["srv"] = T0 + 2500  # row 3 carries a receipt_server_timestamp (modern: the unit is not established)
     early, late = (facts[:-4], facts[-4:]) if wal else (facts, [])
     early = early + list(extras)
-    path = build_db(work, "modern-2026.sql", modern_fill(early, addons=addons, jobs=jobs), journal_wal=wal)
+    path = build_db(work, "modern-2026.sql", modern_fill(early, addons=addons, jobs=jobs, calls=calls), journal_wal=wal)
     if wal:
         js = Jids()
-        alloc(js, early, addons)
+        alloc(js, early, addons, calls)
         nj, nc = len(js.jids), len(js.chats)
         stmts = ["pragma wal_autocheckpoint = 0"]
         rows = [modern_row(m, js) for m in late]
@@ -1580,7 +1736,7 @@ def modern_variant(work, remote, variant, wal=False, extras=(), addons=(), jobs=
 
 def v_modern_2026(work):
     return modern_variant(work, REMOTE_USER10, "android-modern-2026", wal=True, extras=modern_extras(), addons=modern_addons(),
-                          jobs=modern_jobs())
+                          jobs=modern_jobs(), calls=modern_calls())
 
 
 def v_modern_business(work):
