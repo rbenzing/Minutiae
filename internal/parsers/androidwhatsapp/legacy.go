@@ -27,6 +27,10 @@ func legacySpecs() []parse.ColumnSpec {
 		{Name: "receipt_server_timestamp", Affinity: "integer"},
 		{Name: "media_caption", Affinity: "text"},
 		{Name: "media_size", Affinity: "integer"},
+		{Name: "media_name", Affinity: "text"},
+		{Name: "media_mime_type", Affinity: "text"},
+		{Name: "media_url", Affinity: "text"},
+		{Name: "media_hash", Affinity: "text"},
 		{Name: "latitude", Affinity: "real"},
 		{Name: "longitude", Affinity: "real"},
 		{Name: "quoted_row_id", Affinity: "integer"},
@@ -114,6 +118,10 @@ func readLegacy(m parse.MapContext, row parse.Row, js *jobSet) (msgFacts, error)
 	if err := readLegacyFeatures(m, r, &f); err != nil {
 		return msgFacts{}, err
 	}
+	if l, ok := f.Type.label(); ok && mediaLabel(l) && !f.LegacySys && f.Revoke == nil {
+		readLegacyMedia(r, &f)
+	}
+	f.Sole = js.sole(m.Input(), classifyDB(m.Input().Primary.Logical))
 	if js.active() {
 		k, err := legacyKeyOf(m, row, c, id)
 		if err != nil {

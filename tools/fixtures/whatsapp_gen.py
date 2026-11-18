@@ -11,6 +11,7 @@ helpers the wa.db generator (whatsapp_wadb.py) shares: jid(), ms() and vcard().
 
 Python 3 with its bundled sqlite3 only; no Docker. Not part of gen.sh all.
 """
+import base64
 import hashlib
 import re
 import struct
@@ -164,7 +165,7 @@ def modern_extras():
         row(69, chat=JE, text="p69"),
         row(70, chat=JB, text="p70"),
         row(71, chat=JF, text="p71", starred=1),
-    ]
+    ] + attachment_rows()
 
 
 def modern_calls(ids=None):
@@ -197,6 +198,50 @@ def insert_calls(con, js, calls):
         C.insert(con, "call_log", {k: v for k, v in row.items() if k in have})
         for addr, res in c["parts"]:
             C.insert(con, "call_log_participant_v2", {"call_log_row_id": c["id"], "jid_row_id": js.jid_id(addr), "call_result": res})
+
+
+MEDIA_KEY = b"\x01\x02\x03\x04"
+IMG = "/WhatsApp/Media/WhatsApp Images/"
+# the files the scenario holds next to android-modern-2026, which sits at /data/user/10/com.whatsapp/databases (user 10).
+# device None is the database's own device (SER1); SER2 is another device.
+EXTRA_FILES = [
+    ("/storage/emulated/10" + IMG + "IMG-A.jpg", b"JPEG-A", None),                  # same user: the one link (row 80)
+    ("/storage/emulated/10" + IMG + "IMG-B.jpg", b"JPEG-B1", None),                 # a legacy and an Android 11 copy:
+    ("/storage/emulated/10/Android/media/com.whatsapp" + IMG + "IMG-B.jpg", b"JPEG-B2", None),  # ambiguous (row 81)
+    ("/storage/emulated/10" + IMG + "IMG-C.jpg", b"JPEG-C", "SER2"),                # another device (row 82)
+    ("/storage/emulated/10/WhatsApp Business/Media/WhatsApp Images/IMG-D.jpg", b"JPEG-D", None),  # the other app (row 83)
+    ("/storage/emulated/0" + IMG + "IMG-E.jpg", b"JPEG-E", None),                   # another user (row 84)
+    ("/sdcard" + IMG + "IMG-F.jpg", b"JPEG-F", None),                               # names no user: R5a (row 85)
+    ("/storage/emulated/10" + IMG + "IMG-G.jpg", b"JPEG-G", None),                  # an absolute file_path (row 86)
+]
+
+
+def media_row(path, name, size=12345, **kw):
+    row = {"file_path": path, "file_size": size, "mime_type": "image/jpeg", "media_name": name, "file_length": size + 1,
+           "message_url": "https://mmg.example/" + (name or ""), "direct_path": "/v/t62/" + (name or ""),
+           "file_hash": "hash-" + (name or ""),
+           "transferred": 1, "media_key": MEDIA_KEY}
+    row.update(kw)
+    return row
+
+
+def attachment_rows():
+    """Rows 80 to 88 of android-modern-2026 (plan 4I task 11, spec 6.7): one image each, with a message_media row."""
+    def row(i, side):
+        return dict(id=i, chat=C1, me=0, ts=T0 + i * 1000, recv=T0 + i * 1000 + 100, status=0, type=1, key="K%02d" % i,
+                    side=[("message_media", side)])
+    return [
+        row(80, media_row("Media/WhatsApp Images/IMG-A.jpg", "IMG-A.jpg")),
+        row(81, media_row("Media/WhatsApp Images/IMG-B.jpg", "IMG-B.jpg")),
+        row(82, media_row("Media/WhatsApp Images/IMG-C.jpg", "IMG-C.jpg")),
+        row(83, media_row("Media/WhatsApp Images/IMG-D.jpg", "IMG-D.jpg")),
+        row(84, media_row("Media/WhatsApp Images/IMG-E.jpg", "IMG-E.jpg")),
+        row(85, media_row("Media/WhatsApp Images/IMG-F.jpg", "IMG-F.jpg")),
+        row(86, media_row("/storage/emulated/10/WhatsApp/Media/WhatsApp Images/IMG-G.jpg", "IMG-G.jpg")),
+        row(87, media_row("Media/../etc/x.jpg", "x.jpg")),
+        row(88, media_row(None, None, size=0, mime_type=None, file_length=None, message_url=None, direct_path=None,
+                          file_hash=None, media_key=None)),
+    ]
 
 
 def modern_jobs():
@@ -272,6 +317,9 @@ def legacy_row(m):
          "receipt_server_timestamp": -1, "receipt_device_timestamp": m.get("delivered", -1)}
     if sys_row:
         r["media_size"] = 1
+    if m["type"] in (1, 2, 3) and not sys_row:
+        r.update({"media_name": "WA%04d" % m["id"], "media_mime_type": {1: "image/jpeg", 2: "audio/ogg", 3: "video/mp4"}[m["type"]],
+                  "media_size": 1000 + m["id"], "media_url": "https://mmg.example/%d" % m["id"], "media_hash": "H%d" % m["id"]})
     if m["type"] == 1:
         r["media_caption"] = m.get("text")
         r["data"] = None
@@ -920,6 +968,192 @@ def apply_purge(raw, payload, verdict, via=None):
     return False
 
 
+MEDIA_LABELS = {"image", "audio", "video", "gif", "document", "sticker"}
+
+
+def pkg_folder(app):
+    return ("com.whatsapp", "WhatsApp") if app == "whatsapp" else ("com.whatsapp.w4b", "WhatsApp Business")
+
+
+def path_elems(p):
+    """The elements of an absolute path a logical glob can express, else None."""
+    if not p.startswith("/") or any(ch in p for ch in "*\\\x00"):
+        return None
+    el = p[1:].split("/")
+    if len(el) > 64 or any(e in ("", ".", "..") for e in el):
+        return None
+    return el
+
+
+def media_root(el):
+    """(user, named): /storage/emulated/<n>, /data/media/<n> and /media/<n> name user n; anything else names none."""
+    def user(x):
+        return int(x) if re.fullmatch(r"[0-9]{1,6}", x, re.ASCII) else None
+    if len(el) == 3 and el[0] == "storage" and el[1] == "emulated" and user(el[2]) is not None:
+        return user(el[2]), True
+    if len(el) == 3 and el[0] == "data" and el[1] == "media" and user(el[2]) is not None:
+        return user(el[2]), True
+    if len(el) == 2 and el[0] == "media" and user(el[1]) is not None:
+        return user(el[1]), True
+    return None, False
+
+
+def split_media(path, app):
+    """(root, rest, form) of a path under the app's own folder, or None: <root>/<folder>/<rest> or
+    <root>/Android/media/<package>/<folder>/<rest> (spec 6.7)."""
+    pkg, folder = pkg_folder(app)
+    el = path_elems(path)
+    if el is None:
+        return None
+    for i in range(len(el)):
+        if el[i] == "Android" and i + 4 < len(el) and el[i + 1:i + 4] == ["media", pkg, folder]:
+            return media_root(el[:i]), "/".join(el[i + 4:]), "android11"
+        if el[i] == folder and i + 1 < len(el):
+            return media_root(el[:i]), "/".join(el[i + 1:]), "legacy"
+    return None
+
+
+def known_root(path):
+    el = path_elems(path)
+    if el is None:
+        return False
+    if el[0] == "sdcard" or el[:3] == ["storage", "self", "primary"]:
+        return True
+    if len(el) >= 3 and el[:2] in (["storage", "emulated"], ["data", "media"]):
+        return media_root(el[:3])[1]
+    return len(el) >= 2 and el[0] == "media" and media_root(el[:2])[1]
+
+
+def resolve_media(ref, ctx):
+    """(state, path): how the file a row names was looked up (R5, R5a, R6). State is none, missing, found, other_source,
+    ambiguous, other_user or user_undecided."""
+    remote, app = ctx["remote"], app_of(ctx["remote"])
+    m = re.match(r"/data/user/([0-9]+)/", remote)
+    db_user = int(m.group(1)) if m else 0
+    pkg = pkg_folder(app)[0]
+    sole = not any(e["path"].endswith("/" + pkg + "/databases/msgstore.db") for e in ctx["extras"])
+    if not ref:
+        return "none", None
+    if ref.startswith("/"):
+        if not known_root(ref) or split_media(ref, app) is None:
+            return "none", None
+        cands = [e for e in ctx["extras"] if e["path"] == ref]
+    elif ref.startswith("Media/") and path_elems("/" + ref) is not None:
+        cands = []
+        for e in ctx["extras"]:
+            sp = split_media(e["path"], app)
+            if sp is not None and sp[1] == ref:
+                cands.append(e)
+    else:
+        return "none", None
+    if not cands:
+        return "missing", None
+    same = [e for e in cands if e["device"] == "SER1"]
+    if not same:
+        return "other_source", None
+    link, other_user = [], 0
+    for e in same:
+        (user, named), _, _ = split_media(e["path"], app)
+        if named and user == db_user or (not named and sole):
+            link.append(e)
+        elif named:
+            other_user += 1
+    if len(link) == 1:
+        return "found", link[0]["path"]
+    if len(link) > 1:
+        return "ambiguous", None
+    if other_user:
+        return "other_user", None
+    return "user_undecided", None
+
+
+def media_modern(ctx, r, raw, unknown):
+    """The media of a modern message: {name, mime, size, ref, raw} from its message_media row, or None. The table present
+    and no row for the message is raw.media_state."""
+    if "message_media" not in ctx["rows"]:
+        return None
+    mrow = ctx["rows"]["message_media"].get(r["rowid"])
+    if mrow is None:
+        raw["media_state"] = "no-message_media-row"
+        return None
+    c = Cells(mrow, raw, unknown, "message_media.")
+    mf = {"name": None, "mime": None, "size": None, "ref": None, "raw": {}}
+    b = c.text("media_name")
+    if b:
+        mf["name"] = cleaned(raw, "attachments.name", b)
+    b = c.text("mime_type")
+    if b:
+        mf["mime"] = cleaned(raw, "attachments.mime", b)
+    b = c.text("file_path")
+    if b:
+        mf["ref"] = cleaned(raw, "attachments.source_ref", b)
+    v = c.int("file_size")
+    if v is not None:
+        mf["raw"]["file_size"] = v
+        if v > 0:
+            mf["size"] = v
+    for n in ("file_length", "transferred"):
+        v = c.int(n)
+        if v is not None:
+            mf["raw"][n] = v
+    for n in ("message_url", "direct_path", "file_hash"):
+        b = c.text(n)
+        if b:
+            mf["raw"][n] = cleaned(raw, n, b)
+    if mrow.get("media_key") is not None:
+        mf["raw"]["media_key_present"] = isinstance(mrow["media_key"], C.Blob)
+    return mf
+
+
+def media_legacy(c, raw):
+    """The media columns of a legacy message: no local path, so never linked."""
+    mf = {"name": None, "mime": None, "size": None, "ref": None, "raw": {}}
+    b = c.text("media_name")
+    if b:
+        mf["name"] = cleaned(raw, "attachments.name", b)
+    b = c.text("media_mime_type")
+    if b:
+        mf["mime"] = cleaned(raw, "attachments.mime", b)
+    v = c.int("media_size")
+    if v is not None:
+        mf["raw"]["file_size"] = v
+        if v > 0:
+            mf["size"] = v
+    for col, key in (("media_url", "media_url"), ("media_hash", "file_hash")):
+        b = c.text(col)
+        if b:
+            mf["raw"][key] = cleaned(raw, key, b)
+    if mf["name"] or mf["mime"] or mf["raw"]:
+        return mf
+    return None
+
+
+def apply_media(mf, raw, ctx):
+    """The attachments of a media message and the counters of how its file was looked up (R5, R5a, R6)."""
+    raw.update(mf["raw"])
+    if not (mf["name"] or mf["mime"] or mf["size"] or mf["ref"]):
+        return []
+    a = {}
+    if mf["name"]:
+        a["name"] = mf["name"]
+    if mf["mime"]:
+        a["mime"] = mf["mime"]
+    if mf["size"]:
+        a["size"] = mf["size"]
+    if mf["ref"]:
+        a["source_ref"] = mf["ref"]
+    state, path = resolve_media(mf["ref"], ctx)
+    if state == "found":
+        a["artifact_id"], a["artifact_sha256"] = "@id:" + path, "@sha256:" + path
+    raw["attachments_resolved"] = 1 if state == "found" else 0
+    raw["attachments_unresolved"] = 1 if state in ("none", "missing") else 0
+    for st, key in (("ambiguous", "attachments_ambiguous"), ("other_source", "attachments_other_source"),
+                    ("other_user", "attachments_other_user"), ("user_undecided", "attachments_user_undecided")):
+        if state == st:
+            raw[key] = 1
+    return [a]
+
+
 CALL_RESULT = {5: "answered", 2: "not_answered", 3: "unavailable"}
 CALL_MAX_DURATION = 10**9
 EXACT = 1 << 53
@@ -1309,11 +1543,18 @@ def expect_message(table, r, ctx, remote):
         txt, text_source = None, None
         body = None
     lid_raw(ctx, raw, unknown, chat, sender, participants)
+    attachments = []
+    lab = MODERN_TYPE.get(t) if modern else (None if legacy_sys else LEGACY_TYPE.get(t))
+    if not revoke and kind == "media" and lab in MEDIA_LABELS:
+        mf = media_modern(ctx, r, raw, unknown) if modern else media_legacy(c, raw)
+        attachments = apply_media(mf, raw, ctx) if mf else []
     if unknown:
         raw["unknown_columns"] = unknown
 
     payload = {"channel": "whatsapp", "direction": direction, "kind": kind, "participants": participants,
                "status": "unknown", "raw": raw}
+    if attachments:
+        payload["attachments"] = attachments
     if unknown_p:
         payload["participants_unknown"] = True
     thread = {}
@@ -1375,7 +1616,7 @@ def context(view):
 
 SIDE_TABLES = ["message_revoked", "message_quoted", "messages_quotes", "message_edit_info", "message_system",
                "message_system_value_change", "message_system_number_change", "message_call_log", "message_location",
-               "message_view_once_media", "message_ephemeral", "message_forwarded", "jid_map"]
+               "message_view_once_media", "message_ephemeral", "message_forwarded", "jid_map", "message_media"]
 TABLES = ["messages", "message", "jid", "chat", "chat_list", "message_vcard", "messages_vcards", "deleted_chat_job",
           "message_add_on", "message_add_on_reaction", "call_log",
           "call_log_participant_v2"] + SIDE_TABLES
@@ -1403,10 +1644,11 @@ def view_source(sql):
     return "messages" if re.search(r"from\s+messages(?![A-Za-z0-9_])", sql, re.I) else "other"
 
 
-def oracle(files, remote, variant, ddl, generation):
+def oracle(files, remote, variant, ddl, generation, extras=()):
     view = C.engine_view(files, TABLES)
     master = master_rows(files)
     ctx = context(view)
+    ctx["extras"], ctx["remote"] = [{"path": p, "device": d or "SER1", "sha": hashlib.sha256(b).hexdigest()} for p, b, d in extras], remote
     exp = C.expect_header(FAMILY, variant, ddl)
     tables = {n.lower() for t, n, s in master if t == "table" and not (s or "").upper().startswith("CREATE VIRTUAL")}
     n_messages = n_message = sentinel = 0
@@ -1588,11 +1830,14 @@ def modern_fill(facts, with_vcards=True, addons=(), jobs=(), calls=()):
     return f
 
 
-def finish(path, remote, variant, ddl, generation, extra=None):
+def finish(path, remote, variant, ddl, generation, extra=None, extras=()):
     files = {"db": C.read(path)}
     if C.os.path.exists(path + "-wal"):
         files["wal"] = C.read(path + "-wal")
-    exp = oracle(files, remote, variant, ddl, generation)
+    exp = oracle(files, remote, variant, ddl, generation, extras)
+    if extras:
+        exp["extra_files"] = [{"remote_path": p, "content_b64": base64.b64encode(b).decode(), "device": d or ""}
+                              for p, b, d in extras]
     return files, exp
 
 
@@ -1708,7 +1953,8 @@ def v_modern_2021(work):
     return finish(path, REMOTE, "android-modern-2021", "transition-2021.sql", "modern")
 
 
-def modern_variant(work, remote, variant, wal=False, extras=(), addons=(), jobs=(), calls=()):
+def modern_variant(work, remote, variant, wal=False, extras=(), addons=(), jobs=(), calls=(), files=()):
+    files_extra = files
     facts = core(True)
     if extras:
         facts[1]["srv"] = T0 + 2500  # row 3 carries a receipt_server_timestamp (modern: the unit is not established)
@@ -1727,7 +1973,7 @@ def modern_variant(work, remote, variant, wal=False, extras=(), addons=(), jobs=
             stmts.append(insert_stmt("chat", c))
         stmts += [insert_stmt("message", r) for r in rows]
         C.kill_child(path, stmts)
-    files, exp = finish(path, remote, variant, "modern-2026.sql", "modern")
+    files, exp = finish(path, remote, variant, "modern-2026.sql", "modern", extras=files_extra)
     if wal:
         for rec in exp["records"]:
             rec["source_path"] = ""
@@ -1736,7 +1982,7 @@ def modern_variant(work, remote, variant, wal=False, extras=(), addons=(), jobs=
 
 def v_modern_2026(work):
     return modern_variant(work, REMOTE_USER10, "android-modern-2026", wal=True, extras=modern_extras(), addons=modern_addons(),
-                          jobs=modern_jobs(), calls=modern_calls())
+                          jobs=modern_jobs(), calls=modern_calls(), files=EXTRA_FILES)
 
 
 def v_modern_business(work):

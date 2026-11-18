@@ -96,6 +96,14 @@ func readModern(m parse.MapContext, row parse.Row, js *jobSet) (msgFacts, error)
 	if err := readModernFeatures(m, &f); err != nil {
 		return msgFacts{}, err
 	}
+	if f.Revoke == nil {
+		if l, ok := f.Type.label(); ok && mediaLabel(l) {
+			if err := readMediaRow(m, &f); err != nil {
+				return msgFacts{}, err
+			}
+		}
+	}
+	f.Sole = js.sole(m.Input(), classifyDB(m.Input().Primary.Logical))
 	if js.active() {
 		f.Purge = js.eval(modernKeyOf(m, row))
 	}

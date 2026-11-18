@@ -53,8 +53,8 @@ func participants(r parsertest.ExpRecord) []any {
 
 func TestCoreOracleStatesTheSpecRules(t *testing.T) {
 	modern, _ := factsOf(t, "android-modern-2026")
-	if len(modern) != 59 { // the 18 rows of the core, rows 30 to 44 of plan 4I task 7 the five reactions of task 8, and rows 60 to 71 the reaction 9 of task 9 and the eight calls of task 10
-		t.Fatalf("android-modern-2026 has %d records, want 59", len(modern))
+	if len(modern) != 68 { // the 18 rows of the core, rows 30 to 44 of plan 4I task 7 the five reactions of task 8, and rows 60 to 71 the reaction 9 of task 9 the eight calls of task 10 and rows 80 to 88 of task 11
+		t.Fatalf("android-modern-2026 has %d records, want 68", len(modern))
 	}
 	get := func(set map[string]parsertest.ExpRecord, key string) parsertest.ExpRecord {
 		r, ok := set[key]

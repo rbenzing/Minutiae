@@ -96,6 +96,11 @@ func build(m parse.MapContext, f msgFacts) ([]records.Record, error) {
 		summaryText = "[revoked, no content]"
 	}
 
+	// the attachment of a media message and how its file was looked up (never for a tombstone: its kind is unknown)
+	if msg.Kind == message.KindMedia {
+		applyMedia(m, &msg, &f)
+	}
+
 	// the chat was cleared by a deleted_chat_job the app has not purged yet: deleted by the app's own structure, never
 	// live (D5); or the job set cannot say (4I-R4 g)
 	applyPurge(&msg, &rec, &f)

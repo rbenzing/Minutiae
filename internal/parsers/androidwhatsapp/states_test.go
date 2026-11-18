@@ -29,6 +29,7 @@ var baseDDL = map[string]string{
 	"message_add_on": "create table message_add_on(_id integer primary key, chat_row_id integer, from_me integer, key_id text, " +
 		"sender_jid_row_id integer, parent_message_row_id integer, timestamp integer, message_add_on_type integer)",
 	"message_add_on_reaction": "create table message_add_on_reaction(message_add_on_row_id integer primary key, reaction text, sender_timestamp integer)",
+	"message_media":           "create table message_media(message_row_id integer primary key, file_path text, file_size integer, mime_type text, media_name text)",
 	"call_log": "create table call_log(_id integer primary key, jid_row_id integer, from_me integer, call_id text, timestamp integer, " +
 		"video_call integer, duration integer, call_result integer, group_jid_row_id integer)",
 	"call_log_participant_v2": "create table call_log_participant_v2(_id integer primary key, call_log_row_id integer, jid_row_id integer, call_result integer)",
@@ -36,7 +37,7 @@ var baseDDL = map[string]string{
 		"deleted_starred_message_row_id integer, deleted_message_categories text, singular_message_delete_rows_id text)",
 }
 
-var baseOrder = []string{"message", "chat", "jid", "jid_map", "message_vcard", "message_revoked", "message_add_on", "message_add_on_reaction", "call_log", "call_log_participant_v2", "deleted_chat_job"}
+var baseOrder = []string{"message", "chat", "jid", "jid_map", "message_vcard", "message_revoked", "message_add_on", "message_add_on_reaction", "call_log", "call_log_participant_v2", "deleted_chat_job", "message_media"}
 
 type tables map[string]*sqlitetest.Table
 
@@ -123,6 +124,7 @@ func TestWhatsAppStateVocabularyIsPinned(t *testing.T) {
 		msgRow(tb, 12, 1, 0, nil, 0, int64(0), "sentinel time")
 		msgRow(tb, 13, 1, 0, nil, 0, int64(5), "invalid time")
 		msgRow(tb, 14, 3, 0, nil, 0, goodTS, "chat jid has no raw string")
+		msgRow(tb, 16, 1, 0, nil, 1, goodTS, "an image with no message_media row")
 		msgRow(tb, 15, 1, 0, nil, 4, goodTS, "vcard stored NULL")
 		tb["message_vcard"].Insert(2, nil, int64(15), nil)
 	})
@@ -151,6 +153,9 @@ func TestWhatsAppStateVocabularyIsPinned(t *testing.T) {
 	}
 	if got := raw("15")["vcard_state"]; got != "null-vcard" || raw("15")["unknown_columns"] != nil {
 		t.Errorf("message 15: raw %v, want vcard_state null-vcard and no unknown_columns", raw("15"))
+	}
+	if got := raw("16")["media_state"]; got != "no-message_media-row" || recs["message/16"].Payload["attachments"] != nil {
+		t.Errorf("message 16: raw %v, want media_state no-message_media-row and no attachment", raw("16"))
 	}
 	r11 := raw("11")
 	if r11["vcard_state"] != "unreadable" || !reflect.DeepEqual(r11["unknown_columns"], map[string]any{"message_vcard.vcard": "type-mismatch"}) {

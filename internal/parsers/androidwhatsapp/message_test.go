@@ -88,7 +88,7 @@ func TestWhatsAppGenerationsMapAlike(t *testing.T) {
 	strip := func(r records.Record) map[string]any {
 		p := map[string]any{}
 		for k, v := range r.Payload {
-			if k != "raw" {
+			if k != "raw" && k != "attachments" { // the media of a legacy row is in its own columns, of a modern row in message_media
 				p[k] = v
 			}
 		}

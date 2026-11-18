@@ -186,6 +186,9 @@ type msgFacts struct {
 	Revoke   *revokeFacts   // a "deleted for everyone" tombstone (spec 6.5), nil for a live message
 	Reaction *reactionFacts // a message_add_on reaction (4I-R20), nil for a message
 
+	Media *mediaFacts // the file of a media message (spec 6.7), nil for none
+	Sole  func() bool // R5a, answered once per parse: the database is the only live one of its app
+
 	Purge    purgeResult // the deleted_chat_job outcome of the row (4I-R4); for a reaction, the parent's
 	PurgeVia string      // "parent" for a reaction that follows its parent's outcome
 

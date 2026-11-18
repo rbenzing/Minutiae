@@ -75,6 +75,23 @@ type jobSet struct {
 	Undecided          []jobWarn // jobs that can make rows undecided, at most maxJobWarnings kept
 	UndecidedDropped   int64     // the jobs past that cap
 	minID              int64     // the smallest job id read, 0 when none
+	solec              soleCache // the answer of R5a, computed on first use (one parse maps rows one at a time)
+}
+
+// soleCache holds the answer of soleLive for one parse.
+type soleCache struct{ done, val bool }
+
+// sole is the R5a question for db, asked at most once per parse (a nil set, as in the typed recovery pass, asks every time).
+func (js *jobSet) sole(in *parse.Input, db dbPath) func() bool {
+	if js == nil {
+		return func() bool { return soleLive(in, db) }
+	}
+	return func() bool {
+		if !js.solec.done {
+			js.solec.val, js.solec.done = soleLive(in, db), true
+		}
+		return js.solec.val
+	}
 }
 
 // anyJob says whether any usable or unusable job was read.
