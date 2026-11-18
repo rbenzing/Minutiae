@@ -372,12 +372,12 @@ func TestIOSWhatsAppChatsModelOnADamagedPageIsUnreadable(t *testing.T) {
 }
 
 // runLenient is Harness.RunLenient plus the checks a lenient run would otherwise skip (review M5): no contract violation,
-// and every warning is one of the expected kinds (by default only the WAL frames the engine does not apply, which the
-// fixtures with a -wal legitimately raise).
+// and every warning is one of the expected kinds (by default the WAL frames the engine does not apply, which the
+// fixtures with a -wal legitimately raise, and the counted undecided joins of the fixtures that lack a media row).
 func runLenient(t *testing.T, h *parsertest.Harness, p ioswhatsapp.Parser, in *parse.Input, allowed ...string) parsertest.Result {
 	t.Helper()
 	if len(allowed) == 0 {
-		allowed = []string{"wal-frames-not-applied"}
+		allowed = []string{"wal-frames-not-applied", "whatsapp-ios-join-undecided"}
 	}
 	res := h.RunLenient(p, in)
 	if len(res.Violations) != 0 {

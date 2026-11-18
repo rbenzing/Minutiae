@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/rowrun"
 	"github.com/rbenzing/minutiae/internal/parse"
+	"github.com/rbenzing/minutiae/internal/records"
 	"github.com/rbenzing/minutiae/internal/recordtypes/message"
 )
 
@@ -123,11 +126,16 @@ func (Parser) Probe(ctx context.Context, in *parse.Input) (parse.Applicability, 
 	return got, nil
 }
 
-// Mappings is empty until the ZWAMESSAGE mapping (plan 4I2 task 4).
-func (Parser) Mappings() []parse.TableMapping { return nil }
+// Mappings is the typed pass's mapping: ZWAMESSAGE with no Parse context, so a recovered row states the label its
+// place allows (4I2-P8, PF5).
+func (Parser) Mappings() []parse.TableMapping {
+	return []parse.TableMapping{messageMappingWith(nil)}
+}
 
-// Parse is the skeleton of the parser: the place, the app label and the model notes. The mapping follows in later
-// tasks; with no step rowrun.Run only opens the files and forwards the library's warnings.
+// Parse reports the place, the app label and the model notes, then maps ZWAMESSAGE. The step is Identifying at an app
+// group (a same-named database of another app is benign there) and reads through the join guard. Records pass through a
+// counting emitter: the mapping cannot warn, so after rowrun.Run, and so after its reader warnings, Parse warns once per
+// table whose join was undecided (4I2-P7).
 func (Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) error {
 	if in == nil || out == nil || in.Primary.R == nil {
 		return rowrun.ErrNilInput
@@ -153,11 +161,50 @@ func (Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) err
 		return err
 	}
 	l.note(out, p)
-	if err := preflight(ctx, in, out, p); err != nil {
+	g, err := preflight(ctx, in, out, p)
+	if err != nil {
 		return err
 	}
-	_, err = rowrun.Run(ctx, in, out, nil)
+	ce := &countingEmitter{Emitter: out, counts: map[string]int64{}}
+	step := rowrun.Step{Mapping: withGuard(messageMappingWith(&env{Place: p, Label: l}), g), Identifying: p.Place == placeAppGroup}
+	_, err = rowrun.Run(ctx, in, ce, []rowrun.Step{step})
+	if werr := ce.warn(ctx); err == nil {
+		err = werr
+	}
 	return err
+}
+
+// countingEmitter counts the records whose raw.join_undecided names a table (4I2-P7).
+type countingEmitter struct {
+	parse.Emitter
+	counts map[string]int64
+}
+
+func (c *countingEmitter) Emit(ctx context.Context, r records.Record) error {
+	raw, _ := r.Payload["raw"].(map[string]any)
+	if list, ok := raw["join_undecided"].([]any); ok {
+		for _, t := range list {
+			if name, ok := t.(string); ok {
+				c.counts[name]++
+			}
+		}
+	}
+	return c.Emitter.Emit(ctx, r)
+}
+
+// warn raises one warning per table with an undecided join, in table order: locator sqlite:table=<t>.
+func (c *countingEmitter) warn(ctx context.Context) error {
+	tables := make([]string, 0, len(c.counts))
+	for t := range c.counts {
+		tables = append(tables, t)
+	}
+	slices.Sort(tables)
+	for _, t := range tables {
+		if err := c.Warn(ctx, "sqlite:table="+t, fmt.Sprintf("%s: %s: %d records", reasonJoinUndecided, t, c.counts[t])); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // maxPreflightWarnings caps the reader warnings preflight forwards (rowrun's own cap).
@@ -167,14 +214,14 @@ const maxPreflightWarnings = 1000
 // and notes the entity numbers. It forwards the reader's warnings raised after the open (the pages of Z_PRIMARYKEY
 // it read, which Run never reads, even when it still delivered a row), and on an error all of them: the damage that
 // made the model unreadable is evidence and rowrun.Run never runs.
-func preflight(ctx context.Context, in *parse.Input, out parse.Emitter, p dbPlace) (err error) {
+func preflight(ctx context.Context, in *parse.Input, out parse.Emitter, p dbPlace) (g *joinGuard, err error) {
 	files, err := filesOf(in)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	db, err := sqlitedb.Open(ctx, files, in.Budget)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer db.Release()
 	n0 := len(db.Warnings()) // the open's own schema warnings: rowrun.Run's open raises them again
@@ -202,23 +249,60 @@ func preflight(ctx context.Context, in *parse.Input, out parse.Emitter, p dbPlac
 	switch {
 	case errors.Is(terr, sqlitedb.ErrNoSuchTable):
 		if p.Place == placeDomain {
-			return ErrNoWhatsAppTables
+			return nil, ErrNoWhatsAppTables
 		}
-		return nil
+		return nil, nil
 	case terr != nil && !dataDamage(terr):
-		return terr
+		return nil, terr
 	}
 	// present (a table that exists but cannot be read counts as present: the mapping that reads it reports why)
 	m, err := readModelDB(ctx, db, entMessage, entChat)
 	var me *modelError
 	if errors.As(err, &me) {
-		return fmt.Errorf("%w: %s", ErrUnsupportedModel, me.Reason)
+		return nil, fmt.Errorf("%w: %s", ErrUnsupportedModel, me.Reason)
 	} else if err != nil {
-		return err
+		return nil, err
 	}
 	out.Note("entity."+entMessage, strconv.FormatInt(m.ByName[entMessage].Ent, 10))
 	out.Note("entity."+entChat, strconv.FormatInt(m.ByName[entChat].Ent, 10))
-	return nil
+	names, terr := db.Tables(ctx)
+	if terr != nil {
+		return nil, terr
+	}
+	if list := unmappedTables(names); list != "" {
+		out.Note("unmapped_tables", list)
+	}
+	return checkJoinSchema(ctx, db, out)
+}
+
+// maxUnmapped is the size of the unmapped_tables note.
+const maxUnmapped = 512
+
+// unmappedTableNames are the tables of ChatStorage the parser does not map, in the order of the plan ("Notes and
+// warnings"): their content is not read, and the note says they exist (unknown is never absent).
+var unmappedTableNames = []string{
+	"ZWAPROFILEPUSHNAME", "ZWAGROUPMEMBERSCHANGE", "ZWAGROUPINFO", "ZWAMESSAGEDATAITEM", "ZWAVCARDMENTION",
+	"ZWACHATPROPERTIES", "ZWACHATPUSHCONFIG", "ZWABLACKLISTITEM", "ZWAZ1PAYMENTTRANSACTION",
+}
+
+// unmappedTables is the comma list of the present tables among unmappedTableNames, cut at an entry boundary near
+// maxUnmapped bytes with a trailing ",…".
+func unmappedTables(present []string) string {
+	var b strings.Builder
+	for _, want := range unmappedTableNames {
+		if !slices.ContainsFunc(present, func(n string) bool { return strings.EqualFold(n, want) }) {
+			continue
+		}
+		if b.Len()+1+len(want) > maxUnmapped {
+			b.WriteString(",…")
+			return b.String()
+		}
+		if b.Len() > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(want)
+	}
+	return b.String()
 }
 
 // filesOf is the database and its companions as the host hands them (restated from the other WhatsApp parsers).
