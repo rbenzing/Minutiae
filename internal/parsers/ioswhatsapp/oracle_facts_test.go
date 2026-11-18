@@ -109,7 +109,7 @@ func TestIOSWhatsAppChatsOracleStatesTheSpecRules(t *testing.T) {
 		}
 	}
 	_, has46 := c.by[46]
-	want(len(c.by) == 53 && !has46, "ios-chatstorage has %d records, want 53 (messages 1-44 and 47 to 54 in the file, 45 in a committed WAL frame, 46 in an uncommitted one: no record)", len(c.by))
+	want(len(c.by) == 55 && !has46, "ios-chatstorage has %d records, want 55 (messages 1-44 and 47 to 56 in the file, 45 in a committed WAL frame, 46 in an uncommitted one: no record)", len(c.by))
 	want(fx.Expect.Notes["entity.WAMessage"] == "9" && fx.Expect.Notes["entity.WAChatSession"] == "4", "entity notes %v", fx.Expect.Notes)
 
 	// iOS ZMESSAGETYPE 2 = video, 3 = audio, the reverse of Android (spec 7.1, research 7.2)
@@ -235,11 +235,18 @@ func TestIOSWhatsAppChatsOracleStatesTheSpecRules(t *testing.T) {
 	want(c.rec(32).raw["media_state"] == "no-local-path" && c.rec(32).rawIs("attachments_unresolved", 1), "message 32 (NULL path): %v", c.rec(32).raw)
 	want(c.rec(33).raw["media_state"] == "no-ZWAMEDIAITEM-row" && len(c.rec(33).attachments()) == 0, "message 33 (no item): %v", c.rec(33).raw)
 	want(c.rec(5).raw["media_state"] == "no-ZWAMEDIAITEM-row" && c.rec(6).raw["media_state"] == "no-ZWAMEDIAITEM-row", "messages 5, 6 have no item")
+	// a BLOB path is unreadable and a lone NUL is altered by cleaning (to U+FFFD): neither is "no path", neither is unresolved (PF15, I-3)
+	m55, m56 := c.rec(55), c.rec(56)
+	want(m55.raw["media_state"] == "local-path-unreadable" && m55.rawIs("attachments_lookup_undecided", 1) && m55.rawIs("attachments_unresolved", 0) && m55.rawIs("attachments_resolved", 0) && len(m55.attachments()) == 1,
+		"message 55 (BLOB path): %v", m55.raw)
+	a56, _ := m56.attachments()[0].(map[string]any)
+	want(m56.raw["media_state"] == "lookup-path-not-expressible" && m56.rawIs("attachments_lookup_undecided", 1) && m56.rawIs("attachments_unresolved", 0) && a56["mime"] == "image/jpeg" && a56["source_ref"] == "�",
+		"message 56 (a lone NUL path): %v %v", m56.raw, a56)
 	m43 := c.rec(43)
 	want(m43.rawIs("attachments_other_source", 1) && m43.rawIs("attachments_resolved", 0) && m43.rawIs("attachments_unresolved", 0) && m43.raw["label_ZMESSAGETYPE"] == "sticker",
 		"message 43 (a file of another device): %v", m43.raw)
 	// notes and warnings (plan "Notes and warnings (exact texts)"): the present tables the parser does not map, and one counted
-	// warning per table with an undecided join (message 29 is the one record); the reader's warning about the WAL comes first (rowrun forwards it when Run ends, before the parser's own)
+	// warning per table with an undecided join (messages 29 and 54 are the two records); the reader's warning about the WAL comes first (rowrun forwards it when Run ends, before the parser's own)
 	want(fx.Expect.Notes["unmapped_tables"] == "ZWAPROFILEPUSHNAME,ZWAGROUPMEMBERSCHANGE,ZWAGROUPINFO" && fx.Expect.Notes["container"] == "backup_domain", "notes %v", fx.Expect.Notes)
 	ws := fx.Expect.Warnings
 	want(len(ws) == 2 && ws[0].Contains == "wal-frames-not-applied" && ws[1].Locator == "sqlite:table=ZWAMEDIAITEM" &&

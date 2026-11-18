@@ -193,6 +193,8 @@ def core_messages(wal_row=True):
         msg(52, 12, 0, 0),
         msg(53, 2, 0, 0, ZGROUPMEMBER=5, ZFROMJID=GRP),
         msg(54, 1, 0, 1, ZMEDIAITEM="x"),  # a forward key that is no INTEGER: undecided, though an item names the message
+        msg(55, 1, 0, 1),
+        msg(56, 1, 0, 1),
     ]
     if wal_row:
         m.append(msg(45, 1, 0, 0))
@@ -226,6 +228,8 @@ def media_items():
         (11, 150, dict(ZMEDIALOCALPATH="Media/15550000001@s.whatsapp.net/a/b/IMG-0150.jpg", ZVCARDSTRING="image/jpeg", ZFILESIZE=555)),
         (12, 151, dict(ZVCARDNAME="gone1")),
         (13, 54, dict(ZTITLE="t54", ZMEDIALOCALPATH="Media/15550000001@s.whatsapp.net/a/b/IMG-0054.jpg", ZVCARDSTRING="image/jpeg", ZFILESIZE=54)),
+        (14, 55, dict(ZMEDIALOCALPATH=b"\x01\x02", ZVCARDSTRING="image/jpeg", ZFILESIZE=1000)),  # a BLOB path: unreadable, never "no path" (PF15)
+        (15, 56, dict(ZMEDIALOCALPATH=C.Raw(b"\x00"), ZVCARDSTRING="image/jpeg", ZFILESIZE=1000)),  # a lone NUL: altered by cleaning (U+FFFD), never looked up
     ]
 
 
@@ -467,6 +471,8 @@ def attach(ctx, item, raw, unknown):
     v = c.int("ZFILESIZE")
     if v is not None and v > 0:
         size = v
+    cell = c.row.get("ZMEDIALOCALPATH")
+    unreadable = cell is not None and not X.is_text(cell)  # a BLOB, an INTEGER or any other class (PF15)
     b = c.text("ZMEDIALOCALPATH")
     if b:
         ref = X.cleaned(raw, "attachments.source_ref", b)
@@ -481,10 +487,13 @@ def attach(ctx, item, raw, unknown):
     if ref:
         a["source_ref"] = ref
     state, logical = None, None
-    if not ref:
-        raw["media_state"] = "no-local-path"
+    if unreadable:
+        raw["media_state"] = "local-path-unreadable"
+        state = "not_expressible"  # no lookup was possible: counted attachments_lookup_undecided, never unresolved
+    elif not b:
+        raw["media_state"] = "no-local-path"  # NULL or empty text only
         state = "none"
-    elif altered or "*" in ref:
+    elif altered or "*" in (ref or ""):  # decided on the stored bytes, before any test of the cleaned text (PF15)
         raw["media_state"] = "lookup-path-not-expressible"
         state = "not_expressible"
     elif path_refused(ref, ctx):

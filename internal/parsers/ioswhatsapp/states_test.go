@@ -233,11 +233,23 @@ func TestIOSWhatsAppChatsStateVocabularyIsPinned(t *testing.T) {
 		cases["body from title"] = add(map[string]any{"ZMESSAGETYPE": int64(1), "ZTEXT": nil})
 		cases["body from vcard"] = add(map[string]any{"ZMESSAGETYPE": int64(4), "ZTEXT": nil})
 		cases["two media rows"] = add(map[string]any{"ZMESSAGETYPE": int64(1), "ZTEXT": nil})
+		paths := map[string]any{ // the stored ZMEDIALOCALPATH of each media_state case (a lone NUL: cleaning changes it)
+			"path NULL": nil, "path empty": "", "path BLOB": []byte{1, 2}, "path INTEGER": int64(7), "path NUL": "\x00", "path refused": "../x", "path star": "a*b", "path found-nothing": "Media/none.jpg",
+		}
+		for name := range paths {
+			cases[name] = add(map[string]any{"ZMESSAGETYPE": int64(1), "ZTEXT": nil})
+		}
+		cases["no item"] = add(map[string]any{"ZMESSAGETYPE": int64(1), "ZTEXT": nil})
 		mi := tb["ZWAMEDIAITEM"]
 		mi.put(1, map[string]any{"ZMESSAGE": cases["body from title"], "ZTITLE": "pic"})
 		mi.put(2, map[string]any{"ZMESSAGE": cases["body from vcard"], "ZVCARDSTRING": "BEGIN:VCARD"})
 		mi.put(3, map[string]any{"ZMESSAGE": cases["two media rows"]})
 		mi.put(4, map[string]any{"ZMESSAGE": cases["two media rows"]})
+		n := int64(4)
+		for name, p := range paths {
+			n++
+			mi.put(n, map[string]any{"ZMESSAGE": cases[name], "ZMEDIALOCALPATH": p, "ZVCARDSTRING": "image/jpeg"})
+		}
 	})
 	recs, _ := runChat(t, db, nil, "whatsapp-ios-join-undecided")
 	type want struct {
@@ -297,6 +309,26 @@ func TestIOSWhatsAppChatsStateVocabularyIsPinned(t *testing.T) {
 	if _, has := rawOf(recs[cases["no conflict"]])["address_conflict"]; has {
 		t.Error("an agreeing ZFROMJID states a conflict")
 	}
+	// media_state and its counter (4I2-R6, PF15): NULL or empty text is no path; a cell that is no text is unreadable, a path
+	// cleaning changed or holding * cannot be expressed (neither is unresolved); a refused path is unresolved
+	counted := func(name, state, counter string) {
+		t.Helper()
+		check(name, want{"media_state", state})
+		if rawOf(recs[cases[name]])[counter] != int64(1) || len(attachmentsOf(recs[cases[name]])) != 1 {
+			t.Errorf("%s: %v, want %s 1 and one attachment", name, rawOf(recs[cases[name]]), counter)
+		}
+	}
+	counted("path NULL", "no-local-path", "attachments_unresolved")
+	counted("path empty", "no-local-path", "attachments_unresolved")
+	counted("path BLOB", "local-path-unreadable", "attachments_lookup_undecided")
+	counted("path INTEGER", "local-path-unreadable", "attachments_lookup_undecided")
+	counted("path NUL", "lookup-path-not-expressible", "attachments_lookup_undecided")
+	counted("path star", "lookup-path-not-expressible", "attachments_lookup_undecided")
+	counted("path refused", "lookup-path-refused", "attachments_unresolved")
+	if r := recs[cases["path found-nothing"]]; rawOf(r)["media_state"] != nil || rawOf(r)["attachments_unresolved"] != int64(1) {
+		t.Errorf("a path with no file: %v", rawOf(r))
+	}
+	check("no item", want{"media_state", "no-ZWAMEDIAITEM-row"})
 	// receipt_info_state, body_column, join_undecided
 	check("receipt no row", want{"receipt_info_state", "no-ZWAMESSAGEINFO-row"})
 	check("body from title", want{"body_column", "ZTITLE"})

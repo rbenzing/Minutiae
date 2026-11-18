@@ -338,3 +338,34 @@ func TestIOSWhatsAppChatsNonFileTypesHaveNoAttachment(t *testing.T) {
 		t.Errorf("type 7 media raw: %v", raw)
 	}
 }
+
+// A hostile backup can put the database in an app group whose id holds "**" inside one element: classifyPlace accepts it and
+// so does the primary glob, but the case glob of the container's files is not compilable. The lookup is refused (never read as
+// "no file", never a Find), counted unresolved as the plan's vocabulary says of a refused lookup.
+func TestIOSWhatsAppChatsContainerThatNoGlobCanNameIsRefused(t *testing.T) {
+	h := parsertest.NewHarness(t)
+	db := imageDB("Media/x/IMG.jpg")
+	// the remote path (device metadata) holds the "**"; the file in the case does not need to
+	const logical = "ios:HomeDomain/Containers/Shared/AppGroup/x**y/ChatStorage.sqlite"
+	src := evidence.Source{Kind: "file", DeviceID: "IOS1", RemotePath: "/private/var/mobile/Containers/Shared/AppGroup/x**y/ChatStorage.sqlite"}
+	m, err := h.Case.Capture("IOS1", "acq1", "appgroup-xy/ChatStorage.sqlite", src, func(w io.Writer) error { _, err := w.Write(db); return err })
+	if err != nil {
+		t.Fatal(err)
+	}
+	primary := h.IOSArtifact(m, db, logical)
+	p := ioswhatsapp.Parser{}
+	in := h.Input(p, primary, nil, false)
+	cl := &countLookup{Lookuper: in.Lookup}
+	in.Lookup = cl
+	res := runLenient(t, h, p, in, "whatsapp-ios-join-undecided")
+	if res.Err != nil || len(res.Records) != 1 {
+		t.Fatalf("err %v, %d records", res.Err, len(res.Records))
+	}
+	r := res.Records[0]
+	if rawOf(r)["media_state"] != "lookup-path-refused" || counter(r, "attachments_unresolved") != int64(1) || counter(r, "attachments_resolved") != int64(0) || len(attachmentsOf(r)) != 1 {
+		t.Errorf("raw %v", rawOf(r))
+	}
+	if len(cl.globs) != 0 {
+		t.Errorf("a Find was made under a container no glob can name: %q", cl.globs)
+	}
+}

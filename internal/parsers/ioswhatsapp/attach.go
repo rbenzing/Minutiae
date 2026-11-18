@@ -3,6 +3,7 @@ package ioswhatsapp
 import (
 	"strings"
 
+	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/rowrun"
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/recordtypes/common"
 	"github.com/rbenzing/minutiae/internal/recordtypes/message"
@@ -15,6 +16,7 @@ import (
 
 const (
 	stateNoLocalPath    = "no-local-path"
+	stateUnreadable     = "local-path-unreadable"
 	stateNotExpressible = "lookup-path-not-expressible"
 	stateRefused        = "lookup-path-refused"
 	stateNoMediaRow     = "no-ZWAMEDIAITEM-row"
@@ -104,12 +106,14 @@ const (
 	lookupMissing                   // the case holds no file at that logical path
 	lookupOtherSource               // matches exist, but only from another device, acquisition, partition or snapshot
 	lookupAmbiguous                 // several matches of the database's own source
-	lookupRefused                   // the glob cannot be compiled (the element limit, a NUL or backslash): no lookup was made
+	lookupRefused                   // the glob cannot be compiled, so no lookup was made (see resolveMedia)
 )
 
 // resolveMedia finds the file of the case at <container>/Message/<rel> (rel is expressible, see mediaRel). One Find is made;
 // only a file whose logical path is exactly that path counts (the container's own text is never a pattern), and exactly one
-// of the database's own source is a link.
+// of the database's own source is a link. lookupRefused is reachable with a hostile backup: an app-group id such as "x**y"
+// is one path element that the primary glob accepts, but "**" inside an element is no glob (parse.CompileGlob), so the
+// container itself cannot be searched and no Find is made.
 func resolveMedia(in *parse.Input, container, rel string) (parse.Artifact, lookup) {
 	if in == nil || in.Lookup == nil || container == "" {
 		return parse.Artifact{}, lookupNone
@@ -150,9 +154,12 @@ func attachmentOf(m parse.MapContext, ir cellReader) (message.Attachment, bool) 
 	if v, ok := ir.int("ZFILESIZE"); ok && v > 0 {
 		a.Size = &v
 	}
-	stored, _ := ir.text("ZMEDIALOCALPATH")
+	stored, readable := localPath(ir)
 	container := classifyPlace(m.Input().Primary.Logical).Container
 	rel, state := mediaRel(stored, containerElems(container))
+	if !readable {
+		rel, state = "", stateUnreadable
+	}
 	if len(stored) > 0 {
 		a.SourceRef = cleanField(raw, "attachments.source_ref", stored)
 	}
@@ -162,6 +169,8 @@ func attachmentOf(m parse.MapContext, ir cellReader) (message.Attachment, bool) 
 	// every attachment is counted once: resolved, unresolved (no path, a refused path, no file) or one of the three that
 	// never pass for "no file": ambiguous, other source, and a path no lookup could express
 	counter := "attachments_unresolved"
+	// lookupNone (no Lookuper, or no container) cannot happen for a primary the host classified: Probe accepted its logical
+	// path and the host always gives a Lookuper. It is counted unresolved, as "no file was found", and never a link.
 	switch state {
 	case "":
 		art, st := resolveMedia(m.Input(), container, rel)
@@ -176,13 +185,29 @@ func attachmentOf(m parse.MapContext, ir cellReader) (message.Attachment, bool) 
 		case lookupRefused:
 			raw["media_state"] = stateRefused
 		}
-	case stateNotExpressible:
+	case stateNotExpressible, stateUnreadable:
 		raw["media_state"] = state
-		counter = "attachments_lookup_undecided"
+		counter = "attachments_lookup_undecided" // no lookup was possible
 	default:
 		raw["media_state"] = state
 	}
 	raw["attachments_resolved"], raw["attachments_unresolved"] = int64(0), int64(0)
 	raw[counter] = int64(1)
 	return a, true
+}
+
+// localPath reads ZMEDIALOCALPATH: the stored bytes (empty for NULL), and whether the cell is readable. A cell that is NULL
+// or text is readable (NULL and empty text are "no local path"); a BLOB, an INTEGER, a damaged cell or a missing column is
+// not, and is never read as "no path" (PF15).
+func localPath(ir cellReader) ([]byte, bool) {
+	col := ir.cols.At("ZMEDIALOCALPATH")
+	b, k := rowrun.TextCell(ir.row, col)
+	rowrun.Flag(ir.unknown, ir.row, ir.prefix+"ZMEDIALOCALPATH", col, k)
+	switch k {
+	case rowrun.CellValue:
+		return b, true
+	case rowrun.CellNull:
+		return nil, true
+	}
+	return nil, false
 }
