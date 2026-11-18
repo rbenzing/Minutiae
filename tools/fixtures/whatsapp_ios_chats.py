@@ -23,6 +23,7 @@ Variants (the placement of each is in internal/parsers/ioswhatsapp/fixtures_test
   ios-chatstorage-othermodel   Z_PRIMARYKEY names only CallRecord
   ios-chatstorage-otherapp     a same-named database of another app: one table ZMESSAGE(Z_PK, ZTEXT)
   ios-chatstorage-nooptional   no ZWAGROUPMEMBER, ZWAMESSAGEINFO or ZWAMEDIAITEM table (plan 4I2 PF3: the absence is stated)
+  ios-chatstorage-deleted      deleted ZWAMESSAGE rows and an old WAL frame (plan 4I2 PF2): the typed recovery scenario
 
 Python 3 with its bundled sqlite3 only; no Docker. Not part of gen.sh all.
 """
@@ -820,6 +821,70 @@ def v_nooptional(work):
     return files, oracle(files, "ios-chatstorage-nooptional", "backup", DOMAIN_WA)
 
 
+# ----------------------------------------------------------------------------------------- typed recovery (plan 4I2 PF2)
+
+def bulk(first, n, session=1):
+    """n plain text messages with ids first.. (the rows the deleted variant writes and deletes)."""
+    return [msg(i, session, i % 2, 0, ZTEXT="bulk message number %d with some text to fill the page" % i,
+                ZMESSAGEDATE=D + 5000 + i, **({"ZGROUPMEMBER": 1, "ZFROMJID": GRP} if session == 2 and i % 2 == 0 else {}))
+            for i in range(first, first + n)]
+
+
+def new_scenario(variant, con):
+    scen = SCENARIOS[variant] = C.Scenario(CLAIMED, alias=ALIAS)
+    scen.snap(con, "ZWAMESSAGE", "0")
+    return scen
+
+
+def v_deleted(work):
+    """Messages 1-3 live; 60 bulk messages (ids 100-159, half of them in the group) and messages 90-91 in the main file;
+    one committed WAL transaction inserts messages 92-93 and the next deletes 90-93 and 100-159. The main file still holds
+    the deleted rows (versions that are history under the WAL) and the first WAL frame holds 92-93 (the old frame). Typed
+    recovery claims ZWAMESSAGE rows; the joins read the live side tables. Deleted rows are found only through the WAL here:
+    the history oracle (sqlite_oracle.build_history) reads freelist leaves only of a store with no WAL or journal."""
+    msgs = [dict(m, Z_ENT=9) for m in small_messages() + bulk(90, 2) + bulk(100, 30, 1) + bulk(130, 30, 2)]
+    path = build_db(work, MODEL, tables_of(MODEL, msgs, sessions(4)[:2], with_items=False), wal=True)
+    con = C.connect(path)
+    scen = new_scenario("ios-chatstorage-deleted", con)
+    scen.write("ZWAMESSAGE", scen.snap(con, "ZWAMESSAGE"))
+    scen.want("ZWAMESSAGE", scen.snap(con, "ZWAMESSAGE", "Z_PK between 100 and 159 or Z_PK in (90, 91)"))
+    con.close()
+    # the rows the first WAL transaction inserts, as the engine would store them
+    old = [dict(m, Z_ENT=9) for m in bulk(92, 2)]
+    shadow = work + "/shadow.db"
+    sc = C.connect(shadow)
+    sc.executescript(X.load_ios_ddl("chatstorage.sql")[0])
+    for m in old:
+        C.insert(sc, "ZWAMESSAGE", m)
+    old_rows = scen.snap(sc, "ZWAMESSAGE")
+    sc.close()
+    scen.write("ZWAMESSAGE", old_rows)
+    scen.want("ZWAMESSAGE", old_rows)
+    X.leave_old_frame(path, ["pragma wal_autocheckpoint = 0"] + [insert_stmt("ZWAMESSAGE", m) for m in old] +
+                      ["delete from ZWAMESSAGE where Z_PK in (90, 91, 92, 93) or Z_PK between 100 and 159"])
+    files = finish(path)
+    exp = oracle(files, "ios-chatstorage-deleted", "backup", DOMAIN_WA)
+    for rec in exp["records"]:
+        rec["source_path"] = ""
+    return files, exp
+
+
+def recover_env(files):
+    """The live view of the finished files; the place is the consumer backup domain (PF5: a recovered row at a domain
+    place states its domain label)."""
+    return context(C.engine_view(files, TABLES), "backup", DOMAIN_WA, [])
+
+
+def recover_expect(variant, files):
+    """The <variant>.recover.expect.json of a variant that has a scenario (ruling 4G-R14)."""
+    def one(table, d, env, file):
+        rec = expect_message(d, env)
+        rec["source_path"], rec["file"] = "", file  # a recovered record: the source path follows the role of the file
+        return rec
+
+    return C.recover_oracle(variant, files, SCENARIOS[variant], recover_env, one)
+
+
 VARIANTS = {
     "ios-chatstorage": v_chatstorage,
     "ios-chatstorage-business": v_business,
@@ -829,4 +894,5 @@ VARIANTS = {
     "ios-chatstorage-othermodel": v_othermodel,
     "ios-chatstorage-otherapp": v_otherapp,
     "ios-chatstorage-nooptional": v_nooptional,
+    "ios-chatstorage-deleted": v_deleted,
 }

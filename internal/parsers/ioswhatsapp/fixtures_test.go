@@ -24,6 +24,7 @@ const (
 var variants = []string{
 	"ios-chatstorage", "ios-chatstorage-business", "ios-chatstorage-extract", "ios-chatstorage-renumbered",
 	"ios-chatstorage-nomodel", "ios-chatstorage-othermodel", "ios-chatstorage-otherapp", "ios-chatstorage-nooptional",
+	"ios-chatstorage-deleted",
 }
 
 // placeOf is where a variant sits: a backup variant is bundled with BundleIOSBackup(h, domain, rel) and has an empty

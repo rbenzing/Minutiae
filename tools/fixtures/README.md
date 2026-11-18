@@ -3286,6 +3286,7 @@ py -3 -I tools/fixtures/telephony_gen.py --family whatsapp-ios-chats --check
 | `ios-chatstorage-othermodel` | consumer domain | only `CallRecord` 2 | session 1, messages 1 to 3 (the parser refuses it) |
 | `ios-chatstorage-otherapp` | an app group of an extraction | none | one table `ZMESSAGE(Z_PK, ZTEXT)` (another app's database of the same name) |
 | `ios-chatstorage-nooptional` | consumer domain | as above | messages 1 to 4, 10 and 44 without the optional tables `ZWAGROUPMEMBER`, `ZWAMESSAGEINFO` and `ZWAMEDIAITEM`: their absence is an undecided join (plan 4I2 PF3), never "no row" |
+| `ios-chatstorage-deleted` | consumer domain, with `-wal` | as above | session 1, messages 1 to 3 live; messages 90, 91 and 100 to 159 in the file and 92, 93 in a first WAL frame, all deleted by a committed WAL transaction (typed recovery scenario, plan 4I2 PF2; `ios-chatstorage-deleted.recover.expect.json`) |
 
 Messages of the oracle: one record per `ZWAMESSAGE` row, with the raw columns as stored, the labels, the chat and sender states,
 the media join (the exactly-one same-source rule at `<container>/Message/<path>`) and its counters, and the app label from the

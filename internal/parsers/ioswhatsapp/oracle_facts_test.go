@@ -3,6 +3,7 @@ package ioswhatsapp_test
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -272,5 +273,50 @@ func TestIOSWhatsAppChatsOracleStatesTheAbsentOptionalTables(t *testing.T) {
 		if !c.rec(n).rawAbsent("join_undecided") {
 			t.Errorf("message %d (text, no join) states a join", n)
 		}
+	}
+}
+
+// TestIOSWhatsAppChatsDeletedOracleStatesTheHistory (plan 4I2 PF2): messages 1-3 stay live; the rows 90-93 and 100-159 were
+// deleted by a committed WAL transaction, so they are history: the main file holds the versions that the deletion
+// superseded (90, 91, 100-159) and the first WAL frame holds 92 and 93, which a later frame deleted (the old frame).
+func TestIOSWhatsAppChatsDeletedOracleStatesTheHistory(t *testing.T) {
+	c, _ := recsOf(t, "ios-chatstorage-deleted")
+	if len(c.by) != 3 {
+		t.Errorf("%d live records, want 3 (messages 1-3)", len(c.by))
+	}
+	raw, err := os.ReadFile("testdata/ios-chatstorage-deleted.recover.expect.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exp struct {
+		Claimed []string `json:"claimed"`
+		Records []struct {
+			Table, Method, Relation, File string
+			Rowid                         int64
+		} `json:"records"`
+	}
+	if err := json.Unmarshal(raw, &exp); err != nil {
+		t.Fatal(err)
+	}
+	if len(exp.Claimed) != 1 || exp.Claimed[0] != "ZWAMESSAGE" {
+		t.Errorf("claimed %v", exp.Claimed)
+	}
+	rows := map[int64]bool{}
+	files := map[string]bool{}
+	for _, r := range exp.Records {
+		rows[r.Rowid] = true
+		files[r.File] = true
+		if r.Table != "ZWAMESSAGE" || r.Method != "sqlite-wal-prior" || r.Relation != "absent-from-live" {
+			t.Errorf("row %d: %+v", r.Rowid, r)
+		}
+	}
+	for n := int64(1); n <= 200; n++ {
+		want := n == 90 || n == 91 || n == 92 || n == 93 || (n >= 100 && n <= 159)
+		if rows[n] != want {
+			t.Errorf("row %d recovered = %v, want %v", n, rows[n], want)
+		}
+	}
+	if !files["db"] || !files["wal"] {
+		t.Errorf("history in %v, want both the main file and the WAL", files)
 	}
 }

@@ -6,6 +6,8 @@ package ioswhatsapp_test
 // changes this file in the same commit, so a silent regeneration shows in review.
 var fixturePins = map[string]string{
 	"ios-chatstorage-business.db":   "f58de6fb5ae04c076b51cb68f3b56b69a40a9634aa7d119fff3c507957d2baed",
+	"ios-chatstorage-deleted.db":    "ebcb54a9d9c3b7a2ef7cb88fee4c1d0b05e202c9d5a905d83a1121970d3a7773",
+	"ios-chatstorage-deleted.wal":   "0d5d0fce5abba1c498f3037a83a10c3fc3724eac4bbddef64c7df29e7e6aa8f8",
 	"ios-chatstorage-extract.db":    "f58de6fb5ae04c076b51cb68f3b56b69a40a9634aa7d119fff3c507957d2baed",
 	"ios-chatstorage-nomodel.db":    "6a0812a1ef06ba61b391af8d0b24da3c93dafe2f61c4eab5be15e2a110fe3917",
 	"ios-chatstorage-nooptional.db": "ac9354a6a039c7a5bf8cb4712a4d325a06d64c25bf7af0f85dbd7eb0acf60241",
