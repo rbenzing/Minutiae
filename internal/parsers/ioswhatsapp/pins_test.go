@@ -16,5 +16,5 @@ var fixturePins = map[string]string{
 	"ios-chatstorage-othermodel.db":       "760e34b21f0422fe1d670161be296caaa4ddd4bd540fcd36c115ec81b6a69a0c",
 	"ios-chatstorage-renumbered.db":       "a019b633e770aefa0549549468da6ffa4e387bdc46a71ffa658b39cfe9e03c23",
 	"ios-chatstorage.db":                  "12b9d1224d53709afbfc86697f67a873ce56a0149226a22968be09e92c74b227",
-	"ios-chatstorage.wal":                 "ac23149bd5e21ba13aaf5152a8b1c34bb57c556487a0d94662290803d13a4131",
+	"ios-chatstorage.wal":                 "3be3cede9809ec5982d294c4faa5e152c732da3eca126b52305a10e38fdcf4fd",
 }

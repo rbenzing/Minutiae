@@ -222,11 +222,11 @@ func TestIOSWhatsAppChatsOracleStatesTheSpecRules(t *testing.T) {
 	want(m43.rawIs("attachments_other_source", 1) && m43.rawIs("attachments_resolved", 0) && m43.rawIs("attachments_unresolved", 0) && m43.raw["label_ZMESSAGETYPE"] == "sticker",
 		"message 43 (a file of another device): %v", m43.raw)
 	// notes and warnings (plan "Notes and warnings (exact texts)"): the present tables the parser does not map, and one counted
-	// warning per table with an undecided join (message 29 is the one record), then the reader's warning about the WAL
+	// warning per table with an undecided join (message 29 is the one record); the reader's warning about the WAL comes first (rowrun forwards it when Run ends, before the parser's own)
 	want(fx.Expect.Notes["unmapped_tables"] == "ZWAPROFILEPUSHNAME,ZWAGROUPMEMBERSCHANGE,ZWAGROUPINFO" && fx.Expect.Notes["container"] == "backup_domain", "notes %v", fx.Expect.Notes)
 	ws := fx.Expect.Warnings
-	want(len(ws) == 2 && ws[0].Locator == "sqlite:table=ZWAMEDIAITEM" && ws[0].Contains == "whatsapp-ios-join-undecided: ZWAMEDIAITEM: 1 records" &&
-		ws[1].Contains == "wal-frames-not-applied", "warnings %+v", ws)
+	want(len(ws) == 2 && ws[0].Contains == "wal-frames-not-applied" && ws[1].Locator == "sqlite:table=ZWAMEDIAITEM" &&
+		ws[1].Contains == "whatsapp-ios-join-undecided: ZWAMEDIAITEM: 1 records", "warnings %+v", ws)
 	want(len(fx.Expect.ExtraFiles) == 2 && fx.Expect.ExtraFiles[0].Domain == domainConsumer && fx.Expect.ExtraFiles[0].RelativePath == "Message/Media/15550000001@s.whatsapp.net/a/b/IMG-0004.jpg" &&
 		fx.Expect.ExtraFiles[1].Device == "IOS2", "extra files %+v", fx.Expect.ExtraFiles)
 }

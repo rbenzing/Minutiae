@@ -777,7 +777,8 @@ def v_chatstorage(work):
     exp = oracle(files, "ios-chatstorage", "backup", DOMAIN_WA, EXTRAS)
     for rec in exp["records"]:
         rec["source_path"] = ""  # a WAL companion: the source path follows the role of the cell
-    exp["warnings"].append({"table": "", "rowid": 0, "contains": "wal-frames-not-applied"})
+    # the reader's warnings come first (rowrun forwards them when Run ends), then the parser's per-table warnings
+    exp["warnings"].insert(0, {"table": "", "rowid": 0, "contains": "wal-frames-not-applied"})
     return files, exp
 
 
