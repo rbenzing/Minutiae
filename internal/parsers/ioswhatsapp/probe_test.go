@@ -350,7 +350,7 @@ func TestIOSWhatsAppChatsModelOnADamagedPageIsUnreadable(t *testing.T) {
 		h := parsertest.NewHarness(t)
 		b := parsertest.Fixture{Name: name, Files: map[string][]byte{"db": db}}.BundleIOSBackup(h, domainConsumer, dbName)
 		p := ioswhatsapp.Parser{}
-		res := runLenient(t, h, p, b.Input(h, p, false), "")
+		res := runLenient(t, h, p, b.Input(h, p, false), "page-type")
 		if !errors.Is(res.Err, ioswhatsapp.ErrUnsupportedModel) || !strings.Contains(res.Err.Error(), reason) || len(res.Records) != 0 {
 			t.Errorf("%s: Parse err %v", name, res.Err)
 		}
@@ -393,4 +393,32 @@ func runLenient(t *testing.T, h *parsertest.Harness, p ioswhatsapp.Parser, in *p
 		}
 	}
 	return res
+}
+
+// A row the reader still delivers but warns about decides the model, so the warning must reach the job (review N1).
+func TestIOSWhatsAppChatsModelWarningsOfADeliveredRowAreForwarded(t *testing.T) {
+	b := sqlitetest.New(sqlitetest.Options{PageSize: 4096})
+	m := b.CreateTable("ZWAMESSAGE", "CREATE TABLE ZWAMESSAGE (Z_PK INTEGER PRIMARY KEY, ZCHATSESSION INTEGER, ZISFROMME INTEGER, ZMESSAGEDATE TIMESTAMP, ZMESSAGETYPE INTEGER)")
+	c := b.CreateTable("ZWACHATSESSION", "CREATE TABLE ZWACHATSESSION (Z_PK INTEGER PRIMARY KEY, ZCONTACTJID VARCHAR)")
+	m.Insert(1, nil, int64(1), int64(0), int64(600000001), int64(0))
+	c.Insert(1, nil, "15550000001@s.whatsapp.net")
+	z := b.CreateTable("Z_PRIMARYKEY", "CREATE TABLE Z_PRIMARYKEY (Z_ENT INTEGER PRIMARY KEY, Z_NAME VARCHAR, Z_SUPER INTEGER, Z_MAX INTEGER)")
+	z.InsertRaw(1, []uint64{0, 31, 8, 8}, []byte("WAMessagex")) // one byte more than the header accounts for
+	z.Insert(2, nil, "WAChatSession", int64(0), int64(0))
+	h := parsertest.NewHarness(t)
+	bd := parsertest.Fixture{Name: "mismatch", Files: map[string][]byte{"db": b.Bytes()}}.BundleIOSBackup(h, domainConsumer, dbName)
+	p := ioswhatsapp.Parser{}
+	res := runLenient(t, h, p, bd.Input(h, p, false), "record-length-mismatch")
+	if res.Err != nil || res.Notes["entity.WAMessage"] != "1" {
+		t.Fatalf("the delivered row did not decide the model: err %v notes %v", res.Err, res.Notes)
+	}
+	n := 0
+	for _, w := range res.Warnings {
+		if strings.Contains(w.Reason, "record-length-mismatch") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("record-length-mismatch warnings = %d, want 1 (the model read's, once): %v", n, res.Warnings)
+	}
 }

@@ -108,9 +108,8 @@ func readModelDB(ctx context.Context, db *sqlitedb.DB, names ...string) (model, 
 	ix, err := t.Index(ctx, "Z_NAME", maxModelRows+1)
 	var uc *sqlitedb.UnsupportedCollationError
 	switch {
-	case errors.Is(err, sqlitedb.ErrIndexLimit):
-		return model{}, &modelError{"Z_PRIMARYKEY has more than 4096 rows"}
-	case errors.As(err, &uc) || err != nil && dataDamage(err):
+	// the row cap was decided by the scan: an index with more entries than rows (a numeric-looking text is keyed twice) is no row count
+	case errors.Is(err, sqlitedb.ErrIndexLimit) || errors.As(err, &uc) || err != nil && dataDamage(err):
 		return model{}, &modelError{reasonWhole}
 	case err != nil:
 		return model{}, err

@@ -131,3 +131,17 @@ func TestReadModelUnreadableCellsAreNeverDecided(t *testing.T) {
 	wantReason(t, "unreadable Z_ENT", err, reason)
 	// a NULL or TEXT Z_ENT is still a decided "no integer" (TestReadModelBounds)
 }
+
+// The index keys a numeric-looking text twice: 4000 rows are fewer than the row cap, so "more than 4096 rows" would be
+// false; the index limit is an unreadable model (review N2).
+func TestReadModelIndexLimitIsNotARowCount(t *testing.T) {
+	db := zpk(zpkDDL, func(z *sqlitetest.Table) {
+		z.Insert(1, nil, "WAMessage", int64(0), int64(0))
+		z.Insert(2, nil, "WAChatSession", int64(0), int64(0))
+		for i := 3; i <= 4000; i++ {
+			z.Insert(int64(i), nil, strconv.Itoa(100000+i), int64(0), int64(0))
+		}
+	})
+	_, err := modelOf(t, db, "WAMessage", "WAChatSession")
+	wantReason(t, "4000 numeric names", err, "Z_PRIMARYKEY could not be read whole")
+}

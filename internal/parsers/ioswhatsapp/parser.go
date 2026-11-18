@@ -164,8 +164,9 @@ func (Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) err
 const maxPreflightWarnings = 1000
 
 // preflight opens the database once, decides whether ZWAMESSAGE is present and, when it is, reads the Core Data model
-// and notes the entity numbers. When it returns an error it first forwards the reader's warnings: the damage that
-// made the model unreadable is evidence, and rowrun.Run, which forwards them on the success path, never runs.
+// and notes the entity numbers. It forwards the reader's warnings raised after the open (the pages of Z_PRIMARYKEY
+// it read, which Run never reads, even when it still delivered a row), and on an error all of them: the damage that
+// made the model unreadable is evidence and rowrun.Run never runs.
 func preflight(ctx context.Context, in *parse.Input, out parse.Emitter, p dbPlace) (err error) {
 	files, err := filesOf(in)
 	if err != nil {
@@ -176,12 +177,14 @@ func preflight(ctx context.Context, in *parse.Input, out parse.Emitter, p dbPlac
 		return err
 	}
 	defer db.Release()
+	n0 := len(db.Warnings()) // the open's own schema warnings: rowrun.Run's open raises them again
 	defer func() {
-		if err == nil {
-			return
+		from := n0 // on success only what the lookup and the model read raised, which Run never raises (review N1)
+		if err != nil {
+			from = 0
 		}
 		dropped := 0
-		for i, w := range db.Warnings() {
+		for i, w := range db.Warnings()[from:] {
 			if i >= maxPreflightWarnings {
 				dropped++
 				continue
