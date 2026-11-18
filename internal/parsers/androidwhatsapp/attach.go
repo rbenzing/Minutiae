@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/rbenzing/minutiae/internal/parse"
+	"github.com/rbenzing/minutiae/internal/recordtypes/common"
 	"github.com/rbenzing/minutiae/internal/recordtypes/message"
 )
 
@@ -288,10 +289,11 @@ func resolveMedia(in *parse.Input, db dbPath, filePath string, sole func() bool)
 // mediaFacts is the media of a message as a reader found it: what an attachment is made of, and the raw values that
 // state it. The lookups are made by the builder, only when it makes the attachment.
 type mediaFacts struct {
-	Name, Mime string
-	Size       *int64 // file_size, only when above 0 (0 is not recorded: it stays in Raw)
-	SourceRef  string // file_path; "" for a legacy row (no local path)
-	Raw        map[string]any
+	Name, Mime  string
+	Size        *int64 // file_size, only when above 0 (0 is not recorded: it stays in Raw)
+	SourceRef   string // file_path; "" for a legacy row (no local path)
+	PathCleaned bool   // cleaning changed the stored file_path: SourceRef is display text and is never looked up
+	Raw         map[string]any
 }
 
 // mediaLabels are the labels of the message type that hold a file (spec 6.7): a contact card, a location, a group
@@ -339,6 +341,9 @@ func readMediaRow(m parse.MapContext, f *msgFacts) error {
 	}
 	if b, ok := r.text("file_path"); ok && len(b) > 0 {
 		mf.SourceRef = cleanField(f.Raw, "attachments.source_ref", b)
+		// a path that cleaning changed (NUL, invalid UTF-8, a cut) is display text only: the stored path may name no
+		// file the cleaned text names, so it is never looked up (R5: the exact path, never a guess)
+		mf.PathCleaned = len(common.CleanText(b, maxText).Flags) > 0
 	}
 	if v, ok := r.int("file_size"); ok {
 		mf.Raw["file_size"] = v
@@ -404,7 +409,10 @@ func applyMedia(m parse.MapContext, msg *message.Message, f *msgFacts) {
 	}
 	a := message.Attachment{Name: mf.Name, Mime: mf.Mime, SourceRef: mf.SourceRef, Size: mf.Size}
 	var resolved, unresolved, ambiguous, otherSource, otherUser, undecided, pathUndecided int64
-	art, st, _ := resolveMedia(m.Input(), classifyDB(m.Input().Primary.Logical), mf.SourceRef, f.Sole)
+	art, st := parse.Artifact{}, lookupUndecidedPath
+	if !mf.PathCleaned {
+		art, st, _ = resolveMedia(m.Input(), classifyDB(m.Input().Primary.Logical), mf.SourceRef, f.Sole)
+	}
 	switch st {
 	case lookupFound:
 		a.ArtifactID, a.ArtifactSHA256 = art.ID, art.SHA256

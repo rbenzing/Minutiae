@@ -1087,6 +1087,9 @@ def media_modern(ctx, r, raw, unknown):
     b = c.text("file_path")
     if b:
         mf["ref"] = cleaned(raw, "attachments.source_ref", b)
+        # R5, the literal rule: a stored path that cleaning altered is display text; it names no file the cleaned text
+        # names, so it is never looked up
+        mf["ref_altered"] = bool(text_of(b).flags)
     v = c.int("file_size")
     if v is not None:
         mf["raw"]["file_size"] = v
@@ -1142,13 +1145,19 @@ def apply_media(mf, raw, ctx):
         a["size"] = mf["size"]
     if mf["ref"]:
         a["source_ref"] = mf["ref"]
-    state, path = resolve_media(mf["ref"], ctx)
+    if mf.get("ref_altered") or (mf["ref"] and "*" in mf["ref"]):
+        state, path = "not_expressible", None  # the case glob cannot express the path: no lookup is made
+    else:
+        state, path = resolve_media(mf["ref"], ctx)
+    if state == "not_expressible":
+        raw["media_state"] = "lookup-path-not-expressible"
     if state == "found":
         a["artifact_id"], a["artifact_sha256"] = "@id:" + path, "@sha256:" + path
     raw["attachments_resolved"] = 1 if state == "found" else 0
     raw["attachments_unresolved"] = 1 if state in ("none", "missing") else 0
     for st, key in (("ambiguous", "attachments_ambiguous"), ("other_source", "attachments_other_source"),
-                    ("other_user", "attachments_other_user"), ("user_undecided", "attachments_user_undecided")):
+                    ("other_user", "attachments_other_user"), ("user_undecided", "attachments_user_undecided"),
+                    ("not_expressible", "attachments_lookup_undecided")):
         if state == st:
             raw[key] = 1
     return [a]
