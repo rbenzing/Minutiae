@@ -1,6 +1,9 @@
 package androidwhatsapp
 
 import (
+	"slices"
+	"strings"
+
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/rowrun"
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/records"
@@ -204,19 +207,26 @@ func readVCards(m parse.MapContext, f *msgFacts) error {
 	}
 	vc := rowrun.Resolve(m, "message_vcard", "vcard")
 	var cards [][]byte
-	var total, unreadable int
+	var total, unreadable, nulls int
+	kinds := map[string]bool{}
 	for _, row := range rows {
 		b, k := rowrun.TextCell(row, vc.At("vcard"))
 		if k != rowrun.CellValue {
-			// a card row whose cell is not readable text: counted and stated, never skipped as if there were no row
-			unreadable++
+			// a stored NULL is a known value (4I-R22 null-vcard); a damaged cell, a type mismatch or a missing
+			// column is counted and stated, never skipped as if there were no row
 			switch k {
 			case rowrun.CellNull:
-				f.Unknown["message_vcard.vcard"] = "null"
+				nulls++
 			case rowrun.CellMissing:
-				f.Unknown["message_vcard.vcard"] = "missing"
+				unreadable++
+				kinds["missing"] = true
 			default:
-				rowrun.Flag(f.Unknown, row, "message_vcard.vcard", vc.At("vcard"), k)
+				unreadable++
+				one := map[string]any{}
+				rowrun.Flag(one, row, "message_vcard.vcard", vc.At("vcard"), k)
+				if v, ok := one["message_vcard.vcard"].(string); ok {
+					kinds[v] = true
+				}
 			}
 			continue
 		}
@@ -225,9 +235,21 @@ func readVCards(m parse.MapContext, f *msgFacts) error {
 			cards = append(cards, b)
 		}
 	}
+	if len(kinds) > 0 {
+		// the distinct kinds in a stable order, so a later row of another kind never replaces an earlier one
+		names := make([]string, 0, len(kinds))
+		for k := range kinds {
+			names = append(names, k)
+		}
+		slices.Sort(names)
+		f.Unknown["message_vcard.vcard"] = strings.Join(names, ",")
+	}
 	switch {
 	case total == 0 && unreadable > 0:
 		f.Raw["vcard_state"] = "unreadable"
+		return nil
+	case total == 0 && nulls > 0:
+		f.Raw["vcard_state"] = "null-vcard"
 		return nil
 	case total == 0:
 		f.Raw["vcard_state"] = "no-message_vcard-row"

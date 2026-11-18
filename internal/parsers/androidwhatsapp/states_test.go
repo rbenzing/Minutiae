@@ -115,6 +115,8 @@ func TestWhatsAppStateVocabularyIsPinned(t *testing.T) {
 		msgRow(tb, 12, 1, 0, nil, 0, int64(0), "sentinel time")
 		msgRow(tb, 13, 1, 0, nil, 0, int64(5), "invalid time")
 		msgRow(tb, 14, 3, 0, nil, 0, goodTS, "chat jid has no raw string")
+		msgRow(tb, 15, 1, 0, nil, 4, goodTS, "vcard stored NULL")
+		tb["message_vcard"].Insert(2, nil, int64(15), nil)
 	})
 	res := runBytes(t, db, nil, remoteLive)
 	recs := byRowid(t, res)
@@ -138,6 +140,9 @@ func TestWhatsAppStateVocabularyIsPinned(t *testing.T) {
 	}
 	if got := raw("10")["vcard_state"]; got != "no-message_vcard-row" {
 		t.Errorf("message 10: vcard_state %v", got)
+	}
+	if got := raw("15")["vcard_state"]; got != "null-vcard" || raw("15")["unknown_columns"] != nil {
+		t.Errorf("message 15: raw %v, want vcard_state null-vcard and no unknown_columns", raw("15"))
 	}
 	r11 := raw("11")
 	if r11["vcard_state"] != "unreadable" || !reflect.DeepEqual(r11["unknown_columns"], map[string]any{"message_vcard.vcard": "type-mismatch"}) {
@@ -387,5 +392,54 @@ func TestWhatsAppParseGuardsNilInput(t *testing.T) {
 	var in parse.Input
 	if err := p.Parse(t.Context(), &in, nil); !errors.Is(err, rowrun.ErrNilInput) {
 		t.Errorf("Parse(no primary) = %v, want rowrun.ErrNilInput", err)
+	}
+}
+
+// 4I-R22 (review): a stored NULL vCard cell is a known value, counted apart from damage. All NULL gives null-vcard and
+// nothing in unknown_columns; NULL beside a readable card emits the card; a missing column or a damaged cell is
+// unreadable; the kinds of unknown_columns are joined, never overwritten.
+func TestWhatsAppNullVCardIsAKnownState(t *testing.T) {
+	db, _ := buildDB(nil, func(tb tables) {
+		jidRow(tb, 1, "15550000001", "s.whatsapp.net", "15550000001@s.whatsapp.net")
+		tb["chat"].Insert(1, nil, int64(1), nil)
+		for i := int64(1); i <= 4; i++ {
+			msgRow(tb, i, 1, 0, nil, 4, goodTS, "fallback")
+		}
+		tb["message_vcard"].Insert(1, nil, int64(1), nil)
+		tb["message_vcard"].Insert(2, nil, int64(1), nil)
+		tb["message_vcard"].Insert(3, nil, int64(2), nil)
+		tb["message_vcard"].Insert(4, nil, int64(2), "BEGIN:VCARD")
+		tb["message_vcard"].Insert(5, nil, int64(3), int64(5))
+		tb["message_vcard"].Insert(6, nil, int64(3), nil)
+		tb["message_vcard"].Insert(7, nil, int64(4), int64(5))
+		tb["message_vcard"].Insert(8, nil, int64(4), 2.5)
+	})
+	recs := byRowid(t, runBytes(t, db, nil, remoteLive))
+	r1, r2, r3, r4 := rawMap(t, recs["message/1"]), rawMap(t, recs["message/2"]), rawMap(t, recs["message/3"]), rawMap(t, recs["message/4"])
+	if r1["vcard_state"] != "null-vcard" || r1["unknown_columns"] != nil {
+		t.Errorf("all-NULL cards: raw %v, want vcard_state null-vcard and no unknown_columns", r1)
+	}
+	if r2["vcard_state"] != nil || recs["message/2"].Body != "BEGIN:VCARD" || r2["unknown_columns"] != nil {
+		t.Errorf("NULL beside a card: body %q raw %v", recs["message/2"].Body, r2)
+	}
+	if r3["vcard_state"] != "unreadable" || !reflect.DeepEqual(r3["unknown_columns"], map[string]any{"message_vcard.vcard": "type-mismatch"}) {
+		t.Errorf("damaged beside NULL: raw %v, want unreadable and type-mismatch only", r3)
+	}
+	if r4["vcard_state"] != "unreadable" || !reflect.DeepEqual(r4["unknown_columns"], map[string]any{"message_vcard.vcard": "type-mismatch"}) {
+		t.Errorf("two damaged cells: raw %v", r4)
+	}
+}
+
+// A message_vcard table without its vcard column: the cards are unreadable, stated, never "no rows".
+func TestWhatsAppMissingVCardColumnIsUnreadable(t *testing.T) {
+	db, _ := buildDB(map[string]string{"message_vcard": "create table message_vcard(_id integer primary key, message_row_id integer)"}, func(tb tables) {
+		jidRow(tb, 1, "15550000001", "s.whatsapp.net", "15550000001@s.whatsapp.net")
+		tb["chat"].Insert(1, nil, int64(1), nil)
+		msgRow(tb, 1, 1, 0, nil, 4, goodTS, "fallback")
+		tb["message_vcard"].Insert(1, nil, int64(1))
+	})
+	r := rawMap(t, byRowid(t, runBytes(t, db, nil, remoteLive))["message/1"])
+	if r["vcard_state"] != "unreadable" || !reflect.DeepEqual(r["unknown_columns"], map[string]any{"message_vcard.vcard": "missing"}) {
+		t.Errorf("raw %v, want unreadable and missing", r)
 	}
 }
