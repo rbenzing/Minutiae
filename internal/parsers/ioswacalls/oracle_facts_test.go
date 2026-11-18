@@ -81,7 +81,7 @@ func TestIOSWhatsAppCallsOracleStatesTheSpecRules(t *testing.T) {
 		}
 	}
 	_, has16 := c.by[16]
-	want(len(c.by) == 15 && !has16, "ios-callhistory has %d records, want 15 (calls 1-14 in the file, 15 in a committed WAL frame, 16 in an uncommitted one: no record)", len(c.by))
+	want(len(c.by) == 16 && !has16, "ios-callhistory has %d records, want 16 (calls 1-14 and 17 in the file, 15 in a committed WAL frame, 16 in an uncommitted one: no record)", len(c.by))
 
 	// call 1: the single-call aggregate A1 says incoming (ZINCOMING 1 = in, S1 and S7); ZOUTCOME 0 = answered; ZVIDEO is not
 	// mapped (PF6: no per-value source), so the kind is unknown and the stored value is in raw
@@ -99,8 +99,12 @@ func TestIOSWhatsAppCallsOracleStatesTheSpecRules(t *testing.T) {
 	// calls 3 to 5 share the aggregate A3: no direction is borrowed from an aggregate that links three calls
 	for _, id := range []int64{3, 4, 5} {
 		r := c.rec(id)
-		want(r.direction() == "unknown" && r.raw["direction_state"] == "multi-call-aggregate" && r.rawIs("aggregate_calls", 3) && r.rawAbsent("aggregate") &&
+		want(r.direction() == "unknown" && r.raw["direction_state"] == "multi-call-aggregate" && r.rawIs("aggregate_calls", 3) &&
 			r.outcome() == "unknown" && r.raw["label_ZOUTCOME"] == "missed", "call %d: %v", id, r.Payload)
+		// the aggregate row's stored columns are stated whatever the number of calls it links (4I2-A4); only the direction is limited
+		a := r.aggregate()
+		want(len(a) == 4 && fmt.Sprint(a["Z_PK"]) == "3" && fmt.Sprint(a["ZINCOMING"]) == "1" && fmt.Sprint(a["ZVIDEO"]) == "1" && fmt.Sprint(a["ZMISSED"]) == "1",
+			"call %d aggregate %v, want {Z_PK 3, ZINCOMING 1, ZVIDEO 1, ZMISSED 1}", id, r.raw["aggregate"])
 	}
 
 	// call 6: an aggregate whose ZINCOMING is neither 0 nor 1; call 7 names no aggregate; call 8 one that has no row
@@ -108,6 +112,11 @@ func TestIOSWhatsAppCallsOracleStatesTheSpecRules(t *testing.T) {
 	want(c6.direction() == "unknown" && c6.raw["direction_state"] == "incoming-unknown" && fmt.Sprint(c6.aggregate()["ZINCOMING"]) == "7" && c6.outcome() == "answered", "call 6: %v", c6.Payload)
 	want(c.rec(7).direction() == "unknown" && c.rec(7).raw["direction_state"] == "no-aggregate" && c.rec(7).rawAbsent("Z1CALLEVENTS"), "call 7: %v", c.rec(7).Payload)
 	want(c.rec(8).direction() == "unknown" && c.rec(8).raw["direction_state"] == "no-ZWAAGGREGATECALLEVENT-row" && c.rec(8).rawIs("Z1CALLEVENTS", 99), "call 8: %v", c.rec(8).Payload)
+
+	// a TEXT Z1CALLEVENTS is no key: undecided, never "no-aggregate", the stored value in raw (4I2-A4)
+	c17 := c.rec(17)
+	want(c17.direction() == "unknown" && c17.raw["direction_state"] == "undecided" && c17.raw["Z1CALLEVENTS"] == "A3x" && c17.rawAbsent("aggregate") &&
+		fmt.Sprint(c17.raw["unknown_columns"]) == "map[ZWACDCALLEVENT.Z1CALLEVENTS:type-mismatch]", "call 17: %v", c17.Payload)
 
 	// ZOUTCOME 1 on an incoming call is missed; the codes 2, 4 and 99 are no outcome and carry no label
 	want(c.rec(11).direction() == "in" && c.rec(11).outcome() == "missed" && c.rec(11).rawAbsent("label_ZOUTCOME"), "call 11: %v", c.rec(11).Payload)
@@ -140,7 +149,7 @@ func TestIOSWhatsAppCallsOracleStatesTheSpecRules(t *testing.T) {
 	}
 
 	// notes and warnings: the participant table is named as unmapped, 12 distinct aggregate keys are read (1, 2, 3, 4, 6 to 12
-	// and 99: the NULL key of call 7 is no key), and the one warning is the reader's (the uncommitted WAL frames of call 16)
+	// and 99: the NULL key of call 7 and the TEXT key of call 17 are no key), and the one warning is the reader's (the uncommitted WAL frames of call 16)
 	want(fx.Expect.Notes["container"] == "backup_domain" && fx.Expect.Notes["app"] == "whatsapp" && fx.Expect.Notes["app_basis"] == "backup_domain", "notes %v", fx.Expect.Notes)
 	want(fx.Expect.Notes["unmapped_tables"] == "ZWACDCALLEVENTPARTICIPANT" && fx.Expect.Notes["aggregates"] == "12", "notes %v", fx.Expect.Notes)
 	want(len(fx.Expect.Warnings) == 1 && strings.Contains(fx.Expect.Warnings[0].Contains, "wal-frames-not-applied"), "warnings %+v", fx.Expect.Warnings)

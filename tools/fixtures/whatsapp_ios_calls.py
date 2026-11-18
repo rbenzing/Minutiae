@@ -126,6 +126,7 @@ def calls(last=True):
              ZBYTESSENT=1024, ZBYTESRECEIVED=2048),
         call(13, 10, ZDATE=None, ZDURATION=-5),
         call(14, 11, ZVIDEO=2),
+        call(17, "A3x"),  # a key that is TEXT: undecided, not "no aggregate"; it is no key the aggregates note counts
     ]
     return rows + [call(15, 12, ZOUTCOME=99)] if last else rows
 
@@ -169,33 +170,38 @@ def duration_of(c, raw, p):
 
 def direction_of(c, raw, unknown, ctx):
     """The direction of a call and its raw.direction_state (4I2-R7), under the single-call aggregate rule (4I2-R4, PF4)."""
-    key = c.int("Z1CALLEVENTS")
-    if key is not None:
-        raw["Z1CALLEVENTS"] = key  # as stored, whatever the direction
+    stored = c.row.get("Z1CALLEVENTS")
+    key = c.int("Z1CALLEVENTS")  # a cell that is not an integer is stated in unknown_columns
+    if stored is not None:
+        raw["Z1CALLEVENTS"] = key if key is not None else X.stored(raw, "Z1CALLEVENTS", stored)  # as stored, whatever the direction
     if ctx["aggs"] is None:  # a recovered row: the live aggregate says nothing about it (Review Focus 4, P8)
         raw["direction_state"] = "recovered-row"
+        return "unknown"
+    if stored is not None and key is None:  # not NULL, not an integer: no key was read, so no "no-aggregate" (unknown is never absent, 4I2-A4)
+        raw["direction_state"] = "undecided"
         return "unknown"
     if key is None or key == 0:
         raw["direction_state"] = "no-aggregate"
         return "unknown"
     n = ctx["aggs"][key]  # the calls that name this aggregate, this one included
+    row = ctx["agg_rows"].get(key)
+    if row is not None:  # the stored columns are stated whatever the number of calls (4I2-A4); only the direction is limited
+        a = X.Cells(row, {}, unknown, "ZWAAGGREGATECALLEVENT.")
+        stated = {"Z_PK": key}
+        for name in ("ZINCOMING", "ZVIDEO", "ZMISSED", "ZMISSEDREASON"):
+            v = a.int(name)
+            if v is not None:
+                stated[name] = v
+        raw["aggregate"] = stated
     if n >= 2:
         raw["direction_state"] = "multi-call-aggregate"
         raw["aggregate_calls"] = min(n, MAX_AGG_CALLS)
         if n > MAX_AGG_CALLS:
             raw["aggregate_calls_truncated"] = True
         return "unknown"
-    row = ctx["agg_rows"].get(key)
     if row is None:
         raw["direction_state"] = "no-ZWAAGGREGATECALLEVENT-row"
         return "unknown"
-    a = X.Cells(row, {}, unknown, "ZWAAGGREGATECALLEVENT.")
-    stated = {"Z_PK": key}
-    for name in ("ZINCOMING", "ZVIDEO", "ZMISSED", "ZMISSEDREASON"):
-        v = a.int(name)
-        if v is not None:
-            stated[name] = v
-    raw["aggregate"] = stated
     if stated.get("ZINCOMING") in INCOMING:
         return INCOMING[stated["ZINCOMING"]]
     raw["direction_state"] = "incoming-unknown"
