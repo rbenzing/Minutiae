@@ -109,7 +109,7 @@ func TestIOSWhatsAppChatsOracleStatesTheSpecRules(t *testing.T) {
 		}
 	}
 	_, has46 := c.by[46]
-	want(len(c.by) == 45 && !has46, "ios-chatstorage has %d records, want 45 (messages 1-44 in the file, 45 in a committed WAL frame, 46 in an uncommitted one: no record)", len(c.by))
+	want(len(c.by) == 46 && !has46, "ios-chatstorage has %d records, want 46 (messages 1-44 and 47 in the file, 45 in a committed WAL frame, 46 in an uncommitted one: no record)", len(c.by))
 	want(fx.Expect.Notes["entity.WAMessage"] == "9" && fx.Expect.Notes["entity.WAChatSession"] == "4", "entity notes %v", fx.Expect.Notes)
 
 	// iOS ZMESSAGETYPE 2 = video, 3 = audio, the reverse of Android (spec 7.1, research 7.2)
@@ -184,6 +184,10 @@ func TestIOSWhatsAppChatsOracleStatesTheSpecRules(t *testing.T) {
 	want(reflect.DeepEqual(c.rec(34).raw["address_conflict"], []any{"ZFROMJID"}) && c.rec(34).addr("from") == "15550000001@s.whatsapp.net", "message 34: %v", c.rec(34).Payload)
 	want(c.rec(1).rawAbsent("address_conflict") && c.rec(2).rawAbsent("address_conflict") && c.rec(10).rawAbsent("address_conflict") && c.rec(16).rawAbsent("address_conflict"),
 		"an agreeing 1:1 row, a group row or a status row has no address_conflict")
+	// a type-0 session whose JID is a group JID is a group for the sender and never states address_conflict (plan: never on group rows)
+	m47 := c.rec(47)
+	want(m47.addr("from") == "15550000002@s.whatsapp.net" && m47.rawAbsent("address_conflict") && m47.raw["ZFROMJID"] == "15550000099@s.whatsapp.net" &&
+		m47.raw["chat_class"] == "group" && m47.thread()["group"] == false, "message 47: %v", m47.Payload)
 	// a text over the cap is cut and flagged, never rejected
 	m38 := c.rec(38)
 	want(len(m38.text()) == 256<<10 && reflect.DeepEqual(m38.raw["text_flags"], []any{"body"}) && m38.Summary == nil, "message 38 body %d bytes, flags %v", len(m38.text()), m38.raw["text_flags"])
@@ -217,6 +221,12 @@ func TestIOSWhatsAppChatsOracleStatesTheSpecRules(t *testing.T) {
 	m43 := c.rec(43)
 	want(m43.rawIs("attachments_other_source", 1) && m43.rawIs("attachments_resolved", 0) && m43.rawIs("attachments_unresolved", 0) && m43.raw["label_ZMESSAGETYPE"] == "sticker",
 		"message 43 (a file of another device): %v", m43.raw)
+	// notes and warnings (plan "Notes and warnings (exact texts)"): the present tables the parser does not map, and one counted
+	// warning per table with an undecided join (message 29 is the one record), then the reader's warning about the WAL
+	want(fx.Expect.Notes["unmapped_tables"] == "ZWAPROFILEPUSHNAME,ZWAGROUPMEMBERSCHANGE,ZWAGROUPINFO" && fx.Expect.Notes["container"] == "backup_domain", "notes %v", fx.Expect.Notes)
+	ws := fx.Expect.Warnings
+	want(len(ws) == 2 && ws[0].Locator == "sqlite:table=ZWAMEDIAITEM" && ws[0].Contains == "whatsapp-ios-join-undecided: ZWAMEDIAITEM: 1 records" &&
+		ws[1].Contains == "wal-frames-not-applied", "warnings %+v", ws)
 	want(len(fx.Expect.ExtraFiles) == 2 && fx.Expect.ExtraFiles[0].Domain == domainConsumer && fx.Expect.ExtraFiles[0].RelativePath == "Message/Media/15550000001@s.whatsapp.net/a/b/IMG-0004.jpg" &&
 		fx.Expect.ExtraFiles[1].Device == "IOS2", "extra files %+v", fx.Expect.ExtraFiles)
 }
@@ -268,6 +278,22 @@ func TestIOSWhatsAppChatsOracleStatesTheAbsentOptionalTables(t *testing.T) {
 	}
 	if !reflect.DeepEqual(m44.raw["join_undecided"], []any{"ZWAMESSAGEINFO"}) || !m44.rawAbsent("receipt_info") || !m44.rawAbsent("receipt_info_state") {
 		t.Errorf("message 44: %v", m44.Payload)
+	}
+	_, fx := recsOf(t, "ios-chatstorage-nooptional")
+	var got []string
+	for _, w := range fx.Expect.Warnings {
+		got = append(got, w.Locator+" "+w.Contains)
+	}
+	wantW := []string{"sqlite:table=ZWAGROUPMEMBER whatsapp-ios-join-undecided: ZWAGROUPMEMBER: 1 records",
+		"sqlite:table=ZWAMEDIAITEM whatsapp-ios-join-undecided: ZWAMEDIAITEM: 1 records",
+		"sqlite:table=ZWAMESSAGEINFO whatsapp-ios-join-undecided: ZWAMESSAGEINFO: 1 records"}
+	if !reflect.DeepEqual(got, wantW) {
+		t.Errorf("warnings %v, want %v", got, wantW)
+	}
+	for _, tb := range []string{"ZWAGROUPMEMBER", "ZWAMESSAGEINFO", "ZWAMEDIAITEM"} {
+		if fx.Expect.Notes["join_undecided."+tb] == "" {
+			t.Errorf("no note join_undecided.%s", tb)
+		}
 	}
 	for _, n := range []int64{1, 2, 3} {
 		if !c.rec(n).rawAbsent("join_undecided") {

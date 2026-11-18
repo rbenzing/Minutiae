@@ -58,6 +58,7 @@ P4 = X.jid("15550000004", "s.whatsapp.net")
 P99 = X.jid("15550000099", "s.whatsapp.net")
 GRP = X.jid("120363000000000001", "g.us")
 GRP2 = X.jid("120363000000000002", "g.us")
+GRP3 = X.jid("120363000000000003", "g.us")
 STATUS = "status@broadcast"
 BCAST = "1234@broadcast"
 NUL_JID = C.Raw(b"1555\x00" + b"0000007@s.whatsapp.net")
@@ -80,6 +81,9 @@ GROUP_EVENT = {2: "participant_added", 3: "participant_left", 4: "group_icon_cha
 MESSAGE_STATUS = {6: "delivered", 8: "read_by_recipient"}
 SESSION_TYPE = {0: "private", 1: "group", 2: "broadcast", 3: "status"}
 OPTIONAL = ("ZWAGROUPMEMBER", "ZWAMESSAGEINFO", "ZWAMEDIAITEM")
+# the tables the plan lists as unmapped for the chats parser, in its order ("Notes and warnings (exact texts)")
+UNMAPPED = ["ZWAPROFILEPUSHNAME", "ZWAGROUPMEMBERSCHANGE", "ZWAGROUPINFO", "ZWAMESSAGEDATAITEM", "ZWAVCARDMENTION",
+            "ZWACHATPROPERTIES", "ZWACHATPUSHCONFIG", "ZWABLACKLISTITEM", "ZWAZ1PAYMENTTRANSACTION"]
 TABLES = ["ZWAMESSAGE", "ZWACHATSESSION", "ZWAGROUPMEMBER", "ZWAMEDIAITEM", "ZWAMESSAGEINFO", "Z_PRIMARYKEY"]
 
 
@@ -101,6 +105,7 @@ def sessions(ent):
         (5, dict(ZCONTACTJID=None, ZSESSIONTYPE=0)),
         (6, dict(ZCONTACTJID=GRP2, ZSESSIONTYPE=None)),
         (7, dict(ZCONTACTJID=NUL_JID, ZSESSIONTYPE=0)),
+        (8, dict(ZCONTACTJID=GRP3, ZSESSIONTYPE=0)),  # a group JID on a type-0 session: a group for the sender, never an address_conflict
     ]
     return [dict(Z_PK=pk, Z_ENT=ent, Z_OPT=1, **kw) for pk, kw in rows]
 
@@ -174,6 +179,7 @@ def core_messages(wal_row=True):
         msg(42, 7),
         msg(43, 1, 0, 15),
         msg(44, 1, 0, 0, ZMESSAGEINFO=1),
+        msg(47, 8, 0, 0, ZGROUPMEMBER=1, ZFROMJID=P99),
     ]
     if wal_row:
         m.append(msg(45, 1, 0, 0))
@@ -547,7 +553,7 @@ def expect_message(r, ctx):
         participants = [{"role": "from", "address": chat["str"]}]
     else:
         unknown_p = True
-    if chat["type"] == 0 and chat["str"] and direction in ("in", "out"):
+    if chat["type"] == 0 and not is_group and chat["str"] and direction in ("in", "out"):
         key = "ZFROMJID" if direction == "in" else "ZTOJID"
         b = c.row.get(key)
         if X.is_text(b) and not W.text_of(b).flags and W.text_of(b).text != chat["str"]:
@@ -672,6 +678,20 @@ def oracle(files, variant, place, domain, extras=()):
     ents = entities(view)
     for name in ("WAMessage", "WAChatSession"):
         notes["entity." + name] = str(ents[name])
+    present = {n for t, n, _ in W.master_rows(files) if t == "table"}
+    un = [t for t in UNMAPPED if t in present]
+    if un:
+        notes["unmapped_tables"] = ",".join(un)
+    counts = {}
+    for rec in exp["records"]:
+        for t in rec["payload"]["raw"].get("join_undecided", []):
+            counts[t] = counts.get(t, 0) + 1
+    for t in OPTIONAL:
+        if t not in present:
+            notes["join_undecided." + t] = "table absent"  # the reason text is the writer's: the plan names none for an absent table
+    for t in sorted(counts):  # plan P7: one counted warning per table, locator sqlite:table=<t>
+        exp["warnings"].append({"table": "", "rowid": 0, "locator": "sqlite:table=" + t,
+                                "contains": "whatsapp-ios-join-undecided: %s: %d records" % (t, counts[t])})
     exp["extra_files"] = [{"remote_path": I.backup_remote_path(dev, domain, rel),
                            "content_b64": base64.b64encode(b).decode(), "device": "" if dev == UDID else dev,
                            "domain": domain, "relative_path": rel} for rel, b, dev in extras]
@@ -746,7 +766,7 @@ def v_chatstorage(work):
     # 200,000 characters built inside the engine (a command line cannot carry them)
     big_stmt = insert_stmt("ZWAMESSAGE", big).replace("'@@BIG@@'", "replace(hex(zeroblob(100000)), '0', 'x')")
     X.leave_old_frame(path, ["pragma wal_autocheckpoint = 0", "begin", insert_stmt("ZWAMESSAGE", row45),
-                             "update Z_PRIMARYKEY set Z_MAX = 45 where Z_ENT = 9", "commit",
+                             "commit",
                              "pragma cache_size = 5", "pragma cache_spill = 1", "begin", big_stmt])
     files = finish(path)
     assert uncommitted_frames(files["wal"], 4096) > 0, "the WAL holds no frame after its last commit"
