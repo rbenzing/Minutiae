@@ -127,3 +127,19 @@ def leave_old_frame(path, statements):
     """Runs the statements in a child that dies without closing, leaving a WAL (the engine's last committed state is
     in the WAL, the pages it replaced stay in earlier frames). Used to build the old-frame variants (PF2)."""
     C.kill_child(path, statements)
+
+
+def insert_stmt(table, row):
+    """An INSERT statement with literal values, for a killed child's statement list (leave_old_frame)."""
+    return "insert into %s(%s) values (%s)" % (table, ",".join(row), ",".join(C.lit(v) for v in row.values()))
+
+
+def uncommitted_frames(wal, page_size):
+    """Frames after the last commit frame of a WAL (frames whose commit field is zero at the tail)."""
+    n = (len(wal) - 32) // (24 + page_size)
+    last = 0
+    for i in range(n):
+        off = 32 + i * (24 + page_size)
+        if int.from_bytes(wal[off + 4:off + 8], "big"):
+            last = i + 1
+    return n - last

@@ -3294,3 +3294,25 @@ the media join (the exactly-one same-source rule at `<container>/Message/<path>`
 backup domain (an extraction names no app: `unknown`, `no-container-metadata`). Notes: `container`, `app`, `app_basis` or
 `app_state`, `entity.WAMessage`, `entity.WAChatSession`. The warnings and the notes that depend on the mapping's column list are
 stated by the task that writes the parser.
+
+### WhatsApp iOS call-history fixtures (plan 4I2 task 7)
+
+`tools/fixtures/whatsapp_ios_calls.py` is the family `whatsapp-ios-calls` of `telephony_gen.py`, built like the chats family over
+`whatsapp_ios_common.py` with the DDL snapshot `schemas/whatsapp-ios/callhistory.sql` (from memory). The same honesty applies: the
+oracle is a second reading of the spec by the author of the Go design, checked against the text by the literal facts of
+`internal/parsers/ioswacalls/oracle_facts_test.go`.
+
+```
+py -3 -I tools/fixtures/telephony_gen.py --family whatsapp-ios-calls --out internal/parsers/ioswacalls/testdata \
+    --pins-go internal/parsers/ioswacalls/pins_test.go --pins-package ioswacalls_test
+py -3 -I tools/fixtures/telephony_gen.py --family whatsapp-ios-calls --check
+```
+
+| Variant (`internal/parsers/ioswacalls/testdata/`) | Bundled at | `Z_PRIMARYKEY` | Holds |
+|---|---|---|---|
+| `ios-callhistory` | backup domain `AppDomainGroup-group.net.whatsapp.WhatsApp.shared`, with `-wal` | WACDCallEvent 1, WAAggregateCallEvent 2, WACDCallEventParticipant 3 | calls 1 to 14 and aggregates 1 to 11 in the file, call 15 and aggregate 12 in a committed WAL frame, call 16 in an uncommitted one; two participant rows of aggregate 1. Call 1 is the only call of A1 (incoming, answered, 61.5 s); 2 the only call of A2 (outgoing); 3 to 5 share A3 (no direction); 6 an aggregate with `ZINCOMING` 7; 7 no aggregate; 8 an aggregate with no row; 9 and 10 outcome codes 2 and 4; 11 incoming missed; 12 a group call (the JIDs on the call row are raw only); 13 no date and a negative duration; 14 `ZVIDEO` 2; 15 outcome code 99. `ZVIDEO` is not mapped (the kind is `unknown`), no record has an address |
+| `ios-callhistory-extract` | an app group of an extraction (`BundleIOS`, no extras) | as above | calls 1 and 2 |
+| `ios-callhistory-otherapp` | an app group of an extraction | none | one table `ZCALL(Z_PK)` (another app's database of the same name) |
+
+Notes of the oracle: `container`, `app`, `app_basis` or `app_state`, `unmapped_tables` (`ZWACDCALLEVENTPARTICIPANT`) and `aggregates`
+(the number of distinct non-zero `Z1CALLEVENTS` keys). The one warning of `ios-callhistory` is the reader's `wal-frames-not-applied`.

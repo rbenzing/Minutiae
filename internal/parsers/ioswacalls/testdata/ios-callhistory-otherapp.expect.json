@@ -1,0 +1,1 @@
+{"ddl":"","extra_files":[],"family":"whatsapp-ios-calls","generator":{"files":{"db":"753d88d626bf90f552f3c889faf59cc6ff0ff77aac7b9c38d3d75b04985cfa29"},"python":"3.15.2","sqlite":"3.53.4","tool":"tools/fixtures/telephony_gen.py"},"notes":{},"records":[],"variant":"ios-callhistory-otherapp","warnings":[]}

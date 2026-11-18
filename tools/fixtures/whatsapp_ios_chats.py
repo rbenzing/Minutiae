@@ -793,10 +793,6 @@ def finish(path):
     return files
 
 
-def insert_stmt(table, row):
-    return "insert into %s(%s) values (%s)" % (table, ",".join(row), ",".join(C.lit(v) for v in row.values()))
-
-
 def v_chatstorage(work):
     """CORE-iOS in the main file (messages 1-44), row 45 in a committed WAL frame and row 46 in frames written without a
     commit (a large row that spilled from a tiny page cache before the kill): the engine sees 1-45."""
@@ -804,29 +800,18 @@ def v_chatstorage(work):
     row45 = dict(msg(45, 1, 0, 0), Z_ENT=9)
     big = dict(msg(46, 1, 0, 0, ZTEXT="@@BIG@@"), Z_ENT=9)
     # 200,000 characters built inside the engine (a command line cannot carry them)
-    big_stmt = insert_stmt("ZWAMESSAGE", big).replace("'@@BIG@@'", "replace(hex(zeroblob(100000)), '0', 'x')")
-    X.leave_old_frame(path, ["pragma wal_autocheckpoint = 0", "begin", insert_stmt("ZWAMESSAGE", row45),
+    big_stmt = X.insert_stmt("ZWAMESSAGE", big).replace("'@@BIG@@'", "replace(hex(zeroblob(100000)), '0', 'x')")
+    X.leave_old_frame(path, ["pragma wal_autocheckpoint = 0", "begin", X.insert_stmt("ZWAMESSAGE", row45),
                              "commit",
                              "pragma cache_size = 5", "pragma cache_spill = 1", "begin", big_stmt])
     files = finish(path)
-    assert uncommitted_frames(files["wal"], 4096) > 0, "the WAL holds no frame after its last commit"
+    assert X.uncommitted_frames(files["wal"], 4096) > 0, "the WAL holds no frame after its last commit"
     exp = oracle(files, "ios-chatstorage", "backup", DOMAIN_WA, EXTRAS)
     for rec in exp["records"]:
         rec["source_path"] = ""  # a WAL companion: the source path follows the role of the cell
     # the reader's warnings come first (rowrun forwards them when Run ends), then the parser's per-table warnings
     exp["warnings"].insert(0, {"table": "", "rowid": 0, "contains": "wal-frames-not-applied"})
     return files, exp
-
-
-def uncommitted_frames(wal, page_size):
-    """Frames after the last commit frame of a WAL (frames whose commit field is zero at the tail)."""
-    n = (len(wal) - 32) // (24 + page_size)
-    last = 0
-    for i in range(n):
-        off = 32 + i * (24 + page_size)
-        if int.from_bytes(wal[off + 4:off + 8], "big"):
-            last = i + 1
-    return n - last
 
 
 def small(work, model=MODEL, drop=()):
@@ -923,7 +908,7 @@ def v_deleted(work):
     sc.close()
     scen.write("ZWAMESSAGE", old_rows)
     scen.want("ZWAMESSAGE", old_rows)
-    X.leave_old_frame(path, ["pragma wal_autocheckpoint = 0"] + [insert_stmt("ZWAMESSAGE", m) for m in old] +
+    X.leave_old_frame(path, ["pragma wal_autocheckpoint = 0"] + [X.insert_stmt("ZWAMESSAGE", m) for m in old] +
                       ["delete from ZWAMESSAGE where Z_PK in (90, 91, 92, 93) or (Z_PK between 100 and 159 and Z_PK % 2 = 0)"])
     files = finish(path)
     exp = oracle(files, "ios-chatstorage-deleted", "backup", DOMAIN_WA)
