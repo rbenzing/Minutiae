@@ -174,3 +174,17 @@ func TestResolveMediaPairsUserAndSource(t *testing.T) {
 		}
 	}
 }
+
+// M1: a path with a character a glob (or its dialects) could read is not expressible: no lookup, so never "missing".
+func TestResolveMediaGlobMetacharactersAreUndecided(t *testing.T) {
+	prim := art("P", "android:/data/user/10/com.whatsapp/databases/msgstore.db", "SER1", "acq1")
+	db := classifyDB(prim.Logical)
+	in := &parse.Input{Primary: prim, Lookup: fakeLookup{prim}}
+	for _, c := range []string{"[", "]", "?", "{", "}", "*"} {
+		for _, ref := range []string{"Media/WhatsApp Images/IMG" + c + ".jpg", "/storage/emulated/10/WhatsApp/Media/WhatsApp Images/IMG" + c + ".jpg"} {
+			if _, st, _ := resolveMedia(in, db, ref, nil); st != lookupUndecidedPath {
+				t.Errorf("%q: %v, want lookupUndecidedPath", ref, st)
+			}
+		}
+	}
+}

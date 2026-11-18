@@ -39,10 +39,16 @@ const (
 	formAndroid11 = "android11"
 )
 
+// globMeta are the characters a glob (the case lookup or any dialect of one) may read as a pattern: a path holding one
+// cannot be written as a glob that matches exactly itself.
+const globMeta = "*?[]{}"
+
+func hasGlobMeta(p string) bool { return strings.ContainsAny(p, globMeta) }
+
 // cleanPathElements splits an absolute path into its elements, refusing what a logical glob cannot express: an empty,
-// "." or ".." element, a '*', a backslash or a NUL.
+// "." or ".." element, a glob metacharacter, a backslash or a NUL.
 func cleanPathElements(p string) ([]string, bool) {
-	if !strings.HasPrefix(p, "/") || strings.ContainsAny(p, "*\\") || strings.ContainsRune(p, 0) {
+	if !strings.HasPrefix(p, "/") || strings.ContainsAny(p, "\\") || hasGlobMeta(p) || strings.ContainsRune(p, 0) {
 		return nil, false
 	}
 	el := strings.Split(p[1:], "/")
@@ -195,6 +201,7 @@ const (
 	lookupAmbiguous                   // several matches of the database's own source and user
 	lookupOtherUser                   // matches exist, but only of another Android user
 	lookupUserUndecided               // matches exist, but the user pairing cannot be decided
+	lookupUndecidedPath               // the path holds a glob metacharacter: no lookup can be made, so none is made
 )
 
 // resolveMedia finds the file a row names. A relative Media/... path is looked up under the app's own folder in both
@@ -208,6 +215,9 @@ func resolveMedia(in *parse.Input, db dbPath, filePath string, sole func() bool)
 	_, folder, known := mediaFolders(db.App)
 	if !known {
 		return parse.Artifact{}, lookupNone, pairUndecided
+	}
+	if hasGlobMeta(filePath) {
+		return parse.Artifact{}, lookupUndecidedPath, pairUndecided
 	}
 	var found []parse.Artifact
 	switch {
@@ -392,7 +402,7 @@ func applyMedia(m parse.MapContext, msg *message.Message, f *msgFacts) {
 		return // a media row that holds nothing to link or name: its raw values only
 	}
 	a := message.Attachment{Name: mf.Name, Mime: mf.Mime, SourceRef: mf.SourceRef, Size: mf.Size}
-	var resolved, unresolved, ambiguous, otherSource, otherUser, undecided int64
+	var resolved, unresolved, ambiguous, otherSource, otherUser, undecided, pathUndecided int64
 	art, st, _ := resolveMedia(m.Input(), classifyDB(m.Input().Primary.Logical), mf.SourceRef, f.Sole)
 	switch st {
 	case lookupFound:
@@ -406,6 +416,9 @@ func applyMedia(m parse.MapContext, msg *message.Message, f *msgFacts) {
 		otherUser++
 	case lookupUserUndecided:
 		undecided++
+	case lookupUndecidedPath:
+		pathUndecided++
+		f.Raw["media_state"] = "lookup-path-not-expressible"
 	default:
 		unresolved++
 	}
@@ -413,7 +426,7 @@ func applyMedia(m parse.MapContext, msg *message.Message, f *msgFacts) {
 	f.Raw["attachments_resolved"], f.Raw["attachments_unresolved"] = resolved, unresolved
 	for k, v := range map[string]int64{
 		"attachments_ambiguous": ambiguous, "attachments_other_source": otherSource,
-		"attachments_other_user": otherUser, "attachments_user_undecided": undecided,
+		"attachments_other_user": otherUser, "attachments_user_undecided": undecided, "attachments_lookup_undecided": pathUndecided,
 	} {
 		if v > 0 {
 			f.Raw[k] = v

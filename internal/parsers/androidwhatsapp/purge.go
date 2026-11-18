@@ -35,6 +35,7 @@ const (
 	reasonJobSet        = "job-set-incomplete"
 	reasonRowChat       = "row-chat-undecided"
 	reasonJobChatNotInt = "chat-row-id-not-integer"
+	reasonJobChatJoin   = "chat-join-undecided"
 )
 
 // Where a cleared state or an undecided one is recorded.
@@ -70,6 +71,7 @@ type jobSet struct {
 	Total              int64                // the census row count, -1 when it is unknown
 	Read               int64                // jobs read (at most maxJobs)
 	Unusable, Dangling int64
+	ChatUndecided      bool // the chat table is guarded: no job is applied or called dangling (4I review I2)
 	Complete           bool
 	Why                string    // why the set is incomplete ("" when complete)
 	Undecided          []jobWarn // jobs that can make rows undecided, at most maxJobWarnings kept
@@ -99,11 +101,11 @@ func (js *jobSet) anyJob() bool { return js != nil && js.Read > 0 }
 
 // active says whether a row of any chat must be evaluated at all.
 func (js *jobSet) active() bool {
-	return js != nil && (len(js.ByChat) > 0 || !js.Complete || js.Unusable > 0)
+	return js != nil && (len(js.ByChat) > 0 || js.incomplete())
 }
 
 // incomplete says whether a job that was not read, or not usable, could have covered a row.
-func (js *jobSet) incomplete() bool { return !js.Complete || js.Unusable > 0 }
+func (js *jobSet) incomplete() bool { return !js.Complete || js.Unusable > 0 || js.ChatUndecided }
 
 type purgeVerdict int
 
@@ -202,7 +204,7 @@ func dataDamage(err error) bool {
 // loadJobs reads deleted_chat_job once, in rowid order, at most maxRows rows. A table that is absent is an empty complete
 // set. A table that cannot be read whole (damage, or more than max rows) leaves the jobs read and Complete false.
 // Context, budget and internal errors are returned.
-func loadJobs(ctx context.Context, in *parse.Input, maxRows int) (*jobSet, error) {
+func loadJobs(ctx context.Context, in *parse.Input, maxRows int, g *joinGuard) (*jobSet, error) {
 	js := &jobSet{ByChat: map[int64][]jobBound{}, Complete: true, Total: -1}
 	files, err := filesOf(in)
 	if err != nil {
@@ -272,6 +274,12 @@ func loadJobs(ctx context.Context, in *parse.Input, maxRows int) (*jobSet, error
 		if !jr.ChatOK {
 			js.Unusable++
 			js.warn(jr.ID, reasonJobChatNotInt)
+			continue
+		}
+		if _, bad := g.reason("chat"); bad {
+			// the rowid join to chat is unproven: the job is not applied and not called dangling; every row is undecided
+			js.ChatUndecided = true
+			js.warn(jr.ID, reasonJobChatJoin)
 			continue
 		}
 		known, seen := exists[jr.Chat]
@@ -436,8 +444,12 @@ func starredOf(row parse.Row, col int) (int64, bool) {
 func modernKeyOf(m parse.MapContext, row parse.Row) rowKey {
 	c := rowrun.Resolve(m, tblMessage, "chat_row_id", "starred", "sort_id")
 	var k rowKey
-	if v, kd := rowrun.IntCell(row, c.At("chat_row_id")); kd == rowrun.CellValue {
+	switch v, kd := rowrun.IntCell(row, c.At("chat_row_id")); kd {
+	case rowrun.CellValue:
 		k.Chat, k.ChatKnown = v, true
+	case rowrun.CellMissing, rowrun.CellNull: // no chat
+	default:
+		k.ChatUndecided = true // a cell that is not an INTEGER names no chat that can be shown absent from a job
 	}
 	k.Starred, k.StarredOK = starredOf(row, c.At("starred"))
 	if v, kd := rowrun.IntCell(row, c.At("sort_id")); kd == rowrun.CellValue {

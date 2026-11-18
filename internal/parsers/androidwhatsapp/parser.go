@@ -217,7 +217,7 @@ func parseWith(ctx context.Context, in *parse.Input, out parse.Emitter, maxRows 
 	if err != nil {
 		return fmt.Errorf("android.whatsapp.msgstore: %w", err)
 	}
-	js, err := loadJobs(ctx, in, maxRows)
+	js, err := loadJobs(ctx, in, maxRows, g)
 	if err != nil {
 		return fmt.Errorf("android.whatsapp.msgstore: %w", err)
 	}
