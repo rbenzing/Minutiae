@@ -11,6 +11,7 @@ import (
 
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb"
 	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/census"
+	"github.com/rbenzing/minutiae/internal/decode/sqlitedb/rowrun"
 	"github.com/rbenzing/minutiae/internal/parse"
 )
 
@@ -212,6 +213,20 @@ func detect(ctx context.Context, in *parse.Input) (detection, error) {
 	return d, nil
 }
 
+// steps are the tables to map, in the order of R1: the legacy table, then the modern one, each only when the census
+// saw it as a table. Both are Optional so that a table that the census saw but the run cannot open is a note, not a
+// silent skip: rowrun states it.
+func (d detection) steps() []rowrun.Step {
+	var steps []rowrun.Step
+	if d.hasMessages {
+		steps = append(steps, rowrun.Step{Mapping: messagesMapping(), Optional: true})
+	}
+	if d.hasMessage {
+		steps = append(steps, rowrun.Step{Mapping: messageMapping(), Optional: true})
+	}
+	return steps
+}
+
 // unmappedTable says whether spec 6.5 lists the table as unmapped: message_orphaned_edit, receipt_*, message_thumbnail,
 // media_hash_thumbnail, group_participant*, missed_call_logs, newsletter* and props, and the legacy receipts table.
 func unmappedTable(name string) bool {
@@ -248,6 +263,9 @@ func (d detection) note(out parse.Emitter, p dbPath) {
 	damaged := d.Census.SchemaSkipped > 0
 	if d.Gen != genLegacy && !damaged && !hasTable(d.Census.Objects, "jid_map") {
 		out.Note("jid_map", "absent")
+	}
+	if d.hasMessages && !damaged && !hasTable(d.Census.Objects, "chat_list") {
+		out.Note("table.chat_list", "absent") // a legacy row then has a thread id and no title (4I-R13)
 	}
 	if list := d.unmapped(); list != "" {
 		out.Note("unmapped_tables", list)

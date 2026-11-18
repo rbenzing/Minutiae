@@ -166,6 +166,17 @@ func TestWhatsAppUnreadableTableIsStatedNotEmpty(t *testing.T) {
 	if v, ok := res.Notes["rows.message"]; ok {
 		t.Errorf("rows.message = %q for an unreadable table: the rows are unknown, not counted", v)
 	}
+	// the decoder's page warning says the same (the mapping scans the table)
+	page := false
+	for _, w := range res.Warnings {
+		page = page || strings.HasPrefix(w.Locator, "sqlite:file=")
+	}
+	if !page {
+		t.Errorf("no decoder page warning for the unreadable table: %+v", res.Warnings)
+	}
+	if len(res.Records) != 0 {
+		t.Errorf("%d records from an unreadable table", len(res.Records))
+	}
 }
 
 // Spec 6.2: a view named like a message table is not a table.

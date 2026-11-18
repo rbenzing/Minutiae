@@ -51,8 +51,10 @@ func (Parser) Meta() parse.Meta {
 	}
 }
 
-// Mappings are the per-table mappings; none until plan 4I task 6.
-func (Parser) Mappings() []parse.TableMapping { return nil }
+// Mappings are the per-table mappings, in the order Parse runs them: the legacy table first, then the modern one (R1).
+func (Parser) Mappings() []parse.TableMapping {
+	return []parse.TableMapping{messagesMapping(), messageMapping()}
+}
 
 // The reasons of Probe.
 const (
@@ -203,7 +205,7 @@ func (p Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) e
 	if err := d.warn(ctx, out); err != nil {
 		return err
 	}
-	_, err = rowrun.Run(ctx, in, out, nil)
+	_, err = rowrun.Run(ctx, in, out, d.steps())
 	if err != nil {
 		return fmt.Errorf("android.whatsapp.msgstore: %w", err)
 	}

@@ -3216,5 +3216,8 @@ column and a zero time) and, in modern stores only, ids 18 (a channel) and 19 (a
 | `android-other-location` | `modern-2026.sql` | `/storage/emulated/0/Android/data/com.whatsapp/databases/msgstore.db` | a plain database outside the app's live `databases/` directory |
 
 Message records of a variant with a WAL state no source path (the harness derives it from the role of the cell). The
-oracle's `raw` of a message is the part later tasks of plan 4I extend with their features; at this task it states the
-columns the mapping reads, the labels and the app.
+oracle states, from the spec's rules, every record of `messages` and `message` (the one builder of plan 4I task 6): the
+raw columns as stored, the labels, the app, the join states (`chat_state`, `sender_state`, `chat_list_state`,
+`vcard_state`), the address parts of a jid row with no `raw_string`, the notes the detector writes (generation, row counts,
+the view source, the absent tables, the unmapped tables, the view digests) and the warnings in the order the parser raises
+them (the `sqlite:schema` warnings, then the rows', then the reader's). Later tasks of plan 4I add their features.

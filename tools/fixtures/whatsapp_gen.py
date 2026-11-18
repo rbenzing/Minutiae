@@ -48,7 +48,7 @@ MODERN_TYPE = {0: "text", 1: "image", 2: "audio", 3: "video", 4: "contact_card",
 REVOKED_TYPES = (15, 64)
 LEGACY_TYPE = {0: "text", 1: "image", 2: "audio", 3: "video", 4: "contact_card", 5: "location"}
 VCARD = "BEGIN:VCARD\r\nFN:Ann\r\nEND:VCARD\r\n"
-DECIMAL = re.compile(r"[+-]?[0-9]+", re.ASCII)  # strconv.ParseInt base 10
+DECIMAL = re.compile(r"(0|-?[1-9][0-9]{0,17})", re.ASCII)  # the strict decimal of a legacy media_wa_type (plan 4I task 6)
 
 
 def jid(user, server):
@@ -183,19 +183,18 @@ def modern_row(m, js):
 
 
 # ----------------------------------------------------------------------------------------- the oracle
+#
+# The oracle restates the spec rules (6.2, 6.4, 7) over the values the engine reads back from a COPY of the finished
+# files. It shares no code with the Go parser; where the two must agree on a name (a raw key, a state) the name is
+# the one the spec or the plan gives, and a name the spec leaves open is chosen here and pinned by the Go tests.
 
-def text_of(v):
-    """The cleaned text of a stored TEXT value (bytes), as common.CleanText reads it."""
-    return C.clean(v, MAX_TEXT)
-
-
-def stored(v):
-    """A stored value as the raw payload shows it."""
-    if isinstance(v, C.Blob):
-        return C.jv(bytes(v))
-    if isinstance(v, bytes):
-        return v.decode("utf-8")
-    return v
+MODERN_RAW_INTS = ["sort_id", "starred", "origination_flags", "broadcast", "recipient_count", "message_add_on_flags",
+                   "view_mode", "lookup_tables"]
+LEGACY_RAW_INTS = ["starred", "needs_push", "recipient_count", "forwarded", "lookup_tables", "edit_version",
+                   "send_timestamp", "read_device_timestamp", "played_device_timestamp"]
+MAX_ADDR = 1024  # the message contract's limit for a participant address and a thread id
+UNMAPPED_EXACT = {"message_orphaned_edit", "message_thumbnail", "media_hash_thumbnail", "missed_call_logs", "props", "receipts"}
+UNMAPPED_PREFIX = ("receipt_", "group_participant", "newsletter")
 
 
 def time_of(v):
@@ -206,6 +205,160 @@ def time_of(v):
     if st == "valid" and v < FLOOR_MS:
         st = "invalid"
     return (C.iso(v, "ms") if st == "valid" else None), st
+
+
+def is_text(v):
+    return isinstance(v, bytes) and not isinstance(v, C.Blob)
+
+
+def text_of(v):
+    """The cleaned text of a stored TEXT value (bytes), as common.CleanText reads it."""
+    return C.clean(v, MAX_TEXT)
+
+
+def cleaned(raw, field, b):
+    """A TEXT cell kept in raw as a cleaned string; an altered text is listed in raw.text_flags."""
+    c = text_of(b)
+    if c.flags:
+        C.mark(raw, field)
+    return c.text
+
+
+def blob_marker(b):
+    import base64
+    b = bytes(b)
+    return {"blob_b64": base64.b64encode(b).decode()} if len(b) <= 256 else {"blob_len": len(b)}
+
+
+def stored(raw, name, v):
+    """A stored value as raw shows it: an integer, a cleaned text, a finite float or a blob marker; None for NULL."""
+    if v is None:
+        return None
+    if isinstance(v, C.Blob):
+        return blob_marker(v)
+    if isinstance(v, bytes):
+        return cleaned(raw, name, v)
+    return v
+
+
+class Cells:
+    """The cell reader of the Go parser: an INTEGER or TEXT cell of the wrong class is stated in unknown_columns."""
+
+    def __init__(self, row, raw, unknown, prefix=""):
+        self.row, self.raw, self.unknown, self.prefix = row, raw, unknown, prefix
+
+    def int(self, name):
+        v = self.row.get(name)
+        if v is None:
+            return None
+        if is_int(v):
+            return v
+        self.unknown[self.prefix + name] = "type-mismatch"
+        return None
+
+    def text(self, name):
+        v = self.row.get(name)
+        if v is None:
+            return None
+        if is_text(v):
+            return v
+        self.unknown[self.prefix + name] = "type-mismatch"
+        return None
+
+
+def read_code(c, name, text_typed=False):
+    """An enum cell: its raw value as stored, the integer when it is usable. A legacy media_wa_type is read strictly."""
+    v = c.row.get(name)
+    value = None
+    if text_typed:
+        if is_int(v):
+            value = v
+        elif is_text(v):
+            s = v.decode("ascii", "replace")
+            if DECIMAL.fullmatch(s):
+                value = int(s)
+    else:
+        value = c.int(name)
+    s = stored(c.raw, name, v)
+    if s is not None:
+        c.raw[name] = s
+    return value
+
+
+def read_instant(c, name):
+    """A message time in ms; the stored value is in raw with its status when it is not a time (spec 7.6, 4I-R10)."""
+    v = c.int(name)
+    if v is None:
+        return None
+    t, st = time_of(v)
+    c.raw[name] = v
+    if st != "valid":
+        c.raw[name + "_status"] = st
+    return t
+
+
+def parse_jid(s):
+    """decode/wajid.Parse restated for what the classification needs: the (user, server) of a JID, or None."""
+    if "\x00" in s or "@" not in s:
+        return None
+    user, server = s.rsplit("@", 1)
+    if not user or not server:
+        return None
+    if ":" in user:
+        base, dev = user.rsplit(":", 1)
+        if not re.fullmatch(r"[0-9]+", dev) or int(dev) > 65535:
+            return None
+        if "." in base:
+            _, agent = base.rsplit(".", 1)
+            if not re.fullmatch(r"[0-9]+", agent) or int(agent) > 255:
+                return None
+    return user, server
+
+
+def addr_of_text(b, raw, field):
+    """An address from stored text: never cut, never composed (an over-long one is absent)."""
+    if len(b) == 0:
+        return {"str": None, "parts": None, "state": "absent"}
+    s = cleaned(raw, field, b)
+    if len(s.encode("utf-8")) > MAX_ADDR:
+        return {"str": None, "parts": None, "state": "too-long"}
+    return {"str": s, "parts": None, "state": None}
+
+
+def addr_of_jid(row, raw, unknown, field):
+    """The address of a jid row: its raw_string, or when absent the parts as stored (state no-raw-string)."""
+    rs = row.get("raw_string")
+    if is_text(rs) and len(rs) > 0:
+        return addr_of_text(rs, raw, field)
+    c = Cells(row, raw, unknown, "jid.")
+    parts = {}
+    for n in ("user", "server"):
+        b = c.text(n)
+        if b is not None:
+            parts[n] = cleaned(raw, field + "_" + n, b)
+    for n in ("agent", "device"):
+        v = c.int(n)
+        if v is not None:
+            parts[n] = v
+    return {"str": None, "parts": parts, "state": "no-raw-string"}
+
+
+def group_of(a):
+    """True or False when the address names its server, None when it does not."""
+    if a["str"]:
+        p = parse_jid(a["str"])
+        return p[1] == "g.us" if p else None
+    if a["parts"] is not None and "server" in a["parts"]:
+        return a["parts"]["server"] == "g.us"
+    return None
+
+
+def is_status(a):
+    p = parse_jid(a["str"]) if a["str"] else None
+    return bool(p) and p == ("status", "broadcast")
+
+
+ABSENT = {"str": None, "parts": None, "state": "absent"}
 
 
 def app_of(remote):
@@ -220,179 +373,259 @@ def summary_of(direction, counterparty, text):
     return ("whatsapp %s %s: %s" % (direction, counterparty, text or "")).rstrip(" ")
 
 
+def join_text(parts):
+    """The vCards of one message joined with a newline, as the Go parser keeps them (at most 2 * MAX_TEXT bytes)."""
+    return b"\n".join(parts)
+
+
 def expect_message(table, r, ctx, remote):
     """The expectation of one messages or message row as the engine reads it back (spec 6.4, 7.1, 7.3, 7.6)."""
     modern = table == "message"
-    me = r.get("from_me" if modern else "key_from_me")
-    direction = {0: "in", 1: "out"}.get(me, "unknown") if is_int(me) else "unknown"
     raw = {"source_table": table, "app": app_of(remote), "app_basis": "path"}
-    # chat
+    unknown = {}
+    c = Cells(r, raw, unknown)
+    me_col = "from_me" if modern else "key_from_me"
+    me = read_code(c, me_col)
+    direction = {0: "in", 1: "out"}.get(me, "unknown") if me is not None else "unknown"
+    t = read_code(c, "message_type" if modern else "media_wa_type", text_typed=not modern)
+    status = read_code(c, "status")
+    legacy_sys = (not modern) and t == 0 and status == 6
+    guid = c.text("key_id")
+    guid = cleaned(raw, "guid", guid) if guid else None
+
+    # kind and label
+    kind = "unknown"
     if modern:
-        chat = ctx["chat"].get(r.get("chat_row_id"))
-        chat_raw = ctx["jid"].get(chat["jid_row_id"]) if chat else None
-        chat_jid = chat_raw["raw_string"].decode() if chat_raw and chat_raw.get("raw_string") else None
-        raw["chat_row_id"] = r.get("chat_row_id")
-        subject = chat["subject"] if chat else None
-        jparts = {"user": chat_raw["user"].decode(), "server": chat_raw["server"].decode()} if chat_raw else None
-    else:
-        chat_jid = r["key_remote_jid"].decode() if r.get("key_remote_jid") else None
-        subject = ctx.get("subject", {}).get(chat_jid)
-        jparts = None
-    if chat_jid:
-        raw["chat_jid"] = chat_jid
-    elif jparts:
-        raw["chat_jid_parts"] = jparts
-    server = split(chat_jid)[1] if chat_jid else (jparts["server"] if jparts else "")
-    group = server == "g.us"
-    status_chat = chat_jid == STATUS
-    if status_chat:
-        raw["chat_class"] = "status"
-    # kind
-    if modern:
-        t = r.get("message_type")
-        raw["message_type"] = t
-        if is_int(t) and t in MODERN_TYPE:
+        if t in MODERN_TYPE:
             kind = "text" if t == 0 else "system" if t == 7 else "media"
             raw["label_message_type"] = MODERN_TYPE[t]
-        elif is_int(t) and t in REVOKED_TYPES:
-            kind, raw["label_message_type"] = "unknown", "revoked"
-        else:
-            kind = "unknown"
-    else:
-        wt = r.get("media_wa_type")
-        raw["media_wa_type"] = stored(wt)
-        kind = "unknown"
-        if isinstance(wt, bytes) and not isinstance(wt, C.Blob) and DECIMAL.fullmatch(wt.decode("ascii", "replace")):
-            v = int(wt.decode())
-            if v in LEGACY_TYPE and not (v == 0 and r.get("status") == 6):
-                kind = "text" if v == 0 else "media"
-                raw["label_media_wa_type"] = LEGACY_TYPE[v]
-    # status: never mapped (R4), the stored value in raw
-    if r.get("status") is not None:
-        raw["status"] = r["status"]
-    if me is not None:
-        raw["from_me" if modern else "key_from_me"] = me
-    # participants
-    sender_raw = None
-    participants, unknown = [], False
+        elif t in REVOKED_TYPES:
+            raw["label_message_type"] = "revoked"
+    elif t in LEGACY_TYPE and not legacy_sys:
+        kind = "text" if t == 0 else "media"
+        raw["label_media_wa_type"] = LEGACY_TYPE[t]
+
+    # times
+    time_t = read_instant(c, "timestamp")
+    recv = read_instant(c, "received_timestamp")
+    times = {}
+    if recv:
+        times["received"] = recv
+    if not modern:
+        deliv = read_instant(c, "receipt_device_timestamp")
+        if deliv:
+            times["delivered"] = deliv
+    v = c.int("receipt_server_timestamp")
+    if v is not None:
+        raw["receipt_server_timestamp"] = v
+        if modern:
+            raw["receipt_server_timestamp_unit"] = "unestablished"
+    for n in (MODERN_RAW_INTS if modern else LEGACY_RAW_INTS):
+        v = c.int(n)
+        if v is not None:
+            raw[n] = v
+
+    # chat, title and sender
+    chat, title, chat_state, sender = ABSENT, None, None, ABSENT
     if modern:
-        sid = r.get("sender_jid_row_id")
-        if is_int(sid) and sid > 0:
-            sj = ctx["jid"].get(sid)
-            sender_raw = sj["raw_string"].decode() if sj and sj.get("raw_string") else None
+        cid = c.int("chat_row_id")
+        if cid is not None:
+            raw["chat_row_id"] = cid
+            crow = ctx["chat"].get(cid)
+            if crow is None:
+                chat_state = "no-chat-row"
+            else:
+                cc = Cells(crow, raw, unknown, "chat.")
+                sub = cc.text("subject")
+                if sub:
+                    title = cleaned(raw, "thread.title", sub)
+                jid = cc.int("jid_row_id")
+                jrow = ctx["jid"].get(jid) if jid is not None else None
+                if jrow is None:
+                    chat_state = "no-jid-row"
+                else:
+                    chat = addr_of_jid(jrow, raw, unknown, "chat_jid")
+                    if chat["parts"] is not None:
+                        raw["chat_jid_parts"] = chat["parts"]
+        sid = c.int("sender_jid_row_id")
         if sid is not None:
             raw["sender_jid_row_id"] = sid
+        if sid is not None and sid > 0:
+            jrow = ctx["jid"].get(sid)
+            if jrow is None:
+                sender = {"str": None, "parts": None, "state": "no-jid-row"}
+            else:
+                sender = addr_of_jid(jrow, raw, unknown, "sender_jid")
+                if sender["parts"] is not None:
+                    raw["sender_jid_parts"] = sender["parts"]
+        if sender["str"]:
+            raw["sender_jid"] = sender["str"]
     else:
-        if r.get("remote_resource"):
-            sender_raw = r["remote_resource"].decode()
-            raw["remote_resource"] = sender_raw
-    if sender_raw:
-        raw["sender_jid"] = sender_raw
-    if direction == "out" and chat_jid:
-        participants = [{"role": "to", "address": chat_jid}]
-    elif direction == "in" and status_chat:
-        unknown = True
+        kb = c.text("key_remote_jid")
+        if kb is not None:
+            if len(kb) == 0:
+                chat_state = "empty"
+            else:
+                chat = addr_of_text(kb, raw, "chat_jid")
+                if ctx["has_chat_list"]:
+                    rows = ctx["chat_list"].get(bytes(kb), [])
+                    if len(rows) == 0:
+                        raw["chat_list_state"] = "no-chat_list-row"
+                    elif len(rows) == 1:
+                        sub = Cells(rows[0], raw, unknown, "chat_list.").text("subject")
+                        if sub:
+                            title = cleaned(raw, "thread.title", sub)
+                    else:
+                        raw["join_undecided"] = ["chat_list"]
+        rr = c.text("remote_resource")
+        if rr:
+            sender = addr_of_text(rr, raw, "remote_resource")
+            raw["remote_resource"] = cleaned(raw, "remote_resource", rr)
+            if sender["str"]:
+                raw["sender_jid"] = sender["str"]
+        cap = c.text("media_caption")
+        if cap:
+            raw["media_caption"] = cleaned(raw, "media_caption", cap)
+        if legacy_sys:
+            ms_ = c.int("media_size")
+            if ms_ is not None:
+                raw["media_size"] = ms_
+    if chat["str"]:
+        raw["chat_jid"] = chat["str"]
+    if is_status(chat):
+        raw["chat_class"] = "status"
+    if chat_state:
+        raw["chat_state"] = chat_state
+    elif chat["state"] == "too-long":
+        raw["chat_state"] = "too-long"
+    group = group_of(chat)
+
+    # participants (spec 6.4.3, R3)
+    if sender["state"] in ("no-jid-row", "no-raw-string"):
+        raw["sender_state"] = sender["state"]
+    participants, unknown_p = [], False
+    if direction == "out" and chat["str"]:
+        participants = [{"role": "to", "address": chat["str"]}]
+    elif direction == "in" and is_status(chat):
+        unknown_p = True
     elif direction == "in" and group:
-        if sender_raw:
-            participants = [{"role": "from", "address": sender_raw}]
+        if sender["str"]:
+            participants = [{"role": "from", "address": sender["str"]}]
         else:
-            unknown, raw["sender_state"] = True, "absent"
-    elif direction == "in" and chat_jid:
-        participants = [{"role": "from", "address": chat_jid}]
+            unknown_p = True
+            raw["sender_state"] = sender["state"]
+            if sender["parts"] is not None:
+                raw["from_jid"] = dict(sender["parts"])
+    elif direction == "in" and chat["str"]:
+        participants = [{"role": "from", "address": chat["str"]}]
     else:
-        unknown = True
-        if not chat_jid and jparts:
-            raw["from_jid" if direction == "in" else "to_jid"] = dict(jparts)
+        unknown_p = True
+        if chat["parts"] is not None and direction in ("in", "out"):
+            raw["from_jid" if direction == "in" else "to_jid"] = dict(chat["parts"])
+
     # body
-    body, text_source = None, None
+    text_source = None
     if modern:
-        txt = r.get("text_data")
-        if r.get("message_type") == 4:
-            vc = ctx["vcard"].get(r["rowid"])
-            txt, text_source = vc, "part"
+        txt = c.text("text_data")
+        text_source = "text"
+        if t == 4 and ctx["has_vcard"]:
+            cards = ctx["vcards"].get(r["rowid"], [])
+            if cards:
+                txt, text_source = join_text(cards), "part"
+            else:
+                raw["vcard_state"] = "no-message_vcard-row"
     else:
-        txt = r.get("data")
-        if kind == "media" and raw.get("label_media_wa_type") == "contact_card":
+        txt = c.text("data")
+        text_source = "text"
+        if t == 4 and not legacy_sys:
             text_source = "part"
-        if r.get("media_caption") is not None:
-            raw["media_caption"] = r["media_caption"].decode()
-        if r.get("media_size") is not None and r.get("status") == 6:
-            raw["media_size"] = r["media_size"]
+    body = None
     if txt:
-        c = text_of(txt)
-        if c.text:
-            body, text_source = c.text, text_source or "text"
-            if c.flags:
+        cl = text_of(txt)
+        if cl.text:
+            body = cl.text
+            if cl.flags:
                 C.mark(raw, "body")
-    # times
-    t, st = time_of(r.get("timestamp"))
-    if r.get("timestamp") is not None:
-        raw["timestamp"] = r["timestamp"]
-    if st and st != "valid":
-        raw["timestamp_status"] = st
-    times = {}
-    rt, rst = time_of(r.get("received_timestamp"))
-    if r.get("received_timestamp") is not None:
-        raw["received_timestamp"] = r["received_timestamp"]
-        if rst and rst != "valid":
-            raw["received_timestamp_status"] = rst
-    if rt:
-        times["received"] = rt
-    if not modern:
-        dt, dst = time_of(r.get("receipt_device_timestamp"))
-        if r.get("receipt_device_timestamp") is not None:
-            raw["receipt_device_timestamp"] = r["receipt_device_timestamp"]
-            if dst and dst != "valid":
-                raw["receipt_device_timestamp_status"] = dst
-        if dt:
-            times["delivered"] = dt
+    if unknown:
+        raw["unknown_columns"] = unknown
+
     payload = {"channel": "whatsapp", "direction": direction, "kind": kind, "participants": participants,
                "status": "unknown", "raw": raw}
-    if unknown:
+    if unknown_p:
         payload["participants_unknown"] = True
-    thread = {"group": group}
-    if chat_jid:
-        thread["id"] = chat_jid
-    if subject:
-        thread["title"] = text_of(subject).text
-    payload["thread"] = thread
-    if r.get("key_id"):
-        payload["guid"] = r["key_id"].decode()
-    if text_source and body is not None:
+    thread = {}
+    if chat["str"]:
+        thread["id"] = chat["str"]
+    if title:
+        thread["title"] = title
+    if group is not None:
+        thread["group"] = group
+    if thread:
+        payload["thread"] = thread
+    if guid:
+        payload["guid"] = guid
+    if body is not None:
         payload["text_source"] = text_source
-    counter = participants[0]["address"] if participants else (chat_jid or "unknown")
-    return {"table": table, "rowid": r["rowid"], "file": "any", "type": "message", "source_path": remote, "time": t,
+    counter = participants[0]["address"] if participants else (chat["str"] or "unknown")
+    return {"table": table, "rowid": r["rowid"], "file": "any", "type": "message", "source_path": remote, "time": time_t,
             "time_end": None, "times": times, "deleted": False,
             "summary": summary_of(direction, counter, body), "body": body, "payload": payload}
 
 
 def context(view):
     """Lookup tables of the stored rows, by key."""
-    ctx = {"chat": {}, "jid": {}, "vcard": {}, "subject": {}}
+    ctx = {"chat": {}, "jid": {}, "vcards": {}, "chat_list": {}, "has_vcard": "message_vcard" in view,
+           "has_chat_list": "chat_list" in view}
     for r in view.get("chat", []):
         ctx["chat"][r["rowid"]] = r
     for r in view.get("jid", []):
         ctx["jid"][r["rowid"]] = r
     for r in view.get("message_vcard", []):
-        ctx["vcard"].setdefault(r["message_row_id"], r["vcard"])
+        if is_text(r.get("vcard")) and is_int(r.get("message_row_id")):
+            ctx["vcards"].setdefault(r["message_row_id"], []).append(r["vcard"])
     for r in view.get("chat_list", []):
-        if r.get("subject"):
-            ctx["subject"][r["key_remote_jid"].decode()] = r["subject"]
+        if is_text(r.get("key_remote_jid")):
+            ctx["chat_list"].setdefault(bytes(r["key_remote_jid"]), []).append(r)
     return ctx
 
 
-TABLES = ["messages", "message", "jid", "chat", "chat_list", "message_vcard", "messages_vcards"]
+TABLES = ["messages", "message", "jid", "chat", "chat_list", "message_vcard", "messages_vcards", "deleted_chat_job"]
 
 
-def oracle(files, remote, variant, ddl, generation, app_user=None):
+def master_rows(files):
+    """The schema table of the finished files as the engine reads it (WAL applied to a copy): [(type, name, sql)]."""
+    work = C.tempfile.mkdtemp(prefix="whatsapp-master-")
+    try:
+        path = C.os.path.join(work, "v.db")
+        for role, suffix in (("db", ""), ("wal", "-wal"), ("journal", "-journal")):
+            if role in files:
+                with open(path + suffix, "wb") as f:
+                    f.write(files[role])
+        con = C.sqlite3.connect(path)
+        rows = con.execute("select type, name, sql from sqlite_master order by rowid").fetchall()
+        con.close()
+        return rows
+    finally:
+        C.shutil.rmtree(work, ignore_errors=True)
+
+
+def view_source(sql):
+    """Whether the SQL of message_view reads the legacy table (the token FROM messages, spec 6.2)."""
+    return "messages" if re.search(r"from\s+messages(?![A-Za-z0-9_])", sql, re.I) else "other"
+
+
+def oracle(files, remote, variant, ddl, generation):
     view = C.engine_view(files, TABLES)
+    master = master_rows(files)
     ctx = context(view)
     exp = C.expect_header(FAMILY, variant, ddl)
+    tables = {n.lower() for t, n, s in master if t == "table" and not (s or "").upper().startswith("CREATE VIRTUAL")}
     n_messages = n_message = sentinel = 0
+    sentinel_warnings = []
     for r in view.get("messages", []):
         if r.get("key_remote_jid") == b"-1":
             sentinel += 1
-            exp["warnings"].append({"table": "messages", "rowid": r["rowid"], "contains": "sentinel"})
+            sentinel_warnings.append({"table": "messages", "rowid": r["rowid"], "contains": "sentinel"})
             continue
         n_messages += 1
         exp["records"].append(expect_message("messages", r, ctx, remote))
@@ -406,10 +639,36 @@ def oracle(files, remote, variant, ddl, generation, app_user=None):
         notes["sentinel_rows"] = str(sentinel)
     if "message" in view:
         notes["rows.message"] = str(n_message)
+    vsrc = "absent"
+    for t, n, s in master:
+        if t == "view" and n == "message_view":
+            vsrc = view_source(s or "")
+    if generation == "transition":
+        notes["message_view_source"] = vsrc
+    if generation != "legacy" and "jid_map" not in tables:
+        notes["jid_map"] = "absent"
+    if "messages" in tables and "chat_list" not in tables:
+        notes["table.chat_list"] = "absent"
+    unmapped = [n for t, n, s in master if t == "table" and (n.lower() in UNMAPPED_EXACT or n.lower().startswith(UNMAPPED_PREFIX))]
+    if unmapped:
+        notes["unmapped_tables"] = ",".join(unmapped)
     notes["app"] = app_of(remote)
     notes["database_user"] = "10" if "/user/10/" in remote else "0"
+    if "deleted_chat_job" in tables:
+        notes["deleted_chat_jobs"] = str(len(view.get("deleted_chat_job", [])))
+    for t, n, s in master:
+        if t == "view" and n in ("available_message_view", "legacy_available_messages_view"):
+            b = (s or "").encode("utf-8")
+            notes["view_sql." + n] = "sha256=%s;bytes=%d" % (hashlib.sha256(b).hexdigest(), len(b))
+    # the schema warnings come first (before any mapping), then the rows' own
     if n_messages and n_message:
-        exp["warnings"].append({"table": "", "rowid": 0, "contains": "whatsapp-both-generations"})
+        exp["warnings"].append({"table": "", "rowid": 0, "locator": "sqlite:schema", "contains": "whatsapp-both-generations"})
+    if generation == "transition" and vsrc in ("messages", "other"):
+        rows = "both" if n_messages and n_message else "messages" if n_messages else "message" if n_message else "none"
+        if (vsrc == "messages" and rows == "message") or (vsrc == "other" and rows == "messages"):
+            exp["warnings"].append({"table": "", "rowid": 0, "locator": "sqlite:schema",
+                                    "contains": "whatsapp-message-view-disagrees"})
+    exp["warnings"] += sentinel_warnings
     return exp
 
 
@@ -559,6 +818,8 @@ def v_trans_walonly(work):
     exp = oracle(files, REMOTE, "android-transition-walonly", "transition-2021.sql", "transition")
     for rec in exp["records"]:
         rec["source_path"] = ""  # a WAL companion: the source path follows the role of the cell
+    # the decoder states the frames it does not apply (the uncommitted tail): one reader warning, after the rows' own
+    exp["warnings"].append({"table": "", "rowid": 0, "contains": "wal-frames-not-applied"})
     return files, exp
 
 

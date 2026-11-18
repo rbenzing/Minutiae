@@ -63,10 +63,13 @@ type ExpRecord struct {
 
 // ExpWarning is a warning the parser must raise for a row: the locator names the
 // row and the reason contains the text. An empty Table is a warning of the SQLite
-// reader (locator sqlite:file=...) instead of a row's.
+// reader (locator sqlite:file=...) instead of a row's, unless Locator is set: then
+// it is a warning of the parser about the database as a whole at exactly that
+// locator (for example sqlite:schema).
 type ExpWarning struct {
 	Table    string `json:"table"`
 	Rowid    int64  `json:"rowid"`
+	Locator  string `json:"locator,omitempty"`
 	Contains string `json:"contains"`
 }
 
@@ -369,6 +372,12 @@ func compareWarnings(t testing.TB, res Result, exp Expect, tables []string) {
 		return
 	}
 	for i, w := range want {
+		if w.Table == "" && w.Locator != "" { // a warning of the parser about the whole database
+			if got[i].Locator != w.Locator || !strings.Contains(got[i].Reason, w.Contains) {
+				t.Errorf("warning %d = %+v, the oracle expects locator %q and a reason containing %q", i, got[i], w.Locator, w.Contains)
+			}
+			continue
+		}
 		if w.Table == "" { // a warning of the SQLite reader, not of a row
 			if !strings.HasPrefix(got[i].Locator, "sqlite:file=") || !strings.Contains(got[i].Reason, w.Contains) {
 				t.Errorf("warning %d = %+v, the oracle expects a reader warning containing %q", i, got[i], w.Contains)
