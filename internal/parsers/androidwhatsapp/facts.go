@@ -186,5 +186,8 @@ type msgFacts struct {
 	Revoke   *revokeFacts   // a "deleted for everyone" tombstone (spec 6.5), nil for a live message
 	Reaction *reactionFacts // a message_add_on reaction (4I-R20), nil for a message
 
+	Purge    purgeResult // the deleted_chat_job outcome of the row (4I-R4); for a reaction, the parent's
+	PurgeVia string      // "parent" for a reaction that follows its parent's outcome
+
 	Raw, Unknown map[string]any
 }

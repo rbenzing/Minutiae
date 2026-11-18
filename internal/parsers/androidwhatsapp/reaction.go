@@ -29,11 +29,17 @@ func addOnSpecs() []parse.ColumnSpec {
 	}
 }
 
-func addOnMapping() parse.TableMapping {
-	return parse.TableMapping{Table: tblAddOn, Columns: addOnSpecs(), Map: mapAddOn}
+// addOnMapping is the mapping of the typed recovery pass, which states no pending purge (4I-R4 a).
+func addOnMapping() parse.TableMapping { return addOnMappingWith(nil) }
+
+// addOnMappingWith maps the add-ons with the job set js: a reaction follows the outcome of its parent.
+func addOnMappingWith(js *jobSet) parse.TableMapping {
+	return parse.TableMapping{Table: tblAddOn, Columns: addOnSpecs(), Map: func(m parse.MapContext, row parse.Row) ([]records.Record, error) {
+		return mapAddOn(m, row, js)
+	}}
 }
 
-func mapAddOn(m parse.MapContext, row parse.Row) ([]records.Record, error) {
+func mapAddOn(m parse.MapContext, row parse.Row, js *jobSet) ([]records.Record, error) {
 	place, err := rowrun.Where(m, row)
 	if err != nil {
 		return nil, err
@@ -73,7 +79,7 @@ func mapAddOn(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 		return nil, err
 	}
 	f.Sender = addr{State: stateAbsent} // a reaction's sender is never a participant (4I-R20)
-	if err := readReactionParent(m, r, &f); err != nil {
+	if err := readReactionParent(m, r, &f, js); err != nil {
 		return nil, err
 	}
 	if err := readReactionText(m, &f); err != nil {
@@ -84,7 +90,7 @@ func mapAddOn(m parse.MapContext, row parse.Row) ([]records.Record, error) {
 
 // readReactionParent joins the message the reaction is on: its key_id is the target and its chat is the thread. With no
 // parent the thread is the add-on's own chat, and the state says why there is no target.
-func readReactionParent(m parse.MapContext, r cellReader, f *msgFacts) error {
+func readReactionParent(m parse.MapContext, r cellReader, f *msgFacts, js *jobSet) error {
 	pid, ok := r.int("parent_message_row_id")
 	if !ok {
 		f.Raw["parent_state"] = "no-parent-key"
@@ -105,6 +111,10 @@ func readReactionParent(m parse.MapContext, r cellReader, f *msgFacts) error {
 	pr := cellReader{row: prow, cols: rowrun.Resolve(m, tblMessage, "chat_row_id", "key_id"), raw: f.Raw, unknown: f.Unknown, prefix: "message."}
 	if b, ok := pr.text("key_id"); ok && len(b) > 0 {
 		f.Reaction.Target = cleanField(f.Raw, "target_guid", b)
+	}
+	if js.active() {
+		// a reaction is hidden with its parent (spec 6.3, writer call): it follows the parent's outcome
+		f.Purge, f.PurgeVia = js.eval(modernKeyOf(m, prow)), "parent"
 	}
 	return readModernChat(m, pr, f)
 }

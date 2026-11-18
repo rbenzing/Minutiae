@@ -21,7 +21,7 @@ func factsOf(t *testing.T, variant string) (byRow map[string]parsertest.ExpRecor
 		byRow[r.Table+"/"+strconv.FormatInt(r.Rowid, 10)] = r
 		// only a revoke tombstone is deleted, and it names the app's own structure that says so (spec 6.5, plan 4I task 7)
 		del, _ := r.Payload["deleted"].(map[string]any)
-		if r.Type != "message" || r.Deleted != (del != nil) || (r.Deleted && del["source"] != "message_revoked" && del["source"] != "message_type") {
+		if r.Type != "message" || r.Deleted != (del != nil) || (r.Deleted && del["source"] != "message_revoked" && del["source"] != "message_type" && del["source"] != "deleted_chat_job") {
 			t.Errorf("%s %s/%d: type %q deleted %v %v", variant, r.Table, r.Rowid, r.Type, r.Deleted, del)
 		}
 		if r.Payload["status"] != "unknown" { // R4: no delivery status is mapped
@@ -47,8 +47,8 @@ func participants(r parsertest.ExpRecord) []any {
 
 func TestCoreOracleStatesTheSpecRules(t *testing.T) {
 	modern, _ := factsOf(t, "android-modern-2026")
-	if len(modern) != 38 { // the 18 rows of the core, rows 30 to 44 of plan 4I task 7 and the five reactions of task 8
-		t.Fatalf("android-modern-2026 has %d records, want 38", len(modern))
+	if len(modern) != 51 { // the 18 rows of the core, rows 30 to 44 of plan 4I task 7 the five reactions of task 8, and rows 60 to 71 and the reaction 9 of task 9
+		t.Fatalf("android-modern-2026 has %d records, want 51", len(modern))
 	}
 	get := func(set map[string]parsertest.ExpRecord, key string) parsertest.ExpRecord {
 		r, ok := set[key]

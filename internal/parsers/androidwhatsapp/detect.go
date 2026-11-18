@@ -216,16 +216,16 @@ func detect(ctx context.Context, in *parse.Input) (detection, error) {
 // steps are the tables to map, in the order of R1: the legacy table, then the modern one, each only when the census
 // saw it as a table. Both are Optional so that a table that the census saw but the run cannot open is a note, not a
 // silent skip: rowrun states it.
-func (d detection) steps(g *joinGuard) []rowrun.Step {
+func (d detection) steps(g *joinGuard, js *jobSet) []rowrun.Step {
 	var steps []rowrun.Step
 	if d.hasMessages {
-		steps = append(steps, rowrun.Step{Mapping: withGuard(messagesMapping(), g), Optional: true})
+		steps = append(steps, rowrun.Step{Mapping: withGuard(messagesMappingWith(js), g), Optional: true})
 	}
 	if d.hasMessage {
-		steps = append(steps, rowrun.Step{Mapping: withGuard(messageMapping(), g), Optional: true})
+		steps = append(steps, rowrun.Step{Mapping: withGuard(messageMappingWith(js), g), Optional: true})
 	}
 	if hasTable(d.Census.Objects, tblAddOn) {
-		steps = append(steps, rowrun.Step{Mapping: withGuard(addOnMapping(), g), Optional: true})
+		steps = append(steps, rowrun.Step{Mapping: withGuard(addOnMappingWith(js), g), Optional: true})
 	}
 	return steps
 }

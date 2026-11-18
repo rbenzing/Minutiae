@@ -96,6 +96,10 @@ func build(m parse.MapContext, f msgFacts) ([]records.Record, error) {
 		summaryText = "[revoked, no content]"
 	}
 
+	// the chat was cleared by a deleted_chat_job the app has not purged yet: deleted by the app's own structure, never
+	// live (D5); or the job set cannot say (4I-R4 g)
+	applyPurge(&msg, &rec, &f)
+
 	// body
 	if len(f.Text) > 0 {
 		if cl := common.CleanText(f.Text, maxText); cl.Text != "" {

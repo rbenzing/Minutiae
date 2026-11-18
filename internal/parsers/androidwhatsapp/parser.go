@@ -193,6 +193,11 @@ func reqsFor(legacy, modern bool) []rowrun.Req {
 // mapping (so the host's note cap keeps them), and runs the mappings. A database that is not in the app's live
 // databases directory is ErrNotLiveDatabase and emits nothing (4I-R3).
 func (p Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) error {
+	return parseWith(ctx, in, out, maxJobs)
+}
+
+// parseWith is Parse with the cap of deleted_chat_job rows as a parameter (a test seam).
+func parseWith(ctx context.Context, in *parse.Input, out parse.Emitter, maxRows int) error {
 	if in == nil || in.Primary.R == nil {
 		return rowrun.ErrNilInput
 	}
@@ -212,9 +217,20 @@ func (p Parser) Parse(ctx context.Context, in *parse.Input, out parse.Emitter) e
 	if err != nil {
 		return fmt.Errorf("android.whatsapp.msgstore: %w", err)
 	}
-	_, err = rowrun.Run(ctx, in, out, d.steps(g))
+	js, err := loadJobs(ctx, in, maxRows)
 	if err != nil {
 		return fmt.Errorf("android.whatsapp.msgstore: %w", err)
+	}
+	d.judge(js)
+	if err := js.emit(ctx, out); err != nil {
+		return err
+	}
+	_, err = rowrun.Run(ctx, in, out, d.steps(g, js))
+	if err != nil {
+		return fmt.Errorf("android.whatsapp.msgstore: %w", err)
+	}
+	if !js.Complete {
+		return ErrPurgeJobsIncomplete // after every record was emitted: the job is incomplete with its records kept
 	}
 	return nil
 }

@@ -37,21 +37,23 @@ func legacySpecs() []parse.ColumnSpec {
 	return specs
 }
 
-func messagesMapping() parse.TableMapping {
-	return parse.TableMapping{Table: tblMessages, Columns: legacySpecs(), Map: mapLegacy}
-}
+// messagesMapping is the mapping of the typed recovery pass, which states no pending purge (4I-R4 a).
+func messagesMapping() parse.TableMapping { return messagesMappingWith(nil) }
 
-func mapLegacy(m parse.MapContext, row parse.Row) ([]records.Record, error) {
-	f, err := readLegacy(m, row)
-	if err != nil {
-		return nil, err
-	}
-	return build(m, f)
+// messagesMappingWith maps the rows with the job set js (see messageMappingWith).
+func messagesMappingWith(js *jobSet) parse.TableMapping {
+	return parse.TableMapping{Table: tblMessages, Columns: legacySpecs(), Map: func(m parse.MapContext, row parse.Row) ([]records.Record, error) {
+		f, err := readLegacy(m, row, js)
+		if err != nil {
+			return nil, err
+		}
+		return build(m, f)
+	}}
 }
 
 // readLegacy reads a messages row and its joins into the generation-neutral facts (spec 6.4.1). The legacy sentinel
 // (TEXT key_remote_jid '-1') is not a message.
-func readLegacy(m parse.MapContext, row parse.Row) (msgFacts, error) {
+func readLegacy(m parse.MapContext, row parse.Row, js *jobSet) (msgFacts, error) {
 	place, err := rowrun.Where(m, row)
 	if err != nil {
 		return msgFacts{}, err
@@ -111,6 +113,13 @@ func readLegacy(m parse.MapContext, row parse.Row) (msgFacts, error) {
 	}
 	if err := readLegacyFeatures(m, r, &f); err != nil {
 		return msgFacts{}, err
+	}
+	if js.active() {
+		k, err := legacyKeyOf(m, row, c, id)
+		if err != nil {
+			return msgFacts{}, err
+		}
+		f.Purge = js.eval(k)
 	}
 	return f, nil
 }

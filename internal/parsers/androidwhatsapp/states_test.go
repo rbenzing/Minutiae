@@ -29,9 +29,11 @@ var baseDDL = map[string]string{
 	"message_add_on": "create table message_add_on(_id integer primary key, chat_row_id integer, from_me integer, key_id text, " +
 		"sender_jid_row_id integer, parent_message_row_id integer, timestamp integer, message_add_on_type integer)",
 	"message_add_on_reaction": "create table message_add_on_reaction(message_add_on_row_id integer primary key, reaction text, sender_timestamp integer)",
+	"deleted_chat_job": "create table deleted_chat_job(_id integer primary key, chat_row_id, deleted_message_row_id integer, " +
+		"deleted_starred_message_row_id integer, deleted_message_categories text, singular_message_delete_rows_id text)",
 }
 
-var baseOrder = []string{"message", "chat", "jid", "jid_map", "message_vcard", "message_revoked", "message_add_on", "message_add_on_reaction"}
+var baseOrder = []string{"message", "chat", "jid", "jid_map", "message_vcard", "message_revoked", "message_add_on", "message_add_on_reaction", "deleted_chat_job"}
 
 type tables map[string]*sqlitetest.Table
 

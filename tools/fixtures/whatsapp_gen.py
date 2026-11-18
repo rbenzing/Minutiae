@@ -115,6 +115,9 @@ def core(modern_only):
     return m
 
 
+JA, JC, JD, JE, JB, JF = ("155500000%d@s.whatsapp.net" % n for n in (60, 65, 67, 69, 70, 71))  # one chat per scenario
+
+
 def modern_extras():
     """Rows 30 to 44 of android-modern-2026: revokes, a quote, an edit, system rows, a call notice, locations, LIDs and
     the single-source extras. side is [(table, row)] of the tables keyed to the message."""
@@ -151,6 +154,35 @@ def modern_extras():
         row(44, text="extras", starred=1, side=[("message_view_once_media", {"state": 1}),
                                                 ("message_ephemeral", {"duration": 86400, "expire_timestamp": 1600086400}),
                                                 ("message_forwarded", {"forward_score": 2})]),
+    ] + [
+        # plan 4I task 9: the chats of the deleted_chat_job scenario (4I-R4). 63 is starred with a sort_id below job 1's
+        # bound: only the NULL starred bound keeps it live.
+        row(60, chat=JA, text="p60"), row(61, chat=JA, text="p61"), row(62, chat=JA, text="p62"),
+        row(63, chat=JA, text="p63", starred=1, sort=61), row(64, chat=JA, text="p64"),
+        row(65, chat=JC, text="p65"), row(66, chat=JC, text="p66"),
+        row(67, chat=JD, text="p67"), row(68, chat=JD, text="p68"),
+        row(69, chat=JE, text="p69"),
+        row(70, chat=JB, text="p70"),
+        row(71, chat=JF, text="p71", starred=1),
+    ]
+
+
+def modern_jobs():
+    """deleted_chat_job rows 1 to 8 of android-modern-2026 (plan 4I task 9). msg and starred are the bounds as stored;
+    cats and singular the lists; a bound of 'x' is a TEXT in an INTEGER column."""
+    def job(i, chat, **kw):
+        base = dict(id=i, chat=chat, msg=None, starred=None, cats=None, singular=None)
+        base.update(kw)
+        return base
+    return [
+        job(1, JA, msg=62),
+        job(2, JC, msg=60),
+        job(3, JC, msg=66),
+        job(4, JD, msg=60, cats='["1"]'),
+        job(5, JE, singular='["69"]'),
+        job(6, JB, msg="x"),
+        job(7, JF, starred=71),
+        job(8, 9999),
     ]
 
 
@@ -171,6 +203,7 @@ def modern_addons():
         add(6, 2, 9999),
         add(7, 10, 56, chat=GRP, sender=JidRef(LID2), reaction="\u2764"),
         add(8, 2, 56),
+        add(9, 60, 56, chat=JA, reaction="ok"),  # on a message of a cleared chat (task 9)
     ]
 
 
@@ -262,7 +295,7 @@ def modern_row(m, js):
     sender = m.get("sender")
     r = {"_id": m["id"], "chat_row_id": chat_id, "from_me": m["me"], "key_id": m["key"],
          "sender_jid_row_id": js.jid_id(sender) if sender else 0, "status": m["status"], "timestamp": m["ts"],
-         "received_timestamp": m.get("recv", 0), "message_type": m["type"], "text_data": m.get("text"), "sort_id": m["id"],
+         "received_timestamp": m.get("recv", 0), "message_type": m["type"], "text_data": m.get("text"), "sort_id": m.get("sort", m["id"]),
          "starred": m.get("starred", 0), "receipt_server_timestamp": m.get("srv")}
     if m.get("system"):
         r["message_type"] = 7
@@ -724,6 +757,137 @@ def lid_raw(ctx, raw, unknown, chat, sender, participants):
         raw["lid_unresolved"] = unresolved
 
 
+def nonempty(v):
+    """A job list cell that holds something: any value that is not NULL and not an empty text or blob."""
+    if v is None:
+        return False
+    if isinstance(v, bytes):
+        return len(v) > 0
+    return True
+
+
+def job_set(view, ctx):
+    """deleted_chat_job as 4I-R4 reads it: usable jobs by chat (a job of a chat that does not exist is dangling, a job
+    whose chat_row_id is not an INTEGER is unusable), the jobs that can make rows undecided, the smallest id read."""
+    js = {"by_chat": {}, "unusable": 0, "dangling": 0, "warn": [], "min_id": None, "any": False}
+    for r in view.get("deleted_chat_job", []):
+        js["any"] = True
+        jid = r["rowid"]
+        js["min_id"] = jid if js["min_id"] is None else min(js["min_id"], jid)
+        cid = r.get("chat_row_id")
+        if not is_int(cid):
+            js["unusable"] += 1
+            js["warn"].append((jid, "chat-row-id-not-integer"))
+            continue
+        if "chat" in view and cid not in ctx["chat"]:
+            js["dangling"] += 1
+            continue
+        bounds, ok = [], True
+        for n in ("deleted_message_row_id", "deleted_starred_message_row_id"):
+            v = r.get(n)
+            bounds.append(v if is_int(v) else None)
+            ok = ok and (v is None or is_int(v))
+        lists = nonempty(r.get("deleted_message_categories")) or nonempty(r.get("singular_message_delete_rows_id"))
+        js["by_chat"].setdefault(cid, []).append({"id": jid, "msg": bounds[0], "starred": bounds[1], "ok": ok, "lists": lists})
+        if lists:
+            js["warn"].append((jid, "categories-or-singular-list-not-interpreted"))
+        elif not ok:
+            js["warn"].append((jid, "job-bound-not-integer"))
+    return js
+
+
+def job_active(js):
+    return bool(js["by_chat"]) or js["unusable"] > 0
+
+
+def purge_eval(js, k):
+    """(verdict, job ids, smallest job, reason) of a row key: chat, known, undecided, starred, starred_ok, order,
+    order_ok. verdict is None, 'cleared' or 'undecided' (4I-R4 c, d, e)."""
+    incomplete = js["unusable"] > 0
+    if k["undecided"]:
+        if js["any"]:
+            return "undecided", [], js["min_id"], "row-chat-undecided"
+        return None, [], None, None
+    if not k["known"]:
+        return None, [], None, None
+    jobs = js["by_chat"].get(k["chat"], [])
+    if k["starred_ok"] and k["order_ok"]:
+        ids = [j["id"] for j in jobs if (j["starred"] if k["starred"] == 1 else j["msg"]) is not None
+               and k["order"] <= (j["starred"] if k["starred"] == 1 else j["msg"])]
+        if ids:
+            return "cleared", ids, ids[0], None
+    for j in jobs:
+        if j["lists"]:
+            return "undecided", [], j["id"], "categories-or-singular-list-not-interpreted"
+    for j in jobs:
+        if not j["ok"]:
+            return "undecided", [], j["id"], "job-bound-not-integer"
+    if jobs and not (k["starred_ok"] and k["order_ok"]):
+        return "undecided", [], jobs[0]["id"], "row-key-not-integer"
+    if incomplete:
+        return "undecided", [], (jobs[0]["id"] if jobs else None), "job-set-incomplete"
+    return None, [], None, None
+
+
+def starred_of(v):
+    if v is None:
+        return 0, True
+    if is_int(v):
+        return v, v in (0, 1)
+    return 0, False
+
+
+def modern_key(row):
+    st, st_ok = starred_of(row.get("starred"))
+    cid, order = row.get("chat_row_id"), row.get("sort_id")
+    return {"chat": cid if is_int(cid) else None, "known": is_int(cid), "undecided": False, "starred": st,
+            "starred_ok": st_ok, "order": order if is_int(order) else None, "order_ok": is_int(order)}
+
+
+def legacy_key(row, ctx):
+    st, st_ok = starred_of(row.get("starred"))
+    k = {"chat": None, "known": False, "undecided": False, "starred": st, "starred_ok": st_ok, "order": row["rowid"],
+         "order_ok": True}
+    kb = row.get("key_remote_jid")
+    if kb is None or (is_text(kb) and len(kb) == 0):
+        return k
+    if not is_text(kb):
+        k["undecided"] = True
+        return k
+    jids = ctx["jid_by_raw"].get(bytes(kb), [])
+    if len(jids) > 1:
+        k["undecided"] = True
+        return k
+    if len(jids) == 0:
+        return k
+    chats = [c for c in ctx["chat"].values() if c.get("jid_row_id") == jids[0]["rowid"]]
+    if len(chats) > 1:
+        k["undecided"] = True
+    elif chats:
+        k["chat"], k["known"] = chats[0]["rowid"], True
+    return k
+
+
+def apply_purge(raw, payload, verdict, via=None):
+    """Writes the outcome on raw and the payload (4I-R4 g); returns True when the row is deleted by a cleared chat."""
+    kind, ids, job, reason = verdict
+    if kind == "cleared":
+        raw["pending_purge_jobs"] = ids
+        if via:
+            raw["deleted_via"] = via
+        if "deleted" not in payload:
+            payload["deleted"] = {"source": "deleted_chat_job", "job": job}
+            return True
+    elif kind == "undecided":
+        raw["pending_purge"] = "undecided"
+        if job:
+            raw["pending_purge_job"] = job
+        raw["pending_purge_reason"] = reason
+        if via:
+            raw["pending_purge_via"] = via
+    return False
+
+
 def modern_chat(ctx, raw, unknown, cid):
     """(chat address, title, chat_state) of a modern chat_row_id (spec 6.4.1): raw.chat_row_id is the key as stored."""
     chat, title, state = ABSENT, None, None
@@ -787,7 +951,7 @@ def expect_reaction(r, ctx, remote):
     sender = modern_sender(ctx, raw, unknown, c.int("sender_jid_row_id"))
 
     # the parent message: its key is the target, its chat is the thread (the add-on's own chat when there is no parent)
-    target, chat_key = None, own
+    target, chat_key, parent_purge = None, own, (None, [], None, None)
     pid = c.int("parent_message_row_id")
     if pid is None:
         raw["parent_state"] = "no-parent-key"
@@ -800,6 +964,8 @@ def expect_reaction(r, ctx, remote):
             k = pc.text("key_id")
             target = cleaned(raw, "target_guid", k) if k else None
             chat_key = pc.int("chat_row_id")
+            if job_active(ctx["jobs"]):
+                parent_purge = purge_eval(ctx["jobs"], modern_key(prow))
     chat, title, chat_state = modern_chat(ctx, raw, unknown, chat_key)
 
     # the reaction text
@@ -840,6 +1006,7 @@ def expect_reaction(r, ctx, remote):
         raw["unknown_columns"] = unknown
     payload = {"channel": "whatsapp", "direction": "unknown", "kind": "reaction", "participants": [],
                "participants_unknown": True, "status": "unknown", "raw": raw}
+    cleared = apply_purge(raw, payload, parent_purge, via="parent")
     thread = {}
     if chat["str"]:
         thread["id"] = chat["str"]
@@ -856,7 +1023,7 @@ def expect_reaction(r, ctx, remote):
     if body is not None:
         payload["text_source"] = "text"
     return {"table": "message_add_on", "rowid": r["rowid"], "file": "any", "type": "message", "source_path": remote,
-            "time": time_t, "time_end": None, "times": {}, "deleted": False,
+            "time": time_t, "time_end": None, "times": {}, "deleted": cleared,
             "summary": summary_of("unknown", chat["str"] or "unknown", body), "body": body, "payload": payload}
 
 
@@ -1029,8 +1196,13 @@ def expect_message(table, r, ctx, remote):
     counter = participants[0]["address"] if participants else (chat["str"] or "unknown")
     if revoke:
         payload["deleted"] = {"source": revoke}
+    if job_active(ctx["jobs"]):
+        key = modern_key(r) if modern else legacy_key(r, ctx)
+        cleared = apply_purge(raw, payload, purge_eval(ctx["jobs"], key))
+    else:
+        cleared = False
     return {"table": table, "rowid": r["rowid"], "file": "any", "type": "message", "source_path": remote, "time": time_t,
-            "time_end": None, "times": times, "deleted": bool(revoke),
+            "time_end": None, "times": times, "deleted": bool(revoke) or cleared,
             "summary": summary_of(direction, counter, "[revoked, no content]" if revoke else body), "body": body,
             "payload": payload}
 
@@ -1042,11 +1214,13 @@ def context(view):
            "messages": {r["rowid"]: r for r in view.get("message", [])},
            "has_reaction": "message_add_on_reaction" in view,
            "reactions": {r["rowid"]: r for r in view.get("message_add_on_reaction", [])}}
+    ctx["jobs"] = None
     for t in SIDE_TABLES:
         if t in view:
             ctx["rows"][t] = {r["rowid"]: r for r in view[t]}
     for r in view.get("chat", []):
         ctx["chat"][r["rowid"]] = r
+    ctx["jobs"] = job_set(view, ctx)
     for r in view.get("jid", []):
         ctx["jid"][r["rowid"]] = r
         if is_text(r.get("raw_string")):
@@ -1138,6 +1312,9 @@ def oracle(files, remote, variant, ddl, generation):
     notes["database_user"] = "10" if "/user/10/" in remote else "0"
     if "deleted_chat_job" in tables:
         notes["deleted_chat_jobs"] = str(len(view.get("deleted_chat_job", [])))
+    for key, n in (("deleted_chat_jobs_unusable", ctx["jobs"]["unusable"]), ("deleted_chat_jobs_dangling", ctx["jobs"]["dangling"])):
+        if n:
+            notes[key] = str(n)
     for t, n, s in master:
         if t == "view" and n in ("available_message_view", "legacy_available_messages_view"):
             b = (s or "").encode("utf-8")
@@ -1150,6 +1327,9 @@ def oracle(files, remote, variant, ddl, generation):
         if (vsrc == "messages" and rows == "message") or (vsrc == "other" and rows == "messages"):
             exp["warnings"].append({"table": "", "rowid": 0, "locator": "sqlite:schema",
                                     "contains": "whatsapp-message-view-disagrees"})
+    for jid, reason in sorted(ctx["jobs"]["warn"]):
+        exp["warnings"].append({"table": "deleted_chat_job", "rowid": jid,
+                                "contains": "whatsapp-pending-purge-undecided: deleted_chat_job %d: %s" % (jid, reason)})
     exp["warnings"] += sentinel_warnings
     return exp
 
@@ -1206,7 +1386,17 @@ def resolve(js, row):
     return {k: (js.jid_id(str(v)) if isinstance(v, JidRef) else v) for k, v in row.items()}
 
 
-def populate_modern(con, facts, js, vcards=True, addons=()):
+def insert_jobs(con, js, jobs):
+    for j in jobs:
+        chat = j["chat"] if isinstance(j["chat"], int) else js.chat_id(j["chat"])
+        row = {"_id": j["id"], "chat_row_id": chat, "deleted_message_row_id": j["msg"],
+               "deleted_starred_message_row_id": j["starred"], "deleted_message_categories": j["cats"]}
+        if "singular_message_delete_rows_id" in [c[1] for c in con.execute("pragma table_info(deleted_chat_job)")]:
+            row["singular_message_delete_rows_id"] = j["singular"]
+        C.insert(con, "deleted_chat_job", row)
+
+
+def populate_modern(con, facts, js, vcards=True, addons=(), jobs=()):
     for m in facts:
         row = modern_row(m, js)
         C.insert(con, "message", row)
@@ -1225,6 +1415,7 @@ def populate_modern(con, facts, js, vcards=True, addons=()):
             C.insert(con, "message_vcard", {"message_row_id": m["id"], "vcard": m["vcard"]})
         if vcards and m["type"] == 5 and "lat" in m and not any(t == "message_location" for t, _ in sides):
             C.insert(con, "message_location", {"message_row_id": m["id"], "latitude": m["lat"], "longitude": m["lon"]})
+    insert_jobs(con, js, jobs)
     for a in addons:
         sender = js.jid_id(str(a["sender"])) if isinstance(a["sender"], JidRef) else a["sender"]
         C.insert(con, "message_add_on", {"_id": a["id"], "chat_row_id": js.chat_id(a["chat"]), "from_me": a["me"],
@@ -1235,12 +1426,12 @@ def populate_modern(con, facts, js, vcards=True, addons=()):
                                                       "sender_timestamp": a["rts"]})
 
 
-def modern_fill(facts, with_vcards=True, addons=()):
+def modern_fill(facts, with_vcards=True, addons=(), jobs=()):
     def f(con):
         # the jid and chat rows first need their ids: allocate by walking the facts in id order
         js = Jids()
         alloc(js, facts, addons)
-        populate_modern(con, facts, js, with_vcards, addons)
+        populate_modern(con, facts, js, with_vcards, addons, jobs)
     return f
 
 
@@ -1258,7 +1449,7 @@ def v_legacy(work):
     return finish(path, REMOTE, "android-legacy-2.11", "legacy-2.11.sql", "legacy")
 
 
-def transition_fill(legacy_facts, modern_facts, sentinel=True):
+def transition_fill(legacy_facts, modern_facts, sentinel=True, jobs=()):
     def f(con):
         if sentinel:
             C.insert(con, "messages", sentinel_row())
@@ -1285,11 +1476,13 @@ def transition_fill(legacy_facts, modern_facts, sentinel=True):
         for m in modern_facts:
             if m["type"] == 4:
                 C.insert(con, "message_vcard", {"message_row_id": m["id"], "vcard": m["vcard"]})
+        insert_jobs(con, js, jobs)
     return f
 
 
 def v_trans_legacy(work):
-    path = build_db(work, "transition-2021.sql", transition_fill(core(False) + legacy_extras(), []))
+    path = build_db(work, "transition-2021.sql", transition_fill(core(False) + legacy_extras(), [],
+                                                                        jobs=[dict(id=1, chat=GRP, msg=9, starred=None, cats=None, singular=None)]))
     return finish(path, REMOTE, "android-transition-legacydata", "transition-2021.sql", "transition")
 
 
@@ -1359,13 +1552,13 @@ def v_modern_2021(work):
     return finish(path, REMOTE, "android-modern-2021", "transition-2021.sql", "modern")
 
 
-def modern_variant(work, remote, variant, wal=False, extras=(), addons=()):
+def modern_variant(work, remote, variant, wal=False, extras=(), addons=(), jobs=()):
     facts = core(True)
     if extras:
         facts[1]["srv"] = T0 + 2500  # row 3 carries a receipt_server_timestamp (modern: the unit is not established)
     early, late = (facts[:-4], facts[-4:]) if wal else (facts, [])
     early = early + list(extras)
-    path = build_db(work, "modern-2026.sql", modern_fill(early, addons=addons), journal_wal=wal)
+    path = build_db(work, "modern-2026.sql", modern_fill(early, addons=addons, jobs=jobs), journal_wal=wal)
     if wal:
         js = Jids()
         alloc(js, early, addons)
@@ -1386,7 +1579,8 @@ def modern_variant(work, remote, variant, wal=False, extras=(), addons=()):
 
 
 def v_modern_2026(work):
-    return modern_variant(work, REMOTE_USER10, "android-modern-2026", wal=True, extras=modern_extras(), addons=modern_addons())
+    return modern_variant(work, REMOTE_USER10, "android-modern-2026", wal=True, extras=modern_extras(), addons=modern_addons(),
+                          jobs=modern_jobs())
 
 
 def v_modern_business(work):

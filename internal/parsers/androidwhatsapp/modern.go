@@ -34,20 +34,23 @@ func modernSpecs() []parse.ColumnSpec {
 	return specs
 }
 
-func messageMapping() parse.TableMapping {
-	return parse.TableMapping{Table: tblMessage, Columns: modernSpecs(), Map: mapModern}
-}
+// messageMapping is the mapping of the typed recovery pass, which states no pending purge (4I-R4 a).
+func messageMapping() parse.TableMapping { return messageMappingWith(nil) }
 
-func mapModern(m parse.MapContext, row parse.Row) ([]records.Record, error) {
-	f, err := readModern(m, row)
-	if err != nil {
-		return nil, err
-	}
-	return build(m, f)
+// messageMappingWith maps the rows with the job set js: a closure over an immutable value, so the mapper stays a pure
+// function of the row and its context.
+func messageMappingWith(js *jobSet) parse.TableMapping {
+	return parse.TableMapping{Table: tblMessage, Columns: modernSpecs(), Map: func(m parse.MapContext, row parse.Row) ([]records.Record, error) {
+		f, err := readModern(m, row, js)
+		if err != nil {
+			return nil, err
+		}
+		return build(m, f)
+	}}
 }
 
 // readModern reads a message row and its joins into the generation-neutral facts (spec 6.4.1).
-func readModern(m parse.MapContext, row parse.Row) (msgFacts, error) {
+func readModern(m parse.MapContext, row parse.Row, js *jobSet) (msgFacts, error) {
 	place, err := rowrun.Where(m, row)
 	if err != nil {
 		return msgFacts{}, err
@@ -92,6 +95,9 @@ func readModern(m parse.MapContext, row parse.Row) (msgFacts, error) {
 	}
 	if err := readModernFeatures(m, &f); err != nil {
 		return msgFacts{}, err
+	}
+	if js.active() {
+		f.Purge = js.eval(modernKeyOf(m, row))
 	}
 	return f, nil
 }

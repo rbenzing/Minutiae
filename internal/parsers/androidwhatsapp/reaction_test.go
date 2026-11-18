@@ -8,13 +8,13 @@ import (
 	"time"
 )
 
-// Spec 6.5 as amended by 4I-R20: only message_add_on type 56 is a record. The add-on ids 1, 2, 3, 7 and 8 of
+// Spec 6.5 as amended by 4I-R20: only message_add_on type 56 is a record. The add-on ids 1, 2, 3, 7, 8 and 9 of
 // android-modern-2026 give records; 4 (an edit), 5 (keep in chat) and 6 (an unknown type) give none and no error.
 func TestWhatsAppReactionsAreRecordsOnlyForType56(t *testing.T) {
 	recs, res := recordsOf(t, "android-modern-2026")
-	for id := 1; id <= 8; id++ {
+	for id := 1; id <= 9; id++ {
 		_, has := recs[fmt.Sprintf("message_add_on/%d", id)]
-		want := id == 1 || id == 2 || id == 3 || id == 7 || id == 8
+		want := id == 1 || id == 2 || id == 3 || id == 7 || id == 8 || id == 9
 		if has != want {
 			t.Errorf("add-on %d: record %v, want %v", id, has, want)
 		}
