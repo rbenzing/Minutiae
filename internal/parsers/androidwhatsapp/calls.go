@@ -146,6 +146,9 @@ func readCallAddress(m parse.MapContext, r cellReader, f *msgFacts, cl *call.Cal
 		cl.Address = a.Str
 	} else {
 		f.Raw["address_state"] = st
+		if a.Show != "" {
+			f.Raw["address_text"] = a.Show
+		}
 		if a.Parts != nil {
 			f.Raw["address_parts"] = a.Parts
 		}
@@ -171,6 +174,9 @@ func readCallGroup(m parse.MapContext, r cellReader, f *msgFacts) error {
 		f.Raw["group_jid"] = a.Str
 	} else {
 		f.Raw["group_jid_state"] = st
+		if a.Show != "" {
+			f.Raw["group_jid_text"] = a.Show
+		}
 	}
 	return nil
 }
@@ -209,6 +215,9 @@ func readCallParticipants(m parse.MapContext, f *msgFacts) error {
 				e["jid"] = a.Str
 			} else {
 				e["jid_state"] = jst
+				if a.Show != "" {
+					e["jid_text"] = a.Show
+				}
 			}
 		}
 		if v, ok := pr.int("call_result"); ok {

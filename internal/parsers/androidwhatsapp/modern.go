@@ -200,6 +200,8 @@ func readModernSender(m parse.MapContext, r cellReader, f *msgFacts) error {
 		}
 		if f.Sender.Str != "" {
 			f.Raw["sender_jid"] = f.Sender.Str
+		} else if f.Sender.Show != "" {
+			f.Raw["sender_jid"] = f.Sender.Show
 		}
 	}
 	return nil

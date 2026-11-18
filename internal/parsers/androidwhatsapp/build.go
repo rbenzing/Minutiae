@@ -50,6 +50,8 @@ func build(m parse.MapContext, f msgFacts) ([]records.Record, error) {
 	// chat
 	if f.Chat.Str != "" {
 		raw["chat_jid"] = f.Chat.Str
+	} else if f.Chat.Show != "" {
+		raw["chat_jid"] = f.Chat.Show
 	}
 	if f.Chat.isStatus() {
 		raw["chat_class"] = "status"
@@ -59,6 +61,8 @@ func build(m parse.MapContext, f msgFacts) ([]records.Record, error) {
 		raw["chat_state"] = f.ChatState
 	case f.Chat.State == stateTooLong:
 		raw["chat_state"] = stateTooLong
+	case f.Chat.State == stateAltered:
+		raw["chat_state"] = stateAltered
 	}
 	th := &message.Thread{ID: f.Chat.Str, Title: f.Title, Group: f.Chat.group()}
 	if th.ID != "" || th.Title != "" || th.Group != nil {

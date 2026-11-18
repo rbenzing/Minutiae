@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/rbenzing/minutiae/internal/parse"
 	"github.com/rbenzing/minutiae/internal/parsers/androidwhatsapp"
@@ -188,7 +189,7 @@ func anyStrings(v any) []string {
 func TestWhatsAppHostileJIDs(t *testing.T) {
 	jids := []string{
 		"no-at-sign", "a@b@s.whatsapp.net", "1555\x00@s.whatsapp.net", strings.Repeat("1", 1<<20) + "@s.whatsapp.net",
-		"15550000001:7@s.whatsapp.net", "@s.whatsapp.net", "15550000001@",
+		"15550000001:7@s.whatsapp.net", "@s.whatsapp.net", "15550000001@", "1555\x00@g.us", "15\xff55@s.whatsapp.net",
 	}
 	db, _ := buildDB(nil, func(tb tables) {
 		for i, j := range jids {
@@ -218,6 +219,17 @@ func TestWhatsAppHostileJIDs(t *testing.T) {
 			if raw["chat_state"] != "too-long" || th["id"] != nil || raw["chat_jid"] != nil {
 				t.Errorf("%s: a 1 MiB JID: chat_state %v thread %v: never cut and never stored half", k, raw["chat_state"], th)
 			}
+		case strings.ContainsRune(j, 0) || !utf8.ValidString(j):
+			// a JID that cleaning changed is not an address (fix 5, M3): unknown, the cleaned text raw with its text_flags,
+			// never a thread id, a group or a participant
+			if raw["chat_state"] != "altered" || th["id"] != nil || th["group"] != nil || len(parts) != 0 || raw["chat_jid"] != cleanedForRaw(j) {
+				t.Errorf("%s: chat_state %v thread %v participants %v chat_jid %v, want altered, no thread id, group or participant, the cleaned text raw",
+					k, raw["chat_state"], th, parts, raw["chat_jid"])
+			}
+			if fl, _ := raw["text_flags"].([]any); len(fl) == 0 {
+				t.Errorf("%s: no text_flags for a cleaned JID", k)
+			}
+			continue
 		default:
 			if th["id"] != cleanedForRaw(j) {
 				t.Errorf("%s: thread id %v, want the stored %q", k, th["id"], j)
@@ -235,7 +247,9 @@ func TestWhatsAppHostileJIDs(t *testing.T) {
 }
 
 // cleanedForRaw is the stored text as the record shows it: a NUL becomes U+FFFD.
-func cleanedForRaw(s string) string { return strings.ReplaceAll(s, "\x00", "�") }
+func cleanedForRaw(s string) string {
+	return strings.ToValidUTF8(strings.ReplaceAll(s, "\x00", "�"), "�")
+}
 
 // Negative, zero, -1, MaxInt64, MinInt64 and seconds in a millisecond column give a status, never a time.
 func TestWhatsAppAbsurdTimestamps(t *testing.T) {

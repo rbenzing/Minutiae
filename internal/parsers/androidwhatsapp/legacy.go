@@ -105,6 +105,8 @@ func readLegacy(m parse.MapContext, row parse.Row, js *jobSet) (msgFacts, error)
 		f.Raw["remote_resource"] = cleanField(f.Raw, "remote_resource", b)
 		if f.Sender.Str != "" {
 			f.Raw["sender_jid"] = f.Sender.Str
+		} else if f.Sender.Show != "" {
+			f.Raw["sender_jid"] = f.Sender.Show
 		}
 	} else {
 		f.Sender = addr{State: stateAbsent}

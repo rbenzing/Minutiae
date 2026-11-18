@@ -108,7 +108,8 @@ func TestWhatsAppStateVocabularyIsPinned(t *testing.T) {
 		jidRow(tb, 7, "100000000000002", "lid", "100000000000002@lid")
 		jidRow(tb, 8, "100000000000003", "lid", "100000000000003@lid")
 		jidRow(tb, 9, "100000000000004", "lid", "100000000000004@lid")
-		for i, j := range []int64{1, 2, 3, 4, 99, 6, 7, 8, 9} {
+		jidRow(tb, 10, "x", "s.whatsapp.net", "1555\x00@s.whatsapp.net") // cleaning changes it
+		for i, j := range []int64{1, 2, 3, 4, 99, 6, 7, 8, 9, 10} {
 			tb["chat"].Insert(int64(i+1), nil, j, nil)
 		}
 		tb["jid_map"].Insert(7, nil, int64(99)) // the target jid row does not exist
@@ -132,20 +133,26 @@ func TestWhatsAppStateVocabularyIsPinned(t *testing.T) {
 		msgRow(tb, 16, 1, 0, nil, 1, goodTS, "an image with no message_media row")
 		msgRow(tb, 15, 1, 0, nil, 4, goodTS, "vcard stored NULL")
 		tb["message_vcard"].Insert(2, nil, int64(15), nil)
+		msgRow(tb, 17, 10, 0, nil, 0, goodTS, "chat jid altered by cleaning")
+		msgRow(tb, 18, 2, 0, int64(10), 0, goodTS, "sender jid altered by cleaning")
 	})
 	res := runBytes(t, db, nil, remoteLive)
 	recs := byRowid(t, res)
 	raw := func(id string) map[string]any { return rawMap(t, recs["message/"+id]) }
 
-	for id, want := range map[string]string{"1": "no-chat-row", "2": "no-jid-row", "3": "too-long"} {
+	for id, want := range map[string]string{"1": "no-chat-row", "2": "no-jid-row", "3": "too-long", "17": "altered"} {
 		if got := raw(id)["chat_state"]; got != want {
 			t.Errorf("message %s: chat_state %v, want %s", id, got, want)
 		}
 	}
-	for id, want := range map[string]string{"4": "no-jid-row", "5": "no-raw-string", "6": "absent"} {
+	for id, want := range map[string]string{"4": "no-jid-row", "5": "no-raw-string", "6": "absent", "18": "altered"} {
 		if got := raw(id)["sender_state"]; got != want {
 			t.Errorf("message %s: sender_state %v, want %s", id, got, want)
 		}
+	}
+	// 4I-R22 amendment (fix 5): a JID that cleaning changed is "altered": raw text only, never an address
+	if raw("17")["chat_jid"] != "1555"+"�"+"@s.whatsapp.net" || raw("18")["sender_jid"] != "1555"+"�"+"@s.whatsapp.net" || threadOf(recs["message/17"])["id"] != nil {
+		t.Errorf("message 17/18: raw %v / %v, want the cleaned text in raw and no thread id", raw("17"), raw("18"))
 	}
 	if got := raw("7")["lid_unresolved"]; !reflect.DeepEqual(got, []any{"100000000000002@lid"}) {
 		t.Errorf("message 7: lid_unresolved %v (target jid row missing)", got)

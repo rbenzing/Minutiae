@@ -171,6 +171,9 @@ func readRevoke(m parse.MapContext, f *msgFacts, row parse.Row) error {
 			rv["admin_jid"] = a.Str
 		case st != "":
 			rv["admin_jid_state"] = st
+			if a.Show != "" {
+				rv["admin_jid_text"] = a.Show
+			}
 			if a.Parts != nil {
 				rv["admin_jid_parts"] = a.Parts
 			}
@@ -205,6 +208,9 @@ func readQuoted(m parse.MapContext, f *msgFacts, row parse.Row) error {
 			q["sender_jid"] = a.Str
 		case st != "":
 			q["sender_jid_state"] = st
+			if a.Show != "" {
+				q["sender_jid_text"] = a.Show
+			}
 		}
 	}
 	if b, ok := r.text("text_data"); ok && len(b) > 0 {

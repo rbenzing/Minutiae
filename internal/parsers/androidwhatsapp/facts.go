@@ -83,6 +83,7 @@ type addr struct {
 	JID   *wajid.JID
 	Parts map[string]any
 	State string // "": resolved; else why the address is absent
+	Show  string // the cleaned text of an altered address (stateAltered): raw only, never an address
 	RowID *int64 // the jid row the address was read from, nil for an address read from stored text
 }
 
@@ -93,9 +94,11 @@ const (
 	stateNoRawString = "no-raw-string" // the jid row has no raw_string
 	stateTooLong     = "too-long"      // the address is longer than the contract allows
 	stateUndecided   = "undecided"     // the join to the jid row cannot be decided
+	stateAltered     = "altered"       // cleaning changed the stored text (NUL, invalid UTF-8): it names no address that can be shown to exist (4I fix 5)
 )
 
-// addrFromText builds an address from stored text. An over-long JID is never cut: a cut address is another address.
+// addrFromText builds an address from stored text. An over-long JID is never cut: a cut address is another address. A JID
+// that cleaning changed is unknown (stateAltered), with the cleaned text in Show.
 func addrFromText(raw map[string]any, field string, b []byte) addr {
 	if len(b) == 0 {
 		return addr{State: stateAbsent}
@@ -106,6 +109,11 @@ func addrFromText(raw map[string]any, field string, b []byte) addr {
 	}
 	if len(cl.Text) > maxAddr {
 		return addr{State: stateTooLong}
+	}
+	if len(cl.Flags) > 0 {
+		// a repaired JID is not the stored JID: it is never parsed, never a thread id or a grouping key (identity from
+		// structure, never from a guess); the cleaned text stays in raw with its text_flags
+		return addr{State: stateAltered, Show: cl.Text}
 	}
 	a := addr{Str: cl.Text}
 	if j, err := wajid.Parse(cl.Text); err == nil {

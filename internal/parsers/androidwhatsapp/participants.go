@@ -10,7 +10,7 @@ import (
 // raw.from_jid or raw.to_jid and the participants are unknown.
 func participantsOf(f *msgFacts, dir string, raw map[string]any) (ps []message.Participant, unknown bool) {
 	chat := f.Chat.Str
-	if s := f.Sender.State; s == stateNoJIDRow || s == stateNoRawString || s == stateUndecided {
+	if s := f.Sender.State; s == stateNoJIDRow || s == stateNoRawString || s == stateUndecided || s == stateAltered {
 		raw["sender_state"] = s
 	}
 	group := f.Chat.group()
