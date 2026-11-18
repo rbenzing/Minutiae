@@ -175,15 +175,24 @@ func TestResolveMediaPairsUserAndSource(t *testing.T) {
 	}
 }
 
-// M1: a path with a character a glob (or its dialects) could read is not expressible: no lookup, so never "missing".
+// M1: a path holding '*', the one character the case glob (parse.CompileGlob) reads as a pattern, is not expressible:
+// no lookup, so never "missing". Every other character is literal to that glob, so a path holding one is looked up.
 func TestResolveMediaGlobMetacharactersAreUndecided(t *testing.T) {
 	prim := art("P", "android:/data/user/10/com.whatsapp/databases/msgstore.db", "SER1", "acq1")
 	db := classifyDB(prim.Logical)
 	in := &parse.Input{Primary: prim, Lookup: fakeLookup{prim}}
-	for _, c := range []string{"[", "]", "?", "{", "}", "*"} {
-		for _, ref := range []string{"Media/WhatsApp Images/IMG" + c + ".jpg", "/storage/emulated/10/WhatsApp/Media/WhatsApp Images/IMG" + c + ".jpg"} {
-			if _, st, _ := resolveMedia(in, db, ref, nil); st != lookupUndecidedPath {
-				t.Errorf("%q: %v, want lookupUndecidedPath", ref, st)
+	refs := func(c string) []string {
+		return []string{"Media/WhatsApp Images/IMG" + c + ".jpg", "/storage/emulated/10/WhatsApp/Media/WhatsApp Images/IMG" + c + ".jpg"}
+	}
+	for _, ref := range refs("*") {
+		if _, st, _ := resolveMedia(in, db, ref, nil); st != lookupUndecidedPath {
+			t.Errorf("%q: %v, want lookupUndecidedPath", ref, st)
+		}
+	}
+	for _, c := range []string{"[", "]", "?", "{", "}"} {
+		for _, ref := range refs(c) {
+			if _, st, _ := resolveMedia(in, db, ref, nil); st == lookupUndecidedPath {
+				t.Errorf("%q: lookupUndecidedPath, but %q is literal to the case glob, so the path must be looked up", ref, c)
 			}
 		}
 	}

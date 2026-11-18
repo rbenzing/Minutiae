@@ -39,9 +39,10 @@ const (
 	formAndroid11 = "android11"
 )
 
-// globMeta are the characters a glob (the case lookup or any dialect of one) may read as a pattern: a path holding one
-// cannot be written as a glob that matches exactly itself.
-const globMeta = "*?[]{}"
+// globMeta are the characters the case lookup's glob (parse.CompileGlob) reads as a pattern: a path holding one cannot
+// be written as a glob that matches exactly itself. Every other character is literal to that glob, so refusing it would
+// leave a real attachment unlinked for no reason.
+const globMeta = "*"
 
 func hasGlobMeta(p string) bool { return strings.ContainsAny(p, globMeta) }
 

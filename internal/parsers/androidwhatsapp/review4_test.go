@@ -61,10 +61,10 @@ func TestWhatsAppJobsOnGuardedChatTableAreUndecided(t *testing.T) {
 	}
 }
 
-// M1: a media path with a glob metacharacter is never looked up: raw.media_state and a counted undecided lookup, never
-// "unresolved".
+// M1: a media path holding '*' (the case glob's only metacharacter) is never looked up: raw.media_state and a counted
+// undecided lookup, never "unresolved".
 func TestWhatsAppMediaPathWithGlobMetacharacterIsUndecided(t *testing.T) {
-	for _, name := range []string{"IMG[1].jpg", "IMG?.jpg", "IMG{a,b}.jpg", "IMG*.jpg"} {
+	for _, name := range []string{"IMG*.jpg", "*.jpg"} {
 		db, _ := buildDB(nil, func(tb tables) {
 			jidRow(tb, 1, "15550000001", "s.whatsapp.net", "15550000001@s.whatsapp.net")
 			tb["chat"].Insert(1, nil, int64(1), nil)
