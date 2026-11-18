@@ -935,3 +935,16 @@ What the parse costs, counted over the same store by `TestScaleLookupCost` (the 
 | The census, the second open and one extra scan of each counted table (4I-R2) | 1.8 s of 41.9 s (4.4% of the parse), and 1.7 s in the first run | a measured cost (limitation 15) |
 
 Two bounds of the hostile tests, which the plan stated, are not met and are recorded rather than hidden (`docs/limitations/parsers.md`, item 15): a 64 MiB blob in an unread column is charged twice to the budget by the decoder, so MemBudget 128 MiB is the typed `ErrBudget` and 256 MiB parses; and the join index of a million `message_vcard` rows is charged about 260 MiB, so 256 MiB is the typed `ErrBudget` and the default 1 GiB parses.
+
+## WhatsApp iOS ChatStorage at 1,000,000 messages (plan 4I2)
+
+Plan 4I2 (ruling 4I2-R14) asked for one measurement of `ios.whatsapp.chats` on a synthetic ChatStorage.sqlite of at least 1,000,000 messages, the database file plus the peak resident set within 2 GiB. The phases `waios-gen` and `waios-decode-1m` of `TestScaleParse` (`go test -tags scale -run TestScaleParse ./internal/artparse/`, one phase per process) write and parse it. The store is the committed DDL snapshot (`tools/fixtures/schemas/whatsapp-ios/chatstorage.sql`) written by the engine: 1,000,000 `ZWAMESSAGE` rows over 1,000 chat sessions (the first 100 of them groups, each with one `ZWAGROUPMEMBER` row), 10% of them image messages with a `ZWAMEDIAITEM` row, and a `Z_PRIMARYKEY` naming the two entities the parser needs. The primary sits at an app-group extraction path, so attachments are looked up in the case (none is found).
+
+Machine: Intel i7-1265U (10 cores, 12 threads), 15.4 GB RAM, NVMe, Windows 11, go1.26.8, run on 2026-11-18 at commit 85bc822, at below-normal priority, with no other build or test running.
+
+| Phase | MemBudget | Input bytes | Records | Seconds | Records/s | MiB/s | Peak RSS | Streamed | Outcome |
+|---|---|---|---|---|---|---|---|---|---|
+| `waios-gen` | | 167,206,912 | (1,000,000 messages written) | 3 | | | | | generated |
+| `waios-decode-1m` | 1 GiB | 167,206,912 | 1,000,000 | 45.3 | 22,077 | 3.5 | 1,336 MiB | no | complete |
+
+The input is below `MemInputMax` (256 MiB), so it is served from memory. The database file plus the peak resident set is 1,495 MiB, within the 2 GiB cap the phase asserts (`peak_rss_limit` 1,980,276,736 bytes = 2 GiB minus the file). The peak is the high-water mark of the whole test process (Windows peak working set), which includes the capture of the input into a case, so it is an upper bound of the parse. The `waios-gen` seconds are the test's own run time (the phase does not time the write). One run per phase, so there is no spread; the parse registers the one parser directly under a synthetic source hash, as the Android phase does, and the measurement does not depend on the identity.
